@@ -1,0 +1,29 @@
+{
+  "name": "autotrd",
+  "private": true,
+  "version": "0.1.0",
+  "description": "autotrd.net — Paper-Daytrading-Plattform (Firebase + TypeScript)",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "shared",
+    "functions",
+    "frontend"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "emulators": "npm run build -w functions && firebase emulators:start"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.7.0",
+    "firebase-tools": "^15.24.0",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^4.1.10"
+  }
+}
