@@ -18,6 +18,10 @@ KI-News-Analyse. Multi-User, realtime, gebaut auf Firebase + TypeScript.
    (flaches Schema, Lookahead-Gate, Wilder-RSI, Frontend-Regeln) — gelten
    fachlich auch für die TS-Portierung.
 
+Zusätzlich: **[docs/SETUP.md](docs/SETUP.md)** — einmalige Owner-Einrichtung
+(Firebase-Projekt, GitHub Secrets, webgo-FTPS), damit Merge auf `main`
+automatisch deployt.
+
 ## Repo-Layout
 
 ```
