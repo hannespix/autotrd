@@ -59,20 +59,28 @@ Für jede Session / jeden Arbeitsblock:
 **Ziel:** `npm install` + CI grün; Firebase-Projekt verbunden; leere, aber
 deploybare SPA mit Login hinter `autotrd.net`.
 
-- [ ] Root-`package.json` mit npm-Workspaces (`frontend`, `functions`, `shared`),
+- [x] Root-`package.json` mit npm-Workspaces (`frontend`, `functions`, `shared`),
       TypeScript strict, ESLint, Vitest; `shared` baut als reines Typ-/Util-Paket
-- [ ] `frontend/`: Vite + TS + Firebase JS-SDK; Login-Screen (E-Mail+Passwort,
+      (+ `validateStrategy()` mit Tests gegen das Alt-Schema)
+- [x] `frontend/`: Vite + TS + Firebase JS-SDK; Login-Screen (E-Mail+Passwort,
       Google) mit Firebase Auth; nach Login leeres Dashboard-Shell
-- [ ] `functions/`: Firebase Functions v2 (Node 20, TS) initialisiert;
-      eine `healthz`-HTTP-Function als Smoke
+      (E2E-verifiziert gegen den Auth-Emulator: Registrieren → Shell → Logout →
+      Login → Fehlerpfad; Desktop 1500 + Phone 390 ohne Overflow)
+- [x] `functions/`: Firebase Functions v2 (Node 20, TS) initialisiert;
+      eine `healthz`-HTTP-Function als Smoke (im Emulator verifiziert;
+      kompiliert `shared/` mit ins Deploy-Artefakt)
 - [ ] Firebase-Projekt anlegen (Konsole, Blaze + **Budget-Alarm**), `.firebaserc`
       Projekt-ID eintragen, `firestore.rules` deployen
-- [ ] Emulator-Suite (`firebase emulators:start`: auth, firestore, functions)
+      *(Owner-Schritt; `.firebaserc` mit Platzhalter `autotrd` liegt bereit)*
+- [x] Emulator-Suite (`firebase emulators:start`: auth, firestore, functions)
       läuft lokal; README-Abschnitt „Lokal entwickeln"
 - [ ] GitHub Secrets setzen: `FTP_HOST/FTP_USERNAME/FTP_PASSWORD` (webgo, FTPS!),
       `FIREBASE_SERVICE_ACCOUNT` bzw. Token; Workflows aus `.github/workflows/`
       laufen durch (CI hat Guard, solange Tooling fehlt)
+      *(Owner-Schritt: Secrets; die drei Workflows liegen bereit, Deploys
+      überspringen sich sauber per Guard, solange Secrets fehlen)*
 - [ ] webgo: `autotrd.net` DocumentRoot auf Deploy-Zielordner; HTTPS aktiv
+      *(Owner-Schritt)*
 
 **Abnahme:** PR-CI grün · `firebase emulators:start` ok · Merge auf `main`
 lädt Frontend-Build zu webgo hoch · `https://autotrd.net` zeigt Login,

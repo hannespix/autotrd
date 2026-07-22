@@ -30,12 +30,35 @@ reference/   ⭐ Lauffähige Python-Referenz (der bisherige Single-User-Bot)
 firestore.rules · firebase.json · .github/workflows/   Infrastruktur
 ```
 
-## Schnellstart (Entwicklung)
+## Lokal entwickeln (TS-Zielsystem)
 
 ```bash
-# Ab M1: npm ci && firebase emulators:start   (Details folgen mit M1)
+npm ci                       # installiert alle Workspaces (shared/functions/frontend)
 
-# Bis dahin — die Python-Referenz lokal laufen lassen:
+npm run lint                 # ESLint über das ganze Repo
+npm run typecheck            # tsc strict in allen Workspaces
+npm test                     # Vitest (shared-Tests, später Parity-Tests)
+npm run build                # baut shared + functions + frontend
+
+# Emulator-Suite (Auth :9099, Firestore :8081, Functions :5001, UI :4000).
+# Ohne echtes Firebase-Projekt mit einer demo-Projekt-ID starten:
+npm run build -w functions
+npx firebase emulators:start --project demo-autotrd
+curl localhost:5001/demo-autotrd/us-central1/healthz   # Smoke: {"ok":true,…}
+
+# Frontend-Dev-Server (http://localhost:5173):
+cp frontend/.env.example frontend/.env.local   # Werte eintragen — ODER:
+# VITE_FIREBASE_USE_EMULATORS=1 setzen, dann reichen Dummy-Werte und
+# Login/Registrierung laufen gegen den lokalen Auth-Emulator.
+npm run dev -w frontend
+```
+
+Ohne Firebase-Web-Config zeigt das Frontend einen Einrichtungs-Hinweis statt
+des Logins — fehlende Config bricht also nichts.
+
+## Python-Referenz lokal laufen lassen
+
+```bash
 cd reference
 python -m venv .venv && . .venv/bin/activate      # Python 3.11–3.13
 pip install -r requirements.txt
