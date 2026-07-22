@@ -1,0 +1,20 @@
+{
+  "name": "@autotrd/frontend",
+  "private": true,
+  "version": "0.1.0",
+  "description": "SPA für autotrd.net — Vite + TS + Firebase (Auth, Firestore)",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@autotrd/shared": "*",
+    "firebase": "^11.0.0"
+  },
+  "devDependencies": {
+    "vite": "^6.0.0"
+  }
+}

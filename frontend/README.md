@@ -1,6 +1,12 @@
 # frontend/ — SPA für autotrd.net
 
-**Status: Skeleton — wird in M1 aufgesetzt (siehe [MILESTONES.md](../MILESTONES.md)).**
+**Status: M1 steht — Login (E-Mail+Passwort, Google) + leere Dashboard-Shell.
+Das volle Dashboard folgt in M3 (siehe [MILESTONES.md](../MILESTONES.md)).**
+
+- `npm run dev -w frontend` — Dev-Server; Firebase-Web-Config kommt aus
+  `frontend/.env.local` (Vorlage: `.env.example`). Ohne Config rendert ein
+  Einrichtungs-Hinweis. Mit `VITE_FIREBASE_USE_EMULATORS=1` läuft Auth gegen
+  die lokale Emulator-Suite.
 
 - Stack: Vite + TypeScript + Firebase JS-SDK (Auth + Firestore `onSnapshot`).
 - **UI-Seed:** `../reference/scripts/static/index.html` — das bestehende
