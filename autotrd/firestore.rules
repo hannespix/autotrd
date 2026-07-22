@@ -1,0 +1,63 @@
+rules_version = '2';
+
+// autotrd — Security Rules (siehe ARCHITECTURE.md §5)
+// Grundsatz: Geteilte Marktdaten liest jeder Eingeloggte, schreibt NUR der
+// Server (Admin SDK umgeht Rules). User-Daten sind strikt privat; alles
+// Geld-Relevante (wallet/positions/trades) ist auch für den Owner read-only —
+// Schreiben ausschließlich über Cloud Functions.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function isOwner(uid) { return signedIn() && request.auth.uid == uid; }
+
+    // ── Katalog: öffentlich lesbar (auch für Landing Page) ──
+    match /meta/{doc=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // ── Geteilte Marktdaten: nur eingeloggt lesbar, nie client-schreibbar ──
+    match /market/{doc=**} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
+    // ── User-Bereich ──
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      allow create: if false;   // Profil legt die Onboarding-Function an
+      // User darf NUR das settings-Feld ändern (flaches Strategie-Schema);
+      // wallet/profile bleiben serverseitig.
+      allow update: if isOwner(uid)
+        && request.resource.data.diff(resource.data)
+             .affectedKeys().hasOnly(['settings']);
+      allow delete: if false;
+
+      // Geld-relevant: read-only für den Owner, Schreiben nur via Functions
+      match /positions/{doc} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+      match /trades/{doc} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
+      // Alerts: gehören dem User komplett
+      match /alerts/{doc} {
+        allow read, write: if isOwner(uid);
+      }
+    }
+
+    // ── Quotas/Admin: rein serverseitig ──
+    match /admin/{doc=**} {
+      allow read, write: if false;
+    }
+
+    // Default-Deny für alles Unerwähnte
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

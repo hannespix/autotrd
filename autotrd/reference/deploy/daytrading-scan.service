@@ -1,0 +1,8 @@
+[Unit]
+Description=Daytrading auto-scan (paper trading, one cycle)
+After=network-online.target
+
+[Service]
+Type=oneshot
+# Market-hours gate lives in the wrapper; off-hours runs are cheap no-ops.
+ExecStart=%h/.hermes/scripts/run_scan.sh

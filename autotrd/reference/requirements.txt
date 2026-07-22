@@ -1,0 +1,21 @@
+# === autotrd — Python-Abhängigkeiten ===
+# Getestet mit Python 3.11–3.13 (NICHT 3.14 — dort fehlten die Wheels).
+# Installation:  python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt
+
+# --- Kern (Engine, Dashboard, Marktdaten) ---
+yfinance>=0.2.40      # kostenlose Kurse/History, kein API-Key
+pandas>=2.0
+numpy>=1.26
+fastapi>=0.110        # Dashboard-API
+uvicorn>=0.29         # ASGI-Server für das Dashboard
+PyYAML>=6.0           # strategy.yaml
+requests>=2.31        # RSS/HTTP
+feedparser>=6.0       # News-Feeds (Yahoo/Google RSS)
+
+# --- Technische Analyse & Charts ---
+ta>=0.11              # RSI/MACD/BBands-Indikatoren
+matplotlib>=3.8
+mplfinance>=0.12      # Candlestick-Rendering (Backtest/Journal)
+
+# --- Broker (optional — nur für Alpaca; PaperBroker braucht das NICHT) ---
+alpaca-py>=0.43       # echtes/Paper-Brokerage; nur nötig bei broker.provider=alpaca

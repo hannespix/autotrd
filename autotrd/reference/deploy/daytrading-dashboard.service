@@ -1,0 +1,12 @@
+[Unit]
+Description=Daytrading dashboard (FastAPI, localhost:8080)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.hermes/hermes-agent/venv/bin/python %h/.hermes/skills/daytrading/scripts/trading_dashboard.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
