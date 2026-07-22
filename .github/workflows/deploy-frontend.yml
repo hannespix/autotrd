@@ -1,0 +1,49 @@
+name: Deploy Frontend (webgo)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency: deploy-frontend
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Guard (MILESTONES M1): solange die FTP-Secrets fehlen, wird der Deploy
+    # sauber übersprungen statt rot zu werden.
+    env:
+      FTP_HOST: ${{ secrets.FTP_HOST }}
+    steps:
+      - name: Guard — FTP-Secrets vorhanden?
+        if: env.FTP_HOST == ''
+        run: echo "::warning::FTP_HOST/FTP_USERNAME/FTP_PASSWORD fehlen — Frontend-Deploy übersprungen."
+
+      - uses: actions/checkout@v4
+        if: env.FTP_HOST != ''
+      - uses: actions/setup-node@v4
+        if: env.FTP_HOST != ''
+        with:
+          node-version: 20
+          cache: npm
+      - name: Build
+        if: env.FTP_HOST != ''
+        env:
+          VITE_FIREBASE_API_KEY: ${{ vars.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ vars.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ vars.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_APP_ID: ${{ vars.VITE_FIREBASE_APP_ID }}
+        run: |
+          npm ci
+          npm run build -w frontend
+
+      # FTPS (TLS), niemals plain FTP — ARCHITECTURE.md §9
+      - name: FTPS-Upload zu webgo
+        if: env.FTP_HOST != ''
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_HOST }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftps
+          local-dir: frontend/dist/
