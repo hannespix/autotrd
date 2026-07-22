@@ -1,0 +1,36 @@
+# ── Node / TypeScript ────────────────────────────────────────────────
+node_modules/
+dist/
+lib/
+*.tsbuildinfo
+.eslintcache
+coverage/
+
+# ── Firebase ─────────────────────────────────────────────────────────
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+pubsub-debug.log
+functions/*.log
+
+# ── Secrets & State (CLAUDE.md §9 — NIE committen) ───────────────────
+.env
+.env.*
+!.env.example
+*.db
+*.db-wal
+*.db-shm
+*.bak
+
+# ── Python (reference/) ──────────────────────────────────────────────
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ── Editor / OS ──────────────────────────────────────────────────────
+.DS_Store
+.idea/
+.vscode/
+*.swp

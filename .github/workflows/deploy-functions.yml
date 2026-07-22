@@ -1,0 +1,42 @@
+name: Deploy Functions (Firebase)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency: deploy-functions
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Guard (MILESTONES M1): ohne Service-Account wird der Deploy sauber
+    # übersprungen statt rot zu werden.
+    env:
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+    steps:
+      - name: Guard — Firebase-Secret vorhanden?
+        if: env.FIREBASE_SERVICE_ACCOUNT == ''
+        run: echo "::warning::FIREBASE_SERVICE_ACCOUNT fehlt — Functions-Deploy übersprungen."
+
+      - uses: actions/checkout@v4
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+      - uses: actions/setup-node@v4
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        with:
+          node-version: 20
+          cache: npm
+      - name: Abhängigkeiten installieren
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        run: npm ci
+
+      - name: Service-Account bereitstellen
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
+
+      # Baut functions über den predeploy-Hook aus firebase.json mit
+      - name: Deploy functions + firestore.rules
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+        run: npx firebase-tools deploy --only functions,firestore:rules --non-interactive

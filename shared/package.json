@@ -1,0 +1,16 @@
+{
+  "name": "@autotrd/shared",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Geteilte Typen & pure Helper — einzige Wahrheit für das flache Strategie-/Firestore-Schema",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  }
+}
