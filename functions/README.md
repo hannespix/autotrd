@@ -1,6 +1,13 @@
 # functions/ — Cloud Functions (Node 20, TypeScript)
 
-**Status: Skeleton — wird in M1 aufgesetzt (siehe [MILESTONES.md](../MILESTONES.md)).**
+**Status: M1 steht — `healthz`-Smoke-Function läuft (Build: `npm run build -w
+functions`, Test via Emulator). Fachlogik folgt ab M2 (siehe
+[MILESTONES.md](../MILESTONES.md)).**
+
+> Build-Detail: `tsconfig.json` kompiliert `../shared/src` MIT nach `lib/`
+> (rootDir = Repo-Root), damit das Deploy-Artefakt self-contained ist —
+> shared deshalb hier per relativem Pfad importieren
+> (`../../shared/src/index.js`), nicht als npm-Paket.
 
 Geplante Struktur (ARCHITECTURE.md §3):
 

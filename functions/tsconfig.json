@@ -1,0 +1,11 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    // rootDir = Repo-Root: shared/src wird MIT in lib/ kompiliert, damit das
+    // Deploy-Artefakt self-contained ist (firebase deploy lädt nur functions/
+    // hoch — ein npm-Link auf ../shared würde im Cloud Build fehlen).
+    "rootDir": "..",
+    "outDir": "lib"
+  },
+  "include": ["src", "../shared/src"]
+}

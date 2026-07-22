@@ -6,7 +6,9 @@
     {
       "source": "functions",
       "codebase": "default",
-      "runtime": "nodejs20"
+      "runtime": "nodejs20",
+      "predeploy": ["npm run build --workspace functions"],
+      "ignore": ["node_modules", ".git", "**/*.log", "src", "tsconfig.json"]
     }
   ],
   "emulators": {
