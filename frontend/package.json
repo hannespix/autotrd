@@ -12,7 +12,8 @@
   },
   "dependencies": {
     "@autotrd/shared": "*",
-    "firebase": "^11.0.0"
+    "firebase": "^11.0.0",
+    "lightweight-charts": "4.2.0"
   },
   "devDependencies": {
     "vite": "^6.0.0"
