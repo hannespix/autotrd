@@ -48,6 +48,11 @@ service cloud.firestore {
       match /alerts/{doc} {
         allow read, write: if isOwner(uid);
       }
+
+      // Workspaces (M9): Layout/Link-Gruppen — rein clientseitige Präferenzen
+      match /workspaces/{doc} {
+        allow read, write: if isOwner(uid);
+      }
     }
 
     // ── Quotas/Admin: rein serverseitig ──

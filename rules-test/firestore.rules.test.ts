@@ -96,6 +96,15 @@ describe('users/{uid}', () => {
     await assertFails(bob().doc('users/alice/alerts/a2').set({ symbol: 'QQQ' }));
   });
 
+  it('workspaces (M9) gehören dem User komplett, Fremde bleiben draußen', async () => {
+    await assertSucceeds(
+      alice().doc('users/alice/workspaces/default').set({ preset: 'ueberblick', panels: {} }),
+    );
+    await assertSucceeds(alice().doc('users/alice/workspaces/default').get());
+    await assertFails(bob().doc('users/alice/workspaces/default').get());
+    await assertFails(bob().doc('users/alice/workspaces/w2').set({ preset: 'x' }));
+  });
+
   // ── Adversarial (M7): was kann ein böswilliger EINGELOGGTER User? ──
   it('profile-Manipulation (plan-Upgrade) wird abgelehnt — einzeln und gemischt', async () => {
     await assertFails(alice().doc('users/alice').update({ profile: { plan: 'pro' } }));

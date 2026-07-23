@@ -311,19 +311,37 @@ gemeinsamer Aufmerksamkeit: Panels, Link-Gruppen, Keyboard-first, Multi-Monitor
 - [ ] Panel-Lebenszyklus (`mount/onLink/destroy`) + 12-Spalten-Grid; M3-Karten
       (Chart-Stack, Watchlist, Signale, News, Positionen) als Panels;
       Persistenz `users/{uid}/workspaces/{wsId}` (debounced 2 s)
+      *(Teil 1 ✓: 13 Karten als adressierbare Panels (`data-panel`) mit
+      Sichtbarkeits-Steuerung + Persistenz inkl. Rules/Tests; freies
+      12-Spalten-Grid + Chart-Stack folgen in Teil 2)*
 - [ ] Link-Bus mit Gruppen A/B/C: Symbol-, Zeit- (timestamp-basiert) und
       Crosshair-Sync (`setCrosshairPosition`), Link-Chip je Panel in
       Aurora-Farben
+      *(Teil 1 ✓: `linkbus.ts` mit Symbol-Sync + Gruppen-Adoption beim
+      Chip-Wechsel, Chips in Aurora-Farben auf Chart + News; Zeit-/
+      Crosshair-Sync braucht den Chart-Stack → Teil 2)*
 - [ ] QuoteStore-Multiplexing + Leader-Tab über `BroadcastChannel`:
       n Fenster, ein Listener-Satz — Multi-Monitor ohne Read-Duplikation
+      *(Teil 2; Listener-Buchhaltung als Grundlage steckt schon in data.ts)*
 - [ ] Command-Palette (`Ctrl+K`): Symbol-Resolve aus `meta/universe`
       (Klarnamen, `^NDX`-Konvention), Befehle für Order/Alert/Workspace;
       Hotkeys in `settings.hotkeys`
+      *(Teil 1 ✓: Palette mit Katalog-Resolve („ndx"→`^NDX`), Preset-/
+      Panel-/Engine-/Theme-Befehlen, Keyboard-Navigation; Order-/Alert-
+      Befehle + konfigurierbare Hotkeys folgen mit dem Order-Ticket)*
 - [ ] Hotkey-Order-Ticket (`Shift+B/S`) als Overlay auf das
-      `placeOrder`-Callable, Risiko-Vorschau-Zeile, Kurs-Altersstempel,
+      `trade`-Callable, Risiko-Vorschau-Zeile, Kurs-Altersstempel,
       unübersehbares PAPER-Badge
-- [ ] Werks-Presets („Überblick", „Ein-Symbol-Fokus", „Signal-Jäger") +
+- [x] Werks-Presets („Überblick", „Ein-Symbol-Fokus", „Signal-Jäger") +
       deterministische Mobile-Degradation zur Stapelliste (Bottom-Sheet bleibt)
+
+> Teil-1-Verifikation (Emulator + Playwright, 2026-07-23, 11/11): Gruppe A
+> synchronisiert Chart+News beim Watchlist-Klick; News-Chip → B entkoppelt
+> (News bleibt stehen, Chart wechselt weiter); Palette „ndx" → `^NDX`;
+> Preset „Signal-Jäger" blendet Panels aus; **kein Listener-Leak** nach 20×
+> Durchklicken (24 → 24, Zähler über onSnapshot-Wrapper); Preset + Gruppe
+> überleben den Reload (`users/{uid}/workspaces/default`, Rules-Test 16/16);
+> 390 px ohne horizontales Scrollen.
 
 **Abnahme:** Zwei Browserfenster, Gruppe A: Watchlist-Klick wechselt
 Chart+News+Signale in beiden Fenstern, Firestore-Listener-Zahl bleibt konstant
