@@ -3,7 +3,7 @@
  * Callables; kein fetch-Polling, kein /api/* (MILESTONES M3).
  */
 
-import type { Quote, Strategy } from '@autotrd/shared';
+import type { Position, Quote, Strategy, Wallet } from '@autotrd/shared';
 import {
   collection,
   doc,
@@ -117,14 +117,53 @@ export function watchLatestIndicators(
   });
 }
 
-export function watchUserSettings(
+export function watchUserDoc(
   uid: string,
-  cb: (strategy: Strategy | null) => void,
+  cb: (data: { strategy: Strategy | null; wallet: Wallet | null }) => void,
 ): Unsubscribe {
   return onSnapshot(doc(db(), 'users', uid), (snap) => {
-    const s = snap.get('settings.strategy') as Strategy | undefined;
-    cb(s ?? null);
+    cb({
+      strategy: (snap.get('settings.strategy') as Strategy | undefined) ?? null,
+      wallet: (snap.get('wallet') as Wallet | undefined) ?? null,
+    });
   });
+}
+
+export function watchPositions(uid: string, cb: (positions: Position[]) => void): Unsubscribe {
+  return onSnapshot(collection(db(), 'users', uid, 'positions'), (snap) => {
+    cb(snap.docs.map((d) => d.data() as Position));
+  });
+}
+
+export interface TradeRow {
+  symbol: string;
+  side: 'buy' | 'sell';
+  qty: number;
+  price: number;
+  executedAt: string;
+  source: 'engine' | 'manual';
+  pnl?: number;
+  riskExit?: string;
+}
+
+export function watchTrades(uid: string, cb: (trades: TradeRow[]) => void): Unsubscribe {
+  const q = query(
+    collection(db(), 'users', uid, 'trades'),
+    orderBy('at', 'desc'),
+    limit(40),
+  );
+  return onSnapshot(q, (snap) => {
+    cb(snap.docs.map((d) => d.data() as TradeRow));
+  });
+}
+
+/** Manueller Paper-Trade über das trade-Callable (Preis kommt vom Server). */
+export async function callTrade(input: {
+  symbol: string;
+  side: 'buy' | 'sell';
+  qty?: number;
+}): Promise<void> {
+  await httpsCallable(fns(), 'trade')(input);
 }
 
 export interface UniverseEntry {

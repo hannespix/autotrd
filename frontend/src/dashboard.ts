@@ -9,11 +9,14 @@ import {
   DEFAULT_STRATEGY,
   resolveName,
   validateStrategy,
+  type Position,
   type Strategy,
+  type Wallet,
 } from '@autotrd/shared';
 import type { Unsubscribe } from 'firebase/firestore';
 import { buildPriceChart, type ChartBar, type PriceChartHandle } from './chart.js';
 import {
+  callTrade,
   loadMarketQuotes,
   loadUniverse,
   saveStrategy,
@@ -21,10 +24,13 @@ import {
   watchLatestIndicators,
   watchLatestSignal,
   watchMarketDoc,
-  watchUserSettings,
+  watchPositions,
+  watchTrades,
+  watchUserDoc,
   type IndicatorRow,
   type MarketDocData,
   type SignalRow,
+  type TradeRow,
   type UniverseClass,
 } from './data.js';
 import { logout } from './auth.js';
@@ -55,9 +61,15 @@ interface DashState {
   bars: ChartBar[];
   range: number; // Anzahl Bars, 0 = alle
   pickerSelection: Set<string>;
-  subs: Unsubscribe[]; // globale Subs (Settings)
+  wallet: Wallet | null;
+  positions: Position[];
+  trades: TradeRow[];
+  /** Live-Preise der Positions-Symbole (aus market/{sym}.quote). */
+  posPrices: Map<string, number>;
+  subs: Unsubscribe[]; // globale Subs (Settings, Wallet, Positionen, Trades)
   symbolSubs: Unsubscribe[]; // pro Chart-Symbol
   watchlistSubs: Unsubscribe[]; // pro Watchlist (Livebar + Tabelle)
+  positionSubs: Map<string, Unsubscribe>; // Quotes je Positions-Symbol
   timers: number[];
 }
 
@@ -111,8 +123,15 @@ function layout(email: string): string {
       <div class="card"><div class="sect">Engine</div><div class="cbody">
         <button class="btn btn-g" id="engStart">Start</button>
         <button class="btn btn-r" id="engStop">Stop</button>
-        <div class="hint">Auto-Trades führt die Engine ab Milestone M4 aus —
-          der Schalter steuert bereits dein persistentes Engine-Flag.</div>
+        <div class="hint">Bei Engine AN handelt der zentrale 5-min-Scan
+          automatisch nach deiner Strategie (Paper).</div>
+      </div></div>
+
+      <div class="card"><div class="sect">Trade-Historie</div><div class="cbody">
+        <div class="tw"><table class="tbl">
+          <thead><tr><th>Zeit</th><th>Sym</th><th>Side</th><th>Qty</th><th>Preis</th><th>P&amp;L</th></tr></thead>
+          <tbody id="jBody"><tr><td colspan="6" class="c-t3">Keine Trades</td></tr></tbody>
+        </table></div>
       </div></div>
     </div>
 
@@ -150,6 +169,13 @@ function layout(email: string): string {
         </table></div>
       </div></div>
 
+      <div class="card"><div class="sect">Aktive Positionen <span id="pCount" style="float:right;color:var(--t3)">0 offen</span></div><div class="cbody">
+        <div class="tw"><table class="tbl">
+          <thead><tr><th>Sym</th><th>Qty</th><th>Eintritt</th><th>Aktuell</th><th>P&amp;L</th><th>%</th><th></th></tr></thead>
+          <tbody id="pBody"><tr><td colspan="7" class="c-t3">Keine offenen Positionen</td></tr></tbody>
+        </table></div>
+      </div></div>
+
       <div class="card"><div class="sect">Markt-Übersicht</div><div class="cbody">
         <div class="mkt-tabs" id="mktTabs"></div>
         <div id="mktBody"><span class="c-t3">Lade Katalog…</span></div>
@@ -158,9 +184,24 @@ function layout(email: string): string {
 
     <div class="col-r" id="rightCol">
       <div class="card"><div class="sect">Performance</div><div class="cbody kpi">
-        <label class="lbl">Paper-Kapital</label>
-        <div class="vbig c-ac">$${DEFAULT_STRATEGY.broker.initialCapital.toLocaleString('en-US')}</div>
-        <div class="hint">Wallet, Positionen &amp; P&amp;L kommen mit Milestone M4.</div>
+        <label class="lbl">Cash</label><div id="vCash" class="vbig c-ac">--</div>
+        <label class="lbl">Equity (live)</label><div id="vEq" class="vbig">--</div>
+        <label class="lbl">Gesamt P&amp;L</label><div id="vPnl" class="vbig">--</div>
+        <div class="row" style="gap:12px">
+          <div><label class="lbl">Realisiert</label><div id="vClosed" class="smv">--</div></div>
+          <div><label class="lbl">Offen</label><div id="vUnreal" class="smv">--</div></div>
+          <div><label class="lbl">Win Rate</label><div id="vWR" class="smv">--%</div></div>
+        </div>
+      </div></div>
+
+      <div class="card"><div class="sect">Manueller Trade</div><div class="cbody">
+        <input id="mSym" class="inp" placeholder="Symbol (z.B. AAPL)">
+        <input id="mQty" class="inp" type="number" value="1" min="1" placeholder="Menge">
+        <div class="row">
+          <button class="btn btn-g" id="mtBuy">Buy</button>
+          <button class="btn btn-r" id="mtSell">Sell</button>
+        </div>
+        <div class="hint" id="mtHint">Preis = zentraler Live-Kurs (Paper)</div>
       </div></div>
 
       <div class="card"><div class="sect">Markt-Uhr (ET)</div><div class="cbody">
@@ -592,6 +633,120 @@ function closeModal(which: 'detail' | 'picker'): void {
   $(which === 'detail' ? 'detailModal' : 'wlModal').classList.remove('show');
 }
 
+/* ── Portfolio (Wallet, Positionen, Trades) ─────────────────────────── */
+
+const money = (n: number | null | undefined): string =>
+  n === null || n === undefined ? '--' : '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** Quote-Listener für Positions-Symbole nachführen (auf-/abbauen). */
+function syncPositionQuotes(): void {
+  if (!st) return;
+  const needed = new Set(st.positions.map((p) => p.symbol));
+  for (const [sym, unsub] of st.positionSubs) {
+    if (!needed.has(sym)) {
+      unsub();
+      st.positionSubs.delete(sym);
+      st.posPrices.delete(sym);
+    }
+  }
+  for (const sym of needed) {
+    if (st.positionSubs.has(sym)) continue;
+    st.positionSubs.set(
+      sym,
+      watchMarketDoc(sym, (d) => {
+        if (!st) return;
+        if (d?.quote) st.posPrices.set(sym, d.quote.price);
+        renderPortfolio();
+      }),
+    );
+  }
+}
+
+function renderPortfolio(): void {
+  if (!st) return;
+  const cash = st.wallet?.paperBalance ?? null;
+  let openPnl = 0;
+  let posValue = 0;
+  for (const p of st.positions) {
+    const live = st.posPrices.get(p.symbol) ?? p.avgEntry;
+    openPnl += (live - p.avgEntry) * p.qty;
+    posValue += live * p.qty;
+  }
+  const sells = st.trades.filter((t) => t.side === 'sell' && t.pnl !== undefined);
+  const closedPnl = sells.reduce((s, t) => s + (t.pnl ?? 0), 0);
+  const wins = sells.filter((t) => (t.pnl ?? 0) > 0).length;
+  const winRate = sells.length > 0 ? Math.round((wins / sells.length) * 100) : null;
+  const totalPnl = closedPnl + openPnl;
+
+  $('vCash').textContent = money(cash);
+  $('vEq').textContent = cash !== null ? money(cash + posValue) : '--';
+  const pnlEl = $('vPnl');
+  pnlEl.textContent = (totalPnl >= 0 ? '+' : '') + money(totalPnl).replace('$', '$');
+  pnlEl.className = `vbig ${pnlClass(totalPnl)}`;
+  const closedEl = $('vClosed');
+  closedEl.textContent = money(closedPnl);
+  closedEl.className = `smv ${pnlClass(closedPnl)}`;
+  const unrealEl = $('vUnreal');
+  unrealEl.textContent = money(openPnl);
+  unrealEl.className = `smv ${pnlClass(openPnl)}`;
+  $('vWR').textContent = winRate === null ? '--%' : `${winRate}%`;
+
+  // Positionen-Tabelle
+  $('pCount').textContent = `${st.positions.length} offen`;
+  const body = $('pBody') as HTMLTableSectionElement;
+  body.innerHTML = '';
+  if (st.positions.length === 0) {
+    body.innerHTML = '<tr><td colspan="7" class="c-t3">Keine offenen Positionen</td></tr>';
+  }
+  for (const p of st.positions) {
+    const live = st.posPrices.get(p.symbol);
+    const pnl = live !== undefined ? (live - p.avgEntry) * p.qty : null;
+    const pct = live !== undefined && p.avgEntry > 0 ? (live / p.avgEntry - 1) * 100 : null;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td style="color:var(--t1);font-weight:700"></td><td>${p.qty}</td>
+      <td>${fmtNum(p.avgEntry)}</td><td>${live !== undefined ? fmtNum(live) : '--'}</td>
+      <td class="${pnl !== null ? pnlClass(pnl) : ''}">${pnl !== null ? money(pnl) : '--'}</td>
+      <td class="${pct !== null ? pnlClass(pct) : ''}">${pct !== null ? fmtPct(pct) : '--'}</td>
+      <td><button class="hbtn" data-exit style="color:var(--rd)">Exit</button></td>`;
+    tr.querySelector('td')!.textContent = p.symbol;
+    tr.querySelector('[data-exit]')!.addEventListener('click', () => {
+      void manualTrade(p.symbol, 'sell');
+    });
+    body.appendChild(tr);
+  }
+
+  // Trade-Historie
+  const jb = $('jBody') as HTMLTableSectionElement;
+  jb.innerHTML = '';
+  if (st.trades.length === 0) {
+    jb.innerHTML = '<tr><td colspan="6" class="c-t3">Keine Trades</td></tr>';
+  }
+  for (const t of st.trades.slice(0, 20)) {
+    const tr = document.createElement('tr');
+    const time = new Date(t.executedAt).toLocaleString('de-DE', {
+      day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+    });
+    tr.innerHTML = `<td>${time}</td><td style="color:var(--t1)"></td>
+      <td><span class="stag ${t.side === 'buy' ? 't-buy' : 't-sell'}">${t.side.toUpperCase()}</span></td>
+      <td>${t.qty}</td><td>${fmtNum(t.price)}</td>
+      <td class="${t.pnl !== undefined ? pnlClass(t.pnl) : ''}">${t.pnl !== undefined ? money(t.pnl) : '—'}</td>`;
+    tr.querySelectorAll('td')[1]!.textContent = t.symbol + (t.source === 'engine' ? ' ⚙' : '');
+    jb.appendChild(tr);
+  }
+}
+
+async function manualTrade(symbol: string, side: 'buy' | 'sell'): Promise<void> {
+  const hint = $('mtHint');
+  hint.textContent = 'Sende Order…';
+  try {
+    const qty = Math.max(1, Number(($('mQty') as HTMLInputElement).value) || 1);
+    await callTrade({ symbol, side, ...(side === 'buy' ? { qty } : {}) });
+    hint.textContent = `${side === 'buy' ? 'Gekauft' : 'Verkauft'}: ${symbol}`;
+  } catch (e) {
+    hint.textContent = (e as { message?: string }).message ?? 'Order fehlgeschlagen';
+  }
+}
+
 /* ── Uhr ────────────────────────────────────────────────────────────── */
 
 function updateClock(): void {
@@ -622,19 +777,26 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     bars: [],
     range: 66,
     pickerSelection: new Set(),
+    wallet: null,
+    positions: [],
+    trades: [],
+    posPrices: new Map(),
     subs: [],
     symbolSubs: [],
     watchlistSubs: [],
+    positionSubs: new Map(),
     timers: [],
   };
 
-  // Settings-Subscription: Formular + Watchlist folgen dem Firestore-Stand
+  // User-Doc: Strategie (Formular/Watchlist) + Wallet folgen Firestore
   st.subs.push(
-    watchUserSettings(uid, (s) => {
+    watchUserDoc(uid, ({ strategy, wallet }) => {
       if (!st) return;
       const prevWl = st.strategy.watchlist.join(',');
-      st.strategy = s ?? DEFAULT_STRATEGY;
+      st.strategy = strategy ?? DEFAULT_STRATEGY;
+      st.wallet = wallet;
       fillForm(st.strategy);
+      renderPortfolio();
       if (st.strategy.watchlist.join(',') !== prevWl || $('liveBar').childElementCount === 0) {
         if (!st.strategy.watchlist.includes(st.currentSymbol)) {
           st.currentSymbol = st.strategy.watchlist[0] ?? st.currentSymbol;
@@ -643,6 +805,17 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         }
         wireWatchlist();
       }
+    }),
+    watchPositions(uid, (positions) => {
+      if (!st) return;
+      st.positions = positions;
+      syncPositionQuotes();
+      renderPortfolio();
+    }),
+    watchTrades(uid, (trades) => {
+      if (!st) return;
+      st.trades = trades;
+      renderPortfolio();
     }),
   );
 
@@ -676,6 +849,14 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     for (const id of ['leftCol', 'rightCol']) $(id).classList.remove('show');
     $('olv').classList.remove('show');
   });
+  $('mtBuy').addEventListener('click', () => {
+    const sym = (($('mSym') as HTMLInputElement).value || st?.currentSymbol || '').trim().toUpperCase();
+    if (sym) void manualTrade(sym, 'buy');
+  });
+  $('mtSell').addEventListener('click', () => {
+    const sym = (($('mSym') as HTMLInputElement).value || st?.currentSymbol || '').trim().toUpperCase();
+    if (sym) void manualTrade(sym, 'sell');
+  });
   $('themeBtn').addEventListener('click', () => {
     const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
     document.documentElement.dataset.theme = next;
@@ -698,6 +879,7 @@ export function unmountDashboard(): void {
   clearSubs(st.subs);
   clearSubs(st.symbolSubs);
   clearSubs(st.watchlistSubs);
+  for (const u of st.positionSubs.values()) u();
   for (const t of st.timers) clearInterval(t);
   st.chart?.destroy();
   document.removeEventListener('keydown', onEscape);
