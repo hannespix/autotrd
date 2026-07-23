@@ -69,12 +69,23 @@ export function computeIndicatorSnapshot(
   };
 }
 
-/** Eine Symbol-Analyse: Votes sammeln, Konfluenz-Entscheidung fällen. */
+export interface ForecastVoteInput {
+  /** Prognostizierte Änderung zum Horizont-Ende in % (aus dem Forecaster). */
+  predictedPct: number;
+}
+
+/**
+ * Eine Symbol-Analyse: Votes sammeln, Konfluenz-Entscheidung fällen.
+ * `forecast` ist die gewichtete Richtungsstimme der self-getunten Prognose
+ * (Port von _forecast_vote, gesteuert über signals.useForecast/
+ * forecastWeight/forecastThresholdPct).
+ */
 export function computeSignal(
   closes: number[],
   price: number,
   indicators: IndicatorsConfig,
   signals: SignalsConfig,
+  forecast?: ForecastVoteInput | null,
 ): SignalComputation {
   const snapshot = computeIndicatorSnapshot(closes, price, indicators);
   let buyVotes = 0;
@@ -117,6 +128,21 @@ export function computeSignal(
       votes.bollinger = 'buy';
     } else {
       votes.bollinger = 'hold';
+    }
+  }
+
+  // Forecast-Vote (das „Herz"): gewichtete Richtungsstimme der Prognose
+  if (signals.useForecast && forecast) {
+    const thr = signals.forecastThresholdPct;
+    const weight = Math.trunc(signals.forecastWeight);
+    if (forecast.predictedPct >= thr) {
+      buyVotes += weight;
+      votes.forecast = 'buy';
+    } else if (forecast.predictedPct <= -thr) {
+      sellVotes += weight;
+      votes.forecast = 'sell';
+    } else {
+      votes.forecast = 'hold';
     }
   }
 
