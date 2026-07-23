@@ -108,6 +108,62 @@ button:hover { filter: brightness(1.08); }
 
 .error { color: var(--error); margin: 0.25rem 0 0; }
 
+.stack {
+  width: min(60rem, 100%);
+  display: grid;
+  gap: 1rem;
+  align-content: start;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: 0.75rem;
+}
+
+.tile {
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.8rem;
+  background: var(--card);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+.tile-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.tile-sym { font-weight: 700; letter-spacing: 0.02em; }
+.tile-name {
+  font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tile-price {
+  margin-top: 0.35rem;
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', monospace;
+  font-size: 1.25rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.tile-time { font-size: 0.72rem; margin-top: 0.15rem; }
+
+.muted { color: var(--muted); }
+
+.delta {
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', monospace;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+.delta.up { color: #26cf9d; }
+.delta.down { color: var(--error); }
+
 .topbar {
   display: flex;
   align-items: center;
