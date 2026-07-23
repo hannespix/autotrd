@@ -18,12 +18,28 @@ import {
   type ForecastComputation,
   type ForecastDoc,
 } from '../../../shared/src/index.js';
+import { mergeGrids } from './tuner.js';
 
-/** Globale Tuning-Statistik (wie die Referenz: EIN Gitter über alle Symbole). */
-export async function loadBestParams(): Promise<{ w: number; lookback: number }> {
+export interface ForecastMeta {
+  w: number;
+  lookback: number;
+  weightGrid: number[];
+  lookbackGrid: number[];
+}
+
+/**
+ * Globale Tuning-Statistik (wie die Referenz: EIN Gitter über alle Symbole).
+ * Das Shadow-Gitter = Basis-Gitter ∪ Tuner-Erweiterungen (hart geclampt in
+ * mergeGrids) — die LIVE-Params bleiben rein empirische bestParams.
+ */
+export async function loadForecastMeta(): Promise<ForecastMeta> {
   const snap = await getFirestore().doc('meta/forecastStats').get();
   const combos = (snap.get('combos') as Record<string, ComboStat> | undefined) ?? {};
-  return bestParams(combos);
+  const tuning = snap.get('tuning') as
+    | { extraWeights?: number[]; extraLookbacks?: number[] }
+    | undefined;
+  const { weightGrid, lookbackGrid } = mergeGrids(WEIGHT_GRID, LOOKBACK_GRID, tuning);
+  return { ...bestParams(combos), weightGrid, lookbackGrid };
 }
 
 export interface LiveForecast extends ForecastComputation {
@@ -43,7 +59,7 @@ export async function runForecast(
   sentiment: number,
 ): Promise<LiveForecast | null> {
   const db = getFirestore();
-  const { w: bestW, lookback: bestLb } = await loadBestParams();
+  const { w: bestW, lookback: bestLb, weightGrid, lookbackGrid } = await loadForecastMeta();
 
   const live = computeForecast(closes, baseDate, sentiment, bestW, FORECAST_HORIZON, bestLb);
   if (!live) return null;
@@ -58,8 +74,8 @@ export async function runForecast(
   if (existing.empty) {
     const batch = db.batch();
     const madeAt = new Date().toISOString();
-    for (const w of WEIGHT_GRID) {
-      for (const lb of LOOKBACK_GRID) {
+    for (const w of weightGrid) {
+      for (const lb of lookbackGrid) {
         const fc = computeForecast(closes, baseDate, sentiment, w, FORECAST_HORIZON, lb);
         if (!fc) continue;
         const docData: ForecastDoc = {

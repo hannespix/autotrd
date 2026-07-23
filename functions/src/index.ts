@@ -13,6 +13,7 @@ initializeApp();
 
 export { scanMarket, scanNow } from './scheduled/scanMarket.js';
 export { evalForecasts, evalNow } from './scheduled/evalForecasts.js';
+export { tunerReview, tunerNow } from './scheduled/tunerReview.js';
 export { ensureProfile } from './callable/profile.js';
 export { saveStrategy } from './callable/strategy.js';
 export { trade } from './callable/trade.js';

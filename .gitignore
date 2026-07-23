@@ -34,3 +34,7 @@ venv/
 .idea/
 .vscode/
 *.swp
+
+# Firebase-Emulator-Secrets (lokal, nie committen)
+.secret.local
+*.secret.local
