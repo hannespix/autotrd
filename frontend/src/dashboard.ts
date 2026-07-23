@@ -55,7 +55,7 @@ import {
   subscribe as busSubscribe,
   type LinkGroup,
 } from './linkbus.js';
-import { initPalette, type PaletteCommand } from './palette.js';
+import { initPalette, matchesHotkey, type PaletteCommand } from './palette.js';
 
 const CLASS_ORDER = [
   'indices', 'forex', 'crypto', 'commodities', 'rates_bonds',
@@ -78,18 +78,22 @@ const PANEL_TITLES: Record<string, string> = {
   clock: 'Markt-Uhr',
   forecastacc: 'Prognose-Genauigkeit',
   news: 'News & Sentiment',
+  chart2: 'Vergleichs-Chart',
 };
+
+/** Panels, die ohne gespeicherten Workspace ausgeblendet starten. */
+const DEFAULT_HIDDEN = new Set(['chart2']);
 
 /** Werks-Presets: Sichtbarkeits-Sets über den 13 Panels. */
 const WS_PRESETS: Record<string, { label: string; hidden: string[] }> = {
-  ueberblick: { label: 'Überblick', hidden: [] },
+  ueberblick: { label: 'Überblick', hidden: ['chart2'] },
   fokus: {
     label: 'Ein-Symbol-Fokus',
-    hidden: ['market', 'autosignals', 'history', 'clock', 'strategy'],
+    hidden: ['market', 'autosignals', 'history', 'clock', 'strategy', 'chart2'],
   },
   jaeger: {
     label: 'Signal-Jäger',
-    hidden: ['manualtrade', 'clock', 'market', 'history', 'news'],
+    hidden: ['manualtrade', 'clock', 'market', 'history', 'news', 'chart2'],
   },
 };
 
@@ -118,9 +122,21 @@ interface DashState {
   positions: Position[];
   trades: TradeRow[];
   forecast: MarketDocData['forecast'];
-  /** Link-Bus (M9): Gruppen der beiden verlinkbaren Panels. */
+  /** Link-Bus (M9): Gruppen der verlinkbaren Panels. */
   chartGroup: LinkGroup;
   newsGroup: LinkGroup;
+  /** Vergleichs-Chart (M9 Chart-Stack): eigene Gruppe, synchrone Zeitachse. */
+  chart2Group: LinkGroup;
+  chart2Symbol: string;
+  chart2: PriceChartHandle | null;
+  chart2Bars: ChartBar[];
+  chart2Subs: Unsubscribe[];
+  /** Letzter Quote des Chart-Symbols (fürs Order-Ticket: Preis + Alter). */
+  lastQuote: { price: number; updatedAt: string } | null;
+  /** Order-Ticket (Shift+B/S). */
+  orderSide: 'buy' | 'sell';
+  /** Nutzer-Hotkeys aus settings.hotkeys (Defaults siehe HOTKEY_DEFAULTS). */
+  hotkeys: Record<string, string>;
   /** Symbol des News-Panels (folgt newsGroup — kann vom Chart abweichen). */
   newsSymbol: string;
   newsSubs: Unsubscribe[];
@@ -148,6 +164,13 @@ let st: DashState | null = null;
 // Bus-Abonnenten-Schlüssel der beiden verlinkbaren Panels (M9)
 const CHART_KEY = {};
 const NEWS_KEY = {};
+const CHART2_KEY = {};
+
+const HOTKEY_DEFAULTS: Record<string, string> = {
+  palette: 'ctrl+k',
+  buy: 'shift+b',
+  sell: 'shift+s',
+};
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
 
@@ -284,6 +307,17 @@ function layout(email: string): string {
           aktualisiert der zentrale 5-min-Scan.</div>
       </div></div>
 
+      <div class="card" data-panel="chart2"><div class="sect">Vergleichs-Chart
+        <button class="lchip" id="chipChart2" title="Link-Gruppe wechseln (Vergleichs-Chart folgt dieser Gruppe)">B</button></div><div class="cbody">
+        <div class="chart-hd">
+          <span class="chart-nm" id="ch2Sym"></span>
+          <span class="chart-px" id="ch2Px">--</span>
+        </div>
+        <div id="chart2Area" style="height:200px"></div>
+        <div class="hint">Zeitachse + Crosshair laufen synchron zum Haupt-Chart —
+          eigene Link-Gruppe für den Symbol-Vergleich.</div>
+      </div></div>
+
       <div class="sig-grid" data-panel="sigcards">
         <div class="scard"><div class="slbl">RSI (14)</div><div id="vRSI" class="sval c-ac">--</div></div>
         <div class="scard"><div class="slbl">MACD</div><div id="vMacd" class="sval c-ac">--</div></div>
@@ -376,6 +410,25 @@ function layout(email: string): string {
   <!-- Event-Tooltip am Crosshair (position:fixed — CLAUDE.md §6) -->
   <div id="evTip" class="evtip" hidden></div>
 
+  <div class="dmodal" id="orderModal">
+    <div class="dmodal-bg" data-order-close></div>
+    <div class="dsheet" style="width:min(420px,100%)">
+      <span class="paper-badge">PAPER</span>
+      <h3 id="otTitle">Order</h3>
+      <div class="fld"><label class="lbl">Symbol</label>
+        <input id="otSym" class="inp" autocomplete="off" spellcheck="false"></div>
+      <div class="fld"><label class="lbl">Menge</label>
+        <input id="otQty" class="inp" type="number" min="1" value="1"></div>
+      <div id="otRisk" class="hint" style="margin-top:6px"></div>
+      <div id="otAge" class="hint"></div>
+      <p id="otErr" class="error" hidden></p>
+      <div class="dbtns">
+        <button class="dbtn pri" id="otSubmit">Bestätigen (Enter)</button>
+        <button class="dbtn" data-order-close>Abbrechen (Esc)</button>
+      </div>
+    </div>
+  </div>
+
   <div class="dmodal" id="detailModal">
     <div class="dmodal-bg" data-close="detail"></div>
     <div class="dsheet" id="detailSheet"></div>
@@ -422,6 +475,7 @@ function wireChartCtx(): void {
   st.symbolSubs.push(
     watchMarketDoc(sym, (d) => {
       const q = d?.quote;
+      if (st) st.lastQuote = q ? { price: q.price, updatedAt: q.updatedAt } : null;
       $('chPx').textContent = q ? fmtNum(q.price) : '--';
       const chg = $('chChg');
       chg.textContent = q ? fmtPct(q.changePct) : '--';
@@ -474,6 +528,7 @@ function paintChips(): void {
   for (const [id, group] of [
     ['chipChart', st.chartGroup],
     ['chipNews', st.newsGroup],
+    ['chipChart2', st.chart2Group],
   ] as const) {
     const chip = $(id);
     chip.textContent = group;
@@ -552,7 +607,20 @@ async function rebuildChart(): Promise<void> {
     return;
   }
   st.chart = handle;
-  st.chart?.onCrosshairDate((date, pos) => showEventTooltip(date, pos));
+  st.chart?.onCrosshairDate((date, pos) => {
+    showEventTooltip(date, pos);
+    if (!crosshairSyncing && st?.chart2) {
+      crosshairSyncing = true;
+      st.chart2.setCrosshair(date);
+      crosshairSyncing = false;
+    }
+  });
+  st.chart?.onVisibleRangeChange((range) => {
+    if (rangeSyncing || !range || !st?.chart2) return;
+    rangeSyncing = true;
+    st.chart2.setVisibleRange(range);
+    rangeSyncing = false;
+  });
   renderChart();
   applyMarkers();
 }
@@ -661,6 +729,142 @@ function wireWatchlist(): void {
   renderStrategyChips();
 }
 
+/* ── Vergleichs-Chart (M9 Chart-Stack) ──────────────────────────────── */
+
+// Schutz gegen Sync-Echos: setVisibleRange/setCrosshair lösen auf dem
+// Zielchart wieder Events aus — der jeweils aktive Sync setzt das Flag.
+let rangeSyncing = false;
+let crosshairSyncing = false;
+let chart2Epoch = 0;
+
+function renderChart2(): void {
+  if (!st?.chart2) return;
+  st.chart2.setBars(st.chart2Bars);
+}
+
+function wireChart2Ctx(): void {
+  if (!st) return;
+  clearSubs(st.chart2Subs);
+  if (st.wsHidden.has('chart2')) return; // ausgeblendet = keine Listener
+  const sym = st.chart2Symbol;
+  $('ch2Sym').textContent = sym;
+  st.chart2Subs.push(
+    watchMarketDoc(sym, (d) => {
+      $('ch2Px').textContent = d?.quote ? fmtNum(d.quote.price) : '--';
+    }),
+    watchBars(sym, (bars) => {
+      if (!st) return;
+      st.chart2Bars = bars;
+      renderChart2();
+    }),
+  );
+}
+
+async function rebuildChart2(): Promise<void> {
+  if (!st) return;
+  const epoch = ++chart2Epoch;
+  st.chart2?.destroy();
+  st.chart2 = null;
+  if (st.wsHidden.has('chart2')) return;
+  const handle = await buildPriceChart($('chart2Area'), st.chart2Symbol);
+  if (!st || epoch !== chart2Epoch) {
+    handle?.destroy();
+    return;
+  }
+  st.chart2 = handle;
+  // Zeit-/Crosshair-Sync zum Haupt-Chart (beidseitig, mit Echo-Schutz)
+  st.chart2?.onVisibleRangeChange((range) => {
+    if (rangeSyncing || !range || !st?.chart) return;
+    rangeSyncing = true;
+    st.chart.setVisibleRange(range);
+    rangeSyncing = false;
+  });
+  st.chart2?.onCrosshairDate((date) => {
+    if (crosshairSyncing || !st?.chart) return;
+    crosshairSyncing = true;
+    st.chart.setCrosshair(date);
+    crosshairSyncing = false;
+  });
+  renderChart2();
+}
+
+/* ── Hotkey-Order-Ticket (M9): Shift+B/S → trade-Callable ───────────── */
+
+function openOrderTicket(side: 'buy' | 'sell'): void {
+  if (!st) return;
+  st.orderSide = side;
+  const title = $('otTitle');
+  title.textContent = side === 'buy' ? 'Kaufen — Paper-Order' : 'Verkaufen — Paper-Order';
+  title.className = side === 'buy' ? 'c-gn' : 'c-rd';
+  ($('otSym') as HTMLInputElement).value = st.currentSymbol;
+  ($('otQty') as HTMLInputElement).value = '1';
+  $('otErr').hidden = true;
+  updateOrderPreview();
+  $('orderModal').classList.add('show');
+  const qty = $('otQty') as HTMLInputElement;
+  qty.focus();
+  qty.select();
+}
+
+/** Risiko-Vorschau + Kurs-Altersstempel (Kurs = zentraler Scan-Quote). */
+function updateOrderPreview(): void {
+  if (!st) return;
+  const sym = ($('otSym') as HTMLInputElement).value.trim().toUpperCase();
+  const qty = Math.max(1, Number(($('otQty') as HTMLInputElement).value) || 1);
+  const risk = $('otRisk');
+  const age = $('otAge');
+  const q = sym === st.currentSymbol ? st.lastQuote : null;
+  if (!q) {
+    risk.textContent = 'Kein zentraler Kurs für dieses Symbol im Blick — der Server prüft beim Bestätigen.';
+    age.textContent = '';
+    return;
+  }
+  const exposure = qty * q.price;
+  const cash = st.wallet?.paperBalance ?? null;
+  const pct = cash && cash > 0 ? ` (${((exposure / cash) * 100).toFixed(1)} % vom Cash)` : '';
+  const sl = st.strategy.engine.stopLossPct;
+  const slLevel = st.orderSide === 'buy' ? q.price * (1 - sl / 100) : q.price * (1 + sl / 100);
+  risk.textContent =
+    `${qty} × ${fmtNum(q.price)} = $${exposure.toLocaleString('en-US', { maximumFractionDigits: 2 })}` +
+    `${pct} · Stop-Level ~${fmtNum(slLevel)} (${sl} %)`;
+  const secs = Math.max(0, Math.round((Date.now() - Date.parse(q.updatedAt)) / 1000));
+  age.textContent = `Kurs ${secs < 90 ? `${secs} s` : `${Math.round(secs / 60)} min`} alt (zentraler 5-min-Scan)`;
+  age.style.color = secs > 600 ? 'var(--rd)' : '';
+}
+
+async function submitOrderTicket(): Promise<void> {
+  if (!st) return;
+  const sym = ($('otSym') as HTMLInputElement).value.trim().toUpperCase();
+  const qty = Math.max(1, Math.floor(Number(($('otQty') as HTMLInputElement).value) || 1));
+  const err = $('otErr');
+  err.hidden = true;
+  const btn = $('otSubmit') as HTMLButtonElement;
+  btn.disabled = true;
+  try {
+    await callTrade({ symbol: sym, side: st.orderSide, qty });
+    $('orderModal').classList.remove('show');
+  } catch (e) {
+    err.textContent = e instanceof Error && e.message ? e.message : 'Order fehlgeschlagen.';
+    err.hidden = false;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/** Globale Hotkeys (settings.hotkeys, M9) — nie beim Tippen in Feldern. */
+function onGlobalHotkey(e: KeyboardEvent): void {
+  if (!st) return;
+  const tag = (e.target as HTMLElement | null)?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+  if (matchesHotkey(e, st.hotkeys.buy ?? 'shift+b')) {
+    e.preventDefault();
+    openOrderTicket('buy');
+  } else if (matchesHotkey(e, st.hotkeys.sell ?? 'shift+s')) {
+    e.preventDefault();
+    openOrderTicket('sell');
+  }
+}
+
 /** Watchlist-/Tabellen-Klick: Symbol in die CHART-Gruppe publizieren (M9).
  *  Alle Panels derselben Gruppe (Default: auch News) folgen über den Bus. */
 function selectSymbol(sym: string): void {
@@ -681,6 +885,9 @@ function applyPanels(): void {
   document.querySelectorAll<HTMLElement>('[data-panel]').forEach((el) => {
     el.style.display = st!.wsHidden.has(el.dataset.panel ?? '') ? 'none' : '';
   });
+  // Vergleichs-Chart lebt nur, wenn sichtbar (keine unsichtbaren Listener)
+  wireChart2Ctx();
+  void rebuildChart2();
 }
 
 function applyPreset(id: string): void {
@@ -710,8 +917,10 @@ function scheduleWsSave(): void {
     st.wsSaveTimer = null;
     const data: WorkspaceDocData = {
       preset: st.wsPreset,
-      panels: Object.fromEntries([...st.wsHidden].map((id) => [id, { hidden: true }])),
-      groups: { chart: st.chartGroup, news: st.newsGroup },
+      panels: Object.fromEntries(
+        Object.keys(PANEL_TITLES).map((id) => [id, { hidden: st!.wsHidden.has(id) }]),
+      ),
+      groups: { chart: st.chartGroup, news: st.newsGroup, chart2: st.chart2Group },
       symbols: { A: groupSymbol('A'), B: groupSymbol('B'), C: groupSymbol('C') },
       updatedAt: new Date().toISOString(),
     };
@@ -1207,6 +1416,14 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     forecast: null,
     chartGroup: 'A',
     newsGroup: 'A',
+    chart2Group: 'B',
+    chart2Symbol: DEFAULT_STRATEGY.watchlist[1] ?? 'QQQ',
+    chart2: null,
+    chart2Bars: [],
+    chart2Subs: [],
+    lastQuote: null,
+    orderSide: 'buy',
+    hotkeys: { ...HOTKEY_DEFAULTS },
     newsSymbol: DEFAULT_STRATEGY.watchlist[0] ?? 'QQQ',
     newsSubs: [],
     wsPreset: 'ueberblick',
@@ -1223,15 +1440,28 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     positionSubs: new Map(),
     timers: [],
   };
-  seedSymbols({ A: st.currentSymbol, B: st.currentSymbol, C: st.currentSymbol });
+  seedSymbols({ A: st.currentSymbol, B: st.chart2Symbol, C: st.currentSymbol });
 
   // User-Doc: Strategie (Formular/Watchlist) + Wallet folgen Firestore
   st.subs.push(
-    watchUserDoc(uid, ({ strategy, wallet }) => {
+    watchUserDoc(uid, ({ strategy, wallet, hotkeys }) => {
       if (!st) return;
       const prevWl = st.strategy.watchlist.join(',');
       st.strategy = strategy ?? DEFAULT_STRATEGY;
       st.wallet = wallet;
+      const prevPalette = st.hotkeys.palette;
+      st.hotkeys = { ...HOTKEY_DEFAULTS, ...(hotkeys ?? {}) };
+      if (st.hotkeys.palette !== prevPalette && st.paletteDispose) {
+        st.paletteDispose();
+        st.paletteDispose = initPalette({
+          hotkey: st.hotkeys.palette ?? 'ctrl+k',
+          symbols: () => paletteSymbols(),
+          commands: () => paletteCommands(),
+          onSymbol: (sym) => {
+            if (st) publishSymbol(st.chartGroup, sym);
+          },
+        });
+      }
       fillForm(st.strategy);
       renderPortfolio();
       if (st.strategy.watchlist.join(',') !== prevWl || $('liveBar').childElementCount === 0) {
@@ -1282,6 +1512,21 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   // Gruppen-Wechsel: das Panel NIMMT sein Symbol MIT (die neue Gruppe
   // adoptiert es) — so heißt „News auf B" wirklich „News bleibt stehen,
   // während A weiterschaltet", statt zum alten B-Symbol zu springen.
+  busSubscribe(CHART2_KEY, st.chart2Group, (sym) => {
+    if (!st || st.chart2Symbol === sym) return;
+    st.chart2Symbol = sym;
+    wireChart2Ctx();
+    void rebuildChart2();
+    scheduleWsSave();
+  });
+  $('chipChart2').addEventListener('click', () => {
+    if (!st) return;
+    st.chart2Group = nextGroup(st.chart2Group);
+    seedSymbols({ [st.chart2Group]: st.chart2Symbol });
+    setGroup(CHART2_KEY, st.chart2Group);
+    paintChips();
+    scheduleWsSave();
+  });
   $('chipChart').addEventListener('click', () => {
     if (!st) return;
     st.chartGroup = nextGroup(st.chartGroup);
@@ -1302,7 +1547,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   wireWatchlist();
   wireChartCtx();
   wireNewsCtx();
+  wireChart2Ctx();
   paintChips();
+  applyPanels();
   void rebuildChart();
   void renderMarketTabs();
   updateClock();
@@ -1314,14 +1561,16 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     if (!st || !ws) return;
     st.wsPreset = ws.preset ?? 'ueberblick';
     st.wsHidden = new Set(
-      Object.entries(ws.panels ?? {})
-        .filter(([, cfg]) => cfg.hidden)
-        .map(([id]) => id),
+      Object.keys(PANEL_TITLES).filter((id) => {
+        const cfg = ws.panels?.[id];
+        return cfg ? cfg.hidden === true : DEFAULT_HIDDEN.has(id);
+      }),
     );
     applyPanels();
     const g = (v: unknown): LinkGroup => (v === 'B' || v === 'C' ? v : 'A');
     st.chartGroup = g(ws.groups?.chart);
     st.newsGroup = g(ws.groups?.news);
+    st.chart2Group = ws.groups?.chart2 === 'A' || ws.groups?.chart2 === 'C' ? ws.groups.chart2 : 'B';
     const symbols: Partial<Record<LinkGroup, string>> = {};
     for (const grp of ['A', 'B', 'C'] as const) {
       const sym = ws.symbols?.[grp];
@@ -1330,12 +1579,33 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     seedSymbols(symbols);
     setGroup(CHART_KEY, st.chartGroup);
     setGroup(NEWS_KEY, st.newsGroup);
+    setGroup(CHART2_KEY, st.chart2Group);
     paintChips();
   });
 
+  // Test-Hooks (E2E): Chart-Sync von außen mess- und triggerbar
+  (window as unknown as { __autotrdCharts?: unknown }).__autotrdCharts = {
+    mainRange: () => st?.chart?.getVisibleRange() ?? null,
+    secondRange: () => st?.chart2?.getVisibleRange() ?? null,
+    setMainRange: (r: { from: number; to: number }) => st?.chart?.setVisibleRange(r),
+  };
+
+  // Hotkey-Order-Ticket (M9): Shift+B/S, Enter bestätigt, Esc schließt
+  document.addEventListener('keydown', onGlobalHotkey);
+  document.querySelectorAll('[data-order-close]').forEach((el) =>
+    el.addEventListener('click', () => $('orderModal').classList.remove('show')),
+  );
+  $('otSubmit').addEventListener('click', () => void submitOrderTicket());
+  for (const id of ['otSym', 'otQty']) {
+    $(id).addEventListener('input', updateOrderPreview);
+    $(id).addEventListener('keydown', (e) => {
+      if ((e as KeyboardEvent).key === 'Enter') void submitOrderTicket();
+    });
+  }
+
   // Command-Palette (Ctrl+K, überschreibbar via settings.hotkeys.palette)
   st.paletteDispose = initPalette({
-    hotkey: 'ctrl+k',
+    hotkey: st.hotkeys.palette ?? 'ctrl+k',
     symbols: () => paletteSymbols(),
     commands: () => paletteCommands(),
     onSymbol: (sym) => {
@@ -1435,6 +1705,7 @@ export function unmountDashboard(): void {
   clearSubs(st.subs);
   clearSubs(st.symbolSubs);
   clearSubs(st.newsSubs);
+  clearSubs(st.chart2Subs);
   clearSubs(st.watchlistSubs);
   for (const u of st.positionSubs.values()) u();
   for (const t of st.timers) clearInterval(t);
@@ -1442,6 +1713,8 @@ export function unmountDashboard(): void {
   st.paletteDispose?.();
   clearSubscribers();
   st.chart?.destroy();
+  st.chart2?.destroy();
   document.removeEventListener('keydown', onEscape);
+  document.removeEventListener('keydown', onGlobalHotkey);
   st = null;
 }
