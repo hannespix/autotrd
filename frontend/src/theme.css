@@ -165,6 +165,18 @@ button, input, select { font-family: inherit; font-size: inherit; }
   background: radial-gradient(135% 75% at 50% -12%, rgba(0, 212, 255, .13), transparent 55%);
   mix-blend-mode: screen;
 }
+/* Event-Tooltip am Crosshair (M6b) — position:fixed, siehe CLAUDE.md §6 */
+.evtip {
+  position: fixed; z-index: 60; max-width: 300px; padding: 8px 10px; pointer-events: none;
+  background: var(--sd); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  border: 1px solid var(--bd); border-radius: 8px; box-shadow: 0 8px 28px -8px rgba(0, 0, 0, .5);
+  font-size: 10.5px; line-height: 1.4; color: var(--t2);
+}
+.evtip-hd { display: flex; gap: 8px; align-items: baseline; font-family: var(--f-num); font-size: 11px; color: var(--t1); margin-bottom: 4px; }
+.evtip-n { margin-left: auto; color: var(--t3); font-size: 9.5px; }
+.evtip-row { margin-top: 2px; color: var(--t1); }
+.evtip-src { color: var(--t3); font-size: 9.5px; }
+
 .tf-bar { display: flex; gap: 4px; padding: 2px 0; margin-bottom: 4px; }
 .tf-btn {
   padding: 3px 10px; font-size: 11px; font-weight: 700; border: 1px solid var(--bd);
