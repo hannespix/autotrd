@@ -151,23 +151,29 @@ Lighthouse > 80 folgt mit den Owner-Deploy-Schritten (docs/SETUP.md).*
 **Ziel:** Jeder Account hat Wallet/Positionen/Trades; Engine handelt je nach
 User-Strategie. **Alles Geld-Schreibende nur serverseitig.**
 
-- [ ] `shared`: Typen `Wallet/Position/Trade`; Firestore-Rules-Tests:
-      Client-Write auf wallet/positions/trades wird ABGELEHNT
-- [ ] `core/broker.ts`: PaperBroker (Port aus `reference/scripts/broker.py`);
-      Alpaca-Slot als Interface vorbereitet, Live-Doppel-Guard-Logik übernehmen
-- [ ] Callable `trade` (auth-geprüft, Input-Validierung, Rate-Limit über
-      `admin/quotas`): manueller Paper-Trade
-- [ ] `scanMarket`-Erweiterung: pro User mit `settings.engine.running=true`
-      Signale gegen dessen Strategie ausführen (SL/TP, max_position_pct);
-      effizient: 1 Marktdaten-Fetch, N User-Auswertungen
-- [ ] Frontend: Portfolio-Karte (Wallet, Positionen, P&L), Trade-Historie,
-      Engine-Start/Stop-Schalter, manueller Trade
-- [ ] Onboarding: neues Konto → `wallet.paperBalance` Startkapital aus Default
+- [x] `shared`: Typen `Wallet/Position/Trade`; Firestore-Rules-Tests
+      (`npm run test:rules`, emulators:exec, auch in CI): Client-Write auf
+      wallet/positions/trades wird ABGELEHNT — 9 Tests grün
+- [x] `core/broker.ts`: Paper-Ausführung als Firestore-Transaktion (Port aus
+      `broker.py`: nie nachkaufen, Sizing aus maxPositionPct, P&L in den
+      Trade-Record); `resolveBrokerMode()` als einzige Modus-Entscheidung mit
+      Live-Doppel-Guard (`mode:live` UND `ALPACA_ALLOW_LIVE=1`, sonst Paper)
+- [x] Callable `trade` (auth-geprüft, Katalog-/Input-Validierung, Tages-Quota
+      über `admin/quotas-{uid}`): manueller Paper-Trade — Preis kommt IMMER
+      aus den zentralen Scan-Daten, nie vom Client
+- [x] `scanMarket`-Erweiterung: pro User mit `engine.running=true` Signale
+      gegen dessen Strategie (SL/TP-Risk-Exits zuerst, dann Konfluenz);
+      effizient: 1 Marktdaten-Fetch, N User-Auswertungen in-memory
+- [x] Frontend: Performance-Karte (Cash/Equity/P&L/Win-Rate live), Positionen
+      mit Exit-Button, Trade-Historie (Engine-Trades markiert), manueller Trade
+- [x] Onboarding: `ensureProfile` legt `wallet.paperBalance` mit dem
+      Default-Startkapital an
 
-**Abnahme:** Zwei Test-Accounts live: getrennte Wallets/Watchlists/Trades ·
-Rules-Tests grün · Engine-ON-Account handelt beim nächsten Scan, OFF nicht ·
-Manipulationsversuch per Browser-Konsole (direktes Firestore-Write auf wallet)
-scheitert nachweislich.
+**Abnahme (Emulator-E2E):** Zwei Test-Accounts: getrennte Wallets/Trades ✓ ·
+Rules-Tests grün (CI-Pflicht) ✓ · Engine-ON-Account handelt beim nächsten
+Scan (2 Engine-Trades), OFF-Account nicht ✓ · Manipulationsversuch mit echtem
+User-ID-Token (Firestore-REST-PATCH auf wallet) → HTTP 403, Wallet
+unverändert ✓ · *Live-Abnahme folgt mit den Owner-Deploy-Schritten.*
 
 ## M5 — Forecast-Kern & Self-Tuning
 
