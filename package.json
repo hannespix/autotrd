@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "autotrd.net — Paper-Daytrading-Plattform (Firebase + TypeScript)",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "workspaces": [
     "shared",

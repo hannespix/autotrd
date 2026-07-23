@@ -24,7 +24,7 @@ jobs:
       - uses: actions/setup-node@v4
         if: env.FTP_HOST != ''
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - name: Build
         if: env.FTP_HOST != ''
