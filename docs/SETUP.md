@@ -66,6 +66,40 @@ anders lautet: per PR ändern —
 > dauern oder beim ersten Versuch fehlschlagen. Dann einfach den Workflow
 > unter *Actions* per **Re-run** neu starten.
 
+### Troubleshooting: erster Functions-Deploy (APIs freischalten)
+
+Der allererste Functions-Deploy scheitert typischerweise mit
+*„Cloud Functions deployment requires the Cloud Build API to be enabled.
+The current credentials do not have permission to enable APIs"* — der
+Deploy-Service-Account darf keine Google-APIs aktivieren. Zwei Wege:
+
+**Empfohlen (einmalig, zukunftssicher):** dem Service-Account
+`github-deploy` zusätzlich die Rolle **Service Usage Admin** geben
+(IAM-Konsole → Service-Account bearbeiten → Rolle hinzufügen). Danach
+schaltet `firebase deploy` alle benötigten APIs selbst frei — auch die,
+die künftige Features brauchen (Cloud Run, Eventarc, Scheduler, …).
+
+**Alternativ (manuell klicken):** diese APIs im Projekt aktivieren
+(Links aus dem Fehler-Log, `?project=<projekt-id>` anhängen):
+`cloudbuild.googleapis.com` · `cloudfunctions.googleapis.com` ·
+`artifactregistry.googleapis.com` · `run.googleapis.com` ·
+`eventarc.googleapis.com` · `pubsub.googleapis.com` ·
+`cloudscheduler.googleapis.com` · `secretmanager.googleapis.com`
+
+**Außerdem VOR dem nächsten Deploy nötig:** Der Deploy bindet das Secret
+`ANTHROPIC_API_KEY` (KI-Staffel, §H) — im nicht-interaktiven CI-Modus
+bricht er ab, wenn es noch nicht existiert. Einmal lokal ausführen:
+
+```bash
+npx firebase functions:secrets:set ANTHROPIC_API_KEY --project <projekt-id>
+```
+
+(Wer den Key noch nicht hat: trotzdem setzen — notfalls mit einem
+Platzhalter-Wert und später per selbem Befehl überschreiben; die App
+degradiert bei ungültigem Key sichtbar auf regelbasiert und bleibt voll
+funktionsfähig.) Danach: *Actions → Deploy Functions (Firebase) →
+Re-run all jobs* — oder einfach den nächsten PR mergen.
+
 ## D. webgo: FTP-Zugang & Domain (~10 min)
 
 1. webgo-Kundenportal → **FTP** → FTP-Benutzer anlegen (oder vorhandenen
