@@ -2,6 +2,8 @@ import {
   GoogleAuthProvider,
   createUserWithEmailAndPassword,
   onAuthStateChanged,
+  sendEmailVerification,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
@@ -27,6 +29,31 @@ export async function loginGoogle(): Promise<void> {
 
 export async function logout(): Promise<void> {
   await signOut(auth());
+}
+
+/** Verifikations-Mail an den eingeloggten User (Engine-Start braucht das, M7). */
+export async function sendVerification(): Promise<void> {
+  const user = auth().currentUser;
+  if (!user) throw new Error('Nicht angemeldet');
+  await sendEmailVerification(user);
+}
+
+export async function resetPassword(email: string): Promise<void> {
+  await sendPasswordResetEmail(auth(), email);
+}
+
+/** true, wenn die E-Mail des aktuellen Users bestätigt ist (Google zählt). */
+export function emailVerified(): boolean {
+  return auth().currentUser?.emailVerified === true;
+}
+
+/** Token-Refresh nach Verifikation (emailVerified landet erst im neuen Token). */
+export async function refreshUser(): Promise<boolean> {
+  const user = auth().currentUser;
+  if (!user) return false;
+  await user.reload();
+  await user.getIdToken(true);
+  return user.emailVerified;
 }
 
 /** Firebase-Fehlercodes → verständliche deutsche Meldung. */

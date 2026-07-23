@@ -7,10 +7,18 @@
 import { getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { DEFAULT_STRATEGY } from '../../../shared/src/index.js';
+import { consumeQuota } from '../core/broker.js';
+import { CALLABLE_OPTS } from '../core/appcheck.js';
 
-export const ensureProfile = onCall(async (request) => {
+const DAILY_LIMIT = 60; // idempotent + 1 Call je Login — 60/Tag ist großzügig
+
+export const ensureProfile = onCall(CALLABLE_OPTS, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Anmeldung erforderlich');
+
+  if (!(await consumeQuota(uid, 'ensureProfile', DAILY_LIMIT))) {
+    throw new HttpsError('resource-exhausted', 'Tageslimit erreicht — bitte später erneut');
+  }
 
   const ref = getFirestore().doc(`users/${uid}`);
   const snap = await ref.get();

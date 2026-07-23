@@ -138,3 +138,43 @@ KI-Erklärungen (Haiku-Klassifikation + Sonnet-Tagessatz):
 
 Lokal im Emulator: `functions/.secret.local` mit
 `ANTHROPIC_API_KEY=sk-ant-…` anlegen (steht in `.gitignore`, nie committen).
+
+## I. App Check scharf schalten (M7, ~10 min)
+
+Der Code ist vorbereitet und tut ohne Setup nichts — die Reihenfolge ist
+wichtig, sonst sperrt man alle Clients aus:
+
+1. Firebase-Konsole → *App Check* → Web-App registrieren →
+   **reCAPTCHA v3** wählen → Site-Key kopieren.
+2. GitHub-Repo → *Settings → Variables* → `VITE_FIREBASE_APPCHECK_SITE_KEY`
+   mit dem Site-Key anlegen → Frontend-Deploy laufen lassen. Ab jetzt SENDEN
+   Clients App-Check-Tokens (erzwungen wird noch nichts).
+3. Ein paar Tage in der App-Check-Konsole beobachten: Anteil „verifizierte
+   Anfragen" sollte gegen 100 % gehen.
+4. Dann erzwingen: in `functions/.env` → `APPCHECK_ENFORCE=1` committen
+   (nächster Functions-Deploy aktiviert es) **und** in der Firebase-Konsole
+   App Check für **Cloud Firestore** auf *Enforce* stellen.
+5. Abnahme (M7): `curl -X POST …/ensureProfile` ohne App-Check-Token →
+   HTTP 401/403; die App selbst funktioniert normal weiter.
+
+Lokale Entwicklung: mit `VITE_FIREBASE_USE_EMULATORS=1` registriert das
+Frontend einen Debug-Token (erscheint in der Browser-Konsole) — diesen in
+der Firebase-Konsole unter *App Check → Debug-Tokens* freischalten.
+
+## J. Monitoring & Alarme (M7, ~15 min)
+
+Der Scan schreibt einen Heartbeat nach `meta/health` (`lastScanAt`,
+`symbolsOk`, `symbolsFailed`) — darauf bauen die Alarme auf:
+
+1. **Function-Fehler:** GCP-Konsole → *Logging → Log-based metrics* →
+   Zähler-Metrik `functions-errors` mit Filter
+   `resource.type="cloud_function" severity>=ERROR` → *Monitoring → Alerting*
+   → Alert bei `> 5 in 5 min`, Kanal: deine E-Mail.
+2. **Scan-Ausfall:** *Monitoring → Uptime Checks* → HTTPS-Check auf
+   `https://us-central1-<projekt-id>.cloudfunctions.net/healthz` (Intervall
+   5 min) + Alert bei Ausfall. Zusätzlich fällt ein stehender Scan sofort in
+   der App auf (Quotes/`meta/health.lastScanAt` altern).
+3. **Budget:** Billing → *Budgets & alerts* → Budget (z. B. 10 €/Monat) mit
+   50/90/100 %-Mails — deckt Firestore, Functions UND ausufernde KI-Kosten ab
+   (zusätzlich zum Token-Guard `admin/aiBudget` und dem Anthropic-Spend-Limit
+   aus §H).

@@ -5,6 +5,7 @@
  */
 
 import { initializeApp, type FirebaseApp } from 'firebase/app';
+import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 import { connectAuthEmulator, getAuth, type Auth } from 'firebase/auth';
 import { connectFirestoreEmulator, getFirestore, type Firestore } from 'firebase/firestore';
 
@@ -14,6 +15,28 @@ const config = {
   projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID as string | undefined,
   appId: import.meta.env.VITE_FIREBASE_APP_ID as string | undefined,
 };
+
+// App Check (M7): nur aktiv, wenn der Site-Key gesetzt ist — sonst No-Op,
+// damit lokale Entwicklung und Deploys ohne Console-Setup nicht brechen.
+// Serverseitig erzwungen wird das Token erst mit APPCHECK_ENFORCE=1
+// (functions/.env, SETUP.md §I).
+const appCheckSiteKey = import.meta.env.VITE_FIREBASE_APPCHECK_SITE_KEY as string | undefined;
+let appCheckInitialized = false;
+
+function initAppCheckOnce(a: FirebaseApp): void {
+  if (appCheckInitialized || !appCheckSiteKey) return;
+  if (import.meta.env.VITE_FIREBASE_USE_EMULATORS === '1') {
+    // Debug-Provider für Emulator/localhost (Token erscheint in der Konsole
+    // und wird in der Firebase-Konsole freigeschaltet)
+    (self as unknown as { FIREBASE_APPCHECK_DEBUG_TOKEN?: boolean }).FIREBASE_APPCHECK_DEBUG_TOKEN =
+      true;
+  }
+  initializeAppCheck(a, {
+    provider: new ReCaptchaV3Provider(appCheckSiteKey),
+    isTokenAutoRefreshEnabled: true,
+  });
+  appCheckInitialized = true;
+}
 
 /** true, sobald die Pflichtwerte der Web-Config gesetzt sind. */
 export function hasFirebaseConfig(): boolean {
@@ -30,6 +53,7 @@ function getApp(): FirebaseApp {
       projectId: config.projectId!,
       appId: config.appId!,
     });
+    initAppCheckOnce(app);
   }
   return app;
 }

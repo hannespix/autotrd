@@ -203,6 +203,11 @@ export async function runScan(force = false): Promise<ScanResult> {
   const scanId = now.toISOString().slice(0, 16) + 'Z'; // Minute = idempotent
   if (!force && !isUsMarketOpen(now)) {
     logger.info(`Markt geschlossen — Scan übersprungen (${scanId})`);
+    // Heartbeat auch im No-Op: „Scheduler lebt" ≠ „Markt offen" (M7-Monitoring)
+    await getFirestore()
+      .doc('meta/health')
+      .set({ lastRunAt: now.toISOString(), lastRunSkipped: 'market_closed' }, { merge: true })
+      .catch(() => undefined);
     return { scanId, scanned: [], errors: {}, trades: 0, skipped: 'market_closed' };
   }
 
@@ -376,6 +381,24 @@ export async function runScan(force = false): Promise<ScanResult> {
 
   // Auto-Trades pro User (1 Marktdaten-Fetch oben, N Auswertungen hier)
   const trades = await executeUserTrades(marketData);
+
+  // Heartbeat für Monitoring-Alerts (SETUP.md §J): meta/health ist öffentlich
+  // lesbar (meta-Rules) und enthält bewusst KEINE sensiblen Daten.
+  await db
+    .doc('meta/health')
+    .set(
+      {
+        lastScanAt: now.toISOString(),
+        lastScanId: scanId,
+        lastRunAt: now.toISOString(),
+        lastRunSkipped: null,
+        symbolsOk: scanned.length,
+        symbolsFailed: Object.keys(errors).length,
+        trades,
+      },
+      { merge: true },
+    )
+    .catch((err) => logger.warn('Heartbeat-Write fehlgeschlagen', err));
 
   logger.info(`Scan ${scanId}: ${scanned.length}/${symbols.length} Symbole ok, ${trades} Trade(s)`);
   return { scanId, scanned, errors, trades };

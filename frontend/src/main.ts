@@ -4,9 +4,17 @@
 
 import './theme.css';
 import { hasFirebaseConfig } from './firebase.js';
-import { authErrorMessage, loginEmail, loginGoogle, registerEmail, watchAuth } from './auth.js';
+import {
+  authErrorMessage,
+  loginEmail,
+  loginGoogle,
+  registerEmail,
+  resetPassword,
+  watchAuth,
+} from './auth.js';
 import { ensureProfile } from './data.js';
 import { mountDashboard, unmountDashboard } from './dashboard.js';
+import { mountLegalFooter } from './legal.js';
 
 // Theme früh setzen (localStorage), Default dunkel
 document.documentElement.dataset.theme = localStorage.getItem('autotrd-theme') ?? 'dark';
@@ -41,15 +49,18 @@ function renderLogin(): void {
           <label for="password">Passwort</label>
           <input id="password" name="password" class="inp" type="password" autocomplete="current-password" minlength="6" required />
           <p id="err" class="error" role="alert" hidden></p>
+          <p id="info" class="hint" role="status" hidden></p>
           <div class="row">
             <button type="submit" class="btn btn-g">Anmelden</button>
             <button type="button" id="registerBtn" class="btn btn-n">Registrieren</button>
           </div>
+          <button type="button" id="resetBtn" class="btn btn-n" style="width:100%;margin-top:8px;font-size:11px">Passwort vergessen?</button>
         </form>
         <div class="divider" role="separator">oder</div>
         <button type="button" id="googleBtn" class="btn btn-n" style="width:100%">Mit Google anmelden</button>
       </section>
     </main>`;
+  mountLegalFooter(app.querySelector('main')!);
 
   const form = document.querySelector<HTMLFormElement>('#loginForm')!;
   const err = document.querySelector<HTMLParagraphElement>('#err')!;
@@ -76,6 +87,22 @@ function renderLogin(): void {
   document.querySelector('#googleBtn')!.addEventListener('click', () => {
     err.hidden = true;
     loginGoogle().catch(showError);
+  });
+  document.querySelector('#resetBtn')!.addEventListener('click', () => {
+    err.hidden = true;
+    const info = document.querySelector<HTMLParagraphElement>('#info')!;
+    const { email } = fields();
+    if (!email) {
+      err.textContent = 'Bitte oben die E-Mail-Adresse eintragen.';
+      err.hidden = false;
+      return;
+    }
+    resetPassword(email)
+      .then(() => {
+        info.textContent = 'Passwort-Reset-Mail ist unterwegs (Spam-Ordner prüfen).';
+        info.hidden = false;
+      })
+      .catch(showError);
   });
 }
 
