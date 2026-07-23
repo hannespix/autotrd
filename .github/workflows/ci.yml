@@ -20,7 +20,9 @@ jobs:
         run: npm run lint
       - name: Typecheck
         run: npm run typecheck
-      - name: Tests (Vitest, inkl. künftiger Parity-Tests)
+      - name: Tests (Vitest, inkl. Golden-Parity)
         run: npm test
+      - name: Firestore-Rules-Tests (Emulator)
+        run: npm run test:rules
       - name: Build (alle Workspaces)
         run: npm run build
