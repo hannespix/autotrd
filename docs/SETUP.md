@@ -66,18 +66,59 @@ anders lautet: per PR ändern —
 > dauern oder beim ersten Versuch fehlschlagen. Dann einfach den Workflow
 > unter *Actions* per **Re-run** neu starten.
 
+### Troubleshooting: erster Functions-Deploy (APIs freischalten)
+
+Der allererste Functions-Deploy scheitert typischerweise mit
+*„Cloud Functions deployment requires the Cloud Build API to be enabled.
+The current credentials do not have permission to enable APIs"* — der
+Deploy-Service-Account darf keine Google-APIs aktivieren. Zwei Wege:
+
+**Empfohlen (einmalig, zukunftssicher):** dem Service-Account
+`github-deploy` zusätzlich die Rolle **Service Usage Admin** geben
+(IAM-Konsole → Service-Account bearbeiten → Rolle hinzufügen). Danach
+schaltet `firebase deploy` alle benötigten APIs selbst frei — auch die,
+die künftige Features brauchen (Cloud Run, Eventarc, Scheduler, …).
+
+**Alternativ (manuell klicken):** diese APIs im Projekt aktivieren
+(Links aus dem Fehler-Log, `?project=<projekt-id>` anhängen):
+`cloudbuild.googleapis.com` · `cloudfunctions.googleapis.com` ·
+`artifactregistry.googleapis.com` · `run.googleapis.com` ·
+`eventarc.googleapis.com` · `pubsub.googleapis.com` ·
+`cloudscheduler.googleapis.com` · `secretmanager.googleapis.com`
+
+**Außerdem VOR dem nächsten Deploy nötig:** Der Deploy bindet das Secret
+`ANTHROPIC_API_KEY` (KI-Staffel, §H) — im nicht-interaktiven CI-Modus
+bricht er ab, wenn es noch nicht existiert. Einmal lokal ausführen:
+
+```bash
+npx firebase functions:secrets:set ANTHROPIC_API_KEY --project <projekt-id>
+```
+
+(Wer den Key noch nicht hat: trotzdem setzen — notfalls mit einem
+Platzhalter-Wert und später per selbem Befehl überschreiben; die App
+degradiert bei ungültigem Key sichtbar auf regelbasiert und bleibt voll
+funktionsfähig.) Danach: *Actions → Deploy Functions (Firebase) →
+Re-run all jobs* — oder einfach den nächsten PR mergen.
+
 ## D. webgo: FTP-Zugang & Domain (~10 min)
 
 1. webgo-Kundenportal → **FTP** → FTP-Benutzer anlegen (oder vorhandenen
-   nehmen). **Wichtig:** Das Home-/Zielverzeichnis des FTP-Users direkt auf
-   den DocumentRoot von `autotrd.net` zeigen lassen — der Workflow lädt
-   `frontend/dist/` ins FTP-Wurzelverzeichnis hoch.
-2. webgo → **Domains**: `autotrd.net` auf genau dieses Verzeichnis routen.
+   nehmen).
+2. webgo → **Domains**: `autotrd.net` auf den Site-Ordner routen
+   (typisch `www/autotrd.net`).
 3. **SSL aktivieren** (Let's Encrypt im webgo-Panel) + HTTPS-Weiterleitung an.
 4. GitHub Secrets (wie in C.4):
    - `FTP_HOST` — Servername aus dem webgo-Panel (z. B. `sXX.goserver.host`)
    - `FTP_USERNAME` — der FTP-Benutzer
    - `FTP_PASSWORD` — dessen Passwort
+5. **Zielverzeichnis:** Der Workflow lädt nach `server-dir`, RELATIV zur
+   FTP-Wurzel des Users — Default **`autotrd.net/`** (passend, wenn die
+   FTP-Wurzel `www/` ist und die Domain auf `www/autotrd.net` zeigt).
+   Weicht dein Layout ab, Repo-Variable **`FTP_SERVER_DIR`** setzen
+   (Trailing-Slash Pflicht, z. B. `www/autotrd.net/`).
+   > ⚠️ Vor diesem Fix lud der Workflow in die FTP-Wurzel (`www/`).
+   > Dort ggf. aufräumen: `index.html`, `vite.svg` und den Ordner
+   > `assets/` löschen — NUR diese Build-Artefakte, sonst nichts.
 
 ## E. Firebase-Web-Config für den Frontend-Build
 
