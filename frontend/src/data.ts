@@ -25,6 +25,7 @@ export interface MarketDocData {
   name?: string;
   assetClass?: string;
   quote?: Quote;
+  sentiment?: SentimentField;
   forecast?: {
     points: Array<{ time: string; value: number }>;
     band: Array<{ time: string; upper: number; lower: number }>;
@@ -34,6 +35,48 @@ export interface MarketDocData {
     sentiment: number;
     baseDate: string;
   } | null;
+}
+
+export interface EventDay {
+  date: string;
+  sentiment: number;
+  label: 'bullish' | 'bearish' | 'neutral';
+  count: number;
+  top: Array<{ title: string; source: string; url: string; kind: string }>;
+}
+
+export function watchEvents(symbol: string, cb: (events: EventDay[]) => void): Unsubscribe {
+  const q = query(collection(db(), 'market', symbol, 'events'), orderBy(documentId()));
+  return onSnapshot(q, (snap) => {
+    cb(snap.docs.map((d) => d.data() as EventDay));
+  });
+}
+
+export interface NewsRow {
+  title: string;
+  source: string;
+  url: string;
+  ts: string;
+  kind: string;
+  sent: { sentiment: number; label: string };
+}
+
+export function watchNews(symbol: string, cb: (news: NewsRow[]) => void): Unsubscribe {
+  const q = query(
+    collection(db(), 'market', symbol, 'news'),
+    orderBy('published', 'desc'),
+    limit(12),
+  );
+  return onSnapshot(q, (snap) => {
+    cb(snap.docs.map((d) => d.data() as NewsRow));
+  });
+}
+
+export interface SentimentField {
+  overall: number;
+  label: string;
+  n: number;
+  topEvents?: Array<{ type: string; count: number }>;
 }
 
 export interface ForecastStatsDoc {
