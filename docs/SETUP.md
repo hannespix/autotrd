@@ -74,8 +74,10 @@ The current credentials do not have permission to enable APIs"* — der
 Deploy-Service-Account darf keine Google-APIs aktivieren. Zwei Wege:
 
 **Empfohlen (einmalig, zukunftssicher):** dem Service-Account
-`github-deploy` zusätzlich die Rollen **Service Usage Admin** und
-**Cloud Run Admin** geben (Letztere braucht der Deploy, um Callables/HTTP-
+`github-deploy` zusätzlich die Rollen **Service Usage Admin**,
+**Cloud Run Admin** und **Cloud Scheduler Admin** geben (Scheduler
+braucht der Deploy, um die Zeitpläne der scheduled Functions —
+5-min-Scan, evalForecasts, tunerReview — anzulegen) (Letztere braucht der Deploy, um Callables/HTTP-
 Functions öffentlich aufrufbar zu machen — fehlt sie, antworten die
 Functions mit 403 ohne CORS-Header und das Frontend meldet CORS-Fehler)
 (IAM-Konsole → Service-Account bearbeiten → Rolle hinzufügen). Danach

@@ -34,6 +34,7 @@ import {
   parseTunerResponse,
   type TunerStatsSummary,
 } from '../core/tuner.js';
+import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 
 const MIN_SCORED = 20; // wie die Referenz: erst reviewen, wenn Daten da sind
 const EST_TUNER_TOKENS = 1_500;
@@ -233,7 +234,7 @@ export const tunerReview = onSchedule(
 );
 
 /** Manueller Trigger — NUR im Emulator (Abnahme-Verifikation). */
-export const tunerNow = onRequest(async (_req, res) => {
+export const tunerNow = onRequest(EMULATOR_TRIGGER_OPTS, async (_req, res) => {
   if (process.env.FUNCTIONS_EMULATOR !== 'true') {
     res.status(403).json({ error: 'tunerNow ist nur im Emulator verfügbar' });
     return;
