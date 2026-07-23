@@ -122,19 +122,29 @@ Functions-Deploy (Owner-Schritte aus docs/SETUP.md).*
 **Ziel:** Das bestehende UI (Seed: `reference/scripts/static/index.html` —
 der Kern ist gut und bleibt!) als komponentisierte SPA auf Firestore-Reads.
 
-- [ ] UI portieren: Aurora-Theme, Glass-Cards, Light/Dark (`data-theme`),
-      Candlestick-Chart (Lightweight Charts **v4.2.0** gepinnt, Guards wie
-      gehabt), Watchlist-Picker mit Katalog aus `meta/universe`
-- [ ] Alle Daten via `onSnapshot` statt fetch-Polling; kein `/api/*` mehr
-- [ ] User-Settings (`users/{uid}.settings`, flaches Schema aus `shared`)
-      lesen/schreiben — Strategie-Karte funktioniert pro User
-- [ ] Responsive-Abnahme wie in `CLAUDE.md` §6: headless Chrome Desktop 1500
-      **und** Phone 390; Bottom-Sheet-Detail-Modal erhalten
+- [x] UI portieren: Aurora-Theme, Glass-Cards, Light/Dark (`data-theme` +
+      Toggle, persistiert), Candlestick+Volumen-Chart (Lightweight Charts
+      **4.2.0 exakt gepinnt**, dynamischer Import mit Lade-Guard + Fallback-
+      Text, `crosshair.mode: 0`), Watchlist-Picker mit Katalog aus
+      `meta/universe` (Chips, Kategorie-Tabs, Checkbox-Browse)
+- [x] Alle Daten via `onSnapshot`/`getDocs` statt fetch-Polling; kein
+      `/api/*` mehr (Aktionen über Callables)
+- [x] User-Settings (`users/{uid}.settings`, flaches Schema aus `shared`)
+      lesen/schreiben — `ensureProfile` legt das Profil serverseitig an,
+      `saveStrategy` validiert serverseitig (lehnt Alt-Schema, Nicht-Katalog-
+      Symbole und `mode: live` hart ab); Engine-Start/Stop-Schalter persistiert
+      `engine.running`
+- [x] Responsive-Abnahme wie in `CLAUDE.md` §6: Playwright Desktop 1500
+      **und** Phone 390 (kein Overflow); Off-Canvas-Drawer + Bottom-Sheet-
+      Detail-Modal erhalten
 - [ ] Bekannte UI-Verbesserungen aus dem Alt-Dashboard einarbeiten (Liste beim
       Start des Milestones mit dem Owner konkretisieren)
+      *(Owner-Schritt: Wunschliste nennen — dann Umsetzung als Folge-PR)*
 
-**Abnahme:** Live auf autotrd.net: Login → Dashboard mit Realtime-Kursen,
-Chart, eigener Watchlist; Lighthouse Performance > 80; beide Viewports ok.
+**Abnahme:** Emulator-E2E grün: Login → Dashboard mit Realtime-Kursen, Chart,
+eigener Watchlist (Picker → `saveStrategy` → nächster Scan erfasst neue
+Symbole zentral) · beide Viewports ok · *Live-Abnahme auf autotrd.net +
+Lighthouse > 80 folgt mit den Owner-Deploy-Schritten (docs/SETUP.md).*
 
 ## M4 — Paper-Trading pro User
 
