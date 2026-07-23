@@ -16,10 +16,12 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "eslint .",
     "test": "vitest run",
-    "emulators": "npm run build -w functions && firebase emulators:start"
+    "emulators": "npm run build -w functions && firebase emulators:start",
+    "test:rules": "firebase emulators:exec --only firestore --project demo-rules \"vitest run --config vitest.rules.config.ts\""
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@firebase/rules-unit-testing": "^5.0.1",
     "eslint": "^10.7.0",
     "firebase-tools": "^15.24.0",
     "typescript": "^6.0.3",

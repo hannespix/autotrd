@@ -16,13 +16,20 @@ export const ensureProfile = onCall(async (request) => {
   const snap = await ref.get();
   if (snap.exists) return { created: false };
 
+  const now = new Date().toISOString();
   await ref.set({
     profile: {
-      createdAt: new Date().toISOString(),
+      createdAt: now,
       plan: 'free',
     },
     settings: {
       strategy: DEFAULT_STRATEGY,
+    },
+    // Paper-Wallet: Startkapital aus dem Default — NUR Functions schreiben hier
+    wallet: {
+      paperBalance: DEFAULT_STRATEGY.broker.initialCapital,
+      currency: 'USD',
+      updatedAt: now,
     },
   });
   return { created: true };

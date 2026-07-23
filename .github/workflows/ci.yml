@@ -20,7 +20,14 @@ jobs:
         run: npm run lint
       - name: Typecheck
         run: npm run typecheck
-      - name: Tests (Vitest, inkl. künftiger Parity-Tests)
+      - name: Tests (Vitest, inkl. Golden-Parity)
         run: npm test
+      # Firestore-Emulator (firebase-tools) verlangt Java >= 21
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Firestore-Rules-Tests (Emulator)
+        run: npm run test:rules
       - name: Build (alle Workspaces)
         run: npm run build

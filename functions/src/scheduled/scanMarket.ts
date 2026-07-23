@@ -20,9 +20,13 @@ import {
   CLASS_LABELS,
   DEFAULT_STRATEGY,
   classify,
+  isStrategy,
   resolveName,
+  type Position,
+  type Strategy,
 } from '../../../shared/src/index.js';
 import { computeSignal } from '../core/engine.js';
+import { executePaperTrade, resolveBrokerMode, riskExitReason } from '../core/broker.js';
 import { getMarketSnapshot } from '../core/marketData.js';
 
 /** Mo–Fr, 09:30 ≤ t < 16:00 in America/New_York (Port des run_scan.sh-Gates). */
@@ -67,7 +71,91 @@ export interface ScanResult {
   scanId: string;
   scanned: string[];
   errors: Record<string, string>;
+  trades: number;
   skipped?: string;
+}
+
+/** In-Memory-Marktbild eines Scans: 1 Fetch pro Symbol, N User-Auswertungen. */
+interface SymbolData {
+  closes: number[];
+  price: number;
+}
+
+/**
+ * Auto-Trading pro User (MILESTONES M4): Für jeden User mit
+ * `settings.strategy.engine.running === true` werden die Signale gegen SEINE
+ * Strategie-Parameter neu ausgewertet (Indikator-Mathe in-memory, keine
+ * weiteren Fetches) und Paper-Trades transaktional ausgeführt; danach
+ * Stop-Loss/Take-Profit über die offenen Positionen.
+ */
+async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<number> {
+  const db = getFirestore();
+  let executed = 0;
+  const users = await db
+    .collection('users')
+    .where('settings.strategy.engine.running', '==', true)
+    .get();
+
+  for (const userDoc of users.docs) {
+    const uid = userDoc.id;
+    const strategy = userDoc.get('settings.strategy') as Strategy | undefined;
+    if (!strategy || !isStrategy(strategy)) continue;
+    if (resolveBrokerMode(strategy) !== 'paper') continue; // Live bleibt verriegelt (M14)
+
+    try {
+      const positionsSnap = await userDoc.ref.collection('positions').get();
+      const positions = new Map<string, Position>(
+        positionsSnap.docs.map((d) => [d.id, d.data() as Position]),
+      );
+
+      // 1) Risiko-Exits zuerst (Port von _check_risk — vor neuen Signalen)
+      for (const [symbol, pos] of positions) {
+        const data = marketData.get(symbol);
+        if (!data) continue;
+        const reason = riskExitReason(pos, data.price, strategy);
+        if (reason) {
+          const r = await executePaperTrade(
+            { uid, symbol, side: 'sell', price: data.price, source: 'engine', riskExit: reason },
+            strategy,
+          );
+          if (r.executed) {
+            executed += 1;
+            positions.delete(symbol);
+            logger.info(`Risk-Exit ${uid} ${symbol} (${reason})`);
+          }
+        }
+      }
+
+      // 2) Konfluenz-Signale gegen die User-Strategie
+      for (const symbol of strategy.watchlist) {
+        const data = marketData.get(symbol);
+        if (!data) continue;
+        const sig = computeSignal(data.closes, data.price, strategy.indicators, strategy.signals);
+        if (sig.direction === 'buy' && !positions.has(symbol)) {
+          const r = await executePaperTrade(
+            { uid, symbol, side: 'buy', price: data.price, source: 'engine' },
+            strategy,
+          );
+          if (r.executed) {
+            executed += 1;
+            logger.info(`Engine-Buy ${uid} ${symbol} @ ${data.price}`);
+          }
+        } else if (sig.direction === 'sell' && positions.has(symbol)) {
+          const r = await executePaperTrade(
+            { uid, symbol, side: 'sell', price: data.price, source: 'engine' },
+            strategy,
+          );
+          if (r.executed) {
+            executed += 1;
+            logger.info(`Engine-Sell ${uid} ${symbol} @ ${data.price}`);
+          }
+        }
+      }
+    } catch (err) {
+      logger.error(`Auto-Trading-Fehler für ${uid}`, err);
+    }
+  }
+  return executed;
 }
 
 /** Obergrenze des zentralen Scan-Sets (Kosten-Guard). */
@@ -102,7 +190,7 @@ export async function runScan(force = false): Promise<ScanResult> {
   const scanId = now.toISOString().slice(0, 16) + 'Z'; // Minute = idempotent
   if (!force && !isUsMarketOpen(now)) {
     logger.info(`Markt geschlossen — Scan übersprungen (${scanId})`);
-    return { scanId, scanned: [], errors: {}, skipped: 'market_closed' };
+    return { scanId, scanned: [], errors: {}, trades: 0, skipped: 'market_closed' };
   }
 
   await seedUniverse();
@@ -110,11 +198,13 @@ export async function runScan(force = false): Promise<ScanResult> {
   const symbols = await collectScanSymbols();
   const scanned: string[] = [];
   const errors: Record<string, string> = {};
+  const marketData = new Map<string, SymbolData>();
 
   for (const symbol of symbols) {
     try {
       const snap = await getMarketSnapshot(symbol, DEFAULT_STRATEGY.signals.period);
       const closes = snap.bars.map((b) => b.close);
+      marketData.set(symbol, { closes, price: snap.price });
       const sig = computeSignal(
         closes,
         snap.price,
@@ -188,8 +278,11 @@ export async function runScan(force = false): Promise<ScanResult> {
     }
   }
 
-  logger.info(`Scan ${scanId}: ${scanned.length}/${symbols.length} Symbole ok`);
-  return { scanId, scanned, errors };
+  // Auto-Trades pro User (1 Marktdaten-Fetch oben, N Auswertungen hier)
+  const trades = await executeUserTrades(marketData);
+
+  logger.info(`Scan ${scanId}: ${scanned.length}/${symbols.length} Symbole ok, ${trades} Trade(s)`);
+  return { scanId, scanned, errors, trades };
 }
 
 /** Alle 5 Minuten; der Gate macht außerhalb der Marktzeiten einen No-Op. */

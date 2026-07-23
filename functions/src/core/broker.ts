@@ -1,0 +1,156 @@
+/**
+ * Broker-Schicht — Port von reference/scripts/broker.py auf Firestore.
+ *
+ * Paper-Ausführung läuft als Firestore-TRANSAKTION über users/{uid}:
+ * wallet-Feld (Cash), positions/{symbol}, trades/{tradeId} — alles Felder,
+ * die Clients per Rules NICHT schreiben können (ARCHITECTURE §5).
+ *
+ * SICHERHEIT (Port der Python-Guards, niemals lockern):
+ * - Default ist immer Paper.
+ * - Echtgeld erfordert BEIDES: strategy.broker.mode === 'live' UND
+ *   env ALPACA_ALLOW_LIVE === '1' — sonst automatischer Downgrade auf Paper.
+ *   Der Alpaca-Slot selbst kommt in M13/M14; resolveBrokerMode() ist heute
+ *   schon die einzige Stelle, die über den Modus entscheidet.
+ * - Keys nur aus env/Secret Manager, nie geloggt.
+ */
+
+import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore';
+import type { Position, Strategy, Trade } from '../../../shared/src/index.js';
+
+export type BrokerMode = 'paper' | 'live';
+
+/** Einzige Stelle, die den effektiven Broker-Modus bestimmt (Doppel-Guard). */
+export function resolveBrokerMode(strategy: Strategy): BrokerMode {
+  const wantLive = strategy.broker.mode === 'live';
+  if (wantLive && process.env.ALPACA_ALLOW_LIVE === '1') return 'live';
+  return 'paper';
+}
+
+export interface TradeResult {
+  executed: boolean;
+  reason?: string;
+  trade?: Trade & { id: string };
+}
+
+export interface TradeRequest {
+  uid: string;
+  symbol: string;
+  side: 'buy' | 'sell';
+  price: number;
+  /** Stückzahl; ohne Angabe beim Kauf: Positionsgröße aus maxPositionPct. */
+  qty?: number;
+  source: 'engine' | 'manual';
+  /** Risiko-Exit-Grund (stop_loss/take_profit), nur für Engine-Verkäufe. */
+  riskExit?: string;
+}
+
+/**
+ * Paper-Trade transaktional ausführen (Port von _execute_trade):
+ * - buy: nie nachkaufen (Position existiert → no-op); Größe = maxPositionPct
+ *   vom Startkapital (wie Referenz) bzw. explizite qty; Cash-Deckung nötig.
+ * - sell: nur mit Position; realisiert P&L in den Trade-Record.
+ */
+export async function executePaperTrade(req: TradeRequest, strategy: Strategy): Promise<TradeResult> {
+  const db = getFirestore();
+  const userRef = db.doc(`users/${req.uid}`);
+  const posRef = userRef.collection('positions').doc(req.symbol);
+  const tradeRef = userRef.collection('trades').doc();
+
+  if (!(req.price > 0) || !Number.isFinite(req.price)) {
+    return { executed: false, reason: 'kein_preis' };
+  }
+
+  return db.runTransaction(async (tx) => {
+    const [userSnap, posSnap] = await Promise.all([tx.get(userRef), tx.get(posRef)]);
+    if (!userSnap.exists) return { executed: false, reason: 'kein_profil' };
+    const balance = (userSnap.get('wallet.paperBalance') as number | undefined) ?? 0;
+    const now = new Date().toISOString();
+
+    if (req.side === 'buy') {
+      if (posSnap.exists) return { executed: false, reason: 'position_existiert' };
+      const capital = strategy.broker.initialCapital;
+      const maxPct = strategy.engine.maxPositionPct / 100;
+      const qty = req.qty ?? Math.floor((capital * maxPct) / req.price);
+      if (qty < 1) return { executed: false, reason: 'qty_unter_1' };
+      const cost = qty * req.price;
+      if (cost > balance) return { executed: false, reason: 'zu_wenig_cash' };
+
+      const position: Position = {
+        symbol: req.symbol,
+        qty,
+        avgEntry: req.price,
+        stopLoss: strategy.engine.stopLossPct > 0
+          ? req.price * (1 - strategy.engine.stopLossPct / 100)
+          : null,
+        takeProfit: strategy.engine.takeProfitPct > 0
+          ? req.price * (1 + strategy.engine.takeProfitPct / 100)
+          : null,
+        openedAt: now,
+      };
+      const trade: Trade = {
+        symbol: req.symbol,
+        side: 'buy',
+        qty,
+        price: req.price,
+        executedAt: now,
+        source: req.source,
+        paper: true,
+      };
+      tx.set(posRef, position);
+      tx.set(tradeRef, { ...trade, at: Timestamp.now() });
+      tx.update(userRef, { 'wallet.paperBalance': balance - cost, 'wallet.updatedAt': now });
+      return { executed: true, trade: { ...trade, id: tradeRef.id } };
+    }
+
+    // sell
+    if (!posSnap.exists) return { executed: false, reason: 'keine_position' };
+    const pos = posSnap.data() as Position;
+    const qty = pos.qty;
+    const proceeds = qty * req.price;
+    const pnl = (req.price - pos.avgEntry) * qty;
+    const trade: Trade & { pnl: number; riskExit?: string } = {
+      symbol: req.symbol,
+      side: 'sell',
+      qty,
+      price: req.price,
+      executedAt: now,
+      source: req.source,
+      paper: true,
+      pnl: Math.round(pnl * 100) / 100,
+      ...(req.riskExit ? { riskExit: req.riskExit } : {}),
+    };
+    tx.delete(posRef);
+    tx.set(tradeRef, { ...trade, at: Timestamp.now() });
+    tx.update(userRef, { 'wallet.paperBalance': balance + proceeds, 'wallet.updatedAt': now });
+    return { executed: true, trade: { ...trade, id: tradeRef.id } };
+  });
+}
+
+/**
+ * Stop-Loss/Take-Profit einer offenen Position prüfen (Port von _check_risk).
+ * Liefert den Exit-Grund oder null.
+ */
+export function riskExitReason(pos: Position, price: number, strategy: Strategy): string | null {
+  if (!(pos.avgEntry > 0) || !(price > 0)) return null;
+  const change = price / pos.avgEntry - 1;
+  const sl = -strategy.engine.stopLossPct / 100;
+  const tp = strategy.engine.takeProfitPct / 100;
+  if (change <= sl) return 'stop_loss';
+  if (change >= tp) return 'take_profit';
+  return null;
+}
+
+/** Tages-Quota (admin/quotas/{uid}) transaktional erhöhen; false = Limit erreicht. */
+export async function consumeQuota(uid: string, kind: string, dailyLimit: number): Promise<boolean> {
+  const db = getFirestore();
+  const day = new Date().toISOString().slice(0, 10);
+  const ref = db.doc(`admin/quotas-${uid}`);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const key = `${kind}_${day}`;
+    const used = (snap.get(key) as number | undefined) ?? 0;
+    if (used >= dailyLimit) return false;
+    tx.set(ref, { [key]: FieldValue.increment(1) }, { merge: true });
+    return true;
+  });
+}
