@@ -253,19 +253,40 @@ Anthropic-Konsole: Tageskosten im erwarteten Cent-Bereich.
 
 **Ziel:** „Offen online zugänglich" verantwortbar machen.
 
-- [ ] Firebase **App Check** (Frontend + Functions erzwingen)
-- [ ] E-Mail-Verifikation Pflicht vor Engine-Nutzung; Passwort-Reset-Flow testen
-- [ ] Rate-Limits/Quotas für alle Callables; Firestore-Rules-Review
-      (Emulator-Testsuite komplett)
-- [ ] Monitoring: Cloud Logging Alerts (Function-Fehler, Scan-Ausfall
-      > 15 min während Marktzeiten), GCP-Budget-Alarm verifizieren
-- [ ] Security-Pass: `npm audit`, Abhängigkeiten pinnen, Rules nochmal
-      adversarial denken (was kann ein böswilliger eingeloggter User?)
-- [ ] Rechtliches Minimum: Impressum, Datenschutzerklärung,
-      Risiko-Disclaimer („kein Finanzrat") im Frontend
+- [x] Firebase **App Check** — Code komplett, zweistufig gated: Frontend
+      sendet Tokens sobald `VITE_FIREBASE_APPCHECK_SITE_KEY` gesetzt ist
+      (reCAPTCHA v3 + Debug-Token im Emulator), Functions erzwingen mit
+      `APPCHECK_ENFORCE=1` in `functions/.env`. *Scharf schalten =
+      Owner-Schritt (SETUP.md §I — Reihenfolge wichtig!)*
+- [x] E-Mail-Verifikation Pflicht vor Engine-Nutzung (serverseitig in
+      saveStrategy; UI-Box mit Mail-senden/Bestätigt-Refresh);
+      Passwort-Reset-Flow („Passwort vergessen?" im Login)
+- [x] Rate-Limits/Quotas für alle Callables (trade 50/Tag, saveStrategy
+      300/Tag, ensureProfile 60/Tag — transaktional in `admin/quotas-{uid}`);
+      Rules-Review: Testsuite auf 15 Fälle erweitert (adversarial: plan-
+      Upgrade, Forecast-/Tuning-Manipulation, KI-Doc-Writes, Fremd-Zugriffe)
+- [x] Monitoring vorbereitet: Scan-Heartbeat `meta/health` (lastScanAt,
+      symbolsOk/Failed, auch im Markt-zu-No-Op) — *Alerts + Budget-Alarm in
+      der GCP-Konsole = Owner-Schritt (SETUP.md §J)*
+- [x] Security-Pass: `npm audit` prod = **0 Findings** (uuid-Kette via
+      npm-override auf ^11.1.1 gefixt statt firebase-admin-Downgrade);
+      dev: 5 moderate in firebase-tools ohne Upstream-Fix (nur CLI, kein
+      Deploy-Artefakt); adversariale Rules-Fälle siehe oben
+- [x] Rechtliches Minimum: Impressum + Datenschutzerklärung +
+      Risiko-Disclaimer als Modal, Footer auf Login UND Dashboard
+      („Paper-Trading zu Lernzwecken — keine Anlageberatung").
+      *[OWNER]-Platzhalter (Name/Anschrift/E-Mail) in `legal.ts` ausfüllen!*
 
 **Abnahme:** Fremder Client ohne App Check wird abgewiesen · simulierter
 Scan-Ausfall alarmiert · Audit ohne Highs · Rechtstexte live.
+
+> Verifiziert (Emulator, 2026-07-23): Engine-Start unverifiziert →
+> failed-precondition mit klarer Meldung, nach OOB-Verifikation ok (REST +
+> Playwright, 11/11 UI-Checks inkl. Modal-Flows); Passwort-Reset end-to-end
+> (Reset-Mail → neues Passwort → Login); Quota real getript
+> (RESOURCE_EXHAUSTED bei 300); Rules 15/15; `meta/health` nach Scan
+> korrekt (symbolsOk=4) · Die Abnahme-Punkte „ohne App Check abgewiesen"
+> und „Ausfall alarmiert" brauchen das deployte Projekt → Owner (§I/§J).
 
 ## M8 — (neu geschnitten → M13 + M14)
 
