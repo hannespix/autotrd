@@ -110,3 +110,31 @@ Repo → *Settings → Branches → Add branch ruleset* für `main`:
 - **Require status checks to pass** → Check `ci` auswählen
 
 Damit ist der Flow „nur per grünem PR auf main" auch technisch erzwungen.
+
+## H. KI-Staffel: Anthropic-API-Key (M6, ~5 min)
+
+Ohne Key läuft alles weiter — die KI-Tageskarte degradiert dann sichtbar auf
+die regelbasierte Lexikon-Zusammenfassung (`reason: no_api_key`). Für echte
+KI-Erklärungen (Haiku-Klassifikation + Sonnet-Tagessatz):
+
+1. Key erzeugen: <https://console.anthropic.com> → *API Keys* → **Create Key**
+   (eigenes Workspace „autotrd" empfohlen, dort ein **Spend-Limit** setzen —
+   z. B. 5 $/Monat; die Staffel braucht bei 4 Symbolen nur Cent-Beträge).
+2. Als Functions-Secret hinterlegen (einmalig, **vor** dem nächsten
+   Functions-Deploy — der Deploy bindet das Secret):
+
+   ```bash
+   npx firebase functions:secrets:set ANTHROPIC_API_KEY --project <projekt-id>
+   ```
+
+3. Nächsten Functions-Deploy laufen lassen (Merge auf `main` genügt).
+4. Abnahme (M6): Nach einem Scan mit News zeigt die KI-Karte „Warum bewegt
+   sich X?" einen KI-Satz mit Modell-Angabe statt „regelbasiert"; in der
+   Anthropic-Konsole liegen die Tageskosten im Cent-Bereich; ein zweiter
+   Scan erzeugt KEINEN weiteren API-Call (Cache `market/{sym}/ai/{datum}`).
+5. Optional: Tagesbudget anpassen — Firestore-Doc `admin/aiBudget`, Feld
+   `dailyTokenBudget` (Default 200 000 Token/Tag). Bei Überschreitung
+   degradiert die Pipeline sichtbar auf regelbasiert, nichts fällt aus.
+
+Lokal im Emulator: `functions/.secret.local` mit
+`ANTHROPIC_API_KEY=sk-ant-…` anlegen (steht in `.gitignore`, nie committen).

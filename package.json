@@ -16,7 +16,7 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "eslint .",
     "test": "vitest run",
-    "emulators": "npm run build -w functions && firebase emulators:start",
+    "emulators": "npm run build -w functions && FUNCTIONS_DISCOVERY_TIMEOUT=60 firebase emulators:start",
     "test:rules": "firebase emulators:exec --only firestore --project demo-rules \"vitest run --config vitest.rules.config.ts\""
   },
   "devDependencies": {

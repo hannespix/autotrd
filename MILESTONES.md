@@ -216,20 +216,38 @@ von `reference/` folgt, sobald das System deployt ist (Owner-Schritte).*
       Schreibziele `market/{sym}/news/` + `events/{date}` +
       Sentiment-Aggregat am Symbol-Doc — **speist den Forecaster mit echtem
       Sentiment** (bis dahin war es 0)
-- [ ] KI-Staffel (ARCHITECTURE §6): Anthropic TS-SDK in Functions;
-      Haiku = Klassifikation, Sonnet = Tages-Erklärung; Cache
-      `market/{sym}/ai/{date}` (1 Call für alle User); Prompt-Caching;
-      täglicher Tuner-Review (Port `ai_tuner.py`: darf Suchgitter in Bounds
-      erweitern, ändert NIE Live-Params autonom) via Batch API
-- [ ] Kosten-Guard: Tages-Tokenbudget als Config; bei Überschreitung
-      degradiert die Pipeline auf regelbasiert (loggt das sichtbar)
+- [x] KI-Staffel (ARCHITECTURE §6): Anthropic TS-SDK in Functions
+      (`core/ai.ts`); Haiku = Klassifikation, Sonnet = Tages-Erklärung; Cache
+      `market/{sym}/ai/{date}` (1 Call für alle User); Prompt-Caching
+      (`cache_control` auf stabilen System-Prompts); täglicher Tuner-Review
+      (`scheduled/tunerReview.ts`, Port `ai_tuner.py`: darf Suchgitter in
+      harten Bounds [5,60]/[0,1.5] erweitern, ändert NIE Live-Params autonom)
+      via Batch API im Zwei-Phasen-Muster (Submit heute → Collect morgen,
+      50 % Kosten)
+- [x] Kosten-Guard: Tages-Tokenbudget als Config (`admin/aiBudget
+      .dailyTokenBudget`, Default 200k); bei Überschreitung degradiert die
+      Pipeline auf regelbasiert (loggt das sichtbar; ebenso bei fehlendem
+      Key und API-Fehlern — `degraded`/`reason` stehen im ai-Doc)
 - [x] Frontend: Event-Marker auf Kerzen (sentiment-gefärbt aus
-      `events/{date}`), News-Panel mit Gauge + Sentiment-Punkten
-      *(Tooltip-Details + Layer-Toggles folgen mit der KI-Staffel M6b)*
+      `events/{date}`), News-Panel mit Gauge + Sentiment-Punkten,
+      KI-Karte „Warum bewegt sich X?“ (inkl. sichtbarem Degradations-Grund),
+      Crosshair-Tooltip mit Event-Details, Layer-Toggles Prognose/Events
+      (+ Timeframe-Buttons 1M/3M/Alle nachverdrahtet)
 
 **Abnahme:** Live: Symbol mit News zeigt Marker + KI-Summary; zweiter Abruf
 kommt aus Cache (Firestore-Read, kein API-Call — an Logs verifizieren) ·
 Anthropic-Konsole: Tageskosten im erwarteten Cent-Bereich.
+
+> Verifiziert (Emulator, 2026-07-23): alle 3 Degradationspfade real
+> durchlaufen — ohne Key (`no_api_key`), Budget=1 (`budget_exceeded`,
+> Guard greift VOR jedem API-Call), ungültiger Key (`ai_error` mit echtem
+> 401 der Anthropic-API, Scan bleibt grün) · Cache-Hit bewiesen (2. Scan:
+> kein API-Call, `at` unverändert) · Tuner-Gitter-Erweiterung end-to-end
+> (0.6/15 landen im Shadow-Grid, 999/99 hart geclampt; 24 Kombi-Docs) ·
+> 29 neue Unit-Tests (Bounds, Parsing, Fallback, Token-Zählung) ·
+> Playwright-E2E 10/10 (KI-Karte, Toggles, Tooltip, Phone 390 px).
+> *Echte KI-Antworten + Kosten-Check in der Anthropic-Konsole = Owner-Schritt
+> nach `firebase functions:secrets:set ANTHROPIC_API_KEY` (SETUP.md §H).*
 
 ## M7 — Härtung & Betrieb
 
