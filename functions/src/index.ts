@@ -14,6 +14,7 @@ initializeApp();
 export { scanMarket, scanNow } from './scheduled/scanMarket.js';
 export { ensureProfile } from './callable/profile.js';
 export { saveStrategy } from './callable/strategy.js';
+export { trade } from './callable/trade.js';
 
 export const healthz = onRequest({ cors: true }, (_req, res) => {
   res.status(200).json({
