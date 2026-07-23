@@ -103,15 +103,22 @@ Re-run all jobs* — oder einfach den nächsten PR mergen.
 ## D. webgo: FTP-Zugang & Domain (~10 min)
 
 1. webgo-Kundenportal → **FTP** → FTP-Benutzer anlegen (oder vorhandenen
-   nehmen). **Wichtig:** Das Home-/Zielverzeichnis des FTP-Users direkt auf
-   den DocumentRoot von `autotrd.net` zeigen lassen — der Workflow lädt
-   `frontend/dist/` ins FTP-Wurzelverzeichnis hoch.
-2. webgo → **Domains**: `autotrd.net` auf genau dieses Verzeichnis routen.
+   nehmen).
+2. webgo → **Domains**: `autotrd.net` auf den Site-Ordner routen
+   (typisch `www/autotrd.net`).
 3. **SSL aktivieren** (Let's Encrypt im webgo-Panel) + HTTPS-Weiterleitung an.
 4. GitHub Secrets (wie in C.4):
    - `FTP_HOST` — Servername aus dem webgo-Panel (z. B. `sXX.goserver.host`)
    - `FTP_USERNAME` — der FTP-Benutzer
    - `FTP_PASSWORD` — dessen Passwort
+5. **Zielverzeichnis:** Der Workflow lädt nach `server-dir`, RELATIV zur
+   FTP-Wurzel des Users — Default **`autotrd.net/`** (passend, wenn die
+   FTP-Wurzel `www/` ist und die Domain auf `www/autotrd.net` zeigt).
+   Weicht dein Layout ab, Repo-Variable **`FTP_SERVER_DIR`** setzen
+   (Trailing-Slash Pflicht, z. B. `www/autotrd.net/`).
+   > ⚠️ Vor diesem Fix lud der Workflow in die FTP-Wurzel (`www/`).
+   > Dort ggf. aufräumen: `index.html`, `vite.svg` und den Ordner
+   > `assets/` löschen — NUR diese Build-Artefakte, sonst nichts.
 
 ## E. Firebase-Web-Config für den Frontend-Build
 

@@ -48,3 +48,8 @@ jobs:
           password: ${{ secrets.FTP_PASSWORD }}
           protocol: ftps
           local-dir: frontend/dist/
+          # Zielverzeichnis RELATIV zur FTP-Wurzel des Accounts (Trailing-Slash
+          # pflicht). Ohne diese Angabe lädt die Action in die FTP-Wurzel —
+          # bei webgo landet das direkt in www/ statt im Site-Ordner.
+          # Abweichler setzen die Repo-Variable FTP_SERVER_DIR (SETUP.md §D).
+          server-dir: ${{ vars.FTP_SERVER_DIR || 'autotrd.net/' }}
