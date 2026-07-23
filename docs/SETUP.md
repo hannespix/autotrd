@@ -87,18 +87,24 @@ die künftige Features brauchen (Cloud Run, Eventarc, Scheduler, …).
 `cloudscheduler.googleapis.com` · `secretmanager.googleapis.com`
 
 **Außerdem VOR dem nächsten Deploy nötig:** Der Deploy bindet das Secret
-`ANTHROPIC_API_KEY` (KI-Staffel, §H) — im nicht-interaktiven CI-Modus
-bricht er ab, wenn es noch nicht existiert. Einmal lokal ausführen:
+`ANTHROPIC_API_KEY` (KI-Staffel, §H) und scheitert sonst mit
+*„secretmanager.secrets.get denied on resource (or it may not exist)"*.
+Zwei Dinge fixen das:
 
-```bash
-npx firebase functions:secrets:set ANTHROPIC_API_KEY --project <projekt-id>
-```
+1. **Secret anlegen** — ohne lokale CLI direkt in der Cloud-Konsole:
+   *Security → Secret Manager → Create Secret*, Name exakt
+   `ANTHROPIC_API_KEY`, Wert = der Key aus console.anthropic.com.
+   (Alternativ lokal: `npx firebase functions:secrets:set ANTHROPIC_API_KEY
+   --project <projekt-id>`.) Kein Key zur Hand? Platzhalter-Wert setzen und
+   später überschreiben — die App degradiert bei ungültigem Key sichtbar
+   auf regelbasiert und bleibt voll funktionsfähig.
+2. **Rolle fürs Lesen/Binden:** dem Service-Account `github-deploy`
+   zusätzlich **Secret Manager Admin** geben (der Deploy liest das Secret
+   und erteilt der Functions-Laufzeit den Accessor-Zugriff — „Firebase
+   Admin" allein deckt das nicht ab).
 
-(Wer den Key noch nicht hat: trotzdem setzen — notfalls mit einem
-Platzhalter-Wert und später per selbem Befehl überschreiben; die App
-degradiert bei ungültigem Key sichtbar auf regelbasiert und bleibt voll
-funktionsfähig.) Danach: *Actions → Deploy Functions (Firebase) →
-Re-run all jobs* — oder einfach den nächsten PR mergen.
+Danach: *Actions → Deploy Functions (Firebase) → Re-run all jobs* — oder
+einfach den nächsten PR mergen.
 
 ## D. webgo: FTP-Zugang & Domain (~10 min)
 
