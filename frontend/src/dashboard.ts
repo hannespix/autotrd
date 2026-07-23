@@ -39,7 +39,8 @@ import {
   type TradeRow,
   type UniverseClass,
 } from './data.js';
-import { logout } from './auth.js';
+import { emailVerified, logout, refreshUser, sendVerification } from './auth.js';
+import { mountLegalFooter } from './legal.js';
 
 const CLASS_ORDER = [
   'indices', 'forex', 'crypto', 'commodities', 'rates_bonds',
@@ -137,6 +138,15 @@ function layout(email: string): string {
         <button class="btn btn-r" id="engStop">Stop</button>
         <div class="hint">Bei Engine AN handelt der zentrale 5-min-Scan
           automatisch nach deiner Strategie (Paper).</div>
+        <div id="verifyBox" hidden style="margin-top:8px">
+          <p class="hint" style="color:var(--rd)">E-Mail noch nicht bestätigt —
+            der Engine-Start ist bis dahin gesperrt (M7-Schutz).</p>
+          <div class="row">
+            <button class="btn btn-n" id="verifySend">Bestätigungs-Mail</button>
+            <button class="btn btn-n" id="verifyDone">Ich habe bestätigt</button>
+          </div>
+          <div class="hint" id="verifyHint"></div>
+        </div>
       </div></div>
 
       <div class="card"><div class="sect">Trade-Historie</div><div class="cbody">
@@ -588,7 +598,9 @@ async function submitStrategy(next: Strategy, hint: string): Promise<void> {
     await saveStrategy(next);
     $('saveHint').textContent = hint;
   } catch (e) {
-    err.textContent = 'Speichern fehlgeschlagen — bitte erneut versuchen.';
+    // Server-Meldung durchreichen (z. B. „E-Mail zuerst bestätigen", Quota)
+    const msg = e instanceof Error && e.message ? e.message : '';
+    err.textContent = msg || 'Speichern fehlgeschlagen — bitte erneut versuchen.';
     err.hidden = false;
     $('saveHint').textContent = '';
     console.warn('saveStrategy', e);
@@ -1057,6 +1069,22 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   void renderMarketTabs();
   updateClock();
   st.timers.push(window.setInterval(updateClock, 1000));
+  mountLegalFooter(root);
+
+  // E-Mail-Verifikation (M7): ohne bestätigte Mail bleibt der Engine-Start
+  // serverseitig gesperrt — die Box erklärt das und bietet beide Aktionen an.
+  $('verifyBox').hidden = emailVerified();
+  $('verifySend').addEventListener('click', () => {
+    sendVerification()
+      .then(() => { $('verifyHint').textContent = 'Mail ist unterwegs (Spam-Ordner prüfen).'; })
+      .catch(() => { $('verifyHint').textContent = 'Senden fehlgeschlagen — kurz warten und erneut.'; });
+  });
+  $('verifyDone').addEventListener('click', () => {
+    void refreshUser().then((ok) => {
+      $('verifyBox').hidden = ok;
+      if (!ok) $('verifyHint').textContent = 'Noch nicht bestätigt — Link in der Mail öffnen.';
+    });
+  });
 
   // Interaktionen
   $('logoutBtn').addEventListener('click', () => void logout());

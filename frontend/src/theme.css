@@ -251,6 +251,19 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .dsheet .dbtn.pri { background: linear-gradient(135deg, var(--ac2), var(--ac)); color: #04121a; border-color: transparent; box-shadow: var(--glow-ac); }
 .dclose { position: absolute; top: 12px; right: 12px; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--bd2); background: var(--sd); color: var(--t1); font-size: 16px; cursor: pointer; line-height: 1; display: flex; align-items: center; justify-content: center; }
 
+/* Rechtliches (M7): Footer + Modal-Text */
+.legal-foot {
+  display: flex; gap: 10px; align-items: center; justify-content: center; flex-wrap: wrap;
+  padding: 10px 14px calc(10px + env(safe-area-inset-bottom)); font-size: 10.5px; color: var(--t3);
+}
+.legal-foot nav { display: flex; gap: 12px; }
+.legal-foot a { color: var(--t2); text-decoration: none; border-bottom: 1px dotted var(--bd2); }
+.legal-foot a:hover { color: var(--ac); border-color: var(--ac); }
+.legal-body { font-size: 12.5px; line-height: 1.55; color: var(--t2); }
+.legal-body p { margin: 0 0 10px; }
+.legal-body strong { color: var(--t1); }
+.legal-body a { color: var(--ac); }
+
 /* Watchlist-Picker */
 .wl-chips { display: flex; gap: 5px; flex-wrap: wrap; min-height: 24px; align-items: center; }
 .wl-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 999px; background: var(--ac-soft); border: 1px solid var(--ac); color: var(--t1); font-size: 11px; font-weight: 700; }
