@@ -215,15 +215,216 @@ Anthropic-Konsole: Tageskosten im erwarteten Cent-Bereich.
 **Abnahme:** Fremder Client ohne App Check wird abgewiesen · simulierter
 Scan-Ausfall alarmiert · Audit ohne Highs · Rechtstexte live.
 
-## M8 — Später: Echter Broker (erst nach bewusstem Go des Owners)
+## M8 — (neu geschnitten → M13 + M14)
 
-- [ ] Alpaca-Connect pro User: Keys verschlüsselt (KMS), nie client-lesbar
-- [ ] Live-Doppel-Guard: User-Setting `mode: live` UND serverseitiges,
-      nur manuell gesetztes Freigabe-Flag; Default bleibt Paper
-- [ ] Getrennte Anzeige Paper vs. Live; erweiterte Rechtstexte
+Der ursprüngliche Broker-Connect-Milestone ist in zwei Teile aufgegangen
+(siehe [docs/VISION.md](docs/VISION.md)): sein **Paper-Anteil** (KMS-Keys,
+Connect-Flow, echte Order-Mechanik gegen `paper-api.alpaca.markets`) ist jetzt
+**M13**, sein **Echtgeld-Kern** ist **M14** — Echtgeld bleibt damit der letzte,
+verriegelte Milestone.
 
-**Abnahme:** definiert der Owner, wenn es soweit ist. **Nicht eigenmächtig
-beginnen.**
+---
+
+> **M9–M14 — Ausbau zur Vision** (siehe [docs/VISION.md](docs/VISION.md)).
+> Voraussetzung: M2–M7 abgeschlossen. Reihenfolge gilt; Echtgeld (M14) zuletzt
+> und nur mit ausdrücklichem Owner-Go.
+
+## M9 — Linked Workspaces & Null-Klick-Cockpit
+
+**Ziel:** Das portierte Dashboard (M3) wird zum modularen Arbeitsraum mit
+gemeinsamer Aufmerksamkeit: Panels, Link-Gruppen, Keyboard-first, Multi-Monitor
+— rein clientseitig, ohne zusätzliche Firestore-Reads.
+
+- [ ] Panel-Lebenszyklus (`mount/onLink/destroy`) + 12-Spalten-Grid; M3-Karten
+      (Chart-Stack, Watchlist, Signale, News, Positionen) als Panels;
+      Persistenz `users/{uid}/workspaces/{wsId}` (debounced 2 s)
+- [ ] Link-Bus mit Gruppen A/B/C: Symbol-, Zeit- (timestamp-basiert) und
+      Crosshair-Sync (`setCrosshairPosition`), Link-Chip je Panel in
+      Aurora-Farben
+- [ ] QuoteStore-Multiplexing + Leader-Tab über `BroadcastChannel`:
+      n Fenster, ein Listener-Satz — Multi-Monitor ohne Read-Duplikation
+- [ ] Command-Palette (`Ctrl+K`): Symbol-Resolve aus `meta/universe`
+      (Klarnamen, `^NDX`-Konvention), Befehle für Order/Alert/Workspace;
+      Hotkeys in `settings.hotkeys`
+- [ ] Hotkey-Order-Ticket (`Shift+B/S`) als Overlay auf das
+      `placeOrder`-Callable, Risiko-Vorschau-Zeile, Kurs-Altersstempel,
+      unübersehbares PAPER-Badge
+- [ ] Werks-Presets („Überblick", „Ein-Symbol-Fokus", „Signal-Jäger") +
+      deterministische Mobile-Degradation zur Stapelliste (Bottom-Sheet bleibt)
+
+**Abnahme:** Zwei Browserfenster, Gruppe A: Watchlist-Klick wechselt
+Chart+News+Signale in beiden Fenstern, Firestore-Listener-Zahl bleibt konstant
+(DevTools-Nachweis) · `Ctrl+K` → `nvda b 10%` → bestätigter Paper-Trade ohne
+Maus · 390 px rendert die Stapelliste ohne horizontales Scrollen · Panel-Wechsel
+erzeugt keine Listener-Leaks (Zähler vor/nach 20× Durchklicken identisch).
+
+## M10 — Strategie-Studio I: Regel-JSON, Karten-Builder, Live-Vorschau
+
+**Ziel:** Strategie-Logik wird Daten: ein getypter Bedingungsbaum in `shared/`,
+den Builder-Vorschau, Scan-Engine und (später) Backtest identisch
+interpretieren; das flache Schema lebt als kompilierbares `classic`-Preset
+weiter.
+
+- [ ] `shared/src/rules/`: Zod-Knoten (`all/any/weighted/not`;
+      `compare/crossover/priceLevel/changePct/timeWindow/sentiment/newsEvent/`
+      `forecast/position`) + pure `evaluate()`; harte Schema-Guards
+      (Tiefe ≤ 5, ≤ 25 Knoten, erreichbarer Threshold)
+- [ ] `users/{uid}/strategies/{id}` mit `draft`/`compiled`/`status` + Callables
+      `saveStrategyDraft`/`publishStrategyVersion`/`assignStrategy`; Rules:
+      Client-Write `false`; max. 1 `paper`-Strategie je (uid, Symbol)
+- [ ] Migration `settings.strategy` (flach) → `kind:'classic'` + Compiler
+      classic→Baum; **Parity-Test:** kompilierte Classic-Strategie liefert
+      identische Signale wie die M4-Konfluenz (Golden-Fixtures)
+- [ ] `scanMarket`-Erweiterung: 1 Marktdaten-Fetch pro Symbol, N
+      Baum-Auswertungen; exotische Indikator-Parameter nur in-memory
+      (memoisiert), Katalog-Varianten weiter nach `market/**`
+- [ ] Risiko-Hülle außerhalb des Baums (Clamp `maxPositionPct` ≤ 25,
+      Pflicht-Stop-Loss, `maxOpenPositions`, Cooldown) — von keinem Knoten
+      überschreibbar; Stop/TP greifen vor jeder Regel-Auswertung
+- [ ] Karten-Builder `#/strategy/{id}` (Gates/Votes/Exit als Glass-Cards,
+      Threshold-Stepper, Gewicht-Badges) + Live-Vorschau über gecachte Bars
+      (Marker + Haltebänder, Label „Vorschau, kein Backtest",
+      Hinweis „Auswertung alle 5 min")
+- [ ] 5 Presets in `meta/strategyPresets`, jede Knotenart in mindestens einem
+      Preset (Presets = Doku)
+
+**Abnahme:** Preset kopieren → RSI-Schwelle ändern → Vorschau-Marker ändern
+sich ohne Server-Call (Network-Tab) · publizierte Strategie handelt im nächsten
+Scan auf Paper · direkter Firestore-Write auf `strategies/**` wird abgelehnt
+(Rules-Test) · Classic-Parity-Test grün · Builder funktioniert bei 390 px.
+
+## M11 — Strategie-Studio II: Backtest, Shadow, Sweeps, A/B
+
+**Ziel:** Den Experimentier-Loop schließen: Jede publizierte Version wird
+automatisch backgetestet, kann als Shadow live beobachtet, gesweept und im
+fairen A/B gegen die aktive Strategie befördert werden.
+
+- [ ] Port `backtest_engine.py` → `functions/src/core/backtest.ts`;
+      **Backtest-on-Save** nach `runs/{runId}`: Sharpe, MaxDD, Winrate,
+      Trades, Equity-Kurve (≤ 200 Punkte), Bedingungs-Statistik
+      („MACD-Cross feuerte 41×, 12× entscheidend")
+- [ ] Lookahead-Disziplin: Evaluator/Backtest sehen je Bar nur Daten ≤ dieses
+      Bars; Regressionstests inkl. Wochenend-/DST-Fällen — gleiche Härte wie
+      das `forecast_eval`-Gate
+- [ ] Shadow-Modus: virtuelles Konto im Strategie-Doc (nur Functions
+      schreiben), `shadowSignals` nur bei Entscheidungs-Wechsel; UI-Tab mit
+      Hätte-Feed + virtueller vs. echter Equity-Kurve
+- [ ] Sweeps: ≤ 2 Parameter, ≤ 60 Kombis, Budget-Check im Callable; Historie
+      einmal laden, alle Kombis im RAM; Ergebnis als Tabelle + Heatmap,
+      „Als neuen Entwurf übernehmen" — bewusst **kein** Auto-Apply
+- [ ] A/B auf Papier: A `paper` (echtes Wallet), B `shadow` mit gleicher
+      Startbalance; Kennzahlen-Duell, Divergenz-Hervorhebung, transaktionales
+      „Befördern" (Rollentausch)
+- [ ] Versionierung mit Diff-Ansicht + Rollback (append-only); Quotas in
+      `admin/quotas` (10 Strategien, 3 Shadow, 10 Backtests + 3 Sweeps/Tag)
+
+**Abnahme:** Publish erzeugt binnen ~1 min eine Report-Karte per `onSnapshot` ·
+Shadow-Strategie schreibt beim Signalwechsel genau ein `shadowSignals`-Doc ·
+60-Kombi-Sweep bleibt unter dem Function-Timeout · ein absichtlich eingebautes
+Lookahead-Leck lässt den Regressionstest fehlschlagen (adversariale Fixture im
+Repo) · „Befördern" tauscht Rollen atomar.
+
+## M12 — Portfolio, Risiko & Tagesfilm-Journal
+
+**Ziel:** Multi-Wallets je Strategie mit vorberechneten Kennzahlen (Dashboard =
+1 Stats-Doc-Read), serverseitige Risiko-Guards inkl. Circuit Breaker — und der
+Tagesfilm: Replay des Handelstags mit eigenen Trades, damaligen Signalen, News
+und KI-Erklärung, gekoppelt an ein automatisches Journal.
+
+- [ ] Migration `wallet` → `users/{uid}/wallets/{walletId}` (`epoch` für
+      Resets, `strategyId`-Bindung), Positionen als `{walletId_symbol}`;
+      Callables `createWallet/archiveWallet/resetWallet` (Quota 5)
+- [ ] `core/portfolio.ts` (pure, Vitest inkl. DST-/Feiertagsfälle) +
+      `snapshotEquity` (täglich nach US-Close): `equity/{walletId_date}` mit
+      HWM/Drawdown, `stats/{walletId}` mit Sharpe 30/90, MaxDD, WinRate,
+      ProfitFactor, Expectancy-R, Attribution je Symbol/Strategie/Assetklasse
+- [ ] `core/risk.ts`: Circuit Breaker (Tages-Loss-Limit je Wallet,
+      `blockNew`/`flattenAll`, Re-Arm per Callable, Sofort-Push),
+      Positionslimit, fixed-fractional Sizing (Initial-Stop beim Entry
+      eingefroren → R-Multiples) — in derselben Transaktion wie der
+      Wallet-Write, für Scan- und Manuell-Pfad
+- [ ] Journal-Autoanlage bei Entry/Exit mit eingefrorenem `signalContext`
+      (Votes, Indikatorwerte, Forecast, News-Refs, ≤ 60 Bars inline);
+      Rules erlauben dem Client nur `notes/tags/mistakes/review` (diff-Check);
+      Review-Flow mit Grades A–D
+- [ ] **Tagesfilm:** Replay-Panel mit Scrubber aus `ohlc/m5`-Chunk + eigenen
+      Trades + `signals/{scanId}` + `events/{date}`-Markern + `ai/{date}` als
+      Abspann; Abgleich „Signal befolgt / ignoriert / dagegen"
+- [ ] Portfolio-Tab: Equity-Kurve + synchronisiertes Drawdown-Panel,
+      Wallet-Vergleich normalisiert auf 100; Reports Stufe 0 (Template) +
+      Stufe 1 (Haiku-Batch, nur aktive User) via Push/E-Mail, opt-in
+
+**Abnahme:** Simulierter −3 %-Tag trippt den Breaker, neuer Entry wird im
+selben Scan geblockt, Grund erscheint im Signal-Feed · Journal-Update mit
+fremdem Feld wird von Rules abgelehnt · Portfolio-Öffnung kostet ≤ ~10 Reads
+(Profiler-Nachweis) · Tagesfilm lädt mit genau 1 Chunk-Read · Wallet-Reset
+erhöht `epoch`, die Kennzahlen-Reihe bricht nachweislich an der Zäsur.
+
+## M13 — Alpaca Paper Connect & Realtime-Streamer
+
+**Ziel:** Das zweite Paper-Gleis mit echter Order-Mechanik gegen
+`paper-api.alpaca.markets` (eigene Paper-Keys, KMS-verschlüsselt) plus der
+Cloud-Run-`streamer` als einziger Websocket-Halter: Hot-Set-Quotes,
+Sekunden-Preis-Alerts, `trade_updates`.
+
+- [ ] `connectAlpacaPaper`: PK-Präfix-Pflicht (Live-Keys werden abgelehnt),
+      **hartkodierte** Paper-Basis-URL, Probe-Call, KMS-Envelope →
+      `users/{uid}/private/broker` (`read/write: if false` für alle Clients),
+      Initial-Sync + Disconnect-Callable
+- [ ] Order-Statusmaschine: `bracket`/`oco`/`trailing_stop`, `notional`,
+      `extended_hours`, TIF; `client_order_id` = Firestore-Doc-ID
+      (Idempotenz), `cancelOrder`/`replaceOrder`; `engine.stopLoss/takeProfit`
+      mappen auf Bracket-Orders
+- [ ] Cloud-Run-`streamer`, Modul Quotes: IEX-/Krypto-Websocket auf das
+      Hot-Set (Presence via `admin/presence`, 60-s-Heartbeat), Drossel
+      ≤ 1 Write/2 s/Symbol + Change-Filter, `min-instances` 1/0 per
+      Marktzeit-Scheduler
+- [ ] `streamer`, Modul trade_updates: `partial_fill`/`fill`/`canceled` →
+      Order/Position/Wallet (Teilfill-Fortschritt im UI); Reconciliation je
+      Scan („Alpaca ist die Wahrheit" für Gleis B), Drift-Log nach
+      `admin/reconciliations`
+- [ ] Cloud-Tasks-Queue `alpaca-central` für alle Calls mit dem zentralen
+      Daten-Key (429-Header respektieren, Backoff, Dead-Letter-Docs) +
+      Token-Bucket je User-Key in `admin/quotas`
+- [ ] Preis-Alerts realtime über den Streamer (in-memory, nur Firing-Events
+      als Writes); Fehlerbilder-Matrix (401/403/422/429/5xx/WS-Disconnect):
+      fachliche Fehler nie retryen, technische idempotent
+
+**Abnahme:** Limit-Order gegen Alpaca-Paper durchläuft sichtbar
+`pending_new→new→(partial_)filled` inkl. Teilfill-Fortschritt · erzwungener
+Timeout + Retry erzeugt keine Doppel-Order (gleiche `client_order_id`) ·
+Preis-Alert feuert < 5 s nach Schwellen-Tick (gemessen) · grep über Logs,
+Firestore-Export und Frontend-Bundle findet keinen Key · Streamer-Kill
+degradiert das UI sichtbar auf den 5-min-Stand („verzögert"-Badge).
+
+## M14 — Echtgeld-Live (verriegelt, nur mit ausdrücklichem Owner-Go)
+
+**Ziel:** Der Echtgeld-Kern des alten M8 als letzter Schritt: dieselbe
+Order-Maschine, dieselben Risiko-Guards, kein neuer Codepfad außer der
+Live-Basis-URL — hinter dem doppelten Guard und einem Kill-Switch.
+**Nicht eigenmächtig beginnen.**
+
+- [ ] Doppel-Guard: `settings.broker.mode:'live'` **UND** serverseitiges
+      `profile.liveApprovedAt` (setzt ausschließlich der Owner manuell);
+      fehlt eins → automatischer Downgrade auf Paper, mit Log
+- [ ] Live-Keys über separaten KMS-Pfad; `track:'alpaca_live'` in
+      Orders/Wallet (M13-Datenmodell trägt das ohne Migration); LIVE-Badge +
+      Tipp-Bestätigungs-Dialog; Live-UI vor Freischaltung unsichtbar
+- [ ] Risiko-Guards (Breaker, Sizing, Positionslimit) unverändert aktiv;
+      Stops zusätzlich broker-seitig als Bracket-Orders (schließt die
+      5-min-Lücke für Live)
+- [ ] Live-Fehlerbilder (PDT-Sperre, Margin, Buying-Power) in Statusmaschine
+      und UX; getrennte Anzeige Paper vs. Live; erweiterte Rechtstexte
+- [ ] Owner-Kill-Switch: ein Admin-Flag friert alle Live-Order-Pfade
+      plattformweit ein (nur noch Exits erlaubt)
+- [ ] Adversarialer Security-Review + Guard-Tests: kein erreichbarer Codepfad
+      zu `api.alpaca.markets` ohne beide Flags; Rules-/Log-Audit auf Key-Leaks
+
+**Abnahme:** Testaccount mit `mode:'live'` ohne `liveApprovedAt` landet
+nachweislich auf Paper (Log) · mit beiden Flags wird eine Live-Order korrekt
+als `alpaca_live` getrackt · Kill-Switch stoppt Live-Entries binnen eines
+Scans · Review-Protokoll liegt im Repo · alle M12-Guards feuern identisch im
+Live-Pfad (Testfall je Guard). Details definiert der Owner, wenn es soweit ist.
 
 ---
 
