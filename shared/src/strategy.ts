@@ -115,18 +115,27 @@ export interface SignalDoc {
 /**
  * Doc-ID: `${baseDate}_${w}_${lookback}` — der fachliche Schlüssel ersetzt den
  * SQLite-UNIQUE-Index (idempotente Writes, keine Doppel-Logs).
- * evalForecasts bewertet NUR wenn baseDate < heute UND der letzte Horizont-Tag
- * realisiert ist (Lookahead-Gate — niemals aufweichen!).
+ * evalForecasts bewertet NUR wenn der letzte Horizont-Tag strikt vor heute
+ * liegt UND sein Close realisiert ist (Lookahead-Gate — niemals aufweichen!).
  */
 export interface ForecastDoc {
   baseDate: string; // YYYY-MM-DD
+  baseClose: number;
   w: number;
   lookback: number;
   horizonDays: number;
+  sentiment: number;
+  dailyVol: number;
+  points: Array<{ time: string; value: number }>;
+  /** Prognostizierte Änderung zum Horizont-Ende in % (für den Engine-Vote). */
   predictedPct: number;
+  madeAt: string;
+  /** false bis zur Bewertung — Query-Feld für evalForecasts. */
+  evaluated: boolean;
   evaluatedAt?: string;
-  realizedPct?: number;
-  absError?: number;
+  maePct?: number;
+  dirHit?: boolean;
+  nPoints?: number;
 }
 
 // ── User-Daten (users/{uid}/**) ──────────────────────────────────────────────

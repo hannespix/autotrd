@@ -27,6 +27,7 @@ import {
 } from '../../../shared/src/index.js';
 import { computeSignal } from '../core/engine.js';
 import { executePaperTrade, resolveBrokerMode, riskExitReason } from '../core/broker.js';
+import { runForecast, type LiveForecast } from '../core/forecaster.js';
 import { getMarketSnapshot } from '../core/marketData.js';
 
 /** Mo–Fr, 09:30 ≤ t < 16:00 in America/New_York (Port des run_scan.sh-Gates). */
@@ -79,6 +80,7 @@ export interface ScanResult {
 interface SymbolData {
   closes: number[];
   price: number;
+  forecast: LiveForecast | null;
 }
 
 /**
@@ -126,11 +128,17 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
         }
       }
 
-      // 2) Konfluenz-Signale gegen die User-Strategie
+      // 2) Konfluenz-Signale gegen die User-Strategie (inkl. Forecast-Vote)
       for (const symbol of strategy.watchlist) {
         const data = marketData.get(symbol);
         if (!data) continue;
-        const sig = computeSignal(data.closes, data.price, strategy.indicators, strategy.signals);
+        const sig = computeSignal(
+          data.closes,
+          data.price,
+          strategy.indicators,
+          strategy.signals,
+          data.forecast,
+        );
         if (sig.direction === 'buy' && !positions.has(symbol)) {
           const r = await executePaperTrade(
             { uid, symbol, side: 'buy', price: data.price, source: 'engine' },
@@ -204,12 +212,23 @@ export async function runScan(force = false): Promise<ScanResult> {
     try {
       const snap = await getMarketSnapshot(symbol, DEFAULT_STRATEGY.signals.period);
       const closes = snap.bars.map((b) => b.close);
-      marketData.set(symbol, { closes, price: snap.price });
+      const lastDate = snap.bars[snap.bars.length - 1]!.date;
+
+      // Prognose (Sentiment 0 bis M6 die News-Pipeline liefert) + Shadow-Grid
+      let forecast: LiveForecast | null = null;
+      try {
+        forecast = await runForecast(symbol, closes, lastDate, 0);
+      } catch (err) {
+        logger.warn(`Forecast-Fehler ${symbol}`, err);
+      }
+      marketData.set(symbol, { closes, price: snap.price, forecast });
+
       const sig = computeSignal(
         closes,
         snap.price,
         DEFAULT_STRATEGY.indicators,
         DEFAULT_STRATEGY.signals,
+        forecast,
       );
 
       const symRef = db.collection('market').doc(symbol);
@@ -227,6 +246,18 @@ export async function runScan(force = false): Promise<ScanResult> {
             updatedAt: now.toISOString(),
           },
           source: snap.source,
+          // Live-Prognose fürs Chart-Overlay (Punkte + Band + Kennwerte)
+          forecast: forecast
+            ? {
+                points: forecast.points,
+                band: forecast.band,
+                w: forecast.w,
+                lookback: forecast.lookback,
+                predictedPct: Math.round(forecast.predictedPct * 100) / 100,
+                sentiment: forecast.sentiment,
+                baseDate: lastDate,
+              }
+            : null,
         },
         { merge: true },
       );
@@ -252,7 +283,6 @@ export async function runScan(force = false): Promise<ScanResult> {
       // `date` zusätzlich als Feld: Firestore kann nicht absteigend über
       // Doc-IDs sortieren (kein descending key scan) — Clients sortieren
       // deshalb über dieses Feld.
-      const lastDate = snap.bars[snap.bars.length - 1]!.date;
       batch.set(symRef.collection('indicators').doc(lastDate), {
         ...sig.snapshot,
         date: lastDate,

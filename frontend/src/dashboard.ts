@@ -24,6 +24,7 @@ import {
   watchLatestIndicators,
   watchLatestSignal,
   watchMarketDoc,
+  watchForecastStats,
   watchPositions,
   watchTrades,
   watchUserDoc,
@@ -64,6 +65,7 @@ interface DashState {
   wallet: Wallet | null;
   positions: Position[];
   trades: TradeRow[];
+  forecast: MarketDocData['forecast'];
   /** Live-Preise der Positions-Symbole (aus market/{sym}.quote). */
   posPrices: Map<string, number>;
   subs: Unsubscribe[]; // globale Subs (Settings, Wallet, Positionen, Trades)
@@ -150,6 +152,7 @@ function layout(email: string): string {
           <button class="tf-btn on" data-bars="66">3M</button>
           <button class="tf-btn" data-bars="0">Alle</button>
         </div>
+        <div class="hint" id="fcInfo" style="margin-bottom:4px"></div>
         <div id="chartArea"></div>
         <div class="hint">Tageskerzen aus <span class="mono">market/{sym}/bars</span> —
           aktualisiert der zentrale 5-min-Scan.</div>
@@ -213,6 +216,18 @@ function layout(email: string): string {
         </div>
       </div></div>
 
+      <div class="card"><div class="sect">Prognose-Genauigkeit</div><div class="cbody kpi">
+        <label class="lbl">Richtungs-Trefferquote</label>
+        <div id="fcAcc" class="vbig c-ac">--</div>
+        <div class="row" style="gap:12px">
+          <div><label class="lbl">Bewertet</label><div id="fcScored" class="smv">0</div></div>
+          <div><label class="lbl">Best w</label><div id="fcW" class="smv">--</div></div>
+          <div><label class="lbl">Lookback</label><div id="fcLb" class="smv">--</div></div>
+        </div>
+        <div class="hint" id="fcTuning">Self-Tuning sammelt Evidenz — Defaults aktiv,
+          bis genug Prognosen realisiert sind.</div>
+      </div></div>
+
       <div class="card"><div class="sect">News &amp; Sentiment</div><div class="cbody">
         <div class="hint">News-Feeds, Lexikon-Sentiment und KI-Tageszusammenfassung
           folgen mit Milestone M6.</div>
@@ -264,6 +279,10 @@ function wireSymbol(): void {
       const chg = $('chChg');
       chg.textContent = q ? fmtPct(q.changePct) : '--';
       chg.className = `chart-px ${q ? pnlClass(q.changePct) : ''}`;
+      if (st) {
+        st.forecast = d?.forecast ?? null;
+        applyForecast();
+      }
     }),
     watchBars(sym, (bars) => {
       if (!st) return;
@@ -290,6 +309,28 @@ function renderChart(): void {
   if (!st?.chart) return;
   const bars = st.range > 0 ? st.bars.slice(-st.range) : st.bars;
   st.chart.setBars(bars);
+  applyForecast();
+}
+
+/** Prognose-Overlay + Badge aus market/{sym}.forecast anwenden. */
+function applyForecast(): void {
+  if (!st?.chart) return;
+  const fc = st.forecast;
+  const info = $('fcInfo');
+  if (!fc || fc.points.length === 0) {
+    st.chart.setForecast(null);
+    info.textContent = '';
+    return;
+  }
+  const last = st.bars[st.bars.length - 1];
+  st.chart.setForecast(
+    { points: fc.points, band: fc.band },
+    last ? { time: last.date, value: last.close } : undefined,
+  );
+  const dir = fc.predictedPct >= 0 ? '↑' : '↓';
+  info.textContent =
+    `Prognose ${dir} ${fc.predictedPct >= 0 ? '+' : ''}${fc.predictedPct.toFixed(2)} % ` +
+    `über ${fc.points.length} Handelstage (w=${fc.w}, Lookback ${fc.lookback}, gestrichelt ±1σ)`;
 }
 
 async function rebuildChart(): Promise<void> {
@@ -780,6 +821,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     wallet: null,
     positions: [],
     trades: [],
+    forecast: null,
     posPrices: new Map(),
     subs: [],
     symbolSubs: [],
@@ -816,6 +858,16 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       if (!st) return;
       st.trades = trades;
       renderPortfolio();
+    }),
+    watchForecastStats((stats) => {
+      $('fcAcc').textContent =
+        stats?.dirAccuracy != null ? `${stats.dirAccuracy.toFixed(1)} %` : '--';
+      $('fcScored').textContent = String(stats?.scored ?? 0);
+      $('fcW').textContent = stats?.best ? String(stats.best.w) : '--';
+      $('fcLb').textContent = stats?.best ? String(stats.best.lookback) : '--';
+      $('fcTuning').textContent = stats?.tuningActive
+        ? 'Self-Tuning aktiv: Live-Prognosen nutzen die historisch beste Kombi.'
+        : 'Self-Tuning sammelt Evidenz — Defaults aktiv, bis genug Prognosen realisiert sind.';
     }),
   );
 
