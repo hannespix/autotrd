@@ -40,3 +40,12 @@ jobs:
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
         run: npx firebase-tools deploy --only functions,firestore:rules --non-interactive --force
+
+      # firebase-tools setzt den Invoker bei Callable-UPDATES nie — einmal
+      # privat angelegte Callables blieben sonst für immer privat (403 ohne
+      # CORS-Header). Läuft auch nach Teil-Fehlern des Deploys (!cancelled).
+      - name: Callables öffentlich schalten
+        if: ${{ !cancelled() && env.FIREBASE_SERVICE_ACCOUNT != '' }}
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+        run: node scripts-ci/set-public-invoker.mjs ensureprofile savestrategy trade
