@@ -19,7 +19,9 @@ import {
   callTrade,
   loadMarketQuotes,
   loadUniverse,
+  loadWorkspace,
   saveStrategy,
+  saveWorkspace,
   watchBars,
   watchLatestAi,
   watchLatestIndicators,
@@ -38,14 +40,58 @@ import {
   type SignalRow,
   type TradeRow,
   type UniverseClass,
+  type WorkspaceDocData,
 } from './data.js';
 import { emailVerified, logout, refreshUser, sendVerification } from './auth.js';
 import { mountLegalFooter } from './legal.js';
+import {
+  GROUP_COLORS,
+  clearSubscribers,
+  groupSymbol,
+  nextGroup,
+  publishSymbol,
+  seedSymbols,
+  setGroup,
+  subscribe as busSubscribe,
+  type LinkGroup,
+} from './linkbus.js';
+import { initPalette, type PaletteCommand } from './palette.js';
 
 const CLASS_ORDER = [
   'indices', 'forex', 'crypto', 'commodities', 'rates_bonds',
   'etf_sectors', 'etf_regions', 'etf_thematic', 'stocks_us', 'stocks_global',
 ];
+
+/* ── Workspace-Panels & Presets (M9) ────────────────────────────────── */
+
+const PANEL_TITLES: Record<string, string> = {
+  strategy: 'Strategie',
+  engine: 'Engine',
+  history: 'Trade-Historie',
+  chart: 'Chart',
+  sigcards: 'Indikator-Kacheln',
+  autosignals: 'Auto-Signale',
+  positions: 'Positionen',
+  market: 'Markt-Übersicht',
+  performance: 'Performance',
+  manualtrade: 'Manueller Trade',
+  clock: 'Markt-Uhr',
+  forecastacc: 'Prognose-Genauigkeit',
+  news: 'News & Sentiment',
+};
+
+/** Werks-Presets: Sichtbarkeits-Sets über den 13 Panels. */
+const WS_PRESETS: Record<string, { label: string; hidden: string[] }> = {
+  ueberblick: { label: 'Überblick', hidden: [] },
+  fokus: {
+    label: 'Ein-Symbol-Fokus',
+    hidden: ['market', 'autosignals', 'history', 'clock', 'strategy'],
+  },
+  jaeger: {
+    label: 'Signal-Jäger',
+    hidden: ['manualtrade', 'clock', 'market', 'history', 'news'],
+  },
+};
 
 const fmtNum = (n: number | null | undefined): string => {
   if (n === null || n === undefined || !Number.isFinite(n)) return '--';
@@ -72,6 +118,17 @@ interface DashState {
   positions: Position[];
   trades: TradeRow[];
   forecast: MarketDocData['forecast'];
+  /** Link-Bus (M9): Gruppen der beiden verlinkbaren Panels. */
+  chartGroup: LinkGroup;
+  newsGroup: LinkGroup;
+  /** Symbol des News-Panels (folgt newsGroup — kann vom Chart abweichen). */
+  newsSymbol: string;
+  newsSubs: Unsubscribe[];
+  /** Workspace (M9): Preset + ausgeblendete Panels + Save-Debounce. */
+  wsPreset: string;
+  wsHidden: Set<string>;
+  wsSaveTimer: number | null;
+  paletteDispose: (() => void) | null;
   /** Event-Tage des aktuellen Symbols (für Marker + Crosshair-Tooltip). */
   events: EventDay[];
   /** Layer-Toggles (M6b): Prognose-Overlay / Event-Marker ein- und ausblenden. */
@@ -88,7 +145,54 @@ interface DashState {
 
 let st: DashState | null = null;
 
+// Bus-Abonnenten-Schlüssel der beiden verlinkbaren Panels (M9)
+const CHART_KEY = {};
+const NEWS_KEY = {};
+
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
+
+/** Katalog flach für die Palette (Symbol + Klarname); Fallback: Watchlist. */
+function paletteSymbols(): Array<{ symbol: string; name: string }> {
+  if (!st) return [];
+  if (st.universe) {
+    const out: Array<{ symbol: string; name: string }> = [];
+    for (const cls of Object.values(st.universe)) {
+      for (const entries of Object.values(cls.groups)) out.push(...entries);
+    }
+    return out;
+  }
+  return st.strategy.watchlist.map((symbol) => ({ symbol, name: resolveName(symbol) }));
+}
+
+function paletteCommands(): PaletteCommand[] {
+  if (!st) return [];
+  const cmds: PaletteCommand[] = [];
+  for (const [id, p] of Object.entries(WS_PRESETS)) {
+    cmds.push({
+      id: `preset-${id}`,
+      label: `Preset: ${p.label}`,
+      hint: 'Workspace',
+      run: () => applyPreset(id),
+    });
+  }
+  cmds.push(
+    { id: 'theme', label: 'Theme wechseln (hell/dunkel)', run: () => $('themeBtn').click() },
+    { id: 'engine-start', label: 'Engine starten (Paper)', run: () => $('engStart').click() },
+    { id: 'engine-stop', label: 'Engine stoppen', run: () => $('engStop').click() },
+    { id: 'link-chart', label: 'Chart: Link-Gruppe wechseln', run: () => $('chipChart').click() },
+    { id: 'link-news', label: 'News-Panel: Link-Gruppe wechseln', run: () => $('chipNews').click() },
+    { id: 'picker', label: 'Watchlist bearbeiten', run: () => $('openPickerBtn').click() },
+  );
+  for (const [id, title] of Object.entries(PANEL_TITLES)) {
+    cmds.push({
+      id: `panel-${id}`,
+      label: `Panel ${st.wsHidden.has(id) ? 'einblenden' : 'ausblenden'}: ${title}`,
+      hint: 'Panel',
+      run: () => togglePanel(id),
+    });
+  }
+  return cmds;
+}
 
 /* ── Markup ─────────────────────────────────────────────────────────── */
 
@@ -108,7 +212,7 @@ function layout(email: string): string {
 
   <div class="app">
     <div class="col-l" id="leftCol">
-      <div class="card"><div class="sect">Strategie</div><div class="cbody">
+      <div class="card" data-panel="strategy"><div class="sect">Strategie</div><div class="cbody">
         <div class="fld"><label class="lbl">Watchlist</label>
           <div id="wlChips" class="wl-chips"></div>
           <button class="btn btn-n" id="openPickerBtn" style="margin-top:6px">Watchlist wählen</button>
@@ -133,7 +237,7 @@ function layout(email: string): string {
         <div class="hint" id="saveHint"></div>
       </div></div>
 
-      <div class="card"><div class="sect">Engine</div><div class="cbody">
+      <div class="card" data-panel="engine"><div class="sect">Engine</div><div class="cbody">
         <button class="btn btn-g" id="engStart">Start</button>
         <button class="btn btn-r" id="engStop">Stop</button>
         <div class="hint">Bei Engine AN handelt der zentrale 5-min-Scan
@@ -149,7 +253,7 @@ function layout(email: string): string {
         </div>
       </div></div>
 
-      <div class="card"><div class="sect">Trade-Historie</div><div class="cbody">
+      <div class="card" data-panel="history"><div class="sect">Trade-Historie</div><div class="cbody">
         <div class="tw"><table class="tbl">
           <thead><tr><th>Zeit</th><th>Sym</th><th>Side</th><th>Qty</th><th>Preis</th><th>P&amp;L</th></tr></thead>
           <tbody id="jBody"><tr><td colspan="6" class="c-t3">Keine Trades</td></tr></tbody>
@@ -160,7 +264,7 @@ function layout(email: string): string {
     <div class="col-m">
       <div class="livebar" id="liveBar"></div>
 
-      <div class="card"><div class="sect">Chart · Candlestick + Volumen</div><div class="cbody">
+      <div class="card" data-panel="chart"><div class="sect">Chart · Candlestick + Volumen <button class="lchip" id="chipChart" title="Link-Gruppe wechseln (Chart folgt dieser Gruppe)">A</button></div><div class="cbody">
         <div class="chart-hd">
           <span class="chart-nm" id="chSym"></span>
           <span class="chart-sub" id="chSub"></span>
@@ -180,35 +284,35 @@ function layout(email: string): string {
           aktualisiert der zentrale 5-min-Scan.</div>
       </div></div>
 
-      <div class="sig-grid">
+      <div class="sig-grid" data-panel="sigcards">
         <div class="scard"><div class="slbl">RSI (14)</div><div id="vRSI" class="sval c-ac">--</div></div>
         <div class="scard"><div class="slbl">MACD</div><div id="vMacd" class="sval c-ac">--</div></div>
         <div class="scard"><div class="slbl">BB Pos %</div><div id="vBB" class="sval c-ac">--</div></div>
         <div class="scard"><div class="slbl">Signal</div><div id="vSig" class="sval c-t3">--</div></div>
       </div>
 
-      <div class="card"><div class="sect">Auto-Signale</div><div class="cbody">
+      <div class="card" data-panel="autosignals"><div class="sect">Auto-Signale</div><div class="cbody">
         <div class="tw"><table class="tbl">
           <thead><tr><th>Ticker</th><th>RSI</th><th>MACD</th><th>BB %</th><th>Konfluenz</th><th>Signal</th></tr></thead>
           <tbody id="sigBody"><tr><td colspan="6" class="c-t3">Noch kein Scan</td></tr></tbody>
         </table></div>
       </div></div>
 
-      <div class="card"><div class="sect">Aktive Positionen <span id="pCount" style="float:right;color:var(--t3)">0 offen</span></div><div class="cbody">
+      <div class="card" data-panel="positions"><div class="sect">Aktive Positionen <span id="pCount" style="float:right;color:var(--t3)">0 offen</span></div><div class="cbody">
         <div class="tw"><table class="tbl">
           <thead><tr><th>Sym</th><th>Qty</th><th>Eintritt</th><th>Aktuell</th><th>P&amp;L</th><th>%</th><th></th></tr></thead>
           <tbody id="pBody"><tr><td colspan="7" class="c-t3">Keine offenen Positionen</td></tr></tbody>
         </table></div>
       </div></div>
 
-      <div class="card"><div class="sect">Markt-Übersicht</div><div class="cbody">
+      <div class="card" data-panel="market"><div class="sect">Markt-Übersicht</div><div class="cbody">
         <div class="mkt-tabs" id="mktTabs"></div>
         <div id="mktBody"><span class="c-t3">Lade Katalog…</span></div>
       </div></div>
     </div>
 
     <div class="col-r" id="rightCol">
-      <div class="card"><div class="sect">Performance</div><div class="cbody kpi">
+      <div class="card" data-panel="performance"><div class="sect">Performance</div><div class="cbody kpi">
         <label class="lbl">Cash</label><div id="vCash" class="vbig c-ac">--</div>
         <label class="lbl">Equity (live)</label><div id="vEq" class="vbig">--</div>
         <label class="lbl">Gesamt P&amp;L</label><div id="vPnl" class="vbig">--</div>
@@ -219,7 +323,7 @@ function layout(email: string): string {
         </div>
       </div></div>
 
-      <div class="card"><div class="sect">Manueller Trade</div><div class="cbody">
+      <div class="card" data-panel="manualtrade"><div class="sect">Manueller Trade</div><div class="cbody">
         <input id="mSym" class="inp" placeholder="Symbol (z.B. AAPL)">
         <input id="mQty" class="inp" type="number" value="1" min="1" placeholder="Menge">
         <div class="row">
@@ -229,7 +333,7 @@ function layout(email: string): string {
         <div class="hint" id="mtHint">Preis = zentraler Live-Kurs (Paper)</div>
       </div></div>
 
-      <div class="card"><div class="sect">Markt-Uhr (ET)</div><div class="cbody">
+      <div class="card" data-panel="clock"><div class="sect">Markt-Uhr (ET)</div><div class="cbody">
         <div id="marketClock" class="clock">--:--:--</div>
         <div class="phases">
           <div class="ph" id="phPre">Pre-Mkt</div>
@@ -238,7 +342,7 @@ function layout(email: string): string {
         </div>
       </div></div>
 
-      <div class="card"><div class="sect">Prognose-Genauigkeit</div><div class="cbody kpi">
+      <div class="card" data-panel="forecastacc"><div class="sect">Prognose-Genauigkeit</div><div class="cbody kpi">
         <label class="lbl">Richtungs-Trefferquote</label>
         <div id="fcAcc" class="vbig c-ac">--</div>
         <div class="row" style="gap:12px">
@@ -250,7 +354,7 @@ function layout(email: string): string {
           bis genug Prognosen realisiert sind.</div>
       </div></div>
 
-      <div class="card"><div class="sect">News &amp; Sentiment <span id="nsSym" style="float:right;color:var(--t3)"></span></div><div class="cbody">
+      <div class="card" data-panel="news"><div class="sect">News &amp; Sentiment <span id="nsSym" style="float:right;color:var(--t3)"></span> <button class="lchip" id="chipNews" title="Link-Gruppe wechseln (News folgen dieser Gruppe)" style="float:right;margin-right:8px">A</button></div><div class="cbody">
         <div style="display:flex;align-items:baseline;gap:8px">
           <span id="nsLabel" class="vbig" style="font-size:18px">–</span>
           <span id="nsScore" class="smv">–</span>
@@ -302,7 +406,11 @@ function clearSubs(list: Unsubscribe[]): void {
   list.length = 0;
 }
 
-function wireSymbol(): void {
+/**
+ * Chart-Kontext (Link-Gruppe `chartGroup`): Kursheader, Bars, Prognose,
+ * Event-Marker + Indikator-Kacheln — alles, was das Chart-Symbol beschreibt.
+ */
+function wireChartCtx(): void {
   if (!st) return;
   clearSubs(st.symbolSubs);
   const sym = st.currentSymbol;
@@ -310,7 +418,6 @@ function wireSymbol(): void {
   $('chSub').textContent = resolveName(sym);
   st.events = [];
   $('evTip').hidden = true;
-  renderAiCard(null);
 
   st.symbolSubs.push(
     watchMarketDoc(sym, (d) => {
@@ -322,7 +429,6 @@ function wireSymbol(): void {
       if (st) {
         st.forecast = d?.forecast ?? null;
         applyForecast();
-        renderSentimentGauge(d?.sentiment);
       }
     }),
     watchEvents(sym, (events) => {
@@ -330,8 +436,6 @@ function wireSymbol(): void {
       st.events = events;
       applyMarkers();
     }),
-    watchLatestAi(sym, (ai) => renderAiCard(ai)),
-    watchNews(sym, (news) => renderNewsFeed(news)),
     watchBars(sym, (bars) => {
       if (!st) return;
       st.bars = bars;
@@ -345,6 +449,36 @@ function wireSymbol(): void {
       el.className = `sval ${sig.direction === 'buy' ? 'c-gn' : sig.direction === 'sell' ? 'c-rd' : 'c-t3'}`;
     }),
   );
+}
+
+/**
+ * News-Kontext (Link-Gruppe `newsGroup`): Sentiment-Gauge, News-Feed,
+ * KI-Tageskarte — kann über den Link-Chip vom Chart entkoppelt werden.
+ */
+function wireNewsCtx(): void {
+  if (!st) return;
+  clearSubs(st.newsSubs);
+  const sym = st.newsSymbol;
+  renderAiCard(null);
+
+  st.newsSubs.push(
+    watchMarketDoc(sym, (d) => renderSentimentGauge(d?.sentiment)),
+    watchLatestAi(sym, (ai) => renderAiCard(ai)),
+    watchNews(sym, (news) => renderNewsFeed(news)),
+  );
+}
+
+/** Link-Chips einfärben (Aurora-Farben je Gruppe). */
+function paintChips(): void {
+  if (!st) return;
+  for (const [id, group] of [
+    ['chipChart', st.chartGroup],
+    ['chipNews', st.newsGroup],
+  ] as const) {
+    const chip = $(id);
+    chip.textContent = group;
+    chip.style.background = GROUP_COLORS[group];
+  }
 }
 
 function renderIndicatorCards(row: IndicatorRow | null): void {
@@ -515,14 +649,62 @@ function wireWatchlist(): void {
   renderStrategyChips();
 }
 
+/** Watchlist-/Tabellen-Klick: Symbol in die CHART-Gruppe publizieren (M9).
+ *  Alle Panels derselben Gruppe (Default: auch News) folgen über den Bus. */
 function selectSymbol(sym: string): void {
-  if (!st || st.currentSymbol === sym) return;
-  st.currentSymbol = sym;
+  if (!st) return;
+  publishSymbol(st.chartGroup, sym);
+}
+
+function markLivebar(sym: string): void {
   document.querySelectorAll('.lb-item').forEach((el) => {
     el.classList.toggle('on', el.querySelector('.lb-sym')?.textContent === sym);
   });
-  void rebuildChart();
-  wireSymbol();
+}
+
+/* ── Workspace: Sichtbarkeit, Presets, Persistenz (M9) ──────────────── */
+
+function applyPanels(): void {
+  if (!st) return;
+  document.querySelectorAll<HTMLElement>('[data-panel]').forEach((el) => {
+    el.style.display = st!.wsHidden.has(el.dataset.panel ?? '') ? 'none' : '';
+  });
+}
+
+function applyPreset(id: string): void {
+  const preset = WS_PRESETS[id];
+  if (!st || !preset) return;
+  st.wsPreset = id;
+  st.wsHidden = new Set(preset.hidden);
+  applyPanels();
+  scheduleWsSave();
+}
+
+function togglePanel(id: string): void {
+  if (!st) return;
+  if (st.wsHidden.has(id)) st.wsHidden.delete(id);
+  else st.wsHidden.add(id);
+  st.wsPreset = 'custom';
+  applyPanels();
+  scheduleWsSave();
+}
+
+/** Workspace debounced (2 s) nach users/{uid}/workspaces/default schreiben. */
+function scheduleWsSave(): void {
+  if (!st) return;
+  if (st.wsSaveTimer !== null) clearTimeout(st.wsSaveTimer);
+  st.wsSaveTimer = window.setTimeout(() => {
+    if (!st) return;
+    st.wsSaveTimer = null;
+    const data: WorkspaceDocData = {
+      preset: st.wsPreset,
+      panels: Object.fromEntries([...st.wsHidden].map((id) => [id, { hidden: true }])),
+      groups: { chart: st.chartGroup, news: st.newsGroup },
+      symbols: { A: groupSymbol('A'), B: groupSymbol('B'), C: groupSymbol('C') },
+      updatedAt: new Date().toISOString(),
+    };
+    saveWorkspace(st.uid, data).catch((e) => console.warn('saveWorkspace', e));
+  }, 2000);
 }
 
 /* ── Strategie-Formular ─────────────────────────────────────────────── */
@@ -785,7 +967,7 @@ function closeModal(which: 'detail' | 'picker'): void {
 
 function renderSentimentGauge(s: import('./data.js').SentimentField | undefined): void {
   if (!st) return;
-  $('nsSym').textContent = st.currentSymbol;
+  $('nsSym').textContent = st.newsSymbol;
   if (!s) {
     $('nsLabel').textContent = '–';
     $('nsScore').textContent = '–';
@@ -804,7 +986,7 @@ function renderSentimentGauge(s: import('./data.js').SentimentField | undefined)
 /** KI-Tageskarte „Warum bewegt sich X?“ aus market/{sym}/ai/{date} (M6b). */
 function renderAiCard(ai: AiDayDoc | null): void {
   if (!st) return;
-  $('aiSym').textContent = st.currentSymbol;
+  $('aiSym').textContent = st.newsSymbol;
   const sum = $('aiSummary');
   const meta = $('aiMeta');
   const tags = $('aiTags');
@@ -1011,6 +1193,14 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     positions: [],
     trades: [],
     forecast: null,
+    chartGroup: 'A',
+    newsGroup: 'A',
+    newsSymbol: DEFAULT_STRATEGY.watchlist[0] ?? 'QQQ',
+    newsSubs: [],
+    wsPreset: 'ueberblick',
+    wsHidden: new Set(),
+    wsSaveTimer: null,
+    paletteDispose: null,
     events: [],
     showForecast: true,
     showEvents: true,
@@ -1021,6 +1211,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     positionSubs: new Map(),
     timers: [],
   };
+  seedSymbols({ A: st.currentSymbol, B: st.currentSymbol, C: st.currentSymbol });
 
   // User-Doc: Strategie (Formular/Watchlist) + Wallet folgen Firestore
   st.subs.push(
@@ -1033,9 +1224,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       renderPortfolio();
       if (st.strategy.watchlist.join(',') !== prevWl || $('liveBar').childElementCount === 0) {
         if (!st.strategy.watchlist.includes(st.currentSymbol)) {
-          st.currentSymbol = st.strategy.watchlist[0] ?? st.currentSymbol;
-          void rebuildChart();
-          wireSymbol();
+          publishSymbol(st.chartGroup, st.strategy.watchlist[0] ?? st.currentSymbol);
         }
         wireWatchlist();
       }
@@ -1063,13 +1252,84 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     }),
   );
 
+  // Link-Bus (M9): Chart- und News-Kontext folgen ihrer jeweiligen Gruppe.
+  busSubscribe(CHART_KEY, st.chartGroup, (sym) => {
+    if (!st || st.currentSymbol === sym) return;
+    st.currentSymbol = sym;
+    markLivebar(sym);
+    void rebuildChart();
+    wireChartCtx();
+    scheduleWsSave();
+  });
+  busSubscribe(NEWS_KEY, st.newsGroup, (sym) => {
+    if (!st || st.newsSymbol === sym) return;
+    st.newsSymbol = sym;
+    wireNewsCtx();
+    scheduleWsSave();
+  });
+  // Gruppen-Wechsel: das Panel NIMMT sein Symbol MIT (die neue Gruppe
+  // adoptiert es) — so heißt „News auf B" wirklich „News bleibt stehen,
+  // während A weiterschaltet", statt zum alten B-Symbol zu springen.
+  $('chipChart').addEventListener('click', () => {
+    if (!st) return;
+    st.chartGroup = nextGroup(st.chartGroup);
+    seedSymbols({ [st.chartGroup]: st.currentSymbol });
+    setGroup(CHART_KEY, st.chartGroup);
+    paintChips();
+    scheduleWsSave();
+  });
+  $('chipNews').addEventListener('click', () => {
+    if (!st) return;
+    st.newsGroup = nextGroup(st.newsGroup);
+    seedSymbols({ [st.newsGroup]: st.newsSymbol });
+    setGroup(NEWS_KEY, st.newsGroup);
+    paintChips();
+    scheduleWsSave();
+  });
+
   wireWatchlist();
-  wireSymbol();
+  wireChartCtx();
+  wireNewsCtx();
+  paintChips();
   void rebuildChart();
   void renderMarketTabs();
   updateClock();
   st.timers.push(window.setInterval(updateClock, 1000));
   mountLegalFooter(root);
+
+  // Gespeicherten Workspace anwenden (Preset, Panels, Gruppen, Symbole)
+  void loadWorkspace(uid).then((ws) => {
+    if (!st || !ws) return;
+    st.wsPreset = ws.preset ?? 'ueberblick';
+    st.wsHidden = new Set(
+      Object.entries(ws.panels ?? {})
+        .filter(([, cfg]) => cfg.hidden)
+        .map(([id]) => id),
+    );
+    applyPanels();
+    const g = (v: unknown): LinkGroup => (v === 'B' || v === 'C' ? v : 'A');
+    st.chartGroup = g(ws.groups?.chart);
+    st.newsGroup = g(ws.groups?.news);
+    const symbols: Partial<Record<LinkGroup, string>> = {};
+    for (const grp of ['A', 'B', 'C'] as const) {
+      const sym = ws.symbols?.[grp];
+      if (typeof sym === 'string' && sym) symbols[grp] = sym;
+    }
+    seedSymbols(symbols);
+    setGroup(CHART_KEY, st.chartGroup);
+    setGroup(NEWS_KEY, st.newsGroup);
+    paintChips();
+  });
+
+  // Command-Palette (Ctrl+K, überschreibbar via settings.hotkeys.palette)
+  st.paletteDispose = initPalette({
+    hotkey: 'ctrl+k',
+    symbols: () => paletteSymbols(),
+    commands: () => paletteCommands(),
+    onSymbol: (sym) => {
+      if (st) publishSymbol(st.chartGroup, sym);
+    },
+  });
 
   // E-Mail-Verifikation (M7): ohne bestätigte Mail bleibt der Engine-Start
   // serverseitig gesperrt — die Box erklärt das und bietet beide Aktionen an.
@@ -1162,9 +1422,13 @@ export function unmountDashboard(): void {
   if (!st) return;
   clearSubs(st.subs);
   clearSubs(st.symbolSubs);
+  clearSubs(st.newsSubs);
   clearSubs(st.watchlistSubs);
   for (const u of st.positionSubs.values()) u();
   for (const t of st.timers) clearInterval(t);
+  if (st.wsSaveTimer !== null) clearTimeout(st.wsSaveTimer);
+  st.paletteDispose?.();
+  clearSubscribers();
   st.chart?.destroy();
   document.removeEventListener('keydown', onEscape);
   st = null;

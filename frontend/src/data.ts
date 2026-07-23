@@ -10,12 +10,34 @@ import {
   getDoc,
   getDocs,
   limit,
-  onSnapshot,
+  onSnapshot as fsOnSnapshot,
   orderBy,
   query,
+  setDoc,
   documentId,
   type Unsubscribe,
 } from 'firebase/firestore';
+
+// ── Listener-Buchhaltung (M9): jeder onSnapshot läuft über diesen Wrapper,
+// damit Panel-Wechsel nachweislich keine Listener leaken (E2E-Zähler). ──
+let activeListeners = 0;
+
+export function listenerCount(): number {
+  return activeListeners;
+}
+
+const onSnapshot = ((...args: Parameters<typeof fsOnSnapshot>): Unsubscribe => {
+  activeListeners += 1;
+  const unsub = (fsOnSnapshot as (...a: unknown[]) => Unsubscribe)(...args);
+  let closed = false;
+  return () => {
+    if (!closed) {
+      closed = true;
+      activeListeners -= 1;
+    }
+    unsub();
+  };
+}) as typeof fsOnSnapshot;
 import { connectFunctionsEmulator, getFunctions, httpsCallable } from 'firebase/functions';
 import { getApp } from 'firebase/app';
 import { db } from './firebase.js';
@@ -268,6 +290,28 @@ export async function loadUniverse(): Promise<Record<string, UniverseClass> | nu
   const snap = await getDoc(doc(db(), 'meta', 'universe'));
   if (!snap.exists()) return null;
   return (snap.data() as { classes: Record<string, UniverseClass> }).classes;
+}
+
+/* ── Workspace-Persistenz (M9): users/{uid}/workspaces/{wsId} ── */
+
+export interface WorkspaceDocData {
+  preset: string;
+  /** Panel-Sichtbarkeit (id → hidden); fehlend = sichtbar. */
+  panels: Record<string, { hidden?: boolean }>;
+  /** Link-Gruppen der verlinkbaren Panels (chart/news → 'A'|'B'|'C'). */
+  groups: Record<string, string>;
+  /** Zuletzt aktives Symbol je Link-Gruppe. */
+  symbols: Record<string, string>;
+  updatedAt: string;
+}
+
+export async function loadWorkspace(uid: string): Promise<WorkspaceDocData | null> {
+  const snap = await getDoc(doc(db(), 'users', uid, 'workspaces', 'default'));
+  return snap.exists() ? (snap.data() as WorkspaceDocData) : null;
+}
+
+export async function saveWorkspace(uid: string, data: WorkspaceDocData): Promise<void> {
+  await setDoc(doc(db(), 'users', uid, 'workspaces', 'default'), data);
 }
 
 /** Quotes aller vorhandenen market/**-Docs (für die Markt-Übersicht). */

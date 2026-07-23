@@ -12,9 +12,14 @@ import {
   resetPassword,
   watchAuth,
 } from './auth.js';
-import { ensureProfile } from './data.js';
+import { ensureProfile, listenerCount } from './data.js';
 import { mountDashboard, unmountDashboard } from './dashboard.js';
 import { mountLegalFooter } from './legal.js';
+
+// Leak-Nachweis (M9-Abnahme): aktive Firestore-Listener zählbar machen
+(window as unknown as { __autotrd: { listenerCount: () => number } }).__autotrd = {
+  listenerCount,
+};
 
 // Theme früh setzen (localStorage), Default dunkel
 document.documentElement.dataset.theme = localStorage.getItem('autotrd-theme') ?? 'dark';
