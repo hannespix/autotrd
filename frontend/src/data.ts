@@ -41,6 +41,7 @@ const onSnapshot = ((...args: Parameters<typeof fsOnSnapshot>): Unsubscribe => {
 import { connectFunctionsEmulator, getFunctions, httpsCallable } from 'firebase/functions';
 import { getApp } from 'firebase/app';
 import { db } from './firebase.js';
+import { muxWatch } from './mux.js';
 import type { ChartBar } from './chart.js';
 
 export interface MarketDocData {
@@ -68,10 +69,14 @@ export interface EventDay {
 }
 
 export function watchEvents(symbol: string, cb: (events: EventDay[]) => void): Unsubscribe {
-  const q = query(collection(db(), 'market', symbol, 'events'), orderBy(documentId()));
-  return onSnapshot(q, (snap) => {
-    cb(snap.docs.map((d) => d.data() as EventDay));
-  });
+  return muxWatch(
+    `events:${symbol}`,
+    (emit) => {
+      const q = query(collection(db(), 'market', symbol, 'events'), orderBy(documentId()));
+      return onSnapshot(q, (snap) => emit(snap.docs.map((d) => d.data())));
+    },
+    (p) => cb(p as EventDay[]),
+  );
 }
 
 export interface NewsRow {
@@ -84,14 +89,18 @@ export interface NewsRow {
 }
 
 export function watchNews(symbol: string, cb: (news: NewsRow[]) => void): Unsubscribe {
-  const q = query(
-    collection(db(), 'market', symbol, 'news'),
-    orderBy('published', 'desc'),
-    limit(12),
+  return muxWatch(
+    `news:${symbol}`,
+    (emit) => {
+      const q = query(
+        collection(db(), 'market', symbol, 'news'),
+        orderBy('published', 'desc'),
+        limit(12),
+      );
+      return onSnapshot(q, (snap) => emit(snap.docs.map((d) => d.data())));
+    },
+    (p) => cb(p as NewsRow[]),
   );
-  return onSnapshot(q, (snap) => {
-    cb(snap.docs.map((d) => d.data() as NewsRow));
-  });
 }
 
 /** KI-Tages-Doc aus market/{sym}/ai/{date} (M6b — zentral gecacht). */
@@ -107,14 +116,14 @@ export interface AiDayDoc {
 }
 
 export function watchLatestAi(symbol: string, cb: (ai: AiDayDoc | null) => void): Unsubscribe {
-  const q = query(
-    collection(db(), 'market', symbol, 'ai'),
-    orderBy('date', 'desc'),
-    limit(1),
+  return muxWatch(
+    `ai:${symbol}`,
+    (emit) => {
+      const q = query(collection(db(), 'market', symbol, 'ai'), orderBy('date', 'desc'), limit(1));
+      return onSnapshot(q, (snap) => emit(snap.empty ? null : snap.docs[0]!.data()));
+    },
+    (p) => cb(p as AiDayDoc | null),
   );
-  return onSnapshot(q, (snap) => {
-    cb(snap.empty ? null : (snap.docs[0]!.data() as AiDayDoc));
-  });
 }
 
 export interface SentimentField {
@@ -132,9 +141,14 @@ export interface ForecastStatsDoc {
 }
 
 export function watchForecastStats(cb: (stats: ForecastStatsDoc | null) => void): Unsubscribe {
-  return onSnapshot(doc(db(), 'meta', 'forecastStats'), (snap) => {
-    cb(snap.exists() ? (snap.data() as ForecastStatsDoc) : null);
-  });
+  return muxWatch(
+    'forecastStats',
+    (emit) =>
+      onSnapshot(doc(db(), 'meta', 'forecastStats'), (snap) =>
+        emit(snap.exists() ? snap.data() : null),
+      ),
+    (p) => cb(p as ForecastStatsDoc | null),
+  );
 }
 
 export interface SignalRow {
@@ -179,21 +193,25 @@ export function watchMarketDoc(
   symbol: string,
   cb: (data: MarketDocData | null) => void,
 ): Unsubscribe {
-  return onSnapshot(doc(db(), 'market', symbol), (snap) => {
-    cb(snap.exists() ? (snap.data() as MarketDocData) : null);
-  });
+  return muxWatch(
+    `marketDoc:${symbol}`,
+    (emit) =>
+      onSnapshot(doc(db(), 'market', symbol), (snap) => emit(snap.exists() ? snap.data() : null)),
+    (p) => cb(p as MarketDocData | null),
+  );
 }
 
 export function watchBars(symbol: string, cb: (bars: ChartBar[]) => void): Unsubscribe {
-  const q = query(collection(db(), 'market', symbol, 'bars'), orderBy(documentId()));
-  return onSnapshot(q, (snap) => {
-    cb(
-      snap.docs.map((d) => ({
-        date: d.id,
-        ...(d.data() as Omit<ChartBar, 'date'>),
-      })),
-    );
-  });
+  return muxWatch(
+    `bars:${symbol}`,
+    (emit) => {
+      const q = query(collection(db(), 'market', symbol, 'bars'), orderBy(documentId()));
+      return onSnapshot(q, (snap) =>
+        emit(snap.docs.map((d) => ({ date: d.id, ...(d.data() as Omit<ChartBar, 'date'>) }))),
+      );
+    },
+    (p) => cb(p as ChartBar[]),
+  );
 }
 
 // Achtung: Firestore unterstützt KEINE absteigenden Key-Scans
@@ -203,28 +221,36 @@ export function watchLatestSignal(
   symbol: string,
   cb: (sig: SignalRow | null) => void,
 ): Unsubscribe {
-  const q = query(
-    collection(db(), 'market', symbol, 'signals'),
-    orderBy('at', 'desc'),
-    limit(1),
+  return muxWatch(
+    `signal:${symbol}`,
+    (emit) => {
+      const q = query(
+        collection(db(), 'market', symbol, 'signals'),
+        orderBy('at', 'desc'),
+        limit(1),
+      );
+      return onSnapshot(q, (snap) => emit(snap.empty ? null : snap.docs[0]!.data()));
+    },
+    (p) => cb(p as SignalRow | null),
   );
-  return onSnapshot(q, (snap) => {
-    cb(snap.empty ? null : (snap.docs[0]!.data() as SignalRow));
-  });
 }
 
 export function watchLatestIndicators(
   symbol: string,
   cb: (row: IndicatorRow | null) => void,
 ): Unsubscribe {
-  const q = query(
-    collection(db(), 'market', symbol, 'indicators'),
-    orderBy('date', 'desc'),
-    limit(1),
+  return muxWatch(
+    `indicators:${symbol}`,
+    (emit) => {
+      const q = query(
+        collection(db(), 'market', symbol, 'indicators'),
+        orderBy('date', 'desc'),
+        limit(1),
+      );
+      return onSnapshot(q, (snap) => emit(snap.empty ? null : snap.docs[0]!.data()));
+    },
+    (p) => cb(p as IndicatorRow | null),
   );
-  return onSnapshot(q, (snap) => {
-    cb(snap.empty ? null : (snap.docs[0]!.data() as IndicatorRow));
-  });
 }
 
 export function watchUserDoc(
