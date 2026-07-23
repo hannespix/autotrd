@@ -21,6 +21,7 @@ import {
   loadUniverse,
   saveStrategy,
   watchBars,
+  watchLatestAi,
   watchLatestIndicators,
   watchLatestSignal,
   watchMarketDoc,
@@ -30,6 +31,8 @@ import {
   watchPositions,
   watchTrades,
   watchUserDoc,
+  type AiDayDoc,
+  type EventDay,
   type IndicatorRow,
   type MarketDocData,
   type SignalRow,
@@ -68,6 +71,11 @@ interface DashState {
   positions: Position[];
   trades: TradeRow[];
   forecast: MarketDocData['forecast'];
+  /** Event-Tage des aktuellen Symbols (für Marker + Crosshair-Tooltip). */
+  events: EventDay[];
+  /** Layer-Toggles (M6b): Prognose-Overlay / Event-Marker ein- und ausblenden. */
+  showForecast: boolean;
+  showEvents: boolean;
   /** Live-Preise der Positions-Symbole (aus market/{sym}.quote). */
   posPrices: Map<string, number>;
   subs: Unsubscribe[]; // globale Subs (Settings, Wallet, Positionen, Trades)
@@ -153,6 +161,8 @@ function layout(email: string): string {
           <button class="tf-btn" data-bars="22">1M</button>
           <button class="tf-btn on" data-bars="66">3M</button>
           <button class="tf-btn" data-bars="0">Alle</button>
+          <button class="tf-btn on" id="lyFc" title="Prognose-Overlay ein/aus" style="margin-left:auto">Prognose</button>
+          <button class="tf-btn on" id="lyEv" title="Event-Marker ein/aus">Events</button>
         </div>
         <div class="hint" id="fcInfo" style="margin-bottom:4px"></div>
         <div id="chartArea"></div>
@@ -240,11 +250,17 @@ function layout(email: string): string {
           <div id="nsPin" style="position:absolute;top:-3px;left:50%;width:3px;height:14px;background:var(--t1);border-radius:2px;transition:left .5s"></div>
         </div>
         <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--t3);text-transform:uppercase"><span>Bearish</span><span>Neutral</span><span>Bullish</span></div>
-        <div id="newsFeed" style="display:flex;flex-direction:column;max-height:320px;overflow-y:auto"></div>
-        <div class="hint">KI-Tageszusammenfassung folgt mit der KI-Staffel (M6b).</div>
+        <div class="wl-sec" style="margin-top:10px">Warum bewegt sich <span id="aiSym">…</span>?</div>
+        <div id="aiSummary" style="font-size:11.5px;line-height:1.45;color:var(--t1)">Noch keine KI-Zusammenfassung — kommt mit dem nächsten Scan mit News.</div>
+        <div id="aiMeta" class="hint" style="margin-top:3px"></div>
+        <div id="aiTags" class="wl-chips" style="margin-top:5px;min-height:0"></div>
+        <div id="newsFeed" style="display:flex;flex-direction:column;max-height:300px;overflow-y:auto;margin-top:8px"></div>
       </div></div>
     </div>
   </div>
+
+  <!-- Event-Tooltip am Crosshair (position:fixed — CLAUDE.md §6) -->
+  <div id="evTip" class="evtip" hidden></div>
 
   <div class="dmodal" id="detailModal">
     <div class="dmodal-bg" data-close="detail"></div>
@@ -282,6 +298,9 @@ function wireSymbol(): void {
   const sym = st.currentSymbol;
   $('chSym').textContent = sym;
   $('chSub').textContent = resolveName(sym);
+  st.events = [];
+  $('evTip').hidden = true;
+  renderAiCard(null);
 
   st.symbolSubs.push(
     watchMarketDoc(sym, (d) => {
@@ -297,17 +316,11 @@ function wireSymbol(): void {
       }
     }),
     watchEvents(sym, (events) => {
-      if (!st?.chart) return;
-      st.chart.setMarkers(
-        events.map((e) => ({
-          time: e.date,
-          position: e.sentiment < -0.12 ? 'aboveBar' : 'belowBar',
-          color: e.sentiment > 0.12 ? '#26cf9d' : e.sentiment < -0.12 ? '#f2586b' : '#8b93a8',
-          shape: 'circle',
-          text: e.count > 1 ? String(e.count) : '',
-        })),
-      );
+      if (!st) return;
+      st.events = events;
+      applyMarkers();
     }),
+    watchLatestAi(sym, (ai) => renderAiCard(ai)),
     watchNews(sym, (news) => renderNewsFeed(news)),
     watchBars(sym, (bars) => {
       if (!st) return;
@@ -337,11 +350,32 @@ function renderChart(): void {
   applyForecast();
 }
 
+/** Event-Marker anwenden — respektiert den Events-Layer-Toggle (M6b). */
+function applyMarkers(): void {
+  if (!st?.chart) return;
+  st.chart.setMarkers(
+    st.showEvents
+      ? st.events.map((e) => ({
+          time: e.date,
+          position: e.sentiment < -0.12 ? ('aboveBar' as const) : ('belowBar' as const),
+          color: e.sentiment > 0.12 ? '#26cf9d' : e.sentiment < -0.12 ? '#f2586b' : '#8b93a8',
+          shape: 'circle' as const,
+          text: e.count > 1 ? String(e.count) : '',
+        }))
+      : [],
+  );
+}
+
 /** Prognose-Overlay + Badge aus market/{sym}.forecast anwenden. */
 function applyForecast(): void {
   if (!st?.chart) return;
   const fc = st.forecast;
   const info = $('fcInfo');
+  if (!st.showForecast) {
+    st.chart.setForecast(null);
+    info.textContent = fc ? 'Prognose-Layer ausgeblendet.' : '';
+    return;
+  }
   if (!fc || fc.points.length === 0) {
     st.chart.setForecast(null);
     info.textContent = '';
@@ -362,7 +396,43 @@ async function rebuildChart(): Promise<void> {
   if (!st) return;
   st.chart?.destroy();
   st.chart = await buildPriceChart($('chartArea'), st.currentSymbol);
+  st.chart?.onCrosshairDate((date, pos) => showEventTooltip(date, pos));
   renderChart();
+  applyMarkers();
+}
+
+/** Tooltip-Details zum Event-Tag unter dem Crosshair (M6b). */
+function showEventTooltip(date: string | null, pos: { x: number; y: number } | null): void {
+  const tip = $('evTip');
+  const ev = date && st?.showEvents ? st.events.find((e) => e.date === date) : undefined;
+  if (!ev || !pos) {
+    tip.hidden = true;
+    return;
+  }
+  const tone = ev.sentiment > 0.12 ? 'c-gn' : ev.sentiment < -0.12 ? 'c-rd' : 'c-t3';
+  tip.innerHTML = `
+    <div class="evtip-hd"><span class="mono"></span>
+      <span class="${tone}">${ev.sentiment >= 0 ? '+' : ''}${ev.sentiment.toFixed(2)}</span>
+      <span class="evtip-n">${ev.count} News</span></div>
+    <div class="evtip-list"></div>`;
+  tip.querySelector('.mono')!.textContent = ev.date;
+  const list = tip.querySelector('.evtip-list')!;
+  for (const t of ev.top.slice(0, 3)) {
+    const row = document.createElement('div');
+    row.className = 'evtip-row';
+    row.textContent = `• ${t.title}`;
+    const src = document.createElement('span');
+    src.className = 'evtip-src';
+    src.textContent = ` — ${t.source}`;
+    row.appendChild(src);
+    list.appendChild(row);
+  }
+  tip.hidden = false;
+  // Ans Viewport clampen (Tooltip ist position:fixed)
+  const w = tip.offsetWidth;
+  const h = tip.offsetHeight;
+  tip.style.left = `${Math.min(pos.x + 14, window.innerWidth - w - 8)}px`;
+  tip.style.top = `${Math.max(8, Math.min(pos.y - h - 10, window.innerHeight - h - 8))}px`;
 }
 
 function wireWatchlist(): void {
@@ -719,6 +789,41 @@ function renderSentimentGauge(s: import('./data.js').SentimentField | undefined)
   $('nsPin').style.left = `${Math.max(2, Math.min(98, 50 + s.overall * 50))}%`;
 }
 
+/** KI-Tageskarte „Warum bewegt sich X?“ aus market/{sym}/ai/{date} (M6b). */
+function renderAiCard(ai: AiDayDoc | null): void {
+  if (!st) return;
+  $('aiSym').textContent = st.currentSymbol;
+  const sum = $('aiSummary');
+  const meta = $('aiMeta');
+  const tags = $('aiTags');
+  tags.innerHTML = '';
+  if (!ai) {
+    sum.textContent = 'Noch keine KI-Zusammenfassung — kommt mit dem nächsten Scan mit News.';
+    meta.textContent = '';
+    return;
+  }
+  sum.textContent = ai.summary;
+  if (ai.degraded) {
+    const why =
+      ai.reason === 'no_api_key'
+        ? 'kein API-Key hinterlegt'
+        : ai.reason === 'budget_exceeded'
+          ? 'Tages-Tokenbudget erschöpft'
+          : 'KI-Fehler';
+    meta.textContent = `${ai.date} · regelbasiert (${why}) — Lexikon-Stufe 0 aktiv`;
+  } else {
+    const conf = ai.confidence != null ? ` · Konfidenz ${(ai.confidence * 100).toFixed(0)} %` : '';
+    meta.textContent = `${ai.date} · KI (${ai.model ?? '–'})${conf}${ai.cause ? ` · ${ai.cause}` : ''}`;
+  }
+  for (const t of ai.tags.slice(0, 6)) {
+    const chip = document.createElement('span');
+    chip.className = 'wl-chip';
+    chip.style.cssText = 'font-size:9px;padding:2px 7px';
+    chip.textContent = t.count > 1 ? `${t.type} ×${t.count}` : t.type;
+    tags.appendChild(chip);
+  }
+}
+
 function renderNewsFeed(news: import('./data.js').NewsRow[]): void {
   const feed = $('newsFeed');
   feed.innerHTML = '';
@@ -894,6 +999,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     positions: [],
     trades: [],
     forecast: null,
+    events: [],
+    showForecast: true,
+    showEvents: true,
     posPrices: new Map(),
     subs: [],
     symbolSubs: [],
@@ -986,6 +1094,30 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     document.documentElement.dataset.theme = next;
     localStorage.setItem('autotrd-theme', next);
     void rebuildChart();
+  });
+  // Timeframe-Buttons (1M/3M/Alle) + Layer-Toggles (M6b)
+  document.querySelectorAll<HTMLButtonElement>('.tf-btn[data-bars]').forEach((b) =>
+    b.addEventListener('click', () => {
+      if (!st) return;
+      st.range = parseInt(b.dataset.bars ?? '0', 10);
+      document
+        .querySelectorAll('.tf-btn[data-bars]')
+        .forEach((el) => el.classList.toggle('on', el === b));
+      renderChart();
+    }),
+  );
+  $('lyFc').addEventListener('click', () => {
+    if (!st) return;
+    st.showForecast = !st.showForecast;
+    $('lyFc').classList.toggle('on', st.showForecast);
+    applyForecast();
+  });
+  $('lyEv').addEventListener('click', () => {
+    if (!st) return;
+    st.showEvents = !st.showEvents;
+    $('lyEv').classList.toggle('on', st.showEvents);
+    applyMarkers();
+    if (!st.showEvents) $('evTip').hidden = true;
   });
   document.addEventListener('keydown', onEscape);
 }

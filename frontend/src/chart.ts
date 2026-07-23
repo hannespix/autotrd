@@ -37,6 +37,11 @@ export interface PriceChartHandle {
   setForecast(overlay: ForecastOverlay | null, anchor?: { time: string; value: number }): void;
   /** Event-Marker (sentiment-gefärbt) auf den Kerzen. */
   setMarkers(markers: ChartMarker[]): void;
+  /**
+   * Crosshair-Datum für Tooltip-Details (M6b): liefert den Handelstag unter
+   * dem Cursor plus Viewport-Koordinaten — null beim Verlassen des Charts.
+   */
+  onCrosshairDate(cb: (date: string | null, pos: { x: number; y: number } | null) => void): void;
   destroy(): void;
 }
 
@@ -172,6 +177,27 @@ export async function buildPriceChart(
       candle.setMarkers(
         [...markers].sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0)) as never,
       );
+    },
+    onCrosshairDate(cb): void {
+      chart.subscribeCrosshairMove((param) => {
+        // v4 liefert Zeit als BusinessDay-Objekt (bei 'YYYY-MM-DD'-Strings)
+        // oder String — beide Formen auf den ISO-Tag normalisieren.
+        const t = param.time as unknown;
+        let date: string | null = null;
+        if (typeof t === 'string') {
+          date = t;
+        } else if (t && typeof t === 'object' && 'year' in t) {
+          const bd = t as { year: number; month: number; day: number };
+          date = `${bd.year}-${String(bd.month).padStart(2, '0')}-${String(bd.day).padStart(2, '0')}`;
+        }
+        if (!date || !param.point) {
+          cb(null, null);
+          return;
+        }
+        // Tooltip ist position:fixed (CLAUDE.md §6) → Viewport-Koordinaten
+        const rect = container.getBoundingClientRect();
+        cb(date, { x: rect.left + param.point.x, y: rect.top + param.point.y });
+      });
     },
     destroy(): void {
       chart.remove();

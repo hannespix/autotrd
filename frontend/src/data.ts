@@ -72,6 +72,29 @@ export function watchNews(symbol: string, cb: (news: NewsRow[]) => void): Unsubs
   });
 }
 
+/** KI-Tages-Doc aus market/{sym}/ai/{date} (M6b — zentral gecacht). */
+export interface AiDayDoc {
+  date: string;
+  summary: string;
+  cause: string | null;
+  confidence: number | null;
+  tags: Array<{ type: string; count: number }>;
+  model: string | null;
+  degraded: boolean;
+  reason: 'no_api_key' | 'budget_exceeded' | 'ai_error' | null;
+}
+
+export function watchLatestAi(symbol: string, cb: (ai: AiDayDoc | null) => void): Unsubscribe {
+  const q = query(
+    collection(db(), 'market', symbol, 'ai'),
+    orderBy('date', 'desc'),
+    limit(1),
+  );
+  return onSnapshot(q, (snap) => {
+    cb(snap.empty ? null : (snap.docs[0]!.data() as AiDayDoc));
+  });
+}
+
 export interface SentimentField {
   overall: number;
   label: string;

@@ -49,8 +49,12 @@ npm run build                # baut shared + functions + frontend
 # Emulator-Suite (Auth :9099, Firestore :8081, Functions :5001, UI :4000).
 # Ohne echtes Firebase-Projekt mit einer demo-Projekt-ID starten:
 npm run build -w functions
-npx firebase emulators:start --project demo-autotrd
+FUNCTIONS_DISCOVERY_TIMEOUT=60 npx firebase emulators:start --project demo-autotrd
 curl localhost:5001/demo-autotrd/us-central1/healthz   # Smoke: {"ok":true,…}
+# (Der erhöhte Discovery-Timeout ist nötig, seit die Functions das
+#  Anthropic-SDK laden. KI lokal testen: functions/.secret.local mit
+#  ANTHROPIC_API_KEY=… anlegen — ohne Key degradiert alles sichtbar
+#  auf regelbasiert, siehe docs/SETUP.md §H.)
 
 # Frontend-Dev-Server (http://localhost:5173):
 cp frontend/.env.example frontend/.env.local   # Werte eintragen — ODER:

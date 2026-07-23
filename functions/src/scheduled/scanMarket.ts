@@ -26,6 +26,7 @@ import {
   type Strategy,
 } from '../../../shared/src/index.js';
 import { aggregateSentiment } from '../../../shared/src/index.js';
+import { anthropicApiKey, ensureAiDay } from '../core/ai.js';
 import { computeSignal } from '../core/engine.js';
 import { executePaperTrade, resolveBrokerMode, riskExitReason } from '../core/broker.js';
 import { runForecast, type LiveForecast } from '../core/forecaster.js';
@@ -271,6 +272,16 @@ export async function runScan(force = false): Promise<ScanResult> {
             top,
           });
         }
+        // KI-Staffel (M6b): Tages-Doc market/{sym}/ai/{date} — EIN Call-Paar
+        // je (Symbol, Tag) für alle User; Cache-Hit = reiner Firestore-Read.
+        // Ohne Key/Budget degradiert ensureAiDay sichtbar auf regelbasiert.
+        if (news.length > 0) {
+          try {
+            await ensureAiDay(symbol, lastDate, news, snap.changePct);
+          } catch (err) {
+            logger.warn(`KI-Tages-Doc-Fehler ${symbol}`, err);
+          }
+        }
       }
 
       // Prognose mit ECHTEM News-Sentiment + Shadow-Grid
@@ -372,7 +383,12 @@ export async function runScan(force = false): Promise<ScanResult> {
 
 /** Alle 5 Minuten; der Gate macht außerhalb der Marktzeiten einen No-Op. */
 export const scanMarket = onSchedule(
-  { schedule: 'every 5 minutes', timeZone: 'America/New_York', retryCount: 0 },
+  {
+    schedule: 'every 5 minutes',
+    timeZone: 'America/New_York',
+    retryCount: 0,
+    secrets: [anthropicApiKey],
+  },
   async () => {
     await runScan(false);
   },
