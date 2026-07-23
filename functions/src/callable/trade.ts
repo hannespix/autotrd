@@ -8,11 +8,12 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { allSymbols, type Quote, type Strategy } from '../../../shared/src/index.js';
 import { consumeQuota, executePaperTrade, resolveBrokerMode } from '../core/broker.js';
+import { CALLABLE_OPTS } from '../core/appcheck.js';
 
 const DAILY_TRADE_LIMIT = 50;
 const MAX_QTY = 10_000;
 
-export const trade = onCall(async (request) => {
+export const trade = onCall(CALLABLE_OPTS, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Anmeldung erforderlich');
 

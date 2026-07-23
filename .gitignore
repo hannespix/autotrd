@@ -18,6 +18,8 @@ functions/*.log
 .env
 .env.*
 !.env.example
+# Nicht-geheime Functions-Config (App-Check-Flag etc.) — bewusst im Repo
+!functions/.env
 *.db
 *.db-wal
 *.db-shm

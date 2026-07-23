@@ -40,7 +40,11 @@ beforeAll(async () => {
     await db.doc('users/alice/positions/AAPL').set({ qty: 3, avgEntry: 100 });
     await db.doc('users/alice/trades/t1').set({ symbol: 'AAPL', side: 'buy' });
     await db.doc('market/QQQ').set({ quote: { price: 600 } });
+    await db.doc('market/QQQ/ai/2026-07-23').set({ summary: 'x', degraded: true });
+    await db.doc('market/QQQ/forecasts/2026-07-23_0.5_20').set({ evaluated: false });
     await db.doc('meta/universe').set({ classes: {} });
+    await db.doc('meta/forecastStats').set({ tuning: { extraWeights: [0.5] } });
+    await db.doc('admin/aiBudget').set({ dailyTokenBudget: 200000, used: 0 });
   });
 });
 
@@ -91,6 +95,26 @@ describe('users/{uid}', () => {
     await assertSucceeds(alice().doc('users/alice/alerts/a1').set({ symbol: 'QQQ', above: 700 }));
     await assertFails(bob().doc('users/alice/alerts/a2').set({ symbol: 'QQQ' }));
   });
+
+  // ── Adversarial (M7): was kann ein böswilliger EINGELOGGTER User? ──
+  it('profile-Manipulation (plan-Upgrade) wird abgelehnt — einzeln und gemischt', async () => {
+    await assertFails(alice().doc('users/alice').update({ profile: { plan: 'pro' } }));
+    await assertFails(
+      alice().doc('users/alice').update({
+        settings: { strategy: {} },
+        profile: { plan: 'pro' },
+      }),
+    );
+  });
+
+  it('User-Doc löschen ist verboten (auch fürs eigene)', async () => {
+    await assertFails(alice().doc('users/alice').delete());
+  });
+
+  it('Fremde Settings sind weder les- noch schreibbar', async () => {
+    await assertFails(bob().doc('users/alice').update({ settings: { strategy: {} } }));
+    await assertFails(bob().doc('users/alice/alerts/a1').get());
+  });
 });
 
 describe('market/** und meta/**', () => {
@@ -103,6 +127,26 @@ describe('market/** und meta/**', () => {
   it('meta: öffentlich lesbar, nie schreibbar', async () => {
     await assertSucceeds(anon().doc('meta/universe').get());
     await assertFails(alice().doc('meta/universe').set({ classes: {} }));
+  });
+
+  it('KI-Docs (market/{sym}/ai) folgen den market-Regeln', async () => {
+    await assertSucceeds(alice().doc('market/QQQ/ai/2026-07-23').get());
+    await assertFails(anon().doc('market/QQQ/ai/2026-07-23').get());
+    await assertFails(
+      alice().doc('market/QQQ/ai/2026-07-23').set({ summary: 'Pump!', degraded: false }),
+    );
+  });
+
+  it('Forecast-Manipulation (evaluated/Score fälschen) wird abgelehnt', async () => {
+    await assertFails(
+      alice().doc('market/QQQ/forecasts/2026-07-23_0.5_20').update({ evaluated: true, dirHit: true }),
+    );
+  });
+
+  it('Tuning-Gitter in meta/forecastStats ist nicht client-schreibbar', async () => {
+    await assertFails(
+      alice().doc('meta/forecastStats').update({ tuning: { extraWeights: [999] } }),
+    );
   });
 });
 
