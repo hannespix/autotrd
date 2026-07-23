@@ -12,6 +12,8 @@ import { DEFAULT_STRATEGY } from '../../shared/src/index.js';
 initializeApp();
 
 export { scanMarket, scanNow } from './scheduled/scanMarket.js';
+export { ensureProfile } from './callable/profile.js';
+export { saveStrategy } from './callable/strategy.js';
 
 export const healthz = onRequest({ cors: true }, (_req, res) => {
   res.status(200).json({

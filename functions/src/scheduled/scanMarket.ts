@@ -70,6 +70,32 @@ export interface ScanResult {
   skipped?: string;
 }
 
+/** Obergrenze des zentralen Scan-Sets (Kosten-Guard). */
+const MAX_SCAN_SYMBOLS = 40;
+
+/**
+ * Scan-Set = Default-Watchlist ∪ alle User-Watchlists (M3: der Picker macht
+ * Symbole wählbar; der nächste Scan versorgt sie zentral mit Daten).
+ */
+async function collectScanSymbols(): Promise<string[]> {
+  const db = getFirestore();
+  const set = new Set<string>(DEFAULT_STRATEGY.watchlist);
+  try {
+    const users = await db.collection('users').select('settings.strategy.watchlist').get();
+    for (const doc of users.docs) {
+      const wl = doc.get('settings.strategy.watchlist') as unknown;
+      if (Array.isArray(wl)) {
+        for (const sym of wl) {
+          if (typeof sym === 'string' && set.size < MAX_SCAN_SYMBOLS) set.add(sym);
+        }
+      }
+    }
+  } catch (err) {
+    logger.warn('User-Watchlists nicht lesbar — Scan nur über Default', err);
+  }
+  return [...set];
+}
+
 /** Ein kompletter Scan-Zyklus über die zentrale Watchlist. */
 export async function runScan(force = false): Promise<ScanResult> {
   const now = new Date();
@@ -81,7 +107,7 @@ export async function runScan(force = false): Promise<ScanResult> {
 
   await seedUniverse();
   const db = getFirestore();
-  const symbols = DEFAULT_STRATEGY.watchlist;
+  const symbols = await collectScanSymbols();
   const scanned: string[] = [];
   const errors: Record<string, string> = {};
 
@@ -132,9 +158,15 @@ export async function runScan(force = false): Promise<ScanResult> {
         batch.set(symRef, { barsBackfilledAt: now.toISOString() }, { merge: true });
       }
 
-      // Indikator-Snapshot des letzten Handelstags (1 Doc/Tag, überschreibend)
+      // Indikator-Snapshot des letzten Handelstags (1 Doc/Tag, überschreibend).
+      // `date` zusätzlich als Feld: Firestore kann nicht absteigend über
+      // Doc-IDs sortieren (kein descending key scan) — Clients sortieren
+      // deshalb über dieses Feld.
       const lastDate = snap.bars[snap.bars.length - 1]!.date;
-      batch.set(symRef.collection('indicators').doc(lastDate), { ...sig.snapshot });
+      batch.set(symRef.collection('indicators').doc(lastDate), {
+        ...sig.snapshot,
+        date: lastDate,
+      });
 
       // Konfluenz-Signal dieses Scans
       batch.set(symRef.collection('signals').doc(scanId), {
