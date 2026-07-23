@@ -23,10 +23,20 @@ export interface ForecastOverlay {
   band: Array<{ time: string; upper: number; lower: number }>;
 }
 
+export interface ChartMarker {
+  time: string;
+  position: 'aboveBar' | 'belowBar';
+  color: string;
+  shape: 'circle' | 'arrowUp' | 'arrowDown';
+  text?: string;
+}
+
 export interface PriceChartHandle {
   setBars(bars: ChartBar[]): void;
   /** Prognose-Overlay: gestrichelte Mittellinie + ±1σ-Band (null = entfernen). */
   setForecast(overlay: ForecastOverlay | null, anchor?: { time: string; value: number }): void;
+  /** Event-Marker (sentiment-gefärbt) auf den Kerzen. */
+  setMarkers(markers: ChartMarker[]): void;
   destroy(): void;
 }
 
@@ -157,6 +167,11 @@ export async function buildPriceChart(
       fcUp.setData(overlay.band.map((b) => ({ time: b.time, value: b.upper })));
       fcLo.setData(overlay.band.map((b) => ({ time: b.time, value: b.lower })));
       chart.timeScale().fitContent();
+    },
+    setMarkers(markers): void {
+      candle.setMarkers(
+        [...markers].sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0)) as never,
+      );
     },
     destroy(): void {
       chart.remove();

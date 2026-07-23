@@ -24,7 +24,9 @@ import {
   watchLatestIndicators,
   watchLatestSignal,
   watchMarketDoc,
+  watchEvents,
   watchForecastStats,
+  watchNews,
   watchPositions,
   watchTrades,
   watchUserDoc,
@@ -228,9 +230,18 @@ function layout(email: string): string {
           bis genug Prognosen realisiert sind.</div>
       </div></div>
 
-      <div class="card"><div class="sect">News &amp; Sentiment</div><div class="cbody">
-        <div class="hint">News-Feeds, Lexikon-Sentiment und KI-Tageszusammenfassung
-          folgen mit Milestone M6.</div>
+      <div class="card"><div class="sect">News &amp; Sentiment <span id="nsSym" style="float:right;color:var(--t3)"></span></div><div class="cbody">
+        <div style="display:flex;align-items:baseline;gap:8px">
+          <span id="nsLabel" class="vbig" style="font-size:18px">–</span>
+          <span id="nsScore" class="smv">–</span>
+          <span id="nsCount" class="hint" style="margin-left:auto"></span>
+        </div>
+        <div style="height:8px;border-radius:5px;background:linear-gradient(90deg,var(--rd),var(--t3) 50%,var(--gn));position:relative;margin:6px 0 3px">
+          <div id="nsPin" style="position:absolute;top:-3px;left:50%;width:3px;height:14px;background:var(--t1);border-radius:2px;transition:left .5s"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--t3);text-transform:uppercase"><span>Bearish</span><span>Neutral</span><span>Bullish</span></div>
+        <div id="newsFeed" style="display:flex;flex-direction:column;max-height:320px;overflow-y:auto"></div>
+        <div class="hint">KI-Tageszusammenfassung folgt mit der KI-Staffel (M6b).</div>
       </div></div>
     </div>
   </div>
@@ -282,8 +293,22 @@ function wireSymbol(): void {
       if (st) {
         st.forecast = d?.forecast ?? null;
         applyForecast();
+        renderSentimentGauge(d?.sentiment);
       }
     }),
+    watchEvents(sym, (events) => {
+      if (!st?.chart) return;
+      st.chart.setMarkers(
+        events.map((e) => ({
+          time: e.date,
+          position: e.sentiment < -0.12 ? 'aboveBar' : 'belowBar',
+          color: e.sentiment > 0.12 ? '#26cf9d' : e.sentiment < -0.12 ? '#f2586b' : '#8b93a8',
+          shape: 'circle',
+          text: e.count > 1 ? String(e.count) : '',
+        })),
+      );
+    }),
+    watchNews(sym, (news) => renderNewsFeed(news)),
     watchBars(sym, (bars) => {
       if (!st) return;
       st.bars = bars;
@@ -672,6 +697,53 @@ function renderPickerChips(): void {
 
 function closeModal(which: 'detail' | 'picker'): void {
   $(which === 'detail' ? 'detailModal' : 'wlModal').classList.remove('show');
+}
+
+/* ── News & Sentiment ───────────────────────────────────────────────── */
+
+function renderSentimentGauge(s: import('./data.js').SentimentField | undefined): void {
+  if (!st) return;
+  $('nsSym').textContent = st.currentSymbol;
+  if (!s) {
+    $('nsLabel').textContent = '–';
+    $('nsScore').textContent = '–';
+    $('nsCount').textContent = '';
+    return;
+  }
+  const label = $('nsLabel');
+  label.textContent = s.label === 'bullish' ? 'Bullish' : s.label === 'bearish' ? 'Bearish' : 'Neutral';
+  label.className = `vbig ${s.overall > 0.12 ? 'c-gn' : s.overall < -0.12 ? 'c-rd' : 'c-t3'}`;
+  label.style.fontSize = '18px';
+  $('nsScore').textContent = (s.overall >= 0 ? '+' : '') + s.overall.toFixed(2);
+  $('nsCount').textContent = `${s.n} Quellen`;
+  $('nsPin').style.left = `${Math.max(2, Math.min(98, 50 + s.overall * 50))}%`;
+}
+
+function renderNewsFeed(news: import('./data.js').NewsRow[]): void {
+  const feed = $('newsFeed');
+  feed.innerHTML = '';
+  if (news.length === 0) {
+    feed.innerHTML = '<span class="hint" style="padding:8px 0">Noch keine News — kommen mit dem nächsten Scan.</span>';
+    return;
+  }
+  for (const n of news) {
+    const row = document.createElement('a');
+    row.href = n.url || '#';
+    row.target = '_blank';
+    row.rel = 'noopener';
+    row.style.cssText = 'display:flex;gap:8px;padding:7px 2px;border-bottom:1px solid var(--hair);text-decoration:none';
+    const dotColor = n.sent.sentiment > 0.12 ? 'var(--gn)' : n.sent.sentiment < -0.12 ? 'var(--rd)' : 'var(--t3)';
+    row.innerHTML = `
+      <span style="flex:0 0 6px;width:6px;height:6px;border-radius:50%;margin-top:6px;background:${dotColor}"></span>
+      <span style="flex:1;min-width:0">
+        <span class="nhl" style="display:block;font-size:11px;color:var(--t1);line-height:1.35"></span>
+        <span class="hint"></span>
+      </span>`;
+    row.querySelector('.nhl')!.textContent = n.title;
+    row.querySelector('.hint')!.textContent =
+      `${n.source}${n.kind !== 'news' ? ` · ${n.kind}` : ''}${n.ts ? ` · ${n.ts.slice(0, 10)}` : ''}`;
+    feed.appendChild(row);
+  }
 }
 
 /* ── Portfolio (Wallet, Positionen, Trades) ─────────────────────────── */
