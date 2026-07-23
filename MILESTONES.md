@@ -210,9 +210,12 @@ von `reference/` folgt, sobald das System deployt ist (Owner-Schritte).*
 
 **Ziel:** News-Events + tokeneffiziente KI, zentral gecacht.
 
-- [ ] `core/news.ts` + `core/sentiment.ts`: Feeds (yahoo-finance2 News +
-      RSS via feedparser-Äquivalent) und Lexikon-Sentiment portieren;
-      10-min-Cache; Schreibziel `market/{sym}/news/`
+- [x] `core/news.ts` + Lexikon-Sentiment (in `shared/src/sentiment.ts`,
+      Golden-Parity zur Python-Referenz): Yahoo-/Google-RSS + Reddit-Subs via
+      Google-News-Proxy, dependency-freier RSS-Parser; 10-min-TTL im Scan;
+      Schreibziele `market/{sym}/news/` + `events/{date}` +
+      Sentiment-Aggregat am Symbol-Doc — **speist den Forecaster mit echtem
+      Sentiment** (bis dahin war es 0)
 - [ ] KI-Staffel (ARCHITECTURE §6): Anthropic TS-SDK in Functions;
       Haiku = Klassifikation, Sonnet = Tages-Erklärung; Cache
       `market/{sym}/ai/{date}` (1 Call für alle User); Prompt-Caching;
@@ -220,8 +223,9 @@ von `reference/` folgt, sobald das System deployt ist (Owner-Schritte).*
       erweitern, ändert NIE Live-Params autonom) via Batch API
 - [ ] Kosten-Guard: Tages-Tokenbudget als Config; bei Überschreitung
       degradiert die Pipeline auf regelbasiert (loggt das sichtbar)
-- [ ] Frontend: Event-Marker auf Kerzen + Tooltip/Bottom-Sheet, News-Panel
-      mit Sentiment-Färbung, Layer-Toggles (Port aus Alt-UI)
+- [x] Frontend: Event-Marker auf Kerzen (sentiment-gefärbt aus
+      `events/{date}`), News-Panel mit Gauge + Sentiment-Punkten
+      *(Tooltip-Details + Layer-Toggles folgen mit der KI-Staffel M6b)*
 
 **Abnahme:** Live: Symbol mit News zeigt Marker + KI-Summary; zweiter Abruf
 kommt aus Cache (Firestore-Read, kein API-Call — an Logs verifizieren) ·
