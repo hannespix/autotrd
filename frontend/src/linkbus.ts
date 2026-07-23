@@ -20,18 +20,38 @@ type SymbolHandler = (symbol: string) => void;
 const symbols: Record<LinkGroup, string> = { A: 'QQQ', B: 'QQQ', C: 'QQQ' };
 const subscribers = new Map<object, { group: LinkGroup; onSymbol: SymbolHandler }>();
 
-/** Aktuelles Symbol einer Gruppe. */
-export function groupSymbol(group: LinkGroup): string {
-  return symbols[group];
-}
+// Fensterübergreifender Sync (M9): Symbolwechsel einer Gruppe erreichen über
+// den BroadcastChannel ALLE offenen Fenster — Multi-Monitor mit gemeinsamer
+// Aufmerksamkeit, ohne zusätzliche Server-Reads.
+const channel =
+  typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('autotrd-linkbus') : null;
 
-/** Symbol einer Gruppe setzen — benachrichtigt alle Panels dieser Gruppe. */
-export function publishSymbol(group: LinkGroup, symbol: string): void {
+channel?.addEventListener(
+  'message',
+  (ev: MessageEvent<{ group: LinkGroup; symbol: string }>) => {
+    applySymbol(ev.data.group, ev.data.symbol);
+  },
+);
+
+function applySymbol(group: LinkGroup, symbol: string): void {
   if (symbols[group] === symbol) return;
   symbols[group] = symbol;
   for (const sub of subscribers.values()) {
     if (sub.group === group) sub.onSymbol(symbol);
   }
+}
+
+/** Aktuelles Symbol einer Gruppe. */
+export function groupSymbol(group: LinkGroup): string {
+  return symbols[group];
+}
+
+/** Symbol einer Gruppe setzen — benachrichtigt alle Panels dieser Gruppe
+ *  in DIESEM und in allen anderen offenen Fenstern. */
+export function publishSymbol(group: LinkGroup, symbol: string): void {
+  if (symbols[group] === symbol) return;
+  applySymbol(group, symbol);
+  channel?.postMessage({ group, symbol });
 }
 
 /**

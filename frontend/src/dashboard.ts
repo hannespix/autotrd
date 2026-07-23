@@ -536,10 +536,22 @@ function applyForecast(): void {
     `über ${fc.points.length} Handelstage (w=${fc.w}, Lookback ${fc.lookback}, gestrichelt ±1σ)`;
 }
 
+// Schneller Symbolwechsel startet rebuildChart nebenläufig — die Epoche
+// sorgt dafür, dass nur der JÜNGSTE Aufbau gewinnt und Callbacks nie auf
+// einem bereits zerstörten Chart arbeiten („Object is disposed").
+let chartEpoch = 0;
+
 async function rebuildChart(): Promise<void> {
   if (!st) return;
+  const epoch = ++chartEpoch;
   st.chart?.destroy();
-  st.chart = await buildPriceChart($('chartArea'), st.currentSymbol);
+  st.chart = null; // Snapshots während des Aufbaus laufen ins Leere statt auf ein totes Handle
+  const handle = await buildPriceChart($('chartArea'), st.currentSymbol);
+  if (!st || epoch !== chartEpoch) {
+    handle?.destroy();
+    return;
+  }
+  st.chart = handle;
   st.chart?.onCrosshairDate((date, pos) => showEventTooltip(date, pos));
   renderChart();
   applyMarkers();

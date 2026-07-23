@@ -320,9 +320,11 @@ gemeinsamer Aufmerksamkeit: Panels, Link-Gruppen, Keyboard-first, Multi-Monitor
       *(Teil 1 ✓: `linkbus.ts` mit Symbol-Sync + Gruppen-Adoption beim
       Chip-Wechsel, Chips in Aurora-Farben auf Chart + News; Zeit-/
       Crosshair-Sync braucht den Chart-Stack → Teil 2)*
-- [ ] QuoteStore-Multiplexing + Leader-Tab über `BroadcastChannel`:
+- [x] QuoteStore-Multiplexing + Leader-Tab über `BroadcastChannel`:
       n Fenster, ein Listener-Satz — Multi-Monitor ohne Read-Duplikation
-      *(Teil 2; Listener-Buchhaltung als Grundlage steckt schon in data.ts)*
+      *(mux.ts: Leader-Election via Web Locks, ALLE market/meta-Watcher
+      gemuxt — Follower-Fenster halten 0 Market-Listener; Link-Bus synct
+      Symbolwechsel über Fenster hinweg; Failover übernimmt Interessen)*
 - [ ] Command-Palette (`Ctrl+K`): Symbol-Resolve aus `meta/universe`
       (Klarnamen, `^NDX`-Konvention), Befehle für Order/Alert/Workspace;
       Hotkeys in `settings.hotkeys`
@@ -342,6 +344,16 @@ gemeinsamer Aufmerksamkeit: Panels, Link-Gruppen, Keyboard-first, Multi-Monitor
 > Durchklicken (24 → 24, Zähler über onSnapshot-Wrapper); Preset + Gruppe
 > überleben den Reload (`users/{uid}/workspaces/default`, Rules-Test 16/16);
 > 390 px ohne horizontales Scrollen.
+
+> Teil-2a-Verifikation (Zwei-Fenster-E2E, 2026-07-23, 13/13 — die
+> M9-Kern-Abnahme): Fenster 2 öffnet als Follower mit **0 Market-Listenern**
+> (nur 3 User-Doc-Listener), Leader bleibt konstant bei 20; Watchlist-Klick
+> in Fenster 1 wechselt Chart+News in BEIDEN Fenstern (und rückwärts);
+> 12 Wechsel über beide Fenster → Listener-Zahlen unverändert; Leader-Tab
+> schließen → Fenster 2 übernimmt per Web-Lock (3 → 20 Listener) und alles
+> läuft mit Live-Daten weiter. Nebenbei gefixt: rebuildChart-Race
+> („Object is disposed" bei schnellen Symbolwechseln) über Chart-Epochen.
+> *Chart-Stack (Zeit-/Crosshair-Sync) + Hotkey-Order-Ticket = Teil 2b.*
 
 **Abnahme:** Zwei Browserfenster, Gruppe A: Watchlist-Klick wechselt
 Chart+News+Signale in beiden Fenstern, Firestore-Listener-Zahl bleibt konstant

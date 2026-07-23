@@ -13,13 +13,15 @@ import {
   watchAuth,
 } from './auth.js';
 import { ensureProfile, listenerCount } from './data.js';
+import { muxIsLeader } from './mux.js';
 import { mountDashboard, unmountDashboard } from './dashboard.js';
 import { mountLegalFooter } from './legal.js';
 
-// Leak-Nachweis (M9-Abnahme): aktive Firestore-Listener zählbar machen
-(window as unknown as { __autotrd: { listenerCount: () => number } }).__autotrd = {
-  listenerCount,
-};
+// Leak-/Mux-Nachweis (M9-Abnahme): aktive Firestore-Listener zählbar machen
+// + Leader-Status des Fensters (BroadcastChannel-Multiplexing)
+(window as unknown as {
+  __autotrd: { listenerCount: () => number; muxIsLeader: () => boolean };
+}).__autotrd = { listenerCount, muxIsLeader };
 
 // Theme früh setzen (localStorage), Default dunkel
 document.documentElement.dataset.theme = localStorage.getItem('autotrd-theme') ?? 'dark';
