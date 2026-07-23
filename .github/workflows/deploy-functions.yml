@@ -39,4 +39,4 @@ jobs:
         if: env.FIREBASE_SERVICE_ACCOUNT != ''
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
-        run: npx firebase-tools deploy --only functions,firestore:rules --non-interactive
+        run: npx firebase-tools deploy --only functions,firestore:rules --non-interactive --force

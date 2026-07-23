@@ -20,6 +20,7 @@ import {
   type ForecastDoc,
 } from '../../../shared/src/index.js';
 import { getMarketSnapshot } from '../core/marketData.js';
+import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 
 const BATCH_LIMIT = 200;
 
@@ -133,7 +134,7 @@ export const evalForecasts = onSchedule(
 );
 
 /** Manueller Trigger — NUR im Emulator (Abnahme-Verifikation). */
-export const evalNow = onRequest(async (_req, res) => {
+export const evalNow = onRequest(EMULATOR_TRIGGER_OPTS, async (_req, res) => {
   if (process.env.FUNCTIONS_EMULATOR !== 'true') {
     res.status(403).json({ error: 'evalNow ist nur im Emulator verfügbar' });
     return;

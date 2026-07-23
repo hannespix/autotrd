@@ -27,6 +27,7 @@ import {
 } from '../../../shared/src/index.js';
 import { aggregateSentiment } from '../../../shared/src/index.js';
 import { anthropicApiKey, ensureAiDay } from '../core/ai.js';
+import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 import { computeSignal } from '../core/engine.js';
 import { executePaperTrade, resolveBrokerMode, riskExitReason } from '../core/broker.js';
 import { runForecast, type LiveForecast } from '../core/forecaster.js';
@@ -421,7 +422,7 @@ export const scanMarket = onSchedule(
  * Manueller Trigger — NUR im Emulator (lokale Verifikation, MILESTONES M2
  * Abnahme). In Produktion hart 403, damit niemand Scan-Kosten erzeugen kann.
  */
-export const scanNow = onRequest(async (req, res) => {
+export const scanNow = onRequest(EMULATOR_TRIGGER_OPTS, async (req, res) => {
   if (process.env.FUNCTIONS_EMULATOR !== 'true') {
     res.status(403).json({ error: 'scanNow ist nur im Emulator verfügbar' });
     return;

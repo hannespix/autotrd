@@ -11,6 +11,9 @@ import { DEFAULT_STRATEGY } from '../../shared/src/index.js';
 
 initializeApp();
 
+// invoker explizit public: sonst bleibt eine einmal privat angelegte
+// Function bei Updates für immer privat (403 ohne CORS-Header im Browser)
+
 export { scanMarket, scanNow } from './scheduled/scanMarket.js';
 export { evalForecasts, evalNow } from './scheduled/evalForecasts.js';
 export { tunerReview, tunerNow } from './scheduled/tunerReview.js';
@@ -18,7 +21,7 @@ export { ensureProfile } from './callable/profile.js';
 export { saveStrategy } from './callable/strategy.js';
 export { trade } from './callable/trade.js';
 
-export const healthz = onRequest({ cors: true }, (_req, res) => {
+export const healthz = onRequest({ cors: true, invoker: 'public' }, (_req, res) => {
   res.status(200).json({
     ok: true,
     service: 'autotrd-functions',
