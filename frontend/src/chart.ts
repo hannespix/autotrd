@@ -18,8 +18,15 @@ export interface ChartBar extends Bar {
   date: string; // YYYY-MM-DD
 }
 
+export interface ForecastOverlay {
+  points: Array<{ time: string; value: number }>;
+  band: Array<{ time: string; upper: number; lower: number }>;
+}
+
 export interface PriceChartHandle {
   setBars(bars: ChartBar[]): void;
+  /** Prognose-Overlay: gestrichelte Mittellinie + ±1σ-Band (null = entfernen). */
+  setForecast(overlay: ForecastOverlay | null, anchor?: { time: string; value: number }): void;
   destroy(): void;
 }
 
@@ -108,6 +115,13 @@ export async function buildPriceChart(
   });
   chart.priceScale('vol').applyOptions({ scaleMargins: { top: 0.85, bottom: 0 } });
 
+  // Prognose-Serien (leer bis setForecast); 2 = Dashed, 3 = Dotted (numerische
+  // Literale statt Enum — CLAUDE.md-§6-Geist)
+  const fcCommon = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false } as const;
+  const fcMid = chart.addLineSeries({ color: '#25d0ee', lineWidth: 2, lineStyle: 2, ...fcCommon });
+  const fcUp = chart.addLineSeries({ color: 'rgba(37,208,238,.45)', lineWidth: 1, lineStyle: 3, ...fcCommon });
+  const fcLo = chart.addLineSeries({ color: 'rgba(37,208,238,.45)', lineWidth: 1, lineStyle: 3, ...fcCommon });
+
   return {
     setBars(bars: ChartBar[]): void {
       candle.setData(
@@ -126,6 +140,22 @@ export async function buildPriceChart(
           color: b.close >= b.open ? 'rgba(38,207,157,.4)' : 'rgba(242,88,107,.4)',
         })),
       );
+      chart.timeScale().fitContent();
+    },
+    setForecast(overlay, anchor): void {
+      if (!overlay || overlay.points.length === 0) {
+        fcMid.setData([]);
+        fcUp.setData([]);
+        fcLo.setData([]);
+        return;
+      }
+      // Anker (letzter Bar) voranstellen, damit die Linie am Chart andockt
+      const mid = anchor
+        ? [{ time: anchor.time, value: anchor.value }, ...overlay.points]
+        : overlay.points;
+      fcMid.setData(mid.map((p) => ({ time: p.time, value: p.value })));
+      fcUp.setData(overlay.band.map((b) => ({ time: b.time, value: b.upper })));
+      fcLo.setData(overlay.band.map((b) => ({ time: b.time, value: b.lower })));
       chart.timeScale().fitContent();
     },
     destroy(): void {

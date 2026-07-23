@@ -25,6 +25,28 @@ export interface MarketDocData {
   name?: string;
   assetClass?: string;
   quote?: Quote;
+  forecast?: {
+    points: Array<{ time: string; value: number }>;
+    band: Array<{ time: string; upper: number; lower: number }>;
+    w: number;
+    lookback: number;
+    predictedPct: number;
+    sentiment: number;
+    baseDate: string;
+  } | null;
+}
+
+export interface ForecastStatsDoc {
+  scored?: number;
+  dirAccuracy?: number | null;
+  best?: { w: number; lookback: number };
+  tuningActive?: boolean;
+}
+
+export function watchForecastStats(cb: (stats: ForecastStatsDoc | null) => void): Unsubscribe {
+  return onSnapshot(doc(db(), 'meta', 'forecastStats'), (snap) => {
+    cb(snap.exists() ? (snap.data() as ForecastStatsDoc) : null);
+  });
 }
 
 export interface SignalRow {
