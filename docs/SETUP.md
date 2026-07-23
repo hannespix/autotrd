@@ -74,7 +74,10 @@ The current credentials do not have permission to enable APIs"* — der
 Deploy-Service-Account darf keine Google-APIs aktivieren. Zwei Wege:
 
 **Empfohlen (einmalig, zukunftssicher):** dem Service-Account
-`github-deploy` zusätzlich die Rolle **Service Usage Admin** geben
+`github-deploy` zusätzlich die Rollen **Service Usage Admin** und
+**Cloud Run Admin** geben (Letztere braucht der Deploy, um Callables/HTTP-
+Functions öffentlich aufrufbar zu machen — fehlt sie, antworten die
+Functions mit 403 ohne CORS-Header und das Frontend meldet CORS-Fehler)
 (IAM-Konsole → Service-Account bearbeiten → Rolle hinzufügen). Danach
 schaltet `firebase deploy` alle benötigten APIs selbst frei — auch die,
 die künftige Features brauchen (Cloud Run, Eventarc, Scheduler, …).
