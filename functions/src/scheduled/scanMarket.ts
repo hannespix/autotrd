@@ -25,10 +25,14 @@ import {
   type Position,
   type Strategy,
 } from '../../../shared/src/index.js';
+import { aggregateSentiment } from '../../../shared/src/index.js';
 import { computeSignal } from '../core/engine.js';
 import { executePaperTrade, resolveBrokerMode, riskExitReason } from '../core/broker.js';
 import { runForecast, type LiveForecast } from '../core/forecaster.js';
 import { getMarketSnapshot } from '../core/marketData.js';
+import { fetchNews, newsDocId, type NewsItem } from '../core/news.js';
+
+const NEWS_TTL_MS = 10 * 60 * 1000; // wie die Referenz: 10-min-Cache
 
 /** Mo–Fr, 09:30 ≤ t < 16:00 in America/New_York (Port des run_scan.sh-Gates). */
 export function isUsMarketOpen(now: Date = new Date()): boolean {
@@ -214,10 +218,65 @@ export async function runScan(force = false): Promise<ScanResult> {
       const closes = snap.bars.map((b) => b.close);
       const lastDate = snap.bars[snap.bars.length - 1]!.date;
 
-      // Prognose (Sentiment 0 bis M6 die News-Pipeline liefert) + Shadow-Grid
+      const symRef = db.collection('market').doc(symbol);
+      const symDoc = await symRef.get();
+      const batch = db.batch();
+
+      // News + Sentiment (10-min-TTL wie die Referenz; Feeds nicht hämmern)
+      const prevSent = symDoc.get('sentiment') as
+        | { overall?: number; updatedAt?: string }
+        | undefined;
+      let sentimentOverall = prevSent?.overall ?? 0;
+      const sentStale =
+        !prevSent?.updatedAt || now.getTime() - Date.parse(prevSent.updatedAt) > NEWS_TTL_MS;
+      if (sentStale) {
+        let news: NewsItem[] = [];
+        try {
+          news = await fetchNews(symbol);
+        } catch (err) {
+          logger.warn(`News-Fehler ${symbol}`, err);
+        }
+        const agg = aggregateSentiment(news);
+        sentimentOverall = agg.overall;
+        batch.set(
+          symRef,
+          { sentiment: { ...agg, updatedAt: now.toISOString() } },
+          { merge: true },
+        );
+        for (const item of news.slice(0, 20)) {
+          batch.set(symRef.collection('news').doc(newsDocId(item)), { ...item });
+        }
+        // Event-Tage: News auf Chart-Tage mappen (sentiment-gefärbte Marker)
+        const byDay = new Map<string, NewsItem[]>();
+        for (const item of news) {
+          const day = item.ts.slice(0, 10);
+          if (day) byDay.set(day, [...(byDay.get(day) ?? []), item]);
+        }
+        for (const [day, items] of byDay) {
+          const dayAgg = aggregateSentiment(items);
+          const top = [...items]
+            .sort(
+              (a, b) =>
+                Math.abs(b.sent.sentiment) + b.sent.magnitude -
+                (Math.abs(a.sent.sentiment) + a.sent.magnitude),
+            )
+            .slice(0, 3)
+            .map((i) => ({ title: i.title, source: i.source, url: i.url, kind: i.kind, sent: i.sent }));
+          batch.set(symRef.collection('events').doc(day), {
+            date: day,
+            sentiment: dayAgg.overall,
+            label: dayAgg.label,
+            count: items.length,
+            topEvents: dayAgg.topEvents,
+            top,
+          });
+        }
+      }
+
+      // Prognose mit ECHTEM News-Sentiment + Shadow-Grid
       let forecast: LiveForecast | null = null;
       try {
-        forecast = await runForecast(symbol, closes, lastDate, 0);
+        forecast = await runForecast(symbol, closes, lastDate, sentimentOverall);
       } catch (err) {
         logger.warn(`Forecast-Fehler ${symbol}`, err);
       }
@@ -230,10 +289,6 @@ export async function runScan(force = false): Promise<ScanResult> {
         DEFAULT_STRATEGY.signals,
         forecast,
       );
-
-      const symRef = db.collection('market').doc(symbol);
-      const symDoc = await symRef.get();
-      const batch = db.batch();
 
       batch.set(
         symRef,
