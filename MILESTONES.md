@@ -180,22 +180,31 @@ unverändert ✓ · *Live-Abnahme folgt mit den Owner-Deploy-Schritten.*
 **Ziel:** Das „Herz" portieren — sentiment-gewichtete Prognose + Selbst-
 Bewertung. **Höchstes Portier-Risiko, langsam und testgetrieben arbeiten.**
 
-- [ ] `core/forecaster.ts`: Port aus `reference/scripts/forecaster.py`
-      (Drift + gedeckelter Tilt; Shadow-Grid `(w, lookback)`) — Golden-Tests
-      gegen Python-Fixtures ZUERST schreiben, dann portieren
-- [ ] Scheduled `evalForecasts` (täglich nach Börsenschluss): Port aus
-      `forecast_eval.py` — **Lookahead-Gate strikt**, Doc-ID
-      `baseDate_w_lookback` ersetzt UNIQUE-Index; `best_params` nach
-      `market/{sym}` · Extra-Tests: DST-Wechsel, Wochenende, Feiertag
-- [ ] Engine: `_forecast_vote()`-Äquivalent in `core/engine.ts`
-      (`signals.use_forecast/forecast_weight/forecast_threshold_pct`)
-- [ ] Frontend: Prognose-Overlay im Chart + Genauigkeits-Karte (`/api/accuracy`-
-      Äquivalent aus Firestore)
+- [x] Forecast-Kern: pure Mathematik in `shared/src/forecast.ts` (Drift +
+      gedeckelter Tilt, Werktags-Kalender), Firestore-Seite in
+      `core/forecaster.ts` (Shadow-Grid `(w, lookback)` = 15 Docs je
+      Symbol+Tag, Doc-ID `baseDate_w_lookback`) — **Golden-Tests zuerst**:
+      540 Fälle gegen Python-Fixtures (inkl. DST-Beginn/-Ende, Wochenende,
+      Jahreswechsel), Toleranz 1e-9
+- [x] Scheduled `evalForecasts` (täglich 16:30 ET): **Lookahead-Gate strikt**
+      (letzter Horizont-Tag < heute UND End-Close realisiert; 13 Gate-Tests
+      inkl. adversarialer Fälle); Doc-ID ersetzt den UNIQUE-Index;
+      Kombi-Statistik + `best_params` nach `meta/forecastStats`
+      (GLOBAL über alle Symbole — wie die Python-Referenz, nicht per Symbol);
+      Firestore-Falle behoben: Kombi-Schlüssel mit Punkt („0.5_20") brauchen
+      `FieldPath`, sonst verschachtelt der Update-Pfad
+- [x] Engine: `_forecast_vote()`-Äquivalent in `core/engine.ts`
+      (`signals.useForecast/forecastWeight/forecastThresholdPct`) — fließt in
+      zentrale UND User-Signale ein; Sentiment ist 0 bis M6 die News liefert
+- [x] Frontend: Prognose-Overlay im Chart (gestrichelte Mittellinie + ±1σ-Band
+      + Badge) + Genauigkeits-Karte aus `meta/forecastStats`
 
-**Abnahme:** Golden-Tests Forecaster + Eval grün · über mehrere Live-Tage:
-Prognosen werden geloggt, fällige korrekt bewertet, KEINE Bewertung vor
-Realisierung (Stichprobe von Hand prüfen) · danach `reference/` als eingefroren
-markieren (README-Notiz), systemd-Referenz-Loop darf abgeschaltet werden.
+**Abnahme:** Golden- und Gate-Tests grün in CI ✓ · Emulator: Scan loggt
+15er-Shadow-Grid, `evalNow` bewertet heutige Prognosen NICHT (Gate-Beweis),
+eine künstlich in die Vergangenheit gelegte Prognose wird korrekt gescored
+(MAE + Richtungs-Hit, Statistik aktualisiert, Tuning bleibt unter der
+Evidenz-Schwelle bei Defaults) ✓ · *Mehrtages-Live-Stichprobe + Einfrieren
+von `reference/` folgt, sobald das System deployt ist (Owner-Schritte).*
 
 ## M6 — News, Sentiment & KI-Staffel
 
