@@ -1,14 +1,17 @@
 /**
  * autotrd Cloud Functions — Einstiegspunkt.
  *
- * M1: nur `healthz` als Smoke-Function. Die eigentliche Logik (scanMarket,
- * evalForecasts, trade, …) kommt ab M2 nach src/scheduled|callable und
- * stützt sich auf src/core (siehe functions/README.md).
+ * M1: `healthz` (Smoke). M2: `scanMarket` (zentrale Marktdaten alle 5 min)
+ * + `scanNow` (Emulator-only-Trigger für die lokale Abnahme).
  */
 
+import { initializeApp } from 'firebase-admin/app';
 import { onRequest } from 'firebase-functions/v2/https';
-// Import aus shared beweist die Workspace-Verdrahtung (kompiliert mit nach lib/).
 import { DEFAULT_STRATEGY } from '../../shared/src/index.js';
+
+initializeApp();
+
+export { scanMarket, scanNow } from './scheduled/scanMarket.js';
 
 export const healthz = onRequest({ cors: true }, (_req, res) => {
   res.status(200).json({

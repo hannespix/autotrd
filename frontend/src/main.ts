@@ -5,8 +5,9 @@
  */
 
 import './style.css';
-import { DEFAULT_STRATEGY } from '@autotrd/shared';
-import { hasFirebaseConfig } from './firebase.js';
+import { DEFAULT_STRATEGY, resolveName, type Quote } from '@autotrd/shared';
+import { doc, onSnapshot } from 'firebase/firestore';
+import { db, hasFirebaseConfig } from './firebase.js';
 import { authErrorMessage, loginEmail, loginGoogle, logout, registerEmail, watchAuth } from './auth.js';
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -78,7 +79,16 @@ function renderLogin(): void {
   });
 }
 
+/** Aktive market/**-Listener — beim Logout/Re-Render sauber lösen (keine Leaks). */
+let tileUnsubs: Array<() => void> = [];
+
+function clearTileWatchers(): void {
+  for (const u of tileUnsubs) u();
+  tileUnsubs = [];
+}
+
 function renderShell(email: string): void {
+  const symbols = DEFAULT_STRATEGY.watchlist;
   app.innerHTML = `
     <header class="topbar">
       <span class="brand">autotrd</span>
@@ -87,14 +97,57 @@ function renderShell(email: string): void {
       <button type="button" id="logoutBtn">Abmelden</button>
     </header>
     <main class="center">
-      <section class="card">
-        <h2>Dashboard</h2>
-        <p>Angemeldet. Realtime-Marktdaten folgen mit Milestone M2,
-           das volle Frosted-Aurora-Dashboard mit M3.</p>
-        <p class="sub">Paper-Startkapital (Default):
-           $${DEFAULT_STRATEGY.broker.initialCapital.toLocaleString('en-US')}</p>
-      </section>
+      <div class="stack">
+        <section class="tiles" id="tiles" aria-label="Watchlist"></section>
+        <section class="card">
+          <h2>Dashboard</h2>
+          <p>Kurse aktualisieren sich live aus <code>market/**</code>
+             (zentraler 5-min-Scan). Das volle Frosted-Aurora-Dashboard
+             folgt mit Milestone M3.</p>
+          <p class="sub">Paper-Startkapital (Default):
+             $${DEFAULT_STRATEGY.broker.initialCapital.toLocaleString('en-US')}</p>
+        </section>
+      </div>
     </main>`;
+
+  const grid = document.querySelector<HTMLElement>('#tiles')!;
+  for (const sym of symbols) {
+    const tile = document.createElement('article');
+    tile.className = 'tile';
+    tile.innerHTML = `
+      <div class="tile-head">
+        <span class="tile-sym"></span>
+        <span class="delta"></span>
+      </div>
+      <div class="tile-name muted"></div>
+      <div class="tile-price">—</div>
+      <div class="tile-time muted"></div>`;
+    tile.querySelector('.tile-sym')!.textContent = sym;
+    tile.querySelector('.tile-name')!.textContent = resolveName(sym);
+    grid.appendChild(tile);
+
+    const unsub = onSnapshot(doc(db(), 'market', sym), (snap) => {
+      const quote = snap.get('quote') as Quote | undefined;
+      if (!quote) return;
+      const price = tile.querySelector<HTMLElement>('.tile-price')!;
+      const delta = tile.querySelector<HTMLElement>('.delta')!;
+      const time = tile.querySelector<HTMLElement>('.tile-time')!;
+      price.textContent = quote.price.toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+      const pct = quote.changePct;
+      delta.textContent = `${pct >= 0 ? '+' : ''}${pct.toFixed(2)} %`;
+      delta.classList.toggle('up', pct >= 0);
+      delta.classList.toggle('down', pct < 0);
+      time.textContent = `Stand ${new Date(quote.updatedAt).toLocaleTimeString('de-DE', {
+        hour: '2-digit',
+        minute: '2-digit',
+      })}`;
+    });
+    tileUnsubs.push(unsub);
+  }
+
   document.querySelector('#logoutBtn')!.addEventListener('click', () => {
     logout().catch(() => {
       /* Abmelden schlägt praktisch nie fehl; Zustand regelt watchAuth */
@@ -106,6 +159,7 @@ if (!hasFirebaseConfig()) {
   renderSetupHint();
 } else {
   watchAuth((user) => {
+    clearTileWatchers();
     if (user) {
       renderShell(user.email ?? user.uid);
     } else {

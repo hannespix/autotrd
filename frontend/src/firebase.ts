@@ -6,6 +6,7 @@
 
 import { initializeApp, type FirebaseApp } from 'firebase/app';
 import { connectAuthEmulator, getAuth, type Auth } from 'firebase/auth';
+import { connectFirestoreEmulator, getFirestore, type Firestore } from 'firebase/firestore';
 
 const config = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY as string | undefined,
@@ -33,15 +34,26 @@ function getApp(): FirebaseApp {
   return app;
 }
 
-let emulatorConnected = false;
+const useEmulators = import.meta.env.VITE_FIREBASE_USE_EMULATORS === '1';
+let authEmulatorConnected = false;
+let dbEmulatorConnected = false;
 
 export function auth(): Auth {
   const a = getAuth(getApp());
   // Lokale Entwicklung gegen die Emulator-Suite (firebase emulators:start):
   // VITE_FIREBASE_USE_EMULATORS=1 in frontend/.env.local setzen.
-  if (!emulatorConnected && import.meta.env.VITE_FIREBASE_USE_EMULATORS === '1') {
+  if (!authEmulatorConnected && useEmulators) {
     connectAuthEmulator(a, 'http://127.0.0.1:9099', { disableWarnings: true });
-    emulatorConnected = true;
+    authEmulatorConnected = true;
   }
   return a;
+}
+
+export function db(): Firestore {
+  const d = getFirestore(getApp());
+  if (!dbEmulatorConnected && useEmulators) {
+    connectFirestoreEmulator(d, '127.0.0.1', 8081);
+    dbEmulatorConnected = true;
+  }
+  return d;
 }

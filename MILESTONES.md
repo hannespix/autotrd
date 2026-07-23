@@ -91,26 +91,31 @@ Registrierung + Login funktionieren live.
 **Ziel:** Ein zentraler Scan schreibt geteilte Marktdaten; Indikatoren rechnen
 in TS nachweislich wie in Python.
 
-- [ ] `core/marketData.ts`: Alpaca Market Data (Key aus Secret Manager) +
-      `yahoo-finance2`-Fallback; Symbol-Konventionen aus
-      `reference/scripts/market_universe.py` portieren → `meta/universe` seeden
-- [ ] `core/indicators.ts`: RSI (**Wilder-Glättung!**), MACD, Bollinger —
-      portiert aus `reference/technical-analysis/scripts/technical_analysis.py`
-- [ ] **Golden-Tests:** OHLCV-Fixtures mit Python erzeugen
-      (`reference/golden/`, Skript beilegen), Vitest vergleicht TS-Ergebnisse
-      (Toleranz 1e-9) — CI-Pflicht ab jetzt
-- [ ] Scheduled Function `scanMarket` (alle 5 min via Cloud Scheduler):
-      ET-Marktzeiten-Gate (09:30–16:00, Mo–Fr; Logik aus
-      `reference/deploy/run_scan.sh`), schreibt `market/{sym}` quote/bars/
-      indicators/signals idempotent (Doc-IDs = fachliche Schlüssel)
-- [ ] Konfluenz-Logik `core/engine.ts` (aus `trading_engine.py`, zunächst ohne
-      Forecast-Vote): Signale nach `market/{sym}/signals/`
-- [ ] Frontend: Watchlist-Kacheln mit Live-Quote via `onSnapshot` (erst
-      hartkodierte Default-Watchlist)
+- [x] `core/marketData.ts`: Yahoo-Chart-API (alle Katalog-Konventionen) +
+      Alpaca-Slot (aktiv sobald `ALPACA_API_KEY/SECRET` gesetzt, nur
+      US-Equities, Fallback Yahoo); Universum nach `shared/src/universe.ts`
+      portiert → `meta/universe` wird beim Scan geseedet (verifiziert)
+- [x] `core/indicators.ts`: RSI (**Wilder-Glättung!**), MACD, Bollinger —
+      Mathematik in `shared/src/indicators.ts` (eine Implementierung für
+      Scan, Backtest und Frontend), Fassade in functions/core
+- [x] **Golden-Tests:** Fixtures via `reference/golden/gen_fixtures.py`
+      (`ta`-Bibliothek, geseedete Serien), Vitest vergleicht TS (1e-9) —
+      21 Parity-Tests, CI-Pflicht ab jetzt
+- [x] Scheduled Function `scanMarket` (alle 5 min via Cloud Scheduler):
+      ET-Marktzeiten-Gate (09:30–16:00, Mo–Fr, DST-getestet), schreibt
+      `market/{sym}` quote/bars/indicators/signals idempotent (Doc-IDs =
+      Datum/Scan-Minute; Bars: Erst-Backfill, danach nur letzter Bar);
+      `scanNow`-HTTP-Trigger nur im Emulator
+- [x] Konfluenz-Logik `core/engine.ts` (aus `trading_engine.py`, zunächst ohne
+      Forecast-Vote): Signale nach `market/{sym}/signals/` (6 Unit-Tests)
+- [x] Frontend: Watchlist-Kacheln mit Live-Quote via `onSnapshot` (erst
+      hartkodierte Default-Watchlist); Listener werden beim Logout gelöst
 
-**Abnahme:** Golden-Tests grün in CI · Emulator: `scanMarket` manuell
-getriggert füllt `market/**` · Live: Function läuft im 5-min-Takt, Frontend
-zeigt sich selbst aktualisierende Kurse · außerhalb Marktzeiten: sauberer No-Op.
+**Abnahme:** Golden-Tests grün in CI ✓ · Emulator: `scanMarket` manuell
+getriggert füllt `market/**` ✓ (2. Scan idempotent: Bar-Zahl konstant) ·
+Playwright-E2E: Login → 4/4 Kacheln mit Live-Quotes, Phone 390 ohne
+Overflow ✓ · *Live-5-min-Takt folgt automatisch mit dem ersten
+Functions-Deploy (Owner-Schritte aus docs/SETUP.md).*
 
 ## M3 — Dashboard-Port (Frosted Aurora → SPA)
 
