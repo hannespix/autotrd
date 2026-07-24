@@ -1,0 +1,38 @@
+name: Scan-Watchdog
+
+# Stopgap, solange der Deploy-SA keine Cloud-Scheduler-Rolle hat: stößt zu
+# US-Marktzeiten alle 30 min einen Scan an — aber NUR, wenn der öffentliche
+# Heartbeat meta/health älter als 12 min ist (kein Doppel-Scan, sobald der
+# echte Cloud Scheduler läuft; dann kostet der Lauf nur den Heartbeat-Check).
+# Dependency-frei (kein npm ci) → Laufzeit wenige Sekunden.
+
+on:
+  schedule:
+    # 13–21 UTC deckt 9:30–16:00 ET in Sommer- und Winterzeit ab (Mo–Fr).
+    - cron: '*/30 13-21 * * 1-5'
+  workflow_dispatch:
+
+concurrency: scan-watchdog
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    env:
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+    steps:
+      - name: Guard — Firebase-Secret vorhanden?
+        if: env.FIREBASE_SERVICE_ACCOUNT == ''
+        run: echo "::warning::FIREBASE_SERVICE_ACCOUNT fehlt — Watchdog übersprungen."
+
+      - uses: actions/checkout@v4
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+
+      - name: Service-Account bereitstellen
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
+
+      - name: Scan anstoßen, wenn Heartbeat älter als 12 min
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+        run: node scripts-ci/invoke-scan.mjs --if-stale 12

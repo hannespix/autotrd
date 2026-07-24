@@ -111,6 +111,24 @@ Zwei Dinge fixen das:
 Danach: *Actions → Deploy Functions (Firebase) → Re-run all jobs* — oder
 einfach den nächsten PR mergen.
 
+### Scans laufen nicht (kein Heartbeat `meta/health`)
+
+Der Deploy-Step **„Scheduler-Diagnose + Scan-Force-Run"** heilt sich selbst,
+so weit die Rechte reichen, und schreibt die Diagnose ins Actions-Log:
+
+- Meldet er `Deploy-SA hat KEINE Cloud-Scheduler-Berechtigung`, wurde die
+  Rolle **Cloud Scheduler Admin** nicht (oder dem falschen Principal)
+  vergeben. Fix: IAM-Konsole → dem Service-Account mit der **im Log
+  ausgegebenen E-Mail** (`Deploy-SA: …`) die Rolle geben, dann den Deploy
+  re-runnen. Der Step legt den fehlenden 5-min-Job dann selbst an.
+- Bis dahin überbrückt der Workflow **Scan-Watchdog**
+  (`scan-watchdog.yml`): er stößt zu US-Marktzeiten alle 30 min einen Scan
+  direkt am Cloud-Run-Service an — aber nur, wenn der Heartbeat älter als
+  12 min ist. Sobald der echte Scheduler läuft, ist der Watchdog
+  automatisch ein No-op.
+- Existiert `meta/health` trotz allem nicht, schlägt die Function selbst
+  fehl → Cloud-Logging des `scanmarket`-Services prüfen.
+
 ## D. webgo: FTP-Zugang & Domain (~10 min)
 
 1. webgo-Kundenportal → **FTP** → FTP-Benutzer anlegen (oder vorhandenen
