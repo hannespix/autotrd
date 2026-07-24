@@ -40,6 +40,7 @@ beforeAll(async () => {
     await db.doc('users/alice/positions/AAPL').set({ qty: 3, avgEntry: 100 });
     await db.doc('users/alice/trades/t1').set({ symbol: 'AAPL', side: 'buy' });
     await db.doc('users/alice/strategies/s1/runs/r1').set({ totalReturnPct: 4.2 });
+    await db.doc('users/alice/predictions/QQQ').set({ targetPrice: 620, confidence: 2 });
     await db.doc('users/alice/strategies/s1/shadowSignals/sig1').set({ direction: 'buy' });
     await db.doc('users/alice/strategies/s1').set({
       name: 'RSI-Dip',
@@ -131,6 +132,10 @@ describe('users/{uid}', () => {
     await assertSucceeds(alice().doc('users/alice/strategies/s1/shadowSignals/sig1').get());
     await assertFails(bob().doc('users/alice/strategies/s1/shadowSignals/sig1').get());
     await assertFails(alice().doc('users/alice/strategies/s1/shadowSignals/sig2').set({ direction: 'buy' }));
+    // User-Prognosen (Chart-Pfeile): read-only, Schreiben nur via savePrediction
+    await assertSucceeds(alice().doc('users/alice/predictions/QQQ').get());
+    await assertFails(bob().doc('users/alice/predictions/QQQ').get());
+    await assertFails(alice().doc('users/alice/predictions/QQQ').set({ targetPrice: 9999, confidence: 3 }));
   });
 
   // ── Adversarial (M7): was kann ein böswilliger EINGELOGGTER User? ──

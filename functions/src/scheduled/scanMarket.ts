@@ -35,11 +35,13 @@ import { computeIndicatorSnapshot, computeSignal } from '../core/engine.js';
 import { executePaperTrade, resolveBrokerMode, riskExitReason } from '../core/broker.js';
 import {
   RISK_LIMITS,
+  applyPredictionVote,
   buildRuleContext,
   clampStrategyRisk,
   cooldownActive,
   decideTree,
   minuteOfDayEt,
+  predictionVote,
   shadowEquity,
   shadowTrade,
   type ShadowBook,
@@ -159,6 +161,13 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
 
       // 2) Regelbaum-Strategien (M10): publizierte Strategien mit Zuordnung
       // handeln ihre Symbole SELBST — der Classic-Pfad überspringt sie.
+      // User-Prognosen (Chart-Pfeile) einmal je User laden
+      const predSnap = await userDoc.ref.collection('predictions').get();
+      const predictions = new Map(
+        predSnap.docs.map((d) => [d.id, d.data() as import('../../../shared/src/index.js').UserPrediction]),
+      );
+      const todayIso = new Date().toISOString();
+
       const stratSnap = await userDoc.ref
         .collection('strategies')
         .where('status', '==', 'published')
@@ -314,7 +323,12 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
           strategy.signals,
           data.forecast,
         );
-        if (sig.direction === 'buy' && !positions.has(symbol)) {
+        // Prognose-Pfeil des Users als zusätzliche gewichtete Stimme
+        const direction = applyPredictionVote(
+          sig,
+          predictionVote(predictions.get(symbol), data.price, todayIso),
+        );
+        if (direction === 'buy' && !positions.has(symbol)) {
           const r = await executePaperTrade(
             { uid, symbol, side: 'buy', price: data.price, source: 'engine' },
             strategy,
@@ -323,7 +337,7 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
             executed += 1;
             logger.info(`Engine-Buy ${uid} ${symbol} @ ${data.price}`);
           }
-        } else if (sig.direction === 'sell' && positions.has(symbol)) {
+        } else if (direction === 'sell' && positions.has(symbol)) {
           const r = await executePaperTrade(
             { uid, symbol, side: 'sell', price: data.price, source: 'engine' },
             strategy,

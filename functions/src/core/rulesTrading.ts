@@ -16,8 +16,9 @@ import type {
   SignalDirection,
   Strategy,
   StrategySpec,
+  UserPrediction,
 } from '../../../shared/src/index.js';
-import { evaluate } from '../../../shared/src/index.js';
+import { PREDICTION_MIN_EDGE_PCT, evaluate } from '../../../shared/src/index.js';
 
 export const RISK_LIMITS = {
   /** Harte Obergrenze je Position — auch wenn die Config mehr will. */
@@ -153,4 +154,38 @@ export function minuteOfDayEt(now: Date): number {
   const get = (t: string): number =>
     parseInt(parts.find((p) => p.type === t)?.value ?? '0', 10);
   return (get('hour') % 24) * 60 + get('minute');
+}
+
+/* ── User-Prognose-Stimme (Chart-Vision 24.07.) ──────────────────────────────
+   Der gezeichnete Pfeil wird zur gewichteten Richtungsstimme im Classic-Pfad:
+   Ziel deutlich über dem Kurs → buy-Votes +confidence (analog sell).
+   Abgelaufene oder richtungslose Prognosen zählen nicht. */
+
+export function predictionVote(
+  pred: UserPrediction | undefined,
+  price: number,
+  todayIso: string,
+): { dir: 'buy' | 'sell'; weight: number } | null {
+  if (!pred || !(price > 0)) return null;
+  if (pred.targetDate < todayIso.slice(0, 10)) return null; // abgelaufen
+  const edgePct = ((pred.targetPrice - price) / price) * 100;
+  if (edgePct >= PREDICTION_MIN_EDGE_PCT) return { dir: 'buy', weight: pred.confidence };
+  if (edgePct <= -PREDICTION_MIN_EDGE_PCT) return { dir: 'sell', weight: pred.confidence };
+  return null; // Ziel ≈ Kurs → keine Richtung
+}
+
+/**
+ * Konfluenz-Entscheidung mit Prognose-Stimme neu fällen — gleiche Regel wie
+ * die Engine (votes ≥ required ∧ votes > Gegenseite), pure.
+ */
+export function applyPredictionVote(
+  sig: { direction: SignalDirection; buyVotes: number; sellVotes: number; requiredConfluence: number },
+  vote: { dir: 'buy' | 'sell'; weight: number } | null,
+): SignalDirection {
+  if (!vote) return sig.direction;
+  const buy = sig.buyVotes + (vote.dir === 'buy' ? vote.weight : 0);
+  const sell = sig.sellVotes + (vote.dir === 'sell' ? vote.weight : 0);
+  if (buy >= sig.requiredConfluence && buy > sell) return 'buy';
+  if (sell >= sig.requiredConfluence && sell > buy) return 'sell';
+  return 'hold';
 }
