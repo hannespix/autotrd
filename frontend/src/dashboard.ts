@@ -7,12 +7,15 @@
 import {
   CLASS_LABELS,
   DEFAULT_STRATEGY,
+  MAX_WATCHLIST,
+  bollinger,
+  ema,
   resolveName,
+  sma,
   validateStrategy,
   type Position,
   type Strategy,
   type Wallet,
-  MAX_WATCHLIST,
 } from '@autotrd/shared';
 import type { Unsubscribe } from 'firebase/firestore';
 import { buildPriceChart, type ChartBar, type PriceChartHandle } from './chart.js';
@@ -23,6 +26,7 @@ import {
   loadWorkspace,
   saveStrategy,
   saveWorkspace,
+  loadBarsOnce,
   loadIntraday,
   watchBars,
   watchLatestAi,
@@ -124,6 +128,11 @@ interface DashState {
   intradayBars: import('./chart.js').IntradayChartBar[];
   /** fitContent beim nächsten renderChart (nur Symbol-/Zeitrahmen-Wechsel). */
   chartFitPending: boolean;
+  /** Aktive Indikator-Overlays (sma20/sma50/sma200/ema9/ema21/bb). */
+  chartLayers: Set<string>;
+  /** Zweites Symbol als %-Vergleichslinie (null = aus). */
+  overlaySymbol: string | null;
+  overlayBars: import('./chart.js').ChartBar[];
   pickerSelection: Set<string>;
   wallet: Wallet | null;
   positions: Position[];
@@ -312,6 +321,15 @@ function layout(email: string): string {
           <button class="tf-btn" data-bars="0">1J</button>
           <button class="tf-btn on" id="lyFc" title="Prognose-Overlay ein/aus" style="margin-left:auto">Prognose</button>
           <button class="tf-btn on" id="lyEv" title="Event-Marker ein/aus">Events</button>
+        </div>
+        <div class="tf-bar ind-bar">
+          <button class="tf-btn" data-layer="sma20" title="Einfacher gleitender Durchschnitt, 20 Bars">SMA20</button>
+          <button class="tf-btn" data-layer="sma50" title="SMA 50">SMA50</button>
+          <button class="tf-btn" data-layer="sma200" title="SMA 200">SMA200</button>
+          <button class="tf-btn" data-layer="ema9" title="Exponentieller Durchschnitt, 9">EMA9</button>
+          <button class="tf-btn" data-layer="ema21" title="EMA 21">EMA21</button>
+          <button class="tf-btn" data-layer="bb" title="Bollinger-Bänder (20, 2σ)">BB</button>
+          <input id="cmpSym" class="inp cmp-inp" placeholder="+ Overlay: SYM" title="Zweiten Kurs als %-Linie überlagern (Tageskerzen)" />
         </div>
         <div class="hint" id="fcInfo" style="margin-bottom:4px"></div>
         <div id="chartArea"></div>
@@ -562,11 +580,59 @@ function renderChart(): void {
   if (st.intradayDays > 0) {
     st.chart.setBars(st.intradayBars, { fit, timeVisible: true });
     st.chart.setForecast(null); // Prognose ist tagesbasiert
+    applyOverlays();
     return;
   }
   const bars = st.range > 0 ? st.bars.slice(-st.range) : st.bars;
   st.chart.setBars(bars, { fit, timeVisible: false });
   applyForecast();
+  applyOverlays();
+}
+
+/** Indikator-/Vergleichs-Overlays aus den aktuell gezeigten Bars berechnen. */
+function applyOverlays(): void {
+  if (!st?.chart) return;
+  const intraday = st.intradayDays > 0;
+  const times: Array<string | number> = intraday
+    ? st.intradayBars.map((b) => b.time)
+    : (st.range > 0 ? st.bars.slice(-st.range) : st.bars).map((b) => b.date);
+  const closes = intraday
+    ? st.intradayBars.map((b) => b.close)
+    : (st.range > 0 ? st.bars.slice(-st.range) : st.bars).map((b) => b.close);
+  const lines: import('./chart.js').OverlayLine[] = [];
+  const pts = (series: (number | null)[]): Array<{ time: string | number; value: number }> =>
+    series.flatMap((v, i) => (v === null ? [] : [{ time: times[i]!, value: v }]));
+
+  const L = st.chartLayers;
+  if (L.has('sma20')) lines.push({ key: 'sma20', color: '#ffb86b', points: pts(sma(closes, 20)) });
+  if (L.has('sma50')) lines.push({ key: 'sma50', color: '#25d0ee', points: pts(sma(closes, 50)) });
+  if (L.has('sma200')) lines.push({ key: 'sma200', color: '#b98aff', points: pts(sma(closes, 200)) });
+  if (L.has('ema9')) lines.push({ key: 'ema9', color: '#40e0b4', points: pts(ema(closes, 9)) });
+  if (L.has('ema21')) lines.push({ key: 'ema21', color: '#ff8290', points: pts(ema(closes, 21)) });
+  if (L.has('bb')) {
+    const b = bollinger(closes);
+    lines.push(
+      { key: 'bbU', color: 'rgba(37,208,238,.4)', width: 1, points: pts(b.upper) },
+      { key: 'bbM', color: 'rgba(37,208,238,.6)', width: 1, points: pts(b.middle) },
+      { key: 'bbL', color: 'rgba(37,208,238,.4)', width: 1, points: pts(b.lower) },
+    );
+  }
+  // Vergleichs-Overlay (Tageskerzen): %-Entwicklung ab erstem gemeinsamen Tag
+  if (!intraday && st.overlaySymbol && st.overlayBars.length > 1) {
+    const firstDate = (st.range > 0 ? st.bars.slice(-st.range) : st.bars)[0]?.date ?? '';
+    const cmp = st.overlayBars.filter((b) => b.date >= firstDate);
+    const base = cmp[0]?.close;
+    if (base && base > 0) {
+      lines.push({
+        key: `cmp:${st.overlaySymbol}`,
+        color: '#b98aff',
+        width: 2,
+        separateScale: true,
+        points: cmp.map((b) => ({ time: b.date, value: ((b.close - base) / base) * 100 })),
+      });
+    }
+  }
+  st.chart.setOverlays(lines);
 }
 
 /** 5m-Chunks laden und rendern (1T/1W) — Chart-Feedback 24.07. */
@@ -1458,6 +1524,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     intradayDays: 0,
     intradayBars: [],
     chartFitPending: true,
+    chartLayers: new Set((localStorage.getItem('autotrd-chart-layers') ?? '').split(',').filter(Boolean)),
+    overlaySymbol: null,
+    overlayBars: [],
     pickerSelection: new Set(),
     wallet: null,
     positions: [],
@@ -1638,6 +1707,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     secondRange: () => st?.chart2?.getVisibleRange() ?? null,
     setMainRange: (r: { from: number; to: number }) => st?.chart?.setVisibleRange(r),
     refreshMain: () => renderChart(),
+    mainOverlays: () => st?.chart?.overlayCount() ?? -1,
   };
 
   // Hotkey-Order-Ticket (M9): Shift+B/S, Enter bestätigt, Esc schließt
@@ -1729,6 +1799,37 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       else renderChart();
     }),
   );
+  // Indikator-Layer (SMA/EMA/BB) — Auswahl bleibt über localStorage erhalten
+  document.querySelectorAll<HTMLButtonElement>('.tf-btn[data-layer]').forEach((b) => {
+    const key = b.dataset.layer!;
+    b.classList.toggle('on', st?.chartLayers.has(key) ?? false);
+    b.addEventListener('click', () => {
+      if (!st) return;
+      if (st.chartLayers.has(key)) st.chartLayers.delete(key);
+      else st.chartLayers.add(key);
+      b.classList.toggle('on', st.chartLayers.has(key));
+      localStorage.setItem('autotrd-chart-layers', [...st.chartLayers].join(','));
+      applyOverlays();
+    });
+  });
+  // Vergleichs-Overlay: Symbol eintippen + Enter (leer = entfernen)
+  $('cmpSym').addEventListener('keydown', (ev) => {
+    if ((ev as KeyboardEvent).key !== 'Enter' || !st) return;
+    const sym = ($('cmpSym') as HTMLInputElement).value.trim().toUpperCase();
+    if (!sym) {
+      st.overlaySymbol = null;
+      st.overlayBars = [];
+      applyOverlays();
+      return;
+    }
+    void loadBarsOnce(sym).then((bars) => {
+      if (!st) return;
+      st.overlaySymbol = sym;
+      st.overlayBars = bars;
+      applyOverlays();
+    });
+  });
+
   $('lyFc').addEventListener('click', () => {
     if (!st) return;
     st.showForecast = !st.showForecast;
