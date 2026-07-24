@@ -16,6 +16,7 @@ import { ensureProfile, listenerCount } from './data.js';
 import { muxIsLeader } from './mux.js';
 import { mountDashboard, unmountDashboard } from './dashboard.js';
 import { mountLegalFooter } from './legal.js';
+import { initPwa } from './pwa.js';
 
 // Leak-/Mux-Nachweis (M9-Abnahme): aktive Firestore-Listener zählbar machen
 // + Leader-Status des Fensters (BroadcastChannel-Multiplexing)
@@ -25,6 +26,9 @@ import { mountLegalFooter } from './legal.js';
 
 // Theme früh setzen (localStorage), Default dunkel
 document.documentElement.dataset.theme = localStorage.getItem('autotrd-theme') ?? 'dark';
+
+// PWA: Service Worker (nur Prod) + Install-Chip
+initPwa();
 
 const app = document.querySelector<HTMLDivElement>('#app')!;
 
