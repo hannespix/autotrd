@@ -3,7 +3,16 @@
  * Callables; kein fetch-Polling, kein /api/* (MILESTONES M3).
  */
 
-import type { Position, Quote, Strategy, Wallet } from '@autotrd/shared';
+import {
+  STRATEGY_PRESETS,
+  type Position,
+  type Quote,
+  type Strategy,
+  type StrategyDoc,
+  type StrategyPreset,
+  type StrategySpec,
+  type Wallet,
+} from '@autotrd/shared';
 import {
   collection,
   doc,
@@ -351,5 +360,68 @@ export async function loadMarketQuotes(): Promise<Map<string, MarketDocData>> {
   const snap = await getDocs(collection(db(), 'market'));
   const map = new Map<string, MarketDocData>();
   for (const d of snap.docs) map.set(d.id, d.data() as MarketDocData);
+  return map;
+}
+
+/* ── Strategie-Studio (M10): users/{uid}/strategies + Presets + Callables ── */
+
+export interface StrategyRow {
+  id: string;
+  doc: StrategyDoc;
+}
+
+export function watchStrategies(uid: string, cb: (rows: StrategyRow[]) => void): Unsubscribe {
+  const q = query(collection(db(), 'users', uid, 'strategies'), orderBy('updatedAt', 'desc'));
+  return onSnapshot(q, (snap) =>
+    cb(snap.docs.map((d) => ({ id: d.id, doc: d.data() as StrategyDoc }))),
+  );
+}
+
+/** Presets aus meta/strategyPresets (vom Scan geseedet; Fallback: shared). */
+export async function loadStrategyPresets(): Promise<StrategyPreset[]> {
+  try {
+    const snap = await getDoc(doc(db(), 'meta', 'strategyPresets'));
+    if (snap.exists()) return (snap.data() as { presets: StrategyPreset[] }).presets;
+  } catch {
+    /* Rules/Netz — Fallback unten */
+  }
+  return STRATEGY_PRESETS;
+}
+
+export async function callSaveStrategyDraft(input: {
+  id?: string;
+  name: string;
+  spec: StrategySpec;
+}): Promise<string> {
+  const res = await httpsCallable(fns(), 'saveStrategyDraft')(input);
+  return (res.data as { id: string }).id;
+}
+
+export async function callPublishStrategy(id: string): Promise<number> {
+  const res = await httpsCallable(fns(), 'publishStrategyVersion')({ id });
+  return (res.data as { version: number }).version;
+}
+
+export async function callAssignStrategy(id: string, symbols: string[]): Promise<void> {
+  await httpsCallable(fns(), 'assignStrategy')({ id, symbols });
+}
+
+/** Bars einmalig für die Studio-Vorschau (gecachte Tages-Bars, aufsteigend). */
+export async function loadBarsOnce(symbol: string): Promise<ChartBar[]> {
+  const q = query(collection(db(), 'market', symbol, 'bars'), orderBy(documentId()));
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => ({ date: d.id, ...(d.data() as Omit<ChartBar, 'date'>) }));
+}
+
+/** Event-Tage einmalig (Sentiment + Tags je Datum) für die Vorschau. */
+export async function loadEventsOnce(
+  symbol: string,
+): Promise<Map<string, { sentiment: number | null; tags: string[] }>> {
+  const snap = await getDocs(collection(db(), 'market', symbol, 'events'));
+  const map = new Map<string, { sentiment: number | null; tags: string[] }>();
+  for (const d of snap.docs) {
+    const data = d.data() as { sentiment?: number; topEvents?: string[] };
+    map.set(d.id, { sentiment: data.sentiment ?? null, tags: data.topEvents ?? [] });
+  }
   return map;
 }

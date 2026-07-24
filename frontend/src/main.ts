@@ -15,6 +15,7 @@ import {
 import { ensureProfile, listenerCount } from './data.js';
 import { muxIsLeader } from './mux.js';
 import { mountDashboard, unmountDashboard } from './dashboard.js';
+import { mountStudio, unmountStudio } from './studio.js';
 import { mountLegalFooter } from './legal.js';
 import { initPwa } from './pwa.js';
 
@@ -117,17 +118,36 @@ function renderLogin(): void {
   });
 }
 
+// Mini-Router (M10): '#/strategy…' mountet das Studio, alles andere das
+// Dashboard. Auth-Wechsel und hashchange laufen durch dieselbe route().
+let currentUser: { uid: string; email: string | null } | null = null;
+
+function route(): void {
+  unmountDashboard();
+  unmountStudio();
+  if (!currentUser) {
+    renderLogin();
+    return;
+  }
+  if (location.hash.startsWith('#/strategy')) {
+    mountStudio(app, currentUser.uid);
+  } else {
+    mountDashboard(app, currentUser.uid, currentUser.email ?? currentUser.uid);
+  }
+}
+
 if (!hasFirebaseConfig()) {
   renderSetupHint();
 } else {
+  window.addEventListener('hashchange', () => {
+    if (currentUser) route();
+  });
   watchAuth((user) => {
-    unmountDashboard();
+    currentUser = user ? { uid: user.uid, email: user.email } : null;
     if (user) {
-      // Profil serverseitig sicherstellen (idempotent), dann Dashboard
+      // Profil serverseitig sicherstellen (idempotent), dann Dashboard/Studio
       ensureProfile().catch((e) => console.warn('ensureProfile', e));
-      mountDashboard(app, user.uid, user.email ?? user.uid);
-    } else {
-      renderLogin();
     }
+    route();
   });
 }
