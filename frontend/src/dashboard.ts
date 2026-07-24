@@ -26,8 +26,10 @@ import {
   loadWorkspace,
   saveStrategy,
   saveWorkspace,
+  callSavePrediction,
   loadBarsOnce,
   loadIntraday,
+  loadPrediction,
   watchBars,
   watchLatestAi,
   watchLatestIndicators,
@@ -130,6 +132,9 @@ interface DashState {
   chartFitPending: boolean;
   /** Aktive Indikator-Overlays (sma20/sma50/sma200/ema9/ema21/bb). */
   chartLayers: Set<string>;
+  /** Aktive User-Prognose (Chart-Pfeil) des aktuellen Symbols. */
+  prediction: import('@autotrd/shared').UserPrediction | null;
+  predMode: boolean;
   /** Zweites Symbol als %-Vergleichslinie (null = aus). */
   overlaySymbol: string | null;
   overlayBars: import('./chart.js').ChartBar[];
@@ -330,9 +335,31 @@ function layout(email: string): string {
           <button class="tf-btn" data-layer="ema21" title="EMA 21">EMA21</button>
           <button class="tf-btn" data-layer="bb" title="Bollinger-Bänder (20, 2σ)">BB</button>
           <input id="cmpSym" class="inp cmp-inp" placeholder="+ Overlay: SYM" title="Zweiten Kurs als %-Linie überlagern (Tageskerzen)" />
+          <button class="tf-btn" id="predBtn" title="Prognose-Pfeil zeichnen: Klick in den Chart setzt den Ziel-Kurs">✏ Pfeil</button>
         </div>
         <div class="hint" id="fcInfo" style="margin-bottom:4px"></div>
-        <div id="chartArea"></div>
+        <div id="chartWrap" class="chart-wrap">
+          <div id="chartArea"></div>
+          <svg id="predSvg" class="pred-svg" aria-hidden="true"></svg>
+          <div id="predPop" class="pred-pop" hidden>
+            <b>Prognose-Pfeil</b>
+            <label>Ziel-Kurs <input id="ppPrice" class="inp st-num" type="number" step="0.5" /></label>
+            <label>Ziel-Datum <input id="ppDate" class="inp" type="date" /></label>
+            <label>Vertrauen
+              <span class="st-stepper">
+                <button type="button" class="btn btn-n" id="ppConfM">−</button>
+                <b class="mono" id="ppConfV">2</b>
+                <button type="button" class="btn btn-n" id="ppConfP">+</button>
+              </span>
+            </label>
+            <div class="row">
+              <button type="button" class="btn btn-g" id="ppSave">Speichern</button>
+              <button type="button" class="btn btn-n" id="ppDel">Löschen</button>
+              <button type="button" class="btn btn-n" id="ppClose">✕</button>
+            </div>
+            <p class="hint">Der Algorithmus nimmt den Pfeil als gewichtete Stimme (Dicke = Vertrauen).</p>
+          </div>
+        </div>
         <div class="hint">1T/1W: 5-Minuten-Kerzen · 1M–1J: Tageskerzen —
           aktualisiert der zentrale 5-min-Scan. Zoom bleibt beim Aktualisieren erhalten.</div>
       </div></div>
@@ -587,6 +614,7 @@ function renderChart(): void {
   st.chart.setBars(bars, { fit, timeVisible: false });
   applyForecast();
   applyOverlays();
+  drawPredictionArrow();
 }
 
 /** Indikator-/Vergleichs-Overlays aus den aktuell gezeigten Bars berechnen. */
@@ -633,6 +661,51 @@ function applyOverlays(): void {
     }
   }
   st.chart.setOverlays(lines);
+}
+
+/** Prognose-Pfeil als organische Vektor-Kurve über dem Chart (Dicke = Vertrauen). */
+function drawPredictionArrow(): void {
+  const svg = document.getElementById('predSvg');
+  if (!svg || !st) return;
+  svg.innerHTML = '';
+  const pred = st.prediction;
+  if (!pred || !st.chart || st.intradayDays > 0 || st.bars.length === 0) return;
+  const last = st.bars[st.bars.length - 1]!;
+  const start = st.chart.coords(last.date, last.close);
+  const yEnd = st.chart.coords(last.date, pred.targetPrice).y;
+  if (start.x === null || start.y === null || yEnd === null) return;
+  const box = svg.getBoundingClientRect();
+  const x2 = Math.min(box.width - 16, start.x + Math.max(60, box.width * 0.12));
+  const w = 1 + pred.confidence * 1.3;
+  const midX = (start.x + x2) / 2;
+  const up = pred.targetPrice >= last.close;
+  svg.setAttribute('viewBox', `0 0 ${box.width} ${box.height}`);
+  svg.innerHTML = `
+    <path d="M${start.x},${start.y} Q${midX},${start.y} ${x2},${yEnd}"
+      fill="none" stroke="#ffb86b" stroke-width="${w}" stroke-linecap="round" opacity="0.9" />
+    <path d="M${x2},${yEnd} l${up ? '-9,3 2,-8' : '-9,-3 2,8'} z" fill="#ffb86b" opacity="0.9" />
+    <text x="${x2 - 4}" y="${yEnd + (up ? -10 : 18)}" text-anchor="end" class="pred-label">
+      ${pred.targetPrice.toFixed(2)} · ${pred.targetDate.slice(5)}</text>`;
+}
+
+function openPredPop(price: number): void {
+  if (!st) return;
+  const pop = $('predPop');
+  ($('ppPrice') as HTMLInputElement).value = price.toFixed(2);
+  ($('ppDate') as HTMLInputElement).value =
+    st.prediction?.targetDate ?? new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10);
+  $('ppConfV').textContent = String(st.prediction?.confidence ?? 2);
+  ($('ppDel') as HTMLButtonElement).hidden = !st.prediction;
+  pop.hidden = false;
+}
+
+async function loadPredictionForSymbol(): Promise<void> {
+  if (!st) return;
+  const sym = st.currentSymbol;
+  const pred = await loadPrediction(st.uid, sym).catch(() => null);
+  if (!st || st.currentSymbol !== sym) return;
+  st.prediction = pred;
+  drawPredictionArrow();
 }
 
 /** 5m-Chunks laden und rendern (1T/1W) — Chart-Feedback 24.07. */
@@ -705,6 +778,14 @@ async function rebuildChart(): Promise<void> {
   st.chart = handle;
   st.chartFitPending = true;
   if (st.intradayDays > 0) void loadIntradayView();
+  st.chart?.onClick((price) => {
+    if (!st?.predMode || price === null) return;
+    st.predMode = false;
+    $('predBtn').classList.remove('on');
+    openPredPop(price);
+  });
+  st.chart?.onVisibleRangeChange(() => drawPredictionArrow());
+  void loadPredictionForSymbol();
   st.chart?.onCrosshairDate((date, pos) => {
     showEventTooltip(date, pos);
     if (!crosshairSyncing && st?.chart2) {
@@ -1524,6 +1605,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     intradayDays: 0,
     intradayBars: [],
     chartFitPending: true,
+    prediction: null,
+    predMode: false,
     chartLayers: new Set((localStorage.getItem('autotrd-chart-layers') ?? '').split(',').filter(Boolean)),
     overlaySymbol: null,
     overlayBars: [],
@@ -1812,6 +1895,52 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       applyOverlays();
     });
   });
+  // Prognose-Pfeil: Modus + Popover
+  $('predBtn').addEventListener('click', () => {
+    if (!st) return;
+    if (st.intradayDays > 0) return; // Pfeil nur in der Tages-Ansicht
+    st.predMode = !st.predMode;
+    $('predBtn').classList.toggle('on', st.predMode);
+  });
+  $('ppClose').addEventListener('click', () => ($('predPop').hidden = true));
+  $('ppConfM').addEventListener('click', () => {
+    const v = Math.max(1, Number($('ppConfV').textContent) - 1);
+    $('ppConfV').textContent = String(v);
+  });
+  $('ppConfP').addEventListener('click', () => {
+    const v = Math.min(3, Number($('ppConfV').textContent) + 1);
+    $('ppConfV').textContent = String(v);
+  });
+  $('ppSave').addEventListener('click', () => {
+    if (!st) return;
+    const last = st.bars[st.bars.length - 1];
+    const targetPrice = Number(($('ppPrice') as HTMLInputElement).value);
+    const targetDate = ($('ppDate') as HTMLInputElement).value;
+    const confidence = Number($('ppConfV').textContent);
+    void callSavePrediction({
+      symbol: st.currentSymbol,
+      targetPrice,
+      targetDate,
+      confidence,
+      basePrice: last?.close ?? targetPrice,
+    })
+      .then(() => {
+        $('predPop').hidden = true;
+        return loadPredictionForSymbol();
+      })
+      .catch((e) => alert(`Prognose: ${(e as Error).message}`));
+  });
+  $('ppDel').addEventListener('click', () => {
+    if (!st) return;
+    void callSavePrediction({ symbol: st.currentSymbol, clear: true })
+      .then(() => {
+        $('predPop').hidden = true;
+        st!.prediction = null;
+        drawPredictionArrow();
+      })
+      .catch((e) => alert(`Prognose: ${(e as Error).message}`));
+  });
+
   // Vergleichs-Overlay: Symbol eintippen + Enter (leer = entfernen)
   $('cmpSym').addEventListener('keydown', (ev) => {
     if ((ev as KeyboardEvent).key !== 'Enter' || !st) return;
