@@ -68,6 +68,10 @@ export interface PriceChartHandle {
   setOverlays(lines: OverlayLine[]): void;
   /** Anzahl aktiver Overlay-Linien (E2E-Hook). */
   overlayCount(): number;
+  /** Chart-Klick → Preis an der Klick-Position (null außerhalb der Skala). */
+  onClick(cb: (price: number | null) => void): void;
+  /** Pixel-Koordinaten für (Zeit, Preis) — für absolut positionierte Overlays. */
+  coords(time: string | number, price: number): { x: number | null; y: number | null };
   /** Prognose-Overlay: gestrichelte Mittellinie + ±1σ-Band (null = entfernen). */
   setForecast(overlay: ForecastOverlay | null, anchor?: { time: string; value: number }): void;
   /** Event-Marker (sentiment-gefärbt) auf den Kerzen. */
@@ -245,6 +249,18 @@ export async function buildPriceChart(
     },
     overlayCount(): number {
       return overlays.size;
+    },
+    onClick(cb: (price: number | null) => void): void {
+      chart.subscribeClick((param) => {
+        const y = param.point?.y;
+        cb(y == null ? null : (candle.coordinateToPrice(y) as number | null));
+      });
+    },
+    coords(time: string | number, price: number): { x: number | null; y: number | null } {
+      return {
+        x: chart.timeScale().timeToCoordinate(time as never) as number | null,
+        y: candle.priceToCoordinate(price) as number | null,
+      };
     },
     setForecast(overlay, anchor): void {
       if (!overlay || overlay.points.length === 0) {

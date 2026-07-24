@@ -443,6 +443,26 @@ export function watchLatestRun(
   return onSnapshot(q, (snap) => cb(snap.empty ? null : (snap.docs[0]!.data() as BacktestRunDoc)));
 }
 
+/** Aktive User-Prognose (Chart-Pfeil) eines Symbols — null wenn keine. */
+export async function loadPrediction(
+  uid: string,
+  symbol: string,
+): Promise<import('@autotrd/shared').UserPrediction | null> {
+  const snap = await getDoc(doc(db(), 'users', uid, 'predictions', symbol));
+  return snap.exists() ? (snap.data() as import('@autotrd/shared').UserPrediction) : null;
+}
+
+export async function callSavePrediction(input: {
+  symbol: string;
+  targetPrice?: number;
+  targetDate?: string;
+  confidence?: number;
+  basePrice?: number;
+  clear?: boolean;
+}): Promise<void> {
+  await httpsCallable(fns(), 'savePrediction')(input);
+}
+
 /** Bars einmalig für die Studio-Vorschau (gecachte Tages-Bars, aufsteigend). */
 export async function loadBarsOnce(symbol: string): Promise<ChartBar[]> {
   const q = query(collection(db(), 'market', symbol, 'bars'), orderBy(documentId()));
