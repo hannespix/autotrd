@@ -205,6 +205,8 @@ function paletteCommands(): PaletteCommand[] {
     { id: 'link-chart', label: 'Chart: Link-Gruppe wechseln', run: () => $('chipChart').click() },
     { id: 'link-news', label: 'News-Panel: Link-Gruppe wechseln', run: () => $('chipNews').click() },
     { id: 'picker', label: 'Watchlist bearbeiten', run: () => $('openPickerBtn').click() },
+    { id: 'order-buy', label: 'Kaufen … (Order-Ticket, Shift+B)', hint: 'Order', run: () => openOrderTicket('buy') },
+    { id: 'order-sell', label: 'Verkaufen … (Order-Ticket, Shift+S)', hint: 'Order', run: () => openOrderTicket('sell') },
   );
   for (const [id, title] of Object.entries(PANEL_TITLES)) {
     cmds.push({
@@ -1427,7 +1429,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     newsSymbol: DEFAULT_STRATEGY.watchlist[0] ?? 'QQQ',
     newsSubs: [],
     wsPreset: 'ueberblick',
-    wsHidden: new Set(),
+    wsHidden: new Set(DEFAULT_HIDDEN),
     wsSaveTimer: null,
     paletteDispose: null,
     events: [],
@@ -1696,6 +1698,7 @@ function onEscape(e: KeyboardEvent): void {
   if (e.key !== 'Escape') return;
   closeModal('detail');
   closeModal('picker');
+  document.getElementById('orderModal')?.classList.remove('show');
   for (const id of ['leftCol', 'rightCol']) document.getElementById(id)?.classList.remove('show');
   document.getElementById('olv')?.classList.remove('show');
 }

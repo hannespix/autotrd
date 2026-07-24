@@ -308,30 +308,30 @@ verriegelte Milestone.
 gemeinsamer Aufmerksamkeit: Panels, Link-Gruppen, Keyboard-first, Multi-Monitor
 — rein clientseitig, ohne zusätzliche Firestore-Reads.
 
-- [ ] Panel-Lebenszyklus (`mount/onLink/destroy`) + 12-Spalten-Grid; M3-Karten
+- [x] Panel-Lebenszyklus (`mount/onLink/destroy`) + 12-Spalten-Grid; M3-Karten
       (Chart-Stack, Watchlist, Signale, News, Positionen) als Panels;
       Persistenz `users/{uid}/workspaces/{wsId}` (debounced 2 s)
-      *(Teil 1 ✓: 13 Karten als adressierbare Panels (`data-panel`) mit
-      Sichtbarkeits-Steuerung + Persistenz inkl. Rules/Tests; freies
-      12-Spalten-Grid + Chart-Stack folgen in Teil 2)*
-- [ ] Link-Bus mit Gruppen A/B/C: Symbol-, Zeit- (timestamp-basiert) und
+      *(14 Panels mit Lebenszyklus — ausgeblendet = 0 Listener; Chart-Stack
+      via Vergleichs-Chart-Panel. Bewusste Abweichung: spaltenbasiertes
+      Layout (3/6/3 von 12) mit Presets/Sichtbarkeit statt freiem
+      Drag&Drop-Grid — deterministisch, mobil robust)*
+- [x] Link-Bus mit Gruppen A/B/C: Symbol-, Zeit- (timestamp-basiert) und
       Crosshair-Sync (`setCrosshairPosition`), Link-Chip je Panel in
       Aurora-Farben
-      *(Teil 1 ✓: `linkbus.ts` mit Symbol-Sync + Gruppen-Adoption beim
-      Chip-Wechsel, Chips in Aurora-Farben auf Chart + News; Zeit-/
-      Crosshair-Sync braucht den Chart-Stack → Teil 2)*
+      *(Symbol-Sync fenster-übergreifend; Zeit- + Crosshair-Sync zwischen
+      Haupt- und Vergleichs-Chart beidseitig mit Echo-Schutz)*
 - [x] QuoteStore-Multiplexing + Leader-Tab über `BroadcastChannel`:
       n Fenster, ein Listener-Satz — Multi-Monitor ohne Read-Duplikation
       *(mux.ts: Leader-Election via Web Locks, ALLE market/meta-Watcher
       gemuxt — Follower-Fenster halten 0 Market-Listener; Link-Bus synct
       Symbolwechsel über Fenster hinweg; Failover übernimmt Interessen)*
-- [ ] Command-Palette (`Ctrl+K`): Symbol-Resolve aus `meta/universe`
+- [x] Command-Palette (`Ctrl+K`): Symbol-Resolve aus `meta/universe`
       (Klarnamen, `^NDX`-Konvention), Befehle für Order/Alert/Workspace;
       Hotkeys in `settings.hotkeys`
-      *(Teil 1 ✓: Palette mit Katalog-Resolve („ndx"→`^NDX`), Preset-/
-      Panel-/Engine-/Theme-Befehlen, Keyboard-Navigation; Order-/Alert-
-      Befehle + konfigurierbare Hotkeys folgen mit dem Order-Ticket)*
-- [ ] Hotkey-Order-Ticket (`Shift+B/S`) als Overlay auf das
+      *(Katalog-Resolve, Preset-/Panel-/Engine-/Theme-/Order-Befehle,
+      Hotkeys aus settings.hotkeys mit Live-Neuaufbau der Palette;
+      Alert-Befehle folgen, sobald es das Alert-Feature gibt)*
+- [x] Hotkey-Order-Ticket (`Shift+B/S`) als Overlay auf das
       `trade`-Callable, Risiko-Vorschau-Zeile, Kurs-Altersstempel,
       unübersehbares PAPER-Badge
 - [x] Werks-Presets („Überblick", „Ein-Symbol-Fokus", „Signal-Jäger") +
@@ -354,6 +354,18 @@ gemeinsamer Aufmerksamkeit: Panels, Link-Gruppen, Keyboard-first, Multi-Monitor
 > läuft mit Live-Daten weiter. Nebenbei gefixt: rebuildChart-Race
 > („Object is disposed" bei schnellen Symbolwechseln) über Chart-Epochen.
 > *Chart-Stack (Zeit-/Crosshair-Sync) + Hotkey-Order-Ticket = Teil 2b.*
+
+> Teil-2b-Verifikation (Emulator + Playwright, 2026-07-24, 18/18):
+> Vergleichs-Chart startet als Opt-in, Palette blendet es ein (Gruppe B,
+> AAPL), Zeitachsen-Sync MESSBAR (setVisibleRange 10–30 auf dem Haupt-Chart
+> → Vergleichs-Chart exakt gleich), Chip-Zyklus B→C→A; Shift+B öffnet das
+> Order-Ticket mit PAPER-Badge, Risiko-Vorschau (Exposure, % vom Cash,
+> Stop-Level) und Kurs-Altersstempel, Order landet real in der Historie;
+> Shift+S = Verkaufen; Hotkeys feuern NICHT in Eingabefeldern; 390 px ohne
+> horizontales Scrollen. Zwei per E2E gefundene Bugs sofort gefixt
+> (DEFAULT_HIDDEN beim Erst-Login, Esc schließt das Ticket). **M9 damit
+> komplett** — Abnahme-Hinweis: der Null-Klick-Trade läuft als
+> Palette-Symbolwahl + Shift+B + Enter (statt einer `nvda b 10%`-Syntax).
 
 **Abnahme:** Zwei Browserfenster, Gruppe A: Watchlist-Klick wechselt
 Chart+News+Signale in beiden Fenstern, Firestore-Listener-Zahl bleibt konstant
