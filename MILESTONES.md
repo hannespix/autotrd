@@ -402,12 +402,19 @@ weiter.
       Abweichung dokumentiert: bei ENTSCHEIDEND fehlenden Daten hält der Baum
       konservativ. Die Laufzeit-Migration der Settings-Docs folgt mit der
       scanMarket-Erweiterung.)*
-- [ ] `scanMarket`-Erweiterung: 1 Marktdaten-Fetch pro Symbol, N
+- [x] `scanMarket`-Erweiterung: 1 Marktdaten-Fetch pro Symbol, N
       Baum-Auswertungen; exotische Indikator-Parameter nur in-memory
       (memoisiert), Katalog-Varianten weiter nach `market/**`
-- [ ] Risiko-Hülle außerhalb des Baums (Clamp `maxPositionPct` ≤ 25,
+      *(publizierte Strategien mit Zuordnung handeln ihre Symbole selbst,
+      der Classic-Pfad überspringt sie; RuleContext inkl. prevValues für
+      crossover aus dem In-Memory-Scan. Exotische Indikator-Parameter je
+      Knoten folgen mit dem Builder.)*
+- [x] Risiko-Hülle außerhalb des Baums (Clamp `maxPositionPct` ≤ 25,
       Pflicht-Stop-Loss, `maxOpenPositions`, Cooldown) — von keinem Knoten
       überschreibbar; Stop/TP greifen vor jeder Regel-Auswertung
+      *(core/rulesTrading: RISK_LIMITS-Konstanten, clampStrategyRisk pure,
+      Cooldown 30 min nur für ENTRIES (Exits nie geblockt), Risk-Exits
+      laufen wie gehabt VOR jeder Auswertung; Unit-Tests 104/104)*
 - [ ] Karten-Builder `#/strategy/{id}` (Gates/Votes/Exit als Glass-Cards,
       Threshold-Stepper, Gewicht-Badges) + Live-Vorschau über gecachte Bars
       (Marker + Haltebänder, Label „Vorschau, kein Backtest",
@@ -419,6 +426,27 @@ weiter.
 sich ohne Server-Call (Network-Tab) · publizierte Strategie handelt im nächsten
 Scan auf Paper · direkter Firestore-Write auf `strategies/**` wird abgelehnt
 (Rules-Test) · Classic-Parity-Test grün · Builder funktioniert bei 390 px.
+
+## M10b — Depot-Vision: Alle Asset-Klassen handelbar (User-Wunsch 2026-07-24)
+
+**Ziel:** autotrd ist nicht nur US-Daytrading — ein Depot aus Wertpapieren,
+Rohstoffen, Krypto, Devisen usw. soll rund um die Uhr betreut werden, so weit
+die Märkte es hergeben. Der Katalog (10 Klassen, 166 Symbole) kann das längst;
+es fehlten die Handelszeiten je Klasse.
+
+- [x] `shared/marketHours.ts`: `marketOpenForClass` — Krypto 24/7,
+      Forex/Rohstoffe ~24/5 (Wochenend-Pause Fr 17 → So 17 ET), Aktien/ETFs/
+      Indizes/Anleihen US-Zeiten; DST-korrekt via Intl, Unit-Tests
+- [x] Scan-Gate je Symbol statt global: gescannt/gehandelt wird, was gerade
+      offen ist; Heartbeat-No-Op nur noch, wenn ALLE Klassen zu sind
+- [x] Watchdog-Fenster erweitert (stündlich außerhalb des US-Fensters,
+      Actions-Budget-schonend); native 5-min-Kadenz kommt vom Cloud Scheduler
+- [x] Produkt-Framing: „Paper-Trading · Aktien, Krypto & mehr" (Titel,
+      Manifest, Login)
+- [ ] Langfrist-Depot-Horizonte (Positionen über Tage/Wochen, Kennzahlen je
+      Assetklasse) → läuft in M12 (Multi-Wallets, Attribution) ein
+- [ ] Echte Broker-Anbindung je Klasse (Krypto-Spot, IBKR, …) → M13/M14,
+      Echtgeld bleibt owner-gated
 
 ## M11 — Strategie-Studio II: Backtest, Shadow, Sweeps, A/B
 
