@@ -281,6 +281,14 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .cmdk-hint { font-size: 9.5px; text-transform: uppercase; letter-spacing: .5px; color: var(--t3); }
 .cmdk-empty { padding: 14px; font-size: 12px; color: var(--t3); text-align: center; }
 
+/* Order-Ticket (M9): unübersehbares PAPER-Badge */
+.paper-badge {
+  position: absolute; top: 14px; right: 56px; padding: 3px 10px; border-radius: 6px;
+  background: repeating-linear-gradient(45deg, rgba(255, 184, 107, .25), rgba(255, 184, 107, .25) 8px, rgba(255, 184, 107, .12) 8px, rgba(255, 184, 107, .12) 16px);
+  border: 1px solid #ffb86b; color: #ffb86b; font-weight: 800; font-size: 11px;
+  letter-spacing: 2px; font-family: var(--f-num);
+}
+
 /* Rechtliches (M7): Footer + Modal-Text */
 .legal-foot {
   display: flex; gap: 10px; align-items: center; justify-content: center; flex-wrap: wrap;

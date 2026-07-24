@@ -23,4 +23,11 @@ export default tseslint.config(
       ],
     },
   },
+  // CI-Hilfsscripte laufen in Node (process/console sind dort global)
+  {
+    files: ['scripts-ci/**/*.mjs'],
+    languageOptions: {
+      globals: { process: 'readonly', console: 'readonly' },
+    },
+  },
 );

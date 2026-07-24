@@ -42,6 +42,12 @@ export interface PriceChartHandle {
    * dem Cursor plus Viewport-Koordinaten — null beim Verlassen des Charts.
    */
   onCrosshairDate(cb: (date: string | null, pos: { x: number; y: number } | null) => void): void;
+  /** Zeitachsen-Sync (M9 Chart-Stack): sichtbaren Bereich beobachten/setzen. */
+  onVisibleRangeChange(cb: (range: { from: number; to: number } | null) => void): void;
+  setVisibleRange(range: { from: number; to: number }): void;
+  getVisibleRange(): { from: number; to: number } | null;
+  /** Crosshair programmatisch auf einen Handelstag setzen (null = löschen). */
+  setCrosshair(date: string | null): void;
   destroy(): void;
 }
 
@@ -137,8 +143,14 @@ export async function buildPriceChart(
   const fcUp = chart.addLineSeries({ color: 'rgba(37,208,238,.45)', lineWidth: 1, lineStyle: 3, ...fcCommon });
   const fcLo = chart.addLineSeries({ color: 'rgba(37,208,238,.45)', lineWidth: 1, lineStyle: 3, ...fcCommon });
 
+  // Für setCrosshair: Close je Handelstag (setCrosshairPosition braucht
+  // neben der Zeit auch einen Preis auf der Serie)
+  const closeByDate = new Map<string, number>();
+
   return {
     setBars(bars: ChartBar[]): void {
+      closeByDate.clear();
+      for (const b of bars) closeByDate.set(b.date, b.close);
       candle.setData(
         bars.map((b) => ({
           time: b.date,
@@ -198,6 +210,26 @@ export async function buildPriceChart(
         const rect = container.getBoundingClientRect();
         cb(date, { x: rect.left + param.point.x, y: rect.top + param.point.y });
       });
+    },
+    onVisibleRangeChange(cb): void {
+      chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+        cb(range ? { from: range.from, to: range.to } : null);
+      });
+    },
+    setVisibleRange(range): void {
+      chart.timeScale().setVisibleLogicalRange(range);
+    },
+    getVisibleRange(): { from: number; to: number } | null {
+      const r = chart.timeScale().getVisibleLogicalRange();
+      return r ? { from: r.from, to: r.to } : null;
+    },
+    setCrosshair(date): void {
+      const price = date ? closeByDate.get(date) : undefined;
+      if (date && price !== undefined) {
+        chart.setCrosshairPosition(price, date as never, candle);
+      } else {
+        chart.clearCrosshairPosition();
+      }
     },
     destroy(): void {
       chart.remove();

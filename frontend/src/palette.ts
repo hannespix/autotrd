@@ -29,7 +29,7 @@ interface PaletteOptions {
   hotkey?: string;
 }
 
-function matchesHotkey(e: KeyboardEvent, hotkey: string): boolean {
+export function matchesHotkey(e: KeyboardEvent, hotkey: string): boolean {
   const parts = hotkey.toLowerCase().split('+');
   const key = parts[parts.length - 1] ?? 'k';
   return (

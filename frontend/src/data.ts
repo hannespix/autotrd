@@ -255,12 +255,18 @@ export function watchLatestIndicators(
 
 export function watchUserDoc(
   uid: string,
-  cb: (data: { strategy: Strategy | null; wallet: Wallet | null }) => void,
+  cb: (data: {
+    strategy: Strategy | null;
+    wallet: Wallet | null;
+    /** Nutzer-Hotkeys (M9, settings.hotkeys) — z. B. { palette, buy, sell }. */
+    hotkeys: Record<string, string> | null;
+  }) => void,
 ): Unsubscribe {
   return onSnapshot(doc(db(), 'users', uid), (snap) => {
     cb({
       strategy: (snap.get('settings.strategy') as Strategy | undefined) ?? null,
       wallet: (snap.get('wallet') as Wallet | undefined) ?? null,
+      hotkeys: (snap.get('settings.hotkeys') as Record<string, string> | undefined) ?? null,
     });
   });
 }
