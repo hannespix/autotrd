@@ -49,3 +49,11 @@ jobs:
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
         run: node scripts-ci/set-public-invoker.mjs ensureprofile savestrategy trade
+
+      # Live-Abnahme im Log: Scheduler-Jobs listen, Scan einmal anstoßen,
+      # danach den öffentlichen Heartbeat meta/health prüfen.
+      - name: Scheduler-Diagnose + Scan-Force-Run
+        if: ${{ !cancelled() && env.FIREBASE_SERVICE_ACCOUNT != '' }}
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+        run: node scripts-ci/check-scheduler.mjs
