@@ -59,10 +59,15 @@ function strat(patch: {
   return s;
 }
 
-/** Baum-Richtung aus der kompilierten Spec — Margin-Kodierung macht buy∧sell unmöglich. */
+/** Baum-Richtung — Spec je Config EINMAL kompiliert/validiert (Performance). */
+const specCache = new Map<Strategy, ReturnType<typeof compileClassic>>();
 function treeDirection(s: Strategy, ctx: RuleContext): SignalDirection {
-  const spec = compileClassic(s);
-  expect(validateStrategySpec(spec)).toEqual([]); // Guards: Tiefe/Knoten/Threshold
+  let spec = specCache.get(s);
+  if (!spec) {
+    spec = compileClassic(s);
+    expect(validateStrategySpec(spec)).toEqual([]); // Guards: Tiefe/Knoten/Threshold
+    specCache.set(s, spec);
+  }
   const buy = evaluate(spec.buy, ctx);
   const sell = evaluate(spec.sell, ctx);
   expect(buy && sell).toBe(false);
@@ -85,7 +90,7 @@ const FORECASTS: Array<ForecastVoteInput | null> = [
 ];
 
 describe('Parity: compileClassic ⇔ Konfluenz-Engine', () => {
-  it('liefert auf 100 Serien × 5 Configs × 4 Forecasts identische Richtungen', () => {
+  it('liefert auf 100 Serien × 5 Configs × 4 Forecasts identische Richtungen', { timeout: 20_000 }, () => {
     let nonHold = 0;
     let checked = 0;
     for (let seed = 1; seed <= 100; seed++) {

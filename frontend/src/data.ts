@@ -406,6 +406,39 @@ export async function callAssignStrategy(id: string, symbols: string[]): Promise
   await httpsCallable(fns(), 'assignStrategy')({ id, symbols });
 }
 
+export interface BacktestRunDoc {
+  symbol: string;
+  specSource: 'compiled' | 'draft';
+  totalReturnPct: number;
+  buyHoldPct: number;
+  numTrades: number;
+  winRatePct: number;
+  maxDrawdownPct: number;
+  sharpe: number;
+  equityCurve: Array<{ date: string; value: number }>;
+  barsFrom: string;
+  barsTo: string;
+  at: string;
+}
+
+export async function callRunBacktest(strategyId: string, symbol: string): Promise<void> {
+  await httpsCallable(fns(), 'runBacktest')({ strategyId, symbol });
+}
+
+/** Jüngster Backtest-Report einer Strategie (M11, onSnapshot). */
+export function watchLatestRun(
+  uid: string,
+  strategyId: string,
+  cb: (run: BacktestRunDoc | null) => void,
+): Unsubscribe {
+  const q = query(
+    collection(db(), 'users', uid, 'strategies', strategyId, 'runs'),
+    orderBy('at', 'desc'),
+    limit(1),
+  );
+  return onSnapshot(q, (snap) => cb(snap.empty ? null : (snap.docs[0]!.data() as BacktestRunDoc)));
+}
+
 /** Bars einmalig für die Studio-Vorschau (gecachte Tages-Bars, aufsteigend). */
 export async function loadBarsOnce(symbol: string): Promise<ChartBar[]> {
   const q = query(collection(db(), 'market', symbol, 'bars'), orderBy(documentId()));
