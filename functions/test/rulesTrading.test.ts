@@ -10,7 +10,9 @@ import {
   clampStrategyRisk,
   cooldownActive,
   decideTree,
+  applyPredictionVote,
   minuteOfDayEt,
+  predictionVote,
   shadowEquity,
   shadowTrade,
 } from '../src/core/rulesTrading.js';
@@ -156,5 +158,45 @@ describe('Shadow-Konto (M11): pure Buchführung', () => {
   it('shadowEquity = Balance + Positionswert (fehlender Preis → Einstand)', () => {
     const book = { balance: 1_000, positions: { QQQ: { qty: 5, avgEntry: 500 }, AAPL: { qty: 2, avgEntry: 200 } } };
     expect(shadowEquity(book, new Map([['QQQ', 520]]))).toBe(1_000 + 2_600 + 400);
+  });
+});
+
+describe('User-Prognose-Stimme (Chart-Pfeile)', () => {
+  const pred = (over: Partial<import('../../shared/src/index.js').UserPrediction> = {}) => ({
+    symbol: 'QQQ',
+    targetPrice: 620,
+    targetDate: '2026-08-15',
+    confidence: 2 as const,
+    basePrice: 600,
+    baseDate: '2026-07-24',
+    createdAt: '2026-07-24T20:00:00Z',
+    ...over,
+  });
+  const NOW = '2026-07-24T20:30:00Z';
+
+  it('Richtung + Gewicht aus Ziel vs. Kurs; Mini-Abstände zählen nicht', () => {
+    expect(predictionVote(pred(), 600, NOW)).toEqual({ dir: 'buy', weight: 2 });
+    expect(predictionVote(pred({ targetPrice: 580, confidence: 3 }), 600, NOW)).toEqual({ dir: 'sell', weight: 3 });
+    expect(predictionVote(pred({ targetPrice: 600.5 }), 600, NOW)).toBeNull(); // < ±0,2 %
+    expect(predictionVote(undefined, 600, NOW)).toBeNull();
+  });
+
+  it('abgelaufene Prognosen zählen nicht (Stichtag inklusiv)', () => {
+    expect(predictionVote(pred({ targetDate: '2026-07-23' }), 600, NOW)).toBeNull();
+    expect(predictionVote(pred({ targetDate: '2026-07-24' }), 600, NOW)).not.toBeNull();
+  });
+
+  it('kippt die Konfluenz-Entscheidung nach der Engine-Regel', () => {
+    const base = { direction: 'hold' as const, buyVotes: 1, sellVotes: 0, requiredConfluence: 2 };
+    // +2 buy → 3 ≥ 2 und > 0 → buy
+    expect(applyPredictionVote(base, { dir: 'buy', weight: 2 })).toBe('buy');
+    // Gegenstimme reicht nicht für sell (1 < 2) → hold
+    expect(applyPredictionVote(base, { dir: 'sell', weight: 1 })).toBe('hold');
+    // Patt bleibt hold: buy 2 vs sell 2
+    expect(
+      applyPredictionVote({ direction: 'hold', buyVotes: 2, sellVotes: 0, requiredConfluence: 2 }, { dir: 'sell', weight: 2 }),
+    ).toBe('hold');
+    // ohne Stimme bleibt die Engine-Entscheidung
+    expect(applyPredictionVote({ ...base, direction: 'sell' }, null)).toBe('sell');
   });
 });

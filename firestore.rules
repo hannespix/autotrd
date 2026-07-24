@@ -61,6 +61,12 @@ service cloud.firestore {
         }
       }
 
+      // User-Prognosen (Chart-Pfeile): steuern Trades → nur savePrediction
+      match /predictions/{sym} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
       // Alerts: gehören dem User komplett
       match /alerts/{doc} {
         allow read, write: if isOwner(uid);

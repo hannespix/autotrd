@@ -21,6 +21,7 @@ export { ensureProfile } from './callable/profile.js';
 export { saveStrategy } from './callable/strategy.js';
 export { saveStrategyDraft, publishStrategyVersion, assignStrategy } from './callable/strategies.js';
 export { runBacktest } from './callable/backtest.js';
+export { savePrediction } from './callable/prediction.js';
 export { trade } from './callable/trade.js';
 
 export const healthz = onRequest({ cors: true, invoker: 'public' }, (_req, res) => {

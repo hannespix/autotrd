@@ -6,3 +6,4 @@ export * from './forecast.js';
 export * from './sentiment.js';
 export * from './rules/index.js';
 export * from './marketHours.js';
+export * from './prediction.js';
