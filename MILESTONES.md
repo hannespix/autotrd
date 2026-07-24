@@ -466,10 +466,11 @@ fairen A/B gegen die aktive Strategie befördert werden.
       **Backtest-on-Save** nach `runs/{runId}`: Sharpe, MaxDD, Winrate,
       Trades, Equity-Kurve (≤ 200 Punkte), Bedingungs-Statistik
       („MACD-Cross feuerte 41×, 12× entscheidend")
-      *(Port FERTIG: pure backtestSpec über Regel-Bäume, Kommission+Slippage,
-      Sharpe √252, Equity ≤ 200 Punkte; Tests inkl. adversarialer
-      Lookahead-Fixture (Sprung-Serie: Entry nie vor dem Sprung-Tag).
-      Backtest-on-Save + Report-Karte folgen.)*
+      *(Port + runBacktest-Callable + Report-Karte FERTIG: runs/{runId}
+      (ISO-Minute, idempotent, Quota 10/Tag, Rules read-only + Tests),
+      Studio-Karte mit Kennzahlen-Grid + Equity-Sparkline via onSnapshot;
+      E2E 16/16 inkl. Report. Bewusste Abweichung: Backtest per Button
+      statt on-Save (Kosten-Kontrolle); Bedingungs-Statistik folgt.)*
 - [ ] Lookahead-Disziplin: Evaluator/Backtest sehen je Bar nur Daten ≤ dieses
       Bars; Regressionstests inkl. Wochenend-/DST-Fällen — gleiche Härte wie
       das `forecast_eval`-Gate

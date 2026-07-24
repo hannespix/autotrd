@@ -39,6 +39,7 @@ beforeAll(async () => {
     });
     await db.doc('users/alice/positions/AAPL').set({ qty: 3, avgEntry: 100 });
     await db.doc('users/alice/trades/t1').set({ symbol: 'AAPL', side: 'buy' });
+    await db.doc('users/alice/strategies/s1/runs/r1').set({ totalReturnPct: 4.2 });
     await db.doc('users/alice/strategies/s1').set({
       name: 'RSI-Dip',
       status: 'draft',
@@ -121,6 +122,10 @@ describe('users/{uid}', () => {
     await assertFails(
       alice().doc('users/alice/strategies/s1').update({ symbols: ['QQQ', 'AAPL'] }),
     );
+    // Backtest-Reports (M11): Owner liest, niemand schreibt clientseitig
+    await assertSucceeds(alice().doc('users/alice/strategies/s1/runs/r1').get());
+    await assertFails(bob().doc('users/alice/strategies/s1/runs/r1').get());
+    await assertFails(alice().doc('users/alice/strategies/s1/runs/r2').set({ totalReturnPct: 99 }));
   });
 
   // ── Adversarial (M7): was kann ein böswilliger EINGELOGGTER User? ──

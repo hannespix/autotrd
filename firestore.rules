@@ -49,6 +49,11 @@ service cloud.firestore {
       match /strategies/{doc} {
         allow read: if isOwner(uid);
         allow write: if false;
+        // Backtest-Reports (M11): schreibt nur runBacktest (Admin SDK)
+        match /runs/{runId} {
+          allow read: if isOwner(uid);
+          allow write: if false;
+        }
       }
 
       // Alerts: gehören dem User komplett

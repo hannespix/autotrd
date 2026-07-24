@@ -18,16 +18,20 @@ import {
 import {
   callAssignStrategy,
   callPublishStrategy,
+  callRunBacktest,
   callSaveStrategyDraft,
   loadBarsOnce,
   loadEventsOnce,
   loadStrategyPresets,
+  watchLatestRun,
   watchStrategies,
+  type BacktestRunDoc,
   type StrategyRow,
 } from './data.js';
 import { previewSignals, type PreviewBar, type PreviewDayInfo } from './preview.js';
 
 let cleanup: (() => void) | null = null;
+let runSub: (() => void) | null = null;
 
 interface EditorState {
   uid: string;
@@ -242,6 +246,8 @@ function svgPreview(bars: PreviewBar[], res: ReturnType<typeof previewSignals>):
 }
 
 async function renderEditor(root: HTMLElement, st: EditorState): Promise<void> {
+  runSub?.();
+  runSub = null;
   const problems = validateStrategySpec(st.spec);
   root.innerHTML = `
     <main class="st-wrap">
@@ -275,6 +281,14 @@ async function renderEditor(root: HTMLElement, st: EditorState): Promise<void> {
             <div id="stPrevChart" class="st-chart" aria-live="polite"></div>
             <p class="hint">Auswertung alle 5 min · Annahmen: 10:00 ET je Tages-Bar, Prognose in der
             Vorschau unbekannt · Marker ▲ Kauf / ▼ Verkauf, Bänder = Haltephasen</p>
+          </section>
+          <section class="card st-report">
+            <h3>Backtest <span class="chip">1 Jahr Tages-Bars · inkl. Kosten</span></h3>
+            <div class="row">
+              <button type="button" id="stBacktest" class="btn btn-n" ${st.id ? '' : 'disabled'}>Backtest starten</button>
+              <span class="hint">max. 10/Tag</span>
+            </div>
+            <div id="stRun" aria-live="polite"><p class="hint">Noch kein Report.</p></div>
           </section>
         </div>
       </div>
@@ -431,6 +445,41 @@ async function renderEditor(root: HTMLElement, st: EditorState): Promise<void> {
       .catch((e) => say(`✗ ${(e as Error).message}`));
   });
 
+  const runBox = root.querySelector<HTMLDivElement>('#stRun')!;
+  const renderRun = (run: BacktestRunDoc | null): void => {
+    if (!run) return;
+    const eq = run.equityCurve;
+    let spark = '';
+    if (eq.length > 1) {
+      const vals = eq.map((p) => p.value);
+      const min = Math.min(...vals);
+      const max = Math.max(...vals);
+      const pts = vals
+        .map((v, i) => `${((i / (vals.length - 1)) * 300).toFixed(1)},${(60 - ((v - min) / (max - min || 1)) * 52 + 4).toFixed(1)}`)
+        .join(' ');
+      spark = `<svg viewBox="0 0 300 64" class="st-spark" role="img" aria-label="Equity-Kurve"><polyline points="${pts}" /></svg>`;
+    }
+    const pct = (v: number): string => `${v >= 0 ? '+' : ''}${v.toFixed(2)} %`;
+    runBox.innerHTML = `
+      ${spark}
+      <div class="st-metrics mono">
+        <span class="${run.totalReturnPct >= 0 ? 'c-gn' : 'c-rd'}">${pct(run.totalReturnPct)} Rendite</span>
+        <span>${pct(run.buyHoldPct)} Buy&amp;Hold</span>
+        <span>${run.numTrades} Trades · ${run.winRatePct.toFixed(0)} % Winrate</span>
+        <span>MaxDD ${run.maxDrawdownPct.toFixed(1)} % · Sharpe ${run.sharpe.toFixed(2)}</span>
+      </div>
+      <p class="hint">${run.symbol} · ${run.barsFrom} → ${run.barsTo} · ${run.specSource === 'compiled' ? 'publizierte Version' : 'Entwurf'} · ${run.at.slice(0, 16).replace('T', ' ')}Z</p>`;
+  };
+  if (st.id) runSub = watchLatestRun(st.uid, st.id, renderRun);
+
+  root.querySelector('#stBacktest')!.addEventListener('click', () => {
+    if (!st.id) return;
+    say('Backtest läuft …');
+    callRunBacktest(st.id, st.previewSymbol.trim().toUpperCase() || 'QQQ')
+      .then(() => say('✓ Backtest fertig — Report unten'))
+      .catch((e) => say(`✗ ${(e as Error).message}`));
+  });
+
   root.querySelector('#stAssign')!.addEventListener('click', () => {
     if (!st.id) return;
     const symbols = root
@@ -558,4 +607,6 @@ export function mountStudio(root: HTMLElement, uid: string): void {
 export function unmountStudio(): void {
   cleanup?.();
   cleanup = null;
+  runSub?.();
+  runSub = null;
 }
