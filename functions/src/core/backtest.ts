@@ -142,7 +142,6 @@ export function backtestSpec(
     trades.push({ entryDate, exitDate: last.date, pnl: round2((eff - entryPrice) * shares) });
     capital += eff * shares;
     equity[equity.length - 1] = capital;
-    shares = 0;
   }
 
   const finalEquity = equity[equity.length - 1] ?? initial;
