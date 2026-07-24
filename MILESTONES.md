@@ -380,10 +380,13 @@ den Builder-Vorschau, Scan-Engine und (später) Backtest identisch
 interpretieren; das flache Schema lebt als kompilierbares `classic`-Preset
 weiter.
 
-- [ ] `shared/src/rules/`: Zod-Knoten (`all/any/weighted/not`;
+- [x] `shared/src/rules/`: Zod-Knoten (`all/any/weighted/not`;
       `compare/crossover/priceLevel/changePct/timeWindow/sentiment/newsEvent/`
       `forecast/position`) + pure `evaluate()`; harte Schema-Guards
       (Tiefe ≤ 5, ≤ 25 Knoten, erreichbarer Threshold)
+      *(PR #20 — dreiwertige Logik: fehlende Daten = „unbekannt", nie handeln;
+      33 Vitest-Fälle: Guards, Blatt-Semantik inkl. Mitternacht-Wrap,
+      Kombinatorik; Zeitzone liefert der Aufrufer via `ctx.minuteOfDay`)*
 - [ ] `users/{uid}/strategies/{id}` mit `draft`/`compiled`/`status` + Callables
       `saveStrategyDraft`/`publishStrategyVersion`/`assignStrategy`; Rules:
       Client-Write `false`; max. 1 `paper`-Strategie je (uid, Symbol)
