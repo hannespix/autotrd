@@ -41,6 +41,8 @@ interface EditorState {
   status: string;
   version: number | null;
   symbols: string[];
+  mode: 'paper' | 'shadow';
+  shadow: import('@autotrd/shared').ShadowAccount | null;
   previewSymbol: string;
   /** Statuszeile — überlebt Rerenders (Publish/Save rendern neu). */
   msg: string;
@@ -267,8 +269,26 @@ async function renderEditor(root: HTMLElement, st: EditorState): Promise<void> {
           </div>
           <div class="row st-assign">
             <input id="stSymbols" class="inp" value="${esc(st.symbols.join(', '))}" placeholder="Symbole, z. B. QQQ, BTC-USD" aria-label="Zuordnung" />
+            <select id="stMode" class="sel" aria-label="Modus" title="paper = echtes Paper-Wallet · shadow = nur beobachten (virtuelles Konto)">
+              <option value="paper" ${st.mode === 'paper' ? 'selected' : ''}>paper</option>
+              <option value="shadow" ${st.mode === 'shadow' ? 'selected' : ''}>shadow</option>
+            </select>
             <button type="button" id="stAssign" class="btn btn-n" ${st.id ? '' : 'disabled'}>Zuordnen</button>
           </div>
+          ${
+            st.mode === 'shadow' && st.shadow
+              ? `<section class="card st-shadow">
+                  <h3>Shadow-Konto <span class="chip">virtuell — berührt nie dein Wallet</span></h3>
+                  <div class="st-metrics mono">
+                    <span>Equity ${st.shadow.equity.toFixed(2)} $</span>
+                    <span>Cash ${st.shadow.balance.toFixed(2)} $</span>
+                    <span class="${st.shadow.equity >= 25000 ? 'c-gn' : 'c-rd'}">${(((st.shadow.equity - 25000) / 25000) * 100).toFixed(2)} % seit Start</span>
+                    <span>${Object.keys(st.shadow.positions ?? {}).length} offene Position(en)</span>
+                  </div>
+                  <p class="hint">Seit ${st.shadow.startedAt.slice(0, 10)} · Hätte-Signale entstehen nur bei Richtungs-Wechseln im Scan.</p>
+                </section>`
+              : ''
+          }
           <p id="stMsg" class="hint" role="status">${esc(st.msg)}</p>
         </div>
         <div class="st-col">
@@ -487,11 +507,13 @@ async function renderEditor(root: HTMLElement, st: EditorState): Promise<void> {
       .value.split(',')
       .map((s) => s.trim().toUpperCase())
       .filter(Boolean);
+    const mode = (root.querySelector<HTMLSelectElement>('#stMode')!.value === 'shadow' ? 'shadow' : 'paper') as 'paper' | 'shadow';
     say('Ordne zu …');
-    callAssignStrategy(st.id, symbols)
+    callAssignStrategy(st.id, symbols, mode)
       .then(() => {
         st.symbols = symbols;
-        say(symbols.length > 0 ? `✓ Zugeordnet: ${symbols.join(', ')}` : '✓ Zuordnung entfernt');
+        st.mode = mode;
+        say(symbols.length > 0 ? `✓ Zugeordnet (${mode}): ${symbols.join(', ')}` : '✓ Zuordnung entfernt');
       })
       .catch((e) => say(`✗ ${(e as Error).message}`));
   });
@@ -595,6 +617,8 @@ export function mountStudio(root: HTMLElement, uid: string): void {
       status: row.doc.status,
       version: row.doc.compiled?.version ?? null,
       symbols: row.doc.symbols ?? [],
+      mode: row.doc.mode ?? 'paper',
+      shadow: row.doc.shadow ?? null,
       previewSymbol: row.doc.symbols?.[0] ?? 'QQQ',
       msg: '',
       barsCache: new Map(),

@@ -474,9 +474,15 @@ fairen A/B gegen die aktive Strategie befördert werden.
 - [ ] Lookahead-Disziplin: Evaluator/Backtest sehen je Bar nur Daten ≤ dieses
       Bars; Regressionstests inkl. Wochenend-/DST-Fällen — gleiche Härte wie
       das `forecast_eval`-Gate
-- [ ] Shadow-Modus: virtuelles Konto im Strategie-Doc (nur Functions
+- [x] Shadow-Modus: virtuelles Konto im Strategie-Doc (nur Functions
       schreiben), `shadowSignals` nur bei Entscheidungs-Wechsel; UI-Tab mit
       Hätte-Feed + virtueller vs. echter Equity-Kurve
+      *(assignStrategy mode paper|shadow; Shadow-Konto (25k) im Doc, Scan
+      handelt es mit identischer Risiko-Hülle, berührt NIE das Wallet;
+      shadowSignals nur bei Richtungs-Wechsel via lastDirs; Shadow blockt
+      den Classic-Pfad nicht (A/B parallel möglich); Rules+Tests, pure
+      Buchführung unit-getestet, Studio-Karte mit Equity/Cash/Δ%.
+      Hätte-FEED + Equity-Kurven-Vergleich folgen mit dem A/B-Teil.)*
 - [ ] Sweeps: ≤ 2 Parameter, ≤ 60 Kombis, Budget-Check im Callable; Historie
       einmal laden, alle Kombis im RAM; Ergebnis als Tabelle + Heatmap,
       „Als neuen Entwurf übernehmen" — bewusst **kein** Auto-Apply

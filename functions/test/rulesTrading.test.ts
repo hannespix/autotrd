@@ -11,6 +11,8 @@ import {
   cooldownActive,
   decideTree,
   minuteOfDayEt,
+  shadowEquity,
+  shadowTrade,
 } from '../src/core/rulesTrading.js';
 
 const SNAPSHOT: IndicatorSnapshot = {
@@ -125,5 +127,34 @@ describe('minuteOfDayEt', () => {
   it('rechnet UTC korrekt nach ET um (EDT im Juli, EST im Januar)', () => {
     expect(minuteOfDayEt(new Date('2026-07-22T16:00:00Z'))).toBe(12 * 60); // 12:00 EDT
     expect(minuteOfDayEt(new Date('2026-01-21T14:30:00Z'))).toBe(9 * 60 + 30); // 09:30 EST
+  });
+});
+
+describe('Shadow-Konto (M11): pure Buchführung', () => {
+  it('Entry dimensioniert nach maxPositionPct, Exit stellt komplett glatt', () => {
+    const start = { balance: 25_000, positions: {} };
+    const buy = shadowTrade(start, 'QQQ', 'buy', 500, 10); // 10 % von 25k = 2500 → 5 Stück
+    expect(buy.executed).toBe(true);
+    expect(buy.book.positions['QQQ']).toEqual({ qty: 5, avgEntry: 500 });
+    expect(buy.book.balance).toBe(22_500);
+    // nie nachkaufen
+    expect(shadowTrade(buy.book, 'QQQ', 'buy', 480, 10).executed).toBe(false);
+    // Verkauf zu 520 → 5×520 zurück
+    const sell = shadowTrade(buy.book, 'QQQ', 'sell', 520, 10);
+    expect(sell.executed).toBe(true);
+    expect(sell.book.balance).toBe(22_500 + 2_600);
+    expect(sell.book.positions['QQQ']).toBeUndefined();
+    // Original bleibt unangetastet (pure)
+    expect(start.positions).toEqual({});
+  });
+
+  it('Sell ohne Position und Buy ohne Budget sind No-ops', () => {
+    expect(shadowTrade({ balance: 100, positions: {} }, 'QQQ', 'sell', 500, 10).executed).toBe(false);
+    expect(shadowTrade({ balance: 100, positions: {} }, 'QQQ', 'buy', 500, 10).executed).toBe(false);
+  });
+
+  it('shadowEquity = Balance + Positionswert (fehlender Preis → Einstand)', () => {
+    const book = { balance: 1_000, positions: { QQQ: { qty: 5, avgEntry: 500 }, AAPL: { qty: 2, avgEntry: 200 } } };
+    expect(shadowEquity(book, new Map([['QQQ', 520]]))).toBe(1_000 + 2_600 + 400);
   });
 });
