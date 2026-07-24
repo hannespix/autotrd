@@ -103,6 +103,45 @@ export function decideTree(spec: StrategySpec, ctx: RuleContext): SignalDirectio
   return 'hold';
 }
 
+/* ── Shadow-Konto (M11): pure Buchführung des virtuellen Kontos ──────────────
+   Kauf-Sizing wie der Paper-Broker (maxPositionPct der Balance, ganze Stücke),
+   Verkauf stellt die Position komplett glatt. Kein echtes Wallet involviert. */
+
+export interface ShadowBook {
+  balance: number;
+  positions: Record<string, { qty: number; avgEntry: number }>;
+}
+
+export function shadowTrade(
+  book: ShadowBook,
+  symbol: string,
+  side: 'buy' | 'sell',
+  price: number,
+  maxPositionPct: number,
+): { book: ShadowBook; executed: boolean } {
+  const positions = { ...book.positions };
+  if (side === 'buy') {
+    if (positions[symbol]) return { book, executed: false }; // nie nachkaufen
+    const qty = Math.floor((book.balance * (maxPositionPct / 100)) / price);
+    if (qty <= 0) return { book, executed: false };
+    positions[symbol] = { qty, avgEntry: price };
+    return { book: { balance: book.balance - qty * price, positions }, executed: true };
+  }
+  const pos = positions[symbol];
+  if (!pos) return { book, executed: false };
+  delete positions[symbol];
+  return { book: { balance: book.balance + pos.qty * price, positions }, executed: true };
+}
+
+/** Balance + Positionswert zu aktuellen Preisen (fehlender Preis → Einstand). */
+export function shadowEquity(book: ShadowBook, prices: Map<string, number>): number {
+  let equity = book.balance;
+  for (const [sym, pos] of Object.entries(book.positions)) {
+    equity += pos.qty * (prices.get(sym) ?? pos.avgEntry);
+  }
+  return Math.round(equity * 100) / 100;
+}
+
 /** Minuten seit Mitternacht in America/New_York (für timeWindow-Blätter). */
 export function minuteOfDayEt(now: Date): number {
   const parts = new Intl.DateTimeFormat('en-US', {

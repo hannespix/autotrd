@@ -118,7 +118,9 @@ export const publishStrategyVersion = onCall(CALLABLE_OPTS, async (request) => {
 
 export const assignStrategy = onCall(CALLABLE_OPTS, async (request) => {
   const uid = await requireUid(request);
-  const data = (request.data ?? {}) as { id?: unknown; symbols?: unknown };
+  const data = (request.data ?? {}) as { id?: unknown; symbols?: unknown; mode?: unknown };
+  // Modus (M11): paper handelt das echte Wallet, shadow ein virtuelles Konto.
+  const mode: 'paper' | 'shadow' = data.mode === 'shadow' ? 'shadow' : 'paper';
   if (typeof data.id !== 'string' || !ID_RE.test(data.id)) {
     throw new HttpsError('invalid-argument', 'Ungültige Strategie-ID');
   }
@@ -146,20 +148,37 @@ export const assignStrategy = onCall(CALLABLE_OPTS, async (request) => {
     if (symbols.length > 0 && !targetDoc.compiled) {
       throw new HttpsError('failed-precondition', 'Erst publizieren — nur publizierte Strategien handeln');
     }
-    // Höchstens EINE Paper-Strategie je (User, Symbol) — sonst würden zwei
-    // Bäume dasselbe Wallet gegeneinander handeln.
-    for (const other of all.docs) {
-      if (other.id === id) continue;
-      const otherDoc = other.data() as StrategyDoc;
-      const clash = symbols.filter((s) => (otherDoc.symbols ?? []).includes(s));
-      if (clash.length > 0) {
-        throw new HttpsError(
-          'failed-precondition',
-          `${clash.join(', ')} ist bereits „${otherDoc.name}" zugewiesen — erst dort entfernen`,
-        );
+    // Höchstens EINE PAPER-Strategie je (User, Symbol) — sonst würden zwei
+    // Bäume dasselbe Wallet gegeneinander handeln. Shadow beobachtet nur und
+    // darf parallel laufen (A/B: paper vs. shadow auf demselben Symbol).
+    if (mode === 'paper') {
+      for (const other of all.docs) {
+        if (other.id === id) continue;
+        const otherDoc = other.data() as StrategyDoc;
+        if ((otherDoc.mode ?? 'paper') !== 'paper') continue;
+        const clash = symbols.filter((s) => (otherDoc.symbols ?? []).includes(s));
+        if (clash.length > 0) {
+          throw new HttpsError(
+            'failed-precondition',
+            `${clash.join(', ')} ist bereits „${otherDoc.name}" zugewiesen — erst dort entfernen`,
+          );
+        }
       }
     }
-    tx.set(target.ref, { symbols, updatedAt: new Date().toISOString() }, { merge: true });
+    const now = new Date().toISOString();
+    const patch: Record<string, unknown> = { symbols, mode, updatedAt: now };
+    // Shadow-Konto beim Einschalten frisch anlegen (Startbalance wie Paper-
+    // Default); beim Zurückschalten bleibt es als Historie stehen.
+    if (mode === 'shadow' && !(targetDoc as StrategyDoc).shadow) {
+      patch.shadow = {
+        balance: 25_000,
+        positions: {},
+        equity: 25_000,
+        startedAt: now,
+        updatedAt: now,
+      };
+    }
+    tx.set(target.ref, patch, { merge: true });
   });
   return { ok: true, symbols };
 });

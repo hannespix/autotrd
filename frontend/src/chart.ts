@@ -52,8 +52,22 @@ export interface SetBarsOptions {
   timeVisible?: boolean;
 }
 
+export interface OverlayLine {
+  /** Eindeutiger Schlüssel (z. B. 'sma50', 'cmp:AAPL'). */
+  key: string;
+  color: string;
+  width?: number;
+  /** Eigene Skala (z. B. Prozent-Vergleich) statt der Preis-Skala. */
+  separateScale?: boolean;
+  points: Array<{ time: string | number; value: number }>;
+}
+
 export interface PriceChartHandle {
   setBars(bars: ChartBar[] | IntradayChartBar[], opts?: SetBarsOptions): void;
+  /** Indikator-/Vergleichs-Linien deklarativ setzen (fehlende Keys werden entfernt). */
+  setOverlays(lines: OverlayLine[]): void;
+  /** Anzahl aktiver Overlay-Linien (E2E-Hook). */
+  overlayCount(): number;
   /** Prognose-Overlay: gestrichelte Mittellinie + ±1σ-Band (null = entfernen). */
   setForecast(overlay: ForecastOverlay | null, anchor?: { time: string; value: number }): void;
   /** Event-Marker (sentiment-gefärbt) auf den Kerzen. */
@@ -169,6 +183,10 @@ export async function buildPriceChart(
   // neben der Zeit auch einen Preis auf der Serie)
   const closeByDate = new Map<string, number>();
 
+  // Deklarative Overlay-Linien (SMA/EMA/BB/Vergleich) — Serien werden je Key
+  // wiederverwendet und beim Entfernen sauber abgeräumt.
+  const overlays = new Map<string, ReturnType<typeof chart.addLineSeries>>();
+
   return {
     setBars(bars: ChartBar[] | IntradayChartBar[], opts?: SetBarsOptions): void {
       closeByDate.clear();
@@ -189,8 +207,44 @@ export async function buildPriceChart(
         chart.timeScale().applyOptions({ timeVisible: opts.timeVisible, secondsVisible: false });
       }
       // Zoom-Respekt: fitContent NUR bei explizitem Wunsch — Snapshot-Updates
-      // (alle ~60 s) dürfen den User-Zoom nie zurücksetzen.
-      if (opts?.fit) chart.timeScale().fitContent();
+      // (alle ~60 s) dürfen den User-Zoom nie zurücksetzen. Beim expliziten
+      // Fit wird auch die Y-Skala wieder auf Autoscale gestellt (User-Feedback:
+      // „x UND y beim Umschalten optimieren").
+      if (opts?.fit) {
+        chart.priceScale('right').applyOptions({ autoScale: true });
+        chart.timeScale().fitContent();
+      }
+    },
+    setOverlays(lines: OverlayLine[]): void {
+      const wanted = new Set(lines.map((l) => l.key));
+      for (const [key, series] of overlays) {
+        if (!wanted.has(key)) {
+          chart.removeSeries(series);
+          overlays.delete(key);
+        }
+      }
+      for (const line of lines) {
+        let series = overlays.get(line.key);
+        if (!series) {
+          series = chart.addLineSeries({
+            color: line.color,
+            lineWidth: (line.width ?? 1.5) as never,
+            priceLineVisible: false,
+            lastValueVisible: line.separateScale ?? false,
+            crosshairMarkerVisible: false,
+            ...(line.separateScale ? { priceScaleId: 'overlay' } : {}),
+          });
+          if (line.separateScale) {
+            chart.priceScale('overlay').applyOptions({ visible: false });
+          }
+          overlays.set(line.key, series);
+        }
+        series.applyOptions({ color: line.color });
+        series.setData(line.points as never);
+      }
+    },
+    overlayCount(): number {
+      return overlays.size;
     },
     setForecast(overlay, anchor): void {
       if (!overlay || overlay.points.length === 0) {

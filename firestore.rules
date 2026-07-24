@@ -54,6 +54,11 @@ service cloud.firestore {
           allow read: if isOwner(uid);
           allow write: if false;
         }
+        // Shadow-Signale (M11): schreibt nur der Scan bei Richtungs-Wechsel
+        match /shadowSignals/{sigId} {
+          allow read: if isOwner(uid);
+          allow write: if false;
+        }
       }
 
       // Alerts: gehören dem User komplett

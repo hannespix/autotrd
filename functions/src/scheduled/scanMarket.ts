@@ -40,6 +40,9 @@ import {
   cooldownActive,
   decideTree,
   minuteOfDayEt,
+  shadowEquity,
+  shadowTrade,
+  type ShadowBook,
 } from '../core/rulesTrading.js';
 import { runForecast, type LiveForecast } from '../core/forecaster.js';
 import { getIntradayBars, getMarketSnapshot } from '../core/marketData.js';
@@ -163,12 +166,26 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
       const published = stratSnap.docs
         .map((d) => ({ ref: d.ref, doc: d.data() as StrategyDoc & { lastTrades?: Record<string, string> } }))
         .filter((s) => s.doc.compiled && (s.doc.symbols ?? []).length > 0);
-      const strategyOwned = new Set(published.flatMap((s) => s.doc.symbols));
+      // Nur PAPER-Strategien besitzen ihre Symbole exklusiv — Shadow
+      // beobachtet parallel (A/B) und blockt den Classic-Pfad nicht.
+      const strategyOwned = new Set(
+        published.filter((s) => (s.doc.mode ?? 'paper') === 'paper').flatMap((s) => s.doc.symbols),
+      );
       const clamped = clampStrategyRisk(strategy); // Risiko-Hülle: nie überschreibbar
       const now = new Date();
       const minuteEt = minuteOfDayEt(now);
 
       for (const { ref, doc } of published) {
+        const isShadow = (doc.mode ?? 'paper') === 'shadow';
+        // Shadow-Konto lokal führen; geschrieben wird EINMAL nach der Schleife
+        let book: ShadowBook | null =
+          isShadow && doc.shadow
+            ? { balance: doc.shadow.balance, positions: { ...doc.shadow.positions } }
+            : null;
+        let bookChanged = false;
+        const lastDirs: Record<string, 'buy' | 'sell' | 'hold'> = { ...(doc.lastDirs ?? {}) };
+        let dirsChanged = false;
+
         for (const symbol of doc.symbols) {
           const data = marketData.get(symbol);
           if (!data) continue; // Klasse geschlossen oder Symbol nicht im Scan
@@ -192,6 +209,39 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
               : { open: false },
           });
           const dir = decideTree(doc.compiled!, ctx);
+
+          if (isShadow) {
+            // shadowSignals NUR beim Entscheidungs-Wechsel (M11)
+            if (dir !== (lastDirs[symbol] ?? 'hold')) {
+              lastDirs[symbol] = dir;
+              dirsChanged = true;
+              if (dir !== 'hold') {
+                await ref
+                  .collection('shadowSignals')
+                  .doc(`${new Date().toISOString().slice(0, 16)}Z_${symbol}`)
+                  .set({ symbol, direction: dir, price: data.price, at: new Date().toISOString() });
+              }
+            }
+            if (book) {
+              // Virtuelles Konto — Risiko-Hülle wie beim echten Handel
+              if (dir === 'buy' && !book.positions[symbol]) {
+                if (Object.keys(book.positions).length >= RISK_LIMITS.maxOpenPositions) continue;
+                if (cooldownActive(doc.lastTrades?.[symbol], now)) continue;
+                const r = shadowTrade(book, symbol, 'buy', data.price, clamped.engine.maxPositionPct);
+                if (r.executed) {
+                  book = r.book;
+                  bookChanged = true;
+                }
+              } else if (dir === 'sell' && book.positions[symbol]) {
+                const r = shadowTrade(book, symbol, 'sell', data.price, clamped.engine.maxPositionPct);
+                if (r.executed) {
+                  book = r.book;
+                  bookChanged = true;
+                }
+              }
+            }
+            continue; // Shadow berührt NIE das echte Wallet
+          }
 
           if (dir === 'buy' && !pos) {
             // Entry-Guards der Risiko-Hülle: Positionslimit + Cooldown
@@ -228,6 +278,26 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
               logger.info(`Strategie-Sell ${uid} ${symbol} („${doc.name}") @ ${data.price}`);
             }
           }
+        }
+
+        if (bookChanged || dirsChanged) {
+          const prices = new Map<string, number>();
+          for (const sym of doc.symbols) {
+            const d = marketData.get(sym);
+            if (d) prices.set(sym, d.price);
+          }
+          const patch: Record<string, unknown> = { updatedAt: now.toISOString() };
+          if (dirsChanged) patch.lastDirs = lastDirs;
+          if (book && bookChanged) {
+            patch.shadow = {
+              ...doc.shadow,
+              balance: Math.round(book.balance * 100) / 100,
+              positions: book.positions,
+              equity: shadowEquity(book, prices),
+              updatedAt: now.toISOString(),
+            };
+          }
+          await ref.set(patch, { merge: true });
         }
       }
 
@@ -323,6 +393,10 @@ export async function runScan(force = false): Promise<ScanResult> {
   const scanned: string[] = [];
   const errors: Record<string, string> = {};
   const marketData = new Map<string, SymbolData>();
+  // Intraday-Selbstdiagnose (Chart-Feedback): landet im öffentlichen
+  // meta/health, weil Cloud-Logging ohne GCP-Konsole unsichtbar ist.
+  let intradayOk = 0;
+  let intradayError: string | null = null;
 
   for (const symbol of symbols) {
     try {
@@ -477,8 +551,10 @@ export async function runScan(force = false): Promise<ScanResult> {
         if (!symDoc.get('intradayBackfilledAt')) {
           batch.set(symRef, { intradayBackfilledAt: now.toISOString() }, { merge: true });
         }
+        intradayOk += 1;
       } catch (err) {
         logger.warn(`Intraday-Fehler ${symbol}`, err);
+        intradayError ??= `${symbol}: ${err instanceof Error ? err.message : String(err)}`.slice(0, 180);
       }
 
       // Indikator-Snapshot des letzten Handelstags (1 Doc/Tag, überschreibend).
@@ -525,6 +601,8 @@ export async function runScan(force = false): Promise<ScanResult> {
         lastRunSkipped: null,
         symbolsOk: scanned.length,
         symbolsFailed: Object.keys(errors).length,
+        intradayOk,
+        intradayError,
         trades,
       },
       { merge: true },

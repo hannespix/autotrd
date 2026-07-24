@@ -402,8 +402,12 @@ export async function callPublishStrategy(id: string): Promise<number> {
   return (res.data as { version: number }).version;
 }
 
-export async function callAssignStrategy(id: string, symbols: string[]): Promise<void> {
-  await httpsCallable(fns(), 'assignStrategy')({ id, symbols });
+export async function callAssignStrategy(
+  id: string,
+  symbols: string[],
+  mode: 'paper' | 'shadow' = 'paper',
+): Promise<void> {
+  await httpsCallable(fns(), 'assignStrategy')({ id, symbols, mode });
 }
 
 export interface BacktestRunDoc {

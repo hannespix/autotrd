@@ -22,6 +22,16 @@ export interface StrategyVersion extends StrategySpec {
   publishedAt: string; // ISO
 }
 
+/** Virtuelles Shadow-Konto (M11) — lebt im Strategie-Doc, nie im echten Wallet. */
+export interface ShadowAccount {
+  balance: number;
+  positions: Record<string, { qty: number; avgEntry: number }>;
+  /** Balance + Positionswert zum letzten Scan. */
+  equity: number;
+  startedAt: string;
+  updatedAt: string;
+}
+
 /** Doc-Shape users/{uid}/strategies/{id}. */
 export interface StrategyDoc {
   name: string;
@@ -30,8 +40,13 @@ export interface StrategyDoc {
   /** Zuletzt publizierte Version; null = noch nie publiziert. */
   compiled: StrategyVersion | null;
   status: 'draft' | 'published' | 'archived';
-  /** Paper-Zuordnung; je (User, Symbol) darf nur EINE Strategie zugewiesen sein. */
+  /** Zuordnung; je (User, Symbol) darf nur EINE paper-Strategie zugewiesen sein. */
   symbols: string[];
+  /** paper = echtes Wallet · shadow = virtuelles Konto (M11); Default paper. */
+  mode?: 'paper' | 'shadow';
+  shadow?: ShadowAccount | null;
+  /** Letzte Richtung je Symbol — shadowSignals nur bei Entscheidungs-Wechsel. */
+  lastDirs?: Record<string, 'buy' | 'sell' | 'hold'>;
   createdAt: string;
   updatedAt: string;
 }
