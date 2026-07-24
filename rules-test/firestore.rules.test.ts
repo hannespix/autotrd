@@ -39,6 +39,12 @@ beforeAll(async () => {
     });
     await db.doc('users/alice/positions/AAPL').set({ qty: 3, avgEntry: 100 });
     await db.doc('users/alice/trades/t1').set({ symbol: 'AAPL', side: 'buy' });
+    await db.doc('users/alice/strategies/s1').set({
+      name: 'RSI-Dip',
+      status: 'draft',
+      symbols: [],
+      draft: { buy: { type: 'compare', left: 'rsi', op: 'lt', right: 30 } },
+    });
     await db.doc('market/QQQ').set({ quote: { price: 600 } });
     await db.doc('market/QQQ/ai/2026-07-23').set({ summary: 'x', degraded: true });
     await db.doc('market/QQQ/forecasts/2026-07-23_0.5_20').set({ evaluated: false });
@@ -103,6 +109,18 @@ describe('users/{uid}', () => {
     await assertSucceeds(alice().doc('users/alice/workspaces/default').get());
     await assertFails(bob().doc('users/alice/workspaces/default').get());
     await assertFails(bob().doc('users/alice/workspaces/w2').set({ preset: 'x' }));
+  });
+
+  it('strategies (M10): Owner liest, aber NIEMAND schreibt clientseitig', async () => {
+    await assertSucceeds(alice().doc('users/alice/strategies/s1').get());
+    await assertFails(bob().doc('users/alice/strategies/s1').get());
+    // Auch der Owner darf nicht schreiben — nur die Studio-Callables.
+    await assertFails(alice().doc('users/alice/strategies/s1').update({ name: 'hack' }));
+    await assertFails(alice().doc('users/alice/strategies/s2').set({ name: 'neu', status: 'draft' }));
+    await assertFails(alice().doc('users/alice/strategies/s1').delete());
+    await assertFails(
+      alice().doc('users/alice/strategies/s1').update({ symbols: ['QQQ', 'AAPL'] }),
+    );
   });
 
   // ── Adversarial (M7): was kann ein böswilliger EINGELOGGTER User? ──

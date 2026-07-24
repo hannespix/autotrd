@@ -387,9 +387,12 @@ weiter.
       *(PR #20 — dreiwertige Logik: fehlende Daten = „unbekannt", nie handeln;
       33 Vitest-Fälle: Guards, Blatt-Semantik inkl. Mitternacht-Wrap,
       Kombinatorik; Zeitzone liefert der Aufrufer via `ctx.minuteOfDay`)*
-- [ ] `users/{uid}/strategies/{id}` mit `draft`/`compiled`/`status` + Callables
+- [x] `users/{uid}/strategies/{id}` mit `draft`/`compiled`/`status` + Callables
       `saveStrategyDraft`/`publishStrategyVersion`/`assignStrategy`; Rules:
       Client-Write `false`; max. 1 `paper`-Strategie je (uid, Symbol)
+      *(StrategySpec = buy-/sell-Baum; Publish friert `compiled.version++` ein,
+      Zuordnung transaktional mit Kollisions-Check; max. 10 Strategien, Quota
+      300/Tag; Rules-Suite 17/17 — Callable-E2E folgt mit dem Builder-UI)*
 - [ ] Migration `settings.strategy` (flach) → `kind:'classic'` + Compiler
       classic→Baum; **Parity-Test:** kompilierte Classic-Strategie liefert
       identische Signale wie die M4-Konfluenz (Golden-Fixtures)

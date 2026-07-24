@@ -44,6 +44,13 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      // Strategie-Studio (M10): read-only für den Owner — Schreiben NUR über
+      // die Callables saveStrategyDraft/publishStrategyVersion/assignStrategy
+      match /strategies/{doc} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
       // Alerts: gehören dem User komplett
       match /alerts/{doc} {
         allow read, write: if isOwner(uid);
