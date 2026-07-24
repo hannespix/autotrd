@@ -31,8 +31,29 @@ export interface ChartMarker {
   text?: string;
 }
 
+export interface IntradayChartBar {
+  /** UNIX-Sekunden (UTC). */
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface SetBarsOptions {
+  /**
+   * Sichtbereich an die Daten anpassen — NUR bei expliziten Aktionen
+   * (Symbol-/Zeitrahmen-Wechsel) setzen. Snapshot-Updates lassen den
+   * User-Zoom in Ruhe (Chart-Audit 24.07.: „kann nicht rauszoomen").
+   */
+  fit?: boolean;
+  /** Uhrzeiten auf der Zeitachse (Intraday). */
+  timeVisible?: boolean;
+}
+
 export interface PriceChartHandle {
-  setBars(bars: ChartBar[]): void;
+  setBars(bars: ChartBar[] | IntradayChartBar[], opts?: SetBarsOptions): void;
   /** Prognose-Overlay: gestrichelte Mittellinie + ±1σ-Band (null = entfernen). */
   setForecast(overlay: ForecastOverlay | null, anchor?: { time: string; value: number }): void;
   /** Event-Marker (sentiment-gefärbt) auf den Kerzen. */
@@ -81,6 +102,7 @@ function chartTheme(): Record<string, unknown> {
       borderColor: light ? 'rgba(15,23,42,.12)' : 'rgba(255,255,255,.10)',
       rightOffset: 4,
       barSpacing: 6,
+      minBarSpacing: 0.1,
       timeVisible: false,
     },
     // 0 = Normal — numerisches Literal statt Enum (CLAUDE.md §6)
@@ -148,26 +170,27 @@ export async function buildPriceChart(
   const closeByDate = new Map<string, number>();
 
   return {
-    setBars(bars: ChartBar[]): void {
+    setBars(bars: ChartBar[] | IntradayChartBar[], opts?: SetBarsOptions): void {
       closeByDate.clear();
-      for (const b of bars) closeByDate.set(b.date, b.close);
-      candle.setData(
-        bars.map((b) => ({
-          time: b.date,
-          open: b.open,
-          high: b.high,
-          low: b.low,
-          close: b.close,
-        })),
-      );
+      const rows = bars.map((b) => {
+        const time = 'date' in b ? b.date : (b.time as never as string);
+        if ('date' in b) closeByDate.set(b.date, b.close);
+        return { time, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume };
+      });
+      candle.setData(rows.map(({ volume: _v, ...r }) => r) as never);
       vol.setData(
-        bars.map((b) => ({
-          time: b.date,
-          value: b.volume,
-          color: b.close >= b.open ? 'rgba(38,207,157,.4)' : 'rgba(242,88,107,.4)',
-        })),
+        rows.map((r) => ({
+          time: r.time,
+          value: r.volume,
+          color: r.close >= r.open ? 'rgba(38,207,157,.4)' : 'rgba(242,88,107,.4)',
+        })) as never,
       );
-      chart.timeScale().fitContent();
+      if (opts?.timeVisible !== undefined) {
+        chart.timeScale().applyOptions({ timeVisible: opts.timeVisible, secondsVisible: false });
+      }
+      // Zoom-Respekt: fitContent NUR bei explizitem Wunsch — Snapshot-Updates
+      // (alle ~60 s) dürfen den User-Zoom nie zurücksetzen.
+      if (opts?.fit) chart.timeScale().fitContent();
     },
     setForecast(overlay, anchor): void {
       if (!overlay || overlay.points.length === 0) {
@@ -183,7 +206,6 @@ export async function buildPriceChart(
       fcMid.setData(mid.map((p) => ({ time: p.time, value: p.value })));
       fcUp.setData(overlay.band.map((b) => ({ time: b.time, value: b.upper })));
       fcLo.setData(overlay.band.map((b) => ({ time: b.time, value: b.lower })));
-      chart.timeScale().fitContent();
     },
     setMarkers(markers): void {
       candle.setMarkers(
