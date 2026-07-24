@@ -372,3 +372,22 @@ button, input, select { font-family: inherit; font-size: inherit; }
   .card, .dsheet { animation: none; }
   * { transition-duration: .01ms !important; }
 }
+
+/* PWA-Install-Chip (pwa.ts) — dezent unten rechts, Glass-Look */
+.pwa-chip {
+  position: fixed; right: 14px; bottom: 14px; z-index: 90;
+  display: flex; align-items: center; gap: 4px;
+  background: var(--card); border: 1px solid var(--bd2); border-radius: 999px;
+  backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+  box-shadow: var(--sh-card), var(--rim); padding: 4px;
+}
+.pwa-chip .pwa-install {
+  border: 0; background: var(--ac-soft); color: var(--t1); cursor: pointer;
+  font: inherit; font-size: 12.5px; padding: 7px 12px; border-radius: 999px;
+}
+.pwa-chip .pwa-install:hover { background: var(--ac); color: #04121a; }
+.pwa-chip .pwa-close {
+  border: 0; background: transparent; color: var(--t3); cursor: pointer;
+  font-size: 12px; padding: 6px 9px; border-radius: 999px;
+}
+.pwa-chip .pwa-close:hover { color: var(--t1); }

@@ -23,6 +23,20 @@ export default tseslint.config(
       ],
     },
   },
+  // Service Worker läuft im Worker-Global-Scope (self/caches/fetch)
+  {
+    files: ['frontend/public/sw.js'],
+    languageOptions: {
+      globals: {
+        self: 'readonly',
+        caches: 'readonly',
+        fetch: 'readonly',
+        URL: 'readonly',
+        Promise: 'readonly',
+        console: 'readonly',
+      },
+    },
+  },
   // CI-Hilfsscripte laufen in Node (process/console sind dort global)
   {
     files: ['scripts-ci/**/*.mjs'],
