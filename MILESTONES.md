@@ -396,6 +396,12 @@ weiter.
 - [ ] Migration `settings.strategy` (flach) → `kind:'classic'` + Compiler
       classic→Baum; **Parity-Test:** kompilierte Classic-Strategie liefert
       identische Signale wie die M4-Konfluenz (Golden-Fixtures)
+      *(Compiler + Parity FERTIG: `compileClassic` kodiert `buy ≥ minConf ∧
+      buy > sell` exakt via weighted-Margin (Σ[B,¬S] = W+Margin ⇒ Threshold
+      W+1); 1700 Vergleiche über seeded Serien × 5 Configs × Forecasts grün;
+      Abweichung dokumentiert: bei ENTSCHEIDEND fehlenden Daten hält der Baum
+      konservativ. Die Laufzeit-Migration der Settings-Docs folgt mit der
+      scanMarket-Erweiterung.)*
 - [ ] `scanMarket`-Erweiterung: 1 Marktdaten-Fetch pro Symbol, N
       Baum-Auswertungen; exotische Indikator-Parameter nur in-memory
       (memoisiert), Katalog-Varianten weiter nach `market/**`
