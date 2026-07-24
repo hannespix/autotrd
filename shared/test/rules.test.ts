@@ -4,10 +4,12 @@ import {
   evaluate,
   evaluateTri,
   isRuleNode,
+  isStrategySpec,
   MAX_DEPTH,
   MAX_NODES,
   ruleTreeDepth,
   validateRuleTree,
+  validateStrategySpec,
   type RuleContext,
   type RuleNode,
 } from '../src/index.js';
@@ -304,6 +306,40 @@ describe('evaluateTri — Kombinatoren', () => {
     expect(evaluateTri(tree, ctxBase)).toBe(true);
     // außerhalb des Zeitfensters kippt der ganze Baum
     expect(evaluateTri(tree, { ...ctxBase, minuteOfDay: 300 })).toBe(false);
+  });
+});
+
+// ── Strategie-Spec (buy/sell-Bäume) ──────────────────────────────────────────
+
+describe('validateStrategySpec', () => {
+  const sellTree: RuleNode = {
+    type: 'any',
+    children: [
+      { type: 'compare', left: 'rsi', op: 'gt', right: 70 },
+      { type: 'position', state: 'open', minUnrealizedPct: 4 },
+    ],
+  };
+
+  it('akzeptiert eine vollständige Spec', () => {
+    const spec = { buy: rsiUnder30, sell: sellTree };
+    expect(validateStrategySpec(spec)).toEqual([]);
+    expect(isStrategySpec(spec)).toBe(true);
+  });
+
+  it('meldet fehlende Bäume, Fremd-Schlüssel und Nicht-Objekte', () => {
+    expect(validateStrategySpec({ buy: rsiUnder30 }).join('\n')).toMatch(/'sell' fehlt/);
+    expect(validateStrategySpec({ buy: rsiUnder30, sell: sellTree, extra: 1 }).join('\n')).toMatch(
+      /Unbekannter Spec-Schlüssel 'extra'/,
+    );
+    expect(validateStrategySpec(null)).toHaveLength(1);
+    expect(validateStrategySpec([rsiUnder30])).toHaveLength(1);
+  });
+
+  it('präfixt Baum-Probleme mit buy/sell', () => {
+    const broken = { buy: { type: 'magie' }, sell: sellTree };
+    const problems = validateStrategySpec(broken);
+    expect(problems.length).toBeGreaterThan(0);
+    expect(problems.every((p) => p.startsWith('buy: '))).toBe(true);
   });
 });
 
