@@ -415,12 +415,18 @@ weiter.
       *(core/rulesTrading: RISK_LIMITS-Konstanten, clampStrategyRisk pure,
       Cooldown 30 min nur für ENTRIES (Exits nie geblockt), Risk-Exits
       laufen wie gehabt VOR jeder Auswertung; Unit-Tests 104/104)*
-- [ ] Karten-Builder `#/strategy/{id}` (Gates/Votes/Exit als Glass-Cards,
+- [x] Karten-Builder `#/strategy/{id}` (Gates/Votes/Exit als Glass-Cards,
       Threshold-Stepper, Gewicht-Badges) + Live-Vorschau über gecachte Bars
       (Marker + Haltebänder, Label „Vorschau, kein Backtest",
       Hinweis „Auswertung alle 5 min")
-- [ ] 5 Presets in `meta/strategyPresets`, jede Knotenart in mindestens einem
+      *(studio.ts + preview.ts (pure, unit-getestet); Emulator-E2E 14/14:
+      Preset kopieren → Schwelle ändern → Marker ändern sich OHNE
+      Functions-Call → publizieren → zuordnen → 390 px. v1-Grenze: nicht-
+      weighted/all/any-Wurzeln (z. B. kompilierte Classic) nur lesbar)*
+- [x] 5 Presets in `meta/strategyPresets`, jede Knotenart in mindestens einem
       Preset (Presets = Doku)
+      *(shared/rules/presets.ts, Seeding idempotent im Scan; Coverage-Test
+      erzwingt alle 13 Knotenarten)*
 
 **Abnahme:** Preset kopieren → RSI-Schwelle ändern → Vorschau-Marker ändern
 sich ohne Server-Call (Network-Tab) · publizierte Strategie handelt im nächsten

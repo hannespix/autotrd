@@ -23,6 +23,7 @@ import {
   isStrategy,
   marketOpenForClass,
   resolveName,
+  STRATEGY_PRESETS,
   type Position,
   type Strategy,
   type StrategyDoc,
@@ -82,6 +83,15 @@ async function seedUniverse(): Promise<void> {
   }
   await ref.set({ classes, seededAt: new Date().toISOString() });
   logger.info('meta/universe geseedet');
+}
+
+/** meta/strategyPresets einmalig seeden (M10 — Presets = Doku). Idempotent. */
+async function seedPresets(): Promise<void> {
+  const db = getFirestore();
+  const ref = db.doc('meta/strategyPresets');
+  if ((await ref.get()).exists) return;
+  await ref.set({ presets: STRATEGY_PRESETS, seededAt: new Date().toISOString() });
+  logger.info('meta/strategyPresets geseedet');
 }
 
 export interface ScanResult {
@@ -308,6 +318,7 @@ export async function runScan(force = false): Promise<ScanResult> {
   }
 
   await seedUniverse();
+  await seedPresets();
   const db = getFirestore();
   const scanned: string[] = [];
   const errors: Record<string, string> = {};

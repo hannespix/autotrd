@@ -228,6 +228,7 @@ function layout(email: string): string {
     <div class="logo">AUTO<span class="c-gn">TRD</span></div>
     <div class="spacer"></div>
     <div id="engBadge" class="badge b-off">Engine aus</div>
+    <a class="hbtn" id="studioLink" href="#/strategy" title="Strategie-Studio (M10)">⚙ Studio</a>
     <button class="hbtn" id="themeBtn" title="Hell/Dunkel">◐</button>
     <span class="user">${email.replace(/[<>&]/g, '')}</span>
     <button class="hbtn" id="logoutBtn">Abmelden</button>
