@@ -12,6 +12,7 @@ import {
   type Position,
   type Strategy,
   type Wallet,
+  MAX_WATCHLIST,
 } from '@autotrd/shared';
 import type { Unsubscribe } from 'firebase/firestore';
 import { buildPriceChart, type ChartBar, type PriceChartHandle } from './chart.js';
@@ -441,7 +442,7 @@ function layout(email: string): string {
     <div class="dmodal-bg" data-close="picker"></div>
     <div class="dsheet" style="width:min(700px,100%)">
       <button class="dclose" data-close="picker">✕</button>
-      <h3>Watchlist zusammenstellen</h3>
+      <h3>Watchlist zusammenstellen <span id="wlCount" class="chip"></span></h3>
       <div class="wl-sec">Deine Auswahl</div>
       <div id="wlCurrent" class="wl-chips"></div>
       <div class="wl-sec">Nach Kategorie durchsuchen</div>
@@ -1134,9 +1135,20 @@ async function openPicker(): Promise<void> {
         opt.querySelector('.s')!.textContent = symbol;
         opt.querySelector('.n')!.textContent = name;
         opt.addEventListener('click', () => {
-          if (st!.pickerSelection.has(symbol)) st!.pickerSelection.delete(symbol);
-          else st!.pickerSelection.add(symbol);
-          opt.classList.toggle('on');
+          if (st!.pickerSelection.has(symbol)) {
+            st!.pickerSelection.delete(symbol);
+          } else {
+            // Kosten-Guard: mehr als MAX_WATCHLIST lehnt der Server ab —
+            // deshalb hier blocken statt beim Speichern scheitern.
+            if (st!.pickerSelection.size >= MAX_WATCHLIST) {
+              const c = $('wlCount');
+              c.classList.add('wl-full');
+              setTimeout(() => c.classList.remove('wl-full'), 600);
+              return;
+            }
+            st!.pickerSelection.add(symbol);
+          }
+          opt.classList.toggle('on', st!.pickerSelection.has(symbol));
           renderPickerChips();
         });
         box.appendChild(opt);
@@ -1160,6 +1172,9 @@ async function openPicker(): Promise<void> {
 
 function renderPickerChips(): void {
   if (!st) return;
+  const count = $('wlCount');
+  count.textContent = `${st.pickerSelection.size}/${MAX_WATCHLIST}`;
+  count.classList.toggle('c-rd', st.pickerSelection.size >= MAX_WATCHLIST);
   const box = $('wlCurrent');
   box.innerHTML = '';
   for (const sym of st.pickerSelection) {

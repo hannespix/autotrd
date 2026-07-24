@@ -430,3 +430,11 @@ button, input, select { font-family: inherit; font-size: inherit; }
 @media (max-width: 900px) {
   .st-cols { grid-template-columns: 1fr; }
 }
+
+/* Studio: Preset-Karten (statt nativem Select — Screenshot-Feedback 24.07.) */
+.st-new h3 { margin: 4px 0 10px; font-size: 14px; }
+.st-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; }
+.st-preset { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; }
+.st-preset b { font-size: 13px; }
+.st-preset p { margin: 0; font-size: 11.5px; color: var(--t2); flex: 1; }
+.st-preset .btn { align-self: flex-start; }
