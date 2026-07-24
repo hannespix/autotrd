@@ -107,6 +107,49 @@ async function fetchYahoo(symbol: string, range: string): Promise<MarketSnapshot
   return { symbol, price, changePct, bars, source: 'yahoo' };
 }
 
+export interface IntradayBar {
+  /** UNIX-Sekunden (UTC) des Bar-Starts. */
+  t: number;
+  o: number;
+  h: number;
+  l: number;
+  c: number;
+  v: number;
+}
+
+/** 5-Minuten-Bars je Handelstag (ET-Datum) — Chart-Feedback 24.07.:
+ *  „minutengenaue Daten". Yahoo liefert 5m für die letzten ~5 Handelstage. */
+export async function getIntradayBars(symbol: string): Promise<Map<string, IntradayBar[]>> {
+  const url = `${YAHOO_BASE}/${encodeURIComponent(symbol)}?range=5d&interval=5m`;
+  const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (autotrd)' } });
+  if (!res.ok) throw new Error(`Yahoo intraday ${symbol}: HTTP ${res.status}`);
+  const json = (await res.json()) as YahooChartResponse;
+  const result = json.chart.result?.[0];
+  if (!result || json.chart.error) {
+    throw new Error(`Yahoo intraday ${symbol}: ${json.chart.error?.description ?? 'keine Daten'}`);
+  }
+  const tz = result.meta.exchangeTimezoneName ?? 'America/New_York';
+  const quote = result.indicators.quote[0];
+  const ts = result.timestamp ?? [];
+  const byDay = new Map<string, IntradayBar[]>();
+  for (let i = 0; i < ts.length; i++) {
+    const close = quote?.close[i];
+    if (close === null || close === undefined) continue;
+    const day = fmtDate(ts[i]!, tz);
+    const list = byDay.get(day) ?? [];
+    list.push({
+      t: ts[i]!,
+      o: quote!.open[i] ?? close,
+      h: quote!.high[i] ?? close,
+      l: quote!.low[i] ?? close,
+      c: close,
+      v: quote!.volume[i] ?? 0,
+    });
+    byDay.set(day, list);
+  }
+  return byDay;
+}
+
 interface AlpacaBarsResponse {
   bars?: Array<{ t: string; o: number; h: number; l: number; c: number; v: number }>;
 }

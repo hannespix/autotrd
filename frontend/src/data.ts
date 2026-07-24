@@ -413,6 +413,25 @@ export async function loadBarsOnce(symbol: string): Promise<ChartBar[]> {
   return snap.docs.map((d) => ({ date: d.id, ...(d.data() as Omit<ChartBar, 'date'>) }));
 }
 
+/** 5m-Intraday-Bars der letzten N Handelstage aus market/{sym}/ohlc5m
+ *  (Chunk-Doc je ET-Tag; Chart-Feedback 24.07.: „minutengenaue Daten"). */
+export async function loadIntraday(
+  symbol: string,
+  days: number,
+): Promise<import('./chart.js').IntradayChartBar[]> {
+  const q = query(collection(db(), 'market', symbol, 'ohlc5m'), orderBy(documentId()));
+  const snap = await getDocs(q);
+  const chunks = snap.docs.slice(-Math.max(days, 1));
+  const out: import('./chart.js').IntradayChartBar[] = [];
+  for (const d of chunks) {
+    const data = d.data() as { bars?: Array<{ t: number; o: number; h: number; l: number; c: number; v: number }> };
+    for (const b of data.bars ?? []) {
+      out.push({ time: b.t, open: b.o, high: b.h, low: b.l, close: b.c, volume: b.v });
+    }
+  }
+  return out;
+}
+
 /** Event-Tage einmalig (Sentiment + Tags je Datum) für die Vorschau. */
 export async function loadEventsOnce(
   symbol: string,

@@ -42,7 +42,7 @@ import {
   minuteOfDayEt,
 } from '../core/rulesTrading.js';
 import { runForecast, type LiveForecast } from '../core/forecaster.js';
-import { getMarketSnapshot } from '../core/marketData.js';
+import { getIntradayBars, getMarketSnapshot } from '../core/marketData.js';
 import { fetchNews, newsDocId, type NewsItem } from '../core/news.js';
 
 const NEWS_TTL_MS = 10 * 60 * 1000; // wie die Referenz: 10-min-Cache
@@ -439,10 +439,11 @@ export async function runScan(force = false): Promise<ScanResult> {
         { merge: true },
       );
 
-      // Bars: Erst-Backfill komplett, danach nur der letzte Bar
-      const barsToWrite = symDoc.get('barsBackfilledAt')
-        ? snap.bars.slice(-1)
-        : snap.bars;
+      // Bars: Erst-Backfill komplett, danach nur der letzte Bar.
+      // v2 (Chart-Feedback 24.07.): Historie 1y statt 3mo — Bestandssymbole
+      // werden über den Versions-Marker einmalig neu backgefüllt.
+      const backfilled = symDoc.get('barsBackfillV') === 2;
+      const barsToWrite = backfilled ? snap.bars.slice(-1) : snap.bars;
       for (const bar of barsToWrite) {
         batch.set(symRef.collection('bars').doc(bar.date), {
           open: bar.open,
@@ -452,8 +453,32 @@ export async function runScan(force = false): Promise<ScanResult> {
           volume: bar.volume,
         });
       }
-      if (!symDoc.get('barsBackfilledAt')) {
-        batch.set(symRef, { barsBackfilledAt: now.toISOString() }, { merge: true });
+      if (!backfilled) {
+        batch.set(
+          symRef,
+          { barsBackfillV: 2, barsBackfilledAt: now.toISOString() },
+          { merge: true },
+        );
+      }
+
+      // Intraday (5m): Yahoo liefert ~5 Handelstage. Erst-Backfill alle Tage,
+      // danach nur der jüngste Tag (1 Chunk-Doc je ET-Tag, idempotent).
+      try {
+        const intraday = await getIntradayBars(symbol);
+        const days = [...intraday.keys()].sort();
+        const writeDays = symDoc.get('intradayBackfilledAt') ? days.slice(-1) : days;
+        for (const day of writeDays) {
+          batch.set(symRef.collection('ohlc5m').doc(day), {
+            date: day,
+            bars: intraday.get(day),
+            updatedAt: now.toISOString(),
+          });
+        }
+        if (!symDoc.get('intradayBackfilledAt')) {
+          batch.set(symRef, { intradayBackfilledAt: now.toISOString() }, { merge: true });
+        }
+      } catch (err) {
+        logger.warn(`Intraday-Fehler ${symbol}`, err);
       }
 
       // Indikator-Snapshot des letzten Handelstags (1 Doc/Tag, überschreibend).

@@ -438,3 +438,15 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .st-preset b { font-size: 13px; }
 .st-preset p { margin: 0; font-size: 11.5px; color: var(--t2); flex: 1; }
 .st-preset .btn { align-self: flex-start; }
+
+/* Schmale Screens: Header entschlacken (Studio-Icon statt Text, E-Mail weg) */
+@media (max-width: 560px) {
+  .hdr .user { display: none; }
+  .hide-sm { display: none; }
+  .tf-bar { flex-wrap: wrap; }
+}
+@media (max-width: 560px) {
+  .hdr { gap: 5px; padding-left: 8px; padding-right: 8px; }
+  .hbtn { padding: 5px 7px; font-size: 11px; }
+  .badge { font-size: 10px; padding: 3px 7px; }
+}

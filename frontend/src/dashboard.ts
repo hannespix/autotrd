@@ -23,6 +23,7 @@ import {
   loadWorkspace,
   saveStrategy,
   saveWorkspace,
+  loadIntraday,
   watchBars,
   watchLatestAi,
   watchLatestIndicators,
@@ -118,6 +119,11 @@ interface DashState {
   chart: PriceChartHandle | null;
   bars: ChartBar[];
   range: number; // Anzahl Bars, 0 = alle
+  /** Intraday-Zeitrahmen aktiv? Anzahl Handelstage (0 = Tageskerzen). */
+  intradayDays: number;
+  intradayBars: import('./chart.js').IntradayChartBar[];
+  /** fitContent beim nächsten renderChart (nur Symbol-/Zeitrahmen-Wechsel). */
+  chartFitPending: boolean;
   pickerSelection: Set<string>;
   wallet: Wallet | null;
   positions: Position[];
@@ -229,7 +235,7 @@ function layout(email: string): string {
     <div class="logo">AUTO<span class="c-gn">TRD</span></div>
     <div class="spacer"></div>
     <div id="engBadge" class="badge b-off">Engine aus</div>
-    <a class="hbtn" id="studioLink" href="#/strategy" title="Strategie-Studio (M10)">⚙ Studio</a>
+    <a class="hbtn" id="studioLink" href="#/strategy" title="Strategie-Studio">⚙<span class="hide-sm"> Studio</span></a>
     <button class="hbtn" id="themeBtn" title="Hell/Dunkel">◐</button>
     <span class="user">${email.replace(/[<>&]/g, '')}</span>
     <button class="hbtn" id="logoutBtn">Abmelden</button>
@@ -299,16 +305,18 @@ function layout(email: string): string {
           <span class="chart-px" id="chChg">--</span>
         </div>
         <div class="tf-bar">
+          <button class="tf-btn" data-intraday="1">1T</button>
+          <button class="tf-btn" data-intraday="5">1W</button>
           <button class="tf-btn" data-bars="22">1M</button>
           <button class="tf-btn on" data-bars="66">3M</button>
-          <button class="tf-btn" data-bars="0">Alle</button>
+          <button class="tf-btn" data-bars="0">1J</button>
           <button class="tf-btn on" id="lyFc" title="Prognose-Overlay ein/aus" style="margin-left:auto">Prognose</button>
           <button class="tf-btn on" id="lyEv" title="Event-Marker ein/aus">Events</button>
         </div>
         <div class="hint" id="fcInfo" style="margin-bottom:4px"></div>
         <div id="chartArea"></div>
-        <div class="hint">Tageskerzen aus <span class="mono">market/{sym}/bars</span> —
-          aktualisiert der zentrale 5-min-Scan.</div>
+        <div class="hint">1T/1W: 5-Minuten-Kerzen · 1M–1J: Tageskerzen —
+          aktualisiert der zentrale 5-min-Scan. Zoom bleibt beim Aktualisieren erhalten.</div>
       </div></div>
 
       <div class="card" data-panel="chart2"><div class="sect">Vergleichs-Chart
@@ -497,7 +505,8 @@ function wireChartCtx(): void {
     watchBars(sym, (bars) => {
       if (!st) return;
       st.bars = bars;
-      renderChart();
+      if (st.intradayDays > 0) void loadIntradayView();
+      else renderChart();
     }),
     watchLatestIndicators(sym, (row) => renderIndicatorCards(row)),
     watchLatestSignal(sym, (sig) => {
@@ -548,9 +557,26 @@ function renderIndicatorCards(row: IndicatorRow | null): void {
 
 function renderChart(): void {
   if (!st?.chart) return;
+  const fit = st.chartFitPending;
+  st.chartFitPending = false;
+  if (st.intradayDays > 0) {
+    st.chart.setBars(st.intradayBars, { fit, timeVisible: true });
+    st.chart.setForecast(null); // Prognose ist tagesbasiert
+    return;
+  }
   const bars = st.range > 0 ? st.bars.slice(-st.range) : st.bars;
-  st.chart.setBars(bars);
+  st.chart.setBars(bars, { fit, timeVisible: false });
   applyForecast();
+}
+
+/** 5m-Chunks laden und rendern (1T/1W) — Chart-Feedback 24.07. */
+async function loadIntradayView(): Promise<void> {
+  if (!st) return;
+  const sym = st.currentSymbol;
+  const chunks = await loadIntraday(sym, st.intradayDays);
+  if (!st || st.currentSymbol !== sym || st.intradayDays === 0) return;
+  st.intradayBars = chunks;
+  renderChart();
 }
 
 /** Event-Marker anwenden — respektiert den Events-Layer-Toggle (M6b). */
@@ -611,6 +637,8 @@ async function rebuildChart(): Promise<void> {
     return;
   }
   st.chart = handle;
+  st.chartFitPending = true;
+  if (st.intradayDays > 0) void loadIntradayView();
   st.chart?.onCrosshairDate((date, pos) => {
     showEventTooltip(date, pos);
     if (!crosshairSyncing && st?.chart2) {
@@ -1427,6 +1455,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     chart: null,
     bars: [],
     range: 66,
+    intradayDays: 0,
+    intradayBars: [],
+    chartFitPending: true,
     pickerSelection: new Set(),
     wallet: null,
     positions: [],
@@ -1606,6 +1637,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     mainRange: () => st?.chart?.getVisibleRange() ?? null,
     secondRange: () => st?.chart2?.getVisibleRange() ?? null,
     setMainRange: (r: { from: number; to: number }) => st?.chart?.setVisibleRange(r),
+    refreshMain: () => renderChart(),
   };
 
   // Hotkey-Order-Ticket (M9): Shift+B/S, Enter bestätigt, Esc schließt
@@ -1683,15 +1715,18 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     localStorage.setItem('autotrd-theme', next);
     void rebuildChart();
   });
-  // Timeframe-Buttons (1M/3M/Alle) + Layer-Toggles (M6b)
-  document.querySelectorAll<HTMLButtonElement>('.tf-btn[data-bars]').forEach((b) =>
+  // Timeframe-Buttons (1T/1W intraday · 1M/3M/1J Tageskerzen) — jeder
+  // Wechsel ist eine explizite Aktion und darf neu fitten.
+  const tfButtons = document.querySelectorAll<HTMLButtonElement>('.tf-btn[data-bars], .tf-btn[data-intraday]');
+  tfButtons.forEach((b) =>
     b.addEventListener('click', () => {
       if (!st) return;
-      st.range = parseInt(b.dataset.bars ?? '0', 10);
-      document
-        .querySelectorAll('.tf-btn[data-bars]')
-        .forEach((el) => el.classList.toggle('on', el === b));
-      renderChart();
+      st.intradayDays = parseInt(b.dataset.intraday ?? '0', 10);
+      if (b.dataset.bars !== undefined) st.range = parseInt(b.dataset.bars, 10);
+      st.chartFitPending = true;
+      tfButtons.forEach((el) => el.classList.toggle('on', el === b));
+      if (st.intradayDays > 0) void loadIntradayView();
+      else renderChart();
     }),
   );
   $('lyFc').addEventListener('click', () => {

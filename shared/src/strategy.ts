@@ -79,7 +79,7 @@ export const DEFAULT_STRATEGY: Strategy = {
     macd: { enabled: true, crossoverBuy: true },
     bollinger: { enabled: true, bbBreakoutPct: 95 },
   },
-  signals: { minConfluence: 2, period: '3mo', useForecast: true, forecastWeight: 2, forecastThresholdPct: 0.5 },
+  signals: { minConfluence: 2, period: '1y', useForecast: true, forecastWeight: 2, forecastThresholdPct: 0.5 },
 };
 
 // ── Geteilte Marktdaten (market/{symbol}/**, nur Functions schreiben) ────────
