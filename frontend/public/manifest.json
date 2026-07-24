@@ -1,7 +1,7 @@
 {
-  "name": "autotrd — Paper-Daytrading",
+  "name": "autotrd — Paper-Trading",
   "short_name": "autotrd",
-  "description": "Automatisiertes Paper-Daytrading: Scans, Signale, Prognosen und Strategie-Studio. Kein Finanzrat.",
+  "description": "Automatisiertes Paper-Trading für Aktien, ETFs, Krypto, Rohstoffe & Devisen: Scans, Signale, Prognosen und Strategie-Studio. Kein Finanzrat.",
   "id": "/",
   "start_url": "/",
   "scope": "/",

@@ -1,15 +1,20 @@
 name: Scan-Watchdog
 
-# Stopgap, solange der Deploy-SA keine Cloud-Scheduler-Rolle hat: stößt zu
-# US-Marktzeiten alle 30 min einen Scan an — aber NUR, wenn der öffentliche
-# Heartbeat meta/health älter als 12 min ist (kein Doppel-Scan, sobald der
-# echte Cloud Scheduler läuft; dann kostet der Lauf nur den Heartbeat-Check).
+# Stopgap, solange der Deploy-SA keine Cloud-Scheduler-Rolle hat: stößt
+# regelmäßig einen Scan an — aber NUR, wenn der öffentliche Heartbeat
+# meta/health älter als 12 min ist (kein Doppel-Scan, sobald der echte
+# Cloud Scheduler läuft; dann kostet der Lauf nur den Heartbeat-Check).
 # Dependency-frei (kein npm ci) → Laufzeit wenige Sekunden.
 
 on:
   schedule:
     # 13–21 UTC deckt 9:30–16:00 ET in Sommer- und Winterzeit ab (Mo–Fr).
     - cron: '*/30 13-21 * * 1-5'
+    # Depot-Vision: Krypto handelt 24/7, Forex/Rohstoffe ~24/5 — außerhalb
+    # des US-Fensters stündlich (Actions-Minuten-Budget; die volle 5-min-
+    # Kadenz übernimmt der Cloud Scheduler nach der Rollen-Vergabe).
+    - cron: '17 0-12,22-23 * * *'
+    - cron: '17 13-21 * * 0,6'
   workflow_dispatch:
 
 concurrency: scan-watchdog

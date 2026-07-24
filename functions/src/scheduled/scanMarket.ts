@@ -21,15 +21,25 @@ import {
   DEFAULT_STRATEGY,
   classify,
   isStrategy,
+  marketOpenForClass,
   resolveName,
   type Position,
   type Strategy,
+  type StrategyDoc,
 } from '../../../shared/src/index.js';
 import { aggregateSentiment } from '../../../shared/src/index.js';
 import { anthropicApiKey, ensureAiDay } from '../core/ai.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
-import { computeSignal } from '../core/engine.js';
+import { computeIndicatorSnapshot, computeSignal } from '../core/engine.js';
 import { executePaperTrade, resolveBrokerMode, riskExitReason } from '../core/broker.js';
+import {
+  RISK_LIMITS,
+  buildRuleContext,
+  clampStrategyRisk,
+  cooldownActive,
+  decideTree,
+  minuteOfDayEt,
+} from '../core/rulesTrading.js';
 import { runForecast, type LiveForecast } from '../core/forecaster.js';
 import { getMarketSnapshot } from '../core/marketData.js';
 import { fetchNews, newsDocId, type NewsItem } from '../core/news.js';
@@ -134,8 +144,87 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
         }
       }
 
-      // 2) Konfluenz-Signale gegen die User-Strategie (inkl. Forecast-Vote)
+      // 2) Regelbaum-Strategien (M10): publizierte Strategien mit Zuordnung
+      // handeln ihre Symbole SELBST — der Classic-Pfad überspringt sie.
+      const stratSnap = await userDoc.ref
+        .collection('strategies')
+        .where('status', '==', 'published')
+        .get();
+      const published = stratSnap.docs
+        .map((d) => ({ ref: d.ref, doc: d.data() as StrategyDoc & { lastTrades?: Record<string, string> } }))
+        .filter((s) => s.doc.compiled && (s.doc.symbols ?? []).length > 0);
+      const strategyOwned = new Set(published.flatMap((s) => s.doc.symbols));
+      const clamped = clampStrategyRisk(strategy); // Risiko-Hülle: nie überschreibbar
+      const now = new Date();
+      const minuteEt = minuteOfDayEt(now);
+
+      for (const { ref, doc } of published) {
+        for (const symbol of doc.symbols) {
+          const data = marketData.get(symbol);
+          if (!data) continue; // Klasse geschlossen oder Symbol nicht im Scan
+          const pos = positions.get(symbol) ?? null;
+          const snapshot = computeIndicatorSnapshot(data.closes, data.price, strategy.indicators);
+          const prevCloses = data.closes.slice(0, -1);
+          const prevPrice = prevCloses[prevCloses.length - 1] ?? null;
+          const ctx = buildRuleContext({
+            price: data.price,
+            snapshot,
+            prevSnapshot:
+              prevPrice !== null && prevCloses.length > 1
+                ? computeIndicatorSnapshot(prevCloses, prevPrice, strategy.indicators)
+                : null,
+            prevPrice,
+            closes: data.closes,
+            minuteOfDayEt: minuteEt,
+            forecastPct: data.forecast?.predictedPct ?? null,
+            position: pos
+              ? { open: true, unrealizedPct: ((data.price - pos.avgEntry) / pos.avgEntry) * 100 }
+              : { open: false },
+          });
+          const dir = decideTree(doc.compiled!, ctx);
+
+          if (dir === 'buy' && !pos) {
+            // Entry-Guards der Risiko-Hülle: Positionslimit + Cooldown
+            if (positions.size >= RISK_LIMITS.maxOpenPositions) continue;
+            if (cooldownActive(doc.lastTrades?.[symbol], now)) continue;
+            const r = await executePaperTrade(
+              { uid, symbol, side: 'buy', price: data.price, source: 'engine' },
+              clamped,
+            );
+            if (r.executed) {
+              executed += 1;
+              // lokaler Marker fürs Positionslimit/Dedup in diesem Scan
+              positions.set(symbol, {
+                symbol,
+                qty: r.trade?.qty ?? 0,
+                avgEntry: data.price,
+                stopLoss: null,
+                takeProfit: null,
+                openedAt: now.toISOString(),
+              });
+              await ref.set({ lastTrades: { [symbol]: now.toISOString() } }, { merge: true });
+              logger.info(`Strategie-Buy ${uid} ${symbol} („${doc.name}") @ ${data.price}`);
+            }
+          } else if (dir === 'sell' && pos) {
+            // Exits blockt der Cooldown NIE (Sicherheitsprinzip)
+            const r = await executePaperTrade(
+              { uid, symbol, side: 'sell', price: data.price, source: 'engine' },
+              clamped,
+            );
+            if (r.executed) {
+              executed += 1;
+              positions.delete(symbol);
+              await ref.set({ lastTrades: { [symbol]: now.toISOString() } }, { merge: true });
+              logger.info(`Strategie-Sell ${uid} ${symbol} („${doc.name}") @ ${data.price}`);
+            }
+          }
+        }
+      }
+
+      // 3) Konfluenz-Signale gegen die User-Strategie (inkl. Forecast-Vote);
+      // Symbole mit zugeordneter publizierter Strategie gehören dieser (oben).
       for (const symbol of strategy.watchlist) {
+        if (strategyOwned.has(symbol)) continue;
         const data = marketData.get(symbol);
         if (!data) continue;
         const sig = computeSignal(
@@ -202,8 +291,14 @@ async function collectScanSymbols(): Promise<string[]> {
 export async function runScan(force = false): Promise<ScanResult> {
   const now = new Date();
   const scanId = now.toISOString().slice(0, 16) + 'Z'; // Minute = idempotent
-  if (!force && !isUsMarketOpen(now)) {
-    logger.info(`Markt geschlossen — Scan übersprungen (${scanId})`);
+  const allSymbols = await collectScanSymbols();
+  // Depot-Vision (2026-07-24): gescannt wird je Symbol, dessen ASSET-KLASSE
+  // gerade offen ist — Krypto 24/7, Forex/Rohstoffe ~24/5, Rest US-Zeiten.
+  const symbols = force
+    ? allSymbols
+    : allSymbols.filter((s) => marketOpenForClass(classify(s), now));
+  if (symbols.length === 0) {
+    logger.info(`Alle Märkte geschlossen — Scan übersprungen (${scanId})`);
     // Heartbeat auch im No-Op: „Scheduler lebt" ≠ „Markt offen" (M7-Monitoring)
     await getFirestore()
       .doc('meta/health')
@@ -214,7 +309,6 @@ export async function runScan(force = false): Promise<ScanResult> {
 
   await seedUniverse();
   const db = getFirestore();
-  const symbols = await collectScanSymbols();
   const scanned: string[] = [];
   const errors: Record<string, string> = {};
   const marketData = new Map<string, SymbolData>();
