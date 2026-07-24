@@ -10,11 +10,10 @@
 
 import { getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
-import { allSymbols, validateStrategy, type Strategy } from '../../../shared/src/index.js';
+import { allSymbols, MAX_WATCHLIST, validateStrategy, type Strategy } from '../../../shared/src/index.js';
 import { consumeQuota } from '../core/broker.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 
-const MAX_WATCHLIST = 12;
 const DAILY_SAVE_LIMIT = 300;
 
 export const saveStrategy = onCall(CALLABLE_OPTS, async (request) => {

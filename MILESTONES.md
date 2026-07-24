@@ -396,7 +396,9 @@ weiter.
 - [ ] Migration `settings.strategy` (flach) → `kind:'classic'` + Compiler
       classic→Baum; **Parity-Test:** kompilierte Classic-Strategie liefert
       identische Signale wie die M4-Konfluenz (Golden-Fixtures)
-      *(Compiler + Parity FERTIG: `compileClassic` kodiert `buy ≥ minConf ∧
+      *(Entscheidung: KEINE Zwangs-Migration — classic-Settings laufen
+      parallel weiter (eigener Engine-Pfad), kompilierte Classic-Bäume sind
+      im Studio read-only sichtbar. Compiler + Parity FERTIG: `compileClassic` kodiert `buy ≥ minConf ∧
       buy > sell` exakt via weighted-Margin (Σ[B,¬S] = W+Margin ⇒ Threshold
       W+1); 1700 Vergleiche über seeded Serien × 5 Configs × Forecasts grün;
       Abweichung dokumentiert: bei ENTSCHEIDEND fehlenden Daten hält der Baum
@@ -464,6 +466,10 @@ fairen A/B gegen die aktive Strategie befördert werden.
       **Backtest-on-Save** nach `runs/{runId}`: Sharpe, MaxDD, Winrate,
       Trades, Equity-Kurve (≤ 200 Punkte), Bedingungs-Statistik
       („MACD-Cross feuerte 41×, 12× entscheidend")
+      *(Port FERTIG: pure backtestSpec über Regel-Bäume, Kommission+Slippage,
+      Sharpe √252, Equity ≤ 200 Punkte; Tests inkl. adversarialer
+      Lookahead-Fixture (Sprung-Serie: Entry nie vor dem Sprung-Tag).
+      Backtest-on-Save + Report-Karte folgen.)*
 - [ ] Lookahead-Disziplin: Evaluator/Backtest sehen je Bar nur Daten ≤ dieses
       Bars; Regressionstests inkl. Wochenend-/DST-Fällen — gleiche Härte wie
       das `forecast_eval`-Gate

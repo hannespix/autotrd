@@ -449,41 +449,51 @@ async function renderEditor(root: HTMLElement, st: EditorState): Promise<void> {
 }
 
 function renderList(root: HTMLElement, uid: string): () => void {
-  const presetsHtml = '<option>lade …</option>';
   root.innerHTML = `
     <main class="st-wrap">
       <header class="st-head">
         <a class="btn btn-n" href="#">← Dashboard</a>
         <h2>Strategie-Studio</h2>
       </header>
-      <section class="card st-new">
-        <h3>Neue Strategie</h3>
-        <div class="row">
-          <select id="stPreset" class="sel">${presetsHtml}</select>
-          <button type="button" id="stFromPreset" class="btn btn-g">Aus Preset anlegen</button>
-        </div>
-        <p class="hint">Presets zeigen jede Regel-Art einmal — kopieren, anpassen, publizieren.</p>
+      <section class="st-new">
+        <h3>Neue Strategie aus Preset <span class="hint">— jede Regel-Art einmal; kopieren, anpassen, publizieren</span></h3>
+        <div id="stPresetGrid" class="st-presets"><p class="hint">Lade Presets …</p></div>
       </section>
+      <div class="wl-sec">Deine Strategien</div>
       <div id="stList" class="st-list"><p class="hint">Lade Strategien …</p></div>
     </main>`;
 
   void loadStrategyPresets().then((presets) => {
-    const sel = root.querySelector<HTMLSelectElement>('#stPreset');
-    if (!sel) return;
-    sel.innerHTML = presets
-      .map((p) => `<option value="${p.id}">${esc(p.name)} — ${esc(p.description.slice(0, 60))}…</option>`)
+    const grid = root.querySelector<HTMLDivElement>('#stPresetGrid');
+    if (!grid) return;
+    grid.innerHTML = presets
+      .map(
+        (p) => `<article class="card st-preset">
+          <b>${esc(p.name)}</b>
+          <p>${esc(p.description)}</p>
+          <button type="button" class="btn btn-g" data-preset="${p.id}">Anlegen</button>
+        </article>`,
+      )
       .join('');
-    root.querySelector('#stFromPreset')?.addEventListener('click', () => {
-      const preset = presets.find((p) => p.id === sel.value);
-      if (!preset) return;
-      callSaveStrategyDraft({ name: `${preset.name} (Kopie)`, spec: structuredClone(preset.spec) })
-        .then((id) => {
-          location.hash = `#/strategy/${id}`;
-        })
-        .catch((e) => {
-          root.querySelector('#stList')!.insertAdjacentHTML('afterbegin', `<p class="error">${esc((e as Error).message)}</p>`);
-        });
-    });
+    grid.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach((btn) =>
+      btn.addEventListener('click', () => {
+        const preset = presets.find((p) => p.id === btn.dataset.preset);
+        if (!preset) return;
+        btn.disabled = true;
+        btn.textContent = 'Lege an …';
+        callSaveStrategyDraft({ name: `${preset.name} (Kopie)`, spec: structuredClone(preset.spec) })
+          .then((id) => {
+            location.hash = `#/strategy/${id}`;
+          })
+          .catch((e) => {
+            btn.disabled = false;
+            btn.textContent = 'Anlegen';
+            root
+              .querySelector('#stList')!
+              .insertAdjacentHTML('afterbegin', `<p class="error">${esc((e as Error).message)}</p>`);
+          });
+      }),
+    );
   });
 
   const unsub = watchStrategies(uid, (rows: StrategyRow[]) => {

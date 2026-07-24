@@ -66,6 +66,10 @@ export interface Strategy {
   signals: SignalsConfig;
 }
 
+/** Watchlist-Obergrenze je User — Kosten-Guard: jedes Symbol kostet bei
+ *  jedem 5-min-Scan echte Fetches/Writes (global deckelt MAX_SCAN_SYMBOLS). */
+export const MAX_WATCHLIST = 12;
+
 export const DEFAULT_STRATEGY: Strategy = {
   broker: { provider: 'paper', mode: 'paper', initialCapital: 25_000, paperTrading: true },
   watchlist: ['QQQ', 'AAPL', 'TSLA', '^NDX'],
