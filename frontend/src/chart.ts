@@ -107,6 +107,8 @@ export interface PriceChartHandle {
   setAutoScale(on: boolean): void;
   /** Prognose-Overlay: gestrichelte Mittellinie + ±1σ-Band (null = entfernen). */
   setForecast(overlay: ForecastOverlay | null, anchor?: { time: string; value: number }): void;
+  /** Ist ein Prognose-Overlay gesetzt? (E2E-Hook) */
+  forecastActive(): boolean;
   /** Event-Marker (sentiment-gefärbt) auf den Kerzen. */
   setMarkers(markers: ChartMarker[]): void;
   /**
@@ -232,6 +234,7 @@ export async function buildPriceChart(
   // Prognose-Serien (leer bis setForecast); 2 = Dashed, 3 = Dotted (numerische
   // Literale statt Enum — CLAUDE.md-§6-Geist)
   const fcCommon = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false } as const;
+  let fcOn = false;
   const fcMid = chart.addLineSeries({ color: '#25d0ee', lineWidth: 2, lineStyle: 2, ...fcCommon });
   const fcUp = chart.addLineSeries({ color: 'rgba(37,208,238,.45)', lineWidth: 1, lineStyle: 3, ...fcCommon });
   const fcLo = chart.addLineSeries({ color: 'rgba(37,208,238,.45)', lineWidth: 1, lineStyle: 3, ...fcCommon });
@@ -441,7 +444,11 @@ export async function buildPriceChart(
       autoScaleOn = on;
       chart.priceScale('right').applyOptions({ autoScale: on });
     },
+    forecastActive(): boolean {
+      return fcOn;
+    },
     setForecast(overlay, anchor): void {
+      fcOn = overlay !== null && overlay.points.length > 0;
       if (!overlay || overlay.points.length === 0) {
         fcMid.setData([]);
         fcUp.setData([]);
