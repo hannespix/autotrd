@@ -213,6 +213,8 @@ interface DashState {
   /** Workspace (M9): Preset + ausgeblendete Panels + Save-Debounce. */
   wsPreset: string;
   wsHidden: Set<string>;
+  /** Modul-Reihenfolge je Panel-Id (kleiner = weiter oben; fehlend = DOM-Default). */
+  wsOrder: Record<string, number>;
   wsSaveTimer: number | null;
   paletteDispose: (() => void) | null;
   /** Event-Tage des aktuellen Symbols (für Marker + Crosshair-Tooltip). */
@@ -2098,6 +2100,124 @@ function togglePanel(id: string): void {
   scheduleWsSave();
 }
 
+/* ── Taschenmesser Teil 3: Modul-Reihenfolge + Sidebar-Breiten ─────────── */
+
+/** Karten in beiden Sidebars nach wsOrder sortieren (fehlend = DOM-Index —
+ *  stabil, weil sort() stabil ist und der Default die aktuelle Position ist). */
+function applyPanelOrder(): void {
+  if (!st) return;
+  for (const colId of ['leftCol', 'rightCol']) {
+    const col = document.getElementById(colId);
+    if (!col) continue;
+    const cards = [...col.querySelectorAll<HTMLElement>(':scope > .card[data-panel]')];
+    const pos = new Map(cards.map((c, i) => [c, i]));
+    cards
+      .sort(
+        (a, b) =>
+          (st!.wsOrder[a.dataset.panel ?? ''] ?? pos.get(a)!) -
+          (st!.wsOrder[b.dataset.panel ?? ''] ?? pos.get(b)!),
+      )
+      .forEach((c) => col.appendChild(c));
+  }
+}
+
+/** Reihenfolge aus dem DOM einfrieren (nach einem Drop) und speichern. */
+function commitPanelOrder(): void {
+  if (!st) return;
+  for (const colId of ['leftCol', 'rightCol']) {
+    document
+      .getElementById(colId)
+      ?.querySelectorAll<HTMLElement>(':scope > .card[data-panel]')
+      .forEach((c, i) => {
+        st!.wsOrder[c.dataset.panel ?? ''] = i;
+      });
+  }
+  scheduleWsSave();
+}
+
+/** Ein Modul programmatisch verschieben (Palette/Test-Hook — derselbe Pfad
+ *  wie der Drop: DOM umstellen, dann committen). */
+function movePanel(id: string, delta: number): void {
+  const card = document.querySelector<HTMLElement>(`.card[data-panel="${id}"]`);
+  const col = card?.parentElement;
+  if (!card || !col || !(col.id === 'leftCol' || col.id === 'rightCol')) return;
+  const cards = [...col.querySelectorAll<HTMLElement>(':scope > .card[data-panel]')];
+  const idx = cards.indexOf(card);
+  const target = cards[idx + delta];
+  if (!target) return;
+  if (delta > 0) target.after(card);
+  else target.before(card);
+  commitPanelOrder();
+}
+
+/** Spalten-Dragover: die gezogene Karte folgt der Maus (live einsortieren);
+ *  Reorder bewusst nur INNERHALB einer Spalte (Karten sind spaltig designt). */
+function wireColumnDnD(): void {
+  for (const colId of ['leftCol', 'rightCol']) {
+    const col = document.getElementById(colId);
+    col?.addEventListener('dragover', (ev) => {
+      const dragging = col.querySelector<HTMLElement>(':scope > .card.dragging');
+      if (!dragging) return;
+      ev.preventDefault();
+      const y = (ev as DragEvent).clientY;
+      const siblings = [...col.querySelectorAll<HTMLElement>(':scope > .card[data-panel]:not(.dragging)')];
+      const next = siblings.find((s) => {
+        const r = s.getBoundingClientRect();
+        return y < r.top + r.height / 2;
+      });
+      if (next) col.insertBefore(dragging, next);
+      else col.insertBefore(dragging, col.querySelector(':scope > .sb-rs'));
+    });
+  }
+}
+
+/** Sidebar-Breiten (Desktop): Resize-Handle an der Innenkante, Gerät-lokal. */
+function wireSidebarResize(): void {
+  const stored = ((): Record<string, number> => {
+    try {
+      return JSON.parse(localStorage.getItem('autotrd-sbw') ?? '{}') as Record<string, number>;
+    } catch {
+      return {};
+    }
+  })();
+  for (const [colId, edge] of [
+    ['leftCol', 'right'],
+    ['rightCol', 'left'],
+  ] as const) {
+    const col = document.getElementById(colId);
+    if (!col) continue;
+    if (stored[colId]) col.style.width = `${Math.min(440, Math.max(220, stored[colId]))}px`;
+    const grip = document.createElement('div');
+    grip.className = `sb-rs sb-rs-${edge}`;
+    grip.title = 'Spaltenbreite ziehen (Doppelklick = zurücksetzen)';
+    col.appendChild(grip);
+    grip.addEventListener('dblclick', () => {
+      col.style.width = '';
+      delete stored[colId];
+      localStorage.setItem('autotrd-sbw', JSON.stringify(stored));
+    });
+    grip.addEventListener('pointerdown', (ev) => {
+      ev.preventDefault();
+      grip.setPointerCapture(ev.pointerId);
+      const startX = ev.clientX;
+      const startW = col.getBoundingClientRect().width;
+      const move = (m: PointerEvent): void => {
+        const dx = m.clientX - startX;
+        const w = Math.min(440, Math.max(220, edge === 'right' ? startW + dx : startW - dx));
+        col.style.width = `${w}px`;
+      };
+      const up = (): void => {
+        grip.removeEventListener('pointermove', move);
+        grip.removeEventListener('pointerup', up);
+        stored[colId] = Math.round(col.getBoundingClientRect().width);
+        localStorage.setItem('autotrd-sbw', JSON.stringify(stored));
+      };
+      grip.addEventListener('pointermove', move);
+      grip.addEventListener('pointerup', up);
+    });
+  }
+}
+
 /* ── Dashboard-Individualisierung Teil 1 (Taschenmesser-Vision 25.07.) ── */
 
 /** Eingeklappte Karten anwenden (nur der Körper zu — Gerät-lokal). */
@@ -2122,10 +2242,30 @@ function wirePanelChrome(): void {
     if (!sect || !body || !id) return;
     const box = document.createElement('span');
     box.className = 'sect-tools';
+    const inSidebar = card.parentElement?.id === 'leftCol' || card.parentElement?.id === 'rightCol';
     box.innerHTML =
+      (inSidebar
+        ? '<button type="button" class="sect-btn sect-grip" data-grip title="Modul verschieben (ziehen)">⠿</button>'
+        : '') +
       '<button type="button" class="sect-btn" data-col title="Modul ein-/ausklappen">▾</button>' +
       '<button type="button" class="sect-btn" data-x title="Modul ausblenden — wieder einblendbar über ⚙ → Module">✕</button>';
     sect.appendChild(box);
+    // Drag-Reorder (Taschenmesser Teil 3): Karte ist nur draggable, solange
+    // der Grip gedrückt ist — sonst stört Drag jede Text-Selektion.
+    const grip = box.querySelector<HTMLElement>('[data-grip]');
+    if (grip) {
+      grip.addEventListener('pointerdown', () => card.setAttribute('draggable', 'true'));
+      grip.addEventListener('pointerup', () => card.removeAttribute('draggable'));
+      card.addEventListener('dragstart', (ev) => {
+        card.classList.add('dragging');
+        (ev as DragEvent).dataTransfer?.setData('text/plain', id);
+      });
+      card.addEventListener('dragend', () => {
+        card.classList.remove('dragging');
+        card.removeAttribute('draggable');
+        commitPanelOrder();
+      });
+    }
     box.querySelector('[data-col]')!.addEventListener('click', () => {
       if (!st) return;
       if (st.collapsed.has(id)) st.collapsed.delete(id);
@@ -2148,7 +2288,13 @@ function scheduleWsSave(): void {
     const data: WorkspaceDocData = {
       preset: st.wsPreset,
       panels: Object.fromEntries(
-        Object.keys(PANEL_TITLES).map((id) => [id, { hidden: st!.wsHidden.has(id) }]),
+        Object.keys(PANEL_TITLES).map((id) => [
+          id,
+          {
+            hidden: st!.wsHidden.has(id),
+            ...(st!.wsOrder[id] !== undefined ? { order: st!.wsOrder[id] } : {}),
+          },
+        ]),
       ),
       groups: { chart: st.chartGroup, news: st.newsGroup, chart2: st.chart2Group },
       symbols: { A: groupSymbol('A'), B: groupSymbol('B'), C: groupSymbol('C') },
@@ -2704,6 +2850,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     newsSubs: [],
     wsPreset: 'ueberblick',
     wsHidden: new Set(DEFAULT_HIDDEN),
+    wsOrder: {},
     wsSaveTimer: null,
     paletteDispose: null,
     events: [],
@@ -2859,7 +3006,13 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         return cfg ? cfg.hidden === true : DEFAULT_HIDDEN.has(id);
       }),
     );
+    st.wsOrder = Object.fromEntries(
+      Object.entries(ws.panels ?? {})
+        .filter(([, cfg]) => typeof cfg?.order === 'number')
+        .map(([id, cfg]) => [id, cfg.order as number]),
+    );
     applyPanels();
+    applyPanelOrder();
     const g = (v: unknown): LinkGroup => (v === 'B' || v === 'C' ? v : 'A');
     st.chartGroup = g(ws.groups?.chart);
     st.newsGroup = g(ws.groups?.news);
@@ -2978,6 +3131,14 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   $('sideR').addEventListener('click', () => { sbState.r = sbState.r !== true; applySidebars(); });
   applySidebars();
   wirePanelChrome();
+  wireColumnDnD();
+  wireSidebarResize();
+  // Test-Hook (E2E): Reorder über denselben Pfad wie der Drop
+  (window as unknown as { __autotrdWs?: unknown }).__autotrdWs = {
+    move: (id: string, delta: number) => movePanel(id, delta),
+    order: (colId: string) =>
+      [...document.querySelectorAll<HTMLElement>(`#${colId} > .card[data-panel]`)].map((c) => c.dataset.panel),
+  };
   $('olv').addEventListener('click', () => {
     for (const id of ['leftCol', 'rightCol']) $(id).classList.remove('show');
     $('olv').classList.remove('show');

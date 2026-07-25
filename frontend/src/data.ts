@@ -360,8 +360,9 @@ export async function loadUniverse(): Promise<Record<string, UniverseClass> | nu
 
 export interface WorkspaceDocData {
   preset: string;
-  /** Panel-Sichtbarkeit (id → hidden); fehlend = sichtbar. */
-  panels: Record<string, { hidden?: boolean }>;
+  /** Panel-Sichtbarkeit + Reihenfolge (id → {hidden, order}); fehlend = sichtbar,
+   *  Reihenfolge = DOM-Default (Taschenmesser Teil 3: Module per Drag sortieren). */
+  panels: Record<string, { hidden?: boolean; order?: number }>;
   /** Link-Gruppen der verlinkbaren Panels (chart/news → 'A'|'B'|'C'). */
   groups: Record<string, string>;
   /** Zuletzt aktives Symbol je Link-Gruppe. */
