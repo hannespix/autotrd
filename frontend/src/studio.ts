@@ -36,6 +36,7 @@ import {
   type StrategyRow,
 } from './data.js';
 import { previewSignals, type PreviewBar, type PreviewDayInfo } from './preview.js';
+import { iBtn, initInfoTips } from './infotips.js';
 
 let cleanup: (() => void) | null = null;
 let runSub: (() => void) | null = null;
@@ -189,14 +190,14 @@ function renderTreeCard(side: 'buy' | 'sell', root: RuleNode): string {
   return `<section class="card st-tree" data-side="${side}">
     <h3 class="${color}">${title}</h3>
     <div class="st-root row">
-      <label>Verknüpfung
+      <label>Verknüpfung ${iBtn('link')}
         <select class="sel" data-root="type">
           ${['weighted', 'all', 'any'].map((t) => `<option ${t === root.type ? 'selected' : ''}>${t}</option>`).join('')}
         </select>
       </label>
       ${
         root.type === 'weighted'
-          ? `<label>Threshold
+          ? `<label>Threshold ${iBtn('threshold')}
               <span class="st-stepper">
                 <button type="button" class="btn btn-n" data-thr="-1">−</button>
                 <b class="mono" data-thr-val>${root.threshold}</b>
@@ -211,8 +212,8 @@ function renderTreeCard(side: 'buy' | 'sell', root: RuleNode): string {
         .map(
           (k) => `<div class="st-leaf" data-i="${k.i}">
             <div class="st-leaf-head">
-              <span class="chip">${k.node.type}</span>
-              ${k.weight !== null ? `<span class="chip st-w">Gewicht <input class="inp st-num" data-w="${k.i}" type="number" step="0.5" min="0.5" value="${k.weight}" /></span>` : ''}
+              <span class="chip">${k.node.type}</span>${iBtn(`node:${k.node.type}`)}
+              ${k.weight !== null ? `<span class="chip st-w">Gewicht${iBtn('weight')} <input class="inp st-num" data-w="${k.i}" type="number" step="0.5" min="0.5" value="${k.weight}" /></span>` : ''}
               <span class="st-leaf-label mono">${esc(leafLabel(k.node))}</span>
               <button type="button" class="btn btn-n st-del" data-del="${k.i}" aria-label="Regel entfernen">✕</button>
             </div>
@@ -334,7 +335,7 @@ async function renderEditor(root: HTMLElement, st: EditorState): Promise<void> {
           </div>
           <div class="row st-assign">
             <input id="stSymbols" class="inp" value="${esc(st.symbols.join(', '))}" placeholder="Symbole, z. B. QQQ, BTC-USD" aria-label="Zuordnung" />
-            <select id="stMode" class="sel" aria-label="Modus" title="paper = echtes Paper-Wallet · shadow = nur beobachten (virtuelles Konto)">
+            ${iBtn('modus')}<select id="stMode" class="sel" aria-label="Modus" title="paper = echtes Paper-Wallet · shadow = nur beobachten (virtuelles Konto)">
               <option value="paper" ${st.mode === 'paper' ? 'selected' : ''}>paper</option>
               <option value="shadow" ${st.mode === 'shadow' ? 'selected' : ''}>shadow</option>
             </select>
@@ -343,7 +344,7 @@ async function renderEditor(root: HTMLElement, st: EditorState): Promise<void> {
           ${
             st.mode === 'shadow' && st.shadow
               ? `<section class="card st-shadow">
-                  <h3>A/B-Duell <span class="chip">A = Paper-Wallet (echt) · B = diese Strategie (virtuell)</span></h3>
+                  <h3>A/B-Duell <span class="chip">A = Paper-Wallet (echt) · B = diese Strategie (virtuell)</span> ${iBtn('divergenz')}</h3>
                   <div class="ab-grid mono" id="abGrid"><p class="hint">Lade Duell …</p></div>
                   <div class="row st-actions">
                     <button type="button" id="stPromote" class="btn btn-g"
@@ -360,7 +361,7 @@ async function renderEditor(root: HTMLElement, st: EditorState): Promise<void> {
         </div>
         <div class="st-col">
           <section class="card st-preview">
-            <h3>Live-Vorschau <span class="chip">Vorschau, kein Backtest</span></h3>
+            <h3>Live-Vorschau <span class="chip">Vorschau, kein Backtest</span> ${iBtn('preview')}</h3>
             <div class="row">
               <input id="stPrevSym" class="inp st-sym" value="${esc(st.previewSymbol)}" aria-label="Vorschau-Symbol" />
               <button type="button" id="stPrevLoad" class="btn btn-n">Laden</button>
@@ -370,7 +371,7 @@ async function renderEditor(root: HTMLElement, st: EditorState): Promise<void> {
             Vorschau unbekannt · Marker ▲ Kauf / ▼ Verkauf, Bänder = Haltephasen</p>
           </section>
           <section class="card st-report">
-            <h3>Backtest <span class="chip">1 Jahr Tages-Bars · inkl. Kosten</span></h3>
+            <h3>Backtest <span class="chip">1 Jahr Tages-Bars · inkl. Kosten</span> ${iBtn('backtest')}</h3>
             <div class="row">
               <button type="button" id="stBacktest" class="btn btn-n" ${st.id ? '' : 'disabled'}>Backtest starten</button>
               <span class="hint">max. 10/Tag</span>
@@ -378,7 +379,7 @@ async function renderEditor(root: HTMLElement, st: EditorState): Promise<void> {
             <div id="stRun" aria-live="polite"><p class="hint">Noch kein Report.</p></div>
           </section>
           <section class="card st-sweep">
-            <h3>Parameter-Sweep <span class="chip">Classic-Basis · ≤ 60 Kombis · kein Auto-Apply</span></h3>
+            <h3>Parameter-Sweep <span class="chip">Classic-Basis · ≤ 60 Kombis · kein Auto-Apply</span> ${iBtn('sweep')}</h3>
             <div class="row">
               <label>X <select id="swX" class="inp"></select></label>
               <label>Y <select id="swY" class="inp"></select></label>
@@ -561,9 +562,9 @@ async function renderEditor(root: HTMLElement, st: EditorState): Promise<void> {
       ${spark}
       <div class="st-metrics mono">
         <span class="${run.totalReturnPct >= 0 ? 'c-gn' : 'c-rd'}">${pct(run.totalReturnPct)} Rendite</span>
-        <span>${pct(run.buyHoldPct)} Buy&amp;Hold</span>
-        <span>${run.numTrades} Trades · ${run.winRatePct.toFixed(0)} % Winrate</span>
-        <span>MaxDD ${run.maxDrawdownPct.toFixed(1)} % · Sharpe ${run.sharpe.toFixed(2)}</span>
+        <span>${pct(run.buyHoldPct)} Buy&amp;Hold ${iBtn('buyhold')}</span>
+        <span>${run.numTrades} Trades · ${run.winRatePct.toFixed(0)} % Winrate ${iBtn('winrate')}</span>
+        <span>MaxDD ${run.maxDrawdownPct.toFixed(1)} % ${iBtn('maxdd')} · Sharpe ${run.sharpe.toFixed(2)} ${iBtn('sharpe')}</span>
       </div>
       <p class="hint">${run.symbol} · ${run.barsFrom} → ${run.barsTo} · ${run.specSource === 'compiled' ? 'publizierte Version' : 'Entwurf'} · ${run.at.slice(0, 16).replace('T', ' ')}Z</p>`;
   };
@@ -758,6 +759,7 @@ function renderList(root: HTMLElement, uid: string): () => void {
 }
 
 export function mountStudio(root: HTMLElement, uid: string): void {
+  initInfoTips(); // ⓘ-Erklär-Popover (idempotent)
   unmountStudio();
   const route = location.hash; // '#/strategy' oder '#/strategy/{id}'
   const id = route.startsWith('#/strategy/') ? route.slice('#/strategy/'.length) : null;

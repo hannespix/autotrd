@@ -1,0 +1,14 @@
+# Cache-Politik (Live-Bug 25.07.): webgo lieferte KEIN Cache-Control — Browser
+# hielten index.html heuristisch fest und Deploys kamen bei offenen/installierten
+# Apps nicht an. Regel: Hash-Assets ewig cachen, Einstiegspunkte nie.
+<IfModule mod_headers.c>
+  # Vite-Assets tragen den Hash im Namen — unveränderlich, ein Jahr cachen
+  <FilesMatch "\.(js|css|svg|png|webp|woff2)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+  # Einstiegspunkte IMMER revalidieren (steht NACH dem Asset-Block und
+  # überschreibt ihn für sw.js) — sonst zeigen alte HTMLs auf alte Bundles
+  <FilesMatch "^(index\.html|sw\.js|manifest\.json)$">
+    Header set Cache-Control "no-cache, must-revalidate"
+  </FilesMatch>
+</IfModule>

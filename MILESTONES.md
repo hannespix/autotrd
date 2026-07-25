@@ -643,6 +643,17 @@ die Watchlist ist nur noch der Scope der Trading-Engine.
       (⠿-Grip im Kartenkopf, live einsortieren beim Ziehen, Reihenfolge in
       workspace `panels[id].order` — synct über Geräte; Reorder bewusst je
       Spalte) · Test-Hook `__autotrdWs` nutzt denselben Drop-Pfad
+- [x] ⓘ-Erklär-Tooltips + Studio-Feinschliff (User-Wunsch 25.07. „nicht
+      jeder ist Profi — so lernt man"): infotips.ts mit 30+ ausführlichen
+      deutschen Fachbegriff-Erklärungen (RSI/MACD/Konfluenz, Stop/Take,
+      Prognose-Gewicht/-Band/Kombi-Statistik/MAE, alle Regel-Knoten,
+      Sharpe/MaxDD/Winrate/Buy&Hold, Sweep/Backtest/Modus, Gebühren/
+      Kaufkraft) — EIN globales Popover ohne position:fixed (backdrop-
+      filter-Falle), delegiert, Esc/Außenklick schließt; ⓘ an Strategie-
+      Karte, Trade-Ticket, Prognose-Karten und im gesamten Studio-Editor;
+      Label-CSS-Feinschliff (Zeilenhöhe, ⓘ-Ausrichtung) · dazu .htaccess-
+      Cache-Politik (Hash-Assets immutable, index.html/sw.js no-cache) —
+      Wurzelfix für „Deploy kommt beim User nicht an"
 - [x] Trade-Fenster-Redesign (User-Wunsch 25.07.): Katalog-Symbol-Picker
       mit Klarnamen-Suche, Kurs je Einheit + Tages-% + RSI/MACD/Signal
       als Mini-Briefing vor der Order, Live-Summen (Zwischensumme,
