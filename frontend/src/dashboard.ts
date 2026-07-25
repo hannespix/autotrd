@@ -30,6 +30,7 @@ import {
   loadBarsOnce,
   loadIntraday,
   loadPrediction,
+  saveUiPrefs,
   watchBars,
   watchLatestAi,
   watchLatestIndicators,
@@ -135,6 +136,13 @@ interface DashState {
   /** Aktive User-Prognose (Chart-Pfeil) des aktuellen Symbols. */
   prediction: import('@autotrd/shared').UserPrediction | null;
   predMode: boolean;
+  /** Optionale Elemente (Options-Modal ⚙, settings.ui) — ✏ ist Opt-in. */
+  ui: { predArrow: boolean; cmpOverlay: boolean; chartGrid: boolean };
+  /** Multi-Chart-Raster (Chart-Vision): 1 = nur Haupt-Chart, 2/4 = Panels daneben. */
+  gridMode: 1 | 2 | 4;
+  /** Haupt-Chart Teil der Lock-Gruppe (Zoom/Crosshair synchron)? */
+  mainLocked: boolean;
+  gridPanels: GridPanel[];
   /** Zweites Symbol als %-Vergleichslinie (null = aus). */
   overlaySymbol: string | null;
   overlayBars: import('./chart.js').ChartBar[];
@@ -178,6 +186,18 @@ interface DashState {
   watchlistSubs: Unsubscribe[]; // pro Watchlist (Livebar + Tabelle)
   positionSubs: Map<string, Unsubscribe>; // Quotes je Positions-Symbol
   timers: number[];
+}
+
+/** Zusatz-Panel im Multi-Chart-Raster: eigenes Symbol + Zeitrahmen + Lock. */
+interface GridPanel {
+  sym: string;
+  range: number; // Bars (0 = alle, wie Haupt-Chart)
+  locked: boolean;
+  chart: PriceChartHandle | null;
+  bars: ChartBar[];
+  subs: Unsubscribe[];
+  epoch: number;
+  fitPending: boolean;
 }
 
 let st: DashState | null = null;
@@ -249,7 +269,8 @@ function layout(email: string): string {
     <div class="logo">AUTO<span class="c-gn">TRD</span></div>
     <div class="spacer"></div>
     <div id="engBadge" class="badge b-off">Engine aus</div>
-    <a class="hbtn" id="studioLink" href="#/strategy" title="Strategie-Studio">⚙<span class="hide-sm"> Studio</span></a>
+    <a class="hbtn" id="studioLink" href="#/strategy" title="Strategie-Studio">⚡<span class="hide-sm"> Studio</span></a>
+    <button class="hbtn" id="optBtn" title="Optionen: Elemente & Paper-Wallet">⚙</button>
     <button class="hbtn" id="themeBtn" title="Hell/Dunkel">◐</button>
     <span class="user">${email.replace(/[<>&]/g, '')}</span>
     <button class="hbtn" id="logoutBtn">Abmelden</button>
@@ -324,6 +345,13 @@ function layout(email: string): string {
           <button class="tf-btn" data-bars="22">1M</button>
           <button class="tf-btn on" data-bars="66">3M</button>
           <button class="tf-btn" data-bars="0">1J</button>
+          <span class="grid-sw" title="Charts im Raster: 1, 2 oder 4 parallel">
+            <button class="tf-btn on" data-grid="1">▭</button>
+            <button class="tf-btn" data-grid="2">▯▯</button>
+            <button class="tf-btn" data-grid="4">⊞</button>
+          </span>
+          <button class="tf-btn" id="lockMain" hidden
+            title="Haupt-Chart in die Lock-Gruppe: Zoom, Sichtbereich und Crosshair laufen auf allen gelockten Charts synchron">🔓</button>
           <button class="tf-btn on" id="lyFc" title="Prognose-Overlay ein/aus" style="margin-left:auto">Prognose</button>
           <button class="tf-btn on" id="lyEv" title="Event-Marker ein/aus">Events</button>
         </div>
@@ -335,9 +363,10 @@ function layout(email: string): string {
           <button class="tf-btn" data-layer="ema21" title="EMA 21">EMA21</button>
           <button class="tf-btn" data-layer="bb" title="Bollinger-Bänder (20, 2σ)">BB</button>
           <input id="cmpSym" class="inp cmp-inp" placeholder="+ Overlay: SYM" title="Zweiten Kurs als %-Linie überlagern (Tageskerzen)" />
-          <button class="tf-btn" id="predBtn" title="Prognose-Pfeil zeichnen: Klick in den Chart setzt den Ziel-Kurs">✏ Pfeil</button>
+          <button class="tf-btn" id="predBtn" hidden title="Prognose-Pfeil zeichnen: Klick in den Chart setzt den Ziel-Kurs">✏ Pfeil</button>
         </div>
         <div class="hint" id="fcInfo" style="margin-bottom:4px"></div>
+        <div id="chartRow" class="chart-row" data-mode="1">
         <div id="chartWrap" class="chart-wrap">
           <div id="chartArea"></div>
           <svg id="predSvg" class="pred-svg" aria-hidden="true"></svg>
@@ -359,6 +388,8 @@ function layout(email: string): string {
             </div>
             <p class="hint">Der Algorithmus nimmt den Pfeil als gewichtete Stimme (Dicke = Vertrauen).</p>
           </div>
+        </div>
+        <div id="chartGrid"></div>
         </div>
         <div class="hint">1T/1W: 5-Minuten-Kerzen · 1M–1J: Tageskerzen —
           aktualisiert der zentrale 5-min-Scan. Zoom bleibt beim Aktualisieren erhalten.</div>
@@ -489,6 +520,40 @@ function layout(email: string): string {
   <div class="dmodal" id="detailModal">
     <div class="dmodal-bg" data-close="detail"></div>
     <div class="dsheet" id="detailSheet"></div>
+  </div>
+
+  <div class="dmodal" id="optModal">
+    <div class="dmodal-bg" data-close="options"></div>
+    <div class="dsheet" style="width:min(560px,100%)">
+      <button class="dclose" data-close="options">✕</button>
+      <h3>⚙ Optionen</h3>
+      <div class="wl-sec">Optionale Elemente</div>
+      <label class="opt-row"><input type="checkbox" id="ouPred" />
+        <span><b>Prognose-Pfeil (✏)</b> — eigene Kurs-Erwartung im Chart einzeichnen;
+        zählt als gewichtete Stimme im Auto-Trading. <i>Beta, standardmäßig aus.</i></span></label>
+      <label class="opt-row"><input type="checkbox" id="ouCmp" />
+        <span><b>Vergleichs-Overlay</b> — zweites Symbol als %-Linie im Haupt-Chart.</span></label>
+      <label class="opt-row"><input type="checkbox" id="ouGrid" />
+        <span><b>Multi-Chart-Raster</b> — 1/2/4 Charts parallel mit Lock-Sync.</span></label>
+      <div class="wl-sec">Paper-Wallet · Grundeinstellungen</div>
+      <div class="opt-grid">
+        <label>Startkapital $
+          <input id="owCap" class="inp st-num" type="number" min="100" step="500" /></label>
+        <label>Investment je Trade %
+          <input id="owMax" class="inp st-num" type="number" min="1" max="100" step="1" /></label>
+        <label>Stop-Loss %
+          <input id="owSl" class="inp st-num" type="number" min="0.5" step="0.5" /></label>
+        <label>Take-Profit %
+          <input id="owTp" class="inp st-num" type="number" min="0.5" step="0.5" /></label>
+      </div>
+      <p class="hint">Startkapital greift beim Anlegen/Zurücksetzen des Wallets.
+        Investment je Trade bestimmt die Positionsgröße der Engine (Regel-Strategien
+        deckeln serverseitig bei 25 %).</p>
+      <div class="row" style="margin-top:8px">
+        <button class="btn btn-g" id="owSave">Speichern</button>
+        <span class="hint" id="optMsg"></span>
+      </div>
+    </div>
   </div>
 
   <div class="dmodal" id="wlModal">
@@ -669,7 +734,7 @@ function drawPredictionArrow(): void {
   if (!svg || !st) return;
   svg.innerHTML = '';
   const pred = st.prediction;
-  if (!pred || !st.chart || st.intradayDays > 0 || st.bars.length === 0) return;
+  if (!st.ui.predArrow || !pred || !st.chart || st.intradayDays > 0 || st.bars.length === 0) return;
   const last = st.bars[st.bars.length - 1]!;
   const start = st.chart.coords(last.date, last.close);
   const yEnd = st.chart.coords(last.date, pred.targetPrice).y;
@@ -706,6 +771,47 @@ async function loadPredictionForSymbol(): Promise<void> {
   if (!st || st.currentSymbol !== sym) return;
   st.prediction = pred;
   drawPredictionArrow();
+}
+
+/* ── Options-Modal (⚙, Feedback 25.07.): Elemente + Paper-Wallet-Basics ── */
+
+/** Sichtbarkeit der optionalen Elemente anwenden (settings.ui). */
+function applyUiPrefs(): void {
+  if (!st) return;
+  const u = st.ui;
+  ($('predBtn') as HTMLButtonElement).hidden = !u.predArrow;
+  if (!u.predArrow) {
+    st.predMode = false;
+    $('predBtn').classList.remove('on');
+    $('predPop').hidden = true;
+  }
+  drawPredictionArrow();
+  ($('cmpSym') as HTMLInputElement).hidden = !u.cmpOverlay;
+  if (!u.cmpOverlay && st.overlaySymbol) {
+    st.overlaySymbol = null;
+    ($('cmpSym') as HTMLInputElement).value = '';
+    applyOverlays();
+  }
+  const sw = document.querySelector('.grid-sw') as HTMLElement | null;
+  if (sw) sw.hidden = !u.chartGrid;
+  if (!u.chartGrid && st.gridMode !== 1) {
+    st.gridMode = 1;
+    renderChartGrid();
+  }
+  if (!u.chartGrid) ($('lockMain') as HTMLButtonElement).hidden = true;
+}
+
+function openOptions(): void {
+  if (!st) return;
+  ($('ouPred') as HTMLInputElement).checked = st.ui.predArrow;
+  ($('ouCmp') as HTMLInputElement).checked = st.ui.cmpOverlay;
+  ($('ouGrid') as HTMLInputElement).checked = st.ui.chartGrid;
+  ($('owCap') as HTMLInputElement).value = String(st.strategy.broker.initialCapital);
+  ($('owMax') as HTMLInputElement).value = String(st.strategy.engine.maxPositionPct);
+  ($('owSl') as HTMLInputElement).value = String(st.strategy.engine.stopLossPct);
+  ($('owTp') as HTMLInputElement).value = String(st.strategy.engine.takeProfitPct);
+  $('optMsg').textContent = '';
+  $('optModal').classList.add('show');
 }
 
 /** 5m-Chunks laden und rendern (1T/1W) — Chart-Feedback 24.07. */
@@ -785,6 +891,13 @@ async function rebuildChart(): Promise<void> {
     openPredPop(price);
   });
   st.chart?.onVisibleRangeChange(() => drawPredictionArrow());
+  // Lock-Gruppe (Multi-Chart-Raster): Haupt-Chart synct nur, wenn selbst gelockt
+  st.chart?.onVisibleRangeChange((range) => {
+    if (st?.mainLocked && st.chart) syncLockedRange(st.chart, range);
+  });
+  st.chart?.onCrosshairDate((date) => {
+    if (st?.mainLocked && st.chart) syncLockedCrosshair(st.chart, date);
+  });
   void loadPredictionForSymbol();
   st.chart?.onCrosshairDate((date, pos) => {
     showEventTooltip(date, pos);
@@ -965,6 +1078,187 @@ async function rebuildChart2(): Promise<void> {
     crosshairSyncing = false;
   });
   renderChart2();
+}
+
+/* ── Multi-Chart-Raster (Chart-Vision 24.07.): 1/2/4 Panels + Lock-Sync ── */
+
+const GRID_LS_KEY = 'autotrd-chart-grid';
+
+function saveGridPrefs(): void {
+  if (!st) return;
+  localStorage.setItem(
+    GRID_LS_KEY,
+    JSON.stringify({
+      mode: st.gridMode,
+      mainLocked: st.mainLocked,
+      panels: st.gridPanels.map((p) => ({ sym: p.sym, range: p.range, locked: p.locked })),
+    }),
+  );
+}
+
+function loadGridPrefs(): { mode: 1 | 2 | 4; mainLocked: boolean; panels: Array<{ sym: string; range: number; locked: boolean }> } {
+  const fallback = { mode: 1 as const, mainLocked: false, panels: [] };
+  try {
+    const raw = localStorage.getItem(GRID_LS_KEY);
+    if (!raw) return fallback;
+    const p = JSON.parse(raw) as { mode?: number; mainLocked?: boolean; panels?: Array<{ sym?: string; range?: number; locked?: boolean }> };
+    const mode = p.mode === 2 || p.mode === 4 ? p.mode : 1;
+    return {
+      mode,
+      mainLocked: p.mainLocked === true,
+      panels: (p.panels ?? []).slice(0, 3).map((x) => ({
+        sym: typeof x.sym === 'string' && x.sym ? x.sym : 'AAPL',
+        range: typeof x.range === 'number' ? x.range : 66,
+        locked: x.locked === true,
+      })),
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+/** Alle gelockten Chart-Handles (Haupt-Chart nur, wenn selbst gelockt). */
+function lockedHandles(except: PriceChartHandle): PriceChartHandle[] {
+  if (!st) return [];
+  const out: PriceChartHandle[] = [];
+  if (st.mainLocked && st.chart) out.push(st.chart);
+  for (const p of st.gridPanels) if (p.locked && p.chart) out.push(p.chart);
+  return out.filter((h) => h !== except);
+}
+
+// Lock-Sync nutzt dieselben Echo-Guards wie der Chart-Stack: setVisibleRange/
+// setCrosshair feuern die Subscriptions des Zielcharts synchron.
+function syncLockedRange(from: PriceChartHandle, range: { from: number; to: number } | null): void {
+  if (rangeSyncing || !range) return;
+  rangeSyncing = true;
+  for (const h of lockedHandles(from)) h.setVisibleRange(range);
+  rangeSyncing = false;
+}
+
+function syncLockedCrosshair(from: PriceChartHandle, date: string | null): void {
+  if (crosshairSyncing) return;
+  crosshairSyncing = true;
+  for (const h of lockedHandles(from)) h.setCrosshair(date);
+  crosshairSyncing = false;
+}
+
+function renderGridPanelBars(p: GridPanel): void {
+  if (!p.chart) return;
+  const fit = p.fitPending;
+  p.fitPending = false;
+  p.chart.setBars(p.range > 0 ? p.bars.slice(-p.range) : p.bars, { fit });
+}
+
+/** Panel (neu) aufbauen: Bars-Watcher + Chart + Lock-Sync-Verdrahtung. */
+async function mountGridPanel(p: GridPanel, host: HTMLElement): Promise<void> {
+  const epoch = ++p.epoch;
+  clearSubs(p.subs);
+  p.chart?.destroy();
+  p.chart = null;
+  p.fitPending = true;
+  p.subs.push(
+    watchBars(p.sym, (bars) => {
+      p.bars = bars;
+      renderGridPanelBars(p);
+    }),
+  );
+  const handle = await buildPriceChart(host, p.sym);
+  if (!st || epoch !== p.epoch || !st.gridPanels.includes(p)) {
+    handle?.destroy();
+    return;
+  }
+  p.chart = handle;
+  p.chart?.onVisibleRangeChange((range) => {
+    if (p.locked && p.chart) syncLockedRange(p.chart, range);
+  });
+  p.chart?.onCrosshairDate((date) => {
+    if (p.locked && p.chart) syncLockedCrosshair(p.chart, date);
+  });
+  renderGridPanelBars(p);
+}
+
+function unmountGridPanel(p: GridPanel): void {
+  p.epoch++;
+  clearSubs(p.subs);
+  p.chart?.destroy();
+  p.chart = null;
+}
+
+/** Raster-DOM an gridMode angleichen; Panels mounten/unmounten; persistieren. */
+function renderChartGrid(): void {
+  if (!st) return;
+  const grid = $('chartGrid');
+  const want = st.gridMode - 1;
+  // Panel-Liste angleichen (Defaults aus der Watchlist, nie das Haupt-Symbol)
+  while (st.gridPanels.length > want) unmountGridPanel(st.gridPanels.pop()!);
+  while (st.gridPanels.length < want) {
+    const used = new Set([st.currentSymbol, ...st.gridPanels.map((p) => p.sym)]);
+    const sym =
+      st.strategy.watchlist.find((s) => !used.has(s)) ??
+      ['AAPL', 'TSLA', '^NDX'].find((s) => !used.has(s)) ??
+      'AAPL';
+    st.gridPanels.push({ sym, range: 66, locked: false, chart: null, bars: [], subs: [], epoch: 0, fitPending: true });
+  }
+  $('chartRow').dataset['mode'] = String(st.gridMode);
+  ($('lockMain') as HTMLButtonElement).hidden = st.gridMode === 1;
+  $('lockMain').textContent = st.mainLocked ? '🔒' : '🔓';
+  $('lockMain').classList.toggle('on', st.mainLocked);
+  document.querySelectorAll('.tf-btn[data-grid]').forEach((b) => {
+    b.classList.toggle('on', Number((b as HTMLElement).dataset['grid']) === st?.gridMode);
+  });
+
+  grid.innerHTML = '';
+  st.gridPanels.forEach((p, i) => {
+    const el = document.createElement('div');
+    el.className = 'gpanel';
+    el.innerHTML = `
+      <div class="gp-hd">
+        <input class="inp gp-sym" value="${p.sym}" title="Symbol (Enter übernimmt)" />
+        <span class="gp-tf">
+          <button class="tf-btn${p.range === 22 ? ' on' : ''}" data-r="22">1M</button>
+          <button class="tf-btn${p.range === 66 ? ' on' : ''}" data-r="66">3M</button>
+          <button class="tf-btn${p.range === 0 ? ' on' : ''}" data-r="0">1J</button>
+        </span>
+        <button class="tf-btn gp-lock${p.locked ? ' on' : ''}"
+          title="Lock: Zoom, Sichtbereich und Crosshair synchron mit allen gelockten Charts">${p.locked ? '🔒' : '🔓'}</button>
+      </div>
+      <div class="gp-chart" data-gp="${i}"></div>`;
+    const symInp = el.querySelector('.gp-sym') as HTMLInputElement;
+    symInp.addEventListener('keydown', (ev) => {
+      if ((ev as KeyboardEvent).key !== 'Enter') return;
+      const sym = symInp.value.trim().toUpperCase();
+      if (!sym || sym === p.sym) return;
+      p.sym = sym;
+      symInp.value = sym;
+      saveGridPrefs();
+      void mountGridPanel(p, el.querySelector('.gp-chart') as HTMLElement);
+    });
+    el.querySelectorAll('[data-r]').forEach((b) =>
+      b.addEventListener('click', () => {
+        p.range = Number((b as HTMLElement).dataset['r']);
+        p.fitPending = true;
+        el.querySelectorAll('[data-r]').forEach((x) => x.classList.toggle('on', x === b));
+        saveGridPrefs();
+        renderGridPanelBars(p);
+      }),
+    );
+    const lockBtn = el.querySelector('.gp-lock') as HTMLButtonElement;
+    lockBtn.addEventListener('click', () => {
+      p.locked = !p.locked;
+      lockBtn.textContent = p.locked ? '🔒' : '🔓';
+      lockBtn.classList.toggle('on', p.locked);
+      saveGridPrefs();
+      // frisch gelockt → sofort auf den Stand der Gruppe ziehen
+      if (p.locked && p.chart) {
+        const other = lockedHandles(p.chart)[0];
+        const r = other?.getVisibleRange();
+        if (r) syncLockedRange(other!, r);
+      }
+    });
+    grid.appendChild(el);
+    void mountGridPanel(p, el.querySelector('.gp-chart') as HTMLElement);
+  });
+  saveGridPrefs();
 }
 
 /* ── Hotkey-Order-Ticket (M9): Shift+B/S → trade-Callable ───────────── */
@@ -1373,8 +1667,8 @@ function renderPickerChips(): void {
   if (st.pickerSelection.size === 0) box.innerHTML = '<span class="c-t3" style="font-size:11px">Keine Symbole gewählt</span>';
 }
 
-function closeModal(which: 'detail' | 'picker'): void {
-  $(which === 'detail' ? 'detailModal' : 'wlModal').classList.remove('show');
+function closeModal(which: 'detail' | 'picker' | 'options'): void {
+  $(which === 'detail' ? 'detailModal' : which === 'picker' ? 'wlModal' : 'optModal').classList.remove('show');
 }
 
 /* ── News & Sentiment ───────────────────────────────────────────────── */
@@ -1607,7 +1901,11 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     chartFitPending: true,
     prediction: null,
     predMode: false,
+    ui: { predArrow: false, cmpOverlay: true, chartGrid: true },
     chartLayers: new Set((localStorage.getItem('autotrd-chart-layers') ?? '').split(',').filter(Boolean)),
+    gridMode: 1,
+    mainLocked: false,
+    gridPanels: [],
     overlaySymbol: null,
     overlayBars: [],
     pickerSelection: new Set(),
@@ -1645,11 +1943,17 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
 
   // User-Doc: Strategie (Formular/Watchlist) + Wallet folgen Firestore
   st.subs.push(
-    watchUserDoc(uid, ({ strategy, wallet, hotkeys }) => {
+    watchUserDoc(uid, ({ strategy, wallet, hotkeys, ui }) => {
       if (!st) return;
       const prevWl = st.strategy.watchlist.join(',');
       st.strategy = strategy ?? DEFAULT_STRATEGY;
       st.wallet = wallet;
+      st.ui = {
+        predArrow: ui?.predArrow === true,
+        cmpOverlay: ui?.cmpOverlay !== false,
+        chartGrid: ui?.chartGrid !== false,
+      };
+      applyUiPrefs();
       const prevPalette = st.hotkeys.palette;
       st.hotkeys = { ...HOTKEY_DEFAULTS, ...(hotkeys ?? {}) };
       if (st.hotkeys.palette !== prevPalette && st.paletteDispose) {
@@ -1791,6 +2095,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     setMainRange: (r: { from: number; to: number }) => st?.chart?.setVisibleRange(r),
     refreshMain: () => renderChart(),
     mainOverlays: () => st?.chart?.overlayCount() ?? -1,
+    gridPanels: () => st?.gridPanels.length ?? -1,
+    panelRange: (i: number) => st?.gridPanels[i]?.chart?.getVisibleRange() ?? null,
+    setPanelRange: (i: number, r: { from: number; to: number }) => st?.gridPanels[i]?.chart?.setVisibleRange(r),
   };
 
   // Hotkey-Order-Ticket (M9): Shift+B/S, Enter bestätigt, Esc schließt
@@ -1847,7 +2154,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     closeModal('picker');
   });
   document.querySelectorAll('[data-close]').forEach((el) =>
-    el.addEventListener('click', () => closeModal((el as HTMLElement).dataset.close as 'detail' | 'picker')));
+    el.addEventListener('click', () => closeModal((el as HTMLElement).dataset.close as 'detail' | 'picker' | 'options')));
   $('burgL').addEventListener('click', () => { $('leftCol').classList.toggle('show'); $('olv').classList.toggle('show'); });
   $('burgR').addEventListener('click', () => { $('rightCol').classList.toggle('show'); $('olv').classList.toggle('show'); });
   $('olv').addEventListener('click', () => {
@@ -1941,6 +2248,69 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       .catch((e) => alert(`Prognose: ${(e as Error).message}`));
   });
 
+  // Options-Modal (⚙): Element-Toggles sofort wirksam, Wallet-Basics via saveStrategy
+  $('optBtn').addEventListener('click', openOptions);
+  for (const [id, key] of [
+    ['ouPred', 'predArrow'],
+    ['ouCmp', 'cmpOverlay'],
+    ['ouGrid', 'chartGrid'],
+  ] as const) {
+    $(id).addEventListener('change', () => {
+      if (!st) return;
+      st.ui = { ...st.ui, [key]: ($(id) as HTMLInputElement).checked };
+      applyUiPrefs();
+      void saveUiPrefs(st.uid, st.ui).catch(() => undefined);
+    });
+  }
+  $('owSave').addEventListener('click', () => {
+    if (!st) return;
+    const num = (id: string): number => Number(($(id) as HTMLInputElement).value);
+    const strategy: Strategy = {
+      ...st.strategy,
+      broker: { ...st.strategy.broker, initialCapital: num('owCap') },
+      engine: {
+        ...st.strategy.engine,
+        maxPositionPct: num('owMax'),
+        stopLossPct: num('owSl'),
+        takeProfitPct: num('owTp'),
+      },
+    };
+    const problems = validateStrategy(strategy);
+    if (problems.length > 0) {
+      $('optMsg').textContent = problems[0]!;
+      return;
+    }
+    $('optMsg').textContent = 'Speichere …';
+    void saveStrategy(strategy)
+      .then(() => ($('optMsg').textContent = '✓ Gespeichert'))
+      .catch((e) => ($('optMsg').textContent = (e as Error).message));
+  });
+
+  // Multi-Chart-Raster: Umschalter 1/2/4 + Lock fürs Haupt-Chart
+  document.querySelectorAll('.tf-btn[data-grid]').forEach((b) =>
+    b.addEventListener('click', () => {
+      if (!st) return;
+      const mode = Number((b as HTMLElement).dataset['grid']);
+      st.gridMode = mode === 2 || mode === 4 ? mode : 1;
+      renderChartGrid();
+    }),
+  );
+  $('lockMain').addEventListener('click', () => {
+    if (!st) return;
+    st.mainLocked = !st.mainLocked;
+    $('lockMain').textContent = st.mainLocked ? '🔒' : '🔓';
+    $('lockMain').classList.toggle('on', st.mainLocked);
+    saveGridPrefs();
+  });
+  // Gespeichertes Raster wiederherstellen (localStorage)
+  if (st) {
+    const prefs = loadGridPrefs();
+    st.gridMode = prefs.mode;
+    st.mainLocked = prefs.mainLocked;
+    st.gridPanels = prefs.panels.map((p) => ({ ...p, chart: null, bars: [], subs: [], epoch: 0, fitPending: true }));
+    renderChartGrid();
+  }
+
   // Vergleichs-Overlay: Symbol eintippen + Enter (leer = entfernen)
   $('cmpSym').addEventListener('keydown', (ev) => {
     if ((ev as KeyboardEvent).key !== 'Enter' || !st) return;
@@ -1979,6 +2349,7 @@ function onEscape(e: KeyboardEvent): void {
   if (e.key !== 'Escape') return;
   closeModal('detail');
   closeModal('picker');
+  closeModal('options');
   document.getElementById('orderModal')?.classList.remove('show');
   for (const id of ['leftCol', 'rightCol']) document.getElementById(id)?.classList.remove('show');
   document.getElementById('olv')?.classList.remove('show');
@@ -1996,6 +2367,7 @@ export function unmountDashboard(): void {
   if (st.wsSaveTimer !== null) clearTimeout(st.wsSaveTimer);
   st.paletteDispose?.();
   clearSubscribers();
+  for (const p of st.gridPanels) unmountGridPanel(p);
   st.chart?.destroy();
   st.chart2?.destroy();
   document.removeEventListener('keydown', onEscape);

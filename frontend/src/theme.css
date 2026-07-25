@@ -177,7 +177,7 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .evtip-row { margin-top: 2px; color: var(--t1); }
 .evtip-src { color: var(--t3); font-size: 9.5px; }
 
-.tf-bar { display: flex; gap: 4px; padding: 2px 0; margin-bottom: 4px; }
+.tf-bar { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 0; margin-bottom: 4px; }
 .tf-btn {
   padding: 3px 10px; font-size: 11px; font-weight: 700; border: 1px solid var(--bd);
   border-radius: 5px; background: transparent; color: var(--t2); cursor: pointer;
@@ -474,3 +474,35 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .pred-pop label { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--t2); }
 .pred-pop .row { gap: 6px; }
 #predBtn.on { background: var(--ac); color: #04121a; }
+
+/* Multi-Chart-Raster (Chart-Vision): 1/2/4 Panels, Lock-Sync */
+.chart-row { display: grid; grid-template-columns: 1fr; gap: 10px; }
+.chart-row[data-mode="2"], .chart-row[data-mode="4"] { grid-template-columns: 1fr 1fr; }
+.chart-row > * { min-width: 0; }
+#chartGrid { display: contents; }
+.grid-sw { display: flex; gap: 2px; margin-left: 8px; }
+#lockMain.on, .gp-lock.on { background: var(--ac); color: #04121a; }
+.gpanel {
+  border: 1px solid var(--bd); border-radius: var(--r-sm); padding: 8px;
+  background: var(--sd); display: flex; flex-direction: column; gap: 6px;
+  /* display:contents am #chartGrid: .gpanel ist selbst Grid-Item → eigene
+     Mindestbreite nullen, sonst hält die Chart-Canvas die Spur breit (390px). */
+  min-width: 0;
+}
+.gp-chart, .chart-wrap { min-width: 0; }
+.gp-hd { display: flex; align-items: center; gap: 6px; }
+.gp-sym { width: 86px; font-size: 11px; padding: 3px 8px; text-transform: uppercase; }
+.gp-tf { display: flex; gap: 2px; }
+.gp-lock { margin-left: auto; }
+.gp-chart { height: 235px; min-height: 0; }
+@media (max-width: 760px) {
+  .chart-row[data-mode="2"], .chart-row[data-mode="4"] { grid-template-columns: 1fr; }
+}
+
+/* Options-Modal (⚙): optionale Elemente + Paper-Wallet-Basics */
+.opt-row { display: flex; gap: 10px; align-items: flex-start; font-size: 12px; color: var(--t2); margin: 8px 0; cursor: pointer; }
+.opt-row input { margin-top: 2px; accent-color: var(--ac); }
+.opt-row b { color: var(--t1); }
+.opt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.opt-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--t2); }
+@media (max-width: 560px) { .opt-grid { grid-template-columns: 1fr; } }
