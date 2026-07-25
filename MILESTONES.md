@@ -604,9 +604,18 @@ nächste Prognose feiner wird. Granularität so fein, wie die Daten es hergeben.
       Shadow nutzen denselben V2-Generator, damit die Bewertung genau das
       misst, was ausgespielt wird. Badge nennt die Kalibrierungsquelle;
       12 neue shared-Tests
-- [ ] Teil 4: Studio-Integration: genauigkeitsgewichtetes Forecast-Vote
-      (Gewicht ∝ realisierte Trefferquote der aktiven Kombi), Sweep-Achsen
-      um Forecast-Parameter erweitert, Backtest zeigt Forecast-Beitrag
+- [x] Teil 4: genauigkeitsgewichtetes Forecast-Vote: `accuracyWeightedVote`
+      skaliert das Stimmgewicht mit der realisierten KANTE über den Münzwurf
+      (50 % ⇒ 0, 75 % ⇒ ½, 100 % ⇒ voll; nie contrarian; erst ab
+      MIN_TOTAL_SCORES Evidenz) — greift im zentralen Scan-Signal, wird
+      transparent ins Signal-Doc geschrieben und in der Genauigkeits-Karte
+      angezeigt (User-Strategien behalten bewusst ihr konfiguriertes
+      Gewicht). Backtest: kausale Forecast-Serie je Bar (V2 über
+      closes[0..i] + Tages-Sentiment) füllt `ctx.forecastPct` — Forecast-
+      Regeln greifen jetzt in Backtests UND Sweeps (forecastWeight-Achse
+      aussagekräftig); adversarialer Kausalitätstest (Zukunft variiert ⇒
+      Trades vor dem Verzweigungstag identisch); nextWeekdays gegen
+      Endlosschleife bei ungültigem Datum gehärtet
 
 ## Dashboard-Individualisierung („Schweizer Taschenmesser", User-Wunsch 25.07.)
 

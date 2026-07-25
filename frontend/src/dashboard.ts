@@ -217,6 +217,8 @@ interface DashState {
   chart2: PriceChartHandle | null;
   chart2Bars: ChartBar[];
   chart2Subs: Unsubscribe[];
+  /** Panel-Zustand des Vergleichs-Charts — volle Grid-Parität (User-Wunsch 25.07.). */
+  chart2P: GridPanel;
   /** Letzter Quote des Chart-Symbols (fürs Order-Ticket: Preis + Alter). */
   lastQuote: { price: number; updatedAt: string } | null;
   /** Order-Ticket (Shift+B/S). */
@@ -525,10 +527,18 @@ function layout(email: string): string {
         <div class="chart-hd">
           <span class="chart-nm" id="ch2Sym"></span>
           <span class="chart-px" id="ch2Px">--</span>
+          <span class="gp-tf" id="c2tf" style="margin-left:auto">
+            <button class="tf-btn" data-c2i="1" title="1 Handelstag in 5-Minuten-Kerzen">1T</button>
+            <button class="tf-btn" data-c2i="5" title="~5 Handelstage in 5-Minuten-Kerzen">1W</button>
+            <button class="tf-btn" data-c2r="22">1M</button>
+            <button class="tf-btn on" data-c2r="66">3M</button>
+            <button class="tf-btn" data-c2r="0">1J</button>
+          </span>
         </div>
         <div id="chart2Area" style="height:200px"></div>
         <div class="hint">Zeitachse + Crosshair laufen synchron zum Haupt-Chart —
-          eigene Link-Gruppe für den Symbol-Vergleich.</div>
+          eigene Link-Gruppe für den Symbol-Vergleich; Zeitrahmen-Wechsel oben
+          gelten auch hier.</div>
       </div></div>
 
       <div class="sig-grid" data-panel="sigcards">
@@ -599,6 +609,7 @@ function layout(email: string): string {
         </div>
         <div class="hint" id="fcTuning">Self-Tuning sammelt Evidenz — Defaults aktiv,
           bis genug Prognosen realisiert sind.</div>
+        <div class="hint" id="fcVoteInfo"></div>
       </div></div>
 
       <div class="card" data-panel="fclab"><div class="sect">Prognose-Labor <span id="flSym" style="float:right;color:var(--t3)"></span></div><div class="cbody">
@@ -783,6 +794,13 @@ function wireChartCtx(): void {
         st.lastSignalDir = sig?.direction ?? 'hold';
         applyArea(); // Signal-Richtung färbt den Flächen-Verlauf sofort um
       }
+      // Genauigkeitsgewichtetes Vote (Teil 4): Transparenz in der Karte
+      const fv = sig?.forecastVote;
+      $('fcVoteInfo').textContent = fv
+        ? fv.factor === null
+          ? `Prognose-Stimme: ${fv.weight}× (konfiguriert — Kante noch ohne Evidenz)`
+          : `Prognose-Stimme: ${fv.weight}× statt ${fv.base}× (realisierte Kante über Zufall: Faktor ${fv.factor})`
+        : '';
       if (!sig) { el.textContent = '--'; el.className = 'sval c-t3'; return; }
       el.textContent = sig.direction.toUpperCase();
       el.className = `sval ${sig.direction === 'buy' ? 'c-gn' : sig.direction === 'sell' ? 'c-rd' : 'c-t3'}`;
@@ -1863,9 +1881,10 @@ let rangeSyncing = false;
 let crosshairSyncing = false;
 let chart2Epoch = 0;
 
+/** Vergleichs-Chart rendert über dieselbe Panel-Logik wie das Raster. */
 function renderChart2(): void {
-  if (!st?.chart2) return;
-  st.chart2.setBars(st.chart2Bars);
+  if (!st?.chart2P.chart) return;
+  renderGridPanelBars(st.chart2P);
 }
 
 function wireChart2Ctx(): void {
@@ -1873,14 +1892,30 @@ function wireChart2Ctx(): void {
   clearSubs(st.chart2Subs);
   if (st.wsHidden.has('chart2')) return; // ausgeblendet = keine Listener
   const sym = st.chart2Symbol;
+  const p = st.chart2P;
+  p.sym = sym;
+  p.epoch++;
+  const epoch = p.epoch;
+  p.fitPending = true;
   $('ch2Sym').textContent = sym;
   st.chart2Subs.push(
     watchMarketDoc(sym, (d) => {
       $('ch2Px').textContent = d?.quote ? fmtNum(d.quote.price) : '--';
+      if (epoch !== p.epoch) return;
+      p.forecast = d?.forecast ?? null;
+      p.forecastIntraday = d?.forecastIntraday ?? null;
+      renderChart2();
     }),
     watchBars(sym, (bars) => {
-      if (!st) return;
+      if (!st || epoch !== p.epoch) return;
       st.chart2Bars = bars;
+      p.bars = bars;
+      if (p.intradayDays > 0) void loadPanelIntraday(p);
+      else renderChart2();
+    }),
+    watchEvents(sym, (events) => {
+      if (epoch !== p.epoch) return;
+      p.events = events;
       renderChart2();
     }),
   );
@@ -1891,6 +1926,7 @@ async function rebuildChart2(): Promise<void> {
   const epoch = ++chart2Epoch;
   st.chart2?.destroy();
   st.chart2 = null;
+  st.chart2P.chart = null;
   if (st.wsHidden.has('chart2')) return;
   const handle = await buildPriceChart($('chart2Area'), st.chart2Symbol);
   if (!st || epoch !== chart2Epoch) {
@@ -1898,6 +1934,8 @@ async function rebuildChart2(): Promise<void> {
     return;
   }
   st.chart2 = handle;
+  st.chart2P.chart = handle;
+  st.chart2P.fitPending = true;
   // Zeit-/Crosshair-Sync zum Haupt-Chart (beidseitig, mit Echo-Schutz)
   st.chart2?.onVisibleRangeChange((range) => {
     if (rangeSyncing || !range || !st?.chart) return;
@@ -2056,6 +2094,54 @@ function renderGridPanelBars(p: GridPanel): void {
       wantFc && lastB ? { time: lastB.time, value: lastB.close } : undefined,
     );
   }
+}
+
+/** Alle Nebencharts (Raster-Panels + Vergleichs-Chart) neu rendern. */
+function renderAllPanels(): void {
+  if (!st) return;
+  for (const p of st.gridPanels) renderGridPanelBars(p);
+  if (st.chart2P.chart) renderGridPanelBars(st.chart2P);
+}
+
+/**
+ * Zeitrahmen-Sync (User-Wunsch 25.07. nachts): Ein Wechsel oben im Haupt-
+ * Chart schaltet ALLE Charts um — Raster-Panels + Vergleichs-Chart. Die
+ * lokalen Picker bleiben für gezielte Abweichungen danach.
+ */
+function propagateTimeframe(intradayDays: number, range: number): void {
+  if (!st) return;
+  const targets = [...st.gridPanels, st.chart2P];
+  for (const p of targets) {
+    p.intradayDays = intradayDays;
+    if (intradayDays === 0) p.range = range >= 250 || range === 0 ? 0 : range; // 1J ⇒ alle Panel-Bars (~1 Jahr)
+    p.fitPending = true;
+    if (p.intradayDays > 0) void loadPanelIntraday(p);
+    else if (p.chart) renderGridPanelBars(p);
+  }
+  saveGridPrefs();
+  syncPanelTfButtons();
+}
+
+/** on-Klassen der Panel-/Vergleichs-Zeitrahmen-Knöpfe an den State angleichen. */
+function syncPanelTfButtons(): void {
+  if (!st) return;
+  document.querySelectorAll<HTMLElement>('.gpanel').forEach((el, i) => {
+    const p = st!.gridPanels[i];
+    if (!p) return;
+    el.querySelectorAll<HTMLElement>('[data-r], [data-i]').forEach((b) => {
+      const on = b.dataset['i'] !== undefined
+        ? Number(b.dataset['i']) === p.intradayDays && p.intradayDays > 0
+        : p.intradayDays === 0 && Number(b.dataset['r']) === p.range;
+      b.classList.toggle('on', on);
+    });
+  });
+  const p2 = st.chart2P;
+  document.querySelectorAll<HTMLElement>('#c2tf [data-c2r], #c2tf [data-c2i]').forEach((b) => {
+    const on = b.dataset['c2i'] !== undefined
+      ? Number(b.dataset['c2i']) === p2.intradayDays && p2.intradayDays > 0
+      : p2.intradayDays === 0 && Number(b.dataset['c2r']) === p2.range;
+    b.classList.toggle('on', on);
+  });
 }
 
 /** Intraday-Bars eines Panels laden (epoch-geschützt; Refresh via watchBars). */
@@ -3133,6 +3219,21 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     chart2: null,
     chart2Bars: [],
     chart2Subs: [],
+    chart2P: {
+      sym: DEFAULT_STRATEGY.watchlist[1] ?? 'QQQ',
+      range: 66,
+      locked: false,
+      chart: null,
+      bars: [],
+      subs: [],
+      epoch: 0,
+      fitPending: true,
+      forecast: null,
+      forecastIntraday: null,
+      intradayDays: 0,
+      intradayBars: [],
+      events: [],
+    },
     lastQuote: null,
     orderSide: 'buy',
     hotkeys: { ...HOTKEY_DEFAULTS },
@@ -3350,6 +3451,11 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     panelEventCount: (i: number) => st?.gridPanels[i]?.events.length ?? -1,
     panelIntradayDays: (i: number) => st?.gridPanels[i]?.intradayDays ?? -1,
     panelIntradayLen: (i: number) => st?.gridPanels[i]?.intradayBars.length ?? -1,
+    panelRangeVal: (i: number) => st?.gridPanels[i]?.range ?? -1,
+    chart2IntradayDays: () => st?.chart2P.intradayDays ?? -1,
+    chart2IntradayLen: () => st?.chart2P.intradayBars.length ?? -1,
+    chart2ForecastActive: () => st?.chart2?.forecastActive() ?? false,
+    chart2Overlays: () => st?.chart2?.overlayCount() ?? -1,
     mainChartType: () => st?.chart?.chartType() ?? 'candles',
     panelChartType: (i: number) => st?.gridPanels[i]?.chart?.chartType() ?? 'candles',
     panelRange: (i: number) => st?.gridPanels[i]?.chart?.getVisibleRange() ?? null,
@@ -3486,6 +3592,21 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       updateAutoUi();
       if (st.intradayDays > 0) void loadIntradayView();
       else renderChart();
+      // Zeitrahmen-Sync: alle Charts folgen dem Haupt-Picker (User-Wunsch)
+      propagateTimeframe(st.intradayDays, st.range);
+    }),
+  );
+  // Vergleichs-Chart: eigener Picker für gezielte Abweichungen
+  document.querySelectorAll<HTMLElement>('#c2tf [data-c2r], #c2tf [data-c2i]').forEach((b) =>
+    b.addEventListener('click', () => {
+      if (!st) return;
+      const p = st.chart2P;
+      p.intradayDays = b.dataset['c2i'] !== undefined ? Number(b.dataset['c2i']) : 0;
+      if (b.dataset['c2r'] !== undefined) p.range = Number(b.dataset['c2r']);
+      p.fitPending = true;
+      syncPanelTfButtons();
+      if (p.intradayDays > 0) void loadPanelIntraday(p);
+      else renderChart2();
     }),
   );
   // Timeline-Sprünge (User-Wunsch 25.07. nachts): animiert zu Anfang/Mitte/
@@ -3521,7 +3642,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       localStorage.setItem('autotrd-chart-layers', [...st.chartLayers].join(','));
       applyOverlays();
       updateSubPanels();
-      for (const p of st.gridPanels) renderGridPanelBars(p);
+      renderAllPanels();
     });
   });
   // Dropdown-Menüs (TV-Stil, UI-Audit 25.07.): „Indikatoren ▾" + „Layer ▾"
@@ -3577,7 +3698,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   // Haupt-Chart und alle Raster-Panels; Gerät-lokal gemerkt.
   const applyChartStyle = (): void => {
     if (!st) return;
-    const targets = [st.chart, ...st.gridPanels.map((p) => p.chart)];
+    const targets = [st.chart, st.chart2, ...st.gridPanels.map((p) => p.chart)];
     for (const h of targets) {
       h?.setChartType(st.chartTypeSel);
       h?.setTypeCombine(st.typeCombine);
@@ -3646,7 +3767,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     applyForecast();
     updateSubPanels();
     drawPredictionArrow();
-    for (const p of st.gridPanels) renderGridPanelBars(p); // Raster folgt Clean/Layern
+    renderAllPanels(); // Raster + Vergleichs-Chart folgen Clean/Layern
   };
   $('cleanBtn').addEventListener('click', () => {
     if (!st) return;
@@ -3801,14 +3922,14 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     st.showForecast = !st.showForecast;
     $('lyFc').classList.toggle('on', st.showForecast);
     applyForecast();
-    for (const p of st.gridPanels) renderGridPanelBars(p); // Prognose-Layer gilt in ALLEN Charts
+    renderAllPanels(); // Prognose-Layer gilt in ALLEN Charts
   });
   $('lyEv').addEventListener('click', () => {
     if (!st) return;
     st.showEvents = !st.showEvents;
     $('lyEv').classList.toggle('on', st.showEvents);
     applyMarkers();
-    for (const p of st.gridPanels) renderGridPanelBars(p); // News-Punkte in ALLEN Charts
+    renderAllPanels(); // News-Punkte in ALLEN Charts
     if (!st.showEvents) $('evTip').hidden = true;
   });
   document.addEventListener('keydown', onEscape);

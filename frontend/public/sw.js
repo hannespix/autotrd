@@ -11,7 +11,7 @@
  * VERSION bumpen ⇒ alte Caches werden beim Activate weggeräumt.
  */
 
-const VERSION = 'v1';
+const VERSION = 'v2'; // v2: Navigationen umgehen den HTTP-Cache (no-cache)
 const CACHE = `autotrd-${VERSION}`;
 const SHELL = ['/', '/manifest.json', '/favicon.svg'];
 
@@ -39,8 +39,11 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
 
   if (req.mode === 'navigate') {
+    // no-cache: der Browser-HTTP-Cache darf hier NIE ein altes index.html
+    // liefern — sonst zeigen die Asset-Hashes auf ein veraltetes Bundle
+    // (Live-Bug 25.07.: frischer Deploy kam beim User nicht an).
     event.respondWith(
-      fetch(req)
+      fetch(req, { cache: 'no-cache' })
         .then((res) => {
           const copy = res.clone();
           caches.open(CACHE).then((cache) => cache.put('/', copy));
