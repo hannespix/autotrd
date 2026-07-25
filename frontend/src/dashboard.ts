@@ -26,6 +26,7 @@ import {
   buildIndicatorPanel,
   buildPriceChart,
   type ChartBar,
+  type ChartType,
   type IndicatorPanelHandle,
   type PanelLine,
   type PriceChartHandle,
@@ -159,6 +160,12 @@ interface DashState {
   chartFitPending: boolean;
   /** Aktive Indikator-Overlays (sma20/sma50/sma200/ema9/ema21/bb). */
   chartLayers: Set<string>;
+  /** Chart-Typ (TV-Parität Teil 1): candles/hollow/heikin/line/area/baseline/bars. */
+  chartTypeSel: ChartType;
+  /** Preisskala: 0 = linear, 1 = log, 2 = Prozent. */
+  scaleMode: 0 | 1 | 2;
+  /** In-Chart-Legende aufgeklappt? (Gerät-lokal; mobil default zu). */
+  hudOpen: boolean;
   /** Aktive User-Prognose (Chart-Pfeil) des aktuellen Symbols. */
   prediction: import('@autotrd/shared').UserPrediction | null;
   predMode: boolean;
@@ -408,6 +415,18 @@ function layout(email: string): string {
               <button class="tf-btn" data-layer="ema21" title="EMA 21">EMA21</button>
               <button class="tf-btn" data-layer="bb" title="Bollinger-Bänder (20, 2σ)">BB</button>
               <button class="tf-btn ind-x" data-layer="vwap" title="VWAP (Intraday 1T/1W): volumengewichteter Durchschnitt je Handelstag">VWAP</button>
+              <div class="tm-sec">Chart-Typ (TV-Stil)</div>
+              <button class="tf-btn on" data-ctype="candles" title="Klassische Kerzen: Körper = Eröffnung↔Schluss, Docht = Hoch/Tief">Kerzen</button>
+              <button class="tf-btn" data-ctype="hollow" title="Hohle Kerzen: steigende Kerzen ohne Füllung — Trendrichtung auf einen Blick">Hohl</button>
+              <button class="tf-btn" data-ctype="heikin" title="Heikin-Ashi: geglättete Kerzen (Mittelwerte) — Trends klarer, exakte Kurse verschwimmen">Heikin-Ashi</button>
+              <button class="tf-btn" data-ctype="line" title="Linie: nur Schlusskurse — der ruhigste Blick">Linie</button>
+              <button class="tf-btn" data-ctype="area" title="Berg: Schlusskurs-Linie mit Farbverlauf darunter">Berg</button>
+              <button class="tf-btn" data-ctype="baseline" title="Baseline: grün über/rot unter dem Startkurs des Fensters">Baseline</button>
+              <button class="tf-btn" data-ctype="bars" title="OHLC-Bars: klassische Balken mit Eröffnungs-/Schluss-Nasen">Bars</button>
+              <div class="tm-sec">Preisskala</div>
+              <button class="tf-btn on" data-scale="0" title="Lineare Skala: gleiche Abstände je Euro/Dollar">Lin</button>
+              <button class="tf-btn" data-scale="1" title="Logarithmische Skala: gleiche Abstände je PROZENT — bei langen Historien ehrlicher">Log</button>
+              <button class="tf-btn" data-scale="2" title="Prozent-Skala: Entwicklung relativ zum Fenster-Start">%</button>
               <div class="tm-sec">Stil</div>
               <button class="tf-btn" data-layer="area" title="Flächen-Verlauf unter der Kurslinie — die Farbe folgt dem aktuellen Signal (grün = Kauf, rot = Verkauf, blau = neutral)">Fläche</button>
               <button class="tf-btn" data-layer="hideCandles" title="Kerzen + Volumen ausblenden (ruhiger Vektor-Look, z. B. mit aktiver Fläche)">Kerzen aus</button>
@@ -441,7 +460,10 @@ function layout(email: string): string {
         <div id="chartWrap" class="chart-wrap">
           <button id="maxExit" class="chart-max-exit" hidden title="Vollbild schließen (Esc)">✕</button>
           <div id="chartHud" class="chart-hud">
-            <div id="ohlcRow" class="ohlc-row mono" hidden></div>
+            <div class="hud-top">
+              <div id="ohlcRow" class="ohlc-row mono" hidden></div>
+              <button id="hudTgl" class="hud-tgl" title="Legende ein-/ausklappen">▾</button>
+            </div>
             <div id="chartLegend" class="chart-legend" hidden></div>
           </div>
           <div id="chartArea"></div>
@@ -766,6 +788,10 @@ function renderIndicatorCards(row: IndicatorRow | null): void {
 
 function renderChart(): void {
   if (!st?.chart) return;
+  // Chart-Typ + Skala aus dem Geräte-Speicher anwenden — das Chart mountet
+  // asynchron NACH dem Menü-Wiring (setChartType no-opt bei gleichem Typ).
+  st.chart.setChartType(st.chartTypeSel);
+  st.chart.setPriceScaleMode(st.scaleMode);
   const fit = st.chartFitPending;
   st.chartFitPending = false;
   if (st.intradayDays > 0) {
@@ -1024,7 +1050,8 @@ function renderLegend(lines: import('./chart.js').OverlayLine[], intraday: boole
   if (st?.showEvents && !st.cleanView && (st.events.length ?? 0) > 0 && !intraday) {
     items.push({ c: '#26cf9d', t: 'Event-Punkte (News)', title: 'Überfahren zeigt die News des Tages' });
   }
-  el.hidden = items.length === 0;
+  // Legenden-Akkordeon (Feedback 25.07. abends): eingeklappt = nur OHLC-Zeile
+  el.hidden = items.length === 0 || !st?.hudOpen;
   el.innerHTML = items
     .map((i) => `<span class="lg-item" title="${i.title}"><i class="lg-dot" style="background:${i.c}"></i>${i.t}</span>`)
     .join('');
@@ -1806,6 +1833,11 @@ function renderGridPanelBars(p: GridPanel): void {
   p.chart.setBars(bars, { fit });
   // Aktive SMA/EMA/BB-Overlays gelten auf ALLEN Charts (Feedback 25.07.)
   p.chart.setOverlays(baseOverlayLines(bars.map((b) => b.date), bars.map((b) => b.close)));
+  // Chart-Typ + Skala syncen (TV-Parität): Raster folgt dem Haupt-Stil
+  if (st) {
+    p.chart.setChartType(st.chartTypeSel);
+    p.chart.setPriceScaleMode(st.scaleMode);
+  }
   // Layer syncen (User-Wunsch 25.07.): Fläche + „Kerzen aus" gelten auch im
   // Raster. Farbton neutral — das Signal gehört zum Haupt-Symbol, nicht zum
   // Panel-Symbol (falsche Grün/Rot-Aussage wäre schlimmer als neutral).
@@ -2860,6 +2892,17 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     wsPreset: 'ueberblick',
     wsHidden: new Set(DEFAULT_HIDDEN),
     wsOrder: {},
+    chartTypeSel: ((): ChartType => {
+      const t = (localStorage.getItem('autotrd-chart-style') ?? '').split('|')[0];
+      return ['candles', 'hollow', 'heikin', 'line', 'area', 'baseline', 'bars'].includes(t ?? '')
+        ? (t as ChartType)
+        : 'candles';
+    })(),
+    scaleMode: ((): 0 | 1 | 2 => {
+      const m = Number((localStorage.getItem('autotrd-chart-style') ?? '').split('|')[1]);
+      return m === 1 || m === 2 ? m : 0;
+    })(),
+    hudOpen: (localStorage.getItem('autotrd-hud') ?? (window.innerWidth > 640 ? '1' : '0')) === '1',
     wsSaveTimer: null,
     paletteDispose: null,
     events: [],
@@ -3048,6 +3091,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     gridPanels: () => st?.gridPanels.length ?? -1,
     gridPanelOverlays: (i: number) => st?.gridPanels[i]?.chart?.overlayCount() ?? -1,
     panelAreaActive: (i: number) => st?.gridPanels[i]?.chart?.areaActive() ?? false,
+    mainChartType: () => st?.chart?.chartType() ?? 'candles',
+    panelChartType: (i: number) => st?.gridPanels[i]?.chart?.chartType() ?? 'candles',
     panelRange: (i: number) => st?.gridPanels[i]?.chart?.getVisibleRange() ?? null,
     setPanelRange: (i: number, r: { from: number; to: number }) => st?.gridPanels[i]?.chart?.setVisibleRange(r),
     subRange: (k: 'rsi' | 'macd') => st?.subCharts[k]?.getVisibleRange() ?? null,
@@ -3263,6 +3308,54 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') closeMenus();
   });
+
+  // Chart-Typ + Preisskala (TV-Parität Teil 1): gelten synchron für den
+  // Haupt-Chart und alle Raster-Panels; Gerät-lokal gemerkt.
+  const applyChartStyle = (): void => {
+    if (!st) return;
+    const targets = [st.chart, ...st.gridPanels.map((p) => p.chart)];
+    for (const h of targets) {
+      h?.setChartType(st.chartTypeSel);
+      h?.setPriceScaleMode(st.scaleMode);
+    }
+    document.querySelectorAll<HTMLElement>('[data-ctype]').forEach((b) =>
+      b.classList.toggle('on', b.dataset['ctype'] === st!.chartTypeSel),
+    );
+    document.querySelectorAll<HTMLElement>('[data-scale]').forEach((b) =>
+      b.classList.toggle('on', Number(b.dataset['scale']) === st!.scaleMode),
+    );
+    localStorage.setItem('autotrd-chart-style', `${st.chartTypeSel}|${st.scaleMode}`);
+  };
+  document.querySelectorAll<HTMLElement>('[data-ctype]').forEach((b) =>
+    b.addEventListener('click', () => {
+      if (!st) return;
+      st.chartTypeSel = (b.dataset['ctype'] ?? 'candles') as ChartType;
+      applyChartStyle();
+    }),
+  );
+  document.querySelectorAll<HTMLElement>('[data-scale]').forEach((b) =>
+    b.addEventListener('click', () => {
+      if (!st) return;
+      st.scaleMode = Number(b.dataset['scale']) as 0 | 1 | 2;
+      applyChartStyle();
+    }),
+  );
+  applyChartStyle();
+
+  // HUD-Legende einklappbar (Feedback 25.07. abends: „überlagert zu viel")
+  const applyHud = (): void => {
+    if (!st) return;
+    $('hudTgl').textContent = st.hudOpen ? '▾' : '▸';
+    $('hudTgl').classList.toggle('on', st.hudOpen);
+    localStorage.setItem('autotrd-hud', st.hudOpen ? '1' : '0');
+    applyOverlays(); // renderLegend respektiert hudOpen
+  };
+  $('hudTgl').addEventListener('click', () => {
+    if (!st) return;
+    st.hudOpen = !st.hudOpen;
+    applyHud();
+  });
+  applyHud();
 
   // Vollbild je Chart (Feedback 25.07., wichtig für Smartphones): CSS-Overlay
   // statt Fullscreen-API (läuft überall, auch iOS/PWA); Esc schließt.

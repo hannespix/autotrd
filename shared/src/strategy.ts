@@ -68,7 +68,11 @@ export interface Strategy {
 
 /** Watchlist-Obergrenze je User — Kosten-Guard: jedes Symbol kostet bei
  *  jedem 5-min-Scan echte Fetches/Writes (global deckelt MAX_SCAN_SYMBOLS). */
-export const MAX_WATCHLIST = 12;
+/** Engine-Volltiefe je Symbol (5-min-Scan: Kurs+Indikatoren+News+Intraday) —
+ *  der Deckel begrenzt Fetches/Writes, NICHT die Daten (Katalog-Versorgung
+ *  liefert allen ~166 Symbolen Kurse+Tageskerzen). 25.07. von 12 auf 20
+ *  angehoben (User-Wunsch; Kosten skalieren linear und bleiben klein). */
+export const MAX_WATCHLIST = 20;
 
 export const DEFAULT_STRATEGY: Strategy = {
   broker: { provider: 'paper', mode: 'paper', initialCapital: 25_000, paperTrading: true },
