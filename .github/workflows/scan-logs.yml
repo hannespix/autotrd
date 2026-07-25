@@ -1,0 +1,42 @@
+name: Scan-Logs (Diagnose)
+
+# Manuell auslösbarer Log-Abruf: holt die jüngsten scanmarket-Logs aus Cloud
+# Logging ins Job-Log — für Fehlersuche ohne GCP-Konsole (SETUP.md §J).
+
+on:
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: Zeitfenster in Minuten
+        default: '60'
+      severity:
+        description: Mindest-Severity (DEFAULT/INFO/WARNING/ERROR)
+        default: 'DEFAULT'
+
+jobs:
+  logs:
+    runs-on: ubuntu-latest
+    env:
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+    steps:
+      - name: Guard — Firebase-Secret vorhanden?
+        if: env.FIREBASE_SERVICE_ACCOUNT == ''
+        run: echo "::warning::FIREBASE_SERVICE_ACCOUNT fehlt — kein Log-Zugriff."
+
+      - uses: actions/checkout@v4
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+      - uses: actions/setup-node@v4
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        with:
+          node-version: 22
+
+      - name: Service-Account bereitstellen
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
+
+      # Dependency-frei (gcp-lite) — kein npm ci nötig, Ergebnis in Sekunden.
+      - name: scanmarket-Logs holen
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+        run: node scripts-ci/fetch-scan-logs.mjs "${{ inputs.minutes }}" "${{ inputs.severity }}"
