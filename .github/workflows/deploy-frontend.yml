@@ -19,9 +19,9 @@ jobs:
         if: env.FTP_HOST == ''
         run: echo "::warning::FTP_HOST/FTP_USERNAME/FTP_PASSWORD fehlen — Frontend-Deploy übersprungen."
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         if: env.FTP_HOST != ''
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         if: env.FTP_HOST != ''
         with:
           node-version: 22
@@ -39,6 +39,14 @@ jobs:
           npm run build -w frontend
 
       # FTPS (TLS), niemals plain FTP — ARCHITECTURE.md §9
+      #
+      # Achtung Sync-State-Falle: Der Server-State (.ftp-deploy-sync-state.json)
+      # erinnerte einen längst gelöschten icons/-Ordner; dessen Löschversuch
+      # schlug mit FTP 550 fehl → State wurde nie neu geschrieben → JEDER Lauf
+      # rot. Deshalb liegt in frontend/public/icons/ eine .keep-Datei: solange
+      # der Ordner lokal existiert, versucht die Action keinen Ordner-Löschvorgang
+      # und der Sync (inkl. State-Update) läuft durch. NICHT entfernen, ohne die
+      # Folge-Deploys zu beobachten.
       - name: FTPS-Upload zu webgo
         if: env.FTP_HOST != ''
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
