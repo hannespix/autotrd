@@ -104,6 +104,14 @@ export interface PriceChartHandle {
    * dem Cursor plus Viewport-Koordinaten — null beim Verlassen des Charts.
    */
   onCrosshairDate(cb: (date: string | null, pos: { x: number; y: number } | null) => void): void;
+  /**
+   * In-Chart-Legende (TV-Stil, UI-Audit 25.07.): OHLC(+Volumen) des Bars
+   * unter dem Crosshair — null beim Verlassen (dann zeigt die HUD den
+   * letzten Bar). `time` ist der ISO-Tag bzw. die Intraday-Zeit als Label.
+   */
+  onCrosshairData(
+    cb: (d: { time: string; open: number; high: number; low: number; close: number; volume: number | null } | null) => void,
+  ): void;
   /** Zeitachsen-Sync (M9 Chart-Stack): sichtbaren Bereich beobachten/setzen. */
   onVisibleRangeChange(cb: (range: { from: number; to: number } | null) => void): void;
   setVisibleRange(range: { from: number; to: number }): void;
@@ -386,6 +394,35 @@ export async function buildPriceChart(
         // Tooltip ist position:fixed (CLAUDE.md §6) → Viewport-Koordinaten
         const rect = container.getBoundingClientRect();
         cb(date, { x: rect.left + param.point.x, y: rect.top + param.point.y });
+      });
+    },
+    onCrosshairData(cb): void {
+      chart.subscribeCrosshairMove((param) => {
+        const bar = param.seriesData?.get(candle) as
+          | { open?: number; high?: number; low?: number; close?: number }
+          | undefined;
+        if (!param.point || !bar || bar.open === undefined) {
+          cb(null);
+          return;
+        }
+        const volRow = param.seriesData?.get(vol) as { value?: number } | undefined;
+        const t = param.time as unknown;
+        let label = '';
+        if (typeof t === 'string') label = t;
+        else if (t && typeof t === 'object' && 'year' in t) {
+          const bd = t as { year: number; month: number; day: number };
+          label = `${bd.year}-${String(bd.month).padStart(2, '0')}-${String(bd.day).padStart(2, '0')}`;
+        } else if (typeof t === 'number') {
+          label = new Date(t * 1000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+        }
+        cb({
+          time: label,
+          open: bar.open,
+          high: bar.high ?? bar.open,
+          low: bar.low ?? bar.open,
+          close: bar.close ?? bar.open,
+          volume: volRow?.value ?? null,
+        });
       });
     },
     onVisibleRangeChange(cb): void {
