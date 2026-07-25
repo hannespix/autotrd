@@ -485,6 +485,14 @@ Charts parallel.
       Layer-Chip; RSI(14)- und MACD-Unterpanels als eigene LWC-Instanzen mit
       beidseitigem Zeitachsen-Sync zum Haupt-Chart; alles zusammen als
       „Indikator-Extras" im ⚙-Options-Modal abschaltbar (settings.ui.subPanels)
+- [x] UX-Runde 25.07. (Feedback): Werkzeug-Leisten in Aufklapper „Anzeige ▾"
+      (Sektionen Overlays/Panels/Raster, Zustand persistiert) · Zoom wie
+      TradingView (Achsen-Drag, Achsen-Doppelklick-Reset, Pinch, kinetisch;
+      Doppelklick auf die Fläche = frischer X+Y-Fit) · aktive SMA/EMA/BB gelten
+      auf ALLEN Charts inkl. Raster-Panels · Legende beschriftet jede aktive
+      Linie, Mini-Legenden in RSI/MACD-Panels, Tooltips je Zeitrahmen ·
+      jeder Chart per ⛶ vollbild-maximierbar (Portal an body wegen
+      backdrop-filter-Containing-Block, z über Header, Esc/✕ schließt)
 - [ ] ATR, 52-Wochen-Marken, Pivots (weitere Trading-Hilfen)
 - [ ] Organik-Polish: weichere Kurven/Verläufe, Vektor-Ästhetik durchziehen
 
