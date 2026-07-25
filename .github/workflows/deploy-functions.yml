@@ -38,7 +38,7 @@ jobs:
       # continue-on-error + Log-Mitschnitt: das Verdikt darunter entscheidet,
       # ob der Fehler tolerierbar war (NUR Schedule-Upsert-403, solange die
       # Cloud-Scheduler-Rolle fehlt) — alles andere macht den Job hart rot.
-      - name: Deploy functions + firestore.rules
+      - name: Deploy functions + firestore (Rules UND Indexe)
         id: fbdeploy
         if: env.FIREBASE_SERVICE_ACCOUNT != ''
         continue-on-error: true
@@ -47,7 +47,11 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
         run: |
           set -o pipefail
-          npx firebase-tools deploy --only functions,firestore:rules --non-interactive --force 2>&1 \
+          # --only firestore = Rules + Indexe (firestore.indexes.json). Die
+          # Feld-Overrides für die collectionGroup-Queries (forecasts +
+          # forecastsIntraday .evaluated) MÜSSEN mit ausrollen, sonst bricht
+          # die Pending-Query der Eval-Pfade live mit FAILED_PRECONDITION.
+          npx firebase-tools deploy --only functions,firestore --non-interactive --force 2>&1 \
             | tee "$RUNNER_TEMP/deploy.log"
 
       - name: Deploy-Verdikt (nur Schedule-Upserts tolerieren)
