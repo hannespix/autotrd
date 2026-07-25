@@ -507,6 +507,14 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .chart-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 10px; color: var(--t2); margin: 2px 0 4px; }
 .lg-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: -1px; }
 
+/* A/B-Duell (M11): Paper-Wallet vs. Shadow-Strategie */
+.ab-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.ab-side { display: flex; flex-direction: column; gap: 4px; padding: 10px; border: 1px solid var(--bd); border-radius: var(--r-sm); font-size: 12px; }
+.ab-win { border-color: rgba(38, 207, 157, .55); box-shadow: 0 0 0 1px rgba(38, 207, 157, .25) inset; }
+.ab-div { grid-column: 1 / -1; margin: 0; }
+.ab-h { margin-top: 12px; }
+@media (max-width: 560px) { .ab-grid { grid-template-columns: 1fr; } }
+
 /* Vollbild je Chart (Feedback 25.07., Smartphones): CSS-Overlay, Esc schließt */
 .chart-wrap.chart-max, .gpanel.chart-max {
   /* über dem sticky Header (100), unter Modals (220) */

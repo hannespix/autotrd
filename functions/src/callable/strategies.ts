@@ -20,6 +20,7 @@ import {
   type StrategySpec,
 } from '../../../shared/src/index.js';
 import { consumeQuota } from '../core/broker.js';
+import { planPromotion } from '../core/rulesTrading.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 
 const MAX_STRATEGIES = 10;
@@ -181,4 +182,61 @@ export const assignStrategy = onCall(CALLABLE_OPTS, async (request) => {
     tx.set(target.ref, patch, { merge: true });
   });
   return { ok: true, symbols };
+});
+
+/**
+ * Befördern (M11 A/B): transaktionaler Rollentausch — die Shadow-Strategie
+ * wird paper (handelt ab dem nächsten Scan das echte Paper-Wallet), jede
+ * überlappende Paper-Strategie wird shadow und beobachtet mit frischem
+ * virtuellen Konto weiter. Das Wallet des Users wird dabei NICHT angefasst;
+ * offene echte Positionen laufen unter der neuen Paper-Strategie weiter
+ * (Stop-Loss/Take-Profit greifen unabhängig von der Strategie-Zuordnung).
+ */
+export const promoteStrategy = onCall(CALLABLE_OPTS, async (request) => {
+  const uid = await requireUid(request);
+  const data = (request.data ?? {}) as { id?: unknown };
+  if (typeof data.id !== 'string' || !ID_RE.test(data.id)) {
+    throw new HttpsError('invalid-argument', 'Ungültige Strategie-ID');
+  }
+  const id = data.id;
+  const col = strategiesCol(uid);
+  let demoted: string[] = [];
+  await getFirestore().runTransaction(async (tx) => {
+    const all = await tx.get(col);
+    const candidates = all.docs.map((d) => {
+      const doc = d.data() as StrategyDoc;
+      return {
+        id: d.id,
+        status: doc.status ?? 'draft',
+        mode: (doc.mode ?? 'paper') as 'paper' | 'shadow',
+        symbols: doc.symbols ?? [],
+      };
+    });
+    let plan: { demote: string[] };
+    try {
+      plan = planPromotion(candidates, id);
+    } catch (e) {
+      throw new HttpsError('failed-precondition', (e as Error).message);
+    }
+    demoted = plan.demote;
+    const now = new Date().toISOString();
+    const targetRef = col.doc(id);
+    // Ziel wird paper: Shadow-Historie bleibt eingefroren stehen, lastDirs
+    // startet leer (Paper-Pfad nutzt sie nicht).
+    tx.set(targetRef, { mode: 'paper', promotedAt: now, updatedAt: now, lastDirs: {} }, { merge: true });
+    for (const demoteId of plan.demote) {
+      tx.set(
+        col.doc(demoteId),
+        {
+          mode: 'shadow',
+          demotedAt: now,
+          updatedAt: now,
+          lastDirs: {},
+          shadow: { balance: 25_000, positions: {}, equity: 25_000, startedAt: now, updatedAt: now },
+        },
+        { merge: true },
+      );
+    }
+  });
+  return { ok: true, demoted };
 });
