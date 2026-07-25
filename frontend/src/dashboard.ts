@@ -40,7 +40,9 @@ import {
   callSavePrediction,
   loadBarsOnce,
   loadIntraday,
+  loadDailyChunk,
   loadPrediction,
+  callQuoteNow,
   saveUiPrefs,
   watchBars,
   watchLatestAi,
@@ -140,6 +142,11 @@ interface DashState {
   /** Intraday-Zeitrahmen aktiv? Anzahl Handelstage (0 = Tageskerzen). */
   intradayDays: number;
   intradayBars: import('./chart.js').IntradayChartBar[];
+  /** Tiefe Historie (Chart-Audit 2): ältere Jahres-Chunks, nahtlos vorn dran. */
+  histBars: ChartBar[];
+  histOldest: number;
+  histLoading: boolean;
+  histDone: boolean;
   /** Auto-Auflösung: Kerzengröße folgt der Zoomstufe (TradingView-Gefühl). */
   autoRes: boolean;
   /** Aggregations-Fenster der Intraday-Ansicht in Minuten (5/15/60). */
@@ -377,6 +384,7 @@ function layout(email: string): string {
           <button class="tf-btn on" data-bars="66" title="3 Monate in Tageskerzen">3M</button>
           <button class="tf-btn" data-bars="0" title="1 Jahr in Tageskerzen">1J</button>
           <span id="resBadge" class="res-badge mono" title="Aktive Kerzen-Auflösung"></span>
+          <span id="histHint" class="res-badge mono" hidden>lädt ältere Daten …</span>
           <button class="tf-btn" id="maxMain" title="Chart im Vollbild — Legende und Anzeige-Optionen bleiben verfügbar (Esc schließt)">⛶</button>
           <button class="tf-btn" id="cleanBtn" title="Clean-View: alles Optionale auf einmal ausblenden — nur der Kurs bleibt">Clean</button>
           <button class="tf-btn" id="toolsBtn" style="margin-left:auto"
@@ -658,6 +666,11 @@ function wireChartCtx(): void {
   $('chSym').textContent = sym;
   $('chSub').textContent = resolveName(sym);
   st.events = [];
+  // Nachgeladene Historie ist symbol-spezifisch → beim Wechsel zurücksetzen
+  st.histBars = [];
+  st.histOldest = 0;
+  st.histLoading = false;
+  st.histDone = false;
   $('evTip').hidden = true;
 
   st.symbolSubs.push(
@@ -749,24 +762,67 @@ function renderChart(): void {
     renderResBadge();
     return;
   }
-  const bars = st.range > 0 ? st.bars.slice(-st.range) : st.bars;
-  st.chart.setBars(bars, { fit, timeVisible: false });
+  const bars = dailySource();
+  // Fit-Ziel deterministisch bestimmen (kein fitContent-Race):
+  // Auto-Modus → Startfenster ~120 Tage (alles Ältere per Scrollen erreichbar);
+  // aktiver Prognose-Pfeil → rechts Platz einkalkulieren (Feedback 25.07.).
+  const arrowActive = st.ui.predArrow && st.prediction !== null && !st.cleanView;
+  const fitTo = !fit
+    ? undefined
+    : st.autoRes && bars.length > 130
+      ? { from: bars.length - 120, to: bars.length + (arrowActive ? 30 : 3) }
+      : arrowActive
+        ? { from: -0.5, to: bars.length + Math.max(6, bars.length * 0.25) }
+        : undefined;
+  st.chart.setBars(bars, { fit, fitTo, timeVisible: false });
   applyForecast();
   applyOverlays();
   drawPredictionArrow();
   updateSubPanels();
   renderResBadge();
-  // Fit + aktiver Prognose-Pfeil: rechts ~14 % Sichtfenster aufpolstern,
-  // damit der Pfeil Platz hat (Feedback 25.07.) — nur bei expliziten Fits.
-  if (fit && st.ui.predArrow && st.prediction && !st.cleanView) {
-    const chart = st.chart;
-    window.setTimeout(() => {
-      if (!st || st.chart !== chart) return;
-      const r = chart.getVisibleRange();
-      if (!r) return;
-      chart.setVisibleRange({ from: r.from, to: r.to + (r.to - r.from) * 0.25 });
-      drawPredictionArrow();
-    }, 90);
+}
+
+/** Tages-Quelle für Chart/Overlays/Panels: nachgeladene Historie + Live-Bars.
+ *  Im Auto-Modus IMMER alles (das Fenster steuert der Zoom) — manuelle
+ *  Stufen behalten ihre Slices (1M/3M). */
+function dailySource(): ChartBar[] {
+  if (!st) return [];
+  const all = st.histBars.length > 0 ? [...st.histBars, ...st.bars] : st.bars;
+  return st.autoRes ? all : st.range > 0 ? all.slice(-st.range) : all;
+}
+
+/** Ältere Jahres-Chunks nahtlos vorn anfügen (Links-Scroll ans Datenende). */
+async function loadOlderDaily(): Promise<void> {
+  if (!st || st.histLoading || st.histDone || st.intradayDays > 0 || st.bars.length === 0) return;
+  st.histLoading = true;
+  $('histHint').hidden = false;
+  try {
+    const sym = st.currentSymbol;
+    const first = (st.histBars[0] ?? st.bars[0])!;
+    const year = st.histOldest > 0 ? st.histOldest - 1 : Number(first.date.slice(0, 4));
+    if (year < new Date().getFullYear() - 5) {
+      st.histDone = true;
+      return;
+    }
+    const chunk = await loadDailyChunk(sym, year);
+    if (!st || st.currentSymbol !== sym) return;
+    st.histOldest = year;
+    const prepend = chunk.filter((b) => b.date < first.date);
+    if (prepend.length === 0) {
+      if (chunk.length === 0) st.histDone = true; // Chunk (noch) nicht backgefüllt
+      return;
+    }
+    const r = st.chart?.getVisibleRange();
+    st.histBars = [...prepend, ...st.histBars];
+    renderChart(); // ohne Fit — und die Position exakt halten:
+    if (r && st.chart) {
+      st.chart.setVisibleRange({ from: r.from + prepend.length, to: r.to + prepend.length });
+    }
+  } catch {
+    /* nächster Scroll-Versuch */
+  } finally {
+    if (st) st.histLoading = false;
+    $('histHint').hidden = true;
   }
 }
 
@@ -808,12 +864,11 @@ function baseOverlayLines(
 function applyOverlays(): void {
   if (!st?.chart) return;
   const intraday = st.intradayDays > 0;
+  const daily = intraday ? [] : dailySource();
   const times: Array<string | number> = intraday
     ? st.shownIntraday.map((b) => b.time)
-    : (st.range > 0 ? st.bars.slice(-st.range) : st.bars).map((b) => b.date);
-  const closes = intraday
-    ? st.shownIntraday.map((b) => b.close)
-    : (st.range > 0 ? st.bars.slice(-st.range) : st.bars).map((b) => b.close);
+    : daily.map((b) => b.date);
+  const closes = intraday ? st.shownIntraday.map((b) => b.close) : daily.map((b) => b.close);
   const lines = st.cleanView ? [] : baseOverlayLines(times, closes);
   const pts = (series: (number | null)[]): Array<{ time: string | number; value: number }> =>
     series.flatMap((v, i) => (v === null ? [] : [{ time: times[i]!, value: v }]));
@@ -823,7 +878,7 @@ function applyOverlays(): void {
   }
   // Vergleichs-Overlay (Tageskerzen): %-Entwicklung ab erstem gemeinsamen Tag
   if (!st.cleanView && !intraday && st.overlaySymbol && st.overlayBars.length > 1) {
-    const firstDate = (st.range > 0 ? st.bars.slice(-st.range) : st.bars)[0]?.date ?? '';
+    const firstDate = daily[0]?.date ?? '';
     const cmp = st.overlayBars.filter((b) => b.date >= firstDate);
     const base = cmp[0]?.close;
     if (base && base > 0) {
@@ -921,7 +976,7 @@ function shownSeries(): { times: Array<string | number>; closes: number[] } {
   if (st.intradayDays > 0) {
     return { times: st.shownIntraday.map((b) => b.time), closes: st.shownIntraday.map((b) => b.close) };
   }
-  const bars = st.range > 0 ? st.bars.slice(-st.range) : st.bars;
+  const bars = dailySource();
   return { times: bars.map((b) => b.date), closes: bars.map((b) => b.close) };
 }
 
@@ -1188,7 +1243,7 @@ function barTimeMs(b: { time: number } | { date: string }): number {
 
 function currentSource(): Array<{ time: number } | { date: string }> {
   if (!st) return [];
-  return st.intradayDays > 0 ? st.shownIntraday : st.range > 0 ? st.bars.slice(-st.range) : st.bars;
+  return st.intradayDays > 0 ? st.shownIntraday : dailySource();
 }
 
 function maybeAutoSwitch(): void {
@@ -1360,12 +1415,17 @@ async function rebuildChart(): Promise<void> {
     st.subCharts.macd?.setVisibleRange(range);
     rangeSyncing = false;
   });
-  // Auto-Auflösung: sichtbare Zeitspanne beobachten (debounced)
-  st.chart?.onVisibleRangeChange(() => {
+  // Auto-Auflösung + nahtlose Historie: sichtbare Spanne beobachten (debounced)
+  st.chart?.onVisibleRangeChange((range) => {
     if (autoResTimer !== null) window.clearTimeout(autoResTimer);
+    const nearLeftEdge = range !== null && range.from < 12;
     autoResTimer = window.setTimeout(() => {
       autoResTimer = null;
       maybeAutoSwitch();
+      // Links am Datenrand? Ältere Jahres-Chunks nahtlos nachladen.
+      if (nearLeftEdge && st && st.intradayDays === 0 && (st.autoRes || st.range === 0)) {
+        void loadOlderDaily();
+      }
     }, 300);
   });
   st.chart?.setAutoScale(st.yAuto);
@@ -2496,6 +2556,10 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     range: 66,
     intradayDays: 0,
     intradayBars: [],
+    histBars: [],
+    histOldest: 0,
+    histLoading: false,
+    histDone: false,
     autoRes: localStorage.getItem('autotrd-chart-auto') !== '0',
     aggMinutes: 5,
     shownIntraday: [],
@@ -2666,6 +2730,15 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   void renderMarketTabs();
   updateClock();
   st.timers.push(window.setInterval(updateClock, 1000));
+  // Kurz-Updates (Chart-Audit 2): aktives Symbol alle 45 s frisch vom Server
+  // (quoteNow schreibt in market/{sym}.quote — alle Clients sehen es sofort).
+  // Nur bei sichtbarem Tab; Quota deckelt serverseitig, Fehler sind still.
+  st.timers.push(
+    window.setInterval(() => {
+      if (!st || document.visibilityState !== 'visible') return;
+      callQuoteNow(st.currentSymbol).catch(() => undefined);
+    }, 45_000),
+  );
   mountLegalFooter(root);
 
   // Gespeicherten Workspace anwenden (Preset, Panels, Gruppen, Symbole)
@@ -2714,6 +2787,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     cleanActive: () => st?.cleanView ?? false,
     autoLevel: () => (st?.autoRes ? (st.intradayDays > 0 ? st.aggMinutes : 0) : -1),
     resBadge: () => document.getElementById('resBadge')?.textContent ?? '',
+    dailyLen: () => dailySource().length,
+    firstDailyDate: () => dailySource()[0]?.date ?? '',
     eventDates: () => st?.events.map((e) => e.date) ?? [],
     mainCoords: (time: string | number, price: number) => st?.chart?.coords(time, price) ?? null,
     lastClose: () => st?.bars[st.bars.length - 1]?.close ?? null,

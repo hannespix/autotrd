@@ -20,6 +20,7 @@ export { tunerReview, tunerNow } from './scheduled/tunerReview.js';
 export { ensureProfile } from './callable/profile.js';
 export { saveStrategy } from './callable/strategy.js';
 export { saveStrategyDraft, publishStrategyVersion, assignStrategy, promoteStrategy } from './callable/strategies.js';
+export { quoteNow } from './callable/quoteNow.js';
 export { runBacktest } from './callable/backtest.js';
 export { savePrediction } from './callable/prediction.js';
 export { trade } from './callable/trade.js';

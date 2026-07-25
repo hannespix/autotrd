@@ -48,6 +48,12 @@ export interface SetBarsOptions {
    * User-Zoom in Ruhe (Chart-Audit 24.07.: „kann nicht rauszoomen").
    */
   fit?: boolean;
+  /**
+   * Deterministisches Fit-Ziel statt fitContent — fitContent landet
+   * asynchron und würde ein nachträglich gesetztes Fenster überschreiben
+   * (Race beim Pfeil-Polster/Startfenster). Nur zusammen mit fit.
+   */
+  fitTo?: { from: number; to: number } | undefined;
   /** Uhrzeiten auf der Zeitachse (Intraday). */
   timeVisible?: boolean;
 }
@@ -251,7 +257,8 @@ export async function buildPriceChart(
       // „x UND y beim Umschalten optimieren").
       if (opts?.fit) {
         chart.priceScale('right').applyOptions({ autoScale: autoScaleOn });
-        chart.timeScale().fitContent();
+        if (opts.fitTo) chart.timeScale().setVisibleLogicalRange(opts.fitTo);
+        else chart.timeScale().fitContent();
       }
     },
     setOverlays(lines: OverlayLine[]): void {

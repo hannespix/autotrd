@@ -47,7 +47,7 @@ import {
   type ShadowBook,
 } from '../core/rulesTrading.js';
 import { runForecast, type LiveForecast } from '../core/forecaster.js';
-import { getIntradayBars, getMarketSnapshot } from '../core/marketData.js';
+import { chunkBarsByYear, getDeepDailyBars, getIntradayBars, getMarketSnapshot } from '../core/marketData.js';
 import { fetchNews, newsDocId, type NewsItem } from '../core/news.js';
 
 const NEWS_TTL_MS = 10 * 60 * 1000; // wie die Referenz: 10-min-Cache
@@ -550,6 +550,26 @@ export async function runScan(force = false): Promise<ScanResult> {
           { barsBackfillV: 2, barsBackfilledAt: now.toISOString() },
           { merge: true },
         );
+      }
+
+      // Tiefe Historie (Chart-Audit 2, 25.07.): einmalig ~5 Jahre Tages-Bars
+      // als EIN Doc je Jahr (ohlcDaily/{JAHR}) — nahtloses Rausscrollen im
+      // Chart bei ~1 Read je Jahr. Additiv + idempotent (Versions-Marker);
+      // die bars-Collection (rollierendes Jahr) bleibt unangetastet.
+      if (symDoc.get('deepBackfillV') !== 1) {
+        try {
+          const deep = await getDeepDailyBars(symbol);
+          for (const [year, days] of chunkBarsByYear(deep)) {
+            batch.set(
+              symRef.collection('ohlcDaily').doc(year),
+              { days, updatedAt: now.toISOString() },
+              { merge: true },
+            );
+          }
+          batch.set(symRef, { deepBackfillV: 1, deepBackfilledAt: now.toISOString() }, { merge: true });
+        } catch (e) {
+          logger.warn(`deepBackfill ${symbol}`, e); // nächster Scan versucht es erneut
+        }
       }
 
       // Intraday (5m): Yahoo liefert ~5 Handelstage. Erst-Backfill alle Tage,

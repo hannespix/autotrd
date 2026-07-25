@@ -510,8 +510,16 @@ Charts parallel.
       Platz für den Prognose-Pfeil auf · Y-Autoscaling als Anzeige-Option
       schaltbar · Event-Tooltip bleibt auf Touch-Geräten nach dem Loslassen
       ~4 s stehen (vorher nur „aufgeblitzt")
-- [ ] Historie > 1 Jahr (5y-Tages-Backfill, gechunkt) · 1-Minuten-Daten
-      (Yahoo: nur ~7 Tage, ~5× Volumen — bewusst entscheiden)
+- [x] Chart-Audit 2 Teil 1 (Feedback 25.07., 5. Runde): 5-Jahres-Historie als
+      Jahres-Chunks (`market/{sym}/ohlcDaily/{JAHR}`, 1 Read/Jahr, einmaliger
+      Backfill-Marker `deepBackfillV`) · nahtloses Nachladen beim Links-Scrollen
+      (Position springt nicht — logisches Fenster wird um die Prepend-Länge
+      verschoben) · deterministisches Startfenster ~120 Tage via `fitTo`
+      (setVisibleLogicalRange statt async fitContent — kein Race mehr mit dem
+      Pfeil-Polster) · 45-s-Kurz-Updates über `quoteNow`-Callable (nur sichtbarer
+      Tab, Quota 800/Tag, Quote landet in `market/{sym}.quote` für alle)
+- [ ] 1-Minuten-Daten (Yahoo: nur ~7 Tage, ~5× Volumen — bewusst entscheiden)
+      · echte Sekunden-Ticks kommen mit dem M13-Streamer
 - [ ] ATR, 52-Wochen-Marken, Pivots (weitere Trading-Hilfen)
 
 ## Dashboard-Individualisierung („Schweizer Taschenmesser", User-Wunsch 25.07.)
