@@ -3213,9 +3213,12 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     ['layBtn', 'menuLay'],
   ];
   const closeMenus = (): void => {
+    // Null-sicher: die document-Listener unten überleben den Routen-Wechsel
+    // (#/strategy) — dort existieren die Menü-Knoten nicht mehr.
     for (const [b, m] of menus) {
-      $(m).hidden = true;
-      $(b).classList.remove('on');
+      const menu = document.getElementById(m);
+      if (menu) menu.hidden = true;
+      document.getElementById(b)?.classList.remove('on');
     }
   };
   for (const [b, m] of menus) {

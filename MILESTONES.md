@@ -591,9 +591,17 @@ fairen A/B gegen die aktive Strategie befördert werden.
       den Classic-Pfad nicht (A/B parallel möglich); Rules+Tests, pure
       Buchführung unit-getestet, Studio-Karte mit Equity/Cash/Δ%.
       Hätte-FEED + Equity-Kurven-Vergleich folgen mit dem A/B-Teil.)*
-- [ ] Sweeps: ≤ 2 Parameter, ≤ 60 Kombis, Budget-Check im Callable; Historie
+- [x] Sweeps: ≤ 2 Parameter, ≤ 60 Kombis, Budget-Check im Callable; Historie
       einmal laden, alle Kombis im RAM; Ergebnis als Tabelle + Heatmap,
       „Als neuen Entwurf übernehmen" — bewusst **kein** Auto-Apply
+      *(runSweep-Callable (Quota 5/Tag): Whitelist rsiBuy/rsiSell/bbBreakout/
+      minConfluence/forecastWeight mit harten Bounds, buildSweepPlan clampt/
+      dedupt/deckelt (unit-getestet, 10 Tests), Basis = Classic-Strategie des
+      Users, je Kombi compileClassic→backtestSpec; Antwort enthält rows/best/
+      bestSpec — die Übernahme legt via saveStrategyDraft exakt die server-
+      seitig getestete Sieger-Spec als NEUEN Entwurf an. Studio-Karte mit
+      Achsen-Auswahl + Rendite-Heatmap (Farbskala, Hover = Sharpe/MaxDD/
+      Trades, Sieger umrandet); E2E 27/27.)*
 - [x] A/B auf Papier: A `paper` (echtes Wallet), B `shadow` mit gleicher
       Startbalance; Kennzahlen-Duell, Divergenz-Hervorhebung, transaktionales
       „Befördern" (Rollentausch)

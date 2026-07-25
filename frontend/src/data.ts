@@ -511,6 +511,36 @@ export async function callRunBacktest(strategyId: string, symbol: string): Promi
   await httpsCallable(fns(), 'runBacktest')({ strategyId, symbol });
 }
 
+/** Parameter-Sweep (M11): ≤2 Achsen, ≤60 Kombis — Ergebnis kommt direkt zurück. */
+export interface SweepRow {
+  x: number;
+  y: number | null;
+  totalReturnPct: number;
+  sharpe: number;
+  maxDrawdownPct: number;
+  numTrades: number;
+  winRatePct: number;
+}
+export interface SweepResult {
+  rows: SweepRow[];
+  best: SweepRow;
+  /** Serverseitig kompilierte Spec des Siegers — für „Als Entwurf übernehmen". */
+  bestSpec: StrategySpec;
+  combos: number;
+  barsFrom: string;
+  barsTo: string;
+}
+export async function callRunSweep(req: {
+  symbol: string;
+  xParam: string;
+  xValues: number[];
+  yParam?: string;
+  yValues?: number[];
+}): Promise<SweepResult> {
+  const res = await httpsCallable(fns(), 'runSweep')(req);
+  return res.data as SweepResult;
+}
+
 /** Jüngster Backtest-Report einer Strategie (M11, onSnapshot). */
 export function watchLatestRun(
   uid: string,
