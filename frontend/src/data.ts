@@ -271,6 +271,8 @@ export interface UiPrefs {
   cmpOverlay?: boolean;
   /** Multi-Chart-Raster-Umschalter 1/2/4 (default an). */
   chartGrid?: boolean;
+  /** Indikator-Extras: VWAP-Chip + RSI/MACD-Unterpanels (default an). */
+  subPanels?: boolean;
 }
 
 export function watchUserDoc(

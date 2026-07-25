@@ -481,7 +481,11 @@ Charts parallel.
 - [x] Multi-Chart-Raster 1/2/4 mit Lock-Gruppen: Zusatz-Panels mit eigenem
       Symbol + Zeitrahmen; gelockte Charts (inkl. Haupt-Chart, 🔒) teilen
       Zoom/Sichtbereich/Crosshair; Raster persistiert (localStorage)
-- [ ] VWAP (Intraday) + RSI/MACD-Unterpanels, ATR, 52-Wochen-Marken, Pivots
+- [x] VWAP (Intraday, Session-Reset, `shared/vwapSessions` + Tests) als
+      Layer-Chip; RSI(14)- und MACD-Unterpanels als eigene LWC-Instanzen mit
+      beidseitigem Zeitachsen-Sync zum Haupt-Chart; alles zusammen als
+      „Indikator-Extras" im ⚙-Options-Modal abschaltbar (settings.ui.subPanels)
+- [ ] ATR, 52-Wochen-Marken, Pivots (weitere Trading-Hilfen)
 - [ ] Organik-Polish: weichere Kurven/Verläufe, Vektor-Ästhetik durchziehen
 
 ## M11 — Strategie-Studio II: Backtest, Shadow, Sweeps, A/B

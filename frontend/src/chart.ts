@@ -328,3 +328,102 @@ export async function buildPriceChart(
     },
   };
 }
+
+/* ── Indikator-Unterpanels (Chart-Vision): RSI/MACD unter dem Haupt-Chart ── */
+
+export interface PanelLine {
+  key: string;
+  color: string;
+  width?: number;
+  /** Gestrichelte Hilfslinie (z. B. RSI 30/70). */
+  dashed?: boolean;
+  type?: 'line' | 'histogram';
+  points: Array<{ time: string | number; value: number; color?: string }>;
+}
+
+export interface IndicatorPanelHandle {
+  /** Serien deklarativ setzen — Keys werden wiederverwendet, fehlende entfernt. */
+  setSeries(lines: PanelLine[]): void;
+  onVisibleRangeChange(cb: (range: { from: number; to: number } | null) => void): void;
+  setVisibleRange(range: { from: number; to: number }): void;
+  getVisibleRange(): { from: number; to: number } | null;
+  destroy(): void;
+}
+
+/** Kompaktes Unterpanel; die Zeitachse hält der Aufrufer mit dem Haupt-Chart synchron. */
+export async function buildIndicatorPanel(
+  container: HTMLElement,
+  label: string,
+): Promise<IndicatorPanelHandle | null> {
+  const lwc = await loadLwc();
+  if (!lwc) return null;
+  container.innerHTML = '';
+  const chart = lwc.createChart(container, chartTheme() as never);
+  chart.applyOptions({
+    watermark: {
+      visible: true,
+      text: label,
+      color: 'rgba(120,150,200,.10)',
+      fontSize: 16,
+      fontStyle: 'bold',
+      horzAlign: 'left',
+      vertAlign: 'top',
+    },
+    rightPriceScale: { scaleMargins: { top: 0.15, bottom: 0.1 } },
+  } as never);
+
+  type AnySeries = ReturnType<typeof chart.addLineSeries>;
+  const series = new Map<string, { type: 'line' | 'histogram'; s: AnySeries }>();
+
+  return {
+    setSeries(lines: PanelLine[]): void {
+      const wanted = new Set(lines.map((l) => l.key));
+      for (const [key, entry] of series) {
+        if (!wanted.has(key)) {
+          chart.removeSeries(entry.s);
+          series.delete(key);
+        }
+      }
+      for (const line of lines) {
+        const type = line.type ?? 'line';
+        let entry = series.get(line.key);
+        if (entry && entry.type !== type) {
+          chart.removeSeries(entry.s);
+          series.delete(line.key);
+          entry = undefined;
+        }
+        if (!entry) {
+          const common = { priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false };
+          const s =
+            type === 'histogram'
+              ? (chart.addHistogramSeries({ ...common, color: line.color }) as never as AnySeries)
+              : chart.addLineSeries({
+                  ...common,
+                  color: line.color,
+                  lineWidth: (line.width ?? 1.5) as never,
+                  // 2 = Dashed — numerisches Literal statt Enum (CLAUDE.md §6)
+                  ...(line.dashed ? { lineStyle: 2, lastValueVisible: false } : {}),
+                });
+          entry = { type, s };
+          series.set(line.key, entry);
+        }
+        entry.s.setData(line.points as never);
+      }
+    },
+    onVisibleRangeChange(cb): void {
+      chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+        cb(range ? { from: range.from, to: range.to } : null);
+      });
+    },
+    setVisibleRange(range): void {
+      chart.timeScale().setVisibleLogicalRange(range);
+    },
+    getVisibleRange(): { from: number; to: number } | null {
+      const r = chart.timeScale().getVisibleLogicalRange();
+      return r ? { from: r.from, to: r.to } : null;
+    },
+    destroy(): void {
+      chart.remove();
+    },
+  };
+}
