@@ -273,6 +273,9 @@ export interface UiPrefs {
   chartGrid?: boolean;
   /** Indikator-Extras: VWAP-Chip + RSI/MACD-Unterpanels (default an). */
   subPanels?: boolean;
+  /** Marktgruppen-Filter (Taschenmesser Teil 2): Klassen-Key → sichtbar?
+   *  Fehlender Eintrag = sichtbar (Opt-out-Filter, default alles an). */
+  marketGroups?: Record<string, boolean>;
 }
 
 export function watchUserDoc(

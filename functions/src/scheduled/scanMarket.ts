@@ -19,6 +19,7 @@ import {
   CATALOG,
   CLASS_LABELS,
   DEFAULT_STRATEGY,
+  allSymbols,
   classify,
   isStrategy,
   marketOpenForClass,
@@ -47,7 +48,7 @@ import {
   type ShadowBook,
 } from '../core/rulesTrading.js';
 import { runForecast, type LiveForecast } from '../core/forecaster.js';
-import { chunkBarsByYear, getDeepDailyBars, getIntradayBars, getMarketSnapshot } from '../core/marketData.js';
+import { chunkBarsByYear, getDeepDailyBars, getIntradayBars, getMarketSnapshot, getQuickQuote } from '../core/marketData.js';
 import { fetchNews, newsDocId, type NewsItem } from '../core/news.js';
 
 const NEWS_TTL_MS = 10 * 60 * 1000; // wie die Referenz: 10-min-Cache
@@ -384,6 +385,75 @@ async function collectScanSymbols(): Promise<string[]> {
   return [...set];
 }
 
+/** Symbole je Versorgungs-Runde (Kosten-Deckel: 12 Scans/h × 15 ≈ voller
+ *  Katalog jede Stunde bei nativer 5-min-Kadenz). */
+const CATALOG_CHUNK = 15;
+
+/**
+ * Katalog-Versorgung (Taschenmesser Teil 2, User-Wunsch 25.07.): ALLE
+ * Marktgruppen bekommen Daten, nicht nur die Watchlist — die bleibt der
+ * Engine-Scope mit voller 5-min-Tiefe (Indikatoren, News, Intraday).
+ * Der Katalog (~166 Symbole) wird als rotierender Chunk je Scan mit einem
+ * leichten Quote-Fetch versorgt (+ jüngste Tageskerze aus demselben Fetch).
+ * Frische-Gates halten die Kosten klein: offene Klassen ~stündlich, bei
+ * geschlossenem Markt reicht die vorhandene letzte Quote.
+ */
+async function supplyCatalog(scannedSet: Set<string>, now: Date): Promise<number> {
+  const db = getFirestore();
+  const catalog = allSymbols();
+  if (catalog.length === 0) return 0;
+  const stateRef = db.doc('meta/catalogSupply');
+  const cursor = ((await stateRef.get()).get('cursor') as number | undefined) ?? 0;
+
+  const picked: string[] = [];
+  for (let n = 0; n < CATALOG_CHUNK; n++) {
+    const sym = catalog[(cursor + n) % catalog.length]!;
+    if (!scannedSet.has(sym) && !picked.includes(sym)) picked.push(sym);
+  }
+  const refs = picked.map((s) => db.collection('market').doc(s));
+  const docs = refs.length > 0 ? await db.getAll(...refs) : [];
+
+  const batch = db.batch();
+  let fetched = 0;
+  for (let i = 0; i < picked.length; i++) {
+    const sym = picked[i]!;
+    const doc = docs[i]!;
+    const quote = doc.get('quote') as { updatedAt?: string } | undefined;
+    const ageMin = quote?.updatedAt ? (now.getTime() - Date.parse(quote.updatedAt)) / 60_000 : Infinity;
+    // Frische-Gates: geschlossene Klasse + vorhandene Quote = nichts zu tun;
+    // offene Klasse erst ab ~50 min Alter erneuern (≈ stündliche Kadenz).
+    if (quote && !marketOpenForClass(classify(sym), now)) continue;
+    if (ageMin < 50) continue;
+    try {
+      const q = await getQuickQuote(sym);
+      batch.set(
+        doc.ref,
+        {
+          symbol: sym,
+          name: resolveName(sym),
+          assetClass: classify(sym),
+          quote: { price: q.price, changePct: q.changePct, updatedAt: now.toISOString() },
+          lastBarDate: q.lastBar.date,
+        },
+        { merge: true },
+      );
+      // Tages-Tier: jüngste Kerze idempotent ablegen (Doc-ID = Datum) —
+      // Sparklines/Mini-Charts wachsen so für den GANZEN Katalog Tag für Tag.
+      batch.set(doc.ref.collection('bars').doc(q.lastBar.date), { ...q.lastBar });
+      fetched++;
+    } catch (err) {
+      logger.warn(`Katalog-Quote ${sym}`, err); // nächste Runde versucht es erneut
+    }
+  }
+  batch.set(
+    stateRef,
+    { cursor: (cursor + CATALOG_CHUNK) % catalog.length, updatedAt: now.toISOString(), lastFetched: fetched },
+    { merge: true },
+  );
+  await batch.commit();
+  return fetched;
+}
+
 /** Ein kompletter Scan-Zyklus über die zentrale Watchlist. */
 export async function runScan(force = false): Promise<ScanResult> {
   const now = new Date();
@@ -635,6 +705,16 @@ export async function runScan(force = false): Promise<ScanResult> {
     logger.error('Trade-Block fehlgeschlagen', err);
   }
 
+  // Katalog-Versorgung (alle Marktgruppen, rotierender Chunk) — geguarded,
+  // damit ein Yahoo-/Firestore-Schluckauf nie den Kern-Scan gefährdet.
+  let catalogQuotes = 0;
+  try {
+    catalogQuotes = await supplyCatalog(new Set(scanned), now);
+  } catch (err) {
+    lastError = lastError ?? `catalog: ${err instanceof Error ? err.message : String(err)}`.slice(0, 400);
+    logger.warn('Katalog-Versorgung fehlgeschlagen', err);
+  }
+
   // Heartbeat für Monitoring-Alerts (SETUP.md §J): meta/health ist öffentlich
   // lesbar (meta-Rules) und enthält bewusst KEINE sensiblen Daten.
   await db
@@ -650,6 +730,7 @@ export async function runScan(force = false): Promise<ScanResult> {
         intradayOk,
         intradayError,
         trades,
+        catalogQuotes,
         lastError,
         lastErrorAt: lastError ? now.toISOString() : null,
       },
