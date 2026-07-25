@@ -19,9 +19,9 @@ jobs:
         if: env.FIREBASE_SERVICE_ACCOUNT == ''
         run: echo "::warning::FIREBASE_SERVICE_ACCOUNT fehlt — Functions-Deploy übersprungen."
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         if: env.FIREBASE_SERVICE_ACCOUNT != ''
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         if: env.FIREBASE_SERVICE_ACCOUNT != ''
         with:
           node-version: 22
@@ -34,12 +34,25 @@ jobs:
         if: env.FIREBASE_SERVICE_ACCOUNT != ''
         run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
 
-      # Baut functions über den predeploy-Hook aus firebase.json mit
+      # Baut functions über den predeploy-Hook aus firebase.json mit.
+      # continue-on-error + Log-Mitschnitt: das Verdikt darunter entscheidet,
+      # ob der Fehler tolerierbar war (NUR Schedule-Upsert-403, solange die
+      # Cloud-Scheduler-Rolle fehlt) — alles andere macht den Job hart rot.
       - name: Deploy functions + firestore.rules
+        id: fbdeploy
         if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        continue-on-error: true
+        shell: bash
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
-        run: npx firebase-tools deploy --only functions,firestore:rules --non-interactive --force
+        run: |
+          set -o pipefail
+          npx firebase-tools deploy --only functions,firestore:rules --non-interactive --force 2>&1 \
+            | tee "$RUNNER_TEMP/deploy.log"
+
+      - name: Deploy-Verdikt (nur Schedule-Upserts tolerieren)
+        if: ${{ steps.fbdeploy.outcome == 'failure' }}
+        run: node scripts-ci/deploy-verdict.mjs "$RUNNER_TEMP/deploy.log"
 
       # firebase-tools setzt den Invoker bei Callable-UPDATES nie — einmal
       # privat angelegte Callables blieben sonst für immer privat (403 ohne

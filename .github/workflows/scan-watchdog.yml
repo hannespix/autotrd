@@ -9,7 +9,11 @@ name: Scan-Watchdog
 on:
   schedule:
     # 13–21 UTC deckt 9:30–16:00 ET in Sommer- und Winterzeit ab (Mo–Fr).
-    - cron: '*/30 13-21 * * 1-5'
+    # 15-min-Raster statt 30: GitHub verzögert/verwirft Schedule-Läufe massiv
+    # (beobachtet 25.07.: stündliches Raster feuerte nur ~alle 2–3 h) — dichter
+    # planen senkt die reale Heartbeat-Lücke; --if-stale 12 verhindert
+    # Doppel-Scans, sobald der echte Cloud Scheduler läuft.
+    - cron: '*/15 13-21 * * 1-5'
     # Depot-Vision: Krypto handelt 24/7, Forex/Rohstoffe ~24/5 — außerhalb
     # des US-Fensters stündlich (Actions-Minuten-Budget; die volle 5-min-
     # Kadenz übernimmt der Cloud Scheduler nach der Rollen-Vergabe).
@@ -29,7 +33,7 @@ jobs:
         if: env.FIREBASE_SERVICE_ACCOUNT == ''
         run: echo "::warning::FIREBASE_SERVICE_ACCOUNT fehlt — Watchdog übersprungen."
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         if: env.FIREBASE_SERVICE_ACCOUNT != ''
 
       - name: Service-Account bereitstellen

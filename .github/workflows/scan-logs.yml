@@ -23,9 +23,9 @@ jobs:
         if: env.FIREBASE_SERVICE_ACCOUNT == ''
         run: echo "::warning::FIREBASE_SERVICE_ACCOUNT fehlt — kein Log-Zugriff."
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         if: env.FIREBASE_SERVICE_ACCOUNT != ''
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         if: env.FIREBASE_SERVICE_ACCOUNT != ''
         with:
           node-version: 22
