@@ -86,6 +86,20 @@ export const DEFAULT_STRATEGY: Strategy = {
   signals: { minConfluence: 2, period: '1y', useForecast: true, forecastWeight: 2, forecastThresholdPct: 0.5 },
 };
 
+/* ── Paper-Ausführungskosten (Realismus, User-Wunsch 25.07.) ────────────────
+ * Gleiche Konditionen wie der Backtest: 0,1 % Kommission + 5 bp Slippage je
+ * Seite. Angewendet als EFFEKTIVER Preis (buy teurer, sell billiger) in
+ * executePaperTrade UND shadowTrade — Live-Buch und Schatten-Buch bleiben
+ * im A/B-Duell vergleichbar. */
+export const PAPER_COMMISSION_PCT = 0.001;
+export const PAPER_SLIPPAGE_BPS = 5;
+export const PAPER_FEE_RATE = PAPER_COMMISSION_PCT + PAPER_SLIPPAGE_BPS / 10_000;
+
+/** Effektiver Ausführungspreis der Paper-Strecke (Kommission + Slippage). */
+export function paperEffectivePrice(price: number, side: 'buy' | 'sell'): number {
+  return side === 'buy' ? price * (1 + PAPER_FEE_RATE) : price * (1 - PAPER_FEE_RATE);
+}
+
 // ── Geteilte Marktdaten (market/{symbol}/**, nur Functions schreiben) ────────
 
 export interface Quote {

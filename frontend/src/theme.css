@@ -478,6 +478,16 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .sw-tbl th { color: var(--t3); font-weight: 500; }
 .sw-cell { cursor: help; }
 .sw-best { outline: 2px solid var(--ac); outline-offset: -2px; font-weight: 700; }
+/* Trade-Fenster (Redesign 25.07.): Katalog-Combobox + Summenblock */
+.mt-combo { position: relative; }
+.mt-list { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 40; background: var(--card-solid); border: 1px solid var(--bd2); border-radius: 10px; max-height: 220px; overflow-y: auto; box-shadow: 0 12px 30px rgba(0, 0, 0, .35); }
+.mt-list button { display: block; width: 100%; text-align: left; padding: 7px 10px; font-size: 12px; color: var(--t2); background: none; border: 0; border-bottom: 1px solid var(--hair); cursor: pointer; }
+.mt-list button:hover { background: rgba(37, 208, 238, .12); color: var(--t1); }
+.mt-inds { gap: 12px; flex-wrap: wrap; margin: 6px 0; }
+.mt-sum { margin: 8px 0 6px; font-size: 12px; }
+.mt-row { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--hair); color: var(--t2); }
+.mt-row.mt-total { font-weight: 700; color: var(--t1); }
+
 /* Prognose-Labor: kompakte Kombi-/Realitäts-Tabellen (div-Grid, scrollbar) */
 .fl-tbl { max-height: 168px; overflow-y: auto; margin: 4px 0 8px; font-size: 11px; }
 .fl-row { display: grid; grid-template-columns: 1fr 1fr 0.7fr 1.1fr 1fr; gap: 4px; padding: 3px 6px; border-bottom: 1px solid var(--hair); font-variant-numeric: tabular-nums; }

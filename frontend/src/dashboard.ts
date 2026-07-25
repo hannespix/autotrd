@@ -8,6 +8,7 @@ import {
   CLASS_LABELS,
   DEFAULT_STRATEGY,
   MAX_WATCHLIST,
+  PAPER_FEE_RATE,
   aggregateBars,
   bollinger,
   ema,
@@ -581,13 +582,38 @@ function layout(email: string): string {
       </div></div>
 
       <div class="card" data-panel="manualtrade"><div class="sect">Manueller Trade</div><div class="cbody">
-        <input id="mSym" class="inp" placeholder="Symbol (z.B. AAPL)">
-        <input id="mQty" class="inp" type="number" value="1" min="1" placeholder="Menge">
-        <div class="row">
-          <button class="btn btn-g" id="mtBuy">Buy</button>
-          <button class="btn btn-r" id="mtSell">Sell</button>
+        <label class="lbl">Symbol (Katalog)</label>
+        <div class="mt-combo">
+          <input id="mSym" class="inp" placeholder="Suchen: Name oder Symbol …" autocomplete="off">
+          <div id="mSymList" class="mt-list" hidden></div>
         </div>
-        <div class="hint" id="mtHint">Preis = zentraler Live-Kurs (Paper)</div>
+        <div id="mtInfo" hidden>
+          <div class="hint" id="mtName"></div>
+          <div class="row mt-inds">
+            <div><label class="lbl">Kurs/Einheit</label><div id="mtPx" class="smv mono">--</div></div>
+            <div><label class="lbl">Heute</label><div id="mtChg" class="smv mono">--</div></div>
+            <div><label class="lbl" title="Relative-Stärke-Index (14): unter 30 überverkauft, über 70 überkauft">RSI</label><div id="mtRsi" class="smv mono">--</div></div>
+            <div><label class="lbl" title="MACD-Momentum: Histogramm über/unter null">MACD</label><div id="mtMacd" class="smv">--</div></div>
+            <div><label class="lbl" title="Konfluenz-Signal des letzten Scans">Signal</label><div id="mtSig" class="smv">--</div></div>
+          </div>
+        </div>
+        <label class="lbl">Stückzahl</label>
+        <div class="row">
+          <input id="mQty" class="inp" type="number" value="1" min="1" style="flex:1">
+          <button class="tf-btn" id="mtMax" title="Maximale Stückzahl nach Kaufkraft (inkl. Gebühren)">Max</button>
+        </div>
+        <div class="mt-sum">
+          <div class="mt-row"><span>Zwischensumme</span><span id="mtSub" class="mono">--</span></div>
+          <div class="mt-row"><span>Gebühren (0,1 % + 5 bp)</span><span id="mtFee" class="mono">--</span></div>
+          <div class="mt-row mt-total"><span>Gesamt</span><span id="mtTotal" class="mono">--</span></div>
+          <div class="mt-row"><span>Kaufkraft danach</span><span id="mtCash" class="mono">--</span></div>
+        </div>
+        <div class="row">
+          <button class="btn btn-g" id="mtBuy">Kaufen</button>
+          <button class="btn btn-r" id="mtSell">Verkaufen</button>
+        </div>
+        <div class="hint" id="mtHint">Paper-Ausführung zum Live-Kurs inkl. Kommission (0,1 %)
+          + Slippage (5 bp) — dieselben Konditionen wie im Backtest.</div>
       </div></div>
 
       <div class="card" data-panel="clock"><div class="sect">Markt-Uhr (ET)</div><div class="cbody">
@@ -3147,10 +3173,161 @@ async function manualTrade(symbol: string, side: 'buy' | 'sell'): Promise<void> 
   try {
     const qty = Math.max(1, Number(($('mQty') as HTMLInputElement).value) || 1);
     await callTrade({ symbol, side, ...(side === 'buy' ? { qty } : {}) });
-    hint.textContent = `${side === 'buy' ? 'Gekauft' : 'Verkauft'}: ${symbol}`;
+    hint.textContent = `${side === 'buy' ? 'Gekauft' : 'Verkauft'}: ${symbol} — Ausführung inkl. Gebühren, siehe Trade-Historie.`;
   } catch (e) {
     hint.textContent = (e as { message?: string }).message ?? 'Order fehlgeschlagen';
   }
+}
+
+/* ── Trade-Fenster (Redesign, User-Wunsch 25.07.): Katalog-Picker,
+   Live-Summen inkl. Gebühren, Kaufkraft-Check, 2-Schritt-Bestätigung ── */
+
+const mtState: {
+  sym: string | null;
+  price: number | null;
+  subs: Unsubscribe[];
+  arm: { side: 'buy' | 'sell'; timer: number } | null;
+} = { sym: null, price: null, subs: [], arm: null };
+
+function mtDisarm(): void {
+  if (mtState.arm !== null) window.clearTimeout(mtState.arm.timer);
+  mtState.arm = null;
+  $('mtBuy').textContent = 'Kaufen';
+  $('mtSell').textContent = 'Verkaufen';
+}
+
+/** Summen + Kaufkraft live nachrechnen (gleiche Konditionen wie der Server). */
+function mtRecompute(): void {
+  const qty = Math.max(1, Number(($('mQty') as HTMLInputElement).value) || 1);
+  const price = mtState.price;
+  const balance = st?.wallet?.paperBalance ?? null;
+  const fmt = (v: number): string => money(v);
+  if (price === null || price <= 0) {
+    for (const id of ['mtSub', 'mtFee', 'mtTotal', 'mtCash']) $(id).textContent = '--';
+    return;
+  }
+  const sub = qty * price;
+  const fee = sub * PAPER_FEE_RATE;
+  const total = sub + fee;
+  $('mtSub').textContent = fmt(sub);
+  $('mtFee').textContent = fmt(fee);
+  $('mtTotal').textContent = fmt(total);
+  const cashEl = $('mtCash');
+  if (balance === null) {
+    cashEl.textContent = '--';
+  } else {
+    const after = balance - total;
+    cashEl.textContent = fmt(after);
+    cashEl.className = `mono ${after < 0 ? 'c-rd' : ''}`;
+  }
+}
+
+/** Symbol wählen: Live-Kurs, Tages-%, RSI/MACD/Signal des Symbols abonnieren. */
+function mtSelect(sym: string): void {
+  mtDisarm();
+  mtState.sym = sym;
+  mtState.price = null;
+  ($('mSym') as HTMLInputElement).value = sym;
+  $('mSymList').hidden = true;
+  $('mtInfo').hidden = false;
+  $('mtName').textContent = resolveName(sym);
+  clearSubs(mtState.subs);
+  mtState.subs.push(
+    watchMarketDoc(sym, (d) => {
+      const q = d?.quote;
+      mtState.price = q?.price ?? null;
+      $('mtPx').textContent = q ? fmtNum(q.price) : '--';
+      const chg = $('mtChg');
+      chg.textContent = q ? fmtPct(q.changePct) : '--';
+      chg.className = `smv mono ${q ? pnlClass(q.changePct) : ''}`;
+      mtRecompute();
+    }),
+    watchLatestIndicators(sym, (row) => {
+      $('mtRsi').textContent = row?.rsi != null ? row.rsi.toFixed(1) : '--';
+      const m = $('mtMacd');
+      if (row?.macd) {
+        const bull = row.macd.histogram > 0;
+        m.textContent = bull ? '↑ bullisch' : '↓ bärisch';
+        m.className = `smv ${bull ? 'c-gn' : 'c-rd'}`;
+      } else {
+        m.textContent = '--';
+        m.className = 'smv';
+      }
+    }),
+    watchLatestSignal(sym, (sig) => {
+      const el = $('mtSig');
+      el.textContent = sig ? sig.direction.toUpperCase() : '--';
+      el.className = `smv ${sig?.direction === 'buy' ? 'c-gn' : sig?.direction === 'sell' ? 'c-rd' : 'c-t3'}`;
+    }),
+  );
+}
+
+function wireManualTrade(): void {
+  const inp = $('mSym') as HTMLInputElement;
+  const list = $('mSymList');
+  const renderList = (filter: string): void => {
+    const f = filter.trim().toLowerCase();
+    const all = paletteSymbols();
+    const hits = (f
+      ? all.filter((s) => s.symbol.toLowerCase().includes(f) || s.name.toLowerCase().includes(f))
+      : all
+    ).slice(0, 12);
+    list.innerHTML = hits
+      .map((s) => `<button type="button" data-sym="${s.symbol}"><b class="mono">${s.symbol}</b> — ${s.name}</button>`)
+      .join('');
+    list.hidden = hits.length === 0;
+    list.querySelectorAll<HTMLButtonElement>('[data-sym]').forEach((b) =>
+      b.addEventListener('click', () => mtSelect(b.dataset['sym']!)),
+    );
+  };
+  inp.addEventListener('input', () => renderList(inp.value));
+  inp.addEventListener('focus', () => renderList(inp.value));
+  inp.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') {
+      const first = list.querySelector<HTMLButtonElement>('[data-sym]');
+      const typed = inp.value.trim().toUpperCase();
+      if (first && !list.hidden) mtSelect(first.dataset['sym']!);
+      else if (typed) mtSelect(typed);
+    }
+    if (ev.key === 'Escape') list.hidden = true;
+  });
+  document.addEventListener('click', (ev) => {
+    if (!(ev.target as HTMLElement).closest('.mt-combo')) list.hidden = true;
+  });
+  $('mQty').addEventListener('input', () => {
+    mtDisarm();
+    mtRecompute();
+  });
+  $('mtMax').addEventListener('click', () => {
+    const price = mtState.price;
+    const balance = st?.wallet?.paperBalance ?? 0;
+    if (price === null || price <= 0) return;
+    const max = Math.floor(balance / (price * (1 + PAPER_FEE_RATE)));
+    ($('mQty') as HTMLInputElement).value = String(Math.max(1, max));
+    mtDisarm();
+    mtRecompute();
+  });
+  const armOrRun = (side: 'buy' | 'sell'): void => {
+    const sym = mtState.sym ?? (inp.value || st?.currentSymbol || '').trim().toUpperCase();
+    if (!sym) return;
+    if (mtState.arm?.side === side) {
+      mtDisarm();
+      void manualTrade(sym, side);
+      return;
+    }
+    mtDisarm();
+    const qty = Math.max(1, Number(($('mQty') as HTMLInputElement).value) || 1);
+    const total = mtState.price !== null ? money(qty * mtState.price * (1 + PAPER_FEE_RATE)) : '';
+    $(side === 'buy' ? 'mtBuy' : 'mtSell').textContent =
+      side === 'buy'
+        ? `✓ ${qty} × ${sym}${total ? ` für ${total}` : ''} — bestätigen`
+        : `✓ Position ${sym} komplett verkaufen — bestätigen`;
+    // 6 s Bedenkzeit, dann entschärfen — verhindert versehentliche Doppelklicks
+    mtState.arm = { side, timer: window.setTimeout(mtDisarm, 6000) };
+  };
+  $('mtBuy').addEventListener('click', () => armOrRun('buy'));
+  $('mtSell').addEventListener('click', () => armOrRun('sell'));
+  if (st) mtSelect(st.currentSymbol); // Start: aktuelles Chart-Symbol vorwählen
 }
 
 /* ── Uhr ────────────────────────────────────────────────────────────── */
@@ -3563,14 +3740,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     for (const id of ['leftCol', 'rightCol']) $(id).classList.remove('show');
     $('olv').classList.remove('show');
   });
-  $('mtBuy').addEventListener('click', () => {
-    const sym = (($('mSym') as HTMLInputElement).value || st?.currentSymbol || '').trim().toUpperCase();
-    if (sym) void manualTrade(sym, 'buy');
-  });
-  $('mtSell').addEventListener('click', () => {
-    const sym = (($('mSym') as HTMLInputElement).value || st?.currentSymbol || '').trim().toUpperCase();
-    if (sym) void manualTrade(sym, 'sell');
-  });
+  wireManualTrade();
   $('themeBtn').addEventListener('click', () => {
     const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
     document.documentElement.dataset.theme = next;
