@@ -229,3 +229,143 @@ export function bestParams(combos: Record<string, ComboStat>): { w: number; look
 export function comboKey(w: number, lookback: number): string {
   return `${w}_${lookback}`;
 }
+
+/* ── Intraday-Kurzfrist-Prognose (Prognose 2.0 Teil 2) ───────────────────────
+ *
+ * Gleiche ehrliche Mathematik wie die Tages-Prognose, aber auf 5-min-Bars:
+ * Horizont ist die NÄCHSTE STUNDE (12 Bars), Zeitachse sind UNIX-Sekunden.
+ * Eigenes Shadow-Gitter + eigene Statistik (meta/forecastStatsIntraday) —
+ * kurzfristige Dynamik lernt getrennt von der Tages-Dynamik.
+ *
+ * LOOKAHEAD-GATE (genauso heilig wie beim Tages-Pfad): bewertbar erst, wenn
+ * der LETZTE Horizont-Bar vollständig ABGESCHLOSSEN ist (Bar-Start + Bar-Länge
+ * ≤ jetzt) UND sein Close realisiert vorliegt (scoreForecast-Semantik).
+ */
+
+export const INTRADAY_WEIGHT_GRID = [0, 0.5, 1.0] as const;
+export const INTRADAY_LOOKBACK_GRID = [24, 48] as const; // 5-min-Bars (2 h / 4 h)
+export const DEFAULT_INTRADAY_W = 0.5;
+export const DEFAULT_INTRADAY_LOOKBACK = 24;
+export const INTRADAY_HORIZON = 12; // 12 × 5 min = 1 Stunde
+export const INTRADAY_STEP_SEC = 300;
+
+export interface IntradayForecastPoint {
+  t: number; // UNIX-Sekunden (Bar-Start)
+  value: number;
+}
+
+export interface IntradayForecastBandPoint {
+  t: number;
+  upper: number;
+  lower: number;
+}
+
+export interface IntradayForecastComputation {
+  points: IntradayForecastPoint[];
+  band: IntradayForecastBandPoint[];
+  slope: number;
+  slopeAdj: number;
+  vol: number;
+  sigma: number;
+  baseClose: number;
+  lookback: number;
+}
+
+/**
+ * Kurzfrist-Prognose über die nächsten `horizon` 5-min-Bars — dieselbe
+ * Regression+Tilt-Mechanik wie computeForecast, Zeitachse = baseT + k·step.
+ * `closes` älteste→neueste; liefert null bei < 5 Bars.
+ */
+export function computeIntradayForecast(
+  closes: number[],
+  baseT: number,
+  sentiment: number,
+  w: number,
+  horizon: number = INTRADAY_HORIZON,
+  lookback: number = DEFAULT_INTRADAY_LOOKBACK,
+  stepSec: number = INTRADAY_STEP_SEC,
+): IntradayForecastComputation | null {
+  const n = Math.min(lookback, closes.length);
+  if (n < 5) return null;
+  const seg = closes.slice(-n);
+  const { slope, sigma } = linreg(seg);
+  const vol = dailyVol(seg); // hier: mittlere absolute Bar-Änderung
+  const last = seg[seg.length - 1]!;
+
+  let tilt = w * sentiment * vol;
+  const cap = TILT_CAP * vol;
+  tilt = Math.max(-cap, Math.min(cap, tilt));
+  const slopeAdj = slope + tilt;
+
+  const points: IntradayForecastPoint[] = [];
+  const band: IntradayForecastBandPoint[] = [];
+  for (let k = 1; k <= horizon; k++) {
+    const t = baseT + k * stepSec;
+    const y = last + slopeAdj * k;
+    const bandw = sigma * Math.sqrt(1 + k / n);
+    points.push({ t, value: round(y, 4) });
+    band.push({ t, upper: round(y + bandw, 4), lower: round(y - bandw, 4) });
+  }
+  return {
+    points,
+    band,
+    slope: round(slope, 5),
+    slopeAdj: round(slopeAdj, 5),
+    vol: round(vol, 5),
+    sigma: round(sigma, 5),
+    baseClose: round(last, 4),
+    lookback,
+  };
+}
+
+/**
+ * BAR-REALISIERT-GATE: bewertbar nur, wenn der letzte Horizont-Bar
+ * vollständig abgeschlossen ist (Bar-START + Bar-Länge ≤ nowSec) — ein noch
+ * laufender Bar zählt NICHT (Intraday-Pendant zu isForecastDue).
+ */
+export function isIntradayForecastDue(
+  points: Array<{ t: number }>,
+  nowSec: number,
+  stepSec: number = INTRADAY_STEP_SEC,
+): boolean {
+  if (points.length === 0) return false;
+  return points[points.length - 1]!.t + stepSec <= nowSec;
+}
+
+/**
+ * Scoring gegen realisierte 5-min-Closes (Schlüssel = String der UNIX-Sekunde)
+ * — delegiert an scoreForecast: letzter Horizont-Bar MUSS realisiert sein,
+ * fehlende Zwischen-Bars (Lücken/Halts) werden übersprungen.
+ */
+export function scoreIntradayForecast(
+  points: IntradayForecastPoint[],
+  baseClose: number,
+  actuals: Record<string, number>,
+): ForecastScore | null {
+  return scoreForecast(
+    points.map((p) => ({ time: String(p.t), value: p.value })),
+    baseClose,
+    actuals,
+  );
+}
+
+/** Intraday-Doc (market/{sym}/forecastsIntraday/{baseT_w_lookback}). */
+export interface IntradayForecastDoc {
+  baseT: number;
+  baseClose: number;
+  w: number;
+  lookback: number;
+  horizonBars: number;
+  sentiment: number;
+  vol: number;
+  points: IntradayForecastPoint[];
+  predictedPct: number;
+  madeAt: string;
+  evaluated: boolean;
+  evaluatedAt?: string;
+  maePct?: number;
+  dirHit?: boolean;
+  nPoints?: number;
+  /** true = unbewertbar verfallen (z. B. Session-Ende vor Horizont) — zählt NICHT in die Statistik. */
+  expired?: boolean;
+}

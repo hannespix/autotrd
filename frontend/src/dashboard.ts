@@ -53,6 +53,7 @@ import {
   watchEvaluatedForecasts,
   watchEvents,
   watchForecastStats,
+  watchForecastStatsIntraday,
   watchNews,
   watchPositions,
   watchTrades,
@@ -203,6 +204,8 @@ interface DashState {
   positions: Position[];
   trades: TradeRow[];
   forecast: MarketDocData['forecast'];
+  /** Kurzfrist-Prognose (Intraday-Ansicht, 5-min-Raster). */
+  forecastIntraday: MarketDocData['forecastIntraday'];
   /** Link-Bus (M9): Gruppen der verlinkbaren Panels. */
   chartGroup: LinkGroup;
   newsGroup: LinkGroup;
@@ -404,7 +407,7 @@ function layout(email: string): string {
           <button class="tf-btn" data-intraday="5" title="~5 Handelstage in 5-Minuten-Kerzen">1W</button>
           <button class="tf-btn" data-bars="22" title="1 Monat in Tageskerzen">1M</button>
           <button class="tf-btn on" data-bars="66" title="3 Monate in Tageskerzen">3M</button>
-          <button class="tf-btn" data-bars="0" title="1 Jahr in Tageskerzen">1J</button>
+          <button class="tf-btn" data-bars="250" title="1 Jahr in Tageskerzen (~250 Handelstage)">1J</button>
           <span id="resBadge" class="res-badge mono" title="Aktive Kerzen-Auflösung"></span>
           <span id="histHint" class="res-badge mono" hidden>lädt ältere Daten …</span>
           <button class="tf-btn" id="predBtn" hidden title="Prognose-Pfeil zeichnen: Klick in den Chart setzt den Ziel-Kurs">✏</button>
@@ -588,8 +591,10 @@ function layout(email: string): string {
           ihres Horizonts gegen die eingetretene Realität bewertet. Die Trefferquote je
           Kombi aus Sentiment-Gewicht (w) und Lookback steuert, welche Parameter
           künftige Prognosen nutzen — das System lernt aus jedem Fehler.</div>
-        <label class="lbl">Kombi-Statistik (w × Lookback)</label>
+        <label class="lbl">Kombi-Statistik Tages-Prognose (w × Lookback)</label>
         <div id="flCombos" class="fl-tbl"><div class="hint">Noch keine bewerteten Prognosen.</div></div>
+        <label class="lbl">Kombi-Statistik Kurzfrist/Intraday (w × Lookback in 5-min-Bars)</label>
+        <div id="flCombosIntra" class="fl-tbl"><div class="hint">Noch keine bewerteten Kurzfrist-Prognosen.</div></div>
         <label class="lbl">Vorhersage vs. Realität <span id="flSym2" style="color:var(--t3)"></span></label>
         <div id="flRows" class="fl-tbl"><div class="hint">Noch keine bewerteten Prognosen für dieses Symbol.</div></div>
       </div></div>
@@ -740,6 +745,7 @@ function wireChartCtx(): void {
       chg.className = `chart-px ${q ? pnlClass(q.changePct) : ''}`;
       if (st) {
         st.forecast = d?.forecast ?? null;
+        st.forecastIntraday = d?.forecastIntraday ?? null;
         applyForecast();
       }
     }),
@@ -812,13 +818,19 @@ function renderChart(): void {
   // asynchron NACH dem Menü-Wiring (setChartType no-opt bei gleichem Typ).
   st.chart.setChartType(st.chartTypeSel);
   st.chart.setPriceScaleMode(st.scaleMode);
+  // Zeit-Domänen-Wechsel (ISO-Tage ↔ UNIX-Sekunden): das alte Prognose-
+  // Overlay MUSS vor setBars raus — gemischte Zeittypen auf einer Achse
+  // korrumpieren sonst den Fit (1W→1J-Regression, E2E 25.07.).
+  const intradayView = st.intradayDays > 0;
+  if (lastRenderIntraday !== intradayView) st.chart.setForecast(null);
+  lastRenderIntraday = intradayView;
   const fit = st.chartFitPending;
   st.chartFitPending = false;
   if (st.intradayDays > 0) {
     // Auto-Auflösung: 5m-Basis ggf. zu 15m/1h-Kerzen bündeln (pure, shared)
     st.shownIntraday = aggregateBars(st.intradayBars, st.aggMinutes) as typeof st.shownIntraday;
     st.chart.setBars(st.shownIntraday, { fit, timeVisible: true });
-    st.chart.setForecast(null); // Prognose ist tagesbasiert
+    applyForecast(); // Kurzfrist-Prognose (nächste Stunde) im Intraday-Chart
     applyOverlays();
     updateSubPanels();
     renderResBadge();
@@ -1066,6 +1078,9 @@ function renderLegend(lines: import('./chart.js').OverlayLine[], intraday: boole
   }
   if (!intraday && st?.showForecast && !st.cleanView && st.forecast) {
     items.push({ c: '#25d0ee', t: 'Prognose (gestrichelt, ±1σ)', title: 'Sentiment-gewichtete Regression über die nächsten Handelstage' });
+  }
+  if (intraday && st?.showForecast && !st.cleanView && st.forecastIntraday) {
+    items.push({ c: '#25d0ee', t: 'Kurzfrist-Prognose (nächste Stunde)', title: 'Projektion im 5-Minuten-Raster — bei jedem Scan neu berechnet, lernt aus der eigenen Trefferquote' });
   }
   if (st?.showEvents && !st.cleanView && (st.events.length ?? 0) > 0 && !intraday) {
     items.push({ c: '#26cf9d', t: 'Event-Punkte (News)', title: 'Überfahren zeigt die News des Tages' });
@@ -1495,14 +1510,42 @@ function applyMarkers(): void {
   );
 }
 
-/** Prognose-Overlay + Badge aus market/{sym}.forecast anwenden. */
+/**
+ * Prognose-Overlay + Badge anwenden — Tages-Prognose in der Tages-Ansicht,
+ * Kurzfrist-Prognose (nächste Stunde, 5-min-Raster) in der Intraday-Ansicht.
+ */
 function applyForecast(): void {
   if (!st?.chart) return;
+  const intraday = st.intradayDays > 0;
   const fc = st.forecast;
+  const ifc = st.forecastIntraday;
   const info = $('fcInfo');
   if (!st.showForecast || st.cleanView) {
     st.chart.setForecast(null);
-    info.textContent = fc && !st.cleanView ? 'Prognose-Layer ausgeblendet.' : '';
+    info.textContent = (intraday ? ifc : fc) && !st.cleanView ? 'Prognose-Layer ausgeblendet.' : '';
+    return;
+  }
+  if (intraday) {
+    // Nur Punkte NACH dem letzten gezeigten Bar zeichnen (nach Session-Ende
+    // wäre eine alte Projektion mitten im Chart irreführend).
+    const lastBar = st.shownIntraday[st.shownIntraday.length - 1];
+    const pts = ifc && lastBar ? ifc.points.filter((p) => p.t > lastBar.time) : [];
+    if (!ifc || !lastBar || pts.length === 0) {
+      st.chart.setForecast(null);
+      info.textContent = '';
+      return;
+    }
+    st.chart.setForecast(
+      {
+        points: pts.map((p) => ({ time: p.t, value: p.value })),
+        band: ifc.band.filter((b) => b.t > lastBar.time).map((b) => ({ time: b.t, upper: b.upper, lower: b.lower })),
+      },
+      { time: lastBar.time, value: lastBar.close },
+    );
+    const dirI = ifc.predictedPct >= 0 ? '↑' : '↓';
+    info.textContent =
+      `Kurzfrist ${dirI} ${ifc.predictedPct >= 0 ? '+' : ''}${ifc.predictedPct.toFixed(2)} % ` +
+      `über die nächste Stunde (5-min-Raster, w=${ifc.w}, Lookback ${ifc.lookback} Bars)`;
     return;
   }
   if (!fc || fc.points.length === 0) {
@@ -1521,9 +1564,9 @@ function applyForecast(): void {
     `über ${fc.points.length} Handelstage (w=${fc.w}, Lookback ${fc.lookback}, gestrichelt ±1σ)`;
 }
 
-/** Prognose-Labor: Kombi-Statistik aus meta/forecastStats (Self-Tuning-Evidenz). */
-function renderFcLabStats(stats: ForecastStatsDoc | null): void {
-  const host = $('flCombos');
+/** Prognose-Labor: Kombi-Statistik (Tages- ODER Intraday-Pfad) rendern. */
+function renderFcLabStats(hostId: string, stats: ForecastStatsDoc | null): void {
+  const host = $(hostId);
   const rows = Object.entries(stats?.combos ?? {})
     .map(([key, c]) => {
       const [wS, lbS] = key.split('_');
@@ -1582,6 +1625,10 @@ function renderFcLabRows(rows: EvaluatedForecastRow[]): void {
       })
       .join('');
 }
+
+// Zeit-Domäne des letzten renderChart-Laufs (Intraday vs. Tages-Sicht) —
+// steuert das Räumen des Prognose-Overlays beim Moduswechsel.
+let lastRenderIntraday: boolean | null = null;
 
 // Schneller Symbolwechsel startet rebuildChart nebenläufig — die Epoche
 // sorgt dafür, dass nur der JÜNGSTE Aufbau gewinnt und Callbacks nie auf
@@ -2973,6 +3020,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     positions: [],
     trades: [],
     forecast: null,
+    forecastIntraday: null,
     chartGroup: 'A',
     newsGroup: 'A',
     chart2Group: 'B',
@@ -3070,8 +3118,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       $('fcTuning').textContent = stats?.tuningActive
         ? 'Self-Tuning aktiv: Live-Prognosen nutzen die historisch beste Kombi.'
         : 'Self-Tuning sammelt Evidenz — Defaults aktiv, bis genug Prognosen realisiert sind.';
-      renderFcLabStats(stats);
+      renderFcLabStats('flCombos', stats);
     }),
+    watchForecastStatsIntraday((stats) => renderFcLabStats('flCombosIntra', stats)),
   );
 
   // Link-Bus (M9): Chart- und News-Kontext folgen ihrer jeweiligen Gruppe.

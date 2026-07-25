@@ -583,10 +583,16 @@ nächste Prognose feiner wird. Granularität so fein, wie die Daten es hergeben.
       Trefferquote, MAE; beste Kombi markiert) aus `meta/forecastStats`
       live + „Vorhersage vs. Realität" der letzten bewerteten Prognosen des
       Chart-Symbols + Selbstverbesserungs-Erklärtext
-- [ ] Teil 2: Intraday-Kurzfrist-Prognose (max. Granularität): eigener
-      Shadow-Satz auf 5-min-Bars der Watchlist (Horizont Stunden statt
-      Tage), eigener Eval-Pfad mit striktem „Bar realisiert"-Gate,
-      getrennte Kombi-Statistik `meta/forecastStatsIntraday`
+- [x] Teil 2: Intraday-Kurzfrist-Prognose (max. Granularität): Projektion
+      der nächsten Stunde auf 5-min-Bars, bei JEDEM Scan neu berechnet
+      (`forecastIntraday` im Symbol-Doc); Shadow-Gitter 3×2 je UTC-Stunden-
+      slot bei offenem Markt (`forecastsIntraday`, idempotente Doc-IDs);
+      eigener Eval-Pfad huckepack im Scan mit striktem „Bar realisiert"-
+      Gate (`isIntradayForecastDue`: Bar-Start + Bar-Länge ≤ jetzt) +
+      Expiry-Ventil (unbewertbar verfallene zählen NICHT in die Statistik);
+      getrennte Kombi-Statistik `meta/forecastStatsIntraday`; Chart zeigt
+      in 1T/1W die Kurzfrist-Prognose (nur Punkte NACH dem letzten Bar),
+      Labor-Karte mit zweiter Intraday-Statistik; 10 neue shared-Tests
 - [ ] Teil 3: Feature-Regressoren: Sentiment-Verlauf, RSI/MACD-Zustand,
       Vola-Regime als Zusatz-Features; Konfidenz-Band aus der REALISIERTEN
       Fehlerverteilung der jeweiligen Kombi (statt nur ±1σ der Historie)
