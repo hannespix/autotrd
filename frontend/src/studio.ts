@@ -20,7 +20,10 @@ import {
   callPromoteStrategy,
   callPublishStrategy,
   callRunBacktest,
+  callRunSweep,
   callSaveStrategyDraft,
+  type SweepResult,
+  type SweepRow,
   loadBarsOnce,
   loadEventsOnce,
   loadMarketQuotes,
@@ -374,6 +377,16 @@ async function renderEditor(root: HTMLElement, st: EditorState): Promise<void> {
             </div>
             <div id="stRun" aria-live="polite"><p class="hint">Noch kein Report.</p></div>
           </section>
+          <section class="card st-sweep">
+            <h3>Parameter-Sweep <span class="chip">Classic-Basis · ≤ 60 Kombis · kein Auto-Apply</span></h3>
+            <div class="row">
+              <label>X <select id="swX" class="inp"></select></label>
+              <label>Y <select id="swY" class="inp"></select></label>
+              <button type="button" id="swRun" class="btn btn-n">Sweep starten</button>
+              <span class="hint">max. 5/Tag · Symbol = Vorschau-Symbol</span>
+            </div>
+            <div id="swOut" aria-live="polite"><p class="hint">Noch kein Sweep.</p></div>
+          </section>
         </div>
       </div>
     </main>`;
@@ -563,6 +576,77 @@ async function renderEditor(root: HTMLElement, st: EditorState): Promise<void> {
       .then(() => say('✓ Backtest fertig — Report unten'))
       .catch((e) => say(`✗ ${(e as Error).message}`));
   });
+
+  // Parameter-Sweep (M11): Achsen wählen → Heatmap → besten Punkt als Entwurf
+  const SWEEP_AXES: Record<string, { label: string; values: number[] }> = {
+    rsiBuy: { label: 'RSI Kauf <', values: [20, 25, 30, 35, 40] },
+    rsiSell: { label: 'RSI Verkauf >', values: [60, 65, 70, 75, 80] },
+    bbBreakout: { label: 'BB-Ausbruch %', values: [70, 80, 90, 100] },
+    minConfluence: { label: 'Min. Konfluenz', values: [1, 2, 3] },
+    forecastWeight: { label: 'Prognose-Gewicht', values: [0, 1, 2] },
+  };
+  const swX = root.querySelector<HTMLSelectElement>('#swX')!;
+  const swY = root.querySelector<HTMLSelectElement>('#swY')!;
+  for (const [key, ax] of Object.entries(SWEEP_AXES)) {
+    swX.add(new Option(ax.label, key, key === 'rsiBuy', key === 'rsiBuy'));
+    swY.add(new Option(ax.label, key, key === 'minConfluence', key === 'minConfluence'));
+  }
+  swY.add(new Option('— keine —', ''));
+  const swOut = root.querySelector<HTMLElement>('#swOut')!;
+  root.querySelector('#swRun')!.addEventListener('click', () => {
+    const xParam = swX.value;
+    const yParam = swY.value || undefined;
+    if (yParam === xParam) {
+      say('✗ X- und Y-Parameter müssen verschieden sein');
+      return;
+    }
+    say('Sweep läuft — bis zu 60 Backtests …');
+    callRunSweep({
+      symbol: st.previewSymbol.trim().toUpperCase() || 'QQQ',
+      xParam,
+      xValues: SWEEP_AXES[xParam]!.values,
+      ...(yParam ? { yParam, yValues: SWEEP_AXES[yParam]!.values } : {}),
+    })
+      .then((res) => {
+        say(`✓ Sweep fertig — ${res.combos} Kombis (${res.barsFrom} … ${res.barsTo})`);
+        renderSweep(res, xParam, yParam);
+      })
+      .catch((e) => say(`✗ ${(e as Error).message}`));
+  });
+  const renderSweep = (res: SweepResult, xParam: string, yParam?: string): void => {
+    const xs = [...new Set(res.rows.map((r) => r.x))].sort((a, b) => a - b);
+    const ys = [...new Set(res.rows.map((r) => r.y))].sort((a, b) => (a ?? 0) - (b ?? 0));
+    const byKey = new Map(res.rows.map((r) => [`${r.x}|${r.y}`, r]));
+    const maxAbs = Math.max(1e-9, ...res.rows.map((r) => Math.abs(r.totalReturnPct)));
+    const cell = (r: SweepRow | undefined): string => {
+      if (!r) return '<td></td>';
+      const a = (Math.abs(r.totalReturnPct) / maxAbs) * 0.55;
+      const bg = r.totalReturnPct >= 0 ? `rgba(38,207,157,${a})` : `rgba(242,88,107,${a})`;
+      const isBest = r === res.best || (r.x === res.best.x && r.y === res.best.y);
+      return `<td class="sw-cell${isBest ? ' sw-best' : ''}" style="background:${bg}"
+        title="Rendite ${r.totalReturnPct.toFixed(1)} % · Sharpe ${r.sharpe.toFixed(2)} · MaxDD ${r.maxDrawdownPct.toFixed(1)} % · ${r.numTrades} Trades · Winrate ${r.winRatePct.toFixed(0)} %">
+        ${r.totalReturnPct.toFixed(1)}</td>`;
+    };
+    const xl = SWEEP_AXES[xParam]!.label;
+    const yl = yParam ? SWEEP_AXES[yParam]!.label : '';
+    swOut.innerHTML = `
+      <div class="sw-wrap"><table class="sw-tbl mono">
+        <tr><th>${yParam ? `${yl} \\ ${xl}` : xl}</th>${xs.map((x) => `<th>${x}</th>`).join('')}</tr>
+        ${ys.map((y) => `<tr><th>${y ?? '—'}</th>${xs.map((x) => cell(byKey.get(`${x}|${y}`))).join('')}</tr>`).join('')}
+      </table></div>
+      <p class="hint">Zellen = Rendite % (Hover zeigt Sharpe/MaxDD/Trades) · bester Punkt umrandet:
+        ${xl} = <b>${res.best.x}</b>${yParam ? ` · ${yl} = <b>${res.best.y}</b>` : ''} →
+        ${res.best.totalReturnPct.toFixed(1)} % · Sharpe ${res.best.sharpe.toFixed(2)}</p>
+      <button type="button" id="swAdopt" class="btn btn-g">Als Entwurf übernehmen</button>
+      <span class="hint">legt eine NEUE Strategie an — nichts wird automatisch live geschaltet</span>`;
+    swOut.querySelector('#swAdopt')!.addEventListener('click', () => {
+      const name = `Sweep ${xl} ${res.best.x}${yParam ? ` × ${yl} ${res.best.y}` : ''}`.slice(0, 60);
+      say('Lege Entwurf an …');
+      callSaveStrategyDraft({ name, spec: res.bestSpec })
+        .then(() => say(`✓ Entwurf „${name}" angelegt — in der Strategie-Liste`))
+        .catch((e) => say(`✗ ${(e as Error).message}`));
+    });
+  };
 
   root.querySelector('#stAssign')!.addEventListener('click', () => {
     if (!st.id) return;
