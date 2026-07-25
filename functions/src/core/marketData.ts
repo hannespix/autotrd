@@ -107,6 +107,30 @@ async function fetchYahoo(symbol: string, range: string): Promise<MarketSnapshot
   return { symbol, price, changePct, bars, source: 'yahoo' };
 }
 
+/** Tiefe Tages-Historie (Chart-Audit 2): ~5 Jahre für nahtloses Rausscrollen. */
+export async function getDeepDailyBars(symbol: string): Promise<DailyBar[]> {
+  return (await fetchYahoo(symbol, '5y')).bars;
+}
+
+/** Nur der aktuelle Kurs — leichtgewichtig fürs Kurz-Intervall (quoteNow). */
+export async function getQuickQuote(symbol: string): Promise<{ price: number; changePct: number }> {
+  const snap = await fetchYahoo(symbol, '5d');
+  return { price: snap.price, changePct: snap.changePct };
+}
+
+/** Tages-Bars nach Jahr bündeln (ein Firestore-Doc je Jahr — Lese-Kosten). */
+export function chunkBarsByYear(bars: DailyBar[]): Map<string, Record<string, Omit<DailyBar, 'date'>>> {
+  const byYear = new Map<string, Record<string, Omit<DailyBar, 'date'>>>();
+  for (const bar of bars) {
+    const year = bar.date.slice(0, 4);
+    const days = byYear.get(year) ?? {};
+    const { date: _d, ...ohlcv } = bar;
+    days[bar.date] = ohlcv;
+    byYear.set(year, days);
+  }
+  return byYear;
+}
+
 export interface IntradayBar {
   /** UNIX-Sekunden (UTC) des Bar-Starts. */
   t: number;

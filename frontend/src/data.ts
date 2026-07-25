@@ -383,6 +383,22 @@ export async function loadMarketQuotes(): Promise<Map<string, MarketDocData>> {
   return map;
 }
 
+/** Tiefe Historie (Chart-Audit 2): EIN Jahres-Chunk market/{sym}/ohlcDaily/{JAHR}. */
+export async function loadDailyChunk(symbol: string, year: number): Promise<ChartBar[]> {
+  const snap = await getDoc(doc(db(), 'market', symbol, 'ohlcDaily', String(year)));
+  if (!snap.exists()) return [];
+  const days = (snap.data() as { days?: Record<string, { open: number; high: number; low: number; close: number; volume: number }> }).days ?? {};
+  return Object.entries(days)
+    .map(([date, b]) => ({ date, ...b }))
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
+/** Kurz-Update fürs aktive Symbol — Server schreibt den frischen Kurs in
+ *  market/{sym}.quote (alle Clients sehen ihn via onSnapshot). */
+export async function callQuoteNow(symbol: string): Promise<void> {
+  await httpsCallable(fns(), 'quoteNow')({ symbol });
+}
+
 /** Ein-Schuss-Blick auf Wallet + Startkapital + offene Positionen (A/B-Duell). */
 export async function loadWalletSnapshot(
   uid: string,
