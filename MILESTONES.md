@@ -526,9 +526,16 @@ fairen A/B gegen die aktive Strategie befördert werden.
 - [ ] Sweeps: ≤ 2 Parameter, ≤ 60 Kombis, Budget-Check im Callable; Historie
       einmal laden, alle Kombis im RAM; Ergebnis als Tabelle + Heatmap,
       „Als neuen Entwurf übernehmen" — bewusst **kein** Auto-Apply
-- [ ] A/B auf Papier: A `paper` (echtes Wallet), B `shadow` mit gleicher
+- [x] A/B auf Papier: A `paper` (echtes Wallet), B `shadow` mit gleicher
       Startbalance; Kennzahlen-Duell, Divergenz-Hervorhebung, transaktionales
       „Befördern" (Rollentausch)
+      *(A/B-Duell-Karte im Studio: A = Wallet mark-to-market (Quotes) vs.
+      B = Shadow, „vorn"-Badge + Divergenz in Prozentpunkten; Hätte-Feed
+      (letzte 20 shadowSignals via `at` desc — Firestore kann keine
+      absteigenden Key-Scans); promoteStrategy: purer planPromotion-Plan
+      (Unit-Tests) + Transaktion — Ziel wird paper, überlappende
+      Paper-Strategien werden shadow mit frischem 25k-Konto, das Wallet
+      bleibt unangetastet. E2E 22/22.)*
 - [ ] Versionierung mit Diff-Ansicht + Rollback (append-only); Quotas in
       `admin/quotas` (10 Strategien, 3 Shadow, 10 Backtests + 3 Sweeps/Tag)
 

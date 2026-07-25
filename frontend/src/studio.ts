@@ -17,12 +17,16 @@ import {
 } from '@autotrd/shared';
 import {
   callAssignStrategy,
+  callPromoteStrategy,
   callPublishStrategy,
   callRunBacktest,
   callSaveStrategyDraft,
   loadBarsOnce,
   loadEventsOnce,
+  loadMarketQuotes,
+  loadShadowSignals,
   loadStrategyPresets,
+  loadWalletSnapshot,
   watchLatestRun,
   watchStrategies,
   type BacktestRunDoc,
@@ -247,6 +251,64 @@ function svgPreview(bars: PreviewBar[], res: ReturnType<typeof previewSignals>):
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Vorschau-Chart">${holds}<path d="${path}" class="st-line" />${marks}</svg>`;
 }
 
+/** A/B-Duell füllen: A = echtes Paper-Wallet (mark-to-market), B = Shadow. */
+async function fillAbDuel(root: HTMLElement, st: EditorState): Promise<void> {
+  const grid = root.querySelector<HTMLDivElement>('#abGrid');
+  const feed = root.querySelector<HTMLDivElement>('#abFeed');
+  if (!grid || !feed || !st.shadow || !st.id) return;
+  try {
+    const [wallet, quotes, signals] = await Promise.all([
+      loadWalletSnapshot(st.uid),
+      loadMarketQuotes(),
+      loadShadowSignals(st.uid, st.id),
+    ]);
+    const posVal = wallet.positions.reduce(
+      (sum, p) => sum + p.qty * (quotes.get(p.symbol)?.quote?.price ?? p.avgEntry),
+      0,
+    );
+    const equityA = wallet.balance + posVal;
+    const retA = ((equityA - wallet.initialCapital) / wallet.initialCapital) * 100;
+    const retB = ((st.shadow.equity - 25_000) / 25_000) * 100;
+    const side = (
+      label: string,
+      equity: number,
+      ret: number,
+      detail: string,
+      win: boolean,
+    ): string => `
+      <div class="ab-side${win ? ' ab-win' : ''}">
+        <b>${label}${win ? ' <span class="chip">vorn</span>' : ''}</b>
+        <span>Equity ${equity.toFixed(2)} $</span>
+        <span class="${ret >= 0 ? 'c-gn' : 'c-rd'}">${ret >= 0 ? '+' : ''}${ret.toFixed(2)} % seit Start</span>
+        <span>${detail}</span>
+      </div>`;
+    grid.innerHTML =
+      side('A · Paper-Wallet', equityA, retA, `${wallet.positions.length} Position(en) · Cash ${wallet.balance.toFixed(2)} $ · Start ${wallet.initialCapital} $`, retA > retB) +
+      side(`B · ${esc(st.name)}`, st.shadow.equity, retB, `${Object.keys(st.shadow.positions ?? {}).length} Position(en) · Cash ${st.shadow.balance.toFixed(2)} $ · Start 25000 $`, retB > retA) +
+      `<p class="ab-div hint">Divergenz: ${Math.abs(retB - retA).toFixed(2)} Prozentpunkte ${retB === retA ? '(Patt)' : retB > retA ? 'für B' : 'für A'} —
+        beide Seiten handeln mit derselben Risiko-Hülle.</p>`;
+    feed.innerHTML =
+      signals.length === 0
+        ? '<p class="hint">Noch keine Hätte-Signale — sie entstehen nur, wenn der Scan die Richtung wechselt.</p>'
+        : `<div class="tw"><table class="tbl">
+            <thead><tr><th>Zeit (UTC)</th><th>Symbol</th><th>Hätte …</th><th>Kurs</th></tr></thead>
+            <tbody>${signals
+              .map(
+                (s) => `<tr>
+                  <td class="mono">${esc(s.at?.slice(0, 16).replace('T', ' ') ?? s.id.slice(0, 16))}</td>
+                  <td class="mono">${esc(s.symbol)}</td>
+                  <td class="${s.direction === 'buy' ? 'c-gn' : 'c-rd'}">${s.direction === 'buy' ? 'GEKAUFT' : 'VERKAUFT'}</td>
+                  <td class="mono">${s.price.toFixed(2)} $</td>
+                </tr>`,
+              )
+              .join('')}</tbody>
+          </table></div>`;
+  } catch (e) {
+    console.warn('A/B-Duell nicht ladbar:', e);
+    grid.innerHTML = '<p class="hint">Duell-Daten gerade nicht lesbar.</p>';
+  }
+}
+
 async function renderEditor(root: HTMLElement, st: EditorState): Promise<void> {
   runSub?.();
   runSub = null;
@@ -278,14 +340,16 @@ async function renderEditor(root: HTMLElement, st: EditorState): Promise<void> {
           ${
             st.mode === 'shadow' && st.shadow
               ? `<section class="card st-shadow">
-                  <h3>Shadow-Konto <span class="chip">virtuell — berührt nie dein Wallet</span></h3>
-                  <div class="st-metrics mono">
-                    <span>Equity ${st.shadow.equity.toFixed(2)} $</span>
-                    <span>Cash ${st.shadow.balance.toFixed(2)} $</span>
-                    <span class="${st.shadow.equity >= 25000 ? 'c-gn' : 'c-rd'}">${(((st.shadow.equity - 25000) / 25000) * 100).toFixed(2)} % seit Start</span>
-                    <span>${Object.keys(st.shadow.positions ?? {}).length} offene Position(en)</span>
+                  <h3>A/B-Duell <span class="chip">A = Paper-Wallet (echt) · B = diese Strategie (virtuell)</span></h3>
+                  <div class="ab-grid mono" id="abGrid"><p class="hint">Lade Duell …</p></div>
+                  <div class="row st-actions">
+                    <button type="button" id="stPromote" class="btn btn-g"
+                      title="Rollentausch: B handelt ab dem nächsten Scan das echte Paper-Wallet; überlappende Paper-Strategien beobachten als Shadow weiter">B befördern</button>
                   </div>
-                  <p class="hint">Seit ${st.shadow.startedAt.slice(0, 10)} · Hätte-Signale entstehen nur bei Richtungs-Wechseln im Scan.</p>
+                  <p class="hint">Befördern tauscht nur die Rollen (transaktional) — dein Wallet und
+                  offene Positionen bleiben unangetastet. Seit ${st.shadow.startedAt.slice(0, 10)}.</p>
+                  <h3 class="ab-h">Hätte-Feed <span class="chip">Signale nur bei Richtungs-Wechsel</span></h3>
+                  <div id="abFeed"><p class="hint">Lade …</p></div>
                 </section>`
               : ''
           }
@@ -513,7 +577,30 @@ async function renderEditor(root: HTMLElement, st: EditorState): Promise<void> {
       .then(() => {
         st.symbols = symbols;
         st.mode = mode;
+        // Server legt beim Einschalten ein frisches Konto an — lokal spiegeln,
+        // damit die A/B-Karte sofort erscheint (Werte identisch zum Server-Init).
+        if (mode === 'shadow' && !st.shadow) {
+          const now = new Date().toISOString();
+          st.shadow = { balance: 25_000, positions: {}, equity: 25_000, startedAt: now, updatedAt: now };
+        }
         say(symbols.length > 0 ? `✓ Zugeordnet (${mode}): ${symbols.join(', ')}` : '✓ Zuordnung entfernt');
+        rerender();
+      })
+      .catch((e) => say(`✗ ${(e as Error).message}`));
+  });
+
+  // A/B (M11): Duell + Hätte-Feed füllen, Befördern = transaktionaler Rollentausch
+  if (st.mode === 'shadow' && st.shadow && st.id) void fillAbDuel(root, st);
+  root.querySelector('#stPromote')?.addEventListener('click', () => {
+    if (!st.id) return;
+    say('Befördere …');
+    callPromoteStrategy(st.id)
+      .then((demoted) => {
+        st.mode = 'paper';
+        st.msg = `✓ Befördert — „${st.name}" handelt jetzt dein Paper-Wallet${
+          demoted.length > 0 ? ` · ${demoted.length} bisherige Paper-Strategie(n) beobachten als Shadow weiter` : ''
+        }`;
+        rerender();
       })
       .catch((e) => say(`✗ ${(e as Error).message}`));
   });

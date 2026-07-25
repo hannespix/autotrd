@@ -143,6 +143,44 @@ export function shadowEquity(book: ShadowBook, prices: Map<string, number>): num
   return Math.round(equity * 100) / 100;
 }
 
+/* ── Befördern (M11 A/B): purer Rollentausch-Plan ────────────────────── */
+
+export interface PromotionCandidate {
+  id: string;
+  status: string;
+  mode: 'paper' | 'shadow';
+  symbols: string[];
+}
+
+/**
+ * Plant den Rollentausch: Die Shadow-Strategie `targetId` wird paper; jede
+ * publizierte PAPER-Strategie mit Symbol-Überlappung wird shadow (sonst
+ * würden zwei Bäume dasselbe Wallet auf demselben Symbol handeln).
+ * Nicht überlappende Paper-Strategien bleiben unberührt. Wirft bei
+ * ungültigem Ziel — das Wallet selbst wird hier NIE angefasst (pure).
+ */
+export function planPromotion(
+  list: PromotionCandidate[],
+  targetId: string,
+): { demote: string[] } {
+  const target = list.find((s) => s.id === targetId);
+  if (!target) throw new Error('Strategie existiert nicht');
+  if (target.status !== 'published') throw new Error('Erst publizieren — nur publizierte Strategien handeln');
+  if (target.mode !== 'shadow') throw new Error('Nur eine Shadow-Strategie lässt sich befördern');
+  if (target.symbols.length === 0) throw new Error('Erst Symbole zuordnen, dann befördern');
+  const targetSyms = new Set(target.symbols);
+  const demote = list
+    .filter(
+      (s) =>
+        s.id !== targetId &&
+        s.status === 'published' &&
+        s.mode === 'paper' &&
+        s.symbols.some((sym) => targetSyms.has(sym)),
+    )
+    .map((s) => s.id);
+  return { demote };
+}
+
 /** Minuten seit Mitternacht in America/New_York (für timeWindow-Blätter). */
 export function minuteOfDayEt(now: Date): number {
   const parts = new Intl.DateTimeFormat('en-US', {

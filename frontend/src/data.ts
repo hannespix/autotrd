@@ -383,6 +383,21 @@ export async function loadMarketQuotes(): Promise<Map<string, MarketDocData>> {
   return map;
 }
 
+/** Ein-Schuss-Blick auf Wallet + Startkapital + offene Positionen (A/B-Duell). */
+export async function loadWalletSnapshot(
+  uid: string,
+): Promise<{ balance: number; initialCapital: number; positions: Position[] }> {
+  const [userSnap, posSnap] = await Promise.all([
+    getDoc(doc(db(), 'users', uid)),
+    getDocs(collection(db(), 'users', uid, 'positions')),
+  ]);
+  return {
+    balance: (userSnap.get('wallet.paperBalance') as number | undefined) ?? 0,
+    initialCapital: (userSnap.get('settings.strategy.broker.initialCapital') as number | undefined) ?? 25_000,
+    positions: posSnap.docs.map((d) => d.data() as Position),
+  };
+}
+
 /* ── Strategie-Studio (M10): users/{uid}/strategies + Presets + Callables ── */
 
 export interface StrategyRow {
@@ -428,6 +443,33 @@ export async function callAssignStrategy(
   mode: 'paper' | 'shadow' = 'paper',
 ): Promise<void> {
   await httpsCallable(fns(), 'assignStrategy')({ id, symbols, mode });
+}
+
+/** Befördern (M11 A/B): Shadow → paper; überlappende Paper-Strategien → shadow. */
+export async function callPromoteStrategy(id: string): Promise<string[]> {
+  const res = await httpsCallable(fns(), 'promoteStrategy')({ id });
+  return (res.data as { demoted: string[] }).demoted;
+}
+
+export interface ShadowSignalRow {
+  id: string;
+  symbol: string;
+  direction: 'buy' | 'sell';
+  price: number;
+  at: string;
+}
+
+/** Hätte-Feed: letzte Shadow-Signale, neueste zuerst. Sortiert übers
+ *  `at`-Feld — absteigende Scans über die Doc-ID erlaubt Firestore nicht. */
+export async function loadShadowSignals(uid: string, strategyId: string, max = 20): Promise<ShadowSignalRow[]> {
+  const snap = await getDocs(
+    query(
+      collection(db(), 'users', uid, 'strategies', strategyId, 'shadowSignals'),
+      orderBy('at', 'desc'),
+      limit(max),
+    ),
+  );
+  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<ShadowSignalRow, 'id'>) }));
 }
 
 export interface BacktestRunDoc {

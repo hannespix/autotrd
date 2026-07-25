@@ -12,6 +12,7 @@ import {
   decideTree,
   applyPredictionVote,
   minuteOfDayEt,
+  planPromotion,
   predictionVote,
   shadowEquity,
   shadowTrade,
@@ -158,6 +159,36 @@ describe('Shadow-Konto (M11): pure Buchführung', () => {
   it('shadowEquity = Balance + Positionswert (fehlender Preis → Einstand)', () => {
     const book = { balance: 1_000, positions: { QQQ: { qty: 5, avgEntry: 500 }, AAPL: { qty: 2, avgEntry: 200 } } };
     expect(shadowEquity(book, new Map([['QQQ', 520]]))).toBe(1_000 + 2_600 + 400);
+  });
+});
+
+describe('Befördern (M11 A/B): purer Rollentausch-Plan', () => {
+  const S = (id: string, mode: 'paper' | 'shadow', symbols: string[], status = 'published') => ({
+    id,
+    status,
+    mode,
+    symbols,
+  });
+
+  it('demotet genau die überlappenden Paper-Strategien', () => {
+    const list = [
+      S('a', 'paper', ['QQQ', 'AAPL']),
+      S('b', 'shadow', ['QQQ']),
+      S('c', 'paper', ['TSLA']), // keine Überlappung → bleibt
+      S('d', 'paper', ['AAPL'], 'draft'), // nicht publiziert → handelt eh nicht
+    ];
+    expect(planPromotion(list, 'b')).toEqual({ demote: ['a'] });
+  });
+
+  it('ohne Überlappung wird niemand demotet', () => {
+    expect(planPromotion([S('x', 'shadow', ['BTC-USD']), S('y', 'paper', ['QQQ'])], 'x')).toEqual({ demote: [] });
+  });
+
+  it('lehnt ungültige Ziele ab (fehlt / draft / paper / ohne Symbole)', () => {
+    expect(() => planPromotion([], 'nix')).toThrow(/existiert nicht/);
+    expect(() => planPromotion([S('a', 'shadow', ['QQQ'], 'draft')], 'a')).toThrow(/publizieren/);
+    expect(() => planPromotion([S('a', 'paper', ['QQQ'])], 'a')).toThrow(/Shadow/);
+    expect(() => planPromotion([S('a', 'shadow', [])], 'a')).toThrow(/Symbole/);
   });
 });
 
