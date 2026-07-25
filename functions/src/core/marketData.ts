@@ -112,10 +112,14 @@ export async function getDeepDailyBars(symbol: string): Promise<DailyBar[]> {
   return (await fetchYahoo(symbol, '5y')).bars;
 }
 
-/** Nur der aktuelle Kurs — leichtgewichtig fürs Kurz-Intervall (quoteNow). */
-export async function getQuickQuote(symbol: string): Promise<{ price: number; changePct: number }> {
+/** Nur der aktuelle Kurs — leichtgewichtig fürs Kurz-Intervall (quoteNow)
+ *  und die Katalog-Versorgung (Taschenmesser Teil 2); lastBar = jüngste
+ *  Tageskerze aus demselben 5d-Fetch (keine zweite Anfrage nötig). */
+export async function getQuickQuote(
+  symbol: string,
+): Promise<{ price: number; changePct: number; lastBar: DailyBar }> {
   const snap = await fetchYahoo(symbol, '5d');
-  return { price: snap.price, changePct: snap.changePct };
+  return { price: snap.price, changePct: snap.changePct, lastBar: snap.bars[snap.bars.length - 1]! };
 }
 
 /** Tages-Bars nach Jahr bündeln (ein Firestore-Doc je Jahr — Lese-Kosten). */

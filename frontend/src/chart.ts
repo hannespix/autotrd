@@ -257,8 +257,18 @@ export async function buildPriceChart(
       // „x UND y beim Umschalten optimieren").
       if (opts?.fit) {
         chart.priceScale('right').applyOptions({ autoScale: autoScaleOn });
-        if (opts.fitTo) chart.timeScale().setVisibleLogicalRange(opts.fitTo);
-        else chart.timeScale().fitContent();
+        if (opts.fitTo) {
+          // Sanity-Clamp (UI-Audit 25.07.): Ein programmatischer Fit darf die
+          // Kerzen nie in eine Ecke quetschen — rechts höchstens ~20 % der
+          // Spanne (mind. 35 Bars für den Prognose-Pfeil) über den letzten
+          // Datenpunkt hinaus. User-Pan/-Zoom bleibt unbegrenzt.
+          const span = opts.fitTo.to - opts.fitTo.from;
+          const maxTo = rows.length - 1 + Math.max(35, span * 0.2);
+          chart.timeScale().setVisibleLogicalRange({
+            from: Math.max(opts.fitTo.from, -5),
+            to: Math.min(opts.fitTo.to, maxTo),
+          });
+        } else chart.timeScale().fitContent();
       }
     },
     setOverlays(lines: OverlayLine[]): void {

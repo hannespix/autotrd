@@ -163,7 +163,14 @@ interface DashState {
   prediction: import('@autotrd/shared').UserPrediction | null;
   predMode: boolean;
   /** Optionale Elemente (Options-Modal ⚙, settings.ui) — ✏ ist Opt-in. */
-  ui: { predArrow: boolean; cmpOverlay: boolean; chartGrid: boolean; subPanels: boolean };
+  ui: {
+    predArrow: boolean;
+    cmpOverlay: boolean;
+    chartGrid: boolean;
+    subPanels: boolean;
+    /** Marktgruppen-Filter: Klassen-Key → false = versteckt (fehlend = sichtbar). */
+    marketGroups?: Record<string, boolean>;
+  };
   /** Eingeklappte Module (nur Karten-Körper zu — Gerät-lokal). */
   collapsed: Set<string>;
   /** Clean-View: blendet alles Optionale aus, ohne die Auswahl zu verlieren. */
@@ -609,6 +616,10 @@ function layout(email: string): string {
       <div id="ouPanels" class="opt-panels"></div>
       <p class="hint">Abgewählte Module verschwinden komplett (geht auch per ✕ direkt am Modul);
         ▾ am Modul klappt nur zu. Die Auswahl synct über deine Geräte.</p>
+      <div class="wl-sec">Marktgruppen</div>
+      <div id="ouGroups" class="opt-panels"></div>
+      <p class="hint">Abgewählte Gruppen verschwinden aus Markt-Browser und Watchlist-Picker
+        (nur Anzeige — die Daten aller Gruppen laufen serverseitig weiter).</p>
       <div class="wl-sec">Paper-Wallet · Grundeinstellungen</div>
       <div class="opt-grid">
         <label>Startkapital $
@@ -767,12 +778,22 @@ function renderChart(): void {
   // Auto-Modus → Startfenster ~120 Tage (alles Ältere per Scrollen erreichbar);
   // aktiver Prognose-Pfeil → rechts Platz einkalkulieren (Feedback 25.07.).
   const arrowActive = st.ui.predArrow && st.prediction !== null && !st.cleanView;
+  // Pfeil-Polster HORIZONT-basiert (UI-Audit 25.07.): Handelstage bis zum
+  // Prognoseziel + kleine Marge. Nie proportional zur Datenlänge — mit der
+  // 5-Jahres-Historie polsterte `len*0.25` sonst hunderte Leertage rechts.
+  const lastDate = bars[bars.length - 1]?.date ?? '';
+  const arrowPad = arrowActive
+    ? Math.min(
+        30,
+        Math.max(16, Math.ceil(((Date.parse(st.prediction!.targetDate) - Date.parse(lastDate)) / 86_400_000) * (5 / 7)) + 4),
+      )
+    : 0;
   const fitTo = !fit
     ? undefined
     : st.autoRes && bars.length > 130
-      ? { from: bars.length - 120, to: bars.length + (arrowActive ? 30 : 3) }
+      ? { from: bars.length - 120, to: bars.length + (arrowActive ? arrowPad : 3) }
       : arrowActive
-        ? { from: -0.5, to: bars.length + Math.max(6, bars.length * 0.25) }
+        ? { from: -0.5, to: bars.length + arrowPad }
         : undefined;
   st.chart.setBars(bars, { fit, fitTo, timeVisible: false });
   applyForecast();
@@ -1170,6 +1191,13 @@ async function loadPredictionForSymbol(): Promise<void> {
   const pred = await loadPrediction(st.uid, sym).catch(() => null);
   if (!st || st.currentSymbol !== sym) return;
   st.prediction = pred;
+  // Aktiver Pfeil braucht sein Horizont-Polster rechts → Neu-Fit anfordern
+  // (renderChart zeichnet Pfeil + Legende dann selbst mit).
+  if (st.ui.predArrow && pred && !st.cleanView && st.intradayDays === 0) {
+    st.chartFitPending = true;
+    renderChart();
+    return;
+  }
   drawPredictionArrow();
   applyOverlays(); // Legende um den „Meine Prognose"-Eintrag aktualisieren
 }
@@ -1204,6 +1232,7 @@ function applyUiPrefs(): void {
   document.querySelectorAll('.ind-x').forEach((el) => ((el as HTMLElement).hidden = !u.subPanels));
   applyOverlays();
   updateSubPanels();
+  applyGroupFilter(); // Marktgruppen (synct über Geräte wie die Module)
 }
 
 function openOptions(): void {
@@ -1226,8 +1255,35 @@ function openOptions(): void {
   $('ouPanels')
     .querySelectorAll<HTMLInputElement>('input[data-mod]')
     .forEach((cb) => cb.addEventListener('change', () => togglePanel(cb.dataset.mod ?? '')));
+  // Marktgruppen-Filter (Taschenmesser Teil 2): reine Anzeige-Wahrheit in
+  // settings.ui.marketGroups — fehlender Eintrag = sichtbar.
+  $('ouGroups').innerHTML = Object.entries(CLASS_LABELS)
+    .map(
+      ([cls, label]) =>
+        `<label class="opt-chk"><input type="checkbox" data-grp="${cls}" ${st!.ui.marketGroups?.[cls] === false ? '' : 'checked'} /> ${label}</label>`,
+    )
+    .join('');
+  $('ouGroups')
+    .querySelectorAll<HTMLInputElement>('input[data-grp]')
+    .forEach((cb) =>
+      cb.addEventListener('change', () => {
+        if (!st) return;
+        const groups = { ...(st.ui.marketGroups ?? {}) };
+        if (cb.checked) delete groups[cb.dataset.grp ?? ''];
+        else groups[cb.dataset.grp ?? ''] = false;
+        st.ui = { ...st.ui, marketGroups: groups };
+        applyGroupFilter();
+        void saveUiPrefs(st.uid, st.ui);
+      }),
+    );
   $('optMsg').textContent = '';
   $('optModal').classList.add('show');
+}
+
+/** Marktgruppen-Filter anwenden: Markt-Browser-Tabs neu bauen (die Builder
+ *  überspringen versteckte Klassen; der Picker filtert bei jedem Öffnen). */
+function applyGroupFilter(): void {
+  void renderMarketTabs();
 }
 
 /* ── Auto-Auflösung (TradingView-Gefühl, Feedback 25.07.): Die Kerzengröße
@@ -2152,8 +2208,15 @@ async function renderMarketTabs(): Promise<void> {
     $('mktBody').innerHTML = '<span class="c-t3">Katalog noch nicht geseedet — läuft mit dem ersten Scan.</span>';
     return;
   }
+  // Marktgruppen-Filter: steht die aktive Klasse auf „versteckt", zur ersten
+  // sichtbaren wechseln, damit Tab-Leiste und Grid konsistent bleiben.
+  if (st.ui.marketGroups?.[st.marketClass] === false) {
+    const first = CLASS_ORDER.find((c) => st!.universe![c] && st!.ui.marketGroups?.[c] !== false);
+    if (first) st.marketClass = first;
+  }
   for (const cls of CLASS_ORDER) {
     if (!st.universe[cls]) continue;
+    if (st.ui.marketGroups?.[cls] === false) continue;
     const b = document.createElement('button');
     b.className = 'mtab' + (cls === st.marketClass ? ' on' : '');
     b.textContent = CLASS_LABELS[cls] ?? cls;
@@ -2284,6 +2347,7 @@ async function openPicker(): Promise<void> {
   };
   for (const cls of CLASS_ORDER) {
     if (!st.universe[cls]) continue;
+    if (st.ui.marketGroups?.[cls] === false) continue; // Marktgruppen-Filter
     const b = document.createElement('button');
     b.className = 'mtab' + (cls === active ? ' on' : '');
     b.textContent = CLASS_LABELS[cls] ?? cls;
@@ -2623,6 +2687,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         cmpOverlay: ui?.cmpOverlay !== false,
         chartGrid: ui?.chartGrid !== false,
         subPanels: ui?.subPanels !== false,
+        marketGroups: ui?.marketGroups ?? {},
       };
       applyUiPrefs();
       const prevPalette = st.hotkeys.palette;

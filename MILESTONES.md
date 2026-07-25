@@ -518,6 +518,17 @@ Charts parallel.
       (setVisibleLogicalRange statt async fitContent — kein Race mehr mit dem
       Pfeil-Polster) · 45-s-Kurz-Updates über `quoteNow`-Callable (nur sichtbarer
       Tab, Quota 800/Tag, Quote landet in `market/{sym}.quote` für alle)
+- [x] UI-Audit-Fix (Feedback 25.07., 6. Runde „Kerzen in der Ecke"): Das
+      Pfeil-Polster war proportional zur Datenlänge (`len*0.25` — mit
+      5J-Historie hunderte Leertage rechts) → jetzt HORIZONT-basiert
+      (Handelstage bis Prognoseziel, 16–30 Bars) · Sanity-Clamp im Fit-Pfad
+      (programmatische Fits max ~20 % Leerraum rechts, User-Zoom frei) ·
+      Prognose-Speichern/-Laden fordert den Neu-Fit selbst an · E2E wacht
+      jetzt über FÜLLGRAD (>70 % nach Fit, >60 % mit Pfeil)
+- [ ] TV-Vergleich umsetzen (nächste Runde): In-Chart-Legende (OHLC +
+      Indikator-Werte oben links IM Chart statt Zeile darüber),
+      Toolbar auf EINE Zeile (Indikatoren/Layer als Dropdown-Menüs),
+      Hinweistexte → Tooltips
 - [ ] 1-Minuten-Daten (Yahoo: nur ~7 Tage, ~5× Volumen — bewusst entscheiden)
       · echte Sekunden-Ticks kommen mit dem M13-Streamer
 - [ ] ATR, 52-Wochen-Marken, Pivots (weitere Trading-Hilfen)
@@ -534,9 +545,14 @@ die Watchlist ist nur noch der Scope der Trading-Engine.
       ◧/◨ im Header ein-/ausblendbar (persistiert; Mobile-Drawer unberührt) ·
       Bugfix: ✏-Pfeil holt aus der Intraday-/Auto-Ansicht die Tages-Ansicht
       zurück statt stumm nichts zu tun
-- [ ] Teil 2: Marktgruppen-Datenversorgung (tiered: Watchlist 5-min für die
-      Engine, Katalog-Quotes stündlich, Bars täglich) + Marktgruppen-Filter
-      in den Einstellungen
+- [x] Teil 2: Marktgruppen-Datenversorgung (User-Wunsch 25.07. „alle Indizes
+      und Märkte erfassen"): Katalog (~166 Symbole) als rotierender
+      15er-Chunk je Scan (`supplyCatalog`, Cursor in `meta/catalogSupply`) —
+      leichter Quote-Fetch + jüngste Tageskerze; Frische-Gates (offene Klasse
+      ~stündlich, geschlossene behalten die letzte Quote); Zähler
+      `catalogQuotes` im Heartbeat. Die Watchlist bleibt der Engine-Scope mit
+      voller 5-min-Tiefe. ⚙ → „Marktgruppen": Klassen im Markt-Browser +
+      Watchlist-Picker ausblendbar (settings.ui.marketGroups, reine Anzeige)
 - [ ] Teil 3: Sidebar-Breiten per Drag, Module per Drag umsortieren
 
 ## M11 — Strategie-Studio II: Backtest, Shadow, Sweeps, A/B
