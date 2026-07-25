@@ -403,10 +403,16 @@ async function supplyCatalog(scannedSet: Set<string>, now: Date): Promise<number
   const catalog = allSymbols();
   if (catalog.length === 0) return 0;
   const stateRef = db.doc('meta/catalogSupply');
-  const cursor = ((await stateRef.get()).get('cursor') as number | undefined) ?? 0;
+  const state = await stateRef.get();
+  const cursor = (state.get('cursor') as number | undefined) ?? 0;
+  // Catch-up (User-Wunsch 25.07. „immer ALLE Daten"): Bis der Katalog einmal
+  // komplett durchrotiert ist, große Chunks — Erstbefüllung in ~4 Läufen statt
+  // ~11 (wichtig bei dünner Wochenend-Kadenz). Danach sparsame 15er-Rotation.
+  const initialDone = state.get('initialDone') === true;
+  const chunk = initialDone ? CATALOG_CHUNK : 45;
 
   const picked: string[] = [];
-  for (let n = 0; n < CATALOG_CHUNK; n++) {
+  for (let n = 0; n < chunk; n++) {
     const sym = catalog[(cursor + n) % catalog.length]!;
     if (!scannedSet.has(sym) && !picked.includes(sym)) picked.push(sym);
   }
@@ -447,7 +453,12 @@ async function supplyCatalog(scannedSet: Set<string>, now: Date): Promise<number
   }
   batch.set(
     stateRef,
-    { cursor: (cursor + CATALOG_CHUNK) % catalog.length, updatedAt: now.toISOString(), lastFetched: fetched },
+    {
+      cursor: (cursor + chunk) % catalog.length,
+      initialDone: initialDone || cursor + chunk >= catalog.length,
+      updatedAt: now.toISOString(),
+      lastFetched: fetched,
+    },
     { merge: true },
   );
   await batch.commit();
