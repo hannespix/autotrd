@@ -606,6 +606,7 @@ export async function runScan(force = false): Promise<ScanResult> {
                 predictedPct: Math.round(forecast.predictedPct * 100) / 100,
                 sentiment: forecast.sentiment,
                 baseDate: lastDate,
+                calib: forecast.calib,
               }
             : null,
         },
@@ -695,6 +696,7 @@ export async function runScan(force = false): Promise<ScanResult> {
                     predictedPct: Math.round(ifc.predictedPct * 100) / 100,
                     baseT: ifc.points[0]!.t - 300,
                     updatedAt: now.toISOString(),
+                    calib: ifc.calib,
                   }
                 : null,
             },

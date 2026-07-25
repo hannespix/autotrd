@@ -1543,9 +1543,12 @@ function applyForecast(): void {
       { time: lastBar.time, value: lastBar.close },
     );
     const dirI = ifc.predictedPct >= 0 ? '↑' : '↓';
+    const calI = ifc.calib
+      ? `, Band = realisierte Fehlerverteilung (n=${ifc.calib.n})`
+      : ', Band = ±1σ';
     info.textContent =
       `Kurzfrist ${dirI} ${ifc.predictedPct >= 0 ? '+' : ''}${ifc.predictedPct.toFixed(2)} % ` +
-      `über die nächste Stunde (5-min-Raster, w=${ifc.w}, Lookback ${ifc.lookback} Bars)`;
+      `über die nächste Stunde (5-min-Raster, w=${ifc.w}, Lookback ${ifc.lookback} Bars${calI})`;
     return;
   }
   if (!fc || fc.points.length === 0) {
@@ -1559,9 +1562,12 @@ function applyForecast(): void {
     last ? { time: last.date, value: last.close } : undefined,
   );
   const dir = fc.predictedPct >= 0 ? '↑' : '↓';
+  const cal = fc.calib
+    ? `Band = realisierte Fehlerverteilung (n=${fc.calib.n}, MAE ${fc.calib.maePct.toFixed(2)} %)`
+    : 'Band = ±1σ der Regression';
   info.textContent =
     `Prognose ${dir} ${fc.predictedPct >= 0 ? '+' : ''}${fc.predictedPct.toFixed(2)} % ` +
-    `über ${fc.points.length} Handelstage (w=${fc.w}, Lookback ${fc.lookback}, gestrichelt ±1σ)`;
+    `über ${fc.points.length} Handelstage (w=${fc.w}, Lookback ${fc.lookback}, ${cal})`;
 }
 
 /** Prognose-Labor: Kombi-Statistik (Tages- ODER Intraday-Pfad) rendern. */

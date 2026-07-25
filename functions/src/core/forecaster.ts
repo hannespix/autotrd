@@ -14,10 +14,12 @@ import {
   INTRADAY_WEIGHT_GRID,
   LOOKBACK_GRID,
   WEIGHT_GRID,
+  applyBandCalibration,
   bestParams,
   comboKey,
-  computeForecast,
-  computeIntradayForecast,
+  computeForecastV2,
+  computeIntradayForecastV2,
+  type BandCalibration,
   type ComboStat,
   type ForecastComputation,
   type ForecastDoc,
@@ -32,6 +34,8 @@ export interface ForecastMeta {
   lookback: number;
   weightGrid: number[];
   lookbackGrid: number[];
+  /** Realisierte Kombi-Statistik — speist die Band-Kalibrierung (Teil 3). */
+  combos: Record<string, ComboStat>;
 }
 
 /**
@@ -46,13 +50,15 @@ export async function loadForecastMeta(): Promise<ForecastMeta> {
     | { extraWeights?: number[]; extraLookbacks?: number[] }
     | undefined;
   const { weightGrid, lookbackGrid } = mergeGrids(WEIGHT_GRID, LOOKBACK_GRID, tuning);
-  return { ...bestParams(combos), weightGrid, lookbackGrid };
+  return { ...bestParams(combos), weightGrid, lookbackGrid, combos };
 }
 
 export interface LiveForecast extends ForecastComputation {
   w: number;
   sentiment: number;
   predictedPct: number;
+  /** Band-Kalibrierung aus der realisierten Fehlerverteilung (null = keine Evidenz). */
+  calib: BandCalibration | null;
 }
 
 /**
@@ -66,10 +72,13 @@ export async function runForecast(
   sentiment: number,
 ): Promise<LiveForecast | null> {
   const db = getFirestore();
-  const { w: bestW, lookback: bestLb, weightGrid, lookbackGrid } = await loadForecastMeta();
+  const { w: bestW, lookback: bestLb, weightGrid, lookbackGrid, combos } = await loadForecastMeta();
 
-  const live = computeForecast(closes, baseDate, sentiment, bestW, FORECAST_HORIZON, bestLb);
-  if (!live) return null;
+  // V2 (Teil 3): Feature-Tilt + Regime-Band; Band anschließend auf die
+  // realisierte Fehlerverteilung der aktiven Kombi kalibriert.
+  const raw = computeForecastV2(closes, baseDate, sentiment, bestW, FORECAST_HORIZON, bestLb);
+  if (!raw) return null;
+  const { fc: live, calib } = applyBandCalibration(raw, combos[comboKey(bestW, bestLb)]);
   const predictedPct =
     live.baseClose > 0
       ? (live.points[live.points.length - 1]!.value / live.baseClose - 1) * 100
@@ -83,7 +92,9 @@ export async function runForecast(
     const madeAt = new Date().toISOString();
     for (const w of weightGrid) {
       for (const lb of lookbackGrid) {
-        const fc = computeForecast(closes, baseDate, sentiment, w, FORECAST_HORIZON, lb);
+        // Shadow = derselbe V2-Generator wie live — nur so misst die
+        // Bewertung die Prognosen, die wirklich ausgespielt werden.
+        const fc = computeForecastV2(closes, baseDate, sentiment, w, FORECAST_HORIZON, lb);
         if (!fc) continue;
         const docData: ForecastDoc = {
           baseDate,
@@ -107,13 +118,14 @@ export async function runForecast(
     await batch.commit();
   }
 
-  return { ...live, w: bestW, sentiment, predictedPct };
+  return { ...live, w: bestW, sentiment, predictedPct, calib };
 }
 
 export interface LiveIntradayForecast extends IntradayForecastComputation {
   w: number;
   sentiment: number;
   predictedPct: number;
+  calib: BandCalibration | null;
 }
 
 const pctToLast = (points: Array<{ value: number }>, base: number): number =>
@@ -143,8 +155,9 @@ export async function runIntradayForecast(
   const bestW = (INTRADAY_WEIGHT_GRID as readonly number[]).includes(best.w) ? best.w : 0.5;
   const bestLb = (INTRADAY_LOOKBACK_GRID as readonly number[]).includes(best.lookback) ? best.lookback : 24;
 
-  const live = computeIntradayForecast(closes, baseT, sentiment, bestW, INTRADAY_HORIZON, bestLb);
-  if (!live) return null;
+  const rawLive = computeIntradayForecastV2(closes, baseT, sentiment, bestW, INTRADAY_HORIZON, bestLb);
+  if (!rawLive) return null;
+  const { fc: live, calib } = applyBandCalibration(rawLive, combos[comboKey(bestW, bestLb)]);
 
   // Shadow-Logging: offener Markt + Stundenslot; einmal je (symbol, baseT)
   if (marketOpen && baseT % 3600 < 300) {
@@ -155,7 +168,7 @@ export async function runIntradayForecast(
       const madeAt = new Date().toISOString();
       for (const w of INTRADAY_WEIGHT_GRID) {
         for (const lb of INTRADAY_LOOKBACK_GRID) {
-          const fc = computeIntradayForecast(closes, baseT, sentiment, w, INTRADAY_HORIZON, lb);
+          const fc = computeIntradayForecastV2(closes, baseT, sentiment, w, INTRADAY_HORIZON, lb);
           if (!fc) continue;
           const docData: IntradayForecastDoc = {
             baseT,
@@ -177,5 +190,5 @@ export async function runIntradayForecast(
     }
   }
 
-  return { ...live, w: bestW, sentiment, predictedPct: pctToLast(live.points, live.baseClose) };
+  return { ...live, w: bestW, sentiment, predictedPct: pctToLast(live.points, live.baseClose), calib };
 }
