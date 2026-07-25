@@ -551,6 +551,13 @@ button, input, select { font-family: inherit; font-size: inherit; }
   display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
   max-width: min(78%, 560px);
 }
+.hud-top { display: flex; align-items: flex-start; gap: 4px; }
+.hud-tgl {
+  pointer-events: auto; cursor: pointer; border: 1px solid var(--hair);
+  border-radius: 7px; padding: 1px 6px; font-size: 10px; line-height: 1.5;
+  color: var(--t3); background: color-mix(in srgb, var(--bg, #060b12) 62%, transparent);
+}
+.hud-tgl.on { color: var(--ac); }
 .ohlc-row {
   font-size: 11px; color: var(--t2); padding: 2px 8px; border-radius: 7px;
   background: color-mix(in srgb, var(--bg, #060b12) 62%, transparent);

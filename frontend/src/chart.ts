@@ -12,6 +12,7 @@
  * - crosshair.mode als numerisches Literal 0.
  */
 
+import { heikinAshi } from '@autotrd/shared';
 import type { Bar } from '@autotrd/shared';
 
 export interface ChartBar extends Bar {
@@ -75,8 +76,17 @@ export interface OverlayLine {
   points: Array<{ time: string | number; value: number }>;
 }
 
+/** Serien-Typen (TV-Parität Teil 1) — Renko/Kagi/P&F bewusst später. */
+export type ChartType = 'candles' | 'hollow' | 'heikin' | 'line' | 'area' | 'baseline' | 'bars';
+
 export interface PriceChartHandle {
   setBars(bars: ChartBar[] | IntradayChartBar[], opts?: SetBarsOptions): void;
+  /** Chart-Typ umschalten (rendert aus den zuletzt gesetzten Bars neu). */
+  setChartType(type: ChartType): void;
+  /** Aktiver Chart-Typ (E2E-Hook). */
+  chartType(): ChartType;
+  /** Preisskala: 0 = linear, 1 = logarithmisch, 2 = Prozent (LWC PriceScaleMode). */
+  setPriceScaleMode(mode: 0 | 1 | 2): void;
   /** Indikator-/Vergleichs-Linien deklarativ setzen (fehlende Keys werden entfernt). */
   setOverlays(lines: OverlayLine[]): void;
   /** Anzahl aktiver Overlay-Linien (E2E-Hook). */
@@ -240,6 +250,69 @@ export async function buildPriceChart(
   let currentRightOffset = 4;
   let autoScaleOn = true;
 
+  // Chart-Typen (TV-Parität Teil 1): Kerzen-artige Typen rendern über die
+  // candle-Serie (Heikin-Ashi = Daten-Transformation, Hollow = Stil-Optionen);
+  // Line/Area/Baseline/Bars laufen über eine Alternativ-Serie. Die zuletzt
+  // gesetzten Bars werden gecacht, damit der Typ-Wechsel ohne neue Daten geht.
+  type Row = { time: string; open: number; high: number; low: number; close: number; volume: number };
+  let cachedRows: Row[] = [];
+  let currentType: ChartType = 'candles';
+  let candlesWanted = true; // „Kerzen aus"-Layer (gilt nur für Kerzen-Typen)
+  let alt: ReturnType<typeof chart.addLineSeries> | null = null;
+  let altKind: ChartType | null = null;
+  const CANDLE_TYPES = new Set<ChartType>(['candles', 'hollow', 'heikin']);
+  const SOLID_OPTS = { upColor: '#26cf9d', borderVisible: false, borderUpColor: '#26cf9d' };
+  const HOLLOW_OPTS = { upColor: 'rgba(0,0,0,0)', borderVisible: true, borderUpColor: '#26cf9d' };
+
+  const renderPrice = (): void => {
+    const isCandle = CANDLE_TYPES.has(currentType);
+    const rows = currentType === 'heikin' ? heikinAshi(cachedRows) : cachedRows;
+    candle.setData(rows.map(({ volume: _v, ...r }) => r) as never);
+    candle.applyOptions({
+      visible: isCandle && candlesWanted,
+      ...(currentType === 'hollow' ? HOLLOW_OPTS : SOLID_OPTS),
+    });
+    if (!isCandle) {
+      if (!alt || altKind !== currentType) {
+        if (alt) chart.removeSeries(alt);
+        const opts = { priceLineVisible: true, lastValueVisible: true, crosshairMarkerVisible: false };
+        if (currentType === 'line') alt = chart.addLineSeries({ color: '#25d0ee', lineWidth: 2, ...opts });
+        else if (currentType === 'area')
+          alt = chart.addAreaSeries({
+            lineColor: '#25d0ee',
+            topColor: 'rgba(37,208,238,.28)',
+            bottomColor: 'rgba(37,208,238,0)',
+            lineWidth: 2,
+            ...opts,
+          }) as never;
+        else if (currentType === 'baseline')
+          alt = chart.addBaselineSeries({
+            baseValue: { type: 'price', price: cachedRows[0]?.close ?? 0 },
+            topLineColor: '#26cf9d',
+            topFillColor1: 'rgba(38,207,157,.25)',
+            topFillColor2: 'rgba(38,207,157,0)',
+            bottomLineColor: '#f2586b',
+            bottomFillColor1: 'rgba(242,88,107,0)',
+            bottomFillColor2: 'rgba(242,88,107,.25)',
+            lineWidth: 2,
+            ...opts,
+          }) as never;
+        else alt = chart.addBarSeries({ upColor: '#26cf9d', downColor: '#f2586b', thinBars: false, ...opts }) as never;
+        altKind = currentType;
+      }
+      if (currentType === 'bars') alt.setData(cachedRows.map(({ volume: _v, ...r }) => r) as never);
+      else {
+        if (currentType === 'baseline')
+          alt.applyOptions({ baseValue: { type: 'price', price: cachedRows[0]?.close ?? 0 } } as never);
+        alt.setData(cachedRows.map((r) => ({ time: r.time, value: r.close })) as never);
+      }
+    } else if (alt) {
+      chart.removeSeries(alt);
+      alt = null;
+      altKind = null;
+    }
+  };
+
   return {
     setBars(bars: ChartBar[] | IntradayChartBar[], opts?: SetBarsOptions): void {
       closeByDate.clear();
@@ -248,7 +321,8 @@ export async function buildPriceChart(
         if ('date' in b) closeByDate.set(b.date, b.close);
         return { time, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume };
       });
-      candle.setData(rows.map(({ volume: _v, ...r }) => r) as never);
+      cachedRows = rows;
+      renderPrice();
       vol.setData(
         rows.map((r) => ({
           time: r.time,
@@ -343,8 +417,20 @@ export async function buildPriceChart(
       return areaOn;
     },
     setCandlesVisible(visible: boolean): void {
-      candle.applyOptions({ visible });
+      candlesWanted = visible;
+      candle.applyOptions({ visible: visible && CANDLE_TYPES.has(currentType) });
       vol.applyOptions({ visible });
+    },
+    setChartType(type: ChartType): void {
+      if (type === currentType) return;
+      currentType = type;
+      renderPrice();
+    },
+    chartType(): ChartType {
+      return currentType;
+    },
+    setPriceScaleMode(mode: 0 | 1 | 2): void {
+      chart.priceScale('right').applyOptions({ mode });
     },
     setRightOffset(bars: number): void {
       if (bars === currentRightOffset) return;

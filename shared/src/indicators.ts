@@ -234,3 +234,38 @@ export function lastValue(series: Series): number | null {
   }
   return null;
 }
+
+/** OHLC-Bar für die Heikin-Ashi-Transformation (Zeit-Feld bleibt außen vor —
+ *  die Transformation ist rein preislich und typ-agnostisch nutzbar). */
+export interface HaBar {
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+}
+
+/**
+ * Heikin-Ashi (TV-Parität Teil 1): geglättete Kerzen — haClose = OHLC-Mittel,
+ * haOpen = Mittel der VORHERIGEN HA-Kerze (kausal, kein Lookahead),
+ * haHigh/haLow umschließen Original-Extrem und HA-Körper.
+ */
+export function heikinAshi<T extends HaBar>(bars: T[]): T[] {
+  const out: T[] = [];
+  let prevOpen = 0;
+  let prevClose = 0;
+  for (let i = 0; i < bars.length; i++) {
+    const b = bars[i]!;
+    const haClose = (b.open + b.high + b.low + b.close) / 4;
+    const haOpen = i === 0 ? (b.open + b.close) / 2 : (prevOpen + prevClose) / 2;
+    out.push({
+      ...b,
+      open: haOpen,
+      high: Math.max(b.high, haOpen, haClose),
+      low: Math.min(b.low, haOpen, haClose),
+      close: haClose,
+    });
+    prevOpen = haOpen;
+    prevClose = haClose;
+  }
+  return out;
+}

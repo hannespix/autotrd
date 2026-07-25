@@ -537,6 +537,38 @@ Charts parallel.
       · echte Sekunden-Ticks kommen mit dem M13-Streamer
 - [ ] ATR, 52-Wochen-Marken, Pivots (weitere Trading-Hilfen)
 
+## TV-Parität (User-Wunsch 25.07. abends: „so viel wie möglich von TradingView")
+
+**Studie (kompakt):** TradingViews Chart-Kern bietet (a) ~10 Serien-Typen
+(Candles, Hollow, Heikin-Ashi, Line, Area, Baseline, Bars, Renko/Kagi/P&F),
+(b) Preisskalen-Modi (linear/log/Prozent, invertiert), (c) Zeichenwerkzeuge
+(Trendlinien, Horizontale, Fibs, Rechtecke, Text — mit Persistenz je Symbol),
+(d) Chart-Vorlagen/Templates + Multi-Chart-Layouts, (e) Sessions/Zeitzonen,
+Kerzen-Countdown, Alarm-Linien, (f) Bar-Replay. Mit Lightweight Charts 4.2
+sind (a) bis auf Renko/Kagi/P&F direkt oder per Daten-Transformation machbar,
+(b) nativ (PriceScaleMode), (c) als eigener SVG-Layer (Basis: predSvg),
+(d) als gespeicherte Einstellungs-Bundles, (e) teils nativ/teils UI,
+(f) fällt mit dem M12-Tagesfilm zusammen.
+
+- [x] Teil 1: Chart-Typen (Kerzen · Hohl · Heikin-Ashi · Linie · Berg ·
+      Baseline · Bars) im Indikatoren-Menü + Preisskala Lin/Log/% —
+      synct in alle Raster-Panels, Gerät-lokal persistiert; Heikin-Ashi
+      als pure kausale Transformation in shared (5 Tests); dazu (Feedback
+      abends): HUD-Legende einklappbar (▾-Toggle, mobil default zu),
+      MAX_WATCHLIST 12→20, Katalog-Catch-up-Beschleunigung;
+      Screenshots aller 8 Vorlagen an den User geliefert
+- [ ] Teil 2: Zeichenwerkzeuge Basis (Trendlinie, Horizontale, Rechteck,
+      Fib-Retracement, Text) als SVG-Layer mit Koordinaten-Remap beim
+      Zoomen/Pannen; Persistenz je Symbol (settings.drawings)
+- [ ] Teil 3: Chart-Vorlagen: benannte Bundles aus Typ + Overlays + Layern +
+      Skala (settings.chartTemplates), 1-Klick-Umschalter in der Toolbar
+- [ ] Teil 4: Kerzen-Countdown (Zeit bis Bar-Schluss), Preis-Alarm-Linien
+      (Kreuzung → Browser-Notification), Sessions-Schattierung
+- [ ] Teil 5: Bar-Replay → zusammenlegen mit M12-„Tagesfilm" (ein Feature,
+      nicht zwei)
+- [ ] Renko/Kagi/Point&Figure: bewusst NACH Teil 1-4 entscheiden (eigene
+      Zeitachsen-Semantik — mit LWC nur mit Kompromissen)
+
 ## Dashboard-Individualisierung („Schweizer Taschenmesser", User-Wunsch 25.07.)
 
 **Ziel:** Jeder passt sich das Dashboard an: Module wählbar/einklappbar/
