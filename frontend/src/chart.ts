@@ -84,10 +84,16 @@ export interface PriceChartHandle {
   setBars(bars: ChartBar[] | IntradayChartBar[], opts?: SetBarsOptions): void;
   /** Chart-Typ umschalten (rendert aus den zuletzt gesetzten Bars neu). */
   setChartType(type: ChartType): void;
+  /** Kombi: Linientyp (Linie/Berg/Baseline) ZUSÄTZLICH zu den Kerzen. */
+  setTypeCombine(on: boolean): void;
+  /** Ist die Kombi gerade wirksam? (E2E-Hook; bei Kerzen-Typen/Bars false). */
+  typeCombineActive(): boolean;
   /** Aktiver Chart-Typ (E2E-Hook). */
   chartType(): ChartType;
   /** Preisskala: 0 = linear, 1 = logarithmisch, 2 = Prozent (LWC PriceScaleMode). */
   setPriceScaleMode(mode: 0 | 1 | 2): void;
+  /** Animiert zum Anfang/zur Mitte/ans Ende der geladenen Timeline springen. */
+  scrollTo(target: 'start' | 'middle' | 'end'): void;
   /** Indikator-/Vergleichs-Linien deklarativ setzen (fehlende Keys werden entfernt). */
   setOverlays(lines: OverlayLine[]): void;
   /** Anzahl aktiver Overlay-Linien (E2E-Hook). */
@@ -184,7 +190,9 @@ function chartTheme(): Record<string, unknown> {
       axisDoubleClickReset: { time: true, price: true },
     },
     handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
-    kineticScroll: { touch: true, mouse: false },
+    // Schwungvolles Scrubbing (User-Wunsch 25.07. nachts): kinetisches
+    // Weiterrollen nach dem Ziehen — auch mit der Maus, nicht nur Touch.
+    kineticScroll: { touch: true, mouse: true },
   };
 }
 
@@ -262,6 +270,9 @@ export async function buildPriceChart(
   let cachedRows: Row[] = [];
   let currentType: ChartType = 'candles';
   let candlesWanted = true; // „Kerzen aus"-Layer (gilt nur für Kerzen-Typen)
+  // Kombi (User-Wunsch 25.07. nachts): Linientyp (Linie/Berg/Baseline)
+  // ZUSÄTZLICH zu den Kerzen — bei OHLC-Bars sinnfrei (doppelte OHLC-Optik).
+  let combineOn = false;
   let alt: ReturnType<typeof chart.addLineSeries> | null = null;
   let altKind: ChartType | null = null;
   const CANDLE_TYPES = new Set<ChartType>(['candles', 'hollow', 'heikin']);
@@ -270,10 +281,11 @@ export async function buildPriceChart(
 
   const renderPrice = (): void => {
     const isCandle = CANDLE_TYPES.has(currentType);
+    const combineActive = combineOn && !isCandle && currentType !== 'bars';
     const rows = currentType === 'heikin' ? heikinAshi(cachedRows) : cachedRows;
     candle.setData(rows.map(({ volume: _v, ...r }) => r) as never);
     candle.applyOptions({
-      visible: isCandle && candlesWanted,
+      visible: (isCandle || combineActive) && candlesWanted,
       ...(currentType === 'hollow' ? HOLLOW_OPTS : SOLID_OPTS),
     });
     if (!isCandle) {
@@ -433,8 +445,31 @@ export async function buildPriceChart(
     chartType(): ChartType {
       return currentType;
     },
+    setTypeCombine(on: boolean): void {
+      if (on === combineOn) return;
+      combineOn = on;
+      renderPrice();
+    },
+    typeCombineActive(): boolean {
+      return combineOn && !CANDLE_TYPES.has(currentType) && currentType !== 'bars';
+    },
     setPriceScaleMode(mode: 0 | 1 | 2): void {
       chart.priceScale('right').applyOptions({ mode });
+    },
+    scrollTo(target: 'start' | 'middle' | 'end'): void {
+      const ts = chart.timeScale();
+      if (target === 'end') {
+        ts.scrollToRealTime(); // animiert an die rechte Kante
+        return;
+      }
+      const r = ts.getVisibleLogicalRange();
+      if (!r || cachedRows.length === 0) return;
+      const span = r.to - r.from;
+      const len = cachedRows.length;
+      // scrollToPosition: 0 = letzter Bar an der rechten Kante, negativ = links.
+      // Anfang: rechte Kante auf Bar `span`; Mitte: Fenster um len/2 zentriert.
+      const pos = target === 'start' ? span - (len - 1) : span / 2 - (len - 1) / 2;
+      ts.scrollToPosition(Math.min(0, pos), true); // animiert (Schwung)
     },
     setRightOffset(bars: number): void {
       if (bars === currentRightOffset) return;
