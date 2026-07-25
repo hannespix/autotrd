@@ -47,7 +47,8 @@ import {
   shadowTrade,
   type ShadowBook,
 } from '../core/rulesTrading.js';
-import { runForecast, type LiveForecast } from '../core/forecaster.js';
+import { runForecast, runIntradayForecast, type LiveForecast } from '../core/forecaster.js';
+import { evaluateIntradayDue } from './evalForecasts.js';
 import { chunkBarsByYear, getDeepDailyBars, getIntradayBars, getMarketSnapshot, getQuickQuote } from '../core/marketData.js';
 import { fetchNews, newsDocId, type NewsItem } from '../core/news.js';
 
@@ -670,6 +671,38 @@ export async function runScan(force = false): Promise<ScanResult> {
           batch.set(symRef, { intradayBackfilledAt: now.toISOString() }, { merge: true });
         }
         intradayOk += 1;
+
+        // Intraday-Kurzfrist-Prognose (Prognose 2.0 Teil 2): Projektion der
+        // nächsten Stunde, bei JEDEM Scan neu berechnet (maximale Update-Rate);
+        // Shadow-Gitter loggt nur bei offenem Markt (Session-Gate im Forecaster).
+        try {
+          const flat = days.flatMap((d) => intraday.get(d) ?? []);
+          const ifc = await runIntradayForecast(
+            symbol,
+            flat,
+            sentimentOverall,
+            marketOpenForClass(classify(symbol), now),
+          );
+          batch.set(
+            symRef,
+            {
+              forecastIntraday: ifc
+                ? {
+                    points: ifc.points,
+                    band: ifc.band,
+                    w: ifc.w,
+                    lookback: ifc.lookback,
+                    predictedPct: Math.round(ifc.predictedPct * 100) / 100,
+                    baseT: ifc.points[0]!.t - 300,
+                    updatedAt: now.toISOString(),
+                  }
+                : null,
+            },
+            { merge: true },
+          );
+        } catch (err) {
+          logger.warn(`Intraday-Forecast-Fehler ${symbol}`, err);
+        }
       } catch (err) {
         logger.warn(`Intraday-Fehler ${symbol}`, err);
         intradayError ??= `${symbol}: ${err instanceof Error ? err.message : String(err)}`.slice(0, 180);
@@ -726,6 +759,16 @@ export async function runScan(force = false): Promise<ScanResult> {
     logger.warn('Katalog-Versorgung fehlgeschlagen', err);
   }
 
+  // Intraday-Prognosen bewerten (Prognose 2.0 Teil 2): Kurzfrist-Horizonte
+  // realisieren binnen einer Stunde — huckepack im Scan statt täglich 16:30.
+  let intradayScored = 0;
+  try {
+    intradayScored = (await evaluateIntradayDue()).scored;
+  } catch (err) {
+    lastError = lastError ?? `evalIntraday: ${err instanceof Error ? err.message : String(err)}`.slice(0, 400);
+    logger.warn('Intraday-Eval fehlgeschlagen', err);
+  }
+
   // Heartbeat für Monitoring-Alerts (SETUP.md §J): meta/health ist öffentlich
   // lesbar (meta-Rules) und enthält bewusst KEINE sensiblen Daten.
   await db
@@ -740,6 +783,7 @@ export async function runScan(force = false): Promise<ScanResult> {
         symbolsFailed: Object.keys(errors).length,
         intradayOk,
         intradayError,
+        intradayScored,
         trades,
         catalogQuotes,
         lastError,

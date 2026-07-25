@@ -15,10 +15,14 @@ import {
   bestParams,
   comboKey,
   isForecastDue,
+  isIntradayForecastDue,
   scoreForecast,
+  scoreIntradayForecast,
   type ComboStat,
   type ForecastDoc,
+  type IntradayForecastDoc,
 } from '../../../shared/src/index.js';
+import type { IntradayBar } from '../core/marketData.js';
 import { getMarketSnapshot } from '../core/marketData.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 
@@ -125,6 +129,133 @@ export async function evaluateDue(): Promise<EvalResult> {
   return { scored, bestParams: bp };
 }
 
+/* ── Intraday-Eval (Prognose 2.0 Teil 2) ─────────────────────────────────────
+ * Läuft huckepack in JEDEM Scan (Horizonte realisieren binnen einer Stunde —
+ * das tägliche 16:30-Fenster wäre viel zu träge). Gate: Bar-realisiert
+ * (isIntradayForecastDue) + realisierter End-Close (scoreIntradayForecast).
+ * Unbewertbar verfallene Prognosen (Session-Ende vor Horizont, Halts) werden
+ * nach EXPIRE_SEC als expired markiert — sie zählen NICHT in die Statistik,
+ * dürfen aber die Pending-Query nicht ewig verstopfen. */
+
+const INTRADAY_BATCH_LIMIT = 150;
+const INTRADAY_EXPIRE_SEC = 3 * 86_400;
+
+/** Realisierte 5-min-Closes eines Symbols (jüngste ~3 Tage) als t→close.
+ *  Sortierung über das `date`-FELD — Firestore kann keine absteigenden
+ *  Doc-ID-Scans (gleiche Falle wie bei den indicators-Docs). */
+async function loadIntradayActuals(symbol: string): Promise<Record<string, number>> {
+  const snap = await getFirestore()
+    .collection('market')
+    .doc(symbol)
+    .collection('ohlc5m')
+    .orderBy('date', 'desc')
+    .limit(3)
+    .get();
+  const actuals: Record<string, number> = {};
+  for (const doc of snap.docs) {
+    for (const bar of (doc.get('bars') as IntradayBar[] | undefined) ?? []) {
+      if (bar.c > 0) actuals[String(bar.t)] = bar.c;
+    }
+  }
+  return actuals;
+}
+
+/** Alle fälligen Intraday-Prognosen bewerten; Statistik nach meta/forecastStatsIntraday. */
+export async function evaluateIntradayDue(): Promise<{ scored: number; expired: number }> {
+  const db = getFirestore();
+  const nowSec = Math.floor(Date.now() / 1000);
+
+  const pending = await db
+    .collectionGroup('forecastsIntraday')
+    .where('evaluated', '==', false)
+    .limit(INTRADAY_BATCH_LIMIT)
+    .get();
+  if (pending.empty) return { scored: 0, expired: 0 };
+
+  const bySymbol = new Map<string, Array<{ ref: FirebaseFirestore.DocumentReference; doc: IntradayForecastDoc }>>();
+  for (const snap of pending.docs) {
+    const doc = snap.data() as IntradayForecastDoc;
+    if (!isIntradayForecastDue(doc.points, nowSec)) continue;
+    const symbol = snap.ref.parent.parent?.id;
+    if (!symbol) continue;
+    const list = bySymbol.get(symbol) ?? [];
+    list.push({ ref: snap.ref, doc });
+    bySymbol.set(symbol, list);
+  }
+
+  let scored = 0;
+  let expired = 0;
+  const comboDelta = new Map<string, ComboStat>();
+
+  for (const [symbol, entries] of bySymbol) {
+    let actuals: Record<string, number>;
+    try {
+      actuals = await loadIntradayActuals(symbol);
+    } catch (err) {
+      logger.warn(`evalIntraday: keine Actuals für ${symbol}`, err);
+      continue;
+    }
+    const batch = db.batch();
+    for (const { ref, doc } of entries) {
+      const score = scoreIntradayForecast(doc.points, doc.baseClose, actuals);
+      if (score) {
+        batch.update(ref, {
+          evaluated: true,
+          evaluatedAt: new Date().toISOString(),
+          maePct: score.maePct,
+          dirHit: score.dirHit,
+          nPoints: score.nPoints,
+        });
+        const key = comboKey(doc.w, doc.lookback);
+        const d = comboDelta.get(key) ?? { n: 0, hits: 0, maeSum: 0 };
+        d.n += 1;
+        d.hits += score.dirHit ? 1 : 0;
+        d.maeSum += score.maePct;
+        comboDelta.set(key, d);
+        scored += 1;
+      } else if (nowSec - doc.baseT > INTRADAY_EXPIRE_SEC) {
+        // End-Bar wird nie realisiert (Session-Ende/Halt) → verfallen lassen,
+        // NIEMALS mit unvollständigen Daten scoren (Gate bleibt heilig).
+        batch.update(ref, { evaluated: true, expired: true });
+        expired += 1;
+      }
+    }
+    await batch.commit();
+  }
+
+  const statsRef = db.doc('meta/forecastStatsIntraday');
+  if (comboDelta.size > 0) {
+    const args: unknown[] = [new FieldPath('updatedAt'), new Date().toISOString()];
+    for (const [key, d] of comboDelta) {
+      args.push(new FieldPath('combos', key, 'n'), FieldValue.increment(d.n));
+      args.push(new FieldPath('combos', key, 'hits'), FieldValue.increment(d.hits));
+      args.push(new FieldPath('combos', key, 'maeSum'), FieldValue.increment(d.maeSum));
+    }
+    await statsRef.set({}, { merge: true });
+    await statsRef.update(args[0] as FieldPath, args[1], ...(args.slice(2) as unknown[]));
+
+    const combos =
+      ((await statsRef.get()).get('combos') as Record<string, ComboStat> | undefined) ?? {};
+    const bp = bestParams(combos);
+    const total = Object.values(combos).reduce((s, d) => s + d.n, 0);
+    const hits = Object.values(combos).reduce((s, d) => s + d.hits, 0);
+    await statsRef.set(
+      {
+        best: bp,
+        scored: total,
+        dirAccuracy: total > 0 ? Math.round((hits / total) * 1000) / 10 : null,
+        tuningActive: total >= 20,
+      },
+      { merge: true },
+    );
+  }
+
+  if (scored + expired > 0) {
+    logger.info(`evalIntraday: ${scored} bewertet, ${expired} verfallen`);
+  }
+  return { scored, expired };
+}
+
 /** Täglich 16:30 ET (nach US-Schluss), Mo–Fr. */
 export const evalForecasts = onSchedule(
   { schedule: '30 16 * * 1-5', timeZone: 'America/New_York', retryCount: 0 },
@@ -139,5 +270,7 @@ export const evalNow = onRequest(EMULATOR_TRIGGER_OPTS, async (_req, res) => {
     res.status(403).json({ error: 'evalNow ist nur im Emulator verfügbar' });
     return;
   }
-  res.status(200).json(await evaluateDue());
+  const daily = await evaluateDue();
+  const intraday = await evaluateIntradayDue();
+  res.status(200).json({ ...daily, intraday });
 });

@@ -20,8 +20,9 @@ export interface ChartBar extends Bar {
 }
 
 export interface ForecastOverlay {
-  points: Array<{ time: string; value: number }>;
-  band: Array<{ time: string; upper: number; lower: number }>;
+  /** Zeit als ISO-Tag (Tages-Prognose) oder UNIX-Sekunden (Intraday). */
+  points: Array<{ time: string | number; value: number }>;
+  band: Array<{ time: string | number; upper: number; lower: number }>;
 }
 
 export interface ChartMarker {
@@ -106,7 +107,7 @@ export interface PriceChartHandle {
   /** Y-Autoscaling an/aus — auch explizite Fits respektieren die Wahl. */
   setAutoScale(on: boolean): void;
   /** Prognose-Overlay: gestrichelte Mittellinie + ±1σ-Band (null = entfernen). */
-  setForecast(overlay: ForecastOverlay | null, anchor?: { time: string; value: number }): void;
+  setForecast(overlay: ForecastOverlay | null, anchor?: { time: string | number; value: number }): void;
   /** Ist ein Prognose-Overlay gesetzt? (E2E-Hook) */
   forecastActive(): boolean;
   /** Event-Marker (sentiment-gefärbt) auf den Kerzen. */
@@ -459,9 +460,11 @@ export async function buildPriceChart(
       const mid = anchor
         ? [{ time: anchor.time, value: anchor.value }, ...overlay.points]
         : overlay.points;
-      fcMid.setData(mid.map((p) => ({ time: p.time, value: p.value })));
-      fcUp.setData(overlay.band.map((b) => ({ time: b.time, value: b.upper })));
-      fcLo.setData(overlay.band.map((b) => ({ time: b.time, value: b.lower })));
+      // Zeit kann ISO-Tag ODER UNIX-Sekunden sein (Intraday) — gleiche
+      // Laundering-Idiomatik wie bei setBars (LWC akzeptiert beides zur Laufzeit)
+      fcMid.setData(mid.map((p) => ({ time: p.time as never as string, value: p.value })));
+      fcUp.setData(overlay.band.map((b) => ({ time: b.time as never as string, value: b.upper })));
+      fcLo.setData(overlay.band.map((b) => ({ time: b.time as never as string, value: b.lower })));
     },
     setMarkers(markers): void {
       candle.setMarkers(

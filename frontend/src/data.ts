@@ -68,6 +68,16 @@ export interface MarketDocData {
     sentiment: number;
     baseDate: string;
   } | null;
+  /** Kurzfrist-Prognose (nächste Stunde, 5-min-Raster) — je Scan erneuert. */
+  forecastIntraday?: {
+    points: Array<{ t: number; value: number }>;
+    band: Array<{ t: number; upper: number; lower: number }>;
+    w: number;
+    lookback: number;
+    predictedPct: number;
+    baseT: number;
+    updatedAt: string;
+  } | null;
 }
 
 export interface EventDay {
@@ -164,6 +174,20 @@ export function watchForecastStats(cb: (stats: ForecastStatsDoc | null) => void)
     'forecastStats',
     (emit) =>
       onSnapshot(doc(db(), 'meta', 'forecastStats'), (snap) =>
+        emit(snap.exists() ? snap.data() : null),
+      ),
+    (p) => cb(p as ForecastStatsDoc | null),
+  );
+}
+
+/** Kurzfrist-Lernstatistik (meta/forecastStatsIntraday) — gleiche Struktur. */
+export function watchForecastStatsIntraday(
+  cb: (stats: ForecastStatsDoc | null) => void,
+): Unsubscribe {
+  return muxWatch(
+    'forecastStatsIntraday',
+    (emit) =>
+      onSnapshot(doc(db(), 'meta', 'forecastStatsIntraday'), (snap) =>
         emit(snap.exists() ? snap.data() : null),
       ),
     (p) => cb(p as ForecastStatsDoc | null),
