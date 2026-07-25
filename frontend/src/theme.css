@@ -511,6 +511,19 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .chart-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 10px; color: var(--t2); margin: 2px 0 4px; }
 .lg-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: -1px; }
 
+/* Dashboard-Individualisierung Teil 1: Modul-Kopf (▾/✕), ⚙-Module, Sidebars */
+.sect-tools { float: right; display: inline-flex; gap: 2px; margin-left: 8px; }
+.sect-btn { background: none; border: 0; color: var(--t3); cursor: pointer; font-size: 11px; padding: 0 5px; border-radius: 4px; line-height: 1.4; }
+.sect-btn:hover { color: var(--t1); background: var(--sd); }
+.opt-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 14px; }
+.opt-chk { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--t2); cursor: pointer; }
+.opt-chk input { accent-color: var(--ac); }
+.sb-tgl.off { opacity: .45; }
+@media (min-width: 901px) {
+  .col-l.sb-hidden, .col-r.sb-hidden { display: none; }
+}
+@media (max-width: 900px) { .sb-tgl { display: none; } }
+
 /* A/B-Duell (M11): Paper-Wallet vs. Shadow-Strategie */
 .ab-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .ab-side { display: flex; flex-direction: column; gap: 4px; padding: 10px; border: 1px solid var(--bd); border-radius: var(--r-sm); font-size: 12px; }

@@ -157,6 +157,8 @@ interface DashState {
   predMode: boolean;
   /** Optionale Elemente (Options-Modal ⚙, settings.ui) — ✏ ist Opt-in. */
   ui: { predArrow: boolean; cmpOverlay: boolean; chartGrid: boolean; subPanels: boolean };
+  /** Eingeklappte Module (nur Karten-Körper zu — Gerät-lokal). */
+  collapsed: Set<string>;
   /** Clean-View: blendet alles Optionale aus, ohne die Auswahl zu verlieren. */
   cleanView: boolean;
   /** Richtung des letzten Scan-Signals — färbt den Flächen-Verlauf. */
@@ -295,7 +297,9 @@ function layout(email: string): string {
     <div class="spacer"></div>
     <div id="engBadge" class="badge b-off">Engine aus</div>
     <a class="hbtn" id="studioLink" href="#/strategy" title="Strategie-Studio">⚡<span class="hide-sm"> Studio</span></a>
-    <button class="hbtn" id="optBtn" title="Optionen: Elemente & Paper-Wallet">⚙</button>
+    <button class="hbtn" id="optBtn" title="Optionen: Elemente, Module & Paper-Wallet">⚙</button>
+    <button class="hbtn sb-tgl" id="sideL" title="Linke Spalte ein-/ausblenden">◧</button>
+    <button class="hbtn sb-tgl" id="sideR" title="Rechte Spalte ein-/ausblenden">◨</button>
     <button class="hbtn" id="themeBtn" title="Hell/Dunkel">◐</button>
     <span class="user">${email.replace(/[<>&]/g, '')}</span>
     <button class="hbtn" id="logoutBtn">Abmelden</button>
@@ -593,6 +597,10 @@ function layout(email: string): string {
       <label class="opt-row"><input type="checkbox" id="ouSub" />
         <span><b>Indikator-Extras</b> — VWAP (Intraday) und RSI/MACD-Unterpanels
         unter dem Haupt-Chart.</span></label>
+      <div class="wl-sec">Module</div>
+      <div id="ouPanels" class="opt-panels"></div>
+      <p class="hint">Abgewählte Module verschwinden komplett (geht auch per ✕ direkt am Modul);
+        ▾ am Modul klappt nur zu. Die Auswahl synct über deine Geräte.</p>
       <div class="wl-sec">Paper-Wallet · Grundeinstellungen</div>
       <div class="opt-grid">
         <label>Startkapital $
@@ -1153,6 +1161,16 @@ function openOptions(): void {
   ($('owMax') as HTMLInputElement).value = String(st.strategy.engine.maxPositionPct);
   ($('owSl') as HTMLInputElement).value = String(st.strategy.engine.stopLossPct);
   ($('owTp') as HTMLInputElement).value = String(st.strategy.engine.takeProfitPct);
+  // Module: Checkbox je Panel — gleiche Wahrheit wie ✕ am Modul und die Palette
+  $('ouPanels').innerHTML = Object.entries(PANEL_TITLES)
+    .map(
+      ([id, title]) =>
+        `<label class="opt-chk"><input type="checkbox" data-mod="${id}" ${st!.wsHidden.has(id) ? '' : 'checked'} /> ${title}</label>`,
+    )
+    .join('');
+  $('ouPanels')
+    .querySelectorAll<HTMLInputElement>('input[data-mod]')
+    .forEach((cb) => cb.addEventListener('change', () => togglePanel(cb.dataset.mod ?? '')));
   $('optMsg').textContent = '';
   $('optModal').classList.add('show');
 }
@@ -1921,6 +1939,46 @@ function togglePanel(id: string): void {
   scheduleWsSave();
 }
 
+/* ── Dashboard-Individualisierung Teil 1 (Taschenmesser-Vision 25.07.) ── */
+
+/** Eingeklappte Karten anwenden (nur der Körper zu — Gerät-lokal). */
+function applyCollapse(): void {
+  if (!st) return;
+  document.querySelectorAll<HTMLElement>('.card[data-panel]').forEach((card) => {
+    const id = card.dataset.panel ?? '';
+    const body = card.querySelector<HTMLElement>(':scope > .cbody');
+    const btn = card.querySelector<HTMLElement>(':scope > .sect [data-col]');
+    const on = st!.collapsed.has(id);
+    if (body) body.hidden = on;
+    if (btn) btn.textContent = on ? '▸' : '▾';
+  });
+}
+
+/** Jede Modul-Karte bekommt ▾ (einklappen) und ✕ (ausblenden) im Kopf. */
+function wirePanelChrome(): void {
+  document.querySelectorAll<HTMLElement>('.card[data-panel]').forEach((card) => {
+    const sect = card.querySelector<HTMLElement>(':scope > .sect');
+    const body = card.querySelector<HTMLElement>(':scope > .cbody');
+    const id = card.dataset.panel ?? '';
+    if (!sect || !body || !id) return;
+    const box = document.createElement('span');
+    box.className = 'sect-tools';
+    box.innerHTML =
+      '<button type="button" class="sect-btn" data-col title="Modul ein-/ausklappen">▾</button>' +
+      '<button type="button" class="sect-btn" data-x title="Modul ausblenden — wieder einblendbar über ⚙ → Module">✕</button>';
+    sect.appendChild(box);
+    box.querySelector('[data-col]')!.addEventListener('click', () => {
+      if (!st) return;
+      if (st.collapsed.has(id)) st.collapsed.delete(id);
+      else st.collapsed.add(id);
+      localStorage.setItem('autotrd-collapsed', [...st.collapsed].join(','));
+      applyCollapse();
+    });
+    box.querySelector('[data-x]')!.addEventListener('click', () => togglePanel(id));
+  });
+  applyCollapse();
+}
+
 /** Workspace debounced (2 s) nach users/{uid}/workspaces/default schreiben. */
 function scheduleWsSave(): void {
   if (!st) return;
@@ -2446,6 +2504,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     prediction: null,
     predMode: false,
     ui: { predArrow: false, cmpOverlay: true, chartGrid: true, subPanels: true },
+    collapsed: new Set((localStorage.getItem('autotrd-collapsed') ?? '').split(',').filter(Boolean)),
     cleanView: localStorage.getItem('autotrd-chart-clean') === '1',
     lastSignalDir: 'hold',
     subCharts: { rsi: null, macd: null },
@@ -2717,6 +2776,25 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     el.addEventListener('click', () => closeModal((el as HTMLElement).dataset.close as 'detail' | 'picker' | 'options')));
   $('burgL').addEventListener('click', () => { $('leftCol').classList.toggle('show'); $('olv').classList.toggle('show'); });
   $('burgR').addEventListener('click', () => { $('rightCol').classList.toggle('show'); $('olv').classList.toggle('show'); });
+  // Desktop-Sidebars ein-/ausblendbar (Taschenmesser Teil 1) — persistiert
+  const sbState = ((): { l?: boolean; r?: boolean } => {
+    try {
+      return JSON.parse(localStorage.getItem('autotrd-sidebars') ?? '{}') as { l?: boolean; r?: boolean };
+    } catch {
+      return {};
+    }
+  })();
+  const applySidebars = (): void => {
+    $('leftCol').classList.toggle('sb-hidden', sbState.l === true);
+    $('rightCol').classList.toggle('sb-hidden', sbState.r === true);
+    $('sideL').classList.toggle('off', sbState.l === true);
+    $('sideR').classList.toggle('off', sbState.r === true);
+    localStorage.setItem('autotrd-sidebars', JSON.stringify(sbState));
+  };
+  $('sideL').addEventListener('click', () => { sbState.l = sbState.l !== true; applySidebars(); });
+  $('sideR').addEventListener('click', () => { sbState.r = sbState.r !== true; applySidebars(); });
+  applySidebars();
+  wirePanelChrome();
   $('olv').addEventListener('click', () => {
     for (const id of ['leftCol', 'rightCol']) $(id).classList.remove('show');
     $('olv').classList.remove('show');
@@ -2827,7 +2905,14 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   // Prognose-Pfeil: Modus + Popover
   $('predBtn').addEventListener('click', () => {
     if (!st) return;
-    if (st.intradayDays > 0) return; // Pfeil nur in der Tages-Ansicht
+    // Pfeil ist tagesbasiert — steht der Chart (z. B. durch die Auto-
+    // Auflösung) auf Intraday-Kerzen, erst auf Tageskerzen zurückholen
+    // statt stumm nichts zu tun (Bug-Meldung 25.07.).
+    if (st.intradayDays > 0) {
+      st.intradayDays = 0;
+      st.chartFitPending = true;
+      renderChart();
+    }
     st.predMode = !st.predMode;
     $('predBtn').classList.toggle('on', st.predMode);
   });
