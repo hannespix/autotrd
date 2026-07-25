@@ -52,6 +52,13 @@ export interface SetBarsOptions {
   timeVisible?: boolean;
 }
 
+/** Farben des Flächen-Verlaufs — die Signal-Richtung färbt das Integral. */
+export interface AreaColors {
+  line: string;
+  top: string;
+  bottom: string;
+}
+
 export interface OverlayLine {
   /** Eindeutiger Schlüssel (z. B. 'sma50', 'cmp:AAPL'). */
   key: string;
@@ -72,6 +79,12 @@ export interface PriceChartHandle {
   onClick(cb: (price: number | null) => void): void;
   /** Pixel-Koordinaten für (Zeit, Preis) — für absolut positionierte Overlays. */
   coords(time: string | number, price: number): { x: number | null; y: number | null };
+  /** Flächen-Verlauf unter der Kurslinie (Vektor-Look): null = entfernen. */
+  setArea(points: Array<{ time: string | number; value: number }> | null, colors?: AreaColors): void;
+  /** Ist der Flächen-Layer aktiv? (E2E-Hook) */
+  areaActive(): boolean;
+  /** Kerzen + Volumen ein-/ausblenden (ruhiger Vektor-Look bei aktiver Fläche). */
+  setCandlesVisible(visible: boolean): void;
   /** Prognose-Overlay: gestrichelte Mittellinie + ±1σ-Band (null = entfernen). */
   setForecast(overlay: ForecastOverlay | null, anchor?: { time: string; value: number }): void;
   /** Event-Marker (sentiment-gefärbt) auf den Kerzen. */
@@ -202,6 +215,10 @@ export async function buildPriceChart(
   // wiederverwendet und beim Entfernen sauber abgeräumt.
   const overlays = new Map<string, ReturnType<typeof chart.addLineSeries>>();
 
+  // Flächen-Verlauf (Vektor-Look): lazy angelegt, Farbe = Signal-Richtung
+  let area: ReturnType<typeof chart.addAreaSeries> | null = null;
+  let areaOn = false;
+
   return {
     setBars(bars: ChartBar[] | IntradayChartBar[], opts?: SetBarsOptions): void {
       closeByDate.clear();
@@ -272,6 +289,30 @@ export async function buildPriceChart(
         x: chart.timeScale().timeToCoordinate(time as never) as number | null,
         y: candle.priceToCoordinate(price) as number | null,
       };
+    },
+    setArea(points, colors): void {
+      areaOn = points !== null && points.length > 0;
+      if (!areaOn) {
+        area?.setData([]);
+        return;
+      }
+      area ??= chart.addAreaSeries({
+        lineWidth: 2,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false,
+      });
+      if (colors) {
+        area.applyOptions({ lineColor: colors.line, topColor: colors.top, bottomColor: colors.bottom });
+      }
+      area.setData(points as never);
+    },
+    areaActive(): boolean {
+      return areaOn;
+    },
+    setCandlesVisible(visible: boolean): void {
+      candle.applyOptions({ visible });
+      vol.applyOptions({ visible });
     },
     setForecast(overlay, anchor): void {
       if (!overlay || overlay.points.length === 0) {
