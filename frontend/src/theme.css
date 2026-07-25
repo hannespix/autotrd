@@ -91,7 +91,21 @@ button, input, select { font-family: inherit; font-size: inherit; }
 
 /* Layout */
 .app { display: flex; gap: 10px; padding: 10px 12px 20px; }
-.col-l, .col-r { width: 280px; flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; }
+.col-l, .col-r { width: 280px; flex-shrink: 0; display: flex; flex-direction: column; gap: 10px; position: relative; }
+
+/* Taschenmesser Teil 3: Sidebar-Resize-Handle + Modul-Drag */
+.sb-rs {
+  position: absolute; top: 0; bottom: 0; width: 8px; cursor: col-resize;
+  touch-action: none; z-index: 20; border-radius: 4px;
+  transition: background .15s var(--e-out);
+}
+.sb-rs:hover, .sb-rs:active { background: color-mix(in srgb, var(--ac) 30%, transparent); }
+.sb-rs-right { right: -4px; }
+.sb-rs-left { left: -4px; }
+.sect-grip { cursor: grab; }
+.sect-grip:active { cursor: grabbing; }
+.card.dragging { opacity: .55; outline: 1px dashed var(--ac); }
+@media (max-width: 900px) { .sb-rs, .sect-grip { display: none; } }
 .col-m { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
 
 /* Glass-Cards */

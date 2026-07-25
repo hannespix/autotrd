@@ -557,7 +557,12 @@ die Watchlist ist nur noch der Scope der Trading-Engine.
       `catalogQuotes` im Heartbeat. Die Watchlist bleibt der Engine-Scope mit
       voller 5-min-Tiefe. ⚙ → „Marktgruppen": Klassen im Markt-Browser +
       Watchlist-Picker ausblendbar (settings.ui.marketGroups, reine Anzeige)
-- [ ] Teil 3: Sidebar-Breiten per Drag, Module per Drag umsortieren
+- [x] Teil 3: Sidebar-Breiten per Drag (Resize-Handle an der Innenkante,
+      220–440 px, Doppelklick = zurücksetzen, Gerät-lokal wie die
+      Sichtbarkeit; Charts folgen via autoSize) · Module per Drag umsortieren
+      (⠿-Grip im Kartenkopf, live einsortieren beim Ziehen, Reihenfolge in
+      workspace `panels[id].order` — synct über Geräte; Reorder bewusst je
+      Spalte) · Test-Hook `__autotrdWs` nutzt denselben Drop-Pfad
 
 ## M11 — Strategie-Studio II: Backtest, Shadow, Sweeps, A/B
 
