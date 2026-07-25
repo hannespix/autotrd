@@ -352,37 +352,54 @@ function layout(email: string): string {
           <span class="chart-px" id="chChg">--</span>
         </div>
         <div class="tf-bar">
-          <button class="tf-btn" data-intraday="1">1T</button>
-          <button class="tf-btn" data-intraday="5">1W</button>
-          <button class="tf-btn" data-bars="22">1M</button>
-          <button class="tf-btn on" data-bars="66">3M</button>
-          <button class="tf-btn" data-bars="0">1J</button>
-          <span class="grid-sw" title="Charts im Raster: 1, 2 oder 4 parallel">
-            <button class="tf-btn on" data-grid="1">▭</button>
-            <button class="tf-btn" data-grid="2">▯▯</button>
-            <button class="tf-btn" data-grid="4">⊞</button>
-          </span>
-          <button class="tf-btn" id="lockMain" hidden
-            title="Haupt-Chart in die Lock-Gruppe: Zoom, Sichtbereich und Crosshair laufen auf allen gelockten Charts synchron">🔓</button>
-          <button class="tf-btn on" id="lyFc" title="Prognose-Overlay ein/aus" style="margin-left:auto">Prognose</button>
-          <button class="tf-btn on" id="lyEv" title="Event-Marker ein/aus">Events</button>
+          <button class="tf-btn" data-intraday="1" title="1 Handelstag in 5-Minuten-Kerzen">1T</button>
+          <button class="tf-btn" data-intraday="5" title="~5 Handelstage in 5-Minuten-Kerzen">1W</button>
+          <button class="tf-btn" data-bars="22" title="1 Monat in Tageskerzen">1M</button>
+          <button class="tf-btn on" data-bars="66" title="3 Monate in Tageskerzen">3M</button>
+          <button class="tf-btn" data-bars="0" title="1 Jahr in Tageskerzen">1J</button>
+          <button class="tf-btn" id="maxMain" title="Chart im Vollbild (Esc schließt)">⛶</button>
+          <button class="tf-btn" id="toolsBtn" style="margin-left:auto"
+            title="Overlays, Panels, Raster & Vergleich ein-/ausklappen">Anzeige ▾</button>
         </div>
-        <div class="tf-bar ind-bar">
-          <button class="tf-btn" data-layer="sma20" title="Einfacher gleitender Durchschnitt, 20 Bars">SMA20</button>
-          <button class="tf-btn" data-layer="sma50" title="SMA 50">SMA50</button>
-          <button class="tf-btn" data-layer="sma200" title="SMA 200">SMA200</button>
-          <button class="tf-btn" data-layer="ema9" title="Exponentieller Durchschnitt, 9">EMA9</button>
-          <button class="tf-btn" data-layer="ema21" title="EMA 21">EMA21</button>
-          <button class="tf-btn" data-layer="bb" title="Bollinger-Bänder (20, 2σ)">BB</button>
-          <button class="tf-btn ind-x" data-layer="vwap" title="VWAP (Intraday 1T/1W): volumengewichteter Durchschnitt je Handelstag">VWAP</button>
-          <button class="tf-btn ind-x" data-layer="rsiPanel" title="RSI(14) als Unterpanel — Zeitachse läuft synchron zum Haupt-Chart">RSI ▾</button>
-          <button class="tf-btn ind-x" data-layer="macdPanel" title="MACD(12/26/9) als Unterpanel — Zeitachse läuft synchron zum Haupt-Chart">MACD ▾</button>
-          <input id="cmpSym" class="inp cmp-inp" placeholder="+ Overlay: SYM" title="Zweiten Kurs als %-Linie überlagern (Tageskerzen)" />
-          <button class="tf-btn" id="predBtn" hidden title="Prognose-Pfeil zeichnen: Klick in den Chart setzt den Ziel-Kurs">✏ Pfeil</button>
+        <div id="chartTools" hidden>
+          <div class="tf-bar">
+            <span class="tool-lbl">Overlays</span>
+            <button class="tf-btn" data-layer="sma20" title="Einfacher gleitender Durchschnitt, 20 Bars">SMA20</button>
+            <button class="tf-btn" data-layer="sma50" title="SMA 50">SMA50</button>
+            <button class="tf-btn" data-layer="sma200" title="SMA 200">SMA200</button>
+            <button class="tf-btn" data-layer="ema9" title="Exponentieller Durchschnitt, 9">EMA9</button>
+            <button class="tf-btn" data-layer="ema21" title="EMA 21">EMA21</button>
+            <button class="tf-btn" data-layer="bb" title="Bollinger-Bänder (20, 2σ)">BB</button>
+            <button class="tf-btn ind-x" data-layer="vwap" title="VWAP (Intraday 1T/1W): volumengewichteter Durchschnitt je Handelstag">VWAP</button>
+          </div>
+          <div class="tf-bar">
+            <span class="tool-lbl">Panels</span>
+            <button class="tf-btn ind-x" data-layer="rsiPanel" title="RSI(14) als Unterpanel — Zeitachse läuft synchron zum Haupt-Chart">RSI</button>
+            <button class="tf-btn ind-x" data-layer="macdPanel" title="MACD(12/26/9) als Unterpanel — Zeitachse läuft synchron zum Haupt-Chart">MACD</button>
+            <span class="tool-lbl">Layer</span>
+            <button class="tf-btn on" id="lyFc" title="Prognose-Overlay ein/aus">Prognose</button>
+            <button class="tf-btn on" id="lyEv" title="Event-Marker ein/aus">Events</button>
+          </div>
+          <div class="tf-bar">
+            <span class="tool-lbl">Raster</span>
+            <span class="grid-sw" title="Charts im Raster: 1, 2 oder 4 parallel">
+              <button class="tf-btn on" data-grid="1">▭</button>
+              <button class="tf-btn" data-grid="2">▯▯</button>
+              <button class="tf-btn" data-grid="4">⊞</button>
+            </span>
+            <button class="tf-btn" id="lockMain" hidden
+              title="Haupt-Chart in die Lock-Gruppe: Zoom, Sichtbereich und Crosshair laufen auf allen gelockten Charts synchron">🔓</button>
+            <input id="cmpSym" class="inp cmp-inp" placeholder="+ Overlay: SYM" title="Zweiten Kurs als %-Linie überlagern (Tageskerzen)" />
+            <button class="tf-btn" id="predBtn" hidden title="Prognose-Pfeil zeichnen: Klick in den Chart setzt den Ziel-Kurs">✏ Pfeil</button>
+          </div>
+          <div class="hint">Overlays zeichnen Linien in alle Charts · Panels öffnen Unterfenster
+            unter dem Chart · das Raster zeigt bis zu 4 Kurse parallel (🔒 koppelt den Zoom).</div>
         </div>
+        <div id="chartLegend" class="chart-legend" hidden></div>
         <div class="hint" id="fcInfo" style="margin-bottom:4px"></div>
         <div id="chartRow" class="chart-row" data-mode="1">
         <div id="chartWrap" class="chart-wrap">
+          <button id="maxExit" class="chart-max-exit" hidden title="Vollbild schließen (Esc)">✕</button>
           <div id="chartArea"></div>
           <svg id="predSvg" class="pred-svg" aria-hidden="true"></svg>
           <div id="predPop" class="pred-pop" hidden>
@@ -704,20 +721,16 @@ function renderChart(): void {
   updateSubPanels();
 }
 
-/** Indikator-/Vergleichs-Overlays aus den aktuell gezeigten Bars berechnen. */
-function applyOverlays(): void {
-  if (!st?.chart) return;
-  const intraday = st.intradayDays > 0;
-  const times: Array<string | number> = intraday
-    ? st.intradayBars.map((b) => b.time)
-    : (st.range > 0 ? st.bars.slice(-st.range) : st.bars).map((b) => b.date);
-  const closes = intraday
-    ? st.intradayBars.map((b) => b.close)
-    : (st.range > 0 ? st.bars.slice(-st.range) : st.bars).map((b) => b.close);
+/** SMA/EMA/BB-Linien für beliebige Bars — gilt für Haupt-Chart UND Grid-Panels
+ *  (User-Feedback 25.07.: aktive Overlays auf allen Charts). */
+function baseOverlayLines(
+  times: Array<string | number>,
+  closes: number[],
+): import('./chart.js').OverlayLine[] {
   const lines: import('./chart.js').OverlayLine[] = [];
+  if (!st) return lines;
   const pts = (series: (number | null)[]): Array<{ time: string | number; value: number }> =>
     series.flatMap((v, i) => (v === null ? [] : [{ time: times[i]!, value: v }]));
-
   const L = st.chartLayers;
   if (L.has('sma20')) lines.push({ key: 'sma20', color: '#ffb86b', points: pts(sma(closes, 20)) });
   if (L.has('sma50')) lines.push({ key: 'sma50', color: '#25d0ee', points: pts(sma(closes, 50)) });
@@ -732,8 +745,24 @@ function applyOverlays(): void {
       { key: 'bbL', color: 'rgba(37,208,238,.4)', width: 1, points: pts(b.lower) },
     );
   }
+  return lines;
+}
+
+/** Indikator-/Vergleichs-Overlays aus den aktuell gezeigten Bars berechnen. */
+function applyOverlays(): void {
+  if (!st?.chart) return;
+  const intraday = st.intradayDays > 0;
+  const times: Array<string | number> = intraday
+    ? st.intradayBars.map((b) => b.time)
+    : (st.range > 0 ? st.bars.slice(-st.range) : st.bars).map((b) => b.date);
+  const closes = intraday
+    ? st.intradayBars.map((b) => b.close)
+    : (st.range > 0 ? st.bars.slice(-st.range) : st.bars).map((b) => b.close);
+  const lines = baseOverlayLines(times, closes);
+  const pts = (series: (number | null)[]): Array<{ time: string | number; value: number }> =>
+    series.flatMap((v, i) => (v === null ? [] : [{ time: times[i]!, value: v }]));
   // VWAP nur intraday (Session-Konzept) und nur mit aktivierten Indikator-Extras
-  if (intraday && st.ui.subPanels && L.has('vwap')) {
+  if (intraday && st.ui.subPanels && st.chartLayers.has('vwap')) {
     lines.push({ key: 'vwap', color: '#f2d16b', width: 2, points: pts(vwapSessions(st.intradayBars)) });
   }
   // Vergleichs-Overlay (Tageskerzen): %-Entwicklung ab erstem gemeinsamen Tag
@@ -752,6 +781,40 @@ function applyOverlays(): void {
     }
   }
   st.chart.setOverlays(lines);
+  renderLegend(lines, intraday);
+}
+
+/** Legende: beschriftet jede aktive Linie mit Farbe (gilt für alle Charts). */
+function renderLegend(lines: import('./chart.js').OverlayLine[], intraday: boolean): void {
+  const el = $('chartLegend');
+  const NAME: Record<string, string> = {
+    sma20: 'SMA 20',
+    sma50: 'SMA 50',
+    sma200: 'SMA 200',
+    ema9: 'EMA 9',
+    ema21: 'EMA 21',
+    bbM: 'Bollinger 20 ±2σ',
+    vwap: 'VWAP (Session)',
+  };
+  const items: Array<{ c: string; t: string; title: string }> = [];
+  for (const l of lines) {
+    if (l.key === 'bbU' || l.key === 'bbL') continue; // ein Eintrag fürs Band reicht
+    if (l.key.startsWith('cmp:')) {
+      items.push({ c: l.color, t: `${l.key.slice(4)} % (Vergleich)`, title: 'Prozent-Entwicklung auf eigener Skala' });
+    } else if (NAME[l.key]) {
+      items.push({ c: l.color, t: NAME[l.key]!, title: 'Gilt in allen Charts mit denselben Overlays' });
+    }
+  }
+  if (!intraday && st?.showForecast && st.forecast) {
+    items.push({ c: '#25d0ee', t: 'Prognose (gestrichelt, ±1σ)', title: 'Sentiment-gewichtete Regression über die nächsten Handelstage' });
+  }
+  if (st?.showEvents && (st.events.length ?? 0) > 0 && !intraday) {
+    items.push({ c: '#26cf9d', t: 'Event-Punkte (News)', title: 'Überfahren zeigt die News des Tages' });
+  }
+  el.hidden = items.length === 0;
+  el.innerHTML = items
+    .map((i) => `<span class="lg-item" title="${i.title}"><i class="lg-dot" style="background:${i.c}"></i>${i.t}</span>`)
+    .join('');
 }
 
 /* ── Indikator-Unterpanels (Chart-Vision): RSI/MACD, Zeitachse synchron ── */
@@ -816,6 +879,18 @@ async function mountSubPanel(kind: 'rsi' | 'macd'): Promise<void> {
     return;
   }
   st.subCharts[kind] = handle;
+  // Mini-Legende ins Panel (Beschriftungs-Wunsch 25.07.)
+  const lg = document.createElement('div');
+  lg.className = 'sub-legend';
+  lg.innerHTML =
+    kind === 'rsi'
+      ? '<span><i class="lg-dot" style="background:#25d0ee"></i>RSI 14</span>' +
+        '<span><i class="lg-dot" style="background:rgba(242,88,107,.6)"></i>70 überkauft</span>' +
+        '<span><i class="lg-dot" style="background:rgba(38,207,157,.6)"></i>30 überverkauft</span>'
+      : '<span><i class="lg-dot" style="background:#25d0ee"></i>MACD</span>' +
+        '<span><i class="lg-dot" style="background:#ffb86b"></i>Signal</span>' +
+        '<span><i class="lg-dot" style="background:#8b93a8"></i>Histogramm</span>';
+  $(`${kind}Panel`).appendChild(lg);
   handle.onVisibleRangeChange((range) => {
     if (rangeSyncing || !range || !st) return;
     rangeSyncing = true;
@@ -1283,7 +1358,10 @@ function renderGridPanelBars(p: GridPanel): void {
   if (!p.chart) return;
   const fit = p.fitPending;
   p.fitPending = false;
-  p.chart.setBars(p.range > 0 ? p.bars.slice(-p.range) : p.bars, { fit });
+  const bars = p.range > 0 ? p.bars.slice(-p.range) : p.bars;
+  p.chart.setBars(bars, { fit });
+  // Aktive SMA/EMA/BB-Overlays gelten auf ALLEN Charts (Feedback 25.07.)
+  p.chart.setOverlays(baseOverlayLines(bars.map((b) => b.date), bars.map((b) => b.close)));
 }
 
 /** Panel (neu) aufbauen: Bars-Watcher + Chart + Lock-Sync-Verdrahtung. */
@@ -1321,9 +1399,53 @@ function unmountGridPanel(p: GridPanel): void {
   p.chart = null;
 }
 
+/* Vollbild als Portal: die Glass-Cards tragen backdrop-filter und werden damit
+   zum Containing Block für position:fixed — das Element muss deshalb während
+   des Vollbilds an document.body hängen und danach exakt zurück. */
+const maxHomes = new Map<HTMLElement, Comment>();
+
+function enterMax(el: HTMLElement): void {
+  if (maxHomes.has(el)) return;
+  const mark = document.createComment('chart-max-home');
+  el.before(mark);
+  maxHomes.set(el, mark);
+  document.body.appendChild(el);
+  el.classList.add('chart-max');
+}
+
+function leaveMax(el: HTMLElement): void {
+  el.classList.remove('chart-max');
+  const mark = maxHomes.get(el);
+  if (mark) {
+    mark.replaceWith(el);
+    maxHomes.delete(el);
+  }
+}
+
+/** Vollbild fürs Haupt-Chart (CSS-Overlay statt Fullscreen-API — läuft überall). */
+function setMainMax(on: boolean): void {
+  const wrap = $('chartWrap');
+  if (on) enterMax(wrap);
+  else leaveMax(wrap);
+  ($('maxExit') as HTMLButtonElement).hidden = !on;
+  $('maxMain').classList.toggle('on', on);
+  drawPredictionArrow();
+}
+
+/** Alle Vollbild-Zustände beenden (Esc, oder bevor ein anderer Chart maximiert). */
+function exitAllMax(): void {
+  setMainMax(false);
+  document.querySelectorAll('.gpanel.chart-max').forEach((el) => leaveMax(el as HTMLElement));
+  document.querySelectorAll('.gp-max.on').forEach((b) => {
+    b.classList.remove('on');
+    b.textContent = '⛶';
+  });
+}
+
 /** Raster-DOM an gridMode angleichen; Panels mounten/unmounten; persistieren. */
 function renderChartGrid(): void {
   if (!st) return;
+  exitAllMax(); // maximierte Panels hängen am body — vor dem Neuaufbau zurückholen
   const grid = $('chartGrid');
   const want = st.gridMode - 1;
   // Panel-Liste angleichen (Defaults aus der Watchlist, nie das Haupt-Symbol)
@@ -1356,6 +1478,7 @@ function renderChartGrid(): void {
           <button class="tf-btn${p.range === 66 ? ' on' : ''}" data-r="66">3M</button>
           <button class="tf-btn${p.range === 0 ? ' on' : ''}" data-r="0">1J</button>
         </span>
+        <button class="tf-btn gp-max" title="Chart im Vollbild (Esc schließt)">⛶</button>
         <button class="tf-btn gp-lock${p.locked ? ' on' : ''}"
           title="Lock: Zoom, Sichtbereich und Crosshair synchron mit allen gelockten Charts">${p.locked ? '🔒' : '🔓'}</button>
       </div>
@@ -1379,6 +1502,20 @@ function renderChartGrid(): void {
         renderGridPanelBars(p);
       }),
     );
+    const maxBtn = el.querySelector('.gp-max') as HTMLButtonElement;
+    maxBtn.addEventListener('click', () => {
+      const on = !el.classList.contains('chart-max');
+      exitAllMax();
+      if (on) {
+        enterMax(el);
+        maxBtn.classList.add('on');
+        maxBtn.textContent = '✕';
+      }
+    });
+    (el.querySelector('.gp-chart') as HTMLElement).addEventListener('dblclick', () => {
+      p.fitPending = true;
+      renderGridPanelBars(p);
+    });
     const lockBtn = el.querySelector('.gp-lock') as HTMLButtonElement;
     lockBtn.addEventListener('click', () => {
       p.locked = !p.locked;
@@ -2235,6 +2372,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     refreshMain: () => renderChart(),
     mainOverlays: () => st?.chart?.overlayCount() ?? -1,
     gridPanels: () => st?.gridPanels.length ?? -1,
+    gridPanelOverlays: (i: number) => st?.gridPanels[i]?.chart?.overlayCount() ?? -1,
     panelRange: (i: number) => st?.gridPanels[i]?.chart?.getVisibleRange() ?? null,
     setPanelRange: (i: number, r: { from: number; to: number }) => st?.gridPanels[i]?.chart?.setVisibleRange(r),
     subRange: (k: 'rsi' | 'macd') => st?.subCharts[k]?.getVisibleRange() ?? null,
@@ -2346,7 +2484,32 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       localStorage.setItem('autotrd-chart-layers', [...st.chartLayers].join(','));
       applyOverlays();
       updateSubPanels();
+      for (const p of st.gridPanels) renderGridPanelBars(p);
     });
+  });
+  // Werkzeug-Leiste (Anzeige ▾): aufklappbar gegen UI-Clutter, Zustand persistiert
+  const setTools = (open: boolean): void => {
+    $('chartTools').hidden = !open;
+    $('toolsBtn').textContent = open ? 'Anzeige ▴' : 'Anzeige ▾';
+    $('toolsBtn').classList.toggle('on', open);
+    localStorage.setItem('autotrd-chart-tools', open ? '1' : '0');
+  };
+  $('toolsBtn').addEventListener('click', () => setTools($('chartTools').hidden === true));
+  setTools(localStorage.getItem('autotrd-chart-tools') === '1');
+
+  // Vollbild je Chart (Feedback 25.07., wichtig für Smartphones): CSS-Overlay
+  // statt Fullscreen-API (läuft überall, auch iOS/PWA); Esc schließt.
+  $('maxMain').addEventListener('click', () => {
+    const on = !$('chartWrap').classList.contains('chart-max');
+    exitAllMax();
+    if (on) setMainMax(true);
+  });
+  $('maxExit').addEventListener('click', () => setMainMax(false));
+  // Doppelklick auf die Chart-Fläche = frischer Fit (X + Y), wie TradingView
+  $('chartArea').addEventListener('dblclick', () => {
+    if (!st) return;
+    st.chartFitPending = true;
+    renderChart();
   });
   // Prognose-Pfeil: Modus + Popover
   $('predBtn').addEventListener('click', () => {
@@ -2497,6 +2660,7 @@ function onEscape(e: KeyboardEvent): void {
   closeModal('detail');
   closeModal('picker');
   closeModal('options');
+  exitAllMax();
   document.getElementById('orderModal')?.classList.remove('show');
   for (const id of ['leftCol', 'rightCol']) document.getElementById(id)?.classList.remove('show');
   document.getElementById('olv')?.classList.remove('show');
@@ -2504,6 +2668,7 @@ function onEscape(e: KeyboardEvent): void {
 
 export function unmountDashboard(): void {
   if (!st) return;
+  exitAllMax(); // Portal-Elemente vom body zurück, bevor die App-Wurzel geleert wird
   clearSubs(st.subs);
   clearSubs(st.symbolSubs);
   clearSubs(st.newsSubs);

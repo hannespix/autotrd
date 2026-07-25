@@ -129,6 +129,17 @@ function chartTheme(): Record<string, unknown> {
       vertLine: { color: 'rgba(0,212,255,.5)', width: 1, labelBackgroundColor: '#0091c2' },
       horzLine: { color: 'rgba(0,212,255,.4)', labelBackgroundColor: '#0091c2' },
     },
+    // Zoom-Verhalten wie TradingView (User-Feedback 25.07.): Mausrad/Pinch
+    // ums Cursor-Zentrum, Ziehen AUF den Achsen zoomt die jeweilige Achse,
+    // Doppelklick auf eine Achse setzt sie zurück; kinetisches Scrollen an.
+    handleScale: {
+      mouseWheel: true,
+      pinch: true,
+      axisPressedMouseMove: { time: true, price: true },
+      axisDoubleClickReset: { time: true, price: true },
+    },
+    handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+    kineticScroll: { touch: true, mouse: false },
   };
 }
 

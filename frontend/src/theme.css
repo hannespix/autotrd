@@ -497,7 +497,30 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .gp-chart, .chart-wrap { min-width: 0; }
 
 /* Indikator-Unterpanels (RSI/MACD) unter dem Haupt-Chart */
-.sub-panel { height: 110px; min-width: 0; margin-top: 8px; border-top: 1px solid var(--hair); padding-top: 4px; }
+.sub-panel { position: relative; height: 110px; min-width: 0; margin-top: 8px; border-top: 1px solid var(--hair); padding-top: 4px; }
+.sub-legend { position: absolute; top: 4px; right: 68px; z-index: 3; display: flex; gap: 10px; font-size: 9.5px; color: var(--t3); pointer-events: none; }
+
+/* Werkzeug-Aufklapper + Legende (UI-Entrümpelung 25.07.) */
+.tool-lbl { font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--t3); align-self: center; margin-right: 2px; }
+#chartTools { border-left: 2px solid var(--hair); padding-left: 8px; margin: 2px 0 4px; }
+#toolsBtn.on { background: var(--ac); color: #04121a; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 10px; color: var(--t2); margin: 2px 0 4px; }
+.lg-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: -1px; }
+
+/* Vollbild je Chart (Feedback 25.07., Smartphones): CSS-Overlay, Esc schließt */
+.chart-wrap.chart-max, .gpanel.chart-max {
+  /* über dem sticky Header (100), unter Modals (220) */
+  position: fixed; inset: 0; z-index: 150; border-radius: 0;
+  background: var(--card-solid); padding: 10px;
+  padding-top: max(10px, env(safe-area-inset-top));
+}
+.chart-wrap.chart-max #chartArea { height: 100%; }
+.gpanel.chart-max .gp-chart { height: auto; flex: 1; }
+.chart-max-exit {
+  position: absolute; top: 8px; right: 68px; z-index: 30;
+  border: 1px solid var(--bd2); border-radius: var(--r-xs); background: var(--sd);
+  color: var(--t1); font-size: 13px; padding: 4px 10px; cursor: pointer;
+}
 .gp-hd { display: flex; align-items: center; gap: 6px; }
 .gp-sym { width: 86px; font-size: 11px; padding: 3px 8px; text-transform: uppercase; }
 .gp-tf { display: flex; gap: 2px; }
