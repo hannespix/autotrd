@@ -383,7 +383,7 @@ function layout(email: string): string {
           <span class="chart-px" id="chPx">--</span>
           <span class="chart-px" id="chChg">--</span>
         </div>
-        <div class="tf-bar">
+        <div class="tf-bar tf-main">
           <button class="tf-btn" id="autoBtn" title="Auto-Auflösung: Die Kerzengröße folgt der Zoomstufe (1D → 1h → 15m → 5m) — stufenlos zoomen wie in TradingView">Auto</button>
           <button class="tf-btn" data-intraday="1" title="1 Handelstag in 5-Minuten-Kerzen">1T</button>
           <button class="tf-btn" data-intraday="5" title="~5 Handelstage in 5-Minuten-Kerzen">1W</button>
@@ -392,53 +392,56 @@ function layout(email: string): string {
           <button class="tf-btn" data-bars="0" title="1 Jahr in Tageskerzen">1J</button>
           <span id="resBadge" class="res-badge mono" title="Aktive Kerzen-Auflösung"></span>
           <span id="histHint" class="res-badge mono" hidden>lädt ältere Daten …</span>
-          <button class="tf-btn" id="maxMain" title="Chart im Vollbild — Legende und Anzeige-Optionen bleiben verfügbar (Esc schließt)">⛶</button>
+          <button class="tf-btn" id="predBtn" hidden title="Prognose-Pfeil zeichnen: Klick in den Chart setzt den Ziel-Kurs">✏</button>
+          <button class="tf-btn" id="maxMain" style="margin-left:auto" title="Chart im Vollbild — Legende und Menüs bleiben verfügbar (Esc schließt)">⛶</button>
           <button class="tf-btn" id="cleanBtn" title="Clean-View: alles Optionale auf einmal ausblenden — nur der Kurs bleibt">Clean</button>
-          <button class="tf-btn" id="toolsBtn" style="margin-left:auto"
-            title="Overlays, Panels, Raster & Vergleich ein-/ausklappen">Anzeige ▾</button>
+          <span class="tool-anchor">
+            <button class="tf-btn" id="indBtn" title="Indikatoren: Overlays im Chart + RSI/MACD-Unterpanels">Indikatoren ▾</button>
+            <div id="menuInd" class="tool-menu" hidden>
+              <div class="tm-sec">Overlays — Linien in allen Charts</div>
+              <button class="tf-btn" data-layer="sma20" title="Einfacher gleitender Durchschnitt, 20 Bars">SMA20</button>
+              <button class="tf-btn" data-layer="sma50" title="SMA 50">SMA50</button>
+              <button class="tf-btn" data-layer="sma200" title="SMA 200">SMA200</button>
+              <button class="tf-btn" data-layer="ema9" title="Exponentieller Durchschnitt, 9">EMA9</button>
+              <button class="tf-btn" data-layer="ema21" title="EMA 21">EMA21</button>
+              <button class="tf-btn" data-layer="bb" title="Bollinger-Bänder (20, 2σ)">BB</button>
+              <button class="tf-btn ind-x" data-layer="vwap" title="VWAP (Intraday 1T/1W): volumengewichteter Durchschnitt je Handelstag">VWAP</button>
+              <div class="tm-sec">Stil</div>
+              <button class="tf-btn" data-layer="area" title="Flächen-Verlauf unter der Kurslinie — die Farbe folgt dem aktuellen Signal (grün = Kauf, rot = Verkauf, blau = neutral)">Fläche</button>
+              <button class="tf-btn" data-layer="hideCandles" title="Kerzen + Volumen ausblenden (ruhiger Vektor-Look, z. B. mit aktiver Fläche)">Kerzen aus</button>
+              <div class="tm-sec">Unterpanels — synchron zum Haupt-Chart</div>
+              <button class="tf-btn ind-x" data-layer="rsiPanel" title="RSI(14) als Unterpanel">RSI</button>
+              <button class="tf-btn ind-x" data-layer="macdPanel" title="MACD(12/26/9) als Unterpanel">MACD</button>
+            </div>
+          </span>
+          <span class="tool-anchor">
+            <button class="tf-btn" id="layBtn" title="Layer, Raster & Vergleich">Layer ▾</button>
+            <div id="menuLay" class="tool-menu" hidden>
+              <div class="tm-sec">Layer</div>
+              <button class="tf-btn on" id="lyFc" title="Prognose-Overlay ein/aus">Prognose</button>
+              <button class="tf-btn on" id="lyEv" title="Event-Marker ein/aus">Events</button>
+              <button class="tf-btn on" id="yAutoBtn" title="Y-Autoscaling: Preisskala passt sich beim Scrollen/Zoomen automatisch an — ausschalten, um die Y-Achse manuell festzuhalten (Ziehen auf der Preisskala)">Y-Auto</button>
+              <div class="tm-sec">Raster — bis zu 4 Kurse parallel</div>
+              <span class="grid-sw" title="Charts im Raster: 1, 2 oder 4 parallel">
+                <button class="tf-btn on" data-grid="1">▭</button>
+                <button class="tf-btn" data-grid="2">▯▯</button>
+                <button class="tf-btn" data-grid="4">⊞</button>
+              </span>
+              <button class="tf-btn" id="lockMain" hidden
+                title="Haupt-Chart in die Lock-Gruppe: Zoom, Sichtbereich und Crosshair laufen auf allen gelockten Charts synchron">🔓</button>
+              <div class="tm-sec">Vergleich</div>
+              <input id="cmpSym" class="inp cmp-inp" placeholder="+ Overlay: SYM" title="Zweiten Kurs als %-Linie überlagern (Tageskerzen)" />
+            </div>
+          </span>
         </div>
-        <div id="chartTools" hidden>
-          <div class="tf-bar">
-            <span class="tool-lbl">Overlays</span>
-            <button class="tf-btn" data-layer="sma20" title="Einfacher gleitender Durchschnitt, 20 Bars">SMA20</button>
-            <button class="tf-btn" data-layer="sma50" title="SMA 50">SMA50</button>
-            <button class="tf-btn" data-layer="sma200" title="SMA 200">SMA200</button>
-            <button class="tf-btn" data-layer="ema9" title="Exponentieller Durchschnitt, 9">EMA9</button>
-            <button class="tf-btn" data-layer="ema21" title="EMA 21">EMA21</button>
-            <button class="tf-btn" data-layer="bb" title="Bollinger-Bänder (20, 2σ)">BB</button>
-            <button class="tf-btn ind-x" data-layer="vwap" title="VWAP (Intraday 1T/1W): volumengewichteter Durchschnitt je Handelstag">VWAP</button>
-            <button class="tf-btn" data-layer="area" title="Flächen-Verlauf unter der Kurslinie — die Farbe folgt dem aktuellen Signal (grün = Kauf, rot = Verkauf, blau = neutral)">Fläche</button>
-            <button class="tf-btn" data-layer="hideCandles" title="Kerzen + Volumen ausblenden (ruhiger Vektor-Look, z. B. mit aktiver Fläche)">Kerzen aus</button>
-          </div>
-          <div class="tf-bar">
-            <span class="tool-lbl">Panels</span>
-            <button class="tf-btn ind-x" data-layer="rsiPanel" title="RSI(14) als Unterpanel — Zeitachse läuft synchron zum Haupt-Chart">RSI</button>
-            <button class="tf-btn ind-x" data-layer="macdPanel" title="MACD(12/26/9) als Unterpanel — Zeitachse läuft synchron zum Haupt-Chart">MACD</button>
-            <span class="tool-lbl">Layer</span>
-            <button class="tf-btn on" id="lyFc" title="Prognose-Overlay ein/aus">Prognose</button>
-            <button class="tf-btn on" id="lyEv" title="Event-Marker ein/aus">Events</button>
-            <button class="tf-btn on" id="yAutoBtn" title="Y-Autoscaling: Preisskala passt sich beim Scrollen/Zoomen automatisch an — ausschalten, um die Y-Achse manuell festzuhalten (Ziehen auf der Preisskala)">Y-Auto</button>
-          </div>
-          <div class="tf-bar">
-            <span class="tool-lbl">Raster</span>
-            <span class="grid-sw" title="Charts im Raster: 1, 2 oder 4 parallel">
-              <button class="tf-btn on" data-grid="1">▭</button>
-              <button class="tf-btn" data-grid="2">▯▯</button>
-              <button class="tf-btn" data-grid="4">⊞</button>
-            </span>
-            <button class="tf-btn" id="lockMain" hidden
-              title="Haupt-Chart in die Lock-Gruppe: Zoom, Sichtbereich und Crosshair laufen auf allen gelockten Charts synchron">🔓</button>
-            <input id="cmpSym" class="inp cmp-inp" placeholder="+ Overlay: SYM" title="Zweiten Kurs als %-Linie überlagern (Tageskerzen)" />
-            <button class="tf-btn" id="predBtn" hidden title="Prognose-Pfeil zeichnen: Klick in den Chart setzt den Ziel-Kurs">✏ Pfeil</button>
-          </div>
-          <div class="hint">Overlays zeichnen Linien in alle Charts · Panels öffnen Unterfenster
-            unter dem Chart · das Raster zeigt bis zu 4 Kurse parallel (🔒 koppelt den Zoom).</div>
-        </div>
-        <div id="chartLegend" class="chart-legend" hidden></div>
         <div class="hint" id="fcInfo" style="margin-bottom:4px"></div>
         <div id="chartRow" class="chart-row" data-mode="1">
         <div id="chartWrap" class="chart-wrap">
           <button id="maxExit" class="chart-max-exit" hidden title="Vollbild schließen (Esc)">✕</button>
+          <div id="chartHud" class="chart-hud">
+            <div id="ohlcRow" class="ohlc-row mono" hidden></div>
+            <div id="chartLegend" class="chart-legend" hidden></div>
+          </div>
           <div id="chartArea"></div>
           <svg id="predSvg" class="pred-svg" aria-hidden="true"></svg>
           <div id="predPop" class="pred-pop" hidden>
@@ -771,6 +774,7 @@ function renderChart(): void {
     applyOverlays();
     updateSubPanels();
     renderResBadge();
+    renderOhlcHud(null);
     return;
   }
   const bars = dailySource();
@@ -801,6 +805,7 @@ function renderChart(): void {
   drawPredictionArrow();
   updateSubPanels();
   renderResBadge();
+  renderOhlcHud(null); // HUD auf den letzten Bar (bis das Crosshair übernimmt)
 }
 
 /** Tages-Quelle für Chart/Overlays/Panels: nachgeladene Historie + Live-Bars.
@@ -936,6 +941,42 @@ function applyArea(): void {
   // „Kerzen aus" nur sinnvoll, wenn eine Linie/Fläche den Kurs weiter zeigt
   const hide = !st.cleanView && st.chartLayers.has('hideCandles') && want;
   st.chart.setCandlesVisible(!hide);
+}
+
+/** In-Chart-HUD (TV-Stil, UI-Audit 25.07.): Symbol · O H L C · Vol des Bars
+ *  unterm Crosshair — ohne Crosshair der letzte Bar. Grün/rot nach C≥O. */
+function renderOhlcHud(
+  d: { time: string; open: number; high: number; low: number; close: number; volume: number | null } | null,
+): void {
+  if (!st) return;
+  const el = $('ohlcRow');
+  if (st.cleanView) {
+    el.hidden = true;
+    return;
+  }
+  let bar = d;
+  if (!bar) {
+    const src = st.intradayDays > 0 ? st.shownIntraday : dailySource();
+    const last = src[src.length - 1];
+    if (!last) {
+      el.hidden = true;
+      return;
+    }
+    const time =
+      'date' in last
+        ? (last as { date: string }).date
+        : new Date((last as { time: number }).time * 1000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    bar = { time, open: last.open, high: last.high, low: last.low, close: last.close, volume: last.volume ?? null };
+  }
+  const up = bar.close >= bar.open;
+  const pct = bar.open > 0 ? ((bar.close / bar.open - 1) * 100).toFixed(2) : '0.00';
+  const vol =
+    bar.volume === null || bar.volume === 0
+      ? ''
+      : ` · Vol ${bar.volume >= 1e6 ? `${(bar.volume / 1e6).toFixed(1)}M` : Math.round(bar.volume).toLocaleString('de-DE')}`;
+  el.innerHTML = `<b>${st.currentSymbol}</b> <span class="c-t3">${bar.time}</span>
+    <span class="${up ? 'c-gn' : 'c-rd'}">O ${fmtNum(bar.open)} H ${fmtNum(bar.high)} L ${fmtNum(bar.low)} C ${fmtNum(bar.close)} (${up ? '+' : ''}${pct} %)</span>${vol}`;
+  el.hidden = false;
 }
 
 /** Legende: beschriftet jede aktive Linie mit Farbe (gilt für alle Charts). */
@@ -1500,6 +1541,8 @@ async function rebuildChart(): Promise<void> {
       crosshairSyncing = false;
     }
   });
+  // In-Chart-HUD (TV-Stil): OHLC des Bars unterm Crosshair, sonst letzter Bar
+  st.chart?.onCrosshairData((d) => renderOhlcHud(d));
   st.chart?.onVisibleRangeChange((range) => {
     if (rangeSyncing || !range || !st?.chart2) return;
     rangeSyncing = true;
@@ -3001,15 +3044,33 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       for (const p of st.gridPanels) renderGridPanelBars(p);
     });
   });
-  // Werkzeug-Leiste (Anzeige ▾): aufklappbar gegen UI-Clutter, Zustand persistiert
-  const setTools = (open: boolean): void => {
-    $('chartTools').hidden = !open;
-    $('toolsBtn').textContent = open ? 'Anzeige ▴' : 'Anzeige ▾';
-    $('toolsBtn').classList.toggle('on', open);
-    localStorage.setItem('autotrd-chart-tools', open ? '1' : '0');
+  // Dropdown-Menüs (TV-Stil, UI-Audit 25.07.): „Indikatoren ▾" + „Layer ▾"
+  // statt Chip-Wänden. Item-Klicks schließen NICHT (mehrere Toggles am Stück,
+  // wie TVs Indikator-Dialog) — zu geht's per Menü-Knopf, Außenklick oder Esc.
+  const menus: Array<[string, string]> = [
+    ['indBtn', 'menuInd'],
+    ['layBtn', 'menuLay'],
+  ];
+  const closeMenus = (): void => {
+    for (const [b, m] of menus) {
+      $(m).hidden = true;
+      $(b).classList.remove('on');
+    }
   };
-  $('toolsBtn').addEventListener('click', () => setTools($('chartTools').hidden === true));
-  setTools(localStorage.getItem('autotrd-chart-tools') === '1');
+  for (const [b, m] of menus) {
+    $(b).addEventListener('click', () => {
+      const open = $(m).hidden !== false; // hidden kann auch 'until-found' sein
+      closeMenus();
+      $(m).hidden = !open;
+      $(b).classList.toggle('on', open);
+    });
+  }
+  document.addEventListener('click', (ev) => {
+    if (!(ev.target as HTMLElement).closest('.tool-anchor')) closeMenus();
+  });
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') closeMenus();
+  });
 
   // Vollbild je Chart (Feedback 25.07., wichtig für Smartphones): CSS-Overlay
   // statt Fullscreen-API (läuft überall, auch iOS/PWA); Esc schließt.

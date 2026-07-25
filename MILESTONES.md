@@ -525,10 +525,14 @@ Charts parallel.
       (programmatische Fits max ~20 % Leerraum rechts, User-Zoom frei) ·
       Prognose-Speichern/-Laden fordert den Neu-Fit selbst an · E2E wacht
       jetzt über FÜLLGRAD (>70 % nach Fit, >60 % mit Pfeil)
-- [ ] TV-Vergleich umsetzen (nächste Runde): In-Chart-Legende (OHLC +
-      Indikator-Werte oben links IM Chart statt Zeile darüber),
-      Toolbar auf EINE Zeile (Indikatoren/Layer als Dropdown-Menüs),
-      Hinweistexte → Tooltips
+- [x] TV-Vergleich umgesetzt (25.07.): In-Chart-HUD oben links — Symbol ·
+      Datum · O H L C · Δ% · Volumen, live unter dem Crosshair (sonst letzter
+      Bar, via `onCrosshairData`), Overlay-Legende wandert mit in die HUD ·
+      Toolbar auf EINE Zeile: „Indikatoren ▾" (Overlays/Stil/Unterpanels) und
+      „Layer ▾" (Layer/Raster/Lock/Vergleich) als verankerte Dropdowns —
+      Item-Klicks schließen nicht (Mehrfach-Toggles wie TVs Indikator-Dialog),
+      zu per Außenklick/Esc · ✏ sitzt in der Hauptzeile · Chip-Wände + alte
+      Hinweiszeilen entfallen (Tooltips übernehmen)
 - [ ] 1-Minuten-Daten (Yahoo: nur ~7 Tage, ~5× Volumen — bewusst entscheiden)
       · echte Sekunden-Ticks kommen mit dem M13-Streamer
 - [ ] ATR, 52-Wochen-Marken, Pivots (weitere Trading-Hilfen)

@@ -505,10 +505,36 @@ button, input, select { font-family: inherit; font-size: inherit; }
 
 /* Werkzeug-Aufklapper + Legende (UI-Entrümpelung 25.07.) */
 .tool-lbl { font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--t3); align-self: center; margin-right: 2px; }
-#chartTools { border-left: 2px solid var(--hair); padding-left: 8px; margin: 2px 0 4px; }
-#toolsBtn.on { background: var(--ac); color: #04121a; }
+/* TV-Stil-Menüs (UI-Audit 25.07.): verankerte Dropdowns statt Chip-Wänden */
+.tool-anchor { position: relative; display: inline-flex; }
+.tool-menu {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 160;
+  display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start;
+  width: 240px; max-width: 78vw; padding: 8px;
+  background: var(--card, rgba(10, 18, 28, 0.92)); border: 1px solid var(--hair);
+  border-radius: 10px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(14px);
+}
+.tm-sec { flex-basis: 100%; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--t3); margin: 4px 0 1px; }
+#indBtn.on, #layBtn.on { background: var(--ac); color: #04121a; }
 .res-badge { align-self: center; font-size: 10px; color: var(--t3); padding: 2px 8px; border: 1px solid var(--hair); border-radius: 999px; }
-.chart-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 10px; color: var(--t2); margin: 2px 0 4px; }
+/* In-Chart-HUD (TV-Stil): OHLC + Legende oben links IM Chart — Overlay,
+   klickt nicht (pointer-events none), Chips mit Glas-Hintergrund. */
+.chart-hud {
+  position: absolute; top: 6px; left: 6px; z-index: 5; pointer-events: none;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  max-width: min(78%, 560px);
+}
+.ohlc-row {
+  font-size: 11px; color: var(--t2); padding: 2px 8px; border-radius: 7px;
+  background: color-mix(in srgb, var(--bg, #060b12) 62%, transparent);
+  backdrop-filter: blur(6px);
+}
+.chart-legend { display: flex; flex-wrap: wrap; gap: 3px 10px; font-size: 10px; color: var(--t2);
+  padding: 2px 8px; border-radius: 7px;
+  background: color-mix(in srgb, var(--bg, #060b12) 62%, transparent);
+  backdrop-filter: blur(6px);
+}
 .lg-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: -1px; }
 
 /* Dashboard-Individualisierung Teil 1: Modul-Kopf (▾/✕), ⚙-Module, Sidebars */
