@@ -18,7 +18,7 @@ import type {
   StrategySpec,
   UserPrediction,
 } from '../../../shared/src/index.js';
-import { PREDICTION_MIN_EDGE_PCT, evaluate } from '../../../shared/src/index.js';
+import { PREDICTION_MIN_EDGE_PCT, evaluate, paperEffectivePrice } from '../../../shared/src/index.js';
 
 export const RISK_LIMITS = {
   /** Harte Obergrenze je Position — auch wenn die Config mehr will. */
@@ -121,17 +121,19 @@ export function shadowTrade(
   maxPositionPct: number,
 ): { book: ShadowBook; executed: boolean } {
   const positions = { ...book.positions };
+  // Gleiche Ausführungskosten wie das echte Paper-Buch (Duell-Parität)
+  const eff = Math.round(paperEffectivePrice(price, side) * 10_000) / 10_000;
   if (side === 'buy') {
     if (positions[symbol]) return { book, executed: false }; // nie nachkaufen
-    const qty = Math.floor((book.balance * (maxPositionPct / 100)) / price);
+    const qty = Math.floor((book.balance * (maxPositionPct / 100)) / eff);
     if (qty <= 0) return { book, executed: false };
-    positions[symbol] = { qty, avgEntry: price };
-    return { book: { balance: book.balance - qty * price, positions }, executed: true };
+    positions[symbol] = { qty, avgEntry: eff };
+    return { book: { balance: book.balance - qty * eff, positions }, executed: true };
   }
   const pos = positions[symbol];
   if (!pos) return { book, executed: false };
   delete positions[symbol];
-  return { book: { balance: book.balance + pos.qty * price, positions }, executed: true };
+  return { book: { balance: book.balance + pos.qty * eff, positions }, executed: true };
 }
 
 /** Balance + Positionswert zu aktuellen Preisen (fehlender Preis → Einstand). */

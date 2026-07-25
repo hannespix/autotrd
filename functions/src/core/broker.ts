@@ -15,6 +15,7 @@
  */
 
 import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore';
+import { PAPER_FEE_RATE, paperEffectivePrice } from '../../../shared/src/index.js';
 import type { Position, Strategy, Trade } from '../../../shared/src/index.js';
 
 export type BrokerMode = 'paper' | 'live';
@@ -66,24 +67,28 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
     const balance = (userSnap.get('wallet.paperBalance') as number | undefined) ?? 0;
     const now = new Date().toISOString();
 
+    // Realismus (User-Wunsch 25.07.): Ausführung zum EFFEKTIVEN Preis —
+    // Kommission + Slippage wie im Backtest; rawPrice bleibt im Record.
+    const eff = Math.round(paperEffectivePrice(req.price, req.side) * 10_000) / 10_000;
+
     if (req.side === 'buy') {
       if (posSnap.exists) return { executed: false, reason: 'position_existiert' };
       const capital = strategy.broker.initialCapital;
       const maxPct = strategy.engine.maxPositionPct / 100;
-      const qty = req.qty ?? Math.floor((capital * maxPct) / req.price);
+      const qty = req.qty ?? Math.floor((capital * maxPct) / eff);
       if (qty < 1) return { executed: false, reason: 'qty_unter_1' };
-      const cost = qty * req.price;
+      const cost = qty * eff;
       if (cost > balance) return { executed: false, reason: 'zu_wenig_cash' };
 
       const position: Position = {
         symbol: req.symbol,
         qty,
-        avgEntry: req.price,
+        avgEntry: eff,
         stopLoss: strategy.engine.stopLossPct > 0
-          ? req.price * (1 - strategy.engine.stopLossPct / 100)
+          ? eff * (1 - strategy.engine.stopLossPct / 100)
           : null,
         takeProfit: strategy.engine.takeProfitPct > 0
-          ? req.price * (1 + strategy.engine.takeProfitPct / 100)
+          ? eff * (1 + strategy.engine.takeProfitPct / 100)
           : null,
         openedAt: now,
       };
@@ -91,13 +96,13 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
         symbol: req.symbol,
         side: 'buy',
         qty,
-        price: req.price,
+        price: eff,
         executedAt: now,
         source: req.source,
         paper: true,
       };
       tx.set(posRef, position);
-      tx.set(tradeRef, { ...trade, at: Timestamp.now() });
+      tx.set(tradeRef, { ...trade, at: Timestamp.now(), rawPrice: req.price, feeRate: PAPER_FEE_RATE });
       tx.update(userRef, { 'wallet.paperBalance': balance - cost, 'wallet.updatedAt': now });
       return { executed: true, trade: { ...trade, id: tradeRef.id } };
     }
@@ -106,13 +111,13 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
     if (!posSnap.exists) return { executed: false, reason: 'keine_position' };
     const pos = posSnap.data() as Position;
     const qty = pos.qty;
-    const proceeds = qty * req.price;
-    const pnl = (req.price - pos.avgEntry) * qty;
+    const proceeds = qty * eff;
+    const pnl = (eff - pos.avgEntry) * qty;
     const trade: Trade & { pnl: number; riskExit?: string } = {
       symbol: req.symbol,
       side: 'sell',
       qty,
-      price: req.price,
+      price: eff,
       executedAt: now,
       source: req.source,
       paper: true,
@@ -120,7 +125,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       ...(req.riskExit ? { riskExit: req.riskExit } : {}),
     };
     tx.delete(posRef);
-    tx.set(tradeRef, { ...trade, at: Timestamp.now() });
+    tx.set(tradeRef, { ...trade, at: Timestamp.now(), rawPrice: req.price, feeRate: PAPER_FEE_RATE });
     tx.update(userRef, { 'wallet.paperBalance': balance + proceeds, 'wallet.updatedAt': now });
     return { executed: true, trade: { ...trade, id: tradeRef.id } };
   });

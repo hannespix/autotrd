@@ -643,6 +643,15 @@ die Watchlist ist nur noch der Scope der Trading-Engine.
       (⠿-Grip im Kartenkopf, live einsortieren beim Ziehen, Reihenfolge in
       workspace `panels[id].order` — synct über Geräte; Reorder bewusst je
       Spalte) · Test-Hook `__autotrdWs` nutzt denselben Drop-Pfad
+- [x] Trade-Fenster-Redesign (User-Wunsch 25.07.): Katalog-Symbol-Picker
+      mit Klarnamen-Suche, Kurs je Einheit + Tages-% + RSI/MACD/Signal
+      als Mini-Briefing vor der Order, Live-Summen (Zwischensumme,
+      Gebühren, Gesamt, Kaufkraft danach), Max-Button, 2-Schritt-
+      Bestätigung mit 6-s-Entschärfung. Realismus serverseitig: die
+      Paper-Ausführung rechnet jetzt mit EFFEKTIVEM Preis (0,1 %
+      Kommission + 5 bp Slippage wie der Backtest) — in
+      `executePaperTrade` UND `shadowTrade` (Duell-Parität);
+      Trade-Records tragen additiv rawPrice/feeRate
 - [x] Grid-Parität (User-Feedback 25.07. nachts): Raster-Panels haben
       dieselben Zeitrahmen wie das Haupt-Chart (inkl. 1T/1W-Intraday mit
       VWAP und Kurzfrist-Prognose des Panel-Symbols, persistiert),

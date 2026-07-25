@@ -134,18 +134,19 @@ describe('minuteOfDayEt', () => {
 });
 
 describe('Shadow-Konto (M11): pure Buchführung', () => {
-  it('Entry dimensioniert nach maxPositionPct, Exit stellt komplett glatt', () => {
+  it('Entry dimensioniert nach maxPositionPct, Exit stellt komplett glatt — mit Paper-Gebühren', () => {
+    // Realismus (User-Wunsch 25.07.): effektiver Preis = 500 × 1,0015 = 500.75
     const start = { balance: 25_000, positions: {} };
-    const buy = shadowTrade(start, 'QQQ', 'buy', 500, 10); // 10 % von 25k = 2500 → 5 Stück
+    const buy = shadowTrade(start, 'QQQ', 'buy', 500, 10); // 2500 / 500.75 → 4 Stück
     expect(buy.executed).toBe(true);
-    expect(buy.book.positions['QQQ']).toEqual({ qty: 5, avgEntry: 500 });
-    expect(buy.book.balance).toBe(22_500);
+    expect(buy.book.positions['QQQ']).toEqual({ qty: 4, avgEntry: 500.75 });
+    expect(buy.book.balance).toBeCloseTo(25_000 - 4 * 500.75, 6);
     // nie nachkaufen
     expect(shadowTrade(buy.book, 'QQQ', 'buy', 480, 10).executed).toBe(false);
-    // Verkauf zu 520 → 5×520 zurück
+    // Verkauf zu 520 → effektiv 520 × 0,9985 = 519.22 je Stück zurück
     const sell = shadowTrade(buy.book, 'QQQ', 'sell', 520, 10);
     expect(sell.executed).toBe(true);
-    expect(sell.book.balance).toBe(22_500 + 2_600);
+    expect(sell.book.balance).toBeCloseTo(buy.book.balance + 4 * 519.22, 6);
     expect(sell.book.positions['QQQ']).toBeUndefined();
     // Original bleibt unangetastet (pure)
     expect(start.positions).toEqual({});
