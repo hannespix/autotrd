@@ -187,6 +187,45 @@ export function vwapSessions(bars: VwapBar[]): Series {
   return out;
 }
 
+export interface AggBar {
+  /** Unix-Sekunden. */
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+/**
+ * Intraday-Bars zu größeren Kerzen bündeln (Auto-Auflösung, TradingView-
+ * Gefühl): Bucket = floor(time / (minutes·60)). Open = erster, Close =
+ * letzter, High/Low = Extrema, Volumen summiert. Pure — Reihenfolge der
+ * Eingabe (aufsteigend) bleibt erhalten.
+ */
+export function aggregateBars(bars: AggBar[], minutes: number): AggBar[] {
+  if (minutes <= 0) return bars.slice();
+  const size = minutes * 60;
+  const out: AggBar[] = [];
+  let cur: AggBar | null = null;
+  let bucket = Number.NaN;
+  for (const b of bars) {
+    const bk = Math.floor(b.time / size);
+    if (cur === null || bk !== bucket) {
+      if (cur !== null) out.push(cur);
+      cur = { time: bk * size, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume };
+      bucket = bk;
+    } else {
+      cur.high = Math.max(cur.high, b.high);
+      cur.low = Math.min(cur.low, b.low);
+      cur.close = b.close;
+      cur.volume += b.volume;
+    }
+  }
+  if (cur !== null) out.push(cur);
+  return out;
+}
+
 /** Letzter Nicht-null-Wert einer Serie (Analogon zu `.dropna().iloc[-1]`). */
 export function lastValue(series: Series): number | null {
   for (let i = series.length - 1; i >= 0; i--) {

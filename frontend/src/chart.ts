@@ -85,6 +85,10 @@ export interface PriceChartHandle {
   areaActive(): boolean;
   /** Kerzen + Volumen ein-/ausblenden (ruhiger Vektor-Look bei aktiver Fläche). */
   setCandlesVisible(visible: boolean): void;
+  /** Rechten Rand (in Bars) reservieren — z. B. Platz für den Prognose-Pfeil. */
+  setRightOffset(bars: number): void;
+  /** Y-Autoscaling an/aus — auch explizite Fits respektieren die Wahl. */
+  setAutoScale(on: boolean): void;
   /** Prognose-Overlay: gestrichelte Mittellinie + ±1σ-Band (null = entfernen). */
   setForecast(overlay: ForecastOverlay | null, anchor?: { time: string; value: number }): void;
   /** Event-Marker (sentiment-gefärbt) auf den Kerzen. */
@@ -133,7 +137,8 @@ function chartTheme(): Record<string, unknown> {
       borderColor: light ? 'rgba(15,23,42,.12)' : 'rgba(255,255,255,.10)',
       rightOffset: 4,
       barSpacing: 6,
-      minBarSpacing: 0.1,
+      // 0.02 statt 0.1: deutlich tieferes Rauszoomen möglich (Feedback 25.07.)
+      minBarSpacing: 0.02,
       timeVisible: false,
     },
     // 0 = Normal — numerisches Literal statt Enum (CLAUDE.md §6)
@@ -218,6 +223,8 @@ export async function buildPriceChart(
   // Flächen-Verlauf (Vektor-Look): lazy angelegt, Farbe = Signal-Richtung
   let area: ReturnType<typeof chart.addAreaSeries> | null = null;
   let areaOn = false;
+  let currentRightOffset = 4;
+  let autoScaleOn = true;
 
   return {
     setBars(bars: ChartBar[] | IntradayChartBar[], opts?: SetBarsOptions): void {
@@ -243,7 +250,7 @@ export async function buildPriceChart(
       // Fit wird auch die Y-Skala wieder auf Autoscale gestellt (User-Feedback:
       // „x UND y beim Umschalten optimieren").
       if (opts?.fit) {
-        chart.priceScale('right').applyOptions({ autoScale: true });
+        chart.priceScale('right').applyOptions({ autoScale: autoScaleOn });
         chart.timeScale().fitContent();
       }
     },
@@ -313,6 +320,15 @@ export async function buildPriceChart(
     setCandlesVisible(visible: boolean): void {
       candle.applyOptions({ visible });
       vol.applyOptions({ visible });
+    },
+    setRightOffset(bars: number): void {
+      if (bars === currentRightOffset) return;
+      currentRightOffset = bars;
+      chart.timeScale().applyOptions({ rightOffset: bars });
+    },
+    setAutoScale(on: boolean): void {
+      autoScaleOn = on;
+      chart.priceScale('right').applyOptions({ autoScale: on });
     },
     setForecast(overlay, anchor): void {
       if (!overlay || overlay.points.length === 0) {
