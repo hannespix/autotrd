@@ -88,7 +88,10 @@ export async function invokeScanNow({ waitSec = 25 } = {}) {
   const url = await ensureSelfInvoker({ sa, token, project });
 
   const idToken = await mintIdToken(sa, url);
-  // IAM-Propagation kann ~1 min dauern → bei 401/403 mit Backoff wiederholen.
+  // Retries: 401/403 = IAM-Propagation (~1 min); 5xx = transienter Cloud-Run-
+  // Zustand (Revision-Rollout nach Deploy, Scale-down der letzten Instanz) —
+  // beides beobachtet (25.07.), beides heilt in Sekunden. Erst nach 4
+  // Fehlversuchen ist der Fehler echt.
   for (let attempt = 1; attempt <= 4; attempt++) {
     const res = await fetch(url, {
       method: 'POST',
@@ -100,8 +103,10 @@ export async function invokeScanNow({ waitSec = 25 } = {}) {
       break;
     }
     const bodyText = (await res.text()).slice(0, 200);
-    if ((res.status === 401 || res.status === 403) && attempt < 4) {
-      console.log(`  Versuch ${attempt}: HTTP ${res.status} — warte auf IAM-Propagation …`);
+    const retriable = res.status === 401 || res.status === 403 || res.status >= 500;
+    if (retriable && attempt < 4) {
+      const grund = res.status >= 500 ? 'transient (Rollout/Scale-down)' : 'IAM-Propagation';
+      console.log(`  Versuch ${attempt}: HTTP ${res.status} — ${grund}, neuer Versuch …`);
       await sleep(attempt * 15_000);
       continue;
     }
