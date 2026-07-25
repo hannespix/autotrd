@@ -23,6 +23,7 @@ import {
   orderBy,
   query,
   setDoc,
+  updateDoc,
   documentId,
   type Unsubscribe,
 } from 'firebase/firestore';
@@ -262,6 +263,16 @@ export function watchLatestIndicators(
   );
 }
 
+/** Optionale UI-Elemente (Options-Modal ⚙, settings.ui) — synct über Geräte. */
+export interface UiPrefs {
+  /** Prognose-Pfeil ✏ — Opt-in (Feedback 25.07.): default AUS, gilt auch für den Scan-Vote. */
+  predArrow?: boolean;
+  /** Vergleichs-Overlay-Eingabe im Chart (default an). */
+  cmpOverlay?: boolean;
+  /** Multi-Chart-Raster-Umschalter 1/2/4 (default an). */
+  chartGrid?: boolean;
+}
+
 export function watchUserDoc(
   uid: string,
   cb: (data: {
@@ -269,6 +280,7 @@ export function watchUserDoc(
     wallet: Wallet | null;
     /** Nutzer-Hotkeys (M9, settings.hotkeys) — z. B. { palette, buy, sell }. */
     hotkeys: Record<string, string> | null;
+    ui: UiPrefs | null;
   }) => void,
 ): Unsubscribe {
   return onSnapshot(doc(db(), 'users', uid), (snap) => {
@@ -276,8 +288,14 @@ export function watchUserDoc(
       strategy: (snap.get('settings.strategy') as Strategy | undefined) ?? null,
       wallet: (snap.get('wallet') as Wallet | undefined) ?? null,
       hotkeys: (snap.get('settings.hotkeys') as Record<string, string> | undefined) ?? null,
+      ui: (snap.get('settings.ui') as UiPrefs | undefined) ?? null,
     });
   });
+}
+
+/** UI-Präferenzen speichern — Rules erlauben Owner-Updates nur aufs settings-Feld. */
+export async function saveUiPrefs(uid: string, ui: UiPrefs): Promise<void> {
+  await updateDoc(doc(db(), 'users', uid), { 'settings.ui': ui });
 }
 
 export function watchPositions(uid: string, cb: (positions: Position[]) => void): Unsubscribe {

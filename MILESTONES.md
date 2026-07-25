@@ -456,6 +456,34 @@ es fehlten die Handelszeiten je Klasse.
 - [ ] Echte Broker-Anbindung je Klasse (Krypto-Spot, IBKR, …) → M13/M14,
       Echtgeld bleibt owner-gated
 
+## Chart-Vision (User-Wunsch 2026-07-24, laufend)
+
+**Ziel:** Der Chart als vollwertiges, „organisch-vektorbasiertes" Arbeitsgerät:
+fehlerfrei zoombar, lang- und kurzfristig, mit typischen Trading-Overlays,
+eigenen Prognose-Pfeilen (nach denen der Algorithmus handelt) und mehreren
+Charts parallel.
+
+- [x] Zoom-Audit: Rauszoomen möglich, Zoom überlebt Snapshot-Refresh, Fit nur
+      bei Symbol-/Zeitrahmen-Wechsel (X **und** Y via Autoscale-Reset)
+- [x] 1 Jahr Tages-Historie + 5-Minuten-Intraday (1T/1W) mit Zeitrahmen-Bar
+- [x] Indikator-Overlays zum Zuschalten: SMA 20/50/200, EMA 9/21,
+      Bollinger-Bänder; Auswahl persistiert (localStorage)
+- [x] Vergleichs-Overlay: zweites Symbol als %-Linie im selben Chart
+- [x] Prognose-Pfeile: ✏-Modus → Klick setzt Ziel-Kurs → Popover (Datum,
+      Vertrauen 1–3) → organischer SVG-Pfeil (Dicke = Vertrauen); Scan nimmt
+      die Prognose als gewichtete Stimme (PR #31/#32).
+      **Feedback 25.07.: default AUS** — Opt-in übers Options-Modal; ohne
+      Opt-in ignoriert auch der Scan gespeicherte Prognosen (Server-Gate)
+- [x] Options-Modal ⚙ (User-Wunsch 25.07.): optionale Elemente an/aus
+      (Prognose-Pfeil, Vergleichs-Overlay, Raster — settings.ui, geräteübergreifend)
+      + Paper-Wallet-Grundeinstellungen (Startkapital, Investment je Trade %,
+      Stop-Loss/Take-Profit %) über saveStrategy
+- [x] Multi-Chart-Raster 1/2/4 mit Lock-Gruppen: Zusatz-Panels mit eigenem
+      Symbol + Zeitrahmen; gelockte Charts (inkl. Haupt-Chart, 🔒) teilen
+      Zoom/Sichtbereich/Crosshair; Raster persistiert (localStorage)
+- [ ] VWAP (Intraday) + RSI/MACD-Unterpanels, ATR, 52-Wochen-Marken, Pivots
+- [ ] Organik-Polish: weichere Kurven/Verläufe, Vektor-Ästhetik durchziehen
+
 ## M11 — Strategie-Studio II: Backtest, Shadow, Sweeps, A/B
 
 **Ziel:** Den Experimentier-Loop schließen: Jede publizierte Version wird

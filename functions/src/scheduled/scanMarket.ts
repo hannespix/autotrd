@@ -161,10 +161,13 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
 
       // 2) Regelbaum-Strategien (M10): publizierte Strategien mit Zuordnung
       // handeln ihre Symbole SELBST — der Classic-Pfad überspringt sie.
-      // User-Prognosen (Chart-Pfeile) einmal je User laden
-      const predSnap = await userDoc.ref.collection('predictions').get();
+      // User-Prognosen (Chart-Pfeile): Opt-in übers Options-Modal (Feedback
+      // 25.07.) — ohne settings.ui.predArrow === true zählt KEINE Prognose,
+      // gespeicherte Pfeile bleiben aber erhalten (Reaktivierung möglich).
+      const predArrowOn = userDoc.get('settings.ui.predArrow') === true;
+      const predSnap = predArrowOn ? await userDoc.ref.collection('predictions').get() : null;
       const predictions = new Map(
-        predSnap.docs.map((d) => [d.id, d.data() as import('../../../shared/src/index.js').UserPrediction]),
+        (predSnap?.docs ?? []).map((d) => [d.id, d.data() as import('../../../shared/src/index.js').UserPrediction]),
       );
       const todayIso = new Date().toISOString();
 
