@@ -634,6 +634,14 @@ die Watchlist ist nur noch der Scope der Trading-Engine.
       (⠿-Grip im Kartenkopf, live einsortieren beim Ziehen, Reihenfolge in
       workspace `panels[id].order` — synct über Geräte; Reorder bewusst je
       Spalte) · Test-Hook `__autotrdWs` nutzt denselben Drop-Pfad
+- [x] Grid-Parität (User-Feedback 25.07. nachts): Raster-Panels haben
+      dieselben Zeitrahmen wie das Haupt-Chart (inkl. 1T/1W-Intraday mit
+      VWAP und Kurzfrist-Prognose des Panel-Symbols, persistiert),
+      News-Punkte (Event-Marker) in jedem Panel, alle Overlays synchron ·
+      Chart-Typ-Kombi: Linie/Berg/Baseline ZUSÄTZLICH zu den Kerzen
+      (Gerät-lokal im Stil-Schlüssel, synct ins Raster) · Timeline-Schwung:
+      kinetisches Scrolling auch mit der Maus + animierte Sprünge
+      ⇤ Anfang / ◐ Mitte / ⇥ Ende (am Rand lädt die Historie automatisch)
 
 ## M11 — Strategie-Studio II: Backtest, Shadow, Sweeps, A/B
 
