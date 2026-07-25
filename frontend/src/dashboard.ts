@@ -71,6 +71,7 @@ import {
   type WorkspaceDocData,
 } from './data.js';
 import { emailVerified, logout, refreshUser, sendVerification } from './auth.js';
+import { iBtn, initInfoTips } from './infotips.js';
 import { mountLegalFooter } from './legal.js';
 import {
   GROUP_COLORS,
@@ -356,24 +357,24 @@ function layout(email: string): string {
   <div class="app">
     <div class="col-l" id="leftCol">
       <div class="card" data-panel="strategy"><div class="sect">Strategie</div><div class="cbody">
-        <div class="fld"><label class="lbl">Watchlist</label>
+        <div class="fld"><label class="lbl">Watchlist ${iBtn('watchlist')}</label>
           <div id="wlChips" class="wl-chips"></div>
           <button class="btn btn-n" id="openPickerBtn" style="margin-top:6px">Watchlist wählen</button>
         </div>
         <div class="row">
-          <div class="fld"><label class="lbl">RSI Kauf &lt;</label><input id="sRsiLo" class="inp" type="number"></div>
-          <div class="fld"><label class="lbl">RSI Verkauf &gt;</label><input id="sRsiHi" class="inp" type="number"></div>
+          <div class="fld"><label class="lbl">RSI Kauf &lt; ${iBtn('rsiBuy')}</label><input id="sRsiLo" class="inp" type="number"></div>
+          <div class="fld"><label class="lbl">RSI Verkauf &gt; ${iBtn('rsiSell')}</label><input id="sRsiHi" class="inp" type="number"></div>
         </div>
         <div class="row">
-          <div class="fld"><label class="lbl">Scan (min)</label><input id="sInt" class="inp" type="number"></div>
-          <div class="fld"><label class="lbl">Min Konfluenz</label><input id="sConf" class="inp" type="number"></div>
-          <div class="fld"><label class="lbl">Periode</label>
+          <div class="fld"><label class="lbl">Scan (min) ${iBtn('scan')}</label><input id="sInt" class="inp" type="number"></div>
+          <div class="fld"><label class="lbl">Min Konfluenz ${iBtn('konfluenz')}</label><input id="sConf" class="inp" type="number"></div>
+          <div class="fld"><label class="lbl">Periode ${iBtn('periode')}</label>
             <select id="sPeriod" class="sel"><option>3mo</option><option>6mo</option><option>1y</option></select></div>
         </div>
         <div class="row">
-          <div class="fld"><label class="lbl">Max Pos %</label><input id="sMaxP" class="inp" type="number"></div>
-          <div class="fld"><label class="lbl">Stop %</label><input id="sSL" class="inp" type="number" step="0.1"></div>
-          <div class="fld"><label class="lbl">Take %</label><input id="sTP" class="inp" type="number" step="0.1"></div>
+          <div class="fld"><label class="lbl">Max Pos % ${iBtn('maxPos')}</label><input id="sMaxP" class="inp" type="number"></div>
+          <div class="fld"><label class="lbl">Stop % ${iBtn('stopLoss')}</label><input id="sSL" class="inp" type="number" step="0.1"></div>
+          <div class="fld"><label class="lbl">Take % ${iBtn('takeProfit')}</label><input id="sTP" class="inp" type="number" step="0.1"></div>
         </div>
         <p id="stratErr" class="error" hidden></p>
         <button class="btn btn-g" id="saveBtn">Speichern</button>
@@ -592,9 +593,9 @@ function layout(email: string): string {
           <div class="row mt-inds">
             <div><label class="lbl">Kurs/Einheit</label><div id="mtPx" class="smv mono">--</div></div>
             <div><label class="lbl">Heute</label><div id="mtChg" class="smv mono">--</div></div>
-            <div><label class="lbl" title="Relative-Stärke-Index (14): unter 30 überverkauft, über 70 überkauft">RSI</label><div id="mtRsi" class="smv mono">--</div></div>
-            <div><label class="lbl" title="MACD-Momentum: Histogramm über/unter null">MACD</label><div id="mtMacd" class="smv">--</div></div>
-            <div><label class="lbl" title="Konfluenz-Signal des letzten Scans">Signal</label><div id="mtSig" class="smv">--</div></div>
+            <div><label class="lbl">RSI ${iBtn('rsi')}</label><div id="mtRsi" class="smv mono">--</div></div>
+            <div><label class="lbl">MACD ${iBtn('macd')}</label><div id="mtMacd" class="smv">--</div></div>
+            <div><label class="lbl">Signal ${iBtn('signal')}</label><div id="mtSig" class="smv">--</div></div>
           </div>
         </div>
         <label class="lbl">Stückzahl</label>
@@ -604,9 +605,9 @@ function layout(email: string): string {
         </div>
         <div class="mt-sum">
           <div class="mt-row"><span>Zwischensumme</span><span id="mtSub" class="mono">--</span></div>
-          <div class="mt-row"><span>Gebühren (0,1 % + 5 bp)</span><span id="mtFee" class="mono">--</span></div>
+          <div class="mt-row"><span>Gebühren (0,1 % + 5 bp) ${iBtn('fees')}</span><span id="mtFee" class="mono">--</span></div>
           <div class="mt-row mt-total"><span>Gesamt</span><span id="mtTotal" class="mono">--</span></div>
-          <div class="mt-row"><span>Kaufkraft danach</span><span id="mtCash" class="mono">--</span></div>
+          <div class="mt-row"><span>Kaufkraft danach ${iBtn('kaufkraft')}</span><span id="mtCash" class="mono">--</span></div>
         </div>
         <div class="row">
           <button class="btn btn-g" id="mtBuy">Kaufen</button>
@@ -626,7 +627,7 @@ function layout(email: string): string {
       </div></div>
 
       <div class="card" data-panel="forecastacc"><div class="sect">Prognose-Genauigkeit</div><div class="cbody kpi">
-        <label class="lbl">Richtungs-Trefferquote</label>
+        <label class="lbl">Richtungs-Trefferquote ${iBtn('fcCombo')}</label>
         <div id="fcAcc" class="vbig c-ac">--</div>
         <div class="row" style="gap:12px">
           <div><label class="lbl">Bewertet</label><div id="fcScored" class="smv">0</div></div>
@@ -643,11 +644,11 @@ function layout(email: string): string {
           ihres Horizonts gegen die eingetretene Realität bewertet. Die Trefferquote je
           Kombi aus Sentiment-Gewicht (w) und Lookback steuert, welche Parameter
           künftige Prognosen nutzen — das System lernt aus jedem Fehler.</div>
-        <label class="lbl">Kombi-Statistik Tages-Prognose (w × Lookback)</label>
+        <label class="lbl">Kombi-Statistik Tages-Prognose (w × Lookback) ${iBtn('fcCombo')}</label>
         <div id="flCombos" class="fl-tbl"><div class="hint">Noch keine bewerteten Prognosen.</div></div>
-        <label class="lbl">Kombi-Statistik Kurzfrist/Intraday (w × Lookback in 5-min-Bars)</label>
+        <label class="lbl">Kombi-Statistik Kurzfrist/Intraday (w × Lookback in 5-min-Bars) ${iBtn('kurzfrist')}</label>
         <div id="flCombosIntra" class="fl-tbl"><div class="hint">Noch keine bewerteten Kurzfrist-Prognosen.</div></div>
-        <label class="lbl">Vorhersage vs. Realität <span id="flSym2" style="color:var(--t3)"></span></label>
+        <label class="lbl">Vorhersage vs. Realität ${iBtn('mae')} <span id="flSym2" style="color:var(--t3)"></span></label>
         <div id="flRows" class="fl-tbl"><div class="hint">Noch keine bewerteten Prognosen für dieses Symbol.</div></div>
       </div></div>
 
@@ -3348,6 +3349,7 @@ function updateClock(): void {
 /* ── Mount / Unmount ────────────────────────────────────────────────── */
 
 export function mountDashboard(root: HTMLElement, uid: string, email: string): void {
+  initInfoTips(); // ⓘ-Erklär-Popover (idempotent)
   root.innerHTML = layout(email);
   st = {
     uid,
