@@ -57,3 +57,11 @@ jobs:
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
         run: node scripts-ci/check-scheduler.mjs
+
+      # Wenn der Lauf rot wurde (z. B. Scan-Invoke 500): scanmarket-Fehlerlogs
+      # direkt ins Job-Log ziehen — die Ursache soll ohne GCP-Konsole lesbar sein.
+      - name: Scan-Fehlerlogs (Diagnose bei Rot)
+        if: ${{ failure() && env.FIREBASE_SERVICE_ACCOUNT != '' }}
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+        run: node scripts-ci/fetch-scan-logs.mjs 30 DEFAULT

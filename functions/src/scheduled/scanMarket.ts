@@ -623,8 +623,17 @@ export async function runScan(force = false): Promise<ScanResult> {
     }
   }
 
-  // Auto-Trades pro User (1 Marktdaten-Fetch oben, N Auswertungen hier)
-  const trades = await executeUserTrades(marketData);
+  // Auto-Trades pro User (1 Marktdaten-Fetch oben, N Auswertungen hier).
+  // Geguarded: Ein Fehler hier darf den Heartbeat nicht verhindern — sonst
+  // bleibt meta/health stehen und die Ursache ist ohne GCP-Konsole unsichtbar.
+  let trades = 0;
+  let lastError: string | null = null;
+  try {
+    trades = await executeUserTrades(marketData);
+  } catch (err) {
+    lastError = `trades: ${err instanceof Error ? err.message : String(err)}`.slice(0, 400);
+    logger.error('Trade-Block fehlgeschlagen', err);
+  }
 
   // Heartbeat für Monitoring-Alerts (SETUP.md §J): meta/health ist öffentlich
   // lesbar (meta-Rules) und enthält bewusst KEINE sensiblen Daten.
@@ -641,6 +650,8 @@ export async function runScan(force = false): Promise<ScanResult> {
         intradayOk,
         intradayError,
         trades,
+        lastError,
+        lastErrorAt: lastError ? now.toISOString() : null,
       },
       { merge: true },
     )
@@ -659,7 +670,21 @@ export const scanMarket = onSchedule(
     secrets: [anthropicApiKey],
   },
   async () => {
-    await runScan(false);
+    try {
+      await runScan(false);
+    } catch (err) {
+      // Selbstdiagnose ohne GCP-Konsole: Die Fehlermeldung (nie Secrets —
+      // unsere Fehlerpfade loggen keine Keys) landet im öffentlichen
+      // meta/health, damit ein roter Lauf von außen erklärbar ist. Der
+      // Fehler wird rethrown, damit Cloud Logging + Monitoring ihn sehen.
+      const msg = (err instanceof Error ? err.message : String(err)).slice(0, 400);
+      logger.error('runScan fehlgeschlagen', err);
+      await getFirestore()
+        .doc('meta/health')
+        .set({ lastError: `scan: ${msg}`, lastErrorAt: new Date().toISOString() }, { merge: true })
+        .catch(() => undefined);
+      throw err;
+    }
   },
 );
 
