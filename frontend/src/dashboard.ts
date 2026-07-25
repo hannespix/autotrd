@@ -848,6 +848,14 @@ function renderLegend(lines: import('./chart.js').OverlayLine[], intraday: boole
       title: 'Der Verlauf unter der Kurslinie färbt sich nach der aktuellen Signal-Richtung des Scans',
     });
   }
+  if (st && !st.cleanView && !intraday && st.ui.predArrow && st.prediction) {
+    const lastClose = st.bars[st.bars.length - 1]?.close ?? st.prediction.targetPrice;
+    items.push({
+      c: st.prediction.targetPrice >= lastClose ? '#26cf9d' : '#f2586b',
+      t: '✏ Meine Prognose — zählt als Stimme im Auto-Trading',
+      title: 'Deine manuell eingezeichnete Kurs-Erwartung; der Algorithmus nimmt sie als gewichtete Stimme (Gewicht = Vertrauen 1–3) in die Handels-Entscheidung auf',
+    });
+  }
   if (!intraday && st?.showForecast && !st.cleanView && st.forecast) {
     items.push({ c: '#25d0ee', t: 'Prognose (gestrichelt, ±1σ)', title: 'Sentiment-gewichtete Regression über die nächsten Handelstage' });
   }
@@ -1025,19 +1033,22 @@ function drawPredictionArrow(): void {
     `${(base.x + hx * hw).toFixed(1)},${(base.y + hy * hw).toFixed(1)} ` +
     `${tip.x.toFixed(1)},${tip.y.toFixed(1)} ` +
     `${(base.x - hx * hw).toFixed(1)},${(base.y - hy * hw).toFixed(1)}`;
-  // Label-Pille an der Spitze (überdeckt keine Kerzen mehr)
+  // Label-Pille an der Spitze: markiert den Pfeil klar als MANUELLE
+  // User-Prognose (Wunsch 25.07.), Details in Zeile 2 + Erklärung in Legende
+  const title = '✏ Meine Prognose';
   const label = `${pred.targetPrice.toFixed(2)} · ${pred.targetDate.slice(5)}`;
-  const pillW = label.length * 6.4 + 16;
+  const pillW = Math.max(title.length, label.length) * 6.6 + 18;
   const pillX = Math.max(4, Math.min(box.width - pillW - 4, tip.x - pillW / 2));
-  const pillY = up ? Math.max(4, tip.y - 34) : Math.min(box.height - 24, tip.y + 12);
+  const pillY = up ? Math.max(4, tip.y - 48) : Math.min(box.height - 38, tip.y + 12);
   svg.setAttribute('viewBox', `0 0 ${box.width} ${box.height}`);
   svg.innerHTML = `
     <path d="M${leftPts.join(' L')} L${rightPts.join(' L')} Z" fill="${color}" opacity="0.88" />
     <path d="M${head} Z" fill="${color}" opacity="0.95" />
     <g class="pred-pill">
-      <rect x="${pillX}" y="${pillY}" width="${pillW}" height="20" rx="10"
+      <rect x="${pillX}" y="${pillY}" width="${pillW}" height="34" rx="10"
         fill="var(--card-solid, #0e1420)" stroke="${color}" stroke-width="1.2" opacity="0.95" />
-      <text x="${pillX + pillW / 2}" y="${pillY + 14}" text-anchor="middle"
+      <text x="${pillX + pillW / 2}" y="${pillY + 13}" text-anchor="middle" class="pred-label pred-label-t">${title}</text>
+      <text x="${pillX + pillW / 2}" y="${pillY + 27}" text-anchor="middle"
         class="pred-label" style="fill:${color}">${label}</text>
     </g>`;
 }
@@ -1060,6 +1071,7 @@ async function loadPredictionForSymbol(): Promise<void> {
   if (!st || st.currentSymbol !== sym) return;
   st.prediction = pred;
   drawPredictionArrow();
+  applyOverlays(); // Legende um den „Meine Prognose"-Eintrag aktualisieren
 }
 
 /* ── Options-Modal (⚙, Feedback 25.07.): Elemente + Paper-Wallet-Basics ── */
@@ -2672,6 +2684,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         $('predPop').hidden = true;
         st!.prediction = null;
         drawPredictionArrow();
+        applyOverlays();
       })
       .catch((e) => alert(`Prognose: ${(e as Error).message}`));
   });
