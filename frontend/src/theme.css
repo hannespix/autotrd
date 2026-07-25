@@ -515,14 +515,21 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .ab-h { margin-top: 12px; }
 @media (max-width: 560px) { .ab-grid { grid-template-columns: 1fr; } }
 
-/* Vollbild je Chart (Feedback 25.07., Smartphones): CSS-Overlay, Esc schließt */
-.chart-wrap.chart-max, .gpanel.chart-max {
+/* Vollbild je Chart (Feedback 25.07., Smartphones): CSS-Overlay, Esc schließt.
+   Der Haupt-Chart maximiert seinen ganzen Scope — Zeitrahmen, Anzeige-
+   Werkzeuge, Legende und Unterpanels bleiben im Vollbild bedienbar. */
+#chartMaxScope.chart-max, .gpanel.chart-max {
   /* über dem sticky Header (100), unter Modals (220) */
   position: fixed; inset: 0; z-index: 150; border-radius: 0;
   background: var(--card-solid); padding: 10px;
   padding-top: max(10px, env(safe-area-inset-top));
 }
-.chart-wrap.chart-max #chartArea { height: 100%; }
+#chartMaxScope.chart-max {
+  display: flex; flex-direction: column; overflow-y: auto;
+}
+#chartMaxScope.chart-max #chartRow { flex: 1 1 auto; min-height: 240px; grid-auto-rows: 1fr; }
+#chartMaxScope.chart-max .chart-wrap { min-height: 0; height: 100%; }
+#chartMaxScope.chart-max #chartArea { height: 100%; min-height: 240px; }
 .gpanel.chart-max .gp-chart { height: auto; flex: 1; }
 .chart-max-exit {
   position: absolute; top: 8px; right: 68px; z-index: 30;

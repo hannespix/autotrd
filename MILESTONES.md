@@ -493,8 +493,15 @@ Charts parallel.
       Linie, Mini-Legenden in RSI/MACD-Panels, Tooltips je Zeitrahmen ·
       jeder Chart per ⛶ vollbild-maximierbar (Portal an body wegen
       backdrop-filter-Containing-Block, z über Header, Esc/✕ schließt)
+- [x] Vektor-Polish (Design-Wunsch 25.07.): Prognose-Pfeil im TradingView-Stil
+      (gefülltes, konisch zulaufendes Kurven-Band + große Spitze, grün ↑ /
+      rot ↓, Dicke = Vertrauen, Label-Pille an der Spitze) · Layer „Fläche"
+      mit Signal-gefärbtem Verlauf (Kauf grün / Verkauf rot / neutral blau,
+      Legende erklärt die Farbe) · „Kerzen aus" für den ruhigen Vektor-Look ·
+      „Clean"-Chip blendet alles Optionale aus ohne die Auswahl zu verlieren ·
+      Vollbild maximiert den ganzen Chart-Scope (Zeitrahmen, Anzeige-Werkzeuge,
+      Legende, Unterpanels bleiben bedienbar)
 - [ ] ATR, 52-Wochen-Marken, Pivots (weitere Trading-Hilfen)
-- [ ] Organik-Polish: weichere Kurven/Verläufe, Vektor-Ästhetik durchziehen
 
 ## M11 — Strategie-Studio II: Backtest, Shadow, Sweeps, A/B
 

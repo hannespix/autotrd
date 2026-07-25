@@ -148,6 +148,10 @@ interface DashState {
   predMode: boolean;
   /** Optionale Elemente (Options-Modal ⚙, settings.ui) — ✏ ist Opt-in. */
   ui: { predArrow: boolean; cmpOverlay: boolean; chartGrid: boolean; subPanels: boolean };
+  /** Clean-View: blendet alles Optionale aus, ohne die Auswahl zu verlieren. */
+  cleanView: boolean;
+  /** Richtung des letzten Scan-Signals — färbt den Flächen-Verlauf. */
+  lastSignalDir: 'buy' | 'sell' | 'hold';
   /** Indikator-Unterpanels (RSI/MACD) — Zeitachse synchron zum Haupt-Chart. */
   subCharts: { rsi: IndicatorPanelHandle | null; macd: IndicatorPanelHandle | null };
   /** Multi-Chart-Raster (Chart-Vision): 1 = nur Haupt-Chart, 2/4 = Panels daneben. */
@@ -345,6 +349,7 @@ function layout(email: string): string {
       <div class="livebar" id="liveBar"></div>
 
       <div class="card" data-panel="chart"><div class="sect">Chart · Candlestick + Volumen <button class="lchip" id="chipChart" title="Link-Gruppe wechseln (Chart folgt dieser Gruppe)">A</button></div><div class="cbody">
+        <div id="chartMaxScope">
         <div class="chart-hd">
           <span class="chart-nm" id="chSym"></span>
           <span class="chart-sub" id="chSub"></span>
@@ -357,7 +362,8 @@ function layout(email: string): string {
           <button class="tf-btn" data-bars="22" title="1 Monat in Tageskerzen">1M</button>
           <button class="tf-btn on" data-bars="66" title="3 Monate in Tageskerzen">3M</button>
           <button class="tf-btn" data-bars="0" title="1 Jahr in Tageskerzen">1J</button>
-          <button class="tf-btn" id="maxMain" title="Chart im Vollbild (Esc schließt)">⛶</button>
+          <button class="tf-btn" id="maxMain" title="Chart im Vollbild — Legende und Anzeige-Optionen bleiben verfügbar (Esc schließt)">⛶</button>
+          <button class="tf-btn" id="cleanBtn" title="Clean-View: alles Optionale auf einmal ausblenden — nur der Kurs bleibt">Clean</button>
           <button class="tf-btn" id="toolsBtn" style="margin-left:auto"
             title="Overlays, Panels, Raster & Vergleich ein-/ausklappen">Anzeige ▾</button>
         </div>
@@ -371,6 +377,8 @@ function layout(email: string): string {
             <button class="tf-btn" data-layer="ema21" title="EMA 21">EMA21</button>
             <button class="tf-btn" data-layer="bb" title="Bollinger-Bänder (20, 2σ)">BB</button>
             <button class="tf-btn ind-x" data-layer="vwap" title="VWAP (Intraday 1T/1W): volumengewichteter Durchschnitt je Handelstag">VWAP</button>
+            <button class="tf-btn" data-layer="area" title="Flächen-Verlauf unter der Kurslinie — die Farbe folgt dem aktuellen Signal (grün = Kauf, rot = Verkauf, blau = neutral)">Fläche</button>
+            <button class="tf-btn" data-layer="hideCandles" title="Kerzen + Volumen ausblenden (ruhiger Vektor-Look, z. B. mit aktiver Fläche)">Kerzen aus</button>
           </div>
           <div class="tf-bar">
             <span class="tool-lbl">Panels</span>
@@ -425,6 +433,7 @@ function layout(email: string): string {
         </div>
         <div id="rsiPanel" class="sub-panel" hidden></div>
         <div id="macdPanel" class="sub-panel" hidden></div>
+        </div>
         <div class="hint">1T/1W: 5-Minuten-Kerzen · 1M–1J: Tageskerzen —
           aktualisiert der zentrale 5-min-Scan. Zoom bleibt beim Aktualisieren erhalten.</div>
       </div></div>
@@ -658,6 +667,10 @@ function wireChartCtx(): void {
     watchLatestIndicators(sym, (row) => renderIndicatorCards(row)),
     watchLatestSignal(sym, (sig) => {
       const el = $('vSig');
+      if (st) {
+        st.lastSignalDir = sig?.direction ?? 'hold';
+        applyArea(); // Signal-Richtung färbt den Flächen-Verlauf sofort um
+      }
       if (!sig) { el.textContent = '--'; el.className = 'sval c-t3'; return; }
       el.textContent = sig.direction.toUpperCase();
       el.className = `sval ${sig.direction === 'buy' ? 'c-gn' : sig.direction === 'sell' ? 'c-rd' : 'c-t3'}`;
@@ -758,15 +771,15 @@ function applyOverlays(): void {
   const closes = intraday
     ? st.intradayBars.map((b) => b.close)
     : (st.range > 0 ? st.bars.slice(-st.range) : st.bars).map((b) => b.close);
-  const lines = baseOverlayLines(times, closes);
+  const lines = st.cleanView ? [] : baseOverlayLines(times, closes);
   const pts = (series: (number | null)[]): Array<{ time: string | number; value: number }> =>
     series.flatMap((v, i) => (v === null ? [] : [{ time: times[i]!, value: v }]));
   // VWAP nur intraday (Session-Konzept) und nur mit aktivierten Indikator-Extras
-  if (intraday && st.ui.subPanels && st.chartLayers.has('vwap')) {
+  if (!st.cleanView && intraday && st.ui.subPanels && st.chartLayers.has('vwap')) {
     lines.push({ key: 'vwap', color: '#f2d16b', width: 2, points: pts(vwapSessions(st.intradayBars)) });
   }
   // Vergleichs-Overlay (Tageskerzen): %-Entwicklung ab erstem gemeinsamen Tag
-  if (!intraday && st.overlaySymbol && st.overlayBars.length > 1) {
+  if (!st.cleanView && !intraday && st.overlaySymbol && st.overlayBars.length > 1) {
     const firstDate = (st.range > 0 ? st.bars.slice(-st.range) : st.bars)[0]?.date ?? '';
     const cmp = st.overlayBars.filter((b) => b.date >= firstDate);
     const base = cmp[0]?.close;
@@ -782,6 +795,28 @@ function applyOverlays(): void {
   }
   st.chart.setOverlays(lines);
   renderLegend(lines, intraday);
+  applyArea();
+}
+
+/** Signal-Farbtöne des Flächen-Verlaufs (Kauf grün, Verkauf rot, neutral blau). */
+const AREA_TONES = {
+  buy: { line: '#26cf9d', top: 'rgba(38,207,157,.35)', bottom: 'rgba(38,207,157,0)' },
+  sell: { line: '#f2586b', top: 'rgba(242,88,107,.32)', bottom: 'rgba(242,88,107,0)' },
+  hold: { line: '#25d0ee', top: 'rgba(37,208,238,.28)', bottom: 'rgba(37,208,238,0)' },
+} as const;
+
+/** Flächen-Verlauf (Vektor-Look) + Kerzen-Sichtbarkeit anwenden. */
+function applyArea(): void {
+  if (!st?.chart) return;
+  const want = !st.cleanView && st.chartLayers.has('area');
+  const { times, closes } = shownSeries();
+  st.chart.setArea(
+    want && closes.length > 0 ? closes.map((c, i) => ({ time: times[i]!, value: c })) : null,
+    AREA_TONES[st.lastSignalDir],
+  );
+  // „Kerzen aus" nur sinnvoll, wenn eine Linie/Fläche den Kurs weiter zeigt
+  const hide = !st.cleanView && st.chartLayers.has('hideCandles') && want;
+  st.chart.setCandlesVisible(!hide);
 }
 
 /** Legende: beschriftet jede aktive Linie mit Farbe (gilt für alle Charts). */
@@ -805,10 +840,18 @@ function renderLegend(lines: import('./chart.js').OverlayLine[], intraday: boole
       items.push({ c: l.color, t: NAME[l.key]!, title: 'Gilt in allen Charts mit denselben Overlays' });
     }
   }
-  if (!intraday && st?.showForecast && st.forecast) {
+  if (st && !st.cleanView && st.chartLayers.has('area')) {
+    const toneLabel = st.lastSignalDir === 'buy' ? 'Signal KAUF' : st.lastSignalDir === 'sell' ? 'Signal VERKAUF' : 'Signal neutral';
+    items.push({
+      c: AREA_TONES[st.lastSignalDir].line,
+      t: `Fläche — ${toneLabel}`,
+      title: 'Der Verlauf unter der Kurslinie färbt sich nach der aktuellen Signal-Richtung des Scans',
+    });
+  }
+  if (!intraday && st?.showForecast && !st.cleanView && st.forecast) {
     items.push({ c: '#25d0ee', t: 'Prognose (gestrichelt, ±1σ)', title: 'Sentiment-gewichtete Regression über die nächsten Handelstage' });
   }
-  if (st?.showEvents && (st.events.length ?? 0) > 0 && !intraday) {
+  if (st?.showEvents && !st.cleanView && (st.events.length ?? 0) > 0 && !intraday) {
     items.push({ c: '#26cf9d', t: 'Event-Punkte (News)', title: 'Überfahren zeigt die News des Tages' });
   }
   el.hidden = items.length === 0;
@@ -906,7 +949,7 @@ async function mountSubPanel(kind: 'rsi' | 'macd'): Promise<void> {
 function updateSubPanels(): void {
   if (!st) return;
   for (const kind of ['rsi', 'macd'] as const) {
-    const want = st.ui.subPanels && st.chartLayers.has(`${kind}Panel`);
+    const want = st.ui.subPanels && !st.cleanView && st.chartLayers.has(`${kind}Panel`);
     const el = $(`${kind}Panel`);
     el.hidden = !want;
     if (!want) {
@@ -921,7 +964,9 @@ function updateSubPanels(): void {
   }
 }
 
-/** Prognose-Pfeil als organische Vektor-Kurve über dem Chart (Dicke = Vertrauen). */
+/** Prognose-Pfeil im TradingView-Stil (User-Referenz 25.07.): fetter,
+ *  gefüllter Vektor-Pfeil — grün = Ziel über Kurs, rot = darunter; Dicke
+ *  wächst mit dem Vertrauen, Label als Pille an der Spitze. */
 function drawPredictionArrow(): void {
   const svg = document.getElementById('predSvg');
   if (!svg || !st) return;
@@ -933,17 +978,68 @@ function drawPredictionArrow(): void {
   const yEnd = st.chart.coords(last.date, pred.targetPrice).y;
   if (start.x === null || start.y === null || yEnd === null) return;
   const box = svg.getBoundingClientRect();
-  const x2 = Math.min(box.width - 16, start.x + Math.max(60, box.width * 0.12));
-  const w = 1 + pred.confidence * 1.3;
-  const midX = (start.x + x2) / 2;
   const up = pred.targetPrice >= last.close;
+  const color = up ? '#26cf9d' : '#f2586b';
+  const p0 = { x: start.x, y: start.y };
+  const p2 = { x: Math.min(box.width - 28, start.x + Math.max(90, box.width * 0.16)), y: yEnd };
+  const p1 = { x: (p0.x + p2.x) / 2, y: p0.y }; // erst flach anlaufen, dann zum Ziel
+  const q = (t: number): { x: number; y: number } => ({
+    x: (1 - t) ** 2 * p0.x + 2 * (1 - t) * t * p1.x + t ** 2 * p2.x,
+    y: (1 - t) ** 2 * p0.y + 2 * (1 - t) * t * p1.y + t ** 2 * p2.y,
+  });
+  const dq = (t: number): { x: number; y: number } => ({
+    x: 2 * (1 - t) * (p1.x - p0.x) + 2 * t * (p2.x - p1.x),
+    y: 2 * (1 - t) * (p1.y - p0.y) + 2 * t * (p2.y - p1.y),
+  });
+  // Schaft als Band entlang der Kurve (schmal am Start, breiter zur Spitze)
+  const wStart = 1.5 + pred.confidence * 1.2;
+  const wEnd = wStart * 2.2;
+  const headLen = 12 + pred.confidence * 4;
+  const approxLen = Math.hypot(p2.x - p0.x, p2.y - p0.y) * 1.05;
+  const tHead = Math.max(0.5, 1 - headLen / approxLen);
+  const N = 14;
+  const leftPts: string[] = [];
+  const rightPts: string[] = [];
+  for (let i = 0; i <= N; i++) {
+    const t = (i / N) * tHead;
+    const c = q(t);
+    const d = dq(t);
+    const len = Math.hypot(d.x, d.y) || 1;
+    const nx = -d.y / len;
+    const ny = d.x / len;
+    const w = wStart + (wEnd - wStart) * (i / N);
+    leftPts.push(`${(c.x + nx * w).toFixed(1)},${(c.y + ny * w).toFixed(1)}`);
+    rightPts.unshift(`${(c.x - nx * w).toFixed(1)},${(c.y - ny * w).toFixed(1)}`);
+  }
+  // Pfeilspitze: Dreieck tangential zur Kurve, deutlich breiter als der Schaft
+  const base = q(tHead);
+  const dHead = dq(tHead);
+  const hl = Math.hypot(dHead.x, dHead.y) || 1;
+  const ux = dHead.x / hl;
+  const uy = dHead.y / hl;
+  const hx = -uy;
+  const hy = ux;
+  const hw = wEnd * 2.4;
+  const tip = { x: base.x + ux * headLen, y: base.y + uy * headLen };
+  const head =
+    `${(base.x + hx * hw).toFixed(1)},${(base.y + hy * hw).toFixed(1)} ` +
+    `${tip.x.toFixed(1)},${tip.y.toFixed(1)} ` +
+    `${(base.x - hx * hw).toFixed(1)},${(base.y - hy * hw).toFixed(1)}`;
+  // Label-Pille an der Spitze (überdeckt keine Kerzen mehr)
+  const label = `${pred.targetPrice.toFixed(2)} · ${pred.targetDate.slice(5)}`;
+  const pillW = label.length * 6.4 + 16;
+  const pillX = Math.max(4, Math.min(box.width - pillW - 4, tip.x - pillW / 2));
+  const pillY = up ? Math.max(4, tip.y - 34) : Math.min(box.height - 24, tip.y + 12);
   svg.setAttribute('viewBox', `0 0 ${box.width} ${box.height}`);
   svg.innerHTML = `
-    <path d="M${start.x},${start.y} Q${midX},${start.y} ${x2},${yEnd}"
-      fill="none" stroke="#ffb86b" stroke-width="${w}" stroke-linecap="round" opacity="0.9" />
-    <path d="M${x2},${yEnd} l${up ? '-9,3 2,-8' : '-9,-3 2,8'} z" fill="#ffb86b" opacity="0.9" />
-    <text x="${x2 - 4}" y="${yEnd + (up ? -10 : 18)}" text-anchor="end" class="pred-label">
-      ${pred.targetPrice.toFixed(2)} · ${pred.targetDate.slice(5)}</text>`;
+    <path d="M${leftPts.join(' L')} L${rightPts.join(' L')} Z" fill="${color}" opacity="0.88" />
+    <path d="M${head} Z" fill="${color}" opacity="0.95" />
+    <g class="pred-pill">
+      <rect x="${pillX}" y="${pillY}" width="${pillW}" height="20" rx="10"
+        fill="var(--card-solid, #0e1420)" stroke="${color}" stroke-width="1.2" opacity="0.95" />
+      <text x="${pillX + pillW / 2}" y="${pillY + 14}" text-anchor="middle"
+        class="pred-label" style="fill:${color}">${label}</text>
+    </g>`;
 }
 
 function openPredPop(price: number): void {
@@ -1026,7 +1122,7 @@ async function loadIntradayView(): Promise<void> {
 function applyMarkers(): void {
   if (!st?.chart) return;
   st.chart.setMarkers(
-    st.showEvents
+    st.showEvents && !st.cleanView
       ? st.events.map((e) => ({
           time: e.date,
           position: e.sentiment < -0.12 ? ('aboveBar' as const) : ('belowBar' as const),
@@ -1043,9 +1139,9 @@ function applyForecast(): void {
   if (!st?.chart) return;
   const fc = st.forecast;
   const info = $('fcInfo');
-  if (!st.showForecast) {
+  if (!st.showForecast || st.cleanView) {
     st.chart.setForecast(null);
-    info.textContent = fc ? 'Prognose-Layer ausgeblendet.' : '';
+    info.textContent = fc && !st.cleanView ? 'Prognose-Layer ausgeblendet.' : '';
     return;
   }
   if (!fc || fc.points.length === 0) {
@@ -1422,11 +1518,12 @@ function leaveMax(el: HTMLElement): void {
   }
 }
 
-/** Vollbild fürs Haupt-Chart (CSS-Overlay statt Fullscreen-API — läuft überall). */
+/** Vollbild fürs Haupt-Chart — maximiert den ganzen Scope inkl. Zeitrahmen,
+ *  „Anzeige ▾"-Werkzeugen, Legende und Unterpanels (Feedback 25.07.). */
 function setMainMax(on: boolean): void {
-  const wrap = $('chartWrap');
-  if (on) enterMax(wrap);
-  else leaveMax(wrap);
+  const scope = $('chartMaxScope');
+  if (on) enterMax(scope);
+  else leaveMax(scope);
   ($('maxExit') as HTMLButtonElement).hidden = !on;
   $('maxMain').classList.toggle('on', on);
   drawPredictionArrow();
@@ -2176,6 +2273,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     prediction: null,
     predMode: false,
     ui: { predArrow: false, cmpOverlay: true, chartGrid: true, subPanels: true },
+    cleanView: localStorage.getItem('autotrd-chart-clean') === '1',
+    lastSignalDir: 'hold',
     subCharts: { rsi: null, macd: null },
     chartLayers: new Set((localStorage.getItem('autotrd-chart-layers') ?? '').split(',').filter(Boolean)),
     gridMode: 1,
@@ -2378,6 +2477,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     subRange: (k: 'rsi' | 'macd') => st?.subCharts[k]?.getVisibleRange() ?? null,
     subMounted: () => (st ? (st.subCharts.rsi ? 1 : 0) + (st.subCharts.macd ? 1 : 0) : -1),
     eventCount: () => st?.events.length ?? -1,
+    areaActive: () => st?.chart?.areaActive() ?? false,
+    signalDir: () => st?.lastSignalDir ?? 'hold',
+    cleanActive: () => st?.cleanView ?? false,
     eventDates: () => st?.events.map((e) => e.date) ?? [],
     mainCoords: (time: string | number, price: number) => st?.chart?.coords(time, price) ?? null,
     lastClose: () => st?.bars[st.bars.length - 1]?.close ?? null,
@@ -2505,6 +2607,23 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     if (on) setMainMax(true);
   });
   $('maxExit').addEventListener('click', () => setMainMax(false));
+  // Clean-View: alles Optionale auf einmal weg (Auswahl bleibt gemerkt)
+  const applyClean = (): void => {
+    if (!st) return;
+    $('cleanBtn').classList.toggle('on', st.cleanView);
+    localStorage.setItem('autotrd-chart-clean', st.cleanView ? '1' : '0');
+    applyOverlays();
+    applyMarkers();
+    applyForecast();
+    updateSubPanels();
+    drawPredictionArrow();
+  };
+  $('cleanBtn').addEventListener('click', () => {
+    if (!st) return;
+    st.cleanView = !st.cleanView;
+    applyClean();
+  });
+  if (st?.cleanView) applyClean();
   // Doppelklick auf die Chart-Fläche = frischer Fit (X + Y), wie TradingView
   $('chartArea').addEventListener('dblclick', () => {
     if (!st) return;
