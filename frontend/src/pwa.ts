@@ -46,11 +46,51 @@ function showChip(ev: BeforeInstallPromptEvent): void {
   });
 }
 
+/**
+ * Update-Wächter (Live-Bug 25.07.: frischer Deploy kam beim User nicht an):
+ * Eine offene/installierte App navigiert nie — sie würde neue Bundles erst
+ * beim nächsten Kaltstart sehen. Deshalb: index.html periodisch (und beim
+ * Zurückkehren in den Tab) mit no-cache holen, den Vite-Asset-Hash mit dem
+ * gerade laufenden Bundle vergleichen und bei Abweichung einen Reload-Chip
+ * zeigen. Kein Build-Artefakt nötig — der Hash im Dateinamen ist die Version.
+ */
+function initUpdateWatch(): void {
+  const current = document
+    .querySelector<HTMLScriptElement>('script[src*="/assets/index-"]')
+    ?.src.match(/index-[\w-]+\.js/)?.[0];
+  if (!current) return;
+  let shown = false;
+  const check = async (): Promise<void> => {
+    if (shown || document.hidden) return;
+    try {
+      const html = await (await fetch('/', { cache: 'no-cache' })).text();
+      const fresh = html.match(/index-[\w-]+\.js/)?.[0];
+      if (fresh && fresh !== current) {
+        shown = true;
+        const chip = document.createElement('div');
+        chip.id = 'updChip';
+        chip.className = 'pwa-chip';
+        chip.innerHTML = '<button type="button" class="pwa-install">✨ Neue Version — jetzt laden</button>';
+        document.body.append(chip);
+        chip.querySelector('button')!.addEventListener('click', () => window.location.reload());
+      }
+    } catch {
+      /* offline o. ä. — nächster Versuch beim nächsten Intervall */
+    }
+  };
+  window.setInterval(() => void check(), 5 * 60_000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) void check();
+  });
+  window.setTimeout(() => void check(), 20_000); // kurz nach dem Start einmal
+}
+
 export function initPwa(): void {
   if (import.meta.env.PROD && 'serviceWorker' in navigator && window.isSecureContext) {
     window.addEventListener('load', () => {
       navigator.serviceWorker.register('/sw.js').catch((e) => console.warn('SW-Registrierung', e));
     });
+    initUpdateWatch();
   }
 
   window.addEventListener('beforeinstallprompt', (ev) => {

@@ -55,10 +55,13 @@ const round = (x: number, p: number): number => {
   return Math.round(x * m) / m;
 };
 
-/** Die nächsten n Werktage (Mo–Fr) nach base_date, UTC-Datumsarithmetik. */
+/** Die nächsten n Werktage (Mo–Fr) nach base_date, UTC-Datumsarithmetik.
+ *  Ungültiges Datum ⇒ leere Liste (NIE endlos drehen — Backtest-Fixtures
+ *  nutzen synthetische Datums-Strings). */
 export function nextWeekdays(baseDate: string, n: number): string[] {
   const out: string[] = [];
   const d = new Date(`${baseDate}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return out;
   while (out.length < n) {
     d.setUTCDate(d.getUTCDate() + 1);
     const wd = d.getUTCDay(); // 0=So .. 6=Sa
@@ -497,6 +500,36 @@ export function applyBandCalibration<
     fc: { ...fc, band },
     calib: { s: round(s, 3), maePct: round(maePct, 3), n: combo.n },
   };
+}
+
+export interface ForecastVoteWeighting {
+  /** Effektives Stimmgewicht (ganzzahlig, wie die Konfluenz zählt). */
+  weight: number;
+  /** Kante-über-Zufall-Faktor 0–1; null = keine Evidenz (Basisgewicht gilt). */
+  factor: number | null;
+}
+
+/**
+ * Genauigkeitsgewichtetes Forecast-Vote (Prognose 2.0 Teil 4): Das
+ * konfigurierte Stimmgewicht wird mit der REALISIERTEN Kante über den
+ * Münzwurf skaliert — 50 % Trefferquote ⇒ Faktor 0 (die Prognose weiß
+ * nichts, also stimmt sie nicht mit), 75 % ⇒ 0.5, 100 % ⇒ 1. Unter 50 %
+ * ebenfalls 0 — NIE contrarian drehen. Erst ab MIN_TOTAL_SCORES
+ * realisierten Bewertungen aktiv; vorher gilt das konfigurierte Gewicht
+ * unverändert (ehrlicher Default statt eingebildeter Präzision).
+ */
+export function accuracyWeightedVote(
+  baseWeight: number,
+  stats: { scored?: number | undefined; dirAccuracy?: number | null | undefined } | null | undefined,
+): ForecastVoteWeighting {
+  const base = Math.trunc(baseWeight);
+  const scored = stats?.scored ?? 0;
+  const acc = stats?.dirAccuracy;
+  if (scored < MIN_TOTAL_SCORES || acc === null || acc === undefined || !Number.isFinite(acc)) {
+    return { weight: base, factor: null };
+  }
+  const factor = Math.max(0, Math.min(1, (acc / 100 - 0.5) * 2));
+  return { weight: Math.round(base * factor), factor: round(factor, 3) };
 }
 
 /** Intraday-Doc (market/{sym}/forecastsIntraday/{baseT_w_lookback}). */

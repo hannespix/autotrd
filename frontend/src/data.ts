@@ -241,6 +241,8 @@ export interface SignalRow {
   votes: Partial<Record<'rsi' | 'macd' | 'bollinger', 'buy' | 'sell' | 'hold'>>;
   price: number;
   at: string;
+  /** Genauigkeitsgewichtetes Prognose-Stimmgewicht dieses Scans (Teil 4). */
+  forecastVote?: { base: number; weight: number; factor: number | null };
 }
 
 export interface IndicatorRow {

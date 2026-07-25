@@ -47,6 +47,7 @@ import {
   shadowTrade,
   type ShadowBook,
 } from '../core/rulesTrading.js';
+import { accuracyWeightedVote } from '../../../shared/src/index.js';
 import { runForecast, runIntradayForecast, type LiveForecast } from '../core/forecaster.js';
 import { evaluateIntradayDue } from './evalForecasts.js';
 import { chunkBarsByYear, getDeepDailyBars, getIntradayBars, getMarketSnapshot, getQuickQuote } from '../core/marketData.js';
@@ -497,6 +498,21 @@ export async function runScan(force = false): Promise<ScanResult> {
   let intradayOk = 0;
   let intradayError: string | null = null;
 
+  // Genauigkeitsgewichtetes Forecast-Vote (Prognose 2.0 Teil 4): Das
+  // Stimmgewicht der Prognose folgt ihrer REALISIERTEN Kante über den
+  // Münzwurf — einmal je Scan aus der öffentlichen Lernstatistik gelesen.
+  let fcVote = { weight: Math.trunc(DEFAULT_STRATEGY.signals.forecastWeight), factor: null as number | null };
+  try {
+    const statsSnap = await db.doc('meta/forecastStats').get();
+    fcVote = accuracyWeightedVote(DEFAULT_STRATEGY.signals.forecastWeight, {
+      scored: statsSnap.get('scored') as number | undefined,
+      dirAccuracy: statsSnap.get('dirAccuracy') as number | null | undefined,
+    });
+  } catch (err) {
+    logger.warn('forecastStats nicht lesbar — Basisgewicht bleibt', err);
+  }
+  const effSignals = { ...DEFAULT_STRATEGY.signals, forecastWeight: fcVote.weight };
+
   for (const symbol of symbols) {
     try {
       const snap = await getMarketSnapshot(symbol, DEFAULT_STRATEGY.signals.period);
@@ -581,7 +597,7 @@ export async function runScan(force = false): Promise<ScanResult> {
         closes,
         snap.price,
         DEFAULT_STRATEGY.indicators,
-        DEFAULT_STRATEGY.signals,
+        effSignals,
         forecast,
       );
 
@@ -729,6 +745,12 @@ export async function runScan(force = false): Promise<ScanResult> {
         votes: sig.votes,
         price: sig.price,
         at: now.toISOString(),
+        // Transparenz: effektives Prognose-Stimmgewicht dieses Scans
+        forecastVote: {
+          base: Math.trunc(DEFAULT_STRATEGY.signals.forecastWeight),
+          weight: fcVote.weight,
+          factor: fcVote.factor,
+        },
       });
 
       await batch.commit();

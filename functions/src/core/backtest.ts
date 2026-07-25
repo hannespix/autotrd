@@ -13,7 +13,11 @@
  */
 
 import {
+  DEFAULT_LOOKBACK,
+  DEFAULT_W,
+  FORECAST_HORIZON,
   bollinger,
+  computeForecastV2,
   evaluate,
   macd,
   wilderRsi,
@@ -87,6 +91,27 @@ export function backtestSpec(
     pctB: bb.pctB[i],
   });
 
+  // Kausale Forecast-Serie (Prognose 2.0 Teil 4): Die Prognose an Bar i
+  // nutzt AUSSCHLIESSLICH closes[0..i] (+ Tages-Sentiment aus dayInfo) mit
+  // den System-Defaults (w, Lookback) — damit greifen Forecast-Regeln auch
+  // in Backtests und Sweeps. Gleiche Lookahead-Härte wie der Rest der Engine.
+  const fcPct: Array<number | null> = new Array(bars.length).fill(null);
+  for (let i = Math.min(WARMUP, bars.length - 1); i < bars.length; i++) {
+    const day = opts.dayInfo?.get(bars[i]!.date);
+    const fc = computeForecastV2(
+      closes.slice(0, i + 1),
+      bars[i]!.date,
+      day?.sentiment ?? 0,
+      DEFAULT_W,
+      FORECAST_HORIZON,
+      DEFAULT_LOOKBACK,
+    );
+    fcPct[i] =
+      fc && fc.points.length > 0 && fc.baseClose > 0
+        ? Math.round((fc.points[fc.points.length - 1]!.value / fc.baseClose - 1) * 10_000) / 100
+        : null;
+  }
+
   let capital = initial;
   let shares = 0;
   let entryPrice = 0;
@@ -107,7 +132,7 @@ export function backtestSpec(
         minuteOfDay: 600,
         sentiment: day?.sentiment ?? null,
         newsEvents: opts.dayInfo ? (day?.tags ?? []) : null,
-        forecastPct: null,
+        forecastPct: fcPct[i] ?? null,
         position:
           shares > 0
             ? { open: true, unrealizedPct: ((price - entryPrice) / entryPrice) * 100 }
