@@ -8,6 +8,7 @@ import {
   CLASS_LABELS,
   DEFAULT_STRATEGY,
   MAX_WATCHLIST,
+  aggregateBars,
   bollinger,
   ema,
   macd,
@@ -139,6 +140,14 @@ interface DashState {
   /** Intraday-Zeitrahmen aktiv? Anzahl Handelstage (0 = Tageskerzen). */
   intradayDays: number;
   intradayBars: import('./chart.js').IntradayChartBar[];
+  /** Auto-Auflösung: Kerzengröße folgt der Zoomstufe (TradingView-Gefühl). */
+  autoRes: boolean;
+  /** Aggregations-Fenster der Intraday-Ansicht in Minuten (5/15/60). */
+  aggMinutes: number;
+  /** Aktuell GEZEIGTE Intraday-Bars (ggf. aggregiert) — Quelle für Overlays. */
+  shownIntraday: import('./chart.js').IntradayChartBar[];
+  /** Y-Autoscaling der Preisskala (Anzeige-Option, default an). */
+  yAuto: boolean;
   /** fitContent beim nächsten renderChart (nur Symbol-/Zeitrahmen-Wechsel). */
   chartFitPending: boolean;
   /** Aktive Indikator-Overlays (sma20/sma50/sma200/ema9/ema21/bb). */
@@ -357,11 +366,13 @@ function layout(email: string): string {
           <span class="chart-px" id="chChg">--</span>
         </div>
         <div class="tf-bar">
+          <button class="tf-btn" id="autoBtn" title="Auto-Auflösung: Die Kerzengröße folgt der Zoomstufe (1D → 1h → 15m → 5m) — stufenlos zoomen wie in TradingView">Auto</button>
           <button class="tf-btn" data-intraday="1" title="1 Handelstag in 5-Minuten-Kerzen">1T</button>
           <button class="tf-btn" data-intraday="5" title="~5 Handelstage in 5-Minuten-Kerzen">1W</button>
           <button class="tf-btn" data-bars="22" title="1 Monat in Tageskerzen">1M</button>
           <button class="tf-btn on" data-bars="66" title="3 Monate in Tageskerzen">3M</button>
           <button class="tf-btn" data-bars="0" title="1 Jahr in Tageskerzen">1J</button>
+          <span id="resBadge" class="res-badge mono" title="Aktive Kerzen-Auflösung"></span>
           <button class="tf-btn" id="maxMain" title="Chart im Vollbild — Legende und Anzeige-Optionen bleiben verfügbar (Esc schließt)">⛶</button>
           <button class="tf-btn" id="cleanBtn" title="Clean-View: alles Optionale auf einmal ausblenden — nur der Kurs bleibt">Clean</button>
           <button class="tf-btn" id="toolsBtn" style="margin-left:auto"
@@ -387,6 +398,7 @@ function layout(email: string): string {
             <span class="tool-lbl">Layer</span>
             <button class="tf-btn on" id="lyFc" title="Prognose-Overlay ein/aus">Prognose</button>
             <button class="tf-btn on" id="lyEv" title="Event-Marker ein/aus">Events</button>
+            <button class="tf-btn on" id="yAutoBtn" title="Y-Autoscaling: Preisskala passt sich beim Scrollen/Zoomen automatisch an — ausschalten, um die Y-Achse manuell festzuhalten (Ziehen auf der Preisskala)">Y-Auto</button>
           </div>
           <div class="tf-bar">
             <span class="tool-lbl">Raster</span>
@@ -720,10 +732,13 @@ function renderChart(): void {
   const fit = st.chartFitPending;
   st.chartFitPending = false;
   if (st.intradayDays > 0) {
-    st.chart.setBars(st.intradayBars, { fit, timeVisible: true });
+    // Auto-Auflösung: 5m-Basis ggf. zu 15m/1h-Kerzen bündeln (pure, shared)
+    st.shownIntraday = aggregateBars(st.intradayBars, st.aggMinutes) as typeof st.shownIntraday;
+    st.chart.setBars(st.shownIntraday, { fit, timeVisible: true });
     st.chart.setForecast(null); // Prognose ist tagesbasiert
     applyOverlays();
     updateSubPanels();
+    renderResBadge();
     return;
   }
   const bars = st.range > 0 ? st.bars.slice(-st.range) : st.bars;
@@ -732,6 +747,26 @@ function renderChart(): void {
   applyOverlays();
   drawPredictionArrow();
   updateSubPanels();
+  renderResBadge();
+  // Fit + aktiver Prognose-Pfeil: rechts ~14 % Sichtfenster aufpolstern,
+  // damit der Pfeil Platz hat (Feedback 25.07.) — nur bei expliziten Fits.
+  if (fit && st.ui.predArrow && st.prediction && !st.cleanView) {
+    const chart = st.chart;
+    window.setTimeout(() => {
+      if (!st || st.chart !== chart) return;
+      const r = chart.getVisibleRange();
+      if (!r) return;
+      chart.setVisibleRange({ from: r.from, to: r.to + (r.to - r.from) * 0.25 });
+      drawPredictionArrow();
+    }, 90);
+  }
+}
+
+/** Badge neben den Zeitrahmen: aktive Kerzen-Auflösung (+ Auto-Hinweis). */
+function renderResBadge(): void {
+  if (!st) return;
+  const label = st.intradayDays > 0 ? (st.aggMinutes >= 60 ? `${st.aggMinutes / 60}h` : `${st.aggMinutes}m`) : '1D';
+  $('resBadge').textContent = st.autoRes ? `Auto · ${label}` : label;
 }
 
 /** SMA/EMA/BB-Linien für beliebige Bars — gilt für Haupt-Chart UND Grid-Panels
@@ -766,17 +801,17 @@ function applyOverlays(): void {
   if (!st?.chart) return;
   const intraday = st.intradayDays > 0;
   const times: Array<string | number> = intraday
-    ? st.intradayBars.map((b) => b.time)
+    ? st.shownIntraday.map((b) => b.time)
     : (st.range > 0 ? st.bars.slice(-st.range) : st.bars).map((b) => b.date);
   const closes = intraday
-    ? st.intradayBars.map((b) => b.close)
+    ? st.shownIntraday.map((b) => b.close)
     : (st.range > 0 ? st.bars.slice(-st.range) : st.bars).map((b) => b.close);
   const lines = st.cleanView ? [] : baseOverlayLines(times, closes);
   const pts = (series: (number | null)[]): Array<{ time: string | number; value: number }> =>
     series.flatMap((v, i) => (v === null ? [] : [{ time: times[i]!, value: v }]));
   // VWAP nur intraday (Session-Konzept) und nur mit aktivierten Indikator-Extras
   if (!st.cleanView && intraday && st.ui.subPanels && st.chartLayers.has('vwap')) {
-    lines.push({ key: 'vwap', color: '#f2d16b', width: 2, points: pts(vwapSessions(st.intradayBars)) });
+    lines.push({ key: 'vwap', color: '#f2d16b', width: 2, points: pts(vwapSessions(st.shownIntraday)) });
   }
   // Vergleichs-Overlay (Tageskerzen): %-Entwicklung ab erstem gemeinsamen Tag
   if (!st.cleanView && !intraday && st.overlaySymbol && st.overlayBars.length > 1) {
@@ -876,7 +911,7 @@ const subEpochs = { rsi: 0, macd: 0 };
 function shownSeries(): { times: Array<string | number>; closes: number[] } {
   if (!st) return { times: [], closes: [] };
   if (st.intradayDays > 0) {
-    return { times: st.intradayBars.map((b) => b.time), closes: st.intradayBars.map((b) => b.close) };
+    return { times: st.shownIntraday.map((b) => b.time), closes: st.shownIntraday.map((b) => b.close) };
   }
   const bars = st.range > 0 ? st.bars.slice(-st.range) : st.bars;
   return { times: bars.map((b) => b.date), closes: bars.map((b) => b.close) };
@@ -980,7 +1015,9 @@ function drawPredictionArrow(): void {
   if (!svg || !st) return;
   svg.innerHTML = '';
   const pred = st.prediction;
-  if (!st.ui.predArrow || !pred || !st.chart || st.intradayDays > 0 || st.bars.length === 0) return;
+  const active =
+    st.ui.predArrow && !st.cleanView && pred !== null && st.chart !== null && st.intradayDays === 0 && st.bars.length > 0;
+  if (!active || !pred || !st.chart) return;
   const last = st.bars[st.bars.length - 1]!;
   const start = st.chart.coords(last.date, last.close);
   const yEnd = st.chart.coords(last.date, pred.targetPrice).y;
@@ -1120,6 +1157,99 @@ function openOptions(): void {
   $('optModal').classList.add('show');
 }
 
+/* ── Auto-Auflösung (TradingView-Gefühl, Feedback 25.07.): Die Kerzengröße
+   folgt der sichtbaren Zeitspanne — daily ↔ 1h ↔ 15m ↔ 5m, client-seitig
+   aggregiert; beim Wechsel bleibt das ZEITfenster erhalten (kein Neu-Fit). ── */
+
+let autoResTimer: number | null = null;
+let autoSwitching = false;
+
+function barTimeMs(b: { time: number } | { date: string }): number {
+  return 'time' in b ? b.time * 1000 : Date.parse(b.date);
+}
+
+function currentSource(): Array<{ time: number } | { date: string }> {
+  if (!st) return [];
+  return st.intradayDays > 0 ? st.shownIntraday : st.range > 0 ? st.bars.slice(-st.range) : st.bars;
+}
+
+function maybeAutoSwitch(): void {
+  if (!st?.autoRes || !st.chart || autoSwitching) return;
+  const r = st.chart.getVisibleRange();
+  const src = currentSource();
+  if (!r || src.length < 2) return;
+  let i0 = Math.max(0, Math.min(src.length - 1, Math.floor(r.from)));
+  const i1 = Math.max(0, Math.min(src.length - 1, Math.ceil(r.to)));
+  // Leerraum rechts (rightOffset/Pan): beide Indizes clampen sonst auf den
+  // letzten Bar — dann zählt das kleinste echte Fenster (1 Bar zurück).
+  if (i1 <= i0) i0 = Math.max(0, i1 - 1);
+  if (i1 <= i0) return;
+  const t0 = barTimeMs(src[i0]!);
+  const t1 = barTimeMs(src[i1]!);
+  const days = (t1 - t0) / 86_400_000;
+  // Intraday deckt nur ~5 Handelstage ab — will der User ein deutlich
+  // breiteres Fenster (viel Leerraum über die Quelle hinaus), zurück zu daily.
+  const wantsWider = st.intradayDays > 0 && r.to - r.from > src.length + 6;
+  const level = wantsWider ? 0 : days <= 1.6 ? 5 : days <= 3.5 ? 15 : days <= 8 ? 60 : 0;
+  const current = st.intradayDays > 0 ? st.aggMinutes : 0;
+  if (level === current) return;
+  void switchAutoLevel(level, t0, t1, wantsWider);
+}
+
+async function switchAutoLevel(level: number, t0: number, t1: number, refit = false): Promise<void> {
+  if (!st) return;
+  autoSwitching = true;
+  try {
+    if (level > 0) {
+      if (st.intradayBars.length === 0) {
+        const sym = st.currentSymbol;
+        const chunks = await loadIntraday(sym, 5);
+        if (!st || st.currentSymbol !== sym) return;
+        st.intradayBars = chunks;
+      }
+      if (st.intradayBars.length === 0) return; // keine Intraday-Daten → daily bleiben
+      // Fenster außerhalb der ~5-Tage-Abdeckung? Dann bringt Intraday nichts.
+      const cover0 = st.intradayBars[0]!.time * 1000;
+      if (t0 < cover0 - 12 * 3_600_000) return;
+      st.intradayDays = 5;
+      st.aggMinutes = level;
+    } else {
+      st.intradayDays = 0;
+    }
+    // Beim „will-breiter"-Rücksprung auf daily frisch fitten — das schmale
+    // Intraday-Zeitfenster wäre sonst als Mini-Ausschnitt verwirrend.
+    if (refit) st.chartFitPending = true;
+    renderChart(); // sonst bewusst OHNE Fit — der User-Zoom bestimmt das Fenster
+    if (refit) return;
+    // Zeitfenster in der neuen Quelle wiederfinden und exakt setzen
+    const src = currentSource();
+    if (src.length > 1 && st.chart) {
+      let i0 = src.findIndex((b) => barTimeMs(b) >= t0);
+      if (i0 < 0) i0 = 0;
+      let i1 = src.length - 1;
+      for (let i = src.length - 1; i >= 0; i--) {
+        if (barTimeMs(src[i]!) <= t1) {
+          i1 = i;
+          break;
+        }
+      }
+      if (i1 > i0) st.chart.setVisibleRange({ from: i0 - 0.5, to: i1 + 0.5 });
+    }
+  } finally {
+    // setVisibleRange feuert selbst Range-Events — Wächter kurz entschärfen
+    window.setTimeout(() => {
+      autoSwitching = false;
+    }, 400);
+  }
+}
+
+function updateAutoUi(): void {
+  if (!st) return;
+  $('autoBtn').classList.toggle('on', st.autoRes);
+  localStorage.setItem('autotrd-chart-auto', st.autoRes ? '1' : '0');
+  renderResBadge();
+}
+
 /** 5m-Chunks laden und rendern (1T/1W) — Chart-Feedback 24.07. */
 async function loadIntradayView(): Promise<void> {
   if (!st) return;
@@ -1212,6 +1342,15 @@ async function rebuildChart(): Promise<void> {
     st.subCharts.macd?.setVisibleRange(range);
     rangeSyncing = false;
   });
+  // Auto-Auflösung: sichtbare Zeitspanne beobachten (debounced)
+  st.chart?.onVisibleRangeChange(() => {
+    if (autoResTimer !== null) window.clearTimeout(autoResTimer);
+    autoResTimer = window.setTimeout(() => {
+      autoResTimer = null;
+      maybeAutoSwitch();
+    }, 300);
+  });
+  st.chart?.setAutoScale(st.yAuto);
   // Beim Chart-Neuaufbau (Symbol-/Theme-Wechsel) Panels frisch mitziehen
   for (const kind of ['rsi', 'macd'] as const) {
     subEpochs[kind]++;
@@ -1238,12 +1377,30 @@ async function rebuildChart(): Promise<void> {
 }
 
 /** Tooltip-Details zum Event-Tag unter dem Crosshair (M6b). */
+let evTipTimer: number | null = null;
+const COARSE_POINTER = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+
 function showEventTooltip(date: string | null, pos: { x: number; y: number } | null): void {
   const tip = $('evTip');
   const ev = date && st?.showEvents ? st.events.find((e) => e.date === date) : undefined;
   if (!ev || !pos) {
+    // Touch (Handy): Nach dem Loslassen verschwindet das Crosshair sofort —
+    // das Overlay bliebe sonst nur einen Wimpernschlag („nicht sauber",
+    // Feedback 25.07.). Kurz stehen lassen, dann ausblenden.
+    if (COARSE_POINTER && !tip.hidden) {
+      if (evTipTimer !== null) window.clearTimeout(evTipTimer);
+      evTipTimer = window.setTimeout(() => {
+        tip.hidden = true;
+        evTipTimer = null;
+      }, 4000);
+      return;
+    }
     tip.hidden = true;
     return;
+  }
+  if (evTipTimer !== null) {
+    window.clearTimeout(evTipTimer);
+    evTipTimer = null;
   }
   const tone = ev.sentiment > 0.12 ? 'c-gn' : ev.sentiment < -0.12 ? 'c-rd' : 'c-t3';
   tip.innerHTML = `
@@ -2281,6 +2438,10 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     range: 66,
     intradayDays: 0,
     intradayBars: [],
+    autoRes: localStorage.getItem('autotrd-chart-auto') !== '0',
+    aggMinutes: 5,
+    shownIntraday: [],
+    yAuto: localStorage.getItem('autotrd-chart-yauto') !== '0',
     chartFitPending: true,
     prediction: null,
     predMode: false,
@@ -2492,6 +2653,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     areaActive: () => st?.chart?.areaActive() ?? false,
     signalDir: () => st?.lastSignalDir ?? 'hold',
     cleanActive: () => st?.cleanView ?? false,
+    autoLevel: () => (st?.autoRes ? (st.intradayDays > 0 ? st.aggMinutes : 0) : -1),
+    resBadge: () => document.getElementById('resBadge')?.textContent ?? '',
     eventDates: () => st?.events.map((e) => e.date) ?? [],
     mainCoords: (time: string | number, price: number) => st?.chart?.coords(time, price) ?? null,
     lastClose: () => st?.bars[st.bars.length - 1]?.close ?? null,
@@ -2578,14 +2741,33 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   tfButtons.forEach((b) =>
     b.addEventListener('click', () => {
       if (!st) return;
+      st.autoRes = false; // manuelle Stufe gewählt → Auto pausiert bis zum Auto-Klick
       st.intradayDays = parseInt(b.dataset.intraday ?? '0', 10);
+      st.aggMinutes = 5; // manuelle Intraday-Stufen zeigen die 5m-Basis
       if (b.dataset.bars !== undefined) st.range = parseInt(b.dataset.bars, 10);
       st.chartFitPending = true;
       tfButtons.forEach((el) => el.classList.toggle('on', el === b));
+      updateAutoUi();
       if (st.intradayDays > 0) void loadIntradayView();
       else renderChart();
     }),
   );
+  // Auto-Auflösung an/aus + Y-Autoscaling (Anzeige-Option, Feedback 25.07.)
+  $('autoBtn').addEventListener('click', () => {
+    if (!st) return;
+    st.autoRes = !st.autoRes;
+    updateAutoUi();
+    if (st.autoRes) maybeAutoSwitch();
+  });
+  updateAutoUi();
+  $('yAutoBtn').addEventListener('click', () => {
+    if (!st) return;
+    st.yAuto = !st.yAuto;
+    $('yAutoBtn').classList.toggle('on', st.yAuto);
+    localStorage.setItem('autotrd-chart-yauto', st.yAuto ? '1' : '0');
+    st.chart?.setAutoScale(st.yAuto);
+  });
+  $('yAutoBtn').classList.toggle('on', st?.yAuto ?? true);
   // Indikator-Layer (SMA/EMA/BB) — Auswahl bleibt über localStorage erhalten
   document.querySelectorAll<HTMLButtonElement>('.tf-btn[data-layer]').forEach((b) => {
     const key = b.dataset.layer!;

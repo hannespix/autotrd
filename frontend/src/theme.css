@@ -507,6 +507,7 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .tool-lbl { font-size: 9.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--t3); align-self: center; margin-right: 2px; }
 #chartTools { border-left: 2px solid var(--hair); padding-left: 8px; margin: 2px 0 4px; }
 #toolsBtn.on { background: var(--ac); color: #04121a; }
+.res-badge { align-self: center; font-size: 10px; color: var(--t3); padding: 2px 8px; border: 1px solid var(--hair); border-radius: 999px; }
 .chart-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 10px; color: var(--t2); margin: 2px 0 4px; }
 .lg-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: -1px; }
 

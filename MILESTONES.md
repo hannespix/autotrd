@@ -501,6 +501,17 @@ Charts parallel.
       „Clean"-Chip blendet alles Optionale aus ohne die Auswahl zu verlieren ·
       Vollbild maximiert den ganzen Chart-Scope (Zeitrahmen, Anzeige-Werkzeuge,
       Legende, Unterpanels bleiben bedienbar)
+- [x] Auto-Auflösung (Feedback 25.07., 3. Runde): „Auto"-Modus — die
+      Kerzengröße folgt stufenlos der Zoomstufe (1D ↔ 1h ↔ 15m ↔ 5m,
+      client-seitige Aggregation `shared/aggregateBars` + Tests, Badge zeigt
+      die aktive Auflösung, Zeitfenster bleibt beim Wechsel erhalten; weit
+      rauszoomen springt zurück auf Tageskerzen; manuelle Stufen pausieren
+      Auto) · tieferes Rauszoomen (minBarSpacing 0.02) · Fit polstert rechts
+      Platz für den Prognose-Pfeil auf · Y-Autoscaling als Anzeige-Option
+      schaltbar · Event-Tooltip bleibt auf Touch-Geräten nach dem Loslassen
+      ~4 s stehen (vorher nur „aufgeblitzt")
+- [ ] Historie > 1 Jahr (5y-Tages-Backfill, gechunkt) · 1-Minuten-Daten
+      (Yahoo: nur ~7 Tage, ~5× Volumen — bewusst entscheiden)
 - [ ] ATR, 52-Wochen-Marken, Pivots (weitere Trading-Hilfen)
 
 ## M11 — Strategie-Studio II: Backtest, Shadow, Sweeps, A/B
