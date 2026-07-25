@@ -1806,6 +1806,15 @@ function renderGridPanelBars(p: GridPanel): void {
   p.chart.setBars(bars, { fit });
   // Aktive SMA/EMA/BB-Overlays gelten auf ALLEN Charts (Feedback 25.07.)
   p.chart.setOverlays(baseOverlayLines(bars.map((b) => b.date), bars.map((b) => b.close)));
+  // Layer syncen (User-Wunsch 25.07.): Fläche + „Kerzen aus" gelten auch im
+  // Raster. Farbton neutral — das Signal gehört zum Haupt-Symbol, nicht zum
+  // Panel-Symbol (falsche Grün/Rot-Aussage wäre schlimmer als neutral).
+  const wantArea = st !== null && !st.cleanView && st.chartLayers.has('area');
+  p.chart.setArea(
+    wantArea && bars.length > 0 ? bars.map((b) => ({ time: b.date, value: b.close })) : null,
+    AREA_TONES.hold,
+  );
+  p.chart.setCandlesVisible(!(st !== null && !st.cleanView && st.chartLayers.has('hideCandles') && wantArea));
 }
 
 /** Panel (neu) aufbauen: Bars-Watcher + Chart + Lock-Sync-Verdrahtung. */
@@ -3038,6 +3047,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     mainOverlays: () => st?.chart?.overlayCount() ?? -1,
     gridPanels: () => st?.gridPanels.length ?? -1,
     gridPanelOverlays: (i: number) => st?.gridPanels[i]?.chart?.overlayCount() ?? -1,
+    panelAreaActive: (i: number) => st?.gridPanels[i]?.chart?.areaActive() ?? false,
     panelRange: (i: number) => st?.gridPanels[i]?.chart?.getVisibleRange() ?? null,
     setPanelRange: (i: number, r: { from: number; to: number }) => st?.gridPanels[i]?.chart?.setVisibleRange(r),
     subRange: (k: 'rsi' | 'macd') => st?.subCharts[k]?.getVisibleRange() ?? null,
@@ -3221,12 +3231,30 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       document.getElementById(b)?.classList.remove('on');
     }
   };
+  // Viewport-Klemmung (Mobil-Bug 25.07.): Die Menüs sind rechtsbündig am
+  // Knopf verankert — bricht die Toolbar um (Handy), stünde das Menü links
+  // aus dem Bildschirm. Nach dem Öffnen messen und ggf. an die linke
+  // Viewport-Kante klemmen (position:fixed wäre wegen der backdrop-filter-
+  // Containing-Block-Falle tabu, CLAUDE.md §6).
+  const clampMenu = (m: string): void => {
+    const menu = $(m);
+    const anchor = menu.parentElement;
+    if (!anchor) return;
+    menu.style.left = '';
+    menu.style.right = '';
+    const r = menu.getBoundingClientRect();
+    if (r.left < 8) {
+      menu.style.right = 'auto';
+      menu.style.left = `${Math.round(8 - anchor.getBoundingClientRect().left)}px`;
+    }
+  };
   for (const [b, m] of menus) {
     $(b).addEventListener('click', () => {
       const open = $(m).hidden !== false; // hidden kann auch 'until-found' sein
       closeMenus();
       $(m).hidden = !open;
       $(b).classList.toggle('on', open);
+      if (open) clampMenu(m);
     });
   }
   document.addEventListener('click', (ev) => {
@@ -3254,6 +3282,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     applyForecast();
     updateSubPanels();
     drawPredictionArrow();
+    for (const p of st.gridPanels) renderGridPanelBars(p); // Raster folgt Clean/Layern
   };
   $('cleanBtn').addEventListener('click', () => {
     if (!st) return;

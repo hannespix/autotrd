@@ -533,7 +533,10 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .tool-menu {
   position: absolute; top: calc(100% + 6px); right: 0; z-index: 160;
   display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start;
-  width: 240px; max-width: 78vw; padding: 8px;
+  /* Handy-Bug 25.07.: nie breiter als der Viewport; Position klemmt
+     clampMenu() in dashboard.ts an die linke Kante, falls nötig. */
+  width: 240px; max-width: calc(100vw - 20px); max-height: 60vh; overflow-y: auto;
+  padding: 8px;
   background: var(--card, rgba(10, 18, 28, 0.92)); border: 1px solid var(--hair);
   border-radius: 10px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(14px);
