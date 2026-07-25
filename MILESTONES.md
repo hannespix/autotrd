@@ -593,9 +593,17 @@ nächste Prognose feiner wird. Granularität so fein, wie die Daten es hergeben.
       getrennte Kombi-Statistik `meta/forecastStatsIntraday`; Chart zeigt
       in 1T/1W die Kurzfrist-Prognose (nur Punkte NACH dem letzten Bar),
       Labor-Karte mit zweiter Intraday-Statistik; 10 neue shared-Tests
-- [ ] Teil 3: Feature-Regressoren: Sentiment-Verlauf, RSI/MACD-Zustand,
-      Vola-Regime als Zusatz-Features; Konfidenz-Band aus der REALISIERTEN
-      Fehlerverteilung der jeweiligen Kombi (statt nur ±1σ der Historie)
+- [x] Teil 3: Feature-Regressoren + realisierte Konfidenz: `forecastFeatures`
+      (RSI-Zustand als Mean-Reversion, MACD-Momentum, Vola-Regime — kausal
+      aus denselben vergangenen Closes) speist die V2-Wrapper
+      (`computeForecastV2`/`computeIntradayForecastV2`): hart gedeckelter
+      Feature-Tilt auf die Drift, Band-Weitung im turbulenten Regime; die
+      V1-Kerne bleiben Golden-Parity. `applyBandCalibration` skaliert das
+      Band auf die REALISIERTE Fehlerverteilung der aktiven Kombi
+      (MAE·√(π/2), geclampt 0.5–3, erst ab 8 Bewertungen) — Live UND
+      Shadow nutzen denselben V2-Generator, damit die Bewertung genau das
+      misst, was ausgespielt wird. Badge nennt die Kalibrierungsquelle;
+      12 neue shared-Tests
 - [ ] Teil 4: Studio-Integration: genauigkeitsgewichtetes Forecast-Vote
       (Gewicht ∝ realisierte Trefferquote der aktiven Kombi), Sweep-Achsen
       um Forecast-Parameter erweitert, Backtest zeigt Forecast-Beitrag

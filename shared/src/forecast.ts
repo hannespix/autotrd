@@ -16,6 +16,8 @@
  * einen realisierten Close am letzten Horizont-Tag.
  */
 
+import { macd, wilderRsi } from './indicators.js';
+
 export const WEIGHT_GRID = [0.0, 0.25, 0.5, 0.75, 1.0] as const;
 export const LOOKBACK_GRID = [10, 20, 30] as const;
 export const DEFAULT_W = 0.5;
@@ -347,6 +349,154 @@ export function scoreIntradayForecast(
     baseClose,
     actuals,
   );
+}
+
+/* ── Feature-Regressoren + realisierte Konfidenz (Prognose 2.0 Teil 3) ──────
+ *
+ * Zwei kausale Verfeinerungen — die V1-Kerne (computeForecast /
+ * computeIntradayForecast) bleiben als Golden-Parity-Basis UNANGETASTET:
+ *
+ * 1. forecastFeatures: RSI-Zustand (Mean-Reversion), MACD-Momentum und
+ *    Vola-Regime aus den GLEICHEN vergangenen Closes — die V2-Wrapper
+ *    verschieben die Drift um einen hart gedeckelten Feature-Tilt und
+ *    weiten das Band im turbulenten Regime.
+ * 2. applyBandCalibration: das ±1σ-Band (in-sample-Residuen) wird auf die
+ *    REALISIERTE Fehlerverteilung der aktiven Kombi skaliert — die
+ *    Selbstverbesserung erreicht damit auch die Konfidenz, nicht nur die
+ *    Parameterwahl. Ohne Evidenz (n zu klein) bleibt alles unverändert.
+ */
+
+export const FEATURE_TILT_W = 0.5; // fest (Teil 4 macht daraus eine Sweep-Achse)
+export const VOL_REGIME_MIN = 0.75;
+export const VOL_REGIME_MAX = 1.75;
+/** MAE (mittl. Absolutfehler) → σ einer Normalverteilung: σ = MAE·√(π/2). */
+export const MAE_TO_SIGMA = 1.2533;
+export const CALIB_MIN = 0.5;
+export const CALIB_MAX = 3;
+
+export interface ForecastFeatures {
+  /** (50 − RSI14)/50 ∈ [−1, 1] — überkauft ⇒ negativer Zug (Mean-Reversion). */
+  rsiState: number;
+  /** MACD-Histogramm normiert auf die Bar-Volatilität, geclampt [−1, 1]. */
+  macdMom: number;
+  /** Kurz-Vol ÷ Lang-Vol, geclampt [VOL_REGIME_MIN, VOL_REGIME_MAX]. */
+  volRegime: number;
+  /** Kombiniertes Richtungssignal ∈ [−1, 1] (im turbulenten Regime gedämpft). */
+  signal: number;
+}
+
+/**
+ * Kausale Feature-Extraktion aus vergangenen Closes (älteste→neueste).
+ * Fehlt die Historie für einen Indikator, trägt er neutral (0 bzw. 1) bei.
+ */
+export function forecastFeatures(closes: number[], lookback: number): ForecastFeatures {
+  const rsiSeries = wilderRsi(closes);
+  const rsiLast = rsiSeries[rsiSeries.length - 1];
+  const rsiState = typeof rsiLast === 'number' ? Math.max(-1, Math.min(1, (50 - rsiLast) / 50)) : 0;
+
+  const hist = macd(closes).histogram;
+  const histLast = hist[hist.length - 1];
+  const n = Math.min(lookback, closes.length);
+  const vol = dailyVol(closes.slice(-n));
+  const macdMom =
+    typeof histLast === 'number' && vol > 0 ? Math.max(-1, Math.min(1, histLast / vol)) : 0;
+
+  const volLong = dailyVol(closes.slice(-Math.min(3 * lookback, closes.length)));
+  const volRegime =
+    vol > 0 && volLong > 0
+      ? Math.max(VOL_REGIME_MIN, Math.min(VOL_REGIME_MAX, vol / volLong))
+      : 1;
+
+  // Momentum und Mean-Reversion je zur Hälfte; Turbulenz (Regime > 1) dämpft
+  // das Richtungssignal — in unruhigen Phasen ist Zurückhaltung ehrlicher.
+  const raw = 0.5 * macdMom + 0.5 * rsiState;
+  const signal = Math.max(-1, Math.min(1, raw / Math.max(1, volRegime)));
+  return { rsiState: round(rsiState, 4), macdMom: round(macdMom, 4), volRegime: round(volRegime, 4), signal: round(signal, 4) };
+}
+
+/** Punkte um den Feature-Tilt verschieben + Band im turbulenten Regime weiten. */
+function applyFeatures<
+  T extends {
+    points: Array<{ value: number }>;
+    band: Array<{ upper: number; lower: number }>;
+    slopeAdj: number;
+  },
+>(fc: T, feat: ForecastFeatures, vol: number): T & { features: ForecastFeatures } {
+  const cap = TILT_CAP * vol;
+  const tilt = Math.max(-cap, Math.min(cap, FEATURE_TILT_W * feat.signal * vol));
+  const widen = Math.max(1, feat.volRegime);
+  const points = fc.points.map((p, i) => ({ ...p, value: round(p.value + tilt * (i + 1), 4) }));
+  const band = fc.band.map((b, i) => {
+    const mid = (b.upper + b.lower) / 2 + tilt * (i + 1);
+    const half = ((b.upper - b.lower) / 2) * widen;
+    return { ...b, upper: round(mid + half, 4), lower: round(mid - half, 4) };
+  });
+  return { ...fc, points, band, slopeAdj: round(fc.slopeAdj + tilt, 5), features: feat };
+}
+
+/** V2 der Tages-Prognose: V1-Kern + Feature-Tilt + Regime-Band. */
+export function computeForecastV2(
+  closes: number[],
+  baseDate: string,
+  sentiment: number,
+  w: number,
+  horizon: number = FORECAST_HORIZON,
+  lookback: number = DEFAULT_LOOKBACK,
+): (ForecastComputation & { features: ForecastFeatures }) | null {
+  const base = computeForecast(closes, baseDate, sentiment, w, horizon, lookback);
+  if (!base) return null;
+  return applyFeatures(base, forecastFeatures(closes, lookback), base.dailyVol);
+}
+
+/** V2 der Intraday-Prognose: gleiche Mechanik auf 5-min-Closes. */
+export function computeIntradayForecastV2(
+  closes: number[],
+  baseT: number,
+  sentiment: number,
+  w: number,
+  horizon: number = INTRADAY_HORIZON,
+  lookback: number = DEFAULT_INTRADAY_LOOKBACK,
+  stepSec: number = INTRADAY_STEP_SEC,
+): (IntradayForecastComputation & { features: ForecastFeatures }) | null {
+  const base = computeIntradayForecast(closes, baseT, sentiment, w, horizon, lookback, stepSec);
+  if (!base) return null;
+  return applyFeatures(base, forecastFeatures(closes, lookback), base.vol);
+}
+
+export interface BandCalibration {
+  /** Skalierungsfaktor des Bands (geclampt [CALIB_MIN, CALIB_MAX]). */
+  s: number;
+  /** Realisierte mittlere MAE der aktiven Kombi in %. */
+  maePct: number;
+  /** Anzahl realisierter Bewertungen, auf denen die Kalibrierung fußt. */
+  n: number;
+}
+
+/**
+ * Band auf die realisierte Fehlerverteilung skalieren: Ziel-Halbbreite im
+ * Mittel = σ der echten Fehler (MAE·√(π/2)·baseClose). Erst ab
+ * MIN_SAMPLES_PER_COMBO Bewertungen aktiv — vorher bleibt das ±1σ-Band der
+ * Regression unverändert (null). NIEMALS aus unbewerteten Prognosen speisen.
+ */
+export function applyBandCalibration<
+  T extends { band: Array<{ upper: number; lower: number }>; baseClose: number },
+>(fc: T, combo: ComboStat | undefined): { fc: T; calib: BandCalibration | null } {
+  if (!combo || combo.n < MIN_SAMPLES_PER_COMBO || fc.baseClose <= 0) return { fc, calib: null };
+  const halfWidths = fc.band.map((b) => (b.upper - b.lower) / 2);
+  const meanHalf = halfWidths.reduce((a, b) => a + b, 0) / Math.max(1, halfWidths.length);
+  if (meanHalf <= 0) return { fc, calib: null };
+  const maePct = combo.maeSum / combo.n;
+  const target = (maePct / 100) * fc.baseClose * MAE_TO_SIGMA;
+  const s = Math.max(CALIB_MIN, Math.min(CALIB_MAX, target / meanHalf));
+  const band = fc.band.map((b) => {
+    const mid = (b.upper + b.lower) / 2;
+    const half = ((b.upper - b.lower) / 2) * s;
+    return { ...b, upper: round(mid + half, 4), lower: round(mid - half, 4) };
+  });
+  return {
+    fc: { ...fc, band },
+    calib: { s: round(s, 3), maePct: round(maePct, 3), n: combo.n },
+  };
 }
 
 /** Intraday-Doc (market/{sym}/forecastsIntraday/{baseT_w_lookback}). */

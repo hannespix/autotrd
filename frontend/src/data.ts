@@ -67,6 +67,8 @@ export interface MarketDocData {
     predictedPct: number;
     sentiment: number;
     baseDate: string;
+    /** Band-Kalibrierung aus realisierter Fehlerverteilung (null = ±1σ Regression). */
+    calib?: { s: number; maePct: number; n: number } | null;
   } | null;
   /** Kurzfrist-Prognose (nächste Stunde, 5-min-Raster) — je Scan erneuert. */
   forecastIntraday?: {
@@ -77,6 +79,7 @@ export interface MarketDocData {
     predictedPct: number;
     baseT: number;
     updatedAt: string;
+    calib?: { s: number; maePct: number; n: number } | null;
   } | null;
 }
 
