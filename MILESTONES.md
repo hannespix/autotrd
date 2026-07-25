@@ -514,6 +514,23 @@ Charts parallel.
       (Yahoo: nur ~7 Tage, ~5× Volumen — bewusst entscheiden)
 - [ ] ATR, 52-Wochen-Marken, Pivots (weitere Trading-Hilfen)
 
+## Dashboard-Individualisierung („Schweizer Taschenmesser", User-Wunsch 25.07.)
+
+**Ziel:** Jeder passt sich das Dashboard an: Module wählbar/einklappbar/
+verschiebbar, Sidebars flexibel, alle Marktgruppen versorgt und filterbar —
+die Watchlist ist nur noch der Scope der Trading-Engine.
+
+- [x] Teil 1: Module im ⚙-Options-Modal an-/abwählbar (gleiche Wahrheit wie
+      die Strg+K-Palette, Workspace-synct) · jede Karte per ▾ einklappbar
+      (Gerät-lokal) und per ✕ komplett ausblendbar · Desktop-Sidebars über
+      ◧/◨ im Header ein-/ausblendbar (persistiert; Mobile-Drawer unberührt) ·
+      Bugfix: ✏-Pfeil holt aus der Intraday-/Auto-Ansicht die Tages-Ansicht
+      zurück statt stumm nichts zu tun
+- [ ] Teil 2: Marktgruppen-Datenversorgung (tiered: Watchlist 5-min für die
+      Engine, Katalog-Quotes stündlich, Bars täglich) + Marktgruppen-Filter
+      in den Einstellungen
+- [ ] Teil 3: Sidebar-Breiten per Drag, Module per Drag umsortieren
+
 ## M11 — Strategie-Studio II: Backtest, Shadow, Sweeps, A/B
 
 **Ziel:** Den Experimentier-Loop schließen: Jede publizierte Version wird
