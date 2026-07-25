@@ -152,6 +152,41 @@ export function bollinger(closes: number[], window = 20, numStd = 2): BollingerR
   return { upper, middle, lower, pctB };
 }
 
+export interface VwapBar {
+  /** Unix-Sekunden des Bars (5m-Intraday). */
+  time: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+/**
+ * Session-VWAP für Intraday-Bars: kumulativ (typischer Preis × Volumen) je
+ * Handelstag; eine Lücke > 60 min gilt als Session-Wechsel und setzt die
+ * Kumulation zurück. Vor dem ersten Volumen der Session bleibt der Wert null
+ * (kein Teilen durch 0); volumenlose Bars schreiben den letzten VWAP fort.
+ */
+export function vwapSessions(bars: VwapBar[]): Series {
+  const out: Series = new Array(bars.length).fill(null);
+  let cumPv = 0;
+  let cumV = 0;
+  let prevTime: number | null = null;
+  for (let i = 0; i < bars.length; i++) {
+    const b = bars[i]!;
+    if (prevTime !== null && b.time - prevTime > 3600) {
+      cumPv = 0;
+      cumV = 0;
+    }
+    prevTime = b.time;
+    const typical = (b.high + b.low + b.close) / 3;
+    cumPv += typical * b.volume;
+    cumV += b.volume;
+    if (cumV > 0) out[i] = cumPv / cumV;
+  }
+  return out;
+}
+
 /** Letzter Nicht-null-Wert einer Serie (Analogon zu `.dropna().iloc[-1]`). */
 export function lastValue(series: Series): number | null {
   for (let i = series.length - 1; i >= 0; i--) {

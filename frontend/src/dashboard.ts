@@ -10,15 +10,25 @@ import {
   MAX_WATCHLIST,
   bollinger,
   ema,
+  macd,
   resolveName,
   sma,
   validateStrategy,
+  vwapSessions,
+  wilderRsi,
   type Position,
   type Strategy,
   type Wallet,
 } from '@autotrd/shared';
 import type { Unsubscribe } from 'firebase/firestore';
-import { buildPriceChart, type ChartBar, type PriceChartHandle } from './chart.js';
+import {
+  buildIndicatorPanel,
+  buildPriceChart,
+  type ChartBar,
+  type IndicatorPanelHandle,
+  type PanelLine,
+  type PriceChartHandle,
+} from './chart.js';
 import {
   callTrade,
   loadMarketQuotes,
@@ -137,7 +147,9 @@ interface DashState {
   prediction: import('@autotrd/shared').UserPrediction | null;
   predMode: boolean;
   /** Optionale Elemente (Options-Modal ⚙, settings.ui) — ✏ ist Opt-in. */
-  ui: { predArrow: boolean; cmpOverlay: boolean; chartGrid: boolean };
+  ui: { predArrow: boolean; cmpOverlay: boolean; chartGrid: boolean; subPanels: boolean };
+  /** Indikator-Unterpanels (RSI/MACD) — Zeitachse synchron zum Haupt-Chart. */
+  subCharts: { rsi: IndicatorPanelHandle | null; macd: IndicatorPanelHandle | null };
   /** Multi-Chart-Raster (Chart-Vision): 1 = nur Haupt-Chart, 2/4 = Panels daneben. */
   gridMode: 1 | 2 | 4;
   /** Haupt-Chart Teil der Lock-Gruppe (Zoom/Crosshair synchron)? */
@@ -362,6 +374,9 @@ function layout(email: string): string {
           <button class="tf-btn" data-layer="ema9" title="Exponentieller Durchschnitt, 9">EMA9</button>
           <button class="tf-btn" data-layer="ema21" title="EMA 21">EMA21</button>
           <button class="tf-btn" data-layer="bb" title="Bollinger-Bänder (20, 2σ)">BB</button>
+          <button class="tf-btn ind-x" data-layer="vwap" title="VWAP (Intraday 1T/1W): volumengewichteter Durchschnitt je Handelstag">VWAP</button>
+          <button class="tf-btn ind-x" data-layer="rsiPanel" title="RSI(14) als Unterpanel — Zeitachse läuft synchron zum Haupt-Chart">RSI ▾</button>
+          <button class="tf-btn ind-x" data-layer="macdPanel" title="MACD(12/26/9) als Unterpanel — Zeitachse läuft synchron zum Haupt-Chart">MACD ▾</button>
           <input id="cmpSym" class="inp cmp-inp" placeholder="+ Overlay: SYM" title="Zweiten Kurs als %-Linie überlagern (Tageskerzen)" />
           <button class="tf-btn" id="predBtn" hidden title="Prognose-Pfeil zeichnen: Klick in den Chart setzt den Ziel-Kurs">✏ Pfeil</button>
         </div>
@@ -391,6 +406,8 @@ function layout(email: string): string {
         </div>
         <div id="chartGrid"></div>
         </div>
+        <div id="rsiPanel" class="sub-panel" hidden></div>
+        <div id="macdPanel" class="sub-panel" hidden></div>
         <div class="hint">1T/1W: 5-Minuten-Kerzen · 1M–1J: Tageskerzen —
           aktualisiert der zentrale 5-min-Scan. Zoom bleibt beim Aktualisieren erhalten.</div>
       </div></div>
@@ -535,6 +552,9 @@ function layout(email: string): string {
         <span><b>Vergleichs-Overlay</b> — zweites Symbol als %-Linie im Haupt-Chart.</span></label>
       <label class="opt-row"><input type="checkbox" id="ouGrid" />
         <span><b>Multi-Chart-Raster</b> — 1/2/4 Charts parallel mit Lock-Sync.</span></label>
+      <label class="opt-row"><input type="checkbox" id="ouSub" />
+        <span><b>Indikator-Extras</b> — VWAP (Intraday) und RSI/MACD-Unterpanels
+        unter dem Haupt-Chart.</span></label>
       <div class="wl-sec">Paper-Wallet · Grundeinstellungen</div>
       <div class="opt-grid">
         <label>Startkapital $
@@ -673,6 +693,7 @@ function renderChart(): void {
     st.chart.setBars(st.intradayBars, { fit, timeVisible: true });
     st.chart.setForecast(null); // Prognose ist tagesbasiert
     applyOverlays();
+    updateSubPanels();
     return;
   }
   const bars = st.range > 0 ? st.bars.slice(-st.range) : st.bars;
@@ -680,6 +701,7 @@ function renderChart(): void {
   applyForecast();
   applyOverlays();
   drawPredictionArrow();
+  updateSubPanels();
 }
 
 /** Indikator-/Vergleichs-Overlays aus den aktuell gezeigten Bars berechnen. */
@@ -710,6 +732,10 @@ function applyOverlays(): void {
       { key: 'bbL', color: 'rgba(37,208,238,.4)', width: 1, points: pts(b.lower) },
     );
   }
+  // VWAP nur intraday (Session-Konzept) und nur mit aktivierten Indikator-Extras
+  if (intraday && st.ui.subPanels && L.has('vwap')) {
+    lines.push({ key: 'vwap', color: '#f2d16b', width: 2, points: pts(vwapSessions(st.intradayBars)) });
+  }
   // Vergleichs-Overlay (Tageskerzen): %-Entwicklung ab erstem gemeinsamen Tag
   if (!intraday && st.overlaySymbol && st.overlayBars.length > 1) {
     const firstDate = (st.range > 0 ? st.bars.slice(-st.range) : st.bars)[0]?.date ?? '';
@@ -726,6 +752,98 @@ function applyOverlays(): void {
     }
   }
   st.chart.setOverlays(lines);
+}
+
+/* ── Indikator-Unterpanels (Chart-Vision): RSI/MACD, Zeitachse synchron ── */
+
+const subEpochs = { rsi: 0, macd: 0 };
+
+/** Zeiten + Schlusskurse der aktuell gezeigten Bars (Tages- oder Intraday-Sicht). */
+function shownSeries(): { times: Array<string | number>; closes: number[] } {
+  if (!st) return { times: [], closes: [] };
+  if (st.intradayDays > 0) {
+    return { times: st.intradayBars.map((b) => b.time), closes: st.intradayBars.map((b) => b.close) };
+  }
+  const bars = st.range > 0 ? st.bars.slice(-st.range) : st.bars;
+  return { times: bars.map((b) => b.date), closes: bars.map((b) => b.close) };
+}
+
+function renderSubPanel(kind: 'rsi' | 'macd'): void {
+  const handle = st?.subCharts[kind];
+  if (!st || !handle) return;
+  const { times, closes } = shownSeries();
+  const pts = (series: (number | null)[]): PanelLine['points'] =>
+    series.flatMap((v, i) => (v === null ? [] : [{ time: times[i]!, value: v }]));
+  if (kind === 'rsi') {
+    const line70 = times.map((t) => ({ time: t, value: 70 }));
+    const line30 = times.map((t) => ({ time: t, value: 30 }));
+    handle.setSeries([
+      { key: 'g70', color: 'rgba(242,88,107,.35)', width: 1, dashed: true, points: line70 },
+      { key: 'g30', color: 'rgba(38,207,157,.35)', width: 1, dashed: true, points: line30 },
+      { key: 'rsi', color: '#25d0ee', width: 2, points: pts(wilderRsi(closes, 14)) },
+    ]);
+  } else {
+    const m = macd(closes);
+    handle.setSeries([
+      {
+        key: 'hist',
+        color: 'rgba(139,147,168,.4)',
+        type: 'histogram',
+        points: m.histogram.flatMap((v, i) =>
+          v === null
+            ? []
+            : [{ time: times[i]!, value: v, color: v >= 0 ? 'rgba(38,207,157,.45)' : 'rgba(242,88,107,.45)' }],
+        ),
+      },
+      { key: 'line', color: '#25d0ee', width: 2, points: pts(m.line) },
+      { key: 'signal', color: '#ffb86b', width: 1, points: pts(m.signal) },
+    ]);
+  }
+  // Zeitachse ans Haupt-Chart anlegen (guarded — sonst Sync-Echo)
+  const r = st.chart?.getVisibleRange();
+  if (r && !rangeSyncing) {
+    rangeSyncing = true;
+    handle.setVisibleRange(r);
+    rangeSyncing = false;
+  }
+}
+
+async function mountSubPanel(kind: 'rsi' | 'macd'): Promise<void> {
+  const epoch = ++subEpochs[kind];
+  const handle = await buildIndicatorPanel($(`${kind}Panel`), kind === 'rsi' ? 'RSI 14' : 'MACD 12/26/9');
+  if (!st || epoch !== subEpochs[kind] || !handle) {
+    handle?.destroy();
+    return;
+  }
+  st.subCharts[kind] = handle;
+  handle.onVisibleRangeChange((range) => {
+    if (rangeSyncing || !range || !st) return;
+    rangeSyncing = true;
+    st.chart?.setVisibleRange(range);
+    const other = kind === 'rsi' ? st.subCharts.macd : st.subCharts.rsi;
+    other?.setVisibleRange(range);
+    rangeSyncing = false;
+  });
+  renderSubPanel(kind);
+}
+
+/** Panels an Layer-Chips + ⚙-Option angleichen (mount/unmount + Daten). */
+function updateSubPanels(): void {
+  if (!st) return;
+  for (const kind of ['rsi', 'macd'] as const) {
+    const want = st.ui.subPanels && st.chartLayers.has(`${kind}Panel`);
+    const el = $(`${kind}Panel`);
+    el.hidden = !want;
+    if (!want) {
+      subEpochs[kind]++;
+      st.subCharts[kind]?.destroy();
+      st.subCharts[kind] = null;
+      el.innerHTML = '';
+      continue;
+    }
+    if (st.subCharts[kind]) renderSubPanel(kind);
+    else void mountSubPanel(kind);
+  }
 }
 
 /** Prognose-Pfeil als organische Vektor-Kurve über dem Chart (Dicke = Vertrauen). */
@@ -799,6 +917,10 @@ function applyUiPrefs(): void {
     renderChartGrid();
   }
   if (!u.chartGrid) ($('lockMain') as HTMLButtonElement).hidden = true;
+  // Indikator-Extras (VWAP-Chip + RSI/MACD-Unterpanels)
+  document.querySelectorAll('.ind-x').forEach((el) => ((el as HTMLElement).hidden = !u.subPanels));
+  applyOverlays();
+  updateSubPanels();
 }
 
 function openOptions(): void {
@@ -806,6 +928,7 @@ function openOptions(): void {
   ($('ouPred') as HTMLInputElement).checked = st.ui.predArrow;
   ($('ouCmp') as HTMLInputElement).checked = st.ui.cmpOverlay;
   ($('ouGrid') as HTMLInputElement).checked = st.ui.chartGrid;
+  ($('ouSub') as HTMLInputElement).checked = st.ui.subPanels;
   ($('owCap') as HTMLInputElement).value = String(st.strategy.broker.initialCapital);
   ($('owMax') as HTMLInputElement).value = String(st.strategy.engine.maxPositionPct);
   ($('owSl') as HTMLInputElement).value = String(st.strategy.engine.stopLossPct);
@@ -898,6 +1021,20 @@ async function rebuildChart(): Promise<void> {
   st.chart?.onCrosshairDate((date) => {
     if (st?.mainLocked && st.chart) syncLockedCrosshair(st.chart, date);
   });
+  // Indikator-Unterpanels folgen der Haupt-Zeitachse (beidseitig, Echo-Guard)
+  st.chart?.onVisibleRangeChange((range) => {
+    if (rangeSyncing || !range || !st) return;
+    rangeSyncing = true;
+    st.subCharts.rsi?.setVisibleRange(range);
+    st.subCharts.macd?.setVisibleRange(range);
+    rangeSyncing = false;
+  });
+  // Beim Chart-Neuaufbau (Symbol-/Theme-Wechsel) Panels frisch mitziehen
+  for (const kind of ['rsi', 'macd'] as const) {
+    subEpochs[kind]++;
+    st.subCharts[kind]?.destroy();
+    st.subCharts[kind] = null;
+  }
   void loadPredictionForSymbol();
   st.chart?.onCrosshairDate((date, pos) => {
     showEventTooltip(date, pos);
@@ -1901,7 +2038,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     chartFitPending: true,
     prediction: null,
     predMode: false,
-    ui: { predArrow: false, cmpOverlay: true, chartGrid: true },
+    ui: { predArrow: false, cmpOverlay: true, chartGrid: true, subPanels: true },
+    subCharts: { rsi: null, macd: null },
     chartLayers: new Set((localStorage.getItem('autotrd-chart-layers') ?? '').split(',').filter(Boolean)),
     gridMode: 1,
     mainLocked: false,
@@ -1952,6 +2090,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         predArrow: ui?.predArrow === true,
         cmpOverlay: ui?.cmpOverlay !== false,
         chartGrid: ui?.chartGrid !== false,
+        subPanels: ui?.subPanels !== false,
       };
       applyUiPrefs();
       const prevPalette = st.hotkeys.palette;
@@ -2098,6 +2237,12 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     gridPanels: () => st?.gridPanels.length ?? -1,
     panelRange: (i: number) => st?.gridPanels[i]?.chart?.getVisibleRange() ?? null,
     setPanelRange: (i: number, r: { from: number; to: number }) => st?.gridPanels[i]?.chart?.setVisibleRange(r),
+    subRange: (k: 'rsi' | 'macd') => st?.subCharts[k]?.getVisibleRange() ?? null,
+    subMounted: () => (st ? (st.subCharts.rsi ? 1 : 0) + (st.subCharts.macd ? 1 : 0) : -1),
+    eventCount: () => st?.events.length ?? -1,
+    eventDates: () => st?.events.map((e) => e.date) ?? [],
+    mainCoords: (time: string | number, price: number) => st?.chart?.coords(time, price) ?? null,
+    lastClose: () => st?.bars[st.bars.length - 1]?.close ?? null,
   };
 
   // Hotkey-Order-Ticket (M9): Shift+B/S, Enter bestätigt, Esc schließt
@@ -2200,6 +2345,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       b.classList.toggle('on', st.chartLayers.has(key));
       localStorage.setItem('autotrd-chart-layers', [...st.chartLayers].join(','));
       applyOverlays();
+      updateSubPanels();
     });
   });
   // Prognose-Pfeil: Modus + Popover
@@ -2254,6 +2400,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     ['ouPred', 'predArrow'],
     ['ouCmp', 'cmpOverlay'],
     ['ouGrid', 'chartGrid'],
+    ['ouSub', 'subPanels'],
   ] as const) {
     $(id).addEventListener('change', () => {
       if (!st) return;
@@ -2368,6 +2515,10 @@ export function unmountDashboard(): void {
   st.paletteDispose?.();
   clearSubscribers();
   for (const p of st.gridPanels) unmountGridPanel(p);
+  for (const kind of ['rsi', 'macd'] as const) {
+    subEpochs[kind]++;
+    st.subCharts[kind]?.destroy();
+  }
   st.chart?.destroy();
   st.chart2?.destroy();
   document.removeEventListener('keydown', onEscape);
