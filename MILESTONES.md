@@ -569,6 +569,31 @@ sind (a) bis auf Renko/Kagi/P&F direkt oder per Daten-Transformation machbar,
 - [ ] Renko/Kagi/Point&Figure: bewusst NACH Teil 1-4 entscheiden (eigene
       Zeitachsen-Semantik — mit LWC nur mit Kompromissen)
 
+## Prognose 2.0 (User-Direktive 25.07. nachts: „die Prognosen sind das Herzstück")
+
+**Ziel:** Die Zukunftsvoraussage ist der Selling-Point. Kernprinzip
+Selbstverbesserung: gespeicherte Prognose vs. eingetretene Realität → die
+Bewertung verändert die Variablen (w, Lookback, künftig mehr), sodass jede
+nächste Prognose feiner wird. Granularität so fein, wie die Daten es hergeben.
+**Das Lookahead-Gate (evalForecasts/shared/forecast.ts) bleibt dabei heilig.**
+
+- [x] Teil 1: Prognose in ALLEN Charts (Raster-Panels zeigen den Forecast
+      ihres eigenen Symbols, folgen dem Prognose-Layer des Haupt-Charts) +
+      neue Karte „Prognose-Labor": Kombi-Statistik (w × Lookback: n,
+      Trefferquote, MAE; beste Kombi markiert) aus `meta/forecastStats`
+      live + „Vorhersage vs. Realität" der letzten bewerteten Prognosen des
+      Chart-Symbols + Selbstverbesserungs-Erklärtext
+- [ ] Teil 2: Intraday-Kurzfrist-Prognose (max. Granularität): eigener
+      Shadow-Satz auf 5-min-Bars der Watchlist (Horizont Stunden statt
+      Tage), eigener Eval-Pfad mit striktem „Bar realisiert"-Gate,
+      getrennte Kombi-Statistik `meta/forecastStatsIntraday`
+- [ ] Teil 3: Feature-Regressoren: Sentiment-Verlauf, RSI/MACD-Zustand,
+      Vola-Regime als Zusatz-Features; Konfidenz-Band aus der REALISIERTEN
+      Fehlerverteilung der jeweiligen Kombi (statt nur ±1σ der Historie)
+- [ ] Teil 4: Studio-Integration: genauigkeitsgewichtetes Forecast-Vote
+      (Gewicht ∝ realisierte Trefferquote der aktiven Kombi), Sweep-Achsen
+      um Forecast-Parameter erweitert, Backtest zeigt Forecast-Beitrag
+
 ## Dashboard-Individualisierung („Schweizer Taschenmesser", User-Wunsch 25.07.)
 
 **Ziel:** Jeder passt sich das Dashboard an: Module wählbar/einklappbar/

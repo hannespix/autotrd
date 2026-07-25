@@ -143,11 +143,20 @@ export interface SentimentField {
   topEvents?: Array<{ type: string; count: number }>;
 }
 
+/** Aggregat je (w, lookback)-Kombi — Rohmaterial des Self-Tunings. */
+export interface ComboStatRow {
+  n: number;
+  hits: number;
+  maeSum: number;
+}
+
 export interface ForecastStatsDoc {
   scored?: number;
   dirAccuracy?: number | null;
   best?: { w: number; lookback: number };
   tuningActive?: boolean;
+  combos?: Record<string, ComboStatRow>;
+  updatedAt?: string;
 }
 
 export function watchForecastStats(cb: (stats: ForecastStatsDoc | null) => void): Unsubscribe {
@@ -158,6 +167,42 @@ export function watchForecastStats(cb: (stats: ForecastStatsDoc | null) => void)
         emit(snap.exists() ? snap.data() : null),
       ),
     (p) => cb(p as ForecastStatsDoc | null),
+  );
+}
+
+/** Bewertete Shadow-Prognose (market/{sym}/forecasts) fürs Prognose-Labor. */
+export interface EvaluatedForecastRow {
+  baseDate: string;
+  w: number;
+  lookback: number;
+  predictedPct: number;
+  evaluated: boolean;
+  evaluatedAt?: string;
+  maePct?: number;
+  dirHit?: boolean;
+  nPoints?: number;
+}
+
+/**
+ * Letzte bewertete Prognosen eines Symbols (Vorhersage vs. Realität).
+ * orderBy(evaluatedAt) filtert implizit auf bewertete Docs — unbewertete
+ * haben das Feld nicht und fehlen im Index (kein Composite-Index nötig).
+ */
+export function watchEvaluatedForecasts(
+  symbol: string,
+  cb: (rows: EvaluatedForecastRow[]) => void,
+): Unsubscribe {
+  return muxWatch(
+    `fclab:${symbol}`,
+    (emit) => {
+      const q = query(
+        collection(db(), 'market', symbol, 'forecasts'),
+        orderBy('evaluatedAt', 'desc'),
+        limit(8),
+      );
+      return onSnapshot(q, (snap) => emit(snap.docs.map((d) => d.data())));
+    },
+    (p) => cb(p as EvaluatedForecastRow[]),
   );
 }
 

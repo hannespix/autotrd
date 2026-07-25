@@ -50,6 +50,7 @@ import {
   watchLatestIndicators,
   watchLatestSignal,
   watchMarketDoc,
+  watchEvaluatedForecasts,
   watchEvents,
   watchForecastStats,
   watchNews,
@@ -57,7 +58,9 @@ import {
   watchTrades,
   watchUserDoc,
   type AiDayDoc,
+  type EvaluatedForecastRow,
   type EventDay,
+  type ForecastStatsDoc,
   type IndicatorRow,
   type MarketDocData,
   type SignalRow,
@@ -100,6 +103,7 @@ const PANEL_TITLES: Record<string, string> = {
   manualtrade: 'Manueller Trade',
   clock: 'Markt-Uhr',
   forecastacc: 'Prognose-Genauigkeit',
+  fclab: 'Prognose-Labor',
   news: 'News & Sentiment',
   chart2: 'Vergleichs-Chart',
 };
@@ -248,6 +252,8 @@ interface GridPanel {
   subs: Unsubscribe[];
   epoch: number;
   fitPending: boolean;
+  /** Prognose des Panel-Symbols (Prognose 2.0: das Herzstück gehört in JEDES Chart). */
+  forecast: MarketDocData['forecast'];
 }
 
 let st: DashState | null = null;
@@ -577,6 +583,17 @@ function layout(email: string): string {
           bis genug Prognosen realisiert sind.</div>
       </div></div>
 
+      <div class="card" data-panel="fclab"><div class="sect">Prognose-Labor <span id="flSym" style="float:right;color:var(--t3)"></span></div><div class="cbody">
+        <div class="hint">Selbstverbesserung: Jede gespeicherte Prognose wird nach Ablauf
+          ihres Horizonts gegen die eingetretene Realität bewertet. Die Trefferquote je
+          Kombi aus Sentiment-Gewicht (w) und Lookback steuert, welche Parameter
+          künftige Prognosen nutzen — das System lernt aus jedem Fehler.</div>
+        <label class="lbl">Kombi-Statistik (w × Lookback)</label>
+        <div id="flCombos" class="fl-tbl"><div class="hint">Noch keine bewerteten Prognosen.</div></div>
+        <label class="lbl">Vorhersage vs. Realität <span id="flSym2" style="color:var(--t3)"></span></label>
+        <div id="flRows" class="fl-tbl"><div class="hint">Noch keine bewerteten Prognosen für dieses Symbol.</div></div>
+      </div></div>
+
       <div class="card" data-panel="news"><div class="sect">News &amp; Sentiment <span id="nsSym" style="float:right;color:var(--t3)"></span> <button class="lchip" id="chipNews" title="Link-Gruppe wechseln (News folgen dieser Gruppe)" style="float:right;margin-right:8px">A</button></div><div class="cbody">
         <div style="display:flex;align-items:baseline;gap:8px">
           <span id="nsLabel" class="vbig" style="font-size:18px">–</span>
@@ -703,6 +720,8 @@ function wireChartCtx(): void {
   const sym = st.currentSymbol;
   $('chSym').textContent = sym;
   $('chSub').textContent = resolveName(sym);
+  $('flSym').textContent = sym;
+  $('flSym2').textContent = sym;
   st.events = [];
   // Nachgeladene Historie ist symbol-spezifisch → beim Wechsel zurücksetzen
   st.histBars = [];
@@ -735,6 +754,7 @@ function wireChartCtx(): void {
       if (st.intradayDays > 0) void loadIntradayView();
       else renderChart();
     }),
+    watchEvaluatedForecasts(sym, (rows) => renderFcLabRows(rows)),
     watchLatestIndicators(sym, (row) => renderIndicatorCards(row)),
     watchLatestSignal(sym, (sig) => {
       const el = $('vSig');
@@ -1501,6 +1521,68 @@ function applyForecast(): void {
     `über ${fc.points.length} Handelstage (w=${fc.w}, Lookback ${fc.lookback}, gestrichelt ±1σ)`;
 }
 
+/** Prognose-Labor: Kombi-Statistik aus meta/forecastStats (Self-Tuning-Evidenz). */
+function renderFcLabStats(stats: ForecastStatsDoc | null): void {
+  const host = $('flCombos');
+  const rows = Object.entries(stats?.combos ?? {})
+    .map(([key, c]) => {
+      const [wS, lbS] = key.split('_');
+      const w = Number(wS);
+      const lb = Number(lbS);
+      return {
+        w: Number.isFinite(w) ? w : 0,
+        lb: Number.isFinite(lb) ? lb : 0,
+        n: c.n,
+        hit: c.n > 0 ? (c.hits / c.n) * 100 : 0,
+        mae: c.n > 0 ? c.maeSum / c.n : 0,
+      };
+    })
+    .sort((a, b) => b.hit - a.hit || a.mae - b.mae);
+  if (rows.length === 0) {
+    host.innerHTML =
+      '<div class="hint">Noch keine bewerteten Prognosen — die Statistik füllt sich, sobald erste Horizonte realisiert sind.</div>';
+    return;
+  }
+  const best = stats?.best;
+  host.innerHTML =
+    '<div class="fl-row fl-head"><span>w</span><span>Lookback</span><span>n</span><span>Treffer</span><span>MAE</span></div>' +
+    rows
+      .map((r) => {
+        const isBest = best !== undefined && best.w === r.w && best.lookback === r.lb;
+        return (
+          `<div class="fl-row${isBest ? ' fl-best' : ''}"${isBest ? ' title="Beste Kombi — steuert die Live-Prognose"' : ''}>` +
+          `<span>${r.w}</span><span>${r.lb}</span><span>${r.n}</span>` +
+          `<span class="${r.hit >= 50 ? 'c-gn' : 'c-rd'}">${r.hit.toFixed(0)} %</span>` +
+          `<span>${r.mae.toFixed(2)} %</span></div>`
+        );
+      })
+      .join('');
+}
+
+/** Prognose-Labor: bewertete Prognosen (Vorhersage vs. Realität) des Chart-Symbols. */
+function renderFcLabRows(rows: EvaluatedForecastRow[]): void {
+  const host = $('flRows');
+  const done = rows.filter((r) => r.evaluated && r.evaluatedAt);
+  if (done.length === 0) {
+    host.innerHTML = '<div class="hint">Noch keine bewerteten Prognosen für dieses Symbol.</div>';
+    return;
+  }
+  host.innerHTML =
+    '<div class="fl-row fl-head"><span>Basis</span><span>w/Lb</span><span>Prognose</span><span>Richtung</span><span>MAE</span></div>' +
+    done
+      .map((r) => {
+        const hit = r.dirHit === true;
+        return (
+          '<div class="fl-row">' +
+          `<span>${String(r.baseDate).slice(0, 10)}</span><span>${Number(r.w)}/${Number(r.lookback)}</span>` +
+          `<span>${r.predictedPct >= 0 ? '+' : ''}${Number(r.predictedPct).toFixed(2)} %</span>` +
+          `<span class="${hit ? 'c-gn' : 'c-rd'}">${hit ? '✓ getroffen' : '✗ daneben'}</span>` +
+          `<span>${Number(r.maePct ?? 0).toFixed(2)} %</span></div>`
+        );
+      })
+      .join('');
+}
+
 // Schneller Symbolwechsel startet rebuildChart nebenläufig — die Epoche
 // sorgt dafür, dass nur der JÜNGSTE Aufbau gewinnt und Callbacks nie auf
 // einem bereits zerstörten Chart arbeiten („Object is disposed").
@@ -1847,6 +1929,15 @@ function renderGridPanelBars(p: GridPanel): void {
     AREA_TONES.hold,
   );
   p.chart.setCandlesVisible(!(st !== null && !st.cleanView && st.chartLayers.has('hideCandles') && wantArea));
+  // Prognose in JEDEM Chart (Prognose 2.0): folgt dem Prognose-Layer des
+  // Haupt-Charts, aber mit den Daten des Panel-Symbols.
+  const fc = p.forecast;
+  const wantFc = st !== null && st.showForecast && !st.cleanView && fc != null && fc.points.length > 0;
+  const lastB = bars[bars.length - 1];
+  p.chart.setForecast(
+    wantFc && fc ? { points: fc.points, band: fc.band } : null,
+    wantFc && lastB ? { time: lastB.date, value: lastB.close } : undefined,
+  );
 }
 
 /** Panel (neu) aufbauen: Bars-Watcher + Chart + Lock-Sync-Verdrahtung. */
@@ -1859,6 +1950,11 @@ async function mountGridPanel(p: GridPanel, host: HTMLElement): Promise<void> {
   p.subs.push(
     watchBars(p.sym, (bars) => {
       p.bars = bars;
+      renderGridPanelBars(p);
+    }),
+    watchMarketDoc(p.sym, (d) => {
+      if (epoch !== p.epoch) return;
+      p.forecast = d?.forecast ?? null;
       renderGridPanelBars(p);
     }),
   );
@@ -1942,7 +2038,7 @@ function renderChartGrid(): void {
       st.strategy.watchlist.find((s) => !used.has(s)) ??
       ['AAPL', 'TSLA', '^NDX'].find((s) => !used.has(s)) ??
       'AAPL';
-    st.gridPanels.push({ sym, range: 66, locked: false, chart: null, bars: [], subs: [], epoch: 0, fitPending: true });
+    st.gridPanels.push({ sym, range: 66, locked: false, chart: null, bars: [], subs: [], epoch: 0, fitPending: true, forecast: null });
   }
   $('chartRow').dataset['mode'] = String(st.gridMode);
   ($('lockMain') as HTMLButtonElement).hidden = st.gridMode === 1;
@@ -2974,6 +3070,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       $('fcTuning').textContent = stats?.tuningActive
         ? 'Self-Tuning aktiv: Live-Prognosen nutzen die historisch beste Kombi.'
         : 'Self-Tuning sammelt Evidenz — Defaults aktiv, bis genug Prognosen realisiert sind.';
+      renderFcLabStats(stats);
     }),
   );
 
@@ -3091,6 +3188,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     gridPanels: () => st?.gridPanels.length ?? -1,
     gridPanelOverlays: (i: number) => st?.gridPanels[i]?.chart?.overlayCount() ?? -1,
     panelAreaActive: (i: number) => st?.gridPanels[i]?.chart?.areaActive() ?? false,
+    panelForecastActive: (i: number) => st?.gridPanels[i]?.chart?.forecastActive() ?? false,
+    mainForecastActive: () => st?.chart?.forecastActive() ?? false,
     mainChartType: () => st?.chart?.chartType() ?? 'candles',
     panelChartType: (i: number) => st?.gridPanels[i]?.chart?.chartType() ?? 'candles',
     panelRange: (i: number) => st?.gridPanels[i]?.chart?.getVisibleRange() ?? null,
@@ -3503,7 +3602,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     const prefs = loadGridPrefs();
     st.gridMode = prefs.mode;
     st.mainLocked = prefs.mainLocked;
-    st.gridPanels = prefs.panels.map((p) => ({ ...p, chart: null, bars: [], subs: [], epoch: 0, fitPending: true }));
+    st.gridPanels = prefs.panels.map((p) => ({ ...p, chart: null, bars: [], subs: [], epoch: 0, fitPending: true, forecast: null }));
     renderChartGrid();
   }
 
@@ -3530,6 +3629,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     st.showForecast = !st.showForecast;
     $('lyFc').classList.toggle('on', st.showForecast);
     applyForecast();
+    for (const p of st.gridPanels) renderGridPanelBars(p); // Prognose-Layer gilt in ALLEN Charts
   });
   $('lyEv').addEventListener('click', () => {
     if (!st) return;
