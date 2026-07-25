@@ -742,12 +742,17 @@ export async function runScan(force = false): Promise<ScanResult> {
   return { scanId, scanned, errors, trades };
 }
 
-/** Alle 5 Minuten; der Gate macht außerhalb der Marktzeiten einen No-Op. */
+/** Alle 5 Minuten; der Gate macht außerhalb der Marktzeiten einen No-Op.
+ *  512 MiB statt Default 256 (Live-OOM 25.07.: „Memory limit exceeded with
+ *  259–274 MiB" — 5J-Backfill + Katalog-Versorgung + volle Watchlist brauchen
+ *  Luft); 180 s Timeout für den Erst-Backfill mehrerer Symbole. */
 export const scanMarket = onSchedule(
   {
     schedule: 'every 5 minutes',
     timeZone: 'America/New_York',
     retryCount: 0,
+    memory: '512MiB',
+    timeoutSeconds: 180,
     secrets: [anthropicApiKey],
   },
   async () => {
