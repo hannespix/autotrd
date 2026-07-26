@@ -1177,6 +1177,8 @@ function renderLegend(lines: import('./chart.js').OverlayLine[], intraday: boole
 /* ── Indikator-Unterpanels (Chart-Vision): RSI/MACD, Zeitachse synchron ── */
 
 const subEpochs = { rsi: 0, macd: 0 };
+// Länge der Anker-Zeitachse je Panel (E2E-Hook: Domänen-Parität mit Haupt-Chart)
+const subAnchorLens = { rsi: -1, macd: -1 };
 
 /** Zeiten + Schlusskurse der aktuell gezeigten Bars (Tages- oder Intraday-Sicht). */
 function shownSeries(): { times: Array<string | number>; closes: number[] } {
@@ -1194,17 +1196,33 @@ function renderSubPanel(kind: 'rsi' | 'macd'): void {
   const { times, closes } = shownSeries();
   const pts = (series: (number | null)[]): PanelLine['points'] =>
     series.flatMap((v, i) => (v === null ? [] : [{ time: times[i]!, value: v }]));
+  // Zeitachsen-Anker (User-Screenshot 26.07.: „Datumleisten laufen auseinander"):
+  // LWC baut die Zeitskala aus der VEREINIGUNG aller Serien-Zeitpunkte. Fehlen
+  // dem Panel Zeitpunkte des Haupt-Charts (MACD-Anlauf-Nulls werden gefiltert,
+  // Prognose-Whitespace rechts existiert nur im Haupt-Chart), zeigen gleiche
+  // logische Indizes VERSCHIEDENE Daten. Die Hilfslinien laufen deshalb über
+  // die komplette Haupt-Domäne inkl. der aktiven Prognose-Zukunftspunkte.
+  const anchorTimes: Array<string | number> = [...times];
+  const lastT = times[times.length - 1];
+  if (st.showForecast && !st.cleanView && lastT !== undefined) {
+    if (st.intradayDays > 0 && st.forecastIntraday) {
+      for (const p of st.forecastIntraday.points) if (p.t > (lastT as number)) anchorTimes.push(p.t);
+    } else if (st.intradayDays === 0 && st.forecast) {
+      for (const p of st.forecast.points) if (p.time > (lastT as string)) anchorTimes.push(p.time);
+    }
+  }
+  subAnchorLens[kind] = anchorTimes.length; // E2E-Hook (Domänen-Parität)
   if (kind === 'rsi') {
-    const line70 = times.map((t) => ({ time: t, value: 70 }));
-    const line30 = times.map((t) => ({ time: t, value: 30 }));
     handle.setSeries([
-      { key: 'g70', color: 'rgba(242,88,107,.35)', width: 1, dashed: true, points: line70 },
-      { key: 'g30', color: 'rgba(38,207,157,.35)', width: 1, dashed: true, points: line30 },
+      { key: 'g70', color: 'rgba(242,88,107,.35)', width: 1, dashed: true, points: anchorTimes.map((t) => ({ time: t, value: 70 })) },
+      { key: 'g30', color: 'rgba(38,207,157,.35)', width: 1, dashed: true, points: anchorTimes.map((t) => ({ time: t, value: 30 })) },
       { key: 'rsi', color: '#25d0ee', width: 2, points: pts(wilderRsi(closes, 14)) },
     ]);
   } else {
     const m = macd(closes);
     handle.setSeries([
+      // Null-Linie = Zeitachsen-Anker + fachlicher Standard im MACD
+      { key: 'g0', color: 'rgba(139,147,168,.3)', width: 1, dashed: true, points: anchorTimes.map((t) => ({ time: t, value: 0 })) },
       {
         key: 'hist',
         color: 'rgba(139,147,168,.4)',
@@ -3750,6 +3768,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     panelRange: (i: number) => st?.gridPanels[i]?.chart?.getVisibleRange() ?? null,
     setPanelRange: (i: number, r: { from: number; to: number }) => st?.gridPanels[i]?.chart?.setVisibleRange(r),
     subRange: (k: 'rsi' | 'macd') => st?.subCharts[k]?.getVisibleRange() ?? null,
+    subAnchorLen: (k: 'rsi' | 'macd') => subAnchorLens[k],
     subMounted: () => (st ? (st.subCharts.rsi ? 1 : 0) + (st.subCharts.macd ? 1 : 0) : -1),
     eventCount: () => st?.events.length ?? -1,
     areaActive: () => st?.chart?.areaActive() ?? false,
@@ -4205,6 +4224,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     $('lyFc').classList.toggle('on', st.showForecast);
     applyForecast();
     renderAllPanels(); // Prognose-Layer gilt in ALLEN Charts
+    updateSubPanels(); // Zeitachsen-Anker der Unterpanels folgt dem Whitespace
   });
   $('lyEv').addEventListener('click', () => {
     if (!st) return;
