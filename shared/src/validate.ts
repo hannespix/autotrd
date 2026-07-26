@@ -65,6 +65,10 @@ export function validateStrategy(value: unknown): string[] {
     if (typeof broker.paperTrading !== 'boolean') {
       problems.push('broker.paperTrading muss boolean sein');
     }
+    // Additiv (Bestands-Strategien haben das Feld nicht): fehlend = 'balance'
+    if (broker.sizingBase !== undefined && broker.sizingBase !== 'initial' && broker.sizingBase !== 'balance') {
+      problems.push("broker.sizingBase muss 'initial' oder 'balance' sein");
+    }
   }
 
   if (!Array.isArray(watchlist) || !watchlist.every((s) => typeof s === 'string' && s.length > 0)) {

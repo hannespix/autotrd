@@ -32,6 +32,22 @@ function roundCents(v: number): number {
   return Math.round(v * 100) / 100;
 }
 
+/**
+ * Positionsgröße eines Kaufs (pure, testbar) — MA-Audit 26.07.:
+ * Basis ist per Default der VERFÜGBARE Cash ('balance'), nicht mehr das
+ * Startkapital. Grund (Owner-Feedback): Mit fixen Startkapital-Tranchen
+ * scheiterte jeder Kauf still an 'zu_wenig_cash', sobald der Rest-Cash die
+ * Tranche nicht mehr deckte — das Wallet stand dann groß im Depot, aber der
+ * Auto-Trader handelte nicht mehr. Cash-Basis kann IMMER kaufen, solange
+ * floor(cash·pct/price) ≥ 1 Stück ergibt. 'initial' bleibt als bewusste
+ * Option für fixe Tranchen (Referenz-Verhalten).
+ */
+export function sizeOrder(strategy: Strategy, balance: number, effPrice: number): number {
+  const base = strategy.broker.sizingBase ?? 'balance';
+  const capital = base === 'initial' ? strategy.broker.initialCapital : Math.max(0, balance);
+  return Math.floor((capital * strategy.engine.maxPositionPct) / 100 / effPrice);
+}
+
 export interface TradeResult {
   executed: boolean;
   reason?: string;
@@ -54,8 +70,9 @@ export interface TradeRequest {
 
 /**
  * Paper-Trade transaktional ausführen (Port von _execute_trade):
- * - buy: nie nachkaufen (Position existiert → no-op); Größe = maxPositionPct
- *   vom Startkapital (wie Referenz) bzw. explizite qty; Cash-Deckung nötig.
+ * - buy: nie nachkaufen (Position existiert → no-op); Größe via sizeOrder()
+ *   (maxPositionPct vom Cash bzw. Startkapital) oder explizite qty;
+ *   Cash-Deckung nötig.
  * - sell: nur mit Position; realisiert P&L in den Trade-Record.
  */
 export async function executePaperTrade(req: TradeRequest, strategy: Strategy): Promise<TradeResult> {
@@ -80,9 +97,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
 
     if (req.side === 'buy') {
       if (posSnap.exists) return { executed: false, reason: 'position_existiert' };
-      const capital = strategy.broker.initialCapital;
-      const maxPct = strategy.engine.maxPositionPct / 100;
-      const qty = req.qty ?? Math.floor((capital * maxPct) / eff);
+      const qty = req.qty ?? sizeOrder(strategy, balance, eff);
       if (qty < 1) return { executed: false, reason: 'qty_unter_1' };
       const cost = qty * eff;
       if (cost > balance) return { executed: false, reason: 'zu_wenig_cash' };

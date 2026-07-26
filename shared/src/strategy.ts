@@ -15,6 +15,15 @@ export interface BrokerConfig {
   mode: 'paper' | 'live';
   initialCapital: number;
   paperTrading: boolean;
+  /**
+   * Basis der Positionsgröße (Owner-Feedback 26.07.: „Cash, der nicht
+   * arbeitet, bringt nichts"): 'balance' = maxPositionPct vom VERFÜGBAREN
+   * Cash — das Wallet arbeitet weiter, auch wenn schon Positionen offen
+   * sind. 'initial' = fixe Tranche vom Startkapital (Referenz-Verhalten);
+   * scheitert still, sobald der Rest-Cash die Tranche nicht mehr deckt.
+   * Fehlend = 'balance' (der Sinn eines Auto-Traders ist, dass er handelt).
+   */
+  sizingBase?: 'initial' | 'balance';
 }
 
 /**
@@ -128,7 +137,7 @@ export interface Strategy {
 export const MAX_WATCHLIST = 20;
 
 export const DEFAULT_STRATEGY: Strategy = {
-  broker: { provider: 'paper', mode: 'paper', initialCapital: 25_000, paperTrading: true },
+  broker: { provider: 'paper', mode: 'paper', initialCapital: 25_000, paperTrading: true, sizingBase: 'balance' },
   watchlist: ['QQQ', 'AAPL', 'TSLA', '^NDX'],
   engine: {
     checkIntervalMin: 5,
