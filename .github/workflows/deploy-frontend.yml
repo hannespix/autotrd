@@ -47,17 +47,39 @@ jobs:
       # der Ordner lokal existiert, versucht die Action keinen Ordner-Löschvorgang
       # und der Sync (inkl. State-Update) läuft durch. NICHT entfernen, ohne die
       # Folge-Deploys zu beobachten.
+      # Der webgo-FTPS-Kontrollkanal ist gelegentlich minutenlang taub
+      # (26.07.: 2× „Timeout (control socket)" nach exakt 30 s, HTTP lief
+      # weiter). Deshalb: großzügiger Timeout + zweiter Versuch nach Pause.
       - name: FTPS-Upload zu webgo
+        id: ftp1
         if: env.FTP_HOST != ''
+        continue-on-error: true
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_HOST }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
           protocol: ftps
+          timeout: 120000
           local-dir: frontend/dist/
           # Zielverzeichnis RELATIV zur FTP-Wurzel des Accounts (Trailing-Slash
           # pflicht). Ohne diese Angabe lädt die Action in die FTP-Wurzel —
           # bei webgo landet das direkt in www/ statt im Site-Ordner.
           # Abweichler setzen die Repo-Variable FTP_SERVER_DIR (SETUP.md §D).
+          server-dir: ${{ vars.FTP_SERVER_DIR || 'autotrd.net/' }}
+
+      - name: Pause vor zweitem Versuch
+        if: env.FTP_HOST != '' && steps.ftp1.outcome == 'failure'
+        run: sleep 90
+
+      - name: FTPS-Upload zu webgo (2. Versuch)
+        if: env.FTP_HOST != '' && steps.ftp1.outcome == 'failure'
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_HOST }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          protocol: ftps
+          timeout: 120000
+          local-dir: frontend/dist/
           server-dir: ${{ vars.FTP_SERVER_DIR || 'autotrd.net/' }}
