@@ -70,7 +70,7 @@ function initUpdateWatch(): void {
         const chip = document.createElement('div');
         chip.id = 'updChip';
         chip.className = 'pwa-chip';
-        chip.innerHTML = '<button type="button" class="pwa-install">✨ Neue Version — jetzt laden</button>';
+        chip.innerHTML = '<button type="button" class="pwa-install">Neue Version — jetzt laden</button>';
         document.body.append(chip);
         chip.querySelector('button')!.addEventListener('click', () => window.location.reload());
       }

@@ -743,6 +743,37 @@ Shadow-Strategie schreibt beim Signalwechsel genau ein `shadowSignals`-Doc ·
 Lookahead-Leck lässt den Regressionstest fehlschlagen (adversariale Fixture im
 Repo) · „Befördern" tauscht Rollen atomar.
 
+## MA — Großes Engine-Audit (Owner-Auftrag 26.07.: „Herzstück — muss fehlerfrei sein")
+
+**Ziel:** Systematisches Logik- und Bug-Audit der kompletten Auto-Trading-
+Kette — jede gefundene Schwäche wird sofort mit Test + Fix ausgeliefert.
+Reihenfolge = Geldfluss: erst wo Geld bewegt wird, dann wie entschieden wird.
+
+- [ ] MA1 Broker-Kern: `executePaperTrade` (Transaktionalität, Rundung,
+      Gebühren-/Slippage-Vorzeichen je Seite, qty-Sizing, avgEntry bei
+      Nachkäufen, Verkauf > Bestand, negative/Null-Preise, Idempotenz bei
+      Doppel-Scans), `riskExitReason`-Grenzfälle, Wallet-Konsistenz
+      (cash+Positionen=Equity), adversariale Unit-Tests je Fund
+- [ ] MA2 Signal-Kette: `computeSignal`/Konfluenz (Vote-Zählung, Schwellen-
+      Symmetrie buy/sell, Forecast-Vote-Faktor inkl. accuracyWeighted-
+      Clamps, Prediction-Vote), Indikator-Randfälle (kurze Historie, NaN,
+      flache Serien) — Property-Tests + Golden-Parity gegen reference/
+- [ ] MA3 Scan-Orchestrierung: executeUserTrades-Ablauf (Risk-Exits VOR
+      Signalen, strategyOwned-Exklusivität, Marktzeiten-Gates je Klasse,
+      Scan-Set-Vollständigkeit, Fehler-Isolation je User, Doppel-Scan-/
+      Reentry-Sicherheit, lastDirs-Signalwechsel-Semantik)
+- [ ] MA4 Regelbaum + Shadow: evaluate()-Grenzen, Compiler-Parity,
+      shadowTrade-Duell-Fairness (identische Gebühren/Preise), Beförderungs-
+      Atomarität, lastTrades-Cooldowns
+- [ ] MA5 End-to-End-Beweis im Emulator: konstruierte Kursverläufe, die
+      JEDEN Pfad real auslösen (Buy → Take-Profit, Buy → Stop-Loss,
+      Konfluenz-Sell, Regelbaum-Sell, Shadow parallel) + Abschlussbericht
+      an den Owner mit allen Funden/Fixes
+
+**Abnahme:** Jeder gefundene Bug hat einen adversarialen Test, der ohne den
+Fix rot ist · ein Emulator-E2E beweist alle fünf Exit-/Entry-Pfade · Bericht
+listet Fund → Schwere → Fix → Test.
+
 ## M12 — Portfolio, Risiko & Tagesfilm-Journal
 
 **Ziel:** Multi-Wallets je Strategie mit vorberechneten Kennzahlen (Dashboard =

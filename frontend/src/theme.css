@@ -82,6 +82,8 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .hdr .user { color: var(--t3); font-size: 11px; max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hbtn { background: var(--sd); border: 1px solid var(--bd); color: var(--t1); border-radius: 8px; padding: 5px 10px; cursor: pointer; font-size: 11px; }
 .hbtn:hover { border-color: var(--bd2); }
+/* Monochrome SVG-Icons statt bunter System-Emojis (Feedback 26.07.) */
+.ic { width: 14px; height: 14px; vertical-align: -2px; display: inline-block; pointer-events: none; }
 .badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 16px; font-size: 9px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; }
 .badge::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; animation: dotpulse 2.4s ease-in-out infinite; }
 @keyframes dotpulse { 0%, 100% { opacity: 1; } 50% { opacity: .4; } }

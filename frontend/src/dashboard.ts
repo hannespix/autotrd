@@ -33,6 +33,7 @@ import {
   type PanelLine,
   type PriceChartHandle,
 } from './chart.js';
+import { ICONS } from './icons.js';
 import {
   callTrade,
   loadMarketQuotes,
@@ -348,8 +349,8 @@ function layout(email: string): string {
     <div class="logo">AUTO<span class="c-gn">TRD</span></div>
     <div class="spacer"></div>
     <div id="engBadge" class="badge b-off">Engine aus</div>
-    <a class="hbtn" id="studioLink" href="#/strategy" title="Strategie-Studio">⚡<span class="hide-sm"> Studio</span></a>
-    <button class="hbtn" id="optBtn" title="Optionen: Elemente, Module & Paper-Wallet">⚙</button>
+    <a class="hbtn" id="studioLink" href="#/strategy" title="Strategie-Studio">${ICONS.bolt}<span class="hide-sm"> Studio</span></a>
+    <button class="hbtn" id="optBtn" title="Optionen: Elemente, Module & Paper-Wallet">${ICONS.gear}</button>
     <button class="hbtn sb-tgl" id="sideL" title="Linke Spalte ein-/ausblenden">◧</button>
     <button class="hbtn sb-tgl" id="sideR" title="Rechte Spalte ein-/ausblenden">◨</button>
     <button class="hbtn" id="themeBtn" title="Hell/Dunkel">◐</button>
@@ -430,7 +431,7 @@ function layout(email: string): string {
           <button class="tf-btn" data-bars="250" title="1 Jahr in Tageskerzen (~250 Handelstage)">1J</button>
           <span id="resBadge" class="res-badge mono" title="Aktive Kerzen-Auflösung"></span>
           <span id="histHint" class="res-badge mono" hidden>lädt ältere Daten …</span>
-          <button class="tf-btn" id="predBtn" hidden title="Prognose-Pfeil zeichnen: Klick in den Chart setzt den Ziel-Kurs">✏</button>
+          <button class="tf-btn" id="predBtn" hidden title="Prognose-Pfeil zeichnen: Klick in den Chart setzt den Ziel-Kurs">${ICONS.pencil}</button>
           <button class="tf-btn" id="jumpStart" title="Animiert zum Anfang der geladenen Historie springen (lädt am Rand automatisch weiter nach)">⇤</button>
           <button class="tf-btn" id="jumpMid" title="Animiert zur Mitte der Timeline springen">◐</button>
           <button class="tf-btn" id="jumpEnd" title="Animiert ans Ende (aktuellster Kurs) springen">⇥</button>
@@ -482,7 +483,7 @@ function layout(email: string): string {
                 <button class="tf-btn" data-grid="4">⊞</button>
               </span>
               <button class="tf-btn" id="lockMain" hidden
-                title="Haupt-Chart in die Lock-Gruppe: Zoom, Sichtbereich und Crosshair laufen auf allen gelockten Charts synchron">🔓</button>
+                title="Haupt-Chart in die Lock-Gruppe: Zoom, Sichtbereich und Crosshair laufen auf allen gelockten Charts synchron">${ICONS.unlock}</button>
               <div class="tm-sec">Vergleich</div>
               <input id="cmpSym" class="inp cmp-inp" placeholder="+ Overlay: SYM" title="Zweiten Kurs als %-Linie überlagern (Tageskerzen)" />
             </div>
@@ -707,10 +708,10 @@ function layout(email: string): string {
     <div class="dmodal-bg" data-close="options"></div>
     <div class="dsheet" style="width:min(560px,100%)">
       <button class="dclose" data-close="options">✕</button>
-      <h3>⚙ Optionen</h3>
+      <h3>Optionen</h3>
       <div class="wl-sec">Optionale Elemente</div>
       <label class="opt-row"><input type="checkbox" id="ouPred" />
-        <span><b>Prognose-Pfeil (✏)</b> — eigene Kurs-Erwartung im Chart einzeichnen;
+        <span><b>Prognose-Pfeil</b> — eigene Kurs-Erwartung im Chart einzeichnen;
         zählt als gewichtete Stimme im Auto-Trading. <i>Beta, standardmäßig aus.</i></span></label>
       <label class="opt-row"><input type="checkbox" id="ouCmp" />
         <span><b>Vergleichs-Overlay</b> — zweites Symbol als %-Linie im Haupt-Chart.</span></label>
@@ -1154,7 +1155,7 @@ function renderLegend(lines: import('./chart.js').OverlayLine[], intraday: boole
     const lastClose = st.bars[st.bars.length - 1]?.close ?? st.prediction.targetPrice;
     items.push({
       c: st.prediction.targetPrice >= lastClose ? '#26cf9d' : '#f2586b',
-      t: '✏ Meine Prognose — zählt als Stimme im Auto-Trading',
+      t: 'Meine Prognose — zählt als Stimme im Auto-Trading',
       title: 'Deine manuell eingezeichnete Kurs-Erwartung; der Algorithmus nimmt sie als gewichtete Stimme (Gewicht = Vertrauen 1–3) in die Handels-Entscheidung auf',
     });
   }
@@ -1358,7 +1359,7 @@ function drawPredictionArrow(): void {
     `${(base.x - hx * hw).toFixed(1)},${(base.y - hy * hw).toFixed(1)}`;
   // Label-Pille an der Spitze: markiert den Pfeil klar als MANUELLE
   // User-Prognose (Wunsch 25.07.), Details in Zeile 2 + Erklärung in Legende
-  const title = '✏ Meine Prognose';
+  const title = 'Meine Prognose';
   const label = `${pred.targetPrice.toFixed(2)} · ${pred.targetDate.slice(5)}`;
   const pillW = Math.max(title.length, label.length) * 6.6 + 18;
   const pillX = Math.max(4, Math.min(box.width - pillW - 4, tip.x - pillW / 2));
@@ -2432,7 +2433,7 @@ function renderChartGrid(): void {
   }
   $('chartRow').dataset['mode'] = String(st.gridMode);
   ($('lockMain') as HTMLButtonElement).hidden = st.gridMode === 1;
-  $('lockMain').textContent = st.mainLocked ? '🔒' : '🔓';
+  $('lockMain').innerHTML = st.mainLocked ? ICONS.lock : ICONS.unlock;
   $('lockMain').classList.toggle('on', st.mainLocked);
   document.querySelectorAll('.tf-btn[data-grid]').forEach((b) => {
     b.classList.toggle('on', Number((b as HTMLElement).dataset['grid']) === st?.gridMode);
@@ -2454,7 +2455,7 @@ function renderChartGrid(): void {
         </span>
         <button class="tf-btn gp-max" title="Chart im Vollbild (Esc schließt)">⛶</button>
         <button class="tf-btn gp-lock${p.locked ? ' on' : ''}"
-          title="Lock: Zoom, Sichtbereich und Crosshair synchron mit allen gelockten Charts">${p.locked ? '🔒' : '🔓'}</button>
+          title="Lock: Zoom, Sichtbereich und Crosshair synchron mit allen gelockten Charts">${p.locked ? ICONS.lock : ICONS.unlock}</button>
       </div>
       <div class="gp-chart" data-gp="${i}"></div>`;
     const symInp = el.querySelector('.gp-sym') as HTMLInputElement;
@@ -2507,7 +2508,7 @@ function renderChartGrid(): void {
     const lockBtn = el.querySelector('.gp-lock') as HTMLButtonElement;
     lockBtn.addEventListener('click', () => {
       p.locked = !p.locked;
-      lockBtn.textContent = p.locked ? '🔒' : '🔓';
+      lockBtn.innerHTML = p.locked ? ICONS.lock : ICONS.unlock;
       lockBtn.classList.toggle('on', p.locked);
       saveGridPrefs();
       // frisch gelockt → sofort auf den Stand der Gruppe ziehen
@@ -2794,7 +2795,7 @@ function wirePanelChrome(): void {
         ? '<button type="button" class="sect-btn sect-grip" data-grip title="Modul verschieben (ziehen)">⠿</button>'
         : '') +
       '<button type="button" class="sect-btn" data-col title="Modul ein-/ausklappen">▾</button>' +
-      '<button type="button" class="sect-btn" data-x title="Modul ausblenden — wieder einblendbar über ⚙ → Module">✕</button>';
+      '<button type="button" class="sect-btn" data-x title="Modul ausblenden — wieder einblendbar über Optionen → Module">✕</button>';
     sect.appendChild(box);
     // Drag-Reorder (Taschenmesser Teil 3): Karte ist nur draggable, solange
     // der Grip gedrückt ist — sonst stört Drag jede Text-Selektion.
@@ -3307,7 +3308,7 @@ function renderPortfolio(): void {
       <td><span class="stag ${t.side === 'buy' ? 't-buy' : 't-sell'}">${t.side.toUpperCase()}</span></td>
       <td>${t.qty}</td><td>${fmtNum(t.price)}</td>
       <td class="${t.pnl !== undefined ? pnlClass(t.pnl) : ''}">${t.pnl !== undefined ? money(t.pnl) : '—'}</td>`;
-    tr.querySelectorAll('td')[1]!.textContent = t.symbol + (t.source === 'engine' ? ' ⚙' : '');
+    tr.querySelectorAll('td')[1]!.textContent = t.symbol + (t.source === 'engine' ? ' · Auto' : '');
     jb.appendChild(tr);
   }
 }
@@ -4213,7 +4214,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   $('lockMain').addEventListener('click', () => {
     if (!st) return;
     st.mainLocked = !st.mainLocked;
-    $('lockMain').textContent = st.mainLocked ? '🔒' : '🔓';
+    $('lockMain').innerHTML = st.mainLocked ? ICONS.lock : ICONS.unlock;
     $('lockMain').classList.toggle('on', st.mainLocked);
     saveGridPrefs();
   });
@@ -4264,11 +4265,27 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   // oder Vergleichs-Chart lädt dessen News (Raster-Panels analog in renderGrid)
   $('chartWrap').addEventListener('pointerdown', () => focusNews(st?.currentSymbol ?? ''), true);
   $('chart2Area').addEventListener('pointerdown', () => focusNews(st?.chart2Symbol ?? ''), true);
+  // News-Overlay schließt bei Klick/Tipp irgendwo anders SOFORT (User-
+  // Feedback 26.07.) — nicht erst nach dem 4-s-Touch-Nachlauf
+  document.addEventListener('pointerdown', onGlobalTipClose, true);
   document.addEventListener('keydown', onEscape);
+}
+
+/** Klick/Tipp außerhalb des News-Overlays schließt es sofort (26.07.). */
+function onGlobalTipClose(e: PointerEvent): void {
+  const tip = document.getElementById('evTip');
+  if (!tip || tip.hidden || tip.contains(e.target as Node)) return;
+  tip.hidden = true;
+  evTipOwner = null;
+  if (evTipTimer !== null) {
+    window.clearTimeout(evTipTimer);
+    evTipTimer = null;
+  }
 }
 
 function onEscape(e: KeyboardEvent): void {
   if (e.key !== 'Escape') return;
+  $('evTip').hidden = true;
   closeModal('detail');
   closeModal('picker');
   closeModal('options');
@@ -4300,5 +4317,6 @@ export function unmountDashboard(): void {
   st.chart2?.destroy();
   document.removeEventListener('keydown', onEscape);
   document.removeEventListener('keydown', onGlobalHotkey);
+  document.removeEventListener('pointerdown', onGlobalTipClose, true);
   st = null;
 }
