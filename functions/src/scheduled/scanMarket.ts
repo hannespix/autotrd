@@ -371,6 +371,16 @@ const MAX_SCAN_SYMBOLS = 40;
 async function collectScanSymbols(): Promise<string[]> {
   const db = getFirestore();
   const set = new Set<string>(DEFAULT_STRATEGY.watchlist);
+  // Verkaufs-Sicherheit (26.07.): OFFENE POSITIONEN gehören IMMER ins
+  // Scan-Set — VOR den Watchlists (der Kosten-Deckel darf sie nie
+  // verdrängen). Sonst verlöre eine Position, deren Symbol aus allen
+  // Watchlists fällt, jeden Exit-Pfad (Stop/Take/Konfluenz-Verkauf).
+  try {
+    const posSnap = await db.collectionGroup('positions').select().get();
+    for (const d of posSnap.docs) set.add(d.id);
+  } catch (err) {
+    logger.warn('Positions-Symbole nicht lesbar — Scan ohne Positions-Union', err);
+  }
   try {
     const users = await db.collection('users').select('settings.strategy.watchlist').get();
     for (const doc of users.docs) {
