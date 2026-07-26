@@ -744,14 +744,32 @@ function layout(email: string): string {
           <input id="owCap" class="inp st-num" type="number" min="100" step="500" /></label>
         <label>Investment je Trade %
           <input id="owMax" class="inp st-num" type="number" min="1" max="100" step="1" /></label>
-        <label>Stop-Loss %
-          <input id="owSl" class="inp st-num" type="number" min="0.5" step="0.5" /></label>
-        <label>Take-Profit %
-          <input id="owTp" class="inp st-num" type="number" min="0.5" step="0.5" /></label>
+        <label>Stop-Loss % ${iBtn('stopLoss')}
+          <input id="owSl" class="inp st-num" type="number" min="0" step="0.5" /></label>
+        <label>Take-Profit % ${iBtn('takeProfit')}
+          <input id="owTp" class="inp st-num" type="number" min="0" step="0.5" /></label>
+        <label>Nachziehender Stop % ${iBtn('trailingStop')}
+          <input id="owTrail" class="inp st-num" type="number" min="0" step="0.5" /></label>
+        <label>Max. Haltedauer (Tage) ${iBtn('maxHold')}
+          <input id="owHold" class="inp st-num" type="number" min="0" step="1" /></label>
+        <label>ATR-Stop (×ATR) ${iBtn('atrStop')}
+          <input id="owAtrS" class="inp st-num" type="number" min="0" step="0.5" /></label>
+        <label>ATR-Ziel (×ATR) ${iBtn('atrTake')}
+          <input id="owAtrT" class="inp st-num" type="number" min="0" step="0.5" /></label>
+        <label>Konfluenz Ausstieg ${iBtn('exitConfluence')}
+          <input id="owExitC" class="inp st-num" type="number" min="1" max="6" step="1" /></label>
+        <label class="opt-row" style="align-items:center">
+          <input type="checkbox" id="owFcSolo" />
+          <span>Prognose darf allein entscheiden ${iBtn('forecastSolo')}</span></label>
       </div>
-      <p class="hint">Startkapital greift beim Anlegen/Zurücksetzen des Wallets.
-        Investment je Trade bestimmt die Positionsgröße der Engine (Regel-Strategien
-        deckeln serverseitig bei 25 %).</p>
+      <p class="hint">0 schaltet eine Regel ab. Der nachziehende Stop sichert
+        Gewinne, sobald die Position im Plus war; ATR-Werte ersetzen die festen
+        Prozente und passen sich der Schwankungsbreite des Instruments an.
+        Der Ausstieg braucht bewusst weniger Stimmen als der Einstieg —
+        ein verpasster Verkauf kostet Geld, ein verpasster Kauf nur eine Chance.
+        Startkapital greift beim Anlegen/Zurücksetzen des Wallets; Regel-Strategien
+        deckeln die Positionsgröße serverseitig bei 25 %.</p>
+      <p class="hint" id="owClassHint" style="margin-top:4px"></p>
       <div class="row" style="margin-top:8px">
         <button class="btn btn-g" id="owSave">Speichern</button>
         <span class="hint" id="optMsg"></span>
@@ -1458,6 +1476,22 @@ function openOptions(): void {
   ($('owMax') as HTMLInputElement).value = String(st.strategy.engine.maxPositionPct);
   ($('owSl') as HTMLInputElement).value = String(st.strategy.engine.stopLossPct);
   ($('owTp') as HTMLInputElement).value = String(st.strategy.engine.takeProfitPct);
+  ($('owTrail') as HTMLInputElement).value = String(st.strategy.engine.trailingStopPct ?? 0);
+  ($('owHold') as HTMLInputElement).value = String(st.strategy.engine.maxHoldDays ?? 0);
+  ($('owAtrS') as HTMLInputElement).value = String(st.strategy.engine.atrStopMult ?? 0);
+  ($('owAtrT') as HTMLInputElement).value = String(st.strategy.engine.atrTakeMult ?? 0);
+  ($('owExitC') as HTMLInputElement).value = String(
+    st.strategy.signals.exitConfluence ?? Math.max(1, st.strategy.signals.minConfluence - 1));
+  ($('owFcSolo') as HTMLInputElement).checked = st.strategy.signals.forecastSolo === true;
+  // Klassen-Profile transparent machen: Sie überschreiben die Werte oben je
+  // Asset-Klasse — der User soll wissen, was für sein Symbol tatsächlich gilt.
+  const byCls = st.strategy.engine.byClass ?? {};
+  const clsTxt = Object.entries(byCls)
+    .map(([c, o]) => `${CLASS_LABELS[c] ?? c}: Stop ${o.stopLossPct ?? '–'} % / Ziel ${o.takeProfitPct ?? '–'} %`)
+    .join(' · ');
+  $('owClassHint').textContent = clsTxt
+    ? `Abweichende Profile je Anlageklasse (überschreiben die Werte oben): ${clsTxt}`
+    : '';
   // Module: Checkbox je Panel — gleiche Wahrheit wie ✕ am Modul und die Palette
   $('ouPanels').innerHTML = Object.entries(PANEL_TITLES)
     .map(
@@ -4228,6 +4262,15 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         maxPositionPct: num('owMax'),
         stopLossPct: num('owSl'),
         takeProfitPct: num('owTp'),
+        trailingStopPct: num('owTrail'),
+        maxHoldDays: num('owHold'),
+        atrStopMult: num('owAtrS'),
+        atrTakeMult: num('owAtrT'),
+      },
+      signals: {
+        ...st.strategy.signals,
+        exitConfluence: Math.max(1, num('owExitC')),
+        forecastSolo: ($('owFcSolo') as HTMLInputElement).checked,
       },
     };
     const problems = validateStrategy(strategy);

@@ -36,6 +36,8 @@ interface VotePair {
   buy: RuleNode;
   sell: RuleNode;
   weight: number;
+  /** Abweichendes Gewicht der Verkaufs-Seite (Forecast-Deckel, MA2). */
+  weightSell?: number;
 }
 
 /** Bewusst unerfüllbares Blatt (Preis < 1e-6 gibt es nicht). */
@@ -74,44 +76,59 @@ export function compileClassic(strategy: Strategy): StrategySpec {
       weight: 1,
     });
   }
+  // Forecast-Deckel wie in computeSignal (MA2): Beim EINSTIEG darf die
+  // Prognose die Konfluenz nicht allein reißen, beim Ausstieg zählt sie voll.
   const fcWeight = Math.trunc(signals.forecastWeight);
   if (signals.useForecast && fcWeight > 0) {
     const thr = Math.min(signals.forecastThresholdPct, 50);
+    const capped = signals.forecastSolo === true
+      ? fcWeight
+      : Math.max(1, Math.min(fcWeight, signals.minConfluence - 1));
     pairs.push({
       buy: { type: 'forecast', direction: 'up', minAbsPct: thr },
       sell: { type: 'forecast', direction: 'down', minAbsPct: thr },
-      weight: fcWeight,
+      weight: capped,
+      weightSell: fcWeight,
     });
   }
 
-  const totalWeight = pairs.reduce((s, p) => s + p.weight, 0);
+  const totalWeight = pairs.reduce((s, p) => s + Math.max(p.weight, p.weightSell ?? p.weight), 0);
   const required = signals.minConfluence;
   // Ohne Stimmen bzw. mit unerreichbarer Konfluenz hält die Engine für immer.
   if (pairs.length === 0 || required > totalWeight) {
     return { buy: NEVER, sell: NEVER };
   }
 
-  const side = (mine: (p: VotePair) => RuleNode, theirs: (p: VotePair) => RuleNode): RuleNode => ({
+  // Gewichte können sich je Seite unterscheiden (Forecast-Deckel), deshalb
+  // wird die „meine Stimmen > deine Stimmen"-Bedingung mit dem Gesamtgewicht
+  // der GEGENSEITE aufgebaut: M + (T_total − T) ≥ T_total + 1 ⟺ M > T.
+  const wOf = (p: VotePair, sellSide: boolean): number => (sellSide ? (p.weightSell ?? p.weight) : p.weight);
+  const sumW = (sellSide: boolean): number => pairs.reduce((acc, p) => acc + wOf(p, sellSide), 0);
+  const side = (
+    mine: (p: VotePair) => RuleNode,
+    theirs: (p: VotePair) => RuleNode,
+    sellSide: boolean,
+  ): RuleNode => ({
     type: 'all',
     children: [
       {
         type: 'weighted',
         threshold: required,
-        children: pairs.map((p) => ({ weight: p.weight, node: mine(p) })),
+        children: pairs.map((p) => ({ weight: wOf(p, sellSide), node: mine(p) })),
       },
       {
         type: 'weighted',
-        threshold: totalWeight + 1,
+        threshold: sumW(!sellSide) + 1,
         children: [
-          ...pairs.map((p) => ({ weight: p.weight, node: mine(p) })),
-          ...pairs.map((p) => ({ weight: p.weight, node: { type: 'not', child: theirs(p) } as RuleNode })),
+          ...pairs.map((p) => ({ weight: wOf(p, sellSide), node: mine(p) })),
+          ...pairs.map((p) => ({ weight: wOf(p, !sellSide), node: { type: 'not', child: theirs(p) } as RuleNode })),
         ],
       },
     ],
   });
 
   return {
-    buy: side((p) => p.buy, (p) => p.sell),
-    sell: side((p) => p.sell, (p) => p.buy),
+    buy: side((p) => p.buy, (p) => p.sell, false),
+    sell: side((p) => p.sell, (p) => p.buy, true),
   };
 }

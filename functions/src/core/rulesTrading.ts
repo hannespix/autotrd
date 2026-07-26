@@ -23,8 +23,14 @@ import { PREDICTION_MIN_EDGE_PCT, evaluate, paperEffectivePrice } from '../../..
 export const RISK_LIMITS = {
   /** Harte Obergrenze je Position — auch wenn die Config mehr will. */
   maxPositionPct: 25,
-  /** Pflicht-Stop-Loss: greift, wenn die Config keinen (>0) definiert. */
-  fallbackStopLossPct: 2,
+  /**
+   * NOTBREMSE, kein Ersatz-Stop (26.07.): Wer stopLossPct auf 0 setzt, will
+   * bewusst keine enge Reißleine — eine Auto-Engine ganz ohne Verlust-
+   * begrenzung kann ein Konto aber ruinieren. Deshalb bleibt ein WEITER
+   * Katastrophen-Stop stehen. Vorher standen hier 2 %, was „aus" faktisch
+   * unmöglich machte und bei volatilen Werten dauernd auslöste.
+   */
+  emergencyStopPct: 25,
   /** Offene Positionen je User (Entries darüber hinaus werden verweigert). */
   maxOpenPositions: 10,
   /** Mindestabstand zwischen ENTRIES je (Strategie, Symbol) in Minuten. */
@@ -35,8 +41,11 @@ export const RISK_LIMITS = {
 export function clampStrategyRisk(strategy: Strategy): Strategy {
   const s = structuredClone(strategy);
   s.engine.maxPositionPct = Math.min(s.engine.maxPositionPct, RISK_LIMITS.maxPositionPct);
-  if (!(s.engine.stopLossPct > 0)) {
-    s.engine.stopLossPct = RISK_LIMITS.fallbackStopLossPct;
+  if (!(s.engine.stopLossPct >= 0) || !Number.isFinite(s.engine.stopLossPct)) {
+    s.engine.stopLossPct = RISK_LIMITS.emergencyStopPct;
+  } else if (s.engine.stopLossPct === 0) {
+    // „Aus" heißt: kein regulärer Stop — die Notbremse bleibt.
+    s.engine.stopLossPct = RISK_LIMITS.emergencyStopPct;
   }
   return s;
 }

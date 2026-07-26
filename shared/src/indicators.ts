@@ -269,3 +269,73 @@ export function heikinAshi<T extends HaBar>(bars: T[]): T[] {
   }
   return out;
 }
+
+/* ── ATR: Average True Range (MA6 — volatilitätsadaptive Stops) ─────────── */
+
+export interface AtrBar {
+  high: number;
+  low: number;
+  close: number;
+}
+
+/**
+ * Average True Range nach Wilder — das Standardmaß für „wie weit bewegt sich
+ * dieses Instrument normalerweise an einem Tag".
+ *
+ * True Range = max(H−L, |H−C_prev|, |L−C_prev|); die Lücke zum Vortag zählt
+ * also mit. Geglättet wird wie beim Wilder-RSI (α = 1/window), nicht als
+ * einfacher Mittelwert. Liefert `null`, solange zu wenige Bars vorliegen.
+ *
+ * Damit lässt sich ein Stop in „Vielfachen der normalen Tagesbewegung"
+ * ausdrücken statt in festen Prozent: 2 % sind bei BTC Rauschen, bei einem
+ * Index ein echtes Signal.
+ */
+export function atr(bars: AtrBar[], window = 14): Series {
+  const out: Series = new Array(bars.length).fill(null);
+  if (bars.length === 0 || window < 1) return out;
+
+  const tr: number[] = [];
+  for (let i = 0; i < bars.length; i++) {
+    const b = bars[i]!;
+    if (!Number.isFinite(b.high) || !Number.isFinite(b.low)) {
+      tr.push(Number.NaN);
+      continue;
+    }
+    const prev = i > 0 ? bars[i - 1]!.close : Number.NaN;
+    const range = b.high - b.low;
+    tr.push(
+      Number.isFinite(prev)
+        ? Math.max(range, Math.abs(b.high - prev), Math.abs(b.low - prev))
+        : range,
+    );
+  }
+
+  // Erster Wert: einfacher Mittelwert der ersten `window` True Ranges
+  if (tr.length < window) return out;
+  let sum = 0;
+  for (let i = 0; i < window; i++) {
+    const v = tr[i]!;
+    if (!Number.isFinite(v)) return out; // Lücke im Anlauf → kein ATR
+    sum += v;
+  }
+  let prevAtr = sum / window;
+  out[window - 1] = prevAtr;
+  for (let i = window; i < tr.length; i++) {
+    const v = tr[i]!;
+    if (!Number.isFinite(v)) {
+      out[i] = prevAtr; // einzelne Lücke: letzten Wert halten statt NaN streuen
+      continue;
+    }
+    prevAtr = (prevAtr * (window - 1) + v) / window;
+    out[i] = prevAtr;
+  }
+  return out;
+}
+
+/** ATR in Prozent des Schlusskurses — vergleichbar über Instrumente hinweg. */
+export function atrPct(bars: AtrBar[], window = 14): number | null {
+  const a = lastValue(atr(bars, window));
+  const last = bars[bars.length - 1]?.close;
+  if (a === null || !last || !Number.isFinite(last) || last <= 0) return null;
+  return (a / last) * 100;
+}

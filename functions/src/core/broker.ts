@@ -15,8 +15,8 @@
  */
 
 import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore';
-import { PAPER_FEE_RATE, paperEffectivePrice } from '../../../shared/src/index.js';
-import type { Position, Strategy, Trade } from '../../../shared/src/index.js';
+import { PAPER_FEE_RATE, paperEffectivePrice, resolveRisk } from '../../../shared/src/index.js';
+import type { Position, RiskConfig, Strategy, Trade } from '../../../shared/src/index.js';
 
 export type BrokerMode = 'paper' | 'live';
 
@@ -46,8 +46,10 @@ export interface TradeRequest {
   /** Stückzahl; ohne Angabe beim Kauf: Positionsgröße aus maxPositionPct. */
   qty?: number;
   source: 'engine' | 'manual';
-  /** Risiko-Exit-Grund (stop_loss/take_profit), nur für Engine-Verkäufe. */
+  /** Risiko-Exit-Grund (stop_loss/take_profit/trailing_stop/max_hold). */
   riskExit?: string;
+  /** Asset-Klasse für klassen-spezifische Risiko-Level (MA6). */
+  assetClass?: string | null;
 }
 
 /**
@@ -85,17 +87,18 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       const cost = qty * eff;
       if (cost > balance) return { executed: false, reason: 'zu_wenig_cash' };
 
+      // Level klassen-aufgelöst festschreiben (MA6): Krypto bekommt weitere
+      // Stops als ein Index. Der Aufrufer reicht die Klasse durch; ohne
+      // Angabe gelten die globalen Werte.
+      const risk = resolveRisk(strategy.engine, req.assetClass ?? null);
       const position: Position = {
         symbol: req.symbol,
         qty,
         avgEntry: eff,
-        stopLoss: strategy.engine.stopLossPct > 0
-          ? eff * (1 - strategy.engine.stopLossPct / 100)
-          : null,
-        takeProfit: strategy.engine.takeProfitPct > 0
-          ? eff * (1 + strategy.engine.takeProfitPct / 100)
-          : null,
+        stopLoss: risk.stopLossPct > 0 ? eff * (1 - risk.stopLossPct / 100) : null,
+        takeProfit: risk.takeProfitPct > 0 ? eff * (1 + risk.takeProfitPct / 100) : null,
         openedAt: now,
+        highWater: eff, // Startpunkt des nachziehenden Stops
       };
       const trade: Trade = {
         symbol: req.symbol,
@@ -150,24 +153,77 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
  *     vorher feuerte takeProfitPct = 0 wegen `change >= 0` bei jedem
  *     Nicht-Verlust sofort, stopLossPct = 0 analog bei jedem Minus.
  */
-export function riskExitReason(pos: Position, price: number, strategy: Strategy): string | null {
+export interface RiskExitContext {
+  /** Effektive Risiko-Parameter (klassen-aufgelöst, MA6). */
+  risk: RiskConfig;
+  /** ATR in Prozent des Kurses — für volatilitätsadaptive Stops. */
+  atrPct?: number | null | undefined;
+  /** Bezugszeitpunkt (Testbarkeit); Default: jetzt. */
+  now?: Date;
+}
+
+export function riskExitReason(
+  pos: Position,
+  price: number,
+  strategyOrCtx: Strategy | RiskExitContext,
+): string | null {
   if (!(pos.avgEntry > 0) || !(price > 0)) return null;
+
+  // Aufruf mit Strategy (Altpfad) oder mit aufgelöstem Kontext (MA6)
+  const ctx: RiskExitContext =
+    'engine' in strategyOrCtx
+      ? { risk: resolveRisk(strategyOrCtx.engine, null) }
+      : strategyOrCtx;
+  const r = ctx.risk;
+  const now = ctx.now ?? new Date();
 
   const level = (v: number | null | undefined): number | null =>
     typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
-  const stopLevel = level(pos.stopLoss);
-  const takeLevel = level(pos.takeProfit);
+  const pct = (v: number | undefined): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+  // Schwellen mit Toleranz vergleichen: `92/100 - 1` ergibt in Gleitkomma
+  // -0.07999999999999996 und verfehlt einen 8-%-Stop damit knapp. Wer 8 %
+  // einstellt, will bei exakt 8 % raus — nicht bei 8,0000001 %.
+  const atMost = (v: number, limit: number): boolean => v <= limit + Math.abs(limit) * 1e-9 + 1e-12;
+  const atLeast = (v: number, limit: number): boolean => v >= limit - Math.abs(limit) * 1e-9 - 1e-12;
 
-  if (stopLevel !== null) {
-    if (price <= stopLevel) return 'stop_loss';
-  } else if (strategy.engine.stopLossPct > 0) {
-    if (price / pos.avgEntry - 1 <= -strategy.engine.stopLossPct / 100) return 'stop_loss';
+  // ATR-Stops haben Vorrang vor festen Prozenten: Ein 2-%-Stop ist bei BTC
+  // Rauschen, bei einem Index ein echtes Signal. atrPct kommt aus den Bars.
+  const atrOk = typeof ctx.atrPct === 'number' && Number.isFinite(ctx.atrPct) && ctx.atrPct > 0;
+  const stopPct = atrOk && pct(r.atrStopMult) > 0 ? pct(r.atrStopMult) * (ctx.atrPct as number) : pct(r.stopLossPct);
+  const takePct = atrOk && pct(r.atrTakeMult) > 0 ? pct(r.atrTakeMult) * (ctx.atrPct as number) : pct(r.takeProfitPct);
+
+  // 1) Nachziehender Stop — SICHERT GEWINNE, ersetzt aber nicht den festen
+  // Stop. Er greift deshalb erst, wenn die Position im Plus war (Höchstkurs
+  // über dem Einstand); solange sie nie im Gewinn stand, ist allein der
+  // feste bzw. ATR-Stop zuständig. Ohne diese Trennung würde ein enger
+  // Trailing-Wert ein bewusst weit gesetztes Stop-Level überstimmen.
+  const trailPct = pct(r.trailingStopPct);
+  if (trailPct > 0) {
+    const peak = level(pos.highWater) ?? 0;
+    if (peak > pos.avgEntry && atMost(price, peak * (1 - trailPct / 100))) return 'trailing_stop';
   }
 
+  // 2) Fester Stop: gespeichertes Level schlägt den Prozentwert
+  const stopLevel = level(pos.stopLoss);
+  if (stopLevel !== null) {
+    if (atMost(price, stopLevel)) return 'stop_loss';
+  } else if (stopPct > 0 && atMost(price / pos.avgEntry - 1, -stopPct / 100)) {
+    return 'stop_loss';
+  }
+
+  // 3) Take-Profit: ebenso Level vor Prozent
+  const takeLevel = level(pos.takeProfit);
   if (takeLevel !== null) {
-    if (price >= takeLevel) return 'take_profit';
-  } else if (strategy.engine.takeProfitPct > 0) {
-    if (price / pos.avgEntry - 1 >= strategy.engine.takeProfitPct / 100) return 'take_profit';
+    if (atLeast(price, takeLevel)) return 'take_profit';
+  } else if (takePct > 0 && atLeast(price / pos.avgEntry - 1, takePct / 100)) {
+    return 'take_profit';
+  }
+
+  // 4) Zeitgrenze: eine ewig seitwärts laufende Position bindet Kapital
+  const maxDays = pct(r.maxHoldDays);
+  if (maxDays > 0) {
+    const opened = Date.parse(pos.openedAt);
+    if (Number.isFinite(opened) && now.getTime() - opened >= maxDays * 86_400_000) return 'max_hold';
   }
 
   return null;

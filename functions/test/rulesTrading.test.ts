@@ -31,7 +31,7 @@ describe('Risiko-Hülle (von keinem Knoten überschreibbar)', () => {
     greedy.engine.stopLossPct = 0;
     const clamped = clampStrategyRisk(greedy);
     expect(clamped.engine.maxPositionPct).toBe(RISK_LIMITS.maxPositionPct);
-    expect(clamped.engine.stopLossPct).toBe(RISK_LIMITS.fallbackStopLossPct);
+    expect(clamped.engine.stopLossPct).toBe(RISK_LIMITS.emergencyStopPct);
     // Original bleibt unangetastet (pure)
     expect(greedy.engine.maxPositionPct).toBe(80);
   });
