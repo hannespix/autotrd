@@ -174,15 +174,17 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .chart-nm { font-size: 15px; font-weight: 800; color: var(--t1); }
 .chart-sub { font-size: 11px; color: var(--t3); font-weight: 600; }
 .chart-px { font-size: 14px; font-weight: 700; }
-/* EINE Höhen-Variable für ALLE Chart-Fenster (User-Feedback 26.07.: im
-   Raster müssen Haupt-Chart und Panels auf jedem Monitor gleich hoch sein;
-   der Zieh-Griff #chartHDrag überschreibt --chart-h geräte-lokal). */
-#chartArea {
+/* EINE Regel für ALLE Chart-Flächen — Haupt-Chart wie Raster-Panels
+   (User-Feedback 26.07.: „alle Chart-Fenster sollen gleich aussehen, auch
+   das erste"). Höhe steuert --chart-h, das der Zieh-Griff #chartHDrag
+   geräte-lokal überschreibt; Rahmen, Radius und Aurora-Schimmer sind
+   identisch, damit kein Fenster heraussticht. */
+#chartArea, .gp-chart {
   width: 100%; height: var(--chart-h, clamp(280px, 42vh, 420px)); border-radius: 8px; position: relative;
-  border: 1px solid var(--bd); overflow: hidden;
+  border: 1px solid var(--bd); overflow: hidden; min-height: 0;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06), 0 0 34px -12px rgba(0, 212, 255, .35);
 }
-#chartArea::after {
+#chartArea::after, .gp-chart::after {
   content: ''; position: absolute; inset: 0; pointer-events: none; border-radius: inherit; z-index: 2;
   background: radial-gradient(135% 75% at 50% -12%, rgba(0, 212, 255, .13), transparent 55%);
   mix-blend-mode: screen;
@@ -546,12 +548,18 @@ button, input, select { font-family: inherit; font-size: inherit; }
 #chartGrid { display: contents; }
 .grid-sw { display: flex; gap: 2px; margin-left: 8px; }
 #lockMain.on, .gp-lock.on { background: var(--ac); color: #04121a; }
-.gpanel {
+/* EINE Regel für alle Raster-Fenster: Haupt-Chart und Panels teilen sich
+   Rahmen, Radius, Polsterung und Hintergrund — kein Fenster sticht heraus
+   (User-Feedback 26.07.). Im Einzel-Modus bleibt das Haupt-Chart nackt,
+   dort rahmt die Karte selbst. */
+.gpanel,
+.chart-row:not([data-mode="1"]) .chart-wrap {
   border: 1px solid var(--bd); border-radius: var(--r-sm); padding: 8px;
   background: var(--sd); display: flex; flex-direction: column; gap: 6px;
   /* display:contents am #chartGrid: .gpanel ist selbst Grid-Item → eigene
      Mindestbreite nullen, sonst hält die Chart-Canvas die Spur breit (390px). */
   min-width: 0;
+  --wrap-pad: 9px; /* padding + Rahmen: Overlays im Fenster rechnen damit */
 }
 .gp-chart, .chart-wrap { min-width: 0; }
 
@@ -651,15 +659,12 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .gp-sym, .mh-sym { width: 86px; font-size: 11px; padding: 3px 8px; text-transform: uppercase; }
 /* Haupt-Fenster im Raster: gleiche Box wie eine .gpanel (Rahmen unsichtbar,
    damit die Karte nicht doppelt gerahmt wirkt) */
-.chart-row:not([data-mode="1"]) .chart-wrap {
-  display: flex; flex-direction: column; gap: 6px;
-  padding: 8px; border: 1px solid transparent; border-radius: var(--r-sm);
-}
 .gp-tf { display: flex; gap: 2px; }
 /* Eigene Klasse fürs Haupt-Fenster: gleiche Optik, aber Panel-Selektoren
    (.gp-lock) dürfen den Haupt-Lock nicht treffen (26.07.). */
 .gp-lock, .mh-lock { margin-left: auto; }
-.gp-chart { height: var(--chart-h, clamp(280px, 42vh, 420px)); min-height: 0; }
+/* (Höhe, Rahmen und Schimmer der .gp-chart kommen aus der gemeinsamen
+   Regel mit #chartArea weiter oben — hier bewusst nichts mehr) */
 @media (max-width: 760px) {
   .chart-row[data-mode="2"], .chart-row[data-mode="4"] { grid-template-columns: 1fr; }
   /* Mobil: feste, platzsparende Höhe — der Zieh-Griff ist hier ausgeblendet */
@@ -667,8 +672,12 @@ button, input, select { font-family: inherit; font-size: inherit; }
 }
 /* „Jetzt ⇥"-Chip: zurück zur Gegenwart, wenn der jüngste Bar rechts
    außerhalb liegt — absolut im chartWrap (kein fixed, backdrop-Falle) */
+/* Sitzt ÜBER der Zeitachse, nie darauf (Owner-Screenshot 26.07.: der Chip
+   klebte auf den Uhrzeiten). Im Raster kommt das Fenster-Padding dazu,
+   sonst rutscht er um genau diesen Betrag in die Achse. */
 .jump-now {
-  position: absolute; right: 76px; bottom: 34px; z-index: 6;
+  position: absolute; right: calc(72px + var(--wrap-pad, 0px));
+  bottom: calc(44px + var(--wrap-pad, 0px)); z-index: 6;
   border: 1px solid var(--bd2); border-radius: 999px; padding: 4px 12px;
   background: var(--sd); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
   color: var(--ac); font-size: 11px; font-weight: 700; cursor: pointer;
