@@ -298,7 +298,12 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
             minuteOfDayEt: minuteEt,
             forecastPct: tf === 'intraday' ? (data.intradayPct ?? null) : (data.forecast?.predictedPct ?? null),
             position: pos
-              ? { open: true, unrealizedPct: ((data.price - pos.avgEntry) / pos.avgEntry) * 100 }
+              ? {
+                  open: true,
+                  // Shorts verdienen am fallenden Kurs — unrealizedPct gespiegelt
+                  unrealizedPct:
+                    ((pos.side === 'short' ? pos.avgEntry - data.price : data.price - pos.avgEntry) / pos.avgEntry) * 100,
+                }
               : { open: false },
           });
           const dir = decideTree(doc.compiled!, ctx);
@@ -324,10 +329,20 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
               // fortgeschrieben, dann prüfen dieselben riskExitReason-Regeln.
               const sPos = book.positions[symbol];
               if (sPos) {
-                const peak = Math.max(sPos.highWater ?? sPos.avgEntry, data.price);
-                if (peak > (sPos.highWater ?? 0) + 1e-9) {
-                  book.positions[symbol] = { ...sPos, highWater: peak };
-                  bookChanged = true;
+                const sShort = sPos.side === 'short';
+                if (sShort) {
+                  // Tiefstkurs fortschreiben (Short-Trailing, Parität R2)
+                  const trough = Math.min(sPos.lowWater ?? sPos.avgEntry, data.price);
+                  if (trough < (sPos.lowWater ?? Infinity) - 1e-9) {
+                    book.positions[symbol] = { ...sPos, lowWater: trough };
+                    bookChanged = true;
+                  }
+                } else {
+                  const peak = Math.max(sPos.highWater ?? sPos.avgEntry, data.price);
+                  if (peak > (sPos.highWater ?? 0) + 1e-9) {
+                    book.positions[symbol] = { ...sPos, highWater: peak };
+                    bookChanged = true;
+                  }
                 }
                 const cls = classify(symbol);
                 const reason = riskExitReason(
@@ -338,13 +353,16 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
                     stopLoss: null,
                     takeProfit: null,
                     openedAt: sPos.openedAt ?? now.toISOString(),
-                    highWater: Math.max(sPos.highWater ?? sPos.avgEntry, data.price),
+                    ...(sShort
+                      ? { side: 'short' as const, lowWater: Math.min(sPos.lowWater ?? sPos.avgEntry, data.price) }
+                      : { highWater: Math.max(sPos.highWater ?? sPos.avgEntry, data.price) }),
                   },
                   data.price,
                   { risk: resolveRisk(clamped.engine, cls), atrPct: data.atrPct, now },
                 );
                 if (reason) {
-                  const r = shadowTrade(book, symbol, 'sell', data.price, clamped.engine.maxPositionPct);
+                  // Long schließt per Verkauf, Short per Eindecken (Parität)
+                  const r = shadowTrade(book, symbol, sShort ? 'buy' : 'sell', data.price, clamped.engine.maxPositionPct);
                   if (r.executed) {
                     book = r.book;
                     bookChanged = true;
@@ -352,23 +370,31 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
                     await ref
                       .collection('shadowSignals')
                       .doc(`${now.toISOString().slice(0, 16)}Z_${symbol}_risk`)
-                      .set({ symbol, direction: 'sell', riskExit: reason, price: data.price, at: now.toISOString() });
+                      .set({ symbol, direction: sShort ? 'buy' : 'sell', riskExit: reason, price: data.price, at: now.toISOString() });
                     continue; // Position ist zu — Baum-Entscheidung dieses Scans ist erledigt
                   }
                 }
               }
               // Virtuelles Konto — Risiko-Hülle wie beim echten Handel
-              if (dir === 'buy' && !book.positions[symbol]) {
+              const sizingCapital = (): number =>
+                (clamped.broker.sizingBase ?? 'balance') === 'initial'
+                  ? clamped.broker.initialCapital
+                  : book!.balance;
+              if (dir === 'buy' && book.positions[symbol]?.side === 'short') {
+                // Kauf-Signal deckt den Shadow-Short ein (Cover)
+                const r = shadowTrade(book, symbol, 'buy', data.price, clamped.engine.maxPositionPct);
+                if (r.executed) {
+                  book = r.book;
+                  bookChanged = true;
+                  await ref.set({ lastTrades: { [symbol]: now.toISOString() } }, { merge: true });
+                }
+              } else if (dir === 'buy' && !book.positions[symbol]) {
                 if (Object.keys(book.positions).length >= RISK_LIMITS.maxOpenPositions) continue;
                 if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
                 // Sizing-Parität (MA4): gleiche Basis wie der echte Broker —
                 // Cash (Default) oder Startkapital, Deckung prüft der Cash.
-                const capital =
-                  (clamped.broker.sizingBase ?? 'balance') === 'initial'
-                    ? clamped.broker.initialCapital
-                    : book.balance;
                 const r = shadowTrade(book, symbol, 'buy', data.price, clamped.engine.maxPositionPct, {
-                  capital,
+                  capital: sizingCapital(),
                   now,
                   fractional: classify(symbol) === 'crypto',
                 });
@@ -380,8 +406,23 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
                   // war wirkungslos (Shadow durfte im 5-min-Takt handeln).
                   await ref.set({ lastTrades: { [symbol]: now.toISOString() } }, { merge: true });
                 }
-              } else if (dir === 'sell' && book.positions[symbol]) {
+              } else if (dir === 'sell' && book.positions[symbol] && book.positions[symbol]?.side !== 'short') {
                 const r = shadowTrade(book, symbol, 'sell', data.price, clamped.engine.maxPositionPct);
+                if (r.executed) {
+                  book = r.book;
+                  bookChanged = true;
+                  await ref.set({ lastTrades: { [symbol]: now.toISOString() } }, { merge: true });
+                }
+              } else if (dir === 'sell' && !book.positions[symbol] && strategy.signals.allowShort === true) {
+                // Shadow-Short (R2): gleiche Entry-Guards wie der echte Pfad
+                if (Object.keys(book.positions).length >= RISK_LIMITS.maxOpenPositions) continue;
+                if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
+                const r = shadowTrade(book, symbol, 'sell', data.price, clamped.engine.maxPositionPct, {
+                  capital: sizingCapital(),
+                  now,
+                  fractional: classify(symbol) === 'crypto',
+                  openShort: true,
+                });
                 if (r.executed) {
                   book = r.book;
                   bookChanged = true;
@@ -392,7 +433,20 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
             continue; // Shadow berührt NIE das echte Wallet
           }
 
-          if (dir === 'buy' && !pos) {
+          if (dir === 'buy' && pos?.side === 'short') {
+            // Kauf-Signal deckt den Regelbaum-Short ein (Cover, Short R2);
+            // Exits blockt der Cooldown NIE (Sicherheitsprinzip)
+            const r = await executePaperTrade(
+              { uid, symbol, side: 'buy', price: data.price, source: 'engine', assetClass: classify(symbol) },
+              clamped,
+            );
+            if (r.executed) {
+              executed += 1;
+              positions.delete(symbol);
+              await ref.set({ lastTrades: { [symbol]: now.toISOString() } }, { merge: true });
+              logger.info(`Strategie-Cover ${uid} ${symbol} („${doc.name}") @ ${data.price}`);
+            }
+          } else if (dir === 'buy' && !pos) {
             // Entry-Guards der Risiko-Hülle: Positionslimit + Cooldowns
             // (je Strategie UND nach Risk-Exits desselben Wallets)
             if (positions.size >= RISK_LIMITS.maxOpenPositions) continue;
@@ -420,7 +474,7 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
               await ref.set({ lastTrades: { [symbol]: now.toISOString() } }, { merge: true });
               logger.info(`Strategie-Buy ${uid} ${symbol} („${doc.name}") @ ${data.price}`);
             }
-          } else if (dir === 'sell' && pos) {
+          } else if (dir === 'sell' && pos && pos.side !== 'short') {
             // Exits blockt der Cooldown NIE (Sicherheitsprinzip)
             const r = await executePaperTrade(
               { uid, symbol, side: 'sell', price: data.price, source: 'engine', assetClass: classify(symbol) },
@@ -431,6 +485,30 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
               positions.delete(symbol);
               await ref.set({ lastTrades: { [symbol]: now.toISOString() } }, { merge: true });
               logger.info(`Strategie-Sell ${uid} ${symbol} („${doc.name}") @ ${data.price}`);
+            }
+          } else if (dir === 'sell' && !pos && strategy.signals.allowShort === true) {
+            // Regelbaum-Short (R2): Verkaufs-Signal ohne Position — gleiche
+            // Entry-Guards wie beim Kauf, Level gespiegelt im Broker.
+            if (positions.size >= RISK_LIMITS.maxOpenPositions) continue;
+            if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
+            if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
+            const r = await executePaperTrade(
+              { uid, symbol, side: 'sell', price: data.price, source: 'engine', assetClass: classify(symbol), openShort: true },
+              clamped,
+            );
+            if (r.executed) {
+              executed += 1;
+              positions.set(symbol, {
+                symbol,
+                qty: r.trade?.qty ?? 0,
+                avgEntry: r.trade?.price ?? data.price,
+                side: 'short',
+                stopLoss: null,
+                takeProfit: null,
+                openedAt: now.toISOString(),
+              });
+              await ref.set({ lastTrades: { [symbol]: now.toISOString() } }, { merge: true });
+              logger.info(`Strategie-Short ${uid} ${symbol} („${doc.name}") @ ${data.price}`);
             }
           }
         }

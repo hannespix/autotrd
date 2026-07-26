@@ -231,6 +231,11 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .tbl tbody tr { transition: background .12s; }
 .tbl tbody tr:hover { background: rgba(255, 255, 255, .03); }
 .stag { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 9px; font-weight: 700; text-transform: uppercase; }
+/* Exit-Transparenz unter jeder Position (26.07.): Abstände zu Stop/Trailing/
+   Ziel + nächster Kandidat — kleine Begleitzeile, kein eigener Rahmen */
+.pos-sub td { padding: 0 7px 7px; font-size: 10px; color: var(--t3); border-bottom: 1px solid var(--hair); }
+.pos-sub b { color: var(--t2); font-family: var(--f-num); }
+.pos-next { color: var(--ac); font-weight: 700; }
 .t-buy { background: var(--gn-soft); color: var(--gn); }
 .t-sell { background: var(--rd-soft); color: var(--rd); }
 .t-hold { background: rgba(78, 93, 119, .2); color: var(--t2); }
