@@ -671,6 +671,20 @@ die Watchlist ist nur noch der Scope der Trading-Engine.
       (Gerät-lokal im Stil-Schlüssel, synct ins Raster) · Timeline-Schwung:
       kinetisches Scrolling auch mit der Maus + animierte Sprünge
       ⇤ Anfang / ◐ Mitte / ⇥ Ende (am Rand lädt die Historie automatisch)
+- [x] Smartphone-Kinetik + News überall (User-Feedback 26.07.): Der Chart-
+      Sync würgte jede Trägheits-Animation ab (applyRange stoppt in LWC die
+      Kinetik; Range-Events feuern asynchron → der synchrone Boolean-Guard
+      ließ Echos durch). Neu: frame-sicherer Echo-Ring mit Origin-Verfolgung
+      (pushRange/matchEcho) für Unterpanels, Vergleich und Lock-Gruppen +
+      Gesten-Gate (nur pointerdown/wheel/touchstart-nahe Events dürfen
+      andere Charts ziehen — Daten-Refits rissen sonst den Haupt-Zoom weg).
+      Verifiziert per LWC-Isolationsbeweis + Echo-Regressions-E2E ·
+      News-Punkte in ALLEN Sichten (Intraday am ersten Bar des Handelstags,
+      UTC) und allen Charts, Toggle wirkt parallel · News-Fokus: Klick in
+      ein beliebiges Chart-Fenster lädt News/Sentiment/KI dieses Symbols ·
+      Datumsleisten-Sync der RSI/MACD-Panels: Zeitachsen-Anker über die
+      volle Haupt-Domäne inkl. Prognose-Whitespace (MACD bekam die
+      fachlich übliche Null-Linie)
 
 ## M11 — Strategie-Studio II: Backtest, Shadow, Sweeps, A/B
 
