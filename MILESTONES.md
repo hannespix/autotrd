@@ -770,9 +770,30 @@ Reihenfolge = Geldfluss: erst wo Geld bewegt wird, dann wie entschieden wird.
       Konfluenz-Sell, Regelbaum-Sell, Shadow parallel) + Abschlussbericht
       an den Owner mit allen Funden/Fixes
 
+- [ ] MA6 **Volatilitäts-Realismus** (Owner-Frage 26.07.: „Krypto, Indizes,
+      Aktien sind doch völlig unterschiedlich volatil — und reicht alle
+      5 Minuten?"). Heute gilt EIN Stop/Take/Positionsgröße für alles: 2 %
+      Stop ist bei BTC (±4 % Tagesrange) reines Rauschen und wird sofort
+      ausgelöst, bei einem Index (±0,6 %) dagegen ein echtes Signal — die
+      Engine handelt Krypto damit systematisch schlechter als Aktien.
+      Drei Stufen:
+      a) **Risiko-Profile je Asset-Klasse** in `strategy.engine.byClass`
+         (additiv, Fallback = heutige globale Werte; UI-Karte je Klasse mit
+         den 10 Katalog-Klassen). Die Risiko-Hülle klammert je Klasse.
+      b) **ATR-normierte Stops/Takes** (Opt-in je Strategie): Stop =
+         `k × ATR(14)` statt fixem Prozentsatz — passt sich automatisch an
+         jedes Instrument UND an ruhige/wilde Phasen an. ATR gehört als
+         pure Funktion mit Golden-Test in `shared/src/indicators.ts`.
+      c) **Adaptive Kadenz**: Der 5-min-Scan bleibt der Takt (Kosten-Deckel),
+         aber Reaktion wird ereignisgetrieben statt starr — Risiko-Exits
+         prüfen bei JEDEM Scan gegen den frischesten Preis (heute schon),
+         zusätzlich Intraday-Trigger für schnelle Klassen; dokumentierte
+         Grenze: unter 5 min brauchen wir einen Streamer (M13).
+
 **Abnahme:** Jeder gefundene Bug hat einen adversarialen Test, der ohne den
 Fix rot ist · ein Emulator-E2E beweist alle fünf Exit-/Entry-Pfade · Bericht
-listet Fund → Schwere → Fix → Test.
+listet Fund → Schwere → Fix → Test · MA6: Ein BTC-Backtest mit klassen-
+spezifischen Parametern schlägt denselben Backtest mit globalen Parametern.
 
 ## M12 — Portfolio, Risiko & Tagesfilm-Journal
 
