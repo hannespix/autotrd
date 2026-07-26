@@ -100,6 +100,9 @@ export function validateStrategy(value: unknown): string[] {
         problems.push(`engine.${k} muss eine Zahl ≥ 0 sein (0 = aus)`);
       }
     }
+    if (engine.cooldownMin !== undefined && (!isFiniteNumber(engine.cooldownMin) || engine.cooldownMin < 0)) {
+      problems.push('engine.cooldownMin muss eine Zahl ≥ 0 sein');
+    }
     if (engine.byClass !== undefined) {
       if (!isRecord(engine.byClass)) {
         problems.push('engine.byClass muss ein Objekt sein');
@@ -156,6 +159,9 @@ export function validateStrategy(value: unknown): string[] {
     }
     if (signals.forecastSolo !== undefined && typeof signals.forecastSolo !== 'boolean') {
       problems.push('signals.forecastSolo muss boolean sein');
+    }
+    if (signals.timeframe !== undefined && signals.timeframe !== 'daily' && signals.timeframe !== 'intraday') {
+      problems.push("signals.timeframe muss 'daily' oder 'intraday' sein");
     }
   }
 

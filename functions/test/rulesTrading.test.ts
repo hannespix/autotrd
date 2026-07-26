@@ -163,6 +163,28 @@ describe('Shadow-Konto (M11): pure Buchführung', () => {
   });
 });
 
+describe('Trade-Frequenz-Parameter (Owner 26.07.)', () => {
+  it('cooldownMin wird in die Hülle geklemmt: 5–1440, fehlend → 15', () => {
+    const mk = (v?: number): number | undefined => {
+      const s = structuredClone(DEFAULT_STRATEGY);
+      if (v === undefined) delete s.engine.cooldownMin;
+      else s.engine.cooldownMin = v;
+      return clampStrategyRisk(s).engine.cooldownMin;
+    };
+    expect(mk(undefined)).toBe(15);
+    expect(mk(1)).toBe(5); // unter dem Scan-Takt wäre die Pause wirkungslos
+    expect(mk(60)).toBe(60);
+    expect(mk(5000)).toBe(1440); // über 1 Tag wäre ein verstecktes Handelsverbot
+  });
+
+  it('cooldownActive respektiert die konfigurierten Minuten', () => {
+    const now = new Date('2026-07-26T12:00:00Z');
+    const vor10 = new Date('2026-07-26T11:50:00Z').toISOString();
+    expect(cooldownActive(vor10, now, 5)).toBe(false); // 10 min > 5er-Pause
+    expect(cooldownActive(vor10, now, 15)).toBe(true); // 10 min < 15er-Pause
+  });
+});
+
 describe('Shadow-Duell-Parität (MA4, 26.07.)', () => {
   it("Sizing-Basis 'initial' via capital-Override — wie der echte Broker", () => {
     // Startkapital 25 000, aber nur noch 3 000 Cash: 10 % von 25 000 = 2 500

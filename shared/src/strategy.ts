@@ -60,6 +60,12 @@ export interface EngineConfig extends RiskConfig {
   /** Auto-Trading-Schalter (Dashboard Start/Stop). */
   running: boolean;
   /**
+   * Kauf-Pause nach einem Verkauf desselben Symbols in Minuten (Whipsaw-
+   * Schutz). Fehlend = 15; die Risiko-Hülle klemmt auf 5–1440 — unter dem
+   * 5-min-Scan-Takt wäre die Pause wirkungslos. Kleiner = mehr Trades.
+   */
+  cooldownMin?: number;
+  /**
    * Risiko-Overrides je Asset-Klasse (Katalog-Schlüssel aus universe.ts:
    * crypto, indices, stocks_us, …). Fehlende Felder erben von oben.
    */
@@ -117,6 +123,17 @@ export interface SignalsConfig {
    * AUSSTIEG zählt sie immer voll (Risiko-Asymmetrie).
    */
   forecastSolo?: boolean;
+  /**
+   * Zeitbasis der Signal-Berechnung (Owner-Auftrag 26.07.: „Tradefrequenz
+   * deutlich erhöhen"): 'intraday' rechnet RSI/MACD/Bollinger und den
+   * Regelbaum auf 5-MINUTEN-Kerzen — Signale drehen dann im Takt des
+   * 5-min-Scans statt alle paar Tage. 'daily' ist die ruhige Tages-Sicht.
+   * Fehlend = 'intraday' (der Sinn eines Auto-Traders ist, dass er handelt);
+   * die Prognose-Stimme nutzt dann die Kurzfrist-Prognose (nächste Stunde).
+   * Ehrlicher Hinweis: Mehr Trades = mehr Gebühren (0,1 % + Slippage je
+   * Ausführung) — Paper-Trading ist der Ort, das gefahrlos zu erleben.
+   */
+  timeframe?: 'daily' | 'intraday';
 }
 
 export interface Strategy {
@@ -149,6 +166,7 @@ export const DEFAULT_STRATEGY: Strategy = {
     trailingStopPct: 3,
     maxHoldDays: 0,
     running: false,
+    cooldownMin: 15, // Kauf-Pause nach Verkauf — klein für hohe Trade-Frequenz
     // Volatilitäts-Realismus (MA6): Krypto und Rohstoffe brauchen weitere
     // Stops, sonst ist jeder normale Tagesausschlag ein Zwangsverkauf.
     // Werte grob an typischen Tagesranges orientiert; per UI änderbar.
@@ -173,6 +191,7 @@ export const DEFAULT_STRATEGY: Strategy = {
     forecastThresholdPct: 0.5,
     exitConfluence: 1, // Ausstieg leichter als Einstieg (Risiko-Asymmetrie)
     forecastSolo: false, // Prognose braucht eine zweite Stimme zum Einstieg
+    timeframe: 'intraday', // 5-min-Signale: die Engine handelt im Scan-Takt
   },
 };
 

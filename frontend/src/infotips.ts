@@ -61,6 +61,18 @@ export const INFO: Record<string, { t: string; d: string }> = {
     t: 'Prognose darf allein entscheiden',
     d: 'Normalerweise ist das AUS: Die Prognose zählt beim Einstieg höchstens so viel, dass noch eine echte Indikator-Stimme dazukommen muss. Sonst reißt sie mit Gewicht 2 die Schwelle 2 im Alleingang — die „Konfluenz aus drei Indikatoren" wäre dann nur ein Etikett. Beim AUSSTIEG zählt sie ohnehin immer voll. Einschalten, wenn du der Prognose bewusst die Führung geben willst.',
   },
+  signalTimeframe: {
+    t: 'Signal-Zeitrahmen',
+    d: 'Auf welchen Kerzen die Handels-Signale rechnen. „5-Minuten" (Standard): RSI, MACD, Bollinger und die Kurzfrist-Prognose laufen auf 5-Minuten-Kerzen — Signale drehen im Takt des 5-Minuten-Scans, die Engine handelt DEUTLICH häufiger (Daytrading-Stil). „Tageskerzen": die ruhige Sicht — Signale wechseln nur alle paar Tage, dafür weniger Rauschen und weniger Gebühren. Ehrlich gesagt: Jeder Trade kostet 0,1 % + Slippage — hohe Frequenz frisst Rendite, Paper-Trading ist der richtige Ort, das gefahrlos zu erleben.',
+  },
+  cooldownMin: {
+    t: 'Kauf-Pause nach Verkauf',
+    d: 'Wie viele Minuten ein Symbol nach einem Verkauf (auch Stop-Loss/Take-Profit) nicht wieder gekauft wird. Verhindert das Hin-und-Her (Whipsaw): Ein Stop-Loss feuert in fallenden Märkten — genau dann rufen RSI/Bollinger oft „überverkauft, kaufen!" und ohne Pause wäre das Symbol im nächsten Scan sofort wieder im Depot, minus Gebühren. Kleiner = mehr Trades; unter 5 Minuten (Scan-Takt) wäre die Pause wirkungslos, deshalb klemmt die Risiko-Hülle dort.',
+  },
+  minConfluence: {
+    t: 'Konfluenz für den Einstieg',
+    d: 'Wie viele Indikator-Stimmen ein KAUF braucht. Bei 2 müssen z. B. RSI und MACD gleichzeitig „kaufen" sagen; die Prognose zählt als gewichtete Zusatzstimme (gedeckelt, außer du erlaubst ihr den Alleingang). Niedriger = mehr Trades, aber mehr Fehlsignale — 1 heißt „jede einzelne Stimme kauft sofort".',
+  },
   sizingBase: {
     t: 'Sizing-Basis',
     d: 'Woraus die Positionsgröße gerechnet wird. „Verfügbarer Cash" (Standard): Jeder Kauf nimmt seinen Prozentsatz vom aktuell freien Cash — das Wallet arbeitet weiter, auch wenn schon Positionen offen sind, die Tranchen werden mit sinkendem Cash automatisch kleiner. „Startkapital (fix)": Jede Tranche ist gleich groß (Prozent vom Startkapital) — kalkulierbarer, aber sobald der Rest-Cash eine volle Tranche nicht mehr deckt, kauft die Engine gar nichts mehr. Genau das ließ vorher viel Cash ungenutzt liegen.',

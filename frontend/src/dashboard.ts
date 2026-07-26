@@ -785,6 +785,15 @@ function layout(email: string): string {
           <input id="owAtrS" class="inp st-num" type="number" min="0" step="0.5" /></label>
         <label>ATR-Ziel (×ATR) ${iBtn('atrTake')}
           <input id="owAtrT" class="inp st-num" type="number" min="0" step="0.5" /></label>
+        <label>Signal-Zeitrahmen ${iBtn('signalTimeframe')}
+          <select id="owTf" class="inp st-num">
+            <option value="intraday">5-Minuten (aktiv)</option>
+            <option value="daily">Tageskerzen (ruhig)</option>
+          </select></label>
+        <label>Kauf-Pause nach Verkauf (Min) ${iBtn('cooldownMin')}
+          <input id="owCd" class="inp st-num" type="number" min="5" max="1440" step="5" /></label>
+        <label>Konfluenz Einstieg ${iBtn('minConfluence')}
+          <input id="owMinC" class="inp st-num" type="number" min="1" max="6" step="1" /></label>
         <label>Konfluenz Ausstieg ${iBtn('exitConfluence')}
           <input id="owExitC" class="inp st-num" type="number" min="1" max="6" step="1" /></label>
         <label class="opt-row" style="align-items:center">
@@ -1564,6 +1573,9 @@ function openOptions(): void {
   ($('owHold') as HTMLInputElement).value = String(st.strategy.engine.maxHoldDays ?? 0);
   ($('owAtrS') as HTMLInputElement).value = String(st.strategy.engine.atrStopMult ?? 0);
   ($('owAtrT') as HTMLInputElement).value = String(st.strategy.engine.atrTakeMult ?? 0);
+  ($('owTf') as HTMLSelectElement).value = st.strategy.signals.timeframe ?? 'intraday';
+  ($('owCd') as HTMLInputElement).value = String(st.strategy.engine.cooldownMin ?? 15);
+  ($('owMinC') as HTMLInputElement).value = String(st.strategy.signals.minConfluence);
   ($('owExitC') as HTMLInputElement).value = String(
     st.strategy.signals.exitConfluence ?? Math.max(1, st.strategy.signals.minConfluence - 1));
   ($('owFcSolo') as HTMLInputElement).checked = st.strategy.signals.forecastSolo === true;
@@ -4604,11 +4616,14 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         maxHoldDays: num('owHold'),
         atrStopMult: num('owAtrS'),
         atrTakeMult: num('owAtrT'),
+        cooldownMin: Math.min(1440, Math.max(5, num('owCd') || 15)),
       },
       signals: {
         ...st.strategy.signals,
+        minConfluence: Math.max(1, num('owMinC')),
         exitConfluence: Math.max(1, num('owExitC')),
         forecastSolo: ($('owFcSolo') as HTMLInputElement).checked,
+        timeframe: ($('owTf') as HTMLSelectElement).value === 'daily' ? 'daily' : 'intraday',
       },
     };
     const problems = validateStrategy(strategy);
