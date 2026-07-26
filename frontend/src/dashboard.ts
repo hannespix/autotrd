@@ -523,6 +523,8 @@ function layout(email: string): string {
         </div>
         <div id="chartGrid"></div>
         </div>
+        <div id="chartHDrag" class="chart-h-drag"
+          title="Chart-Höhe ziehen — gilt für ALLE Fenster; Doppelklick setzt zurück"></div>
         <div id="rsiPanel" class="sub-panel" hidden></div>
         <div id="macdPanel" class="sub-panel" hidden></div>
         </div>
@@ -2181,8 +2183,6 @@ function syncLockedCrosshair(from: PriceChartHandle, date: string | null): void 
 
 function renderGridPanelBars(p: GridPanel): void {
   if (!p.chart) return;
-  const fit = p.fitPending;
-  p.fitPending = false;
   const intraday = p.intradayDays > 0;
   // Zeit-Domänen-Wechsel (ISO-Tage ↔ UNIX-Sekunden): Prognose-Overlay vor
   // setBars räumen — gleiche Falle wie beim Haupt-Chart (E2E 25.07.).
@@ -2190,6 +2190,11 @@ function renderGridPanelBars(p: GridPanel): void {
   p.lastRenderIntraday = intraday;
 
   const daily = p.range > 0 ? p.bars.slice(-p.range) : p.bars;
+  // Fit erst verbrauchen, wenn KERZEN da sind — sonst fittet das Panel auf
+  // den Prognose-Whitespace und bleibt nach dem Daten-Eintreffen dort
+  // hängen (User-Screenshot 26.07.: AAPL/TSLA zeigten nur Prognose-Linien).
+  const fit = p.fitPending && (intraday ? p.intradayBars.length : daily.length) > 0;
+  if (fit) p.fitPending = false;
   const shown: Array<{ time: string | number; close: number }> = intraday
     ? p.intradayBars.map((b) => ({ time: b.time, close: b.close }))
     : daily.map((b) => ({ time: b.date, close: b.close }));
@@ -4268,7 +4273,50 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   // News-Overlay schließt bei Klick/Tipp irgendwo anders SOFORT (User-
   // Feedback 26.07.) — nicht erst nach dem 4-s-Touch-Nachlauf
   document.addEventListener('pointerdown', onGlobalTipClose, true);
+  wireChartHeightDrag();
   document.addEventListener('keydown', onEscape);
+}
+
+/**
+ * Chart-Höhe per Zieh-Griff (User-Wunsch 26.07. „dynamisch skalierbar"):
+ * EINE Variable --chart-h steuert Haupt-Chart UND alle Raster-Panels —
+ * damit bleiben alle Fenster exakt gleich hoch (LWC folgt via autoSize).
+ * Gerät-lokal persistiert; Doppelklick setzt auf den Responsive-Default zurück.
+ */
+const CHART_H_KEY = 'autotrd-chart-h';
+
+function applyChartHeight(px: number | null): void {
+  if (px === null) document.documentElement.style.removeProperty('--chart-h');
+  else document.documentElement.style.setProperty('--chart-h', `${px}px`);
+}
+
+function wireChartHeightDrag(): void {
+  const stored = Number(localStorage.getItem(CHART_H_KEY));
+  if (stored >= 220) applyChartHeight(stored);
+  const grip = $('chartHDrag');
+  grip.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    grip.classList.add('on');
+    grip.setPointerCapture(e.pointerId);
+    const startY = e.clientY;
+    const startH = $('chartArea').getBoundingClientRect().height;
+    const move = (ev: PointerEvent): void => {
+      const h = Math.max(220, Math.min(Math.round(window.innerHeight * 0.75), Math.round(startH + ev.clientY - startY)));
+      applyChartHeight(h);
+    };
+    const up = (): void => {
+      grip.classList.remove('on');
+      grip.removeEventListener('pointermove', move);
+      grip.removeEventListener('pointerup', up);
+      localStorage.setItem(CHART_H_KEY, String(Math.round($('chartArea').getBoundingClientRect().height)));
+    };
+    grip.addEventListener('pointermove', move);
+    grip.addEventListener('pointerup', up);
+  });
+  grip.addEventListener('dblclick', () => {
+    localStorage.removeItem(CHART_H_KEY);
+    applyChartHeight(null);
+  });
 }
 
 /** Klick/Tipp außerhalb des News-Overlays schließt es sofort (26.07.). */
