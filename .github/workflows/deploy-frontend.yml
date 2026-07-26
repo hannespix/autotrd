@@ -130,12 +130,11 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq lftp sshpass
           # accept-new statt no: der Host-Key wird beim ersten Mal übernommen,
           # ein späterer WECHSEL bricht ab (Schutz vor Umleitung).
-          lftp -c "
-            set sftp:connect-program 'sshpass -e ssh -a -x -o StrictHostKeyChecking=accept-new';
-            set net:timeout 30; set net:max-retries 2;
-            open -u \"\$SFTP_USER\",dummy sftp://\$SFTP_HOST;
-            mirror -R --delete --parallel=2 --exclude-glob .ftp-deploy-sync-state.json frontend/dist/ \"\$SFTP_DIR\";
-          "
+          # Die Variablen MÜSSEN von bash expandiert werden — lftp kennt keine
+          # Shell-Variablen und nahm '$SFTP_HOST' wörtlich („hostname contains
+          # invalid characters"). sshpass reicht das Passwort über SSHPASS
+          # durch; das 'dummy' hält lftp nur von der interaktiven Abfrage ab.
+          lftp -c "set sftp:connect-program 'sshpass -e ssh -a -x -o StrictHostKeyChecking=accept-new'; set net:timeout 30; set net:max-retries 2; open -u ${SFTP_USER},dummy sftp://${SFTP_HOST}; mirror -R --delete --parallel=2 --exclude-glob .ftp-deploy-sync-state.json frontend/dist/ ${SFTP_DIR};"
 
       - name: Ergebnis — mindestens ein Upload muss durchgekommen sein
         if: env.FTP_HOST != ''
