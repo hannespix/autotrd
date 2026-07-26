@@ -821,6 +821,22 @@ Fix rot ist · ein Emulator-E2E beweist alle fünf Exit-/Entry-Pfade · Bericht
 listet Fund → Schwere → Fix → Test · MA6: Ein BTC-Backtest mit klassen-
 spezifischen Parametern schlägt denselben Backtest mit globalen Parametern.
 
+- [x] MA7 **Cash-Sizing (26.07., Owner-Frage „warum arbeitet nicht das ganze
+      Wallet?")**: `broker.sizingBase` — Positionsgröße rechnet per Default
+      vom VERFÜGBAREN Cash (`'balance'`) statt vom Startkapital; die alte
+      fixe Tranche scheiterte still an `zu_wenig_cash`, sobald der Rest-Cash
+      sie nicht mehr deckte — genau das ließ Cash ungenutzt liegen.
+      `'initial'` bleibt als Option (Options-Modal + ⓘ). `sizeOrder()` ist
+      pure + getestet (`functions/test/sizing.test.ts`, 7 Fälle).
+
+- [x] **Grid-Gleichwertigkeit (26.07., Owner-Wunsch „alles soll gleichwertig
+      sein")**: OHLC-Kurszeile als In-Chart-Accordion in ALLEN Fenstern
+      (Haupt + Raster + Vergleich; EIN gerätelokaler Zustand, Klick toggelt
+      überall) · Auto-Zeitrahmen je Raster-Panel und am Vergleichs-Chart
+      (eng zoomen → 5-min-Sicht, weit → Tageskerzen; Zeitfenster bleibt) ·
+      Vergleichs-Chart-Symbol frei wählbar per Eingabefeld (unabhängig vom
+      Raster; Link-Gruppe B kann weiter gezielt mitziehen).
+
 ## M12 — Portfolio, Risiko & Tagesfilm-Journal
 
 **Ziel:** Multi-Wallets je Strategie mit vorberechneten Kennzahlen (Dashboard =

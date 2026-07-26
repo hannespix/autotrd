@@ -177,6 +177,9 @@ interface DashState {
   scaleMode: 0 | 1 | 2;
   /** In-Chart-Legende aufgeklappt? (Gerät-lokal; mobil default zu). */
   hudOpen: boolean;
+  /** OHLC-Kurszeile aufgeklappt? EIN Zustand für ALLE Fenster (Accordion,
+   *  Owner-Wunsch 26.07.) — Gerät-lokal, Klick auf die Zeile toggelt. */
+  ohlcOpen: boolean;
   /** Aktive User-Prognose (Chart-Pfeil) des aktuellen Symbols. */
   prediction: import('@autotrd/shared').UserPrediction | null;
   predMode: boolean;
@@ -278,6 +281,14 @@ interface GridPanel {
   lastRenderIntraday?: boolean;
   /** Zuletzt gesetzte News-Punkte (E2E-Hook, 26.07.). */
   lastMarkers?: number;
+  /** Auto-Zeitrahmen (Grid-Gleichwertigkeit 26.07.): eng zoomen → 5-min-
+   *  Sicht, weit zoomen → Tageskerzen — wie „Auto" am Haupt-Chart. */
+  auto: boolean;
+  /** Wechsel läuft gerade (eigene setVisibleRange-Events ignorieren). */
+  autoBusy?: boolean;
+  autoTimer?: number | null;
+  /** OHLC-Kurszeile des Fensters (In-Chart-Overlay; Accordion-Zustand global). */
+  hudEl?: HTMLElement | null;
 }
 
 let st: DashState | null = null;
@@ -543,9 +554,12 @@ function layout(email: string): string {
       <div class="card" data-panel="chart2"><div class="sect">Vergleichs-Chart
         <button class="lchip" id="chipChart2" title="Link-Gruppe wechseln (Vergleichs-Chart folgt dieser Gruppe)">B</button></div><div class="cbody">
         <div class="chart-hd">
-          <span class="chart-nm" id="ch2Sym"></span>
+          <input id="ch2Sym" class="inp mh-sym"
+            title="Vergleichs-Symbol — frei wählbar, unabhängig vom Raster (Enter übernimmt)" />
           <span class="chart-px" id="ch2Px">--</span>
           <span class="gp-tf" id="c2tf" style="margin-left:auto">
+            <button class="tf-btn" id="c2Auto"
+              title="Auto-Zeitrahmen: eng zoomen wechselt in die 5-Minuten-Sicht, weit zoomen zurück zu Tageskerzen">Auto</button>
             <button class="tf-btn" data-c2i="1" title="1 Handelstag in 5-Minuten-Kerzen">1T</button>
             <button class="tf-btn" data-c2i="5" title="~5 Handelstage in 5-Minuten-Kerzen">1W</button>
             <button class="tf-btn" data-c2r="22">1M</button>
@@ -744,6 +758,11 @@ function layout(email: string): string {
           <input id="owCap" class="inp st-num" type="number" min="100" step="500" /></label>
         <label>Investment je Trade %
           <input id="owMax" class="inp st-num" type="number" min="1" max="100" step="1" /></label>
+        <label>Sizing-Basis ${iBtn('sizingBase')}
+          <select id="owSizing" class="inp st-num">
+            <option value="balance">Verfügbarer Cash</option>
+            <option value="initial">Startkapital (fix)</option>
+          </select></label>
         <label>Stop-Loss % ${iBtn('stopLoss')}
           <input id="owSl" class="inp st-num" type="number" min="0" step="0.5" /></label>
         <label>Take-Profit % ${iBtn('takeProfit')}
@@ -768,7 +787,10 @@ function layout(email: string): string {
         Der Ausstieg braucht bewusst weniger Stimmen als der Einstieg —
         ein verpasster Verkauf kostet Geld, ein verpasster Kauf nur eine Chance.
         Startkapital greift beim Anlegen/Zurücksetzen des Wallets; Regel-Strategien
-        deckeln die Positionsgröße serverseitig bei 25 %.</p>
+        deckeln die Positionsgröße serverseitig bei 25 %.
+        Sizing-Basis „Verfügbarer Cash" lässt das ganze Wallet arbeiten —
+        jeder Kauf nimmt seinen Prozentsatz vom aktuellen Cash, statt an einer
+        fixen Startkapital-Tranche zu scheitern.</p>
       <p class="hint" id="owClassHint" style="margin-top:4px"></p>
       <div class="row" style="margin-top:8px">
         <button class="btn btn-g" id="owSave">Speichern</button>
@@ -1114,40 +1136,91 @@ function applyArea(): void {
   st.chart.setCandlesVisible(!hide);
 }
 
-/** In-Chart-HUD (TV-Stil, UI-Audit 25.07.): Symbol · O H L C · Vol des Bars
- *  unterm Crosshair — ohne Crosshair der letzte Bar. Grün/rot nach C≥O. */
-function renderOhlcHud(
-  d: { time: string; open: number; high: number; low: number; close: number; volume: number | null } | null,
-): void {
-  if (!st) return;
-  const el = $('ohlcRow');
-  if (st.cleanView) {
-    el.hidden = true;
-    return;
-  }
-  let bar = d;
-  if (!bar) {
-    const src = st.intradayDays > 0 ? st.shownIntraday : dailySource();
-    const last = src[src.length - 1];
-    if (!last) {
-      el.hidden = true;
-      return;
-    }
-    const time =
-      'date' in last
-        ? (last as { date: string }).date
-        : new Date((last as { time: number }).time * 1000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
-    bar = { time, open: last.open, high: last.high, low: last.low, close: last.close, volume: last.volume ?? null };
-  }
+/** OHLC-Bar fürs HUD (Crosshair-Daten oder letzter Bar einer Quelle). */
+type HudBar = { time: string; open: number; high: number; low: number; close: number; volume: number | null };
+
+/** Letzten Bar einer Quelle (daily ODER intraday) als HUD-Bar aufbereiten. */
+function lastHudBar(
+  src: Array<({ date: string } | { time: number }) & { open: number; high: number; low: number; close: number; volume?: number | null }>,
+): HudBar | null {
+  const last = src[src.length - 1];
+  if (!last) return null;
+  const time =
+    'date' in last
+      ? last.date
+      : new Date(last.time * 1000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  return { time, open: last.open, high: last.high, low: last.low, close: last.close, volume: last.volume ?? null };
+}
+
+/** Gemeinsames HUD-Format ALLER Fenster: Symbol · Zeit · O H L C (±%) · Vol. */
+function hudHtml(sym: string, bar: HudBar): string {
   const up = bar.close >= bar.open;
   const pct = bar.open > 0 ? ((bar.close / bar.open - 1) * 100).toFixed(2) : '0.00';
   const vol =
     bar.volume === null || bar.volume === 0
       ? ''
       : ` · Vol ${bar.volume >= 1e6 ? `${(bar.volume / 1e6).toFixed(1)}M` : Math.round(bar.volume).toLocaleString('de-DE')}`;
-  el.innerHTML = `<b>${st.currentSymbol}</b> <span class="c-t3">${bar.time}</span>
+  return `<span class="hud-fold">▾</span> <b>${sym}</b> <span class="c-t3">${bar.time}</span>
     <span class="${up ? 'c-gn' : 'c-rd'}">O ${fmtNum(bar.open)} H ${fmtNum(bar.high)} L ${fmtNum(bar.low)} C ${fmtNum(bar.close)} (${up ? '+' : ''}${pct} %)</span>${vol}`;
+}
+
+/** In-Chart-HUD (TV-Stil, UI-Audit 25.07.): Symbol · O H L C · Vol des Bars
+ *  unterm Crosshair — ohne Crosshair der letzte Bar. Grün/rot nach C≥O.
+ *  Seit 26.07. ein Accordion: Klick klappt die Zeile in ALLEN Fenstern. */
+function renderOhlcHud(d: HudBar | null): void {
+  if (!st) return;
+  const el = $('ohlcRow');
+  if (st.cleanView) {
+    el.hidden = true;
+    return;
+  }
+  if (!st.ohlcOpen) {
+    el.innerHTML = '<span class="hud-fold">▸ OHLC</span>';
+    el.hidden = false;
+    return;
+  }
+  const bar = d ?? lastHudBar(st.intradayDays > 0 ? st.shownIntraday : dailySource());
+  if (!bar) {
+    el.hidden = true;
+    return;
+  }
+  el.innerHTML = hudHtml(st.currentSymbol, bar);
   el.hidden = false;
+}
+
+/** OHLC-Kurszeile eines Raster-/Vergleichs-Fensters (Grid-Gleichwertigkeit
+ *  26.07.: „alles soll gleichwertig sein") — gleiche Daten, gleicher
+ *  Accordion-Zustand wie das Haupt-Fenster. */
+function renderPanelHud(p: GridPanel, d: HudBar | null): void {
+  const el = p.hudEl;
+  if (!el) return;
+  if (!st || st.cleanView) {
+    el.hidden = true;
+    return;
+  }
+  if (!st.ohlcOpen) {
+    el.innerHTML = '<span class="hud-fold">▸ OHLC</span>';
+    el.hidden = false;
+    return;
+  }
+  const src = p.intradayDays > 0 ? p.intradayBars : p.range > 0 ? p.bars.slice(-p.range) : p.bars;
+  const bar = d ?? lastHudBar(src);
+  if (!bar) {
+    el.hidden = true;
+    return;
+  }
+  el.innerHTML = hudHtml(p.sym, bar);
+  el.hidden = false;
+}
+
+/** EIN Klick, ALLE Fenster: Accordion-Zustand der Kurszeile umschalten. */
+function toggleOhlcAll(): void {
+  if (!st) return;
+  st.ohlcOpen = !st.ohlcOpen;
+  localStorage.setItem('autotrd-ohlc', st.ohlcOpen ? '1' : '0');
+  renderOhlcHud(null);
+  for (const p of st.gridPanels) renderPanelHud(p, null);
+  renderPanelHud(st.chart2P, null);
 }
 
 /** Legende: beschriftet jede aktive Linie mit Farbe (gilt für alle Charts). */
@@ -1473,6 +1546,7 @@ function openOptions(): void {
   ($('ouGrid') as HTMLInputElement).checked = st.ui.chartGrid;
   ($('ouSub') as HTMLInputElement).checked = st.ui.subPanels;
   ($('owCap') as HTMLInputElement).value = String(st.strategy.broker.initialCapital);
+  ($('owSizing') as HTMLSelectElement).value = st.strategy.broker.sizingBase ?? 'balance';
   ($('owMax') as HTMLInputElement).value = String(st.strategy.engine.maxPositionPct);
   ($('owSl') as HTMLInputElement).value = String(st.strategy.engine.stopLossPct);
   ($('owTp') as HTMLInputElement).value = String(st.strategy.engine.takeProfitPct);
@@ -1624,6 +1698,97 @@ function updateAutoUi(): void {
   $('autoBtn').classList.toggle('on', st.autoRes);
   localStorage.setItem('autotrd-chart-auto', st.autoRes ? '1' : '0');
   renderResBadge();
+}
+
+/* ── Auto-Zeitrahmen je Raster-/Vergleichs-Fenster (Grid-Gleichwertigkeit
+   26.07.: „auto view für ALLE grid fenster"): abgespeckte Version des Haupt-
+   Auto — zwei Stufen (Tageskerzen ↔ 5-min-Sicht), das ZEITfenster bleibt
+   beim Wechsel erhalten. Debounced pro Panel; eigene Wechsel triggern sich
+   über autoBusy nicht selbst. ── */
+
+function schedulePanelAuto(p: GridPanel): void {
+  if (!p.auto) return;
+  if (p.autoTimer != null) window.clearTimeout(p.autoTimer);
+  p.autoTimer = window.setTimeout(() => {
+    p.autoTimer = null;
+    // Wechsel läuft noch (autoBusy)? Wiedervorlage statt verwerfen — sonst
+    // verschluckt das Busy-Fenster den direkt folgenden Gegen-Zoom und das
+    // Panel bleibt dauerhaft in der falschen Sicht hängen (E2E-Fund 26.07.).
+    if (p.autoBusy) {
+      schedulePanelAuto(p);
+      return;
+    }
+    void panelMaybeAutoSwitch(p);
+  }, 350);
+}
+
+/** Quelle des Panels in Render-Reihenfolge (für Index→Zeit-Umrechnung). */
+function panelSource(p: GridPanel): Array<{ time: number } | { date: string }> {
+  return p.intradayDays > 0 ? p.intradayBars : p.range > 0 ? p.bars.slice(-p.range) : p.bars;
+}
+
+async function panelMaybeAutoSwitch(p: GridPanel): Promise<void> {
+  if (!p.auto || !p.chart || p.autoBusy) return;
+  const r = p.chart.getVisibleRange();
+  const src = panelSource(p);
+  if (!r || src.length < 2) return;
+  let i0 = Math.max(0, Math.min(src.length - 1, Math.floor(r.from)));
+  const i1 = Math.max(0, Math.min(src.length - 1, Math.ceil(r.to)));
+  if (i1 <= i0) i0 = Math.max(0, i1 - 1);
+  if (i1 <= i0) return;
+  const t0 = barTimeMs(src[i0]!);
+  const t1 = barTimeMs(src[i1]!);
+  const days = (t1 - t0) / 86_400_000;
+  const intraday = p.intradayDays > 0;
+  // Will der User deutlich mehr sehen, als die ~5 Intraday-Tage hergeben?
+  const wantsWider = intraday && r.to - r.from > src.length + 6;
+  const wantIntraday = !wantsWider && days <= 8;
+  if (wantIntraday === intraday) return;
+  p.autoBusy = true;
+  try {
+    if (wantIntraday) {
+      // Abdeckung prüfen — vorhandene Bars können aus einer 1T-Sicht stammen
+      // und decken das Fenster dann nicht (E2E-Fund 26.07.): dann die vollen
+      // ~5 Handelstage nachladen und erneut prüfen.
+      const covers = (b: typeof p.intradayBars): boolean =>
+        b.length > 0 && t0 >= b[0]!.time * 1000 - 12 * 3_600_000;
+      if (!covers(p.intradayBars)) {
+        const sym = p.sym;
+        const chunks = await loadIntraday(sym, 5);
+        if (p.sym !== sym || !p.auto) return;
+        if (chunks.length > 0) p.intradayBars = chunks;
+      }
+      if (!covers(p.intradayBars)) return; // 5-min-Daten decken das Fenster nicht → daily bleiben
+      p.intradayDays = 5;
+    } else {
+      p.intradayDays = 0;
+      if (wantsWider) p.fitPending = true; // Rücksprung: frisch fitten (Mini-Ausschnitt wäre verwirrend)
+    }
+    renderGridPanelBars(p);
+    // Zeitfenster in der neuen Quelle wiederfinden — der Zoom bestimmt die Sicht
+    if (!wantsWider && p.chart) {
+      const dst = panelSource(p);
+      if (dst.length > 1) {
+        let j0 = dst.findIndex((b) => barTimeMs(b) >= t0);
+        if (j0 < 0) j0 = 0;
+        let j1 = dst.length - 1;
+        for (let i = dst.length - 1; i >= 0; i--) {
+          if (barTimeMs(dst[i]!) <= t1) {
+            j1 = i;
+            break;
+          }
+        }
+        if (j1 > j0) p.chart.setVisibleRange({ from: j0 - 0.5, to: j1 + 0.5 });
+      }
+    }
+    saveGridPrefs();
+    syncPanelTfButtons();
+  } finally {
+    // setVisibleRange feuert selbst Range-Events — Wächter kurz entschärfen
+    window.setTimeout(() => {
+      p.autoBusy = false;
+    }, 400);
+  }
 }
 
 /** 5m-Chunks laden und rendern (1T/1W) — Chart-Feedback 24.07. */
@@ -2108,7 +2273,7 @@ function wireChart2Ctx(): void {
   p.epoch++;
   const epoch = p.epoch;
   p.fitPending = true;
-  $('ch2Sym').textContent = sym;
+  ($('ch2Sym') as HTMLInputElement).value = sym;
   st.chart2Subs.push(
     watchMarketDoc(sym, (d) => {
       $('ch2Px').textContent = d?.quote ? fmtNum(d.quote.price) : '--';
@@ -2147,12 +2312,24 @@ async function rebuildChart2(): Promise<void> {
   st.chart2 = handle;
   st.chart2P.chart = handle;
   st.chart2P.fitPending = true;
+  // OHLC-Kurszeile auch im Vergleichs-Chart (Grid-Gleichwertigkeit 26.07.)
+  const hud2 = document.createElement('div');
+  hud2.className = 'gp-hud mono';
+  hud2.title = 'Kurszeile ein-/ausklappen — wirkt auf alle Chart-Fenster';
+  hud2.addEventListener('click', toggleOhlcAll);
+  $('chart2Area').appendChild(hud2);
+  st.chart2P.hudEl = hud2;
+  st.chart2?.onCrosshairData((d) => {
+    if (st) renderPanelHud(st.chart2P, d);
+  });
   // Zeit-/Crosshair-Sync zum Haupt-Chart (beidseitig, frame-sicherer Echo-
   // Schutz + Gesten-Gate: Daten-Refits des Vergleichs ziehen das Haupt-Chart nicht)
   armGestureTracking($('chart2Area'));
   st.chart2?.onVisibleRangeChange((range) => {
     const h = st?.chart2;
-    if (!range || !st?.chart || !h || matchEcho(h, range)) return;
+    if (!range || !st?.chart || !h) return;
+    if (st.chart2P.auto) schedulePanelAuto(st.chart2P); // Auto-Zeitrahmen wie in den Panels
+    if (matchEcho(h, range)) return;
     if (!recentGesture($('chart2Area'))) return;
     pushRange(st.chart, range, h);
   });
@@ -2178,17 +2355,17 @@ function saveGridPrefs(): void {
     JSON.stringify({
       mode: st.gridMode,
       mainLocked: st.mainLocked,
-      panels: st.gridPanels.map((p) => ({ sym: p.sym, range: p.range, locked: p.locked, intradayDays: p.intradayDays })),
+      panels: st.gridPanels.map((p) => ({ sym: p.sym, range: p.range, locked: p.locked, intradayDays: p.intradayDays, auto: p.auto })),
     }),
   );
 }
 
-function loadGridPrefs(): { mode: 1 | 2 | 4; mainLocked: boolean; panels: Array<{ sym: string; range: number; locked: boolean; intradayDays: number }> } {
+function loadGridPrefs(): { mode: 1 | 2 | 4; mainLocked: boolean; panels: Array<{ sym: string; range: number; locked: boolean; intradayDays: number; auto: boolean }> } {
   const fallback = { mode: 1 as const, mainLocked: false, panels: [] };
   try {
     const raw = localStorage.getItem(GRID_LS_KEY);
     if (!raw) return fallback;
-    const p = JSON.parse(raw) as { mode?: number; mainLocked?: boolean; panels?: Array<{ sym?: string; range?: number; locked?: boolean; intradayDays?: number }> };
+    const p = JSON.parse(raw) as { mode?: number; mainLocked?: boolean; panels?: Array<{ sym?: string; range?: number; locked?: boolean; intradayDays?: number; auto?: boolean }> };
     const mode = p.mode === 2 || p.mode === 4 ? p.mode : 1;
     return {
       mode,
@@ -2198,6 +2375,7 @@ function loadGridPrefs(): { mode: 1 | 2 | 4; mainLocked: boolean; panels: Array<
         range: typeof x.range === 'number' ? x.range : 66,
         locked: x.locked === true,
         intradayDays: x.intradayDays === 1 || x.intradayDays === 5 ? x.intradayDays : 0,
+        auto: x.auto === true,
       })),
     };
   } catch {
@@ -2310,6 +2488,7 @@ function renderGridPanelBars(p: GridPanel): void {
       wantFc && lastB ? { time: lastB.time, value: lastB.close } : undefined,
     );
   }
+  renderPanelHud(p, null); // Kurszeile auf den frischen letzten Bar
 }
 
 /** Alle Nebencharts (Raster-Panels + Vergleichs-Chart) neu rendern. */
@@ -2328,6 +2507,7 @@ function propagateTimeframe(intradayDays: number, range: number): void {
   if (!st) return;
   const targets = [...st.gridPanels, st.chart2P];
   for (const p of targets) {
+    p.auto = false; // expliziter globaler Zeitrahmen schlägt Panel-Auto (wie am Haupt-Chart)
     p.intradayDays = intradayDays;
     if (intradayDays === 0) p.range = range >= 250 || range === 0 ? 0 : range; // 1J ⇒ alle Panel-Bars (~1 Jahr)
     p.fitPending = true;
@@ -2350,6 +2530,7 @@ function syncPanelTfButtons(): void {
         : p.intradayDays === 0 && Number(b.dataset['r']) === p.range;
       b.classList.toggle('on', on);
     });
+    el.querySelector('.gp-auto')?.classList.toggle('on', p.auto);
   });
   const p2 = st.chart2P;
   document.querySelectorAll<HTMLElement>('#c2tf [data-c2r], #c2tf [data-c2i]').forEach((b) => {
@@ -2358,6 +2539,7 @@ function syncPanelTfButtons(): void {
       : p2.intradayDays === 0 && Number(b.dataset['c2r']) === p2.range;
     b.classList.toggle('on', on);
   });
+  $('c2Auto').classList.toggle('on', p2.auto);
 }
 
 /** Intraday-Bars eines Panels laden (epoch-geschützt; Refresh via watchBars). */
@@ -2403,11 +2585,25 @@ async function mountGridPanel(p: GridPanel, host: HTMLElement): Promise<void> {
   }
   p.chart = handle;
   armGestureTracking(host);
+  // OHLC-Kurszeile im Fenster (Grid-Gleichwertigkeit 26.07.) — NACH
+  // buildPriceChart anhängen, das leert den Container. Klick = Accordion
+  // für ALLE Fenster gemeinsam.
+  const hud = document.createElement('div');
+  hud.className = 'gp-hud mono';
+  hud.title = 'Kurszeile ein-/ausklappen — wirkt auf alle Chart-Fenster';
+  hud.addEventListener('click', toggleOhlcAll);
+  host.appendChild(hud);
+  p.hudEl = hud;
+  p.chart?.onCrosshairData((d) => renderPanelHud(p, d));
   p.chart?.onVisibleRangeChange((range) => {
+    if (!range || !p.chart) return;
+    // Auto-Zeitrahmen: JEDE Sichtänderung zählt (auch Lock-Sync — ein
+    // gelocktes Panel folgt dann dem Zoom des treibenden Charts).
+    schedulePanelAuto(p);
     // Echo eines Lock-Pushes? Nicht zurücksenden — sonst stirbt das
     // Trägheits-Gleiten des treibenden Charts (Smartphone-Kinetik 26.07.).
     // Gesten-Gate: Daten-Refits des Panels ziehen die Lock-Gruppe nicht.
-    if (!range || !p.chart || matchEcho(p.chart, range)) return;
+    if (matchEcho(p.chart, range)) return;
     if (p.locked && recentGesture(host)) syncLockedRange(p.chart, range);
   });
   p.chart?.onCrosshairDate((date, pos) => {
@@ -2485,7 +2681,7 @@ function renderChartGrid(): void {
       st.strategy.watchlist.find((s) => !used.has(s)) ??
       ['AAPL', 'TSLA', '^NDX'].find((s) => !used.has(s)) ??
       'AAPL';
-    st.gridPanels.push({ sym, range: 66, locked: false, chart: null, bars: [], subs: [], epoch: 0, fitPending: true, forecast: null, forecastIntraday: null, intradayDays: 0, intradayBars: [], events: [] });
+    st.gridPanels.push({ sym, range: 66, locked: false, chart: null, bars: [], subs: [], epoch: 0, fitPending: true, forecast: null, forecastIntraday: null, intradayDays: 0, intradayBars: [], events: [], auto: false });
   }
   $('chartRow').dataset['mode'] = String(st.gridMode);
   ($('lockMain') as HTMLButtonElement).hidden = st.gridMode === 1;
@@ -2506,6 +2702,8 @@ function renderChartGrid(): void {
       <div class="gp-hd">
         <input class="inp gp-sym" value="${p.sym}" title="Symbol (Enter übernimmt)" />
         <span class="gp-tf">
+          <button class="tf-btn gp-auto${p.auto ? ' on' : ''}"
+            title="Auto-Zeitrahmen: eng zoomen wechselt in die 5-Minuten-Sicht, weit zoomen zurück zu Tageskerzen">Auto</button>
           <button class="tf-btn${p.intradayDays === 1 ? ' on' : ''}" data-i="1" title="1 Handelstag in 5-Minuten-Kerzen">1T</button>
           <button class="tf-btn${p.intradayDays === 5 ? ' on' : ''}" data-i="5" title="~5 Handelstage in 5-Minuten-Kerzen">1W</button>
           <button class="tf-btn${p.intradayDays === 0 && p.range === 22 ? ' on' : ''}" data-r="22">1M</button>
@@ -2528,8 +2726,12 @@ function renderChartGrid(): void {
       void mountGridPanel(p, el.querySelector('.gp-chart') as HTMLElement);
       focusNews(sym); // neues Symbol im aktiven Fenster → News folgen sofort
     });
-    const markTf = (btn: Element): void =>
+    const markTf = (btn: Element): void => {
       el.querySelectorAll('[data-r], [data-i]').forEach((x) => x.classList.toggle('on', x === btn));
+      // Manuelle Stufe gewählt → Panel-Auto pausiert (wie am Haupt-Chart)
+      p.auto = false;
+      el.querySelector('.gp-auto')?.classList.remove('on');
+    };
     el.querySelectorAll('[data-r]').forEach((b) =>
       b.addEventListener('click', () => {
         p.range = Number((b as HTMLElement).dataset['r']);
@@ -2550,6 +2752,14 @@ function renderChartGrid(): void {
         void loadPanelIntraday(p);
       }),
     );
+    // Auto-Zeitrahmen (Grid-Gleichwertigkeit 26.07.): Zoomstufe steuert die Sicht
+    const autoBtn = el.querySelector('.gp-auto') as HTMLButtonElement;
+    autoBtn.addEventListener('click', () => {
+      p.auto = !p.auto;
+      autoBtn.classList.toggle('on', p.auto);
+      saveGridPrefs();
+      if (p.auto) void panelMaybeAutoSwitch(p);
+    });
     const maxBtn = el.querySelector('.gp-max') as HTMLButtonElement;
     maxBtn.addEventListener('click', () => {
       const on = !el.classList.contains('chart-max');
@@ -3620,6 +3830,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       intradayDays: 0,
       intradayBars: [],
       events: [],
+      auto: false,
     },
     lastQuote: null,
     orderSide: 'buy',
@@ -3641,6 +3852,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     })(),
     typeCombine: (localStorage.getItem('autotrd-chart-style') ?? '').split('|')[2] === '1',
     hudOpen: (localStorage.getItem('autotrd-hud') ?? (window.innerWidth > 640 ? '1' : '0')) === '1',
+    ohlcOpen: (localStorage.getItem('autotrd-ohlc') ?? '1') === '1',
     wsSaveTimer: null,
     paletteDispose: null,
     events: [],
@@ -3851,6 +4063,25 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     panelRangeVal: (i: number) => st?.gridPanels[i]?.range ?? -1,
     chart2IntradayDays: () => st?.chart2P.intradayDays ?? -1,
     chart2IntradayLen: () => st?.chart2P.intradayBars.length ?? -1,
+    chart2Sym: () => st?.chart2Symbol ?? '',
+    chart2Auto: () => st?.chart2P.auto ?? false,
+    panelAutoProbe: (i: number) => {
+      const p = st?.gridPanels[i];
+      if (!p) return null;
+      const r = p.chart?.getVisibleRange() ?? null;
+      const src = panelSource(p);
+      let days = -1;
+      if (r && src.length >= 2) {
+        let i0 = Math.max(0, Math.min(src.length - 1, Math.floor(r.from)));
+        const i1 = Math.max(0, Math.min(src.length - 1, Math.ceil(r.to)));
+        if (i1 > i0 || (i0 = Math.max(0, i1 - 1)) < i1) days = (barTimeMs(src[i1]!) - barTimeMs(src[i0]!)) / 86_400_000;
+      }
+      return { auto: p.auto, busy: p.autoBusy === true, intradayDays: p.intradayDays, srcLen: src.length, range: r, days };
+    },
+    panelAuto: (i: number) => st?.gridPanels[i]?.auto ?? false,
+    panelHudText: (i: number) => st?.gridPanels[i]?.hudEl?.textContent?.trim() ?? '',
+    chart2HudText: () => st?.chart2P.hudEl?.textContent?.trim() ?? '',
+    ohlcOpen: () => st?.ohlcOpen ?? false,
     chart2ForecastActive: () => st?.chart2?.forecastActive() ?? false,
     chart2Overlays: () => st?.chart2?.overlayCount() ?? -1,
     mainChartType: () => st?.chart?.chartType() ?? 'candles',
@@ -3992,6 +4223,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     b.addEventListener('click', () => {
       if (!st) return;
       const p = st.chart2P;
+      p.auto = false; // manuelle Stufe pausiert Auto (wie überall)
       p.intradayDays = b.dataset['c2i'] !== undefined ? Number(b.dataset['c2i']) : 0;
       if (b.dataset['c2r'] !== undefined) p.range = Number(b.dataset['c2r']);
       p.fitPending = true;
@@ -4000,6 +4232,29 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       else renderChart2();
     }),
   );
+  // Auto-Zeitrahmen des Vergleichs-Charts (Grid-Gleichwertigkeit 26.07.)
+  $('c2Auto').addEventListener('click', () => {
+    if (!st) return;
+    const p = st.chart2P;
+    p.auto = !p.auto;
+    $('c2Auto').classList.toggle('on', p.auto);
+    if (p.auto) void panelMaybeAutoSwitch(p);
+  });
+  // Vergleichs-Symbol frei wählbar (Owner-Feedback 26.07.: „die Vergleichs-
+  // Chart ist momentan immer gleich Grid-Chart 1") — unabhängig vom Raster;
+  // die Link-Gruppe (Chip B) kann es weiterhin gezielt mitziehen.
+  $('ch2Sym').addEventListener('keydown', (ev) => {
+    if ((ev as KeyboardEvent).key !== 'Enter') return;
+    const el = $('ch2Sym') as HTMLInputElement;
+    const sym = el.value.trim().toUpperCase();
+    if (!sym || !st || sym === st.chart2Symbol) return;
+    el.value = sym;
+    st.chart2Symbol = sym;
+    wireChart2Ctx();
+    void rebuildChart2();
+    scheduleWsSave();
+    focusNews(sym); // aktives Fenster → News folgen (wie in den Panels)
+  });
   // Timeline-Sprünge (User-Wunsch 25.07. nachts): animiert zu Anfang/Mitte/
   // Ende — am linken Rand lädt die bestehende Nachlade-Logik automatisch weiter.
   $('jumpStart').addEventListener('click', () => st?.chart?.scrollTo('start'));
@@ -4149,6 +4404,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     applyHud();
   });
   applyHud();
+  // OHLC-Kurszeile als Accordion (Owner-Wunsch 26.07.): Klick auf die Zeile
+  // klappt sie in ALLEN Fenstern gleichzeitig (ein gerätelokaler Zustand)
+  $('ohlcRow').addEventListener('click', toggleOhlcAll);
 
   // Vollbild je Chart (Feedback 25.07., wichtig für Smartphones): CSS-Overlay
   // statt Fullscreen-API (läuft überall, auch iOS/PWA); Esc schließt.
@@ -4256,7 +4514,11 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     const num = (id: string): number => Number(($(id) as HTMLInputElement).value);
     const strategy: Strategy = {
       ...st.strategy,
-      broker: { ...st.strategy.broker, initialCapital: num('owCap') },
+      broker: {
+        ...st.strategy.broker,
+        initialCapital: num('owCap'),
+        sizingBase: ($('owSizing') as HTMLSelectElement).value === 'initial' ? 'initial' : 'balance',
+      },
       engine: {
         ...st.strategy.engine,
         maxPositionPct: num('owMax'),
@@ -4306,6 +4568,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     st.gridMode = prefs.mode;
     st.mainLocked = prefs.mainLocked;
     st.gridPanels = prefs.panels.map((p) => ({ ...p, chart: null, bars: [], subs: [], epoch: 0, fitPending: true, forecast: null, forecastIntraday: null, intradayBars: [], events: [] }));
+    // (auto kommt aus prefs mit — loadGridPrefs liefert es garantiert)
     renderChartGrid();
   }
 
