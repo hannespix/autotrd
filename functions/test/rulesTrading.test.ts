@@ -139,7 +139,7 @@ describe('Shadow-Konto (M11): pure Buchführung', () => {
     const start = { balance: 25_000, positions: {} };
     const buy = shadowTrade(start, 'QQQ', 'buy', 500, 10); // 2500 / 500.75 → 4 Stück
     expect(buy.executed).toBe(true);
-    expect(buy.book.positions['QQQ']).toEqual({ qty: 4, avgEntry: 500.75 });
+    expect(buy.book.positions['QQQ']).toEqual({ qty: 4, avgEntry: 500.75, highWater: 500.75 });
     expect(buy.book.balance).toBeCloseTo(25_000 - 4 * 500.75, 6);
     // nie nachkaufen
     expect(shadowTrade(buy.book, 'QQQ', 'buy', 480, 10).executed).toBe(false);
@@ -160,6 +160,38 @@ describe('Shadow-Konto (M11): pure Buchführung', () => {
   it('shadowEquity = Balance + Positionswert (fehlender Preis → Einstand)', () => {
     const book = { balance: 1_000, positions: { QQQ: { qty: 5, avgEntry: 500 }, AAPL: { qty: 2, avgEntry: 200 } } };
     expect(shadowEquity(book, new Map([['QQQ', 520]]))).toBe(1_000 + 2_600 + 400);
+  });
+});
+
+describe('Shadow-Duell-Parität (MA4, 26.07.)', () => {
+  it("Sizing-Basis 'initial' via capital-Override — wie der echte Broker", () => {
+    // Startkapital 25 000, aber nur noch 3 000 Cash: 10 % von 25 000 = 2 500
+    // → 4 Stück à 500.75 = 2 003 ≤ 3 000 Deckung → Kauf geht durch.
+    const book = { balance: 3_000, positions: {} };
+    const r = shadowTrade(book, 'QQQ', 'buy', 500, 10, { capital: 25_000 });
+    expect(r.executed).toBe(true);
+    expect(r.book.positions['QQQ']?.qty).toBe(4);
+  });
+
+  it('Deckung prüft IMMER der Shadow-Cash (zu_wenig_cash-Parität)', () => {
+    // 10 % von 25 000 wollen 4 Stück (2 003) — Cash deckt nur 1 500 → No-op
+    const book = { balance: 1_500, positions: {} };
+    expect(shadowTrade(book, 'QQQ', 'buy', 500, 10, { capital: 25_000 }).executed).toBe(false);
+  });
+
+  it('Kauf stempelt highWater (= Einstand) und openedAt für Trailing/Zeitgrenze', () => {
+    const now = new Date('2026-07-26T12:00:00.000Z');
+    const r = shadowTrade({ balance: 25_000, positions: {} }, 'QQQ', 'buy', 500, 10, { now });
+    expect(r.book.positions['QQQ']).toEqual({
+      qty: 4,
+      avgEntry: 500.75,
+      highWater: 500.75,
+      openedAt: '2026-07-26T12:00:00.000Z',
+    });
+  });
+
+  it('negatives capital kauft nichts (Math.max-Guard)', () => {
+    expect(shadowTrade({ balance: 25_000, positions: {} }, 'QQQ', 'buy', 500, 10, { capital: -1 }).executed).toBe(false);
   });
 });
 

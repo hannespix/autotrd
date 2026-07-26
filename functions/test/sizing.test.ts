@@ -55,6 +55,28 @@ describe('sizeOrder — Cash-Basis (Default)', () => {
   });
 });
 
+describe('sizeOrder — Bruchstücke für Krypto (MA-Fund 26.07.)', () => {
+  it('BTC bei ~64 000 $: ganze Stücke ergeben 0, Bruchteile kaufen ~0.0388', () => {
+    const s = strat({ sizingBase: 'balance', maxPositionPct: 10 });
+    expect(sizeOrder(s, 25_000, 64_452)).toBe(0); // der alte Zustand: nie kaufbar
+    const q = sizeOrder(s, 25_000, 64_452, true);
+    expect(q).toBeCloseTo(0.038788, 6); // 2 500 / 64 452, auf µ-Einheiten abgerundet
+    expect(q * 64_452).toBeLessThanOrEqual(2_500);
+  });
+
+  it('µ-Rundung: nie mehr als 6 Nachkommastellen, nie über der Tranche', () => {
+    const s = strat({ sizingBase: 'balance', maxPositionPct: 10 });
+    const q = sizeOrder(s, 1_000, 97_531.13, true);
+    expect(Math.round(q * 1e6)).toBe(q * 1e6); // exakt µ-Raster
+    expect(q * 97_531.13).toBeLessThanOrEqual(100);
+  });
+
+  it('unter einer µ-Einheit → 0 (Broker lehnt mit qty_unter_1 ab)', () => {
+    const s = strat({ sizingBase: 'balance', maxPositionPct: 10 });
+    expect(sizeOrder(s, 0.005, 64_452, true)).toBe(0);
+  });
+});
+
 describe('sizeOrder — Startkapital-Basis (Option)', () => {
   it("'initial' rechnet fix vom Startkapital, unabhängig vom Cash", () => {
     const s = strat({ sizingBase: 'initial', initialCapital: 25_000, maxPositionPct: 10 });

@@ -15,7 +15,7 @@
  */
 
 import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore';
-import { PAPER_FEE_RATE, paperEffectivePrice, resolveRisk } from '../../../shared/src/index.js';
+import { PAPER_FEE_RATE, classify, paperEffectivePrice, resolveRisk } from '../../../shared/src/index.js';
 import type { Position, RiskConfig, Strategy, Trade } from '../../../shared/src/index.js';
 
 export type BrokerMode = 'paper' | 'live';
@@ -42,10 +42,16 @@ function roundCents(v: number): number {
  * floor(cash·pct/price) ≥ 1 Stück ergibt. 'initial' bleibt als bewusste
  * Option für fixe Tranchen (Referenz-Verhalten).
  */
-export function sizeOrder(strategy: Strategy, balance: number, effPrice: number): number {
+export function sizeOrder(strategy: Strategy, balance: number, effPrice: number, fractional = false): number {
   const base = strategy.broker.sizingBase ?? 'balance';
   const capital = base === 'initial' ? strategy.broker.initialCapital : Math.max(0, balance);
-  return Math.floor((capital * strategy.engine.maxPositionPct) / 100 / effPrice);
+  const raw = (capital * strategy.engine.maxPositionPct) / 100 / effPrice;
+  // Krypto handelt real in BRUCHTEILEN (MA-Fund 26.07.): floor auf ganze
+  // Stücke ergab bei BTC (~64 000 $) mit einer 2 500-$-Tranche IMMER 0 —
+  // die Engine konnte teure Coins schlicht nie kaufen ('qty_unter_1').
+  // µ-Einheiten (6 Nachkommastellen) sind Kauf-Standard der Krypto-Börsen.
+  if (fractional) return Math.floor(raw * 1e6) / 1e6;
+  return Math.floor(raw);
 }
 
 export interface TradeResult {
@@ -97,8 +103,10 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
 
     if (req.side === 'buy') {
       if (posSnap.exists) return { executed: false, reason: 'position_existiert' };
-      const qty = req.qty ?? sizeOrder(strategy, balance, eff);
-      if (qty < 1) return { executed: false, reason: 'qty_unter_1' };
+      const cls = req.assetClass ?? classify(req.symbol);
+      const fractional = cls === 'crypto';
+      const qty = req.qty ?? sizeOrder(strategy, balance, eff, fractional);
+      if (qty < (fractional ? 1e-6 : 1)) return { executed: false, reason: 'qty_unter_1' };
       const cost = qty * eff;
       if (cost > balance) return { executed: false, reason: 'zu_wenig_cash' };
 
