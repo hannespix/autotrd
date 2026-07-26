@@ -26,10 +26,11 @@ insert into public.trades (wallet_id, user_id, symbol, side, qty, price, source)
   values ('aaaaaaaa-0000-0000-0000-000000000001',
           '11111111-1111-1111-1111-111111111111', 'QQQ', 'buy', 3, 684.23, 'manual');
 
--- Leserechte für die Rollen (in Supabase macht das die Plattform)
-grant usage on schema public to anon, authenticated;
-grant select on all tables in schema public to anon, authenticated;
-grant insert, update, delete on all tables in schema public to authenticated;
+-- Die Rechte kommen aus Migration 0003_grants.sql — hier werden BEWUSST
+-- keine weiteren vergeben. Zusätzlich testweise INSERT/UPDATE auf die
+-- Geld-Tabellen erlauben: Nur so beweist Test 3/4, dass die RLS-Policies
+-- den Client aufhalten und nicht bloß ein fehlendes Tabellenrecht.
+grant insert, update on public.wallets, public.trades, public.positions to authenticated;
 
 -- ── 1) Eigentümer sieht seine Zeilen ──────────────────────────────────────
 set role authenticated;
@@ -197,9 +198,26 @@ set request.jwt.claim.role = 'anon';
 do $$
 declare n integer;
 begin
-  select count(*) into n from public.market_symbols;
-  if n <> 0 then raise exception 'FAIL 12: Anonymer sieht % Symbole statt 0', n; end if;
-  raise notice 'OK 12: Anonyme sehen keine Marktdaten';
+  -- Zwei Wege führen zum selben Ziel: Entweder fehlt der Rolle schon das
+  -- Tabellenrecht (0003_grants.sql gibt anon nur meta frei) oder die Policy
+  -- blendet alle Zeilen aus. Beides heißt „anonym sieht nichts" — der Test
+  -- akzeptiert deshalb beides und schlägt nur fehl, wenn Daten kommen.
+  begin
+    select count(*) into n from public.market_symbols;
+    if n <> 0 then raise exception 'FAIL 12: Anonymer sieht % Symbole statt 0', n; end if;
+    raise notice 'OK 12: Anonyme sehen keine Marktdaten (Policy blendet aus)';
+  exception when insufficient_privilege then
+    raise notice 'OK 12: Anonyme sehen keine Marktdaten (kein Tabellenrecht)';
+  end;
+end;
+$$;
+
+-- ── 13) Heartbeat ist bewusst öffentlich (Landing Page ohne Login) ────────
+do $$
+declare n integer;
+begin
+  select count(*) into n from public.meta;
+  raise notice 'OK 13: Anonyme lesen meta (% Zeilen) — gewollt für den Systemzustand', n;
 end;
 $$;
 reset role;
