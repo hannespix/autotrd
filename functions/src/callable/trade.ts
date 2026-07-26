@@ -9,6 +9,7 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { allSymbols, classify, type Quote, type Strategy } from '../../../shared/src/index.js';
 import { consumeQuota, executePaperTrade, resolveBrokerMode } from '../core/broker.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
+import { accessDeniedReason, accessLevelOf, mayTrade } from '../core/access.js';
 
 const DAILY_TRADE_LIMIT = 50;
 const MAX_QTY = 10_000;
@@ -42,6 +43,12 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
 
   const db = getFirestore();
   const userSnap = await db.doc(`users/${uid}`).get();
+  // Zugangsstufe (Owner 26.07.): Ohne Freischaltung keine Order — auch nicht
+  // manuell. Die Prüfung steht VOR jeder Preisermittlung, damit ein gesperrtes
+  // Konto nicht einmal Marktdaten-Aufrufe auslöst.
+  if (!mayTrade(userSnap.data())) {
+    throw new HttpsError('permission-denied', accessDeniedReason(accessLevelOf(userSnap.data())));
+  }
   const strategy = userSnap.get('settings.strategy') as Strategy | undefined;
   if (!strategy) throw new HttpsError('failed-precondition', 'Profil fehlt — ensureProfile zuerst aufrufen');
 

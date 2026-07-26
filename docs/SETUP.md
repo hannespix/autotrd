@@ -375,3 +375,45 @@ und zeigen den Ziel-Link im Klartext, statt ihn hinter Text zu verstecken.
 Nach der Umstellung eine Testregistrierung an eine Gmail- **und** eine
 Outlook-Adresse. Landet sie im Posteingang und zeigt Gmail unter „Original
 anzeigen" bei SPF, DKIM und DMARC jeweils `PASS`, ist alles richtig gesetzt.
+
+## N. Scan als Edge Function betreiben (Migration MS3)
+
+Der Marktdaten-Scan läuft als Supabase Edge Function (`supabase/functions/scan`).
+Er benutzt dieselbe Rechenlogik wie bisher — Indikatoren, Konfluenz und
+Katalog kommen unverändert aus `shared/` und laufen in Deno, weil sie keine
+Node-Bibliotheken benutzen.
+
+### Einmal einrichten
+
+1. **Zugriffs-Token** erzeugen: [supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens)
+   → als GitHub-Secret `SUPABASE_ACCESS_TOKEN` hinterlegen.
+2. **Funktion veröffentlichen** (lokal oder über den Workflow):
+
+   ```bash
+   node scripts-ci/build-edge-shared.mjs        # leitet _shared/ ab
+   npx supabase functions deploy scan --project-ref zofhylhgohxqtfostmlw
+   ```
+
+3. **Alle 5 Minuten aufrufen** — einmalig im SQL-Editor ausführen und dabei
+   `DEIN-SECRET-KEY` einsetzen (der Schlüssel steht dann in der Datenbank,
+   nicht im Repo):
+
+   ```sql
+   create extension if not exists pg_cron;
+   create extension if not exists pg_net;
+
+   select cron.schedule('autotrd-scan', '*/5 * * * *', $$
+     select net.http_post(
+       url     := 'https://zofhylhgohxqtfostmlw.supabase.co/functions/v1/scan',
+       headers := '{"Authorization": "Bearer DEIN-SECRET-KEY", "Content-Type": "application/json"}'::jsonb
+     );
+   $$);
+   ```
+
+   Prüfen: `select * from cron.job;` · Verlauf: `select * from cron.job_run_details order by start_time desc limit 5;`
+
+### Abnahme
+
+`select value from public.meta where key = 'health';` zeigt `lastRunAt`,
+`symbolsOk` und `source: 'supabase-edge'`. Wächst `lastRunAt` alle fünf
+Minuten, läuft der Scan.

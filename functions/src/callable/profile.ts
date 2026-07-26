@@ -26,6 +26,13 @@ export const ensureProfile = onCall(CALLABLE_OPTS, async (request) => {
 
   const now = new Date().toISOString();
   await ref.set({
+    // Zugangsstufe (Owner-Auftrag 26.07.): NEUE Konten starten auf 'pending'
+    // und dürfen ansehen, aber nicht handeln. Das Feld liegt bewusst außerhalb
+    // von `settings` — dort erlauben die Rules Client-Updates, hier nicht.
+    // Bestandskonten ohne das Feld gelten weiter als freigeschaltet
+    // (core/access.ts), damit diese Änderung niemanden aussperrt.
+    accessLevel: 'pending',
+    requestedAt: now,
     profile: {
       createdAt: now,
       plan: 'free',
