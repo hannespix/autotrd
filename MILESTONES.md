@@ -933,6 +933,13 @@ und KI-Erklärung, gekoppelt an ein automatisches Journal.
 - [ ] Portfolio-Tab: Equity-Kurve + synchronisiertes Drawdown-Panel,
       Wallet-Vergleich normalisiert auf 100; Reports Stufe 0 (Template) +
       Stufe 1 (Haiku-Batch, nur aktive User) via Push/E-Mail, opt-in
+      **(26.07. Teil 2: Kennzahlen-Block in der Performance-Karte)**:
+      Equity-Sparkline (Inline-SVG, keine zweite Chart-Instanz) + Sharpe
+      30/90, Max-Drawdown, Hochwasser-Marke, Profit-Faktor und Erwartung je
+      Trade — alle mit ⓘ-Erklärung. Quelle ist ausschließlich das
+      Stats-Doc des Snapshot-Laufs (das UI aggregiert bewusst NICHTS
+      selbst, sonst laufen Live-Ansicht und Kennzahlen auseinander).
+      Ehrlichkeits-Hinweis bleibt sichtbar, bis eine Woche Kurve vorliegt.
 
 **Abnahme:** Simulierter −3 %-Tag trippt den Breaker, neuer Entry wird im
 selben Scan geblockt, Grund erscheint im Signal-Feed · Journal-Update mit

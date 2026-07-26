@@ -63,6 +63,8 @@ import {
   watchPositions,
   watchTrades,
   watchUserDoc,
+  watchPortfolioStats,
+  watchEquitySeries,
   type AiDayDoc,
   type EvaluatedForecastRow,
   type EventDay,
@@ -73,6 +75,8 @@ import {
   type TradeRow,
   type UniverseClass,
   type WorkspaceDocData,
+  type PortfolioStatsDoc,
+  type EquitySeriesPoint,
 } from './data.js';
 import { emailVerified, logout, refreshUser, sendVerification } from './auth.js';
 import { iBtn, initInfoTips } from './infotips.js';
@@ -253,6 +257,9 @@ interface DashState {
   lastMainMarkers?: number;
   /** Live-Preise der Positions-Symbole (aus market/{sym}.quote). */
   posPrices: Map<string, number>;
+  /** Portfolio-Kennzahlen (M12): schreibt der tägliche snapshotEquity-Lauf. */
+  pfStats: PortfolioStatsDoc | null;
+  equitySeries: EquitySeriesPoint[];
   subs: Unsubscribe[]; // globale Subs (Settings, Wallet, Positionen, Trades)
   symbolSubs: Unsubscribe[]; // pro Chart-Symbol
   watchlistSubs: Unsubscribe[]; // pro Watchlist (Livebar + Tabelle)
@@ -622,6 +629,17 @@ function layout(email: string): string {
           <div><label class="lbl">Offen</label><div id="vUnreal" class="smv">--</div></div>
           <div><label class="lbl">Win Rate</label><div id="vWR" class="smv">--%</div></div>
         </div>
+        <label class="lbl" style="margin-top:10px">Equity-Kurve ${iBtn('equityCurve')}</label>
+        <svg id="pfSpark" class="pf-spark" viewBox="0 0 100 26" preserveAspectRatio="none" aria-hidden="true"></svg>
+        <div class="pf-grid" id="pfGrid" hidden>
+          <div><label class="lbl">Sharpe 30 ${iBtn('sharpe')}</label><div id="pfS30" class="smv mono">--</div></div>
+          <div><label class="lbl">Sharpe 90</label><div id="pfS90" class="smv mono">--</div></div>
+          <div><label class="lbl">Max-Drawdown ${iBtn('maxdd')}</label><div id="pfDD" class="smv mono">--</div></div>
+          <div><label class="lbl">Hochwasser ${iBtn('hwm')}</label><div id="pfHwm" class="smv mono">--</div></div>
+          <div><label class="lbl">Profit-Faktor ${iBtn('profitFactor')}</label><div id="pfPF" class="smv mono">--</div></div>
+          <div><label class="lbl">Erwartung/Trade ${iBtn('expectancy')}</label><div id="pfExp" class="smv mono">--</div></div>
+        </div>
+        <div class="hint" id="pfHint">Kennzahlen entstehen ab dem ersten Tages-Snapshot (täglich 23:15).</div>
       </div></div>
 
       <div class="card" data-panel="manualtrade"><div class="sect">Manueller Trade</div><div class="cbody">
@@ -3743,6 +3761,68 @@ function renderPortfolio(): void {
   }
 }
 
+/* ── Portfolio-Kennzahlen (M12): Stats-Doc + Equity-Sparkline ──────────────
+   Datenquelle ist ausschließlich der tägliche snapshotEquity-Lauf (Server) —
+   das UI aggregiert hier bewusst NICHTS selbst, damit Live-Ansicht und
+   Kennzahlen nie auseinanderlaufen. Sparkline als Inline-SVG (keine
+   Chart-Lib-Instanz für 120 Punkte, kein position:fixed in Glass-Cards). */
+function renderPfStats(): void {
+  if (!st) return;
+  const s = st.pfStats;
+  const serie = st.equitySeries;
+  const grid = $('pfGrid');
+  const hint = $('pfHint');
+  const spark = $('pfSpark') as unknown as SVGSVGElement;
+
+  // Sparkline: Fläche + Linie; Färbung nach Gesamtrichtung der Serie
+  spark.innerHTML = '';
+  if (serie.length >= 2) {
+    const eq = serie.map((p) => p.equity);
+    const min = Math.min(...eq);
+    const max = Math.max(...eq);
+    const span = max - min || 1;
+    const pts = eq.map((v, i) => {
+      const x = (i / (eq.length - 1)) * 100;
+      const y = 24 - ((v - min) / span) * 22; // 2px Luft oben/unten
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    });
+    const up = eq[eq.length - 1]! >= eq[0]!;
+    const color = up ? 'var(--gn)' : 'var(--rd)';
+    spark.innerHTML =
+      `<polygon points="0,26 ${pts.join(' ')} 100,26" fill="${up ? 'var(--gn-soft, rgba(52,199,123,.18))' : 'var(--rd-soft, rgba(255,95,95,.18))'}"></polygon>` +
+      `<polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.4" vector-effect="non-scaling-stroke"></polyline>`;
+    spark.removeAttribute('hidden');
+  } else {
+    spark.setAttribute('hidden', '');
+  }
+
+  if (!s || s.equityDays === 0) {
+    grid.hidden = true;
+    hint.hidden = false;
+    return;
+  }
+  grid.hidden = false;
+  const days = s.equityDays;
+  // Ehrlichkeit vor Optik: mit wenigen Snapshot-Tagen sind Sharpe & Co. noch
+  // Rauschen — der Hinweis bleibt sichtbar, bis eine Woche Kurve da ist.
+  hint.hidden = days >= 7;
+  if (!hint.hidden) {
+    hint.textContent = `Erst ${days} Snapshot-Tag${days === 1 ? '' : 'e'} — Kennzahlen werden mit jeder weiteren Kurve aussagekräftiger (täglich 23:15).`;
+  }
+  const num = (v: number | null | undefined, digits = 2, suffix = ''): string =>
+    v === null || v === undefined ? '--' : `${v.toFixed(digits)}${suffix}`;
+  $('pfS30').textContent = num(s.sharpe30);
+  $('pfS90').textContent = num(s.sharpe90);
+  const dd = $('pfDD');
+  dd.textContent = num(s.maxDDPct, 2, ' %');
+  dd.className = `smv mono ${s.maxDDPct !== null && s.maxDDPct > 0 ? 'c-rd' : ''}`;
+  $('pfHwm').textContent = s.hwm === null ? '--' : money(s.hwm);
+  $('pfPF').textContent = num(s.profitFactor);
+  const exp = $('pfExp');
+  exp.textContent = s.expectancy === null ? '--' : money(s.expectancy);
+  exp.className = `smv mono ${s.expectancy !== null ? pnlClass(s.expectancy) : ''}`;
+}
+
 async function manualTrade(symbol: string, side: 'buy' | 'sell'): Promise<void> {
   const hint = $('mtHint');
   hint.textContent = 'Sende Order…';
@@ -4016,6 +4096,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     showForecast: true,
     showEvents: true,
     posPrices: new Map(),
+    pfStats: null,
+    equitySeries: [],
     subs: [],
     symbolSubs: [],
     watchlistSubs: [],
@@ -4071,6 +4153,16 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       if (!st) return;
       st.trades = trades;
       renderPortfolio();
+    }),
+    watchPortfolioStats(uid, (stats) => {
+      if (!st) return;
+      st.pfStats = stats;
+      renderPfStats();
+    }),
+    watchEquitySeries(uid, (points) => {
+      if (!st) return;
+      st.equitySeries = points;
+      renderPfStats();
     }),
     watchForecastStats((stats) => {
       $('fcAcc').textContent =
