@@ -114,12 +114,22 @@ export function decideTree(spec: StrategySpec, ctx: RuleContext): SignalDirectio
 }
 
 /* ── Shadow-Konto (M11): pure Buchführung des virtuellen Kontos ──────────────
-   Kauf-Sizing wie der Paper-Broker (maxPositionPct der Balance, ganze Stücke),
-   Verkauf stellt die Position komplett glatt. Kein echtes Wallet involviert. */
+   Kauf-Sizing wie der Paper-Broker (Duell-Parität: gleiche Sizing-Basis,
+   gleiche Gebühren, ganze Stücke), Verkauf stellt die Position komplett
+   glatt. Kein echtes Wallet involviert. */
+
+export interface ShadowPosition {
+  qty: number;
+  avgEntry: number;
+  /** Höchstkurs seit Einstieg — Basis des nachziehenden Stops (MA4-Parität). */
+  highWater?: number;
+  /** ISO-Einstiegszeit — Basis der Zeitgrenze maxHoldDays (MA4-Parität). */
+  openedAt?: string;
+}
 
 export interface ShadowBook {
   balance: number;
-  positions: Record<string, { qty: number; avgEntry: number }>;
+  positions: Record<string, ShadowPosition>;
 }
 
 export function shadowTrade(
@@ -128,15 +138,36 @@ export function shadowTrade(
   side: 'buy' | 'sell',
   price: number,
   maxPositionPct: number,
+  opts?: {
+    /**
+     * Sizing-Basis des Kaufs (MA4-Duell-Parität zu broker.sizingBase):
+     * ohne Angabe der verfügbare Shadow-Cash ('balance'-Verhalten); mit
+     * Angabe z. B. das Startkapital ('initial'). Die DECKUNG prüft immer
+     * der Shadow-Cash — wie beim echten Broker ('zu_wenig_cash').
+     */
+    capital?: number;
+    /** Einstiegszeit für maxHoldDays (Default: nicht gesetzt). */
+    now?: Date;
+    /** Krypto handelt in Bruchteilen (µ-Einheiten) — Parität zu sizeOrder. */
+    fractional?: boolean;
+  },
 ): { book: ShadowBook; executed: boolean } {
   const positions = { ...book.positions };
   // Gleiche Ausführungskosten wie das echte Paper-Buch (Duell-Parität)
   const eff = Math.round(paperEffectivePrice(price, side) * 10_000) / 10_000;
   if (side === 'buy') {
     if (positions[symbol]) return { book, executed: false }; // nie nachkaufen
-    const qty = Math.floor((book.balance * (maxPositionPct / 100)) / eff);
-    if (qty <= 0) return { book, executed: false };
-    positions[symbol] = { qty, avgEntry: eff };
+    const capital = Math.max(0, opts?.capital ?? book.balance);
+    const raw = (capital * (maxPositionPct / 100)) / eff;
+    const qty = opts?.fractional ? Math.floor(raw * 1e6) / 1e6 : Math.floor(raw);
+    if (qty < (opts?.fractional ? 1e-6 : 1)) return { book, executed: false };
+    if (qty * eff > book.balance) return { book, executed: false }; // Deckung wie beim Broker
+    positions[symbol] = {
+      qty,
+      avgEntry: eff,
+      highWater: eff,
+      ...(opts?.now ? { openedAt: opts.now.toISOString() } : {}),
+    };
     return { book: { balance: book.balance - qty * eff, positions }, executed: true };
   }
   const pos = positions[symbol];

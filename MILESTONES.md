@@ -770,13 +770,34 @@ Reihenfolge = Geldfluss: erst wo Geld bewegt wird, dann wie entschieden wird.
       Symmetrie buy/sell, Forecast-Vote-Faktor inkl. accuracyWeighted-
       Clamps, Prediction-Vote), Indikator-Randfälle (kurze Historie, NaN,
       flache Serien) — Property-Tests + Golden-Parity gegen reference/
-- [ ] MA3 Scan-Orchestrierung: executeUserTrades-Ablauf (Risk-Exits VOR
-      Signalen, strategyOwned-Exklusivität, Marktzeiten-Gates je Klasse,
-      Scan-Set-Vollständigkeit, Fehler-Isolation je User, Doppel-Scan-/
-      Reentry-Sicherheit, lastDirs-Signalwechsel-Semantik)
-- [ ] MA4 Regelbaum + Shadow: evaluate()-Grenzen, Compiler-Parity,
-      shadowTrade-Duell-Fairness (identische Gebühren/Preise), Beförderungs-
-      Atomarität, lastTrades-Cooldowns
+- [x] MA3 Scan-Orchestrierung **(26.07. auditiert, 4 Funde gefixt)**:
+      Reihenfolge (Risk-Exits VOR Signalen), strategyOwned, Marktzeiten-
+      Gates, Scan-Set (Positionen vor Watchlists), Fehler-Isolation und
+      Reentry (transaktionaler Broker) waren korrekt. Funde:
+      a) **assetClass fehlte bei allen Engine-/Manuell-Käufen** — die
+         MA6-Klassen-Profile landeten nie in den festgeschriebenen
+         Stop/Take-Leveln (Level haben Vorrang, MA1) → jetzt `classify()`
+         an jedem executePaperTrade; E2E beweist 6 %/10 % bei BTC.
+      b) **Rückkauf-Schleife nach Risk-Exit**: Stop-Loss verkaufte, RSI/
+         Bollinger („überverkauft = kaufen") kauften im selben Scan zurück
+         → `engineCooldowns` am User-Doc (30 min, server-only, Aufräumung
+         nach 1 Tag), geprüft in Classic- UND Regelbaum-Entries.
+      c) **Positionslimit galt nur im Regelbaum-Pfad** — der Konfluenz-Pfad
+         konnte > maxOpenPositions öffnen → Guard ergänzt.
+      d) **Krypto war mit ganzen Stücken praktisch unkaufbar** (BTC ~64 000 $
+         vs. 2 500-$-Tranche → floor = 0, stiller `qty_unter_1`) →
+         Bruchstück-Sizing (µ-Einheiten) für die Krypto-Klasse in
+         sizeOrder + shadowTrade.
+- [x] MA4 Regelbaum + Shadow **(26.07. auditiert, 3 Funde gefixt)**:
+      decideTree/evaluate/Compiler-Parity und planPromotion waren korrekt.
+      Funde (alle Duell-Fairness): Das Shadow-Buch kannte **keine
+      Risk-Exits** (kein Stop/Trailing/Zeitgrenze — Kennzahlen-Duell und
+      „Befördern" verglichen Äpfel mit Birnen) → highWater je Scan +
+      riskExitReason mit denselben geklammerten Parametern + ATR, Exit als
+      shadowSignal mit riskExit-Grund; **Sizing-Basis** folgt jetzt
+      broker.sizingBase (Cash/Startkapital) inkl. Cash-Deckung; **Shadow
+      schrieb nie lastTrades** — der Entry-Cooldown war wirkungslos →
+      Stempel bei jedem Shadow-Trade.
 - [x] MA5 End-to-End-Beweis **(26.07., 12/12 grün)**: `e2e-engine.mjs` legt
       echte User-Dokumente an, ruft `scanNow` (denselben Pfad wie der
       Scheduler) und prüft Positionen/Trades in Firestore — Stop-Loss,

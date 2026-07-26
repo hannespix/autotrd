@@ -153,6 +153,23 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
       const clamped = clampStrategyRisk(strategy);
       const now = new Date();
 
+      // Entry-Cooldown nach Risk-Exits (MA3-Fund 26.07.): Ohne ihn kauft die
+      // Konfluenz ein per Stop-Loss verkauftes Symbol im selben/nächsten Scan
+      // sofort zurück — Stop-Loss feuert in fallenden Märkten, in denen RSI/
+      // Bollinger „überverkauft = kaufen" rufen (Whipsaw); nach Take-Profit
+      // wäre es eine Gebühren-Schleife. Persistiert am User-Doc, damit der
+      // Cooldown Scans überlebt; Einträge > 1 Tag werden weggeräumt.
+      const engineCooldowns: Record<string, string> = {
+        ...((userDoc.get('engineCooldowns') as Record<string, string> | undefined) ?? {}),
+      };
+      let cooldownsChanged = false;
+      for (const [sym, at] of Object.entries(engineCooldowns)) {
+        if (!Number.isFinite(Date.parse(at)) || now.getTime() - Date.parse(at) > 86_400_000) {
+          delete engineCooldowns[sym];
+          cooldownsChanged = true;
+        }
+      }
+
       // 1) Risiko-Exits zuerst (Port von _check_risk — vor neuen Signalen).
       // Seit MA2/MA6: klassen-aufgelöste Parameter, ATR-Option, nachziehender
       // Stop (dafür wird highWater bei jedem Scan fortgeschrieben) und
@@ -184,6 +201,8 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
           if (r.executed) {
             executed += 1;
             positions.delete(symbol);
+            engineCooldowns[symbol] = now.toISOString();
+            cooldownsChanged = true;
             logger.info(`Risk-Exit ${uid} ${symbol} (${reason})`);
           }
         }
@@ -263,20 +282,76 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
               }
             }
             if (book) {
+              // Duell-Fairness (MA4-Fund 26.07.): Das Shadow-Buch lebt unter
+              // DENSELBEN Risiko-Regeln wie das echte Paper-Konto — vorher
+              // kannte es weder Stop/Trailing/Zeitgrenze noch die Sizing-
+              // Basis; Kennzahlen-Duell und „Befördern" verglichen Äpfel mit
+              // Birnen. highWater wird wie beim echten Konto je Scan
+              // fortgeschrieben, dann prüfen dieselben riskExitReason-Regeln.
+              const sPos = book.positions[symbol];
+              if (sPos) {
+                const peak = Math.max(sPos.highWater ?? sPos.avgEntry, data.price);
+                if (peak > (sPos.highWater ?? 0) + 1e-9) {
+                  book.positions[symbol] = { ...sPos, highWater: peak };
+                  bookChanged = true;
+                }
+                const cls = classify(symbol);
+                const reason = riskExitReason(
+                  {
+                    symbol,
+                    qty: sPos.qty,
+                    avgEntry: sPos.avgEntry,
+                    stopLoss: null,
+                    takeProfit: null,
+                    openedAt: sPos.openedAt ?? now.toISOString(),
+                    highWater: Math.max(sPos.highWater ?? sPos.avgEntry, data.price),
+                  },
+                  data.price,
+                  { risk: resolveRisk(clamped.engine, cls), atrPct: data.atrPct, now },
+                );
+                if (reason) {
+                  const r = shadowTrade(book, symbol, 'sell', data.price, clamped.engine.maxPositionPct);
+                  if (r.executed) {
+                    book = r.book;
+                    bookChanged = true;
+                    await ref.set({ lastTrades: { [symbol]: now.toISOString() } }, { merge: true });
+                    await ref
+                      .collection('shadowSignals')
+                      .doc(`${now.toISOString().slice(0, 16)}Z_${symbol}_risk`)
+                      .set({ symbol, direction: 'sell', riskExit: reason, price: data.price, at: now.toISOString() });
+                    continue; // Position ist zu — Baum-Entscheidung dieses Scans ist erledigt
+                  }
+                }
+              }
               // Virtuelles Konto — Risiko-Hülle wie beim echten Handel
               if (dir === 'buy' && !book.positions[symbol]) {
                 if (Object.keys(book.positions).length >= RISK_LIMITS.maxOpenPositions) continue;
                 if (cooldownActive(doc.lastTrades?.[symbol], now)) continue;
-                const r = shadowTrade(book, symbol, 'buy', data.price, clamped.engine.maxPositionPct);
+                // Sizing-Parität (MA4): gleiche Basis wie der echte Broker —
+                // Cash (Default) oder Startkapital, Deckung prüft der Cash.
+                const capital =
+                  (clamped.broker.sizingBase ?? 'balance') === 'initial'
+                    ? clamped.broker.initialCapital
+                    : book.balance;
+                const r = shadowTrade(book, symbol, 'buy', data.price, clamped.engine.maxPositionPct, {
+                  capital,
+                  now,
+                  fractional: classify(symbol) === 'crypto',
+                });
                 if (r.executed) {
                   book = r.book;
                   bookChanged = true;
+                  // Cooldown-Parität: Auch Shadow-Entries stempeln lastTrades —
+                  // vorher schrieb nur der Paper-Pfad und der Shadow-Cooldown
+                  // war wirkungslos (Shadow durfte im 5-min-Takt handeln).
+                  await ref.set({ lastTrades: { [symbol]: now.toISOString() } }, { merge: true });
                 }
               } else if (dir === 'sell' && book.positions[symbol]) {
                 const r = shadowTrade(book, symbol, 'sell', data.price, clamped.engine.maxPositionPct);
                 if (r.executed) {
                   book = r.book;
                   bookChanged = true;
+                  await ref.set({ lastTrades: { [symbol]: now.toISOString() } }, { merge: true });
                 }
               }
             }
@@ -284,11 +359,17 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
           }
 
           if (dir === 'buy' && !pos) {
-            // Entry-Guards der Risiko-Hülle: Positionslimit + Cooldown
+            // Entry-Guards der Risiko-Hülle: Positionslimit + Cooldowns
+            // (je Strategie UND nach Risk-Exits desselben Wallets)
             if (positions.size >= RISK_LIMITS.maxOpenPositions) continue;
             if (cooldownActive(doc.lastTrades?.[symbol], now)) continue;
+            if (cooldownActive(engineCooldowns[symbol], now)) continue;
+            // assetClass durchreichen (MA3-Fund 26.07.): Ohne sie schrieb der
+            // Broker die Stop/Take-LEVEL mit den GLOBALEN Prozenten fest —
+            // die MA6-Klassen-Profile (Krypto 6/10 usw.) griffen beim Kauf
+            // nie, und gespeicherte Level haben bewusst Vorrang (MA1).
             const r = await executePaperTrade(
-              { uid, symbol, side: 'buy', price: data.price, source: 'engine' },
+              { uid, symbol, side: 'buy', price: data.price, source: 'engine', assetClass: classify(symbol) },
               clamped,
             );
             if (r.executed) {
@@ -297,7 +378,7 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
               positions.set(symbol, {
                 symbol,
                 qty: r.trade?.qty ?? 0,
-                avgEntry: data.price,
+                avgEntry: r.trade?.price ?? data.price,
                 stopLoss: null,
                 takeProfit: null,
                 openedAt: now.toISOString(),
@@ -308,7 +389,7 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
           } else if (dir === 'sell' && pos) {
             // Exits blockt der Cooldown NIE (Sicherheitsprinzip)
             const r = await executePaperTrade(
-              { uid, symbol, side: 'sell', price: data.price, source: 'engine' },
+              { uid, symbol, side: 'sell', price: data.price, source: 'engine', assetClass: classify(symbol) },
               clamped,
             );
             if (r.executed) {
@@ -366,8 +447,14 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
         // Ausführung IMMER mit der geklammerten Strategie (Audit 26.07.):
         // Positionsgröße und Stop-Level kommen aus der Risiko-Hülle.
         if (direction === 'buy' && !positions.has(symbol)) {
+          // Entry-Guards auch im Classic-Pfad (MA3-Fund 26.07.): Das
+          // Positionslimit galt vorher nur für Regelbaum-Käufe — die
+          // Konfluenz konnte beliebig viele Positionen öffnen. Und nach
+          // einem Risk-Exit hält der Cooldown den Sofort-Rückkauf auf.
+          if (positions.size >= RISK_LIMITS.maxOpenPositions) continue;
+          if (cooldownActive(engineCooldowns[symbol], now)) continue;
           const r = await executePaperTrade(
-            { uid, symbol, side: 'buy', price: data.price, source: 'engine' },
+            { uid, symbol, side: 'buy', price: data.price, source: 'engine', assetClass: classify(symbol) },
             clamped,
           );
           if (r.executed) {
@@ -388,7 +475,7 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
           }
         } else if (direction === 'sell' && positions.has(symbol)) {
           const r = await executePaperTrade(
-            { uid, symbol, side: 'sell', price: data.price, source: 'engine' },
+            { uid, symbol, side: 'sell', price: data.price, source: 'engine', assetClass: classify(symbol) },
             clamped,
           );
           if (r.executed) {
@@ -397,6 +484,14 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
             logger.info(`Engine-Sell ${uid} ${symbol} @ ${data.price}`);
           }
         }
+      }
+
+      // Risk-Exit-Cooldowns persistieren (ein Write je User und Scan, nur
+      // bei Änderung). update() ersetzt GENAU dieses Feld durch die
+      // bereinigte Map — set/merge würde weggeräumte Einträge liegen lassen,
+      // set ohne merge das ganze User-Doc (Wallet!) plattmachen.
+      if (cooldownsChanged) {
+        await userDoc.ref.update({ engineCooldowns }).catch(() => undefined);
       }
     } catch (err) {
       logger.error(`Auto-Trading-Fehler für ${uid}`, err);
