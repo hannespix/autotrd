@@ -4265,11 +4265,27 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   // oder Vergleichs-Chart lädt dessen News (Raster-Panels analog in renderGrid)
   $('chartWrap').addEventListener('pointerdown', () => focusNews(st?.currentSymbol ?? ''), true);
   $('chart2Area').addEventListener('pointerdown', () => focusNews(st?.chart2Symbol ?? ''), true);
+  // News-Overlay schließt bei Klick/Tipp irgendwo anders SOFORT (User-
+  // Feedback 26.07.) — nicht erst nach dem 4-s-Touch-Nachlauf
+  document.addEventListener('pointerdown', onGlobalTipClose, true);
   document.addEventListener('keydown', onEscape);
+}
+
+/** Klick/Tipp außerhalb des News-Overlays schließt es sofort (26.07.). */
+function onGlobalTipClose(e: PointerEvent): void {
+  const tip = document.getElementById('evTip');
+  if (!tip || tip.hidden || tip.contains(e.target as Node)) return;
+  tip.hidden = true;
+  evTipOwner = null;
+  if (evTipTimer !== null) {
+    window.clearTimeout(evTipTimer);
+    evTipTimer = null;
+  }
 }
 
 function onEscape(e: KeyboardEvent): void {
   if (e.key !== 'Escape') return;
+  $('evTip').hidden = true;
   closeModal('detail');
   closeModal('picker');
   closeModal('options');
@@ -4301,5 +4317,6 @@ export function unmountDashboard(): void {
   st.chart2?.destroy();
   document.removeEventListener('keydown', onEscape);
   document.removeEventListener('keydown', onGlobalHotkey);
+  document.removeEventListener('pointerdown', onGlobalTipClose, true);
   st = null;
 }
