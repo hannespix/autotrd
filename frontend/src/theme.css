@@ -655,6 +655,17 @@ button, input, select { font-family: inherit; font-size: inherit; }
   /* Mobil: feste, platzsparende Höhe — der Zieh-Griff ist hier ausgeblendet */
   #chartArea, .gp-chart { height: 280px; }
 }
+/* „Jetzt ⇥"-Chip: zurück zur Gegenwart, wenn der jüngste Bar rechts
+   außerhalb liegt — absolut im chartWrap (kein fixed, backdrop-Falle) */
+.jump-now {
+  position: absolute; right: 76px; bottom: 34px; z-index: 6;
+  border: 1px solid var(--bd2); border-radius: 999px; padding: 4px 12px;
+  background: var(--sd); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  color: var(--ac); font-size: 11px; font-weight: 700; cursor: pointer;
+  box-shadow: 0 4px 16px -6px rgba(0, 0, 0, .5);
+}
+.jump-now:hover { border-color: var(--ac); }
+
 /* Zieh-Griff: Chart-Höhe für ALLE Fenster gemeinsam skalieren (26.07.) */
 .chart-h-drag {
   height: 10px; margin-top: 2px; border-radius: 5px; cursor: ns-resize;
