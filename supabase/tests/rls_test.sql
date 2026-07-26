@@ -11,9 +11,13 @@ insert into auth.users (id, email) values
   ('11111111-1111-1111-1111-111111111111', 'a@test.de'),
   ('22222222-2222-2222-2222-222222222222', 'b@test.de');
 
+-- Die Profile legt seit 0006 der Trigger auf auth.users automatisch an
+-- (Stufe 'pending') — das ensureProfile-Callable wird damit überflüssig.
+-- Deshalb hier nur absichern, falls die Migration mal fehlt.
 insert into public.profiles (id, email) values
   ('11111111-1111-1111-1111-111111111111', 'a@test.de'),
-  ('22222222-2222-2222-2222-222222222222', 'b@test.de');
+  ('22222222-2222-2222-2222-222222222222', 'b@test.de')
+  on conflict (id) do nothing;
 
 insert into public.wallets (id, user_id, balance) values
   ('aaaaaaaa-0000-0000-0000-000000000001', '11111111-1111-1111-1111-111111111111', 25000),
@@ -21,6 +25,11 @@ insert into public.wallets (id, user_id, balance) values
 
 insert into public.market_symbols (symbol, name, asset_class, quote_price)
   values ('QQQ', 'Invesco QQQ', 'etf_sectors', 684.23);
+
+-- Nutzer A ist für die Handels-Tests freigeschaltet; B bleibt bewusst
+-- 'pending', damit die Sperre weiter unten (Fall 16) prüfbar ist.
+update public.profiles set access_level = 'approved'
+  where id = '11111111-1111-1111-1111-111111111111';
 
 insert into public.trades (wallet_id, user_id, symbol, side, qty, price, source)
   values ('aaaaaaaa-0000-0000-0000-000000000001',
@@ -252,6 +261,123 @@ begin
   exception when check_violation then
     raise notice 'OK 15: Auch die service_role kann kein Konto ins Minus schreiben';
   end;
+end;
+$$;
+reset role;
+
+-- ══ Zugangsstufen (Owner-Auftrag 26.07.) ═════════════════════════════════
+-- Nutzer A wird freigeschaltet, B bleibt auf 'pending' — so lassen sich
+-- beide Seiten prüfen.
+reset role;
+-- ── 16) Nicht freigeschaltet ⇒ kein Trade, egal wer schreibt ─────────────
+-- Der Trigger sitzt bewusst NICHT in einer Policy: service_role umgeht
+-- Policies, und genau der Server soll hier ebenfalls gestoppt werden.
+set role service_role;
+do $$
+begin
+  begin
+    insert into public.trades (wallet_id, user_id, symbol, side, qty, price, source)
+      values ('bbbbbbbb-0000-0000-0000-000000000002',
+              '22222222-2222-2222-2222-222222222222', 'QQQ', 'buy', 1, 684.23, 'engine');
+    raise exception 'FAIL 16: Trade für nicht freigeschaltetes Konto ging durch';
+  exception when insufficient_privilege then
+    raise notice 'OK 16: Ohne Freischaltung entsteht kein Trade — auch nicht serverseitig';
+  end;
+end;
+$$;
+
+-- ── 17) Freigeschaltet ⇒ Handel läuft ───────────────────────────────────
+do $$
+begin
+  insert into public.trades (wallet_id, user_id, symbol, side, qty, price, source)
+    values ('aaaaaaaa-0000-0000-0000-000000000001',
+            '11111111-1111-1111-1111-111111111111', 'QQQ', 'buy', 1, 684.23, 'engine');
+  raise notice 'OK 17: Freigeschaltetes Konto handelt normal';
+end;
+$$;
+reset role;
+
+-- ── 18) Niemand schaltet sich selbst frei ───────────────────────────────
+-- Der gefährlichste Fall: profiles_update_own erlaubt Updates auf der
+-- eigenen Zeile (Strategie-Formular). Ohne den Trigger wäre die eigene
+-- Freischaltung ein Einzeiler in der Browser-Konsole.
+set role authenticated;
+set request.jwt.claim.sub = '22222222-2222-2222-2222-222222222222';
+set request.jwt.claim.role = 'authenticated';
+do $$
+begin
+  begin
+    update public.profiles set access_level = 'approved'
+      where id = '22222222-2222-2222-2222-222222222222';
+    raise exception 'FAIL 18: Nutzer konnte sich selbst freischalten';
+  exception when insufficient_privilege then
+    raise notice 'OK 18: Selbst-Freischaltung wird abgewiesen';
+  end;
+end;
+$$;
+
+-- ── 19) … und macht sich auch nicht selbst zum Admin ────────────────────
+do $$
+begin
+  begin
+    update public.profiles set role = 'admin'
+      where id = '22222222-2222-2222-2222-222222222222';
+    raise exception 'FAIL 19: Nutzer konnte sich selbst zum Admin machen';
+  exception when insufficient_privilege then
+    raise notice 'OK 19: Selbst-Ernennung zum Admin wird abgewiesen';
+  end;
+end;
+$$;
+
+-- ── 20) Einstellungen bleiben trotzdem änderbar ─────────────────────────
+-- Der Riegel darf das Strategie-Formular nicht mit blockieren.
+do $$
+declare n integer;
+begin
+  update public.profiles set settings = '{"strategy":{"watchlist":["AAPL"]}}'::jsonb
+    where id = '22222222-2222-2222-2222-222222222222';
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'FAIL 20: Einstellungen nicht mehr änderbar (% Zeilen)', n; end if;
+  raise notice 'OK 20: Eigene Einstellungen bleiben änderbar';
+end;
+$$;
+
+-- ── 21) Normaler Nutzer sieht keine fremden Profile ──────────────────────
+do $$
+declare n integer;
+begin
+  select count(*) into n from public.profiles;
+  if n <> 1 then raise exception 'FAIL 21: Normaler Nutzer sieht % Profile statt 1', n; end if;
+  raise notice 'OK 21: Ohne Admin-Rolle bleibt die Nutzerliste verborgen';
+end;
+$$;
+
+-- ── 22) Admin sieht alle Profile und schaltet frei ───────────────────────
+reset role;
+update public.profiles set role = 'admin'
+  where id = '11111111-1111-1111-1111-111111111111';
+set role authenticated;
+set request.jwt.claim.sub = '11111111-1111-1111-1111-111111111111';
+do $$
+declare n integer;
+begin
+  select count(*) into n from public.profiles;
+  if n < 2 then raise exception 'FAIL 22: Admin sieht nur % Profile', n; end if;
+  update public.profiles set access_level = 'approved', approved_at = now()
+    where id = '22222222-2222-2222-2222-222222222222';
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'FAIL 22b: Admin konnte nicht freischalten'; end if;
+  raise notice 'OK 22: Admin sieht alle Profile und schaltet frei';
+end;
+$$;
+
+-- ── 23) Die Anfrage-Liste zeigt genau die Offenen ────────────────────────
+do $$
+declare n integer;
+begin
+  select count(*) into n from public.access_requests;
+  if n <> 0 then raise exception 'FAIL 23: % offene Anfragen, erwartet 0 nach Freischaltung', n; end if;
+  raise notice 'OK 23: Freigeschaltete verschwinden aus der Anfrage-Liste';
 end;
 $$;
 reset role;
