@@ -58,6 +58,43 @@ jobs:
             fi
           done
 
+      # HAUPTWEG seit 26.07.: SFTP über SSH (Port 22). Port 21 (FTPS) ist von
+      # webgo dauerhaft für die GitHub-Runner gesperrt (Timeout = DROP), SSH
+      # dagegen läuft. Zwei Lehren aus dem Diagnose-Lauf:
+      #   a) Zielpfad ist www/<domain>/ — die SFTP-Wurzel ist das SSH-Home,
+      #      NICHT die FTP-Wurzel ('autotrd.net/' landete auf /home/autotrd.net).
+      #   b) webgo drosselt neue SSH-Verbindungen: Jedes eigene `lftp -c` baut
+      #      eine NEUE Verbindung auf, ab der zweiten kam nur noch
+      #      „max-retries exceeded". Deshalb läuft ALLES in EINER Session.
+      - name: SFTP-Upload zu webgo (Port 22)
+        id: sftp
+        if: env.FTP_HOST != ''
+        continue-on-error: true
+        env:
+          SSHPASS: ${{ secrets.FTP_PASSWORD }}
+          SFTP_USER: ${{ secrets.FTP_USERNAME }}
+          SFTP_HOST: ${{ secrets.FTP_HOST }}
+          # Eigene Variable, weil die SFTP-Wurzel (SSH-Home) nicht die
+          # FTP-Wurzel ist. FTP_SSH_DIR überschreibt bei abweichendem Layout.
+          SFTP_DIR: ${{ vars.FTP_SSH_DIR || 'www/autotrd.net' }}
+        run: |
+          set -e
+          sudo apt-get update -qq && sudo apt-get install -y -qq lftp sshpass
+          # accept-new: Host-Key wird beim ersten Mal übernommen, ein späterer
+          # WECHSEL bricht ab (Schutz vor Umleitung).
+          # cd VOR mirror in derselben Session: Existiert das Ziel nicht,
+          # scheitert der cd und mirror --delete kann keinen fremden Ordner
+          # leerräumen.
+          lftp -c "
+            set sftp:connect-program 'sshpass -e ssh -a -x -o StrictHostKeyChecking=accept-new';
+            set net:timeout 40; set net:max-retries 2; set net:reconnect-interval-base 10;
+            open -u ${SFTP_USER},dummy sftp://${SFTP_HOST};
+            cd ${SFTP_DIR};
+            pwd;
+            mirror -R --delete --parallel=2 --exclude-glob .ftp-deploy-sync-state.json frontend/dist/ .;
+            cls -l index.html;
+          "
+
       # FTPS (TLS), niemals plain FTP — ARCHITECTURE.md §9.
       # Plain FTP wäre hier ohnehin keine Lösung: FTPS explicit läuft auf
       # DEMSELBEN Port 21 und verhandelt TLS erst nach dem Verbindungsaufbau —
@@ -74,9 +111,9 @@ jobs:
       # Der webgo-FTPS-Kontrollkanal ist gelegentlich minutenlang taub
       # (26.07.: 2× „Timeout (control socket)" nach exakt 30 s, HTTP lief
       # weiter). Deshalb: großzügiger Timeout + zweiter Versuch nach Pause.
-      - name: FTPS-Upload zu webgo
+      - name: FTPS-Upload zu webgo (Rückfallweg, Port 21)
         id: ftp1
-        if: env.FTP_HOST != ''
+        if: env.FTP_HOST != '' && steps.sftp.outcome == 'failure'
         continue-on-error: true
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
@@ -93,12 +130,12 @@ jobs:
           server-dir: ${{ vars.FTP_SERVER_DIR || 'autotrd.net/' }}
 
       - name: Pause vor zweitem Versuch
-        if: env.FTP_HOST != '' && steps.ftp1.outcome == 'failure'
+        if: env.FTP_HOST != '' && steps.sftp.outcome == 'failure' && steps.ftp1.outcome == 'failure'
         run: sleep 90
 
       - name: FTPS-Upload zu webgo (2. Versuch)
         id: ftp2
-        if: env.FTP_HOST != '' && steps.ftp1.outcome == 'failure'
+        if: env.FTP_HOST != '' && steps.sftp.outcome == 'failure' && steps.ftp1.outcome == 'failure'
         continue-on-error: true
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
@@ -110,58 +147,14 @@ jobs:
           local-dir: frontend/dist/
           server-dir: ${{ vars.FTP_SERVER_DIR || 'autotrd.net/' }}
 
-      # Zweiter Weg: SFTP über SSH (Port 22) mit DENSELBEN Zugangsdaten —
-      # webgo erlaubt das bei Webhosting-Paketen. Anderer Port, anderer Dienst:
-      # Wenn Port 21 gesperrt ist (Fail2ban), kommt der Upload hier trotzdem
-      # durch. Verschlüsselt wie FTPS, also kein Sicherheits-Rückschritt —
-      # plain FTP bleibt ausgeschlossen (ARCHITECTURE.md §9).
-      # lftp mirror lädt inkrementell und räumt Gelöschtes mit auf.
-      - name: SFTP-Fallback (Port 22, gleiche Zugangsdaten)
-        id: sftp
-        if: env.FTP_HOST != '' && steps.ftp1.outcome == 'failure' && steps.ftp2.outcome == 'failure'
-        continue-on-error: true
-        env:
-          SSHPASS: ${{ secrets.FTP_PASSWORD }}
-          SFTP_USER: ${{ secrets.FTP_USERNAME }}
-          SFTP_HOST: ${{ secrets.FTP_HOST }}
-          # Eigene Variable, weil die SFTP-Wurzel (SSH-Home) nicht die
-          # FTP-Wurzel ist. FTP_SSH_DIR überschreibt, sobald der Pfad bekannt ist.
-          SFTP_DIR: ${{ vars.FTP_SSH_DIR || vars.FTP_SERVER_DIR || 'autotrd.net/' }}
-        run: |
-          set -e
-          sudo apt-get update -qq && sudo apt-get install -y -qq lftp sshpass
-          # accept-new statt no: der Host-Key wird beim ersten Mal übernommen,
-          # ein späterer WECHSEL bricht ab (Schutz vor Umleitung).
-          # Die Variablen MÜSSEN von bash expandiert werden — lftp kennt keine
-          # Shell-Variablen und nahm '$SFTP_HOST' wörtlich („hostname contains
-          # invalid characters"). sshpass reicht das Passwort über SSHPASS
-          # durch; das 'dummy' hält lftp nur von der interaktiven Abfrage ab.
-          SSH="set sftp:connect-program 'sshpass -e ssh -a -x -o StrictHostKeyChecking=accept-new'; set net:timeout 30; set net:max-retries 2; open -u ${SFTP_USER},dummy sftp://${SFTP_HOST};"
-          # SSH-Login gelingt (26.07.), aber die SFTP-Wurzel ist NICHT die
-          # FTP-Wurzel: 'autotrd.net/' landete auf /home/autotrd.net → „No such
-          # file". Erst zeigen, was da ist, dann gezielt spiegeln.
-          echo "── SFTP-Verzeichnisbaum (Diagnose) ──"
-          lftp -c "$SSH pwd; ls;" || true
-          for CAND in www html public_html httpdocs sites domains; do
-            echo "── ls $CAND ──"; lftp -c "$SSH ls $CAND;" 2>&1 | head -20 || true
-          done
-          # Zielverzeichnis: erst wenn es EXISTIERT wird gespiegelt — sonst
-          # würde --delete im falschen Ordner Schaden anrichten.
-          if lftp -c "$SSH cd ${SFTP_DIR}; pwd;" >/dev/null 2>&1; then
-            lftp -c "$SSH mirror -R --delete --parallel=2 --exclude-glob .ftp-deploy-sync-state.json frontend/dist/ ${SFTP_DIR};"
-          else
-            echo "::warning::SFTP-Login OK, aber '${SFTP_DIR}' existiert dort nicht — richtigen Pfad aus dem Listing oben ablesen und als Repo-Variable FTP_SSH_DIR setzen."
-            exit 1
-          fi
-
       - name: Ergebnis — mindestens ein Upload muss durchgekommen sein
         if: env.FTP_HOST != ''
         run: |
           if [ "${{ steps.ftp1.outcome }}" = "success" ] \
             || [ "${{ steps.ftp2.outcome }}" = "success" ] \
             || [ "${{ steps.sftp.outcome }}" = "success" ]; then
-            echo "Upload erfolgreich (ftps1=${{ steps.ftp1.outcome }} ftps2=${{ steps.ftp2.outcome }} sftp=${{ steps.sftp.outcome }})"
+            echo "Upload erfolgreich (sftp=${{ steps.sftp.outcome }} ftps1=${{ steps.ftp1.outcome }} ftps2=${{ steps.ftp2.outcome }})"
           else
-            echo "::error::Weder FTPS (2 Versuche) noch SFTP kamen durch — siehe Netz-Diagnose oben. Bei Timeout auf BEIDEN Ports ist die Runner-IP vermutlich serverseitig gesperrt."
+            echo "::error::Weder SFTP (Port 22) noch FTPS (Port 21, 2 Versuche) kamen durch — siehe Netz-Diagnose oben. Bei 'No such file' stimmt FTP_SSH_DIR nicht, bei Timeout ist die Runner-IP serverseitig gesperrt."
             exit 1
           fi
