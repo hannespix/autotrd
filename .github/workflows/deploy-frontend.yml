@@ -14,6 +14,9 @@ jobs:
     # sauber übersprungen statt rot zu werden.
     env:
       FTP_HOST: ${{ secrets.FTP_HOST }}
+      # Nur als Vorhandensein-Flag für die if-Bedingung des Hosting-Ausweichwegs
+      # (der secrets-Kontext ist in Step-`if` nicht überall zuverlässig).
+      HAS_FB_SA: ${{ secrets.FIREBASE_SERVICE_ACCOUNT != '' }}
     steps:
       - name: Guard — FTP-Secrets vorhanden?
         if: env.FTP_HOST == ''
@@ -130,21 +133,46 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq lftp sshpass
           # accept-new statt no: der Host-Key wird beim ersten Mal übernommen,
           # ein späterer WECHSEL bricht ab (Schutz vor Umleitung).
-          lftp -c "
-            set sftp:connect-program 'sshpass -e ssh -a -x -o StrictHostKeyChecking=accept-new';
-            set net:timeout 30; set net:max-retries 2;
-            open -u \"\$SFTP_USER\",dummy sftp://\$SFTP_HOST;
-            mirror -R --delete --parallel=2 --exclude-glob .ftp-deploy-sync-state.json frontend/dist/ \"\$SFTP_DIR\";
-          "
+          # Die Variablen MÜSSEN von bash expandiert werden — lftp kennt keine
+          # Shell-Variablen und nahm '$SFTP_HOST' wörtlich („hostname contains
+          # invalid characters"). Das Passwort reicht sshpass über SSHPASS
+          # durch; das 'dummy' im open-Befehl hält lftp nur von der
+          # interaktiven Abfrage ab und geht nie über die Leitung.
+          lftp -c "set sftp:connect-program 'sshpass -e ssh -a -x -o StrictHostKeyChecking=accept-new'; set net:timeout 30; set net:max-retries 2; open -u ${SFTP_USER},dummy sftp://${SFTP_HOST}; mirror -R --delete --parallel=2 --exclude-glob .ftp-deploy-sync-state.json frontend/dist/ ${SFTP_DIR};"
 
-      - name: Ergebnis — mindestens ein Upload muss durchgekommen sein
+      # Dritter Weg: Firebase Hosting (26.07.). Der Befund der Netz-Diagnose
+      # war eindeutig — Port 21 UND 22 laufen vom Runner aus in einen Timeout,
+      # während HTTPS normal antwortet: Die Runner-IP wird serverseitig
+      # gedroppt. Gegen eine Paketfilter-Sperre hilft kein Upload-Protokoll,
+      # nur ein anderer Transportweg. Firebase Hosting deployt über dieselbe
+      # HTTPS-CLI wie die Functions (die zuverlässig durchläuft), ist im
+      # Gratis-Tarif enthalten und liefert SSL automatisch. Ziel-URL:
+      # autotrd-653b0.web.app — die Domain autotrd.net bleibt unberührt,
+      # bis der Owner sie per DNS umziehen will.
+      - name: Firebase Hosting (Ausweichweg, wenn FTP/SFTP gesperrt ist)
+        id: fbhost
+        if: >-
+          env.FTP_HOST != '' && steps.ftp1.outcome == 'failure'
+          && steps.ftp2.outcome == 'failure' && steps.sftp.outcome == 'failure'
+          && env.HAS_FB_SA == 'true'
+        continue-on-error: true
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
+          export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/firebase-sa.json"
+          npx firebase-tools deploy --only hosting --non-interactive --force
+
+      - name: Ergebnis — mindestens ein Weg muss durchgekommen sein
         if: env.FTP_HOST != ''
         run: |
           if [ "${{ steps.ftp1.outcome }}" = "success" ] \
             || [ "${{ steps.ftp2.outcome }}" = "success" ] \
             || [ "${{ steps.sftp.outcome }}" = "success" ]; then
-            echo "Upload erfolgreich (ftps1=${{ steps.ftp1.outcome }} ftps2=${{ steps.ftp2.outcome }} sftp=${{ steps.sftp.outcome }})"
+            echo "Upload zu webgo erfolgreich (ftps1=${{ steps.ftp1.outcome }} ftps2=${{ steps.ftp2.outcome }} sftp=${{ steps.sftp.outcome }})"
+          elif [ "${{ steps.fbhost.outcome }}" = "success" ]; then
+            echo "::warning::webgo war nicht erreichbar (Port 21+22 gesperrt) — der Stand ist über Firebase Hosting live: https://autotrd-653b0.web.app"
           else
-            echo "::error::Weder FTPS (2 Versuche) noch SFTP kamen durch — siehe Netz-Diagnose oben. Bei Timeout auf BEIDEN Ports ist die Runner-IP vermutlich serverseitig gesperrt."
+            echo "::error::Kein Weg kam durch: FTPS (2x), SFTP und Firebase Hosting sind alle gescheitert — siehe Netz-Diagnose oben. Bei Timeout auf BEIDEN FTP-Ports ist die Runner-IP serverseitig gesperrt; scheitert zusätzlich Hosting, fehlt dem Service-Account vermutlich die Rolle 'Firebase Hosting Admin'."
             exit 1
           fi
