@@ -888,6 +888,15 @@ spezifischen Parametern schlägt denselben Backtest mit globalen Parametern.
       Vergleichs-Chart-Symbol frei wählbar per Eingabefeld (unabhängig vom
       Raster; Link-Gruppe B kann weiter gezielt mitziehen).
 
+- [x] **Strategien löschen (26.07., Owner-Frage „wie löscht man gepublishte
+      Strategien?")**: `deleteStrategy`-Callable — bewusst auch für
+      publizierte erlaubt; räumt die Subcollections (Backtest-Runs,
+      Shadow-Signale) pageweise mit ab. Folgen sind sicher: Symbole sind
+      danach nicht mehr strategyOwned (Classic-Konfluenz übernimmt), offene
+      Positionen gehören dem Wallet und bleiben unter Stop/Take/Konfluenz.
+      UI: „Löschen"-Knopf an jeder Studio-Karte UND im Editor, jeweils mit
+      2-Klick-Armierung („Wirklich löschen?", 4-s-Reset) gegen Fehlklicks.
+
 ## M12 — Portfolio, Risiko & Tagesfilm-Journal
 
 **Ziel:** Multi-Wallets je Strategie mit vorberechneten Kennzahlen (Dashboard =
