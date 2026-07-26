@@ -1,0 +1,62 @@
+<!-- autotrd — Anmeldung per Link (Magic Link).
+     Einzufügen unter: Supabase → Authentication → Emails → "Magic Link".
+     Aufbau und Begründungen wie in confirm-signup.html. -->
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+       style="background:#f4f6fa;margin:0;padding:32px 12px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+  <tr>
+    <td align="center">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+             style="max-width:520px;background:#ffffff;border-radius:14px;border:1px solid #e3e8f0;">
+
+        <tr>
+          <td style="padding:28px 32px 8px;border-bottom:1px solid #eef1f6;">
+            <span style="font-size:19px;font-weight:700;color:#0c1424;letter-spacing:-.3px;">autotrd</span>
+            <span style="font-size:13px;color:#7987a0;margin-left:8px;">Paper-Trading</span>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:26px 32px 8px;">
+            <h1 style="margin:0 0 14px;font-size:20px;line-height:1.35;color:#0c1424;font-weight:700;">
+              Dein Anmeldelink
+            </h1>
+            <p style="margin:0 0 18px;font-size:15px;line-height:1.6;color:#43516c;">
+              Mit diesem Link meldest du dich ohne Passwort an. Er gilt eine Stunde und
+              funktioniert genau einmal.
+            </p>
+
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:6px 0 22px;">
+              <tr>
+                <td style="background:#0091c2;border-radius:9px;">
+                  <a href="{{ .ConfirmationURL }}"
+                     style="display:inline-block;padding:13px 26px;font-size:15px;font-weight:600;
+                            color:#ffffff;text-decoration:none;">Jetzt anmelden</a>
+                </td>
+              </tr>
+            </table>
+
+            <p style="margin:0 0 8px;font-size:13px;line-height:1.6;color:#7987a0;">
+              Falls der Knopf nicht funktioniert, kopiere diese Adresse in deinen Browser:
+            </p>
+            <p style="margin:0 0 20px;font-size:12px;line-height:1.5;word-break:break-all;">
+              <a href="{{ .ConfirmationURL }}" style="color:#0091c2;">{{ .ConfirmationURL }}</a>
+            </p>
+          </td>
+        </tr>
+
+        <tr>
+          <td style="padding:16px 32px 26px;border-top:1px solid #eef1f6;">
+            <p style="margin:0 0 6px;font-size:12px;line-height:1.6;color:#7987a0;">
+              Diesen Link nicht angefordert? Dann ignoriere die Nachricht — ohne Klick
+              passiert nichts. Gib ihn niemals weiter: Wer ihn hat, kommt in dein Konto.
+            </p>
+            <p style="margin:0;font-size:12px;line-height:1.6;color:#98a4ba;">
+              autotrd · Simuliertes Handeln mit Spielgeld, keine Anlageberatung ·
+              <a href="https://autotrd.net" style="color:#7987a0;">autotrd.net</a>
+            </p>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>

@@ -317,3 +317,61 @@ Admin nötig — vorher gibt es ja niemanden, der freischalten könnte.
 bräuchte kein Freischaltsystem. Ein Datenbank-Riegel weist genau das ab
 (Testfälle 18/19) — die einzige Ausnahme ist der direkte Datenbankzugriff,
 den nur du hast.
+
+## M. E-Mails: eigener Absender + Vorlagen (gegen den Spam-Ordner)
+
+**Warum Bestätigungsmails im Spam landen:** Nicht wegen des Textes, sondern
+wegen des Absenders. Die eingebauten Mails kommen von einer generischen
+Adresse des Anbieters (`noreply@mail.app.supabase.io`) — für Spamfilter
+schreibt da eine fremde Domain im Namen von autotrd.net. Genau dieses Muster
+bewerten sie schlecht, egal wie schön die Mail gestaltet ist.
+
+Dazu kommt ein praktischer Grund: Der eingebaute Versand ist im kostenlosen
+Tarif auf wenige Mails pro Stunde begrenzt und für echten Betrieb ohnehin
+nicht gedacht.
+
+### 1. Mail-Dienst einrichten (~15 min)
+
+Einen Anbieter wählen (Resend, Postmark und Brevo haben brauchbare
+Gratis-Kontingente), dort `autotrd.net` als Absenderdomain eintragen und die
+angezeigten **DNS-Einträge bei deinem Domain-Anbieter hinterlegen**:
+
+| Eintrag | Zweck |
+|---------|-------|
+| SPF (TXT) | erlaubt dem Dienst, für deine Domain zu senden |
+| DKIM (CNAME/TXT) | signiert die Mails kryptografisch |
+| DMARC (TXT) | sagt Empfängern, was bei Fälschungen zu tun ist |
+
+Ohne diese drei Einträge hilft kein Design — mit ihnen landen die Mails
+zuverlässig im Posteingang. Anschließend in Supabase unter
+*Project Settings → Authentication → SMTP Settings* den Dienst eintragen,
+Absender `noreply@autotrd.net`, Anzeigename `autotrd`.
+
+### 2. Vorlagen einsetzen (~5 min)
+
+Unter *Authentication → Emails* die Vorlagen aus `supabase/templates/`
+einfügen:
+
+| Supabase-Vorlage | Datei |
+|------------------|-------|
+| Confirm signup | `confirm-signup.html` |
+| Reset password | `reset-password.html` |
+| Magic Link | `magic-link.html` |
+
+Als Betreff empfehlen sich schlichte, ehrliche Zeilen ohne Werbesprache und
+ohne Ausrufezeichen — beides erhöht die Spam-Bewertung:
+
+- „autotrd: E-Mail-Adresse bestätigen"
+- „autotrd: Neues Passwort festlegen"
+- „autotrd: Dein Anmeldelink"
+
+Die Vorlagen sind bewusst als Tabellen mit Inline-Styles gebaut (viele
+Mail-Programme ignorieren `<style>`-Blöcke), enthalten **keine Bilder und
+keine externen Nachladungen** — auch das fließt in die Spam-Bewertung ein —
+und zeigen den Ziel-Link im Klartext, statt ihn hinter Text zu verstecken.
+
+### 3. Prüfen
+
+Nach der Umstellung eine Testregistrierung an eine Gmail- **und** eine
+Outlook-Adresse. Landet sie im Posteingang und zeigt Gmail unter „Original
+anzeigen" bei SPF, DKIM und DMARC jeweils `PASS`, ist alles richtig gesetzt.
