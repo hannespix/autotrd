@@ -38,7 +38,31 @@ jobs:
           npm ci
           npm run build -w frontend
 
-      # FTPS (TLS), niemals plain FTP — ARCHITECTURE.md §9
+      # Netz-Diagnose vor dem Upload (26.07.): „Timeout (control socket)" sagt
+      # nicht, WORAN es liegt. Ein DROP (Timeout) statt REJECT (connection
+      # refused) auf Port 21 ist das typische Bild einer Fail2ban-/Firewall-
+      # Sperre — genau das erwartet man nach einem Dutzend Deploys in Folge.
+      # Der Test zeigt außerdem, ob Port 22 (SFTP) offen ist; davon hängt ab,
+      # ob der Fallback unten überhaupt greifen kann. Secrets bleiben maskiert.
+      - name: Netz-Diagnose (Port 21/22)
+        if: env.FTP_HOST != ''
+        continue-on-error: true
+        run: |
+          H='${{ secrets.FTP_HOST }}'
+          echo "DNS:"; getent hosts "$H" || echo "  keine Auflösung"
+          for P in 21 22; do
+            if nc -zvw5 "$H" "$P" 2>&1 | tail -1; then
+              echo "Port $P: OFFEN"
+            else
+              echo "Port $P: keine Verbindung (Timeout = gedroppt/gesperrt, refused = Dienst aus)"
+            fi
+          done
+
+      # FTPS (TLS), niemals plain FTP — ARCHITECTURE.md §9.
+      # Plain FTP wäre hier ohnehin keine Lösung: FTPS explicit läuft auf
+      # DEMSELBEN Port 21 und verhandelt TLS erst nach dem Verbindungsaufbau —
+      # ein Timeout auf dem Kontrollkanal passiert davor. Unverschlüsselt
+      # würde nur das Passwort im Klartext gehen, nicht der Upload gelingen.
       #
       # Achtung Sync-State-Falle: Der Server-State (.ftp-deploy-sync-state.json)
       # erinnerte einen längst gelöschten icons/-Ordner; dessen Löschversuch
@@ -73,7 +97,9 @@ jobs:
         run: sleep 90
 
       - name: FTPS-Upload zu webgo (2. Versuch)
+        id: ftp2
         if: env.FTP_HOST != '' && steps.ftp1.outcome == 'failure'
+        continue-on-error: true
         uses: SamKirkland/FTP-Deploy-Action@v4.3.5
         with:
           server: ${{ secrets.FTP_HOST }}
@@ -83,3 +109,42 @@ jobs:
           timeout: 120000
           local-dir: frontend/dist/
           server-dir: ${{ vars.FTP_SERVER_DIR || 'autotrd.net/' }}
+
+      # Zweiter Weg: SFTP über SSH (Port 22) mit DENSELBEN Zugangsdaten —
+      # webgo erlaubt das bei Webhosting-Paketen. Anderer Port, anderer Dienst:
+      # Wenn Port 21 gesperrt ist (Fail2ban), kommt der Upload hier trotzdem
+      # durch. Verschlüsselt wie FTPS, also kein Sicherheits-Rückschritt —
+      # plain FTP bleibt ausgeschlossen (ARCHITECTURE.md §9).
+      # lftp mirror lädt inkrementell und räumt Gelöschtes mit auf.
+      - name: SFTP-Fallback (Port 22, gleiche Zugangsdaten)
+        id: sftp
+        if: env.FTP_HOST != '' && steps.ftp1.outcome == 'failure' && steps.ftp2.outcome == 'failure'
+        continue-on-error: true
+        env:
+          SSHPASS: ${{ secrets.FTP_PASSWORD }}
+          SFTP_USER: ${{ secrets.FTP_USERNAME }}
+          SFTP_HOST: ${{ secrets.FTP_HOST }}
+          SFTP_DIR: ${{ vars.FTP_SERVER_DIR || 'autotrd.net/' }}
+        run: |
+          set -e
+          sudo apt-get update -qq && sudo apt-get install -y -qq lftp sshpass
+          # accept-new statt no: der Host-Key wird beim ersten Mal übernommen,
+          # ein späterer WECHSEL bricht ab (Schutz vor Umleitung).
+          lftp -c "
+            set sftp:connect-program 'sshpass -e ssh -a -x -o StrictHostKeyChecking=accept-new';
+            set net:timeout 30; set net:max-retries 2;
+            open -u \"\$SFTP_USER\",dummy sftp://\$SFTP_HOST;
+            mirror -R --delete --parallel=2 --exclude-glob .ftp-deploy-sync-state.json frontend/dist/ \"\$SFTP_DIR\";
+          "
+
+      - name: Ergebnis — mindestens ein Upload muss durchgekommen sein
+        if: env.FTP_HOST != ''
+        run: |
+          if [ "${{ steps.ftp1.outcome }}" = "success" ] \
+            || [ "${{ steps.ftp2.outcome }}" = "success" ] \
+            || [ "${{ steps.sftp.outcome }}" = "success" ]; then
+            echo "Upload erfolgreich (ftps1=${{ steps.ftp1.outcome }} ftps2=${{ steps.ftp2.outcome }} sftp=${{ steps.sftp.outcome }})"
+          else
+            echo "::error::Weder FTPS (2 Versuche) noch SFTP kamen durch — siehe Netz-Diagnose oben. Bei Timeout auf BEIDEN Ports ist die Runner-IP vermutlich serverseitig gesperrt."
+            exit 1
+          fi
