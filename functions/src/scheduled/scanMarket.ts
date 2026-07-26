@@ -195,15 +195,29 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
         const data = marketData.get(symbol);
         if (!data) continue;
         const cls = classify(symbol);
-        // Höchstkurs seit Einstieg mitziehen, BEVOR der Trailing-Stop prüft
-        const peak = Math.max(pos.highWater ?? pos.avgEntry, data.price);
-        if (peak > (pos.highWater ?? 0) + 1e-9) {
-          pos.highWater = peak;
-          await userDoc.ref
-            .collection('positions')
-            .doc(symbol)
-            .set({ highWater: peak }, { merge: true })
-            .catch(() => undefined);
+        const isShort = pos.side === 'short';
+        if (isShort) {
+          // Tiefstkurs seit Short-Einstieg mitziehen (Basis des Short-Trailings)
+          const trough = Math.min(pos.lowWater ?? pos.avgEntry, data.price);
+          if (trough < (pos.lowWater ?? Infinity) - 1e-9) {
+            pos.lowWater = trough;
+            await userDoc.ref
+              .collection('positions')
+              .doc(symbol)
+              .set({ lowWater: trough }, { merge: true })
+              .catch(() => undefined);
+          }
+        } else {
+          // Höchstkurs seit Einstieg mitziehen, BEVOR der Trailing-Stop prüft
+          const peak = Math.max(pos.highWater ?? pos.avgEntry, data.price);
+          if (peak > (pos.highWater ?? 0) + 1e-9) {
+            pos.highWater = peak;
+            await userDoc.ref
+              .collection('positions')
+              .doc(symbol)
+              .set({ highWater: peak }, { merge: true })
+              .catch(() => undefined);
+          }
         }
         const reason = riskExitReason(pos, data.price, {
           risk: resolveRisk(clamped.engine, cls),
@@ -211,8 +225,9 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
           now,
         });
         if (reason) {
+          // Long schließt per Verkauf, Short per Eindecken (buy/Cover)
           const r = await executePaperTrade(
-            { uid, symbol, side: 'sell', price: data.price, source: 'engine', riskExit: reason, assetClass: cls },
+            { uid, symbol, side: isShort ? 'buy' : 'sell', price: data.price, source: 'engine', riskExit: reason, assetClass: cls },
             clamped,
           );
           if (r.executed) {
@@ -220,7 +235,7 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
             positions.delete(symbol);
             engineCooldowns[symbol] = now.toISOString();
             cooldownsChanged = true;
-            logger.info(`Risk-Exit ${uid} ${symbol} (${reason})`);
+            logger.info(`Risk-Exit ${uid} ${symbol} (${reason}${isShort ? ', short' : ''})`);
           }
         }
       }
@@ -452,6 +467,7 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
         // kostet Geld, ein verpasster Kauf nur eine Chance.
         // Zeitbasis 'intraday': 5-min-Kerzen + Kurzfrist-Prognose als
         // Forecast-Stimme (die Tages-Prognose passt nicht zum 5-min-Signal).
+        const pos = positions.get(symbol) ?? null;
         const sig = computeSignal(
           signalCloses(data, tf),
           data.price,
@@ -460,16 +476,28 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
           tf === 'intraday'
             ? (data.intradayPct != null ? { predictedPct: data.intradayPct } : null)
             : data.forecast,
-          { hasPosition: positions.has(symbol) },
+          { hasPosition: pos !== null, ...(pos?.side === 'short' ? { positionSide: 'short' as const } : {}) },
         );
         // Prognose-Pfeil des Users als zusätzliche gewichtete Stimme
         const direction = applyPredictionVote(
           sig,
           predictionVote(predictions.get(symbol), data.price, todayIso),
         );
+        const allowShort = strategy.signals.allowShort === true;
         // Ausführung IMMER mit der geklammerten Strategie (Audit 26.07.):
         // Positionsgröße und Stop-Level kommen aus der Risiko-Hülle.
-        if (direction === 'buy' && !positions.has(symbol)) {
+        if (direction === 'buy' && pos?.side === 'short') {
+          // Kauf-Signal auf offenen Short = Eindecken (Cover)
+          const r = await executePaperTrade(
+            { uid, symbol, side: 'buy', price: data.price, source: 'engine', assetClass: classify(symbol) },
+            clamped,
+          );
+          if (r.executed) {
+            executed += 1;
+            positions.delete(symbol);
+            logger.info(`Engine-Cover ${uid} ${symbol} @ ${data.price}`);
+          }
+        } else if (direction === 'buy' && !pos) {
           // Entry-Guards auch im Classic-Pfad (MA3-Fund 26.07.): Das
           // Positionslimit galt vorher nur für Regelbaum-Käufe — die
           // Konfluenz konnte beliebig viele Positionen öffnen. Und nach
@@ -496,7 +524,7 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
             });
             logger.info(`Engine-Buy ${uid} ${symbol} @ ${data.price}`);
           }
-        } else if (direction === 'sell' && positions.has(symbol)) {
+        } else if (direction === 'sell' && pos && pos.side !== 'short') {
           const r = await executePaperTrade(
             { uid, symbol, side: 'sell', price: data.price, source: 'engine', assetClass: classify(symbol) },
             clamped,
@@ -505,6 +533,29 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
             executed += 1;
             positions.delete(symbol);
             logger.info(`Engine-Sell ${uid} ${symbol} @ ${data.price}`);
+          }
+        } else if (direction === 'sell' && !pos && allowShort) {
+          // Leerverkauf (Opt-in): Verkaufs-Signal ohne Position eröffnet
+          // einen Short — gleiche Entry-Guards wie beim Kauf (Limit,
+          // Cooldown), gleiche Risiko-Hülle, Level gespiegelt im Broker.
+          if (positions.size >= RISK_LIMITS.maxOpenPositions) continue;
+          if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
+          const r = await executePaperTrade(
+            { uid, symbol, side: 'sell', price: data.price, source: 'engine', assetClass: classify(symbol), openShort: true },
+            clamped,
+          );
+          if (r.executed) {
+            executed += 1;
+            positions.set(symbol, {
+              symbol,
+              qty: r.trade?.qty ?? 0,
+              avgEntry: r.trade?.price ?? data.price,
+              side: 'short',
+              stopLoss: null,
+              takeProfit: null,
+              openedAt: r.trade?.executedAt ?? now.toISOString(),
+            });
+            logger.info(`Engine-Short ${uid} ${symbol} @ ${data.price}`);
           }
         }
       }

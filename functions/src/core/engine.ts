@@ -87,6 +87,12 @@ export interface SignalOptions {
    * wird die Einstiegs-Sicht berechnet — das ist auch die Anzeige-Sicht.
    */
   hasPosition?: boolean;
+  /**
+   * Seite der offenen Position (Shorts, Owner 26.07.): Bei 'short' ist der
+   * AUSSTIEG die KAUF-Richtung (Eindecken) — die Exit-Asymmetrie (leichtere
+   * Schwelle, Gleichstand für den Exit) gilt dann gespiegelt für buy.
+   */
+  positionSide?: 'long' | 'short';
 }
 
 export function computeSignal(
@@ -173,7 +179,11 @@ export function computeSignal(
   const required = inPosition ? exitReq : entryReq;
 
   let direction: SignalDirection = 'hold';
-  if (inPosition) {
+  if (inPosition && opts?.positionSide === 'short') {
+    // Offener SHORT: Der Ausstieg ist das EINDECKEN (buy) — dieselbe
+    // Risiko-Asymmetrie wie beim Long-Verkauf, nur gespiegelt.
+    if (buyVotes >= exitReq && buyVotes >= sellVotes) direction = 'buy';
+  } else if (inPosition) {
     // Offene Position: Verkauf hat Vorfahrt und gewinnt den Gleichstand.
     // Vorher blockierten RSI und Bollinger (die in fallenden Märkten
     // „überverkauft, also kaufen" sagen) genau dann den Ausstieg, wenn er

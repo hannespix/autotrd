@@ -163,6 +163,9 @@ export function validateStrategy(value: unknown): string[] {
     if (signals.timeframe !== undefined && signals.timeframe !== 'daily' && signals.timeframe !== 'intraday') {
       problems.push("signals.timeframe muss 'daily' oder 'intraday' sein");
     }
+    if (signals.allowShort !== undefined && typeof signals.allowShort !== 'boolean') {
+      problems.push('signals.allowShort muss boolean sein');
+    }
   }
 
   return problems;

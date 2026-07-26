@@ -850,6 +850,20 @@ spezifischen Parametern schlägt denselben Backtest mit globalen Parametern.
       `'initial'` bleibt als Option (Options-Modal + ⓘ). `sizeOrder()` ist
       pure + getestet (`functions/test/sizing.test.ts`, 7 Fälle).
 
+- [x] **Short-Selling Runde 1 (26.07., Owner: „bitte auch schorten
+      können")**: `signals.allowShort` (Opt-in, ⓘ warnt vor unbegrenzten
+      Verlusten) — Verkaufs-Signal ohne Position eröffnet einen Short
+      (100-%-Margin vom Cash, Level GESPIEGELT: Stop über dem Einstand,
+      Take darunter, Trailing via lowWater, Notbremse gilt), Kauf-Signal
+      deckt ein (Cover: Margin + P&L zurück, cent-genau). Exit-Asymmetrie
+      in computeSignal für Shorts auf die buy-Seite gespiegelt; Engine-
+      Risk-Exits schließen Shorts per Cover; Portfolio zeigt SHORT-Badge,
+      gespiegeltes P&L und „Cover"-Knopf; manuelles Ticket shortet bei
+      aktiviertem Opt-in. OFFEN (Runde 2): Regelbaum-/Shadow-Shorts.
+      Emulator-Beweis 17/17: Short-Open (Stop 696.87 ÜBER Einstand 683.20,
+      Margin reserviert), Short-Stop (Cover mit Verlust), Short-Take
+      (Cover mit Gewinn, Cash cent-genau).
+
 - [x] **Trade-Frequenz (26.07., Owner: „bitte die Tradefrequenz deutlich
       erhöhen")**: `signals.timeframe` — Konfluenz UND Regelbaum rechnen
       per Default auf **5-Minuten-Kerzen** (Signale drehen im Scan-Takt

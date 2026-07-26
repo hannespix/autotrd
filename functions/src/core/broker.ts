@@ -72,6 +72,12 @@ export interface TradeRequest {
   riskExit?: string;
   /** Asset-Klasse für klassen-spezifische Risiko-Level (MA6). */
   assetClass?: string | null;
+  /**
+   * Leerverkauf erlauben (Owner 26.07.): sell OHNE Position eröffnet dann
+   * einen Short statt mit 'keine_position' abzulehnen. Buy auf eine
+   * Short-Position deckt IMMER ein (kein Flag nötig — die Position sagt es).
+   */
+  openShort?: boolean;
 }
 
 /**
@@ -102,6 +108,31 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
     const eff = Math.round(paperEffectivePrice(req.price, req.side) * 10_000) / 10_000;
 
     if (req.side === 'buy') {
+      // Buy auf eine SHORT-Position = Eindecken (Cover): Margin + P&L zurück.
+      // P&L eines Shorts = (Einstand − Rückkaufkurs) × Stück — verdient,
+      // wenn der Kurs seit dem Leerverkauf GEFALLEN ist.
+      if (posSnap.exists && (posSnap.data() as Position).side === 'short') {
+        const pos = posSnap.data() as Position;
+        const qty = pos.qty;
+        const pnl = (pos.avgEntry - eff) * qty;
+        const margin = qty * pos.avgEntry;
+        const trade: Trade & { pnl: number; riskExit?: string; cover: boolean } = {
+          symbol: req.symbol,
+          side: 'buy',
+          qty,
+          price: eff,
+          executedAt: now,
+          source: req.source,
+          paper: true,
+          pnl: Math.round(pnl * 100) / 100,
+          cover: true,
+          ...(req.riskExit ? { riskExit: req.riskExit } : {}),
+        };
+        tx.delete(posRef);
+        tx.set(tradeRef, { ...trade, at: Timestamp.now(), rawPrice: req.price, feeRate: PAPER_FEE_RATE });
+        tx.update(userRef, { 'wallet.paperBalance': roundCents(balance + margin + pnl), 'wallet.updatedAt': now });
+        return { executed: true, trade: { ...trade, id: tradeRef.id } };
+      }
       if (posSnap.exists) return { executed: false, reason: 'position_existiert' };
       const cls = req.assetClass ?? classify(req.symbol);
       const fractional = cls === 'crypto';
@@ -141,8 +172,48 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
     }
 
     // sell
-    if (!posSnap.exists) return { executed: false, reason: 'keine_position' };
+    if (!posSnap.exists) {
+      // Leerverkauf (Opt-in via openShort): Verkaufs-Signal ohne Position
+      // eröffnet einen Short. Buchhaltung als 100-%-Margin: Der Cash sinkt
+      // um qty×eff (Sicherheitsleistung) — so bläht der Leerverkaufs-Erlös
+      // weder den Cash noch das Cash-Sizing auf, und beim Eindecken kommt
+      // Margin + P&L zurück. Level gespiegelt: Stop ÜBER dem Einstand
+      // (steigender Kurs = Verlust), Take darunter, lowWater fürs Trailing.
+      if (!req.openShort) return { executed: false, reason: 'keine_position' };
+      const cls = req.assetClass ?? classify(req.symbol);
+      const fractional = cls === 'crypto';
+      const qty = req.qty ?? sizeOrder(strategy, balance, eff, fractional);
+      if (qty < (fractional ? 1e-6 : 1)) return { executed: false, reason: 'qty_unter_1' };
+      const margin = qty * eff;
+      if (margin > balance) return { executed: false, reason: 'zu_wenig_cash' };
+      const risk = resolveRisk(strategy.engine, cls);
+      const position: Position = {
+        symbol: req.symbol,
+        qty,
+        avgEntry: eff,
+        side: 'short',
+        stopLoss: risk.stopLossPct > 0 ? eff * (1 + risk.stopLossPct / 100) : null,
+        takeProfit: risk.takeProfitPct > 0 ? eff * (1 - risk.takeProfitPct / 100) : null,
+        openedAt: now,
+        lowWater: eff, // Startpunkt des Short-Trailings
+      };
+      const trade: Trade & { short: boolean } = {
+        symbol: req.symbol,
+        side: 'sell',
+        qty,
+        price: eff,
+        executedAt: now,
+        source: req.source,
+        paper: true,
+        short: true,
+      };
+      tx.set(posRef, position);
+      tx.set(tradeRef, { ...trade, at: Timestamp.now(), rawPrice: req.price, feeRate: PAPER_FEE_RATE });
+      tx.update(userRef, { 'wallet.paperBalance': roundCents(balance - margin), 'wallet.updatedAt': now });
+      return { executed: true, trade: { ...trade, id: tradeRef.id } };
+    }
     const pos = posSnap.data() as Position;
+    if (pos.side === 'short') return { executed: false, reason: 'short_nachverkauf_verboten' };
     const qty = pos.qty;
     const proceeds = qty * eff;
     const pnl = (eff - pos.avgEntry) * qty;
@@ -214,32 +285,58 @@ export function riskExitReason(
   const atrOk = typeof ctx.atrPct === 'number' && Number.isFinite(ctx.atrPct) && ctx.atrPct > 0;
   const stopPct = atrOk && pct(r.atrStopMult) > 0 ? pct(r.atrStopMult) * (ctx.atrPct as number) : pct(r.stopLossPct);
   const takePct = atrOk && pct(r.atrTakeMult) > 0 ? pct(r.atrTakeMult) * (ctx.atrPct as number) : pct(r.takeProfitPct);
-
-  // 1) Nachziehender Stop — SICHERT GEWINNE, ersetzt aber nicht den festen
-  // Stop. Er greift deshalb erst, wenn die Position im Plus war (Höchstkurs
-  // über dem Einstand); solange sie nie im Gewinn stand, ist allein der
-  // feste bzw. ATR-Stop zuständig. Ohne diese Trennung würde ein enger
-  // Trailing-Wert ein bewusst weit gesetztes Stop-Level überstimmen.
   const trailPct = pct(r.trailingStopPct);
-  if (trailPct > 0) {
-    const peak = level(pos.highWater) ?? 0;
-    if (peak > pos.avgEntry && atMost(price, peak * (1 - trailPct / 100))) return 'trailing_stop';
-  }
 
-  // 2) Fester Stop: gespeichertes Level schlägt den Prozentwert
-  const stopLevel = level(pos.stopLoss);
-  if (stopLevel !== null) {
-    if (atMost(price, stopLevel)) return 'stop_loss';
-  } else if (stopPct > 0 && atMost(price / pos.avgEntry - 1, -stopPct / 100)) {
-    return 'stop_loss';
-  }
+  if (pos.side === 'short') {
+    // SHORT-Spiegelung (Owner 26.07.): Verlust bei STEIGENDEM Kurs.
+    // 1) Trailing über lowWater — sichert Gewinne, sobald der Kurs unter
+    //    dem Einstand war; Exit, wenn er vom Tief wieder hochläuft.
+    if (trailPct > 0) {
+      const trough = level(pos.lowWater);
+      if (trough !== null && trough < pos.avgEntry && atLeast(price, trough * (1 + trailPct / 100))) {
+        return 'trailing_stop';
+      }
+    }
+    // 2) Stop ÜBER dem Einstand: Level vor Prozent
+    const sLevel = level(pos.stopLoss);
+    if (sLevel !== null) {
+      if (atLeast(price, sLevel)) return 'stop_loss';
+    } else if (stopPct > 0 && atLeast(price / pos.avgEntry - 1, stopPct / 100)) {
+      return 'stop_loss';
+    }
+    // 3) Take UNTER dem Einstand: Level vor Prozent
+    const tLevel = level(pos.takeProfit);
+    if (tLevel !== null) {
+      if (atMost(price, tLevel)) return 'take_profit';
+    } else if (takePct > 0 && atMost(price / pos.avgEntry - 1, -takePct / 100)) {
+      return 'take_profit';
+    }
+  } else {
+    // 1) Nachziehender Stop — SICHERT GEWINNE, ersetzt aber nicht den festen
+    // Stop. Er greift deshalb erst, wenn die Position im Plus war (Höchstkurs
+    // über dem Einstand); solange sie nie im Gewinn stand, ist allein der
+    // feste bzw. ATR-Stop zuständig. Ohne diese Trennung würde ein enger
+    // Trailing-Wert ein bewusst weit gesetztes Stop-Level überstimmen.
+    if (trailPct > 0) {
+      const peak = level(pos.highWater) ?? 0;
+      if (peak > pos.avgEntry && atMost(price, peak * (1 - trailPct / 100))) return 'trailing_stop';
+    }
 
-  // 3) Take-Profit: ebenso Level vor Prozent
-  const takeLevel = level(pos.takeProfit);
-  if (takeLevel !== null) {
-    if (atLeast(price, takeLevel)) return 'take_profit';
-  } else if (takePct > 0 && atLeast(price / pos.avgEntry - 1, takePct / 100)) {
-    return 'take_profit';
+    // 2) Fester Stop: gespeichertes Level schlägt den Prozentwert
+    const stopLevel = level(pos.stopLoss);
+    if (stopLevel !== null) {
+      if (atMost(price, stopLevel)) return 'stop_loss';
+    } else if (stopPct > 0 && atMost(price / pos.avgEntry - 1, -stopPct / 100)) {
+      return 'stop_loss';
+    }
+
+    // 3) Take-Profit: ebenso Level vor Prozent
+    const takeLevel = level(pos.takeProfit);
+    if (takeLevel !== null) {
+      if (atLeast(price, takeLevel)) return 'take_profit';
+    } else if (takePct > 0 && atLeast(price / pos.avgEntry - 1, takePct / 100)) {
+      return 'take_profit';
+    }
   }
 
   // 4) Zeitgrenze: eine ewig seitwärts laufende Position bindet Kapital

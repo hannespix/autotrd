@@ -799,6 +799,9 @@ function layout(email: string): string {
         <label class="opt-row" style="align-items:center">
           <input type="checkbox" id="owFcSolo" />
           <span>Prognose darf allein entscheiden ${iBtn('forecastSolo')}</span></label>
+        <label class="opt-row" style="align-items:center">
+          <input type="checkbox" id="owShort" />
+          <span>Shorten erlauben (Leerverkäufe) ${iBtn('allowShort')}</span></label>
       </div>
       <p class="hint">0 schaltet eine Regel ab. Der nachziehende Stop sichert
         Gewinne, sobald die Position im Plus war; ATR-Werte ersetzen die festen
@@ -1579,6 +1582,7 @@ function openOptions(): void {
   ($('owExitC') as HTMLInputElement).value = String(
     st.strategy.signals.exitConfluence ?? Math.max(1, st.strategy.signals.minConfluence - 1));
   ($('owFcSolo') as HTMLInputElement).checked = st.strategy.signals.forecastSolo === true;
+  ($('owShort') as HTMLInputElement).checked = st.strategy.signals.allowShort === true;
   // Klassen-Profile transparent machen: Sie überschreiben die Werte oben je
   // Asset-Klasse — der User soll wissen, was für sein Symbol tatsächlich gilt.
   const byCls = st.strategy.engine.byClass ?? {};
@@ -3570,13 +3574,22 @@ function renderPortfolio(): void {
   let posValue = 0;
   for (const p of st.positions) {
     const live = st.posPrices.get(p.symbol) ?? p.avgEntry;
-    openPnl += (live - p.avgEntry) * p.qty;
-    posValue += live * p.qty;
+    if (p.side === 'short') {
+      // Short verdient am fallenden Kurs; im Depotwert steckt die
+      // hinterlegte Margin (Einstand × Stück) plus unrealisiertes P&L.
+      const pnl = (p.avgEntry - live) * p.qty;
+      openPnl += pnl;
+      posValue += p.avgEntry * p.qty + pnl;
+    } else {
+      openPnl += (live - p.avgEntry) * p.qty;
+      posValue += live * p.qty;
+    }
   }
-  const sells = st.trades.filter((t) => t.side === 'sell' && t.pnl !== undefined);
-  const closedPnl = sells.reduce((s, t) => s + (t.pnl ?? 0), 0);
-  const wins = sells.filter((t) => (t.pnl ?? 0) > 0).length;
-  const winRate = sells.length > 0 ? Math.round((wins / sells.length) * 100) : null;
+  // Realisiertes P&L: Long-Verkäufe UND Short-Eindeckungen (buy mit pnl)
+  const closers = st.trades.filter((t) => t.pnl !== undefined && t.pnl !== null);
+  const closedPnl = closers.reduce((s, t) => s + (t.pnl ?? 0), 0);
+  const wins = closers.filter((t) => (t.pnl ?? 0) > 0).length;
+  const winRate = closers.length > 0 ? Math.round((wins / closers.length) * 100) : null;
   const totalPnl = closedPnl + openPnl;
 
   $('vCash').textContent = money(cash);
@@ -3601,17 +3614,31 @@ function renderPortfolio(): void {
   }
   for (const p of st.positions) {
     const live = st.posPrices.get(p.symbol);
-    const pnl = live !== undefined ? (live - p.avgEntry) * p.qty : null;
-    const pct = live !== undefined && p.avgEntry > 0 ? (live / p.avgEntry - 1) * 100 : null;
+    const short = p.side === 'short';
+    // Short: Gewinn bei fallendem Kurs — P&L und % gespiegelt
+    const pnl = live !== undefined ? (short ? (p.avgEntry - live) : (live - p.avgEntry)) * p.qty : null;
+    const pct = live !== undefined && p.avgEntry > 0
+      ? (short ? (1 - live / p.avgEntry) : (live / p.avgEntry - 1)) * 100
+      : null;
     const tr = document.createElement('tr');
     tr.innerHTML = `<td style="color:var(--t1);font-weight:700"></td><td>${p.qty}</td>
       <td>${fmtNum(p.avgEntry)}</td><td>${live !== undefined ? fmtNum(live) : '--'}</td>
       <td class="${pnl !== null ? pnlClass(pnl) : ''}">${pnl !== null ? money(pnl) : '--'}</td>
       <td class="${pct !== null ? pnlClass(pct) : ''}">${pct !== null ? fmtPct(pct) : '--'}</td>
-      <td><button class="hbtn" data-exit style="color:var(--rd)">Exit</button></td>`;
-    tr.querySelector('td')!.textContent = p.symbol;
+      <td><button class="hbtn" data-exit style="color:var(--rd)">${short ? 'Cover' : 'Exit'}</button></td>`;
+    const symTd = tr.querySelector('td')!;
+    symTd.textContent = p.symbol;
+    if (short) {
+      const tag = document.createElement('span');
+      tag.className = 'stag t-sell';
+      tag.style.marginLeft = '6px';
+      tag.textContent = 'SHORT';
+      tag.title = 'Leerverkauf — verdient am fallenden Kurs; „Cover" deckt ein';
+      symTd.appendChild(tag);
+    }
     tr.querySelector('[data-exit]')!.addEventListener('click', () => {
-      void manualTrade(p.symbol, 'sell');
+      // Short schließt per KAUF (Eindecken), Long per Verkauf
+      void manualTrade(p.symbol, short ? 'buy' : 'sell');
     });
     body.appendChild(tr);
   }
@@ -4624,6 +4651,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         exitConfluence: Math.max(1, num('owExitC')),
         forecastSolo: ($('owFcSolo') as HTMLInputElement).checked,
         timeframe: ($('owTf') as HTMLSelectElement).value === 'daily' ? 'daily' : 'intraday',
+        allowShort: ($('owShort') as HTMLInputElement).checked,
       },
     };
     const problems = validateStrategy(strategy);
