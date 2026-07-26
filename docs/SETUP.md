@@ -248,3 +248,46 @@ Der Scan schreibt einen Heartbeat nach `meta/health` (`lastScanAt`,
    50/90/100 %-Mails — deckt Firestore, Functions UND ausufernde KI-Kosten ab
    (zusätzlich zum Token-Guard `admin/aiBudget` und dem Anthropic-Spend-Limit
    aus §H).
+
+## K. Supabase-Projekt anlegen (Migration MS, ~10 min)
+
+Ab der Migration (MILESTONES *MS*) läuft die Datenhaltung auf Supabase.
+Bestehende Firebase-Daten werden **nicht** übernommen — Konten und Wallets
+entstehen auf der neuen Instanz frisch.
+
+1. **Projekt anlegen:** [supabase.com](https://supabase.com) → *New Project*
+   - Name: `autotrd`
+   - **Region: Frankfurt (eu-central-1)** — kurze Wege zu den Nutzern und
+     Daten in der EU.
+   - Datenbank-Passwort erzeugen lassen und **sicher speichern** (es wird
+     unten für die Migrationen gebraucht und ist später nicht mehr einsehbar).
+2. **Schlüssel abholen:** *Project Settings → API*
+   - `Project URL` → z. B. `https://abcdefgh.supabase.co`
+   - `anon public` → der Schlüssel für den Browser
+   - `service_role` → **Vollzugriff, umgeht ALLE Sicherheitsregeln.**
+     Gehört ausschließlich in GitHub-Secrets und Edge Functions, **niemals**
+     in den Frontend-Build oder ins Repo.
+3. **Verbindungszeichenfolge:** *Project Settings → Database → Connection
+   string → URI*, das Passwort aus Schritt 1 einsetzen.
+4. **Im GitHub-Repo hinterlegen** (*Settings → Secrets and variables → Actions*):
+
+   | Art | Name | Wert |
+   |-----|------|------|
+   | Secret | `SUPABASE_DB_URL` | Verbindungszeichenfolge aus Schritt 3 |
+   | Secret | `SUPABASE_SERVICE_ROLE_KEY` | `service_role`-Schlüssel |
+   | Variable | `VITE_SUPABASE_URL` | Project URL |
+   | Variable | `VITE_SUPABASE_ANON_KEY` | `anon public`-Schlüssel |
+
+   Der `anon`-Schlüssel steht später im ausgelieferten JavaScript — das ist
+   so vorgesehen und ungefährlich, weil jede Zeile zusätzlich durch Row Level
+   Security geschützt ist (`supabase/migrations/0002_rls.sql`). Genau deshalb
+   ist die Trennung zum `service_role`-Schlüssel so wichtig.
+5. **Migrationen einspielen:** Sobald `SUPABASE_DB_URL` gesetzt ist, spielt
+   der Workflow *Deploy Supabase (Migrationen)* bei jedem Push auf `main`
+   alle Dateien aus `supabase/migrations/` ein (idempotent, in Reihenfolge).
+   Manuell geht es genauso: `psql "$SUPABASE_DB_URL" -f supabase/migrations/0001_schema.sql`
+6. **Abnahme:** In der Supabase-Konsole unter *Table Editor* stehen die
+   Tabellen `profiles`, `wallets`, `positions`, `trades`, `strategies`,
+   `market_symbols` … und unter *Authentication → Policies* die Regeln.
+   `wallets` darf **keine** Insert/Update-Policy haben — Geld schreibt nur
+   der Server.

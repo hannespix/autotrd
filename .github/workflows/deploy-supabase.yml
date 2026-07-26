@@ -1,0 +1,59 @@
+name: Deploy Supabase (Migrationen)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/migrations/**'
+      - '.github/workflows/deploy-supabase.yml'
+  workflow_dispatch:
+
+concurrency: deploy-supabase
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    # Guard wie bei den anderen Deploys: Solange das Projekt nicht angelegt
+    # ist (docs/SETUP.md §K), wird sauber übersprungen statt rot zu werden.
+    env:
+      SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+    steps:
+      - name: Guard — Verbindung hinterlegt?
+        if: env.SUPABASE_DB_URL == ''
+        run: echo "::warning::SUPABASE_DB_URL fehlt — Migrationen übersprungen (siehe docs/SETUP.md §K)."
+
+      - uses: actions/checkout@v5
+        if: env.SUPABASE_DB_URL != ''
+
+      # Kein Supabase-CLI nötig: psql spielt die Dateien in Reihenfolge ein.
+      # Die Migrationen sind idempotent geschrieben (create table if not
+      # exists, drop policy if exists), ein zweiter Lauf ist damit harmlos.
+      - name: Migrationen einspielen
+        if: env.SUPABASE_DB_URL != ''
+        run: |
+          set -euo pipefail
+          for f in supabase/migrations/*.sql; do
+            echo "── $f ──"
+            psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -q -f "$f"
+          done
+          echo "Alle Migrationen eingespielt."
+
+      # Sicherheits-Abnahme direkt nach dem Einspielen: Auf den Geld-Tabellen
+      # darf es KEINE Schreib-Policy geben. Eine versehentlich ergänzte würde
+      # Clients erlauben, ihren eigenen Kontostand zu setzen — der Lauf wird
+      # dann rot, bevor das jemand merkt.
+      - name: Abnahme — keine Schreibrechte auf Geld-Tabellen
+        if: env.SUPABASE_DB_URL != ''
+        run: |
+          set -euo pipefail
+          BAD=$(psql "$SUPABASE_DB_URL" -tAc "
+            select count(*) from pg_policies
+            where schemaname = 'public'
+              and tablename in ('wallets','positions','trades','equity_snapshots')
+              and cmd <> 'SELECT';")
+          if [ "$BAD" != "0" ]; then
+            echo "::error::$BAD Schreib-Policy(s) auf Geld-Tabellen gefunden — Geld darf nur die service_role schreiben."
+            psql "$SUPABASE_DB_URL" -c "select tablename, policyname, cmd from pg_policies where schemaname='public' and tablename in ('wallets','positions','trades','equity_snapshots');"
+            exit 1
+          fi
+          echo "OK: Geld-Tabellen sind für Clients read-only."
