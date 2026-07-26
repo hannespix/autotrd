@@ -506,6 +506,16 @@ function layout(email: string): string {
                ihm deren Kopfzeile und das Chart klebte 38 px zu weit oben. -->
           <div id="mainHd" class="gp-hd" hidden>
             <input id="mainHdSym" class="inp mh-sym" title="Symbol des Haupt-Charts (Enter übernimmt)" />
+            <span class="gp-tf">
+              <button class="tf-btn" id="mhAuto"
+                title="Auto-Zeitrahmen: eng zoomen wechselt in feinere Kerzen, weit zoomen zurück zu Tageskerzen">Auto</button>
+              <button class="tf-btn" data-mh-i="1" title="1 Handelstag in 5-Minuten-Kerzen">1T</button>
+              <button class="tf-btn" data-mh-i="5" title="~5 Handelstage in 5-Minuten-Kerzen">1W</button>
+              <button class="tf-btn" data-mh-r="22">1M</button>
+              <button class="tf-btn" data-mh-r="66">3M</button>
+              <button class="tf-btn" data-mh-r="0">1J</button>
+            </span>
+            <button class="tf-btn mh-max" id="mhMax" title="Chart im Vollbild (Esc schließt)">⛶</button>
             <button class="tf-btn mh-lock" id="lockMain"
               title="Haupt-Chart in die Lock-Gruppe: Zoom, Sichtbereich und Crosshair laufen auf allen gelockten Charts synchron">${ICONS.unlock}</button>
           </div>
@@ -1698,6 +1708,28 @@ function updateAutoUi(): void {
   $('autoBtn').classList.toggle('on', st.autoRes);
   localStorage.setItem('autotrd-chart-auto', st.autoRes ? '1' : '0');
   renderResBadge();
+  syncMainHdTf();
+}
+
+/** Raster-Kopf des Haupt-Fensters (Titelleisten-Parität, User-Screenshot
+ *  26.07.): on-Klassen der Auto-/Zeitrahmen-Knöpfe an den Haupt-Zustand
+ *  angleichen — Gegenstück zu syncPanelTfButtons für die Panels. */
+function syncMainHdTf(): void {
+  if (!st) return;
+  document.querySelectorAll<HTMLElement>('#mainHd [data-mh-r], #mainHd [data-mh-i]').forEach((b) => {
+    const on = b.dataset['mhI'] !== undefined
+      ? Number(b.dataset['mhI']) === st!.intradayDays && st!.intradayDays > 0
+      : st!.intradayDays === 0 && Number(b.dataset['mhR']) === st!.range;
+    b.classList.toggle('on', on);
+  });
+  $('mhAuto').classList.toggle('on', st.autoRes);
+}
+
+/** OHLC-Zeile ans CHART koppeln, nicht an den Fenster-Rahmen: Im Raster
+ *  schiebt die Kopfzeile das Chart nach unten — der ▸-OHLC-Chip überlappte
+ *  sonst das Symbolfeld (User-Screenshot 26.07., „nicht homogen"). */
+function positionMainHud(): void {
+  $('chartHud').style.top = `${$('chartArea').offsetTop + 6}px`;
 }
 
 /* ── Auto-Zeitrahmen je Raster-/Vergleichs-Fenster (Grid-Gleichwertigkeit
@@ -2654,6 +2686,10 @@ function setMainMax(on: boolean): void {
   else leaveMax(scope);
   ($('maxExit') as HTMLButtonElement).hidden = !on;
   $('maxMain').classList.toggle('on', on);
+  // Raster-Kopf-⛶ spiegelt den Zustand wie die Panel-⛶ (Titelleisten-Parität)
+  $('mhMax').classList.toggle('on', on);
+  $('mhMax').textContent = on ? '✕' : '⛶';
+  positionMainHud();
   drawPredictionArrow();
 }
 
@@ -2690,6 +2726,8 @@ function renderChartGrid(): void {
   ($('mainHdSym') as HTMLInputElement).value = st.currentSymbol;
   $('lockMain').innerHTML = st.mainLocked ? ICONS.lock : ICONS.unlock;
   $('lockMain').classList.toggle('on', st.mainLocked);
+  syncMainHdTf();
+  positionMainHud(); // Kopf sichtbar/versteckt → OHLC-Zeile ans Chart koppeln
   document.querySelectorAll('.tf-btn[data-grid]').forEach((b) => {
     b.classList.toggle('on', Number((b as HTMLElement).dataset['grid']) === st?.gridMode);
   });
@@ -4270,6 +4308,42 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     el.value = sym;
     selectSymbol(sym);
   });
+  // Zeitrahmen im Raster-Kopf (Titelleisten-Parität 26.07.): wirkt LOKAL
+  // aufs Haupt-Chart — wie die Picker der Panels; der globale Sync über
+  // alle Fenster bleibt bewusst bei der großen Toolbar darüber.
+  document.querySelectorAll<HTMLElement>('#mainHd [data-mh-r], #mainHd [data-mh-i]').forEach((b) =>
+    b.addEventListener('click', () => {
+      if (!st) return;
+      st.autoRes = false; // manuelle Stufe pausiert Auto (wie überall)
+      st.intradayDays = b.dataset['mhI'] !== undefined ? Number(b.dataset['mhI']) : 0;
+      st.aggMinutes = 5;
+      if (b.dataset['mhR'] !== undefined) st.range = Number(b.dataset['mhR']);
+      st.chartFitPending = true;
+      // Toolbar-Knöpfe spiegeln denselben Zustand
+      tfButtons.forEach((el) =>
+        el.classList.toggle(
+          'on',
+          st!.intradayDays > 0
+            ? el.dataset.intraday === String(st!.intradayDays)
+            : el.dataset.intraday === undefined && el.dataset.bars === String(st!.range),
+        ),
+      );
+      updateAutoUi();
+      if (st.intradayDays > 0) void loadIntradayView();
+      else renderChart();
+    }),
+  );
+  $('mhAuto').addEventListener('click', () => {
+    if (!st) return;
+    st.autoRes = !st.autoRes;
+    updateAutoUi();
+    if (st.autoRes) maybeAutoSwitch();
+  });
+  $('mhMax').addEventListener('click', () => {
+    const on = !$('chartMaxScope').classList.contains('chart-max');
+    exitAllMax();
+    if (on) setMainMax(true);
+  });
   // Auto-Auflösung an/aus + Y-Autoscaling (Anzeige-Option, Feedback 25.07.)
   $('autoBtn').addEventListener('click', () => {
     if (!st) return;
@@ -4411,7 +4485,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   // Vollbild je Chart (Feedback 25.07., wichtig für Smartphones): CSS-Overlay
   // statt Fullscreen-API (läuft überall, auch iOS/PWA); Esc schließt.
   $('maxMain').addEventListener('click', () => {
-    const on = !$('chartWrap').classList.contains('chart-max');
+    // chartMaxScope trägt die Vollbild-Klasse (nicht chartWrap) — der
+    // Toggle prüfte das falsche Element und konnte nie wieder schließen.
+    const on = !$('chartMaxScope').classList.contains('chart-max');
     exitAllMax();
     if (on) setMainMax(true);
   });
