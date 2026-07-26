@@ -174,11 +174,11 @@ export const INFO: Record<string, { t: string; d: string }> = {
   // ── Kennzahlen ──
   sharpe: {
     t: 'Sharpe-Ratio',
-    d: 'Rendite pro Einheit Risiko: durchschnittliche Tagesrendite geteilt durch deren Schwankung, aufs Jahr skaliert (√252). Über 1 gilt als gut, über 2 als sehr gut. Eine hohe Rendite mit wilden Schwankungen kann eine SCHLECHTERE Sharpe haben als eine ruhige moderate.',
+    d: 'Rendite pro Einheit Risiko: durchschnittliche Tagesrendite geteilt durch deren Schwankung, aufs Jahr skaliert (√252). Über 1 gilt als gut, über 2 als sehr gut. Eine hohe Rendite mit wilden Schwankungen kann eine SCHLECHTERE Sharpe haben als eine ruhige moderate. Im Portfolio steht „30" bzw. „90" für die letzten 30 bzw. 90 Tages-Snapshots. „--" heißt: noch zu wenig Kurve oder eine völlig flache Serie — bewusst kein geschöntes 0.',
   },
   maxdd: {
     t: 'Max Drawdown',
-    d: 'Der tiefste Einbruch vom zwischenzeitlichen Höchststand, in Prozent — „wie weh tat es maximal?". Wichtigste Kennzahl fürs Durchhalten: −30 % braucht +43 % nur zum Ausgleich.',
+    d: 'Der tiefste Einbruch vom zwischenzeitlichen Höchststand, in Prozent — „wie weh tat es maximal?". Wichtigste Kennzahl fürs Durchhalten: −30 % braucht +43 % nur zum Ausgleich, −40 % schon +67 %. Kleiner ist besser, auch wenn die Rendite dafür etwas niedriger ausfällt.',
   },
   winrate: {
     t: 'Winrate (Trefferquote)',
@@ -216,6 +216,23 @@ export const INFO: Record<string, { t: string; d: string }> = {
   fees: {
     t: 'Gebühren (Kommission + Slippage)',
     d: '0,1 % Ordergebühr plus 5 Basispunkte Slippage (Abweichung zwischen angezeigtem und tatsächlichem Ausführungskurs). Wird hier nicht nur angezeigt, sondern vom Paper-Broker WIRKLICH berechnet — dieselben Konditionen wie im Backtest.',
+  },
+  // ── Portfolio-Kennzahlen (M12) ──
+  equityCurve: {
+    t: 'Equity-Kurve',
+    d: 'Der Verlauf deines GESAMTEN Depotwerts (Cash + alle offenen Positionen zum jeweiligen Tageskurs). Einmal täglich nach US-Börsenschluss wird ein Punkt festgeschrieben — anders als die Live-Anzeige kann die Kurve deshalb nicht durch Zwischenstände „schön" wirken. Sie ist die ehrlichste Einzelgrafik, die es über eine Strategie gibt: Nicht einzelne Gewinner zählen, sondern ob die Linie über Wochen steigt.',
+  },
+  hwm: {
+    t: 'Hochwasser-Marke (High-Water-Mark)',
+    d: 'Der höchste Depotwert, den dein Konto je erreicht hat. Bezugspunkt für den Drawdown: Alles darunter ist noch nicht wieder aufgeholt. Steigt nur, wenn ein neuer Rekordstand erreicht wird.',
+  },
+  profitFactor: {
+    t: 'Profit-Faktor',
+    d: 'Summe aller Gewinne geteilt durch die Summe aller Verluste, über die abgeschlossenen Trades. Über 1 heißt: unterm Strich verdienst du Geld; 1,5 gilt als solide, unter 1 verliert die Strategie. Angenehm an dieser Zahl: Sie funktioniert unabhängig von der Trefferquote — wenige große Gewinner können viele kleine Verluste tragen. „--" erscheint, solange es noch keinen einzigen Verlust-Trade gibt (dann wäre der Wert unendlich, was nichts aussagt).',
+  },
+  expectancy: {
+    t: 'Erwartungswert je Trade',
+    d: 'Was ein durchschnittlicher abgeschlossener Trade eingebracht hat (Gesamt-P&L geteilt durch die Anzahl). Die Zahl übersetzt die Strategie in einen Satz: „Jeder Trade bringt im Mittel X $." Negativ heißt: Häufiger handeln verliert schneller Geld — Frequenz erhöhen lohnt nur bei positivem Erwartungswert.',
   },
   kaufkraft: {
     t: 'Kaufkraft danach',

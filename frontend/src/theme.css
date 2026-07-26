@@ -236,6 +236,14 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .pos-sub td { padding: 0 7px 7px; font-size: 10px; color: var(--t3); border-bottom: 1px solid var(--hair); }
 .pos-sub b { color: var(--t2); font-family: var(--f-num); }
 .pos-next { color: var(--ac); font-weight: 700; }
+/* Portfolio-Kennzahlen (M12): Sparkline + Kennzahlen-Raster in der
+   Performance-Karte. Inline-SVG statt Chart-Lib — 120 Punkte brauchen keine
+   Canvas-Instanz, und in der Glass-Card wäre ein weiterer absolut
+   positionierter Layer nur Ballast. */
+.pf-spark { width: 100%; height: 34px; display: block; margin: 2px 0 6px; }
+.pf-spark[hidden] { display: none; }
+.pf-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 10px; }
+@media (max-width: 420px) { .pf-grid { grid-template-columns: repeat(2, 1fr); } }
 /* Strategie löschen (26.07.): dezent bis zur Armierung, dann unmissverständlich */
 .st-del { margin-left: auto; color: var(--t3); }
 .st-del.armed { color: #fff; background: var(--rd); border-color: var(--rd); }

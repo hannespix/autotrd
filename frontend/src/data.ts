@@ -405,6 +405,60 @@ export function watchTrades(uid: string, cb: (trades: TradeRow[]) => void): Unsu
   });
 }
 
+/* ── Portfolio-Kennzahlen (M12): schreibt NUR der tägliche snapshotEquity-
+   Scheduler — das Dashboard liest genau ein Stats-Doc + die Equity-Serie. ── */
+
+export interface PortfolioStatsDoc {
+  equityDays: number;
+  sharpe30: number | null;
+  sharpe90: number | null;
+  hwm: number | null;
+  maxDDPct: number | null;
+  currentDDPct: number | null;
+  trades: number;
+  wins: number;
+  winRatePct: number | null;
+  profitFactor: number | null;
+  expectancy: number | null;
+  avgWin: number | null;
+  avgLoss: number | null;
+  bySymbol: Record<string, { pnl: number; n: number }>;
+  byClass: Record<string, { pnl: number; n: number }>;
+  updatedAt: string;
+}
+
+export function watchPortfolioStats(
+  uid: string,
+  cb: (stats: PortfolioStatsDoc | null) => void,
+): Unsubscribe {
+  return onSnapshot(doc(db(), 'users', uid, 'stats', 'main'), (snap) =>
+    cb(snap.exists() ? (snap.data() as PortfolioStatsDoc) : null),
+  );
+}
+
+export interface EquitySeriesPoint {
+  date: string;
+  equity: number;
+}
+
+export function watchEquitySeries(
+  uid: string,
+  cb: (points: EquitySeriesPoint[]) => void,
+): Unsubscribe {
+  const q = query(
+    collection(db(), 'users', uid, 'equity'),
+    orderBy('date', 'desc'),
+    limit(120),
+  );
+  return onSnapshot(q, (snap) => {
+    cb(
+      snap.docs
+        .map((d) => ({ date: d.get('date') as string, equity: d.get('equity') as number }))
+        .reverse(),
+    );
+  });
+}
+
 /** Manueller Paper-Trade über das trade-Callable (Preis kommt vom Server). */
 export async function callTrade(input: {
   symbol: string;
