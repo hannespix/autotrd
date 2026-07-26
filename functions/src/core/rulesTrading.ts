@@ -33,7 +33,8 @@ export const RISK_LIMITS = {
   emergencyStopPct: 25,
   /** Offene Positionen je User (Entries darüber hinaus werden verweigert). */
   maxOpenPositions: 10,
-  /** Mindestabstand zwischen ENTRIES je (Strategie, Symbol) in Minuten. */
+  /** Default-Kauf-Pause je Symbol in Minuten — engine.cooldownMin
+   *  überschreibt sie (Klemme 5–1440 in clampStrategyRisk). */
   cooldownMin: 30,
 } as const;
 
@@ -47,15 +48,24 @@ export function clampStrategyRisk(strategy: Strategy): Strategy {
     // „Aus" heißt: kein regulärer Stop — die Notbremse bleibt.
     s.engine.stopLossPct = RISK_LIMITS.emergencyStopPct;
   }
+  // Kauf-Pause konfigurierbar (Owner 26.07.: „Tradefrequenz erhöhen"), aber
+  // in der Hülle: unter 5 min ist sie gegen den 5-min-Scan-Takt wirkungslos,
+  // über 1 Tag wäre sie ein verstecktes Handelsverbot.
+  const cd = s.engine.cooldownMin;
+  s.engine.cooldownMin = Number.isFinite(cd) ? Math.min(1440, Math.max(5, cd as number)) : 15;
   return s;
 }
 
 /** true, solange der Entry-Cooldown seit dem letzten Trade noch läuft. */
-export function cooldownActive(lastTradeAt: string | undefined, now: Date): boolean {
+export function cooldownActive(
+  lastTradeAt: string | undefined,
+  now: Date,
+  minutes: number = RISK_LIMITS.cooldownMin,
+): boolean {
   if (!lastTradeAt) return false;
   const last = Date.parse(lastTradeAt);
   if (!Number.isFinite(last)) return false;
-  return now.getTime() - last < RISK_LIMITS.cooldownMin * 60_000;
+  return now.getTime() - last < minutes * 60_000;
 }
 
 export interface RuleContextArgs {

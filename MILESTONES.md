@@ -850,6 +850,16 @@ spezifischen Parametern schlägt denselben Backtest mit globalen Parametern.
       `'initial'` bleibt als Option (Options-Modal + ⓘ). `sizeOrder()` ist
       pure + getestet (`functions/test/sizing.test.ts`, 7 Fälle).
 
+- [x] **Trade-Frequenz (26.07., Owner: „bitte die Tradefrequenz deutlich
+      erhöhen")**: `signals.timeframe` — Konfluenz UND Regelbaum rechnen
+      per Default auf **5-Minuten-Kerzen** (Signale drehen im Scan-Takt
+      statt alle paar Tage; die Forecast-Stimme nutzt dann die Kurzfrist-
+      Prognose); 'daily' bleibt als ruhige Option. `engine.cooldownMin`
+      (Kauf-Pause nach Verkauf) konfigurierbar, Default 15, Hüllen-Klemme
+      5–1440. Options-Modal: Signal-Zeitrahmen, Kauf-Pause, Konfluenz
+      Einstieg — alle mit ⓘ inkl. ehrlicher Gebühren-Warnung. Die zentrale
+      Signal-Anzeige (market/signals) bleibt bewusst auf Tages-Basis.
+
 - [x] **Grid-Gleichwertigkeit (26.07., Owner-Wunsch „alles soll gleichwertig
       sein")**: OHLC-Kurszeile als In-Chart-Accordion in ALLEN Fenstern
       (Haupt + Raster + Vergleich; EIN gerätelokaler Zustand, Klick toggelt

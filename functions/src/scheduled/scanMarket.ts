@@ -118,6 +118,19 @@ interface SymbolData {
   forecast: LiveForecast | null;
   /** ATR(14) in Prozent des Kurses — Basis volatilitätsadaptiver Stops (MA6). */
   atrPct?: number | null;
+  /** 5-min-Closes (~5 Handelstage) — Signal-Basis im 'intraday'-Zeitrahmen
+   *  (Owner 26.07.: „Tradefrequenz deutlich erhöhen"). */
+  closes5m?: number[];
+  /** Kurzfrist-Prognose (nächste Stunde) in % — Forecast-Stimme im
+   *  'intraday'-Zeitrahmen (die Tages-Prognose passt dort nicht). */
+  intradayPct?: number | null;
+}
+
+/** Signal-Quelle je Zeitrahmen: 5-min-Closes, wenn gewünscht UND vorhanden
+ *  (mind. ~35 Bars für RSI/MACD-Anlauf), sonst Tages-Closes als Fallback. */
+export function signalCloses(data: SymbolData, timeframe: 'daily' | 'intraday'): number[] {
+  if (timeframe === 'intraday' && (data.closes5m?.length ?? 0) >= 35) return data.closes5m!;
+  return data.closes;
 }
 
 /**
@@ -152,6 +165,10 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
       // Schema kein Obergrenze kennt (100 % Einsatz wäre durchgegangen).
       const clamped = clampStrategyRisk(strategy);
       const now = new Date();
+      // Zeitbasis der Signale (Owner 26.07., „Tradefrequenz erhöhen"):
+      // 'intraday' rechnet auf 5-min-Kerzen — Signale drehen im Scan-Takt.
+      const tf: 'daily' | 'intraday' = strategy.signals.timeframe ?? 'intraday';
+      const cdMin = clamped.engine.cooldownMin ?? 15;
 
       // Entry-Cooldown nach Risk-Exits (MA3-Fund 26.07.): Ohne ihn kauft die
       // Konfluenz ein per Stop-Loss verkauftes Symbol im selben/nächsten Scan
@@ -249,8 +266,10 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
           const data = marketData.get(symbol);
           if (!data) continue; // Klasse geschlossen oder Symbol nicht im Scan
           const pos = positions.get(symbol) ?? null;
-          const snapshot = computeIndicatorSnapshot(data.closes, data.price, strategy.indicators);
-          const prevCloses = data.closes.slice(0, -1);
+          // Regelbaum rechnet auf derselben Zeitbasis wie die Konfluenz
+          const closes = signalCloses(data, tf);
+          const snapshot = computeIndicatorSnapshot(closes, data.price, strategy.indicators);
+          const prevCloses = closes.slice(0, -1);
           const prevPrice = prevCloses[prevCloses.length - 1] ?? null;
           const ctx = buildRuleContext({
             price: data.price,
@@ -260,9 +279,9 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
                 ? computeIndicatorSnapshot(prevCloses, prevPrice, strategy.indicators)
                 : null,
             prevPrice,
-            closes: data.closes,
+            closes,
             minuteOfDayEt: minuteEt,
-            forecastPct: data.forecast?.predictedPct ?? null,
+            forecastPct: tf === 'intraday' ? (data.intradayPct ?? null) : (data.forecast?.predictedPct ?? null),
             position: pos
               ? { open: true, unrealizedPct: ((data.price - pos.avgEntry) / pos.avgEntry) * 100 }
               : { open: false },
@@ -326,7 +345,7 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
               // Virtuelles Konto — Risiko-Hülle wie beim echten Handel
               if (dir === 'buy' && !book.positions[symbol]) {
                 if (Object.keys(book.positions).length >= RISK_LIMITS.maxOpenPositions) continue;
-                if (cooldownActive(doc.lastTrades?.[symbol], now)) continue;
+                if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
                 // Sizing-Parität (MA4): gleiche Basis wie der echte Broker —
                 // Cash (Default) oder Startkapital, Deckung prüft der Cash.
                 const capital =
@@ -362,8 +381,8 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
             // Entry-Guards der Risiko-Hülle: Positionslimit + Cooldowns
             // (je Strategie UND nach Risk-Exits desselben Wallets)
             if (positions.size >= RISK_LIMITS.maxOpenPositions) continue;
-            if (cooldownActive(doc.lastTrades?.[symbol], now)) continue;
-            if (cooldownActive(engineCooldowns[symbol], now)) continue;
+            if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
+            if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
             // assetClass durchreichen (MA3-Fund 26.07.): Ohne sie schrieb der
             // Broker die Stop/Take-LEVEL mit den GLOBALEN Prozenten fest —
             // die MA6-Klassen-Profile (Krypto 6/10 usw.) griffen beim Kauf
@@ -431,12 +450,16 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
         // Positionskontext entscheidet über Ein- oder Ausstiegs-Regeln:
         // Der Ausstieg ist bewusst leichter (MA2) — ein verpasster Verkauf
         // kostet Geld, ein verpasster Kauf nur eine Chance.
+        // Zeitbasis 'intraday': 5-min-Kerzen + Kurzfrist-Prognose als
+        // Forecast-Stimme (die Tages-Prognose passt nicht zum 5-min-Signal).
         const sig = computeSignal(
-          data.closes,
+          signalCloses(data, tf),
           data.price,
           strategy.indicators,
           strategy.signals,
-          data.forecast,
+          tf === 'intraday'
+            ? (data.intradayPct != null ? { predictedPct: data.intradayPct } : null)
+            : data.forecast,
           { hasPosition: positions.has(symbol) },
         );
         // Prognose-Pfeil des Users als zusätzliche gewichtete Stimme
@@ -452,7 +475,7 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
           // Konfluenz konnte beliebig viele Positionen öffnen. Und nach
           // einem Risk-Exit hält der Cooldown den Sofort-Rückkauf auf.
           if (positions.size >= RISK_LIMITS.maxOpenPositions) continue;
-          if (cooldownActive(engineCooldowns[symbol], now)) continue;
+          if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
           const r = await executePaperTrade(
             { uid, symbol, side: 'buy', price: data.price, source: 'engine', assetClass: classify(symbol) },
             clamped,
@@ -828,6 +851,9 @@ export async function runScan(force = false): Promise<ScanResult> {
       try {
         const intraday = await getIntradayBars(symbol);
         const days = [...intraday.keys()].sort();
+        // 5-min-Closes ins Marktbild: Signal-Basis des 'intraday'-Zeitrahmens
+        const md = marketData.get(symbol);
+        if (md) md.closes5m = days.flatMap((d) => intraday.get(d) ?? []).map((b) => b.c);
         const writeDays = symDoc.get('intradayBackfilledAt') ? days.slice(-1) : days;
         for (const day of writeDays) {
           batch.set(symRef.collection('ohlc5m').doc(day), {
@@ -852,6 +878,7 @@ export async function runScan(force = false): Promise<ScanResult> {
             sentimentOverall,
             marketOpenForClass(classify(symbol), now),
           );
+          if (md) md.intradayPct = ifc?.predictedPct ?? null;
           batch.set(
             symRef,
             {
