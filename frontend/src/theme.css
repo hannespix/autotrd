@@ -236,6 +236,9 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .pos-sub td { padding: 0 7px 7px; font-size: 10px; color: var(--t3); border-bottom: 1px solid var(--hair); }
 .pos-sub b { color: var(--t2); font-family: var(--f-num); }
 .pos-next { color: var(--ac); font-weight: 700; }
+/* Strategie löschen (26.07.): dezent bis zur Armierung, dann unmissverständlich */
+.st-del { margin-left: auto; color: var(--t3); }
+.st-del.armed { color: #fff; background: var(--rd); border-color: var(--rd); }
 .t-buy { background: var(--gn-soft); color: var(--gn); }
 .t-sell { background: var(--rd-soft); color: var(--rd); }
 .t-hold { background: rgba(78, 93, 119, .2); color: var(--t2); }

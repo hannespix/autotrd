@@ -19,7 +19,7 @@ export { evalForecasts, evalNow } from './scheduled/evalForecasts.js';
 export { tunerReview, tunerNow } from './scheduled/tunerReview.js';
 export { ensureProfile } from './callable/profile.js';
 export { saveStrategy } from './callable/strategy.js';
-export { saveStrategyDraft, publishStrategyVersion, assignStrategy, promoteStrategy } from './callable/strategies.js';
+export { saveStrategyDraft, publishStrategyVersion, assignStrategy, promoteStrategy, deleteStrategy } from './callable/strategies.js';
 export { quoteNow } from './callable/quoteNow.js';
 export { runSweep } from './callable/sweep.js';
 export { runBacktest } from './callable/backtest.js';

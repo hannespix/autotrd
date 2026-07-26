@@ -526,6 +526,11 @@ export async function callSaveStrategyDraft(input: {
   return (res.data as { id: string }).id;
 }
 
+/** Strategie endgültig löschen — auch publizierte (Owner-Frage 26.07.). */
+export async function callDeleteStrategy(id: string): Promise<void> {
+  await httpsCallable(fns(), 'deleteStrategy')({ id });
+}
+
 export async function callPublishStrategy(id: string): Promise<number> {
   const res = await httpsCallable(fns(), 'publishStrategyVersion')({ id });
   return (res.data as { version: number }).version;
