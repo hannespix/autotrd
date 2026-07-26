@@ -646,9 +646,19 @@ button, input, select { font-family: inherit; font-size: inherit; }
   color: var(--t1); font-size: 13px; padding: 4px 10px; cursor: pointer;
 }
 .gp-hd { display: flex; align-items: center; gap: 6px; }
-.gp-sym { width: 86px; font-size: 11px; padding: 3px 8px; text-transform: uppercase; }
+/* EINE Regel für Panel- und Haupt-Symbolfeld: identische Box = identische
+   Kopfhöhe, damit alle Raster-Fenster exakt gleich sitzen (26.07.). */
+.gp-sym, .mh-sym { width: 86px; font-size: 11px; padding: 3px 8px; text-transform: uppercase; }
+/* Haupt-Fenster im Raster: gleiche Box wie eine .gpanel (Rahmen unsichtbar,
+   damit die Karte nicht doppelt gerahmt wirkt) */
+.chart-row:not([data-mode="1"]) .chart-wrap {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px; border: 1px solid transparent; border-radius: var(--r-sm);
+}
 .gp-tf { display: flex; gap: 2px; }
-.gp-lock { margin-left: auto; }
+/* Eigene Klasse fürs Haupt-Fenster: gleiche Optik, aber Panel-Selektoren
+   (.gp-lock) dürfen den Haupt-Lock nicht treffen (26.07.). */
+.gp-lock, .mh-lock { margin-left: auto; }
 .gp-chart { height: var(--chart-h, clamp(280px, 42vh, 420px)); min-height: 0; }
 @media (max-width: 760px) {
   .chart-row[data-mode="2"], .chart-row[data-mode="4"] { grid-template-columns: 1fr; }
