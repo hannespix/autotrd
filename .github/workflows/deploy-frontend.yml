@@ -124,7 +124,9 @@ jobs:
           SSHPASS: ${{ secrets.FTP_PASSWORD }}
           SFTP_USER: ${{ secrets.FTP_USERNAME }}
           SFTP_HOST: ${{ secrets.FTP_HOST }}
-          SFTP_DIR: ${{ vars.FTP_SERVER_DIR || 'autotrd.net/' }}
+          # Eigene Variable, weil die SFTP-Wurzel (SSH-Home) nicht die
+          # FTP-Wurzel ist. FTP_SSH_DIR überschreibt, sobald der Pfad bekannt ist.
+          SFTP_DIR: ${{ vars.FTP_SSH_DIR || vars.FTP_SERVER_DIR || 'autotrd.net/' }}
         run: |
           set -e
           sudo apt-get update -qq && sudo apt-get install -y -qq lftp sshpass
@@ -134,7 +136,23 @@ jobs:
           # Shell-Variablen und nahm '$SFTP_HOST' wörtlich („hostname contains
           # invalid characters"). sshpass reicht das Passwort über SSHPASS
           # durch; das 'dummy' hält lftp nur von der interaktiven Abfrage ab.
-          lftp -c "set sftp:connect-program 'sshpass -e ssh -a -x -o StrictHostKeyChecking=accept-new'; set net:timeout 30; set net:max-retries 2; open -u ${SFTP_USER},dummy sftp://${SFTP_HOST}; mirror -R --delete --parallel=2 --exclude-glob .ftp-deploy-sync-state.json frontend/dist/ ${SFTP_DIR};"
+          SSH="set sftp:connect-program 'sshpass -e ssh -a -x -o StrictHostKeyChecking=accept-new'; set net:timeout 30; set net:max-retries 2; open -u ${SFTP_USER},dummy sftp://${SFTP_HOST};"
+          # SSH-Login gelingt (26.07.), aber die SFTP-Wurzel ist NICHT die
+          # FTP-Wurzel: 'autotrd.net/' landete auf /home/autotrd.net → „No such
+          # file". Erst zeigen, was da ist, dann gezielt spiegeln.
+          echo "── SFTP-Verzeichnisbaum (Diagnose) ──"
+          lftp -c "$SSH pwd; ls;" || true
+          for CAND in www html public_html httpdocs sites domains; do
+            echo "── ls $CAND ──"; lftp -c "$SSH ls $CAND;" 2>&1 | head -20 || true
+          done
+          # Zielverzeichnis: erst wenn es EXISTIERT wird gespiegelt — sonst
+          # würde --delete im falschen Ordner Schaden anrichten.
+          if lftp -c "$SSH cd ${SFTP_DIR}; pwd;" >/dev/null 2>&1; then
+            lftp -c "$SSH mirror -R --delete --parallel=2 --exclude-glob .ftp-deploy-sync-state.json frontend/dist/ ${SFTP_DIR};"
+          else
+            echo "::warning::SFTP-Login OK, aber '${SFTP_DIR}' existiert dort nicht — richtigen Pfad aus dem Listing oben ablesen und als Repo-Variable FTP_SSH_DIR setzen."
+            exit 1
+          fi
 
       - name: Ergebnis — mindestens ein Upload muss durchgekommen sein
         if: env.FTP_HOST != ''
