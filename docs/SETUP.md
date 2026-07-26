@@ -291,3 +291,29 @@ entstehen auf der neuen Instanz frisch.
    `market_symbols` … und unter *Authentication → Policies* die Regeln.
    `wallets` darf **keine** Insert/Update-Policy haben — Geld schreibt nur
    der Server.
+
+## L. Sich selbst zum Admin machen (nach der Registrierung)
+
+Neue Konten landen auf der Stufe `pending` — sie sehen die App, können aber
+weder die Engine starten noch handeln. Das gilt auch für **dein eigenes**
+Konto. Einmalig freischalten und zum Admin machen:
+
+1. Auf autotrd.net registrieren (normale Anmeldung).
+2. Supabase-Dashboard → **SQL Editor** → ausführen (E-Mail anpassen):
+
+   ```sql
+   update public.profiles
+      set role = 'admin', access_level = 'approved', approved_at = now()
+    where email = 'deine@mailadresse.de';
+   ```
+
+3. Neu laden — die Admin-Ansicht mit den offenen Anfragen erscheint.
+
+Ab da geht alles über die Oberfläche: Neue Registrierungen tauchen dort auf
+und werden per Klick freigeschaltet. Der SQL-Schritt ist nur für den ersten
+Admin nötig — vorher gibt es ja niemanden, der freischalten könnte.
+
+**Warum das nicht über die App geht:** Wer sich selbst freischalten könnte,
+bräuchte kein Freischaltsystem. Ein Datenbank-Riegel weist genau das ab
+(Testfälle 18/19) — die einzige Ausnahme ist der direkte Datenbankzugriff,
+den nur du hast.
