@@ -29,5 +29,20 @@ jobs:
           java-version: '21'
       - name: Firestore-Rules-Tests (Emulator)
         run: npm run test:rules
+
+      # Supabase-Migration (MS1): Schema, RLS-Policies und die Geld-Constraints
+      # laufen gegen ein echtes Postgres — ohne Docker, das auth-Schema bildet
+      # supabase/tests/00_local_shim.sql nach. Ein Policy-Fehler fällt damit im
+      # PR auf, nicht erst in der Cloud.
+      - name: Postgres für Supabase-Tests starten
+        run: |
+          sudo systemctl start postgresql || sudo service postgresql start
+          sudo -u postgres psql -c "alter user postgres password 'postgres';"
+          sudo -u postgres psql -c "select version();"
+      - name: Supabase-Schema + RLS-Tests
+        env:
+          PGPASSWORD: postgres
+        run: scripts-ci/pg-test.sh 5432 tcp
+
       - name: Build (alle Workspaces)
         run: npm run build
