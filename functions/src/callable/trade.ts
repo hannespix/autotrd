@@ -72,6 +72,9 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
       // Klasse schrieb der Broker jedem Kauf die GLOBALEN Prozente als
       // Level fest — Krypto-Profile griffen nie (Level haben Vorrang).
       assetClass: classify(symbol),
+      // Manueller Verkauf ohne Position wird zum SHORT, wenn der User
+      // Leerverkäufe erlaubt hat (Opt-in) — sonst wie bisher 'keine_position'.
+      ...(side === 'sell' && strategy.signals.allowShort === true ? { openShort: true } : {}),
     },
     strategy,
   );

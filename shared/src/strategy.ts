@@ -134,6 +134,14 @@ export interface SignalsConfig {
    * Ausführung) — Paper-Trading ist der Ort, das gefahrlos zu erleben.
    */
   timeframe?: 'daily' | 'intraday';
+  /**
+   * Leerverkäufe erlauben (Owner-Wunsch 26.07.): Ein VERKAUFS-Signal ohne
+   * Position eröffnet dann einen Short (verdient am fallenden Kurs), ein
+   * KAUF-Signal deckt ihn ein. Default false — bewusst Opt-in: Beim Short
+   * sind Verluste theoretisch unbegrenzt (der Kurs kann beliebig steigen);
+   * im Paper-Trading begrenzen Stop-Loss und die 25-%-Notbremse real.
+   */
+  allowShort?: boolean;
 }
 
 export interface Strategy {
@@ -192,6 +200,7 @@ export const DEFAULT_STRATEGY: Strategy = {
     exitConfluence: 1, // Ausstieg leichter als Einstieg (Risiko-Asymmetrie)
     forecastSolo: false, // Prognose braucht eine zweite Stimme zum Einstieg
     timeframe: 'intraday', // 5-min-Signale: die Engine handelt im Scan-Takt
+    allowShort: false, // Leerverkäufe bewusst Opt-in (Options-Modal + ⓘ)
   },
 };
 
@@ -315,8 +324,17 @@ export interface Position {
    * Höchster Kurs seit Einstieg — Bezugspunkt des nachziehenden Stops.
    * Wird bei jedem Scan fortgeschrieben; fehlt er (Altbestand), gilt der
    * Einstand, der Trailing-Stop startet dann konservativ.
+   * Bei SHORT-Positionen ist das Pendant `lowWater` zuständig.
    */
   highWater?: number | null;
+  /**
+   * Leerverkauf (Owner-Wunsch 26.07., „auch schorten"): 'short' verdient am
+   * FALLENDEN Kurs. Fehlend = 'long' (additiv, Altbestand bleibt gültig).
+   * Beim Short sind Stop (über dem Einstand) und Take (darunter) gespiegelt.
+   */
+  side?: 'long' | 'short';
+  /** Tiefster Kurs seit Short-Einstieg — Bezugspunkt des Short-Trailings. */
+  lowWater?: number | null;
 }
 
 export interface Trade {
