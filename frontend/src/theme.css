@@ -603,6 +603,21 @@ button, input, select { font-family: inherit; font-size: inherit; }
   font-size: 11px; color: var(--t2); padding: 2px 8px; border-radius: 7px;
   background: color-mix(in srgb, var(--bg, #060b12) 62%, transparent);
   backdrop-filter: blur(6px);
+  /* Accordion (26.07.): die Zeile selbst ist der Klapp-Knopf */
+  pointer-events: auto; cursor: pointer;
+}
+.hud-fold { color: var(--t3); font-size: 10px; }
+/* OHLC-Kurszeile der Raster-/Vergleichs-Fenster (Grid-Gleichwertigkeit
+   26.07.): gleiche Optik wie #ohlcRow, absolut IM Chart — position:absolute,
+   nie fixed (backdrop-filter-Falle, CLAUDE.md §6). z-Index über der Aurora-
+   ::after-Schicht (2), unter Modals. */
+#chart2Area { position: relative; } /* Anker fürs absolute .gp-hud */
+.gp-hud {
+  position: absolute; top: 6px; left: 6px; z-index: 5;
+  font-size: 11px; color: var(--t2); padding: 2px 8px; border-radius: 7px;
+  background: color-mix(in srgb, var(--bg, #060b12) 62%, transparent);
+  backdrop-filter: blur(6px); cursor: pointer;
+  max-width: calc(100% - 12px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .chart-legend { display: flex; flex-wrap: wrap; gap: 3px 10px; font-size: 10px; color: var(--t2);
   padding: 2px 8px; border-radius: 7px;

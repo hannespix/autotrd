@@ -61,6 +61,10 @@ export const INFO: Record<string, { t: string; d: string }> = {
     t: 'Prognose darf allein entscheiden',
     d: 'Normalerweise ist das AUS: Die Prognose zählt beim Einstieg höchstens so viel, dass noch eine echte Indikator-Stimme dazukommen muss. Sonst reißt sie mit Gewicht 2 die Schwelle 2 im Alleingang — die „Konfluenz aus drei Indikatoren" wäre dann nur ein Etikett. Beim AUSSTIEG zählt sie ohnehin immer voll. Einschalten, wenn du der Prognose bewusst die Führung geben willst.',
   },
+  sizingBase: {
+    t: 'Sizing-Basis',
+    d: 'Woraus die Positionsgröße gerechnet wird. „Verfügbarer Cash" (Standard): Jeder Kauf nimmt seinen Prozentsatz vom aktuell freien Cash — das Wallet arbeitet weiter, auch wenn schon Positionen offen sind, die Tranchen werden mit sinkendem Cash automatisch kleiner. „Startkapital (fix)": Jede Tranche ist gleich groß (Prozent vom Startkapital) — kalkulierbarer, aber sobald der Rest-Cash eine volle Tranche nicht mehr deckt, kauft die Engine gar nichts mehr. Genau das ließ vorher viel Cash ungenutzt liegen.',
+  },
   stopLoss: {
     t: 'Stop-Loss',
     d: 'Automatische Verkaufs-Reißleine: Fällt der Kurs um diesen Prozentsatz unter den Einstieg, verkauft die Engine sofort — Verluste werden begrenzt, bevor sie groß werden. Zu eng gesetzt wirft dich normales Marktrauschen aus der Position („ausgestoppt").',
