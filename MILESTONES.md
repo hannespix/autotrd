@@ -966,13 +966,23 @@ in Firestore dagegen vorberechnete Aggregat-Dokumente.
 läuft unverändert weiter — inklusive aller Golden-Tests. Das ist der
 Wertkern des Repos und bleibt die Rückversicherung gegen Regressionen.
 
-- [ ] **MS1 Fundament**: `supabase/migrations/*.sql` — Schema (profiles,
+- [x] **MS1 Fundament (26.07. fertig, live verifiziert)**: `supabase/migrations/*.sql` — Schema (profiles,
       wallets, positions, trades, strategies, market_symbols, bars, quotes,
       signals, forecasts, equity, stats), RLS-Policies (Owner liest seine
       Zeilen, Geld schreibt ausschließlich `service_role`), **Check-Constraints
       für Geld-Invarianten** (Kontostand ≥ 0, qty > 0, Preis > 0) — eine
       Sicherheitsebene, die Firestore gar nicht kennt. Verifikation gegen
       echten Postgres inkl. RLS-Tests mit gesetztem JWT-Claim.
+      **Ergebnis:** 15 Prüfungen lokal grün (ohne Docker — ein auth-Shim
+      bildet `auth.uid()` nach) und acht davon zusätzlich gegen die echte
+      Instanz bestätigt: Nutzer B sieht die Trades von A nicht, A kann
+      weder seinen Kontostand ändern noch einen Trade erfinden (403), der
+      Saldo bleibt danach unverändert, anonym kommt gar nichts durch.
+      **Fund aus dem ersten Live-Lauf:** Ohne „Automatically expose new
+      tables" bekommt auch die service_role keine Rechte automatisch —
+      die Edge Functions hätten NICHTS schreiben können (0005). Der
+      lokale Test übersah es, weil er als Superuser lief; die beiden
+      neuen Fälle 14/15 schließen genau diese Lücke.
 - [ ] **MS2 Datenschicht Frontend**: `data.ts` gegen supabase-js
       (Realtime statt onSnapshot), Auth-Umstellung, Login/Registrierung.
       Die UI-Module bleiben unberührt — nur der Adapter darunter tauscht.
