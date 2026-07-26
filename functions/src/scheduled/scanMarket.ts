@@ -35,6 +35,7 @@ import { anthropicApiKey, ensureAiDay } from '../core/ai.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 import { computeIndicatorSnapshot, computeSignal } from '../core/engine.js';
 import { executePaperTrade, resolveBrokerMode, riskExitReason } from '../core/broker.js';
+import { mayTrade } from '../core/access.js';
 import {
   RISK_LIMITS,
   applyPredictionVote,
@@ -153,6 +154,12 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
     const strategy = userDoc.get('settings.strategy') as Strategy | undefined;
     if (!strategy || !isStrategy(strategy)) continue;
     if (resolveBrokerMode(strategy) !== 'paper') continue; // Live bleibt verriegelt (M14)
+    // Zugangsstufe (Owner 26.07.): Nicht freigeschaltete Konten dürfen den
+    // Schalter zwar umlegen — gehandelt wird für sie trotzdem nicht. Die
+    // Prüfung sitzt hier und nicht in der Query, weil ein fehlendes Feld
+    // (Bestandskonto) als freigeschaltet gilt und Firestore darauf nicht
+    // filtern kann.
+    if (!mayTrade(userDoc.data())) continue;
 
     try {
       const positionsSnap = await userDoc.ref.collection('positions').get();

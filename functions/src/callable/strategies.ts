@@ -22,6 +22,7 @@ import {
 import { consumeQuota } from '../core/broker.js';
 import { planPromotion } from '../core/rulesTrading.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
+import { accessDeniedReason, accessLevelOf, mayTrade } from '../core/access.js';
 
 const MAX_STRATEGIES = 10;
 const MAX_NAME_LEN = 60;
@@ -151,6 +152,13 @@ export const deleteStrategy = onCall(CALLABLE_OPTS, async (request) => {
 
 export const assignStrategy = onCall(CALLABLE_OPTS, async (request) => {
   const uid = await requireUid(request);
+  // Zugangsstufe (Owner 26.07.): Eine Zuweisung startet den Handel für die
+  // gewählten Symbole — deshalb hier dieselbe Sperre wie beim Trade-Callable.
+  // Entwerfen und Publizieren bleiben erlaubt: Ausprobieren soll man dürfen.
+  const profSnap = await getFirestore().doc(`users/${uid}`).get();
+  if (!mayTrade(profSnap.data())) {
+    throw new HttpsError('permission-denied', accessDeniedReason(accessLevelOf(profSnap.data())));
+  }
   const data = (request.data ?? {}) as { id?: unknown; symbols?: unknown; mode?: unknown };
   // Modus (M11): paper handelt das echte Wallet, shadow ein virtuelles Konto.
   const mode: 'paper' | 'shadow' = data.mode === 'shadow' ? 'shadow' : 'paper';
