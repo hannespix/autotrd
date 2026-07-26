@@ -55,7 +55,7 @@ export const CATALOG: Catalog = {
     ],
     Alts: [
       ['DOGE-USD', 'Dogecoin'], ['AVAX-USD', 'Avalanche'], ['DOT-USD', 'Polkadot'],
-      ['LINK-USD', 'Chainlink'], ['MATIC-USD', 'Polygon'], ['LTC-USD', 'Litecoin'],
+      ['LINK-USD', 'Chainlink'], ['POL-USD', 'Polygon'], ['LTC-USD', 'Litecoin'],
       ['TRX-USD', 'TRON'], ['ATOM-USD', 'Cosmos'],
     ],
   },

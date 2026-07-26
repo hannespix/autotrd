@@ -40,3 +40,7 @@ venv/
 # Firebase-Emulator-Secrets (lokal, nie committen)
 .secret.local
 *.secret.local
+
+# Abgeleitet aus shared/ + functions/src/core/engine.ts für Deno
+# (scripts-ci/build-edge-shared.mjs) — eine Quelle, kein Duplikat im Repo.
+supabase/functions/_shared/
