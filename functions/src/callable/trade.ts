@@ -6,7 +6,7 @@
 
 import { getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
-import { allSymbols, type Quote, type Strategy } from '../../../shared/src/index.js';
+import { allSymbols, classify, type Quote, type Strategy } from '../../../shared/src/index.js';
 import { consumeQuota, executePaperTrade, resolveBrokerMode } from '../core/broker.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 
@@ -68,6 +68,10 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
       // Verkauf schließt immer die ganze Position.
       ...(side === 'buy' && qtyNum !== undefined ? { qty: qtyNum } : {}),
       source: 'manual',
+      // Klassen-aufgelöste Stop/Take-Level (MA3-Fund 26.07.): Ohne die
+      // Klasse schrieb der Broker jedem Kauf die GLOBALEN Prozente als
+      // Level fest — Krypto-Profile griffen nie (Level haben Vorrang).
+      assetClass: classify(symbol),
     },
     strategy,
   );
