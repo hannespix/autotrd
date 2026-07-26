@@ -143,16 +143,21 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
       const positions = new Map<string, Position>(
         positionsSnap.docs.map((d) => [d.id, d.data() as Position]),
       );
+      // Risiko-Hülle GILT FÜR JEDEN TRADE dieses Users (Engine-Audit 26.07.):
+      // Sie stand bisher erst weiter unten und deckte nur den Regelbaum-Pfad —
+      // der Classic-Pfad kaufte mit ungeklammertem maxPositionPct, für den das
+      // Schema kein Obergrenze kennt (100 % Einsatz wäre durchgegangen).
+      const clamped = clampStrategyRisk(strategy);
 
       // 1) Risiko-Exits zuerst (Port von _check_risk — vor neuen Signalen)
       for (const [symbol, pos] of positions) {
         const data = marketData.get(symbol);
         if (!data) continue;
-        const reason = riskExitReason(pos, data.price, strategy);
+        const reason = riskExitReason(pos, data.price, clamped);
         if (reason) {
           const r = await executePaperTrade(
             { uid, symbol, side: 'sell', price: data.price, source: 'engine', riskExit: reason },
-            strategy,
+            clamped,
           );
           if (r.executed) {
             executed += 1;
@@ -186,7 +191,6 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
       const strategyOwned = new Set(
         published.filter((s) => (s.doc.mode ?? 'paper') === 'paper').flatMap((s) => s.doc.symbols),
       );
-      const clamped = clampStrategyRisk(strategy); // Risiko-Hülle: nie überschreibbar
       const now = new Date();
       const minuteEt = minuteOfDayEt(now);
 
@@ -334,22 +338,37 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
           sig,
           predictionVote(predictions.get(symbol), data.price, todayIso),
         );
+        // Ausführung IMMER mit der geklammerten Strategie (Audit 26.07.):
+        // Positionsgröße und Stop-Level kommen aus der Risiko-Hülle.
         if (direction === 'buy' && !positions.has(symbol)) {
           const r = await executePaperTrade(
             { uid, symbol, side: 'buy', price: data.price, source: 'engine' },
-            strategy,
+            clamped,
           );
           if (r.executed) {
             executed += 1;
+            // Map mitführen: Ein Symbol kann in der Watchlist doppelt stehen —
+            // ohne das versuchte der Scan denselben Kauf zweimal (der Broker
+            // lehnt transaktional ab, aber der Aufruf ist unnötig). Die Level
+            // bleiben null: Risk-Exits liefen für diesen Scan bereits oben.
+            positions.set(symbol, {
+              symbol,
+              qty: r.trade?.qty ?? 0,
+              avgEntry: r.trade?.price ?? data.price,
+              stopLoss: null,
+              takeProfit: null,
+              openedAt: r.trade?.executedAt ?? now.toISOString(),
+            });
             logger.info(`Engine-Buy ${uid} ${symbol} @ ${data.price}`);
           }
         } else if (direction === 'sell' && positions.has(symbol)) {
           const r = await executePaperTrade(
             { uid, symbol, side: 'sell', price: data.price, source: 'engine' },
-            strategy,
+            clamped,
           );
           if (r.executed) {
             executed += 1;
+            positions.delete(symbol);
             logger.info(`Engine-Sell ${uid} ${symbol} @ ${data.price}`);
           }
         }
