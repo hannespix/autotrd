@@ -482,8 +482,6 @@ function layout(email: string): string {
                 <button class="tf-btn" data-grid="2">▯▯</button>
                 <button class="tf-btn" data-grid="4">⊞</button>
               </span>
-              <button class="tf-btn" id="lockMain" hidden
-                title="Haupt-Chart in die Lock-Gruppe: Zoom, Sichtbereich und Crosshair laufen auf allen gelockten Charts synchron">${ICONS.unlock}</button>
               <div class="tm-sec">Vergleich</div>
               <input id="cmpSym" class="inp cmp-inp" placeholder="+ Overlay: SYM" title="Zweiten Kurs als %-Linie überlagern (Tageskerzen)" />
             </div>
@@ -492,6 +490,14 @@ function layout(email: string): string {
         <div class="hint" id="fcInfo" style="margin-bottom:4px"></div>
         <div id="chartRow" class="chart-row" data-mode="1">
         <div id="chartWrap" class="chart-wrap">
+          <!-- Kopf NUR im Raster (26.07.): strukturgleich zu .gp-hd, damit das
+               Haupt-Fenster exakt so hoch sitzt wie die Panels — vorher fehlte
+               ihm deren Kopfzeile und das Chart klebte 38 px zu weit oben. -->
+          <div id="mainHd" class="gp-hd" hidden>
+            <input id="mainHdSym" class="inp mh-sym" title="Symbol des Haupt-Charts (Enter übernimmt)" />
+            <button class="tf-btn mh-lock" id="lockMain"
+              title="Haupt-Chart in die Lock-Gruppe: Zoom, Sichtbereich und Crosshair laufen auf allen gelockten Charts synchron">${ICONS.unlock}</button>
+          </div>
           <button id="maxExit" class="chart-max-exit" hidden title="Vollbild schließen (Esc)">✕</button>
           <div id="chartHud" class="chart-hud">
             <div class="hud-top">
@@ -2449,6 +2455,9 @@ function renderChartGrid(): void {
   }
   $('chartRow').dataset['mode'] = String(st.gridMode);
   ($('lockMain') as HTMLButtonElement).hidden = st.gridMode === 1;
+  // Kopf des Haupt-Fensters nur im Raster (Höhen-Parität mit den Panels)
+  $('mainHd').hidden = st.gridMode === 1;
+  ($('mainHdSym') as HTMLInputElement).value = st.currentSymbol;
   $('lockMain').innerHTML = st.mainLocked ? ICONS.lock : ICONS.unlock;
   $('lockMain').classList.toggle('on', st.mainLocked);
   document.querySelectorAll('.tf-btn[data-grid]').forEach((b) => {
@@ -2631,6 +2640,8 @@ function markLivebar(sym: string): void {
   document.querySelectorAll('.lb-item').forEach((el) => {
     el.classList.toggle('on', el.querySelector('.lb-sym')?.textContent === sym);
   });
+  const hd = document.getElementById('mainHdSym') as HTMLInputElement | null;
+  if (hd) hd.value = sym; // Kopf des Haupt-Fensters folgt dem Symbol
 }
 
 /* ── Workspace: Sichtbarkeit, Presets, Persistenz (M9) ──────────────── */
@@ -3961,6 +3972,15 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   $('jumpMid').addEventListener('click', () => st?.chart?.scrollTo('middle'));
   $('jumpEnd').addEventListener('click', () => st?.chart?.scrollTo('end'));
   $('jumpNow').addEventListener('click', () => st?.chart?.scrollTo('end'));
+  // Symbolfeld im Raster-Kopf des Haupt-Fensters (wie in den Panels)
+  $('mainHdSym').addEventListener('keydown', (ev) => {
+    if ((ev as KeyboardEvent).key !== 'Enter') return;
+    const el = $('mainHdSym') as HTMLInputElement;
+    const sym = el.value.trim().toUpperCase();
+    if (!sym || !st || sym === st.currentSymbol) return;
+    el.value = sym;
+    selectSymbol(sym);
+  });
   // Auto-Auflösung an/aus + Y-Autoscaling (Anzeige-Option, Feedback 25.07.)
   $('autoBtn').addEventListener('click', () => {
     if (!st) return;
