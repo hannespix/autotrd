@@ -947,6 +947,53 @@ fremdem Feld wird von Rules abgelehnt · Portfolio-Öffnung kostet ≤ ~10 Reads
 (Profiler-Nachweis) · Tagesfilm lädt mit genau 1 Chunk-Read · Wallet-Reset
 erhöht `epoch`, die Kennzahlen-Reihe bricht nachweislich an der Zäsur.
 
+## MS — Migration zu Supabase (Owner-Entscheidung 26.07., „asap")
+
+**Ziel:** Firestore → Postgres (Supabase), Firebase Auth → Supabase Auth,
+Cloud Functions → Edge Functions, Cloud Scheduler → pg_cron. Bestehende
+Daten und Konten werden **nicht** übernommen (Owner-Vorgabe) — das macht den
+Umstieg billig: kein Datenexport, kein Doppelbetrieb der Bestände.
+
+**Warum jetzt und nicht später:** M12b (Steuer-Log mit FIFO-Lots und
+Jahresaggregation) und M13 (Alpaca-Orders, Reconciliation) schreiben den mit
+Abstand meisten neuen Persistenz-Code des Projekts. Nach einer späteren
+Migration schriebe man ihn zweimal. Fachlich gewinnt genau dieser Teil am
+meisten: FIFO, Jahressummen und Verlusttöpfe sind in SQL ein paar Queries,
+in Firestore dagegen vorberechnete Aggregat-Dokumente.
+
+**Was NICHT angefasst wird:** `shared/` ist reine Logik ohne Datenbankbezug
+(Indikatoren, Regelbaum, Prognose, Konfluenz, Portfolio-Kennzahlen) und
+läuft unverändert weiter — inklusive aller Golden-Tests. Das ist der
+Wertkern des Repos und bleibt die Rückversicherung gegen Regressionen.
+
+- [ ] **MS1 Fundament**: `supabase/migrations/*.sql` — Schema (profiles,
+      wallets, positions, trades, strategies, market_symbols, bars, quotes,
+      signals, forecasts, equity, stats), RLS-Policies (Owner liest seine
+      Zeilen, Geld schreibt ausschließlich `service_role`), **Check-Constraints
+      für Geld-Invarianten** (Kontostand ≥ 0, qty > 0, Preis > 0) — eine
+      Sicherheitsebene, die Firestore gar nicht kennt. Verifikation gegen
+      echten Postgres inkl. RLS-Tests mit gesetztem JWT-Claim.
+- [ ] **MS2 Datenschicht Frontend**: `data.ts` gegen supabase-js
+      (Realtime statt onSnapshot), Auth-Umstellung, Login/Registrierung.
+      Die UI-Module bleiben unberührt — nur der Adapter darunter tauscht.
+- [ ] **MS3 Engine**: Scan/Broker/Risk als Edge Function(s) mit
+      Postgres-Transaktionen (`SELECT … FOR UPDATE` statt Firestore-
+      Transaktion) + `pg_cron` für den 5-Minuten-Takt. Vorab-Test: hält eine
+      Edge Function das Zeitbudget für ~170 Symbole? Sonst Scan-Runner als
+      eigener Node-Dienst, Trigger per pg_cron/HTTP.
+- [ ] **MS4 Callables**: trade, saveStrategy, strategies (inkl. delete),
+      backtest, sweep, prediction als Edge Functions — gleiche Signaturen,
+      damit das Frontend nur die Aufruf-Hülle wechselt.
+- [ ] **MS5 Verifikation**: E2E-Suiten auf die neue Umgebung heben
+      (~200 Checks), Parity gegen die bestehende Logik, Deploy-Pipeline
+      (Migrationen per CI), Umschalttag mit frischen Konten.
+
+**Abnahme:** Ein Kauf über die Edge Function ist in derselben Transaktion in
+wallets/positions/trades sichtbar · ein zweiter Nutzer sieht per RLS nichts
+davon (Negativtest) · ein Constraint verhindert nachweislich einen negativen
+Kontostand · pg_cron feuert den Scan im 5-Minuten-Takt · die Suiten laufen
+zweimal grün · `shared/`-Tests bleiben unverändert grün.
+
 ## M12b — Steuer-Log & Jahresreport (Deutschland)
 
 **Ziel (Owner-Auftrag 26.07.):** Jeder Trade wird so protokolliert, dass er
