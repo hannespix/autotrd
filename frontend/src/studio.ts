@@ -17,6 +17,7 @@ import {
 } from '@autotrd/shared';
 import {
   callAssignStrategy,
+  callDeleteStrategy,
   callPromoteStrategy,
   callPublishStrategy,
   callRunBacktest,
@@ -332,6 +333,8 @@ async function renderEditor(root: HTMLElement, st: EditorState): Promise<void> {
           <div class="row st-actions">
             <button type="button" id="stSave" class="btn btn-g">Entwurf speichern</button>
             <button type="button" id="stPublish" class="btn btn-n" ${st.id ? '' : 'disabled'}>Publizieren</button>
+            <button type="button" id="stDelete" class="btn btn-n st-del" ${st.id ? '' : 'disabled'}
+              title="Strategie endgültig löschen — auch publizierte. Offene Positionen bleiben im Wallet und werden von Stop/Take/Konfluenz weiter verwaltet.">Löschen</button>
           </div>
           <div class="row st-assign">
             <input id="stSymbols" class="inp" value="${esc(st.symbols.join(', '))}" placeholder="Symbole, z. B. QQQ, BTC-USD" aria-label="Zuordnung" />
@@ -543,6 +546,33 @@ async function renderEditor(root: HTMLElement, st: EditorState): Promise<void> {
       .catch((e) => say(`✗ ${(e as Error).message}`));
   });
 
+  // Löschen mit 2-Klick-Armierung (Owner-Frage 26.07.) — gilt auch für
+  // publizierte: danach übernimmt der Classic-Pfad die Symbole wieder,
+  // offene Positionen bleiben im Wallet unter Stop/Take/Konfluenz.
+  const delBtn = root.querySelector<HTMLButtonElement>('#stDelete')!;
+  delBtn.addEventListener('click', () => {
+    if (!st.id) return;
+    if (!delBtn.classList.contains('armed')) {
+      delBtn.classList.add('armed');
+      delBtn.textContent = 'Wirklich löschen?';
+      window.setTimeout(() => {
+        delBtn.classList.remove('armed');
+        delBtn.textContent = 'Löschen';
+      }, 4000);
+      return;
+    }
+    delBtn.disabled = true;
+    say('Lösche …');
+    callDeleteStrategy(st.id)
+      .then(() => {
+        location.hash = '#/strategy';
+      })
+      .catch((e) => {
+        delBtn.disabled = false;
+        say(`✗ ${(e as Error).message}`);
+      });
+  });
+
   const runBox = root.querySelector<HTMLDivElement>('#stRun')!;
   const renderRun = (run: BacktestRunDoc | null): void => {
     if (!run) return;
@@ -751,9 +781,35 @@ function renderList(root: HTMLElement, uid: string): () => void {
                 <b>${esc(r.doc.name)}</b>
                 <span class="chip ${r.doc.status === 'published' ? 'c-gn' : ''}">${r.doc.status}${r.doc.compiled ? ` · v${r.doc.compiled.version}` : ''}</span>
                 <span class="mono st-syms">${r.doc.symbols?.join(' · ') ?? ''}</span>
+                <button type="button" class="btn btn-n st-del" data-del="${r.id}"
+                  title="Strategie endgültig löschen — auch publizierte">Löschen</button>
               </a>`,
             )
             .join('');
+    // Löschen direkt aus der Liste (Owner-Frage 26.07.): 2-Klick-Armierung;
+    // der Knopf sitzt IM Karten-Link — Klicks dürfen nicht navigieren.
+    list.querySelectorAll<HTMLButtonElement>('[data-del]').forEach((btn) =>
+      btn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        if (!btn.classList.contains('armed')) {
+          btn.classList.add('armed');
+          btn.textContent = 'Wirklich löschen?';
+          window.setTimeout(() => {
+            btn.classList.remove('armed');
+            btn.textContent = 'Löschen';
+          }, 4000);
+          return;
+        }
+        btn.disabled = true;
+        btn.textContent = 'Lösche …';
+        callDeleteStrategy(btn.dataset.del!).catch((e) => {
+          btn.disabled = false;
+          btn.textContent = 'Löschen';
+          list.insertAdjacentHTML('afterbegin', `<p class="error">${esc((e as Error).message)}</p>`);
+        }); // watchStrategies räumt die Karte nach dem Löschen selbst weg
+      }),
+    );
   });
   return unsub;
 }

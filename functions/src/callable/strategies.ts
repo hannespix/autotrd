@@ -117,6 +117,38 @@ export const publishStrategyVersion = onCall(CALLABLE_OPTS, async (request) => {
   return { ok: true, version };
 });
 
+/**
+ * Strategie löschen (Owner-Frage 26.07.: „wie löscht man gepublishte
+ * Strategien?") — bewusst auch für publizierte erlaubt: Der Owner will
+ * aufräumen können. Folgen sind sicher: Die Symbole sind danach nicht mehr
+ * strategyOwned (der Classic-Konfluenz-Pfad übernimmt sie wieder), offene
+ * Positionen gehören dem WALLET und werden von Risk-Exits + Konfluenz
+ * weiter verwaltet — nichts verwaist. Subcollections (Backtest-Runs,
+ * Shadow-Signale) löscht Firestore nicht mit — hier pageweise, mit Deckel.
+ */
+export const deleteStrategy = onCall(CALLABLE_OPTS, async (request) => {
+  const uid = await requireUid(request);
+  const { id } = (request.data ?? {}) as { id?: unknown };
+  if (typeof id !== 'string' || !ID_RE.test(id)) {
+    throw new HttpsError('invalid-argument', 'Ungültige Strategie-ID');
+  }
+  const ref = strategiesCol(uid).doc(id);
+  if (!(await ref.get()).exists) throw new HttpsError('not-found', 'Strategie existiert nicht');
+  const db = getFirestore();
+  for (const sub of ['runs', 'shadowSignals']) {
+    for (let page = 0; page < 20; page++) {
+      const docs = await ref.collection(sub).limit(300).get();
+      if (docs.empty) break;
+      const batch = db.batch();
+      docs.docs.forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+      if (docs.size < 300) break;
+    }
+  }
+  await ref.delete();
+  return { ok: true };
+});
+
 export const assignStrategy = onCall(CALLABLE_OPTS, async (request) => {
   const uid = await requireUid(request);
   const data = (request.data ?? {}) as { id?: unknown; symbols?: unknown; mode?: unknown };
