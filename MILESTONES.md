@@ -907,10 +907,17 @@ und KI-Erklärung, gekoppelt an ein automatisches Journal.
 - [ ] Migration `wallet` → `users/{uid}/wallets/{walletId}` (`epoch` für
       Resets, `strategyId`-Bindung), Positionen als `{walletId_symbol}`;
       Callables `createWallet/archiveWallet/resetWallet` (Quota 5)
-- [ ] `core/portfolio.ts` (pure, Vitest inkl. DST-/Feiertagsfälle) +
+- [x] `core/portfolio.ts` (pure, Vitest inkl. DST-/Feiertagsfälle) +
       `snapshotEquity` (täglich nach US-Close): `equity/{walletId_date}` mit
       HWM/Drawdown, `stats/{walletId}` mit Sharpe 30/90, MaxDD, WinRate,
       ProfitFactor, Expectancy-R, Attribution je Symbol/Strategie/Assetklasse
+      **(26.07. Teil 1 umgesetzt)**: läuft auf dem heutigen Ein-Wallet-Modell
+      als `users/{uid}/equity/{date}` + `stats/main` (`walletId: 'main'` als
+      Migrations-Vorgriff), täglich 17:15 ET inkl. Wochenende (Krypto);
+      Shorts gespiegelt bewertet, Rerun idempotent (Datums-Doc-ID), Rules
+      read-only, Selbstdiagnose in `meta/health.equitySnapshot`. Noch offen
+      hier: Expectancy-R (braucht R-Multiples aus `core/risk.ts`) und
+      Attribution je Strategie (braucht `strategyId` am Trade).
 - [ ] `core/risk.ts`: Circuit Breaker (Tages-Loss-Limit je Wallet,
       `blockNew`/`flattenAll`, Re-Arm per Callable, Sofort-Push),
       Positionslimit, fixed-fractional Sizing (Initial-Stop beim Entry

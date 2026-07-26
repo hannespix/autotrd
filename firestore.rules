@@ -67,6 +67,16 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      // Portfolio (M12): Equity-Kurve + Kennzahlen — schreibt nur snapshotEquity
+      match /equity/{doc} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+      match /stats/{doc} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
       // Alerts: gehören dem User komplett
       match /alerts/{doc} {
         allow read, write: if isOwner(uid);
