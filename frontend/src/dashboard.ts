@@ -11,9 +11,11 @@ import {
   PAPER_FEE_RATE,
   aggregateBars,
   bollinger,
+  classify,
   ema,
   macd,
   resolveName,
+  resolveRisk,
   sma,
   validateStrategy,
   vwapSessions,
@@ -3567,6 +3569,75 @@ function syncPositionQuotes(): void {
   }
 }
 
+/**
+ * Exit-Transparenz je Position (Owner-Queue 26.07.: „warum verkauft die
+ * Engine (nicht)?"): Abstand des Kurses zu Stop/Trailing/Take in Prozent
+ * plus der nächste Exit-Kandidat. Rechnet EXAKT wie die Engine: gespeicherte
+ * Level haben Vorrang, sonst die heutigen (klassen-aufgelösten) Prozente;
+ * bei Shorts alles gespiegelt. ATR-adaptive Stops zeigt der Client als
+ * Modus an (die exakte Schwelle kennt nur der Server-Scan).
+ */
+function exitOutlook(p: Position, live: number | undefined): string {
+  if (!st || live === undefined || !(live > 0) || !(p.avgEntry > 0)) return '';
+  const risk = resolveRisk(st.strategy.engine, classify(p.symbol));
+  const short = p.side === 'short';
+  const parts: string[] = [];
+  const candidates: Array<{ label: string; dist: number }> = [];
+  const fmt = (v: number): string => `${v.toFixed(1)} %`;
+
+  const atrStop = (risk.atrStopMult ?? 0) > 0;
+  const stopLevel = p.stopLoss ?? (atrStop || !(risk.stopLossPct > 0)
+    ? null
+    : short ? p.avgEntry * (1 + risk.stopLossPct / 100) : p.avgEntry * (1 - risk.stopLossPct / 100));
+  if (stopLevel !== null) {
+    const dist = (short ? (stopLevel - live) : (live - stopLevel)) / live * 100;
+    parts.push(dist <= 0 ? '<b class="c-rd">Stop: löst beim nächsten Scan aus</b>' : `Stop in <b>${fmt(dist)}</b>`);
+    candidates.push({ label: 'Stop', dist });
+  } else if (atrStop) {
+    parts.push('Stop: <b>ATR-adaptiv</b>');
+  }
+
+  const trail = risk.trailingStopPct ?? 0;
+  if (trail > 0) {
+    const armed = short ? (p.lowWater ?? p.avgEntry) < p.avgEntry : (p.highWater ?? 0) > p.avgEntry;
+    if (armed) {
+      const lvl = short
+        ? (p.lowWater ?? p.avgEntry) * (1 + trail / 100)
+        : (p.highWater ?? p.avgEntry) * (1 - trail / 100);
+      const dist = (short ? (lvl - live) : (live - lvl)) / live * 100;
+      parts.push(dist <= 0 ? '<b class="c-rd">Trailing: löst beim nächsten Scan aus</b>' : `Trailing in <b>${fmt(dist)}</b>`);
+      candidates.push({ label: 'Trailing', dist });
+    } else {
+      parts.push('Trailing: <span title="Der nachziehende Stop schärft sich erst, wenn die Position im Gewinn war">wartet auf Gewinn</span>');
+    }
+  }
+
+  const atrTake = (risk.atrTakeMult ?? 0) > 0;
+  const takeLevel = p.takeProfit ?? (atrTake || !(risk.takeProfitPct > 0)
+    ? null
+    : short ? p.avgEntry * (1 - risk.takeProfitPct / 100) : p.avgEntry * (1 + risk.takeProfitPct / 100));
+  if (takeLevel !== null) {
+    const dist = (short ? (live - takeLevel) : (takeLevel - live)) / live * 100;
+    parts.push(dist <= 0 ? '<b class="c-gn">Ziel: löst beim nächsten Scan aus</b>' : `Ziel in <b>${fmt(dist)}</b>`);
+    candidates.push({ label: 'Ziel', dist });
+  } else if (atrTake) {
+    parts.push('Ziel: <b>ATR-adaptiv</b>');
+  }
+
+  // Zeitgrenze läuft in Tagen, nicht in Prozent — sie konkurriert deshalb
+  // nicht um „nächster Exit", außer sie ist bereits erreicht.
+  const maxDays = risk.maxHoldDays ?? 0;
+  if (maxDays > 0 && Number.isFinite(Date.parse(p.openedAt))) {
+    const left = maxDays - (Date.now() - Date.parse(p.openedAt)) / 86_400_000;
+    parts.push(left <= 0 ? '<b>Zeitgrenze erreicht</b>' : `Zeit: noch <b>${left.toFixed(1)} Tg</b>`);
+    if (left <= 0) candidates.push({ label: 'Zeitgrenze', dist: -1 });
+  }
+
+  const next = candidates.sort((a, b) => a.dist - b.dist)[0];
+  if (next) parts.push(`<span class="pos-next">→ nächster Exit: ${next.label}</span>`);
+  return parts.join(' · ');
+}
+
 function renderPortfolio(): void {
   if (!st) return;
   const cash = st.wallet?.paperBalance ?? null;
@@ -3641,6 +3712,15 @@ function renderPortfolio(): void {
       void manualTrade(p.symbol, short ? 'buy' : 'sell');
     });
     body.appendChild(tr);
+    // Exit-Transparenz (Owner-Queue): Abstände zu Stop/Trailing/Ziel + der
+    // nächste Kandidat — damit sichtbar ist, WARUM die Engine (nicht) verkauft
+    const outlook = exitOutlook(p, live);
+    if (outlook) {
+      const sub = document.createElement('tr');
+      sub.className = 'pos-sub';
+      sub.innerHTML = `<td colspan="7">${outlook}</td>`;
+      body.appendChild(sub);
+    }
   }
 
   // Trade-Historie

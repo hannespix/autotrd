@@ -135,6 +135,10 @@ export interface ShadowPosition {
   highWater?: number;
   /** ISO-Einstiegszeit — Basis der Zeitgrenze maxHoldDays (MA4-Parität). */
   openedAt?: string;
+  /** Leerverkauf (Short R2): fehlend = 'long' — Parität zum echten Broker. */
+  side?: 'long' | 'short';
+  /** Tiefstkurs seit Short-Einstieg (Basis des gespiegelten Trailings). */
+  lowWater?: number;
 }
 
 export interface ShadowBook {
@@ -160,16 +164,28 @@ export function shadowTrade(
     now?: Date;
     /** Krypto handelt in Bruchteilen (µ-Einheiten) — Parität zu sizeOrder. */
     fractional?: boolean;
+    /** sell ohne Position eröffnet einen Short (Parität zu TradeRequest). */
+    openShort?: boolean;
   },
 ): { book: ShadowBook; executed: boolean } {
   const positions = { ...book.positions };
   // Gleiche Ausführungskosten wie das echte Paper-Buch (Duell-Parität)
   const eff = Math.round(paperEffectivePrice(price, side) * 10_000) / 10_000;
-  if (side === 'buy') {
-    if (positions[symbol]) return { book, executed: false }; // nie nachkaufen
+  const sizedQty = (): number => {
     const capital = Math.max(0, opts?.capital ?? book.balance);
     const raw = (capital * (maxPositionPct / 100)) / eff;
-    const qty = opts?.fractional ? Math.floor(raw * 1e6) / 1e6 : Math.floor(raw);
+    return opts?.fractional ? Math.floor(raw * 1e6) / 1e6 : Math.floor(raw);
+  };
+  if (side === 'buy') {
+    const existing = positions[symbol];
+    if (existing?.side === 'short') {
+      // Eindecken (Cover): Margin + P&L zurück — wie der echte Broker
+      const pnl = (existing.avgEntry - eff) * existing.qty;
+      delete positions[symbol];
+      return { book: { balance: book.balance + existing.qty * existing.avgEntry + pnl, positions }, executed: true };
+    }
+    if (existing) return { book, executed: false }; // nie nachkaufen
+    const qty = sizedQty();
     if (qty < (opts?.fractional ? 1e-6 : 1)) return { book, executed: false };
     if (qty * eff > book.balance) return { book, executed: false }; // Deckung wie beim Broker
     positions[symbol] = {
@@ -181,16 +197,36 @@ export function shadowTrade(
     return { book: { balance: book.balance - qty * eff, positions }, executed: true };
   }
   const pos = positions[symbol];
-  if (!pos) return { book, executed: false };
+  if (!pos) {
+    // Leerverkauf (Short R2): 100-%-Margin vom Shadow-Cash, Level-Logik
+    // übernimmt riskExitReason über die gespiegelte Pseudo-Position.
+    if (!opts?.openShort) return { book, executed: false };
+    const qty = sizedQty();
+    if (qty < (opts?.fractional ? 1e-6 : 1)) return { book, executed: false };
+    if (qty * eff > book.balance) return { book, executed: false };
+    positions[symbol] = {
+      qty,
+      avgEntry: eff,
+      side: 'short',
+      lowWater: eff,
+      ...(opts?.now ? { openedAt: opts.now.toISOString() } : {}),
+    };
+    return { book: { balance: book.balance - qty * eff, positions }, executed: true };
+  }
+  if (pos.side === 'short') return { book, executed: false }; // kein Nachverkauf auf Shorts
   delete positions[symbol];
   return { book: { balance: book.balance + pos.qty * eff, positions }, executed: true };
 }
 
-/** Balance + Positionswert zu aktuellen Preisen (fehlender Preis → Einstand). */
+/** Balance + Positionswert zu aktuellen Preisen (fehlender Preis → Einstand).
+ *  Shorts stecken mit Margin + unrealisiertem P&L im Depotwert. */
 export function shadowEquity(book: ShadowBook, prices: Map<string, number>): number {
   let equity = book.balance;
   for (const [sym, pos] of Object.entries(book.positions)) {
-    equity += pos.qty * (prices.get(sym) ?? pos.avgEntry);
+    const live = prices.get(sym) ?? pos.avgEntry;
+    equity += pos.side === 'short'
+      ? pos.qty * pos.avgEntry + (pos.avgEntry - live) * pos.qty
+      : pos.qty * live;
   }
   return Math.round(equity * 100) / 100;
 }

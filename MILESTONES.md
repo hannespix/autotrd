@@ -859,7 +859,13 @@ spezifischen Parametern schlägt denselben Backtest mit globalen Parametern.
       in computeSignal für Shorts auf die buy-Seite gespiegelt; Engine-
       Risk-Exits schließen Shorts per Cover; Portfolio zeigt SHORT-Badge,
       gespiegeltes P&L und „Cover"-Knopf; manuelles Ticket shortet bei
-      aktiviertem Opt-in. OFFEN (Runde 2): Regelbaum-/Shadow-Shorts.
+      aktiviertem Opt-in. Runde 2 (26.07. nachmittags): Regelbaum-Pfad
+      shortet/covert mit denselben Entry-Guards; Shadow-Buch führt Shorts
+      mit Margin-Buchhaltung, lowWater und gespiegelten Risk-Exits —
+      Duell-Parität vollständig. Dazu Exit-Transparenz im Portfolio:
+      Begleitzeile je Position mit Abstand zu Stop/Trailing/Ziel in %,
+      Zeitgrenze und „nächster Exit"-Kandidat (Shorts gespiegelt,
+      ATR-Modus als Hinweis).
       Emulator-Beweis 17/17: Short-Open (Stop 696.87 ÜBER Einstand 683.20,
       Margin reserviert), Short-Stop (Cover mit Verlust), Short-Take
       (Cover mit Gewinn, Cash cent-genau).

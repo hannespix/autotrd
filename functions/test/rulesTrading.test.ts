@@ -217,6 +217,42 @@ describe('Shadow-Duell-Parität (MA4, 26.07.)', () => {
   });
 });
 
+describe('Shadow-Shorts (R2, 26.07.) — Parität zum echten Broker', () => {
+  it('Short-Open: 100-%-Margin vom Cash, side/lowWater gestempelt', () => {
+    // sell-Slippage: 500 × 0.9985 = 499.25; 10 % von 25 000 → 5 Stück
+    const r = shadowTrade({ balance: 25_000, positions: {} }, 'QQQ', 'sell', 500, 10, { openShort: true });
+    expect(r.executed).toBe(true);
+    expect(r.book.positions['QQQ']).toMatchObject({ qty: 5, avgEntry: 499.25, side: 'short', lowWater: 499.25 });
+    expect(r.book.balance).toBeCloseTo(25_000 - 5 * 499.25, 6);
+  });
+
+  it('ohne openShort bleibt sell ohne Position ein No-op (Opt-in-Parität)', () => {
+    expect(shadowTrade({ balance: 25_000, positions: {} }, 'QQQ', 'sell', 500, 10).executed).toBe(false);
+  });
+
+  it('Cover (buy) bucht Margin + P&L zurück — Gewinn bei gefallenem Kurs', () => {
+    const open = shadowTrade({ balance: 25_000, positions: {} }, 'QQQ', 'sell', 500, 10, { openShort: true });
+    const cover = shadowTrade(open.book, 'QQQ', 'buy', 480, 10); // buy-Slippage: 480×1.0015 = 480.72
+    expect(cover.executed).toBe(true);
+    const pnl = (499.25 - 480.72) * 5;
+    expect(cover.book.balance).toBeCloseTo(open.book.balance + 5 * 499.25 + pnl, 6);
+    expect(cover.book.positions['QQQ']).toBeUndefined();
+  });
+
+  it('kein Nachverkauf auf offene Shorts (sell = No-op)', () => {
+    const open = shadowTrade({ balance: 25_000, positions: {} }, 'QQQ', 'sell', 500, 10, { openShort: true });
+    expect(shadowTrade(open.book, 'QQQ', 'sell', 490, 10, { openShort: true }).executed).toBe(false);
+  });
+
+  it('shadowEquity: Short steckt mit Margin + unrealisiertem P&L im Depotwert', () => {
+    const book = { balance: 1_000, positions: { QQQ: { qty: 5, avgEntry: 500, side: 'short' as const, lowWater: 480 } } };
+    // Kurs 480: Margin 2 500 + P&L (500−480)×5 = 100 → 2 600
+    expect(shadowEquity(book, new Map([['QQQ', 480]]))).toBe(1_000 + 2_600);
+    // fehlender Preis → Einstand → nur die Margin
+    expect(shadowEquity(book, new Map())).toBe(1_000 + 2_500);
+  });
+});
+
 describe('Befördern (M11 A/B): purer Rollentausch-Plan', () => {
   const S = (id: string, mode: 'paper' | 'shadow', symbols: string[], status = 'published') => ({
     id,
