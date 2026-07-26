@@ -222,4 +222,38 @@ end;
 $$;
 reset role;
 
+-- ── 14) service_role kann schreiben (Edge Functions!) ────────────────────
+-- Diese Prüfung fehlte und kostete beim ersten Live-Lauf eine Runde: Ohne
+-- Rechte für service_role kann der Server nichts schreiben — kein Trade,
+-- kein Scan-Ergebnis. Der lokale Test lief als Superuser und merkte nichts.
+-- Deshalb hier ausdrücklich in die Server-Rolle wechseln.
+set role service_role;
+do $$
+declare n integer;
+begin
+  insert into public.trades (wallet_id, user_id, symbol, side, qty, price, source)
+    values ('aaaaaaaa-0000-0000-0000-000000000001',
+            '11111111-1111-1111-1111-111111111111', 'QQQ', 'sell', 1, 700, 'engine');
+  update public.wallets set balance = 26000
+    where id = 'aaaaaaaa-0000-0000-0000-000000000001';
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'FAIL 14: service_role konnte das Wallet nicht ändern'; end if;
+  raise notice 'OK 14: service_role darf Trades schreiben und Konten führen';
+end;
+$$;
+
+-- ── 15) Auch der Server bricht die Geld-Invariante nicht ─────────────────
+do $$
+begin
+  begin
+    update public.wallets set balance = -5
+      where id = 'aaaaaaaa-0000-0000-0000-000000000001';
+    raise exception 'FAIL 15: service_role konnte den Kontostand negativ setzen';
+  exception when check_violation then
+    raise notice 'OK 15: Auch die service_role kann kein Konto ins Minus schreiben';
+  end;
+end;
+$$;
+reset role;
+
 select '── Alle RLS- und Constraint-Tests bestanden ──' as ergebnis;
