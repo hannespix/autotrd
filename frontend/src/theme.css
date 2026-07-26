@@ -174,8 +174,11 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .chart-nm { font-size: 15px; font-weight: 800; color: var(--t1); }
 .chart-sub { font-size: 11px; color: var(--t3); font-weight: 600; }
 .chart-px { font-size: 14px; font-weight: 700; }
+/* EINE Höhen-Variable für ALLE Chart-Fenster (User-Feedback 26.07.: im
+   Raster müssen Haupt-Chart und Panels auf jedem Monitor gleich hoch sein;
+   der Zieh-Griff #chartHDrag überschreibt --chart-h geräte-lokal). */
 #chartArea {
-  width: 100%; height: clamp(280px, 42vh, 420px); border-radius: 8px; position: relative;
+  width: 100%; height: var(--chart-h, clamp(280px, 42vh, 420px)); border-radius: 8px; position: relative;
   border: 1px solid var(--bd); overflow: hidden;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06), 0 0 34px -12px rgba(0, 212, 255, .35);
 }
@@ -646,10 +649,22 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .gp-sym { width: 86px; font-size: 11px; padding: 3px 8px; text-transform: uppercase; }
 .gp-tf { display: flex; gap: 2px; }
 .gp-lock { margin-left: auto; }
-.gp-chart { height: 235px; min-height: 0; }
+.gp-chart { height: var(--chart-h, clamp(280px, 42vh, 420px)); min-height: 0; }
 @media (max-width: 760px) {
   .chart-row[data-mode="2"], .chart-row[data-mode="4"] { grid-template-columns: 1fr; }
+  /* Mobil: feste, platzsparende Höhe — der Zieh-Griff ist hier ausgeblendet */
+  #chartArea, .gp-chart { height: 280px; }
 }
+/* Zieh-Griff: Chart-Höhe für ALLE Fenster gemeinsam skalieren (26.07.) */
+.chart-h-drag {
+  height: 10px; margin-top: 2px; border-radius: 5px; cursor: ns-resize;
+  display: flex; align-items: center; justify-content: center; touch-action: none;
+}
+.chart-h-drag::before {
+  content: ''; width: 46px; height: 3px; border-radius: 2px; background: var(--bd2);
+}
+.chart-h-drag:hover::before, .chart-h-drag.on::before { background: var(--ac); }
+@media (max-width: 760px) { .chart-h-drag { display: none; } }
 
 /* Options-Modal (⚙): optionale Elemente + Paper-Wallet-Basics */
 .opt-row { display: flex; gap: 10px; align-items: flex-start; font-size: 12px; color: var(--t2); margin: 8px 0; cursor: pointer; }
