@@ -947,6 +947,59 @@ fremdem Feld wird von Rules abgelehnt · Portfolio-Öffnung kostet ≤ ~10 Reads
 (Profiler-Nachweis) · Tagesfilm lädt mit genau 1 Chunk-Read · Wallet-Reset
 erhöht `epoch`, die Kennzahlen-Reihe bricht nachweislich an der Zäsur.
 
+## M12b — Steuer-Log & Jahresreport (Deutschland)
+
+**Ziel (Owner-Auftrag 26.07.):** Jeder Trade wird so protokolliert, dass er
+für die deutsche Steuererklärung verwertbar ist — ohne Nacharbeit, ohne
+Schätzung. Alpaca ist ein US-Broker und behält **keine** deutsche
+Abgeltungsteuer ein; der Anleger erklärt alles selbst (Anlage KAP, bei
+Fonds/ETF zusätzlich KAP-INV, für Krypto die Anlage SO). Das Tool liefert
+die Daten — **keine Steuerberatung**, der Report ist Beleg-Grundlage.
+
+Die fachlichen Fallen, die das Datenmodell abbilden MUSS:
+
+- [ ] **EUR-Umrechnung je Vorgang, nicht am Ergebnis.** Kauf UND Verkauf
+      werden getrennt zum Kurs des jeweiligen Tages in Euro umgerechnet; das
+      Fremdwährungs-Ergebnis einfach umzurechnen ist unzulässig. Also:
+      täglicher EZB-Referenzkurs → `meta/fx/{date}`, beim Trade EINGEFROREN
+      im Trade-Doc (`fxRate`, `fxDate`, `fxSource`) — nie nachträglich neu
+      berechnen, sonst wandern historische Gewinne.
+- [ ] **FIFO-Lots.** Deutschland kennt nur First-in-first-out. Positionen
+      brauchen `lots[]` (Datum, Stück, Einstand in USD **und** EUR); ein
+      Verkauf zerlegt sich in Lot-Anteile mit je eigenem Ergebnis. Heute
+      verkauft die Engine immer die ganze Position — mit Nachkäufen und
+      Teilverkäufen wird FIFO zwingend.
+- [ ] **Getrennte Verlusttöpfe.** Aktienverluste sind nur mit Aktien**gewinnen**
+      verrechenbar (§ 20 Abs. 6 EStG), alles andere läuft im allgemeinen Topf.
+      Jeder Trade bekommt daher `taxCategory`: `aktie` | `fonds_etf` |
+      `sonstige` | `termin` | `krypto`.
+- [ ] **Krypto ist KEIN Kapitalertrag**, sondern ein privates
+      Veräußerungsgeschäft (§ 23 EStG): Haltefrist 1 Jahr (Fristbeginn am
+      Folgetag der Anschaffung) → danach steuerfrei; Freigrenze 1.000 € pro
+      Jahr für ALLE privaten Veräußerungsgewinne zusammen (Freigrenze, nicht
+      Freibetrag — ein Euro darüber macht den vollen Betrag steuerpflichtig);
+      persönlicher Steuersatz statt 25 %. Eigener Report-Abschnitt, eigene
+      Haltefrist-Uhr je Lot.
+- [ ] **Trade-Doc erweitern**: ISIN/WKN, Instrumentenname, Währung,
+      Ausführungszeitpunkt (UTC + lokale Zeit), Stück, Kurs (USD/EUR),
+      Gebühren getrennt (Anschaffungsnebenkosten mindern den Gewinn),
+      `taxCategory`, `lotRefs`, realisiertes Ergebnis in EUR. Additiv +
+      idempotent; Altbestand bleibt gültig.
+- [ ] **Jahresreport**: Callable `taxReport(year)` → CSV + druckbares PDF je
+      Steuerjahr, sortiert nach Kategorie, mit Summenzeilen passend zu den
+      Zeilen der Anlage KAP bzw. SO, plus Einzelnachweis je Trade
+      (Anschaffung → Veräußerung → EZB-Kurs → Ergebnis).
+- [ ] **Shorts sind steuerlich anders** (Termingeschäfte) — eigene Kategorie
+      und im Report klar getrennt; Hinweis auf Steuerberater statt eigener
+      Auslegung.
+
+**Abnahme:** Ein Kauf in USD und ein Verkauf am anderen Tag ergeben in EUR
+exakt das Ergebnis aus getrennter Umrechnung (Golden-Test mit zwei
+EZB-Kursen) · ein Teilverkauf nach zwei Käufen wird FIFO korrekt zerlegt ·
+BTC-Verkauf nach 366 Tagen erscheint als steuerfrei, nach 300 Tagen als
+steuerpflichtig · der Jahresreport summiert Aktien und Krypto in getrennten
+Blöcken · Report enthält den Hinweis, dass er keine Steuerberatung ersetzt.
+
 ## M13 — Alpaca Paper Connect & Realtime-Streamer
 
 **Ziel:** Das zweite Paper-Gleis mit echter Order-Mechanik gegen
