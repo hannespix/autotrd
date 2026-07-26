@@ -501,6 +501,8 @@ function layout(email: string): string {
             <div id="chartLegend" class="chart-legend" hidden></div>
           </div>
           <div id="chartArea"></div>
+          <button id="jumpNow" class="jump-now" hidden
+            title="Zurück zur Gegenwart — animierter Sprung zum jüngsten Kurs">Jetzt ⇥</button>
           <svg id="predSvg" class="pred-svg" aria-hidden="true"></svg>
           <div id="predPop" class="pred-pop" hidden>
             <b>Prognose-Pfeil</b>
@@ -669,7 +671,7 @@ function layout(email: string): string {
         <div style="height:8px;border-radius:5px;background:linear-gradient(90deg,var(--rd),var(--t3) 50%,var(--gn));position:relative;margin:6px 0 3px">
           <div id="nsPin" style="position:absolute;top:-3px;left:50%;width:3px;height:14px;background:var(--t1);border-radius:2px;transition:left .5s"></div>
         </div>
-        <div style="display:flex;justify-content:space-between;font-size:8px;color:var(--t3);text-transform:uppercase"><span>Bearish</span><span>Neutral</span><span>Bullish</span></div>
+        <div style="display:flex;justify-content:space-between;gap:6px;font-size:8px;color:var(--t3);text-transform:uppercase;letter-spacing:.04em"><span>Bearish</span><span>Neutral</span><span>Bullish</span></div>
         <div class="wl-sec" style="margin-top:10px">Warum bewegt sich <span id="aiSym">…</span>?</div>
         <div id="aiSummary" style="font-size:11.5px;line-height:1.45;color:var(--t1)">Noch keine KI-Zusammenfassung — kommt mit dem nächsten Scan mit News.</div>
         <div id="aiMeta" class="hint" style="margin-top:3px"></div>
@@ -1781,6 +1783,15 @@ async function rebuildChart(): Promise<void> {
     openPredPop(price);
   });
   st.chart?.onVisibleRangeChange(() => drawPredictionArrow());
+  // „Jetzt ⇥"-Chip (User-Screenshot 26.07.): erscheint, sobald der jüngste
+  // Bar rechts AUSSERHALB des Fensters liegt — ein Klick springt animiert
+  // zurück in die Gegenwart (TradingView-Komfort; position:absolute im
+  // chartWrap, NICHT fixed — backdrop-filter-Falle, CLAUDE.md §6).
+  st.chart?.onVisibleRangeChange((range) => {
+    if (!st) return;
+    const len = st.intradayDays > 0 ? st.shownIntraday.length : dailySource().length;
+    $('jumpNow').hidden = !(range && len > 0 && range.to < len - 1.5);
+  });
   st.chart?.onCrosshairDate((date) => {
     if (st?.mainLocked && st.chart) syncLockedCrosshair(st.chart, date);
   });
@@ -2738,7 +2749,9 @@ function wireSidebarResize(): void {
   ] as const) {
     const col = document.getElementById(colId);
     if (!col) continue;
-    if (stored[colId]) col.style.width = `${Math.min(440, Math.max(220, stored[colId]))}px`;
+    // 260-560 px (26.07.): unter 260 werden News-/KI-Texte zu Ein-Wort-
+    // Zeilen; großen Monitoren gönnen wir mehr Maximalbreite.
+    if (stored[colId]) col.style.width = `${Math.min(560, Math.max(260, stored[colId]))}px`;
     const grip = document.createElement('div');
     grip.className = `sb-rs sb-rs-${edge}`;
     grip.title = 'Spaltenbreite ziehen (Doppelklick = zurücksetzen)';
@@ -2755,7 +2768,7 @@ function wireSidebarResize(): void {
       const startW = col.getBoundingClientRect().width;
       const move = (m: PointerEvent): void => {
         const dx = m.clientX - startX;
-        const w = Math.min(440, Math.max(220, edge === 'right' ? startW + dx : startW - dx));
+        const w = Math.min(560, Math.max(260, edge === 'right' ? startW + dx : startW - dx));
         col.style.width = `${w}px`;
       };
       const up = (): void => {
@@ -3947,6 +3960,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   $('jumpStart').addEventListener('click', () => st?.chart?.scrollTo('start'));
   $('jumpMid').addEventListener('click', () => st?.chart?.scrollTo('middle'));
   $('jumpEnd').addEventListener('click', () => st?.chart?.scrollTo('end'));
+  $('jumpNow').addEventListener('click', () => st?.chart?.scrollTo('end'));
   // Auto-Auflösung an/aus + Y-Autoscaling (Anzeige-Option, Feedback 25.07.)
   $('autoBtn').addEventListener('click', () => {
     if (!st) return;

@@ -27,6 +27,11 @@ export function resolveBrokerMode(strategy: Strategy): BrokerMode {
   return 'paper';
 }
 
+/** Geldbeträge auf Cent runden — Float-Drift hat im Kontostand nichts zu suchen. */
+function roundCents(v: number): number {
+  return Math.round(v * 100) / 100;
+}
+
 export interface TradeResult {
   executed: boolean;
   reason?: string;
@@ -103,7 +108,9 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       };
       tx.set(posRef, position);
       tx.set(tradeRef, { ...trade, at: Timestamp.now(), rawPrice: req.price, feeRate: PAPER_FEE_RATE });
-      tx.update(userRef, { 'wallet.paperBalance': balance - cost, 'wallet.updatedAt': now });
+      // Auf Cent runden (Audit 26.07.): Ohne das sammelt der Float-Rest jedes
+      // Trades im Kontostand an — nach vielen Zyklen driftet er sichtbar.
+      tx.update(userRef, { 'wallet.paperBalance': roundCents(balance - cost), 'wallet.updatedAt': now });
       return { executed: true, trade: { ...trade, id: tradeRef.id } };
     }
 
@@ -126,7 +133,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
     };
     tx.delete(posRef);
     tx.set(tradeRef, { ...trade, at: Timestamp.now(), rawPrice: req.price, feeRate: PAPER_FEE_RATE });
-    tx.update(userRef, { 'wallet.paperBalance': balance + proceeds, 'wallet.updatedAt': now });
+    tx.update(userRef, { 'wallet.paperBalance': roundCents(balance + proceeds), 'wallet.updatedAt': now });
     return { executed: true, trade: { ...trade, id: tradeRef.id } };
   });
 }
@@ -134,14 +141,35 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
 /**
  * Stop-Loss/Take-Profit einer offenen Position prüfen (Port von _check_risk).
  * Liefert den Exit-Grund oder null.
+ *
+ * Engine-Audit 26.07. (MA1) — zwei Härtungen gegenüber dem Port:
+ *  1. Die beim Kauf gespeicherten LEVEL der Position haben Vorrang vor den
+ *     heutigen Prozenten. Sonst verschiebt eine Settings-Änderung rückwirkend
+ *     die Stops aller offenen Positionen, während die UI die alten Level zeigt.
+ *  2. Prozentwert ≤ 0 heißt „diese Seite ist AUS" (wie `null` beim Level) —
+ *     vorher feuerte takeProfitPct = 0 wegen `change >= 0` bei jedem
+ *     Nicht-Verlust sofort, stopLossPct = 0 analog bei jedem Minus.
  */
 export function riskExitReason(pos: Position, price: number, strategy: Strategy): string | null {
   if (!(pos.avgEntry > 0) || !(price > 0)) return null;
-  const change = price / pos.avgEntry - 1;
-  const sl = -strategy.engine.stopLossPct / 100;
-  const tp = strategy.engine.takeProfitPct / 100;
-  if (change <= sl) return 'stop_loss';
-  if (change >= tp) return 'take_profit';
+
+  const level = (v: number | null | undefined): number | null =>
+    typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
+  const stopLevel = level(pos.stopLoss);
+  const takeLevel = level(pos.takeProfit);
+
+  if (stopLevel !== null) {
+    if (price <= stopLevel) return 'stop_loss';
+  } else if (strategy.engine.stopLossPct > 0) {
+    if (price / pos.avgEntry - 1 <= -strategy.engine.stopLossPct / 100) return 'stop_loss';
+  }
+
+  if (takeLevel !== null) {
+    if (price >= takeLevel) return 'take_profit';
+  } else if (strategy.engine.takeProfitPct > 0) {
+    if (price / pos.avgEntry - 1 >= strategy.engine.takeProfitPct / 100) return 'take_profit';
+  }
+
   return null;
 }
 
