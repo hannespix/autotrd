@@ -37,6 +37,30 @@ export const INFO: Record<string, { t: string; d: string }> = {
     t: 'Maximale Positionsgröße',
     d: 'Wieviel Prozent des Startkapitals eine EINZELNE Position höchstens binden darf. Das klassische Risikomanagement-Werkzeug gegen Klumpenrisiko: 10 % heißt, ein Totalausfall eines Symbols kostet maximal ein Zehntel des Depots.',
   },
+  trailingStop: {
+    t: 'Nachziehender Stop (Trailing-Stop)',
+    d: 'Ein Stop, der mitwandert: Steigt der Kurs, zieht er nach; fällt er, bleibt er stehen. Verkauft wird, wenn der Kurs um diesen Prozentsatz unter den HÖCHSTKURS seit Einstieg fällt. Er greift bewusst erst, wenn die Position im Plus war — solange sie nie im Gewinn stand, ist der feste Stop zuständig. Ohne ihn schließt eine Position nur beim starren Ziel oder beim Stop, in Trendphasen also fast nie. 0 = aus.',
+  },
+  maxHold: {
+    t: 'Maximale Haltedauer',
+    d: 'Zwangsausstieg nach so vielen Kalendertagen, egal wie der Kurs steht. Sinn: Eine Position, die monatelang seitwärts läuft, bindet Kapital, das anderswo arbeiten könnte. 0 = aus (unbegrenzt halten).',
+  },
+  atrStop: {
+    t: 'ATR-Stop (volatilitätsadaptiv)',
+    d: 'Statt eines festen Prozentsatzes wird der Stop als Vielfaches der ATR gesetzt — der durchschnittlichen Tagesschwankung des Instruments. 2 % Stop sind bei Bitcoin (±4 % am Tag) reines Rauschen und werfen dich sofort raus, bei einem Index (±0,6 %) dagegen ein echtes Signal. Mit ATR passt sich der Abstand automatisch an Instrument UND Marktphase an. Typisch: 1,5–3. 0 = aus, dann gilt der Prozentwert.',
+  },
+  atrTake: {
+    t: 'ATR-Ziel',
+    d: 'Dasselbe Prinzip für die Gewinnmitnahme: Das Ziel liegt bei diesem Vielfachen der durchschnittlichen Tagesschwankung über dem Einstieg. Sinnvoll meist größer als der ATR-Stop (etwa doppelt), damit Gewinne die Verluste überwiegen können. 0 = aus, dann gilt der Prozentwert.',
+  },
+  exitConfluence: {
+    t: 'Konfluenz für den Ausstieg',
+    d: 'Wie viele Indikator-Stimmen ein VERKAUF braucht — getrennt vom Einstieg und bewusst niedriger. Der Grund ist asymmetrisch: Ein verpasster Einstieg kostet nur eine Chance, ein verpasster Ausstieg kostet Geld. Bei Gleichstand der Stimmen gewinnt deshalb der Verkauf. Vorher galt für beides dieselbe Schwelle — und weil RSI und Bollinger in fallenden Märkten „überverkauft, also kaufen" sagen, blockierten sie den Ausstieg genau dann, wenn er nötig gewesen wäre.',
+  },
+  forecastSolo: {
+    t: 'Prognose darf allein entscheiden',
+    d: 'Normalerweise ist das AUS: Die Prognose zählt beim Einstieg höchstens so viel, dass noch eine echte Indikator-Stimme dazukommen muss. Sonst reißt sie mit Gewicht 2 die Schwelle 2 im Alleingang — die „Konfluenz aus drei Indikatoren" wäre dann nur ein Etikett. Beim AUSSTIEG zählt sie ohnehin immer voll. Einschalten, wenn du der Prognose bewusst die Führung geben willst.',
+  },
   stopLoss: {
     t: 'Stop-Loss',
     d: 'Automatische Verkaufs-Reißleine: Fällt der Kurs um diesen Prozentsatz unter den Einstieg, verkauft die Engine sofort — Verluste werden begrenzt, bevor sie groß werden. Zu eng gesetzt wirft dich normales Marktrauschen aus der Position („ausgestoppt").',

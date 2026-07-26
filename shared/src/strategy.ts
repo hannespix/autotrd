@@ -17,13 +17,44 @@ export interface BrokerConfig {
   paperTrading: boolean;
 }
 
-export interface EngineConfig {
-  checkIntervalMin: number;
-  maxPositionPct: number;
+/**
+ * Risiko-Parameter einer Position. Getrennt vom Rest der EngineConfig, weil
+ * sie ab MA6 auch PRO ASSET-KLASSE gelten können (Krypto schwankt anders als
+ * ein Index) — `engine.byClass.crypto.stopLossPct` überschreibt dann global.
+ */
+export interface RiskConfig {
   stopLossPct: number;
   takeProfitPct: number;
+  /**
+   * Nachziehender Stop in % vom höchsten Kurs seit Einstieg (0 = aus).
+   * Der wichtigste Ausstiegs-Mechanismus für Trendphasen: Ein starres
+   * Take-Profit verkauft zu früh, ein starrer Stop lässt Gewinne
+   * zurücklaufen. Greift zusätzlich zu Stop/Take.
+   */
+  trailingStopPct?: number;
+  /**
+   * Stop-Abstand als Vielfaches der ATR(14) statt fixer Prozent (0 = aus).
+   * Passt sich automatisch an Instrument UND Marktphase an: bei 2 % Stop
+   * ist BTC (±4 % Tagesrange) reines Rauschen, ein Index (±0,6 %) dagegen
+   * ein echtes Signal. Hat Vorrang vor stopLossPct, wenn gesetzt.
+   */
+  atrStopMult?: number;
+  /** Take-Profit als ATR-Vielfaches (0 = aus, sonst Vorrang vor takeProfitPct). */
+  atrTakeMult?: number;
+  /** Zwangsausstieg nach N Kalendertagen Haltedauer (0 = aus) — bindet sonst Kapital. */
+  maxHoldDays?: number;
+}
+
+export interface EngineConfig extends RiskConfig {
+  checkIntervalMin: number;
+  maxPositionPct: number;
   /** Auto-Trading-Schalter (Dashboard Start/Stop). */
   running: boolean;
+  /**
+   * Risiko-Overrides je Asset-Klasse (Katalog-Schlüssel aus universe.ts:
+   * crypto, indices, stocks_us, …). Fehlende Felder erben von oben.
+   */
+  byClass?: Record<string, Partial<RiskConfig>>;
 }
 
 export interface RsiConfig {
@@ -50,11 +81,33 @@ export interface IndicatorsConfig {
 }
 
 export interface SignalsConfig {
+  /** Stimmen, die ein EINSTIEG braucht. */
   minConfluence: number;
   period: string; // z. B. '3mo'
   useForecast: boolean;
   forecastWeight: number;
   forecastThresholdPct: number;
+  /**
+   * Stimmen, die ein AUSSTIEG aus einer offenen Position braucht
+   * (Default: eine weniger als der Einstieg, mindestens 1).
+   *
+   * Bewusst asymmetrisch: Ein verpasster Einstieg kostet eine Chance, ein
+   * verpasster Ausstieg kostet Geld. Vorher galt dieselbe Schwelle für
+   * beides — zusammen mit der Gleichstandsregel blockierten RSI und
+   * Bollinger (die in fallenden Märkten „überverkauft, also kaufen" sagen)
+   * genau dann den Verkauf, wenn er nötig gewesen wäre.
+   */
+  exitConfluence?: number;
+  /**
+   * Darf die Prognose die Konfluenz IM ALLEINGANG reißen? Default false.
+   *
+   * Mit forecastWeight 2 und minConfluence 2 entschied bisher die Prognose
+   * allein — die „Konfluenz aus drei Indikatoren" war ein Etikett. Bei
+   * false wird ihr Gewicht beim Einstieg auf (minConfluence − 1) gedeckelt,
+   * mindestens eine echte Indikator-Stimme muss also dazukommen. Beim
+   * AUSSTIEG zählt sie immer voll (Risiko-Asymmetrie).
+   */
+  forecastSolo?: boolean;
 }
 
 export interface Strategy {
@@ -77,14 +130,68 @@ export const MAX_WATCHLIST = 20;
 export const DEFAULT_STRATEGY: Strategy = {
   broker: { provider: 'paper', mode: 'paper', initialCapital: 25_000, paperTrading: true },
   watchlist: ['QQQ', 'AAPL', 'TSLA', '^NDX'],
-  engine: { checkIntervalMin: 5, maxPositionPct: 10, stopLossPct: 2, takeProfitPct: 4, running: false },
+  engine: {
+    checkIntervalMin: 5,
+    maxPositionPct: 10,
+    stopLossPct: 2,
+    takeProfitPct: 4,
+    // Nachziehender Stop ist AN (3 %): Ohne ihn schließt eine Position nur
+    // beim starren Take-Profit oder beim Stop — in Trendphasen also fast nie.
+    trailingStopPct: 3,
+    maxHoldDays: 0,
+    running: false,
+    // Volatilitäts-Realismus (MA6): Krypto und Rohstoffe brauchen weitere
+    // Stops, sonst ist jeder normale Tagesausschlag ein Zwangsverkauf.
+    // Werte grob an typischen Tagesranges orientiert; per UI änderbar.
+    byClass: {
+      crypto: { stopLossPct: 6, takeProfitPct: 10, trailingStopPct: 7 },
+      commodities: { stopLossPct: 4, takeProfitPct: 7, trailingStopPct: 5 },
+      forex: { stopLossPct: 1, takeProfitPct: 2, trailingStopPct: 1.5 },
+      indices: { stopLossPct: 1.5, takeProfitPct: 3, trailingStopPct: 2.5 },
+      rates_bonds: { stopLossPct: 1, takeProfitPct: 2, trailingStopPct: 1.5 },
+    },
+  },
   indicators: {
     rsi: { enabled: true, window: 14, thresholdBuy: 30, thresholdSell: 70 },
     macd: { enabled: true, crossoverBuy: true },
     bollinger: { enabled: true, bbBreakoutPct: 95 },
   },
-  signals: { minConfluence: 2, period: '1y', useForecast: true, forecastWeight: 2, forecastThresholdPct: 0.5 },
+  signals: {
+    minConfluence: 2,
+    period: '1y',
+    useForecast: true,
+    forecastWeight: 2,
+    forecastThresholdPct: 0.5,
+    exitConfluence: 1, // Ausstieg leichter als Einstieg (Risiko-Asymmetrie)
+    forecastSolo: false, // Prognose braucht eine zweite Stimme zum Einstieg
+  },
 };
+
+/* ── Risiko-Auflösung je Asset-Klasse (MA6) ──────────────────────────────── */
+
+/**
+ * Effektive Risiko-Parameter für ein Symbol: globale Engine-Werte, von den
+ * Klassen-Overrides (`engine.byClass[assetClass]`) feldweise überschrieben.
+ * Pure Funktion — Engine, Backtest und UI müssen dieselbe Antwort bekommen.
+ */
+export function resolveRisk(engine: EngineConfig, assetClass?: string | null): RiskConfig {
+  const base: RiskConfig = {
+    stopLossPct: engine.stopLossPct,
+    takeProfitPct: engine.takeProfitPct,
+    ...(engine.trailingStopPct !== undefined ? { trailingStopPct: engine.trailingStopPct } : {}),
+    ...(engine.atrStopMult !== undefined ? { atrStopMult: engine.atrStopMult } : {}),
+    ...(engine.atrTakeMult !== undefined ? { atrTakeMult: engine.atrTakeMult } : {}),
+    ...(engine.maxHoldDays !== undefined ? { maxHoldDays: engine.maxHoldDays } : {}),
+  };
+  const over = assetClass ? engine.byClass?.[assetClass] : undefined;
+  if (!over) return base;
+  const out: RiskConfig = { ...base };
+  for (const k of ['stopLossPct', 'takeProfitPct', 'trailingStopPct', 'atrStopMult', 'atrTakeMult', 'maxHoldDays'] as const) {
+    const v = over[k];
+    if (typeof v === 'number' && Number.isFinite(v) && v >= 0) out[k] = v;
+  }
+  return out;
+}
 
 /* ── Paper-Ausführungskosten (Realismus, User-Wunsch 25.07.) ────────────────
  * Gleiche Konditionen wie der Backtest: 0,1 % Kommission + 5 bp Slippage je
@@ -176,6 +283,12 @@ export interface Position {
   stopLoss: number | null;
   takeProfit: number | null;
   openedAt: string;
+  /**
+   * Höchster Kurs seit Einstieg — Bezugspunkt des nachziehenden Stops.
+   * Wird bei jedem Scan fortgeschrieben; fehlt er (Altbestand), gilt der
+   * Einstand, der Trailing-Stop startet dann konservativ.
+   */
+  highWater?: number | null;
 }
 
 export interface Trade {

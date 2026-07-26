@@ -74,9 +74,43 @@ export function validateStrategy(value: unknown): string[] {
   if (!isRecord(engine)) {
     problems.push('engine muss ein Objekt sein');
   } else {
-    for (const k of ['checkIntervalMin', 'maxPositionPct', 'stopLossPct', 'takeProfitPct'] as const) {
+    for (const k of ['checkIntervalMin', 'maxPositionPct'] as const) {
       if (!isFiniteNumber(engine[k]) || (engine[k] as number) <= 0) {
         problems.push(`engine.${k} muss eine positive Zahl sein`);
+      }
+    }
+    // Stop/Take dürfen 0 sein = „diese Seite ist aus" (Audit 26.07.: die
+    // Engine liest 0 seither korrekt als abgeschaltet, nicht als „sofort").
+    for (const k of ['stopLossPct', 'takeProfitPct'] as const) {
+      if (!isFiniteNumber(engine[k]) || (engine[k] as number) < 0) {
+        problems.push(`engine.${k} muss eine Zahl ≥ 0 sein (0 = aus)`);
+      }
+    }
+    // Obergrenze für die Positionsgröße — ohne sie könnte ein Tippfehler
+    // ("100") das gesamte Kapital in eine einzige Position werfen.
+    if (isFiniteNumber(engine.maxPositionPct) && (engine.maxPositionPct as number) > 100) {
+      problems.push('engine.maxPositionPct darf höchstens 100 sein');
+    }
+    for (const k of ['trailingStopPct', 'atrStopMult', 'atrTakeMult', 'maxHoldDays'] as const) {
+      if (engine[k] !== undefined && (!isFiniteNumber(engine[k]) || (engine[k] as number) < 0)) {
+        problems.push(`engine.${k} muss eine Zahl ≥ 0 sein (0 = aus)`);
+      }
+    }
+    if (engine.byClass !== undefined) {
+      if (!isRecord(engine.byClass)) {
+        problems.push('engine.byClass muss ein Objekt sein');
+      } else {
+        for (const [cls, over] of Object.entries(engine.byClass)) {
+          if (!isRecord(over)) {
+            problems.push(`engine.byClass.${cls} muss ein Objekt sein`);
+            continue;
+          }
+          for (const [k, v] of Object.entries(over)) {
+            if (!isFiniteNumber(v) || v < 0) {
+              problems.push(`engine.byClass.${cls}.${k} muss eine Zahl ≥ 0 sein`);
+            }
+          }
+        }
       }
     }
     if (typeof engine.running !== 'boolean') {
@@ -111,6 +145,13 @@ export function validateStrategy(value: unknown): string[] {
     }
     if (!isFiniteNumber(signals.forecastThresholdPct) || signals.forecastThresholdPct < 0) {
       problems.push('signals.forecastThresholdPct muss ≥ 0 sein');
+    }
+    if (signals.exitConfluence !== undefined
+      && (!isFiniteNumber(signals.exitConfluence) || signals.exitConfluence < 1)) {
+      problems.push('signals.exitConfluence muss ≥ 1 sein');
+    }
+    if (signals.forecastSolo !== undefined && typeof signals.forecastSolo !== 'boolean') {
+      problems.push('signals.forecastSolo muss boolean sein');
     }
   }
 

@@ -754,7 +754,19 @@ Reihenfolge = Geldfluss: erst wo Geld bewegt wird, dann wie entschieden wird.
       Nachkäufen, Verkauf > Bestand, negative/Null-Preise, Idempotenz bei
       Doppel-Scans), `riskExitReason`-Grenzfälle, Wallet-Konsistenz
       (cash+Positionen=Equity), adversariale Unit-Tests je Fund
-- [ ] MA2 Signal-Kette: `computeSignal`/Konfluenz (Vote-Zählung, Schwellen-
+- [x] MA2 Signal-Kette **(26.07. umgesetzt)**: Der Owner-Befund „2 Tage, kein
+      einziger Verkauf" hatte zwei Ursachen in der Konfluenz, beide behoben.
+      (1) Die Prognose (Gewicht 2) riss die Schwelle (2) im Alleingang — die
+      „Konfluenz aus drei Indikatoren" war ein Etikett. Ihr Gewicht ist beim
+      EINSTIEG jetzt auf minConfluence−1 gedeckelt (`signals.forecastSolo`
+      hebt das bewusst auf); beim AUSSTIEG zählt sie voll. (2) Die
+      Gleichstandsregel blockierte Ausstiege genau dann, wenn sie nötig
+      waren: In fallenden Märkten sagen RSI und Bollinger „überverkauft,
+      also kaufen", MACD und Prognose „verkaufen" → 2:2 → nichts. Ein- und
+      Ausstieg sind jetzt getrennt (`signals.exitConfluence`, Default
+      minConfluence−1), bei Gleichstand gewinnt der Verkauf. Der Compiler
+      (compileClassic) trägt dieselbe Asymmetrie, die Parity-Suite bleibt grün.
+      Frühere Beschreibung: `computeSignal`/Konfluenz (Vote-Zählung, Schwellen-
       Symmetrie buy/sell, Forecast-Vote-Faktor inkl. accuracyWeighted-
       Clamps, Prediction-Vote), Indikator-Randfälle (kurze Historie, NaN,
       flache Serien) — Property-Tests + Golden-Parity gegen reference/
@@ -765,12 +777,26 @@ Reihenfolge = Geldfluss: erst wo Geld bewegt wird, dann wie entschieden wird.
 - [ ] MA4 Regelbaum + Shadow: evaluate()-Grenzen, Compiler-Parity,
       shadowTrade-Duell-Fairness (identische Gebühren/Preise), Beförderungs-
       Atomarität, lastTrades-Cooldowns
-- [ ] MA5 End-to-End-Beweis im Emulator: konstruierte Kursverläufe, die
+- [x] MA5 End-to-End-Beweis **(26.07., 12/12 grün)**: `e2e-engine.mjs` legt
+      echte User-Dokumente an, ruft `scanNow` (denselben Pfad wie der
+      Scheduler) und prüft Positionen/Trades in Firestore — Stop-Loss,
+      Take-Profit, Halten zwischen den Schwellen, gespeicherte Level vor
+      Prozenten, Notbremse bei −30 %, nachziehender Stop, highWater-
+      Fortschreibung, Zeitgrenze, Konfluenz-Verkauf, Cent-Rundung.
+      Frühere Beschreibung: im Emulator: konstruierte Kursverläufe, die
       JEDEN Pfad real auslösen (Buy → Take-Profit, Buy → Stop-Loss,
       Konfluenz-Sell, Regelbaum-Sell, Shadow parallel) + Abschlussbericht
       an den Owner mit allen Funden/Fixes
 
-- [ ] MA6 **Volatilitäts-Realismus** (Owner-Frage 26.07.: „Krypto, Indizes,
+- [x] MA6 **Volatilitäts-Realismus (26.07. umgesetzt)**: Risiko-Profile je
+      Asset-Klasse (`engine.byClass`, Defaults: Krypto 6/10 %, Rohstoffe
+      4/7 %, Devisen 1/2 %, Indizes 1,5/3 %), ATR(14) als pure Funktion mit
+      Golden-Tests plus `atrStopMult`/`atrTakeMult` für volatilitätsadaptive
+      Stops, nachziehender Stop (`trailingStopPct`, Default 3 %) und
+      Zeitgrenze (`maxHoldDays`). Alle Parameter im Options-Modal mit
+      ⓘ-Erklärung. Zur Kadenz: Der 5-min-Takt bleibt der Kosten-Deckel;
+      Sub-Minuten-Reaktion braucht den Streamer aus M13.
+      Frühere Beschreibung: (Owner-Frage 26.07.: „Krypto, Indizes,
       Aktien sind doch völlig unterschiedlich volatil — und reicht alle
       5 Minuten?"). Heute gilt EIN Stop/Take/Positionsgröße für alles: 2 %
       Stop ist bei BTC (±4 % Tagesrange) reines Rauschen und wird sofort

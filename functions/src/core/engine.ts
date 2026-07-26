@@ -80,12 +80,22 @@ export interface ForecastVoteInput {
  * (Port von _forecast_vote, gesteuert über signals.useForecast/
  * forecastWeight/forecastThresholdPct).
  */
+export interface SignalOptions {
+  /**
+   * Liegt bereits eine offene Position vor? Dann gelten die Ausstiegs-Regeln
+   * (niedrigere Schwelle, Gleichstand zugunsten des Verkaufs). Ohne Angabe
+   * wird die Einstiegs-Sicht berechnet — das ist auch die Anzeige-Sicht.
+   */
+  hasPosition?: boolean;
+}
+
 export function computeSignal(
   closes: number[],
   price: number,
   indicators: IndicatorsConfig,
   signals: SignalsConfig,
   forecast?: ForecastVoteInput | null,
+  opts?: SignalOptions,
 ): SignalComputation {
   const snapshot = computeIndicatorSnapshot(closes, price, indicators);
   let buyVotes = 0;
@@ -131,25 +141,50 @@ export function computeSignal(
     }
   }
 
-  // Forecast-Vote (das „Herz"): gewichtete Richtungsstimme der Prognose
+  // Forecast-Vote (das „Herz"): gewichtete Richtungsstimme der Prognose.
+  // Deckel beim EINSTIEG (Audit 26.07.): Mit Gewicht 2 und minConfluence 2
+  // entschied die Prognose bisher im Alleingang — die „Konfluenz aus drei
+  // Indikatoren" war ein Etikett. Ohne `forecastSolo` braucht ein Kauf
+  // deshalb mindestens eine echte Indikator-Stimme dazu. Beim AUSSTIEG
+  // zählt sie voll: ein verpasster Verkauf kostet Geld, ein verpasster
+  // Kauf nur eine Chance.
   if (signals.useForecast && forecast) {
     const thr = signals.forecastThresholdPct;
-    const weight = Math.trunc(signals.forecastWeight);
+    const raw = Math.trunc(signals.forecastWeight);
+    const capped = signals.forecastSolo === true
+      ? raw
+      : Math.max(1, Math.min(raw, signals.minConfluence - 1));
     if (forecast.predictedPct >= thr) {
-      buyVotes += weight;
+      buyVotes += capped;
       votes.forecast = 'buy';
     } else if (forecast.predictedPct <= -thr) {
-      sellVotes += weight;
+      sellVotes += raw; // Ausstiegsrichtung ungedeckelt
       votes.forecast = 'sell';
     } else {
       votes.forecast = 'hold';
     }
   }
 
-  const required = signals.minConfluence;
+  // Ein-/Ausstieg getrennt bewerten. Der Aufrufer sagt über `hasPosition`,
+  // welcher Fall vorliegt; ohne Angabe gilt die Einstiegs-Sicht (Anzeige).
+  const entryReq = signals.minConfluence;
+  const exitReq = Math.max(1, signals.exitConfluence ?? Math.max(1, signals.minConfluence - 1));
+  const inPosition = opts?.hasPosition === true;
+  const required = inPosition ? exitReq : entryReq;
+
   let direction: SignalDirection = 'hold';
-  if (buyVotes >= required && buyVotes > sellVotes) direction = 'buy';
-  else if (sellVotes >= required && sellVotes > buyVotes) direction = 'sell';
+  if (inPosition) {
+    // Offene Position: Verkauf hat Vorfahrt und gewinnt den Gleichstand.
+    // Vorher blockierten RSI und Bollinger (die in fallenden Märkten
+    // „überverkauft, also kaufen" sagen) genau dann den Ausstieg, wenn er
+    // nötig war — 2:2 hieß „nichts tun".
+    if (sellVotes >= exitReq && sellVotes >= buyVotes) direction = 'sell';
+  } else if (buyVotes >= entryReq && buyVotes > sellVotes) {
+    direction = 'buy';
+  } else if (sellVotes >= entryReq && sellVotes > buyVotes) {
+    // Ohne Position ist „sell" nur eine Anzeige-Information (nichts zu verkaufen)
+    direction = 'sell';
+  }
 
   return {
     direction,

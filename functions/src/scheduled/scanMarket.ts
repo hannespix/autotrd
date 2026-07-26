@@ -24,12 +24,13 @@ import {
   isStrategy,
   marketOpenForClass,
   resolveName,
+  resolveRisk,
   STRATEGY_PRESETS,
   type Position,
   type Strategy,
   type StrategyDoc,
 } from '../../../shared/src/index.js';
-import { aggregateSentiment } from '../../../shared/src/index.js';
+import { aggregateSentiment, atrPct } from '../../../shared/src/index.js';
 import { anthropicApiKey, ensureAiDay } from '../core/ai.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 import { computeIndicatorSnapshot, computeSignal } from '../core/engine.js';
@@ -115,6 +116,8 @@ interface SymbolData {
   closes: number[];
   price: number;
   forecast: LiveForecast | null;
+  /** ATR(14) in Prozent des Kurses — Basis volatilitätsadaptiver Stops (MA6). */
+  atrPct?: number | null;
 }
 
 /**
@@ -148,15 +151,34 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
       // der Classic-Pfad kaufte mit ungeklammertem maxPositionPct, für den das
       // Schema kein Obergrenze kennt (100 % Einsatz wäre durchgegangen).
       const clamped = clampStrategyRisk(strategy);
+      const now = new Date();
 
-      // 1) Risiko-Exits zuerst (Port von _check_risk — vor neuen Signalen)
+      // 1) Risiko-Exits zuerst (Port von _check_risk — vor neuen Signalen).
+      // Seit MA2/MA6: klassen-aufgelöste Parameter, ATR-Option, nachziehender
+      // Stop (dafür wird highWater bei jedem Scan fortgeschrieben) und
+      // Zeitgrenze — alles in riskExitReason gebündelt.
       for (const [symbol, pos] of positions) {
         const data = marketData.get(symbol);
         if (!data) continue;
-        const reason = riskExitReason(pos, data.price, clamped);
+        const cls = classify(symbol);
+        // Höchstkurs seit Einstieg mitziehen, BEVOR der Trailing-Stop prüft
+        const peak = Math.max(pos.highWater ?? pos.avgEntry, data.price);
+        if (peak > (pos.highWater ?? 0) + 1e-9) {
+          pos.highWater = peak;
+          await userDoc.ref
+            .collection('positions')
+            .doc(symbol)
+            .set({ highWater: peak }, { merge: true })
+            .catch(() => undefined);
+        }
+        const reason = riskExitReason(pos, data.price, {
+          risk: resolveRisk(clamped.engine, cls),
+          atrPct: data.atrPct,
+          now,
+        });
         if (reason) {
           const r = await executePaperTrade(
-            { uid, symbol, side: 'sell', price: data.price, source: 'engine', riskExit: reason },
+            { uid, symbol, side: 'sell', price: data.price, source: 'engine', riskExit: reason, assetClass: cls },
             clamped,
           );
           if (r.executed) {
@@ -191,7 +213,6 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
       const strategyOwned = new Set(
         published.filter((s) => (s.doc.mode ?? 'paper') === 'paper').flatMap((s) => s.doc.symbols),
       );
-      const now = new Date();
       const minuteEt = minuteOfDayEt(now);
 
       for (const { ref, doc } of published) {
@@ -326,12 +347,16 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
         if (strategyOwned.has(symbol)) continue;
         const data = marketData.get(symbol);
         if (!data) continue;
+        // Positionskontext entscheidet über Ein- oder Ausstiegs-Regeln:
+        // Der Ausstieg ist bewusst leichter (MA2) — ein verpasster Verkauf
+        // kostet Geld, ein verpasster Kauf nur eine Chance.
         const sig = computeSignal(
           data.closes,
           data.price,
           strategy.indicators,
           strategy.signals,
           data.forecast,
+          { hasPosition: positions.has(symbol) },
         );
         // Prognose-Pfeil des Users als zusätzliche gewichtete Stimme
         const direction = applyPredictionVote(
@@ -620,7 +645,10 @@ export async function runScan(force = false): Promise<ScanResult> {
       } catch (err) {
         logger.warn(`Forecast-Fehler ${symbol}`, err);
       }
-      marketData.set(symbol, { closes, price: snap.price, forecast });
+      // ATR(14) in % — Basis für volatilitätsadaptive Stops (MA6). Wird nur
+      // berechnet, nicht erzwungen: Ohne atrStopMult bleibt alles wie gehabt.
+      const atrPctVal = atrPct(snap.bars.map((b) => ({ high: b.high, low: b.low, close: b.close })), 14);
+      marketData.set(symbol, { closes, price: snap.price, forecast, atrPct: atrPctVal });
 
       const sig = computeSignal(
         closes,
