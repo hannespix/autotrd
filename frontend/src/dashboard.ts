@@ -1834,12 +1834,25 @@ async function rebuildChart(): Promise<void> {
 
 /** Tooltip-Details zum Event-Tag unter dem Crosshair (M6b). */
 let evTipTimer: number | null = null;
+// Besitzer des (einen) Overlays: Crosshair-SYNCS feuern auf den Ziel-Charts
+// Clear-Events (param.point fehlt) — nur das Chart, das das Overlay geöffnet
+// hat, darf es auch schließen, sonst löscht die Lock-Gruppe jeden Tooltip.
+let evTipOwner: unknown = null;
 const COARSE_POINTER = window.matchMedia?.('(pointer: coarse)').matches ?? false;
 
-function showEventTooltip(date: string | null, pos: { x: number; y: number } | null): void {
+function showEventTooltip(
+  date: string | null,
+  pos: { x: number; y: number } | null,
+  // News-Overlay in JEDEM Chart-Fenster (User-Feedback 26.07.): Raster-
+  // Panels/Vergleich reichen ihre EIGENEN Event-Tage herein — default Haupt-Chart.
+  events?: EventDay[],
+  owner: unknown = 'main',
+): void {
   const tip = $('evTip');
-  const ev = date && st?.showEvents ? st.events.find((e) => e.date === date) : undefined;
+  const src = events ?? st?.events ?? [];
+  const ev = date && st?.showEvents ? src.find((e) => e.date === date) : undefined;
   if (!ev || !pos) {
+    if (owner !== evTipOwner) return; // Fremd-/Sync-Clear: Overlay bleibt
     // Touch (Handy): Nach dem Loslassen verschwindet das Crosshair sofort —
     // das Overlay bliebe sonst nur einen Wimpernschlag („nicht sauber",
     // Feedback 25.07.). Kurz stehen lassen, dann ausblenden.
@@ -1854,6 +1867,7 @@ function showEventTooltip(date: string | null, pos: { x: number; y: number } | n
     tip.hidden = true;
     return;
   }
+  evTipOwner = owner;
   if (evTipTimer !== null) {
     window.clearTimeout(evTipTimer);
     evTipTimer = null;
@@ -2088,7 +2102,9 @@ async function rebuildChart2(): Promise<void> {
     if (!recentGesture($('chart2Area'))) return;
     pushRange(st.chart, range, h);
   });
-  st.chart2?.onCrosshairDate((date) => {
+  st.chart2?.onCrosshairDate((date, pos) => {
+    // News-Overlay auch im Vergleichs-Chart (Events des Vergleichs-Symbols)
+    showEventTooltip(date, pos, st?.chart2P.events, 'chart2');
     if (crosshairSyncing || !st?.chart) return;
     crosshairSyncing = true;
     st.chart.setCrosshair(date);
@@ -2337,7 +2353,10 @@ async function mountGridPanel(p: GridPanel, host: HTMLElement): Promise<void> {
     if (!range || !p.chart || matchEcho(p.chart, range)) return;
     if (p.locked && recentGesture(host)) syncLockedRange(p.chart, range);
   });
-  p.chart?.onCrosshairDate((date) => {
+  p.chart?.onCrosshairDate((date, pos) => {
+    // News-Overlay auch im Raster-Panel (User-Feedback 26.07.) — mit den
+    // Event-Tagen des PANEL-Symbols, nicht denen des Haupt-Charts
+    showEventTooltip(date, pos, p.events, p);
     if (p.locked && p.chart) syncLockedCrosshair(p.chart, date);
   });
   renderGridPanelBars(p);
@@ -3756,6 +3775,13 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     panelMarkerCount: (i: number) => st?.gridPanels[i]?.lastMarkers ?? -1,
     mainMarkerCount: () => st?.lastMainMarkers ?? -1,
     newsSym: () => st?.newsSymbol ?? '',
+    panelEventDates: (i: number) => st?.gridPanels[i]?.events.map((e) => e.date) ?? [],
+    panelCoords: (i: number, time: string | number, price: number) =>
+      st?.gridPanels[i]?.chart?.coords(time, price) ?? null,
+    panelLastClose: (i: number) => {
+      const b = st?.gridPanels[i]?.bars;
+      return b && b.length > 0 ? b[b.length - 1]!.close : null;
+    },
     panelIntradayDays: (i: number) => st?.gridPanels[i]?.intradayDays ?? -1,
     panelIntradayLen: (i: number) => st?.gridPanels[i]?.intradayBars.length ?? -1,
     panelRangeVal: (i: number) => st?.gridPanels[i]?.range ?? -1,
