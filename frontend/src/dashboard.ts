@@ -27,6 +27,7 @@ import {
   buildIndicatorPanel,
   buildPriceChart,
   type ChartBar,
+  type ChartMarker,
   type ChartType,
   type IndicatorPanelHandle,
   type PanelLine,
@@ -242,6 +243,8 @@ interface DashState {
   /** Layer-Toggles (M6b): Prognose-Overlay / Event-Marker ein- und ausblenden. */
   showForecast: boolean;
   showEvents: boolean;
+  /** Zuletzt gesetzte News-Punkte im Haupt-Chart (E2E-Hook, 26.07.). */
+  lastMainMarkers?: number;
   /** Live-Preise der Positions-Symbole (aus market/{sym}.quote). */
   posPrices: Map<string, number>;
   subs: Unsubscribe[]; // globale Subs (Settings, Wallet, Positionen, Trades)
@@ -272,6 +275,8 @@ interface GridPanel {
   events: EventDay[];
   /** Zeit-Domäne des letzten Renders (Prognose-Räumung beim Moduswechsel). */
   lastRenderIntraday?: boolean;
+  /** Zuletzt gesetzte News-Punkte (E2E-Hook, 26.07.). */
+  lastMarkers?: number;
 }
 
 let st: DashState | null = null;
@@ -852,6 +857,20 @@ function wireNewsCtx(): void {
   );
 }
 
+/**
+ * News-Fokus (User-Wunsch 26.07.): Ein Klick in IRGENDEIN Chart-Fenster
+ * (Haupt, Raster-Panel, Vergleich) lädt News/Sentiment/KI-Karte für DESSEN
+ * Symbol — nicht nur fürs erste Chart. Bewusst am Link-Bus vorbei: Nur der
+ * News-Kontext wechselt, die Charts selbst bleiben, wie sie sind. Der
+ * nächste Bus-Wechsel (Watchlist-Klick in der News-Gruppe) übernimmt wieder.
+ */
+function focusNews(sym: string): void {
+  if (!st || !sym || st.newsSymbol === sym) return;
+  st.newsSymbol = sym;
+  wireNewsCtx();
+  scheduleWsSave();
+}
+
 /** Link-Chips einfärben (Aurora-Farben je Gruppe). */
 function paintChips(): void {
   if (!st) return;
@@ -892,6 +911,7 @@ function renderChart(): void {
     st.shownIntraday = aggregateBars(st.intradayBars, st.aggMinutes) as typeof st.shownIntraday;
     st.chart.setBars(st.shownIntraday, { fit, timeVisible: true });
     applyForecast(); // Kurzfrist-Prognose (nächste Stunde) im Intraday-Chart
+    applyMarkers(); // News-Punkte am Tages-Start-Bar (Zeit-Domäne wechselt mit)
     applyOverlays();
     updateSubPanels();
     renderResBadge();
@@ -922,6 +942,7 @@ function renderChart(): void {
         : undefined;
   st.chart.setBars(bars, { fit, fitTo, timeVisible: false });
   applyForecast();
+  applyMarkers(); // Zeit-Domäne der News-Punkte folgt der Sicht (26.07.)
   applyOverlays();
   drawPredictionArrow();
   updateSubPanels();
@@ -1143,8 +1164,8 @@ function renderLegend(lines: import('./chart.js').OverlayLine[], intraday: boole
   if (intraday && st?.showForecast && !st.cleanView && st.forecastIntraday) {
     items.push({ c: '#25d0ee', t: 'Kurzfrist-Prognose (nächste Stunde)', title: 'Projektion im 5-Minuten-Raster — bei jedem Scan neu berechnet, lernt aus der eigenen Trefferquote' });
   }
-  if (st?.showEvents && !st.cleanView && (st.events.length ?? 0) > 0 && !intraday) {
-    items.push({ c: '#26cf9d', t: 'Event-Punkte (News)', title: 'Überfahren zeigt die News des Tages' });
+  if (st?.showEvents && !st.cleanView && (st.events.length ?? 0) > 0) {
+    items.push({ c: '#26cf9d', t: 'Event-Punkte (News)', title: 'Überfahren zeigt die News des Tages — Intraday sitzt der Punkt am ersten Bar des Handelstags' });
   }
   // Legenden-Akkordeon (Feedback 25.07. abends): eingeklappt = nur OHLC-Zeile
   el.hidden = items.length === 0 || !st?.hudOpen;
@@ -1198,13 +1219,9 @@ function renderSubPanel(kind: 'rsi' | 'macd'): void {
       { key: 'signal', color: '#ffb86b', width: 1, points: pts(m.signal) },
     ]);
   }
-  // Zeitachse ans Haupt-Chart anlegen (guarded — sonst Sync-Echo)
+  // Zeitachse ans Haupt-Chart anlegen (pushRange markiert das als Echo)
   const r = st.chart?.getVisibleRange();
-  if (r && !rangeSyncing) {
-    rangeSyncing = true;
-    handle.setVisibleRange(r);
-    rangeSyncing = false;
-  }
+  if (r) pushRange(handle, r);
 }
 
 async function mountSubPanel(kind: 'rsi' | 'macd'): Promise<void> {
@@ -1227,13 +1244,14 @@ async function mountSubPanel(kind: 'rsi' | 'macd'): Promise<void> {
         '<span><i class="lg-dot" style="background:#ffb86b"></i>Signal</span>' +
         '<span><i class="lg-dot" style="background:#8b93a8"></i>Histogramm</span>';
   $(`${kind}Panel`).appendChild(lg);
+  armGestureTracking($(`${kind}Panel`));
   handle.onVisibleRangeChange((range) => {
-    if (rangeSyncing || !range || !st) return;
-    rangeSyncing = true;
-    st.chart?.setVisibleRange(range);
-    const other = kind === 'rsi' ? st.subCharts.macd : st.subCharts.rsi;
-    other?.setVisibleRange(range);
-    rangeSyncing = false;
+    // Unterpanels sind Blätter im Sync-Graph: Echos enden hier. Und ohne
+    // frische User-Geste (Daten-Refit!) wird nichts zurückgereicht.
+    if (!range || !st || matchEcho(handle, range)) return;
+    if (!recentGesture($(`${kind}Panel`))) return;
+    pushRange(st.chart, range, handle);
+    pushRange(kind === 'rsi' ? st.subCharts.macd : st.subCharts.rsi, range, handle);
   });
   renderSubPanel(kind);
 }
@@ -1555,20 +1573,40 @@ async function loadIntradayView(): Promise<void> {
   renderChart();
 }
 
+/**
+ * News-Punkte fürs Chart (User-Wunsch 26.07.: „in allen Ansichten"): in der
+ * Tages-Sicht direkt am Datum, in der Intraday-Sicht am ERSTEN Bar des
+ * jeweiligen Handelstags (UTC-Datum der Bar-Zeit — deckt US- wie EU-Sessions).
+ */
+function newsMarkers(events: EventDay[], intradayBars: Array<{ time: number }> | null): ChartMarker[] {
+  const mark = (e: EventDay, time: string | number): ChartMarker => ({
+    time,
+    position: e.sentiment < -0.12 ? 'aboveBar' : 'belowBar',
+    color: e.sentiment > 0.12 ? '#26cf9d' : e.sentiment < -0.12 ? '#f2586b' : '#8b93a8',
+    shape: 'circle',
+    text: e.count > 1 ? String(e.count) : '',
+  });
+  if (!intradayBars) return events.map((e) => mark(e, e.date));
+  const firstOfDay = new Map<string, number>();
+  for (const b of intradayBars) {
+    const day = new Date(b.time * 1000).toISOString().slice(0, 10);
+    if (!firstOfDay.has(day)) firstOfDay.set(day, b.time);
+  }
+  return events.flatMap((e) => {
+    const t = firstOfDay.get(e.date);
+    return t === undefined ? [] : [mark(e, t)];
+  });
+}
+
 /** Event-Marker anwenden — respektiert den Events-Layer-Toggle (M6b). */
 function applyMarkers(): void {
   if (!st?.chart) return;
-  st.chart.setMarkers(
+  const markers =
     st.showEvents && !st.cleanView
-      ? st.events.map((e) => ({
-          time: e.date,
-          position: e.sentiment < -0.12 ? ('aboveBar' as const) : ('belowBar' as const),
-          color: e.sentiment > 0.12 ? '#26cf9d' : e.sentiment < -0.12 ? '#f2586b' : '#8b93a8',
-          shape: 'circle' as const,
-          text: e.count > 1 ? String(e.count) : '',
-        }))
-      : [],
-  );
+      ? newsMarkers(st.events, st.intradayDays > 0 ? st.shownIntraday : null)
+      : [];
+  st.lastMainMarkers = markers.length; // E2E-Hook
+  st.chart.setMarkers(markers);
 }
 
 /**
@@ -1722,20 +1760,23 @@ async function rebuildChart(): Promise<void> {
     openPredPop(price);
   });
   st.chart?.onVisibleRangeChange(() => drawPredictionArrow());
-  // Lock-Gruppe (Multi-Chart-Raster): Haupt-Chart synct nur, wenn selbst gelockt
-  st.chart?.onVisibleRangeChange((range) => {
-    if (st?.mainLocked && st.chart) syncLockedRange(st.chart, range);
-  });
   st.chart?.onCrosshairDate((date) => {
     if (st?.mainLocked && st.chart) syncLockedCrosshair(st.chart, date);
   });
-  // Indikator-Unterpanels folgen der Haupt-Zeitachse (beidseitig, Echo-Guard)
+  // EIN konsolidierter Range-Sync (Unterpanels + Vergleich + Lock-Gruppe):
+  // genau EIN matchEcho pro Event — mehrere Handler würden sich den Ring-
+  // Eintrag gegenseitig wegkonsumieren. Nachbarn folgen auch Echos (sonst
+  // hängen sie, wenn Vergleich/Lock-Panel das Haupt-Chart treibt), aber nie
+  // zurück zum Verursacher — dessen Trägheits-Glide liefe sonst gegen die
+  // eigene, einen Frame alte Range (Smartphone-Kinetik 26.07.).
   st.chart?.onVisibleRangeChange((range) => {
-    if (rangeSyncing || !range || !st) return;
-    rangeSyncing = true;
-    st.subCharts.rsi?.setVisibleRange(range);
-    st.subCharts.macd?.setVisibleRange(range);
-    rangeSyncing = false;
+    if (!range || !st?.chart) return;
+    const echo = matchEcho(st.chart, range);
+    const origin = echo ? echo.origin : st.chart;
+    pushRange(st.subCharts.rsi, range, origin);
+    pushRange(st.subCharts.macd, range, origin);
+    pushRange(st.chart2, range, origin);
+    if (st.mainLocked) syncLockedRange(st.chart, range, origin);
   });
   // Auto-Auflösung + nahtlose Historie: sichtbare Spanne beobachten (debounced)
   st.chart?.onVisibleRangeChange((range) => {
@@ -1768,12 +1809,7 @@ async function rebuildChart(): Promise<void> {
   });
   // In-Chart-HUD (TV-Stil): OHLC des Bars unterm Crosshair, sonst letzter Bar
   st.chart?.onCrosshairData((d) => renderOhlcHud(d));
-  st.chart?.onVisibleRangeChange((range) => {
-    if (rangeSyncing || !range || !st?.chart2) return;
-    rangeSyncing = true;
-    st.chart2.setVisibleRange(range);
-    rangeSyncing = false;
-  });
+  // (Vergleichs-Chart folgt über den konsolidierten Sync-Handler oben)
   renderChart();
   applyMarkers();
 }
@@ -1902,9 +1938,71 @@ function wireWatchlist(): void {
 
 /* ── Vergleichs-Chart (M9 Chart-Stack) ──────────────────────────────── */
 
-// Schutz gegen Sync-Echos: setVisibleRange/setCrosshair lösen auf dem
-// Zielchart wieder Events aus — der jeweils aktive Sync setzt das Flag.
-let rangeSyncing = false;
+// Schutz gegen Sync-Echos — frame-sicher (Smartphone-Kinetik 26.07.):
+// setVisibleRange stoppt in LWC JEDE laufende Trägheits-Animation (applyRange
+// → stopTimeScaleAnimation), und Range-Events feuern ASYNCHRON im nächsten
+// Frame. Ein synchroner Boolean lässt Echos deshalb durch: Haupt-Chart
+// gleitet → Sync schiebt die Range in Unterpanel/Vergleich → deren Echo
+// prallt einen Frame später zurück und würgt das Touch-/Maus-Momentum ab.
+// Stattdessen merkt sich jedes Ziel die zuletzt programmatisch gesetzten
+// Ranges (Ring); meldet es exakt so eine Range zurück, ist es ein Echo und
+// wird nicht weitergereicht — das Original-Chart gleitet ungestört weiter.
+// Jeder Ring-Eintrag trägt den VERURSACHER (origin) mit: Beim Weiterreichen
+// eines Echos wird nie zurück zum Verursacher gepusht — dessen Glide-Animation
+// bliebe sonst am eigenen, einen Frame alten Range-Stand hängen.
+interface RangeTarget {
+  setVisibleRange(r: { from: number; to: number }): void;
+}
+type AppliedRange = { from: number; to: number; origin: RangeTarget | null };
+const appliedRanges = new WeakMap<RangeTarget, AppliedRange[]>();
+
+function pushRange(
+  target: RangeTarget | null | undefined,
+  range: { from: number; to: number },
+  origin: RangeTarget | null = null,
+): void {
+  if (!target || target === origin) return;
+  const ring = appliedRanges.get(target) ?? [];
+  ring.push({ from: range.from, to: range.to, origin });
+  if (ring.length > 6) ring.shift();
+  appliedRanges.set(target, ring);
+  target.setVisibleRange(range);
+}
+
+/** Ist `range` das Echo eines eigenen pushRange? Liefert den Eintrag (mit
+ *  Verursacher) und konsumiert ihn — sonst null. */
+function matchEcho(target: RangeTarget, range: { from: number; to: number }): AppliedRange | null {
+  const ring = appliedRanges.get(target);
+  if (!ring) return null;
+  const i = ring.findIndex((e) => Math.abs(e.from - range.from) < 1e-4 && Math.abs(e.to - range.to) < 1e-4);
+  if (i < 0) return null;
+  const hit = ring[i]!;
+  ring.splice(0, i + 1); // konsumieren — ältere Einträge sind damit erledigt
+  return hit;
+}
+
+// Nur ECHTE User-Gesten auf Unterpanel/Vergleich dürfen das Haupt-Chart
+// ziehen: Daten-Refits (setData/Fit nach Snapshot oder Mount) feuern
+// dieselben Range-Events und würden das Haupt-Chart sonst grundlos
+// zurückreißen (E2E-Fund 26.07. — frisch gemountetes MACD-Panel riss den
+// Haupt-Zoom auf sein Selbst-Fit-Fenster). 2,5 s decken Drag + Glide ab.
+const lastGesture = new WeakMap<HTMLElement, number>();
+
+function armGestureTracking(el: HTMLElement): void {
+  if (el.dataset['gestArmed'] === '1') return;
+  el.dataset['gestArmed'] = '1';
+  const mark = (): void => {
+    lastGesture.set(el, performance.now());
+  };
+  el.addEventListener('pointerdown', mark, true);
+  el.addEventListener('wheel', mark, { capture: true, passive: true });
+  el.addEventListener('touchstart', mark, { capture: true, passive: true });
+}
+
+function recentGesture(el: HTMLElement): boolean {
+  return performance.now() - (lastGesture.get(el) ?? Number.NEGATIVE_INFINITY) < 2500;
+}
+
 let crosshairSyncing = false;
 let chart2Epoch = 0;
 
@@ -1963,12 +2061,14 @@ async function rebuildChart2(): Promise<void> {
   st.chart2 = handle;
   st.chart2P.chart = handle;
   st.chart2P.fitPending = true;
-  // Zeit-/Crosshair-Sync zum Haupt-Chart (beidseitig, mit Echo-Schutz)
+  // Zeit-/Crosshair-Sync zum Haupt-Chart (beidseitig, frame-sicherer Echo-
+  // Schutz + Gesten-Gate: Daten-Refits des Vergleichs ziehen das Haupt-Chart nicht)
+  armGestureTracking($('chart2Area'));
   st.chart2?.onVisibleRangeChange((range) => {
-    if (rangeSyncing || !range || !st?.chart) return;
-    rangeSyncing = true;
-    st.chart.setVisibleRange(range);
-    rangeSyncing = false;
+    const h = st?.chart2;
+    if (!range || !st?.chart || !h || matchEcho(h, range)) return;
+    if (!recentGesture($('chart2Area'))) return;
+    pushRange(st.chart, range, h);
   });
   st.chart2?.onCrosshairDate((date) => {
     if (crosshairSyncing || !st?.chart) return;
@@ -2026,13 +2126,15 @@ function lockedHandles(except: PriceChartHandle): PriceChartHandle[] {
   return out.filter((h) => h !== except);
 }
 
-// Lock-Sync nutzt dieselben Echo-Guards wie der Chart-Stack: setVisibleRange/
-// setCrosshair feuern die Subscriptions des Zielcharts synchron.
-function syncLockedRange(from: PriceChartHandle, range: { from: number; to: number } | null): void {
-  if (rangeSyncing || !range) return;
-  rangeSyncing = true;
-  for (const h of lockedHandles(from)) h.setVisibleRange(range);
-  rangeSyncing = false;
+// Lock-Sync nutzt denselben frame-sicheren Echo-Guard wie der Chart-Stack:
+// pushRange markiert jede gesetzte Range, matchEcho stoppt den Rückprall.
+function syncLockedRange(
+  from: PriceChartHandle,
+  range: { from: number; to: number } | null,
+  origin: RangeTarget | null = from,
+): void {
+  if (!range) return;
+  for (const h of lockedHandles(from)) pushRange(h, range, origin);
 }
 
 function syncLockedCrosshair(from: PriceChartHandle, date: string | null): void {
@@ -2076,18 +2178,14 @@ function renderGridPanelBars(p: GridPanel): void {
     lines.push({ key: 'vwap', color: '#f2d16b', width: 2, points: pts });
   }
   p.chart.setOverlays(lines);
-  // News-Punkte in JEDEM Chart (Tages-Sicht, wie im Haupt-Chart)
-  p.chart.setMarkers(
-    !intraday && st !== null && st.showEvents && !st.cleanView
-      ? p.events.map((e) => ({
-          time: e.date,
-          position: e.sentiment < -0.12 ? ('aboveBar' as const) : ('belowBar' as const),
-          color: e.sentiment > 0.12 ? '#26cf9d' : e.sentiment < -0.12 ? '#f2586b' : '#8b93a8',
-          shape: 'circle' as const,
-          text: e.count > 1 ? String(e.count) : '',
-        }))
-      : [],
-  );
+  // News-Punkte in JEDEM Chart und JEDER Sicht (User-Wunsch 26.07.):
+  // Tages-Sicht am Datum, Intraday-Sicht am ersten Bar des Handelstags.
+  const pMarkers =
+    st !== null && st.showEvents && !st.cleanView
+      ? newsMarkers(p.events, intraday ? p.intradayBars : null)
+      : [];
+  p.lastMarkers = pMarkers.length; // E2E-Hook
+  p.chart.setMarkers(pMarkers);
   // Layer syncen (User-Wunsch 25.07.): Fläche + „Kerzen aus" gelten auch im
   // Raster. Farbton neutral — das Signal gehört zum Haupt-Symbol, nicht zum
   // Panel-Symbol (falsche Grün/Rot-Aussage wäre schlimmer als neutral).
@@ -2213,8 +2311,13 @@ async function mountGridPanel(p: GridPanel, host: HTMLElement): Promise<void> {
     return;
   }
   p.chart = handle;
+  armGestureTracking(host);
   p.chart?.onVisibleRangeChange((range) => {
-    if (p.locked && p.chart) syncLockedRange(p.chart, range);
+    // Echo eines Lock-Pushes? Nicht zurücksenden — sonst stirbt das
+    // Trägheits-Gleiten des treibenden Charts (Smartphone-Kinetik 26.07.).
+    // Gesten-Gate: Daten-Refits des Panels ziehen die Lock-Gruppe nicht.
+    if (!range || !p.chart || matchEcho(p.chart, range)) return;
+    if (p.locked && recentGesture(host)) syncLockedRange(p.chart, range);
   });
   p.chart?.onCrosshairDate((date) => {
     if (p.locked && p.chart) syncLockedCrosshair(p.chart, date);
@@ -2326,6 +2429,7 @@ function renderChartGrid(): void {
       symInp.value = sym;
       saveGridPrefs();
       void mountGridPanel(p, el.querySelector('.gp-chart') as HTMLElement);
+      focusNews(sym); // neues Symbol im aktiven Fenster → News folgen sofort
     });
     const markTf = (btn: Element): void =>
       el.querySelectorAll('[data-r], [data-i]').forEach((x) => x.classList.toggle('on', x === btn));
@@ -2376,6 +2480,9 @@ function renderChartGrid(): void {
         if (r) syncLockedRange(other!, r);
       }
     });
+    // Klick ins Panel = aktives Fenster → News-Kontext folgt (capture, damit
+    // auch Klicks auf die LWC-Canvas zählen; p.sym liest den Live-Stand)
+    el.addEventListener('pointerdown', () => focusNews(p.sym), true);
     grid.appendChild(el);
     void mountGridPanel(p, el.querySelector('.gp-chart') as HTMLElement);
   });
@@ -3628,6 +3735,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     mainTypeCombine: () => st?.chart?.typeCombineActive() ?? false,
     panelTypeCombine: (i: number) => st?.gridPanels[i]?.chart?.typeCombineActive() ?? false,
     panelEventCount: (i: number) => st?.gridPanels[i]?.events.length ?? -1,
+    panelMarkerCount: (i: number) => st?.gridPanels[i]?.lastMarkers ?? -1,
+    mainMarkerCount: () => st?.lastMainMarkers ?? -1,
+    newsSym: () => st?.newsSymbol ?? '',
     panelIntradayDays: (i: number) => st?.gridPanels[i]?.intradayDays ?? -1,
     panelIntradayLen: (i: number) => st?.gridPanels[i]?.intradayBars.length ?? -1,
     panelRangeVal: (i: number) => st?.gridPanels[i]?.range ?? -1,
@@ -4104,6 +4214,10 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     renderAllPanels(); // News-Punkte in ALLEN Charts
     if (!st.showEvents) $('evTip').hidden = true;
   });
+  // Aktives Fenster = News-Kontext (User-Wunsch 26.07.): Klick in Haupt-
+  // oder Vergleichs-Chart lädt dessen News (Raster-Panels analog in renderGrid)
+  $('chartWrap').addEventListener('pointerdown', () => focusNews(st?.currentSymbol ?? ''), true);
+  $('chart2Area').addEventListener('pointerdown', () => focusNews(st?.chart2Symbol ?? ''), true);
   document.addEventListener('keydown', onEscape);
 }
 

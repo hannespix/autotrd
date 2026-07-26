@@ -26,7 +26,8 @@ export interface ForecastOverlay {
 }
 
 export interface ChartMarker {
-  time: string;
+  /** ISO-Tag (Tages-Sicht) oder UNIX-Sekunden (Intraday-Sicht, 26.07.). */
+  time: string | number;
   position: 'aboveBar' | 'belowBar';
   color: string;
   shape: 'circle' | 'arrowUp' | 'arrowDown';
@@ -517,6 +518,10 @@ export async function buildPriceChart(
         } else if (t && typeof t === 'object' && 'year' in t) {
           const bd = t as { year: number; month: number; day: number };
           date = `${bd.year}-${String(bd.month).padStart(2, '0')}-${String(bd.day).padStart(2, '0')}`;
+        } else if (typeof t === 'number') {
+          // Intraday (UNIX-Sekunden) → Handelstag (UTC), damit der News-
+          // Tooltip auch in der 5-min-Sicht die Tages-Events findet (26.07.)
+          date = new Date(t * 1000).toISOString().slice(0, 10);
         }
         if (!date || !param.point) {
           cb(null, null);
