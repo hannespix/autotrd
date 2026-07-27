@@ -196,3 +196,83 @@ describe('stepFleet — Zustandspflege', () => {
     expect(JSON.stringify(zustand)).toBe(kopie);
   });
 });
+
+/* ── Entscheiden und Protokollieren (MT4/MT5) ─────────────────────────────── */
+
+import { decideTuning } from '../src/core/tuneFleet.js';
+import { buildVariants } from '../../shared/src/index.js';
+
+/** n Ergebnisse um `mittel` mit etwas Streuung — sonst gibt es keinen Test. */
+const serie = (n: number, mittel: number): number[] =>
+  Array.from({ length: n }, (_, i) => mittel + (i % 2 === 0 ? 1 : -1));
+
+describe('decideTuning', () => {
+  const basis = () => structuredClone(DEFAULT_STRATEGY);
+
+  it('befördert die beste belegte Variante — und nur eine', () => {
+    // Zwei Varianten schlagen die amtierende; nur die STÄRKERE gewinnt.
+    // Zwei Änderungen gleichzeitig ließen sich hinterher nicht mehr
+    // auseinanderhalten.
+    const b = basis();
+    const v = buildVariants(b, 3);
+    const fleet: FleetState = {
+      [v[0]!.id]: { ...emptyVariantState(T0), pnls: serie(40, 8) },
+      [v[1]!.id]: { ...emptyVariantState(T0), pnls: serie(40, 14) },
+      [v[2]!.id]: { ...emptyVariantState(T0), pnls: serie(40, 1) },
+    };
+    const d = decideTuning(b, v, fleet, serie(40, 0), T0);
+    expect(d.winner?.id).toBe(v[1]!.id);
+    expect(d.entries.filter((e) => e.promoted)).toHaveLength(1);
+  });
+
+  it('befördert nichts, solange die Evidenz fehlt', () => {
+    const b = basis();
+    const v = buildVariants(b, 2);
+    const fleet: FleetState = {
+      [v[0]!.id]: { ...emptyVariantState(T0), pnls: serie(10, 50) }, // sehr gut, aber nur 10
+      [v[1]!.id]: { ...emptyVariantState(T0), pnls: [] },
+    };
+    const d = decideTuning(b, v, fleet, serie(40, 0), T0);
+    expect(d.winner).toBeNull();
+    expect(d.entries[0]!.reason).toMatch(/Zu wenig Evidenz/);
+  });
+
+  it('protokolliert JEDE geprüfte Variante, auch die abgelehnten', () => {
+    // Ein Journal, das nur Erfolge zeigt, verschweigt das Interessante:
+    // wie viele Ideen verworfen wurden und warum.
+    const b = basis();
+    const v = buildVariants(b, 4);
+    const d = decideTuning(b, v, {}, serie(40, 0), T0);
+    expect(d.entries).toHaveLength(4);
+    expect(d.entries.every((e) => e.reason.length > 0)).toBe(true);
+    expect(d.entries.every((e) => !e.promoted)).toBe(true);
+  });
+
+  it('schreibt die Änderung in Klartext — lesbar ohne Code', () => {
+    const b = basis();
+    const v = buildVariants(b, 20).filter((x) => x.id === 'minHoldMin=120');
+    const d = decideTuning(b, v, {}, serie(40, 0), T0);
+    expect(d.entries[0]!.change).toBe('Mindest-Haltedauer 60 → 120');
+  });
+
+  it('hält im Eintrag nachprüfbare Zahlen fest', () => {
+    const b = basis();
+    const v = buildVariants(b, 1);
+    const fleet: FleetState = { [v[0]!.id]: { ...emptyVariantState(T0), pnls: serie(40, 9) } };
+    const e = decideTuning(b, v, fleet, serie(40, 0), T0).entries[0]!;
+    expect(e.nCandidate).toBe(40);
+    expect(e.nIncumbent).toBe(40);
+    expect(e.edge).toBeCloseTo(9, 6);
+    expect(e.p).not.toBeNull();
+    expect(e.at).toBe(T0.toISOString());
+  });
+
+  it('lässt eine strengere Schwelle durchgreifen', () => {
+    const b = basis();
+    const v = buildVariants(b, 1);
+    const fleet: FleetState = { [v[0]!.id]: { ...emptyVariantState(T0), pnls: serie(40, 9) } };
+    // Mit 100 geforderten Trades je Seite reicht die Evidenz nicht mehr.
+    const d = decideTuning(b, v, fleet, serie(40, 0), T0, { minTrades: 100 });
+    expect(d.winner).toBeNull();
+  });
+});

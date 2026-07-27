@@ -24,7 +24,10 @@
 import {
   PAPER_FEE_RATE,
   classify,
+  describeVariant,
+  judgeCandidate,
   resolveRisk,
+  type EvidenceOptions,
   type Strategy,
   type Variant,
 } from '../../../shared/src/index.js';
@@ -224,3 +227,81 @@ export function stepFleet(
  * sind. `shadowTrade` rechnet sie bereits in den Ausführungspreis.
  */
 export const FLEET_ROUNDTRIP_PCT = PAPER_FEE_RATE * 2 * 100;
+
+/* ── Entscheiden und Protokollieren (MT4/MT5) ─────────────────────────────── */
+
+export interface JournalEntry {
+  at: string;
+  variantId: string;
+  /** Klartext der Änderung: „Mindest-Haltedauer 60 → 120". */
+  change: string;
+  /** Begründung aus judgeCandidate — mit Zahlen, nachprüfbar. */
+  reason: string;
+  promoted: boolean;
+  p: number | null;
+  edge: number;
+  nCandidate: number;
+  nIncumbent: number;
+}
+
+export interface TuneDecision {
+  winner: Variant | null;
+  /** Ein Eintrag JE geprüfter Variante — auch für die abgelehnten. */
+  entries: JournalEntry[];
+}
+
+/**
+ * Prüft alle Varianten gegen die amtierende Einstellung und wählt höchstens
+ * EINE Siegerin.
+ *
+ * Warum nur eine je Durchgang: Zwei gleichzeitige Änderungen lassen sich
+ * hinterher nicht mehr auseinanderhalten — man wüsste nicht, welche geholfen
+ * hat. Und die neue Einstellung muss sich erst wieder Evidenz erarbeiten,
+ * bevor der nächste Vergleich Sinn ergibt.
+ *
+ * Protokolliert wird JEDE geprüfte Variante, auch die abgelehnten. Ein
+ * Journal, das nur Erfolge zeigt, verschweigt genau das Interessante: Wie
+ * viele Ideen ausprobiert und verworfen wurden — und warum.
+ */
+export function decideTuning(
+  base: Strategy,
+  variants: Variant[],
+  fleet: FleetState,
+  livePnls: number[],
+  now: Date,
+  opts: EvidenceOptions = {},
+): TuneDecision {
+  const entries: JournalEntry[] = [];
+  let winner: Variant | null = null;
+  let bestEdge = 0;
+
+  for (const v of variants) {
+    const st = fleet[v.id];
+    const verdict = judgeCandidate(
+      { pnls: st?.pnls ?? [], label: v.id },
+      { pnls: livePnls, label: 'aktuell' },
+      opts,
+    );
+    entries.push({
+      at: now.toISOString(),
+      variantId: v.id,
+      change: describeVariant(base, v),
+      reason: verdict.reason,
+      promoted: false,
+      p: verdict.p,
+      edge: verdict.edge,
+      nCandidate: verdict.nCandidate,
+      nIncumbent: verdict.nIncumbent,
+    });
+    if (verdict.promote && verdict.edge > bestEdge) {
+      bestEdge = verdict.edge;
+      winner = v;
+    }
+  }
+
+  if (winner) {
+    const treffer = entries.find((e) => e.variantId === winner!.id);
+    if (treffer) treffer.promoted = true;
+  }
+  return { winner, entries };
+}
