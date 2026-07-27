@@ -28,16 +28,34 @@
  *    in der Datenbank, nicht in diesem Modul.
  */
 
-import type { Quote } from '@autotrd/shared';
+import {
+  attribution,
+  classify,
+  dailyReturns,
+  drawdown,
+  sharpe,
+  tradeStats,
+  type ClosedTrade,
+  type Position,
+  type Quote,
+  type Strategy,
+  type StrategyDoc,
+  type Wallet,
+} from '@autotrd/shared';
 import { muxWatch } from './mux.js';
 import { sb } from './supabase.js';
 import { trackListener } from './listeners.js';
 import type { ChartBar } from './chart.js';
 import type {
+  EquitySeriesPoint,
   ForecastStatsDoc,
   IndicatorRow,
   MarketDocData,
+  PortfolioStatsDoc,
   SignalRow,
+  StrategyRow,
+  TradeRow,
+  UiPrefs,
 } from './data.js';
 
 export { listenerCount } from './listeners.js';
@@ -382,4 +400,349 @@ export function watchForecastStatsIntraday(
 /** Heartbeat des Scans — dieselbe Rolle wie meta/health in Firestore. */
 export function watchHealth(cb: (health: Record<string, unknown> | null) => void): () => void {
   return watchMeta<Record<string, unknown>>('health', cb);
+}
+
+// ── Nutzerdaten (MS2 Teil 3) ─────────────────────────────────────────────────
+//
+// Alles hier ist LESEND. Geschrieben wird ausschließlich serverseitig
+// (Edge Function mit service_role) — die RLS-Policies erlauben auf
+// wallets/positions/trades bewusst gar keine Schreib-Policy, weil jede davon
+// ein Loch wäre (Migration 0002). Das Frontend darf einzig `profiles.settings`
+// ändern; das ist keine Geld-Tabelle.
+
+/** Wallet des Nutzers (heute genau eines je Konto — Multi-Wallet folgt). */
+async function mainWallet(uid: string): Promise<{ id: string; balance: number; updated_at: string } | null> {
+  const res = await sb()
+    .from('wallets')
+    .select('id,balance,updated_at')
+    .eq('user_id', uid)
+    .is('archived_at', null)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  const r = res.data as { id: string; balance: string | number; updated_at: string } | null;
+  return r ? { id: r.id, balance: num0(r.balance), updated_at: r.updated_at } : null;
+}
+
+export function watchUserDoc(
+  uid: string,
+  cb: (data: {
+    strategy: Strategy | null;
+    wallet: Wallet | null;
+    hotkeys: Record<string, string> | null;
+    ui: UiPrefs | null;
+  }) => void,
+): () => void {
+  return sbWatch(
+    {
+      key: `userDoc:${uid}`,
+      tables: [
+        { table: 'profiles', filter: `id=eq.${uid}` },
+        { table: 'wallets', filter: `user_id=eq.${uid}` },
+      ],
+      load: async () => {
+        const prof = await sb().from('profiles').select('settings').eq('id', uid).maybeSingle();
+        const settings = ((prof.data as { settings?: Record<string, unknown> } | null)?.settings ??
+          {}) as {
+          strategy?: Strategy;
+          hotkeys?: Record<string, string>;
+          ui?: UiPrefs;
+        };
+        const w = await mainWallet(uid);
+        return {
+          strategy: settings.strategy ?? null,
+          // Der Wallet-Typ der Oberfläche kennt nur Guthaben, Währung und
+          // Zeitstempel — die Wallet-ID bleibt bewusst hier unten, damit die
+          // UI nichts über die Mehr-Wallet-Struktur wissen muss.
+          wallet: w
+            ? ({ paperBalance: w.balance, currency: 'USD', updatedAt: w.updated_at } as Wallet)
+            : null,
+          hotkeys: settings.hotkeys ?? null,
+          ui: settings.ui ?? null,
+        };
+      },
+    },
+    cb,
+  );
+}
+
+/**
+ * UI-Präferenzen speichern. Der einzige Schreibpfad des Frontends — und
+ * auch der geht nur, weil `profiles` keine Geld-Tabelle ist. Weil Postgres
+ * kein Feldpfad-Update auf JSONB per PostgREST kennt, wird `settings`
+ * gelesen, ergänzt und zurückgeschrieben; die anderen Schlüssel bleiben
+ * dabei erhalten (ein blindes Überschreiben würde Strategie und Hotkeys
+ * löschen).
+ */
+export async function saveUiPrefs(uid: string, ui: UiPrefs): Promise<void> {
+  const prof = await sb().from('profiles').select('settings').eq('id', uid).maybeSingle();
+  const settings = ((prof.data as { settings?: Record<string, unknown> } | null)?.settings ??
+    {}) as Record<string, unknown>;
+  const { error } = await sb()
+    .from('profiles')
+    .update({ settings: { ...settings, ui } })
+    .eq('id', uid);
+  if (error) throw new Error(error.message);
+}
+
+export interface PositionRow {
+  symbol: string;
+  side: 'long' | 'short';
+  qty: string | number;
+  avg_entry: string | number;
+  stop_loss: string | number | null;
+  take_profit: string | number | null;
+  high_water: string | number | null;
+  low_water: string | number | null;
+  opened_at: string;
+}
+
+export function toPosition(r: PositionRow): Position {
+  const p: Position = {
+    symbol: r.symbol,
+    qty: num0(r.qty),
+    avgEntry: num0(r.avg_entry),
+    stopLoss: num(r.stop_loss),
+    takeProfit: num(r.take_profit),
+    openedAt: r.opened_at,
+  };
+  // Wie bei den Marktdaten: fehlende Felder werden NICHT gesetzt. `side`
+  // fehlend heißt „long" (Altbestand vor dem Short-Feature), und ein
+  // fehlender Wasserstand lässt den Trailing-Stop konservativ am Einstand
+  // starten — beides Verhalten, das ein `undefined` im Feld zerstören würde.
+  if (r.side === 'short') p.side = 'short';
+  const hw = num(r.high_water);
+  if (hw !== null) p.highWater = hw;
+  const lw = num(r.low_water);
+  if (lw !== null) p.lowWater = lw;
+  return p;
+}
+
+export function watchPositions(uid: string, cb: (positions: Position[]) => void): () => void {
+  return sbWatch<Position[]>(
+    {
+      key: `positions:${uid}`,
+      tables: [{ table: 'positions', filter: `user_id=eq.${uid}` }],
+      load: async () => {
+        const res = await sb()
+          .from('positions')
+          .select('symbol,side,qty,avg_entry,stop_loss,take_profit,high_water,low_water,opened_at')
+          .eq('user_id', uid);
+        return ((res.data as PositionRow[] | null) ?? []).map(toPosition);
+      },
+    },
+    cb,
+  );
+}
+
+export interface TradeDbRow {
+  symbol: string;
+  side: 'buy' | 'sell';
+  qty: string | number;
+  price: string | number;
+  executed_at: string;
+  source: 'engine' | 'manual';
+  pnl: string | number | null;
+  risk_exit: string | null;
+}
+
+export function toTradeRow(r: TradeDbRow): TradeRow {
+  const t: TradeRow = {
+    symbol: r.symbol,
+    side: r.side,
+    qty: num0(r.qty),
+    price: num0(r.price),
+    executedAt: r.executed_at,
+    source: r.source,
+  };
+  // pnl nur bei schließenden Trades — eine 0 hier hieße „glatt raus", nicht
+  // „noch offen". Die Trade-Liste färbt danach.
+  const pnl = num(r.pnl);
+  if (pnl !== null) t.pnl = pnl;
+  if (r.risk_exit) t.riskExit = r.risk_exit;
+  return t;
+}
+
+/** Jüngste Trades — dieselbe Obergrenze wie unter Firestore. */
+const TRADE_LIMIT = 40;
+
+export function watchTrades(uid: string, cb: (trades: TradeRow[]) => void): () => void {
+  return sbWatch<TradeRow[]>(
+    {
+      key: `trades:${uid}`,
+      tables: [{ table: 'trades', filter: `user_id=eq.${uid}` }],
+      load: async () => {
+        const res = await sb()
+          .from('trades')
+          .select('symbol,side,qty,price,executed_at,source,pnl,risk_exit')
+          .eq('user_id', uid)
+          .order('executed_at', { ascending: false })
+          .limit(TRADE_LIMIT);
+        return ((res.data as TradeDbRow[] | null) ?? []).map(toTradeRow);
+      },
+    },
+    cb,
+  );
+}
+
+/** ~ein halbes Handelsjahr — reicht für Sharpe 90 und das MaxDD-Fenster. */
+const EQUITY_WINDOW = 120;
+
+async function loadEquitySeries(uid: string): Promise<EquitySeriesPoint[]> {
+  const res = await sb()
+    .from('equity_snapshots')
+    .select('day,equity')
+    .eq('user_id', uid)
+    .order('day', { ascending: false })
+    .limit(EQUITY_WINDOW);
+  return ((res.data as Array<{ day: string; equity: string | number }> | null) ?? [])
+    .map((r) => ({ date: r.day, equity: num0(r.equity) }))
+    .reverse();
+}
+
+export function watchEquitySeries(
+  uid: string,
+  cb: (points: EquitySeriesPoint[]) => void,
+): () => void {
+  return sbWatch<EquitySeriesPoint[]>(
+    {
+      key: `equity:${uid}`,
+      tables: [{ table: 'equity_snapshots', filter: `user_id=eq.${uid}` }],
+      load: () => loadEquitySeries(uid),
+    },
+    cb,
+  );
+}
+
+/**
+ * Portfolio-Kennzahlen — hier RECHNET das Frontend, statt ein fertiges
+ * Stats-Dokument zu lesen.
+ *
+ * Unter Firestore schreibt sie ein täglicher Scheduler nach
+ * users/{uid}/stats/main. Genau daran ist die Karte am 27.07. gescheitert:
+ * Der Scheduler existierte live gar nicht, also blieb sie leer — und man
+ * sah es ihr nicht an. Die Kennzahlen sind aber reine Ableitungen aus der
+ * Equity-Serie und den Trades; sie brauchen keinen Hintergrundlauf. Was
+ * einen braucht, ist die SERIE selbst (historische Equity lässt sich nicht
+ * nachträglich rekonstruieren) — die kommt weiter vom Snapshot-Lauf.
+ *
+ * Gerechnet wird mit denselben Funktionen aus `shared/`, die auch der
+ * Scheduler benutzt. Eine zweite Implementierung würde früher oder später
+ * andere Zahlen zeigen als das Firebase-System daneben.
+ */
+async function computeStats(uid: string): Promise<PortfolioStatsDoc | null> {
+  const serie = await loadEquitySeries(uid);
+  const res = await sb()
+    .from('trades')
+    .select('symbol,asset_class,pnl')
+    .eq('user_id', uid)
+    .not('pnl', 'is', null)
+    .order('executed_at', { ascending: false })
+    .limit(STATS_TRADE_WINDOW);
+  const closed: ClosedTrade[] = [];
+  for (const r of (res.data as Array<{ symbol: string; asset_class: string | null; pnl: string | number }> | null) ??
+    []) {
+    const pnl = num(r.pnl);
+    if (pnl === null || !r.symbol) continue;
+    closed.push({ symbol: r.symbol, pnl, assetClass: r.asset_class ?? classify(r.symbol) });
+  }
+  if (serie.length === 0 && closed.length === 0) return null;
+
+  const returns = dailyReturns(serie);
+  const dd = drawdown(serie);
+  const ts = tradeStats(closed);
+  const attr = attribution(closed);
+  return {
+    equityDays: serie.length,
+    sharpe30: sharpe(returns.slice(-30)),
+    sharpe90: sharpe(returns.slice(-90)),
+    hwm: dd.hwm,
+    maxDDPct: dd.maxDDPct,
+    currentDDPct: dd.currentDDPct,
+    trades: ts.n,
+    wins: ts.wins,
+    winRatePct: ts.winRatePct,
+    profitFactor: ts.profitFactor,
+    expectancy: ts.expectancy,
+    avgWin: ts.avgWin,
+    avgLoss: ts.avgLoss,
+    bySymbol: attr.bySymbol,
+    byClass: attr.byClass,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+/** Wie im Scheduler: jüngste Trades für WinRate und Attribution. */
+const STATS_TRADE_WINDOW = 500;
+
+export function watchPortfolioStats(
+  uid: string,
+  cb: (stats: PortfolioStatsDoc | null) => void,
+): () => void {
+  return sbWatch<PortfolioStatsDoc | null>(
+    {
+      key: `pfStats:${uid}`,
+      tables: [
+        { table: 'equity_snapshots', filter: `user_id=eq.${uid}` },
+        { table: 'trades', filter: `user_id=eq.${uid}` },
+      ],
+      load: () => computeStats(uid),
+    },
+    cb,
+  );
+}
+
+export function watchStrategies(uid: string, cb: (rows: StrategyRow[]) => void): () => void {
+  return sbWatch<StrategyRow[]>(
+    {
+      key: `strategies:${uid}`,
+      tables: [{ table: 'strategies', filter: `user_id=eq.${uid}` }],
+      load: async () => {
+        const res = await sb()
+          .from('strategies')
+          .select('id,name,draft,compiled,status,mode,symbols,shadow,version,created_at,updated_at')
+          .eq('user_id', uid)
+          .order('updated_at', { ascending: false });
+        return ((res.data as StrategyDbRow[] | null) ?? []).map(toStrategyRow);
+      },
+    },
+    cb,
+  );
+}
+
+export interface StrategyDbRow {
+  id: string;
+  name: string;
+  draft: StrategyDoc['draft'];
+  compiled: StrategyDoc['compiled'];
+  status: 'draft' | 'published';
+  mode: 'paper' | 'shadow';
+  symbols: string[] | null;
+  shadow: StrategyDoc['shadow'];
+  version: number;
+  created_at?: string;
+  updated_at: string;
+}
+
+/**
+ * Die Spalten heißen in Postgres snake_case, das Frontend kennt camelCase.
+ * Die Umbenennung passiert hier an EINER Stelle — nicht in der Oberfläche,
+ * sonst wäre der Backend-Wechsel dort sichtbar.
+ */
+export function toStrategyRow(r: StrategyDbRow): StrategyRow {
+  const doc: StrategyDoc = {
+    name: r.name,
+    draft: r.draft,
+    compiled: r.compiled,
+    status: r.status,
+    mode: r.mode,
+    symbols: r.symbols ?? [],
+    // Ohne `created_at` in der Auswahl fällt der Wert auf `updated_at`
+    // zurück statt auf einen leeren String: Das Studio zeigt das Datum an,
+    // und „01.01.1970" wäre eine sichtbare Falschaussage.
+    createdAt: r.created_at ?? r.updated_at,
+    updatedAt: r.updated_at,
+  };
+  if (r.shadow) doc.shadow = r.shadow;
+  return { id: r.id, doc };
 }

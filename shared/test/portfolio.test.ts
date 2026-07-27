@@ -15,7 +15,7 @@ import {
   positionValue,
   sharpe,
   tradeStats,
-} from '../src/core/portfolio.js';
+} from '../src/index.js';
 
 describe('normalizeSeries', () => {
   it('sortiert, dedupliziert (letzter gewinnt) und wirft Müll raus', () => {

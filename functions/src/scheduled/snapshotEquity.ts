@@ -19,11 +19,9 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
-import { classify } from '../../../shared/src/index.js';
-import type { Position } from '../../../shared/src/index.js';
-import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 import {
   attribution,
+  classify,
   dailyReturns,
   drawdown,
   positionValue,
@@ -31,7 +29,9 @@ import {
   tradeStats,
   type ClosedTrade,
   type EquityPoint,
-} from '../core/portfolio.js';
+  type Position,
+} from '../../../shared/src/index.js';
+import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 
 /** ~ein halbes Handelsjahr Serie — reicht für Sharpe 90 + MaxDD-Fenster. */
 const EQUITY_WINDOW = 120;

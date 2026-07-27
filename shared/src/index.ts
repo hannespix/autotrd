@@ -7,3 +7,4 @@ export * from './sentiment.js';
 export * from './rules/index.js';
 export * from './marketHours.js';
 export * from './prediction.js';
+export * from './portfolio.js';
