@@ -156,7 +156,16 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
 
 /** Täglich 17:15 ET (nach US-Schluss); 7 Tage — Krypto bewegt Equity auch am Wochenende. */
 export const snapshotEquity = onSchedule(
-  { schedule: '15 17 * * *', timeZone: 'America/New_York', retryCount: 0 },
+  {
+    schedule: '15 17 * * *',
+    timeZone: 'America/New_York',
+    retryCount: 0,
+    // Der Lauf liest je User Positionen + Trades und je Symbol den Kurs; der
+    // 60-s-Default würde mit wachsender Nutzerzahl irgendwann mitten in der
+    // Schleife abbrechen — und ein halb geschriebener Snapshot-Tag verzerrt
+    // Sharpe und Drawdown dauerhaft, weil die Serie eine Lücke bekäme.
+    timeoutSeconds: 180,
+  },
   async () => {
     await snapshotAll();
   },

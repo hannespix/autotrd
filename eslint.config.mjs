@@ -48,6 +48,7 @@ export default tseslint.config(
         setTimeout: 'readonly',
         Buffer: 'readonly',
         URLSearchParams: 'readonly',
+        AbortSignal: 'readonly',
       },
     },
   },

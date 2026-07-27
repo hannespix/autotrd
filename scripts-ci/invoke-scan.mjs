@@ -11,6 +11,14 @@
  *   3. Heartbeat erneut prüfen — erst der beweist den erfolgreichen Lauf.
  *
  * Dependency-frei (gcp-lite), damit der Watchdog ohne npm ci auskommt.
+ *
+ * Seit 27.07. ist der Invoke-Weg NICHT mehr auf scanmarket festgelegt: Die
+ * Diagnose an diesem Tag zeigte, dass live überhaupt KEIN Cloud-Scheduler-Job
+ * existiert (dem Deploy-SA fehlt die Rolle). Damit ist der Direkt-Invoke der
+ * einzige Weg, auf dem die täglichen Läufe — snapshotEquity, evalForecasts,
+ * tunerReview — je stattfinden. Genau die drei füttern Performance-Kurve,
+ * Prognose-Genauigkeit und Prognose-Labor, die deshalb dauerhaft leer blieben.
+ * `invokeService()` verallgemeinert deshalb, was vorher nur der Scan konnte.
  */
 
 import {
@@ -23,6 +31,12 @@ import {
 
 const REGION = 'us-central1';
 const SERVICE = 'scanmarket';
+
+/**
+ * Cloud-Run-Dienstnamen sind kleingeschrieben — Firebase leitet sie aus dem
+ * Export-Namen ab. `snapshotEquity` heißt als Dienst also `snapshotequity`.
+ */
+export const DAILY_SERVICES = ['snapshotequity', 'evalforecasts', 'tunerreview'];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -47,16 +61,16 @@ function heartbeatAgeMin(hb) {
 }
 
 /**
- * Holt den scanmarket-Service und stellt sicher, dass der Deploy-SA selbst
+ * Holt einen Cloud-Run-Service und stellt sicher, dass der Deploy-SA selbst
  * roles/run.invoker hat (idempotent). Liefert die Service-URL — auch die
  * Scheduler-Job-Anlage in check-scheduler.mjs nutzt genau diese Funktion.
  */
-export async function ensureSelfInvoker({ sa, token, project }) {
-  const svcName = `projects/${project}/locations/${REGION}/services/${SERVICE}`;
+export async function ensureSelfInvoker({ sa, token, project, service = SERVICE }) {
+  const svcName = `projects/${project}/locations/${REGION}/services/${service}`;
   const svc = await gfetch(`https://run.googleapis.com/v2/${svcName}`, { token });
   const url = svc.uri;
-  if (!url) throw new Error(`Cloud-Run-Service ${SERVICE} hat keine URI`);
-  console.log(`Service ${SERVICE}: ${url}`);
+  if (!url) throw new Error(`Cloud-Run-Service ${service} hat keine URI`);
+  console.log(`Service ${service}: ${url}`);
 
   const member = `serviceAccount:${sa.client_email}`;
   const policy = await gfetch(`https://run.googleapis.com/v2/${svcName}:getIamPolicy`, { token });
@@ -80,12 +94,16 @@ export async function ensureSelfInvoker({ sa, token, project }) {
   return url;
 }
 
-/** Stößt genau einen Scan an; liefert true, wenn danach ein Heartbeat existiert. */
-export async function invokeScanNow({ waitSec = 25 } = {}) {
+/**
+ * Stößt EINEN Cloud-Run-Service an (der Weg, den geplante v2-Funktionen auch
+ * beim echten Cloud Scheduler nehmen: HTTP-POST mit OIDC-Token).
+ * Liefert true bei HTTP-2xx; die fachliche Wirkung prüft der Aufrufer.
+ */
+export async function invokeService(service, { timeoutMs = 540_000 } = {}) {
   const sa = readServiceAccount();
   const project = projectFromFirebaserc();
   const token = await mintAccessToken(sa);
-  const url = await ensureSelfInvoker({ sa, token, project });
+  const url = await ensureSelfInvoker({ sa, token, project, service });
 
   const idToken = await mintIdToken(sa, url);
   // Retries: 401/403 = IAM-Propagation (~1 min); 5xx = transienter Cloud-Run-
@@ -97,10 +115,11 @@ export async function invokeScanNow({ waitSec = 25 } = {}) {
       method: 'POST',
       headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
       body: '{}',
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (res.ok) {
-      console.log(`✓ Scan-Invoke: HTTP ${res.status}`);
-      break;
+      console.log(`✓ ${service}-Invoke: HTTP ${res.status}`);
+      return true;
     }
     const bodyText = (await res.text()).slice(0, 200);
     const retriable = res.status === 401 || res.status === 403 || res.status >= 500;
@@ -110,11 +129,16 @@ export async function invokeScanNow({ waitSec = 25 } = {}) {
       await sleep(attempt * 15_000);
       continue;
     }
-    throw new Error(`Scan-Invoke fehlgeschlagen: HTTP ${res.status} ${bodyText}`);
+    throw new Error(`${service}-Invoke fehlgeschlagen: HTTP ${res.status} ${bodyText}`);
   }
+  return false;
+}
 
+/** Stößt genau einen Scan an; liefert true, wenn danach ein Heartbeat existiert. */
+export async function invokeScanNow({ waitSec = 25 } = {}) {
+  await invokeService(SERVICE);
   await sleep(waitSec * 1000);
-  const hb = await readHeartbeat(project);
+  const hb = await readHeartbeat(projectFromFirebaserc());
   if (hb) {
     console.log('✓ Heartbeat meta/health:', JSON.stringify(hb).slice(0, 300));
     return true;
