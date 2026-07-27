@@ -129,6 +129,35 @@ so weit die Rechte reichen, und schreibt die Diagnose ins Actions-Log:
 - Existiert `meta/health` trotz allem nicht, schlägt die Function selbst
   fehl → Cloud-Logging des `scanmarket`-Services prüfen.
 
+### Performance-Kurve / Prognose-Genauigkeit / Prognose-Labor bleiben leer
+
+Dieselbe Wurzel, andere Symptome (Owner-Meldung 27.07.): Ohne
+Cloud-Scheduler-Rolle existiert **kein einziger** geplanter Job — also laufen
+auch die drei täglichen Funktionen nie, und die drei Karten im Dashboard haben
+schlicht keine Datenquelle:
+
+| Funktion | füttert | Nachweis in Firestore |
+|---|---|---|
+| `snapshotEquity` | Equity-Kurve + Sharpe/Drawdown/Profit-Faktor | `meta/health.equitySnapshot` |
+| `evalForecasts`  | Prognose-Genauigkeit + Prognose-Labor       | `meta/health.forecastEval`  |
+| `tunerReview`    | KI-Review des Suchgitters                   | `meta/tuner.ts`             |
+
+Die Felder sind **ohne Anmeldung lesbar** — fehlen sie oder ist ihr Datum alt,
+hat der jeweilige Lauf nicht stattgefunden. Der Workflow **Tages-Läufe**
+(`daily-jobs.yml`) überbrückt das: Er stößt die drei nach US-Schluss direkt am
+Cloud-Run-Service an und prüft anschließend die Spur — ein HTTP-200 allein gilt
+ausdrücklich nicht als Erfolg. Manuell auslösen: *Actions → Tages-Läufe → Run
+workflow* (mit `force`, um das „heute schon gelaufen"-Gate zu übergehen).
+
+Zwei Dinge bleiben auch danach normal und sind **kein** Fehler:
+
+- Die Equity-**Kurve** braucht mindestens **zwei** Snapshot-Tage, Sharpe 30
+  entsprechend ~30. Vorher zeigt die Karte bewusst `--` statt einer Scheinzahl.
+- Tages-Prognosen werden erst bewertet, wenn ihr Horizont **vollständig
+  realisiert** ist (Lookahead-Gate, ARCHITECTURE §5) — nach einem Neustart der
+  Datenerhebung dauert das rund eine Handelswoche. Intraday-Trefferquoten
+  erscheinen deutlich früher, sie hängen huckepack am 5-Minuten-Scan.
+
 ## D. webgo: FTP-Zugang & Domain (~10 min)
 
 1. webgo-Kundenportal → **FTP** → FTP-Benutzer anlegen (oder vorhandenen

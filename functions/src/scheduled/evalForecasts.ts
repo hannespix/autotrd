@@ -256,11 +256,46 @@ export async function evaluateIntradayDue(): Promise<{ scored: number; expired: 
   return { scored, expired };
 }
 
-/** Täglich 16:30 ET (nach US-Schluss), Mo–Fr. */
+/**
+ * Täglich 16:30 ET (nach US-Schluss), Mo–Fr.
+ *
+ * Die Selbstdiagnose ins öffentliche meta/health ist hier kein Luxus: Am
+ * 27.07. war live nachweisbar, dass dieser Lauf NIE stattgefunden hatte
+ * (meta/forecastStats existierte nicht, obwohl evaluateDue() das Dokument
+ * bedingungslos schreibt) — die Ursache war ein fehlender Cloud-Scheduler-Job.
+ * Ohne Zugriff auf Cloud Logging ist so ein Ausfall sonst unsichtbar. Das
+ * Feld beantwortet von außen die einzige wirklich wichtige Frage: Lief er?
+ */
 export const evalForecasts = onSchedule(
-  { schedule: '30 16 * * 1-5', timeZone: 'America/New_York', retryCount: 0 },
+  {
+    schedule: '30 16 * * 1-5',
+    timeZone: 'America/New_York',
+    retryCount: 0,
+    // Der Default von 60 s reicht nicht: Der Lauf holt je betroffenem Symbol
+    // einen Marktdaten-Snapshot, um die Horizonte gegen die REALITÄT zu
+    // prüfen. Bei einem Rückstau (erste Bewertung nach Tagen ohne Lauf) sind
+    // das viele Symbole auf einmal — ein Timeout mitten drin würde bewertete
+    // und unbewertete Prognosen mischen.
+    timeoutSeconds: 300,
+    memory: '512MiB',
+  },
   async () => {
-    await evaluateDue();
+    const now = new Date();
+    const res = await evaluateDue();
+    await getFirestore()
+      .doc('meta/health')
+      .set(
+        {
+          forecastEval: {
+            at: now.toISOString(),
+            date: now.toISOString().slice(0, 10),
+            scored: res.scored,
+            best: res.bestParams,
+          },
+        },
+        { merge: true },
+      )
+      .catch((err) => logger.warn('forecastEval-Diagnose nicht geschrieben', err));
   },
 );
 

@@ -1,0 +1,56 @@
+name: Tages-Läufe
+
+# Stopgap wie der Scan-Watchdog, aber für die TÄGLICHEN Läufe:
+# snapshotEquity (Performance-Kurve), evalForecasts (Prognose-Genauigkeit +
+# Labor) und tunerReview. Diagnose 27.07.: Im Projekt existiert KEIN einziger
+# Cloud-Scheduler-Job — dem Deploy-SA fehlt die Rolle ("Deploy-SA hat KEINE
+# Cloud-Scheduler-Berechtigung" im Deploy-Log). Der Scan hing schon am
+# Watchdog; diese drei hatten gar keinen Ersatzweg und liefen deshalb nie.
+# Genau deshalb blieben die drei Karten im Dashboard dauerhaft ohne Werte.
+#
+# Sobald der echte Scheduler läuft (Owner vergibt die Rolle) ODER die
+# Supabase-Migration die Zeitpläne per pg_cron übernimmt, wird dieser
+# Workflow von selbst zum No-Op: invoke-daily.mjs überspringt jeden Lauf,
+# der heute schon eine frische Spur hinterlassen hat.
+
+on:
+  schedule:
+    # Ziel ist NACH US-Schluss (16:00 ET). 21:30 UTC trifft das in der
+    # Sommerzeit, 22:30 UTC in der Winterzeit — beide Termine laufen, der
+    # zweite ist durch das Tages-Gate im Normalfall ein No-Op. 23:30 UTC ist
+    # der Nachzügler-Termin, weil GitHub geplante Läufe nachweislich
+    # verzögert oder verwirft (beobachtet 25.07.). Bewusst VOR Mitternacht
+    # UTC, damit der Snapshot auf dem richtigen Kalendertag landet.
+    - cron: '30 21,22,23 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Auch dann anstoßen, wenn heute schon ein Lauf da war'
+        type: boolean
+        default: false
+
+concurrency: daily-jobs
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    env:
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+    steps:
+      - name: Guard — Firebase-Secret vorhanden?
+        if: env.FIREBASE_SERVICE_ACCOUNT == ''
+        run: echo "::warning::FIREBASE_SERVICE_ACCOUNT fehlt — Tages-Läufe übersprungen."
+
+      - uses: actions/checkout@v5
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+
+      - name: Service-Account bereitstellen
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
+
+      # Dependency-frei (gcp-lite) — kein npm ci, Laufzeit unter einer Minute.
+      - name: Tages-Läufe anstoßen
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+        run: node scripts-ci/invoke-daily.mjs ${{ inputs.force && '--force' || '' }}
