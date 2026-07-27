@@ -1101,8 +1101,20 @@ export async function runScan(force = false): Promise<ScanResult> {
   // Intraday-Prognosen bewerten (Prognose 2.0 Teil 2): Kurzfrist-Horizonte
   // realisieren binnen einer Stunde — huckepack im Scan statt täglich 16:30.
   let intradayScored = 0;
+  // Die Zwischenstände (offen/fällig/verfallen/noch nicht realisiert) landen
+  // mit im Heartbeat: Eine 0 bei „bewertet" allein sagt nicht, WORAN es lag —
+  // genau daran hing der Befund vom 27.07., als die Zahl tagelang stand,
+  // während gleichzeitig Prognosen entstanden.
+  let intradayEval: Record<string, number> | null = null;
   try {
-    intradayScored = (await evaluateIntradayDue()).scored;
+    const res = await evaluateIntradayDue();
+    intradayScored = res.scored;
+    intradayEval = {
+      pending: res.pending,
+      due: res.due,
+      expired: res.expired,
+      unrealized: res.unrealized,
+    };
   } catch (err) {
     lastError = lastError ?? `evalIntraday: ${err instanceof Error ? err.message : String(err)}`.slice(0, 400);
     logger.warn('Intraday-Eval fehlgeschlagen', err);
@@ -1123,6 +1135,7 @@ export async function runScan(force = false): Promise<ScanResult> {
         intradayOk,
         intradayError,
         intradayScored,
+        intradayEval,
         trades,
         catalogQuotes,
         lastError,
