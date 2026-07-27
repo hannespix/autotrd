@@ -35,28 +35,47 @@ jobs:
         run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
 
       # Baut functions über den predeploy-Hook aus firebase.json mit.
-      # continue-on-error + Log-Mitschnitt: das Verdikt darunter entscheidet,
-      # ob der Fehler tolerierbar war (NUR Schedule-Upsert-403, solange die
-      # Cloud-Scheduler-Rolle fehlt) — alles andere macht den Job hart rot.
+      #
+      # Deploy UND Verdikt stehen bewusst in EINEM Schritt: Das Verdikt kennt
+      # drei Ausgänge (tolerierbar · transient · hart rot), und nur „transient"
+      # darf einen zweiten Anlauf auslösen. Zwei getrennte Schritte könnten
+      # das nicht — ein Schritt kann sich nicht selbst wiederholen.
+      #
+      # Anlass war Deploy #104 (27.07.): HTTP 503 von serviceusage.googleapis
+      # mitten im API-Check. Ein Google-Aussetzer, ohne jeden Bezug zum
+      # Projektzustand — und er kostete den kompletten Deploy, obwohl ein
+      # zweiter Versuch 20 Sekunden später durchgelaufen wäre.
       - name: Deploy functions + firestore (Rules UND Indexe)
         id: fbdeploy
         if: env.FIREBASE_SERVICE_ACCOUNT != ''
-        continue-on-error: true
         shell: bash
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
         run: |
           set -o pipefail
-          # --only firestore = Rules + Indexe (firestore.indexes.json). Die
-          # Feld-Overrides für die collectionGroup-Queries (forecasts +
-          # forecastsIntraday .evaluated) MÜSSEN mit ausrollen, sonst bricht
-          # die Pending-Query der Eval-Pfade live mit FAILED_PRECONDITION.
-          npx firebase-tools deploy --only functions,firestore --non-interactive --force 2>&1 \
-            | tee "$RUNNER_TEMP/deploy.log"
-
-      - name: Deploy-Verdikt (nur Schedule-Upserts tolerieren)
-        if: ${{ steps.fbdeploy.outcome == 'failure' }}
-        run: node scripts-ci/deploy-verdict.mjs "$RUNNER_TEMP/deploy.log"
+          for versuch in 1 2 3; do
+            # --only firestore = Rules + Indexe (firestore.indexes.json). Die
+            # Feld-Overrides für die collectionGroup-Queries (forecasts +
+            # forecastsIntraday .evaluated) MÜSSEN mit ausrollen, sonst bricht
+            # die Pending-Query der Eval-Pfade live mit FAILED_PRECONDITION.
+            if npx firebase-tools deploy --only functions,firestore --non-interactive --force 2>&1 \
+                 | tee "$RUNNER_TEMP/deploy.log"; then
+              echo "Deploy erfolgreich (Versuch $versuch)."
+              exit 0
+            fi
+            status=0
+            node scripts-ci/deploy-verdict.mjs "$RUNNER_TEMP/deploy.log" || status=$?
+            # Bewusst `if` statt `[ … ] && exit`: GitHub startet diesen Schritt
+            # mit `bash -e`, und dort beendet eine fehlschlagende &&-Liste als
+            # ganzes Statement das Skript — der Retry käme nie zum Zug.
+            if [ "$status" -eq 0 ]; then exit 0; fi   # tolerierbar — Code ist deployt
+            if [ "$status" -ne 2 ]; then exit 1; fi   # hart rot
+            warte=$((versuch * 30))
+            echo "::warning::Transienter Google-Fehler — Versuch $versuch von 3, neuer Anlauf in ${warte}s."
+            sleep "$warte"
+          done
+          echo "::error::Deploy auch im dritten Anlauf an transienten Google-Fehlern gescheitert."
+          exit 1
 
       # firebase-tools setzt den Invoker bei Callable-UPDATES nie — einmal
       # privat angelegte Callables blieben sonst für immer privat (403 ohne
