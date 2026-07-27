@@ -29,25 +29,17 @@ import {
 } from 'firebase/firestore';
 
 // ── Listener-Buchhaltung (M9): jeder onSnapshot läuft über diesen Wrapper,
-// damit Panel-Wechsel nachweislich keine Listener leaken (E2E-Zähler). ──
-let activeListeners = 0;
+// damit Panel-Wechsel nachweislich keine Listener leaken (E2E-Zähler).
+// Der Zähler liegt in listeners.ts, weil die Supabase-Schicht denselben
+// benutzt — sonst würde der Leak-Test nach der Umstellung nichts mehr messen.
+import { listenerCount, trackListener } from './listeners.js';
 
-export function listenerCount(): number {
-  return activeListeners;
-}
+export { listenerCount };
 
-const onSnapshot = ((...args: Parameters<typeof fsOnSnapshot>): Unsubscribe => {
-  activeListeners += 1;
-  const unsub = (fsOnSnapshot as (...a: unknown[]) => Unsubscribe)(...args);
-  let closed = false;
-  return () => {
-    if (!closed) {
-      closed = true;
-      activeListeners -= 1;
-    }
-    unsub();
-  };
-}) as typeof fsOnSnapshot;
+const onSnapshot = ((...args: Parameters<typeof fsOnSnapshot>): Unsubscribe =>
+  trackListener(
+    (fsOnSnapshot as (...a: unknown[]) => Unsubscribe)(...args),
+  )) as typeof fsOnSnapshot;
 import { connectFunctionsEmulator, getFunctions, httpsCallable } from 'firebase/functions';
 import { getApp } from 'firebase/app';
 import { db } from './firebase.js';
