@@ -160,8 +160,34 @@ async function loadIntradayActuals(symbol: string): Promise<Record<string, numbe
   return actuals;
 }
 
+/**
+ * Ergebnis eines Intraday-Bewertungslaufs.
+ *
+ * `scored` allein reicht zur Diagnose NICHT — genau daran hing der Befund vom
+ * 27.07.: Die Kennzahl stand tagelang auf 0, während gleichzeitig 31
+ * Prognosen entstanden. Aus einer 0 lässt sich nicht ablesen, WORAN es lag:
+ * keine offenen Prognosen? keine fällig? keine realisierten Kurse? Die
+ * Zwischenstände unten beantworten das von außen, ohne Cloud-Logging.
+ */
+export interface IntradayEvalResult {
+  /** Offene (unbewertete) Prognosen, die die Abfrage gefunden hat. */
+  pending: number;
+  /** Davon fällig — letzter Horizont-Bar liegt in der Vergangenheit. */
+  due: number;
+  /** Davon bewertet — der End-Close war tatsächlich realisiert. */
+  scored: number;
+  /** Fällig, aber der End-Bar wird nie realisiert (Session-Ende/Halt). */
+  expired: number;
+  /**
+   * Fällig, aber (noch) nicht bewertbar: Der End-Close fehlt in den
+   * gespeicherten 5-min-Bars. Steht diese Zahl dauerhaft hoch, stimmt etwas
+   * zwischen Prognose-Raster und Kursraster nicht — und NICHT mit dem Gate.
+   */
+  unrealized: number;
+}
+
 /** Alle fälligen Intraday-Prognosen bewerten; Statistik nach meta/forecastStatsIntraday. */
-export async function evaluateIntradayDue(): Promise<{ scored: number; expired: number }> {
+export async function evaluateIntradayDue(): Promise<IntradayEvalResult> {
   const db = getFirestore();
   const nowSec = Math.floor(Date.now() / 1000);
 
@@ -170,14 +196,17 @@ export async function evaluateIntradayDue(): Promise<{ scored: number; expired: 
     .where('evaluated', '==', false)
     .limit(INTRADAY_BATCH_LIMIT)
     .get();
-  if (pending.empty) return { scored: 0, expired: 0 };
+  const leer: IntradayEvalResult = { pending: 0, due: 0, scored: 0, expired: 0, unrealized: 0 };
+  if (pending.empty) return leer;
 
   const bySymbol = new Map<string, Array<{ ref: FirebaseFirestore.DocumentReference; doc: IntradayForecastDoc }>>();
+  let due = 0;
   for (const snap of pending.docs) {
     const doc = snap.data() as IntradayForecastDoc;
     if (!isIntradayForecastDue(doc.points, nowSec)) continue;
     const symbol = snap.ref.parent.parent?.id;
     if (!symbol) continue;
+    due += 1;
     const list = bySymbol.get(symbol) ?? [];
     list.push({ ref: snap.ref, doc });
     bySymbol.set(symbol, list);
@@ -185,6 +214,7 @@ export async function evaluateIntradayDue(): Promise<{ scored: number; expired: 
 
   let scored = 0;
   let expired = 0;
+  let unrealized = 0;
   const comboDelta = new Map<string, ComboStat>();
 
   for (const [symbol, entries] of bySymbol) {
@@ -218,6 +248,12 @@ export async function evaluateIntradayDue(): Promise<{ scored: number; expired: 
         // NIEMALS mit unvollständigen Daten scoren (Gate bleibt heilig).
         batch.update(ref, { evaluated: true, expired: true });
         expired += 1;
+      } else {
+        // Fällig, aber der End-Close steht noch nicht in den gespeicherten
+        // Bars. Normal für die ersten Minuten nach Fälligkeit; bleibt die
+        // Zahl dauerhaft hoch, passen Prognose- und Kursraster nicht
+        // zusammen. Das Gate bleibt unangetastet — hier wird nur gezählt.
+        unrealized += 1;
       }
     }
     await batch.commit();
@@ -253,7 +289,7 @@ export async function evaluateIntradayDue(): Promise<{ scored: number; expired: 
   if (scored + expired > 0) {
     logger.info(`evalIntraday: ${scored} bewertet, ${expired} verfallen`);
   }
-  return { scored, expired };
+  return { pending: pending.size, due, scored, expired, unrealized };
 }
 
 /**
