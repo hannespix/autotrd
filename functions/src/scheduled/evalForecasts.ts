@@ -138,18 +138,40 @@ export async function evaluateDue(): Promise<EvalResult> {
  * dürfen aber die Pending-Query nicht ewig verstopfen. */
 
 const INTRADAY_BATCH_LIMIT = 150;
-const INTRADAY_EXPIRE_SEC = 3 * 86_400;
+/**
+ * Verfallsfenster für Kurzfrist-Prognosen: 12 Stunden.
+ *
+ * Vorher standen hier 3 Tage — viel zu lang. Eine Prognose über EINE Stunde,
+ * die zwölf Stunden später immer noch keinen realisierten End-Close hat,
+ * bekommt auch keinen mehr; der Bar ist längst geschrieben oder er kommt nie.
+ * Das lange Fenster war mitverantwortlich für den Stillstand vom 27.07.: Die
+ * Batch-Abfrage zog immer wieder dieselben unbewertbaren Altlasten, die weder
+ * bewertet noch verworfen werden konnten (`unrealized: 126, expired: 0`).
+ *
+ * Verfallen ist dabei die KONSERVATIVE Richtung — es wird nie mit
+ * unvollständigen Daten bewertet, sondern gar nicht.
+ */
+const INTRADAY_EXPIRE_SEC = 12 * 3600;
 
-/** Realisierte 5-min-Closes eines Symbols (jüngste ~3 Tage) als t→close.
- *  Sortierung über das `date`-FELD — Firestore kann keine absteigenden
- *  Doc-ID-Scans (gleiche Falle wie bei den indicators-Docs). */
+/**
+ * Tages-Dokumente mit 5-min-Bars, aus denen die realisierten Closes kommen
+ * (t→close). Sortierung über das `date`-FELD — Firestore kann keine
+ * absteigenden Doc-ID-Scans (gleiche Falle wie bei den indicators-Docs).
+ *
+ * Acht statt drei: Die Tage werden nur geschrieben, wenn an ihnen auch
+ * gescannt wurde. Über ein Wochenende oder eine Scan-Lücke hinweg deckten
+ * drei Dokumente das Verfallsfenster nicht ab — die dazugehörigen Prognosen
+ * blieben dann dauerhaft unbewertbar, obwohl ihre Bars längst existierten.
+ */
+const ACTUAL_DAY_DOCS = 8;
+
 async function loadIntradayActuals(symbol: string): Promise<Record<string, number>> {
   const snap = await getFirestore()
     .collection('market')
     .doc(symbol)
     .collection('ohlc5m')
     .orderBy('date', 'desc')
-    .limit(3)
+    .limit(ACTUAL_DAY_DOCS)
     .get();
   const actuals: Record<string, number> = {};
   for (const doc of snap.docs) {
@@ -191,11 +213,27 @@ export async function evaluateIntradayDue(): Promise<IntradayEvalResult> {
   const db = getFirestore();
   const nowSec = Math.floor(Date.now() / 1000);
 
-  const pending = await db
-    .collectionGroup('forecastsIntraday')
-    .where('evaluated', '==', false)
-    .limit(INTRADAY_BATCH_LIMIT)
-    .get();
+  // orderBy('baseT') ist hier kein Schönheitsfehler, sondern der Kern:
+  // OHNE Sortierung liefert eine Collection-Group-Abfrage die Dokumente in
+  // PFAD-Reihenfolge — also alle Prognosen der alphabetisch ersten Symbole
+  // zuerst. Sind ausgerechnet die unbewertbar, verbraucht der Kopf der Schlange
+  // jedes Mal das ganze Batch-Limit, und kein einziges neueres Dokument kommt
+  // je an die Reihe. Genau dieser Stau war am 27.07. zu sehen: pending stand
+  // exakt auf dem Limit (150), 126 davon fällig, kein einziges bewertet.
+  // Nach Zeit sortiert wandert die Schlange dagegen zuverlässig durch — und
+  // was hinten nicht mehr bewertbar ist, verfällt nach INTRADAY_EXPIRE_SEC.
+  const base = db.collectionGroup('forecastsIntraday').where('evaluated', '==', false);
+  let pending;
+  try {
+    pending = await base.orderBy('baseT', 'asc').limit(INTRADAY_BATCH_LIMIT).get();
+  } catch (err) {
+    // Der zusammengesetzte Index (evaluated, baseT) baut nach dem Deploy ein
+    // paar Minuten. Bis dahin lieber unsortiert weiterarbeiten als gar nicht —
+    // ohne diesen Rückfall stünde die Bewertung genau in dem Zeitfenster still,
+    // in dem der Stau abgebaut werden soll.
+    logger.warn('evalIntraday: Index (evaluated, baseT) noch nicht bereit — unsortiert', err);
+    pending = await base.limit(INTRADAY_BATCH_LIMIT).get();
+  }
   const leer: IntradayEvalResult = { pending: 0, due: 0, scored: 0, expired: 0, unrealized: 0 };
   if (pending.empty) return leer;
 
