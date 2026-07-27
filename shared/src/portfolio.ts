@@ -1,10 +1,14 @@
 /**
- * core/portfolio.ts — pure Portfolio-Kennzahlen (M12 Teil 1).
+ * portfolio.ts — pure Portfolio-Kennzahlen (M12 Teil 1).
  *
- * Alles hier ist frei von Firestore/IO und deterministisch testbar. Der
- * tägliche `snapshotEquity`-Scheduler (scheduled/snapshotEquity.ts) füttert
- * diese Funktionen mit der Equity-Serie (users/{uid}/equity/{date}) und den
- * geschlossenen Trades und schreibt das Ergebnis nach users/{uid}/stats/main.
+ * Alles hier ist frei von IO und deterministisch testbar. Die Datei lag
+ * zuerst unter `functions/src/core/`, gehört aber nach `shared/`: Seit der
+ * Supabase-Migration gibt es ZWEI Aufrufer — den täglichen
+ * `snapshotEquity`-Scheduler, der das Ergebnis nach users/{uid}/stats/main
+ * schreibt, und die Supabase-Datenschicht, die dieselben Kennzahlen im
+ * Browser aus equity_snapshots und trades rechnet. Zweimal implementiert
+ * würden sie früher oder später verschiedene Zahlen zeigen; so bleibt es
+ * eine Quelle mit einer Testreihe.
  *
  * Datums-Konvention: Kalendertage als ISO-Strings (YYYY-MM-DD) — bewusst OHNE
  * Zeitzonen-Arithmetik. Wochenend-/Feiertagslücken und DST-Wechsel sind damit

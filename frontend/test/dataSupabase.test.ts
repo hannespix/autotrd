@@ -15,7 +15,10 @@ import {
   toBar,
   toIndicatorRow,
   toMarketDoc,
+  toPosition,
   toSignalRow,
+  toStrategyRow,
+  toTradeRow,
   type BarRow,
   type SignalDbRow,
   type SymbolRow,
@@ -173,5 +176,123 @@ describe('toIndicatorRow', () => {
   it('liefert null, wenn gar kein Detail da ist', () => {
     expect(toIndicatorRow({ ...SIG, detail: null })).toBeNull();
     expect(toIndicatorRow(null)).toBeNull();
+  });
+});
+
+describe('toPosition', () => {
+  const P = {
+    symbol: 'AAPL',
+    side: 'long' as const,
+    qty: '12.00000000',
+    avg_entry: '187.4500',
+    stop_loss: '180.0000',
+    take_profit: '210.0000',
+    high_water: '195.2000',
+    low_water: null,
+    opened_at: '2026-07-20T14:31:00.000Z',
+  };
+
+  it('wandelt Text-Zahlen und Spaltennamen um', () => {
+    const p = toPosition(P);
+    expect(p.qty).toBe(12);
+    expect(p.avgEntry).toBe(187.45);
+    expect(p.stopLoss).toBe(180);
+    expect(p.takeProfit).toBe(210);
+    expect(p.highWater).toBe(195.2);
+    expect(p.openedAt).toBe('2026-07-20T14:31:00.000Z');
+  });
+
+  it('setzt side NUR bei Short — fehlend heißt long', () => {
+    // Altbestand vor dem Short-Feature hat kein side; die Engine liest das
+    // fehlende Feld als long. Ein gesetztes `undefined` würde das kippen.
+    expect('side' in toPosition(P)).toBe(false);
+    expect(toPosition({ ...P, side: 'short' }).side).toBe('short');
+  });
+
+  it('lässt fehlende Wasserstände WEG statt sie auf 0 zu setzen', () => {
+    // 0 als Bezugspunkt eines Trailing-Stops wäre fatal: Der Stop läge
+    // sofort weit unter jedem realen Kurs. Fehlt der Wert, startet das
+    // Trailing bewusst konservativ am Einstand.
+    const p = toPosition({ ...P, high_water: null, low_water: null });
+    expect('highWater' in p).toBe(false);
+    expect('lowWater' in p).toBe(false);
+  });
+
+  it('reicht fehlende Exits als null durch (Position ohne Stop)', () => {
+    const p = toPosition({ ...P, stop_loss: null, take_profit: null });
+    expect(p.stopLoss).toBeNull();
+    expect(p.takeProfit).toBeNull();
+  });
+});
+
+describe('toTradeRow', () => {
+  const T = {
+    symbol: 'BTC-USD',
+    side: 'sell' as const,
+    qty: '0.25000000',
+    price: '64000.0000',
+    executed_at: '2026-07-27T12:00:00.000Z',
+    source: 'engine' as const,
+    pnl: '-125.5000',
+    risk_exit: 'stop_loss',
+  };
+
+  it('wandelt Text-Zahlen um und behält das Vorzeichen', () => {
+    const t = toTradeRow(T);
+    expect(t.qty).toBe(0.25);
+    expect(t.price).toBe(64000);
+    expect(t.pnl).toBe(-125.5);
+    expect(t.riskExit).toBe('stop_loss');
+    expect(t.executedAt).toBe('2026-07-27T12:00:00.000Z');
+  });
+
+  it('lässt pnl bei einem eröffnenden Trade ganz weg', () => {
+    // 0 hieße „glatt raus"; ein Kauf hat aber gar kein Ergebnis. Die
+    // Trade-Liste färbt nach diesem Feld.
+    const t = toTradeRow({ ...T, side: 'buy', pnl: null, risk_exit: null });
+    expect('pnl' in t).toBe(false);
+    expect('riskExit' in t).toBe(false);
+  });
+
+  it('behält eine echte 0 als 0', () => {
+    expect(toTradeRow({ ...T, pnl: '0.0000' }).pnl).toBe(0);
+  });
+});
+
+describe('toStrategyRow', () => {
+  const S = {
+    id: 'abc-123',
+    name: 'Momentum',
+    draft: { buy: null, sell: null } as never,
+    compiled: null,
+    status: 'draft' as const,
+    mode: 'paper' as const,
+    symbols: ['AAPL', 'MSFT'],
+    shadow: null,
+    version: 0,
+    created_at: '2026-07-01T10:00:00.000Z',
+    updated_at: '2026-07-27T10:00:00.000Z',
+  };
+
+  it('benennt die Spalten auf die Frontend-Form um', () => {
+    const r = toStrategyRow(S);
+    expect(r.id).toBe('abc-123');
+    expect(r.doc.name).toBe('Momentum');
+    expect(r.doc.symbols).toEqual(['AAPL', 'MSFT']);
+    expect(r.doc.createdAt).toBe('2026-07-01T10:00:00.000Z');
+    expect(r.doc.updatedAt).toBe('2026-07-27T10:00:00.000Z');
+  });
+
+  it('nimmt ohne created_at das Änderungsdatum statt 1970', () => {
+    const { created_at: _weg, ...ohne } = S;
+    expect(toStrategyRow(ohne).doc.createdAt).toBe('2026-07-27T10:00:00.000Z');
+  });
+
+  it('macht aus fehlenden Symbolen eine leere Liste, nicht null', () => {
+    expect(toStrategyRow({ ...S, symbols: null }).doc.symbols).toEqual([]);
+  });
+
+  it('setzt shadow nur, wenn es eines gibt', () => {
+    expect('shadow' in toStrategyRow(S).doc).toBe(false);
   });
 });
