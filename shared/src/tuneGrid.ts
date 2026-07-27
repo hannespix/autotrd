@@ -153,3 +153,25 @@ export function describeVariant(base: Strategy, v: Variant): string {
   const ist = axis?.read(base);
   return `${v.label} ${ist ?? '—'} → ${v.value}`;
 }
+
+/**
+ * Varianten-ID (`minHoldMin=120`) in Klartext übersetzen.
+ *
+ * Die ID ist bewusst maschinenlesbar und stabil — sie hält das Schattenkonto
+ * über Wochen zusammen. Auf dem Bildschirm hat sie nichts verloren: Wer
+ * „Mindest-Haltedauer 120 min" liest, versteht sofort, worüber gerade
+ * abgestimmt wird.
+ *
+ * Unbekannte Schlüssel (alte Journal-Einträge nach einer Achsen-Umbenennung)
+ * kommen entschärft zurück statt gar nicht — ein Eintrag ohne Beschriftung
+ * wäre schlimmer als eine rohe ID.
+ */
+export function labelVariantId(id: string, axes: TuneAxis[] = TUNE_AXES): string {
+  const [key = '', ...rest] = id.split('=');
+  const value = rest.join('=');
+  const axis = axes.find((a) => a.key === key);
+  if (!axis) return id.replace(/[^\w=.-]/g, '');
+  const einheit = key === 'minHoldMin' || key === 'cooldownMin' ? ' min' : '';
+  const wert = key === 'timeframe' ? (value === 'daily' ? 'Tages-Bars' : '5-Minuten-Bars') : value;
+  return `${axis.label} ${wert}${einheit}`;
+}

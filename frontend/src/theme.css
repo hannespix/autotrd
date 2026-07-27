@@ -533,6 +533,26 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .st-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; font-size: 12px; }
 .st-metrics span { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 
+/* Auto-Tuner (MT5): Flotten-Fortschritt + Änderungs-Journal.
+   Der Balken ist bewusst schmal und unaufgeregt — er zeigt eine Stichprobe,
+   keine Rendite, und darf optisch nicht mit den Kennzahlen konkurrieren. */
+.tn-sw { float: right; display: inline-flex; align-items: center; gap: 5px; font-size: 10px; color: var(--t3); text-transform: none; letter-spacing: 0; cursor: pointer; }
+.tn-sw input { accent-color: var(--ac); cursor: pointer; }
+.tn-fl { display: grid; grid-template-columns: 1.5fr 1fr 0.9fr 0.8fr; gap: 6px; align-items: center; padding: 4px 6px; border-bottom: 1px solid var(--hair); font-variant-numeric: tabular-nums; }
+.tn-fl span { text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tn-fl .tn-nm { text-align: left; color: var(--t1); }
+.tn-bar { height: 5px; border-radius: 3px; background: var(--hair); overflow: hidden; }
+.tn-bar i { display: block; height: 100%; background: var(--ac); border-radius: 3px; transition: width .4s; }
+.tn-log { max-height: 260px; overflow-y: auto; margin: 4px 0 2px; }
+.tn-e { padding: 6px 6px 7px; border-bottom: 1px solid var(--hair); }
+.tn-h { display: flex; align-items: baseline; gap: 6px; font-size: 11.5px; }
+.tn-h .tn-nm { font-weight: 600; color: var(--t1); }
+.tn-t { margin-left: auto; font-size: 10px; color: var(--t3); white-space: nowrap; }
+.tn-tag { font-size: 9px; text-transform: uppercase; letter-spacing: .05em; padding: 1px 5px; border-radius: 4px; background: var(--hair); color: var(--t3); }
+.tn-tag.tn-ok { background: rgba(52, 199, 123, .18); color: var(--gn); }
+.tn-r { font-size: 11px; line-height: 1.4; color: var(--t2); margin-top: 2px; }
+.tn-n { font-size: 10px; color: var(--t3); margin-top: 2px; font-variant-numeric: tabular-nums; }
+
 /* Chart: Indikator-Layer-Zeile + Vergleichs-Overlay-Input */
 .ind-bar { margin-top: -2px; }
 .cmp-inp { width: 130px; margin-left: auto; font-size: 11px; padding: 4px 8px; text-transform: uppercase; }

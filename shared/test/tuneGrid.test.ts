@@ -8,7 +8,13 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_STRATEGY, buildVariants, describeVariant, TUNE_AXES } from '../src/index.js';
+import {
+  DEFAULT_STRATEGY,
+  buildVariants,
+  describeVariant,
+  labelVariantId,
+  TUNE_AXES,
+} from '../src/index.js';
 
 const basis = () => JSON.parse(JSON.stringify(DEFAULT_STRATEGY)) as typeof DEFAULT_STRATEGY;
 
@@ -84,5 +90,31 @@ describe('describeVariant', () => {
     const v = buildVariants(b, 20).find((x) => x.id === 'minHoldMin=120')!;
     expect(v).toBeDefined();
     expect(describeVariant(b, v)).toBe('Mindest-Haltedauer 60 → 120');
+  });
+});
+
+describe('labelVariantId', () => {
+  it('übersetzt jede erzeugte Kennung in lesbaren Text', () => {
+    // Jede Variante, die die Flotte je fährt, landet im Journal — es darf
+    // also KEINE geben, für die auf dem Bildschirm die rohe ID stünde.
+    for (const v of buildVariants(basis(), 40)) {
+      const text = labelVariantId(v.id);
+      expect(text).not.toBe(v.id);
+      expect(text.startsWith(v.label)).toBe(true);
+    }
+  });
+
+  it('hängt die Einheit an Zeit-Achsen und übersetzt den Zeitrahmen', () => {
+    expect(labelVariantId('minHoldMin=120')).toBe('Mindest-Haltedauer 120 min');
+    expect(labelVariantId('cooldownMin=15')).toBe('Kauf-Pause 15 min');
+    expect(labelVariantId('timeframe=daily')).toBe('Signal-Zeitrahmen Tages-Bars');
+    expect(labelVariantId('timeframe=intraday')).toBe('Signal-Zeitrahmen 5-Minuten-Bars');
+  });
+
+  it('entschärft unbekannte Kennungen, statt sie zu verschlucken', () => {
+    // Alte Journal-Einträge nach einer Achsen-Umbenennung: lieber die rohe
+    // Kennung als eine leere Zeile — aber ohne Markup, das die Karte baut.
+    expect(labelVariantId('<img src=x onerror=alert(1)>')).toBe('imgsrc=xonerror=alert1');
+    expect(labelVariantId('altesFeld=7')).toBe('altesFeld=7');
   });
 });

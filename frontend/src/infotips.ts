@@ -242,6 +242,10 @@ export const INFO: Record<string, { t: string; d: string }> = {
     t: 'Reibung (Handelskosten)',
     d: 'Jeder Roundtrip kostet Kommission plus Slippage — beim Kauf UND beim Verkauf. Entscheidend ist „Luft über Kosten": die durchschnittliche Gewinnbewegung vor Gebühren, geteilt durch diese Kosten. Unter 2 verdient überwiegend der Broker, denn dann geht über die Hälfte jeder Gewinnbewegung für die Reibung drauf. Kurze Zeitrahmen erzeugen kleine Bewegungen — deshalb braucht mehr Handelsfrequenz zwingend auch genug Bewegung je Trade, sonst beschleunigt sie nur den Verlust. „Ø Gewinn brutto" und „Ø Verlust brutto" zeigen die reinen Kursbewegungen ohne Gebühren, damit sichtbar wird, ob die Strategie selbst funktioniert.',
   },
+  autotuner: {
+    t: 'Auto-Tuner',
+    d: 'Das System probiert deine Einstellung laufend gegen Varianten davon aus — jede Variante ändert genau EINEN Wert (z. B. die Mindest-Haltedauer) und führt ein eigenes Schattenkonto auf denselben Kursen, ohne echtes Geld. Nach genug abgeschlossenen Trades wird verglichen: Nur wenn eine Variante statistisch nachweislich besser abschneidet (Welch-t-Test, p < 0,05, plus spürbarer Vorsprung), wird sie übernommen — höchstens eine Änderung pro Tag, damit hinterher klar ist, was geholfen hat. Warum Schattenkonten und kein Backtest über die Vergangenheit: Ein Parametergitter findet zuverlässig die Kombination, die vergangenes Rauschen am besten erklärt, und versagt danach. Die Flotte handelt dagegen auf Kursen, die zum Zeitpunkt der Entscheidung noch niemand kannte. Positionsgröße, Stop-Loss und Take-Profit rührt der Tuner NIE an — Risikosteuerung bleibt bei dir.',
+  },
   kaufkraft: {
     t: 'Kaufkraft danach',
     d: 'Dein verbleibendes Cash nach dieser Order inklusive aller Kosten. Rot heißt: Die Order übersteigt dein Guthaben und würde vom Broker abgelehnt.',
