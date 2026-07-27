@@ -10,9 +10,11 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { markerDay, runDaily, unwrap } from '../invoke-daily.mjs';
+import { markerDay, markerIstEndgueltig, runDaily, unwrap } from '../invoke-daily.mjs';
 
 const HEUTE = new Date().toISOString().slice(0, 10);
+/** Zeitstempel von heute zur angegebenen UTC-Stunde. */
+const heuteUm = (h) => `${HEUTE}T${String(h).padStart(2, '0')}:15:00.000Z`;
 
 describe('unwrap (Firestore-REST)', () => {
   it('packt verschachtelte Maps aus — genau die Form von health.equitySnapshot', () => {
@@ -67,6 +69,29 @@ describe('markerDay', () => {
   });
 });
 
+describe('markerIstEndgueltig', () => {
+  it('erkennt einen Lauf nach US-Schluss', () => {
+    expect(markerIstEndgueltig({ at: heuteUm(21) })).toBe(true); // Sommerzeit
+    expect(markerIstEndgueltig({ at: heuteUm(22) })).toBe(true); // Winterzeit
+    expect(markerIstEndgueltig({ ts: heuteUm(20) })).toBe(true); // Grenze
+  });
+
+  it('wertet einen Mittags-Lauf NICHT als endgültig', () => {
+    // Sonst würde ein Snapshot vom Mittag den Abend-Lauf verdrängen, und in
+    // der Equity-Serie stünde dauerhaft ein Zwischenstand statt des
+    // Schlusskurses — Sharpe und Drawdown rechneten auf falscher Grundlage.
+    expect(markerIstEndgueltig({ at: heuteUm(13) })).toBe(false);
+    expect(markerIstEndgueltig({ at: heuteUm(19) })).toBe(false);
+  });
+
+  it('behandelt fehlende oder kaputte Zeitstempel als nicht endgültig', () => {
+    expect(markerIstEndgueltig(null)).toBe(false);
+    expect(markerIstEndgueltig({})).toBe(false);
+    expect(markerIstEndgueltig({ date: HEUTE })).toBe(false); // nur Tag, keine Uhrzeit
+    expect(markerIstEndgueltig({ at: 'kein Datum' })).toBe(false);
+  });
+});
+
 /** Baut einen Lauf, dessen Spur erst NACH erfolgreichem Invoke frisch wird. */
 function fakeRun(name, { spurVorher = null, schreibt = true, optional = false } = {}) {
   let spur = spurVorher;
@@ -76,7 +101,7 @@ function fakeRun(name, { spurVorher = null, schreibt = true, optional = false } 
     optional,
     spur: async () => spur,
     _invoke: async () => {
-      if (schreibt) spur = { at: `${HEUTE}T21:15:00.000Z` };
+      if (schreibt) spur = { at: heuteUm(21) };
     },
   };
 }
@@ -108,14 +133,21 @@ describe('runDaily', () => {
     expect(logs.join('\n')).toContain('letzte Spur keine');
   });
 
-  it('überspringt einen Lauf, der heute schon eine Spur hat (Idempotenz-Gate)', async () => {
+  it('überspringt einen Lauf, der heute NACH US-Schluss war (Idempotenz-Gate)', async () => {
     // Das ist der Selbst-Abschalter: Sobald der echte Scheduler oder pg_cron
     // die Läufe übernimmt, wird dieser Workflow zum No-Op.
-    const runs = [fakeRun('snapshotequity', { spurVorher: { date: HEUTE } })];
+    const runs = [fakeRun('snapshotequity', { spurVorher: { date: HEUTE, at: heuteUm(21) } })];
     const { ran, skipped, failed } = await laufe(runs);
     expect(ran).toBe(0);
     expect(skipped).toBe(1);
     expect(failed).toBe(0);
+  });
+
+  it('lässt den Abend-Lauf zu, obwohl mittags schon einer war', async () => {
+    // Der Deploy stößt die Läufe mit an — der Mittags-Snapshot füllt die
+    // Karte sofort, der Abend-Lauf korrigiert ihn dann auf den Schlusskurs.
+    const runs = [fakeRun('snapshotequity', { spurVorher: { date: HEUTE, at: heuteUm(13) } })];
+    expect((await laufe(runs)).ran).toBe(1);
   });
 
   it('stößt eine Spur von GESTERN sehr wohl an', async () => {
@@ -125,7 +157,7 @@ describe('runDaily', () => {
   });
 
   it('--force ignoriert das Tages-Gate', async () => {
-    const runs = [fakeRun('snapshotequity', { spurVorher: { date: HEUTE } })];
+    const runs = [fakeRun('snapshotequity', { spurVorher: { date: HEUTE, at: heuteUm(21) } })];
     expect((await laufe(runs, { force: true })).ran).toBe(1);
   });
 

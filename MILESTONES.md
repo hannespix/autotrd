@@ -986,6 +986,29 @@ Wertkern des Repos und bleibt die Rückversicherung gegen Regressionen.
 - [ ] **MS2 Datenschicht Frontend**: `data.ts` gegen supabase-js
       (Realtime statt onSnapshot), Auth-Umstellung, Login/Registrierung.
       Die UI-Module bleiben unberührt — nur der Adapter darunter tauscht.
+  - [x] **Teil 1 (26.07.)**: `supabase.ts` (Client + Backend-Schalter
+        `VITE_BACKEND`), `authSupabase.ts` (Anmeldung, Registrierung,
+        Zugangsstufe), übersetzte Fehlermeldungen. **Fund am echten
+        Dienst:** Supabase prüft E-Mail-Domains strenger als Firebase und
+        lehnt erfundene Adressen ab (`email_address_invalid`) — betrifft
+        auch die E2E-Suiten, die künftig echte Domains brauchen.
+  - [x] **Teil 2 (27.07.)**: `dataSupabase.ts` — Lesepfad für Markt,
+        Kursreihen, Signale, Indikatoren und `meta` per Realtime.
+        Listener-Zähler nach `listeners.ts` gehoben, damit die
+        E2E-Leak-Prüfung für BEIDE Schichten gilt. **Drei Fallen, die
+        Firestore nicht hat:** PostgREST liefert `numeric` als Text (aus
+        `close - open` würde sonst lautlos eine String-Verkettung),
+        Realtime meldet Zeilen statt Zustände (deshalb Nachladen mit
+        Debounce statt Zeilen-Einpflegen), und die Standard-Obergrenze von
+        1000 Zeilen hätte fünf Jahre Tagesbars vorn beschnitten.
+  - [ ] **Teil 3**: Nutzerdaten (Positionen, Trades, Wallet, Strategien,
+        Equity-Serie) + Dispatcher, der je nach `VITE_BACKEND` die eine
+        oder andere Schicht liefert.
+  - [ ] **Teil 4**: News, Events, KI-Analysen und die **Prognose-Ketten**.
+        Die Schema-Spalten (`market_symbols.forecast`,
+        `forecast_intraday`) stehen, der Edge-Scan füllt sie aber noch
+        nicht — ohne diesen Teil bleiben Prognose-Genauigkeit und
+        Prognose-Labor auch unter Supabase leer.
 - [ ] **MS3 Engine**: Scan/Broker/Risk als Edge Function(s) mit
       Postgres-Transaktionen (`SELECT … FOR UPDATE` statt Firestore-
       Transaktion) + `pg_cron` für den 5-Minuten-Takt. Vorab-Test: hält eine

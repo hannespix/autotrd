@@ -69,6 +69,29 @@ export function markerDay(marker) {
 }
 
 /**
+ * Ab wann ein Lauf als endgültig für den Tag gilt: 20:00 UTC liegt nach dem
+ * US-Schluss in Sommer- UND Winterzeit (16:00 ET = 20:00/21:00 UTC).
+ */
+const FINAL_HOUR_UTC = 20;
+
+/**
+ * Wurde der Lauf NACH US-Schluss gemacht?
+ *
+ * Der Unterschied ist wichtig, seit die Läufe auch beim Deploy angestoßen
+ * werden: Ein Snapshot um die Mittagszeit ist besser als gar keiner — er
+ * füllt die Karte noch heute. Er darf aber den Abend-Lauf nicht verdrängen,
+ * sonst stünde in der Equity-Serie dauerhaft ein Mittagswert statt des
+ * Schlusskurses, und Sharpe und Drawdown rechneten auf falscher Grundlage.
+ * Deshalb sperrt nur ein Lauf nach `FINAL_HOUR_UTC` den Rest des Tages.
+ */
+export function markerIstEndgueltig(marker) {
+  const iso = marker?.at ?? marker?.ts ?? null;
+  if (typeof iso !== 'string') return false;
+  const d = new Date(iso);
+  return Number.isFinite(d.getTime()) && d.getUTCHours() >= FINAL_HOUR_UTC;
+}
+
+/**
  * Die drei Läufe. `spur` liest den Nachweis, den die Funktion selbst
  * hinterlässt — nicht den HTTP-Status. Ein 200 beweist nur, dass der
  * Container antwortete; erst die frische Spur beweist, dass er gearbeitet hat.
@@ -124,8 +147,8 @@ export async function runDaily({
   for (const run of runs) {
     const vorher = await run.spur(project);
     const tag = markerDay(vorher);
-    if (!force && tag === today) {
-      log(`• ${run.label}: heute (${tag}) bereits gelaufen — übersprungen.`);
+    if (!force && tag === today && markerIstEndgueltig(vorher)) {
+      log(`• ${run.label}: heute nach US-Schluss bereits gelaufen — übersprungen.`);
       skipped += 1;
       continue;
     }
@@ -163,10 +186,20 @@ export async function runDaily({
 }
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
+// node scripts-ci/invoke-daily.mjs [--force] [--only snapshotequity,evalforecasts]
 if (import.meta.url === `file://${process.argv[1]}`) {
+  const args = process.argv.slice(2);
+  const onlyIdx = args.indexOf('--only');
+  const only = onlyIdx >= 0 ? (args[onlyIdx + 1] ?? '').split(',').filter(Boolean) : null;
+  const runs = only ? RUNS.filter((r) => only.includes(r.service)) : RUNS;
+  if (only && runs.length === 0) {
+    console.log(`::warning::--only ${only.join(',')} passt auf keinen bekannten Lauf.`);
+    process.exit(1);
+  }
   const { failed } = await runDaily({
     project: projectFromFirebaserc(),
-    force: process.argv.includes('--force'),
+    force: args.includes('--force'),
+    runs,
   });
   process.exit(failed > 0 ? 1 : 0);
 }

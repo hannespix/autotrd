@@ -143,11 +143,21 @@ schlicht keine Datenquelle:
 | `tunerReview`    | KI-Review des Suchgitters                   | `meta/tuner.ts`             |
 
 Die Felder sind **ohne Anmeldung lesbar** — fehlen sie oder ist ihr Datum alt,
-hat der jeweilige Lauf nicht stattgefunden. Der Workflow **Tages-Läufe**
-(`daily-jobs.yml`) überbrückt das: Er stößt die drei nach US-Schluss direkt am
-Cloud-Run-Service an und prüft anschließend die Spur — ein HTTP-200 allein gilt
-ausdrücklich nicht als Erfolg. Manuell auslösen: *Actions → Tages-Läufe → Run
-workflow* (mit `force`, um das „heute schon gelaufen"-Gate zu übergehen).
+hat der jeweilige Lauf nicht stattgefunden. Zwei Wege überbrücken das:
+
+- Der Workflow **Tages-Läufe** (`daily-jobs.yml`) stößt alle drei nach
+  US-Schluss direkt am Cloud-Run-Service an und prüft anschließend die Spur —
+  ein HTTP-200 allein gilt ausdrücklich nicht als Erfolg. Manuell auslösen:
+  *Actions → Tages-Läufe → Run workflow* (mit `force`, um das Gate zu übergehen).
+- Der **Deploy** stößt zusätzlich `snapshotEquity` und `evalForecasts` an, damit
+  die Karten nach einem Merge binnen Minuten gefüllt sind statt erst abends.
+  `tunerReview` bleibt ausgespart — der Lauf kostet Anthropic-Guthaben.
+
+Das Gate unterscheidet dabei „heute gelaufen" von „heute **nach US-Schluss**
+gelaufen" (ab 20:00 UTC): Ein Mittags-Snapshot füllt die Karte sofort, verdrängt
+aber den Abend-Lauf nicht — sonst stünde in der Equity-Serie dauerhaft ein
+Zwischenstand statt des Schlusskurses, und Sharpe und Drawdown rechneten auf
+falscher Grundlage.
 
 Zwei Dinge bleiben auch danach normal und sind **kein** Fehler:
 

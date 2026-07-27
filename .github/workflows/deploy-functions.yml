@@ -75,6 +75,24 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
         run: node scripts-ci/check-scheduler.mjs
 
+      # Solange kein Cloud-Scheduler-Job existiert (Diagnose 27.07.), laufen
+      # snapshotEquity und evalForecasts nur, wenn sie jemand anstößt. Der
+      # nächtliche Workflow „Tages-Läufe" tut das — aber erst abends. Hier
+      # dranzuhängen heißt: Nach jedem Merge sind die Karten spätestens
+      # binnen Minuten gefüllt statt erst nach US-Schluss.
+      #
+      # Das Gate im Skript unterscheidet dabei „heute schon gelaufen" von
+      # „heute NACH US-Schluss gelaufen" — ein Mittags-Snapshot füllt die
+      # Karte, verdrängt aber den Abend-Lauf nicht, dessen Schlusskurs die
+      # Equity-Serie tragen soll. tunerReview bleibt ausgespart: Der Lauf
+      # kostet Anthropic-Guthaben und gehört nicht an jeden Merge.
+      - name: Tages-Läufe anstoßen (Kennzahlen + Prognose-Bewertung)
+        if: ${{ !cancelled() && env.FIREBASE_SERVICE_ACCOUNT != '' }}
+        continue-on-error: true
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+        run: node scripts-ci/invoke-daily.mjs --only snapshotequity,evalforecasts
+
       # Wenn der Lauf rot wurde (z. B. Scan-Invoke 500): scanmarket-Fehlerlogs
       # direkt ins Job-Log ziehen — die Ursache soll ohne GCP-Konsole lesbar sein.
       - name: Scan-Fehlerlogs (Diagnose bei Rot)
