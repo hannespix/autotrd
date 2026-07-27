@@ -192,6 +192,31 @@ describe('market/** und meta/**', () => {
   });
 });
 
+describe('Auto-Tuner (MT)', () => {
+  it('Owner darf sein Journal und seine Schattenkonten lesen', async () => {
+    await assertSucceeds(alice().doc('users/alice/tuneLog/2026-07-27T17_45_minHoldMin=120').get());
+    await assertSucceeds(alice().doc('users/alice/tuning/fleet').get());
+  });
+
+  it('aber NICHT schreiben — sonst ließe sich eine Beförderung erfinden', async () => {
+    // Ein Client, der sein eigenes Journal schreiben dürfte, könnte eine
+    // Änderung samt Begründung frei erfinden; die Nachvollziehbarkeit wäre
+    // damit wertlos. Und ein selbst gefülltes Schattenkonto würde den Tuner
+    // zu einer Beförderung überreden, die keine Evidenz hat.
+    await assertFails(
+      alice().doc('users/alice/tuneLog/gefaelscht').set({ promoted: true, reason: 'weil ich es sage' }),
+    );
+    await assertFails(
+      alice().doc('users/alice/tuning/fleet').set({ variants: { 'minHoldMin=120': { pnls: [999] } } }),
+    );
+  });
+
+  it('Fremde Journale bleiben unsichtbar', async () => {
+    await assertFails(alice().doc('users/bob/tuneLog/irgendwas').get());
+    await assertFails(alice().doc('users/bob/tuning/fleet').get());
+  });
+});
+
 describe('admin/**', () => {
   it('rein serverseitig — kein Client-Zugriff', async () => {
     await assertFails(alice().doc('admin/quotas-alice').get());

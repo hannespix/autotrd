@@ -1027,6 +1027,63 @@ davon (Negativtest) · ein Constraint verhindert nachweislich einen negativen
 Kontostand · pg_cron feuert den Scan im 5-Minuten-Takt · die Suiten laufen
 zweimal grün · `shared/`-Tests bleiben unverändert grün.
 
+## MT — Auto-Tuner: der Kreislauf aus Messen, Ausprobieren, Übernehmen
+
+**Owner-Direktive 27.07.:** *„alles soll vollautomatisch laufen! Messungen,
+Strategie ausprobieren, verbessern, anpassen, testen, optimieren. Das Ziel des
+gesamten Systems ist wenig nötige Interaktion, Selbstkontrolle,
+Selbstverbesserung, Transparenz."*
+
+**Der Anlass:** Die Auswertung der beiden Testkonten am 27.07. brauchte einen
+Menschen (bzw. mich) mit Taschenrechner. Aus „Win Rate 12 %, Profit-Faktor
+0,04" musste ich von Hand zurückrechnen, dass praktisch **alle** Trades am
+Signal-Ausstieg sterben und die Gebühren 54–86 % des Verlusts ausmachen. Genau
+diese Arbeit muss das System selbst tun — sonst ist „Selbstverbesserung" nur
+ein Wort.
+
+**Was bereits selbstregelnd läuft** (und als Vorbild dient): `bestParams`
+wählt die Prognose-Parameter `(w, lookback)` aus **realisierten**
+Trefferquoten, ohne Lookahead. Der KI-Tuner darf das Suchgitter erweitern,
+aber **nie** Live-Parameter ändern. Die Risiko-Hülle klemmt jeden Wert in
+harte Grenzen. Dieses Muster wird auf die HANDELS-Parameter übertragen.
+
+- [x] **MT1 Messen — Ausstiegsgründe und Kostenanteil.** `stats/main` bekommt
+      eine Aufschlüsselung nach Ausstiegsgrund (stop_loss · take_profit ·
+      trailing · Signal · Haltefrist) sowie den Gebührenanteil am Ergebnis.
+      **Das ist der wichtigste Teil:** Dass 100 % der Trades am Signal enden,
+      war nirgends ablesbar. Dazu eine Kennzahl „Ø Bewegung brutto gegen
+      Roundtrip-Kosten" — sie sagt in einer Zahl, ob eine Strategie überhaupt
+      Luft über der Reibung hat.
+- [x] **MT2 Ausprobieren — Schatten-Flotte statt Backtest-Gitter.** Mehrere
+      Parameter-Varianten der aktiven Strategie laufen parallel als
+      Schattenkonten auf denselben Symbolen mit. Kostet nichts (virtuelles
+      Geld) und liefert **Out-of-Sample**-Evidenz — anders als ein
+      Backtest-Gitter, das zuverlässig die Vergangenheit überanpasst.
+      Der Shadow-Modus und `shadowTrade` existieren bereits; neu ist nur,
+      dass die Varianten automatisch erzeugt und gepflegt werden.
+- [x] **MT3 Bewerten — mit Evidenzschwelle.** Eine Variante gewinnt erst,
+      wenn sie genug Trades hat UND ihr Vorsprung außerhalb des Rauschens
+      liegt. Der Fisher-Test am 27.07. zeigte, warum das nicht verhandelbar
+      ist: 12 % gegen 39 % Trefferquote war bei 16 Trades **nicht**
+      signifikant (p = 0,12). Ohne diese Schwelle würde der Tuner Rauschen
+      hinterherlaufen und die Parameter im Wochenrhythmus umwerfen.
+- [x] **MT4 Übernehmen — automatisch, aber eingehegt.** Der Sieger wird per
+      `promoteStrategy` zur Live-Strategie. Grenzen, die NICHT verhandelbar
+      sind: nur innerhalb der Risiko-Hülle, nie bei Echtgeld (M14 bleibt
+      verriegelt), höchstens eine Änderung je Zyklus, und jede Änderung ist
+      rücknehmbar.
+- [x] **MT5 Transparenz — das Änderungs-Journal.** Jede automatische Änderung
+      schreibt „was, warum, mit welcher Evidenz" — im Dashboard als Verlauf
+      sichtbar. Ohne das wäre der Tuner eine Blackbox, die dem Owner sein
+      Depot umbaut. Selbstverbesserung ohne Nachvollziehbarkeit ist kein
+      Feature, sondern ein Risiko.
+
+**Abnahme:** Der Zyklus läuft ohne Zutun durch (messen → variieren → bewerten
+→ übernehmen → messen) · eine Variante mit zu wenig Evidenz wird
+nachweislich NICHT befördert · eine Beförderung erscheint mit Begründung im
+Journal · die Risiko-Hülle lehnt eine Variante außerhalb der Grenzen ab ·
+Echtgeld bleibt in jedem Pfad unberührt.
+
 ## M12b — Steuer-Log & Jahresreport (Deutschland)
 
 **Ziel (Owner-Auftrag 26.07.):** Jeder Trade wird so protokolliert, dass er

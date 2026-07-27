@@ -9,6 +9,7 @@ import {
   buildRuleContext,
   clampStrategyRisk,
   cooldownActive,
+  minHoldActive,
   decideTree,
   applyPredictionVote,
   minuteOfDayEt,
@@ -164,17 +165,33 @@ describe('Shadow-Konto (M11): pure Buchführung', () => {
 });
 
 describe('Trade-Frequenz-Parameter (Owner 26.07.)', () => {
-  it('cooldownMin wird in die Hülle geklemmt: 5–1440, fehlend → 15', () => {
+  it('cooldownMin wird in die Hülle geklemmt: 5–1440, fehlend → 60', () => {
+    // Der Rückfallwert lag bis 27.07. bei 15 min. Die Auswertung der beiden
+    // Testkonten zeigte, dass die hohe Frequenz die Kostenschwelle nicht
+    // trägt (Ø-Gewinn 0,49 % gegen 0,30 % Roundtrip) — deshalb 60.
     const mk = (v?: number): number | undefined => {
       const s = structuredClone(DEFAULT_STRATEGY);
       if (v === undefined) delete s.engine.cooldownMin;
       else s.engine.cooldownMin = v;
       return clampStrategyRisk(s).engine.cooldownMin;
     };
-    expect(mk(undefined)).toBe(15);
+    expect(mk(undefined)).toBe(60);
     expect(mk(1)).toBe(5); // unter dem Scan-Takt wäre die Pause wirkungslos
-    expect(mk(60)).toBe(60);
+    expect(mk(90)).toBe(90);
     expect(mk(5000)).toBe(1440); // über 1 Tag wäre ein verstecktes Handelsverbot
+  });
+
+  it('minHoldMin wird in die Hülle geklemmt: 0–1440, fehlend → 60', () => {
+    const mk = (v?: number): number | undefined => {
+      const s = structuredClone(DEFAULT_STRATEGY);
+      if (v === undefined) delete s.engine.minHoldMin;
+      else s.engine.minHoldMin = v;
+      return clampStrategyRisk(s).engine.minHoldMin;
+    };
+    expect(mk(undefined)).toBe(60);
+    expect(mk(0)).toBe(0); // 0 darf abschalten — anders als beim Cooldown
+    expect(mk(-5)).toBe(0);
+    expect(mk(5000)).toBe(1440); // über 1 Tag wäre die Position eingesperrt
   });
 
   it('cooldownActive respektiert die konfigurierten Minuten', () => {
@@ -320,5 +337,57 @@ describe('User-Prognose-Stimme (Chart-Pfeile)', () => {
     ).toBe('hold');
     // ohne Stimme bleibt die Engine-Entscheidung
     expect(applyPredictionVote({ ...base, direction: 'sell' }, null)).toBe('sell');
+  });
+});
+
+/**
+ * Mindest-Haltedauer (Owner-Auswertung 27.07.).
+ *
+ * Zwei Testkonten zeigten Ø-Gewinne von 0,49 % und Ø-Verluste von 0,36 % —
+ * beide weit unter Stop (1,5 %) und Take-Profit (3 %). Praktisch KEIN Trade
+ * erreichte seine Risiko-Marken; alle starben am Signal-Ausstieg. Bei 0,30 %
+ * Roundtrip-Kosten fraß die Reibung 54 % bzw. 86 % des Verlusts.
+ */
+describe('minHoldActive', () => {
+  const now = new Date('2026-07-27T15:00:00.000Z');
+
+  it('bremst den Ausstieg innerhalb der Haltedauer', () => {
+    expect(minHoldActive('2026-07-27T14:30:00.000Z', now, 60)).toBe(true);
+  });
+
+  it('lässt ihn nach Ablauf durch', () => {
+    expect(minHoldActive('2026-07-27T13:30:00.000Z', now, 60)).toBe(false);
+    expect(minHoldActive('2026-07-27T14:00:00.000Z', now, 60)).toBe(false); // exakt 60 min
+  });
+
+  it('ist mit 0 Minuten abgeschaltet — Verhalten wie vorher', () => {
+    expect(minHoldActive('2026-07-27T14:59:59.000Z', now, 0)).toBe(false);
+  });
+
+  it('bremst nichts, wenn der Eröffnungszeitpunkt fehlt oder kaputt ist', () => {
+    // Altbestand ohne openedAt darf nicht plötzlich unverkäuflich werden.
+    expect(minHoldActive(undefined, now, 60)).toBe(false);
+    expect(minHoldActive('kein Datum', now, 60)).toBe(false);
+    expect(minHoldActive('2026-07-27T14:30:00.000Z', now, Number.NaN)).toBe(false);
+  });
+});
+
+describe('Standardwerte nach der Kosten-Auswertung', () => {
+  it('verlangt zum Ausstieg dieselbe Konfluenz wie zum Einstieg', () => {
+    // Vorher 1: EINE Gegenstimme von dreien reichte. Auf 5-min-Bars kippt
+    // permanent eine — die Position flog raus, bevor sie etwas werden konnte.
+    expect(DEFAULT_STRATEGY.signals.exitConfluence).toBe(2);
+    expect(DEFAULT_STRATEGY.signals.exitConfluence).toBe(DEFAULT_STRATEGY.signals.minConfluence);
+  });
+
+  it('hält Positionen mindestens eine Stunde und pausiert danach ebenso lang', () => {
+    expect(DEFAULT_STRATEGY.engine.minHoldMin).toBe(60);
+    expect(DEFAULT_STRATEGY.engine.cooldownMin).toBe(60);
+  });
+
+  it('lässt Stop und Take unangetastet — das Sicherheitsnetz bleibt scharf', () => {
+    expect(DEFAULT_STRATEGY.engine.stopLossPct).toBe(2);
+    expect(DEFAULT_STRATEGY.engine.takeProfitPct).toBe(4);
+    expect(DEFAULT_STRATEGY.engine.trailingStopPct).toBe(3);
   });
 });

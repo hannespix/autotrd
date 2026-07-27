@@ -38,6 +38,7 @@ import {
 } from './data.js';
 import { previewSignals, type PreviewBar, type PreviewDayInfo } from './preview.js';
 import { iBtn, initInfoTips } from './infotips.js';
+import { esc } from './html.js';
 
 let cleanup: (() => void) | null = null;
 let runSub: (() => void) | null = null;
@@ -94,9 +95,6 @@ function defaultLeaf(type: (typeof LEAF_TYPES)[number]): RuleNode {
       return { type, state: 'none' };
   }
 }
-
-const esc = (s: string): string =>
-  s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 /** Kompakte Ein-Zeilen-Beschreibung eines Blatts für die Karte. */
 function leafLabel(n: RuleNode): string {

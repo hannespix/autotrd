@@ -91,8 +91,19 @@ export function drawdown(points: EquityPoint[]): {
 /** Ein GESCHLOSSENER Trade (Verkauf bzw. Short-Cover mit realisiertem P&L). */
 export interface ClosedTrade {
   symbol: string;
+  /** Ergebnis NACH Gebühren — der Broker rechnet sie in den Ausführungspreis. */
   pnl: number;
   assetClass?: string | null;
+  /**
+   * Warum die Position geschlossen wurde: `stop_loss` · `take_profit` ·
+   * `trailing_stop` · … Fehlend heißt: durch ein SIGNAL geschlossen, nicht
+   * durch eine Risiko-Marke.
+   */
+  riskExit?: string | null;
+  /** Positionswert beim Schließen (Stück × Preis) — Basis der Gebührenschätzung. */
+  notional?: number | null;
+  /** Gebührensatz JE SEITE (Kommission + Slippage), z. B. 0,0015. */
+  feeRate?: number | null;
 }
 
 export interface TradeStats {
@@ -172,4 +183,129 @@ export function positionValue(pos: PositionLike, price: number | null): number {
   const p = typeof price === 'number' && price > 0 ? price : pos.avgEntry;
   if (pos.side === 'short') return pos.qty * pos.avgEntry + (pos.avgEntry - p) * pos.qty;
   return pos.qty * p;
+}
+
+
+/* ── Ausstiegsgründe & Kostenprofil (MT1) ────────────────────────────────────
+ *
+ * Warum es das gibt: Die Auswertung zweier Testkonten am 27.07. brauchte
+ * einen Menschen mit Taschenrechner. Aus „Win Rate 12 %, Profit-Faktor 0,04"
+ * musste von Hand zurückgerechnet werden, dass praktisch ALLE Trades am
+ * Signal-Ausstieg sterben (nie an Stop oder Take) und die Gebühren 54–86 %
+ * des Verlusts ausmachen. Beides war nirgends ablesbar. Ein System, das sich
+ * selbst verbessern soll, muss das selbst sehen. */
+
+/** Sammelschlüssel für Trades, die kein Risiko-Exit geschlossen hat. */
+export const EXIT_SIGNAL = 'signal';
+
+export interface ExitBucket {
+  n: number;
+  pnl: number;
+  wins: number;
+}
+
+/**
+ * Trades nach Ausstiegsgrund gruppieren.
+ *
+ * Die entscheidende Frage, die das beantwortet: Erreichen die Trades ihre
+ * Risiko-Marken überhaupt? Steht fast alles unter `signal`, sind Stop und
+ * Take reine Dekoration — dann entscheidet nicht die Risikosteuerung über
+ * das Ergebnis, sondern das Kippen einer Indikator-Stimme.
+ */
+export function exitBreakdown(closed: ClosedTrade[]): Record<string, ExitBucket> {
+  const out: Record<string, ExitBucket> = {};
+  for (const t of closed) {
+    if (typeof t.pnl !== 'number' || !Number.isFinite(t.pnl)) continue;
+    // Punkte im Schlüssel würden in Firestore eine Verschachtelung erzeugen.
+    const key = (t.riskExit || EXIT_SIGNAL).replace(/\./g, '_');
+    const b = out[key] ?? { n: 0, pnl: 0, wins: 0 };
+    b.n += 1;
+    b.pnl = Math.round((b.pnl + t.pnl) * 100) / 100;
+    if (t.pnl > 0) b.wins += 1;
+    out[key] = b;
+  }
+  return out;
+}
+
+export interface CostProfile {
+  /** Trades, bei denen Positionswert und Gebührensatz bekannt sind. */
+  n: number;
+  /** Geschätzte Gebühren insgesamt (beide Seiten). */
+  fees: number;
+  /** Ergebnis VOR Gebühren = Netto-Ergebnis + Gebühren. */
+  grossPnl: number;
+  /** Anteil der Gebühren am Betrag des Netto-Ergebnisses, in Prozent. */
+  feeSharePct: number | null;
+  /** Ø Gewinnbewegung vor Gebühren, in Prozent des Positionswerts. */
+  avgWinGrossPct: number | null;
+  /** Ø Verlustbewegung vor Gebühren, in Prozent des Positionswerts. */
+  avgLossGrossPct: number | null;
+  /** Roundtrip-Kosten in Prozent (beide Seiten). */
+  roundTripPct: number | null;
+  /**
+   * Ø Gewinnbewegung geteilt durch die Roundtrip-Kosten — die EINE Zahl, die
+   * sagt, ob eine Strategie überhaupt Luft über der Reibung hat. Unter 2
+   * verdient überwiegend der Broker; die Testkonten lagen bei 1,6 und 1,9.
+   */
+  edgeOverCost: number | null;
+}
+
+const LEER: CostProfile = {
+  n: 0, fees: 0, grossPnl: 0, feeSharePct: null, avgWinGrossPct: null,
+  avgLossGrossPct: null, roundTripPct: null, edgeOverCost: null,
+};
+
+/**
+ * Kostenprofil der geschlossenen Trades.
+ *
+ * Die Gebühr wird geschätzt, nicht gespeichert: Der Broker rechnet sie in den
+ * Ausführungspreis (`paperEffectivePrice`), also steckt sie bereits im `pnl`.
+ * Beide Seiten zusammen sind `Positionswert × Satz × 2` — dieselbe Rechnung,
+ * mit der die Ursache am 27.07. gefunden wurde.
+ */
+export function costProfile(closed: ClosedTrade[]): CostProfile {
+  const valid = closed.filter(
+    (t) =>
+      typeof t.pnl === 'number' && Number.isFinite(t.pnl) &&
+      typeof t.notional === 'number' && t.notional > 0 &&
+      typeof t.feeRate === 'number' && t.feeRate >= 0,
+  );
+  if (valid.length === 0) return { ...LEER };
+
+  let fees = 0;
+  let netto = 0;
+  let rtSum = 0;
+  const winPcts: number[] = [];
+  const lossPcts: number[] = [];
+  for (const t of valid) {
+    const notional = t.notional as number;
+    const fee = notional * (t.feeRate as number) * 2;
+    fees += fee;
+    netto += t.pnl;
+    rtSum += (t.feeRate as number) * 2 * 100;
+    const grossPct = ((t.pnl + fee) / notional) * 100;
+    if (t.pnl > 0) winPcts.push(grossPct);
+    else if (t.pnl < 0) lossPcts.push(Math.abs(grossPct));
+  }
+  const mittel = (xs: number[]): number | null =>
+    xs.length === 0 ? null : Math.round((xs.reduce((a, b) => a + b, 0) / xs.length) * 10000) / 10000;
+
+  const avgWinGrossPct = mittel(winPcts);
+  const roundTripPct = Math.round((rtSum / valid.length) * 10000) / 10000;
+  return {
+    n: valid.length,
+    fees: Math.round(fees * 100) / 100,
+    grossPnl: Math.round((netto + fees) * 100) / 100,
+    // Bei einem Netto-Ergebnis nahe 0 wäre der Anteil beliebig groß — dann
+    // sagt die Zahl nichts, also lieber null als eine Scheinpräzision.
+    feeSharePct:
+      Math.abs(netto) > 0.005 ? Math.round((fees / Math.abs(netto)) * 1000) / 10 : null,
+    avgWinGrossPct,
+    avgLossGrossPct: mittel(lossPcts),
+    roundTripPct,
+    edgeOverCost:
+      avgWinGrossPct !== null && roundTripPct > 0
+        ? Math.round((avgWinGrossPct / roundTripPct) * 100) / 100
+        : null,
+  };
 }

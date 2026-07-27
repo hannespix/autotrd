@@ -61,10 +61,20 @@ export interface EngineConfig extends RiskConfig {
   running: boolean;
   /**
    * Kauf-Pause nach einem Verkauf desselben Symbols in Minuten (Whipsaw-
-   * Schutz). Fehlend = 15; die Risiko-Hülle klemmt auf 5–1440 — unter dem
+   * Schutz). Fehlend = 60; die Risiko-Hülle klemmt auf 5–1440 — unter dem
    * 5-min-Scan-Takt wäre die Pause wirkungslos. Kleiner = mehr Trades.
    */
   cooldownMin?: number;
+  /**
+   * Mindest-Haltedauer in Minuten, bevor ein SIGNAL-Ausstieg greifen darf.
+   * Fehlend = 60, 0 schaltet sie ab; die Hülle klemmt auf 0–1440.
+   *
+   * Stop-Loss, Trailing-Stop und Take-Profit bleiben davon UNBERÜHRT — eine
+   * Haltefrist darf das Sicherheitsnetz niemals aushebeln. Sie bremst nur
+   * den Signal-Ausstieg, der sonst jede Position im nächsten Rauschen
+   * wieder ausspuckt (Owner-Auswertung 27.07.).
+   */
+  minHoldMin?: number;
   /**
    * Risiko-Overrides je Asset-Klasse (Katalog-Schlüssel aus universe.ts:
    * crypto, indices, stocks_us, …). Fehlende Felder erben von oben.
@@ -174,7 +184,14 @@ export const DEFAULT_STRATEGY: Strategy = {
     trailingStopPct: 3,
     maxHoldDays: 0,
     running: false,
-    cooldownMin: 15, // Kauf-Pause nach Verkauf — klein für hohe Trade-Frequenz
+    // Kauf-Pause und Mindest-Haltedauer standen auf „maximale Frequenz"
+    // (15 min bzw. gar nicht). Die Auswertung zweier Testkonten am 27.07.
+    // zeigte, warum das nicht trägt: Ø-Gewinn 0,49 %, Ø-Verlust 0,36 %,
+    // bei 0,30 % Roundtrip-Kosten — die Reibung fraß 54 % bzw. 86 % des
+    // Verlusts. Mehr Frequenz hilft nur, wenn jeder Trade Luft über der
+    // Kostenschwelle hat.
+    cooldownMin: 60,
+    minHoldMin: 60,
     // Volatilitäts-Realismus (MA6): Krypto und Rohstoffe brauchen weitere
     // Stops, sonst ist jeder normale Tagesausschlag ein Zwangsverkauf.
     // Werte grob an typischen Tagesranges orientiert; per UI änderbar.
@@ -197,7 +214,11 @@ export const DEFAULT_STRATEGY: Strategy = {
     useForecast: true,
     forecastWeight: 2,
     forecastThresholdPct: 0.5,
-    exitConfluence: 1, // Ausstieg leichter als Einstieg (Risiko-Asymmetrie)
+    // Ausstieg stand auf 1 — EINE Gegenstimme von dreien. Auf 5-min-Bars
+    // kippt permanent eine, und die Position flog raus, bevor sie Stop oder
+    // Take je erreichte. Die Risiko-Asymmetrie bleibt als Option, aber der
+    // Standard entspricht jetzt dem Einstieg.
+    exitConfluence: 2,
     forecastSolo: false, // Prognose braucht eine zweite Stimme zum Einstieg
     timeframe: 'intraday', // 5-min-Signale: die Engine handelt im Scan-Takt
     allowShort: false, // Leerverkäufe bewusst Opt-in (Options-Modal + ⓘ)

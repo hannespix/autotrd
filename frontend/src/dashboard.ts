@@ -7,12 +7,14 @@
 import {
   CLASS_LABELS,
   DEFAULT_STRATEGY,
+  EVIDENCE_DEFAULTS,
   MAX_WATCHLIST,
   PAPER_FEE_RATE,
   aggregateBars,
   bollinger,
   classify,
   ema,
+  labelVariantId,
   macd,
   resolveName,
   resolveRisk,
@@ -49,6 +51,7 @@ import {
   loadDailyChunk,
   loadPrediction,
   callQuoteNow,
+  saveAutoTune,
   saveUiPrefs,
   watchBars,
   watchLatestAi,
@@ -65,6 +68,8 @@ import {
   watchUserDoc,
   watchPortfolioStats,
   watchEquitySeries,
+  watchTuneFleet,
+  watchTuneLog,
   type AiDayDoc,
   type EvaluatedForecastRow,
   type EventDay,
@@ -77,8 +82,11 @@ import {
   type WorkspaceDocData,
   type PortfolioStatsDoc,
   type EquitySeriesPoint,
+  type TuneFleetRow,
+  type TuneLogRow,
 } from './data.js';
 import { emailVerified, logout, refreshUser, sendVerification } from './auth.js';
+import { esc } from './html.js';
 import { iBtn, initInfoTips } from './infotips.js';
 import { mountLegalFooter } from './legal.js';
 import {
@@ -115,6 +123,7 @@ const PANEL_TITLES: Record<string, string> = {
   clock: 'Markt-Uhr',
   forecastacc: 'Prognose-Genauigkeit',
   fclab: 'Prognose-Labor',
+  tuner: 'Auto-Tuner',
   news: 'News & Sentiment',
   chart2: 'Vergleichs-Chart',
 };
@@ -639,6 +648,18 @@ function layout(email: string): string {
           <div><label class="lbl">Profit-Faktor ${iBtn('profitFactor')}</label><div id="pfPF" class="smv mono">--</div></div>
           <div><label class="lbl">Erwartung/Trade ${iBtn('expectancy')}</label><div id="pfExp" class="smv mono">--</div></div>
         </div>
+        <label class="lbl" style="margin-top:10px">Warum geschlossen ${iBtn('exits')}</label>
+        <div id="pfExits" class="fl-tbl"><div class="hint">Noch keine geschlossenen Trades.</div></div>
+        <label class="lbl" style="margin-top:10px">Reibung ${iBtn('kosten')}</label>
+        <div class="pf-grid" id="pfCostGrid" hidden>
+          <div><label class="lbl">Gebühren</label><div id="pfFees" class="smv mono">--</div></div>
+          <div><label class="lbl">Anteil am Ergebnis</label><div id="pfFeeShare" class="smv mono">--</div></div>
+          <div><label class="lbl">Ø Gewinn brutto</label><div id="pfGrossWin" class="smv mono">--</div></div>
+          <div><label class="lbl">Ø Verlust brutto</label><div id="pfGrossLoss" class="smv mono">--</div></div>
+          <div><label class="lbl">Roundtrip-Kosten</label><div id="pfRt" class="smv mono">--</div></div>
+          <div><label class="lbl">Luft über Kosten</label><div id="pfEdge" class="smv mono">--</div></div>
+        </div>
+        <div class="hint" id="pfCostHint"></div>
         <div class="hint" id="pfHint">Kennzahlen entstehen ab dem ersten Tages-Snapshot (täglich 23:15).</div>
       </div></div>
 
@@ -710,6 +731,19 @@ function layout(email: string): string {
         <div id="flCombosIntra" class="fl-tbl"><div class="hint">Noch keine bewerteten Kurzfrist-Prognosen.</div></div>
         <label class="lbl">Vorhersage vs. Realität ${iBtn('mae')} <span id="flSym2" style="color:var(--t3)"></span></label>
         <div id="flRows" class="fl-tbl"><div class="hint">Noch keine bewerteten Prognosen für dieses Symbol.</div></div>
+      </div></div>
+
+      <div class="card" data-panel="tuner"><div class="sect">Auto-Tuner ${iBtn('autotuner')}
+        <label class="tn-sw" title="Abschalten heißt: Die Einstellungen bleiben, wie du sie gesetzt hast."><input type="checkbox" id="tnOn" checked><span>aktiv</span></label>
+      </div><div class="cbody">
+        <div class="hint">Jede Variante deiner Einstellung führt ein eigenes Schattenkonto auf
+          denselben Kursen. Schlägt eine davon nachweislich die aktuelle — statistisch geprüft,
+          nicht nach Bauchgefühl —, wird sie übernommen. Hier steht jede Prüfung, auch die
+          abgelehnten.</div>
+        <label class="lbl" style="margin-top:8px">Schatten-Flotte — Fortschritt der Beweisaufnahme</label>
+        <div id="tnFleet" class="fl-tbl"><div class="hint">Die Flotte startet mit dem nächsten Scan.</div></div>
+        <label class="lbl" style="margin-top:10px">Änderungs-Journal</label>
+        <div id="tnLog" class="tn-log"><div class="hint">Noch keine Prüfung — der Tuner urteilt täglich nach US-Schluss.</div></div>
       </div></div>
 
       <div class="card" data-panel="news"><div class="sect">News &amp; Sentiment <span id="nsSym" style="float:right;color:var(--t3)"></span> <button class="lchip" id="chipNews" title="Link-Gruppe wechseln (News folgen dieser Gruppe)" style="float:right;margin-right:8px">A</button></div><div class="cbody">
@@ -3821,6 +3855,154 @@ function renderPfStats(): void {
   const exp = $('pfExp');
   exp.textContent = s.expectancy === null ? '--' : money(s.expectancy);
   exp.className = `smv mono ${s.expectancy !== null ? pnlClass(s.expectancy) : ''}`;
+  renderExits(s);
+  renderCosts(s);
+}
+
+/** Klarnamen der Ausstiegsgründe — `signal` ist der Sammeltopf ohne Risiko-Exit. */
+const EXIT_LABEL: Record<string, string> = {
+  signal: 'Signal',
+  stop_loss: 'Stop-Loss',
+  take_profit: 'Take-Profit',
+  trailing_stop: 'Trailing-Stop',
+  max_hold: 'Haltedauer',
+};
+
+/**
+ * Ausstiegsgründe (MT1). Die Zeile beantwortet die Frage, die man sonst von
+ * Hand zurückrechnen musste: Erreichen die Trades ihre Risiko-Marken
+ * überhaupt? Steht fast alles unter „Signal", entscheidet nicht die
+ * Risikosteuerung über das Ergebnis, sondern eine gekippte Indikator-Stimme.
+ */
+function renderExits(s: PortfolioStatsDoc): void {
+  const box = $('pfExits');
+  const rows = Object.entries(s.exits ?? {}).sort((a, b) => b[1].n - a[1].n);
+  const total = rows.reduce((a, [, b]) => a + b.n, 0);
+  if (total === 0) {
+    box.innerHTML = '<div class="hint">Noch keine geschlossenen Trades.</div>';
+    return;
+  }
+  box.innerHTML = rows
+    .map(([key, b]) => {
+      const anteil = Math.round((b.n / total) * 100);
+      // Unbekannte Schlüssel kommen aus der Datenbank — auf harmlose Zeichen
+      // beschränken, statt sie ungeprüft in HTML zu setzen.
+      const name = EXIT_LABEL[key] ?? key.replace(/[^\w-]/g, '');
+      return (
+        `<div class="fl-row"><span>${name}</span>` +
+        `<span class="mono">${b.n}× · ${anteil} %</span>` +
+        `<span class="mono ${pnlClass(b.pnl)}">${money(b.pnl)}</span></div>`
+      );
+    })
+    .join('');
+}
+
+/**
+ * Kostenprofil (MT1). `edgeOverCost` ist die eine Zahl, auf die es ankommt:
+ * Ø Gewinnbewegung geteilt durch die Roundtrip-Kosten. Unter 2 verdient
+ * überwiegend der Broker — die Testkonten des Owners lagen bei 1,6 und 1,9.
+ */
+function renderCosts(s: PortfolioStatsDoc): void {
+  const grid = $('pfCostGrid');
+  const hint = $('pfCostHint');
+  const c = s.costs;
+  if (!c || c.n === 0) {
+    grid.hidden = true;
+    hint.textContent = 'Reibung wird ab dem ersten geschlossenen Trade mit Gebührensatz gemessen.';
+    return;
+  }
+  grid.hidden = false;
+  const pct = (v: number | null): string => (v === null ? '--' : `${v.toFixed(2)} %`);
+  $('pfFees').textContent = money(c.fees);
+  $('pfFeeShare').textContent = c.feeSharePct === null ? '--' : `${c.feeSharePct.toFixed(0)} %`;
+  $('pfGrossWin').textContent = pct(c.avgWinGrossPct);
+  $('pfGrossLoss').textContent = pct(c.avgLossGrossPct);
+  $('pfRt').textContent = pct(c.roundTripPct);
+
+  const edge = $('pfEdge');
+  edge.textContent = c.edgeOverCost === null ? '--' : `${c.edgeOverCost.toFixed(2)}×`;
+  // Ampel bewusst streng: Bei Faktor 2 gehen immer noch 50 % jeder
+  // Gewinnbewegung an Gebühren und Slippage.
+  edge.className = `smv mono ${
+    c.edgeOverCost === null ? '' : c.edgeOverCost >= 3 ? 'c-gn' : c.edgeOverCost >= 2 ? '' : 'c-rd'
+  }`;
+  hint.textContent =
+    c.edgeOverCost === null
+      ? ''
+      : c.edgeOverCost < 2
+        ? `Zu wenig Luft: Die durchschnittliche Gewinnbewegung ist nur das ${c.edgeOverCost.toFixed(1)}-Fache der Handelskosten — davon bleibt kaum etwas übrig. Längere Haltedauer oder größerer Zeitrahmen hilft.`
+        : `Die durchschnittliche Gewinnbewegung ist das ${c.edgeOverCost.toFixed(1)}-Fache der Handelskosten.`;
+}
+
+/* ── Auto-Tuner: Flotte und Journal (MT5) ─────────────────────────────────── */
+
+/**
+ * Fortschritt der Schatten-Flotte.
+ *
+ * Der Balken zeigt die Stichprobe gegen die Evidenzschwelle. Das ist die
+ * ehrliche Antwort auf „warum ändert sich nichts?": Meist nicht, weil nichts
+ * besser wäre, sondern weil noch keine Variante genug Trades für ein
+ * belastbares Urteil hat.
+ */
+function renderTuneFleet(rows: TuneFleetRow[]): void {
+  const box = $('tnFleet');
+  if (rows.length === 0) {
+    box.innerHTML = '<div class="hint">Die Flotte startet mit dem nächsten Scan.</div>';
+    return;
+  }
+  const ziel = EVIDENCE_DEFAULTS.minTrades;
+  box.innerHTML = rows
+    .map((r) => {
+      const anteil = Math.min(100, Math.round((r.trades / ziel) * 100));
+      const offen = r.open > 0 ? ` · ${r.open} offen` : '';
+      return (
+        `<div class="tn-fl"><span class="tn-nm">${esc(labelVariantId(r.id))}</span>` +
+        `<span class="tn-bar"><i style="width:${anteil}%"></i></span>` +
+        `<span class="mono">${r.trades}/${ziel}${offen}</span>` +
+        `<span class="mono ${pnlClass(r.pnl)}">${r.trades > 0 ? money(r.pnl) : '--'}</span></div>`
+      );
+    })
+    .join('');
+}
+
+/**
+ * Das Änderungs-Journal (MT5).
+ *
+ * Bewusst mit Begründung UND Zahlen: Ein Automat, der am Depot dreht, muss
+ * nachprüfbar sein. Die abgelehnten Prüfungen stehen gleichberechtigt drin —
+ * ein Journal, das nur Erfolge zeigt, verschweigt gerade das Interessante.
+ */
+function renderTuneLog(rows: TuneLogRow[]): void {
+  const box = $('tnLog');
+  if (rows.length === 0) {
+    box.innerHTML =
+      '<div class="hint">Noch keine Prüfung — der Tuner urteilt täglich nach US-Schluss.</div>';
+    return;
+  }
+  box.innerHTML = rows
+    .map((r) => {
+      const zeit = new Date(r.at).toLocaleString('de-DE', {
+        day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+      });
+      const marke = r.promoted
+        ? '<span class="tn-tag tn-ok">übernommen</span>'
+        : '<span class="tn-tag">abgelehnt</span>';
+      // p-Wert und Stichproben immer mitzeigen: Ohne sie ist „abgelehnt" eine
+      // Behauptung, mit ihnen eine nachrechenbare Aussage.
+      const zahlen =
+        r.nCandidate > 0
+          ? `n=${r.nCandidate} vs. ${r.nIncumbent}` +
+            (r.p !== null ? ` · p=${r.p.toFixed(3)}` : '') +
+            ` · Vorsprung ${r.edge >= 0 ? '+' : ''}${r.edge.toFixed(2)}`
+          : 'noch keine Schatten-Trades';
+      return (
+        `<div class="tn-e"><div class="tn-h"><span class="tn-nm">${esc(r.change || labelVariantId(r.variantId))}</span>${marke}` +
+        `<span class="tn-t mono">${zeit}</span></div>` +
+        `<div class="tn-r">${esc(r.reason)}</div>` +
+        `<div class="tn-n mono">${zahlen}</div></div>`
+      );
+    })
+    .join('');
 }
 
 async function manualTrade(symbol: string, side: 'buy' | 'sell'): Promise<void> {
@@ -4106,13 +4288,23 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   };
   seedSymbols({ A: st.currentSymbol, B: st.chart2Symbol, C: st.currentSymbol });
 
+  // Auto-Tuner-Schalter: schreibt genau das Feld, das `tuneAll` serverseitig
+  // prüft. Kein Callable nötig — es ist eine Einstellung, kein Geld-Vorgang.
+  $('tnOn').addEventListener('change', (e) => {
+    const box = e.target as HTMLInputElement;
+    void saveAutoTune(uid, box.checked).catch(() => {
+      box.checked = !box.checked; // Schreiben fehlgeschlagen → Anzeige ehrlich halten
+    });
+  });
+
   // User-Doc: Strategie (Formular/Watchlist) + Wallet folgen Firestore
   st.subs.push(
-    watchUserDoc(uid, ({ strategy, wallet, hotkeys, ui }) => {
+    watchUserDoc(uid, ({ strategy, wallet, hotkeys, ui, autoTune }) => {
       if (!st) return;
       const prevWl = st.strategy.watchlist.join(',');
       st.strategy = strategy ?? DEFAULT_STRATEGY;
       st.wallet = wallet;
+      ($('tnOn') as HTMLInputElement).checked = autoTune;
       st.ui = {
         predArrow: ui?.predArrow === true,
         cmpOverlay: ui?.cmpOverlay !== false,
@@ -4176,6 +4368,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       renderFcLabStats('flCombos', stats);
     }),
     watchForecastStatsIntraday((stats) => renderFcLabStats('flCombosIntra', stats)),
+    watchTuneFleet(uid, renderTuneFleet),
+    watchTuneLog(uid, renderTuneLog),
   );
 
   // Link-Bus (M9): Chart- und News-Kontext folgen ihrer jeweiligen Gruppe.

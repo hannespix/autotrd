@@ -352,6 +352,8 @@ export function watchUserDoc(
     /** Nutzer-Hotkeys (M9, settings.hotkeys) — z. B. { palette, buy, sell }. */
     hotkeys: Record<string, string> | null;
     ui: UiPrefs | null;
+    /** Auto-Tuner-Schalter (MT5). Fehlt das Feld, ist der Tuner AN. */
+    autoTune: boolean;
   }) => void,
 ): Unsubscribe {
   return onSnapshot(doc(db(), 'users', uid), (snap) => {
@@ -360,6 +362,10 @@ export function watchUserDoc(
       wallet: (snap.get('wallet') as Wallet | undefined) ?? null,
       hotkeys: (snap.get('settings.hotkeys') as Record<string, string> | undefined) ?? null,
       ui: (snap.get('settings.ui') as UiPrefs | undefined) ?? null,
+      // Dieselbe Default-Regel wie im Scheduler (`!== false`): Wer nie etwas
+      // eingestellt hat, bekommt die Selbstverbesserung — abstellen ist eine
+      // bewusste Entscheidung, nicht der Zufall eines fehlenden Feldes.
+      autoTune: snap.get('settings.autoTune') !== false,
     });
   });
 }
@@ -367,6 +373,11 @@ export function watchUserDoc(
 /** UI-Präferenzen speichern — Rules erlauben Owner-Updates nur aufs settings-Feld. */
 export async function saveUiPrefs(uid: string, ui: UiPrefs): Promise<void> {
   await updateDoc(doc(db(), 'users', uid), { 'settings.ui': ui });
+}
+
+/** Auto-Tuner an-/abschalten (MT5) — dasselbe Feld, das `tuneAll` prüft. */
+export async function saveAutoTune(uid: string, on: boolean): Promise<void> {
+  await updateDoc(doc(db(), 'users', uid), { 'settings.autoTune': on });
 }
 
 export function watchPositions(uid: string, cb: (positions: Position[]) => void): Unsubscribe {
@@ -416,6 +427,24 @@ export interface PortfolioStatsDoc {
   avgLoss: number | null;
   bySymbol: Record<string, { pnl: number; n: number }>;
   byClass: Record<string, { pnl: number; n: number }>;
+  /**
+   * Ausstiegsgründe (MT1): stop_loss · take_profit · trailing_stop · signal.
+   * Steht fast alles unter `signal`, sind Stop und Take reine Dekoration —
+   * dann entscheidet nicht die Risikosteuerung, sondern eine gekippte
+   * Indikator-Stimme über das Ergebnis.
+   */
+  exits?: Record<string, { n: number; pnl: number; wins: number }>;
+  /** Kostenprofil (MT1) — hat die Strategie Luft über der Reibung? */
+  costs?: {
+    n: number;
+    fees: number;
+    grossPnl: number;
+    feeSharePct: number | null;
+    avgWinGrossPct: number | null;
+    avgLossGrossPct: number | null;
+    roundTripPct: number | null;
+    edgeOverCost: number | null;
+  };
   updatedAt: string;
 }
 
@@ -447,6 +476,76 @@ export function watchEquitySeries(
       snap.docs
         .map((d) => ({ date: d.get('date') as string, equity: d.get('equity') as number }))
         .reverse(),
+    );
+  });
+}
+
+/**
+ * Eintrag im Änderungs-Journal des Auto-Tuners (MT5).
+ *
+ * Es steht bewusst JEDE Prüfung drin, auch die abgelehnten: Ein Journal, das
+ * nur Erfolge zeigt, verschweigt das Interessante — wie viele Ideen
+ * ausprobiert und verworfen wurden, und woran es lag.
+ */
+export interface TuneLogRow {
+  at: string;
+  variantId: string;
+  /** Klartext: „Mindest-Haltedauer 60 → 120". */
+  change: string;
+  reason: string;
+  promoted: boolean;
+  p: number | null;
+  edge: number;
+  nCandidate: number;
+  nIncumbent: number;
+}
+
+export function watchTuneLog(uid: string, cb: (rows: TuneLogRow[]) => void): Unsubscribe {
+  const q = query(collection(db(), 'users', uid, 'tuneLog'), orderBy('at', 'desc'), limit(24));
+  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => d.data() as TuneLogRow)));
+}
+
+/**
+ * Stand EINER Variante der Schatten-Flotte.
+ *
+ * Ohne diese Zeile zeigte das Journal nur fertige Urteile — und ein Urteil,
+ * das „zu wenig Evidenz" lautet, wäre ohne den Fortschritt unlesbar: Man
+ * sähe nicht, ob eine Variante gerade erst angefangen hat oder seit Wochen
+ * kaum handelt (was selbst schon ein Befund ist).
+ */
+export interface TuneFleetRow {
+  id: string;
+  /** Abgeschlossene Schatten-Trades — die Stichprobe des Vergleichs. */
+  trades: number;
+  /** Summe der Ergebnisse dieser Trades. */
+  pnl: number;
+  /** Aktuell offene Schatten-Positionen. */
+  open: number;
+  startedAt: string;
+}
+
+interface FleetVariantDoc {
+  book?: { positions?: Record<string, unknown> };
+  pnls?: number[];
+  startedAt?: string;
+}
+
+export function watchTuneFleet(uid: string, cb: (rows: TuneFleetRow[]) => void): Unsubscribe {
+  return onSnapshot(doc(db(), 'users', uid, 'tuning', 'fleet'), (snap) => {
+    const variants = (snap.get('variants') as Record<string, FleetVariantDoc> | undefined) ?? {};
+    cb(
+      Object.entries(variants)
+        .map(([id, v]) => {
+          const pnls = v.pnls ?? [];
+          return {
+            id,
+            trades: pnls.length,
+            pnl: pnls.reduce((a, b) => a + b, 0),
+            open: Object.keys(v.book?.positions ?? {}).length,
+            startedAt: v.startedAt ?? '',
+          };
+        })
+        .sort((a, b) => b.trades - a.trades || a.id.localeCompare(b.id)),
     );
   });
 }

@@ -15,6 +15,9 @@ import {
   positionValue,
   sharpe,
   tradeStats,
+  EXIT_SIGNAL,
+  costProfile,
+  exitBreakdown,
 } from '../src/index.js';
 
 describe('normalizeSeries', () => {
@@ -151,5 +154,84 @@ describe('positionValue', () => {
     expect(positionValue({ qty: 2, avgEntry: 100, side: 'short' }, 115)).toBe(170);
     // ohne Kurs: nur Margin (P&L 0)
     expect(positionValue({ qty: 2, avgEntry: 100, side: 'short' }, null)).toBe(200);
+  });
+});
+
+/* ── MT1: Ausstiegsgründe & Kostenprofil ───────────────────────────────────
+ * Die Zahlen unten sind die echten Werte der beiden Owner-Testkonten vom
+ * 27.07. — sie sind der Grund, warum es diese Kennzahlen gibt. */
+
+describe('exitBreakdown', () => {
+  it('gruppiert nach Ausstiegsgrund, Signal-Exits als eigener Topf', () => {
+    const b = exitBreakdown([
+      { symbol: 'AAPL', pnl: -12, riskExit: 'stop_loss' },
+      { symbol: 'QQQ', pnl: 30, riskExit: 'take_profit' },
+      { symbol: 'TSLA', pnl: -4 },            // kein riskExit = Signal-Ausstieg
+      { symbol: 'QQQ', pnl: 6 },
+    ]);
+    expect(b.stop_loss).toEqual({ n: 1, pnl: -12, wins: 0 });
+    expect(b.take_profit).toEqual({ n: 1, pnl: 30, wins: 1 });
+    expect(b[EXIT_SIGNAL]).toEqual({ n: 2, pnl: 2, wins: 1 });
+  });
+
+  it('macht sichtbar, wenn ALLE Trades am Signal sterben', () => {
+    // Genau das war der Befund: Stop (1,5 %) und Take (3 %) wurden nie
+    // erreicht, die Bewegungen lagen bei 0,4–0,6 %.
+    const b = exitBreakdown(Array.from({ length: 16 }, (_, i) => ({ symbol: 'QQQ', pnl: i < 6 ? 7 : -18 })));
+    expect(Object.keys(b)).toEqual([EXIT_SIGNAL]);
+    expect(b[EXIT_SIGNAL]?.n).toBe(16);
+  });
+
+  it('ersetzt Punkte im Schlüssel (Firestore würde daran verschachteln)', () => {
+    expect(exitBreakdown([{ symbol: 'X', pnl: 1, riskExit: 'a.b' }]).a_b?.n).toBe(1);
+  });
+
+  it('überspringt Trades ohne brauchbares Ergebnis', () => {
+    expect(exitBreakdown([{ symbol: 'X', pnl: Number.NaN }])).toEqual({});
+  });
+});
+
+describe('costProfile', () => {
+  /** Ein Trade wie im Livesystem: 2.500 $ Position, 0,15 % je Seite. */
+  const t = (pnl: number) => ({ symbol: 'QQQ', pnl, notional: 2500, feeRate: 0.0015 });
+
+  it('rechnet die Gebühren aus dem Nettoergebnis zurück', () => {
+    // Roundtrip = 2500 × 0,0015 × 2 = 7,50 $. Netto-Gewinn 4,85 → brutto 12,35
+    // = 0,494 % Bewegung. Exakt die Rechnung, die die Ursache fand.
+    const c = costProfile([t(4.85)]);
+    expect(c.fees).toBeCloseTo(7.5, 2);
+    expect(c.grossPnl).toBeCloseTo(12.35, 2);
+    expect(c.avgWinGrossPct).toBeCloseTo(0.494, 3);
+    expect(c.roundTripPct).toBeCloseTo(0.3, 3);
+  });
+
+  it('liefert edgeOverCost — die eine Zahl, die Luft über der Reibung misst', () => {
+    // 0,494 % Gewinnbewegung gegen 0,30 % Kosten = Faktor 1,65.
+    // Unter 2 verdient überwiegend der Broker.
+    expect(costProfile([t(4.85)]).edgeOverCost).toBeCloseTo(1.65, 2);
+    // Ein Trade mit 1,5 % Bruttobewegung hat dagegen Luft.
+    expect(costProfile([{ ...t(0), pnl: 2500 * 0.015 - 7.5 }]).edgeOverCost).toBeGreaterThan(4);
+  });
+
+  it('reproduziert den Gebührenanteil von Konto B (86 %)', () => {
+    // 16 Trades, netto −8,71 $ im Schnitt → Gebühren 7,50 sind 86 % davon.
+    const c = costProfile(Array.from({ length: 16 }, () => t(-8.71)));
+    expect(c.feeSharePct).toBeCloseTo(86.1, 0);
+  });
+
+  it('trennt Gewinn- und Verlustbewegung', () => {
+    const c = costProfile([t(4.85), t(-16.55)]);
+    expect(c.avgWinGrossPct).toBeCloseTo(0.494, 3);
+    expect(c.avgLossGrossPct).toBeCloseTo(0.362, 3); // (16,55 − 7,50) / 2500
+  });
+
+  it('lässt den Anteil bei Ergebnis nahe null offen statt eine Riesenzahl zu zeigen', () => {
+    expect(costProfile([t(0)]).feeSharePct).toBeNull();
+  });
+
+  it('ignoriert Trades ohne Positionswert oder Satz — kein Rateanteil', () => {
+    expect(costProfile([{ symbol: 'X', pnl: 5 }]).n).toBe(0);
+    expect(costProfile([{ symbol: 'X', pnl: 5, notional: 0, feeRate: 0.0015 }]).n).toBe(0);
+    expect(costProfile([]).edgeOverCost).toBeNull();
   });
 });

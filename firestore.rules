@@ -77,6 +77,19 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      // Auto-Tuner (MT): Schattenkonten der Varianten und das Änderungs-
+      // Journal. Beides schreibt AUSSCHLIESSLICH der Server — ein Client, der
+      // sein eigenes Journal schreiben dürfte, könnte eine Beförderung
+      // erfinden, und die Nachvollziehbarkeit wäre wertlos.
+      match /tuning/{doc} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+      match /tuneLog/{doc} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
+
       // Alerts: gehören dem User komplett
       match /alerts/{doc} {
         allow read, write: if isOwner(uid);

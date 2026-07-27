@@ -29,8 +29,11 @@
  */
 
 import {
+  PAPER_FEE_RATE,
   attribution,
   classify,
+  costProfile,
+  exitBreakdown,
   dailyReturns,
   drawdown,
   sharpe,
@@ -55,6 +58,8 @@ import type {
   SignalRow,
   StrategyRow,
   TradeRow,
+  TuneFleetRow,
+  TuneLogRow,
   UiPrefs,
 } from './data.js';
 
@@ -431,6 +436,7 @@ export function watchUserDoc(
     wallet: Wallet | null;
     hotkeys: Record<string, string> | null;
     ui: UiPrefs | null;
+    autoTune: boolean;
   }) => void,
 ): () => void {
   return sbWatch(
@@ -447,6 +453,7 @@ export function watchUserDoc(
           strategy?: Strategy;
           hotkeys?: Record<string, string>;
           ui?: UiPrefs;
+          autoTune?: boolean;
         };
         const w = await mainWallet(uid);
         return {
@@ -459,6 +466,9 @@ export function watchUserDoc(
             : null,
           hotkeys: settings.hotkeys ?? null,
           ui: settings.ui ?? null,
+          // Dieselbe Default-Regel wie unter Firestore: fehlt das Feld, läuft
+          // der Tuner. Abstellen muss eine Entscheidung sein, kein Zufall.
+          autoTune: settings.autoTune !== false,
         };
       },
     },
@@ -475,14 +485,51 @@ export function watchUserDoc(
  * löschen).
  */
 export async function saveUiPrefs(uid: string, ui: UiPrefs): Promise<void> {
+  await patchSettings(uid, { ui });
+}
+
+/** Auto-Tuner-Schalter (MT5) — dasselbe Feld, das der Tuner-Lauf prüft. */
+export async function saveAutoTune(uid: string, on: boolean): Promise<void> {
+  await patchSettings(uid, { autoTune: on });
+}
+
+/**
+ * Ein Feld in `profiles.settings` ändern, ohne die anderen zu verlieren.
+ *
+ * Postgres kennt über PostgREST kein Feldpfad-Update auf JSONB, also wird
+ * gelesen, ergänzt und zurückgeschrieben. Ein blindes Überschreiben würde
+ * Strategie und Hotkeys löschen — deshalb steht das Zusammenführen an EINER
+ * Stelle statt in jedem Schreibpfad.
+ */
+async function patchSettings(uid: string, patch: Record<string, unknown>): Promise<void> {
   const prof = await sb().from('profiles').select('settings').eq('id', uid).maybeSingle();
   const settings = ((prof.data as { settings?: Record<string, unknown> } | null)?.settings ??
     {}) as Record<string, unknown>;
   const { error } = await sb()
     .from('profiles')
-    .update({ settings: { ...settings, ui } })
+    .update({ settings: { ...settings, ...patch } })
     .eq('id', uid);
   if (error) throw new Error(error.message);
+}
+
+/**
+ * Auto-Tuner unter Supabase: noch keine Daten.
+ *
+ * Der Tuner-Lauf ist heute eine Firebase-Function und schreibt nach
+ * Firestore; die Postgres-Entsprechung kommt mit MS2. Die Funktionen
+ * existieren trotzdem — sonst bräche der Backend-Umschalter am fehlenden
+ * Export, und die Oberfläche zeigte statt „noch keine Prüfung" einen Fehler.
+ * Eine leere Liste ist hier die ehrliche Antwort: Es GIBT unter diesem
+ * Backend noch nichts zu zeigen.
+ */
+export function watchTuneFleet(_uid: string, cb: (rows: TuneFleetRow[]) => void): () => void {
+  cb([]);
+  return () => undefined;
+}
+
+export function watchTuneLog(_uid: string, cb: (rows: TuneLogRow[]) => void): () => void {
+  cb([]);
+  return () => undefined;
 }
 
 export interface PositionRow {
@@ -634,17 +681,29 @@ async function computeStats(uid: string): Promise<PortfolioStatsDoc | null> {
   const serie = await loadEquitySeries(uid);
   const res = await sb()
     .from('trades')
-    .select('symbol,asset_class,pnl')
+    .select('symbol,asset_class,pnl,risk_exit,qty,price')
     .eq('user_id', uid)
     .not('pnl', 'is', null)
     .order('executed_at', { ascending: false })
     .limit(STATS_TRADE_WINDOW);
   const closed: ClosedTrade[] = [];
-  for (const r of (res.data as Array<{ symbol: string; asset_class: string | null; pnl: string | number }> | null) ??
-    []) {
+  for (const r of (res.data as TradeStatsRow[] | null) ?? []) {
     const pnl = num(r.pnl);
     if (pnl === null || !r.symbol) continue;
-    closed.push({ symbol: r.symbol, pnl, assetClass: r.asset_class ?? classify(r.symbol) });
+    const qty = num(r.qty);
+    const price = num(r.price);
+    closed.push({
+      symbol: r.symbol,
+      pnl,
+      assetClass: r.asset_class ?? classify(r.symbol),
+      ...(r.risk_exit ? { riskExit: r.risk_exit } : {}),
+      // Gebührensatz aus der geteilten Konstante statt aus der Zeile: Der
+      // Paper-Broker rechnet damit, und beide Backends müssen dieselben
+      // Zahlen liefern — sonst wäre der Umschalttag ein sichtbarer Bruch.
+      ...(qty !== null && price !== null
+        ? { notional: qty * price, feeRate: PAPER_FEE_RATE }
+        : {}),
+    });
   }
   if (serie.length === 0 && closed.length === 0) return null;
 
@@ -668,8 +727,19 @@ async function computeStats(uid: string): Promise<PortfolioStatsDoc | null> {
     avgLoss: ts.avgLoss,
     bySymbol: attr.bySymbol,
     byClass: attr.byClass,
+    exits: exitBreakdown(closed),
+    costs: costProfile(closed),
     updatedAt: new Date().toISOString(),
   };
+}
+
+interface TradeStatsRow {
+  symbol: string;
+  asset_class: string | null;
+  pnl: string | number;
+  risk_exit: string | null;
+  qty: string | number | null;
+  price: string | number | null;
 }
 
 /** Wie im Scheduler: jüngste Trades für WinRate und Attribution. */
