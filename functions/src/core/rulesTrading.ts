@@ -52,8 +52,39 @@ export function clampStrategyRisk(strategy: Strategy): Strategy {
   // in der Hülle: unter 5 min ist sie gegen den 5-min-Scan-Takt wirkungslos,
   // über 1 Tag wäre sie ein verstecktes Handelsverbot.
   const cd = s.engine.cooldownMin;
-  s.engine.cooldownMin = Number.isFinite(cd) ? Math.min(1440, Math.max(5, cd as number)) : 15;
+  s.engine.cooldownMin = Number.isFinite(cd) ? Math.min(1440, Math.max(5, cd as number)) : 60;
+  // Mindest-Haltedauer in derselben Hülle: 0 heißt bewusst „aus" (Verhalten
+  // wie bisher), mehr als ein Tag wäre eine versteckte Positions-Sperre.
+  const mh = s.engine.minHoldMin;
+  s.engine.minHoldMin = Number.isFinite(mh) ? Math.min(1440, Math.max(0, mh as number)) : 60;
   return s;
+}
+
+/**
+ * true, solange die Mindest-Haltedauer seit Eröffnung noch läuft.
+ *
+ * Warum es das gibt (Owner-Screenshots 27.07.): Zwei Testkonten zeigten
+ * Ø-Gewinne von 0,49 % und Ø-Verluste von 0,36 % — beide weit unter Stop
+ * (1,5 %) und Take-Profit (3 %). Praktisch KEIN Trade erreichte also seine
+ * Risiko-Marken; sie starben alle am Signal-Ausstieg, der bei einer einzigen
+ * Gegenstimme feuert. Auf 5-min-Bars kippt permanent eine von drei Stimmen,
+ * und bei 0,30 % Roundtrip-Kosten fraß die Reibung 54 % bzw. 86 % des
+ * Verlusts. Die Mindest-Haltedauer gibt einer Position Zeit, sich zu
+ * entwickeln, statt sie im nächsten Rauschen wieder auszuspucken.
+ *
+ * WICHTIG: Sie bremst NUR den Signal-Ausstieg. Stop-Loss, Trailing-Stop und
+ * Take-Profit laufen unverändert bei jedem Scan — das Sicherheitsnetz darf
+ * eine Haltefrist niemals aushebeln.
+ */
+export function minHoldActive(
+  openedAt: string | undefined,
+  now: Date,
+  minutes: number,
+): boolean {
+  if (!openedAt || !Number.isFinite(minutes) || minutes <= 0) return false;
+  const opened = Date.parse(openedAt);
+  if (!Number.isFinite(opened)) return false;
+  return now.getTime() - opened < minutes * 60_000;
 }
 
 /** true, solange der Entry-Cooldown seit dem letzten Trade noch läuft. */

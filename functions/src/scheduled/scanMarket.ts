@@ -43,6 +43,7 @@ import {
   clampStrategyRisk,
   cooldownActive,
   decideTree,
+  minHoldActive,
   minuteOfDayEt,
   predictionVote,
   shadowEquity,
@@ -482,7 +483,11 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
               logger.info(`Strategie-Buy ${uid} ${symbol} („${doc.name}") @ ${data.price}`);
             }
           } else if (dir === 'sell' && pos && pos.side !== 'short') {
-            // Exits blockt der Cooldown NIE (Sicherheitsprinzip)
+            // Exits blockt der Cooldown NIE (Sicherheitsprinzip) — die
+            // Mindest-Haltedauer bremst dagegen sehr wohl, weil sie nur den
+            // SIGNAL-Ausstieg betrifft. Stop/Trailing/Take sind in diesem
+            // Scan bereits gelaufen und bleiben jederzeit scharf.
+            if (minHoldActive(pos.openedAt, now, clamped.engine.minHoldMin ?? 0)) continue;
             const r = await executePaperTrade(
               { uid, symbol, side: 'sell', price: data.price, source: 'engine', assetClass: classify(symbol) },
               clamped,
@@ -610,6 +615,11 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
             logger.info(`Engine-Buy ${uid} ${symbol} @ ${data.price}`);
           }
         } else if (direction === 'sell' && pos && pos.side !== 'short') {
+          // Signal-Ausstieg erst nach der Mindest-Haltedauer. Die Risiko-Exits
+          // (Stop, Trailing, Take) sind oben in diesem Scan bereits gelaufen —
+          // das Sicherheitsnetz bleibt also jederzeit scharf, gebremst wird
+          // nur das Rausspucken durch eine gekippte Indikator-Stimme.
+          if (minHoldActive(pos.openedAt, now, clamped.engine.minHoldMin ?? 0)) continue;
           const r = await executePaperTrade(
             { uid, symbol, side: 'sell', price: data.price, source: 'engine', assetClass: classify(symbol) },
             clamped,
