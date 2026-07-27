@@ -30,7 +30,7 @@ import {
   type Strategy,
   type StrategyDoc,
 } from '../../../shared/src/index.js';
-import { aggregateSentiment, atrPct } from '../../../shared/src/index.js';
+import { aggregateSentiment, atrPct, buildVariants } from '../../../shared/src/index.js';
 import { anthropicApiKey, ensureAiDay } from '../core/ai.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 import { computeIndicatorSnapshot, computeSignal } from '../core/engine.js';
@@ -53,6 +53,8 @@ import {
 import { accuracyWeightedVote } from '../../../shared/src/index.js';
 import { runForecast, runIntradayForecast, type LiveForecast } from '../core/forecaster.js';
 import { evaluateIntradayDue } from './evalForecasts.js';
+import { stepFleet, type FleetState } from '../core/tuneFleet.js';
+import { FLEET_SIZE } from './autoTune.js';
 import { chunkBarsByYear, getDeepDailyBars, getIntradayBars, getMarketSnapshot, getQuickQuote } from '../core/marketData.js';
 import { fetchNews, newsDocId, type NewsItem } from '../core/news.js';
 
@@ -661,6 +663,31 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
       // set ohne merge das ganze User-Doc (Wallet!) plattmachen.
       if (cooldownsChanged) {
         await userDoc.ref.update({ engineCooldowns }).catch(() => undefined);
+      }
+
+      // Schatten-Flotte des Auto-Tuners (MT2): Jede Parameter-Variante rechnet
+      // denselben Scan auf ihrem eigenen virtuellen Konto mit. Das kostet
+      // KEINEN zusätzlichen Fetch — die Marktdaten liegen schon hier — und
+      // liefert Out-of-Sample-Evidenz, aus der autoTune täglich entscheidet.
+      // Ein Fehler hier darf den echten Handel niemals stören, deshalb der
+      // eigene Fang.
+      if (userDoc.get('settings.autoTune') !== false) {
+        try {
+          const variants = buildVariants(clamped, FLEET_SIZE);
+          if (variants.length > 0) {
+            const fleetRef = userDoc.ref.collection('tuning').doc('fleet');
+            const vorher =
+              ((await fleetRef.get()).get('variants') as FleetState | undefined) ?? {};
+            // Die Flotte sieht dieselben Symbole wie der echte Pfad —
+            // die Watchlist des Users, geschnitten auf das, was der Scan
+            // tatsächlich geladen hat.
+            const fleetSymbols = (clamped.watchlist ?? []).filter((sym) => marketData.has(sym));
+            const { state } = stepFleet(variants, marketData, vorher, fleetSymbols, now);
+            await fleetRef.set({ variants: state, updatedAt: now.toISOString() }, { merge: true });
+          }
+        } catch (err) {
+          logger.warn(`Schatten-Flotte für ${uid} übersprungen`, err);
+        }
       }
     } catch (err) {
       logger.error(`Auto-Trading-Fehler für ${uid}`, err);
