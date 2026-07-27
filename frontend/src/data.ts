@@ -416,6 +416,24 @@ export interface PortfolioStatsDoc {
   avgLoss: number | null;
   bySymbol: Record<string, { pnl: number; n: number }>;
   byClass: Record<string, { pnl: number; n: number }>;
+  /**
+   * Ausstiegsgründe (MT1): stop_loss · take_profit · trailing_stop · signal.
+   * Steht fast alles unter `signal`, sind Stop und Take reine Dekoration —
+   * dann entscheidet nicht die Risikosteuerung, sondern eine gekippte
+   * Indikator-Stimme über das Ergebnis.
+   */
+  exits?: Record<string, { n: number; pnl: number; wins: number }>;
+  /** Kostenprofil (MT1) — hat die Strategie Luft über der Reibung? */
+  costs?: {
+    n: number;
+    fees: number;
+    grossPnl: number;
+    feeSharePct: number | null;
+    avgWinGrossPct: number | null;
+    avgLossGrossPct: number | null;
+    roundTripPct: number | null;
+    edgeOverCost: number | null;
+  };
   updatedAt: string;
 }
 

@@ -29,8 +29,11 @@
  */
 
 import {
+  PAPER_FEE_RATE,
   attribution,
   classify,
+  costProfile,
+  exitBreakdown,
   dailyReturns,
   drawdown,
   sharpe,
@@ -634,17 +637,29 @@ async function computeStats(uid: string): Promise<PortfolioStatsDoc | null> {
   const serie = await loadEquitySeries(uid);
   const res = await sb()
     .from('trades')
-    .select('symbol,asset_class,pnl')
+    .select('symbol,asset_class,pnl,risk_exit,qty,price')
     .eq('user_id', uid)
     .not('pnl', 'is', null)
     .order('executed_at', { ascending: false })
     .limit(STATS_TRADE_WINDOW);
   const closed: ClosedTrade[] = [];
-  for (const r of (res.data as Array<{ symbol: string; asset_class: string | null; pnl: string | number }> | null) ??
-    []) {
+  for (const r of (res.data as TradeStatsRow[] | null) ?? []) {
     const pnl = num(r.pnl);
     if (pnl === null || !r.symbol) continue;
-    closed.push({ symbol: r.symbol, pnl, assetClass: r.asset_class ?? classify(r.symbol) });
+    const qty = num(r.qty);
+    const price = num(r.price);
+    closed.push({
+      symbol: r.symbol,
+      pnl,
+      assetClass: r.asset_class ?? classify(r.symbol),
+      ...(r.risk_exit ? { riskExit: r.risk_exit } : {}),
+      // Gebührensatz aus der geteilten Konstante statt aus der Zeile: Der
+      // Paper-Broker rechnet damit, und beide Backends müssen dieselben
+      // Zahlen liefern — sonst wäre der Umschalttag ein sichtbarer Bruch.
+      ...(qty !== null && price !== null
+        ? { notional: qty * price, feeRate: PAPER_FEE_RATE }
+        : {}),
+    });
   }
   if (serie.length === 0 && closed.length === 0) return null;
 
@@ -668,8 +683,19 @@ async function computeStats(uid: string): Promise<PortfolioStatsDoc | null> {
     avgLoss: ts.avgLoss,
     bySymbol: attr.bySymbol,
     byClass: attr.byClass,
+    exits: exitBreakdown(closed),
+    costs: costProfile(closed),
     updatedAt: new Date().toISOString(),
   };
+}
+
+interface TradeStatsRow {
+  symbol: string;
+  asset_class: string | null;
+  pnl: string | number;
+  risk_exit: string | null;
+  qty: string | number | null;
+  price: string | number | null;
 }
 
 /** Wie im Scheduler: jüngste Trades für WinRate und Attribution. */

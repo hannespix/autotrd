@@ -22,6 +22,8 @@ import { logger } from 'firebase-functions/v2';
 import {
   attribution,
   classify,
+  costProfile,
+  exitBreakdown,
   dailyReturns,
   drawdown,
   positionValue,
@@ -115,11 +117,33 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         const pnl = t.get('pnl') as number | undefined;
         const symbol = t.get('symbol') as string | undefined;
         if (typeof pnl === 'number' && Number.isFinite(pnl) && symbol) {
-          closed.push({ symbol, pnl, assetClass: classify(symbol) });
+          // qty × price ist der Positionswert beim Schließen — Basis der
+          // Gebührenschätzung. Der Satz steht am Trade (feeRate), weil er
+          // sich ändern kann; alte Trades ohne das Feld fallen aus dem
+          // Kostenprofil heraus statt es mit Annahmen zu verfälschen.
+          const qty = t.get('qty') as number | undefined;
+          const price = t.get('price') as number | undefined;
+          const feeRate = t.get('feeRate') as number | undefined;
+          const riskExit = t.get('riskExit') as string | undefined;
+          closed.push({
+            symbol,
+            pnl,
+            assetClass: classify(symbol),
+            ...(riskExit ? { riskExit } : {}),
+            ...(typeof qty === 'number' && typeof price === 'number'
+              ? { notional: qty * price }
+              : {}),
+            ...(typeof feeRate === 'number' ? { feeRate } : {}),
+          });
         }
       }
       const ts = tradeStats(closed);
       const attr = attribution(closed);
+      // MT1: Woran sterben die Trades, und wie viel davon frisst die Reibung?
+      // Beides war bis 27.07. nirgends ablesbar und musste von Hand
+      // zurückgerechnet werden.
+      const exits = exitBreakdown(closed);
+      const costs = costProfile(closed);
 
       await userDoc.ref.collection('stats').doc('main').set({
         walletId: 'main',
@@ -138,6 +162,8 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         avgLoss: ts.avgLoss,
         bySymbol: attr.bySymbol,
         byClass: attr.byClass,
+        exits,
+        costs,
         updatedAt: now.toISOString(),
       });
       snapped += 1;

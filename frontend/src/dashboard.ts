@@ -639,6 +639,18 @@ function layout(email: string): string {
           <div><label class="lbl">Profit-Faktor ${iBtn('profitFactor')}</label><div id="pfPF" class="smv mono">--</div></div>
           <div><label class="lbl">Erwartung/Trade ${iBtn('expectancy')}</label><div id="pfExp" class="smv mono">--</div></div>
         </div>
+        <label class="lbl" style="margin-top:10px">Warum geschlossen ${iBtn('exits')}</label>
+        <div id="pfExits" class="fl-tbl"><div class="hint">Noch keine geschlossenen Trades.</div></div>
+        <label class="lbl" style="margin-top:10px">Reibung ${iBtn('kosten')}</label>
+        <div class="pf-grid" id="pfCostGrid" hidden>
+          <div><label class="lbl">Gebühren</label><div id="pfFees" class="smv mono">--</div></div>
+          <div><label class="lbl">Anteil am Ergebnis</label><div id="pfFeeShare" class="smv mono">--</div></div>
+          <div><label class="lbl">Ø Gewinn brutto</label><div id="pfGrossWin" class="smv mono">--</div></div>
+          <div><label class="lbl">Ø Verlust brutto</label><div id="pfGrossLoss" class="smv mono">--</div></div>
+          <div><label class="lbl">Roundtrip-Kosten</label><div id="pfRt" class="smv mono">--</div></div>
+          <div><label class="lbl">Luft über Kosten</label><div id="pfEdge" class="smv mono">--</div></div>
+        </div>
+        <div class="hint" id="pfCostHint"></div>
         <div class="hint" id="pfHint">Kennzahlen entstehen ab dem ersten Tages-Snapshot (täglich 23:15).</div>
       </div></div>
 
@@ -3821,6 +3833,83 @@ function renderPfStats(): void {
   const exp = $('pfExp');
   exp.textContent = s.expectancy === null ? '--' : money(s.expectancy);
   exp.className = `smv mono ${s.expectancy !== null ? pnlClass(s.expectancy) : ''}`;
+  renderExits(s);
+  renderCosts(s);
+}
+
+/** Klarnamen der Ausstiegsgründe — `signal` ist der Sammeltopf ohne Risiko-Exit. */
+const EXIT_LABEL: Record<string, string> = {
+  signal: 'Signal',
+  stop_loss: 'Stop-Loss',
+  take_profit: 'Take-Profit',
+  trailing_stop: 'Trailing-Stop',
+  max_hold: 'Haltedauer',
+};
+
+/**
+ * Ausstiegsgründe (MT1). Die Zeile beantwortet die Frage, die man sonst von
+ * Hand zurückrechnen musste: Erreichen die Trades ihre Risiko-Marken
+ * überhaupt? Steht fast alles unter „Signal", entscheidet nicht die
+ * Risikosteuerung über das Ergebnis, sondern eine gekippte Indikator-Stimme.
+ */
+function renderExits(s: PortfolioStatsDoc): void {
+  const box = $('pfExits');
+  const rows = Object.entries(s.exits ?? {}).sort((a, b) => b[1].n - a[1].n);
+  const total = rows.reduce((a, [, b]) => a + b.n, 0);
+  if (total === 0) {
+    box.innerHTML = '<div class="hint">Noch keine geschlossenen Trades.</div>';
+    return;
+  }
+  box.innerHTML = rows
+    .map(([key, b]) => {
+      const anteil = Math.round((b.n / total) * 100);
+      // Unbekannte Schlüssel kommen aus der Datenbank — auf harmlose Zeichen
+      // beschränken, statt sie ungeprüft in HTML zu setzen.
+      const name = EXIT_LABEL[key] ?? key.replace(/[^\w-]/g, '');
+      return (
+        `<div class="fl-row"><span>${name}</span>` +
+        `<span class="mono">${b.n}× · ${anteil} %</span>` +
+        `<span class="mono ${pnlClass(b.pnl)}">${money(b.pnl)}</span></div>`
+      );
+    })
+    .join('');
+}
+
+/**
+ * Kostenprofil (MT1). `edgeOverCost` ist die eine Zahl, auf die es ankommt:
+ * Ø Gewinnbewegung geteilt durch die Roundtrip-Kosten. Unter 2 verdient
+ * überwiegend der Broker — die Testkonten des Owners lagen bei 1,6 und 1,9.
+ */
+function renderCosts(s: PortfolioStatsDoc): void {
+  const grid = $('pfCostGrid');
+  const hint = $('pfCostHint');
+  const c = s.costs;
+  if (!c || c.n === 0) {
+    grid.hidden = true;
+    hint.textContent = 'Reibung wird ab dem ersten geschlossenen Trade mit Gebührensatz gemessen.';
+    return;
+  }
+  grid.hidden = false;
+  const pct = (v: number | null): string => (v === null ? '--' : `${v.toFixed(2)} %`);
+  $('pfFees').textContent = money(c.fees);
+  $('pfFeeShare').textContent = c.feeSharePct === null ? '--' : `${c.feeSharePct.toFixed(0)} %`;
+  $('pfGrossWin').textContent = pct(c.avgWinGrossPct);
+  $('pfGrossLoss').textContent = pct(c.avgLossGrossPct);
+  $('pfRt').textContent = pct(c.roundTripPct);
+
+  const edge = $('pfEdge');
+  edge.textContent = c.edgeOverCost === null ? '--' : `${c.edgeOverCost.toFixed(2)}×`;
+  // Ampel bewusst streng: Bei Faktor 2 gehen immer noch 50 % jeder
+  // Gewinnbewegung an Gebühren und Slippage.
+  edge.className = `smv mono ${
+    c.edgeOverCost === null ? '' : c.edgeOverCost >= 3 ? 'c-gn' : c.edgeOverCost >= 2 ? '' : 'c-rd'
+  }`;
+  hint.textContent =
+    c.edgeOverCost === null
+      ? ''
+      : c.edgeOverCost < 2
+        ? `Zu wenig Luft: Die durchschnittliche Gewinnbewegung ist nur das ${c.edgeOverCost.toFixed(1)}-Fache der Handelskosten — davon bleibt kaum etwas übrig. Längere Haltedauer oder größerer Zeitrahmen hilft.`
+        : `Die durchschnittliche Gewinnbewegung ist das ${c.edgeOverCost.toFixed(1)}-Fache der Handelskosten.`;
 }
 
 async function manualTrade(symbol: string, side: 'buy' | 'sell'): Promise<void> {
