@@ -11,7 +11,7 @@
  * pro Scan — sonst wären es ~70 Writes je Symbol alle 5 Minuten.
  */
 
-import { getFirestore } from 'firebase-admin/firestore';
+import { FieldPath, FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
@@ -216,14 +216,24 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
       // Bollinger „überverkauft = kaufen" rufen (Whipsaw); nach Take-Profit
       // wäre es eine Gebühren-Schleife. Persistiert am User-Doc, damit der
       // Cooldown Scans überlebt; Einträge > 1 Tag werden weggeräumt.
+      //
+      // Geschrieben wird FELDWEISE, nicht als ganze Map. Der Grund kam mit
+      // dem 1-Minuten-Puls (28.07.): Der setzt ebenfalls Cooldowns, und ein
+      // `update({ engineCooldowns })` hätte dessen Eintrag zwischen Lesen
+      // und Schreiben dieses Scans einfach überschrieben — der Scan hätte
+      // dann ein Symbol zurückgekauft, das der Puls Sekunden zuvor
+      // ausgestoppt hat. Genau der Whipsaw, gegen den der Cooldown da ist.
+      // Feldweise Updates sind reihenfolgeunabhängig; Abgelaufenes wird
+      // explizit gelöscht statt durch Weglassen (Weglassen entfernt bei
+      // merge nichts).
       const engineCooldowns: Record<string, string> = {
         ...((userDoc.get('engineCooldowns') as Record<string, string> | undefined) ?? {}),
       };
-      let cooldownsChanged = false;
+      const cooldownUpdates: unknown[] = [];
       for (const [sym, at] of Object.entries(engineCooldowns)) {
         if (!Number.isFinite(Date.parse(at)) || now.getTime() - Date.parse(at) > 86_400_000) {
           delete engineCooldowns[sym];
-          cooldownsChanged = true;
+          cooldownUpdates.push(new FieldPath('engineCooldowns', sym), FieldValue.delete());
         }
       }
 
@@ -274,7 +284,10 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
             executed += 1;
             positions.delete(symbol);
             engineCooldowns[symbol] = now.toISOString();
-            cooldownsChanged = true;
+            cooldownUpdates.push(
+              new FieldPath('engineCooldowns', symbol),
+              now.toISOString(),
+            );
             logger.info(`Risk-Exit ${uid} ${symbol} (${reason}${isShort ? ', short' : ''})`);
           }
         }
@@ -697,8 +710,10 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
       // bei Änderung). update() ersetzt GENAU dieses Feld durch die
       // bereinigte Map — set/merge würde weggeräumte Einträge liegen lassen,
       // set ohne merge das ganze User-Doc (Wallet!) plattmachen.
-      if (cooldownsChanged) {
-        await userDoc.ref.update({ engineCooldowns }).catch(() => undefined);
+      if (cooldownUpdates.length > 0) {
+        await (userDoc.ref.update as (...a: unknown[]) => Promise<unknown>)(
+          ...cooldownUpdates,
+        ).catch(() => undefined);
       }
 
       // Schatten-Flotte des Auto-Tuners (MT2): Jede Parameter-Variante rechnet

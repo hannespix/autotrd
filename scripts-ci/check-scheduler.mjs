@@ -45,6 +45,10 @@ const JOB_ID = 'firebase-schedule-scanMarket-us-central1';
  */
 const SCHEDULES = [
   { fn: 'scanMarket', service: 'scanmarket', cron: '*/5 * * * *', was: 'Marktscan' },
+  // Der Ausstiegs-Wächter läuft MINÜTLICH: Ein Stop-Loss, der fünf Minuten
+  // zu spät auslöst, kostet Geld — ein Einstieg fünf Minuten später fast
+  // nichts (Owner-Wunsch 28.07., Begründung in riskPulse.ts).
+  { fn: 'riskPulse', service: 'riskpulse', cron: '* * * * *', was: 'Risiko-Puls' },
   { fn: 'evalForecasts', service: 'evalforecasts', cron: '30 16 * * 1-5', was: 'Prognose-Bewertung' },
   { fn: 'snapshotEquity', service: 'snapshotequity', cron: '15 17 * * *', was: 'Equity-Snapshot' },
   { fn: 'autoTune', service: 'autotune', cron: '45 17 * * *', was: 'Auto-Tuner' },
