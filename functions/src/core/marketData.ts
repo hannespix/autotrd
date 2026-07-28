@@ -235,7 +235,7 @@ export interface SparkQuote {
   lastGridT: number;
 }
 
-interface SparkEntry {
+export interface SparkEntry {
   symbol?: string;
   timestamp?: number[];
   close?: (number | null)[];
@@ -278,6 +278,67 @@ export async function getSparkBatch(symbols: string[]): Promise<Map<string, Spar
     }
   }
   return out;
+}
+
+/**
+ * TAGES-Closes für viele Symbole in wenigen Requests.
+ *
+ * Derselbe Spark-Endpoint, nur mit `interval=1d` — gemessen am 28.07.:
+ * `range=1y` liefert ~251 Tageswerte je Symbol, `range=2y` ~500, weiterhin
+ * 20 Symbole pro Request.
+ *
+ * Das entscheidet, wie schnell das Momentum-Ranking den Katalog überhaupt
+ * bewerten kann. Vorher las `runMomentum` die Historie symbolweise aus
+ * Firestore und holte fehlende über je einen Chart-Fetch nach — gedeckelt auf
+ * 20 Symbole pro TAG. Bei 166 Katalog-Symbolen hätte der erste vollständige
+ * Ranglisten-Lauf damit rund neun Tage gebraucht, und bis dahin rankte das
+ * System nur die Handvoll Symbole, die zufällig schon Historie hatte.
+ * „Breit bewerten, schmal beobachten" war also bis dahin bloß eine Absicht.
+ *
+ * Mit dem Bündel sind es 9 Requests für den ganzen Katalog — der erste Lauf
+ * bewertet sofort alles.
+ */
+export async function getSparkDailyCloses(
+  symbols: string[],
+  range = '2y',
+): Promise<Map<string, number[]>> {
+  const out = new Map<string, number[]>();
+  const chunks: string[][] = [];
+  for (let i = 0; i < symbols.length; i += SPARK_CHUNK) {
+    chunks.push(symbols.slice(i, i + SPARK_CHUNK));
+  }
+
+  const results = await Promise.allSettled(
+    chunks.map(async (chunk) => {
+      const url =
+        `${SPARK_URL}?symbols=${chunk.map(encodeURIComponent).join(',')}` +
+        `&range=${range}&interval=1d`;
+      const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (autotrd)' } });
+      if (!res.ok) throw new Error(`Yahoo spark 1d: HTTP ${res.status} (${chunk.length} Symbole)`);
+      return (await res.json()) as Record<string, SparkEntry>;
+    }),
+  );
+
+  for (const r of results) {
+    if (r.status !== 'fulfilled') continue;
+    for (const [symbol, entry] of Object.entries(r.value)) {
+      const closes = sparkCloses(entry);
+      if (closes.length > 0) out.set(symbol, closes);
+    }
+  }
+  return out;
+}
+
+/**
+ * Die Close-Reihe eines Spark-Eintrags, bereinigt.
+ *
+ * Lücken (Feiertage, Handelspausen) kommen als `null` und fallen raus statt
+ * als 0 zu zählen: Eine 0 im Kursverlauf ist kein fehlender Wert, sondern ein
+ * Kurssturz auf null — sie würde jede Rendite-Rechnung darüber vergiften und
+ * das Symbol im Momentum-Ranking auf den letzten Platz katapultieren.
+ */
+export function sparkCloses(entry: SparkEntry | undefined): number[] {
+  return (entry?.close ?? []).filter((c): c is number => typeof c === 'number' && c > 0);
 }
 
 /** Ein Spark-Eintrag → Quote. Exportiert, damit die Zerlegung testbar ist,

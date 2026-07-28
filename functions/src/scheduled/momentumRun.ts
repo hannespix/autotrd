@@ -4,9 +4,11 @@
  *
  * ── Was hier passiert ───────────────────────────────────────────────────────
  *
- *  1. Historie für alle Katalog-Symbole aus `market/{sym}/ohlcDaily/*` lesen
- *     (ein Read je Symbol-Jahr, kein einziger Netz-Fetch).
- *  2. Symbole ohne tiefe Historie rotierend nachfüllen — mit hartem Deckel.
+ *  1. Tages-Closes für ALLE Katalog-Symbole in einem Spark-Bündel holen
+ *     (~9 Requests für 166 Symbole) — der erste Lauf bewertet sofort das
+ *     ganze Universum. Fällt Yahoo aus, greift die gespeicherte Historie.
+ *  2. Tiefe OHLCV-Historie für die CHARTS rotierend nachfüllen (Spark kennt
+ *     nur Closes) — mit hartem Deckel.
  *  3. Ranking + Marktfilter rechnen, Ergebnis täglich nach `meta/momentum`
  *     schreiben (das ist die Datengrundlage der späteren Optimierung).
  *  4. Wöchentlich das Schattendepot auf das Zielportfolio bringen.
@@ -47,7 +49,7 @@ import {
   type MomentumBook,
   type RankedSymbol,
 } from '../../../shared/src/index.js';
-import { getDeepDailyBars, chunkBarsByYear } from '../core/marketData.js';
+import { getDeepDailyBars, getSparkDailyCloses, chunkBarsByYear } from '../core/marketData.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 
 /** Leitindex des Marktfilters — der breiteste verfügbare US-Index. */
@@ -56,13 +58,13 @@ const MARKET_INDEX = '^GSPC';
  *  Ergebnisse mit den echten Konten vergleichbar bleiben. */
 export const MOMENTUM_START_BALANCE = 25_000;
 /**
- * Symbole je Lauf, für die tiefe Historie nachgeholt wird.
+ * Symbole je Lauf, für die tiefe OHLCV-Historie nachgeholt wird.
  *
- * Der Katalog hat 166 Einträge; bei 20 je Tag ist er nach gut einer Woche
- * vollständig. Solange darf das Ranking mit weniger Symbolen laufen —
- * `momentumScore` gibt für zu kurze Reihen `null` zurück, sie fallen also
- * sauber heraus statt das Ranking zu verfälschen. Die Strategie startet
- * klein und wächst; das ist ehrlicher als auf Vollständigkeit zu warten.
+ * Das betrifft seit dem Spark-Umbau nur noch die CHARTS, nicht mehr das
+ * Ranking — der Deckel verzögert also keine Bewertung mehr, sondern nur, wie
+ * schnell man in einem selten geöffneten Symbol weit zurückscrollen kann.
+ * Vorher hing die Rangliste an genau dieser Zahl: 166 Symbole ÷ 20 pro Tag
+ * ≈ neun Tage bis zum ersten vollständigen Lauf.
  */
 const BACKFILL_PRO_LAUF = 20;
 
@@ -99,20 +101,42 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
   const db = getFirestore();
   const katalog = allSymbols();
 
-  // ── 1. Historie einlesen ──────────────────────────────────────────────────
+  // ── 1. Historie für den GANZEN Katalog holen ──────────────────────────────
+  // Ein Spark-Bündel (20 Symbole je Request, ~9 Requests für 166 Symbole)
+  // statt 166 Firestore-Lesungen plus rotierendem Nachholen von 20 Symbolen
+  // pro TAG. Der alte Weg hätte für den ersten vollständigen Ranglisten-Lauf
+  // rund neun Tage gebraucht — solange rankte das System nur die Handvoll
+  // Symbole, die zufällig schon Historie hatte, und „breit bewerten" war
+  // bloß eine Absicht. Jetzt bewertet der erste Lauf sofort alles.
   const closesMap = new Map<string, number[]>();
-  const fehlend: string[] = [];
-  for (const sym of katalog) {
-    const closes = await ladeCloses(sym);
-    if (closes.length >= MOMENTUM_DEFAULTS.minBars) closesMap.set(sym, closes);
-    else fehlend.push(sym);
+  let fehlend: string[] = [];
+  try {
+    const batchCloses = await getSparkDailyCloses(katalog);
+    for (const sym of katalog) {
+      const closes = batchCloses.get(sym);
+      if (closes && closes.length >= MOMENTUM_DEFAULTS.minBars) closesMap.set(sym, closes);
+      else fehlend.push(sym);
+    }
+  } catch (err) {
+    // Kein Ranking aus halben Daten: Fällt Yahoo aus, wird auf die
+    // gespeicherte Historie zurückgefallen statt auf eine Rangliste aus
+    // Zufallssymbolen. Eine Rangliste, die nur die Hälfte des Katalogs kennt,
+    // sieht genauso aus wie eine richtige — und ist trotzdem falsch.
+    logger.warn('Momentum: Spark-Bündel fehlgeschlagen — Rückfall auf ohlcDaily', err);
+    fehlend = [];
+    for (const sym of katalog) {
+      const closes = await ladeCloses(sym);
+      if (closes.length >= MOMENTUM_DEFAULTS.minBars) closesMap.set(sym, closes);
+      else fehlend.push(sym);
+    }
   }
 
-  // ── 2. Fehlende Historie rotierend nachholen ──────────────────────────────
-  // Rotierend statt „immer die ersten N": Sonst blieben Symbole, deren
-  // Fetch dauerhaft scheitert, für immer der Kopf der Schlange und die
-  // übrigen kämen nie dran (dieselbe Kopf-Blockade wie bei der
-  // Intraday-Bewertung am 27.07.).
+  // ── 2. Tiefe Chart-Historie rotierend nachziehen ──────────────────────────
+  // Das Ranking braucht diese Docs nicht mehr (s. o.), die CHARTS schon:
+  // ohlcDaily hält ~5 Jahre OHLCV fürs nahtlose Rausscrollen, Spark liefert
+  // nur Closes. Rotierend statt „immer die ersten N", damit Symbole, deren
+  // Fetch dauerhaft scheitert, nicht für immer den Kopf der Schlange
+  // blockieren (dieselbe Falle wie bei der Intraday-Bewertung am 27.07.).
   let backfilled = 0;
   if (fehlend.length > 0) {
     const stateRef = db.doc('meta/momentum');
