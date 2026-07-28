@@ -114,6 +114,10 @@ export const INFO: Record<string, { t: string; d: string }> = {
     t: 'Ergebnis nach Handelsstunde',
     d: 'Wann am Tag verdient oder verliert die Strategie — in New Yorker Börsenzeit, nicht in UTC (sonst würde die Sommerzeit die Eröffnungsstunde zweimal im Jahr in ein anderes Fach schieben). Typisches Muster: Die erste Handelsstunde ist die volatilste und für viele Strategien die teuerste. Steht dein Minus konzentriert in einem Zeitfenster, braucht es keine neuen Indikatoren, sondern eine Handelspause.',
   },
+  kollektiv: {
+    t: 'Aus allen Konten gelernt',
+    d: 'Welche Einstellungs-Änderungen sich ÜBER ALLE Konten hinweg bewährt haben. Zwei Dinge macht dieses Wissen — und zwei ausdrücklich nicht. Es bestimmt erstens die Reihenfolge: Es gibt mehr Kandidaten als Plätze in deiner Schatten-Flotte, und die anderswo bewährten kommen zuerst dran, damit du schneller bei der guten Einstellung landest. Zweitens startet ein neues Konto damit, statt bei den Fabrikwerten anzufangen. Was es NICHT tut: deine Beweisschwelle senken. Jede Übernahme in DEINEM Konto braucht weiterhin die volle statistische Evidenz aus deinen eigenen Trades — denn jedes Konto startet von einer anderen Einstellung, und was dort half, kann hier schaden. Und es fließen nur Zählwerte ein (wie oft geprüft, wie oft übernommen), niemals einzelne Trades oder Beträge anderer Nutzer.',
+  },
   kurzfrist: {
     t: 'Kurzfrist-Prognose (Intraday)',
     d: 'Projektion der nächsten Stunde auf 5-Minuten-Kerzen — bei jedem Scan neu berechnet. Sie lernt in einem eigenen Regelkreis (stündliche Bewertung gegen realisierte Bars) getrennt von der Tages-Prognose.',

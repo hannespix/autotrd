@@ -10,6 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_STRATEGY,
+  applyVariantId,
   buildVariants,
   describeVariant,
   labelVariantId,
@@ -116,5 +117,40 @@ describe('labelVariantId', () => {
     // Kennung als eine leere Zeile — aber ohne Markup, das die Karte baut.
     expect(labelVariantId('<img src=x onerror=alert(1)>')).toBe('imgsrc=xonerror=alert1');
     expect(labelVariantId('altesFeld=7')).toBe('altesFeld=7');
+  });
+});
+
+describe('applyVariantId (Startpunkt neuer Konten aus dem Kollektiv)', () => {
+  it('wendet einen Gitterwert an und meldet Erfolg', () => {
+    const s = structuredClone(DEFAULT_STRATEGY);
+    expect(applyVariantId(s, 'minHoldMin=120')).toBe(true);
+    expect(s.engine.minHoldMin).toBe(120);
+  });
+
+  it('verwirft einen unbekannten Achsen-Schlüssel still', () => {
+    // Die IDs stammen aus gespeicherten Aggregaten und können eine
+    // Achsen-Umbenennung überlebt haben. Zu werfen hieße, dass eine alte
+    // Zeile in der Statistik jede Profil-Anlage sprengt.
+    const s = structuredClone(DEFAULT_STRATEGY);
+    expect(applyVariantId(s, 'gibtsNicht=5')).toBe(false);
+    expect(s).toEqual(DEFAULT_STRATEGY);
+  });
+
+  it('verwirft einen Wert AUSSERHALB des Gitters', () => {
+    // Der scharfe Fall: Der Schlüssel stimmt, der Wert nicht. Ihn trotzdem
+    // zu setzen brächte eine Einstellung ins Konto, die nie geprüft wurde.
+    const s = structuredClone(DEFAULT_STRATEGY);
+    expect(applyVariantId(s, 'minHoldMin=999')).toBe(false);
+    expect(s.engine.minHoldMin).toBe(DEFAULT_STRATEGY.engine.minHoldMin);
+  });
+
+  it('kommt mit einer ID ohne Gleichheitszeichen klar', () => {
+    expect(applyVariantId(structuredClone(DEFAULT_STRATEGY), 'kaputt')).toBe(false);
+  });
+
+  it('behandelt Zeichenketten-Achsen korrekt', () => {
+    const s = structuredClone(DEFAULT_STRATEGY);
+    expect(applyVariantId(s, 'timeframe=daily')).toBe(true);
+    expect(s.signals.timeframe).toBe('daily');
   });
 });

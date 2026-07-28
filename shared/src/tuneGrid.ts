@@ -147,6 +147,38 @@ export function buildVariants(base: Strategy, max = 6, axes: TuneAxis[] = TUNE_A
   return out;
 }
 
+/**
+ * Eine Varianten-ID (`minHoldMin=120`) auf eine Strategie anwenden.
+ *
+ * Gegenstück zu `labelVariantId`: Dort wird die ID gelesen, hier wirkt sie.
+ * Gebraucht für den Start neuer Konten mit dem, was das Kollektiv gelernt
+ * hat (`recommendedStart` in globalLearning.ts liefert die IDs).
+ *
+ * Unbekannte Schlüssel und Werte außerhalb des Gitters werden STILL
+ * verworfen — die IDs kommen aus gespeicherten Aggregaten, die eine
+ * Achsen-Umbenennung überlebt haben können. Eine Strategie aus einem Wert
+ * zu bauen, den keine Achse mehr kennt, wäre schlimmer als ihn zu ignorieren.
+ *
+ * Gibt zurück, ob tatsächlich etwas angewandt wurde.
+ */
+export function applyVariantId(
+  strategy: Strategy,
+  id: string,
+  axes: TuneAxis[] = TUNE_AXES,
+): boolean {
+  const [key = '', ...rest] = id.split('=');
+  const rohWert = rest.join('=');
+  const axis = axes.find((a) => a.key === key);
+  if (!axis) return false;
+  // Der Wert muss aus dem Gitter stammen: Nur so ist garantiert, dass er
+  // denselben Typ hat wie beim Erzeugen — und dass die Risiko-Hülle ihn
+  // kennt.
+  const wert = axis.values.find((v) => String(v) === rohWert);
+  if (wert === undefined) return false;
+  axis.apply(strategy, wert);
+  return true;
+}
+
 /** Lesbare Beschreibung fürs Journal: „Mindest-Haltedauer 60 → 120". */
 export function describeVariant(base: Strategy, v: Variant): string {
   const axis = TUNE_AXES.find((a) => a.key === v.axis);

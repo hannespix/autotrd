@@ -11,6 +11,7 @@ import {
   PAPER_FEE_RATE,
   aggregateBars,
   bollinger,
+  buildPriors,
   byHour,
   bySymbol,
   byWeekday,
@@ -31,6 +32,7 @@ import {
   validateStrategy,
   vwapSessions,
   wilderRsi,
+  type GlobalAxisStats,
   type HistoryTrade,
   type Position,
   type Strategy,
@@ -80,6 +82,7 @@ import {
   watchEquitySeries,
   watchMomentum,
   watchTuneFleet,
+  watchTuneGlobal,
   watchTuneLog,
   type EvaluatedForecastRow,
   type ForecastStatsDoc,
@@ -473,11 +476,7 @@ function layout(email: string): string {
           <tbody id="jBody"><tr><td colspan="6" class="c-t3">Keine Trades</td></tr></tbody>
         </table></div>
         <button class="btn btn-n" id="jMore" style="width:100%;margin-top:6px">Ältere laden</button>
-      </div></div>
-
-      <div class="card" data-panel="analytics"><div class="sect">Handels-Analyse
-        <span id="anScope" style="float:right;color:var(--t3)"></span></div><div class="cbody">
-        <div id="anBody"><div class="hint">Noch keine geschlossenen Trades.</div></div>
+        <button class="btn btn-g" id="anOpen" style="width:100%;margin-top:6px">Analyse öffnen</button>
       </div></div>
     </div>
 
@@ -799,6 +798,8 @@ function layout(email: string): string {
           abgelehnten.</div>
         <label class="lbl" style="margin-top:8px">Schatten-Flotte — Fortschritt der Beweisaufnahme</label>
         <div id="tnFleet" class="fl-tbl"><div class="hint">Die Flotte startet mit dem nächsten Scan.</div></div>
+        <label class="lbl" style="margin-top:10px">Aus allen Konten gelernt ${iBtn('kollektiv')}</label>
+        <div id="tnGlobal" class="fl-tbl"><div class="hint">Noch zu wenige Konten für Kollektivwissen.</div></div>
         <label class="lbl" style="margin-top:10px">Änderungs-Journal</label>
         <div id="tnLog" class="tn-log"><div class="hint">Noch keine Prüfung — der Tuner urteilt täglich nach US-Schluss.</div></div>
       </div></div>
@@ -828,6 +829,20 @@ function layout(email: string): string {
   <div class="dmodal" id="detailModal">
     <div class="dmodal-bg" data-close="detail"></div>
     <div class="dsheet" id="detailSheet"></div>
+  </div>
+
+  <!-- Handels-Analyse als eigene Vollbild-Ansicht (Owner-Feedback 28.07.:
+       „passt von der Größe nicht" in die 280-px-Spalte). Sechs Diagramme
+       sind kein Seitenleisten-Widget: Man schaut sie selten an, dann aber
+       gründlich — und dafür brauchen sie die ganze Breite, ohne dem
+       Live-Chart Platz wegzunehmen. -->
+  <div class="dmodal" id="anModal">
+    <div class="dmodal-bg" data-close="analytics"></div>
+    <div class="dsheet dsheet-wide">
+      <button class="dclose" data-close="analytics">✕</button>
+      <h3>Handels-Analyse <span id="anScope" class="an-scope"></span></h3>
+      <div id="anBody"><div class="hint">Noch keine geschlossenen Trades.</div></div>
+    </div>
   </div>
 
   <div class="dmodal" id="optModal">
@@ -2238,6 +2253,14 @@ function wireHistorie(): void {
     mehr.dataset.wired = '1';
     mehr.addEventListener('click', () => void ladeAeltereTrades());
   }
+  const auf = $('anOpen');
+  if (auf && auf.dataset.wired !== '1') {
+    auf.dataset.wired = '1';
+    auf.addEventListener('click', () => {
+      renderAnalytics(); // frisch rechnen, nicht den Stand vom letzten Öffnen zeigen
+      $('anModal').classList.add('show');
+    });
+  }
   for (const id of ['jFilter', 'jSide']) {
     const el = $(id);
     if (!el || el.dataset.wired === '1') continue;
@@ -3343,8 +3366,15 @@ function openDetail(symbol: string, name: string, data: MarketDocData | null): v
   });
 }
 
-function closeModal(which: 'detail' | 'options'): void {
-  $(which === 'detail' ? 'detailModal' : 'optModal').classList.remove('show');
+const MODAL_IDS = {
+  detail: 'detailModal',
+  options: 'optModal',
+  analytics: 'anModal',
+} as const;
+type ModalName = keyof typeof MODAL_IDS;
+
+function closeModal(which: ModalName): void {
+  $(MODAL_IDS[which]).classList.remove('show');
 }
 
 /* ── Portfolio (Wallet, Positionen, Trades) ─────────────────────────── */
@@ -3531,7 +3561,10 @@ function renderPortfolio(): void {
   }
 
   renderJournal();
-  renderAnalytics();
+  // Nur nachziehen, wenn die Ansicht offen ist: Sechs Diagramme bei jedem
+  // Portfolio-Render neu zu bauen, kostet bei jedem eintreffenden Trade
+  // Rechenzeit für Markup, das niemand sieht.
+  if ($('anModal')?.classList.contains('show')) renderAnalytics();
 }
 
 /**
@@ -3925,6 +3958,42 @@ function renderMomentum(m: MomentumDoc | null): void {
  * besser wäre, sondern weil noch keine Variante genug Trades für ein
  * belastbares Urteil hat.
  */
+/**
+ * Was das KOLLEKTIV gelernt hat (Owner-Wunsch 28.07.).
+ *
+ * Bewusst mit sichtbarer Vertrauensangabe: Eine Zeile „Kauf-Pause 60 min —
+ * 82 % übernommen" ohne die Zahl der beitragenden Konten daneben liest sich
+ * wie eine Tatsache, obwohl sie aus drei Konten stammen kann. Wer sich
+ * danach richtet, soll sehen, worauf sie steht.
+ */
+function renderTuneGlobal(stats: GlobalAxisStats): void {
+  const box = $('tnGlobal');
+  if (!box) return;
+  const priors = buildPriors(stats);
+  if (priors.length === 0) {
+    const roh = Object.keys(stats).length;
+    box.innerHTML = `<div class="hint">${
+      roh === 0
+        ? 'Noch keine Prüfungen im Kollektiv.'
+        : `${roh} Einstellung(en) in Beobachtung — es fehlen noch Konten oder Prüfungen für ein belastbares Urteil.`
+    }</div>`;
+    return;
+  }
+  box.innerHTML = priors
+    .slice(0, 6)
+    .map((p) => {
+      const s = stats[p.variantId];
+      const quote = Math.round(p.promoteRate * 100);
+      return (
+        `<div class="tn-fl"><span class="tn-nm">${esc(labelVariantId(p.variantId))}</span>` +
+        `<span class="tn-bar"><i style="width:${quote}%"></i></span>` +
+        `<span class="mono">${quote}% · ${s?.accounts ?? 0} Konten</span>` +
+        `<span class="mono ${pnlClass(p.meanEdge)}">${money(p.meanEdge)}</span></div>`
+      );
+    })
+    .join('');
+}
+
 function renderTuneFleet(rows: TuneFleetRow[]): void {
   const box = $('tnFleet');
   if (rows.length === 0) {
@@ -4370,6 +4439,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     watchMomentum(renderMomentum),
     watchTuneFleet(uid, renderTuneFleet),
     watchTuneLog(uid, renderTuneLog),
+    watchTuneGlobal(renderTuneGlobal),
   );
 
   // Link-Bus (M9): Chart- und News-Kontext folgen ihrer jeweiligen Gruppe.
@@ -4571,7 +4641,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   $('engStop').addEventListener('click', () =>
     void submitStrategy({ ...formStrategy(), engine: { ...formStrategy().engine, running: false } }, 'Engine-Flag: AUS'));
   document.querySelectorAll('[data-close]').forEach((el) =>
-    el.addEventListener('click', () => closeModal((el as HTMLElement).dataset.close as 'detail' | 'options')));
+    el.addEventListener('click', () => closeModal((el as HTMLElement).dataset.close as ModalName)));
   $('burgL').addEventListener('click', () => { $('leftCol').classList.toggle('show'); $('olv').classList.toggle('show'); });
   $('burgR').addEventListener('click', () => { $('rightCol').classList.toggle('show'); $('olv').classList.toggle('show'); });
   // Desktop-Sidebars ein-/ausblendbar (Taschenmesser Teil 1) — persistiert

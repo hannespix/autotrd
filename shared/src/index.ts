@@ -11,3 +11,4 @@ export * from './autotune.js';
 export * from './tuneGrid.js';
 export * from './momentum.js';
 export * from './tradeAnalytics.js';
+export * from './globalLearning.js';
