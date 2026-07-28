@@ -1,7 +1,7 @@
 # autotrd
 
 **autotrd.net** — Paper-Daytrading-Plattform mit Live-Dashboard, technischer
-Konfluenz-Signalgebung, sentiment-gewichteter Kursprognose (self-tuning) und
+Konfluenz-Signalgebung, self-tunender Kursprognose und
 KI-News-Analyse. Multi-User, realtime, gebaut auf Firebase + TypeScript.
 
 > ⚠️ **Kein Finanzrat.** Standard ist Paper-Trading (simuliertes Geld).
@@ -11,7 +11,7 @@ KI-News-Analyse. Multi-User, realtime, gebaut auf Firebase + TypeScript.
 
 1. **[ARCHITECTURE.md](ARCHITECTURE.md)** — Zielarchitektur: TS-Monorepo,
    Firebase (Auth/Firestore/Functions), Frontend auf webgo/autotrd.net,
-   GitHub-Actions-Deploy, Datenmodell, Security, KI-Staffel.
+   GitHub-Actions-Deploy, Datenmodell, Security.
 2. **[MILESTONES.md](MILESTONES.md)** — Fahrplan M0–M8 **und der Coding-Loop**:
    wie hier gearbeitet, verifiziert und committet wird.
 3. **[CLAUDE.md](CLAUDE.md)** — Fallen & Konventionen des bestehenden Codes
@@ -49,12 +49,8 @@ npm run build                # baut shared + functions + frontend
 # Emulator-Suite (Auth :9099, Firestore :8081, Functions :5001, UI :4000).
 # Ohne echtes Firebase-Projekt mit einer demo-Projekt-ID starten:
 npm run build -w functions
-FUNCTIONS_DISCOVERY_TIMEOUT=60 npx firebase emulators:start --project demo-autotrd
+npx firebase emulators:start --project demo-autotrd
 curl localhost:5001/demo-autotrd/us-central1/healthz   # Smoke: {"ok":true,…}
-# (Der erhöhte Discovery-Timeout ist nötig, seit die Functions das
-#  Anthropic-SDK laden. KI lokal testen: functions/.secret.local mit
-#  ANTHROPIC_API_KEY=… anlegen — ohne Key degradiert alles sichtbar
-#  auf regelbasiert, siehe docs/SETUP.md §H.)
 
 # Frontend-Dev-Server (http://localhost:5173):
 cp frontend/.env.example frontend/.env.local   # Werte eintragen — ODER:

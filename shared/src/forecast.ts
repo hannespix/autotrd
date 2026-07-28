@@ -5,10 +5,9 @@
  * Ehrliche Heuristik, KEIN Markt-Orakel:
  * - Baseline: Kleinste-Quadrate-Regression über die letzten N Tages-Closes
  *   → Drift, `horizon` Werktage projiziert, ±1σ-Residuenband.
- * - Sentiment-Tilt: Drift wird in Richtung des News-Sentiments verschoben,
- *   skaliert mit der Tagesvolatilität, hart gedeckelt (±TILT_CAP·vol).
- * - Self-Tuning: Shadow-Prognosen über WEIGHT_GRID × LOOKBACK_GRID; die
- *   Live-Prognose nutzt die historisch beste Kombi (nur realisierte Scores!).
+ * - Feature-Tilt (V2): RSI- und MACD-Lage verschieben die Drift, gedeckelt.
+ * - Self-Tuning: Shadow-Prognosen über LOOKBACK_GRID; die Live-Prognose
+ *   nutzt den historisch besten Lookback (nur realisierte Scores!).
  *
  * LOOKAHEAD-GATE (CLAUDE.md §5 — heilig, nie aufweichen):
  * `isForecastDue` lässt nur Prognosen zur Bewertung zu, deren LETZTER
@@ -18,9 +17,7 @@
 
 import { macd, wilderRsi } from './indicators.js';
 
-export const WEIGHT_GRID = [0.0, 0.25, 0.5, 0.75, 1.0] as const;
 export const LOOKBACK_GRID = [10, 20, 30] as const;
-export const DEFAULT_W = 0.5;
 export const DEFAULT_LOOKBACK = 20;
 export const FORECAST_HORIZON = 6; // projizierte Werktage
 export const TILT_CAP = 1.5; // Tilt ≤ dies × Tagesvolatilität
@@ -43,7 +40,6 @@ export interface ForecastComputation {
   band: ForecastBandPoint[];
   slope: number;
   slopeAdj: number;
-  tilt: number;
   dailyVol: number;
   sigma: number;
   baseClose: number;
@@ -104,15 +100,22 @@ export function dailyVol(closes: number[]): number {
 }
 
 /**
- * Eine Prognose für eine (sentiment, w, lookback)-Kombi — exakter Port von
- * forecaster.compute inkl. Rundungen. `closes` älteste→neueste; `baseDate`
- * ist das Datum des letzten Bars. Liefert null bei < 5 Bars.
+ * Eine Prognose für eine `lookback`-Länge: lineare Regression über die
+ * letzten n Closes, linear fortgeschrieben, mit einem Band aus der
+ * Residuen-Streuung. `closes` älteste→neueste; `baseDate` ist das Datum des
+ * letzten Bars. Liefert null bei < 5 Bars.
+ *
+ * **Kein Sentiment-Tilt mehr** (28.07.): Die Prognose kannte einen Term
+ * `w × sentiment × vol`, der die Steigung nach der Nachrichtenlage
+ * verschob. Mit dem Ausbau der News-Strecke ist `sentiment` konstant 0 —
+ * der Term war exakt null, und die ganze `w`-Achse des Suchgitters
+ * unterschied Kombis, die dieselbe Zahl rechneten. Fünf w-Werte × drei
+ * Lookbacks hieß: 15 identische Prognosen je Symbol und Tag, alle
+ * gespeichert, alle einzeln bewertet. Jetzt sind es drei echte.
  */
 export function computeForecast(
   closes: number[],
   baseDate: string,
-  sentiment: number,
-  w: number,
   horizon: number = FORECAST_HORIZON,
   lookback: number = DEFAULT_LOOKBACK,
 ): ForecastComputation | null {
@@ -122,11 +125,7 @@ export function computeForecast(
   const { slope, intercept: _i, sigma } = linreg(seg);
   const vol = dailyVol(seg);
   const last = seg[seg.length - 1]!;
-
-  let tilt = w * sentiment * vol;
-  const cap = TILT_CAP * vol;
-  tilt = Math.max(-cap, Math.min(cap, tilt));
-  const slopeAdj = slope + tilt;
+  const slopeAdj = slope;
 
   const dates = nextWeekdays(baseDate, horizon);
   const points: ForecastPoint[] = [];
@@ -143,7 +142,6 @@ export function computeForecast(
     band,
     slope: round(slope, 5),
     slopeAdj: round(slopeAdj, 5),
-    tilt: round(tilt, 5),
     dailyVol: round(vol, 5),
     sigma: round(sigma, 5),
     baseClose: round(last, 4),
@@ -211,8 +209,11 @@ export interface ComboStat {
  * Tiebreak niedrigste MAE; Defaults bis genug Evidenz da ist (kein Lookahead —
  * es fließen nur bereits bewertete Prognosen ein).
  */
-export function bestParams(combos: Record<string, ComboStat>): { w: number; lookback: number } {
-  const fallback = { w: DEFAULT_W, lookback: DEFAULT_LOOKBACK };
+export function bestParams(
+  combos: Record<string, ComboStat>,
+  fallbackLookback: number = DEFAULT_LOOKBACK,
+): { lookback: number } {
+  const fallback = { lookback: fallbackLookback };
   const entries = Object.entries(combos);
   const total = entries.reduce((s, [, d]) => s + d.n, 0);
   if (total < MIN_TOTAL_SCORES) return fallback;
@@ -226,13 +227,20 @@ export function bestParams(combos: Record<string, ComboStat>): { w: number; look
       best = { key, dirAcc, mae };
     }
   }
-  const [w, lb] = best!.key.split('_');
-  return { w: Number(w), lookback: Number(lb) };
+  const lb = Number(best!.key);
+  return { lookback: Number.isFinite(lb) && lb > 0 ? lb : fallbackLookback };
 }
 
-/** Kombi-Schlüssel für Stats/Doc-IDs: `${w}_${lookback}` (z. B. "0.5_20"). */
-export function comboKey(w: number, lookback: number): string {
-  return `${w}_${lookback}`;
+/**
+ * Kombi-Schlüssel für Stats und Doc-IDs — seit 28.07. der Lookback allein.
+ *
+ * Vorher `${w}_${lookback}`. Ein Altbestand mit Unterstrich fällt in
+ * `bestParams` durch die `Number()`-Prüfung und landet beim Fallback: Der
+ * Tuner beginnt seine Evidenz neu, statt aus Schlüsseln zu lesen, deren
+ * zweite Hälfte es nicht mehr gibt.
+ */
+export function comboKey(lookback: number): string {
+  return String(lookback);
 }
 
 /* ── Intraday-Kurzfrist-Prognose (Prognose 2.0 Teil 2) ───────────────────────
@@ -247,9 +255,7 @@ export function comboKey(w: number, lookback: number): string {
  * ≤ jetzt) UND sein Close realisiert vorliegt (scoreForecast-Semantik).
  */
 
-export const INTRADAY_WEIGHT_GRID = [0, 0.5, 1.0] as const;
 export const INTRADAY_LOOKBACK_GRID = [24, 48] as const; // 5-min-Bars (2 h / 4 h)
-export const DEFAULT_INTRADAY_W = 0.5;
 export const DEFAULT_INTRADAY_LOOKBACK = 24;
 export const INTRADAY_HORIZON = 12; // 12 × 5 min = 1 Stunde
 export const INTRADAY_STEP_SEC = 300;
@@ -278,14 +284,12 @@ export interface IntradayForecastComputation {
 
 /**
  * Kurzfrist-Prognose über die nächsten `horizon` 5-min-Bars — dieselbe
- * Regression+Tilt-Mechanik wie computeForecast, Zeitachse = baseT + k·step.
+ * Regressions-Mechanik wie computeForecast, Zeitachse = baseT + k·step.
  * `closes` älteste→neueste; liefert null bei < 5 Bars.
  */
 export function computeIntradayForecast(
   closes: number[],
   baseT: number,
-  sentiment: number,
-  w: number,
   horizon: number = INTRADAY_HORIZON,
   lookback: number = DEFAULT_INTRADAY_LOOKBACK,
   stepSec: number = INTRADAY_STEP_SEC,
@@ -296,11 +300,7 @@ export function computeIntradayForecast(
   const { slope, sigma } = linreg(seg);
   const vol = dailyVol(seg); // hier: mittlere absolute Bar-Änderung
   const last = seg[seg.length - 1]!;
-
-  let tilt = w * sentiment * vol;
-  const cap = TILT_CAP * vol;
-  tilt = Math.max(-cap, Math.min(cap, tilt));
-  const slopeAdj = slope + tilt;
+  const slopeAdj = slope;
 
   const points: IntradayForecastPoint[] = [];
   const band: IntradayForecastBandPoint[] = [];
@@ -441,12 +441,10 @@ function applyFeatures<
 export function computeForecastV2(
   closes: number[],
   baseDate: string,
-  sentiment: number,
-  w: number,
   horizon: number = FORECAST_HORIZON,
   lookback: number = DEFAULT_LOOKBACK,
 ): (ForecastComputation & { features: ForecastFeatures }) | null {
-  const base = computeForecast(closes, baseDate, sentiment, w, horizon, lookback);
+  const base = computeForecast(closes, baseDate, horizon, lookback);
   if (!base) return null;
   return applyFeatures(base, forecastFeatures(closes, lookback), base.dailyVol);
 }
@@ -455,13 +453,11 @@ export function computeForecastV2(
 export function computeIntradayForecastV2(
   closes: number[],
   baseT: number,
-  sentiment: number,
-  w: number,
   horizon: number = INTRADAY_HORIZON,
   lookback: number = DEFAULT_INTRADAY_LOOKBACK,
   stepSec: number = INTRADAY_STEP_SEC,
 ): (IntradayForecastComputation & { features: ForecastFeatures }) | null {
-  const base = computeIntradayForecast(closes, baseT, sentiment, w, horizon, lookback, stepSec);
+  const base = computeIntradayForecast(closes, baseT, horizon, lookback, stepSec);
   if (!base) return null;
   return applyFeatures(base, forecastFeatures(closes, lookback), base.vol);
 }
@@ -514,9 +510,17 @@ export interface ForecastVoteWeighting {
  * konfigurierte Stimmgewicht wird mit der REALISIERTEN Kante über den
  * Münzwurf skaliert — 50 % Trefferquote ⇒ Faktor 0 (die Prognose weiß
  * nichts, also stimmt sie nicht mit), 75 % ⇒ 0.5, 100 % ⇒ 1. Unter 50 %
- * ebenfalls 0 — NIE contrarian drehen. Erst ab MIN_TOTAL_SCORES
- * realisierten Bewertungen aktiv; vorher gilt das konfigurierte Gewicht
- * unverändert (ehrlicher Default statt eingebildeter Präzision).
+ * ebenfalls 0 — NIE contrarian drehen.
+ *
+ * **Ohne Evidenz stimmt die Prognose NICHT mit** (Beweislast-Umkehr,
+ * Owner-Direktive 28.07.). Bis zur ersten Deploy-Reihe Ende Juli lief es
+ * andersherum: unter MIN_TOTAL_SCORES galt das volle konfigurierte Gewicht
+ * — die Prognose konnte mit forecastWeight 2 einen Ausstieg im Alleingang
+ * auslösen, obwohl live noch KEINE einzige Prognose je bewertet worden war
+ * (meta/forecastStats stand auf scored: 0). Ein Signal, dessen Trefferquote
+ * niemand kennt, hat in einer Geld-Entscheidung kein Stimmrecht; es muss
+ * sich das Gewicht erst durch realisierte Treffer verdienen. Im Chart
+ * bleibt die Prognose als Anzeige — nur handeln darf sie nicht mehr blind.
  */
 export function accuracyWeightedVote(
   baseWeight: number,
@@ -526,20 +530,18 @@ export function accuracyWeightedVote(
   const scored = stats?.scored ?? 0;
   const acc = stats?.dirAccuracy;
   if (scored < MIN_TOTAL_SCORES || acc === null || acc === undefined || !Number.isFinite(acc)) {
-    return { weight: base, factor: null };
+    return { weight: 0, factor: null };
   }
   const factor = Math.max(0, Math.min(1, (acc / 100 - 0.5) * 2));
   return { weight: Math.round(base * factor), factor: round(factor, 3) };
 }
 
-/** Intraday-Doc (market/{sym}/forecastsIntraday/{baseT_w_lookback}). */
+/** Intraday-Doc (market/{sym}/forecastsIntraday/{baseT_lookback}). */
 export interface IntradayForecastDoc {
   baseT: number;
   baseClose: number;
-  w: number;
   lookback: number;
   horizonBars: number;
-  sentiment: number;
   vol: number;
   points: IntradayForecastPoint[];
   predictedPct: number;

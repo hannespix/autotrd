@@ -91,22 +91,13 @@ die künftige Features brauchen (Cloud Run, Eventarc, Scheduler, …).
 `eventarc.googleapis.com` · `pubsub.googleapis.com` ·
 `cloudscheduler.googleapis.com` · `secretmanager.googleapis.com`
 
-**Außerdem VOR dem nächsten Deploy nötig:** Der Deploy bindet das Secret
-`ANTHROPIC_API_KEY` (KI-Staffel, §H) und scheitert sonst mit
-*„secretmanager.secrets.get denied on resource (or it may not exist)"*.
-Zwei Dinge fixen das:
-
-1. **Secret anlegen** — ohne lokale CLI direkt in der Cloud-Konsole:
-   *Security → Secret Manager → Create Secret*, Name exakt
-   `ANTHROPIC_API_KEY`, Wert = der Key aus console.anthropic.com.
-   (Alternativ lokal: `npx firebase functions:secrets:set ANTHROPIC_API_KEY
-   --project <projekt-id>`.) Kein Key zur Hand? Platzhalter-Wert setzen und
-   später überschreiben — die App degradiert bei ungültigem Key sichtbar
-   auf regelbasiert und bleibt voll funktionsfähig.
-2. **Rolle fürs Lesen/Binden:** dem Service-Account `github-deploy`
-   zusätzlich **Secret Manager Admin** geben (der Deploy liest das Secret
-   und erteilt der Functions-Laufzeit den Accessor-Zugriff — „Firebase
-   Admin" allein deckt das nicht ab).
+**Kein KI-Secret mehr nötig** (seit 28.07.): Der Scan ruft keine
+Anthropic-API mehr auf. News, Sentiment und die KI-Tageserklärung sind aus
+dem Handelspfad entfernt — sie hatten nachweislich keinen Einfluss auf die
+Handelsentscheidung (die Sentiment-Stimme hatte live nie eine bewertete
+Prognose), kosteten aber bei jedem 5-Minuten-Scan Feed-Abrufe und
+Claude-Aufrufe. Ein bereits angelegtes `ANTHROPIC_API_KEY`-Secret stört
+nicht, wird aber nicht mehr gebunden.
 
 Danach: *Actions → Deploy Functions (Firebase) → Re-run all jobs* — oder
 einfach den nächsten PR mergen.
@@ -220,33 +211,23 @@ Repo → *Settings → Branches → Add branch ruleset* für `main`:
 
 Damit ist der Flow „nur per grünem PR auf main" auch technisch erzwungen.
 
-## H. KI-Staffel: Anthropic-API-Key (M6, ~5 min)
+## H. KI-Staffel — entfällt (Stand 28.07.)
 
-Ohne Key läuft alles weiter — die KI-Tageskarte degradiert dann sichtbar auf
-die regelbasierte Lexikon-Zusammenfassung (`reason: no_api_key`). Für echte
-KI-Erklärungen (Haiku-Klassifikation + Sonnet-Tagessatz):
+Dieser Schritt ist **nicht mehr nötig**. News-Feeds, Lexikon-Sentiment und
+die KI-Tageserklärung sind aus dem System entfernt (Owner-Direktive:
+„Performance Maximierung! Kosten Minimierung!"). Die Gründe, kurz:
 
-1. Key erzeugen: <https://console.anthropic.com> → *API Keys* → **Create Key**
-   (eigenes Workspace „autotrd" empfohlen, dort ein **Spend-Limit** setzen —
-   z. B. 5 $/Monat; die Staffel braucht bei 4 Symbolen nur Cent-Beträge).
-2. Als Functions-Secret hinterlegen (einmalig, **vor** dem nächsten
-   Functions-Deploy — der Deploy bindet das Secret):
+- Die Sentiment-Stimme hat live **nie** Evidenz gesammelt
+  (`meta/forecastStats.scored` stand dauerhaft auf 0) — sie beeinflusste
+  also Handelsentscheidungen, ohne dass irgendjemand ihre Trefferquote
+  kannte.
+- Gratis-Feeds (Yahoo/Google-RSS, Reddit) sind Minuten bis Stunden alt.
+  Was dort steht, ist längst im Kurs.
+- Feed-Abrufe und Claude-Aufrufe liefen bei **jedem** 5-Minuten-Scan.
 
-   ```bash
-   npx firebase functions:secrets:set ANTHROPIC_API_KEY --project <projekt-id>
-   ```
-
-3. Nächsten Functions-Deploy laufen lassen (Merge auf `main` genügt).
-4. Abnahme (M6): Nach einem Scan mit News zeigt die KI-Karte „Warum bewegt
-   sich X?" einen KI-Satz mit Modell-Angabe statt „regelbasiert"; in der
-   Anthropic-Konsole liegen die Tageskosten im Cent-Bereich; ein zweiter
-   Scan erzeugt KEINEN weiteren API-Call (Cache `market/{sym}/ai/{datum}`).
-5. Optional: Tagesbudget anpassen — Firestore-Doc `admin/aiBudget`, Feld
-   `dailyTokenBudget` (Default 200 000 Token/Tag). Bei Überschreitung
-   degradiert die Pipeline sichtbar auf regelbasiert, nichts fällt aus.
-
-Lokal im Emulator: `functions/.secret.local` mit
-`ANTHROPIC_API_KEY=sk-ant-…` anlegen (steht in `.gitignore`, nie committen).
+Ein bereits angelegtes `ANTHROPIC_API_KEY`-Secret schadet nicht, wird aber
+von keiner Function mehr gebunden. Das Firestore-Doc `admin/aiBudget` wird
+nicht mehr gelesen.
 
 ## I. App Check scharf schalten (M7, ~10 min)
 

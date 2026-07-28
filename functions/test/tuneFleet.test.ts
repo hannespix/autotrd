@@ -275,4 +275,30 @@ describe('decideTuning', () => {
     const d = decideTuning(b, v, fleet, serie(40, 0), T0, { minTrades: 100 });
     expect(d.winner).toBeNull();
   });
+
+  it('Bonferroni: dieselbe Evidenz reicht bei EINER Variante, aber nicht bei sechs', () => {
+    // Wer 6 Varianten gleichzeitig gegen α = 5 % prüft, findet im Schnitt
+    // 0,3 Scheinsieger je Durchgang — täglich geprüft wären das rund
+    // hundert unbegründete Umstellungen im Jahr. Deshalb bekommt jede
+    // einzelne Prüfung α/6. Die Daten hier sind so gebaut, dass p zwischen
+    // beiden Schwellen liegt (t ≈ 2,5 ⇒ p ≈ 0,015): stark genug für einen
+    // Einzeltest, zu schwach für sechs parallele.
+    const rausch = (n: number, mittel: number, amp: number): number[] =>
+      Array.from({ length: n }, (_, i) => mittel + (i % 2 === 0 ? amp : -amp));
+    const b = basis();
+    const pnls = rausch(40, 1, 1.8);
+    const live = rausch(40, 0, 1.8);
+
+    const eine = buildVariants(b, 1);
+    const d1 = decideTuning(b, eine, { [eine[0]!.id]: { ...emptyVariantState(T0), pnls } }, live, T0);
+    expect(d1.winner).not.toBeNull();
+
+    const sechs = buildVariants(b, 6);
+    const fleet: FleetState = {};
+    for (const v of sechs) fleet[v.id] = { ...emptyVariantState(T0), pnls: [...pnls] };
+    const d6 = decideTuning(b, sechs, fleet, live, T0);
+    expect(d6.winner).toBeNull();
+    // Und die Ablehnung ist begründet, nicht still: p steht im Journal.
+    expect(d6.entries.every((e) => e.p !== null)).toBe(true);
+  });
 });

@@ -103,8 +103,7 @@ jobs:
       # Das Gate im Skript unterscheidet dabei „heute schon gelaufen" von
       # „heute NACH US-Schluss gelaufen" — ein Mittags-Snapshot füllt die
       # Karte, verdrängt aber den Abend-Lauf nicht, dessen Schlusskurs die
-      # Equity-Serie tragen soll. tunerReview bleibt ausgespart: Der Lauf
-      # kostet Anthropic-Guthaben und gehört nicht an jeden Merge.
+      # Equity-Serie tragen soll.
       - name: Tages-Läufe anstoßen (Kennzahlen + Prognose-Bewertung)
         if: ${{ !cancelled() && env.FIREBASE_SERVICE_ACCOUNT != '' }}
         continue-on-error: true

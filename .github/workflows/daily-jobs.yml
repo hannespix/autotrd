@@ -2,7 +2,7 @@ name: Tages-Läufe
 
 # Stopgap wie der Scan-Watchdog, aber für die TÄGLICHEN Läufe:
 # snapshotEquity (Performance-Kurve), evalForecasts (Prognose-Genauigkeit +
-# Labor) und tunerReview. Diagnose 27.07.: Im Projekt existiert KEIN einziger
+# Labor). Diagnose 27.07.: Im Projekt existiert KEIN einziger
 # Cloud-Scheduler-Job — dem Deploy-SA fehlt die Rolle ("Deploy-SA hat KEINE
 # Cloud-Scheduler-Berechtigung" im Deploy-Log). Der Scan hing schon am
 # Watchdog; diese drei hatten gar keinen Ersatzweg und liefen deshalb nie.

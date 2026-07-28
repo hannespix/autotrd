@@ -18,7 +18,13 @@ describe('STRATEGY_PRESETS (Presets = Doku)', () => {
     }
   });
 
-  it('jede Knotenart kommt in mindestens einem Preset vor', () => {
+  it('jede handelbare Knotenart kommt in mindestens einem Preset vor', () => {
+    // `sentiment` und `newsEvent` stehen bewusst NICHT auf der Liste: Seit
+    // dem Ausbau der News-Strecke (28.07.) füllt kein Lauf mehr die Felder,
+    // auf die sie zugreifen. Sie bleiben im Schema, damit gespeicherte
+    // Strategien lesbar bleiben, und liefern in `evaluate` „unbekannt" —
+    // die sichere Richtung, denn unbekannt heißt kein Trade. Ein Preset,
+    // das sie ANBIETET, wäre dagegen ein Versprechen ohne Deckung.
     const seen = new Set<string>();
     for (const p of STRATEGY_PRESETS) {
       collectTypes(p.spec.buy, seen);
@@ -27,10 +33,12 @@ describe('STRATEGY_PRESETS (Presets = Doku)', () => {
     for (const t of [
       'all', 'any', 'weighted', 'not',
       'compare', 'crossover', 'priceLevel', 'changePct', 'timeWindow',
-      'sentiment', 'newsEvent', 'forecast', 'position',
+      'forecast', 'position',
     ]) {
       expect(seen.has(t), `Knotenart '${t}' fehlt in den Presets`).toBe(true);
     }
+    expect(seen.has('sentiment'), 'sentiment gehört in kein Preset mehr').toBe(false);
+    expect(seen.has('newsEvent'), 'newsEvent gehört in kein Preset mehr').toBe(false);
   });
 
   it('IDs sind eindeutig und URL-tauglich', () => {

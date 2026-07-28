@@ -112,7 +112,7 @@ export const INFO: Record<string, { t: string; d: string }> = {
   },
   fcCombo: {
     t: 'Kombi-Statistik (Self-Tuning)',
-    d: 'Das System rechnet jede Prognose parallel mit mehreren Parameter-Kombis (Sentiment-Gewicht w × Lookback-Fenster) als „Schatten" mit und bewertet sie nach Ablauf gegen die Realität. Die Kombi mit der besten realisierten Trefferquote (Tiebreak: kleinste MAE) steuert die Live-Prognose — das ist die Selbstverbesserung.',
+    d: 'Das System rechnet jede Prognose parallel mit mehreren Lookback-Fenstern als „Schatten" mit und bewertet sie nach Ablauf gegen die Realität. Das Fenster mit der besten realisierten Trefferquote (Tiebreak: kleinste MAE) steuert die Live-Prognose — das ist die Selbstverbesserung. Wichtig: Solange keine Trefferquote nachgewiesen ist, stimmt die Prognose beim Handeln GAR NICHT mit; sie muss sich ihr Gewicht erst verdienen.',
   },
   mae: {
     t: 'MAE — Mittlerer absoluter Fehler',
@@ -154,14 +154,6 @@ export const INFO: Record<string, { t: string; d: string }> = {
   'node:timeWindow': {
     t: 'Regel: Zeitfenster (timeWindow)',
     d: 'Beschränkt das Signal auf eine Tageszeit (ET) — z. B. nicht in der volatilen ersten Handelsstunde kaufen. Trifft nur zu, wenn die Scan-Zeit im Fenster liegt.',
-  },
-  'node:sentiment': {
-    t: 'Regel: Sentiment',
-    d: 'Nutzt die Stimmung aus News-Schlagzeilen (−1 bis +1, lexikonbasiert). „Sentiment > 0.2" heißt: nur kaufen, wenn die Nachrichtenlage klar positiv ist.',
-  },
-  'node:newsEvent': {
-    t: 'Regel: News-Ereignis',
-    d: 'Trifft zu, wenn heute ein getaggtes Ereignis vorliegt (Earnings, Analysten-Rating, M&A …). Für Strategien, die auf Nachrichten reagieren — oder sie bewusst meiden.',
   },
   'node:forecast': {
     t: 'Regel: Prognose',
@@ -241,6 +233,10 @@ export const INFO: Record<string, { t: string; d: string }> = {
   kosten: {
     t: 'Reibung (Handelskosten)',
     d: 'Jeder Roundtrip kostet Kommission plus Slippage — beim Kauf UND beim Verkauf. Entscheidend ist „Luft über Kosten": die durchschnittliche Gewinnbewegung vor Gebühren, geteilt durch diese Kosten. Unter 2 verdient überwiegend der Broker, denn dann geht über die Hälfte jeder Gewinnbewegung für die Reibung drauf. Kurze Zeitrahmen erzeugen kleine Bewegungen — deshalb braucht mehr Handelsfrequenz zwingend auch genug Bewegung je Trade, sonst beschleunigt sie nur den Verlust. „Ø Gewinn brutto" und „Ø Verlust brutto" zeigen die reinen Kursbewegungen ohne Gebühren, damit sichtbar wird, ob die Strategie selbst funktioniert.',
+  },
+  momentum: {
+    t: 'Momentum-Ranking',
+    d: 'Statt einer festen Watchlist wird der komplette Katalog nach einer einzigen Zahl sortiert: der Rendite der letzten zwölf Monate, wobei der jüngste Monat NICHT mitzählt. Der Grund für die Auslassung: Auf Monatssicht kehren Kurse eher um, das eigentliche Momentum sitzt in den Monaten davor — wer den letzten Monat mitzählt, mischt zwei gegenläufige Effekte. Gekauft werden die stärksten acht Werte, gleichgewichtet, und nur wenn der Leitindex über seiner 200-Tage-Linie steht. Steht er darunter, bleibt das Depot komplett flach: Momentum-Strategien brechen fast ausschließlich in Erholungsphasen NACH Markteinbrüchen ein, und dieser Filter ist die billigste bekannte Versicherung dagegen. Umgeschichtet wird wöchentlich, nicht täglich — jede Umschichtung kostet Gebühren, und genau daran ist die alte Strategie gescheitert. Der Ansatz ist die am besten belegte Anomalie der Finanzliteratur (Jegadeesh/Titman 1993; Asness/Moskowitz/Pedersen 2013 über acht Assetklassen). Er läuft hier zunächst als Schattendepot — umgestellt wird erst, wenn er die laufende Strategie statistisch nachweisbar schlägt.',
   },
   autotuner: {
     t: 'Auto-Tuner',

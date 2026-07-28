@@ -19,7 +19,6 @@ Leitziele: **kosteneffizient · sicher · leistungsfähig · schnell.**
 | Auth + DB | **Firebase Auth + Firestore** | Login/Userverwaltung fertig & sicher; Firestore ist realtime (`onSnapshot`) UND hat Queries + Security Rules |
 | Engine/Compute | **Cloud Functions (2nd gen, Node) + Cloud Scheduler** | Kein VPS nötig: Scan = kurzer Job alle 5 min; Node-Cold-Start minimal |
 | Marktdaten | **Alpaca Market Data** (offizielles JS-SDK, gratis); Fallback `yahoo-finance2` | Ein Provider für Daten UND (später) Broker; yfinance-Ersatz |
-| KI | **Anthropic TS-SDK, serverseitig**, gestaffelt (§6) | Tokeneffizient; Keys nie im Client |
 | Geld-Modell | **Erst Paper, später echt** | Architektur sieht Broker-Slot vor, Start ohne echtes Geld |
 
 > **Kostenrealität:** Cloud Functions mit ausgehenden HTTP-Calls brauchen den
@@ -45,7 +44,7 @@ Leitziele: **kosteneffizient · sicher · leistungsfähig · schnell.**
                      └────────────┬─────────────┘
                                   │ Secrets NUR hier (Secret Manager)
                                   ▼
-                    Alpaca Data · Anthropic API · (später: Broker-Konten)
+                    Alpaca Data · (später: Broker-Konten)
 ```
 
 **Kernprinzip (Effizienz-Hebel):** User-*unabhängiges* (Kurse, Indikatoren,
@@ -65,7 +64,7 @@ autotrd/
 ├── functions/                 ← Cloud Functions (Node 20, TS)
 │   ├── src/scheduled/           scanMarket, evalForecasts, aiTuner
 │   ├── src/callable/            trade, saveStrategy, (später) connectBroker
-│   └── src/core/                engine, indicators, forecaster, sentiment, broker
+│   └── src/core/                engine, indicators, forecaster, broker
 ├── shared/                    ← Typen + Schema (Firestore-Dokumente, strategy),
 │                                von frontend UND functions importiert
 ├── reference/                 ← eingefrorener Python-Code (heutige scripts/ etc.)
@@ -86,9 +85,8 @@ market/{symbol}                   # ── GETEILT, nur Functions schreiben ─�
   bars/{YYYY-MM-DD}               # OHLCV-Tageskerzen (History)
   indicators/{YYYY-MM-DD}         # RSI/MACD/BBands des Tages
   signals/{scanId}                # Konfluenz-Ergebnis je Scan
-  news/{newsId}                   # + sentiment, eventTags
-  forecasts/{baseDate_w_lookback} # Shadow-Prognosen (UNIQUE per Doc-ID! §7)
-  ai/{YYYY-MM-DD}                 # gecachte Claude-Erklärung (1× für ALLE User)
+  forecasts/{baseDate_lookback}   # Shadow-Prognosen (UNIQUE per Doc-ID! §7)
+  forecastsIntraday/{baseT_lookback}
 
 users/{uid}                       # ── PRIVAT ──
   · profile: {createdAt, plan}
@@ -121,7 +119,7 @@ die SQLite-UNIQUE-Indizes: idempotente Writes statt Doppel-Logs.
                                      && request.resource.data.diff(resource.data)
                                         .affectedKeys().hasOnly(['settings']); }
    ```
-3. **Alle Secrets** (Alpaca, Anthropic, später Broker-Keys der User —
+3. **Alle Secrets** (Alpaca, später Broker-Keys der User —
    verschlüsselt!) leben im **Secret Manager** / Functions-Env. Nichts davon je
    im Frontend-Bundle oder in Firestore-plain.
 4. **Callable Functions** prüfen `context.auth`, validieren Input gegen
@@ -132,15 +130,18 @@ die SQLite-UNIQUE-Indizes: idempotente Writes statt Doppel-Logs.
 6. Firebase **App Check** aktivieren (schützt Functions/Firestore vor fremden
    Clients), Budget-Alarm, Auth mit E-Mail-Verifikation.
 
-## 6. KI-Anbindung (tokeneffizient, gestaffelt)
+## 6. KI-Anbindung — keine (Stand 28.07.)
 
-Stufe 0: **Regeln/Lexikon** (Port von `sentiment.py`) — kostenlos, filtert 90 %.
-Stufe 1: **Haiku** für Routine (News-Klassifikation, Kurz-Tags).
-Stufe 2: **Sonnet** nur on-demand (Tages-Erklärung je Symbol, Tuner-Review).
-Immer: **Ergebnis-Cache in `market/{sym}/ai/{date}`** (1 Call für alle User),
-**Prompt-Caching** (fester System-Prompt), tägliche Reviews via **Batch API**.
-Lokales Hermes/Ollama bleibt **Dev-Fallback**, nie Produktions-Backend.
-Pro-User-KI-Features (falls später) laufen gegen `admin/quotas`-Limits.
+Das System ruft **kein** Sprachmodell auf. Es gab eine gestaffelte Anbindung
+(Lexikon → Haiku → Sonnet) für News-Klassifikation, Tages-Erklärungen und
+einen Review des Prognose-Suchgitters; sie ist mit der News-Strecke
+ausgebaut worden (MILESTONES M6).
+
+Der Grund war nicht die Technik, sondern die Wirkung: Keine dieser Ausgaben
+hat je eine Handelsentscheidung verbessert, die man hätte nachweisen können —
+und der Scan lief alle fünf Minuten. Wer die Staffel wieder einführen will,
+braucht zuerst eine Messung, die zeigt, dass sie den Handel besser macht.
+Für Erklärtexte allein lohnt sie nicht.
 
 ## 7. Was vom heutigen Code wohin wandert
 
@@ -151,7 +152,7 @@ Pro-User-KI-Features (falls später) laufen gegen `admin/quotas`-Limits.
 | `technical_analysis.py` (RSI/MACD/BBands) | `core/indicators.ts` — **Wilder-Glättung beibehalten!** Parity-Test Pflicht | klein, heikel |
 | `forecaster.py` + `forecast_eval.py` | `core/forecaster.ts` + scheduled `evalForecasts` — **Lookahead-Gate strikt portieren** (`base_date < today`, letzter Horizont-Tag realisiert) | mittel, **höchstes Risiko** |
 | `market_data.py` / `market_universe.py` | `core/marketData.ts` (Alpaca + yahoo-finance2-Fallback) / `meta/universe` | klein |
-| `news_feed.py` / `sentiment.py` / `ai_analyst.py` / `ai_tuner.py` | `core/news.ts`, `core/sentiment.ts`, KI via Anthropic-SDK (§6) | mittel |
+| `news_feed.py` / `sentiment.py` / `ai_analyst.py` / `ai_tuner.py` | **NICHT portiert** — 28.07. ausgebaut, siehe MILESTONES M6 | — |
 | `broker.py` | `core/broker.ts` (PaperBroker jetzt; Alpaca-Slot vorbereitet, Guards aus §5) | klein |
 | `history_store.py` (SQLite) | **entfällt** → Firestore (§4) | — |
 | `trading_dashboard.py` (FastAPI) | **entfällt** → Frontend liest Firestore direkt; Aktionen via Callables | — |

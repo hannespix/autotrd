@@ -16,7 +16,7 @@
  * Diagnose an diesem Tag zeigte, dass live überhaupt KEIN Cloud-Scheduler-Job
  * existiert (dem Deploy-SA fehlt die Rolle). Damit ist der Direkt-Invoke der
  * einzige Weg, auf dem die täglichen Läufe — snapshotEquity, evalForecasts,
- * tunerReview — je stattfinden. Genau die drei füttern Performance-Kurve,
+ * je stattfinden. Genau die beiden füttern Performance-Kurve,
  * Prognose-Genauigkeit und Prognose-Labor, die deshalb dauerhaft leer blieben.
  * `invokeService()` verallgemeinert deshalb, was vorher nur der Scan konnte.
  */
@@ -36,7 +36,7 @@ const SERVICE = 'scanmarket';
  * Cloud-Run-Dienstnamen sind kleingeschrieben — Firebase leitet sie aus dem
  * Export-Namen ab. `snapshotEquity` heißt als Dienst also `snapshotequity`.
  */
-export const DAILY_SERVICES = ['snapshotequity', 'evalforecasts', 'tunerreview'];
+export const DAILY_SERVICES = ['snapshotequity', 'evalforecasts'];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

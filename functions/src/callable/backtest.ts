@@ -49,14 +49,7 @@ export const runBacktest = onCall(CALLABLE_OPTS, async (request) => {
     throw new HttpsError('failed-precondition', 'Zu wenig Kurs-Historie im Cache — Symbol erst scannen lassen');
   }
 
-  const eventsSnap = await db.collection(`market/${symbol}/events`).get();
-  const dayInfo = new Map<string, { sentiment?: number | null; tags?: string[] }>();
-  for (const d of eventsSnap.docs) {
-    const e = d.data() as { sentiment?: number; topEvents?: string[] };
-    dayInfo.set(d.id, { sentiment: e.sentiment ?? null, tags: e.topEvents ?? [] });
-  }
-
-  const result = backtestSpec(spec, bars, { dayInfo });
+  const result = backtestSpec(spec, bars, {});
   const now = new Date();
   const runId = now.toISOString().slice(0, 16) + 'Z';
   await stratRef.collection('runs').doc(runId).set({

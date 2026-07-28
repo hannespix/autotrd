@@ -50,14 +50,11 @@ export interface MarketDocData {
   name?: string;
   assetClass?: string;
   quote?: Quote;
-  sentiment?: SentimentField;
   forecast?: {
     points: Array<{ time: string; value: number }>;
     band: Array<{ time: string; upper: number; lower: number }>;
-    w: number;
     lookback: number;
     predictedPct: number;
-    sentiment: number;
     baseDate: string;
     /** Band-Kalibrierung aus realisierter Fehlerverteilung (null = ±1σ Regression). */
     calib?: { s: number; maePct: number; n: number } | null;
@@ -66,7 +63,6 @@ export interface MarketDocData {
   forecastIntraday?: {
     points: Array<{ t: number; value: number }>;
     band: Array<{ t: number; upper: number; lower: number }>;
-    w: number;
     lookback: number;
     predictedPct: number;
     baseT: number;
@@ -75,80 +71,7 @@ export interface MarketDocData {
   } | null;
 }
 
-export interface EventDay {
-  date: string;
-  sentiment: number;
-  label: 'bullish' | 'bearish' | 'neutral';
-  count: number;
-  top: Array<{ title: string; source: string; url: string; kind: string }>;
-}
-
-export function watchEvents(symbol: string, cb: (events: EventDay[]) => void): Unsubscribe {
-  return muxWatch(
-    `events:${symbol}`,
-    (emit) => {
-      const q = query(collection(db(), 'market', symbol, 'events'), orderBy(documentId()));
-      return onSnapshot(q, (snap) => emit(snap.docs.map((d) => d.data())));
-    },
-    (p) => cb(p as EventDay[]),
-  );
-}
-
-export interface NewsRow {
-  title: string;
-  source: string;
-  url: string;
-  ts: string;
-  kind: string;
-  sent: { sentiment: number; label: string };
-}
-
-export function watchNews(symbol: string, cb: (news: NewsRow[]) => void): Unsubscribe {
-  return muxWatch(
-    `news:${symbol}`,
-    (emit) => {
-      const q = query(
-        collection(db(), 'market', symbol, 'news'),
-        orderBy('published', 'desc'),
-        limit(12),
-      );
-      return onSnapshot(q, (snap) => emit(snap.docs.map((d) => d.data())));
-    },
-    (p) => cb(p as NewsRow[]),
-  );
-}
-
-/** KI-Tages-Doc aus market/{sym}/ai/{date} (M6b — zentral gecacht). */
-export interface AiDayDoc {
-  date: string;
-  summary: string;
-  cause: string | null;
-  confidence: number | null;
-  tags: Array<{ type: string; count: number }>;
-  model: string | null;
-  degraded: boolean;
-  reason: 'no_api_key' | 'budget_exceeded' | 'ai_error' | null;
-}
-
-export function watchLatestAi(symbol: string, cb: (ai: AiDayDoc | null) => void): Unsubscribe {
-  return muxWatch(
-    `ai:${symbol}`,
-    (emit) => {
-      const q = query(collection(db(), 'market', symbol, 'ai'), orderBy('date', 'desc'), limit(1));
-      return onSnapshot(q, (snap) => emit(snap.empty ? null : snap.docs[0]!.data()));
-    },
-    (p) => cb(p as AiDayDoc | null),
-  );
-}
-
-export interface SentimentField {
-  overall: number;
-  label: string;
-  n: number;
-  topEvents?: Array<{ type: string; count: number }>;
-}
-
-/** Aggregat je (w, lookback)-Kombi — Rohmaterial des Self-Tunings. */
+/** Aggregat je Lookback-Fenster — Rohmaterial des Self-Tunings. */
 export interface ComboStatRow {
   n: number;
   hits: number;
@@ -158,7 +81,7 @@ export interface ComboStatRow {
 export interface ForecastStatsDoc {
   scored?: number;
   dirAccuracy?: number | null;
-  best?: { w: number; lookback: number };
+  best?: { lookback: number };
   tuningActive?: boolean;
   combos?: Record<string, ComboStatRow>;
   updatedAt?: string;
@@ -192,7 +115,6 @@ export function watchForecastStatsIntraday(
 /** Bewertete Shadow-Prognose (market/{sym}/forecasts) fürs Prognose-Labor. */
 export interface EvaluatedForecastRow {
   baseDate: string;
-  w: number;
   lookback: number;
   predictedPct: number;
   evaluated: boolean;
@@ -503,6 +425,36 @@ export interface TuneLogRow {
 export function watchTuneLog(uid: string, cb: (rows: TuneLogRow[]) => void): Unsubscribe {
   const q = query(collection(db(), 'users', uid, 'tuneLog'), orderBy('at', 'desc'), limit(24));
   return onSnapshot(q, (snap) => cb(snap.docs.map((d) => d.data() as TuneLogRow)));
+}
+
+/**
+ * Tages-Stand des Momentum-Rankings (meta/momentum).
+ *
+ * Öffentlich lesbar wie alle meta-Dokumente: Das Ranking ist keine
+ * Nutzerdatei, sondern eine Eigenschaft des Marktes — und es kostet keinen
+ * zusätzlichen Read, wenn alle dieselbe Zeile lesen.
+ */
+export interface MomentumDoc {
+  at: string;
+  date: string;
+  /** Bewertbare Symbole (mit genug Historie) von `universum` insgesamt. */
+  ranked: number;
+  universum: number;
+  /** Marktfilter: steht der Leitindex über seiner 200-Tage-Linie? */
+  marktOffen: boolean;
+  top: Array<{ symbol: string; score: number }>;
+  ziel: string[];
+  gehalten: string[];
+  equity: number;
+  trades: number;
+  rebalanced: boolean;
+  fehlendeHistorie: number;
+}
+
+export function watchMomentum(cb: (doc: MomentumDoc | null) => void): Unsubscribe {
+  return onSnapshot(doc(db(), 'meta', 'momentum'), (snap) =>
+    cb(snap.exists() ? (snap.data() as MomentumDoc) : null),
+  );
 }
 
 /**
@@ -825,15 +777,3 @@ export async function loadIntraday(
   return out;
 }
 
-/** Event-Tage einmalig (Sentiment + Tags je Datum) für die Vorschau. */
-export async function loadEventsOnce(
-  symbol: string,
-): Promise<Map<string, { sentiment: number | null; tags: string[] }>> {
-  const snap = await getDocs(collection(db(), 'market', symbol, 'events'));
-  const map = new Map<string, { sentiment: number | null; tags: string[] }>();
-  for (const d of snap.docs) {
-    const data = d.data() as { sentiment?: number; topEvents?: string[] };
-    map.set(d.id, { sentiment: data.sentiment ?? null, tags: data.topEvents ?? [] });
-  }
-  return map;
-}

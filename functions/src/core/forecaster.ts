@@ -1,19 +1,18 @@
 /**
  * Forecaster (Firestore) — Port von reference/scripts/forecaster.py.
  * Die pure Mathematik lebt in shared/src/forecast.ts (Golden-Parity);
- * hier: Live-Prognose mit den self-getunten best_params + Shadow-Grid-Logging
- * nach market/{sym}/forecasts/{baseDate_w_lookback} (Doc-ID = fachlicher
- * Schlüssel ⇒ idempotent, ersetzt den SQLite-UNIQUE-Index).
+ * hier: Live-Prognose mit dem self-getunten besten Lookback + Shadow-Grid-
+ * Logging nach market/{sym}/forecasts/{baseDate_lookback} (Doc-ID =
+ * fachlicher Schlüssel ⇒ idempotent, ersetzt den SQLite-UNIQUE-Index).
  */
 
 import { getFirestore } from 'firebase-admin/firestore';
 import {
   FORECAST_HORIZON,
   INTRADAY_HORIZON,
+  DEFAULT_INTRADAY_LOOKBACK,
   INTRADAY_LOOKBACK_GRID,
-  INTRADAY_WEIGHT_GRID,
   LOOKBACK_GRID,
-  WEIGHT_GRID,
   applyBandCalibration,
   bestParams,
   comboKey,
@@ -27,12 +26,9 @@ import {
   type IntradayForecastDoc,
 } from '../../../shared/src/index.js';
 import type { IntradayBar } from './marketData.js';
-import { mergeGrids } from './tuner.js';
 
 export interface ForecastMeta {
-  w: number;
   lookback: number;
-  weightGrid: number[];
   lookbackGrid: number[];
   /** Realisierte Kombi-Statistik — speist die Band-Kalibrierung (Teil 3). */
   combos: Record<string, ComboStat>;
@@ -40,22 +36,21 @@ export interface ForecastMeta {
 
 /**
  * Globale Tuning-Statistik (wie die Referenz: EIN Gitter über alle Symbole).
- * Das Shadow-Gitter = Basis-Gitter ∪ Tuner-Erweiterungen (hart geclampt in
- * mergeGrids) — die LIVE-Params bleiben rein empirische bestParams.
+ *
+ * Das Gitter ist seit 28.07. FEST. Vorher durfte ein täglicher KI-Review es
+ * erweitern — ein Claude-Aufruf pro Tag, dessen einziger Effekt war, dem
+ * Shadow-Logging weitere Kombis hinzuzufügen. Da die Prognose ohne
+ * nachgewiesene Trefferquote ohnehin nicht mitstimmt, kostete das Geld für
+ * mehr Rauschen. Die LIVE-Params bleiben, was sie immer waren: rein
+ * empirische bestParams aus realisierten Treffern.
  */
 export async function loadForecastMeta(): Promise<ForecastMeta> {
   const snap = await getFirestore().doc('meta/forecastStats').get();
   const combos = (snap.get('combos') as Record<string, ComboStat> | undefined) ?? {};
-  const tuning = snap.get('tuning') as
-    | { extraWeights?: number[]; extraLookbacks?: number[] }
-    | undefined;
-  const { weightGrid, lookbackGrid } = mergeGrids(WEIGHT_GRID, LOOKBACK_GRID, tuning);
-  return { ...bestParams(combos), weightGrid, lookbackGrid, combos };
+  return { ...bestParams(combos), lookbackGrid: [...LOOKBACK_GRID], combos };
 }
 
 export interface LiveForecast extends ForecastComputation {
-  w: number;
-  sentiment: number;
   predictedPct: number;
   /** Band-Kalibrierung aus der realisierten Fehlerverteilung (null = keine Evidenz). */
   calib: BandCalibration | null;
@@ -63,22 +58,20 @@ export interface LiveForecast extends ForecastComputation {
 
 /**
  * Live-Prognose + einmaliges Shadow-Logging pro (symbol, baseDate).
- * `sentiment` kommt ab M6 aus den News; bis dahin 0 (reiner Drift).
  */
 export async function runForecast(
   symbol: string,
   closes: number[],
   baseDate: string,
-  sentiment: number,
 ): Promise<LiveForecast | null> {
   const db = getFirestore();
-  const { w: bestW, lookback: bestLb, weightGrid, lookbackGrid, combos } = await loadForecastMeta();
+  const { lookback: bestLb, lookbackGrid, combos } = await loadForecastMeta();
 
   // V2 (Teil 3): Feature-Tilt + Regime-Band; Band anschließend auf die
-  // realisierte Fehlerverteilung der aktiven Kombi kalibriert.
-  const raw = computeForecastV2(closes, baseDate, sentiment, bestW, FORECAST_HORIZON, bestLb);
+  // realisierte Fehlerverteilung des aktiven Lookbacks kalibriert.
+  const raw = computeForecastV2(closes, baseDate, FORECAST_HORIZON, bestLb);
   if (!raw) return null;
-  const { fc: live, calib } = applyBandCalibration(raw, combos[comboKey(bestW, bestLb)]);
+  const { fc: live, calib } = applyBandCalibration(raw, combos[comboKey(bestLb)]);
   const predictedPct =
     live.baseClose > 0
       ? (live.points[live.points.length - 1]!.value / live.baseClose - 1) * 100
@@ -90,40 +83,34 @@ export async function runForecast(
   if (existing.empty) {
     const batch = db.batch();
     const madeAt = new Date().toISOString();
-    for (const w of weightGrid) {
-      for (const lb of lookbackGrid) {
-        // Shadow = derselbe V2-Generator wie live — nur so misst die
-        // Bewertung die Prognosen, die wirklich ausgespielt werden.
-        const fc = computeForecastV2(closes, baseDate, sentiment, w, FORECAST_HORIZON, lb);
-        if (!fc) continue;
-        const docData: ForecastDoc = {
-          baseDate,
-          baseClose: fc.baseClose,
-          w,
-          lookback: lb,
-          horizonDays: fc.points.length,
-          sentiment,
-          dailyVol: fc.dailyVol,
-          points: fc.points,
-          predictedPct:
-            fc.baseClose > 0
-              ? (fc.points[fc.points.length - 1]!.value / fc.baseClose - 1) * 100
-              : 0,
-          madeAt,
-          evaluated: false,
-        };
-        batch.set(coll.doc(`${baseDate}_${comboKey(w, lb)}`), docData);
-      }
+    for (const lb of lookbackGrid) {
+      // Shadow = derselbe V2-Generator wie live — nur so misst die
+      // Bewertung die Prognosen, die wirklich ausgespielt werden.
+      const fc = computeForecastV2(closes, baseDate, FORECAST_HORIZON, lb);
+      if (!fc) continue;
+      const docData: ForecastDoc = {
+        baseDate,
+        baseClose: fc.baseClose,
+        lookback: lb,
+        horizonDays: fc.points.length,
+        dailyVol: fc.dailyVol,
+        points: fc.points,
+        predictedPct:
+          fc.baseClose > 0
+            ? (fc.points[fc.points.length - 1]!.value / fc.baseClose - 1) * 100
+            : 0,
+        madeAt,
+        evaluated: false,
+      };
+      batch.set(coll.doc(`${baseDate}_${comboKey(lb)}`), docData);
     }
     await batch.commit();
   }
 
-  return { ...live, w: bestW, sentiment, predictedPct, calib };
+  return { ...live, predictedPct, calib };
 }
 
 export interface LiveIntradayForecast extends IntradayForecastComputation {
-  w: number;
-  sentiment: number;
   predictedPct: number;
   calib: BandCalibration | null;
 }
@@ -140,7 +127,6 @@ const pctToLast = (points: Array<{ value: number }>, base: number): number =>
 export async function runIntradayForecast(
   symbol: string,
   bars: IntradayBar[],
-  sentiment: number,
   marketOpen: boolean,
 ): Promise<LiveIntradayForecast | null> {
   if (bars.length < 5) return null;
@@ -150,14 +136,14 @@ export async function runIntradayForecast(
 
   const statsSnap = await db.doc('meta/forecastStatsIntraday').get();
   const combos = (statsSnap.get('combos') as Record<string, ComboStat> | undefined) ?? {};
-  const best = bestParams(combos);
-  // bestParams-Fallback sind die TAGES-Defaults — auf Intraday-Gitter mappen
-  const bestW = (INTRADAY_WEIGHT_GRID as readonly number[]).includes(best.w) ? best.w : 0.5;
-  const bestLb = (INTRADAY_LOOKBACK_GRID as readonly number[]).includes(best.lookback) ? best.lookback : 24;
+  // Eigener Fallback: Der Tages-Default (20) liegt gar nicht im
+  // Intraday-Gitter [24, 48] — ein gemeinsamer Default hätte hier stets
+  // einen Lookback erzeugt, den keine Shadow-Kombi je bewertet.
+  const { lookback: bestLb } = bestParams(combos, DEFAULT_INTRADAY_LOOKBACK);
 
-  const rawLive = computeIntradayForecastV2(closes, baseT, sentiment, bestW, INTRADAY_HORIZON, bestLb);
+  const rawLive = computeIntradayForecastV2(closes, baseT, INTRADAY_HORIZON, bestLb);
   if (!rawLive) return null;
-  const { fc: live, calib } = applyBandCalibration(rawLive, combos[comboKey(bestW, bestLb)]);
+  const { fc: live, calib } = applyBandCalibration(rawLive, combos[comboKey(bestLb)]);
 
   // Shadow-Logging: offener Markt + Stundenslot; einmal je (symbol, baseT)
   if (marketOpen && baseT % 3600 < 300) {
@@ -166,29 +152,25 @@ export async function runIntradayForecast(
     if (existing.empty) {
       const batch = db.batch();
       const madeAt = new Date().toISOString();
-      for (const w of INTRADAY_WEIGHT_GRID) {
-        for (const lb of INTRADAY_LOOKBACK_GRID) {
-          const fc = computeIntradayForecastV2(closes, baseT, sentiment, w, INTRADAY_HORIZON, lb);
-          if (!fc) continue;
-          const docData: IntradayForecastDoc = {
-            baseT,
-            baseClose: fc.baseClose,
-            w,
-            lookback: lb,
-            horizonBars: fc.points.length,
-            sentiment,
-            vol: fc.vol,
-            points: fc.points,
-            predictedPct: pctToLast(fc.points, fc.baseClose),
-            madeAt,
-            evaluated: false,
-          };
-          batch.set(coll.doc(`${baseT}_${comboKey(w, lb)}`), docData);
-        }
+      for (const lb of INTRADAY_LOOKBACK_GRID) {
+        const fc = computeIntradayForecastV2(closes, baseT, INTRADAY_HORIZON, lb);
+        if (!fc) continue;
+        const docData: IntradayForecastDoc = {
+          baseT,
+          baseClose: fc.baseClose,
+          lookback: lb,
+          horizonBars: fc.points.length,
+          vol: fc.vol,
+          points: fc.points,
+          predictedPct: pctToLast(fc.points, fc.baseClose),
+          madeAt,
+          evaluated: false,
+        };
+        batch.set(coll.doc(`${baseT}_${comboKey(lb)}`), docData);
       }
       await batch.commit();
     }
   }
 
-  return { ...live, w: bestW, sentiment, predictedPct: pctToLast(live.points, live.baseClose), calib };
+  return { ...live, predictedPct: pctToLast(live.points, live.baseClose), calib };
 }

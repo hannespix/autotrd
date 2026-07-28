@@ -30,8 +30,7 @@ import {
   type Strategy,
   type StrategyDoc,
 } from '../../../shared/src/index.js';
-import { aggregateSentiment, atrPct, buildVariants } from '../../../shared/src/index.js';
-import { anthropicApiKey, ensureAiDay } from '../core/ai.js';
+import { atrPct, buildVariants } from '../../../shared/src/index.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 import { computeIndicatorSnapshot, computeSignal } from '../core/engine.js';
 import { executePaperTrade, resolveBrokerMode, riskExitReason } from '../core/broker.js';
@@ -56,9 +55,7 @@ import { evaluateIntradayDue } from './evalForecasts.js';
 import { stepFleet, type FleetState } from '../core/tuneFleet.js';
 import { FLEET_SIZE } from './autoTune.js';
 import { chunkBarsByYear, getDeepDailyBars, getIntradayBars, getMarketSnapshot, getQuickQuote } from '../core/marketData.js';
-import { fetchNews, newsDocId, type NewsItem } from '../core/news.js';
 
-const NEWS_TTL_MS = 10 * 60 * 1000; // wie die Referenz: 10-min-Cache
 
 /** Mo–Fr, 09:30 ≤ t < 16:00 in America/New_York (Port des run_scan.sh-Gates). */
 export function isUsMarketOpen(now: Date = new Date()): boolean {
@@ -152,11 +149,47 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
     .where('settings.strategy.engine.running', '==', true)
     .get();
 
+  // Beweislast-Umkehr (Owner-Direktive 28.07.): Das Stimmgewicht der Prognose
+  // hängt an ihrer REALISIERTEN Trefferquote — einmal je Scan gelesen, für
+  // alle User angewandt. Der User konfiguriert das Basisgewicht; ob die
+  // Prognose es führen darf, entscheidet die Evidenz. Je Zeitbasis die
+  // passende Statistik: 5-min-Signale werden von der Kurzfrist-Prognose
+  // gestimmt, Tages-Signale von der Tages-Prognose — die Trefferquote der
+  // einen sagt nichts über die andere.
+  type FcStats = { scored?: number | undefined; dirAccuracy?: number | null | undefined } | null;
+  let fcDaily: FcStats = null;
+  let fcIntraday: FcStats = null;
+  try {
+    const [d, i] = await Promise.all([
+      db.doc('meta/forecastStats').get(),
+      db.doc('meta/forecastStatsIntraday').get(),
+    ]);
+    fcDaily = {
+      scored: d.get('scored') as number | undefined,
+      dirAccuracy: d.get('dirAccuracy') as number | null | undefined,
+    };
+    fcIntraday = {
+      scored: i.get('scored') as number | undefined,
+      dirAccuracy: i.get('dirAccuracy') as number | null | undefined,
+    };
+  } catch {
+    // nicht lesbar = keine Evidenz — accuracyWeightedVote(null) ⇒ Stimme 0
+  }
+
   for (const userDoc of users.docs) {
     const uid = userDoc.id;
     const strategy = userDoc.get('settings.strategy') as Strategy | undefined;
     if (!strategy || !isStrategy(strategy)) continue;
     if (resolveBrokerMode(strategy) !== 'paper') continue; // Live bleibt verriegelt (M14)
+    // Gate VOR der Risiko-Klammer, damit beide Pfade (Signal + Ausführung)
+    // dasselbe gedeckelte Gewicht sehen.
+    strategy.signals = {
+      ...strategy.signals,
+      forecastWeight: accuracyWeightedVote(
+        strategy.signals.forecastWeight,
+        (strategy.signals.timeframe ?? 'intraday') === 'intraday' ? fcIntraday : fcDaily,
+      ).weight,
+    };
     // Zugangsstufe (Owner 26.07.): Nicht freigeschaltete Konten dürfen den
     // Schalter zwar umlegen — gehandelt wird für sie trotzdem nicht. Die
     // Prüfung sitzt hier und nicht in der Query, weil ein fehlendes Feld
@@ -846,7 +879,10 @@ export async function runScan(force = false): Promise<ScanResult> {
   // Genauigkeitsgewichtetes Forecast-Vote (Prognose 2.0 Teil 4): Das
   // Stimmgewicht der Prognose folgt ihrer REALISIERTEN Kante über den
   // Münzwurf — einmal je Scan aus der öffentlichen Lernstatistik gelesen.
-  let fcVote = { weight: Math.trunc(DEFAULT_STRATEGY.signals.forecastWeight), factor: null as number | null };
+  // Startwert 0, nicht das Basisgewicht: Ist die Statistik nicht lesbar,
+  // gibt es keine Evidenz — und ohne Evidenz stimmt die Prognose nicht mit
+  // (Beweislast-Umkehr 28.07., siehe accuracyWeightedVote).
+  let fcVote = { weight: 0, factor: null as number | null };
   try {
     const statsSnap = await db.doc('meta/forecastStats').get();
     fcVote = accuracyWeightedVote(DEFAULT_STRATEGY.signals.forecastWeight, {
@@ -854,7 +890,7 @@ export async function runScan(force = false): Promise<ScanResult> {
       dirAccuracy: statsSnap.get('dirAccuracy') as number | null | undefined,
     });
   } catch (err) {
-    logger.warn('forecastStats nicht lesbar — Basisgewicht bleibt', err);
+    logger.warn('forecastStats nicht lesbar — Prognose stimmt nicht mit', err);
   }
   const effSignals = { ...DEFAULT_STRATEGY.signals, forecastWeight: fcVote.weight };
 
@@ -868,71 +904,10 @@ export async function runScan(force = false): Promise<ScanResult> {
       const symDoc = await symRef.get();
       const batch = db.batch();
 
-      // News + Sentiment (10-min-TTL wie die Referenz; Feeds nicht hämmern)
-      const prevSent = symDoc.get('sentiment') as
-        | { overall?: number; updatedAt?: string }
-        | undefined;
-      let sentimentOverall = prevSent?.overall ?? 0;
-      const sentStale =
-        !prevSent?.updatedAt || now.getTime() - Date.parse(prevSent.updatedAt) > NEWS_TTL_MS;
-      if (sentStale) {
-        let news: NewsItem[] = [];
-        try {
-          news = await fetchNews(symbol);
-        } catch (err) {
-          logger.warn(`News-Fehler ${symbol}`, err);
-        }
-        const agg = aggregateSentiment(news);
-        sentimentOverall = agg.overall;
-        batch.set(
-          symRef,
-          { sentiment: { ...agg, updatedAt: now.toISOString() } },
-          { merge: true },
-        );
-        for (const item of news.slice(0, 20)) {
-          batch.set(symRef.collection('news').doc(newsDocId(item)), { ...item });
-        }
-        // Event-Tage: News auf Chart-Tage mappen (sentiment-gefärbte Marker)
-        const byDay = new Map<string, NewsItem[]>();
-        for (const item of news) {
-          const day = item.ts.slice(0, 10);
-          if (day) byDay.set(day, [...(byDay.get(day) ?? []), item]);
-        }
-        for (const [day, items] of byDay) {
-          const dayAgg = aggregateSentiment(items);
-          const top = [...items]
-            .sort(
-              (a, b) =>
-                Math.abs(b.sent.sentiment) + b.sent.magnitude -
-                (Math.abs(a.sent.sentiment) + a.sent.magnitude),
-            )
-            .slice(0, 3)
-            .map((i) => ({ title: i.title, source: i.source, url: i.url, kind: i.kind, sent: i.sent }));
-          batch.set(symRef.collection('events').doc(day), {
-            date: day,
-            sentiment: dayAgg.overall,
-            label: dayAgg.label,
-            count: items.length,
-            topEvents: dayAgg.topEvents,
-            top,
-          });
-        }
-        // KI-Staffel (M6b): Tages-Doc market/{sym}/ai/{date} — EIN Call-Paar
-        // je (Symbol, Tag) für alle User; Cache-Hit = reiner Firestore-Read.
-        // Ohne Key/Budget degradiert ensureAiDay sichtbar auf regelbasiert.
-        if (news.length > 0) {
-          try {
-            await ensureAiDay(symbol, lastDate, news, snap.changePct);
-          } catch (err) {
-            logger.warn(`KI-Tages-Doc-Fehler ${symbol}`, err);
-          }
-        }
-      }
-
-      // Prognose mit ECHTEM News-Sentiment + Shadow-Grid
+      // Prognose als reine Preis-Regression + Shadow-Grid
       let forecast: LiveForecast | null = null;
       try {
-        forecast = await runForecast(symbol, closes, lastDate, sentimentOverall);
+        forecast = await runForecast(symbol, closes, lastDate);
       } catch (err) {
         logger.warn(`Forecast-Fehler ${symbol}`, err);
       }
@@ -965,10 +940,8 @@ export async function runScan(force = false): Promise<ScanResult> {
             ? {
                 points: forecast.points,
                 band: forecast.band,
-                w: forecast.w,
                 lookback: forecast.lookback,
                 predictedPct: Math.round(forecast.predictedPct * 100) / 100,
-                sentiment: forecast.sentiment,
                 baseDate: lastDate,
                 calib: forecast.calib,
               }
@@ -1048,7 +1021,6 @@ export async function runScan(force = false): Promise<ScanResult> {
           const ifc = await runIntradayForecast(
             symbol,
             flat,
-            sentimentOverall,
             marketOpenForClass(classify(symbol), now),
           );
           if (md) md.intradayPct = ifc?.predictedPct ?? null;
@@ -1059,7 +1031,6 @@ export async function runScan(force = false): Promise<ScanResult> {
                 ? {
                     points: ifc.points,
                     band: ifc.band,
-                    w: ifc.w,
                     lookback: ifc.lookback,
                     predictedPct: Math.round(ifc.predictedPct * 100) / 100,
                     baseT: ifc.points[0]!.t - 300,
@@ -1197,7 +1168,8 @@ export const scanMarket = onSchedule(
     retryCount: 0,
     memory: '512MiB',
     timeoutSeconds: 180,
-    secrets: [anthropicApiKey],
+    // Kein KI-Secret mehr: Der Scan ruft seit 28.07. keine Claude-API auf —
+    // Der Scan ruft kein Sprachmodell mehr auf (MILESTONES M6).
   },
   async () => {
     try {

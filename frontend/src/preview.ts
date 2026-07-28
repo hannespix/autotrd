@@ -24,11 +24,6 @@ export interface PreviewBar {
   close: number;
 }
 
-export interface PreviewDayInfo {
-  sentiment?: number | null;
-  tags?: string[];
-}
-
 export interface PreviewMarker {
   index: number;
   date: string;
@@ -47,7 +42,6 @@ const WARMUP = 26; // MACD-Slow — davor sind Serien ohnehin null → unbekannt
 export function previewSignals(
   spec: StrategySpec,
   bars: PreviewBar[],
-  dayInfo?: Map<string, PreviewDayInfo>,
 ): PreviewResult {
   const closes = bars.map((b) => b.close);
   const rsi = wilderRsi(closes);
@@ -73,14 +67,11 @@ export function previewSignals(
   });
 
   for (let i = Math.min(WARMUP, bars.length); i < bars.length; i++) {
-    const day = dayInfo?.get(bars[i]!.date);
     const ctx: RuleContext = {
       values: valuesAt(i),
       prevValues: i > 0 ? valuesAt(i - 1) : {},
       closes: closes.slice(0, i + 1),
       minuteOfDay: 600, // Annahme 10:00 ET (Tages-Bars)
-      sentiment: day?.sentiment ?? null,
-      newsEvents: dayInfo ? (day?.tags ?? []) : null,
       forecastPct: null,
       position:
         openIndex !== null && entry !== null
