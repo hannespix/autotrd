@@ -390,7 +390,11 @@ function layout(email: string): string {
     <button class="hbtn sb-tgl" id="sideR" title="Rechte Spalte ein-/ausblenden">◨</button>
     <button class="hbtn" id="themeBtn" title="Hell/Dunkel">◐</button>
     <span class="user">${email.replace(/[<>&]/g, '')}</span>
-    <button class="hbtn" id="logoutBtn">Abmelden</button>
+    <!-- „Abmelden" saß bis 28.07. hier, direkt neben dem rechten Hamburger —
+         und wurde beim Griff nach dem Menü ständig mitgetroffen (Owner-
+         Screenshot). Eine Aktion, die die Sitzung beendet, gehört nicht
+         fingerbreit neben eine, die man dauernd braucht: Sie steht jetzt
+         unten im Options-Modal (⚙). -->
     <button class="burg" id="burgR" aria-label="Rechtes Panel">☰</button>
   </header>
   <div class="overlay" id="olv"></div>
@@ -895,6 +899,11 @@ function layout(email: string): string {
       <div class="row" style="margin-top:8px">
         <button class="btn btn-g" id="owSave">Speichern</button>
         <span class="hint" id="optMsg"></span>
+      </div>
+      <div class="wl-sec" style="margin-top:14px">Konto</div>
+      <div class="row" style="align-items:center;gap:10px">
+        <span class="hint" style="flex:1">Angemeldet als <b>${email.replace(/[<>&]/g, '')}</b></span>
+        <button class="btn btn-n" id="logoutBtn">Abmelden</button>
       </div>
     </div>
   </div>
