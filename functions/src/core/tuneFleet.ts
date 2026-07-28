@@ -25,6 +25,7 @@ import {
   PAPER_FEE_RATE,
   classify,
   describeVariant,
+  EVIDENCE_DEFAULTS,
   judgeCandidate,
   resolveRisk,
   type EvidenceOptions,
@@ -275,12 +276,22 @@ export function decideTuning(
   let winner: Variant | null = null;
   let bestEdge = 0;
 
+  // Bonferroni: Wer m Varianten gleichzeitig gegen α = 5 % prüft, findet
+  // im Schnitt m·5 % Scheinsieger — bei 6 Varianten und täglicher Prüfung
+  // wäre das grob alle drei Tage eine Beförderung ohne echten Grund, rund
+  // hundert im Jahr. Also bekommt jede einzelne Prüfung α/m. Das ist die
+  // konservativste Korrektur (Harvey/Liu/Zhu 2016 fordern für Faktor-Tests
+  // aus demselben Grund t > 3 statt 2) — und genau deshalb die richtige:
+  // Eine ausgelassene gute Änderung kostet Geduld, eine falsche kostet Geld.
+  const alphaJe = (opts.alpha ?? EVIDENCE_DEFAULTS.alpha) / Math.max(1, variants.length);
+  const optsKorr: EvidenceOptions = { ...opts, alpha: alphaJe };
+
   for (const v of variants) {
     const st = fleet[v.id];
     const verdict = judgeCandidate(
       { pnls: st?.pnls ?? [], label: v.id },
       { pnls: livePnls, label: 'aktuell' },
-      opts,
+      optsKorr,
     );
     entries.push({
       at: now.toISOString(),

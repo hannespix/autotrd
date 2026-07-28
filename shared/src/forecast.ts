@@ -514,9 +514,17 @@ export interface ForecastVoteWeighting {
  * konfigurierte Stimmgewicht wird mit der REALISIERTEN Kante über den
  * Münzwurf skaliert — 50 % Trefferquote ⇒ Faktor 0 (die Prognose weiß
  * nichts, also stimmt sie nicht mit), 75 % ⇒ 0.5, 100 % ⇒ 1. Unter 50 %
- * ebenfalls 0 — NIE contrarian drehen. Erst ab MIN_TOTAL_SCORES
- * realisierten Bewertungen aktiv; vorher gilt das konfigurierte Gewicht
- * unverändert (ehrlicher Default statt eingebildeter Präzision).
+ * ebenfalls 0 — NIE contrarian drehen.
+ *
+ * **Ohne Evidenz stimmt die Prognose NICHT mit** (Beweislast-Umkehr,
+ * Owner-Direktive 28.07.). Bis zur ersten Deploy-Reihe Ende Juli lief es
+ * andersherum: unter MIN_TOTAL_SCORES galt das volle konfigurierte Gewicht
+ * — die Prognose konnte mit forecastWeight 2 einen Ausstieg im Alleingang
+ * auslösen, obwohl live noch KEINE einzige Prognose je bewertet worden war
+ * (meta/forecastStats stand auf scored: 0). Ein Signal, dessen Trefferquote
+ * niemand kennt, hat in einer Geld-Entscheidung kein Stimmrecht; es muss
+ * sich das Gewicht erst durch realisierte Treffer verdienen. Im Chart
+ * bleibt die Prognose als Anzeige — nur handeln darf sie nicht mehr blind.
  */
 export function accuracyWeightedVote(
   baseWeight: number,
@@ -526,7 +534,7 @@ export function accuracyWeightedVote(
   const scored = stats?.scored ?? 0;
   const acc = stats?.dirAccuracy;
   if (scored < MIN_TOTAL_SCORES || acc === null || acc === undefined || !Number.isFinite(acc)) {
-    return { weight: base, factor: null };
+    return { weight: 0, factor: null };
   }
   const factor = Math.max(0, Math.min(1, (acc / 100 - 0.5) * 2));
   return { weight: Math.round(base * factor), factor: round(factor, 3) };

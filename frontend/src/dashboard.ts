@@ -128,12 +128,15 @@ const PANEL_TITLES: Record<string, string> = {
   chart2: 'Vergleichs-Chart',
 };
 
-/** Panels, die ohne gespeicherten Workspace ausgeblendet starten. */
-const DEFAULT_HIDDEN = new Set(['chart2']);
+/** Panels, die ohne gespeicherten Workspace ausgeblendet starten.
+ *  `news` seit 28.07.: Der Scan holt keine News mehr (Owner-Direktive —
+ *  Performance vor Erklärung); die Karte zeigte nur noch stehengebliebene
+ *  Einträge. Wer sie sehen will, kann sie im Workspace-Menü einblenden. */
+const DEFAULT_HIDDEN = new Set(['chart2', 'news']);
 
 /** Werks-Presets: Sichtbarkeits-Sets über den 13 Panels. */
 const WS_PRESETS: Record<string, { label: string; hidden: string[] }> = {
-  ueberblick: { label: 'Überblick', hidden: ['chart2'] },
+  ueberblick: { label: 'Überblick', hidden: ['chart2', 'news'] },
   fokus: {
     label: 'Ein-Symbol-Fokus',
     hidden: ['market', 'autosignals', 'history', 'clock', 'strategy', 'chart2'],

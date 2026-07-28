@@ -6,14 +6,18 @@ import { describe, expect, it } from 'vitest';
 import { MIN_TOTAL_SCORES, accuracyWeightedVote } from '../src/forecast.js';
 
 describe('accuracyWeightedVote', () => {
-  it('ohne Evidenz (scored < Minimum): Basisgewicht unverändert, factor null', () => {
+  it('ohne Evidenz (scored < Minimum): KEINE Stimme — Beweislast-Umkehr 28.07.', () => {
+    // Vorher galt hier das volle Basisgewicht („ehrlicher Default"). Live
+    // stand meta/forecastStats monatelang auf scored: 0 — und die Prognose
+    // stimmte trotzdem mit Gewicht 2 ab. Ein Signal unbekannter Trefferquote
+    // darf kein Geld bewegen; es muss sich sein Gewicht erst verdienen.
     const v = accuracyWeightedVote(2, { scored: MIN_TOTAL_SCORES - 1, dirAccuracy: 90 });
-    expect(v).toEqual({ weight: 2, factor: null });
+    expect(v).toEqual({ weight: 0, factor: null });
   });
 
-  it('fehlende/kaputte Statistik: Basisgewicht unverändert', () => {
-    expect(accuracyWeightedVote(3, null).weight).toBe(3);
-    expect(accuracyWeightedVote(3, { scored: 50, dirAccuracy: null }).factor).toBeNull();
+  it('fehlende/kaputte Statistik: ebenfalls keine Stimme', () => {
+    expect(accuracyWeightedVote(3, null).weight).toBe(0);
+    expect(accuracyWeightedVote(3, { scored: 50, dirAccuracy: null }).weight).toBe(0);
     expect(accuracyWeightedVote(3, { scored: 50, dirAccuracy: Number.NaN }).factor).toBeNull();
   });
 

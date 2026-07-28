@@ -90,7 +90,12 @@ export async function runForecast(
   if (existing.empty) {
     const batch = db.batch();
     const madeAt = new Date().toISOString();
-    for (const w of weightGrid) {
+    // Ohne Sentiment (seit 28.07. der Normalfall) ist w ein toter Regler:
+    // Alle w-Kombis rechnen identisch. Die Achse kollabiert auf [0] — das
+    // drittelt Schreibvolumen und Bewertungslast, ohne Information zu
+    // verlieren. Alte Kombi-Statistiken mit w≠0 bleiben unangetastet.
+    const wGrid: readonly number[] = sentiment === 0 ? [0] : weightGrid;
+    for (const w of wGrid) {
       for (const lb of lookbackGrid) {
         // Shadow = derselbe V2-Generator wie live — nur so misst die
         // Bewertung die Prognosen, die wirklich ausgespielt werden.
@@ -166,7 +171,9 @@ export async function runIntradayForecast(
     if (existing.empty) {
       const batch = db.batch();
       const madeAt = new Date().toISOString();
-      for (const w of INTRADAY_WEIGHT_GRID) {
+      // Gleiche w-Kollaps-Logik wie im Tages-Pfad (siehe runForecast).
+      const wGrid: readonly number[] = sentiment === 0 ? [0] : INTRADAY_WEIGHT_GRID;
+      for (const w of wGrid) {
         for (const lb of INTRADAY_LOOKBACK_GRID) {
           const fc = computeIntradayForecastV2(closes, baseT, sentiment, w, INTRADAY_HORIZON, lb);
           if (!fc) continue;
