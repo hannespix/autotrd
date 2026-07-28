@@ -11,6 +11,7 @@ import {
   EVIDENCE_DEFAULTS,
   MAX_LEVERAGE,
   MAX_OPEN_POSITIONS_CAP,
+  MIN_EDGE_MULTIPLE,
   PAPER_FEE_RATE,
   aggregateBars,
   bollinger,
@@ -924,6 +925,8 @@ function layout(email: string): string {
           <input id="owMinC" class="inp st-num" type="number" min="1" max="6" step="1" /></label>
         <label>Konfluenz Ausstieg ${iBtn('exitConfluence')}
           <input id="owExitC" class="inp st-num" type="number" min="1" max="6" step="1" /></label>
+        <label>Kostenschwelle (× Gebühren) ${iBtn('minEdgeMultiple')}
+          <input id="owEdge" class="inp st-num" type="number" min="0" max="10" step="0.5" /></label>
         <label class="opt-row" style="align-items:center">
           <input type="checkbox" id="owFcSolo" />
           <span>Prognose darf allein entscheiden ${iBtn('forecastSolo')}</span></label>
@@ -1661,6 +1664,8 @@ function openOptions(): void {
   ($('owMinC') as HTMLInputElement).value = String(st.strategy.signals.minConfluence);
   ($('owExitC') as HTMLInputElement).value = String(
     st.strategy.signals.exitConfluence ?? Math.max(1, st.strategy.signals.minConfluence - 1));
+  ($('owEdge') as HTMLInputElement).value = String(
+    st.strategy.signals.minEdgeMultiple ?? MIN_EDGE_MULTIPLE);
   ($('owFcSolo') as HTMLInputElement).checked = st.strategy.signals.forecastSolo === true;
   ($('owShort') as HTMLInputElement).checked = st.strategy.signals.allowShort === true;
   // Klassen-Profile transparent machen: Sie überschreiben die Werte oben je
@@ -5090,6 +5095,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         ...st.strategy.signals,
         minConfluence: Math.max(1, num('owMinC')),
         exitConfluence: Math.max(1, num('owExitC')),
+        minEdgeMultiple: Math.min(10, Math.max(0, num('owEdge'))),
         forecastSolo: ($('owFcSolo') as HTMLInputElement).checked,
         timeframe: ($('owTf') as HTMLSelectElement).value === 'daily' ? 'daily' : 'intraday',
         allowShort: ($('owShort') as HTMLInputElement).checked,

@@ -182,6 +182,14 @@ export function validateStrategy(value: unknown): string[] {
     if (signals.allowShort !== undefined && typeof signals.allowShort !== 'boolean') {
       problems.push('signals.allowShort muss boolean sein');
     }
+    // 0 = Kostenschwelle aus. Nach oben gedeckelt, weil ein Tippfehler ("30")
+    // sonst jeden Einstieg blockierte und die Engine still stillstünde.
+    if (signals.minEdgeMultiple !== undefined
+      && (!isFiniteNumber(signals.minEdgeMultiple)
+        || signals.minEdgeMultiple < 0
+        || signals.minEdgeMultiple > 10)) {
+      problems.push('signals.minEdgeMultiple muss zwischen 0 und 10 liegen (0 = aus)');
+    }
   }
 
   return problems;

@@ -200,6 +200,157 @@ export function classify(symbol: string): string {
   return s.includes('.') ? 'stocks_global' : 'stocks_us';
 }
 
+/* ── Handelbarkeit (Befund 28.07.) ──────────────────────────────────────────
+ *
+ * Von den 40 Symbolen, die der Scan an diesem Tag beobachtete, waren 25
+ * Aktienindizes: ^GSPC, ^DJI, ^N225, ^HSI und so weiter. Die kann man nicht
+ * kaufen. `^GSPC` ist eine Zahl, kein Instrument — kein Broker der Welt
+ * verkauft dir den S&P-500-INDEX, nur ETFs darauf.
+ *
+ * Im Paper-Konto fällt das nicht auf, weil wir so tun als ob. Real war die
+ * Strategie damit NICHT AUSFÜHRBAR, und jede Auswertung maß etwas, das es
+ * nicht zu kaufen gibt. Das ist kein Optimierungsthema, sondern ein
+ * Korrektheitsthema: Solange das drinsteht, ist jede Kennzahl wertlos.
+ *
+ * Der Maßstab ist bewusst der Broker, auf den M13/M14 zielen: Alpaca handelt
+ * US-Aktien, US-ETFs und Krypto. Alles andere — Devisen, Futures,
+ * Auslandsbörsen, Rendite-Indizes — ist über diesen Weg nicht erreichbar.
+ *
+ * Die nicht handelbaren Symbole bleiben im Katalog. Sie sind als SIGNAL
+ * weiterhin wertvoll: ^GSPC trägt den Marktfilter der Momentum-Strategie,
+ * ^VIX misst die Nervosität, die Auslandsindizes zeigen die Weltlage. Nur
+ * kaufen kann man sie eben nicht. */
+
+/** Symbole, die trotz `^`/Sonderform HANDELBAR sind (heute: keine). */
+const TRADABLE_EXCEPTIONS = new Set<string>();
+
+/** Klassen, deren Symbole über den Alpaca-Weg handelbar sind. */
+const TRADABLE_CLASSES = new Set([
+  'stocks_us',
+  'etf_sectors',
+  'etf_regions',
+  'etf_thematic',
+  'crypto',
+]);
+
+/**
+ * Lässt sich dieses Symbol tatsächlich kaufen?
+ *
+ * `rates_bonds` ist gemischt: Die Bond-ETFs (TLT, IEF …) sind ganz normale
+ * US-ETFs, die Rendite-Indizes (^TNX, ^IRX …) sind Prozentzahlen. Deshalb
+ * entscheidet dort nicht die Klasse, sondern das `^`.
+ */
+export function isTradable(symbol: string): boolean {
+  const s = symbol.trim().toUpperCase();
+  if (TRADABLE_EXCEPTIONS.has(s)) return true;
+  if (s.startsWith('^')) return false; // Indizes und Renditen: reine Zahlen
+  if (s.endsWith('=X') || s === 'DX-Y.NYB') return false; // Devisen: nicht über Alpaca
+  if (s.endsWith('=F')) return false; // Futures: Kontrakt-Rollover modellieren wir nicht
+  const cls = classify(s);
+  if (cls === 'rates_bonds') return true; // hier bleiben nur die Bond-ETFs übrig
+  if (cls === 'stocks_global') return false; // Auslandsbörsen nicht erreichbar
+  return TRADABLE_CLASSES.has(cls);
+}
+
+/** Alle handelbaren Katalog-Symbole. */
+export function tradableSymbols(assetClass?: string): string[] {
+  return allSymbols(assetClass).filter(isTradable);
+}
+
+/* ── Korrelations-Cluster (Befund 28.07.) ───────────────────────────────────
+ *
+ * Dieselben 40 Symbole nochmal, anders sortiert: 25 Aktienindizes und 12
+ * Devisenkreuze, davon die meisten USD-Paare. Globale Aktienindizes laufen
+ * im Absturz mit 0,8 bis 0,9 Korrelation, USD-Kreuze sind größtenteils
+ * dieselbe Dollar-Wette.
+ *
+ * Vierzig Positionen waren also in Wahrheit ungefähr ZWEI Wetten. Das
+ * Positionslimit streute damit gar nichts — es vervielfachte dieselbe Wette
+ * und multiplizierte nur die Gebühren. Und im Drawdown, also genau dann,
+ * wenn Streuung zählt, fallen sie gemeinsam.
+ *
+ * Der Cluster ist bewusst grob. Eine gerechnete Korrelationsmatrix wäre
+ * genauer, aber sie hätte einen Nachteil, der schwerer wiegt: Sie ist
+ * rückwärtsgewandt und bricht zusammen, wenn im Crash alles auf 1 geht —
+ * also genau dann, wenn man sie braucht. Eine feste Zuordnung nach
+ * wirtschaftlicher Herkunft kennt diesen Fehlermodus nicht. */
+
+const CLUSTER_OVERRIDES: Record<string, string> = {
+  // Edelmetall-ETFs gehören zu den Metallen, nicht zu den Aktien
+  GLD: 'rohstoff_metall', SLV: 'rohstoff_metall',
+  USO: 'rohstoff_energie',
+  // Energie-nahe Aktien-ETFs laufen mit dem Ölpreis, nicht mit dem Index
+  XLE: 'rohstoff_energie', ICLN: 'rohstoff_energie', TAN: 'rohstoff_energie',
+};
+
+const US_BREIT = new Set(['SPY', 'QQQ', 'DIA', 'IWM', 'VTI']);
+const INTL_ETFS = new Set(['EFA', 'EEM', 'VGK', 'EWJ', 'FXI', 'EWG', 'EWZ', 'INDA']);
+const METALLE = new Set(['GC=F', 'SI=F', 'PL=F', 'PA=F', 'HG=F']);
+const ENERGIE = new Set(['CL=F', 'BZ=F', 'NG=F', 'RB=F', 'HO=F']);
+const US_INDIZES = new Set(['^GSPC', '^DJI', '^IXIC', '^NDX', '^RUT']);
+
+/**
+ * Grober Korrelationsblock eines Symbols.
+ *
+ * Wer hier etwas ändert, ändert die tatsächliche Streuung des Depots —
+ * nicht bloß eine Anzeige.
+ */
+export function correlationCluster(symbol: string): string {
+  const s = symbol.trim().toUpperCase();
+  const over = CLUSTER_OVERRIDES[s];
+  if (over) return over;
+  if (s === '^VIX') return 'volatilitaet'; // läuft GEGEN Aktien, eigener Block
+  if (s.endsWith('=X') || s === 'DX-Y.NYB') {
+    // Alles mit USD auf einer Seite ist dieselbe Dollar-Wette.
+    return s.includes('USD') || s === 'DX-Y.NYB' ? 'fx_usd' : 'fx_kreuz';
+  }
+  if (METALLE.has(s)) return 'rohstoff_metall';
+  if (ENERGIE.has(s)) return 'rohstoff_energie';
+  if (s.endsWith('=F')) return 'rohstoff_agrar'; // Rest der Futures: Agrar + Index-Futures
+  const cls = classify(s);
+  if (cls === 'crypto') return 'krypto';
+  if (cls === 'rates_bonds') return 'zinsen';
+  if (cls === 'indices') return US_INDIZES.has(s) ? 'aktien_us_breit' : 'aktien_intl';
+  if (cls === 'etf_regions') {
+    if (US_BREIT.has(s)) return 'aktien_us_breit';
+    if (INTL_ETFS.has(s)) return 'aktien_intl';
+    return 'aktien_us_breit';
+  }
+  if (cls === 'etf_sectors' || cls === 'etf_thematic') return 'aktien_sektor';
+  if (cls === 'stocks_global') return 'aktien_intl_einzel';
+  return 'aktien_us_einzel';
+}
+
+/**
+ * Wie viele Positionen ein einzelner Korrelationsblock höchstens stellen darf.
+ *
+ * 3 von 10 ist die Grenze, ab der ein Block das Depot dominiert. Höher wäre
+ * kosmetisch: Bei 5 gleichlaufenden Positionen von 10 bestimmt dieser eine
+ * Block die halbe Kurve, und die Streuung ist wieder Behauptung statt
+ * Eigenschaft.
+ */
+export const MAX_PER_CLUSTER = 3;
+
+/**
+ * Darf noch eine Position aus diesem Block eröffnet werden?
+ *
+ * `offen` sind die Symbole der bereits gehaltenen Positionen. Pure Funktion,
+ * damit die Regel einzeln testbar ist — sie entscheidet über echtes Geld.
+ */
+export function clusterHasRoom(
+  offen: readonly string[],
+  symbol: string,
+  max = MAX_PER_CLUSTER,
+): boolean {
+  const ziel = correlationCluster(symbol);
+  let n = 0;
+  for (const sym of offen) {
+    if (correlationCluster(sym) === ziel) n += 1;
+    if (n >= max) return false;
+  }
+  return true;
+}
+
 /** Kuratiertes Kompakt-Set für die „Markt-Puls"-Leiste. */
 export const MARKET_PULSE: readonly string[] = [
   '^GSPC', '^IXIC', '^GDAXI', '^N225', '^VIX',

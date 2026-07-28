@@ -7,6 +7,8 @@
  * Alt-Variante). Frontend UND Functions importieren von hier.
  */
 
+import { MIN_EDGE_MULTIPLE } from './costGate.js';
+
 // ── Strategie (users/{uid}.settings.strategy) ────────────────────────────────
 
 export interface BrokerConfig {
@@ -88,7 +90,7 @@ export interface EngineConfig extends RiskConfig {
    * Gleichzeitig offene Positionen (Owner-Frage 28.07.: „kann man die Anzahl
    * der maximal aktiven Trades irgendwo einstellen? habe es nicht in den
    * Optionen gefunden"). Konnte man nicht — der Wert stand fest im Code.
-   * Fehlend = 10 (bisheriges Verhalten); die Hülle klemmt auf 1–50.
+   * Fehlend = 10 (bisheriges Verhalten); die Hülle klemmt auf 1–30.
    */
   maxOpenPositions?: number;
   /**
@@ -168,6 +170,16 @@ export interface SignalsConfig {
    * im Paper-Trading begrenzen Stop-Loss und die 25-%-Notbremse real.
    */
   allowShort?: boolean;
+  /**
+   * Wie viel die erwartete Bewegung über den Handelskosten liegen muss
+   * (Befund 28.07.). Fehlend = MIN_EDGE_MULTIPLE (3); 0 schaltet die
+   * Kostenschwelle ab.
+   *
+   * Der Grund steht in costGate.ts: Über 297 Live-Trades waren die Gebühren
+   * das 2,7-Fache des Brutto-Ergebnisses. Wir haben um Beträge gehandelt,
+   * die in der Größenordnung der Reibung lagen.
+   */
+  minEdgeMultiple?: number;
 }
 
 export interface Strategy {
@@ -266,6 +278,7 @@ export const DEFAULT_STRATEGY: Strategy = {
     forecastSolo: false, // Prognose braucht eine zweite Stimme zum Einstieg
     timeframe: 'intraday', // 5-min-Signale: die Engine handelt im Scan-Takt
     allowShort: false, // Leerverkäufe bewusst Opt-in (Options-Modal + ⓘ)
+    minEdgeMultiple: MIN_EDGE_MULTIPLE, // Kostenschwelle AN (Befund 28.07.)
   },
 };
 
