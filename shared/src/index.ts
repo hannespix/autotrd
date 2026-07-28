@@ -16,3 +16,4 @@ export * from './tradingHealth.js';
 export * from './margin.js';
 export * from './costGate.js';
 export * from './riskSizing.js';
+export * from './tuneAdvisor.js';

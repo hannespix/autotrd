@@ -15,7 +15,9 @@ import {
   MAX_RISK_PER_TRADE_PCT,
   MIN_EDGE_MULTIPLE,
   PAPER_FEE_RATE,
+  adviseStrategy,
   aggregateBars,
+  applySuggestions,
   bollinger,
   buildPriors,
   byHour,
@@ -959,6 +961,13 @@ function layout(email: string): string {
         <button class="btn btn-g" id="owSave">Speichern</button>
         <span class="hint" id="optMsg"></span>
       </div>
+      <div class="wl-sec" style="margin-top:14px">Einstellungen prüfen ${iBtn('adviseSettings')}</div>
+      <div class="row">
+        <button class="btn btn-n" id="owCheck">Jetzt prüfen</button>
+        <button class="btn btn-g" id="owApply" hidden>Ausgewählte übernehmen</button>
+      </div>
+      <div id="owAdvice"></div>
+      <div class="hint" id="advMsg"></div>
       <div class="wl-sec" style="margin-top:14px">Konto</div>
       <div class="row" style="align-items:center;gap:10px">
         <span class="hint" style="flex:1">Angemeldet als <b>${email.replace(/[<>&]/g, '')}</b></span>
@@ -1661,6 +1670,92 @@ function applyUiPrefs(): void {
   applyOverlays();
   updateSubPanels();
   applyGroupFilter(); // Marktgruppen (synct über Geräte wie die Module)
+}
+
+/**
+ * Die Optionen-Maske als Strategie-Objekt.
+ *
+ * Eigene Funktion, weil sie ZWEI Aufrufer hat: Speichern und Prüfen. Der
+ * Prüfer muss den Stand im FORMULAR sehen, nicht den gespeicherten — sonst
+ * meldet er nichts, wenn man den Hebel gerade hochgestellt und noch nicht
+ * gespeichert hat, und das ist der Moment, in dem man ihn braucht.
+ */
+function optionsFormStrategy(): Strategy {
+  const basis = st?.strategy ?? DEFAULT_STRATEGY;
+  const num = (id: string): number => Number(($(id) as HTMLInputElement).value);
+    const strategy: Strategy = {
+      ...basis,
+      broker: {
+        ...basis.broker,
+        initialCapital: num('owCap'),
+        sizingBase: ($('owSizing') as HTMLSelectElement).value === 'initial' ? 'initial' : 'balance',
+        leverage: Math.min(MAX_LEVERAGE, Math.max(1, num('owLev') || 1)),
+      },
+      engine: {
+        ...basis.engine,
+        maxPositionPct: num('owMax'),
+        mode: ($('owMode') as HTMLSelectElement).value === 'momentum' ? 'momentum' : 'confluence',
+        riskPerTradePct: Math.min(MAX_RISK_PER_TRADE_PCT, Math.max(0, num('owRisk'))),
+        maxOpenPositions: Math.min(
+          MAX_OPEN_POSITIONS_CAP,
+          Math.max(1, num('owMaxPos') || DEFAULT_MAX_OPEN_POSITIONS)),
+        stopLossPct: num('owSl'),
+        takeProfitPct: num('owTp'),
+        trailingStopPct: num('owTrail'),
+        maxHoldDays: num('owHold'),
+        atrStopMult: num('owAtrS'),
+        atrTakeMult: num('owAtrT'),
+        cooldownMin: Math.min(1440, Math.max(5, num('owCd') || 15)),
+      },
+      signals: {
+        ...basis.signals,
+        minConfluence: Math.max(1, num('owMinC')),
+        exitConfluence: Math.max(1, num('owExitC')),
+        minEdgeMultiple: Math.min(10, Math.max(0, num('owEdge'))),
+        forecastSolo: ($('owFcSolo') as HTMLInputElement).checked,
+        timeframe: ($('owTf') as HTMLSelectElement).value === 'daily' ? 'daily' : 'intraday',
+        allowShort: ($('owShort') as HTMLInputElement).checked,
+      },
+    };
+    return strategy;
+  return strategy;
+}
+
+/**
+ * Prüf-Ergebnis rendern.
+ *
+ * Nichts wird automatisch geändert: Erst anzeigen, dann ankreuzen, dann
+ * übernehmen. Ein Knopf, der Einstellungen still umschreibt, nimmt genau die
+ * Entscheidung ab, die dem User gehört — und der GRUND steht bei jedem
+ * Vorschlag, damit man beim nächsten Mal selbst darauf kommt.
+ */
+function renderAdvice(): void {
+  const box = $('owAdvice');
+  const vorschlaege = adviseStrategy(optionsFormStrategy());
+  ($('owApply') as HTMLButtonElement).hidden = vorschlaege.length === 0;
+  if (vorschlaege.length === 0) {
+    // Bewusst nicht „optimal": Der Prüfer kennt keine Rendite, nur
+    // Widersprüche. Diese Unterscheidung darf die Oberfläche nicht verwischen.
+    box.innerHTML =
+      '<p class="hint">✓ Keine widersprüchlichen Einstellungen gefunden. Das heißt nicht ' +
+      '„optimal" — der Prüfer kennt keine Rendite, nur Kombinationen, die gegeneinander ' +
+      'arbeiten. Was sich rechnet, misst der tägliche Selbstoptimierer.</p>';
+    return;
+  }
+  const farbe: Record<string, string> = {
+    kritisch: 'var(--rd)',
+    wichtig: 'var(--yl, #d9a441)',
+    hinweis: 'var(--c-t3, #8b93a7)',
+  };
+  box.innerHTML = vorschlaege
+    .map(
+      (v) => `<label class="opt-row" style="align-items:flex-start;margin-top:10px">
+        <input type="checkbox" data-adv="${v.key}" checked />
+        <span><b style="color:${farbe[v.severity]}">${v.severity.toUpperCase()}</b> ·
+        <b>${v.label}</b>: ${String(v.current)} → <b>${String(v.suggested)}</b><br />
+        <span class="hint">${v.reason}</span></span></label>`,
+    )
+    .join('');
 }
 
 function openOptions(): void {
@@ -5120,41 +5215,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   });
   $('owSave').addEventListener('click', () => {
     if (!st) return;
-    const num = (id: string): number => Number(($(id) as HTMLInputElement).value);
-    const strategy: Strategy = {
-      ...st.strategy,
-      broker: {
-        ...st.strategy.broker,
-        initialCapital: num('owCap'),
-        sizingBase: ($('owSizing') as HTMLSelectElement).value === 'initial' ? 'initial' : 'balance',
-        leverage: Math.min(MAX_LEVERAGE, Math.max(1, num('owLev') || 1)),
-      },
-      engine: {
-        ...st.strategy.engine,
-        maxPositionPct: num('owMax'),
-        mode: ($('owMode') as HTMLSelectElement).value === 'momentum' ? 'momentum' : 'confluence',
-        riskPerTradePct: Math.min(MAX_RISK_PER_TRADE_PCT, Math.max(0, num('owRisk'))),
-        maxOpenPositions: Math.min(
-          MAX_OPEN_POSITIONS_CAP,
-          Math.max(1, num('owMaxPos') || DEFAULT_MAX_OPEN_POSITIONS)),
-        stopLossPct: num('owSl'),
-        takeProfitPct: num('owTp'),
-        trailingStopPct: num('owTrail'),
-        maxHoldDays: num('owHold'),
-        atrStopMult: num('owAtrS'),
-        atrTakeMult: num('owAtrT'),
-        cooldownMin: Math.min(1440, Math.max(5, num('owCd') || 15)),
-      },
-      signals: {
-        ...st.strategy.signals,
-        minConfluence: Math.max(1, num('owMinC')),
-        exitConfluence: Math.max(1, num('owExitC')),
-        minEdgeMultiple: Math.min(10, Math.max(0, num('owEdge'))),
-        forecastSolo: ($('owFcSolo') as HTMLInputElement).checked,
-        timeframe: ($('owTf') as HTMLSelectElement).value === 'daily' ? 'daily' : 'intraday',
-        allowShort: ($('owShort') as HTMLInputElement).checked,
-      },
-    };
+    const strategy = optionsFormStrategy();
     const problems = validateStrategy(strategy);
     if (problems.length > 0) {
       $('optMsg').textContent = problems[0]!;
@@ -5165,6 +5226,30 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       .then(() => ($('optMsg').textContent = '✓ Gespeichert'))
       .catch((e) => ($('optMsg').textContent = (e as Error).message));
   });
+
+  $('owCheck').addEventListener('click', () => renderAdvice());
+  $('owApply').addEventListener('click', () => {
+    if (!st) return;
+    const gewaehlt = [...$('owAdvice').querySelectorAll<HTMLInputElement>('input[data-adv]:checked')]
+      .map((c) => c.dataset.adv ?? '');
+    if (gewaehlt.length === 0) return;
+    const next = applySuggestions(optionsFormStrategy(), gewaehlt);
+    const problems = validateStrategy(next);
+    if (problems.length > 0) {
+      $('advMsg').textContent = problems[0]!;
+      return;
+    }
+    $('advMsg').textContent = 'Übernehme …';
+    void saveStrategy(next)
+      .then(() => {
+        st!.strategy = next;
+        openOptions(); // Formular auf die neuen Werte ziehen
+        renderAdvice(); // und erneut prüfen — die Liste muss sichtbar schrumpfen
+        $('advMsg').textContent = `✓ ${gewaehlt.length} übernommen`;
+      })
+      .catch((e) => ($('advMsg').textContent = (e as Error).message));
+  });
+
 
   // Multi-Chart-Raster: Umschalter 1/2/4 + Lock fürs Haupt-Chart
   document.querySelectorAll('.tf-btn[data-grid]').forEach((b) =>
