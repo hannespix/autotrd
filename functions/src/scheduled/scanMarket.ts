@@ -758,27 +758,52 @@ const MAX_SCAN_SYMBOLS = 40;
  *     Katalog. Bis 27.07. standen hier die handverlesenen Watchlists der
  *     Nutzer — eine Vorauswahl ohne jede Begründung.
  *  3. **Defaults** als Boden. Greift am ersten Tag (noch kein Ranking) und
- *     wenn der Marktfilter die Rangliste kurz hält; ohne ihn stünde der
- *     Scan dann ganz ohne Symbole da.
+ *     wenn der Marktfilter die Rangliste kurz hält.
+ *  4. **Katalog** als letzter Boden — nur, wenn 1–3 nichts Offenes hergeben.
+ *
+ * ── Marktzeit gehört in die AUSWAHL, nicht dahinter (Audit-Befund A1) ───────
+ *
+ * Bis 28.07. wählte diese Funktion die globalen Top-N und `runScan` warf
+ * danach alles weg, dessen Klasse gerade geschlossen ist. Das Ergebnis war
+ * live messbar: `lastRunSkipped: market_closed` um 12:35 UTC — obwohl Krypto
+ * rund um die Uhr handelt und im Katalog steht. Die Default-Liste enthält
+ * nur US-Aktien, also tat der Scan außerhalb 13:30–20:00 UTC gar nichts:
+ * rund 70 % der Zeit plus Wochenenden.
+ *
+ * Der Fehler verschwindet nicht mit der ersten Rangliste. Sind deren Top-40
+ * überwiegend Aktien — was bei einem aktienlastigen Katalog der Normalfall
+ * ist —, bleibt der Scan nachts fast leer. Deshalb filtert `isOpen` schon
+ * BEIM Füllen: Das Kontingent geht an die bestplatzierten Symbole, die
+ * gerade auch handelbar sind.
+ *
+ * Positionen bleiben ausdrücklich UNGEFILTERT. Ob ihre Börse offen ist,
+ * entscheidet später der Handelspfad; hier ausgesiebt zu werden hieße, eine
+ * offene Position aus den Augen zu verlieren — genau das, was Punkt 1
+ * verhindert.
  */
 export function selectScanSymbols(args: {
   positions: string[];
   ranking: string[];
   defaults: string[];
+  /** Letzter Boden (ganzer Katalog), falls 1–3 nichts Offenes liefern. */
+  catalog?: string[];
   max: number;
+  /** Ist die Asset-Klasse dieses Symbols gerade handelbar? Default: alles. */
+  isOpen?: (symbol: string) => boolean;
 }): string[] {
+  const offen = args.isOpen ?? ((): boolean => true);
   const set = new Set<string>();
   for (const sym of args.positions) set.add(sym); // ungedeckelt: siehe 1.
-  for (const gruppe of [args.ranking, args.defaults]) {
+  for (const gruppe of [args.ranking, args.defaults, args.catalog ?? []]) {
     for (const sym of gruppe) {
       if (set.size >= args.max) break;
-      if (sym) set.add(sym);
+      if (sym && offen(sym)) set.add(sym);
     }
   }
   return [...set];
 }
 
-async function collectScanSymbols(): Promise<string[]> {
+async function collectScanSymbols(now: Date): Promise<string[]> {
   const db = getFirestore();
 
   let positions: string[] = [];
@@ -812,7 +837,9 @@ async function collectScanSymbols(): Promise<string[]> {
     positions,
     ranking,
     defaults: [...DEFAULT_STRATEGY.watchlist],
+    catalog: allSymbols(),
     max: MAX_SCAN_SYMBOLS,
+    isOpen: (sym) => marketOpenForClass(classify(sym), now),
   });
   logger.info(
     `Scan-Set: ${symbols.length} Symbole (${positions.length} Positionen, ${ranking.length} im Ranking)`,
@@ -922,12 +949,19 @@ async function supplyCatalog(
 export async function runScan(force = false): Promise<ScanResult> {
   const now = new Date();
   const scanId = now.toISOString().slice(0, 16) + 'Z'; // Minute = idempotent
-  const allSymbols = await collectScanSymbols();
+  const scanSet = await collectScanSymbols(now);
   // Depot-Vision (2026-07-24): gescannt wird je Symbol, dessen ASSET-KLASSE
   // gerade offen ist — Krypto 24/7, Forex/Rohstoffe ~24/5, Rest US-Zeiten.
+  //
+  // Das Filtern steht seit dem Audit-Befund A1 (28.07.) NICHT mehr allein da:
+  // `collectScanSymbols` wählt bereits nur Offenes aus. Hier bleibt es als
+  // zweiter Riegel — und für die Positionen, die die Auswahl bewusst
+  // ungefiltert durchlässt. Ohne die Auswahl davor war dieses Filter der
+  // Grund, warum der Scan ~70 % der Zeit nichts tat: Es warf weg, was die
+  // globale Top-N-Wahl vorher blind eingesammelt hatte.
   const symbols = force
-    ? allSymbols
-    : allSymbols.filter((s) => marketOpenForClass(classify(s), now));
+    ? scanSet
+    : scanSet.filter((s) => marketOpenForClass(classify(s), now));
   if (symbols.length === 0) {
     logger.info(`Alle Märkte geschlossen — Scan übersprungen (${scanId})`);
     // Heartbeat auch im No-Op: „Scheduler lebt" ≠ „Markt offen" (M7-Monitoring)

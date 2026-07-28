@@ -77,7 +77,7 @@ Deploy-Service-Account darf keine Google-APIs aktivieren. Zwei Wege:
 `github-deploy` zusätzlich die Rollen **Service Usage Admin**,
 **Cloud Run Admin** und **Cloud Scheduler Admin** geben (Scheduler
 braucht der Deploy, um die Zeitpläne der scheduled Functions —
-5-min-Scan, evalForecasts, tunerReview — anzulegen) (Letztere braucht der Deploy, um Callables/HTTP-
+5-min-Scan, evalForecasts, snapshotEquity, autoTune, momentumRun — anzulegen) (Letztere braucht der Deploy, um Callables/HTTP-
 Functions öffentlich aufrufbar zu machen — fehlt sie, antworten die
 Functions mit 403 ohne CORS-Header und das Frontend meldet CORS-Fehler)
 (IAM-Konsole → Service-Account bearbeiten → Rolle hinzufügen). Danach
@@ -112,11 +112,11 @@ so weit die Rechte reichen, und schreibt die Diagnose ins Actions-Log:
   vergeben. Fix: IAM-Konsole → dem Service-Account mit der **im Log
   ausgegebenen E-Mail** (`Deploy-SA: …`) die Rolle geben, dann den Deploy
   re-runnen. Der Step legt den fehlenden 5-min-Job dann selbst an.
-- Bis dahin überbrückt der Workflow **Scan-Watchdog**
-  (`scan-watchdog.yml`): er stößt zu US-Marktzeiten alle 30 min einen Scan
-  direkt am Cloud-Run-Service an — aber nur, wenn der Heartbeat älter als
-  12 min ist. Sobald der echte Scheduler läuft, ist der Watchdog
-  automatisch ein No-op.
+- Früher überbrückte das ein Workflow „Scan-Watchdog". Er ist am 28.07.
+  entfallen: Seit die Rolle vergeben ist, feuert der Cloud Scheduler selbst
+  im 5-Minuten-Takt, und der Watchdog lief nur noch zusätzlich (doppelte
+  Scans, doppelte Kosten). Nachweis war der Heartbeat um 12:35 UTC —
+  frisch, obwohl das Watchdog-Fenster erst um 13:00 UTC begann.
 - Existiert `meta/health` trotz allem nicht, schlägt die Function selbst
   fehl → Cloud-Logging des `scanmarket`-Services prüfen.
 
@@ -131,18 +131,16 @@ schlicht keine Datenquelle:
 |---|---|---|
 | `snapshotEquity` | Equity-Kurve + Sharpe/Drawdown/Profit-Faktor | `meta/health.equitySnapshot` |
 | `evalForecasts`  | Prognose-Genauigkeit + Prognose-Labor       | `meta/health.forecastEval`  |
-| `tunerReview`    | KI-Review des Suchgitters                   | `meta/tuner.ts`             |
 
 Die Felder sind **ohne Anmeldung lesbar** — fehlen sie oder ist ihr Datum alt,
 hat der jeweilige Lauf nicht stattgefunden. Zwei Wege überbrücken das:
 
-- Der Workflow **Tages-Läufe** (`daily-jobs.yml`) stößt alle drei nach
-  US-Schluss direkt am Cloud-Run-Service an und prüft anschließend die Spur —
-  ein HTTP-200 allein gilt ausdrücklich nicht als Erfolg. Manuell auslösen:
-  *Actions → Tages-Läufe → Run workflow* (mit `force`, um das Gate zu übergehen).
-- Der **Deploy** stößt zusätzlich `snapshotEquity` und `evalForecasts` an, damit
-  die Karten nach einem Merge binnen Minuten gefüllt sind statt erst abends.
-  `tunerReview` bleibt ausgespart — der Lauf kostet Anthropic-Guthaben.
+- Beide laufen als Cloud-Scheduler-Jobs (`check-scheduler.mjs` legt sie beim
+  Deploy an). Der frühere Stopgap-Workflow „Tages-Läufe" ist am 28.07.
+  entfallen — er lief seit der Scheduler-Rolle doppelt.
+- Der **Deploy** stößt `snapshotEquity` und `evalForecasts` zusätzlich einmal
+  an, damit die Karten nach einem Merge binnen Minuten gefüllt sind statt
+  erst abends.
 
 Das Gate unterscheidet dabei „heute gelaufen" von „heute **nach US-Schluss**
 gelaufen" (ab 20:00 UTC): Ein Mittags-Snapshot füllt die Karte sofort, verdrängt

@@ -67,7 +67,7 @@ nicht geschätzt.
 
 ### A. Funktionale Befunde (nach Schwere)
 
-- [ ] **A1 — Das System steht die meiste Zeit still.** Live gemessen:
+- [x] **A1 — Das System steht die meiste Zeit still.** *(gefixt 28.07.)* Live gemessen:
       `lastRunSkipped: market_closed` um 12:10 UTC, obwohl Krypto rund um die
       Uhr handelt. Ursache: `DEFAULT_STRATEGY.watchlist` ist
       `['QQQ','AAPL','TSLA','^NDX']` — **ausschließlich US-Aktien**. Solange
@@ -78,9 +78,11 @@ nicht geschätzt.
       `runScan` auf offene Klassen. Sind die Top-40 überwiegend Aktien, ist
       nachts wieder fast nichts zu tun — bei einem Katalog, der 24/7-Krypto
       und ~24/5-Forex enthält.
-      **Fix:** Auswahl marktzeit-bewusst machen — Top-N *unter den gerade
-      offenen* Symbolen statt Top-N global mit anschließendem Wegfiltern.
-      Das ist der direkteste Hebel auf „Handelsgeschwindigkeit".
+      **Fix (umgesetzt):** `selectScanSymbols` bekommt `isOpen` und filtert
+      schon BEIM Füllen; dazu der ganze Katalog als letzter Boden, falls
+      Ranking und Defaults nichts Offenes hergeben. Positionen bleiben
+      bewusst ungefiltert (sonst verlöre eine offene Position ihren
+      Exit-Pfad). 5 Tests halten das fest.
 - [ ] **A2 — `intradayScored` bleibt noch tagelang auf 0.** Der Raster-Fix
       (#104) wirkt nur für NEUE Prognosen. Die 150 Altlasten sind off-grid
       und werden nie bewertbar; sie verfallen erst über `INTRADAY_EXPIRE_SEC`
@@ -107,7 +109,7 @@ nicht geschätzt.
       die gefährlichste Sorte Duplikat — es sieht aus wie derselbe Code und
       rechnet anders. Die Golden-Tests decken nur `shared/` ab, die Kopie
       läuft ungeprüft.
-- [ ] **B3 — Zwei Stopgap-Workflows, deren Grund entfallen ist.**
+- [x] **B3 — Zwei Stopgap-Workflows, deren Grund entfallen ist.** *(entfernt 28.07.)*
       `scan-watchdog.yml` (alle 15 min, 13–21 UTC, Mo–Fr) und
       `daily-jobs.yml` (3× täglich) tragen beide im Kopf: *„Stopgap, solange
       der Deploy-SA keine Cloud-Scheduler-Rolle hat."* Die Rolle ist seit dem
@@ -115,6 +117,9 @@ nicht geschätzt.
       an. Beide laufen also ZUSÄTZLICH zum Cloud Scheduler — doppelte Scans,
       doppelte Tages-Läufe, doppelte Kosten, und bei Rennen zwischen beiden
       auch doppelte Schreibvorgänge.
+      **Nachweis vor dem Löschen:** Der Heartbeat stand um 12:35:01 UTC
+      frisch — außerhalb des Watchdog-Fensters (`*/15 13-21`). Der Cloud
+      Scheduler feuert also selbst; die Stopgaps waren reine Dopplung.
 
 ### C. Relikte
 
@@ -140,13 +145,17 @@ Risiko-Hülle, serverseitige Geldschreibung); der Heartbeat als
 Diagnosekanal, der schon dreimal Befunde geliefert hat, die im Log
 unsichtbar geblieben wären.
 
-### E. Empfohlene Reihenfolge
+### E. Reihenfolge (Owner-Entscheidung 28.07.)
 
-1. **A1** — größter Ertragshebel, kleiner Eingriff.
-2. **B3** — reine Kostensenkung, ein Workflow-Löschen.
-3. **Supabase-Entscheidung** (B1/B2/C1/C2) — sie bestimmt, ob ~5 200 Zeilen
-      gepflegt oder gelöscht werden. Bis sie fällt, wächst die Drift weiter.
-4. **MO Teil 2** — Struktursuche, sobald 1–3 stehen.
+1. ~~**A1**~~ + ~~**B3**~~ — erledigt, s. o.
+2. **MO Teil 2** — Struktursuche im Regelbaum.
+3. **Supabase MS2–MS5 fertigbauen.** Der Owner hat sich gegen das Löschen
+      entschieden: Der Strang wird zu Ende gebracht statt eingefroren.
+      **Damit wird B2 zur Vorbedingung, nicht zur Fußnote** — solange
+      `supabase/functions/_shared/` eine driftende Kopie ist, portiert man
+      auf einen Unterbau, der anders rechnet als der getestete. Erster
+      Schritt von MS2 Teil 3 muss deshalb sein, die Kopie durch einen
+      Build-Schritt aus `shared/src/` zu ersetzen.
 
 ---
 
