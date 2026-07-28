@@ -6,8 +6,11 @@
 
 import {
   CLASS_LABELS,
+  DEFAULT_MAX_OPEN_POSITIONS,
   DEFAULT_STRATEGY,
   EVIDENCE_DEFAULTS,
+  MAX_LEVERAGE,
+  MAX_OPEN_POSITIONS_CAP,
   PAPER_FEE_RATE,
   aggregateBars,
   bollinger,
@@ -476,7 +479,6 @@ function layout(email: string): string {
           <tbody id="jBody"><tr><td colspan="6" class="c-t3">Keine Trades</td></tr></tbody>
         </table></div>
         <button class="btn btn-n" id="jMore" style="width:100%;margin-top:6px">Ältere laden</button>
-        <button class="btn btn-g" id="anOpen" style="width:100%;margin-top:6px">Analyse öffnen</button>
       </div></div>
     </div>
 
@@ -700,6 +702,11 @@ function layout(email: string): string {
         </div>
         <div class="hint" id="pfCostHint"></div>
         <div class="hint" id="pfHint">Kennzahlen entstehen ab dem ersten Tages-Snapshot (täglich 23:15).</div>
+        <!-- Owner-Feedback 28.07.: „man schaut meistens auf die Performance, und
+             wenn man die History direkt darunter hat, ist das logischer." Stimmt —
+             die Analyse ist die Vertiefung genau dieser Kennzahlen, nicht ein
+             Anhängsel der Trade-Tabelle. -->
+        <button class="btn btn-g" id="anOpen" style="width:100%;margin-top:8px">Handels-Analyse öffnen</button>
       </div></div>
 
       <div class="card" data-panel="manualtrade"><div class="sect">Manueller Trade</div><div class="cbody">
@@ -875,10 +882,18 @@ function layout(email: string): string {
           <input id="owCap" class="inp st-num" type="number" min="100" step="500" /></label>
         <label>Investment je Trade %
           <input id="owMax" class="inp st-num" type="number" min="1" max="100" step="1" /></label>
+        <label>Max. gleichzeitige Positionen ${iBtn('maxOpenPositions')}
+          <input id="owMaxPos" class="inp st-num" type="number" min="1" max="${MAX_OPEN_POSITIONS_CAP}" step="1" /></label>
         <label>Sizing-Basis ${iBtn('sizingBase')}
           <select id="owSizing" class="inp st-num">
             <option value="balance">Verfügbarer Cash</option>
             <option value="initial">Startkapital (fix)</option>
+          </select></label>
+        <label>Hebel (Margin) ${iBtn('leverage')}
+          <select id="owLev" class="inp st-num">
+            <option value="1">1× — kein Hebel (Standard)</option>
+            <option value="2">2× — nur bei sehr starkem Signal</option>
+            <option value="3">3× — Maximum</option>
           </select></label>
         <label>Stop-Loss % ${iBtn('stopLoss')}
           <input id="owSl" class="inp st-num" type="number" min="0" step="0.5" /></label>
@@ -1625,6 +1640,10 @@ function openOptions(): void {
   ($('owCap') as HTMLInputElement).value = String(st.strategy.broker.initialCapital);
   ($('owSizing') as HTMLSelectElement).value = st.strategy.broker.sizingBase ?? 'balance';
   ($('owMax') as HTMLInputElement).value = String(st.strategy.engine.maxPositionPct);
+  ($('owMaxPos') as HTMLInputElement).value = String(
+    st.strategy.engine.maxOpenPositions ?? DEFAULT_MAX_OPEN_POSITIONS);
+  ($('owLev') as HTMLSelectElement).value = String(
+    Math.min(MAX_LEVERAGE, Math.max(1, Math.round(st.strategy.broker.leverage ?? 1))));
   ($('owSl') as HTMLInputElement).value = String(st.strategy.engine.stopLossPct);
   ($('owTp') as HTMLInputElement).value = String(st.strategy.engine.takeProfitPct);
   ($('owTrail') as HTMLInputElement).value = String(st.strategy.engine.trailingStopPct ?? 0);
@@ -5038,10 +5057,14 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         ...st.strategy.broker,
         initialCapital: num('owCap'),
         sizingBase: ($('owSizing') as HTMLSelectElement).value === 'initial' ? 'initial' : 'balance',
+        leverage: Math.min(MAX_LEVERAGE, Math.max(1, num('owLev') || 1)),
       },
       engine: {
         ...st.strategy.engine,
         maxPositionPct: num('owMax'),
+        maxOpenPositions: Math.min(
+          MAX_OPEN_POSITIONS_CAP,
+          Math.max(1, num('owMaxPos') || DEFAULT_MAX_OPEN_POSITIONS)),
         stopLossPct: num('owSl'),
         takeProfitPct: num('owTp'),
         trailingStopPct: num('owTrail'),

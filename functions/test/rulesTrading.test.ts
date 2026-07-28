@@ -3,11 +3,21 @@
  * Cooldown), RuleContext-Builder und die Richtungsentscheidung.
  */
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_STRATEGY, compileClassic, type IndicatorSnapshot } from '../../shared/src/index.js';
+import {
+  DEFAULT_MAX_OPEN_POSITIONS,
+  DEFAULT_STRATEGY,
+  MAX_LEVERAGE,
+  MAX_OPEN_POSITIONS_CAP,
+  compileClassic,
+  type IndicatorSnapshot,
+  type Strategy,
+} from '../../shared/src/index.js';
 import {
   RISK_LIMITS,
   buildRuleContext,
+  clampLeverage,
   clampStrategyRisk,
+  maxOpenPositions,
   cooldownActive,
   minHoldActive,
   decideTree,
@@ -389,5 +399,72 @@ describe('Standardwerte nach der Kosten-Auswertung', () => {
     expect(DEFAULT_STRATEGY.engine.stopLossPct).toBe(2);
     expect(DEFAULT_STRATEGY.engine.takeProfitPct).toBe(4);
     expect(DEFAULT_STRATEGY.engine.trailingStopPct).toBe(3);
+  });
+});
+
+/* ── Positionslimit + Hebel in der Risiko-Hülle (28.07.) ────────────────── */
+
+describe('maxOpenPositions: konfigurierbar, aber geklemmt', () => {
+  const mit = (v: number | undefined): Strategy => {
+    const s = structuredClone(DEFAULT_STRATEGY);
+    if (v === undefined) delete s.engine.maxOpenPositions;
+    else s.engine.maxOpenPositions = v;
+    return s;
+  };
+
+  it('fehlender Wert ⇒ bisheriges Verhalten (10)', () => {
+    expect(maxOpenPositions(mit(undefined))).toBe(DEFAULT_MAX_OPEN_POSITIONS);
+  });
+
+  it('ein gesetzter Wert gilt', () => {
+    expect(maxOpenPositions(mit(3))).toBe(3);
+    expect(maxOpenPositions(mit(25))).toBe(25);
+  });
+
+  it('über der Obergrenze wird geklemmt', () => {
+    expect(maxOpenPositions(mit(999))).toBe(MAX_OPEN_POSITIONS_CAP);
+  });
+
+  it('0 oder negativ ⇒ mindestens 1 (nie „handelt gar nicht mehr")', () => {
+    expect(maxOpenPositions(mit(0))).toBe(1);
+    expect(maxOpenPositions(mit(-5))).toBe(1);
+  });
+
+  it('Bruchzahlen werden abgerundet, Unsinn fällt auf den Default', () => {
+    expect(maxOpenPositions(mit(4.9))).toBe(4);
+    expect(maxOpenPositions(mit(Number.NaN))).toBe(DEFAULT_MAX_OPEN_POSITIONS);
+  });
+
+  it('clampStrategyRisk schreibt den geklemmten Wert fest', () => {
+    expect(clampStrategyRisk(mit(999)).engine.maxOpenPositions).toBe(MAX_OPEN_POSITIONS_CAP);
+  });
+});
+
+describe('clampLeverage: im Zweifel kein Hebel', () => {
+  it('fehlend, 1 oder kleiner ⇒ 1', () => {
+    expect(clampLeverage(undefined)).toBe(1);
+    expect(clampLeverage(1)).toBe(1);
+    expect(clampLeverage(0)).toBe(1);
+    expect(clampLeverage(-3)).toBe(1);
+  });
+
+  it('gültige Werte bleiben stehen', () => {
+    expect(clampLeverage(2)).toBe(2);
+    expect(clampLeverage(MAX_LEVERAGE)).toBe(MAX_LEVERAGE);
+  });
+
+  it('zu viel wird auf das Maximum geklemmt', () => {
+    expect(clampLeverage(50)).toBe(MAX_LEVERAGE);
+  });
+
+  it('Unsinn ergibt 1, NICHT das Maximum', () => {
+    // Die Richtung ist der ganze Punkt: Ein kaputter Wert darf nie in
+    // mehr Risiko münden.
+    expect(clampLeverage(Number.NaN)).toBe(1);
+    expect(clampLeverage(Number.POSITIVE_INFINITY)).toBe(1);
+  });
+
+  it('der Standard ist hebelfrei', () => {
+    expect(clampStrategyRisk(structuredClone(DEFAULT_STRATEGY)).broker.leverage).toBe(1);
   });
 });

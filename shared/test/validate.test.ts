@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_STRATEGY, isStrategy, validateStrategy } from '../src/index.js';
+import {
+  DEFAULT_STRATEGY,
+  MAX_LEVERAGE,
+  MAX_OPEN_POSITIONS_CAP,
+  isStrategy,
+  validateStrategy,
+} from '../src/index.js';
 
 describe('validateStrategy (flaches Schema, CLAUDE.md §2)', () => {
   it('akzeptiert DEFAULT_STRATEGY', () => {
@@ -46,5 +52,50 @@ describe('validateStrategy (flaches Schema, CLAUDE.md §2)', () => {
         expect.stringContaining('signals.minConfluence'),
       ]),
     );
+  });
+});
+
+describe('Hebel + Positionslimit (28.07.)', () => {
+  const mitBroker = (leverage: unknown): unknown => {
+    const s = structuredClone(DEFAULT_STRATEGY) as Record<string, Record<string, unknown>>;
+    s.broker!.leverage = leverage;
+    return s;
+  };
+  const mitEngine = (maxOpenPositions: unknown): unknown => {
+    const s = structuredClone(DEFAULT_STRATEGY) as Record<string, Record<string, unknown>>;
+    s.engine!.maxOpenPositions = maxOpenPositions;
+    return s;
+  };
+
+  it('beide Felder dürfen fehlen (Altbestand bleibt gültig)', () => {
+    const s = structuredClone(DEFAULT_STRATEGY) as Record<string, Record<string, unknown>>;
+    delete s.broker!.leverage;
+    delete s.engine!.maxOpenPositions;
+    expect(validateStrategy(s)).toEqual([]);
+  });
+
+  it('gültige Hebel gehen durch', () => {
+    expect(validateStrategy(mitBroker(1))).toEqual([]);
+    expect(validateStrategy(mitBroker(MAX_LEVERAGE))).toEqual([]);
+  });
+
+  it('Hebel über dem Maximum wird abgelehnt', () => {
+    // Wichtig, dass das schon beim SPEICHERN scheitert: Die Hülle würde ihn
+    // ohnehin klemmen, aber dann zeigte die UI dauerhaft eine Zahl an, nach
+    // der nie gehandelt wird.
+    expect(validateStrategy(mitBroker(MAX_LEVERAGE + 1)).join()).toMatch(/leverage/);
+    expect(validateStrategy(mitBroker(0)).join()).toMatch(/leverage/);
+    expect(validateStrategy(mitBroker('3')).join()).toMatch(/leverage/);
+  });
+
+  it('gültige Positionslimits gehen durch', () => {
+    expect(validateStrategy(mitEngine(1))).toEqual([]);
+    expect(validateStrategy(mitEngine(MAX_OPEN_POSITIONS_CAP))).toEqual([]);
+  });
+
+  it('Positionslimit außerhalb der Spanne wird abgelehnt', () => {
+    expect(validateStrategy(mitEngine(0)).join()).toMatch(/maxOpenPositions/);
+    expect(validateStrategy(mitEngine(MAX_OPEN_POSITIONS_CAP + 1)).join()).toMatch(/maxOpenPositions/);
+    expect(validateStrategy(mitEngine(null)).join()).toMatch(/maxOpenPositions/);
   });
 });
