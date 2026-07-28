@@ -21,8 +21,11 @@ import {
   DEFAULT_STRATEGY,
   allSymbols,
   classify,
+  effectiveLeverage,
   isStrategy,
+  marginState,
   marketOpenForClass,
+  positionValue,
   resolveName,
   resolveRisk,
   type Position,
@@ -32,15 +35,21 @@ import {
 import { atrPct, buildVariants } from '../../../shared/src/index.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 import { computeIndicatorSnapshot, computeSignal } from '../core/engine.js';
-import { executePaperTrade, resolveBrokerMode, riskExitReason } from '../core/broker.js';
+import {
+  executePaperTrade,
+  resolveBrokerMode,
+  riskExitReason,
+  type MarginBudget,
+} from '../core/broker.js';
 import { mayTrade } from '../core/access.js';
 import {
-  RISK_LIMITS,
   applyPredictionVote,
   buildRuleContext,
+  clampLeverage,
   clampStrategyRisk,
   cooldownActive,
   decideTree,
+  maxOpenPositions,
   minHoldActive,
   minuteOfDayEt,
   predictionVote,
@@ -209,6 +218,10 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
       // 'intraday' rechnet auf 5-min-Kerzen — Signale drehen im Scan-Takt.
       const tf: 'daily' | 'intraday' = strategy.signals.timeframe ?? 'intraday';
       const cdMin = clamped.engine.cooldownMin ?? 15;
+      // Positionslimit kommt jetzt aus der Strategie (Owner-Frage 28.07.:
+      // „habe es nicht in den Optionen gefunden") — die Hülle klemmt nur noch.
+      const posLimit = maxOpenPositions(clamped);
+      const hebel = clampLeverage(clamped.broker.leverage);
 
       // Entry-Cooldown nach Risk-Exits (MA3-Fund 26.07.): Ohne ihn kauft die
       // Konfluenz ein per Stop-Loss verkauftes Symbol im selben/nächsten Scan
@@ -292,6 +305,52 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
           }
         }
       }
+
+      // ── Hebel-Budget (Owner-Wunsch 28.07.) ─────────────────────────────
+      //
+      // Bewusst HIER, nach den Risiko-Exits: Ein Konto, das gerade
+      // ausgestoppt wurde, hat mehr Kaufkraft als vor dem Scan. Vorher
+      // gerechnet wäre das Budget systematisch zu klein — und nach einem
+      // Margin-Call sogar noch von der Position belastet, die es gerade
+      // losgeworden ist.
+      //
+      // Zwei Zahlen, weil sie sich beim Short unterscheiden: `kontoWert` ist
+      // der Rückfluss beim Schließen (Basis der Equity), `kontoExposure` der
+      // am Markt bewegte Gegenwert (Basis der Besicherung).
+      const kontoCash = (userDoc.get('wallet.paperBalance') as number | undefined) ?? 0;
+      let kontoWert = 0;
+      let kontoExposure = 0;
+      for (const p of positions.values()) {
+        const preis = marketData.get(p.symbol)?.price ?? p.avgEntry;
+        kontoWert += positionValue(p, preis);
+        kontoExposure += Math.abs(p.qty * preis);
+      }
+      // In diesem Scan bereits gebundene Kaufkraft. Ohne diesen Zähler stünde
+      // JEDEM Kauf desselben Scans das volle Budget zur Verfügung — aus 3×
+      // Hebel würden bei zehn Käufen faktisch beliebig viele. Der Broker kann
+      // das nicht abfangen: Seine Transaktion sieht nur den Cash, nicht die
+      // Kurse der übrigen Positionen. Ausstiege GEBEN hier nichts zurück; das
+      // ist bewusst zu wenig statt zu viel.
+      let gebundeneKaufkraft = 0;
+      /**
+       * Margin-Budget für GENAU DIESE Entscheidung — `undefined` heißt: bar
+       * gedeckt handeln wie vor dem Hebel.
+       *
+       * Der Hebel greift nur über der Einstiegsschwelle plus Bonus
+       * (Owner-Vorgabe: „nur wenn der Algorithmus sich sehr sicher ist").
+       * Ein Grenzsignal handelt weiter mit Bargeld.
+       */
+      const hebelBudget = (konfluenz: number): MarginBudget | undefined => {
+        if (hebel <= 1) return undefined;
+        const eff = effectiveLeverage(konfluenz, clamped.signals.minConfluence, hebel);
+        if (eff <= 1) return undefined;
+        const st = marginState(kontoCash, kontoWert, eff, kontoExposure);
+        return {
+          equity: st.equity,
+          buyingPower: Math.max(0, st.buyingPower - gebundeneKaufkraft),
+          leverage: eff,
+        };
+      };
 
       // 2) Regelbaum-Strategien (M10): publizierte Strategien mit Zuordnung
       // handeln ihre Symbole SELBST — der Classic-Pfad überspringt sie.
@@ -442,7 +501,7 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
                   await ref.set({ lastTrades: { [symbol]: now.toISOString() } }, { merge: true });
                 }
               } else if (dir === 'buy' && !book.positions[symbol]) {
-                if (Object.keys(book.positions).length >= RISK_LIMITS.maxOpenPositions) continue;
+                if (Object.keys(book.positions).length >= posLimit) continue;
                 if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
                 // Sizing-Parität (MA4): gleiche Basis wie der echte Broker —
                 // Cash (Default) oder Startkapital, Deckung prüft der Cash.
@@ -468,7 +527,7 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
                 }
               } else if (dir === 'sell' && !book.positions[symbol] && strategy.signals.allowShort === true) {
                 // Shadow-Short (R2): gleiche Entry-Guards wie der echte Pfad
-                if (Object.keys(book.positions).length >= RISK_LIMITS.maxOpenPositions) continue;
+                if (Object.keys(book.positions).length >= posLimit) continue;
                 if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
                 const r = shadowTrade(book, symbol, 'sell', data.price, clamped.engine.maxPositionPct, {
                   capital: sizingCapital(),
@@ -502,7 +561,7 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
           } else if (dir === 'buy' && !pos) {
             // Entry-Guards der Risiko-Hülle: Positionslimit + Cooldowns
             // (je Strategie UND nach Risk-Exits desselben Wallets)
-            if (positions.size >= RISK_LIMITS.maxOpenPositions) continue;
+            if (positions.size >= posLimit) continue;
             if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
             if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
             // assetClass durchreichen (MA3-Fund 26.07.): Ohne sie schrieb der
@@ -515,6 +574,11 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
             );
             if (r.executed) {
               executed += 1;
+              // Der Regelbaum handelt bar gedeckt (er liefert ja/nein, kein
+              // Maß für Überzeugung — siehe hebelBudget). Sein Kauf bindet
+              // aber trotzdem Cash, den der Classic-Pfad gleich nicht mehr
+              // hat; ohne diese Zeile wäre dessen Kaufkraft zu groß.
+              gebundeneKaufkraft += (r.trade?.qty ?? 0) * (r.trade?.price ?? data.price);
               // lokaler Marker fürs Positionslimit/Dedup in diesem Scan
               positions.set(symbol, {
                 symbol,
@@ -546,7 +610,7 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
           } else if (dir === 'sell' && !pos && strategy.signals.allowShort === true) {
             // Regelbaum-Short (R2): Verkaufs-Signal ohne Position — gleiche
             // Entry-Guards wie beim Kauf, Level gespiegelt im Broker.
-            if (positions.size >= RISK_LIMITS.maxOpenPositions) continue;
+            if (positions.size >= posLimit) continue;
             if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
             if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
             const r = await executePaperTrade(
@@ -555,6 +619,7 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
             );
             if (r.executed) {
               executed += 1;
+              gebundeneKaufkraft += (r.trade?.qty ?? 0) * (r.trade?.price ?? data.price);
               positions.set(symbol, {
                 symbol,
                 qty: r.trade?.qty ?? 0,
@@ -620,10 +685,15 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
           { hasPosition: pos !== null, ...(pos?.side === 'short' ? { positionSide: 'short' as const } : {}) },
         );
         // Prognose-Pfeil des Users als zusätzliche gewichtete Stimme
-        const direction = applyPredictionVote(
-          sig,
-          predictionVote(predictions.get(symbol), data.price, todayIso),
-        );
+        const vote = predictionVote(predictions.get(symbol), data.price, todayIso);
+        const direction = applyPredictionVote(sig, vote);
+        // Überzeugungsstärke der GEWÄHLTEN Richtung, inklusive Prognose-Pfeil
+        // — genau die Zahl, an der der Hebel hängt. `sig.confluence` allein
+        // wäre falsch, sobald der Pfeil die Richtung gedreht hat.
+        const konfluenz =
+          direction === 'buy'
+            ? sig.buyVotes + (vote?.dir === 'buy' ? vote.weight : 0)
+            : sig.sellVotes + (vote?.dir === 'sell' ? vote.weight : 0);
         const allowShort = strategy.signals.allowShort === true;
         // Ausführung IMMER mit der geklammerten Strategie (Audit 26.07.):
         // Positionsgröße und Stop-Level kommen aus der Risiko-Hülle.
@@ -643,14 +713,24 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
           // Positionslimit galt vorher nur für Regelbaum-Käufe — die
           // Konfluenz konnte beliebig viele Positionen öffnen. Und nach
           // einem Risk-Exit hält der Cooldown den Sofort-Rückkauf auf.
-          if (positions.size >= RISK_LIMITS.maxOpenPositions) continue;
+          if (positions.size >= posLimit) continue;
           if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
+          const budget = hebelBudget(konfluenz);
           const r = await executePaperTrade(
-            { uid, symbol, side: 'buy', price: data.price, source: 'engine', assetClass: classify(symbol) },
+            {
+              uid,
+              symbol,
+              side: 'buy',
+              price: data.price,
+              source: 'engine',
+              assetClass: classify(symbol),
+              ...(budget ? { margin: budget } : {}),
+            },
             clamped,
           );
           if (r.executed) {
             executed += 1;
+            gebundeneKaufkraft += (r.trade?.qty ?? 0) * (r.trade?.price ?? data.price);
             // Map mitführen: Ein Symbol kann in der Watchlist doppelt stehen —
             // ohne das versuchte der Scan denselben Kauf zweimal (der Broker
             // lehnt transaktional ab, aber der Aufruf ist unnötig). Die Level
@@ -684,14 +764,25 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
           // Leerverkauf (Opt-in): Verkaufs-Signal ohne Position eröffnet
           // einen Short — gleiche Entry-Guards wie beim Kauf (Limit,
           // Cooldown), gleiche Risiko-Hülle, Level gespiegelt im Broker.
-          if (positions.size >= RISK_LIMITS.maxOpenPositions) continue;
+          if (positions.size >= posLimit) continue;
           if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
+          const budget = hebelBudget(konfluenz);
           const r = await executePaperTrade(
-            { uid, symbol, side: 'sell', price: data.price, source: 'engine', assetClass: classify(symbol), openShort: true },
+            {
+              uid,
+              symbol,
+              side: 'sell',
+              price: data.price,
+              source: 'engine',
+              assetClass: classify(symbol),
+              openShort: true,
+              ...(budget ? { margin: budget } : {}),
+            },
             clamped,
           );
           if (r.executed) {
             executed += 1;
+            gebundeneKaufkraft += (r.trade?.qty ?? 0) * (r.trade?.price ?? data.price);
             positions.set(symbol, {
               symbol,
               qty: r.trade?.qty ?? 0,

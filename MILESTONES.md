@@ -1258,6 +1258,61 @@ BTC-Verkauf nach 366 Tagen erscheint als steuerfrei, nach 300 Tagen als
 steuerpflichtig · der Jahresreport summiert Aktien und Krypto in getrennten
 Blöcken · Report enthält den Hinweis, dass er keine Steuerberatung ersetzt.
 
+## MH — Margin & Hebel (Owner-Auftrag 28.07.) — ERLEDIGT
+
+**Anlass:** Owner-Frage „können wir auch margin Trades machen? funktioniert
+das? im aktuellen tool? führe margin Trades mit Hebel ein!" — nachgeschoben:
+„margin Trades dürfen natürlich nur ausgeführt werden, wenn der Algorithmus
+sich sehr sicher ist. sonst kann das stark in die Hose gehen."
+
+**Der Status quo davor, ehrlich:** Es gab **keinen** Hebel. Der Kauf prüfte
+`kosten > balance`, war also strikt bar gedeckt. Auch der Leerverkauf sah nur
+AUS wie Margin — er reservierte den vollen Gegenwert und war damit zu 100 %
+besichert. Geliehen wurde nie etwas.
+
+**Warum das nicht in einer Zeile geht.** Die Kaufkraft zu verdoppeln ist
+trivial, und genau deshalb ist es die gefährlichste Art, das zu bauen: Ein
+Simulator, der Hebel gewährt, aber nie zwangsschließt, zeigt systematisch zu
+gute Ergebnisse. Deshalb gehören drei Dinge untrennbar zusammen, und alle
+drei sind drin.
+
+- [x] `shared/src/margin.ts`: Kaufkraft, Nachschussgrenze (Reg T, 25 %),
+      Margin-Zinsen (8 % p. a., 360-Tage-Basis), Zwangsschluss-Plan,
+      `effectiveLeverage` — 53 Tests
+- [x] Hebel nur bei Überzeugung: zwei Stimmen über der Einstiegsschwelle
+      **und** mindestens 3 absolut. Die zweite Bedingung schließt den
+      Fehlanreiz, dass eine LOCKERERE Einstiegsschwelle den Hebel leichter
+      macht. Darunter läuft der Trade bar gedeckt wie bisher — kein
+      anteiliger Hebel auf ein halbes Signal.
+- [x] Broker: `TradeRequest.margin` (Budget des Aufrufers). Fehlt es, ist
+      alles exakt wie vorher — der Hebel ist reines Opt-in.
+- [x] `riskPulse` prüft die Nachschussgrenze **minütlich** und stellt glatt
+      (`riskExit: 'margin_call'`, sticht jeden Einzel-Stop)
+- [x] `snapshotEquity` bucht die Margin-Zinsen täglich, idempotent je Tag
+- [x] `engine.maxOpenPositions` konfigurierbar (Owner-Frage: „habe es nicht
+      in den Optionen gefunden" — stand fest im Code), Hülle 1–30
+- [x] Options-Modal: Hebel-Auswahl + Positionslimit, beide mit ⓘ-Erklärung
+
+**Der Fund, den nur der Emulator zeigte.** Die erste Fassung rechnete die
+Tranche vom blanken Eigenkapital — mit der Begründung, der Hebel dürfe nicht
+doppelt wirken. Der Lauf gegen den Firestore-Emulator zeigte: Damit wirkt er
+GAR NICHT. Bei den Voreinstellungen (10 % je Position, höchstens 10
+Positionen) kommt das Depot auf exakt 100 % des Eigenkapitals; die Kaufkraft
+von 300 % wurde nie angekratzt. Ein Schalter, den man umlegen kann und der
+nichts tut, ist schlimmer als kein Schalter. Jetzt skaliert die Tranche mit
+dem Hebel, die Kaufkraft deckelt die Summe weiterhin bei `Eigenkapital ×
+Hebel`.
+
+**Abnahme (Emulator, 28.07.):** Kauf bar gedeckt 9 Stück / mit 3× 29 Stück ·
+12 Kaufversuche in Folge enden bei 29 945 $ Gegenwert und −19 945 $ Cash,
+also exakt 3× Auslastung, der 12. wird abgelehnt · erschöpfte Kaufkraft fällt
+NICHT auf Bargeld zurück · 20 000 $ Kredit kosten 4,44 $ am Tag, ein zweiter
+Lauf am selben Tag bucht 0 · ein Konto ohne Kredit zahlt nichts.
+
+**Was bewusst NICHT gehebelt wird:** manuelle Trades (ein Klick hat keine
+Konfluenz) und Regelbaum-Strategien (ein Baum liefert ja/nein, kein Maß für
+Überzeugung). Echtgeld bleibt unberührt — M14 ist weiter verriegelt.
+
 ## MO — Struktursuche: der Regelbaum wird Suchraum (Owner-Go 28.07.)
 
 **Anlass:** Owner-Frage „ist das Strategie Studio überhaupt noch sinnvoll?"

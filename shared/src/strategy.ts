@@ -24,6 +24,15 @@ export interface BrokerConfig {
    * Fehlend = 'balance' (der Sinn eines Auto-Traders ist, dass er handelt).
    */
   sizingBase?: 'initial' | 'balance';
+  /**
+   * Hebel der Kaufkraft (Owner-Wunsch 28.07.). Fehlend oder 1 = KEIN Hebel,
+   * also strikt bar gedeckt wie bisher; die Risiko-Hülle klemmt bei
+   * MAX_LEVERAGE (3). Wirksam wird er nur bei hoher Überzeugung
+   * (`effectiveLeverage`, Owner-Vorgabe: „nur wenn der Algorithmus sich sehr
+   * sicher ist") und immer zusammen mit Nachschussgrenze und Margin-Zinsen —
+   * siehe margin.ts, warum diese drei Dinge untrennbar sind.
+   */
+  leverage?: number;
 }
 
 /**
@@ -75,6 +84,13 @@ export interface EngineConfig extends RiskConfig {
    * wieder ausspuckt (Owner-Auswertung 27.07.).
    */
   minHoldMin?: number;
+  /**
+   * Gleichzeitig offene Positionen (Owner-Frage 28.07.: „kann man die Anzahl
+   * der maximal aktiven Trades irgendwo einstellen? habe es nicht in den
+   * Optionen gefunden"). Konnte man nicht — der Wert stand fest im Code.
+   * Fehlend = 10 (bisheriges Verhalten); die Hülle klemmt auf 1–50.
+   */
+  maxOpenPositions?: number;
   /**
    * Risiko-Overrides je Asset-Klasse (Katalog-Schlüssel aus universe.ts:
    * crypto, indices, stocks_us, …). Fehlende Felder erben von oben.
@@ -171,8 +187,35 @@ export interface Strategy {
  *  angehoben (User-Wunsch; Kosten skalieren linear und bleiben klein). */
 export const MAX_WATCHLIST = 20;
 
+/**
+ * Obergrenze für `engine.maxOpenPositions`.
+ *
+ * Warum überhaupt eine: Offene Positionen werden dem Scan-Set UNGEDECKELT
+ * hinzugefügt (eine Position ohne frischen Kurs verlöre ihren Stop-Loss) —
+ * die Zahl treibt also direkt die Fetch- und Schreiblast jedes Scans. Und der
+ * 1-Minuten-Puls beobachtet 60 Symbole über ALLE Konten; wer allein 50
+ * Positionen hält, drängt die der anderen aus dem schnellen Ausstieg.
+ *
+ * 30 ist der Kompromiss: mehr als genug für ein breit gestreutes Depot
+ * (bei 3 % je Position wäre es voll investiert), ohne dass ein einzelnes
+ * Konto den Takt für alle anderen bestimmt.
+ */
+export const MAX_OPEN_POSITIONS_CAP = 30;
+/** Voreinstellung, wenn `engine.maxOpenPositions` fehlt (Altbestand). */
+export const DEFAULT_MAX_OPEN_POSITIONS = 10;
+
 export const DEFAULT_STRATEGY: Strategy = {
-  broker: { provider: 'paper', mode: 'paper', initialCapital: 25_000, paperTrading: true, sizingBase: 'balance' },
+  broker: {
+    provider: 'paper',
+    mode: 'paper',
+    initialCapital: 25_000,
+    paperTrading: true,
+    sizingBase: 'balance',
+    // Hebel bewusst AUS im Standard: Er verstärkt Verluste genauso wie
+    // Gewinne, und ein Konto, das ihn nie eingeschaltet hat, soll auch nie
+    // liquidiert werden können.
+    leverage: 1,
+  },
   watchlist: ['QQQ', 'AAPL', 'TSLA', '^NDX'],
   engine: {
     checkIntervalMin: 5,
@@ -192,6 +235,7 @@ export const DEFAULT_STRATEGY: Strategy = {
     // Kostenschwelle hat.
     cooldownMin: 60,
     minHoldMin: 60,
+    maxOpenPositions: 10,
     // Volatilitäts-Realismus (MA6): Krypto und Rohstoffe brauchen weitere
     // Stops, sonst ist jeder normale Tagesausschlag ein Zwangsverkauf.
     // Werte grob an typischen Tagesranges orientiert; per UI änderbar.

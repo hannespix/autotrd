@@ -37,6 +37,7 @@ import {
   type Position,
 } from '../../../shared/src/index.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
+import { accrueMarginInterest } from '../core/broker.js';
 
 /** ~ein halbes Handelsjahr Serie — reicht für Sharpe 90 + MaxDD-Fenster. */
 const EQUITY_WINDOW = 120;
@@ -50,6 +51,8 @@ function r2(v: number): number {
 export interface SnapshotResult {
   users: number;
   snapped: number;
+  /** Summe der heute gebuchten Margin-Zinsen über alle Konten. */
+  marginInterest: number;
 }
 
 /** Snapshot + Kennzahlen für alle User; Fehler je User isoliert (ein kaputtes Konto stoppt nicht den Rest). */
@@ -74,11 +77,23 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
   }
 
   let snapped = 0;
+  let zinsSumme = 0;
   const beitraege: AccountContribution[] = [];
   for (const userDoc of users.docs) {
     try {
-      const balance = userDoc.get('wallet.paperBalance') as number | undefined;
-      if (typeof balance !== 'number' || !Number.isFinite(balance)) continue; // kein Wallet → kein Snapshot
+      const roh = userDoc.get('wallet.paperBalance') as number | undefined;
+      if (typeof roh !== 'number' || !Number.isFinite(roh)) continue; // kein Wallet → kein Snapshot
+
+      // Margin-Zinsen VOR dem Snapshot buchen (Hebel, 28.07.): Sonst zeigte
+      // die Equity-Kurve einen Tag lang ein Konto, das seine Kreditkosten
+      // noch nicht getragen hat — genau die Schönfärberei, die margin.ts
+      // ausschließen soll. Idempotent je Tag, ein Rerun bucht nichts.
+      const zins = await accrueMarginInterest(userDoc.id, date).catch(() => 0);
+      if (zins > 0) {
+        zinsSumme += zins;
+        logger.info(`Margin-Zinsen ${userDoc.id}: ${zins.toFixed(2)} $`);
+      }
+      const balance = roh - zins;
 
       const posSnap = await userDoc.ref.collection('positions').get();
       let positionsValue = 0;
@@ -201,13 +216,19 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
   const health = aggregateTradingHealth(beitraege);
   await db.doc('meta/health').set(
     {
-      equitySnapshot: { at: now.toISOString(), date, users: users.size, snapped },
+      equitySnapshot: {
+        at: now.toISOString(),
+        date,
+        users: users.size,
+        snapped,
+        marginInterest: Math.round(zinsSumme * 100) / 100,
+      },
       trading: { ...health, verdict: tradingVerdict(health), at: now.toISOString() },
     },
     { merge: true },
   );
   logger.info(`snapshotEquity: ${snapped}/${users.size} User gesnapshottet (${date})`);
-  return { users: users.size, snapped };
+  return { users: users.size, snapped, marginInterest: Math.round(zinsSumme * 100) / 100 };
 }
 
 /** Täglich 17:15 ET (nach US-Schluss); 7 Tage — Krypto bewegt Equity auch am Wochenende. */

@@ -18,7 +18,14 @@ import type {
   StrategySpec,
   UserPrediction,
 } from '../../../shared/src/index.js';
-import { PREDICTION_MIN_EDGE_PCT, evaluate, paperEffectivePrice } from '../../../shared/src/index.js';
+import {
+  DEFAULT_MAX_OPEN_POSITIONS,
+  MAX_LEVERAGE,
+  MAX_OPEN_POSITIONS_CAP,
+  PREDICTION_MIN_EDGE_PCT,
+  evaluate,
+  paperEffectivePrice,
+} from '../../../shared/src/index.js';
 
 export const RISK_LIMITS = {
   /** Harte Obergrenze je Position — auch wenn die Config mehr will. */
@@ -31,8 +38,15 @@ export const RISK_LIMITS = {
    * unmöglich machte und bei volatilen Werten dauernd auslöste.
    */
   emergencyStopPct: 25,
-  /** Offene Positionen je User (Entries darüber hinaus werden verweigert). */
-  maxOpenPositions: 10,
+  /**
+   * Offene Positionen je User, wenn die Strategie nichts sagt (Entries
+   * darüber hinaus werden verweigert). Seit 28.07. konfigurierbar über
+   * `engine.maxOpenPositions` — Owner-Frage: „kann man die Anzahl der
+   * maximal aktiven Trades irgendwo einstellen?" Konnte man nicht; der Wert
+   * stand hier fest und war deshalb in keiner Oberfläche zu finden. Die
+   * Hülle klemmt jetzt nur noch die Obergrenze (MAX_OPEN_POSITIONS_CAP).
+   */
+  maxOpenPositions: DEFAULT_MAX_OPEN_POSITIONS,
   /** Default-Kauf-Pause je Symbol in Minuten — engine.cooldownMin
    *  überschreibt sie (Klemme 5–1440 in clampStrategyRisk). */
   cooldownMin: 30,
@@ -57,7 +71,28 @@ export function clampStrategyRisk(strategy: Strategy): Strategy {
   // wie bisher), mehr als ein Tag wäre eine versteckte Positions-Sperre.
   const mh = s.engine.minHoldMin;
   s.engine.minHoldMin = Number.isFinite(mh) ? Math.min(1440, Math.max(0, mh as number)) : 60;
+  // Positionslimit: konfigurierbar, aber in der Hülle (28.07.). Der Deckel
+  // schützt nicht den User vor sich selbst, sondern den Scan-Takt aller
+  // anderen — Begründung in MAX_OPEN_POSITIONS_CAP.
+  s.engine.maxOpenPositions = maxOpenPositions(s);
+  // Hebel: dieselbe Hülle. Ein unsinniger Wert (NaN, 0, 12) fällt auf
+  // „kein Hebel" zurück, nicht auf den Maximalwert — im Zweifel weniger
+  // Risiko, nie mehr.
+  s.broker.leverage = clampLeverage(s.broker.leverage);
   return s;
+}
+
+/** Konfiguriertes Positionslimit, geklemmt auf 1 … MAX_OPEN_POSITIONS_CAP. */
+export function maxOpenPositions(strategy: Strategy): number {
+  const v = strategy.engine.maxOpenPositions;
+  if (typeof v !== 'number' || !Number.isFinite(v)) return DEFAULT_MAX_OPEN_POSITIONS;
+  return Math.min(MAX_OPEN_POSITIONS_CAP, Math.max(1, Math.floor(v)));
+}
+
+/** Konfigurierter Hebel, geklemmt auf 1 … MAX_LEVERAGE (unsinnig ⇒ 1). */
+export function clampLeverage(leverage: number | undefined): number {
+  if (typeof leverage !== 'number' || !Number.isFinite(leverage) || leverage <= 1) return 1;
+  return Math.min(MAX_LEVERAGE, leverage);
 }
 
 /**

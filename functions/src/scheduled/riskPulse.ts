@@ -48,7 +48,9 @@ import { logger } from 'firebase-functions/v2';
 import {
   classify,
   isStrategy,
+  liquidationPlan,
   marketOpenForClass,
+  positionValue,
   resolveRisk,
   type Position,
   type Strategy,
@@ -106,6 +108,8 @@ export interface PulseResult {
   exits: number;
   /** Fortgeschriebene Höchst-/Tiefstkurse (Basis des Trailing-Stops). */
   waterMarks: number;
+  /** Konten, die unter die Nachschussgrenze gefallen sind (Hebel). */
+  marginCalls: number;
   skipped?: string;
 }
 
@@ -121,7 +125,7 @@ export async function runPulse(now = new Date()): Promise<PulseResult> {
     (sym) => marketOpenForClass(classify(sym), now),
   );
   if (symbole.length === 0) {
-    return { positions: alle.size, watched: 0, exits: 0, waterMarks: 0, skipped: 'market_closed' };
+    return { positions: alle.size, watched: 0, exits: 0, waterMarks: 0, marginCalls: 0, skipped: 'market_closed' };
   }
 
   const quotes = await getSparkBatch(symbole);
@@ -129,11 +133,19 @@ export async function runPulse(now = new Date()): Promise<PulseResult> {
     // Lieber gar nichts tun als auf einem leeren Kursbild handeln: Ein
     // fehlender Kurs darf keinen Ausstieg auslösen, und der 5-min-Scan
     // holt es ohnehin nach.
-    return { positions: alle.size, watched: symbole.length, exits: 0, waterMarks: 0, skipped: 'keine_kurse' };
+    return {
+      positions: alle.size,
+      watched: symbole.length,
+      exits: 0,
+      waterMarks: 0,
+      marginCalls: 0,
+      skipped: 'keine_kurse',
+    };
   }
 
   let exits = 0;
   let waterMarks = 0;
+  let marginCalls = 0;
 
   const users = await db
     .collection('users')
@@ -151,9 +163,51 @@ export async function runPulse(now = new Date()): Promise<PulseResult> {
       const clamped = clampStrategyRisk(structuredClone(roh));
 
       const posSnap = await userDoc.ref.collection('positions').get();
+
+      // ── Nachschussgrenze (Hebel, Owner-Wunsch 28.07.) ─────────────────
+      //
+      // Zuerst, vor allen Einzel-Stops: Wenn das Eigenkapital unter die
+      // Erhaltungsmarge gefallen ist, entscheidet nicht mehr der Stop des
+      // einzelnen Titels, sondern das Konto als Ganzes. Genau diese Prüfung
+      // fehlt in selbstgebauten Hebel-Simulationen, und ohne sie sehen die
+      // Ergebnisse systematisch zu gut aus (margin.ts, Modul-Kopf).
+      //
+      // Ein bar geführtes Konto kann hier nie hängen bleiben: Ohne Kredit
+      // ist der Cash ≥ 0, das Eigenkapital also mindestens so groß wie der
+      // Positionswert — die Marge liegt bei ≥ 100 %.
+      const cash = (userDoc.get('wallet.paperBalance') as number | undefined) ?? 0;
+      const zwangsschluss = new Set(
+        liquidationPlan(
+          posSnap.docs.map((d) => {
+            const p = d.data() as Position;
+            // Fehlt der Kurs (geschlossener Markt), zählt der Einstand. Das
+            // ist die vorsichtigere Annahme: Eine Position, deren Verlust
+            // wir nicht sehen, löst keinen Zwangsverkauf aus, den wir nicht
+            // begründen können.
+            const preis = quotes.get(p.symbol)?.price ?? p.avgEntry;
+            return {
+              symbol: p.symbol,
+              value: positionValue(p, preis),
+              exposure: Math.abs(p.qty * preis),
+            };
+          }),
+          cash,
+        ),
+      );
+      if (zwangsschluss.size > 0) {
+        marginCalls += 1;
+        logger.warn(
+          `Margin-Call ${userDoc.id}: ${zwangsschluss.size} Position(en) werden zwangsweise geschlossen`,
+        );
+      }
+
       for (const doc of posSnap.docs) {
         const pos = doc.data() as Position;
         const quote = quotes.get(pos.symbol);
+        // Ohne Kurs kein Verkauf — auch nicht beim Margin-Call. Der Puls
+        // versucht es in der nächsten Minute erneut und spätestens zur
+        // Eröffnung des betroffenen Marktes geht die Position zu. Auf einem
+        // Kurs von gestern zwangszuschließen wäre schlimmer als warten.
         if (!quote || !(quote.price > 0)) continue;
         const preis = quote.price;
         const cls = classify(pos.symbol);
@@ -184,10 +238,15 @@ export async function runPulse(now = new Date()): Promise<PulseResult> {
         // erfundener Wert würde den volatilitätsadaptiven Stop verfälschen.
         // Ohne ihn fällt `riskExitReason` auf die Prozent-Marken zurück —
         // der ATR-Stop bleibt Sache des 5-min-Scans.
-        const reason = riskExitReason(pos, preis, {
-          risk: resolveRisk(clamped.engine, cls),
-          now,
-        });
+        // Der Margin-Call sticht jeden Stop: Er fragt nicht, wie diese eine
+        // Position steht, sondern ob das Konto sie sich noch leisten kann.
+        const reason =
+          zwangsschluss.has(pos.symbol)
+            ? 'margin_call'
+            : riskExitReason(pos, preis, {
+                risk: resolveRisk(clamped.engine, cls),
+                now,
+              });
         if (!reason) continue;
 
         const r = await executePaperTrade(
@@ -226,13 +285,13 @@ export async function runPulse(now = new Date()): Promise<PulseResult> {
     await db
       .doc('meta/health')
       .set(
-        { pulse: { at: now.toISOString(), watched: symbole.length, exits, waterMarks } },
+        { pulse: { at: now.toISOString(), watched: symbole.length, exits, waterMarks, marginCalls } },
         { merge: true },
       )
       .catch(() => undefined);
   }
 
-  return { positions: alle.size, watched: symbole.length, exits, waterMarks };
+  return { positions: alle.size, watched: symbole.length, exits, waterMarks, marginCalls };
 }
 
 /** Jede Minute — der schnelle Wächter über offene Positionen.
@@ -249,8 +308,8 @@ export const riskPulse = onSchedule(
     const res = await runPulse();
     logger.info(
       `Puls: ${res.watched}/${res.positions} beobachtet, ${res.exits} Ausstieg(e)${
-        res.skipped ? ` — übersprungen (${res.skipped})` : ''
-      }`,
+        res.marginCalls > 0 ? `, ${res.marginCalls} Margin-Call(s)` : ''
+      }${res.skipped ? ` — übersprungen (${res.skipped})` : ''}`,
     );
   },
 );

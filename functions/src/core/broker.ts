@@ -15,8 +15,44 @@
  */
 
 import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore';
-import { PAPER_FEE_RATE, classify, paperEffectivePrice, resolveRisk } from '../../../shared/src/index.js';
+import {
+  DEFAULT_MARGIN_RATE,
+  PAPER_FEE_RATE,
+  classify,
+  marginInterest,
+  paperEffectivePrice,
+  resolveRisk,
+  sizeWithMargin,
+} from '../../../shared/src/index.js';
 import type { Position, RiskConfig, Strategy, Trade } from '../../../shared/src/index.js';
+
+/**
+ * Margin-Budget, das der AUFRUFER mitbringt (Scan bzw. Puls).
+ *
+ * Warum nicht im Broker selbst gerechnet: Die Nachschuss-Mathematik braucht
+ * den MARKTWERT aller offenen Positionen, und den kennt nur der Scan — er hat
+ * die Kurse gerade geholt. Der Broker läuft in einer Transaktion über GENAU
+ * EIN Positions-Dokument; er müsste alle anderen nachladen und hätte trotzdem
+ * keine Kurse dazu, sondern nur Einstände. Mit Einständen gerechnet wäre das
+ * Budget aber systematisch zu groß, sobald das Depot im Minus steht — also
+ * genau dann, wenn es darauf ankommt.
+ *
+ * FEHLT das Feld, handelt der Broker bar gedeckt wie bisher. Das ist kein
+ * Fallback, sondern der Normalfall: Ohne Hebel gibt es nichts zu rechnen.
+ */
+export interface MarginBudget {
+  /** Eigenkapital (Cash + Marktwert der Positionen) — Basis der Tranche. */
+  equity: number;
+  /** Verbleibende Kaufkraft unter dem für DIESE Order geltenden Hebel. */
+  buyingPower: number;
+  /**
+   * Der für DIESE Order geltende Hebel. Er gehört mit ins Budget, weil die
+   * Tranche mit ihm skaliert — ohne ihn käme trotz voller Kaufkraft immer
+   * nur eine bar gedeckte Positionsgröße heraus, und der Hebel bliebe
+   * folgenlos (siehe `sizeWithMargin`).
+   */
+  leverage: number;
+}
 
 export type BrokerMode = 'paper' | 'live';
 
@@ -42,7 +78,20 @@ function roundCents(v: number): number {
  * floor(cash·pct/price) ≥ 1 Stück ergibt. 'initial' bleibt als bewusste
  * Option für fixe Tranchen (Referenz-Verhalten).
  */
-export function sizeOrder(strategy: Strategy, balance: number, effPrice: number, fractional = false): number {
+export function sizeOrder(
+  strategy: Strategy,
+  balance: number,
+  effPrice: number,
+  fractional = false,
+  margin?: MarginBudget,
+): number {
+  // Mit Hebel entscheidet nicht mehr der Cash, sondern das EIGENKAPITAL über
+  // die Tranche — sonst schrumpfte sie mit jedem Kauf gegen null und der
+  // Hebel wäre nach der ersten Handvoll Positionen wirkungslos, obwohl noch
+  // Kaufkraft da ist. Die Kaufkraft deckelt zusätzlich (sizeWithMargin).
+  if (margin) {
+    return sizeWithMargin(margin, strategy.engine.maxPositionPct, effPrice, fractional, margin.leverage);
+  }
   const base = strategy.broker.sizingBase ?? 'balance';
   const capital = base === 'initial' ? strategy.broker.initialCapital : Math.max(0, balance);
   const raw = (capital * strategy.engine.maxPositionPct) / 100 / effPrice;
@@ -78,6 +127,13 @@ export interface TradeRequest {
    * Short-Position deckt IMMER ein (kein Flag nötig — die Position sagt es).
    */
   openShort?: boolean;
+  /**
+   * Kaufkraft unter Hebel (Owner-Wunsch 28.07.). Ohne dieses Feld ist der
+   * Trade strikt BAR gedeckt — exakt das Verhalten von vorher. Der Aufrufer
+   * setzt es nur, wenn `broker.leverage > 1` UND das Signal überzeugend
+   * genug ist (`effectiveLeverage`).
+   */
+  margin?: MarginBudget;
 }
 
 /**
@@ -136,10 +192,18 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       if (posSnap.exists) return { executed: false, reason: 'position_existiert' };
       const cls = req.assetClass ?? classify(req.symbol);
       const fractional = cls === 'crypto';
-      const qty = req.qty ?? sizeOrder(strategy, balance, eff, fractional);
+      const qty = req.qty ?? sizeOrder(strategy, balance, eff, fractional, req.margin);
       if (qty < (fractional ? 1e-6 : 1)) return { executed: false, reason: 'qty_unter_1' };
       const cost = qty * eff;
-      if (cost > balance) return { executed: false, reason: 'zu_wenig_cash' };
+      // Ohne Hebel prüft der Cash, mit Hebel die Kaufkraft. Der Cash darf
+      // dabei NEGATIV werden — das ist der geliehene Betrag, auf den
+      // accrueMarginInterest täglich Zinsen bucht.
+      if (req.margin) {
+        if (cost > req.margin.buyingPower + 1e-9) return { executed: false, reason: 'zu_wenig_kaufkraft' };
+      } else if (cost > balance) {
+        return { executed: false, reason: 'zu_wenig_cash' };
+      }
+      const borrowed = roundCents(Math.max(0, cost - Math.max(0, balance)));
 
       // Level klassen-aufgelöst festschreiben (MA6): Krypto bekommt weitere
       // Stops als ein Index. Der Aufrufer reicht die Klasse durch; ohne
@@ -164,7 +228,16 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
         paper: true,
       };
       tx.set(posRef, position);
-      tx.set(tradeRef, { ...trade, at: Timestamp.now(), rawPrice: req.price, feeRate: PAPER_FEE_RATE });
+      // `borrowed` steht am Trade, damit im Nachhinein nachvollziehbar ist,
+      // welcher Einstieg auf Kredit lief — im Kontostand allein ist das
+      // später nicht mehr auseinanderzuhalten.
+      tx.set(tradeRef, {
+        ...trade,
+        at: Timestamp.now(),
+        rawPrice: req.price,
+        feeRate: PAPER_FEE_RATE,
+        ...(borrowed > 0 ? { borrowed } : {}),
+      });
       // Auf Cent runden (Audit 26.07.): Ohne das sammelt der Float-Rest jedes
       // Trades im Kontostand an — nach vielen Zyklen driftet er sichtbar.
       tx.update(userRef, { 'wallet.paperBalance': roundCents(balance - cost), 'wallet.updatedAt': now });
@@ -182,10 +255,16 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       if (!req.openShort) return { executed: false, reason: 'keine_position' };
       const cls = req.assetClass ?? classify(req.symbol);
       const fractional = cls === 'crypto';
-      const qty = req.qty ?? sizeOrder(strategy, balance, eff, fractional);
+      const qty = req.qty ?? sizeOrder(strategy, balance, eff, fractional, req.margin);
       if (qty < (fractional ? 1e-6 : 1)) return { executed: false, reason: 'qty_unter_1' };
       const margin = qty * eff;
-      if (margin > balance) return { executed: false, reason: 'zu_wenig_cash' };
+      // Gleiche Deckungsprüfung wie beim Kauf: Der Short bindet Sicherheit,
+      // und ob die aus Cash oder aus Kaufkraft kommt, entscheidet der Hebel.
+      if (req.margin) {
+        if (margin > req.margin.buyingPower + 1e-9) return { executed: false, reason: 'zu_wenig_kaufkraft' };
+      } else if (margin > balance) {
+        return { executed: false, reason: 'zu_wenig_cash' };
+      }
       const risk = resolveRisk(strategy.engine, cls);
       const position: Position = {
         symbol: req.symbol,
@@ -347,6 +426,74 @@ export function riskExitReason(
   }
 
   return null;
+}
+
+/**
+ * Höchstzahl Tage, die eine einzelne Abrechnung nachholt.
+ *
+ * Ohne Deckel würde ein Konto, dessen letzte Abrechnung Monate zurückliegt
+ * (neues Feld, pausierter Scheduler, Wiederherstellung), auf einen Schlag mit
+ * einem Jahreszins belastet. Der Fehler ginge dann zu Lasten des Users, und
+ * zwar für ein Versäumnis auf unserer Seite.
+ */
+const MAX_INTEREST_CATCHUP_DAYS = 7;
+
+/**
+ * Margin-Zinsen für einen Tag buchen — der dritte Teil, ohne den Hebel eine
+ * Schönfärberei wäre (margin.ts, Modul-Kopf).
+ *
+ * Idempotent über `wallet.marginInterestDate`: Ein zweiter Lauf am selben Tag
+ * bucht nichts. Läuft transaktional, weil der Scan parallel Trades schreibt —
+ * lesen und schreiben dürfen hier nicht auseinanderfallen.
+ *
+ * Verzinst wird der NEGATIVE Cash, nicht der Positionswert: Geliehen ist
+ * genau der Betrag, den das Konto über sein Bargeld hinaus ausgegeben hat.
+ * Ein Konto mit positivem Cash zahlt nichts, auch wenn Hebel erlaubt ist.
+ */
+export async function accrueMarginInterest(
+  uid: string,
+  day: string,
+  annualRate = DEFAULT_MARGIN_RATE,
+): Promise<number> {
+  const db = getFirestore();
+  const userRef = db.doc(`users/${uid}`);
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(userRef);
+    if (!snap.exists) return 0;
+    const balance = snap.get('wallet.paperBalance') as number | undefined;
+    if (typeof balance !== 'number' || !Number.isFinite(balance)) return 0;
+    const last = snap.get('wallet.marginInterestDate') as string | undefined;
+    if (last === day) return 0; // heute schon abgerechnet
+
+    const borrowed = Math.max(0, -balance);
+    // Auch ohne Schuld das Datum fortschreiben: Sonst sammelt ein Konto, das
+    // lange bar geführt wurde, eine riesige Lücke an und zahlt beim ersten
+    // Kredit rückwirkend für Tage ohne Kredit.
+    let days = 1;
+    if (last && /^\d{4}-\d{2}-\d{2}$/.test(last)) {
+      const diff = Math.round((Date.parse(`${day}T00:00:00Z`) - Date.parse(`${last}T00:00:00Z`)) / 86_400_000);
+      if (Number.isFinite(diff) && diff > 0) days = Math.min(MAX_INTEREST_CATCHUP_DAYS, diff);
+      else days = 0; // Datum in der Zukunft/kaputt ⇒ nichts buchen
+    }
+    const zins = days > 0 ? marginInterest(borrowed, days, annualRate) : 0;
+    tx.set(
+      userRef,
+      {
+        wallet: {
+          marginInterestDate: day,
+          ...(zins > 0
+            ? {
+                paperBalance: roundCents(balance - zins),
+                marginInterestTotal: FieldValue.increment(zins),
+                updatedAt: new Date().toISOString(),
+              }
+            : {}),
+        },
+      },
+      { merge: true },
+    );
+    return zins;
+  });
 }
 
 /** Tages-Quota (admin/quotas/{uid}) transaktional erhöhen; false = Limit erreicht. */

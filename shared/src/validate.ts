@@ -8,6 +8,8 @@
  */
 
 import type { Strategy } from './strategy.js';
+import { MAX_OPEN_POSITIONS_CAP } from './strategy.js';
+import { MAX_LEVERAGE } from './margin.js';
 
 /** Bekannte Schlüssel der kaputten Alt-Struktur — hart verboten. */
 const LEGACY_KEYS = ['strategy', 'indices', 'risk_management', 'execution'] as const;
@@ -69,6 +71,14 @@ export function validateStrategy(value: unknown): string[] {
     if (broker.sizingBase !== undefined && broker.sizingBase !== 'initial' && broker.sizingBase !== 'balance') {
       problems.push("broker.sizingBase muss 'initial' oder 'balance' sein");
     }
+    // Hebel: additiv, fehlend = 1 (aus). Die Obergrenze steht auch hier und
+    // nicht nur in der serverseitigen Hülle — ein Wert, den der Server ohnehin
+    // klemmt, soll gar nicht erst speicherbar sein, sonst zeigt die UI eine
+    // Zahl an, nach der nie gehandelt wird.
+    if (broker.leverage !== undefined
+      && (!isFiniteNumber(broker.leverage) || broker.leverage < 1 || broker.leverage > MAX_LEVERAGE)) {
+      problems.push(`broker.leverage muss zwischen 1 und ${MAX_LEVERAGE} liegen (1 = kein Hebel)`);
+    }
   }
 
   if (!Array.isArray(watchlist) || !watchlist.every((s) => typeof s === 'string' && s.length > 0)) {
@@ -102,6 +112,12 @@ export function validateStrategy(value: unknown): string[] {
     }
     if (engine.cooldownMin !== undefined && (!isFiniteNumber(engine.cooldownMin) || engine.cooldownMin < 0)) {
       problems.push('engine.cooldownMin muss eine Zahl ≥ 0 sein');
+    }
+    if (engine.maxOpenPositions !== undefined
+      && (!isFiniteNumber(engine.maxOpenPositions)
+        || engine.maxOpenPositions < 1
+        || engine.maxOpenPositions > MAX_OPEN_POSITIONS_CAP)) {
+      problems.push(`engine.maxOpenPositions muss zwischen 1 und ${MAX_OPEN_POSITIONS_CAP} liegen`);
     }
     if (engine.byClass !== undefined) {
       if (!isRecord(engine.byClass)) {

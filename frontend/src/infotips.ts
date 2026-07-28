@@ -77,6 +77,14 @@ export const INFO: Record<string, { t: string; d: string }> = {
     t: 'Shorten (Leerverkäufe)',
     d: 'Erlaubt der Engine, auf FALLENDE Kurse zu setzen: Ein Verkaufs-Signal ohne Position eröffnet einen Short (das Depot „leiht" die Stücke und verkauft sie), ein Kauf-Signal deckt ihn wieder ein. Gewinn = Einstand minus Rückkaufkurs. Als Sicherheitsleistung wird der volle Gegenwert vom Cash reserviert und beim Eindecken mit dem Gewinn/Verlust zurückgebucht. Wichtig: Beim Shorten sind Verluste theoretisch unbegrenzt (der Kurs kann beliebig steigen) — deshalb ist das bewusst ein Opt-in; Stop-Loss (über dem Einstand), nachziehender Stop und die 25-%-Notbremse gelten gespiegelt.',
   },
+  maxOpenPositions: {
+    t: 'Max. gleichzeitige Positionen',
+    d: 'Wie viele Positionen höchstens gleichzeitig offen sein dürfen. Ist das Limit erreicht, ignoriert die Engine jedes weitere Kaufsignal — bis eine Position schließt. Zusammen mit „Investment je Trade %" bestimmt das, wie voll das Depot maximal wird: 10 Positionen à 10 % sind voll investiert, 10 à 5 % lassen die Hälfte in Cash. Mehr Positionen streuen das Risiko, machen aber jede einzelne unbedeutender — und jede offene Position kostet bei jedem Scan Abfragen. Die Obergrenze liegt bei 30.',
+  },
+  leverage: {
+    t: 'Hebel (Margin)',
+    d: 'Handeln mit geliehenem Geld: Bei 2× darf das Depot doppelt so viel bewegen, wie es an Eigenkapital hat. Der Hebel verstärkt BEIDE Richtungen gleich stark — aus 10 % Kursgewinn werden 20 % Kontogewinn, aus 10 % Verlust ebenfalls 20 %. Drei Dinge gehören dazu und sind alle eingebaut: (1) Der Hebel greift NUR bei sehr überzeugenden Signalen — zwei Stimmen über deiner Einstiegsschwelle und mindestens 3 insgesamt (sonst würde eine lockerere Einstiegsschwelle den Hebel leichter machen, also genau verkehrt herum); alles darunter handelt weiter bar gedeckt. (2) Fällt das Eigenkapital unter 25 % des Positionswerts, werden Positionen zwangsweise geschlossen (Margin-Call, geprüft im Minutentakt) — genau wie bei einem echten Broker. (3) Auf das geliehene Geld laufen 8 % Jahreszins, täglich gebucht. Ohne (2) und (3) sähe jede Auswertung mit Hebel besser aus, als sie ist. Standard ist 1× (aus). Manuelle Trades bleiben immer bar gedeckt — der Hebel hängt an der Überzeugungsstärke des Algorithmus, und die hat ein Klick von dir nicht.',
+  },
   sizingBase: {
     t: 'Sizing-Basis',
     d: 'Woraus die Positionsgröße gerechnet wird. „Verfügbarer Cash" (Standard): Jeder Kauf nimmt seinen Prozentsatz vom aktuell freien Cash — das Wallet arbeitet weiter, auch wenn schon Positionen offen sind, die Tranchen werden mit sinkendem Cash automatisch kleiner. „Startkapital (fix)": Jede Tranche ist gleich groß (Prozent vom Startkapital) — kalkulierbarer, aber sobald der Rest-Cash eine volle Tranche nicht mehr deckt, kauft die Engine gar nichts mehr. Genau das ließ vorher viel Cash ungenutzt liegen.',

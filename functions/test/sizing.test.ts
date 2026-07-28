@@ -88,3 +88,62 @@ describe('sizeOrder — Startkapital-Basis (Option)', () => {
     expect(sizeOrder(s, 10_000, 333)).toBe(3); // 1 000 / 333 = 3.003 → 3
   });
 });
+
+/* ── Hebel (Owner-Wunsch 28.07.) ────────────────────────────────────────── */
+
+describe('sizeOrder mit Margin-Budget', () => {
+  it('ohne Budget bleibt alles wie vorher — bar gedeckt', () => {
+    // Regressionsschutz: Der Hebel darf das Standardverhalten nicht anfassen.
+    const s = strat({ maxPositionPct: 10 });
+    expect(sizeOrder(s, 10_000, 100)).toBe(10);
+  });
+
+  it('die Tranche skaliert MIT dem Hebel — sonst bliebe er folgenlos', () => {
+    // Der Fund aus dem Emulator-Lauf 28.07.: Rechnete die Tranche vom
+    // blanken Eigenkapital, kamen bei 10 % je Position und höchstens 10
+    // Positionen exakt 100 % des Eigenkapitals heraus — die Kaufkraft von
+    // 300 % wurde nie erreicht, der Hebel tat nichts. Mit ihm skaliert:
+    // 10 000 $ × 3 × 10 % = 3 000 $ = 30 Stück.
+    const s = strat({ maxPositionPct: 10 });
+    expect(sizeOrder(s, 0, 100, false, { equity: 10_000, buyingPower: 30_000, leverage: 3 })).toBe(30);
+  });
+
+  it('zehn solcher Tranchen ergeben genau die versprochene Auslastung', () => {
+    // 10 × 3 000 $ = 30 000 $ = Eigenkapital × 3. Nicht mehr — die
+    // Kaufkraft deckelt die Summe, der Hebel wirkt also nicht doppelt.
+    const s = strat({ maxPositionPct: 10 });
+    const stueck = sizeOrder(s, 0, 100, false, { equity: 10_000, buyingPower: 30_000, leverage: 3 });
+    expect(stueck * 100 * 10).toBe(30_000);
+  });
+
+  it('die Kaufkraft deckelt die Tranche, wenn sie kleiner ist', () => {
+    // Neunte Position bei fast erschöpfter Kaufkraft: Die Tranche wäre
+    // 3 000 $, es sind aber nur noch 1 200 $ frei.
+    const s = strat({ maxPositionPct: 10 });
+    expect(sizeOrder(s, 0, 100, false, { equity: 10_000, buyingPower: 1_200, leverage: 3 })).toBe(12);
+  });
+
+  it('erschöpfte Kaufkraft ergibt 0 Stück — der Broker lehnt dann ab', () => {
+    const s = strat({ maxPositionPct: 10 });
+    expect(sizeOrder(s, 50_000, 100, false, { equity: 10_000, buyingPower: 0, leverage: 3 })).toBe(0);
+  });
+
+  it('Hebel 1 im Budget ⇒ Tranche wie bar gedeckt', () => {
+    const s = strat({ maxPositionPct: 10 });
+    expect(sizeOrder(s, 0, 100, false, { equity: 10_000, buyingPower: 10_000, leverage: 1 })).toBe(10);
+  });
+
+  it('das Budget schlägt die Sizing-Basis „initial"', () => {
+    // Sonst käme unter Hebel eine fixe Startkapital-Tranche heraus, die mit
+    // dem tatsächlichen Kontostand nichts mehr zu tun hat.
+    const s = strat({ sizingBase: 'initial', initialCapital: 100_000, maxPositionPct: 10 });
+    expect(sizeOrder(s, 0, 100, false, { equity: 10_000, buyingPower: 30_000, leverage: 3 })).toBe(30);
+  });
+
+  it('Krypto handelt auch unter Hebel in Bruchteilen', () => {
+    const s = strat({ maxPositionPct: 10 });
+    expect(
+      sizeOrder(s, 0, 64_000, true, { equity: 10_000, buyingPower: 30_000, leverage: 3 }),
+    ).toBeCloseTo(0.046875, 6);
+  });
+});
