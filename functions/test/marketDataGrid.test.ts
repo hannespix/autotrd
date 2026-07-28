@@ -15,7 +15,12 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { INTRADAY_GRID_SEC, isGridBar, parseSparkEntry } from '../src/core/marketData.js';
+import {
+  INTRADAY_GRID_SEC,
+  isGridBar,
+  parseSparkEntry,
+  sparkCloses,
+} from '../src/core/marketData.js';
 
 describe('isGridBar', () => {
   it('erkennt die live gemessenen „Jetzt"-Pseudo-Bars als off-grid', () => {
@@ -88,5 +93,34 @@ describe('parseSparkEntry', () => {
   it('ohne einen einzigen Rasterpunkt bleibt lastGridT 0', () => {
     const q = parseSparkEntry('X', { timestamp: [1_785_224_649], close: [100] })!;
     expect(q.lastGridT).toBe(0);
+  });
+});
+
+describe('sparkCloses (Tages-Historie fürs Momentum-Ranking)', () => {
+  it('wirft Lücken raus, statt sie als Kurs 0 zu zählen', () => {
+    // Der scharfe Fall: Eine 0 im Kursverlauf ist kein fehlender Wert,
+    // sondern ein Kurssturz auf null. Sie würde die 12-1-Rendite des
+    // Symbols zerstören und es im Ranking auf den letzten Platz setzen —
+    // ein Symbol also aussortieren, weil an einem Feiertag nicht gehandelt
+    // wurde.
+    expect(sparkCloses({ close: [100, null, 102, null, 104] })).toEqual([100, 102, 104]);
+  });
+
+  it('filtert auch echte Nullen und Negativwerte', () => {
+    expect(sparkCloses({ close: [100, 0, -5, 102] })).toEqual([100, 102]);
+  });
+
+  it('leerer oder fehlender Eintrag ⇒ leere Reihe, kein Absturz', () => {
+    expect(sparkCloses(undefined)).toEqual([]);
+    expect(sparkCloses({})).toEqual([]);
+    expect(sparkCloses({ close: [] })).toEqual([]);
+  });
+
+  it('behält die Reihenfolge — sie IST die Zeitachse', () => {
+    // rankMomentum rechnet über Indizes (t−252 bis t−21). Würde hier
+    // umsortiert, wäre die Rendite über einen falschen Zeitraum gerechnet,
+    // ohne dass irgendetwas auffiele.
+    const reihe = [10, 11, 9, 12, 15];
+    expect(sparkCloses({ close: reihe })).toEqual(reihe);
   });
 });
