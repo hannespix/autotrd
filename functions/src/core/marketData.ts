@@ -145,6 +145,33 @@ export interface IntradayBar {
   v: number;
 }
 
+/** Raster der 5-min-Serie in Sekunden — Bar-Starts sind Vielfache davon. */
+export const INTRADAY_GRID_SEC = 300;
+
+/**
+ * Yahoo hängt bei OFFENEN Märkten einen Pseudo-Bar an, dessen Zeitstempel die
+ * AKTUELLE UHRZEIT ist statt eines Bar-Starts — gemessen am 28.07.:
+ * BTC-USD `1785224649` (%300 = 249), EURUSD=X `%300 = 200`, GC=F `%300 = 245`;
+ * bei geschlossenen Märkten (AAPL, ^GSPC) liegt dagegen JEDER Bar auf dem
+ * Raster. Er ist kein 5-min-Bar, sondern der Live-Kurs in Bar-Verkleidung.
+ *
+ * Er muss raus, und zwar an der Quelle: `runIntradayForecast` nimmt den
+ * letzten Bar als `baseT`, und alle Prognosepunkte sind `baseT + k·300`. Ein
+ * off-grid `baseT` verschiebt die GANZE Prognose neben das Kursraster — kein
+ * einziger Punkt findet je einen realisierten Close. Genau das war der Befund
+ * vom 28.07.: `intradayScored: 0` bei `unrealized: 150`. Weil Shadow-Prognosen
+ * nur bei OFFENEM Markt entstehen, traf es nicht einzelne, sondern restlos
+ * alle — 150 von 150.
+ *
+ * Der Preis dafür ist ein bis zu 5 Minuten alter letzter Close. Das ist der
+ * richtige Preis: Signale und Prognosen sollen auf ABGESCHLOSSENEN Bars
+ * stehen, nicht auf einem halben, der sich noch bewegt (Repainting). Der
+ * Live-Kurs kommt ohnehin aus `quote`.
+ */
+export function isGridBar(t: number, stepSec: number = INTRADAY_GRID_SEC): boolean {
+  return Number.isFinite(t) && t % stepSec === 0;
+}
+
 /** 5-Minuten-Bars je Handelstag (ET-Datum) — Chart-Feedback 24.07.:
  *  „minutengenaue Daten". Yahoo liefert 5m für die letzten ~5 Handelstage. */
 export async function getIntradayBars(symbol: string): Promise<Map<string, IntradayBar[]>> {
@@ -163,6 +190,7 @@ export async function getIntradayBars(symbol: string): Promise<Map<string, Intra
   for (let i = 0; i < ts.length; i++) {
     const close = quote?.close[i];
     if (close === null || close === undefined) continue;
+    if (!isGridBar(ts[i]!)) continue; // Yahoos „Jetzt"-Pseudo-Bar, s. isGridBar
     const day = fmtDate(ts[i]!, tz);
     const list = byDay.get(day) ?? [];
     list.push({
@@ -176,6 +204,113 @@ export async function getIntradayBars(symbol: string): Promise<Map<string, Intra
     byDay.set(day, list);
   }
   return byDay;
+}
+
+/* ── Batch-Beobachtung des ganzen Katalogs (Owner-Frage 28.07.) ─────────────
+ * „kann das tool nicht alles immer parallel beobachten? markt ist ja dynamisch
+ * und ändert sich stetig!" — konnte es nicht: `getQuickQuote` macht EINEN
+ * Yahoo-Fetch je Symbol, deshalb rotierte die Versorgung in 15er-Häppchen mit
+ * einem 50-min-Frische-Gate durch den Katalog. Ein Symbol war damit im
+ * schlechtesten Fall eine Stunde alt.
+ *
+ * Gemessen am 28.07. (Katalog = 166 Symbole):
+ *   v7/finance/quote  … HTTP 401 (query1 UND query2)
+ *   v8/finance/spark  … HTTP 200, mehrere Symbole je Request
+ *   Grenze: 20 Symbole ok, ab 22 kommt HTTP 400
+ *   → 9 Requests, 165/166 Symbole, 2,5 s
+ *
+ * Damit ist der ganze Katalog bei JEDEM 5-min-Scan frisch — 9 statt 166
+ * Fetches. Spark liefert nur Closes (kein OHLCV); für Kurs + Tagesänderung
+ * reicht das genau, die exakten Tageskerzen kommen weiter aus der Chart-API.
+ */
+const SPARK_URL = 'https://query1.finance.yahoo.com/v8/finance/spark';
+/** Gemessene harte Grenze ist 21; 20 lässt Luft, ohne Requests zu verschenken. */
+export const SPARK_CHUNK = 20;
+
+export interface SparkQuote {
+  symbol: string;
+  price: number;
+  changePct: number;
+  /** Zeitstempel des letzten RASTER-Bars (0, wenn keiner geliefert wurde). */
+  lastGridT: number;
+}
+
+interface SparkEntry {
+  symbol?: string;
+  timestamp?: number[];
+  close?: (number | null)[];
+  previousClose?: number;
+  chartPreviousClose?: number;
+}
+
+/**
+ * Kurse für viele Symbole in wenigen Requests. Chunks laufen parallel; ein
+ * fehlgeschlagener Chunk kostet nur seine 20 Symbole, nie den ganzen Lauf.
+ *
+ * Der letzte Spark-Punkt ist bei offenen Märkten derselbe off-grid
+ * „Jetzt"-Punkt wie in der Chart-API (s. `isGridBar`) — als PREIS ist er
+ * richtig und gewollt, nur als Bar-Zeitstempel wäre er falsch. `lastGridT`
+ * meldet deshalb den letzten echten Rasterpunkt separat.
+ */
+export async function getSparkBatch(symbols: string[]): Promise<Map<string, SparkQuote>> {
+  const out = new Map<string, SparkQuote>();
+  const chunks: string[][] = [];
+  for (let i = 0; i < symbols.length; i += SPARK_CHUNK) {
+    chunks.push(symbols.slice(i, i + SPARK_CHUNK));
+  }
+
+  const results = await Promise.allSettled(
+    chunks.map(async (chunk) => {
+      const url =
+        `${SPARK_URL}?symbols=${chunk.map(encodeURIComponent).join(',')}` +
+        `&range=1d&interval=5m`;
+      const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (autotrd)' } });
+      if (!res.ok) throw new Error(`Yahoo spark: HTTP ${res.status} (${chunk.length} Symbole)`);
+      return (await res.json()) as Record<string, SparkEntry>;
+    }),
+  );
+
+  for (const r of results) {
+    if (r.status !== 'fulfilled') continue;
+    for (const [symbol, entry] of Object.entries(r.value)) {
+      const q = parseSparkEntry(symbol, entry);
+      if (q) out.set(symbol, q);
+    }
+  }
+  return out;
+}
+
+/** Ein Spark-Eintrag → Quote. Exportiert, damit die Zerlegung testbar ist,
+ *  ohne Yahoo zu rufen. Liefert null, wenn kein brauchbarer Close dabei ist. */
+export function parseSparkEntry(symbol: string, entry: SparkEntry | undefined): SparkQuote | null {
+  const closes = entry?.close ?? [];
+  const ts = entry?.timestamp ?? [];
+  let price = 0;
+  for (let i = closes.length - 1; i >= 0; i--) {
+    const c = closes[i];
+    if (typeof c === 'number' && c > 0) {
+      price = c;
+      break;
+    }
+  }
+  if (price <= 0) return null;
+
+  let lastGridT = 0;
+  for (let i = ts.length - 1; i >= 0; i--) {
+    const t = ts[i];
+    if (typeof t === 'number' && isGridBar(t)) {
+      lastGridT = t;
+      break;
+    }
+  }
+
+  const prev = entry?.previousClose ?? entry?.chartPreviousClose ?? 0;
+  return {
+    symbol,
+    price,
+    changePct: prev > 0 ? (price / prev - 1) * 100 : 0,
+    lastGridT,
+  };
 }
 
 interface AlpacaBarsResponse {

@@ -127,7 +127,10 @@ export const CATALOG: Catalog = {
     ],
     Europe: [
       ['MC.PA', 'LVMH'], ['OR.PA', "L'Oreal"], ['TTE.PA', 'TotalEnergies'],
-      ['ASML.AS', 'ASML'], ['NESN.SW', 'Nestle'], ['ROG.SW', 'Roche'], ['NOVN.SW', 'Novartis'],
+      // Roche steht bei Yahoo unter RO.SW; ROG.SW liefert 404 („may be
+      // delisted") — aufgefallen erst beim Batch-Abruf, weil ein einzelner
+      // toter Fetch vorher nur eine Warnzeile war, die niemand sah.
+      ['ASML.AS', 'ASML'], ['NESN.SW', 'Nestle'], ['RO.SW', 'Roche'], ['NOVN.SW', 'Novartis'],
       ['SHEL.L', 'Shell'], ['AZN.L', 'AstraZeneca'], ['HSBA.L', 'HSBC'], ['ULVR.L', 'Unilever'],
     ],
     Asia: [

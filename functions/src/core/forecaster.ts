@@ -7,9 +7,11 @@
  */
 
 import { getFirestore } from 'firebase-admin/firestore';
+import { logger } from 'firebase-functions/v2';
 import {
   FORECAST_HORIZON,
   INTRADAY_HORIZON,
+  INTRADAY_STEP_SEC,
   DEFAULT_INTRADAY_LOOKBACK,
   INTRADAY_LOOKBACK_GRID,
   LOOKBACK_GRID,
@@ -129,10 +131,24 @@ export async function runIntradayForecast(
   bars: IntradayBar[],
   marketOpen: boolean,
 ): Promise<LiveIntradayForecast | null> {
-  if (bars.length < 5) return null;
+  // Raster-Guard (Befund 28.07.): Prognosepunkte sind `baseT + k·300` und
+  // werden später gegen die gespeicherten 5-min-Bars gematcht. Liegt `baseT`
+  // auch nur Sekunden neben dem Raster, trifft KEIN einziger Punkt — die
+  // Prognose ist dann nicht ungenau, sondern für immer unbewertbar. Der
+  // Quellfilter in `getIntradayBars` fängt das bereits ab; hier steht der
+  // zweite Riegel, damit eine künftige zweite Datenquelle denselben Fehler
+  // nicht lautlos wieder einschleppt. Abschneiden statt Runden: ein
+  // hochgerundeter Zeitstempel wäre eine Prognose aus der Zukunft.
+  const grid = bars.filter((b) => b.t % INTRADAY_STEP_SEC === 0);
+  if (grid.length < bars.length) {
+    logger.warn(
+      `Intraday ${symbol}: ${bars.length - grid.length} Bar(s) neben dem ${INTRADAY_STEP_SEC}s-Raster verworfen`,
+    );
+  }
+  if (grid.length < 5) return null;
   const db = getFirestore();
-  const closes = bars.map((b) => b.c);
-  const baseT = bars[bars.length - 1]!.t;
+  const closes = grid.map((b) => b.c);
+  const baseT = grid[grid.length - 1]!.t;
 
   const statsSnap = await db.doc('meta/forecastStatsIntraday').get();
   const combos = (statsSnap.get('combos') as Record<string, ComboStat> | undefined) ?? {};

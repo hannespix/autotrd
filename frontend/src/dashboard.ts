@@ -271,6 +271,10 @@ interface DashState {
    * dann greift der Default als Boden (siehe `watchedSymbols`).
    */
   watched: string[];
+  /** Katalog-Symbole mit offenem Markt im letzten Scan (Heartbeat). */
+  catalogOpen: number;
+  /** Davon frisch bekurst — s. `renderWatchHint`. */
+  catalogQuotes: number;
   positionSubs: Map<string, Unsubscribe>; // Quotes je Positions-Symbol
   timers: number[];
 }
@@ -393,8 +397,7 @@ function layout(email: string): string {
       <div class="card" data-panel="strategy"><div class="sect">Strategie</div><div class="cbody">
         <div class="fld"><label class="lbl">Beobachtet ${iBtn('watchlist')}</label>
           <div id="wlChips" class="wl-chips"></div>
-          <div class="hint" id="wlHint">Automatisch gewählt: die Spitze des täglichen
-            Rankings über alle 166 Katalog-Symbole, plus jede offene Position.</div>
+          <div class="hint" id="wlHint">Automatisch gewählt.</div>
         </div>
         <div class="row">
           <div class="fld"><label class="lbl">RSI Kauf &lt; ${iBtn('rsiBuy')}</label><input id="sRsiLo" class="inp" type="number"></div>
@@ -2088,6 +2091,29 @@ async function rebuildChart(): Promise<void> {
 function watchedSymbols(): string[] {
   const w = st?.watched ?? [];
   return w.length > 0 ? w : [...DEFAULT_STRATEGY.watchlist];
+}
+
+/**
+ * Der Hinweistext unter „Beobachtet".
+ *
+ * Bis 28.07. stand hier eine feste Behauptung („Spitze des täglichen
+ * Rankings über alle 166 Katalog-Symbole"), und darunter eine kurze Liste —
+ * was der Owner zu Recht als Widerspruch las: „kann das tool nicht alles
+ * immer parallel beobachten?" Konnte es damals nicht, und der Text verschwieg
+ * das. Jetzt kommen beide Zahlen aus dem letzten Scan selbst: Kurse für den
+ * ganzen offenen Katalog, tiefe Analyse für die Rangliste.
+ */
+function renderWatchHint(): void {
+  const el = document.getElementById('wlHint');
+  if (!el || !st) return;
+  const tief = watchedSymbols().length;
+  el.textContent =
+    st.catalogQuotes > 0
+      ? `${st.catalogQuotes} von ${st.catalogOpen} offenen Katalog-Symbolen im letzten Scan ` +
+        `bekurst (alle 5 min). Davon ${tief} tief analysiert: 5-min-Kerzen, Indikatoren, ` +
+        `Prognose, Handel — automatisch gewählt nach Rangliste plus jede offene Position.`
+      : `${tief} Symbole tief analysiert — automatisch gewählt nach Rangliste plus jede ` +
+        `offene Position. Kurse holt der Scan für den ganzen Katalog.`;
 }
 
 function wireWatchlist(): void {
@@ -4002,6 +4028,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     symbolSubs: [],
     watchlistSubs: [],
     watched: [],
+    catalogOpen: 0,
+    catalogQuotes: 0,
     positionSubs: new Map(),
     timers: [],
   };
@@ -4050,8 +4078,11 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     // Beobachtete Symbole: kommen vom Scan, nicht aus der Strategie. Ändert
     // sich die Liste (neues Momentum-Ranking, neue Position), baut sich die
     // Livebar neu auf — sonst zeigte das Dashboard eine Auswahl von gestern.
-    watchWatchedSymbols((symbols) => {
+    watchWatchedSymbols(({ symbols, catalogOpen, catalogQuotes }) => {
       if (!st) return;
+      st.catalogOpen = catalogOpen;
+      st.catalogQuotes = catalogQuotes;
+      renderWatchHint();
       const vorher = st.watched.join(',');
       st.watched = symbols;
       if (symbols.join(',') === vorher && $('liveBar').childElementCount > 0) return;

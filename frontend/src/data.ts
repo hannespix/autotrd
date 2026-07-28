@@ -112,6 +112,16 @@ export function watchForecastStatsIntraday(
   );
 }
 
+/** Was die Engine im letzten Scan angefasst hat — zwei Tiefen, eine Quelle. */
+export interface WatchScope {
+  /** Tief analysiert: 5-min-Kerzen, Indikatoren, Prognose, Handelsentscheidung. */
+  symbols: string[];
+  /** Katalog-Symbole mit offenem Markt in diesem Scan. */
+  catalogOpen: number;
+  /** Davon frisch bekurst (Spark-Bündel). Weicht ab ⇒ ein Chunk hat gepatzt. */
+  catalogQuotes: number;
+}
+
 /**
  * Die Symbole, die die Engine gerade beobachtet und handelt.
  *
@@ -120,17 +130,27 @@ export function watchForecastStatsIntraday(
  * Bis 28.07. war es eine handverlesene Watchlist — die Anzeige konnte also
  * Symbole zeigen, die längst nicht mehr gehandelt wurden, und umgekehrt.
  *
- * Die Auswahl selbst trifft der tägliche Momentum-Lauf über den ganzen
- * Katalog; der Scan nimmt seine Rangliste plus alle offenen Positionen.
+ * `symbols` ist dabei nur die TIEFE Stufe. Kurse bekommt seit dem
+ * Batch-Umbau der ganze Katalog bei jedem Scan (Owner-Frage: „kann das tool
+ * nicht alles immer parallel beobachten?"); `catalogOpen`/`catalogQuotes`
+ * machen das sichtbar, statt es dem Nutzer als „nur xx Symbole" zu zeigen.
  */
-export function watchWatchedSymbols(cb: (symbols: string[]) => void): Unsubscribe {
+export function watchWatchedSymbols(cb: (scope: WatchScope) => void): Unsubscribe {
   return muxWatch(
     'watched',
     (emit) =>
       onSnapshot(doc(db(), 'meta', 'health'), (snap) =>
-        emit(snap.exists() ? ((snap.get('watched') as string[] | undefined) ?? []) : []),
+        emit(
+          snap.exists()
+            ? {
+                symbols: (snap.get('watched') as string[] | undefined) ?? [],
+                catalogOpen: (snap.get('catalogOpen') as number | undefined) ?? 0,
+                catalogQuotes: (snap.get('catalogQuotes') as number | undefined) ?? 0,
+              }
+            : { symbols: [], catalogOpen: 0, catalogQuotes: 0 },
+        ),
       ),
-    (p) => cb(p as string[]),
+    (p) => cb(p as WatchScope),
   );
 }
 
