@@ -112,6 +112,28 @@ export function watchForecastStatsIntraday(
   );
 }
 
+/**
+ * Die Symbole, die die Engine gerade beobachtet und handelt.
+ *
+ * Quelle ist der Heartbeat des Scans, nicht eine gespeicherte Auswahl: Was
+ * das Dashboard zeigt, MUSS das sein, was die Engine tatsächlich anfasst.
+ * Bis 28.07. war es eine handverlesene Watchlist — die Anzeige konnte also
+ * Symbole zeigen, die längst nicht mehr gehandelt wurden, und umgekehrt.
+ *
+ * Die Auswahl selbst trifft der tägliche Momentum-Lauf über den ganzen
+ * Katalog; der Scan nimmt seine Rangliste plus alle offenen Positionen.
+ */
+export function watchWatchedSymbols(cb: (symbols: string[]) => void): Unsubscribe {
+  return muxWatch(
+    'watched',
+    (emit) =>
+      onSnapshot(doc(db(), 'meta', 'health'), (snap) =>
+        emit(snap.exists() ? ((snap.get('watched') as string[] | undefined) ?? []) : []),
+      ),
+    (p) => cb(p as string[]),
+  );
+}
+
 /** Bewertete Shadow-Prognose (market/{sym}/forecasts) fürs Prognose-Labor. */
 export interface EvaluatedForecastRow {
   baseDate: string;

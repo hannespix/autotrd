@@ -8,7 +8,6 @@ import {
   CLASS_LABELS,
   DEFAULT_STRATEGY,
   EVIDENCE_DEFAULTS,
-  MAX_WATCHLIST,
   PAPER_FEE_RATE,
   aggregateBars,
   bollinger,
@@ -63,6 +62,7 @@ import {
   watchPositions,
   watchTrades,
   watchUserDoc,
+  watchWatchedSymbols,
   watchPortfolioStats,
   watchEquitySeries,
   watchMomentum,
@@ -223,7 +223,6 @@ interface DashState {
   /** Zweites Symbol als %-Vergleichslinie (null = aus). */
   overlaySymbol: string | null;
   overlayBars: import('./chart.js').ChartBar[];
-  pickerSelection: Set<string>;
   wallet: Wallet | null;
   positions: Position[];
   trades: TradeRow[];
@@ -265,7 +264,13 @@ interface DashState {
   equitySeries: EquitySeriesPoint[];
   subs: Unsubscribe[]; // globale Subs (Settings, Wallet, Positionen, Trades)
   symbolSubs: Unsubscribe[]; // pro Chart-Symbol
-  watchlistSubs: Unsubscribe[]; // pro Watchlist (Livebar + Tabelle)
+  watchlistSubs: Unsubscribe[]; // pro beobachtetem Symbol (Livebar + Tabelle)
+  /**
+   * Was die Engine gerade beobachtet — kommt aus dem Heartbeat, nicht aus
+   * einer gespeicherten Auswahl. Leer, bis der erste Scan geschrieben hat;
+   * dann greift der Default als Boden (siehe `watchedSymbols`).
+   */
+  watched: string[];
   positionSubs: Map<string, Unsubscribe>; // Quotes je Positions-Symbol
   timers: number[];
 }
@@ -326,7 +331,7 @@ function paletteSymbols(): Array<{ symbol: string; name: string }> {
     }
     return out;
   }
-  return st.strategy.watchlist.map((symbol) => ({ symbol, name: resolveName(symbol) }));
+  return watchedSymbols().map((symbol) => ({ symbol, name: resolveName(symbol) }));
 }
 
 function paletteCommands(): PaletteCommand[] {
@@ -345,7 +350,6 @@ function paletteCommands(): PaletteCommand[] {
     { id: 'engine-start', label: 'Engine starten (Paper)', run: () => $('engStart').click() },
     { id: 'engine-stop', label: 'Engine stoppen', run: () => $('engStop').click() },
     { id: 'link-chart', label: 'Chart: Link-Gruppe wechseln', run: () => $('chipChart').click() },
-    { id: 'picker', label: 'Watchlist bearbeiten', run: () => $('openPickerBtn').click() },
     { id: 'order-buy', label: 'Kaufen … (Order-Ticket, Shift+B)', hint: 'Order', run: () => openOrderTicket('buy') },
     { id: 'order-sell', label: 'Verkaufen … (Order-Ticket, Shift+S)', hint: 'Order', run: () => openOrderTicket('sell') },
   );
@@ -387,9 +391,10 @@ function layout(email: string): string {
   <div class="app">
     <div class="col-l" id="leftCol">
       <div class="card" data-panel="strategy"><div class="sect">Strategie</div><div class="cbody">
-        <div class="fld"><label class="lbl">Watchlist ${iBtn('watchlist')}</label>
+        <div class="fld"><label class="lbl">Beobachtet ${iBtn('watchlist')}</label>
           <div id="wlChips" class="wl-chips"></div>
-          <button class="btn btn-n" id="openPickerBtn" style="margin-top:6px">Watchlist wählen</button>
+          <div class="hint" id="wlHint">Automatisch gewählt: die Spitze des täglichen
+            Rankings über alle 166 Katalog-Symbole, plus jede offene Position.</div>
         </div>
         <div class="row">
           <div class="fld"><label class="lbl">RSI Kauf &lt; ${iBtn('rsiBuy')}</label><input id="sRsiLo" class="inp" type="number"></div>
@@ -872,22 +877,7 @@ function layout(email: string): string {
     </div>
   </div>
 
-  <div class="dmodal" id="wlModal">
-    <div class="dmodal-bg" data-close="picker"></div>
-    <div class="dsheet" style="width:min(700px,100%)">
-      <button class="dclose" data-close="picker">✕</button>
-      <h3>Watchlist zusammenstellen <span id="wlCount" class="chip"></span></h3>
-      <div class="wl-sec">Deine Auswahl</div>
-      <div id="wlCurrent" class="wl-chips"></div>
-      <div class="wl-sec">Nach Kategorie durchsuchen</div>
-      <div class="mkt-tabs" id="wlTabs"></div>
-      <div id="wlBrowse" class="wl-browse"></div>
-      <div class="dbtns">
-        <button class="dbtn pri" id="wlSaveBtn">Übernehmen &amp; speichern</button>
-        <button class="dbtn" data-close="picker">Abbrechen</button>
-      </div>
-    </div>
-  </div>`;
+`;
 }
 
 /* ── Subscriptions ──────────────────────────────────────────────────── */
@@ -2088,10 +2078,22 @@ async function rebuildChart(): Promise<void> {
 }
 
 /** Tooltip-Details zum Event-Tag unter dem Crosshair (M6b). */
+/**
+ * Die Symbole, die angezeigt werden — dieselben, die die Engine handelt.
+ *
+ * Vor dem ersten Scan (frisches Projekt, Heartbeat noch leer) fällt die
+ * Anzeige auf die Default-Liste zurück. Eine leere Livebar wäre kein
+ * ehrlicherer Zustand, sondern nur ein ratloser.
+ */
+function watchedSymbols(): string[] {
+  const w = st?.watched ?? [];
+  return w.length > 0 ? w : [...DEFAULT_STRATEGY.watchlist];
+}
+
 function wireWatchlist(): void {
   if (!st) return;
   clearSubs(st.watchlistSubs);
-  const wl = st.strategy.watchlist;
+  const wl = watchedSymbols();
 
   // Livebar
   const bar = $('liveBar');
@@ -2636,7 +2638,7 @@ function renderChartGrid(): void {
   while (st.gridPanels.length < want) {
     const used = new Set([st.currentSymbol, ...st.gridPanels.map((p) => p.sym)]);
     const sym =
-      st.strategy.watchlist.find((s) => !used.has(s)) ??
+      watchedSymbols().find((s) => !used.has(s)) ??
       ['AAPL', 'TSLA', '^NDX'].find((s) => !used.has(s)) ??
       'AAPL';
     st.gridPanels.push({ sym, range: 66, locked: false, chart: null, bars: [], subs: [], epoch: 0, fitPending: true, forecast: null, forecastIntraday: null, intradayDays: 0, intradayBars: [], auto: false });
@@ -3106,7 +3108,7 @@ function renderStrategyChips(): void {
   if (!st) return;
   const box = $('wlChips');
   box.innerHTML = '';
-  for (const sym of st.strategy.watchlist) {
+  for (const sym of watchedSymbols()) {
     const chip = document.createElement('span');
     chip.className = 'wl-chip';
     chip.textContent = sym;
@@ -3236,16 +3238,14 @@ function openDetail(symbol: string, name: string, data: MarketDocData | null): v
   if (!st) return;
   const sheet = $('detailSheet');
   const q = data?.quote;
-  const inWl = st.strategy.watchlist.includes(symbol);
   sheet.innerHTML = `
     <button class="dclose" data-close="detail">✕</button>
     <h3></h3>
     <div class="dmeta"><span class="mono"></span><span>${CLASS_LABELS[data?.assetClass ?? ''] ?? ''}</span></div>
     <div class="vbig ${q ? pnlClass(q.changePct) : 'c-t3'}">${q ? fmtNum(q.price) : '—'}</div>
-    <div class="smv ${q ? pnlClass(q.changePct) : 'c-t3'}">${q ? fmtPct(q.changePct) : 'Noch keine Scan-Daten — Symbol wird nach Aufnahme in eine Watchlist erfasst.'}</div>
+    <div class="smv ${q ? pnlClass(q.changePct) : 'c-t3'}">${q ? fmtPct(q.changePct) : 'Noch keine Scan-Daten — dieses Symbol steht gerade nicht in der Beobachtung.'}</div>
     <div class="dbtns">
       ${q ? '<button class="dbtn pri" id="dOpenChart">Im Chart öffnen</button>' : ''}
-      <button class="dbtn" id="dAddWl">${inWl ? 'In Watchlist ✓' : 'Zur Watchlist hinzufügen'}</button>
     </div>`;
   sheet.querySelector('h3')!.textContent = name;
   sheet.querySelector('.dmeta .mono')!.textContent = symbol;
@@ -3255,109 +3255,10 @@ function openDetail(symbol: string, name: string, data: MarketDocData | null): v
     selectSymbol(symbol);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   });
-  sheet.querySelector('#dAddWl')?.addEventListener('click', () => {
-    if (!st || st.strategy.watchlist.includes(symbol)) return;
-    void submitStrategy(
-      { ...st.strategy, watchlist: [...st.strategy.watchlist, symbol] },
-      `${symbol} zur Watchlist hinzugefügt — Daten kommen mit dem nächsten Scan.`,
-    );
-    closeModal('detail');
-  });
 }
 
-/* ── Watchlist-Picker ───────────────────────────────────────────────── */
-
-async function openPicker(): Promise<void> {
-  if (!st) return;
-  st.pickerSelection = new Set(st.strategy.watchlist);
-  st.universe ??= await loadUniverse();
-  $('wlModal').classList.add('show');
-  renderPickerChips();
-
-  const tabs = $('wlTabs');
-  tabs.innerHTML = '';
-  if (!st.universe) {
-    $('wlBrowse').innerHTML = '<span class="c-t3">Katalog noch nicht geseedet.</span>';
-    return;
-  }
-  let active = st.marketClass;
-  const renderBrowse = (cls: string): void => {
-    const box = $('wlBrowse');
-    box.innerHTML = '';
-    for (const entries of Object.values(st!.universe![cls]?.groups ?? {})) {
-      for (const { symbol, name } of entries) {
-        const opt = document.createElement('div');
-        opt.className = 'wl-opt' + (st!.pickerSelection.has(symbol) ? ' on' : '');
-        opt.innerHTML = `<span class="box"></span><span class="s"></span><span class="n"></span>`;
-        opt.querySelector('.s')!.textContent = symbol;
-        opt.querySelector('.n')!.textContent = name;
-        opt.addEventListener('click', () => {
-          if (st!.pickerSelection.has(symbol)) {
-            st!.pickerSelection.delete(symbol);
-          } else {
-            // Kosten-Guard: mehr als MAX_WATCHLIST lehnt der Server ab —
-            // deshalb hier blocken statt beim Speichern scheitern.
-            if (st!.pickerSelection.size >= MAX_WATCHLIST) {
-              const c = $('wlCount');
-              c.classList.add('wl-full');
-              setTimeout(() => c.classList.remove('wl-full'), 600);
-              return;
-            }
-            st!.pickerSelection.add(symbol);
-          }
-          opt.classList.toggle('on', st!.pickerSelection.has(symbol));
-          renderPickerChips();
-        });
-        box.appendChild(opt);
-      }
-    }
-  };
-  for (const cls of CLASS_ORDER) {
-    if (!st.universe[cls]) continue;
-    if (st.ui.marketGroups?.[cls] === false) continue; // Marktgruppen-Filter
-    const b = document.createElement('button');
-    b.className = 'mtab' + (cls === active ? ' on' : '');
-    b.textContent = CLASS_LABELS[cls] ?? cls;
-    b.addEventListener('click', () => {
-      active = cls;
-      tabs.querySelectorAll('.mtab').forEach((el) => el.classList.toggle('on', el === b));
-      renderBrowse(cls);
-    });
-    tabs.appendChild(b);
-  }
-  renderBrowse(active);
-}
-
-function renderPickerChips(): void {
-  if (!st) return;
-  const count = $('wlCount');
-  count.textContent = `${st.pickerSelection.size}/${MAX_WATCHLIST}`;
-  count.classList.toggle('c-rd', st.pickerSelection.size >= MAX_WATCHLIST);
-  const box = $('wlCurrent');
-  box.innerHTML = '';
-  for (const sym of st.pickerSelection) {
-    const chip = document.createElement('span');
-    chip.className = 'wl-chip';
-    const label = document.createElement('span');
-    label.textContent = sym;
-    const x = document.createElement('span');
-    x.className = 'x';
-    x.textContent = '×';
-    x.addEventListener('click', () => {
-      st!.pickerSelection.delete(sym);
-      renderPickerChips();
-      document.querySelectorAll('#wlBrowse .wl-opt').forEach((el) => {
-        if (el.querySelector('.s')?.textContent === sym) el.classList.remove('on');
-      });
-    });
-    chip.append(label, x);
-    box.appendChild(chip);
-  }
-  if (st.pickerSelection.size === 0) box.innerHTML = '<span class="c-t3" style="font-size:11px">Keine Symbole gewählt</span>';
-}
-
-function closeModal(which: 'detail' | 'picker' | 'options'): void {
-  $(which === 'detail' ? 'detailModal' : which === 'picker' ? 'wlModal' : 'optModal').classList.remove('show');
+function closeModal(which: 'detail' | 'options'): void {
+  $(which === 'detail' ? 'detailModal' : 'optModal').classList.remove('show');
 }
 
 /* ── Portfolio (Wallet, Positionen, Trades) ─────────────────────────── */
@@ -4046,7 +3947,6 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     gridPanels: [],
     overlaySymbol: null,
     overlayBars: [],
-    pickerSelection: new Set(),
     wallet: null,
     positions: [],
     trades: [],
@@ -4101,6 +4001,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     subs: [],
     symbolSubs: [],
     watchlistSubs: [],
+    watched: [],
     positionSubs: new Map(),
     timers: [],
   };
@@ -4119,7 +4020,6 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   st.subs.push(
     watchUserDoc(uid, ({ strategy, wallet, hotkeys, ui, autoTune }) => {
       if (!st) return;
-      const prevWl = st.strategy.watchlist.join(',');
       st.strategy = strategy ?? DEFAULT_STRATEGY;
       st.wallet = wallet;
       ($('tnOn') as HTMLInputElement).checked = autoTune;
@@ -4146,12 +4046,21 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       }
       fillForm(st.strategy);
       renderPortfolio();
-      if (st.strategy.watchlist.join(',') !== prevWl || $('liveBar').childElementCount === 0) {
-        if (!st.strategy.watchlist.includes(st.currentSymbol)) {
-          publishSymbol(st.chartGroup, st.strategy.watchlist[0] ?? st.currentSymbol);
-        }
-        wireWatchlist();
+    }),
+    // Beobachtete Symbole: kommen vom Scan, nicht aus der Strategie. Ändert
+    // sich die Liste (neues Momentum-Ranking, neue Position), baut sich die
+    // Livebar neu auf — sonst zeigte das Dashboard eine Auswahl von gestern.
+    watchWatchedSymbols((symbols) => {
+      if (!st) return;
+      const vorher = st.watched.join(',');
+      st.watched = symbols;
+      if (symbols.join(',') === vorher && $('liveBar').childElementCount > 0) return;
+      const sichtbar = watchedSymbols();
+      if (!sichtbar.includes(st.currentSymbol)) {
+        publishSymbol(st.chartGroup, sichtbar[0] ?? st.currentSymbol);
       }
+      wireWatchlist();
+      renderStrategyChips();
     }),
     watchPositions(uid, (positions) => {
       if (!st) return;
@@ -4388,16 +4297,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     void submitStrategy({ ...formStrategy(), engine: { ...formStrategy().engine, running: true } }, 'Engine-Flag: AN'));
   $('engStop').addEventListener('click', () =>
     void submitStrategy({ ...formStrategy(), engine: { ...formStrategy().engine, running: false } }, 'Engine-Flag: AUS'));
-  $('openPickerBtn').addEventListener('click', () => void openPicker());
-  $('wlSaveBtn').addEventListener('click', () => {
-    if (!st) return;
-    const wl = [...st.pickerSelection];
-    if (wl.length === 0) return;
-    void submitStrategy({ ...st.strategy, watchlist: wl }, 'Watchlist gespeichert.');
-    closeModal('picker');
-  });
   document.querySelectorAll('[data-close]').forEach((el) =>
-    el.addEventListener('click', () => closeModal((el as HTMLElement).dataset.close as 'detail' | 'picker' | 'options')));
+    el.addEventListener('click', () => closeModal((el as HTMLElement).dataset.close as 'detail' | 'options')));
   $('burgL').addEventListener('click', () => { $('leftCol').classList.toggle('show'); $('olv').classList.toggle('show'); });
   $('burgR').addEventListener('click', () => { $('rightCol').classList.toggle('show'); $('olv').classList.toggle('show'); });
   // Desktop-Sidebars ein-/ausblendbar (Taschenmesser Teil 1) — persistiert
@@ -4927,7 +4828,6 @@ function wireChartHeightDrag(): void {
 function onEscape(e: KeyboardEvent): void {
   if (e.key !== 'Escape') return;
   closeModal('detail');
-  closeModal('picker');
   closeModal('options');
   exitAllMax();
   document.getElementById('orderModal')?.classList.remove('show');
