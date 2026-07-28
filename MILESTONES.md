@@ -48,6 +48,108 @@ Für jede Session / jeden Arbeitsblock:
 
 ---
 
+## AUDIT 28.07. — Status quo, Befunde, Reihenfolge
+
+Vollständige Bestandsaufnahme auf Owner-Auftrag („was muss ich als nächstes
+machen, wo gibt's Probleme, gibt es Code-Relikte"). Alle Zahlen sind gemessen,
+nicht geschätzt.
+
+### Umfang
+
+| Bereich | Dateien | Zeilen |
+|---|---|---|
+| `shared/src` (Wertkern, pure Logik) | 18 | 3 777 |
+| `functions/src` (Firebase, live) | 22 | 4 944 |
+| `frontend/src` | 18 | 8 458 |
+| `supabase/` (Migrationsstrang) | 27 | 4 208 |
+| `reference/` (Python-Parity) | 22 | 4 739 |
+| Tests | 38 Dateien | 411 Prüfungen |
+
+### A. Funktionale Befunde (nach Schwere)
+
+- [ ] **A1 — Das System steht die meiste Zeit still.** Live gemessen:
+      `lastRunSkipped: market_closed` um 12:10 UTC, obwohl Krypto rund um die
+      Uhr handelt. Ursache: `DEFAULT_STRATEGY.watchlist` ist
+      `['QQQ','AAPL','TSLA','^NDX']` — **ausschließlich US-Aktien**. Solange
+      die Rangliste fehlt, ist der Scan außerhalb 13:30–20:00 UTC (Mo–Fr) ein
+      reiner No-Op: rund **70 % der Zeit plus Wochenenden**.
+      Der Fallback verschwindet zwar mit der ersten Rangliste, das Muster aber
+      nicht: `selectScanSymbols` nimmt die GLOBALEN Top-N, erst danach filtert
+      `runScan` auf offene Klassen. Sind die Top-40 überwiegend Aktien, ist
+      nachts wieder fast nichts zu tun — bei einem Katalog, der 24/7-Krypto
+      und ~24/5-Forex enthält.
+      **Fix:** Auswahl marktzeit-bewusst machen — Top-N *unter den gerade
+      offenen* Symbolen statt Top-N global mit anschließendem Wegfiltern.
+      Das ist der direkteste Hebel auf „Handelsgeschwindigkeit".
+- [ ] **A2 — `intradayScored` bleibt noch tagelang auf 0.** Der Raster-Fix
+      (#104) wirkt nur für NEUE Prognosen. Die 150 Altlasten sind off-grid
+      und werden nie bewertbar; sie verfallen erst über `INTRADAY_EXPIRE_SEC`
+      (12 h). Das ist so gewollt (nie mit unvollständigen Daten scoren), aber
+      man muss es wissen, sonst liest man die 0 als „Fix wirkt nicht".
+      **Erwartung:** ab ~1 h nach dem ersten Scan mit offenem Markt steigen
+      die Zahlen, die Altlasten verschwinden binnen 12 h.
+- [ ] **A3 — Die Rangliste existiert noch nicht.** `meta/momentum` → HTTP 404.
+      Erste Füllung heute 22:00 UTC (`0 18 * * *` in New Yorker Zeit). Bis
+      dahin greift A1 in voller Härte.
+
+### B. Architektur-Widersprüche
+
+- [ ] **B1 — Zwei Backends parallel, eines unerreichbar.**
+      `frontend/src/dataSupabase.ts` (774 Z.) und `authSupabase.ts` werden von
+      **keinem** Modul importiert. `supabase.ts` liest zwar `VITE_BACKEND`,
+      aber der Dispatcher, der umschalten würde, ist MS2 Teil 3 — also nicht
+      gebaut. Der gesamte Supabase-Frontend-Strang ist damit toter Code, der
+      trotzdem mitgepflegt, mitgetestet und mitgebaut wird.
+- [ ] **B2 — `supabase/functions/_shared/` ist eine DRIFTENDE Kopie von
+      `shared/src/`.** Gemessen: 12 von 17 Dateien weichen ab, darunter
+      `forecast.ts` mit ~100 abweichenden Zeilen. Und: `sentiment.ts` liegt
+      dort noch, obwohl es am 28.07. aus `shared/` entfernt wurde. Das ist
+      die gefährlichste Sorte Duplikat — es sieht aus wie derselbe Code und
+      rechnet anders. Die Golden-Tests decken nur `shared/` ab, die Kopie
+      läuft ungeprüft.
+- [ ] **B3 — Zwei Stopgap-Workflows, deren Grund entfallen ist.**
+      `scan-watchdog.yml` (alle 15 min, 13–21 UTC, Mo–Fr) und
+      `daily-jobs.yml` (3× täglich) tragen beide im Kopf: *„Stopgap, solange
+      der Deploy-SA keine Cloud-Scheduler-Rolle hat."* Die Rolle ist seit dem
+      28.07. vergeben, `check-scheduler.mjs` legt alle fünf Zeitpläne selbst
+      an. Beide laufen also ZUSÄTZLICH zum Cloud Scheduler — doppelte Scans,
+      doppelte Tages-Läufe, doppelte Kosten, und bei Rennen zwischen beiden
+      auch doppelte Schreibvorgänge.
+
+### C. Relikte
+
+- [ ] **C1** `frontend/src/dataSupabase.ts`, `authSupabase.ts`, `supabase.ts`
+      (~1 000 Z.) — unerreichbar, s. B1.
+- [ ] **C2** `supabase/functions/_shared/sentiment.ts` — in `shared/` gelöscht,
+      hier noch vorhanden.
+- [ ] **C3** `functions/src/core/{backtest,sweep}.ts` (325 Z.) — Kerne ohne
+      Aufrufer, seit dem Studio-Ausbau. **Bewusst behalten** als
+      Bewertungsmaschine für MO Teil 2; wird MO gestrichen, gehen sie mit.
+- [ ] **C4** Der Regelbaum-Ausführungspfad in `scanMarket` läuft leer, bis MO
+      Teil 2 ihn füttert (dokumentierter Wegpunkt, kein Versehen).
+
+**Ausdrücklich KEIN Relikt:** `reference/` (4 739 Z. Python) wird von drei
+Golden-Tests gelesen (`indicators.golden`, `forecast.golden`, `marketGate`).
+Das ist die Parity-Absicherung des Wertkerns und bleibt.
+
+### D. Was tragfähig ist
+
+`shared/` als pure Logik mit Golden-Tests gegen die Python-Referenz; die
+Sicherheitsschichten (Doppelschloss für Echtgeld, Lookahead-Gates,
+Risiko-Hülle, serverseitige Geldschreibung); der Heartbeat als
+Diagnosekanal, der schon dreimal Befunde geliefert hat, die im Log
+unsichtbar geblieben wären.
+
+### E. Empfohlene Reihenfolge
+
+1. **A1** — größter Ertragshebel, kleiner Eingriff.
+2. **B3** — reine Kostensenkung, ein Workflow-Löschen.
+3. **Supabase-Entscheidung** (B1/B2/C1/C2) — sie bestimmt, ob ~5 200 Zeilen
+      gepflegt oder gelöscht werden. Bis sie fällt, wächst die Drift weiter.
+4. **MO Teil 2** — Struktursuche, sobald 1–3 stehen.
+
+---
+
 ## M0 — Monorepo-Skeleton ✅
 
 - [x] Python-Bestand nach `reference/` verschoben (bleibt lauffähig)
