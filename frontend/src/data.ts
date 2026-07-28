@@ -4,6 +4,7 @@
  */
 
 import {
+  type GlobalAxisStats,
   type Position,
   type Quote,
   type Strategy,
@@ -599,6 +600,23 @@ export function watchTuneFleet(uid: string, cb: (rows: TuneFleetRow[]) => void):
         .sort((a, b) => b.trades - a.trades || a.id.localeCompare(b.id)),
     );
   });
+}
+
+/**
+ * Kollektives Vorwissen (`meta/tuneGlobal`) — öffentlich lesbar wie die
+ * anderen `meta`-Dokumente, weil es ausschließlich Zählwerte enthält:
+ * wie oft eine Einstellungs-Änderung geprüft und wie oft sie übernommen
+ * wurde. Keine Trades, keine Beträge, keine Kennungen.
+ */
+export function watchTuneGlobal(cb: (stats: GlobalAxisStats) => void): Unsubscribe {
+  return muxWatch(
+    'tuneGlobal',
+    (emit) =>
+      onSnapshot(doc(db(), 'meta', 'tuneGlobal'), (snap) =>
+        emit(snap.exists() ? ((snap.get('axes') as GlobalAxisStats | undefined) ?? {}) : {}),
+      ),
+    (p) => cb(p as GlobalAxisStats),
+  );
 }
 
 /** Manueller Paper-Trade über das trade-Callable (Preis kommt vom Server). */

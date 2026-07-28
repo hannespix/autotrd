@@ -25,11 +25,19 @@
  * Wunsch („alles soll vollautomatisch laufen", 27.07.).
  */
 
-import { getFirestore } from 'firebase-admin/firestore';
+import { FieldPath, FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
-import { buildVariants, type Strategy } from '../../../shared/src/index.js';
+import {
+  TUNE_AXES,
+  buildPriors,
+  buildVariants,
+  mergeAxisStat,
+  orderByPrior,
+  type GlobalAxisStats,
+  type Strategy,
+} from '../../../shared/src/index.js';
 import { clampStrategyRisk } from '../core/rulesTrading.js';
 import { decideTuning, type FleetState, type JournalEntry } from '../core/tuneFleet.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
@@ -54,6 +62,24 @@ export async function tuneAll(now = new Date()): Promise<TuneRunResult> {
     .where('settings.strategy.engine.running', '==', true)
     .get();
 
+  // ── Kollektives Vorwissen (Owner-Wunsch 28.07.) ───────────────────────────
+  // EINMAL je Lauf gelesen, für alle Konten. Was hat eine Achsen-Änderung
+  // ÜBER ALLE KONTEN hinweg gebracht? Das entscheidet nur die REIHENFOLGE,
+  // in der die begrenzte Flotte belegt wird — es gibt mehr Kandidaten als
+  // Plätze, und bisher entschied darüber eine willkürliche feste Ordnung.
+  //
+  // Die lokale Signifikanzprüfung bleibt UNANGETASTET. Sie mit fremder
+  // Evidenz aufzuweichen wäre die verlockende Bayes-Variante und genau die
+  // falsche: Die Bonferroni-Korrektur schützt davor, unter vielen Tests
+  // Zufallssieger zu befördern, und die Konten starten von verschiedenen
+  // Ausgangsstrategien. Jede Beförderung braucht weiterhin die volle
+  // Evidenz des eigenen Kontos.
+  const globalStats = ((await db.doc('meta/tuneGlobal').get()).get('axes') as
+    | GlobalAxisStats
+    | undefined) ?? {};
+  const priors = buildPriors(globalStats);
+  const globalDelta: GlobalAxisStats = {};
+
   let promoted = 0;
   let judged = 0;
 
@@ -63,7 +89,12 @@ export async function tuneAll(now = new Date()): Promise<TuneRunResult> {
       const roh = userDoc.get('settings.strategy') as Strategy | undefined;
       if (!roh) continue;
       const base = clampStrategyRisk(structuredClone(roh));
-      const variants = buildVariants(base, FLEET_SIZE);
+      // Erst ALLE Kandidaten bilden, dann nach Vorwissen ordnen, dann
+      // kappen: Andersherum (erst kappen, dann ordnen) käme das Vorwissen zu
+      // spät — es könnte nur noch sortieren, was die feste Ordnung ohnehin
+      // schon ausgewählt hat.
+      const alle = buildVariants(base, TUNE_AXES.length * 8);
+      const variants = orderByPrior(alle, priors).slice(0, FLEET_SIZE);
       if (variants.length === 0) continue;
 
       const fleetDoc = await userDoc.ref.collection('tuning').doc('fleet').get();
@@ -104,16 +135,60 @@ export async function tuneAll(now = new Date()): Promise<TuneRunResult> {
         logger.info(`autoTune ${userDoc.id}: „${winner.id}" übernommen`);
       }
 
+      // Beitrag zum Kollektiv: NUR Zählwerte je Achsenwert, keine
+      // Einzeltrades, keine Beträge, keine Kennung. Aus „42-mal geprüft,
+      // 7-mal befördert" lässt sich kein Konto rekonstruieren.
+      // `neuesKonto` ist hier immer true, weil jedes Konto je Lauf genau
+      // einmal beiträgt — ohne das zählte ein Konto, das dieselbe Variante
+      // täglich prüft, als viele und täuschte Breite vor.
+      for (const e of entries) {
+        globalDelta[e.variantId] = mergeAxisStat(
+          globalDelta[e.variantId],
+          { promoted: e.promoted, edge: e.edge },
+          true,
+        );
+      }
+
       await schreibeJournal(userDoc.ref, entries);
     } catch (err) {
       logger.warn(`autoTune: User ${userDoc.id} übersprungen`, err);
     }
   }
 
+  // Kollektiv fortschreiben — additiv über FieldValue.increment, damit
+  // zwei gleichzeitige Läufe sich nicht gegenseitig überschreiben (dieselbe
+  // Disziplin wie bei den Forecast-Kombis).
+  if (Object.keys(globalDelta).length > 0) {
+    const ref = db.doc('meta/tuneGlobal');
+    const args: unknown[] = [new FieldPath('updatedAt'), now.toISOString()];
+    for (const [id, d] of Object.entries(globalDelta)) {
+      const key = id.replace(/[/.]/g, '_'); // Punkte würden Pfade verschachteln
+      args.push(new FieldPath('axes', key, 'judged'), FieldValue.increment(d.judged));
+      args.push(new FieldPath('axes', key, 'promoted'), FieldValue.increment(d.promoted));
+      args.push(new FieldPath('axes', key, 'edgeSum'), FieldValue.increment(d.edgeSum));
+      args.push(new FieldPath('axes', key, 'accounts'), FieldValue.increment(d.accounts));
+    }
+    await ref.set({}, { merge: true });
+    await (ref.update as (...a: unknown[]) => Promise<unknown>)(...args).catch((err: unknown) =>
+      logger.warn('meta/tuneGlobal nicht fortschreibbar', err),
+    );
+  }
+
   await db
     .doc('meta/health')
     .set(
-      { autoTune: { at: now.toISOString(), date: now.toISOString().slice(0, 10), users: snap.size, promoted, judged } },
+      {
+        autoTune: {
+          at: now.toISOString(),
+          date: now.toISOString().slice(0, 10),
+          users: snap.size,
+          promoted,
+          judged,
+          // Sichtbar machen, wie breit das Kollektiv gerade ist — sonst
+          // bliebe unklar, ob der Prior überhaupt spricht.
+          priors: priors.length,
+        },
+      },
       { merge: true },
     )
     .catch(() => undefined);

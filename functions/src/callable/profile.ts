@@ -6,7 +6,15 @@
 
 import { getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
-import { DEFAULT_STRATEGY } from '../../../shared/src/index.js';
+import {
+  DEFAULT_STRATEGY,
+  applyVariantId,
+  buildPriors,
+  recommendedStart,
+  type GlobalAxisStats,
+  type Strategy,
+} from '../../../shared/src/index.js';
+import { clampStrategyRisk } from '../core/rulesTrading.js';
 import { consumeQuota } from '../core/broker.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 
@@ -25,6 +33,7 @@ export const ensureProfile = onCall(CALLABLE_OPTS, async (request) => {
   if (snap.exists) return { created: false };
 
   const now = new Date().toISOString();
+  const strategy = await startStrategie();
   await ref.set({
     // Zugangsstufe (Owner-Auftrag 26.07.): NEUE Konten starten auf 'pending'
     // und dürfen ansehen, aber nicht handeln. Das Feld liegt bewusst außerhalb
@@ -38,14 +47,49 @@ export const ensureProfile = onCall(CALLABLE_OPTS, async (request) => {
       plan: 'free',
     },
     settings: {
-      strategy: DEFAULT_STRATEGY,
+      strategy,
     },
     // Paper-Wallet: Startkapital aus dem Default — NUR Functions schreiben hier
     wallet: {
-      paperBalance: DEFAULT_STRATEGY.broker.initialCapital,
+      paperBalance: strategy.broker.initialCapital,
       currency: 'USD',
       updatedAt: now,
     },
   });
   return { created: true };
 });
+
+/**
+ * Die Startstrategie eines NEUEN Kontos (Owner-Wunsch 28.07.: „das Tool soll
+ * sich als Gesamtes verbessern, nicht nur pro User").
+ *
+ * Bisher startete jedes Konto bei den Fabrik-Defaults und musste die
+ * Erfahrung des Systems von null neu erarbeiten — bei einem Tuner, der
+ * Signifikanz verlangt, sind das Wochen. Jetzt beginnt es dort, wo das
+ * Kollektiv nachweislich steht.
+ *
+ * Drei Sicherungen, die das harmlos machen:
+ *
+ *  1. **Nur der Startpunkt.** Der lokale Tuner korrigiert danach wie bisher;
+ *     nichts hier ersetzt eine lokale Signifikanzprüfung.
+ *  2. **Höchstens eine Änderung je Achse** (`recommendedStart`) — sonst
+ *     stapelten sich Effekte, die einzeln geprüft wurden und gemeinsam nie.
+ *  3. **Die Risiko-Hülle läuft zuletzt.** Was ein Mensch über die Oberfläche
+ *     nicht einstellen dürfte, kommt auch hier nicht durch.
+ *
+ * Fällt irgendetwas davon aus, gibt es die Defaults — ein Profil darf an
+ * einer Empfehlung niemals scheitern.
+ */
+async function startStrategie(): Promise<Strategy> {
+  const basis = structuredClone(DEFAULT_STRATEGY) as Strategy;
+  try {
+    const axes = (await getFirestore().doc('meta/tuneGlobal').get()).get('axes') as
+      | GlobalAxisStats
+      | undefined;
+    if (!axes) return basis;
+    for (const id of recommendedStart(buildPriors(axes))) applyVariantId(basis, id);
+    return clampStrategyRisk(basis);
+  } catch {
+    return basis;
+  }
+}
