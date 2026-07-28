@@ -395,8 +395,8 @@ async function executeUserTrades(
         atrPct: number | null | undefined,
         offen: readonly string[],
       ): 'nicht_handelbar' | 'cluster_voll' | 'unter_kosten' | null => {
-        if (!isTradable(symbol)) return 'nicht_handelbar';
-        if (!clusterHasRoom(offen, symbol)) return 'cluster_voll';
+        const handelbar = isTradable(symbol);
+        const platz = handelbar && clusterHasRoom(offen, symbol);
         const gate = costGate({
           atrPct,
           minHoldMin: clamped.engine.minHoldMin,
@@ -406,6 +406,16 @@ async function executeUserTrades(
             ? { multiple: clamped.signals.minEdgeMultiple }
             : {}),
         });
+        // ALLE zutreffenden Gründe zählen, nicht nur den ersten. Der erste
+        // Live-Lauf am 28.07. zeigte warum: `cluster_voll` stand auf 13,
+        // `unter_kosten` auf 0 — nicht weil die Kostenschwelle nichts tat,
+        // sondern weil der Korrelations-Deckel vorher zugeschlagen hatte.
+        // Zum Feinjustieren der Schwelle braucht man beide Zahlen.
+        if (!handelbar) gesperrt.nicht_handelbar += 1;
+        else if (!platz) gesperrt.cluster_voll += 1;
+        if (handelbar && !gate.ok) gesperrt.unter_kosten += 1;
+        if (!handelbar) return 'nicht_handelbar';
+        if (!platz) return 'cluster_voll';
         return gate.ok ? null : 'unter_kosten';
       };
 
@@ -636,10 +646,7 @@ async function executeUserTrades(
             if (positions.size >= posLimit) continue;
             if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
             if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
-            {
-              const sp = entrySperre(symbol, data.atrPct, [...positions.keys()]);
-              if (sp) { gesperrt[sp] += 1; continue; }
-            }
+            if (entrySperre(symbol, data.atrPct, [...positions.keys()])) continue;
             // assetClass durchreichen (MA3-Fund 26.07.): Ohne sie schrieb der
             // Broker die Stop/Take-LEVEL mit den GLOBALEN Prozenten fest —
             // die MA6-Klassen-Profile (Krypto 6/10 usw.) griffen beim Kauf
@@ -697,10 +704,7 @@ async function executeUserTrades(
             if (positions.size >= posLimit) continue;
             if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
             if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
-            {
-              const sp = entrySperre(symbol, data.atrPct, [...positions.keys()]);
-              if (sp) { gesperrt[sp] += 1; continue; }
-            }
+            if (entrySperre(symbol, data.atrPct, [...positions.keys()])) continue;
             const r = await executePaperTrade(
               {
                 uid,
@@ -812,8 +816,7 @@ async function executeUserTrades(
           // einem Risk-Exit hält der Cooldown den Sofort-Rückkauf auf.
           if (positions.size >= posLimit) continue;
           if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
-          const sperre = entrySperre(symbol, data.atrPct, [...positions.keys()]);
-          if (sperre) { gesperrt[sperre] += 1; continue; }
+          if (entrySperre(symbol, data.atrPct, [...positions.keys()])) continue;
           const budget = hebelBudget(konfluenz);
           const r = await executePaperTrade(
             {
@@ -866,8 +869,7 @@ async function executeUserTrades(
           // Cooldown), gleiche Risiko-Hülle, Level gespiegelt im Broker.
           if (positions.size >= posLimit) continue;
           if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
-          const sperre = entrySperre(symbol, data.atrPct, [...positions.keys()]);
-          if (sperre) { gesperrt[sperre] += 1; continue; }
+          if (entrySperre(symbol, data.atrPct, [...positions.keys()])) continue;
           const budget = hebelBudget(konfluenz);
           const r = await executePaperTrade(
             {
