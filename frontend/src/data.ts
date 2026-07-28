@@ -222,6 +222,25 @@ export async function ensureProfile(): Promise<void> {
   await httpsCallable(fns(), 'ensureProfile')({});
 }
 
+/**
+ * Handelshistorie, Positionen und Kennzahlen auf null — Kursdaten bleiben.
+ *
+ * Das Bestätigungswort geht mit auf die Leitung und wird SERVERSEITIG noch
+ * einmal geprüft. Ein Client-Guard allein wäre bei einer unumkehrbaren
+ * Aktion keine Sicherung, nur eine Bequemlichkeit.
+ */
+export async function resetWallet(confirm: string): Promise<ResetWalletResult> {
+  const r = await httpsCallable(fns(), 'resetWallet')({ confirm });
+  return r.data as ResetWalletResult;
+}
+
+export interface ResetWalletResult {
+  ok: true;
+  deleted: Record<string, number>;
+  balance: number;
+  resetAt: string;
+}
+
 /** Strategie serverseitig validieren + speichern (flaches Schema). */
 export async function saveStrategy(strategy: Strategy): Promise<void> {
   await httpsCallable(fns(), 'saveStrategy')({ strategy });

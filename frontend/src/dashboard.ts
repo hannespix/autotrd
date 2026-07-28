@@ -103,6 +103,7 @@ import {
   type MomentumDoc,
   type TuneFleetRow,
   type TuneLogRow,
+  resetWallet,
 } from './data.js';
 import { emailVerified, logout, refreshUser, sendVerification } from './auth.js';
 import { esc } from './html.js';
@@ -963,11 +964,24 @@ function layout(email: string): string {
         <span class="hint" style="flex:1">Angemeldet als <b>${email.replace(/[<>&]/g, '')}</b></span>
         <button class="btn btn-n" id="logoutBtn">Abmelden</button>
       </div>
+      <div class="wl-sec" style="margin-top:14px">Neu anfangen ${iBtn('resetWallet')}</div>
+      <p class="hint">Setzt <b>Handelshistorie, offene Positionen, Kontostand und
+        Kennzahlen</b> auf null zurück. Kursdaten, Prognose-Trefferquoten und deine
+        Strategien bleiben. Nicht rückgängig zu machen.</p>
+      <div class="row" style="align-items:center;gap:8px;margin-top:6px">
+        <input id="rsWord" class="inp st-num" style="flex:1;max-width:180px"
+          type="text" autocomplete="off" spellcheck="false" placeholder="RESET tippen" />
+        <button class="btn btn-r" id="rsGo" disabled>Konto zurücksetzen</button>
+      </div>
+      <div class="hint" id="rsMsg"></div>
     </div>
   </div>
 
 `;
 }
+
+/** Muss identisch zu RESET_CONFIRM_WORD im Server sein — der prüft es erneut. */
+const RESET_CONFIRM_WORD = 'RESET';
 
 /* ── Subscriptions ──────────────────────────────────────────────────── */
 
@@ -5078,6 +5092,32 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       void saveUiPrefs(st.uid, st.ui).catch(() => undefined);
     });
   }
+  // Zwei Stufen: Der Knopf bleibt gesperrt, bis das Wort exakt dasteht.
+  // Das ist bewusst umständlich — ein unumkehrbarer Schritt soll sich auch
+  // so anfühlen. Serverseitig wird dasselbe Wort noch einmal geprüft; der
+  // Client-Guard ist Bequemlichkeit, keine Sicherung.
+  $('rsWord').addEventListener('input', () => {
+    ($('rsGo') as HTMLButtonElement).disabled =
+      ($('rsWord') as HTMLInputElement).value.trim() !== RESET_CONFIRM_WORD;
+  });
+  $('rsGo').addEventListener('click', () => {
+    const btn = $('rsGo') as HTMLButtonElement;
+    btn.disabled = true;
+    $('rsMsg').textContent = 'Setze zurück …';
+    void resetWallet(RESET_CONFIRM_WORD)
+      .then((r) => {
+        const n = Object.entries(r.deleted)
+          .filter(([, v]) => v > 0)
+          .map(([k, v]) => `${k}: ${v}`)
+          .join(', ');
+        $('rsMsg').textContent = `✓ Zurückgesetzt (${n || 'nichts zu löschen'}) — Kontostand ${r.balance} $`;
+        ($('rsWord') as HTMLInputElement).value = '';
+      })
+      .catch((e) => {
+        $('rsMsg').textContent = (e as Error).message;
+        btn.disabled = false;
+      });
+  });
   $('owSave').addEventListener('click', () => {
     if (!st) return;
     const num = (id: string): number => Number(($(id) as HTMLInputElement).value);
