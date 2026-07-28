@@ -382,8 +382,11 @@ function paletteCommands(): PaletteCommand[] {
   }
   cmds.push(
     { id: 'theme', label: 'Theme wechseln (hell/dunkel)', run: () => $('themeBtn').click() },
-    { id: 'engine-start', label: 'Engine starten (Paper)', run: () => $('engStart').click() },
-    { id: 'engine-stop', label: 'Engine stoppen', run: () => $('engStop').click() },
+    // Auch hier nur die mögliche Aktion: „Engine starten" in der Palette,
+    // während sie läuft, wäre derselbe irreführende Knopf wie in der Karte.
+    ...(st.strategy.engine.running
+      ? [{ id: 'engine-stop', label: 'Engine stoppen', run: (): void => $('engStop').click() }]
+      : [{ id: 'engine-start', label: 'Engine starten (Paper)', run: (): void => $('engStart').click() }]),
     { id: 'link-chart', label: 'Chart: Link-Gruppe wechseln', run: () => $('chipChart').click() },
     { id: 'order-buy', label: 'Kaufen … (Order-Ticket, Shift+B)', hint: 'Order', run: () => openOrderTicket('buy') },
     { id: 'order-sell', label: 'Verkaufen … (Order-Ticket, Shift+S)', hint: 'Order', run: () => openOrderTicket('sell') },
@@ -450,8 +453,11 @@ function layout(email: string): string {
       </div></div>
 
       <div class="card" data-panel="engine"><div class="sect">Engine</div><div class="cbody">
-        <button class="btn btn-g" id="engStart">Start</button>
-        <button class="btn btn-r" id="engStop">Stop</button>
+        <!-- Immer genau EINER sichtbar (renderEngineBadge schaltet um).
+             Startzustand „aus", passend zum Default engine.running: false —
+             sobald die Strategie geladen ist, korrigiert der Renderer das. -->
+        <button class="btn btn-g" id="engStart">Engine starten</button>
+        <button class="btn btn-r" id="engStop" hidden>Engine stoppen</button>
         <div class="hint">Bei Engine AN handelt der zentrale 5-min-Scan
           automatisch nach deiner Strategie (Paper).</div>
         <div id="verifyBox" hidden style="margin-top:8px">
@@ -3230,6 +3236,13 @@ function renderEngineBadge(running: boolean): void {
   const b = $('engBadge');
   b.textContent = running ? 'Engine an' : 'Engine aus';
   b.className = `badge ${running ? 'b-on' : 'b-off'}`;
+  // Owner-Feedback 28.07.: „start/stop müssen doch nicht immer beide angezeigt
+  // werden." Stimmt — von zwei Knöpfen ist immer genau einer sinnlos, und ein
+  // grüner „Start" neben einer laufenden Engine liest sich wie ein Hinweis,
+  // dass sie NICHT läuft. Sichtbar ist nur noch die mögliche Aktion; der
+  // Zustand steht ohnehin im Badge daneben.
+  ($('engStart') as HTMLButtonElement).hidden = running;
+  ($('engStop') as HTMLButtonElement).hidden = !running;
 }
 
 function renderStrategyChips(): void {
