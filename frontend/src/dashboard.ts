@@ -476,7 +476,6 @@ function layout(email: string): string {
           <tbody id="jBody"><tr><td colspan="6" class="c-t3">Keine Trades</td></tr></tbody>
         </table></div>
         <button class="btn btn-n" id="jMore" style="width:100%;margin-top:6px">Ältere laden</button>
-        <button class="btn btn-g" id="anOpen" style="width:100%;margin-top:6px">Analyse öffnen</button>
       </div></div>
     </div>
 
@@ -700,6 +699,11 @@ function layout(email: string): string {
         </div>
         <div class="hint" id="pfCostHint"></div>
         <div class="hint" id="pfHint">Kennzahlen entstehen ab dem ersten Tages-Snapshot (täglich 23:15).</div>
+        <!-- Owner-Feedback 28.07.: „man schaut meistens auf die Performance, und
+             wenn man die History direkt darunter hat, ist das logischer." Stimmt —
+             die Analyse ist die Vertiefung genau dieser Kennzahlen, nicht ein
+             Anhängsel der Trade-Tabelle. -->
+        <button class="btn btn-g" id="anOpen" style="width:100%;margin-top:8px">Handels-Analyse öffnen</button>
       </div></div>
 
       <div class="card" data-panel="manualtrade"><div class="sect">Manueller Trade</div><div class="cbody">
