@@ -256,7 +256,13 @@ export const DEFAULT_STRATEGY: Strategy = {
     // liquidiert werden können.
     leverage: 1,
   },
-  watchlist: ['QQQ', 'AAPL', 'TSLA', '^NDX'],
+  // Nur HANDELBARES (Befund 28.07.): Hier stand `^NDX` — der Nasdaq-100-
+  // INDEX, den kein Broker verkauft. Seit dem Handelbarkeits-Filter fällt er
+  // ohnehin aus der Tiefenanalyse, stand aber weiter als Voreinstellung in
+  // jedem neuen Konto und sah aus wie ein Vorschlag. SPY statt dessen: breiter
+  // US-Markt, echtes Instrument, und keine Dopplung zu QQQ (das IST bereits
+  // der Nasdaq-100 als ETF).
+  watchlist: ['QQQ', 'SPY', 'AAPL', 'TSLA'],
   engine: {
     checkIntervalMin: 5,
     maxPositionPct: 10,

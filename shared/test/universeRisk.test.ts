@@ -8,7 +8,9 @@
  */
 
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_STRATEGY } from '../src/strategy.js';
 import {
+  MARKET_PULSE,
   MAX_PER_CLUSTER,
   allSymbols,
   clusterHasRoom,
@@ -153,5 +155,28 @@ describe('clusterHasRoom', () => {
     // Sieben USD-Paare gleichzeitig — eine Wette, siebenfache Gebühren.
     const offen = ['EURUSD=X', 'USDJPY=X', 'AUDUSD=X'];
     expect(clusterHasRoom(offen, 'USDCHF=X')).toBe(false);
+  });
+});
+
+describe('Voreinstellungen enthalten nichts Unkaufbares', () => {
+  it('jedes Symbol der Default-Watchlist ist handelbar', () => {
+    // Bis 28.07. stand `^NDX` darin — der Nasdaq-100-INDEX. Der Filter hätte
+    // ihn stumm aussortiert, aber er stand als Vorschlag in jedem neuen
+    // Konto. Ein Vorschlag, der nichts bewirkt, ist schlimmer als keiner.
+    for (const sym of DEFAULT_STRATEGY.watchlist) {
+      expect(isTradable(sym), sym).toBe(true);
+    }
+  });
+
+  it('und keins doppelt sich fachlich mit einem anderen', () => {
+    // QQQ IST der Nasdaq-100 als ETF — `^NDX` daneben wäre dieselbe Wette
+    // zweimal, und der Korrelations-Deckel zählte sie als zwei.
+    expect(new Set(DEFAULT_STRATEGY.watchlist).size).toBe(DEFAULT_STRATEGY.watchlist.length);
+  });
+
+  it('das Markt-Puls-Set darf dagegen Indizes enthalten — es wird nur ANGEZEIGT', () => {
+    // Bewusster Gegentest: MARKET_PULSE ist eine Anzeige, kein Handelsvorrat.
+    // Hier sind ^GSPC und ^VIX genau richtig.
+    expect(MARKET_PULSE.some((s) => !isTradable(s))).toBe(true);
   });
 });

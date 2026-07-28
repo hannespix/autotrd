@@ -152,22 +152,51 @@ export function signalCloses(data: SymbolData, timeframe: 'daily' | 'intraday'):
  * weiteren Fetches) und Paper-Trades transaktional ausgeführt; danach
  * Stop-Loss/Take-Profit über die offenen Positionen.
  */
-/** Warum Einstiege abgelehnt wurden — landet im Heartbeat (Befund 28.07.). */
-export interface EntryBlocks {
+/**
+ * Was an der Einstiegs-Prüfung passiert ist — landet im Heartbeat.
+ *
+ * Drei Ablehnungen und, genauso wichtig, EINE Durchlassung: Die
+ * Kostenschwelle lässt bewusst durch, wenn keine ATR vorliegt (ein Datenloch
+ * darf die Engine nicht still abschalten). Ohne diesen Zähler ist
+ * `unter_kosten: 0` zweideutig — es kann „prüft und findet alles lohnend"
+ * heißen oder „konnte gar nicht prüfen". Genau diese Zweideutigkeit stand am
+ * 28.07. im Heartbeat, und sie machte die wichtigste Änderung des Tages
+ * unbeurteilbar.
+ *
+ * Der Feldname sagt deshalb ausdrücklich DURCHGELASSEN. Eine Pass-Zahl unter
+ * dem Namen einer Block-Zahl zu führen wäre derselbe Fehler in neu.
+ */
+export interface EntryGateStats {
+  /** Wie viele Einstiegs-Entscheidungen überhaupt geprüft wurden. Ohne diese
+   *  Bezugsgröße hat „14 blockiert" keine Aussagekraft — 14 von 15 ist etwas
+   *  völlig anderes als 14 von 400. */
+  geprueft: number;
+  /** Abgelehnt: Symbol ist bei keinem Broker kaufbar. */
   nicht_handelbar: number;
+  /** Abgelehnt: Korrelationsblock bereits voll. */
   cluster_voll: number;
+  /** Abgelehnt: erwartete Bewegung unter der Kostenschwelle. */
   unter_kosten: number;
+  /** DURCHGELASSEN, obwohl die Kostenschwelle nicht prüfen konnte (keine
+   *  ATR). Steht diese Zahl hoch, ist die Schwelle faktisch abgeschaltet. */
+  ohne_atr_durchgelassen: number;
 }
 
 async function executeUserTrades(
   marketData: Map<string, SymbolData>,
-): Promise<{ executed: number; blocks: EntryBlocks }> {
+): Promise<{ executed: number; gate: EntryGateStats }> {
   const db = getFirestore();
   let executed = 0;
   // Ein abgelehnter Einstieg ist ein Nicht-Ereignis und damit unsichtbar.
   // Genau deshalb wird er gezählt: Ein Filter, der zu scharf steht und ALLES
   // blockt, sähe im Log exakt aus wie ein ruhiger Markt.
-  const gesperrt: EntryBlocks = { nicht_handelbar: 0, cluster_voll: 0, unter_kosten: 0 };
+  const gate: EntryGateStats = {
+    geprueft: 0,
+    nicht_handelbar: 0,
+    cluster_voll: 0,
+    unter_kosten: 0,
+    ohne_atr_durchgelassen: 0,
+  };
   const users = await db
     .collection('users')
     .where('settings.strategy.engine.running', '==', true)
@@ -395,9 +424,10 @@ async function executeUserTrades(
         atrPct: number | null | undefined,
         offen: readonly string[],
       ): 'nicht_handelbar' | 'cluster_voll' | 'unter_kosten' | null => {
+        gate.geprueft += 1;
         const handelbar = isTradable(symbol);
         const platz = handelbar && clusterHasRoom(offen, symbol);
-        const gate = costGate({
+        const kosten = costGate({
           atrPct,
           minHoldMin: clamped.engine.minHoldMin,
           timeframe: tf,
@@ -411,12 +441,16 @@ async function executeUserTrades(
         // `unter_kosten` auf 0 — nicht weil die Kostenschwelle nichts tat,
         // sondern weil der Korrelations-Deckel vorher zugeschlagen hatte.
         // Zum Feinjustieren der Schwelle braucht man beide Zahlen.
-        if (!handelbar) gesperrt.nicht_handelbar += 1;
-        else if (!platz) gesperrt.cluster_voll += 1;
-        if (handelbar && !gate.ok) gesperrt.unter_kosten += 1;
+        if (!handelbar) gate.nicht_handelbar += 1;
+        else if (!platz) gate.cluster_voll += 1;
+        if (handelbar) {
+          if (!kosten.ok) gate.unter_kosten += 1;
+          // Der stille Fall: durchgelassen, weil nicht prüfbar.
+          else if (kosten.reason === 'kein_atr') gate.ohne_atr_durchgelassen += 1;
+        }
         if (!handelbar) return 'nicht_handelbar';
         if (!platz) return 'cluster_voll';
-        return gate.ok ? null : 'unter_kosten';
+        return kosten.ok ? null : 'unter_kosten';
       };
 
       /**
@@ -942,7 +976,7 @@ async function executeUserTrades(
       logger.error(`Auto-Trading-Fehler für ${uid}`, err);
     }
   }
-  return { executed, blocks: gesperrt };
+  return { executed, gate };
 }
 
 /** Obergrenze des zentralen Scan-Sets (Kosten-Guard). */
@@ -1416,12 +1450,18 @@ export async function runScan(force = false): Promise<ScanResult> {
   // Geguarded: Ein Fehler hier darf den Heartbeat nicht verhindern — sonst
   // bleibt meta/health stehen und die Ursache ist ohne GCP-Konsole unsichtbar.
   let trades = 0;
-  let entryBlocks: EntryBlocks = { nicht_handelbar: 0, cluster_voll: 0, unter_kosten: 0 };
+  let entryGate: EntryGateStats = {
+    geprueft: 0,
+    nicht_handelbar: 0,
+    cluster_voll: 0,
+    unter_kosten: 0,
+    ohne_atr_durchgelassen: 0,
+  };
   let lastError: string | null = null;
   try {
     const res = await executeUserTrades(marketData);
     trades = res.executed;
-    entryBlocks = res.blocks;
+    entryGate = res.gate;
   } catch (err) {
     lastError = `trades: ${err instanceof Error ? err.message : String(err)}`.slice(0, 400);
     logger.error('Trade-Block fehlgeschlagen', err);
@@ -1484,12 +1524,21 @@ export async function runScan(force = false): Promise<ScanResult> {
         intradayScored,
         intradayEval,
         trades,
-        // Warum Einstiege NICHT stattfanden (Befund 28.07.). Ohne diese Zahl
-        // wäre der Effekt der neuen Filter nicht messbar: Ein Scan ohne
-        // Trades sieht mit und ohne Filter identisch aus. Steht hier über
-        // Tage `unter_kosten` sehr hoch und `trades` bei null, ist die
-        // Schwelle zu scharf und gehört gesenkt — das ist der Regelkreis.
-        entryBlocks,
+        // Was an der Einstiegs-Prüfung passiert ist (Befund 28.07.). Ohne
+        // diese Zahlen wäre der Effekt der Filter nicht messbar: Ein Scan
+        // ohne Trades sieht mit und ohne Filter identisch aus. Der
+        // Regelkreis: `unter_kosten` über Tage hoch bei `trades: 0` ⇒
+        // Schwelle zu scharf; `ohne_atr_durchgelassen` hoch ⇒ die Schwelle
+        // prüft gar nicht, und die Ursache liegt bei den Daten, nicht am
+        // Parameter.
+        entryGate,
+        // Alter Name, bis die Oberfläche nachzieht — der Inhalt ist derselbe
+        // wie `entryGate`, nur ohne die Durchlass-Zahl.
+        entryBlocks: {
+          nicht_handelbar: entryGate.nicht_handelbar,
+          cluster_voll: entryGate.cluster_voll,
+          unter_kosten: entryGate.unter_kosten,
+        },
         // Katalog-Beobachtung (Owner-Frage 28.07. „alles immer parallel"):
         // `catalogQuotes` = in DIESEM Scan frisch bekurste Katalog-Symbole,
         // `catalogOpen` = wie viele überhaupt einen offenen Markt hatten.
