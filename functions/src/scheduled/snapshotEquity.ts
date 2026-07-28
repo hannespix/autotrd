@@ -20,6 +20,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 import {
+  aggregateTradingHealth,
   attribution,
   classify,
   costProfile,
@@ -29,6 +30,8 @@ import {
   positionValue,
   sharpe,
   tradeStats,
+  tradingVerdict,
+  type AccountContribution,
   type ClosedTrade,
   type EquityPoint,
   type Position,
@@ -71,6 +74,7 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
   }
 
   let snapped = 0;
+  const beitraege: AccountContribution[] = [];
   for (const userDoc of users.docs) {
     try {
       const balance = userDoc.get('wallet.paperBalance') as number | undefined;
@@ -166,16 +170,42 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         costs,
         updatedAt: now.toISOString(),
       });
+      // Beitrag zum öffentlichen Gesamtbild — die Kennzahlen fallen hier
+      // ohnehin an. Was daraus veröffentlicht wird, entscheidet
+      // `aggregateTradingHealth`: Quoten immer, Beträge erst ab genug Konten.
+      beitraege.push({
+        stats: {
+          n: ts.n,
+          wins: ts.wins,
+          profitFactor: ts.profitFactor,
+          expectancy: ts.expectancy,
+          avgWin: ts.avgWin,
+          avgLoss: ts.avgLoss,
+        },
+        exits,
+        costs: { n: costs.n, fees: costs.fees, grossPnl: costs.grossPnl },
+      });
+
       snapped += 1;
     } catch (err) {
       logger.warn(`snapshotEquity: User ${userDoc.id} übersprungen`, err);
     }
   }
 
-  // Selbstdiagnose additiv ins Heartbeat-Doc (Live-Verifikation ohne Konsole)
-  await db
-    .doc('meta/health')
-    .set({ equitySnapshot: { at: now.toISOString(), date, users: users.size, snapped } }, { merge: true });
+  // ── Handelsqualität öffentlich machen (Owner-Frage 28.07.) ────────────────
+  // Bis hierher trug `meta/health` nur BETRIEBS-Zahlen: gescannt, gescheitert,
+  // Anzahl Trades. Damit sieht man, ob die Maschine läuft — nicht, ob sie
+  // etwas taugt. Die Diagnose „sterben alle Trades am Signal?" stand
+  // ausschließlich in `users/{uid}/stats/main` und war von außen unsichtbar;
+  // am 27.07. musste ein Mensch sie mit dem Taschenrechner zurückrechnen.
+  const health = aggregateTradingHealth(beitraege);
+  await db.doc('meta/health').set(
+    {
+      equitySnapshot: { at: now.toISOString(), date, users: users.size, snapped },
+      trading: { ...health, verdict: tradingVerdict(health), at: now.toISOString() },
+    },
+    { merge: true },
+  );
   logger.info(`snapshotEquity: ${snapped}/${users.size} User gesnapshottet (${date})`);
   return { users: users.size, snapped };
 }
