@@ -2,7 +2,7 @@
  * Tests für den Tages-Läufe-Anstoß (invoke-daily.mjs).
  *
  * Warum das getestet gehört: Dieses Skript ist derzeit der EINZIGE Weg, auf
- * dem snapshotEquity, evalForecasts und tunerReview live überhaupt laufen —
+ * dem snapshotEquity und evalForecasts live überhaupt laufen —
  * es gibt im Projekt keinen Cloud-Scheduler-Job (Diagnose 27.07.). Wenn die
  * Ablauflogik hier kippt, bleiben Performance-Kurve, Prognose-Genauigkeit und
  * Prognose-Labor still leer, ohne dass irgendwo etwas rot wird. Genau dieser

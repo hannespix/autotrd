@@ -50,7 +50,6 @@ export interface MarketDocData {
   name?: string;
   assetClass?: string;
   quote?: Quote;
-  sentiment?: SentimentField;
   forecast?: {
     points: Array<{ time: string; value: number }>;
     band: Array<{ time: string; upper: number; lower: number }>;
@@ -73,79 +72,6 @@ export interface MarketDocData {
     updatedAt: string;
     calib?: { s: number; maePct: number; n: number } | null;
   } | null;
-}
-
-export interface EventDay {
-  date: string;
-  sentiment: number;
-  label: 'bullish' | 'bearish' | 'neutral';
-  count: number;
-  top: Array<{ title: string; source: string; url: string; kind: string }>;
-}
-
-export function watchEvents(symbol: string, cb: (events: EventDay[]) => void): Unsubscribe {
-  return muxWatch(
-    `events:${symbol}`,
-    (emit) => {
-      const q = query(collection(db(), 'market', symbol, 'events'), orderBy(documentId()));
-      return onSnapshot(q, (snap) => emit(snap.docs.map((d) => d.data())));
-    },
-    (p) => cb(p as EventDay[]),
-  );
-}
-
-export interface NewsRow {
-  title: string;
-  source: string;
-  url: string;
-  ts: string;
-  kind: string;
-  sent: { sentiment: number; label: string };
-}
-
-export function watchNews(symbol: string, cb: (news: NewsRow[]) => void): Unsubscribe {
-  return muxWatch(
-    `news:${symbol}`,
-    (emit) => {
-      const q = query(
-        collection(db(), 'market', symbol, 'news'),
-        orderBy('published', 'desc'),
-        limit(12),
-      );
-      return onSnapshot(q, (snap) => emit(snap.docs.map((d) => d.data())));
-    },
-    (p) => cb(p as NewsRow[]),
-  );
-}
-
-/** KI-Tages-Doc aus market/{sym}/ai/{date} (M6b — zentral gecacht). */
-export interface AiDayDoc {
-  date: string;
-  summary: string;
-  cause: string | null;
-  confidence: number | null;
-  tags: Array<{ type: string; count: number }>;
-  model: string | null;
-  degraded: boolean;
-  reason: 'no_api_key' | 'budget_exceeded' | 'ai_error' | null;
-}
-
-export function watchLatestAi(symbol: string, cb: (ai: AiDayDoc | null) => void): Unsubscribe {
-  return muxWatch(
-    `ai:${symbol}`,
-    (emit) => {
-      const q = query(collection(db(), 'market', symbol, 'ai'), orderBy('date', 'desc'), limit(1));
-      return onSnapshot(q, (snap) => emit(snap.empty ? null : snap.docs[0]!.data()));
-    },
-    (p) => cb(p as AiDayDoc | null),
-  );
-}
-
-export interface SentimentField {
-  overall: number;
-  label: string;
-  n: number;
-  topEvents?: Array<{ type: string; count: number }>;
 }
 
 /** Aggregat je (w, lookback)-Kombi — Rohmaterial des Self-Tunings. */
@@ -855,15 +781,3 @@ export async function loadIntraday(
   return out;
 }
 
-/** Event-Tage einmalig (Sentiment + Tags je Datum) für die Vorschau. */
-export async function loadEventsOnce(
-  symbol: string,
-): Promise<Map<string, { sentiment: number | null; tags: string[] }>> {
-  const snap = await getDocs(collection(db(), 'market', symbol, 'events'));
-  const map = new Map<string, { sentiment: number | null; tags: string[] }>();
-  for (const d of snap.docs) {
-    const data = d.data() as { sentiment?: number; topEvents?: string[] };
-    map.set(d.id, { sentiment: data.sentiment ?? null, tags: data.topEvents ?? [] });
-  }
-  return map;
-}

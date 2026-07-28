@@ -1,5 +1,5 @@
 /**
- * Stößt die TÄGLICHEN Läufe an: snapshotEquity, evalForecasts, tunerReview.
+ * Stößt die TÄGLICHEN Läufe an: snapshotEquity und evalForecasts.
  *
  * Warum es dieses Skript überhaupt gibt (Diagnose 27.07.):
  * Der Owner meldete, dass Performance-Kurve, Prognose-Genauigkeit und
@@ -19,7 +19,7 @@
  * unten sorgt dafür, dass es dann von selbst zum No-Op wird.
  *
  * Jeder Lauf ist idempotent: snapshotEquity schreibt auf die Datums-Doc-ID,
- * evalForecasts bewertet nur unbewertete Prognosen, tunerReview kennt seinen
+ * evalForecasts bewertet nur unbewertete Prognosen und kennt seinen
  * pendingBatchId. Ein Doppelaufruf am selben Tag schadet also nicht — das
  * Gate spart trotzdem Laufzeit und macht das Actions-Log lesbar.
  *
@@ -109,19 +109,6 @@ export const RUNS = [
     label: 'Prognose-Bewertung (Genauigkeit + Labor)',
     async spur(project) {
       return (await readMeta(project, 'health'))?.forecastEval ?? null;
-    },
-  },
-  {
-    service: 'tunerreview',
-    // Optional: Der Tuner hängt am Anthropic-Batch-API. Wartet ein Batch vom
-    // Vortag noch auf sein Ergebnis, kehrt der Lauf bewusst ohne neue Spur
-    // zurück — das ist korrektes Verhalten, kein Ausfall, und darf den
-    // Watchdog deshalb nicht rot färben. Das empirische Tuning läuft ohnehin
-    // unabhängig von der KI weiter.
-    optional: true,
-    label: 'KI-Tuner-Review',
-    async spur(project) {
-      return await readMeta(project, 'tuner');
     },
   },
 ];

@@ -155,14 +155,6 @@ export const INFO: Record<string, { t: string; d: string }> = {
     t: 'Regel: Zeitfenster (timeWindow)',
     d: 'Beschränkt das Signal auf eine Tageszeit (ET) — z. B. nicht in der volatilen ersten Handelsstunde kaufen. Trifft nur zu, wenn die Scan-Zeit im Fenster liegt.',
   },
-  'node:sentiment': {
-    t: 'Regel: Sentiment',
-    d: 'Nutzt die Stimmung aus News-Schlagzeilen (−1 bis +1, lexikonbasiert). „Sentiment > 0.2" heißt: nur kaufen, wenn die Nachrichtenlage klar positiv ist.',
-  },
-  'node:newsEvent': {
-    t: 'Regel: News-Ereignis',
-    d: 'Trifft zu, wenn heute ein getaggtes Ereignis vorliegt (Earnings, Analysten-Rating, M&A …). Für Strategien, die auf Nachrichten reagieren — oder sie bewusst meiden.',
-  },
   'node:forecast': {
     t: 'Regel: Prognose',
     d: 'Die Richtungsstimme der Zukunfts-Prognose: zutreffend, wenn die vorhergesagte Änderung bis zum Horizont-Ende über der Schwelle liegt (up) bzw. darunter (down). Im Backtest wird die Prognose kausal je Handelstag nachgerechnet.',

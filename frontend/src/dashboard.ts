@@ -54,15 +54,12 @@ import {
   saveAutoTune,
   saveUiPrefs,
   watchBars,
-  watchLatestAi,
   watchLatestIndicators,
   watchLatestSignal,
   watchMarketDoc,
   watchEvaluatedForecasts,
-  watchEvents,
   watchForecastStats,
   watchForecastStatsIntraday,
-  watchNews,
   watchPositions,
   watchTrades,
   watchUserDoc,
@@ -71,9 +68,7 @@ import {
   watchMomentum,
   watchTuneFleet,
   watchTuneLog,
-  type AiDayDoc,
   type EvaluatedForecastRow,
-  type EventDay,
   type ForecastStatsDoc,
   type IndicatorRow,
   type MarketDocData,
@@ -238,7 +233,6 @@ interface DashState {
   forecastIntraday: MarketDocData['forecastIntraday'];
   /** Link-Bus (M9): Gruppen der verlinkbaren Panels. */
   chartGroup: LinkGroup;
-  newsGroup: LinkGroup;
   /** Vergleichs-Chart (M9 Chart-Stack): eigene Gruppe, synchrone Zeitachse. */
   chart2Group: LinkGroup;
   chart2Symbol: string;
@@ -253,9 +247,6 @@ interface DashState {
   orderSide: 'buy' | 'sell';
   /** Nutzer-Hotkeys aus settings.hotkeys (Defaults siehe HOTKEY_DEFAULTS). */
   hotkeys: Record<string, string>;
-  /** Symbol des News-Panels (folgt newsGroup — kann vom Chart abweichen). */
-  newsSymbol: string;
-  newsSubs: Unsubscribe[];
   /** Workspace (M9): Preset + ausgeblendete Panels + Save-Debounce. */
   wsPreset: string;
   wsHidden: Set<string>;
@@ -264,10 +255,8 @@ interface DashState {
   wsSaveTimer: number | null;
   paletteDispose: (() => void) | null;
   /** Event-Tage des aktuellen Symbols (für Marker + Crosshair-Tooltip). */
-  events: EventDay[];
   /** Layer-Toggles (M6b): Prognose-Overlay / Event-Marker ein- und ausblenden. */
   showForecast: boolean;
-  showEvents: boolean;
   /** Zuletzt gesetzte News-Punkte im Haupt-Chart (E2E-Hook, 26.07.). */
   lastMainMarkers?: number;
   /** Live-Preise der Positions-Symbole (aus market/{sym}.quote). */
@@ -300,7 +289,6 @@ interface GridPanel {
   intradayDays: number;
   intradayBars: import('./chart.js').IntradayChartBar[];
   /** Event-Tage des Panel-Symbols (News-Punkte in JEDEM Chart). */
-  events: EventDay[];
   /** Zeit-Domäne des letzten Renders (Prognose-Räumung beim Moduswechsel). */
   lastRenderIntraday?: boolean;
   /** Zuletzt gesetzte News-Punkte (E2E-Hook, 26.07.). */
@@ -319,7 +307,6 @@ let st: DashState | null = null;
 
 // Bus-Abonnenten-Schlüssel der beiden verlinkbaren Panels (M9)
 const CHART_KEY = {};
-const NEWS_KEY = {};
 const CHART2_KEY = {};
 
 const HOTKEY_DEFAULTS: Record<string, string> = {
@@ -359,7 +346,6 @@ function paletteCommands(): PaletteCommand[] {
     { id: 'engine-start', label: 'Engine starten (Paper)', run: () => $('engStart').click() },
     { id: 'engine-stop', label: 'Engine stoppen', run: () => $('engStop').click() },
     { id: 'link-chart', label: 'Chart: Link-Gruppe wechseln', run: () => $('chipChart').click() },
-    { id: 'link-news', label: 'News-Panel: Link-Gruppe wechseln', run: () => $('chipNews').click() },
     { id: 'picker', label: 'Watchlist bearbeiten', run: () => $('openPickerBtn').click() },
     { id: 'order-buy', label: 'Kaufen … (Order-Ticket, Shift+B)', hint: 'Order', run: () => openOrderTicket('buy') },
     { id: 'order-sell', label: 'Verkaufen … (Order-Ticket, Shift+S)', hint: 'Order', run: () => openOrderTicket('sell') },
@@ -513,7 +499,6 @@ function layout(email: string): string {
             <div id="menuLay" class="tool-menu" hidden>
               <div class="tm-sec">Layer</div>
               <button class="tf-btn on" id="lyFc" title="Prognose-Overlay ein/aus">Prognose</button>
-              <button class="tf-btn on" id="lyEv" title="Event-Marker ein/aus">Events</button>
               <button class="tf-btn on" id="yAutoBtn" title="Y-Autoscaling: Preisskala passt sich beim Scrollen/Zoomen automatisch an — ausschalten, um die Y-Achse manuell festzuhalten (Ziehen auf der Preisskala)">Y-Auto</button>
               <div class="tm-sec">Raster — bis zu 4 Kurse parallel</div>
               <span class="grid-sw" title="Charts im Raster: 1, 2 oder 4 parallel">
@@ -774,27 +759,8 @@ function layout(email: string): string {
         <div id="tnLog" class="tn-log"><div class="hint">Noch keine Prüfung — der Tuner urteilt täglich nach US-Schluss.</div></div>
       </div></div>
 
-      <div class="card" data-panel="news"><div class="sect">News &amp; Sentiment <span id="nsSym" style="float:right;color:var(--t3)"></span> <button class="lchip" id="chipNews" title="Link-Gruppe wechseln (News folgen dieser Gruppe)" style="float:right;margin-right:8px">A</button></div><div class="cbody">
-        <div style="display:flex;align-items:baseline;gap:8px">
-          <span id="nsLabel" class="vbig" style="font-size:18px">–</span>
-          <span id="nsScore" class="smv">–</span>
-          <span id="nsCount" class="hint" style="margin-left:auto"></span>
-        </div>
-        <div style="height:8px;border-radius:5px;background:linear-gradient(90deg,var(--rd),var(--t3) 50%,var(--gn));position:relative;margin:6px 0 3px">
-          <div id="nsPin" style="position:absolute;top:-3px;left:50%;width:3px;height:14px;background:var(--t1);border-radius:2px;transition:left .5s"></div>
-        </div>
-        <div style="display:flex;justify-content:space-between;gap:6px;font-size:8px;color:var(--t3);text-transform:uppercase;letter-spacing:.04em"><span>Bearish</span><span>Neutral</span><span>Bullish</span></div>
-        <div class="wl-sec" style="margin-top:10px">Warum bewegt sich <span id="aiSym">…</span>?</div>
-        <div id="aiSummary" style="font-size:11.5px;line-height:1.45;color:var(--t1)">Noch keine KI-Zusammenfassung — kommt mit dem nächsten Scan mit News.</div>
-        <div id="aiMeta" class="hint" style="margin-top:3px"></div>
-        <div id="aiTags" class="wl-chips" style="margin-top:5px;min-height:0"></div>
-        <div id="newsFeed" style="display:flex;flex-direction:column;max-height:300px;overflow-y:auto;margin-top:8px"></div>
-      </div></div>
     </div>
   </div>
-
-  <!-- Event-Tooltip am Crosshair (position:fixed — CLAUDE.md §6) -->
-  <div id="evTip" class="evtip" hidden></div>
 
   <div class="dmodal" id="orderModal">
     <div class="dmodal-bg" data-order-close></div>
@@ -945,13 +911,11 @@ function wireChartCtx(): void {
   $('chSub').textContent = resolveName(sym);
   $('flSym').textContent = sym;
   $('flSym2').textContent = sym;
-  st.events = [];
   // Nachgeladene Historie ist symbol-spezifisch → beim Wechsel zurücksetzen
   st.histBars = [];
   st.histOldest = 0;
   st.histLoading = false;
   st.histDone = false;
-  $('evTip').hidden = true;
 
   st.symbolSubs.push(
     watchMarketDoc(sym, (d) => {
@@ -966,11 +930,6 @@ function wireChartCtx(): void {
         st.forecastIntraday = d?.forecastIntraday ?? null;
         applyForecast();
       }
-    }),
-    watchEvents(sym, (events) => {
-      if (!st) return;
-      st.events = events;
-      applyMarkers();
     }),
     watchBars(sym, (bars) => {
       if (!st) return;
@@ -1000,43 +959,11 @@ function wireChartCtx(): void {
   );
 }
 
-/**
- * News-Kontext (Link-Gruppe `newsGroup`): Sentiment-Gauge, News-Feed,
- * KI-Tageskarte — kann über den Link-Chip vom Chart entkoppelt werden.
- */
-function wireNewsCtx(): void {
-  if (!st) return;
-  clearSubs(st.newsSubs);
-  const sym = st.newsSymbol;
-  renderAiCard(null);
-
-  st.newsSubs.push(
-    watchMarketDoc(sym, (d) => renderSentimentGauge(d?.sentiment)),
-    watchLatestAi(sym, (ai) => renderAiCard(ai)),
-    watchNews(sym, (news) => renderNewsFeed(news)),
-  );
-}
-
-/**
- * News-Fokus (User-Wunsch 26.07.): Ein Klick in IRGENDEIN Chart-Fenster
- * (Haupt, Raster-Panel, Vergleich) lädt News/Sentiment/KI-Karte für DESSEN
- * Symbol — nicht nur fürs erste Chart. Bewusst am Link-Bus vorbei: Nur der
- * News-Kontext wechselt, die Charts selbst bleiben, wie sie sind. Der
- * nächste Bus-Wechsel (Watchlist-Klick in der News-Gruppe) übernimmt wieder.
- */
-function focusNews(sym: string): void {
-  if (!st || !sym || st.newsSymbol === sym) return;
-  st.newsSymbol = sym;
-  wireNewsCtx();
-  scheduleWsSave();
-}
-
 /** Link-Chips einfärben (Aurora-Farben je Gruppe). */
 function paintChips(): void {
   if (!st) return;
   for (const [id, group] of [
     ['chipChart', st.chartGroup],
-    ['chipNews', st.newsGroup],
     ['chipChart2', st.chart2Group],
   ] as const) {
     const chip = $(id);
@@ -1374,9 +1301,6 @@ function renderLegend(lines: import('./chart.js').OverlayLine[], intraday: boole
   }
   if (intraday && st?.showForecast && !st.cleanView && st.forecastIntraday) {
     items.push({ c: '#25d0ee', t: 'Kurzfrist-Prognose (nächste Stunde)', title: 'Projektion im 5-Minuten-Raster — bei jedem Scan neu berechnet, lernt aus der eigenen Trefferquote' });
-  }
-  if (st?.showEvents && !st.cleanView && (st.events.length ?? 0) > 0) {
-    items.push({ c: '#26cf9d', t: 'Event-Punkte (News)', title: 'Überfahren zeigt die News des Tages — Intraday sitzt der Punkt am ersten Bar des Handelstags' });
   }
   // Legenden-Akkordeon (Feedback 25.07. abends): eingeklappt = nur OHLC-Zeile
   el.hidden = items.length === 0 || !st?.hudOpen;
@@ -1937,37 +1861,16 @@ async function loadIntradayView(): Promise<void> {
 }
 
 /**
- * News-Punkte fürs Chart (User-Wunsch 26.07.: „in allen Ansichten"): in der
- * Tages-Sicht direkt am Datum, in der Intraday-Sicht am ERSTEN Bar des
- * jeweiligen Handelstags (UTC-Datum der Bar-Zeit — deckt US- wie EU-Sessions).
+ * Marker auf dem Haupt-Chart.
+ *
+ * Seit dem Ausbau der News-Strecke (28.07.) gibt es keine Event-Punkte mehr;
+ * die Funktion bleibt als EINE Stelle stehen, an der künftige Marker (etwa
+ * die eigenen Ein- und Ausstiege) angehängt werden — verteiltes
+ * setMarkers-Aufrufen war vorher schon die Quelle von Sync-Fehlern.
  */
-function newsMarkers(events: EventDay[], intradayBars: Array<{ time: number }> | null): ChartMarker[] {
-  const mark = (e: EventDay, time: string | number): ChartMarker => ({
-    time,
-    position: e.sentiment < -0.12 ? 'aboveBar' : 'belowBar',
-    color: e.sentiment > 0.12 ? '#26cf9d' : e.sentiment < -0.12 ? '#f2586b' : '#8b93a8',
-    shape: 'circle',
-    text: e.count > 1 ? String(e.count) : '',
-  });
-  if (!intradayBars) return events.map((e) => mark(e, e.date));
-  const firstOfDay = new Map<string, number>();
-  for (const b of intradayBars) {
-    const day = new Date(b.time * 1000).toISOString().slice(0, 10);
-    if (!firstOfDay.has(day)) firstOfDay.set(day, b.time);
-  }
-  return events.flatMap((e) => {
-    const t = firstOfDay.get(e.date);
-    return t === undefined ? [] : [mark(e, t)];
-  });
-}
-
-/** Event-Marker anwenden — respektiert den Events-Layer-Toggle (M6b). */
 function applyMarkers(): void {
   if (!st?.chart) return;
-  const markers =
-    st.showEvents && !st.cleanView
-      ? newsMarkers(st.events, st.intradayDays > 0 ? st.shownIntraday : null)
-      : [];
+  const markers: ChartMarker[] = [];
   st.lastMainMarkers = markers.length; // E2E-Hook
   st.chart.setMarkers(markers);
 }
@@ -2171,8 +2074,7 @@ async function rebuildChart(): Promise<void> {
     st.subCharts[kind] = null;
   }
   void loadPredictionForSymbol();
-  st.chart?.onCrosshairDate((date, pos) => {
-    showEventTooltip(date, pos);
+  st.chart?.onCrosshairDate((date, _pos) => {
     if (!crosshairSyncing && st?.chart2) {
       crosshairSyncing = true;
       st.chart2.setCrosshair(date);
@@ -2187,71 +2089,6 @@ async function rebuildChart(): Promise<void> {
 }
 
 /** Tooltip-Details zum Event-Tag unter dem Crosshair (M6b). */
-let evTipTimer: number | null = null;
-// Besitzer des (einen) Overlays: Crosshair-SYNCS feuern auf den Ziel-Charts
-// Clear-Events (param.point fehlt) — nur das Chart, das das Overlay geöffnet
-// hat, darf es auch schließen, sonst löscht die Lock-Gruppe jeden Tooltip.
-let evTipOwner: unknown = null;
-const COARSE_POINTER = window.matchMedia?.('(pointer: coarse)').matches ?? false;
-
-function showEventTooltip(
-  date: string | null,
-  pos: { x: number; y: number } | null,
-  // News-Overlay in JEDEM Chart-Fenster (User-Feedback 26.07.): Raster-
-  // Panels/Vergleich reichen ihre EIGENEN Event-Tage herein — default Haupt-Chart.
-  events?: EventDay[],
-  owner: unknown = 'main',
-): void {
-  const tip = $('evTip');
-  const src = events ?? st?.events ?? [];
-  const ev = date && st?.showEvents ? src.find((e) => e.date === date) : undefined;
-  if (!ev || !pos) {
-    if (owner !== evTipOwner) return; // Fremd-/Sync-Clear: Overlay bleibt
-    // Touch (Handy): Nach dem Loslassen verschwindet das Crosshair sofort —
-    // das Overlay bliebe sonst nur einen Wimpernschlag („nicht sauber",
-    // Feedback 25.07.). Kurz stehen lassen, dann ausblenden.
-    if (COARSE_POINTER && !tip.hidden) {
-      if (evTipTimer !== null) window.clearTimeout(evTipTimer);
-      evTipTimer = window.setTimeout(() => {
-        tip.hidden = true;
-        evTipTimer = null;
-      }, 4000);
-      return;
-    }
-    tip.hidden = true;
-    return;
-  }
-  evTipOwner = owner;
-  if (evTipTimer !== null) {
-    window.clearTimeout(evTipTimer);
-    evTipTimer = null;
-  }
-  const tone = ev.sentiment > 0.12 ? 'c-gn' : ev.sentiment < -0.12 ? 'c-rd' : 'c-t3';
-  tip.innerHTML = `
-    <div class="evtip-hd"><span class="mono"></span>
-      <span class="${tone}">${ev.sentiment >= 0 ? '+' : ''}${ev.sentiment.toFixed(2)}</span>
-      <span class="evtip-n">${ev.count} News</span></div>
-    <div class="evtip-list"></div>`;
-  tip.querySelector('.mono')!.textContent = ev.date;
-  const list = tip.querySelector('.evtip-list')!;
-  for (const t of ev.top.slice(0, 3)) {
-    const row = document.createElement('div');
-    row.className = 'evtip-row';
-    row.textContent = `• ${t.title}`;
-    const src = document.createElement('span');
-    src.className = 'evtip-src';
-    src.textContent = ` — ${t.source}`;
-    row.appendChild(src);
-    list.appendChild(row);
-  }
-  tip.hidden = false;
-  // Ans Viewport clampen (Tooltip ist position:fixed)
-  const w = tip.offsetWidth;
-  const h = tip.offsetHeight;
-  tip.style.left = `${Math.min(pos.x + 14, window.innerWidth - w - 8)}px`;
-  tip.style.top = `${Math.max(8, Math.min(pos.y - h - 10, window.innerHeight - h - 8))}px`;
-}
-
 function wireWatchlist(): void {
   if (!st) return;
   clearSubs(st.watchlistSubs);
@@ -2424,11 +2261,6 @@ function wireChart2Ctx(): void {
       if (p.intradayDays > 0) void loadPanelIntraday(p);
       else renderChart2();
     }),
-    watchEvents(sym, (events) => {
-      if (epoch !== p.epoch) return;
-      p.events = events;
-      renderChart2();
-    }),
   );
 }
 
@@ -2468,9 +2300,8 @@ async function rebuildChart2(): Promise<void> {
     if (!recentGesture($('chart2Area'))) return;
     pushRange(st.chart, range, h);
   });
-  st.chart2?.onCrosshairDate((date, pos) => {
+  st.chart2?.onCrosshairDate((date, _pos) => {
     // News-Overlay auch im Vergleichs-Chart (Events des Vergleichs-Symbols)
-    showEventTooltip(date, pos, st?.chart2P.events, 'chart2');
     if (crosshairSyncing || !st?.chart) return;
     crosshairSyncing = true;
     st.chart.setCrosshair(date);
@@ -2582,12 +2413,7 @@ function renderGridPanelBars(p: GridPanel): void {
     lines.push({ key: 'vwap', color: '#f2d16b', width: 2, points: pts });
   }
   p.chart.setOverlays(lines);
-  // News-Punkte in JEDEM Chart und JEDER Sicht (User-Wunsch 26.07.):
-  // Tages-Sicht am Datum, Intraday-Sicht am ersten Bar des Handelstags.
-  const pMarkers =
-    st !== null && st.showEvents && !st.cleanView
-      ? newsMarkers(p.events, intraday ? p.intradayBars : null)
-      : [];
+  const pMarkers: ChartMarker[] = [];
   p.lastMarkers = pMarkers.length; // E2E-Hook
   p.chart.setMarkers(pMarkers);
   // Layer syncen (User-Wunsch 25.07.): Fläche + „Kerzen aus" gelten auch im
@@ -2707,11 +2533,6 @@ async function mountGridPanel(p: GridPanel, host: HTMLElement): Promise<void> {
       p.forecastIntraday = d?.forecastIntraday ?? null;
       renderGridPanelBars(p);
     }),
-    watchEvents(p.sym, (events) => {
-      if (epoch !== p.epoch) return;
-      p.events = events;
-      renderGridPanelBars(p);
-    }),
   );
   const handle = await buildPriceChart(host, p.sym);
   if (!st || epoch !== p.epoch || !st.gridPanels.includes(p)) {
@@ -2741,10 +2562,9 @@ async function mountGridPanel(p: GridPanel, host: HTMLElement): Promise<void> {
     if (matchEcho(p.chart, range)) return;
     if (p.locked && recentGesture(host)) syncLockedRange(p.chart, range);
   });
-  p.chart?.onCrosshairDate((date, pos) => {
+  p.chart?.onCrosshairDate((date, _pos) => {
     // News-Overlay auch im Raster-Panel (User-Feedback 26.07.) — mit den
     // Event-Tagen des PANEL-Symbols, nicht denen des Haupt-Charts
-    showEventTooltip(date, pos, p.events, p);
     if (p.locked && p.chart) syncLockedCrosshair(p.chart, date);
   });
   renderGridPanelBars(p);
@@ -2820,7 +2640,7 @@ function renderChartGrid(): void {
       st.strategy.watchlist.find((s) => !used.has(s)) ??
       ['AAPL', 'TSLA', '^NDX'].find((s) => !used.has(s)) ??
       'AAPL';
-    st.gridPanels.push({ sym, range: 66, locked: false, chart: null, bars: [], subs: [], epoch: 0, fitPending: true, forecast: null, forecastIntraday: null, intradayDays: 0, intradayBars: [], events: [], auto: false });
+    st.gridPanels.push({ sym, range: 66, locked: false, chart: null, bars: [], subs: [], epoch: 0, fitPending: true, forecast: null, forecastIntraday: null, intradayDays: 0, intradayBars: [], auto: false });
   }
   $('chartRow').dataset['mode'] = String(st.gridMode);
   ($('lockMain') as HTMLButtonElement).hidden = st.gridMode === 1;
@@ -2865,7 +2685,6 @@ function renderChartGrid(): void {
       symInp.value = sym;
       saveGridPrefs();
       void mountGridPanel(p, el.querySelector('.gp-chart') as HTMLElement);
-      focusNews(sym); // neues Symbol im aktiven Fenster → News folgen sofort
     });
     const markTf = (btn: Element): void => {
       el.querySelectorAll('[data-r], [data-i]').forEach((x) => x.classList.toggle('on', x === btn));
@@ -2930,7 +2749,6 @@ function renderChartGrid(): void {
     });
     // Klick ins Panel = aktives Fenster → News-Kontext folgt (capture, damit
     // auch Klicks auf die LWC-Canvas zählen; p.sym liest den Live-Stand)
-    el.addEventListener('pointerdown', () => focusNews(p.sym), true);
     grid.appendChild(el);
     void mountGridPanel(p, el.querySelector('.gp-chart') as HTMLElement);
   });
@@ -3257,7 +3075,7 @@ function scheduleWsSave(): void {
           },
         ]),
       ),
-      groups: { chart: st.chartGroup, news: st.newsGroup, chart2: st.chart2Group },
+      groups: { chart: st.chartGroup, chart2: st.chart2Group },
       symbols: { A: groupSymbol('A'), B: groupSymbol('B'), C: groupSymbol('C') },
       updatedAt: new Date().toISOString(),
     };
@@ -3541,88 +3359,6 @@ function renderPickerChips(): void {
 
 function closeModal(which: 'detail' | 'picker' | 'options'): void {
   $(which === 'detail' ? 'detailModal' : which === 'picker' ? 'wlModal' : 'optModal').classList.remove('show');
-}
-
-/* ── News & Sentiment ───────────────────────────────────────────────── */
-
-function renderSentimentGauge(s: import('./data.js').SentimentField | undefined): void {
-  if (!st) return;
-  $('nsSym').textContent = st.newsSymbol;
-  if (!s) {
-    $('nsLabel').textContent = '–';
-    $('nsScore').textContent = '–';
-    $('nsCount').textContent = '';
-    return;
-  }
-  const label = $('nsLabel');
-  label.textContent = s.label === 'bullish' ? 'Bullish' : s.label === 'bearish' ? 'Bearish' : 'Neutral';
-  label.className = `vbig ${s.overall > 0.12 ? 'c-gn' : s.overall < -0.12 ? 'c-rd' : 'c-t3'}`;
-  label.style.fontSize = '18px';
-  $('nsScore').textContent = (s.overall >= 0 ? '+' : '') + s.overall.toFixed(2);
-  $('nsCount').textContent = `${s.n} Quellen`;
-  $('nsPin').style.left = `${Math.max(2, Math.min(98, 50 + s.overall * 50))}%`;
-}
-
-/** KI-Tageskarte „Warum bewegt sich X?“ aus market/{sym}/ai/{date} (M6b). */
-function renderAiCard(ai: AiDayDoc | null): void {
-  if (!st) return;
-  $('aiSym').textContent = st.newsSymbol;
-  const sum = $('aiSummary');
-  const meta = $('aiMeta');
-  const tags = $('aiTags');
-  tags.innerHTML = '';
-  if (!ai) {
-    sum.textContent = 'Noch keine KI-Zusammenfassung — kommt mit dem nächsten Scan mit News.';
-    meta.textContent = '';
-    return;
-  }
-  sum.textContent = ai.summary;
-  if (ai.degraded) {
-    const why =
-      ai.reason === 'no_api_key'
-        ? 'kein API-Key hinterlegt'
-        : ai.reason === 'budget_exceeded'
-          ? 'Tages-Tokenbudget erschöpft'
-          : 'KI-Fehler';
-    meta.textContent = `${ai.date} · regelbasiert (${why}) — Lexikon-Stufe 0 aktiv`;
-  } else {
-    const conf = ai.confidence != null ? ` · Konfidenz ${(ai.confidence * 100).toFixed(0)} %` : '';
-    meta.textContent = `${ai.date} · KI (${ai.model ?? '–'})${conf}${ai.cause ? ` · ${ai.cause}` : ''}`;
-  }
-  for (const t of ai.tags.slice(0, 6)) {
-    const chip = document.createElement('span');
-    chip.className = 'wl-chip';
-    chip.style.cssText = 'font-size:9px;padding:2px 7px';
-    chip.textContent = t.count > 1 ? `${t.type} ×${t.count}` : t.type;
-    tags.appendChild(chip);
-  }
-}
-
-function renderNewsFeed(news: import('./data.js').NewsRow[]): void {
-  const feed = $('newsFeed');
-  feed.innerHTML = '';
-  if (news.length === 0) {
-    feed.innerHTML = '<span class="hint" style="padding:8px 0">Noch keine News — kommen mit dem nächsten Scan.</span>';
-    return;
-  }
-  for (const n of news) {
-    const row = document.createElement('a');
-    row.href = n.url || '#';
-    row.target = '_blank';
-    row.rel = 'noopener';
-    row.style.cssText = 'display:flex;gap:8px;padding:7px 2px;border-bottom:1px solid var(--hair);text-decoration:none';
-    const dotColor = n.sent.sentiment > 0.12 ? 'var(--gn)' : n.sent.sentiment < -0.12 ? 'var(--rd)' : 'var(--t3)';
-    row.innerHTML = `
-      <span style="flex:0 0 6px;width:6px;height:6px;border-radius:50%;margin-top:6px;background:${dotColor}"></span>
-      <span style="flex:1;min-width:0">
-        <span class="nhl" style="display:block;font-size:11px;color:var(--t1);line-height:1.35"></span>
-        <span class="hint"></span>
-      </span>`;
-    row.querySelector('.nhl')!.textContent = n.title;
-    row.querySelector('.hint')!.textContent =
-      `${n.source}${n.kind !== 'news' ? ` · ${n.kind}` : ''}${n.ts ? ` · ${n.ts.slice(0, 10)}` : ''}`;
-    feed.appendChild(row);
-  }
 }
 
 /* ── Portfolio (Wallet, Positionen, Trades) ─────────────────────────── */
@@ -4318,7 +4054,6 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     forecast: null,
     forecastIntraday: null,
     chartGroup: 'A',
-    newsGroup: 'A',
     chart2Group: 'B',
     chart2Symbol: DEFAULT_STRATEGY.watchlist[1] ?? 'QQQ',
     chart2: null,
@@ -4337,14 +4072,11 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       forecastIntraday: null,
       intradayDays: 0,
       intradayBars: [],
-      events: [],
       auto: false,
     },
     lastQuote: null,
     orderSide: 'buy',
     hotkeys: { ...HOTKEY_DEFAULTS },
-    newsSymbol: DEFAULT_STRATEGY.watchlist[0] ?? 'QQQ',
-    newsSubs: [],
     wsPreset: 'ueberblick',
     wsHidden: new Set(DEFAULT_HIDDEN),
     wsOrder: {},
@@ -4363,9 +4095,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     ohlcOpen: (localStorage.getItem('autotrd-ohlc') ?? '1') === '1',
     wsSaveTimer: null,
     paletteDispose: null,
-    events: [],
     showForecast: true,
-    showEvents: true,
     posPrices: new Map(),
     pfStats: null,
     equitySeries: [],
@@ -4471,12 +4201,6 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     wireChartCtx();
     scheduleWsSave();
   });
-  busSubscribe(NEWS_KEY, st.newsGroup, (sym) => {
-    if (!st || st.newsSymbol === sym) return;
-    st.newsSymbol = sym;
-    wireNewsCtx();
-    scheduleWsSave();
-  });
   // Gruppen-Wechsel: das Panel NIMMT sein Symbol MIT (die neue Gruppe
   // adoptiert es) — so heißt „News auf B" wirklich „News bleibt stehen,
   // während A weiterschaltet", statt zum alten B-Symbol zu springen.
@@ -4503,18 +4227,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     paintChips();
     scheduleWsSave();
   });
-  $('chipNews').addEventListener('click', () => {
-    if (!st) return;
-    st.newsGroup = nextGroup(st.newsGroup);
-    seedSymbols({ [st.newsGroup]: st.newsSymbol });
-    setGroup(NEWS_KEY, st.newsGroup);
-    paintChips();
-    scheduleWsSave();
-  });
 
   wireWatchlist();
   wireChartCtx();
-  wireNewsCtx();
   wireChart2Ctx();
   paintChips();
   applyPanels();
@@ -4552,7 +4267,6 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     applyPanelOrder();
     const g = (v: unknown): LinkGroup => (v === 'B' || v === 'C' ? v : 'A');
     st.chartGroup = g(ws.groups?.chart);
-    st.newsGroup = g(ws.groups?.news);
     st.chart2Group = ws.groups?.chart2 === 'A' || ws.groups?.chart2 === 'C' ? ws.groups.chart2 : 'B';
     const symbols: Partial<Record<LinkGroup, string>> = {};
     for (const grp of ['A', 'B', 'C'] as const) {
@@ -4561,7 +4275,6 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     }
     seedSymbols(symbols);
     setGroup(CHART_KEY, st.chartGroup);
-    setGroup(NEWS_KEY, st.newsGroup);
     setGroup(CHART2_KEY, st.chart2Group);
     paintChips();
   });
@@ -4580,11 +4293,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     mainForecastActive: () => st?.chart?.forecastActive() ?? false,
     mainTypeCombine: () => st?.chart?.typeCombineActive() ?? false,
     panelTypeCombine: (i: number) => st?.gridPanels[i]?.chart?.typeCombineActive() ?? false,
-    panelEventCount: (i: number) => st?.gridPanels[i]?.events.length ?? -1,
     panelMarkerCount: (i: number) => st?.gridPanels[i]?.lastMarkers ?? -1,
     mainMarkerCount: () => st?.lastMainMarkers ?? -1,
-    newsSym: () => st?.newsSymbol ?? '',
-    panelEventDates: (i: number) => st?.gridPanels[i]?.events.map((e) => e.date) ?? [],
     panelCoords: (i: number, time: string | number, price: number) =>
       st?.gridPanels[i]?.chart?.coords(time, price) ?? null,
     panelLastClose: (i: number) => {
@@ -4624,7 +4334,6 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     subRange: (k: 'rsi' | 'macd') => st?.subCharts[k]?.getVisibleRange() ?? null,
     subAnchorLen: (k: 'rsi' | 'macd') => subAnchorLens[k],
     subMounted: () => (st ? (st.subCharts.rsi ? 1 : 0) + (st.subCharts.macd ? 1 : 0) : -1),
-    eventCount: () => st?.events.length ?? -1,
     areaActive: () => st?.chart?.areaActive() ?? false,
     signalDir: () => st?.lastSignalDir ?? 'hold',
     cleanActive: () => st?.cleanView ?? false,
@@ -4632,7 +4341,6 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     resBadge: () => document.getElementById('resBadge')?.textContent ?? '',
     dailyLen: () => dailySource().length,
     firstDailyDate: () => dailySource()[0]?.date ?? '',
-    eventDates: () => st?.events.map((e) => e.date) ?? [],
     mainCoords: (time: string | number, price: number) => st?.chart?.coords(time, price) ?? null,
     lastClose: () => st?.bars[st.bars.length - 1]?.close ?? null,
   };
@@ -4786,7 +4494,6 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     wireChart2Ctx();
     void rebuildChart2();
     scheduleWsSave();
-    focusNews(sym); // aktives Fenster → News folgen (wie in den Panels)
   });
   // Timeline-Sprünge (User-Wunsch 25.07. nachts): animiert zu Anfang/Mitte/
   // Ende — am linken Rand lädt die bestehende Nachlade-Logik automatisch weiter.
@@ -5142,7 +4849,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     const prefs = loadGridPrefs();
     st.gridMode = prefs.mode;
     st.mainLocked = prefs.mainLocked;
-    st.gridPanels = prefs.panels.map((p) => ({ ...p, chart: null, bars: [], subs: [], epoch: 0, fitPending: true, forecast: null, forecastIntraday: null, intradayBars: [], events: [] }));
+    st.gridPanels = prefs.panels.map((p) => ({ ...p, chart: null, bars: [], subs: [], epoch: 0, fitPending: true, forecast: null, forecastIntraday: null, intradayBars: [] }));
     // (auto kommt aus prefs mit — loadGridPrefs liefert es garantiert)
     renderChartGrid();
   }
@@ -5173,21 +4880,6 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     renderAllPanels(); // Prognose-Layer gilt in ALLEN Charts
     updateSubPanels(); // Zeitachsen-Anker der Unterpanels folgt dem Whitespace
   });
-  $('lyEv').addEventListener('click', () => {
-    if (!st) return;
-    st.showEvents = !st.showEvents;
-    $('lyEv').classList.toggle('on', st.showEvents);
-    applyMarkers();
-    renderAllPanels(); // News-Punkte in ALLEN Charts
-    if (!st.showEvents) $('evTip').hidden = true;
-  });
-  // Aktives Fenster = News-Kontext (User-Wunsch 26.07.): Klick in Haupt-
-  // oder Vergleichs-Chart lädt dessen News (Raster-Panels analog in renderGrid)
-  $('chartWrap').addEventListener('pointerdown', () => focusNews(st?.currentSymbol ?? ''), true);
-  $('chart2Area').addEventListener('pointerdown', () => focusNews(st?.chart2Symbol ?? ''), true);
-  // News-Overlay schließt bei Klick/Tipp irgendwo anders SOFORT (User-
-  // Feedback 26.07.) — nicht erst nach dem 4-s-Touch-Nachlauf
-  document.addEventListener('pointerdown', onGlobalTipClose, true);
   wireChartHeightDrag();
   document.addEventListener('keydown', onEscape);
 }
@@ -5234,21 +4926,8 @@ function wireChartHeightDrag(): void {
   });
 }
 
-/** Klick/Tipp außerhalb des News-Overlays schließt es sofort (26.07.). */
-function onGlobalTipClose(e: PointerEvent): void {
-  const tip = document.getElementById('evTip');
-  if (!tip || tip.hidden || tip.contains(e.target as Node)) return;
-  tip.hidden = true;
-  evTipOwner = null;
-  if (evTipTimer !== null) {
-    window.clearTimeout(evTipTimer);
-    evTipTimer = null;
-  }
-}
-
 function onEscape(e: KeyboardEvent): void {
   if (e.key !== 'Escape') return;
-  $('evTip').hidden = true;
   closeModal('detail');
   closeModal('picker');
   closeModal('options');
@@ -5263,7 +4942,6 @@ export function unmountDashboard(): void {
   exitAllMax(); // Portal-Elemente vom body zurück, bevor die App-Wurzel geleert wird
   clearSubs(st.subs);
   clearSubs(st.symbolSubs);
-  clearSubs(st.newsSubs);
   clearSubs(st.chart2Subs);
   clearSubs(st.watchlistSubs);
   for (const u of st.positionSubs.values()) u();
@@ -5280,6 +4958,5 @@ export function unmountDashboard(): void {
   st.chart2?.destroy();
   document.removeEventListener('keydown', onEscape);
   document.removeEventListener('keydown', onGlobalHotkey);
-  document.removeEventListener('pointerdown', onGlobalTipClose, true);
   st = null;
 }

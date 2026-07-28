@@ -19,7 +19,6 @@ export { evalForecasts, evalNow } from './scheduled/evalForecasts.js';
 export { snapshotEquity, snapshotNow } from './scheduled/snapshotEquity.js';
 export { autoTune, tuneNow } from './scheduled/autoTune.js';
 export { momentumRun, momentumNow } from './scheduled/momentumRun.js';
-export { tunerReview, tunerNow } from './scheduled/tunerReview.js';
 export { ensureProfile } from './callable/profile.js';
 export { saveStrategy } from './callable/strategy.js';
 export { saveStrategyDraft, publishStrategyVersion, assignStrategy, promoteStrategy, deleteStrategy } from './callable/strategies.js';

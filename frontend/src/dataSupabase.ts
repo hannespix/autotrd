@@ -150,7 +150,6 @@ export interface SymbolRow {
   quote_price: string | number | null;
   quote_change_pct: string | number | null;
   quote_updated_at: string | null;
-  sentiment: MarketDocData['sentiment'] | null;
   forecast: MarketDocData['forecast'];
   forecast_intraday: MarketDocData['forecastIntraday'];
 }
@@ -171,7 +170,6 @@ export function toMarketDoc(r: SymbolRow | null): MarketDocData | null {
   };
   if (r.name) out.name = r.name;
   if (r.asset_class) out.assetClass = r.asset_class;
-  if (r.sentiment) out.sentiment = r.sentiment;
   const price = num(r.quote_price);
   if (price !== null) {
     const quote: Quote = {
@@ -185,7 +183,7 @@ export function toMarketDoc(r: SymbolRow | null): MarketDocData | null {
 }
 
 const SYMBOL_COLS =
-  'symbol,name,asset_class,quote_price,quote_change_pct,quote_updated_at,sentiment,forecast,forecast_intraday';
+  'symbol,name,asset_class,quote_price,quote_change_pct,quote_updated_at,forecast,forecast_intraday';
 
 export function watchMarketDoc(
   symbol: string,

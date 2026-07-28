@@ -62,24 +62,27 @@ export const STRATEGY_PRESETS: StrategyPreset[] = [
     },
   },
   {
-    id: 'news-regeln',
-    name: 'News-Wächter',
+    id: 'momentum-relativ',
+    name: 'Relative Stärke',
     description:
-      'Handelt nur vormittags bei positiver Nachrichtenlage — und nie gegen Krisen-Schlagzeilen (not-Regel).',
+      'Kauft, was über fünf Tage deutlich gestiegen ist und Momentum bestätigt — außerhalb der teuren ersten Handelsminuten. Verkauft, sobald beides kippt.',
     spec: {
       buy: {
         type: 'all',
         children: [
-          { type: 'timeWindow', start: '09:30', end: '12:00' },
-          { type: 'sentiment', op: 'gte', value: 0.2 },
-          { type: 'not', child: { type: 'newsEvent', tags: ['lawsuit', 'recall', 'downgrade'] } },
+          // Erst ab 10:00 ET: In der Eröffnungsphase sind die Spreads am
+          // weitesten, und ein weiter Spread ist nichts anderes als eine
+          // Gebühr, die niemand ausweist.
+          { type: 'timeWindow', start: '10:00', end: '15:30' },
+          { type: 'changePct', lookbackBars: 5, op: 'gte', pct: 3 },
+          { type: 'crossover', fast: 'macdLine', slow: 'macdSignal', direction: 'above' },
         ],
       },
       sell: {
         type: 'any',
         children: [
-          { type: 'sentiment', op: 'lte', value: -0.3 },
-          { type: 'newsEvent', tags: ['lawsuit', 'recall', 'bankruptcy'] },
+          { type: 'changePct', lookbackBars: 5, op: 'lte', pct: -2 },
+          { type: 'not', child: { type: 'crossover', fast: 'macdLine', slow: 'macdSignal', direction: 'above' } },
         ],
       },
     },

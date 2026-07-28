@@ -27,7 +27,6 @@ import {
   type IntradayForecastDoc,
 } from '../../../shared/src/index.js';
 import type { IntradayBar } from './marketData.js';
-import { mergeGrids } from './tuner.js';
 
 export interface ForecastMeta {
   w: number;
@@ -40,17 +39,23 @@ export interface ForecastMeta {
 
 /**
  * Globale Tuning-Statistik (wie die Referenz: EIN Gitter über alle Symbole).
- * Das Shadow-Gitter = Basis-Gitter ∪ Tuner-Erweiterungen (hart geclampt in
- * mergeGrids) — die LIVE-Params bleiben rein empirische bestParams.
+ *
+ * Das Gitter ist seit 28.07. FEST. Vorher durfte ein täglicher KI-Review es
+ * erweitern — ein Claude-Aufruf pro Tag, dessen einziger Effekt war, dem
+ * Shadow-Logging weitere Kombis hinzuzufügen. Da die Prognose ohne
+ * nachgewiesene Trefferquote ohnehin nicht mitstimmt, kostete das Geld für
+ * mehr Rauschen. Die LIVE-Params bleiben, was sie immer waren: rein
+ * empirische bestParams aus realisierten Treffern.
  */
 export async function loadForecastMeta(): Promise<ForecastMeta> {
   const snap = await getFirestore().doc('meta/forecastStats').get();
   const combos = (snap.get('combos') as Record<string, ComboStat> | undefined) ?? {};
-  const tuning = snap.get('tuning') as
-    | { extraWeights?: number[]; extraLookbacks?: number[] }
-    | undefined;
-  const { weightGrid, lookbackGrid } = mergeGrids(WEIGHT_GRID, LOOKBACK_GRID, tuning);
-  return { ...bestParams(combos), weightGrid, lookbackGrid, combos };
+  return {
+    ...bestParams(combos),
+    weightGrid: [...WEIGHT_GRID],
+    lookbackGrid: [...LOOKBACK_GRID],
+    combos,
+  };
 }
 
 export interface LiveForecast extends ForecastComputation {

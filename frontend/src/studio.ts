@@ -26,7 +26,6 @@ import {
   type SweepResult,
   type SweepRow,
   loadBarsOnce,
-  loadEventsOnce,
   loadMarketQuotes,
   loadShadowSignals,
   loadStrategyPresets,
@@ -36,7 +35,7 @@ import {
   type BacktestRunDoc,
   type StrategyRow,
 } from './data.js';
-import { previewSignals, type PreviewBar, type PreviewDayInfo } from './preview.js';
+import { previewSignals, type PreviewBar } from './preview.js';
 import { iBtn, initInfoTips } from './infotips.js';
 import { esc } from './html.js';
 
@@ -56,17 +55,24 @@ interface EditorState {
   previewSymbol: string;
   /** Statuszeile — überlebt Rerenders (Publish/Save rendern neu). */
   msg: string;
-  barsCache: Map<string, { bars: PreviewBar[]; days: Map<string, PreviewDayInfo> }>;
+  barsCache: Map<string, { bars: PreviewBar[] }>;
 }
 
+/**
+ * Blatt-Typen, die der Builder ANBIETET.
+ *
+ * `sentiment` und `newsEvent` fehlen seit 28.07.: Kein Lauf füllt mehr die
+ * Felder, auf die sie zugreifen. Im Schema bleiben sie (gespeicherte
+ * Strategien müssen lesbar bleiben) und liefern beim Auswerten „unbekannt"
+ * — was kein Trade bedeutet. Sie hier weiter anzubieten hieße, eine Regel
+ * zu verkaufen, die nie feuert.
+ */
 const LEAF_TYPES = [
   'compare',
   'crossover',
   'priceLevel',
   'changePct',
   'timeWindow',
-  'sentiment',
-  'newsEvent',
   'forecast',
   'position',
 ] as const;
@@ -85,10 +91,6 @@ function defaultLeaf(type: (typeof LEAF_TYPES)[number]): RuleNode {
       return { type, lookbackBars: 5, op: 'gte', pct: 3 };
     case 'timeWindow':
       return { type, start: '09:30', end: '16:00' };
-    case 'sentiment':
-      return { type, op: 'gte', value: 0.2 };
-    case 'newsEvent':
-      return { type, tags: ['earnings'] };
     case 'forecast':
       return { type, direction: 'up', minAbsPct: 0.5 };
     case 'position':
@@ -409,8 +411,8 @@ async function renderEditor(root: HTMLElement, st: EditorState): Promise<void> {
     if (!cached) {
       chartBox.innerHTML = '<p class="hint">Lade Bars …</p>';
       try {
-        const [bars, days] = await Promise.all([loadBarsOnce(sym), loadEventsOnce(sym)]);
-        cached = { bars: bars.map((b) => ({ date: b.date, close: b.close })), days };
+        const bars = await loadBarsOnce(sym);
+        cached = { bars: bars.map((b) => ({ date: b.date, close: b.close })) };
         st.barsCache.set(sym, cached);
       } catch {
         chartBox.innerHTML = '<p class="error">Bars nicht lesbar (Symbol unbekannt?)</p>';
@@ -422,7 +424,7 @@ async function renderEditor(root: HTMLElement, st: EditorState): Promise<void> {
       chartBox.innerHTML = `<p class="error">Spec ungültig: ${esc(probs[0]!)}</p>`;
       return;
     }
-    const res = previewSignals(st.spec, cached.bars, cached.days);
+    const res = previewSignals(st.spec, cached.bars);
     chartBox.innerHTML =
       svgPreview(cached.bars, res) +
       `<p class="hint mono">${res.markers.filter((m) => m.dir === 'buy').length} Käufe · ${res.markers.filter((m) => m.dir === 'sell').length} Verkäufe · ${res.evaluatedBars} Bars ausgewertet</p>`;
