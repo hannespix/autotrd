@@ -10,6 +10,7 @@
 import type { Strategy } from './strategy.js';
 import { MAX_OPEN_POSITIONS_CAP } from './strategy.js';
 import { MAX_LEVERAGE } from './margin.js';
+import { MAX_RISK_PER_TRADE_PCT } from './riskSizing.js';
 
 /** Bekannte Schlüssel der kaputten Alt-Struktur — hart verboten. */
 const LEGACY_KEYS = ['strategy', 'indices', 'risk_management', 'execution'] as const;
@@ -119,6 +120,15 @@ export function validateStrategy(value: unknown): string[] {
         || engine.maxOpenPositions > MAX_OPEN_POSITIONS_CAP)) {
       problems.push(`engine.maxOpenPositions muss zwischen 1 und ${MAX_OPEN_POSITIONS_CAP} liegen`);
     }
+    if (engine.riskPerTradePct !== undefined
+      && (!isFiniteNumber(engine.riskPerTradePct)
+        || engine.riskPerTradePct < 0
+        || engine.riskPerTradePct > MAX_RISK_PER_TRADE_PCT)) {
+      problems.push(`engine.riskPerTradePct muss zwischen 0 und ${MAX_RISK_PER_TRADE_PCT} liegen (0 = aus)`);
+    }
+    if (engine.mode !== undefined && engine.mode !== 'confluence' && engine.mode !== 'momentum') {
+      problems.push("engine.mode muss 'confluence' oder 'momentum' sein");
+    }
     if (engine.byClass !== undefined) {
       if (!isRecord(engine.byClass)) {
         problems.push('engine.byClass muss ein Objekt sein');
@@ -181,6 +191,14 @@ export function validateStrategy(value: unknown): string[] {
     }
     if (signals.allowShort !== undefined && typeof signals.allowShort !== 'boolean') {
       problems.push('signals.allowShort muss boolean sein');
+    }
+    // 0 = Kostenschwelle aus. Nach oben gedeckelt, weil ein Tippfehler ("30")
+    // sonst jeden Einstieg blockierte und die Engine still stillstünde.
+    if (signals.minEdgeMultiple !== undefined
+      && (!isFiniteNumber(signals.minEdgeMultiple)
+        || signals.minEdgeMultiple < 0
+        || signals.minEdgeMultiple > 10)) {
+      problems.push('signals.minEdgeMultiple muss zwischen 0 und 10 liegen (0 = aus)');
     }
   }
 

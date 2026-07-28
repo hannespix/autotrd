@@ -7,6 +7,8 @@
  * Alt-Variante). Frontend UND Functions importieren von hier.
  */
 
+import { MIN_EDGE_MULTIPLE } from './costGate.js';
+
 // ── Strategie (users/{uid}.settings.strategy) ────────────────────────────────
 
 export interface BrokerConfig {
@@ -88,9 +90,37 @@ export interface EngineConfig extends RiskConfig {
    * Gleichzeitig offene Positionen (Owner-Frage 28.07.: „kann man die Anzahl
    * der maximal aktiven Trades irgendwo einstellen? habe es nicht in den
    * Optionen gefunden"). Konnte man nicht — der Wert stand fest im Code.
-   * Fehlend = 10 (bisheriges Verhalten); die Hülle klemmt auf 1–50.
+   * Fehlend = 10 (bisheriges Verhalten); die Hülle klemmt auf 1–30.
    */
   maxOpenPositions?: number;
+  /**
+   * Welche Maschine dieses Wallet handelt (Hantel-Umbau 28.07.).
+   *
+   * 'confluence' (Default, bisheriges Verhalten): der 5-Minuten-Scan aus
+   * RSI/MACD/Bollinger + Prognose bzw. der Regelbaum.
+   *
+   * 'momentum': Cross-Sectional Momentum über den ganzen handelbaren
+   * Katalog — Top 8 gleichgewichtet, WÖCHENTLICH umgeschichtet, mit
+   * SMA200-Marktfilter. Der Scan lässt dieses Wallet dann komplett in Ruhe.
+   *
+   * Warum es ein Entweder-oder ist und kein Nebeneinander: Zwei Maschinen
+   * auf einem Wallet würden sich gegenseitig die Positionen wegverkaufen —
+   * der Scan sähe eine Momentum-Position ohne Signal und schlösse sie.
+   * Die gemischte Aufteilung (Hantel) braucht eine Besitzkennzeichnung je
+   * Position und kommt getrennt.
+   */
+  mode?: 'confluence' | 'momentum';
+  /**
+   * Anteil des Eigenkapitals, der bei einem ausgelösten Stop verloren gehen
+   * darf, in % (0 = aus, dann gilt die klassische Prozent-Tranche).
+   *
+   * Schaltet die Positionsgröße von „10 % des Depots" auf „gleicher
+   * Risikobeitrag je Position" um: Ein ruhiger Titel bekommt dann eine
+   * größere Tranche als ein volatiler, und beide verlieren im Stop-Fall
+   * denselben Betrag. `maxPositionPct` bleibt als harte Obergrenze stehen.
+   * Typisch 0,5 bis 1. Siehe riskSizing.ts.
+   */
+  riskPerTradePct?: number;
   /**
    * Risiko-Overrides je Asset-Klasse (Katalog-Schlüssel aus universe.ts:
    * crypto, indices, stocks_us, …). Fehlende Felder erben von oben.
@@ -168,6 +198,16 @@ export interface SignalsConfig {
    * im Paper-Trading begrenzen Stop-Loss und die 25-%-Notbremse real.
    */
   allowShort?: boolean;
+  /**
+   * Wie viel die erwartete Bewegung über den Handelskosten liegen muss
+   * (Befund 28.07.). Fehlend = MIN_EDGE_MULTIPLE (3); 0 schaltet die
+   * Kostenschwelle ab.
+   *
+   * Der Grund steht in costGate.ts: Über 297 Live-Trades waren die Gebühren
+   * das 2,7-Fache des Brutto-Ergebnisses. Wir haben um Beträge gehandelt,
+   * die in der Größenordnung der Reibung lagen.
+   */
+  minEdgeMultiple?: number;
 }
 
 export interface Strategy {
@@ -236,6 +276,7 @@ export const DEFAULT_STRATEGY: Strategy = {
     cooldownMin: 60,
     minHoldMin: 60,
     maxOpenPositions: 10,
+    mode: 'confluence', // Momentum ist Opt-in — siehe EngineConfig.mode
     // Volatilitäts-Realismus (MA6): Krypto und Rohstoffe brauchen weitere
     // Stops, sonst ist jeder normale Tagesausschlag ein Zwangsverkauf.
     // Werte grob an typischen Tagesranges orientiert; per UI änderbar.
@@ -266,6 +307,7 @@ export const DEFAULT_STRATEGY: Strategy = {
     forecastSolo: false, // Prognose braucht eine zweite Stimme zum Einstieg
     timeframe: 'intraday', // 5-min-Signale: die Engine handelt im Scan-Takt
     allowShort: false, // Leerverkäufe bewusst Opt-in (Options-Modal + ⓘ)
+    minEdgeMultiple: MIN_EDGE_MULTIPLE, // Kostenschwelle AN (Befund 28.07.)
   },
 };
 

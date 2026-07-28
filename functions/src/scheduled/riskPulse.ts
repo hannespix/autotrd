@@ -240,9 +240,16 @@ export async function runPulse(now = new Date()): Promise<PulseResult> {
         // der ATR-Stop bleibt Sache des 5-min-Scans.
         // Der Margin-Call sticht jeden Stop: Er fragt nicht, wie diese eine
         // Position steht, sondern ob das Konto sie sich noch leisten kann.
-        const reason =
-          zwangsschluss.has(pos.symbol)
-            ? 'margin_call'
+        //
+        // Im Momentum-Modus ist er das EINZIGE, was hier greift. Diese
+        // Strategie hält bewusst ohne Stops durch Rücksetzer hindurch — ein
+        // Prozent-Stop würde sie an genau den Bewegungen ausstoppen, über
+        // die hinweg sie ihre Rendite verdient. Der Margin-Call bleibt, weil
+        // er keine Strategie-Entscheidung ist, sondern eine Solvenzgrenze.
+        const reason = zwangsschluss.has(pos.symbol)
+          ? 'margin_call'
+          : clamped.engine.mode === 'momentum'
+            ? null
             : riskExitReason(pos, preis, {
                 risk: resolveRisk(clamped.engine, cls),
                 now,

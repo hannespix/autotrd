@@ -7,10 +7,13 @@
 import {
   CLASS_LABELS,
   DEFAULT_MAX_OPEN_POSITIONS,
+  DEFAULT_RISK_PER_TRADE_PCT,
   DEFAULT_STRATEGY,
   EVIDENCE_DEFAULTS,
   MAX_LEVERAGE,
   MAX_OPEN_POSITIONS_CAP,
+  MAX_RISK_PER_TRADE_PCT,
+  MIN_EDGE_MULTIPLE,
   PAPER_FEE_RATE,
   aggregateBars,
   bollinger,
@@ -888,6 +891,8 @@ function layout(email: string): string {
           <input id="owCap" class="inp st-num" type="number" min="100" step="500" /></label>
         <label>Investment je Trade %
           <input id="owMax" class="inp st-num" type="number" min="1" max="100" step="1" /></label>
+        <label>Risiko je Trade % ${iBtn('riskPerTrade')}
+          <input id="owRisk" class="inp st-num" type="number" min="0" max="5" step="0.25" /></label>
         <label>Max. gleichzeitige Positionen ${iBtn('maxOpenPositions')}
           <input id="owMaxPos" class="inp st-num" type="number" min="1" max="${MAX_OPEN_POSITIONS_CAP}" step="1" /></label>
         <label>Sizing-Basis ${iBtn('sizingBase')}
@@ -913,6 +918,11 @@ function layout(email: string): string {
           <input id="owAtrS" class="inp st-num" type="number" min="0" step="0.5" /></label>
         <label>ATR-Ziel (×ATR) ${iBtn('atrTake')}
           <input id="owAtrT" class="inp st-num" type="number" min="0" step="0.5" /></label>
+        <label>Handels-Modus ${iBtn('engineMode')}
+          <select id="owMode" class="inp st-num">
+            <option value="confluence">Konfluenz (5-Min-Signale)</option>
+            <option value="momentum">Momentum (wöchentlich)</option>
+          </select></label>
         <label>Signal-Zeitrahmen ${iBtn('signalTimeframe')}
           <select id="owTf" class="inp st-num">
             <option value="intraday">5-Minuten (aktiv)</option>
@@ -924,6 +934,8 @@ function layout(email: string): string {
           <input id="owMinC" class="inp st-num" type="number" min="1" max="6" step="1" /></label>
         <label>Konfluenz Ausstieg ${iBtn('exitConfluence')}
           <input id="owExitC" class="inp st-num" type="number" min="1" max="6" step="1" /></label>
+        <label>Kostenschwelle (× Gebühren) ${iBtn('minEdgeMultiple')}
+          <input id="owEdge" class="inp st-num" type="number" min="0" max="10" step="0.5" /></label>
         <label class="opt-row" style="align-items:center">
           <input type="checkbox" id="owFcSolo" />
           <span>Prognose darf allein entscheiden ${iBtn('forecastSolo')}</span></label>
@@ -1646,6 +1658,8 @@ function openOptions(): void {
   ($('owCap') as HTMLInputElement).value = String(st.strategy.broker.initialCapital);
   ($('owSizing') as HTMLSelectElement).value = st.strategy.broker.sizingBase ?? 'balance';
   ($('owMax') as HTMLInputElement).value = String(st.strategy.engine.maxPositionPct);
+  ($('owRisk') as HTMLInputElement).value = String(
+    st.strategy.engine.riskPerTradePct ?? DEFAULT_RISK_PER_TRADE_PCT);
   ($('owMaxPos') as HTMLInputElement).value = String(
     st.strategy.engine.maxOpenPositions ?? DEFAULT_MAX_OPEN_POSITIONS);
   ($('owLev') as HTMLSelectElement).value = String(
@@ -1656,11 +1670,14 @@ function openOptions(): void {
   ($('owHold') as HTMLInputElement).value = String(st.strategy.engine.maxHoldDays ?? 0);
   ($('owAtrS') as HTMLInputElement).value = String(st.strategy.engine.atrStopMult ?? 0);
   ($('owAtrT') as HTMLInputElement).value = String(st.strategy.engine.atrTakeMult ?? 0);
+  ($('owMode') as HTMLSelectElement).value = st.strategy.engine.mode ?? 'confluence';
   ($('owTf') as HTMLSelectElement).value = st.strategy.signals.timeframe ?? 'intraday';
   ($('owCd') as HTMLInputElement).value = String(st.strategy.engine.cooldownMin ?? 15);
   ($('owMinC') as HTMLInputElement).value = String(st.strategy.signals.minConfluence);
   ($('owExitC') as HTMLInputElement).value = String(
     st.strategy.signals.exitConfluence ?? Math.max(1, st.strategy.signals.minConfluence - 1));
+  ($('owEdge') as HTMLInputElement).value = String(
+    st.strategy.signals.minEdgeMultiple ?? MIN_EDGE_MULTIPLE);
   ($('owFcSolo') as HTMLInputElement).checked = st.strategy.signals.forecastSolo === true;
   ($('owShort') as HTMLInputElement).checked = st.strategy.signals.allowShort === true;
   // Klassen-Profile transparent machen: Sie überschreiben die Werte oben je
@@ -5075,6 +5092,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       engine: {
         ...st.strategy.engine,
         maxPositionPct: num('owMax'),
+        mode: ($('owMode') as HTMLSelectElement).value === 'momentum' ? 'momentum' : 'confluence',
+        riskPerTradePct: Math.min(MAX_RISK_PER_TRADE_PCT, Math.max(0, num('owRisk'))),
         maxOpenPositions: Math.min(
           MAX_OPEN_POSITIONS_CAP,
           Math.max(1, num('owMaxPos') || DEFAULT_MAX_OPEN_POSITIONS)),
@@ -5090,6 +5109,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         ...st.strategy.signals,
         minConfluence: Math.max(1, num('owMinC')),
         exitConfluence: Math.max(1, num('owExitC')),
+        minEdgeMultiple: Math.min(10, Math.max(0, num('owEdge'))),
         forecastSolo: ($('owFcSolo') as HTMLInputElement).checked,
         timeframe: ($('owTf') as HTMLSelectElement).value === 'daily' ? 'daily' : 'intraday',
         allowShort: ($('owShort') as HTMLInputElement).checked,

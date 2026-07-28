@@ -21,7 +21,12 @@ import {
   DEFAULT_STRATEGY,
   allSymbols,
   classify,
+  clusterHasRoom,
+  costGate,
   effectiveLeverage,
+  feeRateForClass,
+  isTradable,
+  stopDistancePct,
   isStrategy,
   marginState,
   marketOpenForClass,
@@ -147,9 +152,22 @@ export function signalCloses(data: SymbolData, timeframe: 'daily' | 'intraday'):
  * weiteren Fetches) und Paper-Trades transaktional ausgeführt; danach
  * Stop-Loss/Take-Profit über die offenen Positionen.
  */
-async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<number> {
+/** Warum Einstiege abgelehnt wurden — landet im Heartbeat (Befund 28.07.). */
+export interface EntryBlocks {
+  nicht_handelbar: number;
+  cluster_voll: number;
+  unter_kosten: number;
+}
+
+async function executeUserTrades(
+  marketData: Map<string, SymbolData>,
+): Promise<{ executed: number; blocks: EntryBlocks }> {
   const db = getFirestore();
   let executed = 0;
+  // Ein abgelehnter Einstieg ist ein Nicht-Ereignis und damit unsichtbar.
+  // Genau deshalb wird er gezählt: Ein Filter, der zu scharf steht und ALLES
+  // blockt, sähe im Log exakt aus wie ein ruhiger Markt.
+  const gesperrt: EntryBlocks = { nicht_handelbar: 0, cluster_voll: 0, unter_kosten: 0 };
   const users = await db
     .collection('users')
     .where('settings.strategy.engine.running', '==', true)
@@ -202,6 +220,13 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
     // (Bestandskonto) als freigeschaltet gilt und Firestore darauf nicht
     // filtern kann.
     if (!mayTrade(userDoc.data())) continue;
+    // Momentum-Wallets gehören momentumRun (Hantel-Umbau 28.07.). Der Scan
+    // fasst sie NICHT an — weder Einstieg noch Ausstieg. Täte er es, sähe er
+    // eine Momentum-Position ohne Konfluenz-Signal und schlösse sie beim
+    // nächsten Lauf; die Wochenstrategie käme nie über einen Tag hinaus.
+    // Der Margin-Call im 1-Minuten-Puls greift weiter, denn er ist eine
+    // Solvenzgrenze und keine Strategie-Entscheidung.
+    if (strategy.engine.mode === 'momentum') continue;
 
     try {
       const positionsSnap = await userDoc.ref.collection('positions').get();
@@ -351,6 +376,47 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
           leverage: eff,
         };
       };
+
+      /**
+       * Die drei Einstiegs-Filter aus der Live-Auswertung vom 28.07.
+       *
+       * Sie hängen zusammen und stehen deshalb an EINER Stelle: Jeder Pfad
+       * (Konfluenz, Regelbaum, Long, Short) muss dieselbe Antwort bekommen.
+       * Vier Kopien derselben Regel wären vier Gelegenheiten, eine davon zu
+       * vergessen — und ein Filter, der nur in drei von vier Pfaden greift,
+       * sieht in der Auswertung aus wie ein Filter, der nicht wirkt.
+       *
+       * Ausstiege durchlaufen das hier NIE. Eine offene Position muss
+       * geschlossen werden können, auch wenn ihr Symbol inzwischen als nicht
+       * handelbar gilt oder ihr Block voll ist.
+       */
+      const entrySperre = (
+        symbol: string,
+        atrPct: number | null | undefined,
+        offen: readonly string[],
+      ): 'nicht_handelbar' | 'cluster_voll' | 'unter_kosten' | null => {
+        if (!isTradable(symbol)) return 'nicht_handelbar';
+        if (!clusterHasRoom(offen, symbol)) return 'cluster_voll';
+        const gate = costGate({
+          atrPct,
+          minHoldMin: clamped.engine.minHoldMin,
+          timeframe: tf,
+          feeRate: feeRateForClass(classify(symbol)),
+          ...(typeof clamped.signals.minEdgeMultiple === 'number'
+            ? { multiple: clamped.signals.minEdgeMultiple }
+            : {}),
+        });
+        return gate.ok ? null : 'unter_kosten';
+      };
+
+      /**
+       * Stop-Abstand dieses Symbols in % — Basis des Risiko-Sizings.
+       * Klassen-aufgelöst und mit derselben Vorrangregel wie der spätere
+       * Ausstieg (ATR schlägt Prozent), damit Dimensionierung und Stop
+       * dieselbe Zahl benutzen.
+       */
+      const stopAbstand = (symbol: string, atrPct: number | null | undefined): number =>
+        stopDistancePct(resolveRisk(clamped.engine, classify(symbol)), atrPct);
 
       // 2) Regelbaum-Strategien (M10): publizierte Strategien mit Zuordnung
       // handeln ihre Symbole SELBST — der Classic-Pfad überspringt sie.
@@ -503,6 +569,11 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
               } else if (dir === 'buy' && !book.positions[symbol]) {
                 if (Object.keys(book.positions).length >= posLimit) continue;
                 if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
+                // Dieselben Filter wie im echten Buch — sonst wäre das
+                // A/B-Duell verzerrt: Der Schatten dürfte Trades machen, die
+                // dem echten Konto verboten sind, und gewönne aus dem
+                // falschen Grund.
+                if (entrySperre(symbol, data.atrPct, Object.keys(book.positions))) continue;
                 // Sizing-Parität (MA4): gleiche Basis wie der echte Broker —
                 // Cash (Default) oder Startkapital, Deckung prüft der Cash.
                 const r = shadowTrade(book, symbol, 'buy', data.price, clamped.engine.maxPositionPct, {
@@ -529,6 +600,7 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
                 // Shadow-Short (R2): gleiche Entry-Guards wie der echte Pfad
                 if (Object.keys(book.positions).length >= posLimit) continue;
                 if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
+                if (entrySperre(symbol, data.atrPct, Object.keys(book.positions))) continue;
                 const r = shadowTrade(book, symbol, 'sell', data.price, clamped.engine.maxPositionPct, {
                   capital: sizingCapital(),
                   now,
@@ -564,12 +636,24 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
             if (positions.size >= posLimit) continue;
             if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
             if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
+            {
+              const sp = entrySperre(symbol, data.atrPct, [...positions.keys()]);
+              if (sp) { gesperrt[sp] += 1; continue; }
+            }
             // assetClass durchreichen (MA3-Fund 26.07.): Ohne sie schrieb der
             // Broker die Stop/Take-LEVEL mit den GLOBALEN Prozenten fest —
             // die MA6-Klassen-Profile (Krypto 6/10 usw.) griffen beim Kauf
             // nie, und gespeicherte Level haben bewusst Vorrang (MA1).
             const r = await executePaperTrade(
-              { uid, symbol, side: 'buy', price: data.price, source: 'engine', assetClass: classify(symbol) },
+              {
+                uid,
+                symbol,
+                side: 'buy',
+                price: data.price,
+                source: 'engine',
+                assetClass: classify(symbol),
+                stopDistancePct: stopAbstand(symbol, data.atrPct),
+              },
               clamped,
             );
             if (r.executed) {
@@ -613,8 +697,21 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
             if (positions.size >= posLimit) continue;
             if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
             if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
+            {
+              const sp = entrySperre(symbol, data.atrPct, [...positions.keys()]);
+              if (sp) { gesperrt[sp] += 1; continue; }
+            }
             const r = await executePaperTrade(
-              { uid, symbol, side: 'sell', price: data.price, source: 'engine', assetClass: classify(symbol), openShort: true },
+              {
+                uid,
+                symbol,
+                side: 'sell',
+                price: data.price,
+                source: 'engine',
+                assetClass: classify(symbol),
+                openShort: true,
+                stopDistancePct: stopAbstand(symbol, data.atrPct),
+              },
               clamped,
             );
             if (r.executed) {
@@ -715,6 +812,8 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
           // einem Risk-Exit hält der Cooldown den Sofort-Rückkauf auf.
           if (positions.size >= posLimit) continue;
           if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
+          const sperre = entrySperre(symbol, data.atrPct, [...positions.keys()]);
+          if (sperre) { gesperrt[sperre] += 1; continue; }
           const budget = hebelBudget(konfluenz);
           const r = await executePaperTrade(
             {
@@ -724,6 +823,7 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
               price: data.price,
               source: 'engine',
               assetClass: classify(symbol),
+              stopDistancePct: stopAbstand(symbol, data.atrPct),
               ...(budget ? { margin: budget } : {}),
             },
             clamped,
@@ -766,6 +866,8 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
           // Cooldown), gleiche Risiko-Hülle, Level gespiegelt im Broker.
           if (positions.size >= posLimit) continue;
           if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
+          const sperre = entrySperre(symbol, data.atrPct, [...positions.keys()]);
+          if (sperre) { gesperrt[sperre] += 1; continue; }
           const budget = hebelBudget(konfluenz);
           const r = await executePaperTrade(
             {
@@ -776,6 +878,7 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
               source: 'engine',
               assetClass: classify(symbol),
               openShort: true,
+              stopDistancePct: stopAbstand(symbol, data.atrPct),
               ...(budget ? { margin: budget } : {}),
             },
             clamped,
@@ -837,7 +940,7 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
       logger.error(`Auto-Trading-Fehler für ${uid}`, err);
     }
   }
-  return executed;
+  return { executed, blocks: gesperrt };
 }
 
 /** Obergrenze des zentralen Scan-Sets (Kosten-Guard). */
@@ -903,7 +1006,18 @@ export function selectScanSymbols(args: {
   for (const gruppe of [args.ranking, args.defaults, args.catalog ?? []]) {
     for (const sym of gruppe) {
       if (set.size >= args.max) break;
-      if (sym && offen(sym)) set.add(sym);
+      // NICHT handelbare Symbole fliegen aus der Tiefenanalyse (Befund
+      // 28.07.): Am 28.07. waren 25 der 40 tief analysierten Symbole
+      // Aktienindizes, die kein Broker verkauft. Wir haben also Indikatoren,
+      // Prognosen und Intraday-Kerzen für Dinge gerechnet, die niemals eine
+      // Position werden können — und die 40 Plätze denen weggenommen, die es
+      // könnten. Beobachtet werden sie weiterhin (Katalog-Versorgung, Charts,
+      // Marktfilter); nur die teure Tiefe bekommen sie nicht mehr.
+      //
+      // Offene Positionen sind oben schon drin und bleiben es — auch wenn
+      // ein Symbol nachträglich als nicht handelbar gilt. Eine Position ohne
+      // frische Daten verlöre ihren Stop-Loss.
+      if (sym && isTradable(sym) && offen(sym)) set.add(sym);
     }
   }
   return [...set];
@@ -1300,9 +1414,12 @@ export async function runScan(force = false): Promise<ScanResult> {
   // Geguarded: Ein Fehler hier darf den Heartbeat nicht verhindern — sonst
   // bleibt meta/health stehen und die Ursache ist ohne GCP-Konsole unsichtbar.
   let trades = 0;
+  let entryBlocks: EntryBlocks = { nicht_handelbar: 0, cluster_voll: 0, unter_kosten: 0 };
   let lastError: string | null = null;
   try {
-    trades = await executeUserTrades(marketData);
+    const res = await executeUserTrades(marketData);
+    trades = res.executed;
+    entryBlocks = res.blocks;
   } catch (err) {
     lastError = `trades: ${err instanceof Error ? err.message : String(err)}`.slice(0, 400);
     logger.error('Trade-Block fehlgeschlagen', err);
@@ -1365,6 +1482,12 @@ export async function runScan(force = false): Promise<ScanResult> {
         intradayScored,
         intradayEval,
         trades,
+        // Warum Einstiege NICHT stattfanden (Befund 28.07.). Ohne diese Zahl
+        // wäre der Effekt der neuen Filter nicht messbar: Ein Scan ohne
+        // Trades sieht mit und ohne Filter identisch aus. Steht hier über
+        // Tage `unter_kosten` sehr hoch und `trades` bei null, ist die
+        // Schwelle zu scharf und gehört gesenkt — das ist der Regelkreis.
+        entryBlocks,
         // Katalog-Beobachtung (Owner-Frage 28.07. „alles immer parallel"):
         // `catalogQuotes` = in DIESEM Scan frisch bekurste Katalog-Symbole,
         // `catalogOpen` = wie viele überhaupt einen offenen Markt hatten.

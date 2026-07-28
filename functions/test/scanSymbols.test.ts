@@ -130,4 +130,41 @@ describe('selectScanSymbols: Marktzeit', () => {
   it('ohne isOpen bleibt alles wie vorher — Marktzeit ist opt-in', () => {
     expect(auswahl({ ranking: ['AAPL', 'BTC-USD'] })).toEqual(['AAPL', 'BTC-USD']);
   });
+
+  /* ── Handelbarkeit (Befund 28.07.) ──────────────────────────────────── */
+
+  it('nicht handelbare Symbole kommen NICHT in die Tiefenanalyse', () => {
+    // Am 28.07. waren 25 der 40 tief analysierten Symbole Aktienindizes, die
+    // kein Broker verkauft. Wir haben Indikatoren, Prognosen und
+    // Intraday-Kerzen für Dinge gerechnet, die nie eine Position werden
+    // können — und ihnen die Plätze derer weggenommen, die es könnten.
+    const out = auswahl({
+      ranking: ['^GSPC', 'AAPL', '^N225', 'BTC-USD', 'EURUSD=X', 'GC=F'],
+      max: 10,
+    });
+    expect(out).toEqual(['AAPL', 'BTC-USD']);
+  });
+
+  it('der Katalog-Boden filtert genauso', () => {
+    const out = auswahl({ catalog: ['^DJI', '^FTSE', 'SPY'], max: 10 });
+    expect(out).toEqual(['SPY']);
+  });
+
+  it('offene Positionen bleiben AUCH bei fehlender Handelbarkeit drin', () => {
+    // Sonst verlöre eine Altbestands-Position ihren Stop-Loss — und zwar
+    // still. Geschlossen werden muss sie in jedem Fall können.
+    const out = auswahl({ positions: ['^GSPC'], ranking: ['AAPL'] });
+    expect(out).toContain('^GSPC');
+  });
+
+  it('der Deckel zählt nur, was auch wirklich aufgenommen wurde', () => {
+    // Regressionsschutz: Würde der Filter NACH dem Zählen greifen, käme ein
+    // halb leeres Scan-Set heraus — der Scan liefe dann mit 3 statt 10
+    // Symbolen, ohne dass irgendetwas fehlschlägt.
+    const out = auswahl({
+      ranking: ['^GSPC', '^DJI', '^N225', '^FTSE', '^HSI', 'AAPL', 'MSFT', 'NVDA'],
+      max: 3,
+    });
+    expect(out).toEqual(['AAPL', 'MSFT', 'NVDA']);
+  });
 });

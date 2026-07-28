@@ -14,3 +14,5 @@ export * from './tradeAnalytics.js';
 export * from './globalLearning.js';
 export * from './tradingHealth.js';
 export * from './margin.js';
+export * from './costGate.js';
+export * from './riskSizing.js';

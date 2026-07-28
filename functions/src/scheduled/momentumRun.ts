@@ -40,6 +40,8 @@ import {
   classify,
   emptyMomentumBook,
   feeRateForClass,
+  isStrategy,
+  isTradable,
   istRebalanceFaellig,
   marketFilterPasses,
   momentumEquity,
@@ -47,8 +49,14 @@ import {
   rebalanceOrders,
   targetPortfolio,
   type MomentumBook,
+  type Position,
   type RankedSymbol,
+  type Strategy,
+  type TargetPosition,
 } from '../../../shared/src/index.js';
+import { executePaperTrade, resolveBrokerMode } from '../core/broker.js';
+import { mayTrade } from '../core/access.js';
+import { clampStrategyRisk } from '../core/rulesTrading.js';
 import { getDeepDailyBars, getSparkDailyCloses, chunkBarsByYear } from '../core/marketData.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 
@@ -95,6 +103,10 @@ export interface MomentumRunResult {
   orders: number;
   equity: number;
   backfilled: number;
+  /** Echte Paper-Wallets im Momentum-Modus, die rebalanciert wurden. */
+  echteKonten: number;
+  /** Dort tatsächlich ausgeführte Orders. */
+  echteOrders: number;
 }
 
 export async function runMomentum(now = new Date()): Promise<MomentumRunResult> {
@@ -167,8 +179,15 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
   }
 
   // ── 3. Ranking + Marktfilter ──────────────────────────────────────────────
-  const ranked: RankedSymbol[] = rankMomentum(closesMap);
+  // Bewertet wird der GANZE Katalog, gekauft nur, was es zu kaufen gibt
+  // (Befund 28.07.): Ohne diesen Filter landeten ^N225 und ^GSPC im
+  // Zielportfolio — Zahlen, die kein Broker verkauft. Das Ranking selbst
+  // bleibt vollständig, weil es als Marktbild wertvoll ist.
+  const rankedAlle: RankedSymbol[] = rankMomentum(closesMap);
+  const ranked = rankedAlle.filter((r) => isTradable(r.symbol));
   const indexCloses = closesMap.get(MARKET_INDEX) ?? (await ladeCloses(MARKET_INDEX));
+  // Der Marktfilter läuft bewusst über den nicht handelbaren ^GSPC: Als
+  // SIGNAL ist er das breiteste verfügbare US-Bild, gekauft wird er nie.
   const marktOffen = marketFilterPasses(indexCloses);
   const ziel = targetPortfolio(ranked, marktOffen, MOMENTUM_TOP_N);
 
@@ -212,6 +231,9 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
 
   const equity = momentumEquity(book, preise);
 
+  // ── 5. Echte Wallets im Momentum-Modus ────────────────────────────────────
+  const echte = await rebalanceMomentumUsers(ziel, preise, now);
+
   // Tages-Protokoll: Ranking-Spitze, Filter-Zustand, Depotwert. Das ist die
   // Datengrundlage, aus der sich später beurteilen lässt, ob die Strategie
   // die laufende schlägt — und der einzige Weg, das ohne echtes Geld zu tun.
@@ -230,6 +252,10 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
       rebalanced: faellig,
       backfilled,
       fehlendeHistorie: Math.max(0, katalog.length - closesMap.size),
+      // Echte Konten im Momentum-Modus — getrennt vom Schattendepot, damit
+      // sichtbar bleibt, ob überhaupt jemand die Strategie scharf hat.
+      echteKonten: echte.konten,
+      echteOrders: echte.orders,
     },
     { merge: true },
   );
@@ -239,7 +265,138 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
       `${faellig ? `${orders.length} Order(s)` : 'kein Rebalancing'}, Equity ${equity}`,
   );
 
-  return { ranked: ranked.length, marktOffen, rebalanced: faellig, orders: orders.length, equity, backfilled };
+  return {
+    ranked: ranked.length,
+    marktOffen,
+    rebalanced: faellig,
+    orders: orders.length,
+    equity,
+    backfilled,
+    echteKonten: echte.konten,
+    echteOrders: echte.orders,
+  };
+}
+
+/**
+ * Wöchentliches Rebalancing der ECHTEN Paper-Wallets im Momentum-Modus.
+ *
+ * ── Warum das die ruhige Schicht ist ──────────────────────────────────────
+ *
+ * Die Konfluenz-Engine hat über 297 Live-Trades 1 774 $ Gebühren erzeugt —
+ * das 2,7-Fache ihres Brutto-Ergebnisses. Diese Strategie handelt EINMAL DIE
+ * WOCHE und rührt bestehende Zielpositionen nicht an: typisch 0 bis 3 Orders
+ * je Konto und Woche statt Dutzender am Tag. Die Reibung fällt damit von der
+ * dominierenden Größe auf eine Randnotiz.
+ *
+ * ── Was hier bewusst FEHLT: Stop-Loss ─────────────────────────────────────
+ *
+ * Momentum-Positionen bekommen keine Stops, und das ist keine Nachlässigkeit.
+ * Die Strategie lebt davon, Gewinner laufen zu lassen und Verlierer beim
+ * nächsten Rebalancing aus der Rangliste fallen zu sehen. Ein enger Stop
+ * würde sie systematisch an genau den Rücksetzern ausstoppen, über die
+ * hinweg sie ihre Rendite verdient — er machte aus der Strategie eine
+ * andere, schlechtere.
+ *
+ * Was bleibt: der SMA200-Marktfilter (in einem Abwärtsmarkt ist das
+ * Zielportfolio leer, das Konto geht in Cash) und der Margin-Call im
+ * 1-Minuten-Puls. Der ist kein Strategie-Stop, sondern eine Solvenzgrenze.
+ *
+ * ── Warum die Kaufreihenfolge zählt ───────────────────────────────────────
+ *
+ * `rebalanceOrders` liefert Verkäufe zuerst, und die Schleife hält diese
+ * Reihenfolge ein: Erst das Cash freimachen, dann kaufen. Andersherum
+ * scheiterten die Käufe an `zu_wenig_cash`, obwohl das Geld eine Zeile
+ * später da gewesen wäre — ein Fehler, der nur bei vollem Depot auftritt
+ * und deshalb im Test leicht durchrutscht.
+ */
+async function rebalanceMomentumUsers(
+  ziel: TargetPosition[],
+  preise: ReadonlyMap<string, number>,
+  now: Date,
+): Promise<{ konten: number; orders: number }> {
+  const db = getFirestore();
+  const users = await db
+    .collection('users')
+    .where('settings.strategy.engine.mode', '==', 'momentum')
+    .get();
+
+  let konten = 0;
+  let orderSumme = 0;
+
+  for (const userDoc of users.docs) {
+    try {
+      const roh = userDoc.get('settings.strategy') as Strategy | undefined;
+      if (!roh || !isStrategy(roh)) continue;
+      if (roh.engine.running !== true) continue;
+      // Dieselben Tore wie im Scan: Echtgeld bleibt verriegelt, nicht
+      // freigeschaltete Konten handeln nicht.
+      if (resolveBrokerMode(roh) !== 'paper') continue;
+      if (!mayTrade(userDoc.data())) continue;
+      const clamped = clampStrategyRisk(structuredClone(roh));
+
+      const stateRef = userDoc.ref.collection('meta').doc('momentum');
+      const lastRebalance = (await stateRef.get()).get('lastRebalance') as string | undefined;
+      if (!istRebalanceFaellig(lastRebalance ?? null, now)) continue;
+
+      const posSnap = await userDoc.ref.collection('positions').get();
+      const gehalten = new Map<string, Position>(
+        posSnap.docs.map((d) => [d.id, d.data() as Position]),
+      );
+      const cash = (userDoc.get('wallet.paperBalance') as number | undefined) ?? 0;
+      let equity = cash;
+      for (const [sym, pos] of gehalten) {
+        equity += pos.qty * (preise.get(sym) ?? pos.avgEntry);
+      }
+      if (!(equity > 0)) continue;
+
+      const orders = rebalanceOrders(new Set(gehalten.keys()), ziel, equity)
+        // Ohne Kurs kein Kauf — ein erfundener Einstand macht die ganze
+        // Auswertung wertlos. Verkäufe brauchen keinen: Sie schließen zum
+        // Kurs, den der Broker ohnehin bekommt.
+        .filter((o) => o.side === 'sell' || preise.has(o.symbol));
+
+      let ausgefuehrt = 0;
+      for (const o of orders) {
+        const preis = preise.get(o.symbol) ?? gehalten.get(o.symbol)?.avgEntry;
+        if (!preis || !(preis > 0)) continue;
+        const cls = classify(o.symbol);
+        if (o.side === 'sell') {
+          const r = await executePaperTrade(
+            { uid: userDoc.id, symbol: o.symbol, side: 'sell', price: preis, source: 'engine', riskExit: 'momentum_rebalance', assetClass: cls },
+            clamped,
+          );
+          if (r.executed) ausgefuehrt += 1;
+          continue;
+        }
+        const fractional = cls === 'crypto';
+        const roheMenge = (o.notional ?? 0) / preis;
+        const qty = fractional ? Math.floor(roheMenge * 1e6) / 1e6 : Math.floor(roheMenge);
+        if (qty < (fractional ? 1e-6 : 1)) continue;
+        const r = await executePaperTrade(
+          { uid: userDoc.id, symbol: o.symbol, side: 'buy', price: preis, qty, source: 'engine', assetClass: cls },
+          clamped,
+        );
+        if (r.executed) ausgefuehrt += 1;
+      }
+
+      // Der Zeitstempel wird IMMER gesetzt, auch wenn nichts zu tun war.
+      // Sonst gälte das Rebalancing als überfällig und liefe täglich neu —
+      // bei einem leeren Zielportfolio (Marktfilter zu) wäre das eine
+      // Endlosschleife aus Nichts.
+      await stateRef.set(
+        { lastRebalance: now.toISOString(), orders: orders.length, executed: ausgefuehrt },
+        { merge: true },
+      );
+      konten += 1;
+      orderSumme += ausgefuehrt;
+      if (ausgefuehrt > 0) {
+        logger.info(`Momentum-Rebalancing ${userDoc.id}: ${ausgefuehrt}/${orders.length} Order(s)`);
+      }
+    } catch (err) {
+      logger.warn(`Momentum-Rebalancing: User ${userDoc.id} übersprungen`, err);
+    }
+  }
+  return { konten, orders: orderSumme };
 }
 
 /** Täglich 18:00 ET — nach snapshotEquity (17:15) und autoTune (17:45). */
