@@ -7,10 +7,12 @@
 import {
   CLASS_LABELS,
   DEFAULT_MAX_OPEN_POSITIONS,
+  DEFAULT_RISK_PER_TRADE_PCT,
   DEFAULT_STRATEGY,
   EVIDENCE_DEFAULTS,
   MAX_LEVERAGE,
   MAX_OPEN_POSITIONS_CAP,
+  MAX_RISK_PER_TRADE_PCT,
   MIN_EDGE_MULTIPLE,
   PAPER_FEE_RATE,
   aggregateBars,
@@ -889,6 +891,8 @@ function layout(email: string): string {
           <input id="owCap" class="inp st-num" type="number" min="100" step="500" /></label>
         <label>Investment je Trade %
           <input id="owMax" class="inp st-num" type="number" min="1" max="100" step="1" /></label>
+        <label>Risiko je Trade % ${iBtn('riskPerTrade')}
+          <input id="owRisk" class="inp st-num" type="number" min="0" max="5" step="0.25" /></label>
         <label>Max. gleichzeitige Positionen ${iBtn('maxOpenPositions')}
           <input id="owMaxPos" class="inp st-num" type="number" min="1" max="${MAX_OPEN_POSITIONS_CAP}" step="1" /></label>
         <label>Sizing-Basis ${iBtn('sizingBase')}
@@ -1654,6 +1658,8 @@ function openOptions(): void {
   ($('owCap') as HTMLInputElement).value = String(st.strategy.broker.initialCapital);
   ($('owSizing') as HTMLSelectElement).value = st.strategy.broker.sizingBase ?? 'balance';
   ($('owMax') as HTMLInputElement).value = String(st.strategy.engine.maxPositionPct);
+  ($('owRisk') as HTMLInputElement).value = String(
+    st.strategy.engine.riskPerTradePct ?? DEFAULT_RISK_PER_TRADE_PCT);
   ($('owMaxPos') as HTMLInputElement).value = String(
     st.strategy.engine.maxOpenPositions ?? DEFAULT_MAX_OPEN_POSITIONS);
   ($('owLev') as HTMLSelectElement).value = String(
@@ -5087,6 +5093,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         ...st.strategy.engine,
         maxPositionPct: num('owMax'),
         mode: ($('owMode') as HTMLSelectElement).value === 'momentum' ? 'momentum' : 'confluence',
+        riskPerTradePct: Math.min(MAX_RISK_PER_TRADE_PCT, Math.max(0, num('owRisk'))),
         maxOpenPositions: Math.min(
           MAX_OPEN_POSITIONS_CAP,
           Math.max(1, num('owMaxPos') || DEFAULT_MAX_OPEN_POSITIONS)),

@@ -10,6 +10,7 @@
 import type { Strategy } from './strategy.js';
 import { MAX_OPEN_POSITIONS_CAP } from './strategy.js';
 import { MAX_LEVERAGE } from './margin.js';
+import { MAX_RISK_PER_TRADE_PCT } from './riskSizing.js';
 
 /** Bekannte Schlüssel der kaputten Alt-Struktur — hart verboten. */
 const LEGACY_KEYS = ['strategy', 'indices', 'risk_management', 'execution'] as const;
@@ -118,6 +119,12 @@ export function validateStrategy(value: unknown): string[] {
         || engine.maxOpenPositions < 1
         || engine.maxOpenPositions > MAX_OPEN_POSITIONS_CAP)) {
       problems.push(`engine.maxOpenPositions muss zwischen 1 und ${MAX_OPEN_POSITIONS_CAP} liegen`);
+    }
+    if (engine.riskPerTradePct !== undefined
+      && (!isFiniteNumber(engine.riskPerTradePct)
+        || engine.riskPerTradePct < 0
+        || engine.riskPerTradePct > MAX_RISK_PER_TRADE_PCT)) {
+      problems.push(`engine.riskPerTradePct muss zwischen 0 und ${MAX_RISK_PER_TRADE_PCT} liegen (0 = aus)`);
     }
     if (engine.mode !== undefined && engine.mode !== 'confluence' && engine.mode !== 'momentum') {
       problems.push("engine.mode muss 'confluence' oder 'momentum' sein");

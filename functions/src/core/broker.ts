@@ -22,6 +22,7 @@ import {
   marginInterest,
   paperEffectivePrice,
   resolveRisk,
+  riskBasedQty,
   sizeWithMargin,
 } from '../../../shared/src/index.js';
 import type { Position, RiskConfig, Strategy, Trade } from '../../../shared/src/index.js';
@@ -84,7 +85,27 @@ export function sizeOrder(
   effPrice: number,
   fractional = false,
   margin?: MarginBudget,
+  stopDistancePct?: number,
 ): number {
+  // Risiko-Sizing hat Vorrang, wenn es eingeschaltet IST und der Stop-Abstand
+  // bekannt ist (28.07.): Dann bestimmt nicht mehr der Depotanteil die
+  // Stückzahl, sondern der Betrag, der im Stop-Fall verloren gehen darf —
+  // für jede Position derselbe. Fehlt der Stop-Abstand, fällt es bewusst auf
+  // den alten Weg zurück statt auf einer unbekannten Zahl zu rechnen.
+  const risikoPct = strategy.engine.riskPerTradePct ?? 0;
+  if (risikoPct > 0 && typeof stopDistancePct === 'number' && stopDistancePct > 0) {
+    const eigenkapital = margin ? margin.equity : Math.max(0, balance);
+    const q = riskBasedQty({
+      equity: eigenkapital,
+      riskPerTradePct: risikoPct,
+      stopDistancePct,
+      effPrice,
+      maxPositionPct: strategy.engine.maxPositionPct,
+      ...(margin ? { buyingPower: margin.buyingPower } : {}),
+      fractional,
+    });
+    if (q > 0) return q;
+  }
   // Mit Hebel entscheidet nicht mehr der Cash, sondern das EIGENKAPITAL über
   // die Tranche — sonst schrumpfte sie mit jedem Kauf gegen null und der
   // Hebel wäre nach der ersten Handvoll Positionen wirkungslos, obwohl noch
@@ -134,6 +155,13 @@ export interface TradeRequest {
    * genug ist (`effectiveLeverage`).
    */
   margin?: MarginBudget;
+  /**
+   * Abstand vom Einstieg bis zum Stop in % — Basis des Risiko-Sizings.
+   * Der Aufrufer löst ihn auf (ATR-Vielfaches vor festem Prozentwert),
+   * damit die Position mit demselben Abstand DIMENSIONIERT wird, mit dem
+   * sie später GESTOPPT wird.
+   */
+  stopDistancePct?: number;
 }
 
 /**
@@ -192,7 +220,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       if (posSnap.exists) return { executed: false, reason: 'position_existiert' };
       const cls = req.assetClass ?? classify(req.symbol);
       const fractional = cls === 'crypto';
-      const qty = req.qty ?? sizeOrder(strategy, balance, eff, fractional, req.margin);
+      const qty = req.qty ?? sizeOrder(strategy, balance, eff, fractional, req.margin, req.stopDistancePct);
       if (qty < (fractional ? 1e-6 : 1)) return { executed: false, reason: 'qty_unter_1' };
       const cost = qty * eff;
       // Ohne Hebel prüft der Cash, mit Hebel die Kaufkraft. Der Cash darf
@@ -255,7 +283,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       if (!req.openShort) return { executed: false, reason: 'keine_position' };
       const cls = req.assetClass ?? classify(req.symbol);
       const fractional = cls === 'crypto';
-      const qty = req.qty ?? sizeOrder(strategy, balance, eff, fractional, req.margin);
+      const qty = req.qty ?? sizeOrder(strategy, balance, eff, fractional, req.margin, req.stopDistancePct);
       if (qty < (fractional ? 1e-6 : 1)) return { executed: false, reason: 'qty_unter_1' };
       const margin = qty * eff;
       // Gleiche Deckungsprüfung wie beim Kauf: Der Short bindet Sicherheit,

@@ -26,6 +26,7 @@ import {
   effectiveLeverage,
   feeRateForClass,
   isTradable,
+  stopDistancePct,
   isStrategy,
   marginState,
   marketOpenForClass,
@@ -408,6 +409,15 @@ async function executeUserTrades(
         return gate.ok ? null : 'unter_kosten';
       };
 
+      /**
+       * Stop-Abstand dieses Symbols in % — Basis des Risiko-Sizings.
+       * Klassen-aufgelöst und mit derselben Vorrangregel wie der spätere
+       * Ausstieg (ATR schlägt Prozent), damit Dimensionierung und Stop
+       * dieselbe Zahl benutzen.
+       */
+      const stopAbstand = (symbol: string, atrPct: number | null | undefined): number =>
+        stopDistancePct(resolveRisk(clamped.engine, classify(symbol)), atrPct);
+
       // 2) Regelbaum-Strategien (M10): publizierte Strategien mit Zuordnung
       // handeln ihre Symbole SELBST — der Classic-Pfad überspringt sie.
       // User-Prognosen (Chart-Pfeile): Opt-in übers Options-Modal (Feedback
@@ -635,7 +645,15 @@ async function executeUserTrades(
             // die MA6-Klassen-Profile (Krypto 6/10 usw.) griffen beim Kauf
             // nie, und gespeicherte Level haben bewusst Vorrang (MA1).
             const r = await executePaperTrade(
-              { uid, symbol, side: 'buy', price: data.price, source: 'engine', assetClass: classify(symbol) },
+              {
+                uid,
+                symbol,
+                side: 'buy',
+                price: data.price,
+                source: 'engine',
+                assetClass: classify(symbol),
+                stopDistancePct: stopAbstand(symbol, data.atrPct),
+              },
               clamped,
             );
             if (r.executed) {
@@ -684,7 +702,16 @@ async function executeUserTrades(
               if (sp) { gesperrt[sp] += 1; continue; }
             }
             const r = await executePaperTrade(
-              { uid, symbol, side: 'sell', price: data.price, source: 'engine', assetClass: classify(symbol), openShort: true },
+              {
+                uid,
+                symbol,
+                side: 'sell',
+                price: data.price,
+                source: 'engine',
+                assetClass: classify(symbol),
+                openShort: true,
+                stopDistancePct: stopAbstand(symbol, data.atrPct),
+              },
               clamped,
             );
             if (r.executed) {
@@ -796,6 +823,7 @@ async function executeUserTrades(
               price: data.price,
               source: 'engine',
               assetClass: classify(symbol),
+              stopDistancePct: stopAbstand(symbol, data.atrPct),
               ...(budget ? { margin: budget } : {}),
             },
             clamped,
@@ -850,6 +878,7 @@ async function executeUserTrades(
               source: 'engine',
               assetClass: classify(symbol),
               openShort: true,
+              stopDistancePct: stopAbstand(symbol, data.atrPct),
               ...(budget ? { margin: budget } : {}),
             },
             clamped,

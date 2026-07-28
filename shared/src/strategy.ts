@@ -111,6 +111,17 @@ export interface EngineConfig extends RiskConfig {
    */
   mode?: 'confluence' | 'momentum';
   /**
+   * Anteil des Eigenkapitals, der bei einem ausgelösten Stop verloren gehen
+   * darf, in % (0 = aus, dann gilt die klassische Prozent-Tranche).
+   *
+   * Schaltet die Positionsgröße von „10 % des Depots" auf „gleicher
+   * Risikobeitrag je Position" um: Ein ruhiger Titel bekommt dann eine
+   * größere Tranche als ein volatiler, und beide verlieren im Stop-Fall
+   * denselben Betrag. `maxPositionPct` bleibt als harte Obergrenze stehen.
+   * Typisch 0,5 bis 1. Siehe riskSizing.ts.
+   */
+  riskPerTradePct?: number;
+  /**
    * Risiko-Overrides je Asset-Klasse (Katalog-Schlüssel aus universe.ts:
    * crypto, indices, stocks_us, …). Fehlende Felder erben von oben.
    */
