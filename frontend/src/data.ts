@@ -4,13 +4,9 @@
  */
 
 import {
-  STRATEGY_PRESETS,
   type Position,
   type Quote,
   type Strategy,
-  type StrategyDoc,
-  type StrategyPreset,
-  type StrategySpec,
   type Wallet,
 } from '@autotrd/shared';
 import {
@@ -112,6 +108,16 @@ export function watchForecastStatsIntraday(
   );
 }
 
+/** Was die Engine im letzten Scan angefasst hat — zwei Tiefen, eine Quelle. */
+export interface WatchScope {
+  /** Tief analysiert: 5-min-Kerzen, Indikatoren, Prognose, Handelsentscheidung. */
+  symbols: string[];
+  /** Katalog-Symbole mit offenem Markt in diesem Scan. */
+  catalogOpen: number;
+  /** Davon frisch bekurst (Spark-Bündel). Weicht ab ⇒ ein Chunk hat gepatzt. */
+  catalogQuotes: number;
+}
+
 /**
  * Die Symbole, die die Engine gerade beobachtet und handelt.
  *
@@ -120,17 +126,27 @@ export function watchForecastStatsIntraday(
  * Bis 28.07. war es eine handverlesene Watchlist — die Anzeige konnte also
  * Symbole zeigen, die längst nicht mehr gehandelt wurden, und umgekehrt.
  *
- * Die Auswahl selbst trifft der tägliche Momentum-Lauf über den ganzen
- * Katalog; der Scan nimmt seine Rangliste plus alle offenen Positionen.
+ * `symbols` ist dabei nur die TIEFE Stufe. Kurse bekommt seit dem
+ * Batch-Umbau der ganze Katalog bei jedem Scan (Owner-Frage: „kann das tool
+ * nicht alles immer parallel beobachten?"); `catalogOpen`/`catalogQuotes`
+ * machen das sichtbar, statt es dem Nutzer als „nur xx Symbole" zu zeigen.
  */
-export function watchWatchedSymbols(cb: (symbols: string[]) => void): Unsubscribe {
+export function watchWatchedSymbols(cb: (scope: WatchScope) => void): Unsubscribe {
   return muxWatch(
     'watched',
     (emit) =>
       onSnapshot(doc(db(), 'meta', 'health'), (snap) =>
-        emit(snap.exists() ? ((snap.get('watched') as string[] | undefined) ?? []) : []),
+        emit(
+          snap.exists()
+            ? {
+                symbols: (snap.get('watched') as string[] | undefined) ?? [],
+                catalogOpen: (snap.get('catalogOpen') as number | undefined) ?? 0,
+                catalogQuotes: (snap.get('catalogQuotes') as number | undefined) ?? 0,
+              }
+            : { symbols: [], catalogOpen: 0, catalogQuotes: 0 },
+        ),
       ),
-    (p) => cb(p as string[]),
+    (p) => cb(p as WatchScope),
   );
 }
 
@@ -594,163 +610,6 @@ export async function loadDailyChunk(symbol: string, year: number): Promise<Char
  *  market/{sym}.quote (alle Clients sehen ihn via onSnapshot). */
 export async function callQuoteNow(symbol: string): Promise<void> {
   await httpsCallable(fns(), 'quoteNow')({ symbol });
-}
-
-/** Ein-Schuss-Blick auf Wallet + Startkapital + offene Positionen (A/B-Duell). */
-export async function loadWalletSnapshot(
-  uid: string,
-): Promise<{ balance: number; initialCapital: number; positions: Position[] }> {
-  const [userSnap, posSnap] = await Promise.all([
-    getDoc(doc(db(), 'users', uid)),
-    getDocs(collection(db(), 'users', uid, 'positions')),
-  ]);
-  return {
-    balance: (userSnap.get('wallet.paperBalance') as number | undefined) ?? 0,
-    initialCapital: (userSnap.get('settings.strategy.broker.initialCapital') as number | undefined) ?? 25_000,
-    positions: posSnap.docs.map((d) => d.data() as Position),
-  };
-}
-
-/* ── Strategie-Studio (M10): users/{uid}/strategies + Presets + Callables ── */
-
-export interface StrategyRow {
-  id: string;
-  doc: StrategyDoc;
-}
-
-export function watchStrategies(uid: string, cb: (rows: StrategyRow[]) => void): Unsubscribe {
-  const q = query(collection(db(), 'users', uid, 'strategies'), orderBy('updatedAt', 'desc'));
-  return onSnapshot(q, (snap) =>
-    cb(snap.docs.map((d) => ({ id: d.id, doc: d.data() as StrategyDoc }))),
-  );
-}
-
-/** Presets aus meta/strategyPresets (vom Scan geseedet; Fallback: shared). */
-export async function loadStrategyPresets(): Promise<StrategyPreset[]> {
-  try {
-    const snap = await getDoc(doc(db(), 'meta', 'strategyPresets'));
-    if (snap.exists()) return (snap.data() as { presets: StrategyPreset[] }).presets;
-  } catch {
-    /* Rules/Netz — Fallback unten */
-  }
-  return STRATEGY_PRESETS;
-}
-
-export async function callSaveStrategyDraft(input: {
-  id?: string;
-  name: string;
-  spec: StrategySpec;
-}): Promise<string> {
-  const res = await httpsCallable(fns(), 'saveStrategyDraft')(input);
-  return (res.data as { id: string }).id;
-}
-
-/** Strategie endgültig löschen — auch publizierte (Owner-Frage 26.07.). */
-export async function callDeleteStrategy(id: string): Promise<void> {
-  await httpsCallable(fns(), 'deleteStrategy')({ id });
-}
-
-export async function callPublishStrategy(id: string): Promise<number> {
-  const res = await httpsCallable(fns(), 'publishStrategyVersion')({ id });
-  return (res.data as { version: number }).version;
-}
-
-export async function callAssignStrategy(
-  id: string,
-  symbols: string[],
-  mode: 'paper' | 'shadow' = 'paper',
-): Promise<void> {
-  await httpsCallable(fns(), 'assignStrategy')({ id, symbols, mode });
-}
-
-/** Befördern (M11 A/B): Shadow → paper; überlappende Paper-Strategien → shadow. */
-export async function callPromoteStrategy(id: string): Promise<string[]> {
-  const res = await httpsCallable(fns(), 'promoteStrategy')({ id });
-  return (res.data as { demoted: string[] }).demoted;
-}
-
-export interface ShadowSignalRow {
-  id: string;
-  symbol: string;
-  direction: 'buy' | 'sell';
-  price: number;
-  at: string;
-}
-
-/** Hätte-Feed: letzte Shadow-Signale, neueste zuerst. Sortiert übers
- *  `at`-Feld — absteigende Scans über die Doc-ID erlaubt Firestore nicht. */
-export async function loadShadowSignals(uid: string, strategyId: string, max = 20): Promise<ShadowSignalRow[]> {
-  const snap = await getDocs(
-    query(
-      collection(db(), 'users', uid, 'strategies', strategyId, 'shadowSignals'),
-      orderBy('at', 'desc'),
-      limit(max),
-    ),
-  );
-  return snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<ShadowSignalRow, 'id'>) }));
-}
-
-export interface BacktestRunDoc {
-  symbol: string;
-  specSource: 'compiled' | 'draft';
-  totalReturnPct: number;
-  buyHoldPct: number;
-  numTrades: number;
-  winRatePct: number;
-  maxDrawdownPct: number;
-  sharpe: number;
-  equityCurve: Array<{ date: string; value: number }>;
-  barsFrom: string;
-  barsTo: string;
-  at: string;
-}
-
-export async function callRunBacktest(strategyId: string, symbol: string): Promise<void> {
-  await httpsCallable(fns(), 'runBacktest')({ strategyId, symbol });
-}
-
-/** Parameter-Sweep (M11): ≤2 Achsen, ≤60 Kombis — Ergebnis kommt direkt zurück. */
-export interface SweepRow {
-  x: number;
-  y: number | null;
-  totalReturnPct: number;
-  sharpe: number;
-  maxDrawdownPct: number;
-  numTrades: number;
-  winRatePct: number;
-}
-export interface SweepResult {
-  rows: SweepRow[];
-  best: SweepRow;
-  /** Serverseitig kompilierte Spec des Siegers — für „Als Entwurf übernehmen". */
-  bestSpec: StrategySpec;
-  combos: number;
-  barsFrom: string;
-  barsTo: string;
-}
-export async function callRunSweep(req: {
-  symbol: string;
-  xParam: string;
-  xValues: number[];
-  yParam?: string;
-  yValues?: number[];
-}): Promise<SweepResult> {
-  const res = await httpsCallable(fns(), 'runSweep')(req);
-  return res.data as SweepResult;
-}
-
-/** Jüngster Backtest-Report einer Strategie (M11, onSnapshot). */
-export function watchLatestRun(
-  uid: string,
-  strategyId: string,
-  cb: (run: BacktestRunDoc | null) => void,
-): Unsubscribe {
-  const q = query(
-    collection(db(), 'users', uid, 'strategies', strategyId, 'runs'),
-    orderBy('at', 'desc'),
-    limit(1),
-  );
-  return onSnapshot(q, (snap) => cb(snap.empty ? null : (snap.docs[0]!.data() as BacktestRunDoc)));
 }
 
 /** Aktive User-Prognose (Chart-Pfeil) eines Symbols — null wenn keine. */

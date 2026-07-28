@@ -44,7 +44,7 @@ service cloud.firestore {
         allow write: if false;
       }
 
-      // Strategie-Studio (M10): read-only für den Owner — Schreiben NUR über
+      // Regelbaum-Strategien: read-only für den Owner — Schreiben NUR über
       // die Callables saveStrategyDraft/publishStrategyVersion/assignStrategy
       match /strategies/{doc} {
         allow read: if isOwner(uid);

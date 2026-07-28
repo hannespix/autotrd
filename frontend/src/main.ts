@@ -15,7 +15,6 @@ import {
 import { ensureProfile, listenerCount } from './data.js';
 import { muxIsLeader } from './mux.js';
 import { mountDashboard, unmountDashboard } from './dashboard.js';
-import { mountStudio, unmountStudio } from './studio.js';
 import { mountLegalFooter } from './legal.js';
 import { initPwa } from './pwa.js';
 
@@ -118,22 +117,23 @@ function renderLogin(): void {
   });
 }
 
-// Mini-Router (M10): '#/strategy…' mountet das Studio, alles andere das
-// Dashboard. Auth-Wechsel und hashchange laufen durch dieselbe route().
+// Es gibt nur noch eine Ansicht: das Dashboard. Bis 28.07. hing hier ein
+// zweiter Zweig für das Strategie-Studio unter '#/strategy'. Das Studio ist
+// weg, weil von Hand gebaute Regelbäume als EINZIGES am Selbstoptimierer
+// vorbeiliefen — er liest und schreibt `settings.strategy`, Bäume fasst er
+// nicht an. Eine gezeichnete Strategie war damit für immer eingefroren und
+// beanspruchte trotzdem ihre Symbole exklusiv, verdrängte also genau den
+// Pfad, der sich täglich verbessert. Der Regelbaum selbst bleibt — als
+// Suchraum für den Optimierer statt als Zeichenfläche.
 let currentUser: { uid: string; email: string | null } | null = null;
 
 function route(): void {
   unmountDashboard();
-  unmountStudio();
   if (!currentUser) {
     renderLogin();
     return;
   }
-  if (location.hash.startsWith('#/strategy')) {
-    mountStudio(app, currentUser.uid);
-  } else {
-    mountDashboard(app, currentUser.uid, currentUser.email ?? currentUser.uid);
-  }
+  mountDashboard(app, currentUser.uid, currentUser.email ?? currentUser.uid);
 }
 
 if (!hasFirebaseConfig()) {
@@ -145,7 +145,7 @@ if (!hasFirebaseConfig()) {
   watchAuth((user) => {
     currentUser = user ? { uid: user.uid, email: user.email } : null;
     if (user) {
-      // Profil serverseitig sicherstellen (idempotent), dann Dashboard/Studio
+      // Profil serverseitig sicherstellen (idempotent), dann Dashboard
       ensureProfile().catch((e) => console.warn('ensureProfile', e));
     }
     route();

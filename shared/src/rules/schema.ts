@@ -1,10 +1,22 @@
 /**
- * autotrd — Regel-Baum des Strategie-Studios (M10).
+ * autotrd — Regel-Baum: Strategie-Logik als DATEN.
  *
- * Strategie-Logik als DATEN: ein getypter Bedingungsbaum, den Builder-Vorschau,
- * Scan-Engine und (später M11) Backtest identisch interpretieren. Dieses Modul
- * ist die einzige Wahrheit über die FORM des Baums (Zod-Schemata + harte
- * Guards); die SEMANTIK lebt ausschließlich in `evaluate.ts`.
+ * Ein getypter Bedingungsbaum, den Scan-Engine und Backtest identisch
+ * interpretieren. Dieses Modul ist die einzige Wahrheit über die FORM des
+ * Baums (Zod-Schemata + harte Guards); die SEMANTIK lebt ausschließlich in
+ * `evaluate.ts`.
+ *
+ * Rollenwechsel 28.07.: Bis dahin war der Baum die Datenstruktur hinter dem
+ * Strategie-Studio — der Nutzer zeichnete ihn, die Engine führte ihn aus. Das
+ * Studio ist ausgebaut, weil ein von Hand gezeichneter Baum als einziges Teil
+ * des Systems am Selbstoptimierer vorbeilief und trotzdem seine Symbole
+ * exklusiv beanspruchte.
+ *
+ * Der Baum bleibt, weil er jetzt der SUCHRAUM ist: Der Optimierer variiert
+ * heute fünf Skalare, künftig Strukturen. Genau dafür sind die Guards unten
+ * wichtiger denn je — eine Suche ohne Deckel auf Tiefe und Knotenzahl
+ * erzeugt beliebig komplizierte Bäume, die auf der Historie glänzen und
+ * nichts können (Overfitting). Der Deckel ist die Sparsamkeits-Bremse.
  *
  * Harte Guards (validateRuleTree — niemals aufweichen):
  *   - Tiefe ≤ MAX_DEPTH (5)

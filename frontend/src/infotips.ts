@@ -8,7 +8,7 @@
  * Scroll-Offsets — position:fixed wäre in den Glass-Cards die
  * backdrop-filter-Containing-Block-Falle, CLAUDE.md §6). Delegierter
  * Click-Handler: funktioniert auch in nachträglich gerendertem Markup
- * (das Studio re-rendert komplette Karten).
+ * (Karten werden komplett neu gerendert).
  */
 
 export const INFO: Record<string, { t: string; d: string }> = {
@@ -91,25 +91,9 @@ export const INFO: Record<string, { t: string; d: string }> = {
   },
   watchlist: {
     t: 'Beobachtet',
-    d: 'Die Symbole, die die Engine gerade verfolgt und handelt — automatisch gewählt, nicht von Hand. Einmal täglich bewertet ein Lauf ALLE 166 Katalog-Symbole nach relativer Stärke; die Spitze dieser Rangliste landet hier, dazu jede offene Position (die muss beobachtet bleiben, bis sie geschlossen ist, sonst verlöre sie ihren Stop-Loss). Warum nicht einfach alle 166 dauerhaft? Weil Bewerten und Beobachten zwei verschiedene Kosten haben: Die Bewertung braucht einen Tagesschlusskurs pro Symbol, die Beobachtung 5-Minuten-Kerzen mit RSI, MACD und Bollinger — alle fünf Minuten. Breit bewerten, schmal beobachten ist deshalb nicht Sparsamkeit, sondern die einzige Anordnung, die beides bezahlbar macht. Bis 27.07. stand hier eine handverlesene Liste; die war eine Vorauswahl ohne Begründung.',
+    d: 'Beobachtet wird in ZWEI Tiefen. Flach: Jeder der 166 Katalog-Märkte, dessen Börse gerade offen ist, bekommt alle fünf Minuten einen frischen Kurs — nichts läuft mehr unbemerkt weg. Möglich wurde das durch einen Sammel-Abruf, der 20 Symbole pro Anfrage holt: 9 Anfragen für den ganzen Katalog statt 166. Vorher rotierte die Versorgung in 15er-Häppchen durch, ein Symbol konnte also eine Stunde alt sein. Tief: Die Symbole in der Liste hier bekommen zusätzlich 5-Minuten-Kerzen, RSI, MACD, Bollinger, Prognose — und nur sie werden gehandelt. Sie wählt der tägliche Ranglisten-Lauf über den vollen Katalog, plus jede offene Position (die muss drin bleiben, bis sie geschlossen ist, sonst verlöre sie ihren Stop-Loss). Warum nicht alles tief? Ein Kurs ist ein Zahlenwert, eine Tiefenanalyse sind Kerzenreihen und Indikatorrechnungen pro Symbol und Intervall — die flache Stufe kostet fast nichts, die tiefe skaliert direkt mit. Bis 27.07. stand hier eine handverlesene Liste; die war eine Vorauswahl ohne Begründung.',
   },
   // ── Prognose ──
-  useForecast: {
-    t: 'Prognose als Stimme',
-    d: 'Ob die hauseigene Zukunfts-Prognose als zusätzliche gewichtete Stimme in die Konfluenz einfließt. Das Herzstück: Die Prognose lernt aus jeder realisierten Vorhersage — und ihr Stimmgewicht folgt ihrer ECHTEN Trefferquote (Kante über den Münzwurf).',
-  },
-  forecastWeight: {
-    t: 'Prognose-Gewicht',
-    d: 'Wie viele Stimmen die Prognose maximal in die Konfluenz einbringt (RSI/MACD/Bollinger zählen je 1). Das System skaliert dieses Gewicht automatisch mit der realisierten Trefferquote: 50 % Treffer (Münzwurf) ⇒ Stimme 0, 75 % ⇒ halbes Gewicht, 100 % ⇒ volles Gewicht.',
-  },
-  forecastThreshold: {
-    t: 'Prognose-Schwelle',
-    d: 'Erst wenn die prognostizierte Kursänderung bis zum Horizont-Ende (±) über dieser Prozent-Schwelle liegt, stimmt die Prognose mit. Filtert Mini-Signale nahe der Nulllinie heraus.',
-  },
-  fcBand: {
-    t: 'Prognose-Band (Konfidenz)',
-    d: 'Der gestrichelte Korridor um die Prognose-Linie. Er wird aus der REALISIERTEN Fehlerverteilung vergangener Prognosen kalibriert (MAE·√(π/2)): War das System in der Realität ungenauer als die Theorie, wird das Band ehrlich breiter. ±1σ heißt: ~68 % der Fälle sollten innerhalb liegen.',
-  },
   fcCombo: {
     t: 'Kombi-Statistik (Self-Tuning)',
     d: 'Das System rechnet jede Prognose parallel mit mehreren Lookback-Fenstern als „Schatten" mit und bewertet sie nach Ablauf gegen die Realität. Das Fenster mit der besten realisierten Trefferquote (Tiebreak: kleinste MAE) steuert die Live-Prognose — das ist die Selbstverbesserung. Wichtig: Solange keine Trefferquote nachgewiesen ist, stimmt die Prognose beim Handeln GAR NICHT mit; sie muss sich ihr Gewicht erst verdienen.',
@@ -121,19 +105,6 @@ export const INFO: Record<string, { t: string; d: string }> = {
   kurzfrist: {
     t: 'Kurzfrist-Prognose (Intraday)',
     d: 'Projektion der nächsten Stunde auf 5-Minuten-Kerzen — bei jedem Scan neu berechnet. Sie lernt in einem eigenen Regelkreis (stündliche Bewertung gegen realisierte Bars) getrennt von der Tages-Prognose.',
-  },
-  // ── Regel-Editor (Studio) ──
-  link: {
-    t: 'Verknüpfung der Regeln',
-    d: '„all" = ALLE Regeln müssen zutreffen (UND). „any" = EINE reicht (ODER). „weighted" = jede Regel bringt ihr Gewicht ein, gehandelt wird ab Erreichen des Thresholds — die flexibelste Form, weil starke Signale schwache überstimmen können.',
-  },
-  threshold: {
-    t: 'Threshold (Schwellwert)',
-    d: 'Die Mindestsumme an Gewichten, die zutreffende Regeln zusammen erreichen müssen, damit das Signal auslöst. Threshold 2 mit drei Regeln à Gewicht 1 heißt: mindestens zwei müssen gleichzeitig zutreffen.',
-  },
-  weight: {
-    t: 'Gewicht einer Regel',
-    d: 'Wie viel diese Regel zur Threshold-Summe beiträgt, wenn sie zutrifft. Wichtigen Signalen (z. B. Prognose) gibt man mehr Gewicht als Feinjustierern.',
   },
   'node:compare': {
     t: 'Regel: Vergleich (compare)',
@@ -171,38 +142,6 @@ export const INFO: Record<string, { t: string; d: string }> = {
   maxdd: {
     t: 'Max Drawdown',
     d: 'Der tiefste Einbruch vom zwischenzeitlichen Höchststand, in Prozent — „wie weh tat es maximal?". Wichtigste Kennzahl fürs Durchhalten: −30 % braucht +43 % nur zum Ausgleich, −40 % schon +67 %. Kleiner ist besser, auch wenn die Rendite dafür etwas niedriger ausfällt.',
-  },
-  winrate: {
-    t: 'Winrate (Trefferquote)',
-    d: 'Anteil der Trades mit Gewinn. Allein wenig aussagekräftig: 90 % Winrate mit einem Riesen-Verlusttrade kann schlechter sein als 40 % mit großen Gewinnern. Immer zusammen mit Rendite und Drawdown lesen.',
-  },
-  buyhold: {
-    t: 'Buy & Hold-Vergleich',
-    d: 'Was einfaches Kaufen-und-Liegenlassen im selben Zeitraum gebracht hätte — die ehrliche Messlatte: Eine Strategie muss Buy & Hold nach Kosten schlagen, sonst lohnt der Aufwand nicht.',
-  },
-  equity: {
-    t: 'Equity',
-    d: 'Der Gesamtwert des Kontos: Cash plus aktueller Marktwert aller offenen Positionen (mark-to-market). Die Equity-Kurve zeigt die Entwicklung über die Zeit.',
-  },
-  divergenz: {
-    t: 'Divergenz (A/B-Duell)',
-    d: 'Der Rendite-Abstand zwischen deinem echten Paper-Wallet (A) und der Schatten-Strategie (B) in Prozentpunkten — beide mit identischen Gebühren. Liegt B dauerhaft vorn, ist „Befördern" einen Blick wert.',
-  },
-  modus: {
-    t: 'Modus: paper vs. shadow',
-    d: '„paper" handelt dein echtes Paper-Wallet. „shadow" beobachtet nur: ein virtuelles 25.000-$-Konto führt Buch, was die Strategie GETAN HÄTTE — risikofrei testen, mit echten Marktdaten und echten Gebühren.',
-  },
-  backtest: {
-    t: 'Backtest',
-    d: 'Simulation der Strategie über 1 Jahr historischer Tageskerzen inkl. Kosten (0,1 % Kommission + 5 bp Slippage). Streng kausal: Der Kontext an Tag i sieht ausschließlich Daten bis Tag i — kein Blick in die Zukunft. Vergangenheit garantiert keine Zukunft, aber sie entlarvt kaputte Ideen.',
-  },
-  sweep: {
-    t: 'Parameter-Sweep',
-    d: 'Backtestet automatisch ein Raster aus zwei Parametern (X × Y, bis 60 Kombis) und zeigt die Rendite als Heatmap. Vorsicht Overfitting: Der beste Punkt der Vergangenheit ist nicht automatisch der beste der Zukunft — robuste REGIONEN schlagen einzelne Spitzenwerte.',
-  },
-  preview: {
-    t: 'Live-Vorschau',
-    d: 'Zeigt sofort, wo deine Regeln im letzten Jahr gekauft (▲) und verkauft (▼) hätten — rein clientseitig, ohne Kosten, ohne Prognose. Zum schnellen Gefühl-Bekommen; die harte Wahrheit liefert der Backtest.',
   },
   // ── Trade-Ticket ──
   fees: {

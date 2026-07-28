@@ -1,5 +1,5 @@
 /**
- * autotrd — Strategie-Spec & -Dokument des Strategie-Studios (M10).
+ * autotrd — Strategie-Spec & -Dokument (Regel-Baum als gespeicherte Form).
  *
  * Eine Strategie besteht aus ZWEI Regel-Bäumen: `buy` (Entry) und `sell`
  * (Exit) — beide durch dieselben harten Guards begrenzt (validateRuleTree).

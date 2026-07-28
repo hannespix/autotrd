@@ -25,7 +25,6 @@ import {
   marketOpenForClass,
   resolveName,
   resolveRisk,
-  STRATEGY_PRESETS,
   type Position,
   type Strategy,
   type StrategyDoc,
@@ -54,8 +53,15 @@ import { runForecast, runIntradayForecast, type LiveForecast } from '../core/for
 import { evaluateIntradayDue } from './evalForecasts.js';
 import { stepFleet, type FleetState } from '../core/tuneFleet.js';
 import { FLEET_SIZE } from './autoTune.js';
-import { chunkBarsByYear, getDeepDailyBars, getIntradayBars, getMarketSnapshot, getQuickQuote } from '../core/marketData.js';
-
+import {
+  chunkBarsByYear,
+  getDeepDailyBars,
+  getIntradayBars,
+  getMarketSnapshot,
+  getQuickQuote,
+  getSparkBatch,
+  type SparkQuote,
+} from '../core/marketData.js';
 
 /** Mo–Fr, 09:30 ≤ t < 16:00 in America/New_York (Port des run_scan.sh-Gates). */
 export function isUsMarketOpen(now: Date = new Date()): boolean {
@@ -93,15 +99,6 @@ async function seedUniverse(): Promise<void> {
   }
   await ref.set({ classes, seededAt: new Date().toISOString() });
   logger.info('meta/universe geseedet');
-}
-
-/** meta/strategyPresets einmalig seeden (M10 — Presets = Doku). Idempotent. */
-async function seedPresets(): Promise<void> {
-  const db = getFirestore();
-  const ref = db.doc('meta/strategyPresets');
-  if ((await ref.get()).exists) return;
-  await ref.set({ presets: STRATEGY_PRESETS, seededAt: new Date().toISOString() });
-  logger.info('meta/strategyPresets geseedet');
 }
 
 export interface ScanResult {
@@ -823,84 +820,102 @@ async function collectScanSymbols(): Promise<string[]> {
   return symbols;
 }
 
-/** Symbole je Versorgungs-Runde (Kosten-Deckel: 12 Scans/h × 15 ≈ voller
- *  Katalog jede Stunde bei nativer 5-min-Kadenz). */
-const CATALOG_CHUNK = 15;
+/**
+ * Wie viele Tageskerzen je Scan exakt nachgezogen werden.
+ *
+ * Die Kurse kommen seit dem Batch-Umbau für den GANZEN Katalog aus einem
+ * Spark-Request-Bündel. Was Spark nicht liefert, ist die Tageskerze mit
+ * Open/High/Low/Volume — dafür braucht es weiter einen Chart-Fetch je Symbol.
+ * Der ist reine Historie (Sparklines, Mini-Charts) und darf deshalb langsam
+ * rotieren: 10 Symbole je Scan = voller Katalog gut jede Stunde.
+ */
+const BAR_CHUNK = 10;
 
 /**
- * Katalog-Versorgung (Taschenmesser Teil 2, User-Wunsch 25.07.): ALLE
- * Marktgruppen bekommen Daten, nicht nur die Watchlist — die bleibt der
- * Engine-Scope mit voller 5-min-Tiefe (Indikatoren, News, Intraday).
- * Der Katalog (~166 Symbole) wird als rotierender Chunk je Scan mit einem
- * leichten Quote-Fetch versorgt (+ jüngste Tageskerze aus demselben Fetch).
- * Frische-Gates halten die Kosten klein: offene Klassen ~stündlich, bei
- * geschlossenem Markt reicht die vorhandene letzte Quote.
+ * Katalog-Versorgung — seit 28.07. BATCH statt Rotation.
+ *
+ * Owner-Frage: „kann das tool nicht alles immer parallel beobachten? markt ist
+ * ja dynamisch und ändert sich stetig!" Vorher nicht: `getQuickQuote` kostet
+ * einen Yahoo-Fetch je Symbol, also lief der Katalog in 15er-Häppchen mit
+ * einem 50-min-Frische-Gate durch — ein Symbol war im schlechtesten Fall eine
+ * Stunde alt, und das Momentum-Ranking sah entsprechend alte Kurse.
+ *
+ * Jetzt: EIN Spark-Bündel (9 Requests für 166 Symbole, gemessen 2,5 s) je
+ * Scan. Jedes Symbol des Katalogs ist damit alle 5 Minuten frisch.
+ *
+ * Geschrieben wird trotzdem nur, was sich bewegen KANN: Symbole mit
+ * geschlossener Asset-Klasse überspringt die Schleife. Das ist der ganze
+ * Kostenhebel — Firestore-Writes sind teurer als Yahoo-Fetches, und ein
+ * geschlossener Markt liefert bis zur Eröffnung denselben Kurs.
  */
-async function supplyCatalog(scannedSet: Set<string>, now: Date): Promise<number> {
+async function supplyCatalog(
+  scannedSet: Set<string>,
+  now: Date,
+): Promise<{ fresh: number; open: number }> {
   const db = getFirestore();
-  const catalog = allSymbols();
-  if (catalog.length === 0) return 0;
-  const stateRef = db.doc('meta/catalogSupply');
-  const state = await stateRef.get();
-  const cursor = (state.get('cursor') as number | undefined) ?? 0;
-  // Catch-up (User-Wunsch 25.07. „immer ALLE Daten"): Bis der Katalog einmal
-  // komplett durchrotiert ist, große Chunks — Erstbefüllung in ~4 Läufen statt
-  // ~11 (wichtig bei dünner Wochenend-Kadenz). Danach sparsame 15er-Rotation.
-  const initialDone = state.get('initialDone') === true;
-  const chunk = initialDone ? CATALOG_CHUNK : 45;
+  const catalog = allSymbols().filter((s) => !scannedSet.has(s));
+  if (catalog.length === 0) return { fresh: 0, open: 0 };
 
-  const picked: string[] = [];
-  for (let n = 0; n < chunk; n++) {
-    const sym = catalog[(cursor + n) % catalog.length]!;
-    if (!scannedSet.has(sym) && !picked.includes(sym)) picked.push(sym);
-  }
-  const refs = picked.map((s) => db.collection('market').doc(s));
-  const docs = refs.length > 0 ? await db.getAll(...refs) : [];
+  // Nur offene Klassen: ein geschlossener Markt kann keinen neuen Kurs haben.
+  const offen = catalog.filter((s) => marketOpenForClass(classify(s), now));
+  const quotes: Map<string, SparkQuote> =
+    offen.length > 0 ? await getSparkBatch(offen) : new Map();
+
+  const stateRef = db.doc('meta/catalogSupply');
+  const cursor = ((await stateRef.get()).get('barCursor') as number | undefined) ?? 0;
 
   const batch = db.batch();
   let fetched = 0;
-  for (let i = 0; i < picked.length; i++) {
-    const sym = picked[i]!;
-    const doc = docs[i]!;
-    const quote = doc.get('quote') as { updatedAt?: string } | undefined;
-    const ageMin = quote?.updatedAt ? (now.getTime() - Date.parse(quote.updatedAt)) / 60_000 : Infinity;
-    // Frische-Gates: geschlossene Klasse + vorhandene Quote = nichts zu tun;
-    // offene Klasse erst ab ~50 min Alter erneuern (≈ stündliche Kadenz).
-    if (quote && !marketOpenForClass(classify(sym), now)) continue;
-    if (ageMin < 50) continue;
+  for (const sym of offen) {
+    const q = quotes.get(sym);
+    if (!q) continue; // dieser Chunk hat gepatzt — nächster Scan in 5 min
+    batch.set(
+      db.collection('market').doc(sym),
+      {
+        symbol: sym,
+        name: resolveName(sym),
+        assetClass: classify(sym),
+        quote: { price: q.price, changePct: q.changePct, updatedAt: now.toISOString() },
+      },
+      { merge: true },
+    );
+    fetched++;
+  }
+
+  // Tages-Tier: exakte Kerzen (OHLCV) rotierend nachziehen — Spark kennt nur
+  // Closes. Läuft über den GANZEN Katalog, auch über geschlossene Klassen:
+  // Deren Schlusskerze entsteht ja gerade erst nach Handelsschluss.
+  const barSyms: string[] = [];
+  for (let n = 0; n < BAR_CHUNK; n++) barSyms.push(catalog[(cursor + n) % catalog.length]!);
+  for (const sym of new Set(barSyms)) {
     try {
-      const q = await getQuickQuote(sym);
+      const qq = await getQuickQuote(sym);
+      batch.set(db.collection('market').doc(sym).collection('bars').doc(qq.lastBar.date), {
+        ...qq.lastBar,
+      });
       batch.set(
-        doc.ref,
-        {
-          symbol: sym,
-          name: resolveName(sym),
-          assetClass: classify(sym),
-          quote: { price: q.price, changePct: q.changePct, updatedAt: now.toISOString() },
-          lastBarDate: q.lastBar.date,
-        },
+        db.collection('market').doc(sym),
+        { lastBarDate: qq.lastBar.date },
         { merge: true },
       );
-      // Tages-Tier: jüngste Kerze idempotent ablegen (Doc-ID = Datum) —
-      // Sparklines/Mini-Charts wachsen so für den GANZEN Katalog Tag für Tag.
-      batch.set(doc.ref.collection('bars').doc(q.lastBar.date), { ...q.lastBar });
-      fetched++;
     } catch (err) {
-      logger.warn(`Katalog-Quote ${sym}`, err); // nächste Runde versucht es erneut
+      logger.warn(`Katalog-Tageskerze ${sym}`, err); // nächste Runde erneut
     }
   }
+
   batch.set(
     stateRef,
     {
-      cursor: (cursor + chunk) % catalog.length,
-      initialDone: initialDone || cursor + chunk >= catalog.length,
+      barCursor: (cursor + BAR_CHUNK) % catalog.length,
       updatedAt: now.toISOString(),
       lastFetched: fetched,
+      catalogSize: catalog.length,
+      openSize: offen.length,
     },
     { merge: true },
   );
   await batch.commit();
-  return fetched;
+  return { fresh: fetched, open: offen.length };
 }
 
 /** Ein kompletter Scan-Zyklus über die zentrale Watchlist. */
@@ -924,7 +939,6 @@ export async function runScan(force = false): Promise<ScanResult> {
   }
 
   await seedUniverse();
-  await seedPresets();
   const db = getFirestore();
   const scanned: string[] = [];
   const errors: Record<string, string> = {};
@@ -1157,8 +1171,11 @@ export async function runScan(force = false): Promise<ScanResult> {
   // Katalog-Versorgung (alle Marktgruppen, rotierender Chunk) — geguarded,
   // damit ein Yahoo-/Firestore-Schluckauf nie den Kern-Scan gefährdet.
   let catalogQuotes = 0;
+  let catalogOpen = 0;
   try {
-    catalogQuotes = await supplyCatalog(new Set(scanned), now);
+    const supply = await supplyCatalog(new Set(scanned), now);
+    catalogQuotes = supply.fresh;
+    catalogOpen = supply.open;
   } catch (err) {
     lastError = lastError ?? `catalog: ${err instanceof Error ? err.message : String(err)}`.slice(0, 400);
     logger.warn('Katalog-Versorgung fehlgeschlagen', err);
@@ -1208,7 +1225,13 @@ export async function runScan(force = false): Promise<ScanResult> {
         intradayScored,
         intradayEval,
         trades,
+        // Katalog-Beobachtung (Owner-Frage 28.07. „alles immer parallel"):
+        // `catalogQuotes` = in DIESEM Scan frisch bekurste Katalog-Symbole,
+        // `catalogOpen` = wie viele überhaupt einen offenen Markt hatten.
+        // Stehen die beiden auseinander, hat ein Spark-Chunk gepatzt — das
+        // wäre sonst unsichtbar, weil fehlende Kurse einfach alte bleiben.
         catalogQuotes,
+        catalogOpen,
         lastError,
         lastErrorAt: lastError ? now.toISOString() : null,
       },

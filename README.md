@@ -22,7 +22,7 @@ Zusätzlich: **[docs/SETUP.md](docs/SETUP.md)** — einmalige Owner-Einrichtung
 (Firebase-Projekt, GitHub Secrets, webgo-FTPS), damit Merge auf `main`
 automatisch deployt. Und **[docs/VISION.md](docs/VISION.md)** — die
 Produktvision hinter den Ausbau-Milestones M9–M14 (Linked Workspaces,
-Strategie-Studio, Tagesfilm, Alpaca-Paper, Realtime-Streamer).
+Struktursuche im Regelbaum, Tagesfilm, Alpaca-Paper, Realtime-Streamer).
 
 ## Repo-Layout
 
