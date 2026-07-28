@@ -102,6 +102,18 @@ export const INFO: Record<string, { t: string; d: string }> = {
     t: 'MAE — Mittlerer absoluter Fehler',
     d: 'Durchschnittlicher Abstand zwischen Prognose und eingetretenem Kurs, in Prozent des Kurses. Je kleiner, desto präziser die Vorhersage. Die MAE kalibriert auch die Breite des Konfidenz-Bands.',
   },
+  anEquity: {
+    t: 'Kontoverlauf (realisiert)',
+    d: 'Die Summe aller ABGESCHLOSSENEN Trades, Schritt für Schritt. Bewusst etwas anderes als die Performance-Kurve: Die zeigt einen Wert pro Tag inklusive der Buchgewinne offener Positionen. Diese Linie springt pro Trade und zeigt nur, was tatsächlich realisiert wurde — ein Buchgewinn einer noch offenen Position ist eine Meinung, kein Ergebnis. Die gestrichelte Linie ist der Startpunkt: alles darüber ist verdient, alles darunter verloren.',
+  },
+  anHisto: {
+    t: 'Verteilung der Ergebnisse',
+    d: 'Wie viele Trades in welcher Ergebnisspanne gelandet sind. Die wichtigste Frage, die nur dieses Diagramm beantwortet: Sind die Verluste größer als die Gewinne? Eine Strategie mit 60 % Trefferquote ist ruinös, wenn die wenigen Verlierer dreimal so schwer wiegen wie die vielen Gewinner — in der Trefferquote allein sieht man das nie. Die Fächer liegen symmetrisch um die Null, damit Gewinn und Verlust nie im selben Balken landen.',
+  },
+  anStunde: {
+    t: 'Ergebnis nach Handelsstunde',
+    d: 'Wann am Tag verdient oder verliert die Strategie — in New Yorker Börsenzeit, nicht in UTC (sonst würde die Sommerzeit die Eröffnungsstunde zweimal im Jahr in ein anderes Fach schieben). Typisches Muster: Die erste Handelsstunde ist die volatilste und für viele Strategien die teuerste. Steht dein Minus konzentriert in einem Zeitfenster, braucht es keine neuen Indikatoren, sondern eine Handelspause.',
+  },
   kurzfrist: {
     t: 'Kurzfrist-Prognose (Intraday)',
     d: 'Projektion der nächsten Stunde auf 5-Minuten-Kerzen — bei jedem Scan neu berechnet. Sie lernt in einem eigenen Regelkreis (stündliche Bewertung gegen realisierte Bars) getrennt von der Tages-Prognose.',

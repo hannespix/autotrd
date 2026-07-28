@@ -754,3 +754,56 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .opt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .opt-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--t2); }
 @media (max-width: 560px) { .opt-grid { grid-template-columns: 1fr; } }
+
+/* ── Handels-Analyse: SVG-Diagramme (Owner-Wunsch 28.07.) ──────────────────
+   Die Diagramme bringen KEINE eigenen Farben mit — sie greifen über
+   `var(--gn)` / `var(--rd)` / `var(--t3)` auf die Theme-Variablen zu. Damit
+   funktioniert der Hell-/Dunkel-Umschalter ohne Neuzeichnen; eine im SVG
+   fest verdrahtete Farbe wäre im Lichtmodus unsichtbar. */
+.svgc { width: 100%; height: auto; display: block; overflow: visible; }
+.svgc-ax { font-size: 9px; fill: var(--t3); font-family: var(--f-num); }
+.svgc-empty {
+  display: flex; align-items: center; justify-content: center;
+  min-height: 72px; text-align: center;
+}
+.svgc-donut { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.svgc-donut > .svgc { flex: 0 0 132px; max-width: 132px; }
+.svgc-leg { list-style: none; margin: 0; padding: 0; flex: 1; min-width: 118px; font-size: 11px; }
+.svgc-leg li { display: flex; align-items: center; gap: 6px; padding: 1.5px 0; }
+.svgc-leg i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.svgc-leg .svgc-lbl {
+  flex: 1; color: var(--t2);
+  /* Symbolnamen wie „EURUSD=X" dürfen die Legende nicht sprengen */
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.svgc-leg b { color: var(--t1); font-size: 10.5px; }
+
+.an-kpis {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 6px; margin-bottom: 12px;
+}
+.an-kpi {
+  background: var(--sd); border: 1px solid var(--hair); border-radius: var(--r-xs);
+  padding: 6px 8px; display: flex; flex-direction: column; gap: 2px; min-width: 0;
+}
+.an-kpi .lbl { font-size: 9.5px; color: var(--t3); text-transform: uppercase; letter-spacing: .04em; }
+.an-kpi b { font-size: 13px; color: var(--t1); overflow: hidden; text-overflow: ellipsis; }
+
+.an-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.an-grid section { min-width: 0; }
+.an-grid h4 {
+  margin: 0 0 6px; font-size: 11px; font-weight: 600; color: var(--t2);
+  display: flex; align-items: center; gap: 4px;
+}
+
+/* Ab hier wird zweispaltig zu eng: Ein Donut mit Legende neben einem
+   24-Balken-Diagramm ist auf dem Telefon unlesbar. */
+@media (max-width: 900px) {
+  .an-grid { grid-template-columns: 1fr; }
+  .an-kpis { grid-template-columns: repeat(2, 1fr); }
+  /* SVG-Text skaliert MIT der viewBox: Dieselbe 9-px-Schrift wird bei
+     640er viewBox in einem 340-px-Container auf ~4,8 px gestaucht und ist
+     auf dem Telefon nicht mehr lesbar. Die Größe steht in viewBox-Einheiten,
+     also muss sie hier hoch, damit sie gerendert gleich groß ankommt. */
+  .svgc-ax { font-size: 17px; }
+}
