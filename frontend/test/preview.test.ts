@@ -69,15 +69,15 @@ describe('previewSignals (pure Client-Vorschau)', () => {
     expect(Math.abs(buys.length - sells.length)).toBeLessThanOrEqual(1);
   });
 
-  it('Events-Map: fehlender Tag = „keine Events" (false), ohne Map = unbekannt', () => {
+  it('unbekannter Kontext heißt kein Trade — nicht „vielleicht"', () => {
+    // Das Gegenstück zur Events-Map-Prüfung, die hier bis zum Ausbau der
+    // News-Strecke stand: Ein Blatt, dessen Kontext die Vorschau nicht
+    // füllt (hier die Prognose), darf NIE ein Signal erzeugen. Die
+    // Vorschau kennt keine Prognose — also bleibt sie stumm.
     const spec: StrategySpec = {
-      buy: { type: 'not', child: { type: 'newsEvent', tags: ['halt'] } },
+      buy: { type: 'forecast', direction: 'up', minAbsPct: 0.1 },
       sell: { type: 'compare', left: 'rsi', op: 'gt', right: 99 },
     };
-    const withMap = previewSignals(spec, dipBars(), new Map());
-    const withoutMap = previewSignals(spec, dipBars());
-    // Mit Map: not(keine Events) = true → Käufe möglich; ohne Map: unbekannt → nie
-    expect(withMap.markers.length).toBeGreaterThan(0);
-    expect(withoutMap.markers.length).toBe(0);
+    expect(previewSignals(spec, dipBars()).markers.length).toBe(0);
   });
 });

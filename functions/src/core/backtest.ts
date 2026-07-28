@@ -14,7 +14,6 @@
 
 import {
   DEFAULT_LOOKBACK,
-  DEFAULT_W,
   FORECAST_HORIZON,
   bollinger,
   computeForecastV2,
@@ -36,8 +35,6 @@ export interface BacktestOptions {
   commissionPct?: number;
   /** Basispunkte Slippage je Seite. */
   slippageBps?: number;
-  /** Sentiment/Event-Tags je Datum (optional, wie in der Studio-Vorschau). */
-  dayInfo?: Map<string, { sentiment?: number | null; tags?: string[] }>;
 }
 
 export interface BacktestTrade {
@@ -92,17 +89,14 @@ export function backtestSpec(
   });
 
   // Kausale Forecast-Serie (Prognose 2.0 Teil 4): Die Prognose an Bar i
-  // nutzt AUSSCHLIESSLICH closes[0..i] (+ Tages-Sentiment aus dayInfo) mit
+  // nutzt AUSSCHLIESSLICH closes[0..i] mit
   // den System-Defaults (w, Lookback) — damit greifen Forecast-Regeln auch
   // in Backtests und Sweeps. Gleiche Lookahead-Härte wie der Rest der Engine.
   const fcPct: Array<number | null> = new Array(bars.length).fill(null);
   for (let i = Math.min(WARMUP, bars.length - 1); i < bars.length; i++) {
-    const day = opts.dayInfo?.get(bars[i]!.date);
     const fc = computeForecastV2(
       closes.slice(0, i + 1),
       bars[i]!.date,
-      day?.sentiment ?? 0,
-      DEFAULT_W,
       FORECAST_HORIZON,
       DEFAULT_LOOKBACK,
     );
@@ -123,15 +117,12 @@ export function backtestSpec(
   for (let i = 0; i < bars.length; i++) {
     const price = closes[i]!;
     if (i >= Math.min(WARMUP, bars.length - 1)) {
-      const day = opts.dayInfo?.get(bars[i]!.date);
       const ctx: RuleContext = {
         values: valuesAt(i),
         prevValues: i > 0 ? valuesAt(i - 1) : {},
         // KAUSAL: nur Vergangenheit + Gegenwart — nie bars[i+1..]
         closes: closes.slice(0, i + 1),
         minuteOfDay: 600,
-        sentiment: day?.sentiment ?? null,
-        newsEvents: opts.dayInfo ? (day?.tags ?? []) : null,
         forecastPct: fcPct[i] ?? null,
         position:
           shares > 0

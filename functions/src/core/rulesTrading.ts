@@ -107,7 +107,6 @@ export interface RuleContextArgs {
   prevPrice?: number | null;
   closes: number[];
   minuteOfDayEt: number | null;
-  sentiment?: number | null;
   forecastPct?: number | null;
   position: { open: boolean; unrealizedPct?: number | null } | null;
 }
@@ -135,7 +134,6 @@ export function buildRuleContext(args: RuleContextArgs): RuleContext {
       : {}),
     closes: args.closes,
     minuteOfDay: args.minuteOfDayEt,
-    sentiment: args.sentiment ?? null,
     forecastPct: args.forecastPct ?? null,
     position: args.position,
   };

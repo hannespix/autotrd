@@ -904,28 +904,10 @@ export async function runScan(force = false): Promise<ScanResult> {
       const symDoc = await symRef.get();
       const batch = db.batch();
 
-      // News, Sentiment und KI-Staffel: RAUS aus dem Scan (Owner-Direktive
-      // 28.07., „Performance Maximierung! Kosten Minimierung!").
-      //
-      // Drei Gründe, jeder für sich ausreichend:
-      //  1. Die Sentiment-Stimme hat live nie Evidenz gesammelt (scored: 0)
-      //     — ein Signal unbekannter Trefferquote darf kein Geld bewegen.
-      //  2. Gratis-Feeds (Yahoo/Google-RSS, Reddit) sind Minuten bis Stunden
-      //     alt. Was dort steht, steht längst im Kurs — wer darauf handelt,
-      //     kauft die Bewegung von gestern.
-      //  3. Feeds + KI-Calls waren der teuerste Posten je Scan: HTTP-Fetches
-      //     gegen drei Quellen je Symbol plus Claude-Aufrufe, alle 5 Minuten.
-      //
-      // Der Forecast läuft ab jetzt als reine Preis-Regression (Sentiment 0).
-      // Die w-Achse des Shadow-Gitters kollabiert damit auf w=0 — der
-      // Forecaster erkennt das und drittelt sein Schreibvolumen. Alte
-      // Kombi-Statistiken mit w≠0 bleiben lesbar (History, kein Löschen).
-      const sentimentOverall = 0;
-
       // Prognose als reine Preis-Regression + Shadow-Grid
       let forecast: LiveForecast | null = null;
       try {
-        forecast = await runForecast(symbol, closes, lastDate, sentimentOverall);
+        forecast = await runForecast(symbol, closes, lastDate);
       } catch (err) {
         logger.warn(`Forecast-Fehler ${symbol}`, err);
       }
@@ -958,10 +940,8 @@ export async function runScan(force = false): Promise<ScanResult> {
             ? {
                 points: forecast.points,
                 band: forecast.band,
-                w: forecast.w,
                 lookback: forecast.lookback,
                 predictedPct: Math.round(forecast.predictedPct * 100) / 100,
-                sentiment: forecast.sentiment,
                 baseDate: lastDate,
                 calib: forecast.calib,
               }
@@ -1041,7 +1021,6 @@ export async function runScan(force = false): Promise<ScanResult> {
           const ifc = await runIntradayForecast(
             symbol,
             flat,
-            sentimentOverall,
             marketOpenForClass(classify(symbol), now),
           );
           if (md) md.intradayPct = ifc?.predictedPct ?? null;
@@ -1052,7 +1031,6 @@ export async function runScan(force = false): Promise<ScanResult> {
                 ? {
                     points: ifc.points,
                     band: ifc.band,
-                    w: ifc.w,
                     lookback: ifc.lookback,
                     predictedPct: Math.round(ifc.predictedPct * 100) / 100,
                     baseT: ifc.points[0]!.t - 300,
@@ -1191,7 +1169,7 @@ export const scanMarket = onSchedule(
     memory: '512MiB',
     timeoutSeconds: 180,
     // Kein KI-Secret mehr: Der Scan ruft seit 28.07. keine Claude-API auf —
-    // News/Sentiment/KI sind aus dem Handelspfad raus (Kosten + Evidenz).
+    // Der Scan ruft kein Sprachmodell mehr auf (MILESTONES M6).
   },
   async () => {
     try {

@@ -112,7 +112,7 @@ export const INFO: Record<string, { t: string; d: string }> = {
   },
   fcCombo: {
     t: 'Kombi-Statistik (Self-Tuning)',
-    d: 'Das System rechnet jede Prognose parallel mit mehreren Parameter-Kombis (Sentiment-Gewicht w × Lookback-Fenster) als „Schatten" mit und bewertet sie nach Ablauf gegen die Realität. Die Kombi mit der besten realisierten Trefferquote (Tiebreak: kleinste MAE) steuert die Live-Prognose — das ist die Selbstverbesserung.',
+    d: 'Das System rechnet jede Prognose parallel mit mehreren Lookback-Fenstern als „Schatten" mit und bewertet sie nach Ablauf gegen die Realität. Das Fenster mit der besten realisierten Trefferquote (Tiebreak: kleinste MAE) steuert die Live-Prognose — das ist die Selbstverbesserung. Wichtig: Solange keine Trefferquote nachgewiesen ist, stimmt die Prognose beim Handeln GAR NICHT mit; sie muss sich ihr Gewicht erst verdienen.',
   },
   mae: {
     t: 'MAE — Mittlerer absoluter Fehler',

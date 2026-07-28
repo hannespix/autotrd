@@ -64,18 +64,6 @@ export interface TimeWindowNode {
   end: string;   // 'HH:MM'
 }
 
-export interface SentimentNode {
-  type: 'sentiment';
-  op: 'gte' | 'lte';
-  value: number;
-}
-
-/** Mindestens einer der Tags ist in den aktuellen News-Events vorhanden. */
-export interface NewsEventNode {
-  type: 'newsEvent';
-  tags: string[];
-}
-
 /** Forecast-Richtungsstimme: predictedPct ≥ minAbsPct (up) bzw. ≤ −minAbsPct. */
 export interface ForecastNode {
   type: 'forecast';
@@ -125,8 +113,6 @@ export type RuleLeaf =
   | PriceLevelNode
   | ChangePctNode
   | TimeWindowNode
-  | SentimentNode
-  | NewsEventNode
   | ForecastNode
   | PositionNode;
 
@@ -190,17 +176,6 @@ const TimeWindowSchema = z
   .refine((v) => v.start !== v.end, {
     message: 'timeWindow: start und end dürfen nicht identisch sein (leeres Fenster)',
   });
-
-const SentimentSchema = z.strictObject({
-  type: z.literal('sentiment'),
-  op: z.enum(['gte', 'lte']),
-  value: z.number().min(-1).max(1),
-});
-
-const NewsEventSchema = z.strictObject({
-  type: z.literal('newsEvent'),
-  tags: z.array(z.string().min(1).max(40)).min(1).max(10),
-});
 
 const ForecastSchema = z.strictObject({
   type: z.literal('forecast'),
@@ -270,8 +245,6 @@ const RuleNodeSchemaInternal = z.lazy(() =>
     PriceLevelSchema,
     ChangePctSchema,
     TimeWindowSchema,
-    SentimentSchema,
-    NewsEventSchema,
     ForecastSchema,
     PositionSchema,
   ]),

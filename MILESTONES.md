@@ -206,37 +206,40 @@ eine künstlich in die Vergangenheit gelegte Prognose wird korrekt gescored
 Evidenz-Schwelle bei Defaults) ✓ · *Mehrtages-Live-Stichprobe + Einfrieren
 von `reference/` folgt, sobald das System deployt ist (Owner-Schritte).*
 
-## M6 — News, Sentiment & KI-Staffel
+## M6 — News, Sentiment & KI-Staffel — ZURÜCKGEBAUT (28.07.)
 
-**Ziel:** News-Events + tokeneffiziente KI, zentral gecacht.
+Gebaut, live betrieben, wieder entfernt. Der Eintrag bleibt stehen, weil ein
+gestrichener Meilenstein mehr über ein System aussagt als ein nie versuchter.
 
-- [x] `core/news.ts` + Lexikon-Sentiment (in `shared/src/sentiment.ts`,
-      Golden-Parity zur Python-Referenz): Yahoo-/Google-RSS + Reddit-Subs via
-      Google-News-Proxy, dependency-freier RSS-Parser; 10-min-TTL im Scan;
-      Schreibziele `market/{sym}/news/` + `events/{date}` +
-      Sentiment-Aggregat am Symbol-Doc — **speist den Forecaster mit echtem
-      Sentiment** (bis dahin war es 0)
-- [x] KI-Staffel (ARCHITECTURE §6): Anthropic TS-SDK in Functions
-      (`core/ai.ts`); Haiku = Klassifikation, Sonnet = Tages-Erklärung; Cache
-      `market/{sym}/ai/{date}` (1 Call für alle User); Prompt-Caching
-      (`cache_control` auf stabilen System-Prompts); täglicher Tuner-Review
-      (`scheduled/tunerReview.ts`, Port `ai_tuner.py`: darf Suchgitter in
-      harten Bounds [5,60]/[0,1.5] erweitern, ändert NIE Live-Params autonom)
-      via Batch API im Zwei-Phasen-Muster (Submit heute → Collect morgen,
-      50 % Kosten)
-- [x] Kosten-Guard: Tages-Tokenbudget als Config (`admin/aiBudget
-      .dailyTokenBudget`, Default 200k); bei Überschreitung degradiert die
-      Pipeline auf regelbasiert (loggt das sichtbar; ebenso bei fehlendem
-      Key und API-Fehlern — `degraded`/`reason` stehen im ai-Doc)
-- [x] Frontend: Event-Marker auf Kerzen (sentiment-gefärbt aus
-      `events/{date}`), News-Panel mit Gauge + Sentiment-Punkten,
-      KI-Karte „Warum bewegt sich X?“ (inkl. sichtbarem Degradations-Grund),
-      Crosshair-Tooltip mit Event-Details, Layer-Toggles Prognose/Events
-      (+ Timeframe-Buttons 1M/3M/Alle nachverdrahtet)
+**Was es war:** News-Feeds (Yahoo-/Google-RSS + Reddit), Lexikon-Sentiment mit
+Golden-Parity zur Python-Referenz, eine KI-Staffel (Haiku klassifiziert,
+Sonnet erklärt) mit Tages-Cache und Token-Budget, ein täglicher KI-Review des
+Prognose-Suchgitters, dazu Event-Marker auf den Kerzen und eine News-Karte.
 
-**Abnahme:** Live: Symbol mit News zeigt Marker + KI-Summary; zweiter Abruf
-kommt aus Cache (Firestore-Read, kein API-Call — an Logs verifizieren) ·
-Anthropic-Konsole: Tageskosten im erwarteten Cent-Bereich.
+**Warum es weg ist** (Owner-Direktive „Performance Maximierung! Kosten
+Minimierung! […] Erklärungen sind nicht wichtig solange Performance besser
+ist"):
+
+1. **Die Sentiment-Stimme hat nie Evidenz gesammelt.** `meta/forecastStats`
+   stand live dauerhaft auf `scored: 0` — die Prognose beeinflusste
+   Handelsentscheidungen, ohne dass irgendjemand ihre Trefferquote kannte.
+2. **Gratis-Feeds sind zu langsam.** Yahoo/Google-RSS und Reddit liegen
+   Minuten bis Stunden hinter dem Kurs. Was dort steht, ist eingepreist.
+3. **Es war der teuerste Posten je Scan.** Drei HTTP-Quellen pro Symbol plus
+   Claude-Aufrufe, alle fünf Minuten.
+
+**Was der Rückbau mitgenommen hat:** `core/news.ts`, `core/ai.ts`,
+`core/tuner.ts`, `scheduled/tunerReview.ts`, `shared/src/sentiment.ts`, die
+Regelbaum-Knoten `sentiment` und `newsEvent`, das News-Preset, die Frontend-
+Karten samt Event-Markern — und den **Sentiment-Tilt im Forecast-Kern**.
+Damit fiel auch die `w`-Achse des Suchgitters: Sie unterschied Kombinationen,
+die dieselbe Zahl rechneten. Aus 15 Shadow-Prognosen je Symbol und Tag wurden
+drei echte.
+
+**Was geblieben ist:** Die Prognose selbst — als reine Preis-Regression über
+ein self-getuntes Lookback-Fenster. Und die härtere Regel, die aus dem Befund
+folgte: Ohne nachgewiesene Trefferquote stimmt sie beim Handeln **gar nicht**
+mit.
 
 > Verifiziert (Emulator, 2026-07-23): alle 3 Degradationspfade real
 > durchlaufen — ohne Key (`no_api_key`), Budget=1 (`budget_exceeded`,

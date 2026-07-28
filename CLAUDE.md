@@ -98,11 +98,11 @@ zurückbiegen.
 | `history_store.py`        | SQLite-Zeitreihen (`history.db`, WAL); jeder Scan & jede Kursansicht hängt eine Observation an. |
 | `forecaster.py`           | Sentiment-gewichtete Regression-Prognose; loggt Shadow-Forecasts über `(w, lookback)`-Gitter. |
 | `forecast_eval.py`        | Self-Improvement: bewertet fällige Prognosen, tunt `best_params`. **Kein Lookahead** (§5). |
-| `news_feed.py`            | Gratis-News (yfinance + Yahoo/Google RSS + Reddit), 10-min-Cache. |
-| `sentiment.py`            | Lexikon-Sentiment + Event-Tags. |
-| `ai_analyst.py`           | Claude-Erklärung pro Tag via `claude` CLI (`-p --model sonnet`); cached in `history.db`. |
-| `ai_tuner.py`             | Täglicher KI-Review der Genauigkeit; darf Suchgitter in harten Bounds erweitern, **nie** Live-Params autonom ändern. |
-| `event_engine.py`         | Mappt News auf echte Chart-Tage → sentiment-gefärbte Marker + KI-Tagessummary. |
+| `news_feed.py`            | Gratis-News. **NICHT nach TS portiert** — 28.07. ausgebaut (MILESTONES M6). |
+| `sentiment.py`            | Lexikon-Sentiment. **NICHT portiert** (s. o.). |
+| `ai_analyst.py`           | Claude-Erklärung pro Tag. **NICHT portiert** (s. o.). |
+| `ai_tuner.py`             | Täglicher KI-Review. **NICHT portiert** (s. o.) — das TS-Suchgitter ist fest. |
+| `event_engine.py`         | News auf Chart-Tage mappen. **NICHT portiert** (s. o.). |
 | `broker.py`               | `get_broker(strategy)` → `PaperBroker` \| `AlpacaBroker`; liest Keys aus env; **live hart geguarded** (§7). |
 | `backtest_engine.py`      | Strategie-Backtests (Sharpe/Drawdown). |
 | `static/index.html`       | Komplettes Frontend (hand-maintained, ~87 KB). |

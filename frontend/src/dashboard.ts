@@ -122,7 +122,6 @@ const PANEL_TITLES: Record<string, string> = {
   fclab: 'Prognose-Labor',
   momentum: 'Momentum-Ranking',
   tuner: 'Auto-Tuner',
-  news: 'News & Sentiment',
   chart2: 'Vergleichs-Chart',
 };
 
@@ -707,7 +706,6 @@ function layout(email: string): string {
         <div id="fcAcc" class="vbig c-ac">--</div>
         <div class="row" style="gap:12px">
           <div><label class="lbl">Bewertet</label><div id="fcScored" class="smv">0</div></div>
-          <div><label class="lbl">Best w</label><div id="fcW" class="smv">--</div></div>
           <div><label class="lbl">Lookback</label><div id="fcLb" class="smv">--</div></div>
         </div>
         <div class="hint" id="fcTuning">Self-Tuning sammelt Evidenz — Defaults aktiv,
@@ -718,11 +716,11 @@ function layout(email: string): string {
       <div class="card" data-panel="fclab"><div class="sect">Prognose-Labor <span id="flSym" style="float:right;color:var(--t3)"></span></div><div class="cbody">
         <div class="hint">Selbstverbesserung: Jede gespeicherte Prognose wird nach Ablauf
           ihres Horizonts gegen die eingetretene Realität bewertet. Die Trefferquote je
-          Kombi aus Sentiment-Gewicht (w) und Lookback steuert, welche Parameter
-          künftige Prognosen nutzen — das System lernt aus jedem Fehler.</div>
-        <label class="lbl">Kombi-Statistik Tages-Prognose (w × Lookback) ${iBtn('fcCombo')}</label>
+          Lookback-Fenster steuert, welches Fenster künftige Prognosen nutzen — und ob
+          die Prognose beim Handeln überhaupt mitstimmen darf.</div>
+        <label class="lbl">Kombi-Statistik Tages-Prognose (Lookback-Fenster) ${iBtn('fcCombo')}</label>
         <div id="flCombos" class="fl-tbl"><div class="hint">Noch keine bewerteten Prognosen.</div></div>
-        <label class="lbl">Kombi-Statistik Kurzfrist/Intraday (w × Lookback in 5-min-Bars) ${iBtn('kurzfrist')}</label>
+        <label class="lbl">Kombi-Statistik Kurzfrist/Intraday (Lookback in 5-min-Bars) ${iBtn('kurzfrist')}</label>
         <div id="flCombosIntra" class="fl-tbl"><div class="hint">Noch keine bewerteten Kurzfrist-Prognosen.</div></div>
         <label class="lbl">Vorhersage vs. Realität ${iBtn('mae')} <span id="flSym2" style="color:var(--t3)"></span></label>
         <div id="flRows" class="fl-tbl"><div class="hint">Noch keine bewerteten Prognosen für dieses Symbol.</div></div>
@@ -1913,7 +1911,7 @@ function applyForecast(): void {
       : ', Band = ±1σ';
     info.textContent =
       `Kurzfrist ${dirI} ${ifc.predictedPct >= 0 ? '+' : ''}${ifc.predictedPct.toFixed(2)} % ` +
-      `über die nächste Stunde (5-min-Raster, w=${ifc.w}, Lookback ${ifc.lookback} Bars${calI})`;
+      `über die nächste Stunde (5-min-Raster, Lookback ${ifc.lookback} Bars${calI})`;
     return;
   }
   if (!fc || fc.points.length === 0) {
@@ -1932,7 +1930,7 @@ function applyForecast(): void {
     : 'Band = ±1σ der Regression';
   info.textContent =
     `Prognose ${dir} ${fc.predictedPct >= 0 ? '+' : ''}${fc.predictedPct.toFixed(2)} % ` +
-    `über ${fc.points.length} Handelstage (w=${fc.w}, Lookback ${fc.lookback}, ${cal})`;
+    `über ${fc.points.length} Handelstage (Lookback ${fc.lookback}, ${cal})`;
 }
 
 /** Prognose-Labor: Kombi-Statistik (Tages- ODER Intraday-Pfad) rendern. */
@@ -1940,17 +1938,18 @@ function renderFcLabStats(hostId: string, stats: ForecastStatsDoc | null): void 
   const host = $(hostId);
   const rows = Object.entries(stats?.combos ?? {})
     .map(([key, c]) => {
-      const [wS, lbS] = key.split('_');
-      const w = Number(wS);
-      const lb = Number(lbS);
+      // Schlüssel ist der Lookback. Altbestand im Format "w_lookback" fällt
+      // durch die Prüfung und wird nicht angezeigt — eine Zeile mit
+      // erfundener Zahl wäre schlimmer als eine fehlende.
+      const lb = Number(key);
       return {
-        w: Number.isFinite(w) ? w : 0,
-        lb: Number.isFinite(lb) ? lb : 0,
+        lb: Number.isFinite(lb) && lb > 0 ? lb : null,
         n: c.n,
         hit: c.n > 0 ? (c.hits / c.n) * 100 : 0,
         mae: c.n > 0 ? c.maeSum / c.n : 0,
       };
     })
+    .filter((r): r is { lb: number; n: number; hit: number; mae: number } => r.lb !== null)
     .sort((a, b) => b.hit - a.hit || a.mae - b.mae);
   if (rows.length === 0) {
     host.innerHTML =
@@ -1959,13 +1958,13 @@ function renderFcLabStats(hostId: string, stats: ForecastStatsDoc | null): void 
   }
   const best = stats?.best;
   host.innerHTML =
-    '<div class="fl-row fl-head"><span>w</span><span>Lookback</span><span>n</span><span>Treffer</span><span>MAE</span></div>' +
+    '<div class="fl-row fl-head"><span>Lookback</span><span>n</span><span>Treffer</span><span>MAE</span></div>' +
     rows
       .map((r) => {
-        const isBest = best !== undefined && best.w === r.w && best.lookback === r.lb;
+        const isBest = best !== undefined && best.lookback === r.lb;
         return (
-          `<div class="fl-row${isBest ? ' fl-best' : ''}"${isBest ? ' title="Beste Kombi — steuert die Live-Prognose"' : ''}>` +
-          `<span>${r.w}</span><span>${r.lb}</span><span>${r.n}</span>` +
+          `<div class="fl-row${isBest ? ' fl-best' : ''}"${isBest ? ' title="Bester Lookback — steuert die Live-Prognose"' : ''}>` +
+          `<span>${r.lb}</span><span>${r.n}</span>` +
           `<span class="${r.hit >= 50 ? 'c-gn' : 'c-rd'}">${r.hit.toFixed(0)} %</span>` +
           `<span>${r.mae.toFixed(2)} %</span></div>`
         );
@@ -1982,13 +1981,13 @@ function renderFcLabRows(rows: EvaluatedForecastRow[]): void {
     return;
   }
   host.innerHTML =
-    '<div class="fl-row fl-head"><span>Basis</span><span>w/Lb</span><span>Prognose</span><span>Richtung</span><span>MAE</span></div>' +
+    '<div class="fl-row fl-head"><span>Basis</span><span>Lookback</span><span>Prognose</span><span>Richtung</span><span>MAE</span></div>' +
     done
       .map((r) => {
         const hit = r.dirHit === true;
         return (
           '<div class="fl-row">' +
-          `<span>${String(r.baseDate).slice(0, 10)}</span><span>${Number(r.w)}/${Number(r.lookback)}</span>` +
+          `<span>${String(r.baseDate).slice(0, 10)}</span><span>${Number(r.lookback)}</span>` +
           `<span>${r.predictedPct >= 0 ? '+' : ''}${Number(r.predictedPct).toFixed(2)} %</span>` +
           `<span class="${hit ? 'c-gn' : 'c-rd'}">${hit ? '✓ getroffen' : '✗ daneben'}</span>` +
           `<span>${Number(r.maePct ?? 0).toFixed(2)} %</span></div>`
@@ -4179,7 +4178,6 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       $('fcAcc').textContent =
         stats?.dirAccuracy != null ? `${stats.dirAccuracy.toFixed(1)} %` : '--';
       $('fcScored').textContent = String(stats?.scored ?? 0);
-      $('fcW').textContent = stats?.best ? String(stats.best.w) : '--';
       $('fcLb').textContent = stats?.best ? String(stats.best.lookback) : '--';
       $('fcTuning').textContent = stats?.tuningActive
         ? 'Self-Tuning aktiv: Live-Prognosen nutzen die historisch beste Kombi.'

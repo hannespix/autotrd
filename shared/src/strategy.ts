@@ -354,10 +354,8 @@ export interface SignalDoc {
 export interface ForecastDoc {
   baseDate: string; // YYYY-MM-DD
   baseClose: number;
-  w: number;
   lookback: number;
   horizonDays: number;
-  sentiment: number;
   dailyVol: number;
   points: Array<{ time: string; value: number }>;
   /** Prognostizierte Änderung zum Horizont-Ende in % (für den Engine-Vote). */

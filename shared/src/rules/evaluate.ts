@@ -33,10 +33,6 @@ export interface RuleContext {
   closes?: number[];
   /** Minuten seit Mitternacht in der Markt-Zeitzone (0–1439). */
   minuteOfDay?: number | null;
-  /** Sentiment-Score −1…+1. */
-  sentiment?: number | null;
-  /** Event-Tags der aktuellen News; [] = „keine Events“, undefined = unbekannt. */
-  newsEvents?: string[] | null;
   /** Forecast predictedPct zum Horizont-Ende. */
   forecastPct?: number | null;
   /** Positions-Zustand; undefined = unbekannt (≠ „keine Position“). */
@@ -143,16 +139,6 @@ export function evaluateTri(node: RuleNode, ctx: RuleContext): TriState {
       const end = hmToMinutes(node.end);
       // [start, end); bei start > end wickelt das Fenster über Mitternacht.
       return start < end ? minute >= start && minute < end : minute >= start || minute < end;
-    }
-    case 'sentiment': {
-      const s = num(ctx.sentiment);
-      if (s === null) return null;
-      return node.op === 'gte' ? s >= node.value : s <= node.value;
-    }
-    case 'newsEvent': {
-      const events = ctx.newsEvents;
-      if (events === undefined || events === null) return null;
-      return node.tags.some((t) => events.includes(t));
     }
     case 'forecast': {
       const fc = num(ctx.forecastPct);

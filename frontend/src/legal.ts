@@ -58,7 +58,7 @@ const TEXTS: Record<LegalKind, string> = {
     Geld. Simulierte Ergebnisse lassen keinen Rückschluss auf reale Ergebnisse
     zu — reale Märkte kennen Slippage, Gebühren und Liquiditätsrisiken.</p>
     <p>Prognosen basieren auf einfachen statistischen Modellen und
-    News-Sentiment; sie können falsch liegen und tun das regelmäßig. Der
+    Kursverläufen; sie können falsch liegen und tun das regelmäßig. Der
     Handel mit echten Wertpapieren, Derivaten oder Kryptowährungen kann zum
     Totalverlust führen. Entscheidungen triffst du in eigener Verantwortung.</p>
     <p>Kursdaten stammen von öffentlichen Quellen (verzögert, ohne Gewähr auf

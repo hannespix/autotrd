@@ -204,17 +204,7 @@ describe('evaluateTri — Blätter', () => {
     expect(evaluateTri(win, { values: {} })).toBe(null);
   });
 
-  it('sentiment, newsEvent, forecast', () => {
-    expect(evaluateTri({ type: 'sentiment', op: 'gte', value: 0.3 }, ctxBase)).toBe(true);
-    expect(evaluateTri({ type: 'sentiment', op: 'lte', value: -0.3 }, ctxBase)).toBe(false);
-    expect(evaluateTri({ type: 'sentiment', op: 'gte', value: 0 }, { values: {} })).toBe(null);
-
-    expect(evaluateTri({ type: 'newsEvent', tags: ['earnings', 'fda'] }, ctxBase)).toBe(true);
-    expect(evaluateTri({ type: 'newsEvent', tags: ['merger'] }, ctxBase)).toBe(false);
-    // [] = „keine Events“ (false) vs. undefined = unbekannt (null)
-    expect(evaluateTri({ type: 'newsEvent', tags: ['x'] }, { ...ctxBase, newsEvents: [] })).toBe(false);
-    expect(evaluateTri({ type: 'newsEvent', tags: ['x'] }, { values: {} })).toBe(null);
-
+  it('forecast', () => {
     expect(evaluateTri({ type: 'forecast', direction: 'up', minAbsPct: 1 }, ctxBase)).toBe(true);
     expect(evaluateTri({ type: 'forecast', direction: 'down', minAbsPct: 1 }, ctxBase)).toBe(false);
     expect(
@@ -299,7 +289,7 @@ describe('evaluateTri — Kombinatoren', () => {
             { weight: 2, node: { type: 'forecast', direction: 'up', minAbsPct: 5 } },
           ],
         },
-        { type: 'not', child: { type: 'newsEvent', tags: ['halt'] } },
+        { type: 'not', child: { type: 'priceLevel', level: 1e9, side: 'above' } },
       ],
     };
     expect(validateRuleTree(tree)).toEqual([]);

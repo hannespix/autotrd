@@ -18,7 +18,7 @@ const closesUp = Array.from({ length: 48 }, (_, i) => 100 + i * 0.1);
 
 describe('computeIntradayForecast', () => {
   it('projiziert horizon Punkte im 5-min-Raster ab baseT', () => {
-    const fc = computeIntradayForecast(closesUp, BASE_T, 0, 0.5);
+    const fc = computeIntradayForecast(closesUp, BASE_T);
     expect(fc).not.toBeNull();
     expect(fc!.points).toHaveLength(INTRADAY_HORIZON);
     fc!.points.forEach((p, i) => expect(p.t).toBe(BASE_T + (i + 1) * INTRADAY_STEP_SEC));
@@ -26,20 +26,20 @@ describe('computeIntradayForecast', () => {
   });
 
   it('steigender Trend ⇒ steigende Projektion über baseClose', () => {
-    const fc = computeIntradayForecast(closesUp, BASE_T, 0, 0)!;
+    const fc = computeIntradayForecast(closesUp, BASE_T)!;
     expect(fc.points[INTRADAY_HORIZON - 1]!.value).toBeGreaterThan(fc.baseClose);
   });
 
   it('kausal: nutzt nur die übergebenen Closes (lookback-Segment)', () => {
     // identische letzte 24 Bars ⇒ identische Prognose, egal was davor kam
     const tail = closesUp.slice(-24);
-    const a = computeIntradayForecast([...Array(24).fill(500), ...tail], BASE_T, 0, 0.5, 12, 24);
-    const b = computeIntradayForecast(tail, BASE_T, 0, 0.5, 12, 24);
+    const a = computeIntradayForecast([...Array(24).fill(500), ...tail], BASE_T, 12, 24);
+    const b = computeIntradayForecast(tail, BASE_T, 12, 24);
     expect(a!.points).toEqual(b!.points);
   });
 
   it('liefert null bei < 5 Bars', () => {
-    expect(computeIntradayForecast([1, 2, 3, 4], BASE_T, 0, 0.5)).toBeNull();
+    expect(computeIntradayForecast([1, 2, 3, 4], BASE_T)).toBeNull();
   });
 });
 

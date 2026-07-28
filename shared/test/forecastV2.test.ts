@@ -53,9 +53,9 @@ describe('forecastFeatures', () => {
 describe('computeForecastV2', () => {
   const closes = wave(60, 0.5, 0.3);
 
-  it('Punkt-Verschiebung gegenüber V1 respektiert den Tilt-Cap je Schritt', () => {
-    const v1 = computeForecast(closes, '2026-07-20', 0, 0.5)!;
-    const v2 = computeForecastV2(closes, '2026-07-20', 0, 0.5)!;
+  it('Punkt-Verschiebung gegenüber V1 respektiert den Feature-Tilt-Cap je Schritt', () => {
+    const v1 = computeForecast(closes, '2026-07-20')!;
+    const v2 = computeForecastV2(closes, '2026-07-20')!;
     const cap = TILT_CAP * v1.dailyVol;
     v2.points.forEach((p, i) => {
       expect(Math.abs(p.value - v1.points[i]!.value)).toBeLessThanOrEqual(cap * (i + 1) + 1e-6);
@@ -64,8 +64,8 @@ describe('computeForecastV2', () => {
   });
 
   it('Band ist im turbulenten Regime mindestens so breit wie V1', () => {
-    const v1 = computeForecast(closes, '2026-07-20', 0, 0.5)!;
-    const v2 = computeForecastV2(closes, '2026-07-20', 0, 0.5)!;
+    const v1 = computeForecast(closes, '2026-07-20')!;
+    const v2 = computeForecastV2(closes, '2026-07-20')!;
     v2.band.forEach((b, i) => {
       const w1 = v1.band[i]!.upper - v1.band[i]!.lower;
       expect(b.upper - b.lower).toBeGreaterThanOrEqual(w1 - 1e-6);
@@ -73,18 +73,18 @@ describe('computeForecastV2', () => {
   });
 
   it('liefert null bei < 5 Bars (wie V1)', () => {
-    expect(computeForecastV2([1, 2, 3], '2026-07-20', 0, 0.5)).toBeNull();
+    expect(computeForecastV2([1, 2, 3], '2026-07-20')).toBeNull();
   });
 
   it('Intraday-V2: gleiche Zeitachse wie V1, Features vorhanden', () => {
-    const v2 = computeIntradayForecastV2(closes, 1_753_452_000, 0, 0.5)!;
+    const v2 = computeIntradayForecastV2(closes, 1_753_452_000)!;
     expect(v2.points[0]!.t).toBe(1_753_452_000 + 300);
     expect(v2.features.volRegime).toBeGreaterThan(0);
   });
 });
 
 describe('applyBandCalibration', () => {
-  const fc = computeForecast(wave(60, 0.5, 0.3), '2026-07-20', 0, 0.5)!;
+  const fc = computeForecast(wave(60, 0.5, 0.3), '2026-07-20')!;
 
   it('ohne Kombi-Evidenz (n < Minimum): unverändert, calib null', () => {
     const { fc: out, calib } = applyBandCalibration(fc, { n: MIN_SAMPLES_PER_COMBO - 1, hits: 3, maeSum: 5 });

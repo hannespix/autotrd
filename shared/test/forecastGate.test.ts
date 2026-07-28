@@ -79,25 +79,25 @@ describe('nextWeekdays — Kalender (DST-neutral via UTC)', () => {
 
 describe('bestParams — Self-Tuning ohne Lookahead', () => {
   it('Defaults, solange zu wenig Evidenz (MIN_TOTAL)', () => {
-    expect(bestParams({})).toEqual({ w: DEFAULT_W, lookback: DEFAULT_LOOKBACK });
-    expect(bestParams({ [comboKey(1, 10)]: { n: 5, hits: 5, maeSum: 1 } }))
+    expect(bestParams({})).toEqual({ lookback: DEFAULT_LOOKBACK });
+    expect(bestParams({ [comboKey(10)]: { n: 5, hits: 5, maeSum: 1 } }))
       .toEqual({ w: DEFAULT_W, lookback: DEFAULT_LOOKBACK });
   });
 
   it('wählt beste Richtungs-Quote, Tiebreak niedrigste MAE', () => {
     const combos = {
-      [comboKey(0.25, 10)]: { n: 10, hits: 9, maeSum: 30 }, // 90 %, MAE 3.0
-      [comboKey(0.5, 20)]: { n: 10, hits: 9, maeSum: 20 },  // 90 %, MAE 2.0 ← Gewinner
-      [comboKey(1, 30)]: { n: 10, hits: 7, maeSum: 5 },     // 70 %
+      [comboKey(10)]: { n: 10, hits: 9, maeSum: 30 }, // 90 %, MAE 3.0
+      [comboKey(20)]: { n: 10, hits: 9, maeSum: 20 }, // 90 %, MAE 2.0 ← Gewinner
+      [comboKey(30)]: { n: 10, hits: 7, maeSum: 5 },  // 70 %
     };
-    expect(bestParams(combos)).toEqual({ w: 0.5, lookback: 20 });
+    expect(bestParams(combos)).toEqual({ lookback: 20 });
   });
 
   it('ignoriert Kombis unter MIN_SAMPLES_PER_COMBO', () => {
     const combos = {
-      [comboKey(1, 30)]: { n: 2, hits: 2, maeSum: 0.1 }, // perfekt, aber n<8
-      [comboKey(0.25, 10)]: { n: 20, hits: 12, maeSum: 40 },
+      [comboKey(30)]: { n: 2, hits: 2, maeSum: 0.1 }, // perfekt, aber n<8
+      [comboKey(10)]: { n: 20, hits: 12, maeSum: 40 },
     };
-    expect(bestParams(combos)).toEqual({ w: 0.25, lookback: 10 });
+    expect(bestParams(combos)).toEqual({ lookback: 10 });
   });
 });

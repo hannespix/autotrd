@@ -12,6 +12,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 import {
+  DEFAULT_INTRADAY_LOOKBACK,
   bestParams,
   comboKey,
   isForecastDue,
@@ -30,7 +31,7 @@ const BATCH_LIMIT = 200;
 
 export interface EvalResult {
   scored: number;
-  bestParams: { w: number; lookback: number };
+  bestParams: { lookback: number };
 }
 
 /** Alle fälligen Prognosen bewerten; liefert Anzahl + neue best_params. */
@@ -80,7 +81,7 @@ export async function evaluateDue(): Promise<EvalResult> {
         dirHit: score.dirHit,
         nPoints: score.nPoints,
       });
-      const key = comboKey(doc.w, doc.lookback);
+      const key = comboKey(doc.lookback);
       const d = comboDelta.get(key) ?? { n: 0, hits: 0, maeSum: 0 };
       d.n += 1;
       d.hits += score.dirHit ? 1 : 0;
@@ -125,7 +126,7 @@ export async function evaluateDue(): Promise<EvalResult> {
     { merge: true },
   );
 
-  logger.info(`evalForecasts: ${scored} bewertet, best_params w=${bp.w} lb=${bp.lookback}`);
+  logger.info(`evalForecasts: ${scored} bewertet, bester Lookback=${bp.lookback}`);
   return { scored, bestParams: bp };
 }
 
@@ -274,7 +275,7 @@ export async function evaluateIntradayDue(): Promise<IntradayEvalResult> {
           dirHit: score.dirHit,
           nPoints: score.nPoints,
         });
-        const key = comboKey(doc.w, doc.lookback);
+        const key = comboKey(doc.lookback);
         const d = comboDelta.get(key) ?? { n: 0, hits: 0, maeSum: 0 };
         d.n += 1;
         d.hits += score.dirHit ? 1 : 0;
@@ -310,7 +311,7 @@ export async function evaluateIntradayDue(): Promise<IntradayEvalResult> {
 
     const combos =
       ((await statsRef.get()).get('combos') as Record<string, ComboStat> | undefined) ?? {};
-    const bp = bestParams(combos);
+    const bp = bestParams(combos, DEFAULT_INTRADAY_LOOKBACK);
     const total = Object.values(combos).reduce((s, d) => s + d.n, 0);
     const hits = Object.values(combos).reduce((s, d) => s + d.hits, 0);
     await statsRef.set(

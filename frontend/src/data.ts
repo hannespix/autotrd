@@ -53,10 +53,8 @@ export interface MarketDocData {
   forecast?: {
     points: Array<{ time: string; value: number }>;
     band: Array<{ time: string; upper: number; lower: number }>;
-    w: number;
     lookback: number;
     predictedPct: number;
-    sentiment: number;
     baseDate: string;
     /** Band-Kalibrierung aus realisierter Fehlerverteilung (null = ±1σ Regression). */
     calib?: { s: number; maePct: number; n: number } | null;
@@ -65,7 +63,6 @@ export interface MarketDocData {
   forecastIntraday?: {
     points: Array<{ t: number; value: number }>;
     band: Array<{ t: number; upper: number; lower: number }>;
-    w: number;
     lookback: number;
     predictedPct: number;
     baseT: number;
@@ -74,7 +71,7 @@ export interface MarketDocData {
   } | null;
 }
 
-/** Aggregat je (w, lookback)-Kombi — Rohmaterial des Self-Tunings. */
+/** Aggregat je Lookback-Fenster — Rohmaterial des Self-Tunings. */
 export interface ComboStatRow {
   n: number;
   hits: number;
@@ -84,7 +81,7 @@ export interface ComboStatRow {
 export interface ForecastStatsDoc {
   scored?: number;
   dirAccuracy?: number | null;
-  best?: { w: number; lookback: number };
+  best?: { lookback: number };
   tuningActive?: boolean;
   combos?: Record<string, ComboStatRow>;
   updatedAt?: string;
@@ -118,7 +115,6 @@ export function watchForecastStatsIntraday(
 /** Bewertete Shadow-Prognose (market/{sym}/forecasts) fürs Prognose-Labor. */
 export interface EvaluatedForecastRow {
   baseDate: string;
-  w: number;
   lookback: number;
   predictedPct: number;
   evaluated: boolean;

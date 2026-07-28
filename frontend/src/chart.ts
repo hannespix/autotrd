@@ -117,11 +117,11 @@ export interface PriceChartHandle {
   setForecast(overlay: ForecastOverlay | null, anchor?: { time: string | number; value: number }): void;
   /** Ist ein Prognose-Overlay gesetzt? (E2E-Hook) */
   forecastActive(): boolean;
-  /** Event-Marker (sentiment-gefärbt) auf den Kerzen. */
+  /** Marker auf den Kerzen (aktuell keine — Anker für künftige Trade-Marken). */
   setMarkers(markers: ChartMarker[]): void;
   /**
-   * Crosshair-Datum für Tooltip-Details (M6b): liefert den Handelstag unter
-   * dem Cursor plus Viewport-Koordinaten — null beim Verlassen des Charts.
+   * Crosshair-Datum: liefert den Handelstag unter dem Cursor plus
+   * Viewport-Koordinaten — null beim Verlassen des Charts.
    */
   onCrosshairDate(cb: (date: string | null, pos: { x: number; y: number } | null) => void): void;
   /**

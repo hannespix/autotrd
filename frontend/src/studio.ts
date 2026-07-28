@@ -113,10 +113,6 @@ function leafLabel(n: RuleNode): string {
       return `Δ ${n.lookbackBars} Bars ${n.op === 'gte' ? '≥' : '≤'} ${n.pct} %`;
     case 'timeWindow':
       return `${n.start}–${n.end} ET`;
-    case 'sentiment':
-      return `Sentiment ${n.op === 'gte' ? '≥' : '≤'} ${n.value}`;
-    case 'newsEvent':
-      return `News: ${n.tags.join(', ')}`;
     case 'forecast':
       return `Prognose ${n.direction === 'up' ? '↑' : '↓'} ≥ ${n.minAbsPct} %`;
     case 'position':
@@ -143,10 +139,6 @@ function leafInputs(n: RuleNode): string {
       return `${num('lookbackBars', n.lookbackBars)} Bars ${sel('op', n.op, ['gte', 'lte'])} ${num('pct', n.pct, 0.5)} %`;
     case 'timeWindow':
       return `<input class="inp st-time" data-f="start" value="${n.start}" /> – <input class="inp st-time" data-f="end" value="${n.end}" />`;
-    case 'sentiment':
-      return `${sel('op', n.op, ['gte', 'lte'])} ${num('value', n.value, 0.1)}`;
-    case 'newsEvent':
-      return `<input class="inp" data-f="tags" value="${esc(n.tags.join(', '))}" placeholder="tag1, tag2" />`;
     case 'forecast':
       return `${sel('direction', n.direction, ['up', 'down'])} ≥ ${num('minAbsPct', n.minAbsPct, 0.1)} %`;
     case 'position':

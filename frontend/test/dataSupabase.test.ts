@@ -31,7 +31,6 @@ const SYM: SymbolRow = {
   quote_price: '64123.4500',
   quote_change_pct: '-1.2345',
   quote_updated_at: '2026-07-27T13:37:42.694Z',
-  sentiment: null,
   forecast: null,
   forecast_intraday: null,
 };
