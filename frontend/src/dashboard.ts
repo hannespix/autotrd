@@ -377,7 +377,6 @@ function layout(email: string): string {
     <div class="logo">AUTO<span class="c-gn">TRD</span></div>
     <div class="spacer"></div>
     <div id="engBadge" class="badge b-off">Engine aus</div>
-    <a class="hbtn" id="studioLink" href="#/strategy" title="Strategie-Studio">${ICONS.bolt}<span class="hide-sm"> Studio</span></a>
     <button class="hbtn" id="optBtn" title="Optionen: Elemente, Module & Paper-Wallet">${ICONS.gear}</button>
     <button class="hbtn sb-tgl" id="sideL" title="Linke Spalte ein-/ausblenden">◧</button>
     <button class="hbtn sb-tgl" id="sideR" title="Rechte Spalte ein-/ausblenden">◨</button>
@@ -4515,8 +4514,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     ['layBtn', 'menuLay'],
   ];
   const closeMenus = (): void => {
-    // Null-sicher: die document-Listener unten überleben den Routen-Wechsel
-    // (#/strategy) — dort existieren die Menü-Knoten nicht mehr.
+    // Null-sicher: die document-Listener unten überleben ein Re-Rendern der
+    // Kopfleiste, bei dem die Menü-Knoten kurzzeitig fehlen.
     for (const [b, m] of menus) {
       const menu = document.getElementById(m);
       if (menu) menu.hidden = true;

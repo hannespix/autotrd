@@ -1,7 +1,17 @@
 /**
- * autotrd — Strategie-Presets (M10): 5 kuratierte Vorlagen, die zusammen JEDE
- * Knotenart mindestens einmal zeigen (Presets = lebende Doku des Regel-Baums).
- * Geseedet nach meta/strategyPresets (öffentlich lesbar), kopierbar im Studio.
+ * autotrd — Strategie-Presets: 5 kuratierte Bäume, die zusammen JEDE Knotenart
+ * mindestens einmal zeigen.
+ *
+ * Ursprünglich waren das die Startkarten des Strategie-Studios, nach
+ * meta/strategyPresets geseedet und von Hand kopierbar. Das Studio ist am
+ * 28.07. ausgebaut worden; die Saat ebenfalls, weil sie niemand mehr las.
+ *
+ * Die Bäume selbst bleiben — mit neuer Aufgabe: Sie sind die STARTPOPULATION
+ * der Struktursuche. Ein Optimierer, der nur vom kompilierten Klassik-Baum
+ * ausgeht, sucht im Umkreis genau einer Idee und findet zuverlässig das
+ * nächstgelegene lokale Optimum. Fünf bewusst verschiedene Ansätze
+ * (Mean-Reversion, Momentum, Ausbruch …) spannen den Suchraum auf, statt ihn
+ * auf eine Ecke zu verengen.
  */
 
 import type { StrategySpec } from './spec.js';

@@ -42,7 +42,6 @@ import {
   type Position,
   type Quote,
   type Strategy,
-  type StrategyDoc,
   type Wallet,
 } from '@autotrd/shared';
 import { muxWatch } from './mux.js';
@@ -56,7 +55,6 @@ import type {
   MarketDocData,
   PortfolioStatsDoc,
   SignalRow,
-  StrategyRow,
   TradeRow,
   MomentumDoc,
   TuneFleetRow,
@@ -761,60 +759,6 @@ export function watchPortfolioStats(
   );
 }
 
-export function watchStrategies(uid: string, cb: (rows: StrategyRow[]) => void): () => void {
-  return sbWatch<StrategyRow[]>(
-    {
-      key: `strategies:${uid}`,
-      tables: [{ table: 'strategies', filter: `user_id=eq.${uid}` }],
-      load: async () => {
-        const res = await sb()
-          .from('strategies')
-          .select('id,name,draft,compiled,status,mode,symbols,shadow,version,created_at,updated_at')
-          .eq('user_id', uid)
-          .order('updated_at', { ascending: false });
-        return ((res.data as StrategyDbRow[] | null) ?? []).map(toStrategyRow);
-      },
-    },
-    cb,
-  );
-}
-
-export interface StrategyDbRow {
-  id: string;
-  name: string;
-  draft: StrategyDoc['draft'];
-  compiled: StrategyDoc['compiled'];
-  status: 'draft' | 'published';
-  mode: 'paper' | 'shadow';
-  symbols: string[] | null;
-  shadow: StrategyDoc['shadow'];
-  version: number;
-  created_at?: string;
-  updated_at: string;
-}
-
-/**
- * Die Spalten heißen in Postgres snake_case, das Frontend kennt camelCase.
- * Die Umbenennung passiert hier an EINER Stelle — nicht in der Oberfläche,
- * sonst wäre der Backend-Wechsel dort sichtbar.
- */
-export function toStrategyRow(r: StrategyDbRow): StrategyRow {
-  const doc: StrategyDoc = {
-    name: r.name,
-    draft: r.draft,
-    compiled: r.compiled,
-    status: r.status,
-    mode: r.mode,
-    symbols: r.symbols ?? [],
-    // Ohne `created_at` in der Auswahl fällt der Wert auf `updated_at`
-    // zurück statt auf einen leeren String: Das Studio zeigt das Datum an,
-    // und „01.01.1970" wäre eine sichtbare Falschaussage.
-    createdAt: r.created_at ?? r.updated_at,
-    updatedAt: r.updated_at,
-  };
-  if (r.shadow) doc.shadow = r.shadow;
-  return { id: r.id, doc };
-}
 
 /**
  * Momentum-Ranking unter Supabase: noch keine Daten.

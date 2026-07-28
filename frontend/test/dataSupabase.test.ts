@@ -17,7 +17,6 @@ import {
   toMarketDoc,
   toPosition,
   toSignalRow,
-  toStrategyRow,
   toTradeRow,
   type BarRow,
   type SignalDbRow,
@@ -255,43 +254,5 @@ describe('toTradeRow', () => {
 
   it('behält eine echte 0 als 0', () => {
     expect(toTradeRow({ ...T, pnl: '0.0000' }).pnl).toBe(0);
-  });
-});
-
-describe('toStrategyRow', () => {
-  const S = {
-    id: 'abc-123',
-    name: 'Momentum',
-    draft: { buy: null, sell: null } as never,
-    compiled: null,
-    status: 'draft' as const,
-    mode: 'paper' as const,
-    symbols: ['AAPL', 'MSFT'],
-    shadow: null,
-    version: 0,
-    created_at: '2026-07-01T10:00:00.000Z',
-    updated_at: '2026-07-27T10:00:00.000Z',
-  };
-
-  it('benennt die Spalten auf die Frontend-Form um', () => {
-    const r = toStrategyRow(S);
-    expect(r.id).toBe('abc-123');
-    expect(r.doc.name).toBe('Momentum');
-    expect(r.doc.symbols).toEqual(['AAPL', 'MSFT']);
-    expect(r.doc.createdAt).toBe('2026-07-01T10:00:00.000Z');
-    expect(r.doc.updatedAt).toBe('2026-07-27T10:00:00.000Z');
-  });
-
-  it('nimmt ohne created_at das Änderungsdatum statt 1970', () => {
-    const { created_at: _weg, ...ohne } = S;
-    expect(toStrategyRow(ohne).doc.createdAt).toBe('2026-07-27T10:00:00.000Z');
-  });
-
-  it('macht aus fehlenden Symbolen eine leere Liste, nicht null', () => {
-    expect(toStrategyRow({ ...S, symbols: null }).doc.symbols).toEqual([]);
-  });
-
-  it('setzt shadow nur, wenn es eines gibt', () => {
-    expect('shadow' in toStrategyRow(S).doc).toBe(false);
   });
 });

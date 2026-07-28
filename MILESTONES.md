@@ -376,7 +376,10 @@ Chart+News+Signale in beiden Fenstern, Firestore-Listener-Zahl bleibt konstant
 Maus · 390 px rendert die Stapelliste ohne horizontales Scrollen · Panel-Wechsel
 erzeugt keine Listener-Leaks (Zähler vor/nach 20× Durchklicken identisch).
 
-## M10 — Strategie-Studio I: Regel-JSON, Karten-Builder, Live-Vorschau
+## M10 — Regel-Baum I: Regel-JSON, Karten-Builder, Live-Vorschau
+
+> **Rückgebaut am 28.07. (siehe MO).** Der Karten-Builder und die Live-Vorschau
+> sind entfernt; der Regel-Baum selbst bleibt als Suchraum des Optimierers.
 
 **Ziel:** Strategie-Logik wird Daten: ein getypter Bedingungsbaum in `shared/`,
 den Builder-Vorschau, Scan-Engine und (später) Backtest identisch
@@ -689,7 +692,11 @@ die Watchlist ist nur noch der Scope der Trading-Engine.
       volle Haupt-Domäne inkl. Prognose-Whitespace (MACD bekam die
       fachlich übliche Null-Linie)
 
-## M11 — Strategie-Studio II: Backtest, Shadow, Sweeps, A/B
+## M11 — Regel-Baum II: Backtest, Shadow, Sweeps, A/B
+
+> **Teilweise rückgebaut am 28.07. (siehe MO).** Die User-Einstiege (Backtest-
+> Karte, Sweep-Heatmap, A/B-Duell, „Befördern") sind entfernt; die Kerne
+> unter `functions/src/core/` bleiben als Bewertungsmaschine der Struktursuche.
 
 **Ziel:** Den Experimentier-Loop schließen: Jede publizierte Version wird
 automatisch backgetestet, kann als Shadow live beobachtet, gesweept und im
@@ -1139,6 +1146,57 @@ EZB-Kursen) · ein Teilverkauf nach zwei Käufen wird FIFO korrekt zerlegt ·
 BTC-Verkauf nach 366 Tagen erscheint als steuerfrei, nach 300 Tagen als
 steuerpflichtig · der Jahresreport summiert Aktien und Krypto in getrennten
 Blöcken · Report enthält den Hinweis, dass er keine Steuerberatung ersetzt.
+
+## MO — Struktursuche: der Regelbaum wird Suchraum (Owner-Go 28.07.)
+
+**Anlass:** Owner-Frage „ist das Strategie Studio überhaupt noch sinnvoll?"
+Die ehrliche Antwort war: der Bau-Teil nein, der Baum darunter ja.
+
+**Der Befund, der es entschieden hat.** `autoTune` liest und schreibt
+ausschließlich `settings.strategy` — die klassische Konfiguration. Regelbäume
+fasst der Selbstoptimierer **überhaupt nicht an**. Eine im Studio gezeichnete
+Strategie stand damit als einziges Teil des Systems außerhalb der täglichen
+Verbesserung: einmal gebaut, für immer eingefroren. Schlimmer noch,
+`strategyOwned` gab ihr die Symbole **exklusiv** — sie verdrängte also genau
+den Pfad, der sich verbessert. Je mehr im Studio gebaut wurde, desto weniger
+optimierte sich das System.
+
+**Teil 1 — Rückbau (ERLEDIGT 28.07.):**
+- [x] `frontend/src/studio.ts` (857 Z.), `preview.ts` (98 Z.) und die
+      Callables `strategies.ts`/`backtest.ts`/`sweep.ts` entfernt; Router
+      hat nur noch eine Ansicht. Die Backtest-/Sweep-**Kerne** unter
+      `functions/src/core/` bleiben — sie sind die Bewertungsmaschine, die
+      Teil 2 serverseitig braucht; nur die User-Einstiege sind weg.
+- [x] `meta/strategyPresets`-Saat entfernt (las niemand mehr). Die Preset-
+      Bäume bleiben im Code als **Startpopulation** der Suche.
+- [x] 15 verwaiste ⓘ-Tooltips entfernt — 5 davon waren schon vorher tot.
+- [x] `shared/src/rules/` unverändert erhalten; Kopfkommentare beschreiben
+      die neue Rolle (Suchraum statt Zeichenfläche).
+
+**Teil 2 — Struktursuche (OFFEN):**
+- [ ] `TUNE_AXES` (5 Skalare) um Struktur-Mutationen erweitern: Knoten
+      tauschen, Zweig streichen, Bedingung hinzufügen — Startpunkt sind der
+      kompilierte Klassik-Baum plus die 5 Presets (Diversität gegen lokale
+      Optima).
+- [ ] **Overfitting-Bremse.** Das ist der eigentliche Aufwand, nicht die
+      Mutation: Ein größerer Suchraum findet zuverlässig Bäume, die auf der
+      Historie glänzen und nichts können. Bonferroni allein reicht dafür
+      NICHT — es braucht Walk-Forward (Bewertung nur auf Daten nach dem
+      Suchfenster) und Deflated Sharpe (Bailey/López de Prado 2014, korrigiert
+      um die Anzahl der Versuche). Die harten Guards aus `schema.ts`
+      (Tiefe ≤ 5, ≤ 25 Knoten) sind die Sparsamkeits-Bremse und bleiben.
+- [ ] Beförderung serverseitig wie bei `autoTune`: nur über das Shadow-Konto,
+      höchstens eine Änderung je Durchgang, jede mit Begründung im Journal.
+
+**Abnahme:** Ein mutierter Baum, der im Suchfenster gewinnt und im
+Walk-Forward-Fenster verliert, wird NICHT befördert (Testfall) · das Journal
+nennt für jede Beförderung Vorsprung, p-Wert, Deflated Sharpe und beide
+Stichprobengrößen · der Knoten-Deckel greift nachweislich (Mutation, die ihn
+reißen würde, wird verworfen).
+
+**Zwischenzustand, ehrlich benannt:** Nach Teil 1 erzeugt NICHTS mehr
+Regelbaum-Strategien — der Ausführungspfad in `scanMarket` läuft leer, bis
+Teil 2 ihn füttert. Das ist ein bewusster Wegpunkt, kein vergessener Rest.
 
 ## M13 — Alpaca Paper Connect & Realtime-Streamer
 

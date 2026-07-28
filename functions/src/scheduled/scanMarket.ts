@@ -25,7 +25,6 @@ import {
   marketOpenForClass,
   resolveName,
   resolveRisk,
-  STRATEGY_PRESETS,
   type Position,
   type Strategy,
   type StrategyDoc,
@@ -64,7 +63,6 @@ import {
   type SparkQuote,
 } from '../core/marketData.js';
 
-
 /** Mo–Fr, 09:30 ≤ t < 16:00 in America/New_York (Port des run_scan.sh-Gates). */
 export function isUsMarketOpen(now: Date = new Date()): boolean {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -101,15 +99,6 @@ async function seedUniverse(): Promise<void> {
   }
   await ref.set({ classes, seededAt: new Date().toISOString() });
   logger.info('meta/universe geseedet');
-}
-
-/** meta/strategyPresets einmalig seeden (M10 — Presets = Doku). Idempotent. */
-async function seedPresets(): Promise<void> {
-  const db = getFirestore();
-  const ref = db.doc('meta/strategyPresets');
-  if ((await ref.get()).exists) return;
-  await ref.set({ presets: STRATEGY_PRESETS, seededAt: new Date().toISOString() });
-  logger.info('meta/strategyPresets geseedet');
 }
 
 export interface ScanResult {
@@ -950,7 +939,6 @@ export async function runScan(force = false): Promise<ScanResult> {
   }
 
   await seedUniverse();
-  await seedPresets();
   const db = getFirestore();
   const scanned: string[] = [];
   const errors: Record<string, string> = {};
