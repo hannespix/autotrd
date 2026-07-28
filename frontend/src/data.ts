@@ -19,6 +19,7 @@ import {
   orderBy,
   query,
   setDoc,
+  startAfter,
   updateDoc,
   documentId,
   type Unsubscribe,
@@ -357,15 +358,75 @@ export interface TradeRow {
   riskExit?: string;
 }
 
-export function watchTrades(uid: string, cb: (trades: TradeRow[]) => void): Unsubscribe {
+/** Seitengröße der Historie (Owner-Wunsch 28.07.: „über Pagination nachladen
+ *  damit nicht immer alle direkt geladen werden"). */
+export const TRADE_PAGE = 50;
+
+/**
+ * Der LIVE-KOPF der Handelshistorie: die neuesten `pageSize` Trades.
+ *
+ * Bewusst gedeckelt und bewusst NICHT die ganze Historie: Ein `onSnapshot`
+ * ohne Limit hielte jede Zeile dauerhaft im Speicher und im Abrechnungs-
+ * zähler — bei einem System, das alle fünf Minuten handeln soll, wächst das
+ * unbegrenzt. Ältere Seiten kommen über `loadMoreTrades` als EINMALIGE
+ * Abfrage dazu, ohne Listener.
+ *
+ * Sortiert wird über `executedAt` (ISO-String): lexikografisch identisch mit
+ * chronologisch, einfeldrig — also ohne zusammengesetzten Index, und
+ * derselbe Schlüssel, den die Seiten-Abfrage als Cursor benutzt. Über zwei
+ * verschiedene Felder zu sortieren (`at` live, `executedAt` paginiert) wäre
+ * die klassische Quelle für doppelte oder übersprungene Zeilen an der Naht.
+ */
+export function watchTrades(
+  uid: string,
+  cb: (trades: TradeRow[]) => void,
+  pageSize = TRADE_PAGE,
+): Unsubscribe {
   const q = query(
     collection(db(), 'users', uid, 'trades'),
-    orderBy('at', 'desc'),
-    limit(40),
+    orderBy('executedAt', 'desc'),
+    limit(pageSize),
   );
   return onSnapshot(q, (snap) => {
     cb(snap.docs.map((d) => d.data() as TradeRow));
   });
+}
+
+export interface TradePage {
+  rows: TradeRow[];
+  /** Ältester Zeitstempel dieser Seite — Cursor für die nächste. */
+  cursor: string | null;
+  /** Keine weiteren Zeilen mehr (Seite kam unvollständig zurück). */
+  done: boolean;
+}
+
+/**
+ * Eine ÄLTERE Seite nachladen (einmalige Abfrage, kein Listener).
+ *
+ * `done` wird aus einer unvollständigen Seite abgeleitet, nicht aus einer
+ * zusätzlichen Zählabfrage: Kommen weniger als `pageSize` Zeilen zurück, gibt
+ * es keine älteren mehr. Das spart eine Abfrage pro Klick — und `count()`
+ * über eine wachsende Historie zu rechnen, nur um einen Knopf auszugrauen,
+ * wäre genau die Sorte Kosten, die niemand bemerkt.
+ */
+export async function loadMoreTrades(
+  uid: string,
+  beforeAt: string,
+  pageSize = TRADE_PAGE,
+): Promise<TradePage> {
+  const q = query(
+    collection(db(), 'users', uid, 'trades'),
+    orderBy('executedAt', 'desc'),
+    startAfter(beforeAt),
+    limit(pageSize),
+  );
+  const snap = await getDocs(q);
+  const rows = snap.docs.map((d) => d.data() as TradeRow);
+  return {
+    rows,
+    cursor: rows[rows.length - 1]?.executedAt ?? null,
+    done: rows.length < pageSize,
+  };
 }
 
 /* ── Portfolio-Kennzahlen (M12): schreibt NUR der tägliche snapshotEquity-

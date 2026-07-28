@@ -11,16 +11,27 @@ import {
   PAPER_FEE_RATE,
   aggregateBars,
   bollinger,
+  byHour,
+  bySymbol,
+  byWeekday,
   classify,
+  closedOnly,
   ema,
+  equityCurve,
+  exitBreakdown,
+  historySummary,
   labelVariantId,
   macd,
+  pnlHistogram,
   resolveName,
   resolveRisk,
   sma,
+  streaks,
+  tradeStats,
   validateStrategy,
   vwapSessions,
   wilderRsi,
+  type HistoryTrade,
   type Position,
   type Strategy,
   type Wallet,
@@ -61,6 +72,8 @@ import {
   watchForecastStatsIntraday,
   watchPositions,
   watchTrades,
+  loadMoreTrades,
+  TRADE_PAGE,
   watchUserDoc,
   watchWatchedSymbols,
   watchPortfolioStats,
@@ -84,6 +97,13 @@ import {
 } from './data.js';
 import { emailVerified, logout, refreshUser, sendVerification } from './auth.js';
 import { esc } from './html.js';
+import {
+  areaLine,
+  barChart,
+  donut,
+  hBarChart,
+  histogram,
+} from './svgcharts.js';
 import { iBtn, initInfoTips } from './infotips.js';
 import { mountLegalFooter } from './legal.js';
 import {
@@ -271,6 +291,11 @@ interface DashState {
    * dann greift der Default als Boden (siehe `watchedSymbols`).
    */
   watched: string[];
+  /** Historie: älteste geladene Zeile — Cursor der nächsten Seite. */
+  tradesCursor: string | null;
+  /** Keine älteren Zeilen mehr — der Knopf verschwindet. */
+  tradesDone: boolean;
+  tradesLoading: boolean;
   /** Katalog-Symbole mit offenem Markt im letzten Scan (Heartbeat). */
   catalogOpen: number;
   /** Davon frisch bekurst — s. `renderWatchHint`. */
@@ -434,11 +459,25 @@ function layout(email: string): string {
         </div>
       </div></div>
 
-      <div class="card" data-panel="history"><div class="sect">Trade-Historie</div><div class="cbody">
+      <div class="card" data-panel="history"><div class="sect">Trade-Historie
+        <span id="jCount" style="float:right;color:var(--t3)">0</span></div><div class="cbody">
+        <div class="row" style="gap:6px;margin-bottom:6px">
+          <input id="jFilter" class="inp" placeholder="Symbol filtern …" style="flex:1">
+          <select id="jSide" class="inp" style="max-width:110px">
+            <option value="">Alle</option><option value="buy">Nur Käufe</option>
+            <option value="sell">Nur Verkäufe</option><option value="closed">Nur mit P&amp;L</option>
+          </select>
+        </div>
         <div class="tw"><table class="tbl">
           <thead><tr><th>Zeit</th><th>Sym</th><th>Side</th><th>Qty</th><th>Preis</th><th>P&amp;L</th></tr></thead>
           <tbody id="jBody"><tr><td colspan="6" class="c-t3">Keine Trades</td></tr></tbody>
         </table></div>
+        <button class="btn btn-n" id="jMore" style="width:100%;margin-top:6px">Ältere laden</button>
+      </div></div>
+
+      <div class="card" data-panel="analytics"><div class="sect">Handels-Analyse
+        <span id="anScope" style="float:right;color:var(--t3)"></span></div><div class="cbody">
+        <div id="anBody"><div class="hint">Noch keine geschlossenen Trades.</div></div>
       </div></div>
     </div>
 
@@ -2183,6 +2222,28 @@ function wireWatchlist(): void {
   }
 
   renderStrategyChips();
+  wireHistorie();
+}
+
+/**
+ * Historie-Bedienung: Nachladen und die zwei Anzeigefilter.
+ *
+ * Idempotent über ein Daten-Attribut — `wireWatchlist` läuft bei jeder
+ * Änderung der beobachteten Symbole erneut, und ein zweiter Listener auf
+ * demselben Knopf würde jede Seite doppelt laden.
+ */
+function wireHistorie(): void {
+  const mehr = $('jMore');
+  if (mehr && mehr.dataset.wired !== '1') {
+    mehr.dataset.wired = '1';
+    mehr.addEventListener('click', () => void ladeAeltereTrades());
+  }
+  for (const id of ['jFilter', 'jSide']) {
+    const el = $(id);
+    if (!el || el.dataset.wired === '1') continue;
+    el.dataset.wired = '1';
+    el.addEventListener('input', renderJournal);
+  }
 }
 
 /* ── Vergleichs-Chart (M9 Chart-Stack) ──────────────────────────────── */
@@ -3469,13 +3530,91 @@ function renderPortfolio(): void {
     }
   }
 
-  // Trade-Historie
-  const jb = $('jBody') as HTMLTableSectionElement;
-  jb.innerHTML = '';
-  if (st.trades.length === 0) {
-    jb.innerHTML = '<tr><td colspan="6" class="c-t3">Keine Trades</td></tr>';
+  renderJournal();
+  renderAnalytics();
+}
+
+/**
+ * Identität eines Trades ohne Doc-ID.
+ *
+ * Die Datenschicht liefert nur Feldwerte, keine IDs. Zeitstempel plus Symbol
+ * plus Seite plus Stück reicht: Zwei Trades desselben Symbols in derselben
+ * Millisekunde mit identischer Menge gibt es nicht — der Broker schreibt sie
+ * in einer Transaktion nacheinander.
+ */
+function tradeKey(t: TradeRow): string {
+  return `${t.executedAt}|${t.symbol}|${t.side}|${t.qty}`;
+}
+
+/** Eine ältere Seite anhängen (Knopf „Ältere laden"). */
+async function ladeAeltereTrades(): Promise<void> {
+  if (!st || st.tradesLoading || st.tradesDone || !st.tradesCursor) return;
+  const uid = st.uid;
+  st.tradesLoading = true;
+  renderJournal();
+  try {
+    const seite = await loadMoreTrades(uid, st.tradesCursor);
+    const bekannt = new Set(st.trades.map(tradeKey));
+    // Dedup an der Naht: Der Cursor ist ein Zeitstempel, kein Doc-Cursor —
+    // zwei Trades in derselben Millisekunde könnten sonst doppelt erscheinen.
+    st.trades = [...st.trades, ...seite.rows.filter((t) => !bekannt.has(tradeKey(t)))];
+    st.tradesCursor = seite.cursor ?? st.tradesCursor;
+    st.tradesDone = seite.done;
+  } catch (e) {
+    console.warn('Ältere Trades nicht ladbar:', e);
+  } finally {
+    st.tradesLoading = false;
+    renderPortfolio();
   }
-  for (const t of st.trades.slice(0, 20)) {
+}
+
+/**
+ * Die Handelshistorie als Tabelle.
+ *
+ * Bis 28.07. stand hier ein hartes `.slice(0, 20)` — und darüber holte die
+ * Abfrage ohnehin nur 40 Zeilen. Der Owner sah also nie mehr als die
+ * letzten paar Trades, ohne dass irgendwo stand, dass da noch mehr ist.
+ * Jetzt: Live-Kopf (50) plus nachgeladene Seiten, alles sichtbar, mit
+ * Zähler und zwei Filtern.
+ *
+ * Gefiltert wird NUR die Anzeige, nie die Datenbasis der Auswertungen —
+ * sonst würde die Analyse-Karte je nach Filterfeld andere Kennzahlen zeigen
+ * als die Trades, aus denen sie stammt.
+ */
+function renderJournal(): void {
+  if (!st) return;
+  const jb = $('jBody') as HTMLTableSectionElement;
+  const filter = ($('jFilter') as HTMLInputElement | null)?.value.trim().toUpperCase() ?? '';
+  const seite = ($('jSide') as HTMLSelectElement | null)?.value ?? '';
+  const zeilen = st.trades.filter((t) => {
+    if (filter && !t.symbol.toUpperCase().includes(filter)) return false;
+    if (seite === 'closed') return t.pnl !== undefined && t.pnl !== null;
+    if (seite) return t.side === seite;
+    return true;
+  });
+
+  const zaehler = $('jCount');
+  if (zaehler) {
+    zaehler.textContent =
+      zeilen.length === st.trades.length
+        ? `${st.trades.length}${st.tradesDone ? '' : '+'}`
+        : `${zeilen.length} / ${st.trades.length}${st.tradesDone ? '' : '+'}`;
+  }
+  const mehr = $('jMore') as HTMLButtonElement | null;
+  if (mehr) {
+    mehr.hidden = st.tradesDone;
+    mehr.disabled = st.tradesLoading;
+    mehr.textContent = st.tradesLoading ? 'Lädt …' : 'Ältere laden';
+  }
+
+  jb.innerHTML = '';
+  if (zeilen.length === 0) {
+    jb.innerHTML = `<tr><td colspan="6" class="c-t3">${
+      st.trades.length === 0 ? 'Keine Trades' : 'Kein Treffer für diesen Filter'
+    }</td></tr>`;
+    return;
+  }
+  for (const t of zeilen) {
     const tr = document.createElement('tr');
     const time = new Date(t.executedAt).toLocaleString('de-DE', {
       day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
@@ -3488,6 +3627,98 @@ function renderPortfolio(): void {
     jb.appendChild(tr);
   }
 }
+
+/**
+ * Handels-Analyse (Owner-Wunsch 28.07.).
+ *
+ * Sechs Ansichten auf DIESELBEN geladenen Trades — je mehr Seiten der Nutzer
+ * nachlädt, desto tiefer reicht die Auswertung. Der Umfang steht deshalb im
+ * Kopf der Karte: Eine Kennzahl aus 50 Trades sieht genauso aus wie eine aus
+ * 5000, und ohne die Zahl daneben verwechselt man beides.
+ *
+ * Alle Aggregationen kommen aus `shared/src/tradeAnalytics.ts` (rein,
+ * getestet), alles Gezeichnete aus `svgcharts.ts` (rein, kein DOM). Hier
+ * steht nur die Verdrahtung.
+ */
+function renderAnalytics(): void {
+  if (!st) return;
+  const box = $('anBody');
+  const scope = $('anScope');
+  if (!box) return;
+
+  const trades = st.trades as HistoryTrade[];
+  const summary = historySummary(trades);
+  if (summary.closed === 0) {
+    box.innerHTML = '<div class="hint">Noch keine geschlossenen Trades.</div>';
+    if (scope) scope.textContent = '';
+    return;
+  }
+  if (scope) {
+    scope.textContent = `${summary.closed} geschlossen${st.tradesDone ? '' : ' (geladen)'}`;
+  }
+
+  const geschlossen = closedOnly(trades);
+  const stats = tradeStats(
+    geschlossen.map((t) => ({ symbol: t.symbol, pnl: t.pnl!, riskExit: t.riskExit ?? null })),
+  );
+  const serie = equityCurve(trades).map((p) => p.value);
+  const st_ = streaks(trades);
+
+  // Ausstiegsgründe: die Frage, ob Stop und Take überhaupt erreicht werden
+  // oder ob alles am Signal stirbt (MT1-Befund vom 27.07.).
+  const exits = exitBreakdown(
+    geschlossen.map((t) => ({ symbol: t.symbol, pnl: t.pnl!, riskExit: t.riskExit ?? null })),
+  );
+  const exitSlices = Object.entries(exits).map(([k, b]) => ({
+    label: `${EXIT_LABELS[k] ?? k} (${b.n})`,
+    value: b.pnl,
+  }));
+
+  const symbole = bySymbol(trades);
+  const kpi = (label: string, wert: string, cls = ''): string =>
+    `<div class="an-kpi"><span class="lbl">${esc(label)}</span><b class="mono ${cls}">${esc(wert)}</b></div>`;
+
+  box.innerHTML = `
+    <div class="an-kpis">
+      ${kpi('Ergebnis', money(summary.pnl), pnlClass(summary.pnl))}
+      ${kpi('Trefferquote', stats.winRatePct === null ? '—' : `${stats.winRatePct}%`)}
+      ${kpi('Profit-Faktor', stats.profitFactor === null ? '—' : String(stats.profitFactor))}
+      ${kpi('Ø je Trade', stats.expectancy === null ? '—' : money(stats.expectancy),
+            pnlClass(stats.expectancy ?? 0))}
+      ${kpi('Bester', summary.bestTrade === null ? '—' : money(summary.bestTrade), 'c-gn')}
+      ${kpi('Schlechtester', summary.worstTrade === null ? '—' : money(summary.worstTrade), 'c-rd')}
+      ${kpi('Längste Verlustserie', String(st_.longestLoss))}
+      ${kpi('Laufende Serie', st_.current === 0 ? '—' : `${st_.current > 0 ? '+' : ''}${st_.current}`,
+            st_.current > 0 ? 'c-gn' : st_.current < 0 ? 'c-rd' : '')}
+    </div>
+
+    <div class="an-grid">
+      <section><h4>Kontoverlauf (realisiert) ${iBtn('anEquity')}</h4>${areaLine(serie)}</section>
+      <section><h4>Verteilung der Ergebnisse ${iBtn('anHisto')}</h4>${histogram(pnlHistogram(trades))}</section>
+      <section><h4>Ausstiegsgründe ${iBtn('exits')}</h4>${donut(exitSlices)}</section>
+      <section><h4>Ergebnis je Symbol</h4>${hBarChart(
+        symbole.slice(0, 8).map((b) => ({ label: b.key, value: b.pnl })),
+      )}</section>
+      <section><h4>Nach Wochentag (ET)</h4>${barChart(
+        byWeekday(trades).map((b) => ({ label: b.key, value: b.pnl })),
+        { labelJede: 1 },
+      )}</section>
+      <section><h4>Nach Handelsstunde (ET) ${iBtn('anStunde')}</h4>${barChart(
+        byHour(trades).map((b) => ({ label: b.key, value: b.pnl })),
+        { labelJede: 3 },
+      )}</section>
+    </div>`;
+}
+
+/** Ausstiegsgründe in Klartext — die Schlüssel kommen aus dem Broker. */
+const EXIT_LABELS: Record<string, string> = {
+  signal: 'Signal',
+  stop_loss: 'Stop-Loss',
+  take_profit: 'Take-Profit',
+  trailing_stop: 'Trailing-Stop',
+  max_hold: 'Haltedauer',
+  emergency: 'Notbremse',
+};
 
 /* ── Portfolio-Kennzahlen (M12): Stats-Doc + Equity-Sparkline ──────────────
    Datenquelle ist ausschließlich der tägliche snapshotEquity-Lauf (Server) —
@@ -4027,6 +4258,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     symbolSubs: [],
     watchlistSubs: [],
     watched: [],
+    tradesCursor: null,
+    tradesDone: false,
+    tradesLoading: false,
     catalogOpen: 0,
     catalogQuotes: 0,
     positionSubs: new Map(),
@@ -4098,9 +4332,18 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       syncPositionQuotes();
       renderPortfolio();
     }),
-    watchTrades(uid, (trades) => {
+    // Live-Kopf: die neuesten 50. Nachgeladene ältere Seiten bleiben erhalten
+    // und werden hinten angehängt — sonst würde jeder neue Trade (alle fünf
+    // Minuten einer) die ganze nachgeladene Historie wieder wegwerfen.
+    watchTrades(uid, (kopf) => {
       if (!st) return;
-      st.trades = trades;
+      const bekannt = new Set(kopf.map(tradeKey));
+      const aeltere = st.trades.filter((t) => !bekannt.has(tradeKey(t)));
+      st.trades = [...kopf, ...aeltere];
+      if (st.tradesCursor === null) {
+        st.tradesCursor = kopf[kopf.length - 1]?.executedAt ?? null;
+        st.tradesDone = kopf.length < TRADE_PAGE;
+      }
       renderPortfolio();
     }),
     watchPortfolioStats(uid, (stats) => {

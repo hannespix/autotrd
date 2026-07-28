@@ -94,11 +94,16 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
         run: node scripts-ci/check-scheduler.mjs
 
-      # Solange kein Cloud-Scheduler-Job existiert (Diagnose 27.07.), laufen
-      # snapshotEquity und evalForecasts nur, wenn sie jemand anstößt. Der
-      # nächtliche Workflow „Tages-Läufe" tut das — aber erst abends. Hier
-      # dranzuhängen heißt: Nach jedem Merge sind die Karten spätestens
+      # Aufwärm-Lauf nach dem Deploy: Die Zeitpläne stehen (der Schritt davor
+      # legt sie an), aber snapshotEquity und evalForecasts feuern erst am
+      # Abend. Hier dranzuhängen heißt: Nach jedem Merge sind die Karten
       # binnen Minuten gefüllt statt erst nach US-Schluss.
+      #
+      # Das ist KEIN Ersatz-Scheduler mehr — die beiden Stopgap-Workflows
+      # (scan-watchdog, daily-jobs) sind am 28.07. entfallen, weil sie seit
+      # der Cloud-Scheduler-Rolle doppelt liefen. Nachweis: Der Heartbeat
+      # stand um 12:35 UTC frisch, also außerhalb des Watchdog-Fensters
+      # (*/15 13-21 UTC) — der echte Scheduler feuert selbst.
       #
       # Das Gate im Skript unterscheidet dabei „heute schon gelaufen" von
       # „heute NACH US-Schluss gelaufen" — ein Mittags-Snapshot füllt die

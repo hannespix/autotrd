@@ -66,3 +66,68 @@ describe('selectScanSymbols', () => {
     expect(auswahl({ ranking: ['', 'AAPL', ''] })).toEqual(['AAPL']);
   });
 });
+
+/**
+ * Marktzeit-Bewusstsein (Audit-Befund A1, 28.07.).
+ *
+ * Der Befund war live messbar und kostete ~70 % der Betriebszeit: Die
+ * Auswahl nahm die globalen Top-N, `runScan` warf danach alles weg, dessen
+ * Klasse geschlossen war — und übrig blieb nichts. Diese Tests halten fest,
+ * dass die Marktzeit BEIM Füllen wirkt, nicht dahinter.
+ */
+describe('selectScanSymbols: Marktzeit', () => {
+  // Krypto handelt rund um die Uhr, Aktien nicht — genau die Konstellation
+  // vom 28.07., 12:35 UTC.
+  const nurKrypto = (s: string): boolean => s.endsWith('-USD');
+
+  it('füllt das Kontingent mit OFFENEN Symbolen statt es zu verschwenden', () => {
+    const out = auswahl({
+      ranking: ['AAPL', 'TSLA', 'BTC-USD', 'QQQ', 'ETH-USD'],
+      max: 3,
+      isOpen: nurKrypto,
+    });
+    expect(out, 'geschlossene Aktien dürfen keinen Platz belegen').toEqual([
+      'BTC-USD',
+      'ETH-USD',
+    ]);
+  });
+
+  it('der Katalog ist der letzte Boden, wenn Ranking und Defaults zu sind', () => {
+    // Der Live-Fall: kein Ranking, Defaults nur US-Aktien, Nacht in New York.
+    // Ohne diesen Boden stand der Scan mit null Symbolen da.
+    const out = auswahl({
+      ranking: [],
+      defaults: ['QQQ', 'AAPL', 'TSLA', '^NDX'],
+      catalog: ['MSFT', 'BTC-USD', 'SOL-USD'],
+      max: 10,
+      isOpen: nurKrypto,
+    });
+    expect(out).toEqual(['BTC-USD', 'SOL-USD']);
+  });
+
+  it('Ranking schlägt Katalog — der Boden greift nur, wo Lücken sind', () => {
+    const out = auswahl({
+      ranking: ['ETH-USD'],
+      catalog: ['BTC-USD', 'SOL-USD'],
+      max: 2,
+      isOpen: nurKrypto,
+    });
+    expect(out[0], 'die Rangliste bleibt die Priorität').toBe('ETH-USD');
+    expect(out.length).toBe(2);
+  });
+
+  it('offene Positionen überleben den Marktzeit-Filter', () => {
+    // Bewusst ungefiltert: Aussieben hieße, eine offene Position aus den
+    // Augen zu verlieren. Ob gehandelt wird, entscheidet der Handelspfad.
+    const out = auswahl({
+      positions: ['AAPL'],
+      ranking: ['BTC-USD'],
+      isOpen: nurKrypto,
+    });
+    expect(out).toContain('AAPL');
+  });
+
+  it('ohne isOpen bleibt alles wie vorher — Marktzeit ist opt-in', () => {
+    expect(auswahl({ ranking: ['AAPL', 'BTC-USD'] })).toEqual(['AAPL', 'BTC-USD']);
+  });
+});
