@@ -219,6 +219,13 @@ async function executeUserTrades(
     // (Bestandskonto) als freigeschaltet gilt und Firestore darauf nicht
     // filtern kann.
     if (!mayTrade(userDoc.data())) continue;
+    // Momentum-Wallets gehören momentumRun (Hantel-Umbau 28.07.). Der Scan
+    // fasst sie NICHT an — weder Einstieg noch Ausstieg. Täte er es, sähe er
+    // eine Momentum-Position ohne Konfluenz-Signal und schlösse sie beim
+    // nächsten Lauf; die Wochenstrategie käme nie über einen Tag hinaus.
+    // Der Margin-Call im 1-Minuten-Puls greift weiter, denn er ist eine
+    // Solvenzgrenze und keine Strategie-Entscheidung.
+    if (strategy.engine.mode === 'momentum') continue;
 
     try {
       const positionsSnap = await userDoc.ref.collection('positions').get();

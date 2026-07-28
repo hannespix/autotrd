@@ -119,6 +119,9 @@ export function validateStrategy(value: unknown): string[] {
         || engine.maxOpenPositions > MAX_OPEN_POSITIONS_CAP)) {
       problems.push(`engine.maxOpenPositions muss zwischen 1 und ${MAX_OPEN_POSITIONS_CAP} liegen`);
     }
+    if (engine.mode !== undefined && engine.mode !== 'confluence' && engine.mode !== 'momentum') {
+      problems.push("engine.mode muss 'confluence' oder 'momentum' sein");
+    }
     if (engine.byClass !== undefined) {
       if (!isRecord(engine.byClass)) {
         problems.push('engine.byClass muss ein Objekt sein');

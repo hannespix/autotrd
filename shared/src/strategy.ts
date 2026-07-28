@@ -94,6 +94,23 @@ export interface EngineConfig extends RiskConfig {
    */
   maxOpenPositions?: number;
   /**
+   * Welche Maschine dieses Wallet handelt (Hantel-Umbau 28.07.).
+   *
+   * 'confluence' (Default, bisheriges Verhalten): der 5-Minuten-Scan aus
+   * RSI/MACD/Bollinger + Prognose bzw. der Regelbaum.
+   *
+   * 'momentum': Cross-Sectional Momentum über den ganzen handelbaren
+   * Katalog — Top 8 gleichgewichtet, WÖCHENTLICH umgeschichtet, mit
+   * SMA200-Marktfilter. Der Scan lässt dieses Wallet dann komplett in Ruhe.
+   *
+   * Warum es ein Entweder-oder ist und kein Nebeneinander: Zwei Maschinen
+   * auf einem Wallet würden sich gegenseitig die Positionen wegverkaufen —
+   * der Scan sähe eine Momentum-Position ohne Signal und schlösse sie.
+   * Die gemischte Aufteilung (Hantel) braucht eine Besitzkennzeichnung je
+   * Position und kommt getrennt.
+   */
+  mode?: 'confluence' | 'momentum';
+  /**
    * Risiko-Overrides je Asset-Klasse (Katalog-Schlüssel aus universe.ts:
    * crypto, indices, stocks_us, …). Fehlende Felder erben von oben.
    */
@@ -248,6 +265,7 @@ export const DEFAULT_STRATEGY: Strategy = {
     cooldownMin: 60,
     minHoldMin: 60,
     maxOpenPositions: 10,
+    mode: 'confluence', // Momentum ist Opt-in — siehe EngineConfig.mode
     // Volatilitäts-Realismus (MA6): Krypto und Rohstoffe brauchen weitere
     // Stops, sonst ist jeder normale Tagesausschlag ein Zwangsverkauf.
     // Werte grob an typischen Tagesranges orientiert; per UI änderbar.

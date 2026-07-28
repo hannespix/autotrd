@@ -914,6 +914,11 @@ function layout(email: string): string {
           <input id="owAtrS" class="inp st-num" type="number" min="0" step="0.5" /></label>
         <label>ATR-Ziel (×ATR) ${iBtn('atrTake')}
           <input id="owAtrT" class="inp st-num" type="number" min="0" step="0.5" /></label>
+        <label>Handels-Modus ${iBtn('engineMode')}
+          <select id="owMode" class="inp st-num">
+            <option value="confluence">Konfluenz (5-Min-Signale)</option>
+            <option value="momentum">Momentum (wöchentlich)</option>
+          </select></label>
         <label>Signal-Zeitrahmen ${iBtn('signalTimeframe')}
           <select id="owTf" class="inp st-num">
             <option value="intraday">5-Minuten (aktiv)</option>
@@ -1659,6 +1664,7 @@ function openOptions(): void {
   ($('owHold') as HTMLInputElement).value = String(st.strategy.engine.maxHoldDays ?? 0);
   ($('owAtrS') as HTMLInputElement).value = String(st.strategy.engine.atrStopMult ?? 0);
   ($('owAtrT') as HTMLInputElement).value = String(st.strategy.engine.atrTakeMult ?? 0);
+  ($('owMode') as HTMLSelectElement).value = st.strategy.engine.mode ?? 'confluence';
   ($('owTf') as HTMLSelectElement).value = st.strategy.signals.timeframe ?? 'intraday';
   ($('owCd') as HTMLInputElement).value = String(st.strategy.engine.cooldownMin ?? 15);
   ($('owMinC') as HTMLInputElement).value = String(st.strategy.signals.minConfluence);
@@ -5080,6 +5086,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       engine: {
         ...st.strategy.engine,
         maxPositionPct: num('owMax'),
+        mode: ($('owMode') as HTMLSelectElement).value === 'momentum' ? 'momentum' : 'confluence',
         maxOpenPositions: Math.min(
           MAX_OPEN_POSITIONS_CAP,
           Math.max(1, num('owMaxPos') || DEFAULT_MAX_OPEN_POSITIONS)),

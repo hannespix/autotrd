@@ -25,6 +25,7 @@ import {
   rebalanceOrders,
   targetPortfolio,
 } from '../src/momentum.js';
+import { isTradable } from '../src/universe.js';
 import { feeRateForClass } from '../src/strategy.js';
 
 /** Kursreihe mit konstanter Tagesrendite — analytisch nachrechenbar. */
@@ -323,5 +324,38 @@ describe('feeRateForClass', () => {
   it('fällt bei unbekannter Klasse auf den Pauschalsatz zurück', () => {
     expect(feeRateForClass('gibts-nicht')).toBeGreaterThan(0);
     expect(feeRateForClass(null)).toBeGreaterThan(0);
+  });
+});
+
+/* ── Handelbarkeit im Zielportfolio (Befund 28.07.) ─────────────────────── */
+
+describe('Zielportfolio kauft nur, was es zu kaufen gibt', () => {
+  it('nicht handelbare Indizes gehören gefiltert, bevor das Ziel steht', () => {
+    // Das Ranking läuft über den GANZEN Katalog — dort stehen ^GSPC und
+    // ^N225 ganz oben, wenn die Weltbörsen laufen. Ohne Filter landete das
+    // Zielportfolio voller Zahlen, die kein Broker verkauft. Der Filter sitzt
+    // im Aufrufer (momentumRun), damit das Ranking als Marktbild vollständig
+    // bleibt; dieser Test hält fest, dass er dort auch wirklich greift.
+    const ranking = [
+      { symbol: '^GSPC', score: 0.4 },
+      { symbol: 'SPY', score: 0.38 },
+      { symbol: '^N225', score: 0.3 },
+      { symbol: 'AAPL', score: 0.25 },
+      { symbol: 'EURUSD=X', score: 0.2 },
+      { symbol: 'BTC-USD', score: 0.1 },
+    ];
+    const handelbar = ranking.filter((r) => isTradable(r.symbol));
+    const ziel = targetPortfolio(handelbar, true, 8);
+    expect(ziel.map((z) => z.symbol)).toEqual(['SPY', 'AAPL', 'BTC-USD']);
+    // Gleichgewichtet über die verbliebenen drei, nicht über die ursprünglichen sechs
+    expect(ziel[0]?.weight).toBeCloseTo(1 / 3, 3);
+  });
+
+  it('bleibt nach dem Filter nichts übrig, ist das Ziel leer statt falsch', () => {
+    const nurIndizes = [
+      { symbol: '^GSPC', score: 0.4 },
+      { symbol: '^N225', score: 0.3 },
+    ];
+    expect(targetPortfolio(nurIndizes.filter((r) => isTradable(r.symbol)), true, 8)).toEqual([]);
   });
 });
