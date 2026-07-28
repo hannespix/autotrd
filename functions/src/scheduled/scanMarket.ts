@@ -583,7 +583,13 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
 
       // 3) Konfluenz-Signale gegen die User-Strategie (inkl. Forecast-Vote);
       // Symbole mit zugeordneter publizierter Strategie gehören dieser (oben).
-      for (const symbol of strategy.watchlist) {
+      //
+      // Gehandelt wird ALLES, was der Scan geladen hat — nicht mehr die
+      // handverlesene Watchlist (Owner-Frage 28.07.). Das Scan-Set kommt
+      // aus dem Momentum-Ranking über den ganzen Katalog plus den offenen
+      // Positionen; wer es zusätzlich auf eine Watchlist einschränkte,
+      // schöbe eine unbegründete Vorauswahl vor eine begründete.
+      for (const symbol of marketData.keys()) {
         if (strategyOwned.has(symbol)) continue;
         const data = marketData.get(symbol);
         if (!data) continue;
@@ -711,10 +717,12 @@ async function executeUserTrades(marketData: Map<string, SymbolData>): Promise<n
             const fleetRef = userDoc.ref.collection('tuning').doc('fleet');
             const vorher =
               ((await fleetRef.get()).get('variants') as FleetState | undefined) ?? {};
-            // Die Flotte sieht dieselben Symbole wie der echte Pfad —
-            // die Watchlist des Users, geschnitten auf das, was der Scan
-            // tatsächlich geladen hat.
-            const fleetSymbols = (clamped.watchlist ?? []).filter((sym) => marketData.has(sym));
+            // Die Flotte sieht GENAU dieselben Symbole wie der echte Pfad.
+            // Das ist der ganze Zweck der Schatten-Rechnung: Eine Variante,
+            // die auf einer anderen Symbolmenge liefe, wäre nicht
+            // vergleichbar — und ein nicht vergleichbares Ergebnis ist
+            // schlimmer als gar keines, weil es befördert werden könnte.
+            const fleetSymbols = [...marketData.keys()];
             const { state } = stepFleet(variants, marketData, vorher, fleetSymbols, now);
             await fleetRef.set({ variants: state, updatedAt: now.toISOString() }, { merge: true });
           }
@@ -736,33 +744,83 @@ const MAX_SCAN_SYMBOLS = 40;
  * Scan-Set = Default-Watchlist ∪ alle User-Watchlists (M3: der Picker macht
  * Symbole wählbar; der nächste Scan versorgt sie zentral mit Daten).
  */
+/**
+ * Welche Symbole der Scan beobachtet — die Reihenfolge IST die Priorität,
+ * weil `max` abschneidet.
+ *
+ * Pur gehalten, damit die Rangfolge prüfbar ist: Sie entscheidet, was
+ * überhaupt handelbar ist. Ein Fehler hier fällt nirgends auf — es fehlt
+ * einfach ein Symbol, und niemand vermisst, was er nie gesehen hat.
+ *
+ *  1. **Offene Positionen** — immer und zuerst (Verkaufs-Sicherheit 26.07.).
+ *     Eine Position, die aus der Beobachtung fiele, verlöre jeden
+ *     Exit-Pfad: Stop-Loss, Take-Profit, Konfluenz-Verkauf. Sie muss
+ *     beobachtet bleiben, bis sie geschlossen ist — auch wenn ihr Symbol
+ *     im Ranking auf Platz 150 steht.
+ *  2. **Die Rangliste** des täglichen Momentum-Laufs über den ganzen
+ *     Katalog. Bis 27.07. standen hier die handverlesenen Watchlists der
+ *     Nutzer — eine Vorauswahl ohne jede Begründung.
+ *  3. **Defaults** als Boden. Greift am ersten Tag (noch kein Ranking) und
+ *     wenn der Marktfilter die Rangliste kurz hält; ohne ihn stünde der
+ *     Scan dann ganz ohne Symbole da.
+ */
+export function selectScanSymbols(args: {
+  positions: string[];
+  ranking: string[];
+  defaults: string[];
+  max: number;
+}): string[] {
+  const set = new Set<string>();
+  for (const sym of args.positions) set.add(sym); // ungedeckelt: siehe 1.
+  for (const gruppe of [args.ranking, args.defaults]) {
+    for (const sym of gruppe) {
+      if (set.size >= args.max) break;
+      if (sym) set.add(sym);
+    }
+  }
+  return [...set];
+}
+
 async function collectScanSymbols(): Promise<string[]> {
   const db = getFirestore();
-  const set = new Set<string>(DEFAULT_STRATEGY.watchlist);
-  // Verkaufs-Sicherheit (26.07.): OFFENE POSITIONEN gehören IMMER ins
-  // Scan-Set — VOR den Watchlists (der Kosten-Deckel darf sie nie
-  // verdrängen). Sonst verlöre eine Position, deren Symbol aus allen
-  // Watchlists fällt, jeden Exit-Pfad (Stop/Take/Konfluenz-Verkauf).
+
+  let positions: string[] = [];
   try {
     const posSnap = await db.collectionGroup('positions').select().get();
-    for (const d of posSnap.docs) set.add(d.id);
+    positions = posSnap.docs.map((d) => d.id);
   } catch (err) {
     logger.warn('Positions-Symbole nicht lesbar — Scan ohne Positions-Union', err);
   }
+
+  // Bewertet werden ALLE Katalog-Symbole — das tut `momentumRun` täglich
+  // über die volle Tages-Historie. Was hier ausgewählt wird, ist etwas
+  // anderes: welche Symbole der 5-Minuten-Scan intraday BEOBACHTET. Beides
+  // gleichzusetzen wäre teuer und brächte nichts — 166 Symbole alle fünf
+  // Minuten mit 5-min-Bars, RSI, MACD und Bollinger zu holen, kostet das
+  // Vielfache und liefert für Rang 120 eine Information, auf die niemand
+  // handelt. Breit bewerten, schmal beobachten.
+  let ranking: string[] = [];
   try {
-    const users = await db.collection('users').select('settings.strategy.watchlist').get();
-    for (const doc of users.docs) {
-      const wl = doc.get('settings.strategy.watchlist') as unknown;
-      if (Array.isArray(wl)) {
-        for (const sym of wl) {
-          if (typeof sym === 'string' && set.size < MAX_SCAN_SYMBOLS) set.add(sym);
-        }
-      }
-    }
+    const top = (await db.doc('meta/momentum').get()).get('top') as
+      | Array<{ symbol?: unknown }>
+      | undefined;
+    ranking = (top ?? [])
+      .map((e) => e?.symbol)
+      .filter((sym): sym is string => typeof sym === 'string' && sym.length > 0);
   } catch (err) {
-    logger.warn('User-Watchlists nicht lesbar — Scan nur über Default', err);
+    logger.warn('Momentum-Ranking nicht lesbar', err);
   }
-  return [...set];
+
+  const symbols = selectScanSymbols({
+    positions,
+    ranking,
+    defaults: [...DEFAULT_STRATEGY.watchlist],
+    max: MAX_SCAN_SYMBOLS,
+  });
+  logger.info(
+    `Scan-Set: ${symbols.length} Symbole (${positions.length} Positionen, ${ranking.length} im Ranking)`,
+  );
+  return symbols;
 }
 
 /** Symbole je Versorgungs-Runde (Kosten-Deckel: 12 Scans/h × 15 ≈ voller
@@ -1140,6 +1198,11 @@ export async function runScan(force = false): Promise<ScanResult> {
         lastRunSkipped: null,
         symbolsOk: scanned.length,
         symbolsFailed: Object.keys(errors).length,
+        // Was gerade beobachtet wird — die Oberfläche zeigt genau diese
+        // Symbole an. Ohne die Liste im Heartbeat müsste sie raten oder
+        // eine eigene Auswahl treffen, und dann zeigte das Dashboard etwas
+        // anderes, als die Engine handelt.
+        watched: scanned,
         intradayOk,
         intradayError,
         intradayScored,

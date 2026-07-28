@@ -90,8 +90,8 @@ export const INFO: Record<string, { t: string; d: string }> = {
     d: 'Das Gewinnziel: Steigt der Kurs um diesen Prozentsatz über den Einstieg, wird automatisch verkauft und der Gewinn realisiert. Sichert Buchgewinne, deckelt aber auch die Aufwärtschance.',
   },
   watchlist: {
-    t: 'Watchlist',
-    d: 'Die Symbole, die die Auto-Engine mit voller Tiefe handelt und scannt (max. 20 — der Deckel schützt die Scan-Laufzeit, nicht die Daten: Kurse bekommt der ganze Katalog). Nur Katalog-Symbole in Yahoo-Schreibweise, z. B. ^NDX statt NDX.',
+    t: 'Beobachtet',
+    d: 'Die Symbole, die die Engine gerade verfolgt und handelt — automatisch gewählt, nicht von Hand. Einmal täglich bewertet ein Lauf ALLE 166 Katalog-Symbole nach relativer Stärke; die Spitze dieser Rangliste landet hier, dazu jede offene Position (die muss beobachtet bleiben, bis sie geschlossen ist, sonst verlöre sie ihren Stop-Loss). Warum nicht einfach alle 166 dauerhaft? Weil Bewerten und Beobachten zwei verschiedene Kosten haben: Die Bewertung braucht einen Tagesschlusskurs pro Symbol, die Beobachtung 5-Minuten-Kerzen mit RSI, MACD und Bollinger — alle fünf Minuten. Breit bewerten, schmal beobachten ist deshalb nicht Sparsamkeit, sondern die einzige Anordnung, die beides bezahlbar macht. Bis 27.07. stand hier eine handverlesene Liste; die war eine Vorauswahl ohne Begründung.',
   },
   // ── Prognose ──
   useForecast: {
