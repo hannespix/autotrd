@@ -506,6 +506,36 @@ export function watchTuneLog(uid: string, cb: (rows: TuneLogRow[]) => void): Uns
 }
 
 /**
+ * Tages-Stand des Momentum-Rankings (meta/momentum).
+ *
+ * Öffentlich lesbar wie alle meta-Dokumente: Das Ranking ist keine
+ * Nutzerdatei, sondern eine Eigenschaft des Marktes — und es kostet keinen
+ * zusätzlichen Read, wenn alle dieselbe Zeile lesen.
+ */
+export interface MomentumDoc {
+  at: string;
+  date: string;
+  /** Bewertbare Symbole (mit genug Historie) von `universum` insgesamt. */
+  ranked: number;
+  universum: number;
+  /** Marktfilter: steht der Leitindex über seiner 200-Tage-Linie? */
+  marktOffen: boolean;
+  top: Array<{ symbol: string; score: number }>;
+  ziel: string[];
+  gehalten: string[];
+  equity: number;
+  trades: number;
+  rebalanced: boolean;
+  fehlendeHistorie: number;
+}
+
+export function watchMomentum(cb: (doc: MomentumDoc | null) => void): Unsubscribe {
+  return onSnapshot(doc(db(), 'meta', 'momentum'), (snap) =>
+    cb(snap.exists() ? (snap.data() as MomentumDoc) : null),
+  );
+}
+
+/**
  * Stand EINER Variante der Schatten-Flotte.
  *
  * Ohne diese Zeile zeigte das Journal nur fertige Urteile — und ein Urteil,

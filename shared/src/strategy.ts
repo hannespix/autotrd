@@ -265,6 +265,52 @@ export function paperEffectivePrice(price: number, side: 'buy' | 'sell'): number
   return side === 'buy' ? price * (1 + PAPER_FEE_RATE) : price * (1 - PAPER_FEE_RATE);
 }
 
+/* ── Klassenechte Kosten (Owner-Direktive 28.07.: „Kosten Minimierung") ─────
+ *
+ * Der Pauschalsatz oben (0,105 % je Seite) stammt aus der ersten
+ * Paper-Strecke und ist für JEDE Klasse gleich — das ist an zwei Stellen
+ * falsch, und beide verzerren die Auswertung:
+ *
+ *  - US-Aktien und ETFs kosten bei Alpaca **keine Kommission**. Wir haben
+ *    sie dreimal zu teuer simuliert und damit funktionierende Aktien-
+ *    Strategien künstlich schlechtgerechnet.
+ *  - Krypto kostet dort **mehr** als 0,1 % je Seite. Die Auswertung vom
+ *    27.07. lief fast nur auf Krypto — wir haben also ausgerechnet dort
+ *    zu günstig gerechnet, wo die Engine tatsächlich handelte.
+ *
+ * Die Sätze sind bewusst eher pessimistisch als optimistisch: Eine
+ * Strategie, die unter zu hoch angesetzten Kosten besteht, besteht auch
+ * real. Umgekehrt gilt das nicht.
+ */
+export const CLASS_FEE_RATE: Record<string, number> = {
+  stocks_us: 0.0005, // 0 Kommission, ~5 bp Slippage
+  etf_sectors: 0.0005,
+  etf_regions: 0.0005,
+  etf_thematic: 0.0005,
+  stocks_global: 0.0015, // Auslandsbörsen: Gebühr + weiterer Spread
+  crypto: 0.0025, // Alpaca Krypto ~25 bp je Seite
+  forex: 0.0003,
+  commodities: 0.001, // Futures/Rohstoff-Proxys
+  indices: 0.0005, // über ETF-Proxys handelbar
+  rates_bonds: 0.0005,
+};
+
+/** Gebührensatz JE SEITE für eine Asset-Klasse; unbekannt ⇒ Pauschalsatz. */
+export function feeRateForClass(assetClass?: string | null): number {
+  if (!assetClass) return PAPER_FEE_RATE;
+  return CLASS_FEE_RATE[assetClass] ?? PAPER_FEE_RATE;
+}
+
+/** Effektiver Ausführungspreis mit klassenechtem Satz. */
+export function effectivePriceForClass(
+  price: number,
+  side: 'buy' | 'sell',
+  assetClass?: string | null,
+): number {
+  const rate = feeRateForClass(assetClass);
+  return side === 'buy' ? price * (1 + rate) : price * (1 - rate);
+}
+
 // ── Geteilte Marktdaten (market/{symbol}/**, nur Functions schreiben) ────────
 
 export interface Quote {

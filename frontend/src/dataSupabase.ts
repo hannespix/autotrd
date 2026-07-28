@@ -58,6 +58,7 @@ import type {
   SignalRow,
   StrategyRow,
   TradeRow,
+  MomentumDoc,
   TuneFleetRow,
   TuneLogRow,
   UiPrefs,
@@ -815,4 +816,17 @@ export function toStrategyRow(r: StrategyDbRow): StrategyRow {
   };
   if (r.shadow) doc.shadow = r.shadow;
   return { id: r.id, doc };
+}
+
+/**
+ * Momentum-Ranking unter Supabase: noch keine Daten.
+ *
+ * Der Tages-Lauf ist heute eine Firebase-Function und schreibt nach
+ * meta/momentum; die Postgres-Entsprechung kommt mit MS2. Die Funktion
+ * existiert trotzdem — sonst bräche der Backend-Umschalter am fehlenden
+ * Export, und die Karte zeigte statt „noch kein Ranking" einen Fehler.
+ */
+export function watchMomentum(cb: (doc: MomentumDoc | null) => void): () => void {
+  cb(null);
+  return () => undefined;
 }

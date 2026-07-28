@@ -68,6 +68,7 @@ import {
   watchUserDoc,
   watchPortfolioStats,
   watchEquitySeries,
+  watchMomentum,
   watchTuneFleet,
   watchTuneLog,
   type AiDayDoc,
@@ -82,6 +83,7 @@ import {
   type WorkspaceDocData,
   type PortfolioStatsDoc,
   type EquitySeriesPoint,
+  type MomentumDoc,
   type TuneFleetRow,
   type TuneLogRow,
 } from './data.js';
@@ -123,6 +125,7 @@ const PANEL_TITLES: Record<string, string> = {
   clock: 'Markt-Uhr',
   forecastacc: 'Prognose-Genauigkeit',
   fclab: 'Prognose-Labor',
+  momentum: 'Momentum-Ranking',
   tuner: 'Auto-Tuner',
   news: 'News & Sentiment',
   chart2: 'Vergleichs-Chart',
@@ -734,6 +737,24 @@ function layout(email: string): string {
         <div id="flCombosIntra" class="fl-tbl"><div class="hint">Noch keine bewerteten Kurzfrist-Prognosen.</div></div>
         <label class="lbl">Vorhersage vs. Realität ${iBtn('mae')} <span id="flSym2" style="color:var(--t3)"></span></label>
         <div id="flRows" class="fl-tbl"><div class="hint">Noch keine bewerteten Prognosen für dieses Symbol.</div></div>
+      </div></div>
+
+      <div class="card" data-panel="momentum"><div class="sect">Momentum-Ranking ${iBtn('momentum')}
+        <span id="moFilter" class="tn-tag" style="float:right"></span>
+      </div><div class="cbody">
+        <div class="hint">Statt einer Watchlist wird der GANZE Katalog nach 12-Monats-Momentum
+          sortiert (der letzte Monat zählt nicht mit — auf Monatssicht kehren Kurse eher um).
+          Gekauft werden die stärksten acht, gleichgewichtet, mit Wochen-Rhythmus. Das läuft
+          als Schattendepot neben deiner Strategie: Umgestellt wird erst, wenn es sie
+          nachweislich schlägt.</div>
+        <div class="row" style="gap:12px;margin-top:8px">
+          <div><label class="lbl">Schatten-Depot</label><div id="moEq" class="smv mono">--</div></div>
+          <div><label class="lbl">Trades</label><div id="moTrades" class="smv mono">0</div></div>
+          <div><label class="lbl">Bewertbar</label><div id="moRanked" class="smv mono">--</div></div>
+        </div>
+        <label class="lbl" style="margin-top:10px">Spitze des Universums</label>
+        <div id="moTop" class="fl-tbl"><div class="hint">Das erste Ranking entsteht mit dem nächsten Tages-Lauf (18:00 ET).</div></div>
+        <div class="hint" id="moHint"></div>
       </div></div>
 
       <div class="card" data-panel="tuner"><div class="sect">Auto-Tuner ${iBtn('autotuner')}
@@ -3937,6 +3958,62 @@ function renderCosts(s: PortfolioStatsDoc): void {
         : `Die durchschnittliche Gewinnbewegung ist das ${c.edgeOverCost.toFixed(1)}-Fache der Handelskosten.`;
 }
 
+/**
+ * Momentum-Ranking (Owner-Go 28.07.).
+ *
+ * Zwei Dinge müssen hier sichtbar sein, sonst ist die Karte Dekoration:
+ * der Zustand des MARKTFILTERS (steht er zu, ist Flachbleiben die Strategie,
+ * kein Fehler) und die Zahl der bewertbaren Symbole (sie wächst, während der
+ * Katalog seine Historie nachholt — ein kleines Universum am Anfang ist
+ * erwartetes Verhalten, kein Datenverlust).
+ */
+function renderMomentum(m: MomentumDoc | null): void {
+  const box = $('moTop');
+  const filter = $('moFilter');
+  if (!m) {
+    filter.textContent = '';
+    box.innerHTML = '<div class="hint">Das erste Ranking entsteht mit dem nächsten Tages-Lauf (18:00 ET).</div>';
+    return;
+  }
+  filter.textContent = m.marktOffen ? 'Markt offen' : 'Markt ZU';
+  filter.className = `tn-tag${m.marktOffen ? ' tn-ok' : ''}`;
+  $('moEq').textContent = money(m.equity);
+  $('moTrades').textContent = String(m.trades);
+  $('moRanked').textContent = `${m.ranked}/${m.universum}`;
+
+  const gehalten = new Set(m.gehalten ?? []);
+  const top = m.top ?? [];
+  box.innerHTML =
+    top.length === 0
+      ? '<div class="hint">Kein Symbol mit positivem Momentum — das Depot bleibt flach.</div>'
+      : top
+          .map((t) => {
+            const drin = gehalten.has(t.symbol);
+            return (
+              `<div class="fl-row"><span>${esc(t.symbol)}</span>` +
+              `<span class="mono ${pnlClass(t.score)}">${t.score >= 0 ? '+' : ''}${t.score.toFixed(1)} %</span>` +
+              `<span class="mono">${drin ? 'gehalten' : '—'}</span></div>`
+            );
+          })
+          .join('');
+
+  const teile: string[] = [];
+  if (!m.marktOffen) {
+    teile.push(
+      'Der Leitindex steht unter seiner 200-Tage-Linie — es wird nichts gekauft. ' +
+        'Momentum-Einbrüche passieren fast immer in Erholungsphasen nach Markteinbrüchen; ' +
+        'flach zu bleiben ist hier die Strategie, nicht ihr Ausfall.',
+    );
+  }
+  if (m.fehlendeHistorie > 0) {
+    teile.push(
+      `${m.fehlendeHistorie} Symbol(e) haben noch keine 12-Monats-Historie und nehmen am Ranking nicht teil — ` +
+        'die Lücke schließt sich täglich.',
+    );
+  }
+  $('moHint').textContent = teile.join(' ');
+}
+
 /* ── Auto-Tuner: Flotte und Journal (MT5) ─────────────────────────────────── */
 
 /**
@@ -4371,6 +4448,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       renderFcLabStats('flCombos', stats);
     }),
     watchForecastStatsIntraday((stats) => renderFcLabStats('flCombosIntra', stats)),
+    watchMomentum(renderMomentum),
     watchTuneFleet(uid, renderTuneFleet),
     watchTuneLog(uid, renderTuneLog),
   );
