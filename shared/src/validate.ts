@@ -200,6 +200,9 @@ export function validateStrategy(value: unknown): string[] {
         || signals.minEdgeMultiple > 10)) {
       problems.push('signals.minEdgeMultiple muss zwischen 0 und 10 liegen (0 = aus)');
     }
+    if (signals.newsVeto !== undefined && typeof signals.newsVeto !== 'boolean') {
+      problems.push('signals.newsVeto muss boolean sein');
+    }
   }
 
   return problems;
