@@ -34,6 +34,13 @@ export function newsChartMarkers(
   snap: Pick<NewsSnapshot, 'top' | 'hardEvent'> | null | undefined,
   times: ReadonlyArray<string | number>,
   nowSec: number,
+  /**
+   * signals.newsVeto des Users. Hat er das Veto abgeschaltet, setzt SEINE
+   * Engine nicht aus — dann darf das Chart auch keinen Veto-Pfeil zeigen
+   * (Owner-Fund 29.07.: „kann Veto nicht zurücknehmen!?" — die Anzeige
+   * ignorierte den Schalter und behauptete ein Aussetzen, das nicht stattfand).
+   */
+  vetoEnabled = true,
 ): ChartMarker[] {
   if (!snap || times.length === 0) return [];
 
@@ -70,7 +77,7 @@ export function newsChartMarkers(
   // Scan (newsVeto aus shared) — hier nur Anzeige; zwei eigene Fenster-Logiken
   // würden irgendwann auseinanderlaufen und das Chart etwas anderes zeigen,
   // als die Engine tut.
-  if (newsVeto(snap, nowSec).blocked && snap.hardEvent) {
+  if (vetoEnabled && newsVeto(snap, nowSec).blocked && snap.hardEvent) {
     const bar = barFor(snap.hardEvent.published);
     if (bar !== null) {
       markers.push({ time: bar, position: 'aboveBar', color: NEWS_VETO_COLOR, shape: 'arrowDown', text: 'Veto' });
@@ -101,6 +108,8 @@ export function newsForDay(
   snap: Pick<NewsSnapshot, 'top' | 'hardEvent'> | null | undefined,
   isoDate: string | null,
   nowSec: number,
+  /** signals.newsVeto des Users — abgeschaltet ⇒ kein Veto-Hinweis (s. newsChartMarkers). */
+  vetoEnabled = true,
 ): NewsTipData | null {
   if (!snap || !isoDate) return null;
   const items = (snap.top ?? [])
@@ -108,7 +117,10 @@ export function newsForDay(
     .sort((a, b) => b.published - a.published)
     .map((h) => ({ title: h.title, source: h.source, published: h.published, sentiment: h.sentiment }));
   const veto =
-    newsVeto(snap, nowSec).blocked && snap.hardEvent !== null && utcDay(snap.hardEvent.published) === isoDate;
+    vetoEnabled
+    && newsVeto(snap, nowSec).blocked
+    && snap.hardEvent !== null
+    && utcDay(snap.hardEvent.published) === isoDate;
   if (items.length === 0 && !veto) return null;
   let num = 0;
   let den = 0;

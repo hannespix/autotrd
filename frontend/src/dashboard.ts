@@ -2086,7 +2086,7 @@ function applyMarkers(): void {
     : st.bars.map((b) => b.date);
   const markers: ChartMarker[] =
     st.showNews && !st.cleanView
-      ? newsChartMarkers(st.news, times, Math.floor(Date.now() / 1000))
+      ? newsChartMarkers(st.news, times, Math.floor(Date.now() / 1000), vetoAnzeige())
       : [];
   st.lastMainMarkers = markers.length; // E2E-Hook
   st.chart.setMarkers(markers);
@@ -2108,6 +2108,14 @@ let evTipTimer: number | null = null;
 let evTipOwner: unknown = null;
 const COARSE_POINTER = window.matchMedia?.('(pointer: coarse)').matches ?? false;
 
+/**
+ * Zeigt die Anzeige das Veto? NUR wenn der User es nicht abgeschaltet hat
+ * (Optionen → „News-Veto"). Seine Engine setzt sonst gar nicht aus — ein
+ * Pfeil, der ein Aussetzen behauptet, das nicht stattfindet, war der
+ * Owner-Fund vom 29.07. („kann Veto nicht zurücknehmen!?").
+ */
+const vetoAnzeige = (): boolean => st?.strategy.signals.newsVeto !== false;
+
 function showNewsTooltip(
   date: string | null,
   pos: { x: number; y: number } | null,
@@ -2116,7 +2124,7 @@ function showNewsTooltip(
 ): void {
   const tip = $('evTip');
   const day = st?.showNews && !st.cleanView
-    ? newsForDay(news, date, Math.floor(Date.now() / 1000))
+    ? newsForDay(news, date, Math.floor(Date.now() / 1000), vetoAnzeige())
     : null;
   if (!day || !pos) {
     if (owner !== evTipOwner) return; // Fremd-/Sync-Clear: Overlay bleibt
@@ -2774,7 +2782,7 @@ function renderGridPanelBars(p: GridPanel): void {
   // News-Punkte in JEDEM Chart-Fenster — gleiche Quelle wie der Haupt-Chart
   const pMarkers: ChartMarker[] =
     st !== null && st.showNews && !st.cleanView
-      ? newsChartMarkers(p.news, times, Math.floor(Date.now() / 1000))
+      ? newsChartMarkers(p.news, times, Math.floor(Date.now() / 1000), vetoAnzeige())
       : [];
   p.lastMarkers = pMarkers.length; // E2E-Hook
   p.chart.setMarkers(pMarkers);
@@ -3626,9 +3634,10 @@ function openDetail(symbol: string, name: string, data: MarketDocData | null): v
         <span class="hint mono">${esc(h.source)} · ${alter(h.published)}</span></a>`;
     })
     .join('');
-  const veto = data?.news?.hardEvent
+  const veto = vetoAnzeige()
+    && data?.news?.hardEvent
     && Date.now() / 1000 - data.news.hardEvent.published <= NEWS_VETO_WINDOW_SEC
-    ? `<div class="hint" style="color:var(--yl,#d9a441)">⏸ News-Veto aktiv (${esc(data.news.hardEvent.type)}) — die Engine setzt neue Einstiege hier gerade aus.</div>`
+    ? `<div class="hint" style="color:var(--yl,#d9a441)">⏸ News-Veto aktiv (${esc(data.news.hardEvent.type)}) — die Engine setzt neue Einstiege hier gerade aus. Läuft automatisch 12 h nach dem Ereignis ab; abschaltbar in den Optionen („News-Veto").</div>`
     : '';
   sheet.innerHTML = `
     <button class="dclose" data-close="detail">✕</button>
@@ -4666,6 +4675,11 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       }
       fillForm(st.strategy);
       renderPortfolio();
+      // Veto-Anzeige folgt signals.newsVeto SOFORT nach dem Speichern —
+      // sonst zeigt das Chart noch minutenlang einen Pfeil für ein
+      // Aussetzen, das der User gerade abgeschaltet hat (Fund 29.07.).
+      applyMarkers();
+      renderAllPanels();
     }),
     // Beobachtete Symbole: kommen vom Scan, nicht aus der Strategie. Ändert
     // sich die Liste (neues Momentum-Ranking, neue Position), baut sich die
