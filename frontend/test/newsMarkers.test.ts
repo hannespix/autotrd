@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { NEWS_BEAR, NEWS_BULL, NEWS_VETO_COLOR, newsChartMarkers } from '../src/newsMarkers.js';
+import { NEWS_BEAR, NEWS_BULL, NEWS_VETO_COLOR, newsChartMarkers, newsForDay } from '../src/newsMarkers.js';
 import type { NewsHeadline, NewsSnapshot } from '@autotrd/shared';
 
 const NOW = 1_753_770_000;
@@ -86,3 +86,36 @@ describe('newsChartMarkers', () => {
     expect(m.map((x) => x.time)).toEqual([...m.map((x) => x.time)].sort());
   });
 });
+
+describe('newsForDay (Crosshair-Overlay)', () => {
+  it('liefert nur die Schlagzeilen DES Tages, neueste zuerst', () => {
+    const s = snap([head(3600, 0.5), head(7200, -0.2), head(2 * 86400, 0.9)]);
+    const d = newsForDay(s, DAY(0), NOW);
+    expect(d).not.toBeNull();
+    expect(d!.items.map((i) => i.published)).toEqual([NOW - 3600, NOW - 7200]);
+    expect(d!.veto).toBe(false);
+  });
+
+  it('Tag ohne Schlagzeilen und ohne Veto ⇒ null — das Overlay bleibt zu', () => {
+    expect(newsForDay(snap([head(3600, 0.5)]), DAY(-2 * 86400), NOW)).toBeNull();
+    expect(newsForDay(null, DAY(0), NOW)).toBeNull();
+    expect(newsForDay(snap([head(3600, 0.5)]), null, NOW)).toBeNull();
+  });
+
+  it('aktives Veto markiert genau den Ereignis-Tag', () => {
+    const ev = { type: 'legal', magnitude: 0.8, published: NOW - 3600, title: 'x' };
+    expect(newsForDay(snap([], ev), DAY(0), NOW)!.veto).toBe(true);
+    // abgelaufen ⇒ Tag ist wieder frei (und ohne Items ⇒ null)
+    const alt = { ...ev, published: NOW - 13 * 3600 };
+    expect(newsForDay(snap([], alt), utcDayOf(alt.published), NOW)).toBeNull();
+  });
+
+  it('Tages-Sentiment ist magnitude-gewichtet', () => {
+    const stark = head(3600, -0.8, 1);
+    const schwach = head(7200, 0.8, 0.1);
+    const d = newsForDay(snap([stark, schwach]), DAY(0), NOW);
+    expect(d!.sentiment).toBeLessThan(0);
+  });
+});
+
+const utcDayOf = (published: number): string => new Date(published * 1000).toISOString().slice(0, 10);

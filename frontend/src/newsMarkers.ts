@@ -79,3 +79,44 @@ export function newsChartMarkers(
 
   return markers.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
 }
+
+/** Inhalt des News-Overlays für einen Handelstag unterm Crosshair. */
+export interface NewsTipData {
+  date: string;
+  /** Magnitude-gewichteter Schnitt der Tages-Schlagzeilen (−1..1). */
+  sentiment: number;
+  /** Einstiegs-Veto läuft UND sein Ereignis stammt von diesem Tag. */
+  veto: boolean;
+  items: Array<{ title: string; source: string; published: number; sentiment: number }>;
+}
+
+const utcDay = (published: number): string => new Date(published * 1000).toISOString().slice(0, 10);
+
+/**
+ * Schlagzeilen eines Tages fürs Crosshair-Overlay („den News bitte lesbar
+ * machen", Owner 29.07.). Gleiche Quelle wie die Punkte — null, wenn der Tag
+ * weder Schlagzeilen noch das Veto-Ereignis trägt (Overlay bleibt dann zu).
+ */
+export function newsForDay(
+  snap: Pick<NewsSnapshot, 'top' | 'hardEvent'> | null | undefined,
+  isoDate: string | null,
+  nowSec: number,
+): NewsTipData | null {
+  if (!snap || !isoDate) return null;
+  const items = (snap.top ?? [])
+    .filter((h) => h.published > 0 && utcDay(h.published) === isoDate)
+    .sort((a, b) => b.published - a.published)
+    .map((h) => ({ title: h.title, source: h.source, published: h.published, sentiment: h.sentiment }));
+  const veto =
+    newsVeto(snap, nowSec).blocked && snap.hardEvent !== null && utcDay(snap.hardEvent.published) === isoDate;
+  if (items.length === 0 && !veto) return null;
+  let num = 0;
+  let den = 0;
+  for (const h of snap.top ?? []) {
+    if (!(h.published > 0) || utcDay(h.published) !== isoDate) continue;
+    const w = 0.4 + h.magnitude;
+    num += h.sentiment * w;
+    den += w;
+  }
+  return { date: isoDate, sentiment: den > 0 ? Math.round((num / den) * 1000) / 1000 : 0, veto, items };
+}
