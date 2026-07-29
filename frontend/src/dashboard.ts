@@ -59,6 +59,7 @@ import {
   type PriceChartHandle,
 } from './chart.js';
 import { ICONS } from './icons.js';
+import { newsChartMarkers } from './newsMarkers.js';
 import {
   callTrade,
   loadMarketQuotes,
@@ -285,9 +286,13 @@ interface DashState {
   wsOrder: Record<string, number>;
   wsSaveTimer: number | null;
   paletteDispose: (() => void) | null;
-  /** Event-Tage des aktuellen Symbols (für Marker + Crosshair-Tooltip). */
-  /** Layer-Toggles (M6b): Prognose-Overlay / Event-Marker ein- und ausblenden. */
+  /** Layer-Toggles: Prognose-Overlay / News-Punkte ein- und ausblenden. */
   showForecast: boolean;
+  /** News-Punkte im Chart (Rückkehr 29.07.) — Quelle sind NUR die fürs
+   *  Veto ohnehin geladenen Schlagzeilen (market/{sym}.news), kein Nachladen. */
+  showNews: boolean;
+  /** News-Lage des aktuellen Chart-Symbols (aus dem market-Doc-Watcher). */
+  news: MarketDocData['news'];
   /** Zuletzt gesetzte News-Punkte im Haupt-Chart (E2E-Hook, 26.07.). */
   lastMainMarkers?: number;
   /** Live-Preise der Positions-Symbole (aus market/{sym}.quote). */
@@ -334,7 +339,8 @@ interface GridPanel {
   /** 0 = Tages-Sicht; 1/5 = 5-min-Sicht (Grid-Parität, User-Wunsch 25.07.). */
   intradayDays: number;
   intradayBars: import('./chart.js').IntradayChartBar[];
-  /** Event-Tage des Panel-Symbols (News-Punkte in JEDEM Chart). */
+  /** News-Lage des Panel-Symbols (News-Punkte in JEDEM Chart, 29.07.). */
+  news: MarketDocData['news'];
   /** Zeit-Domäne des letzten Renders (Prognose-Räumung beim Moduswechsel). */
   lastRenderIntraday?: boolean;
   /** Zuletzt gesetzte News-Punkte (E2E-Hook, 26.07.). */
@@ -558,6 +564,7 @@ function layout(email: string): string {
             <div id="menuLay" class="tool-menu" hidden>
               <div class="tm-sec">Layer</div>
               <button class="tf-btn on" id="lyFc" title="Prognose-Overlay ein/aus">Prognose</button>
+              <button class="tf-btn on" id="lyNews" title="News-Punkte ein/aus — nur die Schlagzeilen, die die Engine ohnehin fürs News-Veto lädt (kein zusätzlicher Abruf). Grün/rot = Wortlaut der Schlagzeile, gelber Pfeil = Einstiegs-Veto aktiv.">News</button>
               <button class="tf-btn on" id="yAutoBtn" title="Y-Autoscaling: Preisskala passt sich beim Scrollen/Zoomen automatisch an — ausschalten, um die Y-Achse manuell festzuhalten (Ziehen auf der Preisskala)">Y-Auto</button>
               <div class="tm-sec">Raster — bis zu 4 Kurse parallel</div>
               <span class="grid-sw" title="Charts im Raster: 1, 2 oder 4 parallel">
@@ -1032,7 +1039,9 @@ function wireChartCtx(): void {
       if (st) {
         st.forecast = d?.forecast ?? null;
         st.forecastIntraday = d?.forecastIntraday ?? null;
+        st.news = d?.news ?? null;
         applyForecast();
+        applyMarkers(); // News-Punkte folgen dem market-Doc (29.07.)
       }
     }),
     watchBars(sym, (bars) => {
@@ -2060,16 +2069,24 @@ async function loadIntradayView(): Promise<void> {
 }
 
 /**
- * Marker auf dem Haupt-Chart.
+ * Marker auf dem Haupt-Chart — die EINE Stelle für setMarkers (verteilte
+ * Aufrufe waren früher die Quelle von Sync-Fehlern).
  *
- * Seit dem Ausbau der News-Strecke (28.07.) gibt es keine Event-Punkte mehr;
- * die Funktion bleibt als EINE Stelle stehen, an der künftige Marker (etwa
- * die eigenen Ein- und Ausstiege) angehängt werden — verteiltes
- * setMarkers-Aufrufen war vorher schon die Quelle von Sync-Fehlern.
+ * Seit 29.07. wieder mit Inhalt: News-Punkte aus `market/{sym}.news` — den
+ * Schlagzeilen, die der Scan ohnehin fürs Einstiegs-Veto lädt (Owner: „nur
+ * die auch genutzt werden, nicht extra nach News suchen"). Läuft das Veto,
+ * zeigt ein gelber Pfeil den auslösenden Bar.
  */
 function applyMarkers(): void {
   if (!st?.chart) return;
-  const markers: ChartMarker[] = [];
+  const intraday = st.intradayDays > 0;
+  const times: Array<string | number> = intraday
+    ? st.shownIntraday.map((b) => b.time)
+    : st.bars.map((b) => b.date);
+  const markers: ChartMarker[] =
+    st.showNews && !st.cleanView
+      ? newsChartMarkers(st.news, times, Math.floor(Date.now() / 1000))
+      : [];
   st.lastMainMarkers = markers.length; // E2E-Hook
   st.chart.setMarkers(markers);
 }
@@ -2517,6 +2534,7 @@ function wireChart2Ctx(): void {
       if (epoch !== p.epoch) return;
       p.forecast = d?.forecast ?? null;
       p.forecastIntraday = d?.forecastIntraday ?? null;
+      p.news = d?.news ?? null;
       renderChart2();
     }),
     watchBars(sym, (bars) => {
@@ -2678,7 +2696,11 @@ function renderGridPanelBars(p: GridPanel): void {
     lines.push({ key: 'vwap', color: '#f2d16b', width: 2, points: pts });
   }
   p.chart.setOverlays(lines);
-  const pMarkers: ChartMarker[] = [];
+  // News-Punkte in JEDEM Chart-Fenster — gleiche Quelle wie der Haupt-Chart
+  const pMarkers: ChartMarker[] =
+    st !== null && st.showNews && !st.cleanView
+      ? newsChartMarkers(p.news, times, Math.floor(Date.now() / 1000))
+      : [];
   p.lastMarkers = pMarkers.length; // E2E-Hook
   p.chart.setMarkers(pMarkers);
   // Layer syncen (User-Wunsch 25.07.): Fläche + „Kerzen aus" gelten auch im
@@ -2796,6 +2818,7 @@ async function mountGridPanel(p: GridPanel, host: HTMLElement): Promise<void> {
       if (epoch !== p.epoch) return;
       p.forecast = d?.forecast ?? null;
       p.forecastIntraday = d?.forecastIntraday ?? null;
+      p.news = d?.news ?? null;
       renderGridPanelBars(p);
     }),
   );
@@ -2905,7 +2928,7 @@ function renderChartGrid(): void {
       watchedSymbols().find((s) => !used.has(s)) ??
       ['AAPL', 'TSLA', '^NDX'].find((s) => !used.has(s)) ??
       'AAPL';
-    st.gridPanels.push({ sym, range: 66, locked: false, chart: null, bars: [], subs: [], epoch: 0, fitPending: true, forecast: null, forecastIntraday: null, intradayDays: 0, intradayBars: [], auto: false });
+    st.gridPanels.push({ sym, range: 66, locked: false, chart: null, bars: [], subs: [], epoch: 0, fitPending: true, forecast: null, forecastIntraday: null, news: null, intradayDays: 0, intradayBars: [], auto: false });
   }
   $('chartRow').dataset['mode'] = String(st.gridMode);
   ($('lockMain') as HTMLButtonElement).hidden = st.gridMode === 1;
@@ -4463,6 +4486,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     trades: [],
     forecast: null,
     forecastIntraday: null,
+    news: null,
     chartGroup: 'A',
     chart2Group: 'B',
     chart2Symbol: DEFAULT_STRATEGY.watchlist[1] ?? 'QQQ',
@@ -4480,6 +4504,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       fitPending: true,
       forecast: null,
       forecastIntraday: null,
+      news: null,
       intradayDays: 0,
       intradayBars: [],
       auto: false,
@@ -4506,6 +4531,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     wsSaveTimer: null,
     paletteDispose: null,
     showForecast: true,
+    // News-Punkte an per Default — die Daten liegen ohnehin im market-Doc,
+    // der Toggle kostet also nichts; Abwahl bleibt gerätelokal gemerkt.
+    showNews: localStorage.getItem('autotrd-chart-news') !== '0',
     posPrices: new Map(),
     pfStats: null,
     equitySeries: [],
@@ -5300,7 +5328,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     const prefs = loadGridPrefs();
     st.gridMode = prefs.mode;
     st.mainLocked = prefs.mainLocked;
-    st.gridPanels = prefs.panels.map((p) => ({ ...p, chart: null, bars: [], subs: [], epoch: 0, fitPending: true, forecast: null, forecastIntraday: null, intradayBars: [] }));
+    st.gridPanels = prefs.panels.map((p) => ({ ...p, chart: null, bars: [], subs: [], epoch: 0, fitPending: true, forecast: null, forecastIntraday: null, news: null, intradayBars: [] }));
     // (auto kommt aus prefs mit — loadGridPrefs liefert es garantiert)
     renderChartGrid();
   }
@@ -5330,6 +5358,15 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     applyForecast();
     renderAllPanels(); // Prognose-Layer gilt in ALLEN Charts
     updateSubPanels(); // Zeitachsen-Anker der Unterpanels folgt dem Whitespace
+  });
+  $('lyNews').classList.toggle('on', st?.showNews ?? true);
+  $('lyNews').addEventListener('click', () => {
+    if (!st) return;
+    st.showNews = !st.showNews;
+    $('lyNews').classList.toggle('on', st.showNews);
+    localStorage.setItem('autotrd-chart-news', st.showNews ? '1' : '0');
+    applyMarkers();
+    renderAllPanels(); // News-Punkte gelten in ALLEN Charts
   });
   wireChartHeightDrag();
   document.addEventListener('keydown', onEscape);
