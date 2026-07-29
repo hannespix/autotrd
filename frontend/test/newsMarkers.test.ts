@@ -77,6 +77,15 @@ describe('newsChartMarkers', () => {
     expect(newsChartMarkers(snap([], alt), dailyTimes, NOW)).toEqual([]);
   });
 
+  it('User hat das Veto abgeschaltet ⇒ kein Pfeil (die News-Punkte bleiben)', () => {
+    // Der Fund vom 29.07.: Die Anzeige behauptete ein Aussetzen, das die
+    // Engine des Users (signals.newsVeto: false) gar nicht vornahm.
+    const ev = { type: 'earnings', magnitude: 0.8, published: NOW - 3600, title: 'x' };
+    const m = newsChartMarkers(snap([head(3600, 0.5)], ev), dailyTimes, NOW, false);
+    expect(m).toHaveLength(1); // nur der News-Punkt …
+    expect(m[0]!.color).not.toBe(NEWS_VETO_COLOR); // … kein Veto-Pfeil
+  });
+
   it('Marker sind aufsteigend sortiert (LWC-Anforderung)', () => {
     const m = newsChartMarkers(
       snap([head(3600, 0.5), head(2 * 86400 + 3600, -0.5)]),
@@ -108,6 +117,8 @@ describe('newsForDay (Crosshair-Overlay)', () => {
     // abgelaufen ⇒ Tag ist wieder frei (und ohne Items ⇒ null)
     const alt = { ...ev, published: NOW - 13 * 3600 };
     expect(newsForDay(snap([], alt), utcDayOf(alt.published), NOW)).toBeNull();
+    // User hat das Veto abgeschaltet ⇒ kein Veto-Hinweis im Overlay
+    expect(newsForDay(snap([head(3600, 0.2)], ev), DAY(0), NOW, false)!.veto).toBe(false);
   });
 
   it('Tages-Sentiment ist magnitude-gewichtet', () => {
