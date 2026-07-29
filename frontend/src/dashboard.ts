@@ -59,7 +59,7 @@ import {
   type PriceChartHandle,
 } from './chart.js';
 import { ICONS } from './icons.js';
-import { newsChartMarkers } from './newsMarkers.js';
+import { newsChartMarkers, newsForDay } from './newsMarkers.js';
 import {
   callTrade,
   loadMarketQuotes,
@@ -609,6 +609,7 @@ function layout(email: string): string {
           <div id="chartArea"></div>
           <button id="jumpNow" class="jump-now" hidden
             title="Zurück zur Gegenwart — animierter Sprung zum jüngsten Kurs">Jetzt ⇥</button>
+          <div id="evTip" class="evtip" hidden></div>
           <svg id="predSvg" class="pred-svg" aria-hidden="true"></svg>
           <div id="predPop" class="pred-pop" hidden>
             <b>Prognose-Pfeil</b>
@@ -2092,6 +2093,77 @@ function applyMarkers(): void {
 }
 
 /**
+ * News-Overlay unterm Crosshair („den News bitte lesbar machen", Owner
+ * 29.07.): Fährt/tippt man auf einen Tag mit News-Punkt, erscheinen dessen
+ * Schlagzeilen als kleines Overlay — dieselbe Quelle wie die Punkte
+ * (market/{sym}.news), kein Nachladen.
+ *
+ * Die Mechanik ist die bewährte aus der ersten News-Ära: Nur das Chart, das
+ * das Overlay geöffnet hat, darf es schließen (Crosshair-SYNCS feuern auf den
+ * Ziel-Charts Clear-Events — sonst löscht die Lock-Gruppe jeden Tooltip).
+ * Auf Touch-Geräten verschwindet das Crosshair beim Loslassen sofort; das
+ * Overlay bleibt dann 4 s stehen, damit man es lesen kann.
+ */
+let evTipTimer: number | null = null;
+let evTipOwner: unknown = null;
+const COARSE_POINTER = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+
+function showNewsTooltip(
+  date: string | null,
+  pos: { x: number; y: number } | null,
+  news: MarketDocData['news'],
+  owner: unknown,
+): void {
+  const tip = $('evTip');
+  const day = st?.showNews && !st.cleanView
+    ? newsForDay(news, date, Math.floor(Date.now() / 1000))
+    : null;
+  if (!day || !pos) {
+    if (owner !== evTipOwner) return; // Fremd-/Sync-Clear: Overlay bleibt
+    if (COARSE_POINTER && !tip.hidden) {
+      if (evTipTimer !== null) window.clearTimeout(evTipTimer);
+      evTipTimer = window.setTimeout(() => {
+        tip.hidden = true;
+        evTipTimer = null;
+      }, 4000);
+      return;
+    }
+    tip.hidden = true;
+    return;
+  }
+  evTipOwner = owner;
+  if (evTipTimer !== null) {
+    window.clearTimeout(evTipTimer);
+    evTipTimer = null;
+  }
+  const tone = day.sentiment > 0.12 ? 'c-gn' : day.sentiment < -0.12 ? 'c-rd' : 'c-t3';
+  tip.innerHTML = `
+    <div class="evtip-hd"><span class="mono"></span>
+      <span class="${tone}">${day.sentiment >= 0 ? '+' : ''}${day.sentiment.toFixed(2)}</span>
+      <span class="evtip-n">${day.items.length} News</span></div>
+    ${day.veto ? '<div class="evtip-row" style="color:var(--yl,#d9a441)">⏸ News-Veto aktiv — die Engine setzt neue Einstiege hier gerade aus.</div>' : ''}
+    <div class="evtip-list"></div>`;
+  tip.querySelector('.mono')!.textContent = day.date;
+  const list = tip.querySelector('.evtip-list')!;
+  for (const t of day.items.slice(0, 4)) {
+    const row = document.createElement('div');
+    row.className = 'evtip-row';
+    row.textContent = `• ${t.title}`;
+    const src = document.createElement('span');
+    src.className = 'evtip-src';
+    src.textContent = ` — ${t.source}`;
+    row.appendChild(src);
+    list.appendChild(row);
+  }
+  tip.hidden = false;
+  // Ans Viewport clampen (Tooltip ist position:fixed)
+  const w = tip.offsetWidth;
+  const h = tip.offsetHeight;
+  tip.style.left = `${Math.min(pos.x + 14, window.innerWidth - w - 8)}px`;
+  tip.style.top = `${Math.max(8, Math.min(pos.y - h - 10, window.innerHeight - h - 8))}px`;
+}
+
+/**
  * Prognose-Overlay + Badge anwenden — Tages-Prognose in der Tages-Ansicht,
  * Kurzfrist-Prognose (nächste Stunde, 5-min-Raster) in der Intraday-Ansicht.
  */
@@ -2291,7 +2363,8 @@ async function rebuildChart(): Promise<void> {
     st.subCharts[kind] = null;
   }
   void loadPredictionForSymbol();
-  st.chart?.onCrosshairDate((date, _pos) => {
+  st.chart?.onCrosshairDate((date, pos) => {
+    showNewsTooltip(date, pos, st?.news ?? null, 'main');
     if (!crosshairSyncing && st?.chart2) {
       crosshairSyncing = true;
       st.chart2.setCrosshair(date);
@@ -2583,8 +2656,10 @@ async function rebuildChart2(): Promise<void> {
     if (!recentGesture($('chart2Area'))) return;
     pushRange(st.chart, range, h);
   });
-  st.chart2?.onCrosshairDate((date, _pos) => {
-    // News-Overlay auch im Vergleichs-Chart (Events des Vergleichs-Symbols)
+  st.chart2?.onCrosshairDate((date, pos) => {
+    // News-Overlay auch im Vergleichs-Chart — mit den Schlagzeilen des
+    // VERGLEICHS-Symbols, nicht denen des Haupt-Charts
+    showNewsTooltip(date, pos, st?.chart2P.news ?? null, st?.chart2P ?? 'chart2');
     if (crosshairSyncing || !st?.chart) return;
     crosshairSyncing = true;
     st.chart.setCrosshair(date);
@@ -2850,9 +2925,10 @@ async function mountGridPanel(p: GridPanel, host: HTMLElement): Promise<void> {
     if (matchEcho(p.chart, range)) return;
     if (p.locked && recentGesture(host)) syncLockedRange(p.chart, range);
   });
-  p.chart?.onCrosshairDate((date, _pos) => {
-    // News-Overlay auch im Raster-Panel (User-Feedback 26.07.) — mit den
-    // Event-Tagen des PANEL-Symbols, nicht denen des Haupt-Charts
+  p.chart?.onCrosshairDate((date, pos) => {
+    // News-Overlay auch im Raster-Panel — mit den Schlagzeilen des
+    // PANEL-Symbols, nicht denen des Haupt-Charts
+    showNewsTooltip(date, pos, p.news, p);
     if (p.locked && p.chart) syncLockedCrosshair(p.chart, date);
   });
   renderGridPanelBars(p);
