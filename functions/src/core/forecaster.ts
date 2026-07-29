@@ -20,12 +20,14 @@ import {
   comboKey,
   computeForecastV2,
   computeIntradayForecastV2,
+  shadowSentSign,
   type BandCalibration,
   type ComboStat,
   type ForecastComputation,
   type ForecastDoc,
   type IntradayForecastComputation,
   type IntradayForecastDoc,
+  type NewsSnapshot,
 } from '../../../shared/src/index.js';
 import type { IntradayBar } from './marketData.js';
 
@@ -65,6 +67,7 @@ export async function runForecast(
   symbol: string,
   closes: number[],
   baseDate: string,
+  news: NewsSnapshot | null = null,
 ): Promise<LiveForecast | null> {
   const db = getFirestore();
   const { lookback: bestLb, lookbackGrid, combos } = await loadForecastMeta();
@@ -85,6 +88,11 @@ export async function runForecast(
   if (existing.empty) {
     const batch = db.batch();
     const madeAt = new Date().toISOString();
+    // Sentiment-Schatten (News-Rückkehr 29.07.): Die News-Lage zum
+    // Prognosezeitpunkt wird nur GESTEMPELT — sie verschiebt keine Drift
+    // (der alte Tilt ist bewusst nicht zurück). Die Bewertung zählt später
+    // in meta/sentimentStats, ob das Vorzeichen die Richtung getroffen hätte.
+    const sent = shadowSentSign(news, Math.floor(Date.now() / 1000));
     for (const lb of lookbackGrid) {
       // Shadow = derselbe V2-Generator wie live — nur so misst die
       // Bewertung die Prognosen, die wirklich ausgespielt werden.
@@ -103,6 +111,7 @@ export async function runForecast(
             : 0,
         madeAt,
         evaluated: false,
+        ...(sent ? { sentSign: sent.sign, sentVal: sent.val } : {}),
       };
       batch.set(coll.doc(`${baseDate}_${comboKey(lb)}`), docData);
     }
@@ -130,6 +139,7 @@ export async function runIntradayForecast(
   symbol: string,
   bars: IntradayBar[],
   marketOpen: boolean,
+  news: NewsSnapshot | null = null,
 ): Promise<LiveIntradayForecast | null> {
   // Raster-Guard (Befund 28.07.): Prognosepunkte sind `baseT + k·300` und
   // werden später gegen die gespeicherten 5-min-Bars gematcht. Liegt `baseT`
@@ -168,6 +178,8 @@ export async function runIntradayForecast(
     if (existing.empty) {
       const batch = db.batch();
       const madeAt = new Date().toISOString();
+      // Sentiment-Schatten wie beim Tages-Pfad: stempeln, nie verschieben.
+      const sent = shadowSentSign(news, Math.floor(Date.now() / 1000));
       for (const lb of INTRADAY_LOOKBACK_GRID) {
         const fc = computeIntradayForecastV2(closes, baseT, INTRADAY_HORIZON, lb);
         if (!fc) continue;
@@ -181,6 +193,7 @@ export async function runIntradayForecast(
           predictedPct: pctToLast(fc.points, fc.baseClose),
           madeAt,
           evaluated: false,
+          ...(sent ? { sentSign: sent.sign, sentVal: sent.val } : {}),
         };
         batch.set(coll.doc(`${baseT}_${comboKey(lb)}`), docData);
       }
