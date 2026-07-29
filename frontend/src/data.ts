@@ -48,6 +48,8 @@ export interface MarketDocData {
   name?: string;
   assetClass?: string;
   quote?: Quote;
+  /** News-Lage (News-Rückkehr 29.07.): Veto-Grundlage + Schlagzeilen-Anzeige. */
+  news?: import('../../shared/src/index.js').NewsSnapshot | null;
   forecast?: {
     points: Array<{ time: string; value: number }>;
     band: Array<{ time: string; upper: number; lower: number }>;

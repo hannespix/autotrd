@@ -98,8 +98,8 @@ zurückbiegen.
 | `history_store.py`        | SQLite-Zeitreihen (`history.db`, WAL); jeder Scan & jede Kursansicht hängt eine Observation an. |
 | `forecaster.py`           | Sentiment-gewichtete Regression-Prognose; loggt Shadow-Forecasts über `(w, lookback)`-Gitter. |
 | `forecast_eval.py`        | Self-Improvement: bewertet fällige Prognosen, tunt `best_params`. **Kein Lookahead** (§5). |
-| `news_feed.py`            | Gratis-News. **NICHT nach TS portiert** — 28.07. ausgebaut (MILESTONES M6). |
-| `sentiment.py`            | Lexikon-Sentiment. **NICHT portiert** (s. o.). |
+| `news_feed.py`            | Gratis-News. TS-Rolle seit 29.07. **umgekehrt**: Feeds speisen ein Einstiegs-VETO (`functions/core/news.ts` + `shared/newsGate.ts`), keine Anzeige-Maschinerie (MILESTONES M6, Teil-Rückkehr). |
+| `sentiment.py`            | Lexikon-Sentiment. Seit 29.07. wieder portiert (`shared/sentiment.ts`, Golden-Parity) — nur Veto + Schatten-Statistik, kein Prognose-Tilt. |
 | `ai_analyst.py`           | Claude-Erklärung pro Tag. **NICHT portiert** (s. o.). |
 | `ai_tuner.py`             | Täglicher KI-Review. **NICHT portiert** (s. o.) — das TS-Suchgitter ist fest. |
 | `event_engine.py`         | News auf Chart-Tage mappen. **NICHT portiert** (s. o.). |

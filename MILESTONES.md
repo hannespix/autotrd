@@ -363,6 +363,20 @@ mit.
 > *Echte KI-Antworten + Kosten-Check in der Anthropic-Konsole = Owner-Schritt
 > nach `firebase functions:secrets:set ANTHROPIC_API_KEY` (SETUP.md §H).*
 
+**Teil-Rückkehr (29.07., Owner-Frage „lohnt sich das?"):** Feeds + Lexikon
+sind zurück — aber mit **umgekehrter Rolle**. Kein Prognose-Tilt, keine
+KI-Staffel, kein Tuner-Review. Stattdessen: (1) **Event-Veto** — ein frisches
+hartes Ereignis in der SCHLAGZEILE (Earnings, Klage, Guidance, M&A,
+Führungswechsel; `shared/newsGate.ts`) sperrt neue Einstiege 12 h, weil um
+solche Termine Kurse springen und die TA-Signale dann nichts wert sind. Das
+Veto kann Trades nur verhindern — Punkt 2 und 3 der Rückbau-Begründung oben
+treffen es nicht (es reagiert nicht auf Kurse, und der Abruf ist auf 4
+Symbole je Scan gedeckelt, TTL 45 min). (2) **Sentiment-Schatten** — die
+News-Lage wird auf Shadow-Prognosen gestempelt und in `meta/sentimentStats`
+gegen die realisierte Richtung gezählt; Stimmrecht bekommt sie erst, wenn
+diese Quote die Beweislast trägt (Regel von oben gilt unverändert).
+(3) Schlagzeilen im Symbol-Detail als Anzeige. Kosten: 0 KI-Token.
+
 ## M7 — Härtung & Betrieb
 
 **Ziel:** „Offen online zugänglich" verantwortbar machen.

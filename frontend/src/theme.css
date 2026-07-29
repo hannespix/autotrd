@@ -293,6 +293,13 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .dsheet .dbtn.pri { background: linear-gradient(135deg, var(--ac2), var(--ac)); color: #04121a; border-color: transparent; box-shadow: var(--glow-ac); }
 .dclose { position: absolute; top: 12px; right: 12px; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--bd2); background: var(--sd); color: var(--t1); font-size: 16px; cursor: pointer; line-height: 1; display: flex; align-items: center; justify-content: center; }
 
+/* Schlagzeilen im Detail-Sheet (News-Rückkehr 29.07.) */
+.dsheet .dnews { display: flex; flex-direction: column; gap: 8px; }
+.dsheet .dnews-item { display: grid; grid-template-columns: 8px 1fr; column-gap: 8px; align-items: baseline; text-decoration: none; color: var(--t1); font-size: 12px; line-height: 1.35; }
+.dsheet .dnews-item:hover .dnews-t { text-decoration: underline; }
+.dsheet .dnews-dot { width: 8px; height: 8px; border-radius: 50%; align-self: center; }
+.dsheet .dnews-item .hint { grid-column: 2; font-size: 10px; }
+
 /* Link-Chips (M9): Gruppen-Zugehörigkeit eines Panels in Aurora-Farben */
 .lchip {
   float: right; width: 18px; height: 18px; border-radius: 50%; border: none; cursor: pointer;

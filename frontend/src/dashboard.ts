@@ -14,6 +14,7 @@ import {
   MAX_OPEN_POSITIONS_CAP,
   MAX_RISK_PER_TRADE_PCT,
   MIN_EDGE_MULTIPLE,
+  NEWS_VETO_WINDOW_SEC,
   PAPER_FEE_RATE,
   adviseStrategy,
   aggregateBars,
@@ -945,6 +946,9 @@ function layout(email: string): string {
         <label class="opt-row" style="align-items:center">
           <input type="checkbox" id="owShort" />
           <span>Shorten erlauben (Leerverkäufe) ${iBtn('allowShort')}</span></label>
+        <label class="opt-row" style="align-items:center">
+          <input type="checkbox" id="owNewsVeto" />
+          <span>News-Veto (Einstiege bei harten Events aussetzen) ${iBtn('newsVeto')}</span></label>
       </div>
       <p class="hint">0 schaltet eine Regel ab. Der nachziehende Stop sichert
         Gewinne, sobald die Position im Plus war; ATR-Werte ersetzen die festen
@@ -1683,42 +1687,41 @@ function applyUiPrefs(): void {
 function optionsFormStrategy(): Strategy {
   const basis = st?.strategy ?? DEFAULT_STRATEGY;
   const num = (id: string): number => Number(($(id) as HTMLInputElement).value);
-    const strategy: Strategy = {
-      ...basis,
-      broker: {
-        ...basis.broker,
-        initialCapital: num('owCap'),
-        sizingBase: ($('owSizing') as HTMLSelectElement).value === 'initial' ? 'initial' : 'balance',
-        leverage: Math.min(MAX_LEVERAGE, Math.max(1, num('owLev') || 1)),
-      },
-      engine: {
-        ...basis.engine,
-        maxPositionPct: num('owMax'),
-        mode: ($('owMode') as HTMLSelectElement).value === 'momentum' ? 'momentum' : 'confluence',
-        riskPerTradePct: Math.min(MAX_RISK_PER_TRADE_PCT, Math.max(0, num('owRisk'))),
-        maxOpenPositions: Math.min(
-          MAX_OPEN_POSITIONS_CAP,
-          Math.max(1, num('owMaxPos') || DEFAULT_MAX_OPEN_POSITIONS)),
-        stopLossPct: num('owSl'),
-        takeProfitPct: num('owTp'),
-        trailingStopPct: num('owTrail'),
-        maxHoldDays: num('owHold'),
-        atrStopMult: num('owAtrS'),
-        atrTakeMult: num('owAtrT'),
-        cooldownMin: Math.min(1440, Math.max(5, num('owCd') || 15)),
-      },
-      signals: {
-        ...basis.signals,
-        minConfluence: Math.max(1, num('owMinC')),
-        exitConfluence: Math.max(1, num('owExitC')),
-        minEdgeMultiple: Math.min(10, Math.max(0, num('owEdge'))),
-        forecastSolo: ($('owFcSolo') as HTMLInputElement).checked,
-        timeframe: ($('owTf') as HTMLSelectElement).value === 'daily' ? 'daily' : 'intraday',
-        allowShort: ($('owShort') as HTMLInputElement).checked,
-      },
-    };
-    return strategy;
-  return strategy;
+  return {
+    ...basis,
+    broker: {
+      ...basis.broker,
+      initialCapital: num('owCap'),
+      sizingBase: ($('owSizing') as HTMLSelectElement).value === 'initial' ? 'initial' : 'balance',
+      leverage: Math.min(MAX_LEVERAGE, Math.max(1, num('owLev') || 1)),
+    },
+    engine: {
+      ...basis.engine,
+      maxPositionPct: num('owMax'),
+      mode: ($('owMode') as HTMLSelectElement).value === 'momentum' ? 'momentum' : 'confluence',
+      riskPerTradePct: Math.min(MAX_RISK_PER_TRADE_PCT, Math.max(0, num('owRisk'))),
+      maxOpenPositions: Math.min(
+        MAX_OPEN_POSITIONS_CAP,
+        Math.max(1, num('owMaxPos') || DEFAULT_MAX_OPEN_POSITIONS)),
+      stopLossPct: num('owSl'),
+      takeProfitPct: num('owTp'),
+      trailingStopPct: num('owTrail'),
+      maxHoldDays: num('owHold'),
+      atrStopMult: num('owAtrS'),
+      atrTakeMult: num('owAtrT'),
+      cooldownMin: Math.min(1440, Math.max(5, num('owCd') || 15)),
+    },
+    signals: {
+      ...basis.signals,
+      minConfluence: Math.max(1, num('owMinC')),
+      exitConfluence: Math.max(1, num('owExitC')),
+      minEdgeMultiple: Math.min(10, Math.max(0, num('owEdge'))),
+      forecastSolo: ($('owFcSolo') as HTMLInputElement).checked,
+      timeframe: ($('owTf') as HTMLSelectElement).value === 'daily' ? 'daily' : 'intraday',
+      allowShort: ($('owShort') as HTMLInputElement).checked,
+      newsVeto: ($('owNewsVeto') as HTMLInputElement).checked,
+    },
+  };
 }
 
 /**
@@ -1789,6 +1792,7 @@ function openOptions(): void {
     st.strategy.signals.minEdgeMultiple ?? MIN_EDGE_MULTIPLE);
   ($('owFcSolo') as HTMLInputElement).checked = st.strategy.signals.forecastSolo === true;
   ($('owShort') as HTMLInputElement).checked = st.strategy.signals.allowShort === true;
+  ($('owNewsVeto') as HTMLInputElement).checked = st.strategy.signals.newsVeto !== false; // fehlend = an
   // Klassen-Profile transparent machen: Sie überschreiben die Werte oben je
   // Asset-Klasse — der User soll wissen, was für sein Symbol tatsächlich gilt.
   const byCls = st.strategy.engine.byClass ?? {};
@@ -3505,6 +3509,28 @@ function openDetail(symbol: string, name: string, data: MarketDocData | null): v
   if (!st) return;
   const sheet = $('detailSheet');
   const q = data?.quote;
+  // Schlagzeilen aus der News-Lage des Scans (News-Rückkehr 29.07.) — reine
+  // Anzeige; dieselben Daten, auf denen das Einstiegs-Veto beruht.
+  const esc = (s: string): string => s.replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]!);
+  const alter = (pub: number): string => {
+    const min = Math.max(0, Math.round((Date.now() / 1000 - pub) / 60));
+    return min < 60 ? `vor ${min} min` : `vor ${Math.round(min / 60)} h`;
+  };
+  const newsHtml = (data?.news?.top ?? [])
+    .slice(0, 4)
+    .map((h) => {
+      const dot = h.sentiment > 0.12 ? 'var(--gn)' : h.sentiment < -0.12 ? 'var(--rd)' : 'var(--bd)';
+      const link = /^https?:\/\//.test(h.url) ? esc(h.url) : '#';
+      return `<a class="dnews-item" href="${link}" target="_blank" rel="noopener noreferrer">
+        <span class="dnews-dot" style="background:${dot}"></span>
+        <span class="dnews-t">${esc(h.title)}</span>
+        <span class="hint mono">${esc(h.source)} · ${alter(h.published)}</span></a>`;
+    })
+    .join('');
+  const veto = data?.news?.hardEvent
+    && Date.now() / 1000 - data.news.hardEvent.published <= NEWS_VETO_WINDOW_SEC
+    ? `<div class="hint" style="color:var(--yl,#d9a441)">⏸ News-Veto aktiv (${esc(data.news.hardEvent.type)}) — die Engine setzt neue Einstiege hier gerade aus.</div>`
+    : '';
   sheet.innerHTML = `
     <button class="dclose" data-close="detail">✕</button>
     <h3></h3>
@@ -3513,7 +3539,9 @@ function openDetail(symbol: string, name: string, data: MarketDocData | null): v
     <div class="smv ${q ? pnlClass(q.changePct) : 'c-t3'}">${q ? fmtPct(q.changePct) : 'Noch keine Scan-Daten — dieses Symbol steht gerade nicht in der Beobachtung.'}</div>
     <div class="dbtns">
       ${q ? '<button class="dbtn pri" id="dOpenChart">Im Chart öffnen</button>' : ''}
-    </div>`;
+    </div>
+    ${veto}
+    ${newsHtml ? `<div class="wl-sec" style="margin-top:10px">Schlagzeilen</div><div class="dnews">${newsHtml}</div>` : ''}`;
   sheet.querySelector('h3')!.textContent = name;
   sheet.querySelector('.dmeta .mono')!.textContent = symbol;
   $('detailModal').classList.add('show');
