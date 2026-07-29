@@ -208,6 +208,16 @@ export interface SignalsConfig {
    * die in der Größenordnung der Reibung lagen.
    */
   minEdgeMultiple?: number;
+  /**
+   * News-Veto (News-Rückkehr 29.07.): Frische harte Ereignisse (Earnings,
+   * Klage, Guidance, M&A, Führungswechsel) sperren NEUE Einstiege in das
+   * Symbol für einige Stunden — um solche Termine springen Kurse, und die
+   * technische Analyse ist genau dann am wenigsten wert. Ausstiege bleiben
+   * immer frei. Quellen sind gratis RSS-Feeds plus Wortlisten-Lexikon;
+   * es fließt kein einziger KI-Token. Fehlend = an (das Veto kann Trades
+   * nur verhindern, nie erzeugen — die sichere Voreinstellung ist AN).
+   */
+  newsVeto?: boolean;
 }
 
 export interface Strategy {
@@ -314,6 +324,7 @@ export const DEFAULT_STRATEGY: Strategy = {
     timeframe: 'intraday', // 5-min-Signale: die Engine handelt im Scan-Takt
     allowShort: false, // Leerverkäufe bewusst Opt-in (Options-Modal + ⓘ)
     minEdgeMultiple: MIN_EDGE_MULTIPLE, // Kostenschwelle AN (Befund 28.07.)
+    newsVeto: true, // Einstiegs-Sperre bei frischen Hard-Events (News-Rückkehr 29.07.)
   },
 };
 
@@ -459,6 +470,16 @@ export interface ForecastDoc {
   maePct?: number;
   dirHit?: boolean;
   nPoints?: number;
+  /**
+   * Sentiment-Schatten (News-Rückkehr 29.07.): Vorzeichen der News-Lage zum
+   * Prognosezeitpunkt (−1/0/1). Stimmt NICHT mit — die Bewertung zählt nur
+   * nach meta/sentimentStats, ob das Vorzeichen die Richtung getroffen hätte.
+   * Erst wenn diese realisierte Quote die Beweislast trägt, darf ein
+   * späterer Umbau daraus eine Stimme machen.
+   */
+  sentSign?: number;
+  /** News-Sentiment (−1..1) zum Prognosezeitpunkt — Rohwert zum sentSign. */
+  sentVal?: number;
 }
 
 // ── User-Daten (users/{uid}/**) ──────────────────────────────────────────────

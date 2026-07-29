@@ -30,9 +30,12 @@ import {
   isStrategy,
   marginState,
   marketOpenForClass,
+  newsVeto,
+  NEWS_TTL_SEC,
   positionValue,
   resolveName,
   resolveRisk,
+  type NewsSnapshot,
   type Position,
   type Strategy,
   type StrategyDoc,
@@ -64,6 +67,7 @@ import {
 } from '../core/rulesTrading.js';
 import { accuracyWeightedVote } from '../../../shared/src/index.js';
 import { runForecast, runIntradayForecast, type LiveForecast } from '../core/forecaster.js';
+import { fetchNewsSnapshot } from '../core/news.js';
 import { evaluateIntradayDue } from './evalForecasts.js';
 import { stepFleet, type FleetState } from '../core/tuneFleet.js';
 import { FLEET_SIZE } from './autoTune.js';
@@ -136,6 +140,8 @@ interface SymbolData {
   /** Kurzfrist-Prognose (nächste Stunde) in % — Forecast-Stimme im
    *  'intraday'-Zeitrahmen (die Tages-Prognose passt dort nicht). */
   intradayPct?: number | null;
+  /** News-Lage (Veto-Grundlage + Sentiment-Schatten) — null = keine Daten. */
+  news?: NewsSnapshot | null;
 }
 
 /** Signal-Quelle je Zeitrahmen: 5-min-Closes, wenn gewünscht UND vorhanden
@@ -175,6 +181,8 @@ export interface EntryGateStats {
   nicht_handelbar: number;
   /** Abgelehnt: Korrelationsblock bereits voll. */
   cluster_voll: number;
+  /** Abgelehnt: frisches hartes News-Ereignis (Gap-Risiko) — News-Rückkehr 29.07. */
+  news_veto: number;
   /** Abgelehnt: erwartete Bewegung unter der Kostenschwelle. */
   unter_kosten: number;
   /** DURCHGELASSEN, obwohl die Kostenschwelle nicht prüfen konnte (keine
@@ -194,6 +202,7 @@ async function executeUserTrades(
     geprueft: 0,
     nicht_handelbar: 0,
     cluster_voll: 0,
+    news_veto: 0,
     unter_kosten: 0,
     ohne_atr_durchgelassen: 0,
   };
@@ -423,10 +432,17 @@ async function executeUserTrades(
         symbol: string,
         atrPct: number | null | undefined,
         offen: readonly string[],
-      ): 'nicht_handelbar' | 'cluster_voll' | 'unter_kosten' | null => {
+      ): 'nicht_handelbar' | 'cluster_voll' | 'news_veto' | 'unter_kosten' | null => {
         gate.geprueft += 1;
         const handelbar = isTradable(symbol);
         const platz = handelbar && clusterHasRoom(offen, symbol);
+        // News-Veto (29.07.): frisches hartes Ereignis sperrt NEUE Einstiege.
+        // Nur Einstiege — Ausstiege durchlaufen entrySperre nie (s. o.).
+        // Abschaltbar je User (signals.newsVeto); fehlend = an.
+        const veto =
+          handelbar && clamped.signals.newsVeto !== false
+            ? newsVeto(marketData.get(symbol)?.news, Math.floor(Date.now() / 1000))
+            : { blocked: false };
         const kosten = costGate({
           atrPct,
           minHoldMin: clamped.engine.minHoldMin,
@@ -444,12 +460,14 @@ async function executeUserTrades(
         if (!handelbar) gate.nicht_handelbar += 1;
         else if (!platz) gate.cluster_voll += 1;
         if (handelbar) {
+          if (veto.blocked) gate.news_veto += 1;
           if (!kosten.ok) gate.unter_kosten += 1;
           // Der stille Fall: durchgelassen, weil nicht prüfbar.
           else if (kosten.reason === 'kein_atr') gate.ohne_atr_durchgelassen += 1;
         }
         if (!handelbar) return 'nicht_handelbar';
         if (!platz) return 'cluster_voll';
+        if (veto.blocked) return 'news_veto';
         return kosten.ok ? null : 'unter_kosten';
       };
 
@@ -1237,6 +1255,11 @@ export async function runScan(force = false): Promise<ScanResult> {
   // meta/health, weil Cloud-Logging ohne GCP-Konsole unsichtbar ist.
   let intradayOk = 0;
   let intradayError: string | null = null;
+  // News-Refresh-Deckel je Scan: Bei 4 je Lauf und 45-min-TTL ist jedes der
+  // ~13 beobachteten Symbole grob alle 15–20 Minuten frisch — mehr braucht
+  // ein 12-h-Veto-Fenster nicht, und der Scan bleibt von den Feeds entkoppelt.
+  const NEWS_REFRESH_PER_SCAN = 4;
+  let newsFetched = 0;
 
   // Genauigkeitsgewichtetes Forecast-Vote (Prognose 2.0 Teil 4): Das
   // Stimmgewicht der Prognose folgt ihrer REALISIERTEN Kante über den
@@ -1266,17 +1289,38 @@ export async function runScan(force = false): Promise<ScanResult> {
       const symDoc = await symRef.get();
       const batch = db.batch();
 
+      // News-Lage (News-Rückkehr 29.07.): gespeicherte lesen, bei
+      // Überalterung sparsam erneuern — nur handelbare Symbole (das Veto
+      // betrifft Einstiege, und Indizes kauft ohnehin niemand). Ein
+      // Feed-Ausfall lässt die alte Lage stehen; das Veto-Fenster läuft
+      // über die Item-Zeitstempel ab, nicht über den Abruf.
+      let news = (symDoc.get('news') as NewsSnapshot | undefined) ?? null;
+      const nowSec = Math.floor(now.getTime() / 1000);
+      if (
+        isTradable(symbol)
+        && newsFetched < NEWS_REFRESH_PER_SCAN
+        && (!news || nowSec - news.fetchedT > NEWS_TTL_SEC)
+      ) {
+        try {
+          news = await fetchNewsSnapshot(symbol, nowSec);
+          newsFetched += 1;
+          batch.set(symRef, { news }, { merge: true });
+        } catch (err) {
+          logger.warn(`News ${symbol}`, err); // alte Lage bleibt; fails open
+        }
+      }
+
       // Prognose als reine Preis-Regression + Shadow-Grid
       let forecast: LiveForecast | null = null;
       try {
-        forecast = await runForecast(symbol, closes, lastDate);
+        forecast = await runForecast(symbol, closes, lastDate, news);
       } catch (err) {
         logger.warn(`Forecast-Fehler ${symbol}`, err);
       }
       // ATR(14) in % — Basis für volatilitätsadaptive Stops (MA6). Wird nur
       // berechnet, nicht erzwungen: Ohne atrStopMult bleibt alles wie gehabt.
       const atrPctVal = atrPct(snap.bars.map((b) => ({ high: b.high, low: b.low, close: b.close })), 14);
-      marketData.set(symbol, { closes, price: snap.price, forecast, atrPct: atrPctVal });
+      marketData.set(symbol, { closes, price: snap.price, forecast, atrPct: atrPctVal, news });
 
       const sig = computeSignal(
         closes,
@@ -1384,6 +1428,7 @@ export async function runScan(force = false): Promise<ScanResult> {
             symbol,
             flat,
             marketOpenForClass(classify(symbol), now),
+            news,
           );
           if (md) md.intradayPct = ifc?.predictedPct ?? null;
           batch.set(
@@ -1454,6 +1499,7 @@ export async function runScan(force = false): Promise<ScanResult> {
     geprueft: 0,
     nicht_handelbar: 0,
     cluster_voll: 0,
+    news_veto: 0,
     unter_kosten: 0,
     ohne_atr_durchgelassen: 0,
   };
@@ -1546,6 +1592,12 @@ export async function runScan(force = false): Promise<ScanResult> {
         // wäre sonst unsichtbar, weil fehlende Kurse einfach alte bleiben.
         catalogQuotes,
         catalogOpen,
+        // News-Rückkehr 29.07.: wie viele Symbole in DIESEM Scan frische
+        // Feeds bekamen. Steht die Zahl dauerhaft auf 0, sind die Feeds
+        // tot — und das Veto damit still abgeschaltet (fails open). Genau
+        // deshalb muss die Zahl hier stehen: Ein stilles Veto sieht sonst
+        // aus wie ein Markt ohne Ereignisse.
+        newsFetched,
         lastError,
         lastErrorAt: lastError ? now.toISOString() : null,
       },

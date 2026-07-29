@@ -246,6 +246,22 @@ export function adviseStrategy(strategy: Strategy): Suggestion[] {
     });
   }
 
+  // ── 9. News-Veto aus ───────────────────────────────────────────────────
+  if (s.newsVeto === false) {
+    out.push({
+      key: 'newsVeto',
+      label: 'News-Veto',
+      severity: 'hinweis',
+      current: false,
+      suggested: true,
+      reason:
+        'Das News-Veto ist abgeschaltet. Es sperrt Einstiege für einige Stunden, wenn zu einem ' +
+        'Symbol gerade ein hartes Ereignis läuft (Earnings, Klage, Guidance, Übernahme) — genau ' +
+        'dann springen Kurse, und die Indikator-Signale, auf denen der Einstieg beruht, sind am ' +
+        'wenigsten wert. Es kann Trades nur verhindern, nie erzeugen, und kostet nichts.',
+    });
+  }
+
   const rang: Record<Severity, number> = { kritisch: 0, wichtig: 1, hinweis: 2 };
   return out.sort((a, b) => rang[a.severity] - rang[b.severity]);
 }
@@ -285,6 +301,9 @@ export function applySuggestions(strategy: Strategy, keys: readonly string[]): S
         break;
       case 'stopLossPct':
         next.engine.stopLossPct = v.suggested as number;
+        break;
+      case 'newsVeto':
+        next.signals.newsVeto = true;
         break;
       default:
         break;

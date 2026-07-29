@@ -19,6 +19,7 @@ import {
   isIntradayForecastDue,
   scoreForecast,
   scoreIntradayForecast,
+  sentimentHit,
   type ComboStat,
   type ForecastDoc,
   type IntradayForecastDoc,
@@ -28,6 +29,45 @@ import { getMarketSnapshot } from '../core/marketData.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 
 const BATCH_LIMIT = 200;
+
+/**
+ * Sentiment-Schatten (News-Rückkehr 29.07.): Trefferzählung „hätte das
+ * News-Vorzeichen die Richtung getroffen?" je Zeitbasis nach
+ * meta/sentimentStats. NUR Statistik — kein Stimmrecht, keine Rückkopplung
+ * in Prognose oder Handel. Erst wenn diese Quote über genügend Stichproben
+ * eine Kante über dem Münzwurf zeigt, darf ein späterer, eigener Umbau
+ * daraus eine Stimme machen (dieselbe Beweislast wie beim Forecast-Vote).
+ */
+interface SentDelta {
+  pos: { n: number; hits: number };
+  neg: { n: number; hits: number };
+}
+
+const emptySentDelta = (): SentDelta => ({ pos: { n: 0, hits: 0 }, neg: { n: 0, hits: 0 } });
+
+function tallySent(delta: SentDelta, sentSign: number | undefined, baseClose: number, actLast: number | undefined): void {
+  const hit = sentimentHit(sentSign, baseClose, actLast);
+  if (hit === null) return;
+  const b = sentSign === 1 ? delta.pos : delta.neg;
+  b.n += 1;
+  b.hits += hit ? 1 : 0;
+}
+
+async function writeSentStats(scope: 'daily' | 'intraday', delta: SentDelta): Promise<void> {
+  if (delta.pos.n + delta.neg.n === 0) return;
+  await getFirestore()
+    .doc('meta/sentimentStats')
+    .set(
+      {
+        updatedAt: new Date().toISOString(),
+        [scope]: {
+          pos: { n: FieldValue.increment(delta.pos.n), hits: FieldValue.increment(delta.pos.hits) },
+          neg: { n: FieldValue.increment(delta.neg.n), hits: FieldValue.increment(delta.neg.hits) },
+        },
+      },
+      { merge: true },
+    );
+}
 
 export interface EvalResult {
   scored: number;
@@ -59,6 +99,7 @@ export async function evaluateDue(): Promise<EvalResult> {
 
   let scored = 0;
   const comboDelta = new Map<string, ComboStat>();
+  const sentDelta = emptySentDelta();
 
   for (const [symbol, entries] of dueBySymbol) {
     let actuals: Record<string, number>;
@@ -87,10 +128,13 @@ export async function evaluateDue(): Promise<EvalResult> {
       d.hits += score.dirHit ? 1 : 0;
       d.maeSum += score.maePct;
       comboDelta.set(key, d);
+      // Sentiment-Schatten: nur bewertete Prognosen — dieselben Gates.
+      tallySent(sentDelta, doc.sentSign, doc.baseClose, actuals[doc.points[doc.points.length - 1]!.time]);
       scored += 1;
     }
     await batch.commit();
   }
+  await writeSentStats('daily', sentDelta).catch((err) => logger.warn('sentimentStats daily', err));
 
   // Globale Kombi-Statistik inkrementell fortschreiben (nur realisierte Scores).
   // WICHTIG: Kombi-Schlüssel enthalten Punkte ("0.5_20") — als String-Pfad
@@ -255,6 +299,7 @@ export async function evaluateIntradayDue(): Promise<IntradayEvalResult> {
   let expired = 0;
   let unrealized = 0;
   const comboDelta = new Map<string, ComboStat>();
+  const sentDelta = emptySentDelta();
 
   for (const [symbol, entries] of bySymbol) {
     let actuals: Record<string, number>;
@@ -281,6 +326,13 @@ export async function evaluateIntradayDue(): Promise<IntradayEvalResult> {
         d.hits += score.dirHit ? 1 : 0;
         d.maeSum += score.maePct;
         comboDelta.set(key, d);
+        // Sentiment-Schatten: gleiche Gates wie der dirHit (nur realisierte).
+        tallySent(
+          sentDelta,
+          doc.sentSign,
+          doc.baseClose,
+          actuals[String(doc.points[doc.points.length - 1]!.t)],
+        );
         scored += 1;
       } else if (nowSec - doc.baseT > INTRADAY_EXPIRE_SEC) {
         // End-Bar wird nie realisiert (Session-Ende/Halt) → verfallen lassen,
@@ -297,6 +349,7 @@ export async function evaluateIntradayDue(): Promise<IntradayEvalResult> {
     }
     await batch.commit();
   }
+  await writeSentStats('intraday', sentDelta).catch((err) => logger.warn('sentimentStats intraday', err));
 
   const statsRef = db.doc('meta/forecastStatsIntraday');
   if (comboDelta.size > 0) {

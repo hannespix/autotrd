@@ -124,6 +124,13 @@ describe('adviseStrategy: einzelne Regeln', () => {
     ).not.toContain('stopLossPct');
   });
 
+  it('abgeschaltetes News-Veto ist ein Hinweis — fehlend (= an) aber nicht', () => {
+    expect(keys(mit((s) => { s.signals.newsVeto = false; }))).toContain('newsVeto');
+    expect(keys(mit((s) => { delete s.signals.newsVeto; }))).not.toContain('newsVeto');
+    const next = applySuggestions(mit((s) => { s.signals.newsVeto = false; }), ['newsVeto']);
+    expect(next.signals.newsVeto).toBe(true);
+  });
+
   it('zu kurze Haltedauer nur bei 5-Minuten-Signalen', () => {
     expect(keys(mit((s) => { s.engine.minHoldMin = 5; }))).toContain('minHoldMin');
     expect(

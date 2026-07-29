@@ -553,4 +553,25 @@ export interface IntradayForecastDoc {
   nPoints?: number;
   /** true = unbewertbar verfallen (z. B. Session-Ende vor Horizont) — zählt NICHT in die Statistik. */
   expired?: boolean;
+  /** Sentiment-Schatten wie beim Tages-Doc (siehe ForecastDoc.sentSign). */
+  sentSign?: number;
+  sentVal?: number;
+}
+
+/**
+ * Sentiment-Schatten-Treffer: Hätte das News-Vorzeichen zum Prognosezeitpunkt
+ * die realisierte Richtung getroffen? Gleiche Vorzeichen-Konvention wie
+ * scoreForecast (Gleichstand zählt als „runter"). null = nicht wertbar
+ * (neutrales/fehlendes Sentiment oder kein realisierter End-Close).
+ * Nur BEWERTETE Prognosen rufen das auf — dieselben Lookahead-Gates wie beim
+ * dirHit gelten damit automatisch auch hier.
+ */
+export function sentimentHit(
+  sentSign: number | undefined,
+  baseClose: number,
+  actLast: number | undefined,
+): boolean | null {
+  if (sentSign !== 1 && sentSign !== -1) return null;
+  if (actLast === undefined || actLast <= 0 || baseClose <= 0) return null;
+  return actLast - baseClose > 0 === sentSign > 0;
 }

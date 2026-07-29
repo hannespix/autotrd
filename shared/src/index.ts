@@ -17,3 +17,5 @@ export * from './margin.js';
 export * from './costGate.js';
 export * from './riskSizing.js';
 export * from './tuneAdvisor.js';
+export * from './sentiment.js';
+export * from './newsGate.js';
