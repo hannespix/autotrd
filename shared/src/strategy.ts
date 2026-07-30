@@ -321,7 +321,16 @@ export const DEFAULT_STRATEGY: Strategy = {
     // Standard entspricht jetzt dem Einstieg.
     exitConfluence: 2,
     forecastSolo: false, // Prognose braucht eine zweite Stimme zum Einstieg
-    timeframe: 'intraday', // 5-min-Signale: die Engine handelt im Scan-Takt
+    // 'daily' seit 30.07. — die 5-min-Voreinstellung ist an der Realität
+    // gescheitert: 525 Trades in zwei Handelstagen nach dem Reset, 97 %
+    // davon am Signal-Ausstieg gestorben (Trefferquote dort 16,8 %),
+    // Gebühren das 4,7-Fache des Brutto-Ergebnisses, Profitfaktor 0,18.
+    // Auf 5-min-Kerzen kippt die Konfluenz im Rauschen; die Kostenschwelle
+    // prüft erwartete BEWEGUNG, nicht erwarteten GEWINN — sie kann ein
+    // Signal ohne Kante nicht retten. Bestandskonten behalten ihren
+    // gespeicherten Wert; der Einstellungs-Prüfer legt ihnen den Wechsel
+    // mit genau dieser Messung nahe.
+    timeframe: 'daily',
     allowShort: false, // Leerverkäufe bewusst Opt-in (Options-Modal + ⓘ)
     minEdgeMultiple: MIN_EDGE_MULTIPLE, // Kostenschwelle AN (Befund 28.07.)
     newsVeto: true, // Einstiegs-Sperre bei frischen Hard-Events (News-Rückkehr 29.07.)

@@ -21,11 +21,15 @@ const basis = () => JSON.parse(JSON.stringify(DEFAULT_STRATEGY)) as typeof DEFAU
 
 describe('buildVariants', () => {
   it('lässt den amtierenden Wert aus — man vergleicht nichts mit sich selbst', () => {
-    const b = basis(); // minHoldMin 60, exitConfluence 2, timeframe intraday
+    const b = basis(); // minHoldMin 60, exitConfluence 2, timeframe daily (seit 30.07.)
     const ids = buildVariants(b, 20).map((v) => v.id);
     expect(ids).not.toContain('minHoldMin=60');
     expect(ids).not.toContain('exitConfluence=2');
-    expect(ids).not.toContain('timeframe=intraday');
+    expect(ids).not.toContain('timeframe=daily');
+    // Der alte Default ist jetzt der HERAUSFORDERER: intraday muss sich im
+    // Schatten-A/B gegen daily beweisen, nicht umgekehrt — genau die
+    // Beweislast-Umkehr, die die 525-Trades-Messung vom 30.07. verlangt.
+    expect(ids).toContain('timeframe=intraday');
   });
 
   it('verteilt die Flotte über die Achsen statt eine auszuschöpfen', () => {

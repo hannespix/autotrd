@@ -132,10 +132,26 @@ describe('adviseStrategy: einzelne Regeln', () => {
   });
 
   it('zu kurze Haltedauer nur bei 5-Minuten-Signalen', () => {
-    expect(keys(mit((s) => { s.engine.minHoldMin = 5; }))).toContain('minHoldMin');
+    expect(
+      keys(mit((s) => { s.engine.minHoldMin = 5; s.signals.timeframe = 'intraday'; })),
+    ).toContain('minHoldMin');
     expect(
       keys(mit((s) => { s.engine.minHoldMin = 5; s.signals.timeframe = 'daily'; })),
     ).not.toContain('minHoldMin');
+  });
+
+  it('5-min-Zeitrahmen wird angemahnt — mit der Messung als Grund', () => {
+    const v = adviseStrategy(mit((s) => { s.signals.timeframe = 'intraday'; }));
+    const tf = v.find((x) => x.key === 'timeframe');
+    expect(tf?.severity).toBe('wichtig');
+    expect(tf?.reason).toContain('525');
+    // Momentum-Wallets stimmt der Zeitrahmen nicht um — dort handelt er nicht
+    expect(
+      keys(mit((s) => { s.signals.timeframe = 'intraday'; s.engine.mode = 'momentum'; })),
+    ).not.toContain('timeframe');
+    // Übernehmen stellt um
+    const next = applySuggestions(mit((s) => { s.signals.timeframe = 'intraday'; }), ['timeframe']);
+    expect(next.signals.timeframe).toBe('daily');
   });
 });
 
