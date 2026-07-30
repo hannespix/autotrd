@@ -54,6 +54,8 @@ export const ensureProfile = onCall(CALLABLE_OPTS, async (request) => {
       paperBalance: strategy.broker.initialCapital,
       currency: 'USD',
       updatedAt: now,
+      // Kapitalbasis der Gesamt-P&L (Equity − baseCapital); siehe Wallet-Typ
+      baseCapital: strategy.broker.initialCapital,
     },
   });
   return { created: true };
