@@ -488,6 +488,17 @@ export interface Wallet {
   paperBalance: number;
   currency: 'USD';
   updatedAt: string;
+  /** Schnittmarke des letzten Resets — Kennzahlen gelten „seit hier". */
+  resetAt?: string;
+  /**
+   * Kapitalbasis der Gesamt-P&L: Equity − baseCapital ist die einzige
+   * Gesamtzahl, die NICHT davon abhängt, wie viele Trade-Seiten die
+   * Oberfläche gerade geladen hat (Owner-Fund 29.07.: „Gesamt-P&L ändert
+   * sich, wenn ich ältere Trades anzeige"). Wird beim Anlegen und bei jedem
+   * Reset gestempelt; Bestandskonten ohne das Feld fallen auf
+   * broker.initialCapital zurück.
+   */
+  baseCapital?: number;
 }
 
 /** Doc-ID: symbol */

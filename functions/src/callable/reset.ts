@@ -131,6 +131,8 @@ export async function resetUserWallet(uid: string): Promise<ResetResult> {
         // täte die Auswertung so, als hätte es die alten Daten nie gegeben —
         // mit ihr kann sie ehrlich „Kennzahlen seit …" schreiben.
         resetAt: now,
+        // Kapitalbasis der Gesamt-P&L ab diesem Schnitt (Equity − baseCapital)
+        baseCapital: balance,
         marginInterestTotal: FieldValue.delete(),
         marginInterestDate: FieldValue.delete(),
       },

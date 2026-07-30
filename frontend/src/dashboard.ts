@@ -3787,21 +3787,31 @@ function renderPortfolio(): void {
       posValue += live * p.qty;
     }
   }
-  // Realisiertes P&L: Long-Verkäufe UND Short-Eindeckungen (buy mit pnl)
+  // Gesamt-P&L = Equity − Kapitalbasis. NICHT die Summe der geladenen
+  // Trades: Die Handelshistorie lädt seitenweise nach, und eine „Gesamt"-
+  // Zahl, die mit jedem „Ältere laden" wächst, ist keine (Owner-Fund
+  // 29.07.). Equity − Basis enthält zudem ehrlich ALLES — auch Gebühren
+  // offener Käufe und Margin-Zinsen, die in keinem Trade-pnl stehen.
+  // Realisiert ergibt sich als Differenz zum offenen P&L.
+  const basis = st.wallet?.baseCapital ?? st.strategy.broker.initialCapital;
+  const totalPnl = cash !== null ? cash + posValue - basis : null;
+  const closedPnl = totalPnl !== null ? totalPnl - openPnl : null;
+  // Win-Rate bleibt eine Quote über die GELADENEN Abschlüsse (tiefere
+  // Historie = mehr Stichprobe) — als Quote verschiebt sie sich beim
+  // Nachladen nur, wenn sich die Vergangenheit anders schlug als die
+  // Gegenwart; das ist Information, kein Anzeigefehler.
   const closers = st.trades.filter((t) => t.pnl !== undefined && t.pnl !== null);
-  const closedPnl = closers.reduce((s, t) => s + (t.pnl ?? 0), 0);
   const wins = closers.filter((t) => (t.pnl ?? 0) > 0).length;
   const winRate = closers.length > 0 ? Math.round((wins / closers.length) * 100) : null;
-  const totalPnl = closedPnl + openPnl;
 
   $('vCash').textContent = money(cash);
   $('vEq').textContent = cash !== null ? money(cash + posValue) : '--';
   const pnlEl = $('vPnl');
-  pnlEl.textContent = (totalPnl >= 0 ? '+' : '') + money(totalPnl).replace('$', '$');
-  pnlEl.className = `vbig ${pnlClass(totalPnl)}`;
+  pnlEl.textContent = totalPnl === null ? '--' : (totalPnl >= 0 ? '+' : '') + money(totalPnl);
+  pnlEl.className = `vbig ${pnlClass(totalPnl ?? 0)}`;
   const closedEl = $('vClosed');
-  closedEl.textContent = money(closedPnl);
-  closedEl.className = `smv ${pnlClass(closedPnl)}`;
+  closedEl.textContent = closedPnl === null ? '--' : money(closedPnl);
+  closedEl.className = `smv ${pnlClass(closedPnl ?? 0)}`;
   const unrealEl = $('vUnreal');
   unrealEl.textContent = money(openPnl);
   unrealEl.className = `smv ${pnlClass(openPnl)}`;
