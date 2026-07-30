@@ -246,7 +246,26 @@ export function adviseStrategy(strategy: Strategy): Suggestion[] {
     });
   }
 
-  // ── 9. News-Veto aus ───────────────────────────────────────────────────
+  // ── 9. 5-Minuten-Signale: gemessen ohne Kante ──────────────────────────
+  if (tf === 'intraday' && e.mode !== 'momentum') {
+    out.push({
+      key: 'timeframe',
+      label: 'Signal-Zeitrahmen',
+      severity: 'wichtig',
+      current: 'intraday',
+      suggested: 'daily',
+      reason:
+        'Der 5-Minuten-Zeitrahmen ist an der Realität gescheitert: In den zwei Handelstagen ' +
+        'nach dem Konto-Reset entstanden 525 Trades, 97 % davon starben am Signal-Ausstieg ' +
+        '(Trefferquote dort 16,8 %), die Gebühren waren das 4,7-Fache des Brutto-Ergebnisses, ' +
+        'Profitfaktor 0,18. Auf 5-min-Kerzen kippt die Konfluenz im Rauschen — und die ' +
+        'Kostenschwelle prüft die erwartete BEWEGUNG, nicht den erwarteten GEWINN; ein Signal ' +
+        'ohne Richtungs-Kante kann sie nicht retten. Tageskerzen drehen um Größenordnungen ' +
+        'seltener; Stop, Ziel und nachziehender Stop bekommen überhaupt erst die Zeit zu wirken.',
+    });
+  }
+
+  // ── 10. News-Veto aus ──────────────────────────────────────────────────
   if (s.newsVeto === false) {
     out.push({
       key: 'newsVeto',
@@ -304,6 +323,9 @@ export function applySuggestions(strategy: Strategy, keys: readonly string[]): S
         break;
       case 'newsVeto':
         next.signals.newsVeto = true;
+        break;
+      case 'timeframe':
+        next.signals.timeframe = 'daily';
         break;
       default:
         break;
