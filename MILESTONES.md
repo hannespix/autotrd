@@ -83,16 +83,20 @@ nicht geschätzt.
       Ranking und Defaults nichts Offenes hergeben. Positionen bleiben
       bewusst ungefiltert (sonst verlöre eine offene Position ihren
       Exit-Pfad). 5 Tests halten das fest.
-- [ ] **A2 — `intradayScored` bleibt noch tagelang auf 0.** Der Raster-Fix
+- [x] **A2 — `intradayScored` bleibt noch tagelang auf 0.** *(aufgelöst wie
+      erwartet: 31.07. stehen 2 184 realisierte Scores in
+      `meta/forecastStatsIntraday`, Richtungsquote 47,3 % — die Altlasten
+      sind verfallen, neue Prognosen sitzen auf dem Raster.)* Der Raster-Fix
       (#104) wirkt nur für NEUE Prognosen. Die 150 Altlasten sind off-grid
       und werden nie bewertbar; sie verfallen erst über `INTRADAY_EXPIRE_SEC`
       (12 h). Das ist so gewollt (nie mit unvollständigen Daten scoren), aber
       man muss es wissen, sonst liest man die 0 als „Fix wirkt nicht".
       **Erwartung:** ab ~1 h nach dem ersten Scan mit offenem Markt steigen
       die Zahlen, die Altlasten verschwinden binnen 12 h.
-- [ ] **A3 — Die Rangliste existiert noch nicht.** `meta/momentum` → HTTP 404.
-      Erste Füllung heute 22:00 UTC (`0 18 * * *` in New Yorker Zeit). Bis
-      dahin greift A1 in voller Härte.
+- [x] **A3 — Die Rangliste existiert noch nicht.** *(aufgelöst: `meta/momentum`
+      wird seit 28.07. 22:00 UTC täglich geschrieben, zuletzt 30.07. — die
+      beobachteten 13 Scan-Symbole kommen aus ihr.)* War: HTTP 404 bis zur
+      ersten Füllung um 22:00 UTC.
 
 ### B. Architektur-Widersprüche
 
