@@ -154,17 +154,24 @@ export function computeSignal(
   // deshalb mindestens eine echte Indikator-Stimme dazu. Beim AUSSTIEG
   // zählt sie voll: ein verpasster Verkauf kostet Geld, ein verpasster
   // Kauf nur eine Chance.
-  if (signals.useForecast && forecast) {
+  // Gewicht 0 heißt STUMM — nicht „mindestens 1". Genau hier saß der Fund
+  // vom 31.07. (Owner-Screenshot): Das genauigkeitsgewichtete Vote hatte die
+  // Prognose mangels Evidenz auf 0 gestellt, aber der Einstiegs-Deckel
+  // `Math.max(1, …)` hob die Stimme wieder auf 1 an — ADA-USD zeigte 2▲,
+  // obwohl kein einziger Indikator im Kaufbereich stand. Die Beweislast-
+  // Umkehr war damit auf der Kaufseite still ausgehebelt; der Regelbaum-
+  // Compiler (compileClassic) hatte den `> 0`-Guard von Anfang an.
+  const fcWeight = Math.trunc(signals.forecastWeight);
+  if (signals.useForecast && forecast && fcWeight > 0) {
     const thr = signals.forecastThresholdPct;
-    const raw = Math.trunc(signals.forecastWeight);
     const capped = signals.forecastSolo === true
-      ? raw
-      : Math.max(1, Math.min(raw, signals.minConfluence - 1));
+      ? fcWeight
+      : Math.max(1, Math.min(fcWeight, signals.minConfluence - 1));
     if (forecast.predictedPct >= thr) {
       buyVotes += capped;
       votes.forecast = 'buy';
     } else if (forecast.predictedPct <= -thr) {
-      sellVotes += raw; // Ausstiegsrichtung ungedeckelt
+      sellVotes += fcWeight; // Ausstiegsrichtung ungedeckelt
       votes.forecast = 'sell';
     } else {
       votes.forecast = 'hold';

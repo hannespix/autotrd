@@ -86,4 +86,30 @@ describe('computeSignal (Konfluenz)', () => {
     expect(r.snapshot.macd).not.toBeNull();
     expect(r.snapshot.bollinger).not.toBeNull();
   });
+
+  it('Prognose-Gewicht 0 heißt STUMM — nicht „mindestens 1"', () => {
+    // Der Fund vom 31.07. (Owner-Screenshot): ADA-USD zeigte 2▲, obwohl kein
+    // Indikator im Kaufbereich stand. accuracyWeightedVote hatte das Gewicht
+    // mangels Evidenz auf 0 gestellt, aber der Einstiegs-Deckel
+    // Math.max(1, …) hob die Stimme wieder auf 1 — die Beweislast-Umkehr war
+    // auf der Kaufseite ausgehebelt. compileClassic hatte den Guard immer.
+    // Indikatoren komplett aus: Es geht hier NUR um die Prognose-Stimme.
+    const off: IndicatorsConfig = {
+      rsi: { ...IND.rsi, enabled: false },
+      macd: { ...IND.macd, enabled: false },
+      bollinger: { ...IND.bollinger, enabled: false },
+    };
+    const closes = series(100, 0.001);
+    const price = closes[closes.length - 1]!;
+    const stumm = { ...SIG, forecastWeight: 0 };
+    const r = computeSignal(closes, price, off, stumm, { predictedPct: 5 });
+    expect(r.votes.forecast).toBeUndefined(); // stimmt gar nicht mit ab
+    expect(r.buyVotes).toBe(0);
+    expect(r.direction).toBe('hold');
+    // Gegenprobe: mit Gewicht ≥ 1 stimmt sie weiter gedeckelt mit
+    const laut = { ...SIG, forecastWeight: 2 };
+    const r2 = computeSignal(closes, price, off, laut, { predictedPct: 5 });
+    expect(r2.votes.forecast).toBe('buy');
+    expect(r2.buyVotes).toBe(Math.max(1, Math.min(2, SIG.minConfluence - 1)));
+  });
 });
