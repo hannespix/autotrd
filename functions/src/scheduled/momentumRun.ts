@@ -53,6 +53,7 @@ import {
   type RankedSymbol,
   type Strategy,
   type TargetPosition,
+  bucketKey,
 } from '../../../shared/src/index.js';
 import { executePaperTrade, resolveBrokerMode } from '../core/broker.js';
 import { mayTrade } from '../core/access.js';
@@ -373,7 +374,17 @@ async function rebalanceMomentumUsers(
         const qty = fractional ? Math.floor(roheMenge * 1e6) / 1e6 : Math.floor(roheMenge);
         if (qty < (fractional ? 1e-6 : 1)) continue;
         const r = await executePaperTrade(
-          { uid: userDoc.id, symbol: o.symbol, side: 'buy', price: preis, qty, source: 'engine', assetClass: cls },
+          {
+            uid: userDoc.id,
+            symbol: o.symbol,
+            side: 'buy',
+            price: preis,
+            qty,
+            source: 'engine',
+            assetClass: cls,
+            // Steckbrief fürs Meta-Labeling: Momentum-Käufe lernen getrennt
+            bucket: bucketKey({ assetClass: cls, timeframe: 'daily', signature: 'momentum', side: 'long' }),
+          },
           clamped,
         );
         if (r.executed) ausgefuehrt += 1;

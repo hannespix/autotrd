@@ -14,7 +14,7 @@
  * - Keys nur aus env/Secret Manager, nie geloggt.
  */
 
-import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore';
+import { FieldPath, FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore';
 import {
   DEFAULT_MARGIN_RATE,
   PAPER_FEE_RATE,
@@ -156,6 +156,12 @@ export interface TradeRequest {
    */
   margin?: MarginBudget;
   /**
+   * Steckbrief des Einstiegs (Trade-Filter 31.07.) — nur bei ÖFFNENDEN
+   * Trades gesetzt; landet am Positions-Doc und beim Schließen mit dem
+   * realisierten P&L in der globalen Lernstatistik (meta/tradeFilter).
+   */
+  bucket?: string;
+  /**
    * Abstand vom Einstieg bis zum Stop in % — Basis des Risiko-Sizings.
    * Der Aufrufer löst ihn auf (ATR-Vielfaches vor festem Prozentwert),
    * damit die Position mit demselben Abstand DIMENSIONIERT wird, mit dem
@@ -211,6 +217,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
           pnl: Math.round(pnl * 100) / 100,
           cover: true,
           ...(req.riskExit ? { riskExit: req.riskExit } : {}),
+          ...(pos.bucket ? { bucket: pos.bucket } : {}),
         };
         tx.delete(posRef);
         tx.set(tradeRef, { ...trade, at: Timestamp.now(), rawPrice: req.price, feeRate: PAPER_FEE_RATE });
@@ -245,6 +252,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
         takeProfit: risk.takeProfitPct > 0 ? eff * (1 + risk.takeProfitPct / 100) : null,
         openedAt: now,
         highWater: eff, // Startpunkt des nachziehenden Stops
+        ...(req.bucket ? { bucket: req.bucket } : {}),
       };
       const trade: Trade = {
         symbol: req.symbol,
@@ -303,6 +311,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
         takeProfit: risk.takeProfitPct > 0 ? eff * (1 - risk.takeProfitPct / 100) : null,
         openedAt: now,
         lowWater: eff, // Startpunkt des Short-Trailings
+        ...(req.bucket ? { bucket: req.bucket } : {}),
       };
       const trade: Trade & { short: boolean } = {
         symbol: req.symbol,
@@ -334,12 +343,49 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       paper: true,
       pnl: Math.round(pnl * 100) / 100,
       ...(req.riskExit ? { riskExit: req.riskExit } : {}),
+      ...(pos.bucket ? { bucket: pos.bucket } : {}),
     };
     tx.delete(posRef);
     tx.set(tradeRef, { ...trade, at: Timestamp.now(), rawPrice: req.price, feeRate: PAPER_FEE_RATE });
     tx.update(userRef, { 'wallet.paperBalance': roundCents(balance + proceeds), 'wallet.updatedAt': now });
     return { executed: true, trade: { ...trade, id: tradeRef.id } };
+  }).then(async (result) => {
+    // Lernstatistik NACH der Geld-Transaktion (Trade-Filter 31.07.): Ein
+    // geschlossener Trade mit Steckbrief zählt in meta/tradeFilter. Bewusst
+    // getrennt und fehlertolerant — eine Statistik, deren Ausfall einen
+    // Verkauf verhindert, wäre die falsche Prioritätenordnung.
+    const t = result.trade as (Trade & { pnl?: number; bucket?: string }) | undefined;
+    if (result.executed && t?.bucket && typeof t.pnl === 'number') {
+      await recordFilterStat(t.bucket, t.pnl).catch(() => undefined);
+    }
+    return result;
   });
+}
+
+/**
+ * Ein geschlossener Trade → globale Steckbrief-Statistik (meta/tradeFilter).
+ *
+ * GLOBAL statt je User (Owner-Direktive 28.07.: „das Tool soll sich als
+ * Gesamtes verbessern"): Aggregat-Zähler ohne Konto-Bezug, dafür füllen
+ * sich die Steckbriefe über alle Konten in Tagen statt Wochen. FieldPath-
+ * Segmente, weil die Schlüssel '|' und '+' enthalten — als String-Pfad
+ * würde Firestore daran scheitern (gleiche Falle wie bei den Kombi-Keys).
+ */
+async function recordFilterStat(bucket: string, pnl: number): Promise<void> {
+  const ref = getFirestore().doc('meta/tradeFilter');
+  await ref.set({}, { merge: true });
+  await ref.update(
+    new FieldPath('updatedAt'),
+    new Date().toISOString(),
+    new FieldPath('buckets', bucket, 'n'),
+    FieldValue.increment(1),
+    new FieldPath('buckets', bucket, 'wins'),
+    FieldValue.increment(pnl > 0 ? 1 : 0),
+    new FieldPath('buckets', bucket, 'pnlSum'),
+    FieldValue.increment(Math.round(pnl * 100) / 100),
+    new FieldPath('buckets', bucket, 'pnlSqSum'),
+    FieldValue.increment(Math.round(pnl * pnl * 100) / 100),
+  );
 }
 
 /**
