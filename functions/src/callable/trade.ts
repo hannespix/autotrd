@@ -6,7 +6,7 @@
 
 import { getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
-import { allSymbols, classify, type Quote, type Strategy } from '../../../shared/src/index.js';
+import { allSymbols, bucketKey, classify, type Quote, type Strategy } from '../../../shared/src/index.js';
 import { consumeQuota, executePaperTrade, resolveBrokerMode } from '../core/broker.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { accessDeniedReason, accessLevelOf, mayTrade } from '../core/access.js';
@@ -82,6 +82,14 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
       // Manueller Verkauf ohne Position wird zum SHORT, wenn der User
       // Leerverkäufe erlaubt hat (Opt-in) — sonst wie bisher 'keine_position'.
       ...(side === 'sell' && strategy.signals.allowShort === true ? { openShort: true } : {}),
+      // Steckbrief fürs Meta-Labeling: Hand-Trades lernen als eigene Sorte.
+      // Bei Öffnungen relevant; bei Schließungen ignoriert ihn der Broker.
+      bucket: bucketKey({
+        assetClass: classify(symbol),
+        timeframe: 'daily',
+        signature: 'manuell',
+        side: side === 'sell' ? 'short' : 'long',
+      }),
     },
     strategy,
   );

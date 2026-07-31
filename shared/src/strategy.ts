@@ -533,6 +533,13 @@ export interface Position {
   side?: 'long' | 'short';
   /** Tiefster Kurs seit Short-Einstieg — Bezugspunkt des Short-Trailings. */
   lowWater?: number | null;
+  /**
+   * Steckbrief des Einstiegs (Trade-Filter 31.07.): Anlageklasse ×
+   * Zeitrahmen × Signal-Signatur × Seite (× Regime). Beim ÖFFNEN gestempelt,
+   * beim Schließen zählt der realisierte P&L in die globale Lernstatistik
+   * (meta/tradeFilter) — kein Lookahead: nur geschlossene Trades füttern sie.
+   */
+  bucket?: string;
 }
 
 export interface Trade {

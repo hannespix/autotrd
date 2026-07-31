@@ -32,6 +32,10 @@ import {
   marketOpenForClass,
   newsVeto,
   NEWS_TTL_SEC,
+  bucketKey,
+  bucketVerdict,
+  signalSignature,
+  type BucketStat,
   positionValue,
   resolveName,
   resolveRisk,
@@ -188,6 +192,11 @@ export interface EntryGateStats {
   /** DURCHGELASSEN, obwohl die Kostenschwelle nicht prüfen konnte (keine
    *  ATR). Steht diese Zahl hoch, ist die Schwelle faktisch abgeschaltet. */
   ohne_atr_durchgelassen: number;
+  /** SCHATTEN (Trade-Filter 31.07.): Einstiege, die der selbstlernende
+   *  Steckbrief-Filter geblockt HÄTTE. Er blockt noch nicht — erst wenn
+   *  diese Zahl über Tage zeigt, dass er Verlust-Sorten trifft, wird das
+   *  Blocken in einem eigenen Schritt scharf geschaltet. */
+  filter_wuerde_blocken: number;
 }
 
 async function executeUserTrades(
@@ -205,6 +214,7 @@ async function executeUserTrades(
     news_veto: 0,
     unter_kosten: 0,
     ohne_atr_durchgelassen: 0,
+    filter_wuerde_blocken: 0,
   };
   const users = await db
     .collection('users')
@@ -236,6 +246,17 @@ async function executeUserTrades(
     };
   } catch {
     // nicht lesbar = keine Evidenz — accuracyWeightedVote(null) ⇒ Stimme 0
+  }
+
+  // Steckbrief-Statistik des Trade-Filters (31.07.) — einmal je Scan gelesen,
+  // NUR für den Schatten-Zähler. Nicht lesbar ⇒ leere Statistik ⇒ kein
+  // Schatten; der Handel läuft in jedem Fall unverändert.
+  let filterBuckets: Record<string, BucketStat> = {};
+  try {
+    filterBuckets =
+      ((await db.doc('meta/tradeFilter').get()).get('buckets') as Record<string, BucketStat> | undefined) ?? {};
+  } catch {
+    // s. o.
   }
 
   for (const userDoc of users.docs) {
@@ -712,6 +733,8 @@ async function executeUserTrades(
                 source: 'engine',
                 assetClass: classify(symbol),
                 stopDistancePct: stopAbstand(symbol, data.atrPct),
+                // Regelbaum liefert ja/nein statt Vote-Karte — eigener Steckbrief
+                bucket: bucketKey({ assetClass: classify(symbol), timeframe: tf, signature: 'regelbaum', side: 'long' }),
               },
               clamped,
             );
@@ -767,6 +790,7 @@ async function executeUserTrades(
                 assetClass: classify(symbol),
                 openShort: true,
                 stopDistancePct: stopAbstand(symbol, data.atrPct),
+                bucket: bucketKey({ assetClass: classify(symbol), timeframe: tf, signature: 'regelbaum', side: 'short' }),
               },
               clamped,
             );
@@ -869,6 +893,15 @@ async function executeUserTrades(
           if (positions.size >= posLimit) continue;
           if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
           if (entrySperre(symbol, data.atrPct, [...positions.keys()])) continue;
+          // Steckbrief des Einstiegs (Trade-Filter 31.07.): stempeln + im
+          // SCHATTEN prüfen — geblockt wird noch nichts, nur gezählt.
+          const bucket = bucketKey({
+            assetClass: classify(symbol),
+            timeframe: tf,
+            signature: signalSignature(sig.votes, 'buy'),
+            side: 'long',
+          });
+          if (bucketVerdict(filterBuckets[bucket]).blocked) gate.filter_wuerde_blocken += 1;
           const budget = hebelBudget(konfluenz);
           const r = await executePaperTrade(
             {
@@ -879,6 +912,7 @@ async function executeUserTrades(
               source: 'engine',
               assetClass: classify(symbol),
               stopDistancePct: stopAbstand(symbol, data.atrPct),
+              bucket,
               ...(budget ? { margin: budget } : {}),
             },
             clamped,
@@ -922,6 +956,13 @@ async function executeUserTrades(
           if (positions.size >= posLimit) continue;
           if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
           if (entrySperre(symbol, data.atrPct, [...positions.keys()])) continue;
+          const bucket = bucketKey({
+            assetClass: classify(symbol),
+            timeframe: tf,
+            signature: signalSignature(sig.votes, 'sell'),
+            side: 'short',
+          });
+          if (bucketVerdict(filterBuckets[bucket]).blocked) gate.filter_wuerde_blocken += 1;
           const budget = hebelBudget(konfluenz);
           const r = await executePaperTrade(
             {
@@ -933,6 +974,7 @@ async function executeUserTrades(
               assetClass: classify(symbol),
               openShort: true,
               stopDistancePct: stopAbstand(symbol, data.atrPct),
+              bucket,
               ...(budget ? { margin: budget } : {}),
             },
             clamped,
@@ -1502,6 +1544,7 @@ export async function runScan(force = false): Promise<ScanResult> {
     news_veto: 0,
     unter_kosten: 0,
     ohne_atr_durchgelassen: 0,
+    filter_wuerde_blocken: 0,
   };
   let lastError: string | null = null;
   try {
