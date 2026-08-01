@@ -293,6 +293,8 @@ interface DashState {
   showNews: boolean;
   /** News-Lage des aktuellen Chart-Symbols (aus dem market-Doc-Watcher). */
   news: MarketDocData['news'];
+  /** Zugangsstufe des Kontos — 'pending'/'blocked' heißt: der Scan handelt NICHT. */
+  accessLevel: 'pending' | 'approved' | 'blocked';
   /** Zuletzt gesetzte News-Punkte im Haupt-Chart (E2E-Hook, 26.07.). */
   lastMainMarkers?: number;
   /** Live-Preise der Positions-Symbole (aus market/{sym}.quote). */
@@ -473,6 +475,8 @@ function layout(email: string): string {
         <button class="btn btn-r" id="engStop" hidden>Engine stoppen</button>
         <div class="hint">Bei Engine AN handelt der zentrale 5-min-Scan
           automatisch nach deiner Strategie (Paper).</div>
+        <p id="accessNote" class="hint" hidden
+          style="color:var(--yl,#d9a441);margin-top:6px"></p>
         <div id="verifyBox" hidden style="margin-top:8px">
           <p class="hint" style="color:var(--rd)">E-Mail noch nicht bestätigt —
             der Engine-Start ist bis dahin gesperrt (M7-Schutz).</p>
@@ -3482,6 +3486,29 @@ function renderEngineBadge(running: boolean): void {
   ($('engStop') as HTMLButtonElement).hidden = !running;
 }
 
+/**
+ * Freischaltungs-Hinweis in der Engine-Karte (Fund 01.08.: „Engine fängt bei
+ * neuem Konto nicht an zu handeln"). Neue Konten stehen auf 'pending', und
+ * der Scan überspringt sie STILL — das UI zeigte aber „Engine an". Ein
+ * Schalter, der nichts bewirkt und es nicht sagt, ist eine Falle; deshalb
+ * steht der Grund jetzt direkt unter dem Knopf.
+ */
+function renderAccessNote(): void {
+  if (!st) return;
+  const el = $('accessNote');
+  if (st.accessLevel === 'pending') {
+    el.textContent =
+      '⏳ Dein Zugang wird noch geprüft. Du kannst alles ansehen und einstellen — '
+      + 'gehandelt wird erst nach der Freischaltung durch den Betreiber, auch bei Engine AN.';
+    el.hidden = false;
+  } else if (st.accessLevel === 'blocked') {
+    el.textContent = '⛔ Dieses Konto wurde gesperrt. Bitte wende dich an den Betreiber.';
+    el.hidden = false;
+  } else {
+    el.hidden = true;
+  }
+}
+
 function renderStrategyChips(): void {
   if (!st) return;
   const box = $('wlChips');
@@ -4582,6 +4609,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     forecast: null,
     forecastIntraday: null,
     news: null,
+    accessLevel: 'approved',
     chartGroup: 'A',
     chart2Group: 'B',
     chart2Symbol: DEFAULT_STRATEGY.watchlist[1] ?? 'QQQ',
@@ -4657,8 +4685,10 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
 
   // User-Doc: Strategie (Formular/Watchlist) + Wallet folgen Firestore
   st.subs.push(
-    watchUserDoc(uid, ({ strategy, wallet, hotkeys, ui, autoTune }) => {
+    watchUserDoc(uid, ({ strategy, wallet, hotkeys, ui, autoTune, accessLevel }) => {
       if (!st) return;
+      st.accessLevel = accessLevel;
+      renderAccessNote();
       st.strategy = strategy ?? DEFAULT_STRATEGY;
       st.wallet = wallet;
       ($('tnOn') as HTMLInputElement).checked = autoTune;

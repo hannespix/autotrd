@@ -337,10 +337,20 @@ export function watchUserDoc(
     ui: UiPrefs | null;
     /** Auto-Tuner-Schalter (MT5). Fehlt das Feld, ist der Tuner AN. */
     autoTune: boolean;
+    /**
+     * Zugangsstufe (Owner 26.07.): 'pending' = angelegt, wartet auf
+     * Freischaltung — der Scan überspringt das Konto STILL. Genau deshalb
+     * muss die Oberfläche es zeigen (Fund 01.08.: „Engine fängt bei neuem
+     * Konto nicht an zu handeln" — sie lief, das Konto war nur nicht frei).
+     * Fehlendes Feld = Bestandskonto = freigeschaltet.
+     */
+    accessLevel: 'pending' | 'approved' | 'blocked';
   }) => void,
 ): Unsubscribe {
   return onSnapshot(doc(db(), 'users', uid), (snap) => {
+    const rawAccess = snap.get('accessLevel') as string | undefined;
     cb({
+      accessLevel: rawAccess === 'pending' || rawAccess === 'blocked' ? rawAccess : 'approved',
       strategy: (snap.get('settings.strategy') as Strategy | undefined) ?? null,
       wallet: (snap.get('wallet') as Wallet | undefined) ?? null,
       hotkeys: (snap.get('settings.hotkeys') as Record<string, string> | undefined) ?? null,

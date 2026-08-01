@@ -53,6 +53,18 @@ describe('selectScanSymbols', () => {
     expect(auswahl({ defaults: ['QQQ', 'SPY'] })).toEqual(['QQQ', 'SPY']);
   });
 
+  it('Watchlists laufender Engines stehen VOR dem Ranking (Fund 01.08.)', () => {
+    // „Engine fängt bei neuem Konto nicht an zu handeln": Der Scan
+    // beobachtete nur Ranking + Defaults — ein Konto mit EIGENER Watchlist
+    // konnte nie einen Einstieg eröffnen, weil seine Symbole ohne Daten
+    // blieben. Die Watchlist ist eine Entscheidung des Users, das Ranking
+    // nur ein Vorschlag — also hat sie Vorrang.
+    const out = auswahl({ watchlists: ['NVDA', 'MSFT'], ranking: ['BTC-USD'], max: 3 });
+    expect(out).toEqual(['NVDA', 'MSFT', 'BTC-USD']);
+    // Handelbarkeits- und Marktzeit-Filter gelten auch hier
+    expect(auswahl({ watchlists: ['^GSPC', 'AAPL'] })).toEqual(['AAPL']);
+  });
+
   it('dedupliziert über alle drei Quellen', () => {
     const out = auswahl({
       positions: ['AAPL'],
