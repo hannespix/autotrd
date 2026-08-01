@@ -20,3 +20,5 @@ export * from './tuneAdvisor.js';
 export * from './sentiment.js';
 export * from './newsGate.js';
 export * from './tradeFilter.js';
+export * from './regime.js';
+export * from './conviction.js';

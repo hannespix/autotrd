@@ -34,8 +34,11 @@ import {
   NEWS_TTL_SEC,
   bucketKey,
   bucketVerdict,
+  convictionFactor,
+  marketRegime,
   signalSignature,
   type BucketStat,
+  type MarketRegime,
   positionValue,
   resolveName,
   resolveRisk,
@@ -201,6 +204,7 @@ export interface EntryGateStats {
 
 async function executeUserTrades(
   marketData: Map<string, SymbolData>,
+  regime: MarketRegime,
 ): Promise<{ executed: number; gate: EntryGateStats }> {
   const db = getFirestore();
   let executed = 0;
@@ -734,7 +738,7 @@ async function executeUserTrades(
                 assetClass: classify(symbol),
                 stopDistancePct: stopAbstand(symbol, data.atrPct),
                 // Regelbaum liefert ja/nein statt Vote-Karte — eigener Steckbrief
-                bucket: bucketKey({ assetClass: classify(symbol), timeframe: tf, signature: 'regelbaum', side: 'long' }),
+                bucket: bucketKey({ assetClass: classify(symbol), timeframe: tf, signature: 'regelbaum', side: 'long', regime }),
               },
               clamped,
             );
@@ -790,7 +794,7 @@ async function executeUserTrades(
                 assetClass: classify(symbol),
                 openShort: true,
                 stopDistancePct: stopAbstand(symbol, data.atrPct),
-                bucket: bucketKey({ assetClass: classify(symbol), timeframe: tf, signature: 'regelbaum', side: 'short' }),
+                bucket: bucketKey({ assetClass: classify(symbol), timeframe: tf, signature: 'regelbaum', side: 'short', regime }),
               },
               clamped,
             );
@@ -900,8 +904,17 @@ async function executeUserTrades(
             timeframe: tf,
             signature: signalSignature(sig.votes, 'buy'),
             side: 'long',
+            regime,
           });
           if (bucketVerdict(filterBuckets[bucket]).blocked) gate.filter_wuerde_blocken += 1;
+          // Überzeugungs-Sizing (Owner 01.08.): Einsatz folgt messbarer
+          // Überzeugung — Konfluenz-Überschuss plus REALISIERTE Kante des
+          // Steckbriefs; nachweislich schwache Sorten handeln halbiert.
+          const sizeFactor = convictionFactor({
+            konfluenz,
+            requiredConfluence: clamped.signals.minConfluence,
+            bucket: filterBuckets[bucket] ?? null,
+          });
           const budget = hebelBudget(konfluenz);
           const r = await executePaperTrade(
             {
@@ -913,6 +926,7 @@ async function executeUserTrades(
               assetClass: classify(symbol),
               stopDistancePct: stopAbstand(symbol, data.atrPct),
               bucket,
+              sizeFactor,
               ...(budget ? { margin: budget } : {}),
             },
             clamped,
@@ -961,8 +975,14 @@ async function executeUserTrades(
             timeframe: tf,
             signature: signalSignature(sig.votes, 'sell'),
             side: 'short',
+            regime,
           });
           if (bucketVerdict(filterBuckets[bucket]).blocked) gate.filter_wuerde_blocken += 1;
+          const sizeFactor = convictionFactor({
+            konfluenz,
+            requiredConfluence: clamped.signals.minConfluence,
+            bucket: filterBuckets[bucket] ?? null,
+          });
           const budget = hebelBudget(konfluenz);
           const r = await executePaperTrade(
             {
@@ -975,6 +995,7 @@ async function executeUserTrades(
               openShort: true,
               stopDistancePct: stopAbstand(symbol, data.atrPct),
               bucket,
+              sizeFactor,
               ...(budget ? { margin: budget } : {}),
             },
             clamped,
@@ -1536,6 +1557,28 @@ export async function runScan(force = false): Promise<ScanResult> {
   // Auto-Trades pro User (1 Marktdaten-Fetch oben, N Auswertungen hier).
   // Geguarded: Ein Fehler hier darf den Heartbeat nicht verhindern — sonst
   // bleibt meta/health stehen und die Ursache ist ohne GCP-Konsole unsichtbar.
+  // Regime-Ampel (31.07., Stufe 1: nur messen + stempeln). Quelle sind der
+  // S&P 500 (^GSPC, Tages-Closes) und der VIX — beide Gratis-Größen. Ein
+  // Fetch-Fehler ergibt die konservative Mitte 'seitwaerts', nie Alarm.
+  let regime: ReturnType<typeof marketRegime> = {
+    state: 'seitwaerts',
+    aboveSma200: null,
+    realizedVolPct: null,
+    vix: null,
+  };
+  try {
+    const [spy, vixQuote] = await Promise.all([
+      getMarketSnapshot('^GSPC', '1y'),
+      getQuickQuote('^VIX').catch(() => null),
+    ]);
+    regime = marketRegime(
+      spy.bars.map((b) => b.close),
+      vixQuote && vixQuote.price > 0 ? vixQuote.price : null,
+    );
+  } catch (err) {
+    logger.warn('Regime-Messung fehlgeschlagen — seitwaerts angenommen', err);
+  }
+
   let trades = 0;
   let entryGate: EntryGateStats = {
     geprueft: 0,
@@ -1548,7 +1591,7 @@ export async function runScan(force = false): Promise<ScanResult> {
   };
   let lastError: string | null = null;
   try {
-    const res = await executeUserTrades(marketData);
+    const res = await executeUserTrades(marketData, regime.state);
     trades = res.executed;
     entryGate = res.gate;
   } catch (err) {
@@ -1641,6 +1684,10 @@ export async function runScan(force = false): Promise<ScanResult> {
         // deshalb muss die Zahl hier stehen: Ein stilles Veto sieht sonst
         // aus wie ein Markt ohne Ereignisse.
         newsFetched,
+        // Regime-Ampel: Zustand + Eingangsgrößen (Transparenz). Steuert in
+        // Stufe 1 nichts — er wird gemessen und in die Steckbriefe des
+        // Trade-Filters gestempelt, damit der je Regime getrennt lernt.
+        regime,
         lastError,
         lastErrorAt: lastError ? now.toISOString() : null,
       },
