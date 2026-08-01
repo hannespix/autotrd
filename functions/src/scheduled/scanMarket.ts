@@ -1109,6 +1109,11 @@ const MAX_SCAN_SYMBOLS = 40;
  */
 export function selectScanSymbols(args: {
   positions: string[];
+  /** Watchlists der Konten mit laufender Engine (Fund 01.08.): Die Engine
+   *  verspricht, „deine Watchlist" zu handeln — dann muss der Scan sie auch
+   *  BEOBACHTEN. Vorher deckten nur Ranking + Default-Liste den Einstieg ab;
+   *  ein Konto mit eigener Auswahl konnte nie einen Trade eröffnen. */
+  watchlists?: string[];
   ranking: string[];
   defaults: string[];
   /** Letzter Boden (ganzer Katalog), falls 1–3 nichts Offenes liefern. */
@@ -1120,7 +1125,7 @@ export function selectScanSymbols(args: {
   const offen = args.isOpen ?? ((): boolean => true);
   const set = new Set<string>();
   for (const sym of args.positions) set.add(sym); // ungedeckelt: siehe 1.
-  for (const gruppe of [args.ranking, args.defaults, args.catalog ?? []]) {
+  for (const gruppe of [args.watchlists ?? [], args.ranking, args.defaults, args.catalog ?? []]) {
     for (const sym of gruppe) {
       if (set.size >= args.max) break;
       // NICHT handelbare Symbole fliegen aus der Tiefenanalyse (Befund
@@ -1170,8 +1175,26 @@ async function collectScanSymbols(now: Date): Promise<string[]> {
     logger.warn('Momentum-Ranking nicht lesbar', err);
   }
 
+  // Watchlists aller Konten mit laufender Engine — Einstiegs-Kandidaten
+  // haben Vorrang vor dem Ranking (das Ranking ist ein Vorschlag, die
+  // Watchlist eine Entscheidung des Users).
+  let watchlists: string[] = [];
+  try {
+    const engSnap = await db
+      .collection('users')
+      .where('settings.strategy.engine.running', '==', true)
+      .select('settings.strategy.watchlist')
+      .get();
+    watchlists = engSnap.docs.flatMap(
+      (d) => (d.get('settings.strategy.watchlist') as string[] | undefined) ?? [],
+    );
+  } catch (err) {
+    logger.warn('Watchlists nicht lesbar — Scan ohne Watchlist-Union', err);
+  }
+
   const symbols = selectScanSymbols({
     positions,
+    watchlists,
     ranking,
     defaults: [...DEFAULT_STRATEGY.watchlist],
     catalog: allSymbols(),
