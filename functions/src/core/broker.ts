@@ -86,7 +86,13 @@ export function sizeOrder(
   fractional = false,
   margin?: MarginBudget,
   stopDistancePct?: number,
+  sizeFactor = 1,
 ): number {
+  // Überzeugungs-Sizing (01.08.): Der Faktor wirkt auf den PROZENTSATZ der
+  // Tranche und wird gemeinsam mit ihm bei 25 % gedeckelt — die
+  // Klumpengrenze der Risiko-Hülle bleibt die letzte Instanz.
+  const f = Number.isFinite(sizeFactor) && sizeFactor > 0 ? Math.min(1.5, Math.max(0.25, sizeFactor)) : 1;
+  const pctCap = (pct: number): number => Math.min(25, pct * f);
   // Risiko-Sizing hat Vorrang, wenn es eingeschaltet IST und der Stop-Abstand
   // bekannt ist (28.07.): Dann bestimmt nicht mehr der Depotanteil die
   // Stückzahl, sondern der Betrag, der im Stop-Fall verloren gehen darf —
@@ -97,10 +103,10 @@ export function sizeOrder(
     const eigenkapital = margin ? margin.equity : Math.max(0, balance);
     const q = riskBasedQty({
       equity: eigenkapital,
-      riskPerTradePct: risikoPct,
+      riskPerTradePct: risikoPct * f,
       stopDistancePct,
       effPrice,
-      maxPositionPct: strategy.engine.maxPositionPct,
+      maxPositionPct: pctCap(strategy.engine.maxPositionPct),
       ...(margin ? { buyingPower: margin.buyingPower } : {}),
       fractional,
     });
@@ -111,11 +117,11 @@ export function sizeOrder(
   // Hebel wäre nach der ersten Handvoll Positionen wirkungslos, obwohl noch
   // Kaufkraft da ist. Die Kaufkraft deckelt zusätzlich (sizeWithMargin).
   if (margin) {
-    return sizeWithMargin(margin, strategy.engine.maxPositionPct, effPrice, fractional, margin.leverage);
+    return sizeWithMargin(margin, pctCap(strategy.engine.maxPositionPct), effPrice, fractional, margin.leverage);
   }
   const base = strategy.broker.sizingBase ?? 'balance';
   const capital = base === 'initial' ? strategy.broker.initialCapital : Math.max(0, balance);
-  const raw = (capital * strategy.engine.maxPositionPct) / 100 / effPrice;
+  const raw = (capital * pctCap(strategy.engine.maxPositionPct)) / 100 / effPrice;
   // Krypto handelt real in BRUCHTEILEN (MA-Fund 26.07.): floor auf ganze
   // Stücke ergab bei BTC (~64 000 $) mit einer 2 500-$-Tranche IMMER 0 —
   // die Engine konnte teure Coins schlicht nie kaufen ('qty_unter_1').
@@ -161,6 +167,13 @@ export interface TradeRequest {
    * realisierten P&L in der globalen Lernstatistik (meta/tradeFilter).
    */
   bucket?: string;
+  /**
+   * Überzeugungs-Faktor der Positionsgröße (Owner-Direktive 01.08.): skaliert
+   * die Tranche mit messbarer Überzeugung (convictionFactor, 0,25–1,5).
+   * Fehlt er, gilt exakt die bisherige Größe. Die Klumpengrenze (25 %)
+   * deckelt IMMER zusätzlich — der Faktor kann sie nie aushebeln.
+   */
+  sizeFactor?: number;
   /**
    * Abstand vom Einstieg bis zum Stop in % — Basis des Risiko-Sizings.
    * Der Aufrufer löst ihn auf (ATR-Vielfaches vor festem Prozentwert),
@@ -227,7 +240,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       if (posSnap.exists) return { executed: false, reason: 'position_existiert' };
       const cls = req.assetClass ?? classify(req.symbol);
       const fractional = cls === 'crypto';
-      const qty = req.qty ?? sizeOrder(strategy, balance, eff, fractional, req.margin, req.stopDistancePct);
+      const qty = req.qty ?? sizeOrder(strategy, balance, eff, fractional, req.margin, req.stopDistancePct, req.sizeFactor);
       if (qty < (fractional ? 1e-6 : 1)) return { executed: false, reason: 'qty_unter_1' };
       const cost = qty * eff;
       // Ohne Hebel prüft der Cash, mit Hebel die Kaufkraft. Der Cash darf
@@ -291,7 +304,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       if (!req.openShort) return { executed: false, reason: 'keine_position' };
       const cls = req.assetClass ?? classify(req.symbol);
       const fractional = cls === 'crypto';
-      const qty = req.qty ?? sizeOrder(strategy, balance, eff, fractional, req.margin, req.stopDistancePct);
+      const qty = req.qty ?? sizeOrder(strategy, balance, eff, fractional, req.margin, req.stopDistancePct, req.sizeFactor);
       if (qty < (fractional ? 1e-6 : 1)) return { executed: false, reason: 'qty_unter_1' };
       const margin = qty * eff;
       // Gleiche Deckungsprüfung wie beim Kauf: Der Short bindet Sicherheit,
