@@ -672,6 +672,11 @@ export interface AdminUserRow {
   accessLevel: 'pending' | 'approved' | 'blocked';
   requestedAt: string | null;
   admin: boolean;
+  /** Gesamt-P&L (Equity − Kapitalbasis) — dieselbe Formel wie die
+   *  Performance-Karte; null ohne Wallet/Kapitalbasis. */
+  pnl: number | null;
+  pnlPct: number | null;
+  equity: number | null;
 }
 
 /** Alle Konten (Wartende zuerst) — antwortet nur für Admin-Konten. */

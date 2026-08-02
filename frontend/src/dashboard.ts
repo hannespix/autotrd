@@ -3562,7 +3562,21 @@ async function loadAdminList(): Promise<void> {
       const badge = document.createElement('span');
       badge.className = 'hint';
       badge.textContent = ACCESS_BADGE[row.accessLevel] + (row.admin ? ' · Admin' : '');
-      line.append(who, badge);
+      // Gesamt-P&L des Kontos (Owner 02.08.) — Formel identisch zur
+      // Performance-Karte des Users, gefärbt nach Vorzeichen.
+      const perf = document.createElement('span');
+      perf.className = 'mono';
+      if (row.pnl !== null) {
+        const s = row.pnl >= 0 ? '+' : '';
+        perf.textContent = `${s}${row.pnl.toFixed(2)} $`
+          + (row.pnlPct !== null ? ` (${s}${row.pnlPct.toFixed(1)} %)` : '');
+        perf.style.color = row.pnl > 0 ? 'var(--gn)' : row.pnl < 0 ? 'var(--rd)' : 'var(--t3)';
+        if (row.equity !== null) perf.title = `Equity: ${row.equity.toFixed(2)} $`;
+      } else {
+        perf.textContent = '—';
+        perf.style.color = 'var(--t3)';
+      }
+      line.append(who, perf, badge);
       // Das eigene Konto listet der Server mit, ändern lehnt er ab — dieselbe
       // Regel hier: keine Knöpfe, statt Knöpfe, die immer scheitern.
       if (row.uid !== st?.uid) {
