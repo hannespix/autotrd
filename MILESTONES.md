@@ -106,13 +106,16 @@ nicht geschätzt.
       aber der Dispatcher, der umschalten würde, ist MS2 Teil 3 — also nicht
       gebaut. Der gesamte Supabase-Frontend-Strang ist damit toter Code, der
       trotzdem mitgepflegt, mitgetestet und mitgebaut wird.
-- [ ] **B2 — `supabase/functions/_shared/` ist eine DRIFTENDE Kopie von
-      `shared/src/`.** Gemessen: 12 von 17 Dateien weichen ab, darunter
-      `forecast.ts` mit ~100 abweichenden Zeilen. Und: `sentiment.ts` liegt
-      dort noch, obwohl es am 28.07. aus `shared/` entfernt wurde. Das ist
-      die gefährlichste Sorte Duplikat — es sieht aus wie derselbe Code und
-      rechnet anders. Die Golden-Tests decken nur `shared/` ab, die Kopie
-      läuft ungeprüft.
+- [x] **B2 — `supabase/functions/_shared/` ist eine DRIFTENDE Kopie von
+      `shared/src/`.** *(aufgelöst in zwei Schritten: Seit PR #94 ist die
+      Kopie ein GENERAT — `scripts-ci/build-edge-shared.mjs` leitet sie aus
+      `shared/src` + `functions/src/core/engine.ts` ab, `.gitignore` hält
+      sie aus dem Repo; die gemessene Drift war der eingecheckte Altstand
+      vor #94. Seit 02.08. prüft CI zusätzlich als Drift-Guard: `_shared`
+      frisch bauen + `deno check` der Edge Function — eine shared-Änderung,
+      die nur in der Deno-Welt bricht, macht damit den PR rot statt erst
+      das manuelle Deploy.)* War: 12 von 17 Dateien abweichend, Golden-Tests
+      deckten die Kopie nicht.
 - [x] **B3 — Zwei Stopgap-Workflows, deren Grund entfallen ist.** *(entfernt 28.07.)*
       `scan-watchdog.yml` (alle 15 min, 13–21 UTC, Mo–Fr) und
       `daily-jobs.yml` (3× täglich) tragen beide im Kopf: *„Stopgap, solange
@@ -129,8 +132,9 @@ nicht geschätzt.
 
 - [ ] **C1** `frontend/src/dataSupabase.ts`, `authSupabase.ts`, `supabase.ts`
       (~1 000 Z.) — unerreichbar, s. B1.
-- [ ] **C2** `supabase/functions/_shared/sentiment.ts` — in `shared/` gelöscht,
-      hier noch vorhanden.
+- [x] **C2** `supabase/functions/_shared/sentiment.ts` — *(gegenstandslos:
+      die Kopie ist seit #94 ein Generat außerhalb des Repos, und
+      `sentiment.ts` ist seit 29.07. regulär zurück in `shared/`.)*
 - [ ] **C3** `functions/src/core/{backtest,sweep}.ts` (325 Z.) — Kerne ohne
       Aufrufer, seit dem Studio-Ausbau. **Bewusst behalten** als
       Bewertungsmaschine für MO Teil 2; wird MO gestrichen, gehen sie mit.
@@ -157,9 +161,11 @@ unsichtbar geblieben wären.
       entschieden: Der Strang wird zu Ende gebracht statt eingefroren.
       **Damit wird B2 zur Vorbedingung, nicht zur Fußnote** — solange
       `supabase/functions/_shared/` eine driftende Kopie ist, portiert man
-      auf einen Unterbau, der anders rechnet als der getestete. Erster
+      auf einen Unterbau, der anders rechnet als der getestete. ~~Erster
       Schritt von MS2 Teil 3 muss deshalb sein, die Kopie durch einen
-      Build-Schritt aus `shared/src/` zu ersetzen.
+      Build-Schritt aus `shared/src/` zu ersetzen.~~ *(Vorbedingung erfüllt
+      02.08.: Build-Schritt seit #94, CI-Drift-Guard mit `deno check` — s.
+      B2. MS2 Teil 3 kann direkt auf dem Generat aufsetzen.)*
 
 ---
 
