@@ -345,12 +345,17 @@ export function watchUserDoc(
      * Fehlendes Feld = Bestandskonto = freigeschaltet.
      */
     accessLevel: 'pending' | 'approved' | 'blocked';
+    /** Kontotyp (Owner 02.08.): Admins sehen die Freischaltungs-Karte.
+     *  Das Feld setzt NUR die Konsole bzw. das adminUsers-Callable —
+     *  Client-Updates auf dem User-Doc erlauben die Rules nur für `settings`. */
+    admin: boolean;
   }) => void,
 ): Unsubscribe {
   return onSnapshot(doc(db(), 'users', uid), (snap) => {
     const rawAccess = snap.get('accessLevel') as string | undefined;
     cb({
       accessLevel: rawAccess === 'pending' || rawAccess === 'blocked' ? rawAccess : 'approved',
+      admin: snap.get('admin') === true,
       strategy: (snap.get('settings.strategy') as Strategy | undefined) ?? null,
       wallet: (snap.get('wallet') as Wallet | undefined) ?? null,
       hotkeys: (snap.get('settings.hotkeys') as Record<string, string> | undefined) ?? null,
@@ -657,6 +662,35 @@ export async function callTrade(input: {
   qty?: number;
 }): Promise<void> {
   await httpsCallable(fns(), 'trade')(input);
+}
+
+/* ── Admin-Verwaltung (Owner 02.08.): Freischalten aus der App ── */
+
+export interface AdminUserRow {
+  uid: string;
+  email: string | null;
+  accessLevel: 'pending' | 'approved' | 'blocked';
+  requestedAt: string | null;
+  admin: boolean;
+}
+
+/** Alle Konten (Wartende zuerst) — antwortet nur für Admin-Konten. */
+export async function adminListUsers(): Promise<AdminUserRow[]> {
+  const r = await httpsCallable(fns(), 'adminUsers')({ action: 'list' });
+  return (r.data as { users: AdminUserRow[] }).users;
+}
+
+/** Zugangsstufe eines FREMDEN Kontos setzen (das eigene ist serverseitig tabu). */
+export async function adminSetAccess(
+  target: string,
+  level: 'pending' | 'approved' | 'blocked',
+): Promise<void> {
+  await httpsCallable(fns(), 'adminUsers')({ action: 'set', target, level });
+}
+
+/** Admin-Recht eines FREMDEN Kontos vergeben/entziehen. */
+export async function adminSetAdmin(target: string, admin: boolean): Promise<void> {
+  await httpsCallable(fns(), 'adminUsers')({ action: 'setAdmin', target, admin });
 }
 
 export interface UniverseEntry {
