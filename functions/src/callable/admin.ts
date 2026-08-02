@@ -27,6 +27,7 @@
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
+import { positionValue, type Position } from '../../../shared/src/index.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { consumeQuota } from '../core/broker.js';
 import { accessLevelOf, type AccessLevel } from '../core/access.js';
@@ -40,6 +41,12 @@ export interface AdminUserRow {
   accessLevel: AccessLevel;
   requestedAt: string | null;
   admin: boolean;
+  /** Gesamt-P&L = Equity − Kapitalbasis (Owner 02.08.: „deren aktuelle
+   *  performance sehen"). Dieselbe Formel wie die Performance-Karte des
+   *  Users selbst; null, wenn das Konto (noch) kein Wallet hat. */
+  pnl: number | null;
+  pnlPct: number | null;
+  equity: number | null;
 }
 
 export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
@@ -76,9 +83,24 @@ export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
     // wachsen, braucht die Liste ohnehin Suche + Pagination statt mehr Rohdaten.
     const snap = await db
       .collection('users')
-      .select('accessLevel', 'requestedAt', 'admin')
+      .select('accessLevel', 'requestedAt', 'admin', 'wallet', 'settings.strategy.broker.initialCapital')
       .limit(500)
       .get();
+    // Kurs-Cache wie im Equity-Snapshot: je Symbol einmal, nicht je User.
+    const preise = new Map<string, number | null>();
+    const lastPrice = async (sym: string): Promise<number | null> => {
+      if (!preise.has(sym)) {
+        try {
+          const p = ((await db.collection('market').doc(sym).get()).get('quote') as
+            | { price?: number }
+            | undefined)?.price;
+          preise.set(sym, typeof p === 'number' && p > 0 ? p : null);
+        } catch {
+          preise.set(sym, null);
+        }
+      }
+      return preise.get(sym) ?? null;
+    };
     const rows: AdminUserRow[] = await Promise.all(
       snap.docs.map(async (d) => {
         let email: string | null = null;
@@ -87,12 +109,37 @@ export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
         } catch {
           // Auth-Konto gelöscht, Firestore-Doc verwaist — anzeigen statt werfen
         }
+        // Gesamt-P&L = Cash + bewertete Positionen − Kapitalbasis. Exakt die
+        // Formel der Performance-Karte (Fund 01.08.: lade-unabhängig), damit
+        // Admin-Liste und User-Ansicht nie zwei verschiedene Zahlen zeigen.
+        let pnl: number | null = null;
+        let pnlPct: number | null = null;
+        let equity: number | null = null;
+        const cash = d.get('wallet.paperBalance') as number | undefined;
+        if (typeof cash === 'number' && Number.isFinite(cash)) {
+          let posWert = 0;
+          for (const p of (await d.ref.collection('positions').get()).docs) {
+            const pos = p.data() as Position;
+            posWert += positionValue(pos, await lastPrice(pos.symbol ?? p.id));
+          }
+          equity = Math.round((cash + posWert) * 100) / 100;
+          const basis =
+            (d.get('wallet.baseCapital') as number | undefined)
+            ?? (d.get('settings.strategy.broker.initialCapital') as number | undefined);
+          if (typeof basis === 'number' && basis > 0) {
+            pnl = Math.round((equity - basis) * 100) / 100;
+            pnlPct = Math.round((pnl / basis) * 10000) / 100;
+          }
+        }
         return {
           uid: d.id,
           email,
           accessLevel: accessLevelOf(d.data()),
           requestedAt: (d.get('requestedAt') as string | undefined) ?? null,
           admin: d.get('admin') === true,
+          pnl,
+          pnlPct,
+          equity,
         };
       }),
     );
