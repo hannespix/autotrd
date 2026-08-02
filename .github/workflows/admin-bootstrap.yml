@@ -2,9 +2,14 @@
 # Admin-Recht der App — für den ALLERERSTEN Admin, den das adminUsers-Callable
 # nicht ernennen kann (es verlangt einen bestehenden Admin, Henne-Ei).
 #
-# Nur manuell auslösbar (workflow_dispatch = Repo-Schreibrecht nötig), also
-# dieselbe Vertrauensstufe wie die Deploys, die denselben Service-Account
-# nutzen. Alle weiteren Ernennungen laufen über die Admin-Karte in der App.
+# Zwei gleichwertige Auslöser, beide hinter Repo-Schreibrecht:
+#   1. workflow_dispatch mit email-Input (Actions-UI, „Run workflow").
+#   2. Push auf main, der ops/first-admin.txt ändert — die Datei enthält die
+#      E-Mail. Nötig, weil App-Integrationen (wie die Coding-Session) kein
+#      dispatch dürfen (403 Resource not accessible by integration), pushen
+#      aber schon; die Vertrauensstufe ist identisch, denn pushen kann nur,
+#      wer auch dispatchen dürfte. Alle weiteren Ernennungen laufen über die
+#      Admin-Karte in der App.
 name: Admin-Bootstrap
 
 on:
@@ -14,6 +19,9 @@ on:
         description: 'E-Mail des Kontos, das Admin-Rechte bekommt'
         required: true
         type: string
+  push:
+    branches: [main]
+    paths: ['ops/first-admin.txt']
 
 concurrency: admin-bootstrap
 
@@ -38,10 +46,12 @@ jobs:
       - name: Admin-Recht setzen
         env:
           # Über env statt Inline-Interpolation — Workflow-Inputs gehören nie
-          # ungeprüft in eine Shell-Zeile (Injection).
-          EMAIL: ${{ inputs.email }}
+          # ungeprüft in eine Shell-Zeile (Injection). Beim Push-Auslöser ist
+          # der Input leer, dann kommt die E-Mail aus ops/first-admin.txt.
+          EMAIL_INPUT: ${{ inputs.email }}
         run: |
           set -euo pipefail
+          EMAIL="${EMAIL_INPUT:-$(tr -d '[:space:]' < ops/first-admin.txt)}"
           printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
           GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/firebase-sa.json" \
             node scripts-ci/set-admin.mjs "$EMAIL"
