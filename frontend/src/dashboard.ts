@@ -61,6 +61,9 @@ import {
 import { ICONS } from './icons.js';
 import { newsChartMarkers, newsForDay } from './newsMarkers.js';
 import {
+  adminListUsers,
+  adminSetAccess,
+  adminSetAdmin,
   callTrade,
   loadMarketQuotes,
   loadUniverse,
@@ -295,6 +298,8 @@ interface DashState {
   news: MarketDocData['news'];
   /** Zugangsstufe des Kontos — 'pending'/'blocked' heißt: der Scan handelt NICHT. */
   accessLevel: 'pending' | 'approved' | 'blocked';
+  /** Kontotyp (Owner 02.08.): Admins sehen die Freischaltungs-Karte. */
+  admin: boolean;
   /** Zuletzt gesetzte News-Punkte im Haupt-Chart (E2E-Hook, 26.07.). */
   lastMainMarkers?: number;
   /** Live-Preise der Positions-Symbole (aus market/{sym}.quote). */
@@ -486,6 +491,18 @@ function layout(email: string): string {
           </div>
           <div class="hint" id="verifyHint"></div>
         </div>
+      </div></div>
+
+      <!-- Admin-Verwaltung (Owner 02.08.): nur für Konten mit admin:true
+           sichtbar. Bewusst OHNE data-panel — die Karte gehört nicht in die
+           Workspace-Mechanik (applyPanels würde sonst die Admin-Sichtbarkeit
+           mit style.display überschreiben). -->
+      <div class="card" id="adminCard" hidden><div class="sect">Admin · Freischaltung</div><div class="cbody">
+        <div class="hint">Neue Konten starten auf „wartet" und handeln erst
+          nach der Freischaltung. Das eigene Konto ist serverseitig tabu.</div>
+        <button class="btn btn-n" id="admReload" style="width:100%;margin:6px 0">Konten laden</button>
+        <div id="admList"></div>
+        <p id="admErr" class="error" hidden></p>
       </div></div>
 
       <div class="card" data-panel="history"><div class="sect">Trade-Historie
@@ -3509,6 +3526,85 @@ function renderAccessNote(): void {
   }
 }
 
+/* ── Admin-Verwaltung (Owner 02.08.: „wie kann man andere User freischalten?") ── */
+
+const ACCESS_BADGE: Record<'pending' | 'approved' | 'blocked', string> = {
+  pending: '⏳ wartet',
+  approved: '✓ frei',
+  blocked: '⛔ gesperrt',
+};
+
+/** Karte zeigen/verstecken — der Server prüft das Admin-Recht ohnehin selbst;
+ *  die Sichtbarkeit hier ist reine Höflichkeit, kein Schutz. */
+function renderAdminCard(): void {
+  if (!st) return;
+  ($('adminCard') as HTMLElement).hidden = !st.admin;
+}
+
+/** Konten laden und als Zeilen mit Aktions-Knöpfen rendern. */
+async function loadAdminList(): Promise<void> {
+  const list = $('admList');
+  const err = $('admErr');
+  err.hidden = true;
+  list.innerHTML = '<div class="hint">lädt …</div>';
+  try {
+    const rows = await adminListUsers();
+    list.innerHTML = '';
+    for (const row of rows) {
+      const line = document.createElement('div');
+      line.className = 'row';
+      line.style.cssText = 'gap:6px;align-items:center;margin:4px 0;flex-wrap:wrap';
+      const who = document.createElement('span');
+      who.className = 'mono';
+      who.style.cssText = 'flex:1;min-width:140px;overflow:hidden;text-overflow:ellipsis';
+      who.textContent = row.email ?? row.uid;
+      who.title = row.uid;
+      const badge = document.createElement('span');
+      badge.className = 'hint';
+      badge.textContent = ACCESS_BADGE[row.accessLevel] + (row.admin ? ' · Admin' : '');
+      line.append(who, badge);
+      // Das eigene Konto listet der Server mit, ändern lehnt er ab — dieselbe
+      // Regel hier: keine Knöpfe, statt Knöpfe, die immer scheitern.
+      if (row.uid !== st?.uid) {
+        line.append(
+          admBtn(row.accessLevel === 'approved' ? 'Sperren' : 'Freischalten', async () => {
+            await adminSetAccess(row.uid, row.accessLevel === 'approved' ? 'blocked' : 'approved');
+          }, row.accessLevel === 'approved' ? 'btn-r' : 'btn-g'),
+          admBtn(row.admin ? 'Admin entziehen' : 'Zum Admin machen', async () => {
+            await adminSetAdmin(row.uid, !row.admin);
+          }, 'btn-n'),
+        );
+      }
+      list.append(line);
+    }
+    if (rows.length === 0) list.innerHTML = '<div class="hint">Keine Konten gefunden.</div>';
+  } catch (e) {
+    list.innerHTML = '';
+    err.textContent = e instanceof Error ? e.message : String(e);
+    err.hidden = false;
+  }
+}
+
+/** Kleiner Aktions-Knopf: führt aus, lädt danach die Liste neu, zeigt Fehler ehrlich. */
+function admBtn(label: string, run: () => Promise<void>, cls: string): HTMLButtonElement {
+  const b = document.createElement('button');
+  b.className = `btn ${cls}`;
+  b.style.cssText = 'padding:3px 8px;font-size:.78rem';
+  b.textContent = label;
+  b.addEventListener('click', () => {
+    b.disabled = true;
+    run()
+      .then(() => loadAdminList())
+      .catch((e: unknown) => {
+        const err = $('admErr');
+        err.textContent = e instanceof Error ? e.message : String(e);
+        err.hidden = false;
+        b.disabled = false;
+      });
+  });
+  return b;
+}
+
 function renderStrategyChips(): void {
   if (!st) return;
   const box = $('wlChips');
@@ -4610,6 +4706,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     forecastIntraday: null,
     news: null,
     accessLevel: 'approved',
+    admin: false,
     chartGroup: 'A',
     chart2Group: 'B',
     chart2Symbol: DEFAULT_STRATEGY.watchlist[1] ?? 'QQQ',
@@ -4685,10 +4782,12 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
 
   // User-Doc: Strategie (Formular/Watchlist) + Wallet folgen Firestore
   st.subs.push(
-    watchUserDoc(uid, ({ strategy, wallet, hotkeys, ui, autoTune, accessLevel }) => {
+    watchUserDoc(uid, ({ strategy, wallet, hotkeys, ui, autoTune, accessLevel, admin }) => {
       if (!st) return;
       st.accessLevel = accessLevel;
       renderAccessNote();
+      st.admin = admin;
+      renderAdminCard();
       st.strategy = strategy ?? DEFAULT_STRATEGY;
       st.wallet = wallet;
       ($('tnOn') as HTMLInputElement).checked = autoTune;
@@ -4984,6 +5083,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     void submitStrategy({ ...formStrategy(), engine: { ...formStrategy().engine, running: true } }, 'Engine-Flag: AN'));
   $('engStop').addEventListener('click', () =>
     void submitStrategy({ ...formStrategy(), engine: { ...formStrategy().engine, running: false } }, 'Engine-Flag: AUS'));
+  $('admReload').addEventListener('click', () => void loadAdminList());
   document.querySelectorAll('[data-close]').forEach((el) =>
     el.addEventListener('click', () => closeModal((el as HTMLElement).dataset.close as ModalName)));
   $('burgL').addEventListener('click', () => { $('leftCol').classList.toggle('show'); $('olv').classList.toggle('show'); });
