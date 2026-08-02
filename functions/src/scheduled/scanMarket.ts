@@ -195,11 +195,14 @@ export interface EntryGateStats {
   /** DURCHGELASSEN, obwohl die Kostenschwelle nicht prüfen konnte (keine
    *  ATR). Steht diese Zahl hoch, ist die Schwelle faktisch abgeschaltet. */
   ohne_atr_durchgelassen: number;
-  /** SCHATTEN (Trade-Filter 31.07.): Einstiege, die der selbstlernende
-   *  Steckbrief-Filter geblockt HÄTTE. Er blockt noch nicht — erst wenn
-   *  diese Zahl über Tage zeigt, dass er Verlust-Sorten trifft, wird das
-   *  Blocken in einem eigenen Schritt scharf geschaltet. */
-  filter_wuerde_blocken: number;
+  /** Geblockt vom selbstlernenden Steckbrief-Filter. SCHARF seit 02.08.
+   *  (Owner: „alle Konten im Minus — können wir das ändern???"): Die
+   *  Schatten-Phase (31.07.) hat ihre Beweislast erfüllt — der Steckbrief
+   *  crypto|intraday|bollinger+rsi|short|trend stand bei n=70, 6 Gewinnern,
+   *  t=−9,0; JEDER Intraday-Steckbrief war negativ. Blockiert wird nur, was
+   *  die eigene Historie mit n≥30 und t≤−1,5 als Verlust-Sorte ausweist
+   *  (bucketVerdict); Exits und manuelle Trades bleiben immer frei. */
+  filter_blockiert: number;
 }
 
 /**
@@ -249,7 +252,7 @@ async function executeUserTrades(
     news_veto: 0,
     unter_kosten: 0,
     ohne_atr_durchgelassen: 0,
-    filter_wuerde_blocken: 0,
+    filter_blockiert: 0,
   };
   const konten: KontenStats = {
     laufend: 0,
@@ -293,9 +296,10 @@ async function executeUserTrades(
     // nicht lesbar = keine Evidenz — accuracyWeightedVote(null) ⇒ Stimme 0
   }
 
-  // Steckbrief-Statistik des Trade-Filters (31.07.) — einmal je Scan gelesen,
-  // NUR für den Schatten-Zähler. Nicht lesbar ⇒ leere Statistik ⇒ kein
-  // Schatten; der Handel läuft in jedem Fall unverändert.
+  // Steckbrief-Statistik des Trade-Filters — einmal je Scan gelesen; seit
+  // 02.08. blockt sie Einstiege nachweislicher Verlust-Sorten (s.
+  // EntryGateStats.filter_blockiert). Nicht lesbar ⇒ leere Statistik ⇒
+  // bucketVerdict blockt nichts; der Handel fällt also sicher auf.
   let filterBuckets: Record<string, BucketStat> = {};
   try {
     filterBuckets =
@@ -952,8 +956,9 @@ async function executeUserTrades(
           if (positions.size >= posLimit) continue;
           if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
           if (entrySperre(symbol, data.atrPct, [...positions.keys()])) continue;
-          // Steckbrief des Einstiegs (Trade-Filter 31.07.): stempeln + im
-          // SCHATTEN prüfen — geblockt wird noch nichts, nur gezählt.
+          // Steckbrief des Einstiegs (Trade-Filter, scharf seit 02.08.):
+          // Sorten, deren EIGENE Historie n≥30 und t≤−1,5 zeigt, werden
+          // nicht mehr gehandelt — nur gezählt. Exits bleiben frei.
           const bucket = bucketKey({
             assetClass: classify(symbol),
             timeframe: tf,
@@ -961,7 +966,10 @@ async function executeUserTrades(
             side: 'long',
             regime,
           });
-          if (bucketVerdict(filterBuckets[bucket]).blocked) gate.filter_wuerde_blocken += 1;
+          if (bucketVerdict(filterBuckets[bucket]).blocked) {
+            gate.filter_blockiert += 1;
+            continue;
+          }
           // Überzeugungs-Sizing (Owner 01.08.): Einsatz folgt messbarer
           // Überzeugung — Konfluenz-Überschuss plus REALISIERTE Kante des
           // Steckbriefs; nachweislich schwache Sorten handeln halbiert.
@@ -1032,7 +1040,10 @@ async function executeUserTrades(
             side: 'short',
             regime,
           });
-          if (bucketVerdict(filterBuckets[bucket]).blocked) gate.filter_wuerde_blocken += 1;
+          if (bucketVerdict(filterBuckets[bucket]).blocked) {
+            gate.filter_blockiert += 1;
+            continue;
+          }
           const sizeFactor = convictionFactor({
             konfluenz,
             requiredConfluence: clamped.signals.minConfluence,
@@ -1361,6 +1372,46 @@ async function supplyCatalog(
 }
 
 /** Ein kompletter Scan-Zyklus über die zentrale Watchlist. */
+/**
+ * Einmalige Migration (Owner 02.08.: „komplett alle Konten sind im Minus …
+ * können wir das irgendwie ändern???"): Bestandskonten von 'intraday' auf
+ * 'daily' umstellen.
+ *
+ * Die Messung war eindeutig und zweifach: Schon am 01.08. stand der
+ * 5-min-Takt bei PF 0,18 mit Gebühren = 4,7× Brutto (deshalb ist 'daily'
+ * seit dem der Default für NEUE Konten), und am 02.08. zeigte die
+ * Steckbrief-Statistik JEDEN Intraday-Steckbrief negativ bei 720 Trades,
+ * Gebührenanteil 5,6× Brutto. Die vier Altkonten churnten trotzdem weiter
+ * intraday, weil der Default Bestandskonten nicht anfasst.
+ *
+ * Regeln der Migration: additiv + idempotent (Marker in meta/migrations,
+ * §9); Konten mit abgewähltem Auto-Tuner (settings.autoTune === false)
+ * werden NICHT angefasst — wer die Selbstverbesserung abbestellt hat, hat
+ * das auch hier bestellt. Der Rest der Strategie bleibt unverändert.
+ */
+async function migrateTimeframeDaily(db: FirebaseFirestore.Firestore): Promise<void> {
+  const MARKER = 'timeframeDaily_2026_08_02';
+  try {
+    const marker = db.doc('meta/migrations');
+    if ((await marker.get()).get(MARKER) === true) return;
+    const users = await db.collection('users').select('settings').get();
+    for (const u of users.docs) {
+      if (u.get('settings.autoTune') === false) continue;
+      const tf = u.get('settings.strategy.signals.timeframe') as string | undefined;
+      if (tf === 'daily' || u.get('settings.strategy') === undefined) continue;
+      await u.ref.update(
+        new FieldPath('settings', 'strategy', 'signals', 'timeframe'),
+        'daily',
+      );
+      logger.info(`Migration ${MARKER}: ${u.id} intraday→daily`);
+    }
+    await marker.set({ [MARKER]: true, at: new Date().toISOString() }, { merge: true });
+  } catch (err) {
+    // Nächster Scan versucht es erneut — der Marker wird erst nach Erfolg gesetzt.
+    logger.warn(`Migration ${MARKER} fehlgeschlagen`, err);
+  }
+}
+
 export async function runScan(force = false): Promise<ScanResult> {
   const now = new Date();
   const scanId = now.toISOString().slice(0, 16) + 'Z'; // Minute = idempotent
@@ -1665,13 +1716,14 @@ export async function runScan(force = false): Promise<ScanResult> {
     news_veto: 0,
     unter_kosten: 0,
     ohne_atr_durchgelassen: 0,
-    filter_wuerde_blocken: 0,
+    filter_blockiert: 0,
   };
   let lastError: string | null = null;
   // null = Trade-Block ist gar nicht gelaufen (Fehler davor) — das ist eine
   // andere Aussage als „0 Konten laufend" und darf nicht gleich aussehen.
   let konten: KontenStats | null = null;
   try {
+    await migrateTimeframeDaily(db);
     const res = await executeUserTrades(marketData, regime.state);
     trades = res.executed;
     entryGate = res.gate;
