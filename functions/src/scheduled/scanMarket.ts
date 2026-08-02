@@ -56,7 +56,7 @@ import {
   riskExitReason,
   type MarginBudget,
 } from '../core/broker.js';
-import { mayTrade } from '../core/access.js';
+import { accessLevelOf, mayTrade } from '../core/access.js';
 import {
   applyPredictionVote,
   buildRuleContext,
@@ -202,10 +202,41 @@ export interface EntryGateStats {
   filter_wuerde_blocken: number;
 }
 
+/**
+ * Konten-Zähler je Scan (Owner-Fund 02.08.: „10 Stunden später immer noch
+ * kein Trade").
+ *
+ * Ob ein Konto am Handel teilnimmt, entscheiden vier stille continue-Zeilen —
+ * und ein übersprungenes Konto sieht von außen exakt aus wie ein ruhiger
+ * Markt. Der Fall vom 02.08. war live nicht diagnostizierbar: Ohne Zugriff
+ * auf die Firestore-Konsole ließ sich nicht sagen, ob das neue Konto noch
+ * auf der Freischaltung wartete oder schlicht kein Signal bekam. Diese
+ * Zähler beantworten genau das aus dem öffentlichen Heartbeat — als Summen,
+ * ohne Konto-Bezug, denn meta/health darf keine sensiblen Daten tragen.
+ */
+export interface KontenStats {
+  /** Konten mit `engine.running == true` — die Grundgesamtheit des Scans. */
+  laufend: number;
+  /** Haben den Handelspfad durchlaufen (Exits + Einstiegs-Prüfung). */
+  gehandelt: number;
+  /** Übersprungen: Zugangsstufe 'pending' — wartet auf die Freischaltung
+   *  durch den Betreiber. Steht hier dauerhaft eine Zahl > 0, während ein
+   *  User „Engine an" meldet, ist DAS die Antwort. */
+  wartet_freischaltung: number;
+  /** Übersprungen: Zugangsstufe 'blocked'. */
+  gesperrt: number;
+  /** Übersprungen: Momentum-Wallet — gehört momentumRun, nicht dem Scan. */
+  momentum: number;
+  /** Übersprungen: Strategie fehlt oder ist nicht lesbar (Schema-Bruch). */
+  ohne_strategie: number;
+  /** Übersprungen: Broker-Modus nicht 'paper' (M14-Verriegelung). */
+  live_verriegelt: number;
+}
+
 async function executeUserTrades(
   marketData: Map<string, SymbolData>,
   regime: MarketRegime,
-): Promise<{ executed: number; gate: EntryGateStats }> {
+): Promise<{ executed: number; gate: EntryGateStats; konten: KontenStats }> {
   const db = getFirestore();
   let executed = 0;
   // Ein abgelehnter Einstieg ist ein Nicht-Ereignis und damit unsichtbar.
@@ -220,10 +251,20 @@ async function executeUserTrades(
     ohne_atr_durchgelassen: 0,
     filter_wuerde_blocken: 0,
   };
+  const konten: KontenStats = {
+    laufend: 0,
+    gehandelt: 0,
+    wartet_freischaltung: 0,
+    gesperrt: 0,
+    momentum: 0,
+    ohne_strategie: 0,
+    live_verriegelt: 0,
+  };
   const users = await db
     .collection('users')
     .where('settings.strategy.engine.running', '==', true)
     .get();
+  konten.laufend = users.size;
 
   // Beweislast-Umkehr (Owner-Direktive 28.07.): Das Stimmgewicht der Prognose
   // hängt an ihrer REALISIERTEN Trefferquote — einmal je Scan gelesen, für
@@ -266,8 +307,14 @@ async function executeUserTrades(
   for (const userDoc of users.docs) {
     const uid = userDoc.id;
     const strategy = userDoc.get('settings.strategy') as Strategy | undefined;
-    if (!strategy || !isStrategy(strategy)) continue;
-    if (resolveBrokerMode(strategy) !== 'paper') continue; // Live bleibt verriegelt (M14)
+    if (!strategy || !isStrategy(strategy)) {
+      konten.ohne_strategie += 1;
+      continue;
+    }
+    if (resolveBrokerMode(strategy) !== 'paper') {
+      konten.live_verriegelt += 1;
+      continue; // Live bleibt verriegelt (M14)
+    }
     // Gate VOR der Risiko-Klammer, damit beide Pfade (Signal + Ausführung)
     // dasselbe gedeckelte Gewicht sehen.
     strategy.signals = {
@@ -282,14 +329,22 @@ async function executeUserTrades(
     // Prüfung sitzt hier und nicht in der Query, weil ein fehlendes Feld
     // (Bestandskonto) als freigeschaltet gilt und Firestore darauf nicht
     // filtern kann.
-    if (!mayTrade(userDoc.data())) continue;
+    if (!mayTrade(userDoc.data())) {
+      if (accessLevelOf(userDoc.data()) === 'pending') konten.wartet_freischaltung += 1;
+      else konten.gesperrt += 1;
+      continue;
+    }
     // Momentum-Wallets gehören momentumRun (Hantel-Umbau 28.07.). Der Scan
     // fasst sie NICHT an — weder Einstieg noch Ausstieg. Täte er es, sähe er
     // eine Momentum-Position ohne Konfluenz-Signal und schlösse sie beim
     // nächsten Lauf; die Wochenstrategie käme nie über einen Tag hinaus.
     // Der Margin-Call im 1-Minuten-Puls greift weiter, denn er ist eine
     // Solvenzgrenze und keine Strategie-Entscheidung.
-    if (strategy.engine.mode === 'momentum') continue;
+    if (strategy.engine.mode === 'momentum') {
+      konten.momentum += 1;
+      continue;
+    }
+    konten.gehandelt += 1;
 
     try {
       const positionsSnap = await userDoc.ref.collection('positions').get();
@@ -1057,7 +1112,7 @@ async function executeUserTrades(
       logger.error(`Auto-Trading-Fehler für ${uid}`, err);
     }
   }
-  return { executed, gate };
+  return { executed, gate, konten };
 }
 
 /** Obergrenze des zentralen Scan-Sets (Kosten-Guard). */
@@ -1613,10 +1668,14 @@ export async function runScan(force = false): Promise<ScanResult> {
     filter_wuerde_blocken: 0,
   };
   let lastError: string | null = null;
+  // null = Trade-Block ist gar nicht gelaufen (Fehler davor) — das ist eine
+  // andere Aussage als „0 Konten laufend" und darf nicht gleich aussehen.
+  let konten: KontenStats | null = null;
   try {
     const res = await executeUserTrades(marketData, regime.state);
     trades = res.executed;
     entryGate = res.gate;
+    konten = res.konten;
   } catch (err) {
     lastError = `trades: ${err instanceof Error ? err.message : String(err)}`.slice(0, 400);
     logger.error('Trade-Block fehlgeschlagen', err);
@@ -1687,6 +1746,11 @@ export async function runScan(force = false): Promise<ScanResult> {
         // prüft gar nicht, und die Ursache liegt bei den Daten, nicht am
         // Parameter.
         entryGate,
+        // Konten-Zähler (Owner-Fund 02.08.): WER am Handel teilnimmt und wer
+        // still übersprungen wird — als Summen, ohne Konto-Bezug. Steht
+        // `wartet_freischaltung` > 0 bei einem User mit „Engine an", ist die
+        // fehlende Freischaltung die Ursache, nicht der Markt.
+        konten,
         // Alter Name, bis die Oberfläche nachzieht — der Inhalt ist derselbe
         // wie `entryGate`, nur ohne die Durchlass-Zahl.
         entryBlocks: {
