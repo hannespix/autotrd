@@ -1,0 +1,47 @@
+# Admin-Bootstrap (Owner-Werkzeug, 02.08.): gibt einem Konto per E-Mail das
+# Admin-Recht der App — für den ALLERERSTEN Admin, den das adminUsers-Callable
+# nicht ernennen kann (es verlangt einen bestehenden Admin, Henne-Ei).
+#
+# Nur manuell auslösbar (workflow_dispatch = Repo-Schreibrecht nötig), also
+# dieselbe Vertrauensstufe wie die Deploys, die denselben Service-Account
+# nutzen. Alle weiteren Ernennungen laufen über die Admin-Karte in der App.
+name: Admin-Bootstrap
+
+on:
+  workflow_dispatch:
+    inputs:
+      email:
+        description: 'E-Mail des Kontos, das Admin-Rechte bekommt'
+        required: true
+        type: string
+
+concurrency: admin-bootstrap
+
+jobs:
+  grant:
+    runs-on: ubuntu-latest
+    env:
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+    steps:
+      - name: Guard — Service-Account hinterlegt?
+        if: env.FIREBASE_SERVICE_ACCOUNT == ''
+        run: |
+          echo "::error::FIREBASE_SERVICE_ACCOUNT fehlt (siehe docs/SETUP.md)."
+          exit 1
+
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      # Kein npm ci: set-admin.mjs + gcp-lite.mjs sind dependency-frei.
+      - name: Admin-Recht setzen
+        env:
+          # Über env statt Inline-Interpolation — Workflow-Inputs gehören nie
+          # ungeprüft in eine Shell-Zeile (Injection).
+          EMAIL: ${{ inputs.email }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
+          GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/firebase-sa.json" \
+            node scripts-ci/set-admin.mjs "$EMAIL"
