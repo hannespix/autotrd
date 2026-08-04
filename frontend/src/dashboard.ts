@@ -96,11 +96,15 @@ import {
   watchPortfolioStats,
   watchEquitySeries,
   watchMomentum,
+  watchHealth,
+  watchPositioning,
   watchTuneFleet,
   watchTuneGlobal,
   watchTuneLog,
   type EvaluatedForecastRow,
   type ForecastStatsDoc,
+  type HealthDoc,
+  type PositioningDoc,
   type IndicatorRow,
   type MarketDocData,
   type SignalRow,
@@ -302,6 +306,13 @@ interface DashState {
   accessLevel: 'pending' | 'approved' | 'blocked';
   /** Kontotyp (Owner 02.08.): Admins sehen die Freischaltungs-Karte. */
   admin: boolean;
+  /** Betriebszustand des letzten Scans (meta/health) — Karte „Was die Engine
+   *  gerade tut". Öffentlich lesbar, deshalb ohne Callable direkt abonniert. */
+  health: HealthDoc | null;
+  /** Auffällige Positionierungen des letzten Tageslaufs (meta/positioning). */
+  positioning: PositioningDoc | null;
+  /** Sockel-Kennzahlen des letzten Momentum-Laufs (meta/momentum). */
+  sockelKonten: number | null;
   /** Zuletzt gesetzte News-Punkte im Haupt-Chart (E2E-Hook, 26.07.). */
   lastMainMarkers?: number;
   /** Live-Preise der Positions-Symbole (aus market/{sym}.quote). */
@@ -705,6 +716,16 @@ function layout(email: string): string {
           <thead><tr><th>Sym</th><th>Qty</th><th>Eintritt</th><th>Aktuell</th><th>P&amp;L</th><th>%</th><th></th></tr></thead>
           <tbody id="pBody"><tr><td colspan="7" class="c-t3">Keine offenen Positionen</td></tr></tbody>
         </table></div>
+      </div></div>
+
+      <!-- Betriebszustand (04.08.): Seit der Performance-Offensive entscheiden
+           fünf Mechaniken mit, ob ein Trade zustande kommt — alle unsichtbar.
+           „Es passiert nichts" sah bei einer scharfen Regel bisher genauso aus
+           wie bei einem toten System. Diese Karte macht den Unterschied. -->
+      <div class="card" data-panel="engineWhy"><div class="sect">Was die Engine gerade tut ${iBtn('engineWhy')}</div><div class="cbody">
+        <div id="whyAmpel" class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:6px"></div>
+        <div id="whyGate"></div>
+        <div id="whyExtra" class="hint" style="margin-top:6px"></div>
       </div></div>
 
       <div class="card" data-panel="market"><div class="sect">Markt-Übersicht</div><div class="cbody">
@@ -3543,6 +3564,120 @@ function renderAccessNote(): void {
   }
 }
 
+/* ── Betriebszustand: „Was die Engine gerade tut" (04.08.) ──────────────── */
+
+/**
+ * Klartext für die Einstiegs-Zähler des Heartbeats.
+ *
+ * Die Reihenfolge ist die Rangfolge der Aussagekraft, nicht die des Codes:
+ * Wer wissen will, warum nichts passiert, soll oben den wahrscheinlichsten
+ * Grund finden. Ein Zähler auf 0 wird ausgeblendet — eine Liste aus lauter
+ * Nullen liest niemand zweimal.
+ */
+const GATE_TEXT: ReadonlyArray<[string, string]> = [
+  ['regime_gegen_trend', 'Leerverkäufe abgelehnt — der Markt steigt'],
+  ['regime_stress', 'Einstiege pausiert — Marktstress'],
+  ['filter_blockiert', 'geblockt — diese Trade-Sorte verliert nachweislich'],
+  ['news_veto', 'News-Veto — hartes Ereignis in den Schlagzeilen'],
+  ['unter_kosten', 'zu kleine erwartete Bewegung für die Gebühren'],
+  ['cluster_voll', 'abgelehnt — zu viel in derselben Marktgruppe'],
+  ['nicht_handelbar', 'übersprungen — kein Broker verkauft das'],
+  ['hebel_frei', 'Hebel FREIGEGEBEN (alle fünf Bedingungen erfüllt)'],
+];
+
+const REGIME_TEXT: Record<string, { t: string; c: string }> = {
+  trend: { t: 'Aufwärtstrend — ruhig', c: 'var(--gn)' },
+  seitwaerts: { t: 'Seitwärts', c: 'var(--t3)' },
+  stress: { t: 'Stress — Einstiege pausiert', c: 'var(--rd)' },
+};
+
+const KALENDER_TEXT: Record<string, string> = {
+  fomc: 'Fed-Zinsentscheid',
+  nfp: 'US-Arbeitsmarktbericht',
+  cpi: 'US-Verbraucherpreise',
+};
+
+function whyChip(text: string, farbe: string): HTMLElement {
+  const el = document.createElement('span');
+  el.className = 'hint mono';
+  el.style.cssText = `padding:2px 8px;border-radius:999px;border:1px solid ${farbe};color:${farbe}`;
+  el.textContent = text;
+  return el;
+}
+
+/** Rendert den Betriebszustand aus meta/health + meta/positioning. */
+function renderEngineWhy(): void {
+  if (!st) return;
+  const ampel = $('whyAmpel');
+  const gate = $('whyGate');
+  const extra = $('whyExtra');
+  const h = st.health;
+  if (!h) {
+    ampel.innerHTML = '';
+    gate.innerHTML = '<div class="hint">Noch keine Scan-Daten.</div>';
+    extra.textContent = '';
+    return;
+  }
+
+  // Zeile 1: Marktzustand, anstehender Termin, Trades des letzten Scans.
+  ampel.innerHTML = '';
+  const r = REGIME_TEXT[h.regime?.state ?? ''] ?? { t: 'unbekannt', c: 'var(--t3)' };
+  const vix = typeof h.regime?.vix === 'number' ? ` · VIX ${h.regime.vix.toFixed(1)}` : '';
+  const vol = typeof h.regime?.realizedVolPct === 'number' ? ` · Vol ${h.regime.realizedVolPct}%` : '';
+  ampel.append(whyChip(`${r.t}${vix}${vol}`, r.c));
+  if (h.kalender?.bevorstehend) {
+    const name = KALENDER_TEXT[h.kalender.bevorstehend] ?? h.kalender.bevorstehend;
+    ampel.append(whyChip(`${name} in ${h.kalender.stundenBis ?? '?'} h`, 'var(--yl,#d9a441)'));
+  }
+  if (h.kalender?.turnOfMonth) ampel.append(whyChip('Monatswende', 'var(--t3)'));
+  if (typeof h.trades === 'number') {
+    ampel.append(
+      whyChip(`${h.trades} Trade(s) im letzten Scan`, h.trades > 0 ? 'var(--gn)' : 'var(--t3)'),
+    );
+  }
+
+  // Zeile 2: Warum Einstiege NICHT zustande kamen — nur was wirklich griff.
+  gate.innerHTML = '';
+  const g = h.entryGate ?? {};
+  const zeilen = GATE_TEXT.filter(([k]) => (g[k] ?? 0) > 0);
+  if (zeilen.length === 0) {
+    const geprueft = g['geprueft'] ?? 0;
+    gate.innerHTML = `<div class="hint">Im letzten Scan wurde nichts abgelehnt${
+      geprueft > 0 ? ` (${geprueft} Einstiege geprüft)` : ''
+    }.</div>`;
+  } else {
+    for (const [key, text] of zeilen) {
+      const z = document.createElement('div');
+      z.className = 'hint';
+      z.style.cssText = 'display:flex;gap:8px;align-items:baseline';
+      const n = document.createElement('span');
+      n.className = 'mono';
+      n.style.cssText = `min-width:2.5em;text-align:right;color:${
+        key === 'hebel_frei' ? 'var(--gn)' : 'inherit'
+      }`;
+      n.textContent = String(g[key]);
+      const t = document.createElement('span');
+      t.textContent = text;
+      z.append(n, t);
+      gate.append(z);
+    }
+  }
+
+  // Zeile 3: Konten, Sockel und die seltenen Gelegenheiten.
+  const teile: string[] = [];
+  const k = h.konten;
+  if (k) teile.push(`${k['gehandelt'] ?? 0}/${k['laufend'] ?? 0} Konten aktiv`);
+  if (typeof st.sockelKonten === 'number') teile.push(`Sockel: ${st.sockelKonten} Konto(s)`);
+  const auf = st.positioning?.auffaellig ?? {};
+  const squeeze = Object.entries(auf)
+    .filter(([, v]) => v?.state === 'short_squeeze_setup')
+    .map(([sym]) => sym);
+  if (squeeze.length > 0) teile.push(`Squeeze-Setup: ${squeeze.slice(0, 4).join(', ')}`);
+  const ueberfuellt = Object.values(auf).filter((v) => v?.state === 'longs_ueberfuellt').length;
+  if (ueberfuellt > 0) teile.push(`${ueberfuellt}× überfüllte Longs`);
+  extra.textContent = teile.join(' · ');
+}
+
 /* ── Admin-Verwaltung (Owner 02.08.: „wie kann man andere User freischalten?") ── */
 
 const ACCESS_BADGE: Record<'pending' | 'approved' | 'blocked', string> = {
@@ -4738,6 +4873,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     news: null,
     accessLevel: 'approved',
     admin: false,
+    health: null,
+    positioning: null,
+    sockelKonten: null,
     chartGroup: 'A',
     chart2Group: 'B',
     chart2Symbol: DEFAULT_STRATEGY.watchlist[1] ?? 'QQQ',
@@ -4910,7 +5048,26 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       renderFcLabStats('flCombos', stats);
     }),
     watchForecastStatsIntraday((stats) => renderFcLabStats('flCombosIntra', stats)),
-    watchMomentum(renderMomentum),
+    watchMomentum((doc) => {
+      renderMomentum(doc);
+      // Die Sockel-Zahl gehört in die Betriebszustands-Karte: Sie beantwortet
+      // „läuft der ruhige Teil überhaupt?" — eine 0 dort bei gesetztem
+      // corePct hieße, dass der Rebalance-Takt noch nicht fällig war.
+      if (st) {
+        st.sockelKonten = (doc as { sockelKonten?: number } | null)?.sockelKonten ?? null;
+        renderEngineWhy();
+      }
+    }),
+    watchHealth((doc) => {
+      if (!st) return;
+      st.health = doc;
+      renderEngineWhy();
+    }),
+    watchPositioning((doc) => {
+      if (!st) return;
+      st.positioning = doc;
+      renderEngineWhy();
+    }),
     watchTuneFleet(uid, renderTuneFleet),
     watchTuneLog(uid, renderTuneLog),
     watchTuneGlobal(renderTuneGlobal),

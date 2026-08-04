@@ -594,6 +594,47 @@ export function watchMomentum(cb: (doc: MomentumDoc | null) => void): Unsubscrib
 }
 
 /**
+ * Der Betriebszustand der Engine, wie ihn der Scan hinterlässt (meta/health).
+ *
+ * Warum das ins Dashboard gehört (Owner 04.08.: „das ist sehr langweilig
+ * anzuschauen"): Seit dem 04.08. entscheiden fünf Mechaniken mit, ob ein
+ * Trade zustande kommt — Regime-Ampel, Trade-Filter, News-Veto,
+ * Kostenschwelle und Hebel-Ampel. Alle arbeiten unsichtbar. Ein Nutzer sieht
+ * bisher nur, DASS nichts passiert, und das sieht bei einer scharfen Regel
+ * genauso aus wie bei einem toten System. Diese Zahlen machen aus „es tut
+ * sich nichts" ein „6 Leerverkäufe abgelehnt, weil der Markt steigt".
+ */
+export interface HealthDoc {
+  lastScanAt?: string;
+  trades?: number;
+  entryGate?: Record<string, number>;
+  konten?: Record<string, number>;
+  regime?: { state?: string; vix?: number | null; realizedVolPct?: number | null; aboveSma200?: boolean | null };
+  kalender?: { bevorstehend?: string | null; stundenBis?: number | null; turnOfMonth?: boolean; fomcVeraltet?: boolean };
+  watched?: string[];
+}
+
+export function watchHealth(cb: (doc: HealthDoc | null) => void): Unsubscribe {
+  return onSnapshot(doc(db(), 'meta', 'health'), (snap) =>
+    cb(snap.exists() ? (snap.data() as HealthDoc) : null),
+  );
+}
+
+/** Auffällige Positionierungen des letzten Tageslaufs (meta/positioning). */
+export interface PositioningDoc {
+  at?: string;
+  abgedeckt?: number;
+  zustaende?: Record<string, number>;
+  auffaellig?: Record<string, { state?: string; fundingAnnualPct?: number | null; oiChangePct?: number | null }>;
+}
+
+export function watchPositioning(cb: (doc: PositioningDoc | null) => void): Unsubscribe {
+  return onSnapshot(doc(db(), 'meta', 'positioning'), (snap) =>
+    cb(snap.exists() ? (snap.data() as PositioningDoc) : null),
+  );
+}
+
+/**
  * Stand EINER Variante der Schatten-Flotte.
  *
  * Ohne diese Zeile zeigte das Journal nur fertige Urteile — und ein Urteil,
