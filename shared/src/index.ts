@@ -10,6 +10,7 @@ export * from './portfolio.js';
 export * from './autotune.js';
 export * from './tuneGrid.js';
 export * from './momentum.js';
+export * from './tax.js';
 export * from './tradeAnalytics.js';
 export * from './globalLearning.js';
 export * from './tradingHealth.js';

@@ -26,6 +26,7 @@ export { quoteNow } from './callable/quoteNow.js';
 export { savePrediction } from './callable/prediction.js';
 export { trade } from './callable/trade.js';
 export { resetWallet } from './callable/reset.js';
+export { taxReport } from './callable/taxReport.js';
 export { adminUsers } from './callable/admin.js';
 
 export const healthz = onRequest({ cors: true, invoker: 'public' }, (_req, res) => {

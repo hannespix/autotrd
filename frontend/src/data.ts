@@ -7,6 +7,7 @@ import {
   type GlobalAxisStats,
   type Position,
   type Quote,
+  type Steuerbericht,
   type Strategy,
   type Wallet,
 } from '@autotrd/shared';
@@ -242,6 +243,27 @@ export interface ResetWalletResult {
   deleted: Record<string, number>;
   balance: number;
   resetAt: string;
+}
+
+export interface TaxReportResult {
+  ok: true;
+  bericht: Steuerbericht;
+  csv: string;
+  gelesen: number;
+  historieUnvollstaendig: boolean;
+}
+
+/**
+ * Jahres-Steuerbericht serverseitig rechnen lassen.
+ *
+ * Bewusst KEIN Client-Rechenweg: Der Bericht braucht die volle Historie
+ * inklusive Archiv, und die liegt hinter den Firestore-Regeln. Ihn im Browser
+ * zu rechnen hieße, alle Trades aller Jahre zu laden — teuer und langsam,
+ * ohne dass der Nutzer etwas davon hätte.
+ */
+export async function callTaxReport(jahr: number, echtgeld: boolean): Promise<TaxReportResult> {
+  const r = await httpsCallable(fns(), 'taxReport')({ jahr, echtgeld });
+  return r.data as TaxReportResult;
 }
 
 /** Strategie serverseitig validieren + speichern (flaches Schema). */

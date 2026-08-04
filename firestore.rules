@@ -43,6 +43,14 @@ service cloud.firestore {
         allow read: if isOwner(uid);
         allow write: if false;
       }
+      // Archiv (04.08.): Wohin resetWallet die Historie verschiebt, statt sie
+      // zu löschen. Dieselben Rechte wie `trades` — es sind dieselben Daten,
+      // nur an anderer Stelle. Der Steuer-Export liest beide, damit ein Reset
+      // keine Anschaffungskurse verschwinden lässt.
+      match /tradesArchive/{doc} {
+        allow read: if isOwner(uid);
+        allow write: if false;
+      }
 
       // Regelbaum-Strategien: read-only für den Owner — Schreiben NUR über
       // die Callables saveStrategyDraft/publishStrategyVersion/assignStrategy
