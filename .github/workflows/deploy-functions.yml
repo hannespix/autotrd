@@ -4,6 +4,15 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      force_daily:
+        description: >-
+          Tages-Läufe erzwingen, auch wenn sie heute schon liefen. Nötig,
+          wenn ein Deploy eine NEUE Kennzahl einführt: Der Tageslauf hat
+          dann bereits stattgefunden, das Gate überspringt ihn, und die
+          Zahl erschiene erst am Folgetag.
+        type: boolean
+        default: false
 
 concurrency: deploy-functions
 
@@ -121,7 +130,10 @@ jobs:
         continue-on-error: true
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
-        run: node scripts-ci/invoke-daily.mjs --only snapshotequity,evalforecasts,momentumrun
+        run: >-
+          node scripts-ci/invoke-daily.mjs
+          --only snapshotequity,evalforecasts,momentumrun
+          ${{ inputs.force_daily && '--force' || '' }}
 
       # Wenn der Lauf rot wurde (z. B. Scan-Invoke 500): scanmarket-Fehlerlogs
       # direkt ins Job-Log ziehen — die Ursache soll ohne GCP-Konsole lesbar sein.
