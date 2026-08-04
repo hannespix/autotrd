@@ -1216,34 +1216,40 @@ Die fachlichen Fallen, die das Datenmodell abbilden MUSS:
       täglicher EZB-Referenzkurs → `meta/fx/{date}`, beim Trade EINGEFROREN
       im Trade-Doc (`fxRate`, `fxDate`, `fxSource`) — nie nachträglich neu
       berechnen, sonst wandern historische Gewinne.
-- [ ] **FIFO-Lots.** Deutschland kennt nur First-in-first-out. Positionen
-      brauchen `lots[]` (Datum, Stück, Einstand in USD **und** EUR); ein
-      Verkauf zerlegt sich in Lot-Anteile mit je eigenem Ergebnis. Heute
-      verkauft die Engine immer die ganze Position — mit Nachkäufen und
-      Teilverkäufen wird FIFO zwingend.
-- [ ] **Getrennte Verlusttöpfe.** Aktienverluste sind nur mit Aktien**gewinnen**
-      verrechenbar (§ 20 Abs. 6 EStG), alles andere läuft im allgemeinen Topf.
-      Jeder Trade bekommt daher `taxCategory`: `aktie` | `fonds_etf` |
-      `sonstige` | `termin` | `krypto`.
-- [ ] **Krypto ist KEIN Kapitalertrag**, sondern ein privates
-      Veräußerungsgeschäft (§ 23 EStG): Haltefrist 1 Jahr (Fristbeginn am
-      Folgetag der Anschaffung) → danach steuerfrei; Freigrenze 1.000 € pro
-      Jahr für ALLE privaten Veräußerungsgewinne zusammen (Freigrenze, nicht
-      Freibetrag — ein Euro darüber macht den vollen Betrag steuerpflichtig);
-      persönlicher Steuersatz statt 25 %. Eigener Report-Abschnitt, eigene
-      Haltefrist-Uhr je Lot.
-- [ ] **Trade-Doc erweitern**: ISIN/WKN, Instrumentenname, Währung,
-      Ausführungszeitpunkt (UTC + lokale Zeit), Stück, Kurs (USD/EUR),
-      Gebühren getrennt (Anschaffungsnebenkosten mindern den Gewinn),
-      `taxCategory`, `lotRefs`, realisiertes Ergebnis in EUR. Additiv +
-      idempotent; Altbestand bleibt gültig.
-- [ ] **Jahresreport**: Callable `taxReport(year)` → CSV + druckbares PDF je
-      Steuerjahr, sortiert nach Kategorie, mit Summenzeilen passend zu den
-      Zeilen der Anlage KAP bzw. SO, plus Einzelnachweis je Trade
-      (Anschaffung → Veräußerung → EZB-Kurs → Ergebnis).
-- [ ] **Shorts sind steuerlich anders** (Termingeschäfte) — eigene Kategorie
-      und im Report klar getrennt; Hinweis auf Steuerberater statt eigener
-      Auslegung.
+- [~] **FIFO-Lots.** *(Rechnung fertig 04.08. — `shared/src/tax.ts`
+      `fifoVerrechnen` zerlegt Verkäufe lotweise, Long und Short in
+      getrennten Schlangen, mit Tests. OFFEN bleibt das Datenmodell: die
+      Position trägt kein `lots[]` mit EUR-Einstand. Solange die Engine
+      ganze Positionen verkauft, reicht die Rechnung über die Trade-Historie;
+      mit Nachkäufen und Teilverkäufen wird `lots[]` zwingend.)*
+- [x] **Getrennte Verlusttöpfe.** *(04.08.)* Vier Töpfe in `tax.ts`
+      (`aktien` | `sonstige` | `termin` | `privat`), abgeleitet aus
+      Anlageklasse **und** Richtung — jeder Leerverkauf landet im
+      Termin-Topf, auch auf Krypto. Die Oberfläche zeigt bewusst KEINE
+      Gesamtsumme, weil die Töpfe nicht gegeneinander verrechenbar sind.
+- [x] **Krypto ist KEIN Kapitalertrag.** *(04.08.)* § 23 als eigener Topf,
+      Jahresfrist **taggenau über den Kalender** statt über 365 Tage (in
+      Schaltjahren liegt das einen Tag auseinander, und der Tag entscheidet
+      über den vollen Gewinn). Steuerfreie Gewinne landen in KEINEM Topf,
+      weil sie kein Einkommen sind. Freigrenze wirkt als Grenze, nicht als
+      Freibetrag, und greift nie bei Verlust. Offene Bestände zeigen die
+      Restlaufzeit bis zur Steuerfreiheit.
+- [~] **Trade-Doc erweitern.** *(Teil 1 fertig 04.08.: `assetClass`,
+      `currency`, `commissionRate`/`slippageRate` getrennt, `fee`,
+      `entryPrice`, `acquiredAt`, `holdingDays` — alle optional, Altbestand
+      bleibt gültig. Kommission zählt als Anschaffungsnebenkosten, Slippage
+      als Teil des Preises. OFFEN: ISIN/WKN, Instrumentenname, EUR-Beträge,
+      `lotRefs`.)*
+- [~] **Jahresreport.** *(CSV fertig 04.08.: Callable `taxReport(year)`,
+      Semikolon-getrennt mit deutschen Dezimalkommas und BOM, je Zeile
+      Anschaffung → Veräußerung → Ergebnis. Liest `trades` UND
+      `tradesArchive`, damit ein Konto-Reset keine Anschaffungskurse
+      verschluckt. OFFEN: druckbares PDF und die Zuordnung zu den Zeilen der
+      Anlage KAP/SO.)*
+- [x] **Shorts sind steuerlich anders.** *(04.08.)* Eigener Termin-Topf,
+      im Report getrennt ausgewiesen; die Karte sagt ausdrücklich, dass keine
+      Steuerschuld gerechnet wird und die Zahlen Beleg-Grundlage für den
+      Steuerberater sind.
 
 **Abnahme:** Ein Kauf in USD und ein Verkauf am anderen Tag ergeben in EUR
 exakt das Ergebnis aus getrennter Umrechnung (Golden-Test mit zwei
@@ -1485,6 +1491,99 @@ Woche, sondern ein gemessenes Ergebnis.
 Weil es zwölf der neununddreißig Watchlist-Symbole betrifft, gehört die
 Entscheidung dem Owner und nicht dem Coding-Loop.
 
+## MG — Kapital-Regler je Anlageklasse (Owner-Vorschlag 04.08.)
+
+Owner: „kann man für die einzelnen Handelsklassen auch Schieberegler
+einbauen? am besten Shadow-Trades mit allen handeln lassen damit man die
+theoretische Performance messen kann, und dann eine Empfehlung ausgeben
+welche Handelsklassen jeweils am besten performen. auch einen Auto-Regler."
+
+Der Vorschlag löst das Problem, an dem MF1 hing: Krypto abzuschalten wäre
+endgültig gewesen, weil eine abgeschaltete Klasse nicht mehr gemessen wird.
+Mit laufendem Schatten ist die Entscheidung reversibel — dieselbe
+Zirkularität wie beim Live-Reife-Gate und bei der Kostenschwelle, zum
+dritten Mal an derselben Stelle gelöst.
+
+- [x] **MG1 Kern + Verdrahtung** *(04.08.)*: `shared/src/classAdvisor.ts`,
+      `engine.classWeights` (0…1,5) und `engine.classAutoTune`. Der Regler
+      multipliziert auf denselben `sizeFactor` wie das Überzeugungs-Sizing
+      und ist mit ihm gemeinsam bei 1,5 gedeckelt. Gewicht 0 stoppt NUR die
+      Ausführung (`entryGate.klasse_aus`); Signale und Schatten laufen
+      weiter. Ausstiege bleiben immer frei. Empfehlung erst ab 30 Trades.
+- [x] **MG2 Oberfläche** *(04.08.)*: Schieberegler je Klasse (0…1,5 in
+      Schritten von 0,25) im Options-Modal, Empfehlungs-Karte mit Kante,
+      Urteil und Begründung je Klasse, „Vorschlag übernehmen" als ein Klick.
+      Die Karte rechnet bewusst NICHTS nach — sie zeigt `classAdvice` aus
+      `stats/main`, das der Tageslauf schreibt. Zwei Implementierungen
+      derselben Regel wären zwei Wahrheiten, sobald eine nachzieht.
+      `saveStrategy` normalisiert die Gewichte serverseitig (nur bekannte
+      Klassen, Hülle 0…1,5).
+- [x] **MG3 Auto-Regler verdrahten** *(04.08.)*: `reglerSchritt` läuft im
+      Tageslauf (`snapshotEquity`, direkt nach `attribution` — dort liegen
+      die Zahlen ohnehin), aber nur bei gesetztem `classAutoTune`. Jede
+      Bewegung landet mit Vorher/Nachher, Urteil, Kante und Begründung in
+      `users/{uid}/classLog/{datum}_{klasse}` — ein Gewicht, das sich von
+      selbst bewegt, muss erklärbar bleiben.
+- [x] **MG4b Schatten in die Empfehlung** *(04.08.)*: `KlassenErgebnis`
+      trägt jetzt optional die Schatten-Kante; `snapshotEquity` liest sie
+      aus `meta/classShadow` und nimmt auch Klassen in den Bericht, die
+      NUR im Schatten vorkommen — genau die abgeschalteten. Die
+      Asymmetrie ist Absicht: Der Schatten darf ausschließlich
+      zurückholen (auf `SCHATTEN_PROBELOS = 0,5`), nie abschalten. Ihm
+      fehlt der Stop, der reale Verluste kappt, also ist eine negative
+      Schatten-Kante kein Beleg für einen negativen Trade-Ertrag — eine
+      positive dagegen ein Grund, es mit halbem Einsatz zu versuchen.
+      Realisierte Trades schlagen den Schatten immer.
+- [x] **MG4 Schatten für abgeschaltete Klassen — Messung** *(04.08.)*:
+      `shared/src/classShadow.ts`. Jeder Scan legt Richtung, Kurs und
+      Zeitpunkt seines Signals ans Markt-Dokument; der nächste misst, was
+      daraus geworden ist — vorzeichenrichtig zur Richtung, abzüglich
+      klassenechter Roundtrip-Kosten. Das Aggregat je Klasse steht in
+      `meta/classShadow` (atomar per `increment`) und im Heartbeat unter
+      `schatten`. Kostet keinen zusätzlichen Fetch: Das Markt-Dokument wird
+      ohnehin gelesen und geschrieben.
+      Zwei Gates, die die Zahl erst brauchbar machen: unbekannte Richtung ⇒
+      verwerfen statt als `sell` lesen, und `SCHATTEN_MAX_ALTER_MS = 30 min`
+      ⇒ Übernacht- und Wochenendlücken zählen nicht mit (sonst wäre die
+      Kante eine Funktion der Scan-Lücken, und die sind je Klasse
+      verschieden groß — ausgerechnet bei den Klassen, über die sie
+      entscheiden soll). Es misst die Güte der SIGNALQUELLE, nicht die der
+      Ausführung: Stop, Ziel und Haltedauer fehlen. Deshalb
+      `SCHATTEN_MIN_N = 200` statt der 30 Trades der Trade-Kante.
+
+## Arbeitsreihenfolge (Stand 04.08.)
+
+Über vierzig offene Punkte, und nicht alle sind gleich viel wert. Diese
+Reihenfolge folgt einer einzigen
+Frage: **Was bringt das System näher an „schreibt zuverlässig Gewinn"?**
+Denn daran hängt der Echtgeld-Schalter, und daran hängt alles andere.
+
+**Zuerst — was die Profitabilität direkt betrifft:**
+
+1. ~~**MG1–MG4b** Klassen-Regler komplett~~ *(04.08. erledigt)*: Kern,
+   Schatten-Messung, Oberfläche, Auto-Regler und der Rückweg aus der 0.
+   Was jetzt noch fehlt, ist keine Arbeit, sondern Zeit — der Schatten
+   braucht 200 Signale je Klasse, bevor er sprechen darf.
+2. **ME6** `captureGate` scharf schalten, sobald `kante_wuerde_blocken`
+   eine belastbare Zahl zeigt.
+
+**Danach — was Echtgeld möglich macht:**
+
+4. **M13 Order-Routing** `scanMarket → Alpaca`, aber erst nach einer an
+   echten Daten geprüften Anbindung (Owner muss Paper-Schlüssel hinterlegen).
+5. **M12b Rest**: EUR-Umrechnung je Vorgang (EZB-Kurse), `lots[]` am
+   Bestand, PDF. Wird zwingend, sobald echtes Geld fließt — vorher nicht.
+
+**Bewusst hinten:**
+
+6. **M13 Streamer** (Cloud Run, Websockets). Teuer im Betrieb und im Aufbau;
+   der 5-Minuten-Takt reicht für eine Strategie, die auf Tagesbasis denkt.
+7. **MO Struktursuche**, **Chart-Zeichenwerkzeuge**, **Bar-Replay**,
+   **1-Minuten-Daten**. Alles sinnvoll, nichts davon bringt einen Euro
+   näher an die Profitabilität.
+8. **M14 Echtgeld** bleibt verriegelt — und zwar nicht nur durch den
+   Doppel-Guard, sondern durch die Live-Reife: aktuell 1 von 5 Kriterien.
+
 ## M13 — Alpaca Paper Connect & Realtime-Streamer
 
 **Ziel:** Das zweite Paper-Gleis mit echter Order-Mechanik gegen
@@ -1492,10 +1591,14 @@ Entscheidung dem Owner und nicht dem Coding-Loop.
 Cloud-Run-`streamer` als einziger Websocket-Halter: Hot-Set-Quotes,
 Sekunden-Preis-Alerts, `trade_updates`.
 
-- [ ] `connectAlpacaPaper`: PK-Präfix-Pflicht (Live-Keys werden abgelehnt),
-      **hartkodierte** Paper-Basis-URL, Probe-Call, KMS-Envelope →
-      `users/{uid}/private/broker` (`read/write: if false` für alle Clients),
-      Initial-Sync + Disconnect-Callable
+- [~] `connectAlpacaPaper`. *(04.08. als `connectBroker` gebaut: PK-Präfix-
+      Pflicht — `AK…` wird mit Begründung abgelehnt —, hartkodierte
+      Paper-Basis-URL, Probe-Call VOR dem Speichern, Ablage in
+      `users/{uid}/private/broker` mit `read, write: if false`,
+      Disconnect löscht das Paar. Die Schlüssel kommen nie an einen Client
+      zurück; die App zeigt nur eine maskierte Kennung. OFFEN: KMS-Envelope
+      statt Klartext — vertretbar, solange nur Papier-Schlüssel dort liegen,
+      und zwingend, bevor je ein Live-Schlüssel in die Datenbank dürfte.)*
 - [ ] Order-Statusmaschine: `bracket`/`oco`/`trailing_stop`, `notional`,
       `extended_hours`, TIF; `client_order_id` = Firestore-Doc-ID
       (Idempotenz), `cancelOrder`/`replaceOrder`; `engine.stopLoss/takeProfit`

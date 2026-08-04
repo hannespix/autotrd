@@ -151,6 +151,32 @@ export interface EngineConfig extends RiskConfig {
    * crypto, indices, stocks_us, …). Fehlende Felder erben von oben.
    */
   byClass?: Record<string, Partial<RiskConfig>>;
+  /**
+   * Kapital-Regler je Anlageklasse (04.08.): 0 = aus, 1 = normal,
+   * bis 1,5 = verstärkt. Fehlende Klassen gelten als 1.
+   *
+   * Warum ein Regler und kein Schalter: Die Klassen-Messung vom 04.08.
+   * zeigt Kanten von −0,41 % bis +0,81 % je gehandeltem Dollar — dazwischen
+   * liegt alles. Ein Faktor kann das abbilden, ein Schalter nicht. Er läuft
+   * über denselben `sizeFactor` wie das Überzeugungs-Sizing und ist mit ihm
+   * gemeinsam gedeckelt; zusammen können sie die Klumpengrenze also nicht
+   * aushebeln.
+   *
+   * WICHTIG: Gewicht 0 stoppt nur die AUSFÜHRUNG. Signale und Schatten-P&L
+   * entstehen weiter, damit eine abgeschaltete Klasse messbar bleibt und
+   * sich zurückverdienen kann. Ohne das wäre jedes Abschalten endgültig —
+   * dieselbe Zirkularität wie beim Live-Reife-Gate.
+   */
+  classWeights?: Record<string, number>;
+  /**
+   * Auto-Regler: zieht `classWeights` selbsttätig nach, wenn die gemessene
+   * Kante es belegt (`shared/src/classAdvisor.ts`).
+   *
+   * Standard AUS. Er bewegt sich in Schritten statt zu springen und rührt
+   * eine Klasse mit weniger als 30 Trades gar nicht an — was den
+   * Kapitaleinsatz verändert, braucht Belege, keine Anekdoten.
+   */
+  classAutoTune?: boolean;
 }
 
 export interface RsiConfig {

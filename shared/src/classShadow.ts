@@ -1,0 +1,184 @@
+/**
+ * Schatten-Kante je Anlageklasse — die Messung, die weiterläuft, wenn eine
+ * Klasse abgeschaltet ist (MG4).
+ *
+ * ── Warum es das braucht ──────────────────────────────────────────────────
+ *
+ * Die Klassen-Kante aus `attribution()` entsteht aus AUSGEFÜHRTEN Trades.
+ * Setzt der Regler eine Klasse auf 0, entstehen keine neuen mehr — die
+ * Empfehlung friert auf dem Stand des Abschaltens ein, und die Entscheidung
+ * wird faktisch endgültig. Genau das sollte der Regler nicht sein.
+ *
+ * Dieselbe Zirkularität ist im Projekt schon zweimal aufgetreten: Ein
+ * stillgelegtes Konto wird nie live-reif; ein Filter, der alles blockt,
+ * beendet die Datensammlung, die ihn korrigieren würde. Beide Male war die
+ * Antwort, die MESSUNG von der AUSFÜHRUNG zu trennen. Hier auch.
+ *
+ * ── Warum aus Signalen und nicht aus simulierten Trades ───────────────────
+ *
+ * Ein Schatten-Depot je Klasse müsste Positionen, Cash und Haltedauern
+ * mitführen — viel Zustand für eine Frage, die einfacher ist: Sagen die
+ * Signale dieser Klasse die Richtung richtig voraus, und zwar weit genug,
+ * um die Reibung zu tragen?
+ *
+ * Genau das misst diese Datei. Ein Signal zeigt in eine Richtung, der Kurs
+ * bewegt sich bis zum nächsten Scan, und die Differenz — vorzeichenrichtig
+ * zur Signalrichtung, abzüglich Roundtrip-Kosten — ist die Kante dieses
+ * Signals. Kein Depot, kein Cash, keine Haltedauer.
+ *
+ * Das ist bewusst NICHT dasselbe wie die realisierte Trade-Kante: Es fehlen
+ * Stop, Ziel und Haltedauer. Es ist die Kante der SIGNALQUELLE, nicht die
+ * der Ausführung. Für die Frage „soll diese Klasse wieder mithandeln?" ist
+ * das die richtige Größe — und sie ist zum Nulltarif zu haben, weil Signale
+ * und Kurse ohnehin bei jedem Scan entstehen.
+ */
+
+/** Ein Signal aus dem vorigen Scan, gegen das jetzt gemessen wird. */
+export interface SchattenSignal {
+  direction: 'buy' | 'sell' | 'hold';
+  /** Kurs zum Zeitpunkt des Signals. */
+  price: number;
+}
+
+export interface SchattenBeitrag {
+  /** Zählt dieses Signal überhaupt? `hold` und kaputte Kurse zählen nicht. */
+  zaehlt: boolean;
+  /** Kursbewegung in Signalrichtung, in Prozent (vor Kosten). */
+  rohPct: number;
+  /** Nach Abzug der Roundtrip-Kosten — die Zahl, die über Gewinn entscheidet. */
+  nettoPct: number;
+}
+
+/**
+ * Was ein einzelnes Signal gebracht hätte.
+ *
+ * Das Vorzeichen dreht sich bei `sell`: Ein fallender Kurs ist dort ein
+ * Treffer. Wer das vergisst, misst jede funktionierende Short-Signalquelle
+ * als Verlust — derselbe Fehler, der im Broker beim Short-P&L lauert.
+ */
+export function bewerteSchattenSignal(
+  signal: SchattenSignal,
+  kursJetzt: number,
+  roundtripKosten: number,
+): SchattenBeitrag {
+  const leer: SchattenBeitrag = { zaehlt: false, rohPct: 0, nettoPct: 0 };
+  if (signal.direction === 'hold') return leer;
+  if (!(signal.price > 0) || !(kursJetzt > 0)) return leer;
+  if (!Number.isFinite(roundtripKosten) || roundtripKosten < 0) return leer;
+
+  const bewegung = ((kursJetzt - signal.price) / signal.price) * 100;
+  const roh = signal.direction === 'buy' ? bewegung : -bewegung;
+  const r4 = (x: number): number => Math.round(x * 10_000) / 10_000;
+  return { zaehlt: true, rohPct: r4(roh), nettoPct: r4(roh - roundtripKosten * 100) };
+}
+
+/** Laufendes Aggregat einer Klasse — additiv, damit es über Scans wächst. */
+export interface SchattenKlasse {
+  /** Bewertete Signale (ohne `hold`). */
+  n: number;
+  /** Summe der Netto-Kanten in Prozent. */
+  summePct: number;
+  /** Wie oft die Richtung stimmte (vor Kosten). */
+  treffer: number;
+}
+
+export interface SchattenAuswertung {
+  n: number;
+  treffer: number;
+  /** Trefferquote 0…1; null ohne Signale. */
+  trefferquote: number | null;
+  /** Mittlere Netto-Kante je Signal in Prozent; null ohne Signale. */
+  kantePct: number | null;
+}
+
+/** Ein Beitrag in ein laufendes Aggregat einrechnen. */
+export function addiereSchatten(
+  bisher: SchattenKlasse | undefined,
+  beitrag: SchattenBeitrag,
+): SchattenKlasse {
+  const k = bisher ?? { n: 0, summePct: 0, treffer: 0 };
+  if (!beitrag.zaehlt) return k;
+  return {
+    n: k.n + 1,
+    summePct: Math.round((k.summePct + beitrag.nettoPct) * 10_000) / 10_000,
+    // Treffer wird VOR Kosten gezählt: Die Trefferquote soll die Güte der
+    // Richtungsaussage messen, nicht die Gebührenordnung. Beides zusammen
+    // in eine Zahl zu werfen, verschleiert, welcher Teil das Problem ist.
+    treffer: k.treffer + (beitrag.rohPct > 0 ? 1 : 0),
+  };
+}
+
+/** Aggregat in lesbare Kennzahlen umrechnen. */
+export function werteSchattenAus(k: SchattenKlasse | undefined): SchattenAuswertung {
+  if (!k || k.n <= 0) return { n: 0, treffer: 0, trefferquote: null, kantePct: null };
+  const r4 = (x: number): number => Math.round(x * 10_000) / 10_000;
+  return {
+    n: k.n,
+    treffer: k.treffer,
+    trefferquote: r4(k.treffer / k.n),
+    kantePct: r4(k.summePct / k.n),
+  };
+}
+
+/**
+ * Wie viele Signale eine Schatten-Aussage tragen muss.
+ *
+ * Höher als die 30 Trades der Trade-Kante, und zwar aus einem Grund: Ein
+ * Signal je Scan und Symbol ist ein viel schwächerer Datenpunkt als ein
+ * abgeschlossener Trade — es fehlen Stop, Ziel und Haltedauer. Mehr davon
+ * sind nötig, um dasselbe Vertrauen zu rechtfertigen.
+ */
+export const SCHATTEN_MIN_N = 200;
+
+/**
+ * Wie alt ein Signal höchstens sein darf, um noch bewertet zu werden.
+ *
+ * Der Scan läuft alle 5 Minuten; 30 Minuten decken also auch fünf
+ * ausgefallene Läufe ab. Was darüber liegt, ist kein Signalfenster mehr,
+ * sondern eine Lücke: Übernacht, Wochenende, oder ein Symbol, das die
+ * Top-N-Auswahl tagelang nicht mitgenommen hat.
+ *
+ * Warum das nicht egal ist: Über eine Wochenendlücke bewegt sich ein Kurs
+ * ein Vielfaches dessen, was in fünf Minuten passiert. Solche Fenster
+ * mitzuzählen, machte die Kante zur Funktion der Scan-Lücken statt der
+ * Signalgüte — und zwar systematisch zugunsten der Klassen mit den
+ * größten Lücken. Genau die Klassen, über deren Abschaltung sie
+ * entscheiden soll.
+ */
+export const SCHATTEN_MAX_ALTER_MS = 30 * 60 * 1000;
+
+/**
+ * Ein gespeichertes Signal einlesen — mit Alters- und Formprüfung.
+ *
+ * Die Daten kommen aus Firestore und sind damit `unknown`: Ein Feld kann
+ * fehlen, ein älteres Dokument eine andere Form haben. Der teure Fehler
+ * wäre eine unbekannte Richtung, die stillschweigend wie `sell` behandelt
+ * wird — dann misst der Schatten Rauschen und eine Klasse fliegt raus.
+ * Deshalb hier: im Zweifel `null`, nicht raten.
+ */
+export function leseSchattenSignal(
+  roh: unknown,
+  jetztMs: number,
+  maxAlterMs: number = SCHATTEN_MAX_ALTER_MS,
+): SchattenSignal | null {
+  if (!roh || typeof roh !== 'object') return null;
+  const o = roh as Record<string, unknown>;
+
+  const dir = o['direction'];
+  if (dir !== 'buy' && dir !== 'sell' && dir !== 'hold') return null;
+
+  const price = o['price'];
+  if (typeof price !== 'number' || !Number.isFinite(price) || price <= 0) return null;
+
+  const at = o['at'];
+  if (typeof at !== 'string') return null;
+  const tMs = Date.parse(at);
+  if (!Number.isFinite(tMs)) return null;
+
+  const alter = jetztMs - tMs;
+  // Negatives Alter heißt: Uhr verstellt oder Zeitzone verrutscht. Beides
+  // ist ein Grund, die Zahl NICHT zu verwenden.
+  if (alter < 0 || alter > maxAlterMs) return null;
+
+  return { direction: dir, price };
+}

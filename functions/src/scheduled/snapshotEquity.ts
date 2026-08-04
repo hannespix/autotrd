@@ -22,19 +22,24 @@ import { logger } from 'firebase-functions/v2';
 import {
   aggregateTradingHealth,
   attribution,
+  berateKlassen,
   classify,
   costProfile,
   exitBreakdown,
   dailyReturns,
   drawdown,
   positionValue,
+  reglerSchritt,
   sharpe,
   tradeStats,
   tradingVerdict,
+  werteSchattenAus,
   type AccountContribution,
   type ClosedTrade,
   type EquityPoint,
+  type KlassenErgebnis,
   type Position,
+  type SchattenKlasse,
 } from '../../../shared/src/index.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 import { accrueMarginInterest } from '../core/broker.js';
@@ -59,7 +64,25 @@ export interface SnapshotResult {
 export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
   const db = getFirestore();
   const date = now.toISOString().slice(0, 10);
-  const users = await db.collection('users').select('wallet').get();
+  const users = await db.collection('users').select('wallet', 'settings').get();
+
+  // Schatten-Kante je Klasse (MG4) — einmal je Lauf, nicht je User: Die
+  // Signale entstehen im gemeinsamen Scan und sind für alle dieselben.
+  // Ohne sie könnte eine Klasse mit Gewicht 0 nie zurückkehren; mit ihr
+  // steht auch für eine stillgelegte Klasse eine Zahl im Bericht.
+  let schattenGlobal: Record<string, { n: number; kantePct: number | null }> = {};
+  try {
+    const doc = await db.doc('meta/classShadow').get();
+    const roh = (doc.get('klassen') as Record<string, SchattenKlasse> | undefined) ?? {};
+    schattenGlobal = Object.fromEntries(
+      Object.entries(roh).map(([k, v]) => {
+        const a = werteSchattenAus(v);
+        return [k, { n: a.n, kantePct: a.kantePct }];
+      }),
+    );
+  } catch (err) {
+    logger.warn('Schatten-Kante nicht lesbar — Empfehlung nur aus echten Trades', err);
+  }
 
   // Kurs-Cache: market/{sym}.quote.price einmal je Symbol lesen, nicht je User.
   const priceCache = new Map<string, number | null>();
@@ -164,6 +187,80 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
       const exits = exitBreakdown(closed);
       const costs = costProfile(closed);
 
+      // ── Klassen-Regler (MG2/MG3/MG4b) ─────────────────────────────────────
+      // Die Empfehlung entsteht IMMER — auch ohne Auto-Regler. Sie ist die
+      // Grundlage der Karte in den Einstellungen; wer sie nur ansehen und
+      // von Hand übernehmen will, soll dieselbe Zahl sehen, nach der die
+      // Automatik entscheiden würde.
+      const gewichte =
+        (userDoc.get('settings.strategy.engine.classWeights') as
+          | Record<string, number>
+          | undefined) ?? {};
+      const ergebnisse: Record<string, KlassenErgebnis> = {};
+      for (const [klasse, slice] of Object.entries(attr.byClass)) {
+        ergebnisse[klasse] = {
+          n: slice.n,
+          kantePct: slice.kantePct ?? null,
+          ...(schattenGlobal[klasse] ? { schatten: schattenGlobal[klasse] } : {}),
+        };
+      }
+      // Klassen, die NUR im Schatten vorkommen, gehören zwingend dazu: Genau
+      // das sind die abgeschalteten. Fehlten sie hier, wäre der Rückweg
+      // wieder zu — der Fehler, den MG4 gerade behebt.
+      for (const [klasse, s] of Object.entries(schattenGlobal)) {
+        ergebnisse[klasse] ??= { n: 0, kantePct: null, schatten: s };
+      }
+      const rat = berateKlassen(ergebnisse, gewichte);
+
+      const autoAn = userDoc.get('settings.strategy.engine.classAutoTune') === true;
+      const bewegt: Array<{
+        klasse: string;
+        von: number;
+        nach: number;
+        empfehlung: string;
+        kantePct: number | null;
+        n: number;
+        grund: string;
+      }> = [];
+      if (autoAn) {
+        const neu: Record<string, number> = { ...gewichte };
+        for (const r of rat.raete) {
+          const schritt = reglerSchritt(r);
+          if (Math.abs(schritt - r.gewicht) < 1e-9) continue;
+          neu[r.klasse] = schritt;
+          bewegt.push({
+            klasse: r.klasse,
+            von: r.gewicht,
+            nach: schritt,
+            empfehlung: r.empfehlung,
+            kantePct: r.kantePct,
+            n: r.n,
+            grund: r.grund,
+          });
+        }
+        if (bewegt.length > 0) {
+          await userDoc.ref.set(
+            { settings: { strategy: { engine: { classWeights: neu } } } },
+            { merge: true },
+          );
+          // Journal — wie beim Auto-Tuner (MT5). Ein Gewicht, das sich von
+          // selbst bewegt, muss erklärbar bleiben; sonst steht irgendwann
+          // eine Zahl im System, die niemand mehr zuordnen kann.
+          const log = db.batch();
+          for (const b of bewegt) {
+            log.set(userDoc.ref.collection('classLog').doc(`${date}_${b.klasse}`), {
+              at: now.toISOString(),
+              date,
+              ...b,
+            });
+          }
+          await log.commit();
+          logger.info(
+            `Klassen-Regler ${userDoc.id}: ${bewegt.map((b) => `${b.klasse} ${b.von}→${b.nach}`).join(', ')}`,
+          );
+        }
+      }
+
       await userDoc.ref.collection('stats').doc('main').set({
         walletId: 'main',
         equityDays: serie.length,
@@ -183,6 +280,17 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         byClass: attr.byClass,
         exits,
         costs,
+        // Empfehlung je Anlageklasse (MG2): Kante, Urteil, Vorschlag und
+        // Klartext-Begründung — fertig für die Karte, damit die Oberfläche
+        // nicht dieselbe Logik ein zweites Mal implementieren muss.
+        classAdvice: {
+          raete: rat.raete,
+          aenderungen: rat.aenderungen,
+          fazit: rat.fazit,
+          autoTune: autoAn,
+          bewegt,
+          at: now.toISOString(),
+        },
         updatedAt: now.toISOString(),
       });
       // Beitrag zum öffentlichen Gesamtbild — die Kennzahlen fallen hier

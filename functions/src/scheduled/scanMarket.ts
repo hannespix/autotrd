@@ -24,7 +24,13 @@ import {
   clusterHasRoom,
   costGate,
   effectiveLeverage,
+  addiereSchatten,
+  bewerteSchattenSignal,
+  leseSchattenSignal,
+  werteSchattenAus,
+  type SchattenKlasse,
   captureForClass,
+  klemmeGewicht,
   feeRateForClass,
   isTradable,
   stopDistancePct,
@@ -201,6 +207,8 @@ export interface EntryGateStats {
   unter_kosten: number;
   /** Schatten (04.08.): Was die Kanten-Fassung ZUSÄTZLICH blocken würde. */
   kante_wuerde_blocken: number;
+  /** Klassen-Regler auf 0 — der Schatten misst weiter. */
+  klasse_aus: number;
   /** DURCHGELASSEN, obwohl die Kostenschwelle nicht prüfen konnte (keine
    *  ATR). Steht diese Zahl hoch, ist die Schwelle faktisch abgeschaltet. */
   ohne_atr_durchgelassen: number;
@@ -272,6 +280,7 @@ async function executeUserTrades(
     news_veto: 0,
     unter_kosten: 0,
     kante_wuerde_blocken: 0,
+    klasse_aus: 0,
     ohne_atr_durchgelassen: 0,
     filter_blockiert: 0,
     regime_gegen_trend: 0,
@@ -610,6 +619,7 @@ async function executeUserTrades(
         | 'cluster_voll'
         | 'news_veto'
         | 'unter_kosten'
+        | 'klasse_aus'
         | 'regime_gegen_trend'
         | 'regime_stress'
         | null => {
@@ -670,6 +680,7 @@ async function executeUserTrades(
           // derselbe Einstieg in beiden Zählern und die Zahl läse sich wie
           // ein doppelter Effekt.
           if (kosten.ok && !mitKante.ok) gate.kante_wuerde_blocken += 1;
+          if (klassenGewicht(clamped, symbol) <= 0) gate.klasse_aus += 1;
         }
         if (regimeSperre === 'stress') gate.regime_stress += 1;
         else if (regimeSperre === 'gegen_trend') gate.regime_gegen_trend += 1;
@@ -678,6 +689,7 @@ async function executeUserTrades(
         if (regimeSperre === 'gegen_trend') return 'regime_gegen_trend';
         if (!platz) return 'cluster_voll';
         if (veto.blocked) return 'news_veto';
+        if (klassenGewicht(clamped, symbol) <= 0) return 'klasse_aus';
         return kosten.ok ? null : 'unter_kosten';
       };
 
@@ -1117,11 +1129,16 @@ async function executeUserTrades(
           // Überzeugungs-Sizing (Owner 01.08.): Einsatz folgt messbarer
           // Überzeugung — Konfluenz-Überschuss plus REALISIERTE Kante des
           // Steckbriefs; nachweislich schwache Sorten handeln halbiert.
-          const sizeFactor = convictionFactor({
-            konfluenz,
-            requiredConfluence: clamped.signals.minConfluence,
-            bucket: filterBuckets[bucket] ?? null,
-          });
+          // Klassen-Regler (04.08.) multipliziert auf die Überzeugung. Der
+          // Broker deckelt das Produkt weiterhin bei 1,5 und die
+          // Klumpengrenze bleibt die letzte Instanz — die beiden Faktoren
+          // können sich also nicht zu einem Hebel aufaddieren.
+          const sizeFactor =
+            convictionFactor({
+              konfluenz,
+              requiredConfluence: clamped.signals.minConfluence,
+              bucket: filterBuckets[bucket] ?? null,
+            }) * klassenGewicht(clamped, symbol);
           const budget = hebelBudget(konfluenz, {
             bucket: filterBuckets[bucket] ?? null,
             side: 'long',
@@ -1194,11 +1211,16 @@ async function executeUserTrades(
             gate.filter_blockiert += 1;
             continue;
           }
-          const sizeFactor = convictionFactor({
-            konfluenz,
-            requiredConfluence: clamped.signals.minConfluence,
-            bucket: filterBuckets[bucket] ?? null,
-          });
+          // Klassen-Regler (04.08.) multipliziert auf die Überzeugung. Der
+          // Broker deckelt das Produkt weiterhin bei 1,5 und die
+          // Klumpengrenze bleibt die letzte Instanz — die beiden Faktoren
+          // können sich also nicht zu einem Hebel aufaddieren.
+          const sizeFactor =
+            convictionFactor({
+              konfluenz,
+              requiredConfluence: clamped.signals.minConfluence,
+              bucket: filterBuckets[bucket] ?? null,
+            }) * klassenGewicht(clamped, symbol);
           const budget = hebelBudget(konfluenz, {
             bucket: filterBuckets[bucket] ?? null,
             side: 'short',
@@ -1618,6 +1640,24 @@ async function migrateCorePctAll(db: FirebaseFirestore.Firestore): Promise<void>
   }
 }
 
+/**
+ * Kapital-Gewicht einer Anlageklasse (04.08.).
+ *
+ * `0` heißt: kein neuer Einstieg. Es heißt NICHT „kein Signal" — Signale,
+ * Schatten-P&L und die Klassen-Kante entstehen weiter, damit eine
+ * abgeschaltete Klasse messbar bleibt und sich zurückverdienen kann. Wer
+ * das anders baut, kann eine einmal getroffene Entscheidung nie mehr
+ * überprüfen (siehe `shared/src/classAdvisor.ts`).
+ *
+ * Bestehende Ausstiege bleiben unberührt: Eine offene Position wird immer
+ * geschlossen, auch wenn ihre Klasse inzwischen auf 0 steht. Alles andere
+ * hieße, jemanden in einer Position festzuhalten, die er nicht mehr will.
+ */
+function klassenGewicht(strategy: Strategy, symbol: string): number {
+  return klemmeGewicht(strategy.engine.classWeights?.[classify(symbol)]);
+}
+
+
 export async function runScan(force = false): Promise<ScanResult> {
   const now = new Date();
   const scanId = now.toISOString().slice(0, 16) + 'Z'; // Minute = idempotent
@@ -1634,6 +1674,8 @@ export async function runScan(force = false): Promise<ScanResult> {
    * mit lauter Hold-Signalen und einer mit lauter geblockten Shorts sehen im
    * Log identisch aus: beide „keine Trades". */
   const signalDirs = { buy: 0, sell: 0, hold: 0 };
+  /** Schatten-Kante je Anlageklasse (MG4) — läuft auch für abgeschaltete Klassen. */
+  const schattenKlassen: Record<string, SchattenKlasse> = {};
   /** Richtungsverteilung je Indikator — s. Kommentar an der Zählstelle. */
   const voteDirs: Record<string, { buy: number; sell: number; hold: number }> = {};
   /** „hold", dem genau EINE Stimme zur Konfluenz fehlte. */
@@ -1750,6 +1792,13 @@ export async function runScan(force = false): Promise<ScanResult> {
         {
           name: resolveName(symbol),
           assetClass: classify(symbol),
+          // Grundlage der Schatten-Kante beim NÄCHSTEN Scan (MG4): Richtung,
+          // Kurs und Zeitpunkt dieses Signals. Bewusst am Haupt-Dokument und
+          // nicht in einer eigenen Sammlung — es wird ohnehin geschrieben.
+          // Der Zeitstempel ist kein Beiwerk: Ohne ihn ließe sich ein Signal
+          // von gestern nicht von einem aus dem letzten Lauf unterscheiden
+          // (siehe SCHATTEN_MAX_ALTER_MS).
+          lastSignal: { direction: sig.direction, price: sig.price, at: now.toISOString() },
           quote: {
             price: snap.price,
             changePct: snap.changePct,
@@ -1880,6 +1929,26 @@ export async function runScan(force = false): Promise<ScanResult> {
         date: lastDate,
       });
 
+      // Schatten-Kante je Klasse (MG4, 04.08.): Das Signal des VORIGEN Scans
+      // steht am Markt-Dokument; jetzt liegt der Kurs vor, den es
+      // vorhergesagt hat. Die Differenz — vorzeichenrichtig zur Richtung,
+      // abzüglich Roundtrip-Kosten — ist die Kante dieser Signalquelle.
+      //
+      // Der Punkt daran: Sie entsteht UNABHÄNGIG davon, ob gehandelt wurde.
+      // Steht eine Klasse per Regler auf 0, misst der Schatten weiter, und
+      // sie kann sich zurückverdienen. Ohne das wäre jedes Abschalten
+      // endgültig (siehe shared/src/classShadow.ts).
+      //
+      // Kostet nichts: Das Markt-Dokument wird ohnehin gelesen und
+      // geschrieben — es kommt nur ein Feld dazu.
+      const vorher = leseSchattenSignal(symDoc.get('lastSignal'), now.getTime());
+      if (vorher) {
+        const kl = classify(symbol);
+        schattenKlassen[kl] = addiereSchatten(
+          schattenKlassen[kl],
+          bewerteSchattenSignal(vorher, sig.price, feeRateForClass(kl) * 2),
+        );
+      }
       signalDirs[sig.direction] += 1;
       // Stimmen je INDIKATOR (04.08.). Warum das nötig wurde: `signalDirs`
       // zeigte über Stunden `buy: 0, sell: 2, hold: 37` — die Konfluenz
@@ -1961,6 +2030,7 @@ export async function runScan(force = false): Promise<ScanResult> {
     news_veto: 0,
     unter_kosten: 0,
     kante_wuerde_blocken: 0,
+    klasse_aus: 0,
     ohne_atr_durchgelassen: 0,
     filter_blockiert: 0,
     regime_gegen_trend: 0,
@@ -2018,6 +2088,51 @@ export async function runScan(force = false): Promise<ScanResult> {
     logger.warn('Intraday-Eval fehlgeschlagen', err);
   }
 
+  // Schatten-Kante je Klasse fortschreiben (MG4). Ein Scan liefert ~13
+  // Datenpunkte — die Aussage entsteht erst über Tage, also muss das
+  // Aggregat dauerhaft leben. `increment` statt Lesen-Rechnen-Schreiben:
+  // Ein manuell ausgelöster Scan parallel zum Zeitplan darf keine
+  // Datenpunkte verschlucken.
+  let schattenStand: Record<string, ReturnType<typeof werteSchattenAus>> | null = null;
+  try {
+    const ref = db.doc('meta/classShadow');
+    const vorstand = await ref.get();
+    const alt = (vorstand.get('klassen') as Record<string, SchattenKlasse> | undefined) ?? {};
+    if (Object.keys(schattenKlassen).length > 0) {
+      const inkremente: Record<string, Record<string, FirebaseFirestore.FieldValue>> = {};
+      for (const [kl, k] of Object.entries(schattenKlassen)) {
+        inkremente[kl] = {
+          n: FieldValue.increment(k.n),
+          summePct: FieldValue.increment(k.summePct),
+          treffer: FieldValue.increment(k.treffer),
+        };
+      }
+      await ref.set(
+        {
+          klassen: inkremente,
+          updatedAt: now.toISOString(),
+          ...(vorstand.get('startedAt') ? {} : { startedAt: now.toISOString() }),
+        },
+        { merge: true },
+      );
+    }
+    // Für den Heartbeat: alter Stand + Beitrag dieses Scans. Die Anzeige
+    // rechnet damit dasselbe, was der atomare Write gerade festgeschrieben hat.
+    const klassen = new Set([...Object.keys(alt), ...Object.keys(schattenKlassen)]);
+    schattenStand = {};
+    for (const kl of klassen) {
+      const a = alt[kl] ?? { n: 0, summePct: 0, treffer: 0 };
+      const b = schattenKlassen[kl] ?? { n: 0, summePct: 0, treffer: 0 };
+      schattenStand[kl] = werteSchattenAus({
+        n: a.n + b.n,
+        summePct: Math.round((a.summePct + b.summePct) * 10_000) / 10_000,
+        treffer: a.treffer + b.treffer,
+      });
+    }
+  } catch (err) {
+    logger.warn('Schatten-Kante nicht fortgeschrieben', err); // nie den Scan gefährden
+  }
+
   // Heartbeat für Monitoring-Alerts (SETUP.md §J): meta/health ist öffentlich
   // lesbar (meta-Rules) und enthält bewusst KEINE sensiblen Daten.
   await db
@@ -2063,6 +2178,15 @@ export async function runScan(force = false): Promise<ScanResult> {
         signalDirs,
         voteDirs,
         knappVerfehlt,
+        /* Schatten-Kante je Anlageklasse (MG4) — kumuliert, nicht je Scan.
+         *
+         * Die Zahl beantwortet die Frage, die die Trade-Kante nicht
+         * beantworten kann: Wie gut sagen die Signale einer Klasse die
+         * Richtung voraus, wenn dort gerade GAR NICHT gehandelt wird? Ohne
+         * sie friert die Empfehlung einer abgeschalteten Klasse auf dem
+         * Stand des Abschaltens ein — und die Entscheidung wird faktisch
+         * endgültig, obwohl der Regler graduell gemeint ist. */
+        schatten: schattenStand,
         // Konten-Zähler (Owner-Fund 02.08.): WER am Handel teilnimmt und wer
         // still übersprungen wird — als Summen, ohne Konto-Bezug. Steht
         // `wartet_freischaltung` > 0 bei einem User mit „Engine an", ist die
