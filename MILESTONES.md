@@ -1646,6 +1646,28 @@ sondern unerreichbar.
       `minConfluence: 1` mit Extraschritten. Genau diesen Selbstbetrug hat
       das Projekt schon einmal bezahlt (Forecast-Gewicht 2 bei Konfluenz 2,
       Audit 26.07.).
+      **Erster Live-Vergleich, 21:51 Uhr (derselbe Scan, dieselben Kurse):**
+
+      ```
+      Live-Logik    buy 0 · sell 0 · hold 13
+      Variante      buy 3 · sell 0 · hold 10
+      voteDirs (Variante)  rsi 3/2/8 · bollinger 2/0/11 · macd 6/7/0
+      ```
+
+      Die Hypothese bestätigt sich im ersten Lauf: Der RSI stimmt jetzt ab
+      (vorher 0/0/13, jetzt 3 Kauf- und 2 Verkaufsstimmen), Bollinger
+      liefert zwei Kaufstimmen statt keiner — und aus 13-mal Schweigen
+      werden drei Kaufsignale.
+      Bemerkenswert ist die RICHTUNG: Die Live-Logik wollte zuletzt
+      überwiegend verkaufen, also gegen einen laufenden Aufwärtstrend
+      wetten — die Regime-Lesart will kaufen, mit dem Trend. Das ist genau
+      der Unterschied zwischen Umkehr- und Momentum-Lesart, und er zeigt
+      sich sofort.
+      **Das beantwortet aber nur die erste Hälfte der Frage.** Ob diese
+      drei Signale auch VERDIENEN, steht erst fest, wenn der Schatten sie
+      bewertet hat. Mehr Signale sind kein Fortschritt, solange die Kante
+      die Kosten nicht trägt.
+
 - [ ] **MI2 Umschalten — erst mit Zahlen**: Sobald beide Lesarten je 200
       Signale haben, entscheidet der Vergleich. Schlägt die Variante die
       gehandelte Logik, wird sie zur Live-Logik (dann auch `compileClassic`
