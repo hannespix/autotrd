@@ -1668,6 +1668,30 @@ sondern unerreichbar.
       bewertet hat. Mehr Signale sind kein Fortschritt, solange die Kante
       die Kosten nicht trägt.
 
+      **Erste Schatten-Kante, 22:45 Uhr (n = 33, nur Krypto, nachts):**
+
+      ```
+      Variante   n=33   Kante −0,4803 % je Signal   Trefferquote 51,5 %
+      Live       n=0    (produziert weiter nur „hold")
+      ```
+
+      **Das spricht gegen die Variante, nicht für sie.** 51,5 % Treffer ist
+      Münzwurf; bei 0,5 % Roundtrip-Kosten für Krypto entspricht die
+      Netto-Kante von −0,48 % einer rohen Bewegung von praktisch null. Die
+      Variante löst also die strukturelle Blockade — die Signale, die
+      dabei entstehen, haben in dieser Stichprobe aber keine Kante.
+
+      Einordnung, ehrlich: n = 33 gegen `SCHATTEN_MIN_N = 200`, gemessen
+      nachts, ausschließlich an Krypto, in einer ruhigen Phase. Das ist
+      ein Frühindikator, kein Urteil — die Klasse mit der schlechtesten
+      Trade-Kante des ganzen Systems (−0,19 % je Dollar über 290 Trades)
+      ist die einzige, die hier drin ist. Aussagekräftig wird es zur
+      US-Öffnung, wenn Aktien und ETFs dazukommen.
+
+      Ein Vergleich ist ohnehin noch nicht möglich: Die Live-Logik steht
+      bei n = 0, weil sie nur `hold` liefert. Gegen null lässt sich nichts
+      vergleichen.
+
 - [ ] **MI2 Umschalten — erst mit Zahlen**: Sobald beide Lesarten je 200
       Signale haben, entscheidet der Vergleich. Schlägt die Variante die
       gehandelte Logik, wird sie zur Live-Logik (dann auch `compileClassic`
