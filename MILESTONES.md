@@ -2074,9 +2074,25 @@ harmlos (CSS, `querySelectorAll`, Anker). Und er ist gegen einen
 eingebauten Fehler geprüft: Ein künstlicher Tippfehler macht ihn rot und
 nennt ID samt Datei.
 
-Was er NICHT ersetzt: eine echte Browser-Prüfung (klickt der Regler?
-speichert der Knopf?). Dafür bräuchte es Playwright gegen die
-Emulatoren — machbar, aber eine eigene Aufgabe.
+Der zweite Riegel steht ebenfalls: `frontend/e2e/smoke.mjs` fährt die
+Oberfläche in einem echten Chromium gegen die lokale Emulator-Suite —
+registrieren, Dashboard, Einstellungen öffnen, Regler bewegen, Notbremse
+lesen. **Und er hat beim ersten Lauf sofort etwas gefunden:**
+
+`.opt-grid label` setzt `flex-direction: column`. Ein Inline-`display:flex`
+überschreibt nur `display`, nicht die Richtung — die `flex-basis: 120px`
+der Regler-Zeilen wirkten damit auf die **Höhe**. Aus zehn kompakten
+Zeilen wurden zehn 120 px hohe Blöcke, Name über Regler über Wert. Kein
+Typecheck, kein Build und auch der ID-Abgleich hätten das je gezeigt.
+Behoben mit einem eigenen Raster (`.cls-grid` / `.cls-row`, drei Spalten);
+der Smoke prüft die Zeilenhöhe jetzt mit (23 px statt 120).
+
+**Nicht in der CI**, und zwar mit Absicht: Der Lauf braucht Java, die volle
+Emulator-Suite und einen Browser — zusammen ein Vielfaches der jetzigen
+CI-Zeit für eine Prüfung, die bei reinen Logik-Änderungen nichts findet.
+Playwright ist aus demselben Grund keine Projekt-Abhängigkeit
+(`npm i -D playwright --no-save`, wenn gebraucht). Die Anleitung steht im
+Kopf der Datei.
 
 ### D. Bewusste Wegpunkte, kein To-do
 
