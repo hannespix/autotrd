@@ -45,6 +45,7 @@ import {
   alpacaPositionen,
   type Abweichung,
   type AlpacaKonto,
+  type AlpacaSchluessel,
 } from '../core/alpacaBroker.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { consumeQuota, resolveBrokerMode } from '../core/broker.js';
@@ -77,6 +78,29 @@ export interface BrokerStatusResult {
   fehler?: string;
 }
 
+/**
+ * Selbst verbundenes Papierkonto-Schlüsselpaar; null, wenn keins hinterlegt.
+ *
+ * Liegt in `users/{uid}/private/broker` — für Clients per Rules gesperrt.
+ * Lesefehler werden zu `null`: Ohne Schlüssel läuft der Handel im eigenen
+ * Buch weiter, mit einem halb gelesenen Schlüssel liefe er ins Leere.
+ */
+async function nutzerSchluessel(uid: string): Promise<AlpacaSchluessel | null> {
+  try {
+    const d = await getFirestore()
+      .collection('users')
+      .doc(uid)
+      .collection('private')
+      .doc('broker')
+      .get();
+    const keyId = d.get('keyId') as string | undefined;
+    const secret = d.get('secretKey') as string | undefined;
+    return keyId && secret ? { keyId, secret } : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function pruefeBrokerStatus(uid: string): Promise<BrokerStatusResult> {
   const db = getFirestore();
   const userDoc = await db.collection('users').doc(uid).get();
@@ -102,7 +126,11 @@ export async function pruefeBrokerStatus(uid: string): Promise<BrokerStatusResul
   const modus = resolveBrokerMode(strategy, reife);
   const wunschLive = strategy.broker?.mode === 'live';
   const envFreigabe = process.env.ALPACA_ALLOW_LIVE === '1';
-  const schluesselVorhanden = alpacaKonfiguriert();
+  // Einmal laden, zweimal gebraucht: für die Ampel und für den Probe-Call.
+  // „Vorhanden" heißt: Es gibt einen Weg zum Broker — entweder das selbst
+  // verbundene Papierkonto oder die Umgebung des Betreibers.
+  const eigeneKeys = await nutzerSchluessel(uid);
+  const schluesselVorhanden = eigeneKeys !== null || alpacaKonfiguriert();
 
   const basis = {
     ok: true as const,
@@ -120,8 +148,9 @@ export async function pruefeBrokerStatus(uid: string): Promise<BrokerStatusResul
     return {
       ...basis,
       meldung:
-        'Keine Alpaca-Schlüssel hinterlegt. Ohne sie läuft der Handel weiter im ' +
-        'eigenen Buch — es geht keine Order nach außen.',
+        'Kein Broker verbunden. Der Handel läuft im eigenen Buch — es geht ' +
+        'keine Order nach außen. Zum Verbinden ein Alpaca-PAPIERKONTO ' +
+        'anlegen (gratis) und dessen Schlüssel oben eintragen.',
     };
   }
 
@@ -130,9 +159,13 @@ export async function pruefeBrokerStatus(uid: string): Promise<BrokerStatusResul
     // nebenbei, ob das Schlüsselpaar dorthin gehört. Papier-Schlüssel
     // scheitern am Echtgeld-Endpunkt — und das soll hier auffallen, nicht
     // beim ersten Trade.
+    // Beim Papierkonto zählt das SELBST VERBUNDENE Schlüsselpaar des
+    // Nutzers; für Echtgeld ausschließlich das der Umgebung (`null` ⇒
+    // envSchluessel). Ein Nutzer-Schlüssel darf nie an den Echtgeld-Endpunkt.
+    const keys = modus === 'paper' ? eigeneKeys : null;
     const [konto, brokerPos] = await Promise.all([
-      alpacaKonto(modus),
-      alpacaPositionen(modus).catch(() => []),
+      alpacaKonto(modus, keys),
+      alpacaPositionen(modus, keys).catch(() => []),
     ]);
 
     const posSnap = await db.collection('users').doc(uid).collection('positions').get();

@@ -25,6 +25,7 @@ import {
   keineSchluesselImText,
   vorflugkontrolle,
   type AlpacaKonto,
+  schluesselArt,
 } from '../src/core/alpacaBroker.js';
 
 const KEY = 'PKTESTKEY1234567';
@@ -85,15 +86,15 @@ describe('Endpunkt-Trennung', () => {
     // Der teuerste denkbare Fehler wäre der umgekehrte: eine Live-Order, die
     // still im Papierdepot landet, oder eine Papier-Order gegen echtes Geld.
     const f = vi.fn().mockResolvedValue(antwort(KONTO_ROH));
-    await alpacaKonto('live', f);
+    await alpacaKonto('live', null, f);
     expect(f.mock.calls[0]![0]).toBe('https://api.alpaca.markets/v2/account');
-    await alpacaKonto('paper', f);
+    await alpacaKonto('paper', null, f);
     expect(f.mock.calls[1]![0]).toBe('https://paper-api.alpaca.markets/v2/account');
   });
 
   it('sendet die Schlüssel als Header', async () => {
     const f = vi.fn().mockResolvedValue(antwort(KONTO_ROH));
-    await alpacaKonto('paper', f);
+    await alpacaKonto('paper', null, f);
     const headers = (f.mock.calls[0]![1] as RequestInit).headers as Record<string, string>;
     expect(headers['APCA-API-KEY-ID']).toBe(KEY);
     expect(headers['APCA-API-SECRET-KEY']).toBe(SECRET);
@@ -113,15 +114,15 @@ describe('Schlüssel-Hygiene', () => {
     // landen im Log, in Firestore und im Browser — ein Schlüssel, der dort
     // einmal steht, ist verbrannt.
     const f = vi.fn().mockResolvedValue(antwort(`forbidden for key ${KEY}`, false, 403));
-    await expect(alpacaKonto('live', f)).rejects.toThrow(AlpacaFehler);
-    await expect(alpacaKonto('live', f)).rejects.not.toThrow(new RegExp(KEY));
+    await expect(alpacaKonto('live', null, f)).rejects.toThrow(AlpacaFehler);
+    await expect(alpacaKonto('live', null, f)).rejects.not.toThrow(new RegExp(KEY));
   });
 
   it('meldet fehlende Schlüssel, statt einen leeren Header zu senden', async () => {
     delete process.env.ALPACA_API_KEY;
     expect(alpacaKonfiguriert()).toBe(false);
     const f = vi.fn();
-    await expect(alpacaKonto('paper', f)).rejects.toThrow(/Keine Alpaca-Schlüssel/);
+    await expect(alpacaKonto('paper', null, f)).rejects.toThrow(/Keine Alpaca-Schlüssel/);
     expect(f).not.toHaveBeenCalled();
   });
 });
@@ -181,7 +182,7 @@ describe('clientOrderId — Idempotenz', () => {
 
   it('geht mit der Order auf die Leitung', async () => {
     const f = vi.fn().mockResolvedValue(antwort({ id: 'o1', client_order_id: 'cid-1' }));
-    await alpacaOrder('paper', { symbol: 'AAPL', side: 'buy', qty: 5, clientOrderId: 'cid-1' }, f);
+    await alpacaOrder('paper', { symbol: 'AAPL', side: 'buy', qty: 5, clientOrderId: 'cid-1' }, null, f);
     const body = JSON.parse((f.mock.calls[0]![1] as RequestInit).body as string) as Record<
       string,
       unknown
@@ -250,14 +251,14 @@ describe('alpacaPositionen', () => {
         { symbol: 'TSLA', qty: '-5', side: 'short', avg_entry_price: '200' },
       ]),
     );
-    const p = await alpacaPositionen('paper', f);
+    const p = await alpacaPositionen('paper', null, f);
     expect(p[0]).toEqual({ symbol: 'AAPL', qty: 10, seite: 'long', einstand: 150 });
     expect(p[1]).toEqual({ symbol: 'TSLA', qty: 5, seite: 'short', einstand: 200 });
   });
 
   it('verträgt eine leere Antwort', async () => {
     const f = vi.fn().mockResolvedValue(antwort([]));
-    expect(await alpacaPositionen('paper', f)).toEqual([]);
+    expect(await alpacaPositionen('paper', null, f)).toEqual([]);
   });
 });
 
@@ -302,5 +303,55 @@ describe('abgleich — beide Richtungen', () => {
         [{ symbol: 'BTC-USD', qty: 0.3, seite: 'long', einstand: 50_000 }],
       ),
     ).toEqual([]);
+  });
+});
+
+describe('schluesselArt — die Trennung, die Echtgeld schützt', () => {
+  it('erkennt Papier- und Echtgeld-Schlüssel am Präfix', () => {
+    expect(schluesselArt('PKABCD1234567890')).toBe('paper');
+    expect(schluesselArt('AKABCD1234567890')).toBe('live');
+  });
+
+  it('ist gegen Kleinschreibung und Leerzeichen robust', () => {
+    // Ein Nutzer, der seinen Schlüssel mit einem Leerzeichen einfügt, darf
+    // nicht versehentlich als „unbekannt" durchrutschen.
+    expect(schluesselArt('  pkabcd1234567890  ')).toBe('paper');
+    expect(schluesselArt('akabcd1234567890')).toBe('live');
+  });
+
+  it('nennt alles andere unbekannt statt es zu raten', () => {
+    expect(schluesselArt('XYZ123')).toBe('unbekannt');
+    expect(schluesselArt('')).toBe('unbekannt');
+  });
+});
+
+describe('Schlüssel als Parameter statt aus der Umgebung', () => {
+  it('benutzt das übergebene Paar und NICHT das der Umgebung', () => {
+    // Der Kern der Mehrbenutzer-Fähigkeit: Das Papierkonto des Nutzers darf
+    // nie mit den Schlüsseln des Betreibers angesprochen werden.
+    const f = vi.fn().mockResolvedValue(antwort(KONTO_ROH));
+    const eigene = { keyId: 'PKUSER0000000001', secret: 'USERSECRET000000000000' };
+    return alpacaKonto('paper', eigene, f).then(() => {
+      const h = (f.mock.calls[0]![1] as RequestInit).headers as Record<string, string>;
+      expect(h['APCA-API-KEY-ID']).toBe('PKUSER0000000001');
+      expect(h['APCA-API-KEY-ID']).not.toBe(KEY);
+    });
+  });
+
+  it('fällt ohne übergebenes Paar auf die Umgebung zurück', async () => {
+    const f = vi.fn().mockResolvedValue(antwort(KONTO_ROH));
+    await alpacaKonto('paper', null, f);
+    const h = (f.mock.calls[0]![1] as RequestInit).headers as Record<string, string>;
+    expect(h['APCA-API-KEY-ID']).toBe(KEY);
+  });
+
+  it('putzt auch ÜBERGEBENE Schlüssel aus der Fehlermeldung', async () => {
+    // Ohne das stünde der Nutzer-Schlüssel im Log, sobald Alpaca ihn
+    // zurückspiegelt — die env-Variante allein reicht nicht mehr.
+    const eigene = { keyId: 'PKUSER0000000001', secret: 'USERSECRET000000000000' };
+    const f = vi.fn().mockResolvedValue(antwort(`bad key ${eigene.secret}`, false, 401));
+    await expect(alpacaKonto('paper', eigene, f)).rejects.not.toThrow(
+      new RegExp(eigene.secret),
+    );
   });
 });
