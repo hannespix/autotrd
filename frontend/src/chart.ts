@@ -12,7 +12,7 @@
  * - crosshair.mode als numerisches Literal 0.
  */
 
-import { alsOrtszeit, heikinAshi } from '@autotrd/shared';
+import { alsOrtszeit, heikinAshi, lokalerTag, tagesPraefix } from '@autotrd/shared';
 import type { Bar } from '@autotrd/shared';
 
 /**
@@ -663,8 +663,11 @@ export async function buildPriceChart(
         } else if (typeof t === 'number') {
           // Achsen-Zeit IST die Ortszeit — `toLocaleTimeString` würde den
           // Offset ein zweites Mal draufrechnen (der Widerspruch vom 04.08.:
-          // Achse 13:30, Kurszeile 15:30 für denselben Bar).
-          label = achsenUhrzeit(t);
+          // Achse 13:30, Kurszeile 15:30 für denselben Bar). Aus demselben
+          // Grund kommt auch der Kalendertag aus der UTC-Lesart.
+          const iso = new Date(t * 1000).toISOString();
+          const praefix = tagesPraefix(iso.slice(0, 10), lokalerTag(new Date()));
+          label = praefix ? `${praefix} ${achsenUhrzeit(t)}` : achsenUhrzeit(t);
         }
         cb({
           time: label,
