@@ -76,7 +76,9 @@ function ensureModal(): HTMLElement {
     <div class="dsheet" style="width:min(640px,100%)" role="dialog" aria-modal="true" aria-labelledby="legalTitle">
       <button class="dclose" data-legal-close aria-label="Schließen">✕</button>
       <h3 id="legalTitle"></h3>
-      <div id="legalBody" class="legal-body"></div>
+      <!-- selectable: Rechtstexte sind zum Lesen UND Kopieren da (Adressen,
+           Paragraphen) — die App-weite Markier-Sperre gilt hier nicht. -->
+      <div id="legalBody" class="legal-body selectable"></div>
     </div>`;
   document.body.appendChild(modal);
   modal.querySelectorAll('[data-legal-close]').forEach((el) =>

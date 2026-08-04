@@ -46,6 +46,41 @@ body {
   -webkit-font-smoothing: antialiased; overflow-x: hidden;
 }
 button, input, select { font-family: inherit; font-size: inherit; }
+
+/* ── Keine Textmarkierung im Werkzeug (Owner-Wunsch 04.08.) ──────────────
+   Das Dashboard wird gezogen, nicht gelesen: Modul-Reihenfolge, Sidebar-
+   Breite, Chart-Höhe, Zoom und Pan laufen alle über Ziehen. Eine versehentlich
+   markierte Zeile bricht solche Gesten ab — mit Stift und auf Touchscreens
+   noch leichter als mit der Maus, weil dort ein kurzes Verharren schon als
+   Markierung zählt.
+
+   Bewusst NICHT global blind: Wo Text wirklich gelesen und kopiert wird,
+   bleibt er markierbar (siehe .selectable unten). */
+body {
+  user-select: none;
+  -webkit-user-select: none; /* Safari/iOS */
+  /* Langes Tippen auf iOS öffnet sonst das Teilen-/Kopieren-Menü mitten in
+     der Geste; der graue Tap-Blitz stört bei schnellen Klickfolgen. */
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Eingabefelder MÜSSEN markierbar bleiben — dort korrigiert man Zahlen und
+   Symbole. Ohne diese Ausnahme kann man in manchen Browsern nicht einmal per
+   Doppelklick ein Wort ersetzen. */
+input, textarea, select, [contenteditable='true'] {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Zum Lesen UND Kopieren gedacht: Rechtstexte (Adressen, Paragraphen) und
+   Fehlermeldungen — genau die will man weitergeben können, statt sie
+   abzutippen. */
+.selectable, .selectable *, .error {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
 .mono, .vbig, .sval, .lb-pr, .mkt-pr, .chart-px, .clock, .smv, .tbl td, .mkt-ch, .lb-ch {
   font-family: var(--f-num); font-variant-numeric: tabular-nums;
 }
