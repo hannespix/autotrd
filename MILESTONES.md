@@ -1423,6 +1423,68 @@ Buchverlust in einen echten. Der Hebel liegt nicht bei der Anbindung,
 sondern bei der Handelsfrequenz — `entryGate.unter_kosten` stand bei
 `geprueft: 7` auf **0**, die Kostenschwelle greift also nie.
 
+## MF — Warum die Engine stillsteht (04.08., gemessen)
+
+Der Befund, der drei Fehldiagnosen an einem Tag beendet hat. Die Reihenfolge
+ist lehrreich, weil jede Zwischenstufe plausibel aussah:
+
+1. „Die Gebühren fressen den Gewinn." — Stimmt (0,143 % Kante gegen 0,300 %
+   Kosten), erklärt aber nicht den Stillstand.
+2. „Die Kostenschwelle blockt nie." — Stimmt auch, ist aber folgenlos: Es
+   kommt nichts bis zu ihr durch (`regime_gegen_trend: 12` bei
+   `geprueft: 12`).
+3. „Die Konfluenz erzeugt im Aufwärtstrend nur Verkaufssignale, weil RSI und
+   Bollinger Mean-Reversion-Maße sind." — **Falsch.** Sie erzeugen gar
+   nichts.
+
+### Die Messung (`voteDirs`, 20:15 UTC, n = 13 Symbole)
+
+```
+rsi          0 buy    0 sell   13 hold      ← stimmt NIE ab
+bollinger    0 buy    2 sell   11 hold      ← stimmt fast nie ab
+macd         7 buy    6 sell    0 hold      ← stimmt IMMER ab
+knappVerfehlt: 13 von 13 hold-Signalen fehlte genau EINE Stimme
+```
+
+### Die Ursache steht in den Voreinstellungen
+
+| Indikator | Regel | schweigt |
+|---|---|---|
+| RSI | buy < 30, sell > 70 | zwischen 30 und 70 — die meiste Zeit |
+| Bollinger | `bbBreakoutPct: 95` ⇒ sell > 95 %, buy < 5 % | in den mittleren **90 %** des Bandes |
+| MACD | `line` gegen `signal` | praktisch nie |
+
+Bei `minConfluence: 2` sind zwei einige Stimmen nötig. **MACD liefert die
+eine, und es fehlt strukturell immer die zweite.** Genau das misst
+`knappVerfehlt` mit 13 von 13.
+
+Die „Konfluenz aus drei Indikatoren" ist damit faktisch **„MACD plus ein
+seltener Extremwert"** — dieselbe Art Etikett wie beim Forecast-Vote
+(Audit 26.07., s. `engine.ts`). Und es erklärt rückwirkend die
+Verkaufslastigkeit: Wenn überhaupt ein zweiter Indikator spricht, meldet er
+ein Extrem — im Aufwärtstrend ist das Bollinger am oberen Band, also
+`sell`. Die Regime-Ampel blockt es folgerichtig als Short gegen den Trend.
+
+### Was daraus NICHT folgt
+
+Die naheliegende Reaktion wäre, die Schwellen zu lockern (RSI 40/60,
+Bollinger 80) und so mehr Signale zu erzeugen. **Das wäre die falsche
+Richtung.** Die Kante je Trade ist mit +0,143 % kleiner als die
+Roundtrip-Kosten von 0,300 % — mehr Trades vergrößern den Verlust, sie
+verkleinern ihn nicht. Erst muss die Kante über die Kosten, dann darf die
+Frequenz steigen.
+
+### Was daraus folgt — offen als MF1
+
+Die einzige Änderung, die eine direkte Ergebnismessung mit belastbarer
+Stichprobe hinter sich hat, ist die Klassen-Kante: **crypto, 290 Trades,
+−1.132,87 $, Kante −0,19 %.** Ohne Krypto stünde das Konto bei +40,12 $
+statt −1.092,75 $. Das ist keine Schätzung über Einfangquoten aus einer
+Woche, sondern ein gemessenes Ergebnis.
+
+Weil es zwölf der neununddreißig Watchlist-Symbole betrifft, gehört die
+Entscheidung dem Owner und nicht dem Coding-Loop.
+
 ## M13 — Alpaca Paper Connect & Realtime-Streamer
 
 **Ziel:** Das zweite Paper-Gleis mit echter Order-Mechanik gegen
