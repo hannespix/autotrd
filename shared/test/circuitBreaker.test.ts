@@ -13,6 +13,7 @@ import {
   klemmeBreaker,
   pruefeBreaker,
 } from '../src/circuitBreaker.js';
+import { DEFAULT_STRATEGY } from '../src/strategy.js';
 
 const lage = (vortag: number, jetzt: number, ausgeloest = false) => ({
   vortagEquity: vortag,
@@ -118,5 +119,34 @@ describe('klemmeBreaker — gegen Tippfehler', () => {
     expect(b.grenzePct).toBe(BREAKER_MAX_PCT);
     expect(b.verlustPct).toBe(30);
     expect(b.einstiegErlaubt).toBe(false);
+  });
+});
+
+describe('Voreinstellung für neue Konten', () => {
+  it('liefert neuen Konten eine scharfe Notbremse', () => {
+    // Ein Sicherheitsnetz, das standardmäßig aus ist, schützt niemanden —
+    // und der Moment, in dem jemand es einschalten würde, ist genau der,
+    // in dem er es vergisst.
+    const grenze = DEFAULT_STRATEGY.engine.dailyLossLimitPct ?? 0;
+    expect(grenze).toBeGreaterThan(0);
+    expect(grenze).toBeLessThanOrEqual(BREAKER_MAX_PCT);
+    const b = pruefeBreaker(lage(10_000, 9_400), {
+      dailyLossLimitPct: grenze,
+    });
+    expect(b.einstiegErlaubt).toBe(false); // 6 % Verlust reißt die Grenze
+  });
+
+  it('stellt an einem normalen Tag nicht in den Weg', () => {
+    // 1,5 % Tagesverlust ist Alltag, keine Krise.
+    const b = pruefeBreaker(lage(10_000, 9_850), {
+      dailyLossLimitPct: DEFAULT_STRATEGY.engine.dailyLossLimitPct ?? 0,
+    });
+    expect(b.einstiegErlaubt).toBe(true);
+  });
+
+  it('lässt Bestandskonten unberührt', () => {
+    // Fehlendes Feld = aus. Eine Sperre rückwirkend über fremde Konten zu
+    // legen, wäre eine Kapitalentscheidung ohne Auftrag.
+    expect(pruefeBreaker(lage(10_000, 5_000), {}).einstiegErlaubt).toBe(true);
   });
 });

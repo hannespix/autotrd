@@ -413,6 +413,23 @@ export const DEFAULT_STRATEGY: Strategy = {
     // Kern-Satellit (04.08.): NEUE Konten starten mit ruhigem Sockel.
     // Begründung samt Messung an DEFAULT_CORE_PCT.
     corePct: DEFAULT_CORE_PCT,
+    /* Tages-Notbremse für NEUE Konten (04.08.).
+     *
+     * Ein Sicherheitsnetz, das standardmäßig aus ist, schützt niemanden —
+     * und der Moment, in dem jemand es einschalten würde, ist genau der,
+     * in dem er es vergisst.
+     *
+     * Warum 5 %: Bei zehn Positionen à 10 % und 3 % Stop kostet ein
+     * vollständiges Ausstoppen rund 3 % des Depots. 5 % ist damit „ein
+     * schlechter Tag plus Luft" — eng genug, um eine Verlustserie zu
+     * stoppen, weit genug, um an einem normalen Tag nie zu greifen.
+     *
+     * BESTANDSKONTEN bleiben unberührt (fehlendes Feld = aus). Eine
+     * Sperre rückwirkend über fremde Konten zu legen, wäre eine
+     * Kapitalentscheidung ohne Auftrag; sie steht in den Einstellungen
+     * und ist ein Klick.
+     */
+    dailyLossLimitPct: 5,
     // Volatilitäts-Realismus (MA6): Krypto und Rohstoffe brauchen weitere
     // Stops, sonst ist jeder normale Tagesausschlag ein Zwangsverkauf.
     // Werte grob an typischen Tagesranges orientiert; per UI änderbar.
