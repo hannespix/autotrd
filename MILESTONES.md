@@ -1358,6 +1358,37 @@ reißen würde, wird verworfen).
 Regelbaum-Strategien — der Ausführungspfad in `scanMarket` läuft leer, bis
 Teil 2 ihn füttert. Das ist ein bewusster Wegpunkt, kein vergessener Rest.
 
+## ME — Drei Aufträge an einem Tag (04.08.): Supabase raus, Steuer, Echtgeld
+
+Owner: „setze jetzt alles um in firebase. Werfe die supabase Entwürfe und
+alles was zusammenhängt raus und Räume auf … ich hätte gerne heute noch eine
+fertige echtgeld trade Möglichkeit und Finanzamt, Export etc."
+
+- [x] **ME1 Supabase gelöscht.** ~4.000 Zeilen raus, Begründung in **MS**.
+- [x] **ME2 Steuer-Export** (`shared/src/tax.ts`, `callable/taxReport.ts`,
+      Karte + CSV): FIFO über beide Trade-Sammlungen (auch das Reset-Archiv),
+      vier getrennte Töpfe, taggenaue § 23-Jahresfrist, Freigrenze als Grenze.
+      Deckt M12b Teil 1 sachlich ab; offen bleiben dort Verlustverrechnung
+      über Jahre, EZB-Umrechnung und PDF.
+- [x] **ME3 Echtgeld-Anbindung** (`core/alpacaBroker.ts`,
+      `callable/brokerStatus.ts`, Karte): Adapter mit Vorflugkontrolle,
+      lauf-gebundener Order-Kennung und beidseitigem Depot-Abgleich. Nimmt
+      M13 den Kern vorweg; **ohne** Order-Routing in die Engine — das gehört
+      hinter eine an echten Daten geprüfte Anbindung, nicht davor.
+
+**Was zum echten Geld noch fehlt, und zwar außerhalb dieses Repos:** ein
+Alpaca-Live-Konto (für Nicht-US-Residenten 30.000 $ Mindesteinlage; das
+Papierkonto ist gratis), die Verifikation gegen die echte API statt gegen
+die Test-Attrappe, und danach erst die Verdrahtung `scanMarket → Alpaca`.
+
+**Der Befund, der schwerer wiegt als alle drei Aufträge** (Heartbeat 16:30):
+514 Trades, Gebühren 3.049,01 $, netto −1.593,19 $ — also brutto **+1.455,82 $**.
+Je Trade: 2,83 $ verdient, 5,93 $ bezahlt. Der Handel funktioniert; er wird
+zu Tode gehandelt. Solange das so ist, verwandelt echtes Geld einen
+Buchverlust in einen echten. Der Hebel liegt nicht bei der Anbindung,
+sondern bei der Handelsfrequenz — `entryGate.unter_kosten` stand bei
+`geprueft: 7` auf **0**, die Kostenschwelle greift also nie.
+
 ## M13 — Alpaca Paper Connect & Realtime-Streamer
 
 **Ziel:** Das zweite Paper-Gleis mit echter Order-Mechanik gegen
