@@ -1080,6 +1080,17 @@ function layout(email: string): string {
         Echtgeld-Schlüssel (AK…) wird abgelehnt — der gehört in die
         Server-Umgebung, damit echtes Geld nicht an einem Passwort hängt.
         Das Papierkonto ist bei Alpaca gratis und sofort da.</p>
+      <!-- Die Schlüssel liegen nicht dort, wo man sie sucht: Das Paper-
+           Dashboard ist eine eigene Oberfläche, und der Knopf zum Erzeugen
+           steht rechts in der Seitenleiste. Ohne diese drei Links kostet der
+           erste Versuch mehr Zeit als die ganze Einrichtung. -->
+      <p class="hint">
+        <a href="https://app.alpaca.markets/signup" target="_blank" rel="noopener noreferrer">1. Konto anlegen</a>
+        &nbsp;·&nbsp;
+        <a href="https://app.alpaca.markets/paper/dashboard/overview" target="_blank" rel="noopener noreferrer">2. Paper-Dashboard → API-Keys erzeugen</a>
+        &nbsp;·&nbsp;
+        <a href="https://docs.alpaca.markets/docs/getting-started" target="_blank" rel="noopener noreferrer">Dokumentation</a>
+      </p>
       <div class="row" style="align-items:center;gap:8px;margin-top:6px">
         <button class="btn btn-n" id="bkGo">Verbindung prüfen</button>
         <button class="btn btn-n" id="bkDel">Trennen</button>
