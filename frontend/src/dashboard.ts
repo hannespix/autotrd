@@ -313,6 +313,8 @@ interface DashState {
    * Chart ein Symbol zeigt, in dem das Konto drinsteckt. Default AN.
    */
   showPos: boolean;
+  /** Positions-Chip aufgeklappt? Zu = nur Seite, Stück und Ergebnis. */
+  posOpen: boolean;
   /** News-Lage des aktuellen Chart-Symbols (aus dem market-Doc-Watcher). */
   news: MarketDocData['news'];
   /** Zugangsstufe des Kontos — 'pending'/'blocked' heißt: der Scan handelt NICHT. */
@@ -2226,15 +2228,25 @@ function posKurs(p: Position, fallback?: number): number {
   return closes[closes.length - 1] ?? p.avgEntry;
 }
 
-/** Preislinien für Einstand, Stop, Trailing und Ziel einer Position. */
+/**
+ * Preislinien für Einstand, Stop, Trailing und Ziel einer Position.
+ *
+ * Bewusst karg (Owner 04.08.: „überlagert zu viel Info"): NUR der Einstand
+ * bekommt einen Preis-Kasten auf der Skala — jeder weitere Kasten überdeckt
+ * einen echten Skalenwert, und mit vieren war die Preisachse unlesbar.
+ * Titel-Texte im Chart entfallen ganz; sie standen doppelt zum Achsen-Label
+ * und lagen quer über den Kerzen. Welche Linie welche ist, sagt die Farbe
+ * (rot = Stop, orange = Trailing, grün = Ziel) und der Chip mit den
+ * Prozent-Abständen.
+ */
 function positionsLinien(p: Position): PriceLineSpec[] {
   const lv = posLevels(p);
   const lines: PriceLineSpec[] = [
-    { key: 'pos:entry', price: lv.entry, color: POS_FARBEN.entry, title: `Einstieg ${fmtNum(lv.entry)}`, style: 0, width: 2 },
+    { key: 'pos:entry', price: lv.entry, color: POS_FARBEN.entry, style: 0, width: 2 },
   ];
-  if (lv.stop !== null) lines.push({ key: 'pos:stop', price: lv.stop, color: POS_FARBEN.stop, title: 'Stop', style: 2 });
-  if (lv.trail !== null) lines.push({ key: 'pos:trail', price: lv.trail, color: POS_FARBEN.trail, title: 'Trailing', style: 1 });
-  if (lv.target !== null) lines.push({ key: 'pos:target', price: lv.target, color: POS_FARBEN.target, title: 'Ziel', style: 2 });
+  if (lv.stop !== null) lines.push({ key: 'pos:stop', price: lv.stop, color: POS_FARBEN.stop, style: 2, axisLabel: false });
+  if (lv.trail !== null) lines.push({ key: 'pos:trail', price: lv.trail, color: POS_FARBEN.trail, style: 1, axisLabel: false });
+  if (lv.target !== null) lines.push({ key: 'pos:target', price: lv.target, color: POS_FARBEN.target, style: 2, axisLabel: false });
   return lines;
 }
 
@@ -2259,7 +2271,9 @@ function positionsMarker(times: Array<string | number>, sym?: string): ChartMark
     position: short ? 'aboveBar' : 'belowBar',
     color: POS_FARBEN.entry,
     shape: short ? 'arrowDown' : 'arrowUp',
-    text: `${short ? 'Short' : 'Kauf'} ${fmtNum(p.avgEntry)}`,
+    // Ohne Preis im Text: Der steht schon auf der Preisskala, und zwei Zahlen
+    // für dieselbe Sache verdecken nur Kerzen (Owner 04.08.).
+    text: short ? 'Short' : 'Kauf',
   };
 }
 
@@ -2276,10 +2290,20 @@ function positionsVerlauf(
   const { pnl } = positionPnl(p, posKurs(p, closes[closes.length - 1]));
   const punkte: Array<{ time: string | number; value: number }> = [];
   for (let i = anker.index; i < closes.length; i++) punkte.push({ time: times[i]!, value: closes[i]! });
-  return { key: 'pos:seit', color: pnl >= 0 ? POS_FARBEN.gewinn : POS_FARBEN.verlust, width: 2, points: punkte };
+  // Dünn (1 px): Die Kerzen zeigen den Verlauf, die Linie markiert nur die
+  // Strecke seit Einstieg — 2 px legten sich wie ein Balken über die Körper.
+  return { key: 'pos:seit', color: pnl >= 0 ? POS_FARBEN.gewinn : POS_FARBEN.verlust, width: 1, points: punkte };
 }
 
-/** Preislinien + HUD-Zeile der offenen Position (aus renderChart). */
+/**
+ * Preislinien + Chip der offenen Position (aus renderChart).
+ *
+ * Der Chip ist zweistufig (Owner 04.08.: „überlagert zu viel Info"): Zu sieht
+ * man nur die drei Angaben, die man im Vorbeigehen braucht — Seite mit Stück
+ * und das laufende Ergebnis. Ein Klick klappt Einstand, Haltedauer und die
+ * Abstände zu Stop und Ziel auf. Gleiche Geste wie die OHLC-Zeile darüber,
+ * gleicher Speicherort (Gerät-lokal).
+ */
 function applyPosition(): void {
   if (!st?.chart) return;
   const p = posImChart();
@@ -2295,20 +2319,23 @@ function applyPosition(): void {
   const short = p.side === 'short';
   const live = posKurs(p);
   const { pnl, pct } = positionPnl(p, live);
-  const tage = haltedauerTage(p.openedAt, Date.now());
-  const dauer = tage === 0 ? 'heute eröffnet' : tage === 1 ? 'seit 1 Tag' : `seit ${tage} Tagen`;
   const teile = [
     `<b class="${short ? 'c-rd' : 'c-gn'}">${short ? 'SHORT' : 'LONG'} ${p.qty}</b>`,
-    dauer,
-    `${fmtNum(lv.entry)} → ${fmtNum(live)}`,
     `<b class="${pnlClass(pnl)}">${fmtPct(pct)} · ${money(pnl)}</b>`,
   ];
-  if (p.core === true) teile.push('<span class="pos-tag">Sockel</span>');
-  if (lv.stop !== null) teile.push(`Stop ${fmtPct(levelDistPct(lv.stop, live, 'stop', short))}`);
-  else if (lv.stopAtr) teile.push('Stop adaptiv');
-  if (lv.target !== null) teile.push(`Ziel ${fmtPct(levelDistPct(lv.target, live, 'target', short))}`);
-  else if (lv.targetAtr) teile.push('Ziel adaptiv');
+  if (st.posOpen) {
+    const tage = haltedauerTage(p.openedAt, Date.now());
+    teile.splice(1, 0, tage === 0 ? 'heute rein' : tage === 1 ? 'seit 1 Tag' : `seit ${tage} Tagen`);
+    teile.splice(2, 0, `${fmtNum(lv.entry)} → ${fmtNum(live)}`);
+    if (p.core === true) teile.push('<span class="pos-tag">Sockel</span>');
+    if (lv.stop !== null) teile.push(`Stop ${fmtPct(levelDistPct(lv.stop, live, 'stop', short))}`);
+    else if (lv.stopAtr) teile.push('Stop adaptiv');
+    if (lv.target !== null) teile.push(`Ziel ${fmtPct(levelDistPct(lv.target, live, 'target', short))}`);
+    else if (lv.targetAtr) teile.push('Ziel adaptiv');
+  }
+  teile.push(`<span class="pos-fold">${st.posOpen ? '▾' : '▸'}</span>`);
   hud.innerHTML = teile.join(' <span class="pos-sep">·</span> ');
+  hud.title = st.posOpen ? 'Details einklappen' : 'Einstand, Haltedauer und Abstände zu Stop/Ziel zeigen';
   hud.hidden = false;
 }
 
@@ -5096,6 +5123,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     // der Toggle kostet also nichts; Abwahl bleibt gerätelokal gemerkt.
     showNews: localStorage.getItem('autotrd-chart-news') !== '0',
     showPos: localStorage.getItem('autotrd-chart-pos') !== '0',
+    posOpen: localStorage.getItem('autotrd-pos-open') === '1',
     posPrices: new Map(),
     pfStats: null,
     equitySeries: [],
@@ -5964,6 +5992,13 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     localStorage.setItem('autotrd-chart-news', st.showNews ? '1' : '0');
     applyMarkers();
     renderAllPanels(); // News-Punkte gelten in ALLEN Charts
+  });
+  // Klick auf den Chip klappt die Details auf/zu (gleiche Geste wie OHLC)
+  $('posHud').addEventListener('click', () => {
+    if (!st) return;
+    st.posOpen = !st.posOpen;
+    localStorage.setItem('autotrd-pos-open', st.posOpen ? '1' : '0');
+    applyPosition();
   });
   $('lyPos').classList.toggle('on', st?.showPos ?? true);
   $('lyPos').addEventListener('click', () => {

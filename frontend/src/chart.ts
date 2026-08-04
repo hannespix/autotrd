@@ -87,8 +87,17 @@ export interface PriceLineSpec {
   key: string;
   price: number;
   color: string;
-  /** Text am rechten Rand der Linie. */
-  title: string;
+  /**
+   * Text am rechten Rand der Linie. Sparsam einsetzen: Er steht IM Chart und
+   * verdeckt Kurs — meist sagt schon das Achsen-Label alles (Owner 04.08.:
+   * „überlagert zu viel Info"). Fehlend = kein Text.
+   */
+  title?: string;
+  /**
+   * Preis-Kasten auf der Skala (Default an). Jeder Kasten überdeckt einen
+   * echten Skalenwert — bei mehreren Linien nur der wichtigsten geben.
+   */
+  axisLabel?: boolean;
   /** 0 = durchgezogen, 1 = gepunktet, 2 = gestrichelt (numerisch, CLAUDE.md §6). */
   style?: 0 | 1 | 2;
   width?: number;
@@ -571,8 +580,8 @@ export async function buildPriceChart(
           color: spec.color,
           lineWidth: (spec.width ?? 1) as never,
           lineStyle: (spec.style ?? 2) as never,
-          axisLabelVisible: true,
-          title: spec.title,
+          axisLabelVisible: spec.axisLabel ?? true,
+          title: spec.title ?? '',
         };
         const vorhanden = priceLines.get(spec.key);
         if (vorhanden) vorhanden.applyOptions(opts as never);
