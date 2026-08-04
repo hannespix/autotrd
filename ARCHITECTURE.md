@@ -41,10 +41,32 @@ ursprüngliche Zeitdruck-Argument („M12b und M13 schreiben den meisten
 Persistenzcode, sonst schreibt man ihn zweimal") ist zirkulär geworden,
 seit beide Vorhaben nicht als Nächstes kommen.
 
-**Was das Auftauen auslöst — nicht der Kalender, sondern eine Zahl:** der
-Lese-Break-even. Ein Backtest über fünf Jahre × 166 Symbole sind 207.500
-Firestore-Reads (0,12 $) gegen eine einzige SQL-Query. Bei ~20 Läufen am Tag
-kippt die Rechnung. Bis dahin bleibt `VITE_BACKEND` auf Firebase.
+**Was das Auftauen NICHT auslöst — der Fünf-Jahres-Backtest.** Diese
+Begründung stand hier zuerst (207.500 Firestore-Reads gegen eine SQL-Query)
+und trägt nicht. `functions/src/core/backtest.ts` rechnet **Long/Flat über
+Tages-Bars**. Die Live-Engine handelt seit dem 5-Minuten-Umbau auf
+Intraday-Kerzen und darf shorten. Ein Fünf-Jahres-Lauf würde also eine
+Strategie messen, die so nie läuft — und ließe sich mit unserer Datenquelle
+gar nicht auf die echte Zeitbasis heben: Yahoo gibt 5-Minuten-Historie nur
+~60 Tage zurück. Als *Optimierungs*-Werkzeug ist der lange Backtest sogar
+schädlich: Bei über einem Dutzend Stellschrauben und einem einzigen
+Kurspfad findet man immer eine Parametrierung, die rückblickend glänzt und
+live versagt. Sein legitimer Zweck ist der **Stresstest** („überlebt die
+Regel-Logik einen Crash wie 2022?") — und der läuft einmal im Monat, nicht
+zwanzigmal am Tag. Er rechtfertigt keine Datenbank.
+
+**Was es auslöst — die Fenster-Grenze der Auswertung.** `snapshotEquity`
+liest je Konto die jüngsten `TRADES_WINDOW = 500` Trades. Das ist keine
+fachliche Grenze, sondern eine Kostenbremse: Firestore rechnet je gelesenem
+Dokument ab, also wächst die tägliche Auswertung linear mit der Historie.
+Am 04.08. stehen 514 geschlossene Trades über vier Konten — bei der
+aktuellen Frequenz schneidet das Fenster in wenigen Monaten echte
+Information ab, und der Selbstverbesserer lernt aus einem Ausschnitt, ohne
+dass es jemand sieht. Postgres liest denselben Zeitraum als eine Query zum
+Pauschalpreis und beantwortet dabei Fragen, für die Firestore je Frage
+einen Index bräuchte — genau die Fragen, die Meta-Labeling und Auto-Tuner
+stellen. **Der Trigger ist also: Die Auswertung braucht mehr Historie, als
+das Fenster hergibt.** Bis dahin bleibt `VITE_BACKEND` auf Firebase.
 
 `frontend/test/supabaseParitaet.test.ts` hält den Rückstand fest (20 von 40
 Exporten fehlen, Stand 04.08.) und schlägt an, wenn `data.ts` wächst, ohne
