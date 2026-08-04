@@ -22,3 +22,4 @@ export * from './newsGate.js';
 export * from './tradeFilter.js';
 export * from './regime.js';
 export * from './conviction.js';
+export * from './positioning.js';
