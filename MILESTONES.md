@@ -1056,11 +1056,25 @@ und KI-Erklärung, gekoppelt an ein automatisches Journal.
       read-only, Selbstdiagnose in `meta/health.equitySnapshot`. Noch offen
       hier: Expectancy-R (braucht R-Multiples aus `core/risk.ts`) und
       Attribution je Strategie (braucht `strategyId` am Trade).
-- [ ] `core/risk.ts`: Circuit Breaker (Tages-Loss-Limit je Wallet,
-      `blockNew`/`flattenAll`, Re-Arm per Callable, Sofort-Push),
-      Positionslimit, fixed-fractional Sizing (Initial-Stop beim Entry
-      eingefroren → R-Multiples) — in derselben Transaktion wie der
-      Wallet-Write, für Scan- und Manuell-Pfad
+- [x] **Circuit Breaker** *(04.08.)*: `shared/src/circuitBreaker.ts` +
+      `engine.dailyLossLimitPct` / `engine.flattenOnBreach`. Der Stop-Loss
+      schützt eine POSITION; diese Grenze schützt den Tag — gegen den Fall,
+      der Konten wirklich leert: viele kleine, jeweils regelkonform
+      gestoppte Verluste hintereinander.
+      Gemessen wird gegen das Eigenkapital des Vortags **inklusive
+      Buchverlusten** — zählte nur Realisiertes, löste die Bremse nie aus,
+      solange niemand verkauft, und genau das Verhalten soll sie bremsen.
+      Sie sperrt EINSTIEGE in **beiden** Pfaden (Scan und `trade`-Callable);
+      eine Bremse, die man mit einem Handel umgehen kann, ist keine. Exits
+      bleiben immer frei. `flattenAll` ist bewusst Opt-in: Zwangsverkauf
+      realisiert Buchverluste zum schlechtesten Zeitpunkt.
+      Entriegelt wird datumsbasiert (neuer Handelstag) oder per
+      `resetBreaker`-Callable mit Tageslimit 5 — die Bezugsgröße bleibt
+      dabei stehen, sonst ließe sich dieselbe Grenze beliebig oft
+      ausreizen. `snapshotEquity` armiert sie täglich neu.
+      *Offen bleibt aus dieser Zeile:* fixed-fractional Sizing mit
+      eingefrorenem Initial-Stop (R-Multiples) — das Risiko-Sizing rechnet
+      heute je Scan neu.
 - [ ] Journal-Autoanlage bei Entry/Exit mit eingefrorenem `signalContext`
       (Votes, Indikatorwerte, Forecast, News-Refs, ≤ 60 Bars inline);
       Rules erlauben dem Client nur `notes/tags/mistakes/review` (diff-Check);

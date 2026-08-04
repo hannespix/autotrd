@@ -54,6 +54,7 @@ import {
   type MarketRegime,
   type PositioningState,
   positionValue,
+  pruefeBreaker,
   resolveName,
   resolveRisk,
   type NewsSnapshot,
@@ -211,6 +212,9 @@ export interface EntryGateStats {
   kante_wuerde_blocken: number;
   /** Klassen-Regler auf 0 — der Schatten misst weiter. */
   klasse_aus: number;
+  /** Abgelehnt: Tages-Notbremse ausgelöst (M12). Zählt je gesperrtem Konto,
+   *  nicht je Symbol — die Bremse ist eine Konto-Entscheidung. */
+  breaker_aktiv: number;
   /** DURCHGELASSEN, obwohl die Kostenschwelle nicht prüfen konnte (keine
    *  ATR). Steht diese Zahl hoch, ist die Schwelle faktisch abgeschaltet. */
   ohne_atr_durchgelassen: number;
@@ -283,6 +287,7 @@ async function executeUserTrades(
     unter_kosten: 0,
     kante_wuerde_blocken: 0,
     klasse_aus: 0,
+    breaker_aktiv: 0,
     ohne_atr_durchgelassen: 0,
     filter_blockiert: 0,
     regime_gegen_trend: 0,
@@ -439,6 +444,63 @@ async function executeUserTrades(
       // Schema kein Obergrenze kennt (100 % Einsatz wäre durchgegangen).
       const clamped = clampStrategyRisk(strategy);
       const now = new Date();
+
+      /* Tages-Notbremse (M12 `core/risk.ts`).
+       *
+       * Der Stop-Loss schützt eine POSITION. Er hilft nicht gegen den Fall,
+       * der Konten wirklich leert: viele kleine Verluste hintereinander,
+       * jeder für sich regelkonform gestoppt. Bei 39 Symbolen im
+       * 5-Minuten-Takt und ~24 % Trefferquote ist eine Verlustserie kein
+       * Ausnahmefall.
+       *
+       * Die Bezugsgröße `risk.vortagEquity` schreibt der Tageslauf ans
+       * User-Dokument — es ist damit schon gelesen und kostet keinen
+       * zusätzlichen Read je Scan. Fehlt sie, greift die Bremse nicht: Ein
+       * frisches Konto hat keinen Bezugspunkt, aber auch noch nichts
+       * verloren.
+       *
+       * Ausgelöst wird DATUMSBASIERT vermerkt, nicht als Flag. Damit löst
+       * sich die Sperre beim Tageswechsel auch dann, wenn der Tageslauf
+       * ausfällt — und ein Ausfall des Tageslaufs sperrt kein Konto auf
+       * Dauer aus.
+       */
+      const cashJetzt = (userDoc.get('wallet.paperBalance') as number | undefined) ?? 0;
+      let positionsWert = 0;
+      for (const d of positionsSnap.docs) {
+        const p = d.data() as Position;
+        positionsWert += positionValue(p, marketData.get(d.id)?.price ?? p.avgEntry);
+      }
+      const heuteIso = now.toISOString().slice(0, 10);
+      const breaker = pruefeBreaker(
+        {
+          vortagEquity: (userDoc.get('risk.vortagEquity') as number | undefined) ?? 0,
+          jetztEquity: cashJetzt + positionsWert,
+          bereitsAusgeloest:
+            (userDoc.get('risk.breakerAusgeloestAm') as string | undefined)?.slice(0, 10)
+            === heuteIso,
+        },
+        {
+          dailyLossLimitPct: clamped.engine.dailyLossLimitPct,
+          flattenOnBreach: clamped.engine.flattenOnBreach,
+        },
+      );
+      if (!breaker.einstiegErlaubt) {
+        gate.breaker_aktiv += 1;
+        // Grund und Zahl mitschreiben: Eine Sperre ohne Begründung ist im
+        // Nachhinein nicht von einem Ausfall zu unterscheiden.
+        await userDoc.ref
+          .set(
+            {
+              risk: {
+                breakerAusgeloestAm: now.toISOString(),
+                breakerGrund: breaker.grund,
+                breakerVerlustPct: breaker.verlustPct,
+              },
+            },
+            { merge: true },
+          )
+          .catch((err: unknown) => logger.warn(`Breaker-Vermerk ${uid}`, err));
+      }
       // Zeitbasis der Signale (Owner 26.07., „Tradefrequenz erhöhen"):
       // 'intraday' rechnet auf 5-min-Kerzen — Signale drehen im Scan-Takt.
       const tf: 'daily' | 'intraday' = strategy.signals.timeframe ?? 'intraday';
@@ -622,10 +684,17 @@ async function executeUserTrades(
         | 'news_veto'
         | 'unter_kosten'
         | 'klasse_aus'
+        | 'breaker_aktiv'
         | 'regime_gegen_trend'
         | 'regime_stress'
         | null => {
         gate.geprueft += 1;
+        // Die Notbremse steht VOR allen anderen Prüfungen: Wenn das Konto
+        // heute genug verloren hat, ist jede weitere Abwägung müßig. Der
+        // Zähler steht bewusst nicht hier — er zählt je KONTO, nicht je
+        // geprüftem Symbol, sonst sähe ein gesperrtes Konto mit 39 Symbolen
+        // aus wie 39 Sperren.
+        if (!breaker.einstiegErlaubt) return 'breaker_aktiv';
         const handelbar = isTradable(symbol);
         // Regime-Ampel Stufe 2 (04.08.): Im Aufwärtstrend keine Shorts, im
         // Stress gar keine neuen Einstiege. Die Messung dahinter steht an
@@ -2079,6 +2148,7 @@ export async function runScan(force = false): Promise<ScanResult> {
     unter_kosten: 0,
     kante_wuerde_blocken: 0,
     klasse_aus: 0,
+    breaker_aktiv: 0,
     ohne_atr_durchgelassen: 0,
     filter_blockiert: 0,
     regime_gegen_trend: 0,

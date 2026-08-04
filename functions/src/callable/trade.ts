@@ -6,7 +6,14 @@
 
 import { getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
-import { bucketKey, classify, tradableSymbols, type Quote, type Strategy } from '../../../shared/src/index.js';
+import {
+  bucketKey,
+  classify,
+  pruefeBreaker,
+  tradableSymbols,
+  type Quote,
+  type Strategy,
+} from '../../../shared/src/index.js';
 import { consumeQuota, executePaperTrade, resolveBrokerMode } from '../core/broker.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { accessDeniedReason, accessLevelOf, mayTrade } from '../core/access.js';
@@ -63,6 +70,38 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
   // M4: Paper only — der Doppel-Guard entscheidet zentral (M13/M14 erweitern das).
   if (resolveBrokerMode(strategy) !== 'paper') {
     throw new HttpsError('failed-precondition', 'Live-Trading ist nicht freigeschaltet');
+  }
+
+  /* Tages-Notbremse gilt auch für den Klick (M12).
+   *
+   * Eine Bremse, die man mit einem Handel umgehen kann, ist keine — und der
+   * manuelle Pfad ist der, den man in einer Verlustserie am ehesten benutzt.
+   * Nur EINSTIEGE: Ein Verkauf muss immer möglich bleiben, sonst sperrte die
+   * Bremse genau den Ausweg, für den sie ausgelöst hat. Ein Leerverkauf ist
+   * allerdings ein Einstieg und fällt darunter.
+   */
+  const istEinstieg =
+    side === 'buy'
+    || (side === 'sell'
+      && strategy.signals.allowShort === true
+      && !(await db.doc(`users/${uid}/positions/${symbol}`).get()).exists);
+  if (istEinstieg) {
+    const breaker = pruefeBreaker(
+      {
+        vortagEquity: (userSnap.get('risk.vortagEquity') as number | undefined) ?? 0,
+        // Kein frischer Marktwert an dieser Stelle: Der Scan rechnet ihn alle
+        // fünf Minuten und schreibt das Ergebnis mit. Was hier zählt, ist der
+        // ZUSTAND der Bremse — die Grenzprüfung selbst hat der Scan gemacht.
+        jetztEquity: (userSnap.get('risk.vortagEquity') as number | undefined) ?? 0,
+        bereitsAusgeloest:
+          (userSnap.get('risk.breakerAusgeloestAm') as string | undefined)?.slice(0, 10)
+          === new Date().toISOString().slice(0, 10),
+      },
+      { dailyLossLimitPct: strategy.engine.dailyLossLimitPct ?? 0 },
+    );
+    if (!breaker.einstiegErlaubt) {
+      throw new HttpsError('failed-precondition', breaker.grund);
+    }
   }
 
   const quote = (await db.doc(`market/${symbol}`).get()).get('quote') as Quote | undefined;
