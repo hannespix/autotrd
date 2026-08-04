@@ -78,6 +78,22 @@ export interface OverlayLine {
   points: Array<{ time: string | number; value: number }>;
 }
 
+/**
+ * Waagerechte Preislinie mit Achsen-Label (Einstieg/Stop/Ziel einer offenen
+ * Position, 04.08.). Deklarativ wie `OverlayLine`: fehlende Keys verschwinden.
+ */
+export interface PriceLineSpec {
+  /** Eindeutiger Schlüssel (z. B. 'pos:entry'). */
+  key: string;
+  price: number;
+  color: string;
+  /** Text am rechten Rand der Linie. */
+  title: string;
+  /** 0 = durchgezogen, 1 = gepunktet, 2 = gestrichelt (numerisch, CLAUDE.md §6). */
+  style?: 0 | 1 | 2;
+  width?: number;
+}
+
 /** Serien-Typen (TV-Parität Teil 1) — Renko/Kagi/P&F bewusst später. */
 export type ChartType = 'candles' | 'hollow' | 'heikin' | 'line' | 'area' | 'baseline' | 'bars';
 
@@ -117,8 +133,12 @@ export interface PriceChartHandle {
   setForecast(overlay: ForecastOverlay | null, anchor?: { time: string | number; value: number }): void;
   /** Ist ein Prognose-Overlay gesetzt? (E2E-Hook) */
   forecastActive(): boolean;
-  /** Marker auf den Kerzen (aktuell keine — Anker für künftige Trade-Marken). */
+  /** Marker auf den Kerzen (News-Punkte, Einstiegs-Marke offener Positionen). */
   setMarkers(markers: ChartMarker[]): void;
+  /** Waagerechte Preislinien deklarativ setzen (fehlende Keys werden entfernt). */
+  setPriceLines(lines: PriceLineSpec[]): void;
+  /** Anzahl aktiver Preislinien (E2E-Hook). */
+  priceLineCount(): number;
   /**
    * Crosshair-Datum: liefert den Handelstag unter dem Cursor plus
    * Viewport-Koordinaten — null beim Verlassen des Charts.
@@ -249,6 +269,23 @@ export async function buildPriceChart(
   const fcUp = chart.addLineSeries({ color: 'rgba(37,208,238,.45)', lineWidth: 1, lineStyle: 3, ...fcCommon });
   const fcLo = chart.addLineSeries({ color: 'rgba(37,208,238,.45)', lineWidth: 1, lineStyle: 3, ...fcCommon });
 
+  // Träger der Preislinien (Positions-Overlay 04.08.): eine vollständig
+  // transparente Linien-Serie. Warum nicht direkt die Kerzen? Preislinien
+  // einer AUSGEBLENDETEN Serie zeichnet Lightweight Charts nicht — im
+  // Vektor-Look („Kerzen aus") oder bei Linien-/Berg-Typen wären Einstieg und
+  // Stop sonst genau dann weg, wenn man ruhig auf den Kurs schauen will.
+  // Die Serie trägt dieselben Schlusskurse (nötig für den Skalen-Bezug),
+  // malt aber nichts — sie existiert nur als Anker der Linien.
+  const lineHost = chart.addLineSeries({
+    color: 'rgba(0,0,0,0)',
+    lineWidth: 1,
+    priceLineVisible: false,
+    lastValueVisible: false,
+    crosshairMarkerVisible: false,
+  });
+  const priceLines = new Map<string, ReturnType<typeof lineHost.createPriceLine>>();
+  let lineHostFed = false;
+
   // Für setCrosshair: Close je Handelstag (setCrosshairPosition braucht
   // neben der Zeit auch einen Preis auf der Serie)
   const closeByDate = new Map<string, number>();
@@ -279,6 +316,13 @@ export async function buildPriceChart(
   const CANDLE_TYPES = new Set<ChartType>(['candles', 'hollow', 'heikin']);
   const SOLID_OPTS = { upColor: '#26cf9d', borderVisible: false, borderUpColor: '#26cf9d' };
   const HOLLOW_OPTS = { upColor: 'rgba(0,0,0,0)', borderVisible: true, borderUpColor: '#26cf9d' };
+
+  /** Träger-Serie füttern — nur solange Preislinien hängen (sonst leer). */
+  const feedLineHost = (): void => {
+    lineHost.setData(
+      lineHostFed ? (cachedRows.map((r) => ({ time: r.time, value: r.close })) as never) : [],
+    );
+  };
 
   const renderPrice = (): void => {
     const isCandle = CANDLE_TYPES.has(currentType);
@@ -340,6 +384,7 @@ export async function buildPriceChart(
       });
       cachedRows = rows;
       renderPrice();
+      feedLineHost();
       vol.setData(
         rows.map((r) => ({
           time: r.time,
@@ -506,6 +551,36 @@ export async function buildPriceChart(
       candle.setMarkers(
         [...markers].sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0)) as never,
       );
+    },
+    setPriceLines(lines): void {
+      const wanted = new Set(lines.map((l) => l.key));
+      for (const [key, line] of priceLines) {
+        if (!wanted.has(key)) {
+          lineHost.removePriceLine(line);
+          priceLines.delete(key);
+        }
+      }
+      const brauchtHost = lines.length > 0;
+      if (brauchtHost !== lineHostFed) {
+        lineHostFed = brauchtHost;
+        feedLineHost();
+      }
+      for (const spec of lines) {
+        const opts = {
+          price: spec.price,
+          color: spec.color,
+          lineWidth: (spec.width ?? 1) as never,
+          lineStyle: (spec.style ?? 2) as never,
+          axisLabelVisible: true,
+          title: spec.title,
+        };
+        const vorhanden = priceLines.get(spec.key);
+        if (vorhanden) vorhanden.applyOptions(opts as never);
+        else priceLines.set(spec.key, lineHost.createPriceLine(opts as never));
+      }
+    },
+    priceLineCount(): number {
+      return priceLines.size;
     },
     onCrosshairDate(cb): void {
       chart.subscribeCrosshairMove((param) => {
