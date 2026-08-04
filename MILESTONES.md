@@ -1517,11 +1517,28 @@ dritten Mal an derselben Stelle gelöst.
       (`snapshotEquity` oder `autoTune`) anwenden, wenn `classAutoTune`
       gesetzt ist; jede Änderung ins Journal wie bei MT5, damit
       nachvollziehbar bleibt, WARUM ein Gewicht sich bewegt hat.
-- [ ] **MG4 Schatten für abgeschaltete Klassen**: Heute entsteht die
-      Klassen-Kante aus AUSGEFÜHRTEN Trades. Steht eine Klasse auf 0, fehlen
-      neue Datenpunkte — die Empfehlung friert auf dem Stand des Abschaltens
-      ein. Erst ein Schatten-P&L je Klasse macht die Rückkehr wirklich
-      messbar. **Ohne MG4 ist MG1 nur zur Hälfte das, was es verspricht.**
+- [x] **MG4 Schatten für abgeschaltete Klassen — Messung** *(04.08.)*:
+      `shared/src/classShadow.ts`. Jeder Scan legt Richtung, Kurs und
+      Zeitpunkt seines Signals ans Markt-Dokument; der nächste misst, was
+      daraus geworden ist — vorzeichenrichtig zur Richtung, abzüglich
+      klassenechter Roundtrip-Kosten. Das Aggregat je Klasse steht in
+      `meta/classShadow` (atomar per `increment`) und im Heartbeat unter
+      `schatten`. Kostet keinen zusätzlichen Fetch: Das Markt-Dokument wird
+      ohnehin gelesen und geschrieben.
+      Zwei Gates, die die Zahl erst brauchbar machen: unbekannte Richtung ⇒
+      verwerfen statt als `sell` lesen, und `SCHATTEN_MAX_ALTER_MS = 30 min`
+      ⇒ Übernacht- und Wochenendlücken zählen nicht mit (sonst wäre die
+      Kante eine Funktion der Scan-Lücken, und die sind je Klasse
+      verschieden groß — ausgerechnet bei den Klassen, über die sie
+      entscheiden soll). Es misst die Güte der SIGNALQUELLE, nicht die der
+      Ausführung: Stop, Ziel und Haltedauer fehlen. Deshalb
+      `SCHATTEN_MIN_N = 200` statt der 30 Trades der Trade-Kante.
+- [ ] **MG4b Schatten in die Empfehlung**: Die Messung läuft, aber
+      `berateKlassen` liest sie noch nicht — eine Klasse auf Gewicht 0 hat
+      weiter keine Trade-Kante und bleibt damit „zu dünn für ein Urteil".
+      Der Rückweg ist also erst dokumentiert, nicht befahrbar. Gehört mit
+      MG3 zusammen: Wer den Auto-Regler verdrahtet, muss beide Quellen
+      gewichten — realisierte Trades schlagen Schatten, wo beide vorliegen.
 
 ## Arbeitsreihenfolge (Stand 04.08.)
 
@@ -1532,9 +1549,11 @@ Denn daran hängt der Echtgeld-Schalter, und daran hängt alles andere.
 
 **Zuerst — was die Profitabilität direkt betrifft:**
 
-1. **MG4** Schatten je Klasse. Ohne ihn ist jede Abschaltung blind.
-2. **MG2/MG3** Regler-Oberfläche und Auto-Regler. Macht die Messung
-   bedienbar und selbsttätig.
+1. ~~**MG4** Schatten je Klasse~~ *(Messung steht 04.08.)* — offen bleibt
+   **MG4b**: Die Zahl muss noch in die Empfehlung, sonst ist der Rückweg
+   nur dokumentiert.
+2. **MG2/MG3/MG4b** Regler-Oberfläche, Auto-Regler und Schatten als
+   zweite Evidenzquelle. Macht die Messung bedienbar und selbsttätig.
 3. **ME6** `captureGate` scharf schalten, sobald `kante_wuerde_blocken`
    eine belastbare Zahl zeigt.
 
