@@ -39,6 +39,7 @@ import {
   marketRegime,
   regimeEntryBlocked,
   leverageChance,
+  calendarReading,
   signalSignature,
   type BucketStat,
   type MarketRegime,
@@ -2003,6 +2004,11 @@ export async function runScan(force = false): Promise<ScanResult> {
         // Stufe 1 nichts — er wird gemessen und in die Steckbriefe des
         // Trade-Filters gestempelt, damit der je Regime getrennt lernt.
         regime,
+        // Termin-Kalender (04.08., Schatten): Was steht an, und liegt der Tag
+        // im Turn-of-the-Month-Fenster? Steuert noch NICHTS — erst wenn die
+        // Auswertung über genug Termine zeigt, dass es sich lohnt. Bis dahin
+        // ist es die Datengrundlage, an der sich das später messen lässt.
+        kalender: calendarReading(now),
         lastError,
         lastErrorAt: lastError ? now.toISOString() : null,
       },
