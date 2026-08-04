@@ -1573,6 +1573,84 @@ behaupten, an dem nichts passiert ist.
 
 ---
 
+## MK — Die Messgrundlage stimmte nicht (04.08.) — ERLEDIGT
+
+Entstanden aus der Owner-Frage nach Steuer-Export und Supabase. Beim Prüfen
+des Bestands fiel etwas auf, das beide Themen an Dringlichkeit übertraf.
+
+### Der Befund
+
+`broker.ts` verrechnete für **jede** Anlageklasse denselben Pauschalsatz von
+0,15 % je Seite — während das Kosten-Tor beim EINSTIEG (`scanMarket.ts:623`)
+längst klassenecht rechnete. Beide Zahlen sahen plausibel aus; die Abweichung
+fiel niemandem auf, weil nirgends stand, welcher Satz gelten sollte.
+
+| Klasse | verbucht | real | Wirkung |
+|---|---|---|---|
+| US-Aktien/ETF | 0,15 % | 0,05 % | dreifach zu **teuer** gerechnet |
+| **Krypto** | 0,15 % | **0,25 %** | 1,7-fach zu **billig** gerechnet |
+
+Das ist schlimmer als eine falsche Zahl im Dashboard: **Trade-Filter, A/B-Duell
+und Auto-Tuner lernen aus diesen P&Ls.** Krypto-Steckbriefe wurden zu spät
+geblockt, Aktien-Steckbriefe zu früh — und Krypto handelt rund um die Uhr,
+steht also mit Abstand am häufigsten im Buch. Die Verzerrung schmeichelte
+ausgerechnet der Klasse, die am meisten kostet.
+
+Der Schatten-Pfad (`rulesTrading.shadowTrade`) wurde mit umgestellt. Bliebe er
+beim Pauschalsatz, verglichen A/B-Duell und Auto-Tuner zwei verschieden teure
+Welten.
+
+**Erwartete Folge:** Die ausgewiesenen Kosten steigen, `netPnl` fällt. Das ist
+kein Rückschritt, sondern das Ende einer Schönfärberei — und die Voraussetzung
+dafür, dass Filter und Tuner das Richtige lernen.
+
+### Zwei weitere Funde derselben Runde
+
+**`reset.ts` vernichtete die Handelshistorie.** `'trades'` stand in der
+Löschliste, `recursiveDelete` kennt kein Zurück; beim letzten Mal traf es 297
+Einträge. Jetzt wandern sie nach `tradesArchive` mit `archivedAt`-Stempel.
+Verschieben statt filtern ist bewusst gewählt: Alle Leser von `trades` sehen
+nach dem Reset weiterhin eine leere Liste — das Verhalten ändert sich an
+keiner Stelle, nur die Daten überleben.
+
+**Die Handeingabe ließ Papiere zu, die nicht in Dollar notieren.** `trade.ts`
+prüfte gegen `allSymbols()` statt `tradableSymbols()`. Der Katalog enthält
+`BMW.DE` (Euro), `7203.T` (Yen), `AZN.L` (**Pence**) — der Kontostand ist hart
+in USD geführt. Ein solcher Kauf hätte den Saldo lautlos verfälscht.
+
+### Was jetzt an jedem Trade steht
+
+`assetClass`, `currency`, `commissionRate`, `slippageRate`, `fee` — und an
+schließenden Trades zusätzlich `entryPrice`, `acquiredAt`, `holdingDays`.
+
+Nicht aus Steuergründen (Papiergeld erzeugt keinen steuerbaren Vorgang),
+sondern weil sich all das **später nicht rekonstruieren lässt**: Eine
+Katalog-Änderung verschiebt die Anlageklasse rückwirkend, eine geänderte
+Gebühren-Konstante macht jede nachträgliche Aufteilung falsch, und das
+Positions-Doc wird beim Schließen in derselben Transaktion gelöscht. Die
+Haltedauer ist heute noch aus Kauf/Verkauf paarbar — aber nur, WEIL Nachkauf
+verboten und jeder Verkauf ganz ist. Genau diese Bedingungen fallen mit FIFO.
+
+### Bewusst NICHT gebaut
+
+`taxReport(year)`, CSV, PDF, FIFO-Lots, Verlusttöpfe, §23-Haltefristuhr: drei
+bis fünf Tage Arbeit für eine Ausgabe, die ohne Echtgeld niemand liest.
+EZB-Kursabruf ebenfalls nicht — historische Kurse sind nachladbar, solange
+`executedAt` existiert, und das tut es millisekundengenau.
+
+### Supabase: eingefroren, nicht abgebrochen
+
+Die Kostenrechnung trägt nicht: 5 Konten kosten auf Firebase ~14 $/Monat, auf
+Supabase ~25 $ — und Firebase bleibt bei jeder Nutzerzahl billiger, weil
+Realtime-Nachrichten (2,50 $/Mio) gegen Firestore-Reads (0,60 $/Mio) beim
+Fan-out um Faktor 4 verlieren. Das Argument aus MS („M12b und M13 schreiben
+den meisten Persistenzcode") ist zirkulär geworden, seit beide nicht als
+Nächstes kommen. Der Trigger zum Auftauen ist nicht der Kalender, sondern der
+Lese-Break-even: Ein Backtest über 5 Jahre × 166 Symbole sind 207.500 Reads
+(0,12 $) gegen eine SQL-Query. Bei 20 Läufen/Tag kippt die Rechnung.
+
+---
+
 ## Übergabe-Prompt (so startet man Claude Code in diesem Repo)
 
 > Lies ARCHITECTURE.md, CLAUDE.md und MILESTONES.md. Arbeite nach dem

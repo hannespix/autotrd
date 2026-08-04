@@ -200,6 +200,42 @@ export function classify(symbol: string): string {
   return s.includes('.') ? 'stocks_global' : 'stocks_us';
 }
 
+/**
+ * Notierungswährung aus der yfinance-Symbol-Konvention (04.08.).
+ *
+ * Warum das überhaupt nötig ist: Der Kontostand ist hart in USD geführt
+ * (`Wallet.currency`), und der Katalog enthält Papiere, die gar nicht in USD
+ * notieren — `BMW.DE` in Euro, `7203.T` in Yen, `AZN.L` sogar in **Pence**,
+ * nicht Pfund. Diese Papiere sind über `isTradable` bereits ausgeschlossen
+ * (`stocks_global`), aber die Währung am Trade festzuhalten kostet nichts und
+ * macht einen Buchungsfehler nachträglich erkennbar statt unsichtbar.
+ *
+ * Best effort: Yahoo liefert die Währung im Meta-Block mit — wo die vorliegt,
+ * hat sie Vorrang. Diese Funktion ist der Fallback fürs reine Symbol.
+ */
+const BOERSEN_WAEHRUNG: Record<string, string> = {
+  DE: 'EUR', PA: 'EUR', AS: 'EUR', MI: 'EUR', MC: 'EUR', BR: 'EUR', LS: 'EUR',
+  VI: 'EUR', HE: 'EUR', IR: 'EUR',
+  L: 'GBp', // London notiert in PENCE — Faktor 100 gegenüber GBP
+  T: 'JPY', HK: 'HKD', SS: 'CNY', SZ: 'CNY', KS: 'KRW', TW: 'TWD',
+  SW: 'CHF', ST: 'SEK', OL: 'NOK', CO: 'DKK',
+  TO: 'CAD', V: 'CAD', AX: 'AUD', NZ: 'NZD', SI: 'SGD', BO: 'INR', NS: 'INR',
+  SA: 'BRL', MX: 'MXN', JO: 'ZAR', TA: 'ILS',
+};
+
+export function currencyForSymbol(symbol: string): string {
+  const s = symbol.trim().toUpperCase();
+  if (s.endsWith('-EUR')) return 'EUR';
+  if (s.endsWith('=X')) return s.slice(0, -2).slice(-3) || 'USD'; // EURUSD=X → USD
+  const punkt = s.lastIndexOf('.');
+  if (punkt > 0) {
+    const suffix = s.slice(punkt + 1);
+    const waehrung = BOERSEN_WAEHRUNG[suffix];
+    if (waehrung) return waehrung;
+  }
+  return 'USD';
+}
+
 /* ── Handelbarkeit (Befund 28.07.) ──────────────────────────────────────────
  *
  * Von den 40 Symbolen, die der Scan an diesem Tag beobachtete, waren 25

@@ -1,0 +1,106 @@
+/**
+ * Ausführungskosten und Notierungswährung (04.08.).
+ *
+ * Warum das eigene Tests braucht: Das Buch verrechnete bis zum 04.08. für
+ * JEDE Anlageklasse denselben Pauschalsatz, während das Kosten-Tor beim
+ * Einstieg längst klassenecht rechnete. Beide Zahlen sahen plausibel aus —
+ * die Abweichung fiel niemandem auf, weil nirgends stand, welcher Satz
+ * eigentlich gelten sollte. Diese Tests halten die Sätze zusammen.
+ */
+
+import { describe, expect, it } from 'vitest';
+import {
+  CLASS_FEE_PARTS,
+  CLASS_FEE_RATE,
+  PAPER_FEE_RATE,
+  effectivePriceForClass,
+  feePartsForClass,
+  feeRateForClass,
+} from '../src/strategy.js';
+import { classify, currencyForSymbol } from '../src/universe.js';
+
+describe('Gebühren-Aufteilung', () => {
+  it('summiert sich in JEDER Klasse exakt zum Gesamtsatz', () => {
+    // Der eigentliche Zweck dieses Tests: Zwei Tabellen, die dasselbe meinen,
+    // driften auseinander, sobald jemand nur eine davon anfasst.
+    for (const [klasse, rate] of Object.entries(CLASS_FEE_RATE)) {
+      const teile = CLASS_FEE_PARTS[klasse];
+      expect(teile, `Klasse ${klasse} fehlt in CLASS_FEE_PARTS`).toBeDefined();
+      expect(teile!.commission + teile!.slippage).toBeCloseTo(rate, 10);
+    }
+  });
+
+  it('deckt beide Tabellen dieselben Klassen ab', () => {
+    expect(Object.keys(CLASS_FEE_PARTS).sort()).toEqual(Object.keys(CLASS_FEE_RATE).sort());
+  });
+
+  it('fällt bei unbekannter Klasse auf den Pauschalsatz zurück', () => {
+    const teile = feePartsForClass('gibt_es_nicht');
+    expect(teile.commission + teile.slippage).toBeCloseTo(PAPER_FEE_RATE, 10);
+    expect(feePartsForClass(null).commission + feePartsForClass(null).slippage).toBeCloseTo(PAPER_FEE_RATE, 10);
+  });
+
+  it('rechnet US-Aktien billiger und Krypto teurer als den Pauschalsatz', () => {
+    // Genau diese Spreizung war der Befund: Krypto handelt rund um die Uhr,
+    // steht deshalb am häufigsten im Buch — und wurde am stärksten geschont.
+    expect(feeRateForClass('stocks_us')).toBeLessThan(PAPER_FEE_RATE);
+    expect(feeRateForClass('crypto')).toBeGreaterThan(PAPER_FEE_RATE);
+  });
+
+  it('verteuert den Kauf und verbilligt den Verkauf — je Klasse verschieden', () => {
+    expect(effectivePriceForClass(100, 'buy', 'crypto')).toBeCloseTo(100.25, 10);
+    expect(effectivePriceForClass(100, 'sell', 'crypto')).toBeCloseTo(99.75, 10);
+    expect(effectivePriceForClass(100, 'buy', 'stocks_us')).toBeCloseTo(100.05, 10);
+    expect(effectivePriceForClass(100, 'sell', 'stocks_us')).toBeCloseTo(99.95, 10);
+  });
+
+  it('kostet Krypto real das Fünffache von US-Aktien', () => {
+    expect(feeRateForClass('crypto') / feeRateForClass('stocks_us')).toBeCloseTo(5, 6);
+  });
+});
+
+describe('currencyForSymbol', () => {
+  it('nimmt US-Papiere als Dollar an', () => {
+    for (const s of ['AAPL', 'SPY', 'QQQ', 'BRK-B']) expect(currencyForSymbol(s)).toBe('USD');
+  });
+
+  it('erkennt Euro-Börsen am Suffix', () => {
+    expect(currencyForSymbol('BMW.DE')).toBe('EUR');
+    expect(currencyForSymbol('ASML.AS')).toBe('EUR');
+  });
+
+  it('kennt London als PENCE, nicht Pfund', () => {
+    // Der Faktor-100-Fehler, den man erst im Kontostand bemerkt.
+    expect(currencyForSymbol('AZN.L')).toBe('GBp');
+  });
+
+  it('erkennt Yen und Hongkong-Dollar', () => {
+    expect(currencyForSymbol('7203.T')).toBe('JPY');
+    expect(currencyForSymbol('0700.HK')).toBe('HKD');
+  });
+
+  it('liest die Zielwährung eines Devisenpaars', () => {
+    expect(currencyForSymbol('EURUSD=X')).toBe('USD');
+    expect(currencyForSymbol('USDJPY=X')).toBe('JPY');
+  });
+
+  it('unterscheidet Krypto in Euro von Krypto in Dollar', () => {
+    expect(currencyForSymbol('BTC-EUR')).toBe('EUR');
+    expect(currencyForSymbol('BTC-USD')).toBe('USD');
+  });
+
+  it('fällt bei unbekanntem Suffix auf Dollar zurück statt zu raten', () => {
+    expect(currencyForSymbol('FOO.XYZ')).toBe('USD');
+  });
+});
+
+describe('Zusammenspiel Klasse ↔ Währung', () => {
+  it('macht sichtbar, dass Auslandsbörsen nicht in Dollar notieren', () => {
+    // Diese Papiere sind über isTradable ausgeschlossen — der Test hält fest,
+    // WARUM: Ihr Kurs ist keine Dollar-Zahl, das Wallet führt aber Dollar.
+    for (const s of ['BMW.DE', '7203.T', 'AZN.L']) {
+      expect(classify(s)).toBe('stocks_global');
+      expect(currencyForSymbol(s)).not.toBe('USD');
+    }
+  });
+});

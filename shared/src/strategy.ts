@@ -471,6 +471,45 @@ export const CLASS_FEE_RATE: Record<string, number> = {
   rates_bonds: 0.0005,
 };
 
+/**
+ * Dieselben Sätze, aufgeteilt in Kommission und Slippage (04.08.).
+ *
+ * Warum die Aufteilung überhaupt gespeichert wird: Steuerlich sind das zwei
+ * verschiedene Dinge. Die Kommission ist Anschaffungsnebenkosten und mindert
+ * den Gewinn; die Slippage ist Teil des erzielten Ausführungspreises. Aus der
+ * SUMME allein lässt sich das später nicht mehr trennen — und schon gar nicht,
+ * nachdem eine der Konstanten hier einmal geändert wurde.
+ *
+ * Die Zahlen folgen den Konditionen, gegen die wir messen: US-Aktien und ETFs
+ * kosten bei Alpaca keine Kommission (nur Spread), Krypto kostet dort
+ * Kommission und praktisch keinen zusätzlichen Abschlag.
+ */
+export interface FeeParts {
+  /** Kommission je Seite — Anschaffungsnebenkosten, gewinnmindernd. */
+  commission: number;
+  /** Marktbedingter Ausführungsabschlag je Seite — Teil des Preises. */
+  slippage: number;
+}
+
+export const CLASS_FEE_PARTS: Record<string, FeeParts> = {
+  stocks_us: { commission: 0, slippage: 0.0005 },
+  etf_sectors: { commission: 0, slippage: 0.0005 },
+  etf_regions: { commission: 0, slippage: 0.0005 },
+  etf_thematic: { commission: 0, slippage: 0.0005 },
+  stocks_global: { commission: 0.001, slippage: 0.0005 },
+  crypto: { commission: 0.0025, slippage: 0 },
+  forex: { commission: 0, slippage: 0.0003 },
+  commodities: { commission: 0.0005, slippage: 0.0005 },
+  indices: { commission: 0, slippage: 0.0005 },
+  rates_bonds: { commission: 0, slippage: 0.0005 },
+};
+
+/** Kommission/Slippage einer Klasse; unbekannt ⇒ Pauschalsatz aufgeteilt. */
+export function feePartsForClass(assetClass?: string | null): FeeParts {
+  const parts = assetClass ? CLASS_FEE_PARTS[assetClass] : undefined;
+  return parts ?? { commission: PAPER_COMMISSION_PCT, slippage: PAPER_SLIPPAGE_BPS / 10_000 };
+}
+
 /** Gebührensatz JE SEITE für eine Asset-Klasse; unbekannt ⇒ Pauschalsatz. */
 export function feeRateForClass(assetClass?: string | null): number {
   if (!assetClass) return PAPER_FEE_RATE;
@@ -627,4 +666,30 @@ export interface Trade {
   executedAt: string;
   source: 'engine' | 'manual';
   paper: boolean;
+  /* ── Nachvollziehbarkeit (04.08.) ────────────────────────────────────────
+   * Alle folgenden Felder sind optional: Altbestand bleibt ohne sie gültig.
+   * Sie stehen hier, weil sie sich später NICHT mehr rekonstruieren lassen —
+   * eine Katalog-Änderung verschiebt die Anlageklasse rückwirkend, und eine
+   * geänderte Gebühren-Konstante macht jede nachträgliche Aufteilung falsch. */
+  /** Anlageklasse ZUM ZEITPUNKT des Trades (nicht die heutige). */
+  assetClass?: string;
+  /** Notierungswährung des Instruments — der Kontostand ist in USD geführt. */
+  currency?: string;
+  /** Kommissionssatz je Seite (Anschaffungsnebenkosten). */
+  commissionRate?: number;
+  /** Slippage-Satz je Seite (Teil des Ausführungspreises). */
+  slippageRate?: number;
+  /** Gesamte Ausführungskosten dieses Trades in Kontowährung. */
+  fee?: number;
+  /* ── Anschaffungsbezug, nur an SCHLIESSENDEN Trades ───────────────────── */
+  /** Einstandskurs der geschlossenen Position. */
+  entryPrice?: number;
+  /** Eröffnungszeitpunkt der geschlossenen Position (ISO). */
+  acquiredAt?: string;
+  /**
+   * Haltedauer in Tagen. Heute noch aus Kauf/Verkauf paarbar — aber nur,
+   * WEIL Nachkauf verboten und jeder Verkauf ganz ist. Sobald es Teilverkäufe
+   * gibt, ist die Zuordnung alter Trades nicht mehr eindeutig.
+   */
+  holdingDays?: number;
 }
