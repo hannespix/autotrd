@@ -1551,6 +1551,53 @@ dritten Mal an derselben Stelle gelöst.
       Ausführung: Stop, Ziel und Haltedauer fehlen. Deshalb
       `SCHATTEN_MIN_N = 200` statt der 30 Trades der Trade-Kante.
 
+## MI — Warum die Konfluenz strukturell nicht zustande kommt (04.08.)
+
+Der Heartbeat um 21:10 Uhr:
+
+```
+signalDirs    buy 0 · sell 0 · hold 13
+knappVerfehlt 13 von 13
+voteDirs      rsi 0/0/13 hold · bollinger 0/2/11 · macd 6/7/0
+regime        trend (S&P über SMA200, VIX 16,5)
+entryGate     geprueft 0
+```
+
+**Jedes einzelne Signal verfehlte die Konfluenz um genau eine Stimme, und
+immer dieselbe.** Am Einstiegs-Tor kam gar nichts an — nicht weil die
+Filter blocken, sondern weil die Konfluenz nichts produziert.
+
+Der Grund ist Bauart, kein Fehler: RSI (30/70) und Bollinger (Ausbruch ab
+dem 95. Perzentil) sind **Umkehr**-Indikatoren, sie sprechen nur im
+Extrem. MACD ist ein **Trendfolger**, er spricht sobald eine Richtung da
+ist. Im Trend — dem Regime von heute — schweigen die Umkehr-Indikatoren
+strukturell, und `minConfluence: 2` ist damit nicht selten unerreichbar,
+sondern unerreichbar.
+
+- [x] **MI1 Zweite Lesart im Schatten** *(04.08.)*:
+      `shared/src/regimeSignal.ts` liest **dieselben** Indikatorwerte
+      regime-gerecht — Bollinger-Ausbruch im Trend als Fortsetzung statt
+      Umkehr, RSI über/unter 50 als Richtungsbestätigung statt
+      Extremwert-Warnung, MACD unverändert, bei `stress` gar keine Stimme.
+      Läuft mit, wird aber **nicht gehandelt**: Richtung und Kurs landen als
+      `lastSignalRegime` am Markt-Dokument, der nächste Scan bewertet sie
+      mit derselben Mechanik wie MG4. Ergebnis in `meta/signalShadow` und im
+      Heartbeat (`regimeDirs`, `regimeVoteDirs`, `signalSchatten`), dazu ein
+      Chip in der Karte „Warum handelt die Engine (nicht)?".
+      **Bewusst NICHT gemacht:** eine vierte Stimme (etwa Preis über SMA50).
+      Die spräche im Trend zuverlässig — und sagte dasselbe wie MACD. Zwei
+      korrelierte Trendfolger als „Konfluenz aus zwei Stimmen" zu zählen ist
+      `minConfluence: 1` mit Extraschritten. Genau diesen Selbstbetrug hat
+      das Projekt schon einmal bezahlt (Forecast-Gewicht 2 bei Konfluenz 2,
+      Audit 26.07.).
+- [ ] **MI2 Umschalten — erst mit Zahlen**: Sobald beide Lesarten je 200
+      Signale haben, entscheidet der Vergleich. Schlägt die Variante die
+      gehandelte Logik, wird sie zur Live-Logik (dann auch `compileClassic`
+      nachziehen, sonst bricht die Regelbaum-Parität). Schlägt sie nicht,
+      bleibt alles wie es ist — und der Stillstand ist dann kein Defekt,
+      sondern die richtige Antwort auf eine Kante, die die Kosten nicht
+      trägt (+0,143 % gegen 0,300 % Roundtrip, Deckung 0,48).
+
 ## Arbeitsreihenfolge (Stand 04.08.)
 
 Über vierzig offene Punkte, und nicht alle sind gleich viel wert. Diese

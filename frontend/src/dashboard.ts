@@ -4288,6 +4288,32 @@ function renderEngineWhy(): void {
       : 'Richtungen der Konfluenz-Signale im letzten Scan: Kauf, Verkauf, Halten.';
     ampel.append(chip);
   }
+  /* Die zweite Lesart im Schatten (MI, 04.08.).
+   *
+   * Am 04.08. verfehlten 13 von 13 Signalen die Konfluenz um genau EINE
+   * Stimme: RSI und Bollinger sind auf Umkehr parametriert und schweigen im
+   * Trend, MACD ist der einzige Trendfolger. Die Variante liest dieselben
+   * Indikatoren regime-gerecht und wird NICHT gehandelt — hier steht, was
+   * sie signalisiert hätte und was das eingebracht hätte.
+   *
+   * Der Vergleich der beiden Kanten ist die Entscheidungsgrundlage fürs
+   * Umschalten. Solange die Variante nicht besser ist, bleibt alles wie es
+   * ist: Mehr Trades bei negativer Kante sind mehr Verlust. */
+  const rd = h.regimeDirs;
+  if (rd && (rd.buy ?? 0) + (rd.sell ?? 0) + (rd.hold ?? 0) > 0) {
+    const chip = whyChip(
+      `Variante: ${rd.buy ?? 0}↑ ${rd.sell ?? 0}↓ ${rd.hold ?? 0}·`,
+      'var(--t3)',
+    );
+    const kante = (v?: { n: number; kantePct: number | null } | null): string =>
+      !v || v.kantePct === null ? 'noch keine Daten' : `${v.kantePct.toFixed(3)} % je Signal (${v.n})`;
+    chip.title =
+      'Regime-gerechte Lesart derselben Indikatoren — läuft nur im Schatten mit.\n'
+      + `Gehandelte Logik: ${kante(h.signalSchatten?.live)}\n`
+      + `Variante: ${kante(h.signalSchatten?.regime)}\n`
+      + 'Umgeschaltet wird erst, wenn die Variante die gehandelte Logik schlägt.';
+    ampel.append(chip);
+  }
 
   // Zeile 2: Warum Einstiege NICHT zustande kamen — nur was wirklich griff.
   gate.innerHTML = '';

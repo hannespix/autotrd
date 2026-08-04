@@ -749,6 +749,13 @@ export interface HealthDoc {
    * `trend`). Beides sieht sonst gleich aus.
    */
   signalDirs?: { buy?: number; sell?: number; hold?: number };
+  /**
+   * Dasselbe für die regime-gerechte Schatten-Lesart (MI) — was eine andere
+   * Signal-Logik signalisiert HÄTTE, ohne dass danach gehandelt wird.
+   */
+  regimeDirs?: { buy?: number; sell?: number; hold?: number };
+  /** Kante beider Lesarten nebeneinander, kumuliert (meta/signalShadow). */
+  signalSchatten?: Record<string, { n: number; kantePct: number | null } | null> | null;
   konten?: Record<string, number>;
   regime?: { state?: string; vix?: number | null; realizedVolPct?: number | null; aboveSma200?: boolean | null };
   kalender?: { bevorstehend?: string | null; stundenBis?: number | null; turnOfMonth?: boolean; fomcVeraltet?: boolean };

@@ -27,6 +27,8 @@ import {
   addiereSchatten,
   bewerteSchattenSignal,
   leseSchattenSignal,
+  regimeRichtung,
+  regimeStimmen,
   werteSchattenAus,
   type SchattenKlasse,
   captureForClass,
@@ -1676,6 +1678,16 @@ export async function runScan(force = false): Promise<ScanResult> {
   const signalDirs = { buy: 0, sell: 0, hold: 0 };
   /** Schatten-Kante je Anlageklasse (MG4) — läuft auch für abgeschaltete Klassen. */
   const schattenKlassen: Record<string, SchattenKlasse> = {};
+  /**
+   * Schatten-Kante je SIGNAL-LESART (MI): die gehandelte Logik gegen die
+   * regime-gerechte Variante. Dieselbe Messung, zwei Signalquellen — damit
+   * ein Umschalten der Signal-Logik eine Zahl hinter sich hat und nicht nur
+   * eine Vermutung (siehe shared/src/regimeSignal.ts).
+   */
+  const schattenVarianten: { live?: SchattenKlasse; regime?: SchattenKlasse } = {};
+  /** Richtungsverteilung der Regime-Variante — direkt gegen `signalDirs` lesbar. */
+  const regimeDirs = { buy: 0, sell: 0, hold: 0 };
+  const regimeVoteDirs: Record<string, { buy: number; sell: number; hold: number }> = {};
   /** Richtungsverteilung je Indikator — s. Kommentar an der Zählstelle. */
   const voteDirs: Record<string, { buy: number; sell: number; hold: number }> = {};
   /** „hold", dem genau EINE Stimme zur Konfluenz fehlte. */
@@ -1736,6 +1748,31 @@ export async function runScan(force = false): Promise<ScanResult> {
   }
   const effSignals = { ...DEFAULT_STRATEGY.signals, forecastWeight: fcVote.weight };
 
+  // Regime-Ampel (31.07.). Steht seit 04.08. VOR der Symbol-Schleife statt
+  // dahinter: Die Schatten-Variante liest dieselben Indikatoren
+  // regime-gerecht (MI) und braucht den Zustand deshalb schon beim Bilden
+  // des Signals, nicht erst beim Handeln. Quelle sind der S&P 500 (^GSPC,
+  // Tages-Closes) und der VIX — beide Gratis-Größen. Ein Fetch-Fehler ergibt
+  // die konservative Mitte 'seitwaerts', nie Alarm.
+  let regime: ReturnType<typeof marketRegime> = {
+    state: 'seitwaerts',
+    aboveSma200: null,
+    realizedVolPct: null,
+    vix: null,
+  };
+  try {
+    const [spy, vixQuote] = await Promise.all([
+      getMarketSnapshot('^GSPC', '1y'),
+      getQuickQuote('^VIX').catch(() => null),
+    ]);
+    regime = marketRegime(
+      spy.bars.map((b) => b.close),
+      vixQuote && vixQuote.price > 0 ? vixQuote.price : null,
+    );
+  } catch (err) {
+    logger.warn('Regime-Messung fehlgeschlagen — seitwaerts angenommen', err);
+  }
+
   for (const symbol of symbols) {
     try {
       const snap = await getMarketSnapshot(symbol, DEFAULT_STRATEGY.signals.period);
@@ -1787,6 +1824,19 @@ export async function runScan(force = false): Promise<ScanResult> {
         forecast,
       );
 
+      // Schatten-Variante (MI): dieselben Indikatorwerte, regime-gerecht
+      // gelesen. Kostet nichts — der Snapshot ist bereits berechnet.
+      const rStimmen = regimeStimmen(sig.snapshot, regime.state, DEFAULT_STRATEGY.indicators);
+      const regimeDir = regimeRichtung(rStimmen, DEFAULT_STRATEGY.signals.minConfluence);
+      regimeDirs[regimeDir] += 1;
+      for (const [name, richtung] of Object.entries(rStimmen.votes)) {
+        const eintrag = regimeVoteDirs[name] ?? { buy: 0, sell: 0, hold: 0 };
+        if (richtung === 'buy' || richtung === 'sell' || richtung === 'hold') {
+          eintrag[richtung] += 1;
+        }
+        regimeVoteDirs[name] = eintrag;
+      }
+
       batch.set(
         symRef,
         {
@@ -1799,6 +1849,15 @@ export async function runScan(force = false): Promise<ScanResult> {
           // von gestern nicht von einem aus dem letzten Lauf unterscheiden
           // (siehe SCHATTEN_MAX_ALTER_MS).
           lastSignal: { direction: sig.direction, price: sig.price, at: now.toISOString() },
+          // Zweite Lesart derselben Indikatoren (MI): regime-gerecht statt
+          // fest auf Umkehr. Wird NICHT gehandelt — nur mitgeschrieben und
+          // beim nächsten Scan bewertet, damit die Kante beider Lesarten
+          // nebeneinander steht, bevor jemand umschaltet.
+          lastSignalRegime: {
+            direction: regimeDir,
+            price: sig.price,
+            at: now.toISOString(),
+          },
           quote: {
             price: snap.price,
             changePct: snap.changePct,
@@ -1941,12 +2000,23 @@ export async function runScan(force = false): Promise<ScanResult> {
       //
       // Kostet nichts: Das Markt-Dokument wird ohnehin gelesen und
       // geschrieben — es kommt nur ein Feld dazu.
+      const kosten = feeRateForClass(classify(symbol)) * 2;
       const vorher = leseSchattenSignal(symDoc.get('lastSignal'), now.getTime());
       if (vorher) {
         const kl = classify(symbol);
-        schattenKlassen[kl] = addiereSchatten(
-          schattenKlassen[kl],
-          bewerteSchattenSignal(vorher, sig.price, feeRateForClass(kl) * 2),
+        const beitrag = bewerteSchattenSignal(vorher, sig.price, kosten);
+        schattenKlassen[kl] = addiereSchatten(schattenKlassen[kl], beitrag);
+        schattenVarianten.live = addiereSchatten(schattenVarianten.live, beitrag);
+      }
+      // Dieselbe Bewertung für die regime-gerechte Lesart (MI). Beide
+      // Varianten sehen denselben Kurs zur selben Zeit — nur so ist der
+      // Vergleich fair. Getrennt geführt, weil eine gemeinsame Summe die
+      // Frage, um die es geht, gerade wegmitteln würde.
+      const vorherRegime = leseSchattenSignal(symDoc.get('lastSignalRegime'), now.getTime());
+      if (vorherRegime) {
+        schattenVarianten.regime = addiereSchatten(
+          schattenVarianten.regime,
+          bewerteSchattenSignal(vorherRegime, sig.price, kosten),
         );
       }
       signalDirs[sig.direction] += 1;
@@ -2000,28 +2070,6 @@ export async function runScan(force = false): Promise<ScanResult> {
   // Auto-Trades pro User (1 Marktdaten-Fetch oben, N Auswertungen hier).
   // Geguarded: Ein Fehler hier darf den Heartbeat nicht verhindern — sonst
   // bleibt meta/health stehen und die Ursache ist ohne GCP-Konsole unsichtbar.
-  // Regime-Ampel (31.07., Stufe 1: nur messen + stempeln). Quelle sind der
-  // S&P 500 (^GSPC, Tages-Closes) und der VIX — beide Gratis-Größen. Ein
-  // Fetch-Fehler ergibt die konservative Mitte 'seitwaerts', nie Alarm.
-  let regime: ReturnType<typeof marketRegime> = {
-    state: 'seitwaerts',
-    aboveSma200: null,
-    realizedVolPct: null,
-    vix: null,
-  };
-  try {
-    const [spy, vixQuote] = await Promise.all([
-      getMarketSnapshot('^GSPC', '1y'),
-      getQuickQuote('^VIX').catch(() => null),
-    ]);
-    regime = marketRegime(
-      spy.bars.map((b) => b.close),
-      vixQuote && vixQuote.price > 0 ? vixQuote.price : null,
-    );
-  } catch (err) {
-    logger.warn('Regime-Messung fehlgeschlagen — seitwaerts angenommen', err);
-  }
-
   let trades = 0;
   let entryGate: EntryGateStats = {
     geprueft: 0,
@@ -2133,6 +2181,50 @@ export async function runScan(force = false): Promise<ScanResult> {
     logger.warn('Schatten-Kante nicht fortgeschrieben', err); // nie den Scan gefährden
   }
 
+  // Dasselbe für den Vergleich der beiden Signal-Lesarten (MI). Eigenes
+  // Dokument, weil es eine andere Frage beantwortet: nicht „welche Klasse
+  // trägt?", sondern „welche Signal-Logik trägt?".
+  let variantenStand: Record<string, ReturnType<typeof werteSchattenAus>> | null = null;
+  try {
+    const ref = db.doc('meta/signalShadow');
+    const vorstand = await ref.get();
+    const alt = (vorstand.get('varianten') as Record<string, SchattenKlasse> | undefined) ?? {};
+    const beitraege = Object.entries(schattenVarianten).filter(([, v]) => v) as Array<
+      [string, SchattenKlasse]
+    >;
+    if (beitraege.length > 0) {
+      const inkremente: Record<string, Record<string, FirebaseFirestore.FieldValue>> = {};
+      for (const [name, k] of beitraege) {
+        inkremente[name] = {
+          n: FieldValue.increment(k.n),
+          summePct: FieldValue.increment(k.summePct),
+          treffer: FieldValue.increment(k.treffer),
+        };
+      }
+      await ref.set(
+        {
+          varianten: inkremente,
+          updatedAt: now.toISOString(),
+          ...(vorstand.get('startedAt') ? {} : { startedAt: now.toISOString() }),
+        },
+        { merge: true },
+      );
+    }
+    const namen = new Set([...Object.keys(alt), ...beitraege.map(([n]) => n)]);
+    variantenStand = {};
+    for (const name of namen) {
+      const a = alt[name] ?? { n: 0, summePct: 0, treffer: 0 };
+      const b = schattenVarianten[name as 'live' | 'regime'] ?? { n: 0, summePct: 0, treffer: 0 };
+      variantenStand[name] = werteSchattenAus({
+        n: a.n + b.n,
+        summePct: Math.round((a.summePct + b.summePct) * 10_000) / 10_000,
+        treffer: a.treffer + b.treffer,
+      });
+    }
+  } catch (err) {
+    logger.warn('Varianten-Schatten nicht fortgeschrieben', err);
+  }
+
   // Heartbeat für Monitoring-Alerts (SETUP.md §J): meta/health ist öffentlich
   // lesbar (meta-Rules) und enthält bewusst KEINE sensiblen Daten.
   await db
@@ -2187,6 +2279,23 @@ export async function runScan(force = false): Promise<ScanResult> {
          * Stand des Abschaltens ein — und die Entscheidung wird faktisch
          * endgültig, obwohl der Regler graduell gemeint ist. */
         schatten: schattenStand,
+        /* Zweite Signal-Lesart im Schatten (MI, 04.08.).
+         *
+         * Anlass: `knappVerfehlt` stand bei 13 von 13 — jedes Signal
+         * verfehlte die Konfluenz um genau EINE Stimme, und zwar immer
+         * dieselbe. RSI und Bollinger sind auf Umkehr parametriert und
+         * schweigen im Trend strukturell; MACD ist der einzige Trendfolger.
+         * `minConfluence: 2` ist damit im Trend nicht selten unerreichbar,
+         * sondern unerreichbar.
+         *
+         * `regimeDirs` zeigt, was eine regime-gerechte Lesart daraus machen
+         * würde, `signalSchatten` was sie verdient hätte — beide gegen
+         * dieselben Kurse. Erst wenn die Kante der Variante die der
+         * gehandelten Logik schlägt, wird umgeschaltet. Vorher nicht: Mehr
+         * Trades bei negativer Kante sind mehr Verlust, kein Fortschritt. */
+        regimeDirs,
+        regimeVoteDirs,
+        signalSchatten: variantenStand,
         // Konten-Zähler (Owner-Fund 02.08.): WER am Handel teilnimmt und wer
         // still übersprungen wird — als Summen, ohne Konto-Bezug. Steht
         // `wartet_freischaltung` > 0 bei einem User mit „Engine an", ist die
