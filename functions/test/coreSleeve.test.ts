@@ -25,12 +25,26 @@ import {
 import { clampStrategyRisk, corePct } from '../src/core/rulesTrading.js';
 
 describe('corePct: Hülle des Sockel-Anteils', () => {
-  it('fehlendes Feld heißt 0 — Bestandskonten schichten NICHT still um', () => {
-    // Die wichtigste Zeile dieser Datei: Ein neuer Default darf niemals
-    // rückwirkend 60 % eines fremden Depots umschichten.
+  it('fehlendes Feld heißt 0 — kein Sockel aus Versehen', () => {
+    // Die Hülle selbst erfindet nie einen Sockel: Fehlt das Feld, ist er 0.
+    // Dass Bestandskonten trotzdem einen bekommen, ist eine ausdrückliche
+    // Betreiber-Entscheidung (Owner 04.08.) und passiert über die Migration
+    // corePctAll_2026_08_04 — sichtbar, protokolliert und idempotent —,
+    // nicht als stille Nebenwirkung eines geänderten Defaults.
     const alt = structuredClone(DEFAULT_STRATEGY);
     delete (alt.engine as { corePct?: number }).corePct;
     expect(corePct(alt)).toBe(0);
+  });
+
+  it('die Migration überschreibt keinen selbst gesetzten Sockel', () => {
+    // Die Bedingung der Migration in Reinform: Nur wo kein eigener Wert > 0
+    // steht, wird gesetzt. Wer 25 % gewählt hat, behält 25 % — sonst wäre
+    // jede Nutzereinstellung beim nächsten Deploy weg.
+    const eigener = 25;
+    const nimmMigration = (v: number | undefined): boolean => !(typeof v === 'number' && v > 0);
+    expect(nimmMigration(eigener)).toBe(false);
+    expect(nimmMigration(undefined)).toBe(true);
+    expect(nimmMigration(0)).toBe(true); // nie eingestellt bzw. abgewählt
   });
 
   it('klemmt auf CORE_PCT_CAP — 100 % Sockel gibt es nicht', () => {

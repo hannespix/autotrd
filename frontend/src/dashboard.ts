@@ -12,6 +12,7 @@ import {
   EVIDENCE_DEFAULTS,
   MAX_LEVERAGE,
   CORE_PCT_CAP,
+  DEFAULT_CORE_PCT,
   MAX_OPEN_POSITIONS_CAP,
   MAX_RISK_PER_TRADE_PCT,
   MIN_EDGE_MULTIPLE,
@@ -1813,10 +1814,13 @@ function openOptions(): void {
     st.strategy.engine.riskPerTradePct ?? DEFAULT_RISK_PER_TRADE_PCT);
   ($('owMaxPos') as HTMLInputElement).value = String(
     st.strategy.engine.maxOpenPositions ?? DEFAULT_MAX_OPEN_POSITIONS);
-  // Fehlendes Feld zeigt 0, NICHT den Default: Ein Bestandskonto hat keinen
-  // Sockel, und das Formular darf keinen anzeigen, den es nicht gibt —
-  // sonst schichtet der nächste Speichern-Klick unbemerkt 60 % um.
-  ($('owCore') as HTMLInputElement).value = String(st.strategy.engine.corePct ?? 0);
+  // Fehlendes Feld zeigt den Default (Owner-Anweisung 04.08.: „bitte bei
+  // jedem Konto automatisch als Standardeinstellung setzen"). Vorher stand
+  // hier bewusst 0, weil der Sockel nur für neue Konten galt — mit der
+  // Migration corePctAll_2026_08_04 hat jedes Konto einen echten Wert, und
+  // das Formular soll dieselbe Wahrheit zeigen wie der Server.
+  ($('owCore') as HTMLInputElement).value = String(
+    st.strategy.engine.corePct ?? DEFAULT_CORE_PCT);
   ($('owLev') as HTMLSelectElement).value = String(
     Math.min(MAX_LEVERAGE, Math.max(1, Math.round(st.strategy.broker.leverage ?? 1))));
   ($('owSl') as HTMLInputElement).value = String(st.strategy.engine.stopLossPct);
