@@ -25,6 +25,7 @@ import {
   costGate,
   effectiveLeverage,
   captureForClass,
+  klemmeGewicht,
   feeRateForClass,
   isTradable,
   stopDistancePct,
@@ -201,6 +202,8 @@ export interface EntryGateStats {
   unter_kosten: number;
   /** Schatten (04.08.): Was die Kanten-Fassung ZUSÄTZLICH blocken würde. */
   kante_wuerde_blocken: number;
+  /** Klassen-Regler auf 0 — der Schatten misst weiter. */
+  klasse_aus: number;
   /** DURCHGELASSEN, obwohl die Kostenschwelle nicht prüfen konnte (keine
    *  ATR). Steht diese Zahl hoch, ist die Schwelle faktisch abgeschaltet. */
   ohne_atr_durchgelassen: number;
@@ -272,6 +275,7 @@ async function executeUserTrades(
     news_veto: 0,
     unter_kosten: 0,
     kante_wuerde_blocken: 0,
+    klasse_aus: 0,
     ohne_atr_durchgelassen: 0,
     filter_blockiert: 0,
     regime_gegen_trend: 0,
@@ -610,6 +614,7 @@ async function executeUserTrades(
         | 'cluster_voll'
         | 'news_veto'
         | 'unter_kosten'
+        | 'klasse_aus'
         | 'regime_gegen_trend'
         | 'regime_stress'
         | null => {
@@ -670,6 +675,7 @@ async function executeUserTrades(
           // derselbe Einstieg in beiden Zählern und die Zahl läse sich wie
           // ein doppelter Effekt.
           if (kosten.ok && !mitKante.ok) gate.kante_wuerde_blocken += 1;
+          if (klassenGewicht(clamped, symbol) <= 0) gate.klasse_aus += 1;
         }
         if (regimeSperre === 'stress') gate.regime_stress += 1;
         else if (regimeSperre === 'gegen_trend') gate.regime_gegen_trend += 1;
@@ -678,6 +684,7 @@ async function executeUserTrades(
         if (regimeSperre === 'gegen_trend') return 'regime_gegen_trend';
         if (!platz) return 'cluster_voll';
         if (veto.blocked) return 'news_veto';
+        if (klassenGewicht(clamped, symbol) <= 0) return 'klasse_aus';
         return kosten.ok ? null : 'unter_kosten';
       };
 
@@ -1117,11 +1124,16 @@ async function executeUserTrades(
           // Überzeugungs-Sizing (Owner 01.08.): Einsatz folgt messbarer
           // Überzeugung — Konfluenz-Überschuss plus REALISIERTE Kante des
           // Steckbriefs; nachweislich schwache Sorten handeln halbiert.
-          const sizeFactor = convictionFactor({
-            konfluenz,
-            requiredConfluence: clamped.signals.minConfluence,
-            bucket: filterBuckets[bucket] ?? null,
-          });
+          // Klassen-Regler (04.08.) multipliziert auf die Überzeugung. Der
+          // Broker deckelt das Produkt weiterhin bei 1,5 und die
+          // Klumpengrenze bleibt die letzte Instanz — die beiden Faktoren
+          // können sich also nicht zu einem Hebel aufaddieren.
+          const sizeFactor =
+            convictionFactor({
+              konfluenz,
+              requiredConfluence: clamped.signals.minConfluence,
+              bucket: filterBuckets[bucket] ?? null,
+            }) * klassenGewicht(clamped, symbol);
           const budget = hebelBudget(konfluenz, {
             bucket: filterBuckets[bucket] ?? null,
             side: 'long',
@@ -1194,11 +1206,16 @@ async function executeUserTrades(
             gate.filter_blockiert += 1;
             continue;
           }
-          const sizeFactor = convictionFactor({
-            konfluenz,
-            requiredConfluence: clamped.signals.minConfluence,
-            bucket: filterBuckets[bucket] ?? null,
-          });
+          // Klassen-Regler (04.08.) multipliziert auf die Überzeugung. Der
+          // Broker deckelt das Produkt weiterhin bei 1,5 und die
+          // Klumpengrenze bleibt die letzte Instanz — die beiden Faktoren
+          // können sich also nicht zu einem Hebel aufaddieren.
+          const sizeFactor =
+            convictionFactor({
+              konfluenz,
+              requiredConfluence: clamped.signals.minConfluence,
+              bucket: filterBuckets[bucket] ?? null,
+            }) * klassenGewicht(clamped, symbol);
           const budget = hebelBudget(konfluenz, {
             bucket: filterBuckets[bucket] ?? null,
             side: 'short',
@@ -1618,6 +1635,24 @@ async function migrateCorePctAll(db: FirebaseFirestore.Firestore): Promise<void>
   }
 }
 
+/**
+ * Kapital-Gewicht einer Anlageklasse (04.08.).
+ *
+ * `0` heißt: kein neuer Einstieg. Es heißt NICHT „kein Signal" — Signale,
+ * Schatten-P&L und die Klassen-Kante entstehen weiter, damit eine
+ * abgeschaltete Klasse messbar bleibt und sich zurückverdienen kann. Wer
+ * das anders baut, kann eine einmal getroffene Entscheidung nie mehr
+ * überprüfen (siehe `shared/src/classAdvisor.ts`).
+ *
+ * Bestehende Ausstiege bleiben unberührt: Eine offene Position wird immer
+ * geschlossen, auch wenn ihre Klasse inzwischen auf 0 steht. Alles andere
+ * hieße, jemanden in einer Position festzuhalten, die er nicht mehr will.
+ */
+function klassenGewicht(strategy: Strategy, symbol: string): number {
+  return klemmeGewicht(strategy.engine.classWeights?.[classify(symbol)]);
+}
+
+
 export async function runScan(force = false): Promise<ScanResult> {
   const now = new Date();
   const scanId = now.toISOString().slice(0, 16) + 'Z'; // Minute = idempotent
@@ -1961,6 +1996,7 @@ export async function runScan(force = false): Promise<ScanResult> {
     news_veto: 0,
     unter_kosten: 0,
     kante_wuerde_blocken: 0,
+    klasse_aus: 0,
     ohne_atr_durchgelassen: 0,
     filter_blockiert: 0,
     regime_gegen_trend: 0,
