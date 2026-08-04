@@ -36,6 +36,7 @@ import {
   bucketVerdict,
   convictionFactor,
   marketRegime,
+  regimeEntryBlocked,
   signalSignature,
   type BucketStat,
   type MarketRegime,
@@ -203,6 +204,12 @@ export interface EntryGateStats {
    *  die eigene Historie mit n≥30 und t≤−1,5 als Verlust-Sorte ausweist
    *  (bucketVerdict); Exits und manuelle Trades bleiben immer frei. */
   filter_blockiert: number;
+  /** Abgelehnt: SHORT im Aufwärtstrend (Regime-Ampel Stufe 2, 04.08.).
+   *  Die vier Short-Steckbriefe im Trend standen zusammen bei 112 Trades
+   *  mit 8 Gewinnern — die Zahl hier zeigt, wie oft die Regel greift. */
+  regime_gegen_trend: number;
+  /** Abgelehnt: Stress-Regime, gar keine neuen Einstiege. */
+  regime_stress: number;
 }
 
 /**
@@ -253,6 +260,8 @@ async function executeUserTrades(
     unter_kosten: 0,
     ohne_atr_durchgelassen: 0,
     filter_blockiert: 0,
+    regime_gegen_trend: 0,
+    regime_stress: 0,
   };
   const konten: KontenStats = {
     laufend: 0,
@@ -535,9 +544,22 @@ async function executeUserTrades(
         symbol: string,
         atrPct: number | null | undefined,
         offen: readonly string[],
-      ): 'nicht_handelbar' | 'cluster_voll' | 'news_veto' | 'unter_kosten' | null => {
+        side: 'long' | 'short',
+      ):
+        | 'nicht_handelbar'
+        | 'cluster_voll'
+        | 'news_veto'
+        | 'unter_kosten'
+        | 'regime_gegen_trend'
+        | 'regime_stress'
+        | null => {
         gate.geprueft += 1;
         const handelbar = isTradable(symbol);
+        // Regime-Ampel Stufe 2 (04.08.): Im Aufwärtstrend keine Shorts, im
+        // Stress gar keine neuen Einstiege. Die Messung dahinter steht an
+        // regimeEntryBlocked; abschaltbar je User (signals.regimeGate).
+        const regimeSperre =
+          clamped.signals.regimeGate !== false ? regimeEntryBlocked(regime, side) : null;
         const platz = handelbar && clusterHasRoom(offen, symbol);
         // News-Veto (29.07.): frisches hartes Ereignis sperrt NEUE Einstiege.
         // Nur Einstiege — Ausstiege durchlaufen entrySperre nie (s. o.).
@@ -568,7 +590,11 @@ async function executeUserTrades(
           // Der stille Fall: durchgelassen, weil nicht prüfbar.
           else if (kosten.reason === 'kein_atr') gate.ohne_atr_durchgelassen += 1;
         }
+        if (regimeSperre === 'stress') gate.regime_stress += 1;
+        else if (regimeSperre === 'gegen_trend') gate.regime_gegen_trend += 1;
         if (!handelbar) return 'nicht_handelbar';
+        if (regimeSperre === 'stress') return 'regime_stress';
+        if (regimeSperre === 'gegen_trend') return 'regime_gegen_trend';
         if (!platz) return 'cluster_voll';
         if (veto.blocked) return 'news_veto';
         return kosten.ok ? null : 'unter_kosten';
@@ -738,7 +764,7 @@ async function executeUserTrades(
                 // A/B-Duell verzerrt: Der Schatten dürfte Trades machen, die
                 // dem echten Konto verboten sind, und gewönne aus dem
                 // falschen Grund.
-                if (entrySperre(symbol, data.atrPct, Object.keys(book.positions))) continue;
+                if (entrySperre(symbol, data.atrPct, Object.keys(book.positions), 'long')) continue;
                 // Sizing-Parität (MA4): gleiche Basis wie der echte Broker —
                 // Cash (Default) oder Startkapital, Deckung prüft der Cash.
                 const r = shadowTrade(book, symbol, 'buy', data.price, clamped.engine.maxPositionPct, {
@@ -765,7 +791,7 @@ async function executeUserTrades(
                 // Shadow-Short (R2): gleiche Entry-Guards wie der echte Pfad
                 if (Object.keys(book.positions).length >= posLimit) continue;
                 if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
-                if (entrySperre(symbol, data.atrPct, Object.keys(book.positions))) continue;
+                if (entrySperre(symbol, data.atrPct, Object.keys(book.positions), 'short')) continue;
                 const r = shadowTrade(book, symbol, 'sell', data.price, clamped.engine.maxPositionPct, {
                   capital: sizingCapital(),
                   now,
@@ -802,7 +828,7 @@ async function executeUserTrades(
             if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
             if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
             if (coreSymbols.has(symbol)) continue; // hält der Sockel — Besitzgrenze
-            if (entrySperre(symbol, data.atrPct, alleSymbole())) continue;
+            if (entrySperre(symbol, data.atrPct, alleSymbole(), 'long')) continue;
             // assetClass durchreichen (MA3-Fund 26.07.): Ohne sie schrieb der
             // Broker die Stop/Take-LEVEL mit den GLOBALEN Prozenten fest —
             // die MA6-Klassen-Profile (Krypto 6/10 usw.) griffen beim Kauf
@@ -863,7 +889,7 @@ async function executeUserTrades(
             if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
             if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
             if (coreSymbols.has(symbol)) continue; // hält der Sockel — Besitzgrenze
-            if (entrySperre(symbol, data.atrPct, alleSymbole())) continue;
+            if (entrySperre(symbol, data.atrPct, alleSymbole(), 'short')) continue;
             const r = await executePaperTrade(
               {
                 uid,
@@ -977,7 +1003,7 @@ async function executeUserTrades(
           if (positions.size >= posLimit) continue;
           if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
           if (coreSymbols.has(symbol)) continue; // hält der Sockel — Besitzgrenze
-          if (entrySperre(symbol, data.atrPct, alleSymbole())) continue;
+          if (entrySperre(symbol, data.atrPct, alleSymbole(), 'long')) continue;
           // Steckbrief des Einstiegs (Trade-Filter, scharf seit 02.08.):
           // Sorten, deren EIGENE Historie n≥30 und t≤−1,5 zeigt, werden
           // nicht mehr gehandelt — nur gezählt. Exits bleiben frei.
@@ -1055,7 +1081,7 @@ async function executeUserTrades(
           if (positions.size >= posLimit) continue;
           if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
           if (coreSymbols.has(symbol)) continue; // hält der Sockel — Besitzgrenze
-          if (entrySperre(symbol, data.atrPct, alleSymbole())) continue;
+          if (entrySperre(symbol, data.atrPct, alleSymbole(), 'short')) continue;
           const bucket = bucketKey({
             assetClass: classify(symbol),
             timeframe: tf,
@@ -1740,6 +1766,8 @@ export async function runScan(force = false): Promise<ScanResult> {
     unter_kosten: 0,
     ohne_atr_durchgelassen: 0,
     filter_blockiert: 0,
+    regime_gegen_trend: 0,
+    regime_stress: 0,
   };
   let lastError: string | null = null;
   // null = Trade-Block ist gar nicht gelaufen (Fehler davor) — das ist eine
