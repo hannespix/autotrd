@@ -28,6 +28,8 @@ import {
   byWeekday,
   classify,
   closedOnly,
+  lokalerTag,
+  marketOpenForClass,
   ema,
   entryAnchor,
   equityCurve,
@@ -47,6 +49,7 @@ import {
   tradeStats,
   validateStrategy,
   vwapSessions,
+  tagesPraefix,
   wilderRsi,
   zonenKuerzel,
   type GlobalAxisStats,
@@ -573,6 +576,7 @@ function layout(email: string): string {
           <button class="tf-btn on" data-bars="66" title="3 Monate in Tageskerzen">3M</button>
           <button class="tf-btn" data-bars="250" title="1 Jahr in Tageskerzen (~250 Handelstage)">1J</button>
           <span id="resBadge" class="res-badge mono" title="Aktive Kerzen-Auflösung"></span>
+          <span id="mktBadge" class="res-badge mono" hidden></span>
           <span id="histHint" class="res-badge mono" hidden>lädt ältere Daten …</span>
           <button class="tf-btn" id="predBtn" hidden title="Prognose-Pfeil zeichnen: Klick in den Chart setzt den Ziel-Kurs">${ICONS.pencil}</button>
           <button class="tf-btn" id="jumpStart" title="Animiert zum Anfang der geladenen Historie springen (lädt am Rand automatisch weiter nach)">⇤</button>
@@ -1279,6 +1283,32 @@ function renderResBadge(): void {
   el.title = st.intradayDays > 0
     ? 'Aktive Kerzen-Auflösung — Uhrzeiten auf der Zeitachse und in der Kurszeile stehen in deiner Ortszeit'
     : 'Aktive Kerzen-Auflösung';
+  renderMarktBadge();
+}
+
+/**
+ * Markt-Status des gezeigten Symbols (Owner-Fund 04.08.).
+ *
+ * Warum das hier steht: Der Owner sah bei GOOGL und AMZN „22:00", während es
+ * bei ihm 15:15 war — und hielt es für einen Anzeigefehler. Es war der
+ * gestrige US-Schluss (16:00 New York). Vor der Eröffnung um 15:30 unserer
+ * Zeit KANN die jüngste Kerze nicht von heute sein; bei Krypto dagegen ist
+ * sie es immer. Ohne diesen Hinweis sieht beides gleich aus wie ein Fehler.
+ */
+function renderMarktBadge(): void {
+  if (!st) return;
+  const el = $('mktBadge');
+  const klasse = classify(st.currentSymbol);
+  if (marketOpenForClass(klasse, new Date())) {
+    el.hidden = true;
+    return;
+  }
+  el.textContent = 'Markt zu';
+  el.title =
+    `${st.currentSymbol}: Die Börse dieser Anlageklasse handelt gerade nicht. ` +
+    'Die jüngste Kerze stammt deshalb vom letzten Handelstag — die Uhrzeit in ' +
+    'der Kurszeile gehört zu ihr, nicht zu jetzt.';
+  el.hidden = false;
 }
 
 /** SMA/EMA/BB-Linien für beliebige Bars — gilt für Haupt-Chart UND Grid-Panels
@@ -1377,11 +1407,25 @@ function lastHudBar(
 ): HudBar | null {
   const last = src[src.length - 1];
   if (!last) return null;
-  const time =
-    'date' in last
-      ? last.date
-      : new Date(last.time * 1000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  const time = 'date' in last ? last.date : intradayLabel(last.time);
   return { time, open: last.open, high: last.high, low: last.low, close: last.close, volume: last.volume ?? null };
+}
+
+/**
+ * Uhrzeit eines Intraday-Bars — mit Tages-Angabe, wenn er nicht von heute ist.
+ *
+ * Owner-Fund 04.08.: „bei Google und Amazon wird 22 Uhr gezeigt, obwohl hier
+ * 15:15 ist". Die 22:00 stimmten — es war der gestrige US-Schluss (16:00 New
+ * York). Falsch war nur, dass nichts es sagte: Eine nackte Uhrzeit liest man
+ * als „jetzt". Vor der US-Eröffnung um 15:30 unserer Zeit ist die jüngste
+ * Kerze zwangsläufig von gestern, bei Krypto dagegen von eben — daher zeigten
+ * verschiedene Charts verschiedene Uhrzeiten, ohne dass eine falsch war.
+ */
+function intradayLabel(sek: number): string {
+  const d = new Date(sek * 1000);
+  const uhr = d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  const praefix = tagesPraefix(lokalerTag(d), lokalerTag(new Date()));
+  return praefix ? `${praefix} ${uhr}` : uhr;
 }
 
 /** Gemeinsames HUD-Format ALLER Fenster: Symbol · Zeit · O H L C (±%) · Vol. */

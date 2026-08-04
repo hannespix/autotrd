@@ -35,6 +35,38 @@ export function ausOrtszeit(unixSek: number, offsetMinuten: number): number {
 }
 
 /**
+ * Tages-Präfix für ein Intraday-Label (Owner-Fund 04.08.: „bei Google und
+ * Amazon wird 22 Uhr gezeigt, obwohl hier 15:15 ist").
+ *
+ * Die 22:00 waren richtig — es war der gestrige US-Handelsschluss (16:00 New
+ * York). Falsch war nur, dass nichts es sagte: Eine nackte Uhrzeit liest man
+ * als „jetzt", und dann wirkt der Chart kaputt. Vor der US-Eröffnung um 15:30
+ * unserer Zeit ist die jüngste Kerze zwangsläufig von gestern; bei Krypto
+ * dagegen von eben — deshalb zeigten verschiedene Charts verschiedene
+ * Uhrzeiten, ohne dass eine davon falsch war.
+ *
+ * Beide Argumente sind ISO-Tage (`YYYY-MM-DD`) in DERSELBEN Zeitzone —
+ * gemischt man Bar-Tag in Ortszeit mit „heute" in UTC, springt das Ergebnis
+ * abends um einen Tag.
+ */
+export function tagesPraefix(barTag: string, heuteTag: string): string {
+  if (barTag === heuteTag) return '';
+  const bar = Date.parse(barTag);
+  const heute = Date.parse(heuteTag);
+  if (!Number.isFinite(bar) || !Number.isFinite(heute)) return '';
+  const tage = Math.round((heute - bar) / 86_400_000);
+  if (tage === 1) return 'gestern';
+  const teile = barTag.split('-');
+  return teile.length === 3 ? `${teile[2]}.${teile[1]}.` : '';
+}
+
+/** Lokaler Kalendertag eines Zeitstempels als ISO-Tag (ohne UTC-Versatz). */
+export function lokalerTag(d: Date): string {
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/**
  * Kurzname der Zeitzone fürs Achsen-Label („MESZ", „MEZ") — damit im Chart
  * steht, worauf sich die Uhrzeiten beziehen. Fällt auf den IANA-Namen bzw.
  * einen UTC-Versatz zurück, wenn die Umgebung keinen Kurznamen kennt.
