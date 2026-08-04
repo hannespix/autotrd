@@ -266,6 +266,44 @@ export async function callTaxReport(jahr: number, echtgeld: boolean): Promise<Ta
   return r.data as TaxReportResult;
 }
 
+export interface BrokerStatusResult {
+  ok: true;
+  modus: 'paper' | 'live';
+  wunschLive: boolean;
+  envFreigabe: boolean;
+  schluesselVorhanden: boolean;
+  konto: {
+    id: string;
+    status: string;
+    currency: string;
+    cash: number;
+    equity: number;
+    buyingPower: number;
+    tradingBlocked: boolean;
+    accountBlocked: boolean;
+    patternDayTrader: boolean;
+  } | null;
+  abweichungen: Array<{
+    symbol: string;
+    eigeneMenge: number;
+    brokerMenge: number;
+    differenz: number;
+  }>;
+  meldung: string;
+  fehler?: string;
+}
+
+/**
+ * Zustand der Broker-Anbindung prüfen, ohne zu handeln.
+ *
+ * Bewusst ein reiner Lese-Aufruf: Wer die Anbindung erst beim ersten Trade
+ * testet, testet sie mit Geld.
+ */
+export async function callBrokerStatus(): Promise<BrokerStatusResult> {
+  const r = await httpsCallable(fns(), 'brokerStatus')({});
+  return r.data as BrokerStatusResult;
+}
+
 /** Strategie serverseitig validieren + speichern (flaches Schema). */
 export async function saveStrategy(strategy: Strategy): Promise<void> {
   await httpsCallable(fns(), 'saveStrategy')({ strategy });

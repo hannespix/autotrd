@@ -128,6 +128,8 @@ import {
   type MomentumDoc,
   type TuneFleetRow,
   type TuneLogRow,
+  callBrokerStatus,
+  type BrokerStatusResult,
   callTaxReport,
   type TaxReportResult,
   resetWallet,
@@ -1061,6 +1063,14 @@ function layout(email: string): string {
         <span class="hint" style="flex:1">Angemeldet als <b>${email.replace(/[<>&]/g, '')}</b></span>
         <button class="btn btn-n" id="logoutBtn">Abmelden</button>
       </div>
+      <div class="wl-sec" style="margin-top:14px">Echtgeld-Anbindung ${iBtn('brokerStatus')}</div>
+      <p class="hint">Prüft die Verbindung zum Broker, <b>ohne zu handeln</b>, und
+        gleicht das eigene Buch mit dem Depot beim Broker ab. Echtgeld verlangt
+        zwei Schalter an zwei Orten — ein Klick allein schaltet nichts scharf.</p>
+      <div class="row" style="align-items:center;gap:8px;margin-top:6px">
+        <button class="btn btn-n" id="bkGo">Verbindung prüfen</button>
+      </div>
+      <div id="bkOut" style="margin-top:8px"></div>
       <div class="wl-sec" style="margin-top:14px">Steuer-Export ${iBtn('taxReport')}</div>
       <p class="hint">Paart Käufe und Verkäufe nach <b>FIFO</b>, rechnet Haltedauern
         und sortiert die Ergebnisse in die Töpfe, die das deutsche Recht getrennt
@@ -1094,6 +1104,73 @@ function layout(email: string): string {
 /** Muss identisch zu RESET_CONFIRM_WORD im Server sein — der prüft es erneut. */
 const RESET_CONFIRM_WORD = 'RESET';
 
+/**
+ * HTML-Escaping für Text, der aus einer Antwort des Servers stammt.
+ *
+ * Modul-weit, weil Broker-Meldungen und Steuer-Hinweise dieselbe Behandlung
+ * brauchen: Beide enthalten Text, den nicht dieser Code geschrieben hat.
+ */
+function escText(s: string): string {
+  return s.replace(
+    /[<>&"]/g,
+    (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]!,
+  );
+}
+
+/**
+ * Broker-Status als Karte.
+ *
+ * Die drei Schalter stehen einzeln da, weil genau ihr ZUSAMMENSPIEL über
+ * echtes Geld entscheidet. Wer nur „live" liest, weiß nicht, ob das am
+ * Wunsch, an der Freigabe oder an beidem liegt — und wer nachher fragt,
+ * warum nichts passiert ist, soll es hier ablesen können.
+ */
+function renderBrokerStatus(r: BrokerStatusResult): string {
+  const e = escText;
+  const ampel = (an: boolean): string =>
+    an ? '<span class="up">●</span>' : '<span class="hint">○</span>';
+  const k = r.konto;
+
+  const abw =
+    r.abweichungen.length > 0
+      ? `<table class="tbl st-num" style="width:100%;margin-top:6px">
+           <thead><tr><th>Symbol</th><th class="num">eigenes Buch</th>
+             <th class="num">Broker</th><th class="num">Differenz</th></tr></thead>
+           <tbody>${r.abweichungen
+             .map(
+               (a) => `<tr><td>${e(a.symbol)}</td><td class="num">${a.eigeneMenge}</td>
+                 <td class="num">${a.brokerMenge}</td>
+                 <td class="num dn"><b>${a.differenz > 0 ? '+' : ''}${a.differenz}</b></td></tr>`,
+             )
+             .join('')}</tbody></table>
+         <p class="hint">Eine Position, die nur beim Broker liegt, ist ein Risiko,
+           von dem die Engine nichts weiß. Eine, die nur im Buch steht, lässt sie
+           mit einer Deckung rechnen, die es nicht gibt. Beides vor dem Handeln klären.</p>`
+      : '';
+
+  return `
+    <div class="hint" style="margin-bottom:6px"><b>${
+      r.modus === 'live' ? 'ECHTGELD' : 'Papierhandel'
+    }</b> — ${e(r.meldung)}</div>
+    <div class="hint">
+      ${ampel(r.schluesselVorhanden)} Schlüssel hinterlegt ·
+      ${ampel(r.wunschLive)} Strategie auf Echtgeld ·
+      ${ampel(r.envFreigabe)} Umgebungs-Freigabe
+    </div>
+    ${
+      k
+        ? `<table class="tbl st-num" style="width:100%;margin-top:6px"><tbody>
+             <tr><td>Kontostatus</td><td class="num">${e(k.status)}</td></tr>
+             <tr><td>Barbestand</td><td class="num">${k.cash.toFixed(2)} ${e(k.currency)}</td></tr>
+             <tr><td>Depotwert</td><td class="num">${k.equity.toFixed(2)} ${e(k.currency)}</td></tr>
+             <tr><td>Kaufkraft</td><td class="num">${k.buyingPower.toFixed(2)} ${e(k.currency)}</td></tr>
+           </tbody></table>`
+        : ''
+    }
+    ${abw}
+    ${r.fehler ? `<p class="hint">${e(r.fehler)}</p>` : ''}`;
+}
+
 /** Klarnamen der Steuertöpfe — die Kürzel sagen einem Menschen nichts. */
 const TOPF_LABEL: Record<string, string> = {
   aktien: 'Aktien (§ 20 Abs. 6 S. 4)',
@@ -1111,8 +1188,7 @@ const TOPF_LABEL: Record<string, string> = {
  * werden dürfen. Wer sie zeigt, lädt zum größten Fehler ein.
  */
 function renderSteuerbericht(r: TaxReportResult): string {
-  const e = (s: string): string =>
-    s.replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]!);
+  const e = escText;
   const geld = (n: number): string =>
     `${n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${r.bericht.waehrung}`;
   const b = r.bericht;
@@ -6120,6 +6196,21 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     ($('rsGo') as HTMLButtonElement).disabled =
       ($('rsWord') as HTMLInputElement).value.trim() !== RESET_CONFIRM_WORD;
   });
+  $('bkGo')?.addEventListener('click', () => {
+    const btn = $('bkGo') as HTMLButtonElement;
+    btn.disabled = true;
+    $('bkOut').innerHTML = '<div class="hint">Prüfe Verbindung …</div>';
+    void callBrokerStatus()
+      .then((r) => {
+        $('bkOut').innerHTML = renderBrokerStatus(r);
+      })
+      .catch((e) => {
+        $('bkOut').innerHTML = `<div class="hint">${escText((e as Error).message)}</div>`;
+      })
+      .finally(() => {
+        btn.disabled = false;
+      });
+  });
   // Steuer-Export: Jahresauswahl füllen (laufendes Jahr und die fünf davor —
   // weiter zurück gibt es keine Historie, und die Liste bliebe unübersichtlich).
   const txYear = $('txYear') as HTMLSelectElement;
@@ -6150,7 +6241,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         }
       })
       .catch((e) => {
-        $('txOut').innerHTML = `<div class="hint">${esc((e as Error).message)}</div>`;
+        $('txOut').innerHTML = `<div class="hint">${escText((e as Error).message)}</div>`;
       })
       .finally(() => {
         btn.disabled = false;
