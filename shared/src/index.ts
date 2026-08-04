@@ -25,3 +25,4 @@ export * from './conviction.js';
 export * from './positioning.js';
 export * from './leverageGate.js';
 export * from './calendar.js';
+export * from './positionView.js';
