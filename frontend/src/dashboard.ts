@@ -1148,6 +1148,28 @@ function renderBrokerStatus(r: BrokerStatusResult): string {
            mit einer Deckung rechnen, die es nicht gibt. Beides vor dem Handeln klären.</p>`
       : '';
 
+  // Die Reife-Liste ist der Kern der Karte: Sie zeigt, wie weit das System
+  // noch von echtem Geld entfernt ist — mit Zahlen statt mit einem Gefühl.
+  const reifeListe = r.reife.kriterien
+    .map(
+      (k) => `<tr><td>${ampel(k.erfuellt)} ${e(k.name)}</td>
+        <td class="num">${e(k.ist)}</td>
+        <td class="num hint">${e(k.soll)}</td></tr>`,
+    )
+    .join('');
+
+  const kante =
+    r.kante.nettoPct !== null
+      ? `<p class="hint">Je Trade: <b>${r.kante.bruttoPct?.toFixed(3)} %</b> brutto gegen
+         <b>${r.kante.kostenPct?.toFixed(3)} %</b> Kosten ⇒
+         <b class="${r.kante.nettoPct >= 0 ? 'up' : 'dn'}">${r.kante.nettoPct.toFixed(3)} %</b> netto.
+         Die Kante deckt die Reibung <b>${r.kante.deckung?.toFixed(2)}×</b>${
+           (r.kante.deckung ?? 0) < 1
+             ? ' — unter 1 heißt: strukturell defizitär, unabhängig von der Marktphase.'
+             : '.'
+         }</p>`
+      : '';
+
   return `
     <div class="hint" style="margin-bottom:6px"><b>${
       r.modus === 'live' ? 'ECHTGELD' : 'Papierhandel'
@@ -1155,8 +1177,14 @@ function renderBrokerStatus(r: BrokerStatusResult): string {
     <div class="hint">
       ${ampel(r.schluesselVorhanden)} Schlüssel hinterlegt ·
       ${ampel(r.wunschLive)} Strategie auf Echtgeld ·
-      ${ampel(r.envFreigabe)} Umgebungs-Freigabe
+      ${ampel(r.envFreigabe)} Umgebungs-Freigabe ·
+      ${ampel(r.reife.bereit)} Live-Reife (${r.reife.erfuellt}/${r.reife.gesamt})
     </div>
+    <table class="tbl st-num" style="width:100%;margin-top:6px">
+      <thead><tr><th>Kriterium</th><th class="num">ist</th><th class="num">soll</th></tr></thead>
+      <tbody>${reifeListe}</tbody>
+    </table>
+    ${kante}
     ${
       k
         ? `<table class="tbl st-num" style="width:100%;margin-top:6px"><tbody>
