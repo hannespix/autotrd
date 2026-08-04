@@ -1456,6 +1456,77 @@ Live-Pfad (Testfall je Guard). Details definiert der Owner, wenn es soweit ist.
 
 ---
 
+## MP — Performance-Offensive (Owner-Direktive 04.08.) — ERLEDIGT
+
+> „hast du eine bahnbrechende Idee, wie wir das ganze Tool verbessern
+> könnten? … eine stabile sichere Art und Weise langsam eine positive
+> Performance zu erreichen und zu dem richtig krasse Hebel, wenn sich das
+> Tool sicher ist … wenn die Gelegenheit sicher und günstig ist."
+
+### Die Diagnose, aus der alles folgt
+
+Nach der Notbremse vom 02.08. stand die Engine bei **471 Trades, netto
+−2.743 $ — bei 2.865 $ Gebühren**. Brutto also **+122 $**. Die Strategie
+war nicht kaputt; sie wurde von den Kosten erschlagen: 6,08 $ Gebühr gegen
+0,26 $ Rohertrag je Trade, ein Verhältnis von 23 : 1.
+
+Daraus folgt die Leitlinie, die alle sechs Bausteine trägt: **Gebühren sind
+prozentual — größere Positionen ändern daran nichts. Nur größere Bewegungen
+pro Trade.** Und für den Hebel-Wunsch: **erst Kante, dann Hebel.** Ein Hebel
+multipliziert eine negative Kante genauso zuverlässig wie eine positive.
+
+### Was gebaut wurde
+
+- [x] **Kern-Satellit** (#133, #135): `engine.corePct` führt einen Anteil des
+      Kapitals als ruhigen Momentum-Sockel; `Position.core` ist die
+      Besitzgrenze, der 5-Minuten-Scan fasst diese Positionen nicht an.
+      Auslöser war eine Messung: Der Momentum-Schatten stand am 04.08. bei
+      **+4,0 % seit dem 28.07. mit null Trades**, die vier aktiven Konten
+      zwischen −3,2 % und −6,3 % — er hatte nur nie Kapital
+      (`echteKonten: 0`). Migration `corePctAll_2026_08_04` schaltete ihn
+      auf Owner-Anweisung für alle 6 Bestandskonten ein.
+- [x] **Regime-Ampel Stufe 2** (#134): `regimeEntryBlocked` sperrt Shorts im
+      Aufwärtstrend und alle Einstiege im Stress. Die Evidenz lag vor: Alle
+      **vier** Short-Steckbriefe im Trend-Regime waren negativ, zusammen
+      **112 Trades mit 8 Gewinnern** (t von −3,1 bis −9,0). Entscheidend
+      war, was NICHT im Muster steckte — auch MACD-bestätigte Shorts
+      verloren. Gesperrt wird deshalb die RICHTUNG, nicht eine Signatur.
+      Erste Wirkung: 6 blockierte Einstiege im ersten Scan nach dem Deploy.
+- [x] **Positionierungs-Daten** (#136): Funding Rate und Open Interest von
+      **Kraken Futures** — Information, die kein Preis-Indikator hat. Der
+      erste Entwurf lief auf Binance und wurde im Live-Test verworfen:
+      „Service unavailable from a restricted location" (us-central1 ist
+      gesperrt, Bybit ebenso per CloudFront). Der Code hätte gebaut,
+      deployt und nie ein Datum bekommen. Stufe 1: nur messen.
+- [x] **Hebel-Ampel** (#137): `leverageChance` verlangt fünf UNABHÄNGIGE
+      Bestätigungen — Konfluenz, Regime, **Steckbrief mit t ≥ 2 bei n ≥ 30**,
+      Positionierung, Kostenabstand ≥ 5×. Vorher hing der Hebel allein an
+      der Konfluenz; alle vier verlierenden Short-Sorten hatten Konfluenz.
+- [x] **Termin-Kalender** (#138): Owner fragte nach FinancialJuice — kein
+      RSS, keine API, nur Login. Die Termine sind stattdessen BERECHENBAR
+      (NFP = erster Freitag, FOMC = veröffentlichte Liste, Turn-of-Month
+      braucht nur das Datum). Stufe 1: nur messen.
+- [x] **Sichtbarkeit** (#139): Karte „Was die Engine gerade tut". Fünf
+      Mechaniken entschieden unsichtbar mit — und „es passiert nichts" sieht
+      bei einer scharfen Regel genauso aus wie bei einem toten System.
+
+### Das Muster, das sich durchzieht
+
+Jeder Baustein folgt derselben Beweislast wie der Trade-Filter (31.07.):
+**erst messen, dann steuern.** Positionierung und Kalender stehen bewusst
+noch auf Stufe 1. Die Regime-Ampel wurde erst scharf geschaltet, als 112
+Trades vorlagen — nicht, als die Theorie plausibel klang.
+
+### Offen (bewusst)
+
+- Positionierung und Kalender bekommen Stimmrecht erst mit Evidenz.
+- Die Wirkung auf die Equity-Kurve braucht Tage. Am 04.08., zwei Stunden
+  nach dem Deploy: 4 neue Trades (statt zuvor Dutzende je Stunde), PF
+  stabil bei 0,32, Win-Rate 18,8 → 19,0 %. Das ist die beabsichtigte
+  Frequenz-Senkung, noch kein Ertragsbeweis.
+
+---
+
 ## Übergabe-Prompt (so startet man Claude Code in diesem Repo)
 
 > Lies ARCHITECTURE.md, CLAUDE.md und MILESTONES.md. Arbeite nach dem
