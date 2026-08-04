@@ -168,6 +168,12 @@ export interface TradeRequest {
    */
   bucket?: string;
   /**
+   * SOCKEL-Kauf des Kern-Satelliten (04.08.): stempelt `core: true` auf die
+   * Position. Der 5-Minuten-Scan fasst solche Positionen dann nicht mehr an —
+   * siehe Position.core. Nur der Momentum-Lauf setzt dieses Flag.
+   */
+  core?: boolean;
+  /**
    * Überzeugungs-Faktor der Positionsgröße (Owner-Direktive 01.08.): skaliert
    * die Tranche mit messbarer Überzeugung (convictionFactor, 0,25–1,5).
    * Fehlt er, gilt exakt die bisherige Größe. Die Klumpengrenze (25 %)
@@ -266,6 +272,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
         openedAt: now,
         highWater: eff, // Startpunkt des nachziehenden Stops
         ...(req.bucket ? { bucket: req.bucket } : {}),
+        ...(req.core ? { core: true } : {}),
       };
       const trade: Trade = {
         symbol: req.symbol,

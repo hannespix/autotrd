@@ -352,9 +352,28 @@ async function executeUserTrades(
 
     try {
       const positionsSnap = await userDoc.ref.collection('positions').get();
+      // BESITZGRENZE des Kern-Satelliten (04.08.): Sockel-Positionen gehören
+      // dem Momentum-Lauf und werden hier vollständig ausgeblendet — kein
+      // Exit, kein Trailing, und sie zählen nicht gegen maxOpenPositions.
+      // Würde der Scan sie sehen, schlösse er sie beim nächsten Rauschen:
+      // Er sähe eine Position ohne Konfluenz-Signal und verkaufte sie. Genau
+      // das soll der Sockel nicht erleben — er lebt von Ruhe.
       const positions = new Map<string, Position>(
-        positionsSnap.docs.map((d) => [d.id, d.data() as Position]),
+        positionsSnap.docs
+          .map((d) => [d.id, d.data() as Position] as const)
+          .filter(([, p]) => p.core !== true),
       );
+      // Ausgeblendet heißt NICHT „nicht vorhanden". Zwei Stellen müssen den
+      // Sockel weiter sehen:
+      //   1. Der Einstieg — sonst kauft die aktive Engine ein Symbol nach,
+      //      das der Sockel schon hält; der Broker führte beide zu EINER
+      //      Position zusammen, und die Besitzgrenze wäre verwischt.
+      //   2. Das Klumpenrisiko — Sockel-Positionen sind echtes Marktrisiko,
+      //      auch wenn sie eine andere Maschine führt.
+      const coreSymbols = new Set(
+        positionsSnap.docs.filter((d) => (d.data() as Position).core === true).map((d) => d.id),
+      );
+      const alleSymbole = (): string[] => [...positions.keys(), ...coreSymbols];
       // Risiko-Hülle GILT FÜR JEDEN TRADE dieses Users (Engine-Audit 26.07.):
       // Sie stand bisher erst weiter unten und deckte nur den Regelbaum-Pfad —
       // der Classic-Pfad kaufte mit ungeklammertem maxPositionPct, für den das
@@ -782,7 +801,8 @@ async function executeUserTrades(
             if (positions.size >= posLimit) continue;
             if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
             if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
-            if (entrySperre(symbol, data.atrPct, [...positions.keys()])) continue;
+            if (coreSymbols.has(symbol)) continue; // hält der Sockel — Besitzgrenze
+            if (entrySperre(symbol, data.atrPct, alleSymbole())) continue;
             // assetClass durchreichen (MA3-Fund 26.07.): Ohne sie schrieb der
             // Broker die Stop/Take-LEVEL mit den GLOBALEN Prozenten fest —
             // die MA6-Klassen-Profile (Krypto 6/10 usw.) griffen beim Kauf
@@ -842,7 +862,8 @@ async function executeUserTrades(
             if (positions.size >= posLimit) continue;
             if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
             if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
-            if (entrySperre(symbol, data.atrPct, [...positions.keys()])) continue;
+            if (coreSymbols.has(symbol)) continue; // hält der Sockel — Besitzgrenze
+            if (entrySperre(symbol, data.atrPct, alleSymbole())) continue;
             const r = await executePaperTrade(
               {
                 uid,
@@ -955,7 +976,8 @@ async function executeUserTrades(
           // einem Risk-Exit hält der Cooldown den Sofort-Rückkauf auf.
           if (positions.size >= posLimit) continue;
           if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
-          if (entrySperre(symbol, data.atrPct, [...positions.keys()])) continue;
+          if (coreSymbols.has(symbol)) continue; // hält der Sockel — Besitzgrenze
+          if (entrySperre(symbol, data.atrPct, alleSymbole())) continue;
           // Steckbrief des Einstiegs (Trade-Filter, scharf seit 02.08.):
           // Sorten, deren EIGENE Historie n≥30 und t≤−1,5 zeigt, werden
           // nicht mehr gehandelt — nur gezählt. Exits bleiben frei.
@@ -1032,7 +1054,8 @@ async function executeUserTrades(
           // Cooldown), gleiche Risiko-Hülle, Level gespiegelt im Broker.
           if (positions.size >= posLimit) continue;
           if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
-          if (entrySperre(symbol, data.atrPct, [...positions.keys()])) continue;
+          if (coreSymbols.has(symbol)) continue; // hält der Sockel — Besitzgrenze
+          if (entrySperre(symbol, data.atrPct, alleSymbole())) continue;
           const bucket = bucketKey({
             assetClass: classify(symbol),
             timeframe: tf,

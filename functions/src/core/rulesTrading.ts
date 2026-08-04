@@ -21,6 +21,7 @@ import type {
 import {
   DEFAULT_MAX_OPEN_POSITIONS,
   MAX_LEVERAGE,
+  CORE_PCT_CAP,
   MAX_OPEN_POSITIONS_CAP,
   PREDICTION_MIN_EDGE_PCT,
   evaluate,
@@ -75,11 +76,29 @@ export function clampStrategyRisk(strategy: Strategy): Strategy {
   // schützt nicht den User vor sich selbst, sondern den Scan-Takt aller
   // anderen — Begründung in MAX_OPEN_POSITIONS_CAP.
   s.engine.maxOpenPositions = maxOpenPositions(s);
+  // Sockel-Anteil des Kern-Satelliten (04.08.) in der Hülle: 0–90 %.
+  // Unsinnige Werte fallen auf 0 zurück (= kein Sockel), nie auf den
+  // Maximalwert — eine Kapitalumschichtung darf nie aus einem NaN entstehen.
+  s.engine.corePct = corePct(s);
   // Hebel: dieselbe Hülle. Ein unsinniger Wert (NaN, 0, 12) fällt auf
   // „kein Hebel" zurück, nicht auf den Maximalwert — im Zweifel weniger
   // Risiko, nie mehr.
   s.broker.leverage = clampLeverage(s.broker.leverage);
   return s;
+}
+
+/**
+ * Konfigurierter Sockel-Anteil, geklemmt auf 0 … CORE_PCT_CAP.
+ *
+ * Fehlend oder unsinnig ⇒ 0. Das ist die sichere Richtung: Ein Bestandskonto
+ * ohne das Feld schichtet NICHT plötzlich 60 % seines Kapitals um, nur weil
+ * ein neuer Default existiert. Wer den Sockel will, stellt ihn ein (oder legt
+ * ein neues Konto an, das mit DEFAULT_CORE_PCT startet).
+ */
+export function corePct(strategy: Strategy): number {
+  const v = strategy.engine.corePct;
+  if (typeof v !== 'number' || !Number.isFinite(v) || v <= 0) return 0;
+  return Math.min(CORE_PCT_CAP, v);
 }
 
 /** Konfiguriertes Positionslimit, geklemmt auf 1 … MAX_OPEN_POSITIONS_CAP. */

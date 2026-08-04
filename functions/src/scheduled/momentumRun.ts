@@ -57,7 +57,7 @@ import {
 } from '../../../shared/src/index.js';
 import { executePaperTrade, resolveBrokerMode } from '../core/broker.js';
 import { mayTrade } from '../core/access.js';
-import { clampStrategyRisk } from '../core/rulesTrading.js';
+import { clampStrategyRisk, corePct } from '../core/rulesTrading.js';
 import { getDeepDailyBars, getSparkDailyCloses, chunkBarsByYear } from '../core/marketData.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 
@@ -234,6 +234,8 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
 
   // ── 5. Echte Wallets im Momentum-Modus ────────────────────────────────────
   const echte = await rebalanceMomentumUsers(ziel, preise, now);
+  // ── 5b. Sockel-Hülle der Konfluenz-Wallets (Kern-Satellit, 04.08.) ────────
+  const sockel = await rebalanceCoreSleeve(ziel, preise, now);
 
   // Tages-Protokoll: Ranking-Spitze, Filter-Zustand, Depotwert. Das ist die
   // Datengrundlage, aus der sich später beurteilen lässt, ob die Strategie
@@ -257,6 +259,12 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
       // sichtbar bleibt, ob überhaupt jemand die Strategie scharf hat.
       echteKonten: echte.konten,
       echteOrders: echte.orders,
+      // Kern-Satellit: Wie viele Konfluenz-Konten einen Sockel führen. Steht
+      // hier 0, während Nutzer corePct gesetzt haben, hat der Takt oder ein
+      // Tor geklemmt — ohne die Zahl wäre das nicht von „nichts zu tun"
+      // unterscheidbar.
+      sockelKonten: sockel.konten,
+      sockelOrders: sockel.orders,
     },
     { merge: true },
   );
@@ -405,6 +413,132 @@ async function rebalanceMomentumUsers(
       }
     } catch (err) {
       logger.warn(`Momentum-Rebalancing: User ${userDoc.id} übersprungen`, err);
+    }
+  }
+  return { konten, orders: orderSumme };
+}
+
+/**
+ * KERN-SATELLIT (Owner-Direktive 04.08.): Sockel-Hülle für Konfluenz-Konten.
+ *
+ * Anders als `rebalanceMomentumUsers` übernimmt diese Funktion nicht das
+ * ganze Wallet, sondern nur den Anteil `engine.corePct`. Die Positionen
+ * bekommen `core: true` und sind damit für den 5-Minuten-Scan unsichtbar
+ * (Besitzgrenze, siehe Position.core).
+ *
+ * Warum das gebraucht wurde: Am 04.08. stand der Momentum-Schatten bei
+ * +4,0 % seit dem 28.07., die vier aktiven Konten zwischen −3,2 % und
+ * −6,3 %. Der Sockel funktionierte also — er hatte nur nie Kapital
+ * (`echteKonten: 0`), weil er bis dahin ein Entweder-oder je Wallet war.
+ *
+ * Drei Sicherungen, die das harmlos machen:
+ *  1. **Nur Käufe bis zum Zielgewicht, nie über den Sockel hinaus.** Das
+ *     Zielportfolio rechnet auf `equity × corePct/100`, nicht auf die volle
+ *     Equity — der aktive Teil behält seinen Anteil.
+ *  2. **Verkauft wird ausschließlich aus dem Sockel selbst.** Was die
+ *     aktive Engine hält, rührt diese Funktion nicht an; sonst verkaufte
+ *     der Sockel Positionen, für die er nie bezahlt hat.
+ *  3. **Dieselben Tore wie überall**: Paper-Modus, Freischaltung,
+ *     Risiko-Hülle, Monats-Takt. Bei geschlossenem Marktfilter (SMA200)
+ *     ist das Ziel leer und der Sockel geht in Cash.
+ */
+async function rebalanceCoreSleeve(
+  ziel: TargetPosition[],
+  preise: ReadonlyMap<string, number>,
+  now: Date,
+): Promise<{ konten: number; orders: number }> {
+  const db = getFirestore();
+  const users = await db
+    .collection('users')
+    .where('settings.strategy.engine.running', '==', true)
+    .get();
+
+  let konten = 0;
+  let orderSumme = 0;
+
+  for (const userDoc of users.docs) {
+    try {
+      const roh = userDoc.get('settings.strategy') as Strategy | undefined;
+      if (!roh || !isStrategy(roh)) continue;
+      // Momentum-Wallets laufen über rebalanceMomentumUsers (ganzes Konto).
+      if (roh.engine.mode === 'momentum') continue;
+      if (resolveBrokerMode(roh) !== 'paper') continue;
+      if (!mayTrade(userDoc.data())) continue;
+      const clamped = clampStrategyRisk(structuredClone(roh));
+      const anteil = corePct(clamped);
+      if (anteil <= 0) continue; // kein Sockel gewünscht
+
+      const stateRef = userDoc.ref.collection('meta').doc('coreSleeve');
+      const lastRebalance = (await stateRef.get()).get('lastRebalance') as string | undefined;
+      if (!istRebalanceFaellig(lastRebalance ?? null, now)) continue;
+
+      const posSnap = await userDoc.ref.collection('positions').get();
+      const alle = new Map<string, Position>(posSnap.docs.map((d) => [d.id, d.data() as Position]));
+      const sockel = new Map([...alle].filter(([, p]) => p.core === true));
+
+      const cash = (userDoc.get('wallet.paperBalance') as number | undefined) ?? 0;
+      let equity = cash;
+      for (const [sym, pos] of alle) equity += pos.qty * (preise.get(sym) ?? pos.avgEntry);
+      if (!(equity > 0)) continue;
+
+      // Das Sockel-Budget ist der Anteil an der GESAMTEN Equity — so wächst
+      // und schrumpft er mit dem Konto, statt auf einem alten Betrag zu
+      // stehen, den niemand mehr nachvollziehen kann.
+      const budget = (equity * anteil) / 100;
+      const orders = rebalanceOrders(new Set(sockel.keys()), ziel, budget)
+        .filter((o) => o.side === 'sell' || preise.has(o.symbol))
+        // Sicherung 2: Verkauft wird nur, was dem Sockel gehört.
+        .filter((o) => o.side !== 'sell' || sockel.has(o.symbol));
+
+      let ausgefuehrt = 0;
+      for (const o of orders) {
+        const preis = preise.get(o.symbol) ?? sockel.get(o.symbol)?.avgEntry;
+        if (!preis || !(preis > 0)) continue;
+        const cls = classify(o.symbol);
+        if (o.side === 'sell') {
+          const r = await executePaperTrade(
+            { uid: userDoc.id, symbol: o.symbol, side: 'sell', price: preis, source: 'engine', riskExit: 'core_rebalance', assetClass: cls },
+            clamped,
+          );
+          if (r.executed) ausgefuehrt += 1;
+          continue;
+        }
+        // Ein Symbol, das die AKTIVE Engine schon hält, darf der Sockel nicht
+        // kaufen — der Broker führte beide zu einer Position zusammen und die
+        // Besitzgrenze wäre verwischt. Beim nächsten Takt ist es meist frei.
+        if (alle.has(o.symbol) && !sockel.has(o.symbol)) continue;
+        const fractional = cls === 'crypto';
+        const roheMenge = (o.notional ?? 0) / preis;
+        const qty = fractional ? Math.floor(roheMenge * 1e6) / 1e6 : Math.floor(roheMenge);
+        if (qty < (fractional ? 1e-6 : 1)) continue;
+        const r = await executePaperTrade(
+          {
+            uid: userDoc.id,
+            symbol: o.symbol,
+            side: 'buy',
+            price: preis,
+            qty,
+            source: 'engine',
+            assetClass: cls,
+            core: true, // Besitzkennzeichnung — der Scan lässt sie in Ruhe
+            bucket: bucketKey({ assetClass: cls, timeframe: 'daily', signature: 'core', side: 'long' }),
+          },
+          clamped,
+        );
+        if (r.executed) ausgefuehrt += 1;
+      }
+
+      await stateRef.set(
+        { lastRebalance: now.toISOString(), orders: orders.length, executed: ausgefuehrt, anteilPct: anteil },
+        { merge: true },
+      );
+      konten += 1;
+      orderSumme += ausgefuehrt;
+      if (ausgefuehrt > 0) {
+        logger.info(`Sockel-Rebalancing ${userDoc.id}: ${ausgefuehrt}/${orders.length} Order(s), ${anteil} %`);
+      }
+    } catch (err) {
+      logger.warn(`Sockel-Rebalancing: User ${userDoc.id} übersprungen`, err);
     }
   }
   return { konten, orders: orderSumme };
