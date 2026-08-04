@@ -1634,6 +1634,10 @@ export async function runScan(force = false): Promise<ScanResult> {
    * mit lauter Hold-Signalen und einer mit lauter geblockten Shorts sehen im
    * Log identisch aus: beide „keine Trades". */
   const signalDirs = { buy: 0, sell: 0, hold: 0 };
+  /** Richtungsverteilung je Indikator — s. Kommentar an der Zählstelle. */
+  const voteDirs: Record<string, { buy: number; sell: number; hold: number }> = {};
+  /** „hold", dem genau EINE Stimme zur Konfluenz fehlte. */
+  let knappVerfehlt = 0;
   const scanSet = await collectScanSymbols(now);
   // Depot-Vision (2026-07-24): gescannt wird je Symbol, dessen ASSET-KLASSE
   // gerade offen ist — Krypto 24/7, Forex/Rohstoffe ~24/5, Rest US-Zeiten.
@@ -1877,6 +1881,27 @@ export async function runScan(force = false): Promise<ScanResult> {
       });
 
       signalDirs[sig.direction] += 1;
+      // Stimmen je INDIKATOR (04.08.). Warum das nötig wurde: `signalDirs`
+      // zeigte über Stunden `buy: 0, sell: 2, hold: 37` — die Konfluenz
+      // erzeugt im Aufwärtstrend fast nur Verkaufssignale, und die
+      // Regime-Ampel blockt sie folgerichtig als Shorts gegen den Trend.
+      // Ergebnis: Stillstand. Ob das an EINEM Indikator liegt oder an allen
+      // dreien, ließ sich aus der Summe nicht ablesen — und ohne diese
+      // Unterscheidung wäre jede Änderung an der Konfluenz geraten.
+      for (const [name, richtung] of Object.entries(sig.votes)) {
+        const eintrag = voteDirs[name] ?? { buy: 0, sell: 0, hold: 0 };
+        if (richtung === 'buy' || richtung === 'sell' || richtung === 'hold') {
+          eintrag[richtung] += 1;
+        }
+        voteDirs[name] = eintrag;
+      }
+      // Wie knapp war es? Ein Signal, dem EINE Stimme zur Konfluenz fehlte,
+      // ist etwas anderes als eines, das weit daneben lag: Im ersten Fall
+      // würde eine niedrigere Schwelle Trades freisetzen, im zweiten nicht.
+      if (sig.direction === 'hold') {
+        const beste = Math.max(sig.buyVotes, sig.sellVotes);
+        if (beste > 0 && beste === sig.requiredConfluence - 1) knappVerfehlt += 1;
+      }
       // Konfluenz-Signal dieses Scans
       batch.set(symRef.collection('signals').doc(scanId), {
         direction: sig.direction,
@@ -2036,6 +2061,8 @@ export async function runScan(force = false): Promise<ScanResult> {
          * meldet, sucht die Signal-Logik Umkehrpunkte in einem laufenden
          * Trend — und die Ampel blockt dann nicht zu viel, sondern rettet. */
         signalDirs,
+        voteDirs,
+        knappVerfehlt,
         // Konten-Zähler (Owner-Fund 02.08.): WER am Handel teilnimmt und wer
         // still übersprungen wird — als Summen, ohne Konto-Bezug. Steht
         // `wartet_freischaltung` > 0 bei einem User mit „Engine an", ist die
