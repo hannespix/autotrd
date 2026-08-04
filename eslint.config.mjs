@@ -37,6 +37,21 @@ export default tseslint.config(
       },
     },
   },
+  /* Browser-Smoke: läuft in Node, steuert aber einen Browser.
+     `Event` steht hier, weil `page.evaluate` Code IM BROWSER ausführt —
+     ESLint sieht nur den Quelltext und kann den Kontextwechsel nicht
+     erkennen. */
+  {
+    files: ['frontend/e2e/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+        Event: 'readonly',
+        URL: 'readonly',
+      },
+    },
+  },
   // CI-Hilfsscripte laufen in Node (process/console sind dort global)
   {
     files: ['scripts-ci/**/*.mjs'],
