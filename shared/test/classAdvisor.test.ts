@@ -15,6 +15,7 @@ import {
   GEWICHT_MAX,
   GEWICHT_MIN,
   KLASSE_MIN_TRADES,
+  SCHATTEN_PROBELOS,
   berateKlassen,
   klemmeGewicht,
   rateKlasse,
@@ -42,6 +43,73 @@ describe('rateKlasse — Evidenz vor Meinung', () => {
     // `kantePct: null` heißt „kein Trade trug Volumen" — nicht „Kante ist 0".
     const r = rateKlasse('x', { n: 100, kantePct: null }, 1);
     expect(r.empfehlung).toBe('zu_wenig_daten');
+  });
+});
+
+describe('rateKlasse — der Schatten als zweite Quelle (MG4b)', () => {
+  const schatten = (n: number, kantePct: number) => ({ n, kantePct });
+
+  it('holt eine abgeschaltete Klasse mit halbem Gewicht zurück', () => {
+    // Der eigentliche Zweck der ganzen Schatten-Messung: Eine Klasse auf 0
+    // erzeugt keine Trades mehr und bliebe damit für immer „zu wenig Daten".
+    const r = rateKlasse('crypto', { n: 0, kantePct: null, schatten: schatten(400, 0.12) }, 0);
+    expect(r.empfehlung).toBe('zurueckholen');
+    expect(r.vorschlag).toBe(SCHATTEN_PROBELOS);
+    expect(r.grund).toContain('0.120');
+    expect(r.grund).toContain('400');
+  });
+
+  it('holt NICHT zurück, wenn der Schatten zu dünn ist', () => {
+    const r = rateKlasse('crypto', { n: 0, kantePct: null, schatten: schatten(199, 0.5) }, 0);
+    expect(r.empfehlung).toBe('zu_wenig_daten');
+    expect(r.vorschlag).toBe(0);
+  });
+
+  it('holt NICHT zurück, wenn der Schatten negativ ist', () => {
+    const r = rateKlasse('crypto', { n: 0, kantePct: null, schatten: schatten(1000, -0.2) }, 0);
+    expect(r.empfehlung).toBe('zu_wenig_daten');
+    expect(r.vorschlag).toBe(0);
+    // Die Zahl gehört trotzdem in die Begründung — „bleibt aus" ohne Grund
+    // ist genau die Intransparenz, gegen die der Regler gebaut wurde.
+    expect(r.grund).toContain('-0.200');
+  });
+
+  it('darf NIEMALS abschalten, egal wie schlecht der Schatten aussieht', () => {
+    // Die Asymmetrie ist Absicht: Dem Schatten fehlt der Stop, der reale
+    // Verluste kappt. Eine negative Schatten-Kante ist deshalb kein Beleg
+    // für einen negativen Trade-Ertrag — eine positive dagegen ein Grund,
+    // es mit kleinem Einsatz zu versuchen.
+    const r = rateKlasse('crypto', { n: 5, kantePct: null, schatten: schatten(5000, -3) }, 1);
+    expect(r.empfehlung).toBe('zu_wenig_daten');
+    expect(r.vorschlag).toBe(1); // unverändert, NICHT gesenkt
+  });
+
+  it('rührt eine laufende Klasse nicht an — dort fehlt die Gelegenheit, nicht das Gewicht', () => {
+    const r = rateKlasse('crypto', { n: 2, kantePct: 0.1, schatten: schatten(900, 0.4) }, 0.75);
+    expect(r.empfehlung).toBe('zu_wenig_daten');
+    expect(r.vorschlag).toBe(0.75);
+  });
+
+  it('lässt realisierte Trades immer gewinnen', () => {
+    // 100 echte Trades mit −0,3 % schlagen 5.000 schöne Schatten-Signale.
+    const r = rateKlasse('crypto', { n: 100, kantePct: -0.3, schatten: schatten(5000, 2) }, 1);
+    expect(r.empfehlung).toBe('abschalten');
+    expect(r.vorschlag).toBe(0);
+  });
+
+  it('nähert sich auch bei der Rückkehr an, statt zu springen', () => {
+    const r = rateKlasse('crypto', { n: 0, kantePct: null, schatten: schatten(400, 0.12) }, 0);
+    expect(reglerSchritt(r)).toBe(0.25); // erst am zweiten Tag bei 0,5
+  });
+
+  it('meldet die Rückkehr im Fazit', () => {
+    const b = berateKlassen(
+      { crypto: { n: 0, kantePct: null, schatten: schatten(400, 0.12) } },
+      { crypto: 0 },
+    );
+    expect(b.fazit).toContain('Schatten');
+    expect(b.fazit).toContain('crypto');
+    expect(b.aenderungen).toBe(1);
   });
 });
 

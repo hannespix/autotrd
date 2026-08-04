@@ -1049,6 +1049,22 @@ function layout(email: string): string {
         jeder Kauf nimmt seinen Prozentsatz vom aktuellen Cash, statt an einer
         fixen Startkapital-Tranche zu scheitern.</p>
       <p class="hint" id="owClassHint" style="margin-top:4px"></p>
+      <div class="wl-sec" style="margin-top:14px">Kapital je Anlageklasse ${iBtn('classWeights')}</div>
+      <p class="hint">Der Regler multipliziert die Positionsgröße in dieser Klasse:
+        <b>0</b> = handelt nicht mehr, <b>1</b> = normal, <b>1,5</b> = größere Stücke.
+        Bestehende Positionen werden trotzdem immer geschlossen — der Regler
+        steuert nur den <b>Einstieg</b>.
+        Und: Eine Klasse auf 0 wird weiter <b>gemessen</b> (Schatten-Kante), sie
+        kann sich also zurückverdienen. Ohne das wäre jedes Abschalten endgültig.</p>
+      <div id="owClsRows" class="opt-grid" style="margin-top:6px"></div>
+      <label class="opt-check" style="margin-top:8px">
+        <input type="checkbox" id="owClsAuto" />
+        <span>Automatisch nachregeln (täglich, in Schritten von 0,25) ${iBtn('classAutoTune')}</span></label>
+      <div id="owClsAdvice" style="margin-top:8px"></div>
+      <div class="row" style="margin-top:6px">
+        <button class="btn btn-n" id="owClsApply" hidden>Vorschlag übernehmen</button>
+        <span class="hint" id="owClsMsg"></span>
+      </div>
       <div class="row" style="margin-top:8px">
         <button class="btn btn-g" id="owSave">Speichern</button>
         <span class="hint" id="optMsg"></span>
@@ -2109,6 +2125,11 @@ function optionsFormStrategy(): Strategy {
       atrStopMult: num('owAtrS'),
       atrTakeMult: num('owAtrT'),
       cooldownMin: Math.min(1440, Math.max(5, num('owCd') || 15)),
+      // Alle Klassen explizit, auch die auf 1: `saveStrategy` schreibt die
+      // Strategie als Ganzes, aber ein weggelassener Schlüssel wäre beim
+      // nächsten Öffnen nicht von „bewusst auf 1 gestellt" zu unterscheiden.
+      classWeights: klassenGewichteAusForm(),
+      classAutoTune: ($('owClsAuto') as HTMLInputElement).checked,
     },
     signals: {
       ...basis.signals,
@@ -2122,6 +2143,102 @@ function optionsFormStrategy(): Strategy {
       regimeGate: ($('owRegimeGate') as HTMLInputElement).checked,
     },
   };
+}
+
+/** Aktuelle Reglerstellungen je Anlageklasse aus dem Formular. */
+function klassenGewichteAusForm(): Record<string, number> {
+  const out: Record<string, number> = {};
+  $('owClsRows')
+    .querySelectorAll<HTMLInputElement>('input[data-cls]')
+    .forEach((r) => {
+      const k = r.dataset.cls ?? '';
+      if (k) out[k] = Math.min(1.5, Math.max(0, Number(r.value)));
+    });
+  return out;
+}
+
+/** Ein Regler-Wert als Text — „aus" ist eine andere Aussage als „0,00". */
+function gewichtText(w: number): string {
+  return w === 0 ? 'aus' : `× ${w.toFixed(2).replace('.', ',')}`;
+}
+
+/** Schieberegler je Anlageklasse zeichnen (MG2). */
+function renderKlassenRegler(): void {
+  const gew = st?.strategy.engine.classWeights ?? {};
+  $('owClsRows').innerHTML = Object.entries(CLASS_LABELS)
+    .map(([k, label]) => {
+      const w = Math.min(1.5, Math.max(0, gew[k] ?? 1));
+      return `<label style="display:flex;align-items:center;gap:8px">
+        <span style="flex:1 1 120px">${label}</span>
+        <input type="range" data-cls="${k}" min="0" max="1.5" step="0.25"
+          value="${w}" style="flex:2 1 120px" />
+        <span class="mono" data-clsval="${k}" style="min-width:52px;text-align:right">${gewichtText(w)}</span>
+      </label>`;
+    })
+    .join('');
+  $('owClsRows')
+    .querySelectorAll<HTMLInputElement>('input[data-cls]')
+    .forEach((r) =>
+      r.addEventListener('input', () => {
+        const k = r.dataset.cls ?? '';
+        const feld = $('owClsRows').querySelector(`[data-clsval="${k}"]`);
+        if (feld) feld.textContent = gewichtText(Number(r.value));
+      }),
+    );
+}
+
+/**
+ * Empfehlungs-Karte je Anlageklasse (MG2).
+ *
+ * Die Zahlen kommen fertig vom Tageslauf (`stats/main.classAdvice`) — die
+ * Oberfläche rechnet bewusst nichts nach. Zwei Implementierungen derselben
+ * Regel wären zwei Wahrheiten, sobald eine davon nachzieht.
+ */
+function renderKlassenRat(): void {
+  const box = $('owClsAdvice');
+  const rat = st?.pfStats?.classAdvice;
+  const btn = $('owClsApply') as HTMLButtonElement;
+  if (!rat || rat.raete.length === 0) {
+    btn.hidden = true;
+    box.innerHTML =
+      '<p class="hint">Noch keine Auswertung. Sie entsteht im Tageslauf nach '
+      + 'US-Börsenschluss, sobald eine Klasse genug Trades hat.</p>';
+    return;
+  }
+  const farbe: Record<string, string> = {
+    verstaerken: 'var(--gr, #3fa971)',
+    zurueckholen: 'var(--gr, #3fa971)',
+    behalten: 'var(--c-t3, #8b93a7)',
+    drosseln: 'var(--yl, #d9a441)',
+    abschalten: 'var(--rd)',
+    zu_wenig_daten: 'var(--c-t3, #8b93a7)',
+  };
+  const wort: Record<string, string> = {
+    verstaerken: 'VERSTÄRKEN',
+    zurueckholen: 'ZURÜCKHOLEN',
+    behalten: 'BEHALTEN',
+    drosseln: 'DROSSELN',
+    abschalten: 'ABSCHALTEN',
+    zu_wenig_daten: 'ZU WENIG DATEN',
+  };
+  btn.hidden = rat.aenderungen === 0;
+  box.innerHTML =
+    `<p class="hint"><b>${rat.fazit}</b>`
+    + (rat.autoTune ? ' · Auto-Regler ist an.' : ' · Auto-Regler ist aus.')
+    + '</p>'
+    + rat.raete
+        .map((r) => {
+          const kante = r.kantePct === null ? '—' : `${r.kantePct.toFixed(3)} %`.replace('.', ',');
+          const pfeil =
+            Math.abs(r.vorschlag - r.gewicht) > 1e-9
+              ? ` · ${gewichtText(r.gewicht)} → <b>${gewichtText(r.vorschlag)}</b>`
+              : '';
+          return `<div class="hint" style="margin-top:6px">
+            <b style="color:${farbe[r.empfehlung] ?? 'inherit'}">${wort[r.empfehlung] ?? r.empfehlung}</b>
+            · <b>${CLASS_LABELS[r.klasse] ?? r.klasse}</b>
+            · ${kante} je Dollar (${r.n} Trades)${pfeil}<br />${r.grund}</div>`;
+        })
+        .join('');
 }
 
 /**
@@ -2210,6 +2327,9 @@ function openOptions(): void {
   $('owClassHint').textContent = clsTxt
     ? `Abweichende Profile je Anlageklasse (überschreiben die Werte oben): ${clsTxt}`
     : '';
+  ($('owClsAuto') as HTMLInputElement).checked = st.strategy.engine.classAutoTune === true;
+  renderKlassenRegler();
+  renderKlassenRat();
   // Module: Checkbox je Panel — gleiche Wahrheit wie ✕ am Modul und die Palette
   $('ouPanels').innerHTML = Object.entries(PANEL_TITLES)
     .map(
@@ -5611,6 +5731,10 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       if (!st) return;
       st.pfStats = stats;
       renderPfStats();
+      // Die Empfehlung hängt am selben Doc. Ohne das hier bliebe eine
+      // geöffnete Options-Ansicht auf dem Stand des Öffnens stehen — und
+      // zeigte nach dem Tageslauf die Zahlen von gestern.
+      renderKlassenRat();
     }),
     watchEquitySeries(uid, (points) => {
       if (!st) return;
@@ -6375,6 +6499,32 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     void saveStrategy(strategy)
       .then(() => ($('optMsg').textContent = '✓ Gespeichert'))
       .catch((e) => ($('optMsg').textContent = (e as Error).message));
+  });
+
+  // „Vorschlag übernehmen" (MG2): setzt die Regler auf die empfohlenen Werte
+  // und speichert. Bewusst der VOLLE Vorschlag, nicht der 0,25-Schritt des
+  // Auto-Reglers — wer von Hand klickt, hat die Zahlen gerade gelesen und
+  // trifft eine Entscheidung; die Annäherung schützt nur die Automatik davor,
+  // auf jede Momentaufnahme zu springen.
+  $('owClsApply').addEventListener('click', () => {
+    if (!st) return;
+    const rat = st.pfStats?.classAdvice;
+    if (!rat) return;
+    const gew = { ...klassenGewichteAusForm() };
+    for (const r of rat.raete) gew[r.klasse] = r.vorschlag;
+    const next: Strategy = {
+      ...st.strategy,
+      engine: { ...st.strategy.engine, classWeights: gew },
+    };
+    $('owClsMsg').textContent = 'Übernehme …';
+    void saveStrategy(next)
+      .then(() => {
+        st!.strategy = next;
+        renderKlassenRegler();
+        renderKlassenRat();
+        $('owClsMsg').textContent = `✓ ${rat.aenderungen} Gewicht(e) übernommen`;
+      })
+      .catch((e) => ($('owClsMsg').textContent = (e as Error).message));
   });
 
   $('owCheck').addEventListener('click', () => renderAdvice());

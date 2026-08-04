@@ -10,7 +10,14 @@
 
 import { getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
-import { allSymbols, MAX_WATCHLIST, validateStrategy, type Strategy } from '../../../shared/src/index.js';
+import {
+  allSymbols,
+  CLASS_LABELS,
+  klemmeGewicht,
+  MAX_WATCHLIST,
+  validateStrategy,
+  type Strategy,
+} from '../../../shared/src/index.js';
 import { consumeQuota } from '../core/broker.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 
@@ -51,6 +58,19 @@ export const saveStrategy = onCall(CALLABLE_OPTS, async (request) => {
       'failed-precondition',
       'Bitte zuerst die E-Mail-Adresse bestätigen — dann lässt sich die Engine starten.',
     );
+  }
+
+  // Klassen-Regler normalisieren (MG2): nur bekannte Anlageklassen, Werte in
+  // der Hülle 0…1,5. Die Ausführung klemmt beim LESEN ohnehin — aber ein
+  // Dokument, in dem „× 99" steht, lädt beim nächsten Öffnen der
+  // Einstellungen genau die Zahl, die nie gewirkt hat. Falsche Werte gar
+  // nicht erst ablegen ist ehrlicher als sie still zu ignorieren.
+  if (s.engine.classWeights && typeof s.engine.classWeights === 'object') {
+    const sauber: Record<string, number> = {};
+    for (const [k, v] of Object.entries(s.engine.classWeights)) {
+      if (k in CLASS_LABELS) sauber[k] = klemmeGewicht(typeof v === 'number' ? v : undefined);
+    }
+    s.engine.classWeights = sauber;
   }
 
   const ref = getFirestore().doc(`users/${uid}`);

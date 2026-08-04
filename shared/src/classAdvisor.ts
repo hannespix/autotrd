@@ -43,11 +43,18 @@
  * verändert, braucht Belege, keine Anekdoten.
  */
 
+import { SCHATTEN_MIN_N } from './classShadow.js';
+
 /** Was eine Anlageklasse gemessen hat — Teilmenge von `AttributionSlice`. */
 export interface KlassenErgebnis {
   n: number;
   /** Nettorendite je gehandeltem Dollar in Prozent (nach Gebühren). */
   kantePct: number | null;
+  /**
+   * Schatten-Kante der Signalquelle (MG4) — die Messung, die auch ohne
+   * Ausführung weiterläuft. Zählt nur, wenn realisierte Trades fehlen.
+   */
+  schatten?: { n: number; kantePct: number | null };
 }
 
 /** Regler-Grenzen. Identisch zum Überzeugungs-Sizing, damit beide zusammen gedeckelt bleiben. */
@@ -69,7 +76,24 @@ export const KANTE_GUT = 0.1;
 /** Kante, ab der eine Klasse als defizitär gilt. */
 export const KANTE_SCHLECHT = 0;
 
-export type Empfehlung = 'verstaerken' | 'behalten' | 'drosseln' | 'abschalten' | 'zu_wenig_daten';
+export type Empfehlung =
+  | 'verstaerken'
+  | 'behalten'
+  | 'drosseln'
+  | 'abschalten'
+  | 'zurueckholen'
+  | 'zu_wenig_daten';
+
+/**
+ * Gewicht, mit dem eine abgeschaltete Klasse zurückkommt.
+ *
+ * Ein Probelos, kein Vertrauensvorschuss: Der Schatten misst die
+ * SIGNALQUELLE, nicht die Ausführung — ihm fehlen Stop, Ziel und
+ * Haltedauer. Halbes Gewicht erzeugt wieder echte Trades (und damit die
+ * Kante, die wirklich zählt), ohne viel zu kosten, falls der Schatten zu
+ * gut aussah.
+ */
+export const SCHATTEN_PROBELOS = 0.5;
 
 export interface KlassenRat {
   klasse: string;
@@ -104,11 +128,35 @@ export function rateKlasse(
   ergebnis: KlassenErgebnis,
   gewicht: number,
   minTrades = KLASSE_MIN_TRADES,
+  schattenMinN = SCHATTEN_MIN_N,
 ): KlassenRat {
   const w = klemmeGewicht(gewicht);
   const basis = { klasse, n: ergebnis.n, kantePct: ergebnis.kantePct, gewicht: w };
 
   if (ergebnis.kantePct === null || ergebnis.n < minTrades) {
+    // Kein Trade-Beleg. Genau hier greift der Schatten (MG4b) — und zwar
+    // NUR hier: Realisierte Trades schlagen eine Ersatzmessung immer.
+    const s = ergebnis.schatten;
+    const schattenBelegt = !!s && s.kantePct !== null && s.n >= schattenMinN;
+
+    // Der Schatten darf ausschließlich ZURÜCKHOLEN, nie abschalten. Grund:
+    // Ihm fehlt der Stop, der reale Verluste kappt — eine negative
+    // Schatten-Kante ist deshalb kein Beleg für einen negativen
+    // Trade-Ertrag. Umgekehrt ist eine positive ein handfestes Argument,
+    // es mit kleinem Einsatz noch einmal zu versuchen. Und wenn die Klasse
+    // ohnehin läuft (Gewicht > 0), ist nicht das Gewicht das Problem,
+    // sondern die fehlende Gelegenheit — daran ändert der Regler nichts.
+    if (schattenBelegt && w === 0 && s!.kantePct! > 0) {
+      return {
+        ...basis,
+        empfehlung: 'zurueckholen',
+        vorschlag: SCHATTEN_PROBELOS,
+        grund:
+          `Abgeschaltet, aber der Schatten verdient ${s!.kantePct!.toFixed(3)} % je Signal ` +
+          `über ${s!.n} Signale. Mit halbem Gewicht zurück in den Handel — nur echte ` +
+          'Trades können den Verdacht bestätigen.',
+      };
+    }
     return {
       ...basis,
       empfehlung: 'zu_wenig_daten',
@@ -116,8 +164,12 @@ export function rateKlasse(
       // ohne Beleg soll weder belohnt noch bestraft werden.
       vorschlag: w,
       grund:
-        `${ergebnis.n} Trades — für eine Aussage sind ${minTrades} nötig. ` +
-        'Gewicht bleibt, wie es ist.',
+        `${ergebnis.n} Trades — für eine Aussage sind ${minTrades} nötig. `
+        + (schattenBelegt
+          ? `Der Schatten steht bei ${s!.kantePct!.toFixed(3)} % je Signal (${s!.n}); `
+            + 'er kann eine Klasse zurückholen, aber keine abschalten. '
+          : '')
+        + 'Gewicht bleibt, wie es ist.',
     };
   }
 
@@ -180,9 +232,10 @@ export function berateKlassen(
   ergebnisse: Record<string, KlassenErgebnis>,
   gewichte: Record<string, number> = {},
   minTrades = KLASSE_MIN_TRADES,
+  schattenMinN = SCHATTEN_MIN_N,
 ): KlassenBericht {
   const raete = Object.entries(ergebnisse)
-    .map(([klasse, e]) => rateKlasse(klasse, e, gewichte[klasse] ?? 1, minTrades))
+    .map(([klasse, e]) => rateKlasse(klasse, e, gewichte[klasse] ?? 1, minTrades, schattenMinN))
     .sort((a, b) => (b.kantePct ?? -Infinity) - (a.kantePct ?? -Infinity));
 
   const aenderungen = raete.filter((r) => Math.abs(r.vorschlag - r.gewicht) > 1e-9).length;
@@ -195,11 +248,17 @@ export function berateKlassen(
   } else if (aenderungen === 0) {
     fazit = `${belegt.length} Klassen belegt, alle Gewichte passen bereits.`;
   } else {
+    const zurueck = raete.filter((r) => r.empfehlung === 'zurueckholen');
+    const teile: string[] = [];
+    if (abschalten.length > 0) {
+      teile.push(`${abschalten.length}× Abschalten (${abschalten.map((r) => r.klasse).join(', ')})`);
+    }
+    if (zurueck.length > 0) {
+      teile.push(`${zurueck.length}× Rückkehr aus dem Schatten (${zurueck.map((r) => r.klasse).join(', ')})`);
+    }
     fazit =
       `${aenderungen} Änderung${aenderungen === 1 ? '' : 'en'} vorgeschlagen` +
-      (abschalten.length > 0
-        ? `, darunter ${abschalten.length}× Abschalten (${abschalten.map((r) => r.klasse).join(', ')}).`
-        : '.');
+      (teile.length > 0 ? `, darunter ${teile.join(' und ')}.` : '.');
   }
   return { raete, aenderungen, fazit };
 }

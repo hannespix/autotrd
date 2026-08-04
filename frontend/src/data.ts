@@ -612,6 +612,29 @@ export interface PortfolioStatsDoc {
     roundTripPct: number | null;
     edgeOverCost: number | null;
   };
+  /**
+   * Empfehlung je Anlageklasse (MG2) — fertig gerechnet vom Tageslauf.
+   *
+   * Die Oberfläche zeigt sie nur an; die Logik steht in `classAdvisor.ts`
+   * und läuft serverseitig. Zwei Implementierungen derselben Regel wären
+   * zwei Wahrheiten, sobald eine davon nachzieht.
+   */
+  classAdvice?: {
+    raete: Array<{
+      klasse: string;
+      n: number;
+      kantePct: number | null;
+      gewicht: number;
+      empfehlung: string;
+      vorschlag: number;
+      grund: string;
+    }>;
+    aenderungen: number;
+    fazit: string;
+    autoTune: boolean;
+    bewegt?: Array<{ klasse: string; von: number; nach: number; grund: string }>;
+    at: string;
+  };
   updatedAt: string;
 }
 

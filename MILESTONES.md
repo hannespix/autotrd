@@ -1510,13 +1510,30 @@ dritten Mal an derselben Stelle gelöst.
       und ist mit ihm gemeinsam bei 1,5 gedeckelt. Gewicht 0 stoppt NUR die
       Ausführung (`entryGate.klasse_aus`); Signale und Schatten laufen
       weiter. Ausstiege bleiben immer frei. Empfehlung erst ab 30 Trades.
-- [ ] **MG2 Oberfläche**: Schieberegler je Klasse in den Einstellungen,
-      Empfehlungs-Karte mit Kante, Urteil und Begründung je Klasse,
-      „Vorschlag übernehmen" als ein Klick.
-- [ ] **MG3 Auto-Regler verdrahten**: `reglerSchritt` im Tageslauf
-      (`snapshotEquity` oder `autoTune`) anwenden, wenn `classAutoTune`
-      gesetzt ist; jede Änderung ins Journal wie bei MT5, damit
-      nachvollziehbar bleibt, WARUM ein Gewicht sich bewegt hat.
+- [x] **MG2 Oberfläche** *(04.08.)*: Schieberegler je Klasse (0…1,5 in
+      Schritten von 0,25) im Options-Modal, Empfehlungs-Karte mit Kante,
+      Urteil und Begründung je Klasse, „Vorschlag übernehmen" als ein Klick.
+      Die Karte rechnet bewusst NICHTS nach — sie zeigt `classAdvice` aus
+      `stats/main`, das der Tageslauf schreibt. Zwei Implementierungen
+      derselben Regel wären zwei Wahrheiten, sobald eine nachzieht.
+      `saveStrategy` normalisiert die Gewichte serverseitig (nur bekannte
+      Klassen, Hülle 0…1,5).
+- [x] **MG3 Auto-Regler verdrahten** *(04.08.)*: `reglerSchritt` läuft im
+      Tageslauf (`snapshotEquity`, direkt nach `attribution` — dort liegen
+      die Zahlen ohnehin), aber nur bei gesetztem `classAutoTune`. Jede
+      Bewegung landet mit Vorher/Nachher, Urteil, Kante und Begründung in
+      `users/{uid}/classLog/{datum}_{klasse}` — ein Gewicht, das sich von
+      selbst bewegt, muss erklärbar bleiben.
+- [x] **MG4b Schatten in die Empfehlung** *(04.08.)*: `KlassenErgebnis`
+      trägt jetzt optional die Schatten-Kante; `snapshotEquity` liest sie
+      aus `meta/classShadow` und nimmt auch Klassen in den Bericht, die
+      NUR im Schatten vorkommen — genau die abgeschalteten. Die
+      Asymmetrie ist Absicht: Der Schatten darf ausschließlich
+      zurückholen (auf `SCHATTEN_PROBELOS = 0,5`), nie abschalten. Ihm
+      fehlt der Stop, der reale Verluste kappt, also ist eine negative
+      Schatten-Kante kein Beleg für einen negativen Trade-Ertrag — eine
+      positive dagegen ein Grund, es mit halbem Einsatz zu versuchen.
+      Realisierte Trades schlagen den Schatten immer.
 - [x] **MG4 Schatten für abgeschaltete Klassen — Messung** *(04.08.)*:
       `shared/src/classShadow.ts`. Jeder Scan legt Richtung, Kurs und
       Zeitpunkt seines Signals ans Markt-Dokument; der nächste misst, was
@@ -1533,12 +1550,6 @@ dritten Mal an derselben Stelle gelöst.
       entscheiden soll). Es misst die Güte der SIGNALQUELLE, nicht die der
       Ausführung: Stop, Ziel und Haltedauer fehlen. Deshalb
       `SCHATTEN_MIN_N = 200` statt der 30 Trades der Trade-Kante.
-- [ ] **MG4b Schatten in die Empfehlung**: Die Messung läuft, aber
-      `berateKlassen` liest sie noch nicht — eine Klasse auf Gewicht 0 hat
-      weiter keine Trade-Kante und bleibt damit „zu dünn für ein Urteil".
-      Der Rückweg ist also erst dokumentiert, nicht befahrbar. Gehört mit
-      MG3 zusammen: Wer den Auto-Regler verdrahtet, muss beide Quellen
-      gewichten — realisierte Trades schlagen Schatten, wo beide vorliegen.
 
 ## Arbeitsreihenfolge (Stand 04.08.)
 
@@ -1549,12 +1560,11 @@ Denn daran hängt der Echtgeld-Schalter, und daran hängt alles andere.
 
 **Zuerst — was die Profitabilität direkt betrifft:**
 
-1. ~~**MG4** Schatten je Klasse~~ *(Messung steht 04.08.)* — offen bleibt
-   **MG4b**: Die Zahl muss noch in die Empfehlung, sonst ist der Rückweg
-   nur dokumentiert.
-2. **MG2/MG3/MG4b** Regler-Oberfläche, Auto-Regler und Schatten als
-   zweite Evidenzquelle. Macht die Messung bedienbar und selbsttätig.
-3. **ME6** `captureGate` scharf schalten, sobald `kante_wuerde_blocken`
+1. ~~**MG1–MG4b** Klassen-Regler komplett~~ *(04.08. erledigt)*: Kern,
+   Schatten-Messung, Oberfläche, Auto-Regler und der Rückweg aus der 0.
+   Was jetzt noch fehlt, ist keine Arbeit, sondern Zeit — der Schatten
+   braucht 200 Signale je Klasse, bevor er sprechen darf.
+2. **ME6** `captureGate` scharf schalten, sobald `kante_wuerde_blocken`
    eine belastbare Zahl zeigt.
 
 **Danach — was Echtgeld möglich macht:**
