@@ -668,20 +668,25 @@ button, input, select { font-family: inherit; font-size: inherit; }
   backdrop-filter: blur(6px);
 }
 .lg-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: -1px; }
-/* Positions-Chip im Chart (04.08.): „LONG 12 · seit 3 Tagen · 123,45 → 130,00
-   · +5,3 % · Stop 4,1 %" — steht unter der Legende, gleiche Glas-Optik. Der
-   goldene Rand greift die Farbe der Einstiegs-Linie auf, damit Chip und Linie
-   als EIN Element gelesen werden. */
+/* Positions-Chip im Chart (04.08.): zugeklappt nur „SHORT 6 · +0,4 % · $5,98",
+   aufgeklappt mit Einstand, Haltedauer und den Abständen zu Stop/Ziel. Steht
+   unter der Legende, gleiche Glas-Optik; der goldene Rand greift die Farbe der
+   Einstiegs-Linie auf, damit Chip und Linie als EIN Element gelesen werden.
+
+   Warum zweistufig (Owner-Feedback 04.08. „überlagert zu viel Info"): Die
+   volle Zeile lief über zwei Zeilen bis in die Preisskala und verdeckte dort
+   die Achsen-Labels. Das Wichtige — Seite und laufendes Ergebnis — passt in
+   eine kurze Zeile; alles andere holt man sich per Klick. */
 .pos-hud {
   font-size: 11px; color: var(--t2); padding: 2px 9px; border-radius: 7px;
   background: color-mix(in srgb, var(--bg, #060b12) 68%, transparent);
   backdrop-filter: blur(6px); border: 1px solid rgba(232, 199, 106, .45);
-  /* Umbruch statt Ellipse: Der Chip trägt Zahlen, keine Prosa — „Stop 12,9 %"
-     abzuschneiden hieße, die wichtigste Angabe zu verlieren. Auf schmalen
-     Geräten (390 px) läuft er deshalb über zwei Zeilen. */
-  max-width: 100%; white-space: normal; line-height: 1.55;
+  /* Enger als die OHLC-Zeile: Der Chip darf die Preisskala nie erreichen. */
+  max-width: min(100%, 430px); white-space: normal; line-height: 1.55;
+  pointer-events: auto; cursor: pointer;
 }
 .pos-sep { color: var(--t3); }
+.pos-fold { color: var(--t3); font-size: 10px; }
 .pos-tag {
   font-size: 9px; letter-spacing: .06em; text-transform: uppercase;
   border: 1px solid var(--hair); border-radius: 999px; padding: 0 5px; color: var(--t3);

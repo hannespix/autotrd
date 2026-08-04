@@ -48,6 +48,7 @@ import {
   validateStrategy,
   vwapSessions,
   wilderRsi,
+  zonenKuerzel,
   type GlobalAxisStats,
   type HistoryTrade,
   type Position,
@@ -111,6 +112,7 @@ import {
   type EvaluatedForecastRow,
   type ForecastStatsDoc,
   type HealthDoc,
+  type TradeCursor,
   type PositioningDoc,
   type IndicatorRow,
   type MarketDocData,
@@ -313,6 +315,8 @@ interface DashState {
    * Chart ein Symbol zeigt, in dem das Konto drinsteckt. Default AN.
    */
   showPos: boolean;
+  /** Positions-Chip aufgeklappt? Zu = nur Seite, Stück und Ergebnis. */
+  posOpen: boolean;
   /** News-Lage des aktuellen Chart-Symbols (aus dem market-Doc-Watcher). */
   news: MarketDocData['news'];
   /** Zugangsstufe des Kontos — 'pending'/'blocked' heißt: der Scan handelt NICHT. */
@@ -343,7 +347,9 @@ interface DashState {
    */
   watched: string[];
   /** Historie: älteste geladene Zeile — Cursor der nächsten Seite. */
-  tradesCursor: string | null;
+  tradesCursor: TradeCursor | null;
+  /** Letzter Nachlade-Fehler — sichtbar statt nur in der Konsole. */
+  tradesFehler: string | null;
   /** Keine älteren Zeilen mehr — der Knopf verschwindet. */
   tradesDone: boolean;
   tradesLoading: boolean;
@@ -1265,7 +1271,14 @@ async function loadOlderDaily(): Promise<void> {
 function renderResBadge(): void {
   if (!st) return;
   const label = st.intradayDays > 0 ? (st.aggMinutes >= 60 ? `${st.aggMinutes / 60}h` : `${st.aggMinutes}m`) : '1D';
-  $('resBadge').textContent = st.autoRes ? `Auto · ${label}` : label;
+  const el = $('resBadge');
+  // Zeitzone nur bei Intraday nennen — Tageskerzen tragen den Handelstag in
+  // Börsenzeit und haben gar keine Uhrzeit, auf die sich ein Kürzel bezöge.
+  const zone = st.intradayDays > 0 ? ` · ${zonenKuerzel(new Date())}` : '';
+  el.textContent = (st.autoRes ? `Auto · ${label}` : label) + zone;
+  el.title = st.intradayDays > 0
+    ? 'Aktive Kerzen-Auflösung — Uhrzeiten auf der Zeitachse und in der Kurszeile stehen in deiner Ortszeit'
+    : 'Aktive Kerzen-Auflösung';
 }
 
 /** SMA/EMA/BB-Linien für beliebige Bars — gilt für Haupt-Chart UND Grid-Panels
@@ -2226,15 +2239,25 @@ function posKurs(p: Position, fallback?: number): number {
   return closes[closes.length - 1] ?? p.avgEntry;
 }
 
-/** Preislinien für Einstand, Stop, Trailing und Ziel einer Position. */
+/**
+ * Preislinien für Einstand, Stop, Trailing und Ziel einer Position.
+ *
+ * Bewusst karg (Owner 04.08.: „überlagert zu viel Info"): NUR der Einstand
+ * bekommt einen Preis-Kasten auf der Skala — jeder weitere Kasten überdeckt
+ * einen echten Skalenwert, und mit vieren war die Preisachse unlesbar.
+ * Titel-Texte im Chart entfallen ganz; sie standen doppelt zum Achsen-Label
+ * und lagen quer über den Kerzen. Welche Linie welche ist, sagt die Farbe
+ * (rot = Stop, orange = Trailing, grün = Ziel) und der Chip mit den
+ * Prozent-Abständen.
+ */
 function positionsLinien(p: Position): PriceLineSpec[] {
   const lv = posLevels(p);
   const lines: PriceLineSpec[] = [
-    { key: 'pos:entry', price: lv.entry, color: POS_FARBEN.entry, title: `Einstieg ${fmtNum(lv.entry)}`, style: 0, width: 2 },
+    { key: 'pos:entry', price: lv.entry, color: POS_FARBEN.entry, style: 0, width: 2 },
   ];
-  if (lv.stop !== null) lines.push({ key: 'pos:stop', price: lv.stop, color: POS_FARBEN.stop, title: 'Stop', style: 2 });
-  if (lv.trail !== null) lines.push({ key: 'pos:trail', price: lv.trail, color: POS_FARBEN.trail, title: 'Trailing', style: 1 });
-  if (lv.target !== null) lines.push({ key: 'pos:target', price: lv.target, color: POS_FARBEN.target, title: 'Ziel', style: 2 });
+  if (lv.stop !== null) lines.push({ key: 'pos:stop', price: lv.stop, color: POS_FARBEN.stop, style: 2, axisLabel: false });
+  if (lv.trail !== null) lines.push({ key: 'pos:trail', price: lv.trail, color: POS_FARBEN.trail, style: 1, axisLabel: false });
+  if (lv.target !== null) lines.push({ key: 'pos:target', price: lv.target, color: POS_FARBEN.target, style: 2, axisLabel: false });
   return lines;
 }
 
@@ -2259,7 +2282,9 @@ function positionsMarker(times: Array<string | number>, sym?: string): ChartMark
     position: short ? 'aboveBar' : 'belowBar',
     color: POS_FARBEN.entry,
     shape: short ? 'arrowDown' : 'arrowUp',
-    text: `${short ? 'Short' : 'Kauf'} ${fmtNum(p.avgEntry)}`,
+    // Ohne Preis im Text: Der steht schon auf der Preisskala, und zwei Zahlen
+    // für dieselbe Sache verdecken nur Kerzen (Owner 04.08.).
+    text: short ? 'Short' : 'Kauf',
   };
 }
 
@@ -2276,10 +2301,20 @@ function positionsVerlauf(
   const { pnl } = positionPnl(p, posKurs(p, closes[closes.length - 1]));
   const punkte: Array<{ time: string | number; value: number }> = [];
   for (let i = anker.index; i < closes.length; i++) punkte.push({ time: times[i]!, value: closes[i]! });
-  return { key: 'pos:seit', color: pnl >= 0 ? POS_FARBEN.gewinn : POS_FARBEN.verlust, width: 2, points: punkte };
+  // Dünn (1 px): Die Kerzen zeigen den Verlauf, die Linie markiert nur die
+  // Strecke seit Einstieg — 2 px legten sich wie ein Balken über die Körper.
+  return { key: 'pos:seit', color: pnl >= 0 ? POS_FARBEN.gewinn : POS_FARBEN.verlust, width: 1, points: punkte };
 }
 
-/** Preislinien + HUD-Zeile der offenen Position (aus renderChart). */
+/**
+ * Preislinien + Chip der offenen Position (aus renderChart).
+ *
+ * Der Chip ist zweistufig (Owner 04.08.: „überlagert zu viel Info"): Zu sieht
+ * man nur die drei Angaben, die man im Vorbeigehen braucht — Seite mit Stück
+ * und das laufende Ergebnis. Ein Klick klappt Einstand, Haltedauer und die
+ * Abstände zu Stop und Ziel auf. Gleiche Geste wie die OHLC-Zeile darüber,
+ * gleicher Speicherort (Gerät-lokal).
+ */
 function applyPosition(): void {
   if (!st?.chart) return;
   const p = posImChart();
@@ -2295,20 +2330,23 @@ function applyPosition(): void {
   const short = p.side === 'short';
   const live = posKurs(p);
   const { pnl, pct } = positionPnl(p, live);
-  const tage = haltedauerTage(p.openedAt, Date.now());
-  const dauer = tage === 0 ? 'heute eröffnet' : tage === 1 ? 'seit 1 Tag' : `seit ${tage} Tagen`;
   const teile = [
     `<b class="${short ? 'c-rd' : 'c-gn'}">${short ? 'SHORT' : 'LONG'} ${p.qty}</b>`,
-    dauer,
-    `${fmtNum(lv.entry)} → ${fmtNum(live)}`,
     `<b class="${pnlClass(pnl)}">${fmtPct(pct)} · ${money(pnl)}</b>`,
   ];
-  if (p.core === true) teile.push('<span class="pos-tag">Sockel</span>');
-  if (lv.stop !== null) teile.push(`Stop ${fmtPct(levelDistPct(lv.stop, live, 'stop', short))}`);
-  else if (lv.stopAtr) teile.push('Stop adaptiv');
-  if (lv.target !== null) teile.push(`Ziel ${fmtPct(levelDistPct(lv.target, live, 'target', short))}`);
-  else if (lv.targetAtr) teile.push('Ziel adaptiv');
+  if (st.posOpen) {
+    const tage = haltedauerTage(p.openedAt, Date.now());
+    teile.splice(1, 0, tage === 0 ? 'heute rein' : tage === 1 ? 'seit 1 Tag' : `seit ${tage} Tagen`);
+    teile.splice(2, 0, `${fmtNum(lv.entry)} → ${fmtNum(live)}`);
+    if (p.core === true) teile.push('<span class="pos-tag">Sockel</span>');
+    if (lv.stop !== null) teile.push(`Stop ${fmtPct(levelDistPct(lv.stop, live, 'stop', short))}`);
+    else if (lv.stopAtr) teile.push('Stop adaptiv');
+    if (lv.target !== null) teile.push(`Ziel ${fmtPct(levelDistPct(lv.target, live, 'target', short))}`);
+    else if (lv.targetAtr) teile.push('Ziel adaptiv');
+  }
+  teile.push(`<span class="pos-fold">${st.posOpen ? '▾' : '▸'}</span>`);
   hud.innerHTML = teile.join(' <span class="pos-sep">·</span> ');
+  hud.title = st.posOpen ? 'Details einklappen' : 'Einstand, Haltedauer und Abstände zu Stop/Ziel zeigen';
   hud.hidden = false;
 }
 
@@ -4344,21 +4382,41 @@ function tradeKey(t: TradeRow): string {
   return `${t.executedAt}|${t.symbol}|${t.side}|${t.qty}`;
 }
 
-/** Eine ältere Seite anhängen (Knopf „Ältere laden"). */
+/**
+ * Eine ältere Seite anhängen (Knopf „Ältere laden").
+ *
+ * Zwei Lehren aus dem Owner-Fund vom 04.08. („warum kann man nicht mehr
+ * weitere laden?"):
+ *
+ * 1. Ein Fehler darf hier nicht mehr stumm in der Konsole landen. Vorher sah
+ *    ein abgelehnter Zugriff exakt so aus wie eine leere Historie — der Knopf
+ *    sprang zurück und nichts geschah, ohne dass irgendwo stand, warum.
+ * 2. Bringt eine Seite ausschließlich schon bekannte Zeilen, wird sofort
+ *    weitergeblättert statt aufzugeben. Sonst bliebe der Knopf für immer
+ *    an derselben Stelle stehen.
+ */
 async function ladeAeltereTrades(): Promise<void> {
   if (!st || st.tradesLoading || st.tradesDone || !st.tradesCursor) return;
   const uid = st.uid;
   st.tradesLoading = true;
+  st.tradesFehler = null;
   renderJournal();
   try {
-    const seite = await loadMoreTrades(uid, st.tradesCursor);
-    const bekannt = new Set(st.trades.map(tradeKey));
-    // Dedup an der Naht: Der Cursor ist ein Zeitstempel, kein Doc-Cursor —
-    // zwei Trades in derselben Millisekunde könnten sonst doppelt erscheinen.
-    st.trades = [...st.trades, ...seite.rows.filter((t) => !bekannt.has(tradeKey(t)))];
-    st.tradesCursor = seite.cursor ?? st.tradesCursor;
-    st.tradesDone = seite.done;
+    // Höchstens fünf Runden je Klick: Eine Seite ohne neue Zeilen ist kein
+    // Grund aufzugeben, aber eine Endlosschleife wäre schlimmer als ein Knopf,
+    // den man zweimal drückt.
+    for (let runde = 0; runde < 5 && st.tradesCursor && !st.tradesDone; runde++) {
+      const seite = await loadMoreTrades(uid, st.tradesCursor);
+      if (!st) return; // Abmeldung während der Abfrage
+      const bekannt = new Set(st.trades.map(tradeKey));
+      const neue = seite.rows.filter((t) => !bekannt.has(tradeKey(t)));
+      st.trades = [...st.trades, ...neue];
+      st.tradesCursor = seite.cursor ?? st.tradesCursor;
+      st.tradesDone = seite.done;
+      if (neue.length > 0) break;
+    }
   } catch (e) {
+    st.tradesFehler = e instanceof Error ? e.message : String(e);
     console.warn('Ältere Trades nicht ladbar:', e);
   } finally {
     st.tradesLoading = false;
@@ -4400,9 +4458,25 @@ function renderJournal(): void {
   }
   const mehr = $('jMore') as HTMLButtonElement | null;
   if (mehr) {
-    mehr.hidden = st.tradesDone;
-    mehr.disabled = st.tradesLoading;
-    mehr.textContent = st.tradesLoading ? 'Lädt …' : 'Ältere laden';
+    // Nie ganz verschwinden lassen: Ein fehlender Knopf sieht aus wie ein
+    // Fehler, ein ausgegrauter erklärt sich selbst (Owner-Fund 04.08.).
+    mehr.hidden = false;
+    mehr.disabled = st.tradesLoading || st.tradesDone;
+    mehr.textContent = st.tradesFehler
+      ? `Nachladen fehlgeschlagen — nochmal versuchen`
+      : st.tradesLoading
+        ? 'Lädt …'
+        : st.tradesDone
+          ? 'Alle Trades geladen'
+          : 'Ältere laden';
+    if (st.tradesFehler) {
+      mehr.disabled = false;
+      mehr.title = st.tradesFehler;
+    } else {
+      mehr.title = st.tradesDone
+        ? 'Die Historie ist vollständig geladen'
+        : 'Die nächsten 50 älteren Trades holen';
+    }
   }
 
   jb.innerHTML = '';
@@ -5096,6 +5170,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     // der Toggle kostet also nichts; Abwahl bleibt gerätelokal gemerkt.
     showNews: localStorage.getItem('autotrd-chart-news') !== '0',
     showPos: localStorage.getItem('autotrd-chart-pos') !== '0',
+    posOpen: localStorage.getItem('autotrd-pos-open') === '1',
     posPrices: new Map(),
     pfStats: null,
     equitySeries: [],
@@ -5104,6 +5179,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     watchlistSubs: [],
     watched: [],
     tradesCursor: null,
+    tradesFehler: null,
     tradesDone: false,
     tradesLoading: false,
     catalogOpen: 0,
@@ -5195,13 +5271,13 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     // Live-Kopf: die neuesten 50. Nachgeladene ältere Seiten bleiben erhalten
     // und werden hinten angehängt — sonst würde jeder neue Trade (alle fünf
     // Minuten einer) die ganze nachgeladene Historie wieder wegwerfen.
-    watchTrades(uid, (kopf) => {
+    watchTrades(uid, (kopf, cursor) => {
       if (!st) return;
       const bekannt = new Set(kopf.map(tradeKey));
       const aeltere = st.trades.filter((t) => !bekannt.has(tradeKey(t)));
       st.trades = [...kopf, ...aeltere];
       if (st.tradesCursor === null) {
-        st.tradesCursor = kopf[kopf.length - 1]?.executedAt ?? null;
+        st.tradesCursor = cursor;
         st.tradesDone = kopf.length < TRADE_PAGE;
       }
       renderPortfolio();
@@ -5964,6 +6040,13 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     localStorage.setItem('autotrd-chart-news', st.showNews ? '1' : '0');
     applyMarkers();
     renderAllPanels(); // News-Punkte gelten in ALLEN Charts
+  });
+  // Klick auf den Chip klappt die Details auf/zu (gleiche Geste wie OHLC)
+  $('posHud').addEventListener('click', () => {
+    if (!st) return;
+    st.posOpen = !st.posOpen;
+    localStorage.setItem('autotrd-pos-open', st.posOpen ? '1' : '0');
+    applyPosition();
   });
   $('lyPos').classList.toggle('on', st?.showPos ?? true);
   $('lyPos').addEventListener('click', () => {

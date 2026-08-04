@@ -12,8 +12,33 @@
  * - crosshair.mode als numerisches Literal 0.
  */
 
-import { heikinAshi } from '@autotrd/shared';
+import { alsOrtszeit, heikinAshi } from '@autotrd/shared';
 import type { Bar } from '@autotrd/shared';
+
+/**
+ * Zeitachse in ORTSZEIT (Owner-Entscheidung 04.08.).
+ *
+ * Lightweight Charts rendert numerische Zeitstempel immer als UTC und kennt
+ * keine Zeitzonen-Option. Damit die Achse trotzdem die Uhrzeit des Nutzers
+ * zeigt, verschiebt diese Fassade JEDEN numerischen Zeitstempel an genau
+ * einer Stelle — beim Eintritt (`zuAchse`) und wieder zurück beim Austritt
+ * (`vonAchse`). Alles dazwischen — Kerzen, Prognose-Band, News-Punkte,
+ * Positions-Marken, Crosshair — lebt in derselben verschobenen Domäne und
+ * bleibt deshalb zueinander konsistent.
+ *
+ * ISO-Tage (Tages-Sicht) bleiben unangetastet: Ein Handelstag hat keine
+ * Uhrzeit, und ihn zu verschieben würde Kerzen auf Nachbartage rutschen
+ * lassen. Der Handelstag kommt ohnehin schon in Börsenzeit vom Server
+ * (`marketData.fmtDate` mit `exchangeTimezoneName`).
+ */
+function zuAchse<T extends string | number>(t: T): T {
+  return (typeof t === 'number' ? alsOrtszeit(t, new Date(t * 1000).getTimezoneOffset()) : t) as T;
+}
+
+/** Uhrzeit eines ACHSEN-Zeitstempels — der ist bereits Ortszeit, also UTC lesen. */
+function achsenUhrzeit(t: number): string {
+  return new Date(t * 1000).toISOString().slice(11, 16);
+}
 
 export interface ChartBar extends Bar {
   date: string; // YYYY-MM-DD
@@ -87,8 +112,17 @@ export interface PriceLineSpec {
   key: string;
   price: number;
   color: string;
-  /** Text am rechten Rand der Linie. */
-  title: string;
+  /**
+   * Text am rechten Rand der Linie. Sparsam einsetzen: Er steht IM Chart und
+   * verdeckt Kurs — meist sagt schon das Achsen-Label alles (Owner 04.08.:
+   * „überlagert zu viel Info"). Fehlend = kein Text.
+   */
+  title?: string;
+  /**
+   * Preis-Kasten auf der Skala (Default an). Jeder Kasten überdeckt einen
+   * echten Skalenwert — bei mehreren Linien nur der wichtigsten geben.
+   */
+  axisLabel?: boolean;
   /** 0 = durchgezogen, 1 = gepunktet, 2 = gestrichelt (numerisch, CLAUDE.md §6). */
   style?: 0 | 1 | 2;
   width?: number;
@@ -378,7 +412,7 @@ export async function buildPriceChart(
     setBars(bars: ChartBar[] | IntradayChartBar[], opts?: SetBarsOptions): void {
       closeByDate.clear();
       const rows = bars.map((b) => {
-        const time = 'date' in b ? b.date : (b.time as never as string);
+        const time = 'date' in b ? b.date : (zuAchse(b.time) as never as string);
         if ('date' in b) closeByDate.set(b.date, b.close);
         return { time, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume };
       });
@@ -440,7 +474,7 @@ export async function buildPriceChart(
           overlays.set(line.key, series);
         }
         series.applyOptions({ color: line.color });
-        series.setData(line.points as never);
+        series.setData(line.points.map((p) => ({ time: zuAchse(p.time), value: p.value })) as never);
       }
     },
     overlayCount(): number {
@@ -454,13 +488,13 @@ export async function buildPriceChart(
     },
     coords(time: string | number, price: number): { x: number | null; y: number | null } {
       return {
-        x: chart.timeScale().timeToCoordinate(time as never) as number | null,
+        x: chart.timeScale().timeToCoordinate(zuAchse(time) as never) as number | null,
         y: candle.priceToCoordinate(price) as number | null,
       };
     },
     setArea(points, colors): void {
       areaOn = points !== null && points.length > 0;
-      if (!areaOn) {
+      if (!areaOn || points === null) {
         area?.setData([]);
         return;
       }
@@ -473,7 +507,7 @@ export async function buildPriceChart(
       if (colors) {
         area.applyOptions({ lineColor: colors.line, topColor: colors.top, bottomColor: colors.bottom });
       }
-      area.setData(points as never);
+      area.setData(points.map((p) => ({ time: zuAchse(p.time), value: p.value })) as never);
     },
     areaActive(): boolean {
       return areaOn;
@@ -543,13 +577,15 @@ export async function buildPriceChart(
         : overlay.points;
       // Zeit kann ISO-Tag ODER UNIX-Sekunden sein (Intraday) — gleiche
       // Laundering-Idiomatik wie bei setBars (LWC akzeptiert beides zur Laufzeit)
-      fcMid.setData(mid.map((p) => ({ time: p.time as never as string, value: p.value })));
-      fcUp.setData(overlay.band.map((b) => ({ time: b.time as never as string, value: b.upper })));
-      fcLo.setData(overlay.band.map((b) => ({ time: b.time as never as string, value: b.lower })));
+      fcMid.setData(mid.map((p) => ({ time: zuAchse(p.time) as never as string, value: p.value })));
+      fcUp.setData(overlay.band.map((b) => ({ time: zuAchse(b.time) as never as string, value: b.upper })));
+      fcLo.setData(overlay.band.map((b) => ({ time: zuAchse(b.time) as never as string, value: b.lower })));
     },
     setMarkers(markers): void {
       candle.setMarkers(
-        [...markers].sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0)) as never,
+        markers
+          .map((m) => ({ ...m, time: zuAchse(m.time) }))
+          .sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0)) as never,
       );
     },
     setPriceLines(lines): void {
@@ -571,8 +607,8 @@ export async function buildPriceChart(
           color: spec.color,
           lineWidth: (spec.width ?? 1) as never,
           lineStyle: (spec.style ?? 2) as never,
-          axisLabelVisible: true,
-          title: spec.title,
+          axisLabelVisible: spec.axisLabel ?? true,
+          title: spec.title ?? '',
         };
         const vorhanden = priceLines.get(spec.key);
         if (vorhanden) vorhanden.applyOptions(opts as never);
@@ -594,8 +630,9 @@ export async function buildPriceChart(
           const bd = t as { year: number; month: number; day: number };
           date = `${bd.year}-${String(bd.month).padStart(2, '0')}-${String(bd.day).padStart(2, '0')}`;
         } else if (typeof t === 'number') {
-          // Intraday (UNIX-Sekunden) → Handelstag (UTC), damit der News-
-          // Tooltip auch in der 5-min-Sicht die Tages-Events findet (26.07.)
+          // Intraday: Der Achsen-Zeitstempel ist bereits Ortszeit, also den
+          // Kalendertag ohne weitere Verschiebung ablesen — sonst läge der
+          // News-Tooltip abends auf dem Folgetag.
           date = new Date(t * 1000).toISOString().slice(0, 10);
         }
         if (!date || !param.point) {
@@ -624,7 +661,10 @@ export async function buildPriceChart(
           const bd = t as { year: number; month: number; day: number };
           label = `${bd.year}-${String(bd.month).padStart(2, '0')}-${String(bd.day).padStart(2, '0')}`;
         } else if (typeof t === 'number') {
-          label = new Date(t * 1000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+          // Achsen-Zeit IST die Ortszeit — `toLocaleTimeString` würde den
+          // Offset ein zweites Mal draufrechnen (der Widerspruch vom 04.08.:
+          // Achse 13:30, Kurszeile 15:30 für denselben Bar).
+          label = achsenUhrzeit(t);
         }
         cb({
           time: label,
