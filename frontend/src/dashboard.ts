@@ -48,6 +48,7 @@ import {
   validateStrategy,
   vwapSessions,
   wilderRsi,
+  zonenKuerzel,
   type GlobalAxisStats,
   type HistoryTrade,
   type Position,
@@ -1267,7 +1268,14 @@ async function loadOlderDaily(): Promise<void> {
 function renderResBadge(): void {
   if (!st) return;
   const label = st.intradayDays > 0 ? (st.aggMinutes >= 60 ? `${st.aggMinutes / 60}h` : `${st.aggMinutes}m`) : '1D';
-  $('resBadge').textContent = st.autoRes ? `Auto · ${label}` : label;
+  const el = $('resBadge');
+  // Zeitzone nur bei Intraday nennen — Tageskerzen tragen den Handelstag in
+  // Börsenzeit und haben gar keine Uhrzeit, auf die sich ein Kürzel bezöge.
+  const zone = st.intradayDays > 0 ? ` · ${zonenKuerzel(new Date())}` : '';
+  el.textContent = (st.autoRes ? `Auto · ${label}` : label) + zone;
+  el.title = st.intradayDays > 0
+    ? 'Aktive Kerzen-Auflösung — Uhrzeiten auf der Zeitachse und in der Kurszeile stehen in deiner Ortszeit'
+    : 'Aktive Kerzen-Auflösung';
 }
 
 /** SMA/EMA/BB-Linien für beliebige Bars — gilt für Haupt-Chart UND Grid-Panels
