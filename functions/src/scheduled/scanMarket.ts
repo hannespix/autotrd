@@ -1588,6 +1588,19 @@ async function migrateCorePctAll(db: FirebaseFirestore.Firestore): Promise<void>
 export async function runScan(force = false): Promise<ScanResult> {
   const now = new Date();
   const scanId = now.toISOString().slice(0, 16) + 'Z'; // Minute = idempotent
+  /* Richtungs-Verteilung der Signale dieses Scans (04.08.).
+   *
+   * Anlass: Am Nachmittag des 04.08. blockte das Einstiegs-Tor 13 von 23
+   * geprüften Einstiegen mit `regime_gegen_trend` — also SHORTS in einem
+   * Aufwärtstrend. Die Ampel tut damit genau ihre Arbeit; die Frage, die sie
+   * aufwirft, beantwortet sie aber nicht: WARUM will die Engine in einem
+   * steigenden Markt überwiegend verkaufen?
+   *
+   * Die Blockade-Zähler allein können das nicht zeigen. Sie sehen nur, was
+   * am Tor ankommt — nicht, was die Konfluenz überhaupt produziert. Ein Scan
+   * mit lauter Hold-Signalen und einer mit lauter geblockten Shorts sehen im
+   * Log identisch aus: beide „keine Trades". */
+  const signalDirs = { buy: 0, sell: 0, hold: 0 };
   const scanSet = await collectScanSymbols(now);
   // Depot-Vision (2026-07-24): gescannt wird je Symbol, dessen ASSET-KLASSE
   // gerade offen ist — Krypto 24/7, Forex/Rohstoffe ~24/5, Rest US-Zeiten.
@@ -1830,6 +1843,7 @@ export async function runScan(force = false): Promise<ScanResult> {
         date: lastDate,
       });
 
+      signalDirs[sig.direction] += 1;
       // Konfluenz-Signal dieses Scans
       batch.set(symRef.collection('signals').doc(scanId), {
         direction: sig.direction,
@@ -1975,6 +1989,19 @@ export async function runScan(force = false): Promise<ScanResult> {
         // prüft gar nicht, und die Ursache liegt bei den Daten, nicht am
         // Parameter.
         entryGate,
+        /* Was die Konfluenz überhaupt PRODUZIERT (04.08.).
+         *
+         * Die Blockade-Zähler oben sehen nur, was am Tor ankommt. Erst diese
+         * Verteilung sagt, ob ein Scan ohne Trades ein ruhiger Markt war
+         * (viel `hold`) oder ein Markt, in dem die Engine gegen den Trend
+         * wollte und dafür gestoppt wurde (viel `sell` bei Regime `trend`).
+         * Im Log sehen beide Fälle identisch aus — als „keine Trades".
+         *
+         * Zusammen mit `regime` darunter ist das die Diagnose: Steht hier
+         * dauerhaft `sell` weit über `buy`, während das Regime `trend`
+         * meldet, sucht die Signal-Logik Umkehrpunkte in einem laufenden
+         * Trend — und die Ampel blockt dann nicht zu viel, sondern rettet. */
+        signalDirs,
         // Konten-Zähler (Owner-Fund 02.08.): WER am Handel teilnimmt und wer
         // still übersprungen wird — als Summen, ohne Konto-Bezug. Steht
         // `wartet_freischaltung` > 0 bei einem User mit „Engine an", ist die

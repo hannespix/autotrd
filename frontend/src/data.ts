@@ -623,6 +623,15 @@ export interface HealthDoc {
   lastScanAt?: string;
   trades?: number;
   entryGate?: Record<string, number>;
+  /**
+   * Richtungs-Verteilung der Signale des letzten Scans (04.08.).
+   *
+   * Beantwortet die Frage, die die Blockade-Zähler offenlassen: Ein Scan ohne
+   * Trades kann ein ruhiger Markt sein (viel `hold`) oder einer, in dem die
+   * Engine gegen den Trend wollte und gestoppt wurde (viel `sell` bei Regime
+   * `trend`). Beides sieht sonst gleich aus.
+   */
+  signalDirs?: { buy?: number; sell?: number; hold?: number };
   konten?: Record<string, number>;
   regime?: { state?: string; vix?: number | null; realizedVolPct?: number | null; aboveSma200?: boolean | null };
   kalender?: { bevorstehend?: string | null; stundenBis?: number | null; turnOfMonth?: boolean; fomcVeraltet?: boolean };
