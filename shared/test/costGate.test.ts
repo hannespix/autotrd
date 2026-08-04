@@ -15,6 +15,9 @@ import {
   expectedMovePct,
   holdBars,
   roundtripCostPct,
+  CLASS_CAPTURE,
+  DEFAULT_CAPTURE,
+  captureForClass,
 } from '../src/costGate.js';
 import { feeRateForClass } from '../src/strategy.js';
 
@@ -145,5 +148,85 @@ describe('costGate: die eigentliche Entscheidung', () => {
     });
     expect(r.ok).toBe(true);
     expect(r.expectedPct).toBeCloseTo(1, 10);
+  });
+});
+
+describe('Einfangquote — Bewegung ist kein Gewinn (04.08.)', () => {
+  /** Kryptonahe Werte: 0,25 % je Seite, kräftiger Tages-ATR. */
+  const krypto = {
+    atrPct: 4,
+    minHoldMin: 60,
+    timeframe: 'daily' as const,
+    feeRate: 0.0025,
+  };
+
+  it('lässt ohne Einfangquote alles durch — der Zustand vor dem Umbau', () => {
+    // Genau der Grund, warum `unter_kosten` bei `geprueft: 12` auf 0 stand:
+    // 4 % Auslenkung gegen 0,5 % Kosten × 3 = 1,5 % Schwelle.
+    const r = costGate(krypto);
+    expect(r.ok).toBe(true);
+    expect(r.expectedPct).toBeCloseTo(4, 6);
+    expect(r.edgePct).toBeCloseTo(4, 6); // ohne Quote identisch zur Auslenkung
+  });
+
+  it('blockt denselben Trade, sobald die Einfangquote zählt', () => {
+    // 10 % der Bewegung eingefangen ⇒ 0,4 % erwarteter Gewinn gegen 1,5 %
+    // Schwelle. Der Trade bewegt sich genug — er verdient nur nichts daran.
+    const r = costGate({ ...krypto, capture: 0.1 });
+    expect(r.ok).toBe(false);
+    expect(r.reason).toBe('bewegung_unter_kosten');
+    expect(r.edgePct).toBeCloseTo(0.4, 6);
+    expect(r.expectedPct).toBeCloseTo(4, 6); // Auslenkung bleibt unverändert
+  });
+
+  it('lässt dieselbe Bewegung bei besserer Signalgüte durch', () => {
+    // Der Unterschied zwischen den Anlageklassen in einer Zeile: dieselbe
+    // Bewegung, dieselben Kosten — nur fängt die Klasse mehr davon ein.
+    expect(costGate({ ...krypto, capture: 0.1 }).ok).toBe(false);
+    expect(costGate({ ...krypto, capture: 0.5 }).ok).toBe(true);
+  });
+
+  it('behandelt eine unsinnige Quote wie „nicht angegeben"', () => {
+    // 0, negativ oder > 1 darf nicht dazu führen, dass plötzlich alles
+    // blockiert (oder der Gewinn größer als die Bewegung wird).
+    for (const q of [0, -0.5, 1.5, Number.NaN]) {
+      const r = costGate({ ...krypto, capture: q });
+      expect(r.edgePct).toBeCloseTo(r.expectedPct, 6);
+      expect(r.ok).toBe(true);
+    }
+  });
+
+  it('lässt ohne ATR weiterhin durch, auch mit Quote', () => {
+    // Die permissive Richtung bei fehlendem ATR bleibt unangetastet —
+    // still ausfallende Systeme sind schlimmer als schlechte.
+    const r = costGate({ ...krypto, atrPct: null, capture: 0.1 });
+    expect(r.ok).toBe(true);
+    expect(r.reason).toBe('kein_atr');
+    expect(r.edgePct).toBe(0);
+  });
+});
+
+describe('captureForClass', () => {
+  it('gibt Krypto die niedrigste und thematischen ETFs die höchste Quote', () => {
+    // Nach der Messung vom 04.08.: crypto −0,19 % Kante gegen
+    // etf_thematic +0,81 % bei denselben Signalen.
+    expect(captureForClass('crypto')).toBeLessThan(captureForClass('stocks_us'));
+    expect(captureForClass('stocks_us')).toBeLessThan(captureForClass('etf_thematic'));
+  });
+
+  it('gibt unbekannten Klassen keinen Vertrauensvorschuss', () => {
+    expect(captureForClass('etwas_neues')).toBe(DEFAULT_CAPTURE);
+    expect(captureForClass(undefined)).toBe(DEFAULT_CAPTURE);
+    expect(DEFAULT_CAPTURE).toBeLessThanOrEqual(0.25);
+  });
+
+  it('hält alle Quoten in einem plausiblen Band', () => {
+    // Über 1 wäre unmöglich (mehr einfangen als sich bewegt), unter 0,05
+    // hieße, die Klasse praktisch abzuschalten — dann gehört sie aus dem
+    // Universum, nicht in eine Feinjustierung.
+    for (const q of Object.values(CLASS_CAPTURE)) {
+      expect(q).toBeGreaterThanOrEqual(0.05);
+      expect(q).toBeLessThanOrEqual(1);
+    }
   });
 });

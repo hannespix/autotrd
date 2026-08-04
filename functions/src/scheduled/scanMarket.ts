@@ -24,6 +24,7 @@ import {
   clusterHasRoom,
   costGate,
   effectiveLeverage,
+  captureForClass,
   feeRateForClass,
   isTradable,
   stopDistancePct,
@@ -198,6 +199,8 @@ export interface EntryGateStats {
   news_veto: number;
   /** Abgelehnt: erwartete Bewegung unter der Kostenschwelle. */
   unter_kosten: number;
+  /** Schatten (04.08.): Was die Kanten-Fassung ZUSÄTZLICH blocken würde. */
+  kante_wuerde_blocken: number;
   /** DURCHGELASSEN, obwohl die Kostenschwelle nicht prüfen konnte (keine
    *  ATR). Steht diese Zahl hoch, ist die Schwelle faktisch abgeschaltet. */
   ohne_atr_durchgelassen: number;
@@ -268,6 +271,7 @@ async function executeUserTrades(
     cluster_voll: 0,
     news_veto: 0,
     unter_kosten: 0,
+    kante_wuerde_blocken: 0,
     ohne_atr_durchgelassen: 0,
     filter_blockiert: 0,
     regime_gegen_trend: 0,
@@ -624,15 +628,31 @@ async function executeUserTrades(
           handelbar && clamped.signals.newsVeto !== false
             ? newsVeto(marketData.get(symbol)?.news, Math.floor(Date.now() / 1000))
             : { blocked: false };
-        const kosten = costGate({
+        const klasse = classify(symbol);
+        const kostenBasis = {
           atrPct,
           minHoldMin: clamped.engine.minHoldMin,
           timeframe: tf,
-          feeRate: feeRateForClass(classify(symbol)),
+          feeRate: feeRateForClass(klasse),
           ...(typeof clamped.signals.minEdgeMultiple === 'number'
             ? { multiple: clamped.signals.minEdgeMultiple }
             : {}),
-        });
+        };
+        // Die Kostenschwelle wird ZWEIMAL gerechnet (04.08.):
+        //
+        //  `kosten`  wie bisher — Auslenkung gegen Kosten. Diese Fassung
+        //            entscheidet, solange `signals.captureGate` nicht an ist.
+        //  `mitKante` zusätzlich mit der Einfangquote der Anlageklasse.
+        //
+        // Warum nicht sofort scharf: Die Einfangquoten stammen aus EINER
+        // Messwoche. Sie ungeprüft scharf zu schalten hieße, den Handel auf
+        // eine Schätzung zu drosseln — und ein Filter, der zu viel blockt,
+        // beendet auch die Datensammlung, die ihn korrigieren würde. Der
+        // Schattenzähler zeigt erst, WIE VIELE Einstiege betroffen wären;
+        // scharf wird er, wenn die Zahl das rechtfertigt.
+        const kostenOhneKante = costGate(kostenBasis);
+        const mitKante = costGate({ ...kostenBasis, capture: captureForClass(klasse) });
+        const kosten = clamped.signals.captureGate === true ? mitKante : kostenOhneKante;
         // ALLE zutreffenden Gründe zählen, nicht nur den ersten. Der erste
         // Live-Lauf am 28.07. zeigte warum: `cluster_voll` stand auf 13,
         // `unter_kosten` auf 0 — nicht weil die Kostenschwelle nichts tat,
@@ -645,6 +665,11 @@ async function executeUserTrades(
           if (!kosten.ok) gate.unter_kosten += 1;
           // Der stille Fall: durchgelassen, weil nicht prüfbar.
           else if (kosten.reason === 'kein_atr') gate.ohne_atr_durchgelassen += 1;
+          // Schattenzähler: Was die Kanten-Fassung ZUSÄTZLICH blocken würde.
+          // Nur zählen, wenn die scharfe Fassung durchlässt — sonst stünde
+          // derselbe Einstieg in beiden Zählern und die Zahl läse sich wie
+          // ein doppelter Effekt.
+          if (kosten.ok && !mitKante.ok) gate.kante_wuerde_blocken += 1;
         }
         if (regimeSperre === 'stress') gate.regime_stress += 1;
         else if (regimeSperre === 'gegen_trend') gate.regime_gegen_trend += 1;
@@ -1910,6 +1935,7 @@ export async function runScan(force = false): Promise<ScanResult> {
     cluster_voll: 0,
     news_veto: 0,
     unter_kosten: 0,
+    kante_wuerde_blocken: 0,
     ohne_atr_durchgelassen: 0,
     filter_blockiert: 0,
     regime_gegen_trend: 0,

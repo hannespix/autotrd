@@ -61,6 +61,70 @@
  */
 export const MIN_EDGE_MULTIPLE = 3;
 
+/**
+ * Wie viel der erwarteten Auslenkung ein Signal tatsächlich einfängt.
+ *
+ * ── Der Denkfehler, den diese Zahl behebt ─────────────────────────────────
+ *
+ * Die Prüfung oben vergleicht die erwartete BEWEGUNG mit den Kosten. Am
+ * 04.08. stand `unter_kosten` bei `geprueft: 12` auf 0 — die Schwelle ließ
+ * ausnahmslos alles durch, und der Grund war kein Rechenfehler, sondern ein
+ * Denkfehler: Bewegung ist kein Gewinn. Ein Random Walk mit 4 % Auslenkung
+ * hat Erwartungswert null. Wer nur die Auslenkung gegen die Kosten hält,
+ * misst, ob sich ein Instrument BEWEGT — nicht, ob man an dieser Bewegung
+ * verdient.
+ *
+ * Was zählt, ist der Anteil der Bewegung, den die Signale einfangen. Genau
+ * den hat die Klassen-Attribution vom 04.08. sichtbar gemacht, und die
+ * Unterschiede sind gewaltig:
+ *
+ *   etf_thematic   63 Trades   Kante +0,81 %   ⇒ fängt ~60 % der Bewegung
+ *   stocks_us      38 Trades   Kante +0,19 %   ⇒ fängt ~25 %
+ *   crypto        290 Trades   Kante −0,19 %   ⇒ fängt ~8 %
+ *
+ * Dieselben Signale, dasselbe Regelwerk — und trotzdem verdient die eine
+ * Klasse Geld und die andere verbrennt es. Krypto stellte 55 % aller Trades
+ * und den größten Einzelverlust (−1.132,87 $); ohne Krypto stünde das
+ * System bei +40,12 $ statt −1.092,75 $.
+ *
+ * ── Warum diese Werte konservativ und grob sind ───────────────────────────
+ *
+ * Sie stammen aus EINER Messwoche. Die gemessenen Quoten hier auf die
+ * Nachkommastelle zu übernehmen, wäre Überanpassung an eine Marktphase —
+ * derselbe Fehler, für den weiter oben der Fünf-Jahres-Backtest verworfen
+ * wurde. Deshalb bewusst wenige, runde Stufen, und im Zweifel die
+ * niedrigere: Eine zu klein geschätzte Einfangquote lässt einen guten Trade
+ * aus (Kosten: entgangener Gewinn), eine zu große lässt einen schlechten zu
+ * (Kosten: echtes Geld). Die beiden sind nicht gleich teuer.
+ *
+ * Der Wert ist eine ANNAHME über die Signalgüte, keine gemessene Konstante.
+ * Sobald genug Trades je Klasse vorliegen, gehört er aus der laufenden
+ * Attribution nachgeführt statt hier gepflegt.
+ */
+export const CLASS_CAPTURE: Record<string, number> = {
+  etf_thematic: 0.5,
+  stocks_us: 0.25,
+  stocks_global: 0.25,
+  etf_sectors: 0.2,
+  etf_regions: 0.2,
+  rates_bonds: 0.2,
+  commodities: 0.15,
+  crypto: 0.1,
+};
+
+/**
+ * Voreinstellung für unbekannte Klassen.
+ *
+ * Bewusst am unteren Rand: Eine Klasse, über die nichts bekannt ist, hat
+ * keinen Vertrauensvorschuss verdient.
+ */
+export const DEFAULT_CAPTURE = 0.15;
+
+/** Einfangquote einer Anlageklasse (unbekannt ⇒ DEFAULT_CAPTURE). */
+export function captureForClass(assetClass: string | undefined): number {
+  return CLASS_CAPTURE[(assetClass ?? '').toLowerCase()] ?? DEFAULT_CAPTURE;
+}
+
 /** Kerzenlänge in Minuten je Zeitbasis. */
 export const BAR_MINUTES: Record<'intraday' | 'daily', number> = {
   intraday: 5,
@@ -110,6 +174,12 @@ export interface CostGateInput {
   feeRate: number;
   /** Sicherheitsfaktor; Default MIN_EDGE_MULTIPLE. */
   multiple?: number;
+  /**
+   * Anteil der Bewegung, den die Signale einfangen (0…1). Fehlt er, wird
+   * die Prüfung wie bisher auf die reine Auslenkung angewandt — damit bleibt
+   * jeder bestehende Aufrufer unverändert (siehe `capture`-Kommentar oben).
+   */
+  capture?: number;
 }
 
 export interface CostGateResult {
@@ -121,6 +191,8 @@ export interface CostGateResult {
   costPct: number;
   /** Was die Bewegung mindestens erreichen muss. */
   needPct: number;
+  /** Erwarteter GEWINN = Auslenkung × Einfangquote — die Zahl, die zählt. */
+  edgePct: number;
   /** Grund der Ablehnung (nur bei ok === false). */
   reason?: 'bewegung_unter_kosten' | 'kein_atr';
 }
@@ -141,16 +213,25 @@ export function costGate(input: CostGateInput): CostGateResult {
   const needPct = costPct * (input.multiple ?? MIN_EDGE_MULTIPLE);
   const atr = input.atrPct;
   if (typeof atr !== 'number' || !Number.isFinite(atr) || atr <= 0) {
-    return { ok: true, expectedPct: 0, costPct, needPct, reason: 'kein_atr' };
+    return { ok: true, expectedPct: 0, edgePct: 0, costPct, needPct, reason: 'kein_atr' };
   }
   const bars = holdBars(input.minHoldMin, BAR_MINUTES[input.timeframe]);
   const expectedPct = expectedMovePct(atr, bars);
+  // Ohne Einfangquote bleibt es beim alten Verhalten: Auslenkung gegen
+  // Kosten. Ein Aufrufer, der die Klasse nicht kennt, bekommt damit exakt
+  // die Prüfung von vorher — die Verschärfung kommt nur dort an, wo sie
+  // begründet werden kann.
+  const capture =
+    typeof input.capture === 'number' && input.capture > 0 && input.capture <= 1
+      ? input.capture
+      : 1;
+  const edgePct = expectedPct * capture;
   // Mit Toleranz vergleichen — gleiche Konvention wie riskExitReason: Ein
   // Wert, der rechnerisch exakt auf der Schwelle liegt, soll durchkommen.
   // `0.3/√12 × √12` ergibt in Gleitkomma 0.29999999999999993 und verfehlte
   // die 0,3-%-Grenze sonst um ein Bit.
-  if (expectedPct < needPct - Math.abs(needPct) * 1e-9 - 1e-12) {
-    return { ok: false, expectedPct, costPct, needPct, reason: 'bewegung_unter_kosten' };
+  if (edgePct < needPct - Math.abs(needPct) * 1e-9 - 1e-12) {
+    return { ok: false, expectedPct, edgePct, costPct, needPct, reason: 'bewegung_unter_kosten' };
   }
-  return { ok: true, expectedPct, costPct, needPct };
+  return { ok: true, expectedPct, edgePct, costPct, needPct };
 }
