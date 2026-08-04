@@ -308,6 +308,36 @@ export async function callBrokerStatus(): Promise<BrokerStatusResult> {
   return r.data as BrokerStatusResult;
 }
 
+export interface ConnectResult {
+  ok: true;
+  maskiert: string;
+  kontoStatus: string;
+  cash: number;
+  equity: number;
+  meldung: string;
+}
+
+/**
+ * Eigenes Alpaca-PAPIERKONTO verbinden.
+ *
+ * Die Schlüssel gehen einmal zum Server und kommen nie zurück — auch nicht
+ * an den, der sie gerade gesetzt hat. Was zurückkommt, ist der Kontostatus
+ * und eine maskierte Kennung. Echtgeld-Schlüssel (AK…) weist der Server ab.
+ */
+export async function callConnectBroker(
+  apiKey: string,
+  secretKey: string,
+): Promise<ConnectResult> {
+  const r = await httpsCallable(fns(), 'connectBroker')({ apiKey, secretKey });
+  return r.data as ConnectResult;
+}
+
+/** Verbindung lösen — der Server löscht das Schlüsselpaar. */
+export async function callDisconnectBroker(): Promise<{ ok: true; geloescht: boolean }> {
+  const r = await httpsCallable(fns(), 'connectBroker')({ action: 'disconnect' });
+  return r.data as { ok: true; geloescht: boolean };
+}
+
 /** Strategie serverseitig validieren + speichern (flaches Schema). */
 export async function saveStrategy(strategy: Strategy): Promise<void> {
   await httpsCallable(fns(), 'saveStrategy')({ strategy });

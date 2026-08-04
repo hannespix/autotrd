@@ -52,6 +52,16 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      // Broker-Zugangsdaten (04.08.): für ALLE gesperrt, auch für den Owner
+      // selbst — hier liegen Alpaca-Schlüssel. Nur das Admin-SDK der
+      // Functions liest sie. Der Nutzer setzt sie über `connectBroker` und
+      // bekommt sie nie zurück; die App zeigt ausschließlich eine maskierte
+      // Kennung. Ein Lesezugriff wäre der eine Weg, auf dem ein übernommenes
+      // Konto den Schlüssel abgreifen könnte.
+      match /private/{doc} {
+        allow read, write: if false;
+      }
+
       // Regelbaum-Strategien: read-only für den Owner — Schreiben NUR über
       // die Callables saveStrategyDraft/publishStrategyVersion/assignStrategy
       match /strategies/{doc} {

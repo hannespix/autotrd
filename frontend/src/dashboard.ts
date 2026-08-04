@@ -129,6 +129,8 @@ import {
   type TuneFleetRow,
   type TuneLogRow,
   callBrokerStatus,
+  callConnectBroker,
+  callDisconnectBroker,
   type BrokerStatusResult,
   callTaxReport,
   type TaxReportResult,
@@ -1067,8 +1069,20 @@ function layout(email: string): string {
       <p class="hint">Prüft die Verbindung zum Broker, <b>ohne zu handeln</b>, und
         gleicht das eigene Buch mit dem Depot beim Broker ab. Echtgeld verlangt
         zwei Schalter an zwei Orten — ein Klick allein schaltet nichts scharf.</p>
+      <div class="row" style="align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap">
+        <input id="bkKey" class="inp" style="flex:1;min-width:150px" type="text"
+          autocomplete="off" spellcheck="false" placeholder="API-Key (PK…)" />
+        <input id="bkSec" class="inp" style="flex:1;min-width:150px" type="password"
+          autocomplete="off" spellcheck="false" placeholder="Secret-Key" />
+        <button class="btn btn-n" id="bkSave">Verbinden</button>
+      </div>
+      <p class="hint">Nur <b>Papierkonto-Schlüssel</b> (beginnen mit „PK"). Ein
+        Echtgeld-Schlüssel (AK…) wird abgelehnt — der gehört in die
+        Server-Umgebung, damit echtes Geld nicht an einem Passwort hängt.
+        Das Papierkonto ist bei Alpaca gratis und sofort da.</p>
       <div class="row" style="align-items:center;gap:8px;margin-top:6px">
         <button class="btn btn-n" id="bkGo">Verbindung prüfen</button>
+        <button class="btn btn-n" id="bkDel">Trennen</button>
       </div>
       <div id="bkOut" style="margin-top:8px"></div>
       <div class="wl-sec" style="margin-top:14px">Steuer-Export ${iBtn('taxReport')}</div>
@@ -6223,6 +6237,51 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   $('rsWord').addEventListener('input', () => {
     ($('rsGo') as HTMLButtonElement).disabled =
       ($('rsWord') as HTMLInputElement).value.trim() !== RESET_CONFIRM_WORD;
+  });
+  $('bkSave')?.addEventListener('click', () => {
+    const btn = $('bkSave') as HTMLButtonElement;
+    const key = ($('bkKey') as HTMLInputElement).value.trim();
+    const sec = ($('bkSec') as HTMLInputElement).value.trim();
+    if (!key || !sec) {
+      $('bkOut').innerHTML = '<div class="hint">Beide Schlüssel eingeben.</div>';
+      return;
+    }
+    btn.disabled = true;
+    $('bkOut').innerHTML = '<div class="hint">Prüfe Schlüssel bei Alpaca …</div>';
+    void callConnectBroker(key, sec)
+      .then((r) => {
+        // Eingaben SOFORT leeren: Der Schlüssel soll nach dem Absenden nicht
+        // weiter im Formular stehen — weder für den nächsten am Rechner noch
+        // für einen Screenshot.
+        ($('bkKey') as HTMLInputElement).value = '';
+        ($('bkSec') as HTMLInputElement).value = '';
+        $('bkOut').innerHTML =
+          `<div class="hint">✓ ${escText(r.maskiert)} verbunden — ` +
+          `${escText(r.kontoStatus)}, ${r.cash.toFixed(2)} $ Barbestand. ` +
+          `${escText(r.meldung)}</div>`;
+      })
+      .catch((e) => {
+        $('bkOut').innerHTML = `<div class="hint">${escText((e as Error).message)}</div>`;
+      })
+      .finally(() => {
+        btn.disabled = false;
+      });
+  });
+  $('bkDel')?.addEventListener('click', () => {
+    const btn = $('bkDel') as HTMLButtonElement;
+    btn.disabled = true;
+    void callDisconnectBroker()
+      .then((r) => {
+        $('bkOut').innerHTML = `<div class="hint">${
+          r.geloescht ? 'Verbindung getrennt, Schlüssel gelöscht.' : 'Es war nichts verbunden.'
+        }</div>`;
+      })
+      .catch((e) => {
+        $('bkOut').innerHTML = `<div class="hint">${escText((e as Error).message)}</div>`;
+      })
+      .finally(() => {
+        btn.disabled = false;
+      });
   });
   $('bkGo')?.addEventListener('click', () => {
     const btn = $('bkGo') as HTMLButtonElement;

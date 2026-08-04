@@ -15,10 +15,11 @@
  *
  * ── Die Guards, und warum es drei sind ────────────────────────────────────
  *
- * 1. `resolveBrokerMode` (broker.ts): `broker.mode === 'live'` UND env
- *    `ALPACA_ALLOW_LIVE === '1'`. Zwei Schalter an zwei verschiedenen Orten —
- *    ein verirrter Klick in der Oberfläche reicht nicht, und ein
- *    versehentlich gesetztes Env auch nicht.
+ * 1. `resolveBrokerMode` (broker.ts): `broker.mode === 'live'`, env
+ *    `ALPACA_ALLOW_LIVE === '1'` UND eine bestandene Live-Reife. Drei
+ *    Bedingungen an drei verschiedenen Orten — ein verirrter Klick in der
+ *    Oberfläche reicht nicht, ein versehentlich gesetztes Env auch nicht,
+ *    und ein defizitäres System schon gar nicht.
  * 2. `vorflugkontrolle()` (hier): prüft VOR jeder Order den Kontozustand am
  *    echten Endpunkt. Sie fängt die Fälle, die kein Flag kennt — gesperrtes
  *    Konto, zu große Order, fehlende Deckung, falsches Schlüsselpaar.
@@ -30,12 +31,22 @@
  * Diese Guards werden nie gelockert. Wer hier etwas vereinfachen will, sollte
  * vorher ausrechnen, was der Fehlerfall kostet.
  *
- * ── Schlüssel ─────────────────────────────────────────────────────────────
+ * ── Schlüssel: zwei Quellen, streng getrennt ──────────────────────────────
  *
- * Nur aus der Umgebung (Secret Manager), nie aus Firestore, nie im Log, nie
- * in einer Fehlermeldung. `keineSchluesselImText()` putzt Ausnahmen, bevor
- * sie irgendwo landen — eine Alpaca-Fehlermeldung enthält im Zweifel den
- * gesendeten Header.
+ * PAPIER (`PK…`): Der Nutzer verbindet sein eigenes Alpaca-Papierkonto über
+ * die App (`connectBroker`). Die Schlüssel liegen unter
+ * `users/{uid}/private/broker` — eine Sammlung, die die Firestore-Regeln für
+ * JEDEN Client sperren; nur das Admin-SDK der Functions kommt heran. Das ist
+ * vertretbar, weil an einem Papierkonto kein Geld hängt.
+ *
+ * ECHTGELD (`AK…`): NUR aus der Umgebung (Secret Manager). Über die App
+ * eingegebene Echtgeld-Schlüssel werden ABGELEHNT (`schluesselArt`). Damit
+ * bleibt der Weg zum echten Geld einer, an den keine Oberfläche und kein
+ * kompromittiertes Nutzerkonto herankommt.
+ *
+ * Und für beide gilt: nie im Log, nie in einer Fehlermeldung.
+ * `keineSchluesselImText()` putzt Ausnahmen, bevor sie irgendwo landen — eine
+ * Alpaca-Fehlermeldung enthält im Zweifel den gesendeten Header.
  */
 
 import type { BrokerMode } from './broker.js';
@@ -50,9 +61,46 @@ export function alpacaBasis(mode: BrokerMode): string {
   return BASIS[mode];
 }
 
-/** Sind überhaupt Schlüssel hinterlegt? */
+/**
+ * Ein Alpaca-Schlüsselpaar.
+ *
+ * Bewusst ein WERT, der herumgereicht wird, statt eines env-Zugriffs mitten
+ * im Code: Seit dem 04.08. gibt es zwei Quellen — das Papierkonto, das der
+ * Nutzer selbst in der App verbindet, und das Echtgeldkonto des Betreibers
+ * aus der Umgebung. Welche gilt, entscheidet der Aufrufer; die Funktionen
+ * hier wissen davon nichts.
+ */
+export interface AlpacaSchluessel {
+  keyId: string;
+  secret: string;
+}
+
+/**
+ * Präfix eines Alpaca-Schlüssels: `PK…` = Papierkonto, `AK…` = Echtgeld.
+ *
+ * Diese Unterscheidung ist die Grundlage dafür, dass die App gefahrlos
+ * Schlüssel entgegennehmen darf: Über die Oberfläche kommen NUR
+ * Papier-Schlüssel herein (siehe `connectBroker`). Ein Echtgeld-Schlüssel
+ * wird abgelehnt — er gehört in die Umgebung, an die keine Oberfläche
+ * herankommt.
+ */
+export function schluesselArt(keyId: string): 'paper' | 'live' | 'unbekannt' {
+  const k = keyId.trim().toUpperCase();
+  if (k.startsWith('PK')) return 'paper';
+  if (k.startsWith('AK')) return 'live';
+  return 'unbekannt';
+}
+
+/** Schlüsselpaar des BETREIBERS aus der Umgebung; null, wenn nicht gesetzt. */
+export function envSchluessel(): AlpacaSchluessel | null {
+  const keyId = process.env.ALPACA_API_KEY;
+  const secret = process.env.ALPACA_SECRET_KEY;
+  return keyId && secret ? { keyId, secret } : null;
+}
+
+/** Sind überhaupt Schlüssel in der Umgebung hinterlegt? */
 export function alpacaKonfiguriert(): boolean {
-  return Boolean(process.env.ALPACA_API_KEY && process.env.ALPACA_SECRET_KEY);
+  return envSchluessel() !== null;
 }
 
 /**
@@ -105,9 +153,15 @@ export class AlpacaFehler extends Error {
  * Firestore und im Browser. Ein Schlüssel, der einmal in einem Log steht,
  * ist verbrannt.
  */
-export function keineSchluesselImText(text: string): string {
+export function keineSchluesselImText(text: string, extra?: AlpacaSchluessel): string {
   let t = text;
-  for (const k of [process.env.ALPACA_API_KEY, process.env.ALPACA_SECRET_KEY]) {
+  const alle = [
+    process.env.ALPACA_API_KEY,
+    process.env.ALPACA_SECRET_KEY,
+    extra?.keyId,
+    extra?.secret,
+  ];
+  for (const k of alle) {
     if (k && k.length >= 8) t = t.split(k).join('«entfernt»');
   }
   return t;
@@ -118,10 +172,12 @@ type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 async function alpacaFetch(
   mode: BrokerMode,
   pfad: string,
+  schluessel: AlpacaSchluessel | null,
   init: RequestInit = {},
   fetchImpl: FetchLike = fetch,
 ): Promise<unknown> {
-  if (!alpacaKonfiguriert()) {
+  const k = schluessel ?? envSchluessel();
+  if (!k) {
     throw new AlpacaFehler('Keine Alpaca-Schlüssel hinterlegt');
   }
   let res: Response;
@@ -129,23 +185,26 @@ async function alpacaFetch(
     res = await fetchImpl(`${alpacaBasis(mode)}${pfad}`, {
       ...init,
       headers: {
-        'APCA-API-KEY-ID': process.env.ALPACA_API_KEY!,
-        'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY!,
+        'APCA-API-KEY-ID': k.keyId,
+        'APCA-API-SECRET-KEY': k.secret,
         'Content-Type': 'application/json',
         ...(init.headers ?? {}),
       },
     });
   } catch (e) {
-    throw new AlpacaFehler(`Netzwerkfehler: ${(e as Error).message}`);
+    throw new AlpacaFehler(keineSchluesselImText(`Netzwerkfehler: ${(e as Error).message}`, k));
   }
   const text = await res.text();
   if (!res.ok) {
-    throw new AlpacaFehler(`HTTP ${res.status}: ${text.slice(0, 300)}`, res.status);
+    throw new AlpacaFehler(
+      keineSchluesselImText(`HTTP ${res.status}: ${text.slice(0, 300)}`, k),
+      res.status,
+    );
   }
   try {
     return JSON.parse(text) as unknown;
   } catch {
-    throw new AlpacaFehler(`Unlesbare Antwort: ${text.slice(0, 200)}`);
+    throw new AlpacaFehler(keineSchluesselImText(`Unlesbare Antwort: ${text.slice(0, 200)}`, k));
   }
 }
 
@@ -164,9 +223,13 @@ const zahl = (v: unknown): number => {
  */
 export async function alpacaKonto(
   mode: BrokerMode,
+  schluessel: AlpacaSchluessel | null = null,
   fetchImpl: FetchLike = fetch,
 ): Promise<AlpacaKonto> {
-  const d = (await alpacaFetch(mode, '/v2/account', {}, fetchImpl)) as Record<string, unknown>;
+  const d = (await alpacaFetch(mode, '/v2/account', schluessel, {}, fetchImpl)) as Record<
+    string,
+    unknown
+  >;
   return {
     id: String(d['id'] ?? ''),
     status: String(d['status'] ?? ''),
@@ -183,9 +246,10 @@ export async function alpacaKonto(
 /** Offene Positionen beim Broker — Grundlage des Abgleichs. */
 export async function alpacaPositionen(
   mode: BrokerMode,
+  schluessel: AlpacaSchluessel | null = null,
   fetchImpl: FetchLike = fetch,
 ): Promise<AlpacaPosition[]> {
-  const d = (await alpacaFetch(mode, '/v2/positions', {}, fetchImpl)) as unknown[];
+  const d = (await alpacaFetch(mode, '/v2/positions', schluessel, {}, fetchImpl)) as unknown[];
   if (!Array.isArray(d)) return [];
   return d.map((p) => {
     const r = p as Record<string, unknown>;
@@ -317,11 +381,13 @@ export async function alpacaOrder(
     qty: number;
     clientOrderId: string;
   },
+  schluessel: AlpacaSchluessel | null = null,
   fetchImpl: FetchLike = fetch,
 ): Promise<OrderErgebnis> {
   const d = (await alpacaFetch(
     mode,
     '/v2/orders',
+    schluessel,
     {
       method: 'POST',
       body: JSON.stringify({

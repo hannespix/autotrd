@@ -234,6 +234,23 @@ export interface SignalsConfig {
    */
   minEdgeMultiple?: number;
   /**
+   * Kostenschwelle mit EINFANGQUOTE rechnen (04.08.).
+   *
+   * Die bisherige Schwelle vergleicht die erwartete BEWEGUNG mit den Kosten
+   * und ließ deshalb praktisch alles durch — Bewegung ist aber kein Gewinn.
+   * Mit dieser Option zählt stattdessen der Anteil der Bewegung, den die
+   * Signale der jeweiligen Anlageklasse erfahrungsgemäß einfangen
+   * (`captureForClass`).
+   *
+   * Standard AUS, und das ist wichtig: Die Einfangquoten stammen aus einer
+   * einzigen Messwoche. Solange die Option aus ist, zählt der Scan im
+   * Schatten mit (`entryGate.kante_wuerde_blocken`), wie viele Einstiege
+   * zusätzlich wegfielen. Erst wenn diese Zahl die Drosselung rechtfertigt,
+   * gehört sie eingeschaltet — ein Filter, der zu viel blockt, beendet auch
+   * die Datensammlung, die ihn korrigieren würde.
+   */
+  captureGate?: boolean;
+  /**
    * News-Veto (News-Rückkehr 29.07.): Frische harte Ereignisse (Earnings,
    * Klage, Guidance, M&A, Führungswechsel) sperren NEUE Einstiege in das
    * Symbol für einige Stunden — um solche Termine springen Kurse, und die
