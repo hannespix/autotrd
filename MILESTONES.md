@@ -183,18 +183,21 @@ deploybare SPA mit Login hinter `autotrd.net`.
 - [x] `functions/`: Firebase Functions v2 (Node 20, TS) initialisiert;
       eine `healthz`-HTTP-Function als Smoke (im Emulator verifiziert;
       kompiliert `shared/` mit ins Deploy-Artefakt)
-- [ ] Firebase-Projekt anlegen (Konsole, Blaze + **Budget-Alarm**), `.firebaserc`
+- [x] Firebase-Projekt anlegen (Konsole, Blaze + **Budget-Alarm**), `.firebaserc`
       Projekt-ID eintragen, `firestore.rules` deployen
-      *(Owner-Schritt; `.firebaserc` mit Platzhalter `autotrd` liegt bereit)*
+      *(erledigt — Projekt `autotrd-653b0` läuft; belegt durch die
+      Firestore-REST-Antwort auf `meta/health` und laufende Scheduler.
+      Der Budget-Alarm bleibt Owner-Sache und ist von außen nicht prüfbar.)*
 - [x] Emulator-Suite (`firebase emulators:start`: auth, firestore, functions)
       läuft lokal; README-Abschnitt „Lokal entwickeln"
-- [ ] GitHub Secrets setzen: `FTP_HOST/FTP_USERNAME/FTP_PASSWORD` (webgo, FTPS!),
+- [x] GitHub Secrets setzen: `FTP_HOST/FTP_USERNAME/FTP_PASSWORD` (webgo, FTPS!),
       `FIREBASE_SERVICE_ACCOUNT` bzw. Token; Workflows aus `.github/workflows/`
-      laufen durch (CI hat Guard, solange Tooling fehlt)
-      *(Owner-Schritt: Secrets; die drei Workflows liegen bereit, Deploys
-      überspringen sich sauber per Guard, solange Secrets fehlen)*
-- [ ] webgo: `autotrd.net` DocumentRoot auf Deploy-Zielordner; HTTPS aktiv
-      *(Owner-Schritt)*
+      laufen durch *(erledigt — „Deploy Functions (Firebase)" und „Deploy
+      Frontend (webgo)" laufen seit Wochen grün durch; ein fehlendes Secret
+      würde den Guard auslösen und den Deploy überspringen.)*
+- [x] webgo: `autotrd.net` DocumentRoot auf Deploy-Zielordner; HTTPS aktiv
+      *(erledigt — `https://autotrd.net` liefert HTTP/2 200 mit der
+      gebauten SPA.)*
 
 **Abnahme:** PR-CI grün · `firebase emulators:start` ok · Merge auf `main`
 lädt Frontend-Build zu webgo hoch · `https://autotrd.net` zeigt Login,
@@ -887,11 +890,28 @@ Repo) · „Befördern" tauscht Rollen atomar.
 Kette — jede gefundene Schwäche wird sofort mit Test + Fix ausgeliefert.
 Reihenfolge = Geldfluss: erst wo Geld bewegt wird, dann wie entschieden wird.
 
-- [ ] MA1 Broker-Kern: `executePaperTrade` (Transaktionalität, Rundung,
-      Gebühren-/Slippage-Vorzeichen je Seite, qty-Sizing, avgEntry bei
-      Nachkäufen, Verkauf > Bestand, negative/Null-Preise, Idempotenz bei
-      Doppel-Scans), `riskExitReason`-Grenzfälle, Wallet-Konsistenz
-      (cash+Positionen=Equity), adversariale Unit-Tests je Fund
+- [~] MA1 Broker-Kern *(Review 04.08. — Ergebnis unten, Rest offen)*:
+      `executePaperTrade` Zeile für Zeile gegen die Liste geprüft.
+      **Sauber:** Transaktionalität (`tx.get` auf User UND Position, danach
+      absoluter Write — bei Konflikt wiederholt Firestore korrekt) ·
+      Rundung (`roundCents` an jedem Wallet-Write; ohne das driftet der
+      Saldo über viele Zyklen sichtbar) · Nachkauf ist geguarded
+      (`position_existiert`), die Position wird also nie überschrieben ·
+      Null/negative Preise fallen vor der Transaktion raus · Teilverkäufe
+      gibt es nicht, verkauft wird immer `pos.qty`.
+      **Neu festgenagelt:** Die Gebühren-SYMMETRIE zwischen Long und Short.
+      Der Broker bucht sie auf zwei verschiedenen Wegen — der Long zahlt
+      Aufschlag beim Kauf und bekommt Abschlag beim Verkauf, der Short
+      bekommt den Abschlag beim Öffnen und zahlt den Aufschlag beim
+      Eindecken, wobei die Sicherheitsleistung dazwischen voll zurückfließt.
+      Zwei Buchungswege für dieselbe Sache sind genau die Stelle, an der
+      eine Seite still zu billig wird; die verzerrte P&L speist dann
+      Trade-Filter, A/B-Duell und Auto-Tuner. Drei Tests halten fest, dass
+      beide Wege exakt `2 × Satz × Volumen` kosten, über alle Klassen.
+      **Offen:** Wallet-Konsistenz (cash + Positionen = Equity) als
+      laufender Test gegen den Emulator — dafür fehlt eine
+      Firestore-Testumgebung für den Broker-Pfad; heute deckt nur
+      `test:rules` einen Emulator ab.
 - [x] MA2 Signal-Kette **(26.07. umgesetzt)**: Der Owner-Befund „2 Tage, kein
       einziger Verkauf" hatte zwei Ursachen in der Konfluenz, beide behoben.
       (1) Die Prognose (Gewicht 2) riss die Schwelle (2) im Alleingang — die
