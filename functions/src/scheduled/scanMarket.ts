@@ -38,9 +38,11 @@ import {
   convictionFactor,
   marketRegime,
   regimeEntryBlocked,
+  leverageChance,
   signalSignature,
   type BucketStat,
   type MarketRegime,
+  type PositioningState,
   positionValue,
   resolveName,
   resolveRisk,
@@ -211,6 +213,11 @@ export interface EntryGateStats {
   regime_gegen_trend: number;
   /** Abgelehnt: Stress-Regime, gar keine neuen Einstiege. */
   regime_stress: number;
+  /** Wie oft die HEBEL-AMPEL einen Großeinsatz freigegeben hat (04.08.).
+   *  Erwartungsgemäß selten — sie verlangt fünf unabhängige Bestätigungen
+   *  gleichzeitig. Steht sie dauerhaft auf 0, ist der Hebel faktisch aus;
+   *  steht sie hoch, ist eine Bedingung wirkungslos geworden. */
+  hebel_frei: number;
 }
 
 /**
@@ -263,6 +270,7 @@ async function executeUserTrades(
     filter_blockiert: 0,
     regime_gegen_trend: 0,
     regime_stress: 0,
+    hebel_frei: 0,
   };
   const konten: KontenStats = {
     laufend: 0,
@@ -316,6 +324,23 @@ async function executeUserTrades(
       ((await db.doc('meta/tradeFilter').get()).get('buckets') as Record<string, BucketStat> | undefined) ?? {};
   } catch {
     // s. o.
+  }
+
+  // Positionierungs-Zustände des letzten Tageslaufs (04.08.) — einmal je
+  // Scan gelesen, ausschließlich für die HEBEL-Ampel. Fehlt das Dokument
+  // oder ist der Feed ausgefallen, bleibt die Map leer; die Ampel wertet
+  // Unbekanntes bewusst NICHT als Gegenargument, sonst hinge der Hebel an
+  // der Erreichbarkeit einer fremden Börse.
+  const positionierung = new Map<string, PositioningState>();
+  try {
+    const auf = (await db.doc('meta/positioning').get()).get('auffaellig') as
+      | Record<string, { state?: PositioningState }>
+      | undefined;
+    for (const [sym, r] of Object.entries(auf ?? {})) {
+      if (r?.state) positionierung.set(sym, r.state);
+    }
+  } catch {
+    // s. o. — eine Schatten-Messung darf den Handel nie blockieren.
   }
 
   for (const userDoc of users.docs) {
@@ -516,9 +541,30 @@ async function executeUserTrades(
        * (Owner-Vorgabe: „nur wenn der Algorithmus sich sehr sicher ist").
        * Ein Grenzsignal handelt weiter mit Bargeld.
        */
-      const hebelBudget = (konfluenz: number): MarginBudget | undefined => {
+      const hebelBudget = (
+        konfluenz: number,
+        chance?: { bucket: BucketStat | null; side: 'long' | 'short'; symbol: string; edgeMultiple: number | null },
+      ): MarginBudget | undefined => {
         if (hebel <= 1) return undefined;
-        const eff = effectiveLeverage(konfluenz, clamped.signals.minConfluence, hebel);
+        // HEBEL-AMPEL (04.08.): Konfluenz allein reicht nicht mehr. Sie misst,
+        // wie viele Indikatoren einer Meinung sind — nicht, ob diese Meinung
+        // je Geld verdient hat. Am 02.08. hatten alle vier verlierenden
+        // Short-Steckbriefe Konfluenz; Hebel darauf hätte den Verlust
+        // vervielfacht. Jetzt entscheidet die Konjunktion aus Konfluenz,
+        // Regime, BELEGTER Kante, Positionierung und Kostenabstand.
+        const eff = chance
+          ? leverageChance({
+              konfluenz,
+              requiredConfluence: clamped.signals.minConfluence,
+              leverage: hebel,
+              regime,
+              bucket: chance.bucket,
+              side: chance.side,
+              positioning: positionierung.get(chance.symbol) ?? null,
+              edgeMultiple: chance.edgeMultiple,
+            }).hebel
+          : effectiveLeverage(konfluenz, clamped.signals.minConfluence, hebel);
+        if (eff > 1) gate.hebel_frei += 1;
         if (eff <= 1) return undefined;
         const st = marginState(kontoCash, kontoWert, eff, kontoExposure);
         return {
@@ -607,6 +653,21 @@ async function executeUserTrades(
        * Ausstieg (ATR schlägt Prozent), damit Dimensionierung und Stop
        * dieselbe Zahl benutzen.
        */
+      /**
+       * Erwartete Bewegung geteilt durch die Roundtrip-Kosten — die Zahl, die
+       * die Hebel-Ampel als „günstige Gelegenheit" prüft. Dieselben Eingaben
+       * wie im Kosten-Tor des Einstiegs, damit beide dieselbe Wette bewerten.
+       */
+      const kostenVielfaches = (symbol: string, atrPct: number | null | undefined): number | null => {
+        const k = costGate({
+          atrPct,
+          minHoldMin: clamped.engine.minHoldMin,
+          timeframe: tf,
+          feeRate: feeRateForClass(classify(symbol)),
+        });
+        return k.costPct > 0 ? k.expectedPct / k.costPct : null;
+      };
+
       const stopAbstand = (symbol: string, atrPct: number | null | undefined): number =>
         stopDistancePct(resolveRisk(clamped.engine, classify(symbol)), atrPct);
 
@@ -1027,7 +1088,12 @@ async function executeUserTrades(
             requiredConfluence: clamped.signals.minConfluence,
             bucket: filterBuckets[bucket] ?? null,
           });
-          const budget = hebelBudget(konfluenz);
+          const budget = hebelBudget(konfluenz, {
+            bucket: filterBuckets[bucket] ?? null,
+            side: 'long',
+            symbol,
+            edgeMultiple: kostenVielfaches(symbol, data.atrPct),
+          });
           const r = await executePaperTrade(
             {
               uid,
@@ -1099,7 +1165,12 @@ async function executeUserTrades(
             requiredConfluence: clamped.signals.minConfluence,
             bucket: filterBuckets[bucket] ?? null,
           });
-          const budget = hebelBudget(konfluenz);
+          const budget = hebelBudget(konfluenz, {
+            bucket: filterBuckets[bucket] ?? null,
+            side: 'short',
+            symbol,
+            edgeMultiple: kostenVielfaches(symbol, data.atrPct),
+          });
           const r = await executePaperTrade(
             {
               uid,
@@ -1820,6 +1891,7 @@ export async function runScan(force = false): Promise<ScanResult> {
     filter_blockiert: 0,
     regime_gegen_trend: 0,
     regime_stress: 0,
+    hebel_frei: 0,
   };
   let lastError: string | null = null;
   // null = Trade-Block ist gar nicht gelaufen (Fehler davor) — das ist eine
