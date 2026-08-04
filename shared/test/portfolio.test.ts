@@ -137,8 +137,47 @@ describe('attribution', () => {
     ]);
     expect(a.bySymbol['BTC-USD']).toEqual({ pnl: 30, n: 2 });
     expect(a.bySymbol['X_Y']).toEqual({ pnl: 5, n: 1 }); // Firestore-Map-Key ohne Punkt
-    expect(a.byClass['crypto']).toEqual({ pnl: 30, n: 2 });
-    expect(a.byClass['unbekannt']).toEqual({ pnl: 5, n: 1 });
+    expect(a.byClass['crypto']).toMatchObject({ pnl: 30, n: 2 });
+    expect(a.byClass['unbekannt']).toMatchObject({ pnl: 5, n: 1 });
+  });
+
+  it('rechnet die Netto-Kante je Klasse aus Volumen und Ergebnis', () => {
+    // Zwei Trades über je 1.000 $ Volumen, zusammen +3 $ nach Gebühren
+    // ⇒ 3 / 2.000 = 0,15 % je gehandeltem Dollar.
+    const a = attribution([
+      { symbol: 'AAPL', pnl: 2, assetClass: 'stocks_us', notional: 1000, feeRate: 0.0015 },
+      { symbol: 'MSFT', pnl: 1, assetClass: 'stocks_us', notional: 1000, feeRate: 0.0015 },
+    ]);
+    expect(a.byClass['stocks_us']?.notional).toBe(2000);
+    expect(a.byClass['stocks_us']?.fees).toBe(6); // 2 × 1000 × 0,0015 × 2 Seiten
+    expect(a.byClass['stocks_us']?.kantePct).toBeCloseTo(0.15, 4);
+  });
+
+  it('macht eine defizitäre Klasse als negative Kante sichtbar', () => {
+    // Der Fall, für den die Zahl gebaut ist: Die Klasse handelt viel und
+    // verliert dabei — sichtbar ohne Blick auf absolute Beträge.
+    const a = attribution([
+      { symbol: 'BTC-USD', pnl: -8, assetClass: 'crypto', notional: 2000, feeRate: 0.0025 },
+    ]);
+    expect(a.byClass['crypto']?.kantePct).toBeLessThan(0);
+    expect(a.byClass['crypto']?.kantePct).toBeCloseTo(-0.4, 4);
+  });
+
+  it('lässt Trades ohne Volumen aus dem Nenner, statt die Kante zu schönen', () => {
+    // Ein Trade ohne `notional` darf das Volumen nicht mitzählen — sonst
+    // stünde sein Ergebnis über einem zu kleinen Nenner und die Kante sähe
+    // besser aus, als sie ist.
+    const a = attribution([
+      { symbol: 'AAPL', pnl: 10, assetClass: 'stocks_us', notional: 1000, feeRate: 0.0015 },
+      { symbol: 'AAPL', pnl: 10, assetClass: 'stocks_us' }, // ohne Angaben
+    ]);
+    expect(a.byClass['stocks_us']?.n).toBe(2); // zählt für die Anzahl …
+    expect(a.byClass['stocks_us']?.notional).toBe(1000); // … aber nicht fürs Volumen
+  });
+
+  it('gibt keine Kante aus, wenn kein Trade Volumen trägt', () => {
+    const a = attribution([{ symbol: 'AAPL', pnl: 10, assetClass: 'stocks_us' }]);
+    expect(a.byClass['stocks_us']?.kantePct).toBeNull();
   });
 });
 

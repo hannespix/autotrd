@@ -199,6 +199,9 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         },
         exits,
         costs: { n: costs.n, fees: costs.fees, grossPnl: costs.grossPnl },
+        // Klassen-Aufschlüsselung mit ins Aggregat: Ohne sie sagt das
+        // Gesamtbild nur, DASS zu teuer gehandelt wird — nicht wo.
+        byClass: attr.byClass,
       });
 
       snapped += 1;

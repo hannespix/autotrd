@@ -29,7 +29,7 @@
  * Nutzer registriert — und dann ist es zu spät, die Schwelle nachzurüsten.
  */
 
-import type { CostProfile, ExitBucket, TradeStats } from './portfolio.js';
+import type { AttributionSlice, CostProfile, ExitBucket, TradeStats } from './portfolio.js';
 
 /** Ab so vielen beitragenden Konten dürfen auch Beträge öffentlich werden. */
 export const MIN_ACCOUNTS_PUBLIC = 3;
@@ -45,6 +45,24 @@ export interface AccountContribution {
   exits?: Record<string, ExitBucket> | undefined;
   /** `netPnl` gibt es in `CostProfile` nicht — es folgt aus brutto − Gebühren. */
   costs?: Pick<CostProfile, 'n' | 'fees' | 'grossPnl'> | undefined;
+  /** Ergebnis je Anlageklasse — Grundlage der Klassen-Kante (04.08.). */
+  byClass?: Record<string, AttributionSlice> | undefined;
+}
+
+/** Was eine Anlageklasse über alle Konten hinweg beigetragen hat. */
+export interface KlassenBefund {
+  n: number;
+  /** Nettoergebnis nach Gebühren. */
+  pnl: number;
+  /** Nur ab MIN_ACCOUNTS_PUBLIC; sonst null (s. Kopfkommentar). */
+  fees: number | null;
+  /**
+   * Nettorendite je gehandeltem Dollar in Prozent. Ein VERHÄLTNIS und damit
+   * auch unterhalb der Konten-Schwelle veröffentlichbar — es verrät keine
+   * Kontogröße, beantwortet aber die entscheidende Frage: Verdient diese
+   * Klasse ihre eigene Reibung?
+   */
+  kantePct: number | null;
 }
 
 export interface ExitShare {
@@ -78,6 +96,15 @@ export interface TradingHealth {
   fees: number | null;
   /** Wurden Beträge zurückgehalten? Macht die Lücke erklärbar. */
   amountsWithheld: boolean;
+  /**
+   * Ergebnis je Anlageklasse.
+   *
+   * Ohne diese Aufschlüsselung sagt das Gesamtbild nur, DASS zu teuer
+   * gehandelt wird — nicht WO. Eine Klasse mit negativer Kante gehört nicht
+   * feinjustiert, sondern abgeschaltet; ohne die Zahl wäre jede Änderung an
+   * der Kostenschwelle geraten.
+   */
+  klassen: Record<string, KlassenBefund>;
 }
 
 const r4 = (x: number): number => Math.round(x * 10_000) / 10_000;
@@ -106,6 +133,7 @@ export function aggregateTradingHealth(
   let grossPnl = 0;
   let netPnl = 0;
   const exitN: Record<string, { n: number; wins: number }> = {};
+  const klassenRoh: Record<string, { n: number; pnl: number; fees: number; notional: number }> = {};
 
   for (const c of beitragend) {
     const n = c.stats.n;
@@ -140,6 +168,16 @@ export function aggregateTradingHealth(
       e.wins += b.wins;
       exitN[grund] = e;
     }
+
+    // Klassen-Beitrag dieses Kontos — Summen, keine Quoten (s. u.).
+    for (const [name, slice] of Object.entries(c.byClass ?? {})) {
+      const kl = klassenRoh[name] ?? { n: 0, pnl: 0, fees: 0, notional: 0 };
+      kl.n += slice.n;
+      kl.pnl += slice.pnl;
+      kl.fees += slice.fees ?? 0;
+      kl.notional += slice.notional ?? 0;
+      klassenRoh[name] = kl;
+    }
   }
 
   const exitSumme = Object.values(exitN).reduce((a, e) => a + e.n, 0);
@@ -149,6 +187,19 @@ export function aggregateTradingHealth(
       share: exitSumme > 0 ? r4(e.n / exitSumme) : 0,
       winRate: e.n > 0 ? r4(e.wins / e.n) : 0,
       n: e.n,
+    };
+  }
+
+  // Klassen aus den SUMMEN rechnen, nicht aus gemittelten Konto-Kanten:
+  // Ein Mittel über Quoten gewichtet ein Konto mit drei Trades wie eines mit
+  // dreihundert — dieselbe Falle wie bei der Trefferquote oben.
+  const klassen: Record<string, KlassenBefund> = {};
+  for (const [name, k] of Object.entries(klassenRoh)) {
+    klassen[name] = {
+      n: k.n,
+      pnl: Math.round(k.pnl * 100) / 100,
+      fees: accounts >= minAccountsPublic ? Math.round(k.fees * 100) / 100 : null,
+      kantePct: k.notional > 0 ? r4((k.pnl / k.notional) * 100) : null,
     };
   }
 
@@ -168,6 +219,7 @@ export function aggregateTradingHealth(
     netPnl: oeffentlich ? Math.round(netPnl * 100) / 100 : null,
     fees: oeffentlich ? Math.round(fees * 100) / 100 : null,
     amountsWithheld: !oeffentlich,
+    klassen,
   };
 }
 
