@@ -1,5 +1,6 @@
 /**
- * Regime-Ampel (Performance-Plan 31.07., Idee Nr. 2) — Stufe 1: NUR MESSEN.
+ * Regime-Ampel (Performance-Plan 31.07., Idee Nr. 2) — seit 04.08. Stufe 2:
+ * sie STEUERT die Einstiegsrichtung (siehe `regimeEntryBlocked` am Ende).
  *
  * Die meiste Performance stirbt nicht an schlechten Signalen, sondern daran,
  * dass die richtige Strategie im falschen Marktzustand läuft. Die Ampel
@@ -7,11 +8,11 @@
  * seinem 200-Tage-Durchschnitt (Trend), realisierte 20-Tage-Schwankung
  * (annualisiert) und VIX-Stand (erwartete Schwankung).
  *
- * In Stufe 1 steuert sie NICHTS: Sie wird je Scan gemessen, ins Heartbeat
- * geschrieben und in die Steckbriefe des Trade-Filters gestempelt — der
- * lernt damit je Regime getrennt (der Slot war im Schlüssel von Tag 1
- * reserviert). Ob und was die Ampel später schalten darf, entscheidet die
- * Evidenz dieser Statistik, nicht die Theorie.
+ * Stufe 1 (31.07.) hat nur gemessen und in die Steckbriefe des Trade-Filters
+ * gestempelt — der lernt seither je Regime getrennt. Stufe 2 (04.08.) ist
+ * genau das, was dort als Bedingung stand: „Ob und was die Ampel später
+ * schalten darf, entscheidet die Evidenz dieser Statistik, nicht die
+ * Theorie." Die Evidenz liegt vor, siehe `regimeEntryBlocked`.
  *
  * Fehlende Daten ⇒ 'seitwaerts': die konservative Mitte. 'trend' würde
  * fälschlich Vertrauen signalisieren, 'stress' fälschlich Alarm — beides
@@ -99,4 +100,59 @@ export function marketRegime(spyCloses: number[], vix: number | null): RegimeRea
   if (above === true && ruhig && vixOk) return fertig('trend');
 
   return fertig('seitwaerts');
+}
+
+/* ── Stufe 2: die Ampel steuert (04.08.) ─────────────────────────────────── */
+
+/** Warum ein Einstieg am Regime scheitert — `null` heißt: er darf. */
+export type RegimeBlock = 'gegen_trend' | 'stress';
+
+/**
+ * Darf in diesem Marktzustand überhaupt in diese Richtung eingestiegen
+ * werden? Pure Funktion, damit sie im Scan, im Backtest und im Test dieselbe
+ * Antwort gibt.
+ *
+ * ── Die Evidenz, die Stufe 2 ausgelöst hat (Messung 04.08.) ───────────────
+ *
+ * Der Trade-Filter hatte zu diesem Zeitpunkt vier Steckbriefe für SHORTS im
+ * Trend-Regime. Alle vier waren negativ, zusammen 112 Trades mit 8 Gewinnern:
+ *
+ *   bollinger+rsi   n=70  6 Gewinner  t=−9,0
+ *   bollinger+macd  n=26  2 Gewinner  t=−5,1
+ *   macd+rsi        n=12  0 Gewinner  t=−3,2
+ *   bol+macd+rsi    n= 4  0 Gewinner  t=−3,1
+ *
+ * Entscheidend ist, was NICHT im Muster steckt: Es liegt nicht an einem
+ * bestimmten Indikator. Auch die MACD-bestätigten Shorts verlieren. Der
+ * gemeinsame Nenner ist die RICHTUNG — kurz gegen einen Markt, der über
+ * seinem 200-Tage-Schnitt steht und ruhig läuft. Deshalb sperrt die Regel
+ * die Richtung und nicht eine Signatur; eine Signatur-Regel hätte dieselbe
+ * Wette bloß über den nächsten Indikator wieder hereingelassen.
+ *
+ * ── Die drei Regeln ───────────────────────────────────────────────────────
+ *
+ *  - **trend** → keine SHORT-Einstiege. Long bleibt frei: Ein Rücksetzer-Kauf
+ *    im Aufwärtstrend läuft MIT dem Markt, nicht gegen ihn.
+ *  - **stress** → gar keine neuen Einstiege. Bei VIX ≥ 30 bewegen sich Kurse
+ *    in Sprüngen; RSI, MACD und Bollinger sagen über Sprünge nichts, und ein
+ *    Stop schützt nicht, wenn zum nächsten Kurs statt zum Stop-Kurs
+ *    ausgeführt wird. Bestehende Positionen bleiben unberührt.
+ *  - **seitwaerts** → alles erlaubt. Das ist die Heimat der Mean Reversion:
+ *    ohne Trend gibt es keine Trendrichtung, gegen die man verstoßen könnte.
+ *
+ * ── Was die Regel bewusst NICHT tut ───────────────────────────────────────
+ *
+ * Sie schließt nichts. Wie das News-Veto kann sie Einstiege nur verhindern,
+ * nie auslösen und nie festhalten — eine offene Short-Position wird also
+ * nicht zwangsliquidiert, weil der Markt in den Trend dreht. Sie ersetzt
+ * auch den Trade-Filter nicht: Der lernt weiter je Steckbrief und trifft
+ * Sorten, die diese grobe Richtungsregel durchlässt.
+ */
+export function regimeEntryBlocked(
+  regime: MarketRegime,
+  side: 'long' | 'short',
+): RegimeBlock | null {
+  if (regime === 'stress') return 'stress';
+  if (regime === 'trend' && side === 'short') return 'gegen_trend';
+  return null;
 }

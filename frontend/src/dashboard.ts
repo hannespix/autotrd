@@ -981,6 +981,9 @@ function layout(email: string): string {
         <label class="opt-row" style="align-items:center">
           <input type="checkbox" id="owNewsVeto" />
           <span>News-Veto (Einstiege bei harten Events aussetzen) ${iBtn('newsVeto')}</span></label>
+        <label class="opt-check">
+          <input type="checkbox" id="owRegimeGate" />
+          <span>Markt-Ampel (keine Shorts im Aufwärtstrend, Pause bei Stress) ${iBtn('regimeGate')}</span></label>
       </div>
       <p class="hint">0 schaltet eine Regel ab. Der nachziehende Stop sichert
         Gewinne, sobald die Position im Plus war; ATR-Werte ersetzen die festen
@@ -1755,6 +1758,7 @@ function optionsFormStrategy(): Strategy {
       timeframe: ($('owTf') as HTMLSelectElement).value === 'daily' ? 'daily' : 'intraday',
       allowShort: ($('owShort') as HTMLInputElement).checked,
       newsVeto: ($('owNewsVeto') as HTMLInputElement).checked,
+      regimeGate: ($('owRegimeGate') as HTMLInputElement).checked,
     },
   };
 }
@@ -1832,6 +1836,7 @@ function openOptions(): void {
   ($('owFcSolo') as HTMLInputElement).checked = st.strategy.signals.forecastSolo === true;
   ($('owShort') as HTMLInputElement).checked = st.strategy.signals.allowShort === true;
   ($('owNewsVeto') as HTMLInputElement).checked = st.strategy.signals.newsVeto !== false; // fehlend = an
+  ($('owRegimeGate') as HTMLInputElement).checked = st.strategy.signals.regimeGate !== false; // fehlend = an
   // Klassen-Profile transparent machen: Sie überschreiben die Werte oben je
   // Asset-Klasse — der User soll wissen, was für sein Symbol tatsächlich gilt.
   const byCls = st.strategy.engine.byClass ?? {};

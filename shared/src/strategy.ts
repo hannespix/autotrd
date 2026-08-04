@@ -243,6 +243,16 @@ export interface SignalsConfig {
    * nur verhindern, nie erzeugen — die sichere Voreinstellung ist AN).
    */
   newsVeto?: boolean;
+  /**
+   * Regime-Ampel Stufe 2 (04.08.): Der gemessene Marktzustand sperrt
+   * Einstiege, die gegen ihn laufen — im Aufwärtstrend keine Shorts, im
+   * Stress gar keine neuen Einstiege. Begründung samt Messung an
+   * `regimeEntryBlocked` in regime.ts.
+   *
+   * Fehlend = an. Dieselbe Logik wie beim News-Veto: Die Regel kann Trades
+   * nur verhindern, nie erzeugen — die sichere Voreinstellung ist AN.
+   */
+  regimeGate?: boolean;
 }
 
 export interface Strategy {
