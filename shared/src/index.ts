@@ -23,3 +23,4 @@ export * from './tradeFilter.js';
 export * from './regime.js';
 export * from './conviction.js';
 export * from './positioning.js';
+export * from './leverageGate.js';
