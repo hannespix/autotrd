@@ -1942,6 +1942,73 @@ Live-Engine handelt intraday und shortet. Ausführlich in **MS**.
 
 ---
 
+## Offene Punkte und die Fragen dazu (Stand 04.08., Abend)
+
+Owner-Auftrag: *„arbeite alles automatisch im Loop ab … falls Fragen offen
+bleiben arbeite mit dem nächsten weiter und stelle alle offenen milestones
+mit Fragen zusammen."* Hier ist die Zusammenstellung — sortiert danach,
+**warum** ein Punkt offen ist, nicht nach Meilenstein-Nummer.
+
+### A. Wartet auf eine Owner-Entscheidung
+
+| Punkt | Die Frage |
+|---|---|
+| **Krypto abschalten?** | 290 Trades, −0,19 % je Dollar, −1.132,87 $. Ohne Krypto stünde die Historie bei **+40,12 $ statt −1.092,75 $**. Es sind 12 von 39 Watchlist-Symbolen und die einzige Klasse, die nachts handelt. Der Regler steht bereit (Einstellungen → Kapital je Anlageklasse), der Schatten misst weiter. **Soll ich crypto auf 0 setzen — oder willst du erst den Auto-Regler einschalten und es ihn tun lassen?** |
+| **Auto-Regler scharf?** | `classAutoTune` ist ein Häkchen in den Einstellungen. Es verändert Kapitaleinsatz selbsttätig (in Schritten von 0,25, ab 30 Trades Evidenz, sofortiges Abschalten nur bei strukturellem Verbrennen). Ich schalte das **nicht** eigenmächtig ein — das ist dieselbe Klasse Entscheidung wie der Engine-Schalter. |
+| **Papierkonto-Schlüssel hinterlegen?** | M13 (Order-Routing zu Alpaca) lässt sich ohne echten Schlüssel nicht an echten Daten prüfen. Die Verbindung ist gebaut und getestet, die Karte liegt in den Einstellungen mit drei Links (Konto anlegen → Paper-Dashboard → Doku). **Bis das passiert ist, bleibt M13 unverifizierbar** — ich könnte es blind schreiben, aber nicht belegen, dass es funktioniert. |
+| **M14 Echtgeld** | Bleibt verriegelt. Das steht so seit Beginn und wird nur mit ausdrücklichem Go angefasst. Der dritte Guard (Live-Reife) sperrt zusätzlich, solange die Zahlen nicht tragen — heute tun sie es nicht (PF 0,73). |
+
+### B. Wartet auf Daten, nicht auf Arbeit
+
+| Punkt | Woran es hängt |
+|---|---|
+| **MI2** Signal-Lesart umschalten | Braucht je 200 bewertete Signale in beiden Lesarten. Bei ~13 Symbolen je Scan sind das ein bis zwei Handelstage. Vorher ist jeder Vergleich Rauschen. |
+| **MG-Empfehlung je Klasse** | Der Schatten braucht dieselben 200 Signale, bevor er eine abgeschaltete Klasse zurückholen darf. |
+| **ME6** `captureGate` scharf | `kante_wuerde_blocken` steht auf 0 — aber nur, weil `entryGate.geprueft` ebenfalls 0 ist: Es kommt gar nichts am Tor an. Die Zahl wird erst aussagekräftig, wenn wieder Signale entstehen (siehe MI). |
+
+### C. Große Features — Reihenfolge ist eine Wertfrage
+
+Diese sind gebaut-bar, aber keiner davon macht das System profitabler.
+Deshalb liegen sie hinten, und deshalb ist die Reihenfolge eine
+Owner-Entscheidung:
+
+- **TV-Parität Teil 2–5**: Zeichenwerkzeuge, Chart-Vorlagen,
+  Kerzen-Countdown, Bar-Replay. Das größte Paket. Teil 5 (Replay) fällt
+  mit dem M12-„Tagesfilm" zusammen — ein Feature, nicht zwei.
+- **M12 Tagesfilm + Journal-Autoanlage**: Nachvollziehbarkeit jedes Trades
+  mit eingefrorenem Signal-Kontext. Wertvoll fürs Lernen, nicht für die
+  Rendite.
+- **MO Struktursuche**: Der Regelbaum wird Suchraum des Auto-Tuners. Der
+  eigentliche Aufwand ist die Overfitting-Bremse, nicht die Mutation —
+  ein Suchraum ohne sie findet zuverlässig Unsinn, der im Rückblick
+  großartig aussieht.
+- **M11 Backtest-Port**: Der vorhandene Kern rechnet Tages-Bars und
+  Long/Flat, die Live-Engine handelt intraday und shortet. Er misst also
+  eine Strategie, die so nie läuft. Als Stresstest („überlebt die Logik
+  einen Crash wie 2022?") sinnvoll, als Optimierer schädlich.
+- **M10b Langfrist-Depot-Horizonte**, **Chart-Vision** (1-Minuten-Daten,
+  ATR-/Pivot-Marken), **M12 Multi-Wallet-Migration**.
+
+### D. Bewusste Wegpunkte, kein To-do
+
+- **C3** `backtest.ts`/`sweep.ts` ohne Aufrufer — behalten als
+  Bewertungsmaschine für MO Teil 2.
+- **C4** Regelbaum-Ausführungspfad läuft leer, bis MO ihn füttert.
+- **MA1 Rest**: Wallet-Konsistenz als laufender Emulator-Test. Braucht
+  eine Firestore-Testumgebung für den Broker-Pfad; heute deckt nur
+  `test:rules` einen Emulator ab.
+
+### Und die unbequeme Zusammenfassung
+
+Das System handelt gerade **nicht**, und das ist im Moment richtig: Die
+Kante je Trade liegt bei +0,143 % gegen 0,300 % Roundtrip-Kosten (Deckung
+0,48). Jede Änderung, die mehr Trades erzeugt, vergrößert bei dieser Lage
+den Verlust. Die Reihenfolge, die daraus folgt — erst die Kante heben
+(Klassen mit negativer Kante raus), dann die Frequenz —, steckt in
+A und B oben.
+
+---
+
 ## Übergabe-Prompt (so startet man Claude Code in diesem Repo)
 
 > Lies ARCHITECTURE.md, CLAUDE.md und MILESTONES.md. Arbeite nach dem
