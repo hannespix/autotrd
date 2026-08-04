@@ -177,6 +177,19 @@ export interface EngineConfig extends RiskConfig {
    * Kapitaleinsatz verändert, braucht Belege, keine Anekdoten.
    */
   classAutoTune?: boolean;
+  /**
+   * Tages-Verlustgrenze in Prozent des Vortags-Eigenkapitals (M12).
+   *
+   * Der Stop-Loss schützt eine Position; diese Grenze schützt den Tag. 0 oder
+   * fehlend = aus. Bei Erreichen werden EINSTIEGE gesperrt; bestehende
+   * Ausstiege laufen weiter (siehe `shared/src/circuitBreaker.ts`).
+   */
+  dailyLossLimitPct?: number;
+  /**
+   * Beim Auslösen zusätzlich alle Positionen schließen? Standard aus — ein
+   * Zwangsverkauf realisiert Buchverluste zum schlechtesten Zeitpunkt.
+   */
+  flattenOnBreach?: boolean;
 }
 
 export interface RsiConfig {

@@ -183,18 +183,21 @@ deploybare SPA mit Login hinter `autotrd.net`.
 - [x] `functions/`: Firebase Functions v2 (Node 20, TS) initialisiert;
       eine `healthz`-HTTP-Function als Smoke (im Emulator verifiziert;
       kompiliert `shared/` mit ins Deploy-Artefakt)
-- [ ] Firebase-Projekt anlegen (Konsole, Blaze + **Budget-Alarm**), `.firebaserc`
+- [x] Firebase-Projekt anlegen (Konsole, Blaze + **Budget-Alarm**), `.firebaserc`
       Projekt-ID eintragen, `firestore.rules` deployen
-      *(Owner-Schritt; `.firebaserc` mit Platzhalter `autotrd` liegt bereit)*
+      *(erledigt — Projekt `autotrd-653b0` läuft; belegt durch die
+      Firestore-REST-Antwort auf `meta/health` und laufende Scheduler.
+      Der Budget-Alarm bleibt Owner-Sache und ist von außen nicht prüfbar.)*
 - [x] Emulator-Suite (`firebase emulators:start`: auth, firestore, functions)
       läuft lokal; README-Abschnitt „Lokal entwickeln"
-- [ ] GitHub Secrets setzen: `FTP_HOST/FTP_USERNAME/FTP_PASSWORD` (webgo, FTPS!),
+- [x] GitHub Secrets setzen: `FTP_HOST/FTP_USERNAME/FTP_PASSWORD` (webgo, FTPS!),
       `FIREBASE_SERVICE_ACCOUNT` bzw. Token; Workflows aus `.github/workflows/`
-      laufen durch (CI hat Guard, solange Tooling fehlt)
-      *(Owner-Schritt: Secrets; die drei Workflows liegen bereit, Deploys
-      überspringen sich sauber per Guard, solange Secrets fehlen)*
-- [ ] webgo: `autotrd.net` DocumentRoot auf Deploy-Zielordner; HTTPS aktiv
-      *(Owner-Schritt)*
+      laufen durch *(erledigt — „Deploy Functions (Firebase)" und „Deploy
+      Frontend (webgo)" laufen seit Wochen grün durch; ein fehlendes Secret
+      würde den Guard auslösen und den Deploy überspringen.)*
+- [x] webgo: `autotrd.net` DocumentRoot auf Deploy-Zielordner; HTTPS aktiv
+      *(erledigt — `https://autotrd.net` liefert HTTP/2 200 mit der
+      gebauten SPA.)*
 
 **Abnahme:** PR-CI grün · `firebase emulators:start` ok · Merge auf `main`
 lädt Frontend-Build zu webgo hoch · `https://autotrd.net` zeigt Login,
@@ -887,11 +890,28 @@ Repo) · „Befördern" tauscht Rollen atomar.
 Kette — jede gefundene Schwäche wird sofort mit Test + Fix ausgeliefert.
 Reihenfolge = Geldfluss: erst wo Geld bewegt wird, dann wie entschieden wird.
 
-- [ ] MA1 Broker-Kern: `executePaperTrade` (Transaktionalität, Rundung,
-      Gebühren-/Slippage-Vorzeichen je Seite, qty-Sizing, avgEntry bei
-      Nachkäufen, Verkauf > Bestand, negative/Null-Preise, Idempotenz bei
-      Doppel-Scans), `riskExitReason`-Grenzfälle, Wallet-Konsistenz
-      (cash+Positionen=Equity), adversariale Unit-Tests je Fund
+- [~] MA1 Broker-Kern *(Review 04.08. — Ergebnis unten, Rest offen)*:
+      `executePaperTrade` Zeile für Zeile gegen die Liste geprüft.
+      **Sauber:** Transaktionalität (`tx.get` auf User UND Position, danach
+      absoluter Write — bei Konflikt wiederholt Firestore korrekt) ·
+      Rundung (`roundCents` an jedem Wallet-Write; ohne das driftet der
+      Saldo über viele Zyklen sichtbar) · Nachkauf ist geguarded
+      (`position_existiert`), die Position wird also nie überschrieben ·
+      Null/negative Preise fallen vor der Transaktion raus · Teilverkäufe
+      gibt es nicht, verkauft wird immer `pos.qty`.
+      **Neu festgenagelt:** Die Gebühren-SYMMETRIE zwischen Long und Short.
+      Der Broker bucht sie auf zwei verschiedenen Wegen — der Long zahlt
+      Aufschlag beim Kauf und bekommt Abschlag beim Verkauf, der Short
+      bekommt den Abschlag beim Öffnen und zahlt den Aufschlag beim
+      Eindecken, wobei die Sicherheitsleistung dazwischen voll zurückfließt.
+      Zwei Buchungswege für dieselbe Sache sind genau die Stelle, an der
+      eine Seite still zu billig wird; die verzerrte P&L speist dann
+      Trade-Filter, A/B-Duell und Auto-Tuner. Drei Tests halten fest, dass
+      beide Wege exakt `2 × Satz × Volumen` kosten, über alle Klassen.
+      **Offen:** Wallet-Konsistenz (cash + Positionen = Equity) als
+      laufender Test gegen den Emulator — dafür fehlt eine
+      Firestore-Testumgebung für den Broker-Pfad; heute deckt nur
+      `test:rules` einen Emulator ab.
 - [x] MA2 Signal-Kette **(26.07. umgesetzt)**: Der Owner-Befund „2 Tage, kein
       einziger Verkauf" hatte zwei Ursachen in der Konfluenz, beide behoben.
       (1) Die Prognose (Gewicht 2) riss die Schwelle (2) im Alleingang — die
@@ -1056,11 +1076,25 @@ und KI-Erklärung, gekoppelt an ein automatisches Journal.
       read-only, Selbstdiagnose in `meta/health.equitySnapshot`. Noch offen
       hier: Expectancy-R (braucht R-Multiples aus `core/risk.ts`) und
       Attribution je Strategie (braucht `strategyId` am Trade).
-- [ ] `core/risk.ts`: Circuit Breaker (Tages-Loss-Limit je Wallet,
-      `blockNew`/`flattenAll`, Re-Arm per Callable, Sofort-Push),
-      Positionslimit, fixed-fractional Sizing (Initial-Stop beim Entry
-      eingefroren → R-Multiples) — in derselben Transaktion wie der
-      Wallet-Write, für Scan- und Manuell-Pfad
+- [x] **Circuit Breaker** *(04.08.)*: `shared/src/circuitBreaker.ts` +
+      `engine.dailyLossLimitPct` / `engine.flattenOnBreach`. Der Stop-Loss
+      schützt eine POSITION; diese Grenze schützt den Tag — gegen den Fall,
+      der Konten wirklich leert: viele kleine, jeweils regelkonform
+      gestoppte Verluste hintereinander.
+      Gemessen wird gegen das Eigenkapital des Vortags **inklusive
+      Buchverlusten** — zählte nur Realisiertes, löste die Bremse nie aus,
+      solange niemand verkauft, und genau das Verhalten soll sie bremsen.
+      Sie sperrt EINSTIEGE in **beiden** Pfaden (Scan und `trade`-Callable);
+      eine Bremse, die man mit einem Handel umgehen kann, ist keine. Exits
+      bleiben immer frei. `flattenAll` ist bewusst Opt-in: Zwangsverkauf
+      realisiert Buchverluste zum schlechtesten Zeitpunkt.
+      Entriegelt wird datumsbasiert (neuer Handelstag) oder per
+      `resetBreaker`-Callable mit Tageslimit 5 — die Bezugsgröße bleibt
+      dabei stehen, sonst ließe sich dieselbe Grenze beliebig oft
+      ausreizen. `snapshotEquity` armiert sie täglich neu.
+      *Offen bleibt aus dieser Zeile:* fixed-fractional Sizing mit
+      eingefrorenem Initial-Stop (R-Multiples) — das Risiko-Sizing rechnet
+      heute je Scan neu.
 - [ ] Journal-Autoanlage bei Entry/Exit mit eingefrorenem `signalContext`
       (Votes, Indikatorwerte, Forecast, News-Refs, ≤ 60 Bars inline);
       Rules erlauben dem Client nur `notes/tags/mistakes/review` (diff-Check);
@@ -1210,12 +1244,22 @@ die Daten — **keine Steuerberatung**, der Report ist Beleg-Grundlage.
 
 Die fachlichen Fallen, die das Datenmodell abbilden MUSS:
 
-- [ ] **EUR-Umrechnung je Vorgang, nicht am Ergebnis.** Kauf UND Verkauf
-      werden getrennt zum Kurs des jeweiligen Tages in Euro umgerechnet; das
-      Fremdwährungs-Ergebnis einfach umzurechnen ist unzulässig. Also:
-      täglicher EZB-Referenzkurs → `meta/fx/{date}`, beim Trade EINGEFROREN
-      im Trade-Doc (`fxRate`, `fxDate`, `fxSource`) — nie nachträglich neu
-      berechnen, sonst wandern historische Gewinne.
+- [x] **EUR-Umrechnung je Vorgang, nicht am Ergebnis.** *(04.08.)*
+      `shared/src/fx.ts` (pure Rechnung) + `functions/src/core/fx.ts`
+      (EZB-Kurse über die Frankfurter-API, Cache je Tag in `meta/fx/tage/`).
+      Jeder Trade friert `fxRate`/`fxDate`/`fxSource` ein; `fifoVerrechnen`
+      rechnet Anschaffung und Veräußerung mit dem Kurs IHRES jeweiligen
+      Tages und bildet das Ergebnis erst danach.
+      Der Beleg im Test: 1.000 $ gekauft bei 1,10 und 1.000 $ verkauft bei
+      1,05 sind in Dollar ±0 und in Euro **+43,29 € steuerpflichtiger
+      Währungsgewinn**. Wer am Ergebnis umrechnet, erklärt null.
+      Drei Sicherungen: Der Kurs wird VOR der Firestore-Transaktion geholt
+      (eine Transaktion wird bei Konflikt wiederholt — ein HTTP-Aufruf darin
+      liefe mehrfach); ein Ausfall der Kursquelle blockiert keinen Handel,
+      sondern lässt die Felder leer; und eine Topf-Summe kippt auf `null`,
+      sobald auch nur ein Vorgang keinen Kurs hatte — eine Teilsumme sähe
+      vollständig aus und wäre zu klein. `fxLuecken` zählt jetzt genau
+      diese Vorgänge (vorher jeden USD-Trade, also immer alle).
 - [~] **FIFO-Lots.** *(Rechnung fertig 04.08. — `shared/src/tax.ts`
       `fifoVerrechnen` zerlegt Verkäufe lotweise, Long und Short in
       getrennten Schlangen, mit Tests. OFFEN bleibt das Datenmodell: die
@@ -1551,6 +1595,65 @@ dritten Mal an derselben Stelle gelöst.
       Ausführung: Stop, Ziel und Haltedauer fehlen. Deshalb
       `SCHATTEN_MIN_N = 200` statt der 30 Trades der Trade-Kante.
 
+      **Live-Befund 21:45 Uhr, ehrlich:** `meta/classShadow` existiert und
+      wird alle fünf Minuten fortgeschrieben — aber es steht auf **n = 0**.
+      Nachts ist nur Krypto offen, und dort erzeugt die Konfluenz
+      ausschließlich `hold`; `hold` zählt im Schatten nicht (es gibt keine
+      Richtung, gegen die man messen könnte).
+      Daraus folgt eine Einschränkung, die MG4 beim Bauen nicht
+      offensichtlich war: Der Schatten löst die Zirkularität für Klassen,
+      die per REGLER abgeschaltet sind und trotzdem Signale erzeugen. Er
+      löst sie NICHT für den Fall, dass die Signal-Logik selbst schweigt —
+      dann misst auch der Schatten nichts. Genau das ist heute die Lage,
+      und genau dafür gibt es MI.
+
+## MI — Warum die Konfluenz strukturell nicht zustande kommt (04.08.)
+
+Der Heartbeat um 21:10 Uhr:
+
+```
+signalDirs    buy 0 · sell 0 · hold 13
+knappVerfehlt 13 von 13
+voteDirs      rsi 0/0/13 hold · bollinger 0/2/11 · macd 6/7/0
+regime        trend (S&P über SMA200, VIX 16,5)
+entryGate     geprueft 0
+```
+
+**Jedes einzelne Signal verfehlte die Konfluenz um genau eine Stimme, und
+immer dieselbe.** Am Einstiegs-Tor kam gar nichts an — nicht weil die
+Filter blocken, sondern weil die Konfluenz nichts produziert.
+
+Der Grund ist Bauart, kein Fehler: RSI (30/70) und Bollinger (Ausbruch ab
+dem 95. Perzentil) sind **Umkehr**-Indikatoren, sie sprechen nur im
+Extrem. MACD ist ein **Trendfolger**, er spricht sobald eine Richtung da
+ist. Im Trend — dem Regime von heute — schweigen die Umkehr-Indikatoren
+strukturell, und `minConfluence: 2` ist damit nicht selten unerreichbar,
+sondern unerreichbar.
+
+- [x] **MI1 Zweite Lesart im Schatten** *(04.08.)*:
+      `shared/src/regimeSignal.ts` liest **dieselben** Indikatorwerte
+      regime-gerecht — Bollinger-Ausbruch im Trend als Fortsetzung statt
+      Umkehr, RSI über/unter 50 als Richtungsbestätigung statt
+      Extremwert-Warnung, MACD unverändert, bei `stress` gar keine Stimme.
+      Läuft mit, wird aber **nicht gehandelt**: Richtung und Kurs landen als
+      `lastSignalRegime` am Markt-Dokument, der nächste Scan bewertet sie
+      mit derselben Mechanik wie MG4. Ergebnis in `meta/signalShadow` und im
+      Heartbeat (`regimeDirs`, `regimeVoteDirs`, `signalSchatten`), dazu ein
+      Chip in der Karte „Warum handelt die Engine (nicht)?".
+      **Bewusst NICHT gemacht:** eine vierte Stimme (etwa Preis über SMA50).
+      Die spräche im Trend zuverlässig — und sagte dasselbe wie MACD. Zwei
+      korrelierte Trendfolger als „Konfluenz aus zwei Stimmen" zu zählen ist
+      `minConfluence: 1` mit Extraschritten. Genau diesen Selbstbetrug hat
+      das Projekt schon einmal bezahlt (Forecast-Gewicht 2 bei Konfluenz 2,
+      Audit 26.07.).
+- [ ] **MI2 Umschalten — erst mit Zahlen**: Sobald beide Lesarten je 200
+      Signale haben, entscheidet der Vergleich. Schlägt die Variante die
+      gehandelte Logik, wird sie zur Live-Logik (dann auch `compileClassic`
+      nachziehen, sonst bricht die Regelbaum-Parität). Schlägt sie nicht,
+      bleibt alles wie es ist — und der Stillstand ist dann kein Defekt,
+      sondern die richtige Antwort auf eine Kante, die die Kosten nicht
+      trägt (+0,143 % gegen 0,300 % Roundtrip, Deckung 0,48).
+
 ## Arbeitsreihenfolge (Stand 04.08.)
 
 Über vierzig offene Punkte, und nicht alle sind gleich viel wert. Diese
@@ -1848,6 +1951,73 @@ beim Fan-out um Faktor 4 verlieren). Der zwischenzeitlich notierte
 Auftau-Trigger — ein Fünf-Jahres-Backtest als Lese-Break-even — hielt der
 Prüfung nicht stand: Der Backtest rechnet Tages-Bars und Long/Flat, die
 Live-Engine handelt intraday und shortet. Ausführlich in **MS**.
+
+---
+
+## Offene Punkte und die Fragen dazu (Stand 04.08., Abend)
+
+Owner-Auftrag: *„arbeite alles automatisch im Loop ab … falls Fragen offen
+bleiben arbeite mit dem nächsten weiter und stelle alle offenen milestones
+mit Fragen zusammen."* Hier ist die Zusammenstellung — sortiert danach,
+**warum** ein Punkt offen ist, nicht nach Meilenstein-Nummer.
+
+### A. Wartet auf eine Owner-Entscheidung
+
+| Punkt | Die Frage |
+|---|---|
+| **Krypto abschalten?** | 290 Trades, −0,19 % je Dollar, −1.132,87 $. Ohne Krypto stünde die Historie bei **+40,12 $ statt −1.092,75 $**. Es sind 12 von 39 Watchlist-Symbolen und die einzige Klasse, die nachts handelt. Der Regler steht bereit (Einstellungen → Kapital je Anlageklasse), der Schatten misst weiter. **Soll ich crypto auf 0 setzen — oder willst du erst den Auto-Regler einschalten und es ihn tun lassen?** |
+| **Auto-Regler scharf?** | `classAutoTune` ist ein Häkchen in den Einstellungen. Es verändert Kapitaleinsatz selbsttätig (in Schritten von 0,25, ab 30 Trades Evidenz, sofortiges Abschalten nur bei strukturellem Verbrennen). Ich schalte das **nicht** eigenmächtig ein — das ist dieselbe Klasse Entscheidung wie der Engine-Schalter. |
+| **Papierkonto-Schlüssel hinterlegen?** | M13 (Order-Routing zu Alpaca) lässt sich ohne echten Schlüssel nicht an echten Daten prüfen. Die Verbindung ist gebaut und getestet, die Karte liegt in den Einstellungen mit drei Links (Konto anlegen → Paper-Dashboard → Doku). **Bis das passiert ist, bleibt M13 unverifizierbar** — ich könnte es blind schreiben, aber nicht belegen, dass es funktioniert. |
+| **M14 Echtgeld** | Bleibt verriegelt. Das steht so seit Beginn und wird nur mit ausdrücklichem Go angefasst. Der dritte Guard (Live-Reife) sperrt zusätzlich, solange die Zahlen nicht tragen — heute tun sie es nicht (PF 0,73). |
+
+### B. Wartet auf Daten, nicht auf Arbeit
+
+| Punkt | Woran es hängt |
+|---|---|
+| **MI2** Signal-Lesart umschalten | Braucht je 200 bewertete Signale in beiden Lesarten. Bei ~13 Symbolen je Scan sind das ein bis zwei Handelstage. Vorher ist jeder Vergleich Rauschen. |
+| **MG-Empfehlung je Klasse** | Der Schatten braucht dieselben 200 Signale, bevor er eine abgeschaltete Klasse zurückholen darf. |
+| **ME6** `captureGate` scharf | `kante_wuerde_blocken` steht auf 0 — aber nur, weil `entryGate.geprueft` ebenfalls 0 ist: Es kommt gar nichts am Tor an. Die Zahl wird erst aussagekräftig, wenn wieder Signale entstehen (siehe MI). |
+
+### C. Große Features — Reihenfolge ist eine Wertfrage
+
+Diese sind gebaut-bar, aber keiner davon macht das System profitabler.
+Deshalb liegen sie hinten, und deshalb ist die Reihenfolge eine
+Owner-Entscheidung:
+
+- **TV-Parität Teil 2–5**: Zeichenwerkzeuge, Chart-Vorlagen,
+  Kerzen-Countdown, Bar-Replay. Das größte Paket. Teil 5 (Replay) fällt
+  mit dem M12-„Tagesfilm" zusammen — ein Feature, nicht zwei.
+- **M12 Tagesfilm + Journal-Autoanlage**: Nachvollziehbarkeit jedes Trades
+  mit eingefrorenem Signal-Kontext. Wertvoll fürs Lernen, nicht für die
+  Rendite.
+- **MO Struktursuche**: Der Regelbaum wird Suchraum des Auto-Tuners. Der
+  eigentliche Aufwand ist die Overfitting-Bremse, nicht die Mutation —
+  ein Suchraum ohne sie findet zuverlässig Unsinn, der im Rückblick
+  großartig aussieht.
+- **M11 Backtest-Port**: Der vorhandene Kern rechnet Tages-Bars und
+  Long/Flat, die Live-Engine handelt intraday und shortet. Er misst also
+  eine Strategie, die so nie läuft. Als Stresstest („überlebt die Logik
+  einen Crash wie 2022?") sinnvoll, als Optimierer schädlich.
+- **M10b Langfrist-Depot-Horizonte**, **Chart-Vision** (1-Minuten-Daten,
+  ATR-/Pivot-Marken), **M12 Multi-Wallet-Migration**.
+
+### D. Bewusste Wegpunkte, kein To-do
+
+- **C3** `backtest.ts`/`sweep.ts` ohne Aufrufer — behalten als
+  Bewertungsmaschine für MO Teil 2.
+- **C4** Regelbaum-Ausführungspfad läuft leer, bis MO ihn füttert.
+- **MA1 Rest**: Wallet-Konsistenz als laufender Emulator-Test. Braucht
+  eine Firestore-Testumgebung für den Broker-Pfad; heute deckt nur
+  `test:rules` einen Emulator ab.
+
+### Und die unbequeme Zusammenfassung
+
+Das System handelt gerade **nicht**, und das ist im Moment richtig: Die
+Kante je Trade liegt bei +0,143 % gegen 0,300 % Roundtrip-Kosten (Deckung
+0,48). Jede Änderung, die mehr Trades erzeugt, vergrößert bei dieser Lage
+den Verlust. Die Reihenfolge, die daraus folgt — erst die Kante heben
+(Klassen mit negativer Kante raus), dann die Frequenz —, steckt in
+A und B oben.
 
 ---
 

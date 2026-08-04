@@ -22,6 +22,7 @@ export { momentumRun, momentumNow } from './scheduled/momentumRun.js';
 export { riskPulse, pulseNow } from './scheduled/riskPulse.js';
 export { ensureProfile } from './callable/profile.js';
 export { saveStrategy } from './callable/strategy.js';
+export { resetBreaker } from './callable/resetBreaker.js';
 export { quoteNow } from './callable/quoteNow.js';
 export { savePrediction } from './callable/prediction.js';
 export { trade } from './callable/trade.js';

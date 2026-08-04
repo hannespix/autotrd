@@ -240,6 +240,12 @@ export async function resetWallet(confirm: string): Promise<ResetWalletResult> {
   return r.data as ResetWalletResult;
 }
 
+/** Tages-Notbremse von Hand entriegeln (M12). */
+export async function resetBreaker(): Promise<{ ok: true; warAusgeloest: boolean }> {
+  const r = await httpsCallable(fns(), 'resetBreaker')({});
+  return r.data as { ok: true; warAusgeloest: boolean };
+}
+
 export interface ResetWalletResult {
   ok: true;
   deleted: Record<string, number>;
@@ -444,6 +450,12 @@ export function watchUserDoc(
      *  Das Feld setzt NUR die Konsole bzw. das adminUsers-Callable —
      *  Client-Updates auf dem User-Doc erlauben die Rules nur für `settings`. */
     admin: boolean;
+    /**
+     * Zustand der Tages-Notbremse (M12) — `null`, solange sie nicht
+     * ausgelöst ist. Gehört an dieselbe Stelle wie die Strategie, weil die
+     * Oberfläche beides gemeinsam zeigt: die Grenze und ob sie greift.
+     */
+    breaker: { am: string; grund: string; verlustPct: number | null } | null;
   }) => void,
 ): Unsubscribe {
   return onSnapshot(doc(db(), 'users', uid), (snap) => {
@@ -459,6 +471,14 @@ export function watchUserDoc(
       // eingestellt hat, bekommt die Selbstverbesserung — abstellen ist eine
       // bewusste Entscheidung, nicht der Zufall eines fehlenden Feldes.
       autoTune: snap.get('settings.autoTune') !== false,
+      breaker:
+        typeof snap.get('risk.breakerAusgeloestAm') === 'string'
+          ? {
+              am: snap.get('risk.breakerAusgeloestAm') as string,
+              grund: (snap.get('risk.breakerGrund') as string | undefined) ?? '',
+              verlustPct: (snap.get('risk.breakerVerlustPct') as number | null | undefined) ?? null,
+            }
+          : null,
     });
   });
 }
@@ -749,6 +769,13 @@ export interface HealthDoc {
    * `trend`). Beides sieht sonst gleich aus.
    */
   signalDirs?: { buy?: number; sell?: number; hold?: number };
+  /**
+   * Dasselbe für die regime-gerechte Schatten-Lesart (MI) — was eine andere
+   * Signal-Logik signalisiert HÄTTE, ohne dass danach gehandelt wird.
+   */
+  regimeDirs?: { buy?: number; sell?: number; hold?: number };
+  /** Kante beider Lesarten nebeneinander, kumuliert (meta/signalShadow). */
+  signalSchatten?: Record<string, { n: number; kantePct: number | null } | null> | null;
   konten?: Record<string, number>;
   regime?: { state?: string; vix?: number | null; realizedVolPct?: number | null; aboveSma200?: boolean | null };
   kalender?: { bevorstehend?: string | null; stundenBis?: number | null; turnOfMonth?: boolean; fomcVeraltet?: boolean };

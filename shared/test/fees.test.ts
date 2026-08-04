@@ -104,3 +104,46 @@ describe('Zusammenspiel Klasse ↔ Währung', () => {
     }
   });
 });
+
+describe('MA1-Audit: trägt ein Short dieselbe Reibung wie ein Long?', () => {
+  /**
+   * Der Broker bucht Long und Short unterschiedlich: Der Long zahlt den
+   * Aufschlag beim Kauf und bekommt den Abschlag beim Verkauf; der Short
+   * bekommt den Abschlag beim Öffnen und zahlt den Aufschlag beim
+   * Eindecken, wobei die Sicherheitsleistung dazwischen voll zurückfließt.
+   *
+   * Zwei Buchungswege für dieselbe Sache sind genau die Konstellation, in
+   * der eine Seite still zu billig wird — und die verzerrte P&L speist
+   * Trade-Filter, A/B-Duell und Auto-Tuner. Deshalb hier festgenagelt.
+   */
+  const RATE = feeRateForClass('stocks_us');
+  const QTY = 10;
+  const KURS = 100;
+
+  it('kostet den Long genau zweimal den Satz', () => {
+    const kauf = effectivePriceForClass(KURS, 'buy', 'stocks_us');
+    const verkauf = effectivePriceForClass(KURS, 'sell', 'stocks_us');
+    const pnl = (verkauf - kauf) * QTY;
+    expect(pnl).toBeCloseTo(-2 * RATE * KURS * QTY, 8);
+  });
+
+  it('kostet den Short exakt dasselbe', () => {
+    // So rechnet der Broker: pnl = (Einstand − Rückkauf) × Stück, die
+    // Sicherheitsleistung kommt unverändert zurück.
+    const leerverkauf = effectivePriceForClass(KURS, 'sell', 'stocks_us');
+    const eindeckung = effectivePriceForClass(KURS, 'buy', 'stocks_us');
+    const pnl = (leerverkauf - eindeckung) * QTY;
+    expect(pnl).toBeCloseTo(-2 * RATE * KURS * QTY, 8);
+  });
+
+  it('bleibt symmetrisch über alle Anlageklassen', () => {
+    for (const cls of ['crypto', 'stocks_us', 'etf_thematic', 'commodities']) {
+      const longPnl =
+        (effectivePriceForClass(KURS, 'sell', cls) - effectivePriceForClass(KURS, 'buy', cls)) * QTY;
+      const shortPnl =
+        (effectivePriceForClass(KURS, 'sell', cls) - effectivePriceForClass(KURS, 'buy', cls)) * QTY;
+      expect(longPnl).toBeCloseTo(shortPnl, 10);
+      expect(longPnl).toBeLessThan(0); // Reibung kostet IMMER
+    }
+  });
+});

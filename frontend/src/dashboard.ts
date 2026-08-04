@@ -134,6 +134,7 @@ import {
   type BrokerStatusResult,
   callTaxReport,
   type TaxReportResult,
+  resetBreaker,
   resetWallet,
 } from './data.js';
 import { emailVerified, logout, refreshUser, sendVerification } from './auth.js';
@@ -1025,6 +1026,8 @@ function layout(email: string): string {
           <input id="owExitC" class="inp st-num" type="number" min="1" max="6" step="1" /></label>
         <label>Kostenschwelle (× Gebühren) ${iBtn('minEdgeMultiple')}
           <input id="owEdge" class="inp st-num" type="number" min="0" max="10" step="0.5" /></label>
+        <label>Tages-Notbremse (% Verlust) ${iBtn('dailyLossLimit')}
+          <input id="owBreak" class="inp st-num" type="number" min="0" max="25" step="0.5" /></label>
         <label class="opt-row" style="align-items:center">
           <input type="checkbox" id="owFcSolo" />
           <span>Prognose darf allein entscheiden ${iBtn('forecastSolo')}</span></label>
@@ -1037,6 +1040,9 @@ function layout(email: string): string {
         <label class="opt-check">
           <input type="checkbox" id="owRegimeGate" />
           <span>Markt-Ampel (keine Shorts im Aufwärtstrend, Pause bei Stress) ${iBtn('regimeGate')}</span></label>
+        <label class="opt-check">
+          <input type="checkbox" id="owFlatten" />
+          <span>Bei Notbremse zusätzlich alle Positionen schließen ${iBtn('flattenOnBreach')}</span></label>
       </div>
       <p class="hint">0 schaltet eine Regel ab. Der nachziehende Stop sichert
         Gewinne, sobald die Position im Plus war; ATR-Werte ersetzen die festen
@@ -1126,6 +1132,12 @@ function layout(email: string): string {
         <button class="btn btn-n" id="txGo">Bericht erstellen</button>
       </div>
       <div id="txOut" style="margin-top:8px"></div>
+      <div class="wl-sec" style="margin-top:14px">Tages-Notbremse ${iBtn('dailyLossLimit')}</div>
+      <p class="hint" id="bkrState">—</p>
+      <div class="row" style="align-items:center;gap:8px">
+        <button class="btn btn-n" id="bkrReset">Notbremse lösen</button>
+        <span class="hint" id="bkrMsg"></span>
+      </div>
       <div class="wl-sec" style="margin-top:14px">Neu anfangen ${iBtn('resetWallet')}</div>
       <p class="hint">Setzt <b>Handelshistorie, offene Positionen, Kontostand und
         Kennzahlen</b> auf null zurück. Kursdaten, Prognose-Trefferquoten und deine
@@ -1260,6 +1272,8 @@ function renderSteuerbericht(r: TaxReportResult): string {
   const e = escText;
   const geld = (n: number): string =>
     `${n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${r.bericht.waehrung}`;
+  const eur = (n: number): string =>
+    `${n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
   const b = r.bericht;
 
   const zeilen = (Object.keys(TOPF_LABEL) as Array<keyof typeof b.toepfe>)
@@ -1272,6 +1286,11 @@ function renderSteuerbericht(r: TaxReportResult): string {
         <td class="num">${geld(x.t.gewinne)}</td>
         <td class="num">${geld(-x.t.verluste)}</td>
         <td class="num ${x.t.saldo >= 0 ? 'up' : 'dn'}"><b>${geld(x.t.saldo)}</b></td>
+        <td class="num ${(x.t.eurSaldo ?? 0) >= 0 ? 'up' : 'dn'}">${
+          x.t.eurSaldo === null || x.t.eurSaldo === undefined
+            ? '<span class="hint">—</span>'
+            : `<b>${eur(x.t.eurSaldo)}</b>`
+        }</td>
       </tr>`,
     )
     .join('');
@@ -1310,8 +1329,17 @@ function renderSteuerbericht(r: TaxReportResult): string {
   }
   if (b.fxLuecken > 0) {
     hinweise.push(
-      `${b.fxLuecken} Trades notieren in Fremdwährung. Die Beträge stehen in ` +
-        `${b.waehrung}; für die Erklärung ist mit dem Kurs des Ausführungstags in Euro umzurechnen.`,
+      `<b>${b.fxLuecken} Vorgänge ohne hinterlegten Wechselkurs.</b> Für sie steht ` +
+        'in der Euro-Spalte nichts — ein aus dem Fremdwährungs-Ergebnis hochgerechneter ' +
+        'Betrag wäre steuerlich unzulässig. Betroffen sind Trades von vor dem 04.08.2026; ' +
+        'seither friert jeder Trade den EZB-Kurs seines Tages mit ein.',
+    );
+  } else if (b.veraeusserungen.length > 0) {
+    hinweise.push(
+      'Die Euro-Beträge sind <b>je Vorgang</b> zum EZB-Kurs seines Tages gerechnet — ' +
+        'Anschaffung und Veräußerung getrennt. Das Fremdwährungs-Ergebnis am Ende ' +
+        'umzurechnen wäre unzulässig und verschluckte genau den Währungsgewinn, ' +
+        'der steuerpflichtig ist.',
     );
   }
 
@@ -1323,8 +1351,8 @@ function renderSteuerbericht(r: TaxReportResult): string {
   return `
     <table class="tbl st-num" style="width:100%">
       <thead><tr><th>Topf</th><th class="num">Fälle</th><th class="num">Gewinne</th>
-        <th class="num">Verluste</th><th class="num">Saldo</th></tr></thead>
-      <tbody>${zeilen || '<tr><td colspan="5" class="hint">Keine Veräußerungen in diesem Jahr.</td></tr>'}</tbody>
+        <th class="num">Verluste</th><th class="num">Saldo</th><th class="num">Saldo EUR</th></tr></thead>
+      <tbody>${zeilen || '<tr><td colspan="6" class="hint">Keine Veräußerungen in diesem Jahr.</td></tr>'}</tbody>
     </table>
     <p class="hint" style="margin-top:6px">Die Töpfe stehen bewusst einzeln und ohne
       Gesamtsumme — sie dürfen nicht gegeneinander verrechnet werden.</p>
@@ -2125,6 +2153,8 @@ function optionsFormStrategy(): Strategy {
       atrStopMult: num('owAtrS'),
       atrTakeMult: num('owAtrT'),
       cooldownMin: Math.min(1440, Math.max(5, num('owCd') || 15)),
+      dailyLossLimitPct: Math.min(25, Math.max(0, num('owBreak') || 0)),
+      flattenOnBreach: ($('owFlatten') as HTMLInputElement).checked,
       // Alle Klassen explizit, auch die auf 1: `saveStrategy` schreibt die
       // Strategie als Ganzes, aber ein weggelassener Schlüssel wäre beim
       // nächsten Öffnen nicht von „bewusst auf 1 gestellt" zu unterscheiden.
@@ -2143,6 +2173,30 @@ function optionsFormStrategy(): Strategy {
       regimeGate: ($('owRegimeGate') as HTMLInputElement).checked,
     },
   };
+}
+
+/**
+ * Zustand der Tages-Notbremse zeigen (M12).
+ *
+ * Sie ist eine stille Sperre — ohne diese Zeile sähe ein gebremstes Konto
+ * exakt aus wie ein ruhiger Markt. Genau der Fehler, den die Karte „Warum
+ * handelt die Engine (nicht)?" für die Filter längst behebt.
+ */
+function renderBreaker(b: { am: string; grund: string; verlustPct: number | null } | null): void {
+  const el = document.getElementById('bkrState');
+  if (!el) return;
+  const grenze = st?.strategy.engine.dailyLossLimitPct ?? 0;
+  if (!b) {
+    el.textContent = grenze > 0
+      ? `Nicht ausgelöst. Grenze: ${String(grenze).replace('.', ',')} % Tagesverlust.`
+      : 'Ausgeschaltet — trage oben eine Grenze ein, um sie zu aktivieren.';
+    el.style.color = '';
+    return;
+  }
+  el.innerHTML =
+    `<b style="color:var(--rd)">Ausgelöst</b> am ${escText(b.am.slice(0, 16).replace('T', ' '))} Uhr`
+    + (b.verlustPct === null ? '' : ` (${b.verlustPct.toFixed(2).replace('.', ',')} % Tagesverlust)`)
+    + `.<br />${escText(b.grund)}`;
 }
 
 /** Aktuelle Reglerstellungen je Anlageklasse aus dem Formular. */
@@ -2327,6 +2381,8 @@ function openOptions(): void {
   $('owClassHint').textContent = clsTxt
     ? `Abweichende Profile je Anlageklasse (überschreiben die Werte oben): ${clsTxt}`
     : '';
+  ($('owBreak') as HTMLInputElement).value = String(st.strategy.engine.dailyLossLimitPct ?? 0);
+  ($('owFlatten') as HTMLInputElement).checked = st.strategy.engine.flattenOnBreach === true;
   ($('owClsAuto') as HTMLInputElement).checked = st.strategy.engine.classAutoTune === true;
   renderKlassenRegler();
   renderKlassenRat();
@@ -4203,6 +4259,8 @@ function renderAccessNote(): void {
  * Nullen liest niemand zweimal.
  */
 const GATE_TEXT: ReadonlyArray<[string, string]> = [
+  ['breaker_aktiv', 'Konten mit ausgelöster Tages-Notbremse (keine neuen Einstiege)'],
+  ['klasse_aus', 'abgelehnt — Anlageklasse steht auf 0 (Schatten misst weiter)'],
   ['regime_gegen_trend', 'Leerverkäufe abgelehnt — der Markt steigt'],
   ['regime_stress', 'Einstiege pausiert — Marktstress'],
   ['filter_blockiert', 'geblockt — diese Trade-Sorte verliert nachweislich'],
@@ -4286,6 +4344,32 @@ function renderEngineWhy(): void {
       ? 'Die Konfluenz erzeugt mehr Verkaufs- als Kaufsignale, obwohl der Markt im Aufwärtstrend steht. ' +
         'Die Regime-Ampel blockt diese Einstiege — sie verhindert also Wetten gegen den Trend, statt zu viel zu sperren.'
       : 'Richtungen der Konfluenz-Signale im letzten Scan: Kauf, Verkauf, Halten.';
+    ampel.append(chip);
+  }
+  /* Die zweite Lesart im Schatten (MI, 04.08.).
+   *
+   * Am 04.08. verfehlten 13 von 13 Signalen die Konfluenz um genau EINE
+   * Stimme: RSI und Bollinger sind auf Umkehr parametriert und schweigen im
+   * Trend, MACD ist der einzige Trendfolger. Die Variante liest dieselben
+   * Indikatoren regime-gerecht und wird NICHT gehandelt — hier steht, was
+   * sie signalisiert hätte und was das eingebracht hätte.
+   *
+   * Der Vergleich der beiden Kanten ist die Entscheidungsgrundlage fürs
+   * Umschalten. Solange die Variante nicht besser ist, bleibt alles wie es
+   * ist: Mehr Trades bei negativer Kante sind mehr Verlust. */
+  const rd = h.regimeDirs;
+  if (rd && (rd.buy ?? 0) + (rd.sell ?? 0) + (rd.hold ?? 0) > 0) {
+    const chip = whyChip(
+      `Variante: ${rd.buy ?? 0}↑ ${rd.sell ?? 0}↓ ${rd.hold ?? 0}·`,
+      'var(--t3)',
+    );
+    const kante = (v?: { n: number; kantePct: number | null } | null): string =>
+      !v || v.kantePct === null ? 'noch keine Daten' : `${v.kantePct.toFixed(3)} % je Signal (${v.n})`;
+    chip.title =
+      'Regime-gerechte Lesart derselben Indikatoren — läuft nur im Schatten mit.\n'
+      + `Gehandelte Logik: ${kante(h.signalSchatten?.live)}\n`
+      + `Variante: ${kante(h.signalSchatten?.regime)}\n`
+      + 'Umgeschaltet wird erst, wenn die Variante die gehandelte Logik schlägt.';
     ampel.append(chip);
   }
 
@@ -5645,8 +5729,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
 
   // User-Doc: Strategie (Formular/Watchlist) + Wallet folgen Firestore
   st.subs.push(
-    watchUserDoc(uid, ({ strategy, wallet, hotkeys, ui, autoTune, accessLevel, admin }) => {
+    watchUserDoc(uid, ({ strategy, wallet, hotkeys, ui, autoTune, accessLevel, admin, breaker }) => {
       if (!st) return;
+      renderBreaker(breaker);
       st.accessLevel = accessLevel;
       renderAccessNote();
       st.admin = admin;
@@ -6525,6 +6610,17 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         $('owClsMsg').textContent = `✓ ${rat.aenderungen} Gewicht(e) übernommen`;
       })
       .catch((e) => ($('owClsMsg').textContent = (e as Error).message));
+  });
+
+  $('bkrReset').addEventListener('click', () => {
+    $('bkrMsg').textContent = 'Löse …';
+    void resetBreaker()
+      .then((r) => {
+        $('bkrMsg').textContent = r.warAusgeloest
+          ? '✓ Gelöst — Einstiege sind wieder frei.'
+          : 'War nicht ausgelöst.';
+      })
+      .catch((e) => ($('bkrMsg').textContent = (e as Error).message));
   });
 
   $('owCheck').addEventListener('click', () => renderAdvice());

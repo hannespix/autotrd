@@ -137,6 +137,32 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         updatedAt: now.toISOString(),
       });
 
+      /* Notbremse für den nächsten Tag armieren (M12).
+       *
+       * Zwei Dinge in einem Schreibvorgang: Der heutige Schlussstand wird
+       * zur Bezugsgröße von morgen, und ein ausgelöster Breaker wird
+       * gelöscht — ein neuer Tag beginnt ohne Sperre.
+       *
+       * Warum die Zahl ans USER-Dokument und nicht in die equity-Collection:
+       * Der Scan liest das User-Dokument ohnehin (alle 5 Minuten, je Konto).
+       * Ein zusätzlicher Read in die Tagesserie käme bei 288 Scans am Tag
+       * teuer, und die Bremse braucht genau eine Zahl, nicht die Serie.
+       */
+      await userDoc.ref
+        .set(
+          {
+            risk: {
+              vortagEquity: equity,
+              vortagEquityAm: date,
+              breakerAusgeloestAm: null,
+              breakerGrund: null,
+              breakerVerlustPct: null,
+            },
+          },
+          { merge: true },
+        )
+        .catch((err: unknown) => logger.warn(`Breaker-Armierung ${userDoc.id}`, err));
+
       // Serie (jüngste EQUITY_WINDOW Snapshots, inkl. dem gerade geschriebenen)
       const serieSnap = await userDoc.ref
         .collection('equity')
