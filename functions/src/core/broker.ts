@@ -17,10 +17,11 @@
 import { FieldPath, FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore';
 import {
   DEFAULT_MARGIN_RATE,
-  PAPER_FEE_RATE,
   classify,
+  currencyForSymbol,
+  effectivePriceForClass,
+  feePartsForClass,
   marginInterest,
-  paperEffectivePrice,
   resolveRisk,
   riskBasedQty,
   sizeWithMargin,
@@ -136,6 +137,28 @@ export interface TradeResult {
   trade?: Trade & { id: string };
 }
 
+/**
+ * Anschaffungsbezug für einen SCHLIESSENDEN Trade (04.08.).
+ *
+ * Der Grund, warum das hier stehen muss und nicht später nachgerüstet werden
+ * kann: Das Positions-Doc wird in derselben Transaktion gelöscht. Danach ist
+ * Einstand und Eröffnungszeitpunkt nur noch dadurch rekonstruierbar, dass man
+ * Käufe und Verkäufe je Symbol chronologisch paart — und das funktioniert NUR,
+ * solange Nachkauf verboten und jeder Verkauf ganz ist. Genau diese beiden
+ * Bedingungen fallen, sobald es Teilverkäufe gibt.
+ */
+function anschaffung(pos: Position, jetzt: string): Partial<Trade> {
+  const auf = Date.parse(pos.openedAt);
+  const zu = Date.parse(jetzt);
+  return {
+    entryPrice: pos.avgEntry,
+    acquiredAt: pos.openedAt,
+    ...(Number.isFinite(auf) && Number.isFinite(zu)
+      ? { holdingDays: Math.round(((zu - auf) / 86_400_000) * 100) / 100 }
+      : {}),
+  };
+}
+
 export interface TradeRequest {
   uid: string;
   symbol: string;
@@ -212,9 +235,37 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
     const balance = (userSnap.get('wallet.paperBalance') as number | undefined) ?? 0;
     const now = new Date().toISOString();
 
-    // Realismus (User-Wunsch 25.07.): Ausführung zum EFFEKTIVEN Preis —
-    // Kommission + Slippage wie im Backtest; rawPrice bleibt im Record.
-    const eff = Math.round(paperEffectivePrice(req.price, req.side) * 10_000) / 10_000;
+    /* Realismus (User-Wunsch 25.07.): Ausführung zum EFFEKTIVEN Preis —
+     * Kommission + Slippage wie im Backtest; rawPrice bleibt im Record.
+     *
+     * KLASSENECHT seit 04.08. Vorher rechnete das Buch für JEDE Anlageklasse
+     * denselben Pauschalsatz von 0,105 % je Seite, während das Kosten-Tor beim
+     * EINSTIEG (scanMarket) längst klassenecht rechnete. Krypto kostet real
+     * 0,25 % je Seite — es wurde also 2,4-fach zu billig verbucht, und zwar
+     * ausgerechnet in der Klasse, die rund um die Uhr handelt und deshalb am
+     * häufigsten im Buch steht. Aus diesen P&Ls lernen Trade-Filter, A/B-Duell
+     * und Auto-Tuner: die Verzerrung ließ Krypto-Steckbriefe zu spät blocken
+     * und Aktien-Steckbriefe zu früh. */
+    const klasse = req.assetClass ?? classify(req.symbol);
+    const gebuehr = feePartsForClass(klasse);
+    const eff = Math.round(effectivePriceForClass(req.price, req.side, klasse) * 10_000) / 10_000;
+
+    /* Herkunftsangaben, die an JEDEN Trade gehören (04.08.).
+     *
+     * Nicht aus Steuergründen — es ist Papiergeld —, sondern weil sie später
+     * nicht mehr rekonstruierbar sind: Eine Katalog-Änderung verschiebt die
+     * Anlageklasse rückwirkend, und sobald eine Gebühren-Konstante angefasst
+     * wird, ist die Aufteilung Kommission/Slippage historisch verloren. */
+    const herkunft = {
+      assetClass: klasse,
+      currency: currencyForSymbol(req.symbol),
+      commissionRate: gebuehr.commission,
+      slippageRate: gebuehr.slippage,
+      feeRate: gebuehr.commission + gebuehr.slippage,
+    };
+    /** Ausführungskosten dieses Trades in Kontowährung. */
+    const kosten = (menge: number): number =>
+      Math.round(menge * req.price * herkunft.feeRate * 100) / 100;
 
     if (req.side === 'buy') {
       // Buy auf eine SHORT-Position = Eindecken (Cover): Margin + P&L zurück.
@@ -239,7 +290,14 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
           ...(pos.bucket ? { bucket: pos.bucket } : {}),
         };
         tx.delete(posRef);
-        tx.set(tradeRef, { ...trade, at: Timestamp.now(), rawPrice: req.price, feeRate: PAPER_FEE_RATE });
+        tx.set(tradeRef, {
+          ...trade,
+          at: Timestamp.now(),
+          rawPrice: req.price,
+          ...herkunft,
+          fee: kosten(qty),
+          ...anschaffung(pos, now),
+        });
         tx.update(userRef, { 'wallet.paperBalance': roundCents(balance + margin + pnl), 'wallet.updatedAt': now });
         return { executed: true, trade: { ...trade, id: tradeRef.id } };
       }
@@ -291,7 +349,8 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
         ...trade,
         at: Timestamp.now(),
         rawPrice: req.price,
-        feeRate: PAPER_FEE_RATE,
+        ...herkunft,
+        fee: kosten(qty),
         ...(borrowed > 0 ? { borrowed } : {}),
       });
       // Auf Cent runden (Audit 26.07.): Ohne das sammelt der Float-Rest jedes
@@ -344,7 +403,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
         short: true,
       };
       tx.set(posRef, position);
-      tx.set(tradeRef, { ...trade, at: Timestamp.now(), rawPrice: req.price, feeRate: PAPER_FEE_RATE });
+      tx.set(tradeRef, { ...trade, at: Timestamp.now(), rawPrice: req.price, ...herkunft, fee: kosten(qty) });
       tx.update(userRef, { 'wallet.paperBalance': roundCents(balance - margin), 'wallet.updatedAt': now });
       return { executed: true, trade: { ...trade, id: tradeRef.id } };
     }
@@ -366,7 +425,14 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       ...(pos.bucket ? { bucket: pos.bucket } : {}),
     };
     tx.delete(posRef);
-    tx.set(tradeRef, { ...trade, at: Timestamp.now(), rawPrice: req.price, feeRate: PAPER_FEE_RATE });
+    tx.set(tradeRef, {
+      ...trade,
+      at: Timestamp.now(),
+      rawPrice: req.price,
+      ...herkunft,
+      fee: kosten(qty),
+      ...anschaffung(pos, now),
+    });
     tx.update(userRef, { 'wallet.paperBalance': roundCents(balance + proceeds), 'wallet.updatedAt': now });
     return { executed: true, trade: { ...trade, id: tradeRef.id } };
   }).then(async (result) => {

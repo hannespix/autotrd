@@ -25,7 +25,8 @@ import {
   MAX_OPEN_POSITIONS_CAP,
   PREDICTION_MIN_EDGE_PCT,
   evaluate,
-  paperEffectivePrice,
+  classify,
+  effectivePriceForClass,
 } from '../../../shared/src/index.js';
 
 export const RISK_LIMITS = {
@@ -252,8 +253,11 @@ export function shadowTrade(
   },
 ): { book: ShadowBook; executed: boolean } {
   const positions = { ...book.positions };
-  // Gleiche Ausführungskosten wie das echte Paper-Buch (Duell-Parität)
-  const eff = Math.round(paperEffectivePrice(price, side) * 10_000) / 10_000;
+  // Gleiche Ausführungskosten wie das echte Paper-Buch (Duell-Parität) —
+  // seit 04.08. beidseitig KLASSENECHT. Bliebe der Schatten beim Pauschalsatz,
+  // während das Live-Buch klassenecht rechnet, vergliche das A/B-Duell zwei
+  // verschieden teure Welten: Krypto wäre im Schatten 2,4-fach zu billig.
+  const eff = Math.round(effectivePriceForClass(price, side, classify(symbol)) * 10_000) / 10_000;
   const sizedQty = (): number => {
     const capital = Math.max(0, opts?.capital ?? book.balance);
     const raw = (capital * (maxPositionPct / 100)) / eff;

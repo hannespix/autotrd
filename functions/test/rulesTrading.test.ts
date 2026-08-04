@@ -146,18 +146,20 @@ describe('minuteOfDayEt', () => {
 
 describe('Shadow-Konto (M11): pure Buchführung', () => {
   it('Entry dimensioniert nach maxPositionPct, Exit stellt komplett glatt — mit Paper-Gebühren', () => {
-    // Realismus (User-Wunsch 25.07.): effektiver Preis = 500 × 1,0015 = 500.75
+    // Realismus (User-Wunsch 25.07.), seit 04.08. KLASSENECHT: QQQ ist ein
+    // ETF und kostet 0,05 % je Seite statt des alten Pauschalsatzes von
+    // 0,15 % — effektiver Preis = 500 × 1,0005 = 500.25
     const start = { balance: 25_000, positions: {} };
-    const buy = shadowTrade(start, 'QQQ', 'buy', 500, 10); // 2500 / 500.75 → 4 Stück
+    const buy = shadowTrade(start, 'QQQ', 'buy', 500, 10); // 2500 / 500.25 → 4 Stück
     expect(buy.executed).toBe(true);
-    expect(buy.book.positions['QQQ']).toEqual({ qty: 4, avgEntry: 500.75, highWater: 500.75 });
-    expect(buy.book.balance).toBeCloseTo(25_000 - 4 * 500.75, 6);
+    expect(buy.book.positions['QQQ']).toEqual({ qty: 4, avgEntry: 500.25, highWater: 500.25 });
+    expect(buy.book.balance).toBeCloseTo(25_000 - 4 * 500.25, 6);
     // nie nachkaufen
     expect(shadowTrade(buy.book, 'QQQ', 'buy', 480, 10).executed).toBe(false);
-    // Verkauf zu 520 → effektiv 520 × 0,9985 = 519.22 je Stück zurück
+    // Verkauf zu 520 → effektiv 520 × 0,9995 = 519.74 je Stück zurück
     const sell = shadowTrade(buy.book, 'QQQ', 'sell', 520, 10);
     expect(sell.executed).toBe(true);
-    expect(sell.book.balance).toBeCloseTo(buy.book.balance + 4 * 519.22, 6);
+    expect(sell.book.balance).toBeCloseTo(buy.book.balance + 4 * 519.74, 6);
     expect(sell.book.positions['QQQ']).toBeUndefined();
     // Original bleibt unangetastet (pure)
     expect(start.positions).toEqual({});
@@ -215,7 +217,7 @@ describe('Trade-Frequenz-Parameter (Owner 26.07.)', () => {
 describe('Shadow-Duell-Parität (MA4, 26.07.)', () => {
   it("Sizing-Basis 'initial' via capital-Override — wie der echte Broker", () => {
     // Startkapital 25 000, aber nur noch 3 000 Cash: 10 % von 25 000 = 2 500
-    // → 4 Stück à 500.75 = 2 003 ≤ 3 000 Deckung → Kauf geht durch.
+    // → 4 Stück à 500.25 = 2 001 ≤ 3 000 Deckung → Kauf geht durch.
     const book = { balance: 3_000, positions: {} };
     const r = shadowTrade(book, 'QQQ', 'buy', 500, 10, { capital: 25_000 });
     expect(r.executed).toBe(true);
@@ -223,7 +225,7 @@ describe('Shadow-Duell-Parität (MA4, 26.07.)', () => {
   });
 
   it('Deckung prüft IMMER der Shadow-Cash (zu_wenig_cash-Parität)', () => {
-    // 10 % von 25 000 wollen 4 Stück (2 003) — Cash deckt nur 1 500 → No-op
+    // 10 % von 25 000 wollen 4 Stück (2 001) — Cash deckt nur 1 500 → No-op
     const book = { balance: 1_500, positions: {} };
     expect(shadowTrade(book, 'QQQ', 'buy', 500, 10, { capital: 25_000 }).executed).toBe(false);
   });
@@ -233,8 +235,8 @@ describe('Shadow-Duell-Parität (MA4, 26.07.)', () => {
     const r = shadowTrade({ balance: 25_000, positions: {} }, 'QQQ', 'buy', 500, 10, { now });
     expect(r.book.positions['QQQ']).toEqual({
       qty: 4,
-      avgEntry: 500.75,
-      highWater: 500.75,
+      avgEntry: 500.25,
+      highWater: 500.25,
       openedAt: '2026-07-26T12:00:00.000Z',
     });
   });
@@ -246,11 +248,11 @@ describe('Shadow-Duell-Parität (MA4, 26.07.)', () => {
 
 describe('Shadow-Shorts (R2, 26.07.) — Parität zum echten Broker', () => {
   it('Short-Open: 100-%-Margin vom Cash, side/lowWater gestempelt', () => {
-    // sell-Slippage: 500 × 0.9985 = 499.25; 10 % von 25 000 → 5 Stück
+    // sell-Abschlag (ETF, 0,05 %): 500 × 0.9995 = 499.75; 10 % von 25 000 → 5 Stück
     const r = shadowTrade({ balance: 25_000, positions: {} }, 'QQQ', 'sell', 500, 10, { openShort: true });
     expect(r.executed).toBe(true);
-    expect(r.book.positions['QQQ']).toMatchObject({ qty: 5, avgEntry: 499.25, side: 'short', lowWater: 499.25 });
-    expect(r.book.balance).toBeCloseTo(25_000 - 5 * 499.25, 6);
+    expect(r.book.positions['QQQ']).toMatchObject({ qty: 5, avgEntry: 499.75, side: 'short', lowWater: 499.75 });
+    expect(r.book.balance).toBeCloseTo(25_000 - 5 * 499.75, 6);
   });
 
   it('ohne openShort bleibt sell ohne Position ein No-op (Opt-in-Parität)', () => {
@@ -259,10 +261,10 @@ describe('Shadow-Shorts (R2, 26.07.) — Parität zum echten Broker', () => {
 
   it('Cover (buy) bucht Margin + P&L zurück — Gewinn bei gefallenem Kurs', () => {
     const open = shadowTrade({ balance: 25_000, positions: {} }, 'QQQ', 'sell', 500, 10, { openShort: true });
-    const cover = shadowTrade(open.book, 'QQQ', 'buy', 480, 10); // buy-Slippage: 480×1.0015 = 480.72
+    const cover = shadowTrade(open.book, 'QQQ', 'buy', 480, 10); // buy-Aufschlag: 480×1.0005 = 480.24
     expect(cover.executed).toBe(true);
-    const pnl = (499.25 - 480.72) * 5;
-    expect(cover.book.balance).toBeCloseTo(open.book.balance + 5 * 499.25 + pnl, 6);
+    const pnl = (499.75 - 480.24) * 5;
+    expect(cover.book.balance).toBeCloseTo(open.book.balance + 5 * 499.75 + pnl, 6);
     expect(cover.book.positions['QQQ']).toBeUndefined();
   });
 
