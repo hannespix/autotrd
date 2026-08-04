@@ -823,6 +823,22 @@ input, textarea, select, [contenteditable='true'] {
 .opt-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--t2); }
 @media (max-width: 560px) { .opt-grid { grid-template-columns: 1fr; } }
 
+/* Kapital-Regler je Anlageklasse (MG2).
+   BEWUSST KEIN .opt-grid: Dessen `label { flex-direction: column }` würde
+   Name, Regler und Wert übereinander stapeln — und weil `flex-basis` in
+   einer Spalte auf die HÖHE wirkt, wären die Zeilen 120 px hoch. Genau das
+   ist beim ersten Browser-Durchlauf passiert. Ein eigenes Raster mit drei
+   Spalten hält Name, Schieber und Wert in einer Zeile. */
+.cls-grid { display: grid; gap: 2px; }
+.cls-row {
+  display: grid; grid-template-columns: minmax(90px, 1fr) 2fr 56px;
+  align-items: center; gap: 10px; font-size: 11px; color: var(--t2);
+  padding: 3px 0;
+}
+.cls-row input[type='range'] { width: 100%; accent-color: var(--ac); margin: 0; }
+.cls-row .cls-val { text-align: right; color: var(--t1); }
+@media (max-width: 560px) { .cls-row { grid-template-columns: 1fr 1.5fr 46px; gap: 6px; } }
+
 /* ── Handels-Analyse: SVG-Diagramme (Owner-Wunsch 28.07.) ──────────────────
    Die Diagramme bringen KEINE eigenen Farben mit — sie greifen über
    `var(--gn)` / `var(--rd)` / `var(--t3)` auf die Theme-Variablen zu. Damit

@@ -1062,7 +1062,7 @@ function layout(email: string): string {
         steuert nur den <b>Einstieg</b>.
         Und: Eine Klasse auf 0 wird weiter <b>gemessen</b> (Schatten-Kante), sie
         kann sich also zurückverdienen. Ohne das wäre jedes Abschalten endgültig.</p>
-      <div id="owClsRows" class="opt-grid" style="margin-top:6px"></div>
+      <div id="owClsRows" class="cls-grid" style="margin-top:6px"></div>
       <label class="opt-check" style="margin-top:8px">
         <input type="checkbox" id="owClsAuto" />
         <span>Automatisch nachregeln (täglich, in Schritten von 0,25) ${iBtn('classAutoTune')}</span></label>
@@ -2222,11 +2222,10 @@ function renderKlassenRegler(): void {
   $('owClsRows').innerHTML = Object.entries(CLASS_LABELS)
     .map(([k, label]) => {
       const w = Math.min(1.5, Math.max(0, gew[k] ?? 1));
-      return `<label style="display:flex;align-items:center;gap:8px">
-        <span style="flex:1 1 120px">${label}</span>
-        <input type="range" data-cls="${k}" min="0" max="1.5" step="0.25"
-          value="${w}" style="flex:2 1 120px" />
-        <span class="mono" data-clsval="${k}" style="min-width:52px;text-align:right">${gewichtText(w)}</span>
+      return `<label class="cls-row">
+        <span>${label}</span>
+        <input type="range" data-cls="${k}" min="0" max="1.5" step="0.25" value="${w}" />
+        <span class="mono cls-val" data-clsval="${k}">${gewichtText(w)}</span>
       </label>`;
     })
     .join('');
