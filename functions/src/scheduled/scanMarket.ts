@@ -34,6 +34,7 @@ import {
   NEWS_TTL_SEC,
   bucketKey,
   bucketVerdict,
+  DEFAULT_CORE_PCT,
   convictionFactor,
   marketRegime,
   regimeEntryBlocked,
@@ -1461,6 +1462,57 @@ async function migrateTimeframeDaily(db: FirebaseFirestore.Firestore): Promise<v
   }
 }
 
+/**
+ * Sockel für BESTANDSKONTEN einschalten (Owner-Anweisung 04.08.: „bitte bei
+ * jedem Konto automatisch als Standardeinstellung setzen").
+ *
+ * Der Kern-Satellit kam bewusst nur für NEUE Konten scharf — eine
+ * Kapitalumschichtung sollte nicht die Nebenwirkung eines geänderten
+ * Defaults sein. Der Betreiber hat das ausdrücklich anders entschieden, und
+ * die Messung stützt es: Der Momentum-Sockel stand am 04.08. bei +4,0 %
+ * seit dem 28.07. (null Trades im letzten Lauf), die vier aktiven Konten
+ * zwischen −3,2 % und −6,3 %.
+ *
+ * Anders als die timeframe-Migration überspringt diese Migration KEINE
+ * Konten: Der Sockel ist eine Plattform-Grundeinstellung, kein
+ * Tuner-Experiment — das `settings.autoTune`-Opt-out betrifft die
+ * Selbstverbesserung, nicht die Grundaufteilung des Depots.
+ *
+ * Angefasst wird ausschließlich `engine.corePct`, und nur dort, wo noch
+ * kein eigener Wert > 0 steht: Wer den Sockel selbst eingestellt hat,
+ * behält seine Zahl. Additiv + idempotent über den Marker in
+ * meta/migrations (§9). Gekauft wird dadurch noch nichts — das entscheidet
+ * der nächste Momentum-Lauf, und auch der nur, wenn der SMA200-Marktfilter
+ * offen ist.
+ */
+async function migrateCorePctAll(db: FirebaseFirestore.Firestore): Promise<void> {
+  const MARKER = 'corePctAll_2026_08_04';
+  try {
+    const marker = db.doc('meta/migrations');
+    if ((await marker.get()).get(MARKER) === true) return;
+    const users = await db.collection('users').select('settings').get();
+    let gesetzt = 0;
+    for (const u of users.docs) {
+      if (u.get('settings.strategy') === undefined) continue;
+      const vorhanden = u.get('settings.strategy.engine.corePct') as number | undefined;
+      if (typeof vorhanden === 'number' && vorhanden > 0) continue; // eigener Wert bleibt
+      await u.ref.update(
+        new FieldPath('settings', 'strategy', 'engine', 'corePct'),
+        DEFAULT_CORE_PCT,
+      );
+      gesetzt += 1;
+      logger.info(`Migration ${MARKER}: ${u.id} corePct → ${DEFAULT_CORE_PCT}`);
+    }
+    await marker.set(
+      { [MARKER]: true, at: new Date().toISOString(), konten: gesetzt },
+      { merge: true },
+    );
+  } catch (err) {
+    // Nächster Scan versucht es erneut — der Marker wird erst nach Erfolg gesetzt.
+    logger.warn(`Migration ${MARKER} fehlgeschlagen`, err);
+  }
+}
+
 export async function runScan(force = false): Promise<ScanResult> {
   const now = new Date();
   const scanId = now.toISOString().slice(0, 16) + 'Z'; // Minute = idempotent
@@ -1775,6 +1827,7 @@ export async function runScan(force = false): Promise<ScanResult> {
   let konten: KontenStats | null = null;
   try {
     await migrateTimeframeDaily(db);
+    await migrateCorePctAll(db);
     const res = await executeUserTrades(marketData, regime.state);
     trades = res.executed;
     entryGate = res.gate;
