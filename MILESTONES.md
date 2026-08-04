@@ -61,7 +61,6 @@ nicht geschätzt.
 | `shared/src` (Wertkern, pure Logik) | 18 | 3 777 |
 | `functions/src` (Firebase, live) | 22 | 4 944 |
 | `frontend/src` | 18 | 8 458 |
-| `supabase/` (Migrationsstrang) | 27 | 4 208 |
 | `reference/` (Python-Parity) | 22 | 4 739 |
 | Tests | 38 Dateien | 411 Prüfungen |
 
@@ -100,12 +99,11 @@ nicht geschätzt.
 
 ### B. Architektur-Widersprüche
 
-- [ ] **B1 — Zwei Backends parallel, eines unerreichbar.**
-      `frontend/src/dataSupabase.ts` (774 Z.) und `authSupabase.ts` werden von
-      **keinem** Modul importiert. `supabase.ts` liest zwar `VITE_BACKEND`,
-      aber der Dispatcher, der umschalten würde, ist MS2 Teil 3 — also nicht
-      gebaut. Der gesamte Supabase-Frontend-Strang ist damit toter Code, der
-      trotzdem mitgepflegt, mitgetestet und mitgebaut wird.
+- [x] **B1 — Zwei Backends parallel, eines unerreichbar.** *(aufgelöst
+      04.08. durch Löschen, s. MS.)* `frontend/src/dataSupabase.ts` (774 Z.)
+      und `authSupabase.ts` wurden von **keinem** Modul importiert; der
+      Dispatcher, der umgeschaltet hätte, war nie gebaut. Der gesamte
+      Supabase-Strang ist entfernt — Firebase ist die Antwort.
 - [x] **B2 — `supabase/functions/_shared/` ist eine DRIFTENDE Kopie von
       `shared/src/`.** *(aufgelöst in zwei Schritten: Seit PR #94 ist die
       Kopie ein GENERAT — `scripts-ci/build-edge-shared.mjs` leitet sie aus
@@ -130,8 +128,8 @@ nicht geschätzt.
 
 ### C. Relikte
 
-- [ ] **C1** `frontend/src/dataSupabase.ts`, `authSupabase.ts`, `supabase.ts`
-      (~1 000 Z.) — unerreichbar, s. B1.
+- [x] **C1** `frontend/src/dataSupabase.ts`, `authSupabase.ts`, `supabase.ts`
+      (~1 000 Z.) — *(gelöscht 04.08. mit dem gesamten Strang, s. B1/MS.)*
 - [x] **C2** `supabase/functions/_shared/sentiment.ts` — *(gegenstandslos:
       die Kopie ist seit #94 ein Generat außerhalb des Repos, und
       `sentiment.ts` ist seit 29.07. regulär zurück in `shared/`.)*
@@ -157,15 +155,10 @@ unsichtbar geblieben wären.
 
 1. ~~**A1**~~ + ~~**B3**~~ — erledigt, s. o.
 2. **MO Teil 2** — Struktursuche im Regelbaum.
-3. **Supabase MS2–MS5 fertigbauen.** Der Owner hat sich gegen das Löschen
-      entschieden: Der Strang wird zu Ende gebracht statt eingefroren.
-      **Damit wird B2 zur Vorbedingung, nicht zur Fußnote** — solange
-      `supabase/functions/_shared/` eine driftende Kopie ist, portiert man
-      auf einen Unterbau, der anders rechnet als der getestete. ~~Erster
-      Schritt von MS2 Teil 3 muss deshalb sein, die Kopie durch einen
-      Build-Schritt aus `shared/src/` zu ersetzen.~~ *(Vorbedingung erfüllt
-      02.08.: Build-Schritt seit #94, CI-Drift-Guard mit `deno check` — s.
-      B2. MS2 Teil 3 kann direkt auf dem Generat aufsetzen.)*
+3. ~~**Supabase MS2–MS5 fertigbauen.**~~ *(Am 28.07. hatte sich der Owner
+      gegen das Löschen entschieden; am 04.08. — nach der Kostenrechnung und
+      der Prüfung des Backtest-Arguments — dann dafür. Der Strang ist
+      entfernt, s. MS.)*
 
 ---
 
@@ -1092,85 +1085,62 @@ fremdem Feld wird von Rules abgelehnt · Portfolio-Öffnung kostet ≤ ~10 Reads
 (Profiler-Nachweis) · Tagesfilm lädt mit genau 1 Chunk-Read · Wallet-Reset
 erhöht `epoch`, die Kennzahlen-Reihe bricht nachweislich an der Zäsur.
 
-## MS — Migration zu Supabase (Owner-Entscheidung 26.07., „asap")
+## MS — Migration zu Supabase (26.07. beschlossen, 04.08. verworfen)
 
-**Ziel:** Firestore → Postgres (Supabase), Firebase Auth → Supabase Auth,
-Cloud Functions → Edge Functions, Cloud Scheduler → pg_cron. Bestehende
-Daten und Konten werden **nicht** übernommen (Owner-Vorgabe) — das macht den
-Umstieg billig: kein Datenexport, kein Doppelbetrieb der Bestände.
+**Status: gestrichen. Der gesamte Strang ist gelöscht.** Entfernt wurden
+`supabase/` (Migrationen, Edge Function, Templates, RLS-Tests),
+`frontend/src/{supabase,authSupabase,dataSupabase}.ts` samt Tests, der
+Workflow *Deploy Supabase* und die beiden CI-Schritte (Deno-Drift-Guard,
+Postgres-RLS-Tests). Firebase bleibt.
 
-**Warum jetzt und nicht später:** M12b (Steuer-Log mit FIFO-Lots und
-Jahresaggregation) und M13 (Alpaca-Orders, Reconciliation) schreiben den mit
-Abstand meisten neuen Persistenz-Code des Projekts. Nach einer späteren
-Migration schriebe man ihn zweimal. Fachlich gewinnt genau dieser Teil am
-meisten: FIFO, Jahressummen und Verlusttöpfe sind in SQL ein paar Queries,
-in Firestore dagegen vorberechnete Aggregat-Dokumente.
+**Was der Plan war:** Firestore → Postgres, Firebase Auth → Supabase Auth,
+Cloud Functions → Edge Functions, Cloud Scheduler → pg_cron. Fertig waren
+MS1 (Schema mit RLS und Geld-Invarianten, live verifiziert) und MS2 Teil 1+2
+(Auth-Schicht, Lesepfad Marktdaten). Offen blieben Nutzerdaten,
+Prognose-Ketten und der Dispatcher, der überhaupt erst umgeschaltet hätte.
 
-**Was NICHT angefasst wird:** `shared/` ist reine Logik ohne Datenbankbezug
-(Indikatoren, Regelbaum, Prognose, Konfluenz, Portfolio-Kennzahlen) und
-läuft unverändert weiter — inklusive aller Golden-Tests. Das ist der
-Wertkern des Repos und bleibt die Rückversicherung gegen Regressionen.
+**Warum verworfen — drei Gründe, jeder für sich ausreichend:**
 
-- [x] **MS1 Fundament (26.07. fertig, live verifiziert)**: `supabase/migrations/*.sql` — Schema (profiles,
-      wallets, positions, trades, strategies, market_symbols, bars, quotes,
-      signals, forecasts, equity, stats), RLS-Policies (Owner liest seine
-      Zeilen, Geld schreibt ausschließlich `service_role`), **Check-Constraints
-      für Geld-Invarianten** (Kontostand ≥ 0, qty > 0, Preis > 0) — eine
-      Sicherheitsebene, die Firestore gar nicht kennt. Verifikation gegen
-      echten Postgres inkl. RLS-Tests mit gesetztem JWT-Claim.
-      **Ergebnis:** 15 Prüfungen lokal grün (ohne Docker — ein auth-Shim
-      bildet `auth.uid()` nach) und acht davon zusätzlich gegen die echte
-      Instanz bestätigt: Nutzer B sieht die Trades von A nicht, A kann
-      weder seinen Kontostand ändern noch einen Trade erfinden (403), der
-      Saldo bleibt danach unverändert, anonym kommt gar nichts durch.
-      **Fund aus dem ersten Live-Lauf:** Ohne „Automatically expose new
-      tables" bekommt auch die service_role keine Rechte automatisch —
-      die Edge Functions hätten NICHTS schreiben können (0005). Der
-      lokale Test übersah es, weil er als Superuser lief; die beiden
-      neuen Fälle 14/15 schließen genau diese Lücke.
-- [ ] **MS2 Datenschicht Frontend**: `data.ts` gegen supabase-js
-      (Realtime statt onSnapshot), Auth-Umstellung, Login/Registrierung.
-      Die UI-Module bleiben unberührt — nur der Adapter darunter tauscht.
-  - [x] **Teil 1 (26.07.)**: `supabase.ts` (Client + Backend-Schalter
-        `VITE_BACKEND`), `authSupabase.ts` (Anmeldung, Registrierung,
-        Zugangsstufe), übersetzte Fehlermeldungen. **Fund am echten
-        Dienst:** Supabase prüft E-Mail-Domains strenger als Firebase und
-        lehnt erfundene Adressen ab (`email_address_invalid`) — betrifft
-        auch die E2E-Suiten, die künftig echte Domains brauchen.
-  - [x] **Teil 2 (27.07.)**: `dataSupabase.ts` — Lesepfad für Markt,
-        Kursreihen, Signale, Indikatoren und `meta` per Realtime.
-        Listener-Zähler nach `listeners.ts` gehoben, damit die
-        E2E-Leak-Prüfung für BEIDE Schichten gilt. **Drei Fallen, die
-        Firestore nicht hat:** PostgREST liefert `numeric` als Text (aus
-        `close - open` würde sonst lautlos eine String-Verkettung),
-        Realtime meldet Zeilen statt Zustände (deshalb Nachladen mit
-        Debounce statt Zeilen-Einpflegen), und die Standard-Obergrenze von
-        1000 Zeilen hätte fünf Jahre Tagesbars vorn beschnitten.
-  - [ ] **Teil 3**: Nutzerdaten (Positionen, Trades, Wallet, Strategien,
-        Equity-Serie) + Dispatcher, der je nach `VITE_BACKEND` die eine
-        oder andere Schicht liefert.
-  - [ ] **Teil 4**: News, Events, KI-Analysen und die **Prognose-Ketten**.
-        Die Schema-Spalten (`market_symbols.forecast`,
-        `forecast_intraday`) stehen, der Edge-Scan füllt sie aber noch
-        nicht — ohne diesen Teil bleiben Prognose-Genauigkeit und
-        Prognose-Labor auch unter Supabase leer.
-- [ ] **MS3 Engine**: Scan/Broker/Risk als Edge Function(s) mit
-      Postgres-Transaktionen (`SELECT … FOR UPDATE` statt Firestore-
-      Transaktion) + `pg_cron` für den 5-Minuten-Takt. Vorab-Test: hält eine
-      Edge Function das Zeitbudget für ~170 Symbole? Sonst Scan-Runner als
-      eigener Node-Dienst, Trigger per pg_cron/HTTP.
-- [ ] **MS4 Callables**: trade, saveStrategy, strategies (inkl. delete),
-      backtest, sweep, prediction als Edge Functions — gleiche Signaturen,
-      damit das Frontend nur die Aufruf-Hülle wechselt.
-- [ ] **MS5 Verifikation**: E2E-Suiten auf die neue Umgebung heben
-      (~200 Checks), Parity gegen die bestehende Logik, Deploy-Pipeline
-      (Migrationen per CI), Umschalttag mit frischen Konten.
+1. **Die Kostenrechnung trägt nicht.** Fünf Konten kosten auf Firebase
+   ~14 $/Monat, auf Supabase ~25 $ (Pro-Plan-Sockel). Firebase bleibt bei
+   *jeder* Nutzerzahl billiger, weil Realtime-Nachrichten (2,50 $/Mio) gegen
+   Firestore-Reads (0,60 $/Mio) beim Fan-out um Faktor vier verlieren.
 
-**Abnahme:** Ein Kauf über die Edge Function ist in derselben Transaktion in
-wallets/positions/trades sichtbar · ein zweiter Nutzer sieht per RLS nichts
-davon (Negativtest) · ein Constraint verhindert nachweislich einen negativen
-Kontostand · pg_cron feuert den Scan im 5-Minuten-Takt · die Suiten laufen
-zweimal grün · `shared/`-Tests bleiben unverändert grün.
+2. **Das Zeitdruck-Argument war zirkulär.** MS begründete sich damit, dass
+   M12b (Steuer-Log) und M13 (Alpaca-Orders) den meisten Persistenzcode
+   schreiben und man ihn sonst zweimal schriebe. Das gilt nur, wenn beide
+   *nach* der Migration kommen — sie kamen davor.
+
+3. **Der Backtest-Auslöser hielt der Prüfung nicht stand.** Zwischenzeitlich
+   war als Auftau-Trigger ein Lese-Break-even notiert: fünf Jahre × 166
+   Symbole = 207.500 Firestore-Reads (0,12 $) gegen eine SQL-Query, bei ~20
+   Läufen/Tag kippe die Rechnung. Aber `functions/src/core/backtest.ts`
+   rechnet Long/Flat über **Tages**-Bars, während die Live-Engine auf
+   5-Minuten-Kerzen handelt und shorten darf — er misst eine Strategie, die
+   so nie läuft. Auf die echte Zeitbasis ließe er sich gar nicht heben:
+   Yahoo gibt 5-Minuten-Historie nur ~60 Tage zurück. Als
+   *Optimierungs*-Werkzeug wäre er zudem schädlich (ein Kurspfad, über ein
+   Dutzend Stellschrauben ⇒ Überanpassung). Sein legitimer Zweck ist der
+   Stresstest „überlebt die Regel-Logik einen Crash wie 2022?" — einmal im
+   Monat, nicht zwanzigmal am Tag.
+
+**Warum löschen statt einfrieren:** Zuerst war nur ein Einfrieren geplant,
+abgesichert durch einen Signatur-Wächter (`supabaseParitaet.test.ts`, 20 von
+40 Exporten fehlten). Der Owner entschied am 04.08. anders — zu Recht: Eine
+halbfertige zweite Datenschicht kostet auch dann, wenn niemand sie benutzt.
+Wer `data.ts` erweitert, muss die andere Seite mitdenken oder bewusst
+ignorieren; beides ist Aufwand ohne Gegenwert. Der Code steht in der
+Git-Historie (`789e2ef`) und ist jederzeit zurückholbar.
+
+**Was das Thema wieder öffnen würde:** die Fenster-Grenze der Auswertung.
+`snapshotEquity` liest je Konto nur die jüngsten `TRADES_WINDOW = 500`
+Trades — eine Kostenbremse, keine fachliche Grenze. Am 04.08. stehen 514
+geschlossene Trades über vier Konten; bei dieser Frequenz schneidet das
+Fenster in wenigen Monaten echte Information ab, und der Selbstverbesserer
+lernt aus einem Ausschnitt, ohne dass es auffällt. Postgres läse denselben
+Zeitraum als eine Query zum Pauschalpreis und beantwortete Fragen, für die
+Firestore je Frage einen Index braucht. **Erst dann lohnt die Rechnung neu.**
+
 
 ## MT — Auto-Tuner: der Kreislauf aus Messen, Ausprobieren, Übernehmen
 
@@ -1638,16 +1608,16 @@ bis fünf Tage Arbeit für eine Ausgabe, die ohne Echtgeld niemand liest.
 EZB-Kursabruf ebenfalls nicht — historische Kurse sind nachladbar, solange
 `executedAt` existiert, und das tut es millisekundengenau.
 
-### Supabase: eingefroren, nicht abgebrochen
+### Supabase: verworfen und gelöscht (04.08.)
 
-Die Kostenrechnung trägt nicht: 5 Konten kosten auf Firebase ~14 $/Monat, auf
-Supabase ~25 $ — und Firebase bleibt bei jeder Nutzerzahl billiger, weil
-Realtime-Nachrichten (2,50 $/Mio) gegen Firestore-Reads (0,60 $/Mio) beim
-Fan-out um Faktor 4 verlieren. Das Argument aus MS („M12b und M13 schreiben
-den meisten Persistenzcode") ist zirkulär geworden, seit beide nicht als
-Nächstes kommen. Der Trigger zum Auftauen ist nicht der Kalender, sondern der
-Lese-Break-even: Ein Backtest über 5 Jahre × 166 Symbole sind 207.500 Reads
-(0,12 $) gegen eine SQL-Query. Bei 20 Läufen/Tag kippt die Rechnung.
+Erst eingefroren, dann auf Owner-Entscheidung ganz entfernt. Die
+Kostenrechnung trug nicht (5 Konten: Firebase ~14 $/Monat gegen Supabase
+~25 $; Firebase bleibt bei jeder Nutzerzahl billiger, weil
+Realtime-Nachrichten mit 2,50 $/Mio gegen Firestore-Reads mit 0,60 $/Mio
+beim Fan-out um Faktor 4 verlieren). Der zwischenzeitlich notierte
+Auftau-Trigger — ein Fünf-Jahres-Backtest als Lese-Break-even — hielt der
+Prüfung nicht stand: Der Backtest rechnet Tages-Bars und Long/Flat, die
+Live-Engine handelt intraday und shortet. Ausführlich in **MS**.
 
 ---
 

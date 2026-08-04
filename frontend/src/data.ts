@@ -29,8 +29,8 @@ import {
 
 // ── Listener-Buchhaltung (M9): jeder onSnapshot läuft über diesen Wrapper,
 // damit Panel-Wechsel nachweislich keine Listener leaken (E2E-Zähler).
-// Der Zähler liegt in listeners.ts, weil die Supabase-Schicht denselben
-// benutzt — sonst würde der Leak-Test nach der Umstellung nichts mehr messen.
+// Der Zähler liegt in listeners.ts statt hier, damit ihn auch Module
+// hochzählen können, die data.ts nicht importieren.
 import { listenerCount, trackListener } from './listeners.js';
 
 export { listenerCount };

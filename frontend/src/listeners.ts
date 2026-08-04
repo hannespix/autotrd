@@ -3,10 +3,10 @@
  *
  * Der E2E-Test prüft nach Panel-Wechseln, dass die Zahl wieder auf ihren
  * Ausgangswert fällt: Ein geleakter Listener kostet nicht nur Speicher,
- * sondern bei Firestore auch dauerhaft Lesevorgänge und bei Supabase einen
- * offenen Realtime-Kanal. Solange der Zähler in `data.ts` lebte, hätte die
- * Prüfung nach der Umstellung auf Supabase stillschweigend nichts mehr
- * gemessen — deshalb liegt er jetzt hier, wo ihn beide Schichten hochzählen.
+ * sondern bei Firestore dauerhaft Lesevorgänge — er schreibt also jeden
+ * Monat Rechnung, ohne dass ihn jemand bemerkt. Der Zähler liegt bewusst
+ * in dieser eigenen Datei und nicht in `data.ts`, damit ihn auch Module
+ * hochzählen können, die `data.ts` selbst nicht importieren.
  */
 
 let active = 0;

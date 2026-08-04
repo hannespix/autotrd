@@ -25,53 +25,47 @@ Leitziele: **kosteneffizient · sicher · leistungsfähig · schnell.**
 > **Blaze-Plan** (Pay-as-you-go). Bei diesem Volumen (Scan alle 5 min, kleine
 > Reads) liegt das real bei ~0–5 €/Monat. Budget-Alarm im GCP-Projekt setzen!
 
-### Supabase: begonnen, seit 04.08. eingefroren
+### Supabase: verworfen und ausgebaut (04.08.)
 
-Am 26.07. wurde beschlossen, auf Supabase (Postgres) umzuziehen. Fertig sind
-das Schema mit RLS und Geld-Invarianten (`supabase/migrations/`, live
-verifiziert), die Auth-Schicht und der Lesepfad für Marktdaten
-(`frontend/src/authSupabase.ts`, `dataSupabase.ts`). Offen sind die
-Nutzerdaten und die Prognose-Ketten.
+Am 26.07. wurde beschlossen, auf Supabase (Postgres) umzuziehen. Fertig
+waren Schema mit RLS, Auth-Schicht und der Lesepfad für Marktdaten. Am
+04.08. wurde der gesamte Strang **gelöscht** — Migrationen, Edge Function,
+`frontend/src/{supabase,authSupabase,dataSupabase}.ts`, der Deploy-Workflow
+und die CI-Schritte (Deno-Drift-Guard, Postgres-RLS-Tests).
 
-**Warum es ruht:** Die Kostenrechnung trägt nicht. Bei fünf Konten kostet
-Firebase ~14 $/Monat, Supabase ~25 $ — und Firebase bleibt bei *jeder*
-Nutzerzahl billiger, weil Realtime-Nachrichten (2,50 $/Mio) gegen
-Firestore-Reads (0,60 $/Mio) beim Fan-out um Faktor vier verlieren. Das
-ursprüngliche Zeitdruck-Argument („M12b und M13 schreiben den meisten
-Persistenzcode, sonst schreibt man ihn zweimal") ist zirkulär geworden,
-seit beide Vorhaben nicht als Nächstes kommen.
+**Warum:** Die Kostenrechnung trug nicht. Bei fünf Konten kostet Firebase
+~14 $/Monat, Supabase ~25 $ — und Firebase bleibt bei *jeder* Nutzerzahl
+billiger, weil Realtime-Nachrichten (2,50 $/Mio) gegen Firestore-Reads
+(0,60 $/Mio) beim Fan-out um Faktor vier verlieren. Das ursprüngliche
+Zeitdruck-Argument („M12b und M13 schreiben den meisten Persistenzcode,
+sonst schreibt man ihn zweimal") wurde zirkulär, seit beide Vorhaben nicht
+als Nächstes kommen.
 
-**Was das Auftauen NICHT auslöst — der Fünf-Jahres-Backtest.** Diese
-Begründung stand hier zuerst (207.500 Firestore-Reads gegen eine SQL-Query)
-und trägt nicht. `functions/src/core/backtest.ts` rechnet **Long/Flat über
-Tages-Bars**. Die Live-Engine handelt seit dem 5-Minuten-Umbau auf
-Intraday-Kerzen und darf shorten. Ein Fünf-Jahres-Lauf würde also eine
-Strategie messen, die so nie läuft — und ließe sich mit unserer Datenquelle
-gar nicht auf die echte Zeitbasis heben: Yahoo gibt 5-Minuten-Historie nur
-~60 Tage zurück. Als *Optimierungs*-Werkzeug ist der lange Backtest sogar
-schädlich: Bei über einem Dutzend Stellschrauben und einem einzigen
-Kurspfad findet man immer eine Parametrierung, die rückblickend glänzt und
-live versagt. Sein legitimer Zweck ist der **Stresstest** („überlebt die
-Regel-Logik einen Crash wie 2022?") — und der läuft einmal im Monat, nicht
-zwanzigmal am Tag. Er rechtfertigt keine Datenbank.
+**Warum löschen statt einfrieren:** Eine halbfertige zweite Datenschicht
+kostet auch dann, wenn sie niemand benutzt. `dataSupabase.ts` fehlten 20 von
+40 Exporten aus `data.ts`, und jede Erweiterung vergrößerte den Abstand
+still. Wer die eine Schicht ändert, muss die andere mitdenken oder bewusst
+ignorieren — beides ist Aufwand ohne Gegenwert. Der Code steht in der
+Git-Historie (Stand `789e2ef`) und lässt sich jederzeit zurückholen, falls
+die Rechnung einmal kippt.
 
-**Was es auslöst — die Fenster-Grenze der Auswertung.** `snapshotEquity`
-liest je Konto die jüngsten `TRADES_WINDOW = 500` Trades. Das ist keine
-fachliche Grenze, sondern eine Kostenbremse: Firestore rechnet je gelesenem
-Dokument ab, also wächst die tägliche Auswertung linear mit der Historie.
-Am 04.08. stehen 514 geschlossene Trades über vier Konten — bei der
-aktuellen Frequenz schneidet das Fenster in wenigen Monaten echte
-Information ab, und der Selbstverbesserer lernt aus einem Ausschnitt, ohne
-dass es jemand sieht. Postgres liest denselben Zeitraum als eine Query zum
-Pauschalpreis und beantwortet dabei Fragen, für die Firestore je Frage
-einen Index bräuchte — genau die Fragen, die Meta-Labeling und Auto-Tuner
-stellen. **Der Trigger ist also: Die Auswertung braucht mehr Historie, als
-das Fenster hergibt.** Bis dahin bleibt `VITE_BACKEND` auf Firebase.
+**Was die Rechnung kippen würde** — nicht der Kalender, sondern die
+Fenster-Grenze der Auswertung: `snapshotEquity` liest je Konto die jüngsten
+`TRADES_WINDOW = 500` Trades. Das ist keine fachliche Grenze, sondern eine
+Kostenbremse, denn Firestore rechnet je gelesenem Dokument ab. Am 04.08.
+stehen 514 geschlossene Trades über vier Konten — bei dieser Frequenz
+schneidet das Fenster in wenigen Monaten echte Information ab, und der
+Selbstverbesserer lernt aus einem Ausschnitt, ohne dass es jemand sieht.
+Postgres läse denselben Zeitraum als eine Query zum Pauschalpreis und
+beantwortete dabei Fragen, für die Firestore je Frage einen Index braucht.
+**Erst wenn die Auswertung mehr Historie braucht, als das Fenster hergibt,
+lohnt das Thema erneut.**
 
-`frontend/test/supabaseParitaet.test.ts` hält den Rückstand fest (20 von 40
-Exporten fehlen, Stand 04.08.) und schlägt an, wenn `data.ts` wächst, ohne
-dass jemand über die Supabase-Seite entscheidet. Eingefroren heißt nicht
-vergessen — es heißt, dass der Abstand nicht unbemerkt wachsen darf.
+*Nicht* auf der Liste steht der lange Backtest, der hier zwischenzeitlich
+als Auslöser notiert war: `functions/src/core/backtest.ts` rechnet Long/Flat
+über Tages-Bars, während die Live-Engine auf 5-Minuten-Kerzen handelt und
+shorten darf. Er misst eine Strategie, die so nie läuft, und ließe sich mit
+Yahoo (5m nur ~60 Tage) gar nicht auf die echte Zeitbasis heben.
 
 ## 2. Gesamtbild
 

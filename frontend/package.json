@@ -12,7 +12,6 @@
   },
   "dependencies": {
     "@autotrd/shared": "*",
-    "@supabase/supabase-js": "^2.110.8",
     "firebase": "^11.0.0",
     "lightweight-charts": "4.2.0"
   },

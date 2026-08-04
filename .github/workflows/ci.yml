@@ -23,19 +23,6 @@ jobs:
       - name: Tests (Vitest, inkl. Golden-Parity)
         run: npm test
 
-      # Edge-Drift-Guard (Audit B2): `supabase/functions/_shared/` ist ein
-      # GENERAT aus `shared/src` (+ engine.ts) — hier wird es frisch gebaut
-      # und die Edge Function mit Deno typgeprüft. Ohne diesen Schritt bricht
-      # eine shared-Änderung, die nur in der Deno-Welt kracht (Node-Import,
-      # API-Bruch in engine.ts), erst beim manuellen `functions deploy` —
-      # also lange nach dem Merge und ohne roten PR.
-      - uses: denoland/setup-deno@v2
-        with:
-          deno-version: v2.x
-      - name: Edge-Function-Drift-Guard (Deno)
-        run: |
-          node scripts-ci/build-edge-shared.mjs
-          deno check supabase/functions/scan/index.ts
       # Firestore-Emulator (firebase-tools) verlangt Java >= 21
       - uses: actions/setup-java@v4
         with:
@@ -43,20 +30,6 @@ jobs:
           java-version: '21'
       - name: Firestore-Rules-Tests (Emulator)
         run: npm run test:rules
-
-      # Supabase-Migration (MS1): Schema, RLS-Policies und die Geld-Constraints
-      # laufen gegen ein echtes Postgres — ohne Docker, das auth-Schema bildet
-      # supabase/tests/00_local_shim.sql nach. Ein Policy-Fehler fällt damit im
-      # PR auf, nicht erst in der Cloud.
-      - name: Postgres für Supabase-Tests starten
-        run: |
-          sudo systemctl start postgresql || sudo service postgresql start
-          sudo -u postgres psql -c "alter user postgres password 'postgres';"
-          sudo -u postgres psql -c "select version();"
-      - name: Supabase-Schema + RLS-Tests
-        env:
-          PGPASSWORD: postgres
-        run: scripts-ci/pg-test.sh 5432 tcp
 
       - name: Build (alle Workspaces)
         run: npm run build
