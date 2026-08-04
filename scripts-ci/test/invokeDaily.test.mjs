@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { markerDay, markerIstEndgueltig, runDaily, unwrap } from '../invoke-daily.mjs';
+import { RUNS, markerDay, markerIstEndgueltig, runDaily, unwrap } from '../invoke-daily.mjs';
 
 const HEUTE = new Date().toISOString().slice(0, 10);
 /** Zeitstempel von heute zur angegebenen UTC-Stunde. */
@@ -186,5 +186,38 @@ describe('runDaily', () => {
     const { ran, failed } = await laufe([kaputt, heil]);
     expect(ran).toBe(1); // der heile lief trotzdem
     expect(failed).toBe(1);
+  });
+});
+
+/**
+ * Die Lauf-Liste selbst (04.08.).
+ *
+ * Warum das geprüft gehört: `RUNS` ist der Unterschied zwischen „läuft" und
+ * „läuft nicht" — und ein fehlender Eintrag erzeugt keinen Fehler, sondern
+ * Stille. Genau daran hing der Kern-Satellit: `engine.corePct` war gesetzt,
+ * aber der einzige Lauf, der den Sockel kauft, wurde beim Deploy nicht
+ * angestoßen. Im Dashboard sieht das exakt aus wie ein Sockel, der bewusst
+ * in Cash steht.
+ */
+describe('RUNS', () => {
+  it('enthält den Momentum-Lauf — er kauft den Sockel', () => {
+    const services = RUNS.map((r) => r.service);
+    expect(services, 'momentumrun muss beim Deploy mit angestoßen werden').toContain('momentumrun');
+  });
+
+  it('jeder Lauf hat eine Spur-Funktion — HTTP 200 beweist nichts', () => {
+    // Ein 200 sagt nur, dass der Container geantwortet hat. Erst die frische
+    // Spur in Firestore beweist, dass er auch gearbeitet hat.
+    for (const r of RUNS) {
+      expect(typeof r.spur, `${r.service} ohne spur()`).toBe('function');
+      expect(r.label?.length ?? 0, `${r.service} ohne Label`).toBeGreaterThan(0);
+    }
+  });
+
+  it('der Momentum-Lauf ist optional — er darf keinen Deploy rot machen', () => {
+    // Der Cloud Scheduler fährt ihn ohnehin täglich; ein Fehlschlag beim
+    // Deploy ist ärgerlich, aber kein Grund, das Release zu blockieren.
+    const mom = RUNS.find((r) => r.service === 'momentumrun');
+    expect(mom?.optional).toBe(true);
   });
 });

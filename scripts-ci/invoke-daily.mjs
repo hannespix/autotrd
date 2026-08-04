@@ -111,6 +111,23 @@ export const RUNS = [
       return (await readMeta(project, 'health'))?.forecastEval ?? null;
     },
   },
+  {
+    service: 'momentumrun',
+    label: 'Momentum-Ranking + Sockel-Rebalancing',
+    // Seit dem Kern-Satelliten (04.08.) ist dieser Lauf nicht mehr nur ein
+    // Schattendepot: Er ist der EINZIGE, der den ruhigen Sockel der echten
+    // Konten kauft. Solange er nicht lief, ist `engine.corePct` eine
+    // Einstellung ohne Wirkung — und das sieht im Dashboard exakt so aus wie
+    // ein Sockel, der bewusst in Cash steht. Deshalb gehört er hier dazu.
+    //
+    // Optional, weil der Cloud Scheduler ihn ohnehin täglich um 18:00 ET
+    // fährt: Ein Fehlschlag beim Deploy soll den Deploy nicht rot machen.
+    optional: true,
+    async spur(project) {
+      const doc = await readMeta(project, 'momentum');
+      return doc ? { at: doc.at } : null;
+    },
+  },
 ];
 
 /**

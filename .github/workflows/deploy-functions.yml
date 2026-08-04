@@ -109,12 +109,19 @@ jobs:
       # „heute NACH US-Schluss gelaufen" — ein Mittags-Snapshot füllt die
       # Karte, verdrängt aber den Abend-Lauf nicht, dessen Schlusskurs die
       # Equity-Serie tragen soll.
-      - name: Tages-Läufe anstoßen (Kennzahlen + Prognose-Bewertung)
+      #
+      # Seit dem Kern-Satelliten (04.08.) ist momentumrun mit dabei: Er ist der
+      # einzige Lauf, der den ruhigen Sockel der echten Konten kauft. Ohne ihn
+      # bliebe `engine.corePct` nach einem Deploy bis 18:00 ET eine Einstellung
+      # ohne Wirkung — und das sieht im Dashboard genauso aus wie ein Sockel,
+      # der bewusst in Cash steht. Der Lauf ist idempotent (Wochen-Takt je
+      # Konto) und als optional markiert, damit er keinen Deploy rot macht.
+      - name: Tages-Läufe anstoßen (Kennzahlen, Prognose-Bewertung, Momentum)
         if: ${{ !cancelled() && env.FIREBASE_SERVICE_ACCOUNT != '' }}
         continue-on-error: true
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
-        run: node scripts-ci/invoke-daily.mjs --only snapshotequity,evalforecasts
+        run: node scripts-ci/invoke-daily.mjs --only snapshotequity,evalforecasts,momentumrun
 
       # Wenn der Lauf rot wurde (z. B. Scan-Invoke 500): scanmarket-Fehlerlogs
       # direkt ins Job-Log ziehen — die Ursache soll ohne GCP-Konsole lesbar sein.
