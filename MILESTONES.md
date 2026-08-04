@@ -1595,6 +1595,18 @@ dritten Mal an derselben Stelle gelöst.
       Ausführung: Stop, Ziel und Haltedauer fehlen. Deshalb
       `SCHATTEN_MIN_N = 200` statt der 30 Trades der Trade-Kante.
 
+      **Live-Befund 21:45 Uhr, ehrlich:** `meta/classShadow` existiert und
+      wird alle fünf Minuten fortgeschrieben — aber es steht auf **n = 0**.
+      Nachts ist nur Krypto offen, und dort erzeugt die Konfluenz
+      ausschließlich `hold`; `hold` zählt im Schatten nicht (es gibt keine
+      Richtung, gegen die man messen könnte).
+      Daraus folgt eine Einschränkung, die MG4 beim Bauen nicht
+      offensichtlich war: Der Schatten löst die Zirkularität für Klassen,
+      die per REGLER abgeschaltet sind und trotzdem Signale erzeugen. Er
+      löst sie NICHT für den Fall, dass die Signal-Logik selbst schweigt —
+      dann misst auch der Schatten nichts. Genau das ist heute die Lage,
+      und genau dafür gibt es MI.
+
 ## MI — Warum die Konfluenz strukturell nicht zustande kommt (04.08.)
 
 Der Heartbeat um 21:10 Uhr:
