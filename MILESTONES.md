@@ -1646,6 +1646,52 @@ sondern unerreichbar.
       `minConfluence: 1` mit Extraschritten. Genau diesen Selbstbetrug hat
       das Projekt schon einmal bezahlt (Forecast-Gewicht 2 bei Konfluenz 2,
       Audit 26.07.).
+      **Erster Live-Vergleich, 21:51 Uhr (derselbe Scan, dieselben Kurse):**
+
+      ```
+      Live-Logik    buy 0 · sell 0 · hold 13
+      Variante      buy 3 · sell 0 · hold 10
+      voteDirs (Variante)  rsi 3/2/8 · bollinger 2/0/11 · macd 6/7/0
+      ```
+
+      Die Hypothese bestätigt sich im ersten Lauf: Der RSI stimmt jetzt ab
+      (vorher 0/0/13, jetzt 3 Kauf- und 2 Verkaufsstimmen), Bollinger
+      liefert zwei Kaufstimmen statt keiner — und aus 13-mal Schweigen
+      werden drei Kaufsignale.
+      Bemerkenswert ist die RICHTUNG: Die Live-Logik wollte zuletzt
+      überwiegend verkaufen, also gegen einen laufenden Aufwärtstrend
+      wetten — die Regime-Lesart will kaufen, mit dem Trend. Das ist genau
+      der Unterschied zwischen Umkehr- und Momentum-Lesart, und er zeigt
+      sich sofort.
+      **Das beantwortet aber nur die erste Hälfte der Frage.** Ob diese
+      drei Signale auch VERDIENEN, steht erst fest, wenn der Schatten sie
+      bewertet hat. Mehr Signale sind kein Fortschritt, solange die Kante
+      die Kosten nicht trägt.
+
+      **Erste Schatten-Kante, 22:45 Uhr (n = 33, nur Krypto, nachts):**
+
+      ```
+      Variante   n=33   Kante −0,4803 % je Signal   Trefferquote 51,5 %
+      Live       n=0    (produziert weiter nur „hold")
+      ```
+
+      **Das spricht gegen die Variante, nicht für sie.** 51,5 % Treffer ist
+      Münzwurf; bei 0,5 % Roundtrip-Kosten für Krypto entspricht die
+      Netto-Kante von −0,48 % einer rohen Bewegung von praktisch null. Die
+      Variante löst also die strukturelle Blockade — die Signale, die
+      dabei entstehen, haben in dieser Stichprobe aber keine Kante.
+
+      Einordnung, ehrlich: n = 33 gegen `SCHATTEN_MIN_N = 200`, gemessen
+      nachts, ausschließlich an Krypto, in einer ruhigen Phase. Das ist
+      ein Frühindikator, kein Urteil — die Klasse mit der schlechtesten
+      Trade-Kante des ganzen Systems (−0,19 % je Dollar über 290 Trades)
+      ist die einzige, die hier drin ist. Aussagekräftig wird es zur
+      US-Öffnung, wenn Aktien und ETFs dazukommen.
+
+      Ein Vergleich ist ohnehin noch nicht möglich: Die Live-Logik steht
+      bei n = 0, weil sie nur `hold` liefert. Gegen null lässt sich nichts
+      vergleichen.
+
 - [ ] **MI2 Umschalten — erst mit Zahlen**: Sobald beide Lesarten je 200
       Signale haben, entscheidet der Vergleich. Schlägt die Variante die
       gehandelte Logik, wird sie zur Live-Logik (dann auch `compileClassic`
@@ -2000,6 +2046,37 @@ Owner-Entscheidung:
   einen Crash wie 2022?") sinnvoll, als Optimierer schädlich.
 - **M10b Langfrist-Depot-Horizonte**, **Chart-Vision** (1-Minuten-Daten,
   ATR-/Pivot-Marken), **M12 Multi-Wallet-Migration**.
+
+### C-Vorarbeit: die Verifikationslücke bei UI-Änderungen *(04.08.)*
+
+Gruppe C ist überwiegend Frontend — und dort konnte ich bis heute nur
+„kompiliert sauber" sagen, nicht „funktioniert". Das war in zwei PRs
+hintereinander eine ehrliche, aber unbefriedigende Einschränkung.
+
+Der erste Riegel steht jetzt: `frontend/test/domIds.test.ts` gleicht
+statisch ab, ob jeder Element-Zugriff ein Element findet. Der Hintergrund
+ist der Helfer, mit dem das Dashboard arbeitet:
+
+```ts
+const $ = (id: string): HTMLElement => document.getElementById(id)!;
+```
+
+Das `!` ist eine Behauptung, keine Prüfung. Ein Tippfehler in der ID
+kompiliert sauber durch — der Typ ist ja versprochen — und wird erst im
+Browser zu `Cannot read properties of null`. Weil das Dashboard sein
+Markup in einem Rutsch aufbaut, reißt ein einziger solcher Zugriff die
+ganze Oberfläche mit: weißer Screen statt einer kaputten Zeile. Genau die
+Fehlerklasse, vor der CLAUDE.md §4 aus einem anderen Grund warnt.
+
+Stand heute: **244 Zugriffe, 261 vergebene IDs, keine Lücke.** Der Test
+prüft nur diese eine Richtung — eine ID im Markup ohne Zugriff ist
+harmlos (CSS, `querySelectorAll`, Anker). Und er ist gegen einen
+eingebauten Fehler geprüft: Ein künstlicher Tippfehler macht ihn rot und
+nennt ID samt Datei.
+
+Was er NICHT ersetzt: eine echte Browser-Prüfung (klickt der Regler?
+speichert der Knopf?). Dafür bräuchte es Playwright gegen die
+Emulatoren — machbar, aber eine eigene Aufgabe.
 
 ### D. Bewusste Wegpunkte, kein To-do
 
