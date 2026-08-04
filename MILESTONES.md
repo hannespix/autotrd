@@ -1375,11 +1375,45 @@ fertige echtgeld trade Möglichkeit und Finanzamt, Export etc."
       lauf-gebundener Order-Kennung und beidseitigem Depot-Abgleich. Nimmt
       M13 den Kern vorweg; **ohne** Order-Routing in die Engine — das gehört
       hinter eine an echten Daten geprüfte Anbindung, nicht davor.
+- [x] **ME4 Live-Reife als dritter Guard** (`shared/src/liveReadiness.ts`,
+      `core/liveGate.ts`). Owner-Maxime: „bis man sicher nur noch Gewinn
+      schreibt, dann erst den Schalter umlegen, aber trotzdem schon
+      theoretisch startklar sein. jederzeit." `resolveBrokerMode` verlangt
+      neben Nutzer-Schalter und Umgebungs-Freigabe fünf erfüllte Kriterien:
+      200 Trades, Profitfaktor ≥ 1,20, Gebührenanteil ≤ 50 %, Netto > 0,
+      30 Tage Messstrecke.
+
+      **Das Entscheidende ist, was aus einem unreifen Live-Konto FOLGT:** Es
+      handelt weiter wie ein Papierkonto. Stilllegen wäre zirkulär — Reife
+      entsteht durch Trades; ein stillgelegtes Konto würde nie reif, und der
+      Nutzer hätte sein System durchs Umlegen zum Stillstand gebracht.
+- [x] **ME5 Kante je Anlageklasse** (`attribution`, `aggregateTradingHealth`).
+      Die Kennzahl, deren Fehlen erklärt, warum `unter_kosten` nie blockte:
+      `costGate` prüft, ob sich ein Instrument genug BEWEGT — Bewegung ist
+      aber kein Gewinn, ein Random Walk hat Erwartungswert null. Gemessen am
+      04.08.: **0,143 % brutto je Trade gegen 0,300 % Roundtrip-Kosten,
+      Deckung 0,48.** Jeder Trade verdient die Hälfte dessen, was er kostet.
 
 **Was zum echten Geld noch fehlt, und zwar außerhalb dieses Repos:** ein
 Alpaca-Live-Konto (für Nicht-US-Residenten 30.000 $ Mindesteinlage; das
 Papierkonto ist gratis), die Verifikation gegen die echte API statt gegen
 die Test-Attrappe, und danach erst die Verdrahtung `scanMarket → Alpaca`.
+
+**Der nächste Schritt ist aber ein anderer:** Das Reife-Gate öffnet erst,
+wenn das System profitabel ist — und das ist es nicht. Der Hebel liegt bei
+der Frequenz, nicht bei der Anbindung. Vorgehen bewusst in dieser
+Reihenfolge (offen als ME6):
+
+1. Klassen-Kante nach dem ersten `snapshotEquity`-Lauf mit dem neuen Code
+   auswerten — welche Anlageklasse ist defizitär?
+2. Diese Klasse abschalten oder ihr `minEdgeMultiple` anheben. Eine Klasse
+   mit negativer Kante gehört nicht feinjustiert, sondern raus.
+3. `costGate` um die Einfangquote erweitern, statt nur die Auslenkung zu
+   prüfen.
+
+Erst messen, dann schärfen: Ein Filter, der alles blockt, beendet auch die
+Datensammlung, die ihn kalibrieren müsste — dieselbe Zirkularität wie bei
+ME4.
 
 **Der Befund, der schwerer wiegt als alle drei Aufträge** (Heartbeat 16:30):
 514 Trades, Gebühren 3.049,01 $, netto −1.593,19 $ — also brutto **+1.455,82 $**.
