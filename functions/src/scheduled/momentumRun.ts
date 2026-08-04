@@ -54,12 +54,14 @@ import {
   type Strategy,
   type TargetPosition,
   bucketKey,
+  positioningSummary,
 } from '../../../shared/src/index.js';
 import { executePaperTrade, resolveBrokerMode } from '../core/broker.js';
 import { mayTrade } from '../core/access.js';
 import { clampStrategyRisk, corePct } from '../core/rulesTrading.js';
 import { getDeepDailyBars, getSparkDailyCloses, chunkBarsByYear } from '../core/marketData.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
+import { fetchPositioning } from '../core/positioning.js';
 
 /** Leitindex des Marktfilters — der breiteste verfügbare US-Index. */
 const MARKET_INDEX = '^GSPC';
@@ -236,6 +238,11 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
   const echte = await rebalanceMomentumUsers(ziel, preise, now);
   // ── 5b. Sockel-Hülle der Konfluenz-Wallets (Kern-Satellit, 04.08.) ────────
   const sockel = await rebalanceCoreSleeve(ziel, preise, now);
+  // ── 5c. Positionierungs-Messung (Schatten, 04.08.) ────────────────────────
+  // Hier und nicht im 5-Minuten-Scan: Positionierung ändert sich nicht im
+  // Minutentakt sinnvoll, und der tägliche Rhythmus liefert nebenbei den
+  // 24-h-Abstand, den die OI-Änderung braucht. Kostet einen Request am Tag.
+  const positionierung = await messePositionierung(katalog, now);
 
   // Tages-Protokoll: Ranking-Spitze, Filter-Zustand, Depotwert. Das ist die
   // Datengrundlage, aus der sich später beurteilen lässt, ob die Strategie
@@ -265,6 +272,10 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
       // unterscheidbar.
       sockelKonten: sockel.konten,
       sockelOrders: sockel.orders,
+      // Positionierungs-Abdeckung. Ohne diese Zahl ließe sich ein toter
+      // Feed nicht von einem ereignislosen Markt unterscheiden — genau die
+      // Verwechslung, gegen die beim News-Veto `newsFetched` steht.
+      positionierung,
     },
     { merge: true },
   );
@@ -542,6 +553,56 @@ async function rebalanceCoreSleeve(
     }
   }
   return { konten, orders: orderSumme };
+}
+
+/**
+ * Positionierung messen und protokollieren (Schatten, 04.08.).
+ *
+ * Stufe 1 wie beim Trade-Filter und der Regime-Ampel: Es wird gerechnet und
+ * geschrieben, NICHT gehandelt. Erst wenn die Statistik zeigt, dass die
+ * Extremwerte tatsächlich Bewegungen vorhersagen, bekommt das Signal
+ * Stimmrecht — in einem eigenen, sichtbaren Schritt.
+ *
+ * Der vorherige Open-Interest-Stand kommt aus demselben Dokument, in das
+ * dieser Lauf schreibt: Kraken liefert nur Momentanwerte, und die Aussage
+ * steckt in der Veränderung. Beim allerersten Lauf fehlt der Vergleich, dann
+ * greifen die OI-Regeln schlicht nicht.
+ */
+async function messePositionierung(
+  katalog: readonly string[],
+  now: Date,
+): Promise<{ abgedeckt: number; zustaende: Record<string, number> }> {
+  const db = getFirestore();
+  const ref = db.doc('meta/positioning');
+  try {
+    const vorher = new Map<string, number>(
+      Object.entries(((await ref.get()).get('oi') as Record<string, number> | undefined) ?? {}),
+    );
+    const { readings, oiJetzt } = await fetchPositioning(katalog, vorher);
+    const summary = positioningSummary(readings);
+    await ref.set(
+      {
+        at: now.toISOString(),
+        date: now.toISOString().slice(0, 10),
+        oi: Object.fromEntries(oiJetzt),
+        // Nur die auffälligen Symbole ins Protokoll — 'neutral' ist der
+        // Normalfall und würde das Dokument mit Rauschen füllen.
+        auffaellig: Object.fromEntries(
+          [...readings].filter(([, r]) => r.state !== 'neutral'),
+        ),
+        ...summary,
+      },
+      { merge: true },
+    );
+    logger.info(
+      `Positionierung: ${summary.abgedeckt} Symbole, ${JSON.stringify(summary.zustaende)}`,
+    );
+    return summary;
+  } catch (err) {
+    // Eine Schatten-Messung darf den Lauf nie gefährden.
+    logger.warn('Positionierungs-Messung fehlgeschlagen', err);
+    return { abgedeckt: 0, zustaende: {} };
+  }
 }
 
 /** Täglich 18:00 ET — nach snapshotEquity (17:15) und autoTune (17:45). */
