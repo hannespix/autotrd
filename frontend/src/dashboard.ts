@@ -128,6 +128,10 @@ import {
   type MomentumDoc,
   type TuneFleetRow,
   type TuneLogRow,
+  callBrokerStatus,
+  type BrokerStatusResult,
+  callTaxReport,
+  type TaxReportResult,
   resetWallet,
 } from './data.js';
 import { emailVerified, logout, refreshUser, sendVerification } from './auth.js';
@@ -1059,6 +1063,28 @@ function layout(email: string): string {
         <span class="hint" style="flex:1">Angemeldet als <b>${email.replace(/[<>&]/g, '')}</b></span>
         <button class="btn btn-n" id="logoutBtn">Abmelden</button>
       </div>
+      <div class="wl-sec" style="margin-top:14px">Echtgeld-Anbindung ${iBtn('brokerStatus')}</div>
+      <p class="hint">Prüft die Verbindung zum Broker, <b>ohne zu handeln</b>, und
+        gleicht das eigene Buch mit dem Depot beim Broker ab. Echtgeld verlangt
+        zwei Schalter an zwei Orten — ein Klick allein schaltet nichts scharf.</p>
+      <div class="row" style="align-items:center;gap:8px;margin-top:6px">
+        <button class="btn btn-n" id="bkGo">Verbindung prüfen</button>
+      </div>
+      <div id="bkOut" style="margin-top:8px"></div>
+      <div class="wl-sec" style="margin-top:14px">Steuer-Export ${iBtn('taxReport')}</div>
+      <p class="hint">Paart Käufe und Verkäufe nach <b>FIFO</b>, rechnet Haltedauern
+        und sortiert die Ergebnisse in die Töpfe, die das deutsche Recht getrennt
+        hält. Bei Krypto zählt die <b>Ein-Jahres-Frist</b> — danach steuerfrei.
+        Keine Steuerberatung: Die Zahlen sind eine Aufbereitung für deinen
+        Steuerberater, keine Steuerschuld.</p>
+      <div class="row" style="align-items:center;gap:8px;margin-top:6px">
+        <select id="txYear" class="inp st-num" style="max-width:110px"></select>
+        <label class="hint" style="display:flex;align-items:center;gap:5px">
+          <input type="checkbox" id="txReal" /> nur Echtgeld
+        </label>
+        <button class="btn btn-n" id="txGo">Bericht erstellen</button>
+      </div>
+      <div id="txOut" style="margin-top:8px"></div>
       <div class="wl-sec" style="margin-top:14px">Neu anfangen ${iBtn('resetWallet')}</div>
       <p class="hint">Setzt <b>Handelshistorie, offene Positionen, Kontostand und
         Kennzahlen</b> auf null zurück. Kursdaten, Prognose-Trefferquoten und deine
@@ -1077,6 +1103,183 @@ function layout(email: string): string {
 
 /** Muss identisch zu RESET_CONFIRM_WORD im Server sein — der prüft es erneut. */
 const RESET_CONFIRM_WORD = 'RESET';
+
+/**
+ * HTML-Escaping für Text, der aus einer Antwort des Servers stammt.
+ *
+ * Modul-weit, weil Broker-Meldungen und Steuer-Hinweise dieselbe Behandlung
+ * brauchen: Beide enthalten Text, den nicht dieser Code geschrieben hat.
+ */
+function escText(s: string): string {
+  return s.replace(
+    /[<>&"]/g,
+    (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]!,
+  );
+}
+
+/**
+ * Broker-Status als Karte.
+ *
+ * Die drei Schalter stehen einzeln da, weil genau ihr ZUSAMMENSPIEL über
+ * echtes Geld entscheidet. Wer nur „live" liest, weiß nicht, ob das am
+ * Wunsch, an der Freigabe oder an beidem liegt — und wer nachher fragt,
+ * warum nichts passiert ist, soll es hier ablesen können.
+ */
+function renderBrokerStatus(r: BrokerStatusResult): string {
+  const e = escText;
+  const ampel = (an: boolean): string =>
+    an ? '<span class="up">●</span>' : '<span class="hint">○</span>';
+  const k = r.konto;
+
+  const abw =
+    r.abweichungen.length > 0
+      ? `<table class="tbl st-num" style="width:100%;margin-top:6px">
+           <thead><tr><th>Symbol</th><th class="num">eigenes Buch</th>
+             <th class="num">Broker</th><th class="num">Differenz</th></tr></thead>
+           <tbody>${r.abweichungen
+             .map(
+               (a) => `<tr><td>${e(a.symbol)}</td><td class="num">${a.eigeneMenge}</td>
+                 <td class="num">${a.brokerMenge}</td>
+                 <td class="num dn"><b>${a.differenz > 0 ? '+' : ''}${a.differenz}</b></td></tr>`,
+             )
+             .join('')}</tbody></table>
+         <p class="hint">Eine Position, die nur beim Broker liegt, ist ein Risiko,
+           von dem die Engine nichts weiß. Eine, die nur im Buch steht, lässt sie
+           mit einer Deckung rechnen, die es nicht gibt. Beides vor dem Handeln klären.</p>`
+      : '';
+
+  return `
+    <div class="hint" style="margin-bottom:6px"><b>${
+      r.modus === 'live' ? 'ECHTGELD' : 'Papierhandel'
+    }</b> — ${e(r.meldung)}</div>
+    <div class="hint">
+      ${ampel(r.schluesselVorhanden)} Schlüssel hinterlegt ·
+      ${ampel(r.wunschLive)} Strategie auf Echtgeld ·
+      ${ampel(r.envFreigabe)} Umgebungs-Freigabe
+    </div>
+    ${
+      k
+        ? `<table class="tbl st-num" style="width:100%;margin-top:6px"><tbody>
+             <tr><td>Kontostatus</td><td class="num">${e(k.status)}</td></tr>
+             <tr><td>Barbestand</td><td class="num">${k.cash.toFixed(2)} ${e(k.currency)}</td></tr>
+             <tr><td>Depotwert</td><td class="num">${k.equity.toFixed(2)} ${e(k.currency)}</td></tr>
+             <tr><td>Kaufkraft</td><td class="num">${k.buyingPower.toFixed(2)} ${e(k.currency)}</td></tr>
+           </tbody></table>`
+        : ''
+    }
+    ${abw}
+    ${r.fehler ? `<p class="hint">${e(r.fehler)}</p>` : ''}`;
+}
+
+/** Klarnamen der Steuertöpfe — die Kürzel sagen einem Menschen nichts. */
+const TOPF_LABEL: Record<string, string> = {
+  aktien: 'Aktien (§ 20 Abs. 6 S. 4)',
+  sonstige: 'ETFs / Sonstige (§ 20)',
+  termin: 'Termingeschäfte / Leerverkäufe',
+  privat: 'Krypto — privates Veräußerungsgeschäft (§ 23)',
+};
+
+/**
+ * Steuerbericht als Karte.
+ *
+ * Die Töpfe stehen einzeln UND ohne Gesamtsumme. Das ist Absicht: Eine
+ * Gesamtsumme wäre die eine Zahl, die jeder ablesen würde — und sie wäre
+ * steuerlich bedeutungslos, weil die Töpfe nicht gegeneinander verrechnet
+ * werden dürfen. Wer sie zeigt, lädt zum größten Fehler ein.
+ */
+function renderSteuerbericht(r: TaxReportResult): string {
+  const e = escText;
+  const geld = (n: number): string =>
+    `${n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${r.bericht.waehrung}`;
+  const b = r.bericht;
+
+  const zeilen = (Object.keys(TOPF_LABEL) as Array<keyof typeof b.toepfe>)
+    .map((k) => ({ k, t: b.toepfe[k] }))
+    .filter((x) => x.t.n > 0)
+    .map(
+      (x) => `<tr>
+        <td>${e(TOPF_LABEL[x.k] ?? String(x.k))}</td>
+        <td class="num">${x.t.n}</td>
+        <td class="num">${geld(x.t.gewinne)}</td>
+        <td class="num">${geld(-x.t.verluste)}</td>
+        <td class="num ${x.t.saldo >= 0 ? 'up' : 'dn'}"><b>${geld(x.t.saldo)}</b></td>
+      </tr>`,
+    )
+    .join('');
+
+  const hinweise: string[] = [];
+  if (!b.echtgeld) {
+    hinweise.push(
+      '<b>Papierhandel.</b> Diese Zahlen sind nicht steuerbar — Papiergewinne sind ' +
+        'keine Einkünfte. Der Bericht zeigt, wie er bei Echtgeld aussähe.',
+    );
+  }
+  if (b.privatSteuerfrei !== 0) {
+    hinweise.push(
+      `<b>${geld(b.privatSteuerfrei)}</b> aus Krypto sind nach der Ein-Jahres-Frist ` +
+        'steuerfrei und stehen deshalb in keinem Topf.',
+    );
+  }
+  if (b.privatUnterFreigrenze) {
+    hinweise.push(
+      `Der § 23-Gewinn von ${geld(b.privatSteuerpflichtig)} liegt unter der Freigrenze ` +
+        `von ${b.rechtsstand.privatFreigrenze} € — dann ist er ganz steuerfrei. Achtung: ` +
+        'Das ist eine Freigrenze, kein Freibetrag; ein Euro darüber macht den ganzen Betrag steuerpflichtig.',
+    );
+  }
+  if (r.historieUnvollstaendig) {
+    hinweise.push(
+      '<b>Historie unvollständig.</b> Es wurden nicht alle Trades gelesen — ' +
+        'Anschaffungskurse können fehlen und Gewinne dadurch zu hoch stehen.',
+    );
+  }
+  if (b.unpaarbar.length > 0) {
+    hinweise.push(
+      `${b.unpaarbar.length} Verkäufe ohne passende Anschaffung — sie sind ` +
+        'ausgelassen statt geraten.',
+    );
+  }
+  if (b.fxLuecken > 0) {
+    hinweise.push(
+      `${b.fxLuecken} Trades notieren in Fremdwährung. Die Beträge stehen in ` +
+        `${b.waehrung}; für die Erklärung ist mit dem Kurs des Ausführungstags in Euro umzurechnen.`,
+    );
+  }
+
+  const offen = b.offen.length;
+  const fristBald = b.offen.filter(
+    (o) => typeof o.tageBisJahresfrist === 'number' && o.tageBisJahresfrist > 0,
+  );
+
+  return `
+    <table class="tbl st-num" style="width:100%">
+      <thead><tr><th>Topf</th><th class="num">Fälle</th><th class="num">Gewinne</th>
+        <th class="num">Verluste</th><th class="num">Saldo</th></tr></thead>
+      <tbody>${zeilen || '<tr><td colspan="5" class="hint">Keine Veräußerungen in diesem Jahr.</td></tr>'}</tbody>
+    </table>
+    <p class="hint" style="margin-top:6px">Die Töpfe stehen bewusst einzeln und ohne
+      Gesamtsumme — sie dürfen nicht gegeneinander verrechnet werden.</p>
+    ${hinweise.map((h) => `<p class="hint">${h}</p>`).join('')}
+    ${
+      offen > 0
+        ? `<p class="hint">${offen} offene Position${offen === 1 ? '' : 'en'} — noch nicht
+           veräußert, also noch nicht steuerbar.${
+             fristBald.length > 0
+               ? ` Bei ${fristBald.length} davon läuft die Krypto-Jahresfrist noch
+                   (nächste in ${Math.min(...fristBald.map((o) => o.tageBisJahresfrist ?? 0))} Tagen).`
+               : ''
+           }</p>`
+        : ''
+    }
+    <div class="row" style="gap:8px;margin-top:8px;align-items:center">
+      <a class="btn btn-n" id="txCsv" href="#" download>CSV herunterladen</a>
+      <span class="hint">${r.gelesen} Trades geprüft · ${b.veraeusserungen.length} Veräußerungen</span>
+    </div>
+    <p class="hint" style="margin-top:6px">${e(b.rechtsstandHinweis)}</p>
+    <p class="hint"><b>Keine Steuerberatung.</b> Es wird bewusst keine Steuerschuld
+      gerechnet — sie hängt von Kirchensteuer, Veranlagungsart, Freistellungsaufträgen
+      und Verlustvorträgen ab, die dieses System nicht kennt.</p>`;
+}
 
 /* ── Subscriptions ──────────────────────────────────────────────────── */
 
@@ -5992,6 +6195,57 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   $('rsWord').addEventListener('input', () => {
     ($('rsGo') as HTMLButtonElement).disabled =
       ($('rsWord') as HTMLInputElement).value.trim() !== RESET_CONFIRM_WORD;
+  });
+  $('bkGo')?.addEventListener('click', () => {
+    const btn = $('bkGo') as HTMLButtonElement;
+    btn.disabled = true;
+    $('bkOut').innerHTML = '<div class="hint">Prüfe Verbindung …</div>';
+    void callBrokerStatus()
+      .then((r) => {
+        $('bkOut').innerHTML = renderBrokerStatus(r);
+      })
+      .catch((e) => {
+        $('bkOut').innerHTML = `<div class="hint">${escText((e as Error).message)}</div>`;
+      })
+      .finally(() => {
+        btn.disabled = false;
+      });
+  });
+  // Steuer-Export: Jahresauswahl füllen (laufendes Jahr und die fünf davor —
+  // weiter zurück gibt es keine Historie, und die Liste bliebe unübersichtlich).
+  const txYear = $('txYear') as HTMLSelectElement;
+  if (txYear && txYear.options.length === 0) {
+    const jetzt = new Date().getUTCFullYear();
+    for (let j = jetzt; j >= jetzt - 5; j--) {
+      const o = document.createElement('option');
+      o.value = String(j);
+      o.textContent = String(j);
+      txYear.appendChild(o);
+    }
+  }
+  $('txGo')?.addEventListener('click', () => {
+    const btn = $('txGo') as HTMLButtonElement;
+    const jahr = Number(txYear.value);
+    const echtgeld = ($('txReal') as HTMLInputElement).checked;
+    btn.disabled = true;
+    $('txOut').innerHTML = '<div class="hint">Rechne …</div>';
+    void callTaxReport(jahr, echtgeld)
+      .then((r) => {
+        $('txOut').innerHTML = renderSteuerbericht(r);
+        const dl = $('txCsv') as HTMLAnchorElement | null;
+        if (dl) {
+          // BOM voranstellen: Ohne ihn zeigt deutsches Excel Umlaute kaputt an.
+          const blob = new Blob(['﻿' + r.csv], { type: 'text/csv;charset=utf-8' });
+          dl.href = URL.createObjectURL(blob);
+          dl.download = `autotrd-steuer-${jahr}${echtgeld ? '' : '-papierhandel'}.csv`;
+        }
+      })
+      .catch((e) => {
+        $('txOut').innerHTML = `<div class="hint">${escText((e as Error).message)}</div>`;
+      })
+      .finally(() => {
+        btn.disabled = false;
+      });
   });
   $('rsGo').addEventListener('click', () => {
     const btn = $('rsGo') as HTMLButtonElement;

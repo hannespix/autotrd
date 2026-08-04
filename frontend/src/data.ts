@@ -7,6 +7,7 @@ import {
   type GlobalAxisStats,
   type Position,
   type Quote,
+  type Steuerbericht,
   type Strategy,
   type Wallet,
 } from '@autotrd/shared';
@@ -29,8 +30,8 @@ import {
 
 // ── Listener-Buchhaltung (M9): jeder onSnapshot läuft über diesen Wrapper,
 // damit Panel-Wechsel nachweislich keine Listener leaken (E2E-Zähler).
-// Der Zähler liegt in listeners.ts, weil die Supabase-Schicht denselben
-// benutzt — sonst würde der Leak-Test nach der Umstellung nichts mehr messen.
+// Der Zähler liegt in listeners.ts statt hier, damit ihn auch Module
+// hochzählen können, die data.ts nicht importieren.
 import { listenerCount, trackListener } from './listeners.js';
 
 export { listenerCount };
@@ -242,6 +243,65 @@ export interface ResetWalletResult {
   deleted: Record<string, number>;
   balance: number;
   resetAt: string;
+}
+
+export interface TaxReportResult {
+  ok: true;
+  bericht: Steuerbericht;
+  csv: string;
+  gelesen: number;
+  historieUnvollstaendig: boolean;
+}
+
+/**
+ * Jahres-Steuerbericht serverseitig rechnen lassen.
+ *
+ * Bewusst KEIN Client-Rechenweg: Der Bericht braucht die volle Historie
+ * inklusive Archiv, und die liegt hinter den Firestore-Regeln. Ihn im Browser
+ * zu rechnen hieße, alle Trades aller Jahre zu laden — teuer und langsam,
+ * ohne dass der Nutzer etwas davon hätte.
+ */
+export async function callTaxReport(jahr: number, echtgeld: boolean): Promise<TaxReportResult> {
+  const r = await httpsCallable(fns(), 'taxReport')({ jahr, echtgeld });
+  return r.data as TaxReportResult;
+}
+
+export interface BrokerStatusResult {
+  ok: true;
+  modus: 'paper' | 'live';
+  wunschLive: boolean;
+  envFreigabe: boolean;
+  schluesselVorhanden: boolean;
+  konto: {
+    id: string;
+    status: string;
+    currency: string;
+    cash: number;
+    equity: number;
+    buyingPower: number;
+    tradingBlocked: boolean;
+    accountBlocked: boolean;
+    patternDayTrader: boolean;
+  } | null;
+  abweichungen: Array<{
+    symbol: string;
+    eigeneMenge: number;
+    brokerMenge: number;
+    differenz: number;
+  }>;
+  meldung: string;
+  fehler?: string;
+}
+
+/**
+ * Zustand der Broker-Anbindung prüfen, ohne zu handeln.
+ *
+ * Bewusst ein reiner Lese-Aufruf: Wer die Anbindung erst beim ersten Trade
+ * testet, testet sie mit Geld.
+ */
+export async function callBrokerStatus(): Promise<BrokerStatusResult> {
+  const r = await httpsCallable(fns(), 'brokerStatus')({});
+  return r.data as BrokerStatusResult;
 }
 
 /** Strategie serverseitig validieren + speichern (flaches Schema). */

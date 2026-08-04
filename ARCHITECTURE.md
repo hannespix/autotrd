@@ -25,6 +25,48 @@ Leitziele: **kosteneffizient · sicher · leistungsfähig · schnell.**
 > **Blaze-Plan** (Pay-as-you-go). Bei diesem Volumen (Scan alle 5 min, kleine
 > Reads) liegt das real bei ~0–5 €/Monat. Budget-Alarm im GCP-Projekt setzen!
 
+### Supabase: verworfen und ausgebaut (04.08.)
+
+Am 26.07. wurde beschlossen, auf Supabase (Postgres) umzuziehen. Fertig
+waren Schema mit RLS, Auth-Schicht und der Lesepfad für Marktdaten. Am
+04.08. wurde der gesamte Strang **gelöscht** — Migrationen, Edge Function,
+`frontend/src/{supabase,authSupabase,dataSupabase}.ts`, der Deploy-Workflow
+und die CI-Schritte (Deno-Drift-Guard, Postgres-RLS-Tests).
+
+**Warum:** Die Kostenrechnung trug nicht. Bei fünf Konten kostet Firebase
+~14 $/Monat, Supabase ~25 $ — und Firebase bleibt bei *jeder* Nutzerzahl
+billiger, weil Realtime-Nachrichten (2,50 $/Mio) gegen Firestore-Reads
+(0,60 $/Mio) beim Fan-out um Faktor vier verlieren. Das ursprüngliche
+Zeitdruck-Argument („M12b und M13 schreiben den meisten Persistenzcode,
+sonst schreibt man ihn zweimal") wurde zirkulär, seit beide Vorhaben nicht
+als Nächstes kommen.
+
+**Warum löschen statt einfrieren:** Eine halbfertige zweite Datenschicht
+kostet auch dann, wenn sie niemand benutzt. `dataSupabase.ts` fehlten 20 von
+40 Exporten aus `data.ts`, und jede Erweiterung vergrößerte den Abstand
+still. Wer die eine Schicht ändert, muss die andere mitdenken oder bewusst
+ignorieren — beides ist Aufwand ohne Gegenwert. Der Code steht in der
+Git-Historie (Stand `789e2ef`) und lässt sich jederzeit zurückholen, falls
+die Rechnung einmal kippt.
+
+**Was die Rechnung kippen würde** — nicht der Kalender, sondern die
+Fenster-Grenze der Auswertung: `snapshotEquity` liest je Konto die jüngsten
+`TRADES_WINDOW = 500` Trades. Das ist keine fachliche Grenze, sondern eine
+Kostenbremse, denn Firestore rechnet je gelesenem Dokument ab. Am 04.08.
+stehen 514 geschlossene Trades über vier Konten — bei dieser Frequenz
+schneidet das Fenster in wenigen Monaten echte Information ab, und der
+Selbstverbesserer lernt aus einem Ausschnitt, ohne dass es jemand sieht.
+Postgres läse denselben Zeitraum als eine Query zum Pauschalpreis und
+beantwortete dabei Fragen, für die Firestore je Frage einen Index braucht.
+**Erst wenn die Auswertung mehr Historie braucht, als das Fenster hergibt,
+lohnt das Thema erneut.**
+
+*Nicht* auf der Liste steht der lange Backtest, der hier zwischenzeitlich
+als Auslöser notiert war: `functions/src/core/backtest.ts` rechnet Long/Flat
+über Tages-Bars, während die Live-Engine auf 5-Minuten-Kerzen handelt und
+shorten darf. Er misst eine Strategie, die so nie läuft, und ließe sich mit
+Yahoo (5m nur ~60 Tage) gar nicht auf die echte Zeitbasis heben.
+
 ## 2. Gesamtbild
 
 ```

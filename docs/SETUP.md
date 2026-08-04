@@ -267,171 +267,65 @@ Der Scan schreibt einen Heartbeat nach `meta/health` (`lastScanAt`,
    (zusätzlich zum Token-Guard `admin/aiBudget` und dem Anthropic-Spend-Limit
    aus §H).
 
-## K. Supabase-Projekt anlegen (Migration MS, ~10 min)
-
-Ab der Migration (MILESTONES *MS*) läuft die Datenhaltung auf Supabase.
-Bestehende Firebase-Daten werden **nicht** übernommen — Konten und Wallets
-entstehen auf der neuen Instanz frisch.
-
-1. **Projekt anlegen:** [supabase.com](https://supabase.com) → *New Project*
-   - Name: `autotrd`
-   - **Region: Frankfurt (eu-central-1)** — kurze Wege zu den Nutzern und
-     Daten in der EU.
-   - Datenbank-Passwort erzeugen lassen und **sicher speichern** (es wird
-     unten für die Migrationen gebraucht und ist später nicht mehr einsehbar).
-2. **Schlüssel abholen:** *Project Settings → API*
-   - `Project URL` → z. B. `https://abcdefgh.supabase.co`
-   - `anon public` → der Schlüssel für den Browser
-   - `service_role` → **Vollzugriff, umgeht ALLE Sicherheitsregeln.**
-     Gehört ausschließlich in GitHub-Secrets und Edge Functions, **niemals**
-     in den Frontend-Build oder ins Repo.
-3. **Verbindungszeichenfolge:** *Project Settings → Database → Connection
-   string → URI*, das Passwort aus Schritt 1 einsetzen.
-4. **Im GitHub-Repo hinterlegen** (*Settings → Secrets and variables → Actions*):
-
-   | Art | Name | Wert |
-   |-----|------|------|
-   | Secret | `SUPABASE_DB_URL` | Verbindungszeichenfolge aus Schritt 3 |
-   | Secret | `SUPABASE_SERVICE_ROLE_KEY` | `service_role`-Schlüssel |
-   | Variable | `VITE_SUPABASE_URL` | Project URL |
-   | Variable | `VITE_SUPABASE_ANON_KEY` | `anon public`-Schlüssel |
-
-   Der `anon`-Schlüssel steht später im ausgelieferten JavaScript — das ist
-   so vorgesehen und ungefährlich, weil jede Zeile zusätzlich durch Row Level
-   Security geschützt ist (`supabase/migrations/0002_rls.sql`). Genau deshalb
-   ist die Trennung zum `service_role`-Schlüssel so wichtig.
-5. **Migrationen einspielen:** Sobald `SUPABASE_DB_URL` gesetzt ist, spielt
-   der Workflow *Deploy Supabase (Migrationen)* bei jedem Push auf `main`
-   alle Dateien aus `supabase/migrations/` ein (idempotent, in Reihenfolge).
-   Manuell geht es genauso: `psql "$SUPABASE_DB_URL" -f supabase/migrations/0001_schema.sql`
-6. **Abnahme:** In der Supabase-Konsole unter *Table Editor* stehen die
-   Tabellen `profiles`, `wallets`, `positions`, `trades`, `strategies`,
-   `market_symbols` … und unter *Authentication → Policies* die Regeln.
-   `wallets` darf **keine** Insert/Update-Policy haben — Geld schreibt nur
-   der Server.
-
-## L. Sich selbst zum Admin machen (nach der Registrierung)
+## K. Sich selbst zum Admin machen (nach der Registrierung)
 
 Neue Konten landen auf der Stufe `pending` — sie sehen die App, können aber
 weder die Engine starten noch handeln. Das gilt auch für **dein eigenes**
 Konto. Einmalig freischalten und zum Admin machen:
 
 1. Auf autotrd.net registrieren (normale Anmeldung).
-2. Supabase-Dashboard → **SQL Editor** → ausführen (E-Mail anpassen):
-
-   ```sql
-   update public.profiles
-      set role = 'admin', access_level = 'approved', approved_at = now()
-    where email = 'deine@mailadresse.de';
-   ```
-
+2. GitHub → *Actions* → **Admin-Bootstrap** → *Run workflow*, dort die
+   E-Mail des Kontos eintragen und starten.
 3. Neu laden — die Admin-Ansicht mit den offenen Anfragen erscheint.
 
 Ab da geht alles über die Oberfläche: Neue Registrierungen tauchen dort auf
-und werden per Klick freigeschaltet. Der SQL-Schritt ist nur für den ersten
-Admin nötig — vorher gibt es ja niemanden, der freischalten könnte.
+und werden per Klick freigeschaltet. Der Workflow ist nur für den ersten
+Admin nötig — vorher gibt es niemanden, der freischalten könnte.
 
 **Warum das nicht über die App geht:** Wer sich selbst freischalten könnte,
-bräuchte kein Freischaltsystem. Ein Datenbank-Riegel weist genau das ab
-(Testfälle 18/19) — die einzige Ausnahme ist der direkte Datenbankzugriff,
-den nur du hast.
+bräuchte kein Freischaltsystem. Die Firestore-Regeln weisen genau das ab —
+`users/{uid}.admin` ist für den Nutzer selbst nicht schreibbar. Der Workflow
+umgeht das legitim, weil er mit dem Deploy-Service-Account läuft: dieselbe
+Vertrauensstufe wie ein Deploy, und er braucht Repo-Schreibrecht.
 
-## M. E-Mails: eigener Absender + Vorlagen (gegen den Spam-Ordner)
+## L. E-Mails: eigener Absender (gegen den Spam-Ordner)
 
 **Warum Bestätigungsmails im Spam landen:** Nicht wegen des Textes, sondern
-wegen des Absenders. Die eingebauten Mails kommen von einer generischen
-Adresse des Anbieters (`noreply@mail.app.supabase.io`) — für Spamfilter
-schreibt da eine fremde Domain im Namen von autotrd.net. Genau dieses Muster
-bewerten sie schlecht, egal wie schön die Mail gestaltet ist.
+wegen des Absenders. Firebase Auth verschickt seine Mails per Voreinstellung
+über `noreply@<projekt-id>.firebaseapp.com` — für Spamfilter schreibt da
+eine fremde Domain im Namen von autotrd.net. Genau dieses Muster bewerten
+sie schlecht, egal wie schön die Mail gestaltet ist.
 
-Dazu kommt ein praktischer Grund: Der eingebaute Versand ist im kostenlosen
-Tarif auf wenige Mails pro Stunde begrenzt und für echten Betrieb ohnehin
-nicht gedacht.
+### 1. Absenderdomain beglaubigen (~15 min)
 
-### 1. Mail-Dienst einrichten (~15 min)
-
-Einen Anbieter wählen (Resend, Postmark und Brevo haben brauchbare
-Gratis-Kontingente), dort `autotrd.net` als Absenderdomain eintragen und die
-angezeigten **DNS-Einträge bei deinem Domain-Anbieter hinterlegen**:
+Firebase-Konsole → *Authentication* → *Templates* → **Customize domain**.
+Firebase zeigt die nötigen **DNS-Einträge**, die beim Domain-Anbieter zu
+hinterlegen sind:
 
 | Eintrag | Zweck |
 |---------|-------|
-| SPF (TXT) | erlaubt dem Dienst, für deine Domain zu senden |
+| SPF (TXT) | erlaubt Firebase, für deine Domain zu senden |
 | DKIM (CNAME/TXT) | signiert die Mails kryptografisch |
 | DMARC (TXT) | sagt Empfängern, was bei Fälschungen zu tun ist |
 
 Ohne diese drei Einträge hilft kein Design — mit ihnen landen die Mails
-zuverlässig im Posteingang. Anschließend in Supabase unter
-*Project Settings → Authentication → SMTP Settings* den Dienst eintragen,
-Absender `noreply@autotrd.net`, Anzeigename `autotrd`.
+zuverlässig im Posteingang.
 
-### 2. Vorlagen einsetzen (~5 min)
+### 2. Vorlagen anpassen (~5 min)
 
-Unter *Authentication → Emails* die Vorlagen aus `supabase/templates/`
-einfügen:
-
-| Supabase-Vorlage | Datei |
-|------------------|-------|
-| Confirm signup | `confirm-signup.html` |
-| Reset password | `reset-password.html` |
-| Magic Link | `magic-link.html` |
-
-Als Betreff empfehlen sich schlichte, ehrliche Zeilen ohne Werbesprache und
-ohne Ausrufezeichen — beides erhöht die Spam-Bewertung:
+Unter *Authentication → Templates* Absendername `autotrd` und Antwortadresse
+setzen. Als Betreff empfehlen sich schlichte, ehrliche Zeilen ohne
+Werbesprache und ohne Ausrufezeichen — beides erhöht die Spam-Bewertung:
 
 - „autotrd: E-Mail-Adresse bestätigen"
 - „autotrd: Neues Passwort festlegen"
-- „autotrd: Dein Anmeldelink"
 
-Die Vorlagen sind bewusst als Tabellen mit Inline-Styles gebaut (viele
-Mail-Programme ignorieren `<style>`-Blöcke), enthalten **keine Bilder und
-keine externen Nachladungen** — auch das fließt in die Spam-Bewertung ein —
-und zeigen den Ziel-Link im Klartext, statt ihn hinter Text zu verstecken.
+Firebase erlaubt nur begrenztes HTML in den Vorlagen. Das ist kein Verlust:
+Mails ohne Bilder und ohne externe Nachladungen werden von Spamfiltern
+besser bewertet als gestaltete.
 
 ### 3. Prüfen
 
 Nach der Umstellung eine Testregistrierung an eine Gmail- **und** eine
 Outlook-Adresse. Landet sie im Posteingang und zeigt Gmail unter „Original
 anzeigen" bei SPF, DKIM und DMARC jeweils `PASS`, ist alles richtig gesetzt.
-
-## N. Scan als Edge Function betreiben (Migration MS3)
-
-Der Marktdaten-Scan läuft als Supabase Edge Function (`supabase/functions/scan`).
-Er benutzt dieselbe Rechenlogik wie bisher — Indikatoren, Konfluenz und
-Katalog kommen unverändert aus `shared/` und laufen in Deno, weil sie keine
-Node-Bibliotheken benutzen.
-
-### Einmal einrichten
-
-1. **Zugriffs-Token** erzeugen: [supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens)
-   → als GitHub-Secret `SUPABASE_ACCESS_TOKEN` hinterlegen.
-2. **Funktion veröffentlichen** (lokal oder über den Workflow):
-
-   ```bash
-   node scripts-ci/build-edge-shared.mjs        # leitet _shared/ ab
-   npx supabase functions deploy scan --project-ref zofhylhgohxqtfostmlw
-   ```
-
-3. **Alle 5 Minuten aufrufen** — einmalig im SQL-Editor ausführen und dabei
-   `DEIN-SECRET-KEY` einsetzen (der Schlüssel steht dann in der Datenbank,
-   nicht im Repo):
-
-   ```sql
-   create extension if not exists pg_cron;
-   create extension if not exists pg_net;
-
-   select cron.schedule('autotrd-scan', '*/5 * * * *', $$
-     select net.http_post(
-       url     := 'https://zofhylhgohxqtfostmlw.supabase.co/functions/v1/scan',
-       headers := '{"Authorization": "Bearer DEIN-SECRET-KEY", "Content-Type": "application/json"}'::jsonb
-     );
-   $$);
-   ```
-
-   Prüfen: `select * from cron.job;` · Verlauf: `select * from cron.job_run_details order by start_time desc limit 5;`
-
-### Abnahme
-
-`select value from public.meta where key = 'health';` zeigt `lastRunAt`,
-`symbolsOk` und `source: 'supabase-edge'`. Wächst `lastRunAt` alle fünf
-Minuten, läuft der Scan.

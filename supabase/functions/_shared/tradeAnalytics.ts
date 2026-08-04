@@ -3,8 +3,8 @@
  * „detaillierte Aufschlüsselung, Charts, Pies, sinnvolle Analyse-Diagramme").
  *
  * Alles hier ist PUR: rein aus einer Trade-Liste gerechnet, keine Datenbank,
- * keine Uhr, kein Zufall. Damit sind die Zahlen testbar und überall
- * identisch — Scheduler, Callable und Browser rechnen dieselbe Zahl.
+ * keine Uhr, kein Zufall. Damit sind die Zahlen testbar und in jedem Backend
+ * identisch — sie überleben also den Supabase-Umstieg unverändert.
  *
  * ── Abgrenzung zu portfolio.ts ─────────────────────────────────────────────
  *

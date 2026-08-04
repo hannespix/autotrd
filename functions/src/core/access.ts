@@ -4,9 +4,9 @@
  * „Registrierung nicht für jeden frei. Ohne Freischaltung soll man das Tool
  *  sehen, aber die Engine nicht starten."
  *
- * Dieselbe Regel gilt bereits in der Supabase-Datenbank (Migration 0006).
- * Bis zur Umschaltung läuft der Betrieb aber auf Firebase — ohne diesen
- * Riegel könnte sich hier jeder registrieren und sofort handeln.
+ * Der Riegel sitzt serverseitig, nicht in der UI: Ohne ihn könnte sich
+ * jeder registrieren und sofort handeln — ein verstecktes Formular ist
+ * keine Zugangskontrolle.
  *
  * ZWEI Entscheidungen, die man kennen muss:
  *
