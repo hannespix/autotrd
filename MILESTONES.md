@@ -2047,6 +2047,37 @@ Owner-Entscheidung:
 - **M10b Langfrist-Depot-Horizonte**, **Chart-Vision** (1-Minuten-Daten,
   ATR-/Pivot-Marken), **M12 Multi-Wallet-Migration**.
 
+### C-Vorarbeit: die Verifikationslücke bei UI-Änderungen *(04.08.)*
+
+Gruppe C ist überwiegend Frontend — und dort konnte ich bis heute nur
+„kompiliert sauber" sagen, nicht „funktioniert". Das war in zwei PRs
+hintereinander eine ehrliche, aber unbefriedigende Einschränkung.
+
+Der erste Riegel steht jetzt: `frontend/test/domIds.test.ts` gleicht
+statisch ab, ob jeder Element-Zugriff ein Element findet. Der Hintergrund
+ist der Helfer, mit dem das Dashboard arbeitet:
+
+```ts
+const $ = (id: string): HTMLElement => document.getElementById(id)!;
+```
+
+Das `!` ist eine Behauptung, keine Prüfung. Ein Tippfehler in der ID
+kompiliert sauber durch — der Typ ist ja versprochen — und wird erst im
+Browser zu `Cannot read properties of null`. Weil das Dashboard sein
+Markup in einem Rutsch aufbaut, reißt ein einziger solcher Zugriff die
+ganze Oberfläche mit: weißer Screen statt einer kaputten Zeile. Genau die
+Fehlerklasse, vor der CLAUDE.md §4 aus einem anderen Grund warnt.
+
+Stand heute: **244 Zugriffe, 261 vergebene IDs, keine Lücke.** Der Test
+prüft nur diese eine Richtung — eine ID im Markup ohne Zugriff ist
+harmlos (CSS, `querySelectorAll`, Anker). Und er ist gegen einen
+eingebauten Fehler geprüft: Ein künstlicher Tippfehler macht ihn rot und
+nennt ID samt Datei.
+
+Was er NICHT ersetzt: eine echte Browser-Prüfung (klickt der Regler?
+speichert der Knopf?). Dafür bräuchte es Playwright gegen die
+Emulatoren — machbar, aber eine eigene Aufgabe.
+
 ### D. Bewusste Wegpunkte, kein To-do
 
 - **C3** `backtest.ts`/`sweep.ts` ohne Aufrufer — behalten als
