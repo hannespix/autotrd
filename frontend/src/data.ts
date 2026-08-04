@@ -23,6 +23,7 @@ import {
   startAfter,
   updateDoc,
   documentId,
+  type QueryDocumentSnapshot,
   type Unsubscribe,
 } from 'firebase/firestore';
 
@@ -416,7 +417,7 @@ export const TRADE_PAGE = 50;
  */
 export function watchTrades(
   uid: string,
-  cb: (trades: TradeRow[]) => void,
+  cb: (trades: TradeRow[], cursor: TradeCursor | null) => void,
   pageSize = TRADE_PAGE,
 ): Unsubscribe {
   const q = query(
@@ -425,14 +426,29 @@ export function watchTrades(
     limit(pageSize),
   );
   return onSnapshot(q, (snap) => {
-    cb(snap.docs.map((d) => d.data() as TradeRow));
+    cb(snap.docs.map((d) => d.data() as TradeRow), snap.docs[snap.docs.length - 1] ?? null);
   });
 }
 
+/**
+ * Seiten-Cursor der Handelshistorie: das LETZTE Dokument der geladenen Seite,
+ * nicht dessen Zeitstempel.
+ *
+ * Warum das wichtig ist (Owner-Fund 04.08.: „warum kann man nicht mehr weitere
+ * laden?"): Ein Zeitstempel-Cursor mit `startAfter(executedAt)` springt über
+ * ALLE Zeilen mit exakt diesem Wert hinweg. Der Momentum-Sockel schreibt aber
+ * bis zu 38 Orders in einem Rutsch — landen davon zwei in derselben
+ * Millisekunde und fällt die Seitengrenze genau dazwischen, verschwinden
+ * Zeilen lautlos, und im Extremfall besteht die nächste Seite nur aus schon
+ * bekannten Zeilen: Der Knopf reagiert, es passiert nur nichts Sichtbares.
+ * Ein Dokument-Cursor ist in Firestore eindeutig und kennt das Problem nicht.
+ */
+export type TradeCursor = QueryDocumentSnapshot;
+
 export interface TradePage {
   rows: TradeRow[];
-  /** Ältester Zeitstempel dieser Seite — Cursor für die nächste. */
-  cursor: string | null;
+  /** Letztes Dokument dieser Seite — Cursor für die nächste. */
+  cursor: TradeCursor | null;
   /** Keine weiteren Zeilen mehr (Seite kam unvollständig zurück). */
   done: boolean;
 }
@@ -448,21 +464,20 @@ export interface TradePage {
  */
 export async function loadMoreTrades(
   uid: string,
-  beforeAt: string,
+  after: TradeCursor,
   pageSize = TRADE_PAGE,
 ): Promise<TradePage> {
   const q = query(
     collection(db(), 'users', uid, 'trades'),
     orderBy('executedAt', 'desc'),
-    startAfter(beforeAt),
+    startAfter(after),
     limit(pageSize),
   );
   const snap = await getDocs(q);
-  const rows = snap.docs.map((d) => d.data() as TradeRow);
   return {
-    rows,
-    cursor: rows[rows.length - 1]?.executedAt ?? null,
-    done: rows.length < pageSize,
+    rows: snap.docs.map((d) => d.data() as TradeRow),
+    cursor: snap.docs[snap.docs.length - 1] ?? null,
+    done: snap.docs.length < pageSize,
   };
 }
 

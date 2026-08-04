@@ -112,6 +112,7 @@ import {
   type EvaluatedForecastRow,
   type ForecastStatsDoc,
   type HealthDoc,
+  type TradeCursor,
   type PositioningDoc,
   type IndicatorRow,
   type MarketDocData,
@@ -346,7 +347,9 @@ interface DashState {
    */
   watched: string[];
   /** Historie: älteste geladene Zeile — Cursor der nächsten Seite. */
-  tradesCursor: string | null;
+  tradesCursor: TradeCursor | null;
+  /** Letzter Nachlade-Fehler — sichtbar statt nur in der Konsole. */
+  tradesFehler: string | null;
   /** Keine älteren Zeilen mehr — der Knopf verschwindet. */
   tradesDone: boolean;
   tradesLoading: boolean;
@@ -4379,21 +4382,41 @@ function tradeKey(t: TradeRow): string {
   return `${t.executedAt}|${t.symbol}|${t.side}|${t.qty}`;
 }
 
-/** Eine ältere Seite anhängen (Knopf „Ältere laden"). */
+/**
+ * Eine ältere Seite anhängen (Knopf „Ältere laden").
+ *
+ * Zwei Lehren aus dem Owner-Fund vom 04.08. („warum kann man nicht mehr
+ * weitere laden?"):
+ *
+ * 1. Ein Fehler darf hier nicht mehr stumm in der Konsole landen. Vorher sah
+ *    ein abgelehnter Zugriff exakt so aus wie eine leere Historie — der Knopf
+ *    sprang zurück und nichts geschah, ohne dass irgendwo stand, warum.
+ * 2. Bringt eine Seite ausschließlich schon bekannte Zeilen, wird sofort
+ *    weitergeblättert statt aufzugeben. Sonst bliebe der Knopf für immer
+ *    an derselben Stelle stehen.
+ */
 async function ladeAeltereTrades(): Promise<void> {
   if (!st || st.tradesLoading || st.tradesDone || !st.tradesCursor) return;
   const uid = st.uid;
   st.tradesLoading = true;
+  st.tradesFehler = null;
   renderJournal();
   try {
-    const seite = await loadMoreTrades(uid, st.tradesCursor);
-    const bekannt = new Set(st.trades.map(tradeKey));
-    // Dedup an der Naht: Der Cursor ist ein Zeitstempel, kein Doc-Cursor —
-    // zwei Trades in derselben Millisekunde könnten sonst doppelt erscheinen.
-    st.trades = [...st.trades, ...seite.rows.filter((t) => !bekannt.has(tradeKey(t)))];
-    st.tradesCursor = seite.cursor ?? st.tradesCursor;
-    st.tradesDone = seite.done;
+    // Höchstens fünf Runden je Klick: Eine Seite ohne neue Zeilen ist kein
+    // Grund aufzugeben, aber eine Endlosschleife wäre schlimmer als ein Knopf,
+    // den man zweimal drückt.
+    for (let runde = 0; runde < 5 && st.tradesCursor && !st.tradesDone; runde++) {
+      const seite = await loadMoreTrades(uid, st.tradesCursor);
+      if (!st) return; // Abmeldung während der Abfrage
+      const bekannt = new Set(st.trades.map(tradeKey));
+      const neue = seite.rows.filter((t) => !bekannt.has(tradeKey(t)));
+      st.trades = [...st.trades, ...neue];
+      st.tradesCursor = seite.cursor ?? st.tradesCursor;
+      st.tradesDone = seite.done;
+      if (neue.length > 0) break;
+    }
   } catch (e) {
+    st.tradesFehler = e instanceof Error ? e.message : String(e);
     console.warn('Ältere Trades nicht ladbar:', e);
   } finally {
     st.tradesLoading = false;
@@ -4435,9 +4458,25 @@ function renderJournal(): void {
   }
   const mehr = $('jMore') as HTMLButtonElement | null;
   if (mehr) {
-    mehr.hidden = st.tradesDone;
-    mehr.disabled = st.tradesLoading;
-    mehr.textContent = st.tradesLoading ? 'Lädt …' : 'Ältere laden';
+    // Nie ganz verschwinden lassen: Ein fehlender Knopf sieht aus wie ein
+    // Fehler, ein ausgegrauter erklärt sich selbst (Owner-Fund 04.08.).
+    mehr.hidden = false;
+    mehr.disabled = st.tradesLoading || st.tradesDone;
+    mehr.textContent = st.tradesFehler
+      ? `Nachladen fehlgeschlagen — nochmal versuchen`
+      : st.tradesLoading
+        ? 'Lädt …'
+        : st.tradesDone
+          ? 'Alle Trades geladen'
+          : 'Ältere laden';
+    if (st.tradesFehler) {
+      mehr.disabled = false;
+      mehr.title = st.tradesFehler;
+    } else {
+      mehr.title = st.tradesDone
+        ? 'Die Historie ist vollständig geladen'
+        : 'Die nächsten 50 älteren Trades holen';
+    }
   }
 
   jb.innerHTML = '';
@@ -5140,6 +5179,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     watchlistSubs: [],
     watched: [],
     tradesCursor: null,
+    tradesFehler: null,
     tradesDone: false,
     tradesLoading: false,
     catalogOpen: 0,
@@ -5231,13 +5271,13 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     // Live-Kopf: die neuesten 50. Nachgeladene ältere Seiten bleiben erhalten
     // und werden hinten angehängt — sonst würde jeder neue Trade (alle fünf
     // Minuten einer) die ganze nachgeladene Historie wieder wegwerfen.
-    watchTrades(uid, (kopf) => {
+    watchTrades(uid, (kopf, cursor) => {
       if (!st) return;
       const bekannt = new Set(kopf.map(tradeKey));
       const aeltere = st.trades.filter((t) => !bekannt.has(tradeKey(t)));
       st.trades = [...kopf, ...aeltere];
       if (st.tradesCursor === null) {
-        st.tradesCursor = kopf[kopf.length - 1]?.executedAt ?? null;
+        st.tradesCursor = cursor;
         st.tradesDone = kopf.length < TRADE_PAGE;
       }
       renderPortfolio();
