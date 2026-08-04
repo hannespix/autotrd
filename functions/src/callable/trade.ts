@@ -6,7 +6,7 @@
 
 import { getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
-import { allSymbols, bucketKey, classify, type Quote, type Strategy } from '../../../shared/src/index.js';
+import { bucketKey, classify, tradableSymbols, type Quote, type Strategy } from '../../../shared/src/index.js';
 import { consumeQuota, executePaperTrade, resolveBrokerMode } from '../core/broker.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { accessDeniedReason, accessLevelOf, mayTrade } from '../core/access.js';
@@ -23,8 +23,16 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
     side?: unknown;
     qty?: unknown;
   };
-  if (typeof symbol !== 'string' || !new Set(allSymbols()).has(symbol)) {
-    throw new HttpsError('invalid-argument', 'Unbekanntes Symbol');
+  /* HANDELBARE Symbole, nicht bloß bekannte (04.08.).
+   *
+   * Vorher prüfte die Handeingabe gegen `allSymbols()` — den ganzen Katalog
+   * inklusive der Dinge, die `isTradable` längst ausschließt: Indizes (`^GSPC`
+   * ist eine Zahl, kein Instrument) und Auslandsbörsen. Letztere sind der
+   * ernstere Fall, denn sie notieren gar nicht in Dollar: `BMW.DE` in Euro,
+   * `7203.T` in Yen, `AZN.L` sogar in Pence. Der Kontostand ist hart in USD
+   * geführt — ein solcher Kauf hätte den Saldo lautlos verfälscht. */
+  if (typeof symbol !== 'string' || !new Set(tradableSymbols()).has(symbol)) {
+    throw new HttpsError('invalid-argument', 'Symbol nicht handelbar');
   }
   if (side !== 'buy' && side !== 'sell') {
     throw new HttpsError('invalid-argument', "side muss 'buy' oder 'sell' sein");
