@@ -3887,6 +3887,31 @@ function renderEngineWhy(): void {
       whyChip(`${h.trades} Trade(s) im letzten Scan`, h.trades > 0 ? 'var(--gn)' : 'var(--t3)'),
     );
   }
+  /* Was die Engine WOLLTE (04.08.) — nicht nur, was sie durfte.
+   *
+   * Ohne diese Zahl beantwortet die Karte nur die halbe Frage. Ein Scan ohne
+   * Trades kann heißen „ruhiger Markt" (viel Halten) oder „die Engine wollte
+   * verkaufen, während der Markt steigt" — und nur im zweiten Fall liegt das
+   * Problem in der Signal-Logik, nicht in den Filtern.
+   *
+   * Der Chip färbt sich, wenn Verkaufssignale im Aufwärtstrend überwiegen:
+   * genau die Konstellation, in der die Regime-Ampel dauernd blockt. */
+  const sd = h.signalDirs;
+  if (sd) {
+    const buy = sd.buy ?? 0;
+    const sell = sd.sell ?? 0;
+    const hold = sd.hold ?? 0;
+    const gegenTrend = h.regime?.state === 'trend' && sell > buy;
+    const chip = whyChip(
+      `Signale: ${buy}↑ ${sell}↓ ${hold}·`,
+      gegenTrend ? 'var(--rd)' : 'var(--t3)',
+    );
+    chip.title = gegenTrend
+      ? 'Die Konfluenz erzeugt mehr Verkaufs- als Kaufsignale, obwohl der Markt im Aufwärtstrend steht. ' +
+        'Die Regime-Ampel blockt diese Einstiege — sie verhindert also Wetten gegen den Trend, statt zu viel zu sperren.'
+      : 'Richtungen der Konfluenz-Signale im letzten Scan: Kauf, Verkauf, Halten.';
+    ampel.append(chip);
+  }
 
   // Zeile 2: Warum Einstiege NICHT zustande kamen — nur was wirklich griff.
   gate.innerHTML = '';
