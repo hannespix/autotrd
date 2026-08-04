@@ -356,3 +356,106 @@ describe('CSV-Export', () => {
     expect(veraeusserungenCsv(b).split('\n')).toHaveLength(1);
   });
 });
+
+describe('EUR-Umrechnung je Vorgang (M12b)', () => {
+  /** Kauf und Verkauf zu verschiedenen Kursen — der Kern der Sache. */
+  const trades = [
+    {
+      symbol: 'AAPL',
+      side: 'buy' as const,
+      qty: 10,
+      price: 100,
+      executedAt: '2026-03-02T15:00:00.000Z',
+      assetClass: 'stocks_us',
+      currency: 'USD',
+      paper: false,
+      fxRate: 1.1,
+      fxDate: '2026-03-02',
+      fxSource: 'ecb',
+    },
+    {
+      symbol: 'AAPL',
+      side: 'sell' as const,
+      qty: 10,
+      price: 100,
+      executedAt: '2026-06-02T15:00:00.000Z',
+      assetClass: 'stocks_us',
+      currency: 'USD',
+      paper: false,
+      fxRate: 1.05,
+      fxDate: '2026-06-02',
+      fxSource: 'ecb',
+    },
+  ];
+
+  it('macht aus einem Dollar-Nullsummengeschäft einen Euro-Gewinn', () => {
+    // In USD ±0 (1.000 gekauft, 1.000 verkauft). In EUR: 909,09 gegen
+    // 952,38 — ein steuerpflichtiger Währungsgewinn von 43,29 €. Wer erst
+    // das Ergebnis umrechnet, erklärt null.
+    const v = fifoVerrechnen(trades).veraeusserungen[0]!;
+    expect(v.ergebnis).toBe(0);
+    expect(v.eurAnschaffung).toBe(909.09);
+    expect(v.eurVeraeusserung).toBe(952.38);
+    expect(v.eurErgebnis).toBe(43.29);
+  });
+
+  it('führt beide Kurse mit, damit die Rechnung prüfbar bleibt', () => {
+    const v = fifoVerrechnen(trades).veraeusserungen[0]!;
+    expect(v.fx?.anschaffung).toEqual({ date: '2026-03-02', rate: 1.1, source: 'ecb' });
+    expect(v.fx?.veraeusserung).toEqual({ date: '2026-06-02', rate: 1.05, source: 'ecb' });
+  });
+
+  it('lässt die EUR-Felder LEER, wenn einem Vorgang der Kurs fehlt', () => {
+    const ohne = [trades[0]!, { ...trades[1]!, fxRate: undefined }];
+    const v = fifoVerrechnen(ohne).veraeusserungen[0]!;
+    expect(v.ergebnis).toBe(0); // die USD-Rechnung steht weiter
+    expect(v.eurErgebnis).toBeUndefined();
+    expect(v.eurAnschaffung).toBeUndefined();
+  });
+
+  it('spiegelt das Vorzeichen beim Short', () => {
+    // Leerverkauf zu 100 (Kurs 1,10), Eindeckung zu 90 (Kurs 1,10).
+    // In USD +100 Gewinn, in EUR 909,09 − 818,18 = 90,91.
+    const short = [
+      { ...trades[0]!, side: 'sell' as const, executedAt: '2026-03-02T15:00:00.000Z' },
+      {
+        ...trades[1]!,
+        side: 'buy' as const,
+        price: 90,
+        fxRate: 1.1,
+        fxDate: '2026-06-02',
+      },
+    ];
+    const v = fifoVerrechnen(short).veraeusserungen[0]!;
+    expect(v.richtung).toBe('short');
+    expect(v.ergebnis).toBe(100);
+    expect(v.eurErgebnis).toBe(90.91);
+  });
+
+  it('kippt die Topf-Summe auf null, sobald ein Vorgang keinen Kurs hat', () => {
+    // Eine Teilsumme wäre schlimmer als keine: Sie sähe vollständig aus,
+    // wäre zu klein, und niemand könnte ihr ansehen um wie viel.
+    const gemischt = [
+      ...trades,
+      { ...trades[0]!, symbol: 'MSFT', executedAt: '2026-03-03T15:00:00.000Z', fxRate: undefined },
+      { ...trades[1]!, symbol: 'MSFT', executedAt: '2026-06-03T15:00:00.000Z', fxRate: undefined },
+    ];
+    const b = steuerbericht(gemischt, 2026, { echtgeld: true });
+    expect(b.toepfe.aktien.saldo).toBe(0); // USD-Rechnung bleibt vollständig
+    expect(b.toepfe.aktien.eurSaldo).toBeNull();
+    expect(b.fxLuecken).toBe(2);
+  });
+
+  it('meldet keine Lücke, wenn alle Kurse da sind', () => {
+    const b = steuerbericht(trades, 2026, { echtgeld: true });
+    expect(b.fxLuecken).toBe(0);
+    expect(b.toepfe.aktien.eurSaldo).toBe(43.29);
+  });
+
+  it('schreibt die Euro-Spalten in die CSV', () => {
+    const csv = veraeusserungenCsv(steuerbericht(trades, 2026, { echtgeld: true }));
+    expect(csv.split('\n')[0]).toContain('Ergebnis EUR');
+    expect(csv.split('\n')[1]).toContain('43,29');
+    expect(csv.split('\n')[1]).toContain('1,1000 (2026-03-02)');
+  });
+});

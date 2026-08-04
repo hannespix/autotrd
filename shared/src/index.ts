@@ -13,6 +13,7 @@ export * from './momentum.js';
 export * from './classAdvisor.js';
 export * from './classShadow.js';
 export * from './liveReadiness.js';
+export * from './fx.js';
 export * from './tax.js';
 export * from './tradeAnalytics.js';
 export * from './globalLearning.js';

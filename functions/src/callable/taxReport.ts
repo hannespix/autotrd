@@ -93,6 +93,9 @@ function alsSteuerTrade(d: FirebaseFirestore.QueryDocumentSnapshot): SteuerTrade
   const assetClass = (d.get('assetClass') as string | undefined) ?? classify(symbol);
   const currency = (d.get('currency') as string | undefined) ?? currencyForSymbol(symbol);
   const paper = d.get('paper') as boolean | undefined;
+  const fxRate = d.get('fxRate') as number | undefined;
+  const fxDate = d.get('fxDate') as string | undefined;
+  const fxSource = d.get('fxSource') as string | undefined;
 
   return {
     symbol,
@@ -107,6 +110,17 @@ function alsSteuerTrade(d: FirebaseFirestore.QueryDocumentSnapshot): SteuerTrade
     // fällt auf, als dass Papierhandel als steuerpflichtig ausgewiesen wird.
     paper: paper !== false,
     ...(typeof fee === 'number' ? { fee } : {}),
+    // Eingefrorener EZB-Kurs (M12b). Wird NUR gelesen, nie ergänzt: Ein
+    // nachträglich geholter Kurs würde historische Ergebnisse verschieben,
+    // und zwar unbemerkt — dieselbe Zahl sähe im März anders aus als im
+    // Januar. Fehlt er, zählt der Bericht den Vorgang als `fxLuecken`.
+    ...(typeof fxRate === 'number' && fxRate > 0
+      ? {
+          fxRate,
+          ...(typeof fxDate === 'string' ? { fxDate } : {}),
+          ...(typeof fxSource === 'string' ? { fxSource } : {}),
+        }
+      : {}),
   };
 }
 

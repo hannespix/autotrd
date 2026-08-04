@@ -1210,12 +1210,22 @@ die Daten — **keine Steuerberatung**, der Report ist Beleg-Grundlage.
 
 Die fachlichen Fallen, die das Datenmodell abbilden MUSS:
 
-- [ ] **EUR-Umrechnung je Vorgang, nicht am Ergebnis.** Kauf UND Verkauf
-      werden getrennt zum Kurs des jeweiligen Tages in Euro umgerechnet; das
-      Fremdwährungs-Ergebnis einfach umzurechnen ist unzulässig. Also:
-      täglicher EZB-Referenzkurs → `meta/fx/{date}`, beim Trade EINGEFROREN
-      im Trade-Doc (`fxRate`, `fxDate`, `fxSource`) — nie nachträglich neu
-      berechnen, sonst wandern historische Gewinne.
+- [x] **EUR-Umrechnung je Vorgang, nicht am Ergebnis.** *(04.08.)*
+      `shared/src/fx.ts` (pure Rechnung) + `functions/src/core/fx.ts`
+      (EZB-Kurse über die Frankfurter-API, Cache je Tag in `meta/fx/tage/`).
+      Jeder Trade friert `fxRate`/`fxDate`/`fxSource` ein; `fifoVerrechnen`
+      rechnet Anschaffung und Veräußerung mit dem Kurs IHRES jeweiligen
+      Tages und bildet das Ergebnis erst danach.
+      Der Beleg im Test: 1.000 $ gekauft bei 1,10 und 1.000 $ verkauft bei
+      1,05 sind in Dollar ±0 und in Euro **+43,29 € steuerpflichtiger
+      Währungsgewinn**. Wer am Ergebnis umrechnet, erklärt null.
+      Drei Sicherungen: Der Kurs wird VOR der Firestore-Transaktion geholt
+      (eine Transaktion wird bei Konflikt wiederholt — ein HTTP-Aufruf darin
+      liefe mehrfach); ein Ausfall der Kursquelle blockiert keinen Handel,
+      sondern lässt die Felder leer; und eine Topf-Summe kippt auf `null`,
+      sobald auch nur ein Vorgang keinen Kurs hatte — eine Teilsumme sähe
+      vollständig aus und wäre zu klein. `fxLuecken` zählt jetzt genau
+      diese Vorgänge (vorher jeden USD-Trade, also immer alle).
 - [~] **FIFO-Lots.** *(Rechnung fertig 04.08. — `shared/src/tax.ts`
       `fifoVerrechnen` zerlegt Verkäufe lotweise, Long und Short in
       getrennten Schlangen, mit Tests. OFFEN bleibt das Datenmodell: die

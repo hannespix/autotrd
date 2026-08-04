@@ -56,6 +56,8 @@
  * welche fehlen (`fxLuecken`). Es erfindet keine.
  */
 
+import { brauchtUmrechnung, eurBetrag, type FxKurs } from './fx.js';
+
 /** Steuertöpfe des deutschen Rechts — bewusst getrennt (s. Kopfkommentar). */
 export type Steuertopf = 'aktien' | 'sonstige' | 'termin' | 'privat';
 
@@ -76,6 +78,15 @@ export interface SteuerTrade {
   currency?: string | undefined;
   /** Echtgeld oder Papierhandel — nur Echtgeld ist steuerbar. */
   paper?: boolean | undefined;
+  /**
+   * EZB-Referenzkurs des Vorgangs (Fremdwährung je 1 EUR), EINGEFROREN beim
+   * Trade. Nie nachträglich neu holen — sonst wandern historische Gewinne
+   * (siehe `shared/src/fx.ts`).
+   */
+  fxRate?: number | undefined;
+  /** Tag, für den der Kurs veröffentlicht wurde — kann vor dem Handelstag liegen. */
+  fxDate?: string | undefined;
+  fxSource?: string | undefined;
 }
 
 /** Ein nach FIFO geschlossenes Geschäft: Anschaffung ↔ Veräußerung. */
@@ -100,6 +111,20 @@ export interface Veraeusserung {
    * `true` heißt steuerfrei nach § 23 Abs. 1 Nr. 2 EStG.
    */
   steuerfreiNachJahresfrist?: boolean;
+  /**
+   * Euro-Beträge, JE VORGANG zum Kurs seines Tages umgerechnet (M12b).
+   *
+   * Fehlen sie, fehlte mindestens einem der beiden Vorgänge der Kurs — dann
+   * steht statt einer Zahl nichts. Ein aus dem Ergebnis hochgerechneter
+   * Euro-Betrag wäre steuerlich unzulässig und sähe in der Ausgabe genauso
+   * aus wie ein richtiger.
+   */
+  eurAnschaffung?: number;
+  eurVeraeusserung?: number;
+  eurKosten?: number;
+  eurErgebnis?: number;
+  /** Kurse beider Seiten, damit der Bericht sie ausweisen kann. */
+  fx?: { anschaffung?: FxKurs; veraeusserung?: FxKurs };
 }
 
 /** Ein offener Bestand, der am Stichtag noch nicht veräußert war. */
@@ -224,6 +249,10 @@ interface Lot {
   /** Anteilige Anschaffungsnebenkosten je Stück. */
   kostenJeStueck: number;
   assetClass: string | undefined;
+  /** Notierungswährung des Vorgangs. */
+  waehrung: string | undefined;
+  /** Eingefrorener Kurs DIESES Vorgangs — nicht der des Verkaufs (M12b). */
+  fx: FxKurs | null;
 }
 
 const r2 = (x: number): number => Math.round(x * 100) / 100;
@@ -252,6 +281,12 @@ export interface FifoErgebnis {
  * Die Reihenfolge ist die Ausführungszeit, nicht die Eingabereihenfolge:
  * FIFO über eine unsortierte Liste ist kein FIFO.
  */
+/** Eingefrorenen Kurs aus einem Trade lesen — oder null, wenn keiner da ist. */
+function kursVon(t: SteuerTrade): FxKurs | null {
+  if (typeof t.fxRate !== 'number' || !(t.fxRate > 0)) return null;
+  return { date: t.fxDate ?? t.executedAt.slice(0, 10), rate: t.fxRate, source: t.fxSource ?? 'unbekannt' };
+}
+
 export function fifoVerrechnen(trades: readonly SteuerTrade[]): FifoErgebnis {
   const sortiert = [...trades].sort((a, b) => a.executedAt.localeCompare(b.executedAt));
   const longs = new Map<string, Lot[]>();
@@ -291,6 +326,16 @@ export function fifoVerrechnen(trades: readonly SteuerTrade[]): FifoErgebnis {
         richtung === 'long' ? (t.price - lot.kurs) * teil : (lot.kurs - t.price) * teil;
       const kosten = r2(lot.kostenJeStueck * teil + kostenJeStueck * teil);
       const tage = haltetage(lot.am, t.executedAt);
+      // EUR JE VORGANG (M12b): Die Anschaffung mit dem Kurs IHRES Tages, die
+      // Veräußerung mit dem Kurs ihres eigenen. Das Ergebnis erst danach
+      // bilden — die Umrechnung eines Fremdwährungs-Ergebnisses ist
+      // unzulässig und verschluckt genau den Währungsgewinn, der
+      // steuerpflichtig ist (siehe fx.ts).
+      const fxT = kursVon(t);
+      const eurLot = eurBetrag(lot.kurs * teil, lot.waehrung, lot.fx);
+      const eurT = eurBetrag(t.price * teil, t.currency, fxT);
+      const eurKostenLot = eurBetrag(lot.kostenJeStueck * teil, lot.waehrung, lot.fx);
+      const eurKostenT = eurBetrag(kostenJeStueck * teil, t.currency, fxT);
       const eintrag: Veraeusserung = {
         symbol: t.symbol,
         topf,
@@ -306,6 +351,21 @@ export function fifoVerrechnen(trades: readonly SteuerTrade[]): FifoErgebnis {
       };
       if (topf === 'privat') {
         eintrag.steuerfreiNachJahresfrist = jahresfristUeberschritten(lot.am, t.executedAt);
+      }
+      if (eurLot !== null && eurT !== null && eurKostenLot !== null && eurKostenT !== null) {
+        const eurKosten = r2(eurKostenLot + eurKostenT);
+        eintrag.eurAnschaffung = eurLot;
+        eintrag.eurVeraeusserung = eurT;
+        eintrag.eurKosten = eurKosten;
+        // Beim Short dreht sich das Vorzeichen genauso wie in der
+        // Fremdwährungs-Rechnung darüber: Der Erlös floss beim ÖFFNEN.
+        eintrag.eurErgebnis = r2(
+          (richtung === 'long' ? eurT - eurLot : eurLot - eurT) - eurKosten,
+        );
+        eintrag.fx = {
+          ...(lot.fx ? { anschaffung: lot.fx } : {}),
+          ...(fxT ? { veraeusserung: fxT } : {}),
+        };
       }
       veraeusserungen.push(eintrag);
       lot.menge -= teil;
@@ -334,6 +394,8 @@ export function fifoVerrechnen(trades: readonly SteuerTrade[]): FifoErgebnis {
           am: t.executedAt,
           kostenJeStueck,
           assetClass: t.assetClass,
+          waehrung: t.currency,
+          fx: kursVon(t),
         });
       }
     } else {
@@ -347,6 +409,8 @@ export function fifoVerrechnen(trades: readonly SteuerTrade[]): FifoErgebnis {
           am: t.executedAt,
           kostenJeStueck,
           assetClass: t.assetClass,
+          waehrung: t.currency,
+          fx: kursVon(t),
         });
       }
     }
@@ -403,6 +467,16 @@ export interface TopfSumme {
   saldo: number;
   /** Anzahl Veräußerungsgeschäfte. */
   n: number;
+  /**
+   * Dieselben Zahlen in Euro (M12b) — `null`, sobald AUCH NUR EIN Vorgang
+   * dieses Topfes keinen Kurs hatte.
+   *
+   * Eine Teilsumme wäre schlimmer als keine: Sie sähe vollständig aus,
+   * wäre aber zu klein, und niemand könnte ihr ansehen, um wie viel.
+   */
+  eurGewinne: number | null;
+  eurVerluste: number | null;
+  eurSaldo: number | null;
 }
 
 export interface Steuerbericht {
@@ -432,7 +506,15 @@ export interface Steuerbericht {
   erstelltAm: string;
 }
 
-const leererTopf = (): TopfSumme => ({ gewinne: 0, verluste: 0, saldo: 0, n: 0 });
+const leererTopf = (): TopfSumme => ({
+  gewinne: 0,
+  verluste: 0,
+  saldo: 0,
+  n: 0,
+  eurGewinne: 0,
+  eurVerluste: 0,
+  eurSaldo: 0,
+});
 
 /**
  * Jahresbericht aus der Trade-Historie.
@@ -476,12 +558,27 @@ export function steuerbericht(
     if (v.ergebnis >= 0) t.gewinne = r2(t.gewinne + v.ergebnis);
     else t.verluste = r2(t.verluste - v.ergebnis);
     t.saldo = r2(t.gewinne - t.verluste);
+    // Euro-Summen laufen getrennt mit und kippen auf null, sobald ein
+    // Vorgang keinen Kurs hatte — ab da ist die Summe nicht mehr belegbar.
+    if (v.eurErgebnis === undefined) {
+      t.eurGewinne = null;
+      t.eurVerluste = null;
+      t.eurSaldo = null;
+    } else if (t.eurGewinne !== null && t.eurVerluste !== null) {
+      if (v.eurErgebnis >= 0) t.eurGewinne = r2(t.eurGewinne + v.eurErgebnis);
+      else t.eurVerluste = r2(t.eurVerluste - v.eurErgebnis);
+      t.eurSaldo = r2(t.eurGewinne - t.eurVerluste);
+    }
     if (v.topf === 'privat') privatSteuerpflichtig = r2(privatSteuerpflichtig + v.ergebnis);
   }
 
   const stand = rechtsstandFuer(jahr);
+  // Echte Lücken: Vorgänge in Fremdwährung OHNE eingefrorenen Kurs. Bis
+  // 04.08. zählte diese Zahl jeden USD-Trade — sie war damit immer maximal
+  // und sagte nichts. Jetzt sagt sie, wie viele Vorgänge nachgetragen
+  // werden müssen, bevor die Euro-Summen vollständig sind.
   const fxLuecken = relevant.filter(
-    (t) => t.currency && t.currency !== (opts.waehrung ?? 'USD'),
+    (t) => brauchtUmrechnung(t.currency) && !(typeof t.fxRate === 'number' && t.fxRate > 0),
   ).length;
 
   return {
@@ -538,6 +635,14 @@ export function veraeusserungenCsv(bericht: Steuerbericht): string {
     'Ergebnis',
     'Haltetage',
     'Steuerfrei',
+    // Euro-Spalten (M12b): je Vorgang zum Kurs SEINES Tages umgerechnet.
+    // Leere Felder heißen „kein Kurs hinterlegt" — nicht „null Euro".
+    'Anschaffung EUR',
+    'Veraeusserung EUR',
+    'Kosten EUR',
+    'Ergebnis EUR',
+    'Kurs Anschaffung',
+    'Kurs Veraeusserung',
   ];
   const zahl = (n: number): string => n.toFixed(2).replace('.', ',');
   const zeilen = bericht.veraeusserungen.map((v) =>
@@ -554,6 +659,12 @@ export function veraeusserungenCsv(bericht: Steuerbericht): string {
       csvFeld(zahl(v.ergebnis)),
       csvFeld(v.haltetageGenau),
       csvFeld(v.steuerfreiNachJahresfrist === true ? 'ja' : ''),
+      csvFeld(v.eurAnschaffung === undefined ? '' : zahl(v.eurAnschaffung)),
+      csvFeld(v.eurVeraeusserung === undefined ? '' : zahl(v.eurVeraeusserung)),
+      csvFeld(v.eurKosten === undefined ? '' : zahl(v.eurKosten)),
+      csvFeld(v.eurErgebnis === undefined ? '' : zahl(v.eurErgebnis)),
+      csvFeld(v.fx?.anschaffung ? `${v.fx.anschaffung.rate.toFixed(4).replace('.', ',')} (${v.fx.anschaffung.date})` : ''),
+      csvFeld(v.fx?.veraeusserung ? `${v.fx.veraeusserung.rate.toFixed(4).replace('.', ',')} (${v.fx.veraeusserung.date})` : ''),
     ].join(';'),
   );
   return [kopf.join(';'), ...zeilen].join('\n');

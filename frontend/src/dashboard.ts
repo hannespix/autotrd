@@ -1260,6 +1260,8 @@ function renderSteuerbericht(r: TaxReportResult): string {
   const e = escText;
   const geld = (n: number): string =>
     `${n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${r.bericht.waehrung}`;
+  const eur = (n: number): string =>
+    `${n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
   const b = r.bericht;
 
   const zeilen = (Object.keys(TOPF_LABEL) as Array<keyof typeof b.toepfe>)
@@ -1272,6 +1274,11 @@ function renderSteuerbericht(r: TaxReportResult): string {
         <td class="num">${geld(x.t.gewinne)}</td>
         <td class="num">${geld(-x.t.verluste)}</td>
         <td class="num ${x.t.saldo >= 0 ? 'up' : 'dn'}"><b>${geld(x.t.saldo)}</b></td>
+        <td class="num ${(x.t.eurSaldo ?? 0) >= 0 ? 'up' : 'dn'}">${
+          x.t.eurSaldo === null || x.t.eurSaldo === undefined
+            ? '<span class="hint">—</span>'
+            : `<b>${eur(x.t.eurSaldo)}</b>`
+        }</td>
       </tr>`,
     )
     .join('');
@@ -1310,8 +1317,17 @@ function renderSteuerbericht(r: TaxReportResult): string {
   }
   if (b.fxLuecken > 0) {
     hinweise.push(
-      `${b.fxLuecken} Trades notieren in Fremdwährung. Die Beträge stehen in ` +
-        `${b.waehrung}; für die Erklärung ist mit dem Kurs des Ausführungstags in Euro umzurechnen.`,
+      `<b>${b.fxLuecken} Vorgänge ohne hinterlegten Wechselkurs.</b> Für sie steht ` +
+        'in der Euro-Spalte nichts — ein aus dem Fremdwährungs-Ergebnis hochgerechneter ' +
+        'Betrag wäre steuerlich unzulässig. Betroffen sind Trades von vor dem 04.08.2026; ' +
+        'seither friert jeder Trade den EZB-Kurs seines Tages mit ein.',
+    );
+  } else if (b.veraeusserungen.length > 0) {
+    hinweise.push(
+      'Die Euro-Beträge sind <b>je Vorgang</b> zum EZB-Kurs seines Tages gerechnet — ' +
+        'Anschaffung und Veräußerung getrennt. Das Fremdwährungs-Ergebnis am Ende ' +
+        'umzurechnen wäre unzulässig und verschluckte genau den Währungsgewinn, ' +
+        'der steuerpflichtig ist.',
     );
   }
 
@@ -1323,8 +1339,8 @@ function renderSteuerbericht(r: TaxReportResult): string {
   return `
     <table class="tbl st-num" style="width:100%">
       <thead><tr><th>Topf</th><th class="num">Fälle</th><th class="num">Gewinne</th>
-        <th class="num">Verluste</th><th class="num">Saldo</th></tr></thead>
-      <tbody>${zeilen || '<tr><td colspan="5" class="hint">Keine Veräußerungen in diesem Jahr.</td></tr>'}</tbody>
+        <th class="num">Verluste</th><th class="num">Saldo</th><th class="num">Saldo EUR</th></tr></thead>
+      <tbody>${zeilen || '<tr><td colspan="6" class="hint">Keine Veräußerungen in diesem Jahr.</td></tr>'}</tbody>
     </table>
     <p class="hint" style="margin-top:6px">Die Töpfe stehen bewusst einzeln und ohne
       Gesamtsumme — sie dürfen nicht gegeneinander verrechnet werden.</p>

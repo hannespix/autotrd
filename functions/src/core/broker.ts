@@ -34,6 +34,7 @@ import type {
   Strategy,
   Trade,
 } from '../../../shared/src/index.js';
+import { fxFelder } from './fx.js';
 
 /**
  * Margin-Budget, das der AUFRUFER mitbringt (Scan bzw. Puls).
@@ -261,6 +262,20 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
     return { executed: false, reason: 'kein_preis' };
   }
 
+  /* EZB-Kurs VOR der Transaktion holen (M12b).
+   *
+   * Zwei Gründe, warum er nicht hineingehört: Eine Firestore-Transaktion
+   * wird bei Konflikt WIEDERHOLT — ein HTTP-Aufruf darin liefe mehrfach.
+   * Und sie soll kurz sein; ein fremder Server mit acht Sekunden Timeout
+   * ist das Gegenteil davon.
+   *
+   * Schlägt der Abruf fehl, bleiben die Felder leer und der Trade läuft
+   * trotzdem: Ein nicht erreichbarer Kursserver darf keinen Handel
+   * verhindern — aber auch keine erfundene Zahl in eine Steuererklärung
+   * schreiben. Der Bericht zählt solche Vorgänge als `fxLuecken`.
+   */
+  const fx = await fxFelder(new Date().toISOString(), currencyForSymbol(req.symbol));
+
   return db.runTransaction(async (tx) => {
     const [userSnap, posSnap] = await Promise.all([tx.get(userRef), tx.get(posRef)]);
     if (!userSnap.exists) return { executed: false, reason: 'kein_profil' };
@@ -294,6 +309,9 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       commissionRate: gebuehr.commission,
       slippageRate: gebuehr.slippage,
       feeRate: gebuehr.commission + gebuehr.slippage,
+      // Eingefrorener EZB-Kurs (M12b) — nie nachträglich neu holen, sonst
+      // wandern historische Gewinne. Fehlt er, fehlt er ehrlich.
+      ...fx,
     };
     /** Ausführungskosten dieses Trades in Kontowährung. */
     const kosten = (menge: number): number =>
