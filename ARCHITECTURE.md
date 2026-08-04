@@ -25,6 +25,32 @@ Leitziele: **kosteneffizient · sicher · leistungsfähig · schnell.**
 > **Blaze-Plan** (Pay-as-you-go). Bei diesem Volumen (Scan alle 5 min, kleine
 > Reads) liegt das real bei ~0–5 €/Monat. Budget-Alarm im GCP-Projekt setzen!
 
+### Supabase: begonnen, seit 04.08. eingefroren
+
+Am 26.07. wurde beschlossen, auf Supabase (Postgres) umzuziehen. Fertig sind
+das Schema mit RLS und Geld-Invarianten (`supabase/migrations/`, live
+verifiziert), die Auth-Schicht und der Lesepfad für Marktdaten
+(`frontend/src/authSupabase.ts`, `dataSupabase.ts`). Offen sind die
+Nutzerdaten und die Prognose-Ketten.
+
+**Warum es ruht:** Die Kostenrechnung trägt nicht. Bei fünf Konten kostet
+Firebase ~14 $/Monat, Supabase ~25 $ — und Firebase bleibt bei *jeder*
+Nutzerzahl billiger, weil Realtime-Nachrichten (2,50 $/Mio) gegen
+Firestore-Reads (0,60 $/Mio) beim Fan-out um Faktor vier verlieren. Das
+ursprüngliche Zeitdruck-Argument („M12b und M13 schreiben den meisten
+Persistenzcode, sonst schreibt man ihn zweimal") ist zirkulär geworden,
+seit beide Vorhaben nicht als Nächstes kommen.
+
+**Was das Auftauen auslöst — nicht der Kalender, sondern eine Zahl:** der
+Lese-Break-even. Ein Backtest über fünf Jahre × 166 Symbole sind 207.500
+Firestore-Reads (0,12 $) gegen eine einzige SQL-Query. Bei ~20 Läufen am Tag
+kippt die Rechnung. Bis dahin bleibt `VITE_BACKEND` auf Firebase.
+
+`frontend/test/supabaseParitaet.test.ts` hält den Rückstand fest (20 von 40
+Exporten fehlen, Stand 04.08.) und schlägt an, wenn `data.ts` wächst, ohne
+dass jemand über die Supabase-Seite entscheidet. Eingefroren heißt nicht
+vergessen — es heißt, dass der Abstand nicht unbemerkt wachsen darf.
+
 ## 2. Gesamtbild
 
 ```
