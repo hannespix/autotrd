@@ -5,8 +5,10 @@
 
 import {
   type GlobalAxisStats,
+  type KanteJeTrade,
   type Position,
   type Quote,
+  type ReifeBefund,
   type Steuerbericht,
   type Strategy,
   type Wallet,
@@ -272,6 +274,8 @@ export interface BrokerStatusResult {
   wunschLive: boolean;
   envFreigabe: boolean;
   schluesselVorhanden: boolean;
+  reife: ReifeBefund;
+  kante: KanteJeTrade;
   konto: {
     id: string;
     status: string;

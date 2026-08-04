@@ -145,11 +145,35 @@ function safeKey(raw: string): string {
 }
 
 export interface AttributionSlice {
+  /** Ergebnis NACH Gebühren. */
   pnl: number;
   n: number;
+  /**
+   * Geschätzte Gebühren dieser Gruppe (beide Seiten). Nur aus Trades, bei
+   * denen Positionswert UND Satz bekannt sind — geschätzt wird nichts.
+   */
+  fees?: number;
+  /** Summiertes Handelsvolumen — Nenner für die Rendite je Trade. */
+  notional?: number;
+  /**
+   * NETTO-Rendite je gehandeltem Dollar, in Prozent — also nach Gebühren
+   * (`pnl` ist bereits netto). Die eine Zahl, die sagt, ob diese
+   * Anlageklasse ihre eigene Reibung verdient. Negativ heißt: Hier wird
+   * strukturell Geld verbrannt, egal wie der Markt läuft. `null`, wenn zu
+   * wenige Trades Volumen und Satz tragen.
+   */
+  kantePct?: number | null;
 }
 
-/** P&L-Attribution je Symbol und je Asset-Klasse (nur geschlossene Trades). */
+/**
+ * P&L-Attribution je Symbol und je Asset-Klasse (nur geschlossene Trades).
+ *
+ * Seit dem 04.08. mit Gebühren, Volumen und der Netto-Kante je Gruppe. Der
+ * Grund: Der Gesamtdurchschnitt (+0,143 % brutto gegen 0,300 % Kosten) sagt
+ * nur, DASS zu teuer gehandelt wird — nicht WO. Solange das offen ist, wäre
+ * jede Änderung an der Kostenschwelle geraten. Eine Anlageklasse mit
+ * negativer Kante gehört nicht feinjustiert, sondern abgeschaltet.
+ */
 export function attribution(closed: ClosedTrade[]): {
   bySymbol: Record<string, AttributionSlice>;
   byClass: Record<string, AttributionSlice>;
@@ -161,7 +185,23 @@ export function attribution(closed: ClosedTrade[]): {
     const sym = safeKey(t.symbol);
     const cls = safeKey(t.assetClass ?? 'unbekannt');
     bySymbol[sym] = { pnl: r2((bySymbol[sym]?.pnl ?? 0) + t.pnl), n: (bySymbol[sym]?.n ?? 0) + 1 };
-    byClass[cls] = { pnl: r2((byClass[cls]?.pnl ?? 0) + t.pnl), n: (byClass[cls]?.n ?? 0) + 1 };
+    const c = byClass[cls] ?? { pnl: 0, n: 0, fees: 0, notional: 0 };
+    c.pnl = r2(c.pnl + t.pnl);
+    c.n += 1;
+    // Gebühren und Volumen nur bei vollständigen Angaben — ein Trade ohne
+    // Satz würde den Nenner verfälschen und die Kante zu gut aussehen lassen.
+    if (typeof t.notional === 'number' && t.notional > 0 && typeof t.feeRate === 'number') {
+      c.fees = r2((c.fees ?? 0) + t.notional * t.feeRate * 2);
+      c.notional = r2((c.notional ?? 0) + t.notional);
+    }
+    byClass[cls] = c;
+  }
+  for (const c of Object.values(byClass)) {
+    // Kante = (Ergebnis nach Gebühren) ÷ Volumen. Bewusst NETTO: Die Frage
+    // ist nicht, ob die Klasse sich bewegt, sondern ob nach der Reibung
+    // etwas übrig bleibt.
+    c.kantePct =
+      (c.notional ?? 0) > 0 ? Math.round((c.pnl / (c.notional as number)) * 1_000_000) / 10_000 : null;
   }
   return { bySymbol, byClass };
 }

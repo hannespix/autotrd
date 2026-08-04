@@ -7,10 +7,11 @@
  *
  * SICHERHEIT (Port der Python-Guards, niemals lockern):
  * - Default ist immer Paper.
- * - Echtgeld erfordert BEIDES: strategy.broker.mode === 'live' UND
- *   env ALPACA_ALLOW_LIVE === '1' — sonst automatischer Downgrade auf Paper.
- *   Der Alpaca-Slot selbst kommt in M13/M14; resolveBrokerMode() ist heute
- *   schon die einzige Stelle, die über den Modus entscheidet.
+ * - Echtgeld erfordert DREIERLEI: strategy.broker.mode === 'live', env
+ *   ALPACA_ALLOW_LIVE === '1' UND eine bestandene Live-Reife-Prüfung
+ *   (Owner-Maxime 04.08., siehe shared/src/liveReadiness.ts) — sonst
+ *   automatischer Downgrade auf Paper. `resolveBrokerMode()` ist die einzige
+ *   Stelle, die über den Modus entscheidet; der Alpaca-Adapter hängt daran.
  * - Keys nur aus env/Secret Manager, nie geloggt.
  */
 
@@ -26,7 +27,13 @@ import {
   riskBasedQty,
   sizeWithMargin,
 } from '../../../shared/src/index.js';
-import type { Position, RiskConfig, Strategy, Trade } from '../../../shared/src/index.js';
+import type {
+  Position,
+  ReifeBefund,
+  RiskConfig,
+  Strategy,
+  Trade,
+} from '../../../shared/src/index.js';
 
 /**
  * Margin-Budget, das der AUFRUFER mitbringt (Scan bzw. Puls).
@@ -58,11 +65,36 @@ export interface MarginBudget {
 
 export type BrokerMode = 'paper' | 'live';
 
-/** Einzige Stelle, die den effektiven Broker-Modus bestimmt (Doppel-Guard). */
-export function resolveBrokerMode(strategy: Strategy): BrokerMode {
+/**
+ * Einzige Stelle, die den effektiven Broker-Modus bestimmt.
+ *
+ * DREI Bedingungen, alle nötig — jede eine eigene Fehlerquelle:
+ *
+ *  1. `strategy.broker.mode === 'live'` — der Schalter des Nutzers.
+ *  2. env `ALPACA_ALLOW_LIVE === '1'` — die Freigabe des Betreibers, an einem
+ *     Ort, an den keine Oberfläche herankommt.
+ *  3. **Live-Reife** (seit 04.08.) — die Zahlen müssen es hergeben.
+ *
+ * Punkt 3 setzt die Owner-Maxime um: „so lange testen mit paper wallet wie
+ * notwendig. bis man sicher nur noch Gewinn schreibt, dann erst den Schalter
+ * umlegen, aber trotzdem schon theoretisch startklar sein." Der Schalter ist
+ * jederzeit bedienbar — er greift nur nicht, solange die Messung dagegen
+ * spricht.
+ *
+ * `reife` ist OPTIONAL, und zwar mit Bedacht in diese Richtung: Ein Aufrufer,
+ * der die Kennzahlen nicht kennt, bekommt den bisherigen Doppel-Guard und
+ * damit unverändertes Verhalten. Fehlende Kennzahlen dürfen nie dazu führen,
+ * dass eine Prüfung stillschweigend WEGFÄLLT — sie können hier nur dazu
+ * führen, dass eine dritte Prüfung nicht hinzukommt. Wer live handelt, reicht
+ * sie durch (siehe `scanMarket`); wer nur den Modus anzeigt, nicht.
+ */
+export function resolveBrokerMode(strategy: Strategy, reife?: ReifeBefund): BrokerMode {
   const wantLive = strategy.broker.mode === 'live';
-  if (wantLive && process.env.ALPACA_ALLOW_LIVE === '1') return 'live';
-  return 'paper';
+  if (!wantLive || process.env.ALPACA_ALLOW_LIVE !== '1') return 'paper';
+  // Reife bekannt und negativ ⇒ Downgrade. Der Nutzer merkt es an der
+  // Broker-Karte, nicht an einer stillen Überraschung im Kontoauszug.
+  if (reife && !reife.bereit) return 'paper';
+  return 'live';
 }
 
 /** Geldbeträge auf Cent runden — Float-Drift hat im Kontostand nichts zu suchen. */

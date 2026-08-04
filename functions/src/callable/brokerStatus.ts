@@ -14,18 +14,30 @@
  *
  * ── Was es NICHT tut ──────────────────────────────────────────────────────
  *
- * Es schaltet nichts frei. Der Doppel-Guard aus `resolveBrokerMode` bleibt
- * unangetastet: Echtgeld verlangt weiterhin `broker.mode === 'live'` in der
- * Strategie UND `ALPACA_ALLOW_LIVE=1` in der Umgebung. Dieses Callable macht
- * nur SICHTBAR, wie die Schalter stehen — es fasst sie nicht an. Ein
- * Statusknopf, der nebenbei scharf schaltet, wäre genau die Art Bequemlich-
- * keit, die man bei Geld nicht will.
+ * Es schaltet nichts frei. Die drei Guards aus `resolveBrokerMode` bleiben
+ * unangetastet: Echtgeld verlangt `broker.mode === 'live'` in der Strategie,
+ * `ALPACA_ALLOW_LIVE=1` in der Umgebung UND eine bestandene Live-Reife.
+ * Dieses Callable macht nur SICHTBAR, wie die drei stehen — es fasst sie
+ * nicht an. Ein Statusknopf, der nebenbei scharf schaltet, wäre genau die Art
+ * Bequemlichkeit, die man bei Geld nicht will.
+ *
+ * Die Reife-Kennzahlen werden hier GELESEN und nicht neu gerechnet: Sie
+ * stammen aus demselben `stats/main`-Dokument, das auch das Dashboard zeigt.
+ * Zwei Rechenwege wären zwei Wahrheiten — bei der Frage, ob echtes Geld
+ * fließen darf, ist das keine Option.
  */
 
 import { getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
-import { DEFAULT_STRATEGY, type Position, type Strategy } from '../../../shared/src/index.js';
+import {
+  DEFAULT_STRATEGY,
+  kanteJeTrade,
+  type KanteJeTrade,
+  type Position,
+  type ReifeBefund,
+  type Strategy,
+} from '../../../shared/src/index.js';
 import {
   abgleich,
   alpacaKonfiguriert,
@@ -36,13 +48,14 @@ import {
 } from '../core/alpacaBroker.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { consumeQuota, resolveBrokerMode } from '../core/broker.js';
+import { reifeFuerKonto } from '../core/liveGate.js';
 
 /** Der Aufruf geht nach außen und kostet Latenz — 60 am Tag sind reichlich. */
 const DAILY_STATUS_LIMIT = 60;
 
 export interface BrokerStatusResult {
   ok: true;
-  /** Was tatsächlich gilt — Ergebnis des Doppel-Guards, nicht der Wunsch. */
+  /** Was tatsächlich gilt — Ergebnis aller drei Guards, nicht der Wunsch. */
   modus: 'paper' | 'live';
   /** Steht die Strategie auf Echtgeld? */
   wunschLive: boolean;
@@ -50,6 +63,10 @@ export interface BrokerStatusResult {
   envFreigabe: boolean;
   /** Sind überhaupt Schlüssel hinterlegt? */
   schluesselVorhanden: boolean;
+  /** Die dritte Bedingung: Geben die Zahlen echtes Geld frei? */
+  reife: ReifeBefund;
+  /** Was ein Trade im Mittel bringt gegen das, was er kostet. */
+  kante: KanteJeTrade;
   /** Konto beim Broker — null, wenn nicht erreichbar. */
   konto: AlpacaKonto | null;
   /** Positionen, die im eigenen Buch und beim Broker auseinanderlaufen. */
@@ -66,7 +83,23 @@ export async function pruefeBrokerStatus(uid: string): Promise<BrokerStatusResul
   const strategy = ((userDoc.get('settings') as Strategy | undefined) ??
     DEFAULT_STRATEGY) as Strategy;
 
-  const modus = resolveBrokerMode(strategy);
+  // Reife über denselben Helfer wie der Scan — eine Quelle, eine Zahl.
+  const reife = await reifeFuerKonto(uid);
+  // Die Kante braucht zusätzlich den Roundtrip-Satz, deshalb hier noch einmal
+  // das Kostenprofil. Fehlt der Satz, bleibt die Kante null statt auf einer
+  // geratenen Zahl zu stehen — eine erfundene Kante wäre schlimmer als keine.
+  const stats = await db.collection('users').doc(uid).collection('stats').doc('main').get();
+  const kosten = stats.get('costs') as
+    | { fees?: number; grossPnl?: number; roundTripPct?: number | null }
+    | undefined;
+  const kante = kanteJeTrade(
+    (stats.get('trades') as number | undefined) ?? 0,
+    kosten?.grossPnl ?? 0,
+    kosten?.fees ?? 0,
+    typeof kosten?.roundTripPct === 'number' ? kosten.roundTripPct / 100 : 0,
+  );
+
+  const modus = resolveBrokerMode(strategy, reife);
   const wunschLive = strategy.broker?.mode === 'live';
   const envFreigabe = process.env.ALPACA_ALLOW_LIVE === '1';
   const schluesselVorhanden = alpacaKonfiguriert();
@@ -77,6 +110,8 @@ export async function pruefeBrokerStatus(uid: string): Promise<BrokerStatusResul
     wunschLive,
     envFreigabe,
     schluesselVorhanden,
+    reife,
+    kante,
     konto: null,
     abweichungen: [] as Abweichung[],
   };
@@ -117,6 +152,12 @@ export async function pruefeBrokerStatus(uid: string): Promise<BrokerStatusResul
         'Die Strategie steht auf Echtgeld, aber die Umgebungs-Freigabe ' +
           'ALPACA_ALLOW_LIVE fehlt — es wird weiter im Papiermodus gehandelt.',
       );
+    }
+    if (wunschLive && envFreigabe && !reife.bereit) {
+      // Der wichtigste Satz der ganzen Karte: Beide Schalter stehen, und
+      // trotzdem fließt kein echtes Geld. Ohne diese Erklärung sähe es nach
+      // einem Fehler aus statt nach der Sicherung, die es ist.
+      teile.push(`Beide Freigaben stehen — aber ${reife.fazit}`);
     }
     if (konto.tradingBlocked || konto.accountBlocked) {
       teile.push('Achtung: Der Broker hat das Konto gesperrt.');

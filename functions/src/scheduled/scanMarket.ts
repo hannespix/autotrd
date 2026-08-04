@@ -61,6 +61,7 @@ import {
   riskExitReason,
   type MarginBudget,
 } from '../core/broker.js';
+import { reifeFuerKonto } from '../core/liveGate.js';
 import { accessLevelOf, mayTrade } from '../core/access.js';
 import {
   applyPredictionVote,
@@ -351,9 +352,16 @@ async function executeUserTrades(
       konten.ohne_strategie += 1;
       continue;
     }
-    if (resolveBrokerMode(strategy) !== 'paper') {
+    // Die Reife entscheidet mit (04.08.). Wichtig ist, was daraus FOLGT:
+    // Ein Konto, dessen Schalter auf „live" steht, das aber die Kriterien
+    // noch nicht erfüllt, gilt hier als Papierkonto und handelt ganz normal
+    // weiter. Es MUSS weiterhandeln — Reife entsteht durch Trades, und ein
+    // stillgelegtes Konto würde nie reif werden (siehe core/liveGate.ts).
+    // Übersprungen wird nur, wer wirklich live wäre; dort fehlt das
+    // Order-Routing noch (M14).
+    if (resolveBrokerMode(strategy, await reifeFuerKonto(uid)) !== 'paper') {
       konten.live_verriegelt += 1;
-      continue; // Live bleibt verriegelt (M14)
+      continue; // Echtgeld-Routing kommt in M14
     }
     // Gate VOR der Risiko-Klammer, damit beide Pfade (Signal + Ausführung)
     // dasselbe gedeckelte Gewicht sehen.
