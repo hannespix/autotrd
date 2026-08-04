@@ -8,7 +8,7 @@
  */
 
 import type { Strategy } from './strategy.js';
-import { MAX_OPEN_POSITIONS_CAP } from './strategy.js';
+import { CORE_PCT_CAP, MAX_OPEN_POSITIONS_CAP } from './strategy.js';
 import { MAX_LEVERAGE } from './margin.js';
 import { MAX_RISK_PER_TRADE_PCT } from './riskSizing.js';
 
@@ -125,6 +125,10 @@ export function validateStrategy(value: unknown): string[] {
         || engine.riskPerTradePct < 0
         || engine.riskPerTradePct > MAX_RISK_PER_TRADE_PCT)) {
       problems.push(`engine.riskPerTradePct muss zwischen 0 und ${MAX_RISK_PER_TRADE_PCT} liegen (0 = aus)`);
+    }
+    if (engine.corePct !== undefined
+      && (!isFiniteNumber(engine.corePct) || engine.corePct < 0 || engine.corePct > CORE_PCT_CAP)) {
+      problems.push(`engine.corePct muss zwischen 0 und ${CORE_PCT_CAP} liegen (0 = kein Sockel)`);
     }
     if (engine.mode !== undefined && engine.mode !== 'confluence' && engine.mode !== 'momentum') {
       problems.push("engine.mode muss 'confluence' oder 'momentum' sein");

@@ -107,9 +107,34 @@ export interface EngineConfig extends RiskConfig {
    * auf einem Wallet würden sich gegenseitig die Positionen wegverkaufen —
    * der Scan sähe eine Momentum-Position ohne Signal und schlösse sie.
    * Die gemischte Aufteilung (Hantel) braucht eine Besitzkennzeichnung je
-   * Position und kommt getrennt.
+   * Position — die gibt es seit 04.08. als `Position.core`, siehe `corePct`.
    */
   mode?: 'confluence' | 'momentum';
+  /**
+   * KERN-SATELLIT (Owner-Direktive 04.08.: „eine stabile sichere Art und
+   * Weise langsam eine positive Performance zu erreichen"): Anteil des
+   * Eigenkapitals in %, der als ruhiger Momentum-SOCKEL geführt wird.
+   *
+   * Der Anlass war eine Messung, keine Idee. Am 04.08. stand der
+   * Momentum-Schatten bei +4,0 % seit dem 28.07. — mit NULL Trades im
+   * letzten Lauf —, während die vier Konfluenz-Konten zwischen −3,2 % und
+   * −6,3 % lagen. Die Konfluenz-Engine war dabei brutto sogar leicht
+   * positiv (+122 $); erlegt haben sie die Gebühren (2.865 $ auf 471
+   * Trades). Kosten sind prozentual, also hilft keine größere Position —
+   * nur weniger und größere Bewegungen. Genau das ist der Sockel.
+   *
+   * Mechanik: `momentumRun` schichtet `equity × corePct/100` monatlich in
+   * die Top-Momentum-Werte (SMA200-Marktfilter: im Abwärtsmarkt Cash) und
+   * stempelt die Positionen mit `core: true`. Der 5-Minuten-Scan fasst
+   * diese Positionen NICHT an — weder Exit noch Positionslimit. Was der
+   * Sockel bindet, fehlt der aktiven Engine als Cash; sie schrumpft also
+   * von selbst mit, ohne dass irgendwo eine zweite Grenze gepflegt werden
+   * müsste.
+   *
+   * 0 = aus (reine Konfluenz, bisheriges Verhalten). Die Hülle klemmt auf
+   * 0–90 — ein Rest bleibt immer für den aktiven Teil und die Gebühren.
+   */
+  corePct?: number;
   /**
    * Anteil des Eigenkapitals, der bei einem ausgelösten Stop verloren gehen
    * darf, in % (0 = aus, dann gilt die klassische Prozent-Tranche).
@@ -254,6 +279,32 @@ export const MAX_OPEN_POSITIONS_CAP = 30;
 /** Voreinstellung, wenn `engine.maxOpenPositions` fehlt (Altbestand). */
 export const DEFAULT_MAX_OPEN_POSITIONS = 10;
 
+/**
+ * Obergrenze für `engine.corePct` (Kern-Satellit, 04.08.).
+ *
+ * 90 statt 100: Ein Rest muss immer beim aktiven Teil bleiben. Bei 100 %
+ * hätte das Konto kein Cash mehr für Gebühren, für den Nachkauf beim
+ * Rebalancing und für jeden manuellen Trade — der Sockel wäre dann kein
+ * Sockel mehr, sondern das ganze Haus. Wer das will, stellt `mode` auf
+ * 'momentum'; das ist der ehrliche Schalter dafür.
+ */
+export const CORE_PCT_CAP = 90;
+/**
+ * Voreinstellung des Sockel-Anteils für NEUE Konten.
+ *
+ * 60 % ist keine gerundete Meinung, sondern folgt der Messung vom 04.08.:
+ * Der Momentum-Sockel stand bei +4,0 % (6 Tage, null Trades im letzten
+ * Lauf), die aktive Konfluenz bei −3,2 bis −6,3 % — brutto war sie dabei
+ * +122 $, die Gebühren (2.865 $ auf 471 Trades) haben sie erlegt. Das
+ * Kapital gehört also mehrheitlich in den ruhigen Teil, ohne den aktiven
+ * abzuschaffen: Er bleibt die Suchmaschine für die seltenen guten
+ * Gelegenheiten und darf sich weiter beweisen.
+ *
+ * Bestandskonten ohne das Feld bleiben bei 0 (kein Sockel) — eine
+ * Kapitalumschichtung passiert nie stillschweigend.
+ */
+export const DEFAULT_CORE_PCT = 60;
+
 export const DEFAULT_STRATEGY: Strategy = {
   broker: {
     provider: 'paper',
@@ -293,6 +344,9 @@ export const DEFAULT_STRATEGY: Strategy = {
     minHoldMin: 60,
     maxOpenPositions: 10,
     mode: 'confluence', // Momentum ist Opt-in — siehe EngineConfig.mode
+    // Kern-Satellit (04.08.): NEUE Konten starten mit ruhigem Sockel.
+    // Begründung samt Messung an DEFAULT_CORE_PCT.
+    corePct: DEFAULT_CORE_PCT,
     // Volatilitäts-Realismus (MA6): Krypto und Rohstoffe brauchen weitere
     // Stops, sonst ist jeder normale Tagesausschlag ein Zwangsverkauf.
     // Werte grob an typischen Tagesranges orientiert; per UI änderbar.
@@ -540,6 +594,19 @@ export interface Position {
    * (meta/tradeFilter) — kein Lookahead: nur geschlossene Trades füttern sie.
    */
   bucket?: string;
+  /**
+   * SOCKEL-Position des Kern-Satelliten (04.08., siehe `engine.corePct`).
+   *
+   * Diese Kennzeichnung ist die Besitzgrenze zwischen den zwei Maschinen auf
+   * EINEM Wallet: `true` heißt „gehört dem Momentum-Sockel". Der
+   * 5-Minuten-Scan lässt solche Positionen vollständig in Ruhe — kein
+   * Signal-Exit, kein Stop, kein Trailing, und sie zählen nicht gegen
+   * `maxOpenPositions`. Sonst verkaufte der Scan beim nächsten Rauschen
+   * genau das weg, was der Sockel ruhig halten soll.
+   *
+   * Fehlend = normale Position der aktiven Engine (Altbestand bleibt gültig).
+   */
+  core?: boolean;
 }
 
 export interface Trade {
