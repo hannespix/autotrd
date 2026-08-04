@@ -29,12 +29,17 @@ import {
   classify,
   closedOnly,
   ema,
+  entryAnchor,
   equityCurve,
   exitBreakdown,
+  haltedauerTage,
   historySummary,
   labelVariantId,
+  levelDistPct,
   macd,
   pnlHistogram,
+  positionLevels,
+  positionPnl,
   resolveName,
   resolveRisk,
   sma,
@@ -46,6 +51,7 @@ import {
   type GlobalAxisStats,
   type HistoryTrade,
   type Position,
+  type PositionLevels,
   type Strategy,
   type Wallet,
 } from '@autotrd/shared';
@@ -59,6 +65,7 @@ import {
   type IndicatorPanelHandle,
   type PanelLine,
   type PriceChartHandle,
+  type PriceLineSpec,
 } from './chart.js';
 import { ICONS } from './icons.js';
 import { newsChartMarkers, newsForDay } from './newsMarkers.js';
@@ -300,6 +307,12 @@ interface DashState {
   /** News-Punkte im Chart (Rückkehr 29.07.) — Quelle sind NUR die fürs
    *  Veto ohnehin geladenen Schlagzeilen (market/{sym}.news), kein Nachladen. */
   showNews: boolean;
+  /**
+   * Positions-Overlay (Owner-Wunsch 04.08.): Einstiegs-Marke, Preislinien für
+   * Stop/Trailing/Ziel und die Kurve seit Einstieg — sichtbar, sobald das
+   * Chart ein Symbol zeigt, in dem das Konto drinsteckt. Default AN.
+   */
+  showPos: boolean;
   /** News-Lage des aktuellen Chart-Symbols (aus dem market-Doc-Watcher). */
   news: MarketDocData['news'];
   /** Zugangsstufe des Kontos — 'pending'/'blocked' heißt: der Scan handelt NICHT. */
@@ -599,6 +612,7 @@ function layout(email: string): string {
               <div class="tm-sec">Layer</div>
               <button class="tf-btn on" id="lyFc" title="Prognose-Overlay ein/aus">Prognose</button>
               <button class="tf-btn on" id="lyNews" title="News-Punkte ein/aus — nur die Schlagzeilen, die die Engine ohnehin fürs News-Veto lädt (kein zusätzlicher Abruf). Grün/rot = Wortlaut der Schlagzeile, gelber Pfeil = Einstiegs-Veto aktiv.">News</button>
+              <button class="tf-btn on" id="lyPos" title="Offene Position im Chart: Einstiegs-Marke, Preislinien für Stop/Trailing/Ziel und die Kurslinie seit Einstieg (grün im Gewinn, rot im Verlust). Zeigt sich nur, wenn das Konto in diesem Symbol drinsteckt.">Position</button>
               <button class="tf-btn on" id="yAutoBtn" title="Y-Autoscaling: Preisskala passt sich beim Scrollen/Zoomen automatisch an — ausschalten, um die Y-Achse manuell festzuhalten (Ziehen auf der Preisskala)">Y-Auto</button>
               <div class="tm-sec">Raster — bis zu 4 Kurse parallel</div>
               <span class="grid-sw" title="Charts im Raster: 1, 2 oder 4 parallel">
@@ -639,6 +653,7 @@ function layout(email: string): string {
               <button id="hudTgl" class="hud-tgl" title="Legende ein-/ausklappen">▾</button>
             </div>
             <div id="chartLegend" class="chart-legend" hidden></div>
+            <div id="posHud" class="pos-hud mono" hidden></div>
           </div>
           <div id="chartArea"></div>
           <button id="jumpNow" class="jump-now" hidden
@@ -1163,6 +1178,7 @@ function renderChart(): void {
     applyForecast(); // Kurzfrist-Prognose (nächste Stunde) im Intraday-Chart
     applyMarkers(); // News-Punkte am Tages-Start-Bar (Zeit-Domäne wechselt mit)
     applyOverlays();
+    applyPosition();
     updateSubPanels();
     renderResBadge();
     renderOhlcHud(null);
@@ -1194,6 +1210,7 @@ function renderChart(): void {
   applyForecast();
   applyMarkers(); // Zeit-Domäne der News-Punkte folgt der Sicht (26.07.)
   applyOverlays();
+  applyPosition();
   drawPredictionArrow();
   updateSubPanels();
   renderResBadge();
@@ -1309,6 +1326,9 @@ function applyOverlays(): void {
       });
     }
   }
+  // Kurslinie seit Einstieg — zuletzt, damit sie über den Indikatoren liegt
+  const verlauf = positionsVerlauf(times, closes);
+  if (verlauf) lines.push(verlauf);
   st.chart.setOverlays(lines);
   renderLegend(lines, intraday);
   applyArea();
@@ -1439,6 +1459,12 @@ function renderLegend(lines: import('./chart.js').OverlayLine[], intraday: boole
     if (l.key === 'bbU' || l.key === 'bbL') continue; // ein Eintrag fürs Band reicht
     if (l.key.startsWith('cmp:')) {
       items.push({ c: l.color, t: `${l.key.slice(4)} % (Vergleich)`, title: 'Prozent-Entwicklung auf eigener Skala' });
+    } else if (l.key === 'pos:seit') {
+      items.push({
+        c: l.color,
+        t: 'Seit Einstieg',
+        title: 'Kursverlauf ab dem Einstiegs-Bar der offenen Position — grün, wenn die Position gerade im Gewinn liegt',
+      });
     } else if (NAME[l.key]) {
       items.push({ c: l.color, t: NAME[l.key]!, title: 'Gilt in allen Charts mit denselben Overlays' });
     }
@@ -2147,8 +2173,143 @@ function applyMarkers(): void {
     st.showNews && !st.cleanView
       ? newsChartMarkers(st.news, times, Math.floor(Date.now() / 1000), vetoAnzeige())
       : [];
+  const einstieg = positionsMarker(times);
+  if (einstieg) markers.push(einstieg);
   st.lastMainMarkers = markers.length; // E2E-Hook
   st.chart.setMarkers(markers);
+}
+
+/* ── Offene Position im Chart (Owner-Wunsch 04.08.) ──────────────────────
+ * „Wenn man in einem aktiven Trade das Chart öffnet: wann bin ich rein und
+ * wie ist es seither gelaufen?" — Antwort in drei Schichten:
+ *   1. Marke am Einstiegs-Bar (Pfeil hoch beim Long, runter beim Short),
+ *   2. waagerechte Linien für Einstand, Stop, Trailing und Ziel,
+ *   3. die Kurslinie SEIT dem Einstieg, gefärbt nach aktuellem Ergebnis.
+ * Alle Zahlen stammen aus `positionLevels`/`positionPnl` (shared) — derselben
+ * Rechnung wie die Positionstabelle, damit Chart und Tabelle nie widersprechen.
+ */
+const POS_FARBEN = {
+  entry: '#e8c76a',
+  stop: '#f2586b',
+  trail: '#f0913c',
+  target: '#26cf9d',
+  gewinn: 'rgba(38,207,157,.9)',
+  verlust: 'rgba(242,88,107,.9)',
+} as const;
+
+/**
+ * Offene Position eines Symbols — null, wenn keine da ist, der Layer aus ist
+ * oder der Clean-View läuft (der blendet alles Optionale aus). Gilt für JEDES
+ * Chart-Fenster (Grid-Gleichwertigkeit), nicht nur fürs Haupt-Chart.
+ */
+function posFuerSymbol(sym: string): Position | null {
+  if (!st || !st.showPos || st.cleanView) return null;
+  return st.positions.find((p) => p.symbol === sym) ?? null;
+}
+
+/** Offene Position im gerade gezeigten Haupt-Symbol. */
+function posImChart(): Position | null {
+  return st ? posFuerSymbol(st.currentSymbol) : null;
+}
+
+/** Level der offenen Position (klassen-aufgelöst wie in der Engine). */
+function posLevels(p: Position): PositionLevels {
+  return positionLevels(p, resolveRisk(st!.strategy.engine, classify(p.symbol)));
+}
+
+/** Zuletzt bekannter Kurs der Position (Quote-Abo, sonst letzter Bar). */
+function posKurs(p: Position, fallback?: number): number {
+  const live = st?.posPrices.get(p.symbol);
+  if (live !== undefined && live > 0) return live;
+  if (fallback !== undefined && fallback > 0) return fallback;
+  const closes = shownSeries().closes;
+  return closes[closes.length - 1] ?? p.avgEntry;
+}
+
+/** Preislinien für Einstand, Stop, Trailing und Ziel einer Position. */
+function positionsLinien(p: Position): PriceLineSpec[] {
+  const lv = posLevels(p);
+  const lines: PriceLineSpec[] = [
+    { key: 'pos:entry', price: lv.entry, color: POS_FARBEN.entry, title: `Einstieg ${fmtNum(lv.entry)}`, style: 0, width: 2 },
+  ];
+  if (lv.stop !== null) lines.push({ key: 'pos:stop', price: lv.stop, color: POS_FARBEN.stop, title: 'Stop', style: 2 });
+  if (lv.trail !== null) lines.push({ key: 'pos:trail', price: lv.trail, color: POS_FARBEN.trail, title: 'Trailing', style: 1 });
+  if (lv.target !== null) lines.push({ key: 'pos:target', price: lv.target, color: POS_FARBEN.target, title: 'Ziel', style: 2 });
+  return lines;
+}
+
+/**
+ * Marke am Einstiegs-Bar — nur wenn der Einstieg IM Fenster liegt.
+ *
+ * Der Marker hängt (wie die News-Punkte) an der Kerzen-Serie und verschwindet
+ * deshalb im Vektor-Look „Kerzen aus". Das ist gewollt: Dort tragen die
+ * Einstiegs-Linie und der Beginn der Seit-Einstieg-Kurve dieselbe Aussage,
+ * und ein Marker ohne Kerze hätte keinen Bezugspunkt.
+ */
+function positionsMarker(times: Array<string | number>, sym?: string): ChartMarker | null {
+  const p = sym === undefined ? posImChart() : posFuerSymbol(sym);
+  if (!p) return null;
+  const anker = entryAnchor(times, p.openedAt);
+  // vorFenster: Der Einstieg liegt links außerhalb — ein Marker am ersten Bar
+  // würde einen Zeitpunkt behaupten, der nicht stimmt.
+  if (!anker || anker.vorFenster) return null;
+  const short = p.side === 'short';
+  return {
+    time: times[anker.index]!,
+    position: short ? 'aboveBar' : 'belowBar',
+    color: POS_FARBEN.entry,
+    shape: short ? 'arrowDown' : 'arrowUp',
+    text: `${short ? 'Short' : 'Kauf'} ${fmtNum(p.avgEntry)}`,
+  };
+}
+
+/** Kurslinie seit Einstieg, grün im Gewinn / rot im Verlust. */
+function positionsVerlauf(
+  times: Array<string | number>,
+  closes: number[],
+  sym?: string,
+): import('./chart.js').OverlayLine | null {
+  const p = sym === undefined ? posImChart() : posFuerSymbol(sym);
+  if (!p) return null;
+  const anker = entryAnchor(times, p.openedAt);
+  if (!anker || closes.length - anker.index < 2) return null;
+  const { pnl } = positionPnl(p, posKurs(p, closes[closes.length - 1]));
+  const punkte: Array<{ time: string | number; value: number }> = [];
+  for (let i = anker.index; i < closes.length; i++) punkte.push({ time: times[i]!, value: closes[i]! });
+  return { key: 'pos:seit', color: pnl >= 0 ? POS_FARBEN.gewinn : POS_FARBEN.verlust, width: 2, points: punkte };
+}
+
+/** Preislinien + HUD-Zeile der offenen Position (aus renderChart). */
+function applyPosition(): void {
+  if (!st?.chart) return;
+  const p = posImChart();
+  const hud = $('posHud');
+  if (!p) {
+    st.chart.setPriceLines([]);
+    hud.hidden = true;
+    return;
+  }
+  const lv = posLevels(p);
+  st.chart.setPriceLines(positionsLinien(p));
+
+  const short = p.side === 'short';
+  const live = posKurs(p);
+  const { pnl, pct } = positionPnl(p, live);
+  const tage = haltedauerTage(p.openedAt, Date.now());
+  const dauer = tage === 0 ? 'heute eröffnet' : tage === 1 ? 'seit 1 Tag' : `seit ${tage} Tagen`;
+  const teile = [
+    `<b class="${short ? 'c-rd' : 'c-gn'}">${short ? 'SHORT' : 'LONG'} ${p.qty}</b>`,
+    dauer,
+    `${fmtNum(lv.entry)} → ${fmtNum(live)}`,
+    `<b class="${pnlClass(pnl)}">${fmtPct(pct)} · ${money(pnl)}</b>`,
+  ];
+  if (p.core === true) teile.push('<span class="pos-tag">Sockel</span>');
+  if (lv.stop !== null) teile.push(`Stop ${fmtPct(levelDistPct(lv.stop, live, 'stop', short))}`);
+  else if (lv.stopAtr) teile.push('Stop adaptiv');
+  if (lv.target !== null) teile.push(`Ziel ${fmtPct(levelDistPct(lv.target, live, 'target', short))}`);
+  else if (lv.targetAtr) teile.push('Ziel adaptiv');
+  hud.innerHTML = teile.join(' <span class="pos-sep">·</span> ');
+  hud.hidden = false;
 }
 
 /**
@@ -2837,12 +2998,21 @@ function renderGridPanelBars(p: GridPanel): void {
     );
     lines.push({ key: 'vwap', color: '#f2d16b', width: 2, points: pts });
   }
+  // Offene Position auch im Raster (04.08.): Jedes Fenster zeigt dieselbe
+  // Wahrheit über SEIN Symbol — sonst hinge die Antwort davon ab, in welchem
+  // Kasten der Kurs gerade steht.
+  const pPos = posFuerSymbol(p.sym);
+  const pVerlauf = positionsVerlauf(times, closes, p.sym);
+  if (pVerlauf) lines.push(pVerlauf);
   p.chart.setOverlays(lines);
+  p.chart.setPriceLines(pPos ? positionsLinien(pPos) : []);
   // News-Punkte in JEDEM Chart-Fenster — gleiche Quelle wie der Haupt-Chart
   const pMarkers: ChartMarker[] =
     st !== null && st.showNews && !st.cleanView
       ? newsChartMarkers(p.news, times, Math.floor(Date.now() / 1000), vetoAnzeige())
       : [];
+  const pEinstieg = positionsMarker(times, p.sym);
+  if (pEinstieg) pMarkers.push(pEinstieg);
   p.lastMarkers = pMarkers.length; // E2E-Hook
   p.chart.setMarkers(pMarkers);
   // Layer syncen (User-Wunsch 25.07.): Fläche + „Kerzen aus" gelten auch im
@@ -3984,6 +4154,9 @@ function syncPositionQuotes(): void {
         if (!st) return;
         if (d?.quote) st.posPrices.set(sym, d.quote.price);
         renderPortfolio();
+        // Trailing-Linie und P&L-Chip leben vom Kurs — mitziehen, aber nur
+        // fürs gezeigte Symbol (sonst rendert jede fremde Quote das Chart neu)
+        if (sym === st.currentSymbol) applyPosition();
       }),
     );
   }
@@ -3996,51 +4169,41 @@ function syncPositionQuotes(): void {
  * Level haben Vorrang, sonst die heutigen (klassen-aufgelösten) Prozente;
  * bei Shorts alles gespiegelt. ATR-adaptive Stops zeigt der Client als
  * Modus an (die exakte Schwelle kennt nur der Server-Scan).
+ *
+ * Die Level kommen seit 04.08. aus `positionLevels` (shared) — derselben
+ * Rechnung, die auch die Preislinien im Chart setzt. Zwei Rechnungen würden
+ * driften, und dann widerspräche die Tabelle der Linie im Chart.
  */
 function exitOutlook(p: Position, live: number | undefined): string {
   if (!st || live === undefined || !(live > 0) || !(p.avgEntry > 0)) return '';
   const risk = resolveRisk(st.strategy.engine, classify(p.symbol));
+  const lv = positionLevels(p, risk);
   const short = p.side === 'short';
   const parts: string[] = [];
   const candidates: Array<{ label: string; dist: number }> = [];
   const fmt = (v: number): string => `${v.toFixed(1)} %`;
 
-  const atrStop = (risk.atrStopMult ?? 0) > 0;
-  const stopLevel = p.stopLoss ?? (atrStop || !(risk.stopLossPct > 0)
-    ? null
-    : short ? p.avgEntry * (1 + risk.stopLossPct / 100) : p.avgEntry * (1 - risk.stopLossPct / 100));
-  if (stopLevel !== null) {
-    const dist = (short ? (stopLevel - live) : (live - stopLevel)) / live * 100;
+  if (lv.stop !== null) {
+    const dist = levelDistPct(lv.stop, live, 'stop', short);
     parts.push(dist <= 0 ? '<b class="c-rd">Stop: löst beim nächsten Scan aus</b>' : `Stop in <b>${fmt(dist)}</b>`);
     candidates.push({ label: 'Stop', dist });
-  } else if (atrStop) {
+  } else if (lv.stopAtr) {
     parts.push('Stop: <b>ATR-adaptiv</b>');
   }
 
-  const trail = risk.trailingStopPct ?? 0;
-  if (trail > 0) {
-    const armed = short ? (p.lowWater ?? p.avgEntry) < p.avgEntry : (p.highWater ?? 0) > p.avgEntry;
-    if (armed) {
-      const lvl = short
-        ? (p.lowWater ?? p.avgEntry) * (1 + trail / 100)
-        : (p.highWater ?? p.avgEntry) * (1 - trail / 100);
-      const dist = (short ? (lvl - live) : (live - lvl)) / live * 100;
-      parts.push(dist <= 0 ? '<b class="c-rd">Trailing: löst beim nächsten Scan aus</b>' : `Trailing in <b>${fmt(dist)}</b>`);
-      candidates.push({ label: 'Trailing', dist });
-    } else {
-      parts.push('Trailing: <span title="Der nachziehende Stop schärft sich erst, wenn die Position im Gewinn war">wartet auf Gewinn</span>');
-    }
+  if (lv.trail !== null) {
+    const dist = levelDistPct(lv.trail, live, 'stop', short);
+    parts.push(dist <= 0 ? '<b class="c-rd">Trailing: löst beim nächsten Scan aus</b>' : `Trailing in <b>${fmt(dist)}</b>`);
+    candidates.push({ label: 'Trailing', dist });
+  } else if (lv.trailWartet) {
+    parts.push('Trailing: <span title="Der nachziehende Stop schärft sich erst, wenn die Position im Gewinn war">wartet auf Gewinn</span>');
   }
 
-  const atrTake = (risk.atrTakeMult ?? 0) > 0;
-  const takeLevel = p.takeProfit ?? (atrTake || !(risk.takeProfitPct > 0)
-    ? null
-    : short ? p.avgEntry * (1 - risk.takeProfitPct / 100) : p.avgEntry * (1 + risk.takeProfitPct / 100));
-  if (takeLevel !== null) {
-    const dist = (short ? (live - takeLevel) : (takeLevel - live)) / live * 100;
+  if (lv.target !== null) {
+    const dist = levelDistPct(lv.target, live, 'target', short);
     parts.push(dist <= 0 ? '<b class="c-gn">Ziel: löst beim nächsten Scan aus</b>' : `Ziel in <b>${fmt(dist)}</b>`);
     candidates.push({ label: 'Ziel', dist });
-  } else if (atrTake) {
+  } else if (lv.targetAtr) {
     parts.push('Ziel: <b>ATR-adaptiv</b>');
   }
 
@@ -4129,6 +4292,15 @@ function renderPortfolio(): void {
       <td><button class="hbtn" data-exit style="color:var(--rd)">${short ? 'Cover' : 'Exit'}</button></td>`;
     const symTd = tr.querySelector('td')!;
     symTd.textContent = p.symbol;
+    // Klick aufs Symbol holt die Position ins Haupt-Chart (04.08.) — dort
+    // zeigen Marke, Preislinien und die Kurve seit Einstieg den ganzen Verlauf
+    symTd.className = 'pos-sym';
+    symTd.title = 'Im Chart öffnen — mit Einstieg, Stop/Ziel und Verlauf seit Einstieg';
+    symTd.addEventListener('click', () => {
+      if (!st) return;
+      publishSymbol(st.chartGroup, p.symbol);
+      $('chartArea').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
     if (short) {
       const tag = document.createElement('span');
       tag.className = 'stag t-sell';
@@ -4923,6 +5095,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     // News-Punkte an per Default — die Daten liegen ohnehin im market-Doc,
     // der Toggle kostet also nichts; Abwahl bleibt gerätelokal gemerkt.
     showNews: localStorage.getItem('autotrd-chart-news') !== '0',
+    showPos: localStorage.getItem('autotrd-chart-pos') !== '0',
     posPrices: new Map(),
     pfStats: null,
     equitySeries: [],
@@ -5012,6 +5185,12 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       st.positions = positions;
       syncPositionQuotes();
       renderPortfolio();
+      // Eröffnet/geschlossen: Das Chart-Overlay folgt sofort, sonst zeigt es
+      // Linien einer Position, die es nicht mehr gibt (oder keine für eine neue)
+      applyPosition();
+      applyMarkers();
+      applyOverlays();
+      renderAllPanels(); // gilt in ALLEN Chart-Fenstern
     }),
     // Live-Kopf: die neuesten 50. Nachgeladene ältere Seiten bleiben erhalten
     // und werden hinten angehängt — sonst würde jeder neue Trade (alle fünf
@@ -5785,6 +5964,17 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     localStorage.setItem('autotrd-chart-news', st.showNews ? '1' : '0');
     applyMarkers();
     renderAllPanels(); // News-Punkte gelten in ALLEN Charts
+  });
+  $('lyPos').classList.toggle('on', st?.showPos ?? true);
+  $('lyPos').addEventListener('click', () => {
+    if (!st) return;
+    st.showPos = !st.showPos;
+    $('lyPos').classList.toggle('on', st.showPos);
+    localStorage.setItem('autotrd-chart-pos', st.showPos ? '1' : '0');
+    applyPosition();
+    applyMarkers();
+    applyOverlays();
+    renderAllPanels(); // Positions-Layer gilt in ALLEN Charts
   });
   wireChartHeightDrag();
   document.addEventListener('keydown', onEscape);

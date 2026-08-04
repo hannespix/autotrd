@@ -1527,6 +1527,52 @@ Trades vorlagen — nicht, als die Theorie plausibel klang.
 
 ---
 
+## MC — Offene Position im Chart (Owner-Wunsch 04.08.) — ERLEDIGT
+
+> „Könnte man in den Charts sauber und grafisch gut und klar darstellen, wenn
+> man in einem aktiven Trade das Chart öffnet, wann man reingegangen ist und
+> wie es sich seither entwickelt hat?"
+
+Bis dahin stand die Antwort nur in der Positionstabelle — als Zahlenreihe, die
+man selbst mit dem Kursverlauf verrechnen musste. Jetzt zeigt das Chart sie:
+
+| Schicht | Was man sieht |
+|---|---|
+| Einstiegs-Marke | Pfeil am Einstiegs-Bar (hoch = Kauf, runter = Short) mit Einstandskurs |
+| Preislinien | Einstand (durchgezogen, gold), Stop (gestrichelt rot), Trailing (gepunktet orange), Ziel (gestrichelt grün) — je mit Achsen-Label |
+| Verlauf | Kurslinie **ab dem Einstiegs-Bar**, grün wenn die Position im Gewinn steht, sonst rot |
+| Chip | `LONG 12 · seit 3 Tagen · 104,37 → 113,80 · +9,04 % · $113,16 · Sockel · Stop 12,9 % · Ziel 0,9 %` |
+
+Gilt in **jedem** Chart-Fenster (Haupt-Chart, Raster, Vergleich) für dessen
+eigenes Symbol — Grid-Gleichwertigkeit wie bei News und Indikatoren. Ein Klick
+aufs Symbol in der Positionstabelle holt die Position ins Haupt-Chart.
+Abschaltbar über Layer → Position (Default AN); der Clean-View blendet es
+mit allem anderen Optionalen aus.
+
+### Zwei Entscheidungen, die nicht offensichtlich sind
+
+**Die Level kommen aus `shared/src/positionView.ts`, nicht aus dem Chart-Code.**
+Dieselbe Funktion (`positionLevels`) speist jetzt auch die Exit-Abstände der
+Positionstabelle. Zwei getrennte Rechnungen wären auseinandergedriftet — und
+dann sagt die Tabelle „Stop in 2,1 %", während die Linie woanders liegt. Genau
+diese Sorte Widerspruch kostet Vertrauen in die ganze Anzeige.
+
+**Die Preislinien hängen an einer eigenen, transparenten Trägerserie.**
+Lightweight Charts zeichnet Preislinien einer AUSGEBLENDETEN Serie nicht.
+Hätten sie an den Kerzen gehangen, wären Einstand und Stop im Vektor-Look
+(„Kerzen aus") oder bei Linien-/Berg-Typen genau dann verschwunden, wenn man
+ruhig auf den Kurs schauen will. Mit Chromium in beiden Zuständen belegt.
+
+### Ehrliche Grenze
+
+Der Einstiegs-**Marker** hängt (wie die News-Punkte) an der Kerzen-Serie und
+ist im Modus „Kerzen aus" nicht sichtbar. Dort tragen Einstiegs-Linie und der
+Beginn der Seit-Einstieg-Kurve dieselbe Aussage. Liegt der Einstieg links
+außerhalb des Fensters, wird bewusst KEIN Marker gesetzt — er würde einen Tag
+behaupten, an dem nichts passiert ist.
+
+---
+
 ## Übergabe-Prompt (so startet man Claude Code in diesem Repo)
 
 > Lies ARCHITECTURE.md, CLAUDE.md und MILESTONES.md. Arbeite nach dem

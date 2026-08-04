@@ -668,6 +668,27 @@ button, input, select { font-family: inherit; font-size: inherit; }
   backdrop-filter: blur(6px);
 }
 .lg-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: -1px; }
+/* Positions-Chip im Chart (04.08.): „LONG 12 · seit 3 Tagen · 123,45 → 130,00
+   · +5,3 % · Stop 4,1 %" — steht unter der Legende, gleiche Glas-Optik. Der
+   goldene Rand greift die Farbe der Einstiegs-Linie auf, damit Chip und Linie
+   als EIN Element gelesen werden. */
+.pos-hud {
+  font-size: 11px; color: var(--t2); padding: 2px 9px; border-radius: 7px;
+  background: color-mix(in srgb, var(--bg, #060b12) 68%, transparent);
+  backdrop-filter: blur(6px); border: 1px solid rgba(232, 199, 106, .45);
+  /* Umbruch statt Ellipse: Der Chip trägt Zahlen, keine Prosa — „Stop 12,9 %"
+     abzuschneiden hieße, die wichtigste Angabe zu verlieren. Auf schmalen
+     Geräten (390 px) läuft er deshalb über zwei Zeilen. */
+  max-width: 100%; white-space: normal; line-height: 1.55;
+}
+.pos-sep { color: var(--t3); }
+.pos-tag {
+  font-size: 9px; letter-spacing: .06em; text-transform: uppercase;
+  border: 1px solid var(--hair); border-radius: 999px; padding: 0 5px; color: var(--t3);
+}
+/* Symbol in der Positionstabelle: Klick holt die Position ins Chart */
+.pos-sym { cursor: pointer; }
+.pos-sym:hover { text-decoration: underline; }
 
 /* Dashboard-Individualisierung Teil 1: Modul-Kopf (▾/✕), ⚙-Module, Sidebars */
 .sect-tools { float: right; display: inline-flex; gap: 2px; margin-left: 8px; }
