@@ -131,6 +131,8 @@ import {
   callBrokerStatus,
   callConnectBroker,
   callDisconnectBroker,
+  callLiveMode,
+  type LiveModeStatus,
   type BrokerStatusResult,
   callTaxReport,
   type TaxReportResult,
@@ -1143,6 +1145,47 @@ function layout(email: string): string {
            jetzt?" -->
       <p class="hint" id="bkAuto" style="margin-top:8px">—</p>
       <div id="bkOut" style="margin-top:8px"></div>
+
+      <!-- ── Echtgeld scharf stellen (M14, Owner-Go 05.08.) ──────────────
+           Der Schalter, den der Owner meint. Er steht bewusst HIER, direkt
+           unter der Broker-Karte: Ohne verbundenes Echtgeldkonto ist er
+           gegenstandslos, und die Reihenfolge auf dem Bildschirm soll die
+           Reihenfolge der Schritte sein. -->
+      <div class="wl-sec" style="margin-top:14px">Echtgeld scharf stellen</div>
+      <p class="hint">Es geht los, wenn <b>beides</b> gilt: Dieser Schalter steht
+        auf ECHTGELD <b>und</b> die Trading-Engine steht auf <b>Start</b>. Ein
+        Schalter allein handelt nicht.</p>
+      <p class="hint" id="lvState">—</p>
+      <div id="lvKrit"></div>
+      <div id="lvOn" hidden style="margin-top:8px">
+        <p class="hint" style="border-left:3px solid var(--rd);padding-left:8px">
+          <b>Ab jetzt fließt echtes Geld.</b> Die Engine kauft und verkauft
+          selbstständig auf deinem Alpaca-Echtgeldkonto — ohne weitere
+          Rückfrage, rund um die Uhr für Krypto, zu Börsenzeiten für den Rest.
+          Verluste sind real und nicht rückgängig zu machen.</p>
+        <p class="hint">Zum Bestätigen <b>ECHTGELD</b> tippen. Deine Anmeldung
+          muss dabei frisch sein — du wirst nach deinem Passwort gefragt.</p>
+        <div class="row" style="align-items:center;gap:8px;margin-top:4px;flex-wrap:wrap">
+          <input id="lvWord" class="inp" style="flex:1;min-width:120px" type="text"
+            autocomplete="off" spellcheck="false" placeholder="ECHTGELD" />
+          <input id="lvPw" class="inp" style="flex:1;min-width:120px" type="password"
+            autocomplete="current-password" placeholder="Dein Passwort" />
+        </div>
+      </div>
+      <div class="row" style="align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <button class="btn btn-n" id="lvGo">Auf ECHTGELD umstellen</button>
+        <button class="btn btn-n" id="lvOff" hidden>Zurück auf Papierhandel</button>
+      </div>
+      <div id="lvOut" style="margin-top:8px"></div>
+      <p class="hint" style="margin-top:8px">
+        <b>Was passiert beim Stoppen?</b> Die Engine legt sofort die Hände in den
+        Schoß: keine neuen Käufe, keine Verkäufe, auch keine Stop-Loss- oder
+        Take-Profit-Ausführungen. Dein Depot bleibt <b>exakt so stehen, wie es
+        ist</b> — es wird nichts glattgestellt. Das ist gewollt, hat aber eine
+        Kehrseite: Ein gestopptes Konto ist auch ein <b>ungeschütztes</b> Konto.
+        Wer über Nacht stoppt und Positionen offen lässt, hat keinen Stop-Loss
+        mehr. Für längere Pausen deshalb besser: Positionen von Hand schließen,
+        dann stoppen.</p>
       <div class="wl-sec" style="margin-top:14px">Steuer-Export ${iBtn('taxReport')}</div>
       <p class="hint">Paart Käufe und Verkäufe nach <b>FIFO</b>, rechnet Haltedauern
         und sortiert die Ergebnisse in die Töpfe, die das deutsche Recht getrennt
@@ -2222,6 +2265,86 @@ function renderBreaker(b: { am: string; grund: string; verlustPct: number | null
     `<b style="color:var(--rd)">Ausgelöst</b> am ${escText(b.am.slice(0, 16).replace('T', ' '))} Uhr`
     + (b.verlustPct === null ? '' : ` (${b.verlustPct.toFixed(2).replace('.', ',')} % Tagesverlust)`)
     + `.<br />${escText(b.grund)}`;
+}
+
+/**
+ * Die drei Guards des Echtgeld-Handels anzeigen (M14, 05.08.).
+ *
+ * Alle drei stehen zusammen in einer Liste, weil die Frage, die hier
+ * beantwortet werden muss, immer dieselbe ist: „Warum handelt es noch nicht
+ * mit echtem Geld?" Wären sie über drei Karten verteilt, wäre die Antwort
+ * eine Suchaufgabe — und der wahrscheinlichste Schluss der falsche
+ * („kaputt") statt des richtigen („eine Bedingung fehlt noch").
+ */
+function renderLiveStatus(s: LiveModeStatus | null, istLive: boolean): void {
+  const state = document.getElementById('lvState');
+  const krit = document.getElementById('lvKrit');
+  const on = document.getElementById('lvOn');
+  const go = document.getElementById('lvGo') as HTMLButtonElement | null;
+  const off = document.getElementById('lvOff') as HTMLButtonElement | null;
+  if (!state || !krit || !on || !go || !off) return;
+
+  // Im Echtgeld-Betrieb steht der Rückweg im Vordergrund, nicht der Hinweg.
+  off.hidden = !istLive;
+  go.hidden = istLive;
+  on.hidden = istLive;
+  if (istLive) {
+    state.innerHTML = '<b style="color:var(--rd)">ECHTGELD ist scharf.</b> '
+      + 'Gehandelt wird, sobald die Engine auf „Start" steht.';
+    krit.innerHTML = '';
+    return;
+  }
+  if (!s) {
+    state.textContent = 'Zustand wird geladen …';
+    return;
+  }
+
+  const zeile = (name: string, ok: boolean, text: string): string =>
+    `<div class="hint" style="margin-top:4px"><b style="color:${
+      ok ? 'var(--gn)' : 'var(--t3)'
+    }">${ok ? '✓' : '○'}</b> <b>${escText(name)}</b> — ${escText(text)}</div>`;
+
+  const kontoOk = s.brokerArt === 'live';
+  krit.innerHTML =
+    zeile(
+      'Echtgeldkonto verbunden',
+      kontoOk,
+      s.brokerArt === null
+        ? 'kein Broker hinterlegt'
+        : s.brokerArt === 'paper'
+          ? 'verbunden ist ein Papierkonto (PK…)'
+          : 'Echtgeld-Schlüssel liegt verschlüsselt',
+    )
+    + zeile(
+      'Server-Freigabe',
+      s.serverFreigabe,
+      s.serverFreigabe
+        ? 'der Betreiber hat Echtgeld eingeschaltet'
+        : 'ALPACA_ALLOW_LIVE fehlt — nur der Betreiber kann das setzen',
+    )
+    + zeile(
+      `Reife (${s.reife.erfuellt}/${s.reife.gesamt})`,
+      s.reife.bereit,
+      s.reife.fazit,
+    )
+    + s.reife.kriterien
+        .map(
+          (k) =>
+            `<div class="hint" style="margin-left:16px;opacity:.8">${
+              k.erfuellt ? '✓' : '○'
+            } ${escText(k.name)}: ${escText(k.ist)} (nötig ${escText(k.soll)})</div>`,
+        )
+        .join('');
+
+  const alles = kontoOk && s.serverFreigabe && s.reife.bereit;
+  state.innerHTML = alles
+    ? '<b>Alle Bedingungen erfüllt.</b> Der Schalter unten stellt scharf.'
+    : '<b>Noch nicht scharf schaltbar.</b> Offene Punkte stehen unten — '
+      + 'jeder einzelne verhindert Echtgeld-Handel.';
+  // Der Knopf bleibt klickbar, auch wenn etwas fehlt: Die Server-Antwort
+  // nennt dann den Grund. Ein ausgegrauter Knopf ohne Begründung ist die
+  // schlechtere Auskunft.
+  on.hidden = !alles;
 }
 
 /**
@@ -6545,6 +6668,64 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     ($('rsGo') as HTMLButtonElement).disabled =
       ($('rsWord') as HTMLInputElement).value.trim() !== RESET_CONFIRM_WORD;
   });
+  /* ── Echtgeld-Schalter (M14) ────────────────────────────────────────── */
+  const ladeLiveStatus = (): void => {
+    void callLiveMode({ action: 'status' })
+      .then((r) => {
+        renderLiveStatus(r.status ?? null, st?.strategy.broker.mode === 'live');
+      })
+      .catch(() => {
+        const el = document.getElementById('lvState');
+        if (el) el.textContent = 'Zustand nicht abrufbar.';
+      });
+  };
+  $('optBtn')?.addEventListener('click', ladeLiveStatus);
+
+  $('lvGo')?.addEventListener('click', () => {
+    const btn = $('lvGo') as HTMLButtonElement;
+    const wort = ($('lvWord') as HTMLInputElement).value.trim();
+    btn.disabled = true;
+    $('lvOut').innerHTML = '<div class="hint">Bestätige deine Anmeldung …</div>';
+    // Reihenfolge wie beim Broker-Schlüssel: erst Anmeldung auffrischen,
+    // dann senden. Der Server prüft `auth_time`; ohne Auffrischen käme der
+    // Aufruf mit einem alten Zeitstempel an.
+    void frischAnmelden(($('lvPw') as HTMLInputElement).value || undefined)
+      .then(() => {
+        $('lvOut').innerHTML = '<div class="hint">Schalte scharf …</div>';
+        return callLiveMode({ live: true, bestaetigung: wort });
+      })
+      .then((r) => {
+        ($('lvWord') as HTMLInputElement).value = '';
+        ($('lvPw') as HTMLInputElement).value = '';
+        $('lvOut').innerHTML = `<div class="hint">${escText(r.meldung)}</div>`;
+        renderLiveStatus(null, true);
+      })
+      .catch((e) => {
+        $('lvOut').innerHTML = `<div class="hint">${escText((e as Error).message)}</div>`;
+      })
+      .finally(() => {
+        btn.disabled = false;
+      });
+  });
+
+  // Zurück auf Papier: sofort, ohne Bestätigung. Eine Sicherung, die das
+  // ABSCHALTEN erschwert, ist keine Sicherung.
+  $('lvOff')?.addEventListener('click', () => {
+    const btn = $('lvOff') as HTMLButtonElement;
+    btn.disabled = true;
+    void callLiveMode({ live: false })
+      .then((r) => {
+        $('lvOut').innerHTML = `<div class="hint">${escText(r.meldung)}</div>`;
+        ladeLiveStatus();
+      })
+      .catch((e) => {
+        $('lvOut').innerHTML = `<div class="hint">${escText((e as Error).message)}</div>`;
+      })
+      .finally(() => {
+        btn.disabled = false;
+      });
+  });
+
   // Echtgeld-Feld ein-/ausblenden, sobald erkennbar ist, was eingegeben wird.
   // Reine Anzeige — geprüft wird serverseitig noch einmal am Präfix.
   $('bkKey')?.addEventListener('input', () => {

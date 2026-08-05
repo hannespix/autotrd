@@ -342,6 +342,40 @@ export async function callConnectBroker(
   return r.data as ConnectResult;
 }
 
+export interface LiveModeStatus {
+  reife: {
+    bereit: boolean;
+    erfuellt: number;
+    gesamt: number;
+    fazit: string;
+    kriterien: { name: string; erfuellt: boolean; ist: string; soll: string }[];
+  };
+  brokerArt: 'paper' | 'live' | null;
+  serverFreigabe: boolean;
+}
+
+export interface LiveModeErgebnis {
+  ok: true;
+  modus: 'paper' | 'live';
+  meldung: string;
+  status?: LiveModeStatus;
+}
+
+/**
+ * Echtgeld-Schalter (M14) — abfragen oder umlegen.
+ *
+ * Der Server entscheidet, nicht der Client: Reife, verbundene Kontoart und
+ * die Frische der Anmeldung werden dort geprüft. Die Oberfläche zeigt nur,
+ * was zurückkommt — sonst gäbe es zwei Fassungen derselben Regel, und die
+ * im Browser wäre die, die zuerst veraltet.
+ */
+export async function callLiveMode(
+  arg: { action: 'status' } | { live: boolean; bestaetigung?: string },
+): Promise<LiveModeErgebnis> {
+  const r = await httpsCallable(fns(), 'setLiveMode')(arg);
+  return r.data as LiveModeErgebnis;
+}
+
 /** Verbindung lösen — der Server löscht das Schlüsselpaar. */
 export async function callDisconnectBroker(): Promise<{ ok: true; geloescht: boolean }> {
   const r = await httpsCallable(fns(), 'connectBroker')({ action: 'disconnect' });
