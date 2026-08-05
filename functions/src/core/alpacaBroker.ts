@@ -327,6 +327,33 @@ export async function alpacaPositionen(
   });
 }
 
+/** Antwort von `/v2/clock` — die Börsen-Uhr des Brokers (Alpaca-Sync Punkt 2). */
+export interface AlpacaUhrAblesung {
+  isOpen: boolean;
+  nextOpen: string;
+  nextClose: string;
+}
+
+/**
+ * Die US-Börsen-Uhr ablesen. Kennt Feiertage und Halbtage — unsere eigene
+ * Kalenderrechnung (`usEquityOpen`) kennt beides nicht.
+ */
+export async function alpacaUhr(
+  mode: BrokerMode,
+  schluessel: AlpacaSchluessel | null = null,
+  fetchImpl: FetchLike = fetch,
+): Promise<AlpacaUhrAblesung> {
+  const d = (await alpacaFetch(mode, '/v2/clock', schluessel, {}, fetchImpl)) as Record<
+    string,
+    unknown
+  >;
+  return {
+    isOpen: d['is_open'] === true,
+    nextOpen: String(d['next_open'] ?? ''),
+    nextClose: String(d['next_close'] ?? ''),
+  };
+}
+
 /**
  * Handels-Eigenschaften eines Papiers, wie der BROKER sie kennt (Alpaca-Sync,
  * 05.08. — MILESTONES „Weitere Alpaca-Synchronisierung", Punkt 1).
