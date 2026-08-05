@@ -1827,6 +1827,23 @@ Sekunden-Preis-Alerts, `trade_updates`.
       es nicht, hilft schaerferes Filtern auch nicht — und das zu wissen ist
       genauso viel wert.
 
+      **ENTSCHIEDEN 05.08., 22:05 (US-Schluss, vorregistrierte Regel):
+      Kostenschwelle wird NICHT scharfgeschaltet.** Endstand nach einem
+      vollen Handelstag: live n=98, roh +0,022 %, nach Kosten −0,078 %,
+      Treffer 52,0 % · live_kosten n=67, roh +0,006 %, nach Kosten
+      −0,094 %, Treffer 50,7 %. Die Schwelle waehlt NICHT die besseren
+      Signale aus — die Ueberlebenden verdienen roh sogar weniger als der
+      ungefilterte Durchschnitt (beide Differenzen im Rauschen; genau das
+      ist der Befund: keine Evidenz FUER die Schwelle). Der Engpass ist
+      der HORIZONT, nicht die Filterung: +0,02 % echte Kante je Signal
+      gegen ~0,10 % Roundtrip-Kosten — eine Groessenordnung zu klein.
+      Konsequenz fuer Task 94: naechste Messung ist eine
+      Horizont-Variante (dieselben Live-Signale, bewertet am NAECHSTEN
+      TAG statt am naechsten 5-min-Scan). Traegt die Kante dort die
+      Kosten, ist der Hebel „seltener handeln, laenger halten" — nicht
+      „schaerfer filtern". Regime-Variante endgueltig widerlegt
+      (n=2551, roh −0,010 %, Treffer 46,0 %) und wird eingestellt.
+
 - [x] **Vorfall 05.08., 15:30: Depot und Buch auseinandergelaufen —
       Depot-Uebernahme gebaut.** Zur US-Oeffnung kaufte die Engine ueber das
       Order-Routing real bei Alpaca (16 Fills, ~119.500 $, sequenzielle
