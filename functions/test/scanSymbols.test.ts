@@ -180,3 +180,73 @@ describe('selectScanSymbols: Marktzeit', () => {
     expect(out).toEqual(['AAPL', 'MSFT', 'NVDA']);
   });
 });
+
+/* ── Kontingent für abgeschaltete Klassen (Live-Fund 05.08.) ────────────────
+ *
+ * Der Betrieb zeigte: 14 von 40 Tiefenplätzen gingen an Klassen, deren
+ * Regler auf 0 stand. Sie bekamen 5-min-Kerzen, Indikatoren und Prognosen —
+ * und durften dann nicht handeln.
+ *
+ * Die naheliegende Sparmaßnahme wäre, sie ganz auszusperren. Das wäre der
+ * fünfte Fall desselben Fehlers, den dieses Projekt schon viermal hatte:
+ * Eine Sperre, die zugleich die Messung beendet, die sie korrigieren würde.
+ * Ohne 5-min-Daten misst der Schatten nichts mehr, und ein Abschalten wäre
+ * endgültig — auch wenn die Klasse längst wieder trägt.
+ *
+ * Deshalb ein Kontingent, und deshalb diese Tests: Sie halten BEIDE Seiten
+ * fest — die Bevorzugung der handelnden Klassen UND das Überleben der
+ * Messung.
+ */
+describe('selectScanSymbols — abgeschaltete Klassen', () => {
+  /** BTC ist crypto, AAPL ist stocks_us — beides echte Katalog-Symbole. */
+  const krypto = ['BTC-USD', 'ETH-USD', 'SOL-USD', 'XRP-USD'];
+  const aktien = ['AAPL', 'MSFT', 'NVDA', 'TSLA'];
+
+  it('bevorzugt handelnde Klassen, auch wenn die anderen zuerst kommen', () => {
+    // Krypto steht in der Watchlist (höchste Priorität), Aktien nur im
+    // Ranking. Ohne die Zwei-Durchgang-Logik füllten die vier Krypto-Symbole
+    // die vier Plätze — obwohl in ihnen nicht gehandelt werden darf.
+    const r = auswahl({
+      watchlists: krypto,
+      ranking: aktien,
+      max: 5,
+      klasseAktiv: (s) => !s.endsWith('-USD'),
+    });
+    expect(r.filter((s) => !s.endsWith('-USD')).length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('lässt der abgeschalteten Klasse trotzdem Plätze — sonst stirbt die Messung', () => {
+    const r = auswahl({
+      watchlists: krypto,
+      ranking: aktien,
+      max: 10,
+      schattenAnteil: 0.2,
+      klasseAktiv: (s) => !s.endsWith('-USD'),
+    });
+    // 20 % von 10 = 2 Plätze für den Schatten. Mehr nicht, aber auch nicht
+    // null: Bei null könnte Krypto nie zurückkommen.
+    const imSchatten = r.filter((s) => s.endsWith('-USD')).length;
+    expect(imSchatten).toBeGreaterThan(0);
+    expect(imSchatten).toBeLessThanOrEqual(2);
+  });
+
+  it('hält offene Positionen IMMER drin, auch in abgeschalteten Klassen', () => {
+    // Eine Position ohne frische Daten verlöre ihren Stop-Loss. Das gilt
+    // unabhängig davon, ob die Klasse noch gehandelt werden darf — sonst
+    // würde das Abschalten einer Klasse die bestehenden Positionen darin
+    // schutzlos stellen.
+    const r = auswahl({
+      positions: ['BTC-USD'],
+      ranking: aktien,
+      max: 3,
+      klasseAktiv: (s) => !s.endsWith('-USD'),
+    });
+    expect(r).toContain('BTC-USD');
+  });
+
+  it('verhält sich ohne Klassen-Filter exakt wie vorher', () => {
+    const ohne = auswahl({ watchlists: krypto, ranking: aktien, max: 6 });
+    expect(ohne.length).toBe(6);
+    expect(ohne.slice(0, 4)).toEqual(krypto);
+  });
+});

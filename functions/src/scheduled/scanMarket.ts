@@ -1512,11 +1512,76 @@ export function selectScanSymbols(args: {
   max: number;
   /** Ist die Asset-Klasse dieses Symbols gerade handelbar? Default: alles. */
   isOpen?: (symbol: string) => boolean;
+  /**
+   * Darf in dieser Anlageklasse überhaupt gehandelt werden? (05.08.)
+   *
+   * `false` heißt: KEIN laufendes Konto gewichtet sie über null — der Regler
+   * steht überall auf 0. Solche Symbole bekommen nur noch das Kontingent
+   * unten, statt die Tiefenplätze zu füllen.
+   *
+   * Default: alles aktiv (Verhalten wie vorher, wenn niemand etwas übergibt).
+   */
+  klasseAktiv?: (symbol: string) => boolean;
+  /**
+   * Wie viele Plätze abgeschaltete Klassen behalten (Anteil 0…1).
+   *
+   * Sie GANZ auszusperren wäre die naheliegende Sparmaßnahme und wäre der
+   * fünfte Fall desselben Fehlers, den dieses Projekt schon viermal hatte:
+   * Eine Sperre, die zugleich die Messung beendet, die sie korrigieren
+   * würde. Ohne 5-min-Daten misst der Schatten nichts mehr, und ein
+   * Abschalten wäre endgültig — auch wenn die Klasse wieder trägt.
+   *
+   * Mit Kontingent bleibt die Messung am Leben, und die Mehrheit der teuren
+   * Tiefenplätze geht dorthin, wo tatsächlich gehandelt wird.
+   */
+  schattenAnteil?: number;
 }): string[] {
   const offen = args.isOpen ?? ((): boolean => true);
+  const aktiv = args.klasseAktiv ?? ((): boolean => true);
   const set = new Set<string>();
   for (const sym of args.positions) set.add(sym); // ungedeckelt: siehe 1.
-  for (const gruppe of [args.watchlists ?? [], args.ranking, args.defaults, args.catalog ?? []]) {
+
+  /* Zwei Durchgänge statt einem: erst die handelnden Klassen, dann — bis zum
+   * Kontingent — die abgeschalteten. Ein einziger Durchgang in
+   * Prioritätsreihenfolge würde sonst 13 Krypto-Symbole aus der Watchlist
+   * vor das erste handelbare Symbol des Rankings setzen, nur weil die
+   * Watchlist zuerst drankommt. */
+  const schattenPlaetze = Math.max(
+    0,
+    Math.floor(args.max * Math.min(1, Math.max(0, args.schattenAnteil ?? 0.2))),
+  );
+  const gruppen = (): string[][] => [
+    args.watchlists ?? [],
+    args.ranking,
+    args.defaults,
+    args.catalog ?? [],
+  ];
+  let imSchatten = 0;
+
+  /* Drei Durchgänge, in dieser Reihenfolge:
+   *
+   *  1. Handelnde Klassen bis `max − schattenPlaetze`.
+   *  2. Abgeschaltete Klassen, aber HÖCHSTENS `schattenPlaetze` Stück.
+   *  3. Auffüllen mit handelnden Klassen bis `max`.
+   *
+   * Der dritte Durchgang darf ausdrücklich KEINE abgeschalteten mehr
+   * aufnehmen — sonst wäre das Kontingent aus Schritt 2 wirkungslos, und
+   * genau das hat der Test gefunden, bevor es live ging. */
+  for (const gruppe of gruppen()) {
+    for (const sym of gruppe) {
+      if (set.size >= args.max - schattenPlaetze) break;
+      if (sym && isTradable(sym) && offen(sym) && aktiv(sym)) set.add(sym);
+    }
+  }
+  for (const gruppe of gruppen()) {
+    for (const sym of gruppe) {
+      if (imSchatten >= schattenPlaetze || set.size >= args.max) break;
+      if (!sym || !isTradable(sym) || !offen(sym) || aktiv(sym) || set.has(sym)) continue;
+      set.add(sym);
+      imSchatten += 1;
+    }
+  }
+  for (const gruppe of gruppen()) {
     for (const sym of gruppe) {
       if (set.size >= args.max) break;
       // NICHT handelbare Symbole fliegen aus der Tiefenanalyse (Befund
@@ -1530,8 +1595,11 @@ export function selectScanSymbols(args: {
       // Offene Positionen sind oben schon drin und bleiben es — auch wenn
       // ein Symbol nachträglich als nicht handelbar gilt. Eine Position ohne
       // frische Daten verlöre ihren Stop-Loss.
-      if (sym && isTradable(sym) && offen(sym)) set.add(sym);
+      if (sym && isTradable(sym) && offen(sym) && aktiv(sym)) set.add(sym);
     }
+  }
+  if (imSchatten > 0) {
+    logger.info(`Scan-Set: ${imSchatten} Platz/Plätze für abgeschaltete Klassen (Schatten misst weiter)`);
   }
   return [...set];
 }
@@ -1570,32 +1638,63 @@ async function collectScanSymbols(now: Date): Promise<string[]> {
   // haben Vorrang vor dem Ranking (das Ranking ist ein Vorschlag, die
   // Watchlist eine Entscheidung des Users).
   let watchlists: string[] = [];
+  /**
+   * Klassen, in denen MINDESTENS EIN laufendes Konto handeln darf (05.08.).
+   *
+   * Der Scan ist geteilt, die Regler sind es nicht — deshalb die
+   * Oder-Verknüpfung: Eine Klasse gilt als aktiv, sobald irgendein Konto sie
+   * über null gewichtet. Alles andere wäre gegenüber dem einen Nutzer
+   * unfair, der sie eingeschaltet hat.
+   *
+   * `null` heißt „konnte nicht ermittelt werden" — dann gilt wie bisher
+   * alles als aktiv. Ein Lesefehler darf den Scan nicht verengen.
+   */
+  let aktiveKlassen: Set<string> | null = null;
   try {
     const engSnap = await db
       .collection('users')
       .where('settings.strategy.engine.running', '==', true)
-      .select('settings.strategy.watchlist')
+      .select('settings.strategy.watchlist', 'settings.strategy.engine.classWeights')
       .get();
     watchlists = engSnap.docs.flatMap(
       (d) => (d.get('settings.strategy.watchlist') as string[] | undefined) ?? [],
     );
+    const gefunden = new Set<string>();
+    let mitReglern = 0;
+    for (const d of engSnap.docs) {
+      const w = d.get('settings.strategy.engine.classWeights') as
+        | Record<string, number>
+        | undefined;
+      // Konten OHNE Regler haben alles an — sie machen die Frage
+      // gegenstandslos, und dann bleibt es beim alten Verhalten.
+      if (!w || Object.keys(w).length === 0) return schmiedeAuswahl(null);
+      mitReglern += 1;
+      for (const [kl, g] of Object.entries(w)) if (g > 0) gefunden.add(kl);
+    }
+    if (mitReglern > 0) aktiveKlassen = gefunden;
   } catch (err) {
     logger.warn('Watchlists nicht lesbar — Scan ohne Watchlist-Union', err);
   }
+  return schmiedeAuswahl(aktiveKlassen);
 
-  const symbols = selectScanSymbols({
-    positions,
-    watchlists,
-    ranking,
-    defaults: [...DEFAULT_STRATEGY.watchlist],
-    catalog: allSymbols(),
-    max: MAX_SCAN_SYMBOLS,
-    isOpen: (sym) => marketOpenForClass(classify(sym), now),
-  });
-  logger.info(
-    `Scan-Set: ${symbols.length} Symbole (${positions.length} Positionen, ${ranking.length} im Ranking)`,
-  );
-  return symbols;
+  /** Auswahl mit dem ermittelten Klassen-Filter bauen (eine Stelle, ein Aufruf). */
+  function schmiedeAuswahl(aktiv: Set<string> | null): string[] {
+    const symbols = selectScanSymbols({
+      positions,
+      watchlists,
+      ranking,
+      defaults: [...DEFAULT_STRATEGY.watchlist],
+      catalog: allSymbols(),
+      max: MAX_SCAN_SYMBOLS,
+      isOpen: (sym) => marketOpenForClass(classify(sym), now),
+      ...(aktiv ? { klasseAktiv: (sym: string): boolean => aktiv.has(classify(sym)) } : {}),
+    });
+    logger.info(
+      `Scan-Set: ${symbols.length} Symbole (${positions.length} Positionen, `
+        + `${ranking.length} im Ranking, aktive Klassen: ${aktiv ? [...aktiv].join('/') : 'alle'})`,
+    );
+    return symbols;
+  }
 }
 
 /**
