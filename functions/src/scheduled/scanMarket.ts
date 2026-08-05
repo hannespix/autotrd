@@ -30,6 +30,7 @@ import {
   regimeRichtung,
   regimeStimmen,
   werteSchattenAus,
+  type SchattenBeitrag,
   type SchattenKlasse,
   captureForClass,
   klemmeGewicht,
@@ -1800,6 +1801,26 @@ async function migrateCorePctAll(db: FirebaseFirestore.Firestore): Promise<void>
  * geschlossen, auch wenn ihre Klasse inzwischen auf 0 steht. Alles andere
  * hieße, jemanden in einer Position festzuhalten, die er nicht mehr will.
  */
+/**
+ * Rohsummen zweier Aggregate zusammenlegen — mit eigenem Zähler.
+ *
+ * Getrennt vom `n` der Netto-Summe, weil Altbestand keine Rohsumme trägt
+ * (siehe SchattenKlasse.nRoh). Fehlen sie auf BEIDEN Seiten, kommt gar kein
+ * Feld zurück: Dann liefert die Auswertung `null` — „nicht gemessen" statt
+ * einer erfundenen Null.
+ */
+function summiereRoh(
+  a: SchattenKlasse,
+  b: SchattenKlasse,
+): { summeRohPct?: number; nRoh?: number } {
+  const nRoh = (a.nRoh ?? 0) + (b.nRoh ?? 0);
+  if (nRoh <= 0) return {};
+  return {
+    summeRohPct: Math.round(((a.summeRohPct ?? 0) + (b.summeRohPct ?? 0)) * 10_000) / 10_000,
+    nRoh,
+  };
+}
+
 function klassenGewicht(strategy: Strategy, symbol: string): number {
   return klemmeGewicht(strategy.engine.classWeights?.[classify(symbol)]);
 }
@@ -1830,6 +1851,19 @@ export async function runScan(force = false): Promise<ScanResult> {
    * eine Vermutung (siehe shared/src/regimeSignal.ts).
    */
   const schattenVarianten: { live?: SchattenKlasse; regime?: SchattenKlasse } = {};
+  /* Dieselben Varianten, aufgeschlüsselt nach Anlageklasse (05.08.).
+   *
+   * Der Anlass war eine Zahl, die zwei Deutungen zuließ: −0,496 % Kante je
+   * Signal. Nachts handelt nur Krypto, und Krypto kostet 0,50 % Roundtrip —
+   * die gemessene Kante war also praktisch identisch mit den Kosten EINER
+   * Klasse. Ob dieselbe Signal-Logik in Aktien (0,10 % Roundtrip) trägt,
+   * ließ sich aus der Gesamtsumme nicht ablesen; sie hätte eine
+   * funktionierende Quelle mit der teuersten Klasse zusammen erledigt. */
+  const schattenVariantenKlassen: Record<string, Record<string, SchattenKlasse>> = {};
+  const zuVariante = (variante: string, klasse: string, beitrag: SchattenBeitrag): void => {
+    const je = (schattenVariantenKlassen[variante] ??= {});
+    je[klasse] = addiereSchatten(je[klasse], beitrag);
+  };
   /** Richtungsverteilung der Regime-Variante — direkt gegen `signalDirs` lesbar. */
   const regimeDirs = { buy: 0, sell: 0, hold: 0 };
   const regimeVoteDirs: Record<string, { buy: number; sell: number; hold: number }> = {};
@@ -2152,6 +2186,7 @@ export async function runScan(force = false): Promise<ScanResult> {
         const beitrag = bewerteSchattenSignal(vorher, sig.price, kosten);
         schattenKlassen[kl] = addiereSchatten(schattenKlassen[kl], beitrag);
         schattenVarianten.live = addiereSchatten(schattenVarianten.live, beitrag);
+        zuVariante('live', kl, beitrag);
       }
       // Dieselbe Bewertung für die regime-gerechte Lesart (MI). Beide
       // Varianten sehen denselben Kurs zur selben Zeit — nur so ist der
@@ -2159,10 +2194,9 @@ export async function runScan(force = false): Promise<ScanResult> {
       // Frage, um die es geht, gerade wegmitteln würde.
       const vorherRegime = leseSchattenSignal(symDoc.get('lastSignalRegime'), now.getTime());
       if (vorherRegime) {
-        schattenVarianten.regime = addiereSchatten(
-          schattenVarianten.regime,
-          bewerteSchattenSignal(vorherRegime, sig.price, kosten),
-        );
+        const beitragRegime = bewerteSchattenSignal(vorherRegime, sig.price, kosten);
+        schattenVarianten.regime = addiereSchatten(schattenVarianten.regime, beitragRegime);
+        zuVariante('regime', classify(symbol), beitragRegime);
       }
       signalDirs[sig.direction] += 1;
       // Stimmen je INDIKATOR (04.08.). Warum das nötig wurde: `signalDirs`
@@ -2304,6 +2338,10 @@ export async function runScan(force = false): Promise<ScanResult> {
           n: FieldValue.increment(k.n),
           summePct: FieldValue.increment(k.summePct),
           treffer: FieldValue.increment(k.treffer),
+          // Rohbewegung mit eigenem Zähler (05.08.) — trennt „Signal trägt
+          // keine Information" von „Gebühren fressen die Information".
+          summeRohPct: FieldValue.increment(k.summeRohPct ?? 0),
+          nRoh: FieldValue.increment(k.nRoh ?? 0),
         };
       }
       await ref.set(
@@ -2326,6 +2364,7 @@ export async function runScan(force = false): Promise<ScanResult> {
         n: a.n + b.n,
         summePct: Math.round((a.summePct + b.summePct) * 10_000) / 10_000,
         treffer: a.treffer + b.treffer,
+        ...summiereRoh(a, b),
       });
     }
   } catch (err) {
@@ -2344,12 +2383,27 @@ export async function runScan(force = false): Promise<ScanResult> {
       [string, SchattenKlasse]
     >;
     if (beitraege.length > 0) {
-      const inkremente: Record<string, Record<string, FirebaseFirestore.FieldValue>> = {};
+      const inkremente: Record<string, Record<string, unknown>> = {};
       for (const [name, k] of beitraege) {
+        // Klassen-Aufschlüsselung DERSELBEN Beiträge — ein zweites
+        // Unterfeld am selben Dokument, kein zweiter Write.
+        const jeKlasse: Record<string, Record<string, FirebaseFirestore.FieldValue>> = {};
+        for (const [kl, kk] of Object.entries(schattenVariantenKlassen[name] ?? {})) {
+          jeKlasse[kl] = {
+            n: FieldValue.increment(kk.n),
+            summePct: FieldValue.increment(kk.summePct),
+            treffer: FieldValue.increment(kk.treffer),
+            summeRohPct: FieldValue.increment(kk.summeRohPct ?? 0),
+            nRoh: FieldValue.increment(kk.nRoh ?? 0),
+          };
+        }
         inkremente[name] = {
           n: FieldValue.increment(k.n),
           summePct: FieldValue.increment(k.summePct),
           treffer: FieldValue.increment(k.treffer),
+          summeRohPct: FieldValue.increment(k.summeRohPct ?? 0),
+          nRoh: FieldValue.increment(k.nRoh ?? 0),
+          ...(Object.keys(jeKlasse).length > 0 ? { klassen: jeKlasse } : {}),
         };
       }
       await ref.set(
@@ -2370,6 +2424,7 @@ export async function runScan(force = false): Promise<ScanResult> {
         n: a.n + b.n,
         summePct: Math.round((a.summePct + b.summePct) * 10_000) / 10_000,
         treffer: a.treffer + b.treffer,
+        ...summiereRoh(a, b),
       });
     }
   } catch (err) {

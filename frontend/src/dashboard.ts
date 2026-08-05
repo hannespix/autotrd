@@ -4411,12 +4411,29 @@ function renderEngineWhy(): void {
       `Variante: ${rd.buy ?? 0}↑ ${rd.sell ?? 0}↓ ${rd.hold ?? 0}·`,
       'var(--t3)',
     );
-    const kante = (v?: { n: number; kantePct: number | null } | null): string =>
-      !v || v.kantePct === null ? 'noch keine Daten' : `${v.kantePct.toFixed(3)} % je Signal (${v.n})`;
+    /* Netto UND roh (05.08.).
+     *
+     * Ohne die Rohbewegung lässt eine negative Kante zwei völlig
+     * verschiedene Schlüsse zu: „Signal ist Rauschen" oder „Signal trägt
+     * Information, aber weniger als diese Anlageklasse an Gebühren
+     * verlangt". Der erste Fall erledigt die Variante, der zweite verlegt
+     * sie in eine billigere Klasse oder auf einen längeren Horizont. */
+    const kante = (
+      v?: { n: number; kantePct: number | null; rohPct?: number | null } | null,
+    ): string => {
+      if (!v || v.kantePct === null) return 'noch keine Daten';
+      const netto = `${v.kantePct.toFixed(3)} % je Signal (${v.n})`;
+      return v.rohPct === null || v.rohPct === undefined
+        ? netto
+        : `${netto}, roh ${v.rohPct.toFixed(3)} %`;
+    };
     chip.title =
       'Regime-gerechte Lesart derselben Indikatoren — läuft nur im Schatten mit.\n'
       + `Gehandelte Logik: ${kante(h.signalSchatten?.live)}\n`
       + `Variante: ${kante(h.signalSchatten?.regime)}\n`
+      + '„roh" ist die Bewegung VOR Gebühren: positiv bei negativer Kante heißt,\n'
+      + 'die Richtung stimmt und die Kosten fressen sie — dann liegt es an der\n'
+      + 'Anlageklasse, nicht an der Logik.\n'
       + 'Umgeschaltet wird erst, wenn die Variante die gehandelte Logik schlägt.';
     ampel.append(chip);
   }
