@@ -38,6 +38,16 @@ export interface SchattenSignal {
   direction: 'buy' | 'sell' | 'hold';
   /** Kurs zum Zeitpunkt des Signals. */
   price: number;
+  /**
+   * Hätte dieses Signal die scharfe Kostenschwelle passiert? (MI2, 05.08.)
+   *
+   * Fehlt das Feld, stammt das Signal aus der Zeit vor dieser Messung. Dann
+   * zählt es NICHT in die gefilterte Variante — `true` anzunehmen wäre der
+   * bequeme Fehler: Eine ungefilterte Zahl in einem Zähler namens
+   * „gefiltert" ist schlimmer als ein leerer Zähler, weil sie aussieht wie
+   * ein Ergebnis.
+   */
+  kostenOk?: boolean;
 }
 
 export interface SchattenBeitrag {
@@ -237,5 +247,9 @@ export function leseSchattenSignal(
   // ist ein Grund, die Zahl NICHT zu verwenden.
   if (alter < 0 || alter > maxAlterMs) return null;
 
-  return { direction: dir, price };
+  // Nur ein ECHTES `true` zählt. Ein fehlendes oder anders getipptes Feld
+  // bleibt weg — siehe SchattenSignal.kostenOk.
+  return o['kostenOk'] === true
+    ? { direction: dir, price, kostenOk: true }
+    : { direction: dir, price };
 }

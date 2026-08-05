@@ -1901,6 +1901,37 @@ async function migrateCorePctAll(db: FirebaseFirestore.Firestore): Promise<void>
  * hieße, jemanden in einer Position festzuhalten, die er nicht mehr will.
  */
 /**
+ * Hätte ein Signal die Kostenschwelle passiert? (MI2, 05.08.)
+ *
+ * Bewusst mit DEFAULT_STRATEGY statt einer Konto-Einstellung: Der
+ * Signal-Schatten ist eine Systemmessung, keine Kontomessung — er läuft
+ * einmal je Symbol, nicht einmal je Nutzer. Dieselbe Entscheidung wie beim
+ * Rest des Schattens, der auch die Default-Konfluenz auswertet.
+ *
+ * Gerechnet wird mit Einfangquote (`capture`), also der SCHARFEN Fassung.
+ * Die Frage lautet ja gerade: Was bliebe übrig, wenn man sie scharf
+ * schaltet — und verdient das etwas?
+ *
+ * Ohne ATR ist die Schwelle nicht prüfbar. Dann gilt das Signal als
+ * durchgelassen, genau wie im Einstiegs-Tor (`ohne_atr_durchgelassen`):
+ * Nicht messen können ist kein Grund, es aus der Messung zu werfen.
+ */
+function schattenKostenOk(symbol: string, atrPct: number | null | undefined): boolean {
+  const klasse = classify(symbol);
+  const befund = costGate({
+    atrPct,
+    minHoldMin: DEFAULT_STRATEGY.engine.minHoldMin,
+    timeframe: DEFAULT_STRATEGY.signals.timeframe ?? 'intraday',
+    feeRate: feeRateForClass(klasse),
+    capture: captureForClass(klasse),
+    ...(typeof DEFAULT_STRATEGY.signals.minEdgeMultiple === 'number'
+      ? { multiple: DEFAULT_STRATEGY.signals.minEdgeMultiple }
+      : {}),
+  });
+  return befund.ok || befund.reason === 'kein_atr';
+}
+
+/**
  * Rohsummen zweier Aggregate zusammenlegen — mit eigenem Zähler.
  *
  * Getrennt vom `n` der Netto-Summe, weil Altbestand keine Rohsumme trägt
@@ -1949,7 +1980,12 @@ export async function runScan(force = false): Promise<ScanResult> {
    * ein Umschalten der Signal-Logik eine Zahl hinter sich hat und nicht nur
    * eine Vermutung (siehe shared/src/regimeSignal.ts).
    */
-  const schattenVarianten: { live?: SchattenKlasse; regime?: SchattenKlasse } = {};
+  const schattenVarianten: {
+    live?: SchattenKlasse;
+    regime?: SchattenKlasse;
+    /** Nur die Live-Signale, die die scharfe Kostenschwelle passiert hätten. */
+    live_kosten?: SchattenKlasse;
+  } = {};
   /* Dieselben Varianten, aufgeschlüsselt nach Anlageklasse (05.08.).
    *
    * Der Anlass war eine Zahl, die zwei Deutungen zuließ: −0,496 % Kante je
@@ -2126,7 +2162,31 @@ export async function runScan(force = false): Promise<ScanResult> {
           // Der Zeitstempel ist kein Beiwerk: Ohne ihn ließe sich ein Signal
           // von gestern nicht von einem aus dem letzten Lauf unterscheiden
           // (siehe SCHATTEN_MAX_ALTER_MS).
-          lastSignal: { direction: sig.direction, price: sig.price, at: now.toISOString() },
+          lastSignal: {
+            direction: sig.direction,
+            price: sig.price,
+            at: now.toISOString(),
+            /* Hätte dieses Signal die Kostenschwelle passiert? (MI2, 05.08.)
+             *
+             * Der Anlass ist eine Messung, die die Diagnose umdreht: Die
+             * gehandelte Konfluenz trägt Information — Rohbewegung +0,072 %
+             * bei n=25 — verdient damit aber die Reibung nicht (stocks_us:
+             * 0,10 % Roundtrip). Nicht die Signalquelle ist das Problem,
+             * sondern dass im 5-Minuten-Horizont zu wenig passiert.
+             *
+             * Genau dagegen ist die Kostenschwelle gebaut. Was fehlte, war
+             * die Zahl, die ihre Freischaltung rechtfertigt: die Kante der
+             * Signale, die sie DURCHLÄSST. `kante_wuerde_blocken` zählt nur,
+             * wie viele betroffen wären — das sagt nichts darüber, ob die
+             * übrigen verdienen.
+             *
+             * Mit diesem Feld wird beim nächsten Scan eine dritte Variante
+             * bewertet: dieselben Live-Signale, aber nur die geprüften. Ist
+             * ihre Kante positiv, ist die Schwelle der Hebel; ist sie es
+             * nicht, hilft auch schärferes Filtern nicht — und das zu
+             * wissen, ist genauso viel wert. */
+            kostenOk: schattenKostenOk(symbol, atrPctVal),
+          },
           // Zweite Lesart derselben Indikatoren (MI): regime-gerecht statt
           // fest auf Umkehr. Wird NICHT gehandelt — nur mitgeschrieben und
           // beim nächsten Scan bewertet, damit die Kante beider Lesarten
@@ -2286,6 +2346,14 @@ export async function runScan(force = false): Promise<ScanResult> {
         schattenKlassen[kl] = addiereSchatten(schattenKlassen[kl], beitrag);
         schattenVarianten.live = addiereSchatten(schattenVarianten.live, beitrag);
         zuVariante('live', kl, beitrag);
+        /* Dieselben Signale, gefiltert (MI2). Fehlt das Feld, stammt das
+         * Signal aus der Zeit vor der Messung — dann NICHT mitzählen statt
+         * `true` anzunehmen: Eine ungefilterte Zahl in einem Zähler namens
+         * „gefiltert" wäre schlimmer als ein leerer Zähler. */
+        if (vorher.kostenOk === true) {
+          schattenVarianten.live_kosten = addiereSchatten(schattenVarianten.live_kosten, beitrag);
+          zuVariante('live_kosten', kl, beitrag);
+        }
       }
       // Dieselbe Bewertung für die regime-gerechte Lesart (MI). Beide
       // Varianten sehen denselben Kurs zur selben Zeit — nur so ist der
@@ -2518,7 +2586,8 @@ export async function runScan(force = false): Promise<ScanResult> {
     variantenStand = {};
     for (const name of namen) {
       const a = alt[name] ?? { n: 0, summePct: 0, treffer: 0 };
-      const b = schattenVarianten[name as 'live' | 'regime'] ?? { n: 0, summePct: 0, treffer: 0 };
+      const b = schattenVarianten[name as keyof typeof schattenVarianten]
+        ?? { n: 0, summePct: 0, treffer: 0 };
       variantenStand[name] = werteSchattenAus({
         n: a.n + b.n,
         summePct: Math.round((a.summePct + b.summePct) * 10_000) / 10_000,

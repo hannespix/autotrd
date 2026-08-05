@@ -259,3 +259,44 @@ describe('Rohbewegung vs. Netto-Kante', () => {
     expect(a.treffer).toBe(1);
   });
 });
+
+/* ── Gefilterte Variante: kostenOk (MI2, 05.08.) ────────────────────────────
+ *
+ * Die Messung vom 05.08. dreht die Diagnose um: Die gehandelte Konfluenz
+ * trägt Information (roh +0,072 % bei n=25), verdient damit aber die
+ * Reibung nicht (stocks_us: 0,10 % Roundtrip). Nicht die Signalquelle ist
+ * das Problem, sondern der zu kurze Horizont.
+ *
+ * Die dritte Schattenvariante misst, was übrig bliebe, wenn die
+ * Kostenschwelle scharf stünde. Damit die Zahl etwas wert ist, darf sie
+ * NUR ausdrücklich geprüfte Signale enthalten.
+ */
+describe('leseSchattenSignal — kostenOk', () => {
+  const basis = { direction: 'buy', price: 100, at: new Date().toISOString() };
+
+  it('übernimmt ein echtes true', () => {
+    const s = leseSchattenSignal({ ...basis, kostenOk: true }, Date.now());
+    expect(s?.kostenOk).toBe(true);
+  });
+
+  it('lässt das Feld weg, wenn es fehlt — Altbestand zählt nicht mit', () => {
+    // Der bequeme Fehler wäre, fehlende Felder als „geprüft" zu lesen. Dann
+    // stünden ungefilterte Signale in einem Zähler namens „gefiltert" — eine
+    // Zahl, die aussieht wie ein Ergebnis und keines ist.
+    const s = leseSchattenSignal(basis, Date.now());
+    expect(s?.kostenOk).toBeUndefined();
+  });
+
+  it('lässt das Feld weg bei false und bei Fremdwerten', () => {
+    expect(leseSchattenSignal({ ...basis, kostenOk: false }, Date.now())?.kostenOk).toBeUndefined();
+    expect(leseSchattenSignal({ ...basis, kostenOk: 'ja' }, Date.now())?.kostenOk).toBeUndefined();
+    expect(leseSchattenSignal({ ...basis, kostenOk: 1 }, Date.now())?.kostenOk).toBeUndefined();
+  });
+
+  it('ändert nichts an den bestehenden Prüfungen', () => {
+    // Ein zu altes Signal bleibt verworfen, auch wenn es geprüft war.
+    expect(
+      leseSchattenSignal({ ...basis, kostenOk: true, at: '2020-01-01T00:00:00.000Z' }, Date.now()),
+    ).toBeNull();
+  });
+});
