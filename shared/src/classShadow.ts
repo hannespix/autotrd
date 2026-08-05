@@ -253,3 +253,59 @@ export function leseSchattenSignal(
     ? { direction: dir, price, kostenOk: true }
     : { direction: dir, price };
 }
+
+/* ── Tages-Horizont (Task 94, Entscheidung 05.08.) ──────────────────────────
+ *
+ * Die Kostenschwellen-Messung hat die Diagnose gedreht: Die Live-Signale
+ * tragen Information (roh +0,022 % je Signal, Treffer 52 %), aber im
+ * 5-Minuten-Horizont ist die Bewegung eine Größenordnung kleiner als die
+ * Roundtrip-Kosten. Der Hebel wäre „länger halten" — und ob er trägt, soll
+ * eine Messung sagen, keine Vermutung: dieselben Live-Signale, bewertet am
+ * NÄCHSTEN Tag statt am nächsten Scan.
+ *
+ * Mechanik: Ein eigener Slot (`lastSignalTag` am Markt-Dokument) wird mit
+ * einem buy/sell-Signal belegt und dann NICHT überschrieben, bis der
+ * Horizont erreicht ist — sonst würde der 5-Minuten-Takt das Signal
+ * ersetzen, bevor es je einen Tag alt ist. Nach ≥24 h wird gegen den dann
+ * aktuellen Kurs bewertet und der Slot neu belegt.
+ */
+
+/** Frühestens nach dieser Zeit wird bewertet: der „nächste Tag". */
+export const TAG_HORIZONT_MS = 24 * 3_600_000;
+
+/**
+ * Spätestens bis dahin — sonst verfällt das Signal unbewertet.
+ *
+ * 96 h decken das Wochenende (Freitag-Signal → Bewertung Montag nach
+ * ~66 h). Was älter ist, stammt aus einer echten Lücke (Symbol aus dem
+ * Scan gefallen, Feiertagskette) und würde die Kante zur Funktion der
+ * Lücken machen statt der Signalgüte.
+ */
+export const TAG_MAX_ALTER_MS = 96 * 3_600_000;
+
+export type TagSlotBefund =
+  | { status: 'leer' }
+  | { status: 'wartet' }
+  | { status: 'reif'; signal: SchattenSignal }
+  | { status: 'verfallen' };
+
+/**
+ * Zustand des Tages-Slots bestimmen.
+ *
+ * `leer`/`verfallen` → Slot darf neu belegt werden. `wartet` → Slot NICHT
+ * anfassen (das Signal reift noch). `reif` → jetzt bewerten, danach neu
+ * belegen. Kaputte oder rückdatierte Einträge zählen als `leer` — im
+ * Zweifel nicht raten, wie überall im Schatten.
+ */
+export function pruefeTagSlot(roh: unknown, jetztMs: number): TagSlotBefund {
+  if (!roh || typeof roh !== 'object') return { status: 'leer' };
+  const o = roh as Record<string, unknown>;
+  const at = typeof o['at'] === 'string' ? Date.parse(o['at']) : NaN;
+  if (!Number.isFinite(at)) return { status: 'leer' };
+  const alter = jetztMs - at;
+  if (alter < 0) return { status: 'leer' };
+  if (alter < TAG_HORIZONT_MS) return { status: 'wartet' };
+  if (alter > TAG_MAX_ALTER_MS) return { status: 'verfallen' };
+  const signal = leseSchattenSignal(roh, jetztMs, TAG_MAX_ALTER_MS);
+  return signal ? { status: 'reif', signal } : { status: 'verfallen' };
+}

@@ -13,6 +13,7 @@ import {
   addiereSchatten,
   bewerteSchattenSignal,
   leseSchattenSignal,
+  pruefeTagSlot,
   werteSchattenAus,
 } from '../src/classShadow.js';
 
@@ -298,5 +299,50 @@ describe('leseSchattenSignal — kostenOk', () => {
     expect(
       leseSchattenSignal({ ...basis, kostenOk: true, at: '2020-01-01T00:00:00.000Z' }, Date.now()),
     ).toBeNull();
+  });
+});
+
+/* ── Tages-Horizont-Slot (Task 94, 05.08.) ──────────────────────────────────
+ *
+ * Zeitlogik → echte Datumsgrenzen (CLAUDE.md §5). Der kritische Fall ist das
+ * Wochenende: Ein Freitag-Signal wird erst Montag (~66 h) bewertbar und darf
+ * weder vorher ersetzt noch als „zu alt" verworfen werden.
+ */
+describe('pruefeTagSlot', () => {
+  const T = (iso: string): number => Date.parse(iso);
+  const slot = { direction: 'buy', price: 100, at: '2026-08-05T14:00:00Z' };
+
+  it('leer/kaputt → Slot darf belegt werden', () => {
+    expect(pruefeTagSlot(undefined, T('2026-08-05T14:00:00Z')).status).toBe('leer');
+    expect(pruefeTagSlot(null, T('2026-08-05T14:00:00Z')).status).toBe('leer');
+    expect(pruefeTagSlot({ direction: 'buy' }, T('2026-08-05T14:00:00Z')).status).toBe('leer');
+    expect(pruefeTagSlot({ ...slot, at: 'kaputt' }, T('2026-08-05T14:00:00Z')).status).toBe('leer');
+  });
+
+  it('jünger als 24 h → wartet (Slot NICHT überschreiben)', () => {
+    expect(pruefeTagSlot(slot, T('2026-08-05T14:05:00Z')).status).toBe('wartet');
+    expect(pruefeTagSlot(slot, T('2026-08-06T13:59:00Z')).status).toBe('wartet');
+  });
+
+  it('ab 24 h → reif, mit dem gespeicherten Signal', () => {
+    const b = pruefeTagSlot(slot, T('2026-08-06T14:00:00Z'));
+    expect(b.status).toBe('reif');
+    if (b.status === 'reif') {
+      expect(b.signal.direction).toBe('buy');
+      expect(b.signal.price).toBe(100);
+    }
+  });
+
+  it('Wochenende: Freitag-Signal ist Montag (~66 h) noch bewertbar', () => {
+    const freitag = { ...slot, at: '2026-08-07T19:55:00Z' }; // Fr kurz vor US-Schluss
+    expect(pruefeTagSlot(freitag, T('2026-08-10T13:35:00Z')).status).toBe('reif'); // Mo nach Öffnung
+  });
+
+  it('älter als 96 h → verfallen (Lücke, nicht Signalgüte)', () => {
+    expect(pruefeTagSlot(slot, T('2026-08-09T14:01:00Z')).status).toBe('verfallen');
+  });
+
+  it('rückdatierte Einträge zählen als leer — nicht raten', () => {
+    expect(pruefeTagSlot(slot, T('2026-08-05T13:00:00Z')).status).toBe('leer');
   });
 });

@@ -27,6 +27,7 @@ import {
   addiereSchatten,
   bewerteSchattenSignal,
   leseSchattenSignal,
+  pruefeTagSlot,
   regimeRichtung,
   regimeStimmen,
   werteSchattenAus,
@@ -2019,6 +2020,8 @@ export async function runScan(force = false): Promise<ScanResult> {
     regime?: SchattenKlasse;
     /** Nur die Live-Signale, die die scharfe Kostenschwelle passiert hätten. */
     live_kosten?: SchattenKlasse;
+    /** Dieselben Live-Signale, am NÄCHSTEN Tag bewertet (Task 94, 05.08.). */
+    live_tag?: SchattenKlasse;
   } = {};
   /* Dieselben Varianten, aufgeschlüsselt nach Anlageklasse (05.08.).
    *
@@ -2202,11 +2205,28 @@ export async function runScan(force = false): Promise<ScanResult> {
         regimeVoteDirs[name] = eintrag;
       }
 
+      /* Tages-Horizont-Slot (Task 94): Das Signal reift 24 h, statt beim
+       * nächsten Scan ersetzt zu werden. `wartet` → Slot nicht anfassen;
+       * `reif` wird unten im Schatten-Block bewertet, danach (wie bei
+       * `leer`/`verfallen`) mit dem heutigen buy/sell-Signal neu belegt. */
+      const tagSlot = pruefeTagSlot(symDoc.get('lastSignalTag'), now.getTime());
+      const tagSlotBelegbar =
+        tagSlot.status !== 'wartet' && (sig.direction === 'buy' || sig.direction === 'sell');
+
       batch.set(
         symRef,
         {
           name: resolveName(symbol),
           assetClass: classify(symbol),
+          ...(tagSlotBelegbar
+            ? {
+                lastSignalTag: {
+                  direction: sig.direction,
+                  price: sig.price,
+                  at: now.toISOString(),
+                },
+              }
+            : {}),
           // Grundlage der Schatten-Kante beim NÄCHSTEN Scan (MG4): Richtung,
           // Kurs und Zeitpunkt dieses Signals. Bewusst am Haupt-Dokument und
           // nicht in einer eigenen Sammlung — es wird ohnehin geschrieben.
@@ -2405,6 +2425,15 @@ export async function runScan(force = false): Promise<ScanResult> {
           schattenVarianten.live_kosten = addiereSchatten(schattenVarianten.live_kosten, beitrag);
           zuVariante('live_kosten', kl, beitrag);
         }
+      }
+      /* Tages-Horizont bewerten (Task 94): Das gereifte Signal gegen den
+       * HEUTIGEN Kurs — dieselbe Kosten- und Richtungsrechnung wie beim
+       * 5-Minuten-Schatten, nur der Horizont ist ein anderer. Trägt die
+       * Kante hier die Kosten, heißt der Hebel „länger halten". */
+      if (tagSlot.status === 'reif') {
+        const beitragTag = bewerteSchattenSignal(tagSlot.signal, sig.price, kosten);
+        schattenVarianten.live_tag = addiereSchatten(schattenVarianten.live_tag, beitragTag);
+        zuVariante('live_tag', classify(symbol), beitragTag);
       }
       // Dieselbe Bewertung für die regime-gerechte Lesart (MI). Beide
       // Varianten sehen denselben Kurs zur selben Zeit — nur so ist der
