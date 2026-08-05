@@ -1854,6 +1854,29 @@ Sekunden-Preis-Alerts, `trade_updates`.
       Sparse-Map-Semantik der classWeights (fehlender Regler = aktiv) beim
       Klassen-Filter gegenpruefen.
 
+- [x] **Nachtrag Uebernahme (Owner-Screenshot 17:19): Phantom-P&L
+      −100.330,67 $ — Kapitalbasis gehoert zur Uebernahme dazu.** Die erste
+      Uebernahme holte Cash + Positionen, liess aber die MESSLATTE stehen:
+      `wallet.baseCapital` stand auf 200.000 (vom Reset), das echte Konto
+      startete mit 100.000 → die Performance-Karte rechnete Equity − Basis
+      und zeigte 100.000 $ Phantom-Verlust (wahrer P&L: −330,67 $ = die
+      OFFEN-Zahl). Drei Dinge fehlten, alle in `adoptBroker` ergaenzt:
+      1. `wallet.baseCapital` REKONSTRUIERT statt geraten:
+         Startkapital = Cash + Σ(±Menge × Einstand) — jeder Kauf hat den
+         Cash exakt um Menge × Einstand gesenkt, die Summe stellt die
+         Einzahlung ohne Einzahlungshistorie wieder her (Vorfall:
+         −19.521,50 + 119.521,50 = 100.000,00).
+      2. Heutiger Equity-Snapshot (`users/{uid}/equity/{datum}`) auf die
+         echte Broker-Equity gesetzt (`uebernommen: true`): Hochwasser und
+         Max-Drawdown rechnen ueber die Snapshot-Serie — der 200.000er
+         Reset-Punkt bliebe sonst fuer immer als Hochwasser stehen. Aeltere
+         Tage bleiben unangetastet.
+      3. `risk.vortagEquity` auf die Broker-Equity: Gegen einen
+         Phantom-Vortag von 200.000 saehe die Notbremse einen
+         50-%-Tagesverlust und wuerde das Konto sperren.
+      Der Knopf ist idempotent — einmal erneut druecken korrigiert
+      Bestandsfaelle.
+
 - [ ] **Weitere Alpaca-Synchronisierung — bewertet 05.08. (Owner-Frage:
       „welche Werte kann man abholen? macht das Sinn?").** Nach Nutzen:
       1. `/v2/assets` → `fractionable`, `shortable`, `easy_to_borrow`.

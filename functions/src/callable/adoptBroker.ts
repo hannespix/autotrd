@@ -221,11 +221,62 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
     importiert += 1;
   }
 
-  // 4) Barbestand vom Broker. Negativ ist möglich (Margin) und bleibt
-  //    negativ — das Buch soll die Wahrheit zeigen, nicht die schönere Zahl.
+  /* 4) Barbestand UND Kapitalbasis vom Broker (Owner-Fund 05.08., 17:19).
+   *
+   * Nach der ersten Übernahme zeigte die Performance-Karte −100.330,67 $
+   * Gesamt-P&L — obwohl kein Cent verloren war. Die Rechnung
+   * (Equity − baseCapital) war richtig, die BEZUGSGRÖSSE falsch: Das Buch
+   * war auf 200.000 $ zurückgesetzt worden, das Konto beim Broker hat aber
+   * nie mehr als 100.000 $ gesehen. Eine Übernahme, die Cash und Positionen
+   * holt, aber die Messlatte stehen lässt, erzeugt Phantom-Verluste in
+   * exakt der Höhe der Differenz.
+   *
+   * Die Basis wird REKONSTRUIERT statt geraten:
+   *
+   *   Startkapital = Cash + Σ(±Menge × Einstand)
+   *
+   * Denn jeder Kauf hat den Cash genau um Menge × Einstand gesenkt (Shorts
+   * umgekehrt) — die Summe stellt den Kontostand VOR allen offenen
+   * Positionen wieder her, ohne die Einzahlungshistorie zu kennen. Beim
+   * Vorfall: −19.521,50 + 119.521,50 = 100.000,00 — exakt die Einzahlung.
+   * Bereits realisierte Gewinne/Verluste bleiben dabei ehrlich in der
+   * Basis enthalten: Sie SIND passiert, bevor unsere Messung begann. */
+  const cashRund = Math.round(konto.cash * 100) / 100;
+  const einstandssumme = brokerPositionen.reduce(
+    (s, p) => s + (p.seite === 'short' ? -1 : 1) * p.qty * p.einstand,
+    0,
+  );
+  const basisKapital = Math.round((konto.cash + einstandssumme) * 100) / 100;
   batch.update(userRef, {
-    'wallet.paperBalance': Math.round(konto.cash * 100) / 100,
+    'wallet.paperBalance': cashRund,
+    'wallet.baseCapital': basisKapital,
     'wallet.updatedAt': now,
+    // Bezugsgröße der Tages-Notbremse mitziehen: Verglichen mit einem
+    // Phantom-Vortag von 200.000 $ sähe die echte Equity wie ein
+    // 50-%-Tagesverlust aus — die Bremse würde feuern und alles sperren,
+    // obwohl nichts verloren ist. Nach einer Übernahme beginnt der Tag neu.
+    'risk.vortagEquity': Math.round(konto.equity * 100) / 100,
+  });
+
+  /* 4b) Heutigen Equity-Snapshot mit der ECHTEN Equity überschreiben.
+   *
+   * Hochwasser und Max-Drawdown rechnen über die Snapshot-Serie. Nach dem
+   * Reset steht dort ein einzelner Punkt mit dem Phantom-Kontostand — er
+   * bliebe als „Hochwasser 200.000 $" stehen und jede künftige Kurve sähe
+   * wie ein 50-%-Drawdown aus. Der Snapshot von heute wird deshalb auf die
+   * Broker-Equity gesetzt (Doc-ID = Datum, überschreibt idempotent). Ältere
+   * Tage bleiben unangetastet: Vergangene Messungen umzuschreiben ist nicht
+   * Aufgabe einer Übernahme. */
+  const heute = now.slice(0, 10);
+  batch.set(userRef.collection('equity').doc(heute), {
+    walletId: 'main',
+    date: heute,
+    equity: Math.round(konto.equity * 100) / 100,
+    balance: cashRund,
+    positionsValue: Math.round((konto.equity - konto.cash) * 100) / 100,
+    positionsCount: brokerPositionen.length,
+    updatedAt: now,
+    uebernommen: true,
   });
 
   // 5) Abgleich-Vermerk direkt mitschreiben: Nach der Übernahme IST der
