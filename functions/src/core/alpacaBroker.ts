@@ -328,6 +328,59 @@ export async function alpacaPositionen(
 }
 
 /**
+ * Handels-Eigenschaften eines Papiers, wie der BROKER sie kennt (Alpaca-Sync,
+ * 05.08. — MILESTONES „Weitere Alpaca-Synchronisierung", Punkt 1).
+ */
+export interface AlpacaAsset {
+  symbol: string;
+  tradable: boolean;
+  /** Bruchstücke erlaubt? Wir haben das bisher GERATEN (`klasse === 'crypto'`). */
+  fractionable: boolean;
+  /** Leihbar für Leerverkäufe? Bisher erfuhren wir das erst per abgelehnter Order. */
+  shortable: boolean;
+  easyToBorrow: boolean;
+  marginable: boolean;
+}
+
+/**
+ * Eigenschaften eines Symbols abfragen.
+ *
+ * `null` heißt „Alpaca kennt dieses Symbol nicht" (404) — das ist bei uns
+ * ein normaler Fall, kein Fehler: Der Katalog enthält Indizes, Forex und
+ * Futures, die Alpaca gar nicht führt. Alle ANDEREN Fehler werfen weiter,
+ * damit der Aufrufer Netzwerkprobleme nicht mit „gibt es nicht" verwechselt
+ * und fälschlich cached.
+ */
+export async function alpacaAsset(
+  mode: BrokerMode,
+  symbol: string,
+  schluessel: AlpacaSchluessel | null = null,
+  fetchImpl: FetchLike = fetch,
+): Promise<AlpacaAsset | null> {
+  let d: Record<string, unknown>;
+  try {
+    d = (await alpacaFetch(
+      mode,
+      `/v2/assets/${encodeURIComponent(symbol)}`,
+      schluessel,
+      {},
+      fetchImpl,
+    )) as Record<string, unknown>;
+  } catch (err) {
+    if (err instanceof AlpacaFehler && err.status === 404) return null;
+    throw err;
+  }
+  return {
+    symbol: String(d['symbol'] ?? symbol),
+    tradable: d['tradable'] === true,
+    fractionable: d['fractionable'] === true,
+    shortable: d['shortable'] === true,
+    easyToBorrow: d['easy_to_borrow'] === true,
+    marginable: d['marginable'] === true,
+  };
+}
+
+/**
  * Stabile Order-Kennung gegen Doppelausführung.
  *
  * Alpaca weist eine `client_order_id` zurück, die es schon kennt — ein Retry

@@ -43,9 +43,11 @@
 import { getFirestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions/v2';
 import {
+  alpacaAsset,
   alpacaOrder,
   clientOrderId,
   warteAufFill,
+  type AlpacaAsset,
   type AlpacaSchluessel,
 } from './alpacaBroker.js';
 import type { BrokerMode } from './broker.js';
@@ -253,5 +255,112 @@ export async function routeOrder(
     const text = err instanceof Error ? err.message : String(err);
     logger.warn(`routeOrder ${auftrag.symbol} ${auftrag.side}: ${text.slice(0, 200)}`);
     return { ausgefuehrt: false, grund: 'broker_fehler' };
+  }
+}
+
+/**
+ * Handels-Eigenschaften eines Symbols, wie Alpaca sie kennt — mit Cache
+ * (Alpaca-Sync 05.08., MILESTONES „Weitere Alpaca-Synchronisierung" Punkt 1).
+ *
+ * Warum das überhaupt: Wir haben zwei Eigenschaften bisher GERATEN.
+ * `fractionable` war „Klasse ist Krypto" — dabei erlaubt Alpaca Bruchstücke
+ * für die meisten US-Aktien, und ein kleines Konto scheiterte bei uns an
+ * „qty_unter_1", wo es beim Broker längst 0,4 Stück kaufen dürfte. Und ob
+ * ein Papier LEIHBAR ist, erfuhren wir erst durch die abgelehnte
+ * Short-Order — ein vermeidbarer Fehlversuch samt Log-Lärm.
+ *
+ * ── Cache-Aufbau ──────────────────────────────────────────────────────────
+ *
+ * Zwei Stufen, beide global statt je Nutzer — die Eigenschaften eines
+ * Papiers sind für alle Konten identisch, es wäre Verschwendung, sie je uid
+ * zu halten:
+ *
+ *   1. Prozess-Map (bis Kaltstart) — deckt die Trades EINES Scans ab.
+ *   2. `meta/alpacaAssets` in Firestore, ein Feld je Symbol, 24 h gültig —
+ *      deckt alle Instanzen und Kaltstarts ab. Eigenschaften ändern sich
+ *      praktisch nie unterjährig; 24 h sind konservativ genug.
+ *
+ * Auch „Alpaca kennt das Symbol nicht" (404 → `bekannt: false`) wird
+ * gemerkt: Der halbe Katalog (Indizes, Forex, Futures) existiert dort gar
+ * nicht, und genau diese Symbole würden sonst täglich neu angefragt.
+ * FEHLER (Netz, 5xx) werden dagegen NICHT persistiert — nur kurz in der
+ * Prozess-Map, damit ein wackliger Moment nicht jeden Trade des Scans mit
+ * einem eigenen Fehlversuch belastet.
+ */
+const ASSET_TTL_MS = 24 * 3_600_000;
+const ASSET_FEHLER_TTL_MS = 5 * 60_000;
+const assetCache = new Map<string, { bis: number; wert: AlpacaAsset | null }>();
+
+/** Für Tests: Prozess-Cache leeren. */
+export function vergissAssets(): void {
+  assetCache.clear();
+}
+
+export async function assetAuskunft(
+  verbindung: BrokerVerbindung,
+  symbol: string,
+  fetchImpl: typeof fetch = fetch,
+  jetztMs: number = Date.now(),
+): Promise<AlpacaAsset | null> {
+  const treffer = assetCache.get(symbol);
+  if (treffer && treffer.bis > jetztMs) return treffer.wert;
+
+  const ref = getFirestore().doc('meta/alpacaAssets');
+
+  // Stufe 2: Firestore. Ein Lesefehler ist kein Handelshindernis — dann
+  // wird eben live gefragt oder (wenn auch das scheitert) geraten.
+  try {
+    const feld = (await ref.get()).get(symbol) as
+      | { bekannt: boolean; at: string; tradable?: boolean; fractionable?: boolean;
+          shortable?: boolean; easyToBorrow?: boolean; marginable?: boolean }
+      | undefined;
+    if (feld && jetztMs - Date.parse(feld.at) < ASSET_TTL_MS) {
+      const wert: AlpacaAsset | null = feld.bekannt
+        ? {
+            symbol,
+            tradable: feld.tradable === true,
+            fractionable: feld.fractionable === true,
+            shortable: feld.shortable === true,
+            easyToBorrow: feld.easyToBorrow === true,
+            marginable: feld.marginable === true,
+          }
+        : null;
+      assetCache.set(symbol, { bis: jetztMs + ASSET_TTL_MS, wert });
+      return wert;
+    }
+  } catch (err) {
+    logger.warn(`assetAuskunft ${symbol}: Cache nicht lesbar`, err);
+  }
+
+  // Stufe 3: live beim Broker fragen.
+  try {
+    const wert = await alpacaAsset(verbindung.mode, symbol, verbindung.schluessel, fetchImpl);
+    assetCache.set(symbol, { bis: jetztMs + ASSET_TTL_MS, wert });
+    const at = new Date(jetztMs).toISOString();
+    ref
+      .set(
+        {
+          [symbol]: wert
+            ? {
+                bekannt: true,
+                tradable: wert.tradable,
+                fractionable: wert.fractionable,
+                shortable: wert.shortable,
+                easyToBorrow: wert.easyToBorrow,
+                marginable: wert.marginable,
+                at,
+              }
+            : { bekannt: false, at },
+        },
+        { merge: true },
+      )
+      .catch((err: unknown) => logger.warn(`assetAuskunft ${symbol}: Cache nicht schreibbar`, err));
+    return wert;
+  } catch (err) {
+    // Fehler ≠ „gibt es nicht": kurz merken, NICHT persistieren, und mit
+    // `null` in die bisherigen Schätzungen zurückfallen.
+    logger.warn(`assetAuskunft ${symbol} fehlgeschlagen`, err);
+    assetCache.set(symbol, { bis: jetztMs + ASSET_FEHLER_TTL_MS, wert: null });
+    return null;
   }
 }

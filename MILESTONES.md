@@ -1883,10 +1883,20 @@ Sekunden-Preis-Alerts, `trade_updates`.
 
 - [ ] **Weitere Alpaca-Synchronisierung — bewertet 05.08. (Owner-Frage:
       „welche Werte kann man abholen? macht das Sinn?").** Nach Nutzen:
-      1. `/v2/assets` → `fractionable`, `shortable`, `easy_to_borrow`.
-         **Groesster Gewinn.** Wir RATEN das heute (`fractional = klasse ===
-         'crypto'`), und ob ein Papier leihbar ist, erfahren wir erst durch
-         die abgelehnte Order. Alpaca weiss es je Symbol exakt.
+      1. ✅ UMGESETZT (05.08.): `/v2/assets` → `fractionable`, `shortable`,
+         `easy_to_borrow`, `tradable`, `marginable`. `alpacaAsset()` +
+         `assetAuskunft()` mit Zwei-Stufen-Cache (Prozess-Map + global
+         `meta/alpacaAssets`, 24 h TTL; auch 404 „kennt Alpaca nicht" wird
+         gemerkt, FEHLER dagegen nur 5 min im Prozess und nie persistiert).
+         `executeTrade` nutzt es fuer geroutete Orders: `fractional` vom
+         Broker statt geraten (kleine Konten kaufen jetzt 0,4 Stueck statt
+         an qty_unter_1 zu scheitern), Short-Einstiege auf nicht leihbare
+         Papiere und Einstiege auf nicht handelbare Papiere werden VOR der
+         Order abgefangen (`broker_nicht_shortbar`/`broker_nicht_handelbar`).
+         Exits bleiben bewusst ungegatet — eine Position schliessen koennen
+         geht vor Metadaten-Huebschheit. `null` (unbekannt/Fehler) faellt
+         auf die bisherigen Schaetzungen zurueck: Metadaten duerfen den
+         Handel verbessern, nie verhindern. 9 Tests.
       2. `/v2/clock` + `/v2/calendar` → echte Handelszeiten. Unsere eigene
          Marktzeit-Logik kennt weder Feiertage noch HALBTAGE (Thanksgiving,
          Heiligabend: Schluss 13:00). Heute scannen wir dann ins Leere oder
