@@ -412,6 +412,73 @@ export async function alpacaOrder(
   };
 }
 
+/**
+ * Auf die Ausführung warten, statt sie anzunehmen (M13).
+ *
+ * ── Warum das nötig ist ───────────────────────────────────────────────────
+ *
+ * `alpacaOrder` liefert die Order zurück, wie sie ANGENOMMEN wurde — bei
+ * einer Market-Order steht dort meist `accepted` oder `pending_new`, und
+ * `filled_avg_price` ist noch leer. Wer diesen Rückgabewert bucht, schreibt
+ * einen Kurs von 0 ins Buch oder fällt auf die Schätzung zurück, die er
+ * gerade ersetzen wollte.
+ *
+ * Market-Orders füllen in liquiden Märkten binnen Sekunden. „Meist" ist bei
+ * Geld aber kein Argument: Außerhalb der Handelszeiten, bei Handelsstopps
+ * oder in dünnen Büchern kann es dauern oder ganz ausbleiben.
+ *
+ * ── Was bei Zeitüberschreitung passiert ───────────────────────────────────
+ *
+ * Nichts wird gebucht. Die Order bleibt beim Broker stehen und wird beim
+ * nächsten Abgleich sichtbar — als Position, die nur dort existiert. Genau
+ * dafür ist der Abgleich da. Die Alternative wäre, eine unbestätigte
+ * Ausführung ins Buch zu schreiben; dann stünde dort ein Trade, den es
+ * vielleicht nie gab.
+ */
+export async function warteAufFill(
+  mode: BrokerMode,
+  orderId: string,
+  schluessel: AlpacaSchluessel | null = null,
+  opts: { versuche?: number; pauseMs?: number; schlaf?: (ms: number) => Promise<void> } = {},
+  fetchImpl: FetchLike = fetch,
+): Promise<OrderErgebnis | null> {
+  const versuche = opts.versuche ?? 6;
+  const pause = opts.pauseMs ?? 700;
+  const schlaf = opts.schlaf ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+
+  for (let i = 0; i < versuche; i += 1) {
+    const d = (await alpacaFetch(
+      mode,
+      `/v2/orders/${encodeURIComponent(orderId)}`,
+      schluessel,
+      {},
+      fetchImpl,
+    )) as Record<string, unknown>;
+    const status = String(d['status'] ?? '');
+    const kurs = zahl(d['filled_avg_price']);
+    const menge = zahl(d['filled_qty']);
+
+    // `filled` mit Kurs ist der Normalfall. `partially_filled` zählt
+    // ebenfalls: Was ausgeführt IST, ist ausgeführt — der Rest steht in der
+    // Menge, und der Abgleich fängt eine Abweichung auf.
+    if ((status === 'filled' || status === 'partially_filled') && kurs > 0 && menge > 0) {
+      return {
+        id: String(d['id'] ?? orderId),
+        clientOrderId: String(d['client_order_id'] ?? ''),
+        status,
+        symbol: String(d['symbol'] ?? ''),
+        qty: menge,
+        side: String(d['side'] ?? '') === 'sell' ? 'sell' : 'buy',
+        ausfuehrungskurs: kurs,
+      };
+    }
+    // Endzustände ohne Ausführung: weiter zu warten wäre sinnlos.
+    if (['canceled', 'expired', 'rejected', 'suspended'].includes(status)) return null;
+    if (i < versuche - 1) await schlaf(pause);
+  }
+  return null;
+}
+
 export interface Abweichung {
   symbol: string;
   eigeneMenge: number;

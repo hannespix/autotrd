@@ -1748,18 +1748,41 @@ Sekunden-Preis-Alerts, `trade_updates`.
       zurück; die App zeigt nur eine maskierte Kennung. OFFEN: KMS-Envelope
       statt Klartext — vertretbar, solange nur Papier-Schlüssel dort liegen,
       und zwingend, bevor je ein Live-Schlüssel in die Datenbank dürfte.)*
+- [x] **Order-Routing (05.08.).** Jeder Trade läuft jetzt durch
+      `core/orderRouting.ts`: Order raus → `warteAufFill` pollt bis zum
+      bestätigten Fill → ERST dann bucht das eigene Buch, mit dem echten
+      Ausführungskurs statt der Schätzung. Kein Fill ⇒ **nichts gebucht**.
+      Alle **15** Aufrufstellen (9 Scan, 4 Momentum/Sockel, 1 Puls,
+      1 Handeingabe) gehen über die eine Hülle `executeTrade(req, strategy,
+      laufId)`; `laufId` bindet die `client_order_id` an den LAUF statt an
+      die Uhr. `effectivePriceFromFill` schlägt auf einen echten Fill nur
+      noch die Kommission auf — die Slippage steckt bereits darin, ein
+      zweiter Aufschlag wäre eine Doppelbuchung von bis zu 5 bp je Seite.
+      Positionen tragen `broker: true` + `brokerOrderId`; **Exits auf reine
+      Buch-Positionen werden NICHT geroutet** (sonst eröffnete der Verkauf
+      einer Altbestands-Position beim Broker einen Leerverkauf).
+- [x] **Abgleich bei JEDEM Scan (05.08.).** `core/brokerAbgleich.ts` hält
+      das Buch gegen `/v2/positions`; Drift sperrt **Einstiege** (Zähler
+      `gate.abgleich_drift`, Vermerk unter `risk.abgleich`), **Ausstiege
+      bleiben immer frei**. Ein Broker-Fehler sperrt nicht — er wird
+      vermerkt: Ein Netzwerkausfall ist kein Beweis für Drift.
 - [ ] Order-Statusmaschine: `bracket`/`oco`/`trailing_stop`, `notional`,
-      `extended_hours`, TIF; `client_order_id` = Firestore-Doc-ID
-      (Idempotenz), `cancelOrder`/`replaceOrder`; `engine.stopLoss/takeProfit`
-      mappen auf Bracket-Orders
+      `extended_hours`, TIF; `cancelOrder`/`replaceOrder`;
+      `engine.stopLoss/takeProfit` mappen auf Bracket-Orders
 - [ ] Cloud-Run-`streamer`, Modul Quotes: IEX-/Krypto-Websocket auf das
       Hot-Set (Presence via `admin/presence`, 60-s-Heartbeat), Drossel
       ≤ 1 Write/2 s/Symbol + Change-Filter, `min-instances` 1/0 per
       Marktzeit-Scheduler
 - [ ] `streamer`, Modul trade_updates: `partial_fill`/`fill`/`canceled` →
-      Order/Position/Wallet (Teilfill-Fortschritt im UI); Reconciliation je
-      Scan („Alpaca ist die Wahrheit" für Gleis B), Drift-Log nach
-      `admin/reconciliations`
+      Order/Position/Wallet (Teilfill-Fortschritt im UI).
+      *(Reconciliation je Scan ist seit 05.08. gebaut — siehe oben. Die
+      Architekturentscheidung fiel dabei ANDERS als hier ursprünglich
+      notiert: nicht „Alpaca ist die Wahrheit", sondern **Alpaca ist die
+      Wahrheit über den Bestand, das eigene Buch über die Absicht**.
+      Begründung in `core/orderRouting.ts` — ein Broker-Datensatz kann
+      `bucket`/`riskExit`/`core`/`highWater`/`fxRate` nicht speichern, und
+      als Multi-User-Paper-Plattform bräuchte sonst jeder Nutzer ein eigenes
+      Alpaca-Konto samt KYC vor dem ersten simulierten Trade.)*
 - [ ] Cloud-Tasks-Queue `alpaca-central` für alle Calls mit dem zentralen
       Daten-Key (429-Header respektieren, Backoff, Dead-Letter-Docs) +
       Token-Bucket je User-Key in `admin/quotas`

@@ -66,11 +66,12 @@ import { atrPct, buildVariants } from '../../../shared/src/index.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 import { computeIndicatorSnapshot, computeSignal } from '../core/engine.js';
 import {
-  executePaperTrade,
+  executeTrade,
   resolveBrokerMode,
   riskExitReason,
   type MarginBudget,
 } from '../core/broker.js';
+import { abgleichFuerKonto } from '../core/brokerAbgleich.js';
 import { reifeFuerKonto } from '../core/liveGate.js';
 import { accessLevelOf, mayTrade } from '../core/access.js';
 import {
@@ -215,6 +216,8 @@ export interface EntryGateStats {
   /** Abgelehnt: Tages-Notbremse ausgelöst (M12). Zählt je gesperrtem Konto,
    *  nicht je Symbol — die Bremse ist eine Konto-Entscheidung. */
   breaker_aktiv: number;
+  /** Einstiege gesperrt, weil Buch und Broker-Depot auseinanderlaufen (M13). */
+  abgleich_drift: number;
   /** DURCHGELASSEN, obwohl die Kostenschwelle nicht prüfen konnte (keine
    *  ATR). Steht diese Zahl hoch, ist die Schwelle faktisch abgeschaltet. */
   ohne_atr_durchgelassen: number;
@@ -273,6 +276,13 @@ export interface KontenStats {
 async function executeUserTrades(
   marketData: Map<string, SymbolData>,
   regime: MarketRegime,
+  /**
+   * Lauf-Kennung des Scans (M13) — wird zur `client_order_id` beim Broker.
+   * Sie hängt bewusst am LAUF und nicht an der Uhr: Ein wiederholter Scan
+   * derselben Minute trägt dieselbe Kennung, und Alpaca weist die doppelte
+   * Order ab, statt eine zweite Position zu eröffnen.
+   */
+  scanId: string,
 ): Promise<{ executed: number; gate: EntryGateStats; konten: KontenStats }> {
   const db = getFirestore();
   let executed = 0;
@@ -288,6 +298,7 @@ async function executeUserTrades(
     kante_wuerde_blocken: 0,
     klasse_aus: 0,
     breaker_aktiv: 0,
+    abgleich_drift: 0,
     ohne_atr_durchgelassen: 0,
     filter_blockiert: 0,
     regime_gegen_trend: 0,
@@ -501,6 +512,23 @@ async function executeUserTrades(
           )
           .catch((err: unknown) => logger.warn(`Breaker-Vermerk ${uid}`, err));
       }
+
+      /* Abgleich Buch ↔ Depot (M13).
+       *
+       * Läuft bei JEDEM Scan und nicht auf Knopfdruck: Ein Abgleich, den
+       * jemand auslösen muss, findet genau dann nicht statt, wenn er
+       * gebraucht wird. Bei Drift werden EINSTIEGE gesperrt — Exits nie,
+       * denn ein Stop, der wegen einer Buchungsdifferenz nicht auslöst,
+       * wäre gefährlicher als die Differenz selbst.
+       *
+       * Konten ohne hinterlegten Broker (der Normalfall) kosten hier genau
+       * einen Firestore-Read und keinen HTTP-Aufruf. */
+      const abgleichBefund = await abgleichFuerKonto(
+        uid,
+        positionsSnap.docs.map((d) => d.data() as Position),
+        now,
+      );
+      if (abgleichBefund.sperre) gate.abgleich_drift += 1;
       // Zeitbasis der Signale (Owner 26.07., „Tradefrequenz erhöhen"):
       // 'intraday' rechnet auf 5-min-Kerzen — Signale drehen im Scan-Takt.
       const tf: 'daily' | 'intraday' = strategy.signals.timeframe ?? 'intraday';
@@ -576,9 +604,10 @@ async function executeUserTrades(
         });
         if (reason) {
           // Long schließt per Verkauf, Short per Eindecken (buy/Cover)
-          const r = await executePaperTrade(
+          const r = await executeTrade(
             { uid, symbol, side: isShort ? 'buy' : 'sell', price: data.price, source: 'engine', riskExit: reason, assetClass: cls },
             clamped,
+            scanId,
           );
           if (r.executed) {
             executed += 1;
@@ -685,6 +714,7 @@ async function executeUserTrades(
         | 'unter_kosten'
         | 'klasse_aus'
         | 'breaker_aktiv'
+        | 'abgleich_drift'
         | 'regime_gegen_trend'
         | 'regime_stress'
         | null => {
@@ -695,6 +725,10 @@ async function executeUserTrades(
         // geprüftem Symbol, sonst sähe ein gesperrtes Konto mit 39 Symbolen
         // aus wie 39 Sperren.
         if (!breaker.einstiegErlaubt) return 'breaker_aktiv';
+        // Gleich dahinter: Wenn Buch und Depot nicht übereinstimmen, ist
+        // jede Größenrechnung für den Einstieg auf Sand gebaut. Zähler
+        // ebenfalls je KONTO (siehe oben), nicht je Symbol.
+        if (abgleichBefund.sperre) return 'abgleich_drift';
         const handelbar = isTradable(symbol);
         // Regime-Ampel Stufe 2 (04.08.): Im Aufwärtstrend keine Shorts, im
         // Stress gar keine neuen Einstiege. Die Messung dahinter steht an
@@ -990,9 +1024,10 @@ async function executeUserTrades(
           if (dir === 'buy' && pos?.side === 'short') {
             // Kauf-Signal deckt den Regelbaum-Short ein (Cover, Short R2);
             // Exits blockt der Cooldown NIE (Sicherheitsprinzip)
-            const r = await executePaperTrade(
+            const r = await executeTrade(
               { uid, symbol, side: 'buy', price: data.price, source: 'engine', assetClass: classify(symbol) },
               clamped,
+              scanId,
             );
             if (r.executed) {
               executed += 1;
@@ -1012,7 +1047,7 @@ async function executeUserTrades(
             // Broker die Stop/Take-LEVEL mit den GLOBALEN Prozenten fest —
             // die MA6-Klassen-Profile (Krypto 6/10 usw.) griffen beim Kauf
             // nie, und gespeicherte Level haben bewusst Vorrang (MA1).
-            const r = await executePaperTrade(
+            const r = await executeTrade(
               {
                 uid,
                 symbol,
@@ -1025,6 +1060,7 @@ async function executeUserTrades(
                 bucket: bucketKey({ assetClass: classify(symbol), timeframe: tf, signature: 'regelbaum', side: 'long', regime }),
               },
               clamped,
+              scanId,
             );
             if (r.executed) {
               executed += 1;
@@ -1051,9 +1087,10 @@ async function executeUserTrades(
             // SIGNAL-Ausstieg betrifft. Stop/Trailing/Take sind in diesem
             // Scan bereits gelaufen und bleiben jederzeit scharf.
             if (minHoldActive(pos.openedAt, now, clamped.engine.minHoldMin ?? 0)) continue;
-            const r = await executePaperTrade(
+            const r = await executeTrade(
               { uid, symbol, side: 'sell', price: data.price, source: 'engine', assetClass: classify(symbol) },
               clamped,
+              scanId,
             );
             if (r.executed) {
               executed += 1;
@@ -1069,7 +1106,7 @@ async function executeUserTrades(
             if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
             if (coreSymbols.has(symbol)) continue; // hält der Sockel — Besitzgrenze
             if (entrySperre(symbol, data.atrPct, alleSymbole(), 'short')) continue;
-            const r = await executePaperTrade(
+            const r = await executeTrade(
               {
                 uid,
                 symbol,
@@ -1082,6 +1119,7 @@ async function executeUserTrades(
                 bucket: bucketKey({ assetClass: classify(symbol), timeframe: tf, signature: 'regelbaum', side: 'short', regime }),
               },
               clamped,
+              scanId,
             );
             if (r.executed) {
               executed += 1;
@@ -1165,9 +1203,10 @@ async function executeUserTrades(
         // Positionsgröße und Stop-Level kommen aus der Risiko-Hülle.
         if (direction === 'buy' && pos?.side === 'short') {
           // Kauf-Signal auf offenen Short = Eindecken (Cover)
-          const r = await executePaperTrade(
+          const r = await executeTrade(
             { uid, symbol, side: 'buy', price: data.price, source: 'engine', assetClass: classify(symbol) },
             clamped,
+            scanId,
           );
           if (r.executed) {
             executed += 1;
@@ -1216,7 +1255,7 @@ async function executeUserTrades(
             symbol,
             edgeMultiple: kostenVielfaches(symbol, data.atrPct),
           });
-          const r = await executePaperTrade(
+          const r = await executeTrade(
             {
               uid,
               symbol,
@@ -1230,6 +1269,7 @@ async function executeUserTrades(
               ...(budget ? { margin: budget } : {}),
             },
             clamped,
+            scanId,
           );
           if (r.executed) {
             executed += 1;
@@ -1254,9 +1294,10 @@ async function executeUserTrades(
           // das Sicherheitsnetz bleibt also jederzeit scharf, gebremst wird
           // nur das Rausspucken durch eine gekippte Indikator-Stimme.
           if (minHoldActive(pos.openedAt, now, clamped.engine.minHoldMin ?? 0)) continue;
-          const r = await executePaperTrade(
+          const r = await executeTrade(
             { uid, symbol, side: 'sell', price: data.price, source: 'engine', assetClass: classify(symbol) },
             clamped,
+            scanId,
           );
           if (r.executed) {
             executed += 1;
@@ -1298,7 +1339,7 @@ async function executeUserTrades(
             symbol,
             edgeMultiple: kostenVielfaches(symbol, data.atrPct),
           });
-          const r = await executePaperTrade(
+          const r = await executeTrade(
             {
               uid,
               symbol,
@@ -1313,6 +1354,7 @@ async function executeUserTrades(
               ...(budget ? { margin: budget } : {}),
             },
             clamped,
+            scanId,
           );
           if (r.executed) {
             executed += 1;
@@ -2149,6 +2191,7 @@ export async function runScan(force = false): Promise<ScanResult> {
     kante_wuerde_blocken: 0,
     klasse_aus: 0,
     breaker_aktiv: 0,
+    abgleich_drift: 0,
     ohne_atr_durchgelassen: 0,
     filter_blockiert: 0,
     regime_gegen_trend: 0,
@@ -2162,7 +2205,7 @@ export async function runScan(force = false): Promise<ScanResult> {
   try {
     await migrateTimeframeDaily(db);
     await migrateCorePctAll(db);
-    const res = await executeUserTrades(marketData, regime.state);
+    const res = await executeUserTrades(marketData, regime.state, scanId);
     trades = res.executed;
     entryGate = res.gate;
     konten = res.konten;

@@ -21,6 +21,7 @@ import {
   classify,
   currencyForSymbol,
   effectivePriceForClass,
+  effectivePriceFromFill,
   feePartsForClass,
   marginInterest,
   resolveRisk,
@@ -35,6 +36,7 @@ import type {
   Trade,
 } from '../../../shared/src/index.js';
 import { fxFelder } from './fx.js';
+import { brokerVerbindung, routeOrder } from './orderRouting.js';
 
 /**
  * Margin-Budget, das der AUFRUFER mitbringt (Scan bzw. Puls).
@@ -205,6 +207,16 @@ export interface TradeRequest {
   /** Asset-Klasse für klassen-spezifische Risiko-Level (MA6). */
   assetClass?: string | null;
   /**
+   * ECHTER Ausführungskurs vom Broker (M13) — ersetzt die Schätzung
+   * `effectivePriceForClass`. Genau dafür gibt es das Routing: Die Schätzung
+   * kennt weder Teilausführungen noch den tatsächlichen Spread, und bei einer
+   * Kante von 0,143 % gegen 0,300 % Kosten entscheidet diese Größenordnung
+   * darüber, ob das System trägt.
+   */
+  fillPreis?: number;
+  /** Order-Kennung beim Broker — die Brücke zwischen Buch und Depot. */
+  brokerOrderId?: string;
+  /**
    * Leerverkauf erlauben (Owner 26.07.): sell OHNE Position eröffnet dann
    * einen Short statt mit 'keine_position' abzulehnen. Buy auf eine
    * Short-Position deckt IMMER ein (kein Flag nötig — die Position sagt es).
@@ -252,6 +264,147 @@ export interface TradeRequest {
  *   Cash-Deckung nötig.
  * - sell: nur mit Position; realisiert P&L in den Trade-Record.
  */
+/**
+ * Wie viele Stück würde dieser Auftrag bewegen? (M13)
+ *
+ * VORAB gerechnet, außerhalb der Transaktion — das Order-Routing muss die
+ * Menge kennen, bevor es eine Order senden kann, und ein HTTP-Aufruf hat in
+ * einer Firestore-Transaktion nichts verloren (sie wird bei Konflikt
+ * wiederholt).
+ *
+ * Bewusst als eigene, PURE Funktion und nicht als zweite Kopie der Regel:
+ * Die Transaktion unten ruft dieselbe Funktion auf. Zwei Fassungen derselben
+ * Mengenlogik wären zwei Gelegenheiten, eine davon zu vergessen — und die
+ * Abweichung fiele erst auf, wenn Buch und Depot auseinanderlaufen.
+ *
+ * Schließende Aufträge übernehmen die Positionsmenge, öffnende gehen durch
+ * `sizeOrder`. `req.qty` schlägt beides, weil ein Aufrufer, der die Menge
+ * kennt (Handeingabe, geroutete Order), sie nicht neu ausrechnen lassen darf.
+ */
+export function planeMenge(
+  req: TradeRequest,
+  strategy: Strategy,
+  kontext: { balance: number; position: Position | null; effPreis: number; fractional: boolean },
+): number {
+  const pos = kontext.position;
+  // Schließen: Buy auf Short (Eindecken) oder Sell auf Long — beides bewegt
+  // exakt die offene Menge, nie mehr.
+  if (pos && ((req.side === 'buy' && pos.side === 'short') || (req.side === 'sell' && pos.side !== 'short'))) {
+    return pos.qty;
+  }
+  if (req.qty !== undefined) return req.qty;
+  return sizeOrder(
+    strategy,
+    kontext.balance,
+    kontext.effPreis,
+    kontext.fractional,
+    req.margin,
+    req.stopDistancePct,
+    req.sizeFactor,
+  );
+}
+
+/**
+ * Trade ausführen — mit Order-Routing an den Broker, wenn eins hinterlegt ist.
+ *
+ * ── Die eine Stelle, an der geroutet wird ─────────────────────────────────
+ *
+ * Der Scan ruft `executePaperTrade` an neun Stellen auf (Kauf, Short,
+ * Eindecken, vier Exit-Gründe, Regelbaum, Momentum). Das Routing dort je
+ * einzeln einzubauen wären neun Gelegenheiten, eine zu vergessen — genau das
+ * Muster, das `entrySperre` im Scan bewusst vermeidet. Deshalb diese Hülle:
+ * Sie ersetzt den direkten Aufruf, und der Broker-Kern bleibt unangetastet.
+ *
+ * ── Reihenfolge: erst ausführen, dann buchen ──────────────────────────────
+ *
+ * Die Order geht raus, der Fill wird abgewartet, und ERST der bestätigte
+ * Ausführungskurs wird gebucht. Umgekehrt stünde ein Trade im Buch, den es
+ * beim Broker vielleicht nie gab.
+ *
+ * Bleibt der Fill aus, wird NICHTS gebucht. Die Order steht dann eventuell
+ * weiter beim Broker und wird beim nächsten Abgleich sichtbar — als Position,
+ * die nur dort existiert. Das ist der Fall, für den der Abgleich da ist.
+ *
+ * ── Ohne Verbindung ändert sich gar nichts ────────────────────────────────
+ *
+ * Kein Broker hinterlegt ⇒ direkter Durchgriff, kein zusätzlicher Read, kein
+ * verändertes Verhalten. Das ist der Normalfall: Die meisten Konten handeln
+ * im eigenen Buch, und ein Papierkonto ist Opt-in.
+ */
+export async function executeTrade(
+  req: TradeRequest,
+  strategy: Strategy,
+  laufId: string,
+): Promise<TradeResult> {
+  const verbindung = await brokerVerbindung(req.uid);
+  if (!verbindung) return executePaperTrade(req, strategy);
+
+  const db = getFirestore();
+  const userRef = db.doc(`users/${req.uid}`);
+  const [userSnap, posSnap] = await Promise.all([
+    userRef.get(),
+    userRef.collection('positions').doc(req.symbol).get(),
+  ]);
+  const balance = (userSnap.get('wallet.paperBalance') as number | undefined) ?? 0;
+  const position = posSnap.exists ? (posSnap.data() as Position) : null;
+
+  /* Schließt dieser Auftrag eine Position, die der Broker gar nicht kennt?
+   *
+   * Der gefährlichste Einzelfall dieser ganzen Schicht. Wer sein Konto
+   * verbindet, hat in aller Regel schon Positionen im eigenen Buch — die
+   * sind dort nie angekommen. Ein Verkaufsauftrag für so eine Position würde
+   * beim Broker keinen Bestand auflösen, sondern einen LEERVERKAUF eröffnen:
+   * aus einem gewollten Ausstieg würde ein ungewollter Einstieg in die
+   * Gegenrichtung, mit echtem Risiko und ohne Stop.
+   *
+   * Deshalb: Exits werden nur geroutet, wenn die Position beim Öffnen
+   * tatsächlich über den Broker entstanden ist (`Position.broker`). Alles
+   * andere bleibt reine Buchführung — genau wie vor dem Verbinden. */
+  const schliesst =
+    position !== null &&
+    ((req.side === 'buy' && position.side === 'short') ||
+      (req.side === 'sell' && position.side !== 'short'));
+  if (schliesst && position.broker !== true) return executePaperTrade(req, strategy);
+
+  const klasse = req.assetClass ?? classify(req.symbol);
+  const fractional = klasse === 'crypto';
+  // Für die MENGE reicht der Schätzpreis: Er entscheidet über die Stückzahl,
+  // nicht über den Buchwert. Der echte Kurs kommt gleich vom Broker zurück
+  // und ersetzt ihn beim Buchen.
+  const effSchaetzung = effectivePriceForClass(req.price, req.side, klasse);
+  const qty = planeMenge(req, strategy, {
+    balance,
+    position,
+    effPreis: effSchaetzung,
+    fractional,
+  });
+  if (qty < (fractional ? 1e-6 : 1)) return { executed: false, reason: 'qty_unter_1' };
+
+  const routing = await routeOrder(verbindung, {
+    uid: req.uid,
+    symbol: req.symbol,
+    side: req.side,
+    qty,
+    laufId,
+  });
+  if (!routing.ausgefuehrt) {
+    return { executed: false, reason: `broker_${routing.grund ?? 'unbekannt'}` };
+  }
+
+  // Die AUSGEFÜHRTE Menge gilt, nicht die geplante: Bei einer Teilausführung
+  // liegt weniger im Depot, und das Buch muss dem folgen — sonst rechnet die
+  // Engine mit Stücken, die es nicht gibt.
+  return executePaperTrade(
+    {
+      ...req,
+      qty: routing.fillMenge ?? qty,
+      fillPreis: routing.fillPreis!,
+      ...(routing.brokerOrderId ? { brokerOrderId: routing.brokerOrderId } : {}),
+    },
+    strategy,
+  );
+}
+
 export async function executePaperTrade(req: TradeRequest, strategy: Strategy): Promise<TradeResult> {
   const db = getFirestore();
   const userRef = db.doc(`users/${req.uid}`);
@@ -295,7 +448,18 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
      * und Aktien-Steckbriefe zu früh. */
     const klasse = req.assetClass ?? classify(req.symbol);
     const gebuehr = feePartsForClass(klasse);
-    const eff = Math.round(effectivePriceForClass(req.price, req.side, klasse) * 10_000) / 10_000;
+
+    /* Echter Fill schlägt Schätzung (M13).
+     *
+     * Liegt ein bestätigter Ausführungskurs vom Broker vor, wird ER gebucht —
+     * mit Kommission, aber OHNE den geschätzten Slippage-Aufschlag: Die
+     * Slippage ist im Fill bereits enthalten (sie ist der Abstand zwischen
+     * `req.price` und dem gemeldeten Kurs). Ein zweiter Aufschlag wäre eine
+     * Doppelbuchung, die genau die Kante verfälscht, die wir messen wollen. */
+    const echterFill = req.fillPreis !== undefined && req.fillPreis > 0;
+    const eff = echterFill
+      ? Math.round(effectivePriceFromFill(req.fillPreis!, req.side, klasse) * 10_000) / 10_000
+      : Math.round(effectivePriceForClass(req.price, req.side, klasse) * 10_000) / 10_000;
 
     /* Herkunftsangaben, die an JEDEN Trade gehören (04.08.).
      *
@@ -307,15 +471,28 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       assetClass: klasse,
       currency: currencyForSymbol(req.symbol),
       commissionRate: gebuehr.commission,
-      slippageRate: gebuehr.slippage,
-      feeRate: gebuehr.commission + gebuehr.slippage,
+      // Bei echtem Fill ist die Slippage REAL geflossen und steckt im Kurs;
+      // sie hier nochmal als Satz zu führen würde sie doppelt ausweisen.
+      slippageRate: echterFill ? 0 : gebuehr.slippage,
+      feeRate: echterFill ? gebuehr.commission : gebuehr.commission + gebuehr.slippage,
+      /** Woher der Ausführungskurs stammt — 'broker' heißt: bestätigt, nicht geschätzt. */
+      preisQuelle: echterFill ? 'broker' : 'modell',
+      ...(echterFill ? { brokerFillPrice: req.fillPreis! } : {}),
+      ...(req.brokerOrderId ? { brokerOrderId: req.brokerOrderId } : {}),
       // Eingefrorener EZB-Kurs (M12b) — nie nachträglich neu holen, sonst
       // wandern historische Gewinne. Fehlt er, fehlt er ehrlich.
       ...fx,
     };
-    /** Ausführungskosten dieses Trades in Kontowährung. */
+    /**
+     * Ausführungskosten dieses Trades in Kontowährung.
+     *
+     * Basis ist der Kurs, auf den die Gebühr real anfällt: bei bestätigtem
+     * Fill der Fill-Kurs, sonst der gesehene Kurs. `herkunft.feeRate` trägt
+     * die passende Rate (mit oder ohne Slippage-Anteil) bereits.
+     */
+    const gebuehrenBasis = echterFill ? req.fillPreis! : req.price;
     const kosten = (menge: number): number =>
-      Math.round(menge * req.price * herkunft.feeRate * 100) / 100;
+      Math.round(menge * gebuehrenBasis * herkunft.feeRate * 100) / 100;
 
     if (req.side === 'buy') {
       // Buy auf eine SHORT-Position = Eindecken (Cover): Margin + P&L zurück.
@@ -381,6 +558,9 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
         highWater: eff, // Startpunkt des nachziehenden Stops
         ...(req.bucket ? { bucket: req.bucket } : {}),
         ...(req.core ? { core: true } : {}),
+        // Beim Broker wirklich vorhanden? Entscheidet spaeter ueber Routing
+        // des Exits und ueber den Abgleich (siehe Position.broker).
+        ...(req.brokerOrderId ? { broker: true, brokerOrderId: req.brokerOrderId } : {}),
       };
       const trade: Trade = {
         symbol: req.symbol,
@@ -441,6 +621,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
         openedAt: now,
         lowWater: eff, // Startpunkt des Short-Trailings
         ...(req.bucket ? { bucket: req.bucket } : {}),
+        ...(req.brokerOrderId ? { broker: true, brokerOrderId: req.brokerOrderId } : {}),
       };
       const trade: Trade & { short: boolean } = {
         symbol: req.symbol,

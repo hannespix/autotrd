@@ -4259,6 +4259,7 @@ function renderAccessNote(): void {
  */
 const GATE_TEXT: ReadonlyArray<[string, string]> = [
   ['breaker_aktiv', 'Konten mit ausgelöster Tages-Notbremse (keine neuen Einstiege)'],
+  ['abgleich_drift', 'Konten gesperrt — Buch und Broker-Depot weichen ab (Ausstiege bleiben frei)'],
   ['klasse_aus', 'abgelehnt — Anlageklasse steht auf 0 (Schatten misst weiter)'],
   ['regime_gegen_trend', 'Leerverkäufe abgelehnt — der Markt steigt'],
   ['regime_stress', 'Einstiege pausiert — Marktstress'],

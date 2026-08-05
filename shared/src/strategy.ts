@@ -599,6 +599,30 @@ export function effectivePriceForClass(
   return side === 'buy' ? price * (1 + rate) : price * (1 - rate);
 }
 
+/**
+ * Buchungspreis bei einem ECHTEN Broker-Fill (M13) — nur Kommission.
+ *
+ * `effectivePriceForClass` schätzt zwei Dinge auf einmal: die Kommission, die
+ * der Broker berechnet, und die Slippage, also den Abstand zwischen gesehenem
+ * Kurs und tatsächlicher Ausführung. Kommt ein echter Fill zurück, ist die
+ * Slippage keine Schätzung mehr — sie IST der Unterschied zwischen `req.price`
+ * und dem gemeldeten Kurs. Sie ein zweites Mal aufzuschlagen würde sie doppelt
+ * buchen und jede Kanten-Messung um bis zu 5 Basispunkte je Seite verzerren.
+ *
+ * Die Kommission bleibt drin, obwohl das Alpaca-Papierkonto keine berechnet.
+ * Das ist bewusst konservativ: Das Buch soll die Kosten zeigen, die bei
+ * Echtgeld anfallen — sonst sähe die Kante im Papierbetrieb besser aus als
+ * sie ist, und genau daran hängen Trade-Filter, A/B-Duell und Auto-Tuner.
+ */
+export function effectivePriceFromFill(
+  fillPrice: number,
+  side: 'buy' | 'sell',
+  assetClass?: string | null,
+): number {
+  const c = feePartsForClass(assetClass).commission;
+  return side === 'buy' ? fillPrice * (1 + c) : fillPrice * (1 - c);
+}
+
 // ── Geteilte Marktdaten (market/{symbol}/**, nur Functions schreiben) ────────
 
 export interface Quote {
@@ -729,6 +753,27 @@ export interface Position {
    * Fehlend = normale Position der aktiven Engine (Altbestand bleibt gültig).
    */
   core?: boolean;
+  /**
+   * Diese Position liegt WIRKLICH beim Broker (M13, 05.08.).
+   *
+   * Die Kennzeichnung trennt zwei Dinge, die sonst verschmelzen und dabei
+   * echtes Geld kosten würden:
+   *
+   *   1. Sie entscheidet, ob der SCHLIESSENDE Auftrag geroutet wird. Eine
+   *      Position, die vor dem Verbinden im eigenen Buch entstand, kennt der
+   *      Broker nicht — ein Verkaufsauftrag dafür würde dort keinen Bestand
+   *      auflösen, sondern einen LEERVERKAUF eröffnen. Genau einmal falsch
+   *      geroutet, und das Konto trägt ein Risiko, das niemand wollte.
+   *
+   *   2. Sie ist die Grundlage des Abgleichs. Verglichen wird nur, was beide
+   *      Seiten führen sollten; sonst meldete jedes Konto mit Altbestand
+   *      dauerhaft Drift, und die Meldung wäre wertlos.
+   *
+   * Fehlend = reine Buch-Position (Normalfall, Altbestand bleibt gültig).
+   */
+  broker?: boolean;
+  /** Order-Kennung des ÖFFNENDEN Fills beim Broker — Brücke ins Depot. */
+  brokerOrderId?: string;
 }
 
 export interface Trade {

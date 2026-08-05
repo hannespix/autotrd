@@ -14,6 +14,7 @@ import {
   CLASS_FEE_RATE,
   PAPER_FEE_RATE,
   effectivePriceForClass,
+  effectivePriceFromFill,
   feePartsForClass,
   feeRateForClass,
 } from '../src/strategy.js';
@@ -144,6 +145,38 @@ describe('MA1-Audit: trägt ein Short dieselbe Reibung wie ein Long?', () => {
         (effectivePriceForClass(KURS, 'sell', cls) - effectivePriceForClass(KURS, 'buy', cls)) * QTY;
       expect(longPnl).toBeCloseTo(shortPnl, 10);
       expect(longPnl).toBeLessThan(0); // Reibung kostet IMMER
+    }
+  });
+});
+
+describe('effectivePriceFromFill (M13)', () => {
+  it('schlägt nur die Kommission auf — die Slippage steckt schon im Fill', () => {
+    // stocks_us: 0 % Kommission, 5 bp Slippage. Ein echter Fill wird also
+    // UNVERÄNDERT gebucht; jeder Aufschlag hier wäre eine Doppelbuchung.
+    expect(effectivePriceFromFill(190.12, 'buy', 'stocks_us')).toBeCloseTo(190.12, 10);
+    expect(effectivePriceFromFill(190.12, 'sell', 'stocks_us')).toBeCloseTo(190.12, 10);
+  });
+
+  it('bucht Krypto-Kommission weiter, obwohl das Papierkonto keine berechnet', () => {
+    // Bewusst konservativ: Das Buch soll die Kosten zeigen, die bei Echtgeld
+    // anfallen. Sonst sähe die Kante im Papierbetrieb besser aus als sie ist.
+    const c = CLASS_FEE_PARTS['crypto']!.commission;
+    expect(c).toBeGreaterThan(0);
+    expect(effectivePriceFromFill(100, 'buy', 'crypto')).toBeCloseTo(100 * (1 + c), 10);
+    expect(effectivePriceFromFill(100, 'sell', 'crypto')).toBeCloseTo(100 * (1 - c), 10);
+  });
+
+  it('liegt für den Käufer NIE über der Schätzung', () => {
+    // Die Richtung ist das Entscheidende: Ein echter Fill darf im Buch nicht
+    // teurer erscheinen als die Schätzung, die er ersetzt — sonst wäre das
+    // Routing eine Verschlechterung der Messgrundlage.
+    for (const cls of ['crypto', 'stocks_us', 'etf_thematic', 'commodities', 'forex']) {
+      expect(effectivePriceFromFill(100, 'buy', cls)).toBeLessThanOrEqual(
+        effectivePriceForClass(100, 'buy', cls) + 1e-12,
+      );
+      expect(effectivePriceFromFill(100, 'sell', cls)).toBeGreaterThanOrEqual(
+        effectivePriceForClass(100, 'sell', cls) - 1e-12,
+      );
     }
   });
 });
