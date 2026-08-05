@@ -957,6 +957,31 @@ function layout(email: string): string {
     </div>
   </div>
 
+  <!-- ── Nach dem Engine-Stop: Positionen schließen? (Owner 05.08.) ──────
+       Der Stop pausiert ALLES, auch Stop-Loss und Take-Profit. Wer danach
+       Positionen offen lässt, hält sie ungeschützt. Ein Warnsatz allein
+       verlagert die Arbeit auf den Nutzer; dieser Dialog erledigt sie an
+       der Stelle, an der die Frage entsteht. -->
+  <div class="dmodal" id="stopModal">
+    <div class="dmodal-bg" data-close="stop"></div>
+    <div class="dsheet" style="width:min(560px,100%)">
+      <button class="dclose" data-close="stop">✕</button>
+      <h3 style="margin:0 0 6px">Engine gestoppt</h3>
+      <p class="hint">Es werden keine neuen Trades mehr eröffnet — und auch
+        <b>keine Stop-Loss- oder Take-Profit-Ausführungen</b> mehr. Deine offenen
+        Positionen bleiben genau so stehen, wie sie sind, sind ab jetzt aber
+        <b>ungeschützt</b>.</p>
+      <p class="hint">Was soll damit passieren?</p>
+      <div id="stopRows" style="margin-top:8px"></div>
+      <div class="row" style="align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap">
+        <button class="btn btn-n" id="stopKeep">Offen lassen</button>
+        <button class="btn btn-n" id="stopSel">Ausgewählte schließen</button>
+        <button class="btn btn-r" id="stopAll">Alle schließen</button>
+      </div>
+      <div id="stopOut" style="margin-top:8px"></div>
+    </div>
+  </div>
+
   <div class="dmodal" id="optModal">
     <div class="dmodal-bg" data-close="options"></div>
     <div class="dsheet" style="width:min(560px,100%)">
@@ -982,6 +1007,14 @@ function layout(email: string): string {
       <p class="hint">Abgewählte Gruppen verschwinden aus Markt-Browser und Watchlist-Picker
         (nur Anzeige — die Daten aller Gruppen laufen serverseitig weiter).</p>
       <div class="wl-sec">Paper-Wallet · Grundeinstellungen</div>
+      <!-- Startkapital wirkt an ZWEI Stellen verschieden — ohne diesen
+           Hinweis wartet man auf einen Kontostand, der sich nie ändert. -->
+      <p class="hint">Das <b>Startkapital</b> ändert deinen aktuellen Kontostand
+        <b>nicht</b>. Es greift erst bei „Neu anfangen" ganz unten — dann wird das
+        Wallet auf diesen Betrag zurückgesetzt. Sofort wirksam ist es nur als
+        Rechenbasis für die Positionsgröße, und auch das nur, wenn unten
+        <b>Größenbasis „Startkapital"</b> eingestellt ist (Standard ist
+        „Kontostand").</p>
       <div class="opt-grid">
         <label>Startkapital $
           <input id="owCap" class="inp st-num" type="number" min="100" step="500" /></label>
@@ -4898,11 +4931,85 @@ const MODAL_IDS = {
   detail: 'detailModal',
   options: 'optModal',
   analytics: 'anModal',
+  stop: 'stopModal',
 } as const;
 type ModalName = keyof typeof MODAL_IDS;
 
 function closeModal(which: ModalName): void {
   $(MODAL_IDS[which]).classList.remove('show');
+}
+
+/**
+ * Nach dem Engine-Stop fragen, was mit den offenen Positionen geschehen soll.
+ *
+ * ── Warum das ein Dialog ist und kein Hinweissatz ─────────────────────────
+ *
+ * Der Stop pausiert alles — auch Stop-Loss und Take-Profit. Das ist so
+ * gewollt („das Depot genau im Status quo belassen"), hat aber eine
+ * Kehrseite, die erst später wehtut: Ein gestopptes Konto mit offenen
+ * Positionen ist ein ungeschütztes Konto. Ein Warnsatz verlagert die Arbeit
+ * auf den Nutzer und darauf, dass er ihn im richtigen Moment liest. Dieser
+ * Dialog erledigt sie an der Stelle, an der die Frage entsteht.
+ *
+ * Ohne offene Positionen erscheint er nicht — eine Rückfrage ohne Inhalt
+ * lehrt nur, Dialoge wegzuklicken.
+ */
+function zeigeStopDialog(): void {
+  if (!st || st.positions.length === 0) return;
+  const rows = $('stopRows');
+  $('stopOut').textContent = '';
+  rows.innerHTML = st.positions
+    .map((p) => {
+      const kurs = st?.posPrices.get(p.symbol) ?? p.avgEntry;
+      const short = p.side === 'short';
+      // Vorzeichen dreht beim Short: Ein gefallener Kurs ist dort Gewinn.
+      const pnl = (short ? p.avgEntry - kurs : kurs - p.avgEntry) * p.qty;
+      const farbe = pnl >= 0 ? 'var(--gn)' : 'var(--rd)';
+      return `<label class="hint" style="display:flex;align-items:center;gap:8px;padding:4px 0">
+        <input type="checkbox" data-stopsym="${escText(p.symbol)}" checked />
+        <b style="min-width:64px">${escText(p.symbol)}</b>
+        <span style="flex:1">${short ? 'Short ' : ''}${p.qty} × ${money(p.avgEntry)}</span>
+        <span class="mono" style="color:${farbe}">${pnl >= 0 ? '+' : ''}${money(pnl)}</span>
+      </label>`;
+    })
+    .join('');
+  $(MODAL_IDS.stop).classList.add('show');
+}
+
+/**
+ * Ausgewählte Positionen schließen.
+ *
+ * Nacheinander statt parallel: Jeder Verkauf ist eine eigene Transaktion auf
+ * demselben Wallet-Dokument, und gleichzeitige Schreibvorgänge darauf würden
+ * sich gegenseitig zum Wiederholen zwingen. Bei einer Handvoll Positionen
+ * ist die Reihenfolge schneller als der Konflikt.
+ *
+ * Ein Fehlschlag stoppt die Reihe NICHT: Wenn ein Symbol nicht handelbar ist
+ * (Markt zu), sollen die anderen trotzdem geschlossen werden. Was nicht ging,
+ * steht am Ende namentlich da.
+ */
+async function schliessePositionen(symbole: string[]): Promise<void> {
+  const out = $('stopOut');
+  const fehler: string[] = [];
+  let ok = 0;
+  for (const [i, sym] of symbole.entries()) {
+    out.innerHTML = `<div class="hint">Schließe ${i + 1}/${symbole.length} …</div>`;
+    const pos = st?.positions.find((p) => p.symbol === sym);
+    try {
+      // Long wird verkauft, Short wird eingedeckt — der Broker schließt in
+      // beiden Fällen die GANZE Position, eine Menge ist nicht nötig.
+      await callTrade({ symbol: sym, side: pos?.side === 'short' ? 'buy' : 'sell' });
+      ok += 1;
+    } catch (e) {
+      fehler.push(`${sym}: ${(e as Error).message}`);
+    }
+  }
+  out.innerHTML =
+    `<div class="hint">${ok} von ${symbole.length} geschlossen.`
+    + (fehler.length > 0
+      ? `<br />Nicht geschlossen — ${escText(fehler.join(' · '))}`
+      : ' Das Depot ist jetzt flach.')
+    + '</div>';
 }
 
 /* ── Portfolio (Wallet, Positionen, Trades) ─────────────────────────── */
@@ -6268,8 +6375,32 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   $('saveBtn').addEventListener('click', () => void submitStrategy(formStrategy(), 'Gespeichert.'));
   $('engStart').addEventListener('click', () =>
     void submitStrategy({ ...formStrategy(), engine: { ...formStrategy().engine, running: true } }, 'Engine-Flag: AN'));
-  $('engStop').addEventListener('click', () =>
-    void submitStrategy({ ...formStrategy(), engine: { ...formStrategy().engine, running: false } }, 'Engine-Flag: AUS'));
+  // Stop: erst das Flag setzen, DANN fragen. Die Reihenfolge ist wichtig —
+  // der Dialog darf den Stop nicht aufhalten. Wer ihn wegklickt, hat
+  // trotzdem gestoppt.
+  $('engStop').addEventListener('click', () => {
+    void submitStrategy(
+      { ...formStrategy(), engine: { ...formStrategy().engine, running: false } },
+      'Engine-Flag: AUS',
+    ).then(() => {
+      zeigeStopDialog();
+    });
+  });
+  $('stopKeep').addEventListener('click', () => closeModal('stop'));
+  $('stopAll').addEventListener('click', () => {
+    void schliessePositionen((st?.positions ?? []).map((p) => p.symbol));
+  });
+  $('stopSel').addEventListener('click', () => {
+    const gewaehlt = [...$('stopRows').querySelectorAll<HTMLInputElement>('input[data-stopsym]')]
+      .filter((c) => c.checked)
+      .map((c) => c.dataset.stopsym ?? '')
+      .filter(Boolean);
+    if (gewaehlt.length === 0) {
+      $('stopOut').innerHTML = '<div class="hint">Nichts ausgewählt.</div>';
+      return;
+    }
+    void schliessePositionen(gewaehlt);
+  });
   $('admReload').addEventListener('click', () => void loadAdminList());
   document.querySelectorAll('[data-close]').forEach((el) =>
     el.addEventListener('click', () => closeModal((el as HTMLElement).dataset.close as ModalName)));
