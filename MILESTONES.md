@@ -1795,6 +1795,38 @@ Sekunden-Preis-Alerts, `trade_updates`.
       wird `equity`, nicht `cash` — wer beim Broker Positionen haelt, haette
       sonst nur den unangelegten Rest als Startkapital.
 
+- [x] **MI2-Befund: Die Signalquelle ist nicht das Problem, der Horizont ist
+      es (05.08., 16:15 nach US-Marktoeffnung).**
+
+      | Lesart | n | Kante | roh (vor Gebuehren) | Treffer |
+      |---|---|---|---|---|
+      | Live (gehandelt) | 25 | −0,028 % | **+0,072 %** | 52,0 % |
+      | Regime-Variante | 984 | −0,395 % | **−0,008 %** | 49,2 % |
+
+      **Die Regime-Variante ist erledigt.** n=984, weit ueber der Schwelle
+      von 200; Trefferquote 49,2 % = Muenzwurf, Rohbewegung praktisch null,
+      und zwar in KEINER Klasse positiv (crypto −0,007 %, stocks_us
+      −0,029 %, etf_regions −0,016 %). Sie loest die strukturelle Blockade
+      (RSI und Bollinger koennen im Trend nicht kaufen), aber die dabei
+      entstehenden Signale haben keine Kante. Kein Umschalten;
+      `compileClassic` bleibt unangetastet.
+
+      **Der wertvollere Befund steckt bei „Live":** Rohbewegung +0,072 %,
+      Kante −0,028 %. Die gehandelte Konfluenz TRAEGT Information — sie
+      verdient nur die Reibung nicht (stocks_us: 0,10 % Roundtrip gegen
+      0,082 % Bewegung). Damit ist der Stillstand nicht die Krankheit,
+      sondern ein Symptom: Im 5-Minuten-Horizont passiert zu wenig, um
+      Gebuehren zu verdienen. Mehr Signale waeren keine Loesung.
+
+      Daraus folgt die naechste Messung statt der naechsten Vermutung:
+      dritte Schattenvariante `live_kosten` — dieselben Live-Signale, aber
+      nur die, welche die SCHARFE Kostenschwelle (mit Einfangquote)
+      passiert haetten. `kante_wuerde_blocken` zaehlte bisher nur, WIE VIELE
+      betroffen waeren; das sagt nichts darueber, ob die uebrigen verdienen.
+      Ist ihre Kante positiv, ist die Schwelle der Hebel (Task 94); ist sie
+      es nicht, hilft schaerferes Filtern auch nicht — und das zu wissen ist
+      genauso viel wert.
+
 - [ ] **Weitere Alpaca-Synchronisierung — bewertet 05.08. (Owner-Frage:
       „welche Werte kann man abholen? macht das Sinn?").** Nach Nutzen:
       1. `/v2/assets` → `fractionable`, `shortable`, `easy_to_borrow`.

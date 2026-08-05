@@ -4633,6 +4633,7 @@ function renderEngineWhy(): void {
     chip.title =
       'Regime-gerechte Lesart derselben Indikatoren — läuft nur im Schatten mit.\n'
       + `Gehandelte Logik: ${kante(h.signalSchatten?.live)}\n`
+      + `Davon über der Kostenschwelle: ${kante(h.signalSchatten?.['live_kosten'])}\n`
       + `Variante: ${kante(h.signalSchatten?.regime)}\n`
       + '„roh" ist die Bewegung VOR Gebühren: positiv bei negativer Kante heißt,\n'
       + 'die Richtung stimmt und die Kosten fressen sie — dann liegt es an der\n'
