@@ -317,6 +317,10 @@ export async function callBrokerStatus(): Promise<BrokerStatusResult> {
 export interface ConnectResult {
   ok: true;
   maskiert: string;
+  /** Papier- oder Echtgeldkonto — bestimmt, wie die Karte es anzeigt. */
+  art: 'paper' | 'live';
+  /** Liegt das Geheimnis verschlüsselt? Bei Echtgeld immer `true`. */
+  verschluesselt: boolean;
   kontoStatus: string;
   cash: number;
   equity: number;

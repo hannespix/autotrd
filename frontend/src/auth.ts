@@ -1,7 +1,10 @@
 import {
+  EmailAuthProvider,
   GoogleAuthProvider,
   createUserWithEmailAndPassword,
   onAuthStateChanged,
+  reauthenticateWithCredential,
+  reauthenticateWithPopup,
   sendEmailVerification,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
@@ -10,6 +13,36 @@ import {
   type User,
 } from 'firebase/auth';
 import { auth } from './firebase.js';
+
+/**
+ * Anmeldung auffrischen — der zweite Faktor an der Stelle, wo er wirkt.
+ *
+ * Gebraucht beim Hinterlegen eines ECHTGELD-Schlüssels: Der Server verlangt
+ * dafür eine Anmeldung, die höchstens fünf Minuten alt ist (`auth_time` im
+ * ID-Token). Das schützt gegen den Fall, den 2FA beim Login nicht abdeckt —
+ * eine übernommene, bereits offene Sitzung.
+ *
+ * Wirft, wenn das Passwort falsch ist oder der Nutzer den Google-Dialog
+ * abbricht. Der Aufrufer zeigt die Meldung und speichert NICHTS.
+ *
+ * `getIdToken(true)` am Ende ist entscheidend: Ohne die Erzwingung liefe der
+ * nächste Aufruf mit dem alten, gecachten Token — und dessen `auth_time`
+ * wäre unverändert alt. Die Reauthentifizierung wäre wirkungslos, ohne dass
+ * es jemandem auffiele.
+ */
+export async function frischAnmelden(passwort?: string): Promise<void> {
+  const u = auth().currentUser;
+  if (!u) throw new Error('Nicht angemeldet.');
+  const perGoogle = u.providerData.some((p) => p.providerId === 'google.com');
+  if (perGoogle) {
+    await reauthenticateWithPopup(u, new GoogleAuthProvider());
+  } else {
+    if (!u.email) throw new Error('Zu diesem Konto ist keine E-Mail-Adresse hinterlegt.');
+    if (!passwort) throw new Error('Bitte das Passwort eingeben.');
+    await reauthenticateWithCredential(u, EmailAuthProvider.credential(u.email, passwort));
+  }
+  await u.getIdToken(true);
+}
 
 export function watchAuth(cb: (user: User | null) => void): () => void {
   return onAuthStateChanged(auth(), cb);

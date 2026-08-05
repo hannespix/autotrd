@@ -137,7 +137,13 @@ import {
   resetBreaker,
   resetWallet,
 } from './data.js';
-import { emailVerified, logout, refreshUser, sendVerification } from './auth.js';
+import {
+  emailVerified,
+  frischAnmelden,
+  logout,
+  refreshUser,
+  sendVerification,
+} from './auth.js';
 import { esc } from './html.js';
 import {
   areaLine,
@@ -1098,10 +1104,24 @@ function layout(email: string): string {
           autocomplete="off" spellcheck="false" placeholder="Secret-Key" />
         <button class="btn btn-n" id="bkSave">Verbinden</button>
       </div>
-      <p class="hint">Nur <b>Papierkonto-Schlüssel</b> (beginnen mit „PK"). Ein
-        Echtgeld-Schlüssel (AK…) wird abgelehnt — der gehört in die
-        Server-Umgebung, damit echtes Geld nicht an einem Passwort hängt.
-        Das Papierkonto ist bei Alpaca gratis und sofort da.</p>
+      <!-- Echtgeld-Schlüssel sind seit 05.08. erlaubt (verschlüsselte Ablage).
+           Das Passwortfeld erscheint erst, wenn ein AK…-Schlüssel eingegeben
+           wird — für Papierkonten wäre es Reibung ohne Schutzwirkung. -->
+      <div id="bkLiveBox" hidden style="margin-top:6px">
+        <p class="hint" style="border-left:3px solid var(--rd);padding-left:8px">
+          <b>Das ist ein Echtgeld-Schlüssel (AK…).</b> Er wird verschlüsselt
+          gespeichert und nie wieder angezeigt. <b>Gehandelt wird damit nicht:</b>
+          Dafür braucht es zusätzlich den Live-Modus in den Einstellungen, die
+          Server-Freigabe und eine bestandene Live-Reife. Bis dahin siehst du
+          dein echtes Depot nur im Abgleich.</p>
+        <p class="hint">Zur Sicherheit muss deine Anmeldung frisch sein — eine
+          übernommene, offene Sitzung soll genau das hier nicht können.</p>
+        <input id="bkPw" class="inp" style="width:100%;margin-top:4px" type="password"
+          autocomplete="current-password" placeholder="Dein autotrd-Passwort zur Bestätigung" />
+      </div>
+      <p class="hint"><b>Papierkonto-Schlüssel</b> beginnen mit „PK",
+        <b>Echtgeld-Schlüssel</b> mit „AK". Das Papierkonto ist bei Alpaca gratis
+        und sofort da — fang damit an.</p>
       <!-- Die Schlüssel liegen nicht dort, wo man sie sucht: Das Paper-
            Dashboard ist eine eigene Oberfläche, und der Knopf zum Erzeugen
            steht rechts in der Seitenleiste. Ohne diese drei Links kostet der
@@ -6525,6 +6545,12 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     ($('rsGo') as HTMLButtonElement).disabled =
       ($('rsWord') as HTMLInputElement).value.trim() !== RESET_CONFIRM_WORD;
   });
+  // Echtgeld-Feld ein-/ausblenden, sobald erkennbar ist, was eingegeben wird.
+  // Reine Anzeige — geprüft wird serverseitig noch einmal am Präfix.
+  $('bkKey')?.addEventListener('input', () => {
+    const ist = ($('bkKey') as HTMLInputElement).value.trim().toUpperCase().startsWith('AK');
+    ($('bkLiveBox') as HTMLElement).hidden = !ist;
+  });
   $('bkSave')?.addEventListener('click', () => {
     const btn = $('bkSave') as HTMLButtonElement;
     const key = ($('bkKey') as HTMLInputElement).value.trim();
@@ -6533,15 +6559,34 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       $('bkOut').innerHTML = '<div class="hint">Beide Schlüssel eingeben.</div>';
       return;
     }
+    const istLive = key.toUpperCase().startsWith('AK');
     btn.disabled = true;
-    $('bkOut').innerHTML = '<div class="hint">Prüfe Schlüssel bei Alpaca …</div>';
-    void callConnectBroker(key, sec)
+    /* Bei Echtgeld ZUERST die Anmeldung auffrischen, dann senden.
+     *
+     * Die Reihenfolge ist nicht beliebig: Der Server prüft `auth_time` aus
+     * dem ID-Token. Ohne vorheriges Auffrischen käme der Aufruf mit dem
+     * alten Zeitstempel an und würde abgelehnt — mit einer Fehlermeldung,
+     * die wie ein Serverproblem aussieht, obwohl nur die Reihenfolge falsch
+     * war. */
+    const vorbereitet = istLive
+      ? (() => {
+          $('bkOut').innerHTML = '<div class="hint">Bestätige deine Anmeldung …</div>';
+          return frischAnmelden(($('bkPw') as HTMLInputElement).value || undefined);
+        })()
+      : Promise.resolve();
+    void vorbereitet
+      .then(() => {
+        $('bkOut').innerHTML = '<div class="hint">Prüfe Schlüssel bei Alpaca …</div>';
+        return callConnectBroker(key, sec);
+      })
       .then((r) => {
         // Eingaben SOFORT leeren: Der Schlüssel soll nach dem Absenden nicht
         // weiter im Formular stehen — weder für den nächsten am Rechner noch
         // für einen Screenshot.
         ($('bkKey') as HTMLInputElement).value = '';
         ($('bkSec') as HTMLInputElement).value = '';
+        ($('bkPw') as HTMLInputElement).value = '';
+        ($('bkLiveBox') as HTMLElement).hidden = true;
         $('bkOut').innerHTML =
           `<div class="hint">✓ ${escText(r.maskiert)} verbunden — ` +
           `${escText(r.kontoStatus)}, ${r.cash.toFixed(2)} $ Barbestand. ` +

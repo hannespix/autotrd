@@ -33,7 +33,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions/v2';
 import type { Position } from '../../../shared/src/index.js';
 import { abgleich, alpacaPositionen, type Abweichung } from './alpacaBroker.js';
-import { brokerVerbindung } from './orderRouting.js';
+import { brokerVerbindungLesend } from './orderRouting.js';
 
 /**
  * Ausgang eines Abgleichs — vier unterscheidbare Fälle.
@@ -82,7 +82,14 @@ export async function abgleichFuerKonto(
   eigene: readonly Position[],
   jetzt: Date = new Date(),
 ): Promise<AbgleichBefund> {
-  const verbindung = await brokerVerbindung(uid);
+  /* LESENDE Verbindung — auch bei hinterlegtem Echtgeld-Schlüssel.
+   *
+   * `brokerVerbindung()` würde für Echtgeld `null` liefern, solange der
+   * Handel verriegelt ist. Für den Abgleich ist das zu streng: Er ruft
+   * ausschließlich `/v2/positions` ab und ist damit genau das, was ein
+   * hinterlegter Live-Schlüssel VOR der Freischaltung bringen soll — das
+   * echte Depot sehen, ohne hineinzuhandeln. */
+  const verbindung = await brokerVerbindungLesend(uid);
   if (!verbindung) return OHNE;
 
   let brokerPositionen;

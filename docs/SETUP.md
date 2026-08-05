@@ -329,3 +329,55 @@ besser bewertet als gestaltete.
 Nach der Umstellung eine Testregistrierung an eine Gmail- **und** eine
 Outlook-Adresse. Landet sie im Posteingang und zeigt Gmail unter „Original
 anzeigen" bei SPF, DKIM und DMARC jeweils `PASS`, ist alles richtig gesetzt.
+
+## M. Echtgeld-Schlüssel in der App erlauben (~3 min)
+
+Alpaca-Zugangsdaten liegen in `users/{uid}/private/broker`. Die
+Firestore-Regeln sperren `private/**` für **jeden** Client — aber gegen einen
+Datenbank-Export, ein kompromittiertes Dienstkonto oder einen Blick in die
+Konsole hilft das nicht. Für ein Papierkonto ist das hinnehmbar; für echtes
+Geld nicht.
+
+Deshalb nimmt die App Echtgeld-Schlüssel (`AK…`) erst an, wenn ein
+Hauptschlüssel für die verschlüsselte Ablage hinterlegt ist. Ohne ihn bleibt
+alles wie bisher: Papierkonten funktionieren, Echtgeld wird mit Begründung
+abgelehnt.
+
+### 1. Hauptschlüssel erzeugen und hinterlegen
+
+```bash
+# 32 zufällige Bytes, base64 — genau diese Länge wird akzeptiert.
+head -c 32 /dev/urandom | base64
+
+# Den Wert einfügen, wenn danach gefragt wird:
+firebase functions:secrets:set BROKER_MASTER_KEY
+```
+
+Den Wert **nirgends sonst speichern**. Geht er verloren, sind die
+hinterlegten Schlüssel nicht mehr lesbar — dann trennt man die Verbindung in
+der App und legt sie neu an. Das ist der ganze Schaden, und er ist gewollt:
+Ein Hauptschlüssel mit Sicherungskopie an fünf Orten ist kein Geheimnis mehr.
+
+### 2. Deklaration nachziehen
+
+Erst **nach** Schritt 1: In `functions/src/callable/connectBroker.ts` und
+`functions/src/scheduled/scanMarket.ts` muss `secrets: ['BROKER_MASTER_KEY']`
+in den Function-Optionen stehen, sonst erreicht die Variable die Laufzeit
+nie. Umgekehrte Reihenfolge bricht den Deploy mit „Secret does not exist".
+
+### 3. Was danach möglich ist — und was nicht
+
+Ein hinterlegter Echtgeld-Schlüssel schaltet **nichts scharf**. Orders
+verlangen weiterhin alle drei Guards:
+
+1. `broker.mode: 'live'` in den Konto-Einstellungen
+2. Umgebungsvariable `ALPACA_ALLOW_LIVE=1`
+3. bestandene Live-Reife-Prüfung (`shared/src/liveReadiness.ts`)
+
+Was er sofort bringt: Der Abgleich liest das **echte** Depot und zeigt es in
+der Broker-Karte. „Startklar, aber nicht scharf."
+
+Zusätzlich verlangt das Hinterlegen eines `AK…`-Schlüssels eine Anmeldung,
+die **höchstens fünf Minuten alt** ist. Das ist der zweite Faktor an der
+Stelle, an der er wirkt: Nicht beim Login — dort schützt er gegen gestohlene
+Passwörter, aber nicht gegen eine bereits übernommene, offene Sitzung.
