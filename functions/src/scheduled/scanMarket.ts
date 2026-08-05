@@ -1604,6 +1604,38 @@ export function selectScanSymbols(args: {
   return [...set];
 }
 
+/**
+ * Union der aktiven Klassen über die Regler-Maps aller laufenden Konten.
+ *
+ * `null` heißt „kein Filter — alles aktiv": entweder hat gar kein Konto
+ * Regler, oder mindestens eines hat keine — und ein Konto ohne Regler
+ * handelt in allen Klassen, womit die Frage gegenstandslos ist.
+ *
+ * Sparse-Map-Falle (05.08.): Die Map darf LÜCKEN haben — das UI-Formular
+ * schreibt zwar alle Klassen, aber der Auto-Regler schreibt `{...bestand}`
+ * zurück und ältere Konten kennen neu hinzugekommene Klassen nicht. Beim
+ * HANDELN gilt ein fehlender Regler als 1 (`klemmeGewicht(undefined)`);
+ * zählte der Scan nur explizite `> 0`-Einträge, wären dieselben Klassen im
+ * Scan abgeschaltet und im Handel aktiv — das Konto würde still auf die
+ * Schatten-Quote verengt. Deshalb: fehlend = aktiv, exakt wie beim Handeln.
+ * Inaktiv ist nur, was ausdrücklich auf 0 steht.
+ */
+export function aktiveKlassenAusGewichten(
+  maps: Array<Record<string, number> | undefined>,
+): Set<string> | null {
+  const gefunden = new Set<string>();
+  let mitReglern = 0;
+  for (const w of maps) {
+    if (!w || Object.keys(w).length === 0) return null;
+    mitReglern += 1;
+    for (const kl of Object.keys(CATALOG)) {
+      const g = w[kl];
+      if (g === undefined || g > 0) gefunden.add(kl);
+    }
+  }
+  return mitReglern > 0 ? gefunden : null;
+}
+
 async function collectScanSymbols(now: Date): Promise<string[]> {
   const db = getFirestore();
 
@@ -1643,8 +1675,9 @@ async function collectScanSymbols(now: Date): Promise<string[]> {
    *
    * Der Scan ist geteilt, die Regler sind es nicht — deshalb die
    * Oder-Verknüpfung: Eine Klasse gilt als aktiv, sobald irgendein Konto sie
-   * über null gewichtet. Alles andere wäre gegenüber dem einen Nutzer
-   * unfair, der sie eingeschaltet hat.
+   * über null gewichtet ODER gar keinen Regler für sie hat (Semantik in
+   * `aktiveKlassenAusGewichten`). Alles andere wäre gegenüber dem einen
+   * Nutzer unfair, der sie eingeschaltet hat.
    *
    * `null` heißt „konnte nicht ermittelt werden" — dann gilt wie bisher
    * alles als aktiv. Ein Lesefehler darf den Scan nicht verengen.
@@ -1659,19 +1692,14 @@ async function collectScanSymbols(now: Date): Promise<string[]> {
     watchlists = engSnap.docs.flatMap(
       (d) => (d.get('settings.strategy.watchlist') as string[] | undefined) ?? [],
     );
-    const gefunden = new Set<string>();
-    let mitReglern = 0;
-    for (const d of engSnap.docs) {
-      const w = d.get('settings.strategy.engine.classWeights') as
-        | Record<string, number>
-        | undefined;
-      // Konten OHNE Regler haben alles an — sie machen die Frage
-      // gegenstandslos, und dann bleibt es beim alten Verhalten.
-      if (!w || Object.keys(w).length === 0) return schmiedeAuswahl(null);
-      mitReglern += 1;
-      for (const [kl, g] of Object.entries(w)) if (g > 0) gefunden.add(kl);
-    }
-    if (mitReglern > 0) aktiveKlassen = gefunden;
+    aktiveKlassen = aktiveKlassenAusGewichten(
+      engSnap.docs.map(
+        (d) =>
+          d.get('settings.strategy.engine.classWeights') as
+            | Record<string, number>
+            | undefined,
+      ),
+    );
   } catch (err) {
     logger.warn('Watchlists nicht lesbar — Scan ohne Watchlist-Union', err);
   }

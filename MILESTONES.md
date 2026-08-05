@@ -1849,10 +1849,14 @@ Sekunden-Preis-Alerts, `trade_updates`.
          `users/{uid}/unbookedFills` + logger.error — nie wieder stumm.
       3. Reset warnt jetzt, wenn beim Broker Positionen liegen, und nennt
          den Uebernahme-Knopf als Ausweg.
-      BEOBACHTEN: Screenshot 16:45 zeigte „4 tief analysiert" — Scan 14:50Z
-      wieder 39. Moeglicher Uebergangszustand des #166-Deploys; die
-      Sparse-Map-Semantik der classWeights (fehlender Regler = aktiv) beim
-      Klassen-Filter gegenpruefen.
+      BEOBACHTEN aufgeloest (05.08.): Die Sparse-Map-Pruefung fand eine
+      ECHTE Luecke — der Klassen-Filter zaehlte nur explizite `> 0`-Regler
+      als aktiv, beim Handeln gilt aber fehlend = 1 (`klemmeGewicht`).
+      Sparse Maps entstehen real: Der Auto-Regler schreibt `{...bestand}`
+      zurueck, aeltere Konten kennen neue Klassen nicht. Folge waere ein
+      still auf die Schatten-Quote verengter Scan (passt zum „4 tief
+      analysiert"-Screenshot). Fix: `aktiveKlassenAusGewichten` (pur,
+      getestet) — fehlend = aktiv, inaktiv nur bei explizit 0.
 
 - [x] **Nachtrag Uebernahme (Owner-Screenshot 17:19): Phantom-P&L
       −100.330,67 $ — Kapitalbasis gehoert zur Uebernahme dazu.** Die erste

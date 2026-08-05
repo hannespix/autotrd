@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { selectScanSymbols } from '../src/scheduled/scanMarket.js';
+import { aktiveKlassenAusGewichten, selectScanSymbols } from '../src/scheduled/scanMarket.js';
 
 const auswahl = (args: Partial<Parameters<typeof selectScanSymbols>[0]>): string[] =>
   selectScanSymbols({ positions: [], ranking: [], defaults: [], max: 40, ...args });
@@ -248,5 +248,43 @@ describe('selectScanSymbols — abgeschaltete Klassen', () => {
     const ohne = auswahl({ watchlists: krypto, ranking: aktien, max: 6 });
     expect(ohne.length).toBe(6);
     expect(ohne.slice(0, 4)).toEqual(krypto);
+  });
+});
+
+describe('aktiveKlassenAusGewichten', () => {
+  it('fehlender Regler gilt als aktiv — exakt wie klemmeGewicht beim Handeln', () => {
+    // Sparse Map: Der Auto-Regler schreibt `{...bestand}` zurück, ältere
+    // Konten kennen neue Klassen nicht. Nur explizit 0 schaltet ab.
+    const aktiv = aktiveKlassenAusGewichten([{ crypto: 0, rates_bonds: 0 }]);
+    expect(aktiv).not.toBeNull();
+    expect(aktiv!.has('crypto')).toBe(false);
+    expect(aktiv!.has('rates_bonds')).toBe(false);
+    // Alle nicht genannten Klassen bleiben aktiv, obwohl kein Eintrag existiert.
+    expect(aktiv!.has('stocks_us')).toBe(true);
+    expect(aktiv!.has('etf_sectors')).toBe(true);
+  });
+
+  it('Oder-Verknüpfung: eine Klasse ist aktiv, sobald IRGENDEIN Konto sie über null hat', () => {
+    const aktiv = aktiveKlassenAusGewichten([
+      { crypto: 0, stocks_us: 1 },
+      { crypto: 0.5, stocks_us: 0 },
+    ]);
+    expect(aktiv!.has('crypto')).toBe(true);
+    expect(aktiv!.has('stocks_us')).toBe(true);
+  });
+
+  it('Konto ohne Regler macht den Filter gegenstandslos (null = alles aktiv)', () => {
+    expect(aktiveKlassenAusGewichten([{ crypto: 0 }, undefined])).toBeNull();
+    expect(aktiveKlassenAusGewichten([{ crypto: 0 }, {}])).toBeNull();
+    expect(aktiveKlassenAusGewichten([])).toBeNull();
+  });
+
+  it('nur wenn ALLE Regler-Konten eine Klasse explizit auf 0 haben, fällt sie raus', () => {
+    const aktiv = aktiveKlassenAusGewichten([
+      { crypto: 0, forex: 0 },
+      { crypto: 0 }, // forex fehlt → für dieses Konto aktiv
+    ]);
+    expect(aktiv!.has('crypto')).toBe(false);
+    expect(aktiv!.has('forex')).toBe(true);
   });
 });
