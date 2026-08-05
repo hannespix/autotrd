@@ -62,11 +62,12 @@ export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
     throw new HttpsError('permission-denied', 'Nur für Betreiber-Konten');
   }
 
-  const { action, target, level, admin } = (request.data ?? {}) as {
+  const { action, target, level, admin, an } = (request.data ?? {}) as {
     action?: unknown;
     target?: unknown;
     level?: unknown;
     admin?: unknown;
+    an?: unknown;
   };
   const targetRef = (): FirebaseFirestore.DocumentReference => {
     if (typeof target !== 'string' || target.length === 0 || target.includes('/')) {
@@ -181,5 +182,35 @@ export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
     return { ok: true };
   }
 
-  throw new HttpsError('invalid-argument', "action muss 'list', 'set' oder 'setAdmin' sein");
+  /* Owner-Kill-Switch (M14): plattformweiter Not-Aus für Echtgeld-Orders.
+   *
+   * `meta/live.killSwitch` wird vom Order-Routing bei jeder Live-Verbindung
+   * geprüft (60-s-Cache je Instanz, Lesefehler = angehalten). Der Schalter
+   * betrifft NUR Echtgeld: Paper-Routing, eigenes Buch und der lesende
+   * Abgleich laufen unverändert weiter — Positionen werden also weiterhin
+   * überwacht, es geht nur keine neue Live-Order mehr raus. */
+  if (action === 'liveStatus') {
+    const doc = await db.doc('meta/live').get();
+    return {
+      killSwitch: doc.get('killSwitch') === true,
+      at: (doc.get('killSwitchAt') as string | undefined) ?? null,
+      von: (doc.get('killSwitchVon') as string | undefined) ?? null,
+    };
+  }
+
+  if (action === 'setKillSwitch') {
+    if (typeof an !== 'boolean') {
+      throw new HttpsError('invalid-argument', 'an muss true oder false sein');
+    }
+    await db.doc('meta/live').set(
+      { killSwitch: an, killSwitchAt: new Date().toISOString(), killSwitchVon: uid },
+      { merge: true },
+    );
+    return { ok: true, killSwitch: an };
+  }
+
+  throw new HttpsError(
+    'invalid-argument',
+    "action muss 'list', 'set', 'setAdmin', 'liveStatus' oder 'setKillSwitch' sein",
+  );
 });

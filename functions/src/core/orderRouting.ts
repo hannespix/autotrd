@@ -96,6 +96,44 @@ function echtgeldFreigegeben(): boolean {
 }
 
 /**
+ * Owner-Kill-Switch (M14): `meta/live.killSwitch` friert ALLE
+ * Echtgeld-Order-Pfade ein — ein Klick im Admin-Panel, keine neue
+ * Live-Order mehr, plattformweit.
+ *
+ * Warum zusätzlich zu `ALPACA_ALLOW_LIVE`: Die Env-Variable braucht ein
+ * Deploy bzw. einen Secret-Rollout, um sich zu ändern — im Ernstfall
+ * („die Engine kauft Unsinn, SOFORT stoppen") ist das zu langsam. Das
+ * Firestore-Flag greift auf allen Instanzen binnen 60 s (Cache-TTL).
+ *
+ * Fail-CLOSED, bewusst nur hier: Wer den Schalter nicht LESEN kann, darf
+ * nicht behaupten, er sei aus. Ein Firestore-Ausfall stoppt damit
+ * Echtgeld-Orders — Paper-Routing und der lesende Abgleich sind nicht
+ * betroffen, und das eigene Buch handelt ohnehin weiter. Die umgekehrte
+ * Richtung (bei Lesefehler weiterhandeln) wäre die einzige Konstellation,
+ * in der der Not-Aus genau dann versagt, wenn es brennt.
+ */
+const KILL_TTL_MS = 60_000;
+let killCache: { bis: number; aktiv: boolean } | null = null;
+
+/** Für Tests und den Admin-Schalter: Cache verwerfen. */
+export function vergissKillSwitch(): void {
+  killCache = null;
+}
+
+async function killSwitchAktiv(jetztMs: number = Date.now()): Promise<boolean> {
+  if (killCache && killCache.bis > jetztMs) return killCache.aktiv;
+  try {
+    const aktiv = (await getFirestore().doc('meta/live').get()).get('killSwitch') === true;
+    killCache = { bis: jetztMs + KILL_TTL_MS, aktiv };
+    return aktiv;
+  } catch (err) {
+    logger.error('killSwitchAktiv: meta/live nicht lesbar — Echtgeld vorsorglich angehalten', err);
+    killCache = { bis: jetztMs + KILL_TTL_MS, aktiv: true };
+    return true;
+  }
+}
+
+/**
  * Verbindung eines Kontos laden — oder `null`, wenn keine hinterlegt ist.
  *
  * Die Sammlung `private/**` ist per Rules für JEDEN Client gesperrt; nur das
@@ -124,11 +162,19 @@ export async function brokerVerbindung(
 ): Promise<BrokerVerbindung | null> {
   const v = await brokerVerbindungLesend(uid, jetztMs);
   if (!v) return null;
-  if (v.mode === 'live' && !echtgeldFreigegeben()) {
-    // Bewusst nur `debug`: Bei jedem Trade eines Kontos mit hinterlegtem
-    // Live-Schlüssel wäre eine Warnung Lärm, der echte Warnungen zudeckt.
-    logger.debug(`brokerVerbindung ${uid}: Echtgeld hinterlegt, Handel verriegelt`);
-    return null;
+  if (v.mode === 'live') {
+    if (!echtgeldFreigegeben()) {
+      // Bewusst nur `debug`: Bei jedem Trade eines Kontos mit hinterlegtem
+      // Live-Schlüssel wäre eine Warnung Lärm, der echte Warnungen zudeckt.
+      logger.debug(`brokerVerbindung ${uid}: Echtgeld hinterlegt, Handel verriegelt`);
+      return null;
+    }
+    if (await killSwitchAktiv(jetztMs)) {
+      // `warn`, nicht `debug`: Der Kill-Switch ist ein Ausnahmezustand, und
+      // jede unterbundene Order gehört ins Log — genau dafür ist er da.
+      logger.warn(`brokerVerbindung ${uid}: Kill-Switch aktiv — Echtgeld-Order unterbunden`);
+      return null;
+    }
   }
   return v;
 }

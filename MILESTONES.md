@@ -1960,8 +1960,18 @@ Live-Basis-URL — hinter dem doppelten Guard und einem Kill-Switch.
       5-min-Lücke für Live)
 - [ ] Live-Fehlerbilder (PDT-Sperre, Margin, Buying-Power) in Statusmaschine
       und UX; getrennte Anzeige Paper vs. Live; erweiterte Rechtstexte
-- [ ] Owner-Kill-Switch: ein Admin-Flag friert alle Live-Order-Pfade
-      plattformweit ein (nur noch Exits erlaubt)
+- [x] Owner-Kill-Switch (05.08.): `meta/live.killSwitch` friert alle
+      Live-Order-Pfade plattformweit ein. Pruefung in `brokerVerbindung`
+      (nur Live-Mode, 60-s-Cache je Instanz, **fail-closed**: Schalter
+      nicht lesbar = Echtgeld angehalten — die umgekehrte Richtung waere
+      der einzige Fall, in dem der Not-Aus genau dann versagt, wenn es
+      brennt). Paper-Routing, eigenes Buch und der LESENDE Abgleich
+      laufen unveraendert weiter — Positionen bleiben ueberwacht, es geht
+      nur keine neue Live-Order mehr raus. Bedienung: Admin-Karte
+      („Echtgeld-Not-Aus"), Ausloesen OHNE Rueckfrage (im Ernstfall
+      zaehlt jede Sekunde), Loesen MIT Rueckfrage (danach fliesst wieder
+      Geld). Admin-Actions `liveStatus`/`setKillSwitch` mit Audit-Stempel
+      (wer/wann). 5 Tests inkl. fail-closed und Paper-Unberuehrtheit.
 - [ ] Adversarialer Security-Review + Guard-Tests: kein erreichbarer Codepfad
       zu `api.alpaca.markets` ohne beide Flags; Rules-/Log-Audit auf Key-Leaks
 

@@ -1039,6 +1039,23 @@ export async function adminSetAdmin(target: string, admin: boolean): Promise<voi
   await httpsCallable(fns(), 'adminUsers')({ action: 'setAdmin', target, admin });
 }
 
+/** Zustand des Echtgeld-Not-Aus (M14) — nur für Admin-Konten. */
+export interface KillSwitchStatus {
+  killSwitch: boolean;
+  at: string | null;
+  von: string | null;
+}
+
+export async function adminLiveStatus(): Promise<KillSwitchStatus> {
+  const r = await httpsCallable(fns(), 'adminUsers')({ action: 'liveStatus' });
+  return r.data as KillSwitchStatus;
+}
+
+/** Not-Aus setzen/lösen: friert plattformweit alle Echtgeld-Order-Pfade ein. */
+export async function adminSetKillSwitch(an: boolean): Promise<void> {
+  await httpsCallable(fns(), 'adminUsers')({ action: 'setKillSwitch', an });
+}
+
 export interface UniverseEntry {
   symbol: string;
   name: string;
