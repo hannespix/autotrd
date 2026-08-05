@@ -14,7 +14,7 @@
  *     zwei Fassungen derselben Mengenlogik driften garantiert auseinander.
  */
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_STRATEGY, type Position, type Strategy } from '../../shared/src/index.js';
 import {
   abgleich,
@@ -29,6 +29,7 @@ import {
   brokerVerbindungLesend,
   routeOrder,
   vergissAssets,
+  vergissKillSwitch,
   vergissVerbindung,
 } from '../src/core/orderRouting.js';
 
@@ -306,6 +307,9 @@ describe('Echtgeld-Schlüssel und Order-Routing', () => {
   afterEach(() => {
     holt.mockClear();
     delete process.env.ALPACA_ALLOW_LIVE;
+    // Der Kill-Switch-Cache ist modul-global — liegen lassen hieße, dass
+    // ein späterer Test den Zustand DIESES Tests erbt.
+    vergissKillSwitch();
     for (const uid of ['u-live', 'u-paper']) vergissVerbindung(uid);
   });
 
@@ -552,5 +556,67 @@ describe('assetAuskunft — Zwei-Stufen-Cache', () => {
     }));
     expect(await assetAuskunft(VERB, 'TSLA', f as unknown as typeof fetch, 1_000)).toBeNull();
     expect(setzt).not.toHaveBeenCalled();
+  });
+});
+
+/* ── Owner-Kill-Switch (M14) ────────────────────────────────────────────────
+ *
+ * Der Not-Aus muss zwei Dinge gleichzeitig können: Echtgeld SOFORT stoppen
+ * und alles andere in Ruhe lassen. Ein Not-Aus, der auch Paper-Konten
+ * anhält, würde im Ernstfall zögern lassen — und einer, der bei einem
+ * Firestore-Schluckauf still offen bleibt, wäre keiner.
+ */
+describe('Kill-Switch — Not-Aus für Echtgeld-Order-Pfade', () => {
+  beforeEach(() => {
+    // Reihenfolge-unabhängig: Cache-Reste anderer Describe-Blöcke verwerfen.
+    vergissKillSwitch();
+    for (const uid of ['u-live', 'u-paper']) vergissVerbindung(uid);
+  });
+  afterEach(() => {
+    holt.mockReset();
+    delete process.env.ALPACA_ALLOW_LIVE;
+    vergissKillSwitch();
+    for (const uid of ['u-live', 'u-paper']) vergissVerbindung(uid);
+  });
+
+  it('ausgelöst → keine Live-Verbindung fürs Order-Routing', async () => {
+    process.env.ALPACA_ALLOW_LIVE = '1';
+    // Erster Read: private/broker. Zweiter Read: meta/live.
+    holt
+      .mockResolvedValueOnce(feld({ keyId: 'AK1', secretKey: 'S1', mode: 'live' }))
+      .mockResolvedValueOnce(feld({ killSwitch: true }));
+    expect(await brokerVerbindung('u-live', 1_000)).toBeNull();
+  });
+
+  it('nicht ausgelöst → Live-Routing läuft (mit Betreiber-Freigabe)', async () => {
+    process.env.ALPACA_ALLOW_LIVE = '1';
+    holt
+      .mockResolvedValueOnce(feld({ keyId: 'AK1', secretKey: 'S1', mode: 'live' }))
+      .mockResolvedValueOnce(feld({ killSwitch: false }));
+    expect((await brokerVerbindung('u-live', 1_000))?.mode).toBe('live');
+  });
+
+  it('lässt Paper-Routing unberührt — der Not-Aus gilt NUR für Echtgeld', async () => {
+    holt.mockResolvedValue(feld({ keyId: 'PK1', secretKey: 'S1', mode: 'paper' }));
+    // Kein zweiter Read: Für Paper wird meta/live gar nicht erst gelesen.
+    expect((await brokerVerbindung('u-paper', 1_000))?.mode).toBe('paper');
+    expect(holt).toHaveBeenCalledTimes(1);
+  });
+
+  it('Schalter nicht lesbar → Echtgeld angehalten (fail-closed)', async () => {
+    process.env.ALPACA_ALLOW_LIVE = '1';
+    holt
+      .mockResolvedValueOnce(feld({ keyId: 'AK1', secretKey: 'S1', mode: 'live' }))
+      .mockRejectedValueOnce(new Error('firestore down'));
+    // Wer den Not-Aus nicht lesen kann, darf nicht behaupten, er sei aus.
+    expect(await brokerVerbindung('u-live', 1_000)).toBeNull();
+  });
+
+  it('der LESENDE Abgleich bleibt auch bei ausgelöstem Schalter möglich', async () => {
+    // Depot-Überwachung ist gerade im Ernstfall wichtig — der Not-Aus stoppt
+    // Orders, nicht die Sicht auf das Depot.
+    holt.mockResolvedValue(feld({ keyId: 'AK1', secretKey: 'S1', mode: 'live' }));
+    const v = await brokerVerbindungLesend('u-live', 1_000);
+    expect(v?.mode).toBe('live');
   });
 });

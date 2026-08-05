@@ -75,8 +75,10 @@ import { ICONS } from './icons.js';
 import { newsChartMarkers, newsForDay } from './newsMarkers.js';
 import {
   adminListUsers,
+  adminLiveStatus,
   adminSetAccess,
   adminSetAdmin,
+  adminSetKillSwitch,
   callTrade,
   loadMarketQuotes,
   loadUniverse,
@@ -554,6 +556,15 @@ function layout(email: string): string {
         <button class="btn btn-n" id="admReload" style="width:100%;margin:6px 0">Konten laden</button>
         <div id="admList"></div>
         <p id="admErr" class="error" hidden></p>
+        <div class="wl-sec" style="margin-top:14px">Echtgeld-Not-Aus</div>
+        <div class="hint">Friert plattformweit alle Echtgeld-Order-Pfade ein
+          (greift auf allen Servern binnen 60 s). Paper-Konten, das eigene Buch
+          und die Depot-Überwachung laufen unverändert weiter — es geht nur
+          keine neue Echtgeld-Order mehr raus.</div>
+        <div class="row" style="gap:6px;align-items:center;margin-top:6px">
+          <span id="admKillState" class="mono hint">Zustand: …</span>
+          <button class="btn btn-r" id="admKillBtn" style="margin-left:auto" hidden></button>
+        </div>
       </div></div>
 
       <div class="card" data-panel="history"><div class="sect">Trade-Historie
@@ -4771,6 +4782,26 @@ async function loadAdminList(): Promise<void> {
   }
 }
 
+/** Zustand des Echtgeld-Not-Aus laden und Knopf/Anzeige setzen (M14). */
+async function ladeKillSwitch(): Promise<void> {
+  const state = $('admKillState');
+  const btn = $('admKillBtn') as HTMLButtonElement;
+  try {
+    const s = await adminLiveStatus();
+    state.textContent = s.killSwitch
+      ? `Zustand: AUSGELÖST${s.at ? ` (${new Date(s.at).toLocaleString('de-DE')})` : ''}`
+      : 'Zustand: bereit — Echtgeld-Orders laufen normal';
+    (state as HTMLElement).style.color = s.killSwitch ? 'var(--rd)' : 'var(--t3)';
+    btn.textContent = s.killSwitch ? 'Not-Aus lösen' : 'NOT-AUS auslösen';
+    btn.className = s.killSwitch ? 'btn btn-g' : 'btn btn-r';
+    btn.dataset['an'] = s.killSwitch ? '0' : '1';
+    btn.hidden = false;
+  } catch (e) {
+    state.textContent = `Zustand: nicht lesbar (${e instanceof Error ? e.message : String(e)})`;
+    btn.hidden = true;
+  }
+}
+
 /** Kleiner Aktions-Knopf: führt aus, lädt danach die Liste neu, zeigt Fehler ehrlich. */
 function admBtn(label: string, run: () => Promise<void>, cls: string): HTMLButtonElement {
   const b = document.createElement('button');
@@ -6443,7 +6474,23 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     }
     void schliessePositionen(gewaehlt);
   });
-  $('admReload').addEventListener('click', () => void loadAdminList());
+  $('admReload').addEventListener('click', () => void loadAdminList().then(ladeKillSwitch));
+  $('admKillBtn').addEventListener('click', () => {
+    const btn = $('admKillBtn') as HTMLButtonElement;
+    const anschalten = btn.dataset['an'] === '1';
+    // Der Not-Aus selbst kommt OHNE Rückfrage aus — im Ernstfall zählt jede
+    // Sekunde. Nur das LÖSEN fragt nach, denn danach fließt wieder Echtgeld.
+    if (!anschalten && !confirm('Not-Aus wirklich lösen? Danach gehen wieder echte Orders raus.')) return;
+    btn.disabled = true;
+    adminSetKillSwitch(anschalten)
+      .then(ladeKillSwitch)
+      .catch((e: unknown) => {
+        const err = $('admErr');
+        err.textContent = e instanceof Error ? e.message : String(e);
+        err.hidden = false;
+      })
+      .finally(() => { btn.disabled = false; });
+  });
   document.querySelectorAll('[data-close]').forEach((el) =>
     el.addEventListener('click', () => closeModal((el as HTMLElement).dataset.close as ModalName)));
   $('burgL').addEventListener('click', () => { $('leftCol').classList.toggle('show'); $('olv').classList.toggle('show'); });
