@@ -1827,6 +1827,33 @@ Sekunden-Preis-Alerts, `trade_updates`.
       es nicht, hilft schaerferes Filtern auch nicht — und das zu wissen ist
       genauso viel wert.
 
+- [x] **Vorfall 05.08., 15:30: Depot und Buch auseinandergelaufen —
+      Depot-Uebernahme gebaut.** Zur US-Oeffnung kaufte die Engine ueber das
+      Order-Routing real bei Alpaca (16 Fills, ~119.500 $, sequenzielle
+      Symbol-Schleife 15:30:22–15:36:32). Danach wurde das Buch per „Neu
+      anfangen" geleert — der Reset loescht Positionen/Trades des BUCHES,
+      das Broker-Depot bleibt. Indiz fuer „Buchung lief, Reset kam danach":
+      Die Order-Groessen SCHRUMPFEN ueber die Laeufe (Sizing rechnete mit
+      sinkendem Cash). Owner-Frage: „kann man das im Nachhinein
+      synchronisieren!?!" — Antworten in drei Teilen:
+      1. `adoptBroker` („Depot vom Broker uebernehmen", Broker-Karte):
+         Positionen + Einstaende + Barbestand von Alpaca ins Buch, eigene
+         Order-Historie (client_order_id beginnt mit uid) als Trades
+         nachgebucht — idempotent ueber brokerOrderId, chronologisch fuer
+         FIFO, Stops neu aus der aktuellen Strategie. Kauft/verkauft NICHTS.
+      2. Haertung: Ein bestaetigter Fill wird IMMER gebucht. Nachkauf auf
+         bestehende Long-Position wird bei echtem Fill EINGEMISCHT
+         (gewichteter Einstand) statt abgelehnt; zu_wenig_cash/kaufkraft
+         entfallen bei Fill (Geld ist beim Broker real geflossen, Fehlbetrag
+         laeuft sichtbar als borrowed). Scheitert die Buchung trotzdem:
+         `users/{uid}/unbookedFills` + logger.error — nie wieder stumm.
+      3. Reset warnt jetzt, wenn beim Broker Positionen liegen, und nennt
+         den Uebernahme-Knopf als Ausweg.
+      BEOBACHTEN: Screenshot 16:45 zeigte „4 tief analysiert" — Scan 14:50Z
+      wieder 39. Moeglicher Uebergangszustand des #166-Deploys; die
+      Sparse-Map-Semantik der classWeights (fehlender Regler = aktiv) beim
+      Klassen-Filter gegenpruefen.
+
 - [ ] **Weitere Alpaca-Synchronisierung — bewertet 05.08. (Owner-Frage:
       „welche Werte kann man abholen? macht das Sinn?").** Nach Nutzen:
       1. `/v2/assets` → `fractionable`, `shortable`, `easy_to_borrow`.

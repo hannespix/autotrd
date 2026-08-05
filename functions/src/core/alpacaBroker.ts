@@ -243,6 +243,68 @@ export async function alpacaKonto(
   };
 }
 
+/** Eine ausgeführte, geschlossene Order — Rohmaterial der Depot-Übernahme. */
+export interface AlpacaGeschlosseneOrder {
+  id: string;
+  /** Unsere eigene Kennung (`clientOrderId()`) — verrät uid UND Lauf. */
+  clientOrderId: string;
+  symbol: string;
+  side: 'buy' | 'sell';
+  qty: number;
+  /** Mittlerer Ausführungskurs. */
+  kurs: number;
+  /** Zeitpunkt der (letzten) Ausführung, ISO. */
+  filledAt: string;
+}
+
+/**
+ * Geschlossene Orders mit Ausführung abrufen (Depot-Übernahme, 05.08.).
+ *
+ * Der Anlass ist der Vorfall vom 05.08.: Die Engine hat beim Broker real
+ * gekauft, und das Buch wurde danach geleert („Neu anfangen" löscht das
+ * Buch, aber kein Reset der Welt löscht ein Broker-Depot). Die Orders sind
+ * die einzige Quelle, aus der sich die HISTORIE zurückgewinnen lässt —
+ * `/v2/positions` kennt nur den Bestand, nicht die Käufe dahinter.
+ *
+ * Nur Orders MIT Ausführung kommen zurück: Eine stornierte Order ist für
+ * Buch und Steuer ein Nicht-Ereignis. Aufsteigend sortiert, damit der
+ * Import chronologisch bucht — FIFO im Steuerbericht hängt daran.
+ */
+export async function alpacaOrdersGeschlossen(
+  mode: BrokerMode,
+  schluessel: AlpacaSchluessel | null = null,
+  seitIso: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<AlpacaGeschlosseneOrder[]> {
+  const d = (await alpacaFetch(
+    mode,
+    `/v2/orders?status=closed&after=${encodeURIComponent(seitIso)}&direction=asc&limit=500`,
+    schluessel,
+    {},
+    fetchImpl,
+  )) as unknown[];
+  if (!Array.isArray(d)) return [];
+  return d.flatMap((o) => {
+    const r = o as Record<string, unknown>;
+    const qty = zahl(r['filled_qty']);
+    const kurs = zahl(r['filled_avg_price']);
+    const filledAt = String(r['filled_at'] ?? '');
+    // Ohne Menge, Kurs oder Zeitpunkt ist es keine Ausführung — nicht raten.
+    if (!(qty > 0) || !(kurs > 0) || filledAt.length === 0) return [];
+    return [
+      {
+        id: String(r['id'] ?? ''),
+        clientOrderId: String(r['client_order_id'] ?? ''),
+        symbol: String(r['symbol'] ?? ''),
+        side: String(r['side'] ?? '') === 'sell' ? ('sell' as const) : ('buy' as const),
+        qty,
+        kurs,
+        filledAt,
+      },
+    ];
+  });
+}
+
 /** Offene Positionen beim Broker — Grundlage des Abgleichs. */
 export async function alpacaPositionen(
   mode: BrokerMode,

@@ -130,6 +130,7 @@ import {
   type TuneLogRow,
   callBrokerStatus,
   callConnectBroker,
+  callAdoptBroker,
   callDisconnectBroker,
   callLiveMode,
   type LiveModeStatus,
@@ -1177,6 +1178,19 @@ function layout(email: string): string {
            das war die offene Frage nach dem Verbinden: „Was bringt mir das
            jetzt?" -->
       <p class="hint" id="bkAuto" style="margin-top:8px">—</p>
+      <!-- Der Weg zurück zur einen Wahrheit (Vorfall 05.08.): „Neu anfangen"
+           leert das Buch, aber kein Reset der Welt leert ein Broker-Depot.
+           Dieser Knopf holt Bestand, Einstände, Barbestand und die eigene
+           Order-Historie vom Broker ins Buch — ohne einen einzigen Handel. -->
+      <div class="row" style="align-items:center;gap:8px;margin-top:6px">
+        <button class="btn btn-n" id="bkAdopt">Depot vom Broker übernehmen</button>
+      </div>
+      <p class="hint">Holt Positionen, Einstände, Barbestand und die von autotrd
+        gesendeten Orders vom Broker ins Buch — <b>es wird nichts gekauft oder
+        verkauft</b>. Für den Fall, dass Buch und Depot auseinandergelaufen sind
+        (z. B. nach „Neu anfangen" mit verbundenem Broker). Buch-Positionen ohne
+        Gegenstück beim Broker werden dabei entfernt; Stops kommen neu aus deiner
+        aktuellen Strategie.</p>
       <div id="bkOut" style="margin-top:8px"></div>
 
       <!-- ── Echtgeld scharf stellen (M14, Owner-Go 05.08.) ──────────────
@@ -6939,6 +6953,21 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         btn.disabled = false;
       });
   });
+  $('bkAdopt')?.addEventListener('click', () => {
+    const btn = $('bkAdopt') as HTMLButtonElement;
+    btn.disabled = true;
+    $('bkOut').innerHTML = '<div class="hint">Übernehme Depot vom Broker …</div>';
+    void callAdoptBroker()
+      .then((r) => {
+        $('bkOut').innerHTML = `<div class="hint">✓ ${escText(r.meldung)}</div>`;
+      })
+      .catch((e) => {
+        $('bkOut').innerHTML = `<div class="hint">${escText((e as Error).message)}</div>`;
+      })
+      .finally(() => {
+        btn.disabled = false;
+      });
+  });
   $('bkDel')?.addEventListener('click', () => {
     const btn = $('bkDel') as HTMLButtonElement;
     btn.disabled = true;
@@ -7020,7 +7049,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         // der Broker gefragt wurde oder die Einstellung gegriffen hat.
         const quelle = r.kapitalQuelle === 'broker' ? ' (vom Broker übernommen)' : '';
         $('rsMsg').textContent =
-          `✓ Zurückgesetzt (${n || 'nichts zu löschen'}) — Kontostand ${r.balance} $${quelle}`;
+          `✓ Zurückgesetzt (${n || 'nichts zu löschen'}) — Kontostand ${r.balance} $${quelle}`
+          + (r.hinweis ? ` — ${r.hinweis}` : '');
         ($('rsWord') as HTMLInputElement).value = '';
       })
       .catch((e) => {

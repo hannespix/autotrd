@@ -264,6 +264,9 @@ export interface ResetWalletResult {
   /** Woher der Startwert kam — „100.000 $" ohne Herkunft lässt offen, ob der
    *  Broker gefragt wurde oder die Einstellung gegriffen hat. */
   kapitalQuelle: 'einstellung' | 'broker';
+  /** Warnung, wenn beim Broker noch Positionen liegen — der Reset leert nur
+   *  das Buch, nie das Depot (Vorfall 05.08.). */
+  hinweis?: string;
 }
 
 export interface TaxReportResult {
@@ -387,6 +390,28 @@ export async function callLiveMode(
 ): Promise<LiveModeErgebnis> {
   const r = await httpsCallable(fns(), 'setLiveMode')(arg);
   return r.data as LiveModeErgebnis;
+}
+
+export interface AdoptResult {
+  ok: true;
+  positionen: number;
+  geloescht: number;
+  trades: number;
+  cash: number;
+  meldung: string;
+}
+
+/**
+ * Depot vom Broker ins Buch übernehmen (Vorfall 05.08.).
+ *
+ * Liest Bestand, Einstände, Barbestand und die eigene Order-Historie vom
+ * Broker und schreibt das Buch darauf um — kauft und verkauft NICHTS. Der
+ * Weg zurück zur einen Wahrheit, wenn Buch und Depot auseinandergelaufen
+ * sind (z. B. nach „Neu anfangen" mit verbundenem Broker).
+ */
+export async function callAdoptBroker(): Promise<AdoptResult> {
+  const r = await httpsCallable(fns(), 'adoptBroker')({});
+  return r.data as AdoptResult;
 }
 
 /** Verbindung lösen — der Server löscht das Schlüsselpaar. */
