@@ -47,7 +47,7 @@ import { logger } from 'firebase-functions/v2';
 import { DEFAULT_STRATEGY, type Strategy } from '../../../shared/src/index.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { consumeQuota } from '../core/broker.js';
-import { alpacaKonto } from '../core/alpacaBroker.js';
+import { alpacaKonto, alpacaPositionen } from '../core/alpacaBroker.js';
 import { brokerVerbindungLesend } from '../core/orderRouting.js';
 
 /**
@@ -101,6 +101,13 @@ export interface ResetResult {
   resetAt: string;
   /** Woher der Startwert kam — die UI sagt es dem Nutzer, statt es zu raten. */
   kapitalQuelle: 'einstellung' | 'broker';
+  /**
+   * Warnung, wenn beim Broker Positionen liegen (Vorfall 05.08.): Der Reset
+   * leert das BUCH — das Depot beim Broker bleibt vollständig bestehen.
+   * Wer das nicht weiß, hält hinterher Positionen, von denen seine eigene
+   * Anzeige nichts mehr ahnt.
+   */
+  hinweis?: string;
 }
 
 /**
@@ -244,7 +251,27 @@ export async function resetUserWallet(
   );
 
   logger.info(`Wallet-Reset ${uid}: ${JSON.stringify(deleted)}, Kontostand ${balance}`);
-  return { ok: true, deleted, balance, resetAt: now, kapitalQuelle };
+  /* Depot-Check NACH dem Reset (Vorfall 05.08.): Liegen beim Broker noch
+   * Positionen, ist das Buch ab jetzt leerer als die Wirklichkeit. Das darf
+   * den Reset nicht verhindern (der ist gewollt und schon passiert), aber
+   * es muss LAUT gesagt werden — mitsamt dem Ausweg. Fehler beim Check sind
+   * egal: Eine Warnung, die nicht ermittelbar ist, fällt weg, mehr nicht. */
+  let hinweis: string | undefined;
+  try {
+    const verbindung = await brokerVerbindungLesend(uid);
+    if (verbindung) {
+      const beimBroker = await alpacaPositionen(verbindung.mode, verbindung.schluessel);
+      if (beimBroker.length > 0) {
+        hinweis =
+          `Achtung: Beim Broker liegen weiterhin ${beimBroker.length} Position(en) — ` +
+          'der Reset leert nur das Buch, nicht das Depot. Nutze „Depot vom Broker ' +
+          'übernehmen" in der Broker-Karte, sonst laufen Buch und Depot auseinander.';
+      }
+    }
+  } catch (err) {
+    logger.warn(`Reset-Depot-Check ${uid} nicht möglich`, err);
+  }
+  return { ok: true, deleted, balance, resetAt: now, kapitalQuelle, ...(hinweis ? { hinweis } : {}) };
 }
 
 export const resetWallet = onCall(CALLABLE_OPTS, async (request): Promise<ResetResult> => {

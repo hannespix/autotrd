@@ -16,7 +16,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_STRATEGY, type Position, type Strategy } from '../../shared/src/index.js';
-import { abgleich, warteAufFill } from '../src/core/alpacaBroker.js';
+import { abgleich, alpacaOrdersGeschlossen, warteAufFill } from '../src/core/alpacaBroker.js';
 import { planeMenge, type TradeRequest } from '../src/core/broker.js';
 import {
   brokerVerbindung,
@@ -373,5 +373,44 @@ describe('abgleich — Vorzeichen der Differenz', () => {
         [{ symbol: 'AAPL', qty: 10, seite: 'long', einstand: 100 }],
       ),
     ).toHaveLength(0);
+  });
+});
+
+/* ── Order-Historie für die Depot-Übernahme (Vorfall 05.08.) ────────────────
+ *
+ * Am 05.08. hat die Engine real beim Broker gekauft, und das Buch wurde per
+ * Reset geleert. Die geschlossenen Orders sind die einzige Quelle, aus der
+ * sich die Historie zurückgewinnen lässt — entsprechend darf das Parsing
+ * weder stornierte Orders als Trades erfinden noch echte Fills verlieren.
+ */
+describe('alpacaOrdersGeschlossen', () => {
+  it('liefert nur Orders MIT Ausführung', async () => {
+    const f = antworten([
+      { id: 'a', client_order_id: 'u1-AAPL-buy-5-scan-1', symbol: 'AAPL', side: 'buy',
+        filled_qty: '5', filled_avg_price: '190.5', filled_at: '2026-08-05T13:30:22Z' },
+      // Storniert ohne Fill: für Buch und Steuer ein Nicht-Ereignis.
+      { id: 'b', client_order_id: 'u1-TAN-buy-9-scan-1', symbol: 'TAN', side: 'buy',
+        filled_qty: '0', filled_avg_price: null, filled_at: null, status: 'canceled' },
+    ]);
+    const r = await alpacaOrdersGeschlossen('paper', SCHLUESSEL, '2026-08-05T00:00:00Z', f);
+    expect(r).toHaveLength(1);
+    expect(r[0]).toEqual({
+      id: 'a', clientOrderId: 'u1-AAPL-buy-5-scan-1', symbol: 'AAPL', side: 'buy',
+      qty: 5, kurs: 190.5, filledAt: '2026-08-05T13:30:22Z',
+    });
+  });
+
+  it('erkennt Verkäufe als Verkäufe — sonst würde die Übernahme Bestände erfinden', async () => {
+    const f = antworten([
+      { id: 'c', client_order_id: 'u1-SMH-sell-3-scan-2', symbol: 'SMH', side: 'sell',
+        filled_qty: '3', filled_avg_price: '576.9', filled_at: '2026-08-05T14:00:00Z' },
+    ]);
+    const r = await alpacaOrdersGeschlossen('paper', SCHLUESSEL, '2026-08-05T00:00:00Z', f);
+    expect(r[0]?.side).toBe('sell');
+  });
+
+  it('gibt bei kaputter Antwort eine leere Liste zurück, keinen Absturz', async () => {
+    const f = antworten({ nicht: 'eine liste' });
+    expect(await alpacaOrdersGeschlossen('paper', SCHLUESSEL, '2026-08-05T00:00:00Z', f)).toEqual([]);
   });
 });

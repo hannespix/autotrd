@@ -16,6 +16,7 @@
  */
 
 import { FieldPath, FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore';
+import { logger } from 'firebase-functions/v2';
 import {
   DEFAULT_MARGIN_RATE,
   classify,
@@ -394,7 +395,7 @@ export async function executeTrade(
   // Die AUSGEFÜHRTE Menge gilt, nicht die geplante: Bei einer Teilausführung
   // liegt weniger im Depot, und das Buch muss dem folgen — sonst rechnet die
   // Engine mit Stücken, die es nicht gibt.
-  return executePaperTrade(
+  const buchung = await executePaperTrade(
     {
       ...req,
       qty: routing.fillMenge ?? qty,
@@ -402,7 +403,40 @@ export async function executeTrade(
       ...(routing.brokerOrderId ? { brokerOrderId: routing.brokerOrderId } : {}),
     },
     strategy,
-  );
+  ).catch((err: unknown) => ({
+    executed: false as const,
+    reason: `buchung_exception: ${err instanceof Error ? err.message : String(err)}`.slice(0, 200),
+  }));
+
+  /* Ein bestätigter Fill, der nicht gebucht wurde, darf NIEMALS stumm
+   * verschwinden (Vorfall 05.08.). Er wird festgehalten — mit allem, was
+   * zum Nachbuchen nötig ist — und laut gemeldet. Die Depot-Übernahme
+   * (`adoptBroker`) räumt solche Fälle auf; dieses Dokument sorgt dafür,
+   * dass es überhaupt etwas zum Aufräumen gibt und der Fall nicht erst
+   * beim Abgleich als anonymer „Fremdbestand" auftaucht. */
+  if (!buchung.executed) {
+    logger.error(
+      `FILL NICHT GEBUCHT ${req.uid} ${req.symbol} ${req.side} ` +
+        `${routing.fillMenge ?? qty} @ ${routing.fillPreis} — ${buchung.reason ?? 'unbekannt'}`,
+    );
+    await db
+      .collection('users')
+      .doc(req.uid)
+      .collection('unbookedFills')
+      .doc()
+      .set({
+        symbol: req.symbol,
+        side: req.side,
+        qty: routing.fillMenge ?? qty,
+        fillPreis: routing.fillPreis ?? null,
+        brokerOrderId: routing.brokerOrderId ?? null,
+        laufId,
+        grund: buchung.reason ?? 'unbekannt',
+        at: new Date().toISOString(),
+      })
+      .catch((err: unknown) => logger.error(`unbookedFills ${req.uid} nicht schreibbar`, err));
+  }
+  return buchung;
 }
 
 export async function executePaperTrade(req: TradeRequest, strategy: Strategy): Promise<TradeResult> {
@@ -528,7 +562,48 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
         tx.update(userRef, { 'wallet.paperBalance': roundCents(balance + margin + pnl), 'wallet.updatedAt': now });
         return { executed: true, trade: { ...trade, id: tradeRef.id } };
       }
-      if (posSnap.exists) return { executed: false, reason: 'position_existiert' };
+      if (posSnap.exists) {
+        /* Nachkauf bleibt VERBOTEN — außer die Stücke liegen bereits im
+         * Depot (Vorfall 05.08.). Ein bestätigter Fill ist ein Fait
+         * accompli: Wer ihn ablehnt, macht die Order nicht ungeschehen,
+         * er macht nur das Buch zum Lügner. Zwei parallele Läufe (Scan +
+         * Momentum) können dasselbe Symbol füllen; der zweite Fill wird
+         * dann in die bestehende Position EINGEMISCHT — gewichteter
+         * Einstand, Stops neu vom gemischten Einstand. */
+        if (!echterFill) return { executed: false, reason: 'position_existiert' };
+        const pos = posSnap.data() as Position;
+        if (pos.side === 'short') return { executed: false, reason: 'position_existiert' };
+        const qty = req.qty ?? 0;
+        if (!(qty > 0)) return { executed: false, reason: 'qty_unter_1' };
+        const cost = qty * eff;
+        const nQty = pos.qty + qty;
+        const nAvg = Math.round(((pos.qty * pos.avgEntry + qty * eff) / nQty) * 10_000) / 10_000;
+        const risk = resolveRisk(strategy.engine, req.assetClass ?? classify(req.symbol));
+        tx.set(posRef, {
+          ...pos,
+          qty: nQty,
+          avgEntry: nAvg,
+          stopLoss: risk.stopLossPct > 0 ? nAvg * (1 - risk.stopLossPct / 100) : (pos.stopLoss ?? null),
+          takeProfit:
+            risk.takeProfitPct > 0 ? nAvg * (1 + risk.takeProfitPct / 100) : (pos.takeProfit ?? null),
+          highWater: Math.max(pos.highWater ?? nAvg, eff),
+          broker: true,
+          ...(req.brokerOrderId ? { brokerOrderId: req.brokerOrderId } : {}),
+        });
+        const trade: Trade & { nachkauf: boolean } = {
+          symbol: req.symbol,
+          side: 'buy',
+          qty,
+          price: eff,
+          executedAt: now,
+          source: req.source,
+          paper: true,
+          nachkauf: true,
+        };
+        tx.set(tradeRef, { ...trade, at: Timestamp.now(), rawPrice: req.price, ...herkunft, fee: kosten(qty) });
+        tx.update(userRef, { 'wallet.paperBalance': roundCents(balance - cost), 'wallet.updatedAt': now });
+        return { executed: true, trade: { ...trade, id: tradeRef.id } };
+      }
       const cls = req.assetClass ?? classify(req.symbol);
       const fractional = cls === 'crypto';
       const qty = req.qty ?? sizeOrder(strategy, balance, eff, fractional, req.margin, req.stopDistancePct, req.sizeFactor);
@@ -537,10 +612,17 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       // Ohne Hebel prüft der Cash, mit Hebel die Kaufkraft. Der Cash darf
       // dabei NEGATIV werden — das ist der geliehene Betrag, auf den
       // accrueMarginInterest täglich Zinsen bucht.
-      if (req.margin) {
-        if (cost > req.margin.buyingPower + 1e-9) return { executed: false, reason: 'zu_wenig_kaufkraft' };
-      } else if (cost > balance) {
-        return { executed: false, reason: 'zu_wenig_cash' };
+      //
+      // Bei ECHTEM Fill entfallen beide Prüfungen (05.08.): Das Geld ist
+      // beim Broker bereits geflossen; die Buchung abzulehnen ließe den
+      // Kauf real bestehen und nur das Buch dahinter zurückfallen. Der
+      // Fehlbetrag läuft als `borrowed` — sichtbar, nicht wegdefiniert.
+      if (!echterFill) {
+        if (req.margin) {
+          if (cost > req.margin.buyingPower + 1e-9) return { executed: false, reason: 'zu_wenig_kaufkraft' };
+        } else if (cost > balance) {
+          return { executed: false, reason: 'zu_wenig_cash' };
+        }
       }
       const borrowed = roundCents(Math.max(0, cost - Math.max(0, balance)));
 
