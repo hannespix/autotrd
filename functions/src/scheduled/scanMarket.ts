@@ -556,6 +556,11 @@ async function executeUserTrades(
         uid,
         positionsSnap.docs.map((d) => d.data() as Position),
         now,
+        // Bisheriger Vermerk aus dem SCHON geladenen Doc — das
+        // Verlaufsprotokoll kostet so keinen zweiten Read je Konto.
+        userDoc.get('risk.abgleich') as
+          | { status?: string; verlauf?: import('../core/brokerAbgleich.js').VerlaufEintrag[] }
+          | undefined,
       );
       if (abgleichBefund.zustand !== 'kein_broker') {
         broker.verbunden += 1;

@@ -1938,6 +1938,19 @@ Sekunden-Preis-Alerts, `trade_updates`.
       Buchs (widerspraeche der Architekturentscheidung: Alpaca kennt den
       Bestand, das eigene Buch die Absicht).
 
+- [x] **Broker-Verlaufsprotokoll (Owner-Meldung 05.08.: „Start holprig,
+      ca. 1 Stunde keine Verbindung").** Der Abgleich speicherte nur den
+      LETZTEN Zustand — hinterher war nicht mehr feststellbar, was in der
+      fraglichen Stunde war (Rekonstruktion: die Stunde war die
+      Abgleich-SPERRE nach dem Reset, nicht die Leitung). Jetzt schreibt
+      `ergaenzeVerlauf` (pur, 6 Tests) jeden ZUSTANDSWECHSEL
+      (sauber/drift/fehler, mit Fehlbestand/Fremdbestand bzw. Fehlertext)
+      nach `risk.abgleich.verlauf` — nur Wechsel, nie „weiterhin sauber"
+      (288 Scans/Tag wuerden sonst genau die Stunde zuschuetten, die man
+      sucht); Deckel 12 Eintraege, kein zweiter Read je Konto (Vermerk
+      kommt aus dem schon geladenen User-Doc). Broker-Karte zeigt die
+      letzten 5 Wechsel als aufklappbaren „Verlauf".
+
 - [ ] Order-Statusmaschine: `bracket`/`oco`/`trailing_stop`, `notional`,
       `extended_hours`, TIF; `cancelOrder`/`replaceOrder`;
       `engine.stopLoss/takeProfit` mappen auf Bracket-Orders
