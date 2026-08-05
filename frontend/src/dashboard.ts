@@ -2403,6 +2403,10 @@ function renderAbgleich(
     at: string;
     status: string;
     anzahl: number;
+    /** Im Buch, nicht beim Broker — die gefährliche Richtung, sperrt. */
+    fehlbestand?: number;
+    /** Nur beim Broker — Fremdbestand, sperrt nicht. */
+    fremdbestand?: number;
     verglichen: number;
     brokerPositionen: number;
     fehler: string;
@@ -2423,9 +2427,22 @@ function renderAbgleich(
     return;
   }
   if (a.status === 'drift') {
-    el.innerHTML =
-      `<b style="color:var(--rd)">${a.anzahl} Abweichung(en)</b> zwischen Buch und Depot `
-      + `(${wann} Uhr). <b>Neue Einstiege sind gesperrt</b>, Ausstiege bleiben frei.`;
+    /* Zwei Arten von Drift, zwei Aussagen (Live-Fund 05.08.).
+     *
+     * Fehlbestand heißt: Im Buch stehen Stücke, die der Broker nicht hat —
+     * die Engine rechnet mit etwas, das es nicht gibt. Fremdbestand heißt:
+     * Beim Broker liegt etwas, das die Engine nie anfassen wird. Nur das
+     * erste sperrt. Eine Anzeige, die beides „Abweichung" nennt, treibt
+     * einen zur Suche nach einem Fehler, den es nicht gibt. */
+    if ((a.fehlbestand ?? a.anzahl) > 0) {
+      el.innerHTML =
+        `<b style="color:var(--rd)">${a.fehlbestand ?? a.anzahl} Position(en) fehlen beim Broker</b> `
+        + `(${wann} Uhr). <b>Neue Einstiege sind gesperrt</b>, Ausstiege bleiben frei.`;
+    } else {
+      el.innerHTML =
+        `<b>${a.fremdbestand ?? a.anzahl} Position(en) nur beim Broker</b> (${wann} Uhr) — `
+        + 'nicht von dieser Engine eröffnet. Sie bleiben unangetastet, der Handel läuft weiter.';
+    }
     return;
   }
   el.innerHTML =

@@ -519,6 +519,10 @@ export function watchUserDoc(
       at: string;
       status: string;
       anzahl: number;
+      /** Im Buch, aber nicht beim Broker — das ist die gefährliche Richtung. */
+      fehlbestand: number;
+      /** Nur beim Broker — Fremdbestand, sperrt nicht. */
+      fremdbestand: number;
       verglichen: number;
       brokerPositionen: number;
       fehler: string;
@@ -556,6 +560,8 @@ function leseAbgleich(roh: unknown): {
   at: string;
   status: string;
   anzahl: number;
+  fehlbestand: number;
+  fremdbestand: number;
   verglichen: number;
   brokerPositionen: number;
   fehler: string;
@@ -568,6 +574,8 @@ function leseAbgleich(roh: unknown): {
     at: r['at'],
     status: typeof r['status'] === 'string' ? r['status'] : 'unbekannt',
     anzahl: zahl(r['anzahl']),
+    fehlbestand: zahl(r['fehlbestand']),
+    fremdbestand: zahl(r['fremdbestand']),
     verglichen: zahl(r['verglichen']),
     brokerPositionen: zahl(r['brokerPositionen']),
     fehler: typeof r['fehler'] === 'string' ? r['fehler'] : '',
