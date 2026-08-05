@@ -14,11 +14,26 @@
  *     zwei Fassungen derselben Mengenlogik driften garantiert auseinander.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_STRATEGY, type Position, type Strategy } from '../../shared/src/index.js';
 import { warteAufFill } from '../src/core/alpacaBroker.js';
 import { planeMenge, type TradeRequest } from '../src/core/broker.js';
-import { routeOrder } from '../src/core/orderRouting.js';
+import { brokerVerbindung, routeOrder, vergissVerbindung } from '../src/core/orderRouting.js';
+
+/* Firestore-Attrappe für den Verbindungs-Cache. Sie muss vor den Importen
+ * greifen — deshalb `vi.hoisted`, sonst liefe `holt` erst nach dem Mock. */
+const { holt } = vi.hoisted(() => ({ holt: vi.fn() }));
+vi.mock('firebase-admin/firestore', () => ({
+  getFirestore: () => ({ doc: () => ({ get: holt }) }),
+  FieldPath: class {},
+  FieldValue: { increment: () => 0, delete: () => 0 },
+  Timestamp: { now: () => 0 },
+}));
+/** Doc-Attrappe: `get(feldname)` wie bei Firestore, nicht als Objekt. */
+const feld = (daten: Record<string, unknown>) => ({
+  exists: Object.keys(daten).length > 0,
+  get: (k: string) => daten[k],
+});
 
 const SCHLUESSEL = { keyId: 'PKTEST0000000001', secret: 'GEHEIM0000000001' };
 /** Ohne Pause und mit wenigen Versuchen — der Test misst Logik, nicht Geduld. */
@@ -207,5 +222,56 @@ describe('planeMenge', () => {
       fractional: false,
     });
     expect(m).toBe(10);
+  });
+});
+
+/* ── Verbindungs-Cache (M13) ───────────────────────────────────────────────
+ *
+ * Der Cache spart je Konto und Scan bis zu zehn identische Firestore-Reads.
+ * Geprüft wird nicht das Sparen, sondern die zwei Richtungen, in denen er
+ * Schaden anrichten könnte.
+ */
+describe('brokerVerbindung — Cache', () => {
+  afterEach(() => {
+    holt.mockClear();
+    for (const uid of ['u-mit', 'u-ohne', 'u-fehler']) vergissVerbindung(uid);
+  });
+
+  it('liest innerhalb der Minute nur EINMAL — der Kern der Ersparnis', async () => {
+    holt.mockResolvedValue(feld({ keyId: 'PK1', secretKey: 'S1', mode: 'paper' }));
+    const a = await brokerVerbindung('u-mit', 1_000);
+    const b = await brokerVerbindung('u-mit', 40_000);
+    expect(a).toEqual({ mode: 'paper', schluessel: { keyId: 'PK1', secret: 'S1' } });
+    expect(b).toEqual(a);
+    expect(holt).toHaveBeenCalledTimes(1);
+  });
+
+  it('liest nach Ablauf des TTL wieder', async () => {
+    holt.mockResolvedValue(feld({ keyId: 'PK1', secretKey: 'S1', mode: 'paper' }));
+    await brokerVerbindung('u-mit', 1_000);
+    await brokerVerbindung('u-mit', 62_000);
+    expect(holt).toHaveBeenCalledTimes(2);
+  });
+
+  it('merkt sich auch „kein Broker" — der Normalfall darf nicht der teuerste sein', async () => {
+    holt.mockResolvedValue(feld({}));
+    expect(await brokerVerbindung('u-ohne', 1_000)).toBeNull();
+    expect(await brokerVerbindung('u-ohne', 2_000)).toBeNull();
+    expect(holt).toHaveBeenCalledTimes(1);
+  });
+
+  it('cacht einen FEHLER nicht — sonst wäre das Routing eine Minute lang still', async () => {
+    holt.mockRejectedValue(new Error('Firestore weg'));
+    expect(await brokerVerbindung('u-fehler', 1_000)).toBeNull();
+    expect(await brokerVerbindung('u-fehler', 1_500)).toBeNull();
+    expect(holt).toHaveBeenCalledTimes(2);
+  });
+
+  it('vergisst auf Zuruf — ein Trennen darf den Cache nicht überdauern', async () => {
+    holt.mockResolvedValue(feld({ keyId: 'PK1', secretKey: 'S1', mode: 'paper' }));
+    await brokerVerbindung('u-mit', 1_000);
+    vergissVerbindung('u-mit');
+    await brokerVerbindung('u-mit', 1_100);
+    expect(holt).toHaveBeenCalledTimes(2);
   });
 });

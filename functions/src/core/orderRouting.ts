@@ -57,27 +57,61 @@ export interface BrokerVerbindung {
 }
 
 /**
+ * Kurzlebiger Prozess-Cache für die Verbindungsdaten.
+ *
+ * Ohne ihn liest ein Scan mit neun Trades neunmal dasselbe Dokument, dazu
+ * einmal für den Abgleich — zehn identische Reads je Konto und Scan, alle
+ * fünf Minuten. Das ist kein Detail: Firestore rechnet nach Reads ab, und
+ * der Zähler läuft rund um die Uhr weiter, weil Krypto nie schließt.
+ *
+ * Die 60 Sekunden sind bewusst kurz. Zugangsdaten zu cachen heißt, mit
+ * veralteten zu arbeiten: Wer die Verbindung trennt, will nicht, dass die
+ * nächste Order trotzdem noch beim Broker landet. Eine Minute deckt genau
+ * einen Scan-Durchlauf ab und ist danach vergessen. Der Cache lebt in der
+ * Function-Instanz — ein Kaltstart beginnt ohnehin leer.
+ */
+const VERBINDUNG_TTL_MS = 60_000;
+const verbindungCache = new Map<string, { bis: number; wert: BrokerVerbindung | null }>();
+
+/** Cache verwerfen — beim Verbinden/Trennen, damit die Änderung sofort greift. */
+export function vergissVerbindung(uid: string): void {
+  verbindungCache.delete(uid);
+}
+
+/**
  * Verbindung eines Kontos laden — oder `null`, wenn keine hinterlegt ist.
  *
  * Die Sammlung `private/**` ist per Rules für JEDEN Client gesperrt; nur das
  * Admin-SDK liest hier. Ein fehlender Eintrag ist der Normalfall, kein
  * Fehler: Die allermeisten Konten handeln im eigenen Buch.
  */
-export async function brokerVerbindung(uid: string): Promise<BrokerVerbindung | null> {
+export async function brokerVerbindung(
+  uid: string,
+  jetztMs: number = Date.now(),
+): Promise<BrokerVerbindung | null> {
+  const treffer = verbindungCache.get(uid);
+  if (treffer && treffer.bis > jetztMs) return treffer.wert;
   try {
     const doc = await getFirestore().doc(`users/${uid}/private/broker`).get();
     const keyId = doc.get('keyId') as string | undefined;
     const secret = doc.get('secretKey') as string | undefined;
-    if (!keyId || !secret) return null;
     // `mode` steht am Dokument, aber die Verbindung über die App kann nur
     // 'paper' sein — `connectBroker` lehnt Echtgeld-Schlüssel ab. Alles
     // andere als 'live' gilt deshalb als Papier.
-    const mode: BrokerMode = doc.get('mode') === 'live' ? 'live' : 'paper';
-    return { mode, schluessel: { keyId, secret } };
+    const wert: BrokerVerbindung | null =
+      keyId && secret
+        ? { mode: doc.get('mode') === 'live' ? 'live' : 'paper', schluessel: { keyId, secret } }
+        : null;
+    // Auch das NEGATIVE Ergebnis wird gemerkt: Konten ohne Broker sind der
+    // Normalfall, und genau für sie wäre der Read je Trade reine Verschwendung.
+    verbindungCache.set(uid, { bis: jetztMs + VERBINDUNG_TTL_MS, wert });
+    return wert;
   } catch (err) {
     // Nicht lesbar heißt: nicht routen. Im eigenen Buch weiterhandeln ist
     // die sichere Richtung — eine Order zu senden, deren Konto man nicht
-    // kennt, ist es nicht.
+    // kennt, ist es nicht. Ein Fehler wird NICHT gecacht: Er kann vorübergehend
+    // sein, und ein gemerkter Fehlschlag würde eine Minute lang jedes Routing
+    // stillschweigend abschalten.
     logger.warn(`brokerVerbindung ${uid} nicht lesbar`, err);
     return null;
   }

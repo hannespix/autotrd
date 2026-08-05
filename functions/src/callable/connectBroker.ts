@@ -48,6 +48,7 @@ import {
 } from '../core/alpacaBroker.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { consumeQuota } from '../core/broker.js';
+import { vergissVerbindung } from '../core/orderRouting.js';
 
 /** Verbinden ist ein seltener Vorgang — zehn Versuche am Tag sind reichlich. */
 const DAILY_CONNECT_LIMIT = 10;
@@ -137,6 +138,7 @@ export async function verbindeBroker(
       { merge: true },
     );
 
+  vergissVerbindung(uid);
   // Nur die Kennung ins Log, nie das Geheimnis — und auch die maskiert.
   logger.info(`connectBroker ${uid}: Papierkonto ${maskiere(schluessel.keyId)} verbunden`);
   return {
@@ -146,9 +148,10 @@ export async function verbindeBroker(
     cash: konto.cash,
     equity: konto.equity,
     meldung:
-      `Papierkonto verbunden (${konto.status}). Die Engine handelt weiterhin im ` +
-      'eigenen Buch — Order-Routing an Alpaca kommt erst, wenn die Anbindung ' +
-      'an echten Daten geprüft ist.',
+      `Papierkonto verbunden (${konto.status}). Ab dem nächsten Scan gehen neue ` +
+      'Orders an dieses Konto; das eigene Buch bleibt das führende Journal und ' +
+      'wird bei jedem Scan gegen das Depot abgeglichen. Bestehende Positionen ' +
+      'aus dem eigenen Buch bleiben dort — der Broker kennt sie nicht.',
   };
 }
 
@@ -164,6 +167,13 @@ export async function trenneBroker(uid: string): Promise<{ ok: true; geloescht: 
   // Löschen statt eines `aktiv: false`-Flags: Ein Schlüssel, der nicht mehr
   // gebraucht wird, soll auch nicht mehr da sein.
   await ref.delete();
+  /* Cache dieser Instanz sofort verwerfen (M13).
+   *
+   * Wirkt NUR lokal: `connectBroker` und `scanMarket` laufen in getrennten
+   * Function-Instanzen mit eigenem Speicher. Der Aufruf ist trotzdem richtig
+   * — er nimmt mit, was er mitnehmen kann. Die eigentliche Absicherung ist
+   * der kurze TTL: Spätestens nach einer Minute liest jede Instanz neu. */
+  vergissVerbindung(uid);
   logger.info(`connectBroker ${uid}: Verbindung getrennt`);
   return { ok: true, geloescht: true };
 }
