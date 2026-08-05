@@ -1785,6 +1785,36 @@ Sekunden-Preis-Alerts, `trade_updates`.
       `gate.abgleich_drift`, Vermerk unter `risk.abgleich`), **Ausstiege
       bleiben immer frei**. Ein Broker-Fehler sperrt nicht — er wird
       vermerkt: Ein Netzwerkausfall ist kein Beweis für Drift.
+- [x] **Startkapital vom Broker beim Reset (05.08.).** Owner-Frage: „den
+      Initial-Wallet-Wert direkt von Alpaca holen". Umgesetzt, aber
+      ausschliesslich beim Reset — und das ist die eigentliche Antwort: Der
+      Kontostand ist die Bezugsgroesse JEDER Kennzahl (Profitfaktor,
+      Equity-Kurve, Reife). Wechselt er mitten in der Messung, beziehen sich
+      alte und neue Zahlen auf verschiedene Kapitalbasen und die Reihe wird
+      unlesbar. Beim Reset ist die Historie ohnehin geschnitten. Uebernommen
+      wird `equity`, nicht `cash` — wer beim Broker Positionen haelt, haette
+      sonst nur den unangelegten Rest als Startkapital.
+
+- [ ] **Weitere Alpaca-Synchronisierung — bewertet 05.08. (Owner-Frage:
+      „welche Werte kann man abholen? macht das Sinn?").** Nach Nutzen:
+      1. `/v2/assets` → `fractionable`, `shortable`, `easy_to_borrow`.
+         **Groesster Gewinn.** Wir RATEN das heute (`fractional = klasse ===
+         'crypto'`), und ob ein Papier leihbar ist, erfahren wir erst durch
+         die abgelehnte Order. Alpaca weiss es je Symbol exakt.
+      2. `/v2/clock` + `/v2/calendar` → echte Handelszeiten. Unsere eigene
+         Marktzeit-Logik kennt weder Feiertage noch HALBTAGE (Thanksgiving,
+         Heiligabend: Schluss 13:00). Heute scannen wir dann ins Leere oder
+         halten ueber einen unerwarteten Schluss.
+      3. `/v2/account/activities` → Dividenden, Zinsen, Gebuehren. Wir buchen
+         NUR Trades; Dividenden fehlen im P&L komplett. Bei Papiergeld
+         verschmerzbar, bei Echtgeld ein Loch im Steuerbericht.
+      4. `max_margin_multiplier` aus `/v2/account/configurations` — unser
+         `leverage` ist eine Einstellung, Alpaca weiss das echte Limit.
+      **Bewusst NICHT:** Watchlists (unser Katalog ist reicher — 166 Symbole
+      mit Klassen und Gebuehrenprofilen) und Orders/Trades als Quelle des
+      Buchs (widerspraeche der Architekturentscheidung: Alpaca kennt den
+      Bestand, das eigene Buch die Absicht).
+
 - [ ] Order-Statusmaschine: `bracket`/`oco`/`trailing_stop`, `notional`,
       `extended_hours`, TIF; `cancelOrder`/`replaceOrder`;
       `engine.stopLoss/takeProfit` mappen auf Bracket-Orders
