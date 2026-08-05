@@ -56,7 +56,7 @@ import {
   bucketKey,
   positioningSummary,
 } from '../../../shared/src/index.js';
-import { executePaperTrade, resolveBrokerMode } from '../core/broker.js';
+import { executeTrade, resolveBrokerMode } from '../core/broker.js';
 import { mayTrade } from '../core/access.js';
 import { clampStrategyRisk, corePct } from '../core/rulesTrading.js';
 import { getDeepDailyBars, getSparkDailyCloses, chunkBarsByYear } from '../core/marketData.js';
@@ -335,6 +335,13 @@ async function rebalanceMomentumUsers(
   now: Date,
 ): Promise<{ konten: number; orders: number }> {
   const db = getFirestore();
+  /* Lauf-Kennung fuer das Order-Routing (M13): ein Lauf JE TAG.
+   *
+   * Das Praefix ist nicht Zierde: Momentum-Depot und Kern-Sockel koennen am
+   * selben Tag dasselbe Symbol mit derselben Menge kaufen. Ohne getrennte
+   * Praefixe traegen beide Orders dieselbe `client_order_id`, und Alpaca
+   * wiese die zweite als Duplikat ab — der Sockel bliebe still. */
+  const laufId = `mom-${now.toISOString().slice(0, 10)}`;
   const users = await db
     .collection('users')
     .where('settings.strategy.engine.mode', '==', 'momentum')
@@ -381,9 +388,10 @@ async function rebalanceMomentumUsers(
         if (!preis || !(preis > 0)) continue;
         const cls = classify(o.symbol);
         if (o.side === 'sell') {
-          const r = await executePaperTrade(
+          const r = await executeTrade(
             { uid: userDoc.id, symbol: o.symbol, side: 'sell', price: preis, source: 'engine', riskExit: 'momentum_rebalance', assetClass: cls },
             clamped,
+            laufId,
           );
           if (r.executed) ausgefuehrt += 1;
           continue;
@@ -392,7 +400,7 @@ async function rebalanceMomentumUsers(
         const roheMenge = (o.notional ?? 0) / preis;
         const qty = fractional ? Math.floor(roheMenge * 1e6) / 1e6 : Math.floor(roheMenge);
         if (qty < (fractional ? 1e-6 : 1)) continue;
-        const r = await executePaperTrade(
+        const r = await executeTrade(
           {
             uid: userDoc.id,
             symbol: o.symbol,
@@ -405,6 +413,7 @@ async function rebalanceMomentumUsers(
             bucket: bucketKey({ assetClass: cls, timeframe: 'daily', signature: 'momentum', side: 'long' }),
           },
           clamped,
+          laufId,
         );
         if (r.executed) ausgefuehrt += 1;
       }
@@ -459,6 +468,8 @@ async function rebalanceCoreSleeve(
   now: Date,
 ): Promise<{ konten: number; orders: number }> {
   const db = getFirestore();
+  /** Eigenes Praefix — siehe rebalanceMomentumUsers. */
+  const laufId = `core-${now.toISOString().slice(0, 10)}`;
   const users = await db
     .collection('users')
     .where('settings.strategy.engine.running', '==', true)
@@ -507,9 +518,10 @@ async function rebalanceCoreSleeve(
         if (!preis || !(preis > 0)) continue;
         const cls = classify(o.symbol);
         if (o.side === 'sell') {
-          const r = await executePaperTrade(
+          const r = await executeTrade(
             { uid: userDoc.id, symbol: o.symbol, side: 'sell', price: preis, source: 'engine', riskExit: 'core_rebalance', assetClass: cls },
             clamped,
+            laufId,
           );
           if (r.executed) ausgefuehrt += 1;
           continue;
@@ -522,7 +534,7 @@ async function rebalanceCoreSleeve(
         const roheMenge = (o.notional ?? 0) / preis;
         const qty = fractional ? Math.floor(roheMenge * 1e6) / 1e6 : Math.floor(roheMenge);
         if (qty < (fractional ? 1e-6 : 1)) continue;
-        const r = await executePaperTrade(
+        const r = await executeTrade(
           {
             uid: userDoc.id,
             symbol: o.symbol,
@@ -535,6 +547,7 @@ async function rebalanceCoreSleeve(
             bucket: bucketKey({ assetClass: cls, timeframe: 'daily', signature: 'core', side: 'long' }),
           },
           clamped,
+          laufId,
         );
         if (r.executed) ausgefuehrt += 1;
       }

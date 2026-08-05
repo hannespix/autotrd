@@ -14,7 +14,7 @@ import {
   type Quote,
   type Strategy,
 } from '../../../shared/src/index.js';
-import { consumeQuota, executePaperTrade, resolveBrokerMode } from '../core/broker.js';
+import { consumeQuota, executeTrade, resolveBrokerMode } from '../core/broker.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { accessDeniedReason, accessLevelOf, mayTrade } from '../core/access.js';
 
@@ -112,7 +112,7 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
     );
   }
 
-  const result = await executePaperTrade(
+  const result = await executeTrade(
     {
       uid,
       symbol,
@@ -139,6 +139,15 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
       }),
     },
     strategy,
+    /* Lauf-Kennung des Handeingabe-Trades (M13).
+     *
+     * Minutengenau — und das ist hier die GEWOLLTE Semantik, nicht ein
+     * Kompromiss: Ein Doppelklick auf „Kaufen" soll nicht zwei Positionen
+     * eröffnen. Alpaca weist die zweite Order mit derselben Kennung ab.
+     * Die Kehrseite ist bekannt: Wer denselben Trade absichtlich zweimal
+     * will, muss die Minutengrenze abwarten. Für eine Handeingabe ist das
+     * die sichere Richtung. */
+    `man-${new Date().toISOString().slice(0, 16)}Z`,
   );
   if (!result.executed) {
     throw new HttpsError('failed-precondition', `Nicht ausgeführt: ${result.reason}`);

@@ -1117,6 +1117,11 @@ function layout(email: string): string {
         <button class="btn btn-n" id="bkGo">Verbindung prüfen</button>
         <button class="btn btn-n" id="bkDel">Trennen</button>
       </div>
+      <!-- Der LAUFENDE Abgleich, nicht der auf Knopfdruck. Ein sauberer
+           Abgleich sieht ohne diese Zeile aus wie gar keiner — und genau
+           das war die offene Frage nach dem Verbinden: „Was bringt mir das
+           jetzt?" -->
+      <p class="hint" id="bkAuto" style="margin-top:8px">—</p>
       <div id="bkOut" style="margin-top:8px"></div>
       <div class="wl-sec" style="margin-top:14px">Steuer-Export ${iBtn('taxReport')}</div>
       <p class="hint">Paart Käufe und Verkäufe nach <b>FIFO</b>, rechnet Haltedauern
@@ -2197,6 +2202,49 @@ function renderBreaker(b: { am: string; grund: string; verlustPct: number | null
     `<b style="color:var(--rd)">Ausgelöst</b> am ${escText(b.am.slice(0, 16).replace('T', ' '))} Uhr`
     + (b.verlustPct === null ? '' : ` (${b.verlustPct.toFixed(2).replace('.', ',')} % Tagesverlust)`)
     + `.<br />${escText(b.grund)}`;
+}
+
+/**
+ * Zustand des laufenden Abgleichs Buch ↔ Broker-Depot zeigen (M13).
+ *
+ * Er läuft bei jedem Scan und meldet sich nur, wenn etwas nicht stimmt —
+ * dieselbe Stille wie bei der Notbremse, und dasselbe Problem: Ohne Anzeige
+ * ist „läuft sauber" von „läuft gar nicht" nicht zu unterscheiden. Deshalb
+ * steht hier auch im Gutfall eine Zeile, mit Zeitstempel.
+ */
+function renderAbgleich(
+  a: {
+    at: string;
+    status: string;
+    anzahl: number;
+    verglichen: number;
+    brokerPositionen: number;
+    fehler: string;
+  } | null,
+): void {
+  const el = document.getElementById('bkAuto');
+  if (!el) return;
+  if (!a) {
+    el.textContent =
+      'Kein automatischer Abgleich bisher — er läuft ab dem nächsten Scan, sobald ein Broker verbunden ist.';
+    return;
+  }
+  const wann = escText(a.at.slice(0, 16).replace('T', ' '));
+  if (a.status === 'fehler') {
+    el.innerHTML =
+      `<b>Abgleich nicht möglich</b> (${wann} Uhr): ${escText(a.fehler)}.<br />`
+      + 'Der Handel läuft weiter — ein Netzwerkfehler ist kein Beweis für eine Abweichung.';
+    return;
+  }
+  if (a.status === 'drift') {
+    el.innerHTML =
+      `<b style="color:var(--rd)">${a.anzahl} Abweichung(en)</b> zwischen Buch und Depot `
+      + `(${wann} Uhr). <b>Neue Einstiege sind gesperrt</b>, Ausstiege bleiben frei.`;
+    return;
+  }
+  el.innerHTML =
+    `<b style="color:var(--gn)">Buch und Depot stimmen überein</b> (${wann} Uhr) — `
+    + `${a.verglichen} eigene, ${a.brokerPositionen} beim Broker.`;
 }
 
 /** Aktuelle Reglerstellungen je Anlageklasse aus dem Formular. */
@@ -4259,6 +4307,7 @@ function renderAccessNote(): void {
  */
 const GATE_TEXT: ReadonlyArray<[string, string]> = [
   ['breaker_aktiv', 'Konten mit ausgelöster Tages-Notbremse (keine neuen Einstiege)'],
+  ['abgleich_drift', 'Konten gesperrt — Buch und Broker-Depot weichen ab (Ausstiege bleiben frei)'],
   ['klasse_aus', 'abgelehnt — Anlageklasse steht auf 0 (Schatten misst weiter)'],
   ['regime_gegen_trend', 'Leerverkäufe abgelehnt — der Markt steigt'],
   ['regime_stress', 'Einstiege pausiert — Marktstress'],
@@ -5728,9 +5777,11 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
 
   // User-Doc: Strategie (Formular/Watchlist) + Wallet folgen Firestore
   st.subs.push(
-    watchUserDoc(uid, ({ strategy, wallet, hotkeys, ui, autoTune, accessLevel, admin, breaker }) => {
+    watchUserDoc(uid, (u) => {
+      const { strategy, wallet, hotkeys, ui, autoTune, accessLevel, admin, breaker } = u;
       if (!st) return;
       renderBreaker(breaker);
+      renderAbgleich(u.abgleich);
       st.accessLevel = accessLevel;
       renderAccessNote();
       st.admin = admin;

@@ -55,7 +55,7 @@ import {
   type Position,
   type Strategy,
 } from '../../../shared/src/index.js';
-import { executePaperTrade, resolveBrokerMode, riskExitReason } from '../core/broker.js';
+import { executeTrade, resolveBrokerMode, riskExitReason } from '../core/broker.js';
 import { mayTrade } from '../core/access.js';
 import { clampStrategyRisk } from '../core/rulesTrading.js';
 import { getSparkBatch } from '../core/marketData.js';
@@ -256,7 +256,7 @@ export async function runPulse(now = new Date()): Promise<PulseResult> {
               });
         if (!reason) continue;
 
-        const r = await executePaperTrade(
+        const r = await executeTrade(
           {
             uid: userDoc.id,
             symbol: pos.symbol,
@@ -267,6 +267,11 @@ export async function runPulse(now = new Date()): Promise<PulseResult> {
             assetClass: cls,
           },
           clamped,
+          // Lauf-Kennung des Pulses (M13): Minutengenau, damit ein
+          // wiederholter Puls derselben Minute beim Broker als DIESELBE
+          // Order ankommt und abgewiesen wird — statt ein zweites Mal
+          // dieselbe Position glattzustellen.
+          `puls-${now.toISOString().slice(0, 16)}Z`,
         );
         if (r.executed) {
           exits += 1;
