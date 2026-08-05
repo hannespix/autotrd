@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { marketOpenForClass } from '../src/index.js';
+import {
+  boersenOffenLautUhr,
+  marketOpenForClass,
+  usSessionClass,
+  type BoersenUhr,
+} from '../src/index.js';
 
 // Referenzzeiten (UTC), Juli = EDT (UTC−4), Januar = EST (UTC−5)
 const WED_NOON_ET = new Date('2026-07-22T16:00:00Z'); // Mi 12:00 EDT
@@ -37,5 +42,80 @@ describe('marketOpenForClass (Depot-Vision: je Klasse)', () => {
     expect(marketOpenForClass('stocks_us', new Date('2026-01-21T14:29:00Z'))).toBe(false);
     expect(marketOpenForClass('stocks_us', new Date('2026-07-22T19:59:00Z'))).toBe(true); // 15:59 EDT
     expect(marketOpenForClass('stocks_us', new Date('2026-07-22T20:00:00Z'))).toBe(false); // 16:00 EDT
+  });
+});
+
+describe('usSessionClass', () => {
+  it('genau die Klassen mit US-Kassamarkt-Fenster', () => {
+    for (const cls of ['stocks_us', 'stocks_global', 'indices', 'etf_sectors', 'rates_bonds', 'unbekannt']) {
+      expect(usSessionClass(cls), cls).toBe(true);
+    }
+    for (const cls of ['crypto', 'forex', 'commodities']) {
+      expect(usSessionClass(cls), cls).toBe(false);
+    }
+  });
+});
+
+/* ── Börsen-Uhr (Alpaca /v2/clock) ──────────────────────────────────────────
+ *
+ * Zeitlogik ist hochriskant (CLAUDE.md §5) — deshalb echte Datumsgrenzen:
+ * Heiligabend 2026 ist ein HALBTAG (Schluss 13:00 ET = 18:00 UTC), den die
+ * eigene Kalenderrechnung nicht kennt. Genau dieser Fall — „die Engine hält
+ * über einen Schluss, den sie nicht kommen sah" — ist der Grund für die Uhr.
+ */
+describe('boersenOffenLautUhr', () => {
+  const T = (iso: string): number => Date.parse(iso);
+
+  // Ablesung am Halbtag-Vormittag: offen, Schluss 13:00 ET (18:00 UTC),
+  // nächste Öffnung erst am 28.12. (Montag; 25.–27. Feiertag + Wochenende).
+  const HALBTAG: BoersenUhr = {
+    isOpen: true,
+    nextClose: '2026-12-24T18:00:00Z',
+    nextOpen: '2026-12-28T14:30:00Z',
+    at: '2026-12-24T16:00:00Z',
+  };
+
+  it('offen bleibt offen — bis zum ECHTEN Schluss des Halbtags', () => {
+    expect(boersenOffenLautUhr(HALBTAG, T('2026-12-24T17:59:00Z'))).toBe(true);
+    // 13:00 ET: Die eigene Rechnung sagt hier noch 3 Stunden „offen" —
+    // die Uhr kennt den Halbtag und schließt.
+    expect(boersenOffenLautUhr(HALBTAG, T('2026-12-24T18:00:00Z'))).toBe(false);
+    expect(boersenOffenLautUhr(HALBTAG, T('2026-12-25T15:00:00Z'))).toBe(false); // Feiertag
+  });
+
+  it('nach der nächsten Öffnung ist das Wissen der Ablesung erschöpft → null', () => {
+    // 28.12., 14:31 UTC: laut Ablesung „wieder offen", aber der ZUGEHÖRIGE
+    // Schluss ist unbekannt — und die Ablesung ist ohnehin >24 h alt.
+    expect(boersenOffenLautUhr(HALBTAG, T('2026-12-28T14:31:00Z'))).toBeNull();
+  });
+
+  it('geschlossen bleibt geschlossen bis zur Öffnung, dann offen bis zum Schluss', () => {
+    // Ablesung am frühen Freitagmorgen nach Thanksgiving 2026: noch zu,
+    // Öffnung 14:30 UTC mit HALBTAGS-Schluss 18:00 UTC (13:00 ET).
+    const FEIERTAG: BoersenUhr = {
+      isOpen: false,
+      nextOpen: '2026-11-27T14:30:00Z',
+      nextClose: '2026-11-27T18:00:00Z',
+      at: '2026-11-27T08:00:00Z',
+    };
+    expect(boersenOffenLautUhr(FEIERTAG, T('2026-11-27T13:00:00Z'))).toBe(false); // vor Öffnung
+    expect(boersenOffenLautUhr(FEIERTAG, T('2026-11-27T14:30:00Z'))).toBe(true);  // Fr offen
+    expect(boersenOffenLautUhr(FEIERTAG, T('2026-11-27T17:59:00Z'))).toBe(true);
+    expect(boersenOffenLautUhr(FEIERTAG, T('2026-11-27T18:00:00Z'))).toBeNull();  // Wissen zu Ende
+  });
+
+  it('eine Ablesung älter als 24 h ist verbraucht', () => {
+    expect(boersenOffenLautUhr(HALBTAG, T('2026-12-25T16:01:00Z'))).toBeNull();
+  });
+
+  it('fehlende oder kaputte Ablesungen liefern null statt einer Vermutung', () => {
+    expect(boersenOffenLautUhr(null, T('2026-12-24T17:00:00Z'))).toBeNull();
+    expect(boersenOffenLautUhr(undefined, T('2026-12-24T17:00:00Z'))).toBeNull();
+    expect(
+      boersenOffenLautUhr({ isOpen: true, nextOpen: '', nextClose: '', at: '2026-12-24T16:00:00Z' }, T('2026-12-24T17:00:00Z')),
+    ).toBeNull();
+    expect(
+      boersenOffenLautUhr({ isOpen: true, nextOpen: 'kaputt', nextClose: 'kaputt', at: 'kaputt' }, T('2026-12-24T17:00:00Z')),
+    ).toBeNull();
   });
 });

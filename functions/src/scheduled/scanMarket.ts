@@ -39,7 +39,6 @@ import {
   stopDistancePct,
   isStrategy,
   marginState,
-  marketOpenForClass,
   newsVeto,
   NEWS_TTL_SEC,
   bucketKey,
@@ -65,6 +64,7 @@ import {
 } from '../../../shared/src/index.js';
 import { atrPct, buildVariants } from '../../../shared/src/index.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
+import { aktualisiereBoersenUhr, boersenOffen, offenMitUhr } from '../core/marktUhr.js';
 import { computeIndicatorSnapshot, computeSignal } from '../core/engine.js';
 import {
   executeTrade,
@@ -1636,7 +1636,7 @@ export function aktiveKlassenAusGewichten(
   return mitReglern > 0 ? gefunden : null;
 }
 
-async function collectScanSymbols(now: Date): Promise<string[]> {
+async function collectScanSymbols(now: Date, uhrOffen: boolean | null = null): Promise<string[]> {
   const db = getFirestore();
 
   let positions: string[] = [];
@@ -1714,7 +1714,7 @@ async function collectScanSymbols(now: Date): Promise<string[]> {
       defaults: [...DEFAULT_STRATEGY.watchlist],
       catalog: allSymbols(),
       max: MAX_SCAN_SYMBOLS,
-      isOpen: (sym) => marketOpenForClass(classify(sym), now),
+      isOpen: (sym) => offenMitUhr(sym, now, uhrOffen),
       ...(aktiv ? { klasseAktiv: (sym: string): boolean => aktiv.has(classify(sym)) } : {}),
     });
     logger.info(
@@ -1756,13 +1756,14 @@ const BAR_CHUNK = 10;
 async function supplyCatalog(
   scannedSet: Set<string>,
   now: Date,
+  uhrOffen: boolean | null = null,
 ): Promise<{ fresh: number; open: number }> {
   const db = getFirestore();
   const catalog = allSymbols().filter((s) => !scannedSet.has(s));
   if (catalog.length === 0) return { fresh: 0, open: 0 };
 
   // Nur offene Klassen: ein geschlossener Markt kann keinen neuen Kurs haben.
-  const offen = catalog.filter((s) => marketOpenForClass(classify(s), now));
+  const offen = catalog.filter((s) => offenMitUhr(s, now, uhrOffen));
   const quotes: Map<string, SparkQuote> =
     offen.length > 0 ? await getSparkBatch(offen) : new Map();
 
@@ -2034,7 +2035,24 @@ export async function runScan(force = false): Promise<ScanResult> {
   const voteDirs: Record<string, { buy: number; sell: number; hold: number }> = {};
   /** „hold", dem genau EINE Stimme zur Konfluenz fehlte. */
   let knappVerfehlt = 0;
-  const scanSet = await collectScanSymbols(now);
+  /* Börsen-Uhr des Brokers (Alpaca-Sync Punkt 2): kennt Feiertage und
+   * Halbtage, die unsere Kalenderrechnung nicht kennt. `null` = keine
+   * belastbare Ablesung → überall gilt die eigene Rechnung wie bisher.
+   * Ein Uhr-Problem darf den Scan nie anhalten, deshalb alles im try. */
+  let uhrOffen: boolean | null = null;
+  try {
+    const laufende = await getFirestore()
+      .collection('users')
+      .where('settings.strategy.engine.running', '==', true)
+      .select()
+      .limit(10)
+      .get();
+    await aktualisiereBoersenUhr(laufende.docs.map((d) => d.id), now.getTime());
+    uhrOffen = await boersenOffen(now.getTime());
+  } catch (err) {
+    logger.warn('Börsen-Uhr nicht verfügbar — eigene Marktzeit-Rechnung gilt', err);
+  }
+  const scanSet = await collectScanSymbols(now, uhrOffen);
   // Depot-Vision (2026-07-24): gescannt wird je Symbol, dessen ASSET-KLASSE
   // gerade offen ist — Krypto 24/7, Forex/Rohstoffe ~24/5, Rest US-Zeiten.
   //
@@ -2046,7 +2064,7 @@ export async function runScan(force = false): Promise<ScanResult> {
   // globale Top-N-Wahl vorher blind eingesammelt hatte.
   const symbols = force
     ? scanSet
-    : scanSet.filter((s) => marketOpenForClass(classify(s), now));
+    : scanSet.filter((s) => offenMitUhr(s, now, uhrOffen));
   if (symbols.length === 0) {
     logger.info(`Alle Märkte geschlossen — Scan übersprungen (${scanId})`);
     // Heartbeat auch im No-Op: „Scheduler lebt" ≠ „Markt offen" (M7-Monitoring)
@@ -2316,7 +2334,7 @@ export async function runScan(force = false): Promise<ScanResult> {
           const ifc = await runIntradayForecast(
             symbol,
             flat,
-            marketOpenForClass(classify(symbol), now),
+            offenMitUhr(symbol, now, uhrOffen),
             news,
           );
           if (md) md.intradayPct = ifc?.predictedPct ?? null;
@@ -2486,7 +2504,7 @@ export async function runScan(force = false): Promise<ScanResult> {
   let catalogQuotes = 0;
   let catalogOpen = 0;
   try {
-    const supply = await supplyCatalog(new Set(scanned), now);
+    const supply = await supplyCatalog(new Set(scanned), now, uhrOffen);
     catalogQuotes = supply.fresh;
     catalogOpen = supply.open;
   } catch (err) {

@@ -1897,10 +1897,20 @@ Sekunden-Preis-Alerts, `trade_updates`.
          geht vor Metadaten-Huebschheit. `null` (unbekannt/Fehler) faellt
          auf die bisherigen Schaetzungen zurueck: Metadaten duerfen den
          Handel verbessern, nie verhindern. 9 Tests.
-      2. `/v2/clock` + `/v2/calendar` → echte Handelszeiten. Unsere eigene
-         Marktzeit-Logik kennt weder Feiertage noch HALBTAGE (Thanksgiving,
-         Heiligabend: Schluss 13:00). Heute scannen wir dann ins Leere oder
-         halten ueber einen unerwarteten Schluss.
+      2. ✅ UMGESETZT (05.08.): `/v2/clock` → Boersen-Uhr. Pure Ableitung
+         `boersenOffenLautUhr` (shared): Ablesung + Grenzpunkte
+         (nextOpen/nextClose) schreiben den Zustand exakt fort, bis das
+         WISSEN endet — dann `null` und die eigene Kalenderrechnung gilt
+         (Uhr uebersteuert, ersetzt nie; Broker-Ausfall haelt den Scan
+         nicht an). `core/marktUhr.ts`: Ablesung je Scan max. alle 5 min
+         ueber irgendeine lesende Verbindung, geteilt via
+         `meta/alpacaClock`. Wirkt in Scan-Set, Offen-Filter,
+         Katalog-Versorgung, Intraday-Forecast-Gate und riskPulse — nur
+         fuer US-Session-Klassen (`usSessionClass`); Krypto/Forex/Rohstoffe
+         behalten ihre eigenen Uhren. Tests mit echten Datumsgrenzen
+         (Heiligabend-Halbtag 13:00 ET, Thanksgiving). `/v2/calendar`
+         bewusst NICHT: Die Uhr deckt den 5-min-Takt ab; ein Wochen-
+         Kalender braucht erst der Backtest.
       3. `/v2/account/activities` → Dividenden, Zinsen, Gebuehren. Wir buchen
          NUR Trades; Dividenden fehlen im P&L komplett. Bei Papiergeld
          verschmerzbar, bei Echtgeld ein Loch im Steuerbericht.

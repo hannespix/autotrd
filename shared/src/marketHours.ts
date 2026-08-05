@@ -66,3 +66,70 @@ export function marketOpenForClass(assetClass: string, now: Date): boolean {
       return usEquityOpen(p);
   }
 }
+
+/**
+ * Nutzt die Klasse das US-Kassamarkt-Fenster? Genau diese Klassen kann die
+ * BÖRSEN-UHR des Brokers (Alpaca `/v2/clock`) übersteuern — Krypto, Devisen
+ * und Rohstoff-Futures haben eigene Uhren, für die Alpacas Antwort nichts
+ * aussagt.
+ */
+export function usSessionClass(assetClass: string): boolean {
+  return assetClass !== 'crypto' && assetClass !== 'forex' && assetClass !== 'commodities';
+}
+
+/**
+ * Eine Ablesung der Broker-Uhr (Alpaca `/v2/clock`), wie sie in
+ * `meta/alpacaClock` persistiert wird.
+ *
+ * Warum überhaupt: `usEquityOpen` kennt weder FEIERTAGE noch HALBTAGE
+ * (Thanksgiving-Freitag, Heiligabend: Schluss 13:00 ET). Ohne die Uhr
+ * scannt die Engine an Feiertagen ins Leere und — schlimmer — hält an
+ * Halbtagen über einen Schluss, den sie nicht kommen sah.
+ */
+export interface BoersenUhr {
+  isOpen: boolean;
+  /** Nächste Öffnung laut Broker, ISO. Bei offenem Markt: die von MORGEN. */
+  nextOpen: string;
+  /** Nächster Schluss laut Broker, ISO. Bei geschlossenem Markt: der Schluss
+   *  der KOMMENDEN Session (Alpaca liefert immer den nächsten in der Zukunft). */
+  nextClose: string;
+  /** Zeitpunkt der Ablesung, ISO. */
+  at: string;
+}
+
+/**
+ * Zustand JETZT aus einer (möglicherweise minutenalten) Ablesung ableiten.
+ *
+ * Die Ablesung enthält die nächsten Grenzpunkte — damit lässt sich der
+ * Zustand exakt fortschreiben, bis das WISSEN endet:
+ *
+ *   offen:        jetzt < nextClose            → weiter offen
+ *                 nextClose ≤ jetzt < nextOpen → inzwischen geschlossen
+ *                 jetzt ≥ nextOpen             → null (nächster Schluss unbekannt)
+ *   geschlossen:  jetzt < nextOpen             → weiter geschlossen
+ *                 nextOpen ≤ jetzt < nextClose → inzwischen offen
+ *                 jetzt ≥ nextClose            → null
+ *
+ * `null` heißt ausdrücklich „die Uhr weiß es nicht (mehr)" — der Aufrufer
+ * fällt dann auf die eigene Kalenderrechnung zurück, statt zu raten. Eine
+ * Ablesung älter als 24 h gilt grundsätzlich als verbraucht.
+ */
+export function boersenOffenLautUhr(
+  uhr: BoersenUhr | null | undefined,
+  nowMs: number,
+): boolean | null {
+  if (!uhr) return null;
+  const at = Date.parse(uhr.at);
+  if (!Number.isFinite(at) || nowMs - at > 24 * 3_600_000) return null;
+  const nextOpen = Date.parse(uhr.nextOpen);
+  const nextClose = Date.parse(uhr.nextClose);
+  if (!Number.isFinite(nextOpen) || !Number.isFinite(nextClose)) return null;
+  if (uhr.isOpen) {
+    if (nowMs < nextClose) return true;
+    if (nowMs < nextOpen) return false;
+    return null;
+  }
+  if (nowMs < nextOpen) return false;
+  if (nowMs < nextClose) return true;
+  return null;
+}

@@ -49,7 +49,6 @@ import {
   classify,
   isStrategy,
   liquidationPlan,
-  marketOpenForClass,
   positionValue,
   resolveRisk,
   type Position,
@@ -59,6 +58,7 @@ import { executeTrade, resolveBrokerMode, riskExitReason } from '../core/broker.
 import { mayTrade } from '../core/access.js';
 import { clampStrategyRisk } from '../core/rulesTrading.js';
 import { getSparkBatch } from '../core/marketData.js';
+import { boersenOffen, offenMitUhr } from '../core/marktUhr.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 
 /**
@@ -120,9 +120,12 @@ export async function runPulse(now = new Date()): Promise<PulseResult> {
   // Doc-IDs, nicht die Felder: Der Symbol-Überblick soll billig sein, die
   // Daten kommen erst für die Konten, die wirklich betroffen sind.
   const alle = await db.collectionGroup('positions').select().get();
+  // Börsen-Uhr NUR lesen (der Scan hält sie frisch): Halbtage enden für den
+  // Puls damit genau dann, wenn sie beim Broker enden — nicht erst 16:00 ET.
+  const uhrOffen = await boersenOffen(now.getTime());
   const symbole = pulseSymbols(
     alle.docs.map((d) => d.id),
-    (sym) => marketOpenForClass(classify(sym), now),
+    (sym) => offenMitUhr(sym, now, uhrOffen),
   );
   if (symbole.length === 0) {
     return { positions: alle.size, watched: 0, exits: 0, waterMarks: 0, marginCalls: 0, skipped: 'market_closed' };
