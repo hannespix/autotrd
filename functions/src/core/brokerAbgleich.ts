@@ -35,9 +35,21 @@ import type { Position } from '../../../shared/src/index.js';
 import { abgleich, alpacaPositionen, type Abweichung } from './alpacaBroker.js';
 import { brokerVerbindung } from './orderRouting.js';
 
+/**
+ * Ausgang eines Abgleichs — vier unterscheidbare Fälle.
+ *
+ * Die Unterscheidung zwischen `kein_broker` und `fehler` ist der Grund für
+ * dieses Feld: Beide bedeuten „nicht verglichen", aber nur einer ist ein
+ * Problem. Ohne sie sähe ein Konto, dessen Broker seit Stunden nicht
+ * antwortet, im Heartbeat exakt so aus wie eines ganz ohne Broker.
+ */
+export type AbgleichZustand = 'kein_broker' | 'sauber' | 'drift' | 'fehler';
+
 export interface AbgleichBefund {
   /** Lief der Abgleich überhaupt? `false` = kein Broker verbunden. */
   geprueft: boolean;
+  /** Ausgang in einem Wort — Grundlage der Heartbeat-Telemetrie. */
+  zustand: AbgleichZustand;
   /** Gefundene Abweichungen (leer = sauber). */
   abweichungen: Abweichung[];
   /** Sollen Einstiege gesperrt werden? */
@@ -47,7 +59,12 @@ export interface AbgleichBefund {
 }
 
 /** Kein Broker, keine Prüfung — der Normalfall für reine Buch-Konten. */
-const OHNE: AbgleichBefund = { geprueft: false, abweichungen: [], sperre: false };
+const OHNE: AbgleichBefund = {
+  geprueft: false,
+  zustand: 'kein_broker',
+  abweichungen: [],
+  sperre: false,
+};
 
 /**
  * Ein Konto abgleichen und das Ergebnis am User-Dokument vermerken.
@@ -79,7 +96,13 @@ export async function abgleichFuerKonto(
       status: 'fehler',
       fehler: text.slice(0, 200),
     });
-    return { geprueft: false, abweichungen: [], sperre: false, grund: 'broker_nicht_erreichbar' };
+    return {
+      geprueft: false,
+      zustand: 'fehler',
+      abweichungen: [],
+      sperre: false,
+      grund: 'broker_nicht_erreichbar',
+    };
   }
 
   const relevante = eigene
@@ -98,7 +121,9 @@ export async function abgleichFuerKonto(
     brokerPositionen: brokerPositionen.length,
   });
 
-  if (abweichungen.length === 0) return { geprueft: true, abweichungen: [], sperre: false };
+  if (abweichungen.length === 0) {
+    return { geprueft: true, zustand: 'sauber', abweichungen: [], sperre: false };
+  }
   const liste = abweichungen
     .slice(0, 5)
     .map((a) => `${a.symbol} Buch ${a.eigeneMenge} / Broker ${a.brokerMenge}`)
@@ -106,6 +131,7 @@ export async function abgleichFuerKonto(
   logger.warn(`Abgleich ${uid}: ${abweichungen.length} Abweichung(en) — ${liste}`);
   return {
     geprueft: true,
+    zustand: 'drift',
     abweichungen,
     sperre: true,
     grund: `Buch und Depot weichen ab (${abweichungen.length}): ${liste}`,

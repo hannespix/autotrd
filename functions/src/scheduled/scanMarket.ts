@@ -273,6 +273,28 @@ export interface KontenStats {
   live_verriegelt: number;
 }
 
+/**
+ * Broker-Anbindung im Scan (M13) — vier Zahlen, die eine Frage beantworten:
+ * Kommt das Order-Routing überhaupt bis zum Broker?
+ *
+ * Das Motiv ist Nachweisbarkeit ohne Konto-Bezug. `meta/health` ist
+ * öffentlich lesbar und darf deshalb nichts über einzelne Nutzer verraten —
+ * aggregierte Zahlen verraten nichts und belegen trotzdem, dass die
+ * Verbindung im Scan-Pfad greift. Ohne sie wäre „läuft" von „findet den
+ * Schlüssel nicht" nicht zu unterscheiden, und beides sähe im Heartbeat
+ * gleich aus: Stille.
+ */
+export interface BrokerStats {
+  /** Konten mit hinterlegter Verbindung, für die der Abgleich lief. */
+  verbunden: number;
+  /** Buch und Depot stimmen überein. */
+  sauber: number;
+  /** Abweichung gefunden — Einstiege dieses Kontos sind gesperrt. */
+  drift: number;
+  /** Broker nicht erreichbar — sperrt NICHT, wird aber gezählt. */
+  fehler: number;
+}
+
 async function executeUserTrades(
   marketData: Map<string, SymbolData>,
   regime: MarketRegime,
@@ -283,9 +305,15 @@ async function executeUserTrades(
    * Order ab, statt eine zweite Position zu eröffnen.
    */
   scanId: string,
-): Promise<{ executed: number; gate: EntryGateStats; konten: KontenStats }> {
+): Promise<{
+  executed: number;
+  gate: EntryGateStats;
+  konten: KontenStats;
+  broker: BrokerStats;
+}> {
   const db = getFirestore();
   let executed = 0;
+  const broker: BrokerStats = { verbunden: 0, sauber: 0, drift: 0, fehler: 0 };
   // Ein abgelehnter Einstieg ist ein Nicht-Ereignis und damit unsichtbar.
   // Genau deshalb wird er gezählt: Ein Filter, der zu scharf steht und ALLES
   // blockt, sähe im Log exakt aus wie ein ruhiger Markt.
@@ -528,6 +556,12 @@ async function executeUserTrades(
         positionsSnap.docs.map((d) => d.data() as Position),
         now,
       );
+      if (abgleichBefund.zustand !== 'kein_broker') {
+        broker.verbunden += 1;
+        if (abgleichBefund.zustand === 'sauber') broker.sauber += 1;
+        else if (abgleichBefund.zustand === 'drift') broker.drift += 1;
+        else broker.fehler += 1;
+      }
       if (abgleichBefund.sperre) gate.abgleich_drift += 1;
       // Zeitbasis der Signale (Owner 26.07., „Tradefrequenz erhöhen"):
       // 'intraday' rechnet auf 5-min-Kerzen — Signale drehen im Scan-Takt.
@@ -1413,7 +1447,7 @@ async function executeUserTrades(
       logger.error(`Auto-Trading-Fehler für ${uid}`, err);
     }
   }
-  return { executed, gate, konten };
+  return { executed, gate, konten, broker };
 }
 
 /** Obergrenze des zentralen Scan-Sets (Kosten-Guard). */
@@ -2202,6 +2236,9 @@ export async function runScan(force = false): Promise<ScanResult> {
   // null = Trade-Block ist gar nicht gelaufen (Fehler davor) — das ist eine
   // andere Aussage als „0 Konten laufend" und darf nicht gleich aussehen.
   let konten: KontenStats | null = null;
+  // null = kein Konto hat einen Broker hinterlegt ODER der Block lief nicht.
+  // Auch das ist eine Aussage: Ohne verbundenes Konto gibt es nichts zu routen.
+  let brokerStats: BrokerStats | null = null;
   try {
     await migrateTimeframeDaily(db);
     await migrateCorePctAll(db);
@@ -2209,6 +2246,7 @@ export async function runScan(force = false): Promise<ScanResult> {
     trades = res.executed;
     entryGate = res.gate;
     konten = res.konten;
+    brokerStats = res.broker;
   } catch (err) {
     lastError = `trades: ${err instanceof Error ? err.message : String(err)}`.slice(0, 400);
     logger.error('Trade-Block fehlgeschlagen', err);
@@ -2368,6 +2406,14 @@ export async function runScan(force = false): Promise<ScanResult> {
         // prüft gar nicht, und die Ursache liegt bei den Daten, nicht am
         // Parameter.
         entryGate,
+        /* Broker-Anbindung (M13): Kommt das Order-Routing bis zum Broker?
+         *
+         * `verbunden: 0` heißt: Kein Konto hat einen Schlüssel hinterlegt —
+         * dann ist Stille im Depot völlig richtig. `verbunden: 1, fehler: 1`
+         * heißt etwas ganz anderes, sieht aber ohne diese Zahlen genauso
+         * aus. Aggregiert und ohne Konto-Bezug, weil meta/health öffentlich
+         * lesbar ist. */
+        broker: brokerStats,
         /* Was die Konfluenz überhaupt PRODUZIERT (04.08.).
          *
          * Die Blockade-Zähler oben sehen nur, was am Tor ankommt. Erst diese
