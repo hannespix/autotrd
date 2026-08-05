@@ -104,6 +104,15 @@ pruefe('Notbremse-Text', (await seite.locator('#bkrState').textContent())?.trim(
 );
 pruefe('Grenze voreingestellt', await seite.locator('#owBreak').inputValue(), (v) => Number(v) > 0);
 
+// Abgleich Buch ↔ Broker-Depot (M13): Ohne verbundenen Broker muss dort die
+// erklärende Zeile stehen — nicht der Platzhalter „—", der nichts aussagt.
+await seite.locator('#bkAuto').scrollIntoViewIfNeeded();
+await seite.waitForTimeout(400);
+await seite.screenshot({ path: `${SHOTS}/04-abgleich.png` });
+pruefe('Abgleich-Zeile', (await seite.locator('#bkAuto').textContent())?.trim(), (t) =>
+  t.includes('automatischer Abgleich'),
+);
+
 console.log(`\nJS-Fehler und Abweichungen: ${fehler.length}`);
 for (const f of fehler) console.log('  ', f);
 console.log(`Screenshots: ${SHOTS}`);

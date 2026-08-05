@@ -456,6 +456,22 @@ export function watchUserDoc(
      * Oberfläche beides gemeinsam zeigt: die Grenze und ob sie greift.
      */
     breaker: { am: string; grund: string; verlustPct: number | null } | null;
+    /**
+     * Letzter automatischer Abgleich Buch ↔ Broker-Depot (M13) — `null`,
+     * solange kein Broker verbunden ist oder noch kein Scan gelaufen ist.
+     *
+     * Die Anzeige ist der eigentliche Zweck der Verbindung, nicht Beiwerk:
+     * Wer sein Konto verbindet, will sehen, ob die Order dort ankommt.
+     * Ohne diese Zeile sieht ein sauberer Abgleich exakt aus wie gar keiner.
+     */
+    abgleich: {
+      at: string;
+      status: string;
+      anzahl: number;
+      verglichen: number;
+      brokerPositionen: number;
+      fehler: string;
+    } | null;
   }) => void,
 ): Unsubscribe {
   return onSnapshot(doc(db(), 'users', uid), (snap) => {
@@ -479,8 +495,32 @@ export function watchUserDoc(
               verlustPct: (snap.get('risk.breakerVerlustPct') as number | null | undefined) ?? null,
             }
           : null,
+      abgleich: leseAbgleich(snap.get('risk.abgleich')),
     });
   });
+}
+
+/** `risk.abgleich` in eine Form bringen, auf die sich die Anzeige verlassen kann. */
+function leseAbgleich(roh: unknown): {
+  at: string;
+  status: string;
+  anzahl: number;
+  verglichen: number;
+  brokerPositionen: number;
+  fehler: string;
+} | null {
+  if (!roh || typeof roh !== 'object') return null;
+  const r = roh as Record<string, unknown>;
+  if (typeof r['at'] !== 'string') return null;
+  const zahl = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  return {
+    at: r['at'],
+    status: typeof r['status'] === 'string' ? r['status'] : 'unbekannt',
+    anzahl: zahl(r['anzahl']),
+    verglichen: zahl(r['verglichen']),
+    brokerPositionen: zahl(r['brokerPositionen']),
+    fehler: typeof r['fehler'] === 'string' ? r['fehler'] : '',
+  };
 }
 
 /** UI-Präferenzen speichern — Rules erlauben Owner-Updates nur aufs settings-Feld. */
