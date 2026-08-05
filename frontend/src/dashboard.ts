@@ -1248,6 +1248,16 @@ function layout(email: string): string {
           type="text" autocomplete="off" spellcheck="false" placeholder="RESET tippen" />
         <button class="btn btn-r" id="rsGo" disabled>Konto zurücksetzen</button>
       </div>
+      <!-- Startkapital vom Broker (Owner-Frage 05.08.). Bewusst NUR hier:
+           Der Kontostand ist die Bezugsgroesse jeder Kennzahl — mitten in der
+           Messung gewechselt, beziehen sich alte und neue Zahlen auf
+           verschiedene Kapitalbasen. Beim Reset ist die Historie ohnehin weg. -->
+      <div class="row" style="align-items:center;gap:8px;margin-top:6px">
+        <label class="hint" style="display:flex;align-items:center;gap:6px">
+          <input type="checkbox" id="rsFromBroker" />
+          Startkapital vom verbundenen Broker übernehmen (statt der Zahl oben)
+        </label>
+      </div>
       <div class="hint" id="rsMsg"></div>
     </div>
   </div>
@@ -6982,13 +6992,17 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     const btn = $('rsGo') as HTMLButtonElement;
     btn.disabled = true;
     $('rsMsg').textContent = 'Setze zurück …';
-    void resetWallet(RESET_CONFIRM_WORD)
+    void resetWallet(RESET_CONFIRM_WORD, ($('rsFromBroker') as HTMLInputElement).checked)
       .then((r) => {
         const n = Object.entries(r.deleted)
           .filter(([, v]) => v > 0)
           .map(([k, v]) => `${k}: ${v}`)
           .join(', ');
-        $('rsMsg').textContent = `✓ Zurückgesetzt (${n || 'nichts zu löschen'}) — Kontostand ${r.balance} $`;
+        // Die Quelle mitschreiben: „100.000 $" ohne Herkunft laesst offen, ob
+        // der Broker gefragt wurde oder die Einstellung gegriffen hat.
+        const quelle = r.kapitalQuelle === 'broker' ? ' (vom Broker übernommen)' : '';
+        $('rsMsg').textContent =
+          `✓ Zurückgesetzt (${n || 'nichts zu löschen'}) — Kontostand ${r.balance} $${quelle}`;
         ($('rsWord') as HTMLInputElement).value = '';
       })
       .catch((e) => {

@@ -235,8 +235,18 @@ export async function ensureProfile(): Promise<void> {
  * einmal geprüft. Ein Client-Guard allein wäre bei einer unumkehrbaren
  * Aktion keine Sicherung, nur eine Bequemlichkeit.
  */
-export async function resetWallet(confirm: string): Promise<ResetWalletResult> {
-  const r = await httpsCallable(fns(), 'resetWallet')({ confirm });
+export async function resetWallet(
+  confirm: string,
+  /**
+   * Startkapital vom verbundenen Broker holen statt aus den Einstellungen.
+   *
+   * Nur beim Reset moeglich, nicht laufend: Der Kontostand ist die
+   * Bezugsgroesse jeder Kennzahl. Wechselt er mitten in der Messung, beziehen
+   * sich alte und neue Zahlen auf verschiedene Kapitalbasen.
+   */
+  vomBroker = false,
+): Promise<ResetWalletResult> {
+  const r = await httpsCallable(fns(), 'resetWallet')({ confirm, vomBroker });
   return r.data as ResetWalletResult;
 }
 
@@ -251,6 +261,9 @@ export interface ResetWalletResult {
   deleted: Record<string, number>;
   balance: number;
   resetAt: string;
+  /** Woher der Startwert kam — „100.000 $" ohne Herkunft lässt offen, ob der
+   *  Broker gefragt wurde oder die Einstellung gegriffen hat. */
+  kapitalQuelle: 'einstellung' | 'broker';
 }
 
 export interface TaxReportResult {

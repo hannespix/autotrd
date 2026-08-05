@@ -47,6 +47,8 @@ import { logger } from 'firebase-functions/v2';
 import { DEFAULT_STRATEGY, type Strategy } from '../../../shared/src/index.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { consumeQuota } from '../core/broker.js';
+import { alpacaKonto } from '../core/alpacaBroker.js';
+import { brokerVerbindungLesend } from '../core/orderRouting.js';
 
 /**
  * Das Wort, das getippt werden muss.
@@ -97,6 +99,8 @@ export interface ResetResult {
   balance: number;
   /** Schnittmarke: ab hier ist die Messung sauber. */
   resetAt: string;
+  /** Woher der Startwert kam — die UI sagt es dem Nutzer, statt es zu raten. */
+  kapitalQuelle: 'einstellung' | 'broker';
 }
 
 /**
@@ -139,7 +143,22 @@ async function archiviereTrades(
  * Firestore prüfbar ist. Bei einer unumkehrbaren Löschung ist „typecheck ist
  * grün" keine Verifikation: Was zählt, ist, was hinterher noch dasteht.
  */
-export async function resetUserWallet(uid: string): Promise<ResetResult> {
+export async function resetUserWallet(
+  uid: string,
+  /**
+   * Startkapital vom verbundenen Broker übernehmen statt aus den
+   * Einstellungen (Owner-Frage 05.08.: „den Initial-Wallet-Wert direkt von
+   * Alpaca holen").
+   *
+   * Warum NUR hier und nicht laufend: Der Kontostand ist die Bezugsgröße
+   * jeder Kennzahl — Profitfaktor, Equity-Kurve, Reife-Prüfung. Wechselt er
+   * mitten in der Messung, beziehen sich die alten Zahlen auf eine andere
+   * Kapitalbasis als die neuen, und die Reihe wird unlesbar. Beim Reset ist
+   * die Historie ohnehin weg und die Schnittmarke gesetzt; genau dann ist
+   * ein neuer Startwert richtig statt gefährlich.
+   */
+  vomBroker = false,
+): Promise<ResetResult> {
   const db = getFirestore();
   const userRef = db.doc(`users/${uid}`);
   const snap = await userRef.get();
@@ -147,10 +166,35 @@ export async function resetUserWallet(uid: string): Promise<ResetResult> {
 
   const strategy = (snap.get('settings.strategy') as Strategy | undefined) ?? DEFAULT_STRATEGY;
   const startkapital = strategy.broker?.initialCapital;
-  const balance =
+  let balance =
     typeof startkapital === 'number' && Number.isFinite(startkapital) && startkapital > 0
       ? startkapital
       : DEFAULT_STRATEGY.broker.initialCapital;
+  /** Woher der Startwert stammt — gehört in die Rückmeldung, nicht ins Raten. */
+  let kapitalQuelle: 'einstellung' | 'broker' = 'einstellung';
+  if (vomBroker) {
+    const verbindung = await brokerVerbindungLesend(uid);
+    if (!verbindung) {
+      throw new HttpsError(
+        'failed-precondition',
+        'Kein Broker verbunden — ohne Verbindung gibt es kein Kapital zu übernehmen.',
+      );
+    }
+    // Fehler NICHT verschlucken: Wer „vom Broker" wählt und dann stillschweigend
+    // den alten Wert bekäme, hielte eine falsche Zahl für die echte.
+    const konto = await alpacaKonto(verbindung.mode, verbindung.schluessel);
+    if (!(konto.equity > 0)) {
+      throw new HttpsError(
+        'failed-precondition',
+        `Der Broker meldet kein verwertbares Kapital (Status ${konto.status}).`,
+      );
+    }
+    // EQUITY, nicht `cash`: Wer beim Broker Positionen hält, hätte sonst nur
+    // den unangelegten Rest als Startkapital — und das Depot verschwände aus
+    // der Rechnung, obwohl es weiter existiert.
+    balance = Math.round(konto.equity * 100) / 100;
+    kapitalQuelle = 'broker';
+  }
   const now = new Date().toISOString();
 
   const deleted: Record<string, number> = {};
@@ -200,14 +244,17 @@ export async function resetUserWallet(uid: string): Promise<ResetResult> {
   );
 
   logger.info(`Wallet-Reset ${uid}: ${JSON.stringify(deleted)}, Kontostand ${balance}`);
-  return { ok: true, deleted, balance, resetAt: now };
+  return { ok: true, deleted, balance, resetAt: now, kapitalQuelle };
 }
 
 export const resetWallet = onCall(CALLABLE_OPTS, async (request): Promise<ResetResult> => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Anmeldung erforderlich');
 
-  const { confirm } = (request.data ?? {}) as { confirm?: unknown };
+  const { confirm, vomBroker } = (request.data ?? {}) as {
+    confirm?: unknown;
+    vomBroker?: unknown;
+  };
   if (confirm !== RESET_CONFIRM_WORD) {
     throw new HttpsError(
       'failed-precondition',
@@ -217,5 +264,5 @@ export const resetWallet = onCall(CALLABLE_OPTS, async (request): Promise<ResetR
   if (!(await consumeQuota(uid, 'resetWallet', DAILY_RESET_LIMIT))) {
     throw new HttpsError('resource-exhausted', `Höchstens ${DAILY_RESET_LIMIT} Resets am Tag`);
   }
-  return resetUserWallet(uid);
+  return resetUserWallet(uid, vomBroker === true);
 });
