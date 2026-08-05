@@ -18,7 +18,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_STRATEGY, type Position, type Strategy } from '../../shared/src/index.js';
 import { warteAufFill } from '../src/core/alpacaBroker.js';
 import { planeMenge, type TradeRequest } from '../src/core/broker.js';
-import { brokerVerbindung, routeOrder, vergissVerbindung } from '../src/core/orderRouting.js';
+import {
+  brokerVerbindung,
+  brokerVerbindungLesend,
+  routeOrder,
+  vergissVerbindung,
+} from '../src/core/orderRouting.js';
 
 /* Firestore-Attrappe für den Verbindungs-Cache. Sie muss vor den Importen
  * greifen — deshalb `vi.hoisted`, sonst liefe `holt` erst nach dem Mock. */
@@ -273,5 +278,55 @@ describe('brokerVerbindung — Cache', () => {
     vergissVerbindung('u-mit');
     await brokerVerbindung('u-mit', 1_100);
     expect(holt).toHaveBeenCalledTimes(2);
+  });
+});
+
+/* ── Echtgeld-Verriegelung (05.08.) ────────────────────────────────────────
+ *
+ * Seit Echtgeld-Schlüssel in der App hinterlegt werden dürfen, gibt es einen
+ * Weg, den es vorher nicht gab: Ein `AK…` im Dokument ergibt `mode: 'live'`,
+ * und ohne Sperre schickte `routeOrder` die nächste Order an den
+ * Echtgeld-Endpunkt — ohne dass jemand etwas scharf geschaltet hätte.
+ *
+ * Das ist der teuerste denkbare Fehler dieser Codebasis. Entsprechend wird
+ * er von beiden Seiten geprüft: Das Order-Routing muss schweigen, der
+ * lesende Abgleich muss trotzdem funktionieren.
+ */
+describe('Echtgeld-Schlüssel und Order-Routing', () => {
+  afterEach(() => {
+    holt.mockClear();
+    delete process.env.ALPACA_ALLOW_LIVE;
+    for (const uid of ['u-live', 'u-paper']) vergissVerbindung(uid);
+  });
+
+  it('gibt für ORDERS nichts zurück, solange Echtgeld nicht freigegeben ist', async () => {
+    holt.mockResolvedValue(feld({ keyId: 'AK1', secretKey: 'S1', mode: 'live' }));
+    expect(await brokerVerbindung('u-live', 1_000)).toBeNull();
+  });
+
+  it('gibt dieselbe Verbindung zum LESEN heraus — dafür ist sie hinterlegt', async () => {
+    holt.mockResolvedValue(feld({ keyId: 'AK1', secretKey: 'S1', mode: 'live' }));
+    const v = await brokerVerbindungLesend('u-live', 1_000);
+    expect(v).toEqual({ mode: 'live', schluessel: { keyId: 'AK1', secret: 'S1' } });
+  });
+
+  it('routet erst mit ausdrücklicher Betreiber-Freigabe', async () => {
+    process.env.ALPACA_ALLOW_LIVE = '1';
+    holt.mockResolvedValue(feld({ keyId: 'AK1', secretKey: 'S1', mode: 'live' }));
+    const v = await brokerVerbindung('u-live', 1_000);
+    expect(v?.mode).toBe('live');
+  });
+
+  it('lässt Papierkonten davon unberührt', async () => {
+    holt.mockResolvedValue(feld({ keyId: 'PK1', secretKey: 'S1', mode: 'paper' }));
+    expect((await brokerVerbindung('u-paper', 1_000))?.mode).toBe('paper');
+  });
+
+  it('liefert nichts, wenn das Geheimnis nicht entschlüsselbar ist', async () => {
+    // Kaputtes Chiffrat heißt: falscher Hauptschlüssel oder manipulierte
+    // Daten. Beides darf NICHT als Zugangsdaten an einen Broker gehen —
+    // lieber keine Verbindung als eine mit geratenem Inhalt.
+    holt.mockResolvedValue(feld({ keyId: 'PK1', secretKey: 'v1:a:b:c', mode: 'paper' }));
+    expect(await brokerVerbindungLesend('u-paper', 1_000)).toBeNull();
   });
 });

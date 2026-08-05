@@ -49,6 +49,7 @@ import {
   type AlpacaSchluessel,
 } from './alpacaBroker.js';
 import type { BrokerMode } from './broker.js';
+import { entschluessle } from './keyVault.js';
 
 /** Verbindungsdaten eines Kontos, so wie `connectBroker` sie ablegt. */
 export interface BrokerVerbindung {
@@ -79,13 +80,66 @@ export function vergissVerbindung(uid: string): void {
 }
 
 /**
+ * Darf überhaupt an einen Echtgeld-Endpunkt geordert werden?
+ *
+ * Nur die Betreiber-Freigabe, bewusst OHNE die anderen beiden Guards
+ * (`broker.mode: live` je Konto, Live-Reife) — die prüft `resolveBrokerMode`
+ * weiterhin an seiner Stelle. Hier geht es um die grobe Frage: Ist auf
+ * diesem Server Echtgeld überhaupt eingeschaltet? Solange nein, sind alle
+ * feineren Prüfungen gegenstandslos, und ein hinterlegter Live-Schlüssel
+ * darf keinen einzigen Order-Pfad erreichen.
+ */
+function echtgeldFreigegeben(): boolean {
+  return process.env.ALPACA_ALLOW_LIVE === '1';
+}
+
+/**
  * Verbindung eines Kontos laden — oder `null`, wenn keine hinterlegt ist.
  *
  * Die Sammlung `private/**` ist per Rules für JEDEN Client gesperrt; nur das
  * Admin-SDK liest hier. Ein fehlender Eintrag ist der Normalfall, kein
  * Fehler: Die allermeisten Konten handeln im eigenen Buch.
+ *
+ * ── Echtgeld-Verbindungen liefert diese Funktion NICHT aus ────────────────
+ *
+ * Seit dem 05.08. dürfen Echtgeld-Schlüssel in der App hinterlegt werden
+ * (verschlüsselt, siehe `core/keyVault.ts`). Damit entsteht ein Weg, den es
+ * vorher nicht gab: Ein `AK…`-Schlüssel im Dokument würde hier zu
+ * `mode: 'live'` — und `routeOrder` schickte die nächste Order an den
+ * ECHTGELD-Endpunkt, ohne dass jemand etwas scharf geschaltet hätte.
+ *
+ * Deshalb gibt diese Funktion, die ausschließlich das ORDER-Routing bedient,
+ * bei einer Live-Verbindung `null` zurück, solange M14 verriegelt ist. Der
+ * Trade läuft dann im eigenen Buch weiter — genau wie vorher.
+ *
+ * Für den LESENDEN Abgleich gibt es `brokerVerbindungLesend()`. Die Trennung
+ * ist der ganze Punkt: „startklar, aber nicht scharf" heißt, das echte Depot
+ * sehen zu können, ohne hineinzuhandeln.
  */
 export async function brokerVerbindung(
+  uid: string,
+  jetztMs: number = Date.now(),
+): Promise<BrokerVerbindung | null> {
+  const v = await brokerVerbindungLesend(uid, jetztMs);
+  if (!v) return null;
+  if (v.mode === 'live' && !echtgeldFreigegeben()) {
+    // Bewusst nur `debug`: Bei jedem Trade eines Kontos mit hinterlegtem
+    // Live-Schlüssel wäre eine Warnung Lärm, der echte Warnungen zudeckt.
+    logger.debug(`brokerVerbindung ${uid}: Echtgeld hinterlegt, Handel verriegelt`);
+    return null;
+  }
+  return v;
+}
+
+/**
+ * Dieselbe Verbindung — auch für Echtgeld, aber ausdrücklich nur zum LESEN.
+ *
+ * Aufrufer dieser Funktion dürfen `/v2/account` und `/v2/positions` abrufen.
+ * Wer eine ORDER senden will, nimmt `brokerVerbindung()`. Der getrennte Name
+ * ist die Absicherung: Ein künftiger Aufrufer muss sich aktiv für die
+ * lesende Variante entscheiden, statt sie versehentlich zu erben.
+ */
+export async function brokerVerbindungLesend(
   uid: string,
   jetztMs: number = Date.now(),
 ): Promise<BrokerVerbindung | null> {
@@ -94,10 +148,15 @@ export async function brokerVerbindung(
   try {
     const doc = await getFirestore().doc(`users/${uid}/private/broker`).get();
     const keyId = doc.get('keyId') as string | undefined;
-    const secret = doc.get('secretKey') as string | undefined;
-    // `mode` steht am Dokument, aber die Verbindung über die App kann nur
-    // 'paper' sein — `connectBroker` lehnt Echtgeld-Schlüssel ab. Alles
-    // andere als 'live' gilt deshalb als Papier.
+    const gespeichert = doc.get('secretKey') as string | undefined;
+    // Entschlüsseln (05.08.). `entschluessle` gibt Klartext-Altbestand
+    // unverändert zurück und `null`, wenn ein Chiffrat nicht aufgeht —
+    // falscher Hauptschlüssel oder manipulierte Daten. Beides darf nicht
+    // als Zugangsdaten an einen Broker gehen.
+    const secret = gespeichert ? entschluessle(gespeichert) : null;
+    if (gespeichert && !secret) {
+      logger.warn(`brokerVerbindung ${uid}: Geheimnis nicht entschlüsselbar`);
+    }
     const wert: BrokerVerbindung | null =
       keyId && secret
         ? { mode: doc.get('mode') === 'live' ? 'live' : 'paper', schluessel: { keyId, secret } }

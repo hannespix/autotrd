@@ -1745,9 +1745,28 @@ Sekunden-Preis-Alerts, `trade_updates`.
       Paper-Basis-URL, Probe-Call VOR dem Speichern, Ablage in
       `users/{uid}/private/broker` mit `read, write: if false`,
       Disconnect löscht das Paar. Die Schlüssel kommen nie an einen Client
-      zurück; die App zeigt nur eine maskierte Kennung. OFFEN: KMS-Envelope
-      statt Klartext — vertretbar, solange nur Papier-Schlüssel dort liegen,
-      und zwingend, bevor je ein Live-Schlüssel in die Datenbank dürfte.)*
+      zurück; die App zeigt nur eine maskierte Kennung.)*
+- [x] **Verschlüsselte Ablage + Echtgeld-Schlüssel in der App (05.08.).**
+      Auf Owner-Frage („warum kann man keinen Echtgeld-Key hinterlegen?").
+      Die alte Begründung — Echtgeld-Schlüssel gehören in die Umgebung — war
+      ungenau: Das Problem war nie der Eingabeweg, sondern die ABLAGE im
+      Klartext. `core/keyVault.ts` verschlüsselt mit AES-256-GCM
+      (Hauptschlüssel `BROKER_MASTER_KEY` aus dem Secret Manager, Format
+      `v1:<iv>:<tag>:<chiffrat>`); Klartext-Altbestand bleibt lesbar, ein
+      kaputtes Chiffrat liefert `null` statt geratener Zugangsdaten.
+      Echtgeld-Schlüssel werden angenommen, wenn (1) die Ablage bereit ist
+      und (2) die Anmeldung höchstens **5 Minuten** alt ist (`auth_time`,
+      Reauth im Frontend über `frischAnmelden()`).
+      **Der Handel bleibt verriegelt:** `brokerVerbindung()` — die Quelle des
+      ORDER-Routings — liefert für Live-Konten `null`, solange
+      `ALPACA_ALLOW_LIVE` fehlt; der lesende Abgleich nutzt die getrennte
+      `brokerVerbindungLesend()`. Damit sieht man das echte Depot, ohne
+      hineinzuhandeln. Setup: docs/SETUP.md §M.
+      **OFFEN:** (a) Owner muss `BROKER_MASTER_KEY` setzen, danach
+      `secrets: [...]` nachziehen (Reihenfolge zwingend, sonst bricht der
+      Deploy); (b) Migration der bestehenden Klartext-Papierschlüssel;
+      (c) echtes KMS statt Secret-Manager-AES, sobald Echtgeld über einzelne
+      Konten hinausgeht — bei KMS verlässt der Hauptschlüssel nie das HSM.
 - [x] **Order-Routing (05.08.).** Jeder Trade läuft jetzt durch
       `core/orderRouting.ts`: Order raus → `warteAufFill` pollt bis zum
       bestätigten Fill → ERST dann bucht das eigene Buch, mit dem echten
