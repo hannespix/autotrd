@@ -821,6 +821,20 @@ input, textarea, select, [contenteditable='true'] {
 .opt-row b { color: var(--t1); }
 .opt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .opt-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--t2); }
+/* Untergruppen-Überschrift im Einstellungs-Raster: volle Breite, damit die
+   22 Felder in lesbare Blöcke zerfallen statt in eine anonyme Wand. */
+.opt-sub {
+  grid-column: 1 / -1;
+  margin-top: 6px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid var(--bd);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--t3);
+}
+.opt-grid .opt-sub:first-child { margin-top: 0; }
 @media (max-width: 560px) { .opt-grid { grid-template-columns: 1fr; } }
 
 /* Kapital-Regler je Anlageklasse (MG2).

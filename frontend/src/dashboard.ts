@@ -1027,7 +1027,8 @@ function layout(email: string): string {
         Rechenbasis für die Positionsgröße, und auch das nur, wenn unten
         <b>Größenbasis „Startkapital"</b> eingestellt ist (Standard ist
         „Kontostand").</p>
-      <div class="opt-grid">
+      <div class="opt-grid" id="owGrid">
+        <div class="opt-sub">Kapital &amp; Positionsgröße</div>
         <label>Startkapital $
           <input id="owCap" class="inp st-num" type="number" min="100" step="500" /></label>
         <label>Investment je Trade %
@@ -1049,6 +1050,7 @@ function layout(email: string): string {
             <option value="2">2× — nur bei sehr starkem Signal</option>
             <option value="3">3× — Maximum</option>
           </select></label>
+        <div class="opt-sub">Ausstiege ${iBtn('exits')}</div>
         <label>Stop-Loss % ${iBtn('stopLoss')}
           <input id="owSl" class="inp st-num" type="number" min="0" step="0.5" /></label>
         <label>Take-Profit % ${iBtn('takeProfit')}
@@ -1061,6 +1063,7 @@ function layout(email: string): string {
           <input id="owAtrS" class="inp st-num" type="number" min="0" step="0.5" /></label>
         <label>ATR-Ziel (×ATR) ${iBtn('atrTake')}
           <input id="owAtrT" class="inp st-num" type="number" min="0" step="0.5" /></label>
+        <div class="opt-sub">Signale &amp; Takt</div>
         <label>Handels-Modus ${iBtn('engineMode')}
           <select id="owMode" class="inp st-num">
             <option value="confluence">Konfluenz (5-Min-Signale)</option>
@@ -1077,36 +1080,30 @@ function layout(email: string): string {
           <input id="owMinC" class="inp st-num" type="number" min="1" max="6" step="1" /></label>
         <label>Konfluenz Ausstieg ${iBtn('exitConfluence')}
           <input id="owExitC" class="inp st-num" type="number" min="1" max="6" step="1" /></label>
+        <div class="opt-sub">Schutzschalter</div>
         <label>Kostenschwelle (× Gebühren) ${iBtn('minEdgeMultiple')}
           <input id="owEdge" class="inp st-num" type="number" min="0" max="10" step="0.5" /></label>
         <label>Tages-Notbremse (% Verlust) ${iBtn('dailyLossLimit')}
           <input id="owBreak" class="inp st-num" type="number" min="0" max="25" step="0.5" /></label>
+        <label class="opt-check">
+          <input type="checkbox" id="owFlatten" />
+          <span>Bei Notbremse zusätzlich alle Positionen schließen ${iBtn('flattenOnBreach')}</span></label>
+        <label class="opt-check">
+          <input type="checkbox" id="owRegimeGate" />
+          <span>Markt-Ampel (keine Shorts im Aufwärtstrend, Pause bei Stress) ${iBtn('regimeGate')}</span></label>
+        <label class="opt-row" style="align-items:center">
+          <input type="checkbox" id="owNewsVeto" />
+          <span>News-Veto (Einstiege bei harten Events aussetzen) ${iBtn('newsVeto')}</span></label>
+        <div class="opt-sub">Experimente</div>
         <label class="opt-row" style="align-items:center">
           <input type="checkbox" id="owFcSolo" />
           <span>Prognose darf allein entscheiden ${iBtn('forecastSolo')}</span></label>
         <label class="opt-row" style="align-items:center">
           <input type="checkbox" id="owShort" />
           <span>Shorten erlauben (Leerverkäufe) ${iBtn('allowShort')}</span></label>
-        <label class="opt-row" style="align-items:center">
-          <input type="checkbox" id="owNewsVeto" />
-          <span>News-Veto (Einstiege bei harten Events aussetzen) ${iBtn('newsVeto')}</span></label>
-        <label class="opt-check">
-          <input type="checkbox" id="owRegimeGate" />
-          <span>Markt-Ampel (keine Shorts im Aufwärtstrend, Pause bei Stress) ${iBtn('regimeGate')}</span></label>
-        <label class="opt-check">
-          <input type="checkbox" id="owFlatten" />
-          <span>Bei Notbremse zusätzlich alle Positionen schließen ${iBtn('flattenOnBreach')}</span></label>
       </div>
-      <p class="hint">0 schaltet eine Regel ab. Der nachziehende Stop sichert
-        Gewinne, sobald die Position im Plus war; ATR-Werte ersetzen die festen
-        Prozente und passen sich der Schwankungsbreite des Instruments an.
-        Der Ausstieg braucht bewusst weniger Stimmen als der Einstieg —
-        ein verpasster Verkauf kostet Geld, ein verpasster Kauf nur eine Chance.
-        Startkapital greift beim Anlegen/Zurücksetzen des Wallets; Regel-Strategien
-        deckeln die Positionsgröße serverseitig bei 25 %.
-        Sizing-Basis „Verfügbarer Cash" lässt das ganze Wallet arbeiten —
-        jeder Kauf nimmt seinen Prozentsatz vom aktuellen Cash, statt an einer
-        fixen Startkapital-Tranche zu scheitern.</p>
+      <p class="hint">0 schaltet eine Regel ab; ATR-Werte ersetzen die festen
+        Prozente. Alles Weitere erklärt das ⓘ am jeweiligen Feld.</p>
       <p class="hint" id="owClassHint" style="margin-top:4px"></p>
       <div class="wl-sec" style="margin-top:14px">Kapital je Anlageklasse ${iBtn('classWeights')}</div>
       <p class="hint">Der Regler multipliziert die Positionsgröße in dieser Klasse:
@@ -7117,6 +7114,20 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     void saveStrategy(strategy)
       .then(() => ($('optMsg').textContent = '✓ Gespeichert'))
       .catch((e) => ($('optMsg').textContent = (e as Error).message));
+  });
+  /* UI-Audit 05.08.: Das Modal mischt drei Speicher-Semantiken — die
+   * Anzeige-Optionen oben speichern sofort, dieser Block erst per Knopf,
+   * Broker/Steuer unten haben eigene Knöpfe. Wer hier etwas ändert und das
+   * Modal schließt, verliert die Änderung STILL. Deshalb sagt das Modal ab
+   * der ersten Änderung sichtbar, dass noch nichts gespeichert ist. */
+  for (const box of [$('owGrid'), $('owClsRows')]) {
+    box.addEventListener('input', () => {
+      const m = $('optMsg');
+      if (!m.textContent?.startsWith('Speichere')) m.textContent = '⚠ Noch nicht gespeichert';
+    });
+  }
+  $('owClsAuto').addEventListener('change', () => {
+    $('optMsg').textContent = '⚠ Noch nicht gespeichert';
   });
 
   // „Vorschlag übernehmen" (MG2): setzt die Regler auf die empfohlenen Werte
