@@ -67,6 +67,48 @@ const OHNE: AbgleichBefund = {
 };
 
 /**
+ * Ein Eintrag im Broker-Verlaufsprotokoll (Owner-Meldung 05.08.: „ca. 1
+ * Stunde keine Verbindung" — und niemand konnte hinterher sagen, WAS in
+ * dieser Stunde war, weil nur der LETZTE Zustand gespeichert wurde).
+ */
+export interface VerlaufEintrag {
+  at: string;
+  von: AbgleichZustand | null;
+  nach: AbgleichZustand;
+  fehlbestand?: number;
+  fremdbestand?: number;
+  fehler?: string;
+}
+
+/** Höchstens so viele Einträge — ein Protokoll, kein zweites Log-System. */
+export const VERLAUF_MAX = 12;
+
+/**
+ * Verlauf fortschreiben — aber NUR bei einem Zustandswechsel.
+ *
+ * `null` heißt „kein Wechsel, nichts schreiben": Der Abgleich läuft alle
+ * fünf Minuten, und 288 „weiterhin sauber"-Einträge am Tag würden genau
+ * die Stunde zuschütten, die man sucht. Pur gehalten und exportiert, weil
+ * die Grenzfälle (erster Eintrag, Deckel, gleicher Zustand) testbar sein
+ * müssen, ohne Firestore zu heucheln.
+ */
+export function ergaenzeVerlauf(
+  bisher: readonly VerlaufEintrag[] | undefined,
+  vorherStatus: string | undefined,
+  eintrag: Omit<VerlaufEintrag, 'von'>,
+  max: number = VERLAUF_MAX,
+): VerlaufEintrag[] | null {
+  if (vorherStatus === eintrag.nach) return null;
+  const von = (
+    vorherStatus === 'sauber' || vorherStatus === 'drift'
+    || vorherStatus === 'fehler' || vorherStatus === 'kein_broker'
+      ? vorherStatus
+      : null
+  ) as AbgleichZustand | null;
+  return [...(bisher ?? []), { ...eintrag, von }].slice(-max);
+}
+
+/**
  * Ein Konto abgleichen und das Ergebnis am User-Dokument vermerken.
  *
  * Der Vermerk ist Teil der Aufgabe, nicht Beiwerk: Eine Sperre ohne
@@ -81,6 +123,9 @@ export async function abgleichFuerKonto(
   uid: string,
   eigene: readonly Position[],
   jetzt: Date = new Date(),
+  /** Bisheriger Vermerk (`risk.abgleich` des schon geladenen User-Docs) —
+   *  Grundlage des Verlaufsprotokolls, ohne einen zweiten Read je Konto. */
+  vorher?: { status?: string; verlauf?: VerlaufEintrag[] },
 ): Promise<AbgleichBefund> {
   /* LESENDE Verbindung — auch bei hinterlegtem Echtgeld-Schlüssel.
    *
@@ -98,10 +143,16 @@ export async function abgleichFuerKonto(
   } catch (err) {
     const text = err instanceof Error ? err.message : String(err);
     logger.warn(`Abgleich ${uid}: Broker nicht erreichbar — ${text.slice(0, 200)}`);
+    const verlaufF = ergaenzeVerlauf(vorher?.verlauf, vorher?.status, {
+      at: jetzt.toISOString(),
+      nach: 'fehler',
+      fehler: text.slice(0, 120),
+    });
     await vermerke(uid, {
       at: jetzt.toISOString(),
       status: 'fehler',
       fehler: text.slice(0, 200),
+      ...(verlaufF ? { verlauf: verlaufF } : {}),
     });
     return {
       geprueft: false,
@@ -144,9 +195,16 @@ export async function abgleichFuerKonto(
   const fehlbestand = abweichungen.filter((a) => a.differenz > 0);
   const fremdbestand = abweichungen.filter((a) => a.differenz < 0);
 
+  const status = abweichungen.length === 0 ? 'sauber' : 'drift';
+  const verlauf = ergaenzeVerlauf(vorher?.verlauf, vorher?.status, {
+    at: jetzt.toISOString(),
+    nach: status,
+    fehlbestand: fehlbestand.length,
+    fremdbestand: fremdbestand.length,
+  });
   await vermerke(uid, {
     at: jetzt.toISOString(),
-    status: abweichungen.length === 0 ? 'sauber' : 'drift',
+    status,
     anzahl: abweichungen.length,
     // Getrennt gezählt: Die Oberfläche soll „dir fehlen Stücke" von „da
     // liegt fremdes Zeug" unterscheiden können, ohne selbst zu rechnen.
@@ -157,6 +215,7 @@ export async function abgleichFuerKonto(
     abweichungen: abweichungen.slice(0, 10),
     verglichen: relevante.length,
     brokerPositionen: brokerPositionen.length,
+    ...(verlauf ? { verlauf } : {}),
   });
 
   if (abweichungen.length === 0) {

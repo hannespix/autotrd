@@ -137,6 +137,7 @@ import {
   callLiveMode,
   type LiveModeStatus,
   type BrokerStatusResult,
+  type AbgleichVerlaufEintrag,
   callTaxReport,
   type TaxReportResult,
   resetBreaker,
@@ -2432,6 +2433,7 @@ function renderAbgleich(
     verglichen: number;
     brokerPositionen: number;
     fehler: string;
+    verlauf?: AbgleichVerlaufEintrag[];
   } | null,
 ): void {
   const el = document.getElementById('bkAuto');
@@ -2442,10 +2444,35 @@ function renderAbgleich(
     return;
   }
   const wann = escText(a.at.slice(0, 16).replace('T', ' '));
+  /* Verlaufsprotokoll (Owner-Meldung 05.08.: „ca. 1 Stunde keine
+   * Verbindung" — und hinterher konnte niemand sagen, was in der Stunde
+   * war, weil nur der LETZTE Zustand gespeichert wurde). Jeder
+   * Zustandswechsel steht jetzt mit Uhrzeit hier, neueste zuerst. */
+  const LABEL: Record<string, string> = {
+    sauber: 'sauber',
+    drift: 'Abweichung',
+    fehler: 'Broker nicht erreichbar',
+    kein_broker: 'kein Broker',
+  };
+  const verlaufHtml = (a.verlauf ?? [])
+    .slice(-5)
+    .reverse()
+    .map((v) => {
+      const t = escText(v.at.slice(11, 16));
+      const zusatz = v.nach === 'drift'
+        ? ` (${v.fehlbestand} fehlend, ${v.fremdbestand} fremd)`
+        : v.fehler ? `: ${escText(v.fehler.slice(0, 60))}` : '';
+      return `<div>${t} Uhr · ${escText(LABEL[v.von ?? ''] ?? '—')} → <b>${escText(LABEL[v.nach] ?? v.nach)}</b>${zusatz}</div>`;
+    })
+    .join('');
+  const verlaufBlock = verlaufHtml
+    ? `<details style="margin-top:4px"><summary style="cursor:pointer">Verlauf (letzte Zustandswechsel)</summary>${verlaufHtml}</details>`
+    : '';
   if (a.status === 'fehler') {
     el.innerHTML =
       `<b>Abgleich nicht möglich</b> (${wann} Uhr): ${escText(a.fehler)}.<br />`
-      + 'Der Handel läuft weiter — ein Netzwerkfehler ist kein Beweis für eine Abweichung.';
+      + 'Der Handel läuft weiter — ein Netzwerkfehler ist kein Beweis für eine Abweichung.'
+      + verlaufBlock;
     return;
   }
   if (a.status === 'drift') {
@@ -2459,17 +2486,20 @@ function renderAbgleich(
     if ((a.fehlbestand ?? a.anzahl) > 0) {
       el.innerHTML =
         `<b style="color:var(--rd)">${a.fehlbestand ?? a.anzahl} Position(en) fehlen beim Broker</b> `
-        + `(${wann} Uhr). <b>Neue Einstiege sind gesperrt</b>, Ausstiege bleiben frei.`;
+        + `(${wann} Uhr). <b>Neue Einstiege sind gesperrt</b>, Ausstiege bleiben frei.`
+        + verlaufBlock;
     } else {
       el.innerHTML =
         `<b>${a.fremdbestand ?? a.anzahl} Position(en) nur beim Broker</b> (${wann} Uhr) — `
-        + 'nicht von dieser Engine eröffnet. Sie bleiben unangetastet, der Handel läuft weiter.';
+        + 'nicht von dieser Engine eröffnet. Sie bleiben unangetastet, der Handel läuft weiter.'
+        + verlaufBlock;
     }
     return;
   }
   el.innerHTML =
     `<b style="color:var(--gn)">Buch und Depot stimmen überein</b> (${wann} Uhr) — `
-    + `${a.verglichen} eigene, ${a.brokerPositionen} beim Broker.`;
+    + `${a.verglichen} eigene, ${a.brokerPositionen} beim Broker.`
+    + verlaufBlock;
 }
 
 /** Aktuelle Reglerstellungen je Anlageklasse aus dem Formular. */

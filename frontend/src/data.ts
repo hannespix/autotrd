@@ -581,6 +581,16 @@ export function watchUserDoc(
 }
 
 /** `risk.abgleich` in eine Form bringen, auf die sich die Anzeige verlassen kann. */
+/** Ein Zustandswechsel im Broker-Verlaufsprotokoll (Owner-Meldung 05.08.). */
+export interface AbgleichVerlaufEintrag {
+  at: string;
+  von: string | null;
+  nach: string;
+  fehlbestand: number;
+  fremdbestand: number;
+  fehler: string;
+}
+
 function leseAbgleich(roh: unknown): {
   at: string;
   status: string;
@@ -590,11 +600,27 @@ function leseAbgleich(roh: unknown): {
   verglichen: number;
   brokerPositionen: number;
   fehler: string;
+  verlauf: AbgleichVerlaufEintrag[];
 } | null {
   if (!roh || typeof roh !== 'object') return null;
   const r = roh as Record<string, unknown>;
   if (typeof r['at'] !== 'string') return null;
   const zahl = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  const verlauf: AbgleichVerlaufEintrag[] = Array.isArray(r['verlauf'])
+    ? (r['verlauf'] as unknown[]).flatMap((e) => {
+        if (!e || typeof e !== 'object') return [];
+        const v = e as Record<string, unknown>;
+        if (typeof v['at'] !== 'string' || typeof v['nach'] !== 'string') return [];
+        return [{
+          at: v['at'],
+          von: typeof v['von'] === 'string' ? v['von'] : null,
+          nach: v['nach'],
+          fehlbestand: zahl(v['fehlbestand']),
+          fremdbestand: zahl(v['fremdbestand']),
+          fehler: typeof v['fehler'] === 'string' ? v['fehler'] : '',
+        }];
+      })
+    : [];
   return {
     at: r['at'],
     status: typeof r['status'] === 'string' ? r['status'] : 'unbekannt',
@@ -604,6 +630,7 @@ function leseAbgleich(roh: unknown): {
     verglichen: zahl(r['verglichen']),
     brokerPositionen: zahl(r['brokerPositionen']),
     fehler: typeof r['fehler'] === 'string' ? r['fehler'] : '',
+    verlauf,
   };
 }
 
