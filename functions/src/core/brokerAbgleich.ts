@@ -117,10 +117,41 @@ export async function abgleichFuerKonto(
     .map((p) => ({ symbol: p.symbol, qty: p.qty, side: p.side }));
   const abweichungen = abgleich(relevante, brokerPositionen);
 
+  /* ── Nicht jede Abweichung ist gleich gefährlich (Live-Fund 05.08.) ────
+   *
+   * Der erste Entwurf sperrte bei JEDER Drift. Der erste Betriebstag hat
+   * gezeigt, warum das zu grob ist: Ein Konto mit leerem Buch und Beständen
+   * beim Broker wurde dauerhaft gesperrt — obwohl die Engine mit diesen
+   * Beständen nichts zu tun hat und sie nie anfassen wird.
+   *
+   * Die zwei Richtungen sind nicht symmetrisch:
+   *
+   *   Buch > Broker (differenz > 0) — GEFÄHRLICH. Die Engine hält eine
+   *   Position, die es nicht gibt: Ihr Stop-Loss verkauft ins Leere, ihr
+   *   Positionslimit ist blockiert, ihre Equity-Rechnung ist falsch. Jede
+   *   Größenrechnung für einen Einstieg steht auf Sand. Das MUSS sperren.
+   *
+   *   Broker > Buch (differenz < 0) — FREMDBESTAND. Wer sein Konto
+   *   verbindet, darf dort weiter selbst handeln; solche Positionen tragen
+   *   kein `broker: true` und werden nie geroutet. Sie binden Kaufkraft, ja
+   *   — aber eine Order, der die Deckung fehlt, scheitert SAUBER beim
+   *   Broker. Das ist ein ehrlicher Fehlschlag, kein stiller Fehler, und
+   *   rechtfertigt keine Dauersperre des ganzen Kontos.
+   *
+   * Gemeldet werden weiterhin beide. Nur das Sperren ist einseitig — nach
+   * derselben Regel wie überall hier: die gefährliche Richtung hart, die
+   * harmlose sichtbar. */
+  const fehlbestand = abweichungen.filter((a) => a.differenz > 0);
+  const fremdbestand = abweichungen.filter((a) => a.differenz < 0);
+
   await vermerke(uid, {
     at: jetzt.toISOString(),
     status: abweichungen.length === 0 ? 'sauber' : 'drift',
     anzahl: abweichungen.length,
+    // Getrennt gezählt: Die Oberfläche soll „dir fehlen Stücke" von „da
+    // liegt fremdes Zeug" unterscheiden können, ohne selbst zu rechnen.
+    fehlbestand: fehlbestand.length,
+    fremdbestand: fremdbestand.length,
     // Bewusst gedeckelt: Der Vermerk ist eine Meldung, kein zweites Depot.
     // Bei 50 Abweichungen sagt die Zahl alles, was zählt.
     abweichungen: abweichungen.slice(0, 10),
@@ -131,17 +162,37 @@ export async function abgleichFuerKonto(
   if (abweichungen.length === 0) {
     return { geprueft: true, zustand: 'sauber', abweichungen: [], sperre: false };
   }
-  const liste = abweichungen
-    .slice(0, 5)
-    .map((a) => `${a.symbol} Buch ${a.eigeneMenge} / Broker ${a.brokerMenge}`)
-    .join(', ');
-  logger.warn(`Abgleich ${uid}: ${abweichungen.length} Abweichung(en) — ${liste}`);
+  const beschreibe = (liste: Abweichung[]): string =>
+    liste
+      .slice(0, 5)
+      .map((a) => `${a.symbol} Buch ${a.eigeneMenge} / Broker ${a.brokerMenge}`)
+      .join(', ');
+
+  if (fehlbestand.length === 0) {
+    // Nur Fremdbestand: melden, weiterhandeln lassen.
+    logger.info(
+      `Abgleich ${uid}: ${fremdbestand.length} Position(en) nur beim Broker — ${beschreibe(fremdbestand)}`,
+    );
+    return {
+      geprueft: true,
+      zustand: 'drift',
+      abweichungen,
+      sperre: false,
+      grund: `Nur beim Broker (${fremdbestand.length}): ${beschreibe(fremdbestand)}`,
+    };
+  }
+
+  logger.warn(
+    `Abgleich ${uid}: ${fehlbestand.length} Fehlbestand — ${beschreibe(fehlbestand)}`,
+  );
   return {
     geprueft: true,
     zustand: 'drift',
     abweichungen,
     sperre: true,
-    grund: `Buch und Depot weichen ab (${abweichungen.length}): ${liste}`,
+    grund:
+      `Im Buch stehen ${fehlbestand.length} Position(en), die der Broker nicht hat: `
+      + `${beschreibe(fehlbestand)}`,
   };
 }
 

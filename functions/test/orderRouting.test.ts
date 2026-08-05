@@ -16,7 +16,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_STRATEGY, type Position, type Strategy } from '../../shared/src/index.js';
-import { warteAufFill } from '../src/core/alpacaBroker.js';
+import { abgleich, warteAufFill } from '../src/core/alpacaBroker.js';
 import { planeMenge, type TradeRequest } from '../src/core/broker.js';
 import {
   brokerVerbindung,
@@ -328,5 +328,50 @@ describe('Echtgeld-Schlüssel und Order-Routing', () => {
     // lieber keine Verbindung als eine mit geratenem Inhalt.
     holt.mockResolvedValue(feld({ keyId: 'PK1', secretKey: 'v1:a:b:c', mode: 'paper' }));
     expect(await brokerVerbindungLesend('u-paper', 1_000)).toBeNull();
+  });
+});
+
+/* ── Richtung der Drift entscheidet über die Sperre (Live-Fund 05.08.) ──────
+ *
+ * Der erste Betriebstag hat gezeigt, dass „jede Abweichung sperrt" zu grob
+ * ist: Ein Konto mit leerem Buch und Beständen beim Broker wurde dauerhaft
+ * gesperrt, obwohl die Engine mit diesen Beständen nichts zu tun hat.
+ *
+ * Diese Tests halten die Asymmetrie fest. Sie ist die gleiche Regel wie
+ * überall in der Risiko-Hülle: die gefährliche Richtung hart, die harmlose
+ * sichtbar.
+ */
+describe('abgleich — Vorzeichen der Differenz', () => {
+  it('meldet Fehlbestand positiv: Buch hat mehr als der Broker', () => {
+    const d = abgleich([{ symbol: 'AAPL', qty: 10 }], []);
+    expect(d).toHaveLength(1);
+    expect(d[0]!.differenz).toBeGreaterThan(0);
+  });
+
+  it('meldet Fremdbestand negativ: nur beim Broker vorhanden', () => {
+    const d = abgleich([], [{ symbol: 'AAPL', qty: 10, seite: 'long', einstand: 100 }]);
+    expect(d).toHaveLength(1);
+    expect(d[0]!.differenz).toBeLessThan(0);
+  });
+
+  it('unterscheidet Long und Short bei gleicher Menge', () => {
+    // Ein Long von 10 und ein Short von 10 sind nicht dasselbe. Ohne
+    // Vorzeichen sähe das wie Übereinstimmung aus — und die Engine hielte
+    // ein Depot für abgeglichen, das in die Gegenrichtung zeigt.
+    const d = abgleich(
+      [{ symbol: 'AAPL', qty: 10, side: 'short' }],
+      [{ symbol: 'AAPL', qty: 10, seite: 'long', einstand: 100 }],
+    );
+    expect(d).toHaveLength(1);
+    expect(d[0]!.differenz).toBe(-20);
+  });
+
+  it('meldet nichts, wenn beide Seiten übereinstimmen', () => {
+    expect(
+      abgleich(
+        [{ symbol: 'AAPL', qty: 10 }],
+        [{ symbol: 'AAPL', qty: 10, seite: 'long', einstand: 100 }],
+      ),
+    ).toHaveLength(0);
   });
 });
