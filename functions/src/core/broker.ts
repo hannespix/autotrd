@@ -37,7 +37,7 @@ import type {
   Trade,
 } from '../../../shared/src/index.js';
 import { fxFelder } from './fx.js';
-import { brokerVerbindung, routeOrder } from './orderRouting.js';
+import { assetAuskunft, brokerVerbindung, routeOrder } from './orderRouting.js';
 
 /**
  * Margin-Budget, das der AUFRUFER mitbringt (Scan bzw. Puls).
@@ -368,7 +368,25 @@ export async function executeTrade(
   if (schliesst && position.broker !== true) return executePaperTrade(req, strategy);
 
   const klasse = req.assetClass ?? classify(req.symbol);
-  const fractional = klasse === 'crypto';
+
+  /* Eigenschaften vom Broker statt geraten (Alpaca-Sync 05.08.).
+   *
+   * `fractionable`: Bisher hieß „Bruchstücke erlaubt" schlicht „Klasse ist
+   * Krypto" — dabei erlaubt Alpaca sie für die meisten US-Aktien. Für ein
+   * kleines Konto ist das der Unterschied zwischen „kauft 0,4 Stück" und
+   * „scheitert an qty_unter_1". `shortable`: Ein nicht leihbares Papier
+   * wird jetzt VOR der Order abgefangen, mit klarem Grund — statt als
+   * abgelehnte Order beim Broker zu enden. `null` (Symbol unbekannt,
+   * Metadaten nicht erreichbar) fällt auf die bisherigen Schätzungen
+   * zurück: Metadaten dürfen den Handel verbessern, nie verhindern. */
+  const asset = await assetAuskunft(verbindung, req.symbol);
+  const eroeffnet = !schliesst;
+  if (asset && eroeffnet) {
+    if (!asset.tradable) return { executed: false, reason: 'broker_nicht_handelbar' };
+    const wirdShort = req.side === 'sell';
+    if (wirdShort && !asset.shortable) return { executed: false, reason: 'broker_nicht_shortbar' };
+  }
+  const fractional = asset?.fractionable ?? (klasse === 'crypto');
   // Für die MENGE reicht der Schätzpreis: Er entscheidet über die Stückzahl,
   // nicht über den Buchwert. Der echte Kurs kommt gleich vom Broker zurück
   // und ersetzt ihn beim Buchen.

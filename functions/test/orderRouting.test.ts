@@ -16,20 +16,30 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_STRATEGY, type Position, type Strategy } from '../../shared/src/index.js';
-import { abgleich, alpacaOrdersGeschlossen, warteAufFill } from '../src/core/alpacaBroker.js';
+import {
+  abgleich,
+  alpacaAsset,
+  alpacaOrdersGeschlossen,
+  warteAufFill,
+} from '../src/core/alpacaBroker.js';
 import { planeMenge, type TradeRequest } from '../src/core/broker.js';
 import {
+  assetAuskunft,
   brokerVerbindung,
   brokerVerbindungLesend,
   routeOrder,
+  vergissAssets,
   vergissVerbindung,
 } from '../src/core/orderRouting.js';
 
 /* Firestore-Attrappe für den Verbindungs-Cache. Sie muss vor den Importen
  * greifen — deshalb `vi.hoisted`, sonst liefe `holt` erst nach dem Mock. */
-const { holt } = vi.hoisted(() => ({ holt: vi.fn() }));
+const { holt, setzt } = vi.hoisted(() => ({
+  holt: vi.fn(),
+  setzt: vi.fn(async () => undefined),
+}));
 vi.mock('firebase-admin/firestore', () => ({
-  getFirestore: () => ({ doc: () => ({ get: holt }) }),
+  getFirestore: () => ({ doc: () => ({ get: holt, set: setzt }) }),
   FieldPath: class {},
   FieldValue: { increment: () => 0, delete: () => 0 },
   Timestamp: { now: () => 0 },
@@ -412,5 +422,135 @@ describe('alpacaOrdersGeschlossen', () => {
   it('gibt bei kaputter Antwort eine leere Liste zurück, keinen Absturz', async () => {
     const f = antworten({ nicht: 'eine liste' });
     expect(await alpacaOrdersGeschlossen('paper', SCHLUESSEL, '2026-08-05T00:00:00Z', f)).toEqual([]);
+  });
+});
+
+describe('alpacaAsset — Eigenschaften vom Broker statt geraten', () => {
+  it('liest fractionable/shortable/tradable aus der Antwort', async () => {
+    const f = antworten({
+      symbol: 'AAPL',
+      tradable: true,
+      fractionable: true,
+      shortable: true,
+      easy_to_borrow: true,
+      marginable: true,
+    });
+    const a = await alpacaAsset('paper', 'AAPL', SCHLUESSEL, f);
+    expect(a).toEqual({
+      symbol: 'AAPL',
+      tradable: true,
+      fractionable: true,
+      shortable: true,
+      easyToBorrow: true,
+      marginable: true,
+    });
+  });
+
+  it('404 heißt „kennt Alpaca nicht" — null, kein Fehler', async () => {
+    // Der halbe Katalog (Indizes, Forex, Futures) existiert bei Alpaca nicht.
+    const f = vi.fn(async () => ({
+      ok: false,
+      status: 404,
+      text: async () => '{"message":"asset not found"}',
+    })) as unknown as typeof fetch;
+    expect(await alpacaAsset('paper', '^GSPC', SCHLUESSEL, f)).toBeNull();
+  });
+
+  it('andere Fehler werfen weiter — Netzprobleme sind kein „gibt es nicht"', async () => {
+    const f = vi.fn(async () => ({
+      ok: false,
+      status: 500,
+      text: async () => 'kaputt',
+    })) as unknown as typeof fetch;
+    await expect(alpacaAsset('paper', 'AAPL', SCHLUESSEL, f)).rejects.toThrow('HTTP 500');
+  });
+
+  it('fehlende Felder werden konservativ als false gelesen', async () => {
+    const a = await alpacaAsset('paper', 'X', SCHLUESSEL, antworten({ symbol: 'X' }));
+    expect(a?.fractionable).toBe(false);
+    expect(a?.shortable).toBe(false);
+    expect(a?.tradable).toBe(false);
+  });
+});
+
+describe('assetAuskunft — Zwei-Stufen-Cache', () => {
+  const VERB = { mode: 'paper' as const, schluessel: SCHLUESSEL };
+
+  afterEach(() => {
+    vergissAssets();
+    holt.mockReset();
+    setzt.mockClear();
+  });
+
+  it('holt live, merkt sich das Ergebnis und persistiert es', async () => {
+    holt.mockResolvedValue(feld({})); // Firestore-Cache leer
+    const f = antworten({ symbol: 'NVDA', tradable: true, fractionable: true, shortable: true });
+    const t0 = 1_000_000;
+
+    const a1 = await assetAuskunft(VERB, 'NVDA', f as unknown as typeof fetch, t0);
+    expect(a1?.fractionable).toBe(true);
+    // Zweiter Aufruf: Prozess-Cache, kein weiterer HTTP-Aufruf.
+    const a2 = await assetAuskunft(VERB, 'NVDA', f as unknown as typeof fetch, t0 + 1000);
+    expect(a2?.shortable).toBe(true);
+    expect(f).toHaveBeenCalledTimes(1);
+    // Persistiert mit bekannt: true.
+    expect(setzt).toHaveBeenCalledWith(
+      expect.objectContaining({ NVDA: expect.objectContaining({ bekannt: true, fractionable: true }) }),
+      { merge: true },
+    );
+  });
+
+  it('bedient sich aus dem Firestore-Cache, ohne den Broker zu fragen', async () => {
+    const t0 = Date.parse('2026-08-05T12:00:00Z');
+    holt.mockResolvedValue(
+      feld({
+        MSFT: {
+          bekannt: true,
+          tradable: true,
+          fractionable: true,
+          shortable: false,
+          at: new Date(t0 - 3_600_000).toISOString(), // 1 h alt — frisch genug
+        },
+      }),
+    );
+    const f = vi.fn();
+    const a = await assetAuskunft(VERB, 'MSFT', f as unknown as typeof fetch, t0);
+    expect(a?.fractionable).toBe(true);
+    expect(a?.shortable).toBe(false);
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it('auch „kennt Alpaca nicht" wird gemerkt — sonst fragt jeder Tag neu', async () => {
+    const t0 = Date.parse('2026-08-05T12:00:00Z');
+    holt.mockResolvedValue(
+      feld({ '^GSPC': { bekannt: false, at: new Date(t0 - 60_000).toISOString() } }),
+    );
+    const f = vi.fn();
+    expect(await assetAuskunft(VERB, '^GSPC', f as unknown as typeof fetch, t0)).toBeNull();
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it('ein abgelaufener Eintrag wird live erneuert', async () => {
+    const t0 = Date.parse('2026-08-05T12:00:00Z');
+    holt.mockResolvedValue(
+      feld({
+        AMD: { bekannt: true, tradable: true, at: new Date(t0 - 25 * 3_600_000).toISOString() },
+      }),
+    );
+    const f = antworten({ symbol: 'AMD', tradable: true, shortable: true });
+    const a = await assetAuskunft(VERB, 'AMD', f as unknown as typeof fetch, t0);
+    expect(a?.shortable).toBe(true);
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+
+  it('Fehler liefert null und wird NICHT persistiert', async () => {
+    holt.mockResolvedValue(feld({}));
+    const f = vi.fn(async () => ({
+      ok: false,
+      status: 500,
+      text: async () => 'kaputt',
+    }));
+    expect(await assetAuskunft(VERB, 'TSLA', f as unknown as typeof fetch, 1_000)).toBeNull();
+    expect(setzt).not.toHaveBeenCalled();
   });
 });
