@@ -1844,6 +1844,16 @@ Sekunden-Preis-Alerts, `trade_updates`.
       „schaerfer filtern". Regime-Variante endgueltig widerlegt
       (n=2551, roh −0,010 %, Treffer 46,0 %) und wird eingestellt.
 
+      ✅ UMGESETZT (05.08., 22:40): Vierte Schattenvariante `live_tag` —
+      eigener Slot `lastSignalTag` am Markt-Dokument, wird mit buy/sell
+      belegt und NICHT ueberschrieben, bis 24 h um sind (`pruefeTagSlot`,
+      pur: leer/wartet/reif/verfallen; 96-h-Verfall deckt das Wochenende
+      Fr→Mo ~66 h). Nach Reife: Bewertung gegen den aktuellen Kurs mit
+      derselben Kosten-/Richtungsrechnung, Aggregation laeuft ueber die
+      bestehende Varianten-Schiene (meta/signalShadow + Heartbeat). 6
+      Tests mit echten Datumsgrenzen. Erste belastbare Zahlen nach ~1
+      Woche (SCHATTEN_MIN_N=200 braucht mehrere Handelstage).
+
 - [x] **Vorfall 05.08., 15:30: Depot und Buch auseinandergelaufen —
       Depot-Uebernahme gebaut.** Zur US-Oeffnung kaufte die Engine ueber das
       Order-Routing real bei Alpaca (16 Fills, ~119.500 $, sequenzielle
