@@ -201,3 +201,61 @@ describe('Mindestmenge', () => {
     expect(SCHATTEN_MIN_N).toBeGreaterThan(30);
   });
 });
+
+/* ── Rohbewegung getrennt von den Kosten (05.08.) ──────────────────────────
+ *
+ * Anlass war eine Live-Messung: −0,496 % Kante je Signal. Diese Zahl lässt
+ * zwei völlig verschiedene Deutungen zu — „Signal ist Rauschen" oder
+ * „Signal trägt Information, aber weniger als die TEUERSTE Klasse kostet".
+ * Nachts handelt nur Krypto (0,50 % Roundtrip); die gemessene Kante war
+ * praktisch identisch mit den Kosten dieser einen Klasse.
+ */
+describe('Rohbewegung vs. Netto-Kante', () => {
+  it('trennt „Richtung stimmt" von „Gebühren fressen sie"', () => {
+    // Ein Signal mit +0,3 % Bewegung in Krypto (0,5 % Roundtrip): netto
+    // negativ, roh positiv. Genau der Fall, den die Netto-Zahl allein
+    // verschweigt.
+    const beitrag = bewerteSchattenSignal(
+      { direction: 'buy', price: 100, atMs: 0 },
+      100.3,
+      0.005,
+    );
+    const a = werteSchattenAus(addiereSchatten(undefined, beitrag));
+    expect(a.kantePct).toBeLessThan(0);
+    expect(a.rohPct).toBeGreaterThan(0);
+    expect(a.rohPct).toBeCloseTo(0.3, 4);
+  });
+
+  it('teilt die Rohsumme durch den EIGENEN Zähler, nicht durch n', () => {
+    // Der Fallstrick beim Nachrüsten: Ein Altbestand trägt 170 Signale und
+    // keine Rohsumme. Käme jetzt EIN frisches Signal mit +1 % dazu, wäre
+    // 1/171 ≈ 0,006 % — eine gegen null verzerrte Zahl, an der aber die
+    // Entscheidung hängt. Mit eigenem Nenner sind es die vollen 1 %.
+    const alt = { n: 170, summePct: -84, treffer: 91 };
+    const neu = addiereSchatten(
+      alt,
+      bewerteSchattenSignal({ direction: 'buy', price: 100, atMs: 0 }, 101, 0),
+    );
+    const a = werteSchattenAus(neu);
+    expect(a.n).toBe(171);
+    expect(a.nRoh).toBe(1);
+    expect(a.rohPct).toBeCloseTo(1, 4);
+  });
+
+  it('meldet „nicht gemessen" statt einer erfundenen Null', () => {
+    // Altbestand ohne Rohsumme darf nicht wie „Bewegung war null" aussehen —
+    // das würde eine funktionierende Signalquelle zu Unrecht erledigen.
+    const a = werteSchattenAus({ n: 170, summePct: -84, treffer: 91 });
+    expect(a.kantePct).toBeCloseTo(-0.4941, 3);
+    expect(a.rohPct).toBeNull();
+    expect(a.nRoh).toBe(0);
+  });
+
+  it('dreht die Rohbewegung beim Verkaufssignal mit', () => {
+    // Ein fallender Kurs ist beim sell ein Treffer — auch roh.
+    const b = bewerteSchattenSignal({ direction: 'sell', price: 100, atMs: 0 }, 99, 0.001);
+    const a = werteSchattenAus(addiereSchatten(undefined, b));
+    expect(a.rohPct).toBeCloseTo(1, 4);
+    expect(a.treffer).toBe(1);
+  });
+});

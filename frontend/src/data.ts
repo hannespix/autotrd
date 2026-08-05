@@ -815,7 +815,15 @@ export interface HealthDoc {
    */
   regimeDirs?: { buy?: number; sell?: number; hold?: number };
   /** Kante beider Lesarten nebeneinander, kumuliert (meta/signalShadow). */
-  signalSchatten?: Record<string, { n: number; kantePct: number | null } | null> | null;
+  /**
+   * Schatten-Kante je Signal-Variante. `rohPct` ist die Bewegung VOR
+   * Gebühren — sie trennt „Signal ist Rauschen" von „Gebühren fressen die
+   * Information" und fehlt bei Aggregaten aus der Zeit vor dem 05.08.
+   */
+  signalSchatten?: Record<
+    string,
+    { n: number; kantePct: number | null; rohPct?: number | null } | null
+  > | null;
   konten?: Record<string, number>;
   regime?: { state?: string; vix?: number | null; realizedVolPct?: number | null; aboveSma200?: boolean | null };
   kalender?: { bevorstehend?: string | null; stundenBis?: number | null; turnOfMonth?: boolean; fomcVeraltet?: boolean };

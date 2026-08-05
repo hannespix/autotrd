@@ -80,6 +80,39 @@ export interface SchattenKlasse {
   summePct: number;
   /** Wie oft die Richtung stimmte (vor Kosten). */
   treffer: number;
+  /**
+   * Summe der ROHEN Bewegungen in Prozent — vor Abzug der Kosten (05.08.).
+   *
+   * Der Grund für dieses Feld ist ein konkreter Messbefund: Der
+   * Signal-Schatten zeigte nach vier Stunden eine Kante von −0,496 % je
+   * Signal. Diese Zahl allein lässt zwei völlig verschiedene Deutungen zu:
+   *
+   *   1. Das Signal trägt keine Information — die Bewegung ist Rauschen.
+   *   2. Das Signal trägt Information, aber weniger, als die TEUERSTE
+   *      Anlageklasse an Gebühren verlangt.
+   *
+   * Der Unterschied ist entscheidend, weil nachts nur Krypto handelt
+   * (0,50 % Roundtrip) und tags Aktien (0,10 %). Eine Signalquelle mit
+   * +0,3 % Rohbewegung verliert in Krypto und gewinnt in Aktien — als
+   * Netto-Summe über beide sieht sie nur nach „verliert" aus.
+   *
+   * Fehlendes Feld = Altbestand. Die Auswertung liefert dann `null` statt
+   * einer erfundenen Zahl.
+   */
+  summeRohPct?: number;
+  /**
+   * Wie viele Signale in `summeRohPct` eingeflossen sind — eigener Zähler,
+   * NICHT `n`.
+   *
+   * Der Grund ist ein Fehler, der beim Nachrüsten fast passiert wäre: Ein
+   * Aggregat aus der Zeit vor dem Feld trägt 170 Signale und keine
+   * Rohsumme. Teilte man die frische Rohsumme durch dieses `n`, käme eine
+   * systematisch gegen null verzerrte Zahl heraus — und zwar genau die
+   * Zahl, an der die Entscheidung hängt, ob eine Signalquelle Information
+   * trägt. Mit eigenem Nenner stört der Altbestand nicht; er wird nur
+   * nicht mitgezählt.
+   */
+  nRoh?: number;
 }
 
 export interface SchattenAuswertung {
@@ -89,6 +122,17 @@ export interface SchattenAuswertung {
   trefferquote: number | null;
   /** Mittlere Netto-Kante je Signal in Prozent; null ohne Signale. */
   kantePct: number | null;
+  /** Wie viele Signale in `rohPct` eingeflossen sind (eigener Nenner). */
+  nRoh: number;
+  /**
+   * Mittlere ROHE Bewegung je Signal in Prozent, vor Kosten; null ohne
+   * Signale oder wenn das Aggregat noch aus der Zeit vor dem Feld stammt.
+   *
+   * Positiv bei negativer `kantePct` heißt: Die Richtung stimmt, die
+   * Gebühren fressen sie. Das ist eine Kostenfrage (andere Klasse, längerer
+   * Horizont) und keine Absage an die Signalquelle.
+   */
+  rohPct: number | null;
 }
 
 /** Ein Beitrag in ein laufendes Aggregat einrechnen. */
@@ -105,18 +149,31 @@ export function addiereSchatten(
     // Richtungsaussage messen, nicht die Gebührenordnung. Beides zusammen
     // in eine Zahl zu werfen, verschleiert, welcher Teil das Problem ist.
     treffer: k.treffer + (beitrag.rohPct > 0 ? 1 : 0),
+    summeRohPct: Math.round(((k.summeRohPct ?? 0) + beitrag.rohPct) * 10_000) / 10_000,
+    nRoh: (k.nRoh ?? 0) + 1,
   };
 }
 
 /** Aggregat in lesbare Kennzahlen umrechnen. */
 export function werteSchattenAus(k: SchattenKlasse | undefined): SchattenAuswertung {
-  if (!k || k.n <= 0) return { n: 0, treffer: 0, trefferquote: null, kantePct: null };
+  if (!k || k.n <= 0) {
+    return { n: 0, treffer: 0, trefferquote: null, kantePct: null, nRoh: 0, rohPct: null };
+  }
   const r4 = (x: number): number => Math.round(x * 10_000) / 10_000;
   return {
     n: k.n,
     treffer: k.treffer,
     trefferquote: r4(k.treffer / k.n),
     kantePct: r4(k.summePct / k.n),
+    // Ein Aggregat aus der Zeit vor dem Feld hat KEINE Rohsumme. Dann `null`
+    // statt 0: „nicht gemessen" ist eine andere Aussage als „Bewegung null",
+    // und die zweite würde eine Signalquelle zu Unrecht erledigen.
+    // Geteilt wird durch den EIGENEN Zähler, nicht durch `n` — siehe nRoh.
+    nRoh: k.nRoh ?? 0,
+    rohPct:
+      k.summeRohPct === undefined || !k.nRoh || k.nRoh <= 0
+        ? null
+        : r4(k.summeRohPct / k.nRoh),
   };
 }
 
