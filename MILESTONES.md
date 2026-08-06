@@ -1974,9 +1974,29 @@ Sekunden-Preis-Alerts, `trade_updates`.
       kommt aus dem schon geladenen User-Doc). Broker-Karte zeigt die
       letzten 5 Wechsel als aufklappbaren „Verlauf".
 
-- [ ] Order-Statusmaschine: `bracket`/`oco`/`trailing_stop`, `notional`,
-      `extended_hours`, TIF; `cancelOrder`/`replaceOrder`;
-      `engine.stopLoss/takeProfit` mappen auf Bracket-Orders
+- [x] **Bracket Stufe 1 ✅ (06.08., Owner-Go): Schutz-Stop beim Broker.**
+      Schließt die 5-MINUTEN-LÜCKE: Nach jedem gerouteten Einstieg legt die
+      Engine eine echte GTC-Stop-Order an (`core/schutzStop.ts`), die die
+      PROZENT-Stops spiegelt (Stop-Loss + Trailing, der engere gilt;
+      richtungsgerecht gerundet — der Schutz wird nur weiter, nie enger).
+      Der Scan pflegt sie je Takt (`pflegeSchutz`): ausgelöster Stop →
+      Broker-Fill wird als Risk-Exit gebucht (kein zweiter Verkauf);
+      verschwundene Order → neu angelegt; Trailing ab 0,1 % Verbesserung
+      ersetzt (Schwelle gegen Dauerrauschen). Eigene Exits stornieren die
+      Order ZWINGEND vorher (Alpaca reserviert die Stücke); meldet der
+      Storno „nicht stornierbar", wird der Stop-Fill gebucht statt short zu
+      gehen. Parameter kommen aus den vorhandenen Konto-Einstellungen —
+      kein OSINT-Raten; die Exit-Stil-Messung justiert später nach
+      (Owner: „nach Schätzung einstellen, nach Messung nachjustieren" —
+      die Schätzung IST hier die eigene Konfiguration). Grenzen ehrlich:
+      nur US-Session-Klassen, nur ganze Stücke (Bruchstücke bleiben
+      Engine-only), nur Prozent-Stops (ATR ist scan-zeitabhängig);
+      Teilausführung → Rest storniert, gefüllter Teil gebucht. 21 Tests.
+- [ ] Order-Statusmaschine (Vollstufe): `bracket`/`oco`, `notional`,
+      `extended_hours`, TIF; `engine.stopLoss/takeProfit` mappen je
+      SIGNALTYP auf Bracket-Orders — erst NACH der Exit-Stil-Messung
+      (die Messung bestimmt, was die Brackets tun sollen: Trailing für
+      Trend, festes Ziel für Umkehr — oder eben nicht)
 - [ ] Cloud-Run-`streamer`, Modul Quotes: IEX-/Krypto-Websocket auf das
       Hot-Set (Presence via `admin/presence`, 60-s-Heartbeat), Drossel
       ≤ 1 Write/2 s/Symbol + Change-Filter, `min-instances` 1/0 per
@@ -2366,7 +2386,7 @@ A und B oben.
 
 ## MU — UI-Pflege & kollektives Lernen (Owner-Aufträge 06.08.)
 
-- [ ] **MU1: UI aufräumen.** Historisch übriggebliebene Fragmente,
+- [x] **MU1 ✅ (06.08., PRs #180–182): UI aufräumen.** Historisch übriggebliebene Fragmente,
       datumsbezogene Erklärungen („seit 05.08.", „Fund vom 28.07." u. ä.
       in sichtbaren Texten) und redundante Elemente/Tooltips identifizieren
       und korrigieren. Vorgehen: kompletter Text-Audit von index.html-Shell
@@ -2421,3 +2441,22 @@ A und B oben.
       Handeingabe). Erwartung: Bei Konten-Start 28.07. fällt die erste
       mögliche Kür frühestens auf ~11.08. (14-Tage-Schwelle) — bis dahin
       zeigt die Karte ehrlich den Anwärter-Stand.
+
+- [ ] **MU4: Options-Loadouts (Owner-Idee 06.08.: „vorgefertigte
+      Grundeinstellungen zur Auswahl … gerne auch ein bisschen lustig, im
+      nerdigen Fachjargon … eigene Loadouts erstellbar/speicherbar").**
+      Preset-Karten mit Titel + kurzer Charakterisierung, die beim
+      Auswählen die Trading-Optionen voreinstellen. Design-Leitplanken:
+      1. Loadout = STARTWERTE, keine Fessel — Auto-Tuner, Klassen-Regler
+         und eigene Änderungen laufen danach normal weiter (Evolution
+         bleibt an, wie vom Owner ausdrücklich gewünscht).
+      2. Baut vollständig auf der MU3-Mechanik auf (vergleicheEinstellungen
+         als Vorschau-Diff, uebernehmeEinstellungen, saveStrategy-
+         Validierung) — keine zweite Übernahme-Maschinerie.
+      3. Humor darf Risiko nie verschleiern: Unter jedem Witz-Titel steht
+         die ehrliche Risiko-Charakterisierung (Hebel, Shorts, Frequenz);
+         ein „YOLO"-Loadout trägt dieselben Warnhinweise wie der Regler,
+         den es verstellt. Und KEIN Loadout verspricht Rendite — welche
+         Werte Geld verdienen, weiß heute niemand (Messung läuft).
+      4. Eigene Loadouts: aktuellen Stand benennen + speichern
+         (users/{uid}/loadouts), laden, löschen.

@@ -555,6 +555,167 @@ export async function alpacaOrder(
 }
 
 /**
+ * Schutz-Stop-Order absenden (Bracket Stufe 1, 06.08.) — `type: stop`,
+ * `gtc`-Gültigkeit.
+ *
+ * `gtc` und nicht `day`, mit Absicht: Der Schutz-Stop ist das
+ * Sicherheitsnetz ZWISCHEN den Scans und über Nacht — eine `day`-Order
+ * verfiele um Börsenschluss, und die Lücke, die sie schließen soll, wäre
+ * jede Nacht wieder offen. Bruchstück-Mengen akzeptiert Alpaca bei
+ * Stop-Orders nicht; das Runden auf ganze Stücke entscheidet der Aufrufer
+ * (`planeSchutzStop`), nicht diese Funktion.
+ */
+export async function alpacaStopOrder(
+  mode: BrokerMode,
+  order: {
+    symbol: string;
+    side: 'buy' | 'sell';
+    qty: number;
+    stopPreis: number;
+    clientOrderId: string;
+  },
+  schluessel: AlpacaSchluessel | null = null,
+  fetchImpl: FetchLike = fetch,
+): Promise<OrderErgebnis> {
+  const d = (await alpacaFetch(
+    mode,
+    '/v2/orders',
+    schluessel,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        symbol: order.symbol,
+        qty: String(order.qty),
+        side: order.side,
+        type: 'stop',
+        stop_price: String(order.stopPreis),
+        time_in_force: 'gtc',
+        client_order_id: order.clientOrderId,
+      }),
+    },
+    fetchImpl,
+  )) as Record<string, unknown>;
+  return {
+    id: String(d['id'] ?? ''),
+    clientOrderId: String(d['client_order_id'] ?? order.clientOrderId),
+    status: String(d['status'] ?? ''),
+    symbol: String(d['symbol'] ?? order.symbol),
+    qty: zahl(d['qty']),
+    side: order.side,
+    ausfuehrungskurs: zahl(d['filled_avg_price']),
+  };
+}
+
+/** Zustand einer einzelnen Order — Grundlage der Schutz-Stop-Pflege. */
+export interface AlpacaOrderStand {
+  id: string;
+  status: string;
+  /** Bereits ausgeführte Menge (bei Teilausführung < Order-Menge). */
+  filledQty: number;
+  /** Mittlerer Ausführungskurs; 0, solange nichts ausgeführt ist. */
+  filledAvgPreis: number;
+}
+
+/**
+ * Eine Order abfragen. `null` heißt: Alpaca kennt sie nicht (404) — nach
+ * einem Konto-Reset beim Broker oder wenn die Kennung aus einer anderen
+ * Umgebung stammt. Der Aufrufer behandelt das wie „Order weg" und legt
+ * den Schutz neu an; alle anderen Fehler werfen weiter.
+ */
+export async function alpacaOrderAbfragen(
+  mode: BrokerMode,
+  orderId: string,
+  schluessel: AlpacaSchluessel | null = null,
+  fetchImpl: FetchLike = fetch,
+): Promise<AlpacaOrderStand | null> {
+  let d: Record<string, unknown>;
+  try {
+    d = (await alpacaFetch(
+      mode,
+      `/v2/orders/${encodeURIComponent(orderId)}`,
+      schluessel,
+      {},
+      fetchImpl,
+    )) as Record<string, unknown>;
+  } catch (err) {
+    if (err instanceof AlpacaFehler && err.status === 404) return null;
+    throw err;
+  }
+  return {
+    id: String(d['id'] ?? orderId),
+    status: String(d['status'] ?? ''),
+    filledQty: zahl(d['filled_qty']),
+    filledAvgPreis: zahl(d['filled_avg_price']),
+  };
+}
+
+/**
+ * Order stornieren — mit ehrlichem Befund statt Exception-Raten.
+ *
+ * `weg` (404) und `storniert` sind für den Aufrufer gleichwertig: Die Order
+ * hält keine Stücke mehr fest. `nicht_stornierbar` (422) ist der wichtige
+ * Fall — meist heißt es „schon ausgeführt", und der Aufrufer MUSS dann den
+ * Order-Stand abfragen, bevor er selbst verkauft: Die Stücke sind unter
+ * Umständen schon weg, ein eigener Verkauf würde einen ungewollten Short
+ * eröffnen.
+ */
+export async function alpacaOrderStornieren(
+  mode: BrokerMode,
+  orderId: string,
+  schluessel: AlpacaSchluessel | null = null,
+  fetchImpl: FetchLike = fetch,
+): Promise<'storniert' | 'weg' | 'nicht_stornierbar'> {
+  try {
+    await alpacaFetch(
+      mode,
+      `/v2/orders/${encodeURIComponent(orderId)}`,
+      schluessel,
+      { method: 'DELETE' },
+      fetchImpl,
+    );
+    return 'storniert';
+  } catch (err) {
+    if (err instanceof AlpacaFehler) {
+      if (err.status === 404) return 'weg';
+      if (err.status === 422) return 'nicht_stornierbar';
+      // 204 ohne Body läuft bei uns in den JSON-Parse-Fehler — die Order IST
+      // dann storniert. Erkennbar am fehlenden HTTP-Status im Fehler.
+      if (err.status === undefined && err.message.includes('Unlesbare Antwort')) {
+        return 'storniert';
+      }
+    }
+    throw err;
+  }
+}
+
+/**
+ * Stop-Preis einer offenen Order ersetzen (Trailing-Nachziehen).
+ *
+ * Alpaca legt beim Ersetzen eine NEUE Order an — die zurückgegebene Kennung
+ * ersetzt die alte im Positions-Dokument. Scheitert das Ersetzen, bleibt
+ * die alte Order unverändert stehen: Der Schutz ist dann nur weiter weg
+ * als gewollt, nie verschwunden.
+ */
+export async function alpacaOrderErsetzen(
+  mode: BrokerMode,
+  orderId: string,
+  stopPreis: number,
+  schluessel: AlpacaSchluessel | null = null,
+  fetchImpl: FetchLike = fetch,
+): Promise<string> {
+  const d = (await alpacaFetch(
+    mode,
+    `/v2/orders/${encodeURIComponent(orderId)}`,
+    schluessel,
+    { method: 'PATCH', body: JSON.stringify({ stop_price: String(stopPreis) }) },
+    fetchImpl,
+  )) as Record<string, unknown>;
+  const neueId = String(d['id'] ?? '');
+  if (!neueId) throw new AlpacaFehler('Ersetzen ohne neue Order-Kennung');
+  return neueId;
+}
+
+/**
  * Auf die Ausführung warten, statt sie anzunehmen (M13).
  *
  * ── Warum das nötig ist ───────────────────────────────────────────────────

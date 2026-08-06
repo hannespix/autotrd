@@ -69,12 +69,15 @@ import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 import { aktualisiereBoersenUhr, boersenOffen, offenMitUhr } from '../core/marktUhr.js';
 import { computeIndicatorSnapshot, computeSignal } from '../core/engine.js';
 import {
+  executePaperTrade,
   executeTrade,
   resolveBrokerMode,
   riskExitReason,
   type MarginBudget,
 } from '../core/broker.js';
 import { abgleichFuerKonto } from '../core/brokerAbgleich.js';
+import { brokerVerbindung } from '../core/orderRouting.js';
+import { pflegeSchutz } from '../core/schutzStop.js';
 import { reifeFuerKonto } from '../core/liveGate.js';
 import { accessLevelOf, mayTrade } from '../core/access.js';
 import {
@@ -637,6 +640,55 @@ async function executeUserTrades(
               .doc(symbol)
               .set({ highWater: peak }, { merge: true })
               .catch(() => undefined);
+          }
+        }
+        // Schutz-Stop-Pflege (Bracket Stufe 1, 06.08.): BEVOR die eigenen
+        // Stops prüfen. Hat der Broker-Stop ZWISCHEN den Scans ausgelöst,
+        // ist die Position dort schon verkauft — dann wird der echte Fill
+        // gebucht statt ein zweiter Verkauf versucht. Steht die Order noch,
+        // zieht die Pflege sie dem Trailing nach (nach der Wasserstands-
+        // Fortschreibung oben, damit das frische Hoch zählt).
+        if (pos.broker === true && pos.schutz?.orderId) {
+          const verbindung = await brokerVerbindung(uid);
+          if (verbindung) {
+            const befund = await pflegeSchutz(
+              verbindung,
+              uid,
+              symbol,
+              pos,
+              resolveRisk(clamped.engine, cls),
+              cls,
+              scanId,
+            );
+            if (befund.stand === 'gefuellt') {
+              const r = await executePaperTrade(
+                {
+                  uid,
+                  symbol,
+                  side: isShort ? 'buy' : 'sell',
+                  price: befund.fillPreis,
+                  qty: befund.fillQty,
+                  fillPreis: befund.fillPreis,
+                  source: 'engine',
+                  riskExit: 'stop_loss',
+                  assetClass: cls,
+                  brokerOrderId: befund.orderId,
+                },
+                clamped,
+              );
+              if (r.executed) {
+                executed += 1;
+                positions.delete(symbol);
+                engineCooldowns[symbol] = now.toISOString();
+                cooldownUpdates.push(new FieldPath('engineCooldowns', symbol), now.toISOString());
+                logger.info(`Broker-Stop gebucht ${uid} ${symbol} @ ${befund.fillPreis}`);
+                continue;
+              }
+              // Fill bekannt, Buchung gescheitert: NICHT weiterprüfen — ein
+              // Engine-Exit würde denselben Bestand ein zweites Mal verkaufen.
+              logger.error(`Broker-Stop-Fill NICHT gebucht ${uid} ${symbol}: ${r.reason ?? '?'}`);
+              continue;
+            }
           }
         }
         const reason = riskExitReason(pos, data.price, {

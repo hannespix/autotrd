@@ -774,6 +774,20 @@ export interface Position {
   broker?: boolean;
   /** Order-Kennung des ÖFFNENDEN Fills beim Broker — Brücke ins Depot. */
   brokerOrderId?: string;
+  /**
+   * Schutz-Stop beim BROKER (Bracket Stufe 1, 06.08.).
+   *
+   * Eine echte GTC-Stop-Order im Depot, die die 5-MINUTEN-LÜCKE schließt:
+   * Bisher prüfte nur der Scan die Stops — zwischen zwei Scans war die
+   * Position beim Broker ungeschützt. Der Schutz-Stop spiegelt die
+   * PROZENT-Stops der Engine (Stop-Loss + Trailing, den engeren von
+   * beiden) und wird vom Scan nachgezogen; die Engine bleibt die primäre
+   * Exit-Instanz. WICHTIG: Vor jedem eigenen Exit MUSS die Order storniert
+   * werden — Alpaca reserviert die Stücke für die offene Stop-Order, ein
+   * Verkauf daran vorbei wird abgelehnt. Fehlend = kein Broker-Stop
+   * (Buch-Position, Bruchstück, ATR-only oder Anlage fehlgeschlagen).
+   */
+  schutz?: { orderId: string; stopPreis: number; qty: number } | null;
 }
 
 export interface Trade {
