@@ -28,6 +28,7 @@ export { savePrediction } from './callable/prediction.js';
 export { trade } from './callable/trade.js';
 export { resetWallet } from './callable/reset.js';
 export { taxReport } from './callable/taxReport.js';
+export { fxNachtragen } from './callable/fxBackfill.js';
 export { brokerStatus } from './callable/brokerStatus.js';
 export { connectBroker } from './callable/connectBroker.js';
 export { adoptBroker } from './callable/adoptBroker.js';

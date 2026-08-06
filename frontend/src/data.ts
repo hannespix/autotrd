@@ -291,6 +291,18 @@ export async function callTaxReport(jahr: number, echtgeld: boolean): Promise<Ta
   return r.data as TaxReportResult;
 }
 
+/** Fehlende Wechselkurse historischer Trades einfrieren (Kurs des Handelstages). */
+export interface FxNachtragErgebnis {
+  ok: true;
+  geprueft: number;
+  nachgetragen: number;
+  ohneKurs: number;
+}
+export async function callFxNachtragen(): Promise<FxNachtragErgebnis> {
+  const r = await httpsCallable(fns(), 'fxNachtragen')({});
+  return r.data as FxNachtragErgebnis;
+}
+
 export interface BrokerStatusResult {
   ok: true;
   modus: 'paper' | 'live';

@@ -110,10 +110,11 @@ function alsSteuerTrade(d: FirebaseFirestore.QueryDocumentSnapshot): SteuerTrade
     // fällt auf, als dass Papierhandel als steuerpflichtig ausgewiesen wird.
     paper: paper !== false,
     ...(typeof fee === 'number' ? { fee } : {}),
-    // Eingefrorener EZB-Kurs (M12b). Wird NUR gelesen, nie ergänzt: Ein
-    // nachträglich geholter Kurs würde historische Ergebnisse verschieben,
-    // und zwar unbemerkt — dieselbe Zahl sähe im März anders aus als im
-    // Januar. Fehlt er, zählt der Bericht den Vorgang als `fxLuecken`.
+    // Eingefrorener EZB-Kurs (M12b). Der BERICHT liest ihn nur und ergänzt
+    // nie — sonst sähe dieselbe Zahl im März anders aus als im Januar.
+    // Fehlt er, zählt der Vorgang als `fxLuecken`; das AUSDRÜCKLICHE
+    // Nachtragen (fxNachtragen, 06.08.) friert dann den unveränderlichen
+    // Kurs des Handelstages ein — einmalig, nie überschreibend.
     ...(typeof fxRate === 'number' && fxRate > 0
       ? {
           fxRate,

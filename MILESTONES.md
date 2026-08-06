@@ -1260,6 +1260,25 @@ Die fachlichen Fallen, die das Datenmodell abbilden MUSS:
       sobald auch nur ein Vorgang keinen Kurs hatte — eine Teilsumme sähe
       vollständig aus und wäre zu klein. `fxLuecken` zählt jetzt genau
       diese Vorgänge (vorher jeden USD-Trade, also immer alle).
+
+      **Nachtrag (Owner-Prüffrage 06.08.: „muss der Umrechnungskurs zum
+      Handelszeitpunkt zusätzlich gespeichert werden?"):** Wird er — seit
+      M12b friert JEDER Buchungspfad (Engine, manuell, Momentum, geroutete
+      Fills, Broker-Stop-Buchungen, Depot-Übernahme mit historischem
+      filledAt) den EZB-Kurs des Handelstages ein. Neu geschlossen wurde
+      die letzte Lücke: `fxNachtragen` (Callable + Knopf im
+      fxLuecken-Hinweis) friert für ALT-Trades ohne Kursfelder den
+      unveränderlichen Kurs ihres Handelstages nach — nur wo nichts steht,
+      nie überschreibend, mit `fxNachgetragenAm`-Stempel. Die Regel „nie
+      neu holen" schützt vor beweglichen Zahlen; der Referenzkurs eines
+      vergangenen Tages ist aber ein Fakt, kein beweglicher Wert.
+      Ehrliche Restpunkte für den Steuerberater (dokumentiert, nicht
+      gebaut): Dividenden/Zinsen fehlen bis zum activities-Sync (M13
+      Punkt 3) — bei Paper egal, bei Echtgeld Pflicht vor der ersten
+      Erklärung; und ob USD-Cash-Bewegungen selbst als privates
+      Veräußerungsgeschäft (§ 23) zu erfassen sind, ist eine Frage an den
+      Steuerberater — das System erfasst Wertpapiergeschäfte, keine
+      Währungs-Anschaffungsketten des Verrechnungskontos.
 - [~] **FIFO-Lots.** *(Rechnung fertig 04.08. — `shared/src/tax.ts`
       `fifoVerrechnen` zerlegt Verkäufe lotweise, Long und Short in
       getrennten Schlangen, mit Tests. OFFEN bleibt das Datenmodell: die
