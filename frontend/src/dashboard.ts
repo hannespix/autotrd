@@ -2835,8 +2835,41 @@ function renderLoadouts(): void {
       <div class="lo-risk">${esc(risiko)}</div>
       <button class="btn btn-n" data-lo="${key}" style="margin-top:6px">Ansehen</button>
     </div>`;
+  // Alpha-Leech (Owner-Idee 06.08.): die Bewährten Einstellungen (MU3) als
+  // Community-Karte IM Loadout-Raster — derselbe Snapshot, derselbe
+  // Übernahme-Weg, nur dort sichtbar, wo man nach Loadouts sucht. Solange
+  // kein Konto die Belege erfüllt, zeigt die Karte ehrlich den Anwärter.
+  let bpKarte = '';
+  if (bestPractice?.stand === 'gekuert' && bestPractice.einstellungen && bestPractice.kennzahlen) {
+    const kz = bestPractice.kennzahlen;
+    bpKarte = karte(
+      'bp',
+      'Alpha-Leech (Community)',
+      'Warum selbst tüfteln? Kopiert das Setup des Kontos, dessen ENGINE ' +
+        'gerade am besten läuft — kollektives Lernen zum Nulltarif. GG EZ.',
+      `Belegt statt gehypt: Kante ${kz.kantePct ?? '–'} % je Dollar über ${kz.n} ` +
+        `Engine-Trades in ${Math.round(kz.zeitraumTage)} Tagen. Erfolg von gestern ` +
+        'garantiert nichts für morgen — Details unten bei „Bewährte Einstellungen".',
+      false,
+    );
+  } else if (bestPractice) {
+    const anw = bestPractice.anwaerter;
+    bpKarte = `<div class="lo-card lo-off">
+      <div class="lo-head"><b>Alpha-Leech (im Anflug)</b></div>
+      <div class="hint">Kopiert künftig das Setup des besten Engine-Kontos —
+        sobald eines die Belege liefert (≥30 Engine-Trades, ≥14 Tage,
+        positive Kante nach Gebühren).</div>
+      <div class="lo-risk">${esc(
+        anw
+          ? `Bester Anwärter: Kante ${anw.kennzahlen.kantePct ?? '–'} % (${anw.kennzahlen.n} Trades)` +
+              (anw.fehlt.length > 0 ? ` — es fehlt: ${anw.fehlt.join(', ')}` : '')
+          : 'Noch keine Auswertung — der erste Snapshot entsteht mit dem nächsten Tageslauf.',
+      )}</div>
+    </div>`;
+  }
   $('loGrid').innerHTML =
     LOADOUTS.map((l) => karte(`b:${l.id}`, l.titel, l.beschreibung, l.risiko, false)).join('') +
+    bpKarte +
     eigeneLoadouts
       .map((l) =>
         karte(
@@ -2873,6 +2906,7 @@ function ladeBestPractice(): void {
     .then((bp) => {
       bestPractice = bp;
       renderBestPractice();
+      renderLoadouts(); // Alpha-Leech-Karte im Loadout-Raster nachziehen
     })
     .catch(() => {
       $('bpBody').textContent = 'Auswertung gerade nicht lesbar.';
@@ -7551,11 +7585,22 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     const btn = ziel.closest('[data-lo]') as HTMLElement | null;
     if (!btn || !st) return;
     const key = btn.dataset['lo'] ?? '';
-    const eigen = key.startsWith('e:');
-    const id = key.slice(2);
-    const quelle = eigen
-      ? eigeneLoadouts.find((l) => l.id === id)
-      : LOADOUTS.find((l) => l.id === id);
+    // Alpha-Leech: der MU3-Snapshot als Loadout. Der Hebel wird auf den
+    // EIGENEN gesetzt — die Bewährten Einstellungen tragen bewusst keinen
+    // (Broker-Konfiguration bleibt beim Konto), also darf die Übernahme
+    // ihn auch nicht heimlich auf 1× zurückstellen.
+    const quelle =
+      key === 'bp'
+        ? bestPractice?.einstellungen
+          ? {
+              titel: 'Alpha-Leech (Community)',
+              einstellungen: bestPractice.einstellungen,
+              hebel: st.strategy.broker.leverage ?? 1,
+            }
+          : undefined
+        : key.startsWith('e:')
+          ? eigeneLoadouts.find((l) => l.id === key.slice(2))
+          : LOADOUTS.find((l) => l.id === key.slice(2));
     if (!quelle) return;
     loGewaehlt = {
       titel: 'titel' in quelle ? quelle.titel : quelle.name,

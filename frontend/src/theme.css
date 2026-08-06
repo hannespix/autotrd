@@ -912,6 +912,8 @@ input { accent-color: var(--ac); }
 .lo-del:hover { color: var(--rd); }
 /* Die Risiko-Zeile ist der ehrliche Teil unter dem Witz — sichtbar abgesetzt. */
 .lo-risk { font-size: 11px; color: var(--yl, #d9a441); }
+/* Alpha-Leech vor der ersten Kür: sichtbar, aber erkennbar noch nicht scharf. */
+.lo-off { opacity: 0.7; border-style: dashed; }
 .lo-card .btn { align-self: flex-start; }
 
 /* Kapital-Regler je Anlageklasse (MG2).
