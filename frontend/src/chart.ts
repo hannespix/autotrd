@@ -332,22 +332,23 @@ export async function buildPriceChart(
   let fixSpanne: number | null = null;
   // Geglättete Nachführung (Owner 06.08.: „runder und flüssiger, nicht so
   // ruckelnd"): Ohne Glättung springt die Skalen-MITTE hart, sobald eine
-  // Extrem-Kerze ins Fenster ein- oder austritt. Mitte und Spanne laufen
-  // deshalb als EMA dem Ziel hinterher — je Frame ein Schritt (Zeit-Gate,
-  // weil ALLE Serien der rechten Skala den Provider im selben Durchlauf
-  // fragen und sonst mehrfach pro Frame gerückt würde — mit verschiedenen
-  // Bereichen je Serie). Der Nachlauf-Ticker rollt die Bewegung nach dem
-  // letzten Pan-Ereignis sanft aus, statt mitten im Weg stehen zu bleiben.
+  // Extrem-Kerze ins Fenster ein- oder austritt. NUR die Mitte läuft als
+  // EMA dem Ziel hinterher — die SPANNE bleibt strikt eingefroren
+  // (Owner-Nachschliff: eine mitatmende Spanne las sich wie „Zoom und Pan
+  // kombiniert"; gewollt war allein die rundere Bewegung. Ausbruchskerzen
+  // dürfen dafür oben/unten aus dem Fenster laufen — das IST fester Zoom;
+  // ein Klick auf „Y fix" friert jederzeit am aktuellen Fenster neu ein).
+  // Je Frame ein EMA-Schritt (Zeit-Gate, weil ALLE Serien der rechten Skala
+  // den Provider im selben Durchlauf fragen); der Nachlauf-Ticker rollt die
+  // Bewegung nach dem letzten Pan-Ereignis sanft aus.
   const Y_GLAETTUNG = 0.3;
   let glattMitte: number | null = null;
-  let glattSpanne: number | null = null;
   let yCacheZeit = -1;
   let yCacheWert: { min: number; max: number } | null = null;
   let nachlaufAktiv = false;
   const fixReset = (): void => {
     fixSpanne = null;
     glattMitte = null;
-    glattSpanne = null;
     yCacheZeit = -1;
     yCacheWert = null;
   };
@@ -378,19 +379,12 @@ export async function buildPriceChart(
     }
     if (!(hi > lo)) return null;
     fixSpanne ??= (hi - lo) * 1.15;
-    const zielSpanne = Math.max(fixSpanne, (hi - lo) * 1.05);
     const zielMitte = (lo + hi) / 2;
     glattMitte = glattMitte === null ? zielMitte : glattMitte + (zielMitte - glattMitte) * Y_GLAETTUNG;
-    glattSpanne = glattSpanne === null ? zielSpanne : glattSpanne + (zielSpanne - glattSpanne) * Y_GLAETTUNG;
     // Ziel noch nicht erreicht? Nächsten Frame nachziehen (sanftes Ausrollen).
-    if (
-      Math.abs(zielMitte - glattMitte) > zielSpanne * 0.002 ||
-      Math.abs(zielSpanne - glattSpanne) > zielSpanne * 0.002
-    ) {
-      armNachlauf();
-    }
+    if (Math.abs(zielMitte - glattMitte) > fixSpanne * 0.002) armNachlauf();
     yCacheZeit = jetzt;
-    yCacheWert = { min: glattMitte - glattSpanne / 2, max: glattMitte + glattSpanne / 2 };
+    yCacheWert = { min: glattMitte - fixSpanne / 2, max: glattMitte + fixSpanne / 2 };
     return yCacheWert;
   };
   type YInfo = { priceRange: { minValue: number; maxValue: number } } | null;
