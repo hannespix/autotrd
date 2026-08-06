@@ -997,6 +997,16 @@ function layout(email: string): string {
     <div class="dsheet" style="width:min(560px,100%)">
       <button class="dclose" data-close="options">✕</button>
       <h3>Optionen</h3>
+      <!-- UI-Audit Punkt 6 (Owner-Go 06.08.): elf Themen in einem Scroll-
+           Container waren nur per Suchen-und-Scrollen bedienbar. Vier Reiter
+           gruppieren nach Aufgabe; die Inhalte selbst sind unverändert. -->
+      <div class="otabs" id="owTabs">
+        <button class="otab" data-otab="anzeige">Anzeige</button>
+        <button class="otab active" data-otab="trading">Trading</button>
+        <button class="otab" data-otab="broker">Broker &amp; Echtgeld</button>
+        <button class="otab" data-otab="konto">Konto &amp; Steuer</button>
+      </div>
+      <div data-opane="anzeige" hidden>
       <div class="wl-sec">Optionale Elemente</div>
       <label class="opt-row"><input type="checkbox" id="ouPred" />
         <span><b>Prognose-Pfeil</b> — eigene Kurs-Erwartung im Chart einzeichnen;
@@ -1016,6 +1026,8 @@ function layout(email: string): string {
       <div id="ouGroups" class="opt-panels"></div>
       <p class="hint">Abgewählte Gruppen verschwinden aus Markt-Browser und Watchlist-Picker
         (nur Anzeige — die Daten aller Gruppen laufen serverseitig weiter).</p>
+      </div>
+      <div data-opane="trading">
       <div class="wl-sec">Paper-Wallet · Grundeinstellungen</div>
       <!-- Startkapital wirkt an ZWEI Stellen verschieden — ohne diesen
            Hinweis wartet man auf einen Kontostand, der sich nie ändert. -->
@@ -1115,12 +1127,15 @@ function layout(email: string): string {
       </div>
       <div id="owAdvice"></div>
       <div class="hint" id="advMsg"></div>
-      <div class="wl-sec" style="margin-top:14px">Konto</div>
-      <div class="row" style="align-items:center;gap:10px">
-        <span class="hint" style="flex:1">Angemeldet als <b>${email.replace(/[<>&]/g, '')}</b></span>
-        <button class="btn btn-n" id="logoutBtn">Abmelden</button>
+      <div class="wl-sec" style="margin-top:14px">Tages-Notbremse ${iBtn('dailyLossLimit')}</div>
+      <p class="hint" id="bkrState">—</p>
+      <div class="row" style="align-items:center;gap:8px">
+        <button class="btn btn-n" id="bkrReset">Notbremse lösen</button>
+        <span class="hint" id="bkrMsg"></span>
       </div>
-      <div class="wl-sec" style="margin-top:14px">Echtgeld-Anbindung ${iBtn('brokerStatus')}</div>
+      </div>
+      <div data-opane="broker" hidden>
+      <div class="wl-sec">Echtgeld-Anbindung ${iBtn('brokerStatus')}</div>
       <p class="hint">Prüft die Verbindung zum Broker, <b>ohne zu handeln</b>, und
         gleicht das eigene Buch mit dem Depot beim Broker ab. Echtgeld verlangt
         zwei Schalter an zwei Orten — ein Klick allein schaltet nichts scharf.</p>
@@ -1224,6 +1239,13 @@ function layout(email: string): string {
         Wer über Nacht stoppt und Positionen offen lässt, hat keinen Stop-Loss
         mehr. Für längere Pausen deshalb besser: Positionen von Hand schließen,
         dann stoppen.</p>
+      </div>
+      <div data-opane="konto" hidden>
+      <div class="wl-sec">Konto</div>
+      <div class="row" style="align-items:center;gap:10px">
+        <span class="hint" style="flex:1">Angemeldet als <b>${email.replace(/[<>&]/g, '')}</b></span>
+        <button class="btn btn-n" id="logoutBtn">Abmelden</button>
+      </div>
       <div class="wl-sec" style="margin-top:14px">Steuer-Export ${iBtn('taxReport')}</div>
       <p class="hint">Paart Käufe und Verkäufe nach <b>FIFO</b>, rechnet Haltedauern
         und sortiert die Ergebnisse in die Töpfe, die das deutsche Recht getrennt
@@ -1238,12 +1260,6 @@ function layout(email: string): string {
         <button class="btn btn-n" id="txGo">Bericht erstellen</button>
       </div>
       <div id="txOut" style="margin-top:8px"></div>
-      <div class="wl-sec" style="margin-top:14px">Tages-Notbremse ${iBtn('dailyLossLimit')}</div>
-      <p class="hint" id="bkrState">—</p>
-      <div class="row" style="align-items:center;gap:8px">
-        <button class="btn btn-n" id="bkrReset">Notbremse lösen</button>
-        <span class="hint" id="bkrMsg"></span>
-      </div>
       <div class="wl-sec" style="margin-top:14px">Neu anfangen ${iBtn('resetWallet')}</div>
       <p class="hint">Setzt <b>Handelshistorie, offene Positionen, Kontostand und
         Kennzahlen</b> auf null zurück. Kursdaten, Prognose-Trefferquoten und deine
@@ -1264,6 +1280,7 @@ function layout(email: string): string {
         </label>
       </div>
       <div class="hint" id="rsMsg"></div>
+      </div>
     </div>
   </div>
 
@@ -7133,6 +7150,19 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   }
   $('owClsAuto').addEventListener('change', () => {
     $('optMsg').textContent = '⚠ Noch nicht gespeichert';
+  });
+  // Reiter des Options-Modals (UI-Audit Punkt 6): reine Sichtbarkeit,
+  // kein Zustand — beim nächsten Öffnen startet wieder „Trading".
+  $('owTabs').addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('.otab') as HTMLElement | null;
+    if (!btn) return;
+    const ziel = btn.dataset['otab'];
+    document
+      .querySelectorAll('#owTabs .otab')
+      .forEach((b) => b.classList.toggle('active', b === btn));
+    document.querySelectorAll('#optModal [data-opane]').forEach((p) => {
+      (p as HTMLElement).hidden = (p as HTMLElement).dataset['opane'] !== ziel;
+    });
   });
 
   // „Vorschlag übernehmen" (MG2): setzt die Regler auf die empfohlenen Werte

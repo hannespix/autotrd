@@ -816,6 +816,18 @@ input, textarea, select, [contenteditable='true'] {
 @media (max-width: 760px) { .chart-h-drag { display: none; } }
 
 /* Options-Modal (⚙): optionale Elemente + Paper-Wallet-Basics */
+/* Reiter (UI-Audit Punkt 6): vier Aufgabenbereiche statt einer Scroll-Wand. */
+.otabs { display: flex; gap: 6px; margin: 10px 0 12px; flex-wrap: wrap; }
+.otab {
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--bd);
+  background: transparent;
+  color: var(--t2);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.otab.active { background: var(--ac); color: #fff; border-color: transparent; }
 .opt-row { display: flex; gap: 10px; align-items: flex-start; font-size: 12px; color: var(--t2); margin: 8px 0; cursor: pointer; }
 .opt-row input { margin-top: 2px; accent-color: var(--ac); }
 .opt-row b { color: var(--t1); }
