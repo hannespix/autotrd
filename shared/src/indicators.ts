@@ -226,6 +226,55 @@ export function aggregateBars(bars: AggBar[], minutes: number): AggBar[] {
   return out;
 }
 
+/** Tages-Bar mit ISO-Handelstag — Eingabe der Wochen-/Monats-Bündelung. */
+export interface DailyAggBar {
+  date: string; // YYYY-MM-DD
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+/** Montag der ISO-Woche eines Handelstags (UTC-Rechnung, rein string-basiert). */
+export function wochenMontag(date: string): string {
+  const t = Date.parse(`${date}T00:00:00Z`);
+  const dow = (new Date(t).getUTCDay() + 6) % 7; // Mo=0 … So=6
+  return new Date(t - dow * 86_400_000).toISOString().slice(0, 10);
+}
+
+/**
+ * Tages-Bars zu Wochen- oder Monatskerzen bündeln (Zoom-Kontinuum 06.08.).
+ *
+ * Bucket-Schlüssel: ISO-Wochen-Montag bzw. Kalendermonat. Die KERZE trägt als
+ * Zeit den ERSTEN echten Handelstag des Buckets — nicht den Kalenderanfang:
+ * Lightweight Charts baut die Achse aus den Serien-Zeitpunkten, und ein
+ * synthetischer Montag, an dem nie gehandelt wurde (Feiertag), wäre ein
+ * erfundener Zeitpunkt, auf dem Marker und Crosshair säßen. Open = erster,
+ * Close = letzter Handelstag, High/Low = Extrema, Volumen summiert. Pure;
+ * aufsteigende Eingabe-Reihenfolge bleibt erhalten.
+ */
+export function aggregateDailyBars<T extends DailyAggBar>(bars: T[], bucket: 'week' | 'month'): T[] {
+  const out: T[] = [];
+  let cur: T | null = null;
+  let key = '';
+  for (const b of bars) {
+    const k = bucket === 'week' ? wochenMontag(b.date) : b.date.slice(0, 7);
+    if (cur === null || k !== key) {
+      if (cur !== null) out.push(cur);
+      cur = { ...b };
+      key = k;
+    } else {
+      cur.high = Math.max(cur.high, b.high);
+      cur.low = Math.min(cur.low, b.low);
+      cur.close = b.close;
+      cur.volume += b.volume;
+    }
+  }
+  if (cur !== null) out.push(cur);
+  return out;
+}
+
 /** Letzter Nicht-null-Wert einer Serie (Analogon zu `.dropna().iloc[-1]`). */
 export function lastValue(series: Series): number | null {
   for (let i = series.length - 1; i >= 0; i--) {

@@ -26,6 +26,7 @@ import {
   setDoc,
   startAfter,
   updateDoc,
+  where,
   documentId,
   type QueryDocumentSnapshot,
   type Unsubscribe,
@@ -1321,22 +1322,57 @@ export async function loadBarsOnce(symbol: string): Promise<ChartBar[]> {
   return snap.docs.map((d) => ({ date: d.id, ...(d.data() as Omit<ChartBar, 'date'>) }));
 }
 
+/** ISO-Tag `tage` Kalendertage vor heute (UTC) — Schlüssel-Arithmetik für
+ *  die ohlc5m-Chunk-Queries (Doc-IDs sind ET-Tage im Format YYYY-MM-DD). */
+export function tagVorTagen(tage: number): string {
+  return new Date(Date.now() - tage * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** Ein geladener 5m-Chunk: ET-Handelstag + dessen Bars (aufsteigend). */
+export interface IntradayChunk {
+  day: string;
+  bars: import('./chart.js').IntradayChartBar[];
+}
+
+/**
+ * 5m-Chunks eines Schlüssel-Fensters [vonTag, bisTag] laden (Zoom-Kontinuum
+ * 06.08.). Die Doc-IDs sind ET-Tage — ein Range-Scan über die documentId
+ * liest also GENAU die gewünschten Tage statt der ganzen Collection. Das ist
+ * die Grundlage des dynamischen Nachladens: Die Collection wächst um ein Doc
+ * pro Handelstag, und ein Voll-Scan würde jeden Chart-Refresh mit der
+ * gesamten Intraday-Geschichte bezahlen.
+ */
+export async function loadIntradayChunks(
+  symbol: string,
+  vonTag: string,
+  bisTag: string,
+): Promise<IntradayChunk[]> {
+  const q = query(
+    collection(db(), 'market', symbol, 'ohlc5m'),
+    where(documentId(), '>=', vonTag),
+    where(documentId(), '<=', bisTag),
+    orderBy(documentId()),
+  );
+  const snap = await getDocs(q);
+  return snap.docs.map((d) => {
+    const data = d.data() as { bars?: Array<{ t: number; o: number; h: number; l: number; c: number; v: number }> };
+    return {
+      day: d.id,
+      bars: (data.bars ?? []).map((b) => ({ time: b.t, open: b.o, high: b.h, low: b.l, close: b.c, volume: b.v })),
+    };
+  });
+}
+
 /** 5m-Intraday-Bars der letzten N Handelstage aus market/{sym}/ohlc5m
- *  (Chunk-Doc je ET-Tag; Chart-Feedback 24.07.: „minutengenaue Daten"). */
+ *  (Chunk-Doc je ET-Tag; Chart-Feedback 24.07.: „minutengenaue Daten").
+ *  Cutoff mit Wochenend-/Feiertagspuffer, dann auf die letzten N Handelstage
+ *  geschnitten — liest ein paar Tage mehr als nötig, nie die ganze Collection. */
 export async function loadIntraday(
   symbol: string,
   days: number,
 ): Promise<import('./chart.js').IntradayChartBar[]> {
-  const q = query(collection(db(), 'market', symbol, 'ohlc5m'), orderBy(documentId()));
-  const snap = await getDocs(q);
-  const chunks = snap.docs.slice(-Math.max(days, 1));
-  const out: import('./chart.js').IntradayChartBar[] = [];
-  for (const d of chunks) {
-    const data = d.data() as { bars?: Array<{ t: number; o: number; h: number; l: number; c: number; v: number }> };
-    for (const b of data.bars ?? []) {
-      out.push({ time: b.t, open: b.o, high: b.h, low: b.l, close: b.c, volume: b.v });
-    }
-  }
-  return out;
+  const n = Math.max(days, 1);
+  const chunks = await loadIntradayChunks(symbol, tagVorTagen(Math.ceil(n * 1.6) + 4), '9999-12-31');
+  return chunks.slice(-n).flatMap((c) => c.bars);
 }
 
