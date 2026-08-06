@@ -38,6 +38,7 @@ import type {
 } from '../../../shared/src/index.js';
 import { fxFelder } from './fx.js';
 import { assetAuskunft, brokerVerbindung, routeOrder } from './orderRouting.js';
+import { schutzAnlegen, schutzAufheben } from './schutzStop.js';
 
 /**
  * Margin-Budget, das der AUFRUFER mitbringt (Scan bzw. Puls).
@@ -369,6 +370,36 @@ export async function executeTrade(
 
   const klasse = req.assetClass ?? classify(req.symbol);
 
+  /* Schutz-Stop aus dem Weg räumen (Bracket Stufe 1, 06.08.).
+   *
+   * Alpaca RESERVIERT die Stücke für die offene Stop-Order — ohne Storno
+   * würde der eigene Exit mit „insufficient qty" abgelehnt. Und wenn der
+   * Storno „nicht stornierbar" meldet, hat der Stop meist schon verkauft:
+   * Dann wird DESSEN Fill gebucht (als Risk-Exit zum echten Stop-Kurs)
+   * statt ein zweiter Verkauf versucht, der einen ungewollten Short
+   * eröffnen würde. */
+  const schutz = schliesst && position.broker === true ? (position.schutz ?? null) : null;
+  if (schutz?.orderId) {
+    const aufhebung = await schutzAufheben(verbindung, req.uid, req.symbol, schutz).catch(
+      (err: unknown) => {
+        logger.warn(`schutzAufheben ${req.uid} ${req.symbol} fehlgeschlagen`, err);
+        return { stand: 'frei' } as const;
+      },
+    );
+    if (aufhebung.stand === 'gefuellt') {
+      return executePaperTrade(
+        {
+          ...req,
+          qty: aufhebung.fillQty,
+          fillPreis: aufhebung.fillPreis,
+          brokerOrderId: aufhebung.orderId,
+          riskExit: req.riskExit ?? 'stop_loss',
+        },
+        strategy,
+      );
+    }
+  }
+
   /* Eigenschaften vom Broker statt geraten (Alpaca-Sync 05.08.).
    *
    * `fractionable`: Bisher hieß „Bruchstücke erlaubt" schlicht „Klasse ist
@@ -453,6 +484,22 @@ export async function executeTrade(
         at: new Date().toISOString(),
       })
       .catch((err: unknown) => logger.error(`unbookedFills ${req.uid} nicht schreibbar`, err));
+  }
+
+  /* Schutz-Stop anlegen (Bracket Stufe 1): nur nach einem ERÖFFNENDEN,
+   * GEBUCHTEN Fill. Liest die Position frisch (Nachkauf → Gesamtmenge) und
+   * wirft nie — ein fehlgeschlagenes Sicherheitsnetz darf den gebuchten
+   * Trade nicht rückwirkend scheitern lassen; die Engine-Stops gelten ja
+   * weiter. */
+  if (buchung.executed && eroeffnet) {
+    await schutzAnlegen(
+      verbindung,
+      req.uid,
+      req.symbol,
+      resolveRisk(strategy.engine, klasse),
+      klasse,
+      laufId,
+    );
   }
   return buchung;
 }
