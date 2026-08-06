@@ -2361,3 +2361,49 @@ A und B oben.
 > Coding-Loop aus MILESTONES.md am ersten nicht abgehakten Milestone.
 > Verifiziere jede Abnahme wirklich, hake erledigte Tasks ab und committe
 > klein mit deutschen Messages.
+
+---
+
+## MU — UI-Pflege & kollektives Lernen (Owner-Aufträge 06.08.)
+
+- [ ] **MU1: UI aufräumen.** Historisch übriggebliebene Fragmente,
+      datumsbezogene Erklärungen („seit 05.08.", „Fund vom 28.07." u. ä.
+      in sichtbaren Texten) und redundante Elemente/Tooltips identifizieren
+      und korrigieren. Vorgehen: kompletter Text-Audit von index.html-Shell
+      + dashboard.ts-Templates + infotips.ts (Datums-Grep + Sichtprüfung je
+      Karte), Redundanz-Liste gegen den aktuellen Toolstand (deckt sich
+      teils mit dem offenen UI-Audit-Befund: Feld-Duplikate Strategie-Karte
+      ↔ Options-Modal, Sizing-Basis „Startkapital", Momentum-Modus).
+      Grundsatz: Erklärtexte beschreiben das JETZT, nicht die Historie —
+      die gehört in MILESTONES/Commits.
+
+- [ ] **MU2: Onboarding-Tour.** Kurze visuelle Hilfe, die beim ersten
+      Login (und jederzeit über ?-Knopf) die wichtigen Bereiche vorstellt:
+      Watchlist/Charts → Trading-Engine & Start/Stop → Performance-Karte →
+      Optionen/Regler → Broker-Anbindung → „Warum handelt die Engine
+      (nicht)?". Leichtgewichtig (eigenes Overlay mit Spotlight auf die
+      echte UI, keine Fremdbibliothek), Schritt-Titel + 2 Sätze je Station,
+      Fortschritt in settings.ui.tourGesehen, mobil funktionsfähig.
+
+- [ ] **MU3: „Bewährte Einstellungen" — kollektives Lernen sichtbar
+      machen (Owner-Idee: beste Konto-Einstellungen täglich speichern +
+      manuell übernehmbar).** Design-Entscheidungen nach ehrlicher
+      Diskussion:
+      1. NICHT die Konto-Equity kürt den Besten, sondern die
+         ENGINE-Attribution (nur source='engine'-Trades) — sonst adelt ein
+         manueller Glückstreffer die falschen Einstellungen (genau der vom
+         Owner benannte Einwand).
+      2. Glücks-Schutz: Kandidat braucht ≥30 Engine-Trades UND ≥14 Tage
+         Historie UND positive Kante — der Tages-Beste bei 5 Konten ist
+         sonst überwiegend Varianz, nicht Können.
+      3. Täglicher Snapshot des Gewinners (engine-Parameter + Regler,
+         OHNE Watchlist/Kapital — kontextgebunden) anonymisiert nach
+         meta/bestPractice, mit Kennzahlen (Kante, n, Zeitraum) daneben.
+      4. Übernahme IMMER manuell (Ein-Klick mit Vorschau-Diff gegen die
+         eigenen Einstellungen). KEINE Automatik: Wenn alle Konten auf
+         den Besten springen, stirbt die Vielfalt — und mit ihr das
+         kollektive Lernen, das aus unterschiedlichen Einstellungen seine
+         Information zieht (Monokultur beendet Evolution, statt sie zu
+         beschleunigen). Der Auto-Tuner lernt bereits kollektiv über
+         Priors aus allen Konten; MU3 macht dieses Lernen SICHTBAR und
+         freiwillig übernehmbar, ersetzt es aber nicht.
