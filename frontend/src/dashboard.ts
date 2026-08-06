@@ -509,18 +509,15 @@ function layout(email: string): string {
         <div class="row">
           <div class="fld"><label class="lbl">RSI Kauf &lt; ${iBtn('rsiBuy')}</label><input id="sRsiLo" class="inp" type="number"></div>
           <div class="fld"><label class="lbl">RSI Verkauf &gt; ${iBtn('rsiSell')}</label><input id="sRsiHi" class="inp" type="number"></div>
-        </div>
-        <div class="row">
-          <div class="fld"><label class="lbl">Scan (min) ${iBtn('scan')}</label><input id="sInt" class="inp" type="number"></div>
-          <div class="fld"><label class="lbl">Min Konfluenz ${iBtn('konfluenz')}</label><input id="sConf" class="inp" type="number"></div>
           <div class="fld"><label class="lbl">Periode ${iBtn('periode')}</label>
             <select id="sPeriod" class="sel"><option>3mo</option><option>6mo</option><option>1y</option></select></div>
         </div>
-        <div class="row">
-          <div class="fld"><label class="lbl">Max Pos % ${iBtn('maxPos')}</label><input id="sMaxP" class="inp" type="number"></div>
-          <div class="fld"><label class="lbl">Stop % ${iBtn('stopLoss')}</label><input id="sSL" class="inp" type="number" step="0.1"></div>
-          <div class="fld"><label class="lbl">Take % ${iBtn('takeProfit')}</label><input id="sTP" class="inp" type="number" step="0.1"></div>
-        </div>
+        <!-- UI-Audit Punkt 4 (Owner-Go 06.08.): Risiko- und Takt-Felder leben
+             NUR noch im Options-Modal. Zwei Eingabeorte für dieselben Werte
+             hießen: Wer zuletzt speichert, gewinnt — und die andere Ansicht
+             zeigt bis zum Neuladen veraltete Zahlen. -->
+        <p class="hint">Positionsgröße, Stops und Scan-Takt stellst du in den
+          <b>Optionen (⚙)</b> ein — hier lebt nur, was die Signale formt.</p>
         <p id="stratErr" class="error" hidden></p>
         <button class="btn btn-g" id="saveBtn">Speichern</button>
         <div class="hint" id="saveHint"></div>
@@ -1024,10 +1021,8 @@ function layout(email: string): string {
            Hinweis wartet man auf einen Kontostand, der sich nie ändert. -->
       <p class="hint">Das <b>Startkapital</b> ändert deinen aktuellen Kontostand
         <b>nicht</b>. Es greift erst bei „Neu anfangen" ganz unten — dann wird das
-        Wallet auf diesen Betrag zurückgesetzt. Sofort wirksam ist es nur als
-        Rechenbasis für die Positionsgröße, und auch das nur, wenn unten
-        <b>Größenbasis „Startkapital"</b> eingestellt ist (Standard ist
-        „Kontostand").</p>
+        Wallet auf diesen Betrag zurückgesetzt. Die Positionsgrößen rechnen
+        immer mit dem <b>verfügbaren Cash</b>, nie mit dem Startkapital.</p>
       <div class="opt-grid" id="owGrid">
         <div class="opt-sub">Kapital &amp; Positionsgröße</div>
         <label>Startkapital $
@@ -1040,11 +1035,6 @@ function layout(email: string): string {
           <input id="owMaxPos" class="inp st-num" type="number" min="1" max="${MAX_OPEN_POSITIONS_CAP}" step="1" /></label>
         <label>Ruhiger Sockel % ${iBtn('corePct')}
           <input id="owCore" class="inp st-num" type="number" min="0" max="${CORE_PCT_CAP}" step="5" /></label>
-        <label>Sizing-Basis ${iBtn('sizingBase')}
-          <select id="owSizing" class="inp st-num">
-            <option value="balance">Verfügbarer Cash</option>
-            <option value="initial">Startkapital (fix)</option>
-          </select></label>
         <label>Hebel (Margin) ${iBtn('leverage')}
           <select id="owLev" class="inp st-num">
             <option value="1">1× — kein Hebel (Standard)</option>
@@ -1065,11 +1055,6 @@ function layout(email: string): string {
         <label>ATR-Ziel (×ATR) ${iBtn('atrTake')}
           <input id="owAtrT" class="inp st-num" type="number" min="0" step="0.5" /></label>
         <div class="opt-sub">Signale &amp; Takt</div>
-        <label>Handels-Modus ${iBtn('engineMode')}
-          <select id="owMode" class="inp st-num">
-            <option value="confluence">Konfluenz (5-Min-Signale)</option>
-            <option value="momentum">Momentum (wöchentlich)</option>
-          </select></label>
         <label>Signal-Zeitrahmen ${iBtn('signalTimeframe')}
           <select id="owTf" class="inp st-num">
             <option value="intraday">5-Minuten (aktiv)</option>
@@ -1096,9 +1081,6 @@ function layout(email: string): string {
           <input type="checkbox" id="owNewsVeto" />
           <span>News-Veto (Einstiege bei harten Events aussetzen) ${iBtn('newsVeto')}</span></label>
         <div class="opt-sub">Experimente</div>
-        <label class="opt-row" style="align-items:center">
-          <input type="checkbox" id="owFcSolo" />
-          <span>Prognose darf allein entscheiden ${iBtn('forecastSolo')}</span></label>
         <label class="opt-row" style="align-items:center">
           <input type="checkbox" id="owShort" />
           <span>Shorten erlauben (Leerverkäufe) ${iBtn('allowShort')}</span></label>
@@ -2268,13 +2250,17 @@ function optionsFormStrategy(): Strategy {
     broker: {
       ...basis.broker,
       initialCapital: num('owCap'),
-      sizingBase: ($('owSizing') as HTMLSelectElement).value === 'initial' ? 'initial' : 'balance',
+      // UI-Audit Punkt 5 (Owner-Go 06.08.): Cash-Sizing ist die einzige
+      // Basis — die fixe Startkapital-Tranche ließ Käufe grundlos scheitern.
+      sizingBase: 'balance',
       leverage: Math.min(MAX_LEVERAGE, Math.max(1, num('owLev') || 1)),
     },
     engine: {
       ...basis.engine,
       maxPositionPct: num('owMax'),
-      mode: ($('owMode') as HTMLSelectElement).value === 'momentum' ? 'momentum' : 'confluence',
+      // Der exklusive Momentum-Modus ist im „Ruhigen Sockel %" aufgegangen
+      // (Kern-Satellit) — kein Konto nutzte ihn mehr (Heartbeat momentum=0).
+      mode: 'confluence',
       riskPerTradePct: Math.min(MAX_RISK_PER_TRADE_PCT, Math.max(0, num('owRisk'))),
       maxOpenPositions: Math.min(
         MAX_OPEN_POSITIONS_CAP,
@@ -2300,7 +2286,9 @@ function optionsFormStrategy(): Strategy {
       minConfluence: Math.max(1, num('owMinC')),
       exitConfluence: Math.max(1, num('owExitC')),
       minEdgeMultiple: Math.min(10, Math.max(0, num('owEdge'))),
-      forecastSolo: ($('owFcSolo') as HTMLInputElement).checked,
+      // Kein Allein-Entscheidungsrecht für die Prognose mehr — ihre gemessene
+      // Genauigkeit trägt es nicht; sie stimmt als EINE Stimme weiter mit.
+      forecastSolo: false,
       timeframe: ($('owTf') as HTMLSelectElement).value === 'daily' ? 'daily' : 'intraday',
       allowShort: ($('owShort') as HTMLInputElement).checked,
       newsVeto: ($('owNewsVeto') as HTMLInputElement).checked,
@@ -2641,7 +2629,6 @@ function openOptions(): void {
   ($('ouGrid') as HTMLInputElement).checked = st.ui.chartGrid;
   ($('ouSub') as HTMLInputElement).checked = st.ui.subPanels;
   ($('owCap') as HTMLInputElement).value = String(st.strategy.broker.initialCapital);
-  ($('owSizing') as HTMLSelectElement).value = st.strategy.broker.sizingBase ?? 'balance';
   ($('owMax') as HTMLInputElement).value = String(st.strategy.engine.maxPositionPct);
   ($('owRisk') as HTMLInputElement).value = String(
     st.strategy.engine.riskPerTradePct ?? DEFAULT_RISK_PER_TRADE_PCT);
@@ -2662,7 +2649,6 @@ function openOptions(): void {
   ($('owHold') as HTMLInputElement).value = String(st.strategy.engine.maxHoldDays ?? 0);
   ($('owAtrS') as HTMLInputElement).value = String(st.strategy.engine.atrStopMult ?? 0);
   ($('owAtrT') as HTMLInputElement).value = String(st.strategy.engine.atrTakeMult ?? 0);
-  ($('owMode') as HTMLSelectElement).value = st.strategy.engine.mode ?? 'confluence';
   ($('owTf') as HTMLSelectElement).value = st.strategy.signals.timeframe ?? 'intraday';
   ($('owCd') as HTMLInputElement).value = String(st.strategy.engine.cooldownMin ?? 15);
   ($('owMinC') as HTMLInputElement).value = String(st.strategy.signals.minConfluence);
@@ -2670,7 +2656,6 @@ function openOptions(): void {
     st.strategy.signals.exitConfluence ?? Math.max(1, st.strategy.signals.minConfluence - 1));
   ($('owEdge') as HTMLInputElement).value = String(
     st.strategy.signals.minEdgeMultiple ?? MIN_EDGE_MULTIPLE);
-  ($('owFcSolo') as HTMLInputElement).checked = st.strategy.signals.forecastSolo === true;
   ($('owShort') as HTMLInputElement).checked = st.strategy.signals.allowShort === true;
   ($('owNewsVeto') as HTMLInputElement).checked = st.strategy.signals.newsVeto !== false; // fehlend = an
   ($('owRegimeGate') as HTMLInputElement).checked = st.strategy.signals.regimeGate !== false; // fehlend = an
@@ -4505,12 +4490,7 @@ function scheduleWsSave(): void {
 function fillForm(s: Strategy): void {
   ($('sRsiLo') as HTMLInputElement).value = String(s.indicators.rsi.thresholdBuy);
   ($('sRsiHi') as HTMLInputElement).value = String(s.indicators.rsi.thresholdSell);
-  ($('sInt') as HTMLInputElement).value = String(s.engine.checkIntervalMin);
-  ($('sConf') as HTMLInputElement).value = String(s.signals.minConfluence);
   ($('sPeriod') as HTMLSelectElement).value = s.signals.period;
-  ($('sMaxP') as HTMLInputElement).value = String(s.engine.maxPositionPct);
-  ($('sSL') as HTMLInputElement).value = String(s.engine.stopLossPct);
-  ($('sTP') as HTMLInputElement).value = String(s.engine.takeProfitPct);
   renderEngineBadge(s.engine.running);
 }
 
@@ -4863,15 +4843,11 @@ function renderStrategyChips(): void {
 
 function formStrategy(): Strategy {
   const s = st!.strategy;
+  // Risiko- und Takt-Werte kommen UNVERÄNDERT aus der gespeicherten
+  // Strategie — seit dem UI-Audit (Punkt 4) ist das Options-Modal ihr
+  // einziger Eingabeort. Diese Karte formt nur noch die Signale.
   return {
     ...s,
-    engine: {
-      ...s.engine,
-      checkIntervalMin: Number(($('sInt') as HTMLInputElement).value) || 5,
-      maxPositionPct: Number(($('sMaxP') as HTMLInputElement).value) || 10,
-      stopLossPct: Number(($('sSL') as HTMLInputElement).value) || 2,
-      takeProfitPct: Number(($('sTP') as HTMLInputElement).value) || 4,
-    },
     indicators: {
       ...s.indicators,
       rsi: {
@@ -4882,7 +4858,6 @@ function formStrategy(): Strategy {
     },
     signals: {
       ...s.signals,
-      minConfluence: Number(($('sConf') as HTMLInputElement).value) || 2,
       period: ($('sPeriod') as HTMLSelectElement).value || '3mo',
     },
   };
