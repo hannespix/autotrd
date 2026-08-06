@@ -3868,7 +3868,13 @@ async function rebuildChart(): Promise<void> {
   // Auto-Auflösung + nahtlose Historie: sichtbare Spanne beobachten (debounced)
   st.chart?.onVisibleRangeChange((range) => {
     if (autoResTimer !== null) window.clearTimeout(autoResTimer);
-    const nearLeftEdge = range !== null && range.from < 12;
+    // Vorausschauend nachladen (Owner 06.08.: „früher nachladen, nicht erst
+    // wenn man an den Rand kommt"): Schwelle = anderthalb Bildschirmbreiten
+    // vor der Datenkante — der Nachschub ist da, bevor man die Kante sieht.
+    // Nach jedem Prepend rückt range.from um die neuen Bars nach rechts;
+    // die Kette lädt also genau so lange, bis der Puffer steht.
+    const nearLeftEdge =
+      range !== null && range.from < Math.max(60, (range.to - range.from) * 1.5);
     autoResTimer = window.setTimeout(() => {
       autoResTimer = null;
       maybeAutoSwitch();

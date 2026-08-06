@@ -330,7 +330,40 @@ export async function buildPriceChart(
   // abgeschnitten — es weitet vorübergehend, ohne die Spanne zu ratschen.
   let yModus: YMode = 'auto';
   let fixSpanne: number | null = null;
+  // Geglättete Nachführung (Owner 06.08.: „runder und flüssiger, nicht so
+  // ruckelnd"): Ohne Glättung springt die Skalen-MITTE hart, sobald eine
+  // Extrem-Kerze ins Fenster ein- oder austritt. Mitte und Spanne laufen
+  // deshalb als EMA dem Ziel hinterher — je Frame ein Schritt (Zeit-Gate,
+  // weil ALLE Serien der rechten Skala den Provider im selben Durchlauf
+  // fragen und sonst mehrfach pro Frame gerückt würde — mit verschiedenen
+  // Bereichen je Serie). Der Nachlauf-Ticker rollt die Bewegung nach dem
+  // letzten Pan-Ereignis sanft aus, statt mitten im Weg stehen zu bleiben.
+  const Y_GLAETTUNG = 0.3;
+  let glattMitte: number | null = null;
+  let glattSpanne: number | null = null;
+  let yCacheZeit = -1;
+  let yCacheWert: { min: number; max: number } | null = null;
+  let nachlaufAktiv = false;
+  const fixReset = (): void => {
+    fixSpanne = null;
+    glattMitte = null;
+    glattSpanne = null;
+    yCacheZeit = -1;
+    yCacheWert = null;
+  };
+  const armNachlauf = (): void => {
+    if (nachlaufAktiv) return;
+    nachlaufAktiv = true;
+    requestAnimationFrame(() => {
+      nachlaufAktiv = false;
+      // applyOptions stößt einen Neu-Autoscale an — der Provider läuft
+      // erneut und die EMA macht ihren nächsten Schritt Richtung Ziel.
+      if (yModus === 'fix') chart.priceScale('right').applyOptions({ autoScale: true });
+    });
+  };
   const fixRange = (): { min: number; max: number } | null => {
+    const jetzt = performance.now();
+    if (jetzt - yCacheZeit < 8) return yCacheWert; // ein EMA-Schritt je Frame
     const lr = chart.timeScale().getVisibleLogicalRange();
     if (!lr || cachedRows.length === 0) return null;
     const i0 = Math.max(0, Math.floor(lr.from));
@@ -345,9 +378,20 @@ export async function buildPriceChart(
     }
     if (!(hi > lo)) return null;
     fixSpanne ??= (hi - lo) * 1.15;
-    const spanne = Math.max(fixSpanne, (hi - lo) * 1.05);
-    const mitte = (lo + hi) / 2;
-    return { min: mitte - spanne / 2, max: mitte + spanne / 2 };
+    const zielSpanne = Math.max(fixSpanne, (hi - lo) * 1.05);
+    const zielMitte = (lo + hi) / 2;
+    glattMitte = glattMitte === null ? zielMitte : glattMitte + (zielMitte - glattMitte) * Y_GLAETTUNG;
+    glattSpanne = glattSpanne === null ? zielSpanne : glattSpanne + (zielSpanne - glattSpanne) * Y_GLAETTUNG;
+    // Ziel noch nicht erreicht? Nächsten Frame nachziehen (sanftes Ausrollen).
+    if (
+      Math.abs(zielMitte - glattMitte) > zielSpanne * 0.002 ||
+      Math.abs(zielSpanne - glattSpanne) > zielSpanne * 0.002
+    ) {
+      armNachlauf();
+    }
+    yCacheZeit = jetzt;
+    yCacheWert = { min: glattMitte - glattSpanne / 2, max: glattMitte + glattSpanne / 2 };
+    return yCacheWert;
   };
   type YInfo = { priceRange: { minValue: number; maxValue: number } } | null;
   const yProvider = (orig: () => YInfo): YInfo => {
@@ -515,7 +559,7 @@ export async function buildPriceChart(
       if (opts?.fit) {
         // Expliziter Fit (Symbol-/Zeitrahmen-Wechsel): Fix-Spanne neu
         // einfrieren — die alte gehört zu einem anderen Preisniveau.
-        fixSpanne = null;
+        fixReset();
         chart.priceScale('right').applyOptions({ autoScale: autoScaleOn });
         if (opts.fitTo) {
           // Sanity-Clamp (UI-Audit 25.07.): Ein programmatischer Fit darf die
@@ -641,7 +685,7 @@ export async function buildPriceChart(
     },
     setYMode(mode: YMode): void {
       yModus = mode;
-      fixSpanne = null; // beim Moduswechsel frisch am aktuellen Fenster einfrieren
+      fixReset(); // beim Moduswechsel frisch am aktuellen Fenster einfrieren
       autoScaleOn = mode !== 'frei';
       chart.priceScale('right').applyOptions({ autoScale: autoScaleOn });
     },
