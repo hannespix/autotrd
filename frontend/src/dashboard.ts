@@ -150,6 +150,7 @@ import {
   type LiveModeStatus,
   type BrokerStatusResult,
   type AbgleichVerlaufEintrag,
+  callFxNachtragen,
   callTaxReport,
   type TaxReportResult,
   resetBreaker,
@@ -1503,8 +1504,11 @@ function renderSteuerbericht(r: TaxReportResult): string {
     hinweise.push(
       `<b>${b.fxLuecken} Vorgänge ohne hinterlegten Wechselkurs.</b> Für sie steht ` +
         'in der Euro-Spalte nichts — ein aus dem Fremdwährungs-Ergebnis hochgerechneter ' +
-        'Betrag wäre steuerlich unzulässig. Betroffen sind Trades von vor dem 04.08.2026; ' +
-        'seither friert jeder Trade den EZB-Kurs seines Tages mit ein.',
+        'Betrag wäre steuerlich unzulässig. Seit dem 04.08. friert jeder Trade den ' +
+        'EZB-Kurs seines Tages mit ein; für ältere holt ' +
+        '<button class="btn btn-n" id="txFx" style="vertical-align:middle">Kurse nachtragen</button> ' +
+        'den unveränderlichen Kurs des jeweiligen Handelstages nach. Danach den ' +
+        'Bericht neu erstellen.',
     );
   } else if (b.veraeusserungen.length > 0) {
     hinweise.push(
@@ -7343,6 +7347,26 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       })
       .finally(() => {
         btn.disabled = false;
+      });
+  });
+  // Kurs-Nachtrag (06.08.): Der Knopf entsteht erst MIT dem Bericht (im
+  // fxLuecken-Hinweis) — deshalb Delegation auf dem Container statt eines
+  // Listeners auf einem Element, das es beim Verdrahten noch nicht gibt.
+  $('txOut').addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('#txFx') as HTMLButtonElement | null;
+    if (!btn) return;
+    btn.disabled = true;
+    btn.textContent = 'Trage nach …';
+    void callFxNachtragen()
+      .then((r) => {
+        btn.textContent =
+          `✓ ${r.nachgetragen} Kurse eingefroren` +
+          (r.ohneKurs > 0 ? `, ${r.ohneKurs} ohne auffindbaren Kurs` : '') +
+          ' — jetzt den Bericht neu erstellen';
+      })
+      .catch((err) => {
+        btn.disabled = false;
+        btn.textContent = (err as Error).message;
       });
   });
   $('rsGo').addEventListener('click', () => {
