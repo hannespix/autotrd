@@ -849,6 +849,36 @@ input, textarea, select, [contenteditable='true'] {
 .opt-grid .opt-sub:first-child { margin-top: 0; }
 @media (max-width: 560px) { .opt-grid { grid-template-columns: 1fr; } }
 
+/* Onboarding-Tour (MU2): Spotlight über der echten UI. Der riesige
+   box-shadow dunkelt alles außer dem Ziel ab — ein Element, kein Canvas. */
+.tour-spot {
+  position: fixed;
+  z-index: 300;
+  border-radius: 12px;
+  box-shadow: 0 0 0 9999px rgba(8, 10, 18, 0.62);
+  pointer-events: none;
+  transition: top 0.2s, left 0.2s, width 0.2s, height 0.2s;
+}
+@media (prefers-reduced-motion: reduce) { .tour-spot { transition: none; } }
+.tour-karte {
+  position: fixed;
+  z-index: 301;
+  width: min(320px, calc(100vw - 24px));
+  background: var(--c1, var(--bg, #14161f));
+  border: 1px solid var(--bd);
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+  font-size: 12.5px;
+  color: var(--t2);
+}
+.tour-karte p { margin: 6px 0 10px; line-height: 1.45; }
+.tour-kopf { display: flex; align-items: center; justify-content: space-between; color: var(--t1); }
+.tour-x { background: none; border: none; color: var(--t3); cursor: pointer; font-size: 13px; }
+.tour-x:hover { color: var(--t1); }
+.tour-fuss { display: flex; align-items: center; gap: 8px; }
+.tour-schritt { margin-right: auto; color: var(--t3); font-size: 11px; }
+
 /* Loadout-Karten (MU4): Charaktere nebeneinander, mobil untereinander. */
 .lo-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); margin-top: 6px; }
 .lo-card { border: 1px solid var(--bd); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 4px; }

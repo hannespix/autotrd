@@ -503,6 +503,9 @@ export interface UiPrefs {
   /** Marktgruppen-Filter (Taschenmesser Teil 2): Klassen-Key → sichtbar?
    *  Fehlender Eintrag = sichtbar (Opt-out-Filter, default alles an). */
   marketGroups?: Record<string, boolean>;
+  /** Onboarding-Tour (MU2) gesehen? Auch Abbrechen zählt — der ?-Knopf im
+   *  Header holt sie jederzeit zurück, aufgedrängt wird sie nur einmal. */
+  tourGesehen?: boolean;
 }
 
 export function watchUserDoc(
