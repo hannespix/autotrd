@@ -73,6 +73,12 @@ input, textarea, select, [contenteditable='true'] {
   -webkit-user-select: text;
 }
 
+/* EINE Akzentfarbe für alle Häkchen, Radios und Schieber (CSS-Audit 06.08.:
+   zwei Checkboxen im selben Raster waren browser-blau, zwei türkis — weil
+   die Farbe an vier Einzelstellen statt einmal global gesetzt war). Die
+   Einzelregeln unten dürfen bleiben, sagen aber nur noch dasselbe. */
+input { accent-color: var(--ac); }
+
 /* Zum Lesen UND Kopieren gedacht: Rechtstexte (Adressen, Paragraphen) und
    Fehlermeldungen — genau die will man weitergeben können, statt sie
    abzutippen. */
@@ -847,6 +853,25 @@ input, textarea, select, [contenteditable='true'] {
   color: var(--t3);
 }
 .opt-grid .opt-sub:first-child { margin-top: 0; }
+/* Checkbox-Zeilen (CSS-Audit 06.08.): `.opt-check` war nie definiert — im
+   Einstellungs-Raster erbten die Labels die SPALTEN-Regel der Zahlenfelder
+   (Kästchen ÜBER dem Text, zentriert). Hier die echte Definition: Kästchen
+   links neben dem Text, volle Rasterbreite, überall gleich. */
+.opt-check {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12px;
+  color: var(--t2);
+  cursor: pointer;
+  margin: 2px 0;
+}
+.opt-check input { margin-top: 2px; flex: 0 0 auto; }
+.opt-grid label.opt-check {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  align-items: flex-start;
+}
 @media (max-width: 560px) { .opt-grid { grid-template-columns: 1fr; } }
 
 /* Onboarding-Tour (MU2): Spotlight über der echten UI. Der riesige
