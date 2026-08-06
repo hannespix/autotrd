@@ -53,7 +53,7 @@ function renderLogin(): void {
     <main class="center">
       <section class="card auth-card" aria-labelledby="t">
         <h1 id="t">AUTO<span class="c-gn">TRD</span></h1>
-        <p class="sub">Paper-Trading · Aktien, Krypto &amp; mehr · kein Finanzrat</p>
+        <p class="sub">Automatisiertes Trading · Paper &amp; Broker-Anbindung · keine Anlageberatung</p>
         <form id="loginForm" novalidate>
           <label for="email">E-Mail</label>
           <input id="email" name="email" class="inp" type="email" autocomplete="email" required />
