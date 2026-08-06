@@ -1104,11 +1104,11 @@ function layout(email: string): string {
         <label class="opt-check">
           <input type="checkbox" id="owRegimeGate" />
           <span>Markt-Ampel (keine Shorts im Aufwärtstrend, Pause bei Stress) ${iBtn('regimeGate')}</span></label>
-        <label class="opt-row" style="align-items:center">
+        <label class="opt-check">
           <input type="checkbox" id="owNewsVeto" />
           <span>News-Veto (Einstiege bei harten Events aussetzen) ${iBtn('newsVeto')}</span></label>
         <div class="opt-sub">Experimente</div>
-        <label class="opt-row" style="align-items:center">
+        <label class="opt-check">
           <input type="checkbox" id="owShort" />
           <span>Shorten erlauben (Leerverkäufe) ${iBtn('allowShort')}</span></label>
       </div>
