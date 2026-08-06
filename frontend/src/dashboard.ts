@@ -77,6 +77,7 @@ import {
   type PriceLineSpec,
 } from './chart.js';
 import { ICONS } from './icons.js';
+import { starteTour, tourAktiv } from './tour.js';
 import { newsChartMarkers, newsForDay } from './newsMarkers.js';
 import {
   adminListUsers,
@@ -291,6 +292,8 @@ interface DashState {
     subPanels: boolean;
     /** Marktgruppen-Filter: Klassen-Key → false = versteckt (fehlend = sichtbar). */
     marketGroups?: Record<string, boolean>;
+    /** Onboarding-Tour (MU2) gesehen? Auch Abbrechen zählt. */
+    tourGesehen?: boolean;
   };
   /** Eingeklappte Module (nur Karten-Körper zu — Gerät-lokal). */
   collapsed: Set<string>;
@@ -497,6 +500,7 @@ function layout(email: string): string {
     <div class="spacer"></div>
     <div id="engBadge" class="badge b-off">Engine aus</div>
     <button class="hbtn" id="optBtn" title="Optionen: Elemente, Module & Paper-Wallet">${ICONS.gear}</button>
+    <button class="hbtn" id="tourBtn" title="Tour: die wichtigsten Bereiche in einer Minute">?</button>
     <button class="hbtn sb-tgl" id="sideL" title="Linke Spalte ein-/ausblenden">◧</button>
     <button class="hbtn sb-tgl" id="sideR" title="Rechte Spalte ein-/ausblenden">◨</button>
     <button class="hbtn" id="themeBtn" title="Hell/Dunkel">◐</button>
@@ -2672,6 +2676,81 @@ function renderAdvice(): void {
         <span class="hint">${v.reason}</span></span></label>`,
     )
     .join('');
+}
+
+/* ── Onboarding-Tour (MU2): sechs Stationen über der echten UI ──────────────
+ * Aufgedrängt wird sie genau EINMAL (settings.ui.tourGesehen — auch
+ * Abbrechen zählt); der ?-Knopf im Header holt sie jederzeit zurück. */
+const TOUR_STATIONEN = [
+  {
+    ziel: '.card[data-panel="strategy"]',
+    titel: 'Watchlist & Strategie',
+    text:
+      'Hier wählst du, welche Symbole die Engine beobachtet, und stellst die ' +
+      'Grundzüge deiner Strategie ein. Die Kacheln oben zeigen live die Kurse ' +
+      'deiner Auswahl.',
+  },
+  {
+    ziel: '.card[data-panel="chart"]',
+    titel: 'Chart',
+    text:
+      'Kerzen, Indikatoren, News-Marker, Prognose und deine offenen Positionen ' +
+      'in einem Fenster. Über die Kopfzeile wechselst du Zeitrahmen, Chart-Typ ' +
+      'und das Mehrfach-Raster.',
+  },
+  {
+    ziel: '.card[data-panel="engine"]',
+    titel: 'Engine: Start & Stop',
+    text:
+      'Dieser Schalter entscheidet, ob der 5-Minuten-Scan automatisch für dich ' +
+      'handelt. Alles andere — was er kauft und wie er absichert — bestimmst ' +
+      'du in den Optionen.',
+  },
+  {
+    ziel: '.card[data-panel="performance"]',
+    titel: 'Performance',
+    text:
+      'Kontostand, Gewinn und Kennzahlen wie Trefferquote und Gebührenlast — ' +
+      'ehrlich gerechnet, nach Kosten. Hier siehst du, ob deine Einstellungen ' +
+      'tragen.',
+  },
+  {
+    ziel: '#optBtn',
+    titel: 'Optionen, Loadouts & Broker',
+    text:
+      'Hinter dem Zahnrad liegen vier Reiter: Trading (alle Regler, fertige ' +
+      'Loadouts, bewährte Einstellungen), Anzeige, Broker-Anbindung und Konto. ' +
+      'Jedes Feld erklärt sich über sein ⓘ.',
+  },
+  {
+    ziel: '.card[data-panel="engineWhy"]',
+    titel: 'Warum handelt die Engine (nicht)?',
+    text:
+      'Diese Karte beantwortet die häufigste Frage: Was hat der letzte Scan ' +
+      'gesehen, und warum kam (k)ein Trade dabei heraus? Wenn dich etwas ' +
+      'wundert — zuerst hier nachsehen.',
+  },
+];
+
+function starteAppTour(): void {
+  if (tourAktiv()) return;
+  starteTour(TOUR_STATIONEN, () => {
+    if (!st || st.ui.tourGesehen === true) return;
+    st.ui = { ...st.ui, tourGesehen: true };
+    void saveUiPrefs(st.uid, st.ui);
+  });
+}
+
+let tourAutostartGeprueft = false;
+function pruefeTourAutostart(): void {
+  if (tourAutostartGeprueft || !st) return;
+  tourAutostartGeprueft = true;
+  if (st.ui.tourGesehen === true) return;
+  // Kurz warten, bis Layout und erste Daten stehen — eine Tour über ein
+  // halb gerendertes Dashboard zeigt auf springende Ziele.
+  window.setTimeout(() => {
+    if (st && st.ui.tourGesehen !== true) starteAppTour();
+  }, 1500);
 }
 
 /* ── Bewährte Einstellungen (MU3): täglicher, anonymisierter Snapshot des
@@ -6313,8 +6392,13 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         chartGrid: ui?.chartGrid !== false,
         subPanels: ui?.subPanels !== false,
         marketGroups: ui?.marketGroups ?? {},
+        // MU2: muss hier MITGEFÜHRT werden — saveUiPrefs schreibt settings.ui
+        // als GANZES Objekt; ein fehlendes Feld wäre beim nächsten Speichern
+        // gelöscht und die Tour käme bei jedem Login wieder.
+        tourGesehen: ui?.tourGesehen === true,
       };
       applyUiPrefs();
+      pruefeTourAutostart();
       const prevPalette = st.hotkeys.palette;
       st.hotkeys = { ...HOTKEY_DEFAULTS, ...(hotkeys ?? {}) };
       if (st.hotkeys.palette !== prevPalette && st.paletteDispose) {
@@ -7045,6 +7129,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
 
   // Options-Modal (⚙): Element-Toggles sofort wirksam, Wallet-Basics via saveStrategy
   $('optBtn').addEventListener('click', openOptions);
+  $('tourBtn').addEventListener('click', () => starteAppTour());
   for (const [id, key] of [
     ['ouPred', 'predArrow'],
     ['ouCmp', 'cmpOverlay'],

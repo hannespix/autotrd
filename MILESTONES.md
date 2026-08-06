@@ -2397,13 +2397,28 @@ A und B oben.
       Grundsatz: Erklärtexte beschreiben das JETZT, nicht die Historie —
       die gehört in MILESTONES/Commits.
 
-- [ ] **MU2: Onboarding-Tour.** Kurze visuelle Hilfe, die beim ersten
+- [x] **MU2 ✅ (06.08.): Onboarding-Tour.** Kurze visuelle Hilfe, die beim ersten
       Login (und jederzeit über ?-Knopf) die wichtigen Bereiche vorstellt:
       Watchlist/Charts → Trading-Engine & Start/Stop → Performance-Karte →
       Optionen/Regler → Broker-Anbindung → „Warum handelt die Engine
       (nicht)?". Leichtgewichtig (eigenes Overlay mit Spotlight auf die
       echte UI, keine Fremdbibliothek), Schritt-Titel + 2 Sätze je Station,
       Fortschritt in settings.ui.tourGesehen, mobil funktionsfähig.
+
+      Umsetzung: `frontend/src/tour.ts` — Spotlight per box-shadow-Trick
+      (ein fixiertes Element, kein Canvas), Karte mit Weiter/Zurück/✕ und
+      Schrittzähler, `prefers-reduced-motion` respektiert. Sechs Stationen
+      über der ECHTEN UI (Strategie-Karte, Chart, Engine-Schalter,
+      Performance, ⚙-Knopf inkl. Loadouts/Broker-Reitern, „Was die Engine
+      gerade tut"); unsichtbare Ziele (abgewähltes Modul, Off-Canvas-Spalte
+      am Handy) werden übersprungen statt ins Leere zu zeigen. Auto-Start
+      genau EINMAL nach dem ersten Laden (1,5-s-Verzögerung, bis das Layout
+      steht); auch Abbrechen setzt `tourGesehen` — aufgedrängt wird nichts
+      zweimal, der ?-Knopf im Header holt die Tour jederzeit zurück.
+      WICHTIG fürs nächste Feld in settings.ui: `tourGesehen` muss im
+      st.ui-Aufbau MITGEFÜHRT werden, weil saveUiPrefs das Objekt als
+      Ganzes schreibt — ein vergessenes Feld wäre beim nächsten Speichern
+      still gelöscht.
 
 - [x] **MU3 ✅ (06.08.): „Bewährte Einstellungen" — kollektives Lernen
       sichtbar machen (Owner-Idee: beste Konto-Einstellungen täglich
