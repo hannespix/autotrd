@@ -1854,6 +1854,19 @@ Sekunden-Preis-Alerts, `trade_updates`.
       Tests mit echten Datumsgrenzen. Erste belastbare Zahlen nach ~1
       Woche (SCHATTEN_MIN_N=200 braucht mehrere Handelstage).
 
+      ✅ ERWEITERT (06.08., Owner-Go „mache so weiter wie vorgeschlagen"):
+      Exit-Stil-Messung je SIGNALTYP. `bestimmeSignalTyp` (pur): MACD mit
+      der Richtung = trend, RSI/Bollinger = umkehr, beide = gemischt
+      (keine Muenzwurf-Zuordnung), Forecast-Stimme gehoert zu keiner
+      Familie. Der Typ wandert in lastSignal + lastSignalTag, und die
+      Beitraege laufen zusaetzlich in vier typisierte Varianten:
+      live_trend / live_umkehr / live_tag_trend / live_tag_umkehr.
+      Entscheidungsregel VORAB festgelegt: Erst wenn BEIDE Diagonalen
+      stimmen (trend verdient im Tages-Horizont UND umkehr im
+      5-Minuten-Horizont, je n>=200), wird der Exit-Stil je Signaltyp
+      scharf geschaltet (Trailing fuer Trend-Einstiege, festes Ziel fuer
+      Umkehr-Einstiege). Vorher ist auch diese Idee nur eine Vermutung.
+
 - [x] **Vorfall 05.08., 15:30: Depot und Buch auseinandergelaufen —
       Depot-Uebernahme gebaut.** Zur US-Oeffnung kaufte die Engine ueber das
       Order-Routing real bei Alpaca (16 Fills, ~119.500 $, sequenzielle
