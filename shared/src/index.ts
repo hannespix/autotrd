@@ -12,6 +12,7 @@ export * from './tuneGrid.js';
 export * from './momentum.js';
 export * from './classAdvisor.js';
 export * from './classShadow.js';
+export * from './bestPractice.js';
 export * from './liveReadiness.js';
 export * from './fx.js';
 export * from './tax.js';

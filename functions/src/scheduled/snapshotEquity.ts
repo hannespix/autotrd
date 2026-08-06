@@ -23,7 +23,13 @@ import {
   aggregateTradingHealth,
   attribution,
   berateKlassen,
+  besserAls,
+  BEWAEHRT_MIN_TAGE,
+  BEWAEHRT_MIN_TRADES,
   classify,
+  engineBilanz,
+  extrahiereEinstellungen,
+  pruefeKandidat,
   costProfile,
   exitBreakdown,
   dailyReturns,
@@ -35,7 +41,10 @@ import {
   tradingVerdict,
   werteSchattenAus,
   type AccountContribution,
+  type BewaehrteEinstellungen,
   type ClosedTrade,
+  type EngineBilanz,
+  type EngineTrade,
   type EquityPoint,
   type KlassenErgebnis,
   type Position,
@@ -102,6 +111,11 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
   let snapped = 0;
   let zinsSumme = 0;
   const beitraege: AccountContribution[] = [];
+  // MU3 „Bewährte Einstellungen": Über die Schleife hinweg den Besten nach
+  // ENGINE-Attribution suchen — und, solange keiner die Belege erfüllt, den
+  // besten Anwärter samt Klartext, was ihm noch fehlt (die Karte zeigt das).
+  let bester: { bilanz: EngineBilanz; einstellungen: BewaehrteEinstellungen } | null = null;
+  let anwaerter: { bilanz: EngineBilanz; fehlt: string[] } | null = null;
   for (const userDoc of users.docs) {
     try {
       const roh = userDoc.get('wallet.paperBalance') as number | undefined;
@@ -181,6 +195,10 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         .limit(TRADES_WINDOW)
         .get();
       const closed: ClosedTrade[] = [];
+      // Engine-Trades separat (MU3): Die Best-Practice-Kür zählt NUR
+      // source='engine' — ein manueller Glückstreffer soll keine
+      // Einstellungen adeln, mit denen er nichts zu tun hatte.
+      const engineTrades: EngineTrade[] = [];
       for (const t of tradesSnap.docs) {
         const pnl = t.get('pnl') as number | undefined;
         const symbol = t.get('symbol') as string | undefined;
@@ -203,6 +221,17 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
               : {}),
             ...(typeof feeRate === 'number' ? { feeRate } : {}),
           });
+          const at = t.get('at') as string | undefined;
+          if (t.get('source') === 'engine' && typeof at === 'string') {
+            engineTrades.push({
+              pnl,
+              at,
+              ...(typeof qty === 'number' && typeof price === 'number'
+                ? { notional: qty * price }
+                : {}),
+              ...(typeof feeRate === 'number' ? { feeRate } : {}),
+            });
+          }
         }
       }
       const ts = tradeStats(closed);
@@ -338,6 +367,22 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         byClass: attr.byClass,
       });
 
+      // MU3: Engine-Bilanz dieses Kontos gegen die bisherige Kür halten.
+      const bilanz = engineBilanz(engineTrades);
+      if (bilanz.n > 0) {
+        const urteil = pruefeKandidat(bilanz);
+        if (urteil.geeignet) {
+          const einstellungen = extrahiereEinstellungen(userDoc.get('settings.strategy'));
+          if (einstellungen === null) {
+            logger.warn(`bestPractice: ${userDoc.id} geeignet, aber Strategie unvollständig`);
+          } else if (besserAls(bilanz, bester?.bilanz)) {
+            bester = { bilanz, einstellungen };
+          }
+        } else if (bester === null && besserAls(bilanz, anwaerter?.bilanz)) {
+          anwaerter = { bilanz, fehlt: urteil.fehlt };
+        }
+      }
+
       snapped += 1;
     } catch (err) {
       logger.warn(`snapshotEquity: User ${userDoc.id} übersprungen`, err);
@@ -364,6 +409,35 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
     },
     { merge: true },
   );
+
+  // ── MU3 „Bewährte Einstellungen" (Owner-Idee 06.08.) ──────────────────────
+  // Der Tagesstand ERSETZT das Dokument bewusst komplett (kein merge): Ein
+  // Gewinner von gestern, der heute die Belege nicht mehr erfüllt, darf
+  // nicht als „bewährt" stehen bleiben. Anonymisiert — keine User-Kennung,
+  // keine Watchlist, kein Kapital; nur engine/signals/indicators + Kennzahlen.
+  try {
+    await db.doc('meta/bestPractice').set({
+      at: now.toISOString(),
+      date,
+      kriterien: { minTrades: BEWAEHRT_MIN_TRADES, minTage: BEWAEHRT_MIN_TAGE },
+      ...(bester
+        ? { stand: 'gekuert', kennzahlen: bester.bilanz, einstellungen: bester.einstellungen }
+        : {
+            stand: 'kein_kandidat',
+            ...(anwaerter
+              ? { anwaerter: { kennzahlen: anwaerter.bilanz, fehlt: anwaerter.fehlt } }
+              : {}),
+          }),
+    });
+    logger.info(
+      bester
+        ? `bestPractice: gekürt — Kante ${bester.bilanz.kantePct} %, n=${bester.bilanz.n}, ${bester.bilanz.zeitraumTage} Tage`
+        : 'bestPractice: kein Konto erfüllt die Belege (Snapshot dokumentiert den Anwärter)',
+    );
+  } catch (err) {
+    logger.warn('bestPractice-Snapshot fehlgeschlagen', err);
+  }
+
   logger.info(`snapshotEquity: ${snapped}/${users.size} User gesnapshottet (${date})`);
   return { users: users.size, snapped, marginInterest: Math.round(zinsSumme * 100) / 100 };
 }

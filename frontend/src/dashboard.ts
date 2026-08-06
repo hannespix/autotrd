@@ -47,7 +47,9 @@ import {
   sma,
   streaks,
   tradeStats,
+  uebernehmeEinstellungen,
   validateStrategy,
+  vergleicheEinstellungen,
   vwapSessions,
   tagesPraefix,
   wilderRsi,
@@ -80,6 +82,7 @@ import {
   adminSetAdmin,
   adminSetKillSwitch,
   callTrade,
+  leseBestPractice,
   loadMarketQuotes,
   loadUniverse,
   loadWorkspace,
@@ -126,6 +129,7 @@ import {
   type UniverseClass,
   type WorkspaceDocData,
   type PortfolioStatsDoc,
+  type BestPractice,
   type EquitySeriesPoint,
   type MomentumDoc,
   type TuneFleetRow,
@@ -1127,6 +1131,14 @@ function layout(email: string): string {
       </div>
       <div id="owAdvice"></div>
       <div class="hint" id="advMsg"></div>
+      <div class="wl-sec" style="margin-top:14px">Bewährte Einstellungen ${iBtn('bestPractice')}</div>
+      <p class="hint" id="bpBody">Lade …</p>
+      <div id="bpDiff" hidden></div>
+      <div class="row" style="margin-top:6px">
+        <button class="btn btn-n" id="bpPreview" hidden>Unterschiede ansehen</button>
+        <button class="btn btn-g" id="bpAdopt" hidden>Übernehmen</button>
+        <span class="hint" id="bpMsg"></span>
+      </div>
       <div class="wl-sec" style="margin-top:14px">Tages-Notbremse ${iBtn('dailyLossLimit')}</div>
       <p class="hint" id="bkrState">—</p>
       <div class="row" style="align-items:center;gap:8px">
@@ -2639,8 +2651,73 @@ function renderAdvice(): void {
     .join('');
 }
 
+/* ── Bewährte Einstellungen (MU3): täglicher, anonymisierter Snapshot des
+ * Kontos mit der besten ENGINE-Bilanz — ansehen, Unterschiede prüfen, dann
+ * bewusst übernehmen. Nie automatisch: Wenn alle auf den Besten springen,
+ * stirbt die Vielfalt, aus der das kollektive Lernen seine Information zieht. */
+let bestPractice: BestPractice | null = null;
+
+function bpWert(v: unknown): string {
+  const esc = (s: string): string =>
+    s.replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]!);
+  if (v === undefined || v === null) return '–';
+  if (typeof v === 'object') return esc(JSON.stringify(v));
+  return esc(String(v));
+}
+
+function renderBestPractice(): void {
+  const body = $('bpBody');
+  const kz = bestPractice?.kennzahlen ?? null;
+  ($('bpPreview') as HTMLButtonElement).hidden = !(
+    bestPractice?.stand === 'gekuert' && bestPractice.einstellungen !== null
+  );
+  ($('bpAdopt') as HTMLButtonElement).hidden = true;
+  $('bpDiff').hidden = true;
+  if (!bestPractice) {
+    body.textContent =
+      'Noch keine Auswertung — der erste Snapshot entsteht mit dem nächsten Tageslauf (nach US-Börsenschluss).';
+    return;
+  }
+  const krit = bestPractice.kriterien;
+  const kritTxt = krit
+    ? `mindestens ${krit.minTrades} Engine-Trades, ${krit.minTage} Tage Messzeitraum und eine positive Kante nach Gebühren`
+    : 'genug Belege';
+  if (bestPractice.stand === 'gekuert' && kz) {
+    body.innerHTML =
+      `Das Konto mit der besten <b>Engine</b>-Bilanz (nur automatische Trades zählen): ` +
+      `Kante <b>${kz.kantePct ?? '–'} %</b> je gehandeltem Dollar · ${kz.n} Trades · ` +
+      `${Math.round(kz.zeitraumTage)} Tage. Anonymisiert gespeichert — Watchlist, Kapital ` +
+      `und dein Start/Stop-Schalter bleiben bei einer Übernahme unangetastet.`;
+    return;
+  }
+  const anw = bestPractice.anwaerter;
+  body.textContent =
+    `Noch erfüllt kein Konto die Mindestbelege (${kritTxt}) — der Tages-Beste unter wenigen ` +
+    `Konten wäre sonst überwiegend Zufall.` +
+    (anw
+      ? ` Bester Anwärter: Kante ${anw.kennzahlen.kantePct ?? '–'} % (${anw.kennzahlen.n} Trades)` +
+        (anw.fehlt.length > 0 ? ` — es fehlt: ${anw.fehlt.join(', ')}.` : '.')
+      : '');
+}
+
+function ladeBestPractice(): void {
+  // Der Status wird SYNCHRON geleert: Die ✓-Meldung einer gerade erfolgten
+  // Übernahme entsteht NACH diesem Aufruf und soll das asynchrone Nachladen
+  // überleben — renderBestPractice fasst bpMsg deshalb nicht an.
+  $('bpMsg').textContent = '';
+  void leseBestPractice()
+    .then((bp) => {
+      bestPractice = bp;
+      renderBestPractice();
+    })
+    .catch(() => {
+      $('bpBody').textContent = 'Auswertung gerade nicht lesbar.';
+    });
+}
+
 function openOptions(): void {
   if (!st) return;
+  ladeBestPractice();
   ($('ouPred') as HTMLInputElement).checked = st.ui.predArrow;
   ($('ouCmp') as HTMLInputElement).checked = st.ui.cmpOverlay;
   ($('ouGrid') as HTMLInputElement).checked = st.ui.chartGrid;
@@ -7225,6 +7302,45 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       .catch((e) => ($('advMsg').textContent = (e as Error).message));
   });
 
+  // Bewährte Einstellungen (MU3): erst Unterschiede zeigen, dann übernehmen.
+  $('bpPreview').addEventListener('click', () => {
+    if (!st || !bestPractice?.einstellungen) return;
+    const diff = vergleicheEinstellungen(st.strategy, bestPractice.einstellungen);
+    const box = $('bpDiff');
+    box.hidden = false;
+    if (diff.length === 0) {
+      box.innerHTML =
+        '<p class="hint">✓ Deine Einstellungen stimmen mit den bewährten bereits überein.</p>';
+      return;
+    }
+    box.innerHTML =
+      '<p class="hint" style="margin-top:6px">Was sich ändern würde (dein Wert → bewährter Wert):</p>' +
+      diff
+        .map(
+          (d) =>
+            `<div class="hint" style="font-family:ui-monospace,monospace">${bpWert(d.pfad)}: ` +
+            `<b>${bpWert(d.eigen)}</b> → <b>${bpWert(d.bewaehrt)}</b></div>`,
+        )
+        .join('');
+    ($('bpAdopt') as HTMLButtonElement).hidden = false;
+  });
+  $('bpAdopt').addEventListener('click', () => {
+    if (!st || !bestPractice?.einstellungen) return;
+    const next = uebernehmeEinstellungen(st.strategy, bestPractice.einstellungen);
+    const problems = validateStrategy(next);
+    if (problems.length > 0) {
+      $('bpMsg').textContent = problems[0]!;
+      return;
+    }
+    $('bpMsg').textContent = 'Übernehme …';
+    void saveStrategy(next)
+      .then(() => {
+        st!.strategy = next;
+        openOptions(); // Formular auf die übernommenen Werte ziehen
+        $('bpMsg').textContent = '✓ Übernommen — Watchlist, Kapital und Start/Stop blieben deine.';
+      })
+      .catch((e) => ($('bpMsg').textContent = (e as Error).message));
+  });
 
   // Multi-Chart-Raster: Umschalter 1/2/4 + Lock fürs Haupt-Chart
   document.querySelectorAll('.tf-btn[data-grid]').forEach((b) =>

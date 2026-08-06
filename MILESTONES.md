@@ -2385,10 +2385,10 @@ A und B oben.
       echte UI, keine Fremdbibliothek), Schritt-Titel + 2 Sätze je Station,
       Fortschritt in settings.ui.tourGesehen, mobil funktionsfähig.
 
-- [ ] **MU3: „Bewährte Einstellungen" — kollektives Lernen sichtbar
-      machen (Owner-Idee: beste Konto-Einstellungen täglich speichern +
-      manuell übernehmbar).** Design-Entscheidungen nach ehrlicher
-      Diskussion:
+- [x] **MU3 ✅ (06.08.): „Bewährte Einstellungen" — kollektives Lernen
+      sichtbar machen (Owner-Idee: beste Konto-Einstellungen täglich
+      speichern + manuell übernehmbar).** Design-Entscheidungen nach
+      ehrlicher Diskussion:
       1. NICHT die Konto-Equity kürt den Besten, sondern die
          ENGINE-Attribution (nur source='engine'-Trades) — sonst adelt ein
          manueller Glückstreffer die falschen Einstellungen (genau der vom
@@ -2407,3 +2407,17 @@ A und B oben.
          beschleunigen). Der Auto-Tuner lernt bereits kollektiv über
          Priors aus allen Konten; MU3 macht dieses Lernen SICHTBAR und
          freiwillig übernehmbar, ersetzt es aber nicht.
+
+      Umsetzung: `shared/src/bestPractice.ts` (engineBilanz, pruefeKandidat
+      mit Klartext-Gründen, besserAls nach Kante, extrahiereEinstellungen
+      ohne running/Watchlist/Broker, vergleicheEinstellungen als Punkt-Pfad-
+      Diff, uebernehmeEinstellungen ersetzt statt mischt; 19 Unit-Tests).
+      Kür im Tageslauf `snapshotEquity` (Engine-Trades separat gesammelt,
+      Snapshot nach `meta/bestPractice` — ERSETZT täglich, kein merge; ohne
+      Kandidat steht der beste Anwärter samt „es fehlt: …" im Dokument).
+      Karte im Options-Modal (Trading-Reiter): Kennzahlen bzw. Anwärter-
+      Fortschritt, „Unterschiede ansehen" → Diff, „Übernehmen" → durch
+      validateStrategy + saveStrategy (gleiche Server-Validierung wie jede
+      Handeingabe). Erwartung: Bei Konten-Start 28.07. fällt die erste
+      mögliche Kür frühestens auf ~11.08. (14-Tage-Schwelle) — bis dahin
+      zeigt die Karte ehrlich den Anwärter-Stand.
