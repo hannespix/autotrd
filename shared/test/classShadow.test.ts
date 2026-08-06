@@ -11,6 +11,7 @@ import {
   SCHATTEN_MAX_ALTER_MS,
   SCHATTEN_MIN_N,
   addiereSchatten,
+  bestimmeSignalTyp,
   bewerteSchattenSignal,
   leseSchattenSignal,
   pruefeTagSlot,
@@ -344,5 +345,55 @@ describe('pruefeTagSlot', () => {
 
   it('rückdatierte Einträge zählen als leer — nicht raten', () => {
     expect(pruefeTagSlot(slot, T('2026-08-05T13:00:00Z')).status).toBe('leer');
+  });
+});
+
+/* ── Signaltyp (Exit-Stil-Messung, Owner-Go 06.08.) ─────────────────────────
+ *
+ * Der teure Fehler wäre eine falsche Zuordnung: Ein als „Trend" gezähltes
+ * Umkehr-Signal verfälscht BEIDE Kategorien gleichzeitig — und zwar genau
+ * die Zahlen, an denen die Exit-Stil-Entscheidung hängt.
+ */
+describe('bestimmeSignalTyp', () => {
+  it('MACD allein mit der Richtung → trend', () => {
+    expect(bestimmeSignalTyp({ macd: 'buy', rsi: 'hold' }, 'buy')).toBe('trend');
+    expect(bestimmeSignalTyp({ macd: 'sell' }, 'sell')).toBe('trend');
+  });
+
+  it('RSI oder Bollinger mit der Richtung → umkehr', () => {
+    expect(bestimmeSignalTyp({ rsi: 'buy', macd: 'hold' }, 'buy')).toBe('umkehr');
+    expect(bestimmeSignalTyp({ bollinger: 'sell' }, 'sell')).toBe('umkehr');
+  });
+
+  it('beide Familien stimmen zu → gemischt (keine Münzwurf-Zuordnung)', () => {
+    expect(bestimmeSignalTyp({ macd: 'buy', rsi: 'buy' }, 'buy')).toBe('gemischt');
+    expect(bestimmeSignalTyp({ macd: 'sell', bollinger: 'sell' }, 'sell')).toBe('gemischt');
+  });
+
+  it('Gegenstimmen zählen nicht zur Richtung', () => {
+    // RSI stimmt GEGEN das Kaufsignal — das macht es nicht zum Umkehr-Signal.
+    expect(bestimmeSignalTyp({ macd: 'buy', rsi: 'sell' }, 'buy')).toBe('trend');
+  });
+
+  it('nur die Forecast-Stimme → null (keine der beiden Familien)', () => {
+    expect(bestimmeSignalTyp({ forecast: 'buy' }, 'buy')).toBeNull();
+  });
+
+  it('hold hat keinen Typ', () => {
+    expect(bestimmeSignalTyp({ macd: 'hold', rsi: 'hold' }, 'hold')).toBeNull();
+  });
+});
+
+describe('leseSchattenSignal — typ wandert nur als bekannter Wert mit', () => {
+  const basis = { direction: 'buy', price: 100, at: new Date().toISOString() };
+
+  it('bekannte Typen kommen durch', () => {
+    expect(leseSchattenSignal({ ...basis, typ: 'trend' }, Date.now())?.typ).toBe('trend');
+    expect(leseSchattenSignal({ ...basis, typ: 'umkehr' }, Date.now())?.typ).toBe('umkehr');
+  });
+
+  it('unbekannte oder fehlende Typen werden keine Kategorie', () => {
+    expect(leseSchattenSignal({ ...basis, typ: 'kaputt' }, Date.now())?.typ).toBeUndefined();
+    expect(leseSchattenSignal(basis, Date.now())?.typ).toBeUndefined();
   });
 });

@@ -25,6 +25,7 @@ import {
   costGate,
   effectiveLeverage,
   addiereSchatten,
+  bestimmeSignalTyp,
   bewerteSchattenSignal,
   leseSchattenSignal,
   pruefeTagSlot,
@@ -2022,6 +2023,15 @@ export async function runScan(force = false): Promise<ScanResult> {
     live_kosten?: SchattenKlasse;
     /** Dieselben Live-Signale, am NÄCHSTEN Tag bewertet (Task 94, 05.08.). */
     live_tag?: SchattenKlasse;
+    /* Exit-Stil-Messung (Owner-Go 06.08.): dieselben Beiträge, aufgeteilt
+     * nach Signaltyp × Horizont. Die Hypothese, die hier eine Zahl bekommt:
+     * Trend-Signale verdienen im TAGES-Horizont (laufen lassen), Umkehr-
+     * Signale im 5-MINUTEN-Horizont (abräumen). Erst wenn beide Diagonalen
+     * stimmen, wird der Exit-Stil je Signaltyp scharf geschaltet. */
+    live_trend?: SchattenKlasse;
+    live_umkehr?: SchattenKlasse;
+    live_tag_trend?: SchattenKlasse;
+    live_tag_umkehr?: SchattenKlasse;
   } = {};
   /* Dieselben Varianten, aufgeschlüsselt nach Anlageklasse (05.08.).
    *
@@ -2212,6 +2222,8 @@ export async function runScan(force = false): Promise<ScanResult> {
       const tagSlot = pruefeTagSlot(symDoc.get('lastSignalTag'), now.getTime());
       const tagSlotBelegbar =
         tagSlot.status !== 'wartet' && (sig.direction === 'buy' || sig.direction === 'sell');
+      /** Trend/Umkehr/gemischt — Grundlage der Exit-Stil-Messung (06.08.). */
+      const sigTyp = bestimmeSignalTyp(sig.votes, sig.direction);
 
       batch.set(
         symRef,
@@ -2224,6 +2236,7 @@ export async function runScan(force = false): Promise<ScanResult> {
                   direction: sig.direction,
                   price: sig.price,
                   at: now.toISOString(),
+                  ...(sigTyp ? { typ: sigTyp } : {}),
                 },
               }
             : {}),
@@ -2237,6 +2250,7 @@ export async function runScan(force = false): Promise<ScanResult> {
             direction: sig.direction,
             price: sig.price,
             at: now.toISOString(),
+            ...(sigTyp ? { typ: sigTyp } : {}),
             /* Hätte dieses Signal die Kostenschwelle passiert? (MI2, 05.08.)
              *
              * Der Anlass ist eine Messung, die die Diagnose umdreht: Die
@@ -2425,6 +2439,14 @@ export async function runScan(force = false): Promise<ScanResult> {
           schattenVarianten.live_kosten = addiereSchatten(schattenVarianten.live_kosten, beitrag);
           zuVariante('live_kosten', kl, beitrag);
         }
+        // Exit-Stil-Messung (06.08.): dieselben Beiträge, nach Signaltyp
+        // getrennt. `gemischt` läuft bewusst in KEINE der beiden — die
+        // Hypothese handelt von den klaren Fällen.
+        if (vorher.typ === 'trend') {
+          schattenVarianten.live_trend = addiereSchatten(schattenVarianten.live_trend, beitrag);
+        } else if (vorher.typ === 'umkehr') {
+          schattenVarianten.live_umkehr = addiereSchatten(schattenVarianten.live_umkehr, beitrag);
+        }
       }
       /* Tages-Horizont bewerten (Task 94): Das gereifte Signal gegen den
        * HEUTIGEN Kurs — dieselbe Kosten- und Richtungsrechnung wie beim
@@ -2434,6 +2456,13 @@ export async function runScan(force = false): Promise<ScanResult> {
         const beitragTag = bewerteSchattenSignal(tagSlot.signal, sig.price, kosten);
         schattenVarianten.live_tag = addiereSchatten(schattenVarianten.live_tag, beitragTag);
         zuVariante('live_tag', classify(symbol), beitragTag);
+        if (tagSlot.signal.typ === 'trend') {
+          schattenVarianten.live_tag_trend
+            = addiereSchatten(schattenVarianten.live_tag_trend, beitragTag);
+        } else if (tagSlot.signal.typ === 'umkehr') {
+          schattenVarianten.live_tag_umkehr
+            = addiereSchatten(schattenVarianten.live_tag_umkehr, beitragTag);
+        }
       }
       // Dieselbe Bewertung für die regime-gerechte Lesart (MI). Beide
       // Varianten sehen denselben Kurs zur selben Zeit — nur so ist der

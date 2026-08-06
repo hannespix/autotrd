@@ -48,6 +48,12 @@ export interface SchattenSignal {
    * ein Ergebnis.
    */
   kostenOk?: boolean;
+  /**
+   * Signaltyp zur Exit-Stil-Messung (Owner-Go 06.08.): 'trend' | 'umkehr' |
+   * 'gemischt'. Fehlt das Feld (Altbestand), zählt das Signal in keine der
+   * typisierten Varianten — dieselbe Regel wie bei `kostenOk`.
+   */
+  typ?: string;
 }
 
 export interface SchattenBeitrag {
@@ -249,9 +255,14 @@ export function leseSchattenSignal(
 
   // Nur ein ECHTES `true` zählt. Ein fehlendes oder anders getipptes Feld
   // bleibt weg — siehe SchattenSignal.kostenOk.
-  return o['kostenOk'] === true
-    ? { direction: dir, price, kostenOk: true }
-    : { direction: dir, price };
+  const typ = o['typ'];
+  return {
+    direction: dir,
+    price,
+    ...(o['kostenOk'] === true ? { kostenOk: true } : {}),
+    // Nur bekannte Typen wandern mit — ein Tippfehler wird keine Kategorie.
+    ...(typ === 'trend' || typ === 'umkehr' || typ === 'gemischt' ? { typ } : {}),
+  };
 }
 
 /* ── Tages-Horizont (Task 94, Entscheidung 05.08.) ──────────────────────────
@@ -308,4 +319,38 @@ export function pruefeTagSlot(roh: unknown, jetztMs: number): TagSlotBefund {
   if (alter > TAG_MAX_ALTER_MS) return { status: 'verfallen' };
   const signal = leseSchattenSignal(roh, jetztMs, TAG_MAX_ALTER_MS);
   return signal ? { status: 'reif', signal } : { status: 'verfallen' };
+}
+
+/* ── Signaltyp: Trend oder Umkehr (Owner-Go 06.08.) ─────────────────────────
+ *
+ * Die Exit-Stil-Hypothese: Ein TREND-Signal (MACD stimmt zu) sollte laufen
+ * dürfen (nachziehender Stop, längerer Horizont), ein UMKEHR-Signal
+ * (RSI/Bollinger stimmen zu) sollte sein Ziel abräumen (kurzer Horizont).
+ * Ob das stimmt, sollen die Schatten-Varianten je Signaltyp zeigen, BEVOR
+ * irgendein Exit-Verhalten umgebaut wird: Verdient `trend` im
+ * Tages-Horizont und `umkehr` im 5-Minuten-Horizont, ist der Exit-Stil der
+ * Hebel — sonst ist auch diese Idee nur eine Vermutung gewesen.
+ */
+export type SignalTyp = 'trend' | 'umkehr' | 'gemischt';
+
+/**
+ * Signaltyp aus den Indikator-Stimmen bestimmen.
+ *
+ * Gezählt werden nur Stimmen, die MIT der Signalrichtung stimmen: MACD ist
+ * der Trendfolger, RSI und Bollinger sind die Umkehr-Familie. Stimmen beide
+ * Familien zu → `gemischt` (eigene Kategorie statt Münzwurf). Die
+ * Forecast-Stimme gehört bewusst zu keiner Familie — sie ist eine
+ * Prognose, kein Indikator-Charakter.
+ */
+export function bestimmeSignalTyp(
+  votes: Partial<Record<'rsi' | 'macd' | 'bollinger' | 'forecast', string>>,
+  direction: 'buy' | 'sell' | 'hold',
+): SignalTyp | null {
+  if (direction !== 'buy' && direction !== 'sell') return null;
+  const trend = votes.macd === direction;
+  const umkehr = votes.rsi === direction || votes.bollinger === direction;
+  if (trend && umkehr) return 'gemischt';
+  if (trend) return 'trend';
+  if (umkehr) return 'umkehr';
+  return null;
 }
