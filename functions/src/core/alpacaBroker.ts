@@ -276,23 +276,36 @@ export async function alpacaOrdersGeschlossen(
   seitIso: string,
   fetchImpl: FetchLike = fetch,
 ): Promise<AlpacaGeschlosseneOrder[]> {
-  const d = (await alpacaFetch(
-    mode,
-    `/v2/orders?status=closed&after=${encodeURIComponent(seitIso)}&direction=asc&limit=500`,
-    schluessel,
-    {},
-    fetchImpl,
-  )) as unknown[];
-  if (!Array.isArray(d)) return [];
-  return d.flatMap((o) => {
-    const r = o as Record<string, unknown>;
-    const qty = zahl(r['filled_qty']);
-    const kurs = zahl(r['filled_avg_price']);
-    const filledAt = String(r['filled_at'] ?? '');
-    // Ohne Menge, Kurs oder Zeitpunkt ist es keine Ausführung — nicht raten.
-    if (!(qty > 0) || !(kurs > 0) || filledAt.length === 0) return [];
-    return [
-      {
+  const out: AlpacaGeschlosseneOrder[] = [];
+  // PAGINIERT (Audit 06.08.): Alpaca deckelt bei 500 Orders je Antwort, und
+  // „closed" enthält auch stornierte — die zählen gegen den Deckel, obwohl
+  // sie unten rausfallen. 14 Tage 5-min-Handel überschreiten 500 locker; eine
+  // einzelne Seite hätte dann still Historie verloren (Steuer/FIFO-Lücken).
+  // Cursor ist das submitted_at der letzten Zeile (after = exklusiv danach);
+  // Orders mit IDENTISCHEM Zeitstempel an der Seitengrenze können dabei
+  // theoretisch übersprungen werden — akzeptiert und dokumentiert, die
+  // Alternative (id-Paginierung) bietet die API nicht.
+  let after = seitIso;
+  for (let seite = 0; seite < 10; seite++) {
+    const d = (await alpacaFetch(
+      mode,
+      `/v2/orders?status=closed&after=${encodeURIComponent(after)}&direction=asc&limit=500`,
+      schluessel,
+      {},
+      fetchImpl,
+    )) as unknown[];
+    if (!Array.isArray(d) || d.length === 0) break;
+    let letzteSubmitted = '';
+    for (const o of d) {
+      const r = o as Record<string, unknown>;
+      const submitted = String(r['submitted_at'] ?? '');
+      if (submitted > letzteSubmitted) letzteSubmitted = submitted;
+      const qty = zahl(r['filled_qty']);
+      const kurs = zahl(r['filled_avg_price']);
+      const filledAt = String(r['filled_at'] ?? '');
+      // Ohne Menge, Kurs oder Zeitpunkt ist es keine Ausführung — nicht raten.
+      if (!(qty > 0) || !(kurs > 0) || filledAt.length === 0) continue;
+      out.push({
         id: String(r['id'] ?? ''),
         clientOrderId: String(r['client_order_id'] ?? ''),
         symbol: String(r['symbol'] ?? ''),
@@ -300,6 +313,62 @@ export async function alpacaOrdersGeschlossen(
         qty,
         kurs,
         filledAt,
+      });
+    }
+    if (d.length < 500 || letzteSubmitted.length === 0 || letzteSubmitted === after) break;
+    after = letzteSubmitted;
+  }
+  // Chronologisch nach FILL sortieren: Die Seiten kommen nach submitted_at,
+  // gebucht wird nach filled_at — FIFO im Steuerbericht hängt daran.
+  return out.sort((a, b) => (a.filledAt < b.filledAt ? -1 : a.filledAt > b.filledAt ? 1 : 0));
+}
+
+/** Eine offene Order beim Broker — für die Schutz-Übernahme beim Adopt. */
+export interface AlpacaOffeneOrder {
+  id: string;
+  clientOrderId: string;
+  symbol: string;
+  side: 'buy' | 'sell';
+  /** Alpaca-Ordertyp ('stop', 'market', 'limit', …). */
+  typ: string;
+  qty: number;
+  /** Auslösekurs bei Stop-Orders; 0 sonst. */
+  stopPreis: number;
+}
+
+/**
+ * Offene Orders abrufen (Audit 06.08.): Die Depot-Übernahme muss WISSEN,
+ * welche Schutz-Stops bereits beim Broker liegen — sonst verliert das Buch
+ * beim Adopt die `schutz`-Verknüpfung, der alte GTC-Stop bleibt als Waise
+ * stehen, reserviert die Stücke und blockiert jeden Exit (Storno-vor-Exit
+ * storniert nur die Order, die das Buch kennt).
+ */
+export async function alpacaOrdersOffen(
+  mode: BrokerMode,
+  schluessel: AlpacaSchluessel | null = null,
+  fetchImpl: FetchLike = fetch,
+): Promise<AlpacaOffeneOrder[]> {
+  const d = (await alpacaFetch(
+    mode,
+    '/v2/orders?status=open&limit=500',
+    schluessel,
+    {},
+    fetchImpl,
+  )) as unknown[];
+  if (!Array.isArray(d)) return [];
+  return d.flatMap((o) => {
+    const r = o as Record<string, unknown>;
+    const qty = zahl(r['qty']);
+    if (!(qty > 0)) return [];
+    return [
+      {
+        id: String(r['id'] ?? ''),
+        clientOrderId: String(r['client_order_id'] ?? ''),
+        symbol: String(r['symbol'] ?? ''),
+        side: String(r['side'] ?? '') === 'sell' ? ('sell' as const) : ('buy' as const),
+        typ: String(r['type'] ?? ''),
+        qty,
+        stopPreis: zahl(r['stop_price']),
       },
     ];
   });

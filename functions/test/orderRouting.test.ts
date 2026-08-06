@@ -20,6 +20,7 @@ import {
   abgleich,
   alpacaAsset,
   alpacaOrdersGeschlossen,
+  alpacaOrdersOffen,
   warteAufFill,
 } from '../src/core/alpacaBroker.js';
 import { planeMenge, type TradeRequest } from '../src/core/broker.js';
@@ -426,6 +427,75 @@ describe('alpacaOrdersGeschlossen', () => {
   it('gibt bei kaputter Antwort eine leere Liste zurück, keinen Absturz', async () => {
     const f = antworten({ nicht: 'eine liste' });
     expect(await alpacaOrdersGeschlossen('paper', SCHLUESSEL, '2026-08-05T00:00:00Z', f)).toEqual([]);
+  });
+
+  /* Audit 06.08.: Alpaca deckelt bei 500 Orders je Antwort — und „closed"
+   * enthält auch Stornos, die gegen den Deckel zählen, obwohl sie unten
+   * rausfallen. Ohne Pagination verlor die Depot-Übernahme still Historie
+   * (Steuer-/FIFO-Lücken), sobald 14 Tage mehr als 500 Orders trugen. */
+  it('holt weitere Seiten, wenn die erste voll ist — Fills hinter dem Deckel gehen nicht verloren', async () => {
+    const pad = (n: number): string => String(n).padStart(3, '0');
+    const seite1 = Array.from({ length: 500 }, (_, i) => ({
+      id: `a${i}`,
+      client_order_id: `u1-AAPL-buy-1-scan-${i}`,
+      symbol: 'AAPL',
+      side: 'buy',
+      // Fast alles Stornos ohne Fill — genau das Muster, das den Deckel füllt.
+      filled_qty: i === 0 ? '1' : '0',
+      filled_avg_price: i === 0 ? '100' : null,
+      filled_at: i === 0 ? '2026-08-05T13:30:00Z' : null,
+      submitted_at: `2026-08-05T13:30:00.${pad(i)}Z`,
+    }));
+    const seite2 = [
+      {
+        id: 'b1', client_order_id: 'u1-SMH-sell-2-scan-501', symbol: 'SMH', side: 'sell',
+        filled_qty: '2', filled_avg_price: '570', filled_at: '2026-08-05T14:00:00Z',
+        submitted_at: '2026-08-05T13:59:00.000Z',
+      },
+    ];
+    const f = antworten(seite1, seite2);
+    const r = await alpacaOrdersGeschlossen('paper', SCHLUESSEL, '2026-08-05T00:00:00Z', f);
+    expect(f).toHaveBeenCalledTimes(2);
+    // Cursor der zweiten Seite = submitted_at der letzten Zeile von Seite 1
+    expect(String(f.mock.calls[1]![0])).toContain(encodeURIComponent('2026-08-05T13:30:00.499Z'));
+    expect(r.map((o) => o.id)).toEqual(['a0', 'b1']); // chronologisch nach Fill
+  });
+
+  it('eine nicht volle Seite beendet die Schleife nach einem Abruf', async () => {
+    const f = antworten([
+      { id: 'a', client_order_id: 'u1-AAPL-buy-5-scan-1', symbol: 'AAPL', side: 'buy',
+        filled_qty: '5', filled_avg_price: '190.5', filled_at: '2026-08-05T13:30:22Z',
+        submitted_at: '2026-08-05T13:30:00Z' },
+    ]);
+    await alpacaOrdersGeschlossen('paper', SCHLUESSEL, '2026-08-05T00:00:00Z', f);
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+});
+
+/* ── Offene Orders (Audit 06.08.): Die Depot-Übernahme muss wissen, welche
+ * Schutz-Stops schon beim Broker liegen — sonst werden sie zu Waisen, die
+ * die Stücke reservieren und jeden Exit blockieren. ── */
+describe('alpacaOrdersOffen', () => {
+  it('liest offene Stop-Orders mit Typ und Auslösekurs', async () => {
+    const f = antworten([
+      { id: 's1', client_order_id: 'u1-AAPL-sell-5-scan-9-schutz', symbol: 'AAPL', side: 'sell',
+        type: 'stop', qty: '5', stop_price: '180.55' },
+      { id: 'm1', client_order_id: 'u1-TAN-buy-3-scan-9', symbol: 'TAN', side: 'buy',
+        type: 'market', qty: '3', stop_price: null },
+    ]);
+    const r = await alpacaOrdersOffen('paper', SCHLUESSEL, f);
+    expect(r).toHaveLength(2);
+    expect(r[0]).toEqual({
+      id: 's1', clientOrderId: 'u1-AAPL-sell-5-scan-9-schutz', symbol: 'AAPL',
+      side: 'sell', typ: 'stop', qty: 5, stopPreis: 180.55,
+    });
+    expect(r[1]?.typ).toBe('market');
+    expect(r[1]?.stopPreis).toBe(0);
+  });
+
+  it('gibt bei kaputter Antwort eine leere Liste zurück', async () => {
+    const f = antworten({ nicht: 'eine liste' });
+    expect(await alpacaOrdersOffen('paper', SCHLUESSEL, f)).toEqual([]);
   });
 });
 

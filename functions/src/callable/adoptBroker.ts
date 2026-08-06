@@ -39,7 +39,7 @@
  * will, übernimmt nicht.
  */
 
-import { getFirestore, Timestamp } from 'firebase-admin/firestore';
+import { getFirestore, Timestamp, type WriteBatch } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import {
@@ -54,6 +54,7 @@ import {
 import {
   alpacaKonto,
   alpacaOrdersGeschlossen,
+  alpacaOrdersOffen,
   alpacaPositionen,
   type AlpacaGeschlosseneOrder,
 } from '../core/alpacaBroker.js';
@@ -107,6 +108,7 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
    * scheitert, sollen Bestand und Cash trotzdem stimmen. Ein Depot ohne
    * Historie ist unvollständig; ein Buch, das dem Depot widerspricht, ist
    * falsch. */
+  const uidSauber = uid.replace(/[^A-Za-z0-9-]/g, '_');
   let eigeneOrders: AlpacaGeschlosseneOrder[] = [];
   try {
     const seit = new Date(Date.now() - HISTORIE_TAGE * 86_400_000).toISOString();
@@ -114,10 +116,33 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
     // Nur UNSERE Orders: Die Kennung beginnt mit der (bereinigten) uid —
     // exakt so baut `clientOrderId()` sie. Fremde Orders (Mensch in der
     // Alpaca-Oberfläche) gehören nicht in unser Handelsjournal.
-    const uidSauber = uid.replace(/[^A-Za-z0-9-]/g, '_');
     eigeneOrders = alle.filter((o) => o.clientOrderId.startsWith(`${uidSauber}-`));
   } catch (err) {
     logger.warn(`adoptBroker ${uid}: Order-Historie nicht abrufbar`, err);
+  }
+
+  /* Offene Schutz-Stops WIEDERERKENNEN (Audit 06.08.): Seit Bracket Stufe 1
+   * liegen beim Broker GTC-Stop-Orders, deren Kennung das Buch in
+   * `position.schutz` trägt. Eine Übernahme, die Positionen OHNE dieses Feld
+   * schreibt, macht den Stop zur Waise: Er reserviert die Stücke weiter,
+   * blockiert damit jeden Exit (Storno-vor-Exit storniert nur die Order, die
+   * das Buch kennt), und der nächste Scan versucht obendrein einen ZWEITEN
+   * Stop anzulegen. Deshalb werden unsere offenen Stops hier gelesen und der
+   * Position wieder zugeordnet — die Übernahme bleibt dabei reine Leserei:
+   * Sie storniert nichts, sie merkt sich nur, was schon da ist. */
+  const schutzJeSymbol = new Map<string, { orderId: string; stopPreis: number; qty: number }>();
+  try {
+    const offene = await alpacaOrdersOffen(verbindung.mode, verbindung.schluessel);
+    for (const o of offene) {
+      if (o.typ !== 'stop' || !o.clientOrderId.startsWith(`${uidSauber}-`)) continue;
+      if (schutzJeSymbol.has(o.symbol)) {
+        logger.warn(`adoptBroker ${uid}: mehrere offene Stops für ${o.symbol} — nehme den ersten`);
+        continue;
+      }
+      schutzJeSymbol.set(o.symbol, { orderId: o.id, stopPreis: o.stopPreis, qty: o.qty });
+    }
+  } catch (err) {
+    logger.warn(`adoptBroker ${uid}: offene Orders nicht abrufbar — schutz-Felder bleiben leer`, err);
   }
 
   const db = getFirestore();
@@ -138,16 +163,28 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
     if (typeof b === 'string' && b.length > 0) bekannt.add(b);
   }
 
-  /** Frühester eigener Kauf je Symbol — bestmögliches `openedAt`. */
-  const fruehester = new Map<string, string>();
+  /** Frühester eigener EINSTIEG je Symbol und Seite — bestmögliches
+   *  `openedAt`. Longs eröffnen mit einem Kauf, Shorts mit einem VERKAUF
+   *  (Audit 06.08.: vorher zählten nur Käufe, Shorts bekamen `now`). */
+  const fruehesterKauf = new Map<string, string>();
+  const fruehesterVerkauf = new Map<string, string>();
   for (const o of eigeneOrders) {
-    if (o.side !== 'buy') continue;
-    const bisher = fruehester.get(o.symbol);
-    if (!bisher || o.filledAt < bisher) fruehester.set(o.symbol, o.filledAt);
+    const ziel = o.side === 'buy' ? fruehesterKauf : fruehesterVerkauf;
+    const bisher = ziel.get(o.symbol);
+    if (!bisher || o.filledAt < bisher) ziel.set(o.symbol, o.filledAt);
   }
 
   const now = new Date().toISOString();
-  const batch = db.batch();
+  /* Schreib-Operationen SAMMELN statt direkt in einen Batch (Audit 06.08.):
+   * Ein WriteBatch trägt höchstens 500 Operationen — eine Übernahme nach
+   * 14 Handelstagen kann mehr Trades mitbringen, und dann scheiterte die
+   * GESAMTE Übernahme mit einem Wurf. Stattdessen in 400er-Stücken
+   * committen; die Reihenfolge stellt sicher, dass Wallet-Messlatte,
+   * Equity-Snapshot und Abgleich-Vermerk im LETZTEN Stück liegen — bricht
+   * ein früherer Chunk ab, fehlt keine halbe Messlatte, und ein erneuter
+   * Aufruf heilt den Rest (Positionen per set idempotent, Trades per
+   * brokerOrderId dedupliziert). */
+  const ops: Array<(b: WriteBatch) => void> = [];
 
   // 1) Buch-Positionen ohne Gegenstück beim Broker löschen (Bestand folgt
   //    dem Broker — siehe Modulkopf).
@@ -155,7 +192,8 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
   let geloescht = 0;
   for (const d of posSnap.docs) {
     if (!brokerSymbole.has(d.id)) {
-      batch.delete(d.ref);
+      const ref = d.ref;
+      ops.push((b) => b.delete(ref));
       geloescht += 1;
     }
   }
@@ -168,6 +206,7 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
     const risk = resolveRisk(strategy.engine, cls);
     const short = p.seite === 'short';
     const avg = p.einstand;
+    const schutz = schutzJeSymbol.get(p.symbol);
     const position: Position = {
       symbol: p.symbol,
       qty: p.qty,
@@ -176,11 +215,14 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
       stopLoss: risk.stopLossPct > 0 ? avg * (1 + (short ? 1 : -1) * (risk.stopLossPct / 100)) : null,
       takeProfit:
         risk.takeProfitPct > 0 ? avg * (1 - (short ? 1 : -1) * (risk.takeProfitPct / 100)) : null,
-      openedAt: fruehester.get(p.symbol) ?? now,
+      openedAt: (short ? fruehesterVerkauf : fruehesterKauf).get(p.symbol) ?? now,
       ...(short ? { side: 'short' as const, lowWater: avg } : { highWater: avg }),
       broker: true,
+      // Bereits liegender Schutz-Stop bleibt verknüpft (s. o.) — sonst wird
+      // er zur Waise, die Stücke reserviert und Exits blockiert.
+      ...(schutz ? { schutz } : {}),
     };
-    batch.set(userRef.collection('positions').doc(p.symbol), position);
+    ops.push((b) => b.set(userRef.collection('positions').doc(p.symbol), position));
   }
 
   // 3) Historie nachbuchen — chronologisch, mit dem ECHTEN Fill-Kurs und
@@ -195,7 +237,8 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
     const waehrung = currencyForSymbol(o.symbol);
     // EZB-Kurs zum FILL-Tag — je Tag gecacht, der Import bleibt billig.
     const fx = await fxFelder(o.filledAt, waehrung);
-    batch.set(userRef.collection('trades').doc(), {
+    const tradeRef = userRef.collection('trades').doc();
+    ops.push((b) => b.set(tradeRef, {
       symbol: o.symbol,
       side: o.side,
       qty: o.qty,
@@ -217,7 +260,7 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
       clientOrderId: o.clientOrderId,
       fee: Math.round(o.qty * o.kurs * teile.commission * 100) / 100,
       ...fx,
-    });
+    }));
     importiert += 1;
   }
 
@@ -247,7 +290,7 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
     0,
   );
   const basisKapital = Math.round((konto.cash + einstandssumme) * 100) / 100;
-  batch.update(userRef, {
+  ops.push((b) => b.update(userRef, {
     'wallet.paperBalance': cashRund,
     'wallet.baseCapital': basisKapital,
     'wallet.updatedAt': now,
@@ -256,7 +299,7 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
     // 50-%-Tagesverlust aus — die Bremse würde feuern und alles sperren,
     // obwohl nichts verloren ist. Nach einer Übernahme beginnt der Tag neu.
     'risk.vortagEquity': Math.round(konto.equity * 100) / 100,
-  });
+  }));
 
   /* 4b) Heutigen Equity-Snapshot mit der ECHTEN Equity überschreiben.
    *
@@ -268,7 +311,7 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
    * Tage bleiben unangetastet: Vergangene Messungen umzuschreiben ist nicht
    * Aufgabe einer Übernahme. */
   const heute = now.slice(0, 10);
-  batch.set(userRef.collection('equity').doc(heute), {
+  ops.push((b) => b.set(userRef.collection('equity').doc(heute), {
     walletId: 'main',
     date: heute,
     equity: Math.round(konto.equity * 100) / 100,
@@ -277,30 +320,37 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
     positionsCount: brokerPositionen.length,
     updatedAt: now,
     uebernommen: true,
-  });
+  }));
 
   // 5) Abgleich-Vermerk direkt mitschreiben: Nach der Übernahme IST der
   //    Stand sauber; die Karte soll das sofort sagen und nicht erst beim
   //    nächsten Scan.
-  batch.set(
-    userRef,
-    {
-      risk: {
-        abgleich: {
-          at: now,
-          status: 'sauber',
-          anzahl: 0,
-          fehlbestand: 0,
-          fremdbestand: 0,
-          verglichen: brokerPositionen.length,
-          brokerPositionen: brokerPositionen.length,
+  ops.push((b) =>
+    b.set(
+      userRef,
+      {
+        risk: {
+          abgleich: {
+            at: now,
+            status: 'sauber',
+            anzahl: 0,
+            fehlbestand: 0,
+            fremdbestand: 0,
+            verglichen: brokerPositionen.length,
+            brokerPositionen: brokerPositionen.length,
+          },
         },
       },
-    },
-    { merge: true },
+      { merge: true },
+    ),
   );
 
-  await batch.commit();
+  // In 400er-Stücken committen (WriteBatch-Deckel 500) — Reihenfolge s. o.
+  for (let i = 0; i < ops.length; i += 400) {
+    const b = db.batch();
+    for (const op of ops.slice(i, i + 400)) op(b);
+    await b.commit();
+  }
   logger.info(
     `adoptBroker ${uid}: ${brokerPositionen.length} Position(en) übernommen, ` +
       `${importiert} Trade(s) nachgebucht, ${geloescht} Buch-Position(en) entfernt`,
