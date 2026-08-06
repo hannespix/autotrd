@@ -1623,7 +1623,14 @@ function wireChartCtx(): void {
       if (!st) return;
       st.bars = bars;
       if (st.intradayDays > 0) void loadIntradayView();
-      else renderChart();
+      else {
+        renderChart();
+        // Anfangs-Puffer (Owner 06.08.): Historie schon beim Laden anwärmen,
+        // nicht erst beim ersten Scroll — die Kette füllt bis zum Soll.
+        if (st.histBars.length === 0 && !st.histLoading && !st.histDone && bars.length > 0) {
+          void loadOlderDaily();
+        }
+      }
     }),
     watchEvaluatedForecasts(sym, (rows) => renderFcLabRows(rows)),
     watchLatestIndicators(sym, (row) => renderIndicatorCards(row)),
@@ -1767,37 +1774,55 @@ function dailySource(): ChartBar[] {
  *  Seit 06.08. OHNE festen 5-Jahres-Stop: Der Server füllt die volle Yahoo-
  *  Historie (range=max) — Schluss ist erst, wenn zwei Jahres-Chunks in Folge
  *  leer bleiben (= Datenanfang) oder die Sicherheitsuntergrenze greift. */
+/** Links-Puffer-Soll in GEZEIGTEN Bars: ~3 Bildschirmbreiten (min. 90). */
+function pufferBedarf(range: { from: number; to: number }): number {
+  return Math.max(90, (range.to - range.from) * 3);
+}
+
 async function loadOlderDaily(): Promise<void> {
   if (!st || st.histLoading || st.histDone || st.intradayDays > 0 || st.bars.length === 0) return;
   st.histLoading = true;
   $('histHint').hidden = false;
   try {
     const sym = st.currentSymbol;
-    const first = (st.histBars[0] ?? st.bars[0])!;
-    const year = st.histOldest > 0 ? st.histOldest - 1 : Number(first.date.slice(0, 4));
-    if (year < 1900) {
-      st.histDone = true;
-      return;
-    }
-    const chunk = await loadDailyChunk(sym, year);
-    if (!st || st.currentSymbol !== sym) return;
-    st.histOldest = year;
-    const prepend = chunk.filter((b) => b.date < first.date);
-    if (prepend.length === 0) {
-      st.histEmptyStreak += 1;
-      if (st.histEmptyStreak >= 2) st.histDone = true; // zwei leere Jahre = Anfang erreicht
-      return;
-    }
-    st.histEmptyStreak = 0;
-    const r = st.chart?.getVisibleRange();
-    // Position in GEZEIGTEN Bars halten: In der Wochen-/Monats-Sicht ist der
-    // Versatz nicht die Zahl der Tages-Bars, sondern die der neuen Kerzen.
-    const vorher = st.shownDaily.length;
-    st.histBars = [...prepend, ...st.histBars];
-    renderChart(); // ohne Fit — und die Position exakt halten:
-    const delta = st.shownDaily.length - vorher;
-    if (r && st.chart && delta > 0) {
-      st.chart.setVisibleRange({ from: r.from + delta, to: r.to + delta });
+    // KETTE statt Einzelschritt (Owner 06.08.: „Preloading noch nicht
+    // ausreichend"): Ein Jahres-Chunk pro Scroll-Ereignis war zu träge —
+    // wer schwungvoll nach links wirft, überholt den Nachschub. Die Kette
+    // lädt in EINEM Anstoß weiter, bis der Puffer das Soll trägt oder der
+    // Datenanfang erreicht ist; der Deckel ist nur die Notbremse.
+    for (let schritt = 0; schritt < 10; schritt++) {
+      if (!st || st.currentSymbol !== sym || st.histDone) return;
+      const first = (st.histBars[0] ?? st.bars[0])!;
+      const year = st.histOldest > 0 ? st.histOldest - 1 : Number(first.date.slice(0, 4));
+      if (year < 1900) {
+        st.histDone = true;
+        return;
+      }
+      const chunk = await loadDailyChunk(sym, year);
+      if (!st || st.currentSymbol !== sym) return;
+      st.histOldest = year;
+      const prepend = chunk.filter((b) => b.date < first.date);
+      if (prepend.length === 0) {
+        st.histEmptyStreak += 1;
+        if (st.histEmptyStreak >= 2) {
+          st.histDone = true; // zwei leere Jahre = Anfang erreicht
+          return;
+        }
+        continue; // einzelnes leeres Jahr überspringen, Kette läuft weiter
+      }
+      st.histEmptyStreak = 0;
+      const r = st.chart?.getVisibleRange();
+      // Position in GEZEIGTEN Bars halten: In der Wochen-/Monats-Sicht ist der
+      // Versatz nicht die Zahl der Tages-Bars, sondern die der neuen Kerzen.
+      const vorher = st.shownDaily.length;
+      st.histBars = [...prepend, ...st.histBars];
+      renderChart(); // ohne Fit — und die Position exakt halten:
+      const delta = st.shownDaily.length - vorher;
+      if (r && st.chart && delta > 0) {
+        st.chart.setVisibleRange({ from: r.from + delta, to: r.to + delta });
+      }
+      const jetzt = st.chart?.getVisibleRange();
+      if (jetzt && jetzt.from >= pufferBedarf(jetzt)) return; // Puffer steht
     }
   } catch {
     /* nächster Scroll-Versuch */
@@ -1818,21 +1843,30 @@ async function loadOlderIntraday(): Promise<void> {
   $('histHint').hidden = false;
   try {
     const sym = st.currentSymbol;
-    // ~5 Handelstage je Schritt; 9 Kalendertage decken Wochenende + Feiertage.
-    const chunks = await loadIntradayChunks(sym, tagMinus(st.intradayOldest, 9), tagMinus(st.intradayOldest, 1));
-    if (!st || st.currentSymbol !== sym || st.intradayDays === 0) return;
-    if (chunks.length === 0) {
-      st.intradayHistDone = true; // Datenanfang der 5m-Chunks erreicht
-      return;
-    }
-    const r = st.chart?.getVisibleRange();
-    const vorher = st.shownIntraday.length;
-    st.intradayBars = [...chunks.flatMap((c) => c.bars), ...st.intradayBars];
-    st.intradayOldest = chunks[0]!.day;
-    renderChart();
-    const delta = st.shownIntraday.length - vorher;
-    if (r && st.chart && delta > 0) {
-      st.chart.setVisibleRange({ from: r.from + delta, to: r.to + delta });
+    // Kette wie bei loadOlderDaily: ~5 Handelstage je Schritt (9 Kalendertage
+    // decken Wochenende + Feiertage), bis der Puffer das Soll trägt.
+    for (let schritt = 0; schritt < 6; schritt++) {
+      if (
+        !st || st.currentSymbol !== sym || st.intradayDays === 0 ||
+        st.intradayHistDone || st.intradayOldest === null
+      ) return;
+      const chunks = await loadIntradayChunks(sym, tagMinus(st.intradayOldest, 9), tagMinus(st.intradayOldest, 1));
+      if (!st || st.currentSymbol !== sym || st.intradayDays === 0) return;
+      if (chunks.length === 0) {
+        st.intradayHistDone = true; // Datenanfang der 5m-Chunks erreicht
+        return;
+      }
+      const r = st.chart?.getVisibleRange();
+      const vorher = st.shownIntraday.length;
+      st.intradayBars = [...chunks.flatMap((c) => c.bars), ...st.intradayBars];
+      st.intradayOldest = chunks[0]!.day;
+      renderChart();
+      const delta = st.shownIntraday.length - vorher;
+      if (r && st.chart && delta > 0) {
+        st.chart.setVisibleRange({ from: r.from + delta, to: r.to + delta });
+      }
+      const jetzt = st.chart?.getVisibleRange();
+      if (jetzt && jetzt.from >= pufferBedarf(jetzt)) return; // Puffer steht
     }
   } catch {
     /* nächster Scroll-Versuch */
@@ -3869,12 +3903,10 @@ async function rebuildChart(): Promise<void> {
   st.chart?.onVisibleRangeChange((range) => {
     if (autoResTimer !== null) window.clearTimeout(autoResTimer);
     // Vorausschauend nachladen (Owner 06.08.: „früher nachladen, nicht erst
-    // wenn man an den Rand kommt"): Schwelle = anderthalb Bildschirmbreiten
-    // vor der Datenkante — der Nachschub ist da, bevor man die Kante sieht.
-    // Nach jedem Prepend rückt range.from um die neuen Bars nach rechts;
-    // die Kette lädt also genau so lange, bis der Puffer steht.
-    const nearLeftEdge =
-      range !== null && range.from < Math.max(60, (range.to - range.from) * 1.5);
+    // wenn man an den Rand kommt"): Schwelle = das Puffer-Soll von
+    // pufferBedarf (~3 Bildschirmbreiten) — die Kette in loadOlderDaily/
+    // loadOlderIntraday füllt dann in einem Zug bis zum Soll auf.
+    const nearLeftEdge = range !== null && range.from < pufferBedarf(range);
     autoResTimer = window.setTimeout(() => {
       autoResTimer = null;
       maybeAutoSwitch();
