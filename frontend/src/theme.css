@@ -239,6 +239,11 @@ input { accent-color: var(--ac); }
   border: 1px solid var(--bd); border-radius: 8px; box-shadow: 0 8px 28px -8px rgba(0, 0, 0, .5);
   font-size: 10.5px; line-height: 1.4; color: var(--t2);
 }
+/* Großer Monitor + Maus: geparkt in der Fenster-Ecke darf das Overlay
+   breiter und eine Spur größer sein — 300 px waren Handy-Maß (06.08.). */
+@media (min-width: 1200px) and (pointer: fine) {
+  .evtip { max-width: 400px; font-size: 11.5px; padding: 10px 12px; }
+}
 .evtip-hd { display: flex; gap: 8px; align-items: baseline; font-family: var(--f-num); font-size: 11px; color: var(--t1); margin-bottom: 4px; }
 .evtip-n { margin-left: auto; color: var(--t3); font-size: 9.5px; }
 .evtip-row { margin-top: 2px; color: var(--t1); }

@@ -3610,6 +3610,8 @@ function showNewsTooltip(
   pos: { x: number; y: number } | null,
   news: MarketDocData['news'],
   owner: unknown,
+  /** Chart-Fenster des Aufrufers — Anker fürs ruhige Desktop-Docking. */
+  anker?: HTMLElement,
 ): void {
   const tip = $('evTip');
   const day = st?.showNews && !st.cleanView
@@ -3653,9 +3655,24 @@ function showNewsTooltip(
     list.appendChild(row);
   }
   tip.hidden = false;
-  // Ans Viewport clampen (Tooltip ist position:fixed)
   const w = tip.offsetWidth;
   const h = tip.offsetHeight;
+  // Desktop (Owner-Feedback 06.08.: „Position auf großem Monitor total blöd"):
+  // Mit der Maus klebte das Overlay am Crosshair, hüpfte bei jeder Bewegung
+  // mit und lag genau über den Kerzen, die man gerade ansieht. Jetzt parkt es
+  // ruhig in der OBEREN Ecke des Chart-Fensters, die vom Crosshair WEG zeigt
+  // (Wechsel nur beim Überqueren der Fenstermitte). Rechts bleibt Platz für
+  // die Preisskala. Touch behält das bewährte Verhalten: Overlay am Finger,
+  // 4 s Lesezeit nach dem Loslassen.
+  if (!COARSE_POINTER && anker) {
+    const r = anker.getBoundingClientRect();
+    const linksParken = pos.x > (r.left + r.right) / 2;
+    const x = linksParken ? r.left + 12 : r.right - w - 78;
+    tip.style.left = `${Math.max(8, Math.min(x, window.innerWidth - w - 8))}px`;
+    tip.style.top = `${Math.max(8, Math.min(r.top + 10, window.innerHeight - h - 8))}px`;
+    return;
+  }
+  // Touch/Fallback: am Zeigepunkt, ans Viewport geclampt (position:fixed)
   tip.style.left = `${Math.min(pos.x + 14, window.innerWidth - w - 8)}px`;
   tip.style.top = `${Math.max(8, Math.min(pos.y - h - 10, window.innerHeight - h - 8))}px`;
 }
@@ -3870,7 +3887,7 @@ async function rebuildChart(): Promise<void> {
   }
   void loadPredictionForSymbol();
   st.chart?.onCrosshairDate((date, pos) => {
-    showNewsTooltip(date, pos, st?.news ?? null, 'main');
+    showNewsTooltip(date, pos, st?.news ?? null, 'main', $('chartArea'));
     if (!crosshairSyncing && st?.chart2) {
       crosshairSyncing = true;
       st.chart2.setCrosshair(date);
@@ -4165,7 +4182,7 @@ async function rebuildChart2(): Promise<void> {
   st.chart2?.onCrosshairDate((date, pos) => {
     // News-Overlay auch im Vergleichs-Chart — mit den Schlagzeilen des
     // VERGLEICHS-Symbols, nicht denen des Haupt-Charts
-    showNewsTooltip(date, pos, st?.chart2P.news ?? null, st?.chart2P ?? 'chart2');
+    showNewsTooltip(date, pos, st?.chart2P.news ?? null, st?.chart2P ?? 'chart2', $('chart2Area'));
     if (crosshairSyncing || !st?.chart) return;
     crosshairSyncing = true;
     st.chart.setCrosshair(date);
@@ -4443,7 +4460,7 @@ async function mountGridPanel(p: GridPanel, host: HTMLElement): Promise<void> {
   p.chart?.onCrosshairDate((date, pos) => {
     // News-Overlay auch im Raster-Panel — mit den Schlagzeilen des
     // PANEL-Symbols, nicht denen des Haupt-Charts
-    showNewsTooltip(date, pos, p.news, p);
+    showNewsTooltip(date, pos, p.news, p, host);
     if (p.locked && p.chart) syncLockedCrosshair(p.chart, date);
   });
   renderGridPanelBars(p);
