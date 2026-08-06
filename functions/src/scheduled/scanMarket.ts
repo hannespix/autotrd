@@ -2376,21 +2376,27 @@ export async function runScan(force = false): Promise<ScanResult> {
         );
       }
 
-      // Tiefe Historie (Chart-Audit 2, 25.07.): einmalig ~5 Jahre Tages-Bars
-      // als EIN Doc je Jahr (ohlcDaily/{JAHR}) — nahtloses Rausscrollen im
-      // Chart bei ~1 Read je Jahr. Additiv + idempotent (Versions-Marker);
-      // die bars-Collection (rollierendes Jahr) bleibt unangetastet.
-      if (symDoc.get('deepBackfillV') !== 1) {
+      // Tiefe Historie (Chart-Audit 2, 25.07.): einmalig Tages-Bars als EIN
+      // Doc je Jahr (ohlcDaily/{JAHR}) — nahtloses Rausscrollen im Chart bei
+      // ~1 Read je Jahr. Additiv + idempotent (Versions-Marker); die
+      // bars-Collection (rollierendes Jahr) bleibt unangetastet.
+      // V2 (Zoom-Kontinuum 06.08.): volle Yahoo-Historie (range=max) statt
+      // 5 Jahre — Bestandssymbole werden über den Marker einmalig vertieft.
+      // EIGENER Batch-Commit: Ein alter Index bringt ~100 Jahres-Docs mit,
+      // und die würden das 500-Ops-Budget des Sammel-Batches sprengen.
+      if (symDoc.get('deepBackfillV') !== 2) {
         try {
           const deep = await getDeepDailyBars(symbol);
+          const deepBatch = db.batch();
           for (const [year, days] of chunkBarsByYear(deep)) {
-            batch.set(
+            deepBatch.set(
               symRef.collection('ohlcDaily').doc(year),
               { days, updatedAt: now.toISOString() },
               { merge: true },
             );
           }
-          batch.set(symRef, { deepBackfillV: 1, deepBackfilledAt: now.toISOString() }, { merge: true });
+          deepBatch.set(symRef, { deepBackfillV: 2, deepBackfilledAt: now.toISOString() }, { merge: true });
+          await deepBatch.commit();
         } catch (e) {
           logger.warn(`deepBackfill ${symbol}`, e); // nächster Scan versucht es erneut
         }

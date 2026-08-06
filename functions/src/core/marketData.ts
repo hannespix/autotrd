@@ -109,7 +109,10 @@ async function fetchYahoo(symbol: string, range: string): Promise<MarketSnapshot
 
 /** Tiefe Tages-Historie (Chart-Audit 2): ~5 Jahre für nahtloses Rausscrollen. */
 export async function getDeepDailyBars(symbol: string): Promise<DailyBar[]> {
-  return (await fetchYahoo(symbol, '5y')).bars;
+  // range=max statt 5y (Zoom-Kontinuum 06.08.): die volle Yahoo-Historie —
+  // bei alten Indizes Jahrzehnte. Einmalig je Symbol (deepBackfillV-Marker);
+  // die Jahres-Chunks bleiben je ~250 Zeilen klein, nur ihre Anzahl wächst.
+  return (await fetchYahoo(symbol, 'max')).bars;
 }
 
 /** Nur der aktuelle Kurs — leichtgewichtig fürs Kurz-Intervall (quoteNow)
