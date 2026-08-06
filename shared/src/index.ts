@@ -14,6 +14,7 @@ export * from './classAdvisor.js';
 export * from './classShadow.js';
 export * from './bestPractice.js';
 export * from './loadouts.js';
+export * from './overfit.js';
 export * from './liveReadiness.js';
 export * from './fx.js';
 export * from './tax.js';
