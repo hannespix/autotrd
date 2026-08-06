@@ -131,6 +131,17 @@ export interface PriceLineSpec {
 /** Serien-Typen (TV-Parität Teil 1) — Renko/Kagi/P&F bewusst später. */
 export type ChartType = 'candles' | 'hollow' | 'heikin' | 'line' | 'area' | 'baseline' | 'bars';
 
+/**
+ * Y-Skalen-Modus (Owner-Idee 06.08.):
+ * - 'auto': LWC-Standard — alles Sichtbare wird eingepasst; beim Scrubben
+ *   stauchen/strecken sich die Kerzen mit jedem Fenster.
+ * - 'fix':  fester Y-Zoom — die Spanne (Preis je Pixel) bleibt konstant, die
+ *   Skala WANDERT stattdessen mit den sichtbaren Kerzen mit. Scrollen fühlt
+ *   sich an wie eine Kamerafahrt statt wie ein Gummiband.
+ * - 'frei': manuell — Ziehen auf der Preisskala bestimmt alles selbst.
+ */
+export type YMode = 'auto' | 'fix' | 'frei';
+
 export interface PriceChartHandle {
   setBars(bars: ChartBar[] | IntradayChartBar[], opts?: SetBarsOptions): void;
   /** Chart-Typ umschalten (rendert aus den zuletzt gesetzten Bars neu). */
@@ -161,8 +172,8 @@ export interface PriceChartHandle {
   setCandlesVisible(visible: boolean): void;
   /** Rechten Rand (in Bars) reservieren — z. B. Platz für den Prognose-Pfeil. */
   setRightOffset(bars: number): void;
-  /** Y-Autoscaling an/aus — auch explizite Fits respektieren die Wahl. */
-  setAutoScale(on: boolean): void;
+  /** Y-Skalen-Modus (auto/fix/frei) — auch explizite Fits respektieren die Wahl. */
+  setYMode(mode: YMode): void;
   /** Prognose-Overlay: gestrichelte Mittellinie + ±1σ-Band (null = entfernen). */
   setForecast(overlay: ForecastOverlay | null, anchor?: { time: string | number; value: number }): void;
   /** Ist ein Prognose-Overlay gesetzt? (E2E-Hook) */
@@ -308,12 +319,52 @@ export async function buildPriceChart(
     }, 0);
   });
 
+  // Y-Modus 'fix' (Owner-Idee 06.08.: „Kerzen nicht immer größer und kleiner
+  // stauchen"): Statt bei jedem Pan die Skala neu einzupassen, bleibt die
+  // Preis-SPANNE eingefroren und nur ihre MITTE folgt den sichtbaren Kerzen —
+  // die Kamera fährt mit, statt das Bild zu dehnen. LWC kennt keinen direkten
+  // Setter für den Preisbereich; der Weg führt über autoscaleInfoProvider:
+  // JEDE Serie der rechten Skala liefert im Fix-Modus denselben, hier
+  // berechneten Bereich — die Vereinigung ist dann exakt dieser Bereich.
+  // Not-Ausdehnung: Ein Ausbruchsfenster größer als die Spanne würde sonst
+  // abgeschnitten — es weitet vorübergehend, ohne die Spanne zu ratschen.
+  let yModus: YMode = 'auto';
+  let fixSpanne: number | null = null;
+  const fixRange = (): { min: number; max: number } | null => {
+    const lr = chart.timeScale().getVisibleLogicalRange();
+    if (!lr || cachedRows.length === 0) return null;
+    const i0 = Math.max(0, Math.floor(lr.from));
+    const i1 = Math.min(cachedRows.length - 1, Math.ceil(lr.to));
+    if (i1 < i0) return null;
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let i = i0; i <= i1; i++) {
+      const r = cachedRows[i]!;
+      lo = Math.min(lo, r.low);
+      hi = Math.max(hi, r.high);
+    }
+    if (!(hi > lo)) return null;
+    fixSpanne ??= (hi - lo) * 1.15;
+    const spanne = Math.max(fixSpanne, (hi - lo) * 1.05);
+    const mitte = (lo + hi) / 2;
+    return { min: mitte - spanne / 2, max: mitte + spanne / 2 };
+  };
+  type YInfo = { priceRange: { minValue: number; maxValue: number } } | null;
+  const yProvider = (orig: () => YInfo): YInfo => {
+    if (yModus !== 'fix') return orig();
+    const r = fixRange();
+    return r ? { priceRange: { minValue: r.min, maxValue: r.max } } : orig();
+  };
+  /** In jede Serie der RECHTEN Preisskala spreaden (nicht 'vol'/'overlay'). */
+  const Y = { autoscaleInfoProvider: yProvider as never };
+
   const candle = chart.addCandlestickSeries({
     upColor: '#26cf9d',
     downColor: '#f2586b',
     borderVisible: false,
     wickUpColor: '#40e0b4',
     wickDownColor: '#ff8290',
+    ...Y,
   });
   const vol = chart.addHistogramSeries({
     priceFormat: { type: 'volume' },
@@ -325,9 +376,9 @@ export async function buildPriceChart(
   // Literale statt Enum — CLAUDE.md-§6-Geist)
   const fcCommon = { priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false } as const;
   let fcOn = false;
-  const fcMid = chart.addLineSeries({ color: '#25d0ee', lineWidth: 2, lineStyle: 2, ...fcCommon });
-  const fcUp = chart.addLineSeries({ color: 'rgba(37,208,238,.45)', lineWidth: 1, lineStyle: 3, ...fcCommon });
-  const fcLo = chart.addLineSeries({ color: 'rgba(37,208,238,.45)', lineWidth: 1, lineStyle: 3, ...fcCommon });
+  const fcMid = chart.addLineSeries({ color: '#25d0ee', lineWidth: 2, lineStyle: 2, ...fcCommon, ...Y });
+  const fcUp = chart.addLineSeries({ color: 'rgba(37,208,238,.45)', lineWidth: 1, lineStyle: 3, ...fcCommon, ...Y });
+  const fcLo = chart.addLineSeries({ color: 'rgba(37,208,238,.45)', lineWidth: 1, lineStyle: 3, ...fcCommon, ...Y });
 
   // Träger der Preislinien (Positions-Overlay 04.08.): eine vollständig
   // transparente Linien-Serie. Warum nicht direkt die Kerzen? Preislinien
@@ -342,6 +393,7 @@ export async function buildPriceChart(
     priceLineVisible: false,
     lastValueVisible: false,
     crosshairMarkerVisible: false,
+    ...Y,
   });
   const priceLines = new Map<string, ReturnType<typeof lineHost.createPriceLine>>();
   let lineHostFed = false;
@@ -396,7 +448,7 @@ export async function buildPriceChart(
     if (!isCandle) {
       if (!alt || altKind !== currentType) {
         if (alt) chart.removeSeries(alt);
-        const opts = { priceLineVisible: true, lastValueVisible: true, crosshairMarkerVisible: false };
+        const opts = { priceLineVisible: true, lastValueVisible: true, crosshairMarkerVisible: false, ...Y };
         if (currentType === 'line') alt = chart.addLineSeries({ color: '#25d0ee', lineWidth: 2, ...opts });
         else if (currentType === 'area')
           alt = chart.addAreaSeries({
@@ -461,6 +513,9 @@ export async function buildPriceChart(
       // Fit wird auch die Y-Skala wieder auf Autoscale gestellt (User-Feedback:
       // „x UND y beim Umschalten optimieren").
       if (opts?.fit) {
+        // Expliziter Fit (Symbol-/Zeitrahmen-Wechsel): Fix-Spanne neu
+        // einfrieren — die alte gehört zu einem anderen Preisniveau.
+        fixSpanne = null;
         chart.priceScale('right').applyOptions({ autoScale: autoScaleOn });
         if (opts.fitTo) {
           // Sanity-Clamp (UI-Audit 25.07.): Ein programmatischer Fit darf die
@@ -493,7 +548,7 @@ export async function buildPriceChart(
             priceLineVisible: false,
             lastValueVisible: line.separateScale ?? false,
             crosshairMarkerVisible: false,
-            ...(line.separateScale ? { priceScaleId: 'overlay' } : {}),
+            ...(line.separateScale ? { priceScaleId: 'overlay' } : Y),
           });
           if (line.separateScale) {
             chart.priceScale('overlay').applyOptions({ visible: false });
@@ -530,6 +585,7 @@ export async function buildPriceChart(
         priceLineVisible: false,
         lastValueVisible: false,
         crosshairMarkerVisible: false,
+        ...Y,
       });
       if (colors) {
         area.applyOptions({ lineColor: colors.line, topColor: colors.top, bottomColor: colors.bottom });
@@ -583,9 +639,11 @@ export async function buildPriceChart(
       currentRightOffset = bars;
       chart.timeScale().applyOptions({ rightOffset: bars });
     },
-    setAutoScale(on: boolean): void {
-      autoScaleOn = on;
-      chart.priceScale('right').applyOptions({ autoScale: on });
+    setYMode(mode: YMode): void {
+      yModus = mode;
+      fixSpanne = null; // beim Moduswechsel frisch am aktuellen Fenster einfrieren
+      autoScaleOn = mode !== 'frei';
+      chart.priceScale('right').applyOptions({ autoScale: autoScaleOn });
     },
     forecastActive(): boolean {
       return fcOn;

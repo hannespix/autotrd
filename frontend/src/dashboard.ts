@@ -282,8 +282,10 @@ interface DashState {
   intradayOldest: string | null;
   intradayHistLoading: boolean;
   intradayHistDone: boolean;
-  /** Y-Autoscaling der Preisskala (Anzeige-Option, default an). */
-  yAuto: boolean;
+  /** Y-Skalen-Modus (Owner-Idee 06.08.): 'auto' = einpassen, 'fix' = fester
+   *  Zoom + Nachführen (Kerzenhöhe bleibt beim Scrollen konstant), 'frei' =
+   *  manuell an der Preisskala ziehen. */
+  yMode: import('./chart.js').YMode;
   /** fitContent beim nächsten renderChart (nur Symbol-/Zeitrahmen-Wechsel). */
   chartFitPending: boolean;
   /** Aktive Indikator-Overlays (sma20/sma50/sma200/ema9/ema21/bb). */
@@ -681,7 +683,7 @@ function layout(email: string): string {
               <button class="tf-btn on" id="lyFc" title="Prognose-Overlay ein/aus">Prognose</button>
               <button class="tf-btn on" id="lyNews" title="News-Punkte ein/aus — nur die Schlagzeilen, die die Engine ohnehin fürs News-Veto lädt (kein zusätzlicher Abruf). Grün/rot = Wortlaut der Schlagzeile, gelber Pfeil = Einstiegs-Veto aktiv.">News</button>
               <button class="tf-btn on" id="lyPos" title="Offene Position im Chart: Einstiegs-Marke, Preislinien für Stop/Trailing/Ziel und die Kurslinie seit Einstieg (grün im Gewinn, rot im Verlust). Zeigt sich nur, wenn das Konto in diesem Symbol drinsteckt.">Position</button>
-              <button class="tf-btn on" id="yAutoBtn" title="Y-Autoscaling: Preisskala passt sich beim Scrollen/Zoomen automatisch an — ausschalten, um die Y-Achse manuell festzuhalten (Ziehen auf der Preisskala)">Y-Auto</button>
+              <button class="tf-btn on" id="yAutoBtn" title="Y-Skalen-Modus: automatisch · fester Zoom · manuell">Y auto</button>
               <div class="tm-sec">Raster — bis zu 4 Kurse parallel</div>
               <span class="grid-sw" title="Charts im Raster: 1, 2 oder 4 parallel">
                 <button class="tf-btn on" data-grid="1">▭</button>
@@ -3878,7 +3880,7 @@ async function rebuildChart(): Promise<void> {
       }
     }, 300);
   });
-  st.chart?.setAutoScale(st.yAuto);
+  st.chart?.setYMode(st.yMode);
   // Beim Chart-Neuaufbau (Symbol-/Theme-Wechsel) Panels frisch mitziehen
   for (const kind of ['rsi', 'macd'] as const) {
     subEpochs[kind]++;
@@ -6515,7 +6517,12 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     intradayOldest: null,
     intradayHistLoading: false,
     intradayHistDone: false,
-    yAuto: localStorage.getItem('autotrd-chart-yauto') !== '0',
+    yMode: ((): import('./chart.js').YMode => {
+      const m = localStorage.getItem('autotrd-chart-ymode');
+      if (m === 'auto' || m === 'fix' || m === 'frei') return m;
+      // Migration vom alten An/Aus-Schalter: „aus" hieß manuell.
+      return localStorage.getItem('autotrd-chart-yauto') === '0' ? 'frei' : 'auto';
+    })(),
     chartFitPending: true,
     prediction: null,
     predMode: false,
@@ -7157,14 +7164,30 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     if (st.autoRes) maybeAutoSwitch();
   });
   updateAutoUi();
+  // Y-Modus-Schalter (Owner-Idee 06.08.): auto → fix → frei → auto. „Fix"
+  // hält den Y-Zoom konstant und führt nur die Skalen-MITTE den sichtbaren
+  // Kerzen nach — Scrollen ohne Gummiband-Effekt.
+  const Y_LABEL: Record<import('./chart.js').YMode, [string, string]> = {
+    auto: ['Y auto', 'Y-Skala: automatisch — alles Sichtbare wird eingepasst (Kerzen stauchen sich beim Scrollen). Klick: fester Zoom.'],
+    fix: ['Y fix', 'Y-Skala: fester Zoom — die Skala wandert mit dem Kurs mit, die Kerzenhöhe bleibt beim Scrollen konstant; bei Ausbrüchen weitet sie kurzzeitig. Klick: manuell.'],
+    frei: ['Y frei', 'Y-Skala: manuell — auf der Preisskala ziehen; Doppelklick auf die Achse setzt zurück. Klick: automatisch.'],
+  };
+  const paintYBtn = (): void => {
+    if (!st) return;
+    const [text, title] = Y_LABEL[st.yMode];
+    const b = $('yAutoBtn');
+    b.textContent = text;
+    b.title = title;
+    b.classList.toggle('on', st.yMode !== 'frei');
+  };
   $('yAutoBtn').addEventListener('click', () => {
     if (!st) return;
-    st.yAuto = !st.yAuto;
-    $('yAutoBtn').classList.toggle('on', st.yAuto);
-    localStorage.setItem('autotrd-chart-yauto', st.yAuto ? '1' : '0');
-    st.chart?.setAutoScale(st.yAuto);
+    st.yMode = st.yMode === 'auto' ? 'fix' : st.yMode === 'fix' ? 'frei' : 'auto';
+    paintYBtn();
+    localStorage.setItem('autotrd-chart-ymode', st.yMode);
+    st.chart?.setYMode(st.yMode);
   });
-  $('yAutoBtn').classList.toggle('on', st?.yAuto ?? true);
+  paintYBtn();
   // Indikator-Layer (SMA/EMA/BB) — Auswahl bleibt über localStorage erhalten
   document.querySelectorAll<HTMLButtonElement>('.tf-btn[data-layer]').forEach((b) => {
     const key = b.dataset.layer!;
