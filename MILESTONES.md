@@ -2442,7 +2442,7 @@ A und B oben.
       mögliche Kür frühestens auf ~11.08. (14-Tage-Schwelle) — bis dahin
       zeigt die Karte ehrlich den Anwärter-Stand.
 
-- [ ] **MU4: Options-Loadouts (Owner-Idee 06.08.: „vorgefertigte
+- [x] **MU4 ✅ (06.08.): Options-Loadouts (Owner-Idee 06.08.: „vorgefertigte
       Grundeinstellungen zur Auswahl … gerne auch ein bisschen lustig, im
       nerdigen Fachjargon … eigene Loadouts erstellbar/speicherbar").**
       Preset-Karten mit Titel + kurzer Charakterisierung, die beim
@@ -2460,3 +2460,14 @@ A und B oben.
          Werte Geld verdienen, weiß heute niemand (Messung läuft).
       4. Eigene Loadouts: aktuellen Stand benennen + speichern
          (users/{uid}/loadouts), laden, löschen.
+
+      Umsetzung: `shared/src/loadouts.ts` — fünf Charaktere (Boomer-Depot,
+      Gebühren-Sparfuchs [evidenzbasiert: der einzige BEWIESENE Edge],
+      Werkseinstellung, Daytrader-Deluxe, YOLO-Vollgas), jede Karte mit
+      Witz-Zeile UND ehrlicher Risiko-Zeile; `wendeLoadoutAn` = MU3-Übernahme
+      plus explizitem Hebel (fehlend = 1× — ein „Boomer-Depot" mit
+      vergessenem 3×-Hebel wäre Etikettenschwindel). Killer-Test: JEDES
+      Loadout besteht angewandt validateStrategy (8 Tests). UI im
+      Trading-Reiter: Karten-Raster, „Ansehen"-Diff vor jeder Übernahme,
+      eigener Schnappschuss per Namen (Rules: users/{uid}/loadouts nur
+      Owner). Gesichert wird der GESPEICHERTE Stand, nicht das Formular.

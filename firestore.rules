@@ -117,6 +117,14 @@ service cloud.firestore {
       match /workspaces/{doc} {
         allow read, write: if isOwner(uid);
       }
+
+      // Loadouts (MU4): benannte Einstellungs-Schnappschüsse des Nutzers.
+      // Client-schreibbar wie Workspaces — es sind reine Präferenz-KOPIEN;
+      // wirksam wird ein Loadout erst über saveStrategy und damit durch
+      // dieselbe Server-Validierung wie jede Handeingabe.
+      match /loadouts/{doc} {
+        allow read, write: if isOwner(uid);
+      }
     }
 
     // ── Quotas/Admin: rein serverseitig ──

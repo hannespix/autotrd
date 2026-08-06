@@ -849,6 +849,16 @@ input, textarea, select, [contenteditable='true'] {
 .opt-grid .opt-sub:first-child { margin-top: 0; }
 @media (max-width: 560px) { .opt-grid { grid-template-columns: 1fr; } }
 
+/* Loadout-Karten (MU4): Charaktere nebeneinander, mobil untereinander. */
+.lo-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); margin-top: 6px; }
+.lo-card { border: 1px solid var(--bd); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 4px; }
+.lo-head { display: flex; align-items: center; justify-content: space-between; font-size: 12.5px; color: var(--t1); }
+.lo-del { background: none; border: none; color: var(--t3); cursor: pointer; font-size: 12px; padding: 0 2px; }
+.lo-del:hover { color: var(--rd); }
+/* Die Risiko-Zeile ist der ehrliche Teil unter dem Witz — sichtbar abgesetzt. */
+.lo-risk { font-size: 11px; color: var(--yl, #d9a441); }
+.lo-card .btn { align-self: flex-start; }
+
 /* Kapital-Regler je Anlageklasse (MG2).
    BEWUSST KEIN .opt-grid: Dessen `label { flex-direction: column }` würde
    Name, Regler und Wert übereinander stapeln — und weil `flex-basis` in
