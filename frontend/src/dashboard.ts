@@ -20,6 +20,7 @@ import {
   PAPER_FEE_RATE,
   adviseStrategy,
   aggregateBars,
+  aggregateDailyBars,
   applySuggestions,
   bollinger,
   buildPriors,
@@ -98,6 +99,8 @@ import {
   callSavePrediction,
   loadBarsOnce,
   loadIntraday,
+  loadIntradayChunks,
+  tagVorTagen,
   loadDailyChunk,
   loadPrediction,
   callQuoteNow,
@@ -259,12 +262,26 @@ interface DashState {
   histOldest: number;
   histLoading: boolean;
   histDone: boolean;
+  /** Leere Jahres-Chunks in Folge — zwei davon heißen: Datenanfang erreicht
+   *  (Zoom-Kontinuum 06.08.; ersetzt den alten festen 5-Jahres-Stop). */
+  histEmptyStreak: number;
   /** Auto-Auflösung: Kerzengröße folgt der Zoomstufe (TradingView-Gefühl). */
   autoRes: boolean;
   /** Aggregations-Fenster der Intraday-Ansicht in Minuten (5/15/60). */
   aggMinutes: number;
+  /** Tages-Aggregation der Anzeige: 0 = Tages-, 7 = Wochen-, 30 = Monatskerzen
+   *  (Zoom-Kontinuum 06.08.; greift nur im Auto-Modus). */
+  dailyAgg: 0 | 7 | 30;
+  /** Aktuell GEZEIGTE Tages-Bars (ggf. Wochen/Monat) — Quelle für Overlays,
+   *  Marker, HUD und die Index↔Zeit-Umrechnung des Auto-Zoom-Wächters. */
+  shownDaily: ChartBar[];
   /** Aktuell GEZEIGTE Intraday-Bars (ggf. aggregiert) — Quelle für Overlays. */
   shownIntraday: import('./chart.js').IntradayChartBar[];
+  /** Ältester geladener ohlc5m-Chunk-Tag — das Intraday-Fenster wächst beim
+   *  Rückwärts-Scrollen chunkweise (Zoom-Kontinuum 06.08.). */
+  intradayOldest: string | null;
+  intradayHistLoading: boolean;
+  intradayHistDone: boolean;
   /** Y-Autoscaling der Preisskala (Anzeige-Option, default an). */
   yAuto: boolean;
   /** fitContent beim nächsten renderChart (nur Symbol-/Zeitrahmen-Wechsel). */
@@ -1578,6 +1595,11 @@ function wireChartCtx(): void {
   st.histOldest = 0;
   st.histLoading = false;
   st.histDone = false;
+  st.histEmptyStreak = 0;
+  st.intradayBars = [];
+  st.intradayOldest = null;
+  st.intradayHistLoading = false;
+  st.intradayHistDone = false;
 
   st.symbolSubs.push(
     watchMarketDoc(sym, (d) => {
@@ -1660,7 +1682,26 @@ function renderChart(): void {
   if (st.intradayDays > 0) {
     // Auto-Auflösung: 5m-Basis ggf. zu 15m/1h-Kerzen bündeln (pure, shared)
     st.shownIntraday = aggregateBars(st.intradayBars, st.aggMinutes) as typeof st.shownIntraday;
-    st.chart.setBars(st.shownIntraday, { fit, timeVisible: true });
+    // Fit aufs ANGEFORDERTE Fenster (1T/1W), nicht auf alles Geladene: Das
+    // Intraday-Fenster wächst beim Rückwärts-Scrollen — ein fitContent über
+    // die ganze Lazy-Historie würde den 1T-Klick ad absurdum führen.
+    let fitTo: { from: number; to: number } | undefined;
+    if (fit && st.shownIntraday.length > 1) {
+      // ET-Näherung (−5 h) nur fürs Bündeln nach Handelstagen — dieselbe
+      // Tages-Logik wie die ohlc5m-Chunks, ohne echte Zeitzonen-Tabelle.
+      const tagVonBar = (t: number): string => new Date((t - 5 * 3600) * 1000).toISOString().slice(0, 10);
+      const tage = new Set<string>();
+      let idx = 0;
+      for (let i = st.shownIntraday.length - 1; i >= 0; i--) {
+        tage.add(tagVonBar(st.shownIntraday[i]!.time));
+        if (tage.size > st.intradayDays) {
+          idx = i + 1;
+          break;
+        }
+      }
+      if (idx > 0) fitTo = { from: idx - 0.5, to: st.shownIntraday.length + 3 };
+    }
+    st.chart.setBars(st.shownIntraday, { fit, fitTo, timeVisible: true });
     applyForecast(); // Kurzfrist-Prognose (nächste Stunde) im Intraday-Chart
     applyMarkers(); // News-Punkte am Tages-Start-Bar (Zeit-Domäne wechselt mit)
     applyOverlays();
@@ -1670,7 +1711,15 @@ function renderChart(): void {
     renderOhlcHud(null);
     return;
   }
-  const bars = dailySource();
+  // Zoom-Kontinuum (06.08.): Weit rausgezoomt werden die Tages-Bars zu
+  // Wochen-/Monatskerzen gebündelt — dieselbe Mechanik wie 5m→15m→1h, nur
+  // eine Etage höher. Nur im Auto-Modus; manuelle Stufen bleiben Tageskerzen.
+  const roh = dailySource();
+  const bars =
+    st.autoRes && st.dailyAgg > 0
+      ? aggregateDailyBars(roh, st.dailyAgg === 7 ? 'week' : 'month')
+      : roh;
+  st.shownDaily = bars;
   // Fit-Ziel deterministisch bestimmen (kein fitContent-Race):
   // Auto-Modus → Startfenster ~120 Tage (alles Ältere per Scrollen erreichbar);
   // aktiver Prognose-Pfeil → rechts Platz einkalkulieren (Feedback 25.07.).
@@ -1712,7 +1761,10 @@ function dailySource(): ChartBar[] {
   return st.autoRes ? all : st.range > 0 ? all.slice(-st.range) : all;
 }
 
-/** Ältere Jahres-Chunks nahtlos vorn anfügen (Links-Scroll ans Datenende). */
+/** Ältere Jahres-Chunks nahtlos vorn anfügen (Links-Scroll ans Datenende).
+ *  Seit 06.08. OHNE festen 5-Jahres-Stop: Der Server füllt die volle Yahoo-
+ *  Historie (range=max) — Schluss ist erst, wenn zwei Jahres-Chunks in Folge
+ *  leer bleiben (= Datenanfang) oder die Sicherheitsuntergrenze greift. */
 async function loadOlderDaily(): Promise<void> {
   if (!st || st.histLoading || st.histDone || st.intradayDays > 0 || st.bars.length === 0) return;
   st.histLoading = true;
@@ -1721,7 +1773,7 @@ async function loadOlderDaily(): Promise<void> {
     const sym = st.currentSymbol;
     const first = (st.histBars[0] ?? st.bars[0])!;
     const year = st.histOldest > 0 ? st.histOldest - 1 : Number(first.date.slice(0, 4));
-    if (year < new Date().getFullYear() - 5) {
+    if (year < 1900) {
       st.histDone = true;
       return;
     }
@@ -1730,14 +1782,20 @@ async function loadOlderDaily(): Promise<void> {
     st.histOldest = year;
     const prepend = chunk.filter((b) => b.date < first.date);
     if (prepend.length === 0) {
-      if (chunk.length === 0) st.histDone = true; // Chunk (noch) nicht backgefüllt
+      st.histEmptyStreak += 1;
+      if (st.histEmptyStreak >= 2) st.histDone = true; // zwei leere Jahre = Anfang erreicht
       return;
     }
+    st.histEmptyStreak = 0;
     const r = st.chart?.getVisibleRange();
+    // Position in GEZEIGTEN Bars halten: In der Wochen-/Monats-Sicht ist der
+    // Versatz nicht die Zahl der Tages-Bars, sondern die der neuen Kerzen.
+    const vorher = st.shownDaily.length;
     st.histBars = [...prepend, ...st.histBars];
     renderChart(); // ohne Fit — und die Position exakt halten:
-    if (r && st.chart) {
-      st.chart.setVisibleRange({ from: r.from + prepend.length, to: r.to + prepend.length });
+    const delta = st.shownDaily.length - vorher;
+    if (r && st.chart && delta > 0) {
+      st.chart.setVisibleRange({ from: r.from + delta, to: r.to + delta });
     }
   } catch {
     /* nächster Scroll-Versuch */
@@ -1747,10 +1805,54 @@ async function loadOlderDaily(): Promise<void> {
   }
 }
 
+/** Ältere 5m-Chunks vorn anfügen (Links-Scroll in der Intraday-Sicht) —
+ *  Gegenstück zu loadOlderDaily, eine Etage tiefer (Zoom-Kontinuum 06.08.). */
+async function loadOlderIntraday(): Promise<void> {
+  if (
+    !st || st.intradayHistLoading || st.intradayHistDone ||
+    st.intradayDays === 0 || st.intradayOldest === null
+  ) return;
+  st.intradayHistLoading = true;
+  $('histHint').hidden = false;
+  try {
+    const sym = st.currentSymbol;
+    // ~5 Handelstage je Schritt; 9 Kalendertage decken Wochenende + Feiertage.
+    const chunks = await loadIntradayChunks(sym, tagMinus(st.intradayOldest, 9), tagMinus(st.intradayOldest, 1));
+    if (!st || st.currentSymbol !== sym || st.intradayDays === 0) return;
+    if (chunks.length === 0) {
+      st.intradayHistDone = true; // Datenanfang der 5m-Chunks erreicht
+      return;
+    }
+    const r = st.chart?.getVisibleRange();
+    const vorher = st.shownIntraday.length;
+    st.intradayBars = [...chunks.flatMap((c) => c.bars), ...st.intradayBars];
+    st.intradayOldest = chunks[0]!.day;
+    renderChart();
+    const delta = st.shownIntraday.length - vorher;
+    if (r && st.chart && delta > 0) {
+      st.chart.setVisibleRange({ from: r.from + delta, to: r.to + delta });
+    }
+  } catch {
+    /* nächster Scroll-Versuch */
+  } finally {
+    if (st) st.intradayHistLoading = false;
+    $('histHint').hidden = true;
+  }
+}
+
 /** Badge neben den Zeitrahmen: aktive Kerzen-Auflösung (+ Auto-Hinweis). */
 function renderResBadge(): void {
   if (!st) return;
-  const label = st.intradayDays > 0 ? (st.aggMinutes >= 60 ? `${st.aggMinutes / 60}h` : `${st.aggMinutes}m`) : '1D';
+  const label =
+    st.intradayDays > 0
+      ? st.aggMinutes >= 60
+        ? `${st.aggMinutes / 60}h`
+        : `${st.aggMinutes}m`
+      : st.dailyAgg === 7
+        ? '1W'
+        : st.dailyAgg === 30
+          ? '1Mo'
+          : '1D';
   const el = $('resBadge');
   // Zeitzone nur bei Intraday nennen — Tageskerzen tragen den Handelstag in
   // Börsenzeit und haben gar keine Uhrzeit, auf die sich ein Kürzel bezöge.
@@ -1818,7 +1920,11 @@ function baseOverlayLines(
 function applyOverlays(): void {
   if (!st?.chart) return;
   const intraday = st.intradayDays > 0;
-  const daily = intraday ? [] : dailySource();
+  // GEZEIGTE Bars als Basis (Zoom-Kontinuum): In der Wochen-/Monats-Sicht
+  // rechnen SMA & Co. auf Wochen-/Monats-Closes — wie TradingView. Fremde
+  // Zeitpunkte (Tages-Raster) würden zudem die LWC-Zeitachse aufblähen, die
+  // aus der VEREINIGUNG aller Serien-Zeitpunkte entsteht.
+  const daily = intraday ? [] : st.shownDaily;
   const times: Array<string | number> = intraday
     ? st.shownIntraday.map((b) => b.time)
     : daily.map((b) => b.date);
@@ -1931,7 +2037,7 @@ function renderOhlcHud(d: HudBar | null): void {
     el.hidden = false;
     return;
   }
-  const bar = d ?? lastHudBar(st.intradayDays > 0 ? st.shownIntraday : dailySource());
+  const bar = d ?? lastHudBar(st.intradayDays > 0 ? st.shownIntraday : st.shownDaily);
   if (!bar) {
     el.hidden = true;
     return;
@@ -2043,7 +2149,7 @@ function shownSeries(): { times: Array<string | number>; closes: number[] } {
   if (st.intradayDays > 0) {
     return { times: st.shownIntraday.map((b) => b.time), closes: st.shownIntraday.map((b) => b.close) };
   }
-  const bars = dailySource();
+  const bars = st.shownDaily;
   return { times: bars.map((b) => b.date), closes: bars.map((b) => b.close) };
 }
 
@@ -2159,7 +2265,8 @@ function drawPredictionArrow(): void {
   svg.innerHTML = '';
   const pred = st.prediction;
   const active =
-    st.ui.predArrow && !st.cleanView && pred !== null && st.chart !== null && st.intradayDays === 0 && st.bars.length > 0;
+    st.ui.predArrow && !st.cleanView && pred !== null && st.chart !== null &&
+    st.intradayDays === 0 && st.dailyAgg === 0 && st.bars.length > 0;
   if (!active || !pred || !st.chart) return;
   const last = st.bars[st.bars.length - 1]!;
   const start = st.chart.coords(last.date, last.close);
@@ -3020,7 +3127,45 @@ function barTimeMs(b: { time: number } | { date: string }): number {
 
 function currentSource(): Array<{ time: number } | { date: string }> {
   if (!st) return [];
-  return st.intradayDays > 0 ? st.shownIntraday : dailySource();
+  return st.intradayDays > 0 ? st.shownIntraday : st.shownDaily;
+}
+
+/** ISO-Tag `tage` Kalendertage vor einem ISO-Tag (Chunk-Schlüssel-Arithmetik). */
+function tagMinus(tag: string, tage: number): string {
+  return new Date(Date.parse(`${tag}T00:00:00Z`) - tage * 86_400_000).toISOString().slice(0, 10);
+}
+
+/**
+ * Sorgt dafür, dass das geladene Intraday-Fenster den Zeitpunkt `t0` (ms)
+ * abdeckt — nötigenfalls wächst es per Chunk-Range-Query rückwärts (Zoom-
+ * Kontinuum 06.08.). Liefert false, wenn die 5m-Daten schlicht nicht so weit
+ * zurückreichen (dann bleibt die Tages-Sicht die ehrliche Antwort).
+ */
+async function sichereIntradayAbdeckung(t0: number): Promise<boolean> {
+  if (!st) return false;
+  const sym = st.currentSymbol;
+  if (st.intradayBars.length === 0) {
+    const chunks = await loadIntradayChunks(sym, tagVorTagen(9), '9999-12-31');
+    if (!st || st.currentSymbol !== sym || chunks.length === 0) return false;
+    st.intradayBars = chunks.flatMap((c) => c.bars);
+    st.intradayOldest = chunks[0]!.day;
+  }
+  const zielTag = new Date(Math.max(t0 - 36 * 3_600_000, 0)).toISOString().slice(0, 10);
+  if (!st.intradayHistDone && st.intradayOldest !== null && zielTag < st.intradayOldest) {
+    const chunks = await loadIntradayChunks(sym, zielTag, tagMinus(st.intradayOldest, 1));
+    if (!st || st.currentSymbol !== sym) return false;
+    if (chunks.length === 0) {
+      st.intradayHistDone = true; // unterhalb des Fensters existiert nichts mehr
+    } else {
+      st.intradayBars = [...chunks.flatMap((c) => c.bars), ...st.intradayBars];
+      st.intradayOldest = chunks[0]!.day;
+      // Query lief bis ganz nach unten — begann sie NACH dem Ziel, ist das
+      // der Datenanfang (die Chunks sind seit dem Erst-Backfill lückenlos).
+      if (chunks[0]!.day > zielTag) st.intradayHistDone = true;
+    }
+  }
+  const cover0 = st.intradayBars[0]!.time * 1000;
+  return t0 >= cover0 - 12 * 3_600_000;
 }
 
 function maybeAutoSwitch(): void {
@@ -3037,11 +3182,26 @@ function maybeAutoSwitch(): void {
   const t0 = barTimeMs(src[i0]!);
   const t1 = barTimeMs(src[i1]!);
   const days = (t1 - t0) / 86_400_000;
-  // Intraday deckt nur ~5 Handelstage ab — will der User ein deutlich
-  // breiteres Fenster (viel Leerraum über die Quelle hinaus), zurück zu daily.
+  // Will der User ein deutlich breiteres Fenster, als die Intraday-Quelle
+  // hergibt (viel Leerraum über die Quelle hinaus), zurück zu daily.
   const wantsWider = st.intradayDays > 0 && r.to - r.from > src.length + 6;
-  const level = wantsWider ? 0 : days <= 1.6 ? 5 : days <= 3.5 ? 15 : days <= 8 ? 60 : 0;
-  const current = st.intradayDays > 0 ? st.aggMinutes : 0;
+  // Das volle Kontinuum (06.08.): 5m → 15m → 1h → 1D → 1W → 1M. Die
+  // Tages-Schwellen zielen auf ~500 sichtbare Kerzen je Stufe — dieselbe
+  // Dichte, bei der auch TradingView die Auflösung wechselt.
+  const level = wantsWider
+    ? 0
+    : days <= 1.6
+      ? 5
+      : days <= 3.5
+        ? 15
+        : days <= 8
+          ? 60
+          : days <= 740
+            ? 0
+            : days <= 3600
+              ? -7
+              : -30;
+  const current = st.intradayDays > 0 ? st.aggMinutes : -st.dailyAgg;
   if (level === current) return;
   void switchAutoLevel(level, t0, t1, wantsWider);
 }
@@ -3051,20 +3211,16 @@ async function switchAutoLevel(level: number, t0: number, t1: number, refit = fa
   autoSwitching = true;
   try {
     if (level > 0) {
-      if (st.intradayBars.length === 0) {
-        const sym = st.currentSymbol;
-        const chunks = await loadIntraday(sym, 5);
-        if (!st || st.currentSymbol !== sym) return;
-        st.intradayBars = chunks;
-      }
-      if (st.intradayBars.length === 0) return; // keine Intraday-Daten → daily bleiben
-      // Fenster außerhalb der ~5-Tage-Abdeckung? Dann bringt Intraday nichts.
-      const cover0 = st.intradayBars[0]!.time * 1000;
-      if (t0 < cover0 - 12 * 3_600_000) return;
+      // Fenster nicht abgedeckt (zu weit in der Vergangenheit, keine 5m-Daten)
+      // → Tages-Sicht bleibt; die Chunk-Historie wächst mit jedem Handelstag.
+      if (!(await sichereIntradayAbdeckung(t0))) return;
+      if (!st) return;
       st.intradayDays = 5;
       st.aggMinutes = level;
+      st.dailyAgg = 0;
     } else {
       st.intradayDays = 0;
+      st.dailyAgg = level === -7 ? 7 : level === -30 ? 30 : 0;
     }
     // Beim „will-breiter"-Rücksprung auf daily frisch fitten — das schmale
     // Intraday-Zeitfenster wäre sonst als Mini-Ausschnitt verwirrend.
@@ -3213,13 +3369,27 @@ async function panelMaybeAutoSwitch(p: GridPanel): Promise<void> {
   }
 }
 
-/** 5m-Chunks laden und rendern (1T/1W) — Chart-Feedback 24.07. */
+/** 5m-Chunks laden und rendern (1T/1W) — Chart-Feedback 24.07.
+ *  Seit 06.08. MERGEND statt ersetzend: Der Refresh (jeder Scan feuert
+ *  watchBars) holt nur die jüngsten Tage und lässt eine per Rückwärts-Scroll
+ *  gewachsene Lazy-Historie in Ruhe — sonst spränge die Ansicht beim
+ *  nächsten Scan zurück und das Nachgeladene wäre weg. */
 async function loadIntradayView(): Promise<void> {
   if (!st) return;
   const sym = st.currentSymbol;
-  const chunks = await loadIntraday(sym, st.intradayDays);
+  const n = Math.max(st.intradayDays, 1);
+  const frisch = await loadIntradayChunks(sym, tagVorTagen(Math.ceil(n * 1.6) + 4), '9999-12-31');
   if (!st || st.currentSymbol !== sym || st.intradayDays === 0) return;
-  st.intradayBars = chunks;
+  const fenster = frisch.slice(-n);
+  const neu = fenster.flatMap((c) => c.bars);
+  if (neu.length === 0) {
+    if (st.intradayBars.length === 0) renderChart();
+    return;
+  }
+  const schnitt = neu[0]!.time;
+  const alt = st.intradayBars.filter((b) => b.time < schnitt);
+  st.intradayBars = [...alt, ...neu];
+  if (alt.length === 0) st.intradayOldest = fenster[0]!.day;
   renderChart();
 }
 
@@ -3235,9 +3405,14 @@ async function loadIntradayView(): Promise<void> {
 function applyMarkers(): void {
   if (!st?.chart) return;
   const intraday = st.intradayDays > 0;
+  // GEZEIGTE Bars als Zeitraster (Zoom-Kontinuum): In der Wochen-/Monats-
+  // Sicht landen News- und Einstiegs-Marker auf der Kerze ihres Buckets —
+  // ein Tages-Datum, das es als Serien-Zeitpunkt nicht gibt, zeichnet LWC
+  // schlicht nicht. Nebeneffekt: Marker funktionieren jetzt auch auf der
+  // nachgeladenen Tiefen-Historie (vorher nur auf dem rollierenden Jahr).
   const times: Array<string | number> = intraday
     ? st.shownIntraday.map((b) => b.time)
-    : st.bars.map((b) => b.date);
+    : st.shownDaily.map((b) => b.date);
   const markers: ChartMarker[] =
     st.showNews && !st.cleanView
       ? newsChartMarkers(st.news, times, Math.floor(Date.now() / 1000), vetoAnzeige())
@@ -3526,6 +3701,13 @@ function applyForecast(): void {
       `über die nächste Stunde (5-min-Raster, Lookback ${ifc.lookback} Bars${calI})`;
     return;
   }
+  // Wochen-/Monatskerzen: Die 5-Tage-Prognose lebt UNTER der Kerzenauflösung
+  // — ihre Tages-Zukunftspunkte würden nur die Zeitachse verwässern.
+  if (st.dailyAgg > 0) {
+    st.chart.setForecast(null);
+    info.textContent = fc ? 'Prognose-Overlay nur in der Tages-Sicht (Wochen-/Monatskerzen aktiv).' : '';
+    return;
+  }
   if (!fc || fc.points.length === 0) {
     st.chart.setForecast(null);
     info.textContent = '';
@@ -3643,7 +3825,7 @@ async function rebuildChart(): Promise<void> {
   // chartWrap, NICHT fixed — backdrop-filter-Falle, CLAUDE.md §6).
   st.chart?.onVisibleRangeChange((range) => {
     if (!st) return;
-    const len = st.intradayDays > 0 ? st.shownIntraday.length : dailySource().length;
+    const len = st.intradayDays > 0 ? st.shownIntraday.length : st.shownDaily.length;
     $('jumpNow').hidden = !(range && len > 0 && range.to < len - 1.5);
   });
   st.chart?.onCrosshairDate((date) => {
@@ -3671,9 +3853,11 @@ async function rebuildChart(): Promise<void> {
     autoResTimer = window.setTimeout(() => {
       autoResTimer = null;
       maybeAutoSwitch();
-      // Links am Datenrand? Ältere Jahres-Chunks nahtlos nachladen.
-      if (nearLeftEdge && st && st.intradayDays === 0 && (st.autoRes || st.range === 0)) {
-        void loadOlderDaily();
+      // Links am Datenrand? Ältere Chunks nahtlos nachladen — Jahres-Chunks
+      // in der Tages-Sicht, 5m-Chunks in der Intraday-Sicht (Kontinuum 06.08.).
+      if (nearLeftEdge && st) {
+        if (st.intradayDays === 0 && (st.autoRes || st.range === 0)) void loadOlderDaily();
+        else if (st.intradayDays > 0) void loadOlderIntraday();
       }
     }, 300);
   });
@@ -6305,9 +6489,15 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     histOldest: 0,
     histLoading: false,
     histDone: false,
+    histEmptyStreak: 0,
     autoRes: localStorage.getItem('autotrd-chart-auto') !== '0',
     aggMinutes: 5,
+    dailyAgg: 0,
+    shownDaily: [],
     shownIntraday: [],
+    intradayOldest: null,
+    intradayHistLoading: false,
+    intradayHistDone: false,
     yAuto: localStorage.getItem('autotrd-chart-yauto') !== '0',
     chartFitPending: true,
     prediction: null,
@@ -6697,9 +6887,10 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     areaActive: () => st?.chart?.areaActive() ?? false,
     signalDir: () => st?.lastSignalDir ?? 'hold',
     cleanActive: () => st?.cleanView ?? false,
-    autoLevel: () => (st?.autoRes ? (st.intradayDays > 0 ? st.aggMinutes : 0) : -1),
+    // Intraday-Stufen positiv (5/15/60), Tages-Stufen ≤ 0 (0=1D, -7=1W, -30=1Mo)
+    autoLevel: () => (st?.autoRes ? (st.intradayDays > 0 ? st.aggMinutes : -st.dailyAgg) : -1),
     resBadge: () => document.getElementById('resBadge')?.textContent ?? '',
-    dailyLen: () => dailySource().length,
+    dailyLen: () => (st?.shownDaily ?? []).length,
     firstDailyDate: () => dailySource()[0]?.date ?? '',
     mainCoords: (time: string | number, price: number) => st?.chart?.coords(time, price) ?? null,
     lastClose: () => st?.bars[st.bars.length - 1]?.close ?? null,
@@ -6840,6 +7031,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     b.addEventListener('click', () => {
       if (!st) return;
       st.autoRes = false; // manuelle Stufe gewählt → Auto pausiert bis zum Auto-Klick
+      st.dailyAgg = 0; // manuelle Stufen sind immer Tages-/5m-Basis
       st.intradayDays = parseInt(b.dataset.intraday ?? '0', 10);
       st.aggMinutes = 5; // manuelle Intraday-Stufen zeigen die 5m-Basis
       if (b.dataset.bars !== undefined) st.range = parseInt(b.dataset.bars, 10);
@@ -6910,6 +7102,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     b.addEventListener('click', () => {
       if (!st) return;
       st.autoRes = false; // manuelle Stufe pausiert Auto (wie überall)
+      st.dailyAgg = 0;
       st.intradayDays = b.dataset['mhI'] !== undefined ? Number(b.dataset['mhI']) : 0;
       st.aggMinutes = 5;
       if (b.dataset['mhR'] !== undefined) st.range = Number(b.dataset['mhR']);

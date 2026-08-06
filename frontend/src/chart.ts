@@ -215,6 +215,9 @@ function chartTheme(): Record<string, unknown> {
       textColor: light ? '#43516c' : '#9fadc4',
       fontSize: 11,
       fontFamily: "'JetBrains Mono','SF Mono',ui-monospace,monospace",
+      // TV-Logo aus dem Chart (Owner-Wunsch 06.08.) — die lizenzrechtlich
+      // nötige Attribution steht dafür sichtbar in den Rechtstexten (§legal).
+      attributionLogo: false,
     },
     grid: {
       vertLines: { visible: false },
@@ -281,6 +284,29 @@ export async function buildPriceChart(
       vertAlign: 'center',
     },
   } as never);
+
+  // Max-Zoom-Deckel (Owner 06.08.: „5-Minuten-Balken nicht unendlich breit
+  // ziehen"): Unter MIN_SICHTBARE_BARS schnappt das Fenster zurück — um die
+  // Fenstermitte, damit der Zoom-Fokus erhalten bleibt. LWC v4 kennt kein
+  // maxBarSpacing; der Wächter ist das v4-Äquivalent. Re-Entry-Guard, weil
+  // setVisibleLogicalRange selbst wieder Range-Events feuert.
+  const MIN_SICHTBARE_BARS = 10;
+  let zoomClampAktiv = false;
+  let rowCount = 0; // Bar-Anzahl der Hauptserie (setBars pflegt ihn)
+  chart.timeScale().subscribeVisibleLogicalRangeChange((r) => {
+    if (!r || zoomClampAktiv || rowCount < MIN_SICHTBARE_BARS) return;
+    const span = r.to - r.from;
+    if (span >= MIN_SICHTBARE_BARS) return;
+    const mitte = (r.from + r.to) / 2;
+    zoomClampAktiv = true;
+    chart.timeScale().setVisibleLogicalRange({
+      from: mitte - MIN_SICHTBARE_BARS / 2,
+      to: mitte + MIN_SICHTBARE_BARS / 2,
+    });
+    window.setTimeout(() => {
+      zoomClampAktiv = false;
+    }, 0);
+  });
 
   const candle = chart.addCandlestickSeries({
     upColor: '#26cf9d',
@@ -417,6 +443,7 @@ export async function buildPriceChart(
         return { time, open: b.open, high: b.high, low: b.low, close: b.close, volume: b.volume };
       });
       cachedRows = rows;
+      rowCount = rows.length;
       renderPrice();
       feedLineHost();
       vol.setData(

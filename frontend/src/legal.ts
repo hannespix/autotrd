@@ -46,7 +46,12 @@ const TEXTS: Record<LegalKind, string> = {
     für diese fremden Inhalte übernehmen wir keine Gewähr.</p>
     <p><strong>Urheberrecht:</strong> Die durch den Seitenbetreiber erstellten
     Inhalte und Werke auf diesen Seiten unterliegen dem deutschen
-    Urheberrecht.</p>`,
+    Urheberrecht.</p>
+    <p><strong>Verwendete Komponenten:</strong> Die Kurscharts basieren auf
+    <a href="https://www.tradingview.com/" target="_blank" rel="noopener">
+    TradingView Lightweight Charts™</a> — Copyright © TradingView, Inc.
+    Diese Attribution ist Bestandteil der Lizenzbedingungen der
+    Chart-Bibliothek.</p>`,
   datenschutz: `
     <p><strong>Verantwortlicher:</strong> Hannes Pix, Eisenbahnstraße 19,
     79241 Ihringen am Kaiserstuhl,
