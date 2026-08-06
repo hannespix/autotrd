@@ -1083,6 +1083,78 @@ export async function adminSetKillSwitch(an: boolean): Promise<void> {
   await httpsCallable(fns(), 'adminUsers')({ action: 'setKillSwitch', an });
 }
 
+/* ── Bewährte Einstellungen (MU3, meta/bestPractice) ─────────────────────────
+ * Täglicher, anonymisierter Snapshot des Kontos mit der besten
+ * ENGINE-Attribution — öffentlich lesbar wie alle meta-Dokumente, weil er
+ * weder User-Kennung noch Watchlist noch Kapital enthält. */
+
+export interface BestPracticeKennzahlen {
+  n: number;
+  kantePct: number | null;
+  pnl: number;
+  fees: number;
+  notional: number;
+  zeitraumTage: number;
+}
+
+export interface BestPractice {
+  at: string;
+  stand: 'gekuert' | 'kein_kandidat';
+  kriterien: { minTrades: number; minTage: number } | null;
+  kennzahlen: BestPracticeKennzahlen | null;
+  einstellungen: import('@autotrd/shared').BewaehrteEinstellungen | null;
+  anwaerter: { kennzahlen: BestPracticeKennzahlen; fehlt: string[] } | null;
+}
+
+function parseKennzahlen(roh: unknown): BestPracticeKennzahlen | null {
+  if (!roh || typeof roh !== 'object') return null;
+  const o = roh as Record<string, unknown>;
+  if (typeof o.n !== 'number') return null;
+  return {
+    n: o.n,
+    kantePct: typeof o.kantePct === 'number' ? o.kantePct : null,
+    pnl: typeof o.pnl === 'number' ? o.pnl : 0,
+    fees: typeof o.fees === 'number' ? o.fees : 0,
+    notional: typeof o.notional === 'number' ? o.notional : 0,
+    zeitraumTage: typeof o.zeitraumTage === 'number' ? o.zeitraumTage : 0,
+  };
+}
+
+export async function leseBestPractice(): Promise<BestPractice | null> {
+  const snap = await getDoc(doc(db(), 'meta', 'bestPractice'));
+  if (!snap.exists()) return null;
+  const d = snap.data() as Record<string, unknown>;
+  const stand = d.stand === 'gekuert' ? 'gekuert' : 'kein_kandidat';
+  const krit = d.kriterien as { minTrades?: unknown; minTage?: unknown } | undefined;
+  const anw = d.anwaerter as { kennzahlen?: unknown; fehlt?: unknown } | undefined;
+  const anwKz = anw ? parseKennzahlen(anw.kennzahlen) : null;
+  const einst = d.einstellungen as Record<string, unknown> | undefined;
+  const einstOk =
+    einst &&
+    typeof einst.engine === 'object' &&
+    typeof einst.signals === 'object' &&
+    typeof einst.indicators === 'object';
+  return {
+    at: typeof d.at === 'string' ? d.at : '',
+    stand,
+    kriterien:
+      krit && typeof krit.minTrades === 'number' && typeof krit.minTage === 'number'
+        ? { minTrades: krit.minTrades, minTage: krit.minTage }
+        : null,
+    kennzahlen: parseKennzahlen(d.kennzahlen),
+    einstellungen: einstOk
+      ? (einst as unknown as import('@autotrd/shared').BewaehrteEinstellungen)
+      : null,
+    anwaerter:
+      anwKz !== null
+        ? {
+            kennzahlen: anwKz,
+            fehlt: Array.isArray(anw?.fehlt) ? anw.fehlt.filter((f) => typeof f === 'string') : [],
+          }
+        : null,
+  };
+}
+
 export interface UniverseEntry {
   symbol: string;
   name: string;
