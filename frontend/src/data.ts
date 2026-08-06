@@ -15,6 +15,7 @@ import {
 } from '@autotrd/shared';
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -1153,6 +1154,66 @@ export async function leseBestPractice(): Promise<BestPractice | null> {
           }
         : null,
   };
+}
+
+/* ── Eigene Loadouts (MU4, users/{uid}/loadouts) ─────────────────────────────
+ * Benannte Einstellungs-Schnappschüsse — reine Präferenz-KOPIEN, per Rules
+ * nur vom Owner lesbar/schreibbar. Wirksam wird ein Loadout erst über
+ * saveStrategy (Server-Validierung), nie durch das Speichern hier. */
+
+export interface EigenesLoadout {
+  id: string;
+  name: string;
+  at: string;
+  einstellungen: import('@autotrd/shared').BewaehrteEinstellungen;
+  hebel?: number;
+}
+
+export async function leseLoadouts(uid: string): Promise<EigenesLoadout[]> {
+  const snap = await getDocs(collection(db(), 'users', uid, 'loadouts'));
+  return snap.docs
+    .flatMap((d) => {
+      const name = d.get('name') as unknown;
+      const at = d.get('at') as unknown;
+      const e = d.get('einstellungen') as Record<string, unknown> | undefined;
+      const hebel = d.get('hebel') as unknown;
+      const ok =
+        typeof name === 'string' &&
+        typeof at === 'string' &&
+        e &&
+        typeof e.engine === 'object' &&
+        typeof e.signals === 'object' &&
+        typeof e.indicators === 'object';
+      if (!ok) return [];
+      return [
+        {
+          id: d.id,
+          name,
+          at,
+          einstellungen: e as unknown as import('@autotrd/shared').BewaehrteEinstellungen,
+          ...(typeof hebel === 'number' ? { hebel } : {}),
+        },
+      ];
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function speichereLoadout(
+  uid: string,
+  name: string,
+  einstellungen: import('@autotrd/shared').BewaehrteEinstellungen,
+  hebel: number,
+): Promise<void> {
+  await setDoc(doc(collection(db(), 'users', uid, 'loadouts')), {
+    name,
+    at: new Date().toISOString(),
+    einstellungen,
+    ...(hebel > 1 ? { hebel } : {}),
+  });
+}
+
+export async function loescheLoadout(uid: string, id: string): Promise<void> {
+  await deleteDoc(doc(db(), 'users', uid, 'loadouts', id));
 }
 
 export interface UniverseEntry {

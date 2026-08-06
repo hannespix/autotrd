@@ -46,11 +46,14 @@ import {
   resolveRisk,
   sma,
   streaks,
+  extrahiereEinstellungen,
+  LOADOUTS,
   tradeStats,
   uebernehmeEinstellungen,
   validateStrategy,
   vergleicheEinstellungen,
   vwapSessions,
+  wendeLoadoutAn,
   tagesPraefix,
   wilderRsi,
   zonenKuerzel,
@@ -83,10 +86,13 @@ import {
   adminSetKillSwitch,
   callTrade,
   leseBestPractice,
+  leseLoadouts,
   loadMarketQuotes,
   loadUniverse,
   loadWorkspace,
+  loescheLoadout,
   saveStrategy,
+  speichereLoadout,
   saveWorkspace,
   callSavePrediction,
   loadBarsOnce,
@@ -130,6 +136,7 @@ import {
   type WorkspaceDocData,
   type PortfolioStatsDoc,
   type BestPractice,
+  type EigenesLoadout,
   type EquitySeriesPoint,
   type MomentumDoc,
   type TuneFleetRow,
@@ -1131,6 +1138,22 @@ function layout(email: string): string {
       </div>
       <div id="owAdvice"></div>
       <div class="hint" id="advMsg"></div>
+      <div class="wl-sec" style="margin-top:14px">Loadouts ${iBtn('loadouts')}</div>
+      <p class="hint">Vorgefertigte Grundeinstellungen als Startpunkt — danach
+        stellst du weiter frei ein, und der Selbstoptimierer lernt normal
+        weiter. Watchlist, Kapital und dein Start/Stop-Schalter bleiben
+        <b>immer</b> deine.</p>
+      <div id="loGrid" class="lo-grid"></div>
+      <div id="loDiff" hidden></div>
+      <div class="row" style="margin-top:6px">
+        <button class="btn btn-g" id="loAdopt" hidden>Übernehmen</button>
+        <span class="hint" id="loMsg"></span>
+      </div>
+      <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px;align-items:center">
+        <input id="loName" class="inp" style="flex:1;min-width:150px" maxlength="40"
+          placeholder="Aktuellen (gespeicherten) Stand sichern als …" />
+        <button class="btn btn-n" id="loSave">Als Loadout speichern</button>
+      </div>
       <div class="wl-sec" style="margin-top:14px">Bewährte Einstellungen ${iBtn('bestPractice')}</div>
       <p class="hint" id="bpBody">Lade …</p>
       <div id="bpDiff" hidden></div>
@@ -2700,6 +2723,64 @@ function renderBestPractice(): void {
       : '');
 }
 
+/* ── Loadouts (MU4): Preset-Karten + eigene Schnappschüsse ──────────────────
+ * Eingebaute Charaktere aus shared (LOADOUTS) + users/{uid}/loadouts.
+ * Übernahme läuft über wendeLoadoutAn → validateStrategy → saveStrategy —
+ * dieselbe Schiene wie MU3, keine zweite Maschinerie. */
+let eigeneLoadouts: EigenesLoadout[] = [];
+let loGewaehlt: {
+  titel: string;
+  einstellungen: import('@autotrd/shared').BewaehrteEinstellungen;
+  hebel?: number;
+} | null = null;
+
+function renderLoadouts(): void {
+  const esc = (s: string): string =>
+    s.replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]!);
+  const karte = (
+    key: string,
+    titel: string,
+    beschreibung: string,
+    risiko: string,
+    eigen: boolean,
+  ): string =>
+    `<div class="lo-card">
+      <div class="lo-head"><b>${esc(titel)}</b>${
+        eigen ? `<button class="lo-del" data-lodel="${key}" title="Loadout löschen">✕</button>` : ''
+      }</div>
+      <div class="hint">${esc(beschreibung)}</div>
+      <div class="lo-risk">${esc(risiko)}</div>
+      <button class="btn btn-n" data-lo="${key}" style="margin-top:6px">Ansehen</button>
+    </div>`;
+  $('loGrid').innerHTML =
+    LOADOUTS.map((l) => karte(`b:${l.id}`, l.titel, l.beschreibung, l.risiko, false)).join('') +
+    eigeneLoadouts
+      .map((l) =>
+        karte(
+          `e:${l.id}`,
+          l.name,
+          `Eigener Schnappschuss vom ${l.at.slice(0, 10)}.`,
+          (l.hebel ?? 1) > 1 ? `Enthält ${l.hebel}× Hebel.` : 'Ohne Hebel gespeichert.',
+          true,
+        ),
+      )
+      .join('');
+}
+
+function ladeLoadouts(): void {
+  $('loDiff').hidden = true;
+  ($('loAdopt') as HTMLButtonElement).hidden = true;
+  loGewaehlt = null;
+  renderLoadouts(); // eingebaute sofort zeigen, eigene folgen asynchron
+  if (!st) return;
+  void leseLoadouts(st.uid)
+    .then((liste) => {
+      eigeneLoadouts = liste;
+      renderLoadouts();
+    })
+    .catch(() => undefined);
+}
+
 function ladeBestPractice(): void {
   // Der Status wird SYNCHRON geleert: Die ✓-Meldung einer gerade erfolgten
   // Übernahme entsteht NACH diesem Aufruf und soll das asynchrone Nachladen
@@ -2718,6 +2799,7 @@ function ladeBestPractice(): void {
 function openOptions(): void {
   if (!st) return;
   ladeBestPractice();
+  ladeLoadouts();
   ($('ouPred') as HTMLInputElement).checked = st.ui.predArrow;
   ($('ouCmp') as HTMLInputElement).checked = st.ui.cmpOverlay;
   ($('ouGrid') as HTMLInputElement).checked = st.ui.chartGrid;
@@ -7340,6 +7422,104 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         $('bpMsg').textContent = '✓ Übernommen — Watchlist, Kapital und Start/Stop blieben deine.';
       })
       .catch((e) => ($('bpMsg').textContent = (e as Error).message));
+  });
+
+  // Loadouts (MU4): Karten-Klicks per Delegation — die Liste wird neu gebaut.
+  $('loGrid').addEventListener('click', (e) => {
+    const ziel = e.target as HTMLElement;
+    const del = ziel.closest('[data-lodel]') as HTMLElement | null;
+    if (del && st) {
+      const id = (del.dataset['lodel'] ?? '').slice(2);
+      void loescheLoadout(st.uid, id)
+        .then(() => {
+          eigeneLoadouts = eigeneLoadouts.filter((l) => l.id !== id);
+          renderLoadouts();
+          $('loMsg').textContent = 'Loadout gelöscht.';
+        })
+        .catch((err) => ($('loMsg').textContent = (err as Error).message));
+      return;
+    }
+    const btn = ziel.closest('[data-lo]') as HTMLElement | null;
+    if (!btn || !st) return;
+    const key = btn.dataset['lo'] ?? '';
+    const eigen = key.startsWith('e:');
+    const id = key.slice(2);
+    const quelle = eigen
+      ? eigeneLoadouts.find((l) => l.id === id)
+      : LOADOUTS.find((l) => l.id === id);
+    if (!quelle) return;
+    loGewaehlt = {
+      titel: 'titel' in quelle ? quelle.titel : quelle.name,
+      einstellungen: quelle.einstellungen,
+      ...(quelle.hebel !== undefined ? { hebel: quelle.hebel } : {}),
+    };
+    const diff = vergleicheEinstellungen(st.strategy, quelle.einstellungen);
+    const eigenerHebel = st.strategy.broker.leverage ?? 1;
+    const neuerHebel = quelle.hebel ?? 1;
+    const zeilen = [
+      ...diff.map(
+        (d) =>
+          `<div class="hint" style="font-family:ui-monospace,monospace">${bpWert(d.pfad)}: ` +
+          `<b>${bpWert(d.eigen)}</b> → <b>${bpWert(d.bewaehrt)}</b></div>`,
+      ),
+      ...(eigenerHebel !== neuerHebel
+        ? [
+            `<div class="hint" style="font-family:ui-monospace,monospace">broker.leverage: ` +
+              `<b>${eigenerHebel}</b> → <b>${neuerHebel}</b></div>`,
+          ]
+        : []),
+    ];
+    const box = $('loDiff');
+    box.hidden = false;
+    box.innerHTML =
+      zeilen.length === 0
+        ? '<p class="hint">✓ Entspricht bereits deinen Einstellungen.</p>'
+        : `<p class="hint" style="margin-top:6px">„${bpWert(loGewaehlt.titel)}" würde ändern (dein Wert → Loadout):</p>` +
+          zeilen.join('');
+    ($('loAdopt') as HTMLButtonElement).hidden = zeilen.length === 0;
+    $('loMsg').textContent = '';
+  });
+  $('loAdopt').addEventListener('click', () => {
+    if (!st || !loGewaehlt) return;
+    const next = wendeLoadoutAn(st.strategy, loGewaehlt);
+    const problems = validateStrategy(next);
+    if (problems.length > 0) {
+      $('loMsg').textContent = problems[0]!;
+      return;
+    }
+    $('loMsg').textContent = 'Übernehme …';
+    const titel = loGewaehlt.titel;
+    void saveStrategy(next)
+      .then(() => {
+        st!.strategy = next;
+        openOptions(); // Formular auf die neuen Werte ziehen
+        $('loMsg').textContent = `✓ „${titel}" übernommen — ab jetzt frei anpassbar.`;
+      })
+      .catch((e2) => ($('loMsg').textContent = (e2 as Error).message));
+  });
+  $('loSave').addEventListener('click', () => {
+    if (!st) return;
+    const name = ($('loName') as HTMLInputElement).value.trim();
+    if (name.length === 0) {
+      $('loMsg').textContent = 'Bitte zuerst einen Namen eingeben.';
+      return;
+    }
+    // Gesichert wird der GESPEICHERTE Stand (st.strategy) — nicht das
+    // Formular: Ungespeicherte Reglerwerte gehören erst nach „Speichern"
+    // zur Wahrheit, und genau das sagt der Platzhalter-Text des Feldes.
+    const einstellungen = extrahiereEinstellungen(st.strategy);
+    if (!einstellungen) {
+      $('loMsg').textContent = 'Einstellungen unvollständig — bitte einmal speichern.';
+      return;
+    }
+    $('loMsg').textContent = 'Sichere …';
+    void speichereLoadout(st.uid, name, einstellungen, st.strategy.broker.leverage ?? 1)
+      .then(() => {
+        ($('loName') as HTMLInputElement).value = '';
+        $('loMsg').textContent = `✓ „${name}" gesichert.`;
+        ladeLoadouts();
+      })
+      .catch((e2) => ($('loMsg').textContent = (e2 as Error).message));
   });
 
   // Multi-Chart-Raster: Umschalter 1/2/4 + Lock fürs Haupt-Chart
