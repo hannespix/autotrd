@@ -843,14 +843,16 @@ input { accent-color: var(--ac); }
    22 Felder in lesbare Blöcke zerfallen statt in eine anonyme Wand. */
 .opt-sub {
   grid-column: 1 / -1;
-  margin-top: 6px;
-  padding-bottom: 2px;
-  border-bottom: 1px solid var(--bd);
+  margin-top: 10px;
+  padding: 5px 8px;
+  border-left: 3px solid var(--ac);
+  border-radius: 6px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--ac) 12%, transparent), transparent 70%);
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--t3);
+  color: var(--t2);
 }
 .opt-grid .opt-sub:first-child { margin-top: 0; }
 /* Checkbox-Zeilen (CSS-Audit 06.08.): `.opt-check` war nie definiert — im
@@ -872,7 +874,26 @@ input { accent-color: var(--ac); }
   flex-direction: row;
   align-items: flex-start;
 }
-@media (max-width: 560px) { .opt-grid { grid-template-columns: 1fr; } }
+/* Mobil (Design-Feedback 06.08., Owner-Screenshot „sehr sparsam"): In der
+   Ein-Spalten-Ansicht verbrauchte jedes Feld DREI Zeilen — Beschriftung,
+   einsames ⓘ, Eingabe — mit totem Raum rechts. Jetzt ist ein Feld EINE
+   Zeile: Text + ⓘ links, Eingabe rechtsbündig, gestrichelte Trennlinie
+   als ruhige Führung. Checkbox-Zeilen behalten ihr eigenes Layout. */
+@media (max-width: 560px) {
+  .opt-grid { grid-template-columns: 1fr; gap: 0; }
+  .opt-grid label:not(.opt-check) {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    border-bottom: 1px dashed color-mix(in srgb, var(--bd) 55%, transparent);
+    font-size: 12px;
+  }
+  .opt-grid label:not(.opt-check) .inp { margin-left: auto; flex: 0 0 auto; width: 118px; }
+  .opt-grid label:not(.opt-check) select.inp { width: auto; max-width: 58%; }
+  .opt-grid .opt-sub { margin-top: 14px; border-bottom: 0; }
+  .opt-grid .opt-check { border-bottom: 1px dashed color-mix(in srgb, var(--bd) 55%, transparent); padding: 8px 0; margin: 0; }
+}
 
 /* Onboarding-Tour (MU2): Spotlight über der echten UI. Der riesige
    box-shadow dunkelt alles außer dem Ziel ab — ein Element, kein Canvas. */
