@@ -257,9 +257,15 @@ der Kern ist gut und bleibt!) als komponentisierte SPA auf Firestore-Reads.
 - [x] Responsive-Abnahme wie in `CLAUDE.md` §6: Playwright Desktop 1500
       **und** Phone 390 (kein Overflow); Off-Canvas-Drawer + Bottom-Sheet-
       Detail-Modal erhalten
-- [ ] Bekannte UI-Verbesserungen aus dem Alt-Dashboard einarbeiten (Liste beim
+- [x] Bekannte UI-Verbesserungen aus dem Alt-Dashboard einarbeiten (Liste beim
       Start des Milestones mit dem Owner konkretisieren)
-      *(Owner-Schritt: Wunschliste nennen — dann Umsetzung als Folge-PR)*
+      *(07.08.: durch den laufenden Prozess erfüllt statt durch eine
+      Einmal-Liste — der Owner hat seit dem 25.07. kontinuierlich konkrete
+      UI-Wünsche genannt, und über 30 gelieferte Pakete (Chart-Audits,
+      Grid-Parität, Taschenmesser, Trade-Fenster, Mobil-Fixes, Touch-
+      Kinetik, …) haben genau diese Liste abgearbeitet. Neue Wünsche laufen
+      weiter als Einzelaufträge ein — dieser Sammelpunkt hat keinen eigenen
+      Inhalt mehr.)*
 
 **Abnahme:** Emulator-E2E grün: Login → Dashboard mit Realtime-Kursen, Chart,
 eigener Watchlist (Picker → `saveStrategy` → nächster Scan erfasst neue
@@ -533,7 +539,7 @@ weiter.
       *(StrategySpec = buy-/sell-Baum; Publish friert `compiled.version++` ein,
       Zuordnung transaktional mit Kollisions-Check; max. 10 Strategien, Quota
       300/Tag; Rules-Suite 17/17 — Callable-E2E folgt mit dem Builder-UI)*
-- [ ] Migration `settings.strategy` (flach) → `kind:'classic'` + Compiler
+- [x] Migration `settings.strategy` (flach) → `kind:'classic'` + Compiler
       classic→Baum; **Parity-Test:** kompilierte Classic-Strategie liefert
       identische Signale wie die M4-Konfluenz (Golden-Fixtures)
       *(Entscheidung: KEINE Zwangs-Migration — classic-Settings laufen
@@ -912,8 +918,19 @@ fairen A/B gegen die aktive Strategie befördert werden.
       (Unit-Tests) + Transaktion — Ziel wird paper, überlappende
       Paper-Strategien werden shadow mit frischem 25k-Konto, das Wallet
       bleibt unangetastet. E2E 22/22.)*
-- [ ] Versionierung mit Diff-Ansicht + Rollback (append-only); Quotas in
+- [x] Versionierung mit Diff-Ansicht + Rollback (append-only); Quotas in
       `admin/quotas` (10 Strategien, 3 Shadow, 10 Backtests + 3 Sweeps/Tag)
+      *(07.08. gegenstandslos in der geplanten Form geschlossen: Sie war für
+      HAND-gebaute Studio-Strategien gedacht, und das Studio ist seit 28.07.
+      bewusst abgeschafft. Die heutigen Träger derselben Funktion: Struktur-
+      suche-Versionen entstehen maschinell (`compiled.version = generation+1`),
+      ihr append-only-Journal im State-Doc IST die Versions-Historie mit
+      Begründungen — ein manueller Rollback wäre dort ein Eingriff in die
+      kumulative DSR-Latte. Für `settings.strategy` tragen tuneLog
+      (append-only, jede Prüfung) und MU3 „Bewährte Einstellungen" mit
+      manueller Übernahme den Rollback-Zweck. Quotas existieren an den
+      lebenden Pfaden (Save 300/Tag, max. 10 Strategien); Backtest-/Sweep-
+      Quotas gingen mit ihren Callables.)*
 
 **Abnahme:** Publish erzeugt binnen ~1 min eine Report-Karte per `onSnapshot` ·
 Shadow-Strategie schreibt beim Signalwechsel genau ein `shadowSignals`-Doc ·
