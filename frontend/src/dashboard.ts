@@ -5459,30 +5459,14 @@ function renderEngineWhy(): void {
       : 'Richtungen der Konfluenz-Signale im letzten Scan: Kauf, Verkauf, Halten.';
     ampel.append(chip);
   }
-  /* Die zweite Lesart im Schatten (MI, 04.08.).
-   *
-   * Am 04.08. verfehlten 13 von 13 Signalen die Konfluenz um genau EINE
-   * Stimme: RSI und Bollinger sind auf Umkehr parametriert und schweigen im
-   * Trend, MACD ist der einzige Trendfolger. Die Variante liest dieselben
-   * Indikatoren regime-gerecht und wird NICHT gehandelt — hier steht, was
-   * sie signalisiert hätte und was das eingebracht hätte.
-   *
-   * Der Vergleich der beiden Kanten ist die Entscheidungsgrundlage fürs
-   * Umschalten. Solange die Variante nicht besser ist, bleibt alles wie es
-   * ist: Mehr Trades bei negativer Kante sind mehr Verlust. */
-  const rd = h.regimeDirs;
-  if (rd && (rd.buy ?? 0) + (rd.sell ?? 0) + (rd.hold ?? 0) > 0) {
-    const chip = whyChip(
-      `Variante: ${rd.buy ?? 0}↑ ${rd.sell ?? 0}↓ ${rd.hold ?? 0}·`,
-      'var(--t3)',
-    );
-    /* Netto UND roh (05.08.).
-     *
-     * Ohne die Rohbewegung lässt eine negative Kante zwei völlig
-     * verschiedene Schlüsse zu: „Signal ist Rauschen" oder „Signal trägt
-     * Information, aber weniger als diese Anlageklasse an Gebühren
-     * verlangt". Der erste Fall erledigt die Variante, der zweite verlegt
-     * sie in eine billigere Klasse oder auf einen längeren Horizont. */
+  /* Signal-Kanten-Chip (MI → 07.08.): Die Regime-Variante ist nach der
+   * vorregistrierten Regel EINGESTELLT (n=5187, Kante −0,29 %, roh −0,004 %
+   * gegen live −0,247 %/+0,021 % — sie schlug die gehandelte Logik nicht).
+   * Der Chip zeigt jetzt die verbliebene Messreihe: gehandelte Logik und
+   * ihre Kostenschwellen-Teilmenge, netto UND roh. */
+  const live = h.signalSchatten?.live;
+  if (live && live.n > 0) {
+    const chip = whyChip('Signal-Kante', 'var(--t3)');
     const kante = (
       v?: { n: number; kantePct: number | null; rohPct?: number | null } | null,
     ): string => {
@@ -5493,14 +5477,12 @@ function renderEngineWhy(): void {
         : `${netto}, roh ${v.rohPct.toFixed(3)} %`;
     };
     chip.title =
-      'Regime-gerechte Lesart derselben Indikatoren — läuft nur im Schatten mit.\n'
-      + `Gehandelte Logik: ${kante(h.signalSchatten?.live)}\n`
+      'Gemessene Kante der Signalquelle (Schatten, 5-min-Horizont).\n'
+      + `Gehandelte Logik: ${kante(live)}\n`
       + `Davon über der Kostenschwelle: ${kante(h.signalSchatten?.['live_kosten'])}\n`
-      + `Variante: ${kante(h.signalSchatten?.regime)}\n`
       + '„roh" ist die Bewegung VOR Gebühren: positiv bei negativer Kante heißt,\n'
       + 'die Richtung stimmt und die Kosten fressen sie — dann liegt es an der\n'
-      + 'Anlageklasse, nicht an der Logik.\n'
-      + 'Umgeschaltet wird erst, wenn die Variante die gehandelte Logik schlägt.';
+      + 'Anlageklasse, nicht an der Logik.';
     ampel.append(chip);
   }
 
