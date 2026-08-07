@@ -200,6 +200,9 @@ export interface PriceChartHandle {
   /** Zeitachsen-Sync (M9 Chart-Stack): sichtbaren Bereich beobachten/setzen. */
   onVisibleRangeChange(cb: (range: { from: number; to: number } | null) => void): void;
   setVisibleRange(range: { from: number; to: number }): void;
+  /** Sichtbaren Bereich SANFT anfahren (Zoom-Buttons 07.08.) — easeOutCubic,
+   *  eine neue Fahrt oder Nutzer-Geste ersetzt die laufende. */
+  animateVisibleRange(range: { from: number; to: number }, dauerMs?: number): void;
   getVisibleRange(): { from: number; to: number } | null;
   /** Crosshair programmatisch auf einen Handelstag setzen (null = löschen). */
   setCrosshair(date: string | null): void;
@@ -303,6 +306,8 @@ export async function buildPriceChart(
   // setVisibleLogicalRange selbst wieder Range-Events feuert.
   const MIN_SICHTBARE_BARS = 10;
   let zoomClampAktiv = false;
+  /** Laufende animierte Zoom-Fahrt (animateVisibleRange) — Zähler als Abbruch. */
+  let zoomFahrt = 0;
   let rowCount = 0; // Bar-Anzahl der Hauptserie (setBars pflegt ihn)
   chart.timeScale().subscribeVisibleLogicalRangeChange((r) => {
     if (!r || zoomClampAktiv || rowCount < MIN_SICHTBARE_BARS) return;
@@ -892,7 +897,30 @@ export async function buildPriceChart(
       });
     },
     setVisibleRange(range): void {
+      zoomFahrt++; // laufende Zoom-Fahrt abbrechen — expliziter Set gewinnt
       chart.timeScale().setVisibleLogicalRange(range);
+    },
+    animateVisibleRange(ziel, dauerMs = 380): void {
+      const ts = chart.timeScale();
+      const start = ts.getVisibleLogicalRange();
+      if (!start) {
+        ts.setVisibleLogicalRange(ziel);
+        return;
+      }
+      const anim = ++zoomFahrt;
+      const t0 = performance.now();
+      const ease = (x: number): number => 1 - Math.pow(1 - x, 3);
+      const tick = (): void => {
+        if (anim !== zoomFahrt) return; // neue Fahrt/expliziter Set hat übernommen
+        const p = Math.min(1, (performance.now() - t0) / dauerMs);
+        const e = ease(p);
+        chart.timeScale().setVisibleLogicalRange({
+          from: start.from + (ziel.from - start.from) * e,
+          to: start.to + (ziel.to - start.to) * e,
+        });
+        if (p < 1) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
     },
     getVisibleRange(): { from: number; to: number } | null {
       const r = chart.timeScale().getVisibleLogicalRange();
