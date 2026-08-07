@@ -86,27 +86,57 @@ const HISTORIE_TAGE = 30;
  *
  * Konservativ, kein Raten: Ein Verkauf, dessen Einstand VOR dem
  * Import-Fenster liegt, bekommt KEIN pnl (unbekannte Basis) und wird auch
- * nicht als Short-Eröffnung unterstellt — nachfolgende Käufe eröffnen
- * frisch. PnL rechnet auf den echten Fill-Kursen; die Gebühren stehen
- * separat am Trade (Kosten-Analyse), wie beim Sync-Import üblich.
+ * nicht als Short-Eröffnung unterstellt. PnL rechnet auf den echten
+ * Fill-Kursen; die Gebühren stehen separat am Trade (Kosten-Analyse).
+ *
+ * `shortsMoeglich` (Short-Audit 07.08.): Auf einem Konto, das leerverkaufen
+ * DARF, kann ein ungedeckter Verkauf zwei Dinge sein — Alt-Long-Exit oder
+ * Short-Eröffnung. Ein nachfolgender Kauf ist dann entweder frischer Long
+ * oder das Eindecken; beides ist aus der Order-Historie allein nicht
+ * unterscheidbar. Vorher eröffnete der Kauf IMMER ein Buch-Long — für einen
+ * echten Short-Roundtrip ein Phantom, gegen das der NÄCHSTE Verkauf ein
+ * erfundenes PnL gebucht hätte. Jetzt neutralisieren Käufe zuerst die
+ * ungedeckte Menge (ohne PnL — die Basis ist strittig), nur der Überschuss
+ * eröffnet frisch. Long-only-Konten behalten das alte, für sie korrekte
+ * Verhalten.
  */
-export function importPnls(orders: AlpacaGeschlosseneOrder[]): Map<string, number> {
+export function importPnls(
+  orders: AlpacaGeschlosseneOrder[],
+  opts: { shortsMoeglich?: boolean } = {},
+): Map<string, number> {
   const buch = new Map<string, { qty: number; avg: number }>();
+  /** Ungedeckte Verkaufsmengen je Symbol — nur relevant mit shortsMoeglich. */
+  const ungedeckt = new Map<string, number>();
   const pnls = new Map<string, number>();
   for (const o of orders) {
     const b = buch.get(o.symbol);
     if (o.side === 'buy') {
-      if (b) {
-        b.avg = (b.avg * b.qty + o.kurs * o.qty) / (b.qty + o.qty);
-        b.qty += o.qty;
-      } else {
-        buch.set(o.symbol, { qty: o.qty, avg: o.kurs });
+      let rest = o.qty;
+      if (opts.shortsMoeglich === true) {
+        const u = ungedeckt.get(o.symbol) ?? 0;
+        const gegen = Math.min(u, rest);
+        if (gegen > 0) {
+          ungedeckt.set(o.symbol, u - gegen);
+          rest -= gegen;
+        }
       }
-    } else if (b) {
-      const menge = Math.min(o.qty, b.qty);
-      pnls.set(o.id, Math.round((o.kurs - b.avg) * menge * 100) / 100);
-      b.qty -= menge;
-      if (b.qty <= 1e-9) buch.delete(o.symbol);
+      if (rest > 0) {
+        if (b) {
+          b.avg = (b.avg * b.qty + o.kurs * rest) / (b.qty + rest);
+          b.qty += rest;
+        } else {
+          buch.set(o.symbol, { qty: rest, avg: o.kurs });
+        }
+      }
+    } else {
+      const menge = b ? Math.min(o.qty, b.qty) : 0;
+      if (b && menge > 0) {
+        pnls.set(o.id, Math.round((o.kurs - b.avg) * menge * 100) / 100);
+        b.qty -= menge;
+        if (b.qty <= 1e-9) buch.delete(o.symbol);
+      }
+      const rest = o.qty - menge;
+      if (rest > 0) ungedeckt.set(o.symbol, (ungedeckt.get(o.symbol) ?? 0) + rest);
     }
   }
   return pnls;
@@ -273,7 +303,9 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
   let importiert = 0;
   // PnL über die VOLLE Abfolge rechnen (auch bereits gebuchte Orders zählen
   // als Deckung) — geschrieben wird weiterhin nur, was noch fehlt.
-  const pnls = importPnls(eigeneOrders);
+  const pnls = importPnls(eigeneOrders, {
+    shortsMoeglich: strategy.signals.allowShort === true,
+  });
   for (const o of eigeneOrders) {
     if (bekannt.has(o.id)) continue;
     const pnl = pnls.get(o.id);
@@ -331,7 +363,19 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
    * Vorfall: −19.521,50 + 119.521,50 = 100.000,00 — exakt die Einzahlung.
    * Bereits realisierte Gewinne/Verluste bleiben dabei ehrlich in der
    * Basis enthalten: Sie SIND passiert, bevor unsere Messung begann. */
-  const cashRund = Math.round(konto.cash * 100) / 100;
+  /* Buch-Konvention für Shorts (Short-Audit 07.08.): Alpaca schreibt den
+   * Leerverkaufs-Erlös dem Cash GUT, unser Buch führt Shorts als
+   * 100-%-Margin (Cash sinkt um Menge × Einstand — broker.ts). Wer den
+   * Alpaca-Cash unverändert übernimmt, hat je Short 2 × Margin zu viel im
+   * Buch: Die Equity springt am nächsten Snapshot nach oben, und das
+   * spätere Eindecken schreibt Margin + P&L auf einen Cash, der den Erlös
+   * schon enthält. Deshalb hier die Umrechnung; Equity und Kapitalbasis
+   * rechnen weiter auf den ECHTEN Broker-Zahlen. */
+  const shortMargin = brokerPositionen.reduce(
+    (s, p) => s + (p.seite === 'short' ? p.qty * p.einstand : 0),
+    0,
+  );
+  const cashRund = Math.round((konto.cash - 2 * shortMargin) * 100) / 100;
   const einstandssumme = brokerPositionen.reduce(
     (s, p) => s + (p.seite === 'short' ? -1 : 1) * p.qty * p.einstand,
     0,
@@ -363,7 +407,10 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
     date: heute,
     equity: Math.round(konto.equity * 100) / 100,
     balance: cashRund,
-    positionsValue: Math.round((konto.equity - konto.cash) * 100) / 100,
+    // Gegenstück zum Buch-Cash: balance + positionsValue = equity muss auch
+    // mit der Margin-Konvention aufgehen (positionValue rechnet Shorts als
+    // Margin + unrealisierter P&L — shared/src/portfolio.ts).
+    positionsValue: Math.round((konto.equity - cashRund) * 100) / 100,
     positionsCount: brokerPositionen.length,
     updatedAt: now,
     uebernommen: true,

@@ -109,6 +109,23 @@ export function ergaenzeVerlauf(
 }
 
 /**
+ * Ist diese Abweichung die GEFÄHRLICHE Richtung — hält das Buch mehr, als
+ * der Broker in derselben Richtung hat?
+ *
+ * Vorher entschied das rohe Vorzeichen der Differenz (`differenz > 0`), und
+ * das ist für Shorts exakt gedreht (Short-Audit 07.08.): Ein Buch-Short,
+ * den der Broker nicht kennt (Cover kauft ins Leere, Equity falsch —
+ * GEFÄHRLICH), ergibt eine NEGATIVE Differenz und galt als harmloser
+ * Fremdbestand; ein manuell beim Broker eröffneter Short (harmlos, trägt
+ * kein broker:true) ergab eine positive und sperrte das Konto dauerhaft.
+ * Maßgeblich ist die Richtung des BUCHES: Gefährlich ist, wenn das Buch
+ * in seiner eigenen Richtung über den Broker hinausgeht — long wie short.
+ */
+export function istGefaehrlicheAbweichung(a: Abweichung): boolean {
+  return (a.eigeneMenge > 0 && a.differenz > 0) || (a.eigeneMenge < 0 && a.differenz < 0);
+}
+
+/**
  * Ein Konto abgleichen und das Ergebnis am User-Dokument vermerken.
  *
  * Der Vermerk ist Teil der Aufgabe, nicht Beiwerk: Eine Sperre ohne
@@ -192,8 +209,8 @@ export async function abgleichFuerKonto(
    * Gemeldet werden weiterhin beide. Nur das Sperren ist einseitig — nach
    * derselben Regel wie überall hier: die gefährliche Richtung hart, die
    * harmlose sichtbar. */
-  const fehlbestand = abweichungen.filter((a) => a.differenz > 0);
-  const fremdbestand = abweichungen.filter((a) => a.differenz < 0);
+  const fehlbestand = abweichungen.filter(istGefaehrlicheAbweichung);
+  const fremdbestand = abweichungen.filter((a) => !istGefaehrlicheAbweichung(a));
 
   const status = abweichungen.length === 0 ? 'sauber' : 'drift';
   const verlauf = ergaenzeVerlauf(vorher?.verlauf, vorher?.status, {

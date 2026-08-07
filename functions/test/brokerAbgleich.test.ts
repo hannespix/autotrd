@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest';
-import { ergaenzeVerlauf, VERLAUF_MAX, type VerlaufEintrag } from '../src/core/brokerAbgleich.js';
+import { ergaenzeVerlauf, istGefaehrlicheAbweichung, VERLAUF_MAX, type VerlaufEintrag } from '../src/core/brokerAbgleich.js';
 
 vi.mock('firebase-admin/firestore', () => ({
   getFirestore: () => ({ doc: () => ({ get: vi.fn(), set: vi.fn() }) }),
@@ -66,5 +66,39 @@ describe('ergaenzeVerlauf', () => {
   it('fehler-Wechsel trägt den Fehlertext', () => {
     const v = ergaenzeVerlauf([], 'sauber', { ...eintrag('fehler'), fehler: 'HTTP 429' });
     expect(v![0]).toMatchObject({ von: 'sauber', nach: 'fehler', fehler: 'HTTP 429' });
+  });
+});
+
+describe('istGefaehrlicheAbweichung — die Richtung des BUCHES entscheidet (Short-Audit 07.08.)', () => {
+  const a = (eigeneMenge: number, brokerMenge: number) => ({
+    symbol: 'X',
+    eigeneMenge,
+    brokerMenge,
+    differenz: eigeneMenge - brokerMenge,
+  });
+
+  it('Buch-Long ohne Broker-Deckung → gefährlich (wie bisher)', () => {
+    expect(istGefaehrlicheAbweichung(a(10, 0))).toBe(true);
+    expect(istGefaehrlicheAbweichung(a(10, 6))).toBe(true);
+  });
+
+  it('ABNAHME: Buch-SHORT ohne Broker-Deckung → gefährlich (war vorher „harmlos")', () => {
+    // Der Cover würde ins Leere kaufen, Equity und Sizing rechnen falsch —
+    // exakt die Richtung, die sperren MUSS. Vorzeichenlogik: −10 − 0 = −10.
+    expect(istGefaehrlicheAbweichung(a(-10, 0))).toBe(true);
+    expect(istGefaehrlicheAbweichung(a(-10, -4))).toBe(true);
+  });
+
+  it('Fremdbestand beim Broker → harmlos, in BEIDEN Richtungen', () => {
+    // Manuell gekaufte Longs wie manuell eröffnete Shorts tragen kein
+    // broker:true und werden nie geroutet — keine Dauersperre dafür.
+    expect(istGefaehrlicheAbweichung(a(0, 25))).toBe(false);
+    expect(istGefaehrlicheAbweichung(a(0, -25))).toBe(false);
+    // Broker hält MEHR short als das Buch: der Überhang ist fremd.
+    expect(istGefaehrlicheAbweichung(a(-10, -15))).toBe(false);
+  });
+
+  it('Buch-Long gegen Broker-Short → gefährlich (Bestand existiert nicht)', () => {
+    expect(istGefaehrlicheAbweichung(a(10, -5))).toBe(true);
   });
 });
