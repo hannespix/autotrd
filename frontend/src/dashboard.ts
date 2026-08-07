@@ -852,6 +852,13 @@ function layout(email: string): string {
         </div>
         <label class="lbl" style="margin-top:10px">Equity-Kurve ${iBtn('equityCurve')}</label>
         <svg id="pfSpark" class="pf-spark" viewBox="0 0 100 26" preserveAspectRatio="none" aria-hidden="true"></svg>
+        <details id="pfDetail" style="margin-top:4px">
+          <summary class="hint" style="cursor:pointer">Große Kurve + Drawdown anzeigen</summary>
+          <div id="pfCurveMeta" class="hint mono" style="margin-top:6px"></div>
+          <svg id="pfCurve" viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true" style="display:block;width:100%;height:120px"></svg>
+          <label class="lbl" style="margin-top:6px">Drawdown ${iBtn('drawdown')}</label>
+          <svg id="pfDDCurve" viewBox="0 0 100 18" preserveAspectRatio="none" aria-hidden="true" style="display:block;width:100%;height:54px"></svg>
+        </details>
         <div class="pf-grid" id="pfGrid" hidden>
           <div><label class="lbl">Sharpe 30 ${iBtn('sharpe')}</label><div id="pfS30" class="smv mono">--</div></div>
           <div><label class="lbl">Sharpe 90</label><div id="pfS90" class="smv mono">--</div></div>
@@ -6387,6 +6394,7 @@ function renderPfStats(): void {
   } else {
     spark.setAttribute('hidden', '');
   }
+  renderPfKurven(serie);
 
   if (!s || s.equityDays === 0) {
     grid.hidden = true;
@@ -6415,6 +6423,62 @@ function renderPfStats(): void {
   exp.className = `smv mono ${s.expectancy !== null ? pnlClass(s.expectancy) : ''}`;
   renderExits(s);
   renderCosts(s);
+}
+
+/**
+ * Große Equity-Kurve + synchronisiertes Drawdown-Panel (M12).
+ *
+ * Beide Panels zeichnen DIESELBE Serie mit DERSELBEN X-Skala (ein Punkt je
+ * Snapshot-Tag) — dadurch stehen Tal in der Kurve und Ausschlag im Drawdown
+ * exakt untereinander, ohne Sync-Mechanik. Die Drawdown-KURVE ist eine reine
+ * Ableitung der Serie (Abstand zum bisherigen Hochwasser); die KENNZAHL
+ * maxDD kommt weiterhin ausschließlich vom Server (Stats-Doc) — das UI
+ * rechnet keine konkurrierende Zahl, es malt dieselbe Serie zweimal.
+ * Bewusst ID-freie Inline-SVGs wie die Sparkline: `<defs>`-Gradienten mit
+ * fester ID kollidierten, sobald zwei Charts auf derselben Seite stehen.
+ */
+function renderPfKurven(serie: Array<{ date: string; equity: number }>): void {
+  const kurve = document.getElementById('pfCurve');
+  const ddSvg = document.getElementById('pfDDCurve');
+  const meta = document.getElementById('pfCurveMeta');
+  if (!kurve || !ddSvg || !meta) return;
+  if (serie.length < 2) {
+    kurve.innerHTML = '';
+    ddSvg.innerHTML = '';
+    meta.textContent = 'Noch zu wenige Snapshot-Tage für eine Kurve (täglich einer).';
+    return;
+  }
+  const eq = serie.map((p) => p.equity);
+  const min = Math.min(...eq);
+  const max = Math.max(...eq);
+  const span = max - min || 1;
+  const x = (i: number): string => ((i / (eq.length - 1)) * 100).toFixed(2);
+  const pts = eq.map((v, i) => `${x(i)},${(38 - ((v - min) / span) * 36).toFixed(2)}`);
+  const up = eq[eq.length - 1]! >= eq[0]!;
+  const farbe = up ? 'var(--gn)' : 'var(--rd)';
+  const startY = (38 - ((eq[0]! - min) / span) * 36).toFixed(2);
+  kurve.innerHTML =
+    `<polygon points="0,40 ${pts.join(' ')} 100,40" fill="${up ? 'var(--gn-soft, rgba(52,199,123,.14))' : 'var(--rd-soft, rgba(255,95,95,.14))'}"></polygon>` +
+    `<line x1="0" y1="${startY}" x2="100" y2="${startY}" stroke="var(--bd2)" stroke-dasharray="2 2" vector-effect="non-scaling-stroke"></line>` +
+    `<polyline points="${pts.join(' ')}" fill="none" stroke="${farbe}" stroke-width="1.6" vector-effect="non-scaling-stroke"></polyline>`;
+
+  // Drawdown: Abstand zum bisherigen Hochwasser, 0 % oben, tiefster Wert unten.
+  let hoch = eq[0]!;
+  const dds = eq.map((v) => {
+    hoch = Math.max(hoch, v);
+    return hoch > 0 ? ((v - hoch) / hoch) * 100 : 0;
+  });
+  const tiefster = Math.min(...dds, -0.01);
+  const ddPts = dds.map((d, i) => `${x(i)},${((d / tiefster) * 16).toFixed(2)}`);
+  ddSvg.innerHTML =
+    `<polygon points="0,0 ${ddPts.join(' ')} 100,0" fill="var(--rd-soft, rgba(255,95,95,.18))"></polygon>` +
+    `<polyline points="${ddPts.join(' ')}" fill="none" stroke="var(--rd)" stroke-width="1.2" vector-effect="non-scaling-stroke"></polyline>`;
+
+  const von = serie[0]!.date;
+  const bis = serie[serie.length - 1]!.date;
+  meta.textContent =
+    `${von} → ${bis} · Start ${money(eq[0]!)} · Ende ${money(eq[eq.length - 1]!)} ` +
+    `· Hoch ${money(max)} · Tief ${money(min)} · tiefster Drawdown ${tiefster.toFixed(2)} %`;
 }
 
 /** Klarnamen der Ausstiegsgründe — `signal` ist der Sammeltopf ohne Risiko-Exit. */
