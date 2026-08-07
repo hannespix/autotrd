@@ -174,6 +174,8 @@ export interface PriceChartHandle {
   setRightOffset(bars: number): void;
   /** Y-Skalen-Modus (auto/fix/frei) — auch explizite Fits respektieren die Wahl. */
   setYMode(mode: YMode): void;
+  /** Meldet, wenn eine Achsen-Geste den Y-Modus übernimmt (→ 'fix', 07.08.). */
+  onYModeChange(cb: (mode: YMode) => void): void;
   /** Prognose-Overlay: gestrichelte Mittellinie + ±1σ-Band (null = entfernen). */
   setForecast(overlay: ForecastOverlay | null, anchor?: { time: string | number; value: number }): void;
   /** Ist ein Prognose-Overlay gesetzt? (E2E-Hook) */
@@ -376,11 +378,28 @@ export async function buildPriceChart(
    * Symbol-/Zeitrahmen-Wechsel automatisch passiert (fixReset im Fit).
    * Capture-Phase + stopPropagation, damit LWC die Gesten nie sieht: Sein
    * eigener Achsen-Drag würde die Skala auf manuell kippen und die
-   * Nachführung stünde still. Im Auto-/Frei-Modus greifen die Gesten nicht —
-   * dort bleibt das LWC-Standardverhalten unangetastet. */
+   * Nachführung stünde still.
+   *
+   * Seit 07.08. greifen die Gesten in JEDEM Y-Modus (Owner: „die manuell
+   * skalierbare Y-Achse ist super! sie soll bei allen Y-Modi verfügbar
+   * sein"): Eine Geste auf der Preisskala ÜBERNIMMT die Kontrolle — der
+   * Chart wechselt auf Y-Fix, eingefroren am aktuellen Fenster, und die
+   * Geste formt ab dort die Spanne. Der Wechsel wird nach außen gemeldet
+   * (onYModeChange), damit der Y-Knopf ihn zeigt; zurück geht es jederzeit
+   * über den Knopf. */
   const inPreisAchse = (clientX: number): boolean => {
     const r = container.getBoundingClientRect();
     return clientX >= r.right - chart.priceScale('right').width() - 2 && clientX <= r.right;
+  };
+  let yModeCb: ((mode: YMode) => void) | null = null;
+  const uebernehmeManuell = (): void => {
+    if (yModus === 'fix') return;
+    yModus = 'fix';
+    fixReset(); // am aktuellen Fenster einfrieren — ab hier formt die Geste
+    autoScaleOn = true; // im Frei-Modus war autoScale aus; der Provider braucht es
+    chart.priceScale('right').applyOptions({ autoScale: true });
+    fixRange(); // Spanne SOFORT setzen, damit schon der erste Gesten-Tick zieht
+    yModeCb?.('fix');
   };
   const spanneZoomen = (faktor: number): void => {
     if (yModus !== 'fix' || fixSpanne === null) return;
@@ -390,7 +409,8 @@ export async function buildPriceChart(
   };
   let yDrag: number | null = null;
   const yDragStart = (clientX: number, clientY: number): boolean => {
-    if (yModus !== 'fix' || !inPreisAchse(clientX)) return false;
+    if (!inPreisAchse(clientX)) return false;
+    uebernehmeManuell();
     yDrag = clientY;
     return true;
   };
@@ -401,9 +421,10 @@ export async function buildPriceChart(
     spanneZoomen(Math.exp(dy * 0.006)); // runterziehen = rauszoomen (LWC-Konvention)
   };
   const aufWheel = (ev: WheelEvent): void => {
-    if (yModus !== 'fix' || !inPreisAchse(ev.clientX)) return;
+    if (!inPreisAchse(ev.clientX)) return;
     ev.preventDefault();
     ev.stopPropagation();
+    uebernehmeManuell();
     spanneZoomen(Math.exp(ev.deltaY * 0.0012));
   };
   const aufMausAb = (ev: MouseEvent): void => {
@@ -771,6 +792,9 @@ export async function buildPriceChart(
       fixReset(); // beim Moduswechsel frisch am aktuellen Fenster einfrieren
       autoScaleOn = mode !== 'frei';
       chart.priceScale('right').applyOptions({ autoScale: autoScaleOn });
+    },
+    onYModeChange(cb: (mode: YMode) => void): void {
+      yModeCb = cb;
     },
     forecastActive(): boolean {
       return fcOn;

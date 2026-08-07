@@ -3156,6 +3156,8 @@ function applyGroupFilter(): void {
 
 let autoResTimer: number | null = null;
 let autoSwitching = false;
+/** Y-Modus-Knopf neu malen — gesetzt im UI-Init, gerufen bei Gesten-Übernahme. */
+let malYModusKnopf: (() => void) | null = null;
 
 function barTimeMs(b: { time: number } | { date: string }): number {
   return 'time' in b ? b.time * 1000 : Date.parse(b.date);
@@ -3970,6 +3972,14 @@ async function rebuildChart(): Promise<void> {
     }, 300);
   });
   st.chart?.setYMode(st.yMode);
+  // Eine Y-Achsen-Geste in auto/frei übernimmt die Kontrolle (→ fix, 07.08.):
+  // Zustand, Knopf und gemerkte Wahl ziehen mit, sonst löge die Oberfläche.
+  st.chart?.onYModeChange((m) => {
+    if (!st) return;
+    st.yMode = m;
+    localStorage.setItem('autotrd-chart-ymode', m);
+    malYModusKnopf?.();
+  });
   // Beim Chart-Neuaufbau (Symbol-/Theme-Wechsel) Panels frisch mitziehen
   for (const kind of ['rsi', 'macd'] as const) {
     subEpochs[kind]++;
@@ -4313,7 +4323,9 @@ function loadGridPrefs(): { mode: 1 | 2 | 4; mainLocked: boolean; panels: Array<
         range: typeof x.range === 'number' ? x.range : 66,
         locked: x.locked === true,
         intradayDays: x.intradayDays === 1 || x.intradayDays === 5 ? x.intradayDays : 0,
-        auto: x.auto === true,
+        // Migration 07.08.: Auto ist in den Klon-Panels immer an — ein
+        // gespeichertes false stammt aus der Zeit des Auto-Knopfs.
+        auto: true,
       })),
     };
   } catch {
@@ -4450,20 +4462,11 @@ function renderAllPanels(): void {
  * lokalen Picker bleiben für gezielte Abweichungen danach.
  */
 
-/** on-Klassen der Panel-/Vergleichs-Zeitrahmen-Knöpfe an den State angleichen. */
+/** on-Klassen der Vergleichs-Zeitrahmen-Knöpfe an den State angleichen.
+ *  (Die Raster-Panels tragen seit 07.08. Zoom-Fahrten ohne on-Zustand —
+ *  wie der Haupt-Kopf: momentane Aktionen, der Zoom ist danach wieder frei.) */
 function syncPanelTfButtons(): void {
   if (!st) return;
-  document.querySelectorAll<HTMLElement>('.gpanel').forEach((el, i) => {
-    const p = st!.gridPanels[i];
-    if (!p) return;
-    el.querySelectorAll<HTMLElement>('[data-r], [data-i]').forEach((b) => {
-      const on = b.dataset['i'] !== undefined
-        ? Number(b.dataset['i']) === p.intradayDays && p.intradayDays > 0
-        : p.intradayDays === 0 && Number(b.dataset['r']) === p.range;
-      b.classList.toggle('on', on);
-    });
-    el.querySelector('.gp-auto')?.classList.toggle('on', p.auto);
-  });
   const p2 = st.chart2P;
   document.querySelectorAll<HTMLElement>('#c2tf [data-c2r], #c2tf [data-c2i]').forEach((b) => {
     const on = b.dataset['c2i'] !== undefined
@@ -4472,6 +4475,42 @@ function syncPanelTfButtons(): void {
     b.classList.toggle('on', on);
   });
   $('c2Auto').classList.toggle('on', p2.auto);
+}
+
+/**
+ * Zoom-Fahrt eines Raster-Panels (Klon-Semantik, Owner 07.08.): dieselben
+ * Stufen wie zoomAufTage am Haupt-Chart, auf die schlankere Panel-Mechanik
+ * übersetzt — 1T/1W wechseln in die 5-Minuten-Sicht, 1M/1J/Max in die
+ * Tages-Sicht mit passendem Fenster. Die immer aktive Panel-Auto-Auflösung
+ * übernimmt danach wieder.
+ */
+async function panelZoomAufTage(p: GridPanel, tage: number | null): Promise<void> {
+  if (tage !== null && tage <= 8) {
+    p.intradayDays = tage <= 1.6 ? 1 : 5;
+    p.fitPending = true;
+    await loadPanelIntraday(p);
+  } else {
+    p.intradayDays = 0;
+    // Panels halten ~1 Jahr Historie (Quote-Doc): 1M = 22 Bars, sonst alles.
+    p.range = tage !== null && tage <= 40 ? 22 : 0;
+    p.fitPending = true;
+    renderGridPanelBars(p);
+  }
+  saveGridPrefs();
+}
+
+/**
+ * EIN Klick, ALLE Charts (Owner 07.08.: „alles synchronisiert umschalten"):
+ * Haupt-Chart fährt über zoomAufTage (sanft, mit Ebenen-Wechsel), jedes
+ * Raster-Panel und der Vergleichs-Chart über die Panel-Fahrt. Gilt für die
+ * Zoom-Buttons ALLER Köpfe — Haupt-Toolbar, Haupt-Kopf im Raster und jeden
+ * Panel-Kopf.
+ */
+function alleChartsZoomAufTage(tage: number | null): void {
+  void zoomAufTage(tage);
+  if (!st) return;
+  for (const p of st.gridPanels) void panelZoomAufTage(p, tage);
+  if (st.chart2P.chart) void panelZoomAufTage(st.chart2P, tage);
 }
 
 /** Intraday-Bars eines Panels laden (epoch-geschützt; Refresh via watchBars). */
@@ -4613,7 +4652,9 @@ function renderChartGrid(): void {
       watchedSymbols().find((s) => !used.has(s)) ??
       ['AAPL', 'TSLA', '^NDX'].find((s) => !used.has(s)) ??
       'AAPL';
-    st.gridPanels.push({ sym, range: 66, locked: false, chart: null, bars: [], subs: [], epoch: 0, fitPending: true, forecast: null, forecastIntraday: null, news: null, intradayDays: 0, intradayBars: [], auto: false });
+    // auto: true — Panels sind Klone des Haupt-Charts, und dort ist Auto
+    // seit 07.08. immer an (die Zoomstufe wählt die Auflösung von selbst).
+    st.gridPanels.push({ sym, range: 66, locked: false, chart: null, bars: [], subs: [], epoch: 0, fitPending: true, forecast: null, forecastIntraday: null, news: null, intradayDays: 0, intradayBars: [], auto: true });
   }
   $('chartRow').dataset['mode'] = String(st.gridMode);
   ($('lockMain') as HTMLButtonElement).hidden = st.gridMode === 1;
@@ -4635,13 +4676,11 @@ function renderChartGrid(): void {
       <div class="gp-hd">
         <input class="inp gp-sym" value="${p.sym}" title="Symbol (Enter übernimmt)" />
         <span class="gp-tf">
-          <button class="tf-btn gp-auto${p.auto ? ' on' : ''}"
-            title="Auto-Zeitrahmen: eng zoomen wechselt in die 5-Minuten-Sicht, weit zoomen zurück zu Tageskerzen">Auto</button>
-          <button class="tf-btn${p.intradayDays === 1 ? ' on' : ''}" data-i="1" title="1 Handelstag in 5-Minuten-Kerzen">1T</button>
-          <button class="tf-btn${p.intradayDays === 5 ? ' on' : ''}" data-i="5" title="~5 Handelstage in 5-Minuten-Kerzen">1W</button>
-          <button class="tf-btn${p.intradayDays === 0 && p.range === 22 ? ' on' : ''}" data-r="22">1M</button>
-          <button class="tf-btn${p.intradayDays === 0 && p.range === 66 ? ' on' : ''}" data-r="66">3M</button>
-          <button class="tf-btn${p.intradayDays === 0 && p.range === 0 ? ' on' : ''}" data-r="0">1J</button>
+          <button class="tf-btn" data-pz="1" title="Alle Charts auf 1 Handelstag zoomen">1T</button>
+          <button class="tf-btn" data-pz="7" title="Alle Charts auf 1 Woche zoomen">1W</button>
+          <button class="tf-btn" data-pz="30" title="Alle Charts auf 1 Monat zoomen">1M</button>
+          <button class="tf-btn" data-pz="365" title="Alle Charts auf 1 Jahr zoomen">1J</button>
+          <button class="tf-btn" data-pz="max" title="Alle Charts: gesamte geladene Historie">Max</button>
         </span>
         <button class="tf-btn gp-max" title="Chart im Vollbild (Esc schließt)">⛶</button>
         <button class="tf-btn gp-lock${p.locked ? ' on' : ''}"
@@ -4658,40 +4697,17 @@ function renderChartGrid(): void {
       saveGridPrefs();
       void mountGridPanel(p, el.querySelector('.gp-chart') as HTMLElement);
     });
-    const markTf = (btn: Element): void => {
-      el.querySelectorAll('[data-r], [data-i]').forEach((x) => x.classList.toggle('on', x === btn));
-      // Manuelle Stufe gewählt → Panel-Auto pausiert (wie am Haupt-Chart)
-      p.auto = false;
-      el.querySelector('.gp-auto')?.classList.remove('on');
-    };
-    el.querySelectorAll('[data-r]').forEach((b) =>
+    // Klon-Verdrahtung (Owner 07.08.: „die Grids sollen exakt
+    // synchronisierbare Klone des ersten Charts sein"): Der Panel-Kopf trägt
+    // dieselben Zoom-Fahrten wie der Haupt-Kopf, und JEDER Klick — egal auf
+    // welchem Kopf — schaltet ALLE Charts gemeinsam um. Auto ist immer an;
+    // gezielte Abweichung bleibt per Rad/Drag im einzelnen (ungelockten)
+    // Panel möglich, die Auto-Auflösung folgt dort von selbst.
+    el.querySelectorAll<HTMLButtonElement>('[data-pz]').forEach((b) =>
       b.addEventListener('click', () => {
-        p.range = Number((b as HTMLElement).dataset['r']);
-        p.intradayDays = 0;
-        p.fitPending = true;
-        markTf(b);
-        saveGridPrefs();
-        renderGridPanelBars(p);
+        alleChartsZoomAufTage(b.dataset['pz'] === 'max' ? null : Number(b.dataset['pz']));
       }),
     );
-    // Intraday auch im Raster (Grid-Parität, User-Wunsch 25.07. nachts)
-    el.querySelectorAll('[data-i]').forEach((b) =>
-      b.addEventListener('click', () => {
-        p.intradayDays = Number((b as HTMLElement).dataset['i']);
-        p.fitPending = true;
-        markTf(b);
-        saveGridPrefs();
-        void loadPanelIntraday(p);
-      }),
-    );
-    // Auto-Zeitrahmen (Grid-Gleichwertigkeit 26.07.): Zoomstufe steuert die Sicht
-    const autoBtn = el.querySelector('.gp-auto') as HTMLButtonElement;
-    autoBtn.addEventListener('click', () => {
-      p.auto = !p.auto;
-      autoBtn.classList.toggle('on', p.auto);
-      saveGridPrefs();
-      if (p.auto) void panelMaybeAutoSwitch(p);
-    });
     const maxBtn = el.querySelector('.gp-max') as HTMLButtonElement;
     maxBtn.addEventListener('click', () => {
       const on = !el.classList.contains('chart-max');
@@ -7130,9 +7146,11 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   // letzten N Tage. Die immer aktive Auto-Auflösung wählt die Kerzengröße
   // zum neuen Fenster von selbst. Buttons sind momentane Aktionen — keine
   // on-Markierung, denn der Zoom ist danach sofort wieder frei.
+  // Seit 07.08. fahren die Buttons ALLE Charts gemeinsam (Klon-Semantik):
+  // Haupt-Chart, Raster-Panels und Vergleichs-Chart schalten synchron um.
   document.querySelectorAll<HTMLButtonElement>('.tf-btn[data-zoom]').forEach((b) =>
     b.addEventListener('click', () => {
-      void zoomAufTage(b.dataset.zoom === 'max' ? null : Number(b.dataset.zoom));
+      alleChartsZoomAufTage(b.dataset.zoom === 'max' ? null : Number(b.dataset.zoom));
     }),
   );
   // Vergleichs-Chart: eigener Picker für gezielte Abweichungen
@@ -7196,7 +7214,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   // hält den Y-Zoom konstant und führt nur die Skalen-MITTE den sichtbaren
   // Kerzen nach — Scrollen ohne Gummiband-Effekt.
   const Y_LABEL: Record<import('./chart.js').YMode, [string, string]> = {
-    auto: ['Y auto', 'Y-Skala: automatisch — alles Sichtbare wird eingepasst (Kerzen stauchen sich beim Scrollen). Klick: fester Zoom.'],
+    auto: ['Y auto', 'Y-Skala: automatisch — alles Sichtbare wird eingepasst (Kerzen stauchen sich beim Scrollen). Klick: fester Zoom. Ziehen/Rad auf der Preisskala übernimmt jederzeit manuell.'],
     fix: ['Y fix', 'Y-Skala: fester Zoom — die Skala wandert mit dem Kurs mit, die Kerzenhöhe bleibt beim Scrollen konstant; bei Ausbrüchen weitet sie kurzzeitig. Klick: manuell.'],
     frei: ['Y frei', 'Y-Skala: manuell — auf der Preisskala ziehen; Doppelklick auf die Achse setzt zurück. Klick: automatisch.'],
   };
@@ -7208,6 +7226,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     b.title = title;
     b.classList.toggle('on', st.yMode !== 'frei');
   };
+  // Achsen-Gesten übernehmen den Modus (chart.ts, 07.08.) — der Knopf muss
+  // den Wechsel auch dann zeigen, wenn ihn niemand geklickt hat.
+  malYModusKnopf = paintYBtn;
   $('yAutoBtn').addEventListener('click', () => {
     if (!st) return;
     st.yMode = st.yMode === 'auto' ? 'fix' : st.yMode === 'fix' ? 'frei' : 'auto';
