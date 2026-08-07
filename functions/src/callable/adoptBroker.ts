@@ -68,8 +68,49 @@ const DAILY_ADOPT_LIMIT = 10;
 
 /** Wie weit die Order-Historie zurückgeholt wird. Länger als jede
  *  realistische Lücke zwischen Vorfall und Übernahme; ein Zuviel ist
- *  harmlos, weil bereits gebuchte brokerOrderIds übersprungen werden. */
-const HISTORIE_TAGE = 14;
+ *  harmlos, weil bereits gebuchte brokerOrderIds übersprungen werden.
+ *  Seit 07.08. 30 Tage (vorher 14): Die Handelsanalyse speist sich aus
+ *  dieser Historie, und die Pagination trägt das Fenster jetzt. */
+const HISTORIE_TAGE = 30;
+
+/**
+ * PnL je importierter Verkaufs-/Cover-Order — dieselbe Durchschnittskosten-
+ * Rechnung wie der Live-Pfad (broker.ts: pnl = (Kurs − avgEntry) × Menge).
+ *
+ * Warum das existiert (Owner-Frage 07.08.: „die Handelsanalyse soll nach der
+ * Broker-Synchronisation automatisch Daten beinhalten — auch nach Reset"):
+ * Die GESAMTE Handelsanalyse (Winrate, Profitfaktor, Kanten-Messung,
+ * Kennzahlen-Karte) zählt ausschließlich Trades MIT pnl-Feld (closedOnly).
+ * Nachgebuchte Trades ohne pnl waren für sie unsichtbar — die Historie
+ * stand in der Liste, aber die Analyse blieb leer.
+ *
+ * Konservativ, kein Raten: Ein Verkauf, dessen Einstand VOR dem
+ * Import-Fenster liegt, bekommt KEIN pnl (unbekannte Basis) und wird auch
+ * nicht als Short-Eröffnung unterstellt — nachfolgende Käufe eröffnen
+ * frisch. PnL rechnet auf den echten Fill-Kursen; die Gebühren stehen
+ * separat am Trade (Kosten-Analyse), wie beim Sync-Import üblich.
+ */
+export function importPnls(orders: AlpacaGeschlosseneOrder[]): Map<string, number> {
+  const buch = new Map<string, { qty: number; avg: number }>();
+  const pnls = new Map<string, number>();
+  for (const o of orders) {
+    const b = buch.get(o.symbol);
+    if (o.side === 'buy') {
+      if (b) {
+        b.avg = (b.avg * b.qty + o.kurs * o.qty) / (b.qty + o.qty);
+        b.qty += o.qty;
+      } else {
+        buch.set(o.symbol, { qty: o.qty, avg: o.kurs });
+      }
+    } else if (b) {
+      const menge = Math.min(o.qty, b.qty);
+      pnls.set(o.id, Math.round((o.kurs - b.avg) * menge * 100) / 100);
+      b.qty -= menge;
+      if (b.qty <= 1e-9) buch.delete(o.symbol);
+    }
+  }
+  return pnls;
+}
 
 export interface AdoptErgebnis {
   ok: true;
@@ -230,8 +271,12 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
   //    effectivePriceFromFill). `at` trägt den Fill-Zeitpunkt, nicht den
   //    Import-Zeitpunkt, damit die Trade-Liste und FIFO richtig sortieren.
   let importiert = 0;
+  // PnL über die VOLLE Abfolge rechnen (auch bereits gebuchte Orders zählen
+  // als Deckung) — geschrieben wird weiterhin nur, was noch fehlt.
+  const pnls = importPnls(eigeneOrders);
   for (const o of eigeneOrders) {
     if (bekannt.has(o.id)) continue;
+    const pnl = pnls.get(o.id);
     const cls = classify(o.symbol);
     const teile = feePartsForClass(cls);
     const waehrung = currencyForSymbol(o.symbol);
@@ -259,6 +304,8 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
       brokerOrderId: o.id,
       clientOrderId: o.clientOrderId,
       fee: Math.round(o.qty * o.kurs * teile.commission * 100) / 100,
+      // Handelsanalyse-Anschluss (07.08.): nur bei bekannter Deckung — kein Raten.
+      ...(pnl !== undefined ? { pnl } : {}),
       ...fx,
     }));
     importiert += 1;
