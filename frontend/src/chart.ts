@@ -362,6 +362,90 @@ export async function buildPriceChart(
       if (yModus === 'fix') chart.priceScale('right').applyOptions({ autoScale: true });
     });
   };
+  /* Manueller Y-Zoom im Fix-Modus (Owner 07.08.: „die Y-Achse soll man
+   * manuell zoomen können, genau wie die X-Achse — auch am Touchscreen").
+   * Die SPANNE gehört dem Nutzer: Mausrad über der Preisskala und Ziehen auf
+   * der Preisskala (Maus UND Touch) ändern die eingefrorene Spanne; die
+   * Mitte führt weiter nach. Doppelklick auf die Skala friert neu am
+   * aktuellen Fenster ein — dasselbe „kurz Auto, dann Modus", das beim
+   * Symbol-/Zeitrahmen-Wechsel automatisch passiert (fixReset im Fit).
+   * Capture-Phase + stopPropagation, damit LWC die Gesten nie sieht: Sein
+   * eigener Achsen-Drag würde die Skala auf manuell kippen und die
+   * Nachführung stünde still. Im Auto-/Frei-Modus greifen die Gesten nicht —
+   * dort bleibt das LWC-Standardverhalten unangetastet. */
+  const inPreisAchse = (clientX: number): boolean => {
+    const r = container.getBoundingClientRect();
+    return clientX >= r.right - chart.priceScale('right').width() - 2 && clientX <= r.right;
+  };
+  const spanneZoomen = (faktor: number): void => {
+    if (yModus !== 'fix' || fixSpanne === null) return;
+    fixSpanne = Math.min(Math.max(fixSpanne * faktor, 1e-9), 1e12);
+    yCacheZeit = -1; // Cache verwerfen — sofort mit neuer Spanne rechnen
+    chart.priceScale('right').applyOptions({ autoScale: true });
+  };
+  let yDrag: number | null = null;
+  const yDragStart = (clientX: number, clientY: number): boolean => {
+    if (yModus !== 'fix' || !inPreisAchse(clientX)) return false;
+    yDrag = clientY;
+    return true;
+  };
+  const yDragMove = (clientY: number): void => {
+    if (yDrag === null) return;
+    const dy = clientY - yDrag;
+    yDrag = clientY;
+    spanneZoomen(Math.exp(dy * 0.006)); // runterziehen = rauszoomen (LWC-Konvention)
+  };
+  const aufWheel = (ev: WheelEvent): void => {
+    if (yModus !== 'fix' || !inPreisAchse(ev.clientX)) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    spanneZoomen(Math.exp(ev.deltaY * 0.0012));
+  };
+  const aufMausAb = (ev: MouseEvent): void => {
+    if (yDragStart(ev.clientX, ev.clientY)) {
+      ev.preventDefault();
+      ev.stopPropagation();
+    }
+  };
+  const aufMausZug = (ev: MouseEvent): void => yDragMove(ev.clientY);
+  const aufMausLos = (): void => {
+    yDrag = null;
+  };
+  const aufTouchAb = (ev: TouchEvent): void => {
+    const t = ev.touches[0];
+    if (t && ev.touches.length === 1 && yDragStart(t.clientX, t.clientY)) {
+      ev.preventDefault();
+      ev.stopPropagation();
+    }
+  };
+  const aufTouchZug = (ev: TouchEvent): void => {
+    const t = ev.touches[0];
+    if (yDrag !== null && t) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      yDragMove(t.clientY);
+    }
+  };
+  const aufDoppelklick = (ev: MouseEvent): void => {
+    if (yModus !== 'fix' || !inPreisAchse(ev.clientX)) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    fixReset(); // neu am aktuellen Fenster einfrieren („kurz Auto")
+    chart.priceScale('right').applyOptions({ autoScale: true });
+  };
+  container.addEventListener('wheel', aufWheel, { passive: false, capture: true });
+  container.addEventListener('mousedown', aufMausAb, true);
+  window.addEventListener('mousemove', aufMausZug);
+  window.addEventListener('mouseup', aufMausLos);
+  container.addEventListener('touchstart', aufTouchAb, { passive: false, capture: true });
+  container.addEventListener('touchmove', aufTouchZug, { passive: false, capture: true });
+  container.addEventListener('touchend', aufMausLos, true);
+  container.addEventListener('dblclick', aufDoppelklick, true);
+  const yGestenLoesen = (): void => {
+    window.removeEventListener('mousemove', aufMausZug);
+    window.removeEventListener('mouseup', aufMausLos);
+  };
+
   const fixRange = (): { min: number; max: number } | null => {
     const jetzt = performance.now();
     if (jetzt - yCacheZeit < 8) return yCacheWert; // ein EMA-Schritt je Frame
@@ -823,6 +907,7 @@ export async function buildPriceChart(
       }
     },
     destroy(): void {
+      yGestenLoesen(); // window-Listener der Y-Gesten nicht leaken
       chart.remove();
     },
   };
