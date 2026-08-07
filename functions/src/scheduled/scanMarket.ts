@@ -2163,6 +2163,8 @@ export async function runScan(force = false): Promise<ScanResult> {
   // meta/health, weil Cloud-Logging ohne GCP-Konsole unsichtbar ist.
   let intradayOk = 0;
   let intradayError: string | null = null;
+  // Tages-Slot-Bestand dieses Scans (live_tag-Selbstdiagnose, 07.08.)
+  const tagZaehler = { leer: 0, wartet: 0, reif: 0, verfallen: 0, gesetzt: 0, geloescht: 0 };
   // News-Refresh-Deckel je Scan: Bei 4 je Lauf und 45-min-TTL ist jedes der
   // ~13 beobachteten Symbole grob alle 15–20 Minuten frisch — mehr braucht
   // ein 12-h-Veto-Fenster nicht, und der Scan bleibt von den Feeds entkoppelt.
@@ -2284,6 +2286,13 @@ export async function runScan(force = false): Promise<ScanResult> {
        * alle fünf Minuten erneut gezählt, bis irgendwann ein buy/sell kommt. */
       const tagSlot = pruefeTagSlot(symDoc.get('lastSignalTag'), now.getTime());
       const slotAktion = tagSlotAktion(tagSlot.status, sig.direction);
+      // Selbstdiagnose (07.08.): live_tag stand nach >24 h auf null Einträgen,
+      // und ohne GCP-Konsole war unsichtbar, WO die Pipeline hängt — Slots nie
+      // gesetzt, alle noch am Reifen, oder Bewertung defekt. Die Zähler machen
+      // den Slot-Bestand im Heartbeat ablesbar (Muster: intradayOk).
+      tagZaehler[tagSlot.status] += 1;
+      if (slotAktion === 'neu') tagZaehler.gesetzt += 1;
+      else if (slotAktion === 'loeschen') tagZaehler.geloescht += 1;
       /** Trend/Umkehr/gemischt — Grundlage der Exit-Stil-Messung (06.08.). */
       const sigTyp = bestimmeSignalTyp(sig.votes, sig.direction);
 
@@ -2796,6 +2805,9 @@ export async function runScan(force = false): Promise<ScanResult> {
         // anderes, als die Engine handelt.
         watched: scanned,
         intradayOk,
+        // live_tag-Selbstdiagnose (07.08.): Slot-Bestand je Scan — zeigt ohne
+        // GCP-Konsole, ob Tages-Slots gesetzt werden und wann sie reifen.
+        signalTag: tagZaehler,
         intradayError,
         intradayScored,
         intradayEval,
