@@ -411,6 +411,7 @@ async function rebalanceMomentumUsers(
             assetClass: cls,
             // Steckbrief fürs Meta-Labeling: Momentum-Käufe lernen getrennt
             bucket: bucketKey({ assetClass: cls, timeframe: 'daily', signature: 'momentum', side: 'long' }),
+            signalContext: { typ: 'momentum' },
           },
           clamped,
           laufId,
@@ -545,6 +546,7 @@ async function rebalanceCoreSleeve(
             assetClass: cls,
             core: true, // Besitzkennzeichnung — der Scan lässt sie in Ruhe
             bucket: bucketKey({ assetClass: cls, timeframe: 'daily', signature: 'core', side: 'long' }),
+            signalContext: { typ: 'momentum' },
           },
           clamped,
           laufId,

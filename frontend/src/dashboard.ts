@@ -124,6 +124,8 @@ import {
   watchMomentum,
   watchHealth,
   watchPositioning,
+  saveJournalReview,
+  watchJournal,
   watchStruktur,
   watchTuneFleet,
   watchTuneGlobal,
@@ -144,6 +146,7 @@ import {
   type EigenesLoadout,
   type EquitySeriesPoint,
   type MomentumDoc,
+  type JournalRow,
   type StrukturDoc,
   type TuneFleetRow,
   type TuneLogRow,
@@ -202,6 +205,7 @@ const PANEL_TITLES: Record<string, string> = {
   strategy: 'Strategie',
   engine: 'Engine',
   history: 'Trade-Historie',
+  journal: 'Trade-Journal',
   chart: 'Chart',
   sigcards: 'Indikator-Kacheln',
   autosignals: 'Auto-Signale',
@@ -625,6 +629,13 @@ function layout(email: string): string {
           <tbody id="jBody"><tr><td colspan="6" class="c-t3">Keine Trades</td></tr></tbody>
         </table></div>
         <button class="btn btn-n" id="jMore" style="width:100%;margin-top:6px">Ältere laden</button>
+      </div></div>
+
+      <div class="card" data-panel="journal"><div class="sect">Trade-Journal ${iBtn('tradejournal')}</div><div class="cbody">
+        <div class="hint">Jeder gebuchte Trade landet hier automatisch — mit dem eingefrorenen
+          Signal-Kontext des Moments (Stimmen, Konfluenz, Regime). Deine Aufgabe ist die
+          Bewertung: Note A–D und eine Notiz. Die Fakten selbst sind unveränderlich.</div>
+        <div id="tjList" class="tn-log" style="margin-top:8px"><div class="hint">Noch keine Einträge — das Journal beginnt mit dem nächsten gebuchten Trade.</div></div>
       </div></div>
     </div>
 
@@ -6702,6 +6713,84 @@ function renderStruktur(d: StrukturDoc | null): void {
     .join('');
 }
 
+/* ── Trade-Journal (M12): Fakten vom Server, Bewertung vom User ──────────
+ * (renderJournal ist historisch die Trade-HISTORIE — daher TradeJournal.) */
+
+function renderTradeJournal(rows: JournalRow[]): void {
+  const box = $('tjList');
+  if (!box) return;
+  if (rows.length === 0) {
+    box.innerHTML =
+      '<div class="hint">Noch keine Einträge — das Journal beginnt mit dem nächsten gebuchten Trade.</div>';
+    return;
+  }
+  box.innerHTML = rows
+    .map((r) => {
+      const zeit = new Date(r.at).toLocaleString('de-DE', {
+        day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+      });
+      const marke =
+        r.art === 'exit'
+          ? `<span class="tn-tag${(r.pnl ?? 0) >= 0 ? ' tn-ok' : ''}">Exit ${money(r.pnl ?? 0)}</span>`
+          : '<span class="tn-tag">Entry</span>';
+      const sc = r.signalContext;
+      // Der Kontext ist der Kern der Karte: WARUM stand die Engine so — als
+      // kompakte Zeile, nicht als JSON-Ausdruck.
+      const kontext = [
+        sc?.typ,
+        r.riskExit,
+        sc?.votes
+          ? Object.entries(sc.votes)
+              .map(([k, v]) => `${k}:${v}`)
+              .join(' ')
+          : null,
+        typeof sc?.konfluenz === 'number'
+          ? `Konfluenz ${sc.konfluenz}${typeof sc.minKonfluenz === 'number' ? `/${sc.minKonfluenz}` : ''}`
+          : null,
+        sc?.regime ? `Regime ${sc.regime}` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      const noten = ['A', 'B', 'C', 'D']
+        .map(
+          (g) =>
+            `<button class="lchip tj-g" data-id="${r.id}" data-g="${g}" title="Note ${g}"` +
+            `${r.review === g ? ' style="font-weight:700;border-color:var(--acc);color:var(--acc)"' : ''}>${g}</button>`,
+        )
+        .join('');
+      return (
+        `<div class="tn-e"><div class="tn-h"><span class="tn-nm">${esc(r.symbol)} · ${
+          r.side === 'buy' ? 'Kauf' : 'Verkauf'
+        } · ${r.qty}</span>${marke}` +
+        `<span class="tn-t mono">${zeit}</span></div>` +
+        (kontext ? `<div class="tn-n mono">${esc(kontext)}</div>` : '') +
+        `<div class="tn-h" style="margin-top:4px;gap:4px">${noten}` +
+        `<input class="inp tj-note" data-id="${r.id}" value="${esc(r.notes ?? '')}" placeholder="Notiz …" style="flex:1;min-width:80px"></div></div>`
+      );
+    })
+    .join('');
+}
+
+/** EIN delegierter Listener statt Listener je Zeile — die Liste wird bei
+ *  jedem Snapshot neu gebaut, Einzel-Listener wären sofort verwaist. Der
+ *  Snapshot nach dem Speichern malt die Note dann als aktiv. */
+function wireTradeJournal(uid: string): void {
+  const box = $('tjList');
+  if (!box) return;
+  box.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLElement>('.tj-g');
+    if (!btn) return;
+    const { id, g } = btn.dataset;
+    if (id && g) void saveJournalReview(uid, id, { review: g }).catch(() => undefined);
+  });
+  box.addEventListener('change', (e) => {
+    const inp = e.target as HTMLInputElement;
+    if (!inp.classList.contains('tj-note')) return;
+    const id = inp.dataset.id;
+    if (id) void saveJournalReview(uid, id, { notes: inp.value.slice(0, 500) }).catch(() => undefined);
+  });
+}
+
 async function manualTrade(symbol: string, side: 'buy' | 'sell'): Promise<void> {
   const hint = $('mtHint');
   hint.textContent = 'Sende Order…';
@@ -7159,8 +7248,10 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     watchTuneFleet(uid, renderTuneFleet),
     watchTuneLog(uid, renderTuneLog),
     watchStruktur(uid, renderStruktur),
+    watchJournal(uid, renderTradeJournal),
     watchTuneGlobal(renderTuneGlobal),
   );
+  wireTradeJournal(uid);
 
   // Link-Bus (M9): Chart- und News-Kontext folgen ihrer jeweiligen Gruppe.
   busSubscribe(CHART_KEY, st.chartGroup, (sym) => {

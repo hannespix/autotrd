@@ -196,6 +196,29 @@ function anschaffung(pos: Position, jetzt: string): Partial<Trade> {
   };
 }
 
+/**
+ * Momentaufnahme des Signals, die ans Trade-Journal geht (M12).
+ *
+ * Rein beschreibende Daten — bewusst OHNE Kurs-Bars: Die ≤-60-Bars-Idee aus
+ * dem Milestone würde jedes Journal-Doc um ein Vielfaches aufblähen, und der
+ * spätere Tagesfilm rekonstruiert denselben Ausschnitt ohnehin aus den
+ * `ohlc`-Chunks (Datum + Symbol reichen als Schlüssel).
+ */
+export interface SignalKontext {
+  /** Entscheidungspfad: konfluenz | regelbaum | momentum | manuell. */
+  typ: string;
+  /** Indikator-Stimmen des Scans (rsi/macd/bollinger → buy/sell/hold). */
+  votes?: Record<string, string>;
+  /** Konfluenz der gewählten Richtung inkl. Prognose-Stimme. */
+  konfluenz?: number;
+  /** Erforderliche Konfluenz laut Einstellung — macht „knapp" sichtbar. */
+  minKonfluenz?: number;
+  /** Prognose-Stimme, falls sie mitgestimmt hat. */
+  forecast?: { dir: string; weight: number };
+  /** Regime-Zustand zum Zeitpunkt der Entscheidung. */
+  regime?: string;
+}
+
 export interface TradeRequest {
   uid: string;
   symbol: string;
@@ -206,6 +229,16 @@ export interface TradeRequest {
   source: 'engine' | 'manual';
   /** Risiko-Exit-Grund (stop_loss/take_profit/trailing_stop/max_hold). */
   riskExit?: string;
+  /**
+   * Eingefrorener Signal-Kontext für das Trade-Journal (M12).
+   *
+   * Warum EINFRIEREN statt nachschlagen: Votes, Konfluenz und Regime sind
+   * eine Momentaufnahme des Scans — fünf Minuten später stehen dieselben
+   * Indikatoren anders, und aus den Trade-Records allein ist nicht mehr
+   * rekonstruierbar, WARUM die Engine gehandelt hat. Optional und rein
+   * beschreibend: Kein Buchungspfad liest dieses Feld.
+   */
+  signalContext?: SignalKontext;
   /** Asset-Klasse für klassen-spezifische Risiko-Level (MA6). */
   assetClass?: string | null;
   /**
@@ -832,9 +865,41 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
     // geschlossener Trade mit Steckbrief zählt in meta/tradeFilter. Bewusst
     // getrennt und fehlertolerant — eine Statistik, deren Ausfall einen
     // Verkauf verhindert, wäre die falsche Prioritätenordnung.
-    const t = result.trade as (Trade & { pnl?: number; bucket?: string }) | undefined;
+    const t = result.trade as
+      | (Trade & { id: string; pnl?: number; bucket?: string; riskExit?: string; nachkauf?: boolean })
+      | undefined;
     if (result.executed && t?.bucket && typeof t.pnl === 'number') {
       await recordFilterStat(t.bucket, t.pnl).catch(() => undefined);
+    }
+    /* Journal-Autoanlage (M12) — gleiche Prioritätenordnung wie die
+     * Statistik darüber: nach der Geld-Transaktion, fehlertolerant, nie
+     * handelsblockierend. Doc-ID = Trade-ID, damit Journal und Historie
+     * ohne Suchlauf zueinanderfinden. Der Server legt die FAKTEN an; die
+     * Review-Felder (notes/tags/mistakes/review) ergänzt später der User —
+     * die Rules lassen ihn AUSSCHLIESSLICH diese vier Felder ändern. */
+    if (result.executed && t) {
+      await userRef
+        .collection('journal')
+        .doc(t.id)
+        .set({
+          at: t.executedAt,
+          symbol: t.symbol,
+          side: t.side,
+          qty: t.qty,
+          price: t.price,
+          source: t.source,
+          assetClass: req.assetClass ?? classify(req.symbol),
+          // Ein Trade mit realisiertem P&L ist ein Ausstieg — auch der Cover.
+          art: typeof t.pnl === 'number' ? 'exit' : 'entry',
+          ...(typeof t.pnl === 'number' ? { pnl: t.pnl } : {}),
+          ...(t.riskExit ? { riskExit: t.riskExit } : {}),
+          // Einstiege tragen den Steckbrief nur am Request (er wandert in die
+          // Position), Ausstiege am Trade — beides landet hier.
+          ...(t.bucket ?? req.bucket ? { bucket: t.bucket ?? req.bucket } : {}),
+          ...(t.nachkauf ? { nachkauf: true } : {}),
+          ...(req.signalContext ? { signalContext: req.signalContext } : {}),
+        })
+        .catch((err: unknown) => logger.warn(`journal ${req.uid} ${t.id} nicht schreibbar`, err));
     }
     return result;
   });
