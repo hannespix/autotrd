@@ -678,6 +678,7 @@ function layout(email: string): string {
               <button class="tf-btn" data-layer="ema21" title="EMA 21">EMA21</button>
               <button class="tf-btn" data-layer="bb" title="Bollinger-Bänder (20, 2σ)">BB</button>
               <button class="tf-btn ind-x" data-layer="vwap" title="VWAP (Intraday 1T/1W): volumengewichteter Durchschnitt je Handelstag">VWAP</button>
+              <button class="tf-btn" data-layer="marken" title="Trading-Marken: 52-Wochen-Hoch/Tief (Tagesbasis) + klassische Pivot-Punkte P/R1/S1 aus dem Vortag als Preislinien — die Pivot-Linie trägt zusätzlich die ATR(14) in Prozent (durchschnittliche Tagesspanne, die Basis der adaptiven Stops)">Marken</button>
               <div class="tm-sec">Chart-Typ (TV-Stil)</div>
               <button class="tf-btn on" data-ctype="candles" title="Klassische Kerzen: Körper = Eröffnung↔Schluss, Docht = Hoch/Tief">Kerzen</button>
               <button class="tf-btn" data-ctype="hollow" title="Hohle Kerzen: steigende Kerzen ohne Füllung — Trendrichtung auf einen Blick">Hohl</button>
@@ -3608,6 +3609,65 @@ function posKurs(p: Position, fallback?: number): number {
  * (rot = Stop, orange = Trailing, grün = Ziel) und der Chip mit den
  * Prozent-Abständen.
  */
+/** ATR(14) nach Wilder, in Prozent des letzten Schlusskurses — null bei zu wenig Daten. */
+function atrPct14(daily: ChartBar[]): number | null {
+  const n = 14;
+  if (daily.length < n + 1) return null;
+  const tr = (i: number): number => {
+    const b = daily[i]!;
+    const prevClose = daily[i - 1]!.close;
+    return Math.max(b.high - b.low, Math.abs(b.high - prevClose), Math.abs(b.low - prevClose));
+  };
+  let atr = 0;
+  for (let i = 1; i <= n; i++) atr += tr(i);
+  atr /= n;
+  for (let i = n + 1; i < daily.length; i++) atr = (atr * (n - 1) + tr(i)) / n;
+  const last = daily[daily.length - 1]!.close;
+  return last > 0 ? (atr / last) * 100 : null;
+}
+
+/** Dezente, signal-neutrale Farbe — die Marken sind Landkarte, kein Urteil. */
+const MARKEN_FARBE = '#9aa4b5';
+
+/**
+ * Trading-Marken (Chart-Vision, letzter offener Punkt): 52-Wochen-Hoch/Tief
+ * plus klassische Pivots aus dem Vortag. Beides rechnet IMMER auf Tagesbasis
+ * — auch in der Intraday-Sicht, wo die Pivots ihren eigentlichen Zweck haben
+ * (Intraday-Niveaus aus dem vollendeten Vortag). Der letzte Daily-Bar ist der
+ * LAUFENDE Tag und darf deshalb nicht in die Pivots; die 52W-Marken nehmen
+ * ihn mit (ein neues Jahreshoch ist sofort eines).
+ */
+function markenLinien(daily: ChartBar[]): PriceLineSpec[] {
+  if (!st || st.cleanView || !st.chartLayers.has('marken')) return [];
+  if (daily.length < 21) return []; // zu dünne Tageshistorie für ehrliche Marken
+  const jahr = daily.slice(-252);
+  let hoch = -Infinity;
+  let tief = Infinity;
+  for (const b of jahr) {
+    hoch = Math.max(hoch, b.high);
+    tief = Math.min(tief, b.low);
+  }
+  const v = daily[daily.length - 2]!;
+  const p = (v.high + v.low + v.close) / 3;
+  const atr = atrPct14(daily);
+  return [
+    { key: 'mk:52h', price: hoch, color: MARKEN_FARBE, style: 2, width: 1, title: '52W-Hoch' },
+    { key: 'mk:52t', price: tief, color: MARKEN_FARBE, style: 2, width: 1, title: '52W-Tief' },
+    {
+      key: 'mk:p',
+      price: p,
+      color: MARKEN_FARBE,
+      style: 1,
+      width: 1,
+      title: atr !== null ? `Pivot · ATR ${atr.toFixed(1)} %` : 'Pivot',
+    },
+    // R1/S1 bewusst ohne Text (Owner-Regel: Linien-Titel sparsam) — das
+    // Achsen-Label trägt den Kurs, die Nähe zur Pivot-Linie den Kontext.
+    { key: 'mk:r1', price: 2 * p - v.low, color: MARKEN_FARBE, style: 1, width: 1, axisLabel: false },
+    { key: 'mk:s1', price: 2 * p - v.high, color: MARKEN_FARBE, style: 1, width: 1, axisLabel: false },
+  ];
+}
+
 function positionsLinien(p: Position): PriceLineSpec[] {
   const lv = posLevels(p);
   const lines: PriceLineSpec[] = [
@@ -3677,13 +3737,16 @@ function applyPosition(): void {
   if (!st?.chart) return;
   const p = posImChart();
   const hud = $('posHud');
+  // Marken teilen sich den deklarativen setPriceLines-Kanal mit den
+  // Positions-Linien — EIN Aufruf trägt beide, sonst löscht der zweite den ersten.
+  const marken = markenLinien(st.shownDaily);
   if (!p) {
-    st.chart.setPriceLines([]);
+    st.chart.setPriceLines(marken);
     hud.hidden = true;
     return;
   }
   const lv = posLevels(p);
-  st.chart.setPriceLines(positionsLinien(p));
+  st.chart.setPriceLines([...positionsLinien(p), ...marken]);
 
   const short = p.side === 'short';
   const live = posKurs(p);
@@ -4598,7 +4661,7 @@ function renderGridPanelBars(p: GridPanel): void {
   const pVerlauf = positionsVerlauf(times, closes, p.sym);
   if (pVerlauf) lines.push(pVerlauf);
   p.chart.setOverlays(lines);
-  p.chart.setPriceLines(pPos ? positionsLinien(pPos) : []);
+  p.chart.setPriceLines([...(pPos ? positionsLinien(pPos) : []), ...markenLinien(p.bars)]);
   // News-Punkte in JEDEM Chart-Fenster — gleiche Quelle wie der Haupt-Chart
   const pMarkers: ChartMarker[] =
     st !== null && st.showNews && !st.cleanView
@@ -7724,6 +7787,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       b.classList.toggle('on', st.chartLayers.has(key));
       localStorage.setItem('autotrd-chart-layers', [...st.chartLayers].join(','));
       applyOverlays();
+      applyPosition(); // Marken hängen am selben Preislinien-Kanal
       updateSubPanels();
       renderAllPanels();
     });
@@ -7852,6 +7916,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     localStorage.setItem('autotrd-chart-clean', st.cleanView ? '1' : '0');
     applyOverlays();
     applyMarkers();
+    applyPosition(); // Trading-Marken hängen am Preislinien-Kanal
     applyForecast();
     updateSubPanels();
     drawPredictionArrow();
