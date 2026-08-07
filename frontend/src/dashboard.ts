@@ -3940,7 +3940,8 @@ async function rebuildChart(): Promise<void> {
     const origin = echo ? echo.origin : st.chart;
     pushRange(st.subCharts.rsi, range, origin);
     pushRange(st.subCharts.macd, range, origin);
-    pushRange(st.chart2, range, origin);
+    // Vergleichs-Chart: anderes Symbol, andere Historienlänge → zeitbasiert
+    pushZeitUebersetzt(st.chart2, st.chart, range, origin);
     if (st.mainLocked) syncLockedRange(st.chart, range, origin);
   });
   // Auto-Auflösung + nahtlose Historie: sichtbare Spanne beobachten (debounced)
@@ -4183,6 +4184,61 @@ function matchEcho(target: RangeTarget, range: { from: number; to: number }): Ap
   return hit;
 }
 
+/** Bar-Quelle eines Preis-Chart-Handles (Haupt, Raster-Panel oder Vergleich). */
+function handleQuelle(h: PriceChartHandle): Array<{ time: number } | { date: string }> | null {
+  if (!st) return null;
+  if (h === st.chart) return currentSource();
+  if (h === st.chart2P.chart) return panelSource(st.chart2P);
+  const p = st.gridPanels.find((x) => x.chart === h);
+  return p ? panelSource(p) : null;
+}
+
+/**
+ * Sichtfenster ZEITBASIERT von einer Bar-Quelle auf eine andere übersetzen
+ * (Owner 07.08.: „Zoom, Skala exakt parallel und selbe Position"). Der rohe
+ * Logik-Index verrutscht, sobald zwei Charts verschieden lange Historien
+ * oder Auflösungen halten — Bar 100 des tief geladenen Haupt-Charts ist ein
+ * anderes Datum als Bar 100 eines Panels mit einem Jahr Historie. Übersetzt
+ * wird über die Zeitstempel der Fensterkanten; Bruchteile und Leerraum
+ * (Whitespace links/rechts) wandern mit, damit auch die POSITION exakt
+ * stimmt und nichts an Kerzenkanten „schnappt".
+ */
+function uebersetzeFenster(
+  quelle: ReadonlyArray<{ time: number } | { date: string }>,
+  ziel: ReadonlyArray<{ time: number } | { date: string }>,
+  range: { from: number; to: number },
+): { from: number; to: number } | null {
+  if (quelle.length < 2 || ziel.length < 2 || quelle === ziel) return null;
+  const iL = Math.max(0, Math.min(quelle.length - 1, Math.floor(range.from)));
+  const iR = Math.max(iL, Math.min(quelle.length - 1, Math.ceil(range.to)));
+  const t0 = barTimeMs(quelle[iL]!);
+  const t1 = barTimeMs(quelle[iR]!);
+  let j0 = ziel.findIndex((b) => barTimeMs(b) >= t0);
+  if (j0 < 0) j0 = ziel.length - 1;
+  let j1 = ziel.length - 1;
+  for (let i = ziel.length - 1; i >= 0; i--) {
+    if (barTimeMs(ziel[i]!) <= t1) {
+      j1 = i;
+      break;
+    }
+  }
+  return { from: j0 + (range.from - iL), to: j1 + (range.to - iR) };
+}
+
+/** pushRange mit Zeit-Übersetzung zwischen zwei Preis-Charts. */
+function pushZeitUebersetzt(
+  target: PriceChartHandle | null | undefined,
+  from: PriceChartHandle,
+  range: { from: number; to: number },
+  origin: RangeTarget | null,
+): void {
+  if (!target || !st) return;
+  const q = handleQuelle(from);
+  const z = handleQuelle(target);
+  const u = q && z ? uebersetzeFenster(q, z, range) : null;
+  pushRange(target, u ?? range, origin);
+}
+
 // Nur ECHTE User-Gesten auf Unterpanel/Vergleich dürfen das Haupt-Chart
 // ziehen: Daten-Refits (setData/Fit nach Snapshot oder Mount) feuern
 // dieselben Range-Events und würden das Haupt-Chart sonst grundlos
@@ -4278,7 +4334,7 @@ async function rebuildChart2(): Promise<void> {
     if (st.chart2P.auto) schedulePanelAuto(st.chart2P); // Auto-Zeitrahmen wie in den Panels
     if (matchEcho(h, range)) return;
     if (!recentGesture($('chart2Area'))) return;
-    pushRange(st.chart, range, h);
+    pushZeitUebersetzt(st.chart, h, range, h);
   });
   st.chart2?.onCrosshairDate((date, pos) => {
     // News-Overlay auch im Vergleichs-Chart — mit den Schlagzeilen des
@@ -4350,7 +4406,9 @@ function syncLockedRange(
   origin: RangeTarget | null = from,
 ): void {
   if (!range) return;
-  for (const h of lockedHandles(from)) pushRange(h, range, origin);
+  // Zeitbasiert je Ziel (Owner 07.08.): gleiche Zeitspanne, gleiche Position —
+  // auch wenn Historienlänge oder Auflösung der Charts auseinanderliegen.
+  for (const h of lockedHandles(from)) pushZeitUebersetzt(h, from, range, origin);
 }
 
 function syncLockedCrosshair(from: PriceChartHandle, date: string | null): void {
