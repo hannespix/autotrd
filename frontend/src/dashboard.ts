@@ -629,12 +629,13 @@ function layout(email: string): string {
           <span class="chart-px" id="chChg">--</span>
         </div>
         <div class="tf-bar tf-main">
-          <button class="tf-btn" id="autoBtn" title="Auto-Auflösung: Die Kerzengröße folgt der Zoomstufe (1D → 1h → 15m → 5m) — stufenlos zoomen wie in TradingView">Auto</button>
-          <button class="tf-btn" data-intraday="1" title="1 Handelstag in 5-Minuten-Kerzen">1T</button>
-          <button class="tf-btn" data-intraday="5" title="~5 Handelstage in 5-Minuten-Kerzen">1W</button>
-          <button class="tf-btn" data-bars="22" title="1 Monat in Tageskerzen">1M</button>
-          <button class="tf-btn on" data-bars="66" title="3 Monate in Tageskerzen">3M</button>
-          <button class="tf-btn" data-bars="250" title="1 Jahr in Tageskerzen (~250 Handelstage)">1J</button>
+          <button class="tf-btn" data-zoom="1" title="Auf 1 Handelstag zoomen — die Kerzengröße wählt die Auto-Auflösung">1T</button>
+          <button class="tf-btn" data-zoom="7" title="Auf 1 Woche zoomen">1W</button>
+          <button class="tf-btn" data-zoom="30" title="Auf 1 Monat zoomen">1M</button>
+          <button class="tf-btn" data-zoom="90" title="Auf 3 Monate zoomen">3M</button>
+          <button class="tf-btn" data-zoom="365" title="Auf 1 Jahr zoomen">1J</button>
+          <button class="tf-btn" data-zoom="1825" title="Auf 5 Jahre zoomen">5J</button>
+          <button class="tf-btn" data-zoom="max" title="Gesamte geladene Historie zeigen (lädt weiter nach)">Max</button>
           <span id="resBadge" class="res-badge mono" title="Aktive Kerzen-Auflösung"></span>
           <span id="mktBadge" class="res-badge mono" hidden></span>
           <span id="histHint" class="res-badge mono" hidden>lädt ältere Daten …</span>
@@ -704,13 +705,11 @@ function layout(email: string): string {
           <div id="mainHd" class="gp-hd" hidden>
             <input id="mainHdSym" class="inp mh-sym" title="Symbol des Haupt-Charts (Enter übernimmt)" />
             <span class="gp-tf">
-              <button class="tf-btn" id="mhAuto"
-                title="Auto-Zeitrahmen: eng zoomen wechselt in feinere Kerzen, weit zoomen zurück zu Tageskerzen">Auto</button>
-              <button class="tf-btn" data-mh-i="1" title="1 Handelstag in 5-Minuten-Kerzen">1T</button>
-              <button class="tf-btn" data-mh-i="5" title="~5 Handelstage in 5-Minuten-Kerzen">1W</button>
-              <button class="tf-btn" data-mh-r="22">1M</button>
-              <button class="tf-btn" data-mh-r="66">3M</button>
-              <button class="tf-btn" data-mh-r="0">1J</button>
+              <button class="tf-btn" data-zoom="1" title="Auf 1 Handelstag zoomen">1T</button>
+              <button class="tf-btn" data-zoom="7" title="Auf 1 Woche zoomen">1W</button>
+              <button class="tf-btn" data-zoom="30" title="Auf 1 Monat zoomen">1M</button>
+              <button class="tf-btn" data-zoom="365" title="Auf 1 Jahr zoomen">1J</button>
+              <button class="tf-btn" data-zoom="max" title="Gesamte geladene Historie">Max</button>
             </span>
             <button class="tf-btn mh-max" id="mhMax" title="Chart im Vollbild (Esc schließt)">⛶</button>
             <button class="tf-btn mh-lock" id="lockMain"
@@ -1893,7 +1892,8 @@ function renderResBadge(): void {
   // Zeitzone nur bei Intraday nennen — Tageskerzen tragen den Handelstag in
   // Börsenzeit und haben gar keine Uhrzeit, auf die sich ein Kürzel bezöge.
   const zone = st.intradayDays > 0 ? ` · ${zonenKuerzel(new Date())}` : '';
-  el.textContent = (st.autoRes ? `Auto · ${label}` : label) + zone;
+  // Ohne „Auto ·"-Präfix (07.08.): Auto ist immer an, das Präfix sagte nichts mehr.
+  el.textContent = label + zone;
   el.title = st.intradayDays > 0
     ? 'Aktive Kerzen-Auflösung — Uhrzeiten auf der Zeitachse und in der Kurszeile stehen in deiner Ortszeit'
     : 'Aktive Kerzen-Auflösung';
@@ -3285,26 +3285,47 @@ async function switchAutoLevel(level: number, t0: number, t1: number, refit = fa
   }
 }
 
+/** Seit 07.08. nur noch das Auflösungs-Badge: Auto ist immer an, die
+ *  Zoom-Buttons sind momentane Aktionen ohne on-Zustand. */
 function updateAutoUi(): void {
-  if (!st) return;
-  $('autoBtn').classList.toggle('on', st.autoRes);
-  localStorage.setItem('autotrd-chart-auto', st.autoRes ? '1' : '0');
   renderResBadge();
-  syncMainHdTf();
 }
 
-/** Raster-Kopf des Haupt-Fensters (Titelleisten-Parität, User-Screenshot
- *  26.07.): on-Klassen der Auto-/Zeitrahmen-Knöpfe an den Haupt-Zustand
- *  angleichen — Gegenstück zu syncPanelTfButtons für die Panels. */
-function syncMainHdTf(): void {
-  if (!st) return;
-  document.querySelectorAll<HTMLElement>('#mainHd [data-mh-r], #mainHd [data-mh-i]').forEach((b) => {
-    const on = b.dataset['mhI'] !== undefined
-      ? Number(b.dataset['mhI']) === st!.intradayDays && st!.intradayDays > 0
-      : st!.intradayDays === 0 && Number(b.dataset['mhR']) === st!.range;
-    b.classList.toggle('on', on);
-  });
-  $('mhAuto').classList.toggle('on', st.autoRes);
+/**
+ * Zoom-Button-Fahrt (Owner 07.08.): das Sichtfenster sanft auf die letzten
+ * N Tage fahren (null = gesamte geladene Historie). Wechselt das Ziel die
+ * Auflösungs-Ebene (z. B. 1T braucht 5m-Kerzen), schaltet switchAutoLevel
+ * hart um und setzt das Fenster exakt — eine Kerzen-Morph-Animation über
+ * einen Quellenwechsel hinweg gibt es nicht. Innerhalb derselben Ebene
+ * fährt animateVisibleRange weich (easeOutCubic); die debounced
+ * Auto-/Nachlade-Logik greift nach dem Ausrollen von selbst.
+ */
+async function zoomAufTage(tage: number | null): Promise<void> {
+  if (!st?.chart) return;
+  const src = currentSource();
+  if (src.length < 2) return;
+  const lastMs = barTimeMs(src[src.length - 1]!);
+  if (tage !== null) {
+    const zielLevel =
+      tage <= 1.6 ? 5 : tage <= 3.5 ? 15 : tage <= 8 ? 60 : tage <= 740 ? 0 : tage <= 3600 ? -7 : -30;
+    const aktuell = st.intradayDays > 0 ? st.aggMinutes : -st.dailyAgg;
+    if (zielLevel !== aktuell) {
+      await switchAutoLevel(zielLevel, lastMs - tage * 86_400_000, lastMs);
+      return;
+    }
+  } else {
+    void loadOlderDaily(); // Max: die Ketten-Nachladung anwerfen
+  }
+  const neu = currentSource();
+  const len = neu.length;
+  let from = -0.5;
+  if (tage !== null) {
+    const grenze = barTimeMs(neu[len - 1]!) - tage * 86_400_000;
+    let idx = len - 2;
+    while (idx > 0 && barTimeMs(neu[idx]!) > grenze) idx--;
+    from = idx - 0.5;
+  }
+  st.chart.animateVisibleRange({ from, to: len - 1 + 3 });
 }
 
 /** OHLC-Zeile ans CHART koppeln, nicht an den Fenster-Rahmen: Im Raster
@@ -4398,20 +4419,6 @@ function renderAllPanels(): void {
  * Chart schaltet ALLE Charts um — Raster-Panels + Vergleichs-Chart. Die
  * lokalen Picker bleiben für gezielte Abweichungen danach.
  */
-function propagateTimeframe(intradayDays: number, range: number): void {
-  if (!st) return;
-  const targets = [...st.gridPanels, st.chart2P];
-  for (const p of targets) {
-    p.auto = false; // expliziter globaler Zeitrahmen schlägt Panel-Auto (wie am Haupt-Chart)
-    p.intradayDays = intradayDays;
-    if (intradayDays === 0) p.range = range >= 250 || range === 0 ? 0 : range; // 1J ⇒ alle Panel-Bars (~1 Jahr)
-    p.fitPending = true;
-    if (p.intradayDays > 0) void loadPanelIntraday(p);
-    else if (p.chart) renderGridPanelBars(p);
-  }
-  saveGridPrefs();
-  syncPanelTfButtons();
-}
 
 /** on-Klassen der Panel-/Vergleichs-Zeitrahmen-Knöpfe an den State angleichen. */
 function syncPanelTfButtons(): void {
@@ -4585,7 +4592,6 @@ function renderChartGrid(): void {
   ($('mainHdSym') as HTMLInputElement).value = st.currentSymbol;
   $('lockMain').innerHTML = st.mainLocked ? ICONS.lock : ICONS.unlock;
   $('lockMain').classList.toggle('on', st.mainLocked);
-  syncMainHdTf();
   positionMainHud(); // Kopf sichtbar/versteckt → OHLC-Zeile ans Chart koppeln
   document.querySelectorAll('.tf-btn[data-grid]').forEach((b) => {
     b.classList.toggle('on', Number((b as HTMLElement).dataset['grid']) === st?.gridMode);
@@ -6547,7 +6553,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     histLoading: false,
     histDone: false,
     histEmptyStreak: 0,
-    autoRes: localStorage.getItem('autotrd-chart-auto') !== '0',
+    // Immer an (Owner 07.08.: „Auto soll ja immer an sein") — der alte
+    // Geräte-Schalter ist Geschichte, die Buttons sind reine Zoom-Fahrten.
+    autoRes: true,
     aggMinutes: 5,
     dailyAgg: 0,
     shownDaily: [],
@@ -7086,24 +7094,15 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     localStorage.setItem('autotrd-theme', next);
     void rebuildChart();
   });
-  // Timeframe-Buttons (1T/1W intraday · 1M/3M/1J Tageskerzen) — jeder
-  // Wechsel ist eine explizite Aktion und darf neu fitten.
-  const tfButtons = document.querySelectorAll<HTMLButtonElement>('.tf-btn[data-bars], .tf-btn[data-intraday]');
-  tfButtons.forEach((b) =>
+  // Zoom-Buttons (Owner 07.08.: „Reihenfolge klein nach groß, Auto kann weg,
+  // nur die X-Zoomstufe per smoothem Übergang"): Ein Klick ist KEIN
+  // Modus-Wechsel mehr, sondern eine sanfte Fahrt des Sichtfensters auf die
+  // letzten N Tage. Die immer aktive Auto-Auflösung wählt die Kerzengröße
+  // zum neuen Fenster von selbst. Buttons sind momentane Aktionen — keine
+  // on-Markierung, denn der Zoom ist danach sofort wieder frei.
+  document.querySelectorAll<HTMLButtonElement>('.tf-btn[data-zoom]').forEach((b) =>
     b.addEventListener('click', () => {
-      if (!st) return;
-      st.autoRes = false; // manuelle Stufe gewählt → Auto pausiert bis zum Auto-Klick
-      st.dailyAgg = 0; // manuelle Stufen sind immer Tages-/5m-Basis
-      st.intradayDays = parseInt(b.dataset.intraday ?? '0', 10);
-      st.aggMinutes = 5; // manuelle Intraday-Stufen zeigen die 5m-Basis
-      if (b.dataset.bars !== undefined) st.range = parseInt(b.dataset.bars, 10);
-      st.chartFitPending = true;
-      tfButtons.forEach((el) => el.classList.toggle('on', el === b));
-      updateAutoUi();
-      if (st.intradayDays > 0) void loadIntradayView();
-      else renderChart();
-      // Zeitrahmen-Sync: alle Charts folgen dem Haupt-Picker (User-Wunsch)
-      propagateTimeframe(st.intradayDays, st.range);
+      void zoomAufTage(b.dataset.zoom === 'max' ? null : Number(b.dataset.zoom));
     }),
   );
   // Vergleichs-Chart: eigener Picker für gezielte Abweichungen
@@ -7157,49 +7156,10 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     el.value = sym;
     selectSymbol(sym);
   });
-  // Zeitrahmen im Raster-Kopf (Titelleisten-Parität 26.07.): wirkt LOKAL
-  // aufs Haupt-Chart — wie die Picker der Panels; der globale Sync über
-  // alle Fenster bleibt bewusst bei der großen Toolbar darüber.
-  document.querySelectorAll<HTMLElement>('#mainHd [data-mh-r], #mainHd [data-mh-i]').forEach((b) =>
-    b.addEventListener('click', () => {
-      if (!st) return;
-      st.autoRes = false; // manuelle Stufe pausiert Auto (wie überall)
-      st.dailyAgg = 0;
-      st.intradayDays = b.dataset['mhI'] !== undefined ? Number(b.dataset['mhI']) : 0;
-      st.aggMinutes = 5;
-      if (b.dataset['mhR'] !== undefined) st.range = Number(b.dataset['mhR']);
-      st.chartFitPending = true;
-      // Toolbar-Knöpfe spiegeln denselben Zustand
-      tfButtons.forEach((el) =>
-        el.classList.toggle(
-          'on',
-          st!.intradayDays > 0
-            ? el.dataset.intraday === String(st!.intradayDays)
-            : el.dataset.intraday === undefined && el.dataset.bars === String(st!.range),
-        ),
-      );
-      updateAutoUi();
-      if (st.intradayDays > 0) void loadIntradayView();
-      else renderChart();
-    }),
-  );
-  $('mhAuto').addEventListener('click', () => {
-    if (!st) return;
-    st.autoRes = !st.autoRes;
-    updateAutoUi();
-    if (st.autoRes) maybeAutoSwitch();
-  });
   $('mhMax').addEventListener('click', () => {
     const on = !$('chartMaxScope').classList.contains('chart-max');
     exitAllMax();
     if (on) setMainMax(true);
-  });
-  // Auto-Auflösung an/aus + Y-Autoscaling (Anzeige-Option, Feedback 25.07.)
-  $('autoBtn').addEventListener('click', () => {
-    if (!st) return;
-    st.autoRes = !st.autoRes;
-    updateAutoUi();
-    if (st.autoRes) maybeAutoSwitch();
   });
   updateAutoUi();
   // Y-Modus-Schalter (Owner-Idee 06.08.): auto → fix → frei → auto. „Fix"
