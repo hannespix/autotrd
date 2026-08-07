@@ -15,6 +15,7 @@ import {
   bewerteSchattenSignal,
   leseSchattenSignal,
   pruefeTagSlot,
+  tagSlotAktion,
   werteSchattenAus,
 } from '../src/classShadow.js';
 
@@ -395,5 +396,32 @@ describe('leseSchattenSignal — typ wandert nur als bekannter Wert mit', () => 
   it('unbekannte oder fehlende Typen werden keine Kategorie', () => {
     expect(leseSchattenSignal({ ...basis, typ: 'kaputt' }, Date.now())?.typ).toBeUndefined();
     expect(leseSchattenSignal(basis, Date.now())?.typ).toBeUndefined();
+  });
+});
+
+describe('tagSlotAktion — ein reifer Slot wird IMMER verbraucht (Defekt-Fund 07.08.)', () => {
+  it('ABNAHME: reif + hold → löschen, nie liegen lassen (sonst Doppelzählung alle 5 min)', () => {
+    expect(tagSlotAktion('reif', 'hold')).toBe('loeschen');
+  });
+
+  it('reif + frisches Signal → neu belegen', () => {
+    expect(tagSlotAktion('reif', 'buy')).toBe('neu');
+    expect(tagSlotAktion('reif', 'sell')).toBe('neu');
+  });
+
+  it('wartet → niemals anfassen, egal welches Signal', () => {
+    expect(tagSlotAktion('wartet', 'buy')).toBe('lassen');
+    expect(tagSlotAktion('wartet', 'sell')).toBe('lassen');
+    expect(tagSlotAktion('wartet', 'hold')).toBe('lassen');
+  });
+
+  it('leerer Slot: buy/sell belegt, hold lässt ihn leer', () => {
+    expect(tagSlotAktion('leer', 'buy')).toBe('neu');
+    expect(tagSlotAktion('leer', 'hold')).toBe('lassen');
+  });
+
+  it('verfallene Slots werden aufgeräumt statt liegen gelassen', () => {
+    expect(tagSlotAktion('verfallen', 'hold')).toBe('loeschen');
+    expect(tagSlotAktion('verfallen', 'sell')).toBe('neu');
   });
 });

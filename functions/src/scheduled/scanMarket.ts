@@ -29,6 +29,7 @@ import {
   bewerteSchattenSignal,
   leseSchattenSignal,
   pruefeTagSlot,
+  tagSlotAktion,
   regimeRichtung,
   regimeStimmen,
   werteSchattenAus,
@@ -2269,11 +2270,12 @@ export async function runScan(force = false): Promise<ScanResult> {
 
       /* Tages-Horizont-Slot (Task 94): Das Signal reift 24 h, statt beim
        * nächsten Scan ersetzt zu werden. `wartet` → Slot nicht anfassen;
-       * `reif` wird unten im Schatten-Block bewertet, danach (wie bei
-       * `leer`/`verfallen`) mit dem heutigen buy/sell-Signal neu belegt. */
+       * `reif` wird unten im Schatten-Block bewertet und danach IMMER
+       * verbraucht — neu belegt bei frischem buy/sell, sonst gelöscht
+       * (tagSlotAktion): Ein liegen gebliebener reifer Slot würde sonst
+       * alle fünf Minuten erneut gezählt, bis irgendwann ein buy/sell kommt. */
       const tagSlot = pruefeTagSlot(symDoc.get('lastSignalTag'), now.getTime());
-      const tagSlotBelegbar =
-        tagSlot.status !== 'wartet' && (sig.direction === 'buy' || sig.direction === 'sell');
+      const slotAktion = tagSlotAktion(tagSlot.status, sig.direction);
       /** Trend/Umkehr/gemischt — Grundlage der Exit-Stil-Messung (06.08.). */
       const sigTyp = bestimmeSignalTyp(sig.votes, sig.direction);
 
@@ -2282,7 +2284,7 @@ export async function runScan(force = false): Promise<ScanResult> {
         {
           name: resolveName(symbol),
           assetClass: classify(symbol),
-          ...(tagSlotBelegbar
+          ...(slotAktion === 'neu'
             ? {
                 lastSignalTag: {
                   direction: sig.direction,
@@ -2291,7 +2293,9 @@ export async function runScan(force = false): Promise<ScanResult> {
                   ...(sigTyp ? { typ: sigTyp } : {}),
                 },
               }
-            : {}),
+            : slotAktion === 'loeschen'
+              ? { lastSignalTag: FieldValue.delete() }
+              : {}),
           // Grundlage der Schatten-Kante beim NÄCHSTEN Scan (MG4): Richtung,
           // Kurs und Zeitpunkt dieses Signals. Bewusst am Haupt-Dokument und
           // nicht in einer eigenen Sammlung — es wird ohnehin geschrieben.
