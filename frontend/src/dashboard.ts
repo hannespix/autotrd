@@ -1001,6 +1001,8 @@ function layout(email: string): string {
           <div><label class="lbl">Versuche</label><div id="skTries" class="smv mono">--</div></div>
           <div><label class="lbl">Amtiert seit</label><div id="skSince" class="smv mono">--</div></div>
         </div>
+        <label class="lbl" style="margin-top:10px">Amtierender Baum — was feuert?</label>
+        <div id="skBed" class="fl-tbl"><div class="hint">Kommt mit dem ersten Tageslauf.</div></div>
         <label class="lbl" style="margin-top:10px">Prüf-Journal</label>
         <div id="skLog" class="tn-log"><div class="hint">Noch kein Lauf — die Suche prüft täglich um 18:10 ET einen Kandidaten.</div></div>
       </div></div>
@@ -6744,6 +6746,24 @@ function renderStruktur(d: StrukturDoc | null): void {
   gen.textContent = `G${d.generation ?? 0}`;
   tries.textContent = String(d.nVersuche ?? 0);
   since.textContent = d.amtierendSeit ? d.amtierendSeit.slice(0, 10) : '--';
+  // Blatt-Statistik: „feuerte 41× · 12× am Signal-Tag". Ein Blatt ohne
+  // Feuerungen ist toter Ballast, ein Dauerbrenner entscheidet nichts —
+  // beides sieht man nur mit BEIDEN Zahlen nebeneinander.
+  const bed = $('skBed');
+  if (bed) {
+    const zeilen = d.bedingungen?.zeilen ?? [];
+    bed.innerHTML =
+      zeilen.length === 0
+        ? '<div class="hint">Kommt mit dem ersten Tageslauf.</div>'
+        : zeilen
+            .map(
+              (z) =>
+                `<div class="tn-fl"><span class="tn-tag${z.seite === 'buy' ? ' tn-ok' : ''}">${z.seite === 'buy' ? 'Kauf' : 'Verkauf'}</span>` +
+                `<span class="tn-nm">${esc(z.label ?? '')}</span>` +
+                `<span class="mono">${z.gefeuert ?? 0}× · ${z.amSignalTag ?? 0}× am Signal-Tag</span></div>`,
+            )
+            .join('');
+  }
   const rows = [...(d.journal ?? [])].reverse().slice(0, 12);
   if (rows.length === 0) {
     log.innerHTML = '<div class="hint">Journal leer — der nächste Tageslauf schreibt die erste Prüfung.</div>';

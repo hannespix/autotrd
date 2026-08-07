@@ -49,7 +49,7 @@ import {
   type StrategyDoc,
   type StrategySpec,
 } from '../../../shared/src/index.js';
-import { backtestSpec, type BacktestBar } from '../core/backtest.js';
+import { backtestSpec, type BacktestBar, type BedingungsZeile } from '../core/backtest.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 
 /** Reservierte Strategie-Doc-ID der Suche (users/{uid}/strategies/…). */
@@ -187,7 +187,33 @@ interface SuchZustand {
   /** Zahl der Beförderungen; Generation 0 ist der Startpunkt. */
   generation: number;
   journal: JournalEintrag[];
+  /**
+   * Feuer-Statistik der Blätter des AMTIERENDEN Baums (M11-Rest,
+   * „MACD-Cross feuerte 41×, 12× am Signal-Tag") — summiert über die
+   * Watchlist-Symbole, je Lauf frisch. Macht die Blackbox lesbar: Ein Blatt
+   * mit 0 Feuerungen ist toter Ballast, eines das immer feuert entscheidet
+   * nichts — beides Kandidaten für die nächste Mutation.
+   */
+  bedingungen?: { at: string; zeilen: BedingungsZeile[] };
   updatedAt: string;
+}
+
+/** Blatt-Statistik des Baums über alle Symbole summieren (Label = Schlüssel). */
+function zaehleBedingungen(
+  spec: StrategySpec,
+  barsJeSymbol: ReadonlyMap<string, BacktestBar[]>,
+): BedingungsZeile[] {
+  const summe = new Map<string, BedingungsZeile>();
+  for (const bars of barsJeSymbol.values()) {
+    for (const z of backtestSpec(spec, bars, { mitBedingungen: true }).bedingungen ?? []) {
+      const k = `${z.seite}|${z.label}`;
+      const e = summe.get(k) ?? { seite: z.seite, label: z.label, gefeuert: 0, amSignalTag: 0 };
+      e.gefeuert += z.gefeuert;
+      e.amSignalTag += z.amSignalTag;
+      summe.set(k, e);
+    }
+  }
+  return [...summe.values()];
 }
 
 const round3 = (v: number): number => Math.round(v * 1000) / 1000;
@@ -337,6 +363,7 @@ export async function strukturAlle(now = new Date()): Promise<StrukturRunResult>
               gruende: [],
             },
           ],
+          bedingungen: { at: now.toISOString(), zeilen: zaehleBedingungen(bester.spec, barsJeSymbol) },
           updatedAt: now.toISOString(),
         };
         await stateRef.set(zustand);
@@ -410,6 +437,12 @@ export async function strukturAlle(now = new Date()): Promise<StrukturRunResult>
           `strukturSuche ${userDoc.id}: Generation ${zustand.generation} — ${mut.erg.beschreibung}`,
         );
       }
+      // Statistik NACH einer etwaigen Beförderung — sie beschreibt den Baum,
+      // der ab jetzt amtiert, nicht den gerade abgelösten.
+      zustand.bedingungen = {
+        at: now.toISOString(),
+        zeilen: zaehleBedingungen(zustand.amtierend, barsJeSymbol),
+      };
       zustand.updatedAt = now.toISOString();
       await stateRef.set(zustand);
     } catch (err) {

@@ -4,3 +4,4 @@ export * from './spec.js';
 export * from './compileClassic.js';
 export * from './presets.js';
 export * from './mutate.js';
+export * from './describe.js';

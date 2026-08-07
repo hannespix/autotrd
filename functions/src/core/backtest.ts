@@ -15,10 +15,12 @@
 import {
   DEFAULT_LOOKBACK,
   FORECAST_HORIZON,
+  beschreibeBlatt,
   bollinger,
   computeForecastV2,
   evaluate,
   macd,
+  sammleBlaetter,
   wilderRsi,
   type RuleContext,
   type StrategySpec,
@@ -37,6 +39,24 @@ export interface BacktestOptions {
   slippageBps?: number;
   /** Volle Tagesrendite-Serie im Ergebnis mitliefern (Struktursuche, MO). */
   mitRenditen?: boolean;
+  /** Bedingungs-Statistik je Blatt mitzählen (M11-Rest). */
+  mitBedingungen?: boolean;
+}
+
+/**
+ * Feuer-Statistik EINES Blatts über den Lauf: `gefeuert` = wie oft die
+ * Einzelbedingung wahr war, `amSignalTag` = wie oft davon an einem Bar, an
+ * dem die GESAMTE Baum-Seite auslöste. Bewusst diese zwei Zählungen statt
+ * einer Kausal-Analyse: „feuerte 41×, 12× am Signal-Tag" trennt bereits
+ * Dauer-Brenner (immer wahr, nie unterscheidend) von seltenen Auslösern —
+ * ein kontrafaktisches „wäre ohne dieses Blatt nichts passiert?" wäre bei
+ * any/weighted mehrdeutig und suggeriert mehr Präzision, als drinsteckt.
+ */
+export interface BedingungsZeile {
+  seite: 'buy' | 'sell';
+  label: string;
+  gefeuert: number;
+  amSignalTag: number;
 }
 
 export interface BacktestTrade {
@@ -60,6 +80,8 @@ export interface BacktestResult {
   equityCurve: Array<{ date: string; value: number }>;
   trades: BacktestTrade[];
   evaluatedBars: number;
+  /** Nur mit `opts.mitBedingungen`: Feuer-Statistik je Blatt (buy + sell). */
+  bedingungen?: BedingungsZeile[];
   /**
    * Nur mit `opts.mitRenditen` (Struktursuche): UNGEDÜNNTE Tagesrendite je
    * Bar-Übergang — `renditen[i]` gehört zum Übergang bars[i] → bars[i+1]
@@ -123,6 +145,20 @@ export function backtestSpec(
   const trades: BacktestTrade[] = [];
   let evaluated = 0;
 
+  // Bedingungs-Statistik: Blätter einmal einsammeln, je Bar einzeln stimmen
+  // lassen. Jedes Blatt ist selbst ein gültiger Baum — evaluate(blatt, ctx)
+  // ist exakt die Stimme, die es im Gesamtbaum abgibt.
+  const statistik = opts.mitBedingungen
+    ? ([
+        ...sammleBlaetter(spec.buy).map((blatt) => ({
+          seite: 'buy' as const, blatt, zeile: { seite: 'buy' as const, label: beschreibeBlatt(blatt), gefeuert: 0, amSignalTag: 0 },
+        })),
+        ...sammleBlaetter(spec.sell).map((blatt) => ({
+          seite: 'sell' as const, blatt, zeile: { seite: 'sell' as const, label: beschreibeBlatt(blatt), gefeuert: 0, amSignalTag: 0 },
+        })),
+      ])
+    : null;
+
   for (let i = 0; i < bars.length; i++) {
     const price = closes[i]!;
     if (i >= Math.min(WARMUP, bars.length - 1)) {
@@ -141,6 +177,13 @@ export function backtestSpec(
       evaluated++;
       const buy = evaluate(spec.buy, ctx);
       const sell = evaluate(spec.sell, ctx);
+      if (statistik) {
+        for (const s of statistik) {
+          if (!evaluate(s.blatt, ctx)) continue;
+          s.zeile.gefeuert += 1;
+          if (s.seite === 'buy' ? buy : sell) s.zeile.amSignalTag += 1;
+        }
+      }
       if (buy && !sell && shares === 0) {
         const eff = price * (1 + fee);
         const maxShares = Math.floor(capital / eff);
@@ -219,5 +262,6 @@ export function backtestSpec(
     trades,
     evaluatedBars: evaluated,
     ...(opts.mitRenditen ? { renditen: alleRenditen } : {}),
+    ...(statistik ? { bedingungen: statistik.map((s) => s.zeile) } : {}),
   };
 }

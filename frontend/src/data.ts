@@ -1110,6 +1110,11 @@ export interface StrukturDoc {
   /** Zahl der Beförderungen; Generation 0 ist der kompilierte Startpunkt. */
   generation?: number;
   journal?: StrukturJournalRow[];
+  /** Feuer-Statistik der Blätter des amtierenden Baums (je Tageslauf frisch). */
+  bedingungen?: {
+    at?: string;
+    zeilen?: Array<{ seite?: string; label?: string; gefeuert?: number; amSignalTag?: number }>;
+  };
   updatedAt?: string;
 }
 
