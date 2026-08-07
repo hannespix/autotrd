@@ -1445,6 +1445,12 @@ Lauf also am Abend des 07.08., 22:10 UTC). `check-scheduler.mjs` kennt den
 Zeitplan jetzt auch (Drift-Guard-Parität); Erfolgskriterium für den ersten
 Lauf: `meta/health.strukturSuche` mit `users/gestartet` > 0 und je Engine-User
 ein `tuning/struktur`-State mit Journal-Eintrag `art: 'start'`.
+**Sichtbarkeit (07.08.):** Dashboard-Karte „Struktursuche" neben dem
+Auto-Tuner (Generation, kumulative Versuche, Amtiert-seit, Prüf-Journal mit
+DSR/Latte/Vorsprung/Fenstern) — dieselbe Journal-Disziplin wie beim Tuner:
+Abgelehnte stehen gleichberechtigt drin, sonst wäre die wachsende Latte
+unsichtbar und „lange keine Beförderung" nicht von „Suche tot"
+unterscheidbar.
 
 ## ME — Drei Aufträge an einem Tag (04.08.): Supabase raus, Steuer, Echtgeld
 

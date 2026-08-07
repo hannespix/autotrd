@@ -124,6 +124,7 @@ import {
   watchMomentum,
   watchHealth,
   watchPositioning,
+  watchStruktur,
   watchTuneFleet,
   watchTuneGlobal,
   watchTuneLog,
@@ -143,6 +144,7 @@ import {
   type EigenesLoadout,
   type EquitySeriesPoint,
   type MomentumDoc,
+  type StrukturDoc,
   type TuneFleetRow,
   type TuneLogRow,
   callBrokerStatus,
@@ -212,6 +214,7 @@ const PANEL_TITLES: Record<string, string> = {
   fclab: 'Prognose-Labor',
   momentum: 'Momentum-Ranking',
   tuner: 'Auto-Tuner',
+  struktur: 'Struktursuche',
   chart2: 'Vergleichs-Chart',
 };
 
@@ -966,6 +969,22 @@ function layout(email: string): string {
         <div id="tnGlobal" class="fl-tbl"><div class="hint">Noch zu wenige Konten für Kollektivwissen.</div></div>
         <label class="lbl" style="margin-top:10px">Änderungs-Journal</label>
         <div id="tnLog" class="tn-log"><div class="hint">Noch keine Prüfung — der Tuner urteilt täglich nach US-Schluss.</div></div>
+      </div></div>
+
+      <div class="card" data-panel="struktur"><div class="sect">Struktursuche ${iBtn('struktursuche')}</div><div class="cbody">
+        <div class="hint">Während der Auto-Tuner an den REGLERN deiner Strategie dreht, baut die
+          Struktursuche am BAUPLAN: Einmal täglich tritt ein mutierter Regelbaum gegen den
+          amtierenden an — Walk-Forward-geprüft, mit einer Latte gegen Zufallstreffer, die mit
+          jedem Versuch wächst. Ein Sieger handelt nur ein Schattenkonto („Struktursuche" im
+          Studio); echtes Kapital bekommt er erst, wenn du ihn dort selbst beförderst.
+          Der Auto-Tuner-Schalter oben gilt auch für diese Suche.</div>
+        <div class="row" style="gap:12px;margin-top:8px">
+          <div><label class="lbl">Generation</label><div id="skGen" class="smv mono">--</div></div>
+          <div><label class="lbl">Versuche</label><div id="skTries" class="smv mono">--</div></div>
+          <div><label class="lbl">Amtiert seit</label><div id="skSince" class="smv mono">--</div></div>
+        </div>
+        <label class="lbl" style="margin-top:10px">Prüf-Journal</label>
+        <div id="skLog" class="tn-log"><div class="hint">Noch kein Lauf — die Suche prüft täglich um 18:10 ET einen Kandidaten.</div></div>
       </div></div>
 
     </div>
@@ -6625,6 +6644,64 @@ function renderTuneLog(rows: TuneLogRow[]): void {
     .join('');
 }
 
+/**
+ * Die Struktursuche-Karte (MO Teil 2).
+ *
+ * Dieselbe Journal-Disziplin wie beim Tuner: Abgelehnte Kandidaten stehen
+ * gleichberechtigt neben Beförderungen, jede Zeile mit DSR gegen Latte und
+ * beiden Fenstern — sonst wäre die wachsende statistische Hürde unsichtbar
+ * und „seit Wochen keine Beförderung" nicht von „Suche tot" unterscheidbar.
+ */
+function renderStruktur(d: StrukturDoc | null): void {
+  const gen = $('skGen');
+  const tries = $('skTries');
+  const since = $('skSince');
+  const log = $('skLog');
+  if (!gen || !tries || !since || !log) return;
+  if (!d) {
+    gen.textContent = '--';
+    tries.textContent = '--';
+    since.textContent = '--';
+    log.innerHTML =
+      '<div class="hint">Noch kein Lauf — die Suche prüft täglich um 18:10 ET einen Kandidaten.</div>';
+    return;
+  }
+  gen.textContent = `G${d.generation ?? 0}`;
+  tries.textContent = String(d.nVersuche ?? 0);
+  since.textContent = d.amtierendSeit ? d.amtierendSeit.slice(0, 10) : '--';
+  const rows = [...(d.journal ?? [])].reverse().slice(0, 12);
+  if (rows.length === 0) {
+    log.innerHTML = '<div class="hint">Journal leer — der nächste Tageslauf schreibt die erste Prüfung.</div>';
+    return;
+  }
+  log.innerHTML = rows
+    .map((r) => {
+      const zeit = new Date(r.at).toLocaleString('de-DE', {
+        day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+      });
+      const marke =
+        r.art === 'start'
+          ? '<span class="tn-tag">Startpunkt</span>'
+          : r.befoerdert
+            ? '<span class="tn-tag tn-ok">befördert</span>'
+            : '<span class="tn-tag">abgelehnt</span>';
+      const fmt = (v: number | null | undefined): string =>
+        typeof v === 'number' ? v.toFixed(2) : '--';
+      const zahlen =
+        r.art === 'start'
+          ? `Versuch ${r.nVersuche}`
+          : `Vorsprung ${fmt(r.vorsprung)} · DSR ${fmt(r.dsr)} · Latte ${fmt(r.latte)}` +
+            ` · Test-Sharpe ${fmt(r.testSharpe)} · n=${r.nSuch}/${r.nTest} · Versuch ${r.nVersuche}`;
+      const gruende = r.gruende.length > 0 ? `<div class="tn-r">${esc(r.gruende.join(' · '))}</div>` : '';
+      return (
+        `<div class="tn-e"><div class="tn-h"><span class="tn-nm">${esc(r.beschreibung)}</span>${marke}` +
+        `<span class="tn-t mono">${zeit}</span></div>${gruende}` +
+        `<div class="tn-n mono">${zahlen}</div></div>`
+      );
+    })
+    .join('');
+}
+
 async function manualTrade(symbol: string, side: 'buy' | 'sell'): Promise<void> {
   const hint = $('mtHint');
   hint.textContent = 'Sende Order…';
@@ -7081,6 +7158,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     }),
     watchTuneFleet(uid, renderTuneFleet),
     watchTuneLog(uid, renderTuneLog),
+    watchStruktur(uid, renderStruktur),
     watchTuneGlobal(renderTuneGlobal),
   );
 
