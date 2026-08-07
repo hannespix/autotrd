@@ -845,9 +845,21 @@ fairen A/B gegen die aktive Strategie befördert werden.
       Studio-Karte mit Kennzahlen-Grid + Equity-Sparkline via onSnapshot;
       E2E 16/16 inkl. Report. Bewusste Abweichung: Backtest per Button
       statt on-Save (Kosten-Kontrolle); Bedingungs-Statistik folgt.)*
-- [ ] Lookahead-Disziplin: Evaluator/Backtest sehen je Bar nur Daten ≤ dieses
+- [x] Lookahead-Disziplin: Evaluator/Backtest sehen je Bar nur Daten ≤ dieses
       Bars; Regressionstests inkl. Wochenend-/DST-Fällen — gleiche Härte wie
       das `forecast_eval`-Gate
+      *(07.08. abgeschlossen — Audit vor dem ersten Struktursuche-Lauf, denn
+      seit #203 entscheidet dieser Backtest über Beförderungen. Bestand:
+      harter `closes.slice(0, i+1)`-Schnitt, kausale Forecast-Serie je Bar,
+      Sprung-Fixture (Einstieg NIE vor dem Sprung-Tag) und Zukunfts-
+      Variations-Test für den Forecast-Pfad. NEU dazu der stärkste Beweis
+      über ALLE Indikator-Pfade: Präfix-Konsistenz — Backtest auf bars[0..m]
+      und bars[0..n] laufen bis zum Schnitt IDENTISCH (gleiche Einstiege,
+      gleiche Renditen je Bar). Ein zentriertes Fenster, eine Gesamtserien-
+      Normalisierung oder ein Off-by-one nach vorn in RSI/MACD/Bollinger
+      flöge damit sofort auf. Wochenend-/DST-Fälle betreffen den Bar-Bau
+      (ohlcDaily-Chunks), nicht die Engine — dort sind Daten Schlüssel,
+      keine Rechengröße.)*
 - [x] Shadow-Modus: virtuelles Konto im Strategie-Doc (nur Functions
       schreiben), `shadowSignals` nur bei Entscheidungs-Wechsel; UI-Tab mit
       Hätte-Feed + virtueller vs. echter Equity-Kurve

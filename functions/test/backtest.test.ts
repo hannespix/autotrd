@@ -89,6 +89,55 @@ describe('backtestSpec', () => {
     expect(r.numTrades).toBeGreaterThan(0);
   });
 
+  it('PRÄFIX-KONSISTENZ: gleiche Entscheidungen, egal wie lang die Serie ist', () => {
+    /* Der stärkste Lookahead-Beweis über ALLE Indikator-Pfade: Die
+     * RSI/MACD/Bollinger-Serien werden einmal über die VOLLE Serie gerechnet
+     * und dann an Bar i indiziert — kausal ist das nur, wenn jede dieser
+     * Implementierungen strikt rollierend/rekursiv ist (Fenster bzw. EMA,
+     * die an i enden). Ein zentriertes Fenster, eine Normalisierung über die
+     * Gesamtserie oder ein Off-by-one nach vorn wäre mit den bisherigen
+     * Fixtures unsichtbar, solange es beide Läufe gleich trifft.
+     *
+     * Deshalb hier mechanisch: Backtest auf bars[0..m] und auf bars[0..n]
+     * (m < n) müssen bis zum Schnitt IDENTISCH laufen — dieselben Einstiege
+     * vor dem Schnitt-Tag und dieselbe Equity je Bar (bis auf den letzten
+     * Bar des kurzen Laufs, den seine Schluss-Liquidation umschreibt). */
+    const lcg = (seed: number) => () => {
+      seed = (seed * 1_664_525 + 1_013_904_223) % 4_294_967_296;
+      return seed / 4_294_967_296;
+    };
+    const rnd = lcg(42);
+    const bars: BacktestBar[] = [];
+    let preis = 100;
+    for (let i = 0; i < 160; i++) {
+      preis = Math.max(5, preis * (1 + (rnd() - 0.5) * 0.06 + Math.sin(i / 9) * 0.01));
+      bars.push({ date: isoDate(i), close: Math.round(preis * 100) / 100 });
+    }
+    // Alle drei Indikator-Familien im Spiel, damit jede Serie geprüft wird.
+    const spec: StrategySpec = {
+      buy: {
+        type: 'any',
+        children: [
+          { type: 'compare', left: 'rsi', op: 'lt', right: 45 },
+          { type: 'crossover', fast: 'macdLine', slow: 'macdSignal', direction: 'above' },
+        ],
+      },
+      sell: { type: 'compare', left: 'pctB', op: 'gt', right: 0.9 },
+    };
+    const m = 110;
+    const kurz = backtestSpec(spec, bars.slice(0, m), { commissionPct: 0, slippageBps: 0 });
+    const lang = backtestSpec(spec, bars, { commissionPct: 0, slippageBps: 0 });
+    expect(kurz.numTrades).toBeGreaterThan(0); // die Fixture muss wirklich handeln
+    const schnitt = bars[m - 1]!.date;
+    expect(kurz.trades.map((t) => t.entryDate).filter((d) => d < schnitt))
+      .toEqual(lang.trades.map((t) => t.entryDate).filter((d) => d < schnitt));
+    // Equity Bar für Bar identisch — außer dem letzten Bar des kurzen Laufs
+    // (Schluss-Liquidation). renditen[i] gehört zum Übergang i → i+1.
+    const rKurz = backtestSpec(spec, bars.slice(0, m), { commissionPct: 0, slippageBps: 0, mitRenditen: true }).renditen!;
+    const rLang = backtestSpec(spec, bars, { commissionPct: 0, slippageBps: 0, mitRenditen: true }).renditen!;
+    expect(rKurz.slice(0, m - 2)).toEqual(rLang.slice(0, m - 2));
+  });
+
   it('KAUSALITÄT: forecastPct an Bar i ändert sich nicht, wenn die Zukunft variiert', () => {
     // Adversarial: gleiche Vergangenheit, radikal andere Zukunft — die
     // Trades bis zum Verzweigungstag MÜSSEN identisch sein. Jede Abweichung
