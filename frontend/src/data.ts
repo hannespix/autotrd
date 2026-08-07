@@ -1018,6 +1018,48 @@ export function watchTuneFleet(uid: string, cb: (rows: TuneFleetRow[]) => void):
 }
 
 /**
+ * Prüf-Journal-Zeile der Struktursuche (MO Teil 2) — der Server schreibt
+ * jede Prüfung mit ihren Zahlen ins State-Doc, damit „abgelehnt" eine
+ * nachrechenbare Aussage ist und keine Behauptung.
+ */
+export interface StrukturJournalRow {
+  at: string;
+  art: 'start' | 'kandidat';
+  /** Klartext der Mutation, z. B. „Operator gekippt: rsi lt→gt". */
+  beschreibung: string;
+  befoerdert: boolean;
+  /** Such-Sharpe-Vorsprung des Kandidaten gegen den Amtierenden. */
+  vorsprung: number | null;
+  suchSharpe: number | null;
+  testSharpe: number | null;
+  /** Deflated-Sharpe-Wahrscheinlichkeit (Beförderung verlangt ≥ 0,95). */
+  dsr: number | null;
+  /** E[max SR] aus nVersuche Zufallsversuchen — die wachsende Latte. */
+  latte: number | null;
+  nVersuche: number;
+  nSuch: number;
+  nTest: number;
+  gruende: string[];
+}
+
+/** State der Struktursuche (users/{uid}/tuning/struktur, server-geschrieben). */
+export interface StrukturDoc {
+  amtierendSeit?: string;
+  /** KUMULATIV über die Lebenszeit der Suche — die DSR-Latte wächst mit. */
+  nVersuche?: number;
+  /** Zahl der Beförderungen; Generation 0 ist der kompilierte Startpunkt. */
+  generation?: number;
+  journal?: StrukturJournalRow[];
+  updatedAt?: string;
+}
+
+export function watchStruktur(uid: string, cb: (d: StrukturDoc | null) => void): Unsubscribe {
+  return onSnapshot(doc(db(), 'users', uid, 'tuning', 'struktur'), (snap) =>
+    cb(snap.exists() ? (snap.data() as StrukturDoc) : null),
+  );
+}
+
+/**
  * Kollektives Vorwissen (`meta/tuneGlobal`) — öffentlich lesbar wie die
  * anderen `meta`-Dokumente, weil es ausschließlich Zählwerte enthält:
  * wie oft eine Einstellungs-Änderung geprüft und wie oft sie übernommen
