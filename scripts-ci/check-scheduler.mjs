@@ -53,6 +53,7 @@ const SCHEDULES = [
   { fn: 'snapshotEquity', service: 'snapshotequity', cron: '15 17 * * *', was: 'Equity-Snapshot' },
   { fn: 'autoTune', service: 'autotune', cron: '45 17 * * *', was: 'Auto-Tuner' },
   { fn: 'momentumRun', service: 'momentumrun', cron: '0 18 * * *', was: 'Momentum-Ranking' },
+  { fn: 'strukturSuche', service: 'struktursuche', cron: '10 18 * * *', was: 'Struktursuche' },
 ];
 
 const TZ = 'America/New_York';

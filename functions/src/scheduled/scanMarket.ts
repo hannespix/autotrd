@@ -2826,8 +2826,13 @@ export async function runScan(force = false): Promise<ScanResult> {
          * endgültig, obwohl der Regler graduell gemeint ist. */
         schatten: schattenStand,
         // Die Regime-Lesart (MI) ist eingestellt (05.08. entschieden, 07.08.
-        // vollzogen) — regimeDirs/regimeVoteDirs entfallen; das historische
-        // Aggregat bleibt in meta/signalShadow stehen.
+        // vollzogen) — das historische Aggregat bleibt in meta/signalShadow
+        // stehen. Der Heartbeat wird mit merge geschrieben, deshalb reicht
+        // Weglassen nicht: Die alten Felder müssen aktiv gelöscht werden,
+        // sonst zeigt das Dokument für immer den letzten Stand vor der
+        // Einstellung (Fund 07.08.: Felder standen nach dem Vollzug noch da).
+        regimeDirs: FieldValue.delete(),
+        regimeVoteDirs: FieldValue.delete(),
         signalSchatten: variantenStand,
         // Konten-Zähler (Owner-Fund 02.08.): WER am Handel teilnimmt und wer
         // still übersprungen wird — als Summen, ohne Konto-Bezug. Steht

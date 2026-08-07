@@ -133,11 +133,14 @@ nicht geschätzt.
 - [x] **C2** `supabase/functions/_shared/sentiment.ts` — *(gegenstandslos:
       die Kopie ist seit #94 ein Generat außerhalb des Repos, und
       `sentiment.ts` ist seit 29.07. regulär zurück in `shared/`.)*
-- [ ] **C3** `functions/src/core/{backtest,sweep}.ts` (325 Z.) — Kerne ohne
-      Aufrufer, seit dem Studio-Ausbau. **Bewusst behalten** als
-      Bewertungsmaschine für MO Teil 2; wird MO gestrichen, gehen sie mit.
-- [ ] **C4** Der Regelbaum-Ausführungspfad in `scanMarket` läuft leer, bis MO
-      Teil 2 ihn füttert (dokumentierter Wegpunkt, kein Versehen).
+- [x] **C3** `functions/src/core/{backtest,sweep}.ts` (325 Z.) — *(aufgelöst
+      07.08.: `backtest.ts` hat mit der Struktursuche (#203) wieder einen
+      Aufrufer und ist deren Bewertungsmaschine; `sweep.ts` bleibt vorerst
+      ohne — bewusst behalten für Parameter-Gitter in späteren MO-Stufen.)*
+- [x] **C4** Der Regelbaum-Ausführungspfad in `scanMarket` läuft leer, bis MO
+      Teil 2 ihn füttert (dokumentierter Wegpunkt, kein Versehen). *(07.08.:
+      MO Teil 2 ist geliefert — sobald die erste Beförderung eine
+      Schatten-Strategie `strategies/struktursuche` anlegt, läuft der Pfad.)*
 
 **Ausdrücklich KEIN Relikt:** `reference/` (4 739 Z. Python) wird von drei
 Golden-Tests gelesen (`indicators.golden`, `forecast.golden`, `marketGate`).
@@ -1433,6 +1436,15 @@ reißen würde, wird verworfen).
 **Zwischenzustand, ehrlich benannt:** Nach Teil 1 erzeugt NICHTS mehr
 Regelbaum-Strategien — der Ausführungspfad in `scanMarket` läuft leer, bis
 Teil 2 ihn füttert. Das ist ein bewusster Wegpunkt, kein vergessener Rest.
+
+**Betriebs-Nachweis (07.08.):** Der Scheduler-Job
+`firebase-schedule-strukturSuche-us-central1` wurde beim Deploy von #203
+automatisch angelegt (ENABLED, `10 18 * * *` America/New_York,
+lastAttempt=nie — der Merge um 01:39 UTC lag NACH dem Tagestermin, erster
+Lauf also am Abend des 07.08., 22:10 UTC). `check-scheduler.mjs` kennt den
+Zeitplan jetzt auch (Drift-Guard-Parität); Erfolgskriterium für den ersten
+Lauf: `meta/health.strukturSuche` mit `users/gestartet` > 0 und je Engine-User
+ein `tuning/struktur`-State mit Journal-Eintrag `art: 'start'`.
 
 ## ME — Drei Aufträge an einem Tag (04.08.): Supabase raus, Steuer, Echtgeld
 
