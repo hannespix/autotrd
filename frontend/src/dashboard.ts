@@ -448,6 +448,12 @@ interface GridPanel {
   autoTimer?: number | null;
   /** OHLC-Kurszeile des Fensters (In-Chart-Overlay; Accordion-Zustand global). */
   hudEl?: HTMLElement | null;
+  /** Lazy-Historie des Panels (Klon-Parität 07.08.): ältestes geladenes
+   *  ohlcDaily-Jahr, Lauf-/Ende-Flags, Leerjahr-Strähne. */
+  histJahr?: number | null;
+  histLoading?: boolean;
+  histDone?: boolean;
+  leerJahre?: number;
 }
 
 let st: DashState | null = null;
@@ -4184,6 +4190,57 @@ function matchEcho(target: RangeTarget, range: { from: number; to: number }): Ap
   return hit;
 }
 
+/**
+ * Katalog-Symbolauswahl (Owner 07.08.: „im Grid View bitte dieselbe
+ * Symbol-Auswahl wie beim manuellen Trade") — hängt die vertraute
+ * Suchen-Liste (Name ODER Symbol, Klick/Enter übernimmt) an ein beliebiges
+ * Eingabefeld. `halter` braucht position:relative; die Liste nutzt dieselbe
+ * .mt-list-Optik wie das Trade-Fenster.
+ */
+function wireSymbolAuswahl(
+  inp: HTMLInputElement,
+  halter: HTMLElement,
+  onSelect: (sym: string) => void,
+): void {
+  const list = document.createElement('div');
+  list.className = 'mt-list';
+  list.hidden = true;
+  halter.appendChild(list);
+  const nimm = (sym: string): void => {
+    list.hidden = true;
+    inp.value = sym;
+    onSelect(sym);
+  };
+  const zeige = (filter: string): void => {
+    const f = filter.trim().toLowerCase();
+    const all = paletteSymbols();
+    const hits = (f
+      ? all.filter((s) => s.symbol.toLowerCase().includes(f) || s.name.toLowerCase().includes(f))
+      : all
+    ).slice(0, 12);
+    list.innerHTML = hits
+      .map((s) => `<button type="button" data-sym="${s.symbol}"><b class="mono">${s.symbol}</b> — ${s.name}</button>`)
+      .join('');
+    list.hidden = hits.length === 0;
+    list.querySelectorAll<HTMLButtonElement>('[data-sym]').forEach((b) =>
+      b.addEventListener('click', () => nimm(b.dataset['sym']!)),
+    );
+  };
+  inp.addEventListener('input', () => zeige(inp.value));
+  inp.addEventListener('focus', () => zeige(inp.value));
+  inp.addEventListener('keydown', (ev) => {
+    if ((ev as KeyboardEvent).key === 'Enter') {
+      const erster = list.hidden ? null : list.querySelector<HTMLButtonElement>('[data-sym]');
+      const getippt = inp.value.trim().toUpperCase();
+      if (erster) nimm(erster.dataset['sym']!);
+      else if (getippt) nimm(getippt);
+    }
+    if ((ev as KeyboardEvent).key === 'Escape') list.hidden = true;
+  });
+  // blur mit Nachlauf, damit der Klick auf einen Listeneintrag noch zieht
+  inp.addEventListener('blur', () => window.setTimeout(() => { list.hidden = true; }, 180));
+}
+
 /** Bar-Quelle eines Preis-Chart-Handles (Haupt, Raster-Panel oder Vergleich). */
 function handleQuelle(h: PriceChartHandle): Array<{ time: number } | { date: string }> | null {
   if (!st) return null;
@@ -4193,15 +4250,60 @@ function handleQuelle(h: PriceChartHandle): Array<{ time: number } | { date: str
   return p ? panelSource(p) : null;
 }
 
+/** Typischer Bar-Abstand einer Quelle (letzte zwei Bars; Fallback 1 Tag). */
+function typischerTakt(bars: ReadonlyArray<{ time: number } | { date: string }>): number {
+  const n = bars.length;
+  const d = n >= 2 ? barTimeMs(bars[n - 1]!) - barTimeMs(bars[n - 2]!) : 86_400_000;
+  return d > 0 ? d : 86_400_000;
+}
+
+/** Zeit (ms) an einem FRAKTIONALEN Bar-Index — über die Kanten extrapoliert. */
+function zeitBeiIndex(
+  bars: ReadonlyArray<{ time: number } | { date: string }>,
+  idx: number,
+): number {
+  const n = bars.length;
+  const takt = typischerTakt(bars);
+  if (idx <= 0) return barTimeMs(bars[0]!) + idx * takt;
+  if (idx >= n - 1) return barTimeMs(bars[n - 1]!) + (idx - (n - 1)) * takt;
+  const i = Math.floor(idx);
+  const t0 = barTimeMs(bars[i]!);
+  const t1 = barTimeMs(bars[i + 1]!);
+  return t0 + (idx - i) * (t1 - t0);
+}
+
+/** Fraktionaler Bar-Index zu einer Zeit — über die Kanten extrapoliert. */
+function indexBeiZeit(
+  bars: ReadonlyArray<{ time: number } | { date: string }>,
+  t: number,
+): number {
+  const n = bars.length;
+  const takt = typischerTakt(bars);
+  const first = barTimeMs(bars[0]!);
+  const last = barTimeMs(bars[n - 1]!);
+  if (t <= first) return (t - first) / takt;
+  if (t >= last) return n - 1 + (t - last) / takt;
+  let lo = 0;
+  let hi = n - 1;
+  while (hi - lo > 1) {
+    const m = (lo + hi) >> 1;
+    if (barTimeMs(bars[m]!) <= t) lo = m;
+    else hi = m;
+  }
+  const t0 = barTimeMs(bars[lo]!);
+  const t1 = barTimeMs(bars[hi]!);
+  return t1 > t0 ? lo + (t - t0) / (t1 - t0) : lo;
+}
+
 /**
  * Sichtfenster ZEITBASIERT von einer Bar-Quelle auf eine andere übersetzen
  * (Owner 07.08.: „Zoom, Skala exakt parallel und selbe Position"). Der rohe
  * Logik-Index verrutscht, sobald zwei Charts verschieden lange Historien
- * oder Auflösungen halten — Bar 100 des tief geladenen Haupt-Charts ist ein
- * anderes Datum als Bar 100 eines Panels mit einem Jahr Historie. Übersetzt
- * wird über die Zeitstempel der Fensterkanten; Bruchteile und Leerraum
- * (Whitespace links/rechts) wandern mit, damit auch die POSITION exakt
- * stimmt und nichts an Kerzenkanten „schnappt".
+ * oder Auflösungen halten. Übersetzt wird STUFENLOS (fraktionale Indizes,
+ * über die Datenkanten hinaus extrapoliert): Ein reines Panning bleibt so
+ * auch im Ziel ein reines Panning — die erste Fassung schnappte an
+ * Kerzenkanten und klemmte an der Datenkante des Ziels fest, wodurch aus
+ * einem Pan oben ein Zoom+Pan unten wurde (Owner-Fund 07.08. nachts).
  */
 function uebersetzeFenster(
   quelle: ReadonlyArray<{ time: number } | { date: string }>,
@@ -4209,20 +4311,10 @@ function uebersetzeFenster(
   range: { from: number; to: number },
 ): { from: number; to: number } | null {
   if (quelle.length < 2 || ziel.length < 2 || quelle === ziel) return null;
-  const iL = Math.max(0, Math.min(quelle.length - 1, Math.floor(range.from)));
-  const iR = Math.max(iL, Math.min(quelle.length - 1, Math.ceil(range.to)));
-  const t0 = barTimeMs(quelle[iL]!);
-  const t1 = barTimeMs(quelle[iR]!);
-  let j0 = ziel.findIndex((b) => barTimeMs(b) >= t0);
-  if (j0 < 0) j0 = ziel.length - 1;
-  let j1 = ziel.length - 1;
-  for (let i = ziel.length - 1; i >= 0; i--) {
-    if (barTimeMs(ziel[i]!) <= t1) {
-      j1 = i;
-      break;
-    }
-  }
-  return { from: j0 + (range.from - iL), to: j1 + (range.to - iR) };
+  return {
+    from: indexBeiZeit(ziel, zeitBeiIndex(quelle, range.from)),
+    to: indexBeiZeit(ziel, zeitBeiIndex(quelle, range.to)),
+  };
 }
 
 /** pushRange mit Zeit-Übersetzung zwischen zwei Preis-Charts. */
@@ -4376,7 +4468,9 @@ function loadGridPrefs(): { mode: 1 | 2 | 4; mainLocked: boolean; panels: Array<
       mainLocked: p.mainLocked === true,
       panels: (p.panels ?? []).slice(0, 3).map((x) => ({
         sym: typeof x.sym === 'string' && x.sym ? x.sym : 'AAPL',
-        range: typeof x.range === 'number' ? x.range : 66,
+        // Migration 07.08.: range>0 war ein hartes Daten-Slicing — die
+        // Klon-Panels zeigen die volle Historie, die Stufe ist nur noch Sicht.
+        range: 0,
         locked: x.locked === true,
         intradayDays: x.intradayDays === 1 || x.intradayDays === 5 ? x.intradayDays : 0,
         // Migration 07.08.: Auto ist in den Klon-Panels immer an — ein
@@ -4549,10 +4643,26 @@ async function panelZoomAufTage(p: GridPanel, tage: number | null): Promise<void
     await loadPanelIntraday(p);
   } else {
     p.intradayDays = 0;
-    // Panels halten ~1 Jahr Historie (Quote-Doc): 1M = 22 Bars, sonst alles.
-    p.range = tage !== null && tage <= 40 ? 22 : 0;
-    p.fitPending = true;
-    renderGridPanelBars(p);
+    // KEIN Daten-Slicing mehr (07.08.): range>0 kappte die Quelle hart —
+    // links davon konnte man weder pannen noch nachladen („der untere Grid
+    // lädt die Daten nicht richtig vor"). Die Stufe ist jetzt ein reines
+    // SICHTfenster über der vollen Historie, wie am Haupt-Chart.
+    p.range = 0;
+    if (tage === null) {
+      p.fitPending = true;
+      renderGridPanelBars(p);
+      void panelOlderDaily(p); // Max: ganze Historie — Kette wärmt weiter an
+    } else {
+      p.fitPending = false;
+      renderGridPanelBars(p);
+      const src = panelSource(p);
+      if (p.chart && src.length > 1) {
+        const abMs = barTimeMs(src[src.length - 1]!) - tage * 86_400_000;
+        let i0 = src.findIndex((b) => barTimeMs(b) >= abMs);
+        if (i0 < 0) i0 = 0;
+        p.chart.setVisibleRange({ from: i0 - 0.5, to: src.length + 2 });
+      }
+    }
   }
   saveGridPrefs();
 }
@@ -4569,6 +4679,59 @@ function alleChartsZoomAufTage(tage: number | null): void {
   if (!st) return;
   for (const p of st.gridPanels) void panelZoomAufTage(p, tage);
   if (st.chart2P.chart) void panelZoomAufTage(st.chart2P, tage);
+}
+
+/**
+ * Ältere Tages-Jahres-Chunks eines Raster-Panels vorn anfügen (Klon-Parität
+ * 07.08.: „der untere Grid lädt die Daten nicht richtig vor"). Dieselbe
+ * Ketten-Mechanik wie loadOlderDaily am Haupt-Chart, nur panel-scoped —
+ * greift beim eigenen Links-Scroll UND wenn der Lock-Sync das Fenster in
+ * die Vergangenheit schiebt.
+ */
+async function panelOlderDaily(p: GridPanel): Promise<void> {
+  if (p.histLoading || p.histDone || p.intradayDays > 0 || p.bars.length === 0) return;
+  p.histLoading = true;
+  const sym = p.sym;
+  try {
+    for (let schritt = 0; schritt < 8; schritt++) {
+      if (p.sym !== sym || p.intradayDays > 0) return;
+      const aeltester = p.bars[0]!.date;
+      const jahr = (p.histJahr ?? Number(aeltester.slice(0, 4))) - 1;
+      if (jahr < 1900) {
+        p.histDone = true;
+        return;
+      }
+      const chunk = await loadDailyChunk(sym, jahr);
+      if (p.sym !== sym || p.intradayDays > 0) return;
+      p.histJahr = jahr;
+      if (chunk.length === 0) {
+        // Leerjahr ist erst nach ZWEI Fehlversuchen der Datenanfang — einzelne
+        // Jahre können schlicht noch nicht backgefüllt sein (wie Haupt-Chart).
+        p.leerJahre = (p.leerJahre ?? 0) + 1;
+        if (p.leerJahre >= 2) {
+          p.histDone = true;
+          return;
+        }
+        continue;
+      }
+      p.leerJahre = 0;
+      const r = p.chart?.getVisibleRange();
+      const vorher = panelSource(p).length;
+      p.bars = [...chunk.filter((b) => b.date < aeltester), ...p.bars];
+      renderGridPanelBars(p);
+      // Position halten: das Delta in GEZEIGTEN Bars verschiebt das Fenster
+      const delta = panelSource(p).length - vorher;
+      if (r && p.chart && delta > 0) {
+        p.chart.setVisibleRange({ from: r.from + delta, to: r.to + delta });
+      }
+      const jetzt = p.chart?.getVisibleRange();
+      if (jetzt && jetzt.from >= 90) return; // Puffer steht
+    }
+  } catch {
+    /* nächster Scroll-Versuch */
+  } finally {
+    p.histLoading = false;
+  }
 }
 
 /** Intraday-Bars eines Panels laden (epoch-geschützt; Refresh via watchBars). */
@@ -4588,6 +4751,11 @@ async function mountGridPanel(p: GridPanel, host: HTMLElement): Promise<void> {
   p.chart?.destroy();
   p.chart = null;
   p.fitPending = true;
+  // Lazy-Historie gehört zum Symbol — beim (Neu-)Mounten frisch anfangen
+  p.histJahr = null;
+  p.histDone = false;
+  p.histLoading = false;
+  p.leerJahre = 0;
   p.subs.push(
     watchBars(p.sym, (bars) => {
       p.bars = bars;
@@ -4625,6 +4793,9 @@ async function mountGridPanel(p: GridPanel, host: HTMLElement): Promise<void> {
     // Auto-Zeitrahmen: JEDE Sichtänderung zählt (auch Lock-Sync — ein
     // gelocktes Panel folgt dann dem Zoom des treibenden Charts).
     schedulePanelAuto(p);
+    // Lazy-Historie (Klon-Parität 07.08.): VOR dem Echo-Return, damit auch
+    // ein per Lock-Sync in die Vergangenheit geschobenes Fenster nachlädt.
+    if (p.intradayDays === 0 && range.from < 90) void panelOlderDaily(p);
     // Echo eines Lock-Pushes? Nicht zurücksenden — sonst stirbt das
     // Trägheits-Gleiten des treibenden Charts (Smartphone-Kinetik 26.07.).
     // Gesten-Gate: Daten-Refits des Panels ziehen die Lock-Gruppe nicht.
@@ -4712,7 +4883,8 @@ function renderChartGrid(): void {
       'AAPL';
     // auto: true — Panels sind Klone des Haupt-Charts, und dort ist Auto
     // seit 07.08. immer an (die Zoomstufe wählt die Auflösung von selbst).
-    st.gridPanels.push({ sym, range: 66, locked: false, chart: null, bars: [], subs: [], epoch: 0, fitPending: true, forecast: null, forecastIntraday: null, news: null, intradayDays: 0, intradayBars: [], auto: true });
+    // range: 0 — volle Historie, die Zoom-Stufe ist nur noch ein Sichtfenster.
+    st.gridPanels.push({ sym, range: 0, locked: false, chart: null, bars: [], subs: [], epoch: 0, fitPending: true, forecast: null, forecastIntraday: null, news: null, intradayDays: 0, intradayBars: [], auto: true });
   }
   $('chartRow').dataset['mode'] = String(st.gridMode);
   ($('lockMain') as HTMLButtonElement).hidden = st.gridMode === 1;
@@ -4746,9 +4918,9 @@ function renderChartGrid(): void {
       </div>
       <div class="gp-chart" data-gp="${i}"></div>`;
     const symInp = el.querySelector('.gp-sym') as HTMLInputElement;
-    symInp.addEventListener('keydown', (ev) => {
-      if ((ev as KeyboardEvent).key !== 'Enter') return;
-      const sym = symInp.value.trim().toUpperCase();
+    // Katalog-Auswahl wie beim manuellen Trade (Owner 07.08.): Suchen nach
+    // Name ODER Symbol, Klick/Enter übernimmt — statt blindem Freitext.
+    wireSymbolAuswahl(symInp, el.querySelector('.gp-hd') as HTMLElement, (sym) => {
       if (!sym || sym === p.sym) return;
       p.sym = sym;
       symInp.value = sym;
@@ -7253,13 +7425,10 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   $('jumpMid').addEventListener('click', () => st?.chart?.scrollTo('middle'));
   $('jumpEnd').addEventListener('click', () => st?.chart?.scrollTo('end'));
   $('jumpNow').addEventListener('click', () => st?.chart?.scrollTo('end'));
-  // Symbolfeld im Raster-Kopf des Haupt-Fensters (wie in den Panels)
-  $('mainHdSym').addEventListener('keydown', (ev) => {
-    if ((ev as KeyboardEvent).key !== 'Enter') return;
-    const el = $('mainHdSym') as HTMLInputElement;
-    const sym = el.value.trim().toUpperCase();
+  // Symbolfeld im Raster-Kopf des Haupt-Fensters — mit Katalog-Auswahl wie
+  // beim manuellen Trade (Owner 07.08.), identisch zu den Panel-Köpfen.
+  wireSymbolAuswahl($('mainHdSym') as HTMLInputElement, $('mainHd'), (sym) => {
     if (!sym || !st || sym === st.currentSymbol) return;
-    el.value = sym;
     selectSymbol(sym);
   });
   $('mhMax').addEventListener('click', () => {
