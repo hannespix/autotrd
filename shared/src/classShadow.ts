@@ -321,6 +321,32 @@ export function pruefeTagSlot(roh: unknown, jetztMs: number): TagSlotBefund {
   return signal ? { status: 'reif', signal } : { status: 'verfallen' };
 }
 
+export type TagSlotAktion = 'neu' | 'loeschen' | 'lassen';
+
+/**
+ * Was der Scan mit dem Tages-Slot TUN muss, nachdem `pruefeTagSlot`
+ * gesprochen hat.
+ *
+ * Der Fall, für den diese Funktion existiert (Defekt-Fund 07.08., bevor der
+ * erste Slot reifte): Ein REIFER Slot wurde nur überschrieben, wenn das
+ * heutige Signal buy/sell war. Bei `hold` blieb er stehen — und wurde beim
+ * nächsten Scan ERNEUT bewertet, alle fünf Minuten, bis irgendwann ein
+ * buy/sell kam. Bis zu 12 Doppelzählungen je Stunde, systematisch in ruhigen
+ * Phasen — die Tages-Kante wäre eine Funktion der Marktstille geworden statt
+ * der Signalgüte. Deshalb: Ein reifer Slot wird IMMER verbraucht — neu
+ * belegt, wenn es ein frisches Signal gibt, sonst gelöscht. Verfallene
+ * Slots werden aus demselben Grund aufgeräumt statt liegen gelassen.
+ */
+export function tagSlotAktion(
+  status: TagSlotBefund['status'],
+  direction: 'buy' | 'sell' | 'hold',
+): TagSlotAktion {
+  const frisch = direction === 'buy' || direction === 'sell';
+  if (status === 'wartet') return 'lassen'; // reift noch — niemals anfassen
+  if (frisch) return 'neu';
+  return status === 'reif' || status === 'verfallen' ? 'loeschen' : 'lassen';
+}
+
 /* ── Signaltyp: Trend oder Umkehr (Owner-Go 06.08.) ─────────────────────────
  *
  * Die Exit-Stil-Hypothese: Ein TREND-Signal (MACD stimmt zu) sollte laufen

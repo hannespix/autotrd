@@ -1893,6 +1893,20 @@ Sekunden-Preis-Alerts, `trade_updates`.
       scharf geschaltet (Trailing fuer Trend-Einstiege, festes Ziel fuer
       Umkehr-Einstiege). Vorher ist auch diese Idee nur eine Vermutung.
 
+      ✅ DEFEKT VOR REIFE GEFUNDEN (07.08., 04:20): `live_tag` stand nach
+      ~27 h noch auf null Eintraegen — der Blick in den Code fand einen
+      Doppelzaehl-Defekt, BEVOR er Daten vergiften konnte: Ein REIFER Slot
+      wurde nur ueberschrieben, wenn das heutige Signal buy/sell war; bei
+      `hold` blieb er liegen und waere bei JEDEM 5-Minuten-Scan erneut
+      bewertet worden (bis zu 12 Doppelzaehlungen je Stunde, systematisch
+      in ruhigen Phasen — die Tages-Kante waere eine Funktion der
+      Marktstille geworden). Fix: `tagSlotAktion` (pur, getestet) — ein
+      reifer Slot wird IMMER verbraucht: neu belegt bei frischem buy/sell,
+      sonst geloescht; verfallene Slots werden mit aufgeraeumt. Dass noch
+      nichts gemessen war, ist ehrlich einzuordnen: Die ersten Slots
+      koennen fruehestens seit dem Abend des 06.08. reifen, und die
+      US-Titel liefern erst ab der Oeffnung am 07.08. Bewertungen.
+
 - [x] **Vorfall 05.08., 15:30: Depot und Buch auseinandergelaufen —
       Depot-Uebernahme gebaut.** Zur US-Oeffnung kaufte die Engine ueber das
       Order-Routing real bei Alpaca (16 Fills, ~119.500 $, sequenzielle

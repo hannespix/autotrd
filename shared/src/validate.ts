@@ -207,6 +207,9 @@ export function validateStrategy(value: unknown): string[] {
     if (signals.newsVeto !== undefined && typeof signals.newsVeto !== 'boolean') {
       problems.push('signals.newsVeto muss boolean sein');
     }
+    if (signals.captureGate !== undefined && typeof signals.captureGate !== 'boolean') {
+      problems.push('signals.captureGate muss boolean sein');
+    }
   }
 
   return problems;
