@@ -1120,6 +1120,15 @@ und KI-Erklärung, gekoppelt an ein automatisches Journal.
 - [ ] Portfolio-Tab: Equity-Kurve + synchronisiertes Drawdown-Panel,
       Wallet-Vergleich normalisiert auf 100; Reports Stufe 0 (Template) +
       Stufe 1 (Haiku-Batch, nur aktive User) via Push/E-Mail, opt-in
+      *(07.08. Teil: Große Equity-Kurve + Drawdown-Panel in der
+      Performance-Karte, aufklappbar unter der Sparkline — beide Panels
+      teilen sich die X-Skala (ein Punkt je Snapshot-Tag), damit Tal und
+      Drawdown-Ausschlag exakt untereinander stehen; Meta-Zeile mit
+      Start/Ende/Hoch/Tief. Der WALLET-VERGLEICH entfällt vorerst ehrlich:
+      snapshotEquity schreibt genau EINE Serie je User (walletId 'main') —
+      es gibt keine zweite Tages-Serie zum Normalisieren, solange Momentum-
+      Sockel und Schatten-Strategien keine eigene Equity-Historie führen.
+      Reports Stufe 0/1 weiter offen.)*
       **(26.07. Teil 2: Kennzahlen-Block in der Performance-Karte)**:
       Equity-Sparkline (Inline-SVG, keine zweite Chart-Instanz) + Sharpe
       30/90, Max-Drawdown, Hochwasser-Marke, Profit-Faktor und Erwartung je

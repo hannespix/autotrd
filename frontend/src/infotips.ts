@@ -239,6 +239,10 @@ export const INFO: Record<string, { t: string; d: string }> = {
     t: 'Max Drawdown',
     d: 'Der tiefste Einbruch vom zwischenzeitlichen Höchststand, in Prozent — „wie weh tat es maximal?". Wichtigste Kennzahl fürs Durchhalten: −30 % braucht +43 % nur zum Ausgleich, −40 % schon +67 %. Kleiner ist besser, auch wenn die Rendite dafür etwas niedriger ausfällt.',
   },
+  drawdown: {
+    t: 'Drawdown-Verlauf',
+    d: 'Für jeden Tag: der Abstand zum bis dahin höchsten Kontostand, in Prozent. 0 bedeutet neues Hoch, jeder Ausschlag nach unten ist ein laufender Einbruch. Das Panel teilt sich die Zeitachse mit der Equity-Kurve darüber — ein Tal in der Kurve und sein Drawdown stehen exakt untereinander. So sieht man auf einen Blick, ob Verluste kurze Dellen waren oder lange Durststrecken, und wie lange die Erholung zurück ans Hochwasser dauerte. Die Kennzahl „Max DD" in der Tabelle rechnet der Server aus derselben Serie.',
+  },
   // ── Trade-Ticket ──
   fees: {
     t: 'Gebühren (Kommission + Slippage)',
