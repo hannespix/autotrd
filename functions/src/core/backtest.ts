@@ -35,6 +35,8 @@ export interface BacktestOptions {
   commissionPct?: number;
   /** Basispunkte Slippage je Seite. */
   slippageBps?: number;
+  /** Volle Tagesrendite-Serie im Ergebnis mitliefern (Struktursuche, MO). */
+  mitRenditen?: boolean;
 }
 
 export interface BacktestTrade {
@@ -58,6 +60,13 @@ export interface BacktestResult {
   equityCurve: Array<{ date: string; value: number }>;
   trades: BacktestTrade[];
   evaluatedBars: number;
+  /**
+   * Nur mit `opts.mitRenditen` (Struktursuche): UNGEDÜNNTE Tagesrendite je
+   * Bar-Übergang — `renditen[i]` gehört zum Übergang bars[i] → bars[i+1]
+   * (Länge = bars.length − 1, Warmup-Übergänge sind exakt 0). Bewusst NICHT
+   * Teil der Firestore-Ergebnisse — die Kurve dort bleibt gedünnt.
+   */
+  renditen?: number[];
 }
 
 const WARMUP = 26; // MACD-Slow — davor sind die Serien ohnehin null
@@ -169,11 +178,14 @@ export function backtestSpec(
     maxDd = Math.min(maxDd, ((v - peak) / peak) * 100);
   }
 
-  const rets: number[] = [];
+  // Bar-aligniert (Index i = Übergang i → i+1); entartete Vorwerte zählen als
+  // 0, damit die Zuordnung Rendite ↔ Bar-Datum nie verrutscht.
+  const alleRenditen: number[] = [];
   for (let i = 1; i < equity.length; i++) {
     const prev = equity[i - 1]!;
-    if (prev > 0) rets.push(equity[i]! / prev - 1);
+    alleRenditen.push(prev > 0 ? equity[i]! / prev - 1 : 0);
   }
+  const rets = alleRenditen.filter((_, i) => equity[i]! > 0);
   let sharpe = 0;
   if (rets.length > 1) {
     const mean = rets.reduce((s, r) => s + r, 0) / rets.length;
@@ -206,5 +218,6 @@ export function backtestSpec(
     equityCurve,
     trades,
     evaluatedBars: evaluated,
+    ...(opts.mitRenditen ? { renditen: alleRenditen } : {}),
   };
 }

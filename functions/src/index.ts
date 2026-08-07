@@ -18,6 +18,7 @@ export { scanMarket, scanNow } from './scheduled/scanMarket.js';
 export { evalForecasts, evalNow } from './scheduled/evalForecasts.js';
 export { snapshotEquity, snapshotNow } from './scheduled/snapshotEquity.js';
 export { autoTune, tuneNow } from './scheduled/autoTune.js';
+export { strukturSuche, strukturNow } from './scheduled/strukturSuche.js';
 export { momentumRun, momentumNow } from './scheduled/momentumRun.js';
 export { riskPulse, pulseNow } from './scheduled/riskPulse.js';
 export { ensureProfile } from './callable/profile.js';
