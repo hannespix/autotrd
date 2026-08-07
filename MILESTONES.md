@@ -675,7 +675,17 @@ Charts parallel.
       Hinweiszeilen entfallen (Tooltips übernehmen)
 - [ ] 1-Minuten-Daten (Yahoo: nur ~7 Tage, ~5× Volumen — bewusst entscheiden)
       · echte Sekunden-Ticks kommen mit dem M13-Streamer
-- [ ] ATR, 52-Wochen-Marken, Pivots (weitere Trading-Hilfen)
+- [x] ATR, 52-Wochen-Marken, Pivots (weitere Trading-Hilfen)
+      *(07.08.: Overlay-Toggle „Marken" im Indikatoren-Dropdown — 52W-Hoch/
+      Tief (252 Daily-Bars, inkl. laufendem Tag: ein neues Jahreshoch ist
+      sofort eines) + klassische Pivots P/R1/S1 aus dem VOLLENDETEN Vortag
+      (der letzte Daily-Bar ist der laufende Tag und bleibt draußen) als
+      Preislinien in Haupt- UND Panel-Charts; die Pivot-Linie trägt ATR(14)
+      nach Wilder in Prozent. Alles rechnet auf Tagesbasis — auch in der
+      Intraday-Sicht, wo Pivots ihren eigentlichen Zweck haben. R1/S1
+      bewusst ohne Linien-Text (Owner-Regel: sparsam); ein deklarativer
+      setPriceLines-Kanal trägt Marken + Positions-Linien gemeinsam;
+      Clean-View räumt ab.)*
 
 ## TV-Parität (User-Wunsch 25.07. abends: „so viel wie möglich von TradingView")
 
