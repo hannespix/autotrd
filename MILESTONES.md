@@ -836,7 +836,7 @@ die Watchlist ist nur noch der Scope der Trading-Engine.
 automatisch backgetestet, kann als Shadow live beobachtet, gesweept und im
 fairen A/B gegen die aktive Strategie befördert werden.
 
-- [ ] Port `backtest_engine.py` → `functions/src/core/backtest.ts`;
+- [x] Port `backtest_engine.py` → `functions/src/core/backtest.ts`;
       **Backtest-on-Save** nach `runs/{runId}`: Sharpe, MaxDD, Winrate,
       Trades, Equity-Kurve (≤ 200 Punkte), Bedingungs-Statistik
       („MACD-Cross feuerte 41×, 12× entscheidend")
@@ -844,7 +844,19 @@ fairen A/B gegen die aktive Strategie befördert werden.
       (ISO-Minute, idempotent, Quota 10/Tag, Rules read-only + Tests),
       Studio-Karte mit Kennzahlen-Grid + Equity-Sparkline via onSnapshot;
       E2E 16/16 inkl. Report. Bewusste Abweichung: Backtest per Button
-      statt on-Save (Kosten-Kontrolle); Bedingungs-Statistik folgt.)*
+      statt on-Save (Kosten-Kontrolle).)*
+      *(07.08. — Bedingungs-Statistik nachgeliefert, aber am HEUTIGEN Ort:
+      Das Studio samt runBacktest-Callable wurde am 28.07. bewusst
+      abgeschafft (Regelbäume liefen am Selbstoptimierer vorbei); der
+      Regelbaum lebt als Suchraum der Struktursuche weiter. Die Statistik
+      sitzt deshalb dort: `backtestSpec` zählt je Blatt „gefeuert" und
+      „am Signal-Tag" (`mitBedingungen`, Klartext-Labels aus
+      `shared/rules/describe.ts`), der Tageslauf summiert sie über die
+      Watchlist für den AMTIERENDEN Baum ins State-Doc, die
+      Struktursuche-Karte zeigt sie („Amtierender Baum — was feuert?").
+      Bewusst zwei Zählungen statt Kontrafaktik: „feuerte 41×, 12× am
+      Signal-Tag" trennt Dauerbrenner von seltenen Auslösern; ein „wäre
+      ohne dieses Blatt nichts passiert?" wäre bei any/weighted mehrdeutig.)*
 - [x] Lookahead-Disziplin: Evaluator/Backtest sehen je Bar nur Daten ≤ dieses
       Bars; Regressionstests inkl. Wochenend-/DST-Fällen — gleiche Härte wie
       das `forecast_eval`-Gate

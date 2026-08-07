@@ -89,6 +89,32 @@ describe('backtestSpec', () => {
     expect(r.numTrades).toBeGreaterThan(0);
   });
 
+  it('Bedingungs-Statistik: trennt seltenen Auslöser vom Dauerbrenner', () => {
+    // flatThenJump hat 50 Bars, ausgewertet ab WARMUP=26 ⇒ 24 Bars.
+    // changePct≥20 feuert GENAU am Sprung-Tag; Kurs>1 feuert IMMER — und
+    // weil er im any steht, ist jeder ausgewertete Bar ein Signal-Tag.
+    const spec: StrategySpec = {
+      buy: {
+        type: 'any',
+        children: [
+          { type: 'changePct', lookbackBars: 1, op: 'gte', pct: 20 },
+          { type: 'priceLevel', level: 1, side: 'above' },
+        ],
+      },
+      sell: { type: 'priceLevel', level: -1, side: 'below' }, // nie
+    };
+    const r = backtestSpec(spec, flatThenJump(), {
+      commissionPct: 0, slippageBps: 0, mitBedingungen: true,
+    });
+    expect(r.evaluatedBars).toBe(24);
+    const zeile = (label: string) => r.bedingungen!.find((z) => z.label === label)!;
+    expect(zeile('Δ1 Bar ≥ 20 %')).toMatchObject({ seite: 'buy', gefeuert: 1, amSignalTag: 1 });
+    expect(zeile('Kurs > 1')).toMatchObject({ seite: 'buy', gefeuert: 24, amSignalTag: 24 });
+    expect(zeile('Kurs < -1')).toMatchObject({ seite: 'sell', gefeuert: 0, amSignalTag: 0 });
+    // Ohne die Option bleibt das Ergebnis unverändert schlank.
+    expect(backtestSpec(spec, flatThenJump()).bedingungen).toBeUndefined();
+  });
+
   it('PRÄFIX-KONSISTENZ: gleiche Entscheidungen, egal wie lang die Serie ist', () => {
     /* Der stärkste Lookahead-Beweis über ALLE Indikator-Pfade: Die
      * RSI/MACD/Bollinger-Serien werden einmal über die VOLLE Serie gerechnet
