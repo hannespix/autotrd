@@ -30,8 +30,6 @@ import {
   leseSchattenSignal,
   pruefeTagSlot,
   tagSlotAktion,
-  regimeRichtung,
-  regimeStimmen,
   werteSchattenAus,
   type SchattenBeitrag,
   type SchattenKlasse,
@@ -2072,14 +2070,15 @@ export async function runScan(force = false): Promise<ScanResult> {
   /** Schatten-Kante je Anlageklasse (MG4) — läuft auch für abgeschaltete Klassen. */
   const schattenKlassen: Record<string, SchattenKlasse> = {};
   /**
-   * Schatten-Kante je SIGNAL-LESART (MI): die gehandelte Logik gegen die
-   * regime-gerechte Variante. Dieselbe Messung, zwei Signalquellen — damit
-   * ein Umschalten der Signal-Logik eine Zahl hinter sich hat und nicht nur
-   * eine Vermutung (siehe shared/src/regimeSignal.ts).
+   * Schatten-Kante je SIGNAL-LESART (MI): die gehandelte Logik in mehreren
+   * Bewertungs-Varianten (Kostenschwelle, Tages-Horizont, Exit-Stil).
+   * Dieselbe Messung, mehrere Lesarten — damit ein Umschalten der
+   * Signal-Logik eine Zahl hinter sich hat und nicht nur eine Vermutung.
+   * (Die regime-gerechte Variante lief hier bis 07.08. mit und wurde nach
+   * n=5187 als Verlierer eingestellt — siehe Kommentar in der Symbol-Schleife.)
    */
   const schattenVarianten: {
     live?: SchattenKlasse;
-    regime?: SchattenKlasse;
     /** Nur die Live-Signale, die die scharfe Kostenschwelle passiert hätten. */
     live_kosten?: SchattenKlasse;
     /** Dieselben Live-Signale, am NÄCHSTEN Tag bewertet (Task 94, 05.08.). */
@@ -2107,9 +2106,6 @@ export async function runScan(force = false): Promise<ScanResult> {
     const je = (schattenVariantenKlassen[variante] ??= {});
     je[klasse] = addiereSchatten(je[klasse], beitrag);
   };
-  /** Richtungsverteilung der Regime-Variante — direkt gegen `signalDirs` lesbar. */
-  const regimeDirs = { buy: 0, sell: 0, hold: 0 };
-  const regimeVoteDirs: Record<string, { buy: number; sell: number; hold: number }> = {};
   /** Richtungsverteilung je Indikator — s. Kommentar an der Zählstelle. */
   const voteDirs: Record<string, { buy: number; sell: number; hold: number }> = {};
   /** „hold", dem genau EINE Stimme zur Konfluenz fehlte. */
@@ -2265,18 +2261,12 @@ export async function runScan(force = false): Promise<ScanResult> {
         forecast,
       );
 
-      // Schatten-Variante (MI): dieselben Indikatorwerte, regime-gerecht
-      // gelesen. Kostet nichts — der Snapshot ist bereits berechnet.
-      const rStimmen = regimeStimmen(sig.snapshot, regime.state, DEFAULT_STRATEGY.indicators);
-      const regimeDir = regimeRichtung(rStimmen, DEFAULT_STRATEGY.signals.minConfluence);
-      regimeDirs[regimeDir] += 1;
-      for (const [name, richtung] of Object.entries(rStimmen.votes)) {
-        const eintrag = regimeVoteDirs[name] ?? { buy: 0, sell: 0, hold: 0 };
-        if (richtung === 'buy' || richtung === 'sell' || richtung === 'hold') {
-          eintrag[richtung] += 1;
-        }
-        regimeVoteDirs[name] = eintrag;
-      }
+      /* Die Regime-LESART (MI) ist EINGESTELLT (vorregistrierte Regel,
+       * entschieden 05.08., vollzogen 07.08.): Endstand n=5187 mit Kante
+       * −0,29 %/Signal und ROH −0,004 % gegen live −0,247 %/+0,021 % — die
+       * Variante schlägt die gehandelte Logik nicht, der Stillstand war die
+       * richtige Antwort. Die Regime-AMPEL (Einstiegs-Sperren) bleibt davon
+       * unberührt; das historische Aggregat in meta/signalShadow bleibt stehen. */
 
       /* Tages-Horizont-Slot (Task 94): Das Signal reift 24 h, statt beim
        * nächsten Scan ersetzt zu werden. `wartet` → Slot nicht anfassen;
@@ -2345,15 +2335,8 @@ export async function runScan(force = false): Promise<ScanResult> {
              * wissen, ist genauso viel wert. */
             kostenOk: schattenKostenOk(symbol, atrPctVal),
           },
-          // Zweite Lesart derselben Indikatoren (MI): regime-gerecht statt
-          // fest auf Umkehr. Wird NICHT gehandelt — nur mitgeschrieben und
-          // beim nächsten Scan bewertet, damit die Kante beider Lesarten
-          // nebeneinander steht, bevor jemand umschaltet.
-          lastSignalRegime: {
-            direction: regimeDir,
-            price: sig.price,
-            at: now.toISOString(),
-          },
+          // Die Regime-Lesart (lastSignalRegime) ist eingestellt — alte
+          // Felder verfallen über SCHATTEN_MAX_ALTER_MS von selbst.
           quote: {
             price: snap.price,
             changePct: snap.changePct,
@@ -2542,16 +2525,6 @@ export async function runScan(force = false): Promise<ScanResult> {
           schattenVarianten.live_tag_umkehr
             = addiereSchatten(schattenVarianten.live_tag_umkehr, beitragTag);
         }
-      }
-      // Dieselbe Bewertung für die regime-gerechte Lesart (MI). Beide
-      // Varianten sehen denselben Kurs zur selben Zeit — nur so ist der
-      // Vergleich fair. Getrennt geführt, weil eine gemeinsame Summe die
-      // Frage, um die es geht, gerade wegmitteln würde.
-      const vorherRegime = leseSchattenSignal(symDoc.get('lastSignalRegime'), now.getTime());
-      if (vorherRegime) {
-        const beitragRegime = bewerteSchattenSignal(vorherRegime, sig.price, kosten);
-        schattenVarianten.regime = addiereSchatten(schattenVarianten.regime, beitragRegime);
-        zuVariante('regime', classify(symbol), beitragRegime);
       }
       signalDirs[sig.direction] += 1;
       // Stimmen je INDIKATOR (04.08.). Warum das nötig wurde: `signalDirs`
@@ -2852,22 +2825,9 @@ export async function runScan(force = false): Promise<ScanResult> {
          * Stand des Abschaltens ein — und die Entscheidung wird faktisch
          * endgültig, obwohl der Regler graduell gemeint ist. */
         schatten: schattenStand,
-        /* Zweite Signal-Lesart im Schatten (MI, 04.08.).
-         *
-         * Anlass: `knappVerfehlt` stand bei 13 von 13 — jedes Signal
-         * verfehlte die Konfluenz um genau EINE Stimme, und zwar immer
-         * dieselbe. RSI und Bollinger sind auf Umkehr parametriert und
-         * schweigen im Trend strukturell; MACD ist der einzige Trendfolger.
-         * `minConfluence: 2` ist damit im Trend nicht selten unerreichbar,
-         * sondern unerreichbar.
-         *
-         * `regimeDirs` zeigt, was eine regime-gerechte Lesart daraus machen
-         * würde, `signalSchatten` was sie verdient hätte — beide gegen
-         * dieselben Kurse. Erst wenn die Kante der Variante die der
-         * gehandelten Logik schlägt, wird umgeschaltet. Vorher nicht: Mehr
-         * Trades bei negativer Kante sind mehr Verlust, kein Fortschritt. */
-        regimeDirs,
-        regimeVoteDirs,
+        // Die Regime-Lesart (MI) ist eingestellt (05.08. entschieden, 07.08.
+        // vollzogen) — regimeDirs/regimeVoteDirs entfallen; das historische
+        // Aggregat bleibt in meta/signalShadow stehen.
         signalSchatten: variantenStand,
         // Konten-Zähler (Owner-Fund 02.08.): WER am Handel teilnimmt und wer
         // still übersprungen wird — als Summen, ohne Konto-Bezug. Steht

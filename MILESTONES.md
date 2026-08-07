@@ -1718,13 +1718,28 @@ sondern unerreichbar.
       bei n = 0, weil sie nur `hold` liefert. Gegen null lässt sich nichts
       vergleichen.
 
-- [ ] **MI2 Umschalten — erst mit Zahlen**: Sobald beide Lesarten je 200
-      Signale haben, entscheidet der Vergleich. Schlägt die Variante die
-      gehandelte Logik, wird sie zur Live-Logik (dann auch `compileClassic`
-      nachziehen, sonst bricht die Regelbaum-Parität). Schlägt sie nicht,
-      bleibt alles wie es ist — und der Stillstand ist dann kein Defekt,
-      sondern die richtige Antwort auf eine Kante, die die Kosten nicht
-      trägt (+0,143 % gegen 0,300 % Roundtrip, Deckung 0,48).
+- [x] **MI2 Umschalten — erst mit Zahlen** *(ENTSCHIEDEN 05.08., VOLLZOGEN
+      07.08.)*: Sobald beide Lesarten je 200 Signale haben, entscheidet der
+      Vergleich. Schlägt die Variante die gehandelte Logik, wird sie zur
+      Live-Logik (dann auch `compileClassic` nachziehen, sonst bricht die
+      Regelbaum-Parität). Schlägt sie nicht, bleibt alles wie es ist — und
+      der Stillstand ist dann kein Defekt, sondern die richtige Antwort.
+      **Endstand (07.08., meta/signalShadow):** Variante n=5187, Kante
+      **−0,29 %** je Signal, roh **−0,0043 %** — gegen live n=341, Kante
+      −0,247 %, roh **+0,021 %**. Die Variante produziert 15-mal mehr
+      Signale, aber ihre rohe Bewegung ist NEGATIV: sie löst die
+      strukturelle Blockade und ersetzt sie durch Rauschen mit falschem
+      Vorzeichen. Die gehandelte Logik hat wenigstens rohe Information
+      (+0,021 %), nur trägt die die Kosten nicht — deshalb läuft für sie
+      die Horizont-Frage (live_tag) weiter. **Vollzug:** Die Regime-LESART
+      ist aus dem Scan entfernt (kein `lastSignalRegime`-Write, keine
+      Bewertung, keine `regimeDirs`/`regimeVoteDirs` im Heartbeat mehr;
+      alte Felder verfallen über `SCHATTEN_MAX_ALTER_MS` von selbst). Die
+      Regime-AMPEL (Einstiegs-Sperren, Stufe 1+2) ist davon unberührt und
+      bleibt; das historische Aggregat in `meta/signalShadow` bleibt als
+      Beleg stehen. `shared/src/regimeSignal.ts` bleibt mit seinen Tests
+      als Referenz erhalten, wird aber von keinem Produktionspfad mehr
+      gerufen.
 
 ## Arbeitsreihenfolge (Stand 04.08.)
 
