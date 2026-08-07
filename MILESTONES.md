@@ -1402,20 +1402,27 @@ optimierte sich das System.
 - [x] `shared/src/rules/` unverändert erhalten; Kopfkommentare beschreiben
       die neue Rolle (Suchraum statt Zeichenfläche).
 
-**Teil 2 — Struktursuche (OFFEN):**
-- [ ] `TUNE_AXES` (5 Skalare) um Struktur-Mutationen erweitern: Knoten
-      tauschen, Zweig streichen, Bedingung hinzufügen — Startpunkt sind der
-      kompilierte Klassik-Baum plus die 5 Presets (Diversität gegen lokale
-      Optima).
-- [ ] **Overfitting-Bremse.** Das ist der eigentliche Aufwand, nicht die
-      Mutation: Ein größerer Suchraum findet zuverlässig Bäume, die auf der
-      Historie glänzen und nichts können. Bonferroni allein reicht dafür
-      NICHT — es braucht Walk-Forward (Bewertung nur auf Daten nach dem
-      Suchfenster) und Deflated Sharpe (Bailey/López de Prado 2014, korrigiert
-      um die Anzahl der Versuche). Die harten Guards aus `schema.ts`
-      (Tiefe ≤ 5, ≤ 25 Knoten) sind die Sparsamkeits-Bremse und bleiben.
-- [ ] Beförderung serverseitig wie bei `autoTune`: nur über das Shadow-Konto,
-      höchstens eine Änderung je Durchgang, jede mit Begründung im Journal.
+**Teil 2 — Struktursuche (ERLEDIGT 07.08.):**
+- [x] Struktur-Mutationen (`shared/src/rules/mutate.ts`): fünf Operatoren
+      (Parameter drehen, Blatt tauschen, Zweig streichen, Bedingung ergänzen,
+      Operator kippen), deterministisch (mulberry32-Seed), Guards sind Veto
+      statt Reparatur; Startpunkt = kompilierter Klassik-Baum + 5 Presets
+      (`startPopulation`).
+- [x] **Overfitting-Bremse** (`shared/src/overfit.ts`): Walk-Forward-Split
+      (Suche 70 % / Test 30 %, Warmup-Überhang 26) + Deflated Sharpe
+      (Bailey/López de Prado 2014) mit KUMULATIVER Versuchszahl — die Latte
+      wächst mit jedem Kandidaten und wird nie zurückgesetzt. Abnahme-Test:
+      Suchsieger mit Walk-Forward-Verlust wird NICHT befördert. Die harten
+      Guards aus `schema.ts` (Tiefe ≤ 5, ≤ 25 Knoten) bleiben die
+      Sparsamkeits-Bremse.
+- [x] Beförderung serverseitig (`scheduled/strukturSuche.ts`, täglich 18:10 ET
+      nach autoTune): je User mit laufender Engine EIN Kandidat pro Tag gegen
+      den Amtierenden (State-Doc `tuning/struktur`); Beförderung nur bei
+      Vorsprung im Suchfenster + DSR ≥ 95 % + positivem Test-Sharpe —
+      ausschließlich in die Schatten-Strategie `strategies/struktursuche`
+      (mode shadow, frisches 10k-Konto je Generation), jede Prüfung mit
+      DSR/Latte/Vorsprung im Journal. Opt-out über denselben Schalter wie
+      autoTune (`settings.autoTune: false`).
 
 **Abnahme:** Ein mutierter Baum, der im Suchfenster gewinnt und im
 Walk-Forward-Fenster verliert, wird NICHT befördert (Testfall) · das Journal
