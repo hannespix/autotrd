@@ -1118,7 +1118,10 @@ async function executeUserTrades(
 
           if (dir === 'buy' && pos?.side === 'short') {
             // Kauf-Signal deckt den Regelbaum-Short ein (Cover, Short R2);
-            // Exits blockt der Cooldown NIE (Sicherheitsprinzip)
+            // Exits blockt der Cooldown NIE (Sicherheitsprinzip). Die
+            // Mindest-Haltedauer bremst aber wie beim Long-Signal-Ausstieg
+            // (Short-Audit 07.08.) — Stop/Trailing/Take bleiben scharf.
+            if (minHoldActive(pos.openedAt, now, clamped.engine.minHoldMin ?? 0)) continue;
             const r = await executeTrade(
               { uid, symbol, side: 'buy', price: data.price, source: 'engine', assetClass: classify(symbol) },
               clamped,
@@ -1297,7 +1300,12 @@ async function executeUserTrades(
         // Ausführung IMMER mit der geklammerten Strategie (Audit 26.07.):
         // Positionsgröße und Stop-Level kommen aus der Risiko-Hülle.
         if (direction === 'buy' && pos?.side === 'short') {
-          // Kauf-Signal auf offenen Short = Eindecken (Cover)
+          // Kauf-Signal auf offenen Short = Eindecken (Cover). Die
+          // Mindest-Haltedauer bremst auch hier (Short-Audit 07.08.): Der
+          // Cover IST der Signal-Ausstieg des Shorts — Longs waren gegen das
+          // Whipsaw-Rausspucken geschützt, Shorts zahlten es doppelt.
+          // Stop/Trailing/Take liefen oben und bleiben jederzeit scharf.
+          if (minHoldActive(pos.openedAt, now, clamped.engine.minHoldMin ?? 0)) continue;
           const r = await executeTrade(
             { uid, symbol, side: 'buy', price: data.price, source: 'engine', assetClass: classify(symbol) },
             clamped,

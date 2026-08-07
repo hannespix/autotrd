@@ -368,6 +368,17 @@ export async function executeTrade(
       (req.side === 'sell' && position.side !== 'short'));
   if (schliesst && position.broker !== true) return executePaperTrade(req, strategy);
 
+  /* Ein Verkauf, der weder schließt noch ein AUSDRÜCKLICHER Leerverkauf auf
+   * leerem Bestand ist, darf NIE zum Broker (Short-Audit 07.08.). Vorher
+   * lief er durch: Das Buch lehnte zwar ab (keine_position bzw.
+   * short_nachverkauf_verboten) — aber ERST NACH dem Routing. Beim Broker
+   * war da längst ein echter Leerverkauf eröffnet (bzw. ein bestehender
+   * Short verdoppelt), ungebucht, ohne Stop. Erreichbar über den manuellen
+   * Verkaufs-Knopf; die Ablehnung muss deshalb VOR die Order. */
+  if (req.side === 'sell' && !schliesst && !(req.openShort === true && position === null)) {
+    return executePaperTrade(req, strategy);
+  }
+
   const klasse = req.assetClass ?? classify(req.symbol);
 
   /* Schutz-Stop aus dem Weg räumen (Bracket Stufe 1, 06.08.).
@@ -417,7 +428,10 @@ export async function executeTrade(
     const wirdShort = req.side === 'sell';
     if (wirdShort && !asset.shortable) return { executed: false, reason: 'broker_nicht_shortbar' };
   }
-  const fractional = asset?.fractionable ?? (klasse === 'crypto');
+  // Leerverkäufe verlangen bei Alpaca GANZE Stücke — fractionable gilt nur
+  // für Long-Käufe und das Schließen fraktionaler Bestände (Short-Audit 07.08.).
+  const fractional =
+    (asset?.fractionable ?? (klasse === 'crypto')) && !(req.side === 'sell' && !schliesst);
   // Für die MENGE reicht der Schätzpreis: Er entscheidet über die Stückzahl,
   // nicht über den Buchwert. Der echte Kurs kommt gleich vom Broker zurück
   // und ersetzt ihn beim Buchen.
