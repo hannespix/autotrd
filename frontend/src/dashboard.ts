@@ -3285,6 +3285,27 @@ async function switchAutoLevel(level: number, t0: number, t1: number, refit = fa
   }
 }
 
+/**
+ * Am Anfang der 5m-Daten nahtlos in die Tages-Sicht übergehen (Owner-Fund
+ * 07.08.). Die 5m-Chunks reichen nur bis Ende Juli zurück — wer bei 1T/1W
+ * weiter nach links zieht, landete an einer harten Wand. Statt dort zu
+ * stoppen, wechselt der Chart auf Tageskerzen (dort trägt die volle
+ * Historie) und behält das Zeitfenster; ist es für Tageskerzen zu schmal
+ * (unter ~12 Kalendertagen gäbe es nur 1–2 Kerzen), wird es nach links auf
+ * ein lesbares Minimum geweitet. Danach übernimmt loadOlderDaily.
+ */
+async function intradayZuDaily(): Promise<void> {
+  if (!st?.chart || st.intradayDays === 0 || autoSwitching) return;
+  const r = st.chart.getVisibleRange();
+  const src = st.shownIntraday;
+  if (!r || src.length < 2) return;
+  const i0 = Math.max(0, Math.min(src.length - 1, Math.floor(r.from)));
+  const i1 = Math.max(i0 + 1, Math.min(src.length - 1, Math.ceil(r.to)));
+  const t1 = src[i1]!.time * 1000;
+  const t0 = Math.min(src[i0]!.time * 1000, t1 - 12 * 86_400_000);
+  await switchAutoLevel(0, t0, t1);
+}
+
 /** Seit 07.08. nur noch das Auflösungs-Badge: Auto ist immer an, die
  *  Zoom-Buttons sind momentane Aktionen ohne on-Zustand. */
 function updateAutoUi(): void {
@@ -3935,7 +3956,16 @@ async function rebuildChart(): Promise<void> {
       // in der Tages-Sicht, 5m-Chunks in der Intraday-Sicht (Kontinuum 06.08.).
       if (nearLeftEdge && st) {
         if (st.intradayDays === 0 && (st.autoRes || st.range === 0)) void loadOlderDaily();
-        else if (st.intradayDays > 0) void loadOlderIntraday();
+        else if (st.intradayDays > 0) {
+          // 5m-Daten existieren erst seit Ende Juli (Yahoo liefert rückwirkend
+          // nur ~5 Handelstage; die Chunks wachsen seither täglich). Ist ihr
+          // Anfang erreicht UND zieht der User wirklich an der harten Kante,
+          // geht es nahtlos in Tageskerzen weiter — dort trägt die volle
+          // Historie (Owner-Fund 07.08.: „bei 1W oder 1T funktioniert es
+          // nicht, dass die vorhergehenden Zeiträume geladen werden").
+          if (st.intradayHistDone && range !== null && range.from < 4) void intradayZuDaily();
+          else void loadOlderIntraday();
+        }
       }
     }, 300);
   });
