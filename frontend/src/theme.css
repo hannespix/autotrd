@@ -783,7 +783,8 @@ input { accent-color: var(--ac); }
   border: 1px solid var(--bd2); border-radius: var(--r-xs); background: var(--sd);
   color: var(--t1); font-size: 13px; padding: 4px 10px; cursor: pointer;
 }
-.gp-hd { display: flex; align-items: center; gap: 6px; }
+/* position:relative trägt die Katalog-Auswahl (.mt-list) unter dem Kopf (07.08.) */
+.gp-hd { display: flex; align-items: center; gap: 6px; position: relative; }
 /* EINE Regel für Panel- und Haupt-Symbolfeld: identische Box = identische
    Kopfhöhe, damit alle Raster-Fenster exakt gleich sitzen (26.07.). */
 .gp-sym, .mh-sym { width: 86px; font-size: 11px; padding: 3px 8px; text-transform: uppercase; }
