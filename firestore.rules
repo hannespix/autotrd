@@ -108,6 +108,19 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      // Trade-Journal (M12): Die FAKTEN (Symbol, Menge, P&L, Signal-Kontext)
+      // legt ausschliesslich der Server bei der Buchung an. Der Client darf
+      // GENAU seine vier Review-Felder aendern — ein Journal, dessen Fakten
+      // der User editieren kann, waere als Lernwerkzeug wertlos, und ein
+      // frei erfindbarer Eintrag genauso.
+      match /journal/{doc} {
+        allow read: if isOwner(uid);
+        allow create, delete: if false;
+        allow update: if isOwner(uid)
+          && request.resource.data.diff(resource.data)
+               .affectedKeys().hasOnly(['notes', 'tags', 'mistakes', 'review']);
+      }
+
       // Alerts: gehören dem User komplett
       match /alerts/{doc} {
         allow read, write: if isOwner(uid);

@@ -1098,10 +1098,22 @@ und KI-Erklärung, gekoppelt an ein automatisches Journal.
       *Offen bleibt aus dieser Zeile:* fixed-fractional Sizing mit
       eingefrorenem Initial-Stop (R-Multiples) — das Risiko-Sizing rechnet
       heute je Scan neu.
-- [ ] Journal-Autoanlage bei Entry/Exit mit eingefrorenem `signalContext`
+- [x] Journal-Autoanlage bei Entry/Exit mit eingefrorenem `signalContext`
       (Votes, Indikatorwerte, Forecast, News-Refs, ≤ 60 Bars inline);
       Rules erlauben dem Client nur `notes/tags/mistakes/review` (diff-Check);
       Review-Flow mit Grades A–D
+      *(07.08. umgesetzt: EIN Hook nach der Geld-Transaktion in
+      `executePaperTrade` — alle 15 Aufrufstellen laufen da durch, Doc-ID =
+      Trade-ID, fehlertolerant und nie handelsblockierend. `signalContext`
+      trägt Votes, Konfluenz/minKonfluenz, Forecast-Stimme, Regime und Typ
+      (konfluenz/regelbaum/momentum); Risk-Exits stehen als `riskExit` drin.
+      Rules-Diff-Check + 4 neue Rules-Tests; Dashboard-Karte „Trade-Journal"
+      mit Noten A–D und Notiz-Feld. **Bewusst ANDERS als geplant:** keine
+      ≤ 60 Bars inline — der Tagesfilm rekonstruiert denselben Ausschnitt aus
+      den `ohlc`-Chunks (Datum+Symbol reichen), und Bars in jedem Journal-Doc
+      wären reine Duplikation gegen das 1-MiB-Limit. News-Refs folgen, wenn
+      der Tagesfilm sie braucht. Tags/Mistakes sind per Rules erlaubt, die
+      UI dafür kommt mit dem Review-Flow-Ausbau.)*
 - [ ] **Tagesfilm:** Replay-Panel mit Scrubber aus `ohlc/m5`-Chunk + eigenen
       Trades + `signals/{scanId}` + `events/{date}`-Markern + `ai/{date}` als
       Abspann; Abgleich „Signal befolgt / ignoriert / dagegen"

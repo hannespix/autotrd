@@ -1121,7 +1121,15 @@ async function executeUserTrades(
             // (Short-Audit 07.08.) — Stop/Trailing/Take bleiben scharf.
             if (minHoldActive(pos.openedAt, now, clamped.engine.minHoldMin ?? 0)) continue;
             const r = await executeTrade(
-              { uid, symbol, side: 'buy', price: data.price, source: 'engine', assetClass: classify(symbol) },
+              {
+                uid,
+                symbol,
+                side: 'buy',
+                price: data.price,
+                source: 'engine',
+                assetClass: classify(symbol),
+                signalContext: { typ: 'regelbaum', regime },
+              },
               clamped,
               scanId,
             );
@@ -1154,6 +1162,7 @@ async function executeUserTrades(
                 stopDistancePct: stopAbstand(symbol, data.atrPct),
                 // Regelbaum liefert ja/nein statt Vote-Karte — eigener Steckbrief
                 bucket: bucketKey({ assetClass: classify(symbol), timeframe: tf, signature: 'regelbaum', side: 'long', regime }),
+                signalContext: { typ: 'regelbaum', regime },
               },
               clamped,
               scanId,
@@ -1184,7 +1193,15 @@ async function executeUserTrades(
             // Scan bereits gelaufen und bleiben jederzeit scharf.
             if (minHoldActive(pos.openedAt, now, clamped.engine.minHoldMin ?? 0)) continue;
             const r = await executeTrade(
-              { uid, symbol, side: 'sell', price: data.price, source: 'engine', assetClass: classify(symbol) },
+              {
+                uid,
+                symbol,
+                side: 'sell',
+                price: data.price,
+                source: 'engine',
+                assetClass: classify(symbol),
+                signalContext: { typ: 'regelbaum', regime },
+              },
               clamped,
               scanId,
             );
@@ -1213,6 +1230,7 @@ async function executeUserTrades(
                 openShort: true,
                 stopDistancePct: stopAbstand(symbol, data.atrPct),
                 bucket: bucketKey({ assetClass: classify(symbol), timeframe: tf, signature: 'regelbaum', side: 'short', regime }),
+                signalContext: { typ: 'regelbaum', regime },
               },
               clamped,
               scanId,
@@ -1305,7 +1323,15 @@ async function executeUserTrades(
           // Stop/Trailing/Take liefen oben und bleiben jederzeit scharf.
           if (minHoldActive(pos.openedAt, now, clamped.engine.minHoldMin ?? 0)) continue;
           const r = await executeTrade(
-            { uid, symbol, side: 'buy', price: data.price, source: 'engine', assetClass: classify(symbol) },
+            {
+              uid,
+              symbol,
+              side: 'buy',
+              price: data.price,
+              source: 'engine',
+              assetClass: classify(symbol),
+              signalContext: { typ: 'konfluenz', votes: sig.votes, konfluenz, regime },
+            },
             clamped,
             scanId,
           );
@@ -1368,6 +1394,14 @@ async function executeUserTrades(
               bucket,
               sizeFactor,
               ...(budget ? { margin: budget } : {}),
+              signalContext: {
+                typ: 'konfluenz',
+                votes: sig.votes,
+                konfluenz,
+                minKonfluenz: clamped.signals.minConfluence,
+                ...(vote ? { forecast: { dir: vote.dir, weight: vote.weight } } : {}),
+                regime,
+              },
             },
             clamped,
             scanId,
@@ -1396,7 +1430,15 @@ async function executeUserTrades(
           // nur das Rausspucken durch eine gekippte Indikator-Stimme.
           if (minHoldActive(pos.openedAt, now, clamped.engine.minHoldMin ?? 0)) continue;
           const r = await executeTrade(
-            { uid, symbol, side: 'sell', price: data.price, source: 'engine', assetClass: classify(symbol) },
+            {
+              uid,
+              symbol,
+              side: 'sell',
+              price: data.price,
+              source: 'engine',
+              assetClass: classify(symbol),
+              signalContext: { typ: 'konfluenz', votes: sig.votes, konfluenz, regime },
+            },
             clamped,
             scanId,
           );
@@ -1453,6 +1495,14 @@ async function executeUserTrades(
               bucket,
               sizeFactor,
               ...(budget ? { margin: budget } : {}),
+              signalContext: {
+                typ: 'konfluenz',
+                votes: sig.votes,
+                konfluenz,
+                minKonfluenz: clamped.signals.minConfluence,
+                ...(vote ? { forecast: { dir: vote.dir, weight: vote.weight } } : {}),
+                regime,
+              },
             },
             clamped,
             scanId,

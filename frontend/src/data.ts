@@ -1018,6 +1018,66 @@ export function watchTuneFleet(uid: string, cb: (rows: TuneFleetRow[]) => void):
 }
 
 /**
+ * Trade-Journal-Zeile (M12): Die FAKTEN legt der Server bei der Buchung an
+ * (Doc-ID = Trade-ID), die Review-Felder ergänzt der User — die Rules lassen
+ * ihn ausschließlich `notes/tags/mistakes/review` ändern.
+ */
+export interface JournalRow {
+  id: string;
+  at: string;
+  symbol: string;
+  side: 'buy' | 'sell';
+  qty: number;
+  price: number;
+  source: 'engine' | 'manual';
+  assetClass?: string;
+  art: 'entry' | 'exit';
+  pnl?: number;
+  riskExit?: string;
+  bucket?: string;
+  nachkauf?: boolean;
+  /** Eingefrorene Momentaufnahme des Signals — warum die Engine gehandelt hat. */
+  signalContext?: {
+    typ?: string;
+    votes?: Record<string, string>;
+    konfluenz?: number;
+    minKonfluenz?: number;
+    forecast?: { dir?: string; weight?: number };
+    regime?: string;
+  };
+  /* Review-Felder des Users. */
+  review?: string;
+  notes?: string;
+  tags?: string[];
+  mistakes?: string[];
+}
+
+export function watchJournal(uid: string, cb: (rows: JournalRow[]) => void): Unsubscribe {
+  const q = query(collection(db(), 'users', uid, 'journal'), orderBy('at', 'desc'), limit(12));
+  return onSnapshot(q, (snap) =>
+    cb(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<JournalRow, 'id'>) }))),
+  );
+}
+
+/**
+ * Review speichern — bewusst NUR die vier Felder, die die Rules erlauben.
+ * Ein versehentlich mitgeschicktes Fakten-Feld ließe die ganze Änderung an
+ * den Rules abprallen, und der User sähe ein stummes Nichts.
+ */
+export async function saveJournalReview(
+  uid: string,
+  id: string,
+  patch: { review?: string; notes?: string; tags?: string[]; mistakes?: string[] },
+): Promise<void> {
+  const erlaubt: Record<string, unknown> = {};
+  if (patch.review !== undefined) erlaubt.review = patch.review;
+  if (patch.notes !== undefined) erlaubt.notes = patch.notes;
+  if (patch.tags !== undefined) erlaubt.tags = patch.tags;
+  if (patch.mistakes !== undefined) erlaubt.mistakes = patch.mistakes;
+  await updateDoc(doc(db(), 'users', uid, 'journal', id), erlaubt);
+}
+
+/**
  * Prüf-Journal-Zeile der Struktursuche (MO Teil 2) — der Server schreibt
  * jede Prüfung mit ihren Zahlen ins State-Doc, damit „abgelehnt" eine
  * nachrechenbare Aussage ist und keine Behauptung.

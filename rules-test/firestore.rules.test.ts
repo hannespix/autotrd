@@ -39,6 +39,14 @@ beforeAll(async () => {
     });
     await db.doc('users/alice/positions/AAPL').set({ qty: 3, avgEntry: 100 });
     await db.doc('users/alice/trades/t1').set({ symbol: 'AAPL', side: 'buy' });
+    await db.doc('users/alice/journal/t1').set({
+      symbol: 'AAPL',
+      side: 'buy',
+      art: 'entry',
+      qty: 3,
+      price: 100,
+      signalContext: { typ: 'konfluenz', konfluenz: 2 },
+    });
     await db.doc('users/alice/strategies/s1/runs/r1').set({ totalReturnPct: 4.2 });
     await db.doc('users/alice/predictions/QQQ').set({ targetPrice: 620, confidence: 2 });
     await db.doc('users/alice/strategies/s1/shadowSignals/sig1').set({ direction: 'buy' });
@@ -214,6 +222,41 @@ describe('Auto-Tuner (MT)', () => {
   it('Fremde Journale bleiben unsichtbar', async () => {
     await assertFails(alice().doc('users/bob/tuneLog/irgendwas').get());
     await assertFails(alice().doc('users/bob/tuning/fleet').get());
+  });
+});
+
+describe('Trade-Journal (M12)', () => {
+  it('Owner liest, Fremde nicht', async () => {
+    await assertSucceeds(alice().doc('users/alice/journal/t1').get());
+    await assertFails(bob().doc('users/alice/journal/t1').get());
+  });
+
+  it('Review-Felder darf der Owner ändern — und NUR die', async () => {
+    await assertSucceeds(
+      alice()
+        .doc('users/alice/journal/t1')
+        .update({ review: 'B', notes: 'Einstieg zu früh', tags: ['fomo'], mistakes: ['gegen_trend'] }),
+    );
+  });
+
+  it('Fakten-Manipulation wird abgelehnt — auch gemischt mit erlaubten Feldern', async () => {
+    // Ein Journal, dessen P&L oder Signal-Kontext der User editieren kann,
+    // wäre als Lernwerkzeug wertlos: Die Review-Felder bewerten die Fakten,
+    // sie ersetzen sie nicht.
+    await assertFails(alice().doc('users/alice/journal/t1').update({ pnl: 9_999 }));
+    await assertFails(
+      alice().doc('users/alice/journal/t1').update({ review: 'A', price: 1 }),
+    );
+    await assertFails(
+      alice().doc('users/alice/journal/t1').update({ signalContext: { typ: 'erfunden' } }),
+    );
+  });
+
+  it('create/delete bleiben dem Server vorbehalten', async () => {
+    await assertFails(
+      alice().doc('users/alice/journal/erfunden').set({ symbol: 'X', art: 'entry' }),
+    );
+    await assertFails(alice().doc('users/alice/journal/t1').delete());
   });
 });
 
