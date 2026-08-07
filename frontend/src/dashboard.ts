@@ -454,6 +454,8 @@ interface GridPanel {
   histLoading?: boolean;
   histDone?: boolean;
   leerJahre?: number;
+  /** Auflösungs-Badge im Panel-Kopf (Grid-Audit 07.08. — wie resBadge oben). */
+  resEl?: HTMLElement | null;
 }
 
 let st: DashState | null = null;
@@ -4520,6 +4522,8 @@ function renderGridPanelBars(p: GridPanel): void {
   if (p.lastRenderIntraday !== intraday) p.chart.setForecast(null);
   p.lastRenderIntraday = intraday;
 
+  // Auflösungs-Badge im Panel-Kopf (Grid-Audit 07.08.) — Klon des resBadge
+  if (p.resEl) p.resEl.textContent = intraday ? '5m' : '1D';
   const daily = p.range > 0 ? p.bars.slice(-p.range) : p.bars;
   // Fit erst verbrauchen, wenn KERZEN da sind — sonst fittet das Panel auf
   // den Prognose-Whitespace und bleibt nach dem Daten-Eintreffen dort
@@ -4758,7 +4762,13 @@ async function mountGridPanel(p: GridPanel, host: HTMLElement): Promise<void> {
   p.leerJahre = 0;
   p.subs.push(
     watchBars(p.sym, (bars) => {
-      p.bars = bars;
+      // MERGEND statt ersetzend (Grid-Audit 07.08.): Der Feed liefert ~1 Jahr
+      // und feuert bei jedem Scan — ein glattes Ersetzen würfe die per
+      // panelOlderDaily nachgeladene Mehrjahres-Historie alle 5 Minuten weg
+      // und die Ansicht spränge (dieselbe Falle wie beim Haupt-Chart).
+      const start = bars[0]?.date ?? '';
+      const alt = start ? p.bars.filter((b) => b.date < start) : [];
+      p.bars = [...alt, ...bars];
       // Intraday-Sicht: frische Bars = frischer 5-min-Chunk nachladbar
       if (p.intradayDays > 0) void loadPanelIntraday(p);
       else renderGridPanelBars(p);
@@ -4912,6 +4922,7 @@ function renderChartGrid(): void {
           <button class="tf-btn" data-pz="365" title="Alle Charts auf 1 Jahr zoomen">1J</button>
           <button class="tf-btn" data-pz="max" title="Alle Charts: gesamte geladene Historie">Max</button>
         </span>
+        <span class="res-badge mono gp-res" title="Aktive Kerzen-Auflösung dieses Fensters"></span>
         <button class="tf-btn gp-max" title="Chart im Vollbild (Esc schließt)">⛶</button>
         <button class="tf-btn gp-lock${p.locked ? ' on' : ''}"
           title="Lock: Zoom, Sichtbereich und Crosshair synchron mit allen gelockten Charts">${p.locked ? ICONS.lock : ICONS.unlock}</button>
@@ -4948,9 +4959,12 @@ function renderChartGrid(): void {
         maxBtn.textContent = '✕';
       }
     });
+    p.resEl = el.querySelector('.gp-res') as HTMLElement;
+    // Doppelklick = auf das letzte Jahr fahren (Grid-Audit 07.08.): Ein Fit
+    // auf die GESAMTE Lazy-Historie (mehrere Jahrzehnte) wäre nach dem
+    // range-Umbau eine Brillen-weg-Ansicht, kein Reset.
     (el.querySelector('.gp-chart') as HTMLElement).addEventListener('dblclick', () => {
-      p.fitPending = true;
-      renderGridPanelBars(p);
+      void panelZoomAufTage(p, 365);
     });
     const lockBtn = el.querySelector('.gp-lock') as HTMLButtonElement;
     lockBtn.addEventListener('click', () => {
