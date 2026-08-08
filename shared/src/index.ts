@@ -37,3 +37,5 @@ export * from './leverageGate.js';
 export * from './calendar.js';
 export * from './positionView.js';
 export * from './chartTime.js';
+export * from './erkenntnisse.js';
+export * from './journalText.js';

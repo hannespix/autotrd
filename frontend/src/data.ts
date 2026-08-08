@@ -4,6 +4,7 @@
  */
 
 import {
+  type ErkenntnisChronik,
   type GlobalAxisStats,
   type KanteJeTrade,
   type Position,
@@ -1116,6 +1117,24 @@ export interface StrukturDoc {
     zeilen?: Array<{ seite?: string; label?: string; gefeuert?: number; amSignalTag?: number }>;
   };
   updatedAt?: string;
+}
+
+/**
+ * Erkenntnis-Chronik (`meta/erkenntnisse`, Owner-Go 08.08.).
+ *
+ * Über den Mux wie die anderen `meta`-Dokumente: EIN Listener je Browser,
+ * nicht je Tab. Der Inhalt ist bewusst öffentlich lesbar — Thesen, Quoten und
+ * Zählwerte, keine Beträge und keine Kennungen.
+ */
+export function watchErkenntnisse(cb: (c: ErkenntnisChronik | null) => void): Unsubscribe {
+  return muxWatch(
+    'erkenntnisse',
+    (emit) =>
+      onSnapshot(doc(db(), 'meta', 'erkenntnisse'), (snap) =>
+        emit(snap.exists() ? (snap.data() as ErkenntnisChronik) : null),
+      ),
+    (p) => cb(p as ErkenntnisChronik | null),
+  );
 }
 
 export function watchStruktur(uid: string, cb: (d: StrukturDoc | null) => void): Unsubscribe {
