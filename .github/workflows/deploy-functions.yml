@@ -136,14 +136,19 @@ jobs:
       # ohne Wirkung — und das sieht im Dashboard genauso aus wie ein Sockel,
       # der bewusst in Cash steht. Der Lauf ist idempotent (Wochen-Takt je
       # Konto) und als optional markiert, damit er keinen Deploy rot macht.
-      - name: Tages-Läufe anstoßen (Kennzahlen, Prognose-Bewertung, Momentum)
+      #
+      # kibericht steht am ENDE der Kette und das ist zwingend: Der Bericht
+      # liest die Erkenntnis-Chronik, die erst snapshotequity schreibt. So ist
+      # die Tages-Einschätzung nach einem Merge sofort da statt erst um
+      # 18:25 ET — auch sie optional, denn ein Modell-Anbieter kann ausfallen.
+      - name: Tages-Läufe anstoßen (Kennzahlen, Prognose, Momentum, KI-Bericht)
         if: ${{ !cancelled() && env.FIREBASE_SERVICE_ACCOUNT != '' }}
         continue-on-error: true
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
         run: >-
           node scripts-ci/invoke-daily.mjs
-          --only snapshotequity,evalforecasts,momentumrun
+          --only snapshotequity,evalforecasts,momentumrun,kibericht
           ${{ inputs.force_daily && '--force' || '' }}
 
       # Wenn der Lauf rot wurde (z. B. Scan-Invoke 500): scanmarket-Fehlerlogs

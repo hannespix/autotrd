@@ -5,18 +5,23 @@
  * steht im Kopf von `shared/src/kiBericht.ts`. Hier ist der IO-Teil: Fakten
  * lesen, ein Modell fragen, das Ergebnis ablegen.
  *
- * ── Ohne Schlüssel schläft der Lauf, statt zu scheitern ───────────────────
+ * ── Der Schlüssel ist gebunden — und was passiert, wenn er verschwindet ───
  *
- * `ANTHROPIC_API_KEY` wird bewusst NICHT über `secrets: [...]` deklariert.
- * Eine Secret-Deklaration für ein Secret, das im Projekt noch nicht existiert,
- * bricht den GESAMTEN Deploy mit „Secret does not exist" — sie darf erst
- * nachgezogen werden, nachdem der Owner den Wert gesetzt hat (derselbe
- * Zweischritt wie beim BROKER_MASTER_KEY, dokumentiert in docs/SETUP.md).
+ * `ANTHROPIC_API_KEY` liegt seit dem 23.07. im Secret Manager (angelegt für
+ * die damalige KI-Staffel, seit deren Ausbau am 28.07. ungenutzt). Die
+ * Deploy-Diagnose hat das am 08.08. bestätigt — „VORHANDEN mit 1 aktiven
+ * Version" —, weshalb die Bindung unten steht.
  *
- * Bis dahin ist `process.env.ANTHROPIC_API_KEY` schlicht leer, der Lauf
- * vermerkt `stand: 'kein_schluessel'` und die Karte im Dashboard sagt genau
- * das. Ein Feature, das seine eigene Nicht-Konfiguration als sichtbaren
- * Zustand meldet, ist einem Feature vorzuziehen, das den Deploy rot macht.
+ * Diese Reihenfolge ist Absicht und bleibt sie: Eine Deklaration für ein
+ * Secret, das NICHT existiert, bricht den GESAMTEN Deploy mit „Secret does
+ * not exist". Wer hier ein weiteres Secret binden will, prüft es erst mit
+ * `scripts-ci/check-secret.mjs` — der Schritt läuft bei jedem Deploy.
+ *
+ * Der Schlüssel-Guard im Code bleibt trotzdem bestehen: Wird das Secret
+ * später gelöscht oder seine Version deaktiviert, ist
+ * `process.env.ANTHROPIC_API_KEY` leer, der Lauf vermerkt
+ * `stand: 'kein_schluessel'` und die Karte sagt genau das — statt dass eine
+ * Ausnahme durch den Scheduler nach oben schlägt.
  *
  * ── Warum dieser Lauf niemals etwas kaputt machen kann ────────────────────
  *
@@ -182,6 +187,8 @@ export const kiBericht = onSchedule(
     retryCount: 0,
     // Ein Modell-Aufruf mit Denken kann länger als den 60-s-Default brauchen.
     timeoutSeconds: 300,
+    // Erst nachdem die Deploy-Diagnose das Secret bestätigt hat (s. o.).
+    secrets: ['ANTHROPIC_API_KEY'],
   },
   async () => {
     await schreibeBericht();
