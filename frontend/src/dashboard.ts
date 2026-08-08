@@ -701,6 +701,17 @@ function layout(email: string): string {
             </div>
           </span>
           <span class="tool-anchor">
+            <button class="tf-btn" id="drawBtn" title="Zeichenwerkzeuge: Horizontale, Trendlinie, Rechteck — je Symbol gespeichert (dieses Gerät)">Zeichnen ▾</button>
+            <div id="menuDraw" class="tool-menu" hidden>
+              <div class="tm-sec">Werkzeug wählen, dann ins Chart klicken</div>
+              <button class="tf-btn" data-draw="hline" title="Horizontale Preislinie — 1 Klick">— Horizontale</button>
+              <button class="tf-btn" data-draw="trend" title="Trendlinie — 2 Klicks (Start, Ende). Nur in der Tages-Sicht zeichenbar.">╱ Trendlinie</button>
+              <button class="tf-btn" data-draw="rect" title="Rechteck (Zone) — 2 Klicks (gegenüberliegende Ecken). Nur in der Tages-Sicht zeichenbar.">▭ Rechteck</button>
+              <div class="tm-sec">Verwaltung</div>
+              <button class="tf-btn" id="drawClear" title="Alle Zeichnungen dieses Symbols entfernen">Zeichnungen löschen</button>
+            </div>
+          </span>
+          <span class="tool-anchor">
             <button class="tf-btn" id="layBtn" title="Layer, Raster & Vergleich">Layer ▾</button>
             <div id="menuLay" class="tool-menu" hidden>
               <div class="tm-sec">Layer</div>
@@ -752,6 +763,7 @@ function layout(email: string): string {
             title="Zurück zur Gegenwart — animierter Sprung zum jüngsten Kurs">Jetzt ⇥</button>
           <div id="evTip" class="evtip" hidden></div>
           <svg id="predSvg" class="pred-svg" aria-hidden="true"></svg>
+          <svg id="drawSvg" class="pred-svg" aria-hidden="true"></svg>
           <div id="predPop" class="pred-pop" hidden>
             <b>Prognose-Pfeil</b>
             <label>Ziel-Kurs <input id="ppPrice" class="inp st-num" type="number" step="0.5" /></label>
@@ -2343,7 +2355,113 @@ function updateSubPanels(): void {
 /** Prognose-Pfeil im TradingView-Stil (User-Referenz 25.07.): fetter,
  *  gefüllter Vektor-Pfeil — grün = Ziel über Kurs, rot = darunter; Dicke
  *  wächst mit dem Vertrauen, Label als Pille an der Spitze. */
+/* ── Zeichenwerkzeuge (Chart-Vision Teil 2): Horizontale, Trendlinie, Rechteck ──
+ *
+ * Bewusste V1-Grenzen: Zeitanker sind ISO-Tage — Trendlinie und Rechteck sind
+ * deshalb nur in der TAGES-Sicht zeichen- und sichtbar (im Intraday-Chart
+ * gibt es die Tages-Koordinate nicht, coords() liefert x=null und die Form
+ * verschwindet ehrlich statt falsch zu sitzen). Die Horizontale hängt nur am
+ * Preis und gilt in jeder Sicht. Gespeichert je Symbol auf DIESEM Gerät
+ * (localStorage) — Zeichnungen sind Arbeitsnotizen, keine Kontodaten. */
+
+type ZeichnungsPunkt = { date: string; preis: number };
+type Zeichnung =
+  | { art: 'hline'; preis: number }
+  | { art: 'trend' | 'rect'; a: ZeichnungsPunkt; b: ZeichnungsPunkt };
+
+const ZEICHNUNGEN_KEY = 'autotrd-zeichnungen';
+let zeichnenTool: 'hline' | 'trend' | 'rect' | null = null;
+let zeichnenStart: ZeichnungsPunkt | null = null;
+/** Letzter Handelstag unterm Crosshair — der Zeitanker für Klick-Punkte. */
+let zeichnenTag: string | null = null;
+let zeichnungenCache: Record<string, Zeichnung[]> | null = null;
+
+function alleZeichnungen(): Record<string, Zeichnung[]> {
+  if (!zeichnungenCache) {
+    try {
+      zeichnungenCache = JSON.parse(localStorage.getItem(ZEICHNUNGEN_KEY) ?? '{}') as Record<string, Zeichnung[]>;
+    } catch {
+      zeichnungenCache = {};
+    }
+  }
+  return zeichnungenCache;
+}
+
+function speichereZeichnungen(): void {
+  localStorage.setItem(ZEICHNUNGEN_KEY, JSON.stringify(alleZeichnungen()));
+}
+
+function syncDrawButtons(): void {
+  document.querySelectorAll<HTMLButtonElement>('[data-draw]').forEach((b) => {
+    b.classList.toggle('on', b.dataset.draw === zeichnenTool);
+  });
+  const area = document.getElementById('chartArea');
+  if (area) area.style.cursor = zeichnenTool ? 'crosshair' : '';
+}
+
+const ZEICHNEN_FARBE = '#8ec5ff';
+
+function renderZeichnungen(): void {
+  const svg = document.getElementById('drawSvg');
+  if (!svg || !st) return;
+  svg.innerHTML = '';
+  if (st.cleanView || !st.chart) return;
+  const liste = alleZeichnungen()[st.currentSymbol] ?? [];
+  if (liste.length === 0 && !zeichnenStart) return;
+  const box = svg.getBoundingClientRect();
+  if (box.width < 10) return;
+  svg.setAttribute('viewBox', `0 0 ${box.width} ${box.height}`);
+  // Für die Horizontale braucht coords() irgendeine in DIESER Sicht gültige
+  // Zeit — der jüngste Bar der gezeigten Serie ist immer eine.
+  const zeitanker =
+    st.intradayDays > 0
+      ? st.shownIntraday[st.shownIntraday.length - 1]?.time
+      : st.shownDaily[st.shownDaily.length - 1]?.date;
+  if (zeitanker === undefined) return;
+  const teile: string[] = [];
+  const clip = (v: number): string => Math.max(-2000, Math.min(4000, v)).toFixed(1);
+  for (const z of liste) {
+    if (z.art === 'hline') {
+      const y = st.chart.coords(zeitanker, z.preis).y;
+      if (y === null) continue;
+      teile.push(
+        `<line x1="0" y1="${clip(y)}" x2="${box.width}" y2="${clip(y)}" stroke="${ZEICHNEN_FARBE}" stroke-width="1.2" stroke-dasharray="6 4"/>`,
+        `<text x="6" y="${clip(y - 4)}" fill="${ZEICHNEN_FARBE}" font-size="10" font-family="var(--f-num)">${z.preis.toFixed(2)}</text>`,
+      );
+      continue;
+    }
+    const pa = st.chart.coords(z.a.date, z.a.preis);
+    const pb = st.chart.coords(z.b.date, z.b.preis);
+    if (pa.x === null || pa.y === null || pb.x === null || pb.y === null) continue;
+    if (z.art === 'trend') {
+      teile.push(
+        `<line x1="${clip(pa.x)}" y1="${clip(pa.y)}" x2="${clip(pb.x)}" y2="${clip(pb.y)}" stroke="${ZEICHNEN_FARBE}" stroke-width="1.6"/>`,
+      );
+    } else {
+      const x = Math.min(pa.x, pb.x);
+      const y = Math.min(pa.y, pb.y);
+      teile.push(
+        `<rect x="${clip(x)}" y="${clip(y)}" width="${Math.abs(pb.x - pa.x).toFixed(1)}" height="${Math.abs(pb.y - pa.y).toFixed(1)}" fill="${ZEICHNEN_FARBE}" fill-opacity="0.10" stroke="${ZEICHNEN_FARBE}" stroke-width="1"/>`,
+      );
+    }
+  }
+  // Laufende Zwei-Klick-Zeichnung: den gesetzten Startpunkt markieren.
+  if (zeichnenStart) {
+    const p = st.chart.coords(zeichnenStart.date, zeichnenStart.preis);
+    if (p.x !== null && p.y !== null) {
+      teile.push(
+        `<circle cx="${clip(p.x)}" cy="${clip(p.y)}" r="3.5" fill="none" stroke="${ZEICHNEN_FARBE}" stroke-width="1.5"/>`,
+      );
+    }
+  }
+  svg.innerHTML = teile.join('');
+}
+
 function drawPredictionArrow(): void {
+  // Zeichnungen teilen sich die Refresh-Trigger mit dem Prognose-Pfeil
+  // (Range-Change, Resize, Chart-Neuaufbau, Clean-Toggle) — EIN Einhängepunkt
+  // statt sechs verstreuten Aufrufstellen. Muss VOR den frühen Returns stehen.
+  renderZeichnungen();
   const svg = document.getElementById('predSvg');
   if (!svg || !st) return;
   svg.innerHTML = '';
@@ -4019,6 +4137,35 @@ async function rebuildChart(): Promise<void> {
   st.chart = handle;
   st.chartFitPending = true;
   if (st.intradayDays > 0) void loadIntradayView();
+  // Zeichenwerkzeuge: eigener Klick-Abonnent (subscribeClick trägt mehrere).
+  // Der Zeitanker kommt vom Crosshair — der Klick selbst liefert nur den Preis.
+  st.chart?.onCrosshairDate((date) => {
+    zeichnenTag = date;
+  });
+  st.chart?.onClick((price) => {
+    if (!st || !zeichnenTool || price === null) return;
+    if (zeichnenTool === 'hline') {
+      (alleZeichnungen()[st.currentSymbol] ??= []).push({ art: 'hline', preis: price });
+      speichereZeichnungen();
+      zeichnenTool = null;
+      syncDrawButtons();
+      renderZeichnungen();
+      return;
+    }
+    if (!zeichnenTag) return; // ohne Tages-Anker kein Punkt (z. B. Intraday)
+    const punkt: ZeichnungsPunkt = { date: zeichnenTag, preis: price };
+    if (!zeichnenStart) {
+      zeichnenStart = punkt;
+      renderZeichnungen();
+      return;
+    }
+    (alleZeichnungen()[st.currentSymbol] ??= []).push({ art: zeichnenTool, a: zeichnenStart, b: punkt });
+    speichereZeichnungen();
+    zeichnenStart = null;
+    zeichnenTool = null;
+    syncDrawButtons();
+    renderZeichnungen();
+  });
   st.chart?.onClick((price) => {
     if (!st?.predMode || price === null) return;
     st.predMode = false;
@@ -7797,8 +7944,37 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   // wie TVs Indikator-Dialog) — zu geht's per Menü-Knopf, Außenklick oder Esc.
   const menus: Array<[string, string]> = [
     ['indBtn', 'menuInd'],
+    ['drawBtn', 'menuDraw'],
     ['layBtn', 'menuLay'],
   ];
+  // Zeichenwerkzeuge: Werkzeug wählen (Toggle), dann in den Chart klicken.
+  document.querySelectorAll<HTMLButtonElement>('[data-draw]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const tool = b.dataset.draw as 'hline' | 'trend' | 'rect';
+      zeichnenTool = zeichnenTool === tool ? null : tool;
+      zeichnenStart = null;
+      syncDrawButtons();
+      renderZeichnungen();
+    });
+  });
+  $('drawClear').addEventListener('click', () => {
+    if (!st) return;
+    delete alleZeichnungen()[st.currentSymbol];
+    speichereZeichnungen();
+    zeichnenStart = null;
+    zeichnenTool = null;
+    syncDrawButtons();
+    renderZeichnungen();
+  });
+  // Esc bricht ein laufendes Zeichnen ab (vor den Menü-Esc-Handlern harmlos —
+  // beide dürfen feuern).
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || (!zeichnenTool && !zeichnenStart)) return;
+    zeichnenTool = null;
+    zeichnenStart = null;
+    syncDrawButtons();
+    renderZeichnungen();
+  });
   const closeMenus = (): void => {
     // Null-sicher: die document-Listener unten überleben ein Re-Rendern der
     // Kopfleiste, bei dem die Menü-Knoten kurzzeitig fehlen.

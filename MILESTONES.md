@@ -716,6 +716,16 @@ sind (a) bis auf Renko/Kagi/P&F direkt oder per Daten-Transformation machbar,
 - [ ] Teil 2: Zeichenwerkzeuge Basis (Trendlinie, Horizontale, Rechteck,
       Fib-Retracement, Text) als SVG-Layer mit Koordinaten-Remap beim
       Zoomen/Pannen; Persistenz je Symbol (settings.drawings)
+      *(08.08. BASIS geliefert: „Zeichnen ▾"-Menü mit Horizontale (1 Klick,
+      gilt in jeder Sicht), Trendlinie + Rechteck (2 Klicks, Zeitanker vom
+      Crosshair-Tag) — eigener SVG-Layer über `coords()`, Remap über die
+      Prognose-Pfeil-Trigger (ein Einhängepunkt), Esc bricht ab, Löschen je
+      Symbol, Clean-View blendet aus. Bewusste V1-Grenzen: Trend/Rect nur in
+      der TAGES-Sicht (Zeitanker sind ISO-Tage — im Intraday-Chart lieber
+      ehrlich unsichtbar als falsch platziert); Persistenz Gerät-lokal
+      (localStorage) statt settings.drawings — Zeichnungen sind
+      Arbeitsnotizen, keine Kontodaten; nur Haupt-Chart. OFFEN: Fib, Text,
+      Verschieben/Einzeln-Löschen, Intraday-Anker, Panel-Sync.)*
 - [ ] Teil 3: Chart-Vorlagen: benannte Bundles aus Typ + Overlays + Layern +
       Skala (settings.chartTemplates), 1-Klick-Umschalter in der Toolbar
 - [ ] Teil 4: Kerzen-Countdown (Zeit bis Bar-Schluss), Preis-Alarm-Linien
