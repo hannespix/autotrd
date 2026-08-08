@@ -1190,6 +1190,21 @@ und KI-Erklärung, gekoppelt an ein automatisches Journal.
       es gibt keine zweite Tages-Serie zum Normalisieren, solange Momentum-
       Sockel und Schatten-Strategien keine eigene Equity-Historie führen.
       Reports Stufe 0/1 weiter offen.)*
+      *(08.08. „Zweites Gehirn", Owner-Go nach Video-Analyse: Der REPORT-
+      Gedanke ist damit teilweise eingelöst, aber anders geschnitten als
+      hier geplant — nicht als Push/E-Mail-Versand, sondern als bleibende
+      Ablage im Dashboard. Zwei Teile: (a) `meta/erkenntnisse` — ein fester
+      Thesen-Katalog wird täglich gegen die vorhandenen Messstände geprüft
+      und bekommt Status (gilt / gilt_nicht / wartet_auf_daten), `seitAt`
+      und eine gedeckelte Wechsel-Historie; unter dem Mindest-n wird bewusst
+      NICHTS behauptet. Deterministisch, 0 Token. (b) `meta/aiBericht` —
+      EIN Modell-Aufruf pro Tag (18:25 ET) verdichtet Chronik + Kennzahlen
+      zu einer Einschätzung; idempotent je Datum, Monatsdeckel 40, hartes
+      Token-Limit, Eingabe ausschließlich aus eigenen Zahlen (kein
+      Fremdtext ⇒ keine Prompt-Injection-Fläche). Beide Karten sitzen
+      untereinander: Faktenbasis oben, Deutung darunter. Der Bericht
+      steuert NICHTS — keine Order, kein Parameter, keine Beförderung.
+      OFFEN bleibt der VERSAND (Push/E-Mail) und die Stufe-0-Vorlage.)*
       **(26.07. Teil 2: Kennzahlen-Block in der Performance-Karte)**:
       Equity-Sparkline (Inline-SVG, keine zweite Chart-Instanz) + Sharpe
       30/90, Max-Drawdown, Hochwasser-Marke, Profit-Faktor und Erwartung je
