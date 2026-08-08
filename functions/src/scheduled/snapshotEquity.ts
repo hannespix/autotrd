@@ -36,6 +36,7 @@ import {
   drawdown,
   positionValue,
   reglerSchritt,
+  schreibeChronik,
   sharpe,
   tradeStats,
   tradingVerdict,
@@ -47,6 +48,8 @@ import {
   type EngineTrade,
   type EquityPoint,
   type KlassenErgebnis,
+  type ErkenntnisChronik,
+  type ErkenntnisFakten,
   type Position,
   type SchattenKlasse,
 } from '../../../shared/src/index.js';
@@ -436,6 +439,46 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
     );
   } catch (err) {
     logger.warn('bestPractice-Snapshot fehlgeschlagen', err);
+  }
+
+  // ── Erkenntnis-Chronik (Owner-Go 08.08.: „Zweites Gehirn") ────────────────
+  // Der Heartbeat wird alle fünf Minuten überschrieben, das verdict täglich —
+  // hier wird daraus Wissen, das BLEIBT: datierte Thesen mit Beleg, seit-wann
+  // und protokollierten Widerlegungen. Deterministisch, kein LLM; die Ableitung
+  // selbst ist pur (shared/erkenntnisse.ts) und dort getestet. Nach dem
+  // health-Write gelesen, damit auch die SCAN-Seite (signalSchatten,
+  // strukturSuche) im selben Faktenstand steckt.
+  try {
+    const healthDoc = await db.doc('meta/health').get();
+    const chronikRef = db.doc('meta/erkenntnisse');
+    const vorher = (await chronikRef.get()).data() as ErkenntnisChronik | undefined;
+    const signalSchatten = healthDoc.get('signalSchatten') as
+      | ErkenntnisFakten['signalSchatten']
+      | undefined;
+    const strukturLauf = healthDoc.get('strukturSuche') as
+      | ErkenntnisFakten['strukturSuche']
+      | undefined;
+    const fakten: ErkenntnisFakten = {
+      trading: {
+        trades: health.trades,
+        feeShare: health.feeShare,
+        exits: health.exits,
+        klassen: health.klassen,
+      },
+      ...(signalSchatten ? { signalSchatten } : {}),
+      ...(strukturLauf ? { strukturSuche: strukturLauf } : {}),
+    };
+    const chronik = schreibeChronik(vorher, fakten, now.toISOString());
+    await chronikRef.set(chronik);
+    const zaehl = Object.values(chronik.eintraege).reduce(
+      (a, e) => ((a[e.status] = (a[e.status] ?? 0) + 1), a),
+      {} as Record<string, number>,
+    );
+    logger.info(
+      `Erkenntnisse: ${zaehl.gilt ?? 0} gelten, ${zaehl.gilt_nicht ?? 0} gelten nicht, ${zaehl.wartet_auf_daten ?? 0} warten auf Daten`,
+    );
+  } catch (err) {
+    logger.warn('Erkenntnis-Chronik fehlgeschlagen — Snapshot bleibt gültig', err);
   }
 
   logger.info(`snapshotEquity: ${snapped}/${users.size} User gesnapshottet (${date})`);

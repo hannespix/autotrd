@@ -21,6 +21,7 @@ export { autoTune, tuneNow } from './scheduled/autoTune.js';
 export { strukturSuche, strukturNow } from './scheduled/strukturSuche.js';
 export { momentumRun, momentumNow } from './scheduled/momentumRun.js';
 export { riskPulse, pulseNow } from './scheduled/riskPulse.js';
+export { kiBericht, kiBerichtNow } from './scheduled/kiBericht.js';
 export { ensureProfile } from './callable/profile.js';
 export { saveStrategy } from './callable/strategy.js';
 export { resetBreaker } from './callable/resetBreaker.js';

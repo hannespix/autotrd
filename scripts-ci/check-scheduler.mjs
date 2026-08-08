@@ -54,6 +54,8 @@ const SCHEDULES = [
   { fn: 'autoTune', service: 'autotune', cron: '45 17 * * *', was: 'Auto-Tuner' },
   { fn: 'momentumRun', service: 'momentumrun', cron: '0 18 * * *', was: 'Momentum-Ranking' },
   { fn: 'strukturSuche', service: 'struktursuche', cron: '10 18 * * *', was: 'Struktursuche' },
+  // Nach allen Tages-Läufen: Der Bericht kommentiert den FERTIGEN Tagesstand.
+  { fn: 'kiBericht', service: 'kibericht', cron: '25 18 * * *', was: 'KI-Lagebericht' },
 ];
 
 const TZ = 'America/New_York';

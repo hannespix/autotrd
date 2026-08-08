@@ -57,8 +57,11 @@ import {
   wendeLoadoutAn,
   tagesPraefix,
   wilderRsi,
+  journalThese,
   zonenKuerzel,
+  type ErkenntnisChronik,
   type GlobalAxisStats,
+  type KiBerichtDoc,
   type HistoryTrade,
   type Position,
   type PositionLevels,
@@ -125,6 +128,8 @@ import {
   watchHealth,
   watchPositioning,
   saveJournalReview,
+  watchAiBericht,
+  watchErkenntnisse,
   watchJournal,
   watchStruktur,
   watchTuneFleet,
@@ -1018,6 +1023,19 @@ function layout(email: string): string {
         <div id="skBed" class="fl-tbl"><div class="hint">Kommt mit dem ersten Tageslauf.</div></div>
         <label class="lbl" style="margin-top:10px">Prüf-Journal</label>
         <div id="skLog" class="tn-log"><div class="hint">Noch kein Lauf — die Suche prüft täglich um 18:10 ET einen Kandidaten.</div></div>
+      </div></div>
+
+      <div class="card" data-panel="erkenntnisse"><div class="sect">Was das System gelernt hat ${iBtn('erkenntnisse')}
+        <span id="erDate" class="tn-tag" style="float:right"></span>
+      </div><div class="cbody">
+        <div class="hint">Alle anderen Zahlen hier sind Momentaufnahmen — sie werden überschrieben.
+          Diese Sätze bleiben: Jeden Abend prüft das System einen festen Satz Thesen gegen die
+          gemessenen Daten und hält fest, was gilt, seit wann es gilt und was widerlegt wurde.
+          Jede These trägt ihre Belegzahlen; unterhalb eines Mindest-n wird nichts behauptet.</div>
+        <div id="erList" class="fl-tbl" style="margin-top:8px"><div class="hint">Die erste Chronik entsteht mit dem nächsten Tages-Lauf (17:15 ET).</div></div>
+        <label class="lbl" style="margin-top:12px">Tages-Einschätzung ${iBtn('aibericht')} <span id="abStand" class="tn-tag" style="float:right"></span></label>
+        <div id="abText" class="hint">Der erste Bericht entsteht mit dem nächsten Tages-Lauf (18:25 ET).</div>
+        <div id="abMeta" class="tn-n mono"></div>
       </div></div>
 
     </div>
@@ -7007,6 +7025,99 @@ function renderStruktur(d: StrukturDoc | null): void {
     .join('');
 }
 
+/**
+ * Erkenntnis-Chronik (Owner-Go 08.08.).
+ *
+ * Sortiert nach Gewicht statt nach Katalog-Reihenfolge: Was GILT, steht
+ * oben — Widerlegtes darunter, Wartendes zuletzt. Wer die Karte öffnet, will
+ * wissen, was das System für wahr hält, nicht was es noch nicht weiß.
+ *
+ * Die Belegzahlen stehen bewusst UNTER jedem Satz: Eine These ohne
+ * nachrechenbare Grundlage ist eine Behauptung, und genau davon hat ein
+ * Handelssystem schon genug.
+ */
+function renderErkenntnisse(c: ErkenntnisChronik | null): void {
+  const box = $('erList');
+  const stand = $('erDate');
+  if (!box) return;
+  if (stand) stand.textContent = c?.date ? `Stand ${c.date}` : '';
+  const eintraege = Object.entries(c?.eintraege ?? {});
+  if (eintraege.length === 0) {
+    box.innerHTML =
+      '<div class="hint">Die erste Chronik entsteht mit dem nächsten Tages-Lauf (17:15 ET).</div>';
+    return;
+  }
+  const rang: Record<string, number> = { gilt: 0, gilt_nicht: 1, wartet_auf_daten: 2 };
+  const marke: Record<string, string> = {
+    gilt: '<span class="tn-tag tn-ok">gilt</span>',
+    gilt_nicht: '<span class="tn-tag">widerlegt</span>',
+    wartet_auf_daten: '<span class="tn-tag">wartet auf Daten</span>',
+  };
+  box.innerHTML = eintraege
+    .sort((a, b) => (rang[a[1].status] ?? 9) - (rang[b[1].status] ?? 9) || a[0].localeCompare(b[0]))
+    .map(([, e]) => {
+      const belege = Object.entries(e.beleg ?? {})
+        .map(([k, v]) => `${k} ${typeof v === 'number' ? String(Math.round(v * 100) / 100).replace('.', ',') : (v ?? '--')}`)
+        .join(' · ');
+      const seit = e.seitAt ? `seit ${e.seitAt.slice(0, 10)}` : '';
+      // Ein Wechsel ist die eigentliche Nachricht — ohne ihn wüsste man nie,
+      // dass eine frühere Annahme gekippt ist.
+      const letzter = e.historie?.[e.historie.length - 1];
+      const wechsel = letzter
+        ? `<div class="tn-r">Zuvor (${letzter.at.slice(0, 10)}): ${esc(letzter.these)}</div>`
+        : '';
+      return (
+        `<div class="tn-e"><div class="tn-h"><span class="tn-nm">${esc(e.these)}</span>${marke[e.status] ?? ''}` +
+        `<span class="tn-t mono">${seit}</span></div>` +
+        (belege ? `<div class="tn-n mono">${esc(belege)}</div>` : '') +
+        wechsel +
+        '</div>'
+      );
+    })
+    .join('');
+}
+
+/**
+ * Der tägliche KI-Lagebericht.
+ *
+ * Bewusst UNTER der Chronik in derselben Karte: Der Bericht ist die Deutung,
+ * die Chronik darüber die Faktenbasis. Getrennt platziert läse man die Deutung
+ * ohne ihre Belege — genau die Ordnung, die hier vermieden werden soll.
+ *
+ * Der Zustand „noch kein Schlüssel hinterlegt" wird ausgeschrieben statt
+ * verschwiegen: Ein Feature, das ohne Konfiguration still bleibt, sieht sonst
+ * aus wie ein kaputtes.
+ */
+function renderAiBericht(d: KiBerichtDoc | null): void {
+  const text = $('abText');
+  const stand = $('abStand');
+  const meta = $('abMeta');
+  if (!text || !stand || !meta) return;
+  if (!d || d.stand === 'kein_schluessel') {
+    stand.textContent = d ? 'nicht eingerichtet' : '';
+    text.textContent = d
+      ? 'Für die Tages-Einschätzung fehlt noch der API-Schlüssel des Modell-Anbieters (siehe docs/SETUP.md). Alles andere auf dieser Karte läuft ohne ihn.'
+      : 'Der erste Bericht entsteht mit dem nächsten Tages-Lauf (18:25 ET).';
+    meta.textContent = '';
+    return;
+  }
+  if (d.stand === 'fehler') {
+    stand.textContent = 'fehlgeschlagen';
+    text.textContent = `Der letzte Versuch ist gescheitert: ${d.fehler ?? 'unbekannter Grund'}. Der nächste Tages-Lauf versucht es erneut.`;
+    meta.textContent = '';
+    return;
+  }
+  stand.textContent = d.date ?? '';
+  text.textContent = d.text ?? '';
+  meta.textContent = [
+    d.modell,
+    d.tokens ? `${d.tokens.ein}+${d.tokens.aus} Token` : null,
+    d.laeufeImMonat ? `Lauf ${d.laeufeImMonat} im Monat` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
 /* ── Trade-Journal (M12): Fakten vom Server, Bewertung vom User ──────────
  * (renderJournal ist historisch die Trade-HISTORIE — daher TradeJournal.) */
 
@@ -7028,8 +7139,10 @@ function renderTradeJournal(rows: JournalRow[]): void {
           ? `<span class="tn-tag${(r.pnl ?? 0) >= 0 ? ' tn-ok' : ''}">Exit ${money(r.pnl ?? 0)}</span>`
           : '<span class="tn-tag">Entry</span>';
       const sc = r.signalContext;
-      // Der Kontext ist der Kern der Karte: WARUM stand die Engine so — als
-      // kompakte Zeile, nicht als JSON-Ausdruck.
+      // Die These in Worten (Owner-Go 08.08.): dieselben eingefrorenen Fakten,
+      // nur lesbar. Der Satz steht ÜBER der Kennzahlen-Zeile — wer schnell
+      // reviewt, liest nur ihn; wer nachrechnen will, findet darunter alles.
+      const these = journalThese(r);
       const kontext = [
         sc?.typ,
         r.riskExit,
@@ -7057,6 +7170,7 @@ function renderTradeJournal(rows: JournalRow[]): void {
           r.side === 'buy' ? 'Kauf' : 'Verkauf'
         } · ${r.qty}</span>${marke}` +
         `<span class="tn-t mono">${zeit}</span></div>` +
+        `<div class="tn-r">${esc(these)}</div>` +
         (kontext ? `<div class="tn-n mono">${esc(kontext)}</div>` : '') +
         `<div class="tn-h" style="margin-top:4px;gap:4px">${noten}` +
         `<input class="inp tj-note" data-id="${r.id}" value="${esc(r.notes ?? '')}" placeholder="Notiz …" style="flex:1;min-width:80px"></div></div>`
@@ -7543,6 +7657,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     watchTuneLog(uid, renderTuneLog),
     watchStruktur(uid, renderStruktur),
     watchJournal(uid, renderTradeJournal),
+    watchErkenntnisse(renderErkenntnisse),
+    watchAiBericht(renderAiBericht),
     watchTuneGlobal(renderTuneGlobal),
   );
   wireTradeJournal(uid);

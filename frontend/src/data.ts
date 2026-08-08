@@ -4,7 +4,9 @@
  */
 
 import {
+  type ErkenntnisChronik,
   type GlobalAxisStats,
+  type KiBerichtDoc,
   type KanteJeTrade,
   type Position,
   type Quote,
@@ -1116,6 +1118,41 @@ export interface StrukturDoc {
     zeilen?: Array<{ seite?: string; label?: string; gefeuert?: number; amSignalTag?: number }>;
   };
   updatedAt?: string;
+}
+
+/**
+ * Erkenntnis-Chronik (`meta/erkenntnisse`, Owner-Go 08.08.).
+ *
+ * Über den Mux wie die anderen `meta`-Dokumente: EIN Listener je Browser,
+ * nicht je Tab. Der Inhalt ist bewusst öffentlich lesbar — Thesen, Quoten und
+ * Zählwerte, keine Beträge und keine Kennungen.
+ */
+export function watchErkenntnisse(cb: (c: ErkenntnisChronik | null) => void): Unsubscribe {
+  return muxWatch(
+    'erkenntnisse',
+    (emit) =>
+      onSnapshot(doc(db(), 'meta', 'erkenntnisse'), (snap) =>
+        emit(snap.exists() ? (snap.data() as ErkenntnisChronik) : null),
+      ),
+    (p) => cb(p as ErkenntnisChronik | null),
+  );
+}
+
+/**
+ * Täglicher KI-Lagebericht (`meta/aiBericht`) — ein Text, den ein Modell aus
+ * der Chronik und den Messständen schreibt. Wie alle `meta`-Dokumente
+ * öffentlich lesbar; er enthält keine Kontodaten, sondern nur das
+ * Gesamtbild, das ohnehin im Heartbeat steht.
+ */
+export function watchAiBericht(cb: (d: KiBerichtDoc | null) => void): Unsubscribe {
+  return muxWatch(
+    'aiBericht',
+    (emit) =>
+      onSnapshot(doc(db(), 'meta', 'aiBericht'), (snap) =>
+        emit(snap.exists() ? (snap.data() as KiBerichtDoc) : null),
+      ),
+    (p) => cb(p as KiBerichtDoc | null),
+  );
 }
 
 export function watchStruktur(uid: string, cb: (d: StrukturDoc | null) => void): Unsubscribe {
