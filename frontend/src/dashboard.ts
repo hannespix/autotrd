@@ -61,6 +61,7 @@ import {
   zonenKuerzel,
   type ErkenntnisChronik,
   type GlobalAxisStats,
+  type KiBerichtDoc,
   type HistoryTrade,
   type Position,
   type PositionLevels,
@@ -127,6 +128,7 @@ import {
   watchHealth,
   watchPositioning,
   saveJournalReview,
+  watchAiBericht,
   watchErkenntnisse,
   watchJournal,
   watchStruktur,
@@ -1031,6 +1033,9 @@ function layout(email: string): string {
           gemessenen Daten und hält fest, was gilt, seit wann es gilt und was widerlegt wurde.
           Jede These trägt ihre Belegzahlen; unterhalb eines Mindest-n wird nichts behauptet.</div>
         <div id="erList" class="fl-tbl" style="margin-top:8px"><div class="hint">Die erste Chronik entsteht mit dem nächsten Tages-Lauf (17:15 ET).</div></div>
+        <label class="lbl" style="margin-top:12px">Tages-Einschätzung ${iBtn('aibericht')} <span id="abStand" class="tn-tag" style="float:right"></span></label>
+        <div id="abText" class="hint">Der erste Bericht entsteht mit dem nächsten Tages-Lauf (18:25 ET).</div>
+        <div id="abMeta" class="tn-n mono"></div>
       </div></div>
 
     </div>
@@ -7072,6 +7077,47 @@ function renderErkenntnisse(c: ErkenntnisChronik | null): void {
     .join('');
 }
 
+/**
+ * Der tägliche KI-Lagebericht.
+ *
+ * Bewusst UNTER der Chronik in derselben Karte: Der Bericht ist die Deutung,
+ * die Chronik darüber die Faktenbasis. Getrennt platziert läse man die Deutung
+ * ohne ihre Belege — genau die Ordnung, die hier vermieden werden soll.
+ *
+ * Der Zustand „noch kein Schlüssel hinterlegt" wird ausgeschrieben statt
+ * verschwiegen: Ein Feature, das ohne Konfiguration still bleibt, sieht sonst
+ * aus wie ein kaputtes.
+ */
+function renderAiBericht(d: KiBerichtDoc | null): void {
+  const text = $('abText');
+  const stand = $('abStand');
+  const meta = $('abMeta');
+  if (!text || !stand || !meta) return;
+  if (!d || d.stand === 'kein_schluessel') {
+    stand.textContent = d ? 'nicht eingerichtet' : '';
+    text.textContent = d
+      ? 'Für die Tages-Einschätzung fehlt noch der API-Schlüssel des Modell-Anbieters (siehe docs/SETUP.md). Alles andere auf dieser Karte läuft ohne ihn.'
+      : 'Der erste Bericht entsteht mit dem nächsten Tages-Lauf (18:25 ET).';
+    meta.textContent = '';
+    return;
+  }
+  if (d.stand === 'fehler') {
+    stand.textContent = 'fehlgeschlagen';
+    text.textContent = `Der letzte Versuch ist gescheitert: ${d.fehler ?? 'unbekannter Grund'}. Der nächste Tages-Lauf versucht es erneut.`;
+    meta.textContent = '';
+    return;
+  }
+  stand.textContent = d.date ?? '';
+  text.textContent = d.text ?? '';
+  meta.textContent = [
+    d.modell,
+    d.tokens ? `${d.tokens.ein}+${d.tokens.aus} Token` : null,
+    d.laeufeImMonat ? `Lauf ${d.laeufeImMonat} im Monat` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
 /* ── Trade-Journal (M12): Fakten vom Server, Bewertung vom User ──────────
  * (renderJournal ist historisch die Trade-HISTORIE — daher TradeJournal.) */
 
@@ -7612,6 +7658,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     watchStruktur(uid, renderStruktur),
     watchJournal(uid, renderTradeJournal),
     watchErkenntnisse(renderErkenntnisse),
+    watchAiBericht(renderAiBericht),
     watchTuneGlobal(renderTuneGlobal),
   );
   wireTradeJournal(uid);

@@ -6,6 +6,7 @@
 import {
   type ErkenntnisChronik,
   type GlobalAxisStats,
+  type KiBerichtDoc,
   type KanteJeTrade,
   type Position,
   type Quote,
@@ -1134,6 +1135,23 @@ export function watchErkenntnisse(cb: (c: ErkenntnisChronik | null) => void): Un
         emit(snap.exists() ? (snap.data() as ErkenntnisChronik) : null),
       ),
     (p) => cb(p as ErkenntnisChronik | null),
+  );
+}
+
+/**
+ * Täglicher KI-Lagebericht (`meta/aiBericht`) — ein Text, den ein Modell aus
+ * der Chronik und den Messständen schreibt. Wie alle `meta`-Dokumente
+ * öffentlich lesbar; er enthält keine Kontodaten, sondern nur das
+ * Gesamtbild, das ohnehin im Heartbeat steht.
+ */
+export function watchAiBericht(cb: (d: KiBerichtDoc | null) => void): Unsubscribe {
+  return muxWatch(
+    'aiBericht',
+    (emit) =>
+      onSnapshot(doc(db(), 'meta', 'aiBericht'), (snap) =>
+        emit(snap.exists() ? (snap.data() as KiBerichtDoc) : null),
+      ),
+    (p) => cb(p as KiBerichtDoc | null),
   );
 }
 

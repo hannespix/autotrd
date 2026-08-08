@@ -39,3 +39,4 @@ export * from './positionView.js';
 export * from './chartTime.js';
 export * from './erkenntnisse.js';
 export * from './journalText.js';
+export * from './kiBericht.js';

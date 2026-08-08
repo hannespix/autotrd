@@ -381,3 +381,41 @@ Zusätzlich verlangt das Hinterlegen eines `AK…`-Schlüssels eine Anmeldung,
 die **höchstens fünf Minuten alt** ist. Das ist der zweite Faktor an der
 Stelle, an der er wirkt: Nicht beim Login — dort schützt er gegen gestohlene
 Passwörter, aber nicht gegen eine bereits übernommene, offene Sitzung.
+
+## N. Tages-Einschätzung (KI) einschalten (~2 min, optional)
+
+Die Karte „Was das System gelernt hat" arbeitet vollständig ohne KI: Die
+Erkenntnis-Chronik entsteht deterministisch aus den eigenen Messwerten und
+kostet nichts. Nur die **Tages-Einschätzung** darunter — ein Absatz, der die
+Befunde miteinander in Beziehung setzt — braucht ein Sprachmodell.
+
+Ohne hinterlegten Schlüssel bleibt genau diese eine Zeile leer und meldet
+„nicht eingerichtet". Nichts anderes ändert sich; der Deploy bleibt grün.
+
+### 1. Schlüssel hinterlegen
+
+```bash
+firebase functions:secrets:set ANTHROPIC_API_KEY
+```
+
+### 2. Deklaration nachziehen
+
+Erst **nach** Schritt 1: In `functions/src/scheduled/kiBericht.ts` muss
+`secrets: ['ANTHROPIC_API_KEY']` in die `onSchedule`-Optionen. Vorher würde
+der Deploy mit „Secret does not exist" abbrechen — dieselbe Reihenfolge wie
+beim `BROKER_MASTER_KEY` in Abschnitt M.
+
+### 3. Was das kostet, und was es nicht kann
+
+Ein Aufruf pro Tag, um 18:25 ET, nachdem alle Tages-Läufe fertig sind. Die
+Eingabe ist klein (Chronik plus Kennzahlen), die Antwort auf 200 Wörter
+begrenzt — ein Lauf liegt im niedrigen Cent-Bereich. Zusätzlich greifen drei
+Guards: idempotent je Datum (ein zweiter Aufruf am selben Tag tut nichts),
+ein Monatsdeckel von 40 Läufen und ein hartes Token-Limit je Antwort.
+
+Der Bericht **steuert nichts**. Er löst keine Order aus, ändert keine
+Einstellung und befördert keine Strategie — jede solche Entscheidung braucht
+weiterhin statistische Evidenz aus Auto-Tuner oder Struktursuche. Und das
+Modell sieht ausschließlich selbst gerechnete Zahlen: keine Schlagzeilen,
+keine Nutzertexte, nichts aus dem Netz. Damit lassen sich über die Eingabe
+keine fremden Anweisungen einschleusen.
