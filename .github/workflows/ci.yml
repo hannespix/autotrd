@@ -16,6 +16,12 @@ jobs:
           cache: npm
       - name: Abhängigkeiten installieren
         run: npm ci
+      # functions/ hat ein EIGENES Lockfile (der Cloud-Build macht damit
+      # npm ci). Ein `npm install --workspace functions` schreibt nur das
+      # Root-Lockfile — dann ist hier alles grün und der Deploy bricht danach
+      # für ALLE Functions ab. Vor dem Merge prüfen, nicht danach.
+      - name: functions-Lockfile synchron?
+        run: node scripts-ci/check-functions-lock.mjs
       - name: Lint
         run: npm run lint
       - name: Typecheck
