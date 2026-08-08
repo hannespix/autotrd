@@ -17,72 +17,119 @@
  * `secrets.versions.access`, und er ist hier Absicht.
  *
  * Der Schritt ist bewusst NIE rot: Er beantwortet eine Frage, er stellt
- * keine Bedingung. Fehlt die Berechtigung oder der Service-Account, wird
- * das gemeldet und mit Erfolg beendet.
+ * keine Bedingung.
+ *
+ * ── Die Aufruf-Konvention von gfetch (erster Anlauf lag hier falsch) ──────
+ *
+ * `gfetch` gibt bei Erfolg DIREKT die Daten zurück — es gibt kein
+ * `.status`-Feld — und WIRFT bei jedem Nicht-2xx, mit `err.status`. Der
+ * erste Entwurf hat auf `meta.status === 404` geprüft; das ist bei Erfolg
+ * `undefined` und im Fehlerfall unerreichbar, weil der Wurf vorher greift.
+ * Ergebnis war eine nutzlose Meldung („unerwartete Antwort HTTP undefined")
+ * für ein Secret, das in Wahrheit existierte. Deshalb hier: Erfolg heißt
+ * vorhanden, und die Unterscheidung 404/403/sonstiges passiert im catch.
  *
  * Aufruf: node scripts-ci/check-secret.mjs ANTHROPIC_API_KEY [WEITERES…]
  */
 
 import { gfetch, mintAccessToken, projectFromFirebaserc, readServiceAccount } from './gcp-lite.mjs';
 
-const namen = process.argv.slice(2);
-if (namen.length === 0) {
-  console.log('Kein Secret-Name übergeben — nichts zu prüfen.');
-  process.exit(0);
-}
-
-// readServiceAccount WIRFT, wenn GOOGLE_APPLICATION_CREDENTIALS fehlt — es
-// gibt kein `null` zurück. Ohne dieses try/catch stürbe der Schritt lokal und
-// in jedem Lauf ohne Anmeldedaten mit Stacktrace, statt eine Zeile zu melden.
-let sa;
-try {
-  sa = readServiceAccount();
-} catch (err) {
-  console.log(`Kein Service-Account verfügbar (${err.message}) — Secret-Diagnose übersprungen.`);
-  process.exit(0);
-}
-
-const projekt = projectFromFirebaserc();
-let token;
-try {
-  token = await mintAccessToken(sa);
-} catch (err) {
-  console.log(`Token nicht erhältlich (${err.message}) — Secret-Diagnose übersprungen.`);
-  process.exit(0);
-}
-
-const basis = `https://secretmanager.googleapis.com/v1/projects/${projekt}/secrets`;
-
-for (const name of namen) {
+/**
+ * Ein Secret prüfen — die reine Auswertungslogik, vom Netz getrennt.
+ *
+ * `hole` bildet die gfetch-Konvention ab (Erfolg → Daten, Fehler → Wurf mit
+ * `.status`). Als Parameter statt als Import, damit alle Zweige ohne
+ * Anmeldedaten und ohne Netz prüfbar sind — die Unterscheidung
+ * „existiert / existiert nicht / keine aktive Version / kein Zugriff" ist
+ * genau das, worauf später eine Deploy-Entscheidung aufsetzt.
+ */
+export async function pruefeSecret(name, basis, hole) {
+  let meta;
   try {
-    const meta = await gfetch(`${basis}/${name}`, { token });
-    if (meta.status === 404) {
-      console.log(`::notice::Secret ${name}: EXISTIERT NICHT.`);
-      continue;
-    }
-    if (meta.status === 403) {
-      console.log(
-        `::warning::Secret ${name}: keine Leseberechtigung (403). ` +
-          `Dem Deploy-Service-Account fehlt roles/secretmanager.viewer.`,
-      );
-      continue;
-    }
-    if (meta.status !== 200) {
-      console.log(`::warning::Secret ${name}: unerwartete Antwort HTTP ${meta.status}.`);
-      continue;
-    }
-
-    // Existieren reicht nicht — ein Secret ohne aktivierte Version ist beim
-    // Binden genauso wertlos wie keines.
-    const vers = await gfetch(`${basis}/${name}/versions?filter=state:ENABLED`, { token });
-    const anzahl = Array.isArray(vers.data?.versions) ? vers.data.versions.length : 0;
-    const erstellt = meta.data?.createTime ?? '?';
-    console.log(
-      anzahl > 0
-        ? `::notice::Secret ${name}: VORHANDEN mit ${anzahl} aktiven Version(en), angelegt ${erstellt}. Bereit zum Binden.`
-        : `::warning::Secret ${name}: existiert (angelegt ${erstellt}), hat aber KEINE aktive Version — Binden würde zur Laufzeit ins Leere greifen.`,
-    );
+    meta = await hole(`${basis}/${name}`);
   } catch (err) {
-    console.log(`::warning::Secret ${name}: Prüfung fehlgeschlagen — ${err.message}`);
+    if (err.status === 404) return { name, stand: 'fehlt', text: 'EXISTIERT NICHT.' };
+    if (err.status === 403) {
+      return {
+        name,
+        stand: 'kein_zugriff',
+        text: 'keine Leseberechtigung (403) — dem Deploy-Service-Account fehlt roles/secretmanager.viewer.',
+      };
+    }
+    return { name, stand: 'fehler', text: `Prüfung fehlgeschlagen — ${err.message}` };
+  }
+
+  // Existieren reicht nicht — ein Secret ohne aktivierte Version ist beim
+  // Binden genauso wertlos wie keines, sieht im „existiert"-Check aber gleich aus.
+  const erstellt = meta?.createTime ?? '?';
+  let aktive;
+  try {
+    const vers = await hole(`${basis}/${name}/versions?filter=state:ENABLED`);
+    aktive = Array.isArray(vers?.versions) ? vers.versions.length : 0;
+  } catch (err) {
+    return {
+      name,
+      stand: 'vorhanden_version_unklar',
+      text: `VORHANDEN (angelegt ${erstellt}), Versionsliste nicht lesbar — ${err.message}`,
+    };
+  }
+
+  return aktive > 0
+    ? {
+        name,
+        stand: 'bereit',
+        text: `VORHANDEN mit ${aktive} aktiven Version(en), angelegt ${erstellt}. Bereit zum Binden.`,
+      }
+    : {
+        name,
+        stand: 'ohne_version',
+        text: `existiert (angelegt ${erstellt}), hat aber KEINE aktive Version — Binden würde zur Laufzeit ins Leere greifen.`,
+      };
+}
+
+/** Meldungsart je Ausgang: „bereit" und „fehlt" sind Befunde, kein Alarm. */
+const ART = {
+  bereit: 'notice',
+  fehlt: 'notice',
+  ohne_version: 'warning',
+  kein_zugriff: 'warning',
+  vorhanden_version_unklar: 'warning',
+  fehler: 'warning',
+};
+
+// Ab hier nur noch IO — beim Import (Test) wird nichts davon ausgeführt.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const namen = process.argv.slice(2);
+  if (namen.length === 0) {
+    console.log('Kein Secret-Name übergeben — nichts zu prüfen.');
+    process.exit(0);
+  }
+
+  // readServiceAccount WIRFT, wenn GOOGLE_APPLICATION_CREDENTIALS fehlt — es
+  // gibt kein `null` zurück. Ohne dieses try/catch stürbe der Schritt lokal
+  // und in jedem Lauf ohne Anmeldedaten mit Stacktrace.
+  let sa;
+  try {
+    sa = readServiceAccount();
+  } catch (err) {
+    console.log(`Kein Service-Account verfügbar (${err.message}) — Secret-Diagnose übersprungen.`);
+    process.exit(0);
+  }
+
+  let token;
+  try {
+    token = await mintAccessToken(sa);
+  } catch (err) {
+    console.log(`Token nicht erhältlich (${err.message}) — Secret-Diagnose übersprungen.`);
+    process.exit(0);
+  }
+
+  const projekt = projectFromFirebaserc();
+  const basis = `https://secretmanager.googleapis.com/v1/projects/${projekt}/secrets`;
+  const hole = (url) => gfetch(url, { token });
+
+  for (const name of namen) {
+    const r = await pruefeSecret(name, basis, hole);
+    console.log(`::${ART[r.stand] ?? 'warning'}::Secret ${r.name}: ${r.text}`);
   }
 }
