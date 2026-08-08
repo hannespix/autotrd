@@ -142,11 +142,33 @@ export const RUNS = [
     // (idempotent je Datum, Monatsdeckel) greifen unabhängig davon.
     optional: true,
     async spur(project) {
-      const doc = await readMeta(project, 'aiBericht');
-      return doc ? { at: doc.at, date: doc.date } : null;
+      return berichtSpur(await readMeta(project, 'aiBericht'));
     },
   },
 ];
+
+/**
+ * Zählt der Vermerk in `meta/aiBericht` als „heute schon gelaufen"?
+ *
+ * Nur ein fertiger Bericht tut das. Das Dokument trägt aber AUCH die
+ * Fehlzustände `kein_schluessel` und `fehler` ein — absichtlich, damit die
+ * Karte den Grund nennt statt „noch kein Bericht" zu zeigen. Wer bloß auf die
+ * Existenz des Dokuments prüft, hält genau diese Fehlermeldung für einen
+ * Erfolg und überspringt den Lauf für den Rest des Tages.
+ *
+ * Am 08.08. ist das passiert: Der Deploy vermerkte um 22:25 UTC
+ * `kein_schluessel` (das Secret war im selben Lauf erst gebunden worden),
+ * und das Gate hätte den ersten echten Bericht bis zum Folgetag verhindert.
+ *
+ * Die Unterscheidung steht damit an beiden Enden gleich: `entscheideLauf()`
+ * in shared/kiBericht.ts sperrt den Tag ebenfalls nur bei `stand === 'bericht'`
+ * — ein Fehlversuch darf den nächsten Anlauf nicht blockieren. Der
+ * Monatsdeckel bleibt die Kostenbremse für den Fall, dass ein Anbieter
+ * dauerhaft ausfällt und mehrere Deploys am Tag es erneut versuchen.
+ */
+export function berichtSpur(doc) {
+  return doc?.stand === 'bericht' ? { at: doc.at, date: doc.date } : null;
+}
 
 /**
  * Führt die Läufe aus. `invoke` und `wait` sind injizierbar, damit der Test
