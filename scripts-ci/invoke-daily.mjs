@@ -128,6 +128,24 @@ export const RUNS = [
       return doc ? { at: doc.at } : null;
     },
   },
+  {
+    service: 'kibericht',
+    label: 'KI-Lagebericht (Tages-Einschätzung)',
+    // MUSS nach snapshotequity stehen: Der Bericht liest die
+    // Erkenntnis-Chronik, und die entsteht erst in diesem Lauf. Die
+    // Reihenfolge dieser Tabelle ist die Ausführungsreihenfolge — auch mit
+    // `--only`, weil dort nur gefiltert wird.
+    //
+    // Optional, weil der Cloud Scheduler ihn ohnehin täglich um 18:25 ET
+    // fährt und ein Modell-Anbieter ausfallen kann: Ein Text, der heute
+    // fehlt, darf keinen Deploy rot machen. Die eigenen Kosten-Guards
+    // (idempotent je Datum, Monatsdeckel) greifen unabhängig davon.
+    optional: true,
+    async spur(project) {
+      const doc = await readMeta(project, 'aiBericht');
+      return doc ? { at: doc.at, date: doc.date } : null;
+    },
+  },
 ];
 
 /**

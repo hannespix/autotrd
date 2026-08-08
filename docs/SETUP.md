@@ -392,20 +392,30 @@ Befunde miteinander in Beziehung setzt — braucht ein Sprachmodell.
 Ohne hinterlegten Schlüssel bleibt genau diese eine Zeile leer und meldet
 „nicht eingerichtet". Nichts anderes ändert sich; der Deploy bleibt grün.
 
-### 1. Schlüssel hinterlegen
+### Status: bereits eingerichtet (Stand 08.08.)
+
+**Hier ist nichts mehr zu tun.** Das Secret `ANTHROPIC_API_KEY` liegt seit dem
+23.07. im Projekt — angelegt für die damalige KI-Staffel, nach deren Ausbau am
+28.07. ungenutzt liegengeblieben. Die Deploy-Diagnose hat das bestätigt
+(„VORHANDEN mit 1 aktiven Version"), und `functions/src/scheduled/kiBericht.ts`
+bindet es seitdem über `secrets: ['ANTHROPIC_API_KEY']`.
+
+Nur falls der Schlüssel einmal ersetzt werden muss:
 
 ```bash
 firebase functions:secrets:set ANTHROPIC_API_KEY
 ```
 
-### 2. Deklaration nachziehen
+Eine neue Version wird beim nächsten Deploy automatisch gebunden; an der
+Deklaration ändert sich nichts.
 
-Erst **nach** Schritt 1: In `functions/src/scheduled/kiBericht.ts` muss
-`secrets: ['ANTHROPIC_API_KEY']` in die `onSchedule`-Optionen. Vorher würde
-der Deploy mit „Secret does not exist" abbrechen — dieselbe Reihenfolge wie
-beim `BROKER_MASTER_KEY` in Abschnitt M.
+**Reihenfolge bei WEITEREN Secrets:** erst anlegen, dann deklarieren. Eine
+Deklaration für ein Secret, das es nicht gibt, bricht den GESAMTEN Deploy mit
+„Secret does not exist". Ob eines existiert, sagt der Schritt
+„Secret-Diagnose" in jedem Deploy-Log (`scripts-ci/check-secret.mjs`) — er
+liest nur Metadaten, nie den Wert.
 
-### 3. Was das kostet, und was es nicht kann
+### Was das kostet, und was es nicht kann
 
 Ein Aufruf pro Tag, um 18:25 ET, nachdem alle Tages-Läufe fertig sind. Die
 Eingabe ist klein (Chronik plus Kennzahlen), die Antwort auf 200 Wörter
