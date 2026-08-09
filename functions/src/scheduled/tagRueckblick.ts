@@ -39,6 +39,7 @@ import {
   type TagesKurs,
 } from '../../../shared/src/index.js';
 import { computeSignal } from '../core/engine.js';
+import { DEEP_BACKFILL_V } from '../core/marketData.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 
 /**
@@ -103,7 +104,22 @@ export async function runTagRueckblick(now = new Date()): Promise<TagRueckblickL
 
   const marktDocs = await db.collection('market').get();
   const stand = new Map(marktDocs.docs.map((d) => [d.id, d.get('tagRueckblickV') as unknown]));
-  const offen = katalog.filter((s) => stand.get(s) !== TAG_RUECKBLICK_V);
+  /*
+   * NUR Symbole mit aktueller Tages-Historie (Nachtrag 09.08.).
+   *
+   * Ohne diese Bedingung hätte der erste Lauf nach dem Granularitäts-Fix
+   * Schaden angerichtet: `DEEP_BACKFILL_V` ging auf 3, weil `range=max`
+   * MONATSKERZEN geliefert hatte. Bis alle Symbole neu geholt sind, dauert es
+   * mehrere Läufe. Wer noch auf V2 steht, trägt Monatsbars — die Rückschau
+   * würde daran jeden Basistag am Lücken-Gate verwerfen, NULL Beiträge
+   * liefern und das Symbol trotzdem als bewertet markieren. Es käme dann nie
+   * wieder an die Reihe, und die Kante bliebe für immer unvollständig, ohne
+   * dass irgendwo ein Fehler stünde.
+   */
+  const historie = new Map(marktDocs.docs.map((d) => [d.id, d.get('deepBackfillV') as unknown]));
+  const offen = katalog.filter(
+    (s) => stand.get(s) !== TAG_RUECKBLICK_V && historie.get(s) === DEEP_BACKFILL_V,
+  );
   if (offen.length === 0) return { symbole: 0, bewertet: 0, uebersprungen: 0, fehlerhaft: 0, offen: 0 };
 
   // Rotierend, damit ein dauerhaft scheiterndes Symbol nicht für immer den
@@ -144,6 +160,25 @@ export async function runTagRueckblick(now = new Date()): Promise<TagRueckblickL
         kosten,
         heuteIso,
       );
+
+      /*
+       * Zweiter Riegel gegen grobe Kerzen (Nachtrag 09.08.).
+       *
+       * Der Versions-Filter oben sollte das schon abfangen. Dieser hier greift
+       * unabhängig vom Marker und trifft die Sache direkt: Wenn kein einziger
+       * Basistag durchkam UND das Lücken-Gate zugeschlagen hat, ist die Reihe
+       * nicht täglich — egal was am Symbol-Doc steht. Dann NICHT markieren,
+       * sondern beim nächsten Lauf erneut versuchen.
+       *
+       * Ein Symbol ohne Beiträge, bei dem auch keine Lücke gemeldet wurde, ist
+       * dagegen sauber bewertet — es hatte schlicht nur `hold`-Signale. Das
+       * darf und muss markiert werden, sonst dreht sich die Rotation ewig.
+       */
+      if (e.bewertet === 0 && e.ausfaelle.luecke > 0) {
+        uebersprungen += 1;
+        logger.info(`Tages-Rückblick ${sym}: keine Tagesreihe (${e.ausfaelle.luecke} Lücken)`);
+        continue;
+      }
 
       // Aggregat und Marker gehören in EINEN Batch: Bricht der Lauf dazwischen
       // ab, zählte der nächste dasselbe Symbol ein zweites Mal — und die
