@@ -1676,6 +1676,87 @@ Woche, sondern ein gemessenes Ergebnis.
 Weil es zwölf der neununddreißig Watchlist-Symbole betrifft, gehört die
 Entscheidung dem Owner und nicht dem Coding-Loop.
 
+## MX — Der Ausstieg schneidet die Gewinner ab (Owner-Go 09.08.)
+
+Owner-Frage: „überlege wie man mit recht großer Sicherheit in kurzer Zeit
+mehr als 10 % oder halt einfach einen maximal großen Gewinn erzielen kann!"
+
+**Die ehrliche Hälfte der Antwort zuerst:** „Große Sicherheit" und „>10 % in
+kurzer Zeit" schließen sich aus. Rendite in kurzer Zeit entsteht aus
+Bewegung, und Bewegung ist symmetrisch. Für dieses System galt zudem eine
+härtere Zahl — aus 317 Trades (Trefferquote 32,5 %, Gewinn/Verlust 1,18):
+
+```
+Erwartungswert je Trade  = −0,29 Verlusteinheiten
+Kelly-Einsatz f*         = −24,6 %
+```
+
+Der optimale Einsatz war NEGATIV. Mehr Kapital, mehr Hebel oder mehr Trades
+hätten den erwarteten Verlust proportional vergrößert; der naheliegende Weg
+zu 10 % (Hebel) macht aus −0,29 bei dreifachem Hebel −0,87 je Trade. Ein
+System in diesem Zustand kann man nicht größer machen, nur reparieren.
+
+**Wo es klemmte, sagt die Ausstiegs-Statistik eindeutig:**
+
+| Ausstieg | Trades | Anteil | Trefferquote |
+|---|---|---|---|
+| Signal | 275 | 86,8 % | **26,9 %** |
+| Take-Profit | 26 | 8,2 % | **100 %** |
+| Stop-Loss | 11 | 3,5 % | 0 % |
+| Trailing | 5 | 1,6 % | 60 % |
+
+Jeder Trade, der sein Ziel erreicht, gewinnt — ausnahmslos. Nur acht Prozent
+kommen je dort an. Die Richtungslogik ist nicht das Problem (die Signale
+treffen mit 52,8 % über 523 Messungen besser als der Zufall); der Ausstieg
+schneidet die Gewinner ab, bevor sie welche werden.
+
+Gedankenexperiment mit denselben Zahlen: Signal-Exits von 87 % auf 50 %
+gedrückt, die Hälfte davon läuft stattdessen ins Ziel ⇒ Trefferquote
+32,5 % → 59,7 %, **Kelly −24,6 % → +25,6 %**.
+
+- [x] **MX1 Ausstieg asymmetrisch** *(09.08.)*: `signals.exitConfluence`
+      2 → 3. Bei 2 war der Ausstieg genauso leicht wie der Einstieg —
+      dieselben zwei Stimmen, die eine Position eröffnen, schlossen sie
+      wieder. Jetzt braucht der Ausstieg entweder alle drei Indikatoren oder
+      die Prognose (Gewicht 2, beim Ausstieg voll gezählt) plus eine echte
+      Indikator-Stimme. Einsteigen bei zwei, aussteigen erst bei drei.
+- [x] **MX2 Mindesthaltedauer auf einen Tag** *(09.08.)*: `minHoldMin`
+      60 → 1440. Bei `timeframe: 'daily'` ist ein Tagessignal die Einheit;
+      es 60 Minuten später zu widerrufen verwirft die Information, bevor sie
+      sich zeigen konnte. Nebeneffekt bewusst in Kauf genommen: `costGate`
+      rechnet die erwartete Bewegung aus ATR × √Kerzen über die
+      Mindesthaltedauer, die Kostenschwelle lässt also mehr durch — das ist
+      keine Aufweichung, sondern die korrekte Physik.
+- [x] **MX3 Migration bestehender Konten** *(09.08.)*: `exitUmbauPlan` in
+      shared/strategy.ts, aufgerufen im Scan vor der Signalauswertung. Sie
+      VERSCHÄRFT nur (wer länger hält oder mehr Gegenstimmen verlangt,
+      behält seinen Wert), läuft genau einmal je Konto (`exitUmbauStand`)
+      und fasst kein Sicherheitsnetz an. Ohne sie träfe der Umbau genau die
+      Konten nicht, die ihn nötig haben — Bestandskonten behalten ihre
+      gespeicherten Werte. Bei fehlendem `exitConfluence` rechnet die Engine
+      mit `minConfluence − 1`, also EINER Gegenstimme; die Migration liest
+      das als schwächsten Wert, nicht als bewusste Wahl.
+- [x] **MX4 Suchgitter nachgeführt** *(09.08.)*: `minHoldMin` von
+      [0, 30, 60, 120, 240] auf [240, 720, 1440, 2880, 4320],
+      `exitConfluence` von [1, 2, 3] auf [2, 3, 4]. Das alte Gitter kannte
+      ausschließlich Werte UNTERHALB des neuen Standards — der Auto-Tuner
+      hätte systematisch versucht, die gerade eingebaute Bremse wieder zu
+      lösen, und nie geprüft, ob noch länger besser wäre.
+
+**Was BEWUSST nicht passiert ist:** Der erste Entwurf setzte zusätzlich
+`maxHoldDays` von 0 (unbegrenzt) auf 10. Die Testsuite hat sofort
+widersprochen — mehrere Exit-Tests meldeten `max_hold` statt `null`. Der
+Grund dahinter wiegt schwerer als der Nutzen: Die Frist misst AB EINSTIEG.
+Sie einzuschalten hieße, beim nächsten Scan jede ältere Position quer durch
+alle Konten zu schließen, mit Gebühren auf jede einzelne und ohne Bezug zu
+ihrer Aussicht. Wer eine Frist will, setzt sie im Options-Modal bewusst.
+
+**Offen:** Der Effekt ist eine RECHNUNG, keine Messung. Das
+Gedankenexperiment unterstellt, dass die Hälfte der verhinderten
+Signal-Exits ins Ziel läuft — plausibel, weil das Verhältnis Ziel:Stop heute
+bei 70:30 liegt, aber unbewiesen. Die Schattenmessung läuft weiter; in
+einigen Wochen sagt `exits` im Heartbeat, was tatsächlich passiert ist.
+
 ## MG — Kapital-Regler je Anlageklasse (Owner-Vorschlag 04.08.)
 
 Owner: „kann man für die einzelnen Handelsklassen auch Schieberegler

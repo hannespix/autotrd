@@ -385,16 +385,28 @@ describe('minHoldActive', () => {
 });
 
 describe('Standardwerte nach der Kosten-Auswertung', () => {
-  it('verlangt zum Ausstieg dieselbe Konfluenz wie zum Einstieg', () => {
-    // Vorher 1: EINE Gegenstimme von dreien reichte. Auf 5-min-Bars kippt
-    // permanent eine — die Position flog raus, bevor sie etwas werden konnte.
-    expect(DEFAULT_STRATEGY.signals.exitConfluence).toBe(2);
-    expect(DEFAULT_STRATEGY.signals.exitConfluence).toBe(DEFAULT_STRATEGY.signals.minConfluence);
+  it('verlangt zum Ausstieg MEHR Konfluenz als zum Einstieg (Exit-Umbau 09.08.)', () => {
+    // 1 (bis 30.07.) → 2 → 3. Bei 2 war der Ausstieg genauso leicht wie der
+    // Einstieg: Dieselben zwei Stimmen, die eine Position eröffnen, schlossen
+    // sie wieder. Ergebnis in 317 Trades: 86,8 % starben am Signal, mit
+    // 26,9 % Trefferquote. Jetzt bekommt die Position den Zweifel.
+    expect(DEFAULT_STRATEGY.signals.exitConfluence).toBe(3);
+    expect(DEFAULT_STRATEGY.signals.exitConfluence).toBeGreaterThan(
+      DEFAULT_STRATEGY.signals.minConfluence,
+    );
   });
 
-  it('hält Positionen mindestens eine Stunde und pausiert danach ebenso lang', () => {
-    expect(DEFAULT_STRATEGY.engine.minHoldMin).toBe(60);
+  it('hält Positionen mindestens einen TAG (Exit-Umbau 09.08.)', () => {
+    // 60 min waren bei `timeframe: 'daily'` fast nichts — ein Tagessignal
+    // wurde widerrufen, bevor es sich zeigen konnte. Der Cooldown bleibt bei
+    // 60: Er schützt vor sofortigem Wiedereinstieg, nicht vor zu frühem
+    // Ausstieg, und diese beiden Fragen sind verschieden.
+    expect(DEFAULT_STRATEGY.engine.minHoldMin).toBe(1440);
     expect(DEFAULT_STRATEGY.engine.cooldownMin).toBe(60);
+  });
+
+  it('lässt die Halte-Obergrenze bei 0 — sie würde alte Positionen schlagartig schließen', () => {
+    expect(DEFAULT_STRATEGY.engine.maxHoldDays).toBe(0);
   });
 
   it('lässt Stop und Take unangetastet — das Sicherheitsnetz bleibt scharf', () => {

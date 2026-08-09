@@ -21,11 +21,20 @@ const basis = () => JSON.parse(JSON.stringify(DEFAULT_STRATEGY)) as typeof DEFAU
 
 describe('buildVariants', () => {
   it('lässt den amtierenden Wert aus — man vergleicht nichts mit sich selbst', () => {
-    const b = basis(); // minHoldMin 60, exitConfluence 2, timeframe daily (seit 30.07.)
+    const b = basis(); // minHoldMin 1440, exitConfluence 3, timeframe daily
     const ids = buildVariants(b, 20).map((v) => v.id);
-    expect(ids).not.toContain('minHoldMin=60');
-    expect(ids).not.toContain('exitConfluence=2');
+    expect(ids).not.toContain('minHoldMin=1440');
+    expect(ids).not.toContain('exitConfluence=3');
     expect(ids).not.toContain('timeframe=daily');
+    // Das Gitter darf den Exit-Umbau nicht rückabwickeln: Die nachweislich
+    // schädlichen Werte (Haltedauer unter vier Stunden, EINE Gegenstimme)
+    // stehen gar nicht mehr zur Wahl.
+    expect(ids).not.toContain('minHoldMin=0');
+    expect(ids).not.toContain('minHoldMin=60');
+    expect(ids).not.toContain('exitConfluence=1');
+    // Nach oben bleibt die Suche offen — vielleicht ist noch länger besser.
+    expect(ids).toContain('minHoldMin=2880');
+    expect(ids).toContain('exitConfluence=4');
     // Der alte Default ist jetzt der HERAUSFORDERER: intraday muss sich im
     // Schatten-A/B gegen daily beweisen, nicht umgekehrt — genau die
     // Beweislast-Umkehr, die die 525-Trades-Messung vom 30.07. verlangt.
@@ -92,9 +101,9 @@ describe('describeVariant', () => {
     const b = basis();
     // Ausdrücklich viele Varianten, damit die Achse tief genug ausgereizt
     // wird — der Rundlauf verteilt sonst nur je einen Wert je Achse.
-    const v = buildVariants(b, 20).find((x) => x.id === 'minHoldMin=120')!;
+    const v = buildVariants(b, 20).find((x) => x.id === 'minHoldMin=720')!;
     expect(v).toBeDefined();
-    expect(describeVariant(b, v)).toBe('Mindest-Haltedauer 60 → 120');
+    expect(describeVariant(b, v)).toBe('Mindest-Haltedauer 1440 → 720');
   });
 });
 
@@ -110,7 +119,7 @@ describe('labelVariantId', () => {
   });
 
   it('hängt die Einheit an Zeit-Achsen und übersetzt den Zeitrahmen', () => {
-    expect(labelVariantId('minHoldMin=120')).toBe('Mindest-Haltedauer 120 min');
+    expect(labelVariantId('minHoldMin=720')).toBe('Mindest-Haltedauer 720 min');
     expect(labelVariantId('cooldownMin=15')).toBe('Kauf-Pause 15 min');
     expect(labelVariantId('timeframe=daily')).toBe('Signal-Zeitrahmen Tages-Bars');
     expect(labelVariantId('timeframe=intraday')).toBe('Signal-Zeitrahmen 5-Minuten-Bars');
@@ -127,8 +136,8 @@ describe('labelVariantId', () => {
 describe('applyVariantId (Startpunkt neuer Konten aus dem Kollektiv)', () => {
   it('wendet einen Gitterwert an und meldet Erfolg', () => {
     const s = structuredClone(DEFAULT_STRATEGY);
-    expect(applyVariantId(s, 'minHoldMin=120')).toBe(true);
-    expect(s.engine.minHoldMin).toBe(120);
+    expect(applyVariantId(s, 'minHoldMin=720')).toBe(true);
+    expect(s.engine.minHoldMin).toBe(720);
   });
 
   it('verwirft einen unbekannten Achsen-Schlüssel still', () => {

@@ -147,6 +147,13 @@ export interface EngineConfig extends RiskConfig {
    */
   riskPerTradePct?: number;
   /**
+   * Bis zu welchem Stand der Exit-Umbau (MX, 09.08.) an diesem Konto
+   * gelaufen ist. Fehlend = nie. Siehe `exitUmbauPlan` am Dateiende: Das
+   * Feld ist der Grund, warum die Migration genau einmal greift und eine
+   * spätere Lockerung durch den Nutzer stehen bleibt.
+   */
+  exitUmbauStand?: number;
+  /**
    * Risiko-Overrides je Asset-Klasse (Katalog-Schlüssel aus universe.ts:
    * crypto, indices, stocks_us, …). Fehlende Felder erben von oben.
    */
@@ -412,6 +419,23 @@ export const DEFAULT_STRATEGY: Strategy = {
     // Nachziehender Stop ist AN (3 %): Ohne ihn schließt eine Position nur
     // beim starren Take-Profit oder beim Stop — in Trendphasen also fast nie.
     trailingStopPct: 3,
+    /* Bleibt bei 0 (unbegrenzt) — und das ist ein Fund aus dem Exit-Umbau
+     * vom 09.08., kein Versehen.
+     *
+     * Der erste Entwurf setzte hier 10 Tage: Wenn der Signal-Ausstieg
+     * schwerer feuert, sollte eine Position, die weder Ziel noch Stop
+     * erreicht, nicht ewig Kapital binden. Die Testsuite hat sofort
+     * widersprochen — mehrere Exit-Tests meldeten `max_hold` statt `null`.
+     *
+     * Der Grund dahinter wiegt schwerer als der Nutzen: `maxHoldDays` misst
+     * die Haltedauer AB EINSTIEG, nicht ab Einführung. Eine Obergrenze
+     * einzuschalten hieße also, beim nächsten Scan jede Position zu
+     * schließen, die älter ist als die neue Grenze — ein Massenverkauf
+     * quer durch alle Konten, mit Gebühren auf jede einzelne Position, und
+     * das ohne jeden Bezug zu ihrer Aussicht.
+     *
+     * Wer eine Frist will, setzt sie im Options-Modal bewusst. Der
+     * gemessene Hebel ist ohnehin ein anderer (der Signal-Ausstieg). */
     maxHoldDays: 0,
     running: false,
     // Kauf-Pause und Mindest-Haltedauer standen auf „maximale Frequenz"
@@ -421,7 +445,36 @@ export const DEFAULT_STRATEGY: Strategy = {
     // Verlusts. Mehr Frequenz hilft nur, wenn jeder Trade Luft über der
     // Kostenschwelle hat.
     cooldownMin: 60,
-    minHoldMin: 60,
+    /* 60 → 1440 (Owner-Go 09.08.), und die Begründung ist eine Rechnung.
+     *
+     * Aus 317 Trades: Trefferquote 32,5 %, Gewinn/Verlust-Verhältnis 1,18.
+     * Daraus folgt ein Erwartungswert von −0,29 Verlusteinheiten je Trade
+     * und ein KELLY-EINSATZ VON −24,6 % — der optimale Einsatz ist negativ,
+     * jede Erhöhung von Kapital, Hebel oder Frequenz vergrößert also den
+     * erwarteten Verlust. Ein System in diesem Zustand kann man nicht
+     * größer machen, nur reparieren.
+     *
+     * Wo es klemmt, sagt die Ausstiegs-Statistik eindeutig: 275 von 317
+     * Trades (86,8 %) enden am Signal, und dort gewinnt nur jeder vierte
+     * (26,9 %). Wer dagegen sein ZIEL erreicht, gewinnt ausnahmslos —
+     * 26 von 26 —, aber nur acht Prozent kommen je dort an. Die
+     * Richtungslogik ist nicht das Problem (die Signale treffen mit 52,8 %
+     * über 523 Messungen besser als der Zufall); der Ausstieg schneidet die
+     * Gewinner ab, bevor sie welche werden.
+     *
+     * Bei `timeframe: 'daily'` ist ein Tagessignal die Einheit — es 60
+     * Minuten später durch eine gekippte Stimme zu widerrufen, verwirft die
+     * Information, bevor sie sich zeigen konnte. Ein Tag Mindesthaltedauer
+     * gibt ihr genau eine Kerze Zeit.
+     *
+     * NEBENEFFEKT, bewusst in Kauf genommen: `costGate` rechnet die
+     * erwartete Bewegung aus ATR × √Kerzen und benutzt dafür die
+     * Mindesthaltedauer. Mit 1440 statt 60 Minuten steigt die erwartete
+     * Bewegung, die Kostenschwelle lässt also mehr durch. Das ist keine
+     * Aufweichung, sondern die korrekte Physik: Wer länger hält, hat
+     * tatsächlich mehr Bewegung zur Verfügung.
+     */
+    minHoldMin: 1440,
     maxOpenPositions: 10,
     mode: 'confluence', // Momentum ist Opt-in — siehe EngineConfig.mode
     // Kern-Satellit (04.08.): NEUE Konten starten mit ruhigem Sockel.
@@ -466,11 +519,25 @@ export const DEFAULT_STRATEGY: Strategy = {
     useForecast: true,
     forecastWeight: 2,
     forecastThresholdPct: 0.5,
-    // Ausstieg stand auf 1 — EINE Gegenstimme von dreien. Auf 5-min-Bars
-    // kippt permanent eine, und die Position flog raus, bevor sie Stop oder
-    // Take je erreichte. Die Risiko-Asymmetrie bleibt als Option, aber der
-    // Standard entspricht jetzt dem Einstieg.
-    exitConfluence: 2,
+    /* 1 → 2 (30.07.) → 3 (09.08., Owner-Go). Zweite Verschärfung derselben
+     * Stelle, und diesmal in die Asymmetrie hinein.
+     *
+     * Bei 2 war der Ausstieg genauso leicht wie der Einstieg: Dieselben zwei
+     * Stimmen, die eine Position eröffnen, schließen sie wieder. Auf einem
+     * Markt, der sich nicht bewegt hat, genügt dafür ein Rauschen — und die
+     * Messung zeigt, was dabei herauskommt: 86,8 % aller Trades enden am
+     * Signal, mit 26,9 % Trefferquote.
+     *
+     * Bei 3 muss der Markt deutlicher widersprechen: entweder alle drei
+     * Indikatoren, oder die Prognose (Gewicht 2, beim AUSSTIEG immer voll
+     * gezählt) plus eine echte Indikator-Stimme. Einsteigen bei zwei,
+     * aussteigen erst bei drei — die Position bekommt den Zweifel.
+     *
+     * Das Sicherheitsnetz bleibt davon unberührt: Stop, Trailing-Stop und
+     * Take-Profit laufen in JEDEM Scan vor dieser Prüfung. Gebremst wird
+     * ausschließlich das Rausspucken durch eine gekippte Indikator-Stimme,
+     * nie der Schutz vor Verlusten. */
+    exitConfluence: 3,
     forecastSolo: false, // Prognose braucht eine zweite Stimme zum Einstieg
     // 'daily' seit 30.07. — die 5-min-Voreinstellung ist an der Realität
     // gescheitert: 525 Trades in zwei Handelstagen nach dem Reset, 97 %
@@ -838,4 +905,72 @@ export interface Trade {
    * gibt, ist die Zuordnung alter Trades nicht mehr eindeutig.
    */
   holdingDays?: number;
+}
+
+/* ── Exit-Umbau (MX, Owner-Go 09.08.) ────────────────────────────────────
+ *
+ * Die neuen Voreinstellungen oben gelten für NEUE Konten. Bestandskonten
+ * haben ihre Werte gespeichert und behielten sonst genau die Einstellung,
+ * die zu Kelly = −24,6 % geführt hat — der Umbau träfe niemanden, der ihn
+ * nötig hat.
+ *
+ * Warum das eine Migration rechtfertigt: Der Zusammenhang ist gemessen,
+ * nicht vermutet (275 von 317 Trades sterben am Signal, Trefferquote dort
+ * 26,9 %, gegenüber 26 von 26 gewonnenen Ziel-Exits), und der Owner hat das
+ * sofortige Scharfschalten ausdrücklich angeordnet.
+ *
+ * Sie greift trotzdem so zurückhaltend wie möglich:
+ *   · Sie VERSCHÄRFT nur. Wer bereits länger hält oder mehr Gegenstimmen
+ *     verlangt als der neue Standard, behält seinen Wert.
+ *   · Sie läuft genau einmal je Konto (`exitUmbauStand`) und rührt danach
+ *     nichts mehr an. Wer den Ausstieg anschließend wieder lockert, tut das
+ *     bewusst, und diese Entscheidung bleibt stehen.
+ *   · Sie fasst kein Sicherheitsnetz an: Stop, Trailing-Stop und Take-Profit
+ *     bleiben unverändert und laufen in jedem Scan vor der Signalprüfung.
+ */
+
+/** Stand der Exit-Migration. Höher zählen ⇒ sie läuft je Konto erneut. */
+export const EXIT_UMBAU_STAND = 1;
+
+/** Zielwerte des Umbaus — dieselben Zahlen wie in DEFAULT_STRATEGY. */
+export const EXIT_UMBAU_ZIEL = {
+  minHoldMin: 1440,
+  exitConfluence: 3,
+} as const;
+
+export interface ExitUmbauPlan {
+  minHoldMin?: number;
+  exitConfluence?: number;
+}
+
+/**
+ * Was an diesem Konto zu ändern wäre — `null`, wenn nichts zu tun ist.
+ *
+ * Pur und ohne Firestore, damit die Entscheidung testbar bleibt: Sie
+ * verändert fremde Handelseinstellungen, und das ist nichts, was man an
+ * einer Stelle treffen sollte, die man nur im Live-Betrieb beobachten kann.
+ */
+export function exitUmbauPlan(
+  engine: Partial<EngineConfig> | undefined,
+  signals: Partial<SignalsConfig> | undefined,
+  stand = EXIT_UMBAU_STAND,
+): ExitUmbauPlan | null {
+  if ((engine?.exitUmbauStand ?? 0) >= stand) return null;
+  const plan: ExitUmbauPlan = {};
+
+  // Nur anheben. `?? 0` ist Absicht: Ein fehlender Wert ist der schwächste
+  // denkbare und wird angehoben, nicht als „bewusst so gewählt" gelesen.
+  if ((engine?.minHoldMin ?? 0) < EXIT_UMBAU_ZIEL.minHoldMin) {
+    plan.minHoldMin = EXIT_UMBAU_ZIEL.minHoldMin;
+  }
+  // maxHoldDays wird BEWUSST nicht angefasst — siehe DEFAULT_STRATEGY:
+  // Die Frist misst ab Einstieg, ihre Einführung schlösse also schlagartig
+  // jede ältere Position quer durch alle Konten.
+  // Fehlt der Wert, greift in der Engine `minConfluence - 1` — bei der
+  // Voreinstellung also EINE Gegenstimme. Genau der Zustand, der die
+  // Positionen zerschneidet.
+  if ((signals?.exitConfluence ?? 1) < EXIT_UMBAU_ZIEL.exitConfluence) {
+    plan.exitConfluence = EXIT_UMBAU_ZIEL.exitConfluence;
+  }
+  return Object.keys(plan).length > 0 ? plan : {};
 }
