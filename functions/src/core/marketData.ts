@@ -117,17 +117,40 @@ async function fetchYahoo(symbol: string, range: string): Promise<MarketSnapshot
  * gleich darauf noch einmal holte, und keiner der beiden konnte am Marker
  * ablesen, was der andere getan hatte.
  *
- * Erhöhen NUR, wenn sich der Inhalt ändert (V2 = volle Yahoo-Historie statt
- * 5 Jahre, Zoom-Kontinuum 06.08.) — dann holt jeder Schreiber alles einmal neu.
+ * Erhöhen NUR, wenn sich der Inhalt ändert — dann holt jeder Schreiber alles
+ * einmal neu.
+ *
+ *   V2 (06.08.) volle Historie statt 5 Jahre, über `range=max`.
+ *   V3 (09.08.) ebenso, aber über `range=50y` — `max` lieferte MONATSKERZEN,
+ *               siehe `getDeepDailyBars`. V2-Daten sind unbrauchbar und müssen
+ *               überschrieben werden, deshalb der Sprung.
  */
-export const DEEP_BACKFILL_V = 2;
+export const DEEP_BACKFILL_V = 3;
 
-/** Tiefe Tages-Historie (Chart-Audit 2): volle Yahoo-Historie (range=max). */
+/** Volle Tages-Historie fürs nahtlose Rausscrollen im Chart. */
 export async function getDeepDailyBars(symbol: string): Promise<DailyBar[]> {
-  // range=max statt 5y (Zoom-Kontinuum 06.08.): die volle Yahoo-Historie —
-  // bei alten Indizes Jahrzehnte. Einmalig je Symbol (deepBackfillV-Marker);
-  // die Jahres-Chunks bleiben je ~250 Zeilen klein, nur ihre Anzahl wächst.
-  return (await fetchYahoo(symbol, 'max')).bars;
+  /*
+   * `range=50y`, NICHT `range=max` (Befund 09.08.).
+   *
+   * Yahoo ignoriert bei `range=max` das angeforderte `interval=1d` und
+   * antwortet grober. Gemessen am 09.08.:
+   *
+   *   SPY   range=max → 404 Bars,  dataGranularity 1mo  (Abstände 28–31 Tage)
+   *   ^GSPC range=max → 168 Bars,  dataGranularity 3mo  (!)
+   *   SPY   range=50y → 8438 Bars, dataGranularity 1d,  ab 1993-01-29
+   *
+   * `50y` liefert also die VOLLE Historie und behält die Tagesauflösung; die
+   * Obergrenze ist die Notierungshistorie des Papiers, nicht der Zeitraum
+   * (40y und 50y geben bei SPY beide 8438 Bars ab dem ersten Handelstag).
+   *
+   * Seit dem Zoom-Kontinuum am 06.08. stand hier `max`. Damit landeten drei
+   * Tage lang Monats- und Quartalskerzen in `ohlcDaily` — der Sammlung, die
+   * das Chart beim Rausscrollen zeigt und aus der das Momentum-Ranking seine
+   * Ersatz-Closes zieht. Aufgefallen ist es nicht im Chart, sondern weil die
+   * Tages-Rückschau ihr Lücken-Gate zog: 204 von 204 Basistagen lagen mehr
+   * als vier Kalendertage auseinander.
+   */
+  return (await fetchYahoo(symbol, '50y')).bars;
 }
 
 /** Nur der aktuelle Kurs — leichtgewichtig fürs Kurz-Intervall (quoteNow)
