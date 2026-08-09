@@ -1032,9 +1032,9 @@ function layout(email: string): string {
           Diese Sätze bleiben: Jeden Abend prüft das System einen festen Satz Thesen gegen die
           gemessenen Daten und hält fest, was gilt, seit wann es gilt und was widerlegt wurde.
           Jede These trägt ihre Belegzahlen; unterhalb eines Mindest-n wird nichts behauptet.</div>
-        <div id="erList" class="fl-tbl" style="margin-top:8px"><div class="hint">Die erste Chronik entsteht mit dem nächsten Tages-Lauf (17:15 ET).</div></div>
+        <div id="erList" class="er-list" style="margin-top:8px"><div class="hint">Die erste Chronik entsteht mit dem nächsten Tages-Lauf (17:15 ET).</div></div>
         <label class="lbl" style="margin-top:12px">Tages-Einschätzung ${iBtn('aibericht')} <span id="abStand" class="tn-tag" style="float:right"></span></label>
-        <div id="abText" class="hint">Der erste Bericht entsteht mit dem nächsten Tages-Lauf (18:25 ET).</div>
+        <div id="abText" class="ab-text">Der erste Bericht entsteht mit dem nächsten Tages-Lauf (18:25 ET).</div>
         <div id="abMeta" class="tn-n mono"></div>
       </div></div>
 
@@ -5460,6 +5460,13 @@ function wireColumnDnD(): void {
   }
 }
 
+/**
+ * Ab hier ist die Sidebar ein Off-Canvas-Drawer und ihre Breite gehört dem
+ * CSS (`width: min(340px, 88vw)`), nicht dem gespeicherten Desktop-Wert.
+ * Muss zum Breakpoint in theme.css passen.
+ */
+const DESKTOP_SPALTEN = '(min-width: 901px)';
+
 /** Sidebar-Breiten (Desktop): Resize-Handle an der Innenkante, Gerät-lokal. */
 function wireSidebarResize(): void {
   const stored = ((): Record<string, number> => {
@@ -5469,15 +5476,38 @@ function wireSidebarResize(): void {
       return {};
     }
   })();
+  const desktop = window.matchMedia(DESKTOP_SPALTEN);
+  const spalten: HTMLElement[] = [];
+
+  /**
+   * Gespeicherte Breite anwenden — aber NUR im Desktop-Layout.
+   *
+   * `style.width` ist ein Inline-Style und schlägt damit jede CSS-Regel,
+   * auch die Drawer-Breite im Media-Query. Eine am Monitor gezogene Spalte
+   * (bis 560 px) landete deshalb unverändert auf dem Handy: Bei 390 px
+   * Viewport steht der rechts angedockte Drawer dann bei left = −80 px, also
+   * ragt sein linker Teil samt Textanfang aus dem Bildschirm.
+   *
+   * Auch bei Geräte-Drehung neu bewertet — sonst bliebe der Zustand hängen,
+   * in dem die Seite geladen wurde.
+   */
+  const anwenden = (): void => {
+    for (const col of spalten) {
+      const w = stored[col.id];
+      // 260-560 px (26.07.): unter 260 werden News-/KI-Texte zu Ein-Wort-
+      // Zeilen; großen Monitoren gönnen wir mehr Maximalbreite.
+      col.style.width = desktop.matches && w ? `${Math.min(560, Math.max(260, w))}px` : '';
+    }
+  };
+  desktop.addEventListener('change', anwenden);
+
   for (const [colId, edge] of [
     ['leftCol', 'right'],
     ['rightCol', 'left'],
   ] as const) {
     const col = document.getElementById(colId);
     if (!col) continue;
-    // 260-560 px (26.07.): unter 260 werden News-/KI-Texte zu Ein-Wort-
-    // Zeilen; großen Monitoren gönnen wir mehr Maximalbreite.
-    if (stored[colId]) col.style.width = `${Math.min(560, Math.max(260, stored[colId]))}px`;
+    spalten.push(col);
     const grip = document.createElement('div');
     grip.className = `sb-rs sb-rs-${edge}`;
     grip.title = 'Spaltenbreite ziehen (Doppelklick = zurücksetzen)';
@@ -5507,6 +5537,7 @@ function wireSidebarResize(): void {
       grip.addEventListener('pointerup', up);
     });
   }
+  anwenden();
 }
 
 /* ── Dashboard-Individualisierung Teil 1 (Taschenmesser-Vision 25.07.) ── */
@@ -7077,12 +7108,16 @@ function renderErkenntnisse(c: ErkenntnisChronik | null): void {
       // dass eine frühere Annahme gekippt ist.
       const letzter = e.historie?.[e.historie.length - 1];
       const wechsel = letzter
-        ? `<div class="tn-r">Zuvor (${letzter.at.slice(0, 10)}): ${esc(letzter.these)}</div>`
+        ? `<div class="er-vor">Zuvor (${letzter.at.slice(0, 10)}): ${esc(letzter.these)}</div>`
         : '';
+      // Status und Datum stehen ÜBER dem Satz, nicht daneben: In einer
+      // Flex-Zeile schrumpfen weder das Tag noch das nowrap-Datum, der Satz
+      // bekäme also nur den Rest — auf dem Handy gemessene 141 von 310 px.
       return (
-        `<div class="tn-e"><div class="tn-h"><span class="tn-nm">${esc(e.these)}</span>${marke[e.status] ?? ''}` +
-        `<span class="tn-t mono">${seit}</span></div>` +
-        (belege ? `<div class="tn-n mono">${esc(belege)}</div>` : '') +
+        `<div class="er-e" data-status="${esc(e.status)}">` +
+        `<div class="er-meta">${marke[e.status] ?? ''}<span class="tn-t mono">${seit}</span></div>` +
+        `<div class="er-these">${esc(e.these)}</div>` +
+        (belege ? `<div class="er-beleg mono">${esc(belege)}</div>` : '') +
         wechsel +
         '</div>'
       );
