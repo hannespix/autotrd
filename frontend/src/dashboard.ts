@@ -7088,22 +7088,54 @@ function renderErkenntnisse(c: ErkenntnisChronik | null): void {
  * verschwiegen: Ein Feature, das ohne Konfiguration still bleibt, sieht sonst
  * aus wie ein kaputtes.
  */
+/**
+ * Warum heute kein Bericht dasteht — `null`, wenn einer dasteht.
+ *
+ * Bewusst über den Stand geführt statt über einzelne Sonderfälle: Das Doc
+ * trägt auch die Fehlzustände ein, damit die Karte den GRUND nennt statt
+ * „noch kein Bericht" zu zeigen. Ein Stand, den diese Liste nicht kennt,
+ * landet im Default und wird wenigstens beim Namen genannt — er darf nicht
+ * in den Erfolgspfad rutschen, wo er als leerer Bericht erschiene.
+ */
+function abHinweis(d: KiBerichtDoc): { stand: string; text: string } | null {
+  switch (d.stand) {
+    case 'bericht':
+      return null;
+    case 'kein_schluessel':
+      return {
+        stand: 'nicht eingerichtet',
+        text: 'Für die Tages-Einschätzung fehlt noch der API-Schlüssel des Modell-Anbieters (siehe docs/SETUP.md). Alles andere auf dieser Karte läuft ohne ihn.',
+      };
+    case 'keine_chronik':
+      return {
+        stand: 'wartet auf Kennzahlen',
+        text: 'Die Einschätzung baut auf der Erkenntnis-Chronik auf, und die entsteht im abendlichen Kennzahlen-Lauf. Sobald der einmal durchgelaufen ist, schreibt der nächste Lauf den Bericht.',
+      };
+    case 'fehler':
+      return {
+        stand: 'fehlgeschlagen',
+        text: `Der letzte Versuch ist gescheitert: ${d.fehler ?? 'unbekannter Grund'}. Der nächste Tages-Lauf versucht es erneut.`,
+      };
+    default:
+      return { stand: d.stand, text: 'Für heute liegt noch keine Einschätzung vor.' };
+  }
+}
+
 function renderAiBericht(d: KiBerichtDoc | null): void {
   const text = $('abText');
   const stand = $('abStand');
   const meta = $('abMeta');
   if (!text || !stand || !meta) return;
-  if (!d || d.stand === 'kein_schluessel') {
-    stand.textContent = d ? 'nicht eingerichtet' : '';
-    text.textContent = d
-      ? 'Für die Tages-Einschätzung fehlt noch der API-Schlüssel des Modell-Anbieters (siehe docs/SETUP.md). Alles andere auf dieser Karte läuft ohne ihn.'
-      : 'Der erste Bericht entsteht mit dem nächsten Tages-Lauf (18:25 ET).';
+  if (!d) {
+    stand.textContent = '';
+    text.textContent = 'Der erste Bericht entsteht mit dem nächsten Tages-Lauf (18:25 ET).';
     meta.textContent = '';
     return;
   }
-  if (d.stand === 'fehler') {
-    stand.textContent = 'fehlgeschlagen';
-    text.textContent = `Der letzte Versuch ist gescheitert: ${d.fehler ?? 'unbekannter Grund'}. Der nächste Tages-Lauf versucht es erneut.`;
+  const hinweis = abHinweis(d);
+  if (hinweis) {
+    stand.textContent = hinweis.stand;
+    text.textContent = hinweis.text;
     meta.textContent = '';
     return;
   }

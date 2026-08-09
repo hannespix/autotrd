@@ -57,6 +57,14 @@ import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
  */
 const MODELL = 'claude-opus-5';
 
+/**
+ * Nicht-Läufe, die als Stand im Dokument landen — also die, bei denen ein
+ * Baustein FEHLT. Der Deploy-Anstoß (`scripts-ci/invoke-daily.mjs`) wertet
+ * genau diese Stände NICHT als „heute gelaufen"; die beiden Seiten müssen
+ * dieselbe Unterscheidung treffen, sonst sperrt eine Fehlermeldung den Tag.
+ */
+const SICHTBARE_LEERGRUENDE = new Set(['kein_schluessel', 'keine_chronik']);
+
 export interface KiBerichtResult {
   stand: string;
   grund: string;
@@ -77,11 +85,14 @@ export async function schreibeBericht(now = new Date()): Promise<KiBerichtResult
   const e = entscheideLauf(vorher, chronik !== undefined, schluessel.length > 0, now);
   if (!e.laufen) {
     logger.info(`kiBericht: übersprungen — ${e.grund}`);
-    // Den Zustand „kein Schlüssel" sichtbar machen: Sonst steht in der Karte
-    // dauerhaft „noch kein Bericht" und niemand weiß, dass nur ein Wert fehlt.
-    if (e.grund === 'kein_schluessel' && vorher?.stand !== 'kein_schluessel') {
+    // Einen FEHLENDEN Baustein sichtbar machen: Sonst steht in der Karte
+    // dauerhaft „noch kein Bericht", und niemand weiß, ob das Feature auf
+    // Daten wartet oder gar nicht erst eingerichtet ist. `schon_gelaufen`
+    // und `monatsdeckel` stehen bewusst NICHT hier — sie würden den fertigen
+    // Bericht überschreiben, den die Karte gerade zeigt.
+    if (SICHTBARE_LEERGRUENDE.has(e.grund) && vorher?.stand !== e.grund) {
       await ref
-        .set({ stand: 'kein_schluessel', at: now.toISOString(), date: now.toISOString().slice(0, 10) })
+        .set({ stand: e.grund, at: now.toISOString(), date: now.toISOString().slice(0, 10) })
         .catch(() => undefined);
     }
     return { stand: 'uebersprungen', grund: e.grund };
