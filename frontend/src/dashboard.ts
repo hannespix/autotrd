@@ -5460,6 +5460,13 @@ function wireColumnDnD(): void {
   }
 }
 
+/**
+ * Ab hier ist die Sidebar ein Off-Canvas-Drawer und ihre Breite gehört dem
+ * CSS (`width: min(340px, 88vw)`), nicht dem gespeicherten Desktop-Wert.
+ * Muss zum Breakpoint in theme.css passen.
+ */
+const DESKTOP_SPALTEN = '(min-width: 901px)';
+
 /** Sidebar-Breiten (Desktop): Resize-Handle an der Innenkante, Gerät-lokal. */
 function wireSidebarResize(): void {
   const stored = ((): Record<string, number> => {
@@ -5469,15 +5476,38 @@ function wireSidebarResize(): void {
       return {};
     }
   })();
+  const desktop = window.matchMedia(DESKTOP_SPALTEN);
+  const spalten: HTMLElement[] = [];
+
+  /**
+   * Gespeicherte Breite anwenden — aber NUR im Desktop-Layout.
+   *
+   * `style.width` ist ein Inline-Style und schlägt damit jede CSS-Regel,
+   * auch die Drawer-Breite im Media-Query. Eine am Monitor gezogene Spalte
+   * (bis 560 px) landete deshalb unverändert auf dem Handy: Bei 390 px
+   * Viewport steht der rechts angedockte Drawer dann bei left = −80 px, also
+   * ragt sein linker Teil samt Textanfang aus dem Bildschirm.
+   *
+   * Auch bei Geräte-Drehung neu bewertet — sonst bliebe der Zustand hängen,
+   * in dem die Seite geladen wurde.
+   */
+  const anwenden = (): void => {
+    for (const col of spalten) {
+      const w = stored[col.id];
+      // 260-560 px (26.07.): unter 260 werden News-/KI-Texte zu Ein-Wort-
+      // Zeilen; großen Monitoren gönnen wir mehr Maximalbreite.
+      col.style.width = desktop.matches && w ? `${Math.min(560, Math.max(260, w))}px` : '';
+    }
+  };
+  desktop.addEventListener('change', anwenden);
+
   for (const [colId, edge] of [
     ['leftCol', 'right'],
     ['rightCol', 'left'],
   ] as const) {
     const col = document.getElementById(colId);
     if (!col) continue;
-    // 260-560 px (26.07.): unter 260 werden News-/KI-Texte zu Ein-Wort-
-    // Zeilen; großen Monitoren gönnen wir mehr Maximalbreite.
-    if (stored[colId]) col.style.width = `${Math.min(560, Math.max(260, stored[colId]))}px`;
+    spalten.push(col);
     const grip = document.createElement('div');
     grip.className = `sb-rs sb-rs-${edge}`;
     grip.title = 'Spaltenbreite ziehen (Doppelklick = zurücksetzen)';
@@ -5507,6 +5537,7 @@ function wireSidebarResize(): void {
       grip.addEventListener('pointerup', up);
     });
   }
+  anwenden();
 }
 
 /* ── Dashboard-Individualisierung Teil 1 (Taschenmesser-Vision 25.07.) ── */
