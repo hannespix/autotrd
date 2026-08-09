@@ -40,3 +40,4 @@ export * from './chartTime.js';
 export * from './erkenntnisse.js';
 export * from './journalText.js';
 export * from './kiBericht.js';
+export * from './tagRueckblick.js';
