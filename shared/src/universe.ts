@@ -55,8 +55,28 @@ export const CATALOG: Catalog = {
     ],
     Alts: [
       ['DOGE-USD', 'Dogecoin'], ['AVAX-USD', 'Avalanche'], ['DOT-USD', 'Polkadot'],
-      ['LINK-USD', 'Chainlink'], ['POL-USD', 'Polygon'], ['LTC-USD', 'Litecoin'],
+      ['LINK-USD', 'Chainlink'], ['LTC-USD', 'Litecoin'],
       ['TRX-USD', 'TRON'], ['ATOM-USD', 'Cosmos'],
+      /*
+       * Polygon ist hier ENTFERNT (09.08.), und der Grund ist doppelt.
+       *
+       * `POL-USD` heißt bei Yahoo „Proof Of Liquidity USD" — das ist nicht
+       * Polygon, sondern ein anderer Token. Der Katalog hätte also unter dem
+       * Namen „Polygon" etwas anderes gehandelt.
+       *
+       * Und brauchbar ist keiner von beiden: POL-USD und MATIC-USD liefern
+       * beide 0 Bars für range=5d/1mo/1y, Daten nur noch über range=max, mit
+       * letztem Tag 03.08. Das Spark-Bündel gibt für POL-USD 0 Closes zurück.
+       *
+       * Der Preis dafür war nicht bloß ein fehlendes Symbol: Der Scan meldete
+       * dauerhaft `symbolsFailed: 1` und die Katalog-Versorgung
+       * `catalogQuotes: 0`. Ein Dauerfehler in einem Fehlerzähler ist
+       * schlimmer als das fehlende Symbol — er macht den Zähler blind für den
+       * ZWEITEN Ausfall.
+       *
+       * Wenn Polygon zurücksoll, braucht es vorher einen Ticker, der aktuelle
+       * Tages-Bars liefert.
+       */
     ],
   },
   commodities: {
