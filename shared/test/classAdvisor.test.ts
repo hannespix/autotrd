@@ -267,3 +267,116 @@ describe('berateKlassen — der ganze Bericht', () => {
     expect(b.aenderungen).toBe(0);
   });
 });
+
+/**
+ * Der globale Beleg (MG5, Owner-Go 09.08.).
+ *
+ * ── Warum diese Ebene überhaupt existiert ─────────────────────────────────
+ *
+ * In der Nacht auf den 09.08. stand in der Erkenntnis-Chronik belegt, dass
+ * `etf_thematic` über 58 Trades −0,76 % je Dollar verliert. Der Regler hätte
+ * trotzdem nichts getan: Er verlangte 30 Trades IN DIESER KLASSE IN DIESEM
+ * KONTO, und die 58 verteilten sich über sieben Konten. Die Erkenntnis war
+ * belegt, der Hebel verriegelt.
+ *
+ * Die Tests hier halten die Asymmetrie fest, die dabei nicht verloren gehen
+ * darf: Fremde Zahlen dürfen bremsen, aber nicht Gas geben.
+ */
+describe('rateKlasse — der Gesamtbestand als dritte Quelle (MG5)', () => {
+  const global = (n: number, kantePct: number, konten = 7) => ({ n, kantePct, konten });
+
+  it('schaltet eine strukturell verlierende Klasse auch ohne eigene Trades ab', () => {
+    // Der reale Fall vom 09.08.: eigenes Konto 4 Trades, Bestand 58 aus 7 Konten.
+    const r = rateKlasse(
+      'etf_thematic',
+      { n: 4, kantePct: -1.2, global: global(58, -0.76) },
+      1,
+    );
+    expect(r.empfehlung).toBe('abschalten');
+    expect(r.vorschlag).toBe(0);
+    expect(r.quelle).toBe('global');
+    expect(r.belegN).toBe(58);
+    expect(r.grund).toContain('58 Trades über 7 Konten');
+    // Die EIGENEN Zahlen bleiben stehen — die Karte soll nicht so tun, als
+    // hätte dieses Konto 58 Trades gemacht.
+    expect(r.n).toBe(4);
+  });
+
+  it('eigene Trades schlagen den Gesamtbestand — auch wenn er das Gegenteil sagt', () => {
+    const r = rateKlasse(
+      'crypto',
+      { n: 40, kantePct: 0.5, global: global(500, -0.9) },
+      1,
+    );
+    expect(r.empfehlung).toBe('verstaerken');
+    expect(r.quelle).toBe('eigen');
+    expect(r.belegN).toBe(40);
+  });
+
+  it('verstärkt auf fremde Zahlen hin höchstens auf Gewicht 1', () => {
+    // Bremsen darf der Bestand, Gas geben nicht: Ein Fehlalarm beim Drosseln
+    // kostet entgangene Chancen, einer beim Verstärken kostet Geld.
+    const r = rateKlasse('gold', { n: 0, kantePct: null, global: global(300, 0.9) }, 1);
+    expect(r.empfehlung).toBe('verstaerken');
+    expect(r.vorschlag).toBe(1);
+    expect(r.grund).toContain('höchstens auf 1');
+  });
+
+  it('greift NICHT unter der Trade-Latte — 37 Trades reichen dem Bestand nicht', () => {
+    // stocks_us stand am 09.08. bei −0,05 % über 37 Trades. Unter 50 bleibt
+    // das eine Beobachtung, keine Grundlage für eine Kapitalentscheidung.
+    const r = rateKlasse('stocks_us', { n: 3, kantePct: null, global: global(37, -0.05) }, 1);
+    expect(r.empfehlung).toBe('zu_wenig_daten');
+    expect(r.vorschlag).toBe(1);
+    expect(r.quelle).toBe('keine');
+    expect(r.grund).toContain('Gesamtbestand steht bei');
+  });
+
+  it('greift NICHT, wenn die Trades aus zu wenigen Konten stammen', () => {
+    // Bei zwei Konten ist der „globale" Wert im Wesentlichen der eines
+    // einzelnen — ihn als Kollektivwissen auszugeben wäre Selbsttäuschung.
+    const r = rateKlasse('fx', { n: 0, kantePct: null, global: global(400, -0.8, 2) }, 1);
+    expect(r.empfehlung).toBe('zu_wenig_daten');
+    expect(r.vorschlag).toBe(1);
+  });
+
+  it('ohne Kante im Bestand passiert nichts', () => {
+    // `kantePct: null` heißt „kein Trade trug Volumen" — auch im Bestand ist
+    // das keine Null, sondern eine fehlende Messung.
+    const r = rateKlasse(
+      'x',
+      { n: 0, kantePct: null, global: { n: 999, kantePct: null, konten: 7 } },
+      1,
+    );
+    expect(r.empfehlung).toBe('zu_wenig_daten');
+  });
+
+  it('eigene Trades werden als Quelle „eigen" ausgewiesen', () => {
+    const r = rateKlasse('x', { n: 50, kantePct: -0.5 }, 1);
+    expect(r.quelle).toBe('eigen');
+    expect(r.belegKantePct).toBe(-0.5);
+  });
+
+  it('der Bestand schlägt den Schatten — echte Trades vor Ersatzmessung', () => {
+    // Beide könnten greifen: Gewicht 0, positiver Schatten (würde zurückholen)
+    // UND ein negativer Bestand (würde abschalten). Der Bestand hat echte
+    // Ausführung samt Stop gesehen, der Schatten nicht.
+    const r = rateKlasse(
+      'x',
+      { n: 0, kantePct: null, schatten: { n: 500, kantePct: 0.4 }, global: global(200, -0.9) },
+      0,
+    );
+    expect(r.quelle).toBe('global');
+    expect(r.empfehlung).toBe('abschalten');
+  });
+
+  it('sortiert global belegte Klassen nach der Kante, die die Empfehlung trägt', () => {
+    // Sonst rutschte eine global belegte Klasse ans Ende, nur weil ihre
+    // EIGENE Kante null ist — also genau die, über die etwas gesagt wird.
+    const b = berateKlassen({
+      mies: { n: 0, kantePct: null, global: global(200, -0.9) },
+      gut: { n: 0, kantePct: null, global: global(200, 0.9) },
+    });
+    expect(b.raete.map((r) => r.klasse)).toEqual(['gut', 'mies']);
+  });
+});

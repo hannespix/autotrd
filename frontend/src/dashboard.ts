@@ -2964,10 +2964,19 @@ function renderKlassenRat(): void {
             Math.abs(r.vorschlag - r.gewicht) > 1e-9
               ? ` · ${gewichtText(r.gewicht)} → <b>${gewichtText(r.vorschlag)}</b>`
               : '';
+          // Ein Beleg aus fremden Konten muss als solcher erkennbar sein:
+          // „ABSCHALTEN" neben 4 eigenen Trades sieht sonst nach einem Fehler
+          // aus, obwohl die Zahl dahinter aus dem Gesamtbestand stammt.
+          const quelle =
+            r.quelle === 'global'
+              ? ' <span title="Beleg aus dem Gesamtbestand, nicht aus eigenen Trades">· aus dem Gesamtbestand</span>'
+              : r.quelle === 'schatten'
+                ? ' <span title="Beleg aus der Schatten-Messung ohne Ausführung">· aus dem Schatten</span>'
+                : '';
           return `<div class="hint" style="margin-top:6px">
             <b style="color:${farbe[r.empfehlung] ?? 'inherit'}">${wort[r.empfehlung] ?? r.empfehlung}</b>
             · <b>${CLASS_LABELS[r.klasse] ?? r.klasse}</b>
-            · ${kante} je Dollar (${r.n} Trades)${pfeil}<br />${r.grund}</div>`;
+            · ${kante} je Dollar (${r.n} Trades)${quelle}${pfeil}<br />${r.grund}</div>`;
         })
         .join('');
 }
@@ -3290,7 +3299,11 @@ function openOptions(): void {
     : '';
   ($('owBreak') as HTMLInputElement).value = String(st.strategy.engine.dailyLossLimitPct ?? 0);
   ($('owFlatten') as HTMLInputElement).checked = st.strategy.engine.flattenOnBreach === true;
-  ($('owClsAuto') as HTMLInputElement).checked = st.strategy.engine.classAutoTune === true;
+  // AN, außer ausdrücklich abgewählt — dieselbe Lesart wie im Abendlauf
+  // (`!== false`). Stünde hier `=== true`, zeigte das UI „aus", während der
+  // Regler in Wahrheit arbeitet: der schlimmste denkbare Zustand für einen
+  // Schalter, der Kapital bewegt.
+  ($('owClsAuto') as HTMLInputElement).checked = st.strategy.engine.classAutoTune !== false;
   renderKlassenRegler();
   renderKlassenRat();
   // Module: Checkbox je Panel — gleiche Wahrheit wie ✕ am Modul und die Palette

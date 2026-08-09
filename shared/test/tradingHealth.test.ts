@@ -188,3 +188,42 @@ describe('tradingVerdict', () => {
     expect(tradingVerdict(basis)).toBe('keine auffällige Schieflage');
   });
 });
+
+/**
+ * Wie viele Konten stehen hinter einer Klassen-Kante? (MG5)
+ *
+ * Die Zahl entscheidet, ob ein Konto seine Gewichte nach fremder Erfahrung
+ * stellen darf. Stammen 58 Trades aus sieben Konten oder aus einem einzigen?
+ * Im zweiten Fall ist der „globale" Wert schlicht dessen eigener.
+ */
+describe('aggregateTradingHealth: Konten je Klasse', () => {
+  const mitKlasse = (
+    n: number,
+    byClass: Record<string, { n: number; pnl: number; notional: number }>,
+  ): AccountContribution => ({
+    stats: { n, wins: 0, avgWin: 10, avgLoss: -10 },
+    byClass,
+  });
+
+  it('zählt nur Konten, die in DIESER Klasse gehandelt haben', () => {
+    const h = aggregateTradingHealth([
+      mitKlasse(10, { crypto: { n: 10, pnl: -5, notional: 1000 } }),
+      mitKlasse(10, { crypto: { n: 10, pnl: -5, notional: 1000 } }),
+      mitKlasse(10, { stocks_us: { n: 10, pnl: 5, notional: 1000 } }),
+    ]);
+    expect(h.klassen.crypto?.konten).toBe(2);
+    expect(h.klassen.stocks_us?.konten).toBe(1);
+    expect(h.klassen.crypto?.n).toBe(20);
+  });
+
+  it('ein leerer Klassen-Eintrag ist kein Beitrag', () => {
+    // Ein Eintrag mit n = 0 entsteht schon durch das bloße Anlegen einer
+    // Watchlist — er hat nichts gemessen und darf die Vertrauensschwelle
+    // nicht mit hochzählen.
+    const h = aggregateTradingHealth([
+      mitKlasse(10, { fx: { n: 10, pnl: 1, notional: 500 } }),
+      mitKlasse(5, { fx: { n: 0, pnl: 0, notional: 0 }, gold: { n: 5, pnl: 1, notional: 100 } }),
+    ]);
+    expect(h.klassen.fx?.konten).toBe(1);
+  });
+});

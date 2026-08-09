@@ -818,6 +818,12 @@ export interface PortfolioStatsDoc {
       empfehlung: string;
       vorschlag: number;
       grund: string;
+      /**
+       * Woher der Beleg stammt (MG5) — optional, weil Dokumente aus der Zeit
+       * vor dem 09.08. das Feld nicht tragen. Fehlt es, war es zwangsläufig
+       * ein eigener Beleg: Damals gab es keine andere Quelle.
+       */
+      quelle?: 'eigen' | 'global' | 'schatten' | 'keine';
     }>;
     aenderungen: number;
     fazit: string;

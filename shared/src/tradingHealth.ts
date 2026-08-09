@@ -63,6 +63,19 @@ export interface KlassenBefund {
    * Klasse ihre eigene Reibung?
    */
   kantePct: number | null;
+  /**
+   * Wie viele Konten in dieser Klasse überhaupt gehandelt haben (MG5).
+   *
+   * Die entscheidende Zahl, bevor ein Konto seine Gewichte nach fremder
+   * Erfahrung stellt: Stammen 58 Trades aus sieben Konten oder aus einem
+   * einzigen? Im zweiten Fall ist der „globale" Wert schlicht dessen
+   * eigener, und ihn als Kollektivwissen weiterzureichen wäre eine
+   * Selbsttäuschung mit zusätzlichen Schritten.
+   *
+   * Ein Aggregat ohne Personenbezug — es verrät nur, dass mehrere Konten
+   * dieselbe Klasse handeln, nicht welche oder mit welchen Beträgen.
+   */
+  konten: number;
 }
 
 export interface ExitShare {
@@ -133,7 +146,10 @@ export function aggregateTradingHealth(
   let grossPnl = 0;
   let netPnl = 0;
   const exitN: Record<string, { n: number; wins: number }> = {};
-  const klassenRoh: Record<string, { n: number; pnl: number; fees: number; notional: number }> = {};
+  const klassenRoh: Record<
+    string,
+    { n: number; pnl: number; fees: number; notional: number; konten: number }
+  > = {};
 
   for (const c of beitragend) {
     const n = c.stats.n;
@@ -171,11 +187,15 @@ export function aggregateTradingHealth(
 
     // Klassen-Beitrag dieses Kontos — Summen, keine Quoten (s. u.).
     for (const [name, slice] of Object.entries(c.byClass ?? {})) {
-      const kl = klassenRoh[name] ?? { n: 0, pnl: 0, fees: 0, notional: 0 };
+      const kl = klassenRoh[name] ?? { n: 0, pnl: 0, fees: 0, notional: 0, konten: 0 };
       kl.n += slice.n;
       kl.pnl += slice.pnl;
       kl.fees += slice.fees ?? 0;
       kl.notional += slice.notional ?? 0;
+      // Nur Konten zählen, die in DIESER Klasse tatsächlich gehandelt haben.
+      // Ein leerer Eintrag (n = 0) entsteht schon durch das bloße Anlegen
+      // einer Watchlist und wäre kein Beitrag zur Erfahrung.
+      if (slice.n > 0) kl.konten += 1;
       klassenRoh[name] = kl;
     }
   }
@@ -200,6 +220,7 @@ export function aggregateTradingHealth(
       pnl: Math.round(k.pnl * 100) / 100,
       fees: accounts >= minAccountsPublic ? Math.round(k.fees * 100) / 100 : null,
       kantePct: k.notional > 0 ? r4((k.pnl / k.notional) * 100) : null,
+      konten: k.konten,
     };
   }
 

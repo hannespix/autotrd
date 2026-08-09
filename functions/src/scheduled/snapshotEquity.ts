@@ -47,6 +47,7 @@ import {
   type EngineBilanz,
   type EngineTrade,
   type EquityPoint,
+  type KlassenBefund,
   type KlassenErgebnis,
   type ErkenntnisChronik,
   type ErkenntnisFakten,
@@ -94,6 +95,29 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
     );
   } catch (err) {
     logger.warn('Schatten-Kante nicht lesbar — Empfehlung nur aus echten Trades', err);
+  }
+
+  // Klassen-Kante ÜBER ALLE KONTEN (MG5, Owner-Go 09.08.) — der Beleg, der
+  // ein Konto von der Erfahrung des Bestands profitieren lässt, statt es
+  // dieselben 30 Trades Lehrgeld noch einmal zahlen zu lassen.
+  //
+  // Bewusst der Stand von GESTERN: `meta/health` wird erst am Ende dieses
+  // Laufs neu geschrieben, aus den Beiträgen, die die Schleife unten
+  // sammelt. Eine Klassen-Kante über hunderte Trades bewegt sich über Nacht
+  // nicht nennenswert — und die Alternative wäre, alle Konten zweimal zu
+  // lesen, nur um einen Tag früher dieselbe Antwort zu bekommen.
+  let klassenGlobal: Record<string, { n: number; kantePct: number | null; konten: number }> = {};
+  try {
+    const doc = await db.doc('meta/health').get();
+    const roh = (doc.get('trading.klassen') as Record<string, KlassenBefund> | undefined) ?? {};
+    klassenGlobal = Object.fromEntries(
+      Object.entries(roh).map(([k, v]) => [
+        k,
+        { n: v.n ?? 0, kantePct: v.kantePct ?? null, konten: v.konten ?? 0 },
+      ]),
+    );
+  } catch (err) {
+    logger.warn('Globale Klassen-Kante nicht lesbar — Empfehlung nur aus eigenen Trades', err);
   }
 
   // Kurs-Cache: market/{sym}.quote.price einmal je Symbol lesen, nicht je User.
@@ -260,22 +284,34 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
           n: slice.n,
           kantePct: slice.kantePct ?? null,
           ...(schattenGlobal[klasse] ? { schatten: schattenGlobal[klasse] } : {}),
+          ...(klassenGlobal[klasse] ? { global: klassenGlobal[klasse] } : {}),
         };
       }
-      // Klassen, die NUR im Schatten vorkommen, gehören zwingend dazu: Genau
-      // das sind die abgeschalteten. Fehlten sie hier, wäre der Rückweg
-      // wieder zu — der Fehler, den MG4 gerade behebt.
+      // Klassen, die NUR im Schatten oder NUR im Gesamtbestand vorkommen,
+      // gehören zwingend dazu: Genau das sind die abgeschalteten und die,
+      // in denen dieses Konto noch nie gehandelt hat. Fehlten sie hier,
+      // wäre der Rückweg wieder zu — der Fehler, den MG4 behoben hat — und
+      // fremde Erfahrung käme nur dort an, wo sie am wenigsten fehlt.
       for (const [klasse, s] of Object.entries(schattenGlobal)) {
         ergebnisse[klasse] ??= { n: 0, kantePct: null, schatten: s };
       }
+      for (const [klasse, g] of Object.entries(klassenGlobal)) {
+        ergebnisse[klasse] ??= { n: 0, kantePct: null, global: g };
+        ergebnisse[klasse].global ??= g;
+      }
       const rat = berateKlassen(ergebnisse, gewichte);
 
-      const autoAn = userDoc.get('settings.strategy.engine.classAutoTune') === true;
+      // Seit 09.08. AN, außer ausdrücklich abgewählt (s. strategy.ts). Ein
+      // fehlendes Feld bedeutet dasselbe wie bei einem frisch angelegten
+      // Konto — sonst hinge die Wirkung davon ab, ob jemand das
+      // Options-Modal schon einmal gespeichert hat.
+      const autoAn = userDoc.get('settings.strategy.engine.classAutoTune') !== false;
       const bewegt: Array<{
         klasse: string;
         von: number;
         nach: number;
         empfehlung: string;
+        quelle: string;
         kantePct: number | null;
         n: number;
         grund: string;
@@ -291,6 +327,11 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
             von: r.gewicht,
             nach: schritt,
             empfehlung: r.empfehlung,
+            // Woher der Beleg kam, gehört ins Journal: Ein Gewicht, das auf
+            // fremde Trades hin gefallen ist, muss später als solches
+            // erkennbar sein — sonst sucht jemand die Begründung in den
+            // eigenen Zahlen und findet sie nicht.
+            quelle: r.quelle,
             kantePct: r.kantePct,
             n: r.n,
             grund: r.grund,

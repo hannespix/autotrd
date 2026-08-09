@@ -172,9 +172,23 @@ export interface EngineConfig extends RiskConfig {
    * Auto-Regler: zieht `classWeights` selbsttätig nach, wenn die gemessene
    * Kante es belegt (`shared/src/classAdvisor.ts`).
    *
-   * Standard AUS. Er bewegt sich in Schritten statt zu springen und rührt
-   * eine Klasse mit weniger als 30 Trades gar nicht an — was den
-   * Kapitaleinsatz verändert, braucht Belege, keine Anekdoten.
+   * **Standard AN seit 09.08. (Owner-Go).** Vorher aus — die Umstellung hat
+   * einen konkreten Anlass: Die Erkenntnis-Chronik führte am 09.08. belegt,
+   * dass `etf_thematic` über 58 Trades −0,76 % je Dollar verliert, und der
+   * Bericht schlug vor, die Klasse zu drosseln. Nur passierte nichts, weil
+   * jemand den Vorschlag hätte anklicken müssen. Eine Messung, die niemanden
+   * erreicht, ist keine Verbesserung — und der Owner-Auftrag lautet
+   * „minimale User-Interaktion".
+   *
+   * Der Regler bleibt dabei so vorsichtig wie zuvor: Er bewegt sich in
+   * Schritten von 0,25 statt zu springen, rührt eine Klasse ohne Beleg gar
+   * nicht an, protokolliert jede Bewegung in `classLog`, und der Schatten
+   * misst weiter — eine abgeschaltete Klasse kann zurückkommen.
+   *
+   * `undefined` zählt als AN; wer ihn nicht will, wählt ihn im Options-Modal
+   * ausdrücklich ab (`false`). Diese Lesart ist der Grund, warum es keine
+   * Standard-Konstante gibt: Ein fehlendes Feld soll dasselbe bedeuten wie
+   * ein neu angelegtes Konto.
    */
   classAutoTune?: boolean;
   /**
