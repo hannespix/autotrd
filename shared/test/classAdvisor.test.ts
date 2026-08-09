@@ -357,13 +357,44 @@ describe('rateKlasse — der Gesamtbestand als dritte Quelle (MG5)', () => {
     expect(r.belegKantePct).toBe(-0.5);
   });
 
-  it('der Bestand schlägt den Schatten — echte Trades vor Ersatzmessung', () => {
-    // Beide könnten greifen: Gewicht 0, positiver Schatten (würde zurückholen)
-    // UND ein negativer Bestand (würde abschalten). Der Bestand hat echte
+  it('der Bestand schlägt den Schatten, SOLANGE die Klasse noch läuft', () => {
+    // Bei Gewicht > 0 gibt es nichts zurückzuholen: Der Bestand hat echte
     // Ausführung samt Stop gesehen, der Schatten nicht.
     const r = rateKlasse(
       'x',
       { n: 0, kantePct: null, schatten: { n: 500, kantePct: 0.4 }, global: global(200, -0.9) },
+      1,
+    );
+    expect(r.quelle).toBe('global');
+    expect(r.empfehlung).toBe('abschalten');
+  });
+
+  it('eine abgeschaltete Klasse kommt über den Schatten zurück — auch gegen den Bestand', () => {
+    // DER wichtigste Test dieser Datei. Beim Durchrechnen der Live-Zahlen am
+    // 09.08. fiel auf: Der Bestand schaltet `crypto` (144 Trades, −0,124 %)
+    // und `etf_thematic` in ALLEN Konten ab. Danach entstehen dort keine
+    // neuen Trades mehr — die globale Kante friert auf dem Stand des
+    // Abschalt-Tages ein und spricht bei jedem Lauf dasselbe Urteil.
+    //
+    // Stünde der Bestand vor dem Schatten, wäre die Klasse damit für immer
+    // tot: Die einzige fortlaufende Messung käme nie zu Wort. Genau die
+    // Zirkularität, gegen die MG4 gebaut wurde, durch die Hintertür.
+    const r = rateKlasse(
+      'crypto',
+      { n: 0, kantePct: null, schatten: { n: 500, kantePct: 0.4 }, global: global(144, -0.124) },
+      0,
+    );
+    expect(r.quelle).toBe('schatten');
+    expect(r.empfehlung).toBe('zurueckholen');
+    expect(r.vorschlag).toBe(SCHATTEN_PROBELOS);
+  });
+
+  it('ein NEGATIVER Schatten holt eine abgeschaltete Klasse nicht zurück', () => {
+    // Der Rückweg bleibt eng: Er verlangt einen positiven Schatten. Sonst
+    // wäre er kein Rückweg, sondern ein Leck im Abschalt-Mechanismus.
+    const r = rateKlasse(
+      'crypto',
+      { n: 0, kantePct: null, schatten: { n: 500, kantePct: -0.4 }, global: global(144, -0.124) },
       0,
     );
     expect(r.quelle).toBe('global');
