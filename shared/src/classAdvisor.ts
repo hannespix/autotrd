@@ -44,6 +44,7 @@
  */
 
 import { SCHATTEN_MIN_N } from './classShadow.js';
+import { MIN_ACCOUNTS } from './globalLearning.js';
 
 /** Was eine Anlageklasse gemessen hat — Teilmenge von `AttributionSlice`. */
 export interface KlassenErgebnis {
@@ -55,6 +56,30 @@ export interface KlassenErgebnis {
    * Ausführung weiterläuft. Zählt nur, wenn realisierte Trades fehlen.
    */
   schatten?: { n: number; kantePct: number | null };
+  /**
+   * Dieselbe Klasse über ALLE Konten (MG5, Owner-Go 09.08.).
+   *
+   * ── Warum es diese Ebene braucht ────────────────────────────────────────
+   *
+   * Am 09.08. stand in der Erkenntnis-Chronik belegt, dass `etf_thematic`
+   * über 58 Trades −0,76 % je Dollar verliert — und der Regler hätte
+   * trotzdem nichts getan. Grund: Er verlangt 30 Trades IN DIESER KLASSE IN
+   * DIESEM KONTO, und die 58 verteilen sich über sieben Konten. Die
+   * Erkenntnis war also belegt, der Hebel aber verriegelt.
+   *
+   * Das widerspricht der Owner-Direktive, dass sich das Tool als Ganzes
+   * verbessern soll und nicht nur je Nutzer. Ein Konto muss nicht selbst
+   * 30 Mal Lehrgeld zahlen, wenn die Antwort anderswo schon gemessen wurde.
+   *
+   * ── Warum die Latte höher liegt als bei eigenen Trades ──────────────────
+   *
+   * Fremde Konten handeln mit anderen Einstellungen: andere Loadouts, andere
+   * Stops, andere Watchlists. Dieselbe Klasse kann dort etwas anderes sein
+   * als hier. Deshalb `GLOBAL_MIN_TRADES` deutlich über `KLASSE_MIN_TRADES`
+   * und zusätzlich `MIN_ACCOUNTS` beitragende Konten — bei einem einzigen
+   * Konto wäre der „globale" Wert schlicht dessen eigener.
+   */
+  global?: { n: number; kantePct: number | null; konten: number };
 }
 
 /** Regler-Grenzen. Identisch zum Überzeugungs-Sizing, damit beide zusammen gedeckelt bleiben. */
@@ -63,6 +88,28 @@ export const GEWICHT_MAX = 1.5;
 
 /** Ab so vielen Trades gilt eine Klassen-Kante als belegt. */
 export const KLASSE_MIN_TRADES = 30;
+
+/**
+ * Ab so vielen Trades ÜBER ALLE KONTEN zählt der globale Beleg.
+ *
+ * Fast das Doppelte der eigenen Schwelle. Der Aufschlag bezahlt die
+ * Heterogenität: Die Trades stammen aus Konten mit anderen Einstellungen,
+ * also ist jeder einzelne für dieses Konto weniger aussagekräftig als ein
+ * eigener. Zusammen mit `MIN_ACCOUNTS` verhindert das, dass ein einzelnes
+ * vielhandelndes Konto dem ganzen Bestand seine Erfahrung aufdrängt.
+ */
+export const GLOBAL_MIN_TRADES = 50;
+
+/**
+ * Obergrenze, die ein globaler Beleg vergeben darf.
+ *
+ * Die Asymmetrie ist Absicht und folgt derselben Logik wie beim Schatten,
+ * nur andersherum: Drosseln und Abschalten dürfen auf Fremdmessung hin
+ * passieren, denn ein Fehlalarm kostet nur entgangene Chancen. VERSTÄRKEN
+ * erhöht den Einsatz — dafür soll dieses Konto selbst geliefert haben.
+ * Über 1,0 hinaus geht es also nur mit eigenen Trades.
+ */
+export const GLOBAL_MAX_GEWICHT = 1;
 
 /**
  * Kante, ab der eine Klasse als klar tragend gilt (in Prozent je Dollar).
@@ -95,9 +142,14 @@ export type Empfehlung =
  */
 export const SCHATTEN_PROBELOS = 0.5;
 
+/** Worauf sich die Empfehlung stützt. */
+export type Belegquelle = 'eigen' | 'global' | 'schatten' | 'keine';
+
 export interface KlassenRat {
   klasse: string;
+  /** EIGENE Trades dieses Kontos — bleibt auch dann stehen, wenn global entschieden wurde. */
   n: number;
+  /** EIGENE Kante dieses Kontos. */
   kantePct: number | null;
   /** Aktuelles Gewicht (aus der Strategie). */
   gewicht: number;
@@ -106,6 +158,15 @@ export interface KlassenRat {
   vorschlag: number;
   /** Klartext — landet in der Oberfläche und im Journal. */
   grund: string;
+  /**
+   * Woher der Beleg stammt. Ohne dieses Feld ließe sich in der Karte nicht
+   * unterscheiden, ob „drosseln" auf eigenen Trades beruht oder auf denen
+   * anderer Konten — ein Unterschied, der für die Bewertung zählt.
+   */
+  quelle: Belegquelle;
+  /** Die Zahlen, auf denen die Empfehlung fußt (bei `eigen` identisch zu n/kantePct). */
+  belegN: number;
+  belegKantePct: number | null;
 }
 
 const r2 = (x: number): number => Math.round(x * 100) / 100;
@@ -117,74 +178,32 @@ export function klemmeGewicht(w: number | undefined): number {
 }
 
 /**
- * Empfehlung für eine einzelne Klasse.
+ * Kante → Empfehlung + Vorschlag. Die eigentliche Skala, unabhängig davon,
+ * WOHER die Kante kommt.
  *
- * Die Reihenfolge der Prüfungen ist Absicht — erst Datenmenge, dann
- * Richtung, dann Größe. Genau wie bei `judgeCandidate`: Wer nur das Ergebnis
- * liest, soll trotzdem verstehen, WARUM es so ausfällt.
+ * Ausgelagert, damit eigener und globaler Beleg garantiert dieselben
+ * Schwellen benutzen. Zwei Kopien dieser Kaskade wären der sichere Weg,
+ * dass sie beim nächsten Feinschliff auseinanderlaufen — und niemand würde
+ * es merken, weil beide Zweige für sich plausibel blieben.
+ *
+ * `deckel` begrenzt, wie weit hoch der Vorschlag gehen darf: Beim globalen
+ * Beleg auf 1,0, weil Verstärken eigene Trades verlangt (s. GLOBAL_MAX_GEWICHT).
  */
-export function rateKlasse(
-  klasse: string,
-  ergebnis: KlassenErgebnis,
-  gewicht: number,
-  minTrades = KLASSE_MIN_TRADES,
-  schattenMinN = SCHATTEN_MIN_N,
-): KlassenRat {
-  const w = klemmeGewicht(gewicht);
-  const basis = { klasse, n: ergebnis.n, kantePct: ergebnis.kantePct, gewicht: w };
-
-  if (ergebnis.kantePct === null || ergebnis.n < minTrades) {
-    // Kein Trade-Beleg. Genau hier greift der Schatten (MG4b) — und zwar
-    // NUR hier: Realisierte Trades schlagen eine Ersatzmessung immer.
-    const s = ergebnis.schatten;
-    const schattenBelegt = !!s && s.kantePct !== null && s.n >= schattenMinN;
-
-    // Der Schatten darf ausschließlich ZURÜCKHOLEN, nie abschalten. Grund:
-    // Ihm fehlt der Stop, der reale Verluste kappt — eine negative
-    // Schatten-Kante ist deshalb kein Beleg für einen negativen
-    // Trade-Ertrag. Umgekehrt ist eine positive ein handfestes Argument,
-    // es mit kleinem Einsatz noch einmal zu versuchen. Und wenn die Klasse
-    // ohnehin läuft (Gewicht > 0), ist nicht das Gewicht das Problem,
-    // sondern die fehlende Gelegenheit — daran ändert der Regler nichts.
-    if (schattenBelegt && w === 0 && s!.kantePct! > 0) {
-      return {
-        ...basis,
-        empfehlung: 'zurueckholen',
-        vorschlag: SCHATTEN_PROBELOS,
-        grund:
-          `Abgeschaltet, aber der Schatten verdient ${s!.kantePct!.toFixed(3)} % je Signal ` +
-          `über ${s!.n} Signale. Mit halbem Gewicht zurück in den Handel — nur echte ` +
-          'Trades können den Verdacht bestätigen.',
-      };
-    }
-    return {
-      ...basis,
-      empfehlung: 'zu_wenig_daten',
-      // Unverändert lassen, NICHT auf einen Standardwert ziehen: Eine Klasse
-      // ohne Beleg soll weder belohnt noch bestraft werden.
-      vorschlag: w,
-      grund:
-        `${ergebnis.n} Trades — für eine Aussage sind ${minTrades} nötig. `
-        + (schattenBelegt
-          ? `Der Schatten steht bei ${s!.kantePct!.toFixed(3)} % je Signal (${s!.n}); `
-            + 'er kann eine Klasse zurückholen, aber keine abschalten. '
-          : '')
-        + 'Gewicht bleibt, wie es ist.',
-    };
-  }
-
-  const k = ergebnis.kantePct;
+function bewerteKante(
+  k: number,
+  n: number,
+  w: number,
+  deckel: number,
+): { empfehlung: Empfehlung; vorschlag: number; grund: string } {
   if (k >= KANTE_GUT) {
     return {
-      ...basis,
       empfehlung: 'verstaerken',
-      vorschlag: r2(Math.min(GEWICHT_MAX, Math.max(w, 1) * 1.25)),
+      vorschlag: r2(Math.min(deckel, Math.max(w, 1) * 1.25)),
       grund: `Verdient ${k.toFixed(3)} % je gehandeltem Dollar — trägt ihre Reibung klar.`,
     };
   }
   if (k > KANTE_SCHLECHT) {
     return {
-      ...basis,
       empfehlung: 'behalten',
       vorschlag: r2(Math.min(w, 1)),
       grund:
@@ -197,19 +216,129 @@ export function rateKlasse(
   // pro Dollar systematisch verbrennt.
   if (k > -0.1) {
     return {
-      ...basis,
       empfehlung: 'drosseln',
       vorschlag: r2(Math.max(0.25, w * 0.5)),
       grund: `Verliert ${Math.abs(k).toFixed(3)} % je Dollar — halbes Gewicht, weiter beobachten.`,
     };
   }
   return {
-    ...basis,
     empfehlung: 'abschalten',
     vorschlag: 0,
     grund:
-      `Verliert ${Math.abs(k).toFixed(3)} % je gehandeltem Dollar über ${ergebnis.n} Trades. ` +
+      `Verliert ${Math.abs(k).toFixed(3)} % je gehandeltem Dollar über ${n} Trades. ` +
       'Das ist keine Marktphase, das ist die Struktur. Der Schatten läuft weiter.',
+  };
+}
+
+/**
+ * Empfehlung für eine einzelne Klasse.
+ *
+ * Die Reihenfolge der Prüfungen ist Absicht — erst Datenmenge, dann
+ * Richtung, dann Größe. Genau wie bei `judgeCandidate`: Wer nur das Ergebnis
+ * liest, soll trotzdem verstehen, WARUM es so ausfällt.
+ *
+ * Die Belegquellen stehen in einer festen Rangfolge, und die ist keine
+ * Geschmacksfrage:
+ *
+ *   1. EIGENE Trades — sie messen genau diese Einstellungen an genau diesem
+ *      Konto. Nichts schlägt das.
+ *   2. GLOBALER Beleg (MG5) — echte Trades, aber aus fremden Konten mit
+ *      anderen Einstellungen. Höhere Latte, und Verstärken ist gedeckelt.
+ *   3. SCHATTEN — misst die Signalquelle ohne Ausführung, ihm fehlt der
+ *      Stop. Darf deshalb nur zurückholen, nie abschalten.
+ */
+export function rateKlasse(
+  klasse: string,
+  ergebnis: KlassenErgebnis,
+  gewicht: number,
+  minTrades = KLASSE_MIN_TRADES,
+  schattenMinN = SCHATTEN_MIN_N,
+  globalMinTrades = GLOBAL_MIN_TRADES,
+  globalMinKonten = MIN_ACCOUNTS,
+): KlassenRat {
+  const w = klemmeGewicht(gewicht);
+  const basis = { klasse, n: ergebnis.n, kantePct: ergebnis.kantePct, gewicht: w };
+
+  // 1) Eigene Trades.
+  if (ergebnis.kantePct !== null && ergebnis.n >= minTrades) {
+    return {
+      ...basis,
+      ...bewerteKante(ergebnis.kantePct, ergebnis.n, w, GEWICHT_MAX),
+      quelle: 'eigen',
+      belegN: ergebnis.n,
+      belegKantePct: ergebnis.kantePct,
+    };
+  }
+
+  // 2) Globaler Beleg — dieselbe Skala, strengere Zulassung.
+  const g = ergebnis.global;
+  if (
+    g &&
+    g.kantePct !== null &&
+    g.n >= globalMinTrades &&
+    g.konten >= globalMinKonten
+  ) {
+    const b = bewerteKante(g.kantePct, g.n, w, GLOBAL_MAX_GEWICHT);
+    return {
+      ...basis,
+      ...b,
+      grund:
+        `${b.grund} Beleg aus dem Gesamtbestand: ${g.n} Trades über ${g.konten} Konten ` +
+        `(eigene: ${ergebnis.n}, für einen eigenen Beleg wären ${minTrades} nötig).` +
+        (b.empfehlung === 'verstaerken'
+          ? ` Verstärkt wird höchstens auf ${GLOBAL_MAX_GEWICHT} — darüber hinaus zählen nur eigene Trades.`
+          : ''),
+      quelle: 'global',
+      belegN: g.n,
+      belegKantePct: g.kantePct,
+    };
+  }
+
+  // 3) Schatten — Ersatzmessung ohne Ausführung.
+  const s = ergebnis.schatten;
+  const schattenBelegt = !!s && s.kantePct !== null && s.n >= schattenMinN;
+
+  // Der Schatten darf ausschließlich ZURÜCKHOLEN, nie abschalten. Grund:
+  // Ihm fehlt der Stop, der reale Verluste kappt — eine negative
+  // Schatten-Kante ist deshalb kein Beleg für einen negativen
+  // Trade-Ertrag. Umgekehrt ist eine positive ein handfestes Argument,
+  // es mit kleinem Einsatz noch einmal zu versuchen. Und wenn die Klasse
+  // ohnehin läuft (Gewicht > 0), ist nicht das Gewicht das Problem,
+  // sondern die fehlende Gelegenheit — daran ändert der Regler nichts.
+  if (schattenBelegt && w === 0 && s!.kantePct! > 0) {
+    return {
+      ...basis,
+      empfehlung: 'zurueckholen',
+      vorschlag: SCHATTEN_PROBELOS,
+      grund:
+        `Abgeschaltet, aber der Schatten verdient ${s!.kantePct!.toFixed(3)} % je Signal ` +
+        `über ${s!.n} Signale. Mit halbem Gewicht zurück in den Handel — nur echte ` +
+        'Trades können den Verdacht bestätigen.',
+      quelle: 'schatten',
+      belegN: s!.n,
+      belegKantePct: s!.kantePct,
+    };
+  }
+  return {
+    ...basis,
+    empfehlung: 'zu_wenig_daten',
+    // Unverändert lassen, NICHT auf einen Standardwert ziehen: Eine Klasse
+    // ohne Beleg soll weder belohnt noch bestraft werden.
+    vorschlag: w,
+    grund:
+      `${ergebnis.n} Trades — für eine Aussage sind ${minTrades} nötig. `
+      + (g && g.kantePct !== null
+        ? `Der Gesamtbestand steht bei ${g.kantePct.toFixed(3)} % über ${g.n} Trades aus ${g.konten} Konten; `
+          + `dafür wären ${globalMinTrades} Trades aus ${globalMinKonten} Konten nötig. `
+        : '')
+      + (schattenBelegt
+        ? `Der Schatten steht bei ${s!.kantePct!.toFixed(3)} % je Signal (${s!.n}); `
+          + 'er kann eine Klasse zurückholen, aber keine abschalten. '
+        : '')
+      + 'Gewicht bleibt, wie es ist.',
+    quelle: 'keine',
+    belegN: ergebnis.n,
+    belegKantePct: ergebnis.kantePct,
   };
 }
 
@@ -236,7 +365,11 @@ export function berateKlassen(
 ): KlassenBericht {
   const raete = Object.entries(ergebnisse)
     .map(([klasse, e]) => rateKlasse(klasse, e, gewichte[klasse] ?? 1, minTrades, schattenMinN))
-    .sort((a, b) => (b.kantePct ?? -Infinity) - (a.kantePct ?? -Infinity));
+    // Nach der Kante sortieren, die die Empfehlung TRÄGT — sonst rutschte
+    // eine global belegte Klasse ans Ende, nur weil ihre eigene Kante null
+    // ist. Genau die Klassen sollen aber oben stehen, über die etwas
+    // ausgesagt werden kann.
+    .sort((a, b) => (b.belegKantePct ?? -Infinity) - (a.belegKantePct ?? -Infinity));
 
   const aenderungen = raete.filter((r) => Math.abs(r.vorschlag - r.gewicht) > 1e-9).length;
   const belegt = raete.filter((r) => r.empfehlung !== 'zu_wenig_daten');

@@ -1719,6 +1719,42 @@ dritten Mal an derselben Stelle gelöst.
       Schatten-Kante kein Beleg für einen negativen Trade-Ertrag — eine
       positive dagegen ein Grund, es mit halbem Einsatz zu versuchen.
       Realisierte Trades schlagen den Schatten immer.
+- [x] **MG5 Der Bestand lehrt das einzelne Konto — und der Regler wird
+      scharf** *(09.08., Owner-Go)*: Zwei Änderungen mit einem gemeinsamen
+      Anlass. Der KI-Lagebericht schlug in der Nacht auf den 09.08. vor,
+      `etf_thematic` zu drosseln — belegt mit −0,76 % je Dollar über 58
+      Trades. Passiert wäre trotzdem nichts, aus zwei unabhängigen Gründen.
+
+      **Erstens** verlangte der Regler 30 Trades in dieser Klasse *in diesem
+      Konto*, und die 58 verteilten sich über sieben. Die Erkenntnis war
+      global belegt, der Hebel lokal verriegelt — genau gegen die Direktive
+      „das Tool soll sich als Gesamtes verbessern, nicht nur pro User".
+      `KlassenErgebnis` trägt jetzt optional `global` (Kante, n, Konten aus
+      `meta/health.trading.klassen`), und `rateKlasse` hat drei Belegquellen
+      in fester Rangfolge: eigene Trades → Gesamtbestand → Schatten.
+
+      Die Latte des Bestands liegt höher (`GLOBAL_MIN_TRADES = 50` statt 30,
+      zusätzlich `MIN_ACCOUNTS = 3` beitragende Konten), weil fremde Konten
+      mit anderen Loadouts und Stops handeln. Und er darf nur bremsen:
+      Drosseln und Abschalten ja, Verstärken höchstens auf Gewicht 1
+      (`GLOBAL_MAX_GEWICHT`) — ein Fehlalarm beim Drosseln kostet entgangene
+      Chancen, einer beim Verstärken kostet Geld. Dieselbe Asymmetrie wie
+      bei MG4b, nur in die andere Richtung. Die Kaskade Kante→Urteil steht
+      dafür in EINER Funktion (`bewerteKante`); zwei Kopien wären der sichere
+      Weg, dass die Schwellen beim nächsten Feinschliff auseinanderlaufen.
+
+      **Zweitens** stand `classAutoTune` auf AUS, ein Vorschlag musste also
+      angeklickt werden. Seit 09.08. gilt AN, außer ausdrücklich abgewählt
+      (`!== false`, gleich gelesen in Abendlauf und UI). Der Regler bleibt so
+      vorsichtig wie zuvor: Schritte von 0,25, kein Eingriff ohne Beleg,
+      Journal in `classLog` — jetzt mit `quelle`, damit ein Gewicht, das auf
+      fremde Trades hin gefallen ist, als solches erkennbar bleibt.
+
+      Anlaufverhalten, ehrlich: Der erste Lauf nach dem Deploy findet in
+      `meta/health` noch kein `konten`-Feld vor, liest also 0 Konten und
+      nutzt den globalen Beleg nicht — er schreibt ihn erst. Erst der
+      Folgelauf regelt danach. Ein Tag Puffer, der sich aus der Reihenfolge
+      ergibt und nicht extra gebaut werden musste.
 - [x] **MG4 Schatten für abgeschaltete Klassen — Messung** *(04.08.)*:
       `shared/src/classShadow.ts`. Jeder Scan legt Richtung, Kurs und
       Zeitpunkt seines Signals ans Markt-Dokument; der nächste misst, was
