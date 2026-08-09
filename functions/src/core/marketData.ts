@@ -107,7 +107,22 @@ async function fetchYahoo(symbol: string, range: string): Promise<MarketSnapshot
   return { symbol, price, changePct, bars, source: 'yahoo' };
 }
 
-/** Tiefe Tages-Historie (Chart-Audit 2): ~5 Jahre für nahtloses Rausscrollen. */
+/**
+ * Stand des Tiefen-Backfills am Symbol-Doc (`deepBackfillV`).
+ *
+ * Hier zentral, weil ZWEI Scheduler dieselben `ohlcDaily`-Docs schreiben:
+ * `scanMarket` für die beobachteten Symbole, `momentumRun` rotierend für den
+ * Rest des Katalogs. Bis 09.08. stand in scanMarket die 2 und in momentumRun
+ * die 1 — der Momentum-Backfill markierte damit als „erledigt", was der Scan
+ * gleich darauf noch einmal holte, und keiner der beiden konnte am Marker
+ * ablesen, was der andere getan hatte.
+ *
+ * Erhöhen NUR, wenn sich der Inhalt ändert (V2 = volle Yahoo-Historie statt
+ * 5 Jahre, Zoom-Kontinuum 06.08.) — dann holt jeder Schreiber alles einmal neu.
+ */
+export const DEEP_BACKFILL_V = 2;
+
+/** Tiefe Tages-Historie (Chart-Audit 2): volle Yahoo-Historie (range=max). */
 export async function getDeepDailyBars(symbol: string): Promise<DailyBar[]> {
   // range=max statt 5y (Zoom-Kontinuum 06.08.): die volle Yahoo-Historie —
   // bei alten Indizes Jahrzehnte. Einmalig je Symbol (deepBackfillV-Marker);
