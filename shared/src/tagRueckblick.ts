@@ -67,6 +67,22 @@ export const MIN_VORLAUF = 200;
  */
 export const MAX_LUECKE_TAGE = 4;
 
+/**
+ * Wie viele Kurse das Signal am Basistag sieht — ein ROLLENDES Fenster.
+ *
+ * Nicht „so viel Historie wie da ist", und das aus zwei Gründen:
+ *
+ *  1. Es soll DIESELBE Signalquelle gemessen werden, die auch handelt. Der
+ *     Live-Scan holt `DEFAULT_STRATEGY.signals.period` = '1y', rechnet also
+ *     auf rund 250 Tagen. Ein Wilder-RSI über 5000 Bars ist nicht derselbe
+ *     Wert wie über 250 — eine Messung mit wachsendem Fenster würde etwas
+ *     bewerten, das so nie gehandelt wurde.
+ *  2. Kosten: Jeder Aufruf rechnet die Indikatoren über das ganze Fenster.
+ *     Wachsend wäre das quadratisch in der Reihenlänge; bei alten Indizes
+ *     mit Jahrzehnten Historie sprengt das jedes Zeitbudget.
+ */
+export const SIGNAL_FENSTER = 250;
+
 /** Warum ein Basistag NICHT bewertet wurde — die Zahlen machen den Lauf lesbar. */
 export interface RueckblickAusfaelle {
   /** Vor `MIN_VORLAUF` — die Indikatoren hätten auf Luft gerechnet. */
@@ -120,6 +136,7 @@ export function werteTagRueckblick(
   roundtripKosten: number,
   heuteIso: string,
   minVorlauf: number = MIN_VORLAUF,
+  fenster: number = SIGNAL_FENSTER,
 ): TagRueckblickErgebnis {
   const ausfaelle = leereAusfaelle();
   let klasse: SchattenKlasse | undefined;
@@ -152,9 +169,11 @@ export function werteTagRueckblick(
     if (!(basis.close > 0) || !(folge.close > 0)) { ausfaelle.kaputt += 1; continue; }
 
     // ── Regel 1: das Signal sieht NUR die Vergangenheit ───────────────────
-    // `slice(0, i + 1)` endet EINSCHLIESSLICH i. Der Basistag selbst ist
-    // erlaubt (sein Schluss steht fest), i + 1 auf keinen Fall.
-    const direction = signalFn(closes.slice(0, i + 1), basis.close);
+    // Das Fenster endet bei `i + 1`, also EINSCHLIESSLICH Basistag: Sein
+    // Schluss steht fest, er darf gesehen werden — `i + 1` auf keinen Fall.
+    // Der Anfang rollt mit (`SIGNAL_FENSTER`), damit hier dieselbe
+    // Signalquelle gemessen wird, die auch handelt.
+    const direction = signalFn(closes.slice(Math.max(0, i + 1 - fenster), i + 1), basis.close);
     if (direction === 'hold') { ausfaelle.hold += 1; continue; }
 
     const beitrag = bewerteSchattenSignal({ direction, price: basis.close }, folge.close, roundtripKosten);

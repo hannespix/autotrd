@@ -48,18 +48,38 @@ describe('Regel 1 — das Signal sieht ausschließlich die Vergangenheit', () =>
     expect(gesehen.length).toBeGreaterThan(0);
     for (const g of gesehen) {
       // Der zuletzt sichtbare Kurs IST der Basistagskurs — nicht der danach.
+      // Das ist die eigentliche Lookahead-Garantie: Egal wie lang das Fenster
+      // ist, sein ENDE darf nie über den Basistag hinausreichen.
       expect(g.letzterClose).toBe(g.preis);
-      // Und der Basistag ist der letzte im Fenster: closes[anzahl-1] === preis
-      // schließt aus, dass das Fenster einen Tag zu weit reicht.
       const basisIndex = r.findIndex((t) => t.close === g.preis);
-      expect(g.anzahl).toBe(basisIndex + 1);
+      expect(g.anzahl).toBe(Math.min(basisIndex + 1, 250));
     }
   });
 
-  it('das Fenster wächst je Basistag um genau einen Kurs', () => {
+  it('das Fenster wächst je Basistag um einen Kurs — bis zur Fenstergrenze', () => {
     const laengen: number[] = [];
     werteTagRueckblick(reihe(10), (closes) => { laengen.push(closes.length); return 'hold'; }, 0, '2099-01-01', 3);
     for (let i = 1; i < laengen.length; i++) expect(laengen[i]).toBe(laengen[i - 1]! + 1);
+  });
+
+  it('ab der Fenstergrenze ROLLT es mit, statt weiterzuwachsen', () => {
+    // Sonst würde eine andere Signalquelle gemessen als die gehandelte: Der
+    // Live-Scan rechnet auf `period: '1y'` ≈ 250 Tagen, nicht auf Jahrzehnten.
+    const r = reihe(30);
+    const fenster: Array<{ n: number; erster: number; letzter: number }> = [];
+    werteTagRueckblick(r, (closes) => {
+      fenster.push({ n: closes.length, erster: closes[0]!, letzter: closes[closes.length - 1]! });
+      return 'hold';
+    }, 0, '2099-01-01', 1, 5);
+
+    for (const f of fenster) expect(f.n).toBeLessThanOrEqual(5);
+    // Sobald es rollt, wandert auch der ANFANG mit — ein bloß gekapptes Ende
+    // wäre kein rollendes Fenster.
+    const spaet = fenster.slice(10);
+    for (let i = 1; i < spaet.length; i++) {
+      expect(spaet[i]!.erster).toBeGreaterThan(spaet[i - 1]!.erster);
+      expect(spaet[i]!.letzter).toBeGreaterThan(spaet[i - 1]!.letzter);
+    }
   });
 });
 
