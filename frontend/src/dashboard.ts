@@ -1032,9 +1032,9 @@ function layout(email: string): string {
           Diese Sätze bleiben: Jeden Abend prüft das System einen festen Satz Thesen gegen die
           gemessenen Daten und hält fest, was gilt, seit wann es gilt und was widerlegt wurde.
           Jede These trägt ihre Belegzahlen; unterhalb eines Mindest-n wird nichts behauptet.</div>
-        <div id="erList" class="fl-tbl" style="margin-top:8px"><div class="hint">Die erste Chronik entsteht mit dem nächsten Tages-Lauf (17:15 ET).</div></div>
+        <div id="erList" class="er-list" style="margin-top:8px"><div class="hint">Die erste Chronik entsteht mit dem nächsten Tages-Lauf (17:15 ET).</div></div>
         <label class="lbl" style="margin-top:12px">Tages-Einschätzung ${iBtn('aibericht')} <span id="abStand" class="tn-tag" style="float:right"></span></label>
-        <div id="abText" class="hint">Der erste Bericht entsteht mit dem nächsten Tages-Lauf (18:25 ET).</div>
+        <div id="abText" class="ab-text">Der erste Bericht entsteht mit dem nächsten Tages-Lauf (18:25 ET).</div>
         <div id="abMeta" class="tn-n mono"></div>
       </div></div>
 
@@ -7077,12 +7077,16 @@ function renderErkenntnisse(c: ErkenntnisChronik | null): void {
       // dass eine frühere Annahme gekippt ist.
       const letzter = e.historie?.[e.historie.length - 1];
       const wechsel = letzter
-        ? `<div class="tn-r">Zuvor (${letzter.at.slice(0, 10)}): ${esc(letzter.these)}</div>`
+        ? `<div class="er-vor">Zuvor (${letzter.at.slice(0, 10)}): ${esc(letzter.these)}</div>`
         : '';
+      // Status und Datum stehen ÜBER dem Satz, nicht daneben: In einer
+      // Flex-Zeile schrumpfen weder das Tag noch das nowrap-Datum, der Satz
+      // bekäme also nur den Rest — auf dem Handy gemessene 141 von 310 px.
       return (
-        `<div class="tn-e"><div class="tn-h"><span class="tn-nm">${esc(e.these)}</span>${marke[e.status] ?? ''}` +
-        `<span class="tn-t mono">${seit}</span></div>` +
-        (belege ? `<div class="tn-n mono">${esc(belege)}</div>` : '') +
+        `<div class="er-e" data-status="${esc(e.status)}">` +
+        `<div class="er-meta">${marke[e.status] ?? ''}<span class="tn-t mono">${seit}</span></div>` +
+        `<div class="er-these">${esc(e.these)}</div>` +
+        (belege ? `<div class="er-beleg mono">${esc(belege)}</div>` : '') +
         wechsel +
         '</div>'
       );

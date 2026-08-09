@@ -606,6 +606,35 @@ input { accent-color: var(--ac); }
 .tn-r { font-size: 11px; line-height: 1.4; color: var(--t2); margin-top: 2px; }
 .tn-n { font-size: 10px; color: var(--t3); margin-top: 2px; font-variant-numeric: tabular-nums; }
 
+/* Erkenntnis-Chronik + Tages-Einschätzung.
+   ── Warum eigene Klassen und nicht die des Tuner-Journals ────────────────
+   Die Chronik hat anfangs `.fl-tbl` und `.tn-h` mitbenutzt. Beide sind für
+   kurze Journal-Einträge gebaut, und an ganzen Sätzen brechen sie — auf dem
+   Handy nachgemessen (390 px):
+     · `.fl-tbl` deckelt auf 168 px, der Inhalt war 639 px hoch. Drei Viertel
+       der Chronik steckten in einem inneren Scroll-Container, und der letzte
+       sichtbare Satz brach mitten im Wort ab.
+     · `.tn-h` ist eine Flex-Zeile mit nicht schrumpfbarem Status-Tag und
+       einem Datum mit `white-space: nowrap`. Dem Satz blieben davon 141 px
+       von 310 px — Umbruch auf ein bis zwei Wörter je Zeile.
+   Deshalb hier: Der Satz bekommt die volle Breite, Tag und Datum stehen in
+   einer eigenen Kopfzeile darüber, und die Liste wird nicht gedeckelt. Sie
+   ist der Inhalt, um dessentwillen die Karte existiert; wer sie nicht sehen
+   will, klappt die Karte zu. */
+.er-list { display: flex; flex-direction: column; }
+.er-e { padding: 9px 2px 10px; border-bottom: 1px solid var(--hair); }
+.er-e:last-child { border-bottom: 0; padding-bottom: 2px; }
+.er-meta { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+.er-meta .tn-t { margin-left: auto; }
+.er-these { font-size: 12px; line-height: 1.45; color: var(--t1); font-weight: 600; }
+/* Widerlegt: der Satz gilt nicht mehr, soll aber lesbar bleiben. */
+.er-e[data-status='gilt_nicht'] .er-these { color: var(--t2); font-weight: 500; }
+.er-beleg { font-size: 10px; color: var(--t3); margin-top: 4px; font-variant-numeric: tabular-nums; word-break: break-word; }
+.er-vor { font-size: 11px; line-height: 1.4; color: var(--t3); margin-top: 4px; }
+/* Der Bericht ist ein Fließtext von ~200 Wörtern — `.hint` mit 9 px wäre
+   für die Kernaussage des Tages die falsche Größe. */
+.ab-text { font-size: 12px; line-height: 1.5; color: var(--t2); }
+
 /* Chart: Indikator-Layer-Zeile + Vergleichs-Overlay-Input */
 .ind-bar { margin-top: -2px; }
 .cmp-inp { width: 130px; margin-left: auto; font-size: 11px; padding: 4px 8px; text-transform: uppercase; }
