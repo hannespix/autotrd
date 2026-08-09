@@ -148,7 +148,28 @@ input { accent-color: var(--ac); }
 .sect-grip { cursor: grab; }
 .sect-grip:active { cursor: grabbing; }
 .card.dragging { opacity: .55; outline: 1px dashed var(--ac); }
-@media (max-width: 900px) { .sb-rs, .sect-grip { display: none; } }
+/* ── Wann gilt das Ein-Spalten-Layout? ───────────────────────────────────
+   Nicht allein die Breite entscheidet, sondern auch das Eingabegerät.
+   Grund (Owner-Screenshot 09.08.): Ein Telefon kann sich als Desktop
+   ausgeben — im Browser über „Desktop-Website", und dann meldet es rund
+   980 px statt 390 px. Die App hielte sich für einen Monitor, stellte drei
+   Spalten nebeneinander, und das Gerät skaliert die ganze Seite auf seine
+   echte Breite herunter: Mini-Schrift, Sätze in Ein-Wort-Zeilen.
+
+   `pointer: coarse` heißt „gesteuert mit dem Finger". Ein solches Gerät
+   bekommt bis 1200 px das Ein-Spalten-Layout, egal was es als Breite
+   meldet — ein Dreispalter mit 280-px-Sidebars ist ohne Maus in dieser
+   Größe ohnehin nicht bedienbar. Ab 1201 px (großes Tablet quer) sind drei
+   Spalten wieder sinnvoll.
+
+   Die Gegenseite lautet `(min-width: 901px) and (pointer: fine),
+   (min-width: 1201px)` — beide Zweige zusammen decken jede Kombination
+   genau einmal ab. Wer hier etwas ändert, muss BEIDE anfassen, sonst
+   entsteht ein Bereich mit halbem Layout. Dieselbe Bedingung steht als
+   `DESKTOP_SPALTEN` in dashboard.ts (gespeicherte Spaltenbreite). */
+@media (max-width: 900px), (pointer: coarse) and (max-width: 1200px) {
+  .sb-rs, .sect-grip { display: none; }
+}
 .col-m { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
 
 /* Glass-Cards */
@@ -433,7 +454,7 @@ input { accent-color: var(--ac); }
 ::-webkit-scrollbar-track { background: transparent; }
 
 /* Responsive: Off-Canvas-Drawer + Bottom-Sheet */
-@media (max-width: 900px) {
+@media (max-width: 900px), (pointer: coarse) and (max-width: 1200px) {
   .burg { display: block; }
   .app { flex-direction: column; padding: 10px; }
   .col-l, .col-r {
@@ -522,7 +543,7 @@ input { accent-color: var(--ac); }
 .st-mk-buy { fill: var(--gn); }
 .st-mk-sell { fill: var(--rd); }
 .st-sym { width: 120px; text-transform: uppercase; }
-@media (max-width: 900px) {
+@media (max-width: 900px), (pointer: coarse) and (max-width: 1200px) {
   .st-cols { grid-template-columns: 1fr; }
 }
 
@@ -778,10 +799,11 @@ input { accent-color: var(--ac); }
 .opt-chk { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--t2); cursor: pointer; }
 .opt-chk input { accent-color: var(--ac); }
 .sb-tgl.off { opacity: .45; }
-@media (min-width: 901px) {
+/* Gegenstück zum Mobil-Zweig oben — beide zusammen lückenlos. */
+@media (min-width: 901px) and (pointer: fine), (min-width: 1201px) {
   .col-l.sb-hidden, .col-r.sb-hidden { display: none; }
 }
-@media (max-width: 900px) { .sb-tgl { display: none; } }
+@media (max-width: 900px), (pointer: coarse) and (max-width: 1200px) { .sb-tgl { display: none; } }
 
 /* A/B-Duell (M11): Paper-Wallet vs. Shadow-Strategie */
 .ab-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -1036,7 +1058,7 @@ input { accent-color: var(--ac); }
 
 /* Ab hier wird zweispaltig zu eng: Ein Donut mit Legende neben einem
    24-Balken-Diagramm ist auf dem Telefon unlesbar. */
-@media (max-width: 900px) {
+@media (max-width: 900px), (pointer: coarse) and (max-width: 1200px) {
   .an-grid { grid-template-columns: 1fr; }
   .an-kpis { grid-template-columns: repeat(2, 1fr); }
   /* SVG-Text skaliert MIT der viewBox: Dieselbe 9-px-Schrift wird bei
