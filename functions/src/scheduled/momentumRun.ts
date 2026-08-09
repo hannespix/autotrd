@@ -59,7 +59,12 @@ import {
 import { executeTrade, resolveBrokerMode } from '../core/broker.js';
 import { mayTrade } from '../core/access.js';
 import { clampStrategyRisk, corePct } from '../core/rulesTrading.js';
-import { getDeepDailyBars, getSparkDailyCloses, chunkBarsByYear } from '../core/marketData.js';
+import {
+  DEEP_BACKFILL_V,
+  chunkBarsByYear,
+  getDeepDailyBars,
+  getSparkDailyCloses,
+} from '../core/marketData.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 import { fetchPositioning } from '../core/positioning.js';
 
@@ -77,7 +82,40 @@ export const MOMENTUM_START_BALANCE = 25_000;
  * Vorher hing die Rangliste an genau dieser Zahl: 166 Symbole ÷ 20 pro Tag
  * ≈ neun Tage bis zum ersten vollständigen Lauf.
  */
-const BACKFILL_PRO_LAUF = 20;
+const BACKFILL_PRO_LAUF = 60;
+/*
+ * Von 20 auf 60 erhöht (09.08.), zusammen mit dem Befund unten in Schritt 2.
+ *
+ * Die 20 stammen aus der Zeit, als hier die Ranking-Lücken standen — davon
+ * gab es wenige. Jetzt steht hier der Rückstand an CHART-Historie, und den
+ * tragen auf einen Schlag alle nicht handelbaren Symbole: Indizes, Devisen,
+ * Futures und Auslandsbörsen hatte bisher überhaupt kein Schreiber. Bei 20 je
+ * Lauf und einem Lauf pro Tag hätte es Tage gedauert, bis ein bestimmter Index
+ * an der Reihe ist — der Owner-Befund war aber genau ein einzelner Index.
+ *
+ * Die Grenzen tragen das: Jedes Symbol bekommt seinen EIGENEN Batch (ein alter
+ * Index bringt ~100 Jahres-Docs mit, das 500-Ops-Limit gilt je Batch), und 60
+ * Yahoo-Abrufe bleiben klar unter den 540 s Zeitbudget dieser Funktion.
+ * Danach läuft die Zahl ohnehin leer: Der Marker verhindert Wiederholungen.
+ */
+
+/**
+ * Wem fehlt tiefe CHART-Historie? (Befund 09.08., Owner: „der ndx Index
+ * liefert keine Daten")
+ *
+ * Bewusst über den ganzen Katalog und ohne jede Handelbarkeits-Prüfung:
+ * `^NDX` ist nicht handelbar, wird aber angezeigt und angeklickt — genau
+ * solche Symbole hatten vorher gar keinen Schreiber für ihre Chart-Daten.
+ * Wer nicht handelbar ist, braucht trotzdem ein Chart.
+ *
+ * `stand` bildet Symbol → `deepBackfillV` ab (fehlend = nie geholt).
+ */
+export function chartHistorieFehlt(
+  katalog: readonly string[],
+  stand: ReadonlyMap<string, unknown>,
+): string[] {
+  return katalog.filter((sym) => stand.get(sym) !== DEEP_BACKFILL_V);
+}
 
 /** Zeitreihe eines Symbols aus den Jahres-Dokumenten zusammensetzen. */
 function closesAusJahren(jahre: Array<Record<string, { close?: number }>>): number[] {
@@ -123,14 +161,15 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
   // rund neun Tage gebraucht — solange rankte das System nur die Handvoll
   // Symbole, die zufällig schon Historie hatte, und „breit bewerten" war
   // bloß eine Absicht. Jetzt bewertet der erste Lauf sofort alles.
+  // Wer hier fehlt, ist für das RANKING zu dünn belegt. Das ist eine andere
+  // Frage als „wem fehlt Chart-Historie" — siehe Befund unten in Schritt 2;
+  // die Liste der Ranking-Lücken wird deshalb bewusst nicht mehr geführt.
   const closesMap = new Map<string, number[]>();
-  let fehlend: string[] = [];
   try {
     const batchCloses = await getSparkDailyCloses(katalog);
     for (const sym of katalog) {
       const closes = batchCloses.get(sym);
       if (closes && closes.length >= MOMENTUM_DEFAULTS.minBars) closesMap.set(sym, closes);
-      else fehlend.push(sym);
     }
   } catch (err) {
     // Kein Ranking aus halben Daten: Fällt Yahoo aus, wird auf die
@@ -138,26 +177,51 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
     // Zufallssymbolen. Eine Rangliste, die nur die Hälfte des Katalogs kennt,
     // sieht genauso aus wie eine richtige — und ist trotzdem falsch.
     logger.warn('Momentum: Spark-Bündel fehlgeschlagen — Rückfall auf ohlcDaily', err);
-    fehlend = [];
+    closesMap.clear();
     for (const sym of katalog) {
       const closes = await ladeCloses(sym);
       if (closes.length >= MOMENTUM_DEFAULTS.minBars) closesMap.set(sym, closes);
-      else fehlend.push(sym);
     }
   }
 
   // ── 2. Tiefe Chart-Historie rotierend nachziehen ──────────────────────────
   // Das Ranking braucht diese Docs nicht mehr (s. o.), die CHARTS schon:
-  // ohlcDaily hält ~5 Jahre OHLCV fürs nahtlose Rausscrollen, Spark liefert
-  // nur Closes. Rotierend statt „immer die ersten N", damit Symbole, deren
-  // Fetch dauerhaft scheitert, nicht für immer den Kopf der Schlange
+  // ohlcDaily hält die volle OHLCV-Historie fürs nahtlose Rausscrollen, Spark
+  // liefert nur Closes. Rotierend statt „immer die ersten N", damit Symbole,
+  // deren Fetch dauerhaft scheitert, nicht für immer den Kopf der Schlange
   // blockieren (dieselbe Falle wie bei der Intraday-Bewertung am 27.07.).
+  //
+  // BEFUND 09.08. (Owner: „der ndx Index liefert keine Daten"): Hier stand
+  // `fehlend` — also die Symbole, für die das Spark-Bündel zu wenig Closes
+  // FÜRS RANKING lieferte. Gebraucht wird aber, wer keine CHART-Historie hat.
+  // Das sind zwei verschiedene Fragen, und bei Indizes fallen sie auseinander:
+  // Spark liefert `^NDX` 251 Closes (live geprüft), der Index war also nie
+  // „fehlend" und bekam nie ein ohlcDaily-Doc. Gleichzeitig ist er nicht
+  // handelbar (`isTradable` schließt alles mit `^` aus), weshalb ihn auch der
+  // Scan nie anfasst — der einzige andere Schreiber. Ergebnis: leeres Chart
+  // bei sichtbarem Kurs, denn die Kachel hängt am Spark-Bündel.
+  //
+  // Jetzt entscheidet der Marker, den auch der Scan setzt (`deepBackfillV`),
+  // und beide Schreiber arbeiten damit auf demselben Stand statt aneinander
+  // vorbei. Ein Lauf liest dafür einmal die market-Sammlung (~166 Docs).
+  let chartLuecken: string[] = [];
+  try {
+    const marktDocs = await db.collection('market').get();
+    const stand = new Map(marktDocs.docs.map((doc) => [doc.id, doc.get('deepBackfillV') as unknown]));
+    chartLuecken = chartHistorieFehlt(katalog, stand);
+  } catch (err) {
+    // Kein Backfill ist besser als ein Backfill über den ganzen Katalog:
+    // Ohne den Stand wüssten wir nicht, wer ihn schon hat, und würden 20
+    // Symbole je Lauf sinnlos neu holen.
+    logger.warn('Momentum: Backfill-Stand nicht lesbar — Nachziehen übersprungen', err);
+  }
+
   let backfilled = 0;
-  if (fehlend.length > 0) {
+  if (chartLuecken.length > 0) {
     const stateRef = db.doc('meta/momentum');
     const cursor = ((await stateRef.get()).get('backfillCursor') as number | undefined) ?? 0;
-    for (let n = 0; n < Math.min(BACKFILL_PRO_LAUF, fehlend.length); n++) {
-      const sym = fehlend[(cursor + n) % fehlend.length]!;
+    for (let n = 0; n < Math.min(BACKFILL_PRO_LAUF, chartLuecken.length); n++) {
+      const sym = chartLuecken[(cursor + n) % chartLuecken.length]!;
       try {
         const deep = await getDeepDailyBars(sym);
         if (deep.length === 0) continue;
@@ -166,7 +230,7 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
         for (const [jahr, tage] of chunkBarsByYear(deep)) {
           batch.set(ref.collection('ohlcDaily').doc(jahr), { days: tage, updatedAt: now.toISOString() }, { merge: true });
         }
-        batch.set(ref, { deepBackfillV: 1, deepBackfilledAt: now.toISOString() }, { merge: true });
+        batch.set(ref, { deepBackfillV: DEEP_BACKFILL_V, deepBackfilledAt: now.toISOString() }, { merge: true });
         await batch.commit();
         backfilled++;
         const closes = deep.map((b) => b.close).filter((c) => c > 0);
@@ -176,7 +240,7 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
       }
     }
     await stateRef.set(
-      { backfillCursor: (cursor + BACKFILL_PRO_LAUF) % Math.max(1, fehlend.length) },
+      { backfillCursor: (cursor + BACKFILL_PRO_LAUF) % Math.max(1, chartLuecken.length) },
       { merge: true },
     );
   }

@@ -103,6 +103,7 @@ import { evaluateIntradayDue } from './evalForecasts.js';
 import { stepFleet, type FleetState } from '../core/tuneFleet.js';
 import { FLEET_SIZE } from './autoTune.js';
 import {
+  DEEP_BACKFILL_V,
   chunkBarsByYear,
   getDeepDailyBars,
   getIntradayBars,
@@ -2479,7 +2480,7 @@ export async function runScan(force = false): Promise<ScanResult> {
       // 5 Jahre — Bestandssymbole werden über den Marker einmalig vertieft.
       // EIGENER Batch-Commit: Ein alter Index bringt ~100 Jahres-Docs mit,
       // und die würden das 500-Ops-Budget des Sammel-Batches sprengen.
-      if (symDoc.get('deepBackfillV') !== 2) {
+      if (symDoc.get('deepBackfillV') !== DEEP_BACKFILL_V) {
         try {
           const deep = await getDeepDailyBars(symbol);
           const deepBatch = db.batch();
@@ -2490,7 +2491,11 @@ export async function runScan(force = false): Promise<ScanResult> {
               { merge: true },
             );
           }
-          deepBatch.set(symRef, { deepBackfillV: 2, deepBackfilledAt: now.toISOString() }, { merge: true });
+          deepBatch.set(
+            symRef,
+            { deepBackfillV: DEEP_BACKFILL_V, deepBackfilledAt: now.toISOString() },
+            { merge: true },
+          );
           await deepBatch.commit();
         } catch (e) {
           logger.warn(`deepBackfill ${symbol}`, e); // nächster Scan versucht es erneut
