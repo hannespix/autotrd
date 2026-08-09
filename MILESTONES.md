@@ -1755,6 +1755,24 @@ dritten Mal an derselben Stelle gelöst.
       nutzt den globalen Beleg nicht — er schreibt ihn erst. Erst der
       Folgelauf regelt danach. Ein Tag Puffer, der sich aus der Reihenfolge
       ergibt und nicht extra gebaut werden musste.
+- [x] **MG5b Der Rückweg muss vor dem Bestand stehen** *(09.08., Nachtrag
+      am selben Tag)*: Beim Durchrechnen der Live-Zahlen nach dem Deploy
+      fiel ein Fehler in MG5 auf. Der Bestand hätte `crypto` (144 Trades,
+      −0,124 %) und `etf_thematic` (58, −0,764 %) in ALLEN Konten
+      abgeschaltet — richtig so. Danach entstehen dort aber keine neuen
+      Trades mehr, die globale Kante friert auf dem Stand des Abschalt-Tages
+      ein und spricht bei jedem weiteren Lauf dasselbe Urteil.
+
+      Da der globale Beleg VOR dem Schatten stand, wäre die Klasse damit für
+      immer tot gewesen: Die einzige fortlaufende Messung wäre nie zu Wort
+      gekommen. Exakt die Zirkularität, gegen die MG4 gebaut wurde — durch
+      die Hintertür zurück, zum vierten Mal an derselben Stelle.
+
+      Der Rückweg (Gewicht 0 + belegter, POSITIVER Schatten ⇒ halbes
+      Gewicht) steht deshalb jetzt vor dem globalen Beleg. Er bleibt eng:
+      ein negativer Schatten holt nichts zurück, und bei laufender Klasse
+      (Gewicht > 0) schlägt der Bestand den Schatten weiterhin. Zwei Tests
+      halten beide Richtungen fest.
 - [x] **MG4 Schatten für abgeschaltete Klassen — Messung** *(04.08.)*:
       `shared/src/classShadow.ts`. Jeder Scan legt Richtung, Kurs und
       Zeitpunkt seines Signals ans Markt-Dokument; der nächste misst, was

@@ -242,10 +242,28 @@ function bewerteKante(
  *
  *   1. EIGENE Trades — sie messen genau diese Einstellungen an genau diesem
  *      Konto. Nichts schlägt das.
- *   2. GLOBALER Beleg (MG5) — echte Trades, aber aus fremden Konten mit
+ *   2. RÜCKWEG aus dem Schatten — nur bei Gewicht 0 und positivem Schatten.
+ *      Steht VOR dem globalen Beleg, und der Grund ist der wichtigste
+ *      Halbsatz in dieser Datei (s. u.).
+ *   3. GLOBALER Beleg (MG5) — echte Trades, aber aus fremden Konten mit
  *      anderen Einstellungen. Höhere Latte, und Verstärken ist gedeckelt.
- *   3. SCHATTEN — misst die Signalquelle ohne Ausführung, ihm fehlt der
- *      Stop. Darf deshalb nur zurückholen, nie abschalten.
+ *   4. Sonst: kein Beleg, Gewicht bleibt.
+ *
+ * ── Warum der Rückweg vor dem Gesamtbestand steht ─────────────────────────
+ *
+ * Weil der Bestand sich sonst selbst einfriert. Schaltet er eine Klasse in
+ * ALLEN Konten ab — und genau das tut er, wenn die Kante deutlich negativ
+ * ist —, dann entstehen in dieser Klasse keine neuen Trades mehr. Die
+ * globale Kante bleibt für immer auf dem Stand des Abschalt-Tages stehen,
+ * spricht bei jedem Lauf dasselbe Urteil, und der Schatten, der die einzige
+ * fortlaufende Messung wäre, käme nie zu Wort.
+ *
+ * Das ist exakt die Zirkularität, gegen die MG4 gebaut wurde („wer aufhört
+ * zu messen, kann nie feststellen, ob die Entscheidung noch stimmt") — sie
+ * wäre mit dem globalen Beleg durch die Hintertür zurückgekommen. Der
+ * Rückweg führt auf halbes Gewicht, erzeugt also wieder echte Trades, und
+ * genau die korrigieren den globalen Beleg. Er bleibt dabei eng: nur bei
+ * Gewicht 0, nur mit belegtem und positivem Schatten.
  */
 export function rateKlasse(
   klasse: string,
@@ -270,7 +288,26 @@ export function rateKlasse(
     };
   }
 
-  // 2) Globaler Beleg — dieselbe Skala, strengere Zulassung.
+  // 2) Rückweg aus dem Schatten. MUSS vor dem globalen Beleg stehen, sonst
+  // friert eine einmal abgeschaltete Klasse für immer ein (s. Kopf).
+  const s = ergebnis.schatten;
+  const schattenBelegt = !!s && s.kantePct !== null && s.n >= schattenMinN;
+  if (schattenBelegt && w === 0 && s!.kantePct! > 0) {
+    return {
+      ...basis,
+      empfehlung: 'zurueckholen',
+      vorschlag: SCHATTEN_PROBELOS,
+      grund:
+        `Abgeschaltet, aber der Schatten verdient ${s!.kantePct!.toFixed(3)} % je Signal ` +
+        `über ${s!.n} Signale. Mit halbem Gewicht zurück in den Handel — nur echte ` +
+        'Trades können den Verdacht bestätigen.',
+      quelle: 'schatten',
+      belegN: s!.n,
+      belegKantePct: s!.kantePct,
+    };
+  }
+
+  // 3) Globaler Beleg — dieselbe Skala, strengere Zulassung.
   const g = ergebnis.global;
   if (
     g &&
@@ -294,31 +331,12 @@ export function rateKlasse(
     };
   }
 
-  // 3) Schatten — Ersatzmessung ohne Ausführung.
-  const s = ergebnis.schatten;
-  const schattenBelegt = !!s && s.kantePct !== null && s.n >= schattenMinN;
-
-  // Der Schatten darf ausschließlich ZURÜCKHOLEN, nie abschalten. Grund:
-  // Ihm fehlt der Stop, der reale Verluste kappt — eine negative
-  // Schatten-Kante ist deshalb kein Beleg für einen negativen
-  // Trade-Ertrag. Umgekehrt ist eine positive ein handfestes Argument,
-  // es mit kleinem Einsatz noch einmal zu versuchen. Und wenn die Klasse
-  // ohnehin läuft (Gewicht > 0), ist nicht das Gewicht das Problem,
-  // sondern die fehlende Gelegenheit — daran ändert der Regler nichts.
-  if (schattenBelegt && w === 0 && s!.kantePct! > 0) {
-    return {
-      ...basis,
-      empfehlung: 'zurueckholen',
-      vorschlag: SCHATTEN_PROBELOS,
-      grund:
-        `Abgeschaltet, aber der Schatten verdient ${s!.kantePct!.toFixed(3)} % je Signal ` +
-        `über ${s!.n} Signale. Mit halbem Gewicht zurück in den Handel — nur echte ` +
-        'Trades können den Verdacht bestätigen.',
-      quelle: 'schatten',
-      belegN: s!.n,
-      belegKantePct: s!.kantePct,
-    };
-  }
+  // 4) Kein Beleg. Der Schatten kommt hier nicht mehr vor: Er darf
+  // ausschließlich ZURÜCKHOLEN (oben, Schritt 2), nie abschalten. Ihm fehlt
+  // der Stop, der reale Verluste kappt — eine negative Schatten-Kante ist
+  // deshalb kein Beleg für einen negativen Trade-Ertrag. Und wenn die Klasse
+  // ohnehin läuft (Gewicht > 0), ist nicht das Gewicht das Problem, sondern
+  // die fehlende Gelegenheit; daran ändert der Regler nichts.
   return {
     ...basis,
     empfehlung: 'zu_wenig_daten',
