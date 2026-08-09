@@ -46,7 +46,13 @@ export const TUNE_AXES: TuneAxis[] = [
   {
     key: 'minHoldMin',
     label: 'Mindest-Haltedauer',
-    values: [0, 30, 60, 120, 240],
+    // Verschoben mit dem Exit-Umbau (09.08.): vorher [0, 30, 60, 120, 240],
+    // also ausschließlich Werte UNTERHALB des neuen Standards von 1440. Der
+    // Tuner hätte damit systematisch versucht, die Bremse wieder zu lösen,
+    // die gerade eingebaut wurde — und dabei nie geprüft, ob noch länger
+    // besser wäre. Ein Suchgitter muss der Erkenntnis folgen, sonst sucht es
+    // in der Vergangenheit.
+    values: [240, 720, 1440, 2880, 4320],
     apply: (s, v) => {
       s.engine.minHoldMin = v as number;
     },
@@ -55,7 +61,10 @@ export const TUNE_AXES: TuneAxis[] = [
   {
     key: 'exitConfluence',
     label: 'Ausstiegs-Konfluenz',
-    values: [1, 2, 3],
+    // 1 ist raus (09.08.): EINE Gegenstimme war der Zustand, unter dem
+    // 86,8 % aller Trades am Signal starben. Dafür kommt 4 dazu — die
+    // Richtung, in die die Messung zeigt.
+    values: [2, 3, 4],
     apply: (s, v) => {
       s.signals.exitConfluence = v as number;
     },

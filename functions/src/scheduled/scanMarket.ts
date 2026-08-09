@@ -39,6 +39,8 @@ import {
   isTradable,
   stopDistancePct,
   isStrategy,
+  exitUmbauPlan,
+  EXIT_UMBAU_STAND,
   marginState,
   newsVeto,
   NEWS_TTL_SEC,
@@ -415,6 +417,45 @@ async function executeUserTrades(
     if (!strategy || !isStrategy(strategy)) {
       konten.ohne_strategie += 1;
       continue;
+    }
+
+    // ── Exit-Umbau (MX, Owner-Go 09.08.) ────────────────────────────────
+    // Läuft genau einmal je Konto und hebt die Ausstiegs-Bremsen auf den
+    // neuen Standard; die Begründung samt Kelly-Rechnung steht bei
+    // `exitUmbauPlan` in shared/strategy.ts. Hier, nicht im Tageslauf, weil
+    // die Wirkung sofort einsetzen soll — und vor der Signalauswertung,
+    // damit schon DIESER Scan mit den neuen Werten rechnet.
+    //
+    // Fehlertolerant: Ein Schreibfehler darf keinen Scan kippen. Dann läuft
+    // der Versuch beim nächsten Durchgang erneut, was folgenlos ist.
+    const plan = exitUmbauPlan(strategy.engine, strategy.signals);
+    if (plan) {
+      // Sauber trennen: Haltedauern gehören zu `engine`, die Ausstiegs-
+      // Konfluenz zu `signals`. Ein pauschales Spread über beide Zweige
+      // legte `exitConfluence` zusätzlich unter `engine` ab, wo es niemand
+      // liest — ein stiller Fehler, der erst auffiele, wenn jemand sich
+      // über ein unbekanntes Feld im Dokument wundert.
+      const { exitConfluence, ...engineTeil } = plan;
+      try {
+        await userDoc.ref.set(
+          {
+            settings: {
+              strategy: {
+                engine: { ...engineTeil, exitUmbauStand: EXIT_UMBAU_STAND },
+                ...(exitConfluence !== undefined ? { signals: { exitConfluence } } : {}),
+              },
+            },
+          },
+          { merge: true },
+        );
+        // Auch im Speicher nachziehen, damit schon DIESER Scan mit den
+        // neuen Werten rechnet statt erst der nächste.
+        Object.assign(strategy.engine, engineTeil);
+        if (exitConfluence !== undefined) strategy.signals.exitConfluence = exitConfluence;
+        if (Object.keys(plan).length > 0) logger.info(`Exit-Umbau ${uid}: ${JSON.stringify(plan)}`);
+      } catch (err) {
+        logger.warn(`Exit-Umbau ${uid} fehlgeschlagen — Scan läuft weiter`, err);
+      }
     }
     // Die Reife entscheidet mit (04.08.). Wichtig ist, was daraus FOLGT:
     // Ein Konto, dessen Schalter auf „live" steht, das aber die Kriterien

@@ -250,9 +250,9 @@ describe('decideTuning', () => {
 
   it('schreibt die Änderung in Klartext — lesbar ohne Code', () => {
     const b = basis();
-    const v = buildVariants(b, 20).filter((x) => x.id === 'minHoldMin=120');
+    const v = buildVariants(b, 20).filter((x) => x.id === 'minHoldMin=720');
     const d = decideTuning(b, v, {}, serie(40, 0), T0);
-    expect(d.entries[0]!.change).toBe('Mindest-Haltedauer 60 → 120');
+    expect(d.entries[0]!.change).toBe('Mindest-Haltedauer 1440 → 720');
   });
 
   it('hält im Eintrag nachprüfbare Zahlen fest', () => {

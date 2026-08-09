@@ -5461,11 +5461,15 @@ function wireColumnDnD(): void {
 }
 
 /**
- * Ab hier ist die Sidebar ein Off-Canvas-Drawer und ihre Breite gehört dem
- * CSS (`width: min(340px, 88vw)`), nicht dem gespeicherten Desktop-Wert.
- * Muss zum Breakpoint in theme.css passen.
+ * Wann stehen die Spalten nebeneinander? Nur dann darf die gespeicherte
+ * Breite gelten — sonst gehört sie dem CSS (`width: min(340px, 88vw)`).
+ *
+ * Muss WÖRTLICH zur Gegenseite in theme.css passen (dort steht die
+ * ausführliche Begründung): Ein Telefon kann sich als Desktop ausgeben und
+ * ~980 px melden; `pointer: fine` unterscheidet Maus von Finger und hält
+ * das Dreispalten-Layout von Touch-Geräten fern.
  */
-const DESKTOP_SPALTEN = '(min-width: 901px)';
+const DESKTOP_SPALTEN = '(min-width: 901px) and (pointer: fine), (min-width: 1201px)';
 
 /** Sidebar-Breiten (Desktop): Resize-Handle an der Innenkante, Gerät-lokal. */
 function wireSidebarResize(): void {
