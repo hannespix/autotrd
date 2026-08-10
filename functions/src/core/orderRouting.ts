@@ -356,7 +356,7 @@ const ASSET_FEHLER_TTL_MS = 5 * 60_000;
  * Positive Einträge bleiben verwendbar — was Alpaca einmal kannte, kennt es
  * weiter; nur die Absagen sind an ihre Fragestellung gebunden.
  */
-export const SCHREIBWEISE_V = 2;
+export const SCHREIBWEISE_V = 3;
 
 /**
  * Was wir über ein Symbol beim Broker wissen — DREI Zustände, nicht zwei.

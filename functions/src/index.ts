@@ -20,6 +20,7 @@ export { snapshotEquity, snapshotNow } from './scheduled/snapshotEquity.js';
 export { autoTune, tuneNow } from './scheduled/autoTune.js';
 export { strukturSuche, strukturNow } from './scheduled/strukturSuche.js';
 export { momentumRun, momentumNow } from './scheduled/momentumRun.js';
+export { universumSync, universumSyncNow } from './scheduled/universumSync.js';
 export { tagRueckblick, tagRueckblickNow } from './scheduled/tagRueckblick.js';
 export { riskPulse, pulseNow } from './scheduled/riskPulse.js';
 export { kiBericht, kiBerichtNow } from './scheduled/kiBericht.js';

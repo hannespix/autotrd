@@ -177,9 +177,22 @@ const KOMPAKT_ZURUECK = new Map<string, string>(
     .filter((s) => classify(s) === 'crypto')
     .map((s) => [s.replace('-', ''), s]),
 );
-/** Anteilsklasse: kurze Basis + genau ein Buchstabe (`BRK-B` ↔ `BRK.B`). */
-const KLASSE_ZU = /^([A-Z]{1,4})-([A-Z])$/;
-const KLASSE_VON = /^([A-Z]{1,4})\.([A-Z])$/;
+/**
+ * Anteilsklasse: kurze Basis + `A`, `B` oder `C` (`BRK-B` ↔ `BRK.B`).
+ *
+ * Die Einschränkung auf drei Buchstaben ist keine Vorsicht, sondern eine
+ * Notwendigkeit — gefunden beim Aufbau des Alpaca-Universums (11.08.):
+ * `ABC.U` (Unit) und `ABC.W` (Warrant) haben exakt dieselbe Form wie eine
+ * Anteilsklasse, meinen aber etwas ganz anderes, und Yahoo schreibt sie
+ * `-UN` bzw. `-WT`. Ein allgemeines „ein Buchstabe" hätte sie zu `ABC-U`
+ * und `ABC-W` gemacht: Symbole, die es nirgends gibt.
+ *
+ * A, B und C decken die real vorkommenden Anteilsklassen ab; alles andere
+ * bleibt unangetastet und fällt damit sichtbar durch — was bei einer
+ * Schreibweise, die wir nicht sicher beherrschen, die richtige Antwort ist.
+ */
+const KLASSE_ZU = /^([A-Z]{1,4})-([ABC])$/;
+const KLASSE_VON = /^([A-Z]{1,4})\.([ABC])$/;
 
 /** Katalog-Schreibweise → Alpaca (`BTC-USD` → `BTC/USD`, `BRK-B` → `BRK.B`). */
 export function zuAlpacaSymbol(symbol: string): string {
@@ -257,9 +270,9 @@ export function keineSchluesselImText(text: string, extra?: AlpacaSchluessel): s
   return t;
 }
 
-type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
+export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
-async function alpacaFetch(
+export async function alpacaFetch(
   mode: BrokerMode,
   pfad: string,
   schluessel: AlpacaSchluessel | null,

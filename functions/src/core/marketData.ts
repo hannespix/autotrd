@@ -286,6 +286,62 @@ const SPARK_URL = 'https://query1.finance.yahoo.com/v8/finance/spark';
 /** Gemessene harte Grenze ist 21; 20 lässt Luft, ohne Requests zu verschenken. */
 export const SPARK_CHUNK = 20;
 
+/**
+ * Wie viele Spark-Anfragen gleichzeitig laufen dürfen.
+ *
+ * ── Warum es diese Grenze gibt (11.08.) ───────────────────────────────────
+ *
+ * Bis hierher war sie unnötig: 166 Katalog-Symbole sind 9 Chunks, und neun
+ * gleichzeitige Anfragen nimmt Yahoo klaglos. Mit dem Alpaca-Universum
+ * ändert sich die Größenordnung — mehrere tausend Symbole sind hunderte
+ * Chunks, und `Promise.allSettled` über alle hieße, sie ALLE in derselben
+ * Millisekunde abzufeuern.
+ *
+ * Yahoo hat für diesen Endpunkt kein veröffentlichtes Kontingent, aber eine
+ * sichtbare Reaktion: Ab einer gewissen Rate kommen 429er, und zwar für die
+ * ganze Herkunft, nicht nur für die überzähligen Anfragen. Der Lauf würde
+ * also nicht teilweise, sondern ganz scheitern — und weil jeder Chunk
+ * einzeln fehlschlägt, sähe das Ergebnis aus wie „Yahoo kennt diese Symbole
+ * nicht" statt wie „wir haben zu schnell gefragt".
+ *
+ * Acht gleichzeitig ist die bisher unbeanstandete Größenordnung (die neun
+ * Chunks des Katalogs liefen monatelang ohne 429). Der Durchsatz bleibt
+ * hoch: 500 Chunks zu je ~0,3 s sind in unter einer Minute durch.
+ */
+export const SPARK_PARALLEL = 8;
+
+/**
+ * Aufgaben mit begrenzter Nebenläufigkeit abarbeiten.
+ *
+ * Absichtlich kein Wechsel auf eine Bibliothek: Das hier sind zwölf Zeilen,
+ * und eine Abhängigkeit im Datenpfad will gepflegt und geprüft werden.
+ * Jede Aufgabe wird genau einmal gestartet; ein Fehler in einer Aufgabe
+ * beendet die anderen nicht (die Aufrufer benutzen `allSettled`-Semantik).
+ */
+export async function mitGrenze<T>(
+  aufgaben: ReadonlyArray<() => Promise<T>>,
+  grenze = SPARK_PARALLEL,
+): Promise<Array<PromiseSettledResult<T>>> {
+  const out = new Array<PromiseSettledResult<T>>(aufgaben.length);
+  let next = 0;
+  const arbeiter = async (): Promise<void> => {
+    for (;;) {
+      const i = next++;
+      const aufgabe = aufgaben[i];
+      if (!aufgabe) return;
+      try {
+        out[i] = { status: 'fulfilled', value: await aufgabe() };
+      } catch (reason) {
+        out[i] = { status: 'rejected', reason };
+      }
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.max(1, Math.min(grenze, aufgaben.length)) }, arbeiter),
+  );
+  return out;
+}
+
 export interface SparkQuote {
   symbol: string;
   price: number;
@@ -318,8 +374,8 @@ export async function getSparkBatch(symbols: string[]): Promise<Map<string, Spar
     chunks.push(symbols.slice(i, i + SPARK_CHUNK));
   }
 
-  const results = await Promise.allSettled(
-    chunks.map(async (chunk) => {
+  const results = await mitGrenze(
+    chunks.map((chunk) => async () => {
       const url =
         `${SPARK_URL}?symbols=${chunk.map(encodeURIComponent).join(',')}` +
         `&range=1d&interval=5m`;
@@ -367,8 +423,8 @@ export async function getSparkDailyCloses(
     chunks.push(symbols.slice(i, i + SPARK_CHUNK));
   }
 
-  const results = await Promise.allSettled(
-    chunks.map(async (chunk) => {
+  const results = await mitGrenze(
+    chunks.map((chunk) => async () => {
       const url =
         `${SPARK_URL}?symbols=${chunk.map(encodeURIComponent).join(',')}` +
         `&range=${range}&interval=1d`;
