@@ -129,12 +129,34 @@ export function isUsMarketOpen(now: Date = new Date()): boolean {
   return hm >= 930 && hm < 1600;
 }
 
-/** meta/universe einmalig seeden (Katalog als Array-of-Maps — Firestore
- *  erlaubt keine verschachtelten Arrays). Idempotent. */
+/**
+ * Stand des Katalogs in `meta/universe`.
+ *
+ * ERHÖHEN, wenn sich der Katalog ändert. Ohne diese Zahl wäre der Seed
+ * „einmal und nie wieder" — und genau das war er bis zum 10.08.:
+ *
+ *   `if ((await ref.get()).exists) return;`
+ *
+ * Das Dokument in Produktion stammte damit aus der ersten Woche. Nach der
+ * Alpaca-Ausrichtung hätte die ENGINE den neuen Katalog benutzt (er steht im
+ * Code), die OBERFLÄCHE aber weiter den alten aus Firestore — der Picker und
+ * die Markt-Übersicht lesen `meta/universe`. Der Nutzer hätte Devisen,
+ * Futures und SAP.DE gesehen, alle mit eingefrorenen Kursen, weil der Scan
+ * sie nicht mehr versorgt. Ein Symbol anzubieten, das die Engine nicht kennt,
+ * ist schlimmer als es wegzulassen.
+ *
+ *   V1 (bis 09.08.) 165 Symbole, inkl. Devisen, Futures, Auslandsaktien.
+ *   V2 (10.08.)     Alpaca-Universum: 132 Symbole, davon 130 orderbar.
+ */
+export const UNIVERSE_V = 2;
+
+/** meta/universe seeden (Katalog als Array-of-Maps — Firestore erlaubt keine
+ *  verschachtelten Arrays). Idempotent, aber versionsbewusst. */
 async function seedUniverse(): Promise<void> {
   const db = getFirestore();
   const ref = db.doc('meta/universe');
-  if ((await ref.get()).exists) return;
+  const vorher = await ref.get();
+  if (vorher.exists && vorher.get('v') === UNIVERSE_V) return;
   const classes: Record<string, unknown> = {};
   for (const [cls, groups] of Object.entries(CATALOG)) {
     classes[cls] = {
@@ -147,8 +169,11 @@ async function seedUniverse(): Promise<void> {
       ),
     };
   }
-  await ref.set({ classes, seededAt: new Date().toISOString() });
-  logger.info('meta/universe geseedet');
+  /* VOLLES `set`, kein `merge`: Beim Versionswechsel müssen entfernte Klassen
+   * wirklich verschwinden. Mit `merge` überlebten `forex` und `commodities`
+   * als Karteileichen — dieselbe Falle wie beim Rückschau-Zustandsdoc. */
+  await ref.set({ classes, v: UNIVERSE_V, seededAt: new Date().toISOString() });
+  logger.info(`meta/universe geseedet (v${UNIVERSE_V}, ${Object.keys(classes).length} Klassen)`);
 }
 
 export interface ScanResult {
