@@ -337,6 +337,28 @@ const ASSET_TTL_MS = 24 * 3_600_000;
 const ASSET_FEHLER_TTL_MS = 5 * 60_000;
 
 /**
+ * Schreibweisen-Stand, unter dem ein Cache-Eintrag entstanden ist.
+ *
+ * ── Warum eine Antwort ablaufen kann, ohne alt zu sein (10.08.) ───────────
+ *
+ * `bekannt: false` heißt nicht „dieses Papier gibt es nicht", sondern „auf
+ * DIESE Frage kam 404". Ändert sich die Frage — und genau das tut sie, wenn
+ * `zuAlpacaSymbol` eine Schreibweise dazulernt —, dann beantwortet der alte
+ * Eintrag eine Frage, die wir nicht mehr stellen.
+ *
+ * Ohne diesen Marker liefe der BRK-B-Fix ins Leere: Der Cache-Eintrag von
+ * heute Nachmittag („BRK-B kennt Alpaca nicht", entstanden aus der Anfrage
+ * `/v2/assets/BRK-B`) würde noch bis morgen jeden Einstieg blockieren,
+ * obwohl die neue Anfrage längst `/v2/assets/BRK.B` lautet und Erfolg hätte.
+ * Dieselbe Falle träfe die kompakte Krypto-Schreibweise.
+ *
+ * Die Nummer wird bei JEDER Änderung an der Symbolübersetzung erhöht.
+ * Positive Einträge bleiben verwendbar — was Alpaca einmal kannte, kennt es
+ * weiter; nur die Absagen sind an ihre Fragestellung gebunden.
+ */
+export const SCHREIBWEISE_V = 2;
+
+/**
  * Was wir über ein Symbol beim Broker wissen — DREI Zustände, nicht zwei.
  *
  * Der Modulkopf sagt seit dem 05.08. „Fehler ≠ ‚gibt es nicht'", und der
@@ -417,10 +439,13 @@ export async function assetStand(
   // wird eben live gefragt oder (wenn auch das scheitert) geraten.
   try {
     const feld = (await ref.get()).get(symbol) as
-      | { bekannt: boolean; at: string; tradable?: boolean; fractionable?: boolean;
+      | { bekannt: boolean; at: string; v?: number; tradable?: boolean; fractionable?: boolean;
           shortable?: boolean; easyToBorrow?: boolean; marginable?: boolean }
       | undefined;
-    if (feld && jetztMs - Date.parse(feld.at) < ASSET_TTL_MS) {
+    // Eine Absage aus einer ÄLTEREN Schreibweise beantwortet eine Frage, die
+    // wir nicht mehr stellen (s. SCHREIBWEISE_V). Zusagen bleiben gültig.
+    const frisch = feld?.bekannt === true || (feld?.v ?? 1) >= SCHREIBWEISE_V;
+    if (feld && frisch && jetztMs - Date.parse(feld.at) < ASSET_TTL_MS) {
       const stand: AssetStand = feld.bekannt
         ? {
             art: 'bekannt',
@@ -460,7 +485,7 @@ export async function assetStand(
                 marginable: wert.marginable,
                 at,
               }
-            : { bekannt: false, at },
+            : { bekannt: false, at, v: SCHREIBWEISE_V },
         },
         { merge: true },
       )

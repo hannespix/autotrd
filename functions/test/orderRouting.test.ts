@@ -31,6 +31,7 @@ import {
   brokerVerbindung,
   brokerVerbindungLesend,
   routeOrder,
+  SCHREIBWEISE_V,
   vergissAssets,
   vergissKillSwitch,
   vergissVerbindung,
@@ -522,6 +523,29 @@ describe('alpacaAsset — Eigenschaften vom Broker statt geraten', () => {
     });
   });
 
+  /* ── Der Live-Bug saß in der URL, nicht im Rückgabewert (10.08.) ────────
+   *
+   * Der Katalog führt Berkshire B als `BRK-B` (Yahoo-Konvention, dort kommen
+   * die Kurse her), Alpaca als `BRK.B`. Gefragt wurde `/v2/assets/BRK-B` —
+   * 404. Die Vorprüfung machte daraus korrekt „kennt Alpaca nicht" und
+   * blockierte jeden Einstieg. Für ein Papier, das dort ganz normal
+   * handelbar ist: ein stiller Totalausfall, sichtbar nur als Symbol, das
+   * nie handelt.
+   *
+   * Deshalb prüft dieser Test die ANGEFRAGTE URL. Ein Test auf den
+   * Rückgabewert hätte den Fehler nicht gefunden — die Antwort war ja
+   * korrekt verarbeitet, nur die Frage war falsch gestellt. */
+  it('fragt Anteilsklassen in der Alpaca-Schreibweise ab', async () => {
+    const f = antworten({ symbol: 'BRK.B', tradable: true, shortable: true });
+    const a = await alpacaAsset('paper', 'BRK-B', SCHLUESSEL, f as unknown as typeof fetch);
+    const url = String((f.mock.calls[0] as unknown[])[0]);
+    expect(url).toContain('/v2/assets/BRK.B');
+    expect(url).not.toContain('BRK-B');
+    // …und der Rückweg landet wieder in unserer Schreibweise, sonst stünden
+    // zwei Namen für dasselbe Papier im Bestand.
+    expect(a?.symbol).toBe('BRK-B');
+  });
+
   it('404 heißt „kennt Alpaca nicht" — null, kein Fehler', async () => {
     // Der halbe Katalog (Indizes, Forex, Futures) existiert bei Alpaca nicht.
     const f = vi.fn(async () => ({
@@ -599,7 +623,11 @@ describe('assetAuskunft — Zwei-Stufen-Cache', () => {
   it('auch „kennt Alpaca nicht" wird gemerkt — sonst fragt jeder Tag neu', async () => {
     const t0 = Date.parse('2026-08-05T12:00:00Z');
     holt.mockResolvedValue(
-      feld({ '^GSPC': { bekannt: false, at: new Date(t0 - 60_000).toISOString() } }),
+      // `v` gehört seit dem 10.08. dazu: Eine Absage gilt nur für die
+      // Schreibweise, unter der sie entstand (s. SCHREIBWEISE_V).
+      feld({
+        '^GSPC': { bekannt: false, at: new Date(t0 - 60_000).toISOString(), v: SCHREIBWEISE_V },
+      }),
     );
     const f = vi.fn();
     expect(await assetAuskunft(VERB, '^GSPC', f as unknown as typeof fetch, t0)).toBeNull();
@@ -733,11 +761,49 @@ describe('assetStand — drei Zustände statt zwei', () => {
   it('ein gemerktes „bekannt: false" aus Firestore ist ebenfalls „fehlt"', async () => {
     const t0 = Date.parse('2026-08-05T12:00:00Z');
     holt.mockResolvedValue(
-      feld({ '^GSPC': { bekannt: false, at: new Date(t0 - 60_000).toISOString() } }),
+      feld({
+        '^GSPC': {
+          bekannt: false,
+          at: new Date(t0 - 60_000).toISOString(),
+          v: SCHREIBWEISE_V,
+        },
+      }),
     );
     const f = vi.fn();
     const st = await assetStand(VERB2, '^GSPC', f as unknown as typeof fetch, t0);
     expect(st.art).toBe('fehlt');
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  /* ── Eine Absage kann ablaufen, ohne alt zu sein (10.08.) ───────────────
+   *
+   * `bekannt: false` heißt „auf DIESE Frage kam 404". Als die Übersetzung
+   * `BRK-B → BRK.B` dazulernte, änderte sich die Frage — der Eintrag von
+   * vorher hätte den Fix sonst bis zu 24 Stunden ausgehebelt: Der Einstieg
+   * bliebe blockiert, obwohl die neue Anfrage Erfolg hätte. */
+  it('eine Absage aus ÄLTERER Schreibweise wird neu gefragt', async () => {
+    const t0 = Date.parse('2026-08-10T12:00:00Z');
+    holt.mockResolvedValue(
+      // Kein `v` — so sehen alle Einträge aus, die vor dem Marker entstanden.
+      feld({ 'BRK-B': { bekannt: false, at: new Date(t0 - 60_000).toISOString() } }),
+    );
+    const f = antworten({ symbol: 'BRK.B', tradable: true });
+    const st = await assetStand(VERB2, 'BRK-B', f as unknown as typeof fetch, t0);
+    expect(f).toHaveBeenCalled();
+    expect(st.art).toBe('bekannt');
+  });
+
+  it('eine ZUSAGE aus älterer Schreibweise bleibt gültig', async () => {
+    // Was Alpaca einmal kannte, kennt es weiter — nur Absagen hängen an der
+    // Fragestellung. Sonst würde jede Marker-Erhöhung den halben Katalog
+    // ohne Not neu abfragen.
+    const t0 = Date.parse('2026-08-10T12:00:00Z');
+    holt.mockResolvedValue(
+      feld({ AAPL: { bekannt: true, tradable: true, at: new Date(t0 - 60_000).toISOString() } }),
+    );
+    const f = vi.fn();
+    const st = await assetStand(VERB2, 'AAPL', f as unknown as typeof fetch, t0);
+    expect(st.art).toBe('bekannt');
     expect(f).not.toHaveBeenCalled();
   });
 

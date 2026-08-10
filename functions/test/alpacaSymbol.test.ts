@@ -37,8 +37,35 @@ describe('zuAlpacaSymbol', () => {
     // Der eigentliche Grund für die Gegenwährungs-Liste: „alles mit
     // Bindestrich" hätte BF-B zu „BF/B" gemacht — ein Symbol, das es nicht
     // gibt, für ein Papier, das Alpaca sehr wohl handelt.
-    expect(zuAlpacaSymbol('BF-B')).toBe('BF-B');
-    expect(zuAlpacaSymbol('BRK-B')).toBe('BRK-B');
+    expect(zuAlpacaSymbol('BF-B')).not.toContain('/');
+    expect(zuAlpacaSymbol('BRK-B')).not.toContain('/');
+  });
+
+  /* ── Korrektur einer falschen Regel in diesem Test (10.08.) ──────────────
+   *
+   * Hier stand vorher `expect(zuAlpacaSymbol('BRK-B')).toBe('BRK-B')` — die
+   * Sorge war richtig (kein „BF/B"), der Schluss falsch: gar nicht anfassen.
+   * Alpaca schreibt Anteilsklassen mit PUNKT. Der Katalog führt `BRK-B`,
+   * also fragte die Vorprüfung `/v2/assets/BRK-B`, bekam 404 und blockierte
+   * jeden Einstieg mit „kennt Alpaca nicht" — für ein Papier, das dort ganz
+   * normal handelbar ist. Der Test hat den Fehler nicht nur verpasst, er hat
+   * ihn festgeschrieben. */
+  it('übersetzt Anteilsklassen in die Punkt-Schreibweise', () => {
+    expect(zuAlpacaSymbol('BRK-B')).toBe('BRK.B');
+    expect(zuAlpacaSymbol('BF-B')).toBe('BF.B');
+    expect(zuAlpacaSymbol('PBR-A')).toBe('PBR.A');
+  });
+
+  it('fasst Endungen mit MEHR als einem Buchstaben nicht an', () => {
+    // Warrants, Rechte und Units folgen bei Yahoo eigenen Regeln (`-WT`,
+    // `-RT`, `-UN`), die kein Zeichentausch trifft. Ein falsch übersetztes
+    // Symbol wäre schlimmer als ein unübersetztes: Letzteres fällt sichtbar
+    // als Fremdbestand auf, ersteres handelt unter erfundenem Namen.
+    for (const s of ['ABC-WT', 'ABC-RT', 'ABC-UN']) expect(zuAlpacaSymbol(s)).toBe(s);
+  });
+
+  it('fasst lange Basen nicht an — Anteilsklassen-Ticker sind kurz', () => {
+    expect(zuAlpacaSymbol('GOOGL-B')).toBe('GOOGL-B');
   });
 
   it('lässt Indizes und Devisen unberührt — sie gehen ohnehin nie zum Broker', () => {
@@ -53,8 +80,36 @@ describe('vonAlpacaSymbol', () => {
     expect(vonAlpacaSymbol('SOL/USDT')).toBe('SOL-USDT');
   });
 
+  it('und Anteilsklassen ebenso — sonst meldet der Abgleich Phantome', () => {
+    // Ohne die Rückrichtung stünde `BRK.B` beim Broker und `BRK-B` bei uns:
+    // eine Position, zwei Meldungen — ein Fehlbestand und ein Fremdbestand.
+    expect(vonAlpacaSymbol('BRK.B')).toBe('BRK-B');
+    expect(vonAlpacaSymbol('BF.B')).toBe('BF-B');
+  });
+
+  /* ── Krypto hat bei Alpaca ZWEI Schreibweisen (10.08.) ──────────────────
+   *
+   * Belegt in Alpacas eigener Hilfe („Why am I seeing BTCUSD after I bought
+   * BTC/USD?"): Bestellt wird das PAAR mit Schrägstrich, im Bestand steht
+   * der HALTEWERT ohne. Wer nur die Paar-Form zurückübersetzt, hat für jede
+   * offene Krypto-Position zwei Meldungen im Abgleich — Fehlbestand
+   * `BTC-USD` und Fremdbestand `BTCUSD` —, und der Fehlbestand sperrt
+   * Einstiege. */
+  it('erkennt auch die kompakte Bestandsform', () => {
+    expect(vonAlpacaSymbol('BTCUSD')).toBe('BTC-USD');
+    expect(vonAlpacaSymbol('ETHUSD')).toBe('ETH-USD');
+    expect(vonAlpacaSymbol('DOGEUSD')).toBe('DOGE-USD');
+  });
+
+  it('rät die kompakte Form NICHT — sie muss im Katalog stehen', () => {
+    // „Alles was auf USD endet ist Krypto" hätte einen Aktienticker mit
+    // dieser Endung zu einem Währungspaar umgedeutet, das es nicht gibt.
+    expect(vonAlpacaSymbol('FAKEUSD')).toBe('FAKEUSD');
+    expect(vonAlpacaSymbol('XYZUSDT')).toBe('XYZUSDT');
+  });
+
   it('lässt alles andere, wie es ist', () => {
-    for (const s of ['AAPL', 'SPY', 'BF-B', '']) expect(vonAlpacaSymbol(s)).toBe(s);
+    for (const s of ['AAPL', 'SPY', '', 'ABC.WS']) expect(vonAlpacaSymbol(s)).toBe(s);
   });
 });
 
@@ -68,10 +123,21 @@ describe('Hin und zurück', () => {
     }
   });
 
-  it('und jedes NICHT-Krypto-Symbol bleibt auf beiden Wegen unverändert', () => {
-    for (const s of allSymbols().filter((x) => classify(x) !== 'crypto')) {
-      expect(zuAlpacaSymbol(s), s).toBe(s);
-      expect(vonAlpacaSymbol(s), s).toBe(s);
+  /**
+   * Die entscheidende Eigenschaft ist NICHT „bleibt unverändert" — das stand
+   * hier vorher und hat den BRK-B-Fehler mitgedeckt. Entscheidend ist, dass
+   * der Rundweg zurückführt: Was wir senden, erkennen wir wieder, wenn es
+   * als Position oder Fill zurückkommt.
+   */
+  it('jedes Katalog-Symbol übersteht den Rundweg unverändert', () => {
+    for (const s of allSymbols()) {
+      expect(vonAlpacaSymbol(zuAlpacaSymbol(s)), s).toBe(s);
     }
+  });
+
+  it('und nur Krypto und Anteilsklassen werden dabei überhaupt umgeschrieben', () => {
+    const geaendert = allSymbols().filter((s) => zuAlpacaSymbol(s) !== s);
+    const erwartet = allSymbols().filter((s) => classify(s) === 'crypto' || s === 'BRK-B');
+    expect(geaendert.sort()).toEqual(erwartet.sort());
   });
 });

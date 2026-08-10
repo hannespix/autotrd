@@ -49,6 +49,7 @@
  * Alpaca-Fehlermeldung enthält im Zweifel den gesendeten Header.
  */
 
+import { allSymbols, classify } from '../../../shared/src/index.js';
 import type { BrokerMode } from './broker.js';
 
 /** Endpunkte. Nur diese beiden — kein konfigurierbares Feld, kein Tippfehler. */
@@ -130,21 +131,76 @@ export const MAX_ORDER_ANTEIL = 0.5;
  * Die Endungen sind bewusst aufgezählt statt „alles mit Bindestrich": US-
  * Ticker enthalten Bindestriche (BF-B, BRK-B), und die dürfen nicht zu
  * Krypto-Paaren umgedeutet werden.
+ *
+ * ── Anteilsklassen: der zweite Fall derselben Sache (10.08.) ──────────────
+ *
+ * Krypto ist nicht die einzige Stelle, an der die beiden Häuser dasselbe
+ * Papier verschieden schreiben. Bei Aktien mit mehreren Anteilsklassen
+ * trennt Yahoo (und damit unser Katalog) mit Bindestrich, Alpaca mit Punkt:
+ * `BRK-B` hier, `BRK.B` dort. Der Katalog führt genau ein solches Papier —
+ * Berkshire B — und es war damit über den Broker-Pfad tot: Die Vorprüfung
+ * fragte `/v2/assets/BRK-B`, bekam 404 und blockierte den Einstieg als
+ * „kennt Alpaca nicht". Korrekt gehandelt, aber aus dem falschen Grund;
+ * handelbar ist das Papier sehr wohl.
+ *
+ * Die Regel ist bewusst eng gefasst: Basis aus höchstens vier Zeichen, dann
+ * GENAU EIN Buchstabe. Das trifft Anteilsklassen (BRK-B, BF-B, PBR-A) und
+ * lässt alles andere in Ruhe. Zwei-Zeichen-Endungen sind nämlich ein ganz
+ * anderes Feld: Bezugsrechte, Warrants und Units (`ABC.WS`, `ABC.RT`)
+ * folgen bei Yahoo eigenen Regeln (`-WT`, `-RT`), die sich NICHT durch
+ * Zeichentausch ineinander überführen lassen. Solche Papiere übersetzen wir
+ * lieber gar nicht: Dann meldet der Abgleich sie als Fremdbestand — sichtbar
+ * und unangetastet — statt sie unter einem erfundenen Namen zu handeln.
  */
 const KRYPTO_GEGEN = ['USD', 'USDT', 'USDC', 'BTC'] as const;
 const ZU_ALPACA = new RegExp(`^([A-Z0-9]{2,10})-(${KRYPTO_GEGEN.join('|')})$`);
 const VON_ALPACA = new RegExp(`^([A-Z0-9]{2,10})/(${KRYPTO_GEGEN.join('|')})$`);
+/**
+ * Krypto hat bei Alpaca ZWEI Schreibweisen, und die Rückrichtung braucht
+ * beide (belegt in Alpacas eigener Hilfe, „Why am I seeing BTCUSD after I
+ * bought BTC/USD?"): Bestellt wird das PAAR `BTC/USD`, im Bestand steht dann
+ * der HALTEWERT `BTCUSD` — ohne Trennzeichen.
+ *
+ * Ohne diese Zeile trifft uns genau die Falle, gegen die die Übersetzung
+ * angetreten ist: Wir buchen `BTC-USD`, der Abgleich liest `BTCUSD` und
+ * meldet für EINE Position zwei Abweichungen — einen Fehlbestand und einen
+ * Fremdbestand. Und ein Fehlbestand sperrt Einstiege.
+ *
+ * Die kompakte Form ist bewusst NICHT frei geraten („alles was auf USD
+ * endet"): Sie wird nur akzeptiert, wenn sie sich zu einem Krypto-Symbol
+ * unseres Katalogs auflöst. Ein Aktienticker, der zufällig auf eine
+ * Gegenwährung endet, würde sonst zu einem Währungspaar umgedeutet, das es
+ * nicht gibt.
+ */
+const KOMPAKT_ZURUECK = new Map<string, string>(
+  allSymbols()
+    .filter((s) => classify(s) === 'crypto')
+    .map((s) => [s.replace('-', ''), s]),
+);
+/** Anteilsklasse: kurze Basis + genau ein Buchstabe (`BRK-B` ↔ `BRK.B`). */
+const KLASSE_ZU = /^([A-Z]{1,4})-([A-Z])$/;
+const KLASSE_VON = /^([A-Z]{1,4})\.([A-Z])$/;
 
-/** Katalog-Schreibweise → Alpaca (`BTC-USD` → `BTC/USD`). */
+/** Katalog-Schreibweise → Alpaca (`BTC-USD` → `BTC/USD`, `BRK-B` → `BRK.B`). */
 export function zuAlpacaSymbol(symbol: string): string {
-  const m = ZU_ALPACA.exec(symbol.trim().toUpperCase());
-  return m ? `${m[1]}/${m[2]}` : symbol;
+  const s = symbol.trim().toUpperCase();
+  const krypto = ZU_ALPACA.exec(s);
+  if (krypto) return `${krypto[1]}/${krypto[2]}`;
+  const klasse = KLASSE_ZU.exec(s);
+  if (klasse) return `${klasse[1]}.${klasse[2]}`;
+  return symbol;
 }
 
-/** Alpaca → Katalog-Schreibweise (`BTC/USD` → `BTC-USD`). */
+/** Alpaca → Katalog (`BTC/USD` und `BTCUSD` → `BTC-USD`, `BRK.B` → `BRK-B`). */
 export function vonAlpacaSymbol(symbol: string): string {
-  const m = VON_ALPACA.exec(symbol.trim().toUpperCase());
-  return m ? `${m[1]}-${m[2]}` : symbol;
+  const s = symbol.trim().toUpperCase();
+  const krypto = VON_ALPACA.exec(s);
+  if (krypto) return `${krypto[1]}-${krypto[2]}`;
+  const kompakt = KOMPAKT_ZURUECK.get(s);
+  if (kompakt) return kompakt;
+  const klasse = KLASSE_VON.exec(s);
+  if (klasse) return `${klasse[1]}-${klasse[2]}`;
+  return symbol;
 }
 
 export interface AlpacaKonto {
