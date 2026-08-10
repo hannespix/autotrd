@@ -35,7 +35,9 @@ import {
   entryAnchor,
   equityCurve,
   exitBreakdown,
+  besteHaltedauer,
   haltedauerTage,
+  haltedauerZeilen,
   historySummary,
   labelVariantId,
   levelDistPct,
@@ -130,6 +132,7 @@ import {
   saveJournalReview,
   watchAiBericht,
   watchErkenntnisse,
+  watchTagRueckblick,
   watchJournal,
   watchStruktur,
   watchTuneFleet,
@@ -153,6 +156,7 @@ import {
   type MomentumDoc,
   type JournalRow,
   type StrukturDoc,
+  type TagRueckblickDoc,
   type TuneFleetRow,
   type TuneLogRow,
   callBrokerStatus,
@@ -177,6 +181,11 @@ import {
   sendVerification,
 } from './auth.js';
 import { esc } from './html.js';
+import {
+  haltedauerFazit,
+  haltedauerMeta,
+  haltedauerTabelle,
+} from './haltedauerCard.js';
 import {
   areaLine,
   barChart,
@@ -1023,6 +1032,19 @@ function layout(email: string): string {
         <div id="skBed" class="fl-tbl"><div class="hint">Kommt mit dem ersten Tageslauf.</div></div>
         <label class="lbl" style="margin-top:10px">Prüf-Journal</label>
         <div id="skLog" class="tn-log"><div class="hint">Noch kein Lauf — die Suche prüft täglich um 18:10 ET einen Kandidaten.</div></div>
+      </div></div>
+
+      <div class="card" data-panel="haltedauer"><div class="sect">Wie lange halten? ${iBtn('haltedauer')}
+        <span id="hdStand" class="tn-tag" style="float:right"></span>
+      </div><div class="cbody">
+        <div class="hint">Dieselben Kaufsignale, nur unterschiedlich lange gehalten — gerechnet auf der
+          gespeicherten Tages-Historie, jeweils nach Abzug der klassenechten Kosten. Die Zeile mit
+          der besten Netto-Kante ist hervorgehoben; Zeilen mit zu wenig Beobachtungen bleiben blass
+          und zählen nicht mit. Die Spalten Kauf und Verkauf trennen echte Kante von Marktdrift:
+          Trägt nur die Kaufseite, misst man den steigenden Markt und nicht das Signal.</div>
+        <div id="hdTbl" class="hd-tbl" style="margin-top:8px"><div class="hint">Die Rückschau rechnet täglich um 18:30 ET.</div></div>
+        <div id="hdFazit" class="tn-r"></div>
+        <div id="hdMeta" class="tn-n mono"></div>
       </div></div>
 
       <div class="card" data-panel="erkenntnisse"><div class="sect">Was das System gelernt hat ${iBtn('erkenntnisse')}
@@ -7074,6 +7096,41 @@ function renderStruktur(d: StrukturDoc | null): void {
 }
 
 /**
+ * Die Kurve über die Haltedauer (`meta/tagRueckblick`).
+ *
+ * Die Messung lag bis jetzt nur in Firestore und war nirgends zu sehen. Sie
+ * beantwortet die Frage, an der die Profitabilität hängt — wie lange halten?
+ * —, und sie soll ohne Nachfrage lesbar sein.
+ *
+ * Hier steht nur die Verdrahtung. Die Auswahl der besten Zeile und die
+ * Belastbarkeits-Schwelle liegen geprüft in shared/tagRueckblick
+ * (`haltedauerZeilen`, `besteHaltedauer`), das Markup in haltedauerCard —
+ * aus dieser Karte kann eine echte Einstellungs-Änderung folgen, und ein
+ * Spitzenreiter aus drei Beobachtungen sähe genauso aus wie ein belegter.
+ */
+function renderHaltedauer(d: TagRueckblickDoc | null): void {
+  const box = $('hdTbl');
+  if (!box) return;
+  const stand = $('hdStand');
+  const fazit = $('hdFazit');
+  const meta = $('hdMeta');
+
+  const zeilen = haltedauerZeilen(d?.horizonte);
+  if (zeilen.length === 0) {
+    box.innerHTML = '<div class="hint">Die Rückschau rechnet täglich um 18:30 ET.</div>';
+    if (stand) stand.textContent = '';
+    if (fazit) fazit.textContent = '';
+    if (meta) meta.textContent = '';
+    return;
+  }
+  const beste = besteHaltedauer(zeilen);
+  if (stand) stand.textContent = d?.at ? `Stand ${d.at.slice(0, 10)}` : '';
+  box.innerHTML = haltedauerTabelle(zeilen, beste);
+  if (fazit) fazit.textContent = haltedauerFazit(beste);
+  if (meta) meta.textContent = haltedauerMeta(d ?? {});
+}
+
+/**
  * Erkenntnis-Chronik (Owner-Go 08.08.).
  *
  * Sortiert nach Gewicht statt nach Katalog-Reihenfolge: Was GILT, steht
@@ -7742,6 +7799,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     watchStruktur(uid, renderStruktur),
     watchJournal(uid, renderTradeJournal),
     watchErkenntnisse(renderErkenntnisse),
+    watchTagRueckblick(renderHaltedauer),
     watchAiBericht(renderAiBericht),
     watchTuneGlobal(renderTuneGlobal),
   );

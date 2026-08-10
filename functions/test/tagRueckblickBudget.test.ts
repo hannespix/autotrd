@@ -147,6 +147,14 @@ describe('runTagRueckblick — ein Lauf, der ganze Katalog', () => {
     expect(z.meta.get('meta/tagRueckblick')).toEqual(nachEins);
   });
 
+  it('zählt die beteiligten Symbole mit — ohne sie ist die Kante nicht lesbar', async () => {
+    // 534 Beobachtungen aus zwölf Index-Symbolen sehen genauso aus wie 534
+    // aus dem halben Katalog. Ohne diese Zahl liest man einen Index-Beleg als
+    // Katalog-Beleg.
+    await runTagRueckblick(HEUTE, () => 0);
+    expect((z.meta.get('meta/tagRueckblick') as { symbole: number }).symbole).toBe(40);
+  });
+
   it('trägt eine Stichprobe zusammen, statt still bei null zu bleiben', async () => {
     const r = await runTagRueckblick(HEUTE, () => 0);
     expect(r.bewertet).toBeGreaterThan(0);
@@ -219,8 +227,12 @@ describe('Versionswechsel', () => {
     const st = z.meta.get('meta/tagRueckblick')! as {
       gesamt: { n: number };
       klassen: Record<string, unknown>;
+      symbole: number;
     };
     expect(st.gesamt.n).toBe(r.bewertet);
     expect(st.klassen['erfundene_klasse']).toBeUndefined();
+    // Auch der Symbol-Zähler beginnt neu — sonst stünde am Ende eine Zahl,
+    // die mehr Abdeckung behauptet, als die neue Rechnung hat.
+    expect(st.symbole).toBe(6);
   });
 });

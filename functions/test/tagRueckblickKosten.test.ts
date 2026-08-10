@@ -53,13 +53,11 @@ describe.skipIf(!AN)('Kosten und Ertrag eines tieferen Fensters', () => {
       heute,
     );
     const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-    // eslint-disable-next-line no-console
     console.log(`SPY ab ${reihe[0]?.date}, ${Math.round(ms)} ms für ALLE Horizonte:`);
     for (const [tage, h] of Object.entries(e.horizonte)) {
       const a = werteSchattenAus(h.klasse);
       const b = werteSchattenAus(h.nachRichtung.buy);
       const s = werteSchattenAus(h.nachRichtung.sell);
-      // eslint-disable-next-line no-console
       console.log(
         `  ${String(tage).padStart(2)} Tage halten: n=${String(a.n).padStart(4)} `
         + `roh=${a.rohPct?.toFixed(4)}% netto=${a.kantePct?.toFixed(4)}% Treffer=${((a.trefferquote ?? 0) * 100).toFixed(1)}%`

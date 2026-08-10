@@ -205,6 +205,15 @@ export async function runTagRueckblick(
     ? (vorher.get('horizonte') as Record<string, HorizontStand> | undefined)
     : undefined;
   const horizonte: Record<string, HorizontStand> = { ...(gespeicherteHorizonte ?? {}) };
+  /*
+   * Wie viele Symbole in der Summe stecken.
+   *
+   * Ohne diesen Zähler ist die Kante nicht lesbar: `n` zählt Basistage, und
+   * 534 Beobachtungen aus zwölf Index-Symbolen sehen genauso aus wie 534 aus
+   * dem halben Katalog — sagen aber etwas völlig anderes. Eine Kante, die nur
+   * auf Indizes gemessen wurde, darf nicht als Katalog-Beleg gelesen werden.
+   */
+  let symbolZahl = fortsetzen ? ((vorher.get('symbole') as number | undefined) ?? 0) : 0;
 
   let bewertet = 0;
   let uebersprungen = 0;
@@ -306,6 +315,7 @@ export async function runTagRueckblick(
         klassen: neuKlasse ? { ...klassen, [kl]: neuKlasse } : klassen,
         nachRichtung: { buy: neuBuy, sell: neuSell },
         horizonte: neuHorizonte,
+        symbole: symbolZahl + 1,
         cursor: (cursor + i + 1) % Math.max(1, offen.length),
         at: now.toISOString(),
         version: TAG_RUECKBLICK_V,
@@ -318,6 +328,7 @@ export async function runTagRueckblick(
       nachRichtung.buy = neuBuy;
       nachRichtung.sell = neuSell;
       for (const [tage, h] of Object.entries(neuHorizonte)) horizonte[tage] = h;
+      symbolZahl += 1;
 
       bewertet += e.bewertet;
       fertig.push(sym);
