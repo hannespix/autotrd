@@ -36,6 +36,7 @@ import {
   equityCurve,
   exitBreakdown,
   besteHaltedauer,
+  zerlegeDepot,
   haltedauerTage,
   haltedauerZeilen,
   historySummary,
@@ -186,6 +187,7 @@ import {
   haltedauerMeta,
   haltedauerTabelle,
 } from './haltedauerCard.js';
+import { depotChart, depotTooltip } from './depotChart.js';
 import {
   areaLine,
   barChart,
@@ -435,6 +437,8 @@ interface DashState {
   /** Davon frisch bekurst — s. `renderWatchHint`. */
   catalogQuotes: number;
   positionSubs: Map<string, Unsubscribe>; // Quotes je Positions-Symbol
+  /** Zerlegung des Depot-Verlaufs: je Symbol gebündelt oder je Trade einzeln. */
+  dcModus: 'symbol' | 'trade';
   timers: number[];
 }
 
@@ -1032,6 +1036,22 @@ function layout(email: string): string {
         <div id="skBed" class="fl-tbl"><div class="hint">Kommt mit dem ersten Tageslauf.</div></div>
         <label class="lbl" style="margin-top:10px">Prüf-Journal</label>
         <div id="skLog" class="tn-log"><div class="hint">Noch kein Lauf — die Suche prüft täglich um 18:10 ET einen Kandidaten.</div></div>
+      </div></div>
+
+      <div class="card" data-panel="depotVerlauf"><div class="sect">Depot-Verlauf ${iBtn('depotVerlauf')}
+        <span class="dc-modus">
+          <button id="dcMSym" aria-pressed="true">je Symbol</button>
+          <button id="dcMTrade" aria-pressed="false">je Trade</button>
+        </span>
+      </div><div class="cbody">
+        <div class="hint">Die dicke Linie ist dein Depot. Die farbigen Flächen zeigen, WOMIT es
+          dorthin kam: Grün baut auf, Rot trägt wieder ab, zuletzt korrigiert der Buchwert der
+          offenen Positionen auf den tatsächlichen Stand. Jede Fläche setzt dort an, wo die vorige
+          aufhört — deshalb endet die Treppe genau auf der Depot-Linie. Die Höhe einer Fläche ist
+          das seit Fensterbeginn aufgelaufene Ergebnis dieses Symbols (oder Trades).</div>
+        <div class="dc-wrap" id="dcWrap"><div id="dcChart"></div><div class="dc-tt" id="dcTip" hidden></div></div>
+        <div class="dc-legende" id="dcLegende"></div>
+        <div id="dcMeta" class="tn-n mono"></div>
       </div></div>
 
       <div class="card" data-panel="haltedauer"><div class="sect">Wie lange halten? ${iBtn('haltedauer')}
@@ -6695,6 +6715,7 @@ function renderPfStats(): void {
     spark.setAttribute('hidden', '');
   }
   renderPfKurven(serie);
+  renderDepotVerlauf();
 
   if (!s || s.equityDays === 0) {
     grid.hidden = true;
@@ -6779,6 +6800,95 @@ function renderPfKurven(serie: Array<{ date: string; equity: number }>): void {
   meta.textContent =
     `${von} → ${bis} · Start ${money(eq[0]!)} · Ende ${money(eq[eq.length - 1]!)} ` +
     `· Hoch ${money(max)} · Tief ${money(min)} · tiefster Drawdown ${tiefster.toFixed(2)} %`;
+}
+
+/**
+ * Depot-Verlauf, zerlegt nach Trades (Owner-Wunsch 10.08.).
+ *
+ * Hier steht nur die Verdrahtung: Zerlegung in shared (`zerlegeDepot`),
+ * Zeichnung in `depotChart` — beides ohne DOM und damit prüfbar. Diese
+ * Funktion holt die Daten, hängt das Ergebnis ein und verbindet Maus und
+ * Finger mit dem Tooltip.
+ */
+function renderDepotVerlauf(): void {
+  if (!st) return;
+  const halter = $('dcChart');
+  const legende = $('dcLegende');
+  const meta = $('dcMeta');
+  if (!halter || !legende || !meta) return;
+
+  const z = zerlegeDepot(st.equitySeries, st.trades as HistoryTrade[], { modus: st.dcModus });
+  const { svg, legende: legHtml } = depotChart(z);
+  halter.innerHTML = svg || '<div class="hint">Noch zu wenige Snapshot-Tage (täglich einer).</div>';
+  legende.innerHTML = legHtml;
+
+  const teile: string[] = [];
+  if (z.tage.length >= 2) teile.push(`${z.tage[0]} → ${z.tage[z.tage.length - 1]}`);
+  const drin = z.baender.reduce((n, b) => n + b.trades, 0);
+  teile.push(`${drin} ${drin === 1 ? 'Trade' : 'Trades'} im Bild`);
+  // Ehrlich benennen, was NICHT im Bild ist — sonst wirkt die Zerlegung
+  // vollständig, obwohl ältere Trades längst in der Bezugslinie stecken.
+  if (z.ausserhalb.vorher > 0) teile.push(`${z.ausserhalb.vorher} älter als das Fenster`);
+  if (z.ausserhalb.nachher > 0) teile.push(`${z.ausserhalb.nachher} nach dem letzten Snapshot`);
+  if (!st.tradesDone) teile.push('Historie nur teilweise geladen');
+  meta.textContent = teile.join(' · ');
+
+  wireDepotVerlauf(z);
+}
+
+/** Tooltip, Fadenkreuz und Legenden-Klick — nach jedem Neuzeichnen frisch. */
+function wireDepotVerlauf(z: ReturnType<typeof zerlegeDepot>): void {
+  const wrap = $('dcWrap');
+  const tip = $('dcTip');
+  const svg = wrap?.querySelector<SVGSVGElement>('.dc-svg');
+  if (!wrap || !tip || !svg) return;
+  const kreuz = svg.querySelector<SVGLineElement>('.dc-cross');
+
+  const zeigen = (ziel: Element): void => {
+    const i = Number((ziel as HTMLElement).dataset['i']);
+    if (!Number.isInteger(i)) return;
+    tip.innerHTML = depotTooltip(z, i);
+    tip.hidden = false;
+    const box = wrap.getBoundingClientRect();
+    const r = (ziel as SVGRectElement).getBoundingClientRect();
+    const x = r.left + r.width / 2 - box.left;
+    // Am rechten Rand nach links kippen, damit der Tooltip in der Karte
+    // bleibt — `position: absolute` schneidet sonst am Kartenrand ab.
+    const breite = tip.offsetWidth || 160;
+    tip.style.left = `${Math.max(0, Math.min(x - breite / 2, box.width - breite))}px`;
+    tip.style.top = '2px';
+    if (kreuz) {
+      const rel = Number((ziel as HTMLElement).getAttribute('x')) + Number((ziel as HTMLElement).getAttribute('width')) / 2;
+      kreuz.setAttribute('x1', String(rel));
+      kreuz.setAttribute('x2', String(rel));
+      kreuz.style.display = '';
+    }
+  };
+  const verstecken = (): void => {
+    tip.hidden = true;
+    if (kreuz) kreuz.style.display = 'none';
+  };
+
+  for (const hit of svg.querySelectorAll('.dc-hit')) {
+    hit.addEventListener('pointerenter', () => zeigen(hit));
+    // Touch: `pointerenter` feuert dort nur beim Tippen, `pointerdown` ist
+    // das verlässlichere Signal — sonst bleibt der Tooltip am Handy leer.
+    hit.addEventListener('pointerdown', () => zeigen(hit));
+  }
+  svg.addEventListener('pointerleave', verstecken);
+
+  // Legende: ein Klick blendet ein Band aus, damit man die anderen sieht.
+  // Bewusst nur optisch — die Zerlegung bleibt vollständig, sonst stimmte
+  // die Summen-Identität nicht mehr mit dem Bild überein.
+  for (const eintrag of $('dcLegende')?.querySelectorAll<HTMLElement>('.dc-leg') ?? []) {
+    eintrag.addEventListener('click', () => {
+      const key = eintrag.dataset['key'];
+      const aus = eintrag.classList.toggle('dc-aus');
+      svg
+        .querySelector<SVGPolygonElement>(`.dc-band[data-key="${CSS.escape(key ?? '')}"]`)
+        ?.classList.toggle('dc-blass', aus);
+    });
+  }
 }
 
 /** Klarnamen der Ausstiegsgründe — `signal` ist der Sammeltopf ohne Risiko-Exit. */
@@ -7640,6 +7750,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     tradesCursor: null,
     tradesFehler: null,
     tradesDone: false,
+    dcModus: 'symbol',
     tradesLoading: false,
     catalogOpen: 0,
     catalogQuotes: 0,
@@ -7748,6 +7859,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         st.tradesDone = kopf.length < TRADE_PAGE;
       }
       renderPortfolio();
+      renderDepotVerlauf();
     }),
     watchPortfolioStats(uid, (stats) => {
       if (!st) return;
@@ -7804,6 +7916,18 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     watchTuneGlobal(renderTuneGlobal),
   );
   wireTradeJournal(uid);
+
+  // Umschalter der Depot-Zerlegung. Einmal verdrahtet, nicht bei jedem
+  // Neuzeichnen — die Knöpfe stehen im festen Karten-Markup.
+  const setzeModus = (modus: 'symbol' | 'trade'): void => {
+    if (!st || st.dcModus === modus) return;
+    st.dcModus = modus;
+    $('dcMSym')?.setAttribute('aria-pressed', String(modus === 'symbol'));
+    $('dcMTrade')?.setAttribute('aria-pressed', String(modus === 'trade'));
+    renderDepotVerlauf();
+  };
+  $('dcMSym')?.addEventListener('click', () => setzeModus('symbol'));
+  $('dcMTrade')?.addEventListener('click', () => setzeModus('trade'));
 
   // Link-Bus (M9): Chart- und News-Kontext folgen ihrer jeweiligen Gruppe.
   busSubscribe(CHART_KEY, st.chartGroup, (sym) => {

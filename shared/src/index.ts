@@ -18,6 +18,7 @@ export * from './overfit.js';
 export * from './liveReadiness.js';
 export * from './fx.js';
 export * from './tax.js';
+export * from './depotAufteilung.js';
 export * from './tradeAnalytics.js';
 export * from './globalLearning.js';
 export * from './tradingHealth.js';
