@@ -31,6 +31,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { abgleich, bestandsAbgleich, nurBrokerPositionen } from '../src/core/alpacaBroker.js';
+import { istGefaehrlicheAbweichung } from '../src/core/brokerAbgleich.js';
 
 /** Bestand beim Broker, wie ihn `alpacaPositionen()` liefert. */
 const brokerPos = [
@@ -152,4 +153,46 @@ describe('Quelltext: beide Aufrufstellen gehen durch die gemeinsame Funktion', (
       expect(importe, `Importe aus alpacaBroker: ${importe.join(' | ')}`).not.toContain('abgleich');
     });
   }
+});
+
+/* ── Die Telemetrie muss die zwei Richtungen auseinanderhalten (11.08.) ────
+ *
+ * Live-Befund: Der Heartbeat meldete `drift: 2, sauber: 0` — und im selben
+ * Dokument stand `abgleich_drift: 0`, also „kein Konto gesperrt". Beide
+ * Konten waren in Ordnung; die Abweichung war reiner Fremdbestand (der
+ * Nutzer handelt auf seinem verbundenen Konto selbst). Ansehen konnte man
+ * das den zwei Zahlen nicht — man musste den Code lesen, um zu wissen, dass
+ * nur die eine Richtung sperrt.
+ *
+ * `AbgleichBefund` reicht die Aufteilung deshalb heraus, und der Scan zählt
+ * sie getrennt. Ein Warnzeichen, das den harmlosen und den gefährlichen Fall
+ * gleich anzeigt, ist keins.
+ */
+describe('Befund trennt Fehl- und Fremdbestand', () => {
+  it('nur beim Broker ⇒ Fremdbestand, keine Sperre', () => {
+    const out = bestandsAbgleich([], brokerPos);
+    expect(out.filter(istGefaehrlicheAbweichung)).toHaveLength(0);
+    expect(out.filter((a) => !istGefaehrlicheAbweichung(a))).toHaveLength(1);
+  });
+
+  it('nur im Buch ⇒ Fehlbestand, das ist die gefährliche Richtung', () => {
+    const eigene = [{ symbol: 'AAPL', qty: 10, side: 'long', broker: true }];
+    const out = bestandsAbgleich(eigene, []);
+    expect(out.filter(istGefaehrlicheAbweichung)).toHaveLength(1);
+  });
+
+  it('ein Buch-SHORT ohne Gegenstück zählt als Fehlbestand, nicht als Fremd', () => {
+    // Beim Short ist das rohe Vorzeichen gedreht — ein Cover würde ins Leere
+    // kaufen. Die Richtung des BUCHES entscheidet, nicht das Vorzeichen.
+    const eigene = [{ symbol: 'AAPL', qty: 10, side: 'short', broker: true }];
+    const out = bestandsAbgleich(eigene, []);
+    expect(out.filter(istGefaehrlicheAbweichung)).toHaveLength(1);
+  });
+
+  it('beide Richtungen gleichzeitig werden beide gezählt', () => {
+    const eigene = [{ symbol: 'TLT', qty: 4, side: 'long', broker: true }];
+    const out = bestandsAbgleich(eigene, brokerPos); // AAPL fremd, TLT fehlt
+    expect(out.filter(istGefaehrlicheAbweichung).map((a) => a.symbol)).toEqual(['TLT']);
+    expect(out.filter((a) => !istGefaehrlicheAbweichung(a)).map((a) => a.symbol)).toEqual(['AAPL']);
+  });
 });

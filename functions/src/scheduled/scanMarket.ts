@@ -322,8 +322,27 @@ export interface BrokerStats {
   verbunden: number;
   /** Buch und Depot stimmen überein. */
   sauber: number;
-  /** Abweichung gefunden — Einstiege dieses Kontos sind gesperrt. */
+  /** Abweichung gefunden (beide Richtungen zusammen). */
   drift: number;
+  /**
+   * Konten mit FEHLbestand — das Buch hält mehr als der Broker.
+   *
+   * Die einzige Zahl dieser Gruppe, die etwas bedeutet. Nur sie sperrt
+   * Einstiege, und nur sie heißt, dass die Engine mit Stücken rechnet, die
+   * es nicht gibt.
+   */
+  fehlbestand: number;
+  /**
+   * Konten mit FREMDbestand — beim Broker liegt mehr als im Buch.
+   *
+   * Harmlos und erwartbar: Wer sein Konto verbindet, darf dort weiter selbst
+   * handeln. Getrennt gezählt, weil `drift` allein im Betrieb falsch gelesen
+   * wurde (10.08.: „drift 2, sauber 0" sah nach zwei kaputten Konten aus,
+   * während `abgleich_drift` im selben Dokument bei 0 stand — beide Konten
+   * waren also in Ordnung, und niemand konnte das den zwei Zahlen ansehen,
+   * ohne den Code zu lesen).
+   */
+  fremdbestand: number;
   /** Broker nicht erreichbar — sperrt NICHT, wird aber gezählt. */
   fehler: number;
 }
@@ -346,7 +365,14 @@ async function executeUserTrades(
 }> {
   const db = getFirestore();
   let executed = 0;
-  const broker: BrokerStats = { verbunden: 0, sauber: 0, drift: 0, fehler: 0 };
+  const broker: BrokerStats = {
+    verbunden: 0,
+    sauber: 0,
+    drift: 0,
+    fehlbestand: 0,
+    fremdbestand: 0,
+    fehler: 0,
+  };
   // Ein abgelehnter Einstieg ist ein Nicht-Ereignis und damit unsichtbar.
   // Genau deshalb wird er gezählt: Ein Filter, der zu scharf steht und ALLES
   // blockt, sähe im Log exakt aus wie ein ruhiger Markt.
@@ -636,8 +662,13 @@ async function executeUserTrades(
       if (abgleichBefund.zustand !== 'kein_broker') {
         broker.verbunden += 1;
         if (abgleichBefund.zustand === 'sauber') broker.sauber += 1;
-        else if (abgleichBefund.zustand === 'drift') broker.drift += 1;
-        else broker.fehler += 1;
+        else if (abgleichBefund.zustand === 'drift') {
+          broker.drift += 1;
+          // Je Konto höchstens einmal gezählt — die Frage ist „wie viele
+          // Konten sind betroffen", nicht „wie viele Symbole insgesamt".
+          if (abgleichBefund.fehlbestand > 0) broker.fehlbestand += 1;
+          if (abgleichBefund.fremdbestand > 0) broker.fremdbestand += 1;
+        } else broker.fehler += 1;
       }
       if (abgleichBefund.sperre) gate.abgleich_drift += 1;
       // Zeitbasis der Signale (Owner 26.07., „Tradefrequenz erhöhen"):
