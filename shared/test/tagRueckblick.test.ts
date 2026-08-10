@@ -16,6 +16,7 @@ import {
   MAX_LUECKE_TAGE,
   type SignalFn,
   type TagesKurs,
+  maxLuecke,
   tageZwischen,
   werteTagRueckblick,
 } from '../src/tagRueckblick.js';
@@ -263,6 +264,96 @@ describe('Robustheit', () => {
     const e = werteTagRueckblick(r, (_c, p) => (p % 2 === 0 ? 'buy' : 'hold'), 0.005, r[35]!.date, 5);
     const summe = Object.values(e.ausfaelle).reduce((a, b) => a + b, 0) + e.bewertet;
     expect(summe).toBe(r.length);
+  });
+});
+
+describe('Mehrere Halte-Horizonte in einem Durchlauf', () => {
+  it('für einen Tag ist die Lücken-Schranke UNVERÄNDERT', () => {
+    // Der wichtigste Test dieses Umbaus. Wäre maxLuecke(1) auch nur um eins
+    // anders, hätte er still die Bedeutung der bereits gemessenen Tages-Kante
+    // verschoben — und alle Vergleiche mit den Zahlen von gestern wären falsch.
+    expect(maxLuecke(1)).toBe(MAX_LUECKE_TAGE);
+  });
+
+  it('die Schranke wächst mit dem Horizont, sonst fiele jeder lange durch', () => {
+    // 10 Handelstage sind rund 14 Kalendertage — mit einer Schranke von 4
+    // käme kein einziger Zehn-Tages-Wert je durch.
+    expect(maxLuecke(5)).toBeGreaterThan(MAX_LUECKE_TAGE);
+    expect(maxLuecke(10)).toBeGreaterThanOrEqual(14);
+    for (let h = 2; h <= 10; h++) expect(maxLuecke(h)).toBeGreaterThan(maxLuecke(h - 1));
+  });
+
+  it('die Spitzenfelder sind exakt der Ein-Tages-Horizont', () => {
+    const r = reihe(60);
+    const e = werteTagRueckblick(r, (_c, p) => (p % 2 === 0 ? 'buy' : 'hold'), 0.001, '2099-01-01', 5);
+    expect(e.horizonte[1]!.klasse).toEqual(e.klasse);
+    expect(e.horizonte[1]!.bewertet).toBe(e.bewertet);
+    expect(e.horizonte[1]!.nachRichtung).toEqual(e.nachRichtung);
+    expect(e.horizonte[1]!.hold).toBe(e.ausfaelle.hold);
+  });
+
+  it('das teure Signal wird je Basistag GENAU EINMAL gerechnet', () => {
+    // Das ist der ganze Grund für den Umbau: Die Indikator-Rechnung hängt am
+    // Basistag, nicht an der Haltedauer. Würde sie je Horizont wiederholt,
+    // kostete die Kurve das Fünffache statt fast nichts.
+    const r = reihe(60);
+    let aufrufe = 0;
+    const e = werteTagRueckblick(r, () => { aufrufe += 1; return 'buy'; }, 0, '2099-01-01', 5);
+    // Ein Aufruf je Basistag, an dem mindestens ein Horizont auswertbar war.
+    expect(aufrufe).toBeLessThanOrEqual(r.length);
+    expect(e.horizonte[1]!.bewertet).toBeLessThanOrEqual(aufrufe);
+    expect(e.horizonte[10]!.bewertet).toBeLessThanOrEqual(aufrufe);
+  });
+
+  it('ein längerer Horizont fängt die größere Bewegung ein', () => {
+    // Stetig steigende Reihe: Fünf Tage halten muss mehr bringen als einer.
+    const r = reihe(60, '2026-01-01', 100, 1);
+    const e = werteTagRueckblick(r, immerKauf, 0, '2099-01-01', 5);
+    const roh = (h: number): number => {
+      const k = e.horizonte[h]!.klasse;
+      return (k.summeRohPct ?? 0) / Math.max(1, k.nRoh ?? 0);
+    };
+    expect(roh(5)).toBeGreaterThan(roh(1));
+    expect(roh(10)).toBeGreaterThan(roh(5));
+  });
+
+  it('Gate 2 greift je Horizont einzeln', () => {
+    // Der Bewertungstag von h=10 kann noch in der Zukunft liegen, während der
+    // von h=1 längst realisiert ist. Ein gemeinsames Gate würde entweder den
+    // kurzen Horizont unnötig verwerfen oder den langen zu früh bewerten.
+    const r = reihe(30);
+    const heute = r[20]!.date;
+    const e = werteTagRueckblick(r, immerKauf, 0, heute, 1);
+    expect(e.horizonte[1]!.bewertet).toBeGreaterThan(e.horizonte[10]!.bewertet);
+    // Beide Zähler für sich sind hier ZUFÄLLIG gleich (10): Beim langen
+    // Horizont fallen die späten Basistage schon mangels Folgetag heraus,
+    // bevor Gate 2 sie sehen kann. Was zählt, ist der Verlust insgesamt.
+    const verloren = (h: number): number =>
+      e.horizonte[h]!.nichtRealisiert + e.horizonte[h]!.keinFolgetag;
+    expect(verloren(10)).toBeGreaterThan(verloren(1));
+  });
+
+  it('am Reihenende fehlen langen Horizonten mehr Folgetage als kurzen', () => {
+    const e = werteTagRueckblick(reihe(30), immerKauf, 0, '2099-01-01', 1);
+    expect(e.horizonte[10]!.keinFolgetag).toBeGreaterThan(e.horizonte[1]!.keinFolgetag);
+  });
+
+  it('jeder Horizont führt eine vollständige Bilanz', () => {
+    // Wie beim Ein-Tages-Horizont: Ausfälle plus Bewertete müssen die
+    // Reihenlänge ergeben, sonst verschwinden Basistage lautlos.
+    const r = reihe(50);
+    const e = werteTagRueckblick(r, (_c, p) => (p % 4 === 0 ? 'buy' : p % 4 === 1 ? 'sell' : 'hold'), 0.001, r[45]!.date, 5);
+    for (const h of [1, 2, 3, 5, 10]) {
+      const x = e.horizonte[h]!;
+      const summe = x.bewertet + x.hold + x.keinFolgetag + x.nichtRealisiert + x.luecke + x.kaputt
+        + e.ausfaelle.zuWenigVorlauf;
+      expect(summe, `Horizont ${h}`).toBe(r.length);
+    }
+  });
+
+  it('ein eigenes Horizont-Gitter wird respektiert', () => {
+    const e = werteTagRueckblick(reihe(40), immerKauf, 0, '2099-01-01', 5, 250, [1, 4]);
+    expect(Object.keys(e.horizonte).map(Number).sort((a, b) => a - b)).toEqual([1, 4]);
   });
 });
 
