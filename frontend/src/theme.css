@@ -627,6 +627,60 @@ input { accent-color: var(--ac); }
 .tn-r { font-size: 11px; line-height: 1.4; color: var(--t2); margin-top: 2px; }
 .tn-n { font-size: 10px; color: var(--t3); margin-top: 2px; font-variant-numeric: tabular-nums; }
 
+/* Teilbare Ergebnis-Grafik in der Handels-Analyse (Owner-Wunsch 10.08.).
+   Die Vorschau ist bewusst breit und ungestaucht: Man teilt nur, was man
+   vorher gesehen hat, und das Bild verlässt die App unwiderruflich. */
+.an-share { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 2px 0 8px; }
+.an-share-opt { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--t2); cursor: pointer; }
+.an-share-opt input { accent-color: var(--ac); cursor: pointer; }
+.an-share-vor { max-width: 420px; margin: 0 auto 10px; border-radius: 12px; overflow: hidden; border: 1px solid var(--bd2); }
+.an-share-vor svg { display: block; width: 100%; height: auto; }
+
+/* Depot-Verlauf, zerlegt (Owner-Wunsch 10.08.: „mit welchen Trades man
+   Gewinn und Verlust gemacht hat").
+
+   `preserveAspectRatio: none` streckt das SVG auf die Kartenbreite — deshalb
+   dürfen Schriften NICHT im SVG skalieren. `vector-effect` hält die Linien
+   strichstark, die Achsentexte bekommen ihre Größe über CSS und werden vom
+   Streckfaktor nicht verzerrt, weil sie in Nutzerkoordinaten klein bleiben. */
+.dc-wrap { position: relative; margin-top: 6px; }
+.dc-svg { display: block; width: 100%; height: 190px; overflow: visible; }
+.dc-band { stroke: none; }
+.dc-band.dc-blass { opacity: .18; }
+.dc-basis { stroke: var(--bd2); stroke-width: 1; stroke-dasharray: 2 2; vector-effect: non-scaling-stroke; }
+/* Die Depot-Linie muss über den Flächen LESBAR bleiben — auf einer hellen
+   Fläche verschwand sie im ersten Bild fast. Dunkler Unterstrich + heller
+   Deckstrich funktioniert auf jedem Untergrund und in beiden Themes. */
+.dc-eq { fill: none; stroke: var(--t1); stroke-width: 2; vector-effect: non-scaling-stroke;
+  paint-order: stroke; stroke-linejoin: round; }
+.dc-eq-halo { fill: none; stroke: var(--bg); stroke-width: 4; opacity: .55; vector-effect: non-scaling-stroke; }
+.dc-cross { stroke: var(--ac); stroke-width: 1; stroke-dasharray: 2 2; vector-effect: non-scaling-stroke; pointer-events: none; }
+.dc-ax { font-size: 2.6px; fill: var(--t3); font-variant-numeric: tabular-nums; }
+.dc-hit { fill: transparent; cursor: crosshair; }
+
+/* Tooltip: `position: absolute` im Wrapper, nicht `fixed` — in einer
+   Glass-Card mit eigenem Stacking-Kontext wandert `fixed` sonst aus dem
+   Bild (derselbe Fehler wie beim Chart-Tooltip, siehe CLAUDE.md §6). */
+.dc-tt { position: absolute; z-index: 5; pointer-events: none; min-width: 150px; max-width: 240px;
+  background: var(--card-solid); border: 1px solid var(--bd2); border-radius: 8px; padding: 6px 8px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, .38); font-size: 11px; }
+.dc-tt-h { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.dc-tt-d { display: flex; justify-content: space-between; gap: 8px; color: var(--t3); font-size: 10px; }
+.dc-tt-l { margin-top: 4px; border-top: 1px solid var(--hair); padding-top: 4px; }
+.dc-tt-l div { display: flex; justify-content: space-between; gap: 10px; font-variant-numeric: tabular-nums; }
+.dc-tt-l span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.dc-legende { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-size: 11px; }
+.dc-leg { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+.dc-leg i { width: 9px; height: 9px; border-radius: 2px; flex: 0 0 auto; }
+.dc-leg b { font-weight: 600; color: var(--t1); }
+.dc-leg-n { color: var(--t3); font-size: 10px; }
+.dc-leg.dc-aus { opacity: .4; }
+.dc-modus { float: right; display: inline-flex; gap: 4px; }
+.dc-modus button { font-size: 10px; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--bd2);
+  background: none; color: var(--t3); cursor: pointer; }
+.dc-modus button[aria-pressed="true"] { background: rgba(37, 208, 238, .14); color: var(--t1); border-color: var(--ac); }
+
 /* Haltedauer-Kurve (10.08.): sechs Spalten, kein innerer Scroll.
    Bewusst NICHT `.fl-tbl` mitbenutzt — die deckelt auf 168 px, und fünf
    Zeilen plus Kopf liegen darüber; der Inhalt landete in einem inneren

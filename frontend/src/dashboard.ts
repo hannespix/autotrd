@@ -36,6 +36,7 @@ import {
   equityCurve,
   exitBreakdown,
   besteHaltedauer,
+  zerlegeDepot,
   haltedauerTage,
   haltedauerZeilen,
   historySummary,
@@ -186,6 +187,14 @@ import {
   haltedauerMeta,
   haltedauerTabelle,
 } from './haltedauerCard.js';
+import { depotChart, depotTooltip } from './depotChart.js';
+import {
+  KARTE,
+  type ShareDaten,
+  shareCard,
+  shareDateiname,
+  shareText,
+} from './shareCard.js';
 import {
   areaLine,
   barChart,
@@ -435,6 +444,8 @@ interface DashState {
   /** Davon frisch bekurst — s. `renderWatchHint`. */
   catalogQuotes: number;
   positionSubs: Map<string, Unsubscribe>; // Quotes je Positions-Symbol
+  /** Zerlegung des Depot-Verlaufs: je Symbol gebündelt oder je Trade einzeln. */
+  dcModus: 'symbol' | 'trade';
   timers: number[];
 }
 
@@ -1034,6 +1045,22 @@ function layout(email: string): string {
         <div id="skLog" class="tn-log"><div class="hint">Noch kein Lauf — die Suche prüft täglich um 18:10 ET einen Kandidaten.</div></div>
       </div></div>
 
+      <div class="card" data-panel="depotVerlauf"><div class="sect">Depot-Verlauf ${iBtn('depotVerlauf')}
+        <span class="dc-modus">
+          <button id="dcMSym" aria-pressed="true">je Symbol</button>
+          <button id="dcMTrade" aria-pressed="false">je Trade</button>
+        </span>
+      </div><div class="cbody">
+        <div class="hint">Die dicke Linie ist dein Depot. Die farbigen Flächen zeigen, WOMIT es
+          dorthin kam: Grün baut auf, Rot trägt wieder ab, zuletzt korrigiert der Buchwert der
+          offenen Positionen auf den tatsächlichen Stand. Jede Fläche setzt dort an, wo die vorige
+          aufhört — deshalb endet die Treppe genau auf der Depot-Linie. Die Höhe einer Fläche ist
+          das seit Fensterbeginn aufgelaufene Ergebnis dieses Symbols (oder Trades).</div>
+        <div class="dc-wrap" id="dcWrap"><div id="dcChart"></div><div class="dc-tt" id="dcTip" hidden></div></div>
+        <div class="dc-legende" id="dcLegende"></div>
+        <div id="dcMeta" class="tn-n mono"></div>
+      </div></div>
+
       <div class="card" data-panel="haltedauer"><div class="sect">Wie lange halten? ${iBtn('haltedauer')}
         <span id="hdStand" class="tn-tag" style="float:right"></span>
       </div><div class="cbody">
@@ -1097,6 +1124,12 @@ function layout(email: string): string {
     <div class="dsheet dsheet-wide">
       <button class="dclose" data-close="analytics">✕</button>
       <h3>Handels-Analyse <span id="anScope" class="an-scope"></span></h3>
+      <div class="an-share">
+        <button class="dbtn" id="anShareBtn">Grafik teilen</button>
+        <label class="an-share-opt"><input type="checkbox" id="anShareBetraege"> Beträge zeigen</label>
+        <span id="anShareStatus" class="hint"></span>
+      </div>
+      <div id="anSharePreview" class="an-share-vor" hidden></div>
       <div id="anBody"><div class="hint">Noch keine geschlossenen Trades.</div></div>
     </div>
   </div>
@@ -4438,6 +4471,7 @@ function wireHistorie(): void {
     auf.dataset.wired = '1';
     auf.addEventListener('click', () => {
       renderAnalytics(); // frisch rechnen, nicht den Stand vom letzten Öffnen zeigen
+      renderSharePreview();
       $('anModal').classList.add('show');
     });
   }
@@ -6695,6 +6729,7 @@ function renderPfStats(): void {
     spark.setAttribute('hidden', '');
   }
   renderPfKurven(serie);
+  renderDepotVerlauf();
 
   if (!s || s.equityDays === 0) {
     grid.hidden = true;
@@ -6779,6 +6814,224 @@ function renderPfKurven(serie: Array<{ date: string; equity: number }>): void {
   meta.textContent =
     `${von} → ${bis} · Start ${money(eq[0]!)} · Ende ${money(eq[eq.length - 1]!)} ` +
     `· Hoch ${money(max)} · Tief ${money(min)} · tiefster Drawdown ${tiefster.toFixed(2)} %`;
+}
+
+/* ── Teilbare Ergebnis-Grafik (Owner-Wunsch 10.08.) ───────────────────────
+   Der Bau der Karte steht in `shareCard` — hier nur die Browser-Seite:
+   Daten sammeln, SVG rastern, weitergeben. */
+
+/** Baut die Kennzahlen der Teilen-Grafik aus dem aktuellen Stand. */
+function shareDatenBauen(betraege: boolean): ShareDaten {
+  const zerlegung = zerlegeDepot(st!.equitySeries, st!.trades as HistoryTrade[]);
+  const letzte = zerlegung.equity[zerlegung.equity.length - 1] ?? 0;
+  const basis = zerlegung.basis || 1;
+  const geschlossen = closedOnly(st!.trades as HistoryTrade[]);
+  const stats = tradeStats(
+    geschlossen.map((t) => ({ symbol: t.symbol, pnl: t.pnl!, riskExit: t.riskExit ?? null })),
+  );
+
+  // Tiefster Drawdown über das Fenster — dieselbe Rechnung wie in der
+  // Portfolio-Karte, damit Bild und App nie verschiedene Zahlen zeigen.
+  let hoch = zerlegung.equity[0] ?? 0;
+  let maxDd: number | null = null;
+  for (const v of zerlegung.equity) {
+    hoch = Math.max(hoch, v);
+    if (hoch > 0) maxDd = Math.min(maxDd ?? 0, ((v - hoch) / hoch) * 100);
+  }
+
+  const sortiert = [...zerlegung.baender]
+    .filter((b) => b.key !== '__rest__')
+    .sort((a, b) => b.summe - a.summe);
+  const alsAnteil = (b: (typeof sortiert)[number] | undefined): { label: string; pct: number } | null =>
+    b ? { label: b.label, pct: (b.summe / basis) * 100 } : null;
+
+  return {
+    zerlegung,
+    renditePct: ((letzte - zerlegung.basis) / basis) * 100,
+    ergebnis: letzte - zerlegung.basis,
+    waehrung: st!.wallet?.currency ?? 'USD',
+    trefferquotePct: stats.winRatePct,
+    profitFaktor: stats.profitFactor,
+    trades: geschlossen.length,
+    maxDrawdownPct: maxDd,
+    bestes: alsAnteil(sortiert[0]),
+    schlechtestes: alsAnteil(sortiert.length > 1 ? sortiert[sortiert.length - 1] : undefined),
+    // Papier bleibt Papier: Das Siegel richtet sich nach dem Broker-Modus,
+    // nicht nach einer Einstellung im Teilen-Dialog.
+    echtgeld: st!.strategy?.broker?.mode === 'live',
+    betraege,
+  };
+}
+
+/** SVG → PNG über eine Canvas. Doppelte Auflösung, damit es scharf bleibt. */
+async function svgAlsPng(svg: string, kante: number, skala = 2): Promise<Blob> {
+  const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
+  try {
+    const bild = new Image();
+    await new Promise<void>((fertig, fehler) => {
+      bild.onload = () => fertig();
+      bild.onerror = () => fehler(new Error('Grafik konnte nicht gerastert werden'));
+      bild.src = url;
+    });
+    const leinwand = document.createElement('canvas');
+    leinwand.width = kante * skala;
+    leinwand.height = kante * skala;
+    const ctx = leinwand.getContext('2d');
+    if (!ctx) throw new Error('Canvas nicht verfügbar');
+    ctx.drawImage(bild, 0, 0, leinwand.width, leinwand.height);
+    return await new Promise<Blob>((fertig, fehler) =>
+      leinwand.toBlob(
+        (b) => (b ? fertig(b) : fehler(new Error('PNG-Export fehlgeschlagen'))),
+        'image/png',
+      ),
+    );
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/** Vorschau im Analyse-Fenster — man teilt nur, was man vorher gesehen hat. */
+function renderSharePreview(): void {
+  const box = $('anSharePreview');
+  if (!st || !box) return;
+  const betraege = ($('anShareBetraege') as HTMLInputElement | null)?.checked === true;
+  box.innerHTML = shareCard(shareDatenBauen(betraege));
+  box.hidden = false;
+}
+
+/**
+ * Teilen: erst das Systemblatt versuchen, sonst herunterladen.
+ *
+ * `navigator.share` mit Dateien gibt es nur in sicheren Kontexten und nicht
+ * auf jedem Desktop-Browser. Der Fallback ist kein Notbehelf, sondern der
+ * Normalfall am Rechner: Bild speichern, Text mit Link in die Zwischenablage.
+ */
+async function teileDepotGrafik(): Promise<void> {
+  const status = $('anShareStatus');
+  const knopf = $('anShareBtn') as HTMLButtonElement | null;
+  if (!st || !status || !knopf) return;
+  knopf.disabled = true;
+  status.textContent = 'Grafik wird gebaut…';
+  try {
+    const betraege = ($('anShareBetraege') as HTMLInputElement | null)?.checked === true;
+    const daten = shareDatenBauen(betraege);
+    const png = await svgAlsPng(shareCard(daten), KARTE);
+    const datei = new File([png], shareDateiname(daten), { type: 'image/png' });
+    const text = shareText(daten);
+
+    if (navigator.canShare?.({ files: [datei] })) {
+      await navigator.share({ files: [datei], text, url: 'https://autotrd.net' });
+      status.textContent = 'Geteilt.';
+      return;
+    }
+    const url = URL.createObjectURL(png);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = datei.name;
+    a.click();
+    URL.revokeObjectURL(url);
+    // Der Link steht ohnehin im Bild; in der Zwischenablage spart er das
+    // Abtippen. Schlägt das fehl (kein sicherer Kontext), ist das kein Grund
+    // für eine Fehlermeldung — das Bild ist da.
+    await navigator.clipboard?.writeText(`${text} https://autotrd.net`).catch(() => undefined);
+    status.textContent = 'Bild gespeichert, Text in der Zwischenablage.';
+  } catch (e) {
+    // Ein abgebrochener Teilen-Dialog ist kein Fehler.
+    const name = e instanceof Error ? e.name : '';
+    status.textContent =
+      name === 'AbortError' ? '' : `Fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    knopf.disabled = false;
+  }
+}
+
+/**
+ * Depot-Verlauf, zerlegt nach Trades (Owner-Wunsch 10.08.).
+ *
+ * Hier steht nur die Verdrahtung: Zerlegung in shared (`zerlegeDepot`),
+ * Zeichnung in `depotChart` — beides ohne DOM und damit prüfbar. Diese
+ * Funktion holt die Daten, hängt das Ergebnis ein und verbindet Maus und
+ * Finger mit dem Tooltip.
+ */
+function renderDepotVerlauf(): void {
+  if (!st) return;
+  const halter = $('dcChart');
+  const legende = $('dcLegende');
+  const meta = $('dcMeta');
+  if (!halter || !legende || !meta) return;
+
+  const z = zerlegeDepot(st.equitySeries, st.trades as HistoryTrade[], { modus: st.dcModus });
+  const { svg, legende: legHtml } = depotChart(z);
+  halter.innerHTML = svg || '<div class="hint">Noch zu wenige Snapshot-Tage (täglich einer).</div>';
+  legende.innerHTML = legHtml;
+
+  const teile: string[] = [];
+  if (z.tage.length >= 2) teile.push(`${z.tage[0]} → ${z.tage[z.tage.length - 1]}`);
+  const drin = z.baender.reduce((n, b) => n + b.trades, 0);
+  teile.push(`${drin} ${drin === 1 ? 'Trade' : 'Trades'} im Bild`);
+  // Ehrlich benennen, was NICHT im Bild ist — sonst wirkt die Zerlegung
+  // vollständig, obwohl ältere Trades längst in der Bezugslinie stecken.
+  if (z.ausserhalb.vorher > 0) teile.push(`${z.ausserhalb.vorher} älter als das Fenster`);
+  if (z.ausserhalb.nachher > 0) teile.push(`${z.ausserhalb.nachher} nach dem letzten Snapshot`);
+  if (!st.tradesDone) teile.push('Historie nur teilweise geladen');
+  meta.textContent = teile.join(' · ');
+
+  wireDepotVerlauf(z);
+}
+
+/** Tooltip, Fadenkreuz und Legenden-Klick — nach jedem Neuzeichnen frisch. */
+function wireDepotVerlauf(z: ReturnType<typeof zerlegeDepot>): void {
+  const wrap = $('dcWrap');
+  const tip = $('dcTip');
+  const svg = wrap?.querySelector<SVGSVGElement>('.dc-svg');
+  if (!wrap || !tip || !svg) return;
+  const kreuz = svg.querySelector<SVGLineElement>('.dc-cross');
+
+  const zeigen = (ziel: Element): void => {
+    const i = Number((ziel as HTMLElement).dataset['i']);
+    if (!Number.isInteger(i)) return;
+    tip.innerHTML = depotTooltip(z, i);
+    tip.hidden = false;
+    const box = wrap.getBoundingClientRect();
+    const r = (ziel as SVGRectElement).getBoundingClientRect();
+    const x = r.left + r.width / 2 - box.left;
+    // Am rechten Rand nach links kippen, damit der Tooltip in der Karte
+    // bleibt — `position: absolute` schneidet sonst am Kartenrand ab.
+    const breite = tip.offsetWidth || 160;
+    tip.style.left = `${Math.max(0, Math.min(x - breite / 2, box.width - breite))}px`;
+    tip.style.top = '2px';
+    if (kreuz) {
+      const rel = Number((ziel as HTMLElement).getAttribute('x')) + Number((ziel as HTMLElement).getAttribute('width')) / 2;
+      kreuz.setAttribute('x1', String(rel));
+      kreuz.setAttribute('x2', String(rel));
+      kreuz.style.display = '';
+    }
+  };
+  const verstecken = (): void => {
+    tip.hidden = true;
+    if (kreuz) kreuz.style.display = 'none';
+  };
+
+  for (const hit of svg.querySelectorAll('.dc-hit')) {
+    hit.addEventListener('pointerenter', () => zeigen(hit));
+    // Touch: `pointerenter` feuert dort nur beim Tippen, `pointerdown` ist
+    // das verlässlichere Signal — sonst bleibt der Tooltip am Handy leer.
+    hit.addEventListener('pointerdown', () => zeigen(hit));
+  }
+  svg.addEventListener('pointerleave', verstecken);
+
+  // Legende: ein Klick blendet ein Band aus, damit man die anderen sieht.
+  // Bewusst nur optisch — die Zerlegung bleibt vollständig, sonst stimmte
+  // die Summen-Identität nicht mehr mit dem Bild überein.
+  for (const eintrag of $('dcLegende')?.querySelectorAll<HTMLElement>('.dc-leg') ?? []) {
+    eintrag.addEventListener('click', () => {
+      const key = eintrag.dataset['key'];
+      const aus = eintrag.classList.toggle('dc-aus');
+      svg
+        .querySelector<SVGPolygonElement>(`.dc-band[data-key="${CSS.escape(key ?? '')}"]`)
+        ?.classList.toggle('dc-blass', aus);
+    });
+  }
 }
 
 /** Klarnamen der Ausstiegsgründe — `signal` ist der Sammeltopf ohne Risiko-Exit. */
@@ -7640,6 +7893,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     tradesCursor: null,
     tradesFehler: null,
     tradesDone: false,
+    dcModus: 'symbol',
     tradesLoading: false,
     catalogOpen: 0,
     catalogQuotes: 0,
@@ -7748,6 +8002,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         st.tradesDone = kopf.length < TRADE_PAGE;
       }
       renderPortfolio();
+      renderDepotVerlauf();
     }),
     watchPortfolioStats(uid, (stats) => {
       if (!st) return;
@@ -7804,6 +8059,23 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     watchTuneGlobal(renderTuneGlobal),
   );
   wireTradeJournal(uid);
+
+  // Umschalter der Depot-Zerlegung. Einmal verdrahtet, nicht bei jedem
+  // Neuzeichnen — die Knöpfe stehen im festen Karten-Markup.
+  const setzeModus = (modus: 'symbol' | 'trade'): void => {
+    if (!st || st.dcModus === modus) return;
+    st.dcModus = modus;
+    $('dcMSym')?.setAttribute('aria-pressed', String(modus === 'symbol'));
+    $('dcMTrade')?.setAttribute('aria-pressed', String(modus === 'trade'));
+    renderDepotVerlauf();
+  };
+  $('dcMSym')?.addEventListener('click', () => setzeModus('symbol'));
+  $('dcMTrade')?.addEventListener('click', () => setzeModus('trade'));
+
+  // Teilen-Grafik: Vorschau folgt dem Beträge-Schalter, damit man vor dem
+  // Teilen sieht, was das Bild preisgibt.
+  $('anShareBtn')?.addEventListener('click', () => void teileDepotGrafik());
+  $('anShareBetraege')?.addEventListener('change', renderSharePreview);
 
   // Link-Bus (M9): Chart- und News-Kontext folgen ihrer jeweiligen Gruppe.
   busSubscribe(CHART_KEY, st.chartGroup, (sym) => {
