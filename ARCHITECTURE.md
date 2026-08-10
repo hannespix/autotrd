@@ -18,7 +18,7 @@ Leitziele: **kosteneffizient · sicher · leistungsfähig · schnell.**
 | Frontend-Hosting | **webgo** (`autotrd.net`) via FTP-Deploy aus Action; optional später Cloudflare Pages | Vorhandener Vertrag + Domain; Frontend ist rein statisch |
 | Auth + DB | **Firebase Auth + Firestore** | Login/Userverwaltung fertig & sicher; Firestore ist realtime (`onSnapshot`) UND hat Queries + Security Rules |
 | Engine/Compute | **Cloud Functions (2nd gen, Node) + Cloud Scheduler** | Kein VPS nötig: Scan = kurzer Job alle 5 min; Node-Cold-Start minimal |
-| Marktdaten | **Alpaca Market Data** (offizielles JS-SDK, gratis); Fallback `yahoo-finance2` | Ein Provider für Daten UND (später) Broker; yfinance-Ersatz |
+| Marktdaten | **Yahoo-Finance-Chart-API (v8)** — eine einzige Quelle, kein Key | Alpaca-Daten (10.08. entfernt): `feed=iex` ist nur die IEX-Börse (~2–3 % Volumen, kein offizieller Schlussauktions-Kurs) und deckte nur 55/164 Symbole — zwei Quellen hätten Messung (Rückschau auf `ohlcDaily`) und Handel (Signal-Bars) auseinanderlaufen lassen. Alpaca bleibt Broker, nicht Datenquelle. |
 | Geld-Modell | **Erst Paper, später echt** | Architektur sieht Broker-Slot vor, Start ohne echtes Geld |
 
 > **Kostenrealität:** Cloud Functions mit ausgehenden HTTP-Calls brauchen den
@@ -193,7 +193,7 @@ Für Erklärtexte allein lohnt sie nicht.
 | `trading_engine.py` (Konfluenz, Forecast-Vote) | `functions/src/core/engine.ts` | mittel |
 | `technical_analysis.py` (RSI/MACD/BBands) | `core/indicators.ts` — **Wilder-Glättung beibehalten!** Parity-Test Pflicht | klein, heikel |
 | `forecaster.py` + `forecast_eval.py` | `core/forecaster.ts` + scheduled `evalForecasts` — **Lookahead-Gate strikt portieren** (`base_date < today`, letzter Horizont-Tag realisiert) | mittel, **höchstes Risiko** |
-| `market_data.py` / `market_universe.py` | `core/marketData.ts` (Alpaca + yahoo-finance2-Fallback) / `meta/universe` | klein |
+| `market_data.py` / `market_universe.py` | `core/marketData.ts` (**eine** Quelle: Yahoo v8) / `meta/universe` | klein |
 | `news_feed.py` / `sentiment.py` / `ai_analyst.py` / `ai_tuner.py` | **NICHT portiert** — 28.07. ausgebaut, siehe MILESTONES M6 | — |
 | `broker.py` | `core/broker.ts` (PaperBroker jetzt; Alpaca-Slot vorbereitet, Guards aus §5) | klein |
 | `history_store.py` (SQLite) | **entfällt** → Firestore (§4) | — |
