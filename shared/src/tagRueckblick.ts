@@ -104,6 +104,21 @@ export interface TagRueckblickErgebnis {
   /** Tatsächlich in die Kante eingegangene Basistage. */
   bewertet: number;
   ausfaelle: RueckblickAusfaelle;
+  /**
+   * Dieselben Beiträge, getrennt nach Signalrichtung (Owner-Frage 09.08.).
+   *
+   * Das ist die Zahl, die Drift von Kante trennt. Der erste Katalog-Lauf gab
+   * 51,9 % Trefferquote bei +0,60 % Nettokante — die Richtung stimmt also kaum
+   * öfter als beim Münzwurf, der Ertrag kommt aus der Asymmetrie der
+   * Bewegungen. In einem steigenden Markt ist das bei Kaufsignalen aber genau
+   * das, was auch reine Aufwärtsdrift erzeugen würde.
+   *
+   * Trägt nur `buy` und liegt `sell` bei null oder darunter, misst man die
+   * Marktrichtung und nicht das Signal. Tragen beide, ist es eine Kante.
+   * Ohne diese Trennung lässt sich der Unterschied aus keiner noch so großen
+   * Stichprobe herauslesen.
+   */
+  nachRichtung: { buy: SchattenKlasse; sell: SchattenKlasse };
 }
 
 /** Richtung, die das Signal am Basistag hatte. */
@@ -141,6 +156,7 @@ export function werteTagRueckblick(
   const ausfaelle = leereAusfaelle();
   let klasse: SchattenKlasse | undefined;
   let bewertet = 0;
+  const richtung: Record<'buy' | 'sell', SchattenKlasse | undefined> = { buy: undefined, sell: undefined };
 
   for (let i = 1; i < reihe.length; i++) {
     if (reihe[i]!.date <= reihe[i - 1]!.date) {
@@ -179,6 +195,7 @@ export function werteTagRueckblick(
     const beitrag = bewerteSchattenSignal({ direction, price: basis.close }, folge.close, roundtripKosten);
     if (!beitrag.zaehlt) { ausfaelle.kaputt += 1; continue; }
     klasse = addiereSchatten(klasse, beitrag);
+    richtung[direction] = addiereSchatten(richtung[direction], beitrag);
     bewertet += 1;
   }
 
@@ -186,5 +203,11 @@ export function werteTagRueckblick(
   // Ausfälle plus `bewertet` die Reihenlänge ergibt und ein Loch auffällt.
   if (reihe.length > 0) ausfaelle.keinFolgetag += 1;
 
-  return { klasse: klasse ?? { n: 0, summePct: 0, treffer: 0 }, bewertet, ausfaelle };
+  const leer = (): SchattenKlasse => ({ n: 0, summePct: 0, treffer: 0 });
+  return {
+    klasse: klasse ?? leer(),
+    bewertet,
+    ausfaelle,
+    nachRichtung: { buy: richtung.buy ?? leer(), sell: richtung.sell ?? leer() },
+  };
 }

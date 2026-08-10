@@ -63,15 +63,27 @@ export const TAG_RUECKBLICK_V = 1;
 const SYMBOLE_PRO_LAUF = 12;
 
 /**
- * Wie weit zurück bewertet wird.
+ * Wie weit zurück bewertet wird — so weit die Historie reicht.
  *
- * Rund drei Jahre. Nicht „alles, was da ist": Alte Indizes bringen Jahrzehnte
- * mit, und Marktregime von vor zehn Jahren sagen wenig über die Frage, ob der
- * heutige Signalsatz einen Tag lang trägt. Drei Jahre decken Aufschwung,
- * Einbruch und Seitwärtsphase ab — genug Vielfalt, ohne die Messung mit einer
- * anderen Welt zu füllen.
+ * Hier standen erst 750 Tage (drei Jahre), mit der Begründung, ältere
+ * Marktregime sagten wenig über den heutigen Signalsatz. Die Messung hat dem
+ * widersprochen. An SPY, am 09.08. gegen echte Kurse (functions/test/
+ * tagRueckblickKosten.test.ts):
+ *
+ *   Fenster  750:  87 ms   n= 79   netto +0,0332 %   Treffer 44,3 %   ab 2022-07
+ *   Fenster 1500:  65 ms   n=103   netto +0,0349 %   Treffer 43,7 %   ab 2019-08
+ *   Fenster 3000: 135 ms   n=196   netto +0,0842 %   Treffer 47,4 %   ab 2013-08
+ *   Fenster 6000: 241 ms   n=327   netto +0,0958 %   Treffer 50,1 %   ab 2001-09
+ *
+ * Die Kante wird über 25 Jahre GRÖSSER, nicht kleiner — und das über Dotcom-
+ * Nachbeben, 2008, 2020 und 2022 hinweg. Genau die Regime-Vielfalt, die der
+ * Verdacht „das ist nur Aufwärtsdrift" braucht, um geprüft zu werden.
+ *
+ * Kosten sind kein Gegenargument: 241 ms je Symbol, hochgerechnet rund 40 s
+ * für den ganzen Katalog bei 540 s Zeitbudget. Die Stichprobe wächst
+ * unterlinear (8× Fenster ⇒ 4× n), weil die meisten Tage `hold` sind.
  */
-const MAX_BASISTAGE = 750;
+const MAX_BASISTAGE = 6000;
 
 /** Tages-Reihe eines Symbols aus den Jahres-Chunks — aufsteigend, entdoppelt. */
 export function reiheAusJahren(
@@ -132,6 +144,12 @@ export async function runTagRueckblick(now = new Date()): Promise<TagRueckblickL
   let gesamt = (vorher.get('gesamt') as SchattenKlasse | undefined) ?? undefined;
   const klassen: Record<string, SchattenKlasse> =
     (vorher.get('klassen') as Record<string, SchattenKlasse> | undefined) ?? {};
+  const gespeicherteRichtung = vorher.get('nachRichtung') as
+    { buy?: SchattenKlasse; sell?: SchattenKlasse } | undefined;
+  const nachRichtung: { buy: SchattenKlasse | undefined; sell: SchattenKlasse | undefined } = {
+    buy: gespeicherteRichtung?.buy,
+    sell: gespeicherteRichtung?.sell,
+  };
 
   let bewertet = 0;
   let uebersprungen = 0;
@@ -192,6 +210,9 @@ export async function runTagRueckblick(now = new Date()): Promise<TagRueckblickL
       // verhindern soll, nur eine Ebene höher.
       const neuGesamt = e.klasse.n > 0 ? summiere(gesamt, e.klasse) : gesamt;
       const neuKlasse = e.klasse.n > 0 ? summiere(klassen[kl], e.klasse) : klassen[kl];
+      // Getrennt nach Richtung — die Zahl, die Drift von Kante scheidet.
+      const neuBuy = summiere(nachRichtung.buy, e.nachRichtung.buy);
+      const neuSell = summiere(nachRichtung.sell, e.nachRichtung.sell);
 
       const batch = db.batch();
       batch.set(db.collection('market').doc(sym), { tagRueckblickV: TAG_RUECKBLICK_V }, { merge: true });
@@ -200,6 +221,7 @@ export async function runTagRueckblick(now = new Date()): Promise<TagRueckblickL
         {
           gesamt: neuGesamt ?? { n: 0, summePct: 0, treffer: 0 },
           klassen: neuKlasse ? { ...klassen, [kl]: neuKlasse } : klassen,
+          nachRichtung: { buy: neuBuy, sell: neuSell },
           cursor: (cursor + i + 1) % Math.max(1, offen.length),
           at: now.toISOString(),
           version: TAG_RUECKBLICK_V,
@@ -211,6 +233,8 @@ export async function runTagRueckblick(now = new Date()): Promise<TagRueckblickL
 
       gesamt = neuGesamt;
       if (neuKlasse) klassen[kl] = neuKlasse;
+      nachRichtung.buy = neuBuy;
+      nachRichtung.sell = neuSell;
 
       bewertet += e.bewertet;
       fertig.push(sym);
