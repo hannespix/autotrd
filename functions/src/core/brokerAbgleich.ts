@@ -32,7 +32,12 @@
 import { getFirestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions/v2';
 import type { Position } from '../../../shared/src/index.js';
-import { abgleich, alpacaPositionen, type Abweichung } from './alpacaBroker.js';
+import {
+  alpacaPositionen,
+  bestandsAbgleich,
+  nurBrokerPositionen,
+  type Abweichung,
+} from './alpacaBroker.js';
 import { brokerVerbindungLesend } from './orderRouting.js';
 
 /**
@@ -180,10 +185,12 @@ export async function abgleichFuerKonto(
     };
   }
 
-  const relevante = eigene
-    .filter((p) => p.broker === true)
-    .map((p) => ({ symbol: p.symbol, qty: p.qty, side: p.side }));
-  const abweichungen = abgleich(relevante, brokerPositionen);
+  // Dieselbe Funktion wie in der Broker-Karte — eine Quelle, damit die beiden
+  // Ansichten desselben Kontos nie wieder verschiedene Antworten geben.
+  // `relevante` dient nur der Zählung im Vermerk: „gegen wie viele eigene
+  // Positionen wurde überhaupt verglichen".
+  const relevante = nurBrokerPositionen(eigene);
+  const abweichungen = bestandsAbgleich(relevante, brokerPositionen);
 
   /* ── Nicht jede Abweichung ist gleich gefährlich (Live-Fund 05.08.) ────
    *
