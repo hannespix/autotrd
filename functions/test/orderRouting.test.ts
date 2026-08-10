@@ -522,6 +522,29 @@ describe('alpacaAsset — Eigenschaften vom Broker statt geraten', () => {
     });
   });
 
+  /* ── Der Live-Bug saß in der URL, nicht im Rückgabewert (10.08.) ────────
+   *
+   * Der Katalog führt Berkshire B als `BRK-B` (Yahoo-Konvention, dort kommen
+   * die Kurse her), Alpaca als `BRK.B`. Gefragt wurde `/v2/assets/BRK-B` —
+   * 404. Die Vorprüfung machte daraus korrekt „kennt Alpaca nicht" und
+   * blockierte jeden Einstieg. Für ein Papier, das dort ganz normal
+   * handelbar ist: ein stiller Totalausfall, sichtbar nur als Symbol, das
+   * nie handelt.
+   *
+   * Deshalb prüft dieser Test die ANGEFRAGTE URL. Ein Test auf den
+   * Rückgabewert hätte den Fehler nicht gefunden — die Antwort war ja
+   * korrekt verarbeitet, nur die Frage war falsch gestellt. */
+  it('fragt Anteilsklassen in der Alpaca-Schreibweise ab', async () => {
+    const f = antworten({ symbol: 'BRK.B', tradable: true, shortable: true });
+    const a = await alpacaAsset('paper', 'BRK-B', SCHLUESSEL, f as unknown as typeof fetch);
+    const url = String((f.mock.calls[0] as unknown[])[0]);
+    expect(url).toContain('/v2/assets/BRK.B');
+    expect(url).not.toContain('BRK-B');
+    // …und der Rückweg landet wieder in unserer Schreibweise, sonst stünden
+    // zwei Namen für dasselbe Papier im Bestand.
+    expect(a?.symbol).toBe('BRK-B');
+  });
+
   it('404 heißt „kennt Alpaca nicht" — null, kein Fehler', async () => {
     // Der halbe Katalog (Indizes, Forex, Futures) existiert bei Alpaca nicht.
     const f = vi.fn(async () => ({
