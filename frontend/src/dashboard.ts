@@ -189,6 +189,13 @@ import {
 } from './haltedauerCard.js';
 import { depotChart, depotTooltip } from './depotChart.js';
 import {
+  KARTE,
+  type ShareDaten,
+  shareCard,
+  shareDateiname,
+  shareText,
+} from './shareCard.js';
+import {
   areaLine,
   barChart,
   donut,
@@ -1117,6 +1124,12 @@ function layout(email: string): string {
     <div class="dsheet dsheet-wide">
       <button class="dclose" data-close="analytics">✕</button>
       <h3>Handels-Analyse <span id="anScope" class="an-scope"></span></h3>
+      <div class="an-share">
+        <button class="dbtn" id="anShareBtn">Grafik teilen</button>
+        <label class="an-share-opt"><input type="checkbox" id="anShareBetraege"> Beträge zeigen</label>
+        <span id="anShareStatus" class="hint"></span>
+      </div>
+      <div id="anSharePreview" class="an-share-vor" hidden></div>
       <div id="anBody"><div class="hint">Noch keine geschlossenen Trades.</div></div>
     </div>
   </div>
@@ -4458,6 +4471,7 @@ function wireHistorie(): void {
     auf.dataset.wired = '1';
     auf.addEventListener('click', () => {
       renderAnalytics(); // frisch rechnen, nicht den Stand vom letzten Öffnen zeigen
+      renderSharePreview();
       $('anModal').classList.add('show');
     });
   }
@@ -6802,6 +6816,135 @@ function renderPfKurven(serie: Array<{ date: string; equity: number }>): void {
     `· Hoch ${money(max)} · Tief ${money(min)} · tiefster Drawdown ${tiefster.toFixed(2)} %`;
 }
 
+/* ── Teilbare Ergebnis-Grafik (Owner-Wunsch 10.08.) ───────────────────────
+   Der Bau der Karte steht in `shareCard` — hier nur die Browser-Seite:
+   Daten sammeln, SVG rastern, weitergeben. */
+
+/** Baut die Kennzahlen der Teilen-Grafik aus dem aktuellen Stand. */
+function shareDatenBauen(betraege: boolean): ShareDaten {
+  const zerlegung = zerlegeDepot(st!.equitySeries, st!.trades as HistoryTrade[]);
+  const letzte = zerlegung.equity[zerlegung.equity.length - 1] ?? 0;
+  const basis = zerlegung.basis || 1;
+  const geschlossen = closedOnly(st!.trades as HistoryTrade[]);
+  const stats = tradeStats(
+    geschlossen.map((t) => ({ symbol: t.symbol, pnl: t.pnl!, riskExit: t.riskExit ?? null })),
+  );
+
+  // Tiefster Drawdown über das Fenster — dieselbe Rechnung wie in der
+  // Portfolio-Karte, damit Bild und App nie verschiedene Zahlen zeigen.
+  let hoch = zerlegung.equity[0] ?? 0;
+  let maxDd: number | null = null;
+  for (const v of zerlegung.equity) {
+    hoch = Math.max(hoch, v);
+    if (hoch > 0) maxDd = Math.min(maxDd ?? 0, ((v - hoch) / hoch) * 100);
+  }
+
+  const sortiert = [...zerlegung.baender]
+    .filter((b) => b.key !== '__rest__')
+    .sort((a, b) => b.summe - a.summe);
+  const alsAnteil = (b: (typeof sortiert)[number] | undefined): { label: string; pct: number } | null =>
+    b ? { label: b.label, pct: (b.summe / basis) * 100 } : null;
+
+  return {
+    zerlegung,
+    renditePct: ((letzte - zerlegung.basis) / basis) * 100,
+    ergebnis: letzte - zerlegung.basis,
+    waehrung: st!.wallet?.currency ?? 'USD',
+    trefferquotePct: stats.winRatePct,
+    profitFaktor: stats.profitFactor,
+    trades: geschlossen.length,
+    maxDrawdownPct: maxDd,
+    bestes: alsAnteil(sortiert[0]),
+    schlechtestes: alsAnteil(sortiert.length > 1 ? sortiert[sortiert.length - 1] : undefined),
+    // Papier bleibt Papier: Das Siegel richtet sich nach dem Broker-Modus,
+    // nicht nach einer Einstellung im Teilen-Dialog.
+    echtgeld: st!.strategy?.broker?.mode === 'live',
+    betraege,
+  };
+}
+
+/** SVG → PNG über eine Canvas. Doppelte Auflösung, damit es scharf bleibt. */
+async function svgAlsPng(svg: string, kante: number, skala = 2): Promise<Blob> {
+  const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
+  try {
+    const bild = new Image();
+    await new Promise<void>((fertig, fehler) => {
+      bild.onload = () => fertig();
+      bild.onerror = () => fehler(new Error('Grafik konnte nicht gerastert werden'));
+      bild.src = url;
+    });
+    const leinwand = document.createElement('canvas');
+    leinwand.width = kante * skala;
+    leinwand.height = kante * skala;
+    const ctx = leinwand.getContext('2d');
+    if (!ctx) throw new Error('Canvas nicht verfügbar');
+    ctx.drawImage(bild, 0, 0, leinwand.width, leinwand.height);
+    return await new Promise<Blob>((fertig, fehler) =>
+      leinwand.toBlob(
+        (b) => (b ? fertig(b) : fehler(new Error('PNG-Export fehlgeschlagen'))),
+        'image/png',
+      ),
+    );
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+/** Vorschau im Analyse-Fenster — man teilt nur, was man vorher gesehen hat. */
+function renderSharePreview(): void {
+  const box = $('anSharePreview');
+  if (!st || !box) return;
+  const betraege = ($('anShareBetraege') as HTMLInputElement | null)?.checked === true;
+  box.innerHTML = shareCard(shareDatenBauen(betraege));
+  box.hidden = false;
+}
+
+/**
+ * Teilen: erst das Systemblatt versuchen, sonst herunterladen.
+ *
+ * `navigator.share` mit Dateien gibt es nur in sicheren Kontexten und nicht
+ * auf jedem Desktop-Browser. Der Fallback ist kein Notbehelf, sondern der
+ * Normalfall am Rechner: Bild speichern, Text mit Link in die Zwischenablage.
+ */
+async function teileDepotGrafik(): Promise<void> {
+  const status = $('anShareStatus');
+  const knopf = $('anShareBtn') as HTMLButtonElement | null;
+  if (!st || !status || !knopf) return;
+  knopf.disabled = true;
+  status.textContent = 'Grafik wird gebaut…';
+  try {
+    const betraege = ($('anShareBetraege') as HTMLInputElement | null)?.checked === true;
+    const daten = shareDatenBauen(betraege);
+    const png = await svgAlsPng(shareCard(daten), KARTE);
+    const datei = new File([png], shareDateiname(daten), { type: 'image/png' });
+    const text = shareText(daten);
+
+    if (navigator.canShare?.({ files: [datei] })) {
+      await navigator.share({ files: [datei], text, url: 'https://autotrd.net' });
+      status.textContent = 'Geteilt.';
+      return;
+    }
+    const url = URL.createObjectURL(png);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = datei.name;
+    a.click();
+    URL.revokeObjectURL(url);
+    // Der Link steht ohnehin im Bild; in der Zwischenablage spart er das
+    // Abtippen. Schlägt das fehl (kein sicherer Kontext), ist das kein Grund
+    // für eine Fehlermeldung — das Bild ist da.
+    await navigator.clipboard?.writeText(`${text} https://autotrd.net`).catch(() => undefined);
+    status.textContent = 'Bild gespeichert, Text in der Zwischenablage.';
+  } catch (e) {
+    // Ein abgebrochener Teilen-Dialog ist kein Fehler.
+    const name = e instanceof Error ? e.name : '';
+    status.textContent =
+      name === 'AbortError' ? '' : `Fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`;
+  } finally {
+    knopf.disabled = false;
+  }
+}
+
 /**
  * Depot-Verlauf, zerlegt nach Trades (Owner-Wunsch 10.08.).
  *
@@ -7928,6 +8071,11 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   };
   $('dcMSym')?.addEventListener('click', () => setzeModus('symbol'));
   $('dcMTrade')?.addEventListener('click', () => setzeModus('trade'));
+
+  // Teilen-Grafik: Vorschau folgt dem Beträge-Schalter, damit man vor dem
+  // Teilen sieht, was das Bild preisgibt.
+  $('anShareBtn')?.addEventListener('click', () => void teileDepotGrafik());
+  $('anShareBetraege')?.addEventListener('change', renderSharePreview);
 
   // Link-Bus (M9): Chart- und News-Kontext folgen ihrer jeweiligen Gruppe.
   busSubscribe(CHART_KEY, st.chartGroup, (sym) => {
