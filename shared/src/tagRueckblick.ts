@@ -39,7 +39,13 @@
  *
  * Die Regeln 2 und 3 sind Gates im Sinne von CLAUDE.md §5.
  */
-import { type SchattenKlasse, addiereSchatten, bewerteSchattenSignal } from './classShadow.js';
+import {
+  type SchattenKlasse,
+  SCHATTEN_MIN_N,
+  addiereSchatten,
+  bewerteSchattenSignal,
+  werteSchattenAus,
+} from './classShadow.js';
 
 /** Ein Tag der gespeicherten Historie. `date` ist ISO (YYYY-MM-DD). */
 export interface TagesKurs {
@@ -330,4 +336,98 @@ export function werteTagRueckblick(
     nachRichtung: eins.nachRichtung,
     horizonte: ergebnisse,
   };
+}
+
+/* ── Lesbar machen: die Kurve über die Haltedauer ──────────────────────────
+ *
+ * Der Lauf schreibt sein Aggregat nach `meta/tagRueckblick`. Die Umrechnung
+ * in Zeilen steht hier und nicht im Dashboard, weil sie eine Aussage trifft
+ * — „welche Haltedauer ist die beste?" —, und diese Aussage gehört geprüft,
+ * nicht in eine Render-Funktion.
+ */
+
+/** Ein Halte-Horizont, wie ihn der Lauf in Firestore ablegt. */
+export interface HorizontStand {
+  klasse?: SchattenKlasse;
+  buy?: SchattenKlasse;
+  sell?: SchattenKlasse;
+}
+
+export interface HaltedauerZeile {
+  /** Handelstage halten. */
+  tage: number;
+  n: number;
+  /** Kante nach Kosten, in Prozent je Signal — `null`, wenn n = 0. */
+  nettoPct: number | null;
+  /** Bewegung VOR Kosten. Trennt „Signal taugt nichts" von „Kosten fressen". */
+  rohPct: number | null;
+  trefferquote: number | null;
+  buyN: number;
+  buyPct: number | null;
+  sellN: number;
+  sellPct: number | null;
+  /**
+   * Trägt die Zeile genug Beobachtungen für eine Aussage?
+   *
+   * Ohne diese Unterscheidung wäre die Karte gefährlicher als keine Karte:
+   * Eine Haltedauer mit n=3 und +2 % sieht wie ein Sieger aus. Die Schwelle
+   * ist dieselbe wie beim Signal-Schatten (SCHATTEN_MIN_N) — dieselbe Art
+   * Datenpunkt, dieselbe Latte.
+   */
+  belastbar: boolean;
+}
+
+/**
+ * Aggregat → Zeilen, aufsteigend nach Haltedauer.
+ *
+ * Unbekannte Schlüssel werden übersprungen statt geraten: Firestore-Maps
+ * haben String-Schlüssel, und ein „1a" aus einem späteren Format soll die
+ * Tabelle nicht mit einer `NaN`-Zeile verunstalten.
+ */
+export function haltedauerZeilen(
+  horizonte: Record<string, HorizontStand> | undefined,
+  minN: number = SCHATTEN_MIN_N,
+): HaltedauerZeile[] {
+  const zeilen: HaltedauerZeile[] = [];
+  for (const [schluessel, stand] of Object.entries(horizonte ?? {})) {
+    const tage = Number(schluessel);
+    if (!Number.isInteger(tage) || tage <= 0) continue;
+    const a = werteSchattenAus(stand.klasse);
+    const b = werteSchattenAus(stand.buy);
+    const s = werteSchattenAus(stand.sell);
+    zeilen.push({
+      tage,
+      n: a.n,
+      nettoPct: a.kantePct,
+      rohPct: a.rohPct,
+      trefferquote: a.trefferquote,
+      buyN: b.n,
+      buyPct: b.kantePct,
+      sellN: s.n,
+      sellPct: s.kantePct,
+      belastbar: a.n >= minN,
+    });
+  }
+  return zeilen.sort((x, y) => x.tage - y.tage);
+}
+
+/**
+ * Die beste Haltedauer — oder `null`, wenn keine Zeile belastbar ist.
+ *
+ * `null` ist hier die wichtigere Hälfte der Funktion. „Noch keine Aussage"
+ * muss als solche durchs Dashboard laufen; ein zufälliger Spitzenreiter aus
+ * dünnen Daten würde als Empfehlung gelesen und könnte eine echte
+ * Einstellungs-Änderung auslösen.
+ *
+ * Gleichstand entscheidet die KÜRZERE Haltedauer: Sie bindet das Kapital
+ * kürzer und trägt weniger Übernacht-Risiko — bei gleicher gemessener Kante
+ * ist sie die sparsamere Wahl, nicht die zufällig erste.
+ */
+export function besteHaltedauer(zeilen: HaltedauerZeile[]): HaltedauerZeile | null {
+  let beste: HaltedauerZeile | null = null;
+  for (const z of zeilen) {
+    if (!z.belastbar || z.nettoPct === null) continue;
+    if (beste === null || z.nettoPct > beste.nettoPct!) beste = z;
+  }
+  return beste;
 }

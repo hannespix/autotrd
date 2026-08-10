@@ -49,6 +49,9 @@ export default tseslint.config(
         console: 'readonly',
         Event: 'readonly',
         URL: 'readonly',
+        // `page.evaluate` läuft im Browser — dessen Globals stehen nur hier.
+        document: 'readonly',
+        window: 'readonly',
       },
     },
   },

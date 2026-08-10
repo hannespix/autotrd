@@ -11,6 +11,7 @@ import {
   type Position,
   type Quote,
   type ReifeBefund,
+  type SchattenKlasse,
   type Steuerbericht,
   type Strategy,
   type Wallet,
@@ -1158,6 +1159,53 @@ export function watchAiBericht(cb: (d: KiBerichtDoc | null) => void): Unsubscrib
         emit(snap.exists() ? (snap.data() as KiBerichtDoc) : null),
       ),
     (p) => cb(p as KiBerichtDoc | null),
+  );
+}
+
+/** Ein Halte-Horizont der Rückschau — gesamt und getrennt nach Richtung. */
+export interface HorizontStand {
+  klasse?: SchattenKlasse;
+  buy?: SchattenKlasse;
+  sell?: SchattenKlasse;
+}
+
+/**
+ * Tages-Rückschau (`meta/tagRueckblick`) — die Kante über die Haltedauer.
+ *
+ * Bis jetzt lag diese Messung nur in Firestore und war nirgends zu sehen.
+ * Sie ist die Antwort auf die Frage, an der die Profitabilität hängt: Wie
+ * lange halten? Wie alle `meta`-Dokumente öffentlich lesbar — sie enthält
+ * ausschließlich Quoten und Zählwerte, keine Beträge und keine Kennungen.
+ */
+export interface TagRueckblickDoc {
+  gesamt?: SchattenKlasse;
+  klassen?: Record<string, SchattenKlasse>;
+  nachRichtung?: { buy?: SchattenKlasse; sell?: SchattenKlasse };
+  horizonte?: Record<string, HorizontStand>;
+  /** Zeitpunkt des letzten Beitrags — nicht der letzten Lauf-Auslösung. */
+  at?: string;
+  /** Rechnungs-Version; ein Wechsel verwirft das Aggregat (siehe Scheduler). */
+  version?: number;
+  /** Wie viele Basistage je Symbol bewertet wurden. */
+  fenster?: number;
+  /**
+   * Wie viele Symbole in der Summe stecken.
+   *
+   * Ohne diese Zahl ist die Kante nicht lesbar: `n` zählt Basistage, und 534
+   * Beobachtungen aus zwölf Index-Symbolen sehen genauso aus wie 534 aus dem
+   * halben Katalog — sagen aber etwas völlig anderes.
+   */
+  symbole?: number;
+}
+
+export function watchTagRueckblick(cb: (d: TagRueckblickDoc | null) => void): Unsubscribe {
+  return muxWatch(
+    'tagRueckblick',
+    (emit) =>
+      onSnapshot(doc(db(), 'meta', 'tagRueckblick'), (snap) =>
+        emit(snap.exists() ? (snap.data() as TagRueckblickDoc) : null),
+      ),
+    (p) => cb(p as TagRueckblickDoc | null),
   );
 }
 

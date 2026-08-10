@@ -55,7 +55,6 @@ describe.skipIf(!AN)('Tages-Rückblick mit echten Kursen', () => {
       heute,
     );
     const a = werteSchattenAus(e.klasse);
-    // eslint-disable-next-line no-console
     console.log('SPY:', JSON.stringify({ bewertet: e.bewertet, ...a, ausfaelle: e.ausfaelle }));
 
     // Kein Werturteil über die Kante — nur: Die Kette LIEFERT etwas, und die

@@ -627,6 +627,20 @@ input { accent-color: var(--ac); }
 .tn-r { font-size: 11px; line-height: 1.4; color: var(--t2); margin-top: 2px; }
 .tn-n { font-size: 10px; color: var(--t3); margin-top: 2px; font-variant-numeric: tabular-nums; }
 
+/* Haltedauer-Kurve (10.08.): sechs Spalten, kein innerer Scroll.
+   Bewusst NICHT `.fl-tbl` mitbenutzt — die deckelt auf 168 px, und fünf
+   Zeilen plus Kopf liegen darüber; der Inhalt landete in einem inneren
+   Scroll-Container, in dem man die beste Zeile suchen müsste. Die Tabelle
+   ist kurz und endlich, also darf sie ganz dastehen. */
+.hd-tbl { font-size: 11px; }
+.hd-row { display: grid; grid-template-columns: 1fr 0.7fr 1fr 0.9fr 1fr 1fr; gap: 4px; padding: 4px 6px; border-bottom: 1px solid var(--hair); font-variant-numeric: tabular-nums; }
+.hd-row span { text-align: right; white-space: nowrap; }
+.hd-row span:first-child { text-align: left; }
+.hd-head { color: var(--t3); font-weight: 500; }
+.hd-best { outline: 1.5px solid var(--ac); outline-offset: -1.5px; font-weight: 700; border-radius: 4px; }
+/* Zu dünn für eine Aussage: sichtbar, aber erkennbar nicht mitzählend. */
+.hd-dim { opacity: .45; }
+
 /* Erkenntnis-Chronik + Tages-Einschätzung.
    ── Warum eigene Klassen und nicht die des Tuner-Journals ────────────────
    Die Chronik hat anfangs `.fl-tbl` und `.tn-h` mitbenutzt. Beide sind für
