@@ -57,6 +57,18 @@ export interface AbgleichBefund {
   zustand: AbgleichZustand;
   /** Gefundene Abweichungen (leer = sauber). */
   abweichungen: Abweichung[];
+  /**
+   * Wie viele Symbole fehlen (Buch > Broker) — die GEFÄHRLICHE Richtung.
+   *
+   * Getrennt herausgereicht, weil `zustand: 'drift'` für sich genommen nach
+   * Problem klingt und im Betrieb genau so gelesen wurde (Heartbeat 10.08.:
+   * „drift 2, sauber 0" bei zwei Konten, die völlig in Ordnung waren). Der
+   * Code kennt den Unterschied längst und sperrt danach; nur nach außen
+   * verschwand er in einem Wort.
+   */
+  fehlbestand: number;
+  /** Wie viele Symbole der Broker mehr hält (Broker > Buch) — harmlos. */
+  fremdbestand: number;
   /** Sollen Einstiege gesperrt werden? */
   sperre: boolean;
   /** Klartext für Log und Anzeige. */
@@ -68,6 +80,8 @@ const OHNE: AbgleichBefund = {
   geprueft: false,
   zustand: 'kein_broker',
   abweichungen: [],
+  fehlbestand: 0,
+  fremdbestand: 0,
   sperre: false,
 };
 
@@ -180,6 +194,8 @@ export async function abgleichFuerKonto(
       geprueft: false,
       zustand: 'fehler',
       abweichungen: [],
+      fehlbestand: 0,
+      fremdbestand: 0,
       sperre: false,
       grund: 'broker_nicht_erreichbar',
     };
@@ -243,7 +259,14 @@ export async function abgleichFuerKonto(
   });
 
   if (abweichungen.length === 0) {
-    return { geprueft: true, zustand: 'sauber', abweichungen: [], sperre: false };
+    return {
+      geprueft: true,
+      zustand: 'sauber',
+      abweichungen: [],
+      fehlbestand: 0,
+      fremdbestand: 0,
+      sperre: false,
+    };
   }
   const beschreibe = (liste: Abweichung[]): string =>
     liste
@@ -260,6 +283,8 @@ export async function abgleichFuerKonto(
       geprueft: true,
       zustand: 'drift',
       abweichungen,
+      fehlbestand: 0,
+      fremdbestand: fremdbestand.length,
       sperre: false,
       grund: `Nur beim Broker (${fremdbestand.length}): ${beschreibe(fremdbestand)}`,
     };
@@ -272,6 +297,8 @@ export async function abgleichFuerKonto(
     geprueft: true,
     zustand: 'drift',
     abweichungen,
+    fehlbestand: fehlbestand.length,
+    fremdbestand: fremdbestand.length,
     sperre: true,
     grund:
       `Im Buch stehen ${fehlbestand.length} Position(en), die der Broker nicht hat: `
