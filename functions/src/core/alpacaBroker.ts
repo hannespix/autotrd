@@ -49,6 +49,7 @@
  * Alpaca-Fehlermeldung enthält im Zweifel den gesendeten Header.
  */
 
+import { allSymbols, classify } from '../../../shared/src/index.js';
 import type { BrokerMode } from './broker.js';
 
 /** Endpunkte. Nur diese beiden — kein konfigurierbares Feld, kein Tippfehler. */
@@ -154,6 +155,28 @@ export const MAX_ORDER_ANTEIL = 0.5;
 const KRYPTO_GEGEN = ['USD', 'USDT', 'USDC', 'BTC'] as const;
 const ZU_ALPACA = new RegExp(`^([A-Z0-9]{2,10})-(${KRYPTO_GEGEN.join('|')})$`);
 const VON_ALPACA = new RegExp(`^([A-Z0-9]{2,10})/(${KRYPTO_GEGEN.join('|')})$`);
+/**
+ * Krypto hat bei Alpaca ZWEI Schreibweisen, und die Rückrichtung braucht
+ * beide (belegt in Alpacas eigener Hilfe, „Why am I seeing BTCUSD after I
+ * bought BTC/USD?"): Bestellt wird das PAAR `BTC/USD`, im Bestand steht dann
+ * der HALTEWERT `BTCUSD` — ohne Trennzeichen.
+ *
+ * Ohne diese Zeile trifft uns genau die Falle, gegen die die Übersetzung
+ * angetreten ist: Wir buchen `BTC-USD`, der Abgleich liest `BTCUSD` und
+ * meldet für EINE Position zwei Abweichungen — einen Fehlbestand und einen
+ * Fremdbestand. Und ein Fehlbestand sperrt Einstiege.
+ *
+ * Die kompakte Form ist bewusst NICHT frei geraten („alles was auf USD
+ * endet"): Sie wird nur akzeptiert, wenn sie sich zu einem Krypto-Symbol
+ * unseres Katalogs auflöst. Ein Aktienticker, der zufällig auf eine
+ * Gegenwährung endet, würde sonst zu einem Währungspaar umgedeutet, das es
+ * nicht gibt.
+ */
+const KOMPAKT_ZURUECK = new Map<string, string>(
+  allSymbols()
+    .filter((s) => classify(s) === 'crypto')
+    .map((s) => [s.replace('-', ''), s]),
+);
 /** Anteilsklasse: kurze Basis + genau ein Buchstabe (`BRK-B` ↔ `BRK.B`). */
 const KLASSE_ZU = /^([A-Z]{1,4})-([A-Z])$/;
 const KLASSE_VON = /^([A-Z]{1,4})\.([A-Z])$/;
@@ -168,11 +191,13 @@ export function zuAlpacaSymbol(symbol: string): string {
   return symbol;
 }
 
-/** Alpaca → Katalog-Schreibweise (`BTC/USD` → `BTC-USD`, `BRK.B` → `BRK-B`). */
+/** Alpaca → Katalog (`BTC/USD` und `BTCUSD` → `BTC-USD`, `BRK.B` → `BRK-B`). */
 export function vonAlpacaSymbol(symbol: string): string {
   const s = symbol.trim().toUpperCase();
   const krypto = VON_ALPACA.exec(s);
   if (krypto) return `${krypto[1]}-${krypto[2]}`;
+  const kompakt = KOMPAKT_ZURUECK.get(s);
+  if (kompakt) return kompakt;
   const klasse = KLASSE_VON.exec(s);
   if (klasse) return `${klasse[1]}-${klasse[2]}`;
   return symbol;

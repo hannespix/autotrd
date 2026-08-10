@@ -87,6 +87,27 @@ describe('vonAlpacaSymbol', () => {
     expect(vonAlpacaSymbol('BF.B')).toBe('BF-B');
   });
 
+  /* ── Krypto hat bei Alpaca ZWEI Schreibweisen (10.08.) ──────────────────
+   *
+   * Belegt in Alpacas eigener Hilfe („Why am I seeing BTCUSD after I bought
+   * BTC/USD?"): Bestellt wird das PAAR mit Schrägstrich, im Bestand steht
+   * der HALTEWERT ohne. Wer nur die Paar-Form zurückübersetzt, hat für jede
+   * offene Krypto-Position zwei Meldungen im Abgleich — Fehlbestand
+   * `BTC-USD` und Fremdbestand `BTCUSD` —, und der Fehlbestand sperrt
+   * Einstiege. */
+  it('erkennt auch die kompakte Bestandsform', () => {
+    expect(vonAlpacaSymbol('BTCUSD')).toBe('BTC-USD');
+    expect(vonAlpacaSymbol('ETHUSD')).toBe('ETH-USD');
+    expect(vonAlpacaSymbol('DOGEUSD')).toBe('DOGE-USD');
+  });
+
+  it('rät die kompakte Form NICHT — sie muss im Katalog stehen', () => {
+    // „Alles was auf USD endet ist Krypto" hätte einen Aktienticker mit
+    // dieser Endung zu einem Währungspaar umgedeutet, das es nicht gibt.
+    expect(vonAlpacaSymbol('FAKEUSD')).toBe('FAKEUSD');
+    expect(vonAlpacaSymbol('XYZUSDT')).toBe('XYZUSDT');
+  });
+
   it('lässt alles andere, wie es ist', () => {
     for (const s of ['AAPL', 'SPY', '', 'ABC.WS']) expect(vonAlpacaSymbol(s)).toBe(s);
   });
