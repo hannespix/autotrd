@@ -26,6 +26,8 @@ import {
 import { planeMenge, type TradeRequest } from '../src/core/broker.js';
 import {
   assetAuskunft,
+  assetStand,
+  brokerVorpruefung,
   brokerVerbindung,
   brokerVerbindungLesend,
   routeOrder,
@@ -626,6 +628,126 @@ describe('assetAuskunft — Zwei-Stufen-Cache', () => {
     }));
     expect(await assetAuskunft(VERB, 'TSLA', f as unknown as typeof fetch, 1_000)).toBeNull();
     expect(setzt).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Die Vorprüfung — der Riegel, der eine zwecklose Order gar nicht erst sendet.
+ *
+ * Sie steht als reine Funktion da und nicht inline im Broker, weil genau das
+ * beim ersten Anlauf schiefging: Die Bedingung war eingebaut, aber von keinem
+ * Test berührt — die Sabotage-Probe („Riegel durch `if (false)` ersetzen")
+ * lief glatt durch. Ein Sicherheitsriegel ohne Test ist eine Absichtserklärung.
+ */
+describe('brokerVorpruefung', () => {
+  const bekannt = (o: Partial<{ tradable: boolean; shortable: boolean }> = {}) =>
+    ({
+      art: 'bekannt' as const,
+      asset: {
+        symbol: 'X',
+        tradable: o.tradable ?? true,
+        fractionable: true,
+        shortable: o.shortable ?? true,
+        easyToBorrow: true,
+        marginable: true,
+      },
+    });
+
+  it('blockt die ERÖFFNUNG, wenn Alpaca das Symbol nicht kennt', () => {
+    const r = brokerVorpruefung({ art: 'fehlt' }, { eroeffnet: true, wirdShort: false });
+    expect(r).toEqual({ ok: false, grund: 'broker_kennt_symbol_nicht' });
+  });
+
+  it('lässt das SCHLIESSEN durch — sonst säße man in einem Delisting fest', () => {
+    expect(brokerVorpruefung({ art: 'fehlt' }, { eroeffnet: false, wirdShort: true }).ok).toBe(true);
+  });
+
+  it('bei „unklar" entscheidet der Handel, nicht die Metadaten', () => {
+    // Regel vom 05.08.: Metadaten dürfen den Handel verbessern, nie
+    // verhindern. Ein Netzfehler ist kein Grund, nicht zu handeln.
+    expect(brokerVorpruefung({ art: 'unklar' }, { eroeffnet: true, wirdShort: false }).ok).toBe(true);
+  });
+
+  it('nicht handelbares Papier wird abgelehnt', () => {
+    const r = brokerVorpruefung(bekannt({ tradable: false }), { eroeffnet: true, wirdShort: false });
+    expect(r).toEqual({ ok: false, grund: 'broker_nicht_handelbar' });
+  });
+
+  it('nicht leihbares Papier wird nur beim SHORT abgelehnt', () => {
+    const nichtLeihbar = bekannt({ shortable: false });
+    expect(brokerVorpruefung(nichtLeihbar, { eroeffnet: true, wirdShort: true })).toEqual({
+      ok: false,
+      grund: 'broker_nicht_shortbar',
+    });
+    expect(brokerVorpruefung(nichtLeihbar, { eroeffnet: true, wirdShort: false }).ok).toBe(true);
+  });
+
+  it('ein sauberes Papier geht durch', () => {
+    expect(brokerVorpruefung(bekannt(), { eroeffnet: true, wirdShort: true }).ok).toBe(true);
+  });
+});
+
+/**
+ * „Kennt Alpaca nicht" ist etwas anderes als „konnte nicht fragen".
+ *
+ * Der Modulkopf trennt beides seit dem 05.08., der Cache auch — nur die
+ * RÜCKGABE tat es nicht: `assetAuskunft` lieferte für beide Fälle `null`.
+ * Der Aufrufer fiel damit bei einem 404 genauso auf Schätzungen zurück wie
+ * bei einem Netzfehler und schickte eine Eröffnungs-Order für ein Symbol
+ * los, von dem er schon wusste, dass es der Broker nicht führt. Genau das
+ * wäre bei jedem Krypto-Symbol passiert, solange die Schreibweise nicht
+ * übersetzt wurde.
+ */
+describe('assetStand — drei Zustände statt zwei', () => {
+  const VERB2 = { mode: 'paper' as const, schluessel: SCHLUESSEL };
+
+  afterEach(() => {
+    vergissAssets();
+    holt.mockReset();
+    setzt.mockClear();
+  });
+
+  it('bekanntes Papier: art „bekannt" mit Eigenschaften', async () => {
+    holt.mockResolvedValue(feld({}));
+    const f = antworten({ symbol: 'NVDA', tradable: true, shortable: true });
+    const st = await assetStand(VERB2, 'NVDA', f as unknown as typeof fetch, 1_000);
+    expect(st.art).toBe('bekannt');
+    expect(st.art === 'bekannt' && st.asset.shortable).toBe(true);
+  });
+
+  it('404 vom Broker: art „fehlt" — eine Aussage, kein fehlendes Wissen', async () => {
+    holt.mockResolvedValue(feld({}));
+    const f = vi.fn(async () => ({ ok: false, status: 404, text: async () => 'not found' }));
+    const st = await assetStand(VERB2, 'BTC-USD', f as unknown as typeof fetch, 1_000);
+    expect(st.art).toBe('fehlt');
+  });
+
+  it('Netzfehler: art „unklar" — und NICHT persistiert', async () => {
+    holt.mockResolvedValue(feld({}));
+    const f = vi.fn(async () => ({ ok: false, status: 500, text: async () => 'kaputt' }));
+    const st = await assetStand(VERB2, 'TSLA', f as unknown as typeof fetch, 1_000);
+    expect(st.art).toBe('unklar');
+    expect(setzt).not.toHaveBeenCalled();
+  });
+
+  it('ein gemerktes „bekannt: false" aus Firestore ist ebenfalls „fehlt"', async () => {
+    const t0 = Date.parse('2026-08-05T12:00:00Z');
+    holt.mockResolvedValue(
+      feld({ '^GSPC': { bekannt: false, at: new Date(t0 - 60_000).toISOString() } }),
+    );
+    const f = vi.fn();
+    const st = await assetStand(VERB2, '^GSPC', f as unknown as typeof fetch, t0);
+    expect(st.art).toBe('fehlt');
+    expect(f).not.toHaveBeenCalled();
+  });
+
+  it('die Altschnittstelle bleibt: „fehlt" und „unklar" ergeben beide null', async () => {
+    holt.mockResolvedValue(feld({}));
+    const f404 = vi.fn(async () => ({ ok: false, status: 404, text: async () => '' }));
+    expect(await assetAuskunft(VERB2, 'AAA', f404 as unknown as typeof fetch, 1_000)).toBeNull();
+    vergissAssets();
+    const f500 = vi.fn(async () => ({ ok: false, status: 500, text: async () => '' }));
+    expect(await assetAuskunft(VERB2, 'BBB', f500 as unknown as typeof fetch, 1_000)).toBeNull();
   });
 });
 

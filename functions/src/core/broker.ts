@@ -37,7 +37,7 @@ import type {
   Trade,
 } from '../../../shared/src/index.js';
 import { fxFelder } from './fx.js';
-import { assetAuskunft, brokerVerbindung, routeOrder } from './orderRouting.js';
+import { assetStand, brokerVerbindung, brokerVorpruefung, routeOrder } from './orderRouting.js';
 import { schutzAnlegen, schutzAufheben } from './schutzStop.js';
 
 /**
@@ -454,13 +454,11 @@ export async function executeTrade(
    * abgelehnte Order beim Broker zu enden. `null` (Symbol unbekannt,
    * Metadaten nicht erreichbar) fällt auf die bisherigen Schätzungen
    * zurück: Metadaten dürfen den Handel verbessern, nie verhindern. */
-  const asset = await assetAuskunft(verbindung, req.symbol);
+  const stand = await assetStand(verbindung, req.symbol);
+  const asset = stand.art === 'bekannt' ? stand.asset : null;
   const eroeffnet = !schliesst;
-  if (asset && eroeffnet) {
-    if (!asset.tradable) return { executed: false, reason: 'broker_nicht_handelbar' };
-    const wirdShort = req.side === 'sell';
-    if (wirdShort && !asset.shortable) return { executed: false, reason: 'broker_nicht_shortbar' };
-  }
+  const vor = brokerVorpruefung(stand, { eroeffnet, wirdShort: req.side === 'sell' });
+  if (!vor.ok) return { executed: false, reason: vor.grund };
   // Leerverkäufe verlangen bei Alpaca GANZE Stücke — fractionable gilt nur
   // für Long-Käufe und das Schließen fraktionaler Bestände (Short-Audit 07.08.).
   const fractional =

@@ -193,6 +193,45 @@ describe('clientOrderId — Idempotenz', () => {
   });
 });
 
+/**
+ * Die Verdrahtung der Symbolübersetzung — nicht nur die reine Funktion.
+ *
+ * `alpacaSymbol.test.ts` prüft `zuAlpacaSymbol`/`vonAlpacaSymbol` für sich.
+ * Das hier prüft, dass sie an der Leitung auch WIRKEN: Wer die Übersetzung
+ * aus dem Order-Body entfernt, merkt es sonst erst, wenn Alpaca ablehnt.
+ */
+describe('Krypto-Schreibweise an der Leitung', () => {
+  it('die Order geht mit BTC/USD raus, nicht mit BTC-USD', async () => {
+    const f = vi.fn().mockResolvedValue(antwort({ id: 'o2', symbol: 'BTC/USD' }));
+    await alpacaOrder('paper', { symbol: 'BTC-USD', side: 'buy', qty: 0.01, clientOrderId: 'c' }, null, f);
+    const body = JSON.parse((f.mock.calls[0]![1] as RequestInit).body as string) as Record<string, unknown>;
+    expect(body['symbol']).toBe('BTC/USD');
+  });
+
+  it('und die Antwort kommt als BTC-USD zurück — sonst zwei Schreibweisen im Bestand', async () => {
+    const f = vi.fn().mockResolvedValue(antwort({ id: 'o2', symbol: 'BTC/USD' }));
+    const r = await alpacaOrder('paper', { symbol: 'BTC-USD', side: 'buy', qty: 0.01, clientOrderId: 'c' }, null, f);
+    expect(r.symbol).toBe('BTC-USD');
+  });
+
+  it('Positionen des Brokers werden in Katalog-Schreibweise gelesen', async () => {
+    // Ohne Rückübersetzung meldete der Abgleich für DIESELBE Position
+    // gleichzeitig einen Fehlbestand und einen Fremdbestand.
+    const f = vi.fn().mockResolvedValue(
+      antwort([{ symbol: 'BTC/USD', qty: '0.5', side: 'long', avg_entry_price: '60000' }]),
+    );
+    const p = await alpacaPositionen('paper', null, f);
+    expect(p[0]!.symbol).toBe('BTC-USD');
+  });
+
+  it('eine Aktien-Order bleibt unverändert', async () => {
+    const f = vi.fn().mockResolvedValue(antwort({ id: 'o3', symbol: 'AAPL' }));
+    await alpacaOrder('paper', { symbol: 'AAPL', side: 'buy', qty: 1, clientOrderId: 'c' }, null, f);
+    const body = JSON.parse((f.mock.calls[0]![1] as RequestInit).body as string) as Record<string, unknown>;
+    expect(body['symbol']).toBe('AAPL');
+  });
+});
+
 describe('vorflugkontrolle', () => {
   const order = { symbol: 'AAPL', side: 'buy' as const, qty: 10, preis: 100 };
 

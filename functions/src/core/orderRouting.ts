@@ -335,21 +335,81 @@ export async function routeOrder(
  */
 const ASSET_TTL_MS = 24 * 3_600_000;
 const ASSET_FEHLER_TTL_MS = 5 * 60_000;
-const assetCache = new Map<string, { bis: number; wert: AlpacaAsset | null }>();
+
+/**
+ * Was wir über ein Symbol beim Broker wissen — DREI Zustände, nicht zwei.
+ *
+ * Der Modulkopf sagt seit dem 05.08. „Fehler ≠ ‚gibt es nicht'", und der
+ * Cache trennt beides auch. Die Rückgabe tat es nicht: `assetAuskunft` gab
+ * für BEIDE Fälle `null`, und der Aufrufer fiel deshalb bei einem 404
+ * genauso auf Schätzungen zurück wie bei einem Netzfehler — er schickte also
+ * eine Eröffnungs-Order für ein Symbol los, von dem er bereits WUSSTE, dass
+ * Alpaca es nicht führt. Die Ablehnung kam dann vom Broker.
+ *
+ *   `bekannt` — Alpaca kennt das Papier, Eigenschaften liegen vor.
+ *   `fehlt`   — Alpaca antwortet 404. Eine Eröffnung hier ist zwecklos.
+ *   `unklar`  — Netz oder 5xx. Keine Aussage; Metadaten dürfen den Handel
+ *               verbessern, nie verhindern (Regel vom 05.08.).
+ */
+export type AssetStand =
+  | { art: 'bekannt'; asset: AlpacaAsset }
+  | { art: 'fehlt' }
+  | { art: 'unklar' };
+
+const assetCache = new Map<string, { bis: number; stand: AssetStand }>();
 
 /** Für Tests: Prozess-Cache leeren. */
 export function vergissAssets(): void {
   assetCache.clear();
 }
 
+/** Die Eigenschaften, oder `null` bei `fehlt`/`unklar` (Altschnittstelle). */
 export async function assetAuskunft(
   verbindung: BrokerVerbindung,
   symbol: string,
   fetchImpl: typeof fetch = fetch,
   jetztMs: number = Date.now(),
 ): Promise<AlpacaAsset | null> {
+  const stand = await assetStand(verbindung, symbol, fetchImpl, jetztMs);
+  return stand.art === 'bekannt' ? stand.asset : null;
+}
+
+/**
+ * Darf diese Order zum Broker? — als reine Funktion, damit sie prüfbar ist.
+ *
+ * Drei Regeln, in dieser Reihenfolge:
+ *
+ *  1. Kennt Alpaca das Symbol NICHT, wird nichts ERÖFFNET. Das ist eine
+ *     Aussage des Brokers, kein fehlendes Wissen — die Order würde bei ihm
+ *     abgelehnt, und zwar jedes Mal.
+ *  2. SCHLIESSEN bleibt in jedem Fall erlaubt. Ein Bestand muss auch dann
+ *     verkäuflich sein, wenn das Papier inzwischen delistet wurde; sonst
+ *     säße man darin fest.
+ *  3. Ist der Stand `unklar` (Netz, 5xx), entscheidet der Handel, nicht die
+ *     Metadaten: Sie dürfen ihn verbessern, nie verhindern (Regel 05.08.).
+ */
+export function brokerVorpruefung(
+  stand: AssetStand,
+  opts: { eroeffnet: boolean; wirdShort: boolean },
+): { ok: true } | { ok: false; grund: string } {
+  if (!opts.eroeffnet) return { ok: true };
+  if (stand.art === 'fehlt') return { ok: false, grund: 'broker_kennt_symbol_nicht' };
+  if (stand.art === 'unklar') return { ok: true };
+  if (!stand.asset.tradable) return { ok: false, grund: 'broker_nicht_handelbar' };
+  if (opts.wirdShort && !stand.asset.shortable) {
+    return { ok: false, grund: 'broker_nicht_shortbar' };
+  }
+  return { ok: true };
+}
+
+export async function assetStand(
+  verbindung: BrokerVerbindung,
+  symbol: string,
+  fetchImpl: typeof fetch = fetch,
+  jetztMs: number = Date.now(),
+): Promise<AssetStand> {
   const treffer = assetCache.get(symbol);
-  if (treffer && treffer.bis > jetztMs) return treffer.wert;
+  if (treffer && treffer.bis > jetztMs) return treffer.stand;
 
   const ref = getFirestore().doc('meta/alpacaAssets');
 
@@ -361,18 +421,21 @@ export async function assetAuskunft(
           shortable?: boolean; easyToBorrow?: boolean; marginable?: boolean }
       | undefined;
     if (feld && jetztMs - Date.parse(feld.at) < ASSET_TTL_MS) {
-      const wert: AlpacaAsset | null = feld.bekannt
+      const stand: AssetStand = feld.bekannt
         ? {
-            symbol,
-            tradable: feld.tradable === true,
-            fractionable: feld.fractionable === true,
-            shortable: feld.shortable === true,
-            easyToBorrow: feld.easyToBorrow === true,
-            marginable: feld.marginable === true,
+            art: 'bekannt',
+            asset: {
+              symbol,
+              tradable: feld.tradable === true,
+              fractionable: feld.fractionable === true,
+              shortable: feld.shortable === true,
+              easyToBorrow: feld.easyToBorrow === true,
+              marginable: feld.marginable === true,
+            },
           }
-        : null;
-      assetCache.set(symbol, { bis: jetztMs + ASSET_TTL_MS, wert });
-      return wert;
+        : { art: 'fehlt' };
+      assetCache.set(symbol, { bis: jetztMs + ASSET_TTL_MS, stand });
+      return stand;
     }
   } catch (err) {
     logger.warn(`assetAuskunft ${symbol}: Cache nicht lesbar`, err);
@@ -381,7 +444,8 @@ export async function assetAuskunft(
   // Stufe 3: live beim Broker fragen.
   try {
     const wert = await alpacaAsset(verbindung.mode, symbol, verbindung.schluessel, fetchImpl);
-    assetCache.set(symbol, { bis: jetztMs + ASSET_TTL_MS, wert });
+    const stand: AssetStand = wert ? { art: 'bekannt', asset: wert } : { art: 'fehlt' };
+    assetCache.set(symbol, { bis: jetztMs + ASSET_TTL_MS, stand });
     const at = new Date(jetztMs).toISOString();
     ref
       .set(
@@ -400,13 +464,13 @@ export async function assetAuskunft(
         },
         { merge: true },
       )
-      .catch((err: unknown) => logger.warn(`assetAuskunft ${symbol}: Cache nicht schreibbar`, err));
-    return wert;
+      .catch((err: unknown) => logger.warn(`assetStand ${symbol}: Cache nicht schreibbar`, err));
+    return stand;
   } catch (err) {
-    // Fehler ≠ „gibt es nicht": kurz merken, NICHT persistieren, und mit
-    // `null` in die bisherigen Schätzungen zurückfallen.
-    logger.warn(`assetAuskunft ${symbol} fehlgeschlagen`, err);
-    assetCache.set(symbol, { bis: jetztMs + ASSET_FEHLER_TTL_MS, wert: null });
-    return null;
+    // Fehler ≠ „gibt es nicht": kurz merken, NICHT persistieren, und als
+    // `unklar` in die bisherigen Schätzungen zurückfallen.
+    logger.warn(`assetStand ${symbol} fehlgeschlagen`, err);
+    assetCache.set(symbol, { bis: jetztMs + ASSET_FEHLER_TTL_MS, stand: { art: 'unklar' } });
+    return { art: 'unklar' };
   }
 }

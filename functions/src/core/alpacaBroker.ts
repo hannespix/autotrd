@@ -113,6 +113,40 @@ export function alpacaKonfiguriert(): boolean {
  */
 export const MAX_ORDER_ANTEIL = 0.5;
 
+/* ── Symbolschreibweise: Katalog ↔ Alpaca ─────────────────────────────────
+ *
+ * Der Katalog führt Krypto in der yfinance-Schreibweise (`BTC-USD`), weil von
+ * dort die Kurse kommen. Alpaca schreibt dieselbe Münze `BTC/USD`. Ohne
+ * Übersetzung ging jede Krypto-Order mit einem Symbol raus, das der Broker
+ * nicht kennt — sie wäre abgelehnt worden, und zwar erst bei ihm.
+ *
+ * Die Abbildung gehört an DIESE Grenze und nirgendwo sonst: Katalog, Engine,
+ * Charts und Buchhaltung sprechen durchgehend Katalog-Schreibweise, nur die
+ * Broker-Aufrufe übersetzen — hin beim Senden, zurück beim Lesen. Täte man
+ * es weiter innen, hätte man zwei Schreibweisen im Bestand und der
+ * Broker-Abgleich meldete Phantom-Positionen („BTC/USD beim Broker,
+ * BTC-USD bei uns").
+ *
+ * Die Endungen sind bewusst aufgezählt statt „alles mit Bindestrich": US-
+ * Ticker enthalten Bindestriche (BF-B, BRK-B), und die dürfen nicht zu
+ * Krypto-Paaren umgedeutet werden.
+ */
+const KRYPTO_GEGEN = ['USD', 'USDT', 'USDC', 'BTC'] as const;
+const ZU_ALPACA = new RegExp(`^([A-Z0-9]{2,10})-(${KRYPTO_GEGEN.join('|')})$`);
+const VON_ALPACA = new RegExp(`^([A-Z0-9]{2,10})/(${KRYPTO_GEGEN.join('|')})$`);
+
+/** Katalog-Schreibweise → Alpaca (`BTC-USD` → `BTC/USD`). */
+export function zuAlpacaSymbol(symbol: string): string {
+  const m = ZU_ALPACA.exec(symbol.trim().toUpperCase());
+  return m ? `${m[1]}/${m[2]}` : symbol;
+}
+
+/** Alpaca → Katalog-Schreibweise (`BTC/USD` → `BTC-USD`). */
+export function vonAlpacaSymbol(symbol: string): string {
+  const m = VON_ALPACA.exec(symbol.trim().toUpperCase());
+  return m ? `${m[1]}-${m[2]}` : symbol;
+}
+
 export interface AlpacaKonto {
   id: string;
   status: string;
@@ -308,7 +342,7 @@ export async function alpacaOrdersGeschlossen(
       out.push({
         id: String(r['id'] ?? ''),
         clientOrderId: String(r['client_order_id'] ?? ''),
-        symbol: String(r['symbol'] ?? ''),
+        symbol: vonAlpacaSymbol(String(r['symbol'] ?? '')),
         side: String(r['side'] ?? '') === 'sell' ? ('sell' as const) : ('buy' as const),
         qty,
         kurs,
@@ -364,7 +398,7 @@ export async function alpacaOrdersOffen(
       {
         id: String(r['id'] ?? ''),
         clientOrderId: String(r['client_order_id'] ?? ''),
-        symbol: String(r['symbol'] ?? ''),
+        symbol: vonAlpacaSymbol(String(r['symbol'] ?? '')),
         side: String(r['side'] ?? '') === 'sell' ? ('sell' as const) : ('buy' as const),
         typ: String(r['type'] ?? ''),
         qty,
@@ -386,7 +420,7 @@ export async function alpacaPositionen(
     const r = p as Record<string, unknown>;
     const qty = zahl(r['qty']);
     return {
-      symbol: String(r['symbol'] ?? ''),
+      symbol: vonAlpacaSymbol(String(r['symbol'] ?? '')),
       // Alpaca liefert Short-Mengen negativ; das Vorzeichen steckt bei uns
       // in `seite`, damit Mengen nie versehentlich subtrahiert werden.
       qty: Math.abs(qty),
@@ -457,7 +491,7 @@ export async function alpacaAsset(
   try {
     d = (await alpacaFetch(
       mode,
-      `/v2/assets/${encodeURIComponent(symbol)}`,
+      `/v2/assets/${encodeURIComponent(zuAlpacaSymbol(symbol))}`,
       schluessel,
       {},
       fetchImpl,
@@ -467,7 +501,7 @@ export async function alpacaAsset(
     throw err;
   }
   return {
-    symbol: String(d['symbol'] ?? symbol),
+    symbol: vonAlpacaSymbol(String(d['symbol'] ?? symbol)),
     tradable: d['tradable'] === true,
     fractionable: d['fractionable'] === true,
     shortable: d['shortable'] === true,
@@ -602,7 +636,7 @@ export async function alpacaOrder(
     {
       method: 'POST',
       body: JSON.stringify({
-        symbol: order.symbol,
+        symbol: zuAlpacaSymbol(order.symbol),
         qty: String(order.qty),
         side: order.side,
         type: 'market',
@@ -616,7 +650,7 @@ export async function alpacaOrder(
     id: String(d['id'] ?? ''),
     clientOrderId: String(d['client_order_id'] ?? order.clientOrderId),
     status: String(d['status'] ?? ''),
-    symbol: String(d['symbol'] ?? order.symbol),
+    symbol: vonAlpacaSymbol(String(d['symbol'] ?? order.symbol)),
     qty: zahl(d['qty']),
     side: order.side,
     ausfuehrungskurs: zahl(d['filled_avg_price']),
@@ -653,7 +687,7 @@ export async function alpacaStopOrder(
     {
       method: 'POST',
       body: JSON.stringify({
-        symbol: order.symbol,
+        symbol: zuAlpacaSymbol(order.symbol),
         qty: String(order.qty),
         side: order.side,
         type: 'stop',
@@ -668,7 +702,7 @@ export async function alpacaStopOrder(
     id: String(d['id'] ?? ''),
     clientOrderId: String(d['client_order_id'] ?? order.clientOrderId),
     status: String(d['status'] ?? ''),
-    symbol: String(d['symbol'] ?? order.symbol),
+    symbol: vonAlpacaSymbol(String(d['symbol'] ?? order.symbol)),
     qty: zahl(d['qty']),
     side: order.side,
     ausfuehrungskurs: zahl(d['filled_avg_price']),
@@ -838,7 +872,7 @@ export async function warteAufFill(
         id: String(d['id'] ?? orderId),
         clientOrderId: String(d['client_order_id'] ?? ''),
         status,
-        symbol: String(d['symbol'] ?? ''),
+        symbol: vonAlpacaSymbol(String(d['symbol'] ?? '')),
         qty: menge,
         side: String(d['side'] ?? '') === 'sell' ? 'sell' : 'buy',
         ausfuehrungskurs: kurs,
