@@ -1,10 +1,37 @@
 /**
  * Marktdaten-Provider — Port von reference/scripts/market_data.py.
  *
- * Primär: Alpaca Market Data (nur konfiguriert + nur US-Aktien/ETF-Symbole),
- * sonst Fallback auf die Yahoo-Finance-Chart-API (v8, kein Key nötig) — sie
- * liefert Quote UND Tages-Bars in einem Request und versteht alle
- * yfinance-Symbolkonventionen des Katalogs (^GSPC, EURUSD=X, GC=F, BTC-USD).
+ * EINE Quelle: die Yahoo-Finance-Chart-API (v8, kein Key nötig). Sie liefert
+ * Quote UND Tages-Bars in einem Request und versteht alle yfinance-Symbol-
+ * konventionen des Katalogs (^GSPC, EURUSD=X, GC=F, BTC-USD).
+ *
+ * Bis 10.08. gab es hier einen zweiten Pfad: Alpaca Market Data mit
+ * `feed=iex`, aktiv sobald Betreiber-Schlüssel in der Umgebung liegen und das
+ * Symbol reine Großbuchstaben hat (55 von 164 Katalog-Symbolen — genau die
+ * handelbaren US-Aktien und ETFs). Er ist entfernt, aus drei Gründen:
+ *
+ * 1. GESPALTENE MESSGRUNDLAGE. `market/{sym}/ohlcDaily` — die Reihe hinter
+ *    dem Chart UND hinter der Tages-Rückschau (`tagRueckblick`) — kommt
+ *    IMMER von Yahoo. Der Live-Scan holte seine Signal-Bars über
+ *    `getMarketSnapshot`. Mit Alpaca-Schlüsseln hätte die Rückschau also
+ *    Signale auf Yahoo-Bars gemessen, während die Engine Signale auf
+ *    IEX-Bars handelt. Eine Kante, die auf anderen Zahlen gemessen wird als
+ *    sie entsteht, ist keine Messung.
+ * 2. `feed=iex` IST NICHT DAS KONSOLIDIERTE TAPE. Es sind nur die Trades der
+ *    IEX-Börse (~2–3 % des US-Volumens). Der Tagesschluss einer an NYSE oder
+ *    Nasdaq gelisteten Aktie entsteht in deren Schluss-Auktion — die läuft
+ *    nicht auf IEX. Der „close" aus diesem Feed ist der letzte IEX-Trade,
+ *    nicht der offizielle Schlusskurs. Ein systematischer Unterschied, kein
+ *    Rauschen.
+ * 3. AUCH KEINE AUSFÜHRUNGSTREUE. Alpaca routet Orders an den ganzen Markt;
+ *    IEX ist nur die kostenlose Datenstufe. Der Pfad war weder genauer noch
+ *    näher an der Ausführung — nur anders.
+ *
+ * Ehrlich dazu: Der tatsächliche Bar-Unterschied ist hier NICHT gemessen —
+ * es liegen keine Alpaca-Schlüssel vor. Das Argument ist strukturell.
+ *
+ * Alpaca bleibt unangetastet für das, wofür es da ist: Orders, Positionen,
+ * Börsenuhr, Asset-Metadaten (`alpacaBroker.ts`).
  */
 
 export interface DailyBar {
@@ -21,20 +48,11 @@ export interface MarketSnapshot {
   price: number;
   changePct: number;
   bars: DailyBar[];
-  source: 'alpaca' | 'yahoo';
+  /** Bewusst nur ein Wert: Signal-Bars und Chart-Historie teilen die Quelle. */
+  source: 'yahoo';
 }
 
 const YAHOO_BASE = 'https://query1.finance.yahoo.com/v8/finance/chart';
-const ALPACA_DATA_BASE = 'https://data.alpaca.markets';
-
-function alpacaConfigured(): boolean {
-  return Boolean(process.env.ALPACA_API_KEY && process.env.ALPACA_SECRET_KEY);
-}
-
-/** Alpaca kennt nur US-Aktien/ETFs — keine Indizes/Forex/Futures/Suffixe. */
-function isAlpacaTradable(symbol: string): boolean {
-  return /^[A-Z]+$/.test(symbol);
-}
 
 function fmtDate(tsSec: number, timeZone: string): string {
   // en-CA liefert YYYY-MM-DD
@@ -415,54 +433,16 @@ export function parseSparkEntry(symbol: string, entry: SparkEntry | undefined): 
   };
 }
 
-interface AlpacaBarsResponse {
-  bars?: Array<{ t: string; o: number; h: number; l: number; c: number; v: number }>;
-}
-
-async function fetchAlpaca(symbol: string, days: number): Promise<MarketSnapshot> {
-  const headers = {
-    'APCA-API-KEY-ID': process.env.ALPACA_API_KEY!,
-    'APCA-API-SECRET-KEY': process.env.ALPACA_SECRET_KEY!,
-  };
-  const start = new Date(Date.now() - days * 86_400_000).toISOString();
-  const url =
-    `${ALPACA_DATA_BASE}/v2/stocks/${encodeURIComponent(symbol)}/bars` +
-    `?timeframe=1Day&start=${encodeURIComponent(start)}&limit=1000&adjustment=split&feed=iex`;
-  const res = await fetch(url, { headers });
-  if (!res.ok) throw new Error(`Alpaca ${symbol}: HTTP ${res.status}`);
-  const json = (await res.json()) as AlpacaBarsResponse;
-  const bars: DailyBar[] = (json.bars ?? []).map((b) => ({
-    date: b.t.slice(0, 10),
-    open: b.o,
-    high: b.h,
-    low: b.l,
-    close: b.c,
-    volume: b.v,
-  }));
-  if (bars.length < 2) throw new Error(`Alpaca ${symbol}: zu wenig Bars`);
-  const price = bars[bars.length - 1]!.close;
-  const prev = bars[bars.length - 2]!.close;
-  return {
-    symbol,
-    price,
-    changePct: prev > 0 ? (price / prev - 1) * 100 : 0,
-    bars,
-    source: 'alpaca',
-  };
-}
-
 /**
  * Quote + Tages-Bars für ein Symbol. `range` in Yahoo-Notation ('3mo', '1y').
- * Alpaca (falls konfiguriert) für US-Equities, sonst/bei Fehlern Yahoo.
+ *
+ * Bewusst ohne Anbieterwahl: Diese Bars tragen die Signale, die gehandelt
+ * werden — und `ohlcDaily` (Chart + Rückschau) kommt aus derselben Quelle.
+ * Ein zweiter Anbieter hier hieße, die Kante an anderen Zahlen zu messen als
+ * an denen sie entsteht (Modulkopf). Wer eine zweite Quelle einführt, muss
+ * `getDeepDailyBars` mitziehen — sonst driften Messung und Handel wieder
+ * auseinander, und zwar lautlos.
  */
 export async function getMarketSnapshot(symbol: string, range = '3mo'): Promise<MarketSnapshot> {
-  if (alpacaConfigured() && isAlpacaTradable(symbol)) {
-    try {
-      const days = range === '1y' ? 380 : range === '6mo' ? 190 : 100;
-      return await fetchAlpaca(symbol, days);
-    } catch {
-      // Fallback unten — Yahoo kann alle Symbole
-    }
-  }
   return fetchYahoo(symbol, range);
 }

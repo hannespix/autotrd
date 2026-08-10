@@ -62,15 +62,31 @@ import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 export const TAG_RUECKBLICK_V = 3;
 
 /**
- * Symbole je Lauf.
+ * Wie lange ein Lauf höchstens rechnet — statt eines festen Symbol-Deckels.
  *
- * Der Kostentreiber ist nicht Firestore, sondern die Indikator-Rechnung: je
- * Basistag ein Durchlauf über das 250er-Fenster. Bei `MAX_BASISTAGE` sind das
- * rund 750 Durchläufe je Symbol — für 12 Symbole zusammen deutlich unter
- * einer Sekunde reiner Rechenzeit. Der Deckel schützt also vor allem die
- * Firestore-Lesungen und hält den Lauf berechenbar.
+ * Vorher standen hier 12 Symbole je Lauf. Der Deckel war der eigentliche
+ * Engpass des ganzen Vorhabens: Der Lauf ist täglich, der Katalog hat 164
+ * Symbole — die Kante über den ganzen Katalog hätte also VIERZEHN Nächte
+ * gebraucht. Und bei jedem Versions-Sprung (V1→V2→V3 allein am 10.08.)
+ * beginnt die Zählung von vorn. Der Beleg wäre nie fertig geworden.
+ *
+ * Es gibt keinen Grund dafür. Der Lauf liest gespeicherte Historie und rechnet
+ * — keine Kurs-Abrufe, keine Fremd-API. Gemessen (functions/test/
+ * tagRueckblickKosten.test.ts, SPY über 25 Jahre): 299 ms je Symbol für alle
+ * fünf Horizonte. Für den ganzen Katalog rund 50 s reine Rechenzeit, plus je
+ * Symbol eine Lesung der Jahres-Chunks und ein Batch-Commit — zusammen deutlich
+ * unter zwei Minuten bei 540 s Zeitbudget der Function.
+ *
+ * Der Zeitdeckel ersetzt den Zähldeckel, weil er das misst, worauf es ankommt:
+ * Ein fester Symbol-Deckel ist entweder zu klein (dauert Wochen) oder bietet
+ * keinen Schutz, wenn ein Symbol einmal ungewöhnlich lange braucht. 400 s
+ * lassen 140 s Luft bis zum Timeout — genug für den laufenden Commit und das
+ * Abschluss-Log.
+ *
+ * Bricht der Lauf am Budget ab, macht der nächste an der Rotationsstelle
+ * weiter; die Marker je Symbol sorgen dafür, dass nichts doppelt zählt.
  */
-const SYMBOLE_PRO_LAUF = 12;
+const ZEITBUDGET_MS = 400_000;
 
 /**
  * Wie weit zurück bewertet wird — so weit die Historie reicht.
@@ -119,8 +135,13 @@ export interface TagRueckblickLauf {
   offen: number;
 }
 
-export async function runTagRueckblick(now = new Date()): Promise<TagRueckblickLauf> {
+export async function runTagRueckblick(
+  now = new Date(),
+  /** Monotone Uhr in ms — als Parameter, damit der Budget-Abbruch prüfbar ist. */
+  uhr: () => number = () => Date.now(),
+): Promise<TagRueckblickLauf> {
   const db = getFirestore();
+  const startMs = uhr();
   const heuteIso = now.toISOString().slice(0, 10);
   const katalog = allSymbols();
 
@@ -190,7 +211,14 @@ export async function runTagRueckblick(now = new Date()): Promise<TagRueckblickL
   let fehlerhaft = 0;
   const fertig: string[] = [];
 
-  for (let i = 0; i < Math.min(SYMBOLE_PRO_LAUF, offen.length); i++) {
+  for (let i = 0; i < offen.length; i++) {
+    // Vor dem Symbol prüfen, nicht danach: Ein angefangenes Symbol soll fertig
+    // rechnen und committen dürfen — ein Abbruch mitten im Batch wäre die
+    // einzige Stelle, an der Marker und Summe auseinanderlaufen könnten.
+    if (uhr() - startMs > ZEITBUDGET_MS) {
+      logger.info(`Tages-Rückblick: Zeitbudget erreicht nach ${i} Symbolen`);
+      break;
+    }
     const sym = offen[(cursor + i) % offen.length]!;
     try {
       const snap = await db.collection('market').doc(sym).collection('ohlcDaily').get();
