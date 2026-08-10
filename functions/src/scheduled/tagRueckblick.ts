@@ -45,11 +45,20 @@ import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 /**
  * Stand der Rückschau am Symbol-Doc.
  *
- * Erhöhen NUR, wenn sich die RECHNUNG ändert (anderes Fenster, andere
- * Gates) — dann muss das Aggregat zurückgesetzt und alles neu bewertet
- * werden, sonst mischen sich zwei Messungen in einer Zahl.
+ * Erhöhen, wenn sich die RECHNUNG ändert (anderes Fenster, andere Gates,
+ * andere Aufteilung) — sonst mischen sich zwei Messungen in einer Zahl.
+ *
+ *   V1 (09.08.) Fenster 750 Basistage, nur Gesamt-Aggregat.
+ *   V2 (10.08.) Fenster 6000 Basistage plus Trennung nach Richtung.
+ *
+ * Der Sprung auf V2 ist ein Nachtrag: Beim Vertiefen des Fensters hatte ich
+ * die Version stehen lassen. Die 12 in der Nacht bewerteten Index-Symbole
+ * wären dadurch nie neu gerechnet worden — ihre 534 Beobachtungen aus dem
+ * 750er-Fenster hätten sich still mit den neuen aus dem 6000er-Fenster
+ * vermischt, und die Kante wäre ein Mittel aus zwei verschiedenen Messungen
+ * gewesen. Genau davor warnt dieser Kommentar seit V1.
  */
-export const TAG_RUECKBLICK_V = 1;
+export const TAG_RUECKBLICK_V = 2;
 
 /**
  * Symbole je Lauf.
@@ -141,11 +150,22 @@ export async function runTagRueckblick(now = new Date()): Promise<TagRueckblickL
   const vorher = await stateRef.get();
   const cursor = (vorher.get('cursor') as number | undefined) ?? 0;
 
-  let gesamt = (vorher.get('gesamt') as SchattenKlasse | undefined) ?? undefined;
-  const klassen: Record<string, SchattenKlasse> =
-    (vorher.get('klassen') as Record<string, SchattenKlasse> | undefined) ?? {};
-  const gespeicherteRichtung = vorher.get('nachRichtung') as
-    { buy?: SchattenKlasse; sell?: SchattenKlasse } | undefined;
+  /*
+   * Bei einem Versionswechsel wird das Aggregat VERWORFEN, nicht fortgesetzt.
+   *
+   * Die Symbol-Marker sorgen dafür, dass alle Symbole neu bewertet werden;
+   * würde die alte Summe stehen bleiben, zählte jedes Symbol zweimal — einmal
+   * mit der alten Rechnung, einmal mit der neuen. Das Ergebnis sähe wie eine
+   * größere Stichprobe aus und wäre ein Mischmasch aus zwei Messungen.
+   */
+  const fortsetzen = (vorher.get('version') as number | undefined) === TAG_RUECKBLICK_V;
+  let gesamt = fortsetzen ? (vorher.get('gesamt') as SchattenKlasse | undefined) : undefined;
+  const klassen: Record<string, SchattenKlasse> = fortsetzen
+    ? ((vorher.get('klassen') as Record<string, SchattenKlasse> | undefined) ?? {})
+    : {};
+  const gespeicherteRichtung = fortsetzen
+    ? (vorher.get('nachRichtung') as { buy?: SchattenKlasse; sell?: SchattenKlasse } | undefined)
+    : undefined;
   const nachRichtung: { buy: SchattenKlasse | undefined; sell: SchattenKlasse | undefined } = {
     buy: gespeicherteRichtung?.buy,
     sell: gespeicherteRichtung?.sell,
@@ -216,19 +236,27 @@ export async function runTagRueckblick(now = new Date()): Promise<TagRueckblickL
 
       const batch = db.batch();
       batch.set(db.collection('market').doc(sym), { tagRueckblickV: TAG_RUECKBLICK_V }, { merge: true });
-      batch.set(
-        stateRef,
-        {
-          gesamt: neuGesamt ?? { n: 0, summePct: 0, treffer: 0 },
-          klassen: neuKlasse ? { ...klassen, [kl]: neuKlasse } : klassen,
-          nachRichtung: { buy: neuBuy, sell: neuSell },
-          cursor: (cursor + i + 1) % Math.max(1, offen.length),
-          at: now.toISOString(),
-          version: TAG_RUECKBLICK_V,
-          fenster: MAX_BASISTAGE,
-        },
-        { merge: true },
-      );
+      /*
+       * VOLLES `set`, kein `merge` — anders als beim Symbol-Marker.
+       *
+       * `merge` verschmilzt Maps feldweise. Beim Versionswechsel würde die
+       * frisch geleerte `klassen`-Map die alten Schlüssel deshalb NICHT
+       * löschen: Bewertet der neue Lauf zuerst `crypto`, stünde hinterher
+       * `{ indices: <alt, Fenster 750>, crypto: <neu, Fenster 6000> }` da —
+       * die alte Messung überlebte in einer Zahl, die neu aussieht.
+       *
+       * Dieses Dokument gehört ganz diesem Lauf; alle seine Felder werden hier
+       * geschrieben. Ein volles `set` ist damit die ehrlichere Operation.
+       */
+      batch.set(stateRef, {
+        gesamt: neuGesamt ?? { n: 0, summePct: 0, treffer: 0 },
+        klassen: neuKlasse ? { ...klassen, [kl]: neuKlasse } : klassen,
+        nachRichtung: { buy: neuBuy, sell: neuSell },
+        cursor: (cursor + i + 1) % Math.max(1, offen.length),
+        at: now.toISOString(),
+        version: TAG_RUECKBLICK_V,
+        fenster: MAX_BASISTAGE,
+      });
       await batch.commit();
 
       gesamt = neuGesamt;
