@@ -114,13 +114,25 @@ describe('correlationCluster', () => {
   });
 
   it('die 40 Live-Symbole waren in Wahrheit zwei Wetten', () => {
+    /*
+     * Der Befund vom 28.07., der das Positionslimit erklärt: Vierzig
+     * Positionen waren ungefähr ZWEI Wetten — Aktien und Dollar.
+     *
+     * Gezählt wird über ALLE Aktien-Blöcke, nicht über zwei namentlich
+     * genannte. Die frühere Fassung zählte `aktien_intl` und
+     * `aktien_us_breit`; mit der Alpaca-Ausrichtung (10.08.) sind
+     * `FTSEMIB.MI` und `000001.SS` aus dem Katalog verschwunden und rutschen
+     * seither in `aktien_intl_einzel` — dieselbe Wette, anderer Block. Ein
+     * Test, der die Blocknamen aufzählt, prüft die Katalog-Mitgliedschaft
+     * statt den Befund.
+     */
     const bloecke = new Map<string, number>();
     for (const s of LIVE_28_07) {
       const c = correlationCluster(s);
       bloecke.set(c, (bloecke.get(c) ?? 0) + 1);
     }
-    // Aktien + Dollar stellen zusammen den überwiegenden Teil
-    const aktien = (bloecke.get('aktien_intl') ?? 0) + (bloecke.get('aktien_us_breit') ?? 0);
+    let aktien = 0;
+    for (const [block, n] of bloecke) if (block.startsWith('aktien_')) aktien += n;
     const dollar = bloecke.get('fx_usd') ?? 0;
     expect(aktien + dollar).toBeGreaterThanOrEqual(32);
   });
@@ -178,5 +190,39 @@ describe('Voreinstellungen enthalten nichts Unkaufbares', () => {
     // Bewusster Gegentest: MARKET_PULSE ist eine Anzeige, kein Handelsvorrat.
     // Hier sind ^GSPC und ^VIX genau richtig.
     expect(MARKET_PULSE.some((s) => !isTradable(s))).toBe(true);
+  });
+});
+
+/**
+ * Die Rohstoff-ETFs nach dem Alpaca-Umbau (10.08.).
+ *
+ * Sie ersetzen die Futures, die Alpaca nicht handelt. Ohne ausdrückliche
+ * Zuordnung landeten sie über `classify` in `etf_thematic` und damit im Block
+ * `aktien_sektor` — das Positionslimit hielte GLD, SLV und PPLT dann für drei
+ * Aktienwetten. Sie sind aber eine Metallwette und fallen im Drawdown
+ * gemeinsam, also genau dann, wenn Streuung zählt.
+ */
+describe('Rohstoff-ETFs statt Futures', () => {
+  it('Metall-ETFs gehören zum Metall', () => {
+    for (const s of ['GLD', 'SLV', 'PPLT', 'CPER']) {
+      expect(correlationCluster(s), s).toBe('rohstoff_metall');
+    }
+  });
+
+  it('Energie-ETFs gehören zur Energie', () => {
+    for (const s of ['USO', 'BNO', 'UNG', 'PDBC']) {
+      expect(correlationCluster(s), s).toBe('rohstoff_energie');
+    }
+  });
+
+  it('und sie sind — anders als die Futures — handelbar', () => {
+    for (const s of ['GLD', 'SLV', 'PPLT', 'CPER', 'USO', 'BNO', 'UNG', 'DBA', 'PDBC']) {
+      expect(isTradable(s), s).toBe(true);
+    }
+  });
+
+  it('die alten Futures bleiben richtig eingeordnet — für Altbestände', () => {
+    expect(correlationCluster('GC=F')).toBe('rohstoff_metall');
+    expect(correlationCluster('CL=F')).toBe('rohstoff_energie');
   });
 });

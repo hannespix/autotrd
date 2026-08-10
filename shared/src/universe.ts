@@ -14,38 +14,24 @@ export type CatalogEntry = readonly [symbol: string, name: string];
 export type Catalog = Record<string, Record<string, readonly CatalogEntry[]>>;
 
 export const CATALOG: Catalog = {
+  /*
+   * ── Indizes: NUR was als Signal gebraucht wird ──────────────────────────
+   *
+   * Alpaca handelt keine Indizes. Die 25 Einträge von früher waren deshalb
+   * reine Scan-Kosten ohne die Möglichkeit eines Trades. Geblieben sind die
+   * beiden, die tatsächlich etwas STEUERN:
+   *
+   *   ^GSPC — Marktfilter des Momentum-Sockels (`MARKET_INDEX`). Als Signal
+   *           ist er das breiteste verfügbare US-Bild; gekauft wird SPY.
+   *   ^VIX  — Regime-Ampel im Scan. Für ihn gibt es keinen brauchbaren
+   *           handelbaren Vertreter: VIXY und UVXY sind Futures-ETFs mit
+   *           Rollverlust und bilden den Index nicht ab.
+   *
+   * Beide werden NIE gekauft (`isTradable` sperrt alles mit `^`).
+   */
   indices: {
-    US: [
-      ['^GSPC', 'S&P 500'], ['^DJI', 'Dow Jones'], ['^IXIC', 'Nasdaq Composite'],
-      ['^NDX', 'Nasdaq 100'], ['^RUT', 'Russell 2000'], ['^VIX', 'VIX Volatility'],
-    ],
-    Europe: [
-      ['^GDAXI', 'DAX 40'], ['^FTSE', 'FTSE 100'], ['^FCHI', 'CAC 40'],
-      ['^STOXX50E', 'Euro Stoxx 50'], ['^IBEX', 'IBEX 35'], ['^AEX', 'AEX'],
-      ['^SSMI', 'SMI Switzerland'], ['FTSEMIB.MI', 'FTSE MIB Italy'],
-    ],
-    'Asia-Pacific': [
-      ['^N225', 'Nikkei 225'], ['^HSI', 'Hang Seng'], ['000001.SS', 'Shanghai Composite'],
-      ['^BSESN', 'BSE Sensex'], ['^KS11', 'KOSPI'], ['^AXJO', 'ASX 200'],
-      ['^TWII', 'Taiwan Weighted'], ['^STI', 'Straits Times'],
-    ],
-    Americas: [
-      ['^BVSP', 'Bovespa Brazil'], ['^GSPTSE', 'TSX Canada'], ['^MXX', 'IPC Mexico'],
-    ],
-  },
-  forex: {
-    Majors: [
-      ['EURUSD=X', 'EUR/USD'], ['GBPUSD=X', 'GBP/USD'], ['USDJPY=X', 'USD/JPY'],
-      ['USDCHF=X', 'USD/CHF'], ['AUDUSD=X', 'AUD/USD'], ['USDCAD=X', 'USD/CAD'],
-      ['NZDUSD=X', 'NZD/USD'], ['DX-Y.NYB', 'US Dollar Index'],
-    ],
-    Crosses: [
-      ['EURGBP=X', 'EUR/GBP'], ['EURJPY=X', 'EUR/JPY'], ['EURCHF=X', 'EUR/CHF'],
-      ['GBPJPY=X', 'GBP/JPY'],
-    ],
-    Emerging: [
-      ['USDCNY=X', 'USD/CNY'], ['USDINR=X', 'USD/INR'], ['USDMXN=X', 'USD/MXN'],
-      ['USDBRL=X', 'USD/BRL'], ['USDZAR=X', 'USD/ZAR'], ['USDTRY=X', 'USD/TRY'],
+    'Nur Signal': [
+      ['^GSPC', 'S&P 500 (Marktfilter)'], ['^VIX', 'VIX Volatilität (Regime)'],
     ],
   },
   crypto: {
@@ -79,33 +65,17 @@ export const CATALOG: Catalog = {
        */
     ],
   },
-  commodities: {
-    Metals: [
-      ['GC=F', 'Gold'], ['SI=F', 'Silver'], ['PL=F', 'Platinum'],
-      ['PA=F', 'Palladium'], ['HG=F', 'Copper'],
-    ],
-    Energy: [
-      ['CL=F', 'WTI Crude Oil'], ['BZ=F', 'Brent Crude'], ['NG=F', 'Natural Gas'],
-      ['RB=F', 'Gasoline'], ['HO=F', 'Heating Oil'],
-    ],
-    Agriculture: [
-      ['ZC=F', 'Corn'], ['ZW=F', 'Wheat'], ['ZS=F', 'Soybeans'], ['KC=F', 'Coffee'],
-      ['SB=F', 'Sugar'], ['CC=F', 'Cocoa'], ['CT=F', 'Cotton'],
-    ],
-    'Index Futures': [
-      ['ES=F', 'S&P 500 Future'], ['NQ=F', 'Nasdaq 100 Future'],
-      ['YM=F', 'Dow Future'], ['RTY=F', 'Russell 2000 Future'],
-    ],
-  },
   rates_bonds: {
-    Yields: [
-      ['^IRX', '13w T-Bill'], ['^FVX', '5y Treasury'],
-      ['^TNX', '10y Treasury'], ['^TYX', '30y Treasury'],
-    ],
+    /*
+     * Die vier Rendite-INDIZES (^IRX, ^FVX, ^TNX, ^TYX) sind entfernt: Sie
+     * sind Prozentzahlen, kein Papier, und wurden von keiner Logik gelesen —
+     * anders als ^GSPC und ^VIX, die etwas steuern. Die Zinskurve bildet sich
+     * über die Laufzeiten der Bond-ETFs ohnehin ab, und die sind handelbar.
+     */
     'Bond ETFs': [
       ['TLT', '20y+ Treasury'], ['IEF', '7-10y Treasury'], ['SHY', '1-3y Treasury'],
       ['AGG', 'US Aggregate'], ['LQD', 'IG Corporate'], ['HYG', 'High Yield'],
-      ['TIP', 'TIPS Inflation'],
+      ['TIP', 'TIPS Inflation'], ['BIL', '1-3m T-Bill'],
     ],
   },
   etf_sectors: {
@@ -129,50 +99,94 @@ export const CATALOG: Catalog = {
       ['ARKK', 'ARK Innovation'], ['SMH', 'Semiconductors'], ['SOXX', 'Semiconductors'],
       ['IBB', 'Biotech'], ['ICLN', 'Clean Energy'], ['TAN', 'Solar'], ['LIT', 'Battery/Lithium'],
       ['JETS', 'Airlines'], ['HACK', 'Cybersecurity'], ['BOTZ', 'Robotics/AI'],
-      ['GLD', 'Gold'], ['SLV', 'Silver'], ['USO', 'Oil'],
+    ],
+    /*
+     * ── Rohstoffe als ETF statt als Future ──────────────────────────────────
+     *
+     * Vorher standen hier 21 Futures (GC=F, CL=F, ZC=F …). Alpaca handelt
+     * keine Futures, und ein Kontrakt-Rollover ist ohnehin nichts, was diese
+     * Engine modelliert. Die ETFs bilden dieselbe wirtschaftliche Wette ab,
+     * laufen an der US-Börse und sind orderbar.
+     *
+     * Bewusst nur die liquiden: Ein Agrar-ETF mit 20.000 Stück Tagesumsatz
+     * hätte einen Spread, den unser Kostenmodell nicht kennt — und die
+     * gemessene Netto-Kante liegt im Bereich von 0,3 % je Signal.
+     */
+    Rohstoffe: [
+      ['GLD', 'Gold'], ['SLV', 'Silber'], ['PPLT', 'Platin'], ['CPER', 'Kupfer'],
+      ['USO', 'Öl (WTI)'], ['BNO', 'Öl (Brent)'], ['UNG', 'Erdgas'],
+      ['DBA', 'Agrar breit'], ['PDBC', 'Rohstoffkorb'],
     ],
   },
   stocks_us: {
-    'US Mega Cap': [
-      ['AAPL', 'Apple'], ['MSFT', 'Microsoft'], ['NVDA', 'Nvidia'], ['AMZN', 'Amazon'],
-      ['GOOGL', 'Alphabet'], ['META', 'Meta'], ['TSLA', 'Tesla'], ['BRK-B', 'Berkshire'],
-      ['JPM', 'JPMorgan'], ['V', 'Visa'], ['XOM', 'Exxon'], ['WMT', 'Walmart'],
+    /*
+     * ── Der eigentliche Alpaca-Raum ─────────────────────────────────────────
+     *
+     * Von 12 auf 60 der liquidesten US-Werte, über alle Sektoren gestreut.
+     * Der Ausbau ist KOSTENNEUTRAL: Er finanziert sich aus den 96 Symbolen,
+     * die Alpaca nie handeln konnte und die trotzdem alle fünf Minuten
+     * mitversorgt wurden.
+     *
+     * Die Auswahl folgt zwei Regeln: Tagesumsatz weit über dem, was unsere
+     * Positionsgrößen bewegen (damit der Spread nicht die Kante frisst), und
+     * Streuung über Sektoren — die Korrelations-Cluster weiter unten sind
+     * sonst wirkungslos, weil sie nur EINE Wette in Scheiben schneiden.
+     */
+    'Technologie': [
+      ['AAPL', 'Apple'], ['MSFT', 'Microsoft'], ['NVDA', 'Nvidia'], ['AVGO', 'Broadcom'],
+      ['AMD', 'AMD'], ['INTC', 'Intel'], ['QCOM', 'Qualcomm'], ['TXN', 'Texas Instruments'],
+      ['MU', 'Micron'], ['ORCL', 'Oracle'], ['CRM', 'Salesforce'], ['ADBE', 'Adobe'],
+      ['CSCO', 'Cisco'], ['IBM', 'IBM'], ['PLTR', 'Palantir'],
     ],
-  },
-  stocks_global: {
-    'Germany (Xetra)': [
-      ['SAP.DE', 'SAP'], ['SIE.DE', 'Siemens'], ['ALV.DE', 'Allianz'], ['BMW.DE', 'BMW'],
-      ['MBG.DE', 'Mercedes-Benz'], ['VOW3.DE', 'Volkswagen'], ['DTE.DE', 'Deutsche Telekom'],
-      ['BAS.DE', 'BASF'], ['RHM.DE', 'Rheinmetall'], ['DBK.DE', 'Deutsche Bank'],
+    'Kommunikation & Konsum': [
+      ['GOOGL', 'Alphabet'], ['META', 'Meta'], ['NFLX', 'Netflix'], ['DIS', 'Disney'],
+      ['AMZN', 'Amazon'], ['TSLA', 'Tesla'], ['HD', 'Home Depot'], ['MCD', "McDonald's"],
+      ['NKE', 'Nike'], ['SBUX', 'Starbucks'], ['LOW', "Lowe's"], ['BKNG', 'Booking'],
     ],
-    Europe: [
-      ['MC.PA', 'LVMH'], ['OR.PA', "L'Oreal"], ['TTE.PA', 'TotalEnergies'],
-      // Roche steht bei Yahoo unter RO.SW; ROG.SW liefert 404 („may be
-      // delisted") — aufgefallen erst beim Batch-Abruf, weil ein einzelner
-      // toter Fetch vorher nur eine Warnzeile war, die niemand sah.
-      ['ASML.AS', 'ASML'], ['NESN.SW', 'Nestle'], ['RO.SW', 'Roche'], ['NOVN.SW', 'Novartis'],
-      ['SHEL.L', 'Shell'], ['AZN.L', 'AstraZeneca'], ['HSBA.L', 'HSBC'], ['ULVR.L', 'Unilever'],
+    'Finanzen': [
+      ['BRK-B', 'Berkshire'], ['JPM', 'JPMorgan'], ['BAC', 'Bank of America'],
+      ['WFC', 'Wells Fargo'], ['GS', 'Goldman Sachs'], ['MS', 'Morgan Stanley'],
+      ['V', 'Visa'], ['MA', 'Mastercard'], ['AXP', 'American Express'],
+      ['BLK', 'BlackRock'], ['SCHW', 'Charles Schwab'],
     ],
-    Asia: [
-      ['7203.T', 'Toyota'], ['6758.T', 'Sony'], ['9984.T', 'SoftBank'],
-      ['0700.HK', 'Tencent'], ['9988.HK', 'Alibaba'],
-      ['RELIANCE.NS', 'Reliance'], ['TCS.NS', 'TCS'],
+    'Gesundheit': [
+      ['UNH', 'UnitedHealth'], ['JNJ', 'Johnson & Johnson'], ['LLY', 'Eli Lilly'],
+      ['ABBV', 'AbbVie'], ['MRK', 'Merck'], ['PFE', 'Pfizer'], ['TMO', 'Thermo Fisher'],
+      ['ABT', 'Abbott'], ['AMGN', 'Amgen'],
+    ],
+    'Industrie & Energie': [
+      ['XOM', 'Exxon'], ['CVX', 'Chevron'], ['COP', 'ConocoPhillips'], ['SLB', 'SLB'],
+      ['CAT', 'Caterpillar'], ['DE', 'Deere'], ['BA', 'Boeing'], ['GE', 'GE Aerospace'],
+      ['HON', 'Honeywell'], ['UPS', 'UPS'], ['LMT', 'Lockheed Martin'],
+    ],
+    'Basiskonsum & Versorger': [
+      ['WMT', 'Walmart'], ['COST', 'Costco'], ['PG', 'Procter & Gamble'], ['KO', 'Coca-Cola'],
+      ['PEP', 'PepsiCo'], ['PM', 'Philip Morris'], ['NEE', 'NextEra Energy'], ['DUK', 'Duke Energy'],
     ],
   },
 };
 
-/** Deutsche UI-Labels + Reihenfolge der Assetklassen. */
+/**
+ * Deutsche UI-Labels + Reihenfolge der Assetklassen.
+ *
+ * `forex`, `commodities` und `stocks_global` stehen weiterhin hier, obwohl der
+ * Katalog sie nicht mehr führt: `classify()` kann sie für Alt-Bestände und
+ * Alt-Statistiken immer noch zurückgeben (ein Trade in SAP.DE aus der Zeit
+ * davor, ein Klassen-Aggregat in der Rückschau). Ohne Label stünde dort ein
+ * roher Schlüssel. Neue Symbole dieser Klassen entstehen nicht mehr.
+ */
 export const CLASS_LABELS: Record<string, string> = {
-  indices: 'Indizes',
-  forex: 'Devisen',
+  indices: 'Indizes (nur Signal)',
   crypto: 'Krypto',
-  commodities: 'Rohstoffe',
   rates_bonds: 'Zinsen & Anleihen',
   etf_sectors: 'Sektor-ETFs',
   etf_regions: 'Regionen-ETFs',
   etf_thematic: 'Themen-ETFs',
   stocks_us: 'US-Aktien',
-  stocks_global: 'Globale Aktien',
+  // Nur noch für Altbestände (siehe oben) — nicht mehr im Katalog:
+  forex: 'Devisen (historisch)',
+  commodities: 'Rohstoffe (historisch)',
+  stocks_global: 'Globale Aktien (historisch)',
 };
 
 /** Flache Symbolliste, optional auf eine Assetklasse gefiltert. */
@@ -332,15 +346,32 @@ export function tradableSymbols(assetClass?: string): string[] {
  * wirtschaftlicher Herkunft kennt diesen Fehlermodus nicht. */
 
 const CLUSTER_OVERRIDES: Record<string, string> = {
-  // Edelmetall-ETFs gehören zu den Metallen, nicht zu den Aktien
+  /*
+   * Rohstoff-ETFs gehören zum Rohstoff, nicht zu den Aktien.
+   *
+   * Ohne diese Zuordnung landeten sie über `classify` in `etf_thematic` und
+   * damit im Block `aktien_sektor` — und das Positionslimit hielte GLD, SLV
+   * und PPLT für drei Aktienwetten. Sie sind aber eine Metallwette, und im
+   * Drawdown laufen sie zusammen. Seit dem Alpaca-Umbau (10.08.) sind die
+   * Rohstoffe ETFs statt Futures; die Zuordnung wandert deshalb von den
+   * `=F`-Mengen hierher.
+   */
   GLD: 'rohstoff_metall', SLV: 'rohstoff_metall',
-  USO: 'rohstoff_energie',
+  PPLT: 'rohstoff_metall', CPER: 'rohstoff_metall',
+  USO: 'rohstoff_energie', BNO: 'rohstoff_energie', UNG: 'rohstoff_energie',
+  DBA: 'rohstoff_agrar',
+  // Ein breiter Rohstoffkorb ist überwiegend Energie — so wird er gewichtet.
+  PDBC: 'rohstoff_energie',
   // Energie-nahe Aktien-ETFs laufen mit dem Ölpreis, nicht mit dem Index
   XLE: 'rohstoff_energie', ICLN: 'rohstoff_energie', TAN: 'rohstoff_energie',
 };
 
 const US_BREIT = new Set(['SPY', 'QQQ', 'DIA', 'IWM', 'VTI']);
 const INTL_ETFS = new Set(['EFA', 'EEM', 'VGK', 'EWJ', 'FXI', 'EWG', 'EWZ', 'INDA']);
+/* Die Futures-Mengen bleiben, obwohl der Katalog keine `=F`-Symbole mehr
+ * führt: `correlationCluster` bekommt auch Symbole aus ALTEN Positionen und
+ * alten Statistiken zu sehen, und die sollen weiter richtig eingeordnet
+ * werden. Neue entstehen nicht mehr. */
 const METALLE = new Set(['GC=F', 'SI=F', 'PL=F', 'PA=F', 'HG=F']);
 const ENERGIE = new Set(['CL=F', 'BZ=F', 'NG=F', 'RB=F', 'HO=F']);
 const US_INDIZES = new Set(['^GSPC', '^DJI', '^IXIC', '^NDX', '^RUT']);

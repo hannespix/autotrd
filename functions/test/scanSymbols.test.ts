@@ -280,11 +280,15 @@ describe('aktiveKlassenAusGewichten', () => {
   });
 
   it('nur wenn ALLE Regler-Konten eine Klasse explizit auf 0 haben, fällt sie raus', () => {
+    // Zweite Klasse war früher `forex`. Seit der Alpaca-Ausrichtung (10.08.)
+    // führt der Katalog keine Devisen mehr, und `aktiveKlassenAusGewichten`
+    // läuft über `Object.keys(CATALOG)` — eine Klasse, die es nicht gibt,
+    // kann auch nicht aktiv sein. Die geprüfte REGEL ist unverändert.
     const aktiv = aktiveKlassenAusGewichten([
-      { crypto: 0, forex: 0 },
-      { crypto: 0 }, // forex fehlt → für dieses Konto aktiv
+      { crypto: 0, stocks_us: 0 },
+      { crypto: 0 }, // stocks_us fehlt → für dieses Konto aktiv
     ]);
     expect(aktiv!.has('crypto')).toBe(false);
-    expect(aktiv!.has('forex')).toBe(true);
+    expect(aktiv!.has('stocks_us')).toBe(true);
   });
 });
