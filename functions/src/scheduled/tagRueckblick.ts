@@ -51,6 +51,15 @@ import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
  *   V1 (09.08.) Fenster 750 Basistage, nur Gesamt-Aggregat.
  *   V2 (10.08.) Fenster 6000 Basistage plus Trennung nach Richtung.
  *   V3 (10.08.) mehrere Halte-Horizonte (1/2/3/5/10 Handelstage) je Basistag.
+ *   V4 (11.08.) Halte-Horizonte zusätzlich JE ANLAGEKLASSE und Richtung.
+ *
+ * Warum V4 einen vollen Neulauf rechtfertigt, obwohl die Rechnung selbst
+ * unverändert ist: Die neue Kreuzung wird von Symbol zu Symbol aufaddiert.
+ * Ohne Versionssprung fortgesetzt, enthielte sie nur die Symbole, die nach
+ * dem Deploy noch drankamen — und sähe dabei aus wie eine Aussage über den
+ * ganzen Katalog. Genau die Verwechslung, gegen die `symbole` eingeführt
+ * wurde. Ein Lauf schafft den Katalog inzwischen in einem Stück (132 Symbole
+ * am 10.08.), der Neulauf kostet also eine Nacht.
  *
  * Der Sprung auf V2 ist ein Nachtrag: Beim Vertiefen des Fensters hatte ich
  * die Version stehen lassen. Die 12 in der Nacht bewerteten Index-Symbole
@@ -59,7 +68,7 @@ import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
  * vermischt, und die Kante wäre ein Mittel aus zwei verschiedenen Messungen
  * gewesen. Genau davor warnt dieser Kommentar seit V1.
  */
-export const TAG_RUECKBLICK_V = 3;
+export const TAG_RUECKBLICK_V = 4;
 
 /**
  * Wie lange ein Lauf höchstens rechnet — statt eines festen Symbol-Deckels.
@@ -135,6 +144,72 @@ export interface TagRueckblickLauf {
   offen: number;
 }
 
+/** Ein Horizont-Topf: alle Signale, plus die beiden Richtungen getrennt. */
+export type HorizontStand = {
+  klasse?: SchattenKlasse;
+  buy?: SchattenKlasse;
+  sell?: SchattenKlasse;
+};
+
+/**
+ * Ein Symbol-Ergebnis in einen Horizont-Bestand einrechnen.
+ *
+ * Herausgezogen, weil es seit V4 an ZWEI Stellen passiert: einmal für den
+ * globalen Bestand, einmal für den der Anlageklasse. Zwei Kopien derselben
+ * Schleife wären zwei Gelegenheiten, sie verschieden zu ändern — und der
+ * Fehler fiele nicht auf, weil beide Zahlen für sich plausibel aussähen.
+ * Mit einer gemeinsamen Funktion gilt die Invariante strukturell: Die Summe
+ * über alle Klassen ist der globale Bestand.
+ */
+export function summiereHorizonte(
+  alt: Record<string, HorizontStand>,
+  neu: Record<number, { klasse: SchattenKlasse; nachRichtung: { buy: SchattenKlasse; sell: SchattenKlasse } }>,
+): Record<string, HorizontStand> {
+  const out: Record<string, HorizontStand> = { ...alt };
+  for (const [tage, h] of Object.entries(neu)) {
+    const a = alt[tage];
+    out[tage] = {
+      klasse: summiere(a?.klasse, h.klasse),
+      buy: summiere(a?.buy, h.nachRichtung.buy),
+      sell: summiere(a?.sell, h.nachRichtung.sell),
+    };
+  }
+  return out;
+}
+
+/** Beide Bestände zusammen — global und je Anlageklasse. */
+export interface HorizontBestand {
+  global: Record<string, HorizontStand>;
+  jeKlasse: Record<string, Record<string, HorizontStand>>;
+}
+
+/**
+ * Einen Symbol-Beitrag in BEIDE Bestände einrechnen.
+ *
+ * Warum das eine eigene Funktion ist und nicht zwei Zeilen in der Schleife:
+ * Genau diese Komposition ist die Fehlerquelle. Ein vergessener Vorbestand
+ * (`summiereHorizonte({}, …)` statt `summiereHorizonte(jeKlasse[klasse] ?? {}, …)`)
+ * ließe jedes Symbol den Topf seiner Klasse überschreiben — am Ende stünde
+ * dort nur das zuletzt bewertete Symbol, während der globale Bestand
+ * vollständig wäre. Beide Zahlen sähen für sich plausibel aus.
+ *
+ * Ein Test, der die Verteilung selbst nachbaut, findet das nicht. Deshalb
+ * geht der Lauf durch diese Funktion, und der Test prüft sie.
+ */
+export function verteileBeitrag(
+  bestand: HorizontBestand,
+  klasse: string,
+  e: Record<number, { klasse: SchattenKlasse; nachRichtung: { buy: SchattenKlasse; sell: SchattenKlasse } }>,
+): HorizontBestand {
+  return {
+    global: summiereHorizonte(bestand.global, e),
+    jeKlasse: {
+      ...bestand.jeKlasse,
+      [klasse]: summiereHorizonte(bestand.jeKlasse[klasse] ?? {}, e),
+    },
+  };
+}
+
 export async function runTagRueckblick(
   now = new Date(),
   /** Monotone Uhr in ms — als Parameter, damit der Budget-Abbruch prüfbar ist. */
@@ -200,11 +275,37 @@ export async function runTagRueckblick(
    * kostet fast nichts extra: Teuer ist die Indikator-Rechnung am Basistag,
    * und die hängt nicht an der Haltedauer.
    */
-  type HorizontStand = { klasse?: SchattenKlasse; buy?: SchattenKlasse; sell?: SchattenKlasse };
   const gespeicherteHorizonte = fortsetzen
     ? (vorher.get('horizonte') as Record<string, HorizontStand> | undefined)
     : undefined;
   const horizonte: Record<string, HorizontStand> = { ...(gespeicherteHorizonte ?? {}) };
+  /**
+   * Dieselbe Kurve, aber JE ANLAGEKLASSE — die Frage hinter Meilenstein #94.
+   *
+   * ── Warum die bisherigen Zahlen nicht reichten (Befund 10.08.) ───────────
+   *
+   * Der erste Katalog-Lauf zeigte Krypto bei −1,06 % netto und −0,56 % roh
+   * (n = 3.023) — als einzige Klasse negativ, und zwar schon VOR Kosten. Die
+   * naheliegende Antwort wäre „Klasse raus". Nur ist sie aus dieser Zahl
+   * nicht ableitbar: `klassen` mischt Kauf- und Verkaufssignale.
+   *
+   * Global gemessen tragen ausschließlich die Kaufsignale (+0,65 % auf einen
+   * Tag), während Verkaufssignale mit jedem Tag Haltedauer schlechter werden
+   * (+0,05 % auf einen Tag, −0,78 % auf zehn). Wenn sich das in einer Klasse
+   * wiederholt, ist die richtige Konsequenz NICHT, die Klasse abzuschalten,
+   * sondern nur die Richtung, die verliert — und der Unterschied ist erheblich:
+   * Krypto ist die einzige Klasse, die auch nachts handelt, und wäre damit
+   * das einzige, was außerhalb der US-Handelszeiten überhaupt möglich ist.
+   *
+   * Die Kreuzung kostet nichts Zusätzliches: Beide Aufteilungen fallen im
+   * selben Durchlauf ohnehin an, sie wurden bisher nur getrennt aufaddiert.
+   */
+  const gespeicherteKlassenHorizonte = fortsetzen
+    ? (vorher.get('klassenHorizonte') as Record<string, Record<string, HorizontStand>> | undefined)
+    : undefined;
+  const klassenHorizonte: Record<string, Record<string, HorizontStand>> = {
+    ...(gespeicherteKlassenHorizonte ?? {}),
+  };
   /*
    * Wie viele Symbole in der Summe stecken.
    *
@@ -286,15 +387,16 @@ export async function runTagRueckblick(
       const neuSell = summiere(nachRichtung.sell, e.nachRichtung.sell);
       // Die Kurve über die Haltedauer — Schlüssel als String, weil Firestore
       // keine Zahlen als Map-Schlüssel kennt.
-      const neuHorizonte: Record<string, HorizontStand> = { ...horizonte };
-      for (const [tage, h] of Object.entries(e.horizonte)) {
-        const alt = horizonte[tage];
-        neuHorizonte[tage] = {
-          klasse: summiere(alt?.klasse, h.klasse),
-          buy: summiere(alt?.buy, h.nachRichtung.buy),
-          sell: summiere(alt?.sell, h.nachRichtung.sell),
-        };
-      }
+      // Beide Bestände in EINEM Schritt — die Komposition ist geprüft
+      // (`functions/test/klassenHorizonte.test.ts`), weil genau sie die
+      // Fehlerquelle ist: Ein vergessener Vorbestand fiele nirgends auf.
+      const beitrag = verteileBeitrag(
+        { global: horizonte, jeKlasse: klassenHorizonte },
+        kl,
+        e.horizonte,
+      );
+      const neuHorizonte = beitrag.global;
+      const neuKlassenHorizonte = beitrag.jeKlasse;
 
       const batch = db.batch();
       batch.set(db.collection('market').doc(sym), { tagRueckblickV: TAG_RUECKBLICK_V }, { merge: true });
@@ -315,6 +417,7 @@ export async function runTagRueckblick(
         klassen: neuKlasse ? { ...klassen, [kl]: neuKlasse } : klassen,
         nachRichtung: { buy: neuBuy, sell: neuSell },
         horizonte: neuHorizonte,
+        klassenHorizonte: neuKlassenHorizonte,
         symbole: symbolZahl + 1,
         cursor: (cursor + i + 1) % Math.max(1, offen.length),
         at: now.toISOString(),
@@ -328,6 +431,7 @@ export async function runTagRueckblick(
       nachRichtung.buy = neuBuy;
       nachRichtung.sell = neuSell;
       for (const [tage, h] of Object.entries(neuHorizonte)) horizonte[tage] = h;
+      for (const [k, v] of Object.entries(neuKlassenHorizonte)) klassenHorizonte[k] = v;
       symbolZahl += 1;
 
       bewertet += e.bewertet;
