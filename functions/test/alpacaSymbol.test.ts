@@ -56,6 +56,15 @@ describe('zuAlpacaSymbol', () => {
     expect(zuAlpacaSymbol('PBR-A')).toBe('PBR.A');
   });
 
+  it('fasst einbuchstabige Endungen außer A/B/C nicht an', () => {
+    // Gefunden beim Aufbau des Universums (11.08.): `ABC.U` (Unit) und
+    // `ABC.W` (Warrant) sehen aus wie eine Anteilsklasse, meinen aber etwas
+    // anderes — Yahoo schreibt sie `-UN` und `-WT`. Die vorige Regel („genau
+    // ein Buchstabe") hätte daraus `ABC-U` und `ABC-W` gemacht: Symbole, die
+    // es nirgends gibt.
+    for (const s of ['ABC-U', 'ABC-W', 'ABC-R', 'ABC-D']) expect(zuAlpacaSymbol(s)).toBe(s);
+  });
+
   it('fasst Endungen mit MEHR als einem Buchstaben nicht an', () => {
     // Warrants, Rechte und Units folgen bei Yahoo eigenen Regeln (`-WT`,
     // `-RT`, `-UN`), die kein Zeichentausch trifft. Ein falsch übersetztes
