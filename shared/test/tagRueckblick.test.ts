@@ -163,6 +163,54 @@ describe('Rechnung', () => {
   });
 });
 
+describe('Trennung nach Richtung — Drift oder Kante?', () => {
+  // Der Anlass: Der erste Katalog-Lauf gab 51,9 % Trefferquote bei +0,60 %
+  // Nettokante. Die Richtung stimmt also kaum öfter als beim Münzwurf; der
+  // Ertrag kommt aus der Asymmetrie der Bewegungen. In einem steigenden Markt
+  // erzeugt reine Aufwärtsdrift bei Kaufsignalen genau dieses Bild. Ohne die
+  // Trennung ist der Unterschied aus KEINER Stichprobengröße herauszulesen.
+
+  it('bucht Kaufsignale nach buy und Verkaufssignale nach sell', () => {
+    const r: TagesKurs[] = [
+      { date: '2026-01-05', close: 100 },
+      { date: '2026-01-06', close: 110 }, // +10 % → buy trifft
+      { date: '2026-01-07', close: 99 }, // −10 % → sell trifft
+    ];
+    const e = werteTagRueckblick(r, (_c, p) => (p === 100 ? 'buy' : 'sell'), 0, '2099-01-01', 1);
+    expect(e.nachRichtung.buy.n).toBe(1);
+    expect(e.nachRichtung.sell.n).toBe(1);
+    expect(e.nachRichtung.buy.summeRohPct).toBeCloseTo(10, 4);
+    expect(e.nachRichtung.sell.summeRohPct).toBeCloseTo(10, 4); // vorzeichenrichtig
+  });
+
+  it('die beiden Richtungen ergeben zusammen die Gesamtzahl', () => {
+    // Ginge etwas verloren, sähe die Aufteilung plausibel aus und wäre falsch.
+    const r = reihe(60);
+    const e = werteTagRueckblick(r, (_c, p) => (p % 3 === 0 ? 'buy' : p % 3 === 1 ? 'sell' : 'hold'), 0.002, '2099-01-01', 5);
+    expect(e.nachRichtung.buy.n + e.nachRichtung.sell.n).toBe(e.klasse.n);
+    expect(e.nachRichtung.buy.treffer + e.nachRichtung.sell.treffer).toBe(e.klasse.treffer);
+    expect((e.nachRichtung.buy.summePct + e.nachRichtung.sell.summePct)).toBeCloseTo(e.klasse.summePct, 3);
+  });
+
+  it('eine reine Aufwärtsreihe zeigt genau das Muster, das der Verdacht meint', () => {
+    // Steigende Kurse, IMMER buy: die Kante ist voll auf der Kaufseite und
+    // `sell` bleibt leer. Genau so sähe Drift aus — und genau daran soll man
+    // sie künftig erkennen können.
+    const e = werteTagRueckblick(reihe(40), immerKauf, 0, '2099-01-01', 5);
+    expect(e.nachRichtung.buy.n).toBeGreaterThan(0);
+    expect(e.nachRichtung.sell.n).toBe(0);
+    expect((e.nachRichtung.buy.summeRohPct ?? 0)).toBeGreaterThan(0);
+  });
+
+  it('ohne bewertete Signale sind beide Seiten leer statt undefined', () => {
+    const e = werteTagRueckblick(reihe(10), immerHalten, 0, '2099-01-01', 1);
+    expect(e.nachRichtung).toEqual({
+      buy: { n: 0, summePct: 0, treffer: 0 },
+      sell: { n: 0, summePct: 0, treffer: 0 },
+    });
+  });
+});
+
 describe('Vorlauf', () => {
   it('bewertet nichts, bevor die Indikatoren genug Kurse haben', () => {
     const e = werteTagRueckblick(reihe(10), immerKauf, 0, '2099-01-01', 8);
