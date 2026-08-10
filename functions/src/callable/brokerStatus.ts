@@ -39,7 +39,7 @@ import {
   type Strategy,
 } from '../../../shared/src/index.js';
 import {
-  abgleich,
+  bestandsAbgleich,
   alpacaKonfiguriert,
   alpacaKonto,
   alpacaPositionen,
@@ -171,9 +171,16 @@ export async function pruefeBrokerStatus(uid: string): Promise<BrokerStatusResul
     const posSnap = await db.collection('users').doc(uid).collection('positions').get();
     const eigene = posSnap.docs.map((d) => {
       const p = d.data() as Position;
-      return { symbol: p.symbol ?? d.id, qty: p.qty ?? 0, side: p.side };
+      return { symbol: p.symbol ?? d.id, qty: p.qty ?? 0, side: p.side, broker: p.broker };
     });
-    const abweichungen = abgleich(eigene, brokerPos);
+    /* Dieselbe Funktion wie im geplanten Abgleich (`brokerAbgleich.ts`).
+     *
+     * Vorher lief hier der ungefilterte Bestand in ein eigenes `abgleich()`.
+     * Jede Papier-Position (aus der Zeit vor dem Verbinden, oder aus einem
+     * der legitimen Papier-Pfade in `broker.ts`) erschien damit als
+     * Fehlbestand: Dasselbe Konto war für die Engine „sauber" und für den
+     * Nutzer „Abweichung". */
+    const abweichungen = bestandsAbgleich(eigene, brokerPos);
 
     const teile: string[] = [
       modus === 'live'

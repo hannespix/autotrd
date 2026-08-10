@@ -905,6 +905,59 @@ export interface Abweichung {
  * Vorzeichenbehaftet verglichen: Ein Long von 10 und ein Short von 10 sind
  * nicht dasselbe, auch wenn die Menge übereinstimmt.
  */
+/**
+ * Nur die Positionen, die WIRKLICH über den Broker entstanden sind.
+ *
+ * Ohne diesen Filter meldet der Abgleich jede reine Buchungs-Position als
+ * Fehlbestand — sie steht in unserem Buch, beim Broker aber nie. Und davon
+ * gibt es reichlich: Positionen aus der Zeit vor dem Verbinden, Exits auf
+ * Papier-Positionen (`broker.ts`), Verkäufe, die weder schließen noch ein
+ * ausdrücklicher Leerverkauf sind — alles legitime Papier-Buchungen.
+ *
+ * Der geplante Abgleich (`brokerAbgleich.ts`) filterte so; die Broker-Karte
+ * in der App (`brokerStatus.ts`) nicht. Dasselbe Konto war damit für die
+ * Engine „sauber" und für den Nutzer „Abweichung" — ein Alarm, den niemand
+ * auflösen kann, weil nichts kaputt ist. Ein Warnzeichen, das immer leuchtet,
+ * ist schlimmer als keins: Es macht blind für den echten Fall.
+ *
+ * Deshalb steht der Filter jetzt an EINER Stelle, und beide fragen ihn.
+ */
+export function nurBrokerPositionen<T extends { broker?: boolean | undefined }>(
+  eigene: readonly T[],
+): T[] {
+  return eigene.filter((p) => p.broker === true);
+}
+
+/** Eine Position, wie beide Ansichten sie aus Firestore zusammenstellen. */
+export interface BuchPosition {
+  symbol: string;
+  qty: number;
+  side?: string | undefined;
+  broker?: boolean | undefined;
+}
+
+/**
+ * Der Abgleich, den BEIDE Ansichten benutzen: filtern, dann vergleichen.
+ *
+ * Warum das eine Funktion ist und nicht zwei Zeilen an zwei Stellen: Genau
+ * so entstand der Fehler. Beide Seiten riefen `abgleich()`, eine filterte
+ * vorher, die andere nicht — sichtbar erst als Widerspruch im Betrieb
+ * (`drift: 2, sauber: 0` im Heartbeat bei einer makellosen Broker-Karte,
+ * bzw. umgekehrt). Zwei Kompositionen sind zwei Wahrheiten; ein gemeinsamer
+ * Filter allein verhindert das nicht, solange ihn jede Seite selbst
+ * aufrufen muss.
+ *
+ * Wer `abgleich()` direkt ruft, umgeht den Filter — `functions/test/
+ * brokerAbgleichEinheitlich.test.ts` hält deshalb zusätzlich fest, dass die
+ * beiden Aufrufstellen hier hereingehen.
+ */
+export function bestandsAbgleich(
+  eigene: readonly BuchPosition[],
+  broker: readonly AlpacaPosition[],
+): Abweichung[] {
+  return abgleich(nurBrokerPositionen(eigene), broker);
+}
+
 export function abgleich(
   eigene: ReadonlyArray<{ symbol: string; qty: number; side?: string | undefined }>,
   broker: readonly AlpacaPosition[],
