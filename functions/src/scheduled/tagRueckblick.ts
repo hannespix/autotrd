@@ -50,6 +50,7 @@ import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
  *
  *   V1 (09.08.) Fenster 750 Basistage, nur Gesamt-Aggregat.
  *   V2 (10.08.) Fenster 6000 Basistage plus Trennung nach Richtung.
+ *   V3 (10.08.) mehrere Halte-Horizonte (1/2/3/5/10 Handelstage) je Basistag.
  *
  * Der Sprung auf V2 ist ein Nachtrag: Beim Vertiefen des Fensters hatte ich
  * die Version stehen lassen. Die 12 in der Nacht bewerteten Index-Symbole
@@ -58,7 +59,7 @@ import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
  * vermischt, und die Kante wäre ein Mittel aus zwei verschiedenen Messungen
  * gewesen. Genau davor warnt dieser Kommentar seit V1.
  */
-export const TAG_RUECKBLICK_V = 2;
+export const TAG_RUECKBLICK_V = 3;
 
 /**
  * Symbole je Lauf.
@@ -170,6 +171,19 @@ export async function runTagRueckblick(now = new Date()): Promise<TagRueckblickL
     buy: gespeicherteRichtung?.buy,
     sell: gespeicherteRichtung?.sell,
   };
+  /**
+   * Die Kurve über die Haltedauer: Handelstage → Kante, je Richtung getrennt.
+   *
+   * Das ist die eigentliche Frage hinter dem Exit-Umbau — nicht „ist ein Tag
+   * besser als fünf Minuten", sondern „wie lange halten ist optimal". Sie
+   * kostet fast nichts extra: Teuer ist die Indikator-Rechnung am Basistag,
+   * und die hängt nicht an der Haltedauer.
+   */
+  type HorizontStand = { klasse?: SchattenKlasse; buy?: SchattenKlasse; sell?: SchattenKlasse };
+  const gespeicherteHorizonte = fortsetzen
+    ? (vorher.get('horizonte') as Record<string, HorizontStand> | undefined)
+    : undefined;
+  const horizonte: Record<string, HorizontStand> = { ...(gespeicherteHorizonte ?? {}) };
 
   let bewertet = 0;
   let uebersprungen = 0;
@@ -233,6 +247,17 @@ export async function runTagRueckblick(now = new Date()): Promise<TagRueckblickL
       // Getrennt nach Richtung — die Zahl, die Drift von Kante scheidet.
       const neuBuy = summiere(nachRichtung.buy, e.nachRichtung.buy);
       const neuSell = summiere(nachRichtung.sell, e.nachRichtung.sell);
+      // Die Kurve über die Haltedauer — Schlüssel als String, weil Firestore
+      // keine Zahlen als Map-Schlüssel kennt.
+      const neuHorizonte: Record<string, HorizontStand> = { ...horizonte };
+      for (const [tage, h] of Object.entries(e.horizonte)) {
+        const alt = horizonte[tage];
+        neuHorizonte[tage] = {
+          klasse: summiere(alt?.klasse, h.klasse),
+          buy: summiere(alt?.buy, h.nachRichtung.buy),
+          sell: summiere(alt?.sell, h.nachRichtung.sell),
+        };
+      }
 
       const batch = db.batch();
       batch.set(db.collection('market').doc(sym), { tagRueckblickV: TAG_RUECKBLICK_V }, { merge: true });
@@ -252,6 +277,7 @@ export async function runTagRueckblick(now = new Date()): Promise<TagRueckblickL
         gesamt: neuGesamt ?? { n: 0, summePct: 0, treffer: 0 },
         klassen: neuKlasse ? { ...klassen, [kl]: neuKlasse } : klassen,
         nachRichtung: { buy: neuBuy, sell: neuSell },
+        horizonte: neuHorizonte,
         cursor: (cursor + i + 1) % Math.max(1, offen.length),
         at: now.toISOString(),
         version: TAG_RUECKBLICK_V,
@@ -263,6 +289,7 @@ export async function runTagRueckblick(now = new Date()): Promise<TagRueckblickL
       if (neuKlasse) klassen[kl] = neuKlasse;
       nachRichtung.buy = neuBuy;
       nachRichtung.sell = neuSell;
+      for (const [tage, h] of Object.entries(neuHorizonte)) horizonte[tage] = h;
 
       bewertet += e.bewertet;
       fertig.push(sym);

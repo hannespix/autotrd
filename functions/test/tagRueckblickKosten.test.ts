@@ -43,28 +43,31 @@ describe.skipIf(!AN)('Kosten und Ertrag eines tieferen Fensters', () => {
     const heute = new Date().toISOString().slice(0, 10);
     const kosten = feeRateForClass('etf_regions') * 2;
 
-    for (const basistage of [750, 1500, 3000, 6000]) {
-      const reihe = volle.slice(-(basistage + 260));
-      const t0 = process.hrtime.bigint();
-      const e = werteTagRueckblick(
-        reihe,
-        (closes, preis) =>
-          computeSignal(closes, preis, DEFAULT_STRATEGY.indicators, DEFAULT_STRATEGY.signals, null).direction,
-        kosten,
-        heute,
-      );
-      const ms = Number(process.hrtime.bigint() - t0) / 1e6;
-      const a = werteSchattenAus(e.klasse);
-      const b = werteSchattenAus(e.nachRichtung.buy);
-      const s = werteSchattenAus(e.nachRichtung.sell);
+    const reihe = volle.slice(-6260);
+    const t0 = process.hrtime.bigint();
+    const e = werteTagRueckblick(
+      reihe,
+      (closes, preis) =>
+        computeSignal(closes, preis, DEFAULT_STRATEGY.indicators, DEFAULT_STRATEGY.signals, null).direction,
+      kosten,
+      heute,
+    );
+    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+    // eslint-disable-next-line no-console
+    console.log(`SPY ab ${reihe[0]?.date}, ${Math.round(ms)} ms für ALLE Horizonte:`);
+    for (const [tage, h] of Object.entries(e.horizonte)) {
+      const a = werteSchattenAus(h.klasse);
+      const b = werteSchattenAus(h.nachRichtung.buy);
+      const s = werteSchattenAus(h.nachRichtung.sell);
       // eslint-disable-next-line no-console
       console.log(
-        `Fenster ${String(basistage).padStart(4)}: ${String(Math.round(ms)).padStart(5)} ms  `
-        + `n=${String(a.n).padStart(4)} netto=${a.kantePct?.toFixed(4)}%  |  `
-        + `BUY n=${String(b.n).padStart(4)} netto=${b.kantePct?.toFixed(4)}%  `
-        + `SELL n=${String(s.n).padStart(4)} netto=${s.kantePct?.toFixed(4)}%  ab=${reihe[0]?.date}`,
+        `  ${String(tage).padStart(2)} Tage halten: n=${String(a.n).padStart(4)} `
+        + `roh=${a.rohPct?.toFixed(4)}% netto=${a.kantePct?.toFixed(4)}% Treffer=${((a.trefferquote ?? 0) * 100).toFixed(1)}%`
+        + `  |  BUY n=${String(b.n).padStart(3)} netto=${b.kantePct?.toFixed(4)}%`
+        + `  SELL n=${String(s.n).padStart(3)} netto=${s.kantePct?.toFixed(4)}%`,
       );
     }
     expect(volle.length).toBeGreaterThan(1000);
+    expect(e.horizonte[10]!.bewertet).toBeGreaterThan(50);
   }, 300_000);
 });

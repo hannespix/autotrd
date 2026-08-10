@@ -68,6 +68,35 @@ export const MIN_VORLAUF = 200;
 export const MAX_LUECKE_TAGE = 4;
 
 /**
+ * Halte-Horizonte in Handelstagen, die je Basistag ausgewertet werden.
+ *
+ * Der Grund für mehrere: Teuer ist `signalFn` — sie rechnet die Indikatoren
+ * über das ganze 250er-Fenster. Ob danach EIN Folgekurs abgezogen wird oder
+ * fünf, fällt nicht ins Gewicht. Aus derselben Rechenarbeit wird so aus der
+ * Ja/Nein-Frage „ist ein Tag besser als fünf Minuten?" eine KURVE über die
+ * Haltedauer — und das ist die Frage hinter dem Exit-Umbau.
+ *
+ * 10 Handelstage sind zwei Wochen; darüber hinaus wird der Vergleich mit
+ * einer Intraday-Strategie sinnlos.
+ */
+export const HORIZONTE = [1, 2, 3, 5, 10] as const;
+
+/**
+ * Größte erlaubte Lücke für einen Horizont von `h` Handelstagen.
+ *
+ * `h` Handelstage umfassen rund `1,4 · h` Kalendertage (fünf Handelstage je
+ * sieben). Dazu kommt derselbe Puffer wie bei `MAX_LUECKE_TAGE` für lange
+ * Wochenenden und Feiertage.
+ *
+ * Für h = 1 MUSS exakt `MAX_LUECKE_TAGE` herauskommen — sonst änderte dieser
+ * Umbau still die Bedeutung der bereits gemessenen Tages-Kante. Die Formel
+ * ist so gewählt, dass das gilt, und ein Test nagelt es fest.
+ */
+export function maxLuecke(h: number): number {
+  return MAX_LUECKE_TAGE + Math.ceil((h - 1) * 1.4);
+}
+
+/**
  * Wie viele Kurse das Signal am Basistag sieht — ein ROLLENDES Fenster.
  *
  * Nicht „so viel Historie wie da ist", und das aus zwei Gründen:
@@ -119,6 +148,30 @@ export interface TagRueckblickErgebnis {
    * Stichprobe herauslesen.
    */
   nachRichtung: { buy: SchattenKlasse; sell: SchattenKlasse };
+  /**
+   * Dieselbe Rechnung über MEHRERE Haltedauern, Schlüssel = Handelstage.
+   *
+   * Die Felder oben (`klasse`, `bewertet`, `ausfaelle`, `nachRichtung`)
+   * bleiben BEWUSST die Zahlen des Ein-Tages-Horizonts — sonst hätte dieser
+   * Umbau still die Bedeutung der bereits gemessenen Tages-Kante verschoben.
+   * `horizonte[1]` trägt dieselben Werte noch einmal.
+   */
+  horizonte: Record<number, HorizontErgebnis>;
+}
+
+/** Ergebnis für EINE Haltedauer. */
+export interface HorizontErgebnis {
+  /** Handelstage zwischen Einstieg und Bewertung. */
+  tage: number;
+  klasse: SchattenKlasse;
+  bewertet: number;
+  nachRichtung: { buy: SchattenKlasse; sell: SchattenKlasse };
+  /** Ausfälle, die NUR diesen Horizont betreffen (Vorlauf gilt für alle). */
+  hold: number;
+  keinFolgetag: number;
+  nichtRealisiert: number;
+  luecke: number;
+  kaputt: number;
 }
 
 /** Richtung, die das Signal am Basistag hatte. */
@@ -152,11 +205,9 @@ export function werteTagRueckblick(
   heuteIso: string,
   minVorlauf: number = MIN_VORLAUF,
   fenster: number = SIGNAL_FENSTER,
+  horizonte: readonly number[] = HORIZONTE,
 ): TagRueckblickErgebnis {
   const ausfaelle = leereAusfaelle();
-  let klasse: SchattenKlasse | undefined;
-  let bewertet = 0;
-  const richtung: Record<'buy' | 'sell', SchattenKlasse | undefined> = { buy: undefined, sell: undefined };
 
   for (let i = 1; i < reihe.length; i++) {
     if (reihe[i]!.date <= reihe[i - 1]!.date) {
@@ -164,50 +215,119 @@ export function werteTagRueckblick(
     }
   }
 
+  // Laufender Stand je Horizont.
+  interface Stand {
+    klasse?: SchattenKlasse;
+    buy?: SchattenKlasse;
+    sell?: SchattenKlasse;
+    bewertet: number;
+    hold: number;
+    keinFolgetag: number;
+    nichtRealisiert: number;
+    luecke: number;
+    kaputt: number;
+  }
+  const stand = new Map<number, Stand>(
+    horizonte.map((h) => [h, { bewertet: 0, hold: 0, keinFolgetag: 0, nichtRealisiert: 0, luecke: 0, kaputt: 0 }]),
+  );
+
   const closes = reihe.map((t) => t.close);
 
-  // Bis `length - 2`, denn i + 1 muss existieren.
+  // Bis `length - 2`, denn mindestens i + 1 muss existieren.
   for (let i = 0; i < reihe.length - 1; i++) {
     const basis = reihe[i]!;
-    const folge = reihe[i + 1]!;
 
     if (i + 1 < minVorlauf) { ausfaelle.zuWenigVorlauf += 1; continue; }
 
-    // ── Gate 2: nur vollständig realisierte Bewertungstage ────────────────
-    // `>=` und nicht `>`: Die heutige Kerze ist noch offen. Sie zu nehmen
-    // hieße, einen halben Handelstag als ganzen zu werten — und zwar
-    // systematisch in Richtung des laufenden Trends.
-    if (folge.date >= heuteIso) { ausfaelle.nichtRealisiert += 1; continue; }
+    /*
+     * Erst prüfen, WELCHE Horizonte auswertbar sind — und zwar BEVOR das
+     * teure Signal gerechnet wird. Ein Basistag ohne einen einzigen gültigen
+     * Horizont kostet so nichts.
+     *
+     * Die Gates gelten je Horizont einzeln: Der Bewertungstag von h = 10 kann
+     * noch in der Zukunft liegen, während der von h = 1 längst realisiert ist.
+     */
+    const gueltig: Array<{ h: number; ziel: TagesKurs; s: Stand }> = [];
+    for (const h of horizonte) {
+      const s = stand.get(h)!;
+      const ziel = reihe[i + h];
+      if (!ziel) { s.keinFolgetag += 1; continue; }
 
-    // ── Gate 3: keine Datenlöcher als Haltedauer verkaufen ────────────────
-    if (tageZwischen(basis.date, folge.date) > MAX_LUECKE_TAGE) { ausfaelle.luecke += 1; continue; }
+      // ── Gate 2: nur vollständig realisierte Bewertungstage ──────────────
+      // `>=` und nicht `>`: Die heutige Kerze ist noch offen. Sie zu nehmen
+      // hieße, einen halben Handelstag als ganzen zu werten — und zwar
+      // systematisch in Richtung des laufenden Trends.
+      if (ziel.date >= heuteIso) { s.nichtRealisiert += 1; continue; }
 
-    if (!(basis.close > 0) || !(folge.close > 0)) { ausfaelle.kaputt += 1; continue; }
+      // ── Gate 3: keine Datenlöcher als Haltedauer verkaufen ──────────────
+      // Die Schranke wächst mit dem Horizont (`maxLuecke`), sonst fiele jeder
+      // längere Horizont grundsätzlich durch — für h = 1 ist sie unverändert.
+      if (tageZwischen(basis.date, ziel.date) > maxLuecke(h)) { s.luecke += 1; continue; }
+
+      if (!(basis.close > 0) || !(ziel.close > 0)) { s.kaputt += 1; continue; }
+      gueltig.push({ h, ziel, s });
+    }
+    if (gueltig.length === 0) continue;
 
     // ── Regel 1: das Signal sieht NUR die Vergangenheit ───────────────────
     // Das Fenster endet bei `i + 1`, also EINSCHLIESSLICH Basistag: Sein
     // Schluss steht fest, er darf gesehen werden — `i + 1` auf keinen Fall.
     // Der Anfang rollt mit (`SIGNAL_FENSTER`), damit hier dieselbe
     // Signalquelle gemessen wird, die auch handelt.
+    //
+    // EIN Aufruf für ALLE Horizonte: Er hängt nur am Basistag, nicht an der
+    // Haltedauer. Genau das macht die Kurve über die Haltedauer fast gratis.
     const direction = signalFn(closes.slice(Math.max(0, i + 1 - fenster), i + 1), basis.close);
-    if (direction === 'hold') { ausfaelle.hold += 1; continue; }
+    if (direction === 'hold') {
+      for (const { s } of gueltig) s.hold += 1;
+      continue;
+    }
 
-    const beitrag = bewerteSchattenSignal({ direction, price: basis.close }, folge.close, roundtripKosten);
-    if (!beitrag.zaehlt) { ausfaelle.kaputt += 1; continue; }
-    klasse = addiereSchatten(klasse, beitrag);
-    richtung[direction] = addiereSchatten(richtung[direction], beitrag);
-    bewertet += 1;
+    for (const { ziel, s } of gueltig) {
+      const beitrag = bewerteSchattenSignal({ direction, price: basis.close }, ziel.close, roundtripKosten);
+      if (!beitrag.zaehlt) { s.kaputt += 1; continue; }
+      s.klasse = addiereSchatten(s.klasse, beitrag);
+      s[direction] = addiereSchatten(s[direction], beitrag);
+      s.bewertet += 1;
+    }
   }
 
-  // Das Reihenende hat keinen Folgetag — einmal zählen, damit die Summe der
-  // Ausfälle plus `bewertet` die Reihenlänge ergibt und ein Loch auffällt.
-  if (reihe.length > 0) ausfaelle.keinFolgetag += 1;
+  // Das Reihenende hat keinen Folgetag — einmal je Horizont zählen, damit die
+  // Summe der Ausfälle plus `bewertet` die Reihenlänge ergibt und ein Loch
+  // auffällt. Für h > 1 fehlen entsprechend mehr Tage; die sind oben in der
+  // Schleife bereits als `keinFolgetag` gebucht.
+  if (reihe.length > 0) for (const h of horizonte) stand.get(h)!.keinFolgetag += 1;
 
   const leer = (): SchattenKlasse => ({ n: 0, summePct: 0, treffer: 0 });
+  const ergebnisse: Record<number, HorizontErgebnis> = {};
+  for (const h of horizonte) {
+    const s = stand.get(h)!;
+    ergebnisse[h] = {
+      tage: h,
+      klasse: s.klasse ?? leer(),
+      bewertet: s.bewertet,
+      nachRichtung: { buy: s.buy ?? leer(), sell: s.sell ?? leer() },
+      hold: s.hold,
+      keinFolgetag: s.keinFolgetag,
+      nichtRealisiert: s.nichtRealisiert,
+      luecke: s.luecke,
+      kaputt: s.kaputt,
+    };
+  }
+
+  // Die Spitzenfelder bleiben der EIN-Tages-Horizont — siehe Typ-Kommentar.
+  const eins = ergebnisse[horizonte.includes(1) ? 1 : horizonte[0]!]!;
+  ausfaelle.hold = eins.hold;
+  ausfaelle.keinFolgetag = eins.keinFolgetag;
+  ausfaelle.nichtRealisiert = eins.nichtRealisiert;
+  ausfaelle.luecke = eins.luecke;
+  ausfaelle.kaputt = eins.kaputt;
+
   return {
-    klasse: klasse ?? leer(),
-    bewertet,
+    klasse: eins.klasse,
+    bewertet: eins.bewertet,
     ausfaelle,
-    nachRichtung: { buy: richtung.buy ?? leer(), sell: richtung.sell ?? leer() },
+    nachRichtung: eins.nachRichtung,
+    horizonte: ergebnisse,
   };
 }
