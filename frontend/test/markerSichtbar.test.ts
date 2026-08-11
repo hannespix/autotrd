@@ -54,14 +54,13 @@ describe('Marker hängen an einer immer sichtbaren Serie', () => {
     expect(quelle()).not.toContain('candle.setMarkers');
   });
 
-  it('die Träger-Serie wird für Marker mit Daten versorgt', () => {
+  it('die Träger-Serie hat immer Daten, an denen Marker hängen können', () => {
     /* Ohne Daten zeichnet Lightweight Charts auch auf einer sichtbaren Serie
      * keine Marker: Es gibt dann keinen Bar, an den sie sich hängen könnten.
      * Vorher wurde die Serie NUR gefüttert, wenn Preislinien hingen — bei
-     * einem Symbol ohne offene Position also nie. */
-    const b = setMarkersBlock();
-    expect(b).toContain('markerAnzahl = markers.length;');
-    expect(b).toContain('hostVersorgen();');
+     * einem Symbol ohne offene Position also nie. Siehe „Die Träger-Serie
+     * ist immer versorgt" weiter unten. */
+    expect(quelle()).toContain('lineHost.setData(cachedRows.map(');
   });
 
   it('die Kerzen-Serie ist nachweislich nicht immer sichtbar', () => {
@@ -71,32 +70,65 @@ describe('Marker hängen an einer immer sichtbaren Serie', () => {
   });
 });
 
-describe('Die Träger-Serie versorgt beide Lasten', () => {
-  const versorgen = (): string => {
-    const text = quelle();
-    const ab = text.indexOf('const hostVersorgen = (');
-    return text.slice(ab, text.indexOf('\n  };', ab));
-  };
-
-  it('sie zählt Preislinien UND Marker', () => {
-    // Eine Bedingung, zwei Lasten. Getrennt zu zählen wäre die Gelegenheit,
-    // die Serie zu leeren, während die andere Last noch daran hängt.
-    expect(versorgen()).toContain('geplanteLinien > 0 || markerAnzahl > 0');
+/* ── Owner-Meldung, zweite Runde ──────────────────────────────────────────
+ *
+ * „nur wenn die Indikatoren auf Kerzen stehen, dann werden News und andere
+ * Sachen angezeigt. sobald ich auf Bars oder ähnliches stelle, dann werden
+ * News und die anderen Sachen ausgeblendet."
+ *
+ * Die Marker allein waren nur die Hälfte. An der Kerzen-Serie hingen noch
+ * zwei weitere Dinge, und beide brechen auf einer unsichtbaren Serie:
+ *
+ *   `coords()`   rechnet Preis → Pixel. Daran hängen die gezeichneten
+ *                Trendlinien, Horizontalen und Rechtecke — und der
+ *                Prognose-Pfeil.
+ *   `onClick()`  rechnet Pixel → Preis. Das ist das ZEICHNEN selbst.
+ *
+ * Bei Bars, Linie und Fläche verschwanden die Zeichnungen also nicht nur,
+ * man konnte auch keine neuen setzen. Das ist das „und die anderen Sachen".
+ */
+describe('Auch Zeichnen und Pixel-Rechnung hängen an der Träger-Serie', () => {
+  it('coords rechnet über die Träger-Serie', () => {
+    expect(quelle()).toContain('y: lineHost.priceToCoordinate(price)');
   });
 
-  it('Preislinien melden ihren KÜNFTIGEN Stand', () => {
-    /* `priceLines.size` ist beim Aufruf noch der Stand von eben — die neuen
-     * Linien werden erst danach angelegt. Ohne den Parameter bliebe die
-     * Serie beim ersten Setzen leer. */
-    const text = quelle();
-    expect(text).toContain('hostVersorgen(lines.length);');
-    const ab = text.indexOf('hostVersorgen(lines.length);');
-    expect(text.slice(ab, ab + 300)).toContain('for (const spec of lines)');
+  it('onClick rechnet über die Träger-Serie', () => {
+    expect(quelle()).toContain('lineHost.coordinateToPrice(y)');
   });
 
-  it('die alte Sonderbehandlung ist weg', () => {
-    // Sie fütterte nur nach Preislinien und war damit die Hälfte des
-    // Befunds.
+  it('die Kerzen-Serie rechnet gar keine Koordinaten mehr', () => {
+    /* Solange irgendwo `candle.priceToCoordinate` steht, kann eine dritte
+     * Anzeige daran hängen und bei Bars wieder verschwinden — dieselbe
+     * Meldung ein drittes Mal. */
+    const text = quelle();
+    expect(text).not.toContain('candle.priceToCoordinate');
+    expect(text).not.toContain('candle.coordinateToPrice');
+  });
+});
+
+describe('Die Träger-Serie ist immer versorgt', () => {
+  it('sie bekommt die Daten ohne Bedingung', () => {
+    /* Vorher entschied eine Bedingung, WANN sie gefüttert wird — erst nach
+     * Preislinien, dann nach Preislinien ODER Markern. Beide Male war die
+     * Bedingung die Fehlerquelle. Eine Bedingung, die es nicht gibt, kann
+     * nicht falsch sein.
+     *
+     * Die Serie ist transparent und trägt dieselben Schlusskurse, die der
+     * Chart ohnehin hält — ein paar hundert Zahlen. */
+    const text = quelle();
+    const ab = text.indexOf('const feedLineHost = (): void => {');
+    expect(ab, 'feedLineHost nicht gefunden').toBeGreaterThan(0);
+    const block = text.slice(ab, text.indexOf('\n  };', ab));
+    expect(block).toContain('lineHost.setData(cachedRows.map(');
+    expect(block).not.toContain('?');
+  });
+
+  it('kein lineHostFed-Schalter mehr', () => {
+    expect(quelle()).not.toContain('lineHostFed');
+  });
+
+  it('und keine Versorgungs-Bedingung mehr', () => {
+    expect(quelle()).not.toContain('hostVersorgen');
     expect(quelle()).not.toContain('const brauchtHost = lines.length > 0;');
   });
 });

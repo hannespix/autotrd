@@ -544,7 +544,6 @@ export async function buildPriceChart(
     ...Y,
   });
   const priceLines = new Map<string, ReturnType<typeof lineHost.createPriceLine>>();
-  let lineHostFed = false;
 
   // Für setCrosshair: Close je Handelstag (setCrosshairPosition braucht
   // neben der Zeit auch einen Preis auf der Serie)
@@ -577,29 +576,38 @@ export async function buildPriceChart(
   const SOLID_OPTS = { upColor: '#26cf9d', borderVisible: false, borderUpColor: '#26cf9d' };
   const HOLLOW_OPTS = { upColor: 'rgba(0,0,0,0)', borderVisible: true, borderUpColor: '#26cf9d' };
 
-  /** Träger-Serie füttern — nur solange sie etwas trägt (sonst leer). */
-  const feedLineHost = (): void => {
-    lineHost.setData(
-      lineHostFed ? (cachedRows.map((r) => ({ time: r.time, value: r.close })) as never) : [],
-    );
-  };
-
-  /** Wie viele Marker gerade hängen — siehe `hostVersorgen`. */
-  let markerAnzahl = 0;
-
   /**
-   * Die Träger-Serie mit Daten versorgen, sobald sie gebraucht wird.
+   * Träger-Serie füttern — IMMER, sobald der Chart Daten hat.
    *
-   * Sie trägt zweierlei: Preislinien (Einstand, Stop, Ziel) und seit dem
-   * 11.08. auch die MARKER (Einstiegs-Punkt, News, Veto). Beide zeichnet
-   * Lightweight Charts nur, wenn die tragende Serie sichtbar IST und Daten
-   * hat — deshalb hängen sie hier und nicht an den Kerzen.
+   * ── Owner-Meldung 11.08., zweite Runde ──────────────────────────────────
+   *
+   * „nur wenn die Indikatoren auf Kerzen stehen, dann werden News und andere
+   * Sachen angezeigt. sobald ich auf Bars oder ähnliches stelle, dann werden
+   * News und die anderen Sachen ausgeblendet."
+   *
+   * Die Träger-Serie hängt an VIER Dingen, und alle vier brechen, wenn sie
+   * leer oder unsichtbar ist:
+   *
+   *   1. Preislinien (Einstand, Stop, Trailing, Ziel) — seit 04.08.
+   *   2. Marker (Einstiegs-Punkt, News, Veto) — seit heute früh.
+   *   3. `coords()` rechnet Preis → Pixel. Daran hängen die gezeichneten
+   *      Trendlinien, Horizontalen und Rechtecke sowie der Prognose-Pfeil.
+   *   4. `onClick()` rechnet Pixel → Preis. Das ist das ZEICHNEN selbst.
+   *
+   * Punkt 3 und 4 liefen bis eben über die Kerzen-Serie — und die ist bei
+   * Bars, Linie, Fläche und im Vektor-Look unsichtbar. Auf einer
+   * ausgeblendeten Serie geben `priceToCoordinate`/`coordinateToPrice` kein
+   * brauchbares Ergebnis: Die Zeichnungen verschwanden, und neue ließen sich
+   * gar nicht erst setzen. Das ist das „und die anderen Sachen" aus der
+   * Meldung.
+   *
+   * Deshalb keine Sparsamkeit mehr: Die Serie ist transparent und trägt
+   * dieselben Schlusskurse, die der Chart ohnehin hält — ein paar hundert
+   * Zahlen. Eine Bedingung, die entscheidet, WANN sie gefüttert wird, ist
+   * eine Bedingung, die falsch sein kann. Die hatten wir jetzt zweimal.
    */
-  const hostVersorgen = (geplanteLinien = priceLines.size): void => {
-    const braucht = geplanteLinien > 0 || markerAnzahl > 0;
-    if (braucht === lineHostFed) return;
-    lineHostFed = braucht;
-    feedLineHost();
+  const feedLineHost = (): void => {
+    lineHost.setData(cachedRows.map((r) => ({ time: r.time, value: r.close })) as never);
   };
 
   const renderPrice = (): void => {
@@ -731,13 +739,16 @@ export async function buildPriceChart(
     onClick(cb: (price: number | null) => void): void {
       chart.subscribeClick((param) => {
         const y = param.point?.y;
-        cb(y == null ? null : (candle.coordinateToPrice(y) as number | null));
+        // Träger-Serie, nicht Kerzen: Die sind bei Bars/Linie/Fläche unsichtbar,
+        // und dort liefert die Umrechnung nichts Brauchbares (Owner 11.08.).
+        cb(y == null ? null : (lineHost.coordinateToPrice(y) as number | null));
       });
     },
     coords(time: string | number, price: number): { x: number | null; y: number | null } {
       return {
         x: chart.timeScale().timeToCoordinate(zuAchse(time) as never) as number | null,
-        y: candle.priceToCoordinate(price) as number | null,
+        // s. onClick — die Kerzen-Serie ist nicht immer sichtbar.
+        y: lineHost.priceToCoordinate(price) as number | null,
       };
     },
     setArea(points, colors): void {
@@ -862,8 +873,6 @@ export async function buildPriceChart(
      * dieselbe Linie.
      */
     setMarkers(markers): void {
-      markerAnzahl = markers.length;
-      hostVersorgen();
       lineHost.setMarkers(
         markers
           .map((m) => ({ ...m, time: zuAchse(m.time) }))
@@ -878,9 +887,6 @@ export async function buildPriceChart(
           priceLines.delete(key);
         }
       }
-      // VOR dem Anlegen versorgen: `lines.length` ist der Stand von gleich,
-      // `priceLines.size` noch der von eben.
-      hostVersorgen(lines.length);
       for (const spec of lines) {
         const opts = {
           price: spec.price,
