@@ -10,6 +10,7 @@ import {
   DEFAULT_RISK_PER_TRADE_PCT,
   DEFAULT_STRATEGY,
   EVIDENCE_DEFAULTS,
+  eingabeStueckzahl,
   MAX_LEVERAGE,
   CORE_PCT_CAP,
   DEFAULT_CORE_PCT,
@@ -5345,7 +5346,7 @@ function openOrderTicket(side: 'buy' | 'sell'): void {
 function updateOrderPreview(): void {
   if (!st) return;
   const sym = ($('otSym') as HTMLInputElement).value.trim().toUpperCase();
-  const qty = Math.max(1, Number(($('otQty') as HTMLInputElement).value) || 1);
+  const qty = eingabeStueckzahl(($('otQty') as HTMLInputElement).value);
   const risk = $('otRisk');
   const age = $('otAge');
   const q = sym === st.currentSymbol ? st.lastQuote : null;
@@ -5354,14 +5355,32 @@ function updateOrderPreview(): void {
     age.textContent = '';
     return;
   }
-  const exposure = qty * q.price;
+  /* Schließt diese Order eine offene Position, gilt die eingetippte Menge
+   * NICHT (Audit-Befund 11.08.).
+   *
+   * Der Server schließt beim Verkauf einer Long-Position (und beim Eindecken
+   * eines Shorts) immer die GANZE Position — `planeMenge` gibt `pos.qty`
+   * zurück und ignoriert `req.qty`. Die Vorschau rechnete trotzdem mit dem
+   * Feldwert: Wer 100 Stück QQQ zu 250 hielt und Shift+S drückte, las
+   * „1 × 250,00 = 250,00 $ (0,3 % vom Cash)" und liquidierte mit dem
+   * Bestätigen 25.000 $. Die Zahl auf dem Bildschirm war um den Faktor 100
+   * falsch — genau bei der Entscheidung, die sie stützen soll. */
+  const offen = st.positions.find((p) => p.symbol === sym);
+  const schliesst =
+    offen !== undefined &&
+    (offen.side === 'short' ? st.orderSide === 'buy' : st.orderSide === 'sell');
+  const wirkMenge = schliesst ? offen.qty : qty;
+  const exposure = wirkMenge * q.price;
   const cash = st.wallet?.paperBalance ?? null;
   const pct = cash && cash > 0 ? ` (${((exposure / cash) * 100).toFixed(1)} % vom Cash)` : '';
   const sl = st.strategy.engine.stopLossPct;
   const slLevel = st.orderSide === 'buy' ? q.price * (1 - sl / 100) : q.price * (1 + sl / 100);
-  risk.textContent =
-    `${qty} × ${fmtNum(q.price)} = $${exposure.toLocaleString('en-US', { maximumFractionDigits: 2 })}` +
-    `${pct} · Stop-Level ~${fmtNum(slLevel)} (${sl} %)`;
+  risk.textContent = schliesst
+    ? `Schließt die GANZE Position: ${wirkMenge} × ${fmtNum(q.price)} = ` +
+      `$${exposure.toLocaleString('en-US', { maximumFractionDigits: 2 })}${pct} · ` +
+      'die eingetippte Menge gilt hier nicht'
+    : `${qty} × ${fmtNum(q.price)} = $${exposure.toLocaleString('en-US', { maximumFractionDigits: 2 })}` +
+      `${pct} · Stop-Level ~${fmtNum(slLevel)} (${sl} %)`;
   const secs = Math.max(0, Math.round((Date.now() - Date.parse(q.updatedAt)) / 1000));
   age.textContent = `Kurs ${secs < 90 ? `${secs} s` : `${Math.round(secs / 60)} min`} alt (zentraler 5-min-Scan)`;
   age.style.color = secs > 600 ? 'var(--rd)' : '';
@@ -5369,11 +5388,24 @@ function updateOrderPreview(): void {
 
 async function submitOrderTicket(): Promise<void> {
   if (!st) return;
+  const btn = $('otSubmit') as HTMLButtonElement;
+  /* Wiedereintritt abfangen (Audit-Befund 11.08.).
+   *
+   * Der Doppelklick-Schutz war allein `btn.disabled` — und ein deaktivierter
+   * Knopf feuert kein `click` mehr. Der ENTER-Pfad hängt aber am Eingabefeld,
+   * nicht am Knopf: Shift+B öffnet das Ticket mit dem Fokus in `#otQty`, und
+   * zweimal schnell Enter (oder gedrückt gehaltenes Enter mit Tastenwieder-
+   * holung) schickte zwei `callTrade`.
+   *
+   * Serverseitig ist ein Kauf mit ausdrücklicher Menge auf eine bestehende
+   * Long-Position ein NACHKAUF (`nQty = pos.qty + qty`). Aus den bestätigten
+   * 10 Stück wurden also 20; das Fenster schloss nach der ersten Antwort und
+   * verdeckte die zweite. */
+  if (btn.disabled) return;
   const sym = ($('otSym') as HTMLInputElement).value.trim().toUpperCase();
-  const qty = Math.max(1, Math.floor(Number(($('otQty') as HTMLInputElement).value) || 1));
+  const qty = eingabeStueckzahl(($('otQty') as HTMLInputElement).value);
   const err = $('otErr');
   err.hidden = true;
-  const btn = $('otSubmit') as HTMLButtonElement;
   btn.disabled = true;
   try {
     await callTrade({ symbol: sym, side: st.orderSide, qty });
@@ -6450,8 +6482,10 @@ function renderPortfolio(): void {
       symTd.appendChild(tag);
     }
     tr.querySelector('[data-exit]')!.addEventListener('click', () => {
-      // Short schließt per KAUF (Eindecken), Long per Verkauf
-      void manualTrade(p.symbol, short ? 'buy' : 'sell');
+      // Short schließt per KAUF (Eindecken), Long per Verkauf — beides OHNE
+      // Menge, der Server schließt die ganze Position (Audit-Befund 11.08.,
+      // Begründung bei `positionSchliessen`).
+      void positionSchliessen(p.symbol, short ? 'buy' : 'sell');
     });
     body.appendChild(tr);
     // Exit-Transparenz (Owner-Queue): Abstände zu Stop/Trailing/Ziel + der
@@ -7593,11 +7627,45 @@ function wireTradeJournal(uid: string): void {
   });
 }
 
+/**
+ * Eine offene Position schließen — Long per Verkauf, Short per Eindecken.
+ *
+ * ── Der Audit-Befund vom 11.08. ───────────────────────────────────────────
+ *
+ * Der „Exit"-Knopf in der Positionstabelle rief `manualTrade`, und die reicht
+ * bei `side === 'buy'` die Menge aus `#mQty` mit — dem Stückzahlfeld der
+ * TRADE-KARTE, das mit dieser Position nichts zu tun hat. Für einen Long
+ * (`sell`, ohne Menge) ging das gut, für einen Short (`buy`, mit Menge) nicht.
+ *
+ * Der Server rettet die Menge zwar (`planeMenge` gibt bei Schließungen
+ * `pos.qty` zurück), aber die VALIDIERUNG läuft davor: `qty` muss eine ganze
+ * Zahl zwischen 1 und 10.000 sein. Wer in der Trade-Karte „Max" für ein
+ * günstiges Symbol geklickt hatte, hatte dort z. B. 25.000 stehen — der Klick
+ * auf „Cover" wurde dann mit „qty muss eine ganze Zahl 1–10000 sein"
+ * abgelehnt, und die Meldung landete in `#mtHint`, also in einer ANDEREN
+ * Karte. Bei der Position selbst passierte sichtbar nichts; der Short blieb
+ * offen, obwohl der Nutzer ihn geschlossen glaubte. Derselbe Klick auf einen
+ * Long funktionierte.
+ *
+ * `schliessePositionen` (der Massen-Pfad) macht es seit jeher richtig: keine
+ * Menge. Diese Funktion ist dieselbe Regel für den Einzelfall.
+ */
+async function positionSchliessen(symbol: string, side: 'buy' | 'sell'): Promise<void> {
+  const hint = $('mtHint');
+  hint.textContent = 'Sende Order…';
+  try {
+    await callTrade({ symbol, side });
+    hint.textContent = `Position geschlossen: ${symbol} — Ausführung inkl. Gebühren, siehe Trade-Historie.`;
+  } catch (e) {
+    hint.textContent = (e as { message?: string }).message ?? 'Order fehlgeschlagen';
+  }
+}
+
 async function manualTrade(symbol: string, side: 'buy' | 'sell'): Promise<void> {
   const hint = $('mtHint');
   hint.textContent = 'Sende Order…';
   try {
-    const qty = Math.max(1, Number(($('mQty') as HTMLInputElement).value) || 1);
+    const qty = eingabeStueckzahl(($('mQty') as HTMLInputElement).value);
     await callTrade({ symbol, side, ...(side === 'buy' ? { qty } : {}) });
     hint.textContent = `${side === 'buy' ? 'Gekauft' : 'Verkauft'}: ${symbol} — Ausführung inkl. Gebühren, siehe Trade-Historie.`;
   } catch (e) {
@@ -7624,7 +7692,7 @@ function mtDisarm(): void {
 
 /** Summen + Kaufkraft live nachrechnen (gleiche Konditionen wie der Server). */
 function mtRecompute(): void {
-  const qty = Math.max(1, Number(($('mQty') as HTMLInputElement).value) || 1);
+  const qty = eingabeStueckzahl(($('mQty') as HTMLInputElement).value);
   const price = mtState.price;
   const balance = st?.wallet?.paperBalance ?? null;
   const fmt = (v: number): string => money(v);
@@ -7742,7 +7810,7 @@ function wireManualTrade(): void {
       return;
     }
     mtDisarm();
-    const qty = Math.max(1, Number(($('mQty') as HTMLInputElement).value) || 1);
+    const qty = eingabeStueckzahl(($('mQty') as HTMLInputElement).value);
     const total = mtState.price !== null ? money(qty * mtState.price * (1 + PAPER_FEE_RATE)) : '';
     $(side === 'buy' ? 'mtBuy' : 'mtSell').textContent =
       side === 'buy'

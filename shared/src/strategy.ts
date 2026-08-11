@@ -974,3 +974,48 @@ export function exitUmbauPlan(
   }
   return Object.keys(plan).length > 0 ? plan : {};
 }
+
+// ── Stückzahl aus einem Eingabefeld (Audit-Befund 11.08.) ───────────────────
+
+/**
+ * Größte Stückzahl, die eine Handeingabe tragen darf.
+ *
+ * Die Grenze steht seit M4 im `trade`-Callable und ist der Grund, warum sie
+ * hier steht: Sie MUSS an beiden Enden dieselbe sein.
+ */
+export const MAX_QTY = 10_000;
+
+/**
+ * Die Stückzahl aus einem Eingabefeld — nach genau der Regel, die der Server
+ * durchsetzt.
+ *
+ * ── Der Audit-Befund ──────────────────────────────────────────────────────
+ *
+ * Das Dashboard las die Menge an fünf Stellen aus einem Feld, mit vier
+ * verschiedenen Antworten. Zwei davon standen im selben Ablauf:
+ *
+ *   Vorschau (`updateOrderPreview`)  Math.max(1, Number(v) || 1)
+ *   Absenden (`submitOrderTicket`)   Math.max(1, Math.floor(Number(v) || 1))
+ *
+ * Die Felder sind `type="number"` ohne `step`, nehmen also `2,7`. Die
+ * Vorschau rechnete dann mit 2,7 (`2,7 × 250,00 = 675,00 $`), ausgeführt
+ * wurden 2 Stück (500,00 $). Kapitalbindung, Prozent-vom-Cash und Stop-Level
+ * bezogen sich auf eine Order, die so nie stattfand.
+ *
+ * In der Trade-Karte fehlte das Abrunden GANZ — dort rechneten Zwischensumme,
+ * Gebühr, Gesamtbetrag, „Barbestand danach" und der Bestätigungstext
+ * vollständig mit 2,5 Stück durch. Als einziges Ergebnis kam danach die
+ * Server-Absage „qty muss eine ganze Zahl 1–10000 sein". Die gesamte Vorschau
+ * beschrieb eine Order, die das System per Definition nicht ausführen kann.
+ *
+ * ── Warum abrunden und nicht aufrunden ────────────────────────────────────
+ *
+ * Weil eine aufgerundete Kaufmenge mehr Kapital bindet, als der Nutzer
+ * eingetippt hat. Im Zweifel weniger, nie mehr — dieselbe Richtung, die
+ * `clampStrategyRisk` und `sizeOrder` bei jedem Grenzfall nehmen.
+ */
+export function eingabeStueckzahl(roh: string | number | null | undefined): number {
+  const n = typeof roh === 'number' ? roh : Number(roh);
+  if (!Number.isFinite(n)) return 1;
+  return Math.min(MAX_QTY, Math.max(1, Math.floor(n)));
+}
