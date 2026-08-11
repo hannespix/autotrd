@@ -163,3 +163,48 @@ describe('Befund B: die Broker-Karte liest settings.strategy', () => {
     expect(text.slice(ab, bis)).toContain("get('settings.strategy')");
   });
 });
+
+/* ── Befund C: „Depot nicht abrufbar" sah aus wie „stimmt überein" ─────────
+ *
+ * `alpacaPositionen(...).catch(() => [])` machte aus einem gescheiterten
+ * Abruf ein leeres Depot. Der Abgleich fand dann erwartungsgemäß keine
+ * Abweichung, und die Karte meldete „Eigenes Buch und Broker-Depot stimmen
+ * überein."
+ *
+ * Dasselbe Muster, das `brokerAbgleich.ts` an seiner Stelle ausdrücklich
+ * aufgelöst hat: „Ohne sie sähe ein Konto, dessen Broker seit Stunden nicht
+ * antwortet, exakt so aus wie eines ganz ohne Broker." Im Callable stand es
+ * noch — und es ist dieselbe Familie wie `verbindungUnlesbar` aus Paket 1.
+ *
+ * Der Fall ist nicht konstruiert: Nach einem Reset ist das Buch leer, beim
+ * Broker liegen Positionen (der Vorfall vom 05.08., der `adoptBroker` nötig
+ * machte). Antwortet `/v2/account`, aber `/v2/positions` läuft in einen
+ * Timeout, sah der Nutzer eine Unbedenklichkeitsbescheinigung.
+ */
+describe('Befund C: unlesbares Depot ist kein leeres Depot', () => {
+  const pfad = join(import.meta.dirname, '..', 'src', 'callable', 'brokerStatus.ts');
+
+  it('der Fehlschlag wird als solcher festgehalten, nicht zu [] geglättet', () => {
+    const text = readFileSync(pfad, 'utf8');
+    expect(text).not.toContain('alpacaPositionen(modus, keys).catch(() => [])');
+    expect(text).toContain('lesbar: false as const');
+  });
+
+  it('die Meldung nennt den Unterschied', () => {
+    const text = readFileSync(pfad, 'utf8');
+    const ab = text.indexOf('teile.push(');
+    const bis = text.indexOf('logger.info(', ab);
+    const block = text.slice(text.lastIndexOf('teile.push(', bis), bis);
+    expect(block).toContain('!depot.lesbar');
+    expect(block).toContain('UNBEKANNT');
+  });
+
+  it('und das Log ebenso', () => {
+    // Sonst wäre der Befund nur von der Meldung in die Diagnose gewandert:
+    // „abweichungen=0" hieße weiter zweierlei.
+    const text = readFileSync(pfad, 'utf8');
+    const ab = text.indexOf('brokerStatus ${uid}: modus=');
+    expect(ab).toBeGreaterThan(0);
+    expect(text.slice(ab, ab + 400)).toContain("depot.lesbar ? abweichungen.length : 'unbekannt'");
+  });
+});
