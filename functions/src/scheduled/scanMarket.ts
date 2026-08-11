@@ -1951,6 +1951,17 @@ async function collectScanSymbols(now: Date, uhrOffen: boolean | null = null): P
 const BAR_CHUNK = 10;
 
 /**
+ * Wie viele noch nie versorgte Symbole ein Lauf höchstens nachholt.
+ *
+ * Der Deckel schützt gegen den einen Fall, der sonst dauerhaft Last macht:
+ * ein Symbol, das Yahoo überhaupt nicht kennt. Es käme nie in die
+ * `versorgt`-Liste und würde bei jedem Scan neu abgefragt. Mit 40 je Lauf
+ * ist ein frischer Katalog nach vier Scans (20 Minuten) vollständig, und ein
+ * hartnäckiger Ausfall kostet nur seinen Anteil an einem Spark-Bündel.
+ */
+const ERSTVERSORGUNG_MAX = 40;
+
+/**
  * Katalog-Versorgung — seit 28.07. BATCH statt Rotation.
  *
  * Owner-Frage: „kann das tool nicht alles immer parallel beobachten? markt ist
@@ -1967,6 +1978,33 @@ const BAR_CHUNK = 10;
  * Kostenhebel — Firestore-Writes sind teurer als Yahoo-Fetches, und ein
  * geschlossener Markt liefert bis zur Eröffnung denselben Kurs.
  */
+/**
+ * Welche Symbole dieser Lauf mit einem Kurs versorgt.
+ *
+ * Zwei Gruppen, und nur die erste ist offensichtlich:
+ *
+ *   1. Alles, dessen Markt gerade OFFEN ist — dort kann sich der Kurs
+ *      bewegt haben.
+ *   2. Alles, was noch NIE einen Kurs bekommen hat, unabhängig von der
+ *      Marktzeit. Für ein Symbol ohne Bestand ist der letzte Schlusskurs
+ *      nicht redundant, sondern genau das Fehlende.
+ *
+ * Rein gehalten, weil hier zwei Fehler lauern, die im Betrieb schwer zu
+ * sehen sind: ohne Gruppe 2 bleibt ein frisch aufgenommenes Symbol bis zur
+ * nächsten Marktöffnung leer (bei US-Aktien über ein Wochenende gut zwei
+ * Tage), ohne den Deckel wird ein Symbol, das die Kursquelle nicht kennt,
+ * bei jedem Scan aufs Neue abgefragt.
+ */
+export function zuVersorgende(
+  catalog: readonly string[],
+  offen: readonly string[],
+  versorgt: ReadonlySet<string>,
+  max: number = ERSTVERSORGUNG_MAX,
+): string[] {
+  const erstmals = catalog.filter((s) => !versorgt.has(s)).slice(0, Math.max(0, max));
+  return [...new Set([...offen, ...erstmals])];
+}
+
 async function supplyCatalog(
   scannedSet: Set<string>,
   now: Date,
@@ -1978,15 +2016,39 @@ async function supplyCatalog(
 
   // Nur offene Klassen: ein geschlossener Markt kann keinen neuen Kurs haben.
   const offen = catalog.filter((s) => offenMitUhr(s, now, uhrOffen));
-  const quotes: Map<string, SparkQuote> =
-    offen.length > 0 ? await getSparkBatch(offen) : new Map();
 
   const stateRef = db.doc('meta/catalogSupply');
-  const cursor = ((await stateRef.get()).get('barCursor') as number | undefined) ?? 0;
+  const stateSnap = await stateRef.get();
+  const cursor = (stateSnap.get('barCursor') as number | undefined) ?? 0;
+
+  /* ── Erstversorgung: der Satz oben gilt nur für Symbole, die schon einen
+   *    Kurs HABEN (Owner-Screenshot 11.08., 08:31 deutscher Zeit) ──────────
+   *
+   * „Ein geschlossener Markt kann keinen neuen Kurs haben" ist richtig — für
+   * ein Symbol mit Bestand. Für ein Symbol OHNE Kurs ist es genau falsch
+   * herum: Der letzte Schlusskurs ist dort nicht redundant, er ist das, was
+   * fehlt.
+   *
+   * Sichtbar wurde das beim Alpaca-Katalog-Umbau: 54 neue US-Aktien kamen
+   * gestern Abend dazu, seither war der US-Markt durchgehend geschlossen —
+   * also blieben sie in der Oberfläche alle auf „--". Das ist kein Randfall,
+   * sondern der Normalfall für jeden europäischen Nutzer, der die App
+   * morgens öffnet: Von 132 Symbolen zeigten vier einen Kurs.
+   *
+   * Gedeckelt, weil ein Symbol, das Yahoo dauerhaft nicht kennt, sonst bei
+   * JEDEM Scan erneut abgefragt würde. Nur erfolgreich geholte kommen in die
+   * Liste; 40 je Lauf heißt, der ganze Katalog ist nach vier Scans versorgt
+   * (20 Minuten), und ein hartnäckiger Ausfall kostet nur seinen Anteil.
+   */
+  const versorgt = new Set((stateSnap.get('versorgt') as string[] | undefined) ?? []);
+  const zuHolen = zuVersorgende(catalog, offen, versorgt);
+
+  const quotes: Map<string, SparkQuote> =
+    zuHolen.length > 0 ? await getSparkBatch(zuHolen) : new Map();
 
   const batch = db.batch();
   let fetched = 0;
-  for (const sym of offen) {
+  for (const sym of zuHolen) {
     const q = quotes.get(sym);
     if (!q) continue; // dieser Chunk hat gepatzt — nächster Scan in 5 min
     batch.set(
@@ -2031,6 +2093,10 @@ async function supplyCatalog(
       lastFetched: fetched,
       catalogSize: catalog.length,
       openSize: offen.length,
+      // Nur was WIRKLICH einen Kurs bekommen hat — ein Fehlschlag darf das
+      // Symbol nicht als erledigt markieren, sonst bliebe es bis zur
+      // nächsten Marktöffnung leer.
+      versorgt: [...new Set([...versorgt, ...quotes.keys()])],
     },
     { merge: true },
   );
