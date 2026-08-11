@@ -24,6 +24,34 @@ export const TILT_CAP = 1.5; // Tilt ≤ dies × Tagesvolatilität
 export const MIN_SAMPLES_PER_COMBO = 8;
 export const MIN_TOTAL_SCORES = 20;
 
+/**
+ * Fassung der PROGNOSERECHNUNG — bei jeder inhaltlichen Änderung erhöhen.
+ *
+ * ── Der Fehler, den das verhindert (Audit 11.08.) ─────────────────────────
+ *
+ * `meta/forecastStats.combos` wächst über `FieldValue.increment` — jede
+ * bewertete Prognose addiert auf einen Zähler, der nie zurückgesetzt wird.
+ * Aus diesen Zählern wählt `bestParams()` die Gewichtung und den Lookback,
+ * mit denen die Engine anschließend prognostiziert und über `_forecast_vote`
+ * ECHTE TRADES beeinflusst.
+ *
+ * Solange die Rechnung gleich bleibt, ist das genau richtig: eine wachsende
+ * Stichprobe derselben Frage. Ändert man aber die Features, die Gewichte,
+ * die Regime-Dämpfung oder den Horizont, dann addieren sich ab dem Deploy
+ * die Treffer ZWEIER verschiedener Rechnungen in denselben Zähler — und zwar
+ * für immer, weil nichts sie je trennt. Die Trefferquote sähe weiter
+ * plausibel aus und wäre ein Mittel aus zwei Messungen.
+ *
+ * Genau dieselbe Falle wie bei `TAG_RUECKBLICK_V` (dort am 10.08. zugeschlagen)
+ * und bei `SCHREIBWEISE_V` — nur auf einem Pfad, der Geld bewegt.
+ *
+ * Beim Sprung werden die Zähler VERWORFEN, nicht fortgeschrieben. Das kostet
+ * die gesammelte Historie, und das ist der Preis: Sie beantwortet eine Frage,
+ * die wir nicht mehr stellen. Eine falsche große Stichprobe ist schlechter
+ * als eine richtige kleine — bei einer Zahl, die Trades steuert, entscheidend.
+ */
+export const FORECAST_V = 1;
+
 export interface ForecastPoint {
   time: string; // YYYY-MM-DD
   value: number;

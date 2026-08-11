@@ -27,6 +27,7 @@ import {
   evaluate,
   classify,
   effectivePriceForClass,
+  positionValue,
 } from '../../../shared/src/index.js';
 
 export const RISK_LIMITS = {
@@ -305,15 +306,29 @@ export function shadowTrade(
   return { book: { balance: book.balance + pos.qty * eff, positions }, executed: true };
 }
 
-/** Balance + Positionswert zu aktuellen Preisen (fehlender Preis → Einstand).
- *  Shorts stecken mit Margin + unrealisiertem P&L im Depotwert. */
+/**
+ * Balance + Positionswert zu aktuellen Preisen.
+ *
+ * ── Warum das `positionValue` ruft und nicht selbst rechnet (Audit 11.08.) ─
+ *
+ * Hier stand dieselbe Formel ein zweites Mal — mit einem Unterschied, der
+ * kein Stilfrage war: `positionValue` fällt bei einem Preis von 0 auf den
+ * Einstand zurück (`price > 0`), diese Kopie bewertete die Position mit
+ * NULL (`prices.get(sym) ?? pos.avgEntry` greift nur bei `undefined`).
+ *
+ * Ein Nullkurs aus einer patzenden Quelle hätte das Schattendepot also einen
+ * Totalverlust anzeigen lassen — und das Schattendepot ist die Grundlage der
+ * Beförderungsentscheidung, also die Frage, welche Strategie echtes Geld
+ * bekommt. Ein einziger kaputter Kurs hätte eine funktionierende Strategie
+ * aus dem Rennen genommen, ohne dass irgendwo ein Fehler stünde.
+ *
+ * Shorts stecken weiterhin mit Margin + unrealisiertem P&L im Depotwert —
+ * unverändert, nur jetzt an einer Stelle definiert.
+ */
 export function shadowEquity(book: ShadowBook, prices: Map<string, number>): number {
   let equity = book.balance;
   for (const [sym, pos] of Object.entries(book.positions)) {
-    const live = prices.get(sym) ?? pos.avgEntry;
-    equity += pos.side === 'short'
-      ? pos.qty * pos.avgEntry + (pos.avgEntry - live) * pos.qty
-      : pos.qty * live;
+    equity += positionValue(pos, prices.get(sym) ?? null);
   }
   return Math.round(equity * 100) / 100;
 }

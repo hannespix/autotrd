@@ -212,6 +212,8 @@ export async function brokerVerbindungLesend(
     // Auch das NEGATIVE Ergebnis wird gemerkt: Konten ohne Broker sind der
     // Normalfall, und genau für sie wäre der Read je Trade reine Verschwendung.
     verbindungCache.set(uid, { bis: jetztMs + VERBINDUNG_TTL_MS, wert });
+    // Gelesen heißt: kein Lesefehler mehr, egal was drinstand.
+    unlesbar.delete(uid);
     return wert;
   } catch (err) {
     // Nicht lesbar heißt: nicht routen. Im eigenen Buch weiterhandeln ist
@@ -220,8 +222,43 @@ export async function brokerVerbindungLesend(
     // sein, und ein gemerkter Fehlschlag würde eine Minute lang jedes Routing
     // stillschweigend abschalten.
     logger.warn(`brokerVerbindung ${uid} nicht lesbar`, err);
+    unlesbar.add(uid);
     return null;
   }
+}
+
+/**
+ * Merkzettel für „beim letzten Lesen ging es schief".
+ *
+ * ── Wozu (Audit 11.08.) ───────────────────────────────────────────────────
+ *
+ * `brokerVerbindungLesend` gibt für ZWEI verschiedene Sachverhalte `null`
+ * zurück: „dieses Konto hat keinen Broker" (der Normalfall) und „ich konnte
+ * nicht nachsehen" (ein Problem). Für das Routing ist beides gleich — nicht
+ * routen ist in beiden Fällen richtig, und deshalb war das lange kein Fehler.
+ *
+ * Für die MELDUNG ist es das Gegenteil. `brokerAbgleich.ts` macht aus dem
+ * `null` ein `zustand: 'kein_broker'`, und sein eigener Modulkopf beschreibt
+ * genau, warum das falsch ist:
+ *
+ *   „Ohne sie sähe ein Konto, dessen Broker seit Stunden nicht antwortet, im
+ *    Heartbeat exakt so aus wie eines ganz ohne Broker."
+ *
+ * Der Fall, gegen den `AbgleichZustand.fehler` gebaut wurde, trat über den
+ * Firestore-Pfad also trotzdem ein: Das Konto verschwand aus `verbunden`,
+ * und niemand sah es.
+ *
+ * Bewusst ein Merkzettel und kein Rückgabewert: Die Altschnittstelle bleibt
+ * damit unverändert (`null` = nicht routen), und die einzige Stelle, die den
+ * Unterschied BRAUCHT, fragt ihn ab. Der Eintrag hält nur bis zur nächsten
+ * erfolgreichen Lesung — ein vorübergehender Fehler darf nicht dauerhaft als
+ * Problem gemeldet werden.
+ */
+const unlesbar = new Set<string>();
+
+/** War die letzte Leseprüfung dieses Kontos ein FEHLER (statt „kein Broker")? */
+export function verbindungUnlesbar(uid: string): boolean {
+  return unlesbar.has(uid);
 }
 
 export interface RoutingErgebnis {
