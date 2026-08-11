@@ -97,7 +97,7 @@ import {
   shadowTrade,
   type ShadowBook,
 } from '../core/rulesTrading.js';
-import { accuracyWeightedVote } from '../../../shared/src/index.js';
+import { accuracyWeightedVote, resetLaeuft } from '../../../shared/src/index.js';
 import { runForecast, runIntradayForecast, type LiveForecast } from '../core/forecaster.js';
 import { fetchNewsSnapshot } from '../core/news.js';
 import { evaluateIntradayDue } from './evalForecasts.js';
@@ -364,6 +364,14 @@ export interface KontenStats {
   ohne_strategie: number;
   /** Übersprungen: Broker-Modus nicht 'paper' (M14-Verriegelung). */
   live_verriegelt: number;
+  /**
+   * Übersprungen: Auf diesem Konto läuft gerade ein Reset (Befund 11.08.).
+   *
+   * Steht hier dauerhaft eine Zahl > 0, hängt ein Reset — der Marker
+   * verfällt nach `RESET_SPERRE_MIN` Minuten, eine Zahl über mehrere Scans
+   * hinweg wäre also ein Hinweis, kein Normalzustand.
+   */
+  reset_laeuft: number;
 }
 
 /**
@@ -498,6 +506,7 @@ async function executeUserTrades(
     gesperrt: 0,
     momentum: 0,
     ohne_strategie: 0,
+    reset_laeuft: 0,
     live_verriegelt: 0,
   };
   const users = await db
@@ -636,6 +645,19 @@ async function executeUserTrades(
     if (!mayTrade(userDoc.data())) {
       if (accessLevelOf(userDoc.data()) === 'pending') konten.wartet_freischaltung += 1;
       else konten.gesperrt += 1;
+      continue;
+    }
+    /* Läuft gerade ein Reset, bleibt dieses Konto diesen Scan über außen vor
+     * (Audit-Befund 11.08.). Ein Trade mitten im Reset hinterlässt einen
+     * Zustand, den hinterher niemand mehr auseinanderdividiert: eine
+     * Position, deren Kauf-Trade schon im Archiv liegt, oder eine Abbuchung,
+     * die der neue Startkontostand überschreibt.
+     *
+     * Ein Scan auszulassen kostet fünf Minuten Handelszeit. Die Alternative
+     * kostet die Messgrundlage — und die ist genau das, was der Reset
+     * herstellen soll. */
+    if (resetLaeuft(userDoc.get('risk.resetLaeuftSeit'), new Date())) {
+      konten.reset_laeuft += 1;
       continue;
     }
     // Momentum-Wallets gehören momentumRun (Hantel-Umbau 28.07.). Der Scan

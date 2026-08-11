@@ -117,6 +117,51 @@ export function bezugTageAlt(vortagEquityAm?: string, heute?: string): number | 
   return Math.round((b - a) / 86_400_000);
 }
 
+/**
+ * Wie lange ein Reset-Marker den Handel sperrt (Minuten).
+ *
+ * ── Warum es diesen Marker gibt (Audit-Befund 11.08.) ─────────────────────
+ *
+ * `resetWallet` arbeitet in vielen Schritten: Trades archivieren (seitenweise
+ * zu 200), fünf Unterlisten rekursiv löschen, Schattendepots leeren, zuletzt
+ * das Wallet neu setzen. Bei einer gewachsenen Historie dauert das
+ * Sekunden bis Minuten — und der Scan läuft alle fünf Minuten weiter.
+ *
+ * Fällt ein Scan in dieses Fenster, entsteht ein Zustand, den niemand mehr
+ * auseinanderdividieren kann: eine Position, die nach dem `recursiveDelete`
+ * angelegt wurde und deshalb bleibt, während ihr Kauf-Trade schon ins Archiv
+ * gewandert ist. Oder ein Kauf, dessen Abbuchung das abschließende
+ * `wallet.paperBalance = startkapital` einfach überschreibt — Geld ausgegeben,
+ * Saldo wieder voll.
+ *
+ * ── Warum der Marker VERFÄLLT ─────────────────────────────────────────────
+ *
+ * Ein Marker ohne Verfall ist eine Falle: Stirbt die Funktion mitten im Reset
+ * (Timeout, Deploy), bliebe er für immer stehen — und das Konto handelte nie
+ * wieder, ohne dass irgendwo ein Fehler steht. Zehn Minuten sind großzügig
+ * gegenüber jedem realistischen Reset und kurz genug, dass ein abgestürzter
+ * Lauf höchstens zwei Scans kostet.
+ */
+export const RESET_SPERRE_MIN = 10;
+
+/**
+ * Läuft gerade ein Reset auf diesem Konto?
+ *
+ * Alles, was kein brauchbarer Zeitstempel ist, gilt als „kein Reset" — ein
+ * kaputtes Feld darf ein Konto nicht stilllegen.
+ */
+export function resetLaeuft(marker: unknown, jetzt: Date, maxMin = RESET_SPERRE_MIN): boolean {
+  if (typeof marker !== 'string' || marker === '') return false;
+  const t = Date.parse(marker);
+  if (!Number.isFinite(t)) return false;
+  const alterMin = (jetzt.getTime() - t) / 60_000;
+  // Betrag, nicht Vorzeichen: Ein Marker aus der Zukunft (Uhr-Versatz
+  // zwischen Diensten) soll sperren, aber ein um Jahre verrutschter Stempel
+  // darf das Konto nicht jahrelang stilllegen. Beide Richtungen verfallen
+  // nach demselben Fenster.
+  return Math.abs(alterMin) < maxMin;
+}
+
 /** Grenze, die als „aus" gilt. */
 export const BREAKER_AUS = 0;
 

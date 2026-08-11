@@ -10,6 +10,7 @@ import {
   bucketKey,
   classify,
   pruefeBreaker,
+  resetLaeuft,
   tradableSymbols,
   type Quote,
   type Strategy,
@@ -81,6 +82,19 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
    * Bremse genau den Ausweg, für den sie ausgelöst hat. Ein Leerverkauf ist
    * allerdings ein Einstieg und fällt darunter.
    */
+  /* Läuft gerade ein Reset, ist JEDER Handel gesperrt — auch der Verkauf
+   * (Audit-Befund 11.08.). Anders als bei der Notbremse geht es hier nicht
+   * um Risiko, sondern um Buchführung: Ein Verkauf mitten im Archivieren
+   * hinterlässt einen Trade, den der Reset nicht mehr mitnimmt, oder eine
+   * Gutschrift, die der neue Startkontostand gleich überschreibt. Die Sperre
+   * dauert höchstens `RESET_SPERRE_MIN` Minuten und verfällt von selbst. */
+  if (resetLaeuft(userSnap.get('risk.resetLaeuftSeit'), new Date())) {
+    throw new HttpsError(
+      'failed-precondition',
+      'Auf diesem Konto läuft gerade ein Reset — bitte einen Moment warten und erneut versuchen.',
+    );
+  }
+
   const istEinstieg =
     side === 'buy'
     || (side === 'sell'
