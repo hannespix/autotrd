@@ -309,6 +309,56 @@ await seite.waitForTimeout(150);
   await seite.screenshot({ path: `${SHOTS}/kerzen-aus.png` });
 }
 
+/* ── Y-Modi und Preisskalen ───────────────────────────────────────────────
+ *
+ * Vier Zustände, die die Oberfläche anbietet und die der Prüfstand bis eben
+ * nicht kannte:
+ *
+ *   yMode 'fix'   — feste Spanne über `autoscaleInfoProvider`. Liefert der
+ *                   Provider Unsinn, zieht LWC die Skala auf einen Strich
+ *                   zusammen oder zeichnet gar nichts.
+ *   yMode 'frei'  — der Nutzer zieht selbst.
+ *   Skala log     — bricht bei Werten <= 0.
+ *   Skala prozent — eigene Rechnung relativ zum ersten sichtbaren Bar.
+ *
+ * Der Owner arbeitet mit diesen Schaltern; ein Prüfstand, der nur den
+ * Standardzustand kennt, prüft nicht seinen Chart. */
+await seite.evaluate((bs) => {
+  const c = window.__chart;
+  c.setChartType('candles');
+  c.setOverlays([]);
+  c.setForecast(null);
+  c.setArea(null);
+  c.setBars(bs);
+}, bars);
+await seite.waitForTimeout(200);
+
+for (const [name, wirkung] of [
+  ['y:auto', (c) => c.setYMode('auto')],
+  ['y:fix', (c) => c.setYMode('fix')],
+  ['y:frei', (c) => c.setYMode('frei')],
+  ['skala:log', (c) => { c.setYMode('auto'); c.setPriceScaleMode(1); }],
+  ['skala:pct', (c) => c.setPriceScaleMode(2)],
+  ['skala:lin', (c) => c.setPriceScaleMode(0)],
+]) {
+  await seite.evaluate(`(${wirkung.toString()})(window.__chart)`);
+  await seite.waitForTimeout(180);
+  const pixel = await gezeichnet();
+  const co = await seite.evaluate(
+    ([zeit, preis]) => window.__chart.coords(zeit, preis),
+    [letzter.date, letzter.close],
+  );
+  const seitenFehler = await seite.evaluate(() => window.__fehler.slice());
+  const ok = pixel > 500 && co.y !== null && seitenFehler.length === 0;
+  zeilen.push(
+    `${ok ? 'OK  ' : 'FEHL'} ${name.padEnd(10)} pixel=${String(pixel).padStart(6)} ` +
+      `coords.y=${co.y === null ? 'null' : Math.round(co.y)}` +
+      (seitenFehler.length ? ` JS=${seitenFehler.join(' | ')}` : ''),
+  );
+  if (!ok) fehler.push(`${name}: pixel=${pixel} coords=${JSON.stringify(co)} js=${JSON.stringify(seitenFehler)}`);
+  await seite.screenshot({ path: `${SHOTS}/${name.replace(':', '-')}.png` });
+}
+
 console.log(zeilen.join('\n'));
 if (konsole.length > 0) console.log('\nKonsole:\n' + konsole.join('\n'));
 console.log(`\nBilder: ${SHOTS}`);
