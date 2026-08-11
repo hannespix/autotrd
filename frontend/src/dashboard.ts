@@ -9584,6 +9584,63 @@ function onEscape(e: KeyboardEvent): void {
   document.getElementById('olv')?.classList.remove('show');
 }
 
+/**
+ * Modulglobalen Zustand zurücksetzen — beim Abmelden und beim Nutzerwechsel.
+ *
+ * ── Audit-Befunde 11.08. (F9, F10, F11) ───────────────────────────────────
+ *
+ * `unmountDashboard` räumte gründlich auf — aber nur, was im `st`-Objekt
+ * hing. Alles, was als Modulvariable neben `st` liegt, überlebte das
+ * Abmelden und war beim nächsten Anmelden noch da. Drei Wirkungen, die im
+ * Audit getrennt aufgefallen sind und dieselbe Ursache haben:
+ *
+ *  - **Listener-Leck (F11):** `mtState.subs` hält einen `onSnapshot` auf den
+ *    Kurs des zuletzt gewählten Handels-Symbols. Nach dem Abmelden lief er
+ *    weiter — samt Firestore-Verbindung und Kosten, und mit einem Callback,
+ *    das in ein geleertes DOM schreibt.
+ *  - **Scharfe Order überlebt (F11):** `mtState.arm` ist der Zwei-Klick-
+ *    Schutz mit Zeitfenster. Sein `setTimeout` lief nach dem Abmelden weiter
+ *    und griff beim Feuern auf Knöpfe zu, die es nicht mehr gibt.
+ *  - **Fremde Daten beim Nutzerwechsel (F9):** `eigeneLoadouts` und
+ *    `loGewaehlt` gehören dem angemeldeten Konto. Meldet sich auf demselben
+ *    Gerät jemand anders an, sah er bis zum ersten Nachladen die Loadouts
+ *    seines Vorgängers.
+ *  - **Tour startet nie wieder (F10):** `tourAutostartGeprueft` bleibt
+ *    `true`. Der zweite Nutzer auf demselben Gerät bekam die Einführung nie
+ *    zu sehen — genau der Nutzer, der sie am nötigsten hätte.
+ *
+ * Die laufenden Timer (`autoResTimer`, `evTipTimer`) stehen aus demselben
+ * Grund hier: Sie hängen an keinem `st` und feuern nach dem Abmelden in eine
+ * Oberfläche, die es nicht mehr gibt.
+ */
+export function setzeModulZustandZurueck(): void {
+  // Trade-Fenster: erst die Listener lösen, dann den Zustand leeren.
+  for (const u of mtState.subs) u();
+  mtState.subs.length = 0;
+  if (mtState.arm !== null) window.clearTimeout(mtState.arm.timer);
+  mtState.arm = null;
+  mtState.sym = null;
+  mtState.price = null;
+  // Nutzergebundene Daten — sie gehören dem Konto, nicht dem Gerät.
+  eigeneLoadouts = [];
+  loGewaehlt = null;
+  bestPractice = null;
+  zeichnungenCache = null;
+  tourAutostartGeprueft = false;
+  // Freilaufende Timer.
+  if (autoResTimer !== null) window.clearTimeout(autoResTimer);
+  autoResTimer = null;
+  if (evTipTimer !== null) window.clearTimeout(evTipTimer);
+  evTipTimer = null;
+  evTipOwner = null;
+  autoSwitching = false;
+  malYModusKnopf = null;
+  zeichnenTool = null;
+  zeichnenStart = null;
+  zeichnenTag = null;
+  lastRenderIntraday = null;
+}
+
 export function unmountDashboard(): void {
   if (!st) return;
   exitAllMax(); // Portal-Elemente vom body zurück, bevor die App-Wurzel geleert wird
@@ -9605,5 +9662,9 @@ export function unmountDashboard(): void {
   st.chart2?.destroy();
   document.removeEventListener('keydown', onEscape);
   document.removeEventListener('keydown', onGlobalHotkey);
+  // Zuletzt, damit ein Fehler weiter oben den Modulzustand nicht halb
+  // zurückgesetzt hinterlässt — und weil `st = null` danach kommt: Was hier
+  // noch auf `st` zugreift, findet es vor.
+  setzeModulZustandZurueck();
   st = null;
 }
