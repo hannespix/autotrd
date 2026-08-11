@@ -577,29 +577,11 @@ export async function buildPriceChart(
   const SOLID_OPTS = { upColor: '#26cf9d', borderVisible: false, borderUpColor: '#26cf9d' };
   const HOLLOW_OPTS = { upColor: 'rgba(0,0,0,0)', borderVisible: true, borderUpColor: '#26cf9d' };
 
-  /** Träger-Serie füttern — nur solange sie etwas trägt (sonst leer). */
+  /** Träger-Serie füttern — nur solange Preislinien hängen (sonst leer). */
   const feedLineHost = (): void => {
     lineHost.setData(
       lineHostFed ? (cachedRows.map((r) => ({ time: r.time, value: r.close })) as never) : [],
     );
-  };
-
-  /** Wie viele Marker gerade hängen — siehe `hostVersorgen`. */
-  let markerAnzahl = 0;
-
-  /**
-   * Die Träger-Serie mit Daten versorgen, sobald sie gebraucht wird.
-   *
-   * Sie trägt zweierlei: Preislinien (Einstand, Stop, Ziel) und seit dem
-   * 11.08. auch die MARKER (Einstiegs-Punkt, News, Veto). Beide zeichnet
-   * Lightweight Charts nur, wenn die tragende Serie sichtbar IST und Daten
-   * hat — deshalb hängen sie hier und nicht an den Kerzen.
-   */
-  const hostVersorgen = (geplanteLinien = priceLines.size): void => {
-    const braucht = geplanteLinien > 0 || markerAnzahl > 0;
-    if (braucht === lineHostFed) return;
-    lineHostFed = braucht;
-    feedLineHost();
   };
 
   const renderPrice = (): void => {
@@ -835,36 +817,8 @@ export async function buildPriceChart(
       fcUp.setData(overlay.band.map((b) => ({ time: zuAchse(b.time) as never as string, value: b.upper })));
       fcLo.setData(overlay.band.map((b) => ({ time: zuAchse(b.time) as never as string, value: b.lower })));
     },
-    /**
-     * Marker setzen — auf der TRÄGER-Serie, nicht auf den Kerzen.
-     *
-     * ── Owner-Meldung 11.08. ────────────────────────────────────────────
-     *
-     * „Kauf Punkte und Veto Zeichnung und News werden momentan nicht immer
-     * im Chart angezeigt je nach anderen Indikatoren. sobald die aktiviert
-     * sind sollten sie auch immer eingeblendet werden."
-     *
-     * Der Grund stand schon im Code — nur eine Zeile weiter oben, und nur
-     * für die Preislinien: Lightweight Charts zeichnet nichts, was an einer
-     * AUSGEBLENDETEN Serie hängt. Die Kerzen-Serie wird aber genau dann
-     * unsichtbar geschaltet, wenn ein anderer Chart-Typ gewählt ist (Linie,
-     * Fläche, Baseline, Bars) oder der Vektor-Look „Kerzen aus" läuft.
-     *
-     * Für die Preislinien war das am 04.08. erkannt und mit der Träger-Serie
-     * gelöst worden; für die Marker galt dieselbe Regel weiter nicht. Genau
-     * die Fehlerfamilie, die im Audit mehrfach aufgetaucht ist: eine Regel
-     * ist aufgeschrieben und gilt nur im Normalfall.
-     *
-     * Nebenwirkung, bewusst in Kauf genommen: Die Marker sitzen jetzt am
-     * SCHLUSSKURS des Bars statt an dessen Hoch/Tief — die Träger-Serie
-     * führt Schlusskurse. Ein paar Pixel Versatz gegen „ist immer da" ist
-     * ein guter Tausch, und Marker und Preislinien beziehen sich damit auf
-     * dieselbe Linie.
-     */
     setMarkers(markers): void {
-      markerAnzahl = markers.length;
-      hostVersorgen();
-      lineHost.setMarkers(
+      candle.setMarkers(
         markers
           .map((m) => ({ ...m, time: zuAchse(m.time) }))
           .sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0)) as never,
@@ -878,9 +832,11 @@ export async function buildPriceChart(
           priceLines.delete(key);
         }
       }
-      // VOR dem Anlegen versorgen: `lines.length` ist der Stand von gleich,
-      // `priceLines.size` noch der von eben.
-      hostVersorgen(lines.length);
+      const brauchtHost = lines.length > 0;
+      if (brauchtHost !== lineHostFed) {
+        lineHostFed = brauchtHost;
+        feedLineHost();
+      }
       for (const spec of lines) {
         const opts = {
           price: spec.price,
