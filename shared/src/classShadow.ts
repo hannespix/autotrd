@@ -54,6 +54,49 @@ export interface SchattenSignal {
    * typisierten Varianten — dieselbe Regel wie bei `kostenOk`.
    */
   typ?: string;
+  /**
+   * ATR in Prozent je Kerze zum SIGNALZEITPUNKT — der Nenner der
+   * Einfangquote (11.08.).
+   *
+   * ── Wozu ──────────────────────────────────────────────────────────────
+   *
+   * `costGate` prüft „erwartete Bewegung × Einfangquote > Kosten". Die
+   * Einfangquote war eine Konstante aus einer einzigen Messwoche — mit dem
+   * ausdrücklichen Hinweis im Quelltext, dass sie „aus der laufenden
+   * Attribution nachgeführt" gehört, sobald genug Trades vorliegen. Diese
+   * Nachführung braucht beide Seiten des Bruchs: Was hat sich BEWEGT
+   * (`rohPct`, wird schon gemessen) und was war zu ERWARTEN.
+   *
+   * ── Warum eingefroren ─────────────────────────────────────────────────
+   *
+   * Der ATR ist später nicht mehr rekonstruierbar: Eine halbe Stunde danach
+   * steht ein anderer im Speicher, und ein Nenner aus einem anderen Moment
+   * macht die Quote falsch, ohne dass man es ihr ansieht. Deshalb hier
+   * festgehalten, wie `kostenOk` und `typ` auch.
+   *
+   * Fehlend = Altbestand oder kein ATR. Zählt dann in keinen Quoten-Zähler;
+   * die Quote fällt auf die Annahme zurück.
+   */
+  atrPct?: number;
+  /**
+   * Kerzenlänge in Minuten, auf der `atrPct` gerechnet wurde.
+   *
+   * Muss mitkommen, weil nur der Schreiber die Zeitbasis kennt: Bei
+   * 5-Minuten-Signalen ist eine Kerze fünf Minuten, bei Tagessignalen
+   * 1 440. Ein hier fest angenommener Wert wäre für die eine Hälfte der
+   * Klassen um den Faktor 288 daneben.
+   */
+  barMin?: number;
+  /**
+   * Wie alt das Signal beim Bewerten war, in Millisekunden — der HORIZONT.
+   *
+   * Wird beim Lesen gesetzt, nicht gespeichert. Der Wert ist nicht konstant:
+   * Fällt ein Scan aus, ist das Signal zehn statt fünf Minuten alt, und über
+   * die doppelte Zeit ist auch die erwartete Bewegung größer (√2). Mit einem
+   * angenommenen Fünf-Minuten-Horizont zu rechnen hieße, die Einfangquote
+   * genau in den Störungsphasen zu überschätzen.
+   */
+  alterMs?: number;
 }
 
 export interface SchattenBeitrag {
@@ -63,6 +106,8 @@ export interface SchattenBeitrag {
   rohPct: number;
   /** Nach Abzug der Roundtrip-Kosten — die Zahl, die über Gewinn entscheidet. */
   nettoPct: number;
+  /** Erwartete Bewegung über den Signal-Horizont (fehlend = nicht messbar). */
+  erwartetPct?: number;
 }
 
 /**
@@ -85,7 +130,34 @@ export function bewerteSchattenSignal(
   const bewegung = ((kursJetzt - signal.price) / signal.price) * 100;
   const roh = signal.direction === 'buy' ? bewegung : -bewegung;
   const r4 = (x: number): number => Math.round(x * 10_000) / 10_000;
-  return { zaehlt: true, rohPct: r4(roh), nettoPct: r4(roh - roundtripKosten * 100) };
+  return {
+    zaehlt: true,
+    rohPct: r4(roh),
+    nettoPct: r4(roh - roundtripKosten * 100),
+    ...erwarteteBewegung(signal),
+  };
+}
+
+/**
+ * Erwartete Bewegung über den tatsächlichen Signal-Horizont, in Prozent.
+ *
+ * Liefert ein LEERES Objekt, wenn eine der drei Zutaten fehlt oder unsinnig
+ * ist. Kein Ersatzwert: „nicht messbar" muss von „Erwartung null"
+ * unterscheidbar bleiben — die Null würde später als Nenner eine unendliche
+ * Einfangquote erzeugen und der Klasse unbegrenzt Kapital freigeben.
+ */
+function erwarteteBewegung(signal: SchattenSignal): { erwartetPct?: number } {
+  const { atrPct, barMin, alterMs } = signal;
+  if (typeof atrPct !== 'number' || !Number.isFinite(atrPct) || atrPct <= 0) return {};
+  if (typeof barMin !== 'number' || !Number.isFinite(barMin) || barMin <= 0) return {};
+  if (typeof alterMs !== 'number' || !Number.isFinite(alterMs) || alterMs <= 0) return {};
+  // √-Skalierung wie in costGate.expectedMovePct — bewusst dieselbe Physik.
+  // Linear zu rechnen würde die erwartete Bewegung über längere Horizonte
+  // massiv überschätzen und damit die gemessene Einfangquote drücken.
+  const bars = alterMs / 60_000 / barMin;
+  const erwartet = atrPct * Math.sqrt(bars);
+  if (!Number.isFinite(erwartet) || erwartet <= 0) return {};
+  return { erwartetPct: Math.round(erwartet * 10_000) / 10_000 };
 }
 
 /** Laufendes Aggregat einer Klasse — additiv, damit es über Scans wächst. */
@@ -129,6 +201,26 @@ export interface SchattenKlasse {
    * nicht mitgezählt.
    */
   nRoh?: number;
+  /**
+   * Summe der ERWARTETEN Bewegungen — der Nenner der Einfangquote (11.08.).
+   */
+  summeErwartetPct?: number;
+  /**
+   * Summe der ROHEN Bewegungen GENAU DERSELBEN Signale wie
+   * `summeErwartetPct` — der Zähler der Einfangquote.
+   *
+   * Warum nicht `summeRohPct` wiederverwenden? Weil deren Signalmenge eine
+   * andere ist: Ein Signal ohne Erwartungswert (Altbestand, kein ATR)
+   * fließt dort ein, hier nicht. Ein Bruch aus zwei verschieden erhobenen
+   * Summen ist keine Quote, sondern eine Zahl, die zufällig entsteht — und
+   * an ihr hängt, ob eine Anlageklasse Kapital bekommt.
+   *
+   * Dieselbe Vorsicht wie bei `nRoh`, aus demselben Grund: Beim Nachrüsten
+   * des Rohfeldes wäre fast durch `n` geteilt worden.
+   */
+  summeRohBeiErwartet?: number;
+  /** Wie viele Signale in beide Summen eingeflossen sind. */
+  nErwartet?: number;
 }
 
 export interface SchattenAuswertung {
@@ -149,6 +241,18 @@ export interface SchattenAuswertung {
    * Horizont) und keine Absage an die Signalquelle.
    */
   rohPct: number | null;
+  /** Wie viele Signale beide Quoten-Summen tragen (eigener Nenner). */
+  nErwartet: number;
+  /** Mittlere ERWARTETE Bewegung je Signal in Prozent; null ohne Messung. */
+  erwartetPct: number | null;
+  /**
+   * Mittlere ROHE Bewegung GENAU DER Signale, die auch einen Erwartungswert
+   * haben — der Zähler der Einfangquote. Null ohne Messung.
+   *
+   * Sieht `rohPct` zum Verwechseln ähnlich und ist es nicht: andere
+   * Signalmenge. Nur DIESE Zahl darf gegen `erwartetPct` gerechnet werden.
+   */
+  rohBeiErwartetPct: number | null;
 }
 
 /** Ein Beitrag in ein laufendes Aggregat einrechnen. */
@@ -158,22 +262,53 @@ export function addiereSchatten(
 ): SchattenKlasse {
   const k = bisher ?? { n: 0, summePct: 0, treffer: 0 };
   if (!beitrag.zaehlt) return k;
+  const r4 = (x: number): number => Math.round(x * 10_000) / 10_000;
+  // Die beiden Quoten-Summen wachsen NUR GEMEINSAM. Getrennt fortgeschrieben
+  // wären sie irgendwann über verschiedene Signalmengen gebildet, und ihr
+  // Quotient hätte keine Bedeutung mehr.
+  const quote =
+    beitrag.erwartetPct !== undefined && beitrag.erwartetPct > 0
+      ? {
+          summeErwartetPct: r4((k.summeErwartetPct ?? 0) + beitrag.erwartetPct),
+          summeRohBeiErwartet: r4((k.summeRohBeiErwartet ?? 0) + beitrag.rohPct),
+          nErwartet: (k.nErwartet ?? 0) + 1,
+        }
+      : {};
   return {
     n: k.n + 1,
-    summePct: Math.round((k.summePct + beitrag.nettoPct) * 10_000) / 10_000,
+    summePct: r4(k.summePct + beitrag.nettoPct),
     // Treffer wird VOR Kosten gezählt: Die Trefferquote soll die Güte der
     // Richtungsaussage messen, nicht die Gebührenordnung. Beides zusammen
     // in eine Zahl zu werfen, verschleiert, welcher Teil das Problem ist.
     treffer: k.treffer + (beitrag.rohPct > 0 ? 1 : 0),
-    summeRohPct: Math.round(((k.summeRohPct ?? 0) + beitrag.rohPct) * 10_000) / 10_000,
+    summeRohPct: r4((k.summeRohPct ?? 0) + beitrag.rohPct),
     nRoh: (k.nRoh ?? 0) + 1,
+    // Bestehende Quoten-Summen erhalten, auch wenn dieser Beitrag keine hat.
+    ...(k.summeErwartetPct !== undefined
+      ? {
+          summeErwartetPct: k.summeErwartetPct,
+          summeRohBeiErwartet: k.summeRohBeiErwartet ?? 0,
+          nErwartet: k.nErwartet ?? 0,
+        }
+      : {}),
+    ...quote,
   };
 }
 
 /** Aggregat in lesbare Kennzahlen umrechnen. */
 export function werteSchattenAus(k: SchattenKlasse | undefined): SchattenAuswertung {
   if (!k || k.n <= 0) {
-    return { n: 0, treffer: 0, trefferquote: null, kantePct: null, nRoh: 0, rohPct: null };
+    return {
+      n: 0,
+      treffer: 0,
+      trefferquote: null,
+      kantePct: null,
+      nRoh: 0,
+      rohPct: null,
+      nErwartet: 0,
+      erwartetPct: null,
+      rohBeiErwartetPct: null,
+    };
   }
   const r4 = (x: number): number => Math.round(x * 10_000) / 10_000;
   return {
@@ -190,6 +325,15 @@ export function werteSchattenAus(k: SchattenKlasse | undefined): SchattenAuswert
       k.summeRohPct === undefined || !k.nRoh || k.nRoh <= 0
         ? null
         : r4(k.summeRohPct / k.nRoh),
+    nErwartet: k.nErwartet ?? 0,
+    erwartetPct:
+      k.summeErwartetPct === undefined || !k.nErwartet || k.nErwartet <= 0
+        ? null
+        : r4(k.summeErwartetPct / k.nErwartet),
+    rohBeiErwartetPct:
+      k.summeRohBeiErwartet === undefined || !k.nErwartet || k.nErwartet <= 0
+        ? null
+        : r4(k.summeRohBeiErwartet / k.nErwartet),
   };
 }
 
@@ -256,12 +400,24 @@ export function leseSchattenSignal(
   // Nur ein ECHTES `true` zählt. Ein fehlendes oder anders getipptes Feld
   // bleibt weg — siehe SchattenSignal.kostenOk.
   const typ = o['typ'];
+  const atrPct = o['atrPct'];
+  const barMin = o['barMin'];
+  // Der Horizont ist das GEMESSENE Alter, nicht das erwartete Scan-Intervall.
+  const messbar =
+    typeof atrPct === 'number' &&
+    Number.isFinite(atrPct) &&
+    atrPct > 0 &&
+    typeof barMin === 'number' &&
+    Number.isFinite(barMin) &&
+    barMin > 0 &&
+    alter > 0;
   return {
     direction: dir,
     price,
     ...(o['kostenOk'] === true ? { kostenOk: true } : {}),
     // Nur bekannte Typen wandern mit — ein Tippfehler wird keine Kategorie.
     ...(typ === 'trend' || typ === 'umkehr' || typ === 'gemischt' ? { typ } : {}),
+    ...(messbar ? { atrPct, barMin, alterMs: alter } : {}),
   };
 }
 

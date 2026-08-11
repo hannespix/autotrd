@@ -33,7 +33,9 @@ import {
   werteSchattenAus,
   type SchattenBeitrag,
   type SchattenKlasse,
+  BAR_MINUTES,
   captureForClass,
+  wirksameEinfangquote,
   klemmeGewicht,
   feeRateForClass,
   isTradable,
@@ -2473,6 +2475,17 @@ async function migrateCorePctAll(db: FirebaseFirestore.Firestore): Promise<void>
  * durchgelassen, genau wie im Einstiegs-Tor (`ohne_atr_durchgelassen`):
  * Nicht messen können ist kein Grund, es aus der Messung zu werfen.
  */
+/**
+ * Zeitbasis des SCHATTENS — die des Standard-Profils.
+ *
+ * Der Schatten misst eine Signalquelle, nicht ein Konto: Er läuft einmal je
+ * Symbol und Scan, unabhängig davon, welche Zeitbasis einzelne Nutzer
+ * eingestellt haben. Der ATR, den er einfriert, gehört deshalb zu genau
+ * dieser Basis — und die Kerzenlänge muss mitkommen, sonst rechnet der
+ * Nenner der Einfangquote mit fünf Minuten, wo Tage gemeint waren.
+ */
+const SCHATTEN_TF: 'intraday' | 'daily' = DEFAULT_STRATEGY.signals.timeframe ?? 'intraday';
+
 function schattenKostenOk(symbol: string, atrPct: number | null | undefined): boolean {
   const klasse = classify(symbol);
   const befund = costGate({
@@ -2505,6 +2518,28 @@ function summiereRoh(
   return {
     summeRohPct: Math.round(((a.summeRohPct ?? 0) + (b.summeRohPct ?? 0)) * 10_000) / 10_000,
     nRoh,
+  };
+}
+
+/**
+ * Dasselbe für die beiden Summen der Einfangquote (11.08.).
+ *
+ * Getrennt von `summiereRoh`, weil es eine andere Signalmenge ist: Nur
+ * Signale mit eingefrorenem ATR tragen hier bei. Beide Summen wandern
+ * gemeinsam oder gar nicht — ein Bruch aus verschieden erhobenen Summen
+ * wäre keine Quote (siehe classShadow.summeRohBeiErwartet).
+ */
+function summiereQuote(
+  a: SchattenKlasse,
+  b: SchattenKlasse,
+): { summeErwartetPct?: number; summeRohBeiErwartet?: number; nErwartet?: number } {
+  const nErwartet = (a.nErwartet ?? 0) + (b.nErwartet ?? 0);
+  if (nErwartet <= 0) return {};
+  const r4 = (x: number): number => Math.round(x * 10_000) / 10_000;
+  return {
+    summeErwartetPct: r4((a.summeErwartetPct ?? 0) + (b.summeErwartetPct ?? 0)),
+    summeRohBeiErwartet: r4((a.summeRohBeiErwartet ?? 0) + (b.summeRohBeiErwartet ?? 0)),
+    nErwartet,
   };
 }
 
@@ -2796,6 +2831,22 @@ export async function runScan(force = false): Promise<ScanResult> {
              * nicht, hilft auch schärferes Filtern nicht — und das zu
              * wissen, ist genauso viel wert. */
             kostenOk: schattenKostenOk(symbol, atrPctVal),
+            /* ── Nenner der Einfangquote (11.08.) ────────────────────────
+             *
+             * Der ATR zum Signalzeitpunkt, dazu die Kerzenlänge, auf der er
+             * gerechnet wurde. Beide sind später nicht mehr rekonstruierbar:
+             * Beim Bewerten steht ein anderer ATR im Speicher, und ein
+             * Nenner aus einem anderen Moment macht die Quote falsch, ohne
+             * dass man es ihr ansieht.
+             *
+             * Wozu: `costGate` multipliziert die erwartete Bewegung mit
+             * einer Einfangquote, die bisher eine Konstante aus einer
+             * einzigen Messwoche war — mit dem Hinweis im Quelltext, dass
+             * sie nachgeführt gehört, sobald Daten da sind. Genau die
+             * entstehen hier. */
+            ...(typeof atrPctVal === 'number' && Number.isFinite(atrPctVal) && atrPctVal > 0
+              ? { atrPct: atrPctVal, barMin: BAR_MINUTES[SCHATTEN_TF] }
+              : {}),
           },
           // Die Regime-Lesart (lastSignalRegime) ist eingestellt — alte
           // Felder verfallen über SCHATTEN_MAX_ALTER_MS von selbst.
@@ -3136,6 +3187,12 @@ export async function runScan(force = false): Promise<ScanResult> {
           // keine Information" von „Gebühren fressen die Information".
           summeRohPct: FieldValue.increment(k.summeRohPct ?? 0),
           nRoh: FieldValue.increment(k.nRoh ?? 0),
+          // Einfangquote (11.08.): erwartete Bewegung als Nenner, dazu die
+          // Rohbewegung DERSELBEN Signale als Zähler. Wieder eigener
+          // Zähler — nur Signale mit eingefrorenem ATR tragen bei.
+          summeErwartetPct: FieldValue.increment(k.summeErwartetPct ?? 0),
+          summeRohBeiErwartet: FieldValue.increment(k.summeRohBeiErwartet ?? 0),
+          nErwartet: FieldValue.increment(k.nErwartet ?? 0),
         };
       }
       await ref.set(
@@ -3159,6 +3216,7 @@ export async function runScan(force = false): Promise<ScanResult> {
         summePct: Math.round((a.summePct + b.summePct) * 10_000) / 10_000,
         treffer: a.treffer + b.treffer,
         ...summiereRoh(a, b),
+        ...summiereQuote(a, b),
       });
     }
   } catch (err) {
@@ -3291,6 +3349,27 @@ export async function runScan(force = false): Promise<ScanResult> {
          * Stand des Abschaltens ein — und die Entscheidung wird faktisch
          * endgültig, obwohl der Regler graduell gemeint ist. */
         schatten: schattenStand,
+        /* ── Einfangquote je Klasse (11.08.) ────────────────────────────
+         *
+         * Die Zahl, mit der `costGate` über jeden Einstieg entscheidet:
+         * „erwartete Bewegung × Einfangquote — trägt das die Kosten?" Sie
+         * war eine Konstante aus EINER Messwoche, und ausgerechnet die
+         * Klasse mit der optimistischsten Annahme (`etf_thematic`, 0,5)
+         * steht heute mit −1 812 $ als größter Verlustbringer im Buch.
+         *
+         * Hier steht, was die laufende Messung stattdessen sagt, und wie
+         * weit sie noch von der Beweislast entfernt ist. Solange
+         * `herkunft` auf `annahme_zu_wenig_daten` steht, rechnet die
+         * Engine unverändert mit der Konstante — die Messung ist noch
+         * keine Grundlage für eine Kapitalentscheidung. */
+        einfangquoten: schattenStand
+          ? Object.fromEntries(
+              Object.entries(schattenStand).map(([kl, a]) => {
+                const b = wirksameEinfangquote(kl, a);
+                return [kl, { quote: b.quote, herkunft: b.herkunft, gemessen: b.gemessen, n: b.n }];
+              }),
+            )
+          : null,
         // Die Regime-Lesart (MI) ist eingestellt (05.08. entschieden, 07.08.
         // vollzogen) — das historische Aggregat bleibt in meta/signalShadow
         // stehen. Der Heartbeat wird mit merge geschrieben, deshalb reicht
