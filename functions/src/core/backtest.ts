@@ -41,6 +41,26 @@ export interface BacktestOptions {
   mitRenditen?: boolean;
   /** Bedingungs-Statistik je Blatt mitzählen (M11-Rest). */
   mitBedingungen?: boolean;
+  /**
+   * Leerverkäufe simulieren — dasselbe Opt-in wie live (`broker.allowShort`).
+   *
+   * ── Audit-Befund 11.08. ─────────────────────────────────────────────────
+   *
+   * Ohne dieses Flag verwirft der Backtest ein `sell`-Signal, wenn keine
+   * Position offen ist (`shares > 0` als Bedingung). Die Live-Engine
+   * eröffnet daraus einen Short. Eine Strategie mit Short-Regeln wurde also
+   * anders BEWERTET als sie gehandelt wird — und zwar stillschweigend.
+   *
+   * Die Richtung des Fehlers ist nicht neutral: Die Katalog-Messung vom
+   * 10.08. zeigt Verkaufssignale bei jeder Haltedauer über einem Tag im
+   * Minus (−0,78 % auf zehn Tage). Der Backtest zeigte damit systematisch
+   * die BESSERE Hälfte der Strategie.
+   *
+   * Opt-in, weil die Long-only-Parität gegen die Referenz-Implementierung
+   * erhalten bleiben muss: Ohne das Flag verhält sich der Lauf exakt wie
+   * vorher, Bar für Bar.
+   */
+  allowShort?: boolean;
 }
 
 /**
@@ -137,7 +157,9 @@ export function backtestSpec(
         : null;
   }
 
+  const allowShort = opts.allowShort === true;
   let capital = initial;
+  /** > 0 = Long, < 0 = Short (nur mit `allowShort`), 0 = flach. */
   let shares = 0;
   let entryPrice = 0;
   let entryDate = '';
@@ -169,9 +191,21 @@ export function backtestSpec(
         closes: closes.slice(0, i + 1),
         minuteOfDay: 600,
         forecastPct: fcPct[i] ?? null,
+        /* Auch ein SHORT ist eine offene Position.
+         *
+         * Vorher stand hier `shares > 0` — mit Longs allein war das
+         * gleichbedeutend. Sobald der Lauf Shorts kennt, meldete es
+         * `open: false`, während eine Position offen ist: Jede `position`-
+         * Regel („nur wenn im Gewinn", „nur wenn flach") hätte für Shorts
+         * die falsche Antwort bekommen. Der unrealisierte Gewinn ist
+         * gespiegelt — ein Short verdient am FALLENDEN Kurs. */
         position:
-          shares > 0
-            ? { open: true, unrealizedPct: ((price - entryPrice) / entryPrice) * 100 }
+          shares !== 0
+            ? {
+                open: true,
+                unrealizedPct:
+                  ((shares > 0 ? price - entryPrice : entryPrice - price) / entryPrice) * 100,
+              }
             : { open: false },
       };
       evaluated++;
@@ -193,14 +227,47 @@ export function backtestSpec(
           entryDate = bars[i]!.date;
           capital -= eff * shares;
         }
+      } else if (buy && !sell && shares < 0) {
+        // Kauf-Signal auf offenen Short = eindecken. Gespiegelt zum
+        // Long-Ausstieg: Der Gewinn entsteht, wenn der Kurs GEFALLEN ist.
+        const eff = price * (1 + fee);
+        const menge = -shares;
+        trades.push({
+          entryDate,
+          exitDate: bars[i]!.date,
+          pnl: round2((entryPrice - eff) * menge),
+        });
+        capital += menge * entryPrice + (entryPrice - eff) * menge;
+        shares = 0;
       } else if (sell && !buy && shares > 0) {
         const eff = price * (1 - fee);
         trades.push({ entryDate, exitDate: bars[i]!.date, pnl: round2((eff - entryPrice) * shares) });
         capital += eff * shares;
         shares = 0;
+      } else if (allowShort && sell && !buy && shares === 0) {
+        /* Short eröffnen — die Hälfte, die bisher fehlte.
+         *
+         * Die Margin wird wie beim Long dem Kapital entnommen (Erlös bleibt
+         * gebunden); das entspricht der Live-Buchung in `broker.ts`, wo ein
+         * Short `qty × avgEntry` als Margin bindet. Ohne diese Bindung
+         * könnte eine Short-Strategie unbegrenzt aufstocken. */
+        const eff = price * (1 - fee);
+        const maxShares = Math.floor(capital / eff);
+        if (maxShares > 0) {
+          shares = -maxShares;
+          entryPrice = eff;
+          entryDate = bars[i]!.date;
+          capital -= eff * maxShares;
+        }
       }
     }
-    equity.push(capital + shares * price);
+    // Long: Marktwert. Short: gebundene Margin + unrealisierter Gewinn —
+    // dieselbe Spiegelung wie `positionValue` im Live-Depot.
+    equity.push(
+      shares >= 0
+        ? capital + shares * price
+        : capital + -shares * entryPrice + (entryPrice - price) * -shares,
+    );
   }
 
   // Restposition zum letzten Close glattstellen (wie die Referenz)
@@ -209,6 +276,14 @@ export function backtestSpec(
     const eff = last.close * (1 - fee);
     trades.push({ entryDate, exitDate: last.date, pnl: round2((eff - entryPrice) * shares) });
     capital += eff * shares;
+    equity[equity.length - 1] = capital;
+  } else if (shares < 0) {
+    // Offener Short zum letzten Close eindecken — gespiegelt.
+    const last = bars[bars.length - 1]!;
+    const eff = last.close * (1 + fee);
+    const menge = -shares;
+    trades.push({ entryDate, exitDate: last.date, pnl: round2((entryPrice - eff) * menge) });
+    capital += menge * entryPrice + (entryPrice - eff) * menge;
     equity[equity.length - 1] = capital;
   }
 
