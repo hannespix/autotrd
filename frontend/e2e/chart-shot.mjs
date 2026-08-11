@@ -137,6 +137,66 @@ const gezeichnet = () =>
     return gesamt;
   });
 
+/**
+ * Wie viele Pixel einer bestimmten Farbe stehen auf der Zeichenfläche?
+ *
+ * ── Warum das die entscheidende Messung ist (Owner 11.08.) ────────────────
+ *
+ * „bei Linie, Berg, baseline, Bars … werden die Punkte und die ganzen
+ * anderen Nachrichten-Zeichnungen einfach nicht im Chart gerendert!"
+ *
+ * Die erste Fassung dieses Prüfstands zählte nur, ob die Fläche ÜBERHAUPT
+ * Inhalt hat. Der Kurs allein füllt sie — und damit war jeder Chart-Typ
+ * „grün", während genau die Marker fehlten, um die es geht. Ein Prüfstand,
+ * der die gemeldete Sache nicht messen kann, ist schlimmer als keiner: Er
+ * bescheinigt Fehlerfreiheit.
+ *
+ * Also wird nach FARBE gesucht — aber nur nach Farben, die es sonst NIRGENDS
+ * im Bild gibt. Der erste Versuch färbte Marker wie in der App (`#e8c76a`
+ * News-Gelb, `#26cf9d` Kauf-Grün) und zählte damit die Preislinie in
+ * derselben Gelbtönung und jede steigende Kerze mit: alle sieben Typen
+ * meldeten vierstellige Trefferzahlen, auch die kaputten. Zweiter
+ * Fehlschlag derselben Familie — der Prüfstand konnte die gemeldete Sache
+ * nicht messen und bescheinigte trotzdem Fehlerfreiheit.
+ *
+ * Deshalb bekommen Marker hier Signalfarben (Magenta/Cyan/Reingelb), die im
+ * Kursbild nicht vorkommen, und die Toleranz ist eng genug, dass Kerzen-Grün
+ * (38,207,157) nicht als Cyan (0,255,255) durchgeht.
+ */
+const farbPixel = (hex, toleranz = 30) =>
+  seite.evaluate(
+    ([h, tol]) => {
+      const r0 = parseInt(h.slice(1, 3), 16);
+      const g0 = parseInt(h.slice(3, 5), 16);
+      const b0 = parseInt(h.slice(5, 7), 16);
+      let n = 0;
+      for (const c of document.querySelectorAll('#chartArea canvas')) {
+        if (c.width === 0 || c.height === 0) continue;
+        const ctx = c.getContext('2d');
+        if (!ctx) continue;
+        const d = ctx.getImageData(0, 0, c.width, c.height).data;
+        for (let i = 0; i < d.length; i += 4) {
+          if (
+            Math.abs(d[i] - r0) < tol &&
+            Math.abs(d[i + 1] - g0) < tol &&
+            Math.abs(d[i + 2] - b0) < tol
+          ) {
+            n++;
+          }
+        }
+      }
+      return n;
+    },
+    [hex, toleranz],
+  );
+
+/* Signalfarben nur für den Prüfstand — im Kursbild kommt keine davon vor,
+ * also ist jeder Treffer nachweislich die gesuchte Zeichnung.
+ *   Magenta = News-Marker · Cyan = Kauf-Marker · Reingelb = Preislinie */
+const M_NEWS = '#ff00ff';
+const M_KAUF = '#00ffff';
+const L_EINSTIEG = '#ffff00';
+
 const TYPEN = ['candles', 'hollow', 'heikin', 'line', 'area', 'baseline', 'bars'];
 const fehler = [];
 const zeilen = [];
@@ -147,12 +207,11 @@ await seite.evaluate(
     const c = window.__chart;
     c.setBars(bs);
     c.setMarkers([
-      { key: 'news', time: m.date, position: 'aboveBar', color: '#e8c76a', shape: 'circle', text: 'N' },
-      { key: 'entry', time: l.date, position: 'belowBar', color: '#26cf9d', shape: 'arrowUp', text: 'Kauf' },
+      { key: 'news', time: m.date, position: 'aboveBar', color: '#ff00ff', shape: 'circle', text: 'N' },
+      { key: 'entry', time: l.date, position: 'belowBar', color: '#00ffff', shape: 'arrowUp', text: 'Kauf' },
     ]);
     c.setPriceLines([
-      { key: 'entry', price: m.close, color: '#e8c76a', title: '', axisLabel: true },
-      { key: 'stop', price: m.close * 0.95, color: '#f2586b', title: '', axisLabel: true },
+      { key: 'entry', price: m.close, color: '#ffff00', title: '', axisLabel: true },
     ]);
   },
   [bars, mitte, letzter],
@@ -170,16 +229,29 @@ for (const typ of TYPEN) {
     [letzter.date, letzter.close],
   );
   const seitenFehler = await seite.evaluate(() => window.__fehler.slice());
+  /* Die Marker müssen SICHTBAR sein, nicht nur gesetzt. Genau hier lag der
+   * gemeldete Fehler: gesetzt waren sie immer, gezeichnet nur bei Kerzen. */
+  const mNews = await farbPixel(M_NEWS);
+  const mKauf = await farbPixel(M_KAUF);
+  const lEin = await farbPixel(L_EINSTIEG);
 
-  const ok = pixel > 500 && co.y !== null && co.x !== null && seitenFehler.length === 0;
+  const ok =
+    pixel > 500 &&
+    co.y !== null &&
+    co.x !== null &&
+    seitenFehler.length === 0 &&
+    mNews > 10 &&
+    mKauf > 10 &&
+    lEin > 10;
   zeilen.push(
     `${ok ? 'OK  ' : 'FEHL'} ${typ.padEnd(9)} pixel=${String(pixel).padStart(6)} ` +
-      `coords.x=${co.x === null ? 'null' : Math.round(co.x)} coords.y=${co.y === null ? 'null' : Math.round(co.y)}` +
+      `news=${String(mNews).padStart(4)} kauf=${String(mKauf).padStart(4)} linie=${String(lEin).padStart(4)} ` +
+      `coords.y=${co.y === null ? 'null' : Math.round(co.y)}` +
       (seitenFehler.length ? ` JS=${seitenFehler.join(' | ')}` : ''),
   );
   if (!ok) {
     fehler.push(
-      `${typ}: pixel=${pixel} coords=${JSON.stringify(co)} js=${JSON.stringify(seitenFehler)}`,
+      `${typ}: pixel=${pixel} news=${mNews} kauf=${mKauf} linie=${lEin} coords=${JSON.stringify(co)} js=${JSON.stringify(seitenFehler)}`,
     );
   }
   await seite.screenshot({ path: `${SHOTS}/${typ}.png` });
@@ -211,7 +283,7 @@ for (const typ of TYPEN) {
     c.setCandlesVisible(true);
     c.setBars(bs, { intraday: true });
     c.setMarkers([
-      { key: 'n', time: bs[100].time, position: 'aboveBar', color: '#e8c76a', shape: 'circle', text: 'N' },
+      { key: 'n', time: bs[100].time, position: 'aboveBar', color: '#ff00ff', shape: 'circle', text: 'N' },
     ]);
   }, intra);
   await seite.waitForTimeout(250);
@@ -223,12 +295,14 @@ for (const typ of TYPEN) {
       ([zeit, preis]) => window.__chart.coords(zeit, preis),
       [intra[150].time, intra[150].close],
     );
-    const ok = pixel > 500 && co.y !== null && co.x !== null;
+    const mNews = await farbPixel(M_NEWS);
+    const ok = pixel > 500 && co.y !== null && co.x !== null && mNews > 10;
     zeilen.push(
       `${ok ? 'OK  ' : 'FEHL'} intraday:${typ.padEnd(7)} pixel=${String(pixel).padStart(6)} ` +
+        `news=${String(mNews).padStart(4)} ` +
         `coords.x=${co.x === null ? 'null' : Math.round(co.x)} coords.y=${co.y === null ? 'null' : Math.round(co.y)}`,
     );
-    if (!ok) fehler.push(`intraday ${typ}: pixel=${pixel} coords=${JSON.stringify(co)}`);
+    if (!ok) fehler.push(`intraday ${typ}: pixel=${pixel} news=${mNews} coords=${JSON.stringify(co)}`);
   }
   await seite.screenshot({ path: `${SHOTS}/intraday.png` });
 }
@@ -357,6 +431,121 @@ for (const [name, wirkung] of [
   );
   if (!ok) fehler.push(`${name}: pixel=${pixel} coords=${JSON.stringify(co)} js=${JSON.stringify(seitenFehler)}`);
   await seite.screenshot({ path: `${SHOTS}/${name.replace(':', '-')}.png` });
+}
+
+/* ── Reihenfolgen und Domänenwechsel ──────────────────────────────────────
+ *
+ * Alles, was oben geprüft wird, läuft in der bequemen Reihenfolge: erst
+ * Kurse, dann Marker. Die App hält sich nicht immer daran — ein Symbolwechsel
+ * setzt Marker aus dem alten Zustand, bevor die neuen Kurse da sind, und der
+ * Zeitrahmen-Umschalter wirft die Zeit-Domäne um (ISO-Tag ↔ Unix-Sekunden),
+ * während Marker der alten Domäne noch hängen.
+ *
+ * Diese Fälle sind die wahrscheinlichsten Ursachen eines Totalausfalls, denn
+ * Lightweight Charts wirft bei unsortierten oder domänenfremden Daten hart —
+ * und ein geworfener Fehler im Aufbau lässt die Fläche leer. Deshalb stehen
+ * sie hier, nicht im Kommentar. */
+{
+  const intra2 = [];
+  const s2 = Date.UTC(2026, 7, 11, 13, 30) / 1000;
+  for (let i = 0; i < 80; i++) {
+    const k = 100 + Math.sin(i / 5) * 0.8;
+    intra2.push({ time: s2 + i * 300, open: k, high: k + 0.4, low: k - 0.4, close: k, volume: 1000 });
+  }
+  const faelle = [
+    [
+      'marker-vor-bars',
+      async () => {
+        await seite.evaluate(
+          ([m, l]) => {
+            const c = window.__chart;
+            c.setBars([]);
+            c.setMarkers([
+              { key: 'n', time: m.date, position: 'aboveBar', color: '#ff00ff', shape: 'circle', text: 'N' },
+              { key: 'e', time: l.date, position: 'belowBar', color: '#00ffff', shape: 'arrowUp', text: 'K' },
+            ]);
+            c.setPriceLines([{ key: 'entry', price: m.close, color: '#ffff00', title: '', axisLabel: true }]);
+          },
+          [mitte, letzter],
+        );
+        await seite.waitForTimeout(120);
+        await seite.evaluate((bs) => window.__chart.setBars(bs, { fit: true }), bars);
+      },
+    ],
+    [
+      'tag→intraday',
+      async () => {
+        // Preislinie mitziehen: Ein Preis aus dem Tages-Niveau läge außerhalb
+        // der Intraday-Spanne und wäre zu Recht unsichtbar — das wäre eine
+        // Prüfung der Skala, nicht der Zeichnung.
+        await seite.evaluate((bs) => {
+          const c = window.__chart;
+          c.setBars(bs, { intraday: true, fit: true });
+          c.setPriceLines([{ key: 'entry', price: bs[0].close, color: '#ffff00', title: '', axisLabel: true }]);
+        }, intra2);
+      },
+    ],
+    [
+      'intraday→tag',
+      async () => {
+        await seite.evaluate(
+          ([bs, m, l]) => {
+            const c = window.__chart;
+            c.setBars(bs, { fit: true });
+            c.setMarkers([
+              { key: 'n', time: m.date, position: 'aboveBar', color: '#ff00ff', shape: 'circle', text: 'N' },
+              { key: 'e', time: l.date, position: 'belowBar', color: '#00ffff', shape: 'arrowUp', text: 'K' },
+            ]);
+          },
+          [bars, mitte, letzter],
+        );
+      },
+    ],
+  ];
+  for (const [name, wirkung] of faelle) {
+    await wirkung();
+    await seite.waitForTimeout(220);
+    const pixel = await gezeichnet();
+    const seitenFehler = await seite.evaluate(() => window.__fehler.slice());
+    // Nach jedem Fall müssen Marker UND Preislinie wieder stehen — außer im
+    // Intraday-Zwischenschritt, dessen Marker einer anderen Domäne gehören.
+    const mNews = await farbPixel(M_NEWS);
+    const lEin = await farbPixel(L_EINSTIEG);
+    const brauchtMarker = name !== 'tag→intraday';
+    const ok = pixel > 500 && seitenFehler.length === 0 && lEin > 10 && (!brauchtMarker || mNews > 10);
+    zeilen.push(
+      `${ok ? 'OK  ' : 'FEHL'} ${name.padEnd(16)} pixel=${String(pixel).padStart(6)} ` +
+        `news=${String(mNews).padStart(4)} linie=${String(lEin).padStart(4)}` +
+        (seitenFehler.length ? ` JS=${seitenFehler.join(' | ')}` : ''),
+    );
+    if (!ok) fehler.push(`${name}: pixel=${pixel} news=${mNews} linie=${lEin} js=${JSON.stringify(seitenFehler)}`);
+  }
+}
+
+/* ── Klick-Umrechnung (Zeichenwerkzeuge) ──────────────────────────────────
+ *
+ * `onClick` liefert den Preis unter dem Mauszeiger; daran hängen Trendlinie,
+ * Horizontale, Rechteck und der Prognose-Pfeil. Läuft die Umrechnung über
+ * eine unsichtbare Serie, kommt `null` zurück und jedes Zeichenwerkzeug
+ * setzt ins Leere — sichtbar nur so. */
+for (const [i, typ] of ['candles', 'line', 'bars'].entries()) {
+  await seite.evaluate((t) => {
+    window.__klick = undefined;
+    window.__chart.setChartType(t);
+    window.__chart.onClick((p) => {
+      window.__klick = p;
+    });
+  }, typ);
+  await seite.waitForTimeout(400);
+  // Jeder Klick an eine andere Stelle und mit Abstand: dreimal dieselbe
+  // Koordinate in Folge wertet Chromium als Doppel-/Dreifachklick, den
+  // Lightweight Charts nicht als Klick meldet.
+  await seite.mouse.click(380 + i * 60, 170 + i * 30);
+  await seite.waitForTimeout(200);
+  const preis = await seite.evaluate(() => window.__klick);
+  const ok = typeof preis === 'number' && Number.isFinite(preis);
+  zeilen.push(`${ok ? 'OK  ' : 'FEHL'} klick:${typ.padEnd(11)} preis=${ok ? preis.toFixed(2) : String(preis)}`);
+  if (!ok) fehler.push(`klick ${typ}: preis=${String(preis)}`);
 }
 
 console.log(zeilen.join('\n'));
