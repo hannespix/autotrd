@@ -544,6 +544,7 @@ export async function buildPriceChart(
     ...Y,
   });
   const priceLines = new Map<string, ReturnType<typeof lineHost.createPriceLine>>();
+  let lineHostFed = false;
 
   // Für setCrosshair: Close je Handelstag (setCrosshairPosition braucht
   // neben der Zeit auch einen Preis auf der Serie)
@@ -576,38 +577,11 @@ export async function buildPriceChart(
   const SOLID_OPTS = { upColor: '#26cf9d', borderVisible: false, borderUpColor: '#26cf9d' };
   const HOLLOW_OPTS = { upColor: 'rgba(0,0,0,0)', borderVisible: true, borderUpColor: '#26cf9d' };
 
-  /**
-   * Träger-Serie füttern — IMMER, sobald der Chart Daten hat.
-   *
-   * ── Owner-Meldung 11.08., zweite Runde ──────────────────────────────────
-   *
-   * „nur wenn die Indikatoren auf Kerzen stehen, dann werden News und andere
-   * Sachen angezeigt. sobald ich auf Bars oder ähnliches stelle, dann werden
-   * News und die anderen Sachen ausgeblendet."
-   *
-   * Die Träger-Serie hängt an VIER Dingen, und alle vier brechen, wenn sie
-   * leer oder unsichtbar ist:
-   *
-   *   1. Preislinien (Einstand, Stop, Trailing, Ziel) — seit 04.08.
-   *   2. Marker (Einstiegs-Punkt, News, Veto) — seit heute früh.
-   *   3. `coords()` rechnet Preis → Pixel. Daran hängen die gezeichneten
-   *      Trendlinien, Horizontalen und Rechtecke sowie der Prognose-Pfeil.
-   *   4. `onClick()` rechnet Pixel → Preis. Das ist das ZEICHNEN selbst.
-   *
-   * Punkt 3 und 4 liefen bis eben über die Kerzen-Serie — und die ist bei
-   * Bars, Linie, Fläche und im Vektor-Look unsichtbar. Auf einer
-   * ausgeblendeten Serie geben `priceToCoordinate`/`coordinateToPrice` kein
-   * brauchbares Ergebnis: Die Zeichnungen verschwanden, und neue ließen sich
-   * gar nicht erst setzen. Das ist das „und die anderen Sachen" aus der
-   * Meldung.
-   *
-   * Deshalb keine Sparsamkeit mehr: Die Serie ist transparent und trägt
-   * dieselben Schlusskurse, die der Chart ohnehin hält — ein paar hundert
-   * Zahlen. Eine Bedingung, die entscheidet, WANN sie gefüttert wird, ist
-   * eine Bedingung, die falsch sein kann. Die hatten wir jetzt zweimal.
-   */
+  /** Träger-Serie füttern — nur solange Preislinien hängen (sonst leer). */
   const feedLineHost = (): void => {
-    lineHost.setData(cachedRows.map((r) => ({ time: r.time, value: r.close })) as never);
+    lineHost.setData(
+      lineHostFed ? (cachedRows.map((r) => ({ time: r.time, value: r.close })) as never) : [],
+    );
   };
 
   const renderPrice = (): void => {
@@ -739,16 +713,13 @@ export async function buildPriceChart(
     onClick(cb: (price: number | null) => void): void {
       chart.subscribeClick((param) => {
         const y = param.point?.y;
-        // Träger-Serie, nicht Kerzen: Die sind bei Bars/Linie/Fläche unsichtbar,
-        // und dort liefert die Umrechnung nichts Brauchbares (Owner 11.08.).
-        cb(y == null ? null : (lineHost.coordinateToPrice(y) as number | null));
+        cb(y == null ? null : (candle.coordinateToPrice(y) as number | null));
       });
     },
     coords(time: string | number, price: number): { x: number | null; y: number | null } {
       return {
         x: chart.timeScale().timeToCoordinate(zuAchse(time) as never) as number | null,
-        // s. onClick — die Kerzen-Serie ist nicht immer sichtbar.
-        y: lineHost.priceToCoordinate(price) as number | null,
+        y: candle.priceToCoordinate(price) as number | null,
       };
     },
     setArea(points, colors): void {
@@ -846,34 +817,8 @@ export async function buildPriceChart(
       fcUp.setData(overlay.band.map((b) => ({ time: zuAchse(b.time) as never as string, value: b.upper })));
       fcLo.setData(overlay.band.map((b) => ({ time: zuAchse(b.time) as never as string, value: b.lower })));
     },
-    /**
-     * Marker setzen — auf der TRÄGER-Serie, nicht auf den Kerzen.
-     *
-     * ── Owner-Meldung 11.08. ────────────────────────────────────────────
-     *
-     * „Kauf Punkte und Veto Zeichnung und News werden momentan nicht immer
-     * im Chart angezeigt je nach anderen Indikatoren. sobald die aktiviert
-     * sind sollten sie auch immer eingeblendet werden."
-     *
-     * Der Grund stand schon im Code — nur eine Zeile weiter oben, und nur
-     * für die Preislinien: Lightweight Charts zeichnet nichts, was an einer
-     * AUSGEBLENDETEN Serie hängt. Die Kerzen-Serie wird aber genau dann
-     * unsichtbar geschaltet, wenn ein anderer Chart-Typ gewählt ist (Linie,
-     * Fläche, Baseline, Bars) oder der Vektor-Look „Kerzen aus" läuft.
-     *
-     * Für die Preislinien war das am 04.08. erkannt und mit der Träger-Serie
-     * gelöst worden; für die Marker galt dieselbe Regel weiter nicht. Genau
-     * die Fehlerfamilie, die im Audit mehrfach aufgetaucht ist: eine Regel
-     * ist aufgeschrieben und gilt nur im Normalfall.
-     *
-     * Nebenwirkung, bewusst in Kauf genommen: Die Marker sitzen jetzt am
-     * SCHLUSSKURS des Bars statt an dessen Hoch/Tief — die Träger-Serie
-     * führt Schlusskurse. Ein paar Pixel Versatz gegen „ist immer da" ist
-     * ein guter Tausch, und Marker und Preislinien beziehen sich damit auf
-     * dieselbe Linie.
-     */
     setMarkers(markers): void {
-      lineHost.setMarkers(
+      candle.setMarkers(
         markers
           .map((m) => ({ ...m, time: zuAchse(m.time) }))
           .sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0)) as never,
@@ -886,6 +831,11 @@ export async function buildPriceChart(
           lineHost.removePriceLine(line);
           priceLines.delete(key);
         }
+      }
+      const brauchtHost = lines.length > 0;
+      if (brauchtHost !== lineHostFed) {
+        lineHostFed = brauchtHost;
+        feedLineHost();
       }
       for (const spec of lines) {
         const opts = {
