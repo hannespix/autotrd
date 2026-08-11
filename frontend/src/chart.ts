@@ -528,13 +528,24 @@ export async function buildPriceChart(
   const fcUp = chart.addLineSeries({ color: 'rgba(37,208,238,.45)', lineWidth: 1, lineStyle: 3, ...fcCommon, ...Y });
   const fcLo = chart.addLineSeries({ color: 'rgba(37,208,238,.45)', lineWidth: 1, lineStyle: 3, ...fcCommon, ...Y });
 
-  // Träger der Preislinien (Positions-Overlay 04.08.): eine vollständig
-  // transparente Linien-Serie. Warum nicht direkt die Kerzen? Preislinien
-  // einer AUSGEBLENDETEN Serie zeichnet Lightweight Charts nicht — im
-  // Vektor-Look („Kerzen aus") oder bei Linien-/Berg-Typen wären Einstieg und
-  // Stop sonst genau dann weg, wenn man ruhig auf den Kurs schauen will.
-  // Die Serie trägt dieselben Schlusskurse (nötig für den Skalen-Bezug),
-  // malt aber nichts — sie existiert nur als Anker der Linien.
+  // ── Anker-Serie für alles, was NICHT der Kurs selbst ist ────────────────
+  //
+  // Eine vollständig transparente Linien-Serie mit denselben Schlusskursen.
+  // Sie malt nichts; sie existiert nur, damit Preislinien, Marker und
+  // Koordinaten-Umrechnungen an etwas hängen, das immer sichtbar ist.
+  //
+  // Warum nicht die Kerzen-Serie? Lightweight Charts zeichnet NICHTS, was an
+  // einer `visible: false`-Serie hängt — weder Marker noch Preislinien —, und
+  // `priceToCoordinate`/`coordinateToPrice` einer unsichtbaren Serie sind
+  // ebenfalls unbrauchbar. Die Kerzen-Serie ist aber genau dann unsichtbar,
+  // wenn der Nutzer Linie/Berg/Baseline/Bars wählt oder den Vektor-Look
+  // („Kerzen aus") einschaltet.
+  //
+  // Owner-Meldung 11.08.: „bei Linie, Berg, baseline, Bars … werden die Punkte
+  // und die ganzen anderen Nachrichten-Zeichnungen einfach nicht im Chart
+  // gerendert!" — genau dieser Mechanismus. Nachgewiesen und gegen Rückfall
+  // gesichert von `frontend/e2e/chart-shot.mjs`, das die Marker-Pixel je
+  // Chart-Typ in Signalfarben zählt.
   const lineHost = chart.addLineSeries({
     color: 'rgba(0,0,0,0)',
     lineWidth: 1,
@@ -544,7 +555,6 @@ export async function buildPriceChart(
     ...Y,
   });
   const priceLines = new Map<string, ReturnType<typeof lineHost.createPriceLine>>();
-  let lineHostFed = false;
 
   // Für setCrosshair: Close je Handelstag (setCrosshairPosition braucht
   // neben der Zeit auch einen Preis auf der Serie)
@@ -577,11 +587,15 @@ export async function buildPriceChart(
   const SOLID_OPTS = { upColor: '#26cf9d', borderVisible: false, borderUpColor: '#26cf9d' };
   const HOLLOW_OPTS = { upColor: 'rgba(0,0,0,0)', borderVisible: true, borderUpColor: '#26cf9d' };
 
-  /** Träger-Serie füttern — nur solange Preislinien hängen (sonst leer). */
+  /**
+   * Anker-Serie füttern — IMMER, nicht nur wenn Preislinien hängen.
+   *
+   * Marker und Koordinaten-Umrechnung hängen ebenfalls an dieser Serie, und
+   * beide brauchen Daten: eine leere Serie kennt keine Zeitpunkte (Marker
+   * verschwinden) und keine Preisskala (`priceToCoordinate` liefert null).
+   */
   const feedLineHost = (): void => {
-    lineHost.setData(
-      lineHostFed ? (cachedRows.map((r) => ({ time: r.time, value: r.close })) as never) : [],
-    );
+    lineHost.setData(cachedRows.map((r) => ({ time: r.time, value: r.close })) as never);
   };
 
   const renderPrice = (): void => {
@@ -713,13 +727,15 @@ export async function buildPriceChart(
     onClick(cb: (price: number | null) => void): void {
       chart.subscribeClick((param) => {
         const y = param.point?.y;
-        cb(y == null ? null : (candle.coordinateToPrice(y) as number | null));
+        // Anker-Serie, nicht die Kerzen: bei Linie/Berg/Bars ist die
+        // Kerzen-Serie unsichtbar und rechnet nicht mehr um (§Anker oben).
+        cb(y == null ? null : (lineHost.coordinateToPrice(y) as number | null));
       });
     },
     coords(time: string | number, price: number): { x: number | null; y: number | null } {
       return {
         x: chart.timeScale().timeToCoordinate(zuAchse(time) as never) as number | null,
-        y: candle.priceToCoordinate(price) as number | null,
+        y: lineHost.priceToCoordinate(price) as number | null,
       };
     },
     setArea(points, colors): void {
@@ -818,7 +834,9 @@ export async function buildPriceChart(
       fcLo.setData(overlay.band.map((b) => ({ time: zuAchse(b.time) as never as string, value: b.lower })));
     },
     setMarkers(markers): void {
-      candle.setMarkers(
+      // Anker-Serie, nicht die Kerzen — sonst fehlen News-Punkte, Veto-Kreuze
+      // und Kauf-Pfeile bei Linie/Berg/Baseline/Bars (§Anker oben).
+      lineHost.setMarkers(
         markers
           .map((m) => ({ ...m, time: zuAchse(m.time) }))
           .sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0)) as never,
@@ -831,11 +849,6 @@ export async function buildPriceChart(
           lineHost.removePriceLine(line);
           priceLines.delete(key);
         }
-      }
-      const brauchtHost = lines.length > 0;
-      if (brauchtHost !== lineHostFed) {
-        lineHostFed = brauchtHost;
-        feedLineHost();
       }
       for (const spec of lines) {
         const opts = {

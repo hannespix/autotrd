@@ -148,6 +148,23 @@ gesamten Event-Loop ein → Server hängt → Browser bekommt leere Antwort →
 - `LightweightCharts` **nicht** auf Top-Level referenzieren (CDN-Fail würde
   sonst das gesamte JS killen) — Guards in `buildPriceChart`/`loadTrend`,
   `crosshair.mode: 0` statt Enum.
+- **Anker-Serie statt Kerzen-Serie.** Lightweight Charts zeichnet NICHTS, was
+  an einer `visible: false`-Serie hängt: keine Marker, keine Preislinien; auch
+  `priceToCoordinate`/`coordinateToPrice` liefern dann Unbrauchbares. Die
+  Kerzen-Serie ist genau dann unsichtbar, wenn der Nutzer Linie/Berg/Baseline/
+  Bars wählt oder den Vektor-Look einschaltet. Alles Nicht-Kurs-Zeichnerische
+  hängt deshalb an `lineHost` (transparente Linien-Serie mit denselben
+  Schlusskursen, `frontend/src/chart.ts`) — News-Punkte, Veto-Kreuze,
+  Kauf-Pfeile, Einstieg/Stop/Ziel, Zeichenwerkzeuge, Prognose-Pfeil. Der
+  Fehler kam zweimal zurück (Owner 11.08.); die Sperre ist
+  `npm run chart:shot` (zählt Marker-Pixel je Chart-Typ) plus der
+  Quelltext-Wächter `frontend/test/chartAnkerSerie.test.ts`.
+- **Chart-Änderungen ohne Browser-Nachweis sind unverifiziert.** typecheck,
+  eslint und die Unit-Tests können die einzige Frage, die bei einem Chart
+  zählt — *zeichnet er?* —, nicht beantworten. Vor jedem Chart-Commit:
+  `npm i -D playwright --no-save && npm run chart:shot`. Prüft der Prüfstand
+  die geänderte Sache nicht, ist er zuerst zu erweitern: Ein Prüfstand, der
+  die gemeldete Sache nicht messen kann, bescheinigt Fehlerfreiheit.
 - UI ist „Frosted Aurora": Glass-Cards, eine GPU-Aurora-Layer, Mono-Zahlen,
   `prefers-reduced-motion`-Guard, Light/Dark via `data-theme`, responsive bis
   ~360 px (dann Off-Canvas-Drawer + Bottom-Sheet-Modal `#detailModal`).
