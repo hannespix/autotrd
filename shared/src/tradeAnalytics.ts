@@ -265,3 +265,84 @@ export function historySummary(trades: HistoryTrade[]): HistorySummary {
     to: sortiert[sortiert.length - 1]?.executedAt ?? null,
   };
 }
+
+// ── Zeitraum der Auswertung (Owner-Wunsch 11.08.) ──────────────────────────
+
+/**
+ * Wählbare Zeiträume der Handels-Analyse, in Tagen. `0` heißt „alles".
+ *
+ * ── Warum es das braucht ──────────────────────────────────────────────────
+ *
+ * Der Owner am 11.08.: „Die Handelsanalyse zeigt nur einen definierten, sehr
+ * kurzen Bereich. Kann man diesen auch einstellbar machen?"
+ *
+ * Der Bereich war nie eingestellt — er war ein Nebenprodukt. Die Analyse
+ * rechnet auf den GELADENEN Trades, und geladen wird eine Seite zu 50. Wer
+ * zehn Trades in vier Tagen hatte, sah eine Vier-Tage-Auswertung, ohne dass
+ * irgendwo stand, dass das der Grund ist. „Trefferquote 30 %" aus vier Tagen
+ * sieht genauso aus wie aus vier Monaten.
+ */
+export const ZEITRAEUME = [7, 30, 90, 365, 0] as const;
+export type Zeitraum = (typeof ZEITRAEUME)[number];
+
+/** Beschriftung eines Zeitraums für die Oberfläche. */
+export function zeitraumLabel(tage: Zeitraum): string {
+  if (tage === 0) return 'Alles';
+  if (tage === 365) return '1J';
+  return `${tage}T`;
+}
+
+/** Frühester Zeitpunkt, der noch in den Zeitraum fällt (`null` = alles). */
+export function zeitraumBeginn(tage: Zeitraum, jetzt: Date): Date | null {
+  if (tage === 0) return null;
+  return new Date(jetzt.getTime() - tage * 86_400_000);
+}
+
+/**
+ * Trades im Zeitraum. Unlesbare Zeitstempel fliegen raus, statt als
+ * „vor langer Zeit" durchzurutschen — eine Kennzahl aus Zeilen, deren Datum
+ * niemand kennt, ist schlechter als eine ohne sie.
+ */
+export function imZeitraum<T extends { executedAt: string }>(
+  trades: readonly T[],
+  tage: Zeitraum,
+  jetzt: Date,
+): T[] {
+  const ab = zeitraumBeginn(tage, jetzt);
+  if (ab === null) return [...trades];
+  const abMs = ab.getTime();
+  return trades.filter((t) => {
+    const ms = Date.parse(t.executedAt);
+    return Number.isFinite(ms) && ms >= abMs;
+  });
+}
+
+/**
+ * Reicht die geladene Historie weit genug für diesen Zeitraum?
+ *
+ * `false` heißt: nachladen, bevor gerechnet wird. Sonst behauptete die
+ * Auswertung „letzte 90 Tage", zeigte aber die letzten vier — genau die
+ * Verwechslung, gegen die der Umschalter gebaut wurde.
+ *
+ * Ist alles geladen (`alleGeladen`), reicht die Historie per Definition: Mehr
+ * gibt es nicht, auch wenn der älteste Trade jünger ist als der Zeitraum.
+ * Ebenso bei „Alles" — da gibt es keine Untergrenze zu erreichen.
+ */
+export function historieReicht(
+  trades: ReadonlyArray<{ executedAt: string }>,
+  tage: Zeitraum,
+  jetzt: Date,
+  alleGeladen: boolean,
+): boolean {
+  if (alleGeladen || tage === 0) return true;
+  const ab = zeitraumBeginn(tage, jetzt);
+  if (ab === null) return true;
+  let aeltester = Number.POSITIVE_INFINITY;
+  for (const t of trades) {
+    const ms = Date.parse(t.executedAt);
+    if (Number.isFinite(ms) && ms < aeltester) aeltester = ms;
+  }
+  // Keine lesbaren Zeitstempel ⇒ nichts, worauf sich „reicht" beziehen könnte.
+  if (!Number.isFinite(aeltester)) return false;
+  return aeltester <= ab.getTime();
+}
