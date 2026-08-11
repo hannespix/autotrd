@@ -30,6 +30,11 @@ import {
   byWeekday,
   classify,
   closedOnly,
+  historieReicht,
+  imZeitraum,
+  zeitraumLabel,
+  ZEITRAEUME,
+  type Zeitraum,
   lokalerTag,
   marketOpenForClass,
   ema,
@@ -435,6 +440,10 @@ interface DashState {
   watched: string[];
   /** Historie: älteste geladene Zeile — Cursor der nächsten Seite. */
   tradesCursor: TradeCursor | null;
+  /** Gewählter Zeitraum der Handels-Analyse in Tagen (0 = alles). */
+  anZeitraum: Zeitraum;
+  /** Läuft gerade ein Nachladen für den gewählten Zeitraum? */
+  anLaedt: boolean;
   /** Letzter Nachlade-Fehler — sichtbar statt nur in der Konsole. */
   tradesFehler: string | null;
   /** Keine älteren Zeilen mehr — der Knopf verschwindet. */
@@ -1125,6 +1134,11 @@ function layout(email: string): string {
     <div class="dsheet dsheet-wide">
       <button class="dclose" data-close="analytics">✕</button>
       <h3>Handels-Analyse <span id="anScope" class="an-scope"></span></h3>
+      <!-- Zeitraum-Umschalter (Owner 11.08.: „zeigt nur einen definierten,
+           sehr kurzen Bereich"). Reicht die geladene Historie nicht bis zum
+           Anfang des gewählten Zeitraums, wird selbst nachgeladen — sonst
+           behauptete die Auswertung „90 Tage" und zeigte vier. -->
+      <div class="an-zeit" id="anZeit"></div>
       <div class="an-share">
         <button class="dbtn" id="anShareBtn">Grafik teilen</button>
         <label class="an-share-opt"><input type="checkbox" id="anShareBetraege"> Beträge zeigen</label>
@@ -6692,21 +6706,91 @@ function renderJournal(): void {
  * getestet), alles Gezeichnete aus `svgcharts.ts` (rein, kein DOM). Hier
  * steht nur die Verdrahtung.
  */
+/**
+ * Zeitraum wechseln — und die Historie besorgen, die er braucht.
+ *
+ * Der Umschalter wäre eine Lüge ohne diesen Schritt: `st.trades` enthält nur
+ * die geladenen Seiten (50 je Klick), und wer „90 Tage" wählt, während nur
+ * vier geladen sind, bekäme eine Vier-Tage-Auswertung mit 90-Tage-Beschriftung.
+ *
+ * Deshalb wird nachgeladen, bis `historieReicht` zufrieden ist oder es nichts
+ * mehr gibt. Der Deckel von zwölf Runden (= 600 Trades) ist eine Bremse gegen
+ * ein Konto mit sehr langer Historie und einem Fehlgriff auf „Alles"; er wird
+ * im Kopf der Karte offen benannt, statt still abzuschneiden.
+ */
+async function waehleZeitraum(tage: Zeitraum): Promise<void> {
+  if (!st || st.anLaedt) return;
+  st.anZeitraum = tage;
+  st.anLaedt = true;
+  renderAnalytics();
+  try {
+    const uid = st.uid;
+    for (let runde = 0; runde < 12; runde++) {
+      if (!st || st.tradesDone || !st.tradesCursor) break;
+      if (historieReicht(st.trades, tage, new Date(), st.tradesDone)) break;
+      const seite = await loadMoreTrades(uid, st.tradesCursor);
+      if (!st) return; // Abmeldung während der Abfrage
+      const bekannt = new Set(st.trades.map(tradeKey));
+      st.trades = [...st.trades, ...seite.rows.filter((t) => !bekannt.has(tradeKey(t)))];
+      st.tradesCursor = seite.cursor ?? st.tradesCursor;
+      st.tradesDone = seite.done;
+    }
+  } catch (e) {
+    console.warn('Zeitraum-Historie nicht ladbar:', e);
+  } finally {
+    if (st) st.anLaedt = false;
+    renderAnalytics();
+    renderPortfolio();
+  }
+}
+
+/** Die Chip-Leiste über der Auswertung. */
+function renderZeitraumChips(): void {
+  const leiste = $('anZeit');
+  if (!leiste || !st) return;
+  leiste.innerHTML = ZEITRAEUME.map(
+    (z) =>
+      `<button class="tf-btn${z === st!.anZeitraum ? ' on' : ''}" data-anz="${z}"` +
+      `${st!.anLaedt ? ' disabled' : ''}>${esc(zeitraumLabel(z))}</button>`,
+  ).join('');
+  for (const b of leiste.querySelectorAll<HTMLButtonElement>('[data-anz]')) {
+    b.addEventListener('click', () => {
+      void waehleZeitraum(Number(b.dataset['anz']) as Zeitraum);
+    });
+  }
+}
+
 function renderAnalytics(): void {
   if (!st) return;
   const box = $('anBody');
   const scope = $('anScope');
   if (!box) return;
+  renderZeitraumChips();
 
-  const trades = st.trades as HistoryTrade[];
+  /* Ab hier rechnet ALLES auf dem gewählten Zeitraum — auch die Kennzahlen
+   * oben und die Teilen-Grafik. Zwei Bezugsräume auf einem Bildschirm wären
+   * schlimmer als ein zu kurzer: Man vergliche Zahlen, die nichts miteinander
+   * zu tun haben. */
+  const trades = imZeitraum(st.trades as HistoryTrade[], st.anZeitraum, new Date());
   const summary = historySummary(trades);
   if (summary.closed === 0) {
-    box.innerHTML = '<div class="hint">Noch keine geschlossenen Trades.</div>';
+    box.innerHTML = st.anLaedt
+      ? '<div class="hint">Lade Historie …</div>'
+      : `<div class="hint">Keine geschlossenen Trades in diesem Zeitraum${
+          st.anZeitraum === 0 ? '' : ' — längeren Zeitraum wählen?'
+        }</div>`;
     if (scope) scope.textContent = '';
     return;
   }
   if (scope) {
-    scope.textContent = `${summary.closed} geschlossen${st.tradesDone ? '' : ' (geladen)'}`;
+    /* Der Kopf sagt, worauf die Zahlen beruhen. Genau die Angabe fehlte:
+     * „Trefferquote 30 %" aus vier Tagen sah aus wie eine aus vier Monaten.
+     * `(geladen)` bleibt für den Fall, dass der Deckel gegriffen hat — dann
+     * ist der Zeitraum gewählt, aber nicht vollständig belegt. */
+    const voll = st.tradesDone || historieReicht(st.trades, st.anZeitraum, new Date(), st.tradesDone);
+    scope.textContent =
+      `${summary.closed} geschlossen · ${zeitraumLabel(st.anZeitraum)}` +
+      `${st.anLaedt ? ' · lädt …' : voll ? '' : ' (geladen)'}`;
   }
 
   const geschlossen = closedOnly(trades);
@@ -6899,11 +6983,37 @@ function renderPfKurven(serie: Array<{ date: string; equity: number }>): void {
    Daten sammeln, SVG rastern, weitergeben. */
 
 /** Baut die Kennzahlen der Teilen-Grafik aus dem aktuellen Stand. */
+/**
+ * Die Trades und die Equity-Serie, beide auf den gewählten Zeitraum
+ * geschnitten (Owner 11.08.).
+ *
+ * Beide, nicht nur die Trades: Die Teilen-Grafik zeichnet die Equity-Kurve
+ * und beschriftet sie mit ihrem ersten und letzten Datum. Bliebe sie
+ * ungeschnitten, stünde über der Auswertung „90 Tage" und in der Grafik
+ * darunter „2026-08-07 → 2026-08-11" — genau die Verwechslung, die der
+ * Umschalter beenden soll.
+ *
+ * Die Equity-Serie trägt `date` als `YYYY-MM-DD`, die Trades `executedAt` als
+ * vollen Zeitstempel; verglichen wird deshalb über `Date.parse`, nicht über
+ * Zeichenketten.
+ */
+function anZeitfenster(): { trades: HistoryTrade[]; equity: EquitySeriesPoint[] } {
+  const jetzt = new Date();
+  const trades = imZeitraum(st!.trades as HistoryTrade[], st!.anZeitraum, jetzt);
+  const equity = imZeitraum(
+    st!.equitySeries.map((p) => ({ ...p, executedAt: p.date })),
+    st!.anZeitraum,
+    jetzt,
+  ).map(({ date, equity: e }) => ({ date, equity: e }));
+  return { trades, equity };
+}
+
 function shareDatenBauen(betraege: boolean): ShareDaten {
-  const zerlegung = zerlegeDepot(st!.equitySeries, st!.trades as HistoryTrade[]);
+  const fenster = anZeitfenster();
+  const zerlegung = zerlegeDepot(fenster.equity, fenster.trades);
   const letzte = zerlegung.equity[zerlegung.equity.length - 1] ?? 0;
   const basis = zerlegung.basis || 1;
-  const geschlossen = closedOnly(st!.trades as HistoryTrade[]);
+  const geschlossen = closedOnly(fenster.trades);
   const stats = tradeStats(
     geschlossen.map((t) => ({ symbol: t.symbol, pnl: t.pnl!, riskExit: t.riskExit ?? null })),
   );
@@ -8003,6 +8113,11 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     watchlistSubs: [],
     watched: [],
     tradesCursor: null,
+    // 30 Tage als Start: lang genug, dass die Kennzahlen etwas aussagen,
+    // kurz genug, dass die erste Seite meist reicht und nichts nachgeladen
+    // werden muss.
+    anZeitraum: 30,
+    anLaedt: false,
     tradesFehler: null,
     tradesDone: false,
     dcModus: 'symbol',

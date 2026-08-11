@@ -1105,6 +1105,10 @@ input { accent-color: var(--ac); }
    280-px-Seitenleiste konnte sie nie liefern (Owner-Feedback 28.07.). */
 .dsheet-wide { width: min(1180px, 100%); max-height: 92vh; overflow-y: auto; }
 .an-scope { float: right; color: var(--t3); font-size: 11px; font-weight: 400; }
+/* Zeitraum-Umschalter der Handels-Analyse (Owner 11.08.). Umbruchfähig,
+   damit die fünf Chips auch auf 360 px nicht aus der Karte laufen. */
+.an-zeit { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.an-zeit .tf-btn:disabled { opacity: .5; cursor: default; }
 
 .an-kpis {
   display: grid; grid-template-columns: repeat(4, 1fr);
