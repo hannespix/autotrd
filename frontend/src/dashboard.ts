@@ -76,6 +76,7 @@ import {
   type PositionLevels,
   type Strategy,
   type Wallet,
+  positionLage,
 } from '@autotrd/shared';
 import type { Unsubscribe } from 'firebase/firestore';
 import {
@@ -6308,16 +6309,19 @@ function zeigeStopDialog(): void {
   $('stopOut').textContent = '';
   rows.innerHTML = st.positions
     .map((p) => {
-      const kurs = st?.posPrices.get(p.symbol) ?? p.avgEntry;
+      const kurs = st?.posPrices.get(p.symbol) ?? null;
       const short = p.side === 'short';
-      // Vorzeichen dreht beim Short: Ein gefallener Kurs ist dort Gewinn.
-      const pnl = (short ? p.avgEntry - kurs : kurs - p.avgEntry) * p.qty;
-      const farbe = pnl >= 0 ? 'var(--gn)' : 'var(--rd)';
+      // Dieselbe Rechnung wie in Summe und Tabelle (F6). Ohne Kurs bleibt
+      // `pnl` null — hier steht dann „—" statt einer erfundenen Null.
+      const { pnl } = positionLage(p, kurs);
+      const farbe = pnl === null ? 'var(--t3)' : pnl >= 0 ? 'var(--gn)' : 'var(--rd)';
       return `<label class="hint" style="display:flex;align-items:center;gap:8px;padding:4px 0">
         <input type="checkbox" data-stopsym="${escText(p.symbol)}" checked />
         <b style="min-width:64px">${escText(p.symbol)}</b>
         <span style="flex:1">${short ? 'Short ' : ''}${p.qty} × ${money(p.avgEntry)}</span>
-        <span class="mono" style="color:${farbe}">${pnl >= 0 ? '+' : ''}${money(pnl)}</span>
+        <span class="mono" style="color:${farbe}">${
+          pnl === null ? '—' : `${pnl >= 0 ? '+' : ''}${money(pnl)}`
+        }</span>
       </label>`;
     })
     .join('');
@@ -6456,18 +6460,20 @@ function renderPortfolio(): void {
   const cash = st.wallet?.paperBalance ?? null;
   let openPnl = 0;
   let posValue = 0;
+  /* Positionen ohne frischen Kurs (Audit-Befund 11.08., F6).
+   *
+   * Der Wert bleibt konservativ auf Einstand — eine Position aus der Equity
+   * zu streichen, weil ihr Kurs fehlt, wäre schlimmer. Aber ihr Ergebnis ist
+   * dann UNBEKANNT, nicht null, und genau das muss dranstehen: Sonst liest
+   * sich „P&L ±0,00" wie „hat sich nichts bewegt", während in Wahrheit
+   * niemand weiß, wo die Position steht. Der Owner-Screenshot vom 10.08.
+   * zeigte genau diese Lage — 128 von 132 Symbolen ohne Kurs. */
+  let ohneKurs = 0;
   for (const p of st.positions) {
-    const live = st.posPrices.get(p.symbol) ?? p.avgEntry;
-    if (p.side === 'short') {
-      // Short verdient am fallenden Kurs; im Depotwert steckt die
-      // hinterlegte Margin (Einstand × Stück) plus unrealisiertes P&L.
-      const pnl = (p.avgEntry - live) * p.qty;
-      openPnl += pnl;
-      posValue += p.avgEntry * p.qty + pnl;
-    } else {
-      openPnl += (live - p.avgEntry) * p.qty;
-      posValue += live * p.qty;
-    }
+    const lage = positionLage(p, st.posPrices.get(p.symbol) ?? null);
+    posValue += lage.wert;
+    if (lage.pnl === null) ohneKurs += 1;
+    else openPnl += lage.pnl;
   }
   // Gesamt-P&L = Equity − Kapitalbasis. NICHT die Summe der geladenen
   // Trades: Die Handelshistorie lädt seitenweise nach, und eine „Gesamt"-
@@ -6495,12 +6501,22 @@ function renderPortfolio(): void {
   closedEl.textContent = closedPnl === null ? '--' : money(closedPnl);
   closedEl.className = `smv ${pnlClass(closedPnl ?? 0)}`;
   const unrealEl = $('vUnreal');
-  unrealEl.textContent = money(openPnl);
+  /* Fehlen Kurse, sagt die Zahl es (F6). Vorher stand hier eine glatte
+   * Summe, in der jede kurslose Position stillschweigend mit 0 zählte —
+   * dieselbe Anzeige wie bei „steht genau auf Einstand", nur dass niemand
+   * das wusste. */
+  unrealEl.textContent = ohneKurs > 0 ? `${money(openPnl)} *` : money(openPnl);
   unrealEl.className = `smv ${pnlClass(openPnl)}`;
+  unrealEl.title =
+    ohneKurs > 0
+      ? `Für ${ohneKurs} von ${st.positions.length} Positionen fehlt ein aktueller Kurs — `
+        + 'sie sind mit ihrem Einstand bewertet und stecken NICHT in dieser Zahl.'
+      : '';
   $('vWR').textContent = winRate === null ? '--%' : `${winRate}%`;
 
   // Positionen-Tabelle
-  $('pCount').textContent = `${st.positions.length} offen`;
+  $('pCount').textContent =
+    ohneKurs > 0 ? `${st.positions.length} offen · ${ohneKurs} ohne Kurs` : `${st.positions.length} offen`;
   const body = $('pBody') as HTMLTableSectionElement;
   body.innerHTML = '';
   if (st.positions.length === 0) {
@@ -6509,8 +6525,9 @@ function renderPortfolio(): void {
   for (const p of st.positions) {
     const live = st.posPrices.get(p.symbol);
     const short = p.side === 'short';
-    // Short: Gewinn bei fallendem Kurs — P&L und % gespiegelt
-    const pnl = live !== undefined ? (short ? (p.avgEntry - live) : (live - p.avgEntry)) * p.qty : null;
+    // Dieselbe Rechnung wie in der Summe darüber und im Stop-Dialog — eine
+    // Funktion, damit die drei Anzeigen nicht auseinanderlaufen (F6).
+    const { pnl } = positionLage(p, live ?? null);
     const pct = live !== undefined && p.avgEntry > 0
       ? (short ? (1 - live / p.avgEntry) : (live / p.avgEntry - 1)) * 100
       : null;
@@ -9567,6 +9584,63 @@ function onEscape(e: KeyboardEvent): void {
   document.getElementById('olv')?.classList.remove('show');
 }
 
+/**
+ * Modulglobalen Zustand zurücksetzen — beim Abmelden und beim Nutzerwechsel.
+ *
+ * ── Audit-Befunde 11.08. (F9, F10, F11) ───────────────────────────────────
+ *
+ * `unmountDashboard` räumte gründlich auf — aber nur, was im `st`-Objekt
+ * hing. Alles, was als Modulvariable neben `st` liegt, überlebte das
+ * Abmelden und war beim nächsten Anmelden noch da. Drei Wirkungen, die im
+ * Audit getrennt aufgefallen sind und dieselbe Ursache haben:
+ *
+ *  - **Listener-Leck (F11):** `mtState.subs` hält einen `onSnapshot` auf den
+ *    Kurs des zuletzt gewählten Handels-Symbols. Nach dem Abmelden lief er
+ *    weiter — samt Firestore-Verbindung und Kosten, und mit einem Callback,
+ *    das in ein geleertes DOM schreibt.
+ *  - **Scharfe Order überlebt (F11):** `mtState.arm` ist der Zwei-Klick-
+ *    Schutz mit Zeitfenster. Sein `setTimeout` lief nach dem Abmelden weiter
+ *    und griff beim Feuern auf Knöpfe zu, die es nicht mehr gibt.
+ *  - **Fremde Daten beim Nutzerwechsel (F9):** `eigeneLoadouts` und
+ *    `loGewaehlt` gehören dem angemeldeten Konto. Meldet sich auf demselben
+ *    Gerät jemand anders an, sah er bis zum ersten Nachladen die Loadouts
+ *    seines Vorgängers.
+ *  - **Tour startet nie wieder (F10):** `tourAutostartGeprueft` bleibt
+ *    `true`. Der zweite Nutzer auf demselben Gerät bekam die Einführung nie
+ *    zu sehen — genau der Nutzer, der sie am nötigsten hätte.
+ *
+ * Die laufenden Timer (`autoResTimer`, `evTipTimer`) stehen aus demselben
+ * Grund hier: Sie hängen an keinem `st` und feuern nach dem Abmelden in eine
+ * Oberfläche, die es nicht mehr gibt.
+ */
+export function setzeModulZustandZurueck(): void {
+  // Trade-Fenster: erst die Listener lösen, dann den Zustand leeren.
+  for (const u of mtState.subs) u();
+  mtState.subs.length = 0;
+  if (mtState.arm !== null) window.clearTimeout(mtState.arm.timer);
+  mtState.arm = null;
+  mtState.sym = null;
+  mtState.price = null;
+  // Nutzergebundene Daten — sie gehören dem Konto, nicht dem Gerät.
+  eigeneLoadouts = [];
+  loGewaehlt = null;
+  bestPractice = null;
+  zeichnungenCache = null;
+  tourAutostartGeprueft = false;
+  // Freilaufende Timer.
+  if (autoResTimer !== null) window.clearTimeout(autoResTimer);
+  autoResTimer = null;
+  if (evTipTimer !== null) window.clearTimeout(evTipTimer);
+  evTipTimer = null;
+  evTipOwner = null;
+  autoSwitching = false;
+  malYModusKnopf = null;
+  zeichnenTool = null;
+  zeichnenStart = null;
+  zeichnenTag = null;
+  lastRenderIntraday = null;
+}
+
 export function unmountDashboard(): void {
   if (!st) return;
   exitAllMax(); // Portal-Elemente vom body zurück, bevor die App-Wurzel geleert wird
@@ -9588,5 +9662,9 @@ export function unmountDashboard(): void {
   st.chart2?.destroy();
   document.removeEventListener('keydown', onEscape);
   document.removeEventListener('keydown', onGlobalHotkey);
+  // Zuletzt, damit ein Fehler weiter oben den Modulzustand nicht halb
+  // zurückgesetzt hinterlässt — und weil `st = null` danach kommt: Was hier
+  // noch auf `st` zugreift, findet es vor.
+  setzeModulZustandZurueck();
   st = null;
 }
