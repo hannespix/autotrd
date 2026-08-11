@@ -49,6 +49,75 @@ const LIVE_TRADE_WINDOW = 400;
 /** Journal-Einträge je User; ältere fallen raus. */
 const JOURNAL_KEEP = 200;
 
+/** Objekt mit sortierten Schlüsseln — für einen Vergleich per JSON. */
+function kanonisch(wert: unknown): unknown {
+  if (Array.isArray(wert)) return wert.map(kanonisch);
+  if (wert !== null && typeof wert === 'object') {
+    const o = wert as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(o).sort()) out[k] = kanonisch(o[k]);
+    return out;
+  }
+  return wert;
+}
+
+/**
+ * Ist die Strategie noch dieselbe, auf der die Entscheidung beruht?
+ *
+ * ── Audit-Befund 11.08. ───────────────────────────────────────────────────
+ *
+ * `tuneAll` liest ALLE Konten einmal zu Beginn und arbeitet sie dann der
+ * Reihe nach ab. Zwischen dem Lesen und dem Schreiben liegen mehrere
+ * Netzrunden je Konto (Flotte, 400 Trades, Journal). In dieser Zeit kann der
+ * Owner in der App an seiner Strategie drehen — und der Tuner schrieb
+ * anschließend `settings.strategy` KOMPLETT aus seinem alten Stand plus
+ * seiner einen Änderung. Die Änderung des Menschen war damit weg, ohne
+ * Meldung, ohne Spur.
+ *
+ * Der schärfste Fall war `engine.running`: Der Schalter wurde ausdrücklich
+ * aus der alten Fassung zurückgeschrieben („gehört dem Owner"). Wer die
+ * Engine um 17:45 abschaltet, hätte sie eine Minute später wieder an
+ * gehabt.
+ *
+ * ── Warum der Schalter beim Vergleich außen vor bleibt ────────────────────
+ *
+ * Ihn umzulegen ist die häufigste und harmloseste Änderung überhaupt. Zählte
+ * er als „Basis geändert", verlöre der Tuner seine Beförderung wegen eines
+ * Klicks, der mit den Parametern nichts zu tun hat. Stattdessen wird er beim
+ * Schreiben aus dem FRISCHEN Stand übernommen — dann gehört er dem Owner
+ * wirklich, und zwar in der Fassung von eben.
+ */
+export function basisUnveraendert(frisch: Strategy | undefined, basis: Strategy): boolean {
+  if (!frisch) return false;
+  const ohneSchalter = (s: Strategy): string => {
+    const k = structuredClone(s);
+    k.engine.running = false;
+    return JSON.stringify(kanonisch(k));
+  };
+  return ohneSchalter(frisch) === ohneSchalter(basis);
+}
+
+/**
+ * Eine Siegerin, die es nicht ins Dokument geschafft hat, im Journal
+ * richtigstellen.
+ *
+ * Ohne das stünde im Journal „übernommen", während die Einstellung
+ * unverändert ist — und dieselbe Zahl ginge über `globalDelta` als Erfolg
+ * ins kollektive Vorwissen ein. Eine Sache, zwei Antworten.
+ *
+ * Die Prüfung selbst bleibt stehen: Sie hat stattgefunden, ihr Ergebnis ist
+ * gültig, und der Grund gehört sichtbar dazu. Das Journal ist der Ort, an
+ * dem der Owner nachvollzieht, warum sich etwas geändert hat — oder eben
+ * nicht.
+ */
+export function markiereNichtUebernommen(entries: JournalEntry[], variantId: string): void {
+  for (const e of entries) {
+    if (e.variantId !== variantId) continue;
+    e.promoted = false;
+    e.reason = `${e.reason} — nicht übernommen: Strategie wurde während des Laufs geändert.`;
+  }
+}
+
 export interface TuneRunResult {
   users: number;
   promoted: number;
@@ -122,17 +191,37 @@ export async function tuneAll(now = new Date()): Promise<TuneRunResult> {
         // nichts durchsetzen können, was ein Mensch über die Oberfläche auch
         // nicht dürfte.
         const neu = clampStrategyRisk(structuredClone(winner.strategy));
-        neu.engine.running = base.engine.running; // Schalter gehört dem Owner
-        await userDoc.ref.set({ settings: { strategy: neu } }, { merge: true });
-        // Nach der Übernahme ist die Flotte veraltet — die Varianten bezogen
-        // sich auf die alte Basis. Frisch anfangen ist ehrlicher, als
-        // Ergebnisse aus zwei verschiedenen Welten zu vermischen.
-        await userDoc.ref.collection('tuning').doc('fleet').set({
-          variants: {},
-          rebuiltAt: now.toISOString(),
+        const fleetRef = userDoc.ref.collection('tuning').doc('fleet');
+        // In einer Transaktion, weil zwischen dem Lesen zu Beginn des Laufs
+        // und diesem Schreibvorgang Minuten liegen können (siehe
+        // `basisUnveraendert`). Ohne sie überschriebe der Tuner still, was
+        // der Owner in der Zwischenzeit eingestellt hat.
+        const uebernommen = await db.runTransaction(async (tx) => {
+          const frisch = await tx.get(userDoc.ref);
+          const jetzt = frisch.get('settings.strategy') as Strategy | undefined;
+          const jetztGeclampt = jetzt ? clampStrategyRisk(structuredClone(jetzt)) : undefined;
+          if (!basisUnveraendert(jetztGeclampt, base)) return false;
+          // Der Schalter gehört dem Owner — und zwar so, wie er JETZT steht.
+          const schalter = jetzt?.engine?.running;
+          neu.engine.running = typeof schalter === 'boolean' ? schalter : base.engine.running;
+          tx.set(userDoc.ref, { settings: { strategy: neu } }, { merge: true });
+          // Nach der Übernahme ist die Flotte veraltet — die Varianten bezogen
+          // sich auf die alte Basis. Frisch anfangen ist ehrlicher, als
+          // Ergebnisse aus zwei verschiedenen Welten zu vermischen. Im selben
+          // Zug wie die Strategie, sonst gäbe es einen Moment, in dem die neue
+          // Basis gegen Schattenkonten der alten geprüft würde.
+          tx.set(fleetRef, { variants: {}, rebuiltAt: now.toISOString() });
+          return true;
         });
-        promoted += 1;
-        logger.info(`autoTune ${userDoc.id}: „${winner.id}" übernommen`);
+        if (uebernommen) {
+          promoted += 1;
+          logger.info(`autoTune ${userDoc.id}: „${winner.id}" übernommen`);
+        } else {
+          markiereNichtUebernommen(entries, winner.id);
+          logger.info(
+            `autoTune ${userDoc.id}: „${winner.id}" verworfen — Strategie hat sich während des Laufs geändert`,
+          );
+        }
       }
 
       // Beitrag zum Kollektiv: NUR Zählwerte je Achsenwert, keine
