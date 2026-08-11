@@ -162,10 +162,16 @@ const gezeichnet = () =>
  * Deshalb bekommen Marker hier Signalfarben (Magenta/Cyan/Reingelb), die im
  * Kursbild nicht vorkommen, und die Toleranz ist eng genug, dass Kerzen-Grün
  * (38,207,157) nicht als Cyan (0,255,255) durchgeht.
+ *
+ * `bereich` schränkt die Zählung auf einen CSS-Pixel-Streifen ein (`xVon`,
+ * `xBis`). Damit lässt sich auch etwas isolieren, dessen Farbe man NICHT frei
+ * wählen kann — die Prognose-Linie ist in `chart.ts` fest auf `#25d0ee`
+ * gesetzt, dieselbe Farbe wie die Linien-/Berg-Serie. Rechts vom letzten Bar
+ * liegt aber nur die Prognose, und dort ist die Farbe wieder eindeutig.
  */
-const farbPixel = (hex, toleranz = 30) =>
+const farbPixel = (hex, toleranz = 30, bereich = null) =>
   seite.evaluate(
-    ([h, tol]) => {
+    ([h, tol, ber]) => {
       const r0 = parseInt(h.slice(1, 3), 16);
       const g0 = parseInt(h.slice(3, 5), 16);
       const b0 = parseInt(h.slice(5, 7), 16);
@@ -174,7 +180,12 @@ const farbPixel = (hex, toleranz = 30) =>
         if (c.width === 0 || c.height === 0) continue;
         const ctx = c.getContext('2d');
         if (!ctx) continue;
-        const d = ctx.getImageData(0, 0, c.width, c.height).data;
+        // Canvas-Pixel je CSS-Pixel (Retina/deviceScaleFactor)
+        const s = c.clientWidth > 0 ? c.width / c.clientWidth : 1;
+        const xVon = ber ? Math.max(0, Math.round(ber.xVon * s)) : 0;
+        const xBis = ber ? Math.min(c.width, Math.round(ber.xBis * s)) : c.width;
+        if (xBis <= xVon) continue;
+        const d = ctx.getImageData(xVon, 0, xBis - xVon, c.height).data;
         for (let i = 0; i < d.length; i += 4) {
           if (
             Math.abs(d[i] - r0) < tol &&
@@ -187,7 +198,7 @@ const farbPixel = (hex, toleranz = 30) =>
       }
       return n;
     },
-    [hex, toleranz],
+    [hex, toleranz, bereich],
   );
 
 /* Signalfarben nur für den Prüfstand — im Kursbild kommt keine davon vor,
@@ -196,6 +207,8 @@ const farbPixel = (hex, toleranz = 30) =>
 const M_NEWS = '#ff00ff';
 const M_KAUF = '#00ffff';
 const L_EINSTIEG = '#ffff00';
+const O_INDIKATOR = '#ff7f00'; // Overlay (SMA/EMA/BB/VWAP) — frei wählbar
+const P_PROGNOSE = '#25d0ee'; // Prognose-Linie — in chart.ts fest verdrahtet
 
 const TYPEN = ['candles', 'hollow', 'heikin', 'line', 'area', 'baseline', 'bars'];
 const fehler = [];
@@ -307,41 +320,68 @@ for (const typ of TYPEN) {
   await seite.screenshot({ path: `${SHOTS}/intraday.png` });
 }
 
-/* ── Overlays, Prognose und Flächen-Verlauf ───────────────────────────────
+/* ── Indikatoren, Prognose und Flächen-Verlauf — in JEDEM Chart-Typ ───────
  *
- * Sie legen zusätzliche Serien auf dieselbe Preisskala. Eine falsch
- * skalierte Zusatzserie kann den Kurs auf einen Strich zusammendrücken —
- * sichtbar nur als Bild, nie in einem Unit-Test. */
-await seite.evaluate((bs) => {
-  const c = window.__chart;
-  c.setChartType('candles');
-  c.setBars(bs);
-  c.setOverlays([
-    { key: 'sma20', color: '#e8c76a', points: bs.map((b, i) => ({ time: b.date, value: b.close * (1 + i * 0.0002) })) },
-    { key: 'bb-up', color: '#7f8fb0', points: bs.map((b) => ({ time: b.date, value: b.close * 1.04 })) },
-  ]);
-  c.setForecast({
-    points: bs.slice(-10).map((b, i) => ({ time: b.date, value: b.close + i * 0.4 })),
-    band: bs.slice(-10).map((b, i) => ({ time: b.date, upper: b.close + i * 0.4 + 2, lower: b.close + i * 0.4 - 2 })),
-  });
-  c.setArea(bs.slice(-40).map((b) => ({ time: b.date, value: b.close })));
-}, bars);
-await seite.waitForTimeout(250);
-{
+ * Zweite Hälfte der Owner-Meldung 11.08.: „die News Punkte und die
+ * INDIKATOREN funktionieren nicht so richtig". Der erste Prüfstand legte
+ * Overlays nur auf Kerzen — und beantwortete die Frage damit nicht.
+ *
+ * Overlays bekommen eine Signalfarbe (Orange), die Prognose ist in
+ * `chart.ts` fest auf `#25d0ee` verdrahtet — dieselbe Farbe wie die
+ * Linien-/Berg-Serie. Sie wird deshalb im Streifen RECHTS vom letzten Bar
+ * gezählt, wo nur sie liegen kann. */
+// Prognose-Tage LIEGEN IN DER ZUKUNFT — wie in der App. Auf vergangene Tage
+// gelegt verschwindet sie unter der Kurslinie und wäre nicht isolierbar.
+const zukunft = Array.from({ length: 10 }, (_, i) => ({
+  date: new Date(Date.parse(`${letzter.date}T00:00:00Z`) + (i + 1) * 86_400_000).toISOString().slice(0, 10),
+  value: letzter.close + (i + 1) * 0.5,
+}));
+await seite.evaluate(
+  ([bs, zk, l]) => {
+    const c = window.__chart;
+    c.setBars(bs, { fit: true });
+    c.setRightOffset(14); // Platz für die Prognose rechts der letzten Kerze
+    c.setOverlays([
+      { key: 'sma20', color: '#ff7f00', points: bs.map((b, i) => ({ time: b.date, value: b.close * (1 + i * 0.0002) })) },
+      { key: 'bb-up', color: '#7f8fb0', points: bs.map((b) => ({ time: b.date, value: b.close * 1.04 })) },
+    ]);
+    c.setForecast(
+      {
+        points: zk.map((p) => ({ time: p.date, value: p.value })),
+        band: zk.map((p) => ({ time: p.date, upper: p.value + 2, lower: p.value - 2 })),
+      },
+      { time: l.date, value: l.close },
+    );
+    c.setArea(bs.slice(-40).map((b) => ({ time: b.date, value: b.close })));
+  },
+  [bars, zukunft, letzter],
+);
+await seite.waitForTimeout(300);
+for (const typ of TYPEN) {
+  await seite.evaluate((t) => window.__chart.setChartType(t), typ);
+  await seite.waitForTimeout(180);
   const pixel = await gezeichnet();
   const co = await seite.evaluate(
     ([zeit, preis]) => window.__chart.coords(zeit, preis),
     [letzter.date, letzter.close],
   );
   const seitenFehler = await seite.evaluate(() => window.__fehler.slice());
-  const ok = pixel > 500 && co.y !== null && seitenFehler.length === 0;
+  const ind = await farbPixel(O_INDIKATOR);
+  // Prognose: nur rechts vom letzten Bar zählen (dort ist `#25d0ee` eindeutig).
+  const prog = co.x === null ? 0 : await farbPixel(P_PROGNOSE, 30, { xVon: co.x + 8, xBis: 900 });
+  const ok = pixel > 500 && co.y !== null && seitenFehler.length === 0 && ind > 50 && prog > 20;
   zeilen.push(
-    `${ok ? 'OK  ' : 'FEHL'} overlays  pixel=${String(pixel).padStart(6)} ` +
+    `${ok ? 'OK  ' : 'FEHL'} ind:${typ.padEnd(9)} pixel=${String(pixel).padStart(6)} ` +
+      `indikator=${String(ind).padStart(4)} prognose=${String(prog).padStart(4)} ` +
       `coords.y=${co.y === null ? 'null' : Math.round(co.y)}` +
       (seitenFehler.length ? ` JS=${seitenFehler.join(' | ')}` : ''),
   );
-  if (!ok) fehler.push(`overlays: pixel=${pixel} coords=${JSON.stringify(co)} js=${JSON.stringify(seitenFehler)}`);
-  await seite.screenshot({ path: `${SHOTS}/overlays.png` });
+  if (!ok) {
+    fehler.push(
+      `ind ${typ}: pixel=${pixel} indikator=${ind} prognose=${prog} coords=${JSON.stringify(co)} js=${JSON.stringify(seitenFehler)}`,
+    );
+  }
+  await seite.screenshot({ path: `${SHOTS}/ind-${typ}.png` });
 }
 
 /* ── Leere und einelementige Daten ────────────────────────────────────────
