@@ -91,18 +91,60 @@ export function schutzStopPreis(lage: SchutzLage, risk: RiskConfig): number | nu
       : null;
   if (sl === null && trail === null) return null;
   if (lage.side === 'short') {
-    const basis = lage.lowWater ?? lage.avgEntry;
+    /* Das Trailing zählt erst, wenn die Position IM PLUS war
+     * (Audit-Befund 11.08.) — beim Short heißt das: der Kurs stand unter dem
+     * Einstand. Die Begründung steht bei der Long-Seite unten; hier dieselbe
+     * Regel gespiegelt, wie `riskExitReason` sie mit `trough < avgEntry`
+     * führt. */
+    const tief = lage.lowWater ?? lage.avgEntry;
+    const imPlus = tief < lage.avgEntry;
     const kandidaten = [
       ...(sl !== null ? [lage.avgEntry * (1 + sl / 100)] : []),
-      ...(trail !== null ? [basis * (1 + trail / 100)] : []),
+      ...(trail !== null && imPlus ? [tief * (1 + trail / 100)] : []),
     ];
+    if (kandidaten.length === 0) return null;
     return rundeStopPreis(Math.min(...kandidaten), 'short');
   }
-  const basis = lage.highWater ?? lage.avgEntry;
+  /* Das Trailing zählt erst, wenn die Position IM PLUS war.
+   *
+   * ── Der Audit-Befund vom 11.08. ──────────────────────────────────────────
+   *
+   * Die Engine führt genau diese Regel mit einer zusätzlichen Bedingung:
+   *
+   *     if (peak > pos.avgEntry && atMost(price, peak * (1 - trailPct/100)))
+   *
+   * Das `peak > avgEntry` fehlte hier. Beim Einstieg ist `highWater` gleich
+   * dem Einstand, der Trailing-Kandidat wurde also vom EINSTAND aus gerechnet
+   * und gewann das `Math.max`, sobald `trailingStopPct < stopLossPct`.
+   *
+   * Der Broker-Stop lag damit enger als jede Engine-Regel — und er ist eine
+   * echte GTC-Order, er verkauft wirklich. Konkret bei „fester Stop aus, nur
+   * Trailing" (`stopLossPct: 0` ⇒ clampStrategyRisk setzt die 25-%-Notbremse,
+   * `trailingStopPct: 3`): Einstieg AAPL 50 Stück zu 200,00.
+   *
+   *   Engine       Stop bei 150,00, Trailing inaktiv (peak = 200, nicht > 200)
+   *   Schutz-Stop  max(150,00 ; 194,00) = 194,00
+   *
+   * Bei 193,80 löste die GTC-Order aus: 300 $ realisierter Verlust auf einer
+   * Position, die nach den eigenen Regeln bis 150,00 laufen durfte —
+   * 22 Prozentpunkte zwischen beabsichtigtem und tatsächlichem Stop. Gebucht
+   * wurde der Fill danach als regulärer `stop_loss`, die Statistik sah also
+   * nichts Ungewöhnliches.
+   *
+   * Mit den ausgelieferten Defaults (2 % Stop, 3 % Trailing) tritt es nicht
+   * auf, weil dort der Einstands-Stop gewinnt. Es tritt bei jedem
+   * `trailingStopPct < stopLossPct` auf — der klassischen Kombination
+   * „weiter Einstands-Stop, enges Trailing". */
+  const hoch = lage.highWater ?? lage.avgEntry;
+  const imPlus = hoch > lage.avgEntry;
   const kandidaten = [
     ...(sl !== null ? [lage.avgEntry * (1 - sl / 100)] : []),
-    ...(trail !== null ? [basis * (1 - trail / 100)] : []),
+    ...(trail !== null && imPlus ? [hoch * (1 - trail / 100)] : []),
   ];
+  // Nur Trailing konfiguriert und noch nie im Plus ⇒ es gibt kein Niveau,
+  // das die Engine gerade führen würde. Keine Order ist richtig; eine vom
+  // Einstand aus gerechnete wäre die des Befundes.
+  if (kandidaten.length === 0) return null;
   return rundeStopPreis(Math.max(...kandidaten), 'long');
 }
 
