@@ -104,7 +104,18 @@ async function nutzerSchluessel(uid: string): Promise<AlpacaSchluessel | null> {
 export async function pruefeBrokerStatus(uid: string): Promise<BrokerStatusResult> {
   const db = getFirestore();
   const userDoc = await db.collection('users').doc(uid).get();
-  const strategy = ((userDoc.get('settings') as Strategy | undefined) ??
+  /* `settings.strategy`, nicht `settings` (Audit-Befund 11.08.).
+   *
+   * Unter `settings` liegen drei Dinge nebeneinander: `strategy`, `ui` und
+   * `autoTune`. Wer `settings` als Strategie liest, bekommt eine Hülle ohne
+   * `broker` und ohne `engine` — und `resolveBrokerMode` greift zwei Zeilen
+   * später ungeschützt auf `strategy.broker.mode` zu. Diese Karte warf
+   * dadurch für JEDES Konto mit Profil; funktioniert hat nur der Fallback
+   * für Konten ganz ohne `settings`.
+   *
+   * Es war die einzige Stelle in `functions/src`, die das Feld `settings`
+   * selbst als Strategie las — alle anderen lesen `settings.strategy`. */
+  const strategy = ((userDoc.get('settings.strategy') as Strategy | undefined) ??
     DEFAULT_STRATEGY) as Strategy;
 
   // Reife über denselben Helfer wie der Scan — eine Quelle, eine Zahl.
