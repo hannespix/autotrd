@@ -207,7 +207,20 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
   // vorbei. Ein Lauf liest dafür einmal die market-Sammlung (~166 Docs).
   let chartLuecken: string[] = [];
   try {
-    const marktDocs = await db.collection('market').get();
+    /* `.select(…)` statt des ganzen Dokuments (Audit-Befund 11.08.).
+     *
+     * Gebraucht wird EIN Feld. Geholt wurde bis dahin alles, und ein
+     * `market/{sym}`-Dokument trägt `forecast.points`,
+     * `forecastIntraday.points`, `news`, `lastSignal` und `quote` — bei 166
+     * Symbolen unauffällig, beim Alpaca-Universum nicht mehr: rund 10.000
+     * Dokumente à ~10 KB sind ~100 MB in einem Rutsch, bei 512 MiB
+     * Funktionsspeicher.
+     *
+     * Der Ausfall wäre still: OOM-Kill des Laufs ⇒ `meta/momentum.top` bleibt
+     * auf dem Vorabend stehen ⇒ `collectScanSymbols` wählt am nächsten Tag
+     * nach einer veralteten Rangliste, ohne dass irgendwo „Ranking ist alt"
+     * steht. */
+    const marktDocs = await db.collection('market').select('deepBackfillV').get();
     const stand = new Map(marktDocs.docs.map((doc) => [doc.id, doc.get('deepBackfillV') as unknown]));
     chartLuecken = chartHistorieFehlt(katalog, stand);
   } catch (err) {

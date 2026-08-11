@@ -39,6 +39,20 @@ function bauDb(): unknown {
             get: (f: string) => data[f],
           })),
         }),
+        /* `.select(…)` gibt in Firestore eine Query zurück, deren Dokumente
+         * NUR die genannten Felder tragen (Audit-Fix 11.08. gegen die
+         * Speichergrenze). Die Attrappe bildet das nach statt es zu
+         * ignorieren — sonst liefe der Test auf Daten, die es im Betrieb
+         * nicht gibt, und ein versehentlich zusätzlich gelesenes Feld fiele
+         * hier nie auf. */
+        select: (...felder: string[]) => ({
+          get: async () => ({
+            docs: [...z.market.entries()].map(([id, data]) => ({
+              id,
+              get: (f: string) => (felder.includes(f) ? data[f] : undefined),
+            })),
+          }),
+        }),
         doc: (sym: string) => ({
           __pfad: `market/${sym}`,
           collection: () => ({
