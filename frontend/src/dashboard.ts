@@ -3835,6 +3835,39 @@ function atrPct14(daily: ChartBar[]): number | null {
 const MARKEN_FARBE = '#9aa4b5';
 
 /**
+ * Ab welcher Chart-Breite die Marken überhaupt beschriftet werden.
+ *
+ * ── Owner-Feedback 11.08.: „Marken überdecken zu viel wichtiger Infos" ────
+ *
+ * Die Regel steht seit dem 04.08. im Kopf von `PriceLineSpec`: Der Titel
+ * „steht IM Chart und verdeckt Kurs — meist sagt schon das Achsen-Label
+ * alles". R1 und S1 befolgen sie, die drei Marken darunter taten es nicht:
+ * `52W-Hoch`, `52W-Tief` und vor allem `Pivot · ATR 5,4 %` sind auf einem
+ * Telefon breite Kästen mitten im Kursverlauf — und sie sitzen ausgerechnet
+ * rechts, wo die JÜNGSTEN Kerzen stehen.
+ *
+ * Unter dieser Breite tragen die Marken deshalb gar keinen Text. Die
+ * gestrichelte Linie zeigt das Niveau, das Achsen-Label den Kurs; welche
+ * Linie welche ist, sagt die Legende beim Antippen. Darüber bleiben sie
+ * beschriftet, aber kurz.
+ *
+ * 640 px ist dieselbe Grenze, an der auch das OHLC-HUD standardmäßig
+ * aufklappt — eine Schwelle im ganzen Dashboard, nicht zwei.
+ */
+const MARKEN_TEXT_AB_PX = 640;
+
+/**
+ * Marken-Titel nur, wo Platz ist — sonst der leere String.
+ *
+ * Leer und nicht `undefined`: `PriceLineSpec.title` ist unter
+ * `exactOptionalPropertyTypes` ein `string`, und die Chart-Schicht setzt
+ * ohnehin `spec.title ?? ''`. Ein leerer Titel IST dort „kein Text".
+ */
+function markenTitel(text: string): string {
+  return window.innerWidth >= MARKEN_TEXT_AB_PX ? text : '';
+}
+
+/**
  * Trading-Marken (Chart-Vision, letzter offener Punkt): 52-Wochen-Hoch/Tief
  * plus klassische Pivots aus dem Vortag. Beides rechnet IMMER auf Tagesbasis
  * — auch in der Intraday-Sicht, wo die Pivots ihren eigentlichen Zweck haben
@@ -3855,16 +3888,27 @@ function markenLinien(daily: ChartBar[]): PriceLineSpec[] {
   const v = daily[daily.length - 2]!;
   const p = (v.high + v.low + v.close) / 3;
   const atr = atrPct14(daily);
+  /* Kurze Titel, und nur auf breiten Schirmen (Owner 11.08.).
+   *
+   * `52W-Hoch` und `Pivot · ATR 5,4 %` waren auf dem Telefon breite Kästen
+   * mitten im Kursverlauf — ausgerechnet rechts, wo die jüngsten Kerzen
+   * stehen. Dort schweigen die Marken jetzt ganz; das Niveau zeigt die
+   * gestrichelte Linie, den Kurs das Achsen-Label.
+   *
+   * Auf breiten Schirmen bleiben sie beschriftet, aber kürzer: `52W ↑` sagt
+   * dasselbe wie `52W-Hoch` in halber Breite. Das ATR bleibt am Pivot — dort
+   * war nie zu wenig Platz, und es ist die Zahl, die den Abstand zwischen den
+   * Niveaus überhaupt einordnet. */
   return [
-    { key: 'mk:52h', price: hoch, color: MARKEN_FARBE, style: 2, width: 1, title: '52W-Hoch' },
-    { key: 'mk:52t', price: tief, color: MARKEN_FARBE, style: 2, width: 1, title: '52W-Tief' },
+    { key: 'mk:52h', price: hoch, color: MARKEN_FARBE, style: 2, width: 1, title: markenTitel('52W ↑') },
+    { key: 'mk:52t', price: tief, color: MARKEN_FARBE, style: 2, width: 1, title: markenTitel('52W ↓') },
     {
       key: 'mk:p',
       price: p,
       color: MARKEN_FARBE,
       style: 1,
       width: 1,
-      title: atr !== null ? `Pivot · ATR ${atr.toFixed(1)} %` : 'Pivot',
+      title: markenTitel(atr !== null ? `Pivot · ATR ${atr.toFixed(1)} %` : 'Pivot'),
     },
     // R1/S1 bewusst ohne Text (Owner-Regel: Linien-Titel sparsam) — das
     // Achsen-Label trägt den Kurs, die Nähe zur Pivot-Linie den Kontext.
