@@ -43,6 +43,25 @@ export interface BreakerLage {
   jetztEquity: number;
   /** Bereits ausgelöst und noch nicht zurückgesetzt? */
   bereitsAusgeloest?: boolean;
+  /**
+   * Tag, an dem `vortagEquity` festgestellt wurde (`YYYY-MM-DD`).
+   *
+   * ── Audit-Befund 11.08. ─────────────────────────────────────────────────
+   *
+   * `snapshotEquity` schrieb dieses Datum von Anfang an mit — gelesen hat es
+   * nie jemand. Damit blieb ein Fall unsichtbar, der jederzeit eintreten
+   * kann: Fällt der Tageslauf aus (Deploy-Fenster, Scheduler-Fehler), bleibt
+   * die Bezugsgröße von vorgestern oder älter stehen. Der Vergleich misst
+   * dann einen MEHRTAGES-Verlust gegen eine TAGES-Grenze.
+   *
+   * Die Richtung ist die sichere: Die Bremse löst eher zu früh aus als zu
+   * spät. Falsch war nur der Klartext — „heute 4,10 % Verlust" über drei Tage
+   * ist eine Behauptung, die der Owner nicht überprüfen kann, und sie schickt
+   * ihn bei der Ursachensuche in die falsche Richtung.
+   */
+  vortagEquityAm?: string | undefined;
+  /** Heutiges Datum (`YYYY-MM-DD`) — Bezug für das Alter oben. */
+  heute?: string | undefined;
 }
 
 export interface BreakerConfig {
@@ -67,8 +86,80 @@ export interface BreakerBefund {
   verlustPct: number | null;
   /** Die Grenze, gegen die geprüft wurde. */
   grenzePct: number | null;
+  /**
+   * Alter der Bezugsgröße in Tagen; `null`, wenn keins bestimmbar ist.
+   *
+   * 0 oder 1 ist der Normalfall (der Tageslauf läuft täglich, auch am
+   * Wochenende — Krypto handelt durch). Alles darüber heißt: Der Tageslauf
+   * ist ausgefallen, und `verlustPct` ist kein Tagesverlust mehr.
+   */
+  bezugTageAlt: number | null;
   /** Klartext für Oberfläche und Journal. */
   grund: string;
+}
+
+/** Ab hier ist die Bezugsgröße nicht mehr „von gestern". */
+export const BEZUG_MAX_TAGE = 1;
+
+/**
+ * Wie alt ist die Bezugsgröße in Tagen?
+ *
+ * Reine Datumsrechnung über UTC-Mitternacht — beide Seiten kommen als
+ * `YYYY-MM-DD` und werden auch so verglichen. Unlesbare Angaben ergeben
+ * `null`: „weiß nicht" ist eine ehrlichere Antwort als eine erfundene Zahl,
+ * und der Aufrufer behandelt sie wie „keine Warnung".
+ */
+export function bezugTageAlt(vortagEquityAm?: string, heute?: string): number | null {
+  if (!vortagEquityAm || !heute) return null;
+  const a = Date.parse(`${vortagEquityAm}T00:00:00Z`);
+  const b = Date.parse(`${heute}T00:00:00Z`);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  return Math.round((b - a) / 86_400_000);
+}
+
+/**
+ * Wie lange ein Reset-Marker den Handel sperrt (Minuten).
+ *
+ * ── Warum es diesen Marker gibt (Audit-Befund 11.08.) ─────────────────────
+ *
+ * `resetWallet` arbeitet in vielen Schritten: Trades archivieren (seitenweise
+ * zu 200), fünf Unterlisten rekursiv löschen, Schattendepots leeren, zuletzt
+ * das Wallet neu setzen. Bei einer gewachsenen Historie dauert das
+ * Sekunden bis Minuten — und der Scan läuft alle fünf Minuten weiter.
+ *
+ * Fällt ein Scan in dieses Fenster, entsteht ein Zustand, den niemand mehr
+ * auseinanderdividieren kann: eine Position, die nach dem `recursiveDelete`
+ * angelegt wurde und deshalb bleibt, während ihr Kauf-Trade schon ins Archiv
+ * gewandert ist. Oder ein Kauf, dessen Abbuchung das abschließende
+ * `wallet.paperBalance = startkapital` einfach überschreibt — Geld ausgegeben,
+ * Saldo wieder voll.
+ *
+ * ── Warum der Marker VERFÄLLT ─────────────────────────────────────────────
+ *
+ * Ein Marker ohne Verfall ist eine Falle: Stirbt die Funktion mitten im Reset
+ * (Timeout, Deploy), bliebe er für immer stehen — und das Konto handelte nie
+ * wieder, ohne dass irgendwo ein Fehler steht. Zehn Minuten sind großzügig
+ * gegenüber jedem realistischen Reset und kurz genug, dass ein abgestürzter
+ * Lauf höchstens zwei Scans kostet.
+ */
+export const RESET_SPERRE_MIN = 10;
+
+/**
+ * Läuft gerade ein Reset auf diesem Konto?
+ *
+ * Alles, was kein brauchbarer Zeitstempel ist, gilt als „kein Reset" — ein
+ * kaputtes Feld darf ein Konto nicht stilllegen.
+ */
+export function resetLaeuft(marker: unknown, jetzt: Date, maxMin = RESET_SPERRE_MIN): boolean {
+  if (typeof marker !== 'string' || marker === '') return false;
+  const t = Date.parse(marker);
+  if (!Number.isFinite(t)) return false;
+  const alterMin = (jetzt.getTime() - t) / 60_000;
+  // Betrag, nicht Vorzeichen: Ein Marker aus der Zukunft (Uhr-Versatz
+  // zwischen Diensten) soll sperren, aber ein um Jahre verrutschter Stempel
+  // darf das Konto nicht jahrelang stilllegen. Beide Richtungen verfallen
+  // nach demselben Fenster.
+  return Math.abs(alterMin) < maxMin;
 }
 
 /** Grenze, die als „aus" gilt. */
@@ -99,12 +190,23 @@ export function klemmeBreaker(pct: number | undefined): number {
  */
 export function pruefeBreaker(lage: BreakerLage, cfg: BreakerConfig): BreakerBefund {
   const grenze = klemmeBreaker(cfg.dailyLossLimitPct);
+  const alter = bezugTageAlt(lage.vortagEquityAm, lage.heute);
+  /* Hängt an JEDEN Grund an, sobald die Bezugsgröße nicht mehr von gestern
+   * ist. Absichtlich am Grund und nicht an einer eigenen Stufe: Der Wert
+   * bleibt gültig und die Bremse konservativ — falsch war nur die Behauptung,
+   * es handle sich um einen Tagesverlust. */
+  const hinweis =
+    alter !== null && alter > BEZUG_MAX_TAGE
+      ? ` Achtung: Die Bezugsgröße stammt vom ${lage.vortagEquityAm ?? '?'} (${alter} Tage alt) —`
+        + ' der Tageslauf ist ausgefallen, der Wert deckt mehrere Tage ab.'
+      : '';
   const frei = (grund: string, verlustPct: number | null = null): BreakerBefund => ({
     stufe: 'frei',
     einstiegErlaubt: true,
     verlustPct,
     grenzePct: grenze > 0 ? grenze : null,
-    grund,
+    bezugTageAlt: alter,
+    grund: grund + hinweis,
   });
 
   if (grenze <= 0) return frei('Notbremse ist ausgeschaltet.');
@@ -127,9 +229,11 @@ export function pruefeBreaker(lage: BreakerLage, cfg: BreakerConfig): BreakerBef
       einstiegErlaubt: false,
       verlustPct,
       grenzePct: grenze,
+      bezugTageAlt: alter,
       grund:
         `Notbremse ist ausgelöst (heute ${verlustPct.toFixed(2)} % Verlust, Grenze ${grenze} %). `
-        + 'Sie bleibt aktiv, bis sie von Hand zurückgesetzt wird.',
+        + 'Sie bleibt aktiv, bis sie von Hand zurückgesetzt wird.'
+        + hinweis,
     };
   }
 
@@ -145,11 +249,13 @@ export function pruefeBreaker(lage: BreakerLage, cfg: BreakerConfig): BreakerBef
     einstiegErlaubt: false,
     verlustPct,
     grenzePct: grenze,
+    bezugTageAlt: alter,
     grund:
       `Tages-Verlustgrenze erreicht: ${verlustPct.toFixed(2)} % gegen ${grenze} %. `
       + (cfg.flattenOnBreach
         ? 'Offene Positionen werden geschlossen.'
         : 'Keine neuen Einstiege. Bestehende Ausstiege laufen weiter — '
-          + 'ein Zwangsverkauf würde Buchverluste zum schlechtesten Zeitpunkt festschreiben.'),
+          + 'ein Zwangsverkauf würde Buchverluste zum schlechtesten Zeitpunkt festschreiben.')
+      + hinweis,
   };
 }

@@ -80,6 +80,44 @@ export function zaehlung(eintraege: readonly UniversumEintrag[], at: string): Un
  */
 export const BLOCK = 2_000;
 
+/**
+ * Welche Block-Dokumente nach dem Schreiben übrig bleiben und weg müssen.
+ *
+ * ── Audit-Befund 11.08. ───────────────────────────────────────────────────
+ *
+ * Der Lauf schrieb die Blöcke `0 … n-1` und ließ alles darüber stehen.
+ * Schrumpft das Universum — ein Delisting-Schwung, ein geänderter Filter,
+ * eine unvollständige Antwort von Alpaca —, bleibt der letzte Block mit
+ * seinen bis zu 2.000 Symbolen als Leiche liegen.
+ *
+ * Der Kommentar an der Schreibstelle behauptete das Gegenteil: „Volles `set`
+ * statt `merge`: Ein geschrumpftes Universum muss die Blöcke am Ende
+ * wirklich leeren." Das galt nur für das Zähl-Dokument, nicht für die
+ * Blöcke. Ein Kommentar, der eine Garantie verspricht, die der Code nicht
+ * gibt, ist schlimmer als gar keiner — der nächste Leser prüft sie nicht
+ * mehr nach.
+ *
+ * ── Warum es (noch) nichts kaputt macht und trotzdem dringend ist ─────────
+ *
+ * Einen Leser gibt es heute noch nicht; die Rangliste zieht das Universum
+ * erst im nächsten Schritt. Die naheliegende Bauweise dafür ist aber
+ * `collection('bloecke').get()` — und die liest die Leichen mit. Delistete
+ * Papiere ständen dann wieder in der Rangliste, ohne dass jemand den
+ * Zusammenhang zum Sync-Lauf herstellt.
+ *
+ * Deshalb jetzt, solange der Zusammenhang noch sichtbar ist.
+ */
+export function verwaisteBloecke(vorhanden: readonly string[], neueAnzahl: number): string[] {
+  return vorhanden.filter((id) => {
+    const n = Number(id);
+    // Eine Kennung, die keine Blocknummer ist, gehört nicht zu diesem
+    // Schema — Finger weg. Löschen ist unumkehrbar, und was hier liegt,
+    // haben wir nicht angelegt.
+    if (!Number.isInteger(n) || n < 0 || String(n) !== id) return false;
+    return n >= neueAnzahl;
+  });
+}
+
 export async function runUniversumSync(now = new Date()): Promise<UniversumStand | null> {
   if (!alpacaKonfiguriert()) {
     logger.info('Universum: keine Alpaca-Schlüssel in der Umgebung — übersprungen');
@@ -113,13 +151,37 @@ export async function runUniversumSync(now = new Date()): Promise<UniversumStand
       symbole: eintraege.slice(i * BLOCK, (i + 1) * BLOCK),
     });
   }
-  // Volles `set` statt `merge`: Ein geschrumpftes Universum muss die Blöcke
-  // am Ende wirklich leeren, sonst ranken delistete Papiere weiter mit.
+  /* Blöcke, die es nach dem Schrumpfen nicht mehr gibt, im SELBEN Batch
+   * löschen (siehe `verwaisteBloecke`). Ein volles `set` erreicht sie nicht:
+   * Es überschreibt nur die Dokumente, die es anfasst — die dahinter bleiben
+   * unberührt liegen.
+   *
+   * `listDocuments` statt einer Abfrage: Es holt nur die Kennungen, nicht die
+   * bis zu 2.000 Symbole je Block. Bei einer Handvoll Blöcken ist der
+   * Unterschied klein, aber es gibt keinen Grund, Daten zu lesen, die
+   * gleich gelöscht werden. */
+  let entfernt = 0;
+  try {
+    const vorhanden = await db.collection('meta/alpacaUniversum/bloecke').listDocuments();
+    for (const id of verwaisteBloecke(vorhanden.map((r) => r.id), bloecke)) {
+      batch.delete(db.doc(`meta/alpacaUniversum/bloecke/${id}`));
+      entfernt += 1;
+    }
+  } catch (err) {
+    // Ein misslungenes Aufräumen darf den Sync nicht kippen — der neue Stand
+    // ist wichtiger als die Leichen von gestern, und der nächste Lauf
+    // versucht es erneut.
+    logger.warn('Universum: alte Blöcke nicht auflistbar', err);
+  }
+
+  // Volles `set` statt `merge` — hier reicht es, weil das Zähl-Dokument
+  // vollständig neu geschrieben wird.
   batch.set(db.doc('meta/alpacaUniversum'), { ...stand, bloecke });
 
   await batch.commit();
   logger.info(
-    `Universum: ${stand.gesamt} Symbole (${stand.aktien} Aktien, ${stand.krypto} Krypto) in ${bloecke} Blöcken`,
+    `Universum: ${stand.gesamt} Symbole (${stand.aktien} Aktien, ${stand.krypto} Krypto) in ${bloecke} Blöcken`
+      + (entfernt > 0 ? `, ${entfernt} alte Blöcke entfernt` : ''),
   );
   return stand;
 }

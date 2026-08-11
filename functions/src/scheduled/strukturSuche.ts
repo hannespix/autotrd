@@ -54,6 +54,50 @@ import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 
 /** Reservierte Strategie-Doc-ID der Suche (users/{uid}/strategies/…). */
 export const STRUKTUR_STRATEGIE_ID = 'struktursuche';
+
+/**
+ * Den Suchzustand schreiben — aber nur, wenn ihn seit dem Lesen niemand
+ * angefasst hat.
+ *
+ * ── Audit-Befund 11.08. ───────────────────────────────────────────────────
+ *
+ * Zwischen `stateRef.get()` und `stateRef.set(zustand)` liegt die gesamte
+ * Rechnung dieses Kontos: eine Mutation bauen, Kandidat und Amtierenden über
+ * bis zu zwölf Symbole backtesten. Das dauert. Geschrieben wurde dann das
+ * KOMPLETTE Dokument aus dem alten Stand plus den eigenen Änderungen.
+ *
+ * Neben dem täglichen Scheduler gibt es `strukturNow` als HTTP-Trigger.
+ * Zwei Läufe gleichzeitig sind also kein Gedankenspiel, und der langsamere
+ * gewinnt — samt seiner Sicht auf Generation, Versuchszähler und Journal.
+ *
+ * Der teure Fall ist die Beförderung: Lauf A schreibt die neue
+ * Schatten-Strategie und den Zustand dazu, Lauf B überschreibt den Zustand
+ * mit der alten Generation. Danach fährt der Schatten einen Baum, den der
+ * Zustand nicht kennt — und das A/B-Duell misst zwei verschiedene Dinge
+ * gegeneinander, ohne dass es jemandem auffiele.
+ *
+ * `nVersuche` ist der zweite stille Verlierer: Er ist die Latte, gegen die
+ * `beurteileBefoerderung` prüft (Selektion kostet Signifikanz). Fällt er
+ * zurück, wird die Latte zu niedrig — und die Suche befördert leichter, als
+ * sie darf.
+ */
+export async function schreibeZustandWennFrisch(
+  db: FirebaseFirestore.Firestore,
+  ref: FirebaseFirestore.DocumentReference,
+  zustand: SuchZustand,
+  gelesenUpdatedAt: string | undefined,
+): Promise<boolean> {
+  return db.runTransaction(async (tx) => {
+    const frisch = await tx.get(ref);
+    const jetzt = frisch.get('updatedAt') as unknown;
+    const jetztStr = typeof jetzt === 'string' ? jetzt : undefined;
+    // Strikter Vergleich, kein „neuer als": Ein anderer Lauf hat auf einer
+    // anderen Ausgangslage gerechnet, egal in welche Richtung die Uhr zeigt.
+    if (jetztStr !== gelesenUpdatedAt) return false;
+    tx.set(ref, zustand);
+    return true;
+  });
+}
 /** Bewertungsfenster: ~3 Jahre Tages-Bars (Suche 70 % / Test 30 %). */
 const MAX_BARS = 750;
 /** Darunter trägt teileWalkForward ohnehin kein Urteil (120 Suche + 60 Test). */
@@ -366,7 +410,16 @@ export async function strukturAlle(now = new Date()): Promise<StrukturRunResult>
           bedingungen: { at: now.toISOString(), zeilen: zaehleBedingungen(bester.spec, barsJeSymbol) },
           updatedAt: now.toISOString(),
         };
-        await stateRef.set(zustand);
+        /* `create` statt `set`: Es scheitert, wenn das Dokument inzwischen
+         * existiert. Zwei gleichzeitige Läufe legten sonst beide eine
+         * Generation 0 an — der zweite überschriebe den Startpunkt des
+         * ersten, und die Schatten-Strategie zeigte auf einen dritten Baum. */
+        try {
+          await stateRef.create(zustand);
+        } catch {
+          logger.info(`strukturSuche ${userDoc.id}: Startpunkt existiert bereits — übersprungen`);
+          continue;
+        }
         await schreibeSchattenStrategie(userDoc.ref, zustand, watchlist, now);
         gestartet += 1;
         continue; // der erste Kandidat kommt morgen — eine Änderung je Durchgang
@@ -374,13 +427,16 @@ export async function strukturAlle(now = new Date()): Promise<StrukturRunResult>
 
       // ── Tages-Kandidat: genau EINE Mutation gegen den Amtierenden ─────────
       const zustand = stateDoc.data() as SuchZustand;
+      // Stand beim Lesen — daran erkennt der Schreibvorgang, ob ihn ein
+      // zweiter Lauf inzwischen überholt hat.
+      const gelesenUpdatedAt = typeof zustand.updatedAt === 'string' ? zustand.updatedAt : undefined;
       const mut = naechsteMutation(zustand.amtierend, zustand.seedZaehler);
       if (!mut) {
         // 40 Seeds ohne gültige Mutation (praktisch nur bei randvollem Baum):
         // Seeds verbrauchen und morgen mit frischen weitermachen.
         zustand.seedZaehler += MAX_MUTATION_SEEDS;
         zustand.updatedAt = now.toISOString();
-        await stateRef.set(zustand);
+        await schreibeZustandWennFrisch(db, stateRef, zustand, gelesenUpdatedAt);
         continue;
       }
       const bewK = bewerteSpec(mut.erg.spec, barsJeSymbol);
@@ -431,11 +487,6 @@ export async function strukturAlle(now = new Date()): Promise<StrukturRunResult>
         zustand.amtierend = mut.erg.spec;
         zustand.amtierendSeit = now.toISOString();
         zustand.generation += 1;
-        befoerdert += 1;
-        await schreibeSchattenStrategie(userDoc.ref, zustand, watchlist, now);
-        logger.info(
-          `strukturSuche ${userDoc.id}: Generation ${zustand.generation} — ${mut.erg.beschreibung}`,
-        );
       }
       // Statistik NACH einer etwaigen Beförderung — sie beschreibt den Baum,
       // der ab jetzt amtiert, nicht den gerade abgelösten.
@@ -444,7 +495,20 @@ export async function strukturAlle(now = new Date()): Promise<StrukturRunResult>
         zeilen: zaehleBedingungen(zustand.amtierend, barsJeSymbol),
       };
       zustand.updatedAt = now.toISOString();
-      await stateRef.set(zustand);
+      /* Erst der Zustand, dann der Schatten (Audit-Befund 11.08.). Andersherum
+       * — so stand es hier — führe ein überholter Lauf die Schatten-Strategie
+       * auf einen Baum, den anschließend niemand mehr im Zustand hat. */
+      if (!(await schreibeZustandWennFrisch(db, stateRef, zustand, gelesenUpdatedAt))) {
+        logger.info(`strukturSuche ${userDoc.id}: überholt — Ergebnis verworfen`);
+        continue;
+      }
+      if (bef) {
+        befoerdert += 1;
+        await schreibeSchattenStrategie(userDoc.ref, zustand, watchlist, now);
+        logger.info(
+          `strukturSuche ${userDoc.id}: Generation ${zustand.generation} — ${mut.erg.beschreibung}`,
+        );
+      }
     } catch (err) {
       logger.warn(`strukturSuche: User ${userDoc.id} übersprungen`, err);
     }

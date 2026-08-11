@@ -97,7 +97,7 @@ import {
   shadowTrade,
   type ShadowBook,
 } from '../core/rulesTrading.js';
-import { accuracyWeightedVote } from '../../../shared/src/index.js';
+import { accuracyWeightedVote, resetLaeuft } from '../../../shared/src/index.js';
 import { runForecast, runIntradayForecast, type LiveForecast } from '../core/forecaster.js';
 import { fetchNewsSnapshot } from '../core/news.js';
 import { evaluateIntradayDue } from './evalForecasts.js';
@@ -364,6 +364,14 @@ export interface KontenStats {
   ohne_strategie: number;
   /** Übersprungen: Broker-Modus nicht 'paper' (M14-Verriegelung). */
   live_verriegelt: number;
+  /**
+   * Übersprungen: Auf diesem Konto läuft gerade ein Reset (Befund 11.08.).
+   *
+   * Steht hier dauerhaft eine Zahl > 0, hängt ein Reset — der Marker
+   * verfällt nach `RESET_SPERRE_MIN` Minuten, eine Zahl über mehrere Scans
+   * hinweg wäre also ein Hinweis, kein Normalzustand.
+   */
+  reset_laeuft: number;
 }
 
 /**
@@ -405,6 +413,45 @@ export interface BrokerStats {
   fremdbestand: number;
   /** Broker nicht erreichbar — sperrt NICHT, wird aber gezählt. */
   fehler: number;
+}
+
+/**
+ * Das `variants`-Feld bauen, das die Schatten-Flotte schreibt.
+ *
+ * ── Warum das nicht einfach `state` ist ───────────────────────────────────
+ *
+ * `stepFleet` räumt Varianten aus dem Speicher-Objekt, die es nicht mehr
+ * gibt (Achse geändert, Basis verschoben). Geschrieben wird mit
+ * `set(…, { merge: true })`, und Firestore merged Maps FELDWEISE: Ein
+ * Schlüssel, der im geschriebenen Objekt fehlt, bleibt im Dokument stehen.
+ * Das Aufräumen wirkte deshalb nur im Arbeitsspeicher — im Dokument
+ * sammelte sich jede je gefahrene Variante mit bis zu 400 `pnls` plus Buch.
+ *
+ * Irgendwann reißt die 1-MB-Grenze. Der Schreibvorgang scheitert dann, und
+ * der `catch` um die Flotte schluckt ihn als `logger.warn` — die
+ * Selbstoptimierung dieses Kontos stünde ab da dauerhaft still, ohne dass
+ * eine Kennzahl es zeigt.
+ *
+ * `FieldValue.delete()` ist der einzige Weg, einem merge-Schreibvorgang zu
+ * sagen: „Dieser Schlüssel soll WEG." In einer verschachtelten Map ist das
+ * ausdrücklich erlaubt (`rules-test/fleetMerge.rules.test.ts` belegt beide
+ * Hälften am Emulator: ohne Sentinel bleibt der Schlüssel, mit Sentinel geht
+ * er).
+ */
+export function fleetSchreibfeld(
+  state: FleetState,
+  entfernt: readonly string[],
+): Record<string, unknown> {
+  const feld: Record<string, unknown> = { ...state };
+  for (const id of entfernt) {
+    // Eine Kennung, die stepFleet als entfernt meldet UND gleichzeitig im
+    // Zustand steht, gäbe es nur bei einem Fehler dort. Dann lieber
+    // behalten als löschen: Ein überflüssiges Dokumentfeld kostet Platz,
+    // ein gelöschtes Buch kostet Messdaten.
+    if (id in state) continue;
+    feld[id] = FieldValue.delete();
+  }
+  return feld;
 }
 
 async function executeUserTrades(
@@ -459,6 +506,7 @@ async function executeUserTrades(
     gesperrt: 0,
     momentum: 0,
     ohne_strategie: 0,
+    reset_laeuft: 0,
     live_verriegelt: 0,
   };
   const users = await db
@@ -599,6 +647,19 @@ async function executeUserTrades(
       else konten.gesperrt += 1;
       continue;
     }
+    /* Läuft gerade ein Reset, bleibt dieses Konto diesen Scan über außen vor
+     * (Audit-Befund 11.08.). Ein Trade mitten im Reset hinterlässt einen
+     * Zustand, den hinterher niemand mehr auseinanderdividiert: eine
+     * Position, deren Kauf-Trade schon im Archiv liegt, oder eine Abbuchung,
+     * die der neue Startkontostand überschreibt.
+     *
+     * Ein Scan auszulassen kostet fünf Minuten Handelszeit. Die Alternative
+     * kostet die Messgrundlage — und die ist genau das, was der Reset
+     * herstellen soll. */
+    if (resetLaeuft(userDoc.get('risk.resetLaeuftSeit'), new Date())) {
+      konten.reset_laeuft += 1;
+      continue;
+    }
     // Momentum-Wallets gehören momentumRun (Hantel-Umbau 28.07.). Der Scan
     // fasst sie NICHT an — weder Einstieg noch Ausstieg. Täte er es, sähe er
     // eine Momentum-Position ohne Konfluenz-Signal und schlösse sie beim
@@ -671,6 +732,13 @@ async function executeUserTrades(
         {
           vortagEquity: (userDoc.get('risk.vortagEquity') as number | undefined) ?? 0,
           jetztEquity: cashJetzt + positionsWert,
+          // Alter der Bezugsgröße (Audit-Befund 11.08.): Das Datum wurde
+          // seit jeher mitgeschrieben und nie gelesen. Fällt der Tageslauf
+          // aus, misst die Bremse einen Mehrtages-Verlust gegen eine
+          // Tagesgrenze — sie sperrt dann zwar sicherheitshalber, aber der
+          // Klartext behauptete „heute".
+          vortagEquityAm: (userDoc.get('risk.vortagEquityAm') as string | undefined) ?? undefined,
+          heute: handelstagET(now),
           // Handelstag in New York, nicht UTC (Audit-Befund 11.08.) —
           // Begründung bei `handelstagET`.
           bereitsAusgeloest: breakerHeuteAusgeloest(
@@ -1713,8 +1781,11 @@ async function executeUserTrades(
             // vergleichbar — und ein nicht vergleichbares Ergebnis ist
             // schlimmer als gar keines, weil es befördert werden könnte.
             const fleetSymbols = [...marketData.keys()];
-            const { state } = stepFleet(variants, marketData, vorher, fleetSymbols, now);
-            await fleetRef.set({ variants: state, updatedAt: now.toISOString() }, { merge: true });
+            const { state, entfernt } = stepFleet(variants, marketData, vorher, fleetSymbols, now);
+            await fleetRef.set(
+              { variants: fleetSchreibfeld(state, entfernt), updatedAt: now.toISOString() },
+              { merge: true },
+            );
           }
         } catch (err) {
           logger.warn(`Schatten-Flotte für ${uid} übersprungen`, err);

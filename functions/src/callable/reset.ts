@@ -204,6 +204,21 @@ export async function resetUserWallet(
   }
   const now = new Date().toISOString();
 
+  /* Lauf-Marker setzen, BEVOR irgendetwas verschwindet (Audit-Befund 11.08.).
+   *
+   * Der Reset arbeitet in vielen Schritten und dauert bei gewachsener
+   * Historie Sekunden bis Minuten. Der Scan läuft alle fünf Minuten weiter.
+   * Fällt einer in dieses Fenster, entsteht ein Zustand, den hinterher
+   * niemand mehr auseinanderdividiert: eine Position, die nach dem
+   * `recursiveDelete` angelegt wurde und deshalb bleibt, während ihr
+   * Kauf-Trade schon im Archiv liegt. Oder ein Kauf, dessen Abbuchung das
+   * abschließende `paperBalance = startkapital` einfach überschreibt — Geld
+   * ausgegeben, Saldo wieder voll.
+   *
+   * Der Marker verfällt von selbst (`RESET_SPERRE_MIN`); ein abgestürzter
+   * Reset darf ein Konto nicht dauerhaft stilllegen. */
+  await userRef.set({ risk: { resetLaeuftSeit: now } }, { merge: true });
+
   const deleted: Record<string, number> = {};
   deleted.tradesArchived = await archiviereTrades(userRef, now);
   for (const name of GELOESCHTE_SAMMLUNGEN) {
@@ -246,6 +261,11 @@ export async function resetUserWallet(
       },
       // Kauf-Pausen beziehen sich auf Trades, die es nicht mehr gibt.
       engineCooldowns: FieldValue.delete(),
+      // Der Reset ist durch — ab hier darf wieder gehandelt werden. Im
+      // SELBEN Schreibvorgang wie der neue Kontostand: Getrennt gäbe es
+      // einen Moment, in dem der Handel frei ist und das Wallet noch nicht
+      // steht.
+      risk: { resetLaeuftSeit: FieldValue.delete() },
     },
     { merge: true },
   );

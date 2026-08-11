@@ -81,17 +81,90 @@ describe('zaehlerVerwerfen', () => {
 describe('Quelltext: beide Statistiken prüfen die Fassung', () => {
   const pfad = join(import.meta.dirname, '..', 'src', 'scheduled', 'evalForecasts.ts');
 
-  for (const doc of ['meta/forecastStats', 'meta/forecastStatsIntraday']) {
-    it(`${doc} läuft durch pruefeFassung`, () => {
+  /* Nachgezogen am 11.08., als das Aggregat je Symbol in den Marker-Batch
+   * wanderte (Befund „evaluated gesetzt, Treffer verloren").
+   *
+   * Der alte Test suchte die Grenze bei `comboDelta.size > 0` — den gibt es
+   * nicht mehr. `indexOf` lieferte dann `-1`, `slice(ab, -1)` fast den ganzen
+   * Rest der Datei, und `pruefeFassung` stand darin natürlich irgendwo: Der
+   * Test blieb GRÜN und prüfte nichts mehr. Genau die Sorte stiller Ausfall,
+   * gegen die er gebaut war.
+   *
+   * Die Aussage ist heute schärfer, weil die Lage es verlangt: Geschrieben
+   * wird jetzt IN der Symbol-Schleife, also muss die Fassungsprüfung davor
+   * liegen. Stünde sie dahinter, hätte sie die frisch addierten Zähler schon
+   * mitgemischt — und beim Verwerfen genau die Treffer gelöscht, die dieser
+   * Lauf gerade gesammelt hat. */
+  for (const [doc, schleife] of [
+    ['meta/forecastStats', 'for (const [symbol, entries] of dueBySymbol)'],
+    ['meta/forecastStatsIntraday', 'for (const [symbol, entries] of bySymbol)'],
+  ] as const) {
+    it(`${doc}: pruefeFassung steht VOR der Symbol-Schleife`, () => {
       const text = readFileSync(pfad, 'utf8');
       const ab = text.indexOf(`db.doc('${doc}')`);
       expect(ab, `Schreibstelle für ${doc} nicht gefunden`).toBeGreaterThan(0);
-      // Die Prüfung muss VOR dem Fortschreiben stehen — danach hätte sie
-      // die frisch addierten Zähler schon mitgemischt.
-      const bis = text.indexOf('comboDelta.size > 0', ab);
+      const bis = text.indexOf(schleife, ab);
+      expect(bis, `Symbol-Schleife nach ${doc} nicht gefunden`).toBeGreaterThan(ab);
       expect(text.slice(ab, bis)).toContain('pruefeFassung(statsRef)');
     });
+
+    it(`${doc}: das Dokument wird vor dem ersten update angelegt`, () => {
+      // `update` scheitert auf einem fehlenden Dokument. Vorher stand das
+      // `set({}, { merge: true })` direkt neben dem einen Schreibvorgang am
+      // Ende; jetzt muss es vor die Schleife.
+      const text = readFileSync(pfad, 'utf8');
+      const ab = text.indexOf(`db.doc('${doc}')`);
+      const bis = text.indexOf(schleife, ab);
+      expect(text.slice(ab, bis)).toContain('statsRef.set({}, { merge: true })');
+    });
   }
+});
+
+/* ── Der Befund vom 11.08.: Marker gesetzt, Treffer verloren ───────────────
+ *
+ * Jeder Symbol-Commit setzte `evaluated: true`, während `comboDelta` die
+ * Treffer nur im Speicher sammelte — geschrieben wurde erst nach ALLEN
+ * Symbolen. Bricht der Lauf dazwischen ab (der Intraday-Zwilling läuft
+ * huckepack im Scan und teilt sich dessen 180-s-Timeout), tragen die schon
+ * bearbeiteten Prognosen dauerhaft den Marker, ihre Treffer erreichen die
+ * Statistik aber nie.
+ *
+ * Das ist kein Schönheitsfehler: `dirAccuracy` wird dann über eine verzerrte
+ * Teilmenge gerechnet, und genau diese Zahl steuert über
+ * `accuracyWeightedVote` das Stimmgewicht der Prognose im HANDEL. Nachholbar
+ * ist der Verlust nicht, und er hinterlässt keine Spur.
+ */
+describe('Quelltext: Marker und Zähler wandern gemeinsam', () => {
+  const pfad = join(import.meta.dirname, '..', 'src', 'scheduled', 'evalForecasts.ts');
+
+  it('beide Pfade legen das Aggregat in den Symbol-Batch', () => {
+    const text = readFileSync(pfad, 'utf8');
+    const treffer = text.match(/aggregatInBatch\(batch, statsRef, symbolDelta\);/g) ?? [];
+    expect(treffer.length, 'Tages- UND Intraday-Pfad').toBe(2);
+  });
+
+  it('und zwar VOR dem Commit — danach wäre es wirkungslos', () => {
+    const text = readFileSync(pfad, 'utf8');
+    for (const [i, zeile] of text.split('\n').entries()) {
+      if (!zeile.includes('aggregatInBatch(batch, statsRef, symbolDelta);')) continue;
+      const naechste = text.split('\n')[i + 1] ?? '';
+      expect(naechste, `Zeile ${i + 2} muss der Commit sein`).toContain('await batch.commit()');
+    }
+  });
+
+  it('es gibt kein lauf-weites comboDelta mehr', () => {
+    // Solange es existiert, kann jemand versehentlich wieder hineinsammeln —
+    // und der Befund wäre zurück, ohne dass ein Test fällt.
+    expect(readFileSync(pfad, 'utf8')).not.toContain('const comboDelta =');
+  });
+
+  it('eine Funktion für beide Pfade', () => {
+    // Zwei Kopien wären zwei Gelegenheiten, sie verschieden zu ändern — und
+    // der Fehler fiele nicht auf, weil beide Statistiken für sich plausibel
+    // aussähen.
+    const text = readFileSync(pfad, 'utf8');
+    expect((text.match(/function aggregatInBatch\(/g) ?? []).length).toBe(1);
+  });
 });
 
 describe('FORECAST_V', () => {

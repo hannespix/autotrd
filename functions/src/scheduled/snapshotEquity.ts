@@ -66,6 +66,58 @@ function r2(v: number): number {
   return Math.round(v * 100) / 100;
 }
 
+/** Ein Kontostand aus einem einzigen Lesezeitpunkt. */
+export interface Kontostand {
+  balance: number;
+  positionen: { id: string; pos: Position }[];
+}
+
+/**
+ * Saldo UND Positionen aus EINEM Stand lesen (Audit-Befund 11.08.).
+ *
+ * ── Was vorher passierte ──────────────────────────────────────────────────
+ *
+ * Der Saldo kam aus dem Konten-Query vom Beginn des Laufs, die Positionen aus
+ * einem frischen Lesevorgang. Dazwischen liegen die Zinsbuchung und alle
+ * vorher abgearbeiteten Konten — und Krypto handelt rund um die Uhr, der
+ * 17:15-Lauf ist also kein ruhiger Moment. Fiel ein Kauf in dieses Fenster,
+ * zählte das Geld doppelt: das Cash aus dem alten Stand UND die frisch
+ * gekaufte Position.
+ *
+ * Das ist keine Kosmetik. Dieselbe Zahl wird zur Bezugsgröße der Notbremse
+ * (`risk.vortagEquity`) — eine zu hohe Bezugsgröße lässt die Bremse am
+ * nächsten Tag zu früh auslösen und sperrt ein gesundes Konto.
+ *
+ * Die Read-only-Transaktion garantiert genau das, was fehlte: einen
+ * gemeinsamen Lesezeitpunkt für beide Abfragen, ohne Sperren zu nehmen. Der
+ * zusätzliche Read je Konto fällt EINMAL am Tag an.
+ *
+ * `rueckfall` greift nur, wenn das Wallet-Feld beim frischen Lesen fehlt
+ * oder unbrauchbar ist — dann ist der alte Stand (abzüglich der eben
+ * gebuchten Zinsen) immer noch besser als gar kein Snapshot.
+ */
+export async function leseKontostand(
+  db: FirebaseFirestore.Firestore,
+  ref: FirebaseFirestore.DocumentReference,
+  rueckfall: number,
+): Promise<Kontostand> {
+  return db.runTransaction(
+    async (tx) => {
+      const u = await tx.get(ref);
+      const p = await tx.get(ref.collection('positions'));
+      const frisch = u.get('wallet.paperBalance') as unknown;
+      return {
+        // Der frische Saldo enthält die eben gebuchten Zinsen bereits — hier
+        // NICHT noch einmal abziehen. Nur der Rückfall bringt seinen Abzug
+        // selbst mit.
+        balance: typeof frisch === 'number' && Number.isFinite(frisch) ? frisch : rueckfall,
+        positionen: p.docs.map((d) => ({ id: d.id, pos: d.data() as Position })),
+      };
+    },
+    { readOnly: true },
+  );
+}
+
 export interface SnapshotResult {
   users: number;
   snapped: number;
@@ -157,13 +209,31 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         zinsSumme += zins;
         logger.info(`Margin-Zinsen ${userDoc.id}: ${zins.toFixed(2)} $`);
       }
-      const balance = roh - zins;
 
-      const posSnap = await userDoc.ref.collection('positions').get();
+      /* Saldo UND Positionen aus EINEM Stand (Audit-Befund 11.08.).
+       *
+       * Vorher kam der Saldo aus dem Konten-Query vom Beginn des Laufs und
+       * die Positionen aus einem frischen Lesevorgang. Dazwischen liegen die
+       * Zinsbuchung und alle vorher abgearbeiteten Konten — und Krypto
+       * handelt rund um die Uhr, der 17:15-Lauf ist also kein ruhiger
+       * Moment. Fiel ein Kauf in dieses Fenster, zählte das Geld doppelt:
+       * das Cash aus dem alten Stand UND die frisch gekaufte Position.
+       *
+       * Das ist keine Kosmetik. Dieselbe Zahl wird gleich unten als
+       * `risk.vortagEquity` zur Bezugsgröße der Notbremse — eine zu hohe
+       * Bezugsgröße lässt die Bremse am nächsten Tag zu früh auslösen und
+       * sperrt ein gesundes Konto.
+       *
+       * Read-only-Transaktion: Sie garantiert genau das, was hier fehlte —
+       * einen gemeinsamen Lesezeitpunkt — ohne Sperren zu nehmen. Der
+       * zusätzliche Read je Konto fällt EINMAL am Tag an.
+       */
+      const stand = await leseKontostand(db, userDoc.ref, roh - zins);
+      const balance = stand.balance;
+
       let positionsValue = 0;
-      for (const d of posSnap.docs) {
-        const pos = d.data() as Position;
-        positionsValue += positionValue(pos, await lastPrice(pos.symbol ?? d.id));
+      for (const { id, pos } of stand.positionen) {
+        positionsValue += positionValue(pos, await lastPrice(pos.symbol ?? id));
       }
       positionsValue = r2(positionsValue);
       const equity = r2(balance + positionsValue);
@@ -174,7 +244,7 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         equity,
         balance: r2(balance),
         positionsValue,
-        positionsCount: posSnap.size,
+        positionsCount: stand.positionen.length,
         updatedAt: now.toISOString(),
       });
 

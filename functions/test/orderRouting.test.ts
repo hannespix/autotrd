@@ -49,10 +49,18 @@ vi.mock('firebase-admin/firestore', () => ({
   FieldValue: { increment: () => 0, delete: () => 0 },
   Timestamp: { now: () => 0 },
 }));
-/** Doc-Attrappe: `get(feldname)` wie bei Firestore, nicht als Objekt. */
+/**
+ * Doc-Attrappe: `get(feldname)` wie bei Firestore, nicht als Objekt.
+ *
+ * `data()` kam am 11.08. dazu, als der Asset-Cache auf Shards umgestellt
+ * wurde (ein Dokument je Symbol-Block statt eines für alle). Der Leser
+ * übernimmt jetzt den ganzen Block in die Prozess-Map, statt nur das eine
+ * gesuchte Feld — deshalb braucht er das vollständige Dokument.
+ */
 const feld = (daten: Record<string, unknown>) => ({
   exists: Object.keys(daten).length > 0,
   get: (k: string) => daten[k],
+  data: () => daten,
 });
 
 const SCHLUESSEL = { keyId: 'PKTEST0000000001', secret: 'GEHEIM0000000001' };
