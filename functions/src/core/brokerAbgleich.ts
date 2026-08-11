@@ -38,7 +38,7 @@ import {
   nurBrokerPositionen,
   type Abweichung,
 } from './alpacaBroker.js';
-import { brokerVerbindungLesend } from './orderRouting.js';
+import { brokerVerbindungLesend, verbindungUnlesbar } from './orderRouting.js';
 
 /**
  * Ausgang eines Abgleichs — vier unterscheidbare Fälle.
@@ -171,7 +171,28 @@ export async function abgleichFuerKonto(
    * hinterlegter Live-Schlüssel VOR der Freischaltung bringen soll — das
    * echte Depot sehen, ohne hineinzuhandeln. */
   const verbindung = await brokerVerbindungLesend(uid);
-  if (!verbindung) return OHNE;
+  if (!verbindung) {
+    /* „Kein Broker" und „konnte nicht nachsehen" sind NICHT dasselbe.
+     *
+     * `brokerVerbindungLesend` gibt für beides `null` — fürs Routing ist das
+     * richtig (nicht routen), für die MELDUNG ist es genau der Fall, gegen
+     * den `AbgleichZustand.fehler` gebaut wurde (s. Kopf dieser Datei). Ein
+     * Firestore-Lesefehler ließ das Konto bisher als „hat keinen Broker"
+     * erscheinen: Es verschwand aus `verbunden`, und niemand sah es. */
+    if (verbindungUnlesbar(uid)) {
+      logger.warn(`Abgleich ${uid}: Verbindungsdaten nicht lesbar`);
+      return {
+        geprueft: false,
+        zustand: 'fehler',
+        abweichungen: [],
+        fehlbestand: 0,
+        fremdbestand: 0,
+        sperre: false,
+        grund: 'verbindung_nicht_lesbar',
+      };
+    }
+    return OHNE;
+  }
 
   let brokerPositionen;
   try {
