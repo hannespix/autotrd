@@ -15,7 +15,7 @@ import {
   type Strategy,
 } from '../../../shared/src/index.js';
 import { consumeQuota, executeTrade, resolveBrokerMode } from '../core/broker.js';
-import { breakerHeuteAusgeloest } from '../scheduled/scanMarket.js';
+import { breakerHeuteAusgeloest, handelstagET } from '../scheduled/scanMarket.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { accessDeniedReason, accessLevelOf, mayTrade } from '../core/access.js';
 
@@ -94,6 +94,10 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
         // fünf Minuten und schreibt das Ergebnis mit. Was hier zählt, ist der
         // ZUSTAND der Bremse — die Grenzprüfung selbst hat der Scan gemacht.
         jetztEquity: (userSnap.get('risk.vortagEquity') as number | undefined) ?? 0,
+        // Alter der Bezugsgröße (Audit-Befund 11.08.) — dieselbe Angabe wie
+        // im Scan, damit der Klartext hier nicht etwas anderes behauptet.
+        vortagEquityAm: (userSnap.get('risk.vortagEquityAm') as string | undefined) ?? undefined,
+        heute: handelstagET(new Date()),
         // Handelstag in New York, nicht UTC (Audit-Befund 11.08.): Sonst
         // gäbe die Bremse das Konto ab 20:00 ET wieder frei, obwohl niemand
         // sie entriegelt hat. Dieselbe Funktion wie im Scan — zwei

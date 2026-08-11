@@ -710,6 +710,13 @@ async function executeUserTrades(
         {
           vortagEquity: (userDoc.get('risk.vortagEquity') as number | undefined) ?? 0,
           jetztEquity: cashJetzt + positionsWert,
+          // Alter der Bezugsgröße (Audit-Befund 11.08.): Das Datum wurde
+          // seit jeher mitgeschrieben und nie gelesen. Fällt der Tageslauf
+          // aus, misst die Bremse einen Mehrtages-Verlust gegen eine
+          // Tagesgrenze — sie sperrt dann zwar sicherheitshalber, aber der
+          // Klartext behauptete „heute".
+          vortagEquityAm: (userDoc.get('risk.vortagEquityAm') as string | undefined) ?? undefined,
+          heute: handelstagET(now),
           // Handelstag in New York, nicht UTC (Audit-Befund 11.08.) —
           // Begründung bei `handelstagET`.
           bereitsAusgeloest: breakerHeuteAusgeloest(
