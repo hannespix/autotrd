@@ -219,9 +219,56 @@ export interface PositionLike {
  * Ohne Kurs (null) wird konservativ zum Einstand bewertet.
  */
 export function positionValue(pos: PositionLike, price: number | null): number {
-  const p = typeof price === 'number' && price > 0 ? price : pos.avgEntry;
-  if (pos.side === 'short') return pos.qty * pos.avgEntry + (pos.avgEntry - p) * pos.qty;
-  return pos.qty * p;
+  return positionLage(pos, price).wert;
+}
+
+export interface PositionLage {
+  /** Depotwert dieser Position — ohne Kurs konservativ zum Einstand. */
+  wert: number;
+  /**
+   * Unrealisiertes Ergebnis, oder `null`, wenn kein Kurs vorliegt.
+   *
+   * `null` und nicht `0`: Ohne Kurs ist das Ergebnis UNBEKANNT, nicht
+   * ausgeglichen. Der Unterschied entscheidet, ob die Oberfläche „±0,00 $"
+   * schreiben darf (eine Aussage) oder „—" (keine).
+   */
+  pnl: number | null;
+  /** Lag ein brauchbarer Kurs vor? */
+  kursBekannt: boolean;
+}
+
+/**
+ * Wert UND Ergebnis einer offenen Position aus EINER Rechnung.
+ *
+ * ── Audit-Befund 11.08. (F6) ──────────────────────────────────────────────
+ *
+ * Das Dashboard rechnete den Positionswert an drei Stellen selbst nach: in
+ * der Kennzahlen-Summe, in der Positionstabelle und im Stop-Dialog. Die
+ * Formel war überall dieselbe — der Umgang mit einem FEHLENDEN Kurs nicht:
+ *
+ *   - Die Summe setzte still den Einstand ein und zeigte „P&L ±0,00".
+ *   - Die Tabelle zeigte ehrlich „—".
+ *   - Der Stop-Dialog zeigte wieder 0.
+ *
+ * Auf demselben Bildschirm standen damit zwei Antworten auf dieselbe Frage.
+ * Und die gefährlichere davon war die Summe: Ein Depotwert, der auf
+ * Einstandspreisen beruht, sieht aus wie ein Depotwert — nur dass er
+ * bedeutet „hier hat sich nichts bewegt", obwohl niemand weiß, ob das
+ * stimmt. Genau die Lage aus dem Owner-Screenshot vom 10.08., in dem 128 von
+ * 132 Symbolen keinen Kurs hatten.
+ *
+ * Der Wert bleibt bewusst konservativ auf Einstand — eine Position aus der
+ * Equity zu streichen, weil ihr Kurs fehlt, wäre schlimmer. Aber `pnl` sagt
+ * `null`, und `kursBekannt` macht es zählbar.
+ */
+export function positionLage(pos: PositionLike, price: number | null | undefined): PositionLage {
+  const kursBekannt = typeof price === 'number' && Number.isFinite(price) && price > 0;
+  const p = kursBekannt ? (price as number) : pos.avgEntry;
+  // Short verdient am fallenden Kurs; im Depotwert steckt die hinterlegte
+  // Margin (Einstand × Stück) plus unrealisiertes Ergebnis.
+  const pnl = (pos.side === 'short' ? pos.avgEntry - p : p - pos.avgEntry) * pos.qty;
+  const wert = pos.side === 'short' ? pos.qty * pos.avgEntry + pnl : pos.qty * p;
+  return { wert, pnl: kursBekannt ? pnl : null, kursBekannt };
 }
 
 
