@@ -106,6 +106,28 @@ export interface FleetStepResult {
   state: FleetState;
   /** Abgeschlossene Trades dieses Schrittes — nur fürs Protokoll. */
   closed: number;
+  /**
+   * Varianten, die es nicht mehr gibt und die der Aufrufer LÖSCHEN muss.
+   *
+   * ── Der Audit-Befund vom 11.08. ────────────────────────────────────────
+   *
+   * Das Aufräumen unten (`delete state[id]`) wirkte nicht. Geschrieben wird
+   * mit `set({ variants: state }, { merge: true })`, und Firestore merged
+   * Maps FELDWEISE: Ein Schlüssel, der im geschriebenen Objekt fehlt, bleibt
+   * im Dokument einfach stehen. Dieselbe Falle, vor der `scanMarket` und
+   * `tagRueckblick` an anderer Stelle ausdrücklich warnen.
+   *
+   * Die Folge war kein falsches Ergebnis, sondern ein wachsendes Dokument:
+   * Jede Parameter-Änderung erzeugt neue Varianten-Kennungen, und jede alte
+   * blieb mit bis zu 400 `pnls` plus Buch liegen. Irgendwann reißt die
+   * 1-MB-Grenze, der Schreibvorgang scheitert — und der `catch` im Scan
+   * schluckt ihn als `logger.warn`. Die Selbstoptimierung dieses Kontos
+   * stünde ab da dauerhaft still, ohne dass eine Kennzahl es zeigt.
+   *
+   * Deshalb hier als Liste statt als stilles `delete`: Der Aufrufer muss
+   * etwas damit TUN, und dass er es tut, ist prüfbar.
+   */
+  entfernt: string[];
 }
 
 /**
@@ -217,9 +239,14 @@ export function stepFleet(
   // fallen raus — sonst sammelte sich Ballast, dessen Zahlen zu Parametern
   // gehören, die niemand mehr fährt.
   const aktuell = new Set(variants.map((v) => v.id));
-  for (const id of Object.keys(state)) if (!aktuell.has(id)) delete state[id];
+  const entfernt: string[] = [];
+  for (const id of Object.keys(state)) {
+    if (aktuell.has(id)) continue;
+    delete state[id];
+    entfernt.push(id);
+  }
 
-  return { state, closed };
+  return { state, closed, entfernt };
 }
 
 /**

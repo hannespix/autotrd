@@ -407,6 +407,45 @@ export interface BrokerStats {
   fehler: number;
 }
 
+/**
+ * Das `variants`-Feld bauen, das die Schatten-Flotte schreibt.
+ *
+ * ── Warum das nicht einfach `state` ist ───────────────────────────────────
+ *
+ * `stepFleet` räumt Varianten aus dem Speicher-Objekt, die es nicht mehr
+ * gibt (Achse geändert, Basis verschoben). Geschrieben wird mit
+ * `set(…, { merge: true })`, und Firestore merged Maps FELDWEISE: Ein
+ * Schlüssel, der im geschriebenen Objekt fehlt, bleibt im Dokument stehen.
+ * Das Aufräumen wirkte deshalb nur im Arbeitsspeicher — im Dokument
+ * sammelte sich jede je gefahrene Variante mit bis zu 400 `pnls` plus Buch.
+ *
+ * Irgendwann reißt die 1-MB-Grenze. Der Schreibvorgang scheitert dann, und
+ * der `catch` um die Flotte schluckt ihn als `logger.warn` — die
+ * Selbstoptimierung dieses Kontos stünde ab da dauerhaft still, ohne dass
+ * eine Kennzahl es zeigt.
+ *
+ * `FieldValue.delete()` ist der einzige Weg, einem merge-Schreibvorgang zu
+ * sagen: „Dieser Schlüssel soll WEG." In einer verschachtelten Map ist das
+ * ausdrücklich erlaubt (`rules-test/fleetMerge.rules.test.ts` belegt beide
+ * Hälften am Emulator: ohne Sentinel bleibt der Schlüssel, mit Sentinel geht
+ * er).
+ */
+export function fleetSchreibfeld(
+  state: FleetState,
+  entfernt: readonly string[],
+): Record<string, unknown> {
+  const feld: Record<string, unknown> = { ...state };
+  for (const id of entfernt) {
+    // Eine Kennung, die stepFleet als entfernt meldet UND gleichzeitig im
+    // Zustand steht, gäbe es nur bei einem Fehler dort. Dann lieber
+    // behalten als löschen: Ein überflüssiges Dokumentfeld kostet Platz,
+    // ein gelöschtes Buch kostet Messdaten.
+    if (id in state) continue;
+    feld[id] = FieldValue.delete();
+  }
+  return feld;
+}
+
 async function executeUserTrades(
   marketData: Map<string, SymbolData>,
   regime: MarketRegime,
@@ -1713,8 +1752,11 @@ async function executeUserTrades(
             // vergleichbar — und ein nicht vergleichbares Ergebnis ist
             // schlimmer als gar keines, weil es befördert werden könnte.
             const fleetSymbols = [...marketData.keys()];
-            const { state } = stepFleet(variants, marketData, vorher, fleetSymbols, now);
-            await fleetRef.set({ variants: state, updatedAt: now.toISOString() }, { merge: true });
+            const { state, entfernt } = stepFleet(variants, marketData, vorher, fleetSymbols, now);
+            await fleetRef.set(
+              { variants: fleetSchreibfeld(state, entfernt), updatedAt: now.toISOString() },
+              { merge: true },
+            );
           }
         } catch (err) {
           logger.warn(`Schatten-Flotte für ${uid} übersprungen`, err);
