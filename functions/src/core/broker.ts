@@ -134,6 +134,67 @@ export function resolveBrokerMode(strategy: Strategy, reife?: ReifeBefund): Brok
  * Geprüft wird dann nur noch, dass überhaupt etwas gefüllt wurde: Eine
  * Position über null Stück ist keine Position.
  */
+/**
+ * Unter welcher Lauf-Kennung dieser Auftrag beim Broker ankommt.
+ *
+ * ── Der Audit-Befund vom 11.08. ───────────────────────────────────────────
+ *
+ * Die Idempotenz beim Broker hängt an der `clientOrderId`, und die enthält
+ * die Kennung des LAUFS. Für einen Risiko-Exit ist der Lauf aber die falsche
+ * Bezugsgröße, denn zwei verschiedene Läufe stoßen denselben Exit an:
+ *
+ *   riskPulse    jede Minute      `puls-2026-08-11T10:03Z`
+ *   scanMarket   alle 5 Minuten   `2026-08-11T10:03Z`
+ *
+ * Sie überlappen sich also zwangsläufig alle fünf Minuten, und weil die
+ * Kennungen verschieden sind, sieht Alpaca zwei verschiedene Orders.
+ *
+ * Die Abfolge, die das auslöst:
+ *
+ *   10:03:00  Der Puls liest `positions/AAPL`, `riskExitReason` feuert,
+ *             `routeOrder` geht raus. `warteAufFill` pollt bis zu 6 × 700 ms
+ *             — die Position steht in Firestore also noch rund vier Sekunden.
+ *   10:03:02  Der laufende Scan erreicht dieselbe Position, liest sie als
+ *             offen, `riskExitReason` feuert ebenfalls, zweite echte Order.
+ *   danach    Beide Fills laufen: 10 Stück verkauft, 10 weitere LEERverkauft.
+ *             Der Puls bucht, der Scan bekommt `keine_position` und schreibt
+ *             nur `unbookedFills`.
+ *
+ * Übrig bleibt ein echter Short über −10 Stück beim Broker, ohne Stop und
+ * ohne Buchung. Und der Abgleich stuft ihn als harmlos ein: Bei eigener
+ * Menge 0 ist er weder Fehl- noch Doppelbestand, landet also in
+ * `fremdbestand` und löst keine Sperre aus. Nichts hält ihn auf.
+ *
+ * Genau das Risiko, das `executeTrade` ein paar Zeilen weiter oben für den
+ * anderen Fall beschreibt: „aus einem gewollten Ausstieg würde ein
+ * ungewollter Einstieg in die Gegenrichtung, mit echtem Risiko und ohne
+ * Stop".
+ *
+ * ── Warum die Position die richtige Bezugsgröße ist ───────────────────────
+ *
+ * Ein Risiko-Exit ist durch die POSITION bestimmt, nicht durch den Lauf, der
+ * ihn zufällig zuerst bemerkt. `openedAt` ist über das ganze Leben einer
+ * Position stabil und bei einer neu eröffneten eine andere Zeit — dieselbe
+ * Position wird also unter derselben Kennung geschlossen, egal wer den Exit
+ * auslöst, und ein späterer Wiedereinstieg bekommt trotzdem eine neue.
+ *
+ * Alles andere behält die Lauf-Kennung: Ein Einstieg IST an seinen Lauf
+ * gebunden — zwei Scans, die dasselbe Symbol kaufen wollen, sind zwei
+ * Entscheidungen, keine Wiederholung derselben.
+ *
+ * Fehlt `openedAt` (Altbestand), bleibt es beim bisherigen Verhalten.
+ */
+export function auftragsLauf(
+  req: { riskExit?: string | undefined },
+  position: { openedAt?: string | undefined } | null,
+  laufId: string,
+): string {
+  if (typeof req.riskExit !== 'string' || req.riskExit === '') return laufId;
+  const auf = position?.openedAt;
+  if (typeof auf !== 'string' || auf === '') return laufId;
+  return `exit-${auf}`;
+}
+
 export function mengeZuKlein(qty: number, fractional: boolean, echterFill: boolean): boolean {
   if (echterFill) return !(qty > 0);
   return !(qty >= (fractional ? 1e-6 : 1));
@@ -420,6 +481,13 @@ export async function executeTrade(
   const balance = (userSnap.get('wallet.paperBalance') as number | undefined) ?? 0;
   const position = posSnap.exists ? (posSnap.data() as Position) : null;
 
+  /* Die Kennung, unter der dieser Auftrag beim Broker ankommt.
+   *
+   * EINMAL abgeleitet und ab hier überall benutzt — Order, Fehlerspur und
+   * Schutz-Stop. Zwei Ableitungen wären zwei Gelegenheiten, sie verschieden
+   * zu machen; die Begründung steht bei `auftragsLauf`. */
+  const lauf = auftragsLauf(req, position, laufId);
+
   /* Schließt dieser Auftrag eine Position, die der Broker gar nicht kennt?
    *
    * Der gefährlichste Einzelfall dieser ganzen Schicht. Wer sein Konto
@@ -518,7 +586,7 @@ export async function executeTrade(
     symbol: req.symbol,
     side: req.side,
     qty,
-    laufId,
+    laufId: lauf,
   });
   if (!routing.ausgefuehrt) {
     return { executed: false, reason: `broker_${routing.grund ?? 'unbekannt'}` };
@@ -562,7 +630,7 @@ export async function executeTrade(
         qty: routing.fillMenge ?? qty,
         fillPreis: routing.fillPreis ?? null,
         brokerOrderId: routing.brokerOrderId ?? null,
-        laufId,
+        laufId: lauf,
         grund: buchung.reason ?? 'unbekannt',
         at: new Date().toISOString(),
       })
@@ -581,7 +649,7 @@ export async function executeTrade(
       req.symbol,
       resolveRisk(strategy.engine, klasse),
       klasse,
-      laufId,
+      lauf,
     );
   }
   return buchung;

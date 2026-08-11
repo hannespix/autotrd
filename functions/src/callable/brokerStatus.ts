@@ -174,10 +174,31 @@ export async function pruefeBrokerStatus(uid: string): Promise<BrokerStatusResul
     // Nutzers; für Echtgeld ausschließlich das der Umgebung (`null` ⇒
     // envSchluessel). Ein Nutzer-Schlüssel darf nie an den Echtgeld-Endpunkt.
     const keys = modus === 'paper' ? eigeneKeys : null;
-    const [konto, brokerPos] = await Promise.all([
+    /* „Depot nicht abrufbar" ist kein leeres Depot (Audit-Befund 11.08.).
+     *
+     * Der `catch` machte aus einem gescheiterten Abruf eine leere Liste, und
+     * der Abgleich weiter unten fand dann erwartungsgemäß keine Abweichung —
+     * die Karte meldete „Eigenes Buch und Broker-Depot stimmen überein."
+     *
+     * Das ist genau das Muster, das `brokerAbgleich.ts` an seiner Stelle
+     * ausdrücklich aufgelöst hat: „Ohne sie sähe ein Konto, dessen Broker
+     * seit Stunden nicht antwortet, exakt so aus wie eines ganz ohne
+     * Broker." Im Callable stand es noch.
+     *
+     * Der Fall ist nicht konstruiert. Nach einem Reset ist das Buch leer,
+     * beim Broker liegen Positionen — der Vorfall vom 05.08., der
+     * `adoptBroker` überhaupt nötig machte. Antwortet `/v2/account`, aber
+     * `/v2/positions` läuft in einen Timeout, sah der Nutzer eine
+     * Unbedenklichkeitsbescheinigung und keinen Anlass, „Depot übernehmen"
+     * zu drücken. */
+    const [konto, depot] = await Promise.all([
       alpacaKonto(modus, keys),
-      alpacaPositionen(modus, keys).catch(() => []),
+      alpacaPositionen(modus, keys).then(
+        (p) => ({ lesbar: true as const, positionen: p }),
+        () => ({ lesbar: false as const, positionen: [] }),
+      ),
     ]);
+    const brokerPos = depot.positionen;
 
     const posSnap = await db.collection('users').doc(uid).collection('positions').get();
     const eigene = posSnap.docs.map((d) => {
@@ -217,14 +238,19 @@ export async function pruefeBrokerStatus(uid: string): Promise<BrokerStatusResul
       teile.push('Hinweis: Das Konto ist als Muster-Daytrader eingestuft.');
     }
     teile.push(
-      abweichungen.length === 0
-        ? 'Eigenes Buch und Broker-Depot stimmen überein.'
-        : `${abweichungen.length} Position${abweichungen.length === 1 ? '' : 'en'} laufen auseinander — vor dem Handeln klären.`,
+      !depot.lesbar
+        ? 'Das Depot war gerade nicht abrufbar — ob Buch und Broker übereinstimmen, ist damit UNBEKANNT. Bitte gleich noch einmal prüfen.'
+        : abweichungen.length === 0
+          ? 'Eigenes Buch und Broker-Depot stimmen überein.'
+          : `${abweichungen.length} Position${abweichungen.length === 1 ? '' : 'en'} laufen auseinander — vor dem Handeln klären.`,
     );
 
     logger.info(
       `brokerStatus ${uid}: modus=${modus} status=${konto.status} ` +
-        `abweichungen=${abweichungen.length}`,
+        // „0 Abweichungen" und „nicht nachgesehen" dürfen auch im Log nicht
+        // gleich aussehen — sonst wäre der Befund von der Meldung in die
+        // Diagnose gewandert statt behoben.
+        `abweichungen=${depot.lesbar ? abweichungen.length : 'unbekannt'}`,
     );
     return { ...basis, konto, abweichungen, meldung: teile.join(' ') };
   } catch (e) {

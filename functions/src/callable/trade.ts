@@ -15,6 +15,7 @@ import {
   type Strategy,
 } from '../../../shared/src/index.js';
 import { consumeQuota, executeTrade, resolveBrokerMode } from '../core/broker.js';
+import { breakerHeuteAusgeloest } from '../scheduled/scanMarket.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { accessDeniedReason, accessLevelOf, mayTrade } from '../core/access.js';
 
@@ -93,9 +94,14 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
         // fünf Minuten und schreibt das Ergebnis mit. Was hier zählt, ist der
         // ZUSTAND der Bremse — die Grenzprüfung selbst hat der Scan gemacht.
         jetztEquity: (userSnap.get('risk.vortagEquity') as number | undefined) ?? 0,
-        bereitsAusgeloest:
-          (userSnap.get('risk.breakerAusgeloestAm') as string | undefined)?.slice(0, 10)
-          === new Date().toISOString().slice(0, 10),
+        // Handelstag in New York, nicht UTC (Audit-Befund 11.08.): Sonst
+        // gäbe die Bremse das Konto ab 20:00 ET wieder frei, obwohl niemand
+        // sie entriegelt hat. Dieselbe Funktion wie im Scan — zwei
+        // Ableitungen wären zwei Gelegenheiten, sie verschieden zu machen.
+        bereitsAusgeloest: breakerHeuteAusgeloest(
+          userSnap.get('risk.breakerAusgeloestAm'),
+          new Date(),
+        ),
       },
       { dailyLossLimitPct: strategy.engine.dailyLossLimitPct ?? 0 },
     );

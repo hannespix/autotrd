@@ -114,6 +114,65 @@ import {
   type SparkQuote,
 } from '../core/marketData.js';
 
+/**
+ * Der Handelstag in New Yorker Zeit, als `YYYY-MM-DD`.
+ *
+ * ── Der Audit-Befund vom 11.08. ───────────────────────────────────────────
+ *
+ * Die Verlust-Notbremse merkt sich in `risk.breakerAusgeloestAm`, dass sie
+ * heute schon ausgelöst hat, und `pruefeBreaker` hält sie deshalb gesperrt.
+ * `circuitBreaker.ts` sagt dazu ausdrücklich: „Einmal ausgelöst, bleibt sie
+ * ausgelöst — bis jemand sie ausdrücklich zurücksetzt." Genau dafür gibt es
+ * `resetBreaker`.
+ *
+ * Verglichen wurde aber gegen `now.toISOString().slice(0, 10)` — den
+ * UTC-Kalendertag, während der Handelstag in New York liegt. Die Abfolge:
+ *
+ *   17:15 ET  `snapshotEquity` setzt `vortagEquity` und löscht den Marker.
+ *   18:30 ET  Krypto-Absturz, Grenze gerissen, Einstiege gesperrt.
+ *   20:00 ET  = 00:00 UTC. `heuteIso` springt auf den nächsten Tag, der
+ *             Marker trägt noch den vorigen ⇒ `bereitsAusgeloest` wird
+ *             `false`.
+ *   danach    Hat sich die Equity etwas erholt, gibt `pruefeBreaker` frei.
+ *
+ * Das Konto handelt dann rund fünfzehn Stunden vor dem nächsten regulären
+ * Reset wieder, obwohl die Bremse ausgelöst war und niemand sie entriegelt
+ * hat. Krypto läuft durch, der Fall ist also nicht theoretisch. Im Winter
+ * verschiebt sich die Lücke auf 19:00 ET — dieselbe Regel feuerte je nach
+ * Jahreszeit eine Stunde versetzt.
+ *
+ * Dass die Bremse sich am Tageswechsel überhaupt selbst löst, ist gewollt.
+ * Falsch war die GRENZE. Der Rest des Scans rechnet Marktzeiten längst über
+ * `Intl` mit `America/New_York`; hier fehlte es.
+ *
+ * Beide Seiten des Vergleichs laufen durch diese Funktion, deshalb bleibt
+ * das gespeicherte Format ein unveränderter ISO-Zeitstempel — keine
+ * Migration, kein Bestandsdokument wird ungültig.
+ */
+export function handelstagET(zeit: Date): string {
+  const p = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(zeit);
+  const teil = (t: string): string => p.find((x) => x.type === t)?.value ?? '';
+  return `${teil('year')}-${teil('month')}-${teil('day')}`;
+}
+
+/**
+ * Hat die Notbremse an DEMSELBEN Handelstag schon ausgelöst?
+ *
+ * `null`/fehlend heißt „nie ausgelöst"; ein unlesbarer Zeitstempel gilt
+ * bewusst als ausgelöst — im Zweifel gesperrt lassen, nicht freigeben.
+ */
+export function breakerHeuteAusgeloest(marker: unknown, jetzt: Date): boolean {
+  if (typeof marker !== 'string' || marker === '') return false;
+  const t = Date.parse(marker);
+  if (!Number.isFinite(t)) return true;
+  return handelstagET(new Date(t)) === handelstagET(jetzt);
+}
+
 /** Mo–Fr, 09:30 ≤ t < 16:00 in America/New_York (Port des run_scan.sh-Gates). */
 export function isUsMarketOpen(now: Date = new Date()): boolean {
   const parts = new Intl.DateTimeFormat('en-US', {
@@ -608,14 +667,16 @@ async function executeUserTrades(
         const p = d.data() as Position;
         positionsWert += positionValue(p, marketData.get(d.id)?.price ?? p.avgEntry);
       }
-      const heuteIso = now.toISOString().slice(0, 10);
       const breaker = pruefeBreaker(
         {
           vortagEquity: (userDoc.get('risk.vortagEquity') as number | undefined) ?? 0,
           jetztEquity: cashJetzt + positionsWert,
-          bereitsAusgeloest:
-            (userDoc.get('risk.breakerAusgeloestAm') as string | undefined)?.slice(0, 10)
-            === heuteIso,
+          // Handelstag in New York, nicht UTC (Audit-Befund 11.08.) —
+          // Begründung bei `handelstagET`.
+          bereitsAusgeloest: breakerHeuteAusgeloest(
+            userDoc.get('risk.breakerAusgeloestAm'),
+            now,
+          ),
         },
         {
           dailyLossLimitPct: clamped.engine.dailyLossLimitPct,
