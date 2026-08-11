@@ -37,6 +37,7 @@ import {
   klemmeGewicht,
   feeRateForClass,
   isTradable,
+  MAX_WATCHLIST,
   stopDistancePct,
   isStrategy,
   exitUmbauPlan,
@@ -1669,6 +1670,48 @@ async function executeUserTrades(
 const MAX_SCAN_SYMBOLS = 40;
 
 /**
+ * Watchlist-Union aller laufenden Konten — je Konto geklemmt und gefiltert.
+ *
+ * Zweite Verteidigungslinie zum Firestore-Regel-Fix vom 11.08. Bis dahin
+ * konnte ein Konto `settings.strategy` direkt schreiben und damit die beiden
+ * Prüfungen aus `saveStrategy` umgehen, die hier zählen: die Länge
+ * (MAX_WATCHLIST) und die Katalog-Zugehörigkeit.
+ *
+ * Warum das trotz geschlossener Regel noch nötig ist:
+ *
+ *  1. Bestandsdokumente. Was vor dem Fix geschrieben wurde, steht weiter da;
+ *     eine Regel wirkt nur auf neue Schreibvorgänge.
+ *  2. Die Watchlist steht in `selectScanSymbols` VOR Ranking, Defaults und
+ *     Katalog. Ein einziges Konto mit überlanger Liste füllt damit das
+ *     gesamte Kontingent und verdrängt die Symbole aller anderen Konten.
+ *  3. `isTradable` prüft die KLASSE, nicht den Katalog: `classify` ordnet
+ *     jedes unbekannte Kürzel `stocks_us` zu, also gilt auch `MUELLXYZ` als
+ *     handelbar. Ohne diesen Filter gingen Fantasie-Symbole an die
+ *     Kursquelle — Aufrufe, die nur kosten und nie etwas liefern.
+ *
+ * Dasselbe Muster wie `clampStrategyRisk`: Die Ausführung verlässt sich nicht
+ * darauf, dass das Dokument in Ordnung ist.
+ */
+export function watchlistUnion(
+  jeKonto: readonly unknown[],
+  katalog: ReadonlySet<string> = new Set(allSymbols()),
+  maxJeKonto: number = MAX_WATCHLIST,
+): string[] {
+  const union: string[] = [];
+  for (const liste of jeKonto) {
+    if (!Array.isArray(liste)) continue;
+    let genommen = 0;
+    for (const sym of liste as unknown[]) {
+      if (genommen >= maxJeKonto) break;
+      if (typeof sym !== 'string' || !katalog.has(sym)) continue;
+      union.push(sym);
+      genommen += 1;
+    }
+  }
+  return union;
+}
+
+/**
  * Scan-Set = Default-Watchlist ∪ alle User-Watchlists (M3: der Picker macht
  * Symbole wählbar; der nächste Scan versorgt sie zentral mit Daten).
  */
@@ -1903,8 +1946,8 @@ async function collectScanSymbols(now: Date, uhrOffen: boolean | null = null): P
       .where('settings.strategy.engine.running', '==', true)
       .select('settings.strategy.watchlist', 'settings.strategy.engine.classWeights')
       .get();
-    watchlists = engSnap.docs.flatMap(
-      (d) => (d.get('settings.strategy.watchlist') as string[] | undefined) ?? [],
+    watchlists = watchlistUnion(
+      engSnap.docs.map((d) => d.get('settings.strategy.watchlist') as unknown),
     );
     aktiveKlassen = aktiveKlassenAusGewichten(
       engSnap.docs.map(
