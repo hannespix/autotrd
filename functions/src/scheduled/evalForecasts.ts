@@ -109,6 +109,32 @@ async function pruefeFassung(
   await statsRef.set({ combos: {}, forecastV: FORECAST_V, scored: 0, dirAccuracy: null });
 }
 
+/**
+ * Die Kombi-Zähler eines Symbols in den laufenden Batch legen.
+ *
+ * Eine Funktion für beide Pfade (Tag und Intraday): Zwei Kopien wären zwei
+ * Gelegenheiten, sie verschieden zu ändern — und der Fehler fiele nicht auf,
+ * weil beide Statistiken für sich plausibel aussähen.
+ *
+ * Kombi-Schlüssel enthalten Punkte ("0.5_20"). Als String-Pfad würde
+ * Firestore daran verschachteln; `FieldPath`-Segmente sind literal. Deshalb
+ * die variadische `update`-Form statt eines Objekts.
+ */
+function aggregatInBatch(
+  batch: ReturnType<ReturnType<typeof getFirestore>['batch']>,
+  statsRef: ReturnType<ReturnType<typeof getFirestore>['doc']>,
+  delta: ReadonlyMap<string, ComboStat>,
+): void {
+  if (delta.size === 0) return;
+  const args: unknown[] = [new FieldPath('updatedAt'), new Date().toISOString()];
+  for (const [key, d] of delta) {
+    args.push(new FieldPath('combos', key, 'n'), FieldValue.increment(d.n));
+    args.push(new FieldPath('combos', key, 'hits'), FieldValue.increment(d.hits));
+    args.push(new FieldPath('combos', key, 'maeSum'), FieldValue.increment(d.maeSum));
+  }
+  (batch.update as (...a: unknown[]) => unknown)(statsRef, ...args);
+}
+
 export async function evaluateDue(): Promise<EvalResult> {
   const db = getFirestore();
   const today = new Date().toISOString().slice(0, 10);
@@ -132,8 +158,34 @@ export async function evaluateDue(): Promise<EvalResult> {
   }
 
   let scored = 0;
-  const comboDelta = new Map<string, ComboStat>();
   const sentDelta = emptySentDelta();
+
+  /* Das Aggregat wird JE SYMBOL fortgeschrieben, im selben Batch wie die
+   * `evaluated`-Marker (Audit-Befund 11.08.).
+   *
+   * Vorher setzte jeder Symbol-Commit die Marker, und `comboDelta` sammelte
+   * die Treffer nur im Speicher — geschrieben wurde erst nach ALLEN Symbolen.
+   * Bricht der Lauf dazwischen ab (der Intraday-Zwilling läuft huckepack im
+   * Scan und teilt sich dessen 180-s-Timeout), tragen die schon bearbeiteten
+   * Prognosen dauerhaft `evaluated: true`, ihre Treffer erreichen die
+   * Statistik aber nie. `dirAccuracy` wird dann über eine verzerrte Teilmenge
+   * gerechnet — und genau diese Zahl steuert über `accuracyWeightedVote` das
+   * Stimmgewicht der Prognose im HANDEL. Nachholbar ist der Verlust nicht,
+   * und er hinterlässt keine Spur.
+   *
+   * Der Preis sind ein paar Schreibvorgänge mehr auf ein Dokument statt einem
+   * — `FieldValue.increment` ist genau dafür gebaut. Die umgekehrte
+   * Reihenfolge (erst Aggregat, dann Marker) wäre schlechter: Sie tauschte
+   * verlorene gegen doppelt gezählte Treffer.
+   *
+   * `pruefeFassung` und das Anlegen müssen deshalb VOR die Schleife —
+   * `update` scheitert auf einem fehlenden Dokument.
+   *
+   * `sentDelta` bleibt bewusst, wie es war: reine Schatten-Statistik ohne
+   * Handelswirkung. Ein Verlust dort kostet Messpunkte, keine Trades. */
+  const statsRef = db.doc('meta/forecastStats');
+  await pruefeFassung(statsRef);
+  await statsRef.set({}, { merge: true });
 
   for (const [symbol, entries] of dueBySymbol) {
     let actuals: Record<string, number>;
@@ -146,6 +198,7 @@ export async function evaluateDue(): Promise<EvalResult> {
     }
 
     const batch = db.batch();
+    const symbolDelta = new Map<string, ComboStat>();
     for (const { ref, doc } of entries) {
       const score = scoreForecast(doc.points, doc.baseClose, actuals);
       if (!score) continue; // End-Tag (noch) nicht realisiert → später erneut
@@ -157,38 +210,19 @@ export async function evaluateDue(): Promise<EvalResult> {
         nPoints: score.nPoints,
       });
       const key = comboKey(doc.lookback);
-      const d = comboDelta.get(key) ?? { n: 0, hits: 0, maeSum: 0 };
+      const d = symbolDelta.get(key) ?? { n: 0, hits: 0, maeSum: 0 };
       d.n += 1;
       d.hits += score.dirHit ? 1 : 0;
       d.maeSum += score.maePct;
-      comboDelta.set(key, d);
+      symbolDelta.set(key, d);
       // Sentiment-Schatten: nur bewertete Prognosen — dieselben Gates.
       tallySent(sentDelta, doc.sentSign, doc.baseClose, actuals[doc.points[doc.points.length - 1]!.time]);
       scored += 1;
     }
+    aggregatInBatch(batch, statsRef, symbolDelta);
     await batch.commit();
   }
   await writeSentStats('daily', sentDelta).catch((err) => logger.warn('sentimentStats daily', err));
-
-  // Globale Kombi-Statistik inkrementell fortschreiben (nur realisierte Scores).
-  // WICHTIG: Kombi-Schlüssel enthalten Punkte ("0.5_20") — als String-Pfad
-  // würde Firestore daran verschachteln; FieldPath-Segmente sind literal.
-  const statsRef = db.doc('meta/forecastStats');
-  await pruefeFassung(statsRef);
-  if (comboDelta.size > 0) {
-    const args: unknown[] = [new FieldPath('updatedAt'), new Date().toISOString()];
-    for (const [key, d] of comboDelta) {
-      args.push(new FieldPath('combos', key, 'n'), FieldValue.increment(d.n));
-      args.push(new FieldPath('combos', key, 'hits'), FieldValue.increment(d.hits));
-      args.push(new FieldPath('combos', key, 'maeSum'), FieldValue.increment(d.maeSum));
-    }
-    await statsRef.set({}, { merge: true });
-    await statsRef.update(
-      args[0] as FieldPath,
-      args[1],
-      ...(args.slice(2) as unknown[]),
-    );
-  }
 
   const combos =
     ((await statsRef.get()).get('combos') as Record<string, ComboStat> | undefined) ?? {};
@@ -333,8 +367,12 @@ export async function evaluateIntradayDue(): Promise<IntradayEvalResult> {
   let scored = 0;
   let expired = 0;
   let unrealized = 0;
-  const comboDelta = new Map<string, ComboStat>();
   const sentDelta = emptySentDelta();
+
+  // Dieselbe Regel wie im Tagespfad — Begründung dort.
+  const statsRef = db.doc('meta/forecastStatsIntraday');
+  await pruefeFassung(statsRef);
+  await statsRef.set({}, { merge: true });
 
   for (const [symbol, entries] of bySymbol) {
     let actuals: Record<string, number>;
@@ -345,6 +383,7 @@ export async function evaluateIntradayDue(): Promise<IntradayEvalResult> {
       continue;
     }
     const batch = db.batch();
+    const symbolDelta = new Map<string, ComboStat>();
     for (const { ref, doc } of entries) {
       const score = scoreIntradayForecast(doc.points, doc.baseClose, actuals);
       if (score) {
@@ -356,11 +395,11 @@ export async function evaluateIntradayDue(): Promise<IntradayEvalResult> {
           nPoints: score.nPoints,
         });
         const key = comboKey(doc.lookback);
-        const d = comboDelta.get(key) ?? { n: 0, hits: 0, maeSum: 0 };
+        const d = symbolDelta.get(key) ?? { n: 0, hits: 0, maeSum: 0 };
         d.n += 1;
         d.hits += score.dirHit ? 1 : 0;
         d.maeSum += score.maePct;
-        comboDelta.set(key, d);
+        symbolDelta.set(key, d);
         // Sentiment-Schatten: gleiche Gates wie der dirHit (nur realisierte).
         tallySent(
           sentDelta,
@@ -382,22 +421,12 @@ export async function evaluateIntradayDue(): Promise<IntradayEvalResult> {
         unrealized += 1;
       }
     }
+    aggregatInBatch(batch, statsRef, symbolDelta);
     await batch.commit();
   }
   await writeSentStats('intraday', sentDelta).catch((err) => logger.warn('sentimentStats intraday', err));
 
-  const statsRef = db.doc('meta/forecastStatsIntraday');
-  await pruefeFassung(statsRef);
-  if (comboDelta.size > 0) {
-    const args: unknown[] = [new FieldPath('updatedAt'), new Date().toISOString()];
-    for (const [key, d] of comboDelta) {
-      args.push(new FieldPath('combos', key, 'n'), FieldValue.increment(d.n));
-      args.push(new FieldPath('combos', key, 'hits'), FieldValue.increment(d.hits));
-      args.push(new FieldPath('combos', key, 'maeSum'), FieldValue.increment(d.maeSum));
-    }
-    await statsRef.set({}, { merge: true });
-    await statsRef.update(args[0] as FieldPath, args[1], ...(args.slice(2) as unknown[]));
-
+  if (scored > 0) {
     const combos =
       ((await statsRef.get()).get('combos') as Record<string, ComboStat> | undefined) ?? {};
     const bp = bestParams(combos, DEFAULT_INTRADAY_LOOKBACK);
