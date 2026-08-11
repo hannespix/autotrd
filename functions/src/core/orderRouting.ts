@@ -422,6 +422,72 @@ export function vergissAssets(): void {
   assetCache.clear();
 }
 
+/**
+ * Wie viele Dokumente den Asset-Cache tragen.
+ *
+ * ── Audit-Befund 11.08. ───────────────────────────────────────────────────
+ *
+ * Bis hierher lag der gesamte Cache in EINEM Dokument (`meta/alpacaAssets`),
+ * ein Feld je Symbol. Bei den 166 Katalog-Symbolen von heute sind das etwa
+ * 30 KB — unauffällig. Der laufende Umbau zieht aber das gesamte
+ * Alpaca-Universum in die Rangliste, und das sind über 11.000 handelbare
+ * Papiere. Bei rund 180 Byte je Eintrag (sieben Felder plus Zeitstempel und
+ * Feldnamen) reißt das Dokument die harte 1-MB-Grenze von Firestore.
+ *
+ * Was dann passiert, ist tückisch: Der Schreibvorgang scheitert, der
+ * `.catch` macht daraus eine Warnung, und der Cache friert ein. Jedes neue
+ * Symbol geht ab da bei JEDEM Scan live an Alpaca — langsamer, teurer, und
+ * die einzige Spur ist eine Logzeile unter tausenden.
+ *
+ * ── Warum Shards und nicht ein Dokument je Symbol ─────────────────────────
+ *
+ * Firestore rechnet je gelesenem DOKUMENT, nicht je Byte. Ein Dokument je
+ * Symbol wäre also genauso teuer wie heute (ein Read je Abfrage), nur
+ * kleiner. Shards sind billiger als beides: Ein Scan über 40 Symbole trifft
+ * höchstens 16 Shards, und weil jeder Shard beim Lesen KOMPLETT in die
+ * Prozess-Map wandert, deckt er die übrigen Symbole gleich mit ab. Bei
+ * einem Katalog über tausende Papiere ist das der Unterschied zwischen 16
+ * Reads und tausenden.
+ *
+ * 16 Shards halten das Universum bei etwa 125 KB je Dokument — Platz um den
+ * Faktor acht, bevor die Grenze wieder in Sicht kommt.
+ */
+export const ASSET_SHARDS = 16;
+
+/**
+ * Welcher Shard trägt dieses Symbol?
+ *
+ * FNV-1a über den Symbolnamen: gleichmäßig verteilt (ein Präfix nach
+ * Anfangsbuchstaben wäre es nicht — „A" und „S" tragen ein Vielfaches von
+ * „X"), deterministisch über Prozesse und Deploys hinweg, und ohne
+ * Abhängigkeit von einer Bibliothek.
+ *
+ * Stabilität ist die eigentliche Anforderung: Wanderte ein Symbol zwischen
+ * zwei Läufen in einen anderen Shard, läge sein Eintrag im alten und würde
+ * nie mehr gefunden — der Cache verlöre still seine Wirkung.
+ */
+export function assetShard(symbol: string): number {
+  let h = 2_166_136_261;
+  for (let i = 0; i < symbol.length; i += 1) {
+    h ^= symbol.charCodeAt(i);
+    h = Math.imul(h, 16_777_619);
+  }
+  return Math.abs(h) % ASSET_SHARDS;
+}
+
+/**
+ * Dokumentpfad des Shards.
+ *
+ * Der alte Pfad `meta/alpacaAssets` wird NICHT migriert und nicht mehr
+ * gelesen. Das ist hier gefahrlos: Jeder Eintrag verfällt ohnehin nach 24
+ * Stunden, der Wechsel kostet also höchstens einen Tag mit mehr
+ * Live-Abfragen — deutlich weniger Aufwand und Risiko als eine Migration
+ * von Daten, die sich von selbst erneuern.
+ */
+export function assetShardPfad(symbol: string): string {
+  return `meta/alpacaAssets_${assetShard(symbol)}`;
+}
+
 /** Die Eigenschaften, oder `null` bei `fehlt`/`unklar` (Altschnittstelle). */
 export async function assetAuskunft(
   verbindung: BrokerVerbindung,
@@ -461,6 +527,57 @@ export function brokerVorpruefung(
   return { ok: true };
 }
 
+/** Ein gespeichertes Cache-Feld, wie es im Shard-Dokument liegt. */
+interface AssetFeld {
+  bekannt?: unknown;
+  at?: unknown;
+  v?: unknown;
+  tradable?: unknown;
+  fractionable?: unknown;
+  shortable?: unknown;
+  easyToBorrow?: unknown;
+  marginable?: unknown;
+}
+
+/**
+ * Ein Cache-Feld in einen Stand übersetzen — oder `null`, wenn es nicht mehr
+ * gilt.
+ *
+ * Zwei Gründe, warum ein Feld nicht mehr gilt, und beide sind wichtig:
+ *
+ *  - Es ist ÄLTER als 24 Stunden.
+ *  - Es ist eine ABSAGE aus einer älteren Schreibweise. `bekannt: false`
+ *    heißt nicht „dieses Papier gibt es nicht", sondern „auf DIESE Frage kam
+ *    404" — und die Frage ändert sich, sobald `zuAlpacaSymbol` eine
+ *    Schreibweise dazulernt (s. SCHREIBWEISE_V). Zusagen bleiben gültig: Was
+ *    Alpaca einmal kannte, kennt es weiter.
+ *
+ * Als eigene Funktion, weil sie jetzt für JEDEN Eintrag eines Shards läuft
+ * und nicht mehr nur für das eine gesuchte Symbol.
+ */
+export function feldZuStand(symbol: string, roh: unknown, jetztMs: number): AssetStand | null {
+  if (!roh || typeof roh !== 'object') return null;
+  const feld = roh as AssetFeld;
+  if (typeof feld.at !== 'string') return null;
+  const alter = jetztMs - Date.parse(feld.at);
+  if (!Number.isFinite(alter) || alter >= ASSET_TTL_MS || alter < -ASSET_TTL_MS) return null;
+  const bekannt = feld.bekannt === true;
+  const v = typeof feld.v === 'number' ? feld.v : 1;
+  if (!bekannt && v < SCHREIBWEISE_V) return null;
+  if (!bekannt) return { art: 'fehlt' };
+  return {
+    art: 'bekannt',
+    asset: {
+      symbol,
+      tradable: feld.tradable === true,
+      fractionable: feld.fractionable === true,
+      shortable: feld.shortable === true,
+      easyToBorrow: feld.easyToBorrow === true,
+      marginable: feld.marginable === true,
+    },
+  };
+}
+
 export async function assetStand(
   verbindung: BrokerVerbindung,
   symbol: string,
@@ -470,35 +587,22 @@ export async function assetStand(
   const treffer = assetCache.get(symbol);
   if (treffer && treffer.bis > jetztMs) return treffer.stand;
 
-  const ref = getFirestore().doc('meta/alpacaAssets');
+  const ref = getFirestore().doc(assetShardPfad(symbol));
 
   // Stufe 2: Firestore. Ein Lesefehler ist kein Handelshindernis — dann
   // wird eben live gefragt oder (wenn auch das scheitert) geraten.
   try {
-    const feld = (await ref.get()).get(symbol) as
-      | { bekannt: boolean; at: string; v?: number; tradable?: boolean; fractionable?: boolean;
-          shortable?: boolean; easyToBorrow?: boolean; marginable?: boolean }
-      | undefined;
-    // Eine Absage aus einer ÄLTEREN Schreibweise beantwortet eine Frage, die
-    // wir nicht mehr stellen (s. SCHREIBWEISE_V). Zusagen bleiben gültig.
-    const frisch = feld?.bekannt === true || (feld?.v ?? 1) >= SCHREIBWEISE_V;
-    if (feld && frisch && jetztMs - Date.parse(feld.at) < ASSET_TTL_MS) {
-      const stand: AssetStand = feld.bekannt
-        ? {
-            art: 'bekannt',
-            asset: {
-              symbol,
-              tradable: feld.tradable === true,
-              fractionable: feld.fractionable === true,
-              shortable: feld.shortable === true,
-              easyToBorrow: feld.easyToBorrow === true,
-              marginable: feld.marginable === true,
-            },
-          }
-        : { art: 'fehlt' };
-      assetCache.set(symbol, { bis: jetztMs + ASSET_TTL_MS, stand });
-      return stand;
+    const daten = (await ref.get()).data() ?? {};
+    /* Den GANZEN Shard in die Prozess-Map übernehmen, nicht nur das gesuchte
+     * Symbol. Der Read ist bereits bezahlt; jeder weitere Eintrag daraus
+     * spart einen späteren. Bei einem Scan über hunderte Symbole ist das der
+     * Unterschied zwischen 16 Reads und hunderten. */
+    for (const [sym, roh] of Object.entries(daten)) {
+      const stand = feldZuStand(sym, roh, jetztMs);
+      if (stand) assetCache.set(sym, { bis: jetztMs + ASSET_TTL_MS, stand });
     }
+    const treffer2 = assetCache.get(symbol);
+    if (treffer2 && treffer2.bis > jetztMs) return treffer2.stand;
   } catch (err) {
     logger.warn(`assetAuskunft ${symbol}: Cache nicht lesbar`, err);
   }
