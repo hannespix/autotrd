@@ -13,6 +13,7 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 import {
   DEFAULT_INTRADAY_LOOKBACK,
+  FORECAST_V,
   bestParams,
   comboKey,
   isForecastDue,
@@ -75,6 +76,39 @@ export interface EvalResult {
 }
 
 /** Alle fälligen Prognosen bewerten; liefert Anzahl + neue best_params. */
+
+/**
+ * Zähler verwerfen, wenn sie aus einer ANDEREN Prognoserechnung stammen.
+ *
+ * `combos` wächst per `increment` und wird nie zurückgesetzt — richtig,
+ * solange die Rechnung dieselbe bleibt. Nach einer Formeländerung addierten
+ * sich sonst die Treffer zweier Rechnungen in denselben Zähler, dauerhaft
+ * und unsichtbar (Begründung ausführlich bei `FORECAST_V`).
+ *
+ * Rein gehalten und exportiert, damit die Entscheidung prüfbar ist: Sie
+ * verwirft im Zweifel Messdaten, und das darf nicht aus Versehen passieren.
+ */
+export function zaehlerVerwerfen(gespeichert: unknown, aktuell: number = FORECAST_V): boolean {
+  // Fehlt der Marker, stammt der Stand aus der Zeit VOR ihm — also aus der
+  // Rechnung, die bei seiner Einführung galt. Der gilt weiter.
+  if (gespeichert === undefined || gespeichert === null) return false;
+  return gespeichert !== aktuell;
+}
+
+/** Vor dem Fortschreiben: Stand prüfen, bei Fassungswechsel leeren. */
+async function pruefeFassung(
+  statsRef: FirebaseFirestore.DocumentReference,
+): Promise<void> {
+  const snap = await statsRef.get();
+  if (!snap.exists) return;
+  if (!zaehlerVerwerfen(snap.get('forecastV'))) return;
+  logger.warn(
+    `${statsRef.path}: Prognoserechnung ist jetzt V${FORECAST_V} — Zähler werden verworfen, `
+      + 'sie beantworten eine andere Frage',
+  );
+  await statsRef.set({ combos: {}, forecastV: FORECAST_V, scored: 0, dirAccuracy: null });
+}
+
 export async function evaluateDue(): Promise<EvalResult> {
   const db = getFirestore();
   const today = new Date().toISOString().slice(0, 10);
@@ -140,6 +174,7 @@ export async function evaluateDue(): Promise<EvalResult> {
   // WICHTIG: Kombi-Schlüssel enthalten Punkte ("0.5_20") — als String-Pfad
   // würde Firestore daran verschachteln; FieldPath-Segmente sind literal.
   const statsRef = db.doc('meta/forecastStats');
+  await pruefeFassung(statsRef);
   if (comboDelta.size > 0) {
     const args: unknown[] = [new FieldPath('updatedAt'), new Date().toISOString()];
     for (const [key, d] of comboDelta) {
@@ -352,6 +387,7 @@ export async function evaluateIntradayDue(): Promise<IntradayEvalResult> {
   await writeSentStats('intraday', sentDelta).catch((err) => logger.warn('sentimentStats intraday', err));
 
   const statsRef = db.doc('meta/forecastStatsIntraday');
+  await pruefeFassung(statsRef);
   if (comboDelta.size > 0) {
     const args: unknown[] = [new FieldPath('updatedAt'), new Date().toISOString()];
     for (const [key, d] of comboDelta) {
