@@ -102,6 +102,43 @@ export function resolveBrokerMode(strategy: Strategy, reife?: ReifeBefund): Brok
   return 'live';
 }
 
+/**
+ * Ist die Menge zu klein, um sie zu buchen?
+ *
+ * ── Der Audit-Befund vom 11.08. ───────────────────────────────────────────
+ *
+ * Die Untergrenze stand zweimal im Code, mit verschiedenen Antworten:
+ *
+ *   `executeTrade` (Routing)   `asset?.fractionable ?? (klasse === 'crypto')`
+ *   `executePaperTrade` (Buch) `cls === 'crypto'`
+ *
+ * Seit dem Alpaca-Assets-Sync kennt die routende Schicht echte Bruchstücke
+ * auch bei Aktien. Die buchende nicht. Die Folge war kein abgelehnter Trade,
+ * sondern ein AUSGEFÜHRTER, der nicht ankam: Die Order über 0,25 NVDA ging
+ * raus und wurde gefüllt — rund 200 $ real investiert —, danach lehnte die
+ * Buchung sie mit `qty_unter_1` ab, weil sie NVDA für unteilbar hielt.
+ *
+ * Übrig blieben ein `unbookedFills`-Dokument und ein `logger.error`. Keine
+ * Position, kein Cash-Abzug, kein Schutz-Stop. Und weil der Cooldown nur bei
+ * Erfolg gesetzt wird und keine Position entsteht, wiederholte der
+ * 5-Minuten-Scan denselben Vorgang, solange das Kaufsignal stand.
+ *
+ * ── Warum ein bestätigter Fill die Grenze nicht mehr passieren muss ───────
+ *
+ * Weil die Frage dann falsch gestellt ist. „Ist die Menge zu klein zum
+ * Kaufen?" entscheidet, ob eine Order rausgeht — sie ist aber schon raus und
+ * ausgeführt. Die Buchung abzulehnen ließe den Kauf real bestehen und nur das
+ * Buch dahinter zurückfallen. Exakt dieselbe Begründung trägt die
+ * Cash-Prüfung ein paar Zeilen weiter unten seit dem 05.08.
+ *
+ * Geprüft wird dann nur noch, dass überhaupt etwas gefüllt wurde: Eine
+ * Position über null Stück ist keine Position.
+ */
+export function mengeZuKlein(qty: number, fractional: boolean, echterFill: boolean): boolean {
+  if (echterFill) return !(qty > 0);
+  return !(qty >= (fractional ? 1e-6 : 1));
+}
+
 /** Geldbeträge auf Cent runden — Float-Drift hat im Kontostand nichts zu suchen. */
 function roundCents(v: number): number {
   return Math.round(v * 100) / 100;
@@ -473,7 +510,8 @@ export async function executeTrade(
     effPreis: effSchaetzung,
     fractional,
   });
-  if (qty < (fractional ? 1e-6 : 1)) return { executed: false, reason: 'qty_unter_1' };
+  // Hier ist noch nichts gefüllt — die Order geht erst gleich raus.
+  if (mengeZuKlein(qty, fractional, false)) return { executed: false, reason: 'qty_unter_1' };
 
   const routing = await routeOrder(verbindung, {
     uid: req.uid,
@@ -717,7 +755,9 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       const cls = req.assetClass ?? classify(req.symbol);
       const fractional = cls === 'crypto';
       const qty = req.qty ?? sizeOrder(strategy, balance, eff, fractional, req.margin, req.stopDistancePct, req.sizeFactor);
-      if (qty < (fractional ? 1e-6 : 1)) return { executed: false, reason: 'qty_unter_1' };
+      if (mengeZuKlein(qty, fractional, echterFill)) {
+        return { executed: false, reason: 'qty_unter_1' };
+      }
       const cost = qty * eff;
       // Ohne Hebel prüft der Cash, mit Hebel die Kaufkraft. Der Cash darf
       // dabei NEGATIV werden — das ist der geliehene Betrag, auf den
@@ -793,7 +833,9 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       const cls = req.assetClass ?? classify(req.symbol);
       const fractional = cls === 'crypto';
       const qty = req.qty ?? sizeOrder(strategy, balance, eff, fractional, req.margin, req.stopDistancePct, req.sizeFactor);
-      if (qty < (fractional ? 1e-6 : 1)) return { executed: false, reason: 'qty_unter_1' };
+      if (mengeZuKlein(qty, fractional, echterFill)) {
+        return { executed: false, reason: 'qty_unter_1' };
+      }
       const margin = qty * eff;
       // Gleiche Deckungsprüfung wie beim Kauf: Der Short bindet Sicherheit,
       // und ob die aus Cash oder aus Kaufkraft kommt, entscheidet der Hebel.

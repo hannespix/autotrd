@@ -215,10 +215,30 @@ function bewerteKante(
   // sie liegt — eine Klasse knapp unter null ist etwas anderes als eine, die
   // pro Dollar systematisch verbrennt.
   if (k > -0.1) {
+    /* Die Untergrenze gilt nur für Klassen, die überhaupt AN sind
+     * (Audit-Befund 11.08.).
+     *
+     * `Math.max(0.25, w * 0.5)` allein machte aus einem Gewicht von 0 eine
+     * 0,25 — aus „drosseln" wurde eine Aktivierung, und zwar auf negative
+     * Kante hin. Der Text sagte weiter „halbes Gewicht, weiter beobachten",
+     * im Journal stand `von: 0, nach: 0.25`, und `snapshotEquity` übernahm
+     * das ohne Rückfrage in `engine.classWeights`. Die Klasse handelte wieder.
+     *
+     * Damit war der Riegel offen, den der Modulkopf ausdrücklich beschreibt:
+     * Der Rückweg aus dem Schatten sei „eng: nur bei Gewicht 0, nur mit
+     * belegtem und POSITIVEM Schatten". Hier führte er bei negativer Kante
+     * zurück — der einzige Fall, für den er nie gedacht war.
+     *
+     * Die 0,25 selbst bleibt richtig: Sie verhindert, dass wiederholtes
+     * Halbieren eine laufende Klasse still gegen null fährt. Nur eine
+     * abgeschaltete darf sie nicht anheben. */
     return {
       empfehlung: 'drosseln',
-      vorschlag: r2(Math.max(0.25, w * 0.5)),
-      grund: `Verliert ${Math.abs(k).toFixed(3)} % je Dollar — halbes Gewicht, weiter beobachten.`,
+      vorschlag: w > 0 ? r2(Math.max(0.25, w * 0.5)) : 0,
+      grund:
+        w > 0
+          ? `Verliert ${Math.abs(k).toFixed(3)} % je Dollar — halbes Gewicht, weiter beobachten.`
+          : `Verliert ${Math.abs(k).toFixed(3)} % je Dollar — bleibt aus, der Schatten misst weiter.`,
     };
   }
   return {

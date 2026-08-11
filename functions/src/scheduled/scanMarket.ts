@@ -37,6 +37,7 @@ import {
   klemmeGewicht,
   feeRateForClass,
   isTradable,
+  MAX_WATCHLIST,
   stopDistancePct,
   isStrategy,
   exitUmbauPlan,
@@ -1669,6 +1670,121 @@ async function executeUserTrades(
 const MAX_SCAN_SYMBOLS = 40;
 
 /**
+ * Wie viele Schreibvorgänge ein Batch trägt, bevor er abgegeben wird.
+ *
+ * Firestore committet höchstens 500 Operationen je Batch. 450 lässt Luft für
+ * den Zustands-Schreibvorgang am Ende und für künftige Felder, ohne dass
+ * jemand nachrechnen muss.
+ */
+export const BATCH_MAX = 450;
+
+/**
+ * Ein Batch, der abgibt, bevor er überläuft.
+ *
+ * ── Der Audit-Befund vom 11.08. ───────────────────────────────────────────
+ *
+ * `supplyCatalog` sammelte ALLES in einem einzigen Batch: einen
+ * Schreibvorgang je versorgtem Symbol, zwei je Tageskerze, plus den Zustand.
+ * Bei 132 Katalog-Symbolen sind das ~153 Operationen — unauffällig. Die Zahl
+ * wächst aber mit dem Universum, und `zuHolen` ist in der Katalogbreite
+ * ungedeckelt (`zuVersorgende` deckelt nur die ERSTversorgung).
+ *
+ * Ab rund 479 offenen Symbolen reißt das Limit. Der Fehler wäre nicht laut,
+ * sondern lähmend: Der `catch` in `runScan` schreibt `lastError` und macht
+ * weiter — verloren geht der GESAMTE Batch, inklusive `versorgt` und
+ * `barCursor`. Jeder Folgescan startet damit vom selben Zustand und scheitert
+ * identisch. Die Marktübersicht fröre dauerhaft ein, während der Heartbeat
+ * „läuft" meldet.
+ *
+ * Mit dem Alpaca-Universum (~10.000 Symbole) wären es rund 8.000 Operationen
+ * in der US-Session. Der Fix gehört deshalb VOR den Ausbau, nicht danach.
+ *
+ * ── Was die Aufteilung kostet ─────────────────────────────────────────────
+ *
+ * Die Atomarität über den ganzen Lauf. Bricht ein mittlerer Block ab, sind
+ * die vorigen geschrieben und der Zustand am Ende nicht — der nächste Lauf
+ * holt dieselben Symbole erneut. Alle Schreibvorgänge hier sind `merge` auf
+ * feste Dokument-Kennungen, also idempotent; ein doppelter Lauf schreibt
+ * denselben Kurs zweimal. Das ist deutlich besser als „alles oder nichts",
+ * wo „nichts" den Scan dauerhaft blockiert.
+ */
+export function sammelBatch(
+  db: ReturnType<typeof getFirestore>,
+  max = BATCH_MAX,
+): {
+  set: (ref: unknown, daten: unknown, opts?: unknown) => Promise<void>;
+  fertig: () => Promise<void>;
+  bloecke: () => number;
+} {
+  let batch = db.batch();
+  let offen = 0;
+  let abgegeben = 0;
+  return {
+    async set(ref, daten, opts): Promise<void> {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (batch.set as any)(ref, daten, opts ?? {});
+      offen += 1;
+      if (offen >= max) {
+        await batch.commit();
+        abgegeben += 1;
+        batch = db.batch();
+        offen = 0;
+      }
+    },
+    async fertig(): Promise<void> {
+      if (offen > 0) {
+        await batch.commit();
+        abgegeben += 1;
+        offen = 0;
+      }
+    },
+    bloecke: () => abgegeben,
+  };
+}
+
+/**
+ * Watchlist-Union aller laufenden Konten — je Konto geklemmt und gefiltert.
+ *
+ * Zweite Verteidigungslinie zum Firestore-Regel-Fix vom 11.08. Bis dahin
+ * konnte ein Konto `settings.strategy` direkt schreiben und damit die beiden
+ * Prüfungen aus `saveStrategy` umgehen, die hier zählen: die Länge
+ * (MAX_WATCHLIST) und die Katalog-Zugehörigkeit.
+ *
+ * Warum das trotz geschlossener Regel noch nötig ist:
+ *
+ *  1. Bestandsdokumente. Was vor dem Fix geschrieben wurde, steht weiter da;
+ *     eine Regel wirkt nur auf neue Schreibvorgänge.
+ *  2. Die Watchlist steht in `selectScanSymbols` VOR Ranking, Defaults und
+ *     Katalog. Ein einziges Konto mit überlanger Liste füllt damit das
+ *     gesamte Kontingent und verdrängt die Symbole aller anderen Konten.
+ *  3. `isTradable` prüft die KLASSE, nicht den Katalog: `classify` ordnet
+ *     jedes unbekannte Kürzel `stocks_us` zu, also gilt auch `MUELLXYZ` als
+ *     handelbar. Ohne diesen Filter gingen Fantasie-Symbole an die
+ *     Kursquelle — Aufrufe, die nur kosten und nie etwas liefern.
+ *
+ * Dasselbe Muster wie `clampStrategyRisk`: Die Ausführung verlässt sich nicht
+ * darauf, dass das Dokument in Ordnung ist.
+ */
+export function watchlistUnion(
+  jeKonto: readonly unknown[],
+  katalog: ReadonlySet<string> = new Set(allSymbols()),
+  maxJeKonto: number = MAX_WATCHLIST,
+): string[] {
+  const union: string[] = [];
+  for (const liste of jeKonto) {
+    if (!Array.isArray(liste)) continue;
+    let genommen = 0;
+    for (const sym of liste as unknown[]) {
+      if (genommen >= maxJeKonto) break;
+      if (typeof sym !== 'string' || !katalog.has(sym)) continue;
+      union.push(sym);
+      genommen += 1;
+    }
+  }
+  return union;
+}
+
+/**
  * Scan-Set = Default-Watchlist ∪ alle User-Watchlists (M3: der Picker macht
  * Symbole wählbar; der nächste Scan versorgt sie zentral mit Daten).
  */
@@ -1903,8 +2019,8 @@ async function collectScanSymbols(now: Date, uhrOffen: boolean | null = null): P
       .where('settings.strategy.engine.running', '==', true)
       .select('settings.strategy.watchlist', 'settings.strategy.engine.classWeights')
       .get();
-    watchlists = engSnap.docs.flatMap(
-      (d) => (d.get('settings.strategy.watchlist') as string[] | undefined) ?? [],
+    watchlists = watchlistUnion(
+      engSnap.docs.map((d) => d.get('settings.strategy.watchlist') as unknown),
     );
     aktiveKlassen = aktiveKlassenAusGewichten(
       engSnap.docs.map(
@@ -2046,12 +2162,12 @@ async function supplyCatalog(
   const quotes: Map<string, SparkQuote> =
     zuHolen.length > 0 ? await getSparkBatch(zuHolen) : new Map();
 
-  const batch = db.batch();
+  const batch = sammelBatch(db);
   let fetched = 0;
   for (const sym of zuHolen) {
     const q = quotes.get(sym);
     if (!q) continue; // dieser Chunk hat gepatzt — nächster Scan in 5 min
-    batch.set(
+    await batch.set(
       db.collection('market').doc(sym),
       {
         symbol: sym,
@@ -2072,10 +2188,10 @@ async function supplyCatalog(
   for (const sym of new Set(barSyms)) {
     try {
       const qq = await getQuickQuote(sym);
-      batch.set(db.collection('market').doc(sym).collection('bars').doc(qq.lastBar.date), {
+      await batch.set(db.collection('market').doc(sym).collection('bars').doc(qq.lastBar.date), {
         ...qq.lastBar,
       });
-      batch.set(
+      await batch.set(
         db.collection('market').doc(sym),
         { lastBarDate: qq.lastBar.date },
         { merge: true },
@@ -2085,7 +2201,7 @@ async function supplyCatalog(
     }
   }
 
-  batch.set(
+  await batch.set(
     stateRef,
     {
       barCursor: (cursor + BAR_CHUNK) % catalog.length,
@@ -2100,7 +2216,7 @@ async function supplyCatalog(
     },
     { merge: true },
   );
-  await batch.commit();
+  await batch.fertig();
   return { fresh: fetched, open: offen.length };
 }
 

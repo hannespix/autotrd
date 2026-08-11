@@ -83,10 +83,116 @@ describe('users/{uid}', () => {
     await assertFails(bob().doc('users/bob').set({ settings: {} }));
   });
 
-  it('Owner darf NUR settings ändern', async () => {
-    await assertSucceeds(
-      alice().doc('users/alice').update({ settings: { strategy: { broker: { mode: 'paper' } } } }),
-    );
+  /* Audit-Befund 11.08.: Die Regel prüfte nur, DASS ausschließlich `settings`
+   * betroffen ist — nicht, WAS darin steht. `affectedKeys()` sieht die
+   * Top-Level-Schlüssel; alles unterhalb war frei.
+   *
+   * Damit war `settings.strategy` direkt beschreibbar, und `saveStrategy`
+   * wurde zur Empfehlung statt zur Pflicht. Das Callable ist die einzige
+   * Stelle, die Schema, Watchlist-Länge, Katalog-Zugehörigkeit, `broker.mode`
+   * und die E-Mail-Bestätigung prüft.
+   *
+   * Der ALTE Test an dieser Stelle hielt genau das falsche Verhalten fest —
+   * er behauptete „Owner darf NUR settings ändern" und belegte mit
+   * `settings.strategy` das Gegenteil dessen, was er meinte. Dieselbe Lehre
+   * wie bei den Alpaca-Symbolen am 11.08.: Ein eigener Test kann eine falsche
+   * Regel zementieren.
+   *
+   * Jeder Test stellt seinen Ausgangszustand selbst her — sonst hinge das
+   * Ergebnis an der Reihenfolge, in der vitest die Fälle abarbeitet. */
+  describe('settings: nur Präferenzen, Strategie nur über saveStrategy', () => {
+    const grundzustand = async (): Promise<void> => {
+      await env.withSecurityRulesDisabled(async (ctx) => {
+        await ctx.firestore().doc('users/alice').set({
+          profile: { plan: 'free' },
+          settings: {
+            strategy: { broker: { mode: 'paper' }, watchlist: ['QQQ'] },
+            ui: { theme: 'dark' },
+          },
+          wallet: { paperBalance: 25_000, currency: 'USD' },
+        });
+      });
+    };
+
+    it('UI-Präferenzen darf der Client selbst setzen', async () => {
+      await grundzustand();
+      await assertSucceeds(
+        alice().doc('users/alice').update({ 'settings.ui': { theme: 'light' } }),
+      );
+    });
+
+    it('den Auto-Tuner-Schalter auch', async () => {
+      await grundzustand();
+      await assertSucceeds(alice().doc('users/alice').update({ 'settings.autoTune': false }));
+      await assertSucceeds(alice().doc('users/alice').update({ 'settings.hotkeys': { buy: 'b' } }));
+    });
+
+    it('mehrere Präferenzfelder in einem Schreibvorgang gehen auch', async () => {
+      await grundzustand();
+      await assertSucceeds(
+        alice()
+          .doc('users/alice')
+          .update({ 'settings.ui': { theme: 'light' }, 'settings.autoTune': true }),
+      );
+    });
+
+    it('die STRATEGIE nicht — sie muss durch saveStrategy', async () => {
+      await grundzustand();
+      await assertFails(
+        alice().doc('users/alice').update({ 'settings.strategy': { broker: { mode: 'paper' } } }),
+      );
+    });
+
+    it('auch nicht ein einzelnes Strategie-Feld', async () => {
+      await grundzustand();
+      // Die konkreten Umgehungen, die der Befund benannt hat:
+      // Engine ohne bestätigte E-Mail starten …
+      await assertFails(
+        alice().doc('users/alice').update({ 'settings.strategy.engine.running': true }),
+      );
+      // … die Watchlist über MAX_WATCHLIST hinaus füllen (der Scan liest sie
+      // roh und bedient sie VOR Ranking und Katalog) …
+      await assertFails(
+        alice()
+          .doc('users/alice')
+          .update({ 'settings.strategy.watchlist': Array.from({ length: 500 }, () => 'QQQ') }),
+      );
+      // … oder Echtgeld anfordern. (Das Doppelschloss aus ALPACA_ALLOW_LIVE
+      // und Live-Reife hielte auch so — aber die Anforderung gehört gar nicht
+      // erst ins Dokument.)
+      await assertFails(
+        alice().doc('users/alice').update({ 'settings.strategy.broker.mode': 'live' }),
+      );
+    });
+
+    it('ein erlaubtes Feld deckt kein verbotenes mit ab', async () => {
+      await grundzustand();
+      // Der Versuch, die Strategie im Windschatten einer UI-Änderung
+      // mitzuschreiben. `hasOnly` muss für ALLE geänderten Schlüssel gelten.
+      await assertFails(
+        alice()
+          .doc('users/alice')
+          .update({ 'settings.ui': { theme: 'light' }, 'settings.strategy.engine.running': true }),
+      );
+    });
+
+    it('settings komplett ersetzen ist verboten — das löschte die Strategie', async () => {
+      await grundzustand();
+      // Ein Objekt-Update ersetzt das ganze Feld: `strategy` verschwände.
+      // Für die Regel ist das eine Änderung an `strategy` wie jede andere.
+      await assertFails(alice().doc('users/alice').update({ settings: { ui: { theme: 'x' } } }));
+    });
+
+    it('ein Profil ohne settings-Feld kann Präferenzen anlegen', async () => {
+      // Randfall des Fixes: `resource.data.get('settings', {})` muss den
+      // Erstschreibvorgang tragen, sonst könnte ein frisch angelegtes Profil
+      // seine Oberfläche nie einstellen.
+      await env.withSecurityRulesDisabled(async (ctx) => {
+        await ctx.firestore().doc('users/carol').set({ profile: { plan: 'free' } });
+      });
+      const carol = env.authenticatedContext('carol').firestore();
+      await assertSucceeds(carol.doc('users/carol').update({ 'settings.ui': { theme: 'dark' } }));
+    });
   });
 
   it('wallet-Manipulation wird abgelehnt — auch für den Owner', async () => {

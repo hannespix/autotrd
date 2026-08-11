@@ -25,13 +25,43 @@ service cloud.firestore {
 
     // ── User-Bereich ──
     match /users/{uid} {
+      /**
+       * Welche settings-Unterfelder der Client SELBST setzen darf.
+       *
+       * Alles hier drin sind reine Präferenzen ohne Handelswirkung:
+       *   ui        Layout, Themes, eingeblendete Module
+       *   autoTune  An/Aus-Schalter des Auto-Tuners (nur `=== false` geprüft)
+       *   hotkeys   Tastenkürzel
+       *
+       * `strategy` steht bewusst NICHT dabei — sie muss über `saveStrategy`
+       * laufen. Das Callable prüft fünf Dinge, die es sonst nirgends gibt:
+       * Schema (validateStrategy), Watchlist-Länge (MAX_WATCHLIST), nur
+       * Katalog-Symbole, `broker.mode` bleibt paper, und die Engine startet
+       * nur mit bestätigter E-Mail. Ein direkter Schreibzugriff auf
+       * `settings.strategy` umging alle fünf.
+       *
+       * Die Risiko-Hülle (clampStrategyRisk) und das Echtgeld-Doppelschloss
+       * (ALPACA_ALLOW_LIVE + Live-Reife) fangen die gefährlichsten Folgen
+       * ohnehin ab — aber nicht die E-Mail-Bremse und nicht die
+       * Watchlist-Länge: Der Scan liest `settings.strategy.watchlist` roh
+       * und stellt sie im Symbol-Kontingent VOR Ranking und Katalog. Eine
+       * überlange Watchlist verdrängt damit die Symbole aller anderen.
+       */
+      function nurPraeferenzen() {
+        return request.resource.data.settings
+                 .diff(resource.data.get('settings', {}))
+                 .affectedKeys()
+                 .hasOnly(['ui', 'autoTune', 'hotkeys']);
+      }
+
       allow read: if isOwner(uid);
       allow create: if false;   // Profil legt die Onboarding-Function an
-      // User darf NUR das settings-Feld ändern (flaches Strategie-Schema);
-      // wallet/profile bleiben serverseitig.
+      // User darf NUR das settings-Feld ändern (wallet/profile bleiben
+      // serverseitig) — und davon nur die Präferenz-Unterfelder.
       allow update: if isOwner(uid)
         && request.resource.data.diff(resource.data)
-             .affectedKeys().hasOnly(['settings']);
+             .affectedKeys().hasOnly(['settings'])
+        && nurPraeferenzen();
       allow delete: if false;
 
       // Geld-relevant: read-only für den Owner, Schreiben nur via Functions

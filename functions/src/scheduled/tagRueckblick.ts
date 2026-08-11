@@ -220,7 +220,19 @@ export async function runTagRueckblick(
   const heuteIso = now.toISOString().slice(0, 10);
   const katalog = allSymbols();
 
-  const marktDocs = await db.collection('market').get();
+  /* `.select(…)` statt des ganzen Dokuments (Audit-Befund 11.08.) —
+   * dieselbe Begründung wie in `momentumRun`: Gebraucht werden ZWEI Felder,
+   * geholt wurde alles, und mit dem Alpaca-Universum wäre das ein
+   * Speicher-Ausfall.
+   *
+   * Beide Felder müssen dabeistehen. `deepBackfillV` weiter unten ist keine
+   * Kür, sondern das Gate, das Symbole mit veralteter Historie draußen hält;
+   * fehlt es hier, ist es `undefined` und der Lauf findet gar nichts mehr zu
+   * tun. Der Budget-Test hat genau das gefunden. */
+  const marktDocs = await db
+    .collection('market')
+    .select('tagRueckblickV', 'deepBackfillV')
+    .get();
   const stand = new Map(marktDocs.docs.map((d) => [d.id, d.get('tagRueckblickV') as unknown]));
   /*
    * NUR Symbole mit aktueller Tages-Historie (Nachtrag 09.08.).
