@@ -45,6 +45,7 @@ import {
   istRebalanceFaellig,
   marketFilterPasses,
   momentumEquity,
+  positionValue,
   rankMomentum,
   rebalanceOrders,
   targetPortfolio,
@@ -435,8 +436,11 @@ async function rebalanceMomentumUsers(
       );
       const cash = (userDoc.get('wallet.paperBalance') as number | undefined) ?? 0;
       let equity = cash;
+      // `positionValue` statt `qty × Kurs` (Audit-Befund 11.08.): Für einen
+      // Short ist der Marktwert das falsche Vorzeichen — siehe die
+      // Begründung an der zweiten Stelle weiter unten.
       for (const [sym, pos] of gehalten) {
-        equity += pos.qty * (preise.get(sym) ?? pos.avgEntry);
+        equity += positionValue(pos, preise.get(sym) ?? null);
       }
       if (!(equity > 0)) continue;
 
@@ -565,7 +569,24 @@ async function rebalanceCoreSleeve(
 
       const cash = (userDoc.get('wallet.paperBalance') as number | undefined) ?? 0;
       let equity = cash;
-      for (const [sym, pos] of alle) equity += pos.qty * (preise.get(sym) ?? pos.avgEntry);
+      /* `positionValue` statt `qty × Kurs` (Audit-Befund 11.08.).
+       *
+       * `alle` enthält jede Position des Kontos, auch Shorts — und für einen
+       * Short ist der Marktwert das falsche Vorzeichen. Richtig ist die
+       * Spiegelung `qty × Einstand + (Einstand − Kurs) × qty`: gebundene
+       * Margin plus unrealisierter Gewinn.
+       *
+       * Beispiel: 5.000 Cash, ein Short über 100 Stück zu 50, Kurs jetzt 60.
+       * Wahre Equity 9.000 (der Short liegt 1.000 im Minus), gerechnet wurden
+       * 11.000 — 22 % zu hoch. Das Sockel-Budget hängt direkt daran
+       * (`equity × anteil / 100`), also kauft der Kern-Satellit 22 % zu groß
+       * ein und läuft dann in `zu_wenig_cash`: Die Order fällt ganz aus,
+       * statt kleiner zu werden. Bei einem gewinnbringenden Short kippt das
+       * Vorzeichen und der Sockel bleibt zu klein.
+       *
+       * Dieselbe Formel-Dopplung wie bei `shadowEquity` einen Tag zuvor —
+       * sieben andere Stellen im Repo rufen längst `positionValue`. */
+      for (const [sym, pos] of alle) equity += positionValue(pos, preise.get(sym) ?? null);
       if (!(equity > 0)) continue;
 
       // Das Sockel-Budget ist der Anteil an der GESAMTEN Equity — so wächst
