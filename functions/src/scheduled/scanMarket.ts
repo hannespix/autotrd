@@ -80,6 +80,7 @@ import {
   type MarginBudget,
 } from '../core/broker.js';
 import { abgleichFuerKonto } from '../core/brokerAbgleich.js';
+import { raeumeWaisen } from '../core/brokerBindung.js';
 import { brokerVerbindung } from '../core/orderRouting.js';
 import { pflegeSchutz } from '../core/schutzStop.js';
 import { reifeFuerKonto } from '../core/liveGate.js';
@@ -3204,6 +3205,23 @@ export async function runScan(force = false): Promise<ScanResult> {
   // Aggregat dauerhaft leben. `increment` statt Lesen-Rechnen-Schreiben:
   // Ein manuell ausgelöster Scan parallel zum Zeitplan darf keine
   // Datenpunkte verschlucken.
+  /* Verwaiste Depot-Bindungen freigeben (Owner-Direktive 12.08.:
+   * „unkompliziert, mit moeglichst wenig Verwaltungsaufwand").
+   *
+   * Ohne diese Raeumung bliebe ein Depot nach einem geloeschten oder
+   * zurueckgesetzten Konto dauerhaft belegt — niemand koennte es je wieder
+   * verbinden, auch der urspruengliche Besitzer nicht, und jeder Fall
+   * landete als Handarbeit beim Betreiber.
+   *
+   * Nie den Scan gefaehrden: Ein Fehler hier ist ein Aufraeum-Problem, kein
+   * Handels-Problem. */
+  let waisenGeraeumt = 0;
+  try {
+    waisenGeraeumt = (await raeumeWaisen(now)).length;
+  } catch (err) {
+    logger.warn('Depot-Bindungen: Waisen-Raeumung fehlgeschlagen', err);
+  }
+
   let schattenStand: Record<string, ReturnType<typeof werteSchattenAus>> | null = null;
   try {
     const ref = db.doc('meta/classShadow');
@@ -3395,6 +3413,11 @@ export async function runScan(force = false): Promise<ScanResult> {
          * `herkunft` auf `annahme_zu_wenig_daten` steht, rechnet die
          * Engine unverändert mit der Konstante — die Messung ist noch
          * keine Grundlage für eine Kapitalentscheidung. */
+        // Depot-Bindungen: wie viele verwaiste Eintraege dieser Lauf
+        // freigegeben hat. Bleibt die Zahl dauerhaft > 0, raeumt die
+        // Selbstheilung immer wieder dasselbe — dann stimmt etwas anderes
+        // nicht, und das soll sichtbar sein statt nur im Log zu stehen.
+        depotWaisen: waisenGeraeumt,
         einfangquoten: schattenStand
           ? Object.fromEntries(
               Object.entries(schattenStand).map(([kl, a]) => {

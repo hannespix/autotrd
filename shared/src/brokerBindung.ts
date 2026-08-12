@@ -107,3 +107,50 @@ export function bindungsMeldung(seit: string): string {
     'Trenne die Verbindung im anderen Konto oder lege bei Alpaca ein zweites Depot an.'
   );
 }
+
+/**
+ * Bindungen, deren Konto nachweislich kein Broker-Dokument mehr hat.
+ *
+ * ── Warum es das braucht ──────────────────────────────────────────────────
+ *
+ * Owner-Direktive 12.08.: „Pro User muss mindestens ein Alpaca-Account
+ * verknüpfbar sein — unkompliziert, mit möglichst wenig Verwaltungsaufwand."
+ *
+ * Ohne diese Räumung wäre der Riegel oben das Gegenteil davon. Wird ein
+ * Konto gelöscht, zurückgesetzt oder seine Verbindung außerhalb von
+ * `trenneBroker` entfernt, bliebe die Bindung stehen — und das Depot wäre
+ * dauerhaft belegt. Niemand könnte es je wieder verbinden, auch der
+ * ursprüngliche Besitzer nicht. Jeder solche Fall landete als Handarbeit
+ * beim Betreiber.
+ *
+ * ── Die entscheidende Vorsicht ────────────────────────────────────────────
+ *
+ * `hatVerbindung` ist bewusst dreiwertig: `true` (lebt), `false` (geprüft,
+ * kein Broker-Dokument) und FEHLEND (nicht geprüft). Nur `false` gibt frei.
+ *
+ * Der Unterschied ist kein Detail. Der Scan sieht nur freigeschaltete,
+ * laufende Konten — ein pausiertes, gesperrtes oder gerade zurücksetzendes
+ * Konto taucht dort nicht auf. Würde „nicht gesehen" als „nicht vorhanden"
+ * gelesen, verlöre genau dieses Konto sein Depot an den Nächsten, der es
+ * verbindet. Ein Datenverlust aus einer Nichtinformation ist schlimmer als
+ * eine Bindung, die eine Runde länger steht.
+ */
+export function verwaisteBindungen(
+  bindungen: Record<string, Bindung> | undefined | null,
+  hatVerbindung: Record<string, boolean> | undefined | null,
+): string[] {
+  if (!bindungen) return [];
+  const befund = hatVerbindung ?? {};
+  const waisen: string[] = [];
+  for (const [fp, bindung] of Object.entries(bindungen)) {
+    // Eine Bindung ohne uid kann niemandem gehören — die blockiert nur.
+    if (!bindung?.uid) {
+      waisen.push(fp);
+      continue;
+    }
+    if (befund[bindung.uid] === false) waisen.push(fp);
+  }
+  // Sortiert, damit zwei Läufe mit demselben Bestand dieselbe Liste liefern
+  // und ein Vergleich im Log oder Test nicht an der Reihenfolge scheitert.
+  return waisen.sort();
+}

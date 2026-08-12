@@ -18,7 +18,12 @@
 import { getFirestore } from 'firebase-admin/firestore';
 import { createHash } from 'node:crypto';
 import { logger } from 'firebase-functions/v2';
-import { pruefeBindung, type Bindung, type BindungsBefund } from '../../../shared/src/index.js';
+import {
+  pruefeBindung,
+  verwaisteBindungen,
+  type Bindung,
+  type BindungsBefund,
+} from '../../../shared/src/index.js';
 
 /**
  * Fingerabdruck einer Broker-Konto-ID.
@@ -132,4 +137,58 @@ export async function loeseDepot(
       tx.set(ref, { depots: rest, updatedAt: new Date().toISOString() });
     })
     .catch((err: unknown) => logger.warn(`Depot-Bindung ${uid} nicht gelöst`, err));
+}
+
+/**
+ * Verwaiste Bindungen freigeben — die Selbstheilung des Riegels.
+ *
+ * Owner-Direktive 12.08.: „unkompliziert, mit möglichst wenig
+ * Verwaltungsaufwand." Ohne diese Räumung bliebe ein Depot nach einem
+ * gelöschten oder zurückgesetzten Konto dauerhaft belegt, und der Owner
+ * müsste von Hand eingreifen.
+ *
+ * ── Warum jedes Konto EINZELN geprüft wird ───────────────────────────────
+ *
+ * Naheliegend wäre, die im Scan gesehenen Konten als Wahrheit zu nehmen. Das
+ * wäre falsch: Der Scan sieht nur freigeschaltete, laufende Konten. Ein
+ * pausiertes, gesperrtes oder gerade zurücksetzendes Konto kommt dort nicht
+ * vor — und verlöre sein Depot an den Nächsten, der es verbindet.
+ *
+ * Deshalb ein gezielter Read je Bindung. Das sind so viele Reads wie es
+ * verbundene Depots gibt (heute: zwei), einmal je Scan. Der Preis ist
+ * vernachlässigbar; die Verwechslung wäre es nicht.
+ */
+export async function raeumeWaisen(jetzt: Date = new Date()): Promise<string[]> {
+  const db = getFirestore();
+  const alle = await leseBindungen();
+  const uids = [...new Set(Object.values(alle).map((b) => b?.uid).filter((u): u is string => !!u))];
+  if (uids.length === 0) return [];
+
+  const befund: Record<string, boolean> = {};
+  await Promise.all(
+    uids.map(async (uid) => {
+      try {
+        const snap = await db.collection('users').doc(uid).collection('private').doc('broker').get();
+        befund[uid] = snap.exists;
+      } catch (err) {
+        // Lesefehler heißt NICHT „nicht vorhanden". Der Eintrag bleibt weg,
+        // und `verwaisteBindungen` behandelt fehlende Einträge als
+        // ungeprüft — die Bindung überlebt eine Runde länger. Genau richtig:
+        // Ein Datenverlust aus einem Netzwerkfehler wäre nicht reparabel.
+        logger.warn(`Waisen-Prüfung ${uid} fehlgeschlagen`, err);
+      }
+    }),
+  );
+
+  const waisen = verwaisteBindungen(alle, befund);
+  if (waisen.length === 0) return [];
+
+  const rest = { ...alle };
+  for (const fp of waisen) delete rest[fp];
+  await db
+    .doc(REF)
+    .set({ depots: rest, updatedAt: jetzt.toISOString() })
+    .catch((err: unknown) => logger.warn('Waisen nicht geräumt', err));
+  logger.info(`Depot-Bindungen: ${waisen.length} verwaiste freigegeben`);
+  return waisen;
 }
