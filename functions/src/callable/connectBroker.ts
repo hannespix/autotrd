@@ -62,6 +62,8 @@ import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { consumeQuota } from '../core/broker.js';
 import { vergissVerbindung } from '../core/orderRouting.js';
 import { vaultBereit, verschluessle } from '../core/keyVault.js';
+import { bindeDepot, loeseDepot } from '../core/brokerBindung.js';
+import { bindungsMeldung } from '../../../shared/src/index.js';
 
 /** Verbinden ist ein seltener Vorgang — zehn Versuche am Tag sind reichlich. */
 const DAILY_CONNECT_LIMIT = 10;
@@ -183,6 +185,31 @@ export async function verbindeBroker(
     );
   }
 
+  /* ── Ein Depot, ein Konto (Owner-Befund 12.08.) ─────────────────────────
+   *
+   * Zwei autotrd-Konten hatten dasselbe Alpaca-Paper-Depot hinterlegt. Der
+   * Broker fuehrt EINE Position je Symbol und addiert alle Kaeufe; jedes
+   * Buch kannte nur seinen Anteil. Sichtbar wurde es an Positionen, die
+   * bis auf die sechste Nachkommastelle uebereinstimmten, waehrend andere
+   * beim Broker um ein Vielfaches groesser waren — und an 84 598 $
+   * Cash-Differenz.
+   *
+   * Das ist nicht nur eine falsche Anzeige: Positionslimit, Korrelations-
+   * Deckel und Kapitaldecke rechnen alle auf dem eigenen Buch und sind
+   * damit wirkungslos. Schlimmer noch kann ein Verkauf des einen Kontos
+   * die Position des anderen schliessen — samt Stop.
+   *
+   * Gebunden wird ueber die KONTO-ID, nicht ueber den Schluessel: Zu einem
+   * Alpaca-Konto lassen sich mehrere Schluesselpaare erzeugen, ein Riegel
+   * auf Schluesselebene waere mit zwei Klicks zu umgehen. Die Bindung
+   * geschieht in einer Transaktion, damit zwei gleichzeitige Verbinden-
+   * Aufrufe sich nicht gegenseitig ueberholen. */
+  const bindung = await bindeDepot(konto.id, art, uid);
+  if (!bindung.ok) {
+    logger.warn(`connectBroker ${uid}: Depot bereits gebunden seit ${bindung.seit}`);
+    throw new HttpsError('failed-precondition', bindungsMeldung(bindung.seit));
+  }
+
   await getFirestore()
     .collection('users')
     .doc(uid)
@@ -249,6 +276,17 @@ export async function trenneBroker(uid: string): Promise<{ ok: true; geloescht: 
   // Löschen statt eines `aktiv: false`-Flags: Ein Schlüssel, der nicht mehr
   // gebraucht wird, soll auch nicht mehr da sein.
   await ref.delete();
+  /* Depot-Bindung mit lösen — sonst bliebe das Depot für immer belegt und
+   * niemand könnte es je wieder verbinden, auch dieser Nutzer nicht.
+   *
+   * `loeseDepot` löscht nur, wenn die Bindung auch DIESEM Konto gehört:
+   * Andernfalls könnte man eine fremde Bindung aufheben und sich danach
+   * selbst eintragen — der Riegel wäre in zwei Schritten zu umgehen. */
+  await loeseDepot(
+    vorher.get('accountId') as string | undefined,
+    (vorher.get('mode') as string | undefined) ?? 'paper',
+    uid,
+  );
   /* Cache dieser Instanz sofort verwerfen (M13).
    *
    * Wirkt NUR lokal: `connectBroker` und `scanMarket` laufen in getrennten
