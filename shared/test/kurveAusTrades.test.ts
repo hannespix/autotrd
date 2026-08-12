@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   SNAPSHOT_MIN,
+  kurvenErklaerung,
   kurveAusTrades,
   waehleKurve,
   type KurvenTrade,
@@ -137,5 +138,53 @@ describe('waehleKurve', () => {
   it('hat eine Schwelle, die zur Karte passt', () => {
     // Die Teilen-Karte prüft `tage.length >= 2` — dieselbe Grenze.
     expect(SNAPSHOT_MIN).toBe(2);
+  });
+});
+
+describe('kurvenErklaerung — die Anzeige sagt WARUM (Owner-Frage 12.08.)', () => {
+  it('schweigt, wenn die echte Snapshot-Kurve läuft', () => {
+    expect(kurvenErklaerung({ herkunft: 'snapshots', snapshots: 12, trades: 9 })).toBe('');
+  });
+
+  it('benennt die realisierte Kurve als solche', () => {
+    const s = kurvenErklaerung({ herkunft: 'trades', snapshots: 0, trades: 9 });
+    expect(s).toContain('9 Abschlüssen');
+    expect(s).toContain('realisiert');
+    // Und sagt, wann die Depotwert-Kurve nachkommt.
+    expect(s).toContain('23:15');
+  });
+
+  it('nennt den Reset, wenn die Serie deswegen leer ist', () => {
+    // Genau der Fall des Owners: altes Konto, volles Journal, leere Serie.
+    const s = kurvenErklaerung({
+      herkunft: 'trades',
+      snapshots: 1,
+      trades: 9,
+      resetAm: '2026-08-11T09:20:00.000Z',
+    });
+    expect(s).toContain('Reset am 2026-08-11');
+    expect(s).toContain('Erst ein Tages-Snapshot');
+  });
+
+  it('unterscheidet „noch nie gehandelt" von „Daten kaputt"', () => {
+    const leer = kurvenErklaerung({ herkunft: 'leer', snapshots: 0, trades: 0 });
+    expect(leer).toContain('Noch keine abgeschlossenen Trades');
+
+    const kaputt = kurvenErklaerung({ herkunft: 'leer', snapshots: 0, trades: 4 });
+    expect(kaputt).toContain('keinen verwertbaren Zeitpunkt');
+    expect(kaputt).not.toContain('Noch keine abgeschlossenen Trades');
+  });
+
+  it('sagt im Einzahl-Fall nicht „1 Abschlüssen"', () => {
+    expect(kurvenErklaerung({ herkunft: 'trades', snapshots: 0, trades: 1 })).toContain(
+      '1 Abschluss ',
+    );
+    expect(kurvenErklaerung({ herkunft: 'leer', snapshots: 0, trades: 1 })).toContain(
+      '1 Abschluss trägt',
+    );
+  });
+
+  it('erfindet keinen Reset, wenn keiner stattfand', () => {
+    expect(kurvenErklaerung({ herkunft: 'trades', snapshots: 1, trades: 3 })).not.toContain('Reset');
   });
 });
