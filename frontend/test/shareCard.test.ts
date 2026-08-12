@@ -44,6 +44,9 @@ function daten(ueber: Partial<ShareDaten> = {}): ShareDaten {
     schlechtestes: { label: 'EWJ', pct: -0.6 },
     echtgeld: false,
     betraege: false,
+    tradeBilanz: 180,
+    vonTag: '2026-07-20',
+    bisTag: '2026-08-07',
     ...ueber,
   };
 }
@@ -183,7 +186,14 @@ describe('Kurve aus Trades, wenn Snapshots fehlen (Owner-Befund 12.08.)', () => 
       NEUN.map((t) => ({ at: t.executedAt, pnl: t.pnl ?? 0 })),
       100_000,
     );
-    return daten({ zerlegung: zerlegeDepot(wahl.serie, NEUN), trades: 9, profitFaktor: 0.12 });
+    return daten({
+      zerlegung: zerlegeDepot(wahl.serie, NEUN),
+      trades: 9,
+      profitFaktor: 0.12,
+      tradeBilanz: -1_319.56,
+      vonTag: '2026-08-10',
+      bisTag: '2026-08-12',
+    });
   };
 
   it('zeichnet eine Kurve statt „Noch zu wenige Tage"', () => {
@@ -203,7 +213,103 @@ describe('Kurve aus Trades, wenn Snapshots fehlen (Owner-Befund 12.08.)', () => 
   });
 
   it('bleibt bei leerer Lage ehrlich — keine Kurve ohne Daten', () => {
-    const leer = daten({ zerlegung: zerlegeDepot([], []) });
+    const leer = daten({
+      zerlegung: zerlegeDepot([], []),
+      trades: 0,
+      tradeBilanz: 0,
+      vonTag: undefined,
+      bisTag: undefined,
+    });
     expect(shareCard(leer)).toContain('Noch zu wenige Tage');
+  });
+});
+
+describe('Ohne Zeitraum keine Prozentzahl (Owner-Befund 12.08.)', () => {
+  /* Die Karte zeigte „0,00 %" in GRÜN neben Profit-Faktor 0,12 und
+   * „noch kein Zeitraum". Sie verlässt die App mit Markenlogo und
+   * „offen nachgerechnet" im Fuß — eine falsche Aussage wiegt hier
+   * schwerer als in jeder internen Ansicht. */
+
+  const leereKurveMitTrades = (): ShareDaten =>
+    daten({
+      zerlegung: zerlegeDepot([], []),
+      renditePct: 0,
+      ergebnis: 0,
+      trades: 9,
+      tradeBilanz: -1_719.54,
+      profitFaktor: 0.12,
+      trefferquotePct: 33.3,
+      maxDrawdownPct: null,
+      bestes: null,
+      schlechtestes: null,
+      betraege: true,
+      vonTag: '2026-08-10',
+      bisTag: '2026-08-12',
+    });
+
+  it('zeigt KEINE Prozentzahl, wenn die Kurve leer ist', () => {
+    const svg = shareCard(leereKurveMitTrades());
+    expect(svg).not.toContain('0,00 %');
+    expect(svg).not.toContain('+0,00');
+  });
+
+  it('zeigt stattdessen die gemessene Trade-Bilanz mit ihrem Zeitraum', () => {
+    const svg = shareCard(leereKurveMitTrades());
+    expect(svg).toContain('−1719,54 USD');
+    expect(svg).toContain('9 Trades');
+    expect(svg).toContain('über 3 Tage');
+  });
+
+  it('färbt einen Verlust NICHT grün', () => {
+    const svg = shareCard(leereKurveMitTrades());
+    // Die grosse Zeile trägt die Verlustfarbe. Gefasst wird sie an
+    // `data-rolle="haupt"`, nicht an ihrer Schriftgröße: die hängt seit dem
+    // Überlauf-Fix von der Textlänge ab.
+    const haupt = /<text data-rolle="haupt"[^>]*fill="([^"]+)"/.exec(svg);
+    expect(haupt).not.toBeNull();
+    expect(haupt![1]).toBe('#ff5f5f');
+    expect(haupt![1]).not.toBe('#34c77b');
+  });
+
+  it('blendet „WOMIT" aus, wenn darunter nichts steht', () => {
+    const svg = shareCard(leereKurveMitTrades());
+    expect(svg).not.toContain('WOMIT');
+  });
+
+  it('zeigt „WOMIT" weiterhin, wenn es Beiträge gibt', () => {
+    expect(shareCard(daten())).toContain('WOMIT');
+  });
+
+  it('behauptet gar nichts, wenn weder Kurve noch Trades da sind', () => {
+    const svg = shareCard(
+      daten({
+        zerlegung: zerlegeDepot([], []),
+        renditePct: 0,
+        ergebnis: 0,
+        trades: 0,
+        tradeBilanz: 0,
+        vonTag: undefined,
+        bisTag: undefined,
+      }),
+    );
+    // Gezielt die GROSSE Zeile — die Prozentzeichen der Kennzahlen
+    // (Trefferquote, Drawdown) dürfen bleiben.
+    const haupt = /<text data-rolle="haupt"[^>]*>([^<]*)</.exec(svg);
+    expect(haupt).not.toBeNull();
+    expect(haupt![1]).toBe('—');
+    expect(svg).toContain('Noch keine abgeschlossenen Trades');
+  });
+
+  it('verkleinert die große Zeile, wenn der Text lang wird', () => {
+    // Der Bild-Prüfstand hat den Überlauf gefunden; hier steht die Regel
+    // auch im Quelltext, damit eine Rückkehr nicht erst am Bild auffällt.
+    const lang = /<text data-rolle="haupt"[^>]*font-size="(\d+)"/.exec(shareCard(leereKurveMitTrades()));
+    const kurz = /<text data-rolle="haupt"[^>]*font-size="(\d+)"/.exec(shareCard(daten()));
+    expect(lang).not.toBeNull();
+    expect(kurz).not.toBeNull();
+    // „−1719,54 USD" (12 Zeichen) muss kleiner gesetzt sein als „+6,40 %".
+    expect(Number(lang![1])).toBeLessThan(Number(kurz![1]));
+    // Und in die nutzbare Breite von 1020 px passen (0,8 em je Zeichen).
+    expect(Number(lang![1]) * '−1719,54 USD'.length * 0.8).toBeLessThanOrEqual(1020);
   });
 });

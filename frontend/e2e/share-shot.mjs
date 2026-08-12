@@ -59,9 +59,43 @@ const faelle = {
     trefferquotePct: 52.4, profitFaktor: 1.83, trades: trades.length, maxDrawdownPct: -6.8,
     bestes: { label: 'NVDA', pct: 3.1 }, schlechtestes: { label: 'EWJ', pct: -1.4 },
     echtgeld: false, betraege: false,
+    tradeBilanz: trades.reduce((a, t) => a + t.pnl, 0),
+    vonTag: trades[0]?.executedAt.slice(0, 10),
+    bisTag: trades[trades.length - 1]?.executedAt.slice(0, 10),
   },
 };
 faelle.verlust = { ...faelle.gewinn, renditePct: -12.37, ergebnis: -1237, maxDrawdownPct: -18.4, betraege: true };
+
+/* ── Der Anlassfall vom 12.08.: Trades ohne Kurve ────────────────────────
+ *
+ * Die Karte zeigte „0,00 %" in GRÜN neben Profit-Faktor 0,12, dazu „noch
+ * kein Zeitraum" und ein leeres „WOMIT". Sie geht mit Markenlogo nach
+ * aussen — hier gehoert der Fall als Bild geprueft und nicht nur als Text:
+ * Ob die grosse Zeile gruen oder rot ist, steht im gerenderten Pixel, nicht
+ * im SVG-Quelltext, wo eine Farbe nur eine Zeichenkette ist. */
+faelle.ohne_kurve = {
+  ...faelle.gewinn,
+  zerlegung: zerlegeDepot([], []),
+  renditePct: 0,
+  ergebnis: 0,
+  trades: 9,
+  tradeBilanz: -1719.54,
+  trefferquotePct: 33.3,
+  profitFaktor: 0.12,
+  maxDrawdownPct: null,
+  bestes: null,
+  schlechtestes: null,
+  betraege: true,
+  vonTag: '2026-08-10',
+  bisTag: '2026-08-12',
+};
+faelle.ganz_leer = {
+  ...faelle.ohne_kurve,
+  trades: 0,
+  tradeBilanz: 0,
+  vonTag: undefined,
+  bisTag: undefined,
+};
 
 const browser = await chromium.launch(CHROME ? { executablePath: CHROME } : {});
 const fehler = [];

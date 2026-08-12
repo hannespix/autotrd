@@ -203,6 +203,7 @@ import {
   shareDateiname,
   shareText,
 } from './shareCard.js';
+import { kartenAussage } from './shareAussage.js';
 import {
   areaLine,
   barChart,
@@ -7072,10 +7073,22 @@ function shareDatenBauen(betraege: boolean): ShareDaten {
   const alsAnteil = (b: (typeof sortiert)[number] | undefined): { label: string; pct: number } | null =>
     b ? { label: b.label, pct: (b.summe / basis) * 100 } : null;
 
+  /* Realisierte Bilanz und Handelstage — die Karte braucht sie, wenn keine
+   * Kurve vorliegt: Ohne Kurve gibt es keine Bezugsgröße für eine Rendite,
+   * aber die Summe der Abschlüsse ist gemessen (Owner-Befund 12.08.). */
+  const tradeBilanz = geschlossen.reduce((sum, t) => sum + (t.pnl ?? 0), 0);
+  const handelstage = geschlossen
+    .map((t) => t.executedAt.slice(0, 10))
+    .filter((tg) => tg.length === 10)
+    .sort();
+
   return {
     zerlegung,
     renditePct: ((letzte - zerlegung.basis) / basis) * 100,
     ergebnis: letzte - zerlegung.basis,
+    tradeBilanz: Math.round(tradeBilanz * 100) / 100,
+    vonTag: handelstage[0],
+    bisTag: handelstage[handelstage.length - 1],
     waehrung: st!.wallet?.currency ?? 'USD',
     trefferquotePct: stats.winRatePct,
     profitFaktor: stats.profitFactor,
@@ -7142,6 +7155,26 @@ async function teileDepotGrafik(): Promise<void> {
   try {
     const betraege = ($('anShareBetraege') as HTMLInputElement | null)?.checked === true;
     const daten = shareDatenBauen(betraege);
+    /* Ohne belastbare Aussage kein Bild (Owner-Befund 12.08.).
+     *
+     * Eine Grafik mit Markenlogo und „offen nachgerechnet" im Fuß, die
+     * nichts zu sagen hat, ist kein leeres Formular — sie sieht aus wie ein
+     * Track-Record. Lieber gar kein Bild als eines, das nichts belegt. */
+    const aussage = kartenAussage({
+      kurventage: daten.zerlegung.tage.length,
+      renditePct: daten.renditePct,
+      ergebnis: daten.ergebnis,
+      trades: daten.trades,
+      tradeBilanz: daten.tradeBilanz,
+      vonTag: daten.vonTag,
+      bisTag: daten.bisTag,
+      betraege,
+      waehrung: daten.waehrung,
+    });
+    if (!aussage.teilbar) {
+      status.textContent = aussage.grund ?? 'Noch nichts zu teilen.';
+      return;
+    }
     const png = await svgAlsPng(shareCard(daten), KARTE);
     const datei = new File([png], shareDateiname(daten), { type: 'image/png' });
     const text = shareText(daten);
