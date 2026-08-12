@@ -27,6 +27,7 @@
  */
 import { type DepotZerlegung, stapelBaender } from '@autotrd/shared';
 import { esc } from './html.js';
+import { kartenAussage } from './shareAussage.js';
 
 /** Kantenlänge der quadratischen Karte — passt ohne Zuschnitt überall hin. */
 export const KARTE = 1200;
@@ -62,12 +63,39 @@ export interface ShareDaten {
   echtgeld: boolean;
   /** Beträge einblenden — Standard aus. */
   betraege: boolean;
+  /**
+   * Summe der realisierten Ergebnisse im Fenster (Owner-Befund 12.08.).
+   *
+   * Ohne Kurve gibt es keine Bezugsgröße für eine Rendite — dann tritt diese
+   * Zahl an ihre Stelle. Sie ist gemessen und stammt aus denselben Trades
+   * wie die Kennzahlen darunter; eine Prozentzahl wäre hier erfunden.
+   */
+  tradeBilanz: number;
+  /** Erster/letzter Handelstag im Fenster (ISO) — für „über N Tage". */
+  vonTag?: string | undefined;
+  bisTag?: string | undefined;
 }
 
 /** Deutsches Komma UND typografisches Minus — ein ASCII-Bindestrich neben
  *  einem echten Minus in derselben Grafik sieht nach Versehen aus. */
 const zahl = (v: number, n = 2): string => v.toFixed(n).replace('.', ',').replace('-', '−');
 const mitVorzeichen = (v: number, n = 2): string => `${v > 0 ? '+' : v < 0 ? '−' : ''}${zahl(Math.abs(v), n)}`;
+
+/**
+ * Schriftgröße der Hauptzeile, damit sie in den Rahmen passt.
+ *
+ * Die nutzbare Breite ist 1020 px (90 … 1110). Der erste Ansatz rechnete mit
+ * 0,62 em je Zeichen und ragte weiter über den Rand — bei `font-weight: 800`
+ * sind Ziffern deutlich breiter als in einer normalen Schnitt-Schätzung.
+ * Jetzt 0,8 em: bewusst großzügig, denn zu klein ist hier folgenlos und zu
+ * groß ein Überlauf auf einem Bild, das die App verlässt. Der Bild-Prüfstand
+ * misst das Ergebnis nach — er hat beide Fassungen bewertet.
+ */
+function hauptGroesse(text: string): number {
+  const max = 140;
+  const passt = Math.floor(1020 / (Math.max(1, text.length) * 0.8));
+  return Math.max(64, Math.min(max, passt));
+}
 
 /** Die Kurve als Pfad, auf ein Rechteck skaliert. */
 function kurvenPfad(
@@ -106,12 +134,34 @@ function kpi(x: number, y: number, label: string, wert: string, farbe: string = 
  */
 export function shareCard(d: ShareDaten): string {
   const z = d.zerlegung;
-  const positiv = d.renditePct >= 0;
-  const haupt = positiv ? FARBE.gruen : FARBE.rot;
+  /* Was diese Karte behaupten DARF (Owner-Befund 12.08.).
+   *
+   * Vorher stand hier `positiv = d.renditePct >= 0` — und damit erschien
+   * eine Rendite von 0,00 % in Gewinn-Grün, obwohl sie nur bedeutete, dass
+   * mangels Kurve gar nichts gerechnet wurde. Daneben standen neun Trades
+   * mit Profit-Faktor 0,12. Die Regel steckt jetzt in `kartenAussage`:
+   * ohne Zeitraum keine Prozentzahl, und eine Null ist neutral. */
+  const aussage = kartenAussage({
+    kurventage: z.tage.length,
+    renditePct: d.renditePct,
+    ergebnis: d.ergebnis,
+    trades: d.trades,
+    tradeBilanz: d.tradeBilanz,
+    /* Der Zeitraum muss zu der Zahl gehören, die darüber steht.
+     *
+     * Mit Kurve ist das ihr Zeitraum — er ist die Grundlage der Rendite.
+     * Ohne Kurve treten die Handelstage an seine Stelle, denn dann zeigt die
+     * Karte die Trade-Bilanz. Beides zu mischen wäre derselbe Fehler, der
+     * den Anlassfall erzeugt hat: eine Zahl aus der einen Quelle, ihr
+     * Zeitraum aus der anderen. */
+    vonTag: z.tage.length >= 2 ? z.tage[0] : d.vonTag,
+    bisTag: z.tage.length >= 2 ? z.tage[z.tage.length - 1] : d.bisTag,
+    betraege: d.betraege,
+    waehrung: d.waehrung,
+  });
+  const haupt =
+    aussage.ton === 'gruen' ? FARBE.gruen : aussage.ton === 'rot' ? FARBE.rot : FARBE.text2;
   const { linie, flaeche } = kurvenPfad(z.equity, 90, 430, KARTE - 180, 260);
-
-  const zeitraum =
-    z.tage.length >= 2 ? `${z.tage[0]} → ${z.tage[z.tage.length - 1]}` : 'noch kein Zeitraum';
   const siegel = d.echtgeld ? 'ECHTGELD' : 'PAPIERKONTO';
 
   // Die drei stärksten Bänder als Streifen unter der Kurve — sie beantworten
@@ -177,7 +227,15 @@ export function shareCard(d: ShareDaten): string {
     + `<rect x="${KARTE - 90 - 232}" y="104" width="232" height="46" rx="23" fill="none" stroke="${FARBE.text3}" stroke-width="2"></rect>`
     + `<text x="${KARTE - 90 - 116}" y="136" fill="${FARBE.text3}" font-size="24" letter-spacing="2" text-anchor="middle">${esc(siegel)}</text>`
     // Hauptzahl
-    + `<text x="90" y="290" fill="${haupt}" font-size="140" font-weight="800">${esc(mitVorzeichen(d.renditePct, 2))} %</text>`
+    /* Schriftgröße nach Textlänge (Bild-Prüfstand 12.08.).
+     *
+     * „+6,40 %" sind sieben Zeichen, „−1719,54 USD" sind zwölf — bei
+     * font-size 140 ragt die zweite Fassung rechts aus dem Rahmen. Im
+     * SVG-Quelltext sieht man davon nichts; gefunden hat es der
+     * Bild-Prüfstand, der die gerenderten Textkästen misst. Seit die Karte
+     * auch Beträge in die Kopfzeile setzen kann, ist die Länge nicht mehr
+     * konstant und die Größe muss mitgehen. */
+    + `<text x="90" y="290" fill="${haupt}" font-size="${hauptGroesse(aussage.haupt)}" font-weight="800">${esc(aussage.haupt)}</text>`
     /*
      * Zeitraum und Betrag stehen in EINER Zeile unter der großen Zahl.
      *
@@ -187,16 +245,19 @@ export function shareCard(d: ShareDaten): string {
      * davon sieht man im SVG-Quelltext nichts. Der Bild-Prüfstand vergleicht
      * seitdem alle Textkästen paarweise — er hat beide Kollisionen gefunden.
      */
-    + `<text x="90" y="356" fill="${FARBE.text2}" font-size="30">`
-    + `${esc(zeitraum)}${d.betraege ? ` · ${esc(mitVorzeichen(d.ergebnis))} ${esc(d.waehrung)}` : ' · Beträge ausgeblendet'}`
-    + '</text>'
+    + `<text x="90" y="356" fill="${FARBE.text2}" font-size="30">${esc(aussage.unter)}</text>`
     // Kurve
     + (linie
       ? `<polygon points="${flaeche}" fill="${haupt}" opacity="0.14"></polygon>`
         + `<polyline points="${linie}" fill="none" stroke="${haupt}" stroke-width="5" stroke-linejoin="round"></polyline>`
       : `<text x="90" y="560" fill="${FARBE.text3}" font-size="30">Noch zu wenige Tage für eine Kurve</text>`)
     // Beitrags-Streifen
-    + `<text x="90" y="716" fill="${FARBE.text3}" font-size="26" letter-spacing="1.5">WOMIT</text>`
+    /* „WOMIT" nur, wenn darunter auch etwas steht. Eine Überschrift über
+     * einer leeren Fläche sieht aus, als sei die Grafik kaputt — und im
+     * Anlassfall war sie das auch. */
+    + (streifen
+      ? `<text x="90" y="716" fill="${FARBE.text3}" font-size="26" letter-spacing="1.5">WOMIT</text>`
+      : '')
     + streifen
     + kpis
     + bestZeile
