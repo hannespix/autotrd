@@ -790,6 +790,23 @@ async function executeUserTrades(
         userDoc.get('risk.abgleich') as
           | { status?: string; verlauf?: import('../core/brokerAbgleich.js').VerlaufEintrag[] }
           | undefined,
+        /* Buch-Kontostand fuer den Kontoabgleich (12.08.).
+         *
+         * NUR der Cash ist hier belastbar. Fuer eine ehrliche Buch-Equity
+         * braeuchte es aktuelle Kurse aller Positionen; die laedt der Scan
+         * erst spaeter, und sie hier zu holen hiesse, dieselben Kurse ein
+         * zweites Mal zu bezahlen — mit einem anderen Zeitstempel, was den
+         * Vergleich um genau die Groessenordnung verrauschte, die er messen
+         * soll. `positionValue` mit `avgEntry` waere noch schlechter: Das
+         * ist der EINSTANDSwert, nicht der Marktwert; jede gelaufene
+         * Position erzeugte damit eine Differenz, die es nicht gibt.
+         *
+         * Deshalb wird die Buch-Equity mit der Broker-Equity gleichgesetzt.
+         * Der Equity-Teil des Vergleichs meldet dann nichts — bewusst: Eine
+         * Kennzahl, die man nicht sauber erheben kann, soll schweigen und
+         * nicht raten. Der Cash-Vergleich bleibt exakt, und er ist der,
+         * an dem die Kapitaldecke haengt. */
+        kontoStandFuerAbgleich(userDoc),
       );
       if (abgleichBefund.zustand !== 'kein_broker') {
         broker.verbunden += 1;
@@ -2541,6 +2558,22 @@ function summiereQuote(
     summeRohBeiErwartet: r4((a.summeRohBeiErwartet ?? 0) + (b.summeRohBeiErwartet ?? 0)),
     nErwartet,
   };
+}
+
+/**
+ * Buch-Kontostand fuer den Abgleich — Cash exakt, Equity bewusst neutral.
+ *
+ * Eigene Funktion statt Inline-Objekt, damit die Regel an EINER Stelle steht
+ * und ein spaeterer Aufrufer sie nicht versehentlich anders formuliert.
+ * Die Broker-Equity ist beim Aufruf noch nicht bekannt; `Number.NaN` als
+ * Equity waere ein Signal, aber `kontoAbgleich` verwirft dann den ganzen
+ * Vergleich. Deshalb 0 auf beiden Seiten: Der Aufrufer setzt die
+ * Broker-Equity gleich, sobald er sie hat.
+ */
+function kontoStandFuerAbgleich(
+  userDoc: FirebaseFirestore.QueryDocumentSnapshot,
+): { cash: number; equity: number } {
+  return { cash: (userDoc.get('wallet.paperBalance') as number | undefined) ?? 0, equity: 0 };
 }
 
 function klassenGewicht(strategy: Strategy, symbol: string): number {
