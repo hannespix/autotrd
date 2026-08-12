@@ -13,6 +13,7 @@ export * from './momentum.js';
 export * from './classAdvisor.js';
 export * from './classShadow.js';
 export * from './captureLearning.js';
+export * from './kontoAbgleich.js';
 export * from './bestPractice.js';
 export * from './loadouts.js';
 export * from './overfit.js';

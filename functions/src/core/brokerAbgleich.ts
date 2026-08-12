@@ -33,11 +33,13 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions/v2';
 import type { Position } from '../../../shared/src/index.js';
 import {
+  alpacaKonto,
   alpacaPositionen,
   bestandsAbgleich,
   nurBrokerPositionen,
   type Abweichung,
 } from './alpacaBroker.js';
+import { kontoAbgleich, type KontoBefund } from '../../../shared/src/index.js';
 import { brokerVerbindungLesend, verbindungUnlesbar } from './orderRouting.js';
 
 /**
@@ -73,6 +75,15 @@ export interface AbgleichBefund {
   sperre: boolean;
   /** Klartext für Log und Anzeige. */
   grund?: string;
+  /**
+   * Kontostand-Vergleich — Cash und Depotwert (12.08.).
+   *
+   * Der Positions-Vergleich oben kann „sauber" melden, während beide Seiten
+   * 85 000 $ auseinanderliegen: Solange dieselben Symbole in denselben
+   * Stückzahlen geführt werden, faellt eine völlig andere Kapitaldecke nicht
+   * auf. Genau das ist am 12.08. passiert. Geld war nie Teil des Vergleichs.
+   */
+  konto?: KontoBefund;
 }
 
 /** Kein Broker, keine Prüfung — der Normalfall für reine Buch-Konten. */
@@ -162,6 +173,20 @@ export async function abgleichFuerKonto(
   /** Bisheriger Vermerk (`risk.abgleich` des schon geladenen User-Docs) —
    *  Grundlage des Verlaufsprotokolls, ohne einen zweiten Read je Konto. */
   vorher?: { status?: string; verlauf?: VerlaufEintrag[] },
+  /**
+   * Kontostand des eigenen Buchs — Cash und Equity (12.08.).
+   *
+   * Wird durchgereicht statt hier gelesen, weil nur der Aufrufer die
+   * Positionen BEWERTEN kann: Für die Buch-Equity braucht es aktuelle
+   * Kurse, und die hat der Scan ohnehin schon geladen. Sie hier erneut zu
+   * holen hiesse, dieselben Kurse ein zweites Mal zu bezahlen — und
+   * schlimmer: mit einem anderen Zeitstempel, was den Vergleich um genau
+   * die Groessenordnung verrauschen wuerde, die er messen soll.
+   *
+   * Fehlt der Parameter, entfaellt der Kontoteil. Kein Bruch fuer
+   * Aufrufer, die nur Positionen pruefen wollen.
+   */
+  buch?: { cash: number; equity: number },
 ): Promise<AbgleichBefund> {
   /* LESENDE Verbindung — auch bei hinterlegtem Echtgeld-Schlüssel.
    *
@@ -222,6 +247,34 @@ export async function abgleichFuerKonto(
     };
   }
 
+  /* ── Kontostand mitpruefen (12.08.) ────────────────────────────────────
+   *
+   * Ein eigener Fehlerpfad, bewusst OHNE Abbruch: Wenn `/v2/account` nicht
+   * antwortet, die Positionen aber schon, ist der Positionsvergleich
+   * trotzdem etwas wert. Ein Kontoteil, der den ganzen Abgleich scheitern
+   * laesst, machte die Pruefung insgesamt unzuverlaessiger statt besser. */
+  let kontoBefund: KontoBefund | undefined;
+  if (buch) {
+    try {
+      const k = await alpacaKonto(verbindung.mode, verbindung.schluessel);
+      /* Equity 0 im Buch heisst „nicht erhoben", nicht „Konto leer".
+       *
+       * Der Scan kann sie beim Aufruf nicht belastbar liefern (Kurse fehlen
+       * noch, siehe dort). Sie wird deshalb der Broker-Equity gleichgesetzt:
+       * Der Equity-Teil meldet dann nichts, statt eine Differenz in
+       * Kontogroesse zu erfinden. Der Cash-Vergleich bleibt exakt — und an
+       * ihm haengt die Kapitaldecke. */
+      const buchEquity = buch.equity === 0 ? k.equity : buch.equity;
+      kontoBefund = kontoAbgleich(
+        { cash: buch.cash, equity: buchEquity },
+        { cash: k.cash, equity: k.equity },
+      );
+    } catch (err) {
+      const text = err instanceof Error ? err.message : String(err);
+      logger.warn(`Abgleich ${uid}: Kontostand nicht lesbar — ${text.slice(0, 200)}`);
+    }
+  }
+
   // Dieselbe Funktion wie in der Broker-Karte — eine Quelle, damit die beiden
   // Ansichten desselben Kontos nie wieder verschiedene Antworten geben.
   // `relevante` dient nur der Zählung im Vermerk: „gegen wie viele eigene
@@ -276,17 +329,36 @@ export async function abgleichFuerKonto(
     abweichungen: abweichungen.slice(0, 10),
     verglichen: relevante.length,
     brokerPositionen: brokerPositionen.length,
+    // Kontostand mit in den Vermerk: Die Broker-Karte und der Heartbeat
+    // sollen dieselbe Zahl zeigen, ohne sie selbst nachzurechnen.
+    ...(kontoBefund?.geprueft
+      ? {
+          konto: {
+            zustand: kontoBefund.zustand,
+            cashDiff: kontoBefund.cashDiff,
+            equityDiff: kontoBefund.equityDiff,
+            cashDiffPct: kontoBefund.cashDiffPct,
+            sicheresCash: kontoBefund.sicheresCash,
+          },
+        }
+      : {}),
     ...(verlauf ? { verlauf } : {}),
   });
 
   if (abweichungen.length === 0) {
+    /* Positionen stimmen — das Konto muss deshalb noch lange nicht stimmen.
+     * Genau dieser Fall trat am 12.08. ein: derselbe Bestand auf beiden
+     * Seiten, 84 598 $ Unterschied im Cash. Die Sperre haengt deshalb am
+     * ODER beider Teile, nicht nur am Positionsvergleich. */
     return {
       geprueft: true,
-      zustand: 'sauber',
+      zustand: kontoBefund?.sperre ? 'drift' : 'sauber',
       abweichungen: [],
       fehlbestand: 0,
       fremdbestand: 0,
-      sperre: false,
+      sperre: kontoBefund?.sperre === true,
+      ...(kontoBefund ? { konto: kontoBefund } : {}),
+      ...(kontoBefund?.grund ? { grund: kontoBefund.grund } : {}),
     };
   }
   const beschreibe = (liste: Abweichung[]): string =>
@@ -306,8 +378,11 @@ export async function abgleichFuerKonto(
       abweichungen,
       fehlbestand: 0,
       fremdbestand: fremdbestand.length,
-      sperre: false,
-      grund: `Nur beim Broker (${fremdbestand.length}): ${beschreibe(fremdbestand)}`,
+      sperre: kontoBefund?.sperre === true,
+      ...(kontoBefund ? { konto: kontoBefund } : {}),
+      grund:
+        `Nur beim Broker (${fremdbestand.length}): ${beschreibe(fremdbestand)}`
+        + (kontoBefund?.grund ? ` · ${kontoBefund.grund}` : ''),
     };
   }
 
@@ -321,9 +396,11 @@ export async function abgleichFuerKonto(
     fehlbestand: fehlbestand.length,
     fremdbestand: fremdbestand.length,
     sperre: true,
+    ...(kontoBefund ? { konto: kontoBefund } : {}),
     grund:
       `Im Buch stehen ${fehlbestand.length} Position(en), die der Broker nicht hat: `
-      + `${beschreibe(fehlbestand)}`,
+      + `${beschreibe(fehlbestand)}`
+      + (kontoBefund?.grund ? ` · ${kontoBefund.grund}` : ''),
   };
 }
 
