@@ -77,6 +77,7 @@ import {
   type Strategy,
   type Wallet,
   positionLage,
+  waehleKurve,
 } from '@autotrd/shared';
 import type { Unsubscribe } from 'firebase/firestore';
 import {
@@ -7027,7 +7028,28 @@ function anZeitfenster(): { trades: HistoryTrade[]; equity: EquitySeriesPoint[] 
 
 function shareDatenBauen(betraege: boolean): ShareDaten {
   const fenster = anZeitfenster();
-  const zerlegung = zerlegeDepot(fenster.equity, fenster.trades);
+  /* Kurve aus den TRADES, wenn zu wenige Snapshots vorliegen (Owner 12.08.).
+   *
+   * Die Karte zeigte „0,00 %", „noch kein Zeitraum" und „Noch zu wenige Tage
+   * für eine Kurve" — bei neun geschlossenen Trades, Profit-Faktor 0,12 und
+   * −191,06 $ je Trade. Die Kennzahlen daneben stimmten; nur die Kurve war
+   * leer, weil sie ausschliesslich aus den Tages-Snapshots kam
+   * (`snapshotEquity`, 23:15). Wer heute anfängt, hat abends einen Punkt —
+   * und ein Reset stellt denselben Zustand wieder her, obwohl das
+   * Handelsjournal voll ist.
+   *
+   * Jeder geschlossene Trade trägt beides, was eine Kurve braucht: Zeitpunkt
+   * und Ergebnis. `waehleKurve` nimmt die Snapshots, sobald es genug gibt,
+   * und springt sonst auf die realisierte Kurve ein — mit einem Hinweis,
+   * welche der beiden gezeigt wird. Eine Kurve ohne Angabe ihrer Bedeutung
+   * wäre eine Einladung zum Fehlschluss: Die realisierte steht still,
+   * während eine offene Position läuft. */
+  const wahl = waehleKurve(
+    fenster.equity,
+    closedOnly(fenster.trades).map((t) => ({ at: t.executedAt, pnl: t.pnl ?? 0 })),
+    st?.wallet?.baseCapital ?? st?.strategy.broker.initialCapital ?? 0,
+  );
+  const zerlegung = zerlegeDepot(wahl.serie, fenster.trades);
   const letzte = zerlegung.equity[zerlegung.equity.length - 1] ?? 0;
   const basis = zerlegung.basis || 1;
   const geschlossen = closedOnly(fenster.trades);

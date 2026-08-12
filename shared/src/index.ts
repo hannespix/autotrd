@@ -15,6 +15,7 @@ export * from './classShadow.js';
 export * from './captureLearning.js';
 export * from './kontoAbgleich.js';
 export * from './brokerBindung.js';
+export * from './kurveAusTrades.js';
 export * from './bestPractice.js';
 export * from './loadouts.js';
 export * from './overfit.js';

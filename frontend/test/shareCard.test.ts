@@ -12,7 +12,12 @@
  *    wurden. Die Kontogröße gehört niemandem außer dem Besitzer.
  */
 import { describe, expect, it } from 'vitest';
-import { type DepotTag, type HistoryTrade, zerlegeDepot } from '@autotrd/shared';
+import {
+  type DepotTag,
+  type HistoryTrade,
+  waehleKurve,
+  zerlegeDepot,
+} from '@autotrd/shared';
 import { KARTE, type ShareDaten, shareCard, shareDateiname, shareText } from '../src/shareCard.js';
 
 const SERIE: DepotTag[] = [
@@ -142,5 +147,63 @@ describe('shareDateiname', () => {
     expect(shareDateiname(daten({ zerlegung: zerlegeDepot([], []) }))).toBe(
       'autotrd-depot-aktuell.png',
     );
+  });
+});
+
+describe('Kurve aus Trades, wenn Snapshots fehlen (Owner-Befund 12.08.)', () => {
+  /* Der Anlassfall: Die Karte zeigte „0,00 %", „noch kein Zeitraum" und
+   * „Noch zu wenige Tage für eine Kurve" — bei NEUN geschlossenen Trades mit
+   * Profit-Faktor 0,12. Die Kurve kam ausschliesslich aus Tages-Snapshots;
+   * das Handelsjournal war voll und wurde nicht gelesen.
+   *
+   * Geprüft wird die KARTE, nicht nur die Rechenfunktion: Ein Test, der
+   * `waehleKurve` bestätigt, kann nicht sagen, was im SVG steht. */
+  const NEUN: HistoryTrade[] = [
+    ['2026-08-10T14:00:00.000Z', -510.26],
+    ['2026-08-10T15:00:00.000Z', -180.4],
+    ['2026-08-10T16:00:00.000Z', 95.2],
+    ['2026-08-11T14:00:00.000Z', -310.5],
+    ['2026-08-11T15:00:00.000Z', -88.9],
+    ['2026-08-11T16:00:00.000Z', 140.1],
+    ['2026-08-12T14:00:00.000Z', -402.3],
+    ['2026-08-12T15:00:00.000Z', -120.0],
+    ['2026-08-12T16:00:00.000Z', 57.5],
+  ].map(([at, pnl], i) => ({
+    symbol: `SYM${i}`,
+    side: 'sell' as const,
+    qty: 1,
+    price: 100,
+    pnl: pnl as number,
+    executedAt: at as string,
+  }));
+
+  const ohneSnapshots = (): ShareDaten => {
+    const wahl = waehleKurve(
+      [],
+      NEUN.map((t) => ({ at: t.executedAt, pnl: t.pnl ?? 0 })),
+      100_000,
+    );
+    return daten({ zerlegung: zerlegeDepot(wahl.serie, NEUN), trades: 9, profitFaktor: 0.12 });
+  };
+
+  it('zeichnet eine Kurve statt „Noch zu wenige Tage"', () => {
+    const svg = shareCard(ohneSnapshots());
+    expect(svg).not.toContain('Noch zu wenige Tage');
+    // Eine Linie mit mehreren Stützstellen — nicht nur ein Strich.
+    // (kurvenPfad liefert `points` für polyline/polygon, kein path-`d`.)
+    const linie = /points="([^"]+)"/.exec(svg);
+    expect(linie).not.toBeNull();
+    expect(linie![1]!.trim().split(/\s+/).length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('nennt einen echten Zeitraum statt „noch kein Zeitraum"', () => {
+    const svg = shareCard(ohneSnapshots());
+    expect(svg).not.toContain('noch kein Zeitraum');
+    expect(svg).toContain('2026-08-12');
+  });
+
+  it('bleibt bei leerer Lage ehrlich — keine Kurve ohne Daten', () => {
+    const leer = daten({ zerlegung: zerlegeDepot([], []) });
+    expect(shareCard(leer)).toContain('Noch zu wenige Tage');
   });
 });
