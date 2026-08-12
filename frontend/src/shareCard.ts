@@ -235,7 +235,12 @@ export function shareCard(d: ShareDaten): string {
      * Bild-Prüfstand, der die gerenderten Textkästen misst. Seit die Karte
      * auch Beträge in die Kopfzeile setzen kann, ist die Länge nicht mehr
      * konstant und die Größe muss mitgehen. */
-    + `<text x="90" y="290" fill="${haupt}" font-size="${hauptGroesse(aussage.haupt)}" font-weight="800">${esc(aussage.haupt)}</text>`
+    /* `data-rolle="haupt"` ist der Griff, an dem Tests die große Zeile
+     * fassen. Vorher suchten sie `font-size="140"` — seit die Größe von der
+     * Textlänge abhängt, fand dieser Griff die Zeile bei langen Beträgen
+     * nicht mehr und ein Test schlug fehl, obwohl die Karte stimmte. Ein
+     * Prüfstand, der sein Prüfobjekt nur zufällig trifft, ist keiner. */
+    + `<text data-rolle="haupt" x="90" y="290" fill="${haupt}" font-size="${hauptGroesse(aussage.haupt)}" font-weight="800">${esc(aussage.haupt)}</text>`
     /*
      * Zeitraum und Betrag stehen in EINER Zeile unter der großen Zahl.
      *

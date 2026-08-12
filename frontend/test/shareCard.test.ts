@@ -262,12 +262,13 @@ describe('Ohne Zeitraum keine Prozentzahl (Owner-Befund 12.08.)', () => {
 
   it('färbt einen Verlust NICHT grün', () => {
     const svg = shareCard(leereKurveMitTrades());
-    // Die grosse Zeile (font-size 140) trägt die Verlustfarbe.
-    const haupt = /font-size="140"[^>]*fill="([^"]+)"|fill="([^"]+)"[^>]*font-size="140"/.exec(svg);
+    // Die grosse Zeile trägt die Verlustfarbe. Gefasst wird sie an
+    // `data-rolle="haupt"`, nicht an ihrer Schriftgröße: die hängt seit dem
+    // Überlauf-Fix von der Textlänge ab.
+    const haupt = /<text data-rolle="haupt"[^>]*fill="([^"]+)"/.exec(svg);
     expect(haupt).not.toBeNull();
-    const farbe = haupt![1] ?? haupt![2];
-    expect(farbe).toBe('#ff5f5f');
-    expect(farbe).not.toBe('#34c77b');
+    expect(haupt![1]).toBe('#ff5f5f');
+    expect(haupt![1]).not.toBe('#34c77b');
   });
 
   it('blendet „WOMIT" aus, wenn darunter nichts steht', () => {
@@ -293,9 +294,22 @@ describe('Ohne Zeitraum keine Prozentzahl (Owner-Befund 12.08.)', () => {
     );
     // Gezielt die GROSSE Zeile — die Prozentzeichen der Kennzahlen
     // (Trefferquote, Drawdown) dürfen bleiben.
-    const haupt = /font-size="140"[^>]*>([^<]*)</.exec(svg);
+    const haupt = /<text data-rolle="haupt"[^>]*>([^<]*)</.exec(svg);
     expect(haupt).not.toBeNull();
     expect(haupt![1]).toBe('—');
     expect(svg).toContain('Noch keine abgeschlossenen Trades');
+  });
+
+  it('verkleinert die große Zeile, wenn der Text lang wird', () => {
+    // Der Bild-Prüfstand hat den Überlauf gefunden; hier steht die Regel
+    // auch im Quelltext, damit eine Rückkehr nicht erst am Bild auffällt.
+    const lang = /<text data-rolle="haupt"[^>]*font-size="(\d+)"/.exec(shareCard(leereKurveMitTrades()));
+    const kurz = /<text data-rolle="haupt"[^>]*font-size="(\d+)"/.exec(shareCard(daten()));
+    expect(lang).not.toBeNull();
+    expect(kurz).not.toBeNull();
+    // „−1719,54 USD" (12 Zeichen) muss kleiner gesetzt sein als „+6,40 %".
+    expect(Number(lang![1])).toBeLessThan(Number(kurz![1]));
+    // Und in die nutzbare Breite von 1020 px passen (0,8 em je Zeichen).
+    expect(Number(lang![1]) * '−1719,54 USD'.length * 0.8).toBeLessThanOrEqual(1020);
   });
 });
