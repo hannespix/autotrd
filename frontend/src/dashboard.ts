@@ -6106,7 +6106,19 @@ async function loadAdminList(): Promise<void> {
         perf.textContent = '—';
         perf.style.color = 'var(--t3)';
       }
-      line.append(who, perf, badge);
+      /* Konten-Übersicht (Owner 13.08.): Trades + Reife-Fortschritt je Konto.
+       * Der Befund kommt vom Server aus liveGate.reifeFuerKonto — derselben
+       * Funktion, die die Echtgeld-Freigabe entscheidet. Die Karte zeigt
+       * also den echten Gate-Stand, keine eigene Näherung. */
+      const reife = document.createElement('span');
+      reife.className = 'mono hint';
+      reife.style.whiteSpace = 'nowrap';
+      const trades = row.trades ?? 0;
+      reife.textContent = `${trades} Trades · Reife ${row.reife.erfuellt}/${row.reife.gesamt}`
+        + (row.reife.bereit ? ' ✓' : '');
+      reife.title = row.reife.fazit;
+      if (row.reife.bereit) reife.style.color = 'var(--gn)';
+      line.append(who, perf, reife, badge);
       // Das eigene Konto listet der Server mit, ändern lehnt er ab — dieselbe
       // Regel hier: keine Knöpfe, statt Knöpfe, die immer scheitern.
       if (row.uid !== st?.uid) {

@@ -1261,6 +1261,10 @@ export interface AdminUserRow {
   pnl: number | null;
   pnlPct: number | null;
   equity: number | null;
+  /** Geschlossene Trades laut Konto-Statistik; null ohne Statistik. */
+  trades: number | null;
+  /** Live-Reife-Kurzform aus liveGate.reifeFuerKonto (Server rechnet). */
+  reife: { bereit: boolean; erfuellt: number; gesamt: number; fazit: string };
 }
 
 /** Alle Konten (Wartende zuerst) — antwortet nur für Admin-Konten. */

@@ -31,6 +31,7 @@ import { positionValue, type Position } from '../../../shared/src/index.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { consumeQuota } from '../core/broker.js';
 import { accessLevelOf, type AccessLevel } from '../core/access.js';
+import { reifeFuerKonto } from '../core/liveGate.js';
 
 const DAILY_LIMIT = 300;
 const LEVELS: ReadonlySet<string> = new Set(['pending', 'approved', 'blocked']);
@@ -47,6 +48,14 @@ export interface AdminUserRow {
   pnl: number | null;
   pnlPct: number | null;
   equity: number | null;
+  /** Geschlossene Trades laut stats/main — reine Anzeige-Zahl (Owner 13.08.:
+   *  Konten-Übersicht); null, wenn das Konto noch keine Statistik hat. */
+  trades: number | null;
+  /** Live-Reife-Kurzform. Die Rechnung kommt AUSSCHLIESSLICH aus
+   *  `liveGate.reifeFuerKonto` — derselben Funktion, die Scan, brokerStatus
+   *  und Order-Routing benutzen. Eine zweite Rechnung hier wäre eine zweite
+   *  Wahrheit über die Echtgeld-Freigabe. */
+  reife: { bereit: boolean; erfuellt: number; gesamt: number; fazit: string };
 }
 
 export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
@@ -132,6 +141,14 @@ export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
             pnlPct = Math.round((pnl / basis) * 10000) / 100;
           }
         }
+        // Trades-Zahl (Anzeige) + Reife-Befund je Konto. Der Befund kommt aus
+        // liveGate (einzige Wahrheit); die Trades-Zahl liest stats/main damit
+        // die Übersicht „Equity · Trades · Reife" ohne zweite Ansicht steht.
+        const [statsDoc, befund] = await Promise.all([
+          d.ref.collection('stats').doc('main').get().catch(() => null),
+          reifeFuerKonto(d.id),
+        ]);
+        const tradesRoh = statsDoc?.get('trades') as number | undefined;
         return {
           uid: d.id,
           email,
@@ -141,6 +158,13 @@ export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
           pnl,
           pnlPct,
           equity,
+          trades: typeof tradesRoh === 'number' && Number.isFinite(tradesRoh) ? tradesRoh : null,
+          reife: {
+            bereit: befund.bereit,
+            erfuellt: befund.erfuellt,
+            gesamt: befund.gesamt,
+            fazit: befund.fazit,
+          },
         };
       }),
     );
