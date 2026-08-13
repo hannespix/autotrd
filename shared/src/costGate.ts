@@ -131,6 +131,61 @@ export const BAR_MINUTES: Record<'intraday' | 'daily', number> = {
   daily: 1440,
 };
 
+/**
+ * Handelsminuten je Tag der Anlageklasse — der Nenner des Tages-ATR
+ * (Audit 13.08., HOCH-4).
+ *
+ * ── Der Einheitenfehler, den das behebt ───────────────────────────────────
+ *
+ * Der Scan rechnet den ATR auf TAGES-Kerzen; das Kosten-Tor teilte die
+ * Haltedauer aber durch die SIGNAL-Kerzenlänge (5 min im Intraday-Modus).
+ * Beim Default (minHold 1440) hieß das: erwartete Bewegung = Tages-ATR ×
+ * √288 ≈ 17 × Tages-ATR — eine Schwelle, die nie blocken konnte
+ * (`unter_kosten: 0` bei jedem Lauf). Real bewegt sich eine US-Aktie über
+ * 60 Handelsminuten um Tages-ATR × √(60/390) ≈ 0,4×, nicht um ×3,5.
+ *
+ * 390 = US-Kassamarkt (09:30–16:00 ET) — die Zeit, in der die Spanne einer
+ * Tageskerze tatsächlich entsteht. 24/7- und ~24/5-Klassen (Krypto,
+ * Devisen, Rohstoffe) sammeln ihre Spanne über den ganzen Tag: 1440.
+ */
+export function sessionMinutesForClass(assetClass: string | undefined): number {
+  switch ((assetClass ?? '').toLowerCase()) {
+    case 'crypto':
+    case 'forex':
+    case 'commodities':
+      return 1440;
+    default:
+      return 390;
+  }
+}
+
+/**
+ * Haltedauer in TAGES-ATR-Anteilen, handelszeit-bewusst.
+ *
+ * Zwei Übersetzungen in einem Schritt: (1) Gehalten wird in Wanduhr-Minuten,
+ * die Spanne einer Tageskerze entsteht aber nur während der Handelszeit —
+ * eine Stunde Haltezeit einer US-Aktie ist 60/390 einer Tageskerze, eine
+ * Stunde Krypto 60/1440. (2) Über mehrere Tage zählt je Kalendertag
+ * höchstens EINE Session (`sessionMin × Haltetage`): Wer eine Aktie 48 h
+ * hält, war zwei Sessions im Markt, nicht 48/6,5.
+ *
+ * `mindestMin` ist der Boden (eine Signal-Kerze): Kürzer existiert keine
+ * Position, auch wenn die Mindest-Haltedauer auf „aus" steht.
+ */
+export function atrTagesanteile(
+  minHoldMin: number | undefined,
+  sessionMin: number,
+  mindestMin: number,
+): number {
+  if (!(sessionMin > 0)) return 1;
+  const halte = Math.max(
+    mindestMin > 0 ? mindestMin : sessionMin,
+    Number.isFinite(minHoldMin) && (minHoldMin as number) > 0 ? (minHoldMin as number) : 0,
+  );
+  const handelsMin = Math.min(halte, sessionMin * Math.max(1, halte / 1440));
+  return handelsMin / sessionMin;
+}
+
 /** Roundtrip-Kosten in Prozent (beide Seiten) aus dem Satz je Seite. */
 export function roundtripCostPct(feeRate: number): number {
   if (!Number.isFinite(feeRate) || feeRate <= 0) return 0;
@@ -170,6 +225,14 @@ export interface CostGateInput {
   minHoldMin: number | undefined;
   /** Zeitbasis der Signale — bestimmt die Kerzenlänge. */
   timeframe: 'intraday' | 'daily';
+  /**
+   * Handelsminuten je Tag der Klasse, auf die sich der TAGES-ATR bezieht
+   * (`sessionMinutesForClass`). Gesetzt ⇒ die Haltedauer wird
+   * handelszeit-bewusst in Tages-ATR-Anteile übersetzt (Audit HOCH-4).
+   * Fehlt das Feld, gilt das alte Verhalten (Signal-Kerzenlänge) — nur für
+   * Aufrufer, deren ATR wirklich auf der Signal-Zeitbasis gerechnet ist.
+   */
+  atrSessionMin?: number;
   /** Gebührensatz JE SEITE der Anlageklasse (feeRateForClass). */
   feeRate: number;
   /** Sicherheitsfaktor; Default MIN_EDGE_MULTIPLE. */
@@ -215,7 +278,12 @@ export function costGate(input: CostGateInput): CostGateResult {
   if (typeof atr !== 'number' || !Number.isFinite(atr) || atr <= 0) {
     return { ok: true, expectedPct: 0, edgePct: 0, costPct, needPct, reason: 'kein_atr' };
   }
-  const bars = holdBars(input.minHoldMin, BAR_MINUTES[input.timeframe]);
+  // Mit `atrSessionMin` rechnet die Haltedauer in TAGES-ATR-Anteilen
+  // (Einheiten-Fix, Audit HOCH-4); ohne bleibt die alte Signal-Kerzen-Basis.
+  const bars =
+    typeof input.atrSessionMin === 'number' && input.atrSessionMin > 0
+      ? atrTagesanteile(input.minHoldMin, input.atrSessionMin, BAR_MINUTES[input.timeframe])
+      : holdBars(input.minHoldMin, BAR_MINUTES[input.timeframe]);
   const expectedPct = expectedMovePct(atr, bars);
   // Ohne Einfangquote bleibt es beim alten Verhalten: Auslenkung gegen
   // Kosten. Ein Aufrufer, der die Klasse nicht kennt, bekommt damit exakt

@@ -35,6 +35,7 @@ import {
   type SchattenKlasse,
   BAR_MINUTES,
   captureForClass,
+  sessionMinutesForClass,
   wirksameEinfangquote,
   klemmeGewicht,
   feeRateForClass,
@@ -1152,6 +1153,10 @@ async function executeUserTrades(
           atrPct,
           minHoldMin: clamped.engine.minHoldMin,
           timeframe: tf,
+          // Der ATR ist auf TAGES-Kerzen gerechnet (s. atrPctVal unten im
+          // Marktdaten-Block) — die Haltedauer wird deshalb handelszeit-
+          // bewusst in Tages-Anteile übersetzt (Einheiten-Fix, Audit HOCH-4).
+          atrSessionMin: sessionMinutesForClass(klasse),
           feeRate: feeRateForClass(klasse),
           ...(typeof clamped.signals.minEdgeMultiple === 'number'
             ? { multiple: clamped.signals.minEdgeMultiple }
@@ -1218,6 +1223,7 @@ async function executeUserTrades(
           atrPct,
           minHoldMin: clamped.engine.minHoldMin,
           timeframe: tf,
+          atrSessionMin: sessionMinutesForClass(classify(symbol)),
           feeRate: feeRateForClass(classify(symbol)),
         });
         return k.costPct > 0 ? k.expectedPct / k.costPct : null;
@@ -2576,7 +2582,8 @@ function schattenKostenOk(symbol: string, atrPct: number | null | undefined): bo
   const befund = costGate({
     atrPct,
     minHoldMin: DEFAULT_STRATEGY.engine.minHoldMin,
-    timeframe: DEFAULT_STRATEGY.signals.timeframe ?? 'intraday',
+    timeframe: SCHATTEN_TF,
+    atrSessionMin: sessionMinutesForClass(klasse),
     feeRate: feeRateForClass(klasse),
     capture: captureForClass(klasse),
     ...(typeof DEFAULT_STRATEGY.signals.minEdgeMultiple === 'number'
@@ -2946,7 +2953,11 @@ export async function runScan(force = false): Promise<ScanResult> {
              * sie nachgeführt gehört, sobald Daten da sind. Genau die
              * entstehen hier. */
             ...(typeof atrPctVal === 'number' && Number.isFinite(atrPctVal) && atrPctVal > 0
-              ? { atrPct: atrPctVal, barMin: BAR_MINUTES[SCHATTEN_TF] }
+              // Die Kerzenlänge gehört zum ATR, nicht zur Signal-Zeitbasis
+              // (Einheiten-Fix, Audit HOCH-4): `atrPctVal` ist auf
+              // TAGES-Kerzen gerechnet — mit barMin=5 rechnete der Nenner
+              // der Einfangquote 288× zu viele Kerzen in ein Signal-Alter.
+              ? { atrPct: atrPctVal, barMin: BAR_MINUTES.daily }
               : {}),
           },
           // Die Regime-Lesart (lastSignalRegime) ist eingestellt — alte
