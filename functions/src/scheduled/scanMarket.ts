@@ -61,6 +61,7 @@ import {
   type PositioningState,
   positionValue,
   pruefeBreaker,
+  notbremsenExit,
   resolveName,
   resolveRisk,
   type NewsSnapshot,
@@ -861,6 +862,26 @@ async function executeUserTrades(
       // Seit MA2/MA6: klassen-aufgelöste Parameter, ATR-Option, nachziehender
       // Stop (dafür wird highWater bei jedem Scan fortgeschrieben) und
       // Zeitgrenze — alles in riskExitReason gebündelt.
+      /* Zwangs-Glattstellung der Notbremse (Audit 13.08., K-3).
+       *
+       * `flattenOnBreach` war bis heute ein Schalter ohne Maschine: Die
+       * Stufe 'glattstellen' wurde berechnet und als Text versprochen, aber
+       * kein Code hat je glattgestellt. Jetzt übersteuert sie hier — VOR den
+       * normalen Stops, über exakt denselben Exit-Pfad (executeTrade mit
+       * riskExit, Fill-vor-Buchung, Cooldown-Stempel). Scheitert ein Exit
+       * (Broker-Fehler, kein Kurs), bleibt die Position liegen und der
+       * nächste Scan versucht es erneut: Die Bremse bleibt ausgelöst, die
+       * Stufe bleibt 'glattstellen' — die Wiederholung ist der Retry.
+       *
+       * Nur Engine-Positionen: Diese Schleife führt den Sockel ohnehin
+       * nicht (Besitzgrenze oben), und das ist hier auch fachlich richtig —
+       * Begründung bei `notbremsenExit`. */
+      const zwangsGrund = notbremsenExit(breaker);
+      if (zwangsGrund && positions.size > 0) {
+        logger.warn(
+          `Notbremsen-Glattstellung ${uid}: ${positions.size} Engine-Position(en) werden geschlossen`,
+        );
+      }
       for (const [symbol, pos] of positions) {
         const data = marketData.get(symbol);
         if (!data) continue;
@@ -938,11 +959,13 @@ async function executeUserTrades(
             }
           }
         }
-        const reason = riskExitReason(pos, data.price, {
-          risk: resolveRisk(clamped.engine, cls),
-          atrPct: data.atrPct,
-          now,
-        });
+        const reason =
+          zwangsGrund
+          ?? riskExitReason(pos, data.price, {
+            risk: resolveRisk(clamped.engine, cls),
+            atrPct: data.atrPct,
+            now,
+          });
         if (reason) {
           // Long schließt per Verkauf, Short per Eindecken (buy/Cover)
           const r = await executeTrade(

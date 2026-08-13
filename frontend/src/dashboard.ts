@@ -6898,6 +6898,11 @@ const EXIT_LABELS: Record<string, string> = {
   trailing_stop: 'Trailing-Stop',
   max_hold: 'Haltedauer',
   emergency: 'Notbremse',
+  // Zwangs-Glattstellung der Tages-Notbremse (Audit 13.08., K-3). Das Wort
+  // kommt aus notbremsenExit — journalText erzählt es als „durch die
+  // Tages-Notbremse".
+  breaker: 'Notbremse (Glattstellung)',
+  margin_call: 'Margin-Call',
 };
 
 /* ── Portfolio-Kennzahlen (M12): Stats-Doc + Equity-Sparkline ──────────────
