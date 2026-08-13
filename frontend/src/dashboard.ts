@@ -12,6 +12,7 @@ import {
   EVIDENCE_DEFAULTS,
   eingabeStueckzahl,
   MAX_LEVERAGE,
+  MAX_WATCHLIST,
   CORE_PCT_CAP,
   DEFAULT_CORE_PCT,
   MAX_OPEN_POSITIONS_CAP,
@@ -596,6 +597,24 @@ function layout(email: string): string {
         <div class="fld"><label class="lbl">Beobachtet ${iBtn('watchlist')}</label>
           <div id="wlChips" class="wl-chips"></div>
           <div class="hint" id="wlHint">Automatisch gewählt.</div>
+        </div>
+        <!-- Watchlist-EDITOR (Stufe 3b, Task 121): Die Chips darüber zeigen,
+             was die Engine BEOBACHTET (Rangliste + Positionen, kommt vom
+             Heartbeat). Hier dagegen steht DEINE Auswahl — sie geht mit
+             Vorrang in den Scan und darf seit #283 jedes Symbol enthalten,
+             das der Broker laut Universum wirklich handelt. Gespeichert wird
+             sofort je Änderung; die Serverantwort (z. B. „weder Katalog noch
+             Alpaca-Universum") landet sichtbar in #stratErr. -->
+        <div class="fld"><label class="lbl">Watchlist
+            <span id="wlCount" class="mono" style="color:var(--t3);font-weight:400"></span></label>
+          <div id="wlEdit" class="wl-chips"></div>
+          <div class="mt-combo" id="wlCombo" style="margin-top:6px">
+            <input id="wlInput" class="inp" placeholder="Symbol suchen oder frei eingeben …" autocomplete="off">
+            <div id="wlSymList" class="mt-list" hidden></div>
+          </div>
+          <div class="hint">Katalog als Vorschlag — per Enter geht auch jedes
+            andere Symbol, das Alpaca handelt (der Server prüft gegen das
+            Broker-Universum). Deine Watchlist handelt die Engine mit Vorrang.</div>
         </div>
         <div class="row">
           <div class="fld"><label class="lbl">RSI Kauf &lt; ${iBtn('rsiBuy')}</label><input id="sRsiLo" class="inp" type="number"></div>
@@ -5789,6 +5808,10 @@ function fillForm(s: Strategy): void {
   ($('sRsiHi') as HTMLInputElement).value = String(s.indicators.rsi.thresholdSell);
   ($('sPeriod') as HTMLSelectElement).value = s.signals.period;
   renderEngineBadge(s.engine.running);
+  // Der Editor rendert aus derselben Quelle wie das Formular: Nach jedem
+  // Speichern kommt das User-Doc über den Listener zurück und die Chips
+  // zeigen den tatsächlich gespeicherten Stand — nie einen optimistischen.
+  renderWlEditor(s);
 }
 
 function renderEngineBadge(running: boolean): void {
@@ -6140,6 +6163,97 @@ function renderStrategyChips(): void {
     chip.textContent = sym;
     box.appendChild(chip);
   }
+}
+
+/* ── Watchlist-Editor (Stufe 3b, Task 121) ────────────────────────────
+ *
+ * DEINE Auswahl, getrennt von „Beobachtet": Die Chips oben zeigen, was der
+ * Scan gerade tief analysiert (Heartbeat); dieser Editor schreibt
+ * `strategy.watchlist` — die Liste, die der Scan mit Vorrang beobachtet und
+ * die seit #283 auch Nicht-Katalog-Symbole aus dem Alpaca-Universum tragen
+ * darf. Jede Änderung speichert sofort über `submitStrategy`; Serverfehler
+ * (Universum kennt das Symbol nicht, Watchlist voll) erscheinen in
+ * #stratErr, dem Fehlerfeld der Karte. */
+
+function renderWlEditor(s: Strategy): void {
+  const box = document.getElementById('wlEdit');
+  const count = document.getElementById('wlCount');
+  if (!box || !count) return;
+  box.innerHTML = '';
+  for (const sym of s.watchlist) {
+    const chip = document.createElement('span');
+    chip.className = 'wl-chip';
+    chip.textContent = sym;
+    const x = document.createElement('span');
+    x.className = 'x';
+    x.textContent = '×';
+    x.title = `${sym} von der Watchlist entfernen`;
+    x.addEventListener('click', () => {
+      if (!st) return;
+      void submitStrategy(
+        { ...st.strategy, watchlist: st.strategy.watchlist.filter((w) => w !== sym) },
+        'Watchlist gespeichert.',
+      );
+    });
+    chip.appendChild(x);
+    box.appendChild(chip);
+  }
+  count.textContent = `${s.watchlist.length}/${MAX_WATCHLIST}`;
+}
+
+function wlHinzufuegen(roh: string): void {
+  if (!st) return;
+  const sym = roh.trim().toUpperCase();
+  if (!sym) return;
+  const liste = st.strategy.watchlist;
+  const err = $('stratErr');
+  if (liste.includes(sym)) return; // schon drauf — kein Fehler, kein Write
+  if (liste.length >= MAX_WATCHLIST) {
+    err.textContent = `Watchlist ist auf ${MAX_WATCHLIST} Symbole begrenzt — erst eines entfernen.`;
+    err.hidden = false;
+    return;
+  }
+  void submitStrategy({ ...st.strategy, watchlist: [...liste, sym] }, 'Watchlist gespeichert.');
+}
+
+function wireWlEditor(): void {
+  const inp = $('wlInput') as HTMLInputElement;
+  const list = $('wlSymList');
+  const renderList = (filter: string): void => {
+    const f = filter.trim().toLowerCase();
+    const all = paletteSymbols();
+    const hits = (f
+      ? all.filter((s) => s.symbol.toLowerCase().includes(f) || s.name.toLowerCase().includes(f))
+      : all
+    ).slice(0, 12);
+    list.innerHTML = hits
+      .map((s) => `<button type="button" data-sym="${s.symbol}"><b class="mono">${s.symbol}</b> — ${s.name}</button>`)
+      .join('');
+    list.hidden = hits.length === 0;
+    list.querySelectorAll<HTMLButtonElement>('[data-sym]').forEach((b) =>
+      b.addEventListener('click', () => {
+        wlHinzufuegen(b.dataset['sym']!);
+        (inp as HTMLInputElement).value = '';
+        list.hidden = true;
+      }),
+    );
+  };
+  inp.addEventListener('input', () => renderList(inp.value));
+  inp.addEventListener('focus', () => renderList(inp.value));
+  inp.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') {
+      // Enter nimmt IMMER die getippte Eingabe — auch außerhalb des Katalogs
+      // (freie Symbole, #283). Wer einen Vorschlag will, klickt ihn an.
+      ev.preventDefault();
+      wlHinzufuegen(inp.value);
+      inp.value = '';
+      list.hidden = true;
+    }
+    if (ev.key === 'Escape') list.hidden = true;
+  });
+  document.addEventListener('click', (ev) => {
+    if (!(ev.target as HTMLElement).closest('#wlCombo')) list.hidden = true;
+  });
 }
 
 function formStrategy(): Strategy {
@@ -8743,6 +8857,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     $('olv').classList.remove('show');
   });
   wireManualTrade();
+  wireWlEditor();
   $('themeBtn').addEventListener('click', () => {
     const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
     document.documentElement.dataset.theme = next;
