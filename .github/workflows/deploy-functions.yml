@@ -86,6 +86,41 @@ jobs:
           echo "::error::Deploy auch im dritten Anlauf an transienten Google-Fehlern gescheitert."
           exit 1
 
+      # „Deploy complete!" heißt bei firebase-tools nur „keine Fehler
+      # gemeldet" — nach dem 13.08. heißt es NICHT „der Code läuft": Ein
+      # Google-seitig abgebrochener Deploy (Cloud Builds CANCELLED) hinterließ
+      # neue Quell-Hash-Metadaten auf allen Functions; der nächste Lauf
+      # übersprang deshalb ALLE Functions („Skipped — No changes detected")
+      # und wurde grün, während produktiv der alte Stand weiterlief. Dieser
+      # Schritt fragt die GCF-API nach dem echten Zustand. Steht eine Function
+      # nicht auf ACTIVE, erzwingt eine Stempel-Datei im Functions-Paket einen
+      # echten Rollout (anderer Tarball-Hash ⇒ kein Skip möglich) und prüft
+      # danach erneut — erst DAS ist der Beleg, dass der Code läuft.
+      - name: Functions-Zustand prüfen (+ Selbstheilung bei stalem Skip)
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        shell: bash
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+        run: |
+          set -o pipefail
+          if node scripts-ci/check-functions-state.mjs; then exit 0; fi
+          echo "::warning::Nicht-ACTIVE Functions gefunden — erzwinge echten Rollout über Stempel-Datei."
+          printf 'Heilungs-Rollout %s Run %s\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" > functions/deploy-stamp.txt
+          for versuch in 1 2 3; do
+            if npx firebase-tools deploy --only functions --non-interactive --force 2>&1 \
+                 | tee "$RUNNER_TEMP/heal.log"; then
+              break
+            fi
+            status=0
+            node scripts-ci/deploy-verdict.mjs "$RUNNER_TEMP/heal.log" || status=$?
+            if [ "$status" -eq 0 ]; then break; fi
+            if [ "$status" -ne 2 ]; then exit 1; fi
+            warte=$((versuch * 30))
+            echo "::warning::Transienter Google-Fehler beim Heilungs-Rollout — Versuch $versuch von 3, neuer Anlauf in ${warte}s."
+            sleep "$warte"
+          done
+          node scripts-ci/check-functions-state.mjs
+
       # firebase-tools setzt den Invoker bei Callable-UPDATES nie — einmal
       # privat angelegte Callables blieben sonst für immer privat (403 ohne
       # CORS-Header). Läuft auch nach Teil-Fehlern des Deploys (!cancelled).
