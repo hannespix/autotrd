@@ -49,6 +49,7 @@ import {
 } from '../core/alpacaBroker.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { consumeQuota, resolveBrokerMode } from '../core/broker.js';
+import { entschluessle } from '../core/keyVault.js';
 import { reifeFuerKonto } from '../core/liveGate.js';
 
 /** Der Aufruf geht nach außen und kostet Latenz — 60 am Tag sind reichlich. */
@@ -94,7 +95,18 @@ async function nutzerSchluessel(uid: string): Promise<AlpacaSchluessel | null> {
       .doc('broker')
       .get();
     const keyId = d.get('keyId') as string | undefined;
-    const secret = d.get('secretKey') as string | undefined;
+    const gespeichert = d.get('secretKey') as string | undefined;
+    /* Entschlüsseln wie in `brokerVerbindung` (Audit 13.08., H2): Seit dem
+     * keyVault liegt das Geheimnis als AES-256-GCM-Chiffrat im Dokument.
+     * Diese Funktion las es ROH — das Chiffrat ging als Passwort an Alpaca,
+     * und die Karte meldete für jedes neu verbundene Konto fälschlich
+     * „Verbindung fehlgeschlagen". `entschluessle` gibt Klartext-Altbestand
+     * unverändert zurück und `null` bei kaputtem Chiffrat — beides darf
+     * nicht raten. */
+    const secret = gespeichert ? entschluessle(gespeichert) : null;
+    if (gespeichert && !secret) {
+      logger.warn(`brokerStatus ${uid}: Geheimnis nicht entschlüsselbar`);
+    }
     return keyId && secret ? { keyId, secret } : null;
   } catch {
     return null;
@@ -138,10 +150,18 @@ export async function pruefeBrokerStatus(uid: string): Promise<BrokerStatusResul
   const wunschLive = strategy.broker?.mode === 'live';
   const envFreigabe = process.env.ALPACA_ALLOW_LIVE === '1';
   // Einmal laden, zweimal gebraucht: für die Ampel und für den Probe-Call.
-  // „Vorhanden" heißt: Es gibt einen Weg zum Broker — entweder das selbst
-  // verbundene Papierkonto oder die Umgebung des Betreibers.
+  //
+  // Im PAPIER-Modus zählt ausschließlich das SELBST verbundene Schlüsselpaar
+  // (Audit 13.08., H2): Die Betreiber-Umgebung zählte hier bisher mit —
+  // `keys = null` fiel dann in `alpacaFetch` auf die env-Schlüssel zurück,
+  // und der Nutzer sah Cash und Depot des BETREIBER-Kontos, gegen das auch
+  // noch sein eigenes Buch „abgeglichen" wurde. Ein Konto ohne eigene
+  // Schlüssel hat keinen Broker — Punkt. Nur für ECHTGELD ist die Umgebung
+  // der einzige legitime Weg (ein Nutzer-Schlüssel darf nie an den
+  // Echtgeld-Endpunkt), und dorthin führt ohnehin erst die volle
+  // Drei-Guard-Kette.
   const eigeneKeys = await nutzerSchluessel(uid);
-  const schluesselVorhanden = eigeneKeys !== null || alpacaKonfiguriert();
+  const schluesselVorhanden = modus === 'live' ? alpacaKonfiguriert() : eigeneKeys !== null;
 
   const basis = {
     ok: true as const,
