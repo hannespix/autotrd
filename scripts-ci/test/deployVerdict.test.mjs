@@ -61,6 +61,34 @@ describe('deploy-verdict', () => {
     expect(verdikt('thard', log)).toBe(1);
   });
 
+  it('wiederholt, wenn Google die Cloud Builds selbst abbricht (Deploy 13.08.)', () => {
+    // Echtes Bild vom 13.08. (Deploy für 8afce0d): Google bricht jeden Build
+    // mit CANCELLED + „An unexpected error occurred" ab, firebase-tools listet
+    // daraufhin ALLE Functions als „Failed to update" — der Grund steht nur im
+    // Log-Körper, nie in den Summenzeilen. Das alte Verdikt wertete das hart
+    // und ließ 37 gesunde Functions auf altem Stand liegen.
+    const log = [
+      'Build failed with status: CANCELLED and message: An unexpected error occurred. ' +
+        'Refer to build logs: https://console.cloud.google.com/cloud-build/builds;region=us-central1/' +
+        '5b78af38-5919-4fb5-b13d-c4735ca6ca69?project=151244068285.',
+      'Functions deploy had errors with the following functions:',
+      '- Error Failed to update function healthz in region us-central1',
+      '- Error Failed to update function trade in region us-central1',
+    ].join('\n');
+    expect(verdikt('tcancel', log)).toBe(2);
+  });
+
+  it('bleibt hart, wenn neben den abgebrochenen Builds ein fremder Fehler steht', () => {
+    // Der Abbruch-Marker macht NUR die Funktions-Summenzeilen transient —
+    // ein 403 daneben heißt weiterhin: wiederholen ändert nichts, rot bleiben.
+    const log = [
+      'Build failed with status: CANCELLED and message: An unexpected error occurred.',
+      '- Error Failed to update function trade in region us-central1',
+      '- Error HTTP Error: 403, Permission denied',
+    ].join('\n');
+    expect(verdikt('tcancelmix', log)).toBe(1);
+  });
+
   it('lässt einen transienten Fehler den tolerierbaren überstimmen', () => {
     // Sonst würde der Job grün, obwohl der Code wegen des 502 gar nicht live
     // ist — die gefährlichste der drei Verwechslungen.
