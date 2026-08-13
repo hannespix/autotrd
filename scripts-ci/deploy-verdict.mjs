@@ -48,6 +48,26 @@ const TRANSIENT = [
 
 const istTransient = (text) => TRANSIENT.some((re) => re.test(text));
 
+/**
+ * Google bricht Cloud Builds gelegentlich selbst ab: Status CANCELLED mit
+ * „An unexpected error occurred" (beobachtet 13.08., Deploy für 8afce0d —
+ * alle 37 Functions „Failed to update", Ursache ausschließlich Google-seitig
+ * abgebrochene Builds). Die „- Error"-Summenzeilen tragen den Grund NICHT,
+ * er steht nur im Log-Körper — deshalb wird er dort gesucht. Bewusst beide
+ * Teile im Muster: ein echter Build-Fehler meldet Status FAILURE, ein von
+ * Menschen abgebrochener Build kommt ohne „unexpected error".
+ */
+const BUILD_ABBRUCH = /Build failed with status: CANCELLED and message: An unexpected error occurred/;
+
+/**
+ * „Failed to update/create function X" ist nur die Summenzeile — transient
+ * genau dann, wenn der Log-Körper den Google-seitigen Build-Abbruch zeigt.
+ * Jede andere Fehlerzeile daneben bleibt hart und überstimmt (hard gewinnt
+ * unten vor transient), und ohne den Abbruch-Marker bleibt die Summenzeile
+ * hart wie bisher.
+ */
+const istFunktionsSummenzeile = (text) => /^Failed to (update|create) function /.test(text);
+
 // firebase-tools listet am Ende jeden Fehler als „- Error <Beschreibung>".
 const errLines = [...log.matchAll(/^- Error (.+)$/gm)].map((m) => m[1].trim());
 
@@ -66,10 +86,11 @@ if (errLines.length === 0) {
   process.exit(1);
 }
 
+const buildAbbruch = BUILD_ABBRUCH.test(log);
 const tolerated = errLines.filter((l) => /^Failed to upsert schedule function /.test(l));
 const rest = errLines.filter((l) => !/^Failed to upsert schedule function /.test(l));
-const transient = rest.filter((l) => istTransient(l));
-const hard = rest.filter((l) => !istTransient(l));
+const transient = rest.filter((l) => istTransient(l) || (buildAbbruch && istFunktionsSummenzeile(l)));
+const hard = rest.filter((l) => !istTransient(l) && !(buildAbbruch && istFunktionsSummenzeile(l)));
 
 for (const l of tolerated) console.log(`toleriert: ${l}`);
 for (const l of transient) console.log(`transient: ${l}`);
