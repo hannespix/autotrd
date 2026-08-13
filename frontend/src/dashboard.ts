@@ -916,6 +916,9 @@ function layout(email: string): string {
     <div class="col-r" id="rightCol">
       <div class="card" data-panel="performance"><div class="sect">Performance</div><div class="cbody kpi">
         <label class="lbl">Cash</label><div id="vCash" class="vbig c-ac">--</div>
+        <!-- Erklärt sich nur, wenn er gebraucht wird (negatives Cash beim
+             Short-Buch) — renderPortfolio füllt und zeigt ihn. -->
+        <p class="hint" id="vCashHint" hidden style="margin:-4px 0 6px"></p>
         <label class="lbl">Equity (live)</label><div id="vEq" class="vbig">--</div>
         <label class="lbl">Gesamt P&amp;L</label><div id="vPnl" class="vbig">--</div>
         <div class="row" style="gap:12px">
@@ -6634,6 +6637,26 @@ function renderPortfolio(): void {
   const winRate = closers.length > 0 ? Math.round((wins / closers.length) * 100) : null;
 
   $('vCash').textContent = money(cash);
+  /* Negatives Cash ist beim SHORT-Buch Buchungslogik, kein Verlust — und
+   * die nackte Zahl hat den Owner am 13.08. zweimal zu Recht irritiert.
+   * Hintergrund: Der Broker führt den Leerverkaufs-Erlös im Cash, unser
+   * Buch hält die Deckung im Positionswert; beim Abgleich gilt deshalb
+   * Buch-Cash = Broker-Cash − 2 × Σ Short-Einstände (adoptBroker/K-5,
+   * kontoAbgleich seit #277). Die Zahl bleibt stehen — die Equity daneben
+   * ist der echte, broker-identische Kontostand —, aber sie erklärt sich
+   * jetzt selbst und nennt die praktische Folge: Für neue Käufe ist das
+   * verfügbare Kapital höchstens max(0, Cash). Reine Anzeige, die
+   * Wallet-Arithmetik bleibt unberührt. */
+  const cashHint = document.getElementById('vCashHint');
+  if (cashHint) {
+    const negativ = cash !== null && cash < 0;
+    cashHint.hidden = !negativ;
+    cashHint.textContent = negativ
+      ? 'Kein Verlust: Deine Shorts binden 2× ihren Einstand im Buch-Cash — '
+        + '„Equity (live)" ist der echte Kontostand (identisch mit dem Broker). '
+        + `Verfügbar für neue Käufe: ${money(Math.max(0, cash))}.`
+      : '';
+  }
   $('vEq').textContent = cash !== null ? money(cash + posValue) : '--';
   const pnlEl = $('vPnl');
   pnlEl.textContent = totalPnl === null ? '--' : (totalPnl >= 0 ? '+' : '') + money(totalPnl);
