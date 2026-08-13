@@ -40,3 +40,6 @@ venv/
 # Firebase-Emulator-Secrets (lokal, nie committen)
 .secret.local
 *.secret.local
+
+# CI-Selbstheilung: Stempel-Datei erzwingt echten Functions-Rollout (nie committen)
+functions/deploy-stamp.txt
