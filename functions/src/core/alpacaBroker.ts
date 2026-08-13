@@ -287,6 +287,13 @@ export async function alpacaFetch(
   try {
     res = await fetchImpl(`${alpacaBasis(mode)}${pfad}`, {
       ...init,
+      /* Hartes Timeout (Audit 13.08., K-2c): Ohne Signal hing ein POST bis
+       * zum Function-Timeout — und dann war UNBEKANNT, ob die Order platziert
+       * wurde, während der nächste Scan längst erneut kaufte. 15 s sind für
+       * jede Alpaca-Antwort großzügig; ein Abbruch ist hier die ehrlichere
+       * Antwort als ein Lauf, der stirbt. Ein vom Aufrufer mitgegebenes
+       * Signal hat Vorrang. */
+      signal: init.signal ?? AbortSignal.timeout(15_000),
       headers: {
         'APCA-API-KEY-ID': k.keyId,
         'APCA-API-SECRET-KEY': k.secret,
@@ -815,6 +822,44 @@ export async function alpacaOrderAbfragen(
   }
   return {
     id: String(d['id'] ?? orderId),
+    status: String(d['status'] ?? ''),
+    filledQty: zahl(d['filled_qty']),
+    filledAvgPreis: zahl(d['filled_avg_price']),
+  };
+}
+
+/**
+ * Order über ihre CLIENT-Kennung wiederfinden (Audit 13.08., K-2e).
+ *
+ * Die client_order_id ist bei Alpaca dauerhaft eindeutig je Konto — genau
+ * darauf baut unsere Idempotenz. Die Kehrseite: Lehnte Alpaca einen
+ * Wiederholungsversuch mit 422 „duplicate" ab, konnte bisher niemand
+ * nachsehen, was aus der ERSTEN Order geworden ist. Ein Exit mit
+ * positionsstabiler Kennung (`exit-<openedAt>`) blieb dann für immer
+ * verklemmt: jede Wiederholung 422, der Fill der Ur-Order nie gebucht.
+ * Diese Funktion ist das fehlende Gegenstück — nachschlagen statt raten.
+ */
+export async function alpacaOrderPerClientId(
+  mode: BrokerMode,
+  clientOrderId: string,
+  schluessel: AlpacaSchluessel | null = null,
+  fetchImpl: FetchLike = fetch,
+): Promise<AlpacaOrderStand | null> {
+  let d: Record<string, unknown>;
+  try {
+    d = (await alpacaFetch(
+      mode,
+      `/v2/orders:by_client_order_id?client_order_id=${encodeURIComponent(clientOrderId)}`,
+      schluessel,
+      {},
+      fetchImpl,
+    )) as Record<string, unknown>;
+  } catch (err) {
+    if (err instanceof AlpacaFehler && err.status === 404) return null;
+    throw err;
+  }
+  return {
+    id: String(d['id'] ?? ''),
     status: String(d['status'] ?? ''),
     filledQty: zahl(d['filled_qty']),
     filledAvgPreis: zahl(d['filled_avg_price']),

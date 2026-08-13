@@ -559,6 +559,11 @@ export async function executeTrade(
     symbol: req.symbol,
     side: req.side,
     qty,
+    // K-2c: Eine ungefüllte ERÖFFNENDE Order wird storniert, damit sie
+    // nicht Minuten später füllt, während der nächste Scan erneut kauft.
+    // Schließende bleiben stehen — ihr später Fill ist erwünscht und wird
+    // über die positionsstabile Kennung nachgebucht.
+    stornoBeiKeinFill: eroeffnet,
     laufId: lauf,
   });
   if (!routing.ausgefuehrt) {
@@ -608,6 +613,17 @@ export async function executeTrade(
         at: new Date().toISOString(),
       })
       .catch((err: unknown) => logger.error(`unbookedFills ${req.uid} nicht schreibbar`, err));
+    /* Cooldown stempeln (Audit 13.08., K-2a): Ohne ihn sah der nächste
+     * 5-Minuten-Scan dasselbe Kaufsignal, keine Position, keinen Cooldown —
+     * und kaufte ERNEUT echt, alle fünf Minuten, solange das Signal stand.
+     * Genau dieser Loop war der NVDA-Vorfall vom 11.08.; behoben wurde
+     * damals nur der eine Auslöser (qty_unter_1), nicht die Fehlerklasse.
+     * Der Stempel gilt für jede Buchungs-Panne, die ein bestätigter Fill
+     * hinterlässt. */
+    await db
+      .doc(`users/${req.uid}`)
+      .set({ engineCooldowns: { [req.symbol]: new Date().toISOString() } }, { merge: true })
+      .catch((err: unknown) => logger.warn(`Cooldown nach Fill-Panne ${req.uid}`, err));
   }
 
   /* Schutz-Stop anlegen (Bracket Stufe 1): nur nach einem ERÖFFNENDEN,
@@ -626,6 +642,94 @@ export async function executeTrade(
     );
   }
   return buchung;
+}
+
+/**
+ * Unverbuchte Fills nachbuchen (Audit 13.08., K-2b).
+ *
+ * `unbookedFills` war bis heute ein Friedhof mit Beschriftung: Der Fill
+ * wurde festgehalten „mit allem, was zum Nachbuchen nötig ist" — aber
+ * niemand hat je nachgebucht. Die Position lag real beim Broker (gekauft,
+ * bezahlt, ohne Stop), im Buch fehlte sie, und der Abgleich stufte sie als
+ * harmlosen Fremdbestand ein. Heilung nur von Hand über die Übernahme.
+ *
+ * Diese Funktion läuft je Konto zu Beginn des Scans: Sie nimmt die
+ * ältesten Einträge, prüft gegen die Trade-Historie, ob die Order-Kennung
+ * nicht doch schon gebucht wurde (Doppelbuchung wäre schlimmer als eine
+ * späte), bucht den Fill über den normalen Buchungspfad und löscht den
+ * Eintrag erst NACH erfolgreicher Buchung. Ein Eintrag ohne verwertbaren
+ * Fill (kein Preis, keine Menge) bleibt liegen — er ist ein Fall für die
+ * Übernahme, nicht für eine geratene Buchung.
+ *
+ * Bewusst gedeckelt (3 je Lauf): Der Normalzustand ist eine LEERE Liste;
+ * die Schleife darf den Scan nie messbar verlängern.
+ */
+export async function bucheUnverbuchteFills(
+  uid: string,
+  strategy: Strategy,
+  limit = 3,
+): Promise<number> {
+  const db = getFirestore();
+  const userRef = db.collection('users').doc(uid);
+  const offen = await userRef
+    .collection('unbookedFills')
+    .orderBy('at')
+    .limit(limit)
+    .get()
+    .catch(() => null);
+  if (!offen || offen.empty) return 0;
+
+  let gebucht = 0;
+  for (const doc of offen.docs) {
+    const d = doc.data() as {
+      symbol?: string;
+      side?: 'buy' | 'sell';
+      qty?: number;
+      fillPreis?: number | null;
+      brokerOrderId?: string | null;
+    };
+    if (!d.symbol || !d.side || !(d.qty! > 0) || !(d.fillPreis! > 0)) {
+      logger.warn(`unbookedFills ${uid}/${doc.id}: kein verwertbarer Fill — bleibt liegen (Übernahme)`);
+      continue;
+    }
+    if (d.brokerOrderId) {
+      const schon = await userRef
+        .collection('trades')
+        .where('brokerOrderId', '==', d.brokerOrderId)
+        .limit(1)
+        .get()
+        .catch(() => null);
+      if (schon && !schon.empty) {
+        await doc.ref.delete().catch(() => undefined);
+        continue;
+      }
+    }
+    const r = await executePaperTrade(
+      {
+        uid,
+        symbol: d.symbol,
+        side: d.side,
+        price: d.fillPreis!,
+        qty: d.qty!,
+        fillPreis: d.fillPreis!,
+        ...(d.brokerOrderId ? { brokerOrderId: d.brokerOrderId } : {}),
+        source: 'engine',
+        assetClass: classify(d.symbol),
+      },
+      strategy,
+    ).catch((err: unknown) => ({
+      executed: false as const,
+      reason: `nachbuchung_exception: ${err instanceof Error ? err.message : String(err)}`.slice(0, 200),
+    }));
+    if (r.executed) {
+      await doc.ref.delete().catch(() => undefined);
+      gebucht += 1;
+      logger.info(`unbookedFills ${uid}: ${d.side} ${d.qty} ${d.symbol} @ ${d.fillPreis} nachgebucht`);
+    } else {
+      logger.warn(`unbookedFills ${uid}/${doc.id}: Nachbuchung scheitert weiter — ${r.reason ?? '?'}`);
+    }
+  }
+  return gebucht;
 }
 
 export async function executePaperTrade(req: TradeRequest, strategy: Strategy): Promise<TradeResult> {
