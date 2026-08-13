@@ -36,10 +36,11 @@ describe('liveReife — öffnet nur, wenn ALLES stimmt', () => {
   });
 
   it('sperrt bei zu kleiner Stichprobe', () => {
-    // Bei ~20 % Trefferquote ist ein Profitfaktor über 50 Trades Rauschen.
-    const b = liveReife(reif({ trades: 50 }));
+    // Grenze seit 13.08. (Owner-Rekalibrierung): 40 Tages-Trades.
+    const b = liveReife(reif({ trades: 39 }));
     expect(b.bereit).toBe(false);
     expect(b.fazit).toContain('Stichprobe');
+    expect(liveReife(reif({ trades: 40 })).bereit).toBe(true);
   });
 
   it('sperrt bei Profitfaktor knapp unter der Schwelle', () => {
@@ -62,8 +63,9 @@ describe('liveReife — öffnet nur, wenn ALLES stimmt', () => {
   });
 
   it('sperrt bei zu kurzer Messstrecke — Gewinn über drei Tage ist Wetter', () => {
-    expect(liveReife(reif({ tageStrecke: 29 })).bereit).toBe(false);
-    expect(liveReife(reif({ tageStrecke: 30 })).bereit).toBe(true);
+    // Grenze seit 13.08.: zwei Wochen ununterbrochene Strecke.
+    expect(liveReife(reif({ tageStrecke: 13 })).bereit).toBe(false);
+    expect(liveReife(reif({ tageStrecke: 14 })).bereit).toBe(true);
   });
 
   it('behandelt eine fehlende Messstrecke als null Tage, nicht als erfüllt', () => {
@@ -129,15 +131,45 @@ describe('liveReife — Diagnose', () => {
   });
 });
 
-describe('Schwellen', () => {
-  it('verlangt mehr als bloße Kostendeckung', () => {
+describe('Schwellen — Rekalibrierung 13.08. (Owner-Ansage)', () => {
+  /* „bitte optimiere die cashguards. es soll möglich sein innerhalb von ca.
+   * zwei Wochen live oder mit echtgeld Handeln zu können, wenn es alles gut
+   * funktioniert." — Die MENGEN-Hürden wurden aufs Tages-Regime kalibriert
+   * (200→40 Trades, 30→14 Tage). Die QUALITÄTS-Hürden sind der Teil, den
+   * „wenn alles gut funktioniert" bedeutet — die Wächter unten verhindern,
+   * dass sie je stillschweigend mitgelockert werden. */
+
+  it('verlangt mehr als bloße Kostendeckung — unverändert', () => {
     // Bei exakt 1,0 schaltet man live auf unter 1,0 — Papierhandel
     // unterschätzt die Wirklichkeit.
-    expect(REIFE_SCHWELLEN.minProfitFactor).toBeGreaterThan(1);
+    expect(REIFE_SCHWELLEN.minProfitFactor).toBeGreaterThanOrEqual(1.2);
   });
 
-  it('verlangt eine Stichprobe, die einen Profitfaktor tragen kann', () => {
-    expect(REIFE_SCHWELLEN.minTrades).toBeGreaterThanOrEqual(100);
+  it('Gebührenanteil und Nettoergebnis bleiben scharf — unverändert', () => {
+    expect(REIFE_SCHWELLEN.maxFeeShare).toBeLessThanOrEqual(0.5);
+    expect(REIFE_SCHWELLEN.minNetPnl).toBeGreaterThanOrEqual(0);
+  });
+
+  it('die Mengen-Hürden stehen exakt auf dem Owner-kalibrierten Wert', () => {
+    // Bewusst EXAKT statt >=: Jede weitere Änderung — höher wie tiefer —
+    // soll diesen Test brechen und damit eine dokumentierte Entscheidung
+    // erzwingen, keinen stillen Drift.
+    expect(REIFE_SCHWELLEN.minTrades).toBe(40);
+    expect(REIFE_SCHWELLEN.minTageStrecke).toBe(14);
+  });
+
+  it('zwei schlechte Wochen öffnen NICHT — die Qualität bleibt die Bedingung', () => {
+    // 40 Trades und 14 Tage erreicht, aber Profitfaktor unter Wasser:
+    // exakt die Lage von heute (PF 0,96) nach zwei Wochen mehr Handel.
+    const b = liveReife({
+      trades: 60,
+      profitFactor: 0.96,
+      feeShare: 1.06,
+      netPnl: -140.75,
+      tageStrecke: 20,
+    });
+    expect(b.bereit).toBe(false);
+    expect(b.erfuellt).toBe(2); // nur Stichprobe + Messstrecke stehen
   });
 });
 
