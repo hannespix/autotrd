@@ -15,7 +15,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { bewerteFunktionsZustaende } from '../check-functions-state.mjs';
+import { bewerteFunktionsZustaende, istVeraltet, FRISCHE_TOLERANZ_MS } from '../check-functions-state.mjs';
 
 const hier = dirname(fileURLToPath(import.meta.url));
 const workflow = readFileSync(join(hier, '../../.github/workflows/deploy-functions.yml'), 'utf8');
@@ -59,6 +59,33 @@ describe('bewerteFunktionsZustaende — die pure Bewertung', () => {
   });
 });
 
+describe('istVeraltet — die pure Frische-Entscheidung', () => {
+  // Der echte Schadensfall (Run 31736108192): ACTIVE, updateTime 18:21,
+  // dienende Revision von 17:44 — der Update-Versuch rollte nie Code aus.
+  it('updateTime deutlich nach der Revisions-Erzeugung ⇒ veraltet', () => {
+    expect(istVeraltet('2026-08-13T18:21:45Z', '2026-08-13T17:44:10Z')).toBe(true);
+  });
+
+  it('gesunder Rollout (Revision Sekunden vor dem Stempel) ⇒ frisch', () => {
+    expect(istVeraltet('2026-08-13T17:44:20Z', '2026-08-13T17:44:10Z')).toBe(false);
+    // Auch ein zäher Rollout innerhalb der Toleranz bleibt frisch.
+    expect(istVeraltet('2026-08-13T17:53:00Z', '2026-08-13T17:44:10Z')).toBe(false);
+  });
+
+  it('die Toleranz liegt bei 10 Minuten — exakt an der Grenze ist frisch', () => {
+    expect(FRISCHE_TOLERANZ_MS).toBe(10 * 60 * 1000);
+    expect(istVeraltet('2026-08-13T17:54:10Z', '2026-08-13T17:44:10Z')).toBe(false);
+    expect(istVeraltet('2026-08-13T17:54:10.001Z', '2026-08-13T17:44:10Z')).toBe(true);
+  });
+
+  it('unlesbare Zeiten sind KEIN Befund, sondern unprüfbar (null)', () => {
+    // Sonst ließe ein API-Formatwechsel flächendeckend „heilen" — ein
+    // Deploy-Sturm ohne jeden echten Schaden.
+    expect(istVeraltet(undefined, '2026-08-13T17:44:10Z')).toBe(null);
+    expect(istVeraltet('2026-08-13T18:21:45Z', 'kaputt')).toBe(null);
+  });
+});
+
 describe('Verdrahtung (Quelltext-Wächter)', () => {
   it('der Workflow prüft den Zustand nach dem Deploy UND nach der Heilung', () => {
     // Zweimal: einmal als Auslöser, einmal als Beleg, dass die Heilung wirkte.
@@ -82,5 +109,16 @@ describe('Verdrahtung (Quelltext-Wächter)', () => {
 
   it('die Stempel-Datei ist git-ignoriert (CI-Artefakt, nie committen)', () => {
     expect(gitignore).toContain('functions/deploy-stamp.txt');
+  });
+
+  it('der Hauptlauf prüft die Frische wirklich (Revision-API + istVeraltet angeschlossen)', () => {
+    // Genau dieser Anschluss fehlte der ersten Fassung: ACTIVE wurde geprüft,
+    // aber GCF rollt nach abgebrochenem Build auf ACTIVE zurück — der stale
+    // Zustand blieb unsichtbar. Ein Wächter, der nur die pure Funktion testet,
+    // hätte das wieder nicht bemerkt.
+    const skript = readFileSync(join(hier, '../check-functions-state.mjs'), 'utf8');
+    expect(skript).toContain('https://run.googleapis.com/v2/${dienst}/revisions/${revision}');
+    expect(skript).toContain('const stale = istVeraltet(f?.updateTime, revZeit);');
+    expect(skript).toContain('Frische unprüfbar: keine einzige Revisions-Erzeugungszeit lesbar');
   });
 });
