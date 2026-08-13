@@ -183,7 +183,7 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
         run: >-
           node scripts-ci/invoke-daily.mjs
-          --only snapshotequity,evalforecasts,momentumrun,kibericht
+          --only snapshotequity,evalforecasts,universumsyncnow,momentumrun,kibericht
           ${{ inputs.force_daily && '--force' || '' }}
 
       # Wenn der Lauf rot wurde (z. B. Scan-Invoke 500): scanmarket-Fehlerlogs
