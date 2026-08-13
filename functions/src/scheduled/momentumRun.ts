@@ -69,6 +69,7 @@ import {
 } from '../core/marketData.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 import { fetchPositioning } from '../core/positioning.js';
+import { ladeUniversumSymbole } from '../core/universumLeser.js';
 
 /** Leitindex des Marktfilters — der breiteste verfügbare US-Index. */
 const MARKET_INDEX = '^GSPC';
@@ -152,24 +153,50 @@ export interface MomentumRunResult {
   echteOrders: number;
 }
 
+/**
+ * Kandidaten fürs RANKING: Katalog ∪ Alpaca-Universum (Task 123).
+ *
+ * Pur, damit die Vereinigungsregel testbar ist. Ein leeres Universum (Sync
+ * lief nie, Firestore-Fehler — `ladeUniversumSymbole` liefert dann die leere
+ * Menge) heißt: exakt der Katalog, exakt das bisherige Verhalten. Ein
+ * Lesefehler kann die Rangliste also nur auf den alten Stand SCHRUMPFEN,
+ * nie verfälschen.
+ */
+export function rankingKandidaten(
+  katalog: readonly string[],
+  universum: ReadonlySet<string>,
+): string[] {
+  if (universum.size === 0) return [...katalog];
+  return [...new Set([...katalog, ...universum])];
+}
+
 export async function runMomentum(now = new Date()): Promise<MomentumRunResult> {
   const db = getFirestore();
   const katalog = allSymbols();
+  /* Owner-Frage 11.08.: „Können wir nicht einfach alle verfügbaren
+   * Alpaca-Symbole in die Beobachtung nehmen?" — hier ist die Antwort
+   * eingelöst (Task 123): Die Rangliste sucht den stärksten Trend nicht
+   * mehr unter 166 handverlesenen, sondern zusätzlich unter allen
+   * broker-verifizierten Papieren des täglichen Universum-Syncs. NUR die
+   * Rangliste: Die 5-Minuten-Kursversorgung wählt weiterhin eine begrenzte
+   * Menge (selectScanSymbols) — jetzt aus dem großen Pool. Die Kosten
+   * trägt der Lauf: ~560 Spark-Chunks laufen mit `mitGrenze(8)` in unter
+   * einer Minute, weit unter den 540 s dieser Funktion. */
+  const kandidaten = rankingKandidaten(katalog, await ladeUniversumSymbole());
 
-  // ── 1. Historie für den GANZEN Katalog holen ──────────────────────────────
-  // Ein Spark-Bündel (20 Symbole je Request, ~9 Requests für 166 Symbole)
-  // statt 166 Firestore-Lesungen plus rotierendem Nachholen von 20 Symbolen
-  // pro TAG. Der alte Weg hätte für den ersten vollständigen Ranglisten-Lauf
-  // rund neun Tage gebraucht — solange rankte das System nur die Handvoll
-  // Symbole, die zufällig schon Historie hatte, und „breit bewerten" war
-  // bloß eine Absicht. Jetzt bewertet der erste Lauf sofort alles.
+  // ── 1. Historie für ALLE Kandidaten holen ─────────────────────────────────
+  // Ein Spark-Bündel (20 Symbole je Request) statt Firestore-Lesungen plus
+  // rotierendem Nachholen von 20 Symbolen pro TAG. Der alte Weg hätte für
+  // den ersten vollständigen Ranglisten-Lauf rund neun Tage gebraucht —
+  // solange rankte das System nur die Handvoll Symbole, die zufällig schon
+  // Historie hatte, und „breit bewerten" war bloß eine Absicht.
   // Wer hier fehlt, ist für das RANKING zu dünn belegt. Das ist eine andere
   // Frage als „wem fehlt Chart-Historie" — siehe Befund unten in Schritt 2;
   // die Liste der Ranking-Lücken wird deshalb bewusst nicht mehr geführt.
   const closesMap = new Map<string, number[]>();
   try {
-    const batchCloses = await getSparkDailyCloses(katalog);
-    for (const sym of katalog) {
+    const batchCloses = await getSparkDailyCloses(kandidaten);
+    for (const sym of kandidaten) {
       const closes = batchCloses.get(sym);
       if (closes && closes.length >= MOMENTUM_DEFAULTS.minBars) closesMap.set(sym, closes);
     }
@@ -178,7 +205,12 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
     // gespeicherte Historie zurückgefallen statt auf eine Rangliste aus
     // Zufallssymbolen. Eine Rangliste, die nur die Hälfte des Katalogs kennt,
     // sieht genauso aus wie eine richtige — und ist trotzdem falsch.
-    logger.warn('Momentum: Spark-Bündel fehlgeschlagen — Rückfall auf ohlcDaily', err);
+    //
+    // Der Rückfall bleibt bewusst beim KATALOG (Task 123): ohlcDaily gibt es
+    // nur für Katalog-Symbole; die Universums-Kandidaten dort abzufragen
+    // wären ~11.000 Firestore-Reads mit leeren Antworten. Bei Yahoo-Ausfall
+    // schrumpft die Rangliste an diesem Tag also ehrlich auf den Katalog.
+    logger.warn('Momentum: Spark-Bündel fehlgeschlagen — Rückfall auf ohlcDaily (nur Katalog)', err);
     closesMap.clear();
     for (const sym of katalog) {
       const closes = await ladeCloses(sym);
@@ -223,6 +255,10 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
      * steht. */
     const marktDocs = await db.collection('market').select('deepBackfillV').get();
     const stand = new Map(marktDocs.docs.map((doc) => [doc.id, doc.get('deepBackfillV') as unknown]));
+    // Bewusst KATALOG, nicht Kandidaten (Task 123): Tiefe Chart-Historie je
+    // Universums-Symbol wären ~11.000 × ~100 Jahres-Docs — die Charts der
+    // App zeigen den Katalog; Universums-Symbole bekommen ihre Daten erst,
+    // wenn sie über Watchlist/Position in den Scan aufsteigen.
     chartLuecken = chartHistorieFehlt(katalog, stand);
   } catch (err) {
     // Kein Backfill ist besser als ein Backfill über den ganzen Katalog:
@@ -321,6 +357,9 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
   // Hier und nicht im 5-Minuten-Scan: Positionierung ändert sich nicht im
   // Minutentakt sinnvoll, und der tägliche Rhythmus liefert nebenbei den
   // 24-h-Abstand, den die OI-Änderung braucht. Kostet einen Request am Tag.
+  // Positionierung bleibt Katalog-Sache (Task 123): Sie kostet einen
+  // API-Request je gemessenem Symbol — über 11.000 Kandidaten wäre das
+  // ein eigener Kostenposten ohne Beleg, dass die Zahl dort etwas trägt.
   const positionierung = await messePositionierung(katalog, now);
 
   // Tages-Protokoll: Ranking-Spitze, Filter-Zustand, Depotwert. Das ist die
@@ -331,7 +370,7 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
       at: now.toISOString(),
       date: now.toISOString().slice(0, 10),
       ranked: ranked.length,
-      universum: katalog.length,
+      universum: kandidaten.length,
       marktOffen,
       top: ranked.slice(0, MOMENTUM_TOP_N).map((r) => ({ symbol: r.symbol, score: r.score })),
       ziel: ziel.map((z) => z.symbol),
@@ -340,7 +379,10 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
       trades: book.pnls.length,
       rebalanced: faellig,
       backfilled,
-      fehlendeHistorie: Math.max(0, katalog.length - closesMap.size),
+      // Bezogen auf die KANDIDATEN: Beim vollen Universum ist eine große
+      // Zahl hier normal (Neuemissionen ohne 12-Monats-Historie, tote
+      // Yahoo-Symbole) — sie misst Abdeckung, nicht Fehler.
+      fehlendeHistorie: Math.max(0, kandidaten.length - closesMap.size),
       // Echte Konten im Momentum-Modus — getrennt vom Schattendepot, damit
       // sichtbar bleibt, ob überhaupt jemand die Strategie scharf hat.
       echteKonten: echte.konten,
@@ -360,7 +402,7 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
   );
 
   logger.info(
-    `momentumRun: ${ranked.length}/${katalog.length} bewertbar, Filter ${marktOffen ? 'offen' : 'ZU'}, ` +
+    `momentumRun: ${ranked.length}/${kandidaten.length} bewertbar, Filter ${marktOffen ? 'offen' : 'ZU'}, ` +
       `${faellig ? `${orders.length} Order(s)` : 'kein Rebalancing'}, Equity ${equity}`,
   );
 
