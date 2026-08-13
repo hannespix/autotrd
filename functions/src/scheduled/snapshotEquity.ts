@@ -33,6 +33,8 @@ import {
   pruefeKandidat,
   costProfile,
   exitBreakdown,
+  exitBreakdownSeit,
+  EXIT_FENSTER_TAGE,
   dailyReturns,
   drawdown,
   positionValue,
@@ -190,6 +192,9 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
 
   let snapped = 0;
   let zinsSumme = 0;
+  // Untergrenze des rollierenden Exit-Fensters (Task 115) — EINMAL je Lauf,
+  // damit alle Konten und das Aggregat dasselbe Fenster meinen.
+  const fensterSeit = new Date(now.getTime() - EXIT_FENSTER_TAGE * 24 * 60 * 60 * 1000).toISOString();
   const beitraege: AccountContribution[] = [];
   // MU3 „Bewährte Einstellungen": Über die Schleife hinweg den Besten nach
   // ENGINE-Attribution suchen — und, solange keiner die Belege erfüllt, den
@@ -323,14 +328,17 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
               ? { entryNotional: qty * entryPrice }
               : {}),
           };
+          const at = t.get('at') as string | undefined;
           closed.push({
             symbol,
             pnl,
             assetClass: classify(symbol),
             ...(riskExit ? { riskExit } : {}),
+            // Schlusszeitpunkt mitgeben — ohne ihn gibt es keine
+            // zeitgefensterte Exit-Sicht (Task 115).
+            ...(typeof at === 'string' ? { at } : {}),
             ...volumen,
           });
-          const at = t.get('at') as string | undefined;
           if (t.get('source') === 'engine' && typeof at === 'string') {
             engineTrades.push({ pnl, at, ...volumen });
           }
@@ -342,6 +350,11 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
       // Beides war bis 27.07. nirgends ablesbar und musste von Hand
       // zurückgerechnet werden.
       const exits = exitBreakdown(closed);
+      // Dieselbe Verteilung NUR über die letzten 7 Tage (Task 115): Die
+      // kumulative Sicht kann eine Verhaltensänderung — etwa den Exit-Umbau
+      // vom 09.08. — erst zeigen, wenn sie Hunderte Alt-Trades überstimmt
+      // hat. Das Fenster zeigt sie sofort.
+      const exits7t = exitBreakdownSeit(closed, fensterSeit);
       const costs = costProfile(closed);
 
       // ── Klassen-Regler (MG2/MG3/MG4b) ─────────────────────────────────────
@@ -453,6 +466,8 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         bySymbol: attr.bySymbol,
         byClass: attr.byClass,
         exits,
+        exits7t,
+        exits7tSeit: fensterSeit,
         costs,
         // Empfehlung je Anlageklasse (MG2): Kante, Urteil, Vorschlag und
         // Klartext-Begründung — fertig für die Karte, damit die Oberfläche
@@ -480,6 +495,7 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
           avgLoss: ts.avgLoss,
         },
         exits,
+        exits7t,
         costs: { n: costs.n, fees: costs.fees, grossPnl: costs.grossPnl },
         // Klassen-Aufschlüsselung mit ins Aggregat: Ohne sie sagt das
         // Gesamtbild nur, DASS zu teuer gehandelt wird — nicht wo.
@@ -524,7 +540,14 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         snapped,
         marginInterest: Math.round(zinsSumme * 100) / 100,
       },
-      trading: { ...health, verdict: tradingVerdict(health), at: now.toISOString() },
+      trading: {
+        ...health,
+        verdict: tradingVerdict(health),
+        at: now.toISOString(),
+        // Wovon `exits7t` das Fenster ist — ohne den Stempel wäre die Zahl
+        // im Dokument nicht interpretierbar.
+        exits7tSeit: fensterSeit,
+      },
     },
     { merge: true },
   );
