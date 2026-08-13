@@ -33,6 +33,7 @@ import {
   closedOnly,
   historieReicht,
   imZeitraum,
+  zeitraumBeginn,
   zeitraumLabel,
   ZEITRAEUME,
   type Zeitraum,
@@ -449,6 +450,11 @@ interface DashState {
   tradesCursor: TradeCursor | null;
   /** Gewählter Zeitraum der Handels-Analyse in Tagen (0 = alles). */
   anZeitraum: Zeitraum;
+  /** Zeitraum der Equity-Kurve auf der Performance-Karte (Owner-Thema
+   *  „Performance mit Zeitachse"; 0 = alles, wie bisher). Fenstert NUR die
+   *  gezeichnete Kurve samt Drawdown — die Kennzahlen darunter bleiben die
+   *  Server-Zahlen mit ihren eigenen Bezugsräumen (Sharpe 30/90 etc.). */
+  pfZeitraum: Zeitraum;
   /** Läuft gerade ein Nachladen für den gewählten Zeitraum? */
   anLaedt: boolean;
   /** Letzter Nachlade-Fehler — sichtbar statt nur in der Konsole. */
@@ -932,6 +938,10 @@ function layout(email: string): string {
           <div><label class="lbl">Win Rate</label><div id="vWR" class="smv">--%</div></div>
         </div>
         <label class="lbl" style="margin-top:10px">Equity-Kurve ${iBtn('equityCurve')}</label>
+        <!-- Zeitachse der Kurve (Owner-Thema „Performance mit Zeitachse"):
+             fenstert Sparkline, große Kurve und Drawdown; die Kennzahlen
+             darunter bleiben Server-Zahlen mit eigenem Bezugsraum. -->
+        <div class="mkt-tabs" id="pfZeit" style="margin:2px 0 4px"></div>
         <svg id="pfSpark" class="pf-spark" viewBox="0 0 100 26" preserveAspectRatio="none" aria-hidden="true"></svg>
         <details id="pfDetail" style="margin-top:4px">
           <summary class="hint" style="cursor:pointer">Große Kurve + Drawdown anzeigen</summary>
@@ -7167,10 +7177,45 @@ function depotKurve(quelle?: {
   };
 }
 
+/** Zeitraum-Chips der Performance-Kurve — dasselbe Muster wie die
+ *  Handels-Analyse (`renderZeitraumChips`), nur ohne Nachladen: Die Kurve
+ *  fenstert über bereits geladene Snapshots/Trades; welche Quelle zeichnet,
+ *  sagt weiterhin die Meta-Zeile. */
+function renderPfZeitChips(): void {
+  const leiste = document.getElementById('pfZeit');
+  if (!leiste || !st) return;
+  leiste.innerHTML = ZEITRAEUME.map(
+    (z) =>
+      `<button class="tf-btn${z === st!.pfZeitraum ? ' on' : ''}" data-pfz="${z}">${esc(zeitraumLabel(z))}</button>`,
+  ).join('');
+  for (const b of leiste.querySelectorAll<HTMLButtonElement>('[data-pfz]')) {
+    b.addEventListener('click', () => {
+      if (!st) return;
+      st.pfZeitraum = Number(b.dataset['pfz']) as Zeitraum;
+      renderPfStats();
+    });
+  }
+}
+
 function renderPfStats(): void {
   if (!st) return;
   const s = st.pfStats;
-  const wahl = depotKurve();
+  renderPfZeitChips();
+  /* Zeitfenster der KURVE (Owner-Thema „Performance mit Zeitachse"): Bei 0
+   * (Alles) exakt der bisherige Weg; sonst dieselbe Kurvenwahl über die
+   * gefensterten Quellen — Schnitt-Logik und Erklärung bleiben in
+   * depotKurve, hier wird nur die Eingabe beschnitten. Die Kennzahlen im
+   * Raster darunter bleiben bewusst die Server-Zahlen: Sharpe 30/90 und
+   * Max-Drawdown tragen ihren Bezugsraum im Namen, eine zweite, clientseitig
+   * gefensterte Fassung derselben Namen wäre zwei Wahrheiten. */
+  const zr = st.pfZeitraum;
+  const ab = zeitraumBeginn(zr, new Date());
+  const wahl = ab === null
+    ? depotKurve()
+    : depotKurve({
+        snapshots: (st.equitySeries ?? []).filter((p) => Date.parse(p.date) >= ab.getTime()),
+        trades: imZeitraum((st.trades ?? []) as HistoryTrade[], zr, new Date()),
+      });
   const serie = wahl.serie;
   const grid = $('pfGrid');
   const hint = $('pfHint');
@@ -7197,7 +7242,9 @@ function renderPfStats(): void {
   } else {
     spark.setAttribute('hidden', '');
   }
-  renderPfKurven(serie, wahl.hinweis);
+  // Die Meta-Zeile nennt das gewählte Fenster — sonst sähe eine 7-Tage-Kurve
+  // aus wie die ganze Historie eines jungen Kontos.
+  renderPfKurven(serie, (zr === 0 ? '' : `${zeitraumLabel(zr)} · `) + wahl.hinweis);
   renderDepotVerlauf();
 
   if (!s || s.equityDays === 0) {
@@ -8493,6 +8540,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     // kurz genug, dass die erste Seite meist reicht und nichts nachgeladen
     // werden muss.
     anZeitraum: 30,
+    // Kurve startet wie bisher mit „Alles" — Fenster ist Opt-in per Chip.
+    pfZeitraum: 0,
     anLaedt: false,
     tradesFehler: null,
     tradesDone: false,
