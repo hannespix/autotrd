@@ -162,6 +162,20 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
     throw new HttpsError('resource-exhausted', `Höchstens ${DAILY_ADOPT_LIMIT} Übernahmen am Tag`);
   }
 
+  /* Lauf-Marker gegen den parallelen Scan (Audit 13.08., K-5c) — dieselbe
+   * Mechanik wie beim Reset (`resetLaeuft`, verfällt nach 10 min): Ein
+   * 5-Minuten-Scan, der MITTEN in die Übernahme handelt, wird von deren
+   * abschließendem Cash-/Positions-Überschreiben ausgelöscht — Geld
+   * erschaffen oder vernichtet, beim Broker aber real gehandelt. Der Reset
+   * hatte diesen Schutz seit dem 11.08.; die Übernahme, die dieselben
+   * Felder überschreibt, hatte ihn nicht. Aufgeräumt wird der Marker im
+   * letzten Batch; stirbt die Function vorher, verfällt er von selbst. */
+  await getFirestore()
+    .collection('users')
+    .doc(uid)
+    .set({ risk: { resetLaeuftSeit: new Date().toISOString() } }, { merge: true })
+    .catch(() => undefined);
+
   const verbindung = await brokerVerbindungLesend(uid);
   if (!verbindung) {
     throw new HttpsError(
@@ -218,18 +232,25 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
 
   const db = getFirestore();
   const userRef = db.collection('users').doc(uid);
-  const [userSnap, posSnap, tradesSnap] = await Promise.all([
+  const [userSnap, posSnap, tradesSnap, archivSnap] = await Promise.all([
     userRef.get(),
     userRef.collection('positions').get(),
     // Bereits gebuchte Broker-Orders erkennen — die Übernahme muss
     // IDEMPOTENT sein: zweimal gedrückt darf nichts doppelt buchen.
     userRef.collection('trades').select('brokerOrderId').get(),
+    /* AUCH das Archiv (Audit 13.08., K-5a): `resetWallet` verschiebt die
+     * Historie nach `tradesArchive` — die Dedupe-Lesung kannte nur die
+     * Live-Sammlung. Der von reset.ts selbst empfohlene Ablauf „Reset →
+     * Depot übernehmen" importierte dieselben Orders deshalb ERNEUT, und
+     * der Steuerbericht (liest beide Sammlungen) wies jede Veräußerung
+     * doppelt aus. */
+    userRef.collection('tradesArchive').select('brokerOrderId').get(),
   ]);
   if (!userSnap.exists) throw new HttpsError('failed-precondition', 'Profil fehlt');
   const strategy = (userSnap.get('settings.strategy') as Strategy | undefined) ?? DEFAULT_STRATEGY;
 
   const bekannt = new Set<string>();
-  for (const d of tradesSnap.docs) {
+  for (const d of [...tradesSnap.docs, ...archivSnap.docs]) {
     const b = d.get('brokerOrderId');
     if (typeof b === 'string' && b.length > 0) bekannt.add(b);
   }
@@ -314,7 +335,11 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
     const waehrung = currencyForSymbol(o.symbol);
     // EZB-Kurs zum FILL-Tag — je Tag gecacht, der Import bleibt billig.
     const fx = await fxFelder(o.filledAt, waehrung);
-    const tradeRef = userRef.collection('trades').doc();
+    /* Deterministische Doc-ID (Audit 13.08., K-5a): `alpaca_<orderId>`
+     * statt Zufalls-ID. Zwei PARALLELE Übernahmen (Doppelklick — die
+     * Dedupe-Lesung oben liegt vor den Batch-Commits) schreiben damit
+     * dieselben Dokumente statt Duplikate; `set` ist idempotent. */
+    const tradeRef = userRef.collection('trades').doc(`alpaca_${o.id}`);
     ops.push((b) => b.set(tradeRef, {
       symbol: o.symbol,
       side: o.side,
@@ -385,6 +410,16 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
     'wallet.paperBalance': cashRund,
     'wallet.baseCapital': basisKapital,
     'wallet.updatedAt': now,
+    /* Übernahme = MARKIERTER Schnitt (Audit 13.08., K-5c/B-3). Sie stempelt
+     * die Kapitalbasis neu — das ist dieselbe Messzäsur wie ein Reset, nur
+     * hieß sie bisher nirgends so: kein resetAt, keine Spur, und ein Minus
+     * ließ sich per Knopfdruck aus der Anzeige waschen, ohne dass später
+     * jemand sagen konnte, wann die Messlatte verschoben wurde. Jetzt
+     * tragen beide Marken das Datum; `uebernahmeAt` unterscheidet die
+     * Übernahme vom echten Reset, `resetAt` schneidet die „seit
+     * hier"-Kennzahlen wie überall sonst. */
+    'wallet.resetAt': now,
+    'wallet.uebernahmeAt': now,
     // Bezugsgröße der Tages-Notbremse mitziehen: Verglichen mit einem
     // Phantom-Vortag von 200.000 $ sähe die echte Equity wie ein
     // 50-%-Tagesverlust aus — die Bremse würde feuern und alles sperren,
@@ -438,6 +473,48 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
       { merge: true },
     ),
   );
+
+  /* 6) Equity-Serie VOR heute schneiden (Audit 13.08., B-3): Die Übernahme
+   * setzt die Kapitalbasis neu — eine Serie, die über diesen Schnitt
+   * hinweg läuft, misst zwei verschiedene Konten in einer Kurve. Ein Konto,
+   * das mit Buch-Basis 200.000 lief und mit Broker-Equity 100.000
+   * übernommen wird, trüge sonst bis zu 120 Tage ein Phantom-Hochwasser
+   * und einen Phantom-Max-Drawdown von ~50 % in stats/main. Der Reset
+   * löscht die Serie aus demselben Grund komplett. */
+  const alteSerie = await userRef
+    .collection('equity')
+    .where('date', '<', heute)
+    .select()
+    .get()
+    .catch(() => null);
+  if (alteSerie) {
+    for (const d of alteSerie.docs) ops.push((b) => b.delete(d.ref));
+  }
+
+  /* 7) Diagnose-Protokoll je Übernahme (Audit 13.08., K-5c): Der Owner
+   * stand am 12.08. vor einem Buch-Cash von −167.720 $ und niemand konnte
+   * sagen, wie die Zahl entstand. Jede Übernahme schreibt jetzt ihre
+   * komplette Rechnung mit — die Frage „wie kam dieser Kontostand
+   * zustande?" hat damit dauerhaft eine nachlesbare Antwort. */
+  ops.push((b) => b.set(userRef.collection('adoptLog').doc(now.replace(/[:.]/g, '-')), {
+    at: now,
+    brokerCash: Math.round(konto.cash * 100) / 100,
+    brokerEquity: Math.round(konto.equity * 100) / 100,
+    shortMargin: Math.round(shortMargin * 100) / 100,
+    buchCash: cashRund,
+    baseCapital: basisKapital,
+    positionen: brokerPositionen.length,
+    tradesImportiert: importiert,
+    equityTageGeschnitten: alteSerie?.size ?? 0,
+    rechnung:
+      'buchCash = brokerCash − 2×Σ(Short-Menge×Einstand) [Buch führt Shorts als '
+      + '100-%-Margin, Alpaca schreibt den Erlös gut]; '
+      + 'baseCapital = brokerCash + Σ(±Menge×Einstand) [rekonstruierte Einzahlung '
+      + 'inkl. bereits realisierter Ergebnisse]',
+  }));
+
+  // 8) Lauf-Marker aufräumen — die Übernahme ist fertig, der Scan darf wieder.
+  ops.push((b) => b.set(userRef, { risk: { resetLaeuftSeit: null } }, { merge: true }));
 
   // In 400er-Stücken committen (WriteBatch-Deckel 500) — Reihenfolge s. o.
   for (let i = 0; i < ops.length; i += 400) {

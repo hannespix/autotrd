@@ -132,6 +132,17 @@ async function historie(uid: string): Promise<{ trades: SteuerTrade[]; abgeschni
   const trades: SteuerTrade[] = [];
   let abgeschnitten = false;
 
+  /* Entdoppelung über die Broker-Order-Kennung (Audit 13.08., K-5b).
+   *
+   * Reset verschiebt die Historie nach `tradesArchive`; eine Übernahme
+   * konnte dieselben Orders danach erneut nach `trades` importieren. Ein
+   * Bericht, der beide Sammlungen liest, wies dieselbe Veräußerung dann
+   * DOPPELT aus — in einem Dokument, das ans Finanzamt geht. Dieselbe
+   * Kennung in beiden Sammlungen ist EIN Vorgang; `trades` wird zuerst
+   * gelesen und gewinnt. Trades ohne Kennung (reine Buch-Trades) können
+   * bauartbedingt nicht doppelt importiert werden und laufen ungefiltert.
+   */
+  const gesehen = new Set<string>();
   for (const sammlung of ['trades', 'tradesArchive']) {
     const rest = MAX_TRADES - trades.length;
     if (rest <= 0) {
@@ -141,6 +152,11 @@ async function historie(uid: string): Promise<{ trades: SteuerTrade[]; abgeschni
     const snap = await userRef.collection(sammlung).limit(rest + 1).get();
     if (snap.size > rest) abgeschnitten = true;
     for (const d of snap.docs.slice(0, rest)) {
+      const orderId = d.get('brokerOrderId') as unknown;
+      if (typeof orderId === 'string' && orderId.length > 0) {
+        if (gesehen.has(orderId)) continue;
+        gesehen.add(orderId);
+      }
       const t = alsSteuerTrade(d);
       if (t) trades.push(t);
     }
