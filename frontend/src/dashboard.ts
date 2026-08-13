@@ -5165,8 +5165,16 @@ async function panelOlderDaily(p: GridPanel): Promise<void> {
 async function loadPanelIntraday(p: GridPanel): Promise<void> {
   const epoch = p.epoch;
   const sym = p.sym;
+  // Auch die STUFE festhalten (Audit 11.08., F7): Geprüft wurden epoch, sym
+  // und „überhaupt noch Intraday" — nicht der Wechsel ZWISCHEN zwei
+  // Intraday-Stufen. Klick 1T, dann 1W: Die langsamere 1T-Antwort kam nach
+  // dem Wechsel zurück und überschrieb die 1W-Daten — der Knopf zeigte 1W,
+  // der Chart einen Tag.
+  const stufe = p.intradayDays;
   const chunks = await loadIntraday(sym, p.intradayDays);
-  if (epoch !== p.epoch || p.sym !== sym || p.intradayDays === 0) return;
+  if (epoch !== p.epoch || p.sym !== sym || p.intradayDays === 0 || p.intradayDays !== stufe) {
+    return;
+  }
   p.intradayBars = chunks;
   renderGridPanelBars(p);
 }
@@ -6256,7 +6264,7 @@ function wireWlEditor(): void {
   });
   document.addEventListener('click', (ev) => {
     if (!(ev.target as HTMLElement).closest('#wlCombo')) list.hidden = true;
-  });
+  }, { signal: docListenerSignal() });
 }
 
 function formStrategy(): Strategy {
@@ -6308,7 +6316,21 @@ async function submitStrategy(next: Strategy, hint: string): Promise<void> {
 
 async function renderMarketTabs(): Promise<void> {
   if (!st) return;
-  st.universe ??= await loadUniverse();
+  // Ehrlich scheitern statt dauerhaft „Lade Katalog…" (Audit 11.08., F8):
+  // Ein Fehler beim Katalog-Laden war eine unbehandelte Rejection, und der
+  // Platzhalter stand bis zum Neuladen der Seite.
+  if (!st.universe) {
+    try {
+      const geladen = await loadUniverse();
+      if (!st) return; // Abmeldung während der Abfrage
+      st.universe = geladen;
+    } catch (e) {
+      $('mktBody').innerHTML =
+        '<span class="c-t3">Katalog gerade nicht ladbar — bitte Panel erneut öffnen.</span>';
+      console.warn('renderMarketTabs', e);
+      return;
+    }
+  }
   const tabs = $('mktTabs');
   tabs.innerHTML = '';
   if (!st.universe) {
@@ -6339,10 +6361,25 @@ async function renderMarketTabs(): Promise<void> {
 
 async function renderMarketGrid(): Promise<void> {
   if (!st?.universe) return;
-  const cls = st.universe[st.marketClass];
+  // Die Klasse VOR dem await festhalten (Audit 11.08., F8): Wechselt der
+  // Nutzer während der Kurs-Abfrage den Tab, landete die Aktien-Antwort
+  // unter dem Krypto-Tab. Nach dem await entscheidet der Vergleich — der
+  // Lauf des NEUEN Tabs rendert, dieser hier tritt ab.
+  const klasse = st.marketClass;
+  const cls = st.universe[klasse];
   const body = $('mktBody');
   if (!cls) { body.innerHTML = ''; return; }
-  const quotes = await loadMarketQuotes();
+  let quotes: Awaited<ReturnType<typeof loadMarketQuotes>>;
+  try {
+    quotes = await loadMarketQuotes();
+  } catch (e) {
+    // Ehrlich scheitern statt den alten Inhalt stehen zu lassen (F8).
+    body.innerHTML =
+      '<span class="c-t3">Kurse gerade nicht ladbar — beim nächsten Tab-Wechsel neuer Versuch.</span>';
+    console.warn('renderMarketGrid', e);
+    return;
+  }
+  if (!st || st.marketClass !== klasse) return;
   body.innerHTML = '';
   for (const [group, entries] of Object.entries(cls.groups)) {
     const g = document.createElement('div');
@@ -6791,11 +6828,17 @@ async function ladeAeltereTrades(): Promise<void> {
       if (neue.length > 0) break;
     }
   } catch (e) {
-    st.tradesFehler = e instanceof Error ? e.message : String(e);
+    if (st) st.tradesFehler = e instanceof Error ? e.message : String(e);
     console.warn('Ältere Trades nicht ladbar:', e);
   } finally {
-    st.tradesLoading = false;
-    renderPortfolio();
+    // Abmeldung während der Abfrage (Audit 11.08., F12): Das `return` im
+    // try läuft trotzdem durch dieses finally — und `st` ist dann null.
+    // Das frühere nackte `st.tradesLoading = false` war ein unbehandelter
+    // TypeError im Abmelde-Pfad.
+    if (st) {
+      st.tradesLoading = false;
+      renderPortfolio();
+    }
   }
 }
 
@@ -8241,7 +8284,7 @@ function wireManualTrade(): void {
   });
   document.addEventListener('click', (ev) => {
     if (!(ev.target as HTMLElement).closest('.mt-combo')) list.hidden = true;
-  });
+  }, { signal: docListenerSignal() });
   $('mQty').addEventListener('input', () => {
     mtDisarm();
     mtRecompute();
@@ -9032,7 +9075,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     zeichnenStart = null;
     syncDrawButtons();
     renderZeichnungen();
-  });
+  }, { signal: docListenerSignal() });
   const closeMenus = (): void => {
     // Null-sicher: die document-Listener unten überleben ein Re-Rendern der
     // Kopfleiste, bei dem die Menü-Knoten kurzzeitig fehlen.
@@ -9070,10 +9113,10 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   }
   document.addEventListener('click', (ev) => {
     if (!(ev.target as HTMLElement).closest('.tool-anchor')) closeMenus();
-  });
+  }, { signal: docListenerSignal() });
   document.addEventListener('keydown', (ev) => {
     if (ev.key === 'Escape') closeMenus();
-  });
+  }, { signal: docListenerSignal() });
 
   // Chart-Typ + Preisskala (TV-Parität Teil 1): gelten synchron für den
   // Haupt-Chart und alle Raster-Panels; Gerät-lokal gemerkt.
@@ -9869,6 +9912,24 @@ function onEscape(e: KeyboardEvent): void {
 }
 
 /**
+ * Abbruch-Signal je Dashboard-Lauf für die ANONYMEN document-Listener
+ * (Audit 11.08., F11-Rest).
+ *
+ * `onEscape` und `onGlobalHotkey` sind benannte Funktionen und werden in
+ * `unmountDashboard` per removeEventListener gelöst. Die anonymen Handler
+ * (Combo-Listen zuklappen, Zeichnen-Esc, Toolbar-Menüs) konnte man so nicht
+ * lösen — pro Login-Zyklus kam ein Satz dazu, und die alten schrieben nach
+ * dem Abmelden in ein DOM, das es nicht mehr gibt. Mit `{ signal }` löst
+ * ein einziges `abort()` sie alle; der nächste Mount bekommt ein frisches
+ * Signal.
+ */
+let docListenerAbort: AbortController | null = null;
+function docListenerSignal(): AbortSignal {
+  docListenerAbort ??= new AbortController();
+  return docListenerAbort.signal;
+}
+
+/**
  * Modulglobalen Zustand zurücksetzen — beim Abmelden und beim Nutzerwechsel.
  *
  * ── Audit-Befunde 11.08. (F9, F10, F11) ───────────────────────────────────
@@ -9898,6 +9959,10 @@ function onEscape(e: KeyboardEvent): void {
  * Oberfläche, die es nicht mehr gibt.
  */
 export function setzeModulZustandZurueck(): void {
+  // Anonyme document-Listener lösen (F11-Rest) — ein abort() für alle;
+  // der nächste Mount holt sich über docListenerSignal() ein frisches.
+  docListenerAbort?.abort();
+  docListenerAbort = null;
   // Trade-Fenster: erst die Listener lösen, dann den Zustand leeren.
   for (const u of mtState.subs) u();
   mtState.subs.length = 0;
