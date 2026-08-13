@@ -253,9 +253,43 @@ export function pruefeBreaker(lage: BreakerLage, cfg: BreakerConfig): BreakerBef
     grund:
       `Tages-Verlustgrenze erreicht: ${verlustPct.toFixed(2)} % gegen ${grenze} %. `
       + (cfg.flattenOnBreach
-        ? 'Offene Positionen werden geschlossen.'
+        ? 'Engine-Positionen werden geschlossen (Zwangs-Glattstellung); der '
+          + 'Momentum-Sockel bleibt stehen.'
         : 'Keine neuen Einstiege. Bestehende Ausstiege laufen weiter — '
           + 'ein Zwangsverkauf würde Buchverluste zum schlechtesten Zeitpunkt festschreiben.')
       + hinweis,
   };
+}
+
+/**
+ * Zwangs-Exit-Grund der Notbremse — oder null, wenn keiner ansteht.
+ *
+ * ── Der Befund (Audit 13.08., K-3) ────────────────────────────────────────
+ *
+ * `flattenOnBreach` war ein Schalter ohne Maschine: Er stand im
+ * Options-Modal, `pruefeBreaker` lieferte die Stufe 'glattstellen', und der
+ * Klartext versprach „Offene Positionen werden geschlossen." — aber
+ * repo-weit existierte KEIN Code, der bei dieser Stufe irgendetwas
+ * glattstellte. Wer die harte Stufe bewusst wählte, glaubte sich geschützt
+ * und war es nicht: Am Crash-Tag lief das Konto durch bis zum letzten
+ * Einzel-Stop, statt bei der gewählten Grenze glatt zu sein.
+ *
+ * Diese Funktion ist die EINE Übersetzung von Stufe zu Exit-Grund. Der
+ * Scan fragt sie in seiner Risiko-Exit-Schleife VOR den normalen Stops ab;
+ * so läuft die Glattstellung über exakt denselben Pfad wie jeder andere
+ * Exit (Broker-Routing, Fill-vor-Buchung, Cooldown-Stempel) — kein zweiter
+ * Verkaufsweg, der eigene Fehler haben könnte.
+ *
+ * Der Grund heißt 'breaker', weil `journalText` genau dieses Wort bereits
+ * als „durch die Tages-Notbremse" erzählt — ein zweites Vokabular
+ * ('emergency') für dieselbe Sache wäre wieder „eine Sache, zwei
+ * Antworten".
+ *
+ * Bewusst NUR Engine-Positionen: Der Momentum-Sockel gehört einer anderen,
+ * langsamen Maschine (SMA200-gefiltert, wöchentlich); ihn im Panik-Moment
+ * zum Tagestief zu verkaufen widerspräche seinem Design. Der Klartext der
+ * Bremse sagt das ausdrücklich.
+ */
+export function notbremsenExit(befund: Pick<BreakerBefund, 'stufe'>): 'breaker' | null {
+  return befund.stufe === 'glattstellen' ? 'breaker' : null;
 }

@@ -260,8 +260,16 @@ Der Scan schreibt einen Heartbeat nach `meta/health` (`lastScanAt`,
    → Alert bei `> 5 in 5 min`, Kanal: deine E-Mail.
 2. **Scan-Ausfall:** *Monitoring → Uptime Checks* → HTTPS-Check auf
    `https://us-central1-<projekt-id>.cloudfunctions.net/healthz` (Intervall
-   5 min) + Alert bei Ausfall. Zusätzlich fällt ein stehender Scan sofort in
-   der App auf (Quotes/`meta/health.lastScanAt` altern).
+   5 min) + Alert bei Ausfall. Seit 13.08. ist `healthz` ein echter
+   Totmann-Endpunkt: Er bewertet bei jedem Aufruf den Scan-Herzschlag
+   (`meta/health.lastRunAt`) und antwortet **503**, wenn der Scan länger als
+   20 Minuten steht oder die Kursquelle keinen einzigen Kurs mehr liefert —
+   der Uptime-Check schlägt damit auch bei totem Cloud Scheduler an, nicht
+   nur bei toter Function. Zweite Schicht: der `wachhund`-Scheduler (alle
+   10 min) schreibt denselben Befund nach `meta/health.alarm` und als
+   `logger.error` (Filter `WACHHUND` für einen eigenen Log-Alert); dritte
+   Schicht: das Dashboard rechnet das Urteil clientseitig und zeigt einen
+   roten Chip in „Warum handelt die Engine (nicht)?".
 3. **Budget:** Billing → *Budgets & alerts* → Budget (z. B. 10 €/Monat) mit
    50/90/100 %-Mails — deckt Firestore, Functions UND ausufernde KI-Kosten ab
    (zusätzlich zum Token-Guard `admin/aiBudget` und dem Anthropic-Spend-Limit

@@ -9,6 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 import {
+  notbremsenExit,
   BREAKER_MAX_PCT,
   klemmeBreaker,
   pruefeBreaker,
@@ -148,5 +149,32 @@ describe('Voreinstellung für neue Konten', () => {
     // Fehlendes Feld = aus. Eine Sperre rückwirkend über fremde Konten zu
     // legen, wäre eine Kapitalentscheidung ohne Auftrag.
     expect(pruefeBreaker(lage(10_000, 5_000), {}).einstiegErlaubt).toBe(true);
+  });
+});
+
+describe('notbremsenExit — der Schalter hat jetzt eine Maschine (Audit K-3)', () => {
+  it('übersetzt NUR die Stufe glattstellen in einen Exit-Grund', () => {
+    expect(notbremsenExit({ stufe: 'glattstellen' })).toBe('breaker');
+    expect(notbremsenExit({ stufe: 'gesperrt' })).toBeNull();
+    expect(notbremsenExit({ stufe: 'frei' })).toBeNull();
+  });
+
+  it('liefert das Wort, das journalText bereits erzählt', () => {
+    // 'breaker' → „durch die Tages-Notbremse". Ein zweites Vokabular
+    // ('emergency') für dieselbe Sache wäre „eine Sache, zwei Antworten".
+    expect(notbremsenExit({ stufe: 'glattstellen' })).toBe('breaker');
+  });
+
+  it('verspricht im Klartext nur, was der Scan wirklich tut', () => {
+    // Der alte Text sagte „Offene Positionen werden geschlossen" — auch
+    // der Sockel wäre gemeint gewesen, den der Scan gar nicht führt. Wer
+    // die harte Stufe wählt, muss lesen können, was sie NICHT tut.
+    const b = pruefeBreaker(lage(10_000, 9_000), {
+      dailyLossLimitPct: 5,
+      flattenOnBreach: true,
+    });
+    expect(b.stufe).toBe('glattstellen');
+    expect(b.grund).toContain('Engine-Positionen');
+    expect(b.grund).toContain('Sockel');
   });
 });

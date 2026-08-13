@@ -935,6 +935,13 @@ export function watchMomentum(cb: (doc: MomentumDoc | null) => void): Unsubscrib
  */
 export interface HealthDoc {
   lastScanAt?: string;
+  /** Jeder Lauf stempelt das — auch der Skip-Pfad. Herzschlag des Wächters. */
+  lastRunAt?: string;
+  lastRunSkipped?: string | null;
+  symbolsOk?: number;
+  symbolsFailed?: number;
+  /** Urteil des wachhund-Schedulers (Audit 13.08., K-4a). */
+  alarm?: { aktiv?: boolean; grund?: string; text?: string; seit?: string; at?: string };
   trades?: number;
   entryGate?: Record<string, number>;
   /**
