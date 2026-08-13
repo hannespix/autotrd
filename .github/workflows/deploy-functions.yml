@@ -147,7 +147,9 @@ jobs:
         continue-on-error: true
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
-        run: node scripts-ci/check-secret.mjs ANTHROPIC_API_KEY BROKER_MASTER_KEY
+        run: >-
+          node scripts-ci/check-secret.mjs ANTHROPIC_API_KEY BROKER_MASTER_KEY
+          ALPACA_API_KEY ALPACA_SECRET_KEY
 
       # Aufwärm-Lauf nach dem Deploy: Die Zeitpläne stehen (der Schritt davor
       # legt sie an), aber snapshotEquity und evalForecasts feuern erst am
