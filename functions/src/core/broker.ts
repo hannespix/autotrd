@@ -27,6 +27,7 @@ import {
   marginInterest,
   resolveRisk,
   riskBasedQty,
+  sicheresKapital,
   sizeWithMargin,
 } from '../../../shared/src/index.js';
 import type {
@@ -176,6 +177,49 @@ export function mengeZuKlein(qty: number, fractional: boolean, echterFill: boole
 /** Geldbeträge auf Cent runden — Float-Drift hat im Kontostand nichts zu suchen. */
 function roundCents(v: number): number {
   return Math.round(v * 100) / 100;
+}
+
+/**
+ * Wie lange der letzte Konto-Abgleich als Kapital-Deckel nachwirkt.
+ *
+ * Der Abgleich läuft mit jedem Scan (Minuten-Takt); 24 Stunden überbrücken
+ * Wochenenden und Ausfälle der Broker-API, ohne dass eine uralte Zahl ewig
+ * weiterklemmt. Nach Ablauf gilt wieder das Buch allein — zusammen mit dem
+ * Totmann-Wächter, der stehende Scans ohnehin meldet.
+ */
+export const KAPITAL_DECKEL_STD = 24;
+
+/**
+ * Womit ein EINSTIEG rechnen darf (Audit 13.08., Hochbefund 1).
+ *
+ * `kontoAbgleich` berechnet seit dem 12.08. das `sicheresCash` — das Minimum
+ * aus Buch- und Broker-Cash — und legt es im Vermerk `risk.abgleich` ab. Bis
+ * heute LAS es dort niemand: `sizeOrder` und die Deckungsprüfung rechneten
+ * weiter allein mit `wallet.paperBalance`. Genau das war der Anlassfall vom
+ * 12.08.: Buch +39 311 $, Broker −45 286 $ — das Buch gab munter weitere
+ * Käufe frei, real lief jeder davon auf Kredit.
+ *
+ * Der Deckel wirkt nur auf Einstiege (Sizing + Deckungsprüfung). Exits und
+ * die Wallet-Arithmetik rechnen weiter mit dem echten Buchstand: Ein Stop,
+ * der wegen einer Buchungsdifferenz nicht auslöst, wäre gefährlicher als die
+ * Differenz selbst — und eine Buchung mit geklemmter Zahl machte das Buch
+ * zum Lügner.
+ */
+export function kapitalDeckel(
+  vermerk: unknown,
+  buchCash: number,
+  jetztIso: string,
+): number {
+  if (typeof vermerk !== 'object' || vermerk === null) return buchCash;
+  const v = vermerk as { at?: unknown; konto?: { sicheresCash?: unknown } };
+  const cash = v.konto?.sicheresCash;
+  if (typeof cash !== 'number' || !Number.isFinite(cash)) return buchCash;
+  if (typeof v.at !== 'string') return buchCash;
+  const alter = Date.parse(jetztIso) - Date.parse(v.at);
+  // Zukunfts-Stempel oder unlesbares Datum ⇒ dem Vermerk nicht trauen,
+  // aber in die KONSERVATIVE Richtung: Der Deckel gilt dann trotzdem.
+  if (Number.isFinite(alter) && alter > KAPITAL_DECKEL_STD * 3_600_000) return buchCash;
+  return sicheresKapital(buchCash, cash);
 }
 
 /**
@@ -761,6 +805,11 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
     if (!userSnap.exists) return { executed: false, reason: 'kein_profil' };
     const balance = (userSnap.get('wallet.paperBalance') as number | undefined) ?? 0;
     const now = new Date().toISOString();
+    /* Einstiege rechnen mit dem GEDECKELTEN Kapital (siehe kapitalDeckel):
+     * min(Buch, Broker) aus dem letzten Konto-Abgleich. Die Wallet-Buchungen
+     * weiter unten bleiben beim echten Buchstand — der Deckel entscheidet,
+     * OB und WIE GROSS gekauft wird, nicht, was gebucht wird. */
+    const deckung = kapitalDeckel(userSnap.get('risk.abgleich'), balance, now);
 
     /* Realismus (User-Wunsch 25.07.): Ausführung zum EFFEKTIVEN Preis —
      * Kommission + Slippage wie im Backtest; rawPrice bleibt im Record.
@@ -899,7 +948,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       }
       const cls = req.assetClass ?? classify(req.symbol);
       const fractional = cls === 'crypto';
-      const qty = req.qty ?? sizeOrder(strategy, balance, eff, fractional, req.margin, req.stopDistancePct, req.sizeFactor);
+      const qty = req.qty ?? sizeOrder(strategy, deckung, eff, fractional, req.margin, req.stopDistancePct, req.sizeFactor);
       if (mengeZuKlein(qty, fractional, echterFill)) {
         return { executed: false, reason: 'qty_unter_1' };
       }
@@ -915,7 +964,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       if (!echterFill) {
         if (req.margin) {
           if (cost > req.margin.buyingPower + 1e-9) return { executed: false, reason: 'zu_wenig_kaufkraft' };
-        } else if (cost > balance) {
+        } else if (cost > deckung) {
           return { executed: false, reason: 'zu_wenig_cash' };
         }
       }
@@ -977,7 +1026,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       if (!req.openShort) return { executed: false, reason: 'keine_position' };
       const cls = req.assetClass ?? classify(req.symbol);
       const fractional = cls === 'crypto';
-      const qty = req.qty ?? sizeOrder(strategy, balance, eff, fractional, req.margin, req.stopDistancePct, req.sizeFactor);
+      const qty = req.qty ?? sizeOrder(strategy, deckung, eff, fractional, req.margin, req.stopDistancePct, req.sizeFactor);
       if (mengeZuKlein(qty, fractional, echterFill)) {
         return { executed: false, reason: 'qty_unter_1' };
       }
@@ -986,7 +1035,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       // und ob die aus Cash oder aus Kaufkraft kommt, entscheidet der Hebel.
       if (req.margin) {
         if (margin > req.margin.buyingPower + 1e-9) return { executed: false, reason: 'zu_wenig_kaufkraft' };
-      } else if (margin > balance) {
+      } else if (margin > deckung) {
         return { executed: false, reason: 'zu_wenig_cash' };
       }
       const risk = resolveRisk(strategy.engine, cls);
