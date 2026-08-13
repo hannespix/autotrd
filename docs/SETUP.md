@@ -258,9 +258,13 @@ Der Scan schreibt einen Heartbeat nach `meta/health` (`lastScanAt`,
    Zähler-Metrik `functions-errors` mit Filter
    `resource.type="cloud_function" severity>=ERROR` → *Monitoring → Alerting*
    → Alert bei `> 5 in 5 min`, Kanal: deine E-Mail.
-2. **Scan-Ausfall:** *Monitoring → Uptime Checks* → HTTPS-Check auf
-   `https://us-central1-<projekt-id>.cloudfunctions.net/healthz` (Intervall
-   5 min) + Alert bei Ausfall. Seit 13.08. ist `healthz` ein echter
+2. **Scan-Ausfall:** *Monitoring → Uptime Checks* → HTTPS-Check auf die
+   **run.app-URL** der Function (Intervall 5 min) + Alert bei Ausfall. Die
+   URL steht im Deploy-Log hinter „Function URL (healthz)" — aktuell
+   `https://healthz-6xru5z43xa-uc.a.run.app`. Achtung: Das früher hier
+   dokumentierte Muster `us-central1-<projekt-id>.cloudfunctions.net/healthz`
+   liefert in diesem Projekt **404** — ein Uptime-Check darauf prüft nichts
+   (verifiziert 13.08.). Seit 13.08. ist `healthz` ein echter
    Totmann-Endpunkt: Er bewertet bei jedem Aufruf den Scan-Herzschlag
    (`meta/health.lastRunAt`) und antwortet **503**, wenn der Scan länger als
    20 Minuten steht oder die Kursquelle keinen einzigen Kurs mehr liefert —

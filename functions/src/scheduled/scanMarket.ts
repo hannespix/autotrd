@@ -626,12 +626,18 @@ async function executeUserTrades(
     // noch nicht erfüllt, gilt hier als Papierkonto und handelt ganz normal
     // weiter. Es MUSS weiterhandeln — Reife entsteht durch Trades, und ein
     // stillgelegtes Konto würde nie reif werden (siehe core/liveGate.ts).
-    // Übersprungen wird nur, wer wirklich live wäre; dort fehlt das
-    // Order-Routing noch (M14).
-    if (resolveBrokerMode(strategy, await reifeFuerKonto(uid)) !== 'paper') {
-      konten.live_verriegelt += 1;
-      continue; // Echtgeld-Routing kommt in M14
-    }
+    //
+    // ── Audit-Fix K-1 (13.08.): kein `continue` mehr ──────────────────────
+    //
+    // Bis heute wurde ein wirklich lives Konto hier KOMPLETT übersprungen —
+    // inklusive Risiko-Exits, Broker-Stop-Pflege, Trailing und Notbremse.
+    // Die M14-Verriegelung sollte Einstiege sperren; sie verriegelte auch
+    // die Ausstiege: Am ersten Live-Tag hätte niemand mehr die Stops
+    // gezogen. Jetzt läuft das Konto normal durch den Scan, und die
+    // Verriegelung sitzt dort, wo sie hingehört — als erster Grund in
+    // `entrySperre`. Exits durchlaufen die Sperre nie (siehe deren Kopf).
+    const liveVerriegelt = resolveBrokerMode(strategy, await reifeFuerKonto(uid)) !== 'paper';
+    if (liveVerriegelt) konten.live_verriegelt += 1;
     // Gate VOR der Risiko-Klammer, damit beide Pfade (Signal + Ausführung)
     // dasselbe gedeckelte Gewicht sehen.
     strategy.signals = {
@@ -1072,6 +1078,7 @@ async function executeUserTrades(
         offen: readonly string[],
         side: 'long' | 'short',
       ):
+        | 'live_verriegelt'
         | 'nicht_handelbar'
         | 'cluster_voll'
         | 'news_veto'
@@ -1083,6 +1090,13 @@ async function executeUserTrades(
         | 'regime_stress'
         | null => {
         gate.geprueft += 1;
+        // Live-Verriegelung ZUERST (Audit K-1, 13.08.): Solange das
+        // Einstiegs-Routing für Echtgeld nicht ausdrücklich freigegeben
+        // ist, eröffnet ein wirklich lives Konto nichts Neues — es wird
+        // aber nicht mehr vom ganzen Scan ausgeschlossen; Exits und Stops
+        // laufen normal. Zähler je KONTO (konten.live_verriegelt), nicht
+        // je Symbol — wie bei der Notbremse darunter.
+        if (liveVerriegelt) return 'live_verriegelt';
         // Die Notbremse steht VOR allen anderen Prüfungen: Wenn das Konto
         // heute genug verloren hat, ist jede weitere Abwägung müßig. Der
         // Zähler steht bewusst nicht hier — er zählt je KONTO, nicht je

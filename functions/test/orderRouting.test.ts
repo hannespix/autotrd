@@ -39,12 +39,32 @@ import {
 
 /* Firestore-Attrappe für den Verbindungs-Cache. Sie muss vor den Importen
  * greifen — deshalb `vi.hoisted`, sonst liefe `holt` erst nach dem Mock. */
-const { holt, setzt } = vi.hoisted(() => ({
+const { holt, setzt, statsHolt, equityAnzahl } = vi.hoisted(() => ({
   holt: vi.fn(),
   setzt: vi.fn(async () => undefined),
+  /** users/{uid}/stats/main — Grundlage der Live-Reife (Audit K-1). */
+  statsHolt: vi.fn(async () => ({ exists: false, get: () => undefined, data: () => ({}) })),
+  /** Länge der Equity-Serie für die Reife-Messstrecke. */
+  equityAnzahl: { wert: 0 },
 }));
 vi.mock('firebase-admin/firestore', () => ({
-  getFirestore: () => ({ doc: () => ({ get: holt, set: setzt }) }),
+  getFirestore: () => ({
+    doc: () => ({ get: holt, set: setzt }),
+    // Nur für `reifeFuerKonto` (liveGate): users/{uid}/stats/main lesen und
+    // die Equity-Serie zählen. Alles andere läuft über `doc` oben.
+    collection: () => ({
+      doc: () => ({
+        collection: (name: string) =>
+          name === 'equity'
+            ? {
+                count: () => ({
+                  get: async () => ({ data: () => ({ count: equityAnzahl.wert }) }),
+                }),
+              }
+            : { doc: () => ({ get: statsHolt }) },
+      }),
+    }),
+  }),
   FieldPath: class {},
   FieldValue: { increment: () => 0, delete: () => 0 },
   Timestamp: { now: () => 0 },
@@ -323,6 +343,7 @@ describe('Echtgeld-Schlüssel und Order-Routing', () => {
     // ein späterer Test den Zustand DIESES Tests erbt.
     vergissKillSwitch();
     for (const uid of ['u-live', 'u-paper']) vergissVerbindung(uid);
+    equityAnzahl.wert = 0;
   });
 
   it('gibt für ORDERS nichts zurück, solange Echtgeld nicht freigegeben ist', async () => {
@@ -336,11 +357,43 @@ describe('Echtgeld-Schlüssel und Order-Routing', () => {
     expect(v).toEqual({ mode: 'live', schluessel: { keyId: 'AK1', secret: 'S1' } });
   });
 
-  it('routet erst mit ausdrücklicher Betreiber-Freigabe', async () => {
+  it('Env-Flag + AK-Schlüssel allein schalten NICHTS scharf (Audit K-1)', async () => {
+    // Der alte Vertrag dieses Tests WAR der Audit-Befund: Betreiber-Freigabe
+    // plus Schlüssel-Präfix genügten für Live-Routing — ohne Nutzer-Schalter,
+    // ohne Reife. Jetzt bleibt die Order im Buch, solange der Schalter des
+    // Nutzers nicht ausdrücklich auf live steht.
     process.env.ALPACA_ALLOW_LIVE = '1';
-    holt.mockResolvedValue(feld({ keyId: 'AK1', secretKey: 'S1', mode: 'live' }));
+    holt
+      .mockResolvedValueOnce(feld({ keyId: 'AK1', secretKey: 'S1', mode: 'live' }))
+      .mockResolvedValueOnce(feld({ killSwitch: false }))
+      .mockResolvedValueOnce(feld({})); // User-Doc ohne live-Schalter
+    expect(await brokerVerbindung('u-live', 1_000)).toBeNull();
+  });
+
+  it('routet erst, wenn die GANZE Drei-Guard-Kette ja sagt', async () => {
+    process.env.ALPACA_ALLOW_LIVE = '1';
+    holt
+      .mockResolvedValueOnce(feld({ keyId: 'AK1', secretKey: 'S1', mode: 'live' }))
+      .mockResolvedValueOnce(feld({ killSwitch: false }))
+      .mockResolvedValueOnce(feld({ 'settings.strategy.broker.mode': 'live' }));
+    // Reife bestanden: 250 Trades, PF 1,6, FeeShare 2 %, 40 Tage Strecke.
+    statsHolt.mockResolvedValueOnce(
+      feld({ trades: 250, profitFactor: 1.6, costs: { fees: 100, grossPnl: 5_000 } }),
+    );
+    equityAnzahl.wert = 40;
     const v = await brokerVerbindung('u-live', 1_000);
     expect(v?.mode).toBe('live');
+  });
+
+  it('Schalter live, aber Reife fehlt → Order bleibt im Buch', async () => {
+    process.env.ALPACA_ALLOW_LIVE = '1';
+    holt
+      .mockResolvedValueOnce(feld({ keyId: 'AK1', secretKey: 'S1', mode: 'live' }))
+      .mockResolvedValueOnce(feld({ killSwitch: false }))
+      .mockResolvedValueOnce(feld({ 'settings.strategy.broker.mode': 'live' }));
+    statsHolt.mockResolvedValueOnce(feld({ trades: 3 })); // weit unter der Reife
+    equityAnzahl.wert = 2;
+    expect(await brokerVerbindung('u-live', 1_000)).toBeNull();
   });
 
   it('lässt Papierkonten davon unberührt', async () => {
@@ -837,12 +890,14 @@ describe('Kill-Switch — Not-Aus für Echtgeld-Order-Pfade', () => {
     // Reihenfolge-unabhängig: Cache-Reste anderer Describe-Blöcke verwerfen.
     vergissKillSwitch();
     for (const uid of ['u-live', 'u-paper']) vergissVerbindung(uid);
+    equityAnzahl.wert = 0;
   });
   afterEach(() => {
     holt.mockReset();
     delete process.env.ALPACA_ALLOW_LIVE;
     vergissKillSwitch();
     for (const uid of ['u-live', 'u-paper']) vergissVerbindung(uid);
+    equityAnzahl.wert = 0;
   });
 
   it('ausgelöst → keine Live-Verbindung fürs Order-Routing', async () => {
@@ -854,11 +909,17 @@ describe('Kill-Switch — Not-Aus für Echtgeld-Order-Pfade', () => {
     expect(await brokerVerbindung('u-live', 1_000)).toBeNull();
   });
 
-  it('nicht ausgelöst → Live-Routing läuft (mit Betreiber-Freigabe)', async () => {
+  it('nicht ausgelöst → Live-Routing läuft (volle Kette, Audit K-1)', async () => {
     process.env.ALPACA_ALLOW_LIVE = '1';
     holt
       .mockResolvedValueOnce(feld({ keyId: 'AK1', secretKey: 'S1', mode: 'live' }))
-      .mockResolvedValueOnce(feld({ killSwitch: false }));
+      .mockResolvedValueOnce(feld({ killSwitch: false }))
+      // Seit K-1 gehören Nutzer-Schalter und Reife zur Kette — auch hier.
+      .mockResolvedValueOnce(feld({ 'settings.strategy.broker.mode': 'live' }));
+    statsHolt.mockResolvedValueOnce(
+      feld({ trades: 250, profitFactor: 1.6, costs: { fees: 100, grossPnl: 5_000 } }),
+    );
+    equityAnzahl.wert = 40;
     expect((await brokerVerbindung('u-live', 1_000))?.mode).toBe('live');
   });
 
