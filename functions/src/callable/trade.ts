@@ -9,6 +9,7 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
   bucketKey,
   classify,
+  kursZuAlt,
   tradableSymbols,
   type Quote,
   type Strategy,
@@ -126,6 +127,21 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
     throw new HttpsError(
       'failed-precondition',
       'Kein zentraler Kurs — Symbol zuerst in die Watchlist aufnehmen (nächster Scan liefert Daten)',
+    );
+  }
+  /* Kurs-Zeitdeckel (Audit 13.08., B-2): `updatedAt` wurde geschrieben und
+   * von keinem Leser geprüft — ein Symbol, das aus der Beobachtung fällt,
+   * behielt seine eingefrorene Quote, und die Handeingabe führte zum
+   * Wochen-alten Kurs aus. Gilt für BEIDE Seiten wie die Prüfung darüber:
+   * Ein Verkauf zu einem erfundenen Kurs ist keine Hilfe, sondern eine
+   * falsche P&L-Buchung. Das ist keine Risiko-Sperre (die lassen Exits
+   * durch), sondern dieselbe Frage wie „kein zentraler Kurs" — nur in der
+   * Zeit statt im Raum. */
+  const kursAlter = kursZuAlt(quote.updatedAt, classify(symbol), new Date());
+  if (kursAlter.zuAlt) {
+    throw new HttpsError(
+      'failed-precondition',
+      `${kursAlter.grund ?? 'Kurs ist veraltet'} — Symbol in die Watchlist aufnehmen, der nächste Scan liefert frische Daten`,
     );
   }
 
