@@ -133,6 +133,66 @@ export function waehleKurve(
   return { serie: [], herkunft: 'leer', hinweis: '' };
 }
 
+/**
+ * Warum die Anzeige zeigt, was sie zeigt (Owner-Frage 12.08.).
+ *
+ * „Noch zu wenige Snapshot-Tage für eine Kurve" sagt, DASS etwas fehlt, aber
+ * nicht WARUM — und genau das war die Frage: „warum noch keine Tageskurve!?!"
+ * bei vollem Handelsjournal. Die Gründe sind verschieden und führen zu
+ * verschiedenen Schlüssen:
+ *
+ *   - Es wurde noch nie abgeschlossen → warten auf den ersten Trade.
+ *   - Es gibt Abschlüsse, aber keine Snapshots → der Tageslauf um 23:15 hat
+ *     noch nicht gegriffen (oder ein Reset hat die Serie geleert). Dann
+ *     springt die realisierte Kurve ein, und der Satz sagt, dass es sie ist.
+ *   - Ein Reset liegt dazwischen → die Serie beginnt bei null, obwohl das
+ *     Konto alt ist. Ohne diesen Hinweis sucht man den Fehler im System.
+ *
+ * Pur und getestet, weil dieser Satz an drei Stellen der Oberfläche steht
+ * (Performance-Karte, Depot-Verlauf, Teilen-Karte) — dreimal formuliert
+ * wäre er dreimal anders.
+ */
+export interface ErklaerungEingabe {
+  herkunft: KurvenWahl['herkunft'];
+  /** Vorhandene Tages-Snapshots. */
+  snapshots: number;
+  /** Geschlossene Trades, aus denen eine Kurve gebaut werden könnte. */
+  trades: number;
+  /** Schnittmarke des letzten Resets (ISO), falls es einen gab. */
+  resetAm?: string | undefined;
+}
+
+/** Wann der Tageslauf schreibt — 17:15 New York, in Mitteleuropa 23:15. */
+const SNAPSHOT_UHRZEIT = '23:15';
+
+function snapshotSatz(snapshots: number, resetAm: string | undefined): string {
+  const seitReset = resetAm && resetAm.length >= 10 ? ` (Reset am ${resetAm.slice(0, 10)})` : '';
+  if (snapshots <= 0) {
+    return `Tages-Snapshots gibt es noch keine${seitReset} — der nächste entsteht um ${SNAPSHOT_UHRZEIT}.`;
+  }
+  if (snapshots === 1) {
+    return `Erst ein Tages-Snapshot${seitReset} — ab zwei entsteht die Depotwert-Kurve (einer je Tag, ${SNAPSHOT_UHRZEIT}).`;
+  }
+  return '';
+}
+
+export function kurvenErklaerung(e: ErklaerungEingabe): string {
+  if (e.herkunft === 'snapshots') return '';
+
+  if (e.herkunft === 'trades') {
+    const n = `${e.trades} ${e.trades === 1 ? 'Abschluss' : 'Abschlüssen'}`;
+    return `Kurve aus ${n} gerechnet — realisiert, sie bewegt sich nur bei Abschlüssen. ${snapshotSatz(e.snapshots, e.resetAm)}`.trim();
+  }
+
+  if (e.trades <= 0) {
+    return `Noch keine abgeschlossenen Trades — die Kurve beginnt mit dem ersten Abschluss. ${snapshotSatz(e.snapshots, e.resetAm)}`.trim();
+  }
+  // Abschlüsse vorhanden, trotzdem keine Kurve: dann fehlt ihnen der
+  // Zeitstempel oder das Ergebnis. Das ist ein Datenfehler und darf nicht wie
+  // „noch zu früh" klingen.
+  return `${e.trades} ${e.trades === 1 ? 'Abschluss trägt' : 'Abschlüsse tragen'} keinen verwertbaren Zeitpunkt oder kein Ergebnis — daraus lässt sich keine Kurve bauen.`;
+}
+
 const runde = (x: number): number => Math.round(x * 100) / 100;
 
 /** Kalendertag davor — der Ankerpunkt der Kurve. */

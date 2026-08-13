@@ -78,6 +78,8 @@ import {
   type Wallet,
   positionLage,
   waehleKurve,
+  kurvenErklaerung,
+  type KurvenWahl,
 } from '@autotrd/shared';
 import type { Unsubscribe } from 'firebase/firestore';
 import {
@@ -6880,10 +6882,55 @@ const EXIT_LABELS: Record<string, string> = {
    das UI aggregiert hier bewusst NICHTS selbst, damit Live-Ansicht und
    Kennzahlen nie auseinanderlaufen. Sparkline als Inline-SVG (keine
    Chart-Lib-Instanz für 120 Punkte, kein position:fixed in Glass-Cards). */
+/**
+ * Welche Depot-Kurve die Oberfläche zeigt — EINE Wahl für ALLE Karten.
+ *
+ * ── Der Befund (Owner 12.08.: „warum noch keine Tageskurve!?!") ───────────
+ *
+ * #265 hat die Kurve aus den Abschlüssen gebaut, #266 sie in die
+ * Teilen-Karte gehängt — und dort blieb sie. Die Performance-Karte, die
+ * große Kurve mit Drawdown und der Depot-Verlauf lasen weiter ausschließlich
+ * die Tages-Snapshots und meldeten „Noch zu wenige Snapshot-Tage", während
+ * das Bild zum Teilen eine Kurve zeichnete. Zwei Antworten auf dieselbe
+ * Frage, in derselben Ansicht untereinander.
+ *
+ * Deshalb steht die Wahl jetzt hier, an einer Stelle, und alle vier Karten
+ * rufen sie auf. Die Erklärung wandert mit: Ohne sie sieht eine realisierte
+ * Kurve aus wie der Depotwert — und ein Konto, dessen Snapshots ein Reset
+ * gelöscht hat, sieht aus wie ein kaputtes System.
+ */
+function depotKurve(quelle?: {
+  snapshots: readonly EquitySeriesPoint[];
+  trades: readonly HistoryTrade[];
+}): KurvenWahl & { erklaerung: string; snapshots: number } {
+  // Ohne Argument der volle Stand (Dashboard-Karten), mit Argument der
+  // Zeitraum-Ausschnitt (Handels-Analyse und Teilen-Grafik folgen dem
+  // Umschalter Heute/7T/30T/…). Dieselbe Rechnung, andere Eingabe — nicht
+  // dieselbe Frage mit zwei Antworten.
+  const snapshots = quelle?.snapshots ?? st?.equitySeries ?? [];
+  const geschlossen = closedOnly((quelle?.trades ?? st?.trades ?? []) as HistoryTrade[]);
+  const wahl = waehleKurve(
+    snapshots,
+    geschlossen.map((t) => ({ at: t.executedAt, pnl: t.pnl ?? 0 })),
+    st?.wallet?.baseCapital ?? st?.strategy?.broker?.initialCapital ?? 0,
+  );
+  return {
+    ...wahl,
+    snapshots: snapshots.length,
+    erklaerung: kurvenErklaerung({
+      herkunft: wahl.herkunft,
+      snapshots: snapshots.length,
+      trades: geschlossen.length,
+      resetAm: st?.wallet?.resetAt,
+    }),
+  };
+}
+
 function renderPfStats(): void {
   if (!st) return;
   const s = st.pfStats;
-  const serie = st.equitySeries;
+  const wahl = depotKurve();
+  const serie = wahl.serie;
   const grid = $('pfGrid');
   const hint = $('pfHint');
   const spark = $('pfSpark') as unknown as SVGSVGElement;
@@ -6909,12 +6956,16 @@ function renderPfStats(): void {
   } else {
     spark.setAttribute('hidden', '');
   }
-  renderPfKurven(serie);
+  renderPfKurven(serie, wahl.hinweis);
   renderDepotVerlauf();
 
   if (!s || s.equityDays === 0) {
     grid.hidden = true;
     hint.hidden = false;
+    // Statt des festen Markup-Satzes die Erklärung, die zum Konto passt: Der
+    // Unterschied zwischen „noch nie gehandelt" und „Reset hat die Serie
+    // geleert" ist genau die Frage, die hier gestellt wurde.
+    if (wahl.erklaerung) hint.textContent = wahl.erklaerung;
     return;
   }
   grid.hidden = false;
@@ -6923,7 +6974,9 @@ function renderPfStats(): void {
   // Rauschen — der Hinweis bleibt sichtbar, bis eine Woche Kurve da ist.
   hint.hidden = days >= 7;
   if (!hint.hidden) {
-    hint.textContent = `Erst ${days} Snapshot-Tag${days === 1 ? '' : 'e'} — Kennzahlen werden mit jeder weiteren Kurve aussagekräftiger (täglich 23:15).`;
+    hint.textContent =
+      `Erst ${days} Snapshot-Tag${days === 1 ? '' : 'e'} — Kennzahlen werden mit jeder weiteren Kurve aussagekräftiger (täglich 23:15).`
+      + (wahl.erklaerung ? ` ${wahl.erklaerung}` : '');
   }
   const num = (v: number | null | undefined, digits = 2, suffix = ''): string =>
     v === null || v === undefined ? '--' : `${v.toFixed(digits)}${suffix}`;
@@ -6953,7 +7006,10 @@ function renderPfStats(): void {
  * Bewusst ID-freie Inline-SVGs wie die Sparkline: `<defs>`-Gradienten mit
  * fester ID kollidierten, sobald zwei Charts auf derselben Seite stehen.
  */
-function renderPfKurven(serie: Array<{ date: string; equity: number }>): void {
+function renderPfKurven(
+  serie: Array<{ date: string; equity: number }>,
+  herkunftHinweis = '',
+): void {
   const kurve = document.getElementById('pfCurve');
   const ddSvg = document.getElementById('pfDDCurve');
   const meta = document.getElementById('pfCurveMeta');
@@ -6961,7 +7017,8 @@ function renderPfKurven(serie: Array<{ date: string; equity: number }>): void {
   if (serie.length < 2) {
     kurve.innerHTML = '';
     ddSvg.innerHTML = '';
-    meta.textContent = 'Noch zu wenige Snapshot-Tage für eine Kurve (täglich einer).';
+    // Warum, nicht nur dass — dieselbe Erklärung wie in der Karte darüber.
+    meta.textContent = depotKurve().erklaerung || 'Noch keine Kurve.';
     return;
   }
   const eq = serie.map((p) => p.equity);
@@ -6994,7 +7051,11 @@ function renderPfKurven(serie: Array<{ date: string; equity: number }>): void {
   const bis = serie[serie.length - 1]!.date;
   meta.textContent =
     `${von} → ${bis} · Start ${money(eq[0]!)} · Ende ${money(eq[eq.length - 1]!)} ` +
-    `· Hoch ${money(max)} · Tief ${money(min)} · tiefster Drawdown ${tiefster.toFixed(2)} %`;
+    `· Hoch ${money(max)} · Tief ${money(min)} · tiefster Drawdown ${tiefster.toFixed(2)} %` +
+    // Eine realisierte Kurve MUSS sich als solche zu erkennen geben: Sie steht
+    // still, während eine offene Position läuft — als Depotwert gelesen führt
+    // sie in die Irre.
+    (herkunftHinweis ? ` · ${herkunftHinweis}` : '');
 }
 
 /* ── Teilbare Ergebnis-Grafik (Owner-Wunsch 10.08.) ───────────────────────
@@ -7045,11 +7106,7 @@ function shareDatenBauen(betraege: boolean): ShareDaten {
    * welche der beiden gezeigt wird. Eine Kurve ohne Angabe ihrer Bedeutung
    * wäre eine Einladung zum Fehlschluss: Die realisierte steht still,
    * während eine offene Position läuft. */
-  const wahl = waehleKurve(
-    fenster.equity,
-    closedOnly(fenster.trades).map((t) => ({ at: t.executedAt, pnl: t.pnl ?? 0 })),
-    st?.wallet?.baseCapital ?? st?.strategy.broker.initialCapital ?? 0,
-  );
+  const wahl = depotKurve({ snapshots: fenster.equity, trades: fenster.trades });
   const zerlegung = zerlegeDepot(wahl.serie, fenster.trades);
   const letzte = zerlegung.equity[zerlegung.equity.length - 1] ?? 0;
   const basis = zerlegung.basis || 1;
@@ -7220,13 +7277,19 @@ function renderDepotVerlauf(): void {
   const meta = $('dcMeta');
   if (!halter || !legende || !meta) return;
 
-  const z = zerlegeDepot(st.equitySeries, st.trades as HistoryTrade[], { modus: st.dcModus });
+  // Dieselbe Kurvenwahl wie Performance-Karte und Teilen-Grafik (Owner
+  // 12.08.): Vorher las diese Karte allein die Snapshots und meldete „zu
+  // wenige Tage", während das Teilen-Bild daneben eine Kurve zeichnete.
+  const wahl = depotKurve();
+  const z = zerlegeDepot(wahl.serie, st.trades as HistoryTrade[], { modus: st.dcModus });
   const { svg, legende: legHtml } = depotChart(z);
-  halter.innerHTML = svg || '<div class="hint">Noch zu wenige Snapshot-Tage (täglich einer).</div>';
+  halter.innerHTML =
+    svg || `<div class="hint">${escText(wahl.erklaerung || 'Noch keine Kurve.')}</div>`;
   legende.innerHTML = legHtml;
 
   const teile: string[] = [];
   if (z.tage.length >= 2) teile.push(`${z.tage[0]} → ${z.tage[z.tage.length - 1]}`);
+  if (wahl.hinweis) teile.push(wahl.hinweis);
   const drin = z.baender.reduce((n, b) => n + b.trades, 0);
   teile.push(`${drin} ${drin === 1 ? 'Trade' : 'Trades'} im Bild`);
   // Ehrlich benennen, was NICHT im Bild ist — sonst wirkt die Zerlegung

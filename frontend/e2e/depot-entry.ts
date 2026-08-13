@@ -5,4 +5,4 @@
  * kann — beides aus den echten Quellen, nicht nachgebaut.
  */
 export { depotChart, depotTooltip } from '../src/depotChart.js';
-export { zerlegeDepot } from '@autotrd/shared';
+export { zerlegeDepot, waehleKurve, kurvenErklaerung } from '@autotrd/shared';

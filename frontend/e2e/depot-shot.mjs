@@ -32,7 +32,7 @@ execFileSync(
   ['esbuild', 'frontend/e2e/depot-entry.ts', '--bundle', '--format=esm', `--outfile=${BUNDLE}`, '--log-level=warning'],
   { stdio: 'inherit' },
 );
-const { depotChart, zerlegeDepot } = await import(BUNDLE);
+const { depotChart, zerlegeDepot, waehleKurve, kurvenErklaerung } = await import(BUNDLE);
 
 /* Vier Wochen Handelstage, sechs Symbole, gemischte Ergebnisse — nah an dem,
  * was ein Papierkonto nach ein paar Wochen zeigt. Deterministisch erzeugt
@@ -131,6 +131,85 @@ for (const [name, breite] of [['desktop', 1500], ['phone', 390]]) {
     fehler.push(`${name}: Equity-Linie (${mass.eqOben}…${mass.eqUnten}) liegt außerhalb des letzten Bandes (${mass.letztesOben}…${mass.letztesUnten})`);
   }
   await seite.close();
+}
+
+/* ── Fall 2: keine Snapshots, aber Trades (Owner 12.08.) ──────────────────
+ *
+ * „warum noch keine Tageskurve!?!" — bei vollem Handelsjournal. Der Grund
+ * war die Quelle: Diese Karte las ausschließlich die Tages-Snapshots, und
+ * die löscht ein Reset. Seitdem wählt `waehleKurve` — dieselbe Funktion, die
+ * das Dashboard aufruft — und springt auf die realisierte Kurve ein.
+ *
+ * Der Prüfstand muss GENAU DAS messen können, sonst bescheinigt er
+ * Fehlerfreiheit für etwas, das er nicht sieht: Vor der Änderung entstand
+ * hier kein `.dc-svg`, weil `zerlegeDepot([], trades)` nichts liefert.
+ * Gemessen wird also am gerenderten Bild, ob eine Linie mit Ausdehnung da
+ * ist — nicht, ob der Quelltext eine Funktion aufruft. */
+const wahl = waehleKurve(
+  [],
+  trades.map((t) => ({ at: t.executedAt, pnl: t.pnl })),
+  10_000,
+);
+const zt = zerlegeDepot(wahl.serie, trades);
+const { svg: svgT, legende: legT } = depotChart(zt);
+const erklaerung = kurvenErklaerung({
+  herkunft: wahl.herkunft,
+  snapshots: 0,
+  trades: trades.length,
+  resetAm: '2026-08-11T09:20:00.000Z',
+});
+const htmlT = `<!doctype html><html lang="de" data-theme="dark"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head>
+<body><div class="wrap" style="padding:12px;max-width:520px">
+<div class="card" data-panel="depotVerlauf"><div class="sect">Depot-Verlauf</div><div class="cbody">
+  <div class="dc-wrap" id="dcWrap"><div id="dcChart">${svgT || `<div class="hint">${erklaerung}</div>`}</div></div>
+  <div class="dc-legende" id="dcLegende">${legT}</div>
+  <div class="tn-n mono" id="dcMeta">${zt.tage[0]} → ${zt.tage[zt.tage.length - 1]} · ${wahl.hinweis}</div>
+  <div class="hint" id="dcWarum">${erklaerung}</div>
+</div></div></div></body></html>`;
+const dateiT = `${SHOTS}/depot-ohne-snapshots.html`;
+writeFileSync(dateiT, htmlT);
+
+{
+  const browser2 = await chromium.launch(CHROME ? { executablePath: CHROME } : {});
+  const seite = await browser2.newPage({ viewport: { width: 390, height: 900 }, reducedMotion: 'reduce' });
+  seite.on('pageerror', (e) => fehler.push(`ohne_snapshots: pageerror ${e.message}`));
+  await seite.goto(pathToFileURL(dateiT).href);
+  const mass = await seite.evaluate(() => {
+    const svgEl = document.querySelector('.dc-svg');
+    const eq = svgEl?.querySelector('.dc-eq')?.getBBox() ?? null;
+    return {
+      hatKurve: Boolean(svgEl),
+      eqBreite: eq ? Math.round(eq.width) : 0,
+      eqHoehe: eq ? Math.round(eq.height) : 0,
+      baender: svgEl ? svgEl.querySelectorAll('.dc-band').length : 0,
+      meta: document.getElementById('dcMeta')?.textContent ?? '',
+      warum: document.getElementById('dcWarum')?.textContent ?? '',
+      seiteScroll: Math.round(document.documentElement.scrollWidth),
+      fensterBreite: window.innerWidth,
+    };
+  });
+  await seite.screenshot({ path: `${SHOTS}/depot-ohne-snapshots.png`, fullPage: true });
+  console.log('ohne_snapshots', JSON.stringify(mass));
+
+  if (!mass.hatKurve) fehler.push('ohne_snapshots: gar keine Kurve gezeichnet (der gemeldete Fehler)');
+  if (mass.eqBreite < 10) fehler.push(`ohne_snapshots: Depot-Linie nur ${mass.eqBreite}px breit`);
+  // Die Kurve muss sich BEWEGEN — eine waagerechte Linie wäre eine Kurve,
+  // die nichts erzählt, und genau das Bild, das der Owner gemeldet hat.
+  if (mass.eqHoehe < 2) fehler.push(`ohne_snapshots: Depot-Linie ist flach (${mass.eqHoehe}px hoch)`);
+  if (mass.baender < 1) fehler.push('ohne_snapshots: keine Trade-Bänder gezeichnet');
+  if (!mass.meta.includes('realisiert')) {
+    fehler.push('ohne_snapshots: Bildunterschrift sagt nicht, dass die Kurve realisiert ist');
+  }
+  // Und sie muss sagen WARUM, nicht nur DASS — das war die Frage.
+  if (!mass.warum.includes('Reset') || !mass.warum.includes('23:15')) {
+    fehler.push(`ohne_snapshots: Erklärung nennt weder Reset noch Tageslauf ("${mass.warum}")`);
+  }
+  if (mass.seiteScroll > mass.fensterBreite + 1) {
+    fehler.push(`ohne_snapshots: Seite scrollt waagerecht (${mass.seiteScroll} > ${mass.fensterBreite})`);
+  }
+  await seite.close();
+  await browser2.close();
 }
 
 await browser.close();
