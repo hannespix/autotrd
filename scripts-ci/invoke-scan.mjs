@@ -99,7 +99,7 @@ export async function ensureSelfInvoker({ sa, token, project, service = SERVICE 
  * beim echten Cloud Scheduler nehmen: HTTP-POST mit OIDC-Token).
  * Liefert true bei HTTP-2xx; die fachliche Wirkung prüft der Aufrufer.
  */
-export async function invokeService(service, { timeoutMs = 540_000 } = {}) {
+export async function invokeService(service, { timeoutMs = 540_000, logBody = false } = {}) {
   const sa = readServiceAccount();
   const project = projectFromFirebaserc();
   const token = await mintAccessToken(sa);
@@ -118,7 +118,15 @@ export async function invokeService(service, { timeoutMs = 540_000 } = {}) {
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (res.ok) {
-      console.log(`✓ ${service}-Invoke: HTTP ${res.status}`);
+      /* `logBody` für Läufe, deren Antwort die eigentliche Diagnose ist
+       * (universumsyncnow meldet `{ ok:false, grund:… }`, wenn der Sync
+       * nichts schrieb) — sonst stünde der Grund nur in Cloud Logging. */
+      if (logBody) {
+        const body = (await res.text()).slice(0, 300);
+        console.log(`✓ ${service}-Invoke: HTTP ${res.status} — ${body}`);
+      } else {
+        console.log(`✓ ${service}-Invoke: HTTP ${res.status}`);
+      }
       return true;
     }
     const bodyText = (await res.text()).slice(0, 200);

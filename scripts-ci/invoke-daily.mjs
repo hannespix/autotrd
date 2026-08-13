@@ -112,6 +112,28 @@ export const RUNS = [
     },
   },
   {
+    service: 'universumsyncnow',
+    label: 'Alpaca-Universum (alle handelbaren Papiere)',
+    // MUSS vor momentumrun stehen: Die Rangliste liest die Universum-Blöcke,
+    // die dieser Lauf schreibt — die Reihenfolge dieser Tabelle ist die
+    // Ausführungsreihenfolge (auch mit --only, dort wird nur gefiltert).
+    //
+    // Anlass (13.08., #123): `meta/alpacaUniversum` wurde seit #246 NIE
+    // geschrieben — der 17:30-ET-Scheduler lief, aber sein Abbruchgrund
+    // stand nur in Cloud Logging. Hier landet er im Actions-Log: Der
+    // Endpoint antwortet bei Misserfolg mit `{ ok:false, grund:… }`, und
+    // `logBody` druckt genau diese Antwort.
+    //
+    // Optional, weil der Cloud Scheduler ihn ohnehin täglich fährt und die
+    // Rangliste ohne Universum ehrlich auf den Katalog zurückfällt.
+    optional: true,
+    invokeOpts: { logBody: true },
+    async spur(project) {
+      const doc = await readMeta(project, 'alpacaUniversum');
+      return doc ? { at: doc.at } : null;
+    },
+  },
+  {
     service: 'momentumrun',
     label: 'Momentum-Ranking + Sockel-Rebalancing',
     // Seit dem Kern-Satelliten (04.08.) ist dieser Lauf nicht mehr nur ein
@@ -198,7 +220,7 @@ export async function runDaily({
     }
     log(`• ${run.label}: letzte Spur ${tag ?? 'keine'} — stoße ${run.service} an …`);
     try {
-      await invoke(run.service);
+      await invoke(run.service, run.invokeOpts);
     } catch (err) {
       log(`::warning::${run.label} — Invoke fehlgeschlagen: ${err.message}`);
       if (!run.optional) failed += 1;

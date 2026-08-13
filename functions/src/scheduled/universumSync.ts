@@ -118,10 +118,24 @@ export function verwaisteBloecke(vorhanden: readonly string[], neueAnzahl: numbe
   });
 }
 
-export async function runUniversumSync(now = new Date()): Promise<UniversumStand | null> {
+/**
+ * Ergebnis des Sync-Laufs MIT Grund.
+ *
+ * Der Grund existiert für die Diagnose ohne GCP-Konsole (Befund 13.08.:
+ * `meta/alpacaUniversum` wurde seit #246 NIE geschrieben, und warum, stand
+ * nur in Cloud Logging). `universumSyncNow` reicht ihn in die HTTP-Antwort
+ * durch — die Deploy-Aufwärm-Kette druckt sie ins Actions-Log.
+ */
+export interface UniversumErgebnis {
+  stand: UniversumStand | null;
+  /** null bei Erfolg; sonst maschinenlesbarer Kurzgrund. */
+  grund: string | null;
+}
+
+export async function runUniversumSync(now = new Date()): Promise<UniversumErgebnis> {
   if (!alpacaKonfiguriert()) {
     logger.info('Universum: keine Alpaca-Schlüssel in der Umgebung — übersprungen');
-    return null;
+    return { stand: null, grund: 'keine_schluessel' };
   }
 
   let eintraege: UniversumEintrag[];
@@ -133,12 +147,15 @@ export async function runUniversumSync(now = new Date()): Promise<UniversumStand
   } catch (err) {
     // Letzter Stand bleibt stehen — s. Modulkopf.
     logger.warn('Universum: Abruf fehlgeschlagen, alter Stand bleibt', err);
-    return null;
+    return {
+      stand: null,
+      grund: `abruf_fehlgeschlagen: ${err instanceof Error ? err.message : String(err)}`.slice(0, 200),
+    };
   }
 
   if (eintraege.length === 0) {
     logger.warn('Universum: leere Antwort — alter Stand bleibt');
-    return null;
+    return { stand: null, grund: 'leere_antwort' };
   }
 
   const db = getFirestore();
@@ -183,7 +200,7 @@ export async function runUniversumSync(now = new Date()): Promise<UniversumStand
     `Universum: ${stand.gesamt} Symbole (${stand.aktien} Aktien, ${stand.krypto} Krypto) in ${bloecke} Blöcken`
       + (entfernt > 0 ? `, ${entfernt} alte Blöcke entfernt` : ''),
   );
-  return stand;
+  return { stand, grund: null };
 }
 
 /** Täglich 17:30 ET — nach Börsenschluss, vor dem Momentum-Lauf (18:00). */
@@ -207,7 +224,10 @@ export const universumSync = onSchedule(
 export const universumSyncNow = onRequest(
   { timeoutSeconds: 540, memory: '512MiB' },
   async (_req, res) => {
-    const stand = await runUniversumSync();
-    res.json(stand ?? { ok: false, grund: 'kein_stand' });
+    // Der Grund steht in der Antwort, nicht nur im Cloud-Log: Die
+    // Deploy-Aufwärm-Kette druckt sie ins Actions-Log, und „warum ist das
+    // Universum leer?" ist damit ohne GCP-Konsole beantwortbar.
+    const r = await runUniversumSync();
+    res.json(r.stand ?? { ok: false, grund: r.grund ?? 'kein_stand' });
   },
 );

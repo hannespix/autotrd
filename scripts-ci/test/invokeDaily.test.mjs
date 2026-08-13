@@ -220,4 +220,18 @@ describe('RUNS', () => {
     const mom = RUNS.find((r) => r.service === 'momentumrun');
     expect(mom?.optional).toBe(true);
   });
+
+  it('der Universum-Sync steht VOR dem Momentum-Lauf und druckt seine Antwort', () => {
+    // Anlass (13.08., #123): meta/alpacaUniversum wurde seit #246 NIE
+    // geschrieben — der Grund stand nur in Cloud Logging. Die Rangliste liest
+    // die Blöcke, die der Sync schreibt: Reihenfolge ist Ausführungsreihenfolge.
+    const services = RUNS.map((r) => r.service);
+    const uni = services.indexOf('universumsyncnow');
+    expect(uni, 'universumsyncnow fehlt in RUNS').toBeGreaterThanOrEqual(0);
+    expect(uni).toBeLessThan(services.indexOf('momentumrun'));
+    const run = RUNS.find((r) => r.service === 'universumsyncnow');
+    expect(run?.optional).toBe(true);
+    // logBody: Die HTTP-Antwort IST die Diagnose ({ok:false, grund:…}).
+    expect(run?.invokeOpts).toEqual({ logBody: true });
+  });
 });
