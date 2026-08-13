@@ -136,20 +136,41 @@ export function sicheresKapital(buchCash: number, brokerCash: number | null | un
  * Pur und ohne Firestore, wie `costGate` und `exitUmbauPlan`: Die
  * Entscheidung sperrt fremde Konten, und das ist nichts, was man nur im
  * Live-Betrieb beobachten können sollte.
+ *
+ * ── `shortMargin`: die Buchungs-Differenz, die KEIN Fehler ist ────────────
+ *
+ * (Audit 13.08., H3 Alpaca-Grenze.) Das Buch führt Leerverkäufe als
+ * 100-%-Margin: Der Cash SINKT um Menge × Einstand (Sicherheitsleistung).
+ * Alpaca schreibt den Leerverkaufs-Erlös dagegen GUT: Der Cash STEIGT um
+ * denselben Betrag. Je offenem Short liegen die beiden Kontostände damit
+ * systematisch 2 × Menge × Einstand auseinander — bei völlig korrekter
+ * Buchführung auf beiden Seiten. Ohne Korrektur war die Sperre ab einer
+ * Short-Margin von ~2,5 % der Equity DAUERHAFT an (2× davon ≥ 5-%-Schwelle),
+ * und ein Dauer-Alarm macht blind für echte Fälle wie die 84 598 $ vom
+ * 12.08. Der Aufrufer liefert Σ(Menge × Einstand) der eigenen offenen
+ * Shorts; der Broker-Cash wird damit auf die Buch-Führung normalisiert —
+ * dieselbe Formel, die `adoptBroker` beim Übernehmen dokumentiert
+ * (buchCash = brokerCash − 2×Σ Short-Margin).
  */
 export function kontoAbgleich(
   buch: Kontostand | null | undefined,
   broker: Kontostand | null | undefined,
   meldeSchwelle = KONTO_MELDE_SCHWELLE,
   sperrAnteil = KONTO_SPERR_ANTEIL,
+  shortMargin = 0,
 ): KontoBefund {
   if (!buch || !broker) return OHNE;
   if (!endlich(buch.cash) || !endlich(broker.cash)) return OHNE;
   if (!endlich(buch.equity) || !endlich(broker.equity)) return OHNE;
 
-  const cashDiff = runde(broker.cash - buch.cash);
+  // Unsinnige Korrektur (NaN, negativ) zählt als 0 — im Zweifel wird die
+  // volle Differenz gemeldet, nie eine erfundene weggerechnet.
+  const korrektur = endlich(shortMargin) && shortMargin > 0 ? 2 * shortMargin : 0;
+  const brokerCashVergleichbar = broker.cash - korrektur;
+
+  const cashDiff = runde(brokerCashVergleichbar - buch.cash);
   const equityDiff = runde(broker.equity - buch.equity);
-  const sicheresCash = Math.min(buch.cash, broker.cash);
+  const sicheresCash = Math.min(buch.cash, brokerCashVergleichbar);
 
   // Bezug ist die BROKER-Equity, nicht die Buch-Equity: Sie ist die Wahrheit,
   // und ein kaputtes Buch darf nicht auch noch den Maßstab stellen.
