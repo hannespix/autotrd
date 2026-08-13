@@ -19,6 +19,7 @@ import {
   type Strategy,
 } from '../../../shared/src/index.js';
 import { consumeQuota } from '../core/broker.js';
+import { ladeUniversumSymbole } from '../core/universumLeser.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 
 const DAILY_SAVE_LIMIT = 300;
@@ -41,11 +42,22 @@ export const saveStrategy = onCall(CALLABLE_OPTS, async (request) => {
   if (s.watchlist.length > MAX_WATCHLIST) {
     throw new HttpsError('invalid-argument', `Watchlist ist auf ${MAX_WATCHLIST} Symbole begrenzt`);
   }
-  // Nur Katalog-Symbole (yfinance-Konventionen, z. B. '^NDX' statt 'NDX')
+  // Katalog-Symbole (yfinance-Konventionen, z. B. '^NDX' statt 'NDX') —
+  // seit Stufe 3 (Task 121) erweitert um das Alpaca-Universum: Was der
+  // Broker laut täglichem Sync wirklich handelt, darf auf die Watchlist,
+  // auch ohne Katalog-Eintrag. Der Universums-Blick kostet nur dann eine
+  // Lesung, wenn tatsächlich ein Nicht-Katalog-Symbol dabei ist.
   const catalog = new Set(allSymbols());
-  const unknown = s.watchlist.filter((sym) => !catalog.has(sym));
+  let unknown = s.watchlist.filter((sym) => !catalog.has(sym));
   if (unknown.length > 0) {
-    throw new HttpsError('invalid-argument', `Unbekannte Symbole: ${unknown.join(', ')}`);
+    const universum = await ladeUniversumSymbole();
+    unknown = unknown.filter((sym) => !universum.has(sym));
+  }
+  if (unknown.length > 0) {
+    throw new HttpsError(
+      'invalid-argument',
+      `Unbekannte Symbole (weder Katalog noch Alpaca-Universum): ${unknown.join(', ')}`,
+    );
   }
   // Broker-Guards: Client kann hierüber NIE live schalten (M8/M14-Thema)
   if (s.broker.mode !== 'paper') {

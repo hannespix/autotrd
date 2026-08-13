@@ -84,6 +84,7 @@ import {
   type MarginBudget,
 } from '../core/broker.js';
 import { abgleichFuerKonto } from '../core/brokerAbgleich.js';
+import { ladeUniversumSymbole } from '../core/universumLeser.js';
 import { raeumeWaisen } from '../core/brokerBindung.js';
 import { brokerVerbindung } from '../core/orderRouting.js';
 import { pflegeSchutz } from '../core/schutzStop.js';
@@ -2248,6 +2249,13 @@ async function collectScanSymbols(now: Date, uhrOffen: boolean | null = null): P
       .get();
     watchlists = watchlistUnion(
       engSnap.docs.map((d) => d.get('settings.strategy.watchlist') as unknown),
+      // Katalog ∪ Alpaca-Universum (Stufe 3, Task 121): `saveStrategy` lässt
+      // Universums-Symbole inzwischen auf die Watchlist — der Scan muss sie
+      // also auch BEOBACHTEN, sonst gäbe es nie einen Kurs und damit nie
+      // einen Trade. Der Fantasie-Filter (MUELLXYZ) bleibt voll wirksam:
+      // Das Universum enthält nur broker-verifizierte Papiere, und bei
+      // Lesefehlern ist es leer — dann gilt wie bisher nur der Katalog.
+      new Set([...allSymbols(), ...(await ladeUniversumSymbole())]),
     );
     aktiveKlassen = aktiveKlassenAusGewichten(
       engSnap.docs.map(

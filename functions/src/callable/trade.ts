@@ -15,6 +15,7 @@ import {
   type Strategy,
 } from '../../../shared/src/index.js';
 import { consumeQuota, executeTrade, resolveBrokerMode } from '../core/broker.js';
+import { ladeUniversumSymbole } from '../core/universumLeser.js';
 import { kontoTore } from '../core/kontoTore.js';
 import { clampStrategyRisk, maxOpenPositions } from '../core/rulesTrading.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
@@ -39,9 +40,26 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
    * ist eine Zahl, kein Instrument) und Auslandsbörsen. Letztere sind der
    * ernstere Fall, denn sie notieren gar nicht in Dollar: `BMW.DE` in Euro,
    * `7203.T` in Yen, `AZN.L` sogar in Pence. Der Kontostand ist hart in USD
-   * geführt — ein solcher Kauf hätte den Saldo lautlos verfälscht. */
-  if (typeof symbol !== 'string' || !new Set(tradableSymbols()).has(symbol)) {
+   * geführt — ein solcher Kauf hätte den Saldo lautlos verfälscht.
+   *
+   * Seit Stufe 3 (Task 121) gilt zusätzlich das ALPACA-UNIVERSUM: jedes
+   * Papier, das der Broker laut täglichem Sync wirklich handelt (nur
+   * US-Börsen + Krypto, OTC ausgefiltert, USD-notiert — dieselben Sorgen wie
+   * oben, nur broker-verifiziert statt handverlesen). Der Katalog bleibt der
+   * schnelle Normalfall; das Universum ist der Fallback für freie Eingaben.
+   * Kein Guard wird dadurch weicher: Kurs-Pflicht, Kurs-Zeitdeckel,
+   * Konto-Tore und Quota laufen für beide Wege identisch weiter. */
+  if (typeof symbol !== 'string') {
     throw new HttpsError('invalid-argument', 'Symbol nicht handelbar');
+  }
+  if (
+    !new Set(tradableSymbols()).has(symbol)
+    && !(await ladeUniversumSymbole()).has(symbol)
+  ) {
+    throw new HttpsError(
+      'invalid-argument',
+      'Symbol nicht handelbar — weder im Katalog noch im Alpaca-Universum',
+    );
   }
   if (side !== 'buy' && side !== 'sell') {
     throw new HttpsError('invalid-argument', "side muss 'buy' oder 'sell' sein");
