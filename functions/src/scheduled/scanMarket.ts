@@ -687,8 +687,11 @@ async function executeUserTrades(
       /* Unverbuchte Fills ZUERST nachbuchen (Audit 13.08., K-2b): Sie sind
        * echtes Depot ohne Buch — jede weitere Rechnung dieses Laufs (Cash,
        * Positionslimit, Exits) wäre sonst auf dem falschen Stand. Der
-       * Normalfall ist eine leere Liste und genau ein Firestore-Read. */
-      const nachgebucht = await bucheUnverbuchteFills(uid, clamped).catch(() => 0);
+       * Normalfall ist eine leere Liste und genau ein Firestore-Read.
+       * `strategy` statt `clamped` (das erst später entsteht): Die Buchung
+       * eines BEREITS AUSGEFÜHRTEN Fills entscheidet nichts mehr — Menge
+       * und Preis stehen fest, die Risiko-Klammer hätte nichts zu klemmen. */
+      const nachgebucht = await bucheUnverbuchteFills(uid, strategy).catch(() => 0);
       if (nachgebucht > 0) logger.info(`Scan ${uid}: ${nachgebucht} unverbuchte(r) Fill(s) nachgebucht`);
 
       const positionsSnap = await userDoc.ref.collection('positions').get();
