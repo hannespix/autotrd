@@ -44,6 +44,46 @@ import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 
 /** Wie viele Varianten gleichzeitig laufen — siehe tuneGrid zur Begründung. */
 export const FLEET_SIZE = 6;
+
+/**
+ * Das kollektive Vorwissen laden — EINMAL je Lauf, von Scan UND Tuner.
+ *
+ * Ein Lesefehler liefert leere Priors (= Ursprungsordnung), nie einen
+ * Abbruch: Weder ein Scan noch ein Tuner-Lauf darf an `meta/tuneGlobal`
+ * scheitern.
+ */
+export async function ladeTunePriors(): Promise<ReturnType<typeof buildPriors>> {
+  try {
+    const stats = ((await getFirestore().doc('meta/tuneGlobal').get()).get('axes') as
+      | GlobalAxisStats
+      | undefined) ?? {};
+    return buildPriors(stats);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * DIE Flotten-Auswahl — eine Funktion für Scan und Tuner (Audit 13.08., K-7).
+ *
+ * Der Befund: Der Scan steppte `buildVariants(clamped, FLEET_SIZE)` — die
+ * ersten sechs in FESTER Ordnung —, während der Tuner
+ * `orderByPrior(buildVariants(base, 48), priors).slice(0, 6)` bewertete.
+ * Sobald das Kollektiv Priors hatte, die die Top-6 ändern, bewertete der
+ * Tuner Varianten OHNE Schattenkonto (dauerhaft „Zu wenig Evidenz: 0 gegen
+ * X"), `stepFleet` löschte bei jedem Scan die Zustände der prior-gestützten
+ * Varianten wieder, und die 0-Evidenz-Urteile flossen ins globale Aggregat
+ * zurück: Sobald das Kollektiv etwas gelernt hatte, fror die lokale
+ * Selbstverbesserung ein. Jetzt wählen beide über GENAU diese Funktion —
+ * erst alle Kandidaten, dann nach Vorwissen ordnen, dann kappen.
+ */
+export function flottenAuswahl(
+  base: Strategy,
+  priors: ReturnType<typeof buildPriors>,
+): ReturnType<typeof buildVariants> {
+  const alle = buildVariants(base, TUNE_AXES.length * 8);
+  return orderByPrior(alle, priors).slice(0, FLEET_SIZE);
+}
 /** Trades des echten Kontos, die als Vergleichsgruppe dienen. */
 const LIVE_TRADE_WINDOW = 400;
 /** Journal-Einträge je User; ältere fallen raus. */
@@ -143,10 +183,7 @@ export async function tuneAll(now = new Date()): Promise<TuneRunResult> {
   // Zufallssieger zu befördern, und die Konten starten von verschiedenen
   // Ausgangsstrategien. Jede Beförderung braucht weiterhin die volle
   // Evidenz des eigenen Kontos.
-  const globalStats = ((await db.doc('meta/tuneGlobal').get()).get('axes') as
-    | GlobalAxisStats
-    | undefined) ?? {};
-  const priors = buildPriors(globalStats);
+  const priors = await ladeTunePriors();
   const globalDelta: GlobalAxisStats = {};
 
   let promoted = 0;
@@ -158,12 +195,9 @@ export async function tuneAll(now = new Date()): Promise<TuneRunResult> {
       const roh = userDoc.get('settings.strategy') as Strategy | undefined;
       if (!roh) continue;
       const base = clampStrategyRisk(structuredClone(roh));
-      // Erst ALLE Kandidaten bilden, dann nach Vorwissen ordnen, dann
-      // kappen: Andersherum (erst kappen, dann ordnen) käme das Vorwissen zu
-      // spät — es könnte nur noch sortieren, was die feste Ordnung ohnehin
-      // schon ausgewählt hat.
-      const alle = buildVariants(base, TUNE_AXES.length * 8);
-      const variants = orderByPrior(alle, priors).slice(0, FLEET_SIZE);
+      // Dieselbe Auswahl wie der Scan (flottenAuswahl, K-7): Bewertet wird
+      // nur, was auch ein Schattenkonto führt.
+      const variants = flottenAuswahl(base, priors);
       if (variants.length === 0) continue;
 
       const fleetDoc = await userDoc.ref.collection('tuning').doc('fleet').get();
