@@ -23,10 +23,20 @@
  *
  * Keine ist geraten; jede beantwortet eine konkrete Frage:
  *
- *   `minTrades`      Ab wann bedeutet eine Trefferquote überhaupt etwas? Bei
- *                    rund 20 % Trefferquote schwankt der Anteil über 50
- *                    Trades noch um mehr als die Hälfte seines Werts. 200 ist
- *                    die Grenze, ab der ein Profitfaktor kein Zufall mehr ist.
+ *   `minTrades`      Ab wann bedeutet eine Trefferquote überhaupt etwas?
+ *                    Ursprünglich 200 — kalibriert im 5-Minuten-Zeitalter
+ *                    (525 Trades in zwei Tagen; 200 waren eine Woche). Seit
+ *                    dem Tages-Regime (Zeitrahmen daily, Mindesthalte 1 Tag,
+ *                    Kostenschwelle) schüttet das System diese Währung
+ *                    absichtlich nicht mehr aus: 200 Trades wären Monate bis
+ *                    Jahre. Owner-Entscheidung 13.08. („innerhalb von ca.
+ *                    zwei Wochen live, wenn alles gut funktioniert"): 40 —
+ *                    bei gutem Lauf zwei Wochen Tages-Handel. Ein
+ *                    Tages-Trade trägt statistisch mehr als ein
+ *                    5-Minuten-Trade (größere Bewegung je Trade, weniger
+ *                    Rauschen), und die Qualitäts-Hürden darunter bleiben
+ *                    unverändert scharf — gelockert wurde NUR die Stückzahl,
+ *                    nicht die Beweislast.
  *   `minProfitFactor` Nicht 1,0, sondern mit Puffer. Papierhandel unterschätzt
  *                    die Wirklichkeit systematisch: Teilausführungen, echte
  *                    Slippage in dünnen Büchern, verpasste Kurse zwischen
@@ -40,7 +50,12 @@
  *                    Strich nichts hängen bleibt. Beides muss stimmen.
  *   `minTageStrecke` Gewinn über drei Tage ist Wetter, nicht Klima. Die
  *                    Messstrecke muss lang genug sein, um mehr als eine
- *                    Marktphase gesehen zu haben.
+ *                    Marktphase gesehen zu haben. 30 → 14 (Owner 13.08.,
+ *                    dieselbe Entscheidung wie bei `minTrades`): zwei Wochen
+ *                    ununterbrochen grüner Paper-Handel unter den scharfen
+ *                    Filtern von heute. Ein Reset löscht die Strecke — wer
+ *                    eine schlechte Strecke wegwirft, behält nicht deren
+ *                    Reife.
  *
  * ── Was hier NICHT geprüft wird ───────────────────────────────────────────
  *
@@ -74,13 +89,22 @@ export interface ReifeSchwellen {
 /**
  * Voreinstellung. Bewusst streng: Der Fehler „zu früh scharf" kostet Geld,
  * der Fehler „zu spät scharf" kostet Zeit. Die beiden sind nicht gleich teuer.
+ *
+ * Rekalibriert am 13.08. auf ausdrückliche Owner-Ansage („bitte optimiere
+ * die cashguards. es soll möglich sein innerhalb von ca. zwei Wochen live
+ * oder mit echtgeld Handeln zu können, wenn es alles gut funktioniert"):
+ * `minTrades` 200 → 40 und `minTageStrecke` 30 → 14 — die MENGEN-Hürden
+ * passen jetzt zum bewusst entschleunigten Tages-Regime. Die drei
+ * QUALITÄTS-Hürden (Profitfaktor, Gebührenanteil, Nettoergebnis) sind
+ * unangetastet: „wenn es alles gut funktioniert" ist weiter die Bedingung,
+ * nicht die Hoffnung. Zwei schlechte Wochen öffnen genauso wenig wie vorher.
  */
 export const REIFE_SCHWELLEN: ReifeSchwellen = {
-  minTrades: 200,
+  minTrades: 40,
   minProfitFactor: 1.2,
   maxFeeShare: 0.5,
   minNetPnl: 0,
-  minTageStrecke: 30,
+  minTageStrecke: 14,
 };
 
 export interface ReifeKriterium {
