@@ -79,6 +79,7 @@ import {
   positionLage,
   waehleKurve,
   kurvenErklaerung,
+  bewerteHerzschlag,
   type KurvenWahl,
 } from '@autotrd/shared';
 import type { Unsubscribe } from 'firebase/firestore';
@@ -5886,6 +5887,28 @@ function renderEngineWhy(): void {
 
   // Zeile 1: Marktzustand, anstehender Termin, Trades des letzten Scans.
   ampel.innerHTML = '';
+  /* Totmann-Urteil ZUERST und clientseitig gerechnet (Audit 13.08., K-4a):
+   * dieselbe pure Funktion wie healthz und der wachhund-Scheduler — nicht
+   * deren gespeichertes Ergebnis. Wenn der komplette Scheduler steht, wird
+   * `meta/health.alarm` nie geschrieben; ein Client, der nur das Feld
+   * anzeigte, bliebe dann grün. Der Client hat eine eigene Uhr — er braucht
+   * den Server nicht, um „der letzte Lauf ist 40 Minuten her" zu erkennen. */
+  const herz = bewerteHerzschlag({
+    jetztMs: Date.now(),
+    lastRunAt: h.lastRunAt ?? h.lastScanAt,
+    lastRunSkipped: h.lastRunSkipped,
+    symbolsOk: h.symbolsOk,
+    symbolsFailed: h.symbolsFailed,
+  });
+  if (!herz.ok) {
+    const chip = whyChip(`⚠ ${herz.text}`, 'var(--rd)');
+    chip.style.fontWeight = '700';
+    ampel.append(chip);
+  } else if (h.alarm?.aktiv) {
+    // Server-Alarm ohne frisches Client-Urteil: der Wächter sieht etwas,
+    // das der Client nicht sieht (z. B. Kursquelle) — anzeigen, nicht raten.
+    ampel.append(whyChip(`⚠ ${h.alarm.text ?? 'Wächter-Alarm aktiv'}`, 'var(--rd)'));
+  }
   const r = REGIME_TEXT[h.regime?.state ?? ''] ?? { t: 'unbekannt', c: 'var(--t3)' };
   const vix = typeof h.regime?.vix === 'number' ? ` · VIX ${h.regime.vix.toFixed(1)}` : '';
   const vol = typeof h.regime?.realizedVolPct === 'number' ? ` · Vol ${h.regime.realizedVolPct}%` : '';
