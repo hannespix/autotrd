@@ -95,7 +95,8 @@ describe('Die Notbremse bleibt über die UTC-Mitternacht gesperrt', () => {
 });
 
 /* Wie in den Paketen davor: Die Funktion allein sagt nichts darüber, ob die
- * Gates sie benutzen. Es gibt ZWEI — der Scan und das trade-Callable —, und
+ * Gates sie benutzen. Es gibt ZWEI — der Scan und die zentralen Konto-Tore
+ * (seit 13.08. das Breaker-Gate von Handeingabe UND Momentum-Lauf) —, und
  * eines davon zu vergessen wäre schlimmer als beide falsch zu haben: Der
  * Nutzer bekäme dann je nach Weg eine andere Antwort auf dieselbe Frage. */
 describe('Quelltext: beide Breaker-Gates rechnen in New Yorker Zeit', () => {
@@ -104,7 +105,7 @@ describe('Quelltext: beide Breaker-Gates rechnen in New Yorker Zeit', () => {
 
   for (const [name, rel] of [
     ['Scan', ['scheduled', 'scanMarket.ts']],
-    ['trade-Callable', ['callable', 'trade.ts']],
+    ['Konto-Tore', ['core', 'kontoTore.ts']],
   ] as const) {
     it(`${name} benutzt breakerHeuteAusgeloest`, () => {
       const text = quelle([...rel]);
