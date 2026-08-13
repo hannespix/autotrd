@@ -103,6 +103,53 @@ export interface ClosedTrade {
   notional?: number | null;
   /** Gebührensatz JE SEITE (Kommission + Slippage), z. B. 0,0015. */
   feeRate?: number | null;
+  /** ECHTE Gebühr der Schluss-Seite (`fee`-Feld am Trade, seit 04.08.). */
+  fee?: number | null;
+  /** Positionswert beim ÖFFNEN (Stück × Einstand) — seit 04.08. am Schluss-Trade. */
+  entryNotional?: number | null;
+}
+
+/**
+ * Roundtrip-Gebühr eines geschlossenen Trades — EINE Quelle für alle
+ * Statistiken (Audit 13.08., Hochbefund 4).
+ *
+ * Bis dahin schätzten Attribution, Kostenprofil und Best-Practice-Bilanz
+ * die Gebühren als `notional × feeRate × 2` — obwohl der Broker seit dem
+ * 04.08. an jeden Trade die ECHT verbuchte Gebühr schreibt (`fee`). Die
+ * Schätzung nimmt die Rate und das Volumen der SCHLUSS-Seite für beide
+ * Seiten: Bei einem gelaufenen Kurs stimmt die Einstiegs-Seite nicht, und
+ * bei einem echten Broker-Fill galt real die niedrigere Kommissions-Rate
+ * ohne Slippage-Aufschlag. Auf genau diesen Zahlen steht die Live-Reife
+ * (Profit-Faktor NACH Kosten) — eine Reife-Ampel auf geschätzten Kosten
+ * ist keine.
+ *
+ * Kaskade, ehrlichste zuerst; jede Stufe nutzt nur, was der Trade trägt:
+ *  1. `fee` + Einstiegs-Seite aus `entryNotional × feeRate` — Exit echt,
+ *     Entry mit echter Basis (Einstand) rekonstruiert.
+ *  2. `fee × 2` — Exit echt, Entry als Spiegel angenommen.
+ *  3. `notional × feeRate × 2` — Altbestand ohne `fee` (bisherige Rechnung).
+ *  4. `null` — es gibt nichts Belastbares; der Trade fällt aus dem
+ *     Kostenprofil, statt es mit Annahmen zu verfälschen.
+ */
+export function roundtripGebuehr(
+  t: Pick<ClosedTrade, 'fee' | 'entryNotional' | 'notional' | 'feeRate'>,
+): number | null {
+  if (typeof t.fee === 'number' && Number.isFinite(t.fee) && t.fee >= 0) {
+    if (
+      typeof t.entryNotional === 'number' && t.entryNotional > 0
+      && typeof t.feeRate === 'number' && t.feeRate >= 0
+    ) {
+      return t.fee + t.entryNotional * t.feeRate;
+    }
+    return t.fee * 2;
+  }
+  if (
+    typeof t.notional === 'number' && t.notional > 0
+    && typeof t.feeRate === 'number' && t.feeRate >= 0
+  ) {
+    return t.notional * t.feeRate * 2;
+  }
+  return null;
 }
 
 export interface TradeStats {
@@ -189,9 +236,12 @@ export function attribution(closed: ClosedTrade[]): {
     c.pnl = r2(c.pnl + t.pnl);
     c.n += 1;
     // Gebühren und Volumen nur bei vollständigen Angaben — ein Trade ohne
-    // Satz würde den Nenner verfälschen und die Kante zu gut aussehen lassen.
-    if (typeof t.notional === 'number' && t.notional > 0 && typeof t.feeRate === 'number') {
-      c.fees = r2((c.fees ?? 0) + t.notional * t.feeRate * 2);
+    // Belastbares würde den Nenner verfälschen und die Kante zu gut
+    // aussehen lassen. Die Gebühr kommt aus roundtripGebuehr: echt, wo das
+    // fee-Feld steht; geschätzt nur für Altbestand.
+    const geb = roundtripGebuehr(t);
+    if (geb !== null && typeof t.notional === 'number' && t.notional > 0) {
+      c.fees = r2((c.fees ?? 0) + geb);
       c.notional = r2((c.notional ?? 0) + t.notional);
     }
     byClass[cls] = c;
@@ -344,17 +394,18 @@ const LEER: CostProfile = {
 /**
  * Kostenprofil der geschlossenen Trades.
  *
- * Die Gebühr wird geschätzt, nicht gespeichert: Der Broker rechnet sie in den
- * Ausführungspreis (`paperEffectivePrice`), also steckt sie bereits im `pnl`.
- * Beide Seiten zusammen sind `Positionswert × Satz × 2` — dieselbe Rechnung,
- * mit der die Ursache am 27.07. gefunden wurde.
+ * Die Gebühr steckt bereits im `pnl` (der Broker rechnet sie in den
+ * Ausführungspreis) — hier wird sie WIEDER SICHTBAR gemacht. Seit dem
+ * 13.08. über `roundtripGebuehr`: echt aus dem `fee`-Feld, wo es steht;
+ * die alte Schätzung `Positionswert × Satz × 2` trägt nur noch den
+ * Altbestand. Die Live-Reife misst mit `fees`/`grossPnl` von hier.
  */
 export function costProfile(closed: ClosedTrade[]): CostProfile {
   const valid = closed.filter(
     (t) =>
       typeof t.pnl === 'number' && Number.isFinite(t.pnl) &&
       typeof t.notional === 'number' && t.notional > 0 &&
-      typeof t.feeRate === 'number' && t.feeRate >= 0,
+      roundtripGebuehr(t) !== null,
   );
   if (valid.length === 0) return { ...LEER };
 
@@ -365,10 +416,13 @@ export function costProfile(closed: ClosedTrade[]): CostProfile {
   const lossPcts: number[] = [];
   for (const t of valid) {
     const notional = t.notional as number;
-    const fee = notional * (t.feeRate as number) * 2;
+    const fee = roundtripGebuehr(t) as number;
     fees += fee;
     netto += t.pnl;
-    rtSum += (t.feeRate as number) * 2 * 100;
+    // Realisierte Roundtrip-Kosten in Prozent des Schluss-Volumens — nicht
+    // mehr der NOMINELLE Satz: Bei echten Fills war die Rate real niedriger
+    // (nur Kommission), und genau diese Differenz soll die Zahl zeigen.
+    rtSum += (fee / notional) * 100;
     const grossPct = ((t.pnl + fee) / notional) * 100;
     if (t.pnl > 0) winPcts.push(grossPct);
     else if (t.pnl < 0) lossPcts.push(Math.abs(grossPct));

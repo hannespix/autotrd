@@ -300,34 +300,38 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         const pnl = t.get('pnl') as number | undefined;
         const symbol = t.get('symbol') as string | undefined;
         if (typeof pnl === 'number' && Number.isFinite(pnl) && symbol) {
-          // qty × price ist der Positionswert beim Schließen — Basis der
-          // Gebührenschätzung. Der Satz steht am Trade (feeRate), weil er
-          // sich ändern kann; alte Trades ohne das Feld fallen aus dem
-          // Kostenprofil heraus statt es mit Annahmen zu verfälschen.
+          // qty × price ist der Positionswert beim Schließen. Die Gebühr
+          // kommt seit dem 13.08. bevorzugt ECHT aus dem fee-Feld (steht
+          // seit 04.08. an jedem Trade); entryPrice liefert die
+          // Einstiegs-Basis. feeRate bleibt für den Altbestand — alte
+          // Trades ohne alles fallen aus dem Kostenprofil heraus, statt es
+          // mit Annahmen zu verfälschen (roundtripGebuehr, portfolio.ts).
           const qty = t.get('qty') as number | undefined;
           const price = t.get('price') as number | undefined;
           const feeRate = t.get('feeRate') as number | undefined;
+          const fee = t.get('fee') as number | undefined;
+          const entryPrice = t.get('entryPrice') as number | undefined;
           const riskExit = t.get('riskExit') as string | undefined;
+          const volumen = {
+            ...(typeof qty === 'number' && typeof price === 'number'
+              ? { notional: qty * price }
+              : {}),
+            ...(typeof feeRate === 'number' ? { feeRate } : {}),
+            ...(typeof fee === 'number' ? { fee } : {}),
+            ...(typeof qty === 'number' && typeof entryPrice === 'number' && entryPrice > 0
+              ? { entryNotional: qty * entryPrice }
+              : {}),
+          };
           closed.push({
             symbol,
             pnl,
             assetClass: classify(symbol),
             ...(riskExit ? { riskExit } : {}),
-            ...(typeof qty === 'number' && typeof price === 'number'
-              ? { notional: qty * price }
-              : {}),
-            ...(typeof feeRate === 'number' ? { feeRate } : {}),
+            ...volumen,
           });
           const at = t.get('at') as string | undefined;
           if (t.get('source') === 'engine' && typeof at === 'string') {
-            engineTrades.push({
-              pnl,
-              at,
-              ...(typeof qty === 'number' && typeof price === 'number'
-                ? { notional: qty * price }
-                : {}),
-              ...(typeof feeRate === 'number' ? { feeRate } : {}),
-            });
+            engineTrades.push({ pnl, at, ...volumen });
           }
         }
       }
