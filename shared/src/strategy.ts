@@ -302,12 +302,15 @@ export interface SignalsConfig {
    * Signale der jeweiligen Anlageklasse erfahrungsgemäß einfangen
    * (`captureForClass`).
    *
-   * Standard AUS, und das ist wichtig: Die Einfangquoten stammen aus einer
-   * einzigen Messwoche. Solange die Option aus ist, zählt der Scan im
-   * Schatten mit (`entryGate.kante_wuerde_blocken`), wie viele Einstiege
-   * zusätzlich wegfielen. Erst wenn diese Zahl die Drosselung rechtfertigt,
-   * gehört sie eingeschaltet — ein Filter, der zu viel blockt, beendet auch
-   * die Datensammlung, die ihn korrigieren würde.
+   * Standard AN seit dem 13.08. (Task 94, Owner-Direktive „Kosten
+   * Minimierung"): AUS war die richtige Vorsicht, solange die Schwelle mit
+   * falschen ATR-Einheiten ohnehin nie blocken KONNTE und der
+   * Schattenzähler deshalb nichts aussagte. Beides hat sich geändert — die
+   * Einheiten stimmen (costGate, HOCH-4-Fix), der Schattenzähler
+   * (`entryGate.kante_wuerde_blocken`) schlug sofort an, und die
+   * Klassen-Attribution belegt live, was die Schwelle verhindert hätte:
+   * Krypto −625 $ bei 1 316 $ Gebühren, Forex −245 $, Kante −0,15 bis
+   * −0,32 %. `false` bleibt das ausdrückliche Opt-out je Konto.
    */
   captureGate?: boolean;
   /**
@@ -552,6 +555,10 @@ export const DEFAULT_STRATEGY: Strategy = {
     allowShort: false, // Leerverkäufe bewusst Opt-in (Options-Modal + ⓘ)
     minEdgeMultiple: MIN_EDGE_MULTIPLE, // Kostenschwelle AN (Befund 28.07.)
     newsVeto: true, // Einstiegs-Sperre bei frischen Hard-Events (News-Rückkehr 29.07.)
+    // Einfangquote zählt mit (13.08., Task 94). Der Scan wertet `!== false`,
+    // Bestandskonten ohne Feld sind also ebenfalls AN — der Eintrag hier
+    // dokumentiert den Standard und macht ihn im gespeicherten Doc sichtbar.
+    captureGate: true,
   },
 };
 

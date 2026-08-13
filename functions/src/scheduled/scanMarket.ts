@@ -1164,19 +1164,21 @@ async function executeUserTrades(
         };
         // Die Kostenschwelle wird ZWEIMAL gerechnet (04.08.):
         //
-        //  `kosten`  wie bisher — Auslenkung gegen Kosten. Diese Fassung
-        //            entscheidet, solange `signals.captureGate` nicht an ist.
-        //  `mitKante` zusätzlich mit der Einfangquote der Anlageklasse.
+        //  `kostenOhneKante` — nur Auslenkung gegen Kosten (Alt-Fassung).
+        //  `mitKante`        — zusätzlich mit der Einfangquote der Klasse.
         //
-        // Warum nicht sofort scharf: Die Einfangquoten stammen aus EINER
-        // Messwoche. Sie ungeprüft scharf zu schalten hieße, den Handel auf
-        // eine Schätzung zu drosseln — und ein Filter, der zu viel blockt,
-        // beendet auch die Datensammlung, die ihn korrigieren würde. Der
-        // Schattenzähler zeigt erst, WIE VIELE Einstiege betroffen wären;
-        // scharf wird er, wenn die Zahl das rechtfertigt.
+        // Seit dem 13.08. entscheidet die KANTEN-Fassung (Task 94, Opt-out
+        // über signals.captureGate === false). Das „nicht sofort scharf" von
+        // damals galt, solange die Schwelle mit falschen ATR-Einheiten
+        // ohnehin nie blocken konnte und der Schattenzähler nichts aussagte.
+        // Nach dem Einheiten-Fix (HOCH-4) schlug der Zähler sofort an, und
+        // die Klassen-Attribution belegt live, was ungebremst passiert:
+        // Krypto −625 $ bei 1 316 $ Gebühren, Forex −245 $. Bewegung ist
+        // kein Gewinn — gehandelt wird nur noch, was nach Einfangquote seine
+        // eigene Reibung tragen kann.
         const kostenOhneKante = costGate(kostenBasis);
         const mitKante = costGate({ ...kostenBasis, capture: captureForClass(klasse) });
-        const kosten = clamped.signals.captureGate === true ? mitKante : kostenOhneKante;
+        const kosten = clamped.signals.captureGate !== false ? mitKante : kostenOhneKante;
         // ALLE zutreffenden Gründe zählen, nicht nur den ersten. Der erste
         // Live-Lauf am 28.07. zeigte warum: `cluster_voll` stand auf 13,
         // `unter_kosten` auf 0 — nicht weil die Kostenschwelle nichts tat,
