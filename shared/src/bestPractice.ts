@@ -25,6 +25,7 @@
  */
 
 import type { Strategy } from './strategy.js';
+import { roundtripGebuehr } from './portfolio.js';
 
 // ── Engine-Bilanz (die Messgröße, die den Besten kürt) ──────────────────────
 
@@ -38,6 +39,10 @@ export interface EngineTrade {
   notional?: number;
   /** Gebührensatz je Seite — steht am Trade, weil er sich ändern kann. */
   feeRate?: number;
+  /** ECHTE Gebühr der Schluss-Seite (`fee`-Feld am Trade, seit 04.08.). */
+  fee?: number;
+  /** Positionswert beim Öffnen (Stück × Einstand). */
+  entryNotional?: number;
 }
 
 export interface EngineBilanz {
@@ -81,10 +86,13 @@ export function engineBilanz(trades: EngineTrade[]): EngineBilanz {
       juengster = Math.max(juengster, ms);
     }
     // Volumen und Gebühren nur bei vollständigen Angaben — ein Trade ohne
-    // Satz würde den Nenner verfälschen und die Kante zu gut aussehen lassen.
-    if (typeof t.notional === 'number' && t.notional > 0 && typeof t.feeRate === 'number') {
+    // Belastbares würde den Nenner verfälschen und die Kante zu gut
+    // aussehen lassen. Gebühr über roundtripGebuehr (echt vor Schätzung) —
+    // dieselbe Quelle wie Attribution und Kostenprofil.
+    const geb = roundtripGebuehr(t);
+    if (geb !== null && typeof t.notional === 'number' && t.notional > 0) {
       notional += t.notional;
-      fees += t.notional * t.feeRate * 2;
+      fees += geb;
     }
   }
   const zeitraumTage =
