@@ -50,7 +50,7 @@ import {
   type AlpacaAsset,
   type AlpacaSchluessel,
 } from './alpacaBroker.js';
-import type { BrokerMode } from './broker.js';
+import { reifeFuerKonto, resolveBrokerMode, type BrokerMode } from './liveGate.js';
 import { entschluessle } from './keyVault.js';
 
 /** Verbindungsdaten eines Kontos, so wie `connectBroker` sie ablegt. */
@@ -173,6 +173,39 @@ export async function brokerVerbindung(
       // `warn`, nicht `debug`: Der Kill-Switch ist ein Ausnahmezustand, und
       // jede unterbundene Order gehört ins Log — genau dafür ist er da.
       logger.warn(`brokerVerbindung ${uid}: Kill-Switch aktiv — Echtgeld-Order unterbunden`);
+      return null;
+    }
+    /* Drei-Guard-Kette AUCH am Order-Pfad (Audit 13.08., K-1).
+     *
+     * Bis heute prüfte diese Funktion für 'live' nur die Betreiber-Freigabe
+     * und den Kill-Switch. Der Modus kommt aber aus dem SCHLÜSSEL-Präfix
+     * (AK… ⇒ live) — nicht aus einer Entscheidung des Nutzers. Konsequenz:
+     * Am Tag von `ALPACA_ALLOW_LIVE=1` hätte JEDES Konto mit hinterlegtem
+     * Live-Schlüssel echt gehandelt, auch mit Paper-Strategie, ohne Reife,
+     * ohne ECHTGELD-Bestätigung — über Scan, Puls, Momentum und den
+     * Kauf-Knopf. Genau die Konten, die als „startklar, aber nicht scharf"
+     * beworben wurden.
+     *
+     * Jetzt gilt hier dieselbe Kette wie in `resolveBrokerMode`: Der
+     * Nutzer-Schalter (`settings.strategy.broker.mode`) und die Live-Reife
+     * müssen JA sagen, sonst bleibt die Order im Buch. Der rohe Feldwert
+     * genügt — ein unlesbares oder fehlendes Feld ist KEIN 'live', die
+     * Kette versagt geschlossen. Die zwei zusätzlichen Reads fallen nur
+     * für Konten mit Live-Schlüssel an.
+     */
+    const schalter = await getFirestore()
+      .doc(`users/${uid}`)
+      .get()
+      .then((d) => d.get('settings.strategy.broker.mode') as unknown)
+      .catch(() => null);
+    const modus = schalter === 'live' ? 'live' : 'paper';
+    const reife = modus === 'live' ? await reifeFuerKonto(uid) : undefined;
+    if (resolveBrokerMode({ broker: { mode: modus } }, reife) !== 'live') {
+      logger.warn(
+        `brokerVerbindung ${uid}: Live-Schlüssel hinterlegt, aber `
+          + (modus !== 'live' ? 'Nutzer-Schalter steht nicht auf live' : 'Live-Reife fehlt')
+          + ' — Order bleibt im Buch',
+      );
       return null;
     }
   }

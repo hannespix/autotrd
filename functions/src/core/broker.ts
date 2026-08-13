@@ -31,7 +31,6 @@ import {
 } from '../../../shared/src/index.js';
 import type {
   Position,
-  ReifeBefund,
   RiskConfig,
   Strategy,
   Trade,
@@ -68,39 +67,13 @@ export interface MarginBudget {
   leverage: number;
 }
 
-export type BrokerMode = 'paper' | 'live';
-
-/**
- * Einzige Stelle, die den effektiven Broker-Modus bestimmt.
- *
- * DREI Bedingungen, alle nötig — jede eine eigene Fehlerquelle:
- *
- *  1. `strategy.broker.mode === 'live'` — der Schalter des Nutzers.
- *  2. env `ALPACA_ALLOW_LIVE === '1'` — die Freigabe des Betreibers, an einem
- *     Ort, an den keine Oberfläche herankommt.
- *  3. **Live-Reife** (seit 04.08.) — die Zahlen müssen es hergeben.
- *
- * Punkt 3 setzt die Owner-Maxime um: „so lange testen mit paper wallet wie
- * notwendig. bis man sicher nur noch Gewinn schreibt, dann erst den Schalter
- * umlegen, aber trotzdem schon theoretisch startklar sein." Der Schalter ist
- * jederzeit bedienbar — er greift nur nicht, solange die Messung dagegen
- * spricht.
- *
- * `reife` ist OPTIONAL, und zwar mit Bedacht in diese Richtung: Ein Aufrufer,
- * der die Kennzahlen nicht kennt, bekommt den bisherigen Doppel-Guard und
- * damit unverändertes Verhalten. Fehlende Kennzahlen dürfen nie dazu führen,
- * dass eine Prüfung stillschweigend WEGFÄLLT — sie können hier nur dazu
- * führen, dass eine dritte Prüfung nicht hinzukommt. Wer live handelt, reicht
- * sie durch (siehe `scanMarket`); wer nur den Modus anzeigt, nicht.
- */
-export function resolveBrokerMode(strategy: Strategy, reife?: ReifeBefund): BrokerMode {
-  const wantLive = strategy.broker.mode === 'live';
-  if (!wantLive || process.env.ALPACA_ALLOW_LIVE !== '1') return 'paper';
-  // Reife bekannt und negativ ⇒ Downgrade. Der Nutzer merkt es an der
-  // Broker-Karte, nicht an einer stillen Überraschung im Kontoauszug.
-  if (reife && !reife.bereit) return 'paper';
-  return 'live';
-}
+/* `resolveBrokerMode`/`BrokerMode` sind am 13.08. nach `core/liveGate.ts`
+ * gezogen (Audit K-1): Die Order-Routing-Schicht braucht dieselbe
+ * Drei-Guard-Kette, und sie darf `broker.ts` nicht importieren (Zyklus —
+ * broker.ts importiert orderRouting). Der Re-Export hier hält alle
+ * bestehenden Aufrufer unverändert. */
+export { resolveBrokerMode } from './liveGate.js';
+export type { BrokerMode } from './liveGate.js';
 
 /**
  * Ist die Menge zu klein, um sie zu buchen?

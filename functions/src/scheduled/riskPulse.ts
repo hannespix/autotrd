@@ -54,7 +54,7 @@ import {
   type Position,
   type Strategy,
 } from '../../../shared/src/index.js';
-import { executeTrade, resolveBrokerMode, riskExitReason } from '../core/broker.js';
+import { executeTrade, riskExitReason } from '../core/broker.js';
 import { mayTrade } from '../core/access.js';
 import { clampStrategyRisk } from '../core/rulesTrading.js';
 import { getSparkBatch } from '../core/marketData.js';
@@ -159,9 +159,14 @@ export async function runPulse(now = new Date()): Promise<PulseResult> {
     try {
       const roh = userDoc.get('settings.strategy') as Strategy | undefined;
       if (!roh || !isStrategy(roh)) continue;
-      // Dieselben Tore wie im Scan: Echtgeld bleibt verriegelt, nicht
-      // freigeschaltete Konten handeln nicht.
-      if (resolveBrokerMode(roh) !== 'paper') continue;
+      /* Audit-Fix K-1 (13.08.): Live-Konten werden hier NICHT mehr
+       * übersprungen. Der Puls macht ausschließlich Schutzarbeit — Stops,
+       * Trailing, Margin-Call. Genau die stand für ein wirklich lives
+       * Konto still: Die als Einstiegs-Verriegelung gedachte Zeile
+       * `resolveBrokerMode(roh) !== 'paper' → continue` verriegelte auch
+       * jeden Ausstieg. Einstiege kennt der Puls nicht, also gibt es hier
+       * nichts zu verriegeln. Das Order-Routing der Exits prüft seine
+       * Drei-Guard-Kette selbst (orderRouting.brokerVerbindung). */
       if (!mayTrade(userDoc.data())) continue;
       const clamped = clampStrategyRisk(structuredClone(roh));
 
