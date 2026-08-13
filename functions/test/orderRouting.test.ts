@@ -947,3 +947,102 @@ describe('Kill-Switch — Not-Aus für Echtgeld-Order-Pfade', () => {
     expect(v?.mode).toBe('live');
   });
 });
+
+/* ── K-2 (Audit 13.08.): kein_fill-Storno und Duplicate-Nachschlag ──────────
+ *
+ * Der Wiederholungskauf-Loop hatte zwei Öffnungen: Eine ungefüllte
+ * Kauf-Order arbeitete beim Broker weiter und füllte, während der nächste
+ * Scan erneut kaufte; und ein Exit mit positionsstabiler Kennung blieb
+ * nach 422 „duplicate" für immer verklemmt, weil niemand die Ur-Order
+ * nachschlug.
+ */
+const antwortFolge = (
+  ...schritte: Array<{ ok?: boolean; status?: number; body?: unknown }>
+): ReturnType<typeof vi.fn> => {
+  let i = 0;
+  return vi.fn(async () => {
+    const s = schritte[Math.min(i++, schritte.length - 1)]!;
+    return {
+      ok: s.ok ?? true,
+      status: s.status ?? 200,
+      text: async () => (typeof s.body === 'string' ? s.body : JSON.stringify(s.body ?? {})),
+    } as unknown as Response;
+  });
+};
+
+describe('K-2 — routeOrder: Storno bei kein_fill, Nachschlag bei duplicate', () => {
+  const verbindung = { mode: 'paper' as const, schluessel: SCHLUESSEL };
+  const oeffnend = {
+    uid: 'u1',
+    symbol: 'AAPL',
+    side: 'buy' as const,
+    qty: 5,
+    laufId: 'scan-9',
+    stornoBeiKeinFill: true,
+  };
+
+  it('storniert eine ungefüllte ERÖFFNENDE Order statt sie arbeiten zu lassen', async () => {
+    const f = antwortFolge(
+      { body: { id: 'o9', status: 'accepted' } },
+      { body: { id: 'o9', status: 'new' } },
+      { body: { id: 'o9', status: 'new' } },
+      { body: {} }, // DELETE /v2/orders/o9
+    );
+    const r = await routeOrder(verbindung, oeffnend, f, SCHNELL);
+    expect(r.ausgefuehrt).toBe(false);
+    expect(r.grund).toBe('kein_fill');
+    // Der vierte Aufruf IST der Storno — ohne ihn bliebe die Order stehen
+    // und füllte Minuten später parallel zum nächsten Scan-Kauf.
+    expect(f).toHaveBeenCalledTimes(4);
+  });
+
+  it('bucht den Fill, wenn der Storno zu spät kommt — die Order füllte doch', async () => {
+    const f = antwortFolge(
+      { body: { id: 'o9', status: 'accepted' } },
+      { body: { id: 'o9', status: 'new' } },
+      { body: { id: 'o9', status: 'new' } },
+      { ok: false, status: 422, body: 'order is not cancelable' },
+      { body: { id: 'o9', status: 'filled', filled_qty: '5', filled_avg_price: '101' } },
+    );
+    const r = await routeOrder(verbindung, oeffnend, f, SCHNELL);
+    expect(r).toEqual({ ausgefuehrt: true, fillPreis: 101, fillMenge: 5, brokerOrderId: 'o9' });
+  });
+
+  it('lässt eine SCHLIESSENDE Order stehen — kein Storno', async () => {
+    // Ein später Exit-Fill ist erwünscht (die Stücke sind dann weg); der
+    // nächste Lauf findet ihn über die positionsstabile Kennung wieder.
+    const f = antwortFolge(
+      { body: { id: 'o9', status: 'accepted' } },
+      { body: { id: 'o9', status: 'new' } },
+      { body: { id: 'o9', status: 'new' } },
+    );
+    const r = await routeOrder(verbindung, { ...oeffnend, stornoBeiKeinFill: false }, f, SCHNELL);
+    expect(r.grund).toBe('kein_fill');
+    expect(f).toHaveBeenCalledTimes(3);
+  });
+
+  it('422 unique: findet die Ur-Order und übernimmt ihren Fill (Exit-Verklemmung)', async () => {
+    const f = antwortFolge(
+      { ok: false, status: 422, body: 'client_order_id must be unique' },
+      { body: { id: 'alt1', status: 'filled', filled_qty: '3', filled_avg_price: '55.5' } },
+    );
+    const r = await routeOrder(verbindung, { ...oeffnend, stornoBeiKeinFill: false }, f, SCHNELL);
+    expect(r).toEqual({ ausgefuehrt: true, fillPreis: 55.5, fillMenge: 3, brokerOrderId: 'alt1' });
+  });
+
+  it('422 unique bei toter Ur-Order ohne Fill → ehrlicher Grund statt broker_fehler', async () => {
+    const f = antwortFolge(
+      { ok: false, status: 422, body: 'client_order_id must be unique' },
+      { body: { id: 'alt1', status: 'canceled', filled_qty: '0', filled_avg_price: '0' } },
+    );
+    const r = await routeOrder(verbindung, { ...oeffnend, stornoBeiKeinFill: false }, f, SCHNELL);
+    expect(r.ausgefuehrt).toBe(false);
+    expect(r.grund).toBe('duplicate_ohne_fill');
+  });
+
+  it('anderes 422 (kein unique) bleibt ein broker_fehler', async () => {
+    const f = antwortFolge({ ok: false, status: 422, body: 'insufficient buying power' });
+    const r = await routeOrder(verbindung, oeffnend, f, SCHNELL);
+    expect(r.grund).toBe('broker_fehler');
+  });
+});

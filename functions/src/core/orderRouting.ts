@@ -43,8 +43,12 @@
 import { getFirestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions/v2';
 import {
+  AlpacaFehler,
   alpacaAsset,
   alpacaOrder,
+  alpacaOrderAbfragen,
+  alpacaOrderPerClientId,
+  alpacaOrderStornieren,
   clientOrderId,
   warteAufFill,
   type AlpacaAsset,
@@ -324,6 +328,20 @@ export async function routeOrder(
     qty: number;
     /** Lauf-Kennung (scanId) — bindet die Order-ID an den Lauf, nicht an die Uhr. */
     laufId: string;
+    /**
+     * Bei `kein_fill` die Order stornieren (Audit 13.08., K-2c)?
+     *
+     * Nur für ERÖFFNENDE Orders gesetzt: Eine ungefüllte Kauf-Order, die
+     * beim Broker weiterarbeitet, füllt Minuten später — während der
+     * nächste Scan mit frischer Kennung erneut kauft. Ergebnis: doppelte
+     * Position, eine davon ohne Buch und ohne Stop.
+     *
+     * Für SCHLIESSENDE Orders bleibt der Schalter aus, mit Absicht: Ein
+     * später Fill eines Exits ist erwünscht (die Stücke sind dann weg), und
+     * der nächste Lauf findet ihn über die positionsstabile Kennung wieder
+     * (siehe Duplicate-Pfad unten) und bucht ihn nach.
+     */
+    stornoBeiKeinFill?: boolean;
   },
   fetchImpl: typeof fetch = fetch,
   warteOpts: { versuche?: number; pauseMs?: number } = {},
@@ -354,9 +372,46 @@ export async function routeOrder(
       fetchImpl,
     );
     if (!fill || !(fill.ausfuehrungskurs > 0)) {
-      // Die Order steht möglicherweise weiter beim Broker. Sie wird beim
-      // nächsten Abgleich als Position sichtbar, die nur dort existiert —
-      // und sperrt dann die Einstiege, bis jemand hinsieht.
+      if (auftrag.stornoBeiKeinFill) {
+        /* Die Order darf nicht weiterarbeiten (Begründung am Parameter).
+         * `nicht_stornierbar` heißt fast immer: Sie hat sich zwischen dem
+         * letzten Poll und dem Storno doch noch gefüllt — dann ist der
+         * Fill hier nachzuholen statt ihn zum Waisen zu machen. */
+        try {
+          const storno = await alpacaOrderStornieren(
+            verbindung.mode,
+            order.id,
+            verbindung.schluessel,
+            fetchImpl,
+          );
+          if (storno === 'nicht_stornierbar') {
+            const stand = await alpacaOrderAbfragen(
+              verbindung.mode,
+              order.id,
+              verbindung.schluessel,
+              fetchImpl,
+            );
+            if (stand && stand.filledAvgPreis > 0 && stand.filledQty > 0) {
+              return {
+                ausgefuehrt: true,
+                fillPreis: stand.filledAvgPreis,
+                fillMenge: stand.filledQty,
+                brokerOrderId: order.id,
+              };
+            }
+          }
+        } catch (err) {
+          logger.warn(
+            `routeOrder ${auftrag.symbol}: Storno nach kein_fill fehlgeschlagen — `
+              + `Order ${order.id} arbeitet womöglich weiter`,
+            err,
+          );
+        }
+        return { ausgefuehrt: false, grund: 'kein_fill' };
+      }
+      // Schließende Order: Sie bleibt bewusst stehen — ein später Fill ist
+      // erwünscht und wird beim nächsten Lauf über die positionsstabile
+      // Kennung nachgebucht (Duplicate-Pfad im catch unten).
       return { ausgefuehrt: false, grund: 'kein_fill' };
     }
     return {
@@ -366,6 +421,59 @@ export async function routeOrder(
       brokerOrderId: order.id,
     };
   } catch (err) {
+    /* 422 „client_order_id must be unique" (Audit 13.08., K-2e): Die
+     * Kennung ist bereits verbraucht — es GIBT diese Order also schon.
+     * Bisher endete das als anonymer broker_fehler, und ein Exit mit
+     * positionsstabiler Kennung (`exit-<openedAt>`) blieb für immer
+     * verklemmt: jede Wiederholung 422, der Fill der Ur-Order nie gebucht.
+     * Jetzt wird nachgeschlagen statt geraten: Hat die Ur-Order gefüllt,
+     * ist DAS das Ergebnis dieses Aufrufs. */
+    if (err instanceof AlpacaFehler && err.status === 422 && /unique/i.test(err.message)) {
+      try {
+        const alt = await alpacaOrderPerClientId(
+          verbindung.mode,
+          coid,
+          verbindung.schluessel,
+          fetchImpl,
+        );
+        if (alt && alt.filledAvgPreis > 0 && alt.filledQty > 0) {
+          logger.info(
+            `routeOrder ${auftrag.symbol}: Ur-Order zur Kennung gefunden und Fill übernommen`,
+          );
+          return {
+            ausgefuehrt: true,
+            fillPreis: alt.filledAvgPreis,
+            fillMenge: alt.filledQty,
+            brokerOrderId: alt.id,
+          };
+        }
+        if (alt && ['new', 'accepted', 'partially_filled', 'pending_new'].includes(alt.status)) {
+          const fill = await warteAufFill(
+            verbindung.mode,
+            alt.id,
+            verbindung.schluessel,
+            warteOpts,
+            fetchImpl,
+          );
+          if (fill && fill.ausfuehrungskurs > 0) {
+            return {
+              ausgefuehrt: true,
+              fillPreis: fill.ausfuehrungskurs,
+              fillMenge: fill.qty > 0 ? fill.qty : auftrag.qty,
+              brokerOrderId: alt.id,
+            };
+          }
+          return { ausgefuehrt: false, grund: 'kein_fill' };
+        }
+        // Ur-Order tot ohne Fill (canceled/expired/rejected): nichts zu
+        // buchen. Der Grund benennt es, damit das Log nicht „Fehler" sagt,
+        // wo „nichts passiert" die Wahrheit ist.
+        return { ausgefuehrt: false, grund: 'duplicate_ohne_fill' };
+      } catch (nachschlag) {
+        logger.warn(`routeOrder ${auftrag.symbol}: Duplicate-Nachschlag fehlgeschlagen`, nachschlag);
+        return { ausgefuehrt: false, grund: 'broker_fehler' };
+      }
+    }
     // Die Fehlermeldung kann die Antwort des Brokers enthalten; sie geht
     // durch `keineSchluesselImText` in alpacaFetch, bevor sie hier ankommt.
     const text = err instanceof Error ? err.message : String(err);
