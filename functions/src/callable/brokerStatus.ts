@@ -48,6 +48,7 @@ import {
   type AlpacaSchluessel,
 } from '../core/alpacaBroker.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
+import { accessDeniedReason, accessLevelOf, mayTrade } from '../core/access.js';
 import { consumeQuota, resolveBrokerMode } from '../core/broker.js';
 import { entschluessle } from '../core/keyVault.js';
 import { reifeFuerKonto } from '../core/liveGate.js';
@@ -116,6 +117,13 @@ async function nutzerSchluessel(uid: string): Promise<AlpacaSchluessel | null> {
 export async function pruefeBrokerStatus(uid: string): Promise<BrokerStatusResult> {
   const db = getFirestore();
   const userDoc = await db.collection('users').doc(uid).get();
+  /* Freischaltung VOR dem Außen-Call (Audit 13.08., Härtung): Diese Karte
+   * feuert 2–3 Alpaca-Aufrufe je Klick — ein nie freigeschaltetes Konto
+   * zog damit bis zu 60× am Tag Fremd-API-Kosten. Das Doc ist ohnehin
+   * gerade gelesen; das Gate kostet nichts. */
+  if (!mayTrade(userDoc.data())) {
+    throw new HttpsError('permission-denied', accessDeniedReason(accessLevelOf(userDoc.data())));
+  }
   /* `settings.strategy`, nicht `settings` (Audit-Befund 11.08.).
    *
    * Unter `settings` liegen drei Dinge nebeneinander: `strategy`, `ui` und
