@@ -59,6 +59,7 @@ import {
   type AlpacaGeschlosseneOrder,
 } from '../core/alpacaBroker.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
+import { accessDeniedReason, accessLevelOf, mayTrade } from '../core/access.js';
 import { consumeQuota } from '../core/broker.js';
 import { fxFelder } from '../core/fx.js';
 import { brokerVerbindungLesend } from '../core/orderRouting.js';
@@ -158,6 +159,14 @@ export interface AdoptErgebnis {
 export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptErgebnis> => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'Anmeldung erforderlich');
+  /* Freischaltung VOR allem anderen (Audit 13.08., Härtung): Die Übernahme
+   * ruft Konto, Positionen und Order-Historie beim Broker ab und
+   * ÜBERSCHREIBT das eigene Buch — beides hat ein nie freigeschaltetes
+   * Konto nicht zu tun. */
+  const zugang = (await getFirestore().collection('users').doc(uid).get()).data();
+  if (!mayTrade(zugang)) {
+    throw new HttpsError('permission-denied', accessDeniedReason(accessLevelOf(zugang)));
+  }
   if (!(await consumeQuota(uid, 'adoptBroker', DAILY_ADOPT_LIMIT))) {
     throw new HttpsError('resource-exhausted', `Höchstens ${DAILY_ADOPT_LIMIT} Übernahmen am Tag`);
   }

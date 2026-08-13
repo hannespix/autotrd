@@ -20,6 +20,7 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 import {
+  MIN_ACCOUNTS_PUBLIC,
   aggregateTradingHealth,
   attribution,
   berateKlassen,
@@ -533,24 +534,41 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
   // Gewinner von gestern, der heute die Belege nicht mehr erfüllt, darf
   // nicht als „bewährt" stehen bleiben. Anonymisiert — keine User-Kennung,
   // keine Watchlist, kein Kapital; nur engine/signals/indicators + Kennzahlen.
+  //
+  // ANONYMITÄTSSCHWELLE (Audit 13.08., Härtung): `meta/**` ist öffentlich
+  // lesbar, und bei zwei, drei Konten ist „das beste Konto" schlicht eine
+  // PERSON, deren komplette Strategie-Konfiguration dann unauthentifiziert
+  // aussteht. `meta/health` hält dafür längst MIN_ACCOUNTS_PUBLIC ein —
+  // dieselbe Schwelle gilt jetzt auch hier. Der Komplett-Ersatz oben sorgt
+  // dafür, dass ein früher veröffentlichter Stand dabei auch VERSCHWINDET.
+  const beitragende = beitraege.filter((b) => (b.stats?.n ?? 0) > 0).length;
   try {
     await db.doc('meta/bestPractice').set({
       at: now.toISOString(),
       date,
       kriterien: { minTrades: BEWAEHRT_MIN_TRADES, minTage: BEWAEHRT_MIN_TAGE },
-      ...(bester
-        ? { stand: 'gekuert', kennzahlen: bester.bilanz, einstellungen: bester.einstellungen }
-        : {
-            stand: 'kein_kandidat',
-            ...(anwaerter
-              ? { anwaerter: { kennzahlen: anwaerter.bilanz, fehlt: anwaerter.fehlt } }
-              : {}),
-          }),
+      ...(bester && beitragende < MIN_ACCOUNTS_PUBLIC
+        ? {
+            stand: 'zurueckgehalten',
+            grund:
+              `Weniger als ${MIN_ACCOUNTS_PUBLIC} beitragende Konten — eine ` +
+              'veröffentlichte Bestleistung wäre keine Statistik, sondern eine Person.',
+          }
+        : bester
+          ? { stand: 'gekuert', kennzahlen: bester.bilanz, einstellungen: bester.einstellungen }
+          : {
+              stand: 'kein_kandidat',
+              ...(anwaerter
+                ? { anwaerter: { kennzahlen: anwaerter.bilanz, fehlt: anwaerter.fehlt } }
+                : {}),
+            }),
     });
     logger.info(
-      bester
-        ? `bestPractice: gekürt — Kante ${bester.bilanz.kantePct} %, n=${bester.bilanz.n}, ${bester.bilanz.zeitraumTage} Tage`
-        : 'bestPractice: kein Konto erfüllt die Belege (Snapshot dokumentiert den Anwärter)',
+      bester && beitragende < MIN_ACCOUNTS_PUBLIC
+        ? `bestPractice: zurückgehalten — nur ${beitragende} beitragende(s) Konto/Konten (< ${MIN_ACCOUNTS_PUBLIC})`
+        : bester
+          ? `bestPractice: gekürt — Kante ${bester.bilanz.kantePct} %, n=${bester.bilanz.n}, ${bester.bilanz.zeitraumTage} Tage`
+          : 'bestPractice: kein Konto erfüllt die Belege (Snapshot dokumentiert den Anwärter)',
     );
   } catch (err) {
     logger.warn('bestPractice-Snapshot fehlgeschlagen', err);

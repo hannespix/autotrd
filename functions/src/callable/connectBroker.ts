@@ -59,6 +59,7 @@ import {
   type AlpacaSchluessel,
 } from '../core/alpacaBroker.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
+import { accessDeniedReason, accessLevelOf, mayTrade } from '../core/access.js';
 import { consumeQuota } from '../core/broker.js';
 import { vergissVerbindung } from '../core/orderRouting.js';
 import { vaultBereit, verschluessle } from '../core/keyVault.js';
@@ -314,6 +315,16 @@ export const connectBroker = onCall(
 
     if (typeof apiKey !== 'string' || typeof secretKey !== 'string') {
       throw new HttpsError('invalid-argument', 'apiKey und secretKey sind erforderlich');
+    }
+    /* Freischaltung VOR dem Außen-Call (Audit 13.08., Härtung): Bis dahin
+     * konnte jedes frisch registrierte, nie freigeschaltete Konto Schlüssel
+     * hinterlegen und den Probe-Call gegen Alpaca fahren — kostenverursachende
+     * Fremd-API-Aufrufe vor jeder menschlichen Prüfung. Das TRENNEN oben
+     * bleibt bewusst frei: Ein gesperrtes Konto, das seine Schlüssel
+     * entfernen will, soll das immer dürfen. */
+    const zugang = (await getFirestore().doc(`users/${uid}`).get()).data();
+    if (!mayTrade(zugang)) {
+      throw new HttpsError('permission-denied', accessDeniedReason(accessLevelOf(zugang)));
     }
     if (!(await consumeQuota(uid, 'connectBroker', DAILY_CONNECT_LIMIT))) {
       throw new HttpsError(
