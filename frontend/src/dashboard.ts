@@ -920,7 +920,12 @@ function layout(email: string): string {
              Short-Buch) — renderPortfolio füllt und zeigt ihn. -->
         <p class="hint" id="vCashHint" hidden style="margin:-4px 0 6px"></p>
         <label class="lbl">Equity (live)</label><div id="vEq" class="vbig">--</div>
-        <label class="lbl">Gesamt P&amp;L</label><div id="vPnl" class="vbig">--</div>
+        <label class="lbl">Gesamt P&amp;L ${iBtn('gesamtPnl')}</label><div id="vPnl" class="vbig">--</div>
+        <!-- Der Maßstab dieser Zahl (Owner-Frage 13.08.: „+2.245 $ hier,
+             −1,79 % dort — was ist die Realität?"): Nach einem Depot-Schnitt
+             zählt Gesamt P&L erst AB dem Schnitt. Ohne diese Zeile liest
+             sich die Zahl wie ein Lebenszeit-Gewinn. renderPortfolio füllt. -->
+        <p class="hint" id="vPnlBasis" hidden style="margin:-4px 0 6px"></p>
         <div class="row" style="gap:12px">
           <div><label class="lbl">Realisiert</label><div id="vClosed" class="smv">--</div></div>
           <div><label class="lbl">Offen</label><div id="vUnreal" class="smv">--</div></div>
@@ -6698,6 +6703,22 @@ function renderPortfolio(): void {
   const pnlEl = $('vPnl');
   pnlEl.textContent = totalPnl === null ? '--' : (totalPnl >= 0 ? '+' : '') + money(totalPnl);
   pnlEl.className = `vbig ${pnlClass(totalPnl ?? 0)}`;
+  /* Maßstab der Gesamt-P&L (Owner-Frage 13.08.): Nach einem Depot-Schnitt
+   * (Übernahme/Reset) ist die Basis neu geankert — ein grünes „+2.245 $"
+   * neben einer roten Handels-Analyse ist dann KEIN Widerspruch, sondern
+   * zwei Zeiträume. Die Zeile sagt, ab wann die Zahl zählt; die Trades
+   * davor bleiben in der Handels-Analyse sichtbar. Nur Anzeige. */
+  const basisHint = document.getElementById('vPnlBasis');
+  if (basisHint) {
+    const resetAt = st.wallet?.resetAt;
+    const t = resetAt ? Date.parse(resetAt) : NaN;
+    const datum = Number.isFinite(t) ? new Date(t).toLocaleDateString('de-DE') : null;
+    basisHint.hidden = !datum;
+    basisHint.textContent = datum
+      ? `Zählt seit Depot-Schnitt am ${datum} (Basis ${money(basis)}) = Realisiert + Offen ab dem Schnitt. `
+        + 'Früher geschlossene Trades stehen NICHT in dieser Zahl — die Handels-Analyse zählt sie im gewählten Zeitfenster.'
+      : '';
+  }
   const closedEl = $('vClosed');
   closedEl.textContent = closedPnl === null ? '--' : money(closedPnl);
   closedEl.className = `smv ${pnlClass(closedPnl ?? 0)}`;

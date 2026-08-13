@@ -249,6 +249,10 @@ export const INFO: Record<string, { t: string; d: string }> = {
     d: '0,1 % Ordergebühr plus 5 Basispunkte Slippage (Abweichung zwischen angezeigtem und tatsächlichem Ausführungskurs). Wird hier nicht nur angezeigt, sondern vom Paper-Broker WIRKLICH berechnet — dieselben Konditionen wie im Backtest.',
   },
   // ── Portfolio-Kennzahlen (M12) ──
+  gesamtPnl: {
+    t: 'Gesamt P&L — was diese Zahl misst (und was nicht)',
+    d: 'Gesamt P&L = Equity (live) − Kapitalbasis. Die Basis wird bei einer Depot-Übernahme oder einem Reset NEU geankert — die Zahl zählt dann erst ab diesem Schnitt und ist die Summe aus „Realisiert" (geschlossen seit dem Schnitt) und „Offen" (unrealisierter Stand der offenen Positionen; wird erst beim Schließen zu echtem Ergebnis). Die Handels-Analyse beantwortet eine ANDERE Frage: Was haben die geschlossenen Trades im gewählten Zeitfenster gebracht — auch die vor dem Schnitt. Deshalb können beide gleichzeitig stimmen und gegenläufig aussehen: alte Abschlüsse im Minus, offene Positionen gerade im Plus. Der ehrlichste Einzelwert bleibt Equity (live) — der broker-identische Kontostand.',
+  },
   equityCurve: {
     t: 'Equity-Kurve',
     d: 'Der Verlauf deines GESAMTEN Depotwerts (Cash + alle offenen Positionen zum jeweiligen Tageskurs). Einmal täglich nach US-Börsenschluss wird ein Punkt festgeschrieben — anders als die Live-Anzeige kann die Kurve deshalb nicht durch Zwischenstände „schön" wirken. Sie ist die ehrlichste Einzelgrafik, die es über eine Strategie gibt: Nicht einzelne Gewinner zählen, sondern ob die Linie über Wochen steigt.',
