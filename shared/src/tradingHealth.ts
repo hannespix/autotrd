@@ -34,6 +34,13 @@ import type { AttributionSlice, CostProfile, ExitBucket, TradeStats } from './po
 /** Ab so vielen beitragenden Konten dürfen auch Beträge öffentlich werden. */
 export const MIN_ACCOUNTS_PUBLIC = 3;
 
+/**
+ * Ab so vielen Trades im 7-Tage-Fenster urteilt das Verdict über das FENSTER
+ * statt über die kumulative Geschichte. Darunter wäre das „aktuelle
+ * Verhalten" eine Handvoll Einzelfälle mit Prozentzeichen.
+ */
+export const EXIT_FENSTER_MIN_TRADES = 10;
+
 /** Was ein einzelnes Konto zum Aggregat beisteuert. */
 export interface AccountContribution {
   stats: Pick<TradeStats, 'n' | 'wins'> & {
@@ -43,6 +50,13 @@ export interface AccountContribution {
     avgLoss?: number | null;
   };
   exits?: Record<string, ExitBucket> | undefined;
+  /**
+   * Exit-Verteilung NUR über die letzten `EXIT_FENSTER_TAGE` (Task 115):
+   * die einzige Sicht, in der eine Verhaltensänderung — etwa der Exit-Umbau
+   * vom 09.08. — überhaupt ankommen kann, bevor sie Hunderte Alt-Trades
+   * überstimmt haben.
+   */
+  exits7t?: Record<string, ExitBucket> | undefined;
   /** `netPnl` gibt es in `CostProfile` nicht — es folgt aus brutto − Gebühren. */
   costs?: Pick<CostProfile, 'n' | 'fees' | 'grossPnl'> | undefined;
   /** Ergebnis je Anlageklasse — Grundlage der Klassen-Kante (04.08.). */
@@ -104,6 +118,10 @@ export interface TradingHealth {
   feeShare: number | null;
   /** Ausstiegsgründe als Anteile — die wichtigste Einzeldiagnose. */
   exits: Record<string, ExitShare>;
+  /** Dieselbe Diagnose, aber NUR über die letzten `EXIT_FENSTER_TAGE`. */
+  exits7t: Record<string, ExitShare>;
+  /** Geschlossene Trades im 7-Tage-Fenster — der Nenner von `exits7t`. */
+  trades7t: number;
   /** Nur ab MIN_ACCOUNTS_PUBLIC gesetzt, sonst null (s. Kopfkommentar). */
   netPnl: number | null;
   fees: number | null;
@@ -146,6 +164,7 @@ export function aggregateTradingHealth(
   let grossPnl = 0;
   let netPnl = 0;
   const exitN: Record<string, { n: number; wins: number }> = {};
+  const exitNeuN: Record<string, { n: number; wins: number }> = {};
   const klassenRoh: Record<
     string,
     { n: number; pnl: number; fees: number; notional: number; konten: number }
@@ -184,6 +203,12 @@ export function aggregateTradingHealth(
       e.wins += b.wins;
       exitN[grund] = e;
     }
+    for (const [grund, b] of Object.entries(c.exits7t ?? {})) {
+      const e = exitNeuN[grund] ?? { n: 0, wins: 0 };
+      e.n += b.n;
+      e.wins += b.wins;
+      exitNeuN[grund] = e;
+    }
 
     // Klassen-Beitrag dieses Kontos — Summen, keine Quoten (s. u.).
     for (const [name, slice] of Object.entries(c.byClass ?? {})) {
@@ -200,15 +225,21 @@ export function aggregateTradingHealth(
     }
   }
 
-  const exitSumme = Object.values(exitN).reduce((a, e) => a + e.n, 0);
-  const exits: Record<string, ExitShare> = {};
-  for (const [grund, e] of Object.entries(exitN)) {
-    exits[grund] = {
-      share: exitSumme > 0 ? r4(e.n / exitSumme) : 0,
-      winRate: e.n > 0 ? r4(e.wins / e.n) : 0,
-      n: e.n,
-    };
-  }
+  const exitShares = (roh: Record<string, { n: number; wins: number }>): Record<string, ExitShare> => {
+    const summe = Object.values(roh).reduce((a, e) => a + e.n, 0);
+    const out: Record<string, ExitShare> = {};
+    for (const [grund, e] of Object.entries(roh)) {
+      out[grund] = {
+        share: summe > 0 ? r4(e.n / summe) : 0,
+        winRate: e.n > 0 ? r4(e.wins / e.n) : 0,
+        n: e.n,
+      };
+    }
+    return out;
+  };
+  const exits = exitShares(exitN);
+  const exits7t = exitShares(exitNeuN);
+  const trades7t = Object.values(exitNeuN).reduce((a, e) => a + e.n, 0);
 
   // Klassen aus den SUMMEN rechnen, nicht aus gemittelten Konto-Kanten:
   // Ein Mittel über Quoten gewichtet ein Konto mit drei Trades wie eines mit
@@ -237,6 +268,8 @@ export function aggregateTradingHealth(
     profitFactor: grossLoss > 0 ? r4(grossWin / grossLoss) : null,
     feeShare: brutto > 0 ? r4(fees / brutto) : null,
     exits,
+    exits7t,
+    trades7t,
     netPnl: oeffentlich ? Math.round(netPnl * 100) / 100 : null,
     fees: oeffentlich ? Math.round(fees * 100) / 100 : null,
     amountsWithheld: !oeffentlich,
@@ -254,9 +287,23 @@ export function aggregateTradingHealth(
 export function tradingVerdict(h: TradingHealth): string {
   if (h.trades === 0) return 'noch keine geschlossenen Trades';
 
-  const signal = h.exits['signal']?.share ?? 0;
-  if (signal > 0.8) {
-    return `${Math.round(signal * 100)} % der Trades enden am Signal — Stop und Ziel sind praktisch wirkungslos`;
+  // Die Signal-Exit-Diagnose bevorzugt das 7-TAGE-Fenster, sobald es genug
+  // Trades trägt (Task 115): Der Exit-Umbau vom 09.08. kann in der
+  // kumulativen Verteilung rechnerisch erst nach Wochen ankommen — bis dahin
+  // stünde hier ein Urteil über ein System, das es so nicht mehr gibt, und
+  // läse sich wie die Widerlegung des Umbaus. Unter der Mindestzahl gilt
+  // weiter die kumulative Sicht: Drei Trades sind keine Verteilung.
+  const neuN = h.trades7t ?? 0;
+  if (neuN >= EXIT_FENSTER_MIN_TRADES) {
+    const neuSignal = h.exits7t['signal']?.share ?? 0;
+    if (neuSignal > 0.8) {
+      return `${Math.round(neuSignal * 100)} % der Trades der letzten 7 Tage enden am Signal — Stop und Ziel sind praktisch wirkungslos`;
+    }
+  } else {
+    const signal = h.exits['signal']?.share ?? 0;
+    if (signal > 0.8) {
+      return `${Math.round(signal * 100)} % der Trades enden am Signal — Stop und Ziel sind praktisch wirkungslos`;
+    }
   }
   if (h.feeShare !== null && h.feeShare > 0.5) {
     return `Gebühren fressen ${Math.round(h.feeShare * 100)} % des Bruttoergebnisses — Handelsfrequenz zu hoch`;

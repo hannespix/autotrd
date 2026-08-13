@@ -94,6 +94,20 @@ export function riskBasedQty(i: RiskSizeInput): number {
  * Prozentwert. Wäre das hier anders herum, würde die Position mit einem
  * anderen Abstand DIMENSIONIERT als sie später GESTOPPT wird, und der
  * gerechnete Risikobetrag stimmte nie.
+ *
+ * `atrPct` ist der TAGES-ATR — auch für Konten mit Intraday-Signal-
+ * Zeitrahmen, und das ist ABSICHT (geprüft in Task 115, nach dem
+ * Einheiten-Fix der Kostenschwelle HOCH-4): Der Stop schützt die POSITION
+ * über ihre Lebensdauer, nicht das Signal über seine Kerze. Positionen
+ * leben hier mindestens einen Tag (Exit-Umbau: minHoldMin 1440, und das
+ * Sicherheitsnetz muss die Overnight-Lücke überstehen, die aus der
+ * TAGES-Volatilität kommt). Würde man den Abstand wie bei der
+ * Kostenschwelle auf den Halte-Horizont herunterskalieren (ein 60-min-Halt
+ * einer Aktie: 2 × 1,5 % × √(60/390) ≈ 1,2 %), läge der Stop INNERHALB
+ * des normalen Tagesausschlags von 1,5 % — jeder gewöhnliche Tag wäre ein
+ * Zwangsverkauf im Rauschen, genau der Fehler, den die Klassen-Profile
+ * (MA6) beheben. Die √-Skalierung gehört zur ERWARTETEN BEWEGUNG
+ * (costGate), nicht zum Schutzabstand.
  */
 export function stopDistancePct(
   risk: { stopLossPct: number; atrStopMult?: number | undefined },

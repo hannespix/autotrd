@@ -107,6 +107,13 @@ export interface ClosedTrade {
   fee?: number | null;
   /** Positionswert beim ÖFFNEN (Stück × Einstand) — seit 04.08. am Schluss-Trade. */
   entryNotional?: number | null;
+  /**
+   * Schlusszeitpunkt (ISO, `at`-Feld des Trades) — Grundlage der
+   * ZEITGEFENSTERTEN Auswertung (Task 115): Ohne ihn lässt sich nie sagen,
+   * ob sich das Verhalten GEÄNDERT hat, nur wie es im Schnitt aller Zeiten
+   * war.
+   */
+  at?: string | null;
 }
 
 /**
@@ -361,6 +368,31 @@ export function exitBreakdown(closed: ClosedTrade[]): Record<string, ExitBucket>
     out[key] = b;
   }
   return out;
+}
+
+/** Rollierendes Messfenster der jüngsten Exit-Verteilung, in Tagen (Task 115). */
+export const EXIT_FENSTER_TAGE = 7;
+
+/**
+ * Exit-Verteilung NUR über Trades, die ab `seitIso` geschlossen wurden.
+ *
+ * Warum das gebraucht wird (Exit-Umbau 09.08.): Die kumulative Verteilung
+ * mittelt über die GESAMTE Handelsgeschichte. Nach Hunderten Alt-Trades kann
+ * eine Verhaltensänderung dort rechnerisch nie sichtbar werden — das Urteil
+ * „81 % sterben am Signal" bliebe noch Wochen nach einem wirksamen Umbau
+ * stehen und läse sich wie dessen Widerlegung. Gemessen werden muss das
+ * Fenster NACH der Änderung.
+ *
+ * Trades ohne Zeitstempel fallen heraus — ehrlicher, als sie einem Fenster
+ * zuzuschlagen, in das sie vielleicht nicht gehören. ISO-Strings vergleichen
+ * lexikografisch korrekt, solange beide Seiten UTC-ISO sind (sind sie: `at`
+ * schreibt der Broker als `toISOString()`).
+ */
+export function exitBreakdownSeit(
+  closed: ClosedTrade[],
+  seitIso: string,
+): Record<string, ExitBucket> {
+  return exitBreakdown(closed.filter((t) => typeof t.at === 'string' && t.at >= seitIso));
 }
 
 export interface CostProfile {
