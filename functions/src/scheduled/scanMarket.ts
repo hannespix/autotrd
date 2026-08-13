@@ -77,6 +77,7 @@ import {
   executePaperTrade,
   bucheUnverbuchteFills,
   executeTrade,
+  kapitalDeckel,
   resolveBrokerMode,
   riskExitReason,
   type MarginBudget,
@@ -1014,7 +1015,14 @@ async function executeUserTrades(
       // Zwei Zahlen, weil sie sich beim Short unterscheiden: `kontoWert` ist
       // der Rückfluss beim Schließen (Basis der Equity), `kontoExposure` der
       // am Markt bewegte Gegenwert (Basis der Besicherung).
-      const kontoCash = (userDoc.get('wallet.paperBalance') as number | undefined) ?? 0;
+      // Gedeckelt mit dem sicheren Cash aus dem Konto-Abgleich (Audit 13.08.,
+      // Hochbefund 1): Das Hebel-Budget speist sich sonst aus einem Buchstand,
+      // den der Broker längst nicht mehr deckt — mit Hebel obendrauf.
+      const kontoCash = kapitalDeckel(
+        userDoc.get('risk.abgleich'),
+        (userDoc.get('wallet.paperBalance') as number | undefined) ?? 0,
+        now.toISOString(),
+      );
       let kontoWert = 0;
       let kontoExposure = 0;
       for (const p of positions.values()) {
