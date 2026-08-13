@@ -21,9 +21,12 @@ const breakerAufruf = (text: string): string => {
 };
 
 describe('Beide Handelspfade liefern das Alter der Bezugsgröße', () => {
+  // Seit dem 13.08. steht das Breaker-Gate der Handeingabe (und des
+  // Momentum-Laufs) zentral in core/kontoTore.ts — EIN pruefeBreaker-Aufruf
+  // für alle Pfade außerhalb des Scans, statt Kopien, die auseinanderlaufen.
   for (const [name, pfad] of [
     ['Scan', ['scheduled', 'scanMarket.ts']],
-    ['Handels-Callable', ['callable', 'trade.ts']],
+    ['Konto-Tore (Handeingabe + Momentum)', ['core', 'kontoTore.ts']],
   ] as const) {
     it(`${name}: reicht vortagEquityAm durch`, () => {
       expect(breakerAufruf(quelle(...pfad))).toContain("risk.vortagEquityAm");
@@ -40,8 +43,11 @@ describe('Beide Handelspfade liefern das Alter der Bezugsgröße', () => {
   it('beide benutzen DIESELBE Handelstag-Funktion', () => {
     // Zwei Ableitungen wären zwei Gelegenheiten, sie verschieden zu machen —
     // und dann behauptete der eine Pfad ein anderes Alter als der andere.
-    expect(quelle('callable', 'trade.ts')).toContain(
+    expect(quelle('core', 'kontoTore.ts')).toContain(
       "from '../scheduled/scanMarket.js'",
     );
+    // Und die Handeingabe hängt wirklich an den Toren — sonst wäre die
+    // zentrale Stelle nur eine weitere Funktion, die niemand ruft.
+    expect(quelle('callable', 'trade.ts')).toContain("from '../core/kontoTore.js'");
   });
 });

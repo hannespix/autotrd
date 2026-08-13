@@ -62,13 +62,23 @@ describe('Beide Handelspfade beachten die Sperre', () => {
     /* Anders als bei der Notbremse, die Verkäufe ausdrücklich durchlässt.
      * Hier geht es nicht um Risiko, sondern um Buchführung: Ein Verkauf
      * mitten im Archivieren hinterlässt einen Trade, den der Reset nicht
-     * mehr mitnimmt. */
+     * mehr mitnimmt.
+     *
+     * Seit dem 13.08. entscheidet das zentral core/kontoTore.ts: Die Sperre
+     * steht dort als `handel` (nicht `einstieg`) — sie trifft also jede
+     * Richtung. Hier bleibt zu prüfen, dass das Callable sie VOR der
+     * Einstiegs-Unterscheidung abfragt und hart ablehnt. */
+    const tore = quelle('core', 'kontoTore.ts');
+    const abTore = tore.indexOf("resetLaeuft(snap.get('risk.resetLaeuftSeit')");
+    expect(abTore, 'Reset-Gate fehlt in den Konto-Toren').toBeGreaterThan(0);
+    expect(tore.slice(abTore, abTore + 200)).toContain("handel: 'reset_laeuft'");
+
     const text = quelle('callable', 'trade.ts');
-    const ab = text.indexOf("resetLaeuft(userSnap.get('risk.resetLaeuftSeit')");
-    expect(ab, 'Reset-Gate fehlt im Handels-Callable').toBeGreaterThan(0);
+    const ab = text.indexOf('if (tore.handel)');
+    expect(ab, 'Handel-Sperre fehlt im Handels-Callable').toBeGreaterThan(0);
     const einstieg = text.indexOf('const istEinstieg =');
     expect(ab, 'Gate steht hinter der Einstiegs-Unterscheidung').toBeLessThan(einstieg);
-    expect(text.slice(ab, ab + 400)).toContain('HttpsError');
+    expect(text.slice(ab, ab + 200)).toContain('HttpsError');
   });
 
   it('beide benutzen DIESELBE Funktion', () => {
@@ -76,7 +86,7 @@ describe('Beide Handelspfade beachten die Sperre', () => {
     // verschieden zu setzen.
     for (const pfad of [
       ['scheduled', 'scanMarket.ts'],
-      ['callable', 'trade.ts'],
+      ['core', 'kontoTore.ts'],
     ] as const) {
       expect(quelle(...pfad)).toContain('resetLaeuft');
     }

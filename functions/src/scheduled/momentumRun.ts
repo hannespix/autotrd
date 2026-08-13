@@ -58,8 +58,9 @@ import {
   positioningSummary,
 } from '../../../shared/src/index.js';
 import { executeTrade, resolveBrokerMode } from '../core/broker.js';
+import { kontoTore } from '../core/kontoTore.js';
 import { mayTrade } from '../core/access.js';
-import { clampStrategyRisk, corePct } from '../core/rulesTrading.js';
+import { clampStrategyRisk, corePct, maxOpenPositions } from '../core/rulesTrading.js';
 import {
   DEEP_BACKFILL_V,
   chunkBarsByYear,
@@ -439,6 +440,18 @@ async function rebalanceMomentumUsers(
       if (!mayTrade(userDoc.data())) continue;
       const clamped = clampStrategyRisk(structuredClone(roh));
 
+      /* Dieselben Konto-Tore wie Scan und Handeingabe (Audit 13.08., H2):
+       * Bis dahin kannte dieser Pfad weder Notbremse noch Abgleich-Sperre —
+       * ein Konto, das der Scan längst gesperrt hatte, wurde hier trotzdem
+       * rebalanciert. Reset sperrt den ganzen Lauf (Buchführung); Bremse und
+       * Drift sperren nur KÄUFE — Verkäufe des Rebalancings laufen weiter,
+       * ein Ausstieg darf nie an einer Sperre scheitern. */
+      const tore = kontoTore(userDoc, clamped, now);
+      if (tore.handel) {
+        logger.info(`Momentum-Rebalancing ${userDoc.id}: übersprungen — ${tore.handel}`);
+        continue;
+      }
+
       const stateRef = userDoc.ref.collection('meta').doc('momentum');
       const lastRebalance = (await stateRef.get()).get('lastRebalance') as string | undefined;
       if (!istRebalanceFaellig(lastRebalance ?? null, now)) continue;
@@ -464,6 +477,10 @@ async function rebalanceMomentumUsers(
         .filter((o) => o.side === 'sell' || preise.has(o.symbol));
 
       let ausgefuehrt = 0;
+      // Laufende Positionszahl für das Limit: Verkäufe machen Platz frei,
+      // Käufe belegen ihn — in der Reihenfolge, in der die Orders laufen.
+      let offenZahl = gehalten.size;
+      const posLimit = maxOpenPositions(clamped);
       for (const o of orders) {
         const preis = preise.get(o.symbol) ?? gehalten.get(o.symbol)?.avgEntry;
         if (!preis || !(preis > 0)) continue;
@@ -474,9 +491,17 @@ async function rebalanceMomentumUsers(
             clamped,
             laufId,
           );
-          if (r.executed) ausgefuehrt += 1;
+          if (r.executed) {
+            ausgefuehrt += 1;
+            offenZahl -= 1;
+          }
           continue;
         }
+        // Käufe stehen unter den Einstiegs-Toren (H2) und dem Positionslimit
+        // des Users — bei den Defaults (Limit 10, Zielportfolio 8) ändert das
+        // nichts, ein bewusst enger gestelltes Limit gilt jetzt auch hier.
+        if (tore.einstieg) continue;
+        if (offenZahl >= posLimit) continue;
         const fractional = cls === 'crypto';
         const roheMenge = (o.notional ?? 0) / preis;
         const qty = fractional ? Math.floor(roheMenge * 1e6) / 1e6 : Math.floor(roheMenge);
@@ -497,17 +522,34 @@ async function rebalanceMomentumUsers(
           clamped,
           laufId,
         );
-        if (r.executed) ausgefuehrt += 1;
+        if (r.executed) {
+          ausgefuehrt += 1;
+          offenZahl += 1;
+        }
       }
 
       // Der Zeitstempel wird IMMER gesetzt, auch wenn nichts zu tun war.
       // Sonst gälte das Rebalancing als überfällig und liefe täglich neu —
       // bei einem leeren Zielportfolio (Marktfilter zu) wäre das eine
       // Endlosschleife aus Nichts.
-      await stateRef.set(
-        { lastRebalance: now.toISOString(), orders: orders.length, executed: ausgefuehrt },
-        { merge: true },
-      );
+      //
+      // AUSNAHME (13.08.): Waren Käufe durch ein Einstiegs-Tor gesperrt,
+      // bleibt der Stempel stehen — das Tor VERSCHIEBT das Rebalancing auf
+      // den nächsten Tageslauf, es streicht es nicht für eine ganze Periode.
+      // Die Verkäufe von heute wiederholt der nächste Lauf nicht (die
+      // Positionen sind weg); offen bleiben nur die gesperrten Käufe.
+      if (tore.einstieg) {
+        await stateRef.set(
+          { einstiegGesperrt: tore.einstieg, gesperrtAt: now.toISOString() },
+          { merge: true },
+        );
+        logger.info(`Momentum-Rebalancing ${userDoc.id}: Käufe gesperrt — ${tore.einstieg}`);
+      } else {
+        await stateRef.set(
+          { lastRebalance: now.toISOString(), orders: orders.length, executed: ausgefuehrt, einstiegGesperrt: null },
+          { merge: true },
+        );
+      }
       konten += 1;
       orderSumme += ausgefuehrt;
       if (ausgefuehrt > 0) {
@@ -572,6 +614,15 @@ async function rebalanceCoreSleeve(
       const anteil = corePct(clamped);
       if (anteil <= 0) continue; // kein Sockel gewünscht
 
+      /* Dieselben Konto-Tore wie oben (Audit 13.08., H2): Genau dieser Pfad
+       * war der Anlass — ein per Notbremse gesperrtes Konto bekam am selben
+       * Tag Sockel-Käufe bis 60 % der Equity. Verkäufe laufen weiter. */
+      const tore = kontoTore(userDoc, clamped, now);
+      if (tore.handel) {
+        logger.info(`Sockel-Rebalancing ${userDoc.id}: übersprungen — ${tore.handel}`);
+        continue;
+      }
+
       const stateRef = userDoc.ref.collection('meta').doc('coreSleeve');
       const lastRebalance = (await stateRef.get()).get('lastRebalance') as string | undefined;
       if (!istRebalanceFaellig(lastRebalance ?? null, now)) continue;
@@ -612,6 +663,12 @@ async function rebalanceCoreSleeve(
         .filter((o) => o.side !== 'sell' || sockel.has(o.symbol));
 
       let ausgefuehrt = 0;
+      // Positionszahl des SOCKELS fürs Limit — die Besitzgrenze gilt in beide
+      // Richtungen: Aktive Positionen zählen nicht gegen den Sockel (wie
+      // Sockel-Positionen nicht gegen den Scan), aber mehr als das geklemmte
+      // Limit baut auch der Sockel nicht auf.
+      let offenZahl = sockel.size;
+      const posLimit = maxOpenPositions(clamped);
       for (const o of orders) {
         const preis = preise.get(o.symbol) ?? sockel.get(o.symbol)?.avgEntry;
         if (!preis || !(preis > 0)) continue;
@@ -622,9 +679,15 @@ async function rebalanceCoreSleeve(
             clamped,
             laufId,
           );
-          if (r.executed) ausgefuehrt += 1;
+          if (r.executed) {
+            ausgefuehrt += 1;
+            offenZahl -= 1;
+          }
           continue;
         }
+        // Käufe stehen unter den Einstiegs-Toren (H2) und dem Positionslimit.
+        if (tore.einstieg) continue;
+        if (offenZahl >= posLimit) continue;
         // Ein Symbol, das die AKTIVE Engine schon hält, darf der Sockel nicht
         // kaufen — der Broker führte beide zu einer Position zusammen und die
         // Besitzgrenze wäre verwischt. Beim nächsten Takt ist es meist frei.
@@ -649,13 +712,26 @@ async function rebalanceCoreSleeve(
           clamped,
           laufId,
         );
-        if (r.executed) ausgefuehrt += 1;
+        if (r.executed) {
+          ausgefuehrt += 1;
+          offenZahl += 1;
+        }
       }
 
-      await stateRef.set(
-        { lastRebalance: now.toISOString(), orders: orders.length, executed: ausgefuehrt, anteilPct: anteil },
-        { merge: true },
-      );
+      // Gesperrte Käufe VERSCHIEBEN das Rebalancing (siehe oben bei den
+      // Momentum-Wallets) — der Stempel bleibt dann stehen.
+      if (tore.einstieg) {
+        await stateRef.set(
+          { einstiegGesperrt: tore.einstieg, gesperrtAt: now.toISOString() },
+          { merge: true },
+        );
+        logger.info(`Sockel-Rebalancing ${userDoc.id}: Käufe gesperrt — ${tore.einstieg}`);
+      } else {
+        await stateRef.set(
+          { lastRebalance: now.toISOString(), orders: orders.length, executed: ausgefuehrt, anteilPct: anteil, einstiegGesperrt: null },
+          { merge: true },
+        );
+      }
       konten += 1;
       orderSumme += ausgefuehrt;
       if (ausgefuehrt > 0) {

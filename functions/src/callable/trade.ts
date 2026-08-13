@@ -9,14 +9,13 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
   bucketKey,
   classify,
-  pruefeBreaker,
-  resetLaeuft,
   tradableSymbols,
   type Quote,
   type Strategy,
 } from '../../../shared/src/index.js';
 import { consumeQuota, executeTrade, resolveBrokerMode } from '../core/broker.js';
-import { breakerHeuteAusgeloest, handelstagET } from '../scheduled/scanMarket.js';
+import { kontoTore } from '../core/kontoTore.js';
+import { clampStrategyRisk, maxOpenPositions } from '../core/rulesTrading.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { accessDeniedReason, accessLevelOf, mayTrade } from '../core/access.js';
 
@@ -74,57 +73,51 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
     throw new HttpsError('failed-precondition', 'Live-Trading ist nicht freigeschaltet');
   }
 
-  /* Tages-Notbremse gilt auch für den Klick (M12).
+  /* Risiko-Hülle auch für die Handeingabe (Audit 13.08., H3).
    *
-   * Eine Bremse, die man mit einem Handel umgehen kann, ist keine — und der
-   * manuelle Pfad ist der, den man in einer Verlustserie am ehesten benutzt.
-   * Nur EINSTIEGE: Ein Verkauf muss immer möglich bleiben, sonst sperrte die
-   * Bremse genau den Ausweg, für den sie ausgelöst hat. Ein Leerverkauf ist
-   * allerdings ein Einstieg und fällt darunter.
+   * Bis dahin ging die UNGEKLAMMERTE Strategie an den Broker: Wer sich
+   * maxPositionPct 100 ins Profil schrieb, kaufte von Hand mit vollem
+   * Einsatz, während der Scan längst auf 25 % geklemmt hätte. Die Hülle gilt
+   * für jeden Trade dieses Users — egal, welcher Pfad ihn auslöst.
    */
-  /* Läuft gerade ein Reset, ist JEDER Handel gesperrt — auch der Verkauf
-   * (Audit-Befund 11.08.). Anders als bei der Notbremse geht es hier nicht
-   * um Risiko, sondern um Buchführung: Ein Verkauf mitten im Archivieren
-   * hinterlässt einen Trade, den der Reset nicht mehr mitnimmt, oder eine
-   * Gutschrift, die der neue Startkontostand gleich überschreibt. Die Sperre
-   * dauert höchstens `RESET_SPERRE_MIN` Minuten und verfällt von selbst. */
-  if (resetLaeuft(userSnap.get('risk.resetLaeuftSeit'), new Date())) {
-    throw new HttpsError(
-      'failed-precondition',
-      'Auf diesem Konto läuft gerade ein Reset — bitte einen Moment warten und erneut versuchen.',
-    );
+  const clamped = clampStrategyRisk(strategy);
+
+  /* Konto-Tore (M12, zentralisiert 13.08.): Reset sperrt JEDEN Handel
+   * (Buchführung), Notbremse und Abgleich-Drift sperren EINSTIEGE — eine
+   * Bremse, die man mit einem Klick umgehen kann, ist keine. Ein Verkauf
+   * einer bestehenden Position bleibt immer möglich; ein Leerverkauf ist
+   * ein Einstieg und fällt unter die Tore. */
+  const tore = kontoTore(userSnap, clamped, new Date());
+  if (tore.handel) {
+    throw new HttpsError('failed-precondition', tore.grund ?? 'Konto ist vorübergehend gesperrt');
   }
 
+  /* Positionsbestand EINMAL lesen: Er entscheidet, ob dieser Trade ein
+   * Einstieg ist (neue Position) — und ob das Positionslimit greift. */
+  const posSnap = await db.collection(`users/${uid}/positions`).get();
+  const hatPosition = posSnap.docs.some((d) => d.id === symbol);
+  // Sockel-Positionen (core) zählen nicht — dieselbe Besitzgrenze wie im
+  // Scan: Sie gehören dem Momentum-Lauf und blockieren nicht das Limit
+  // der aktiv geführten Trades.
+  const offenAktiv = posSnap.docs.filter((d) => (d.data() as { core?: boolean }).core !== true).length;
+
   const istEinstieg =
-    side === 'buy'
-    || (side === 'sell'
-      && strategy.signals.allowShort === true
-      && !(await db.doc(`users/${uid}/positions/${symbol}`).get()).exists);
+    (side === 'buy' && !hatPosition)
+    || (side === 'sell' && strategy.signals.allowShort === true && !hatPosition);
   if (istEinstieg) {
-    const breaker = pruefeBreaker(
-      {
-        vortagEquity: (userSnap.get('risk.vortagEquity') as number | undefined) ?? 0,
-        // Kein frischer Marktwert an dieser Stelle: Der Scan rechnet ihn alle
-        // fünf Minuten und schreibt das Ergebnis mit. Was hier zählt, ist der
-        // ZUSTAND der Bremse — die Grenzprüfung selbst hat der Scan gemacht.
-        jetztEquity: (userSnap.get('risk.vortagEquity') as number | undefined) ?? 0,
-        // Alter der Bezugsgröße (Audit-Befund 11.08.) — dieselbe Angabe wie
-        // im Scan, damit der Klartext hier nicht etwas anderes behauptet.
-        vortagEquityAm: (userSnap.get('risk.vortagEquityAm') as string | undefined) ?? undefined,
-        heute: handelstagET(new Date()),
-        // Handelstag in New York, nicht UTC (Audit-Befund 11.08.): Sonst
-        // gäbe die Bremse das Konto ab 20:00 ET wieder frei, obwohl niemand
-        // sie entriegelt hat. Dieselbe Funktion wie im Scan — zwei
-        // Ableitungen wären zwei Gelegenheiten, sie verschieden zu machen.
-        bereitsAusgeloest: breakerHeuteAusgeloest(
-          userSnap.get('risk.breakerAusgeloestAm'),
-          new Date(),
-        ),
-      },
-      { dailyLossLimitPct: strategy.engine.dailyLossLimitPct ?? 0 },
-    );
-    if (!breaker.einstiegErlaubt) {
-      throw new HttpsError('failed-precondition', breaker.grund);
+    if (tore.einstieg) {
+      throw new HttpsError('failed-precondition', tore.grund ?? 'Einstiege sind gesperrt');
+    }
+    /* Positionslimit auch von Hand (Audit 13.08., H3): 50 Käufe am Tag mit
+     * je 25 % wären sonst regelkonform gewesen, während der Scan beim
+     * Limit längst aufhört. Nur NEUE Positionen — ein Verkauf und die
+     * Bedienung bestehender Positionen bleiben frei. */
+    const limit = maxOpenPositions(clamped);
+    if (offenAktiv >= limit) {
+      throw new HttpsError(
+        'failed-precondition',
+        `Positionslimit erreicht (${offenAktiv}/${limit} offene Positionen) — erst schließen, dann neu eröffnen.`,
+      );
     }
   }
 
@@ -162,7 +155,7 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
         side: side === 'sell' ? 'short' : 'long',
       }),
     },
-    strategy,
+    clamped,
     /* Lauf-Kennung des Handeingabe-Trades (M13).
      *
      * Minutengenau — und das ist hier die GEWOLLTE Semantik, nicht ein
