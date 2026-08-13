@@ -49,6 +49,7 @@
  * Alpaca-Fehlermeldung enthält im Zweifel den gesendeten Header.
  */
 
+import { logger } from 'firebase-functions/v2';
 import { allSymbols, classify } from '../../../shared/src/index.js';
 import type { BrokerMode } from './broker.js';
 
@@ -228,6 +229,15 @@ export interface AlpacaKonto {
   accountBlocked: boolean;
   /** Wurde das Muster-Daytrader-Limit gerissen? */
   patternDayTrader: boolean;
+  /**
+   * Konto-Eröffnung (ISO, `created_at`) — der ehrliche Anker der
+   * Order-Historie (Owner-Wunsch 13.08.: Historie ohne 30-Tage-Deckel).
+   * Vor der Eröffnung kann es keine Orders geben; weiter zurückzufragen
+   * ist sinnlos, früher aufzuhören verliert Historie. Leer, wenn Alpaca
+   * das Feld nicht liefert — der Aufrufer fällt dann auf sein bisheriges
+   * Fenster zurück.
+   */
+  createdAt: string;
 }
 
 export interface AlpacaPosition {
@@ -350,6 +360,7 @@ export async function alpacaKonto(
     tradingBlocked: d['trading_blocked'] === true,
     accountBlocked: d['account_blocked'] === true,
     patternDayTrader: d['pattern_day_trader'] === true,
+    createdAt: typeof d['created_at'] === 'string' ? d['created_at'] : '',
   };
 }
 
@@ -396,7 +407,15 @@ export async function alpacaOrdersGeschlossen(
   // theoretisch übersprungen werden — akzeptiert und dokumentiert, die
   // Alternative (id-Paginierung) bietet die API nicht.
   let after = seitIso;
-  for (let seite = 0; seite < 10; seite++) {
+  // 10 → 40 Seiten (13.08.): Seit der Anker die KONTO-ERÖFFNUNG ist statt
+  // „vor 30 Tagen", muss der Deckel die volle Historie tragen — die
+  // 5-Minuten-Ära allein produzierte Hunderte Orders je Woche (inklusive
+  // Stornos, die gegen die 500 je Seite zählen). 40 × 500 = 20.000 Orders
+  // bei ~12 s Laufzeit. Reicht auch das nicht, sagt der Log es unten
+  // ausdrücklich, statt still abzuschneiden.
+  let abgeschnitten = false;
+  const SEITEN_MAX = 40;
+  for (let seite = 0; seite < SEITEN_MAX; seite++) {
     const d = (await alpacaFetch(
       mode,
       `/v2/orders?status=closed&after=${encodeURIComponent(after)}&direction=asc&limit=500`,
@@ -405,6 +424,7 @@ export async function alpacaOrdersGeschlossen(
       fetchImpl,
     )) as unknown[];
     if (!Array.isArray(d) || d.length === 0) break;
+    if (seite === SEITEN_MAX - 1 && d.length === 500) abgeschnitten = true;
     let letzteSubmitted = '';
     for (const o of d) {
       const r = o as Record<string, unknown>;
@@ -427,6 +447,13 @@ export async function alpacaOrdersGeschlossen(
     }
     if (d.length < 500 || letzteSubmitted.length === 0 || letzteSubmitted === after) break;
     after = letzteSubmitted;
+  }
+  if (abgeschnitten) {
+    // Kein stilles Abschneiden: Ein FIFO-Steuerbericht auf halber Historie
+    // sieht aus wie ein ganzer — der Unterschied muss im Log stehen.
+    logger.warn(
+      `alpacaOrdersGeschlossen: Seitendeckel (${SEITEN_MAX * 500}) erreicht — Historie vor ${after} unvollständig`,
+    );
   }
   // Chronologisch nach FILL sortieren: Die Seiten kommen nach submitted_at,
   // gebucht wird nach filled_at — FIFO im Steuerbericht hängt daran.

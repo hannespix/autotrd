@@ -67,12 +67,29 @@ import { brokerVerbindungLesend } from '../core/orderRouting.js';
 /** Übernahmen je Tag — großzügig, aber kein Dauerlauf. */
 const DAILY_ADOPT_LIMIT = 10;
 
-/** Wie weit die Order-Historie zurückgeholt wird. Länger als jede
- *  realistische Lücke zwischen Vorfall und Übernahme; ein Zuviel ist
- *  harmlos, weil bereits gebuchte brokerOrderIds übersprungen werden.
- *  Seit 07.08. 30 Tage (vorher 14): Die Handelsanalyse speist sich aus
- *  dieser Historie, und die Pagination trägt das Fenster jetzt. */
+/** RÜCKFALL-Fenster der Order-Historie, wenn Alpaca kein `created_at`
+ *  liefert. Der Normalfall ist seit dem 13.08. die KONTO-ERÖFFNUNG als
+ *  Anker (`historieAnker`, Owner-Wunsch: Historie ohne 30-Tage-Deckel) —
+ *  ein Zuviel ist harmlos, weil bereits gebuchte brokerOrderIds
+ *  übersprungen werden. 14 → 30 Tage (07.08.) → Konto-Eröffnung (13.08.). */
 const HISTORIE_TAGE = 30;
+
+/**
+ * Ab wann die Order-Historie geholt wird: die Konto-Eröffnung — vor ihr kann
+ * es keine Orders geben, und jeder spätere Anker verliert Historie (der
+ * 30-Tage-Deckel war genau die Lücke, die der Owner am 13.08. gemeldet hat:
+ * Steuer-FIFO und Handelsanalyse sahen nur den letzten Monat).
+ *
+ * Pur und defensiv: Ein fehlender, unlesbarer oder in der Zukunft liegender
+ * Stempel fällt auf das bisherige 30-Tage-Fenster zurück — ein kaputtes
+ * `created_at` darf die Übernahme nicht auf die Ur-Zeit aufblasen und nicht
+ * in die Zukunft ankern (dann käme gar nichts zurück).
+ */
+export function historieAnker(createdAt: string, jetztMs: number): string {
+  const t = Date.parse(createdAt);
+  if (Number.isFinite(t) && t > 0 && t < jetztMs) return new Date(t).toISOString();
+  return new Date(jetztMs - HISTORIE_TAGE * 86_400_000).toISOString();
+}
 
 /**
  * PnL je importierter Verkaufs-/Cover-Order — dieselbe Durchschnittskosten-
@@ -205,7 +222,7 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
   const uidSauber = uid.replace(/[^A-Za-z0-9-]/g, '_');
   let eigeneOrders: AlpacaGeschlosseneOrder[] = [];
   try {
-    const seit = new Date(Date.now() - HISTORIE_TAGE * 86_400_000).toISOString();
+    const seit = historieAnker(konto.createdAt, Date.now());
     const alle = await alpacaOrdersGeschlossen(verbindung.mode, verbindung.schluessel, seit);
     // Nur UNSERE Orders: Die Kennung beginnt mit der (bereinigten) uid —
     // exakt so baut `clientOrderId()` sie. Fremde Orders (Mensch in der
