@@ -69,7 +69,7 @@ import {
   type Strategy,
   type StrategyDoc,
 } from '../../../shared/src/index.js';
-import { atrPct, buildVariants } from '../../../shared/src/index.js';
+import { atrPct } from '../../../shared/src/index.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 import { aktualisiereBoersenUhr, boersenOffen, offenMitUhr } from '../core/marktUhr.js';
 import { computeIndicatorSnapshot, computeSignal } from '../core/engine.js';
@@ -108,7 +108,7 @@ import { runForecast, runIntradayForecast, type LiveForecast } from '../core/for
 import { fetchNewsSnapshot } from '../core/news.js';
 import { evaluateIntradayDue } from './evalForecasts.js';
 import { stepFleet, type FleetState } from '../core/tuneFleet.js';
-import { FLEET_SIZE } from './autoTune.js';
+import { flottenAuswahl, ladeTunePriors } from './autoTune.js';
 import {
   DEEP_BACKFILL_V,
   chunkBarsByYear,
@@ -576,6 +576,13 @@ async function executeUserTrades(
   } catch {
     // s. o. — eine Schatten-Messung darf den Handel nie blockieren.
   }
+
+  // Kollektives Vorwissen für die Tuner-Flotte — EINMAL je Lauf, für alle
+  // Konten (Audit 13.08., K-7): Scan und autoTune müssen DIESELBEN sechs
+  // Varianten wählen, sonst bewertet der Tuner Varianten ohne Schattenkonto
+  // und die lokale Selbstverbesserung friert ein, sobald das Kollektiv
+  // etwas gelernt hat.
+  const tunePriors = await ladeTunePriors();
 
   for (const userDoc of users.docs) {
     const uid = userDoc.id;
@@ -1846,7 +1853,11 @@ async function executeUserTrades(
       // eigene Fang.
       if (userDoc.get('settings.autoTune') !== false) {
         try {
-          const variants = buildVariants(clamped, FLEET_SIZE);
+          // DIESELBE Auswahl wie autoTune (flottenAuswahl, K-7): Die Flotte
+          // führt Schattenkonten für genau die Varianten, die der Tuner
+          // abends bewertet — vorher wählten beide verschieden, sobald
+          // meta/tuneGlobal Priors hatte.
+          const variants = flottenAuswahl(clamped, tunePriors);
           if (variants.length > 0) {
             const fleetRef = userDoc.ref.collection('tuning').doc('fleet');
             const vorher =
