@@ -265,9 +265,21 @@ export async function abgleichFuerKonto(
        * Kontogroesse zu erfinden. Der Cash-Vergleich bleibt exakt — und an
        * ihm haengt die Kapitaldecke. */
       const buchEquity = buch.equity === 0 ? k.equity : buch.equity;
+      /* Short-Margin der EIGENEN offenen Shorts (Audit 13.08., H3): Das
+       * Buch bindet je Short Menge × Einstand als Sicherheitsleistung,
+       * Alpaca schreibt den Erlös gut — 2× dieser Summe ist die ERWARTETE
+       * Cash-Differenz bei korrekter Buchführung, keine Drift. Ohne die
+       * Korrektur stand die Einstiegs-Sperre ab ~2,5 % Equity in Shorts
+       * dauerhaft an, und ein Dauer-Alarm macht blind für echte Fälle. */
+      const shortMargin = eigene
+        .filter((p) => p.side === 'short' && p.qty > 0 && Number.isFinite(p.avgEntry))
+        .reduce((summe, p) => summe + p.qty * p.avgEntry, 0);
       kontoBefund = kontoAbgleich(
         { cash: buch.cash, equity: buchEquity },
         { cash: k.cash, equity: k.equity },
+        undefined,
+        undefined,
+        shortMargin,
       );
     } catch (err) {
       const text = err instanceof Error ? err.message : String(err);
