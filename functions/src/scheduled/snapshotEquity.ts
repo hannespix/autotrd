@@ -328,7 +328,15 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
               ? { entryNotional: qty * entryPrice }
               : {}),
           };
-          const at = t.get('at') as string | undefined;
+          /* Feldname MUSS zur Buchung passen: broker.ts schreibt den
+           * Schlusszeitpunkt als `executedAt` — die erste Fassung las hier
+           * `at` (den Namen des ClosedTrade-FELDS, nicht des Dokuments) und
+           * bekam IMMER undefined. Folge: Das 7-Tage-Fenster war seit seiner
+           * Einführung strukturell leer — am 14.08. standen 6 frische
+           * Abschlüsse in den Kumulativ-Zahlen (PF 0,96→1,18) bei
+           * trades7t = 0. Der Wächter in exitFensterMessung pinnt den
+           * Feldnamen jetzt gegen die Schreibstelle. */
+          const at = t.get('executedAt') as string | undefined;
           closed.push({
             symbol,
             pnl,
