@@ -111,6 +111,17 @@ describe('snapshotEquity — die Verdrahtung (Quelltext-Wächter)', () => {
     expect(snapshot).toContain("...(typeof at === 'string' ? { at } : {})");
   });
 
+  it('der Feldname passt zur Buchung: executedAt, nicht at (Befund 14.08.)', () => {
+    // Die erste Fassung las `t.get('at')` — den Namen des ClosedTrade-FELDS,
+    // nicht des Trade-Dokuments (broker.ts schreibt `executedAt`). Ergebnis:
+    // trades7t blieb strukturell 0, obwohl am 14.08. sechs frische Abschlüsse
+    // die Kumulativ-Zahlen bewegten (PF 0,96→1,18). Beide Seiten gepinnt:
+    expect(snapshot).toContain("const at = t.get('executedAt') as string | undefined;");
+    expect(snapshot).not.toContain("t.get('at')");
+    const broker = readFileSync(join(hier, '../src/core/broker.ts'), 'utf8');
+    expect(broker).toContain('executedAt: now,');
+  });
+
   it('das Fenster wird EINMAL je Lauf gerechnet und je Konto angewandt', () => {
     expect(snapshot).toContain('EXIT_FENSTER_TAGE * 24 * 60 * 60 * 1000');
     expect(snapshot).toContain('exitBreakdownSeit(closed, fensterSeit)');
