@@ -7150,10 +7150,15 @@ const EXIT_LABELS: Record<string, string> = {
  * Kurve aus wie der Depotwert — und ein Konto, dessen Snapshots ein Reset
  * gelöscht hat, sieht aus wie ein kaputtes System.
  */
-function depotKurve(quelle?: {
-  snapshots: readonly EquitySeriesPoint[];
-  trades: readonly HistoryTrade[];
-}): KurvenWahl & { erklaerung: string; snapshots: number } {
+function depotKurve(
+  quelle?: {
+    snapshots: readonly EquitySeriesPoint[];
+    trades: readonly HistoryTrade[];
+  },
+  /** true ⇒ realisierte Trade-Kurve erzwingen (Snapshots decken das
+   *  Fenster nicht — Owner-Befund 14.08., siehe shareDatenBauen). */
+  erzwingeRealisiert = false,
+): KurvenWahl & { erklaerung: string; snapshots: number } {
   // Ohne Argument der volle Stand (Dashboard-Karten), mit Argument der
   // Zeitraum-Ausschnitt (Handels-Analyse und Teilen-Grafik folgen dem
   // Umschalter Heute/7T/30T/…). Dieselbe Rechnung, andere Eingabe — nicht
@@ -7164,6 +7169,7 @@ function depotKurve(quelle?: {
     snapshots,
     geschlossen.map((t) => ({ at: t.executedAt, pnl: t.pnl ?? 0 })),
     st?.wallet?.baseCapital ?? st?.strategy?.broker?.initialCapital ?? 0,
+    erzwingeRealisiert ? Number.POSITIVE_INFINITY : undefined,
   );
   return {
     ...wahl,
@@ -7393,8 +7399,35 @@ function shareDatenBauen(betraege: boolean): ShareDaten {
    * und springt sonst auf die realisierte Kurve ein — mit einem Hinweis,
    * welche der beiden gezeigt wird. Eine Kurve ohne Angabe ihrer Bedeutung
    * wäre eine Einladung zum Fehlschluss: Die realisierte steht still,
-   * während eine offene Position läuft. */
-  const wahl = depotKurve({ snapshots: fenster.equity, trades: fenster.trades });
+   * während eine offene Position läuft.
+   *
+   * ── Und die Snapshots müssen das FENSTER decken (Owner 14.08.) ──────────
+   *
+   * Am Morgen nach dem Depot-Schnitt gab es genau ZWEI Snapshot-Tage
+   * (13.+14.08.) — `waehleKurve` sprang auf die Snapshot-Kurve um, obwohl
+   * die neun geschlossenen Trades des 30-Tage-Fensters alle VOR dem Schnitt
+   * liegen. Ergebnis: Kopfzeile „−0,04 % · 13.→14.08." über Kennzahlen aus
+   * 30 Tagen, eine gerade Linie ohne Trade-Bänder, WOMIT leer. Genau die
+   * zwei Bezugsräume auf einer Karte, vor denen dieser Kommentar warnt.
+   * Deshalb: Beginnen die Snapshots erst NACH dem ersten Abschluss des
+   * Fensters, zeigt die Karte die realisierte Kurve — sie deckt dieselben
+   * Trades wie die Kennzahlen darunter. */
+  const abschluesse = closedOnly(fenster.trades);
+  const ersterAbschlussTag = abschluesse.reduce<string | null>((min, t) => {
+    const tag = typeof t.executedAt === 'string' ? t.executedAt.slice(0, 10) : null;
+    return tag !== null && (min === null || tag < min) ? tag : min;
+  }, null);
+  const ersterSnapshotTag = fenster.equity.reduce<string | null>(
+    (min, p) => (min === null || p.date < min ? p.date : min),
+    null,
+  );
+  const snapshotsDeckenFenster =
+    ersterAbschlussTag === null
+    || (ersterSnapshotTag !== null && ersterSnapshotTag <= ersterAbschlussTag);
+  const wahl = depotKurve(
+    { snapshots: fenster.equity, trades: fenster.trades },
+    !snapshotsDeckenFenster,
+  );
   const zerlegung = zerlegeDepot(wahl.serie, fenster.trades);
   const letzte = zerlegung.equity[zerlegung.equity.length - 1] ?? 0;
   const basis = zerlegung.basis || 1;
