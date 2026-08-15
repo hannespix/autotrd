@@ -22,8 +22,11 @@ const scan = readFileSync(join(hier, '../src/scheduled/scanMarket.ts'), 'utf8');
 
 describe('Short-Zins in der Einstiegs-Hürde', () => {
   it('die Leihe wird mit der echten Marge-Rate und der Klassen-Session gerechnet', () => {
+    // Seit Hebel 1c mit der WIRKSAMEN Mindesthalte (minHalte = User-Wert,
+    // auf den Klassen-Boden angehoben) — ein Krypto-Short zahlt seine
+    // Leihe über die Haltedauer, die die Engine tatsächlich erzwingt.
     expect(scan).toMatch(
-      /shortFinanzierungPct\(\s*clamped\.engine\.minHoldMin,\s*sessionMinutesForClass\(klasse\),\s*DEFAULT_MARGIN_RATE,\s*\)/,
+      /shortFinanzierungPct\(\s*minHalte,\s*sessionMinutesForClass\(klasse\),\s*DEFAULT_MARGIN_RATE,\s*\)/,
     );
   });
 

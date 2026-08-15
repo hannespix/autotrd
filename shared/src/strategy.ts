@@ -588,6 +588,45 @@ export function resolveRisk(engine: EngineConfig, assetClass?: string | null): R
   return out;
 }
 
+/**
+ * Mindesthalte-Böden je Anlageklasse (Hebel 1c des Rund-um-die-Uhr-Umbaus,
+ * Owner 15.08.).
+ *
+ * Krypto: 2 Kalendertage. Die Zahl kommt aus der Messung, nicht aus
+ * Geschmack: 146 Krypto-Trades zahlten 1.316 $ Gebühren auf +691 $ brutto —
+ * die Klasse stirbt am UMSCHLAG, nicht an der Richtung. Ein Boden von zwei
+ * Tagen halbiert die maximale Roundtrip-Frequenz gegenüber dem globalen
+ * Default (1 Tag) und gibt jeder Position die √2-fache erwartete Bewegung
+ * je Gebührenpaar (Random Walk, s. costGate).
+ *
+ * Der Boden bremst ausschließlich den SIGNAL-Ausstieg (minHoldActive) —
+ * Stop, Trailing und Ziel laufen in jedem Scan davor und bleiben jederzeit
+ * scharf. Er ist damit eine Anti-Umschlag-Bremse, kein Exit-Hindernis.
+ *
+ * Er greift auch dann, wenn User oder Auto-Tuner den globalen Wert senken:
+ * Der Tuner optimiert über ALLE Klassen — genau dann braucht die
+ * gebührenteuerste Klasse ihren eigenen Boden.
+ */
+export const KLASSEN_MINDESTHALTE: Record<string, number> = {
+  crypto: 2880,
+};
+
+/**
+ * Wirksame Mindest-Haltedauer eines Symbols: der User-Wert, auf den
+ * Klassen-Boden ANGEHOBEN. Nur anhebend — der Boden kann den User-Wert nie
+ * senken, und Klassen ohne Boden behalten exakt den User-Wert (auch 0 =
+ * „Signal-Ausstieg sofort erlaubt").
+ */
+export function wirksameMindesthalte(
+  minHoldMin: number | undefined,
+  assetClass: string | undefined | null,
+): number {
+  const user =
+    Number.isFinite(minHoldMin) && (minHoldMin as number) > 0 ? (minHoldMin as number) : 0;
+  const boden = KLASSEN_MINDESTHALTE[(assetClass ?? '').toLowerCase()] ?? 0;
+  return Math.max(user, boden);
+}
+
 /* ── Paper-Ausführungskosten (Realismus, User-Wunsch 25.07.) ────────────────
  * Gleiche Konditionen wie der Backtest: 0,1 % Kommission + 5 bp Slippage je
  * Seite. Angewendet als EFFEKTIVER Preis (buy teurer, sell billiger) in
