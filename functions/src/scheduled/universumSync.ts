@@ -211,6 +211,13 @@ export const universumSync = onSchedule(
     retryCount: 0,
     timeoutSeconds: 540,
     memory: '512MiB',
+    /* Erst nachdem die Deploy-Diagnose beide Secrets bestätigt hat
+     * (15.08. 15:00 UTC: „VORHANDEN … Bereit zum Binden") — ein gebundenes
+     * Secret, das nicht existiert, bricht den GESAMTEN Functions-Deploy
+     * (gleiche Regel wie beim ANTHROPIC_API_KEY, kiBericht). Der eine
+     * Plattform-Schlüssel dient NUR der Asset-Liste; Konto-Schlüssel der
+     * Nutzer bleiben verschlüsselt in Firestore und sind hiervon getrennt. */
+    secrets: ['ALPACA_API_KEY', 'ALPACA_SECRET_KEY'],
   },
   async () => {
     await runUniversumSync();
@@ -222,7 +229,9 @@ export const universumSync = onSchedule(
  * überhaupt die erste Zahl zu sehen.
  */
 export const universumSyncNow = onRequest(
-  { timeoutSeconds: 540, memory: '512MiB' },
+  // Dieselbe Bindung wie der Zeitplan drüber — sonst antwortet der
+  // Hand-Auslöser weiter `keine_schluessel`, während der Nachtlauf läuft.
+  { timeoutSeconds: 540, memory: '512MiB', secrets: ['ALPACA_API_KEY', 'ALPACA_SECRET_KEY'] },
   async (_req, res) => {
     // Der Grund steht in der Antwort, nicht nur im Cloud-Log: Die
     // Deploy-Aufwärm-Kette druckt sie ins Actions-Log, und „warum ist das

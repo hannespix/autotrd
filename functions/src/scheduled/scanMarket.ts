@@ -3658,7 +3658,13 @@ export const scanMarket = onSchedule(
     schedule: 'every 5 minutes',
     timeZone: 'America/New_York',
     retryCount: 0,
-    memory: '512MiB',
+    /* 1GiB seit 15.08.: Cloud Logging zeigte ab 14:55 UTC „Memory limit of
+     * 512 MiB exceeded with 513/525 MiB used" — die Instanz wurde mitten im
+     * Scan abgeschossen und neu gestartet. Der Scan ist über die scanId
+     * idempotent, aber ein halber Lauf ist trotzdem ein Loch in der
+     * Messung. Das Set ist organisch gewachsen (30 Symbole, 25 Positionen,
+     * Schatten-Varianten, Flotte) — das Limit war schlicht zu knapp. */
+    memory: '1GiB',
     timeoutSeconds: 180,
     // Kein KI-Secret mehr: Der Scan ruft seit 28.07. keine Claude-API auf —
     // Der Scan ruft kein Sprachmodell mehr auf (MILESTONES M6).
