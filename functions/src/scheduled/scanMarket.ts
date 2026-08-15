@@ -23,6 +23,8 @@ import {
   classify,
   clusterHasRoom,
   costGate,
+  shortFinanzierungPct,
+  DEFAULT_MARGIN_RATE,
   effectiveLeverage,
   addiereSchatten,
   bestimmeSignalTyp,
@@ -312,6 +314,10 @@ export interface EntryGateStats {
   unter_kosten: number;
   /** Schatten (04.08.): Was die Kanten-Fassung ZUSÄTZLICH blocken würde. */
   kante_wuerde_blocken: number;
+  /** Abgelehnt: SHORT, dessen Hürde erst MIT der Leihe (shortFinanzierungPct)
+   *  reißt — die Basis-Hürde hätte durchgelassen (Hebel 3, 15.08.). Getrennt
+   *  von `unter_kosten`, damit die Wirkung der Leihe je Lauf messbar bleibt. */
+  short_zins_blockt: number;
   /** Klassen-Regler auf 0 — der Schatten misst weiter. */
   klasse_aus: number;
   /** Abgelehnt: Tages-Notbremse ausgelöst (M12). Zählt je gesperrtem Konto,
@@ -498,6 +504,7 @@ async function executeUserTrades(
     news_veto: 0,
     unter_kosten: 0,
     kante_wuerde_blocken: 0,
+    short_zins_blockt: 0,
     klasse_aus: 0,
     breaker_aktiv: 0,
     abgleich_drift: 0,
@@ -1180,6 +1187,27 @@ async function executeUserTrades(
         const kostenOhneKante = costGate(kostenBasis);
         const mitKante = costGate({ ...kostenBasis, capture: captureForClass(klasse) });
         const kosten = clamped.signals.captureGate !== false ? mitKante : kostenOhneKante;
+        /* Hebel 3 des Rund-um-die-Uhr-Umbaus (Owner 15.08.): Ein SHORT leiht
+         * die Papiere und zahlt Zins über die Haltedauer (gemessen ~37 $ je
+         * Nacht auf dem aktuellen Short-Buch). Die Hürde eines Short-
+         * EINSTIEGS trägt diese Kosten jetzt mit — dieselbe Rechnung wie
+         * `kosten`, nur um die Leihe erhöht. Exits bleiben unberührt: Ein
+         * Zuschlag dort würde offene Positionen einsperren. */
+        const shortZins = shortFinanzierungPct(
+          clamped.engine.minHoldMin,
+          sessionMinutesForClass(klasse),
+          DEFAULT_MARGIN_RATE,
+        );
+        const kostenShort =
+          shortZins > 0
+            ? costGate({
+                ...kostenBasis,
+                extraCostPct: shortZins,
+                ...(clamped.signals.captureGate !== false
+                  ? { capture: captureForClass(klasse) }
+                  : {}),
+              })
+            : kosten;
         // ALLE zutreffenden Gründe zählen, nicht nur den ersten. Der erste
         // Live-Lauf am 28.07. zeigte warum: `cluster_voll` stand auf 13,
         // `unter_kosten` auf 0 — nicht weil die Kostenschwelle nichts tat,
@@ -1197,6 +1225,10 @@ async function executeUserTrades(
           // derselbe Einstieg in beiden Zählern und die Zahl läse sich wie
           // ein doppelter Effekt.
           if (kosten.ok && !mitKante.ok) gate.kante_wuerde_blocken += 1;
+          // Hebel 3: Blocks, die NUR die Short-Leihe verursacht — getrennt
+          // gezählt, sonst wäre ihre Wirkung von der Basis-Hürde ununter-
+          // scheidbar. Zählt nur echte Zusatz-Blocks (Basis ließ durch).
+          if (side === 'short' && kosten.ok && !kostenShort.ok) gate.short_zins_blockt += 1;
           if (klassenGewicht(clamped, symbol) <= 0) gate.klasse_aus += 1;
         }
         if (regimeSperre === 'stress') gate.regime_stress += 1;
@@ -1207,7 +1239,10 @@ async function executeUserTrades(
         if (!platz) return 'cluster_voll';
         if (veto.blocked) return 'news_veto';
         if (klassenGewicht(clamped, symbol) <= 0) return 'klasse_aus';
-        return kosten.ok ? null : 'unter_kosten';
+        // Seitenscharf: Ein Short muss AUCH seine Leihkosten tragen. Für
+        // Longs (und Intraday-Shorts, shortZins === 0) ist kostenShort
+        // dasselbe Objekt wie kosten — die Hürde wird nie gesenkt.
+        return (side === 'short' ? kostenShort : kosten).ok ? null : 'unter_kosten';
       };
 
       /**
@@ -3224,6 +3259,7 @@ export async function runScan(force = false): Promise<ScanResult> {
     news_veto: 0,
     unter_kosten: 0,
     kante_wuerde_blocken: 0,
+    short_zins_blockt: 0,
     klasse_aus: 0,
     breaker_aktiv: 0,
     abgleich_drift: 0,

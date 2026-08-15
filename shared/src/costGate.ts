@@ -193,6 +193,35 @@ export function roundtripCostPct(feeRate: number): number {
 }
 
 /**
+ * Finanzierungskosten eines SHORTS über die erwartete Haltedauer, in %.
+ *
+ * Hebel 3 des Rund-um-die-Uhr-Umbaus (Owner 15.08.): Shorts leihen die
+ * Papiere und zahlen dafür Zins — gemessen ~37 $ je Nacht auf dem
+ * aktuellen Short-Buch. Die Gebührenrechnung des Kosten-Tors sah diese
+ * Kosten bisher nicht; ein Short musste also weniger Bewegung nachweisen,
+ * als er tatsächlich kostet.
+ *
+ * Konservative, ehrliche Annahmen:
+ *  - Ein Short, dessen Mindesthaltedauer innerhalb EINER Session liegt,
+ *    kann am selben Tag schließen ⇒ keine Übernacht-Leihe, Zuschlag 0.
+ *  - Ab Session-Länge zählt mindestens EIN Kalendertag Zins (die Nacht),
+ *    darüber die Haltedauer in Kalendertagen — Leihe läuft am Wochenende
+ *    weiter, deshalb Kalender- und nicht Handelstage.
+ */
+export function shortFinanzierungPct(
+  minHoldMin: number | undefined,
+  sessionMin: number,
+  annualRate: number,
+): number {
+  if (!Number.isFinite(annualRate) || annualRate <= 0 || !(sessionMin > 0)) return 0;
+  const halte =
+    Number.isFinite(minHoldMin) && (minHoldMin as number) > 0 ? (minHoldMin as number) : 0;
+  if (halte < sessionMin) return 0;
+  const tage = Math.max(1, halte / 1440);
+  return (annualRate / 365) * tage * 100;
+}
+
+/**
  * Kerzen, die eine Position mindestens gehalten wird.
  *
  * Mindestens 1 — eine Haltedauer von 0 („aus") heißt nicht, dass die Position
@@ -235,6 +264,13 @@ export interface CostGateInput {
   atrSessionMin?: number;
   /** Gebührensatz JE SEITE der Anlageklasse (feeRateForClass). */
   feeRate: number;
+  /**
+   * Zusätzliche Kosten in % des Positionswerts, die dieser Trade über die
+   * Gebühren hinaus trägt — z. B. die Short-Leihe über die Haltedauer
+   * (`shortFinanzierungPct`). Fließt VOR dem Sicherheitsfaktor in die
+   * Hürde ein; kann sie nur ERHÖHEN, nie senken (negative Werte zählen 0).
+   */
+  extraCostPct?: number;
   /** Sicherheitsfaktor; Default MIN_EDGE_MULTIPLE. */
   multiple?: number;
   /**
@@ -272,7 +308,9 @@ export interface CostGateResult {
  * Der Fall wird deshalb als eigener Grund gezählt und im Heartbeat sichtbar.
  */
 export function costGate(input: CostGateInput): CostGateResult {
-  const costPct = roundtripCostPct(input.feeRate);
+  const extra =
+    typeof input.extraCostPct === 'number' && input.extraCostPct > 0 ? input.extraCostPct : 0;
+  const costPct = roundtripCostPct(input.feeRate) + extra;
   const needPct = costPct * (input.multiple ?? MIN_EDGE_MULTIPLE);
   const atr = input.atrPct;
   if (typeof atr !== 'number' || !Number.isFinite(atr) || atr <= 0) {
