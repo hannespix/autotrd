@@ -13,6 +13,7 @@ import {
   watchAuth,
 } from './auth.js';
 import { ensureProfile, listenerCount } from './data.js';
+import { t } from './i18n.js';
 import { muxIsLeader } from './mux.js';
 import { mountDashboard, unmountDashboard } from './dashboard.js';
 import { mountLegalFooter } from './legal.js';
@@ -63,22 +64,22 @@ function renderLogin(): void {
     <main class="center">
       <section class="card auth-card" aria-labelledby="t">
         <h1 id="t">AUTO<span class="c-gn">TRD</span></h1>
-        <p class="sub">Automatisiertes Trading · Paper &amp; Broker-Anbindung · keine Anlageberatung</p>
+        <p class="sub">${t('login.sub')}</p>
         <form id="loginForm" novalidate>
-          <label for="email">E-Mail</label>
+          <label for="email">${t('login.email')}</label>
           <input id="email" name="email" class="inp" type="email" autocomplete="email" required />
-          <label for="password">Passwort</label>
+          <label for="password">${t('login.passwort')}</label>
           <input id="password" name="password" class="inp" type="password" autocomplete="current-password" minlength="6" required />
           <p id="err" class="error" role="alert" hidden></p>
           <p id="info" class="hint" role="status" hidden></p>
           <div class="row">
-            <button type="submit" class="btn btn-g">Anmelden</button>
-            <button type="button" id="registerBtn" class="btn btn-n">Registrieren</button>
+            <button type="submit" class="btn btn-g">${t('login.anmelden')}</button>
+            <button type="button" id="registerBtn" class="btn btn-n">${t('login.registrieren')}</button>
           </div>
-          <button type="button" id="resetBtn" class="btn btn-n" style="width:100%;margin-top:8px;font-size:11px">Passwort vergessen?</button>
+          <button type="button" id="resetBtn" class="btn btn-n" style="width:100%;margin-top:8px;font-size:11px">${t('login.passwortVergessen')}</button>
         </form>
-        <div class="divider" role="separator">oder</div>
-        <button type="button" id="googleBtn" class="btn btn-n" style="width:100%">Mit Google anmelden</button>
+        <div class="divider" role="separator">${t('login.oder')}</div>
+        <button type="button" id="googleBtn" class="btn btn-n" style="width:100%">${t('login.mitGoogle')}</button>
       </section>
     </main>`;
   mountLegalFooter(app.querySelector('main')!);
@@ -114,13 +115,13 @@ function renderLogin(): void {
     const info = document.querySelector<HTMLParagraphElement>('#info')!;
     const { email } = fields();
     if (!email) {
-      err.textContent = 'Bitte oben die E-Mail-Adresse eintragen.';
+      err.textContent = t('login.emailFehlt');
       err.hidden = false;
       return;
     }
     resetPassword(email)
       .then(() => {
-        info.textContent = 'Passwort-Reset-Mail ist unterwegs (Spam-Ordner prüfen).';
+        info.textContent = t('login.resetUnterwegs');
         info.hidden = false;
       })
       .catch(showError);

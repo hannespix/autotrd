@@ -217,6 +217,7 @@ import {
   histogram,
 } from './svgcharts.js';
 import { iBtn, initInfoTips } from './infotips.js';
+import { setzeSprache, sprachWahl } from './i18n.js';
 import { mountLegalFooter } from './legal.js';
 import {
   GROUP_COLORS,
@@ -1248,6 +1249,13 @@ function layout(email: string): string {
           <option value="system">System</option>
           <option value="light">Hell</option>
           <option value="dark">Dunkel</option>
+        </select></label>
+      <label class="opt-row"><span><b>Sprache / Language</b> — Deutsch ist Standard.
+        Englisch übersetzt die Oberfläche schrittweise; noch nicht übersetzte
+        Texte erscheinen auf Deutsch.</span>
+        <select id="ouLang" class="inp" style="max-width:140px;margin-left:auto">
+          <option value="de">Deutsch</option>
+          <option value="en">English</option>
         </select></label>
       <div class="wl-sec">Optionale Elemente</div>
       <label class="opt-row"><input type="checkbox" id="ouPred" />
@@ -9082,6 +9090,17 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     if (themeWahl() !== 'system') return;
     wendeThemeAn();
     void rebuildChart();
+  });
+  /* Sprachwahl (Task #139, Phase 0): Wahl speichern und die App neu laden.
+   * Ein Reload statt Soft-Re-Render, mit Absicht: Das Dashboard hält Charts,
+   * Listener und Workspace-Zustand — ein halb neu gerendertes UI wäre die
+   * fehleranfälligste aller Varianten. Der Reload ist der ehrliche Schnitt;
+   * wenn Phase 1 weit genug ist, kann ein sanfter Re-Render folgen. */
+  const ouLang = $('ouLang') as HTMLSelectElement;
+  ouLang.value = sprachWahl();
+  ouLang.addEventListener('change', () => {
+    setzeSprache(ouLang.value === 'en' ? 'en' : 'de');
+    location.reload();
   });
   // Zoom-Buttons (Owner 07.08.: „Reihenfolge klein nach groß, Auto kann weg,
   // nur die X-Zoomstufe per smoothem Übergang"): Ein Klick ist KEIN
