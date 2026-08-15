@@ -1393,49 +1393,40 @@ function layout(email: string): string {
       </div>
       </div>
       <div data-opane="broker" hidden>
-      <div class="wl-sec">Echtgeld-Anbindung ${iBtn('brokerStatus')}</div>
-      <p class="hint">Prüft die Verbindung zum Broker, <b>ohne zu handeln</b>, und
-        gleicht das eigene Buch mit dem Depot beim Broker ab. Echtgeld verlangt
-        zwei Schalter an zwei Orten — ein Klick allein schaltet nichts scharf.</p>
+      <div class="wl-sec">${t('opt.echtgeldAnbindung')} ${iBtn('brokerStatus')}</div>
+      <p class="hint">${t('opt.brokerHint')}</p>
       <div class="row" style="align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap">
         <input id="bkKey" class="inp" style="flex:1;min-width:150px" type="text"
           autocomplete="off" spellcheck="false" placeholder="API-Key (PK…)" />
         <input id="bkSec" class="inp" style="flex:1;min-width:150px" type="password"
           autocomplete="off" spellcheck="false" placeholder="Secret-Key" />
-        <button class="btn btn-n" id="bkSave">Verbinden</button>
+        <button class="btn btn-n" id="bkSave">${t('opt.verbinden')}</button>
       </div>
       <!-- Echtgeld-Schlüssel sind seit 05.08. erlaubt (verschlüsselte Ablage).
            Das Passwortfeld erscheint erst, wenn ein AK…-Schlüssel eingegeben
            wird — für Papierkonten wäre es Reibung ohne Schutzwirkung. -->
       <div id="bkLiveBox" hidden style="margin-top:6px">
         <p class="hint" style="border-left:3px solid var(--rd);padding-left:8px">
-          <b>Das ist ein Echtgeld-Schlüssel (AK…).</b> Er wird verschlüsselt
-          gespeichert und nie wieder angezeigt. <b>Gehandelt wird damit nicht:</b>
-          Dafür braucht es zusätzlich den Live-Modus in den Einstellungen, die
-          Server-Freigabe und eine bestandene Live-Reife. Bis dahin siehst du
-          dein echtes Depot nur im Abgleich.</p>
-        <p class="hint">Zur Sicherheit muss deine Anmeldung frisch sein — eine
-          übernommene, offene Sitzung soll genau das hier nicht können.</p>
+          ${t('opt.liveKeyWarnung')}</p>
+        <p class="hint">${t('opt.reauthHint')}</p>
         <input id="bkPw" class="inp" style="width:100%;margin-top:4px" type="password"
-          autocomplete="current-password" placeholder="Dein autotrd-Passwort zur Bestätigung" />
+          autocomplete="current-password" placeholder="${t('opt.pwPlatzhalter')}" />
       </div>
-      <p class="hint"><b>Papierkonto-Schlüssel</b> beginnen mit „PK",
-        <b>Echtgeld-Schlüssel</b> mit „AK". Das Papierkonto ist bei Alpaca gratis
-        und sofort da — fang damit an.</p>
+      <p class="hint">${t('opt.pkAkHint')}</p>
       <!-- Die Schlüssel liegen nicht dort, wo man sie sucht: Das Paper-
            Dashboard ist eine eigene Oberfläche, und der Knopf zum Erzeugen
            steht rechts in der Seitenleiste. Ohne diese drei Links kostet der
            erste Versuch mehr Zeit als die ganze Einrichtung. -->
       <p class="hint">
-        <a href="https://app.alpaca.markets/signup" target="_blank" rel="noopener noreferrer">1. Konto anlegen</a>
+        <a href="https://app.alpaca.markets/signup" target="_blank" rel="noopener noreferrer">${t('opt.linkKonto')}</a>
         &nbsp;·&nbsp;
-        <a href="https://app.alpaca.markets/paper/dashboard/overview" target="_blank" rel="noopener noreferrer">2. Paper-Dashboard → API-Keys erzeugen</a>
+        <a href="https://app.alpaca.markets/paper/dashboard/overview" target="_blank" rel="noopener noreferrer">${t('opt.linkKeys')}</a>
         &nbsp;·&nbsp;
-        <a href="https://docs.alpaca.markets/docs/getting-started" target="_blank" rel="noopener noreferrer">Dokumentation</a>
+        <a href="https://docs.alpaca.markets/docs/getting-started" target="_blank" rel="noopener noreferrer">${t('opt.linkDoku')}</a>
       </p>
       <div class="row" style="align-items:center;gap:8px;margin-top:6px">
-        <button class="btn btn-n" id="bkGo">Verbindung prüfen</button>
-        <button class="btn btn-n" id="bkDel">Trennen</button>
+        <button class="btn btn-n" id="bkGo">${t('opt.verbindungPruefen')}</button>
+        <button class="btn btn-n" id="bkDel">${t('opt.trennen')}</button>
       </div>
       <!-- Der LAUFENDE Abgleich, nicht der auf Knopfdruck. Ein sauberer
            Abgleich sieht ohne diese Zeile aus wie gar keiner — und genau
@@ -1447,94 +1438,73 @@ function layout(email: string): string {
            Dieser Knopf holt Bestand, Einstände, Barbestand und die eigene
            Order-Historie vom Broker ins Buch — ohne einen einzigen Handel. -->
       <div class="row" style="align-items:center;gap:8px;margin-top:6px">
-        <button class="btn btn-n" id="bkAdopt">Depot vom Broker übernehmen</button>
+        <button class="btn btn-n" id="bkAdopt">${t('opt.depotUebernehmen')}</button>
       </div>
-      <p class="hint">Holt Positionen, Einstände, Barbestand und die von autotrd
-        gesendeten Orders vom Broker ins Buch — <b>es wird nichts gekauft oder
-        verkauft</b>. Für den Fall, dass Buch und Depot auseinandergelaufen sind
-        (z. B. nach „Neu anfangen" mit verbundenem Broker). Buch-Positionen ohne
-        Gegenstück beim Broker werden dabei entfernt; Stops kommen neu aus deiner
-        aktuellen Strategie.</p>
+      <p class="hint">${t('opt.depotUebernehmenHint')}</p>
       <div id="bkOut" style="margin-top:8px"></div>
 
       <!-- ── Echtgeld scharf stellen (M14, Owner-Go 05.08.) ──────────────
            Der Schalter, den der Owner meint. Er steht bewusst HIER, direkt
            unter der Broker-Karte: Ohne verbundenes Echtgeldkonto ist er
            gegenstandslos, und die Reihenfolge auf dem Bildschirm soll die
-           Reihenfolge der Schritte sein. -->
-      <div class="wl-sec" style="margin-top:14px">Echtgeld scharf stellen</div>
-      <p class="hint">Es geht los, wenn <b>beides</b> gilt: Dieser Schalter steht
-        auf ECHTGELD <b>und</b> die Trading-Engine steht auf <b>Start</b>. Ein
-        Schalter allein handelt nicht.</p>
+           Reihenfolge der Schritte sein. Das Tipp-Wort ECHTGELD ist
+           serverseitig gepinnt und bleibt in JEDER Sprache wörtlich. -->
+      <div class="wl-sec" style="margin-top:14px">${t('opt.scharfStellen')}</div>
+      <p class="hint">${t('opt.scharfHint')}</p>
       <p class="hint" id="lvState">—</p>
       <div id="lvKrit"></div>
       <div id="lvOn" hidden style="margin-top:8px">
         <p class="hint" style="border-left:3px solid var(--rd);padding-left:8px">
-          <b>Ab jetzt fließt echtes Geld.</b> Die Engine kauft und verkauft
-          selbstständig auf deinem Alpaca-Echtgeldkonto — ohne weitere
-          Rückfrage, rund um die Uhr für Krypto, zu Börsenzeiten für den Rest.
-          Verluste sind real und nicht rückgängig zu machen.</p>
-        <p class="hint">Zum Bestätigen <b>ECHTGELD</b> tippen. Deine Anmeldung
-          muss dabei frisch sein — du wirst nach deinem Passwort gefragt.</p>
+          ${t('opt.echtgeldWarnung')}</p>
+        <p class="hint">${t('opt.echtgeldTippen')}</p>
         <div class="row" style="align-items:center;gap:8px;margin-top:4px;flex-wrap:wrap">
           <input id="lvWord" class="inp" style="flex:1;min-width:120px" type="text"
             autocomplete="off" spellcheck="false" placeholder="ECHTGELD" />
           <input id="lvPw" class="inp" style="flex:1;min-width:120px" type="password"
-            autocomplete="current-password" placeholder="Dein Passwort" />
+            autocomplete="current-password" placeholder="${t('opt.pwKurz')}" />
         </div>
       </div>
       <div class="row" style="align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap">
-        <button class="btn btn-n" id="lvGo">Auf ECHTGELD umstellen</button>
-        <button class="btn btn-n" id="lvOff" hidden>Zurück auf Papierhandel</button>
+        <button class="btn btn-n" id="lvGo">${t('opt.aufEchtgeld')}</button>
+        <button class="btn btn-n" id="lvOff" hidden>${t('opt.zurueckPapier')}</button>
       </div>
       <div id="lvOut" style="margin-top:8px"></div>
       <p class="hint" style="margin-top:8px">
-        <b>Was passiert beim Stoppen?</b> Die Engine legt sofort die Hände in den
-        Schoß: keine neuen Käufe, keine Verkäufe, auch keine Stop-Loss- oder
-        Take-Profit-Ausführungen. Dein Depot bleibt <b>exakt so stehen, wie es
-        ist</b> — es wird nichts glattgestellt. Das ist gewollt, hat aber eine
-        Kehrseite: Ein gestopptes Konto ist auch ein <b>ungeschütztes</b> Konto.
-        Wer über Nacht stoppt und Positionen offen lässt, hat keinen Stop-Loss
-        mehr. Für längere Pausen deshalb besser: Positionen von Hand schließen,
-        dann stoppen.</p>
+        ${t('opt.stoppWasPassiert')}</p>
       </div>
       <div data-opane="konto" hidden>
-      <div class="wl-sec">Konto</div>
+      <div class="wl-sec">${t('opt.konto')}</div>
       <div class="row" style="align-items:center;gap:10px">
-        <span class="hint" style="flex:1">Angemeldet als <b>${email.replace(/[<>&]/g, '')}</b></span>
-        <button class="btn btn-n" id="logoutBtn">Abmelden</button>
+        <span class="hint" style="flex:1">${t('opt.angemeldetAls')} <b>${email.replace(/[<>&]/g, '')}</b></span>
+        <button class="btn btn-n" id="logoutBtn">${t('opt.abmelden')}</button>
       </div>
-      <div class="wl-sec" style="margin-top:14px">Steuer-Export ${iBtn('taxReport')}</div>
-      <p class="hint">Paart Käufe und Verkäufe nach <b>FIFO</b>, rechnet Haltedauern
-        und sortiert die Ergebnisse in die Töpfe, die das deutsche Recht getrennt
-        hält. Bei Krypto zählt die <b>Ein-Jahres-Frist</b> — danach steuerfrei.
-        Keine Steuerberatung: Die Zahlen sind eine Aufbereitung für deinen
-        Steuerberater, keine Steuerschuld.</p>
+      <div class="wl-sec" style="margin-top:14px">${t('opt.steuerExport')} ${iBtn('taxReport')}</div>
+      <p class="hint">${t('opt.steuerHint')}</p>
       <div class="row" style="align-items:center;gap:8px;margin-top:6px">
         <select id="txYear" class="inp st-num" style="max-width:110px"></select>
         <label class="hint" style="display:flex;align-items:center;gap:5px">
-          <input type="checkbox" id="txReal" /> nur Echtgeld
+          <input type="checkbox" id="txReal" /> ${t('opt.nurEchtgeld')}
         </label>
-        <button class="btn btn-n" id="txGo">Bericht erstellen</button>
+        <button class="btn btn-n" id="txGo">${t('opt.berichtErstellen')}</button>
       </div>
       <div id="txOut" style="margin-top:8px"></div>
-      <div class="wl-sec" style="margin-top:14px">Neu anfangen ${iBtn('resetWallet')}</div>
-      <p class="hint">Setzt <b>Handelshistorie, offene Positionen, Kontostand und
-        Kennzahlen</b> auf null zurück. Kursdaten, Prognose-Trefferquoten und deine
-        Strategien bleiben. Nicht rückgängig zu machen.</p>
+      <div class="wl-sec" style="margin-top:14px">${t('opt.neuAnfangen')} ${iBtn('resetWallet')}</div>
+      <p class="hint">${t('opt.resetHint')}</p>
       <div class="row" style="align-items:center;gap:8px;margin-top:6px">
         <input id="rsWord" class="inp st-num" style="flex:1;max-width:180px"
-          type="text" autocomplete="off" spellcheck="false" placeholder="RESET tippen" />
-        <button class="btn btn-r" id="rsGo" disabled>Konto zurücksetzen</button>
+          type="text" autocomplete="off" spellcheck="false" placeholder="${t('opt.resetTippen')}" />
+        <button class="btn btn-r" id="rsGo" disabled>${t('opt.kontoZuruecksetzen')}</button>
       </div>
       <!-- Startkapital vom Broker (Owner-Frage 05.08.). Bewusst NUR hier:
            Der Kontostand ist die Bezugsgroesse jeder Kennzahl — mitten in der
            Messung gewechselt, beziehen sich alte und neue Zahlen auf
-           verschiedene Kapitalbasen. Beim Reset ist die Historie ohnehin weg. -->
+           verschiedene Kapitalbasen. Beim Reset ist die Historie ohnehin weg.
+           Das Tipp-Wort RESET ist serverseitig gepinnt (RESET_CONFIRM_WORD)
+           und bleibt in JEDER Sprache wörtlich. -->
       <div class="row" style="align-items:center;gap:8px;margin-top:6px">
         <label class="hint" style="display:flex;align-items:center;gap:6px">
           <input type="checkbox" id="rsFromBroker" />
-          Startkapital vom verbundenen Broker übernehmen (statt der Zahl oben)
+          ${t('opt.startVomBroker')}
         </label>
       </div>
       <div class="hint" id="rsMsg"></div>
