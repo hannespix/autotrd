@@ -81,6 +81,17 @@ describe('Golden-Wächter — im DE-Modus exakt die bisherigen Texte', () => {
     expect(DE['auth.falscheDaten']).toBe('E-Mail oder Passwort ist falsch.');
     expect(DE['auth.fehlgeschlagen']).toBe('Anmeldung fehlgeschlagen. Bitte erneut versuchen.');
   });
+
+  it('Tranche 1: die deutschen Kopfleisten-Texte sind byte-gleich zum Bestand', () => {
+    expect(DE['nav.engineAus']).toBe('Engine aus');
+    expect(DE['nav.engineAn']).toBe('Engine an');
+    expect(DE['nav.panelLinks']).toBe('Linkes Panel');
+    expect(DE['nav.panelRechts']).toBe('Rechtes Panel');
+    expect(DE['nav.optionenTitle']).toBe('Optionen: Elemente, Module & Paper-Wallet');
+    expect(DE['nav.tourTitle']).toBe('Tour: die wichtigsten Bereiche in einer Minute');
+    expect(DE['nav.spalteLinks']).toBe('Linke Spalte ein-/ausblenden');
+    expect(DE['nav.spalteRechts']).toBe('Rechte Spalte ein-/ausblenden');
+  });
 });
 
 describe('Anschluss-Wächter — die Funktion ist verdrahtet, nicht nur vorhanden', () => {
@@ -101,6 +112,26 @@ describe('Anschluss-Wächter — die Funktion ist verdrahtet, nicht nur vorhande
   it('authErrorMessage übersetzt über t()', () => {
     expect(auth).toContain("t('auth.falscheDaten')");
     expect(auth).toContain("t('auth.fehlgeschlagen')");
+  });
+
+  it('die Kopfleiste zieht ihre Texte über t() — Badge inklusive Umschalter', () => {
+    for (const k of [
+      "t('nav.panelLinks')",
+      "t('nav.panelRechts')",
+      "t('nav.engineAus')",
+      "t('nav.optionenTitle')",
+      "t('nav.tourTitle')",
+      "t('nav.spalteLinks')",
+      "t('nav.spalteRechts')",
+    ]) {
+      expect(dashboard).toContain(k);
+    }
+    // Der dynamische Badge-Umschalter (renderEngineBadge) übersetzt BEIDE
+    // Zustände — sonst spränge das Badge beim Engine-Start zurück auf Deutsch.
+    expect(dashboard).toContain("running ? t('nav.engineAn') : t('nav.engineAus')");
+    // Keine hartkodierten Reste in der Kopfleiste.
+    expect(dashboard).not.toContain('>Engine aus</div>');
+    expect(dashboard).not.toContain('aria-label="Linkes Panel"');
   });
 
   it('die Sprachwahl sitzt in Optionen → Anzeige und wird angewandt', () => {

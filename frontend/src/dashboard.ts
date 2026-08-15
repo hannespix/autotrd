@@ -217,7 +217,7 @@ import {
   histogram,
 } from './svgcharts.js';
 import { iBtn, initInfoTips } from './infotips.js';
-import { setzeSprache, sprachWahl } from './i18n.js';
+import { setzeSprache, sprachWahl, t } from './i18n.js';
 import { mountLegalFooter } from './legal.js';
 import {
   GROUP_COLORS,
@@ -586,14 +586,14 @@ function paletteCommands(): PaletteCommand[] {
 function layout(email: string): string {
   return `
   <header class="hdr">
-    <button class="burg" id="burgL" aria-label="Linkes Panel">☰</button>
+    <button class="burg" id="burgL" aria-label="${t('nav.panelLinks')}">☰</button>
     <div class="logo">AUTO<span class="c-gn">TRD</span></div>
     <div class="spacer"></div>
-    <div id="engBadge" class="badge b-off">Engine aus</div>
-    <button class="hbtn" id="optBtn" title="Optionen: Elemente, Module & Paper-Wallet">${ICONS.gear}</button>
-    <button class="hbtn" id="tourBtn" title="Tour: die wichtigsten Bereiche in einer Minute">?</button>
-    <button class="hbtn sb-tgl" id="sideL" title="Linke Spalte ein-/ausblenden">◧</button>
-    <button class="hbtn sb-tgl" id="sideR" title="Rechte Spalte ein-/ausblenden">◨</button>
+    <div id="engBadge" class="badge b-off">${t('nav.engineAus')}</div>
+    <button class="hbtn" id="optBtn" title="${t('nav.optionenTitle')}">${ICONS.gear}</button>
+    <button class="hbtn" id="tourBtn" title="${t('nav.tourTitle')}">?</button>
+    <button class="hbtn sb-tgl" id="sideL" title="${t('nav.spalteLinks')}">◧</button>
+    <button class="hbtn sb-tgl" id="sideR" title="${t('nav.spalteRechts')}">◨</button>
     <!-- Hell/Dunkel wohnt seit 15.08. in Optionen → Anzeige (Owner: der
          Kopfleisten-Knopf wurde ständig aus Versehen getippt). -->
 
@@ -603,7 +603,7 @@ function layout(email: string): string {
          Screenshot). Eine Aktion, die die Sitzung beendet, gehört nicht
          fingerbreit neben eine, die man dauernd braucht: Sie steht jetzt
          unten im Options-Modal (⚙). -->
-    <button class="burg" id="burgR" aria-label="Rechtes Panel">☰</button>
+    <button class="burg" id="burgR" aria-label="${t('nav.panelRechts')}">☰</button>
   </header>
   <div class="overlay" id="olv"></div>
 
@@ -5867,7 +5867,7 @@ function fillForm(s: Strategy): void {
 
 function renderEngineBadge(running: boolean): void {
   const b = $('engBadge');
-  b.textContent = running ? 'Engine an' : 'Engine aus';
+  b.textContent = running ? t('nav.engineAn') : t('nav.engineAus');
   b.className = `badge ${running ? 'b-on' : 'b-off'}`;
   // Owner-Feedback 28.07.: „start/stop müssen doch nicht immer beide angezeigt
   // werden." Stimmt — von zwei Knöpfen ist immer genau einer sinnlos, und ein
