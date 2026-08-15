@@ -18,7 +18,9 @@ import {
   CLASS_CAPTURE,
   DEFAULT_CAPTURE,
   captureForClass,
+  shortFinanzierungPct,
 } from '../src/costGate.js';
+import { DEFAULT_MARGIN_RATE } from '../src/margin.js';
 import { feeRateForClass } from '../src/strategy.js';
 
 describe('roundtripCostPct', () => {
@@ -203,6 +205,87 @@ describe('Einfangquote — Bewegung ist kein Gewinn (04.08.)', () => {
     expect(r.ok).toBe(true);
     expect(r.reason).toBe('kein_atr');
     expect(r.edgePct).toBe(0);
+  });
+});
+
+describe('shortFinanzierungPct — die Leihe eines Shorts (Hebel 3, 15.08.)', () => {
+  // 8 % p. a. ⇒ 0,08 / 365 × 100 ≈ 0,0219 % je Kalendertag.
+  const proTag = (DEFAULT_MARGIN_RATE / 365) * 100;
+
+  it('Intraday-Short zahlt keine Übernacht-Leihe', () => {
+    // Mindesthaltedauer 60 min bei 390-min-Session: kann am selben Tag
+    // schließen — es gibt keine Nacht, für die Zins anfiele.
+    expect(shortFinanzierungPct(60, 390, DEFAULT_MARGIN_RATE)).toBe(0);
+    expect(shortFinanzierungPct(0, 390, DEFAULT_MARGIN_RATE)).toBe(0);
+    expect(shortFinanzierungPct(undefined, 390, DEFAULT_MARGIN_RATE)).toBe(0);
+  });
+
+  it('ab Session-Länge zählt mindestens EINE Nacht', () => {
+    // 390 min Haltedauer überspannt die ganze US-Session ⇒ die Position
+    // liegt über Nacht, auch wenn 390 min < 1 Kalendertag sind.
+    expect(shortFinanzierungPct(390, 390, DEFAULT_MARGIN_RATE)).toBeCloseTo(proTag, 10);
+    expect(shortFinanzierungPct(1440, 390, DEFAULT_MARGIN_RATE)).toBeCloseTo(proTag, 10);
+    // 24/7-Klassen (Session 1440): unter einem vollen Tag bleibt es intraday.
+    expect(shortFinanzierungPct(720, 1440, DEFAULT_MARGIN_RATE)).toBe(0);
+    expect(shortFinanzierungPct(1440, 1440, DEFAULT_MARGIN_RATE)).toBeCloseTo(proTag, 10);
+  });
+
+  it('mehrtägige Haltedauer zahlt kalendertäglich weiter', () => {
+    // Leihe läuft am Wochenende weiter — 3 Kalendertage sind 3 Tage Zins.
+    expect(shortFinanzierungPct(4320, 390, DEFAULT_MARGIN_RATE)).toBeCloseTo(proTag * 3, 10);
+  });
+
+  it('unsinnige Eingaben ergeben 0 — nie NaN, nie negativ', () => {
+    expect(shortFinanzierungPct(1440, 390, 0)).toBe(0);
+    expect(shortFinanzierungPct(1440, 390, -0.05)).toBe(0);
+    expect(shortFinanzierungPct(1440, 390, Number.NaN)).toBe(0);
+    expect(shortFinanzierungPct(1440, 0, DEFAULT_MARGIN_RATE)).toBe(0);
+  });
+});
+
+describe('extraCostPct — Zusatzkosten erhöhen die Hürde, nie senken', () => {
+  const basis = {
+    minHoldMin: 60,
+    timeframe: 'intraday' as const,
+    feeRate: feeRateForClass('stocks_us'), // 0,1 % Roundtrip ⇒ 0,3 % Schwelle
+  };
+
+  it('derselbe Trade kippt, sobald er Zusatzkosten trägt', () => {
+    const eng = { ...basis, atrPct: 0.15 }; // 0,52 % erwartete Bewegung
+    expect(costGate(eng).ok).toBe(true);
+    const r = costGate({ ...eng, extraCostPct: 0.1 });
+    expect(r.ok).toBe(false);
+    expect(r.costPct).toBeCloseTo(0.2, 10);
+    expect(r.needPct).toBeCloseTo(0.6, 10);
+  });
+
+  it('Zusatzkosten zählen VOR dem Sicherheitsfaktor', () => {
+    // needPct = (Roundtrip + Zusatz) × multiple — die Leihe wird wie jede
+    // andere Reibung mit dem Faktor abgesichert, nicht nachträglich addiert.
+    const r = costGate({ ...basis, atrPct: 0.15, extraCostPct: 0.1 });
+    expect(r.needPct).toBeCloseTo((0.1 + 0.1) * MIN_EDGE_MULTIPLE, 10);
+  });
+
+  it('negative oder unsinnige Zusatzkosten senken die Hürde NICHT', () => {
+    const eng = { ...basis, atrPct: 0.15 };
+    const ohne = costGate(eng);
+    for (const extra of [-0.5, 0, Number.NaN]) {
+      const r = costGate({ ...eng, extraCostPct: extra });
+      expect(r.costPct).toBeCloseTo(ohne.costPct, 10);
+      expect(r.needPct).toBeCloseTo(ohne.needPct, 10);
+      expect(r.ok).toBe(true);
+    }
+  });
+
+  it('die Übernacht-Leihe allein kann einen Short-Einstieg kippen', () => {
+    // Genau der Anschluss aus scanMarket: Basis-Hürde 0,3 %, mit Leihe
+    // (1 Nacht ≈ 0,022 %) steigt sie auf ~0,366 % — ein Trade dazwischen
+    // ist als Long tragfähig, als Übernacht-Short nicht.
+    const zins = shortFinanzierungPct(1440, 390, DEFAULT_MARGIN_RATE);
+    expect(zins).toBeGreaterThan(0);
+    const eng = { atrPct: 0.02, minHoldMin: 1440, timeframe: 'intraday' as const, feeRate: 0.0005 };
+    expect(costGate(eng).ok).toBe(true);
+    expect(costGate({ ...eng, extraCostPct: zins }).ok).toBe(false);
   });
 });
 
