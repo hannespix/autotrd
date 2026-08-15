@@ -30,6 +30,16 @@ describe('Universum-Sync-Grund (Quelltext-Wächter)', () => {
     expect(sync).toContain("res.json(r.stand ?? { ok: false, grund: r.grund ?? 'kein_stand' });");
   });
 
+  it('BEIDE Sync-Functions binden die Alpaca-Secrets (15.08., nach Diagnose VORHANDEN)', () => {
+    // Bindung erst NACH bestätigter Existenz (sonst bricht der ganze
+    // Deploy) — und auf BEIDEN Functions: Der Zeitplan schreibt nachts,
+    // der Hand-Auslöser beweist es tagsüber. Nur eine von beiden gebunden
+    // hieße: Die Deploy-Aufwärm-Kette meldet weiter keine_schluessel,
+    // obwohl der Nachtlauf längst funktioniert.
+    const treffer = sync.match(/secrets: \['ALPACA_API_KEY', 'ALPACA_SECRET_KEY'\]/g) ?? [];
+    expect(treffer, 'Bindung auf universumSync UND universumSyncNow erwartet').toHaveLength(2);
+  });
+
   it('die Deploy-Aufwärm-Kette stößt den Sync an und druckt die Antwort', () => {
     // Reihenfolge + logBody prüft invokeDaily.test.mjs an den RUNS selbst;
     // hier hängt der Anschluss: --only im Workflow und die logBody-Mechanik.
