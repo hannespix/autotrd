@@ -298,6 +298,16 @@ export function verbindungUnlesbar(uid: string): boolean {
   return unlesbar.has(uid);
 }
 
+/**
+ * Wartefenster für LIMIT-Einstiege (~12 s): länger als die ~4 s der
+ * Market-Orders, weil ein Limit am Entscheidungskurs eine Gegenseite
+ * braucht — aber endlich, weil danach der K-2c-Storno aufräumt. Mehr
+ * Geduld hieße mehr Scan-Laufzeit je Krypto-Einstieg, weniger hieße
+ * praktisch nur Fehlversuche.
+ */
+export const LIMIT_WARTE_VERSUCHE = 12;
+export const LIMIT_WARTE_PAUSE_MS = 1000;
+
 export interface RoutingErgebnis {
   /** Wurde beim Broker ausgeführt? Nur dann darf gebucht werden. */
   ausgefuehrt: boolean;
@@ -342,11 +352,37 @@ export async function routeOrder(
      * (siehe Duplicate-Pfad unten) und bucht ihn nach.
      */
     stornoBeiKeinFill?: boolean;
+    /**
+     * Gesetzt (> 0): als LIMIT-Order senden statt Market (Hebel 1b, 15.08.
+     * — Krypto-Einstiege zahlen Maker- statt Taker-Gebühr).
+     *
+     * Wird NUR für eröffnende Orders (`stornoBeiKeinFill`) beachtet, hart
+     * hier im Routing statt beim Aufrufer: Ein Limit auf einer
+     * SCHLIESSENDEN Order könnte einen Exit verhindern — und Exits dürfen
+     * niemals erschwert werden. Der Storno-Pfad garantiert zugleich, dass
+     * ein ungefüllter Limit-Einstieg nicht beim Broker liegen bleibt.
+     */
+    limitPreis?: number;
   },
   fetchImpl: typeof fetch = fetch,
   warteOpts: { versuche?: number; pauseMs?: number } = {},
 ): Promise<RoutingErgebnis> {
   if (!(auftrag.qty > 0)) return { ausgefuehrt: false, grund: 'menge_null' };
+
+  const limitPreis =
+    auftrag.stornoBeiKeinFill === true &&
+    typeof auftrag.limitPreis === 'number' &&
+    auftrag.limitPreis > 0
+      ? auftrag.limitPreis
+      : undefined;
+  /* Ein Limit am Entscheidungskurs füllt nicht in Sekunden wie eine
+   * Market-Order — es braucht eine Gegenseite. Das Wartefenster ist deshalb
+   * länger (~12 s statt ~4 s), aber nur, wenn der Aufrufer nichts
+   * Eigenes vorgibt; danach greift derselbe Storno wie bisher. */
+  const warte =
+    limitPreis !== undefined && warteOpts.versuche === undefined && warteOpts.pauseMs === undefined
+      ? { versuche: LIMIT_WARTE_VERSUCHE, pauseMs: LIMIT_WARTE_PAUSE_MS }
+      : warteOpts;
 
   const coid = clientOrderId(
     auftrag.uid,
@@ -358,7 +394,13 @@ export async function routeOrder(
   try {
     const order = await alpacaOrder(
       verbindung.mode,
-      { symbol: auftrag.symbol, side: auftrag.side, qty: auftrag.qty, clientOrderId: coid },
+      {
+        symbol: auftrag.symbol,
+        side: auftrag.side,
+        qty: auftrag.qty,
+        clientOrderId: coid,
+        ...(limitPreis !== undefined ? { limitPreis } : {}),
+      },
       verbindung.schluessel,
       fetchImpl,
     );
@@ -368,7 +410,7 @@ export async function routeOrder(
       verbindung.mode,
       order.id,
       verbindung.schluessel,
-      warteOpts,
+      warte,
       fetchImpl,
     );
     if (!fill || !(fill.ausfuehrungskurs > 0)) {
@@ -452,7 +494,7 @@ export async function routeOrder(
             verbindung.mode,
             alt.id,
             verbindung.schluessel,
-            warteOpts,
+            warte,
             fetchImpl,
           );
           if (fill && fill.ausfuehrungskurs > 0) {
