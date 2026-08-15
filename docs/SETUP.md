@@ -394,6 +394,30 @@ die **höchstens fünf Minuten alt** ist. Das ist der zweite Faktor an der
 Stelle, an der er wirkt: Nicht beim Login — dort schützt er gegen gestohlene
 Passwörter, aber nicht gegen eine bereits übernommene, offene Sitzung.
 
+### 4. Bestands-Auflösung: Das Hauptkonto behält sein Depot (Owner-Entscheid)
+
+Festgehalten als Betreiber-Entscheidung (13.08.), damit sie nicht in
+Chat-Verläufen verloren geht: Das Hauptkonto **m.suetterlin@gmail.com**
+behält seinen bestehenden Depot-Bestand. Es wird **nichts automatisch
+verkauft**, um „sauber anzufangen" — weder von der Engine noch von einem
+Migrations-Skript.
+
+Warum das die richtige Richtung ist:
+
+- **Verkaufen ist eine Steuer- und Markt-Entscheidung**, keine technische.
+  Ein automatischer Kahlschlag würde Gewinne realisieren (Steuer) und
+  Spreads zahlen, nur damit eine Datenbank hübscher aussieht.
+- Die Buchführung braucht den Kahlschlag nicht: `adoptBroker` übernimmt
+  einen bestehenden Broker-Bestand als **markierten Schnitt** ins eigene
+  Buch (deterministische IDs, kein Doppelzählen — Audit K-5). Kennzahlen
+  zählen ab dem Schnitt; Alt-Bestand verfälscht sie nicht.
+- Exits bleiben wie überall frei: Die Engine darf übernommene Positionen
+  über ihre normalen Regeln (Stop/Ziel/Signal) schließen — nur eben als
+  Handels-Entscheidung, nicht als Aufräum-Aktion.
+
+Wer ein Konto wirklich leeren will, tut das von Hand beim Broker — bewusst,
+mit Blick auf Steuern und Kurse.
+
 ## N. Tages-Einschätzung (KI) einschalten (~2 min, optional)
 
 Die Karte „Was das System gelernt hat" arbeitet vollständig ohne KI: Die
