@@ -1232,51 +1232,46 @@ function layout(email: string): string {
     <div class="dmodal-bg" data-close="options"></div>
     <div class="dsheet" style="width:min(560px,100%)">
       <button class="dclose" data-close="options">✕</button>
-      <h3>Optionen</h3>
+      <h3>${t('opt.titel')}</h3>
       <!-- UI-Audit Punkt 6 (Owner-Go 06.08.): elf Themen in einem Scroll-
            Container waren nur per Suchen-und-Scrollen bedienbar. Vier Reiter
            gruppieren nach Aufgabe; die Inhalte selbst sind unverändert. -->
       <div class="otabs" id="owTabs">
-        <button class="otab" data-otab="anzeige">Anzeige</button>
-        <button class="otab active" data-otab="trading">Trading</button>
-        <button class="otab" data-otab="broker">Broker &amp; Echtgeld</button>
-        <button class="otab" data-otab="konto">Konto &amp; Steuer</button>
+        <button class="otab" data-otab="anzeige">${t('opt.tabAnzeige')}</button>
+        <button class="otab active" data-otab="trading">${t('opt.tabTrading')}</button>
+        <button class="otab" data-otab="broker">${t('opt.tabBroker')}</button>
+        <button class="otab" data-otab="konto">${t('opt.tabKonto')}</button>
       </div>
       <div data-opane="anzeige" hidden>
-      <div class="wl-sec">Darstellung</div>
-      <label class="opt-row"><span><b>Hell/Dunkel</b> — „System" folgt automatisch
-        deiner Geräte-Einstellung; Hell/Dunkel stellt fest um.</span>
+      <div class="wl-sec">${t('opt.darstellung')}</div>
+      <label class="opt-row"><span>${t('opt.hellDunkel')}</span>
         <select id="ouTheme" class="inp" style="max-width:140px;margin-left:auto">
-          <option value="system">System</option>
-          <option value="light">Hell</option>
-          <option value="dark">Dunkel</option>
+          <option value="system">${t('opt.themeSystem')}</option>
+          <option value="light">${t('opt.themeHell')}</option>
+          <option value="dark">${t('opt.themeDunkel')}</option>
         </select></label>
-      <label class="opt-row"><span><b>Sprache / Language</b> — Deutsch ist Standard.
-        Englisch übersetzt die Oberfläche schrittweise; noch nicht übersetzte
-        Texte erscheinen auf Deutsch.</span>
+      <label class="opt-row"><span>${t('opt.sprache')}</span>
         <select id="ouLang" class="inp" style="max-width:140px;margin-left:auto">
+          <!-- Sprachnamen werden NIE übersetzt — jede Sprache in ihrem
+               eigenen Namen, sonst findet niemand aus der falschen heraus. -->
           <option value="de">Deutsch</option>
           <option value="en">English</option>
         </select></label>
-      <div class="wl-sec">Optionale Elemente</div>
+      <div class="wl-sec">${t('opt.optionaleElemente')}</div>
       <label class="opt-row"><input type="checkbox" id="ouPred" />
-        <span><b>Prognose-Pfeil</b> — eigene Kurs-Erwartung im Chart einzeichnen;
-        zählt als gewichtete Stimme im Auto-Trading. <i>Beta, standardmäßig aus.</i></span></label>
+        <span>${t('opt.prognosePfeil')}</span></label>
       <label class="opt-row"><input type="checkbox" id="ouCmp" />
-        <span><b>Vergleichs-Overlay</b> — zweites Symbol als %-Linie im Haupt-Chart.</span></label>
+        <span>${t('opt.vergleichsOverlay')}</span></label>
       <label class="opt-row"><input type="checkbox" id="ouGrid" />
-        <span><b>Multi-Chart-Raster</b> — 1/2/4 Charts parallel mit Lock-Sync.</span></label>
+        <span>${t('opt.multiChartRaster')}</span></label>
       <label class="opt-row"><input type="checkbox" id="ouSub" />
-        <span><b>Indikator-Extras</b> — VWAP (Intraday) und RSI/MACD-Unterpanels
-        unter dem Haupt-Chart.</span></label>
-      <div class="wl-sec">Module</div>
+        <span>${t('opt.indikatorExtras')}</span></label>
+      <div class="wl-sec">${t('opt.module')}</div>
       <div id="ouPanels" class="opt-panels"></div>
-      <p class="hint">Abgewählte Module verschwinden komplett (geht auch per ✕ direkt am Modul);
-        ▾ am Modul klappt nur zu. Die Auswahl synct über deine Geräte.</p>
-      <div class="wl-sec">Marktgruppen</div>
+      <p class="hint">${t('opt.moduleHint')}</p>
+      <div class="wl-sec">${t('opt.marktgruppen')}</div>
       <div id="ouGroups" class="opt-panels"></div>
-      <p class="hint">Abgewählte Gruppen verschwinden aus Markt-Browser und Watchlist-Picker
-        (nur Anzeige — die Daten aller Gruppen laufen serverseitig weiter).</p>
+      <p class="hint">${t('opt.marktgruppenHint')}</p>
       </div>
       <div data-opane="trading">
       <div class="wl-sec">Paper-Wallet · Grundeinstellungen</div>
