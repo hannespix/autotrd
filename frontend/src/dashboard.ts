@@ -1274,136 +1274,121 @@ function layout(email: string): string {
       <p class="hint">${t('opt.marktgruppenHint')}</p>
       </div>
       <div data-opane="trading">
-      <div class="wl-sec">Paper-Wallet · Grundeinstellungen</div>
+      <div class="wl-sec">${t('opt.paperWallet')}</div>
       <!-- Startkapital wirkt an ZWEI Stellen verschieden — ohne diesen
            Hinweis wartet man auf einen Kontostand, der sich nie ändert. -->
-      <p class="hint">Das <b>Startkapital</b> ändert deinen aktuellen Kontostand
-        <b>nicht</b>. Es greift erst bei „Neu anfangen" ganz unten — dann wird das
-        Wallet auf diesen Betrag zurückgesetzt. Die Positionsgrößen rechnen
-        immer mit dem <b>verfügbaren Cash</b>, nie mit dem Startkapital.</p>
+      <p class="hint">${t('opt.startkapitalHint')}</p>
       <div class="opt-grid" id="owGrid">
-        <div class="opt-sub">Kapital &amp; Positionsgröße</div>
-        <label>Startkapital $
+        <div class="opt-sub">${t('opt.kapitalPosition')}</div>
+        <label>${t('opt.startkapital')}
           <input id="owCap" class="inp st-num" type="number" min="100" step="500" /></label>
-        <label>Investment je Trade %
+        <label>${t('opt.investmentJeTrade')}
           <input id="owMax" class="inp st-num" type="number" min="1" max="100" step="1" /></label>
-        <label>Risiko je Trade % ${iBtn('riskPerTrade')}
+        <label>${t('opt.risikoJeTrade')} ${iBtn('riskPerTrade')}
           <input id="owRisk" class="inp st-num" type="number" min="0" max="5" step="0.25" /></label>
-        <label>Max. gleichzeitige Positionen ${iBtn('maxOpenPositions')}
+        <label>${t('opt.maxPositionen')} ${iBtn('maxOpenPositions')}
           <input id="owMaxPos" class="inp st-num" type="number" min="1" max="${MAX_OPEN_POSITIONS_CAP}" step="1" /></label>
-        <label>Ruhiger Sockel % ${iBtn('corePct')}
+        <label>${t('opt.ruhigerSockel')} ${iBtn('corePct')}
           <input id="owCore" class="inp st-num" type="number" min="0" max="${CORE_PCT_CAP}" step="5" /></label>
-        <label>Hebel (Margin) ${iBtn('leverage')}
+        <label>${t('opt.hebel')} ${iBtn('leverage')}
           <select id="owLev" class="inp st-num">
-            <option value="1">1× — kein Hebel (Standard)</option>
-            <option value="2">2× — nur bei sehr starkem Signal</option>
-            <option value="3">3× — Maximum</option>
+            <option value="1">${t('opt.hebel1')}</option>
+            <option value="2">${t('opt.hebel2')}</option>
+            <option value="3">${t('opt.hebel3')}</option>
           </select></label>
-        <div class="opt-sub">Ausstiege ${iBtn('exits')}</div>
-        <label>Stop-Loss % ${iBtn('stopLoss')}
+        <div class="opt-sub">${t('opt.ausstiege')} ${iBtn('exits')}</div>
+        <label>${t('opt.stopLoss')} ${iBtn('stopLoss')}
           <input id="owSl" class="inp st-num" type="number" min="0" step="0.5" /></label>
-        <label>Take-Profit % ${iBtn('takeProfit')}
+        <label>${t('opt.takeProfit')} ${iBtn('takeProfit')}
           <input id="owTp" class="inp st-num" type="number" min="0" step="0.5" /></label>
-        <label>Nachziehender Stop % ${iBtn('trailingStop')}
+        <label>${t('opt.trailing')} ${iBtn('trailingStop')}
           <input id="owTrail" class="inp st-num" type="number" min="0" step="0.5" /></label>
-        <label>Max. Haltedauer (Tage) ${iBtn('maxHold')}
+        <label>${t('opt.maxHalte')} ${iBtn('maxHold')}
           <input id="owHold" class="inp st-num" type="number" min="0" step="1" /></label>
-        <label>ATR-Stop (×ATR) ${iBtn('atrStop')}
+        <label>${t('opt.atrStop')} ${iBtn('atrStop')}
           <input id="owAtrS" class="inp st-num" type="number" min="0" step="0.5" /></label>
-        <label>ATR-Ziel (×ATR) ${iBtn('atrTake')}
+        <label>${t('opt.atrZiel')} ${iBtn('atrTake')}
           <input id="owAtrT" class="inp st-num" type="number" min="0" step="0.5" /></label>
-        <div class="opt-sub">Signale &amp; Takt</div>
-        <label>Signal-Zeitrahmen ${iBtn('signalTimeframe')}
+        <div class="opt-sub">${t('opt.signaleTakt')}</div>
+        <label>${t('opt.signalZeitrahmen')} ${iBtn('signalTimeframe')}
           <select id="owTf" class="inp st-num">
-            <option value="intraday">5-Minuten (aktiv)</option>
-            <option value="daily">Tageskerzen (ruhig)</option>
+            <option value="intraday">${t('opt.tf5m')}</option>
+            <option value="daily">${t('opt.tfDaily')}</option>
           </select></label>
-        <label>Kauf-Pause nach Verkauf (Min) ${iBtn('cooldownMin')}
+        <label>${t('opt.kaufPause')} ${iBtn('cooldownMin')}
           <input id="owCd" class="inp st-num" type="number" min="5" max="1440" step="5" /></label>
-        <label>Konfluenz Einstieg ${iBtn('minConfluence')}
+        <label>${t('opt.konfluenzEinstieg')} ${iBtn('minConfluence')}
           <input id="owMinC" class="inp st-num" type="number" min="1" max="6" step="1" /></label>
-        <label>Konfluenz Ausstieg ${iBtn('exitConfluence')}
+        <label>${t('opt.konfluenzAusstieg')} ${iBtn('exitConfluence')}
           <input id="owExitC" class="inp st-num" type="number" min="1" max="6" step="1" /></label>
-        <div class="opt-sub">Schutzschalter</div>
-        <label>Kostenschwelle (× Gebühren) ${iBtn('minEdgeMultiple')}
+        <div class="opt-sub">${t('opt.schutzschalter')}</div>
+        <label>${t('opt.kostenschwelle')} ${iBtn('minEdgeMultiple')}
           <input id="owEdge" class="inp st-num" type="number" min="0" max="10" step="0.5" /></label>
-        <label>Tages-Notbremse (% Verlust) ${iBtn('dailyLossLimit')}
+        <label>${t('opt.tagesNotbremsePct')} ${iBtn('dailyLossLimit')}
           <input id="owBreak" class="inp st-num" type="number" min="0" max="25" step="0.5" /></label>
         <label class="opt-check">
           <input type="checkbox" id="owFlatten" />
-          <span>Bei Notbremse zusätzlich alle Positionen schließen ${iBtn('flattenOnBreach')}</span></label>
+          <span>${t('opt.flatten')} ${iBtn('flattenOnBreach')}</span></label>
         <label class="opt-check">
           <input type="checkbox" id="owRegimeGate" />
-          <span>Markt-Ampel (keine Shorts im Aufwärtstrend, Pause bei Stress) ${iBtn('regimeGate')}</span></label>
+          <span>${t('opt.regimeGate')} ${iBtn('regimeGate')}</span></label>
         <label class="opt-check">
           <input type="checkbox" id="owNewsVeto" />
-          <span>News-Veto (Einstiege bei harten Events aussetzen) ${iBtn('newsVeto')}</span></label>
-        <div class="opt-sub">Experimente</div>
+          <span>${t('opt.newsVeto')} ${iBtn('newsVeto')}</span></label>
+        <div class="opt-sub">${t('opt.experimente')}</div>
         <label class="opt-check">
           <input type="checkbox" id="owShort" />
-          <span>Shorten erlauben (Leerverkäufe) ${iBtn('allowShort')}</span></label>
+          <span>${t('opt.shorten')} ${iBtn('allowShort')}</span></label>
       </div>
-      <p class="hint">0 schaltet eine Regel ab; ATR-Werte ersetzen die festen
-        Prozente. Alles Weitere erklärt das ⓘ am jeweiligen Feld.</p>
+      <p class="hint">${t('opt.nullSchaltetAb')}</p>
       <p class="hint" id="owClassHint" style="margin-top:4px"></p>
-      <div class="wl-sec" style="margin-top:14px">Kapital je Anlageklasse ${iBtn('classWeights')}</div>
-      <p class="hint">Der Regler multipliziert die Positionsgröße in dieser Klasse:
-        <b>0</b> = handelt nicht mehr, <b>1</b> = normal, <b>1,5</b> = größere Stücke.
-        Bestehende Positionen werden trotzdem immer geschlossen — der Regler
-        steuert nur den <b>Einstieg</b>.
-        Und: Eine Klasse auf 0 wird weiter <b>gemessen</b> (Schatten-Kante), sie
-        kann sich also zurückverdienen. Ohne das wäre jedes Abschalten endgültig.
-        Ist <b>„Automatisch nachregeln"</b> an, stellt der Tageslauf die Regler auf
-        die gemessene Kante zurück — von Hand gesetzte Werte halten dauerhaft nur
-        mit abgewähltem Häkchen.</p>
+      <div class="wl-sec" style="margin-top:14px">${t('opt.klassenKapital')} ${iBtn('classWeights')}</div>
+      <p class="hint">${t('opt.klassenHint')}</p>
       <div id="owClsRows" class="cls-grid" style="margin-top:6px"></div>
       <label class="opt-check" style="margin-top:8px">
         <input type="checkbox" id="owClsAuto" />
-        <span>Automatisch nachregeln (täglich, in Schritten von 0,25) ${iBtn('classAutoTune')}</span></label>
+        <span>${t('opt.autoNachregeln')} ${iBtn('classAutoTune')}</span></label>
       <div id="owClsAdvice" style="margin-top:8px"></div>
       <div class="row" style="margin-top:6px">
-        <button class="btn btn-n" id="owClsApply" hidden>Vorschlag übernehmen</button>
+        <button class="btn btn-n" id="owClsApply" hidden>${t('opt.vorschlagUebernehmen')}</button>
         <span class="hint" id="owClsMsg"></span>
       </div>
       <div class="row" style="margin-top:8px">
-        <button class="btn btn-g" id="owSave">Speichern</button>
+        <button class="btn btn-g" id="owSave">${t('opt.speichern')}</button>
         <span class="hint" id="optMsg"></span>
       </div>
-      <div class="wl-sec" style="margin-top:14px">Einstellungen prüfen ${iBtn('adviseSettings')}</div>
+      <div class="wl-sec" style="margin-top:14px">${t('opt.einstellungenPruefen')} ${iBtn('adviseSettings')}</div>
       <div class="row">
-        <button class="btn btn-n" id="owCheck">Jetzt prüfen</button>
-        <button class="btn btn-g" id="owApply" hidden>Ausgewählte übernehmen</button>
+        <button class="btn btn-n" id="owCheck">${t('opt.jetztPruefen')}</button>
+        <button class="btn btn-g" id="owApply" hidden>${t('opt.ausgewaehlteUebernehmen')}</button>
       </div>
       <div id="owAdvice"></div>
       <div class="hint" id="advMsg"></div>
-      <div class="wl-sec" style="margin-top:14px">Loadouts ${iBtn('loadouts')}</div>
-      <p class="hint">Vorgefertigte Grundeinstellungen als Startpunkt — danach
-        stellst du weiter frei ein, und der Selbstoptimierer lernt normal
-        weiter. Watchlist, Kapital und dein Start/Stop-Schalter bleiben
-        <b>immer</b> deine.</p>
+      <div class="wl-sec" style="margin-top:14px">${t('opt.loadouts')} ${iBtn('loadouts')}</div>
+      <p class="hint">${t('opt.loadoutsHint')}</p>
       <div id="loGrid" class="lo-grid"></div>
       <div id="loDiff" hidden></div>
       <div class="row" style="margin-top:6px">
-        <button class="btn btn-g" id="loAdopt" hidden>Übernehmen</button>
+        <button class="btn btn-g" id="loAdopt" hidden>${t('opt.uebernehmen')}</button>
         <span class="hint" id="loMsg"></span>
       </div>
       <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px;align-items:center">
         <input id="loName" class="inp" style="flex:1;min-width:150px" maxlength="40"
-          placeholder="Aktuellen (gespeicherten) Stand sichern als …" />
-        <button class="btn btn-n" id="loSave">Als Loadout speichern</button>
+          placeholder="${t('opt.loName')}" />
+        <button class="btn btn-n" id="loSave">${t('opt.alsLoadoutSpeichern')}</button>
       </div>
-      <div class="wl-sec" style="margin-top:14px">Bewährte Einstellungen ${iBtn('bestPractice')}</div>
-      <p class="hint" id="bpBody">Lade …</p>
+      <div class="wl-sec" style="margin-top:14px">${t('opt.bewaehrt')} ${iBtn('bestPractice')}</div>
+      <p class="hint" id="bpBody">${t('opt.lade')}</p>
       <div id="bpDiff" hidden></div>
       <div class="row" style="margin-top:6px">
-        <button class="btn btn-n" id="bpPreview" hidden>Unterschiede ansehen</button>
-        <button class="btn btn-g" id="bpAdopt" hidden>Übernehmen</button>
+        <button class="btn btn-n" id="bpPreview" hidden>${t('opt.unterschiedeAnsehen')}</button>
+        <button class="btn btn-g" id="bpAdopt" hidden>${t('opt.uebernehmen')}</button>
         <span class="hint" id="bpMsg"></span>
       </div>
-      <div class="wl-sec" style="margin-top:14px">Tages-Notbremse ${iBtn('dailyLossLimit')}</div>
+      <div class="wl-sec" style="margin-top:14px">${t('opt.notbremse')} ${iBtn('dailyLossLimit')}</div>
       <p class="hint" id="bkrState">—</p>
       <div class="row" style="align-items:center;gap:8px">
-        <button class="btn btn-n" id="bkrReset">Notbremse lösen</button>
+        <button class="btn btn-n" id="bkrReset">${t('opt.notbremseLoesen')}</button>
         <span class="hint" id="bkrMsg"></span>
       </div>
       </div>
