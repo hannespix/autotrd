@@ -25,6 +25,7 @@ import {
   PAPER_FEE_RATE,
   classify,
   describeVariant,
+  wirksameMindesthalte,
   EVIDENCE_DEFAULTS,
   judgeCandidate,
   resolveRisk,
@@ -211,7 +212,11 @@ export function stepFleet(
         }
       } else if (sig.direction === 'sell' && nachPos && nachPos.side !== 'short') {
         // Die Haltefrist bremst NUR hier — Risiko-Ausstiege liefen oben.
-        if (minHoldActive(nachPos.openedAt, now, minHold)) continue;
+        // Mit Klassen-Boden (Hebel 1c): Die Flotte misst sonst Varianten
+        // unter Bedingungen, die die Produktion gar nicht zulässt — und der
+        // Tuner übernähme einen Sieger, dessen Vorteil live nicht existiert.
+        if (minHoldActive(nachPos.openedAt, now, wirksameMindesthalte(minHold, classify(symbol))))
+          continue;
         const vorBalance = book.balance;
         const einstand = nachPos.qty * nachPos.avgEntry;
         const r = shadowTrade(book, symbol, 'sell', data.price, s.engine.maxPositionPct);

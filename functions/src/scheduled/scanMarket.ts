@@ -39,6 +39,7 @@ import {
   captureForClass,
   sessionMinutesForClass,
   wirksameEinfangquote,
+  wirksameMindesthalte,
   klemmeGewicht,
   feeRateForClass,
   isTradable,
@@ -1157,9 +1158,15 @@ async function executeUserTrades(
             ? newsVeto(marketData.get(symbol)?.news, Math.floor(Date.now() / 1000))
             : { blocked: false };
         const klasse = classify(symbol);
+        /* Hebel 1c (15.08.): Die Klassen-Mindesthalte (Krypto: 2 Tage) gilt
+         * überall, wo die Haltedauer in eine Rechnung eingeht — Kosten-Tor,
+         * Short-Leihe UND Signal-Ausstieg (unten in den Trade-Zweigen).
+         * Dieselbe Zahl an allen Stellen, sonst rechnet das Tor mit einer
+         * Haltedauer, die die Engine gar nicht erzwingt. */
+        const minHalte = wirksameMindesthalte(clamped.engine.minHoldMin, klasse);
         const kostenBasis = {
           atrPct,
-          minHoldMin: clamped.engine.minHoldMin,
+          minHoldMin: minHalte,
           timeframe: tf,
           // Der ATR ist auf TAGES-Kerzen gerechnet (s. atrPctVal unten im
           // Marktdaten-Block) — die Haltedauer wird deshalb handelszeit-
@@ -1194,7 +1201,7 @@ async function executeUserTrades(
          * `kosten`, nur um die Leihe erhöht. Exits bleiben unberührt: Ein
          * Zuschlag dort würde offene Positionen einsperren. */
         const shortZins = shortFinanzierungPct(
-          clamped.engine.minHoldMin,
+          minHalte,
           sessionMinutesForClass(klasse),
           DEFAULT_MARGIN_RATE,
         );
@@ -1257,12 +1264,13 @@ async function executeUserTrades(
        * wie im Kosten-Tor des Einstiegs, damit beide dieselbe Wette bewerten.
        */
       const kostenVielfaches = (symbol: string, atrPct: number | null | undefined): number | null => {
+        const klasse = classify(symbol);
         const k = costGate({
           atrPct,
-          minHoldMin: clamped.engine.minHoldMin,
+          minHoldMin: wirksameMindesthalte(clamped.engine.minHoldMin, klasse),
           timeframe: tf,
-          atrSessionMin: sessionMinutesForClass(classify(symbol)),
-          feeRate: feeRateForClass(classify(symbol)),
+          atrSessionMin: sessionMinutesForClass(klasse),
+          feeRate: feeRateForClass(klasse),
         });
         return k.costPct > 0 ? k.expectedPct / k.costPct : null;
       };
@@ -1474,7 +1482,7 @@ async function executeUserTrades(
             // Exits blockt der Cooldown NIE (Sicherheitsprinzip). Die
             // Mindest-Haltedauer bremst aber wie beim Long-Signal-Ausstieg
             // (Short-Audit 07.08.) — Stop/Trailing/Take bleiben scharf.
-            if (minHoldActive(pos.openedAt, now, clamped.engine.minHoldMin ?? 0)) continue;
+            if (minHoldActive(pos.openedAt, now, wirksameMindesthalte(clamped.engine.minHoldMin, classify(symbol)))) continue;
             const r = await executeTrade(
               {
                 uid,
@@ -1546,7 +1554,7 @@ async function executeUserTrades(
             // Mindest-Haltedauer bremst dagegen sehr wohl, weil sie nur den
             // SIGNAL-Ausstieg betrifft. Stop/Trailing/Take sind in diesem
             // Scan bereits gelaufen und bleiben jederzeit scharf.
-            if (minHoldActive(pos.openedAt, now, clamped.engine.minHoldMin ?? 0)) continue;
+            if (minHoldActive(pos.openedAt, now, wirksameMindesthalte(clamped.engine.minHoldMin, classify(symbol)))) continue;
             const r = await executeTrade(
               {
                 uid,
@@ -1676,7 +1684,7 @@ async function executeUserTrades(
           // Cover IST der Signal-Ausstieg des Shorts — Longs waren gegen das
           // Whipsaw-Rausspucken geschützt, Shorts zahlten es doppelt.
           // Stop/Trailing/Take liefen oben und bleiben jederzeit scharf.
-          if (minHoldActive(pos.openedAt, now, clamped.engine.minHoldMin ?? 0)) continue;
+          if (minHoldActive(pos.openedAt, now, wirksameMindesthalte(clamped.engine.minHoldMin, classify(symbol)))) continue;
           const r = await executeTrade(
             {
               uid,
@@ -1783,7 +1791,7 @@ async function executeUserTrades(
           // (Stop, Trailing, Take) sind oben in diesem Scan bereits gelaufen —
           // das Sicherheitsnetz bleibt also jederzeit scharf, gebremst wird
           // nur das Rausspucken durch eine gekippte Indikator-Stimme.
-          if (minHoldActive(pos.openedAt, now, clamped.engine.minHoldMin ?? 0)) continue;
+          if (minHoldActive(pos.openedAt, now, wirksameMindesthalte(clamped.engine.minHoldMin, classify(symbol)))) continue;
           const r = await executeTrade(
             {
               uid,
@@ -2626,7 +2634,9 @@ function schattenKostenOk(symbol: string, atrPct: number | null | undefined): bo
   const klasse = classify(symbol);
   const befund = costGate({
     atrPct,
-    minHoldMin: DEFAULT_STRATEGY.engine.minHoldMin,
+    // Auch der Schatten rechnet mit der Klassen-Mindesthalte (Hebel 1c) —
+    // sonst bewertet er Signale unter Bedingungen, die live nie gelten.
+    minHoldMin: wirksameMindesthalte(DEFAULT_STRATEGY.engine.minHoldMin, klasse),
     timeframe: SCHATTEN_TF,
     atrSessionMin: sessionMinutesForClass(klasse),
     feeRate: feeRateForClass(klasse),
