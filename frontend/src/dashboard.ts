@@ -218,6 +218,7 @@ import {
 } from './svgcharts.js';
 import { iBtn, initInfoTips } from './infotips.js';
 import { setzeSprache, sprachWahl, t } from './i18n.js';
+import { reglerWarnung } from './reglerHinweis.js';
 import { mountLegalFooter } from './legal.js';
 import {
   GROUP_COLORS,
@@ -1356,7 +1357,10 @@ function layout(email: string): string {
         Bestehende Positionen werden trotzdem immer geschlossen — der Regler
         steuert nur den <b>Einstieg</b>.
         Und: Eine Klasse auf 0 wird weiter <b>gemessen</b> (Schatten-Kante), sie
-        kann sich also zurückverdienen. Ohne das wäre jedes Abschalten endgültig.</p>
+        kann sich also zurückverdienen. Ohne das wäre jedes Abschalten endgültig.
+        Ist <b>„Automatisch nachregeln"</b> an, stellt der Tageslauf die Regler auf
+        die gemessene Kante zurück — von Hand gesetzte Werte halten dauerhaft nur
+        mit abgewähltem Häkchen.</p>
       <div id="owClsRows" class="cls-grid" style="margin-top:6px"></div>
       <label class="opt-check" style="margin-top:8px">
         <input type="checkbox" id="owClsAuto" />
@@ -3052,8 +3056,21 @@ function renderKlassenRegler(): void {
         const k = r.dataset.cls ?? '';
         const feld = $('owClsRows').querySelector(`[data-clsval="${k}"]`);
         if (feld) feld.textContent = gewichtText(Number(r.value));
+        zeigeReglerWarnung(k, Number(r.value));
       }),
     );
+}
+
+/**
+ * Warnung an Ort und Stelle, wenn der Auto-Regler einen Handwert wieder
+ * überschreiben wird (Owner-Befund 15.08.: „options broken?" — war die
+ * Automatik). Speist sich aus derselben Empfehlung, nach der der Tageslauf
+ * entscheidet; Begründung in `reglerHinweis.ts`.
+ */
+function zeigeReglerWarnung(klasse: string, wert: number): void {
+  const autoAn = ($('owClsAuto') as HTMLInputElement).checked;
+  const rat = st?.pfStats?.classAdvice?.raete.find((r) => r.klasse === klasse);
+  $('owClsMsg').textContent = reglerWarnung(autoAn, rat, wert, CLASS_LABELS[klasse] ?? klasse);
 }
 
 /**
@@ -9724,6 +9741,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   }
   $('owClsAuto').addEventListener('change', () => {
     $('optMsg').textContent = '⚠ Noch nicht gespeichert';
+    // Häkchen weg = die Automatik fasst nichts mehr an — eine stehen
+    // gebliebene Überschreib-Warnung wäre dann schlicht falsch.
+    if (!($('owClsAuto') as HTMLInputElement).checked) $('owClsMsg').textContent = '';
   });
   // Reiter des Options-Modals (UI-Audit Punkt 6): reine Sichtbarkeit,
   // kein Zustand — beim nächsten Öffnen startet wieder „Trading".
