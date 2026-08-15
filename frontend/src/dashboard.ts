@@ -552,7 +552,14 @@ function paletteCommands(): PaletteCommand[] {
     });
   }
   cmds.push(
-    { id: 'theme', label: 'Theme wechseln (hell/dunkel)', run: () => $('themeBtn').click() },
+    {
+      id: 'theme',
+      label: 'Hell/Dunkel einstellen (Optionen → Anzeige)',
+      run: () => {
+        openOptions();
+        (document.querySelector('.otab[data-otab="anzeige"]') as HTMLElement | null)?.click();
+      },
+    },
     // Auch hier nur die mögliche Aktion: „Engine starten" in der Palette,
     // während sie läuft, wäre derselbe irreführende Knopf wie in der Karte.
     ...(st.strategy.engine.running
@@ -586,7 +593,9 @@ function layout(email: string): string {
     <button class="hbtn" id="tourBtn" title="Tour: die wichtigsten Bereiche in einer Minute">?</button>
     <button class="hbtn sb-tgl" id="sideL" title="Linke Spalte ein-/ausblenden">◧</button>
     <button class="hbtn sb-tgl" id="sideR" title="Rechte Spalte ein-/ausblenden">◨</button>
-    <button class="hbtn" id="themeBtn" title="Hell/Dunkel">◐</button>
+    <!-- Hell/Dunkel wohnt seit 15.08. in Optionen → Anzeige (Owner: der
+         Kopfleisten-Knopf wurde ständig aus Versehen getippt). -->
+
     <span class="user">${email.replace(/[<>&]/g, '')}</span>
     <!-- „Abmelden" saß bis 28.07. hier, direkt neben dem rechten Hamburger —
          und wurde beim Griff nach dem Menü ständig mitgetroffen (Owner-
@@ -1232,6 +1241,14 @@ function layout(email: string): string {
         <button class="otab" data-otab="konto">Konto &amp; Steuer</button>
       </div>
       <div data-opane="anzeige" hidden>
+      <div class="wl-sec">Darstellung</div>
+      <label class="opt-row"><span><b>Hell/Dunkel</b> — „System" folgt automatisch
+        deiner Geräte-Einstellung; Hell/Dunkel stellt fest um.</span>
+        <select id="ouTheme" class="inp" style="max-width:140px;margin-left:auto">
+          <option value="system">System</option>
+          <option value="light">Hell</option>
+          <option value="dark">Dunkel</option>
+        </select></label>
       <div class="wl-sec">Optionale Elemente</div>
       <label class="opt-row"><input type="checkbox" id="ouPred" />
         <span><b>Prognose-Pfeil</b> — eigene Kurs-Erwartung im Chart einzeichnen;
@@ -9039,10 +9056,31 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   });
   wireManualTrade();
   wireWlEditor();
-  $('themeBtn').addEventListener('click', () => {
-    const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
-    document.documentElement.dataset.theme = next;
-    localStorage.setItem('autotrd-theme', next);
+  /* Theme-Wahl (Owner 15.08.): Drei Zustände in Optionen → Anzeige statt
+   * Kopfleisten-Knopf. 'system' folgt prefers-color-scheme — auch LIVE,
+   * wenn das Gerät umschaltet (Abend-Automatik); Hell/Dunkel sind feste
+   * manuelle Wahlen. Charts zeichnen mit Theme-Farben und müssen nach
+   * jedem Wechsel neu gebaut werden. */
+  const themeWahl = (): 'system' | 'light' | 'dark' => {
+    const w = localStorage.getItem('autotrd-theme');
+    return w === 'light' || w === 'dark' ? w : 'system';
+  };
+  const systemDunkel = window.matchMedia?.('(prefers-color-scheme: dark)');
+  const wendeThemeAn = (): void => {
+    const wahl = themeWahl();
+    document.documentElement.dataset.theme =
+      wahl === 'system' ? (systemDunkel?.matches === false ? 'light' : 'dark') : wahl;
+  };
+  const ouTheme = $('ouTheme') as HTMLSelectElement;
+  ouTheme.value = themeWahl();
+  ouTheme.addEventListener('change', () => {
+    localStorage.setItem('autotrd-theme', ouTheme.value);
+    wendeThemeAn();
+    void rebuildChart();
+  });
+  systemDunkel?.addEventListener?.('change', () => {
+    if (themeWahl() !== 'system') return;
+    wendeThemeAn();
     void rebuildChart();
   });
   // Zoom-Buttons (Owner 07.08.: „Reihenfolge klein nach groß, Auto kann weg,
