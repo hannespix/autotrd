@@ -46,6 +46,35 @@ export const DE = {
   'nav.tourTitle': 'Tour: die wichtigsten Bereiche in einer Minute',
   'nav.spalteLinks': 'Linke Spalte ein-/ausblenden',
   'nav.spalteRechts': 'Rechte Spalte ein-/ausblenden',
+  // Optionen-Modal (Tranche 2: Rahmen + Tab „Anzeige"). Einige Werte tragen
+  // Inline-Markup (<b>/<i>) bzw. HTML-Entities (&amp;) — sie landen im
+  // layout()-Template per innerHTML, genau wie die bisherigen Literale.
+  'opt.titel': 'Optionen',
+  'opt.tabAnzeige': 'Anzeige',
+  'opt.tabTrading': 'Trading',
+  'opt.tabBroker': 'Broker &amp; Echtgeld',
+  'opt.tabKonto': 'Konto &amp; Steuer',
+  'opt.darstellung': 'Darstellung',
+  'opt.hellDunkel':
+    '<b>Hell/Dunkel</b> — „System" folgt automatisch deiner Geräte-Einstellung; Hell/Dunkel stellt fest um.',
+  'opt.themeSystem': 'System',
+  'opt.themeHell': 'Hell',
+  'opt.themeDunkel': 'Dunkel',
+  'opt.sprache':
+    '<b>Sprache / Language</b> — Deutsch ist Standard. Englisch übersetzt die Oberfläche schrittweise; noch nicht übersetzte Texte erscheinen auf Deutsch.',
+  'opt.optionaleElemente': 'Optionale Elemente',
+  'opt.prognosePfeil':
+    '<b>Prognose-Pfeil</b> — eigene Kurs-Erwartung im Chart einzeichnen; zählt als gewichtete Stimme im Auto-Trading. <i>Beta, standardmäßig aus.</i>',
+  'opt.vergleichsOverlay': '<b>Vergleichs-Overlay</b> — zweites Symbol als %-Linie im Haupt-Chart.',
+  'opt.multiChartRaster': '<b>Multi-Chart-Raster</b> — 1/2/4 Charts parallel mit Lock-Sync.',
+  'opt.indikatorExtras':
+    '<b>Indikator-Extras</b> — VWAP (Intraday) und RSI/MACD-Unterpanels unter dem Haupt-Chart.',
+  'opt.module': 'Module',
+  'opt.moduleHint':
+    'Abgewählte Module verschwinden komplett (geht auch per ✕ direkt am Modul); ▾ am Modul klappt nur zu. Die Auswahl synct über deine Geräte.',
+  'opt.marktgruppen': 'Marktgruppen',
+  'opt.marktgruppenHint':
+    'Abgewählte Gruppen verschwinden aus Markt-Browser und Watchlist-Picker (nur Anzeige — die Daten aller Gruppen laufen serverseitig weiter).',
   'auth.falscheDaten': 'E-Mail oder Passwort ist falsch.',
   'auth.ungueltigeEmail': 'Das ist keine gültige E-Mail-Adresse.',
   'auth.emailVergeben': 'Für diese E-Mail existiert bereits ein Konto.',
@@ -80,6 +109,32 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'nav.tourTitle': 'Tour: the key areas in one minute',
   'nav.spalteLinks': 'Show/hide left column',
   'nav.spalteRechts': 'Show/hide right column',
+  'opt.titel': 'Options',
+  'opt.tabAnzeige': 'Display',
+  'opt.tabTrading': 'Trading',
+  'opt.tabBroker': 'Broker &amp; live trading',
+  'opt.tabKonto': 'Account &amp; taxes',
+  'opt.darstellung': 'Appearance',
+  'opt.hellDunkel':
+    '<b>Light/Dark</b> — “System” follows your device setting automatically; Light/Dark sets it permanently.',
+  'opt.themeSystem': 'System',
+  'opt.themeHell': 'Light',
+  'opt.themeDunkel': 'Dark',
+  'opt.sprache':
+    '<b>Sprache / Language</b> — German is the default. English translates the interface step by step; texts not yet translated appear in German.',
+  'opt.optionaleElemente': 'Optional elements',
+  'opt.prognosePfeil':
+    '<b>Forecast arrow</b> — draw your own price expectation on the chart; counts as a weighted vote in auto-trading. <i>Beta, off by default.</i>',
+  'opt.vergleichsOverlay': '<b>Comparison overlay</b> — a second symbol as a % line on the main chart.',
+  'opt.multiChartRaster': '<b>Multi-chart grid</b> — 1/2/4 charts side by side with lock sync.',
+  'opt.indikatorExtras':
+    '<b>Indicator extras</b> — VWAP (intraday) and RSI/MACD sub-panels below the main chart.',
+  'opt.module': 'Modules',
+  'opt.moduleHint':
+    'Deselected modules disappear entirely (also works via ✕ on the module itself); ▾ on a module only collapses it. The selection syncs across your devices.',
+  'opt.marktgruppen': 'Market groups',
+  'opt.marktgruppenHint':
+    'Deselected groups disappear from the market browser and watchlist picker (display only — data for all groups keeps running server-side).',
   'auth.falscheDaten': 'Email or password is incorrect.',
   'auth.ungueltigeEmail': 'That is not a valid email address.',
   'auth.emailVergeben': 'An account already exists for this email.',

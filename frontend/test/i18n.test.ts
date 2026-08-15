@@ -82,6 +82,36 @@ describe('Golden-Wächter — im DE-Modus exakt die bisherigen Texte', () => {
     expect(DE['auth.fehlgeschlagen']).toBe('Anmeldung fehlgeschlagen. Bitte erneut versuchen.');
   });
 
+  it('Tranche 2: die deutschen Optionen-Anzeige-Texte sind byte-gleich zum Bestand', () => {
+    // Mehrzeilige Template-Literale wurden auf EINE Zeile normalisiert —
+    // HTML kollabiert Whitespace, gerendert ist das identisch.
+    expect(DE['opt.titel']).toBe('Optionen');
+    expect(DE['opt.tabAnzeige']).toBe('Anzeige');
+    expect(DE['opt.tabBroker']).toBe('Broker &amp; Echtgeld');
+    expect(DE['opt.tabKonto']).toBe('Konto &amp; Steuer');
+    expect(DE['opt.darstellung']).toBe('Darstellung');
+    expect(DE['opt.hellDunkel']).toBe(
+      '<b>Hell/Dunkel</b> — „System" folgt automatisch deiner Geräte-Einstellung; Hell/Dunkel stellt fest um.',
+    );
+    expect(DE['opt.themeSystem']).toBe('System');
+    expect(DE['opt.themeHell']).toBe('Hell');
+    expect(DE['opt.themeDunkel']).toBe('Dunkel');
+    expect(DE['opt.optionaleElemente']).toBe('Optionale Elemente');
+    expect(DE['opt.prognosePfeil']).toBe(
+      '<b>Prognose-Pfeil</b> — eigene Kurs-Erwartung im Chart einzeichnen; zählt als gewichtete Stimme im Auto-Trading. <i>Beta, standardmäßig aus.</i>',
+    );
+    expect(DE['opt.vergleichsOverlay']).toBe(
+      '<b>Vergleichs-Overlay</b> — zweites Symbol als %-Linie im Haupt-Chart.',
+    );
+    expect(DE['opt.multiChartRaster']).toBe(
+      '<b>Multi-Chart-Raster</b> — 1/2/4 Charts parallel mit Lock-Sync.',
+    );
+    expect(DE['opt.module']).toBe('Module');
+    expect(DE['opt.marktgruppen']).toBe('Marktgruppen');
+    expect(DE['opt.moduleHint']).toContain('Abgewählte Module verschwinden komplett');
+    expect(DE['opt.marktgruppenHint']).toContain('nur Anzeige — die Daten aller Gruppen');
+  });
+
   it('Tranche 1: die deutschen Kopfleisten-Texte sind byte-gleich zum Bestand', () => {
     expect(DE['nav.engineAus']).toBe('Engine aus');
     expect(DE['nav.engineAn']).toBe('Engine an');
@@ -132,6 +162,34 @@ describe('Anschluss-Wächter — die Funktion ist verdrahtet, nicht nur vorhande
     // Keine hartkodierten Reste in der Kopfleiste.
     expect(dashboard).not.toContain('>Engine aus</div>');
     expect(dashboard).not.toContain('aria-label="Linkes Panel"');
+  });
+
+  it('der Optionen-Tab „Anzeige" zieht seine Texte über t()', () => {
+    for (const k of [
+      "t('opt.titel')",
+      "t('opt.tabAnzeige')",
+      "t('opt.tabBroker')",
+      "t('opt.darstellung')",
+      "t('opt.hellDunkel')",
+      "t('opt.themeSystem')",
+      "t('opt.sprache')",
+      "t('opt.optionaleElemente')",
+      "t('opt.prognosePfeil')",
+      "t('opt.indikatorExtras')",
+      "t('opt.module')",
+      "t('opt.moduleHint')",
+      "t('opt.marktgruppen')",
+      "t('opt.marktgruppenHint')",
+    ]) {
+      expect(dashboard).toContain(k);
+    }
+    // Keine hartkodierten Reste der übersetzten Region im Template.
+    expect(dashboard).not.toContain('<h3>Optionen</h3>');
+    expect(dashboard).not.toContain('data-otab="anzeige">Anzeige<');
+    expect(dashboard).not.toContain('<b>Prognose-Pfeil</b> — eigene Kurs-Erwartung im Chart einzeichnen;\n');
+    // Sprachnamen bleiben unübersetzt — jede Sprache in ihrem eigenen Namen.
+    expect(dashboard).toContain('<option value="de">Deutsch</option>');
+    expect(dashboard).toContain('<option value="en">English</option>');
   });
 
   it('die Sprachwahl sitzt in Optionen → Anzeige und wird angewandt', () => {
