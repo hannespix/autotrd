@@ -134,6 +134,56 @@ export const DE = {
   'opt.unterschiedeAnsehen': 'Unterschiede ansehen',
   'opt.notbremse': 'Tages-Notbremse',
   'opt.notbremseLoesen': 'Notbremse lösen',
+  // Optionen-Modal, Tabs „Broker & Echtgeld" + „Konto & Steuer" (Tranche 3b).
+  // Die Bestätigungs-Wörter RESET und ECHTGELD sind serverseitig gepinnt und
+  // bleiben in JEDER Sprache wörtlich stehen — nur der Satz drumherum wird
+  // übersetzt.
+  'opt.echtgeldAnbindung': 'Echtgeld-Anbindung',
+  'opt.brokerHint':
+    'Prüft die Verbindung zum Broker, <b>ohne zu handeln</b>, und gleicht das eigene Buch mit dem Depot beim Broker ab. Echtgeld verlangt zwei Schalter an zwei Orten — ein Klick allein schaltet nichts scharf.',
+  'opt.verbinden': 'Verbinden',
+  'opt.liveKeyWarnung':
+    '<b>Das ist ein Echtgeld-Schlüssel (AK…).</b> Er wird verschlüsselt gespeichert und nie wieder angezeigt. <b>Gehandelt wird damit nicht:</b> Dafür braucht es zusätzlich den Live-Modus in den Einstellungen, die Server-Freigabe und eine bestandene Live-Reife. Bis dahin siehst du dein echtes Depot nur im Abgleich.',
+  'opt.reauthHint':
+    'Zur Sicherheit muss deine Anmeldung frisch sein — eine übernommene, offene Sitzung soll genau das hier nicht können.',
+  'opt.pwPlatzhalter': 'Dein autotrd-Passwort zur Bestätigung',
+  'opt.pkAkHint':
+    '<b>Papierkonto-Schlüssel</b> beginnen mit „PK", <b>Echtgeld-Schlüssel</b> mit „AK". Das Papierkonto ist bei Alpaca gratis und sofort da — fang damit an.',
+  'opt.linkKonto': '1. Konto anlegen',
+  'opt.linkKeys': '2. Paper-Dashboard → API-Keys erzeugen',
+  'opt.linkDoku': 'Dokumentation',
+  'opt.verbindungPruefen': 'Verbindung prüfen',
+  'opt.trennen': 'Trennen',
+  'opt.depotUebernehmen': 'Depot vom Broker übernehmen',
+  'opt.depotUebernehmenHint':
+    'Holt Positionen, Einstände, Barbestand und die von autotrd gesendeten Orders vom Broker ins Buch — <b>es wird nichts gekauft oder verkauft</b>. Für den Fall, dass Buch und Depot auseinandergelaufen sind (z. B. nach „Neu anfangen" mit verbundenem Broker). Buch-Positionen ohne Gegenstück beim Broker werden dabei entfernt; Stops kommen neu aus deiner aktuellen Strategie.',
+  'opt.scharfStellen': 'Echtgeld scharf stellen',
+  'opt.scharfHint':
+    'Es geht los, wenn <b>beides</b> gilt: Dieser Schalter steht auf ECHTGELD <b>und</b> die Trading-Engine steht auf <b>Start</b>. Ein Schalter allein handelt nicht.',
+  'opt.echtgeldWarnung':
+    '<b>Ab jetzt fließt echtes Geld.</b> Die Engine kauft und verkauft selbstständig auf deinem Alpaca-Echtgeldkonto — ohne weitere Rückfrage, rund um die Uhr für Krypto, zu Börsenzeiten für den Rest. Verluste sind real und nicht rückgängig zu machen.',
+  'opt.echtgeldTippen':
+    'Zum Bestätigen <b>ECHTGELD</b> tippen. Deine Anmeldung muss dabei frisch sein — du wirst nach deinem Passwort gefragt.',
+  'opt.pwKurz': 'Dein Passwort',
+  'opt.aufEchtgeld': 'Auf ECHTGELD umstellen',
+  'opt.zurueckPapier': 'Zurück auf Papierhandel',
+  'opt.stoppWasPassiert':
+    '<b>Was passiert beim Stoppen?</b> Die Engine legt sofort die Hände in den Schoß: keine neuen Käufe, keine Verkäufe, auch keine Stop-Loss- oder Take-Profit-Ausführungen. Dein Depot bleibt <b>exakt so stehen, wie es ist</b> — es wird nichts glattgestellt. Das ist gewollt, hat aber eine Kehrseite: Ein gestopptes Konto ist auch ein <b>ungeschütztes</b> Konto. Wer über Nacht stoppt und Positionen offen lässt, hat keinen Stop-Loss mehr. Für längere Pausen deshalb besser: Positionen von Hand schließen, dann stoppen.',
+  'opt.konto': 'Konto',
+  'opt.angemeldetAls': 'Angemeldet als',
+  'opt.abmelden': 'Abmelden',
+  'opt.steuerExport': 'Steuer-Export',
+  'opt.steuerHint':
+    'Paart Käufe und Verkäufe nach <b>FIFO</b>, rechnet Haltedauern und sortiert die Ergebnisse in die Töpfe, die das deutsche Recht getrennt hält. Bei Krypto zählt die <b>Ein-Jahres-Frist</b> — danach steuerfrei. Keine Steuerberatung: Die Zahlen sind eine Aufbereitung für deinen Steuerberater, keine Steuerschuld.',
+  'opt.nurEchtgeld': 'nur Echtgeld',
+  'opt.berichtErstellen': 'Bericht erstellen',
+  'opt.neuAnfangen': 'Neu anfangen',
+  'opt.resetHint':
+    'Setzt <b>Handelshistorie, offene Positionen, Kontostand und Kennzahlen</b> auf null zurück. Kursdaten, Prognose-Trefferquoten und deine Strategien bleiben. Nicht rückgängig zu machen.',
+  'opt.resetTippen': 'RESET tippen',
+  'opt.kontoZuruecksetzen': 'Konto zurücksetzen',
+  'opt.startVomBroker':
+    'Startkapital vom verbundenen Broker übernehmen (statt der Zahl oben)',
   'auth.falscheDaten': 'E-Mail oder Passwort ist falsch.',
   'auth.ungueltigeEmail': 'Das ist keine gültige E-Mail-Adresse.',
   'auth.emailVergeben': 'Für diese E-Mail existiert bereits ein Konto.',
@@ -251,6 +301,52 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'opt.unterschiedeAnsehen': 'View differences',
   'opt.notbremse': 'Daily loss brake',
   'opt.notbremseLoesen': 'Release the brake',
+  'opt.echtgeldAnbindung': 'Live-money connection',
+  'opt.brokerHint':
+    'Checks the connection to the broker, <b>without trading</b>, and reconciles your own book with the depot at the broker. Live money requires two switches in two places — a single click arms nothing.',
+  'opt.verbinden': 'Connect',
+  'opt.liveKeyWarnung':
+    '<b>This is a live-money key (AK…).</b> It is stored encrypted and never shown again. <b>It does not trade:</b> that additionally requires live mode in the settings, the server-side approval and a passed live-readiness check. Until then you only see your real depot in the reconciliation.',
+  'opt.reauthHint':
+    'For safety your sign-in must be fresh — a hijacked open session must not be able to do exactly this.',
+  'opt.pwPlatzhalter': 'Your autotrd password to confirm',
+  'opt.pkAkHint':
+    '<b>Paper-account keys</b> start with “PK”, <b>live-money keys</b> with “AK”. The paper account is free at Alpaca and available immediately — start with that.',
+  'opt.linkKonto': '1. Create an account',
+  'opt.linkKeys': '2. Paper dashboard → generate API keys',
+  'opt.linkDoku': 'Documentation',
+  'opt.verbindungPruefen': 'Check connection',
+  'opt.trennen': 'Disconnect',
+  'opt.depotUebernehmen': 'Adopt depot from broker',
+  'opt.depotUebernehmenHint':
+    'Fetches positions, cost bases, cash and the orders sent by autotrd from the broker into the book — <b>nothing is bought or sold</b>. For the case that book and depot have drifted apart (e.g. after “Start over” with a connected broker). Book positions without a counterpart at the broker are removed; stops are re-derived from your current strategy.',
+  'opt.scharfStellen': 'Arm live trading',
+  'opt.scharfHint':
+    'It starts when <b>both</b> hold: this switch is set to ECHTGELD <b>and</b> the trading engine is set to <b>Start</b>. One switch alone does not trade.',
+  'opt.echtgeldWarnung':
+    '<b>From now on real money flows.</b> The engine buys and sells autonomously on your Alpaca live account — without further confirmation, around the clock for crypto, during market hours for the rest. Losses are real and cannot be undone.',
+  'opt.echtgeldTippen':
+    'Type <b>ECHTGELD</b> to confirm. Your sign-in must be fresh — you will be asked for your password.',
+  'opt.pwKurz': 'Your password',
+  'opt.aufEchtgeld': 'Switch to ECHTGELD (live)',
+  'opt.zurueckPapier': 'Back to paper trading',
+  'opt.stoppWasPassiert':
+    '<b>What happens on stop?</b> The engine immediately folds its hands: no new buys, no sells, not even stop-loss or take-profit executions. Your depot stays <b>exactly as it is</b> — nothing is flattened. That is intended, but has a flip side: a stopped account is also an <b>unprotected</b> account. If you stop overnight with open positions, you have no stop loss anymore. For longer breaks, better: close positions manually, then stop.',
+  'opt.konto': 'Account',
+  'opt.angemeldetAls': 'Signed in as',
+  'opt.abmelden': 'Sign out',
+  'opt.steuerExport': 'Tax export',
+  'opt.steuerHint':
+    'Pairs buys and sells by <b>FIFO</b>, computes holding periods and sorts the results into the buckets German law keeps separate. For crypto the <b>one-year period</b> applies — tax-free afterwards. Not tax advice: the numbers are a preparation for your tax advisor, not a tax liability.',
+  'opt.nurEchtgeld': 'live money only',
+  'opt.berichtErstellen': 'Create report',
+  'opt.neuAnfangen': 'Start over',
+  'opt.resetHint':
+    'Resets <b>trade history, open positions, balance and metrics</b> to zero. Price data, forecast hit rates and your strategies remain. Cannot be undone.',
+  'opt.resetTippen': 'Type RESET',
+  'opt.kontoZuruecksetzen': 'Reset account',
+  'opt.startVomBroker':
+    'Adopt starting capital from the connected broker (instead of the number above)',
   'auth.falscheDaten': 'Email or password is incorrect.',
   'auth.ungueltigeEmail': 'That is not a valid email address.',
   'auth.emailVergeben': 'An account already exists for this email.',

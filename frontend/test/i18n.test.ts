@@ -171,6 +171,56 @@ describe('Golden-Wächter — im DE-Modus exakt die bisherigen Texte', () => {
     expect(DE['opt.loadoutsHint']).toContain('bleiben <b>immer</b> deine');
   });
 
+  it('Tranche 3b: die deutschen Broker/Konto-Tab-Texte sind byte-gleich zum Bestand', () => {
+    expect(DE['opt.echtgeldAnbindung']).toBe('Echtgeld-Anbindung');
+    expect(DE['opt.verbinden']).toBe('Verbinden');
+    expect(DE['opt.pwPlatzhalter']).toBe('Dein autotrd-Passwort zur Bestätigung');
+    expect(DE['opt.linkKonto']).toBe('1. Konto anlegen');
+    expect(DE['opt.linkKeys']).toBe('2. Paper-Dashboard → API-Keys erzeugen');
+    expect(DE['opt.linkDoku']).toBe('Dokumentation');
+    expect(DE['opt.verbindungPruefen']).toBe('Verbindung prüfen');
+    expect(DE['opt.trennen']).toBe('Trennen');
+    expect(DE['opt.depotUebernehmen']).toBe('Depot vom Broker übernehmen');
+    expect(DE['opt.scharfStellen']).toBe('Echtgeld scharf stellen');
+    expect(DE['opt.pwKurz']).toBe('Dein Passwort');
+    expect(DE['opt.aufEchtgeld']).toBe('Auf ECHTGELD umstellen');
+    expect(DE['opt.zurueckPapier']).toBe('Zurück auf Papierhandel');
+    expect(DE['opt.konto']).toBe('Konto');
+    expect(DE['opt.angemeldetAls']).toBe('Angemeldet als');
+    expect(DE['opt.abmelden']).toBe('Abmelden');
+    expect(DE['opt.steuerExport']).toBe('Steuer-Export');
+    expect(DE['opt.nurEchtgeld']).toBe('nur Echtgeld');
+    expect(DE['opt.berichtErstellen']).toBe('Bericht erstellen');
+    expect(DE['opt.neuAnfangen']).toBe('Neu anfangen');
+    expect(DE['opt.resetTippen']).toBe('RESET tippen');
+    expect(DE['opt.kontoZuruecksetzen']).toBe('Konto zurücksetzen');
+    expect(DE['opt.startVomBroker']).toBe(
+      'Startkapital vom verbundenen Broker übernehmen (statt der Zahl oben)',
+    );
+    // Lange Hints: Kernaussagen pinnen.
+    expect(DE['opt.brokerHint']).toContain('<b>ohne zu handeln</b>');
+    expect(DE['opt.liveKeyWarnung']).toContain('<b>Gehandelt wird damit nicht:</b>');
+    expect(DE['opt.depotUebernehmenHint']).toContain('<b>es wird nichts gekauft oder verkauft</b>');
+    expect(DE['opt.echtgeldWarnung']).toContain('<b>Ab jetzt fließt echtes Geld.</b>');
+    expect(DE['opt.stoppWasPassiert']).toContain('<b>ungeschütztes</b> Konto');
+    expect(DE['opt.steuerHint']).toContain('<b>FIFO</b>');
+    expect(DE['opt.resetHint']).toContain('Nicht rückgängig zu machen.');
+  });
+
+  it('die Bestätigungs-Wörter RESET und ECHTGELD bleiben in JEDER Sprache wörtlich', () => {
+    // Serverseitig gepinnt (RESET_CONFIRM_WORD bzw. setLiveMode) — eine
+    // Übersetzung des Tipp-Worts würde die Bestätigung unmöglich machen.
+    expect(DE['opt.resetTippen']).toContain('RESET');
+    expect(EN['opt.resetTippen']).toContain('RESET');
+    expect(DE['opt.echtgeldTippen']).toContain('ECHTGELD');
+    expect(EN['opt.echtgeldTippen']).toContain('ECHTGELD');
+    expect(DE['opt.aufEchtgeld']).toContain('ECHTGELD');
+    expect(EN['opt.aufEchtgeld']).toContain('ECHTGELD');
+    expect(EN['opt.scharfHint']).toContain('ECHTGELD');
+    // Die Eingabefeld-Platzhalter der Wörter selbst bleiben unübersetzt.
+    expect(dashboard).toContain('placeholder="ECHTGELD"');
+  });
+
   it('Tranche 1: die deutschen Kopfleisten-Texte sind byte-gleich zum Bestand', () => {
     expect(DE['nav.engineAus']).toBe('Engine aus');
     expect(DE['nav.engineAn']).toBe('Engine an');
@@ -282,6 +332,43 @@ describe('Anschluss-Wächter — die Funktion ist verdrahtet, nicht nur vorhande
     expect(dashboard).not.toContain('<option value="1">1× — kein Hebel (Standard)</option>');
     expect(dashboard).not.toContain('id="owSave">Speichern<');
     expect(dashboard).not.toContain('id="bkrReset">Notbremse lösen<');
+  });
+
+  it('die Optionen-Tabs „Broker" und „Konto" ziehen ihre Texte über t()', () => {
+    for (const k of [
+      "t('opt.echtgeldAnbindung')",
+      "t('opt.brokerHint')",
+      "t('opt.verbinden')",
+      "t('opt.liveKeyWarnung')",
+      "t('opt.pwPlatzhalter')",
+      "t('opt.pkAkHint')",
+      "t('opt.linkKonto')",
+      "t('opt.depotUebernehmen')",
+      "t('opt.depotUebernehmenHint')",
+      "t('opt.scharfStellen')",
+      "t('opt.echtgeldWarnung')",
+      "t('opt.echtgeldTippen')",
+      "t('opt.aufEchtgeld')",
+      "t('opt.stoppWasPassiert')",
+      "t('opt.konto')",
+      "t('opt.angemeldetAls')",
+      "t('opt.abmelden')",
+      "t('opt.steuerExport')",
+      "t('opt.steuerHint')",
+      "t('opt.neuAnfangen')",
+      "t('opt.resetTippen')",
+      "t('opt.kontoZuruecksetzen')",
+      "t('opt.startVomBroker')",
+    ]) {
+      expect(dashboard).toContain(k);
+    }
+    // Keine hartkodierten Reste der übersetzten Region im Template.
+    expect(dashboard).not.toContain('id="bkSave">Verbinden<');
+    expect(dashboard).not.toContain('id="bkAdopt">Depot vom Broker übernehmen<');
+    expect(dashboard).not.toContain('id="logoutBtn">Abmelden<');
+    expect(dashboard).not.toContain('placeholder="RESET tippen"');
+    // Der E-Mail-Einschub bleibt escaped hinter dem übersetzten Präfix.
+    expect(dashboard).toContain("${t('opt.angemeldetAls')} <b>${email.replace(/[<>&]/g, '')}</b>");
   });
 
   it('die Sprachwahl sitzt in Optionen → Anzeige und wird angewandt', () => {
