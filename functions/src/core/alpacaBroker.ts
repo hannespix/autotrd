@@ -712,14 +712,47 @@ export interface OrderErgebnis {
 }
 
 /**
- * Order absenden — Market-Order, `day`-Gültigkeit.
+ * Limit-Preis auf ein Raster runden, das Alpaca sicher annimmt.
  *
- * Warum Market und nicht Limit: Die Engine entscheidet auf Basis eines
- * gerade geholten Kurses und will die Position JETZT. Eine Limit-Order, die
- * nicht ausgeführt wird, hinterlässt ein Depot, das nicht dem eigenen Buch
- * entspricht — und genau diese Abweichung ist die teuerste Fehlerquelle
- * einer Broker-Anbindung. Lieber ein paar Basispunkte Slippage (die die
- * Kostenrechnung ohnehin einkalkuliert) als ein stiller Auseinanderlauf.
+ * Dieselbe Idee wie `rundeStopPreis` (schutzStop.ts), nur mit der
+ * Kaufmanns-Richtung eines EINSTIEGS: Ein Kauf-Limit wird ABgerundet (nie
+ * mehr zahlen als entschieden), ein Verkaufs-Limit AUFgerundet. Das ist
+ * zugleich die Maker-Richtung — das Limit landet auf oder hinter dem
+ * Entscheidungskurs, nie davor.
+ *
+ * Raster nach Größenordnung (zu viele Nachkommastellen lehnt Alpaca mit
+ * 422 ab, weniger sind immer erlaubt): ≥ 1 $ zwei Stellen, ≥ 0,001 $ vier,
+ * darunter sechs. Das Epsilon fängt Gleitkomma-Kanten wie `4.07 × 100 =
+ * 406.99999…` ab, die sonst ein Cent zu tief landen würden. Ergebnis 0
+ * (Preis unrundbar klein oder ungültig) heißt für den Aufrufer: keine
+ * Limit-Order — Market wie bisher.
+ */
+export function rundeLimitPreis(preis: number, side: 'buy' | 'sell'): number {
+  if (!Number.isFinite(preis) || preis <= 0) return 0;
+  const faktor = preis >= 1 ? 100 : preis >= 0.001 ? 10_000 : 1_000_000;
+  const roh = preis * faktor;
+  return (side === 'buy' ? Math.floor(roh + 1e-7) : Math.ceil(roh - 1e-7)) / faktor;
+}
+
+/**
+ * Order absenden — Market-Order, `day`-Gültigkeit; mit `limitPreis` eine
+ * Limit-Order mit `gtc`.
+ *
+ * Warum Market und nicht Limit (die Regel): Die Engine entscheidet auf
+ * Basis eines gerade geholten Kurses und will die Position JETZT. Eine
+ * Limit-Order, die nicht ausgeführt wird, hinterlässt ein Depot, das nicht
+ * dem eigenen Buch entspricht — und genau diese Abweichung ist die teuerste
+ * Fehlerquelle einer Broker-Anbindung. Lieber ein paar Basispunkte Slippage
+ * (die die Kostenrechnung ohnehin einkalkuliert) als ein stiller
+ * Auseinanderlauf.
+ *
+ * Die AUSNAHME (Hebel 1b, 15.08.) sind Krypto-EINSTIEGE: Dort ist die
+ * Gebühr selbst kursabhängig (Maker 0,15 % statt Taker 0,25 %), und der
+ * Aufrufer (`routeOrder`) garantiert per Storno, dass ein ungefüllter
+ * Limit-Einstieg nicht liegen bleibt — der Auseinanderlauf von oben ist
+ * damit konstruktiv ausgeschlossen. `gtc` statt `day`, weil Alpaca für
+ * Krypto nur gtc/ioc kennt; die Laufzeit begrenzt ohnehin der Storno,
+ * nicht die Gültigkeit.
  */
 export async function alpacaOrder(
   mode: BrokerMode,
@@ -728,10 +761,13 @@ export async function alpacaOrder(
     side: 'buy' | 'sell';
     qty: number;
     clientOrderId: string;
+    /** Gesetzt (> 0) ⇒ Limit-Order statt Market (nur Einstiege, s. o.). */
+    limitPreis?: number;
   },
   schluessel: AlpacaSchluessel | null = null,
   fetchImpl: FetchLike = fetch,
 ): Promise<OrderErgebnis> {
+  const limit = typeof order.limitPreis === 'number' && order.limitPreis > 0;
   const d = (await alpacaFetch(
     mode,
     '/v2/orders',
@@ -742,8 +778,9 @@ export async function alpacaOrder(
         symbol: zuAlpacaSymbol(order.symbol),
         qty: String(order.qty),
         side: order.side,
-        type: 'market',
-        time_in_force: 'day',
+        ...(limit
+          ? { type: 'limit', limit_price: String(order.limitPreis), time_in_force: 'gtc' }
+          : { type: 'market', time_in_force: 'day' }),
         client_order_id: order.clientOrderId,
       }),
     },

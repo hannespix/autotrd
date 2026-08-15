@@ -37,6 +37,7 @@ import type {
   Trade,
 } from '../../../shared/src/index.js';
 import { fxFelder } from './fx.js';
+import { rundeLimitPreis } from './alpacaBroker.js';
 import { assetStand, brokerVerbindung, brokerVorpruefung, routeOrder } from './orderRouting.js';
 import { schutzAnlegen, schutzAufheben } from './schutzStop.js';
 
@@ -598,11 +599,25 @@ export async function executeTrade(
   // Hier ist noch nichts gefüllt — die Order geht erst gleich raus.
   if (mengeZuKlein(qty, fractional, false)) return { executed: false, reason: 'qty_unter_1' };
 
+  /* Hebel 1b (Owner 15.08., „rund um die Uhr"): Krypto-EINSTIEGE gehen als
+   * Limit-Order zum Entscheidungskurs statt als Market-Order. Alpaca nimmt
+   * für Maker 0,15 % statt Taker 0,25 % — bei der Klasse, deren Gebühren
+   * (1.316 $) ihren Brutto-Gewinn (+691 $) auffressen, ist der Verzicht
+   * auf das Spread-Überqueren der größte einzelne Kostenhebel. Füllt das
+   * Limit im Wartefenster nicht, storniert K-2c die Order (kein_fill) —
+   * ein verpasster Einstieg kostet nichts, ein zu teurer echtes Geld.
+   * NUR Einstiege: Exits bleiben Market (das Routing erzwingt das
+   * zusätzlich selbst). Gebucht wird weiterhin die Taker-Gebühr der
+   * Klasse — lieber zu viel Reibung einplanen als zu wenig. */
+  const limitPreis =
+    eroeffnet && klasse === 'crypto' ? rundeLimitPreis(req.price, req.side) : 0;
+
   const routing = await routeOrder(verbindung, {
     uid: req.uid,
     symbol: req.symbol,
     side: req.side,
     qty,
+    ...(limitPreis > 0 ? { limitPreis } : {}),
     // K-2c: Eine ungefüllte ERÖFFNENDE Order wird storniert, damit sie
     // nicht Minuten später füllt, während der nächste Scan erneut kauft.
     // Schließende bleiben stehen — ihr später Fill ist erwünscht und wird
