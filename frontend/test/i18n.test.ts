@@ -112,6 +112,65 @@ describe('Golden-Wächter — im DE-Modus exakt die bisherigen Texte', () => {
     expect(DE['opt.marktgruppenHint']).toContain('nur Anzeige — die Daten aller Gruppen');
   });
 
+  it('Tranche 3a: die deutschen Trading-Tab-Texte sind byte-gleich zum Bestand', () => {
+    expect(DE['opt.paperWallet']).toBe('Paper-Wallet · Grundeinstellungen');
+    expect(DE['opt.kapitalPosition']).toBe('Kapital &amp; Positionsgröße');
+    expect(DE['opt.startkapital']).toBe('Startkapital $');
+    expect(DE['opt.investmentJeTrade']).toBe('Investment je Trade %');
+    expect(DE['opt.risikoJeTrade']).toBe('Risiko je Trade %');
+    expect(DE['opt.maxPositionen']).toBe('Max. gleichzeitige Positionen');
+    expect(DE['opt.ruhigerSockel']).toBe('Ruhiger Sockel %');
+    expect(DE['opt.hebel']).toBe('Hebel (Margin)');
+    expect(DE['opt.hebel1']).toBe('1× — kein Hebel (Standard)');
+    expect(DE['opt.hebel2']).toBe('2× — nur bei sehr starkem Signal');
+    expect(DE['opt.hebel3']).toBe('3× — Maximum');
+    expect(DE['opt.ausstiege']).toBe('Ausstiege');
+    expect(DE['opt.stopLoss']).toBe('Stop-Loss %');
+    expect(DE['opt.takeProfit']).toBe('Take-Profit %');
+    expect(DE['opt.trailing']).toBe('Nachziehender Stop %');
+    expect(DE['opt.maxHalte']).toBe('Max. Haltedauer (Tage)');
+    expect(DE['opt.atrStop']).toBe('ATR-Stop (×ATR)');
+    expect(DE['opt.atrZiel']).toBe('ATR-Ziel (×ATR)');
+    expect(DE['opt.signaleTakt']).toBe('Signale &amp; Takt');
+    expect(DE['opt.signalZeitrahmen']).toBe('Signal-Zeitrahmen');
+    expect(DE['opt.tf5m']).toBe('5-Minuten (aktiv)');
+    expect(DE['opt.tfDaily']).toBe('Tageskerzen (ruhig)');
+    expect(DE['opt.kaufPause']).toBe('Kauf-Pause nach Verkauf (Min)');
+    expect(DE['opt.konfluenzEinstieg']).toBe('Konfluenz Einstieg');
+    expect(DE['opt.konfluenzAusstieg']).toBe('Konfluenz Ausstieg');
+    expect(DE['opt.schutzschalter']).toBe('Schutzschalter');
+    expect(DE['opt.kostenschwelle']).toBe('Kostenschwelle (× Gebühren)');
+    expect(DE['opt.tagesNotbremsePct']).toBe('Tages-Notbremse (% Verlust)');
+    expect(DE['opt.flatten']).toBe('Bei Notbremse zusätzlich alle Positionen schließen');
+    expect(DE['opt.regimeGate']).toBe('Markt-Ampel (keine Shorts im Aufwärtstrend, Pause bei Stress)');
+    expect(DE['opt.newsVeto']).toBe('News-Veto (Einstiege bei harten Events aussetzen)');
+    expect(DE['opt.experimente']).toBe('Experimente');
+    expect(DE['opt.shorten']).toBe('Shorten erlauben (Leerverkäufe)');
+    expect(DE['opt.klassenKapital']).toBe('Kapital je Anlageklasse');
+    expect(DE['opt.autoNachregeln']).toBe('Automatisch nachregeln (täglich, in Schritten von 0,25)');
+    expect(DE['opt.vorschlagUebernehmen']).toBe('Vorschlag übernehmen');
+    expect(DE['opt.speichern']).toBe('Speichern');
+    expect(DE['opt.einstellungenPruefen']).toBe('Einstellungen prüfen');
+    expect(DE['opt.jetztPruefen']).toBe('Jetzt prüfen');
+    expect(DE['opt.ausgewaehlteUebernehmen']).toBe('Ausgewählte übernehmen');
+    expect(DE['opt.loadouts']).toBe('Loadouts');
+    expect(DE['opt.uebernehmen']).toBe('Übernehmen');
+    expect(DE['opt.loName']).toBe('Aktuellen (gespeicherten) Stand sichern als …');
+    expect(DE['opt.alsLoadoutSpeichern']).toBe('Als Loadout speichern');
+    expect(DE['opt.bewaehrt']).toBe('Bewährte Einstellungen');
+    expect(DE['opt.lade']).toBe('Lade …');
+    expect(DE['opt.unterschiedeAnsehen']).toBe('Unterschiede ansehen');
+    expect(DE['opt.notbremse']).toBe('Tages-Notbremse');
+    expect(DE['opt.notbremseLoesen']).toBe('Notbremse lösen');
+    // Lange Hints: Kernaussagen pinnen (mehrzeilige Literale wurden auf
+    // eine Zeile normalisiert — HTML kollabiert Whitespace).
+    expect(DE['opt.startkapitalHint']).toContain('ändert deinen aktuellen Kontostand');
+    expect(DE['opt.nullSchaltetAb']).toContain('0 schaltet eine Regel ab');
+    expect(DE['opt.klassenHint']).toContain('steuert nur den <b>Einstieg</b>');
+    expect(DE['opt.klassenHint']).toContain('von Hand gesetzte Werte halten dauerhaft nur');
+    expect(DE['opt.loadoutsHint']).toContain('bleiben <b>immer</b> deine');
+  });
+
   it('Tranche 1: die deutschen Kopfleisten-Texte sind byte-gleich zum Bestand', () => {
     expect(DE['nav.engineAus']).toBe('Engine aus');
     expect(DE['nav.engineAn']).toBe('Engine an');
@@ -190,6 +249,39 @@ describe('Anschluss-Wächter — die Funktion ist verdrahtet, nicht nur vorhande
     // Sprachnamen bleiben unübersetzt — jede Sprache in ihrem eigenen Namen.
     expect(dashboard).toContain('<option value="de">Deutsch</option>');
     expect(dashboard).toContain('<option value="en">English</option>');
+  });
+
+  it('der Optionen-Tab „Trading" zieht seine Texte über t()', () => {
+    for (const k of [
+      "t('opt.paperWallet')",
+      "t('opt.startkapitalHint')",
+      "t('opt.kapitalPosition')",
+      "t('opt.startkapital')",
+      "t('opt.hebel1')",
+      "t('opt.ausstiege')",
+      "t('opt.signaleTakt')",
+      "t('opt.tf5m')",
+      "t('opt.schutzschalter')",
+      "t('opt.flatten')",
+      "t('opt.shorten')",
+      "t('opt.nullSchaltetAb')",
+      "t('opt.klassenKapital')",
+      "t('opt.klassenHint')",
+      "t('opt.autoNachregeln')",
+      "t('opt.speichern')",
+      "t('opt.jetztPruefen')",
+      "t('opt.loadoutsHint')",
+      "t('opt.loName')",
+      "t('opt.bewaehrt')",
+      "t('opt.notbremseLoesen')",
+    ]) {
+      expect(dashboard).toContain(k);
+    }
+    // Keine hartkodierten Reste der übersetzten Region im Template.
+    expect(dashboard).not.toContain('>Paper-Wallet · Grundeinstellungen<');
+    expect(dashboard).not.toContain('<option value="1">1× — kein Hebel (Standard)</option>');
+    expect(dashboard).not.toContain('id="owSave">Speichern<');
+    expect(dashboard).not.toContain('id="bkrReset">Notbremse lösen<');
   });
 
   it('die Sprachwahl sitzt in Optionen → Anzeige und wird angewandt', () => {
