@@ -42,13 +42,36 @@ export const saveStrategy = onCall(CALLABLE_OPTS, async (request) => {
   if (s.watchlist.length > MAX_WATCHLIST) {
     throw new HttpsError('invalid-argument', `Watchlist ist auf ${MAX_WATCHLIST} Symbole begrenzt`);
   }
-  // Katalog-Symbole (yfinance-Konventionen, z. B. '^NDX' statt 'NDX') —
+  const ref = getFirestore().doc(`users/${uid}`);
+  const vorher = await ref.get();
+  if (!vorher.exists) {
+    throw new HttpsError('failed-precondition', 'Profil fehlt — ensureProfile zuerst aufrufen');
+  }
+
+  // Katalog-Symbole (yfinance-Konventionen, z. B. '^GSPC' statt 'GSPC') —
   // seit Stufe 3 (Task 121) erweitert um das Alpaca-Universum: Was der
   // Broker laut täglichem Sync wirklich handelt, darf auf die Watchlist,
   // auch ohne Katalog-Eintrag. Der Universums-Blick kostet nur dann eine
   // Lesung, wenn tatsächlich ein Nicht-Katalog-Symbol dabei ist.
+  //
+  // ── Bestandsschutz (Owner-Befund 15.08.) ────────────────────────────────
+  //
+  // Nur NEU hinzukommende Symbole müssen bekannt sein. Der Alpaca-first-
+  // Umbau (Stufe 2) hat Indizes und Futures aus dem Katalog genommen —
+  // Watchlists aus der Zeit davor tragen sie aber noch. Ohne diese Zeile
+  // blockierte ein '^NDX' von Juli JEDEN Speichern-Klick des Kontos
+  // („Unbekannte Symbole: ^NDX, GC=F"), auch wenn die Änderung mit der
+  // Watchlist nichts zu tun hatte — der Klassen-Regler ließ sich so nicht
+  // mehr verstellen. Was schon gespeichert ist, war beim Eintragen gültig
+  // und bleibt; einmal entfernt, kommt es nicht wieder hinein.
   const catalog = new Set(allSymbols());
   let unknown = s.watchlist.filter((sym) => !catalog.has(sym));
+  if (unknown.length > 0) {
+    const bestand = new Set(
+      (vorher.get('settings.strategy.watchlist') as string[] | undefined) ?? [],
+    );
+    unknown = unknown.filter((sym) => !bestand.has(sym));
+  }
   if (unknown.length > 0) {
     const universum = await ladeUniversumSymbole();
     unknown = unknown.filter((sym) => !universum.has(sym));
@@ -85,10 +108,6 @@ export const saveStrategy = onCall(CALLABLE_OPTS, async (request) => {
     s.engine.classWeights = sauber;
   }
 
-  const ref = getFirestore().doc(`users/${uid}`);
-  if (!(await ref.get()).exists) {
-    throw new HttpsError('failed-precondition', 'Profil fehlt — ensureProfile zuerst aufrufen');
-  }
   await ref.set({ settings: { strategy: s } }, { merge: true });
   return { ok: true };
 });
