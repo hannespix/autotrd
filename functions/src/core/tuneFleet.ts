@@ -25,7 +25,9 @@ import {
   PAPER_FEE_RATE,
   classify,
   describeVariant,
+  regimeCooldownMin,
   wirksameMindesthalte,
+  type MarketRegime,
   EVIDENCE_DEFAULTS,
   judgeCandidate,
   resolveRisk,
@@ -146,6 +148,13 @@ export function stepFleet(
   vorher: FleetState,
   symbols: string[],
   now: Date,
+  /**
+   * Regime-Zustand des Laufs (Hebel 2, 15.08.): `cooldownMin` ist eine
+   * Achse des Tuner-Gitters — misst die Flotte ohne die Seitwärts-Bremse,
+   * kürt sie Varianten-Sieger, die live gebremst würden. `null` (Tests,
+   * Alt-Aufrufer) heißt: keine Bremse, Verhalten wie bisher.
+   */
+  regimeState: MarketRegime | null = null,
 ): FleetStepResult {
   const state: FleetState = { ...vorher };
   let closed = 0;
@@ -157,7 +166,10 @@ export function stepFleet(
     const lastTrades = { ...st.lastTrades };
     const pnls = [...st.pnls];
     const tf = s.signals.timeframe === 'daily' ? 'daily' : 'intraday';
-    const cdMin = s.engine.cooldownMin ?? 60;
+    const cdBasis = s.engine.cooldownMin ?? 60;
+    // Hebel 2: dieselbe Seitwärts-Bremse wie der echte Pfad (nur Cooldown —
+    // die Flotte kennt kein sizeFactor-Sizing, ihr Maßstab ist die P&L-Folge).
+    const cdMin = regimeState ? regimeCooldownMin(cdBasis, regimeState) : cdBasis;
     const minHold = s.engine.minHoldMin ?? 0;
 
     for (const symbol of symbols) {
