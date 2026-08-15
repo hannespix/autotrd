@@ -156,3 +156,51 @@ export function regimeEntryBlocked(
   if (regime === 'trend' && side === 'short') return 'gegen_trend';
   return null;
 }
+
+/* ── Stufe 3: die Seitwärts-Bremse (Hebel 2, Owner 15.08.) ────────────────── */
+
+/**
+ * Im SEITWÄRTS-Regime handelt die Engine seltener und kleiner.
+ *
+ * Die Ampel oben kennt für `seitwaerts` keine Richtungssperre — „alles
+ * erlaubt" ist dort fachlich richtig (keine Trendrichtung, gegen die man
+ * verstoßen könnte). Aber erlaubt heißt nicht empfehlenswert: Ohne Trend
+ * kippt die Konfluenz im Rauschen hin und her, und genau dieses Hin und Her
+ * ist der Umschlag, der über die Gebühren das Geld verbrennt (der
+ * 5-min-Befund vom 30.07. — 525 Trades in zwei Tagen, Gebühren das
+ * 4,7-Fache des Bruttos — war exakt dieses Muster in schnell).
+ *
+ * Deshalb zwei Dämpfer, beide NUR verschärfend und beide nur für Einstiege
+ * (der Cooldown blockt Exits ohnehin nie, das Sizing betrifft nur neue
+ * Positionen):
+ *
+ *  - Cooldown: mindestens verdoppelt und nie unter 30 Minuten — auch wer
+ *    den Cooldown auf 0 gestellt hat, bekommt im Seitwärtsmarkt einen
+ *    Whipsaw-Schutz.
+ *  - Positionsgröße: halbiert. Wenn schon gehandelt wird, dann mit kleinem
+ *    Einsatz — Mean-Reversion-Treffer bleiben möglich, Fehlsignale kosten
+ *    die Hälfte.
+ *
+ * `trend` bleibt unangetastet (dort trägt die Richtungsregel oben), und in
+ * `stress` sind Einstiege ohnehin komplett gesperrt — die Bremse hier ist
+ * also ausschließlich die Antwort auf die NEUTRALE Ampel.
+ */
+export const SEITWAERTS_COOLDOWN_FAKTOR = 2;
+export const SEITWAERTS_COOLDOWN_MIN = 30;
+export const SEITWAERTS_GROESSEN_FAKTOR = 0.5;
+
+/**
+ * Wirksamer Einstiegs-Cooldown unter der Ampel — NUR verlängernd: Außerhalb
+ * von `seitwaerts` exakt der Basiswert, darin nie kürzer als Basis, Faktor
+ * und Boden.
+ */
+export function regimeCooldownMin(cooldownMin: number, state: MarketRegime): number {
+  const basis = Number.isFinite(cooldownMin) && cooldownMin > 0 ? cooldownMin : 0;
+  if (state !== 'seitwaerts') return basis;
+  return Math.max(basis, basis * SEITWAERTS_COOLDOWN_FAKTOR, SEITWAERTS_COOLDOWN_MIN);
+}
+
+/** Positionsgrößen-Dämpfer unter der Ampel — NUR dämpfend (≤ 1, nie ≤ 0). */
+export function regimeGroessenFaktor(state: MarketRegime): number {
+  return state === 'seitwaerts' ? SEITWAERTS_GROESSEN_FAKTOR : 1;
+}

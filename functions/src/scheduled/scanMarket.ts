@@ -57,6 +57,10 @@ import {
   convictionFactor,
   marketRegime,
   regimeEntryBlocked,
+  regimeCooldownMin,
+  regimeGroessenFaktor,
+  SEITWAERTS_COOLDOWN_FAKTOR,
+  SEITWAERTS_COOLDOWN_MIN,
   leverageChance,
   calendarReading,
   signalSignature,
@@ -860,7 +864,13 @@ async function executeUserTrades(
       // Zeitbasis der Signale (Owner 26.07., „Tradefrequenz erhöhen"):
       // 'intraday' rechnet auf 5-min-Kerzen — Signale drehen im Scan-Takt.
       const tf: 'daily' | 'intraday' = strategy.signals.timeframe ?? 'intraday';
-      const cdMin = clamped.engine.cooldownMin ?? 15;
+      const cdBasis = clamped.engine.cooldownMin ?? 15;
+      /* Hebel 2 (15.08.): Neutrale Ampel (seitwaerts) ⇒ seltener handeln.
+       * Der Cooldown wird mindestens verdoppelt und fällt nie unter 30 min —
+       * und weil JEDER Einstiegs-Pfad (Regelbaum echt/Schatten, Classic
+       * long/short) dieselbe cdMin liest, gilt die Bremse überall mit einer
+       * einzigen Zeile. Exits blockt der Cooldown ohnehin nie (Bestand). */
+      const cdMin = regimeCooldownMin(cdBasis, regime);
       // Positionslimit kommt jetzt aus der Strategie (Owner-Frage 28.07.:
       // „habe es nicht in den Optionen gefunden") — die Hülle klemmt nur noch.
       const posLimit = maxOpenPositions(clamped);
@@ -1525,6 +1535,9 @@ async function executeUserTrades(
                 stopDistancePct: stopAbstand(symbol, data.atrPct),
                 // Regelbaum liefert ja/nein statt Vote-Karte — eigener Steckbrief
                 bucket: bucketKey({ assetClass: classify(symbol), timeframe: tf, signature: 'regelbaum', side: 'long', regime }),
+                // Hebel 2: Im Seitwärts-Regime halbe Größe — auch für
+                // Regelbaum-Strategien (der Broker klemmt auf [0,25; 1,5]).
+                sizeFactor: regimeGroessenFaktor(regime),
                 signalContext: { typ: 'regelbaum', regime },
               },
               clamped,
@@ -1593,6 +1606,8 @@ async function executeUserTrades(
                 openShort: true,
                 stopDistancePct: stopAbstand(symbol, data.atrPct),
                 bucket: bucketKey({ assetClass: classify(symbol), timeframe: tf, signature: 'regelbaum', side: 'short', regime }),
+                // Hebel 2: Seitwärts ⇒ halbe Größe, wie beim Regelbaum-Long.
+                sizeFactor: regimeGroessenFaktor(regime),
                 signalContext: { typ: 'regelbaum', regime },
               },
               clamped,
@@ -1738,7 +1753,7 @@ async function executeUserTrades(
               konfluenz,
               requiredConfluence: clamped.signals.minConfluence,
               bucket: filterBuckets[bucket] ?? null,
-            }) * klassenGewicht(clamped, symbol);
+            }) * klassenGewicht(clamped, symbol) * regimeGroessenFaktor(regime);
           const budget = hebelBudget(konfluenz, {
             bucket: filterBuckets[bucket] ?? null,
             side: 'long',
@@ -1838,7 +1853,7 @@ async function executeUserTrades(
               konfluenz,
               requiredConfluence: clamped.signals.minConfluence,
               bucket: filterBuckets[bucket] ?? null,
-            }) * klassenGewicht(clamped, symbol);
+            }) * klassenGewicht(clamped, symbol) * regimeGroessenFaktor(regime);
           const budget = hebelBudget(konfluenz, {
             bucket: filterBuckets[bucket] ?? null,
             side: 'short',
@@ -1920,7 +1935,18 @@ async function executeUserTrades(
             // vergleichbar — und ein nicht vergleichbares Ergebnis ist
             // schlimmer als gar keines, weil es befördert werden könnte.
             const fleetSymbols = [...marketData.keys()];
-            const { state, entfernt } = stepFleet(variants, marketData, vorher, fleetSymbols, now);
+            const { state, entfernt } = stepFleet(
+              variants,
+              marketData,
+              vorher,
+              fleetSymbols,
+              now,
+              // Hebel 2: Die Flotte misst unter denselben Cooldown-Bedingungen
+              // wie der echte Pfad — cooldownMin ist eine Tuner-Grid-Achse,
+              // und ein Varianten-Sieger, der live gebremst würde, wäre eine
+              // Fehlmessung.
+              regime,
+            );
             await fleetRef.set(
               { variants: fleetSchreibfeld(state, entfernt), updatedAt: now.toISOString() },
               { merge: true },
@@ -3598,6 +3624,15 @@ export async function runScan(force = false): Promise<ScanResult> {
         // Stufe 1 nichts — er wird gemessen und in die Steckbriefe des
         // Trade-Filters gestempelt, damit der je Regime getrennt lernt.
         regime,
+        // Hebel 2 (15.08.): Was die Seitwärts-Bremse in DIESEM Lauf an
+        // Frequenz und Größe gedämpft hat — deklarativ, damit die Wirkung
+        // je Lauf nachlesbar ist statt nur im Code zu stehen.
+        regimeBremse: {
+          state: regime.state,
+          cooldownFaktor: regime.state === 'seitwaerts' ? SEITWAERTS_COOLDOWN_FAKTOR : 1,
+          cooldownMindestMin: regime.state === 'seitwaerts' ? SEITWAERTS_COOLDOWN_MIN : null,
+          groessenFaktor: regimeGroessenFaktor(regime.state),
+        },
         // Termin-Kalender (04.08., Schatten): Was steht an, und liegt der Tag
         // im Turn-of-the-Month-Fenster? Steuert noch NICHTS — erst wenn die
         // Auswertung über genug Termine zeigt, dass es sich lohnt. Bis dahin
