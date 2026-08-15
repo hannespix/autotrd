@@ -24,8 +24,18 @@ import { initPwa } from './pwa.js';
   __autotrd: { listenerCount: () => number; muxIsLeader: () => boolean };
 }).__autotrd = { listenerCount, muxIsLeader };
 
-// Theme früh setzen (localStorage), Default dunkel
-document.documentElement.dataset.theme = localStorage.getItem('autotrd-theme') ?? 'dark';
+/* Theme so früh wie möglich (kein Falsch-Blitz beim Laden): Eine manuelle
+ * Wahl ('light'/'dark' aus Optionen → Anzeige) gilt; sonst folgt die App der
+ * SYSTEMEINSTELLUNG (Owner 15.08. — Standard ist 'system'). Die laufende
+ * Umschaltung bei Systemwechsel übernimmt dashboard.ts; ohne matchMedia
+ * bleibt Dunkel der Rückfall wie bisher. */
+const themeWahl = localStorage.getItem('autotrd-theme');
+document.documentElement.dataset.theme =
+  themeWahl === 'light' || themeWahl === 'dark'
+    ? themeWahl
+    : window.matchMedia?.('(prefers-color-scheme: dark)')?.matches === false
+      ? 'light'
+      : 'dark';
 
 // PWA: Service Worker (nur Prod) + Install-Chip
 initPwa();
