@@ -13,6 +13,7 @@ import {
   type User,
 } from 'firebase/auth';
 import { auth } from './firebase.js';
+import { t } from './i18n.js';
 
 /**
  * Anmeldung auffrischen — der zweite Faktor an der Stelle, wo er wirkt.
@@ -96,18 +97,18 @@ export function authErrorMessage(err: unknown): string {
     case 'auth/invalid-credential':
     case 'auth/wrong-password':
     case 'auth/user-not-found':
-      return 'E-Mail oder Passwort ist falsch.';
+      return t('auth.falscheDaten');
     case 'auth/invalid-email':
-      return 'Das ist keine gültige E-Mail-Adresse.';
+      return t('auth.ungueltigeEmail');
     case 'auth/email-already-in-use':
-      return 'Für diese E-Mail existiert bereits ein Konto.';
+      return t('auth.emailVergeben');
     case 'auth/weak-password':
-      return 'Das Passwort ist zu schwach (mindestens 6 Zeichen).';
+      return t('auth.schwachesPasswort');
     case 'auth/too-many-requests':
-      return 'Zu viele Versuche — bitte kurz warten.';
+      return t('auth.zuVieleVersuche');
     case 'auth/popup-closed-by-user':
-      return 'Google-Anmeldung abgebrochen.';
+      return t('auth.googleAbgebrochen');
     default:
-      return 'Anmeldung fehlgeschlagen. Bitte erneut versuchen.';
+      return t('auth.fehlgeschlagen');
   }
 }
