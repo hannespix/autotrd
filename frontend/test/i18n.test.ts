@@ -221,6 +221,32 @@ describe('Golden-Wächter — im DE-Modus exakt die bisherigen Texte', () => {
     expect(dashboard).toContain('placeholder="ECHTGELD"');
   });
 
+  it('Tranche 4: die deutschen Panel-Titel sind byte-gleich zum Bestand', () => {
+    expect(DE['panel.strategie']).toBe('Strategie');
+    expect(DE['panel.engine']).toBe('Engine');
+    expect(DE['panel.historie']).toBe('Trade-Historie');
+    expect(DE['panel.journal']).toBe('Trade-Journal');
+    expect(DE['panel.chart']).toBe('Chart');
+    expect(DE['panel.chartKopf']).toBe('Chart · Candlestick + Volumen');
+    expect(DE['panel.indikatorKacheln']).toBe('Indikator-Kacheln');
+    expect(DE['panel.autoSignale']).toBe('Auto-Signale');
+    expect(DE['panel.positionen']).toBe('Positionen');
+    expect(DE['panel.positionenKopf']).toBe('Aktive Positionen');
+    expect(DE['panel.markt']).toBe('Markt-Übersicht');
+    expect(DE['panel.performance']).toBe('Performance');
+    expect(DE['panel.manuellerTrade']).toBe('Manueller Trade');
+    expect(DE['panel.marktUhr']).toBe('Markt-Uhr');
+    expect(DE['panel.marktUhrKopf']).toBe('Markt-Uhr (ET)');
+    expect(DE['panel.prognoseGenauigkeit']).toBe('Prognose-Genauigkeit');
+    expect(DE['panel.prognoseLabor']).toBe('Prognose-Labor');
+    expect(DE['panel.momentum']).toBe('Momentum-Ranking');
+    expect(DE['panel.autoTuner']).toBe('Auto-Tuner');
+    expect(DE['panel.struktursuche']).toBe('Struktursuche');
+    expect(DE['panel.vergleichsChart']).toBe('Vergleichs-Chart');
+    expect(DE['panel.haltedauer']).toBe('Wie lange halten?');
+    expect(DE['panel.erkenntnisse']).toBe('Was das System gelernt hat');
+  });
+
   it('Tranche 1: die deutschen Kopfleisten-Texte sind byte-gleich zum Bestand', () => {
     expect(DE['nav.engineAus']).toBe('Engine aus');
     expect(DE['nav.engineAn']).toBe('Engine an');
@@ -369,6 +395,31 @@ describe('Anschluss-Wächter — die Funktion ist verdrahtet, nicht nur vorhande
     expect(dashboard).not.toContain('placeholder="RESET tippen"');
     // Der E-Mail-Einschub bleibt escaped hinter dem übersetzten Präfix.
     expect(dashboard).toContain("${t('opt.angemeldetAls')} <b>${email.replace(/[<>&]/g, '')}</b>");
+  });
+
+  it('Panel-Titel: Registry UND Karten-Köpfe ziehen über t() — dieselben Schlüssel', () => {
+    // Die Registry (Modul-Checkboxen, Palette) …
+    for (const k of [
+      "strategy: t('panel.strategie')",
+      "sigcards: t('panel.indikatorKacheln')",
+      "chart2: t('panel.vergleichsChart')",
+    ]) {
+      expect(dashboard).toContain(k);
+    }
+    // … und die Karten-Köpfe im Layout (auch die Sonder-Fassungen).
+    for (const k of [
+      "data-panel=\"history\"><div class=\"sect\">${t('panel.historie')}",
+      "data-panel=\"chart\"><div class=\"sect\">${t('panel.chartKopf')}",
+      "data-panel=\"positions\"><div class=\"sect\">${t('panel.positionenKopf')}",
+      "data-panel=\"clock\"><div class=\"sect\">${t('panel.marktUhrKopf')}",
+      "data-panel=\"erkenntnisse\"><div class=\"sect\">${t('panel.erkenntnisse')}",
+    ]) {
+      expect(dashboard).toContain(k);
+    }
+    // Keine hartkodierten Reste in Registry oder Köpfen.
+    expect(dashboard).not.toContain("history: 'Trade-Historie'");
+    expect(dashboard).not.toContain('class="sect">Trade-Historie');
+    expect(dashboard).not.toContain('class="sect">Aktive Positionen');
   });
 
   it('die Sprachwahl sitzt in Optionen → Anzeige und wird angewandt', () => {
