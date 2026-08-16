@@ -358,6 +358,58 @@ export const INFO_DE: Record<string, Tip> = {
  * Englisch stellt, erwartet die Begriffe, die auch beim Broker stehen.
  */
 export const INFO_EN: Record<string, Partial<Tip>> = {
+  rsiBuy: {
+    t: 'RSI buy threshold',
+    d: 'The Relative Strength Index (RSI, 14 periods) measures from 0–100 how overbought or oversold a market is. If the RSI falls BELOW this threshold (classically 30), the market counts as oversold — the indicator casts a buy vote into the confluence. A lower threshold = rarer but more conservative buy signals.',
+  },
+  rsiSell: {
+    t: 'RSI sell threshold',
+    d: 'If the RSI rises ABOVE this threshold (classically 70), the market counts as overbought — the indicator votes to sell. A higher threshold = you let profits run longer but risk missing the turning point.',
+  },
+  konfluenz: {
+    t: 'Minimum confluence',
+    d: 'Confluence = agreement of several independent votes (RSI, MACD, Bollinger, forecast). Only when at least THIS many votes point in the same direction does the engine trade. Higher = fewer but more reliable trades; lower = more active but more error-prone.',
+  },
+  minConfluence: {
+    t: 'Confluence for the entry',
+    d: 'How many indicator votes a BUY needs. At 2, for example, RSI and MACD must say “buy” at the same time; the forecast counts as a weighted extra vote (capped, unless you let it go solo). Lower = more trades but more false signals — 1 means “every single vote buys immediately”.',
+  },
+  exitConfluence: {
+    t: 'Confluence for the exit',
+    d: 'How many indicator votes a SELL needs — separate from the entry and deliberately lower. The reason is asymmetric: a missed entry only costs an opportunity, a missed exit costs money. On a tie of votes, the sell therefore wins. Previously the same threshold applied to both — and because RSI and Bollinger say “oversold, so buy” in falling markets, they blocked the exit exactly when it would have been needed.',
+  },
+  signalTimeframe: {
+    t: 'Signal timeframe',
+    d: 'Which candles the trading signals are computed on. “5-minute” (default): RSI, MACD, Bollinger and the short-term forecast run on 5-minute candles — signals turn at the pace of the 5-minute scan and the engine trades MUCH more often (day-trading style). “Daily candles”: the calm view — signals only change every few days, with less noise and lower fees. Honestly: every trade costs 0.1 % plus slippage — high frequency eats returns, and paper trading is the right place to experience that without risk.',
+  },
+  cooldownMin: {
+    t: 'Buy pause after a sell',
+    d: 'How many minutes a symbol is not bought again after a sale (including stop loss / take profit). Prevents the back-and-forth (whipsaw): a stop loss fires in falling markets — precisely then RSI/Bollinger often shout “oversold, buy!”, and without a pause the symbol would be back in the portfolio on the next scan, minus fees. Smaller = more trades; below 5 minutes (the scan interval) the pause would have no effect, which is where the risk envelope clamps it.',
+  },
+  minEdgeMultiple: {
+    t: 'Cost threshold',
+    d: 'The system’s most important filter — and the one it lacked the longest. Every trade costs fees plus spread, there and back: 0.1 % on US equities, up to 0.5 % on crypto. Without this filter you trade on the signal and pay afterwards — in measured practice the friction then eats a multiple of the actual result. So the engine checks beforehand: does this instrument even move far enough within the minimum holding period to beat the costs? Computed from the ATR and the square root of the holding period (over four candles the expected move doubles, it does not quadruple). At 3, the expected move must be three times the costs — the trade must carry even when two out of three attempts fail. Higher = fewer but more worthwhile trades. 0 switches the filter off (not recommended).',
+  },
+  dailyLossLimit: {
+    t: 'Daily loss brake',
+    d: 'The limit at which the day is over — measured against yesterday’s equity, including unrealised losses. WHY, GIVEN THERE IS A STOP LOSS: the stop loss protects a POSITION. It does not help against the case that really empties accounts: many small losses in a row on one day, each of them stopped by the rules. With 39 watched symbols, a 5-minute cadence and roughly a 24 % hit rate, a losing streak is not an exception but the norm — it just costs more on some days. A daily limit answers the question no single stop can: when do you stop? WHY UNREALISED LOSSES COUNT: if only realised losses counted, the brake would never trigger as long as nobody sells — and that very behaviour (letting losers run) is what it is meant to brake. WHAT IT DOES: it blocks ENTRIES, in both paths — automatic and manual click. A brake you can bypass with one trade is not a brake. Existing exits (stop, target, trailing, signal) keep running; a sale always stays possible, otherwise it would block the very way out it triggered for. HOW IT RELEASES: by itself on the next trading day, or earlier with a deliberate click. It does NOT release because the price briefly recovers — otherwise it would have prevented nothing on exactly the day it is needed. The maximum is 25 %: above that it is no longer an emergency brake but decoration, and the cap also catches the typo (250 instead of 2.5 would have silently switched the brake off). 0 = off.',
+  },
+  flattenOnBreach: {
+    t: 'Flatten on brake',
+    d: 'On triggering the daily loss brake, additionally closes ALL open positions. The default is OFF, and that is the more important setting: a forced sale sounds decisive and is usually wrong. It realises unrealised losses at the worst moment of the day and turns an interim correction into a final loss — on a day when the market is already running against you. The existing exits keep running anyway; they are the right authority for the question of when a SINGLE position gives up, because they know its stop, target and trailing. This option is meant for the case where someone explicitly wants a hard cut — before a trip, say, or while the strategy is being rebuilt.',
+  },
+  regimeGate: {
+    t: 'Market light',
+    d: 'Blocks entries that run against the measured market state. The state comes from three free inputs: the S&P 500’s position relative to its 200-day average, the actual volatility of the last 20 days, and the VIX level. Three rules follow: in an UPTREND no short sales — you do not bet against the market you are in. Under STRESS (VIX at 30 or above, or very high volatility) no new entries at all, because prices then move in jumps and a stop is not filled at the stop price but at the next one. SIDEWAYS everything is allowed — without a trend there is no trend direction to violate. The trigger was a measurement in our own trading history: short sales in an uptrend lost across every kind of indicator — the common denominator was the direction, so the rule blocks the direction. Like the news veto it can only prevent trades, never trigger them: existing positions stay untouched, exits always free. If the market data is missing, “sideways” applies and nothing is blocked — a data outage must not become a silent trading ban.',
+  },
+  newsVeto: {
+    t: 'News veto',
+    d: 'Blocks NEW entries into a symbol for a few hours when a hard event is currently in the headlines for it: quarterly figures, a profit warning, litigation/investigation, a takeover or a change of leadership. The reason is mechanical: around such dates prices JUMP instead of moving — and RSI, MACD and Bollinger, on which the entry rests, say nothing about jumps. A stop loss does not protect against that either, because on a gap you sell at the next price, not at the stop price. The veto can only PREVENT trades, never trigger them — so at most it lowers fees. Exits always stay free: an open position is never held back because headlines are running. The sources are free news feeds (Yahoo Finance, Google News), scored by a word list — no AI, no cost. Ordinary coverage (“what analysts expect …”) does not trigger the veto; it takes a dated event with clear wording. If the feed fails, trading continues normally — the veto switches itself off, never the engine.',
+  },
+  allowShort: {
+    t: 'Shorting (short sales)',
+    d: 'Allows the engine to bet on FALLING prices: a sell signal without a position opens a short (the portfolio “borrows” the shares and sells them), a buy signal covers it again. Profit = entry minus repurchase price. The full counter-value is reserved from cash as collateral and booked back with the gain/loss when covering. Important: when shorting, losses are theoretically unlimited (the price can rise arbitrarily) — which is why this is deliberately opt-in; stop loss (above the entry), trailing stop and the 25 % emergency brake apply mirrored.',
+  },
   riskPerTrade: {
     t: 'Risk per trade',
     d: 'Switches position sizing from “share of the portfolio” to “equal risk contribution”. Previously every position got the same 10 % of capital — no matter whether it was a calm bond ETF (0.3 % daily swing) or a wild crypto bet (5 %). That looks like diversification but is not: two or three restless names then drive the whole portfolio and the rest is decoration. This value turns the question around — not “how much money do I put in”, but “how much may I lose when the stop is hit”. At 1 %, EVERY stopped-out trade costs roughly 1 % of the portfolio, whatever the instrument; the quantity follows from the stop distance. A name with a tight stop gets correspondingly more shares. “Max. investment per trade” remains as a hard ceiling — a very tight stop would otherwise compute to a multiple of the portfolio. 0 = off (classic percentage slice). The default is deliberately 0: the rebuild is an improvement, but an unproven one — let the cost threshold take effect first, then switch this on, otherwise you will not know afterwards what did the work.',
