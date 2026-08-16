@@ -118,5 +118,31 @@ describe('Golden-Wächter — die deutschen Tips sind byte-gleich zum Bestand', 
     expect(INFO_EN['takeProfit']?.t).toBe('Take profit');
     expect(INFO_EN['trailingStop']?.t).toBe('Trailing stop');
     expect(INFO_EN['leverage']?.d).toContain('margin call');
+    // Häppchen 5b: Signale, Takt und Schutzschalter.
+    expect(INFO_EN['rsiBuy']?.t).toBe('RSI buy threshold');
+    expect(INFO_EN['minConfluence']?.t).toBe('Confluence for the entry');
+    expect(INFO_EN['cooldownMin']?.d).toContain('whipsaw');
+    expect(INFO_EN['minEdgeMultiple']?.d).toContain('square root of the holding period');
+    expect(INFO_EN['dailyLossLimit']?.d).toContain('it blocks ENTRIES');
+    expect(INFO_EN['regimeGate']?.d).toContain('200-day average');
+    expect(INFO_EN['allowShort']?.d).toContain('theoretically unlimited');
+  });
+
+  it('Häppchen 5b: die deutschen Vorlagen sind byte-gleich geblieben', () => {
+    expect(INFO_DE['rsiBuy']?.t).toBe('RSI-Kaufschwelle');
+    expect(INFO_DE['rsiSell']?.t).toBe('RSI-Verkaufsschwelle');
+    expect(INFO_DE['konfluenz']?.t).toBe('Minimale Konfluenz');
+    expect(INFO_DE['minConfluence']?.t).toBe('Konfluenz für den Einstieg');
+    expect(INFO_DE['exitConfluence']?.t).toBe('Konfluenz für den Ausstieg');
+    expect(INFO_DE['signalTimeframe']?.t).toBe('Signal-Zeitrahmen');
+    expect(INFO_DE['cooldownMin']?.t).toBe('Kauf-Pause nach Verkauf');
+    expect(INFO_DE['minEdgeMultiple']?.t).toBe('Kostenschwelle');
+    expect(INFO_DE['dailyLossLimit']?.t).toBe('Tages-Notbremse');
+    expect(INFO_DE['flattenOnBreach']?.t).toBe('Bei Notbremse glattstellen');
+    expect(INFO_DE['regimeGate']?.t).toBe('Markt-Ampel');
+    expect(INFO_DE['newsVeto']?.t).toBe('News-Veto');
+    expect(INFO_DE['allowShort']?.t).toBe('Shorten (Leerverkäufe)');
+    expect(INFO_DE['minEdgeMultiple']?.d).toContain('Wurzel aus der Haltedauer');
+    expect(INFO_DE['dailyLossLimit']?.d).toContain('Sie sperrt EINSTIEGE');
   });
 });
