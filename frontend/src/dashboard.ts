@@ -240,25 +240,29 @@ const CLASS_ORDER = [
 
 /* ── Workspace-Panels & Presets (M9) ────────────────────────────────── */
 
+/* Werte über t() zur MODUL-Ladezeit: sicher, weil der Sprachwechsel bewusst
+ * per location.reload() arbeitet — jede Seite lädt das Modul in genau einer
+ * Sprache. Die IDs (Schlüssel) sind Persistenz-Format (Workspace-Doc) und
+ * bleiben sprachunabhängig. */
 const PANEL_TITLES: Record<string, string> = {
-  strategy: 'Strategie',
-  engine: 'Engine',
-  history: 'Trade-Historie',
-  journal: 'Trade-Journal',
-  chart: 'Chart',
-  sigcards: 'Indikator-Kacheln',
-  autosignals: 'Auto-Signale',
-  positions: 'Positionen',
-  market: 'Markt-Übersicht',
-  performance: 'Performance',
-  manualtrade: 'Manueller Trade',
-  clock: 'Markt-Uhr',
-  forecastacc: 'Prognose-Genauigkeit',
-  fclab: 'Prognose-Labor',
-  momentum: 'Momentum-Ranking',
-  tuner: 'Auto-Tuner',
-  struktur: 'Struktursuche',
-  chart2: 'Vergleichs-Chart',
+  strategy: t('panel.strategie'),
+  engine: t('panel.engine'),
+  history: t('panel.historie'),
+  journal: t('panel.journal'),
+  chart: t('panel.chart'),
+  sigcards: t('panel.indikatorKacheln'),
+  autosignals: t('panel.autoSignale'),
+  positions: t('panel.positionen'),
+  market: t('panel.markt'),
+  performance: t('panel.performance'),
+  manualtrade: t('panel.manuellerTrade'),
+  clock: t('panel.marktUhr'),
+  forecastacc: t('panel.prognoseGenauigkeit'),
+  fclab: t('panel.prognoseLabor'),
+  momentum: t('panel.momentum'),
+  tuner: t('panel.autoTuner'),
+  struktur: t('panel.struktursuche'),
+  chart2: t('panel.vergleichsChart'),
 };
 
 /** Panels, die ohne gespeicherten Workspace ausgeblendet starten.
@@ -610,7 +614,7 @@ function layout(email: string): string {
 
   <div class="app">
     <div class="col-l" id="leftCol">
-      <div class="card" data-panel="strategy"><div class="sect">Strategie</div><div class="cbody">
+      <div class="card" data-panel="strategy"><div class="sect">${t('panel.strategie')}</div><div class="cbody">
         <div class="fld"><label class="lbl">Beobachtet ${iBtn('watchlist')}</label>
           <div id="wlChips" class="wl-chips"></div>
           <div class="hint" id="wlHint">Automatisch gewählt.</div>
@@ -650,7 +654,7 @@ function layout(email: string): string {
         <div class="hint" id="saveHint"></div>
       </div></div>
 
-      <div class="card" data-panel="engine"><div class="sect">Engine</div><div class="cbody">
+      <div class="card" data-panel="engine"><div class="sect">${t('panel.engine')}</div><div class="cbody">
         <!-- Immer genau EINER sichtbar (renderEngineBadge schaltet um).
              Startzustand „aus", passend zum Default engine.running: false —
              sobald die Strategie geladen ist, korrigiert der Renderer das. -->
@@ -692,7 +696,7 @@ function layout(email: string): string {
         </div>
       </div></div>
 
-      <div class="card" data-panel="history"><div class="sect">Trade-Historie
+      <div class="card" data-panel="history"><div class="sect">${t('panel.historie')}
         <span id="jCount" style="float:right;color:var(--t3)">0</span></div><div class="cbody">
         <div class="row" style="gap:6px;margin-bottom:6px">
           <input id="jFilter" class="inp" placeholder="Symbol filtern …" style="flex:1">
@@ -708,7 +712,7 @@ function layout(email: string): string {
         <button class="btn btn-n" id="jMore" style="width:100%;margin-top:6px">Ältere laden</button>
       </div></div>
 
-      <div class="card" data-panel="journal"><div class="sect">Trade-Journal ${iBtn('tradejournal')}</div><div class="cbody">
+      <div class="card" data-panel="journal"><div class="sect">${t('panel.journal')} ${iBtn('tradejournal')}</div><div class="cbody">
         <div class="hint">Jeder gebuchte Trade landet hier automatisch — mit dem eingefrorenen
           Signal-Kontext des Moments (Stimmen, Konfluenz, Regime). Deine Aufgabe ist die
           Bewertung: Note A–D und eine Notiz. Die Fakten selbst sind unveränderlich.</div>
@@ -719,7 +723,7 @@ function layout(email: string): string {
     <div class="col-m">
       <div class="livebar" id="liveBar"></div>
 
-      <div class="card" data-panel="chart"><div class="sect">Chart · Candlestick + Volumen <button class="lchip" id="chipChart" title="Link-Gruppe wechseln (Chart folgt dieser Gruppe)">A</button></div><div class="cbody">
+      <div class="card" data-panel="chart"><div class="sect">${t('panel.chartKopf')} <button class="lchip" id="chipChart" title="Link-Gruppe wechseln (Chart folgt dieser Gruppe)">A</button></div><div class="cbody">
         <div id="chartMaxScope">
         <div class="chart-hd">
           <span class="chart-nm" id="chSym"></span>
@@ -871,7 +875,7 @@ function layout(email: string): string {
           aktualisiert der zentrale 5-min-Scan. Zoom bleibt beim Aktualisieren erhalten.</div>
       </div></div>
 
-      <div class="card" data-panel="chart2"><div class="sect">Vergleichs-Chart
+      <div class="card" data-panel="chart2"><div class="sect">${t('panel.vergleichsChart')}
         <button class="lchip" id="chipChart2" title="Link-Gruppe wechseln (Vergleichs-Chart folgt dieser Gruppe)">B</button></div><div class="cbody">
         <div class="chart-hd">
           <input id="ch2Sym" class="inp mh-sym"
@@ -900,14 +904,14 @@ function layout(email: string): string {
         <div class="scard"><div class="slbl">Signal</div><div id="vSig" class="sval c-t3">--</div></div>
       </div>
 
-      <div class="card" data-panel="autosignals"><div class="sect">Auto-Signale</div><div class="cbody">
+      <div class="card" data-panel="autosignals"><div class="sect">${t('panel.autoSignale')}</div><div class="cbody">
         <div class="tw"><table class="tbl">
           <thead><tr><th>Ticker</th><th>RSI</th><th>MACD</th><th>BB %</th><th>Konfluenz</th><th>Signal</th></tr></thead>
           <tbody id="sigBody"><tr><td colspan="6" class="c-t3">Noch kein Scan</td></tr></tbody>
         </table></div>
       </div></div>
 
-      <div class="card" data-panel="positions"><div class="sect">Aktive Positionen <span id="pCount" style="float:right;color:var(--t3)">0 offen</span></div><div class="cbody">
+      <div class="card" data-panel="positions"><div class="sect">${t('panel.positionenKopf')} <span id="pCount" style="float:right;color:var(--t3)">0 offen</span></div><div class="cbody">
         <div class="tw"><table class="tbl">
           <thead><tr><th>Sym</th><th>Qty</th><th>Eintritt</th><th>Aktuell</th><th>P&amp;L</th><th>%</th><th></th></tr></thead>
           <tbody id="pBody"><tr><td colspan="7" class="c-t3">Keine offenen Positionen</td></tr></tbody>
@@ -924,14 +928,14 @@ function layout(email: string): string {
         <div id="whyExtra" class="hint" style="margin-top:6px"></div>
       </div></div>
 
-      <div class="card" data-panel="market"><div class="sect">Markt-Übersicht</div><div class="cbody">
+      <div class="card" data-panel="market"><div class="sect">${t('panel.markt')}</div><div class="cbody">
         <div class="mkt-tabs" id="mktTabs"></div>
         <div id="mktBody"><span class="c-t3">Lade Katalog…</span></div>
       </div></div>
     </div>
 
     <div class="col-r" id="rightCol">
-      <div class="card" data-panel="performance"><div class="sect">Performance</div><div class="cbody kpi">
+      <div class="card" data-panel="performance"><div class="sect">${t('panel.performance')}</div><div class="cbody kpi">
         <label class="lbl">Cash</label><div id="vCash" class="vbig c-ac">--</div>
         <!-- Erklärt sich nur, wenn er gebraucht wird (negatives Cash beim
              Short-Buch) — renderPortfolio füllt und zeigt ihn. -->
@@ -989,7 +993,7 @@ function layout(email: string): string {
         <button class="btn btn-g" id="anOpen" style="width:100%;margin-top:8px">Handels-Analyse öffnen</button>
       </div></div>
 
-      <div class="card" data-panel="manualtrade"><div class="sect">Manueller Trade</div><div class="cbody">
+      <div class="card" data-panel="manualtrade"><div class="sect">${t('panel.manuellerTrade')}</div><div class="cbody">
         <label class="lbl">Symbol (Katalog)</label>
         <div class="mt-combo">
           <input id="mSym" class="inp" placeholder="Suchen: Name oder Symbol …" autocomplete="off">
@@ -1024,7 +1028,7 @@ function layout(email: string): string {
           + Slippage (5 bp) — dieselben Konditionen wie im Backtest.</div>
       </div></div>
 
-      <div class="card" data-panel="clock"><div class="sect">Markt-Uhr (ET)</div><div class="cbody">
+      <div class="card" data-panel="clock"><div class="sect">${t('panel.marktUhrKopf')}</div><div class="cbody">
         <div id="marketClock" class="clock">--:--:--</div>
         <div class="phases">
           <div class="ph" id="phPre">Pre-Mkt</div>
@@ -1033,7 +1037,7 @@ function layout(email: string): string {
         </div>
       </div></div>
 
-      <div class="card" data-panel="forecastacc"><div class="sect">Prognose-Genauigkeit</div><div class="cbody kpi">
+      <div class="card" data-panel="forecastacc"><div class="sect">${t('panel.prognoseGenauigkeit')}</div><div class="cbody kpi">
         <label class="lbl">Richtungs-Trefferquote ${iBtn('fcCombo')}</label>
         <div id="fcAcc" class="vbig c-ac">--</div>
         <div class="row" style="gap:12px">
@@ -1045,7 +1049,7 @@ function layout(email: string): string {
         <div class="hint" id="fcVoteInfo"></div>
       </div></div>
 
-      <div class="card" data-panel="fclab"><div class="sect">Prognose-Labor <span id="flSym" style="float:right;color:var(--t3)"></span></div><div class="cbody">
+      <div class="card" data-panel="fclab"><div class="sect">${t('panel.prognoseLabor')} <span id="flSym" style="float:right;color:var(--t3)"></span></div><div class="cbody">
         <div class="hint">Selbstverbesserung: Jede gespeicherte Prognose wird nach Ablauf
           ihres Horizonts gegen die eingetretene Realität bewertet. Die Trefferquote je
           Lookback-Fenster steuert, welches Fenster künftige Prognosen nutzen — und ob
@@ -1058,7 +1062,7 @@ function layout(email: string): string {
         <div id="flRows" class="fl-tbl"><div class="hint">Noch keine bewerteten Prognosen für dieses Symbol.</div></div>
       </div></div>
 
-      <div class="card" data-panel="momentum"><div class="sect">Momentum-Ranking ${iBtn('momentum')}
+      <div class="card" data-panel="momentum"><div class="sect">${t('panel.momentum')} ${iBtn('momentum')}
         <span id="moFilter" class="tn-tag" style="float:right"></span>
       </div><div class="cbody">
         <div class="hint">Statt einer Watchlist wird der GANZE Katalog nach 12-Monats-Momentum
@@ -1076,7 +1080,7 @@ function layout(email: string): string {
         <div class="hint" id="moHint"></div>
       </div></div>
 
-      <div class="card" data-panel="tuner"><div class="sect">Auto-Tuner ${iBtn('autotuner')}
+      <div class="card" data-panel="tuner"><div class="sect">${t('panel.autoTuner')} ${iBtn('autotuner')}
         <label class="tn-sw" title="Abschalten heißt: Die Einstellungen bleiben, wie du sie gesetzt hast."><input type="checkbox" id="tnOn" checked><span>aktiv</span></label>
       </div><div class="cbody">
         <div class="hint">Jede Variante deiner Einstellung führt ein eigenes Schattenkonto auf
@@ -1091,7 +1095,7 @@ function layout(email: string): string {
         <div id="tnLog" class="tn-log"><div class="hint">Noch keine Prüfung — der Tuner urteilt täglich nach US-Schluss.</div></div>
       </div></div>
 
-      <div class="card" data-panel="struktur"><div class="sect">Struktursuche ${iBtn('struktursuche')}</div><div class="cbody">
+      <div class="card" data-panel="struktur"><div class="sect">${t('panel.struktursuche')} ${iBtn('struktursuche')}</div><div class="cbody">
         <div class="hint">Während der Auto-Tuner an den REGLERN deiner Strategie dreht, baut die
           Struktursuche am BAUPLAN: Einmal täglich tritt ein mutierter Regelbaum gegen den
           amtierenden an — Walk-Forward-geprüft, mit einer Latte gegen Zufallstreffer, die mit
@@ -1125,7 +1129,7 @@ function layout(email: string): string {
         <div id="dcMeta" class="tn-n mono"></div>
       </div></div>
 
-      <div class="card" data-panel="haltedauer"><div class="sect">Wie lange halten? ${iBtn('haltedauer')}
+      <div class="card" data-panel="haltedauer"><div class="sect">${t('panel.haltedauer')} ${iBtn('haltedauer')}
         <span id="hdStand" class="tn-tag" style="float:right"></span>
       </div><div class="cbody">
         <div class="hint">Dieselben Kaufsignale, nur unterschiedlich lange gehalten — gerechnet auf der
@@ -1138,7 +1142,7 @@ function layout(email: string): string {
         <div id="hdMeta" class="tn-n mono"></div>
       </div></div>
 
-      <div class="card" data-panel="erkenntnisse"><div class="sect">Was das System gelernt hat ${iBtn('erkenntnisse')}
+      <div class="card" data-panel="erkenntnisse"><div class="sect">${t('panel.erkenntnisse')} ${iBtn('erkenntnisse')}
         <span id="erDate" class="tn-tag" style="float:right"></span>
       </div><div class="cbody">
         <div class="hint">Alle anderen Zahlen hier sind Momentaufnahmen — sie werden überschrieben.
