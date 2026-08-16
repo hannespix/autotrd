@@ -210,6 +210,10 @@ export const DE = {
   'panel.vergleichsChart': 'Vergleichs-Chart',
   'panel.haltedauer': 'Wie lange halten?',
   'panel.erkenntnisse': 'Was das System gelernt hat',
+  // ⓘ-Knopf: Die Tip-INHALTE stehen in infotips.ts (eigene Records, s. dort);
+  // hier nur die beiden Attribut-Texte des Knopfes selbst.
+  'tip.erklaerung': 'Erklärung',
+  'tip.wasBedeutet': 'Was bedeutet das?',
   'auth.falscheDaten': 'E-Mail oder Passwort ist falsch.',
   'auth.ungueltigeEmail': 'Das ist keine gültige E-Mail-Adresse.',
   'auth.emailVergeben': 'Für diese E-Mail existiert bereits ein Konto.',
@@ -396,6 +400,8 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'panel.vergleichsChart': 'Comparison chart',
   'panel.haltedauer': 'How long to hold?',
   'panel.erkenntnisse': 'What the system has learned',
+  'tip.erklaerung': 'Explanation',
+  'tip.wasBedeutet': 'What does this mean?',
   'auth.falscheDaten': 'Email or password is incorrect.',
   'auth.ungueltigeEmail': 'That is not a valid email address.',
   'auth.emailVergeben': 'An account already exists for this email.',

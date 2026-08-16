@@ -11,7 +11,29 @@
  * (Karten werden komplett neu gerendert).
  */
 
-export const INFO: Record<string, { t: string; d: string }> = {
+import { sprachWahl, t as uebersetzt, type Sprache } from './i18n.js';
+
+/** Ein Tip: Überschrift + ausführliche Erklärung. */
+export interface Tip {
+  t: string;
+  d: string;
+}
+
+/**
+ * ── Zweisprachigkeit (Task #139, Tranche 5) ───────────────────────────────
+ *
+ * Die Tips sind der größte Textbestand der App (70 Einträge, viele davon
+ * mehrere Sätze). Sie werden deshalb NICHT einzeln ins allgemeine Wörterbuch
+ * gehoben, sondern bleiben hier — als zwei Records nebeneinander.
+ *
+ * `INFO_DE` ist vollständig und die Quelle der Wahrheit. `INFO_EN` darf
+ * lücken, und zwar FELDWEISE: Ein Eintrag mit übersetzter Überschrift, aber
+ * ohne übersetzten Fließtext, zeigt die englische Überschrift über dem
+ * deutschen Text. Das ist während der schrittweisen Übersetzung der einzige
+ * Zustand, der weder lügt noch etwas verschluckt — und es erlaubt, die
+ * kurzen Überschriften vorzuziehen, wo die langen Texte noch fehlen.
+ */
+export const INFO_DE: Record<string, Tip> = {
   // ── Klassische Strategie-Parameter ──
   rsiBuy: {
     t: 'RSI-Kaufschwelle',
@@ -327,6 +349,90 @@ export const INFO: Record<string, { t: string; d: string }> = {
   },
 };
 
+/**
+ * Englische Fassung — darf lücken (feldweiser Fallback, s. o.), aber KEINE
+ * Schlüssel außerhalb von `INFO_DE` erfinden (Karteileichen-Test).
+ *
+ * Die Fachbegriffe bleiben englisch, wo sie es im Deutschen schon sind
+ * (Stop-Loss → stop loss, Take-Profit → take profit): Wer die Oberfläche auf
+ * Englisch stellt, erwartet die Begriffe, die auch beim Broker stehen.
+ */
+export const INFO_EN: Record<string, Partial<Tip>> = {
+  riskPerTrade: {
+    t: 'Risk per trade',
+    d: 'Switches position sizing from “share of the portfolio” to “equal risk contribution”. Previously every position got the same 10 % of capital — no matter whether it was a calm bond ETF (0.3 % daily swing) or a wild crypto bet (5 %). That looks like diversification but is not: two or three restless names then drive the whole portfolio and the rest is decoration. This value turns the question around — not “how much money do I put in”, but “how much may I lose when the stop is hit”. At 1 %, EVERY stopped-out trade costs roughly 1 % of the portfolio, whatever the instrument; the quantity follows from the stop distance. A name with a tight stop gets correspondingly more shares. “Max. investment per trade” remains as a hard ceiling — a very tight stop would otherwise compute to a multiple of the portfolio. 0 = off (classic percentage slice). The default is deliberately 0: the rebuild is an improvement, but an unproven one — let the cost threshold take effect first, then switch this on, otherwise you will not know afterwards what did the work.',
+  },
+  maxOpenPositions: {
+    t: 'Max. concurrent positions',
+    d: 'How many positions may be open at the same time at most. Once the limit is reached, the engine ignores every further buy signal — until a position closes. Together with “investment per trade %” this determines how full the portfolio gets at most: 10 positions at 10 % is fully invested, 10 at 5 % leaves half in cash. More positions spread the risk but make each one less meaningful — and every open position costs queries on every scan. The ceiling is 30.',
+  },
+  corePct: {
+    t: 'Quiet core %',
+    d: 'The share of your capital that is NOT actively traded but sits in a quiet momentum portfolio: the strongest names of the whole catalogue, equally weighted, rebalanced at most once a month — and only as long as the overall market is above its 200-day average; below that the core goes to cash. The reason is a measurement, not an opinion: in our own history the quiet momentum portfolio clearly beat the actively traded accounts — not because their signals advised worse, but because fees ate up the gross result. Since fees are charged as a percentage, no larger position helps against that, only: trade less often and capture bigger moves. That is exactly what the core does. Whatever it ties up is missing from the active engine as cash — so it automatically becomes smaller and remains the search engine for the rare good opportunities. Core positions are invisible to the 5-minute scan: no signal sell, no stop, no trailing. They live off calm. 0 % switches the core off, more than 90 % does not exist — a remainder must stay available for fees and manual trades.',
+  },
+  leverage: {
+    t: 'Leverage (margin)',
+    d: 'Trading with borrowed money: at 2× the portfolio may move twice what it holds in equity. Leverage amplifies BOTH directions equally — a 10 % price gain becomes a 20 % account gain, a 10 % loss likewise 20 %. Three things belong to it and all are built in: (1) Leverage applies ONLY to very convincing signals — two votes above your entry threshold and at least 3 in total (otherwise a looser entry threshold would make leverage easier, i.e. exactly backwards); anything below keeps trading cash-covered. (2) If equity falls below 25 % of the position value, positions are force-closed (margin call, checked every minute) — just like at a real broker. (3) The borrowed money accrues 8 % annual interest, booked daily. Without (2) and (3) every evaluation with leverage would look better than it is. The default is 1× (off). Manual trades always stay cash-covered — leverage hangs on the algorithm’s conviction, and a click of yours does not carry that.',
+  },
+  exits: {
+    t: 'Why closed',
+    d: 'What actually ended the positions: a risk marker (stop loss, take profit, trailing stop) or a SIGNAL — i.e. because the indicators turned. The distribution says more than any single number: if almost everything sits under “signal”, stop and take are practically never reached. Then it is not your risk control that decides the outcome but the flip of a single indicator vote — a sign that positions are thrown out again too early.',
+  },
+  stopLoss: {
+    t: 'Stop loss',
+    d: 'Automatic emergency exit: if the price falls by this percentage below the entry, the engine sells immediately — losses are capped before they grow. Set too tight, normal market noise throws you out of the position (“stopped out”).',
+  },
+  takeProfit: {
+    t: 'Take profit',
+    d: 'The profit target: if the price rises by this percentage above the entry, it is sold automatically and the gain realised. Secures paper profits but also caps the upside.',
+  },
+  trailingStop: {
+    t: 'Trailing stop',
+    d: 'A stop that moves along: when the price rises it follows; when it falls it stays put. It sells when the price drops by this percentage below the HIGHEST price since entry. It deliberately only kicks in once the position has been in profit — as long as it never was, the fixed stop is in charge. Without it a position only closes at the rigid target or at the stop, so in trending phases almost never. 0 = off.',
+  },
+  maxHold: {
+    t: 'Max. holding period',
+    d: 'Forced exit after this many calendar days, whatever the price is doing. The point: a position drifting sideways for months ties up capital that could work elsewhere. 0 = off (hold indefinitely).',
+  },
+  atrStop: {
+    t: 'ATR stop (volatility-adaptive)',
+    d: 'Instead of a fixed percentage the stop is set as a multiple of the ATR — the instrument’s average daily swing. A 2 % stop is pure noise on Bitcoin (±4 % a day) and throws you out immediately, while on an index (±0.6 %) it is a real signal. With ATR the distance adapts automatically to the instrument AND the market phase. Typical: 1.5–3. 0 = off, then the percentage applies.',
+  },
+  atrTake: {
+    t: 'ATR target',
+    d: 'The same principle for taking profits: the target sits this multiple of the average daily swing above the entry. Usually sensible larger than the ATR stop (about double), so that gains can outweigh losses. 0 = off, then the percentage applies.',
+  },
+};
+
+/**
+ * Ein Wörterbuch aus DE + EN bauen — FELDWEISE, damit eine halb übersetzte
+ * Karte weder leer noch falsch ist (s. Kopf von `INFO_EN`).
+ *
+ * Pur gehalten, damit der Test die Fallback-Semantik mit eigenen Records
+ * prüfen kann, ohne localStorage zu stubben.
+ */
+export function waehleTips(
+  de: Record<string, Tip>,
+  en: Record<string, Partial<Tip>>,
+  sprache: Sprache,
+): Record<string, Tip> {
+  if (sprache !== 'en') return de;
+  const out: Record<string, Tip> = {};
+  for (const [id, tip] of Object.entries(de)) {
+    const u = en[id];
+    out[id] = {
+      t: u?.t && u.t.length > 0 ? u.t : tip.t,
+      d: u?.d && u.d.length > 0 ? u.d : tip.d,
+    };
+  }
+  return out;
+}
+
+/* Auswahl zur MODUL-Ladezeit: sicher, weil der Sprachwechsel bewusst per
+ * location.reload() arbeitet (s. i18n.ts) — jede Seite lädt das Modul in
+ * genau einer Sprache. */
+export const INFO: Record<string, Tip> = waehleTips(INFO_DE, INFO_EN, sprachWahl());
+
 let pop: HTMLElement | null = null;
 let openKey: string | null = null;
 
@@ -350,7 +456,7 @@ function hidePop(): void {
 export function iBtn(key: string): string {
   const info = INFO[key];
   if (!info) return '';
-  return `<button type="button" class="ibtn" data-info="${key}" aria-label="Erklärung: ${info.t}" title="Was bedeutet das?">ⓘ</button>`;
+  return `<button type="button" class="ibtn" data-info="${key}" aria-label="${uebersetzt('tip.erklaerung')}: ${info.t}" title="${uebersetzt('tip.wasBedeutet')}">ⓘ</button>`;
 }
 
 let wired = false;
