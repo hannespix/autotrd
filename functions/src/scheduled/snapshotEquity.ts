@@ -139,15 +139,38 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
   // Ohne sie könnte eine Klasse mit Gewicht 0 nie zurückkehren; mit ihr
   // steht auch für eine stillgelegte Klasse eine Zahl im Bericht.
   let schattenGlobal: Record<string, { n: number; kantePct: number | null }> = {};
+  /**
+   * Klassen, über die der Schatten überhaupt schon etwas weiß — aus BEIDEN
+   * Reihen. Nur zum Auffüllen der Liste (s. u.), nie als Beleg.
+   */
+  let schattenKlassenBekannt: string[] = [];
   try {
     const doc = await db.doc('meta/classShadow').get();
-    const roh = (doc.get('klassen') as Record<string, SchattenKlasse> | undefined) ?? {};
+    /* ── Welche Reihe entscheiden darf (17.08.) ────────────────────────────
+     *
+     * `klassenHalte` und nicht `klassen`. Der Unterschied ist das
+     * Zeitfenster: Die alte Reihe misst die Kursbewegung von einem Scan zum
+     * nächsten — fünf Minuten — und zieht die vollen Roundtrip-Kosten ab.
+     * Live gilt für Krypto seit dem 15.08. eine Mindesthalte von 48 Stunden.
+     * Eine Kante über fünf Minuten gegen Kosten für einen 48-Stunden-Trade
+     * zu rechnen, ist kein strenger Maßstab, sondern ein falscher: Die
+     * Klasse kann ihn nicht bestehen, und zwar unabhängig davon, wie gut
+     * ihre Signale sind.
+     *
+     * Die neue Reihe startet leer. Solange sie unter der Beweisschwelle
+     * liegt, gibt es hier keinen Schatten-Beleg — und `rateKlasse` lässt das
+     * Gewicht dann, wie es ist. Das ist die STRENGERE Seite: Der Rückweg
+     * öffnet sich später als vorher, nie früher.
+     */
+    const roh = (doc.get('klassenHalte') as Record<string, SchattenKlasse> | undefined) ?? {};
+    const rohAlt = (doc.get('klassen') as Record<string, SchattenKlasse> | undefined) ?? {};
     schattenGlobal = Object.fromEntries(
       Object.entries(roh).map(([k, v]) => {
         const a = werteSchattenAus(v);
         return [k, { n: a.n, kantePct: a.kantePct }];
       }),
     );
+    schattenKlassenBekannt = [...new Set([...Object.keys(roh), ...Object.keys(rohAlt)])];
   } catch (err) {
     logger.warn('Schatten-Kante nicht lesbar — Empfehlung nur aus echten Trades', err);
   }
@@ -388,8 +411,15 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
       // in denen dieses Konto noch nie gehandelt hat. Fehlten sie hier,
       // wäre der Rückweg wieder zu — der Fehler, den MG4 behoben hat — und
       // fremde Erfahrung käme nur dort an, wo sie am wenigsten fehlt.
-      for (const [klasse, s] of Object.entries(schattenGlobal)) {
-        ergebnisse[klasse] ??= { n: 0, kantePct: null, schatten: s };
+      // Aufgefüllt wird aus BEIDEN Schatten-Reihen (17.08.): Eine Klasse, von
+      // der nur die alte Fünf-Minuten-Reihe weiß, muss trotzdem in der Karte
+      // auftauchen — sonst verschwände sie aus der Anzeige, sobald sie keine
+      // eigenen Trades mehr hat. Einen BELEG bekommt sie dadurch nicht: Ohne
+      // Eintrag in `schattenGlobal` bleibt `schatten` leer, und `rateKlasse`
+      // spricht dann „zu_wenig_daten" und lässt das Gewicht stehen.
+      for (const klasse of schattenKlassenBekannt) {
+        const s = schattenGlobal[klasse];
+        ergebnisse[klasse] ??= { n: 0, kantePct: null, ...(s ? { schatten: s } : {}) };
       }
       for (const [klasse, g] of Object.entries(klassenGlobal)) {
         ergebnisse[klasse] ??= { n: 0, kantePct: null, global: g };

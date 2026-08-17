@@ -6002,21 +6002,42 @@ function renderEngineWhy(): void {
   if (live && live.n > 0) {
     const chip = whyChip('Signal-Kante', 'var(--t3)');
     const kante = (
-      v?: { n: number; kantePct: number | null; rohPct?: number | null } | null,
+      v?: {
+        n: number;
+        kantePct: number | null;
+        rohPct?: number | null;
+        alterMin?: number | null;
+      } | null,
     ): string => {
       if (!v || v.kantePct === null) return 'noch keine Daten';
       const netto = `${v.kantePct.toFixed(3)} % je Signal (${v.n})`;
-      return v.rohPct === null || v.rohPct === undefined
-        ? netto
-        : `${netto}, roh ${v.rohPct.toFixed(3)} %`;
+      const roh =
+        v.rohPct === null || v.rohPct === undefined ? netto : `${netto}, roh ${v.rohPct.toFixed(3)} %`;
+      /* Der Horizont gehört an die Kante wie die Einheit an eine Zahl
+       * (17.08.): Bis zu diesem Tag stand hier eine Kante von −0,49 % ohne
+       * den Hinweis, dass sie über FÜNF MINUTEN gemessen war, während Krypto
+       * live 48 Stunden halten muss. Beides zusammen macht sofort sichtbar,
+       * ob eine negative Kante ein Befund oder ein Kategorienfehler ist. */
+      if (typeof v.alterMin !== 'number' || !(v.alterMin > 0)) return roh;
+      const fenster =
+        v.alterMin >= 1_440
+          ? `${(v.alterMin / 1_440).toFixed(1)} Tage`
+          : v.alterMin >= 60
+            ? `${(v.alterMin / 60).toFixed(1)} h`
+            : `${v.alterMin.toFixed(0)} min`;
+      return `${roh} — Fenster ${fenster}`;
     };
     chip.title =
-      'Gemessene Kante der Signalquelle (Schatten, 5-min-Horizont).\n'
+      'Gemessene Kante der Signalquelle (Schatten).\n'
       + `Gehandelte Logik: ${kante(live)}\n`
       + `Davon über der Kostenschwelle: ${kante(h.signalSchatten?.['live_kosten'])}\n`
+      + `Über die echte Haltedauer: ${kante(h.signalSchatten?.['live_halte'])}\n`
       + '„roh" ist die Bewegung VOR Gebühren: positiv bei negativer Kante heißt,\n'
       + 'die Richtung stimmt und die Kosten fressen sie — dann liegt es an der\n'
-      + 'Anlageklasse, nicht an der Logik.';
+      + 'Anlageklasse, nicht an der Logik.\n'
+      + '„Fenster" ist der Zeitraum, über den gemessen wurde. Nur die Zeile mit\n'
+      + 'der echten Haltedauer entscheidet, ob eine abgeschaltete Klasse\n'
+      + 'zurückkommt — sie rechnet mit demselben Fenster, das die Engine hält.';
     ampel.append(chip);
   }
 

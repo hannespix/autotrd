@@ -30,6 +30,7 @@ import {
   bestimmeSignalTyp,
   bewerteSchattenSignal,
   leseSchattenSignal,
+  pruefeHalteSlot,
   pruefeTagSlot,
   tagSlotAktion,
   werteSchattenAus,
@@ -42,6 +43,7 @@ import {
   wirksameMindesthalte,
   klemmeGewicht,
   feeRateForClass,
+  roundtripFeeRateForClass,
   isTradable,
   MAX_WATCHLIST,
   stopDistancePct,
@@ -2717,6 +2719,87 @@ function summiereQuote(
 }
 
 /**
+ * Und dasselbe für die Horizont-Summe (17.08.) — dritte Summe mit eigenem
+ * Zähler, aus demselben Grund wie die beiden darüber: Ein Aggregat aus der
+ * Zeit vor dem Feld trägt kein Alter, und durch `n` geteilt käme ein
+ * Horizont von fast null heraus. Ausgerechnet die Zahl, die einen
+ * Fünf-Minuten-Horizont ENTLARVEN soll, würde einen behaupten.
+ */
+function summiereAlter(
+  a: SchattenKlasse,
+  b: SchattenKlasse,
+): { summeAlterMs?: number; nAlter?: number } {
+  const nAlter = (a.nAlter ?? 0) + (b.nAlter ?? 0);
+  if (nAlter <= 0) return {};
+  return { summeAlterMs: (a.summeAlterMs ?? 0) + (b.summeAlterMs ?? 0), nAlter };
+}
+
+/**
+ * Ein Klassen-Aggregat in Firestore-Inkremente übersetzen.
+ *
+ * Ausgelagert (17.08.), weil es seit dem Halte-Schatten ZWEI Aggregate mit
+ * identischem Schema gibt (`klassen`, `klassenHalte`). Zwei Kopien dieser
+ * Feldliste wären die sichere Art, beim nächsten neuen Summenfeld eine davon
+ * zu vergessen — und ein Aggregat, dem ein Zähler fehlt, rechnet still
+ * falsch weiter.
+ */
+function schattenInkremente(
+  je: Record<string, SchattenKlasse>,
+): Record<string, Record<string, FirebaseFirestore.FieldValue>> {
+  const out: Record<string, Record<string, FirebaseFirestore.FieldValue>> = {};
+  for (const [kl, k] of Object.entries(je)) {
+    out[kl] = {
+      n: FieldValue.increment(k.n),
+      summePct: FieldValue.increment(k.summePct),
+      treffer: FieldValue.increment(k.treffer),
+      // Rohbewegung mit eigenem Zähler (05.08.) — trennt „Signal trägt
+      // keine Information" von „Gebühren fressen die Information".
+      summeRohPct: FieldValue.increment(k.summeRohPct ?? 0),
+      nRoh: FieldValue.increment(k.nRoh ?? 0),
+      // Einfangquote (11.08.): erwartete Bewegung als Nenner, dazu die
+      // Rohbewegung DERSELBEN Signale als Zähler. Wieder eigener
+      // Zähler — nur Signale mit eingefrorenem ATR tragen bei.
+      summeErwartetPct: FieldValue.increment(k.summeErwartetPct ?? 0),
+      summeRohBeiErwartet: FieldValue.increment(k.summeRohBeiErwartet ?? 0),
+      nErwartet: FieldValue.increment(k.nErwartet ?? 0),
+      // Gemessener Horizont (17.08.) — die Einheit der Kante.
+      summeAlterMs: FieldValue.increment(k.summeAlterMs ?? 0),
+      nAlter: FieldValue.increment(k.nAlter ?? 0),
+    };
+  }
+  return out;
+}
+
+/**
+ * Alter Stand + Beitrag dieses Scans, klassenweise ausgewertet — die Zahlen
+ * für den Heartbeat.
+ *
+ * Rechnet genau das nach, was der `increment`-Write gerade festgeschrieben
+ * hat. Eine zweite Leserunde nach dem Write wäre teurer und würde bei einem
+ * parallelen Scan trotzdem einen anderen Stand sehen.
+ */
+function schattenStandAus(
+  alt: Record<string, SchattenKlasse>,
+  neu: Record<string, SchattenKlasse>,
+): Record<string, ReturnType<typeof werteSchattenAus>> {
+  const leer: SchattenKlasse = { n: 0, summePct: 0, treffer: 0 };
+  const out: Record<string, ReturnType<typeof werteSchattenAus>> = {};
+  for (const kl of new Set([...Object.keys(alt), ...Object.keys(neu)])) {
+    const a = alt[kl] ?? leer;
+    const b = neu[kl] ?? leer;
+    out[kl] = werteSchattenAus({
+      n: a.n + b.n,
+      summePct: Math.round((a.summePct + b.summePct) * 10_000) / 10_000,
+      treffer: a.treffer + b.treffer,
+      ...summiereRoh(a, b),
+      ...summiereQuote(a, b),
+      ...summiereAlter(a, b),
+    });
+  }
+  return out;
+}
+
+/**
  * Buch-Kontostand fuer den Abgleich — Cash exakt, Equity bewusst neutral.
  *
  * Eigene Funktion statt Inline-Objekt, damit die Regel an EINER Stelle steht
@@ -2756,6 +2839,22 @@ export async function runScan(force = false): Promise<ScanResult> {
   /** Schatten-Kante je Anlageklasse (MG4) — läuft auch für abgeschaltete Klassen. */
   const schattenKlassen: Record<string, SchattenKlasse> = {};
   /**
+   * Dieselbe Kante, aber über die HALTEDAUER der Klasse gemessen (17.08.).
+   *
+   * Ein EIGENES Aggregat und keine Umstellung des bestehenden: `schatten-
+   * Klassen` trägt 1 087 Signale, die über fünf Minuten und mit 2 × Taker
+   * gerechnet wurden. Die neue Rechnung — Fenster = `wirksameMindesthalte`,
+   * Kosten = Maker + Taker — in dieselbe Summe zu schieben, ergäbe einen
+   * Mittelwert über zwei verschiedene Messvorschriften. Genau davor warnt
+   * `SchattenKlasse.nRoh` seit dem 05.08.: Ein Bruch aus verschieden
+   * erhobenen Summen ist keine Kennzahl, sondern eine Zahl, die zufällig
+   * entsteht — und an ihr hängt Kapital.
+   *
+   * Das alte Aggregat bleibt als Diagnose stehen; ENTSCHEIDEN darf ab jetzt
+   * nur dieses (siehe snapshotEquity).
+   */
+  const schattenHalteKlassen: Record<string, SchattenKlasse> = {};
+  /**
    * Schatten-Kante je SIGNAL-LESART (MI): die gehandelte Logik in mehreren
    * Bewertungs-Varianten (Kostenschwelle, Tages-Horizont, Exit-Stil).
    * Dieselbe Messung, mehrere Lesarten — damit ein Umschalten der
@@ -2769,6 +2868,16 @@ export async function runScan(force = false): Promise<ScanResult> {
     live_kosten?: SchattenKlasse;
     /** Dieselben Live-Signale, am NÄCHSTEN Tag bewertet (Task 94, 05.08.). */
     live_tag?: SchattenKlasse;
+    /**
+     * Dieselben Live-Signale, über die KLASSEN-HALTEDAUER bewertet (17.08.).
+     *
+     * Unterscheidet sich von `live_tag` genau dort, wo eine Klasse einen
+     * eigenen Mindesthalte-Boden hat: Krypto 48 h statt 24 h. Für alle
+     * anderen Klassen fällt der Horizont mit dem Tages-Horizont zusammen —
+     * dann sind beide Varianten dieselbe Messung mit unterschiedlicher
+     * Kostenrechnung (`live_tag`: 2 × Taker, `live_halte`: Maker + Taker).
+     */
+    live_halte?: SchattenKlasse;
     /* Exit-Stil-Messung (Owner-Go 06.08.): dieselben Beiträge, aufgeteilt
      * nach Signaltyp × Horizont. Die Hypothese, die hier eine Zahl bekommt:
      * Trend-Signale verdienen im TAGES-Horizont (laufen lassen), Umkehr-
@@ -2847,6 +2956,14 @@ export async function runScan(force = false): Promise<ScanResult> {
   let intradayError: string | null = null;
   // Tages-Slot-Bestand dieses Scans (live_tag-Selbstdiagnose, 07.08.)
   const tagZaehler = { leer: 0, wartet: 0, reif: 0, verfallen: 0, gesetzt: 0, geloescht: 0 };
+  /* Derselbe Bestand für den HALTE-Slot (17.08.) — und zwar aus einem
+   * konkreten Grund: `live_tag` stand nach zwölf Tagen bei n=10, obwohl die
+   * Mechanik ~13 Beobachtungen am Tag zulassen sollte. Woran es liegt, ist
+   * ohne Zähler nicht zu sehen: Slots nie gesetzt (kein buy/sell), zu früh
+   * überschrieben, oder verfallen, weil das Symbol zwischenzeitlich aus dem
+   * Scan-Set fiel. Diese sechs Zahlen unterscheiden die Fälle. Ohne sie wäre
+   * die Wartezeit bis zur Beweisschwelle eine Vermutung. */
+  const halteZaehler = { leer: 0, wartet: 0, reif: 0, verfallen: 0, gesetzt: 0, geloescht: 0 };
   // News-Refresh-Deckel je Scan: Bei 4 je Lauf und 45-min-TTL ist jedes der
   // ~13 beobachteten Symbole grob alle 15–20 Minuten frisch — mehr braucht
   // ein 12-h-Veto-Fenster nicht, und der Scan bleibt von den Feeds entkoppelt.
@@ -2969,6 +3086,28 @@ export async function runScan(force = false): Promise<ScanResult> {
       tagZaehler[tagSlot.status] += 1;
       if (slotAktion === 'neu') tagZaehler.gesetzt += 1;
       else if (slotAktion === 'loeschen') tagZaehler.geloescht += 1;
+
+      /* HALTE-Slot (17.08.): dieselbe Mechanik, aber mit dem Horizont, den
+       * die Klasse live wirklich halten MUSS — 48 h bei Krypto, 24 h sonst.
+       * Der Fünf-Minuten-Schatten misst ein Fenster, das es im Handel seit
+       * dem 15.08. nicht mehr gibt, und entscheidet trotzdem darüber, ob
+       * eine abgeschaltete Klasse zurückkommen darf.
+       *
+       * Bewusst `wirksameMindesthalte(DEFAULT_STRATEGY…)` und nicht die
+       * Einstellung eines Kontos: Der Schatten ist eine Systemmessung, er
+       * läuft einmal je Symbol, nicht je Nutzer — dieselbe Entscheidung wie
+       * bei `schattenKostenOk` und `SCHATTEN_TF`. */
+      const halteHorizontMs =
+        wirksameMindesthalte(DEFAULT_STRATEGY.engine.minHoldMin, classify(symbol)) * 60_000;
+      const halteSlot = pruefeHalteSlot(
+        symDoc.get('lastSignalHalte'),
+        now.getTime(),
+        halteHorizontMs,
+      );
+      const halteAktion = tagSlotAktion(halteSlot.status, sig.direction);
+      halteZaehler[halteSlot.status] += 1;
+      if (halteAktion === 'neu') halteZaehler.gesetzt += 1;
+      else if (halteAktion === 'loeschen') halteZaehler.geloescht += 1;
       /** Trend/Umkehr/gemischt — Grundlage der Exit-Stil-Messung (06.08.). */
       const sigTyp = bestimmeSignalTyp(sig.votes, sig.direction);
 
@@ -2988,6 +3127,24 @@ export async function runScan(force = false): Promise<ScanResult> {
               }
             : slotAktion === 'loeschen'
               ? { lastSignalTag: FieldValue.delete() }
+              : {}),
+          /* Halte-Slot: identische Buchführung, eigener Slot. Zwei Slots und
+           * nicht einer, weil die Horizonte auseinanderlaufen — ein
+           * gemeinsamer Slot müsste sich für einen entscheiden, und die
+           * Tages-Reihe (n=10, Kante +0,41 %) ist die einzige, die heute
+           * überhaupt etwas zeigt. Sie wird nicht abgeräumt, um die neue zu
+           * starten. */
+          ...(halteAktion === 'neu'
+            ? {
+                lastSignalHalte: {
+                  direction: sig.direction,
+                  price: sig.price,
+                  at: now.toISOString(),
+                  ...(sigTyp ? { typ: sigTyp } : {}),
+                },
+              }
+            : halteAktion === 'loeschen'
+              ? { lastSignalHalte: FieldValue.delete() }
               : {}),
           // Grundlage der Schatten-Kante beim NÄCHSTEN Scan (MG4): Richtung,
           // Kurs und Zeitpunkt dieses Signals. Bewusst am Haupt-Dokument und
@@ -3236,6 +3393,31 @@ export async function runScan(force = false): Promise<ScanResult> {
             = addiereSchatten(schattenVarianten.live_tag_umkehr, beitragTag);
         }
       }
+      /* Halte-Horizont bewerten (17.08.) — die Messung, die ab jetzt über den
+       * Rückweg einer abgeschalteten Klasse entscheidet.
+       *
+       * Zwei Korrekturen gegenüber dem Fünf-Minuten-Schatten, und beide sind
+       * Korrekturen der MESSUNG, keine Lockerung einer Schwelle:
+       *
+       *  1. Das Fenster ist die Haltedauer der Klasse statt des
+       *     Scan-Intervalls (`pruefeHalteSlot` oben).
+       *  2. Die Kosten sind Maker (Einstieg) + Taker (Ausstieg) statt
+       *     zweimal Taker — bei Krypto 0,40 % statt 0,50 %, weil Einstiege
+       *     seit dem 15.08. als Limit-Order laufen und Exits Market bleiben.
+       *
+       * Die Rückhol-Schwelle selbst (Kante > 0, n ≥ SCHATTEN_MIN_N, Rückkehr
+       * nur mit halbem Gewicht) bleibt unangetastet. */
+      if (halteSlot.status === 'reif') {
+        const kl = classify(symbol);
+        const beitragHalte = bewerteSchattenSignal(
+          halteSlot.signal,
+          sig.price,
+          roundtripFeeRateForClass(kl),
+        );
+        schattenHalteKlassen[kl] = addiereSchatten(schattenHalteKlassen[kl], beitragHalte);
+        schattenVarianten.live_halte = addiereSchatten(schattenVarianten.live_halte, beitragHalte);
+        zuVariante('live_halte', kl, beitragHalte);
+      }
       signalDirs[sig.direction] += 1;
       // Stimmen je INDIKATOR (04.08.). Warum das nötig wurde: `signalDirs`
       // zeigte über Stunden `buy: 0, sell: 2, hold: 37` — die Konfluenz
@@ -3383,53 +3565,42 @@ export async function runScan(force = false): Promise<ScanResult> {
   }
 
   let schattenStand: Record<string, ReturnType<typeof werteSchattenAus>> | null = null;
+  /** Derselbe Stand, aber haltedauer-gerecht gemessen (17.08.). */
+  let schattenHalteStand: Record<string, ReturnType<typeof werteSchattenAus>> | null = null;
   try {
     const ref = db.doc('meta/classShadow');
     const vorstand = await ref.get();
     const alt = (vorstand.get('klassen') as Record<string, SchattenKlasse> | undefined) ?? {};
-    if (Object.keys(schattenKlassen).length > 0) {
-      const inkremente: Record<string, Record<string, FirebaseFirestore.FieldValue>> = {};
-      for (const [kl, k] of Object.entries(schattenKlassen)) {
-        inkremente[kl] = {
-          n: FieldValue.increment(k.n),
-          summePct: FieldValue.increment(k.summePct),
-          treffer: FieldValue.increment(k.treffer),
-          // Rohbewegung mit eigenem Zähler (05.08.) — trennt „Signal trägt
-          // keine Information" von „Gebühren fressen die Information".
-          summeRohPct: FieldValue.increment(k.summeRohPct ?? 0),
-          nRoh: FieldValue.increment(k.nRoh ?? 0),
-          // Einfangquote (11.08.): erwartete Bewegung als Nenner, dazu die
-          // Rohbewegung DERSELBEN Signale als Zähler. Wieder eigener
-          // Zähler — nur Signale mit eingefrorenem ATR tragen bei.
-          summeErwartetPct: FieldValue.increment(k.summeErwartetPct ?? 0),
-          summeRohBeiErwartet: FieldValue.increment(k.summeRohBeiErwartet ?? 0),
-          nErwartet: FieldValue.increment(k.nErwartet ?? 0),
-        };
-      }
+    // Getrenntes Unterfeld am SELBEN Dokument: ein Read, ein Write, zwei
+    // Messvorschriften, die nie in eine Summe geraten können.
+    const altHalte =
+      (vorstand.get('klassenHalte') as Record<string, SchattenKlasse> | undefined) ?? {};
+    const etwasNeu =
+      Object.keys(schattenKlassen).length > 0 || Object.keys(schattenHalteKlassen).length > 0;
+    if (etwasNeu) {
       await ref.set(
         {
-          klassen: inkremente,
+          ...(Object.keys(schattenKlassen).length > 0
+            ? { klassen: schattenInkremente(schattenKlassen) }
+            : {}),
+          ...(Object.keys(schattenHalteKlassen).length > 0
+            ? { klassenHalte: schattenInkremente(schattenHalteKlassen) }
+            : {}),
           updatedAt: now.toISOString(),
           ...(vorstand.get('startedAt') ? {} : { startedAt: now.toISOString() }),
+          // Eigener Startstempel: Die Halte-Reihe beginnt Tage bis Wochen
+          // nach der Fünf-Minuten-Reihe. Ein gemeinsames `startedAt` würde
+          // ihre Laufzeit — und damit die Erwartung, wann sie belastbar ist —
+          // um genau diese Differenz zu groß aussehen lassen.
+          ...(vorstand.get('halteStartedAt') || Object.keys(schattenHalteKlassen).length === 0
+            ? {}
+            : { halteStartedAt: now.toISOString() }),
         },
         { merge: true },
       );
     }
-    // Für den Heartbeat: alter Stand + Beitrag dieses Scans. Die Anzeige
-    // rechnet damit dasselbe, was der atomare Write gerade festgeschrieben hat.
-    const klassen = new Set([...Object.keys(alt), ...Object.keys(schattenKlassen)]);
-    schattenStand = {};
-    for (const kl of klassen) {
-      const a = alt[kl] ?? { n: 0, summePct: 0, treffer: 0 };
-      const b = schattenKlassen[kl] ?? { n: 0, summePct: 0, treffer: 0 };
-      schattenStand[kl] = werteSchattenAus({
-        n: a.n + b.n,
-        summePct: Math.round((a.summePct + b.summePct) * 10_000) / 10_000,
-        treffer: a.treffer + b.treffer,
-        ...summiereRoh(a, b),
-        ...summiereQuote(a, b),
-      });
-    }
+    schattenStand = schattenStandAus(alt, schattenKlassen);
+    schattenHalteStand = schattenStandAus(altHalte, schattenHalteKlassen);
   } catch (err) {
     logger.warn('Schatten-Kante nicht fortgeschrieben', err); // nie den Scan gefährden
   }
@@ -3450,22 +3621,18 @@ export async function runScan(force = false): Promise<ScanResult> {
       for (const [name, k] of beitraege) {
         // Klassen-Aufschlüsselung DERSELBEN Beiträge — ein zweites
         // Unterfeld am selben Dokument, kein zweiter Write.
-        const jeKlasse: Record<string, Record<string, FirebaseFirestore.FieldValue>> = {};
-        for (const [kl, kk] of Object.entries(schattenVariantenKlassen[name] ?? {})) {
-          jeKlasse[kl] = {
-            n: FieldValue.increment(kk.n),
-            summePct: FieldValue.increment(kk.summePct),
-            treffer: FieldValue.increment(kk.treffer),
-            summeRohPct: FieldValue.increment(kk.summeRohPct ?? 0),
-            nRoh: FieldValue.increment(kk.nRoh ?? 0),
-          };
-        }
+        const jeKlasse = schattenInkremente(schattenVariantenKlassen[name] ?? {});
         inkremente[name] = {
           n: FieldValue.increment(k.n),
           summePct: FieldValue.increment(k.summePct),
           treffer: FieldValue.increment(k.treffer),
           summeRohPct: FieldValue.increment(k.summeRohPct ?? 0),
           nRoh: FieldValue.increment(k.nRoh ?? 0),
+          // Horizont (17.08.): Bei den Varianten ist er die halbe Aussage —
+          // `live` und `live_halte` lesen dieselben Signale, der Unterschied
+          // IST das Zeitfenster.
+          summeAlterMs: FieldValue.increment(k.summeAlterMs ?? 0),
+          nAlter: FieldValue.increment(k.nAlter ?? 0),
           ...(Object.keys(jeKlasse).length > 0 ? { klassen: jeKlasse } : {}),
         };
       }
@@ -3489,6 +3656,7 @@ export async function runScan(force = false): Promise<ScanResult> {
         summePct: Math.round((a.summePct + b.summePct) * 10_000) / 10_000,
         treffer: a.treffer + b.treffer,
         ...summiereRoh(a, b),
+        ...summiereAlter(a, b),
       });
     }
   } catch (err) {
@@ -3516,6 +3684,14 @@ export async function runScan(force = false): Promise<ScanResult> {
         // live_tag-Selbstdiagnose (07.08.): Slot-Bestand je Scan — zeigt ohne
         // GCP-Konsole, ob Tages-Slots gesetzt werden und wann sie reifen.
         signalTag: tagZaehler,
+        /* Slot-Bestand des HALTE-Schattens (17.08.). Dieselbe Diagnose wie
+         * `signalTag`, und diesmal von Anfang an dabei: Bei `live_tag` stand
+         * nach zwölf Tagen n=10, wo die Mechanik ~13 am Tag zulässt, und die
+         * Ursache war ohne diese Zähler nicht zu belegen. Steht hier `leer`
+         * dauerhaft bei fast allen Symbolen, fehlen keine Kurse, sondern
+         * gerichtete Signale — dann ist der Engpass die Konfluenz und nicht
+         * der Horizont. */
+        signalHalte: halteZaehler,
         intradayError,
         intradayScored,
         intradayEval,
@@ -3560,6 +3736,19 @@ export async function runScan(force = false): Promise<ScanResult> {
          * Stand des Abschaltens ein — und die Entscheidung wird faktisch
          * endgültig, obwohl der Regler graduell gemeint ist. */
         schatten: schattenStand,
+        /* ── Haltedauer-gerechte Schatten-Kante (17.08.) ─────────────────
+         *
+         * Die Zahl, die ab jetzt über den Rückweg einer abgeschalteten
+         * Klasse ENTSCHEIDET (siehe snapshotEquity). `schatten` darüber
+         * bleibt als Diagnose stehen, hat aber ein Zeitfenster, das es im
+         * Handel nicht mehr gibt: fünf Minuten gegen eine Mindesthalte von
+         * 48 h bei Krypto.
+         *
+         * `alterMin` je Klasse ist der Beweis, dass die Fenster jetzt
+         * stimmen — steht dort 2 880 bei Krypto, misst der Schatten
+         * dasselbe, was die Engine hält. Steht dort 5, ist der Umbau
+         * zurückgefallen, und die Kante ist wieder eine Zahl ohne Einheit. */
+        schattenHalte: schattenHalteStand,
         /* ── Einfangquote je Klasse (11.08.) ────────────────────────────
          *
          * Die Zahl, mit der `costGate` über jeden Einstieg entscheidet:

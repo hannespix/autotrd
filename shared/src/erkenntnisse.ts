@@ -96,6 +96,8 @@ export interface ErkenntnisFakten {
       trefferquote?: number | null;
       rohPct?: number | null;
       kantePct?: number | null;
+      /** Mittlerer gemessener Horizont in Minuten (17.08.) — Einheit der Kante. */
+      alterMin?: number | null;
     }
   >;
   /** Letzter Struktursuche-Lauf (`meta/health.strukturSuche`). */
@@ -234,6 +236,59 @@ function tagesKante(f: ErkenntnisFakten): Befund {
   };
 }
 
+/**
+ * Die Kante über die ECHTE Haltedauer (17.08.) — die Reihe, die über den
+ * Rückweg einer abgeschalteten Klasse entscheidet.
+ *
+ * ── Warum sie eine eigene These bekommt ───────────────────────────────────
+ *
+ * `tages_kante` darüber misst 24 h für jede Klasse. Live hält Krypto seit dem
+ * 15.08. mindestens 48 h, und bis zum 17.08. entschied trotzdem eine
+ * Fünf-Minuten-Messung über die Rückkehr. Die Chronik ist das Gedächtnis des
+ * Systems; wenn dort nur eine Reihe steht, die NICHT entscheidet, merkt sich
+ * das System das Falsche.
+ *
+ * Der Horizont wird mitgeschrieben, und zwar als Teil der These, nicht als
+ * Fußnote: Genau seine Abwesenheit hat den Fehler zwölf Tage überleben
+ * lassen.
+ */
+function halteKante(f: ErkenntnisFakten): Befund {
+  const lh = f.signalSchatten?.live_halte;
+  const n = lh?.n ?? 0;
+  const fenster =
+    typeof lh?.alterMin === 'number' && lh.alterMin > 0
+      ? `${pz(lh.alterMin / 60, 1)} h Fenster`
+      : 'Fenster noch nicht gemessen';
+  if (!lh || n < MIN_N_TAGESKANTE) {
+    return {
+      status: 'wartet_auf_daten',
+      these:
+        `Haltedauer-gerechte Kante: erst n=${n}, belastbar ab n=${MIN_N_TAGESKANTE} (${fenster}). `
+        + 'Diese Reihe — und nicht die Fünf-Minuten-Messung — entscheidet, ob eine '
+        + 'abgeschaltete Anlageklasse zurück in den Handel darf.',
+      beleg: { n, minN: MIN_N_TAGESKANTE, kantePct: lh?.kantePct ?? null, alterMin: lh?.alterMin ?? null },
+    };
+  }
+  const kante = typeof lh.kantePct === 'number' ? lh.kantePct : null;
+  const beleg = { n, kantePct: kante, rohPct: lh.rohPct ?? null, alterMin: lh.alterMin ?? null };
+  if (kante !== null && kante > 0) {
+    return {
+      status: 'gilt',
+      these:
+        `Über die echte Haltedauer tragen die Signale ihre Kosten (Kante +${pz(kante, 2)} % `
+        + `bei n=${n}, ${fenster}) — der Rückweg für abgeschaltete Klassen ist offen.`,
+      beleg,
+    };
+  }
+  return {
+    status: 'gilt_nicht',
+    these:
+      `Auch über die echte Haltedauer bleibt nach Kosten nichts übrig (Kante `
+      + `${pz(kante ?? 0, 2)} % bei n=${n}, ${fenster}).`,
+    beleg,
+  };
+}
+
 function klasseVerlustquelle(f: ErkenntnisFakten): Befund {
   const klassen = Object.entries(f.trading?.klassen ?? {}).filter(
     (e): e is [string, { n: number; kantePct: number }] =>
@@ -320,6 +375,7 @@ const KATALOG: ReadonlyArray<readonly [string, (f: ErkenntnisFakten) => Befund]>
   ['kosten_dominieren', kostenDominieren],
   ['richtung_vs_kante', richtungVsKante],
   ['tages_kante', tagesKante],
+  ['halte_kante', halteKante],
   ['klasse_verlustquelle', klasseVerlustquelle],
   ['klasse_traegt', klasseTraegt],
   ['struktursuche_latte', struktursucheLatte],

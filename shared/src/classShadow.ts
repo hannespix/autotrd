@@ -108,6 +108,17 @@ export interface SchattenBeitrag {
   nettoPct: number;
   /** Erwartete Bewegung über den Signal-Horizont (fehlend = nicht messbar). */
   erwartetPct?: number;
+  /**
+   * Über WELCHES Zeitfenster gemessen wurde, in Millisekunden (17.08.).
+   *
+   * Die Zahl, die den Befund vom 17.08. sichtbar gemacht hätte: Der
+   * Klassen-Schatten zog von einer Fünf-Minuten-Bewegung die vollen
+   * Roundtrip-Kosten ab, während live seit dem 15.08. eine Mindesthalte von
+   * 48 h gilt. Kante und Kosten standen in der Anzeige nebeneinander — der
+   * HORIZONT, der beide erst vergleichbar macht, stand nirgends. Wer eine
+   * Kante ohne ihr Zeitfenster liest, liest eine Zahl ohne Einheit.
+   */
+  alterMs?: number;
 }
 
 /**
@@ -134,6 +145,9 @@ export function bewerteSchattenSignal(
     zaehlt: true,
     rohPct: r4(roh),
     nettoPct: r4(roh - roundtripKosten * 100),
+    ...(typeof signal.alterMs === 'number' && signal.alterMs > 0
+      ? { alterMs: signal.alterMs }
+      : {}),
     ...erwarteteBewegung(signal),
   };
 }
@@ -221,6 +235,19 @@ export interface SchattenKlasse {
   summeRohBeiErwartet?: number;
   /** Wie viele Signale in beide Summen eingeflossen sind. */
   nErwartet?: number;
+  /**
+   * Summe der gemessenen Horizonte in Millisekunden (17.08.) — der Nenner
+   * der Frage „über welches Zeitfenster ist diese Kante entstanden?".
+   *
+   * Wieder EIGENER Zähler (`nAlter`), aus dem inzwischen dreifach belegten
+   * Grund: Ein Aggregat aus der Zeit vor diesem Feld trägt hunderte Signale
+   * und keine Altersumme. Durch `n` geteilt käme ein systematisch gegen null
+   * gezogener Horizont heraus — und ein Schatten, der fälschlich „5 Minuten"
+   * meldet, ist genau der Befund, den dieses Feld aufdecken soll.
+   */
+  summeAlterMs?: number;
+  /** Wie viele Signale in `summeAlterMs` eingeflossen sind. */
+  nAlter?: number;
 }
 
 export interface SchattenAuswertung {
@@ -253,6 +280,17 @@ export interface SchattenAuswertung {
    * Signalmenge. Nur DIESE Zahl darf gegen `erwartetPct` gerechnet werden.
    */
   rohBeiErwartetPct: number | null;
+  /** Wie viele Signale einen gemessenen Horizont tragen (eigener Nenner). */
+  nAlter: number;
+  /**
+   * Mittlerer gemessener Horizont in MINUTEN — die Einheit der Kante.
+   *
+   * `null` heißt „nicht gemessen" (Altbestand). Steht hier 5, während die
+   * Klasse live 2 880 Minuten halten muss, ist die Kante über ein Fenster
+   * entstanden, das es im Handel nicht gibt — und dann ist sie kein Beleg,
+   * sondern ein Kategorienfehler.
+   */
+  alterMin: number | null;
 }
 
 /** Ein Beitrag in ein laufendes Aggregat einrechnen. */
@@ -283,6 +321,16 @@ export function addiereSchatten(
     treffer: k.treffer + (beitrag.rohPct > 0 ? 1 : 0),
     summeRohPct: r4((k.summeRohPct ?? 0) + beitrag.rohPct),
     nRoh: (k.nRoh ?? 0) + 1,
+    // Horizont-Summe: bestehende erhalten, neue nur bei gemessenem Alter.
+    ...(k.summeAlterMs !== undefined
+      ? { summeAlterMs: k.summeAlterMs, nAlter: k.nAlter ?? 0 }
+      : {}),
+    ...(typeof beitrag.alterMs === 'number' && beitrag.alterMs > 0
+      ? {
+          summeAlterMs: (k.summeAlterMs ?? 0) + beitrag.alterMs,
+          nAlter: (k.nAlter ?? 0) + 1,
+        }
+      : {}),
     // Bestehende Quoten-Summen erhalten, auch wenn dieser Beitrag keine hat.
     ...(k.summeErwartetPct !== undefined
       ? {
@@ -308,6 +356,8 @@ export function werteSchattenAus(k: SchattenKlasse | undefined): SchattenAuswert
       nErwartet: 0,
       erwartetPct: null,
       rohBeiErwartetPct: null,
+      nAlter: 0,
+      alterMin: null,
     };
   }
   const r4 = (x: number): number => Math.round(x * 10_000) / 10_000;
@@ -334,6 +384,14 @@ export function werteSchattenAus(k: SchattenKlasse | undefined): SchattenAuswert
       k.summeRohBeiErwartet === undefined || !k.nErwartet || k.nErwartet <= 0
         ? null
         : r4(k.summeRohBeiErwartet / k.nErwartet),
+    nAlter: k.nAlter ?? 0,
+    // In MINUTEN, nicht Millisekunden: Die Zahl wird gegen `minHoldMin`
+    // gelesen — 2 880 gegen 5 ist auf einen Blick verständlich,
+    // 172 800 000 gegen 300 000 ist es nicht.
+    alterMin:
+      k.summeAlterMs === undefined || !k.nAlter || k.nAlter <= 0
+        ? null
+        : Math.round((k.summeAlterMs / k.nAlter / 60_000) * 100) / 100,
   };
 }
 
@@ -403,6 +461,11 @@ export function leseSchattenSignal(
   const atrPct = o['atrPct'];
   const barMin = o['barMin'];
   // Der Horizont ist das GEMESSENE Alter, nicht das erwartete Scan-Intervall.
+  // Er wandert IMMER mit (17.08.) und nicht mehr nur zusammen mit dem ATR:
+  // Das Alter ist die Einheit der Kante, nicht Zubehör der Einfangquote. An
+  // die Quote gekoppelt fehlte er genau dort, wo er gebraucht wurde — die
+  // Tages- und Halte-Slots führen keinen ATR mit, und ausgerechnet bei ihnen
+  // ist der Horizont die Aussage.
   const messbar =
     typeof atrPct === 'number' &&
     Number.isFinite(atrPct) &&
@@ -417,7 +480,8 @@ export function leseSchattenSignal(
     ...(o['kostenOk'] === true ? { kostenOk: true } : {}),
     // Nur bekannte Typen wandern mit — ein Tippfehler wird keine Kategorie.
     ...(typ === 'trend' || typ === 'umkehr' || typ === 'gemischt' ? { typ } : {}),
-    ...(messbar ? { atrPct, barMin, alterMs: alter } : {}),
+    ...(alter > 0 ? { alterMs: alter } : {}),
+    ...(messbar ? { atrPct, barMin } : {}),
   };
 }
 
@@ -457,24 +521,40 @@ export type TagSlotBefund =
   | { status: 'verfallen' };
 
 /**
- * Zustand des Tages-Slots bestimmen.
+ * Zustand eines HORIZONT-Slots bestimmen — die allgemeine Fassung.
  *
  * `leer`/`verfallen` → Slot darf neu belegt werden. `wartet` → Slot NICHT
  * anfassen (das Signal reift noch). `reif` → jetzt bewerten, danach neu
  * belegen. Kaputte oder rückdatierte Einträge zählen als `leer` — im
  * Zweifel nicht raten, wie überall im Schatten.
+ *
+ * Der Horizont ist Parameter und keine Konstante mehr (17.08.), weil er
+ * inzwischen von der Anlageklasse abhängt: Krypto muss live 48 h halten,
+ * Aktien 24 h. Die Mechanik ist dieselbe — und sie soll genau EINMAL im Repo
+ * stehen, damit der Doppelzähl-Defekt vom 07.08. nicht in einer zweiten
+ * Kopie zurückkommt.
  */
-export function pruefeTagSlot(roh: unknown, jetztMs: number): TagSlotBefund {
+export function pruefeHorizontSlot(
+  roh: unknown,
+  jetztMs: number,
+  horizontMs: number,
+  maxAlterMs: number,
+): TagSlotBefund {
   if (!roh || typeof roh !== 'object') return { status: 'leer' };
   const o = roh as Record<string, unknown>;
   const at = typeof o['at'] === 'string' ? Date.parse(o['at']) : NaN;
   if (!Number.isFinite(at)) return { status: 'leer' };
   const alter = jetztMs - at;
   if (alter < 0) return { status: 'leer' };
-  if (alter < TAG_HORIZONT_MS) return { status: 'wartet' };
-  if (alter > TAG_MAX_ALTER_MS) return { status: 'verfallen' };
-  const signal = leseSchattenSignal(roh, jetztMs, TAG_MAX_ALTER_MS);
+  if (alter < horizontMs) return { status: 'wartet' };
+  if (alter > maxAlterMs) return { status: 'verfallen' };
+  const signal = leseSchattenSignal(roh, jetztMs, maxAlterMs);
   return signal ? { status: 'reif', signal } : { status: 'verfallen' };
+}
+
+/** Zustand des TAGES-Slots (Task 94) — unveränderte Fassung mit 24 h/96 h. */
+export function pruefeTagSlot(roh: unknown, jetztMs: number): TagSlotBefund {
+  return pruefeHorizontSlot(roh, jetztMs, TAG_HORIZONT_MS, TAG_MAX_ALTER_MS);
 }
 
 export type TagSlotAktion = 'neu' | 'loeschen' | 'lassen';
@@ -501,6 +581,82 @@ export function tagSlotAktion(
   if (status === 'wartet') return 'lassen'; // reift noch — niemals anfassen
   if (frisch) return 'neu';
   return status === 'reif' || status === 'verfallen' ? 'loeschen' : 'lassen';
+}
+
+/* ── Halte-Horizont: messen, wie lange live gehalten wird (17.08.) ──────────
+ *
+ * ── Der Befund ────────────────────────────────────────────────────────────
+ *
+ * Owner-Frage 16.08.: „seit unserem letzten Update, das für mehr Einkommen
+ * sorgen sollte, gibt es quasi keine Bewegung mehr." Krypto stand auf
+ * Gewicht 0, und der einzige Rückweg — die Schatten-Kante — zeigte −0,488 %
+ * je Signal. Beim Nachrechnen war die Kante nicht das Problem, sondern ihre
+ * EINHEIT:
+ *
+ *   Der Klassen-Schatten misst die Bewegung von einem Scan zum nächsten,
+ *   also über FÜNF MINUTEN, und zieht davon die vollen Roundtrip-Kosten ab.
+ *   Live gilt für Krypto seit dem 15.08. eine Mindesthalte von 48 STUNDEN.
+ *
+ * Gemessen wurden also 0,011 % Rohbewegung gegen 0,50 % Kosten — eine
+ * Rechnung, die keine Signalquelle der Welt gewinnen kann, und die mit dem
+ * Handel, den sie freigeben soll, nichts zu tun hat. Der Rückweg war nicht
+ * eng, er war zu.
+ *
+ * ── Warum ein Slot und keine Warteschlange ────────────────────────────────
+ *
+ * Naheliegend wäre, JEDES Signal 48 h aufzubewahren und dann zu bewerten —
+ * 576 Signale je Symbol und Fenster statt einem. Das wäre die bequeme Zahl:
+ * Diese Fenster ÜBERLAPPEN sich fast vollständig, sie messen 576-mal
+ * dieselbe Kursbewegung. n=200 wäre in drei Tagen erreicht und trüge die
+ * Information von zwei unabhängigen Beobachtungen. Die Beweisschwelle sähe
+ * erfüllt aus, ohne erfüllt zu sein — genau der Fehler, den `nRoh` und
+ * `summeRohBeiErwartet` an anderer Stelle verhindern.
+ *
+ * Deshalb: EIN Slot je Symbol, nicht überlappende Fenster. Der Preis ist
+ * ehrlich benannt — bei 13 Krypto-Symbolen und 48 h Horizont sind das ~6,5
+ * unabhängige Beobachtungen am Tag, also rund einen Monat bis zur
+ * Beweisschwelle. Wer schneller will, braucht mehr SYMBOLE, nicht mehr
+ * Messpunkte je Symbol.
+ */
+
+/**
+ * Kulanz oberhalb des Horizonts, bis ein Halte-Signal verfällt.
+ *
+ * Deckt Marktlücken: Ein Aktiensignal, das Freitagmittag reif würde, wird
+ * erst Montag nach der Öffnung bewertet (~66 h). Ohne Kulanz wäre die Kante
+ * eine Funktion des Kalenders — und zwar systematisch zulasten der Klassen
+ * mit den größten Lücken.
+ *
+ * 72 h ist keine neue Zahl, sondern die, die der Tages-Slot seit dem 05.08.
+ * benutzt: `TAG_MAX_ALTER_MS` (96 h) minus `TAG_HORIZONT_MS` (24 h). Dass
+ * beide Fassungen dieselbe Kulanz verwenden, ist Absicht und wird im Test
+ * festgenagelt.
+ */
+export const HALTE_KULANZ_MS = 72 * 3_600_000;
+
+/** Spätestens so alt darf ein Halte-Signal beim Bewerten sein. */
+export function halteMaxAlterMs(horizontMs: number): number {
+  const h = Number.isFinite(horizontMs) && horizontMs > 0 ? horizontMs : 0;
+  return h + HALTE_KULANZ_MS;
+}
+
+/**
+ * Zustand des HALTE-Slots — derselbe Mechanismus wie beim Tages-Slot, nur
+ * mit dem Horizont der Anlageklasse (`wirksameMindesthalte`).
+ *
+ * Ein Horizont von 0 ist zulässig und bedeutet, was er sagt: Eine Klasse
+ * ohne Mindesthalte darf sofort wieder aussteigen, für sie IST das nächste
+ * Scan-Fenster die Haltedauer. Die Bewertung fällt dann mit der
+ * Fünf-Minuten-Messung zusammen — nicht aus Nachlässigkeit, sondern weil das
+ * für diese Klasse die richtige Zeitbasis ist.
+ */
+export function pruefeHalteSlot(
+  roh: unknown,
+  jetztMs: number,
+  horizontMs: number,
+): TagSlotBefund {
+  const h = Number.isFinite(horizontMs) && horizontMs > 0 ? horizontMs : 0;
+  return pruefeHorizontSlot(roh, jetztMs, h, halteMaxAlterMs(h));
 }
 
 /* ── Signaltyp: Trend oder Umkehr (Owner-Go 06.08.) ─────────────────────────
