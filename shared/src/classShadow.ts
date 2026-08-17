@@ -406,6 +406,34 @@ export function werteSchattenAus(k: SchattenKlasse | undefined): SchattenAuswert
 export const SCHATTEN_MIN_N = 200;
 
 /**
+ * Dieselbe Frage für den HALTEDAUER-Schatten (Owner-Go 17.08.): 60.
+ *
+ * ── Warum weniger als 200 ─────────────────────────────────────────────────
+ *
+ * Die 200 oben sind ausdrücklich damit begründet, dass ein Fünf-Minuten-
+ * Signal „ein viel schwächerer Datenpunkt als ein abgeschlossener Trade"
+ * sei — es fehlten Stop, Ziel und Haltedauer. Genau dieses Argument trägt
+ * für die Halte-Reihe nicht mehr: Sie MISST die Haltedauer. Was ihr
+ * gegenüber einem echten Trade noch fehlt, sind Stop, Ziel und
+ * Positionsgröße — deutlich weniger als vorher.
+ *
+ * Die Zahl ist deshalb an der Trade-Schwelle bemessen, nicht an der alten
+ * Signal-Schwelle: `KLASSE_MIN_TRADES` ist 30, und ein Halte-Signal ist
+ * schwächer als ein Trade — also das Doppelte. Es ist dieselbe Verdopplung,
+ * mit der `GLOBAL_MIN_TRADES` (50) die Heterogenität fremder Konten
+ * bezahlt. Nichts daran ist eine runde Wunschzahl.
+ *
+ * ── Was das praktisch bedeutet ────────────────────────────────────────────
+ *
+ * Bei 13 Krypto-Symbolen und 48 h Horizont entstehen ~6,5 unabhängige
+ * Beobachtungen am Tag. 200 wären gut ein Monat, 60 sind gut neun Tage.
+ * Der Rückweg bleibt eng — Kante > 0 und Rückkehr nur mit halbem Gewicht
+ * sind unverändert; nur die Wartezeit ist jetzt an den Informationsgehalt
+ * der Messung angepasst statt an den einer anderen Messung.
+ */
+export const SCHATTEN_HALTE_MIN_N = 60;
+
+/**
  * Wie alt ein Signal höchstens sein darf, um noch bewertet zu werden.
  *
  * Der Scan läuft alle 5 Minuten; 30 Minuten decken also auch fünf

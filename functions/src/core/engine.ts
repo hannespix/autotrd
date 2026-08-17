@@ -15,6 +15,7 @@
 import type {
   IndicatorSnapshot,
   IndicatorsConfig,
+  MarketRegime,
   SignalDirection,
   SignalsConfig,
 } from '../../../shared/src/index.js';
@@ -93,6 +94,16 @@ export interface SignalOptions {
    * Schwelle, Gleichstand für den Exit) gilt dann gespiegelt für buy.
    */
   positionSide?: 'long' | 'short';
+  /**
+   * Zustand der Markt-Ampel (17.08.) — Deckung für die Trendstimme.
+   *
+   * Nur `'trend'` schaltet `signals.trendSolo` scharf. FEHLT der Wert, ist
+   * die Regel aus: Ein Aufrufer, der die Ampel nicht kennt (Backtest,
+   * Anzeige, Regelbaum-Parität), soll nicht stillschweigend mit einer
+   * anderen Einstiegsschwelle rechnen als die Engine. Lieber die strengere
+   * Sicht als eine, die niemand angefordert hat.
+   */
+  regime?: MarketRegime | null;
 }
 
 export function computeSignal(
@@ -183,7 +194,40 @@ export function computeSignal(
   const entryReq = signals.minConfluence;
   const exitReq = Math.max(1, signals.exitConfluence ?? Math.max(1, signals.minConfluence - 1));
   const inPosition = opts?.hasPosition === true;
-  const required = inPosition ? exitReq : entryReq;
+
+  /* ── Ampel-gedeckte Trendstimme (Owner-Go 17.08.) ────────────────────────
+   *
+   * Ein LONG-Einstieg darf auf EINER Stimme stehen, wenn diese Stimme vom
+   * Trendfolger kommt UND die Ampel `trend` meldet. Der Befund dahinter
+   * steht bei `SignalsConfig.trendSolo`: RSI und Bollinger melden sich nur
+   * an Extremen, MACD immer — eine Konfluenz von 2 aus diesen dreien heißt
+   * im ruhigen Aufwärtstrend faktisch „kein Einstieg", und genau das war am
+   * 17.08. gemessen der Zustand (13 von 13 Symbolen um EINE Stimme daneben).
+   *
+   * Die drei Bedingungen sind bewusst eng und einzeln begründet:
+   *
+   *  - `votes.macd === 'buy'`: Die Erleichterung gilt der TRENDFOLGE. Eine
+   *    Umkehr-Stimme allein (RSI/Bollinger ohne MACD) ist die riskantere
+   *    Wette und behält die volle Konfluenz.
+   *  - `opts.regime === 'trend'`: über SMA200 bei ruhiger Schwankung. Im
+   *    Seitwärts- und Stressmarkt bleibt alles wie bisher. Ohne Ampel-
+   *    Angabe (Backtest, Anzeige, Regelbaum-Parität) greift die Regel NICHT
+   *    — kein stiller Effekt bei Aufrufern, die den Zustand nicht kennen.
+   *  - Nur die KAUFSEITE. Ein Short bekommt die Erleichterung nie: Im
+   *    Aufwärtstrend zu verkaufen ist genau das, was `regimeEntryBlocked`
+   *    ohnehin sperrt — eine Erleichterung dafür wäre eine Regel, die sich
+   *    selbst widerspricht.
+   *
+   * Was NICHT gelockert wird: Gegenstimmen blockieren weiter
+   * (`buyVotes > sellVotes`), und der Ausstieg ist unberührt — `exitReq`
+   * kommt gar nicht in Berührung mit dieser Regel.
+   */
+  const trendSoloAktiv =
+    signals.trendSolo === true &&
+    !inPosition &&
+    opts?.regime === 'trend' &&
+    votes.macd === 'buy';
+  const buyReq = trendSoloAktiv ? 1 : entryReq;
 
   let direction: SignalDirection = 'hold';
   if (inPosition && opts?.positionSide === 'short') {
@@ -196,7 +240,7 @@ export function computeSignal(
     // „überverkauft, also kaufen" sagen) genau dann den Ausstieg, wenn er
     // nötig war — 2:2 hieß „nichts tun".
     if (sellVotes >= exitReq && sellVotes >= buyVotes) direction = 'sell';
-  } else if (buyVotes >= entryReq && buyVotes > sellVotes) {
+  } else if (buyVotes >= buyReq && buyVotes > sellVotes) {
     direction = 'buy';
   } else if (sellVotes >= entryReq && sellVotes > buyVotes) {
     // Ohne Position ist „sell" nur eine Anzeige-Information (nichts zu verkaufen)
@@ -208,7 +252,11 @@ export function computeSignal(
     confluence: direction === 'buy' ? buyVotes : direction === 'sell' ? sellVotes : Math.max(buyVotes, sellVotes),
     buyVotes,
     sellVotes,
-    requiredConfluence: required,
+    // Die Schwelle, die TATSÄCHLICH galt — nicht die konfigurierte. Sonst
+    // meldete `knappVerfehlt` im Scan „um eine Stimme verfehlt" für ein
+    // Signal, das gar keine zweite Stimme gebraucht hätte, und die Anzeige
+    // zeigte eine Hürde, die nicht angewandt wurde.
+    requiredConfluence: inPosition ? exitReq : direction === 'buy' ? buyReq : entryReq,
     votes,
     price,
     snapshot,

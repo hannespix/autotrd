@@ -21,6 +21,7 @@ import {
   rateKlasse,
   reglerSchritt,
 } from '../src/classAdvisor.js';
+import { SCHATTEN_HALTE_MIN_N } from '../src/classShadow.js';
 
 describe('rateKlasse — Evidenz vor Meinung', () => {
   it('rührt das Gewicht bei zu dünner Stichprobe NICHT an', () => {
@@ -60,9 +61,31 @@ describe('rateKlasse — der Schatten als zweite Quelle (MG4b)', () => {
   });
 
   it('holt NICHT zurück, wenn der Schatten zu dünn ist', () => {
-    const r = rateKlasse('crypto', { n: 0, kantePct: null, schatten: schatten(199, 0.5) }, 0);
+    /* Die Schwelle ist seit dem 17.08. `SCHATTEN_HALTE_MIN_N` (60) statt
+     * `SCHATTEN_MIN_N` (200) — und zwar NICHT, weil 200 zu streng wären,
+     * sondern weil sie für eine andere Messung kalibriert waren: für
+     * Fünf-Minuten-Signale, denen ausdrücklich „Stop, Ziel und Haltedauer"
+     * fehlten. Die Reihe, die den Regler heute speist, misst die Haltedauer.
+     *
+     * Der Test prüft die Schwelle relativ zur Konstante, nicht als
+     * abgeschriebene Zahl: So bleibt er aussagekräftig, wenn die Zahl sich
+     * noch einmal bewegt, und schlägt an, wenn die Prüfung ganz entfällt. */
+    const r = rateKlasse(
+      'crypto',
+      { n: 0, kantePct: null, schatten: schatten(SCHATTEN_HALTE_MIN_N - 1, 0.5) },
+      0,
+    );
     expect(r.empfehlung).toBe('zu_wenig_daten');
     expect(r.vorschlag).toBe(0);
+    // Und knapp DARÜBER greift der Rückweg — sonst wäre oben auch eine
+    // Schwelle von einer Million „bestanden".
+    expect(
+      rateKlasse(
+        'crypto',
+        { n: 0, kantePct: null, schatten: schatten(SCHATTEN_HALTE_MIN_N, 0.5) },
+        0,
+      ).empfehlung,
+    ).toBe('zurueckholen');
   });
 
   it('holt NICHT zurück, wenn der Schatten negativ ist', () => {

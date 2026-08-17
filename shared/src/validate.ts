@@ -190,6 +190,9 @@ export function validateStrategy(value: unknown): string[] {
     if (signals.forecastSolo !== undefined && typeof signals.forecastSolo !== 'boolean') {
       problems.push('signals.forecastSolo muss boolean sein');
     }
+    if (signals.trendSolo !== undefined && typeof signals.trendSolo !== 'boolean') {
+      problems.push('signals.trendSolo muss boolean sein');
+    }
     if (signals.timeframe !== undefined && signals.timeframe !== 'daily' && signals.timeframe !== 'intraday') {
       problems.push("signals.timeframe muss 'daily' oder 'intraday' sein");
     }
