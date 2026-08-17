@@ -19,23 +19,114 @@
   --glow-rd: 0 0 18px -4px rgba(255, 71, 87, .55);
   --sh-card: 0 12px 36px -16px rgba(0, 0, 0, .7);
   --sh-pop: 0 24px 60px -18px rgba(0, 0, 0, .82);
+  --sh-pop2: 0 12px 32px -10px rgba(0, 0, 0, .45);
   --rim: inset 0 1px 0 rgba(255, 255, 255, .10), inset 0 -1px 0 rgba(0, 0, 0, .3);
   --blur: blur(18px) saturate(150%); --blur-h: blur(24px) saturate(140%);
+
+  /* ── Rollen statt Rohwerte (Owner-Meldung 17.08.) ───────────────────────
+   *
+   * „das helle Theme gefällt mir von den Farben her überhaupt nicht."
+   *
+   * Die Ursache war zu zwei Dritteln gar keine Farbwahl, sondern dass das
+   * helle Theme nur die TOKENS überschrieb — und ein gutes Dutzend Werte
+   * stand fest verdrahtet im Regelwerk: Schrift auf Akzentflächen als
+   * Fast-Schwarz (richtig auf leuchtendem Türkis, unlesbar-fleckig auf
+   * tiefem Petrol), Hover-Flächen als „Weiß mit 3 %" (auf Weiß unsichtbar),
+   * Chips als dunkles Marineblau, Neon-Schein als Leuchten (das auf Papier
+   * kein Leuchten ist, sondern ein Schmutzfleck).
+   *
+   * Jede dieser Größen ist hier eine Rolle geworden. Das ist der eigentliche
+   * Fix: Ein Theme, das nur die Hälfte der Farben umschaltet, kann nicht
+   * harmonisch sein — egal wie gut die andere Hälfte gewählt ist.
+   */
+  /** Schrift auf gefüllten Akzentflächen (Knöpfe, aktive Reiter). */
+  --on-ac: #04121a; --on-gn: #04140e; --on-rd: #fff;
+  /** Eingesenkte Fläche (Eingaben, Fortschrittsrinnen). */
+  --fill-in: rgba(0, 0, 0, .22);
+  /** Leichte Hover-Fläche auf Listen und Tabellenzeilen. */
+  --hover: rgba(255, 255, 255, .05);
+  /** Neutraler Chip-/Pillen-Grund ohne eigene Aussage. */
+  --chip-bg: rgba(26, 34, 53, .4);
+  /** Verdunkelung hinter Modalen und Overlays. */
+  --scrim: rgba(3, 6, 12, .66);
   --r: 14px; --r-sm: 10px; --r-xs: 7px;
   --e-out: cubic-bezier(.22, 1, .36, 1); --e-spring: cubic-bezier(.34, 1.4, .64, 1);
   --f-num: 'JetBrains Mono', 'SF Mono', ui-monospace, 'Roboto Mono', monospace;
 }
+/* ══ HELLES THEME ═══════════════════════════════════════════════════════════
+ *
+ * Owner 17.08.: „von den Farben her (Kombination) überhaupt nicht … kann man
+ * das harmonischer und schöner gestalten?"
+ *
+ * ── Was vorher nicht zusammenpasste ─────────────────────────────────────
+ *
+ *  1. DREI Farbfamilien auf einmal. Die Aurora-Schicht (Türkis + Violett +
+ *     Grün, 50 % Deckkraft) war nur fürs Dunkel gedacht; auf hellem Grund
+ *     wusch sie die Seite von Mint links über Lila rechts bis Blassblau —
+ *     und die halbtransparenten Karten nahmen den Farbstich mit. Dieselbe
+ *     weiße Karte sah links grünlich aus und rechts fliederfarben. Genau das
+ *     ist der Eindruck „beißt sich".
+ *  2. Ungleiche Gewichte. `--rd` (#e5384b) war heller und deutlich
+ *     gesättigter als `--gn` (#00a67a) — Rot schrie, Grün flüsterte, obwohl
+ *     beide dieselbe Rolle haben (Ergebnis-Vorzeichen).
+ *  3. Neonfarben aus dem Dunkel-Theme: `--vi`, alle drei `--glow-*` und
+ *     die Verlaufsknöpfe (#ff4757) waren nie überschrieben.
+ *
+ * ── Die Ordnung dahinter ────────────────────────────────────────────────
+ *
+ * EIN kühles Grundgerüst (Papier mit einem Hauch Blau, kein Stahlblau), EINE
+ * Leitfarbe (das Petrol der Marke), und Grün/Rot/Violett als Geschwister im
+ * selben Helligkeitsband — sie unterscheiden sich in der Buntheit, nicht in
+ * der Lautstärke. Deshalb sind alle vier Akzente bewusst dunkler und
+ * ruhiger als im Dunkel-Theme: Auf Weiß trägt eine Farbe schon bei halber
+ * Sättigung, während dieselbe Sättigung, die auf Schwarz elegant leuchtet,
+ * auf Papier grell wirkt.
+ */
 :root[data-theme='light'] {
-  --bg0: #dbe3ef; --bg: #eef2f8;
-  --card: rgba(255, 255, 255, .64); --card-solid: #f4f7fc; --sd: rgba(255, 255, 255, .5);
-  --bd: rgba(15, 23, 42, .12); --bd2: rgba(15, 23, 42, .2); --hair: rgba(15, 23, 42, .08);
-  --t1: #0c1424; --t2: #43516c; --t3: #7987a0;
-  --ac: #0091c2; --ac2: #00a9df; --ac-soft: rgba(0, 145, 194, .12);
-  --gn: #00a67a; --gn2: #00c896; --gn-soft: rgba(0, 166, 122, .12);
-  --rd: #e5384b; --rd2: #ff4757; --rd-soft: rgba(229, 56, 75, .12);
-  --sh-card: 0 12px 30px -18px rgba(31, 45, 80, .3);
-  --sh-pop: 0 22px 52px -18px rgba(31, 45, 80, .36);
-  --rim: inset 0 1px 0 rgba(255, 255, 255, .7);
+  /* Papier statt Stahl: ein Hauch Blau im Grund, damit das Petrol verwandt
+   * wirkt — aber weit genug entsättigt, dass es nicht selbst als Farbe
+   * auftritt. */
+  --bg0: #e8ebf2; --bg: #f4f6fa;
+  /* Deutlich deckender als vorher (.64 → .88). Der entscheidende Wert für
+   * den Gesamteindruck: Eine Karte, die den Hintergrund durchscheinen
+   * lässt, wechselt mit ihm die Farbe — und dann gibt es kein „Kartenweiß"
+   * mehr, sondern zwölf verschiedene Weiß. */
+  --card: rgba(255, 255, 255, .88); --card-solid: #ffffff; --sd: rgba(255, 255, 255, .72);
+  --bd: rgba(22, 33, 56, .11); --bd2: rgba(22, 33, 56, .19); --hair: rgba(22, 33, 56, .07);
+  --t1: #101a2c; --t2: #48566f; --t3: #7c8aa2;
+  /* Leitfarbe: dasselbe Petrol wie im Dunkeln, nur zwei Stufen tiefer —
+   * #25d0ee leuchtet auf Schwarz, auf Weiß blendet es. */
+  --ac: #0e7490; --ac2: #1191b2; --ac-soft: rgba(14, 116, 144, .10);
+  /* Grün und Rot als Geschwister: gleiche Helligkeitsstufe, gleiche
+   * Sättigungsordnung. Vorher lag Rot vier Stufen heller — deshalb sprang
+   * jede Verlustzahl ins Auge und jede Gewinnzahl nicht. */
+  /* Die zweite Stufe (`*2`) liegt bewusst NAH an der ersten: Im Dunkeln ist
+   * der Verlauf auf dem Knopf ein Glanz, im Hellen wurde daraus ein
+   * Farbsprung — und der leuchtende obere Rand ließ „Kaufen" lauter wirken
+   * als „Verkaufen", obwohl beide dasselbe Gewicht haben sollen. */
+  --gn: #0b8f6a; --gn2: #109a74; --gn-soft: rgba(11, 143, 106, .11);
+  --rd: #c33a4e; --rd2: #ce4459; --rd-soft: rgba(195, 58, 78, .10);
+  --vi: #5b53b8; --vi-soft: rgba(91, 83, 184, .12);
+  /* Auf Papier gibt es kein Leuchten. Aus dem Neon-Schein wird ein weicher
+   * farbiger Schlagschatten NACH UNTEN — dieselbe Betonung, nur physikalisch
+   * plausibel statt als Schmutzfleck um den Knopf herum. */
+  --glow-ac: 0 6px 16px -8px rgba(14, 116, 144, .5);
+  --glow-gn: 0 6px 16px -8px rgba(11, 143, 106, .45);
+  --glow-rd: 0 6px 16px -8px rgba(195, 58, 78, .45);
+  --sh-card: 0 10px 26px -18px rgba(22, 33, 56, .34);
+  --sh-pop: 0 20px 46px -20px rgba(22, 33, 56, .32);
+  --sh-pop2: 0 12px 28px -14px rgba(22, 33, 56, .26);
+  --rim: inset 0 1px 0 rgba(255, 255, 255, .9);
+  /* Weiße Schrift auf allen gefüllten Akzentflächen: Die Akzente sind hier
+   * dunkel genug, dass Fast-Schwarz darauf grau und schmutzig aussähe. */
+  --on-ac: #fff; --on-gn: #fff; --on-rd: #fff;
+  --fill-in: rgba(22, 33, 56, .05);
+  --hover: rgba(22, 33, 56, .045);
+  --chip-bg: rgba(22, 33, 56, .07);
+  --scrim: rgba(24, 33, 52, .42);
+  /* Der Sättigungs-Schub des Milchglases (150 %) verstärkte auf hellem
+   * Grund genau den Farbstich, den die Aurora hineinträgt. */
+  --blur: blur(18px) saturate(115%); --blur-h: blur(22px) saturate(112%);
 }
 
 html { background: var(--bg0); }
@@ -103,6 +194,29 @@ input { accent-color: var(--ac); }
     radial-gradient(34% 34% at 28% 78%, rgba(139, 124, 255, .20), transparent 62%);
   animation: aurora 36s ease-in-out infinite alternate; will-change: transform;
 }
+/* ── Aurora im Hellen (17.08.) ───────────────────────────────────────────
+ *
+ * Die auffälligste Einzelursache der Owner-Meldung. Unverändert übernommen
+ * wusch die Schicht drei Farbfamilien über die Seite: Mint links, Lila
+ * rechts, Blassblau in der Mitte — auf Schwarz ein Nordlicht, auf Papier ein
+ * Wasserfleck. Sie ganz zu streichen wäre die einfache Lösung und die
+ * falsche: Die Aurora IST das Gesicht der Anwendung (§6 „Frosted Aurora"),
+ * und ohne sie wäre das helle Theme ein anderes Produkt.
+ *
+ * Also dasselbe Motiv, aber in EINER Familie und als Hauch: nur Petrol und
+ * ein Blau daneben, ein Fünftel der Deckkraft, keine Sättigungsanhebung.
+ * Es bleibt eine Tiefe im Grund — sichtbar, wenn man darauf achtet, und
+ * unsichtbar, wenn man auf die Zahlen schaut. Genau das soll ein Hintergrund
+ * tun.
+ */
+:root[data-theme='light'] .aurora {
+  opacity: .38;
+  filter: blur(72px) saturate(100%);
+  background:
+    radial-gradient(46% 46% at 16% 24%, rgba(14, 116, 144, .16), transparent 64%),
+    radial-gradient(44% 44% at 84% 20%, rgba(56, 106, 168, .13), transparent 64%),
+    radial-gradient(50% 50% at 70% 84%, rgba(14, 116, 144, .10), transparent 66%);
+}
 @keyframes aurora {
   0% { transform: translate3d(0, 0, 0) scale(1); }
   50% { transform: translate3d(2%, -2%, 0) scale(1.08); }
@@ -119,6 +233,9 @@ input { accent-color: var(--ac); }
 }
 :root[data-theme='light'] .hdr { background: rgba(255, 255, 255, .72); }
 .logo { font-weight: 800; font-size: 15px; color: var(--ac); letter-spacing: .5px; text-shadow: 0 0 20px rgba(0, 212, 255, .35); }
+/* Ein Leuchten hinter der Wortmarke ist auf Schwarz Charakter und auf
+ * Papier ein unscharfer Doppeldruck. */
+:root[data-theme='light'] .logo { text-shadow: none; }
 .spacer { flex: 1; }
 .hdr .user { color: var(--t3); font-size: 11px; max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hbtn { background: var(--sd); border: 1px solid var(--bd); color: var(--t1); border-radius: 8px; padding: 5px 10px; cursor: pointer; font-size: 11px; }
@@ -193,7 +310,7 @@ input { accent-color: var(--ac); }
 .lbl { display: flex; align-items: center; gap: 3px; font-size: 9px; line-height: 1.6; color: var(--t3); text-transform: uppercase; letter-spacing: .4px; }
 .lbl .ibtn { text-transform: none; }
 .inp, .sel {
-  width: 100%; padding: 7px 9px; background: rgba(0, 0, 0, .22);
+  width: 100%; padding: 7px 9px; background: var(--fill-in);
   border: 1px solid var(--bd); border-radius: var(--r-sm); color: var(--t1); outline: none;
   transition: border-color .2s, box-shadow .2s;
 }
@@ -207,8 +324,8 @@ input { accent-color: var(--ac); }
 }
 .btn:hover { transform: translateY(-1px); filter: brightness(1.06); }
 .btn:active { transform: scale(.98); }
-.btn-g { background: linear-gradient(135deg, var(--gn2), var(--gn)); color: #04140e; box-shadow: var(--glow-gn); }
-.btn-r { background: linear-gradient(135deg, var(--rd2), var(--rd)); color: #fff; box-shadow: var(--glow-rd); }
+.btn-g { background: linear-gradient(135deg, var(--gn2), var(--gn)); color: var(--on-gn); box-shadow: var(--glow-gn); }
+.btn-r { background: linear-gradient(135deg, var(--rd2), var(--rd)); color: var(--on-rd); box-shadow: var(--glow-rd); }
 .btn-n { background: var(--sd); color: var(--t1); border: 1px solid var(--bd); }
 .hint { font-size: 9px; color: var(--t3); }
 
@@ -244,12 +361,18 @@ input { accent-color: var(--ac); }
 #chartArea, .gp-chart {
   width: 100%; height: var(--chart-h, clamp(280px, 42vh, 420px)); border-radius: 8px; position: relative;
   border: 1px solid var(--bd); overflow: hidden; min-height: 0;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06), 0 0 34px -12px rgba(0, 212, 255, .35);
+  box-shadow: var(--rim), var(--glow-ac);
 }
 #chartArea::after, .gp-chart::after {
   content: ''; position: absolute; inset: 0; pointer-events: none; border-radius: inherit; z-index: 2;
   background: radial-gradient(135% 75% at 50% -12%, rgba(0, 212, 255, .13), transparent 55%);
   mix-blend-mode: screen;
+}
+/* `screen` hellt auf — auf schwarzem Grund ein Lichtschimmer über dem
+ * Chart, auf weißem Grund ein Nebel, der die Kurslinie schluckt. */
+:root[data-theme='light'] #chartArea::after, :root[data-theme='light'] .gp-chart::after {
+  background: radial-gradient(135% 75% at 50% -12%, rgba(14, 116, 144, .07), transparent 55%);
+  mix-blend-mode: multiply;
 }
 /* Event-Tooltip am Crosshair (M6b) — position:fixed, siehe CLAUDE.md §6 */
 .evtip {
@@ -257,7 +380,7 @@ input { accent-color: var(--ac); }
      News-Overlays im Chart-Vollbild unsichtbar HINTER dem Chart (Bug 25.07.) */
   position: fixed; z-index: 200; max-width: 300px; padding: 8px 10px; pointer-events: none;
   background: var(--sd); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
-  border: 1px solid var(--bd); border-radius: 8px; box-shadow: 0 8px 28px -8px rgba(0, 0, 0, .5);
+  border: 1px solid var(--bd); border-radius: 8px; box-shadow: var(--sh-pop2);
   font-size: 10.5px; line-height: 1.4; color: var(--t2);
 }
 /* Großer Monitor + Maus: geparkt in der Fenster-Ecke darf das Overlay
@@ -277,7 +400,7 @@ input { accent-color: var(--ac); }
   transition: all .15s; font-family: var(--f-num);
 }
 .tf-btn:hover { color: var(--ac); border-color: var(--ac); }
-.tf-btn.on { background: var(--ac); color: #04121a; border-color: var(--ac); box-shadow: 0 0 8px rgba(0, 212, 255, .3); }
+.tf-btn.on { background: var(--ac); color: var(--on-ac); border-color: var(--ac); box-shadow: var(--glow-ac); }
 
 /* Signal-Kacheln */
 .sig-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
@@ -296,7 +419,7 @@ input { accent-color: var(--ac); }
 .tbl th { text-align: left; padding: 5px 7px; font-size: 9px; color: var(--t3); font-weight: 500; text-transform: uppercase; border-bottom: 1px solid var(--bd); }
 .tbl td { padding: 5px 7px; border-bottom: 1px solid var(--hair); }
 .tbl tbody tr { transition: background .12s; }
-.tbl tbody tr:hover { background: rgba(255, 255, 255, .03); }
+.tbl tbody tr:hover { background: var(--hover); }
 .stag { display: inline-block; padding: 2px 6px; border-radius: 3px; font-size: 9px; font-weight: 700; text-transform: uppercase; }
 /* Exit-Transparenz unter jeder Position (26.07.): Abstände zu Stop/Trailing/
    Ziel + nächster Kandidat — kleine Begleitzeile, kein eigener Rahmen */
@@ -313,16 +436,16 @@ input { accent-color: var(--ac); }
 @media (max-width: 420px) { .pf-grid { grid-template-columns: repeat(2, 1fr); } }
 /* Strategie löschen (26.07.): dezent bis zur Armierung, dann unmissverständlich */
 .st-del { margin-left: auto; color: var(--t3); }
-.st-del.armed { color: #fff; background: var(--rd); border-color: var(--rd); }
+.st-del.armed { color: var(--on-rd); background: var(--rd); border-color: var(--rd); }
 .t-buy { background: var(--gn-soft); color: var(--gn); }
 .t-sell { background: var(--rd-soft); color: var(--rd); }
-.t-hold { background: rgba(78, 93, 119, .2); color: var(--t2); }
+.t-hold { background: var(--chip-bg); color: var(--t2); }
 
 /* Markt-Übersicht */
 .mkt-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
 .mtab { padding: 5px 10px; background: transparent; border: 1px solid var(--bd); border-radius: 999px; color: var(--t3); cursor: pointer; font-size: 11px; transition: all .18s var(--e-out); }
 .mtab:hover { border-color: var(--bd2); color: var(--t1); }
-.mtab.on { color: #04121a; background: var(--ac); border-color: var(--ac); box-shadow: var(--glow-ac); }
+.mtab.on { color: var(--on-ac); background: var(--ac); border-color: var(--ac); box-shadow: var(--glow-ac); }
 .mkt-group { margin-bottom: 12px; }
 .mkt-glbl { font-size: 9px; color: var(--t3); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
 .mkt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 6px; }
@@ -340,13 +463,13 @@ input { accent-color: var(--ac); }
 /* Markt-Uhr */
 .clock { font-size: 26px; font-weight: 800; text-align: center; color: var(--t1); }
 .phases { display: flex; gap: 4px; margin-top: 6px; }
-.ph { flex: 1; text-align: center; padding: 5px 4px; border-radius: 4px; font-size: 9px; font-weight: 600; color: var(--t3); background: rgba(26, 34, 53, .4); }
-.ph.active { color: #fff; background: var(--ac); }
+.ph { flex: 1; text-align: center; padding: 5px 4px; border-radius: 4px; font-size: 9px; font-weight: 600; color: var(--t3); background: var(--chip-bg); }
+.ph.active { color: var(--on-ac); background: var(--ac); }
 
 /* Detail-Modal / Bottom-Sheet */
 .dmodal { display: none; position: fixed; inset: 0; z-index: 220; align-items: center; justify-content: center; padding: 16px; }
 .dmodal.show { display: flex; }
-.dmodal-bg { position: absolute; inset: 0; background: rgba(3, 6, 12, .72); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
+.dmodal-bg { position: absolute; inset: 0; background: var(--scrim); -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
 .dsheet {
   position: relative; width: min(560px, 100%); max-height: 86vh; overflow-y: auto;
   background: var(--card-solid); border: 1px solid var(--bd2); border-radius: 18px;
@@ -357,7 +480,7 @@ input { accent-color: var(--ac); }
 .dsheet .dmeta { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 11px; color: var(--t3); margin-bottom: 10px; }
 .dsheet .dbtns { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; }
 .dsheet .dbtn { flex: 1; min-width: 130px; text-align: center; padding: 12px; border-radius: 12px; font-weight: 700; font-size: 13px; cursor: pointer; border: 1px solid var(--bd2); color: var(--t1); background: var(--sd); }
-.dsheet .dbtn.pri { background: linear-gradient(135deg, var(--ac2), var(--ac)); color: #04121a; border-color: transparent; box-shadow: var(--glow-ac); }
+.dsheet .dbtn.pri { background: linear-gradient(135deg, var(--ac2), var(--ac)); color: var(--on-ac); border-color: transparent; box-shadow: var(--glow-ac); }
 .dclose { position: absolute; top: 12px; right: 12px; width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--bd2); background: var(--sd); color: var(--t1); font-size: 16px; cursor: pointer; line-height: 1; display: flex; align-items: center; justify-content: center; }
 
 /* Schlagzeilen im Detail-Sheet (News-Rückkehr 29.07.) */
@@ -370,15 +493,15 @@ input { accent-color: var(--ac); }
 /* Link-Chips (M9): Gruppen-Zugehörigkeit eines Panels in Aurora-Farben */
 .lchip {
   float: right; width: 18px; height: 18px; border-radius: 50%; border: none; cursor: pointer;
-  font-size: 10px; font-weight: 800; color: #04121a; line-height: 18px; padding: 0;
-  font-family: var(--f-num); box-shadow: 0 0 8px rgba(0, 212, 255, .35); transition: transform .12s;
+  font-size: 10px; font-weight: 800; color: var(--on-ac); line-height: 18px; padding: 0;
+  font-family: var(--f-num); box-shadow: var(--glow-ac); transition: transform .12s;
 }
 .lchip:hover { transform: scale(1.15); }
 
 /* Command-Palette (M9): Ctrl+K */
 .cmdk { display: none; position: fixed; inset: 0; z-index: 300; }
 .cmdk.show { display: block; }
-.cmdk-bg { position: absolute; inset: 0; background: rgba(3, 6, 12, .6); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
+.cmdk-bg { position: absolute; inset: 0; background: var(--scrim); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
 .cmdk-box {
   position: relative; width: min(560px, calc(100% - 24px)); margin: 12vh auto 0;
   background: var(--card-solid); border: 1px solid var(--bd2); border-radius: 14px;
@@ -426,10 +549,10 @@ input { accent-color: var(--ac); }
 .wl-sec { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--t3); margin: 15px 0 7px; }
 .wl-browse { display: grid; grid-template-columns: repeat(auto-fill, minmax(155px, 1fr)); gap: 3px; max-height: 230px; overflow-y: auto; padding: 2px; }
 .wl-opt { display: flex; align-items: center; gap: 8px; padding: 5px 7px; border-radius: 6px; cursor: pointer; font-size: 11px; }
-.wl-opt:hover { background: rgba(255, 255, 255, .05); }
+.wl-opt:hover { background: var(--hover); }
 .wl-opt .box { width: 15px; height: 15px; border: 1.5px solid var(--bd2); border-radius: 4px; flex: 0 0 auto; position: relative; }
 .wl-opt.on .box { background: var(--ac); border-color: var(--ac); }
-.wl-opt.on .box::after { content: ''; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid #04140e; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.wl-opt.on .box::after { content: ''; position: absolute; left: 4px; top: 1px; width: 4px; height: 8px; border: solid var(--on-gn); border-width: 0 2px 2px 0; transform: rotate(45deg); }
 .wl-opt .s { font-weight: 700; color: var(--t1); }
 .wl-opt .n { color: var(--t3); font-size: 9px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 
@@ -445,7 +568,7 @@ input { accent-color: var(--ac); }
 .auth-card .divider::before, .auth-card .divider::after { content: ''; flex: 1; border-top: 1px solid var(--bd); }
 .error { color: var(--rd); margin: .25rem 0 0; }
 
-.overlay { display: none; position: fixed; inset: 0; background: rgba(0, 0, 0, .55); z-index: 40; }
+.overlay { display: none; position: fixed; inset: 0; background: var(--scrim); z-index: 40; }
 
 /* Scrollbars */
 * { scrollbar-width: thin; scrollbar-color: var(--bd) transparent; }
@@ -501,7 +624,7 @@ input { accent-color: var(--ac); }
   border: 0; background: var(--ac-soft); color: var(--t1); cursor: pointer;
   font: inherit; font-size: 12.5px; padding: 7px 12px; border-radius: 999px;
 }
-.pwa-chip .pwa-install:hover { background: var(--ac); color: #04121a; }
+.pwa-chip .pwa-install:hover { background: var(--ac); color: var(--on-ac); }
 .pwa-chip .pwa-close {
   border: 0; background: transparent; color: var(--t3); cursor: pointer;
   font-size: 12px; padding: 6px 9px; border-radius: 999px;
@@ -581,15 +704,15 @@ input { accent-color: var(--ac); }
 /* ⓘ-Erklär-Tooltips (User-Wunsch 25.07.): kleiner Knopf + globales Popover */
 .ibtn { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; margin-left: 4px; border: 1px solid var(--bd2); border-radius: 50%; background: none; color: var(--t3); font-size: 10px; line-height: 1; cursor: pointer; vertical-align: middle; flex: none; }
 .ibtn:hover { color: var(--ac); border-color: var(--ac); }
-.ipop { position: absolute; z-index: 300; background: var(--card-solid); border: 1px solid var(--bd2); border-radius: 12px; padding: 10px 12px; box-shadow: 0 14px 36px rgba(0, 0, 0, .45); font-size: 12px; line-height: 1.5; color: var(--t2); }
+.ipop { position: absolute; z-index: 300; background: var(--card-solid); border: 1px solid var(--bd2); border-radius: 12px; padding: 10px 12px; box-shadow: var(--sh-pop2); font-size: 12px; line-height: 1.5; color: var(--t2); }
 .ipop b { display: block; margin-bottom: 4px; color: var(--t1); font-size: 12.5px; }
 .ipop p { margin: 0; }
 
 /* Trade-Fenster (Redesign 25.07.): Katalog-Combobox + Summenblock */
 .mt-combo { position: relative; }
-.mt-list { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 40; background: var(--card-solid); border: 1px solid var(--bd2); border-radius: 10px; max-height: 220px; overflow-y: auto; box-shadow: 0 12px 30px rgba(0, 0, 0, .35); }
+.mt-list { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 40; background: var(--card-solid); border: 1px solid var(--bd2); border-radius: 10px; max-height: 220px; overflow-y: auto; box-shadow: var(--sh-pop2); }
 .mt-list button { display: block; width: 100%; text-align: left; padding: 7px 10px; font-size: 12px; color: var(--t2); background: none; border: 0; border-bottom: 1px solid var(--hair); cursor: pointer; }
-.mt-list button:hover { background: rgba(37, 208, 238, .12); color: var(--t1); }
+.mt-list button:hover { background: var(--ac-soft); color: var(--t1); }
 .mt-inds { gap: 12px; flex-wrap: wrap; margin: 6px 0; }
 .mt-sum { margin: 8px 0 6px; font-size: 12px; }
 .mt-row { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--hair); color: var(--t2); }
@@ -623,7 +746,7 @@ input { accent-color: var(--ac); }
 .tn-h .tn-nm { font-weight: 600; color: var(--t1); }
 .tn-t { margin-left: auto; font-size: 10px; color: var(--t3); white-space: nowrap; }
 .tn-tag { font-size: 9px; text-transform: uppercase; letter-spacing: .05em; padding: 1px 5px; border-radius: 4px; background: var(--hair); color: var(--t3); }
-.tn-tag.tn-ok { background: rgba(52, 199, 123, .18); color: var(--gn); }
+.tn-tag.tn-ok { background: var(--gn-soft); color: var(--gn); }
 .tn-r { font-size: 11px; line-height: 1.4; color: var(--t2); margin-top: 2px; }
 .tn-n { font-size: 10px; color: var(--t3); margin-top: 2px; font-variant-numeric: tabular-nums; }
 
@@ -663,7 +786,7 @@ input { accent-color: var(--ac); }
    Bild (derselbe Fehler wie beim Chart-Tooltip, siehe CLAUDE.md §6). */
 .dc-tt { position: absolute; z-index: 5; pointer-events: none; min-width: 150px; max-width: 240px;
   background: var(--card-solid); border: 1px solid var(--bd2); border-radius: 8px; padding: 6px 8px;
-  box-shadow: 0 10px 24px rgba(0, 0, 0, .38); font-size: 11px; }
+  box-shadow: var(--sh-pop2); font-size: 11px; }
 .dc-tt-h { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
 .dc-tt-d { display: flex; justify-content: space-between; gap: 8px; color: var(--t3); font-size: 10px; }
 .dc-tt-l { margin-top: 4px; border-top: 1px solid var(--hair); padding-top: 4px; }
@@ -679,7 +802,7 @@ input { accent-color: var(--ac); }
 .dc-modus { float: right; display: inline-flex; gap: 4px; }
 .dc-modus button { font-size: 10px; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--bd2);
   background: none; color: var(--t3); cursor: pointer; }
-.dc-modus button[aria-pressed="true"] { background: rgba(37, 208, 238, .14); color: var(--t1); border-color: var(--ac); }
+.dc-modus button[aria-pressed="true"] { background: var(--ac-soft); color: var(--t1); border-color: var(--ac); }
 
 /* Haltedauer-Kurve (10.08.): sechs Spalten, kein innerer Scroll.
    Bewusst NICHT `.fl-tbl` mitbenutzt — die deckelt auf 168 px, und fünf
@@ -746,7 +869,7 @@ input { accent-color: var(--ac); }
 }
 .pred-pop label { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--t2); }
 .pred-pop .row { gap: 6px; }
-#predBtn.on { background: var(--ac); color: #04121a; }
+#predBtn.on { background: var(--ac); color: var(--on-ac); }
 
 /* Multi-Chart-Raster (Chart-Vision): 1/2/4 Panels, Lock-Sync */
 .chart-row { display: grid; grid-template-columns: 1fr; gap: 10px; }
@@ -754,7 +877,7 @@ input { accent-color: var(--ac); }
 .chart-row > * { min-width: 0; }
 #chartGrid { display: contents; }
 .grid-sw { display: flex; gap: 2px; margin-left: 8px; }
-#lockMain.on, .gp-lock.on { background: var(--ac); color: #04121a; }
+#lockMain.on, .gp-lock.on { background: var(--ac); color: var(--on-ac); }
 /* EINE Regel für alle Raster-Fenster: Haupt-Chart und Panels teilen sich
    Rahmen, Radius, Polsterung und Hintergrund — kein Fenster sticht heraus
    (User-Feedback 26.07.). Im Einzel-Modus bleibt das Haupt-Chart nackt,
@@ -786,11 +909,11 @@ input { accent-color: var(--ac); }
   width: 240px; max-width: calc(100vw - 20px); max-height: 60vh; overflow-y: auto;
   padding: 8px;
   background: var(--card, rgba(10, 18, 28, 0.92)); border: 1px solid var(--hair);
-  border-radius: 10px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  border-radius: 10px; box-shadow: var(--sh-pop2);
   backdrop-filter: blur(14px);
 }
 .tm-sec { flex-basis: 100%; font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--t3); margin: 4px 0 1px; }
-#indBtn.on, #layBtn.on { background: var(--ac); color: #04121a; }
+#indBtn.on, #layBtn.on { background: var(--ac); color: var(--on-ac); }
 .res-badge { align-self: center; font-size: 10px; color: var(--t3); padding: 2px 8px; border: 1px solid var(--hair); border-radius: 999px; }
 /* In-Chart-HUD (TV-Stil): OHLC + Legende oben links IM Chart — Overlay,
    klickt nicht (pointer-events none), Chips mit Glas-Hintergrund. */
@@ -931,7 +1054,7 @@ input { accent-color: var(--ac); }
   border: 1px solid var(--bd2); border-radius: 999px; padding: 4px 12px;
   background: var(--sd); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
   color: var(--ac); font-size: 11px; font-weight: 700; cursor: pointer;
-  box-shadow: 0 4px 16px -6px rgba(0, 0, 0, .5);
+  box-shadow: var(--sh-pop2);
 }
 .jump-now:hover { border-color: var(--ac); }
 
@@ -958,7 +1081,7 @@ input { accent-color: var(--ac); }
   font-size: 11.5px;
   cursor: pointer;
 }
-.otab.active { background: var(--ac); color: #fff; border-color: transparent; }
+.otab.active { background: var(--ac); color: var(--on-ac); border-color: transparent; }
 .opt-row { display: flex; gap: 10px; align-items: flex-start; font-size: 12px; color: var(--t2); margin: 8px 0; cursor: pointer; }
 .opt-row input { margin-top: 2px; accent-color: var(--ac); }
 .opt-row b { color: var(--t1); }
@@ -1039,7 +1162,7 @@ input { accent-color: var(--ac); }
   border: 1px solid var(--bd);
   border-radius: 12px;
   padding: 12px 14px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--sh-pop2);
   font-size: 12.5px;
   color: var(--t2);
 }
