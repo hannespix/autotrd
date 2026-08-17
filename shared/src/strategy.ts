@@ -716,6 +716,58 @@ export function feeRateForClass(assetClass?: string | null): number {
   return CLASS_FEE_RATE[assetClass] ?? PAPER_FEE_RATE;
 }
 
+/* ── Maker-Sätze: was ein EINSTIEG wirklich kostet (17.08.) ─────────────────
+ *
+ * Seit Hebel 1b (15.08.) gehen Krypto-EINSTIEGE als Limit-Order zum
+ * Entscheidungskurs raus (`broker.ts`, `alpacaOrder`). Alpaca berechnet dafür
+ * den Maker-Satz — Tier 1: 0,15 % statt 0,25 % Taker. Exits bleiben Market
+ * und zahlen weiter Taker; das ist Absicht und darf nie anders werden.
+ *
+ * ── Warum das nicht einfach `CLASS_FEE_RATE` ersetzt ──────────────────────
+ *
+ * Das BUCH soll konservativ bleiben. `effectivePriceForClass` bucht bewusst
+ * den Taker-Satz auf beide Seiten („lieber zu viel Reibung einplanen als zu
+ * wenig", s. broker.ts) — ein Limit, das im Wartefenster nicht füllt, wird
+ * storniert, und ein Buch, das sich den günstigeren Satz gutschreibt, sähe
+ * besser aus als die Realität. An diesem Buch hängen Trade-Filter, A/B-Duell
+ * und Auto-Tuner. Es wird hier NICHT angefasst.
+ *
+ * Was diese Sätze bekommen, ist die MESSUNG: Der Signal-Schatten entscheidet,
+ * ob eine abgeschaltete Klasse zurückkommen darf, und zieht dafür die
+ * Roundtrip-Kosten ab. Rechnet er mit 2 × Taker, verlangt er von der
+ * Signalquelle eine Reibung, die live nicht mehr anfällt — bei Krypto 0,50 %
+ * statt 0,40 %. Eine Messung, die teurer rechnet als die Ausführung, hält
+ * eine Klasse aus, die sich verdient hätte.
+ */
+export const CLASS_MAKER_FEE_RATE: Record<string, number> = {
+  // Alpaca Krypto Tier 1: Maker 0,15 %. Nur hier eingetragen, weil nur hier
+  // der Einstieg tatsächlich als Limit-Order läuft — ein Satz für eine
+  // Order-Art, die es nicht gibt, wäre eine geschenkte Kostensenkung.
+  crypto: 0.0015,
+};
+
+/**
+ * Gebührensatz der EINSTIEGSSEITE: Maker, wo der Einstieg als Limit-Order
+ * läuft, sonst derselbe Satz wie bisher.
+ */
+export function entryFeeRateForClass(assetClass?: string | null): number {
+  const maker = assetClass ? CLASS_MAKER_FEE_RATE[assetClass] : undefined;
+  return maker ?? feeRateForClass(assetClass);
+}
+
+/**
+ * Roundtrip-Kosten einer Klasse: Einstieg (Maker, wo Limit läuft) + Ausstieg
+ * (immer Taker, weil Exits Market bleiben).
+ *
+ * Bewusst eine eigene Funktion statt `feeRateForClass(k) * 2`: Der Faktor 2
+ * war die stille Annahme, beide Seiten kosteten dasselbe. Seit Hebel 1b
+ * stimmt sie für Krypto nicht mehr, und ein `* 2` an fünf Stellen wäre fünf
+ * Gelegenheiten, die Korrektur an vier davon zu vergessen.
+ */
+export function roundtripFeeRateForClass(assetClass?: string | null): number {
+  return entryFeeRateForClass(assetClass) + feeRateForClass(assetClass);
+}
+
 /** Effektiver Ausführungspreis mit klassenechtem Satz. */
 export function effectivePriceForClass(
   price: number,

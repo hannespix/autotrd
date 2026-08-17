@@ -131,4 +131,46 @@ describe('schreibeChronik', () => {
     expect(c.eintraege.tages_kante!.status).toBe('gilt');
     expect(c.eintraege.tages_kante!.these).toContain('+0,40');
   });
+
+  /* Haltedauer-gerechte Kante (17.08.) — die Reihe, die über den Rückweg
+   * einer abgeschalteten Klasse ENTSCHEIDET. Sie hat eine eigene These, weil
+   * die Chronik das Gedächtnis des Systems ist: Stünde dort nur die
+   * Tages-Reihe, würde sich das System die Zahl merken, die nichts entscheidet. */
+  it('Halte-Kante wartet, solange die Reihe zu kurz ist — und nennt das Fenster', () => {
+    const c = schreibeChronik(undefined, fakten(), T1);
+    expect(c.eintraege.halte_kante!.status).toBe('wartet_auf_daten');
+    expect(c.eintraege.halte_kante!.these).toContain('n=0');
+    expect(c.eintraege.halte_kante!.these).toContain('Fenster noch nicht gemessen');
+  });
+
+  it('Halte-Kante ab Mindest-n: positiv ⇒ gilt, mit Horizont im Text', () => {
+    const c = schreibeChronik(
+      undefined,
+      fakten({
+        signalSchatten: {
+          live_halte: { n: 220, treffer: 130, rohPct: 1.1, kantePct: 0.7, alterMin: 2_880 },
+        },
+      }),
+      T1,
+    );
+    expect(c.eintraege.halte_kante!.status).toBe('gilt');
+    expect(c.eintraege.halte_kante!.these).toContain('+0,70');
+    // 48 h — der Krypto-Boden. Der Horizont MUSS im Klartext stehen: Genau
+    // seine Abwesenheit hat den Fünf-Minuten-Fehler zwölf Tage überleben lassen.
+    expect(c.eintraege.halte_kante!.these).toContain('48,0 h Fenster');
+  });
+
+  it('Halte-Kante negativ ⇒ gilt_nicht — der Rückweg bleibt zu', () => {
+    const c = schreibeChronik(
+      undefined,
+      fakten({
+        signalSchatten: {
+          live_halte: { n: 300, treffer: 140, rohPct: 0.2, kantePct: -0.3, alterMin: 2_880 },
+        },
+      }),
+      T1,
+    );
+    expect(c.eintraege.halte_kante!.status).toBe('gilt_nicht');
+    expect(c.eintraege.halte_kante!.these).toContain('48,0 h Fenster');
+  });
 });

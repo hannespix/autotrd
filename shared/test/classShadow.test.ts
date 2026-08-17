@@ -129,12 +129,18 @@ describe('leseSchattenSignal — was aus der Datenbank kommt, ist unknown', () =
   const JETZT = Date.parse('2026-08-04T15:30:00.000Z');
   const vor = (ms: number): string => new Date(JETZT - ms).toISOString();
 
-  it('liest ein frisches, wohlgeformtes Signal', () => {
+  it('liest ein frisches, wohlgeformtes Signal — mit gemessenem Alter', () => {
     const s = leseSchattenSignal(
       { direction: 'sell', price: 42.5, at: vor(5 * 60_000) },
       JETZT,
     );
-    expect(s).toEqual({ direction: 'sell', price: 42.5 });
+    // Das Alter wandert seit dem 17.08. IMMER mit und nicht mehr nur
+    // zusammen mit dem ATR: Es ist die Einheit der Kante, nicht Zubehör der
+    // Einfangquote. An die Quote gekoppelt fehlte es genau bei den Slots, die
+    // keinen ATR mitführen (Tag, Halte) — und dort ist der Horizont die
+    // eigentliche Aussage. Der ATR selbst bleibt an seine Bedingungen
+    // gebunden (nächster Test).
+    expect(s).toEqual({ direction: 'sell', price: 42.5, alterMs: 300_000 });
   });
 
   it('verwirft eine unbekannte Richtung, statt sie wie „sell" zu behandeln', () => {

@@ -960,7 +960,18 @@ export interface HealthDoc {
    */
   signalSchatten?: Record<
     string,
-    { n: number; kantePct: number | null; rohPct?: number | null } | null
+    {
+      n: number;
+      kantePct: number | null;
+      rohPct?: number | null;
+      /**
+       * Mittlerer gemessener Horizont in Minuten (17.08.) — die EINHEIT der
+       * Kante. Ohne sie ließ sich nicht sehen, dass die Krypto-Kante über
+       * fünf Minuten entstand, während live 48 h gehalten werden muss.
+       * Fehlend = Aggregat aus der Zeit vor der Messung.
+       */
+      alterMin?: number | null;
+    } | null
   > | null;
   konten?: Record<string, number>;
   regime?: { state?: string; vix?: number | null; realizedVolPct?: number | null; aboveSma200?: boolean | null };

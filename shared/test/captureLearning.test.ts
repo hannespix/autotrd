@@ -253,6 +253,13 @@ describe('Erwartungswert aus ATR und tatsächlichem Horizont', () => {
     );
     expect(s).not.toBeNull();
     expect(s?.atrPct).toBeUndefined();
-    expect(s?.alterMs).toBeUndefined();
+    // Das ALTER bleibt, seit es vom ATR entkoppelt ist (17.08.): Es wird
+    // gemessen und nicht aus dem Dokument gelesen, ein kaputtes ATR-Feld kann
+    // es also nicht verderben. Die Einfangquote braucht beide Zutaten und
+    // bleibt damit trotzdem stumm — das prüft der Test darunter.
+    expect(s?.alterMs).toBe(300_000);
+    expect(s?.barMin).toBeUndefined();
+    // Und das ist der Punkt, an dem es hängt: ohne ATR keine Erwartung.
+    expect(bewerteSchattenSignal(s!, 101, 0.001).erwartetPct).toBeUndefined();
   });
 });
