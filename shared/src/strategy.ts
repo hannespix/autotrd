@@ -265,6 +265,50 @@ export interface SignalsConfig {
    */
   forecastSolo?: boolean;
   /**
+   * Darf die TRENDSTIMME allein einsteigen — unter Ampel-Deckung? (Owner-Go
+   * 17.08.) Default true.
+   *
+   * ── Der Befund, der dazu geführt hat ────────────────────────────────────
+   *
+   * Owner-Frage 16.08.: „seit unserem letzten Update gibt es quasi keine
+   * Bewegung mehr." Die Zähler des Scans vom 17.08., 13 Krypto-Symbole:
+   *
+   *   knappVerfehlt   13 von 13   — JEDES Symbol verfehlt um EINE Stimme
+   *   MACD            6 Kauf / 7 Verkauf
+   *   RSI             13× halten
+   *   Bollinger       12× halten
+   *   Prognose        stimmt nicht mit (44 % Trefferquote, zu Recht stumm)
+   *
+   * Das ist kein Zufall, sondern Bauart: MACD hat immer eine Meinung, RSI
+   * (30/70) und Bollinger (`bbBreakoutPct` 95, also die äußersten 5 %)
+   * melden sich nur an Extremen. Eine Konfluenz von 2 aus diesen dreien
+   * heißt faktisch: Einstieg nur am Extrem. In einem ruhigen Aufwärtstrend
+   * — genau der Lage vom 17.08. (VIX 15, über SMA200) — kommt das nie
+   * zustande, und das System steht.
+   *
+   * ── Warum das trotzdem keine Absenkung von `minConfluence` ist ──────────
+   *
+   * `minConfluence: 1` würde JEDEN Einstieg auf eine Stimme stellen, auch
+   * die Gegen-den-Trend-Wette und die reine Umkehr-Wette. Genau die sind
+   * die riskanten. Diese Regel ist eng gefasst und gilt NUR, wenn alle drei
+   * Bedingungen zusammenkommen:
+   *
+   *   1. Die Stimme kommt vom TRENDFOLGER (MACD) — nicht von der
+   *      Umkehr-Familie.
+   *   2. Die Ampel meldet `trend`, also über SMA200 bei ruhiger
+   *      Schwankung. Im Seitwärts- und Stressmarkt gilt weiter die volle
+   *      Konfluenz.
+   *   3. Es ist ein LONG-Einstieg. Ein Short bekommt die Erleichterung
+   *      NIE — im Aufwärtstrend zu verkaufen ist genau das, was die Ampel
+   *      ohnehin sperrt (`regimeEntryBlocked`).
+   *
+   * Alles andere bleibt: Gegenstimmen blockieren weiter (`buyVotes >
+   * sellVotes`), Kostenschwelle, Mindesthalte, Cooldown, Klassen-Regler und
+   * Ausstiegs-Konfluenz sind unberührt. Der Ausstieg wird durch diese Regel
+   * weder leichter noch schwerer.
+   */
+  trendSolo?: boolean;
+  /**
    * Zeitbasis der Signal-Berechnung (Owner-Auftrag 26.07.: „Tradefrequenz
    * deutlich erhöhen"): 'intraday' rechnet RSI/MACD/Bollinger und den
    * Regelbaum auf 5-MINUTEN-Kerzen — Signale drehen dann im Takt des
@@ -542,6 +586,10 @@ export const DEFAULT_STRATEGY: Strategy = {
      * nie der Schutz vor Verlusten. */
     exitConfluence: 3,
     forecastSolo: false, // Prognose braucht eine zweite Stimme zum Einstieg
+    // Ampel-gedeckte Trendstimme (Owner-Go 17.08.) — siehe SignalsConfig.
+    // AN, weil die Alternative gemessen der Stillstand ist: 13 von 13
+    // Symbolen verfehlten die Konfluenz um genau eine Stimme.
+    trendSolo: true,
     // 'daily' seit 30.07. — die 5-min-Voreinstellung ist an der Realität
     // gescheitert: 525 Trades in zwei Handelstagen nach dem Reset, 97 %
     // davon am Signal-Ausstieg gestorben (Trefferquote dort 16,8 %),

@@ -1680,7 +1680,15 @@ async function executeUserTrades(
           tf === 'intraday'
             ? (data.intradayPct != null ? { predictedPct: data.intradayPct } : null)
             : data.forecast,
-          { hasPosition: pos !== null, ...(pos?.side === 'short' ? { positionSide: 'short' as const } : {}) },
+          {
+            hasPosition: pos !== null,
+            ...(pos?.side === 'short' ? { positionSide: 'short' as const } : {}),
+            // Ampel-Deckung für die Trendstimme (17.08.): Nur bei `trend`
+            // darf ein LONG-Einstieg auf einer MACD-Stimme stehen. Ohne
+            // diesen Wert wäre die Regel hier still aus — und der Owner-Go
+            // vom 17.08. hätte im Handel keine Wirkung.
+            regime,
+          },
         );
         // Prognose-Pfeil des Users als zusätzliche gewichtete Stimme
         const vote = predictionVote(predictions.get(symbol), data.price, todayIso);
@@ -2905,6 +2913,8 @@ export async function runScan(force = false): Promise<ScanResult> {
   const voteDirs: Record<string, { buy: number; sell: number; hold: number }> = {};
   /** „hold", dem genau EINE Stimme zur Konfluenz fehlte. */
   let knappVerfehlt = 0;
+  /** Kauf-Signale, die es ohne die Ampel-gedeckte Trendstimme nicht gäbe. */
+  let soloSignale = 0;
   /* Börsen-Uhr des Brokers (Alpaca-Sync Punkt 2): kennt Feiertage und
    * Halbtage, die unsere Kalenderrechnung nicht kennt. `null` = keine
    * belastbare Ablesung → überall gilt die eigene Rechnung wie bisher.
@@ -3062,6 +3072,11 @@ export async function runScan(force = false): Promise<ScanResult> {
         DEFAULT_STRATEGY.indicators,
         effSignals,
         forecast,
+        // Dieselbe Ampel-Deckung wie im Handelspfad (17.08.). Sie MUSS auch
+        // hier stehen: Dieses Signal speist Schatten und Anzeige — rechnete
+        // es mit einer anderen Einstiegsschwelle als die Engine, würde der
+        // Schatten eine Logik messen, die niemand handelt.
+        { regime: regime.state },
       );
 
       /* Die Regime-LESART (MI) ist EINGESTELLT (vorregistrierte Regel,
@@ -3419,6 +3434,16 @@ export async function runScan(force = false): Promise<ScanResult> {
         zuVariante('live_halte', kl, beitragHalte);
       }
       signalDirs[sig.direction] += 1;
+      /* Wie oft die Ampel-gedeckte Trendstimme entschieden hat (17.08.).
+       *
+       * Erkennbar daran, dass ein Kauf-Signal mit WENIGER Stimmen zustande
+       * kam, als die Konfluenz sonst verlangt. Ohne diesen Zähler ließe sich
+       * die Wirkung der Regel nicht von einem allgemein lebhafteren Markt
+       * unterscheiden — und dann wäre nicht zu belegen, ob sie hilft oder
+       * nur zufällig mit besseren Tagen zusammenfiel. */
+      if (sig.direction === 'buy' && sig.buyVotes < DEFAULT_STRATEGY.signals.minConfluence) {
+        soloSignale += 1;
+      }
       // Stimmen je INDIKATOR (04.08.). Warum das nötig wurde: `signalDirs`
       // zeigte über Stunden `buy: 0, sell: 2, hold: 37` — die Konfluenz
       // erzeugt im Aufwärtstrend fast nur Verkaufssignale, und die
@@ -3727,6 +3752,14 @@ export async function runScan(force = false): Promise<ScanResult> {
         signalDirs,
         voteDirs,
         knappVerfehlt,
+        /* Wirkung der Ampel-gedeckten Trendstimme (17.08.).
+         *
+         * `erzeugt` sind die Kauf-Signale dieses Scans, die es ohne die
+         * Regel nicht gäbe; `ampel` sagt, ob sie überhaupt scharf war (nur
+         * bei `trend`). Beide zusammen mit `knappVerfehlt` darüber: Sinkt
+         * `knappVerfehlt` und steigt `erzeugt`, wirkt genau diese Regel —
+         * und nicht ein zufällig lebhafterer Markt. */
+        trendSolo: { erzeugt: soloSignale, ampel: regime.state },
         /* Schatten-Kante je Anlageklasse (MG4) — kumuliert, nicht je Scan.
          *
          * Die Zahl beantwortet die Frage, die die Trade-Kante nicht

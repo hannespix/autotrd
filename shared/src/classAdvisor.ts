@@ -43,7 +43,7 @@
  * verändert, braucht Belege, keine Anekdoten.
  */
 
-import { SCHATTEN_MIN_N } from './classShadow.js';
+import { SCHATTEN_HALTE_MIN_N } from './classShadow.js';
 import { MIN_ACCOUNTS } from './globalLearning.js';
 
 /** Was eine Anlageklasse gemessen hat — Teilmenge von `AttributionSlice`. */
@@ -54,6 +54,13 @@ export interface KlassenErgebnis {
   /**
    * Schatten-Kante der Signalquelle (MG4) — die Messung, die auch ohne
    * Ausführung weiterläuft. Zählt nur, wenn realisierte Trades fehlen.
+   *
+   * Seit dem 17.08. ist das die HALTEDAUER-gerechte Reihe
+   * (`meta/classShadow.klassenHalte`): gemessen über das Fenster, das die
+   * Klasse live wirklich hält, und mit den Kosten, die live wirklich
+   * anfallen. Die alte Fünf-Minuten-Reihe entscheidet nicht mehr — sie
+   * verlangte von jeder Klasse eine Kante, die in ihrem Zeitfenster gar
+   * nicht entstehen kann (siehe classShadow.ts, Abschnitt Halte-Horizont).
    */
   schatten?: { n: number; kantePct: number | null };
   /**
@@ -136,7 +143,10 @@ export type Empfehlung =
  *
  * Ein Probelos, kein Vertrauensvorschuss: Der Schatten misst die
  * SIGNALQUELLE, nicht die Ausführung — ihm fehlen Stop, Ziel und
- * Haltedauer. Halbes Gewicht erzeugt wieder echte Trades (und damit die
+ * Positionsgröße. (Die Haltedauer fehlte ihm bis zum 17.08. auch; seither
+ * misst er über genau das Fenster, das die Klasse live hält. Näher an einen
+ * echten Trade kommt er trotzdem nicht — und deshalb bleibt das halbe
+ * Gewicht.) Halbes Gewicht erzeugt wieder echte Trades (und damit die
  * Kante, die wirklich zählt), ohne viel zu kosten, falls der Schatten zu
  * gut aussah.
  */
@@ -290,7 +300,7 @@ export function rateKlasse(
   ergebnis: KlassenErgebnis,
   gewicht: number,
   minTrades = KLASSE_MIN_TRADES,
-  schattenMinN = SCHATTEN_MIN_N,
+  schattenMinN = SCHATTEN_HALTE_MIN_N,
   globalMinTrades = GLOBAL_MIN_TRADES,
   globalMinKonten = MIN_ACCOUNTS,
 ): KlassenRat {
@@ -399,7 +409,7 @@ export function berateKlassen(
   ergebnisse: Record<string, KlassenErgebnis>,
   gewichte: Record<string, number> = {},
   minTrades = KLASSE_MIN_TRADES,
-  schattenMinN = SCHATTEN_MIN_N,
+  schattenMinN = SCHATTEN_HALTE_MIN_N,
 ): KlassenBericht {
   const raete = Object.entries(ergebnisse)
     .map(([klasse, e]) => rateKlasse(klasse, e, gewichte[klasse] ?? 1, minTrades, schattenMinN))
