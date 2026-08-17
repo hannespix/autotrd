@@ -47,6 +47,7 @@ import {
   classify,
   currencyForSymbol,
   feePartsForClass,
+  istNoOpUebernahme,
   resolveRisk,
   type Position,
   type Strategy,
@@ -170,6 +171,14 @@ export interface AdoptErgebnis {
   trades: number;
   /** Neuer Barbestand (vom Broker). */
   cash: number;
+  /**
+   * Hat diese Übernahme eine MESSZÄSUR gesetzt? (Owner-Befund 16.08.)
+   *
+   * `false` heißt: Sie hat nichts bewegt, `resetAt` blieb ungestempelt und
+   * die Equity-Serie — die Messstrecke der Live-Reife — steht unverändert.
+   * Die Oberfläche sagt das dem Nutzer, statt ihn raten zu lassen.
+   */
+  schnitt: boolean;
   meldung: string;
 }
 
@@ -318,8 +327,13 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
 
   // 2) Broker-Positionen ins Buch — mit frischen Stops aus der aktuellen
   //    Strategie, damit riskPulse sie ab dem nächsten Lauf schützt.
+  // Positionen, die das Buch noch nicht kennt — Teil der Wirkungs-Messung
+  // (s. istNoOpUebernahme): Eine neue Position ist immer eine Zäsur.
+  const buchSymbole = new Set(posSnap.docs.map((d) => d.id));
+  let neuePositionen = 0;
   for (const p of brokerPositionen) {
     if (!(p.qty > 0) || !(p.einstand > 0)) continue; // kein Raten bei kaputten Daten
+    if (!buchSymbole.has(p.symbol)) neuePositionen += 1;
     const cls = classify(p.symbol);
     const risk = resolveRisk(strategy.engine, cls);
     const short = p.seite === 'short';
@@ -432,6 +446,25 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
     0,
   );
   const basisKapital = Math.round((konto.cash + einstandssumme) * 100) / 100;
+
+  /* Bewegt diese Übernahme überhaupt etwas? (Owner-Befund 16.08.)
+   *
+   * Der Schnitt unten kostet die Live-Reife ihre 14-Tage-Messstrecke — zu
+   * Recht, wenn sich die Kapitalbasis verschiebt. Ein Klick OHNE Wirkung
+   * kostete sie bisher genauso, und weil der Scan bei Drift die Einstiege
+   * sperrt, standen sich zwei Sicherungen gegenseitig im Weg (Begründung
+   * ausführlich in shared/src/uebernahmeSchnitt.ts). Die Anti-Wasch-Garantie
+   * bleibt: Sobald etwas bewegt wird, stempelt es wie bisher. */
+  const alteBasis = userSnap.get('wallet.baseCapital') as number | undefined;
+  const wirkung = {
+    geloescht,
+    importiert,
+    neuePositionen,
+    basisVorher: typeof alteBasis === 'number' ? alteBasis : null,
+    basisNachher: basisKapital,
+  };
+  const ohneWirkung = istNoOpUebernahme(wirkung);
+
   ops.push((b) => b.update(userRef, {
     'wallet.paperBalance': cashRund,
     'wallet.baseCapital': basisKapital,
@@ -443,14 +476,18 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
      * jemand sagen konnte, wann die Messlatte verschoben wurde. Jetzt
      * tragen beide Marken das Datum; `uebernahmeAt` unterscheidet die
      * Übernahme vom echten Reset, `resetAt` schneidet die „seit
-     * hier"-Kennzahlen wie überall sonst. */
-    'wallet.resetAt': now,
-    'wallet.uebernahmeAt': now,
+     * hier"-Kennzahlen wie überall sonst.
+     *
+     * NUR wenn die Übernahme etwas bewegt (s. `ohneWirkung`): Ein Abruf, der
+     * dasselbe Depot bestätigt, ist keine Zäsur — er ist ein Abgleich. */
+    ...(ohneWirkung ? {} : { 'wallet.resetAt': now, 'wallet.uebernahmeAt': now }),
     // Bezugsgröße der Tages-Notbremse mitziehen: Verglichen mit einem
     // Phantom-Vortag von 200.000 $ sähe die echte Equity wie ein
     // 50-%-Tagesverlust aus — die Bremse würde feuern und alles sperren,
     // obwohl nichts verloren ist. Nach einer Übernahme beginnt der Tag neu.
-    'risk.vortagEquity': Math.round(konto.equity * 100) / 100,
+    // Ohne Wirkung bleibt der Vortagswert stehen: Die Notbremse soll den
+    // laufenden Tag messen, nicht bei jedem Abgleich neu anfangen.
+    ...(ohneWirkung ? {} : { 'risk.vortagEquity': Math.round(konto.equity * 100) / 100 }),
   }));
 
   /* 4b) Heutigen Equity-Snapshot mit der ECHTEN Equity überschreiben.
@@ -506,15 +543,24 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
    * das mit Buch-Basis 200.000 lief und mit Broker-Equity 100.000
    * übernommen wird, trüge sonst bis zu 120 Tage ein Phantom-Hochwasser
    * und einen Phantom-Max-Drawdown von ~50 % in stats/main. Der Reset
-   * löscht die Serie aus demselben Grund komplett. */
-  const alteSerie = await userRef
-    .collection('equity')
-    .where('date', '<', heute)
-    .select()
-    .get()
-    .catch(() => null);
-  if (alteSerie) {
-    for (const d of alteSerie.docs) ops.push((b) => b.delete(d.ref));
+   * löscht die Serie aus demselben Grund komplett.
+   *
+   * NUR wenn die Übernahme etwas bewegt (Owner-Befund 16.08.): Diese Serie
+   * IST die Messstrecke der Live-Reife. Ein Abruf, der dasselbe Depot
+   * bestätigt, verschiebt keine Kapitalbasis — und darf deshalb auch keine
+   * 14 Tage kosten. */
+  let geschnitteneTage = 0;
+  if (!ohneWirkung) {
+    const alteSerie = await userRef
+      .collection('equity')
+      .where('date', '<', heute)
+      .select()
+      .get()
+      .catch(() => null);
+    if (alteSerie) {
+      for (const d of alteSerie.docs) ops.push((b) => b.delete(d.ref));
+      geschnitteneTage = alteSerie.size;
+    }
   }
 
   /* 7) Diagnose-Protokoll je Übernahme (Audit 13.08., K-5c): Der Owner
@@ -531,7 +577,11 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
     baseCapital: basisKapital,
     positionen: brokerPositionen.length,
     tradesImportiert: importiert,
-    equityTageGeschnitten: alteSerie?.size ?? 0,
+    equityTageGeschnitten: geschnitteneTage,
+    /* Ob gestempelt wurde und warum nicht — die Diagnose muss auch den
+     * NICHT-Schnitt erklären können (Owner-Befund 16.08.). */
+    schnitt: !ohneWirkung,
+    wirkung,
     rechnung:
       'buchCash = brokerCash − 2×Σ(Short-Menge×Einstand) [Buch führt Shorts als '
       + '100-%-Margin, Alpaca schreibt den Erlös gut]; '
@@ -550,7 +600,8 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
   }
   logger.info(
     `adoptBroker ${uid}: ${brokerPositionen.length} Position(en) übernommen, ` +
-      `${importiert} Trade(s) nachgebucht, ${geloescht} Buch-Position(en) entfernt`,
+      `${importiert} Trade(s) nachgebucht, ${geloescht} Buch-Position(en) entfernt` +
+      (ohneWirkung ? ' — ohne Wirkung, Messstrecke bleibt' : ''),
   );
   return {
     ok: true,
@@ -558,9 +609,15 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
     geloescht,
     trades: importiert,
     cash: Math.round(konto.cash * 100) / 100,
+    /* Der Nutzer muss WISSEN, ob dieser Klick seine Messstrecke gekostet
+     * hat — die Zahl steht sonst nirgends, bis er die Live-Reife öffnet. */
+    schnitt: !ohneWirkung,
     meldung:
       `${brokerPositionen.length} Position(en) und ${importiert} Trade(s) vom Broker übernommen; ` +
       `Barbestand jetzt ${konto.cash.toFixed(2)} $. Es wurde nichts gekauft oder verkauft. ` +
-      'Stops und Ziele wurden aus deiner aktuellen Strategie neu gesetzt.',
+      'Stops und Ziele wurden aus deiner aktuellen Strategie neu gesetzt.' +
+      (ohneWirkung
+        ? ' Es hat sich nichts geändert — die Messstrecke der Live-Reife läuft weiter.'
+        : ' Buch und Depot sind wieder gleich; die Messstrecke der Live-Reife beginnt neu.'),
   };
 });
