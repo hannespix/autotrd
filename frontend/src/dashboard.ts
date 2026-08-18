@@ -83,6 +83,8 @@ import {
   kurvenErklaerung,
   bewerteHerzschlag,
   type KurvenWahl,
+  benchmarkKurve,
+  benchmarkSatz,
 } from '@autotrd/shared';
 import type { Unsubscribe } from 'firebase/firestore';
 import {
@@ -7240,6 +7242,22 @@ function renderPfStats(): void {
         trades: imZeitraum((st.trades ?? []) as HistoryTrade[], zr, new Date()),
       });
   const serie = wahl.serie;
+  /* ── Vergleichslinie „einfach halten" (Owner 18.08.) ───────────────────
+   *
+   * Nur auf der SNAPSHOT-Kurve. Die realisierte Trade-Kurve zeigt gebuchte
+   * Gewinne, der Index den Depotwert — beides in ein Bild zu legen wäre ein
+   * Vergleich zweier verschiedener Größen, und er fiele systematisch zu
+   * unseren Gunsten aus, weil offene Verluste dort noch nicht drinstehen.
+   * Genau dieser Unterschied war am 18.08. das Thema: „gestern waren wir
+   * noch knapp 4000 im Plus" — das war der Depotwert, gebucht wurde später
+   * weniger. */
+  const bench = wahl.herkunft === 'snapshots'
+    ? benchmarkKurve(
+        ab === null
+          ? (st.equitySeries ?? [])
+          : (st.equitySeries ?? []).filter((p) => Date.parse(p.date) >= ab.getTime()),
+      )
+    : null;
   const grid = $('pfGrid');
   const hint = $('pfHint');
   const spark = $('pfSpark') as unknown as SVGSVGElement;
@@ -7248,8 +7266,14 @@ function renderPfStats(): void {
   spark.innerHTML = '';
   if (serie.length >= 2) {
     const eq = serie.map((p) => p.equity);
-    const min = Math.min(...eq);
-    const max = Math.max(...eq);
+    /* Die Vergleichslinie teilt sich die Skala mit der Depot-Kurve — sonst
+     * wären zwei Linien mit verschiedenen Maßstäben übereinander, und der
+     * ABSTAND zwischen ihnen, also das einzig Interessante, wäre erfunden. */
+    const bw = (bench?.kurve ?? [])
+      .map((p) => p.bench)
+      .filter((v): v is number => v !== null);
+    const min = Math.min(...eq, ...bw);
+    const max = Math.max(...eq, ...bw);
     const span = max - min || 1;
     const pts = eq.map((v, i) => {
       const x = (i / (eq.length - 1)) * 100;
@@ -7258,8 +7282,28 @@ function renderPfStats(): void {
     });
     const up = eq[eq.length - 1]! >= eq[0]!;
     const color = up ? 'var(--gn)' : 'var(--rd)';
+    /* Gestrichelt und in der Neutralfarbe: Die Vergleichslinie ist der
+     * Maßstab, nicht das Ergebnis — sie darf die Depot-Kurve nicht
+     * optisch überstimmen. Lücken (Tage ohne Indexkurs) werden nicht
+     * überbrückt, sondern beginnen ein neues Segment. */
+    const benchSegmente: string[] = [];
+    let lauf: string[] = [];
+    for (const [i, p] of (bench?.kurve ?? []).entries()) {
+      if (p.bench === null) { if (lauf.length > 1) benchSegmente.push(lauf.join(' ')); lauf = []; continue; }
+      const n = bench!.kurve.length;
+      const x = n > 1 ? (i / (n - 1)) * 100 : 0;
+      lauf.push(`${x.toFixed(2)},${(24 - ((p.bench - min) / span) * 22).toFixed(2)}`);
+    }
+    if (lauf.length > 1) benchSegmente.push(lauf.join(' '));
     spark.innerHTML =
       `<polygon points="0,26 ${pts.join(' ')} 100,26" fill="${up ? 'var(--gn-soft, rgba(52,199,123,.18))' : 'var(--rd-soft, rgba(255,95,95,.18))'}"></polygon>` +
+      benchSegmente
+        .map(
+          (seg) =>
+            `<polyline points="${seg}" fill="none" stroke="var(--t3)" stroke-width="1.1"` +
+            ' stroke-dasharray="3 2" vector-effect="non-scaling-stroke"></polyline>',
+        )
+        .join('') +
       `<polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.4" vector-effect="non-scaling-stroke"></polyline>`;
     spark.removeAttribute('hidden');
   } else {
@@ -7267,7 +7311,14 @@ function renderPfStats(): void {
   }
   // Die Meta-Zeile nennt das gewählte Fenster — sonst sähe eine 7-Tage-Kurve
   // aus wie die ganze Historie eines jungen Kontos.
-  renderPfKurven(serie, (zr === 0 ? '' : `${zeitraumLabel(zr)} · `) + wahl.hinweis);
+  renderPfKurven(
+    serie,
+    (zr === 0 ? '' : `${zeitraumLabel(zr)} · `)
+      + wahl.hinweis
+      // Der Vergleich gehört an die Kurve, nicht in eine eigene Ecke: Wer
+      // die Linie sieht, soll die Zahl daneben lesen können.
+      + (bench && bench.vorsprungPct !== null ? ` · ${benchmarkSatz(bench)}` : ''),
+  );
   renderDepotVerlauf();
 
   if (!s || s.equityDays === 0) {

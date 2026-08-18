@@ -847,6 +847,14 @@ export function watchPortfolioStats(
 export interface EquitySeriesPoint {
   date: string;
   equity: number;
+  /**
+   * Schlusskurs des Vergleichsindex an diesem Tag (Owner 18.08.).
+   *
+   * Der ROHE Kurs, nicht die fertige Vergleichslinie — die entsteht erst
+   * durch `benchmarkKurve()`, weil sie von der Basis abhängt und die Basis
+   * bei jedem Depot-Schnitt wandert. Fehlend = an dem Tag nicht erhoben.
+   */
+  benchClose?: number | null;
 }
 
 export function watchEquitySeries(
@@ -861,7 +869,11 @@ export function watchEquitySeries(
   return onSnapshot(q, (snap) => {
     cb(
       snap.docs
-        .map((d) => ({ date: d.get('date') as string, equity: d.get('equity') as number }))
+        .map((d) => ({
+          date: d.get('date') as string,
+          equity: d.get('equity') as number,
+          benchClose: (d.get('benchClose') as number | undefined) ?? null,
+        }))
         .reverse(),
     );
   });

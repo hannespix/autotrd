@@ -59,6 +59,17 @@ import {
 } from '../../../shared/src/index.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 import { accrueMarginInterest } from '../core/broker.js';
+import { getQuickQuote } from '../core/marketData.js';
+
+/**
+ * Vergleichsindex der Benchmark-Linie (Owner 18.08.).
+ *
+ * Der S&P 500 und nicht ein handelbarer ETF: Es geht um den MARKT als
+ * Maßstab, nicht um ein Produkt mit eigener Kostenquote. Denselben Index
+ * liest die Regime-Ampel im Scan — zwei Maßstäbe für „der Markt" wären
+ * zwei Wahrheiten.
+ */
+const BENCH_SYMBOL = '^GSPC';
 
 /** ~ein halbes Handelsjahr Serie — reicht für Sharpe 90 + MaxDD-Fenster. */
 const EQUITY_WINDOW = 120;
@@ -213,6 +224,20 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
     return priceCache.get(sym) ?? null;
   }
 
+  /* Index-Schlusskurs EINMAL je Lauf (Owner 18.08.).
+   *
+   * Er ist für alle Konten derselbe — ein Abruf je Konto wäre dieselbe Zahl
+   * zum n-fachen Preis. Ein Fehlschlag lässt das Feld weg statt den Lauf zu
+   * gefährden: Ein fehlender Tag unterbricht die Vergleichslinie sichtbar,
+   * eine erfundene Zahl würde sie unsichtbar verfälschen. */
+  let benchClose: number | null = null;
+  try {
+    const q = await getQuickQuote(BENCH_SYMBOL);
+    if (q.price > 0) benchClose = Math.round(q.price * 100) / 100;
+  } catch (err) {
+    logger.warn('Vergleichsindex nicht lesbar — Benchmark-Linie hat heute eine Lücke', err);
+  }
+
   let snapped = 0;
   let zinsSumme = 0;
   // Untergrenze des rollierenden Exit-Fensters (Task 115) — EINMAL je Lauf,
@@ -274,6 +299,10 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         balance: r2(balance),
         positionsValue,
         positionsCount: stand.positionen.length,
+        // Der ROHE Indexkurs, nicht die fertige Vergleichslinie: Die Kurve
+        // hängt an der Basis, und die wandert bei jedem Depot-Schnitt mit
+        // (siehe shared/src/benchmark.ts).
+        ...(benchClose !== null ? { benchClose } : {}),
         updatedAt: now.toISOString(),
       });
 

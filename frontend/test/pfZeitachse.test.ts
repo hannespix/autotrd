@@ -40,6 +40,37 @@ describe('Performance-Zeitachse — Markup und Logik', () => {
   });
 
   it('die Meta-Zeile nennt das gewählte Fenster', () => {
-    expect(dashboard).toContain("(zr === 0 ? '' : `${zeitraumLabel(zr)} · `) + wahl.hinweis");
+    // Seit dem 18.08. hängt der Benchmark-Satz hinten dran, deshalb steht der
+    // Ausdruck über mehrere Zeilen. Geprüft werden die zwei Teile, auf die es
+    // ankommt — nicht die Formatierung.
+    expect(dashboard).toContain("(zr === 0 ? '' : `${zeitraumLabel(zr)} · `)");
+    expect(dashboard).toContain('+ wahl.hinweis');
+  });
+
+  it('der Vergleich mit „einfach halten" steht an derselben Zeile', () => {
+    /* Owner 18.08.: „gestern waren wir noch knapp 4000 im plus." Ohne
+     * Maßstab lässt sich nicht sagen, ob das der Markt war oder das System.
+     * Der Satz gehört an die Kurve — wer die Linie sieht, soll die Zahl
+     * daneben lesen können, nicht in einer anderen Ecke suchen. */
+    const render = dashboard.slice(dashboard.indexOf('function renderPfStats'));
+    expect(render).toContain('bench && bench.vorsprungPct !== null ? ` · ${benchmarkSatz(bench)}`');
+  });
+
+  it('die Vergleichslinie zeichnet NUR auf der Snapshot-Kurve', () => {
+    /* Die realisierte Trade-Kurve zeigt gebuchte Gewinne, der Index den
+     * Depotwert. Beides in ein Bild zu legen wäre ein Vergleich zweier
+     * verschiedener Größen — und er fiele systematisch zu unseren Gunsten
+     * aus, weil offene Verluste in der realisierten Kurve fehlen. Genau
+     * dieser Unterschied war am 18.08. das Thema. */
+    const render = dashboard.slice(dashboard.indexOf('function renderPfStats'));
+    expect(render).toContain("const bench = wahl.herkunft === 'snapshots'");
+  });
+
+  it('beide Linien teilen sich EINE Skala', () => {
+    // Zwei Maßstäbe übereinander würden den Abstand zwischen den Linien
+    // erfinden — und der Abstand ist das einzig Interessante.
+    const render = dashboard.slice(dashboard.indexOf('function renderPfStats'));
+    expect(render).toContain('const min = Math.min(...eq, ...bw);');
+    expect(render).toContain('const max = Math.max(...eq, ...bw);');
   });
 });
