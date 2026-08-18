@@ -65,6 +65,60 @@ describe('Wörterbuch-Hygiene der Tips', () => {
     }
   });
 
+  it('INFO_EN ist VOLLSTÄNDIG — jeder deutsche Tip hat eine englische Fassung', () => {
+    /* Seit dem 18.08. (Tranche 5c) sind alle 70 Tips übersetzt. Dieser Test
+     * hält den Zustand — er widerspricht dem Fallback NICHT, sondern greift
+     * woanders: Der Fallback ist das Laufzeit-Netz (nie ein leeres Popover),
+     * dieser Test die Review-Pflicht (ein neuer Tip kommt zweisprachig).
+     *
+     * Ohne ihn verfiele die englische Oberfläche schleichend zurück, und
+     * zwar unbemerkt — GERADE WEIL der Fallback so leise ist: Wer einen
+     * deutschen Tip ergänzt und den englischen vergisst, sieht keinen
+     * Fehler, keine Warnung und keinen roten Balken. Er sieht im
+     * Englisch-Modus einen deutschen Absatz, den er selbst für richtig
+     * hält. Diese Zeile macht daraus einen roten Balken. */
+    const ohneEn = Object.keys(INFO_DE).filter((id) => {
+      const u = INFO_EN[id];
+      return !u || !u.t || u.t.length === 0 || !u.d || u.d.length === 0;
+    });
+    expect(ohneEn, `ohne englische Fassung: ${ohneEn.join(', ')}`).toEqual([]);
+  });
+
+  it('keine englische Fassung ist bloß der deutsche Text', () => {
+    /* Der billigste Weg, den Vollständigkeits-Test zu bestehen, wäre, den
+     * deutschen Text nach INFO_EN zu kopieren. Das Ergebnis wäre schlimmer
+     * als eine Lücke: Der Fallback ist als „noch nicht übersetzt" lesbar,
+     * eine Kopie behauptet, sie sei die Übersetzung.
+     *
+     * Ausnahmen brauchen einen Namen und einen Grund — eine Ausnahme ohne
+     * beides ist der Anfang einer stillen Liste. */
+    const gleichErlaubt = new Set([
+      'loadouts', // deutsches Lehnwort aus dem Englischen: „Loadouts" ist beides
+      'macd', // ausgeschriebener Fachbegriff — „Moving Average Convergence/Divergence"
+      //        steht im Deutschen bereits englisch da; eine Eindeutschung wäre
+      //        keine Übersetzung, sondern eine Erfindung.
+    ]);
+    for (const [id, tip] of Object.entries(INFO_DE)) {
+      if (!gleichErlaubt.has(id)) {
+        expect(INFO_EN[id]?.t, `Überschrift von „${id}" ist unübersetzt`).not.toBe(tip.t);
+      }
+      expect(INFO_EN[id]?.d, `Text von „${id}" ist unübersetzt`).not.toBe(tip.d);
+    }
+  });
+
+  it('auch die Regel-Bausteine (node:*) sind übersetzt', () => {
+    /* Ihre Schlüssel tragen einen Doppelpunkt und rutschten deshalb durch
+     * jede Prüfung, die Schlüssel mit /[a-zA-Z0-9_]+/ zählt — beim Abschluss
+     * von Tranche 5c fehlten genau diese sieben, und aufgefallen ist es erst
+     * durch den Vollständigkeits-Test darüber. Diese Zeilen halten sie
+     * einzeln fest, damit sie nicht ein zweites Mal unsichtbar werden. */
+    for (const id of Object.keys(INFO_DE).filter((k) => k.startsWith('node:'))) {
+      expect(INFO_EN[id]?.t, `${id} ohne englische Überschrift`).toBeTruthy();
+      expect(INFO_EN[id]?.d, `${id} ohne englischen Text`).toBeTruthy();
+    }
+    expect(INFO_EN['node:crossover']?.t).toBe('Rule: crossover');
+  });
+
   it('kein deutscher Tip ist leer — INFO_DE ist die Quelle der Wahrheit', () => {
     for (const [id, tip] of Object.entries(INFO_DE)) {
       expect(tip.t.length, `Überschrift von „${id}" ist leer`).toBeGreaterThan(0);

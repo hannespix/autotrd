@@ -26,12 +26,22 @@ export interface Tip {
  * mehrere Sätze). Sie werden deshalb NICHT einzeln ins allgemeine Wörterbuch
  * gehoben, sondern bleiben hier — als zwei Records nebeneinander.
  *
- * `INFO_DE` ist vollständig und die Quelle der Wahrheit. `INFO_EN` darf
- * lücken, und zwar FELDWEISE: Ein Eintrag mit übersetzter Überschrift, aber
- * ohne übersetzten Fließtext, zeigt die englische Überschrift über dem
- * deutschen Text. Das ist während der schrittweisen Übersetzung der einzige
- * Zustand, der weder lügt noch etwas verschluckt — und es erlaubt, die
- * kurzen Überschriften vorzuziehen, wo die langen Texte noch fehlen.
+ * `INFO_DE` ist vollständig und die Quelle der Wahrheit. Der Fallback ist
+ * FELDWEISE: Ein Eintrag mit übersetzter Überschrift, aber ohne übersetzten
+ * Fließtext, zeigt die englische Überschrift über dem deutschen Text — nie
+ * einen leeren Kasten, nie einen Schlüsselnamen.
+ *
+ * ── Stand seit 18.08. (Tranche 5c): `INFO_EN` ist VOLLSTÄNDIG ─────────────
+ *
+ * Alle 70 Einträge sind übersetzt. Der Fallback bleibt trotzdem, und das ist
+ * kein Widerspruch — die beiden Regeln greifen an verschiedenen Stellen:
+ *
+ *   - Zur LAUFZEIT ist der Fallback das Sicherheitsnetz. Ein fehlendes Feld
+ *     darf nie zu einem leeren Popover führen, egal wodurch es entsteht.
+ *   - Im REVIEW ist Vollständigkeit Pflicht. `infotips.test.ts` verlangt zu
+ *     jedem neuen deutschen Tip auch den englischen; sonst verfällt die
+ *     englische Oberfläche wieder schleichend, und zwar unbemerkt — genau
+ *     weil der Fallback so leise ist.
  */
 export const INFO_DE: Record<string, Tip> = {
   // ── Klassische Strategie-Parameter ──
@@ -453,6 +463,218 @@ export const INFO_EN: Record<string, Partial<Tip>> = {
   atrTake: {
     t: 'ATR target',
     d: 'The same principle for taking profits: the target sits this multiple of the average daily swing above the entry. Usually sensible larger than the ATR stop (about double), so that gains can outweigh losses. 0 = off, then the percentage applies.',
+  },
+  scan: {
+    t: 'Scan interval',
+    d: 'How often (in minutes) the engine checks all watchlist symbols for new signals. Five minutes is the finest step — the free market data does not reliably deliver anything shorter.',
+  },
+  periode: {
+    t: 'Data period',
+    d: 'How much price history the indicator computation sees (e.g. one year of daily candles). It affects moving averages and the context of the signals, not the trading frequency.',
+  },
+  maxPos: {
+    t: 'Maximum position size',
+    d: 'The largest share of the starting capital a SINGLE position may tie up. The classic risk-management tool against concentration risk: 10 % means a total loss on one symbol costs at most a tenth of the portfolio.',
+  },
+  forecastSolo: {
+    t: 'Let the forecast decide alone',
+    d: 'Normally this is OFF: on entry the forecast counts at most so much that a real indicator vote must still join it. Otherwise it clears the threshold of 2 single-handedly with a weight of 2 — and “confluence of three indicators” would be a label, not a fact. On EXIT it always counts fully anyway. Switch this on if you deliberately want to give the forecast the lead.',
+  },
+  resetWallet: {
+    t: 'Reset account',
+    d: 'Deletes the trading history, open positions and all metrics, and sets the balance back to your starting capital. WHAT IT IS FOR: after a larger strategy rebuild, the old trades measure a system that no longer exists. Leaving them would not be harmless: the metrics run over the last 500 trades, and because the new engine deliberately trades far less often, the old numbers would keep dragging the average for months — you could never tell whether an improvement came from the filters or merely from dilution. WHAT STAYS: all price data, candles and indicators, the forecast hit rates (they measure predictions, not trades — and they are the training history of the self-optimiser), your strategies and your drawn forecast arrows. WHAT GOES: trades, positions, equity curve, metrics, tuner fleet, shadow portfolios. A cut mark is recorded so it stays traceable from when measurement started. Cannot be undone.',
+  },
+  brokerStatus: {
+    t: 'Live-money connection',
+    d: 'LIVE MATURITY is the most important line on this card. It implements the rule that the switch is only thrown once the system demonstrably makes money — and not as a sticky note but as a lock in the execution path. Even with both approvals in place, trading stays in our own book as long as one criterion is missing. The reason for that hardness: the moment somebody wants to flip the switch against the data is exactly the moment they least want to look at the data. FIVE CRITERIA: (1) sample ≥ 40 trades — calibrated to the daily regime (13 Aug., owner decision: “live in about two weeks if everything works well”); a daily trade carries more statistical weight than a 5-minute trade, and the earlier 200 came from the 5-minute era. (2) Profit factor ≥ 1.20, not 1.00 — paper trading systematically understates reality (partial fills, real slippage in thin books, prices missed between signal and order); switching at exactly 1.0 means switching live to below it. (3) Fee share ≤ 50 % of the gross result — above that the system carries on paper, but any deterioration in execution tips it immediately. (4) Net result above zero. (5) Measurement run ≥ 14 uninterrupted days — a profit over three days is weather, not climate; the run counts from the last account reset, because throwing away a bad stretch does not let you keep its maturity. Criteria 2–4 are the condition behind “if everything works well”: two bad weeks open the gate no more than before. THE EDGE PER TRADE below is the number everything hangs on: what a trade brings in on average against what it costs. A coverage below 1 means every single trade loses money in expectation — no better market phase and no luck fixes that, only fewer and better trades. It checks the connection to the broker (Alpaca) WITHOUT sending an order — testing the connection with your first trade means testing it with money. WHY ALPACA: because it is the only provider running a paper account on the same interface as the live account; only the address differs. That lets the whole chain — keys, order format, reconciliation, error cases — be rehearsed on a real account without risking a cent. THREE SWITCHES, ALL THREE REQUIRED: (1) keys stored — only in the server environment, never in the database, never in the browser. (2) Strategy set to live money — the switch in your settings. (3) Environment approval ALPACA_ALLOW_LIVE — a second switch in a different place that no user interface can reach. If one is missing, everything keeps running in our own book. That is deliberate: a stray click must not be able to move real money, and neither must an env var set by accident. RECONCILIATION is the most important ongoing control in live operation, and it checks both directions: a position that exists only at the broker is a risk the engine knows nothing about — it will never close it. A position that exists only in our own book makes the engine plan around cover that is not there. Long and short are told apart even when the quantity matches. AGAINST DOUBLE ORDERS: every order carries an identifier from the scan that triggered it. If a cloud function restarts after an error, the broker recognises the identifier and rejects the repeat — instead of opening a second position nobody wanted.',
+  },
+  taxReport: {
+    t: 'Tax export (Germany)',
+    d: 'Prepares the trading history the way German tax law wants to see it — separated into pots, because gains and losses may NOT be freely offset against each other here. Throwing everything into one sum systematically understates the tax owed; that is the most common mistake in home-made evaluations. THE FOUR POTS: (1) Equities — losses from share sales may only offset gains from share sales (§ 20 (6) sentence 4 EStG); an equity loss does not rescue an ETF gain. (2) Other — ETFs, funds, bonds. (3) Futures and derivatives — this includes EVERY short sale, crypto included. (4) Private — cryptocurrencies count as a private disposal transaction (§ 23 EStG) under an entirely different regime: your personal tax rate instead of the flat withholding tax, but completely tax-free after ONE YEAR of holding. That deadline is computed to the day, not as 365 days — in leap years those differ by one day, and one day decides the entire gain here. FIFO: with several purchases of the same instrument, the oldest holding counts as sold first — the law prescribes it, and the entry price decides the gain. The calculation uses the full history including trades an account reset moved into the archive: a sale in January stays taxable even if you reset in March. EXEMPTION LIMIT, not an allowance: if the crypto gain stays below the limit it is entirely tax-free — one euro above and the WHOLE amount becomes taxable. WHAT THIS IS NOT: tax advice. No tax liability is computed, deliberately — that depends on church tax, filing status, exemption orders at other banks and loss carry-forwards this system does not know about. The CSV file is meant for your tax adviser.',
+  },
+  classWeights: {
+    t: 'Capital per asset class',
+    d: 'A factor on the position size, separately for every asset class: 0 = no longer trades, 1 = normal, 1.5 = larger slices. WHY A DIAL AND NOT A SWITCH: the measured class edges lie between −0.41 % and +0.81 % per dollar traded — everything sits in between, and a switch knows only two answers to a continuous question. WHAT THE NUMBER MEANS: “edge per dollar” is not the profit but the profit AFTER fees divided by the volume traded. It answers the only question that matters: does this class carry its own friction? An example from real numbers: 290 crypto trades at −0.19 % per dollar produced −$1,132 — the same history without crypto stood at +$40 instead of −$1,093. THE DIAL CONTROLS ENTRIES ONLY. An open position is always closed, even if its class now sits at 0; otherwise one click on a dial would imprison holdings. WEIGHT 0 DOES NOT STOP THE MEASUREMENT: signals and the shadow edge keep forming, so a switched-off class can earn its way back. Without that, every shutdown would be final — whoever stops measuring can never find out whether the decision still holds. LIMITS: the dial multiplies onto the same factor as conviction sizing and is capped together with it at 1.5; the concentration limit remains the last authority. Two factors cannot add up into leverage.',
+  },
+  classAutoTune: {
+    t: 'Auto-adjust classes',
+    d: 'Lets the daily run change the weights itself — in steps of 0.25 towards the proposal, not in one jump. ON BY DEFAULT since 9 Aug.: before that every proposal had to be adopted by hand, and that is exactly where it failed — the measurement sat there and nothing happened. Anyone who prefers to decide themselves switches it off here; the recommendations stay visible. OTHER PEOPLE’S EXPERIENCE COUNTS TOO: if this account has not yet made 30 trades in a class, the evidence from the overall pool applies — but only from 50 trades across at least 3 accounts, and it may raise the weight to 1 at most. Throttling and switching off may happen on other people’s numbers (a false alarm only costs missed chances); RAISING the stake only on your own. The journal records the source of the evidence for every move. WHY STEPS: a measurement is a snapshot. If the weight jumped to the full proposal at every evaluation, it would swing back and forth between weeks, and every switch costs trades that belonged to the old setting. THE ONE EXCEPTION: anything structurally burning money (more than 0.1 % loss per dollar over at least 30 trades) is set to 0 immediately instead of in stages — a false alarm only costs missed chances there, hesitation costs real money, and the shadow keeps the way back open. EVIDENCE BEFORE OPINION: below 30 trades the automation does not touch a weight, neither up nor down, and not back to the default either. A class with a single trade would otherwise trigger a capital decision. THE SHADOW may only BRING BACK, never switch off: it lacks the stop that caps real losses, so a negative shadow edge is no evidence of a negative trade return — a positive one, by contrast, is a reason to try again at half weight. Every change lands in the journal with a reason; a weight that moves on its own has to stay explainable.',
+  },
+  loadouts: {
+    t: 'Loadouts',
+    d: 'Ready-made base settings as a starting point — from the calm “boomer portfolio” to “YOLO full throttle”. WHAT A LOADOUT DOES: it sets the trading options (engine parameters, signals, indicators, leverage) to one coherent character. Watchlist, capital, broker connection and your start/stop switch ALWAYS stay yours. WHAT IT DOES NOT DO: it promises no return — nobody knows today which values actually make money; that is exactly what the running shadow statistics measure. The descriptions may wink, the risk line beneath them never lies: “YOLO” really does mean 3× leverage and shorts, with everything that entails (margin-call risk, theoretically unlimited short losses). NO SHACKLE: after adopting one you keep adjusting freely, and the daily self-optimiser keeps learning as normal — a loadout is a starting point, not a subscription. PREVIEW FIRST: “View” shows field by field what would change; adoption only happens on a click, and everything runs through the same server validation as any manual entry. YOUR OWN LOADOUTS: you can save your current (stored) state under a name and bring it back with one click later — handy before you try something wild.',
+  },
+  bestPractice: {
+    t: 'Proven settings',
+    d: 'Shows the settings of the account whose ENGINE most recently produced the best record — recomputed daily, stored anonymously. WHY ONLY ENGINE TRADES COUNT: an account can lead because of a single lucky manual hit; settings that had nothing to do with the success would then be crowned. So only what the automation itself traded is counted. LUCK PROTECTION: a winner is only crowned from 30 engine trades, 14 days of measurement and a positive edge after fees — otherwise the daily best among a handful of accounts is mostly variance, not skill. WHAT IS ADOPTED: engine parameters, signal settings, indicators and the class dials. NOT adopted are the watchlist, capital and your start/stop switch. WHY THERE IS NO AUTOMATION: if every account jumped to the best one, they would all put the same question to the market — and the collective learning, which draws its information from DIFFERENT settings, would stop. So adoption stays a deliberate decision with a preview of the differences.',
+  },
+  adviseSettings: {
+    t: 'Check settings',
+    d: 'Looks for settings that work AGAINST EACH OTHER — regardless of how the market is running. Examples from a real account: 3× leverage with the trailing stop switched off (the leverage triples the give-back of every paper gain, and the one mechanism that would secure it is off). Or “max. 30 positions” while the correlation cap binds at 24 — the number sits there and does nothing. Or 10 % per position times 3× leverage = 30 % of equity in a single name, more than the concentration limit would ever allow without leverage. IMPORTANT: this is NOT an optimiser. It does not know which values produce returns — nobody can, from an empty trading history. Findings like these need no statistics, only arithmetic, and that is precisely why they may be automated. What actually PAYS is measured by the daily self-optimiser, which runs variants in the shadow and only promotes what passes a statistical threshold. So “no suggestions” means “nothing contradicts itself”, not “optimal”. Nothing is changed automatically: first show, then tick, then adopt — and every suggestion states its reason, so that next time you spot it yourself.',
+  },
+  engineMode: {
+    t: 'Trading mode',
+    d: 'Which machine trades your wallet. “Confluence” (default) is the fast layer: RSI, MACD, Bollinger and the forecast every 5 minutes, with stop loss and targets. “Momentum” is the calm one: once a week the 8 strongest tradable markets of the last 12 months are bought equally weighted — nothing more happens. The difference in numbers: instead of dozens of trades a day, typically 0 to 3 orders a week. That is exactly the point, because across 297 real trades the fees came to 2.7 times the gross result. Momentum is one of the few methods that kept working for decades even AFTER it was published. Two things you need to know: there is deliberately NO stop loss — the strategy lives on enduring pullbacks, and a tight stop would throw it out exactly where it earns. And it has hard phases: at trend reversals momentum loses heavily. The only protection is the market filter — if the S&P 500 sits below its 200-day average, nothing is bought and the account goes to cash. The 5-minute scan leaves a momentum wallet entirely alone; otherwise the two machines would sell each other’s positions out from under them.',
+  },
+  engineWhy: {
+    t: 'What the engine is doing',
+    d: 'The operating state of the last scan in plain words. The reason for this card: five mechanisms have a say in whether a trade happens — market traffic light, self-learning trade filter, news veto, cost threshold and leverage traffic light. All of them work out of sight, and “nothing is happening” looks exactly the same under a sharply set rule as under a broken system. Instead, this states WHAT was checked and why it was rejected — for instance “6 short sales rejected, the market is rising”. At the top the situation: market state with VIX and realised volatility, an upcoming economic event, the turn of the month, and how many trades the last scan triggered. In the middle the rejection reasons — only the ones that actually bit; a list of nothing but zeroes is not read twice. At the bottom, how many accounts are actively trading, how many run a quiet core holding, and which symbols currently sit in a short-squeeze setup (negative funding rate with a rising price — the constellation behind the sharpest upward moves). All numbers come from the scan itself, not from a second calculation: what stands here is what the engine really did.',
+  },
+  hebelAmpel: {
+    t: 'Leverage traffic light',
+    d: 'When the tool may go in big with borrowed money. This used to hang on confluence alone — that is, on how many indicators currently agree. But that does not measure whether that agreement has ever made money — losing kinds of trade can have some indicators agreeing too, and leverage on top multiplies the loss instead of the return. So the order is now “edge first, leverage second”. Five conditions must hold SIMULTANEOUSLY, and deliberately from five different sources — five conditions all derived from price would be one condition in five disguises: (1) the indicators clearly agree, not narrowly; (2) the overall market is in a calm uptrend; (3) this exact kind of trade has demonstrably made money in your OWN trading history over at least 30 trades (statistically backed, not a backtest); (4) futures-market positioning is not against it — no leverage into a crowded market; (5) the expected move is at least five times the trading costs, because leverage multiplies the fees too. If just one condition fails, trading is cash-covered as always. That happens rarely — which is exactly the intent: go in big only when the opportunity is both safe AND cheap. The margin call at 25 % and the concentration limit continue to apply unchanged.',
+  },
+  sizingBase: {
+    t: 'Sizing base',
+    d: 'What the position size is computed from. “Available cash” (default): every purchase takes its percentage of the currently free cash — the wallet keeps working even with positions already open, and the slices shrink automatically as cash falls. “Starting capital (fixed)”: every slice is the same size (a percentage of the starting capital) — more predictable, but as soon as the remaining cash no longer covers a full slice, the engine buys nothing at all. That is precisely what used to leave a lot of cash idle.',
+  },
+  watchlist: {
+    t: 'Watched',
+    d: 'Watching happens at TWO depths. Shallow: every one of the 166 catalogue markets whose exchange is currently open gets a fresh price every five minutes — nothing runs away unnoticed any more. That became possible through a batch request fetching 20 symbols per call: 9 requests for the whole catalogue instead of 166. Before, coverage rotated through in chunks of 15, so a symbol could be an hour old. Deep: the symbols in this list additionally get 5-minute candles, RSI, MACD, Bollinger and the forecast — and only they are traded. They are chosen by the daily ranking run across the full catalogue, plus every open position (which has to stay in until it is closed, otherwise it would lose its stop loss). Why not everything deep? A price is one number; a deep analysis is candle series and indicator computations per symbol and interval — the shallow layer costs almost nothing, the deep one scales directly with the count.',
+  },
+  fcCombo: {
+    t: 'Combination statistics (self-tuning)',
+    d: 'The system computes every forecast in parallel with several lookback windows as a “shadow” and grades them against reality once they mature. The window with the best realised hit rate (tiebreak: smallest MAE) drives the live forecast — that is the self-improvement. Important: as long as no hit rate is proven, the forecast does NOT vote at all when trading; it has to earn its weight first.',
+  },
+  mae: {
+    t: 'MAE — mean absolute error',
+    d: 'The average distance between forecast and realised price, as a percentage of the price. The smaller, the more precise the prediction. The MAE also calibrates the width of the confidence band.',
+  },
+  anEquity: {
+    t: 'Account curve (realised)',
+    d: 'The sum of all CLOSED trades, step by step. Deliberately something other than the performance curve: that one shows a value per day including the paper gains of open positions. This line jumps per trade and shows only what was actually realised — a paper gain on a still-open position is an opinion, not a result. The dashed line is the starting point: everything above it is earned, everything below it lost.',
+  },
+  anHisto: {
+    t: 'Distribution of results',
+    d: 'How many trades landed in which result band. The most important question only this chart answers: are the losses bigger than the gains? A strategy with a 60 % hit rate is ruinous if the few losers weigh three times as much as the many winners — you never see that in the hit rate alone. The buckets sit symmetrically around zero so that a gain and a loss never land in the same bar.',
+  },
+  anStunde: {
+    t: 'Result by trading hour',
+    d: 'When during the day the strategy earns or loses — in New York exchange time, not UTC (otherwise daylight saving would push the opening hour into a different bucket twice a year). A typical pattern: the first trading hour is the most volatile and, for many strategies, the most expensive. If your losses are concentrated in one time window, you do not need new indicators, you need a trading break.',
+  },
+  kollektiv: {
+    t: 'Learned from all accounts',
+    d: 'Which setting changes have proven themselves ACROSS ALL accounts. This knowledge does two things — and explicitly not two others. First it sets the order: there are more candidates than slots in your shadow fleet, and the ones proven elsewhere go first, so you arrive at the good setting sooner. Second, a new account starts from it instead of from the factory values. What it does NOT do: lower your burden of proof. Every adoption in YOUR account still needs the full statistical evidence from your own trades — because every account starts from a different setting, and what helped there can hurt here. And only counters flow in (how often tested, how often adopted), never individual trades or amounts from other users.',
+  },
+  kurzfrist: {
+    t: 'Short-term forecast (intraday)',
+    d: 'A projection of the next hour on 5-minute candles — recomputed on every scan. It learns in its own control loop (hourly grading against realised bars), separately from the daily forecast.',
+  },
+  sharpe: {
+    t: 'Sharpe ratio',
+    d: 'Return per unit of risk: the average daily return divided by its volatility, scaled to a year (√252). Above 1 counts as good, above 2 as very good. A high return with wild swings can have a WORSE Sharpe than a calm moderate one. In the portfolio, “30” and “90” stand for the last 30 or 90 daily snapshots. “--” means: not enough curve yet, or a completely flat series — deliberately not a flattering 0.',
+  },
+  maxdd: {
+    t: 'Max drawdown',
+    d: 'The deepest fall from an interim high, in percent — “how much did it hurt at worst?”. The most important number for staying the course: −30 % needs +43 % just to break even, −40 % already needs +67 %. Smaller is better, even at the cost of a slightly lower return.',
+  },
+  drawdown: {
+    t: 'Drawdown history',
+    d: 'For each day: the distance to the highest account balance up to that point, in percent. 0 means a new high; every downward excursion is an ongoing decline. This panel shares its time axis with the equity curve above — a trough in the curve and its drawdown sit exactly one below the other. That shows at a glance whether losses were short dips or long dry spells, and how long the recovery back to the high-water mark took. The “Max DD” figure in the table is computed by the server from the same series.',
+  },
+  fees: {
+    t: 'Fees (commission + slippage)',
+    d: '0.1 % order commission plus 5 basis points of slippage (the difference between the quoted and the actual fill price). This is not merely displayed here — the paper broker REALLY charges it, on the same terms as the backtest.',
+  },
+  gesamtPnl: {
+    t: 'Total P&L — what this number measures (and what it does not)',
+    d: 'Total P&L = equity (live) − capital base. The base is RE-ANCHORED on a portfolio adoption or a reset — the number then counts only from that cut, and it is the sum of “realised” (closed since the cut) and “open” (the unrealised standing of open positions; only a real result once closed). The trade analysis answers a DIFFERENT question: what did the closed trades produce inside the chosen time window — including the ones before the cut. So both can be right at the same time and look contradictory: old closings in the red, open positions currently in the green. The most honest single value stays equity (live) — the balance identical to the broker’s.',
+  },
+  equityCurve: {
+    t: 'Equity curve',
+    d: 'The course of your ENTIRE portfolio value (cash plus all open positions at that day’s price). One point is written down once a day after the US close — unlike the live display, the curve therefore cannot be made to look “nice” by an interim reading. It is the most honest single chart there is about a strategy: individual winners do not count, only whether the line rises over weeks.',
+  },
+  hwm: {
+    t: 'High-water mark',
+    d: 'The highest portfolio value your account has ever reached. The reference point for the drawdown: everything below it has not been made back yet. It only rises when a new record is set.',
+  },
+  profitFactor: {
+    t: 'Profit factor',
+    d: 'The sum of all gains divided by the sum of all losses, across the closed trades. Above 1 means you make money on balance; 1.5 counts as solid, below 1 the strategy loses. The pleasant thing about this number: it works independently of the hit rate — a few large winners can carry many small losses. “--” appears as long as there is not a single losing trade (the value would be infinite, which says nothing).',
+  },
+  expectancy: {
+    t: 'Expectancy per trade',
+    d: 'What an average closed trade brought in (total P&L divided by the count). The number translates the strategy into one sentence: “every trade returns $X on average.” Negative means: trading more often loses money faster — raising the frequency only pays with a positive expectancy.',
+  },
+  kosten: {
+    t: 'Friction (trading costs)',
+    d: 'Every round trip costs commission plus slippage — on the buy AND on the sell. What matters is the “headroom over costs”: the average winning move before fees, divided by those costs. Below 2 it is mostly the broker earning, because more than half of every winning move then goes into friction. Short timeframes produce small moves — which is why more trading frequency strictly requires enough movement per trade, otherwise it merely accelerates the loss. “Avg. gross gain” and “avg. gross loss” show the pure price moves without fees, so it becomes visible whether the strategy itself works.',
+  },
+  momentum: {
+    t: 'Momentum ranking',
+    d: 'Instead of a fixed watchlist, the entire catalogue is sorted by a single number: the return of the last twelve months, with the most recent month NOT counted. The reason for the omission: over a one-month horizon prices tend to revert, the actual momentum sits in the months before it — counting the last month mixes two opposing effects. The strongest eight are bought, equally weighted, and only while the benchmark index sits above its 200-day line. Below it the portfolio stays entirely flat: momentum strategies break down almost exclusively during recoveries AFTER market crashes, and this filter is the cheapest known insurance against that. Rebalancing is weekly, not daily — every rebalance costs fees, and that is exactly what the old strategy foundered on. The approach is the best-documented anomaly in the finance literature (Jegadeesh/Titman 1993; Asness/Moskowitz/Pedersen 2013 across eight asset classes). Here it runs as a shadow portfolio first — the switch only happens once it beats the running strategy with statistical proof.',
+  },
+  autotuner: {
+    t: 'Auto-tuner',
+    d: 'The system continuously tries your setting against variants of it — each variant changes exactly ONE value (e.g. the minimum holding period) and runs its own shadow account on the same prices, without real money. After enough closed trades they are compared: only if a variant performs demonstrably better in statistical terms (Welch t-test, p < 0.05, plus a noticeable margin) is it adopted — at most one change per day, so that afterwards it is clear what helped. Why shadow accounts and not a backtest over the past: a parameter grid reliably finds the combination that best explains past noise, and fails afterwards. The fleet, by contrast, trades on prices nobody knew at the moment of the decision. Position size, stop loss and take profit are NEVER touched by the tuner — risk control stays with you.',
+  },
+  tradejournal: {
+    t: 'Trade journal',
+    d: 'Every booked trade — engine or manual — automatically gets a journal entry with the frozen snapshot of the signal: which indicators voted how, how high the confluence was, what the regime said, whether the forecast joined in. Frozen because the same indicators stand differently five minutes later — from the trade history alone the WHY can no longer be reconstructed. Your job is the assessment: grade A (by the rules and clean) through D (mistake identified), plus a note. You cannot change the facts themselves — a journal whose numbers can be prettied up afterwards would be worthless as a learning tool. The value appears on re-reading: losers graded A are bad luck, losers graded D are a pattern.',
+  },
+  struktursuche: {
+    t: 'Structure search',
+    d: 'The auto-tuner turns the DIALS of your strategy (e.g. holding period) — the structure search works on the BLUEPRINT: it changes the rule structure itself, one building block a day (flip a comparison, drop a branch, add a condition). Every candidate is walk-forward tested: it must beat the incumbent in the search window AND earn afterwards in a test window that was not allowed to take part in the search. On top comes the deflated Sharpe hurdle (Bailey/López de Prado): whoever tries many variants finds “good” ones by chance — the bar accounts for how many attempts have already run, and it rises with each further one. That is why “rejected” is the normal case here and not a defect. A winner trades exclusively on a shadow account with fresh virtual capital; whether it ever runs real money is your decision in the studio via “Promote”. The search is switched off together with the auto-tuner — it is ONE concept: the system improves itself, but only with proof.',
+  },
+  depotVerlauf: {
+    t: 'Portfolio history, decomposed',
+    d: 'An equity curve shows THAT the portfolio rose or fell — never WITH WHAT. Two accounts with the same curve can have got there in completely different ways: one from twenty small gains, the other from one lucky hit and nineteen losses. Yet every decision about what to change in the system hangs on exactly that. This chart decomposes the curve: the horizontal dashed line is your portfolio on the first day of the window; every coloured area is a symbol (or, toggled, a single trade) with its result accumulated since that day. The areas form a staircase: winners build the mountain up, losers carry it back down, and finally the book value of the still-open positions corrects to the actual level — the part that moves daily with the price and has decided nothing yet. Every area starts where the previous one ends, which is why the staircase lands exactly on the portfolio line every day. A divergence between line and staircase would therefore be visible to the naked eye and a computational error, not a display detail. (The first draft stacked gains upwards and losses downwards — pretty, but the portfolio line then sat somewhere in between and the statement could not be checked against the picture.) Trades closed before the window are already inside the reference line and do not appear again as an area; the footer says how many those are.',
+  },
+  haltedauer: {
+    t: 'How long to hold?',
+    d: 'The most expensive open question in the system — and it cannot be answered by watching: a holding period of five days yields one data point per week and symbol, so a meaningful comparison would take years. This card therefore takes the answer from the STORED history: for every trading day in the past the signal is recomputed — only from prices up to that day, never with a glance forward — and then it checks what an exit after 1, 2, 3, 5 or 10 trading days would have brought. Costs are deducted true to the asset class, and a result is only counted if the evaluation day really lies in the past with no data gap in between. Rows with too few observations stay pale and do not count — a recommendation from three cases would be more dangerous than none. The separate buy and sell columns are the most honest part: if only the buy side earns, you are measuring the rising market and not the ability of the signal; if both sides earn, it is a real edge. The card changes NOTHING about your strategy by itself — it lays out the numbers, the decision stays yours.',
+  },
+  erkenntnisse: {
+    t: 'What the system has learned',
+    d: 'Every other number on the dashboard is a snapshot: the heartbeat is overwritten every five minutes, the daily metrics every evening. That only ever shows the state NOW — never what has turned out to be true over weeks. This card is the memory for that: a fixed, small set of hypotheses is checked against the measured data every evening and receives one of three states — holds, refuted, or waiting for data. Below a minimum n, NOTHING is claimed on purpose; a chronicle that judges at five trades teaches noise. Every hypothesis carries its supporting figures and the day since which it has been in that state, and on a change the old wording stays visible — that very moment, when an assumption tips over, is the actual insight. Everything here is derived deterministically from existing measurements, without AI and without cost.',
+  },
+  aibericht: {
+    t: 'Daily assessment (AI)',
+    d: 'Once in the evening a language model reads the insight chronicle above and the aggregated trading figures, and writes a short assessment from them: which findings are connected, what is the most likely common cause, what would be the next step? That is exactly the part code cannot do — condensing numbers and testing hypotheses is handled deterministically and free of charge by the cards above. Important: the report is a text NEXT TO the machine, not a voice INSIDE it. It triggers no order, changes no setting and promotes no strategy; every such decision still requires statistical evidence. The model sees exclusively the system’s own measurements — no headlines, no external texts, nothing from the web — so that no foreign instructions can be smuggled in through the input. One call per day, with a monthly cap and a hard token limit; without a stored API key the line stays empty and everything else keeps running.',
+  },
+  kaufkraft: {
+    t: 'Buying power afterwards',
+    d: 'Your remaining cash after this order including all costs. Red means: the order exceeds your balance and would be rejected by the broker.',
+  },
+  rsi: {
+    t: 'RSI (Relative Strength Index)',
+    d: 'A momentum oscillator from 0–100 over 14 periods: below 30 oversold (a recovery is more likely), above 70 overbought (a pullback is more likely). Not a timing oracle — strong in combination with other signals.',
+  },
+  macd: {
+    t: 'MACD (Moving Average Convergence/Divergence)',
+    d: 'The difference between two exponential averages (12/26) plus a signal line (9). A histogram above zero = upward momentum (“bullish”), below zero = downward momentum (“bearish”). Crossovers count as hints of a trend change.',
+  },
+  signal: {
+    t: 'Confluence signal',
+    d: 'The overall verdict of the last scan across all votes (RSI, MACD, Bollinger, forecast): BUY, SELL or HOLD. This is exactly what the auto engine acts on when it is switched on.',
+  },
+  'node:compare': {
+    t: 'Rule: comparison (compare)',
+    d: 'Compares an indicator value (RSI, MACD line, %B …) with a number or another value — e.g. “RSI < 30”. The basic building block of every strategy.',
+  },
+  'node:crossover': {
+    t: 'Rule: crossover',
+    d: 'Fires in the exact moment one line crosses another (e.g. the MACD line above the signal line = “golden cross” logic). The classic momentum entry signal.',
+  },
+  'node:priceLevel': {
+    t: 'Rule: price level',
+    d: 'True when the price stands above/below a fixed mark — for supports, resistances or psychological levels (e.g. “buy below $100”).',
+  },
+  'node:changePct': {
+    t: 'Rule: change % (changePct)',
+    d: 'Measures the percentage price change over the last N candles — e.g. “fallen more than 3 % in 5 days”. Good for dip buys or momentum filters.',
+  },
+  'node:timeWindow': {
+    t: 'Rule: time window',
+    d: 'Restricts the signal to a time of day (ET) — e.g. do not buy during the volatile first trading hour. It only applies when the scan time falls inside the window.',
+  },
+  'node:forecast': {
+    t: 'Rule: forecast',
+    d: 'The directional vote of the forward forecast: true when the predicted change to the end of the horizon lies above the threshold (up) or below it (down). In the backtest the forecast is recomputed causally for each trading day.',
+  },
+  'node:position': {
+    t: 'Rule: position state',
+    d: 'Queries your own portfolio state: “state open” with a min/max % unrealised gain builds exits such as “sell from +5 %” — the rule-based variant of take profit / stop loss.',
   },
 };
 
