@@ -431,3 +431,45 @@ describe('Anschluss-Wächter — die Funktion ist verdrahtet, nicht nur vorhande
     expect(dashboard).toContain("setzeSprache(ouLang.value === 'en' ? 'en' : 'de');");
   });
 });
+
+describe('Onboarding-Tour ist zweisprachig (Tranche 5d)', () => {
+  const tourQuelle = readFileSync(join(import.meta.dirname, '..', 'src', 'tour.ts'), 'utf8');
+
+  it('kein deutscher Literaltext mehr im Tour-Modul', () => {
+    /* Die Tour ist der EINZIGE Text, den ein neuer Nutzer sieht, bevor er
+     * irgendetwas anderes gesehen hat — sie startet beim ersten Login von
+     * selbst. Ausgerechnet dort deutsche Knöpfe zu zeigen, hieße: Die
+     * Sprachwahl greift überall, nur nicht in der Einführung. */
+    expect(tourQuelle).not.toContain('>Zurück<');
+    expect(tourQuelle).not.toContain("'Fertig'");
+    expect(tourQuelle).not.toContain("'Weiter'");
+    expect(tourQuelle).not.toContain("'Einführungstour'");
+    expect(tourQuelle).not.toContain('aria-label="Tour beenden"');
+    expect(tourQuelle).toContain("t('tour.zurueck')");
+    expect(tourQuelle).toContain("t('tour.fertig')");
+    expect(tourQuelle).toContain("t('tour.beenden')");
+    expect(tourQuelle).toContain("t('tour.aria')");
+  });
+
+  it('die sechs Stationen ziehen Titel UND Text über t()', () => {
+    const block = dashboard.slice(
+      dashboard.indexOf('const TOUR_STATIONEN = ['),
+      dashboard.indexOf('function starteAppTour'),
+    );
+    for (const s of ['strategie', 'chart', 'engine', 'performance', 'optionen', 'engineWhy']) {
+      expect(block, `Station ${s}: Titel fehlt`).toContain(`t('tour.${s}Titel')`);
+      expect(block, `Station ${s}: Text fehlt`).toContain(`t('tour.${s}Text')`);
+    }
+    // Kein Rest-Literal: der Block enthält außer den Selektoren keinen Satz.
+    expect(block).not.toMatch(/titel: '[^']/);
+    expect(block).not.toMatch(/text:\s*\n?\s*'[^']/);
+  });
+
+  it('jede Tour-Station hat eine englische Fassung', () => {
+    // Ein deutscher Fallback wäre hier besonders teuer: Die Tour erklärt die
+    // App, und eine unverständliche Erklärung ist schlimmer als keine.
+    for (const k of Object.keys(DE).filter((s) => s.startsWith('tour.'))) {
+      expect(EN[k as TextSchluessel], `${k} ohne englische Fassung`).toBeTruthy();
+    }
+  });
+});

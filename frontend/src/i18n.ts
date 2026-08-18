@@ -214,6 +214,32 @@ export const DE = {
   // hier nur die beiden Attribut-Texte des Knopfes selbst.
   'tip.erklaerung': 'Erklärung',
   'tip.wasBedeutet': 'Was bedeutet das?',
+  // Onboarding-Tour (Tranche 5d). Die Stationen stehen als Schlüssel hier,
+  // nicht in dashboard.ts — ein englischer Nutzer beim ERSTEN Login sieht
+  // sonst ausgerechnet die Einführung auf Deutsch.
+  'tour.aria': 'Einführungstour',
+  'tour.beenden': 'Tour beenden',
+  'tour.zurueck': 'Zurück',
+  'tour.weiter': 'Weiter',
+  'tour.fertig': 'Fertig',
+  'tour.strategieTitel': 'Watchlist & Strategie',
+  'tour.strategieText':
+    'Hier wählst du, welche Symbole die Engine beobachtet, und stellst die Grundzüge deiner Strategie ein. Die Kacheln oben zeigen live die Kurse deiner Auswahl.',
+  'tour.chartTitel': 'Chart',
+  'tour.chartText':
+    'Kerzen, Indikatoren, News-Marker, Prognose und deine offenen Positionen in einem Fenster. Über die Kopfzeile wechselst du Zeitrahmen, Chart-Typ und das Mehrfach-Raster.',
+  'tour.engineTitel': 'Engine: Start & Stop',
+  'tour.engineText':
+    'Dieser Schalter entscheidet, ob der 5-Minuten-Scan automatisch für dich handelt. Alles andere — was er kauft und wie er absichert — bestimmst du in den Optionen.',
+  'tour.performanceTitel': 'Performance',
+  'tour.performanceText':
+    'Kontostand, Gewinn und Kennzahlen wie Trefferquote und Gebührenlast — ehrlich gerechnet, nach Kosten. Hier siehst du, ob deine Einstellungen tragen.',
+  'tour.optionenTitel': 'Optionen, Loadouts & Broker',
+  'tour.optionenText':
+    'Hinter dem Zahnrad liegen vier Reiter: Trading (alle Regler, fertige Loadouts, bewährte Einstellungen), Anzeige, Broker-Anbindung und Konto. Jedes Feld erklärt sich über sein ⓘ.',
+  'tour.engineWhyTitel': 'Warum handelt die Engine (nicht)?',
+  'tour.engineWhyText':
+    'Diese Karte beantwortet die häufigste Frage: Was hat der letzte Scan gesehen, und warum kam (k)ein Trade dabei heraus? Wenn dich etwas wundert — zuerst hier nachsehen.',
   'auth.falscheDaten': 'E-Mail oder Passwort ist falsch.',
   'auth.ungueltigeEmail': 'Das ist keine gültige E-Mail-Adresse.',
   'auth.emailVergeben': 'Für diese E-Mail existiert bereits ein Konto.',
@@ -409,6 +435,30 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'auth.zuVieleVersuche': 'Too many attempts — please wait a moment.',
   'auth.googleAbgebrochen': 'Google sign-in was cancelled.',
   'auth.fehlgeschlagen': 'Sign-in failed. Please try again.',
+  // Onboarding-Tour (Tranche 5d).
+  'tour.aria': 'Introductory tour',
+  'tour.beenden': 'End tour',
+  'tour.zurueck': 'Back',
+  'tour.weiter': 'Next',
+  'tour.fertig': 'Done',
+  'tour.strategieTitel': 'Watchlist & strategy',
+  'tour.strategieText':
+    'Here you choose which symbols the engine watches, and set the broad lines of your strategy. The tiles above show live prices for your selection.',
+  'tour.chartTitel': 'Chart',
+  'tour.chartText':
+    'Candles, indicators, news markers, the forecast and your open positions in one window. The header row switches the timeframe, the chart type and the multi-chart grid.',
+  'tour.engineTitel': 'Engine: start & stop',
+  'tour.engineText':
+    'This switch decides whether the 5-minute scan trades automatically for you. Everything else — what it buys and how it hedges — you set in the options.',
+  'tour.performanceTitel': 'Performance',
+  'tour.performanceText':
+    'Balance, profit and metrics such as hit rate and fee load — honestly computed, after costs. This is where you see whether your settings carry.',
+  'tour.optionenTitel': 'Options, loadouts & broker',
+  'tour.optionenText':
+    'Behind the gear icon sit four tabs: Trading (all the dials, ready-made loadouts, proven settings), Display, broker connection and account. Every field explains itself through its ⓘ.',
+  'tour.engineWhyTitel': 'Why is the engine (not) trading?',
+  'tour.engineWhyText':
+    'This card answers the most common question: what did the last scan see, and why did (or did not) a trade come out of it? If something puzzles you — look here first.',
 };
 
 /**

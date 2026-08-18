@@ -3133,53 +3133,19 @@ function renderAdvice(): void {
  * Aufgedrängt wird sie genau EINMAL (settings.ui.tourGesehen — auch
  * Abbrechen zählt); der ?-Knopf im Header holt sie jederzeit zurück. */
 const TOUR_STATIONEN = [
-  {
-    ziel: '.card[data-panel="strategy"]',
-    titel: 'Watchlist & Strategie',
-    text:
-      'Hier wählst du, welche Symbole die Engine beobachtet, und stellst die ' +
-      'Grundzüge deiner Strategie ein. Die Kacheln oben zeigen live die Kurse ' +
-      'deiner Auswahl.',
-  },
-  {
-    ziel: '.card[data-panel="chart"]',
-    titel: 'Chart',
-    text:
-      'Kerzen, Indikatoren, News-Marker, Prognose und deine offenen Positionen ' +
-      'in einem Fenster. Über die Kopfzeile wechselst du Zeitrahmen, Chart-Typ ' +
-      'und das Mehrfach-Raster.',
-  },
-  {
-    ziel: '.card[data-panel="engine"]',
-    titel: 'Engine: Start & Stop',
-    text:
-      'Dieser Schalter entscheidet, ob der 5-Minuten-Scan automatisch für dich ' +
-      'handelt. Alles andere — was er kauft und wie er absichert — bestimmst ' +
-      'du in den Optionen.',
-  },
+  { ziel: '.card[data-panel="strategy"]', titel: t('tour.strategieTitel'), text: t('tour.strategieText') },
+  { ziel: '.card[data-panel="chart"]', titel: t('tour.chartTitel'), text: t('tour.chartText') },
+  { ziel: '.card[data-panel="engine"]', titel: t('tour.engineTitel'), text: t('tour.engineText') },
   {
     ziel: '.card[data-panel="performance"]',
-    titel: 'Performance',
-    text:
-      'Kontostand, Gewinn und Kennzahlen wie Trefferquote und Gebührenlast — ' +
-      'ehrlich gerechnet, nach Kosten. Hier siehst du, ob deine Einstellungen ' +
-      'tragen.',
+    titel: t('tour.performanceTitel'),
+    text: t('tour.performanceText'),
   },
-  {
-    ziel: '#optBtn',
-    titel: 'Optionen, Loadouts & Broker',
-    text:
-      'Hinter dem Zahnrad liegen vier Reiter: Trading (alle Regler, fertige ' +
-      'Loadouts, bewährte Einstellungen), Anzeige, Broker-Anbindung und Konto. ' +
-      'Jedes Feld erklärt sich über sein ⓘ.',
-  },
+  { ziel: '#optBtn', titel: t('tour.optionenTitel'), text: t('tour.optionenText') },
   {
     ziel: '.card[data-panel="engineWhy"]',
-    titel: 'Warum handelt die Engine (nicht)?',
-    text:
-      'Diese Karte beantwortet die häufigste Frage: Was hat der letzte Scan ' +
-      'gesehen, und warum kam (k)ein Trade dabei heraus? Wenn dich etwas ' +
-      'wundert — zuerst hier nachsehen.',
+    titel: t('tour.engineWhyTitel'),
+    text: t('tour.engineWhyText'),
   },
 ];
 
