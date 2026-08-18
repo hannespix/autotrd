@@ -12,6 +12,8 @@
  * zeigen — die Tour beschreibt, was da ist, nicht was da sein könnte.
  */
 
+import { t } from './i18n.js';
+
 export interface TourStation {
   /** CSS-Selektor des Ziels. */
   ziel: string;
@@ -104,12 +106,12 @@ function zeige(index: number, richtung: 1 | -1): void {
   const erste = lauf.stationen.findIndex((s) => zielElement(s) !== null);
   lauf.karte.innerHTML = `
     <div class="tour-kopf"><b>${station.titel}</b>
-      <button class="tour-x" data-tour="x" aria-label="Tour beenden">✕</button></div>
+      <button class="tour-x" data-tour="x" aria-label="${t('tour.beenden')}">✕</button></div>
     <p>${station.text}</p>
     <div class="tour-fuss">
       <span class="tour-schritt">${i + 1}/${anzahl}</span>
-      ${i > erste ? '<button class="btn btn-n" data-tour="zurueck">Zurück</button>' : ''}
-      <button class="btn btn-g" data-tour="weiter">${i >= anzahl - 1 ? 'Fertig' : 'Weiter'}</button>
+      ${i > erste ? `<button class="btn btn-n" data-tour="zurueck">${t('tour.zurueck')}</button>` : ''}
+      <button class="btn btn-g" data-tour="weiter">${i >= anzahl - 1 ? t('tour.fertig') : t('tour.weiter')}</button>
     </div>`;
   lauf.karte.querySelector('[data-tour="x"]')!.addEventListener('click', () => beenden());
   lauf.karte
@@ -143,7 +145,7 @@ export function starteTour(stationen: TourStation[], amEnde: () => void): void {
   const karte = document.createElement('div');
   karte.className = 'tour-karte';
   karte.setAttribute('role', 'dialog');
-  karte.setAttribute('aria-label', 'Einführungstour');
+  karte.setAttribute('aria-label', t('tour.aria'));
   document.body.appendChild(spot);
   document.body.appendChild(karte);
 
