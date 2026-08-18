@@ -12,6 +12,17 @@
  * Der Prüfstand rastert zusätzlich über eine Canvas nach PNG — denselben Weg,
  * den die App beim Teilen geht. Fällt das durch, wäre der Teilen-Knopf in der
  * App kaputt, ohne dass ein Unit-Test es merkt.
+ *
+ * ── Beide Sprachen (Tranche 5e, 18.08.) ─────────────────────────────────
+ *
+ * Seit die Karte übersetzt ist, wird jeder Fall ZWEIMAL gerendert. Der Grund
+ * ist nicht Gründlichkeit, sondern Arithmetik: Englische Beschriftung ist an
+ * manchen Stellen länger (PAPER ACCOUNT gegen PAPIERKONTO), und die Karte hat
+ * feste Koordinaten. Ein Prüfstand, der nur Deutsch misst, bescheinigt einer
+ * englischen Karte Fehlerfreiheit, die er nie gesehen hat (CLAUDE.md §6).
+ *
+ * `t()` liest die Wahl aus localStorage — in Node gibt es das nicht, also
+ * wird es hier gestellt: derselbe Weg wie im Browser, nur ohne Browser.
  */
 import { chromium } from 'playwright';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -28,6 +39,11 @@ execFileSync(
   ['esbuild', 'frontend/e2e/share-entry.ts', '--bundle', '--format=esm', `--outfile=${BUNDLE}`, '--log-level=warning'],
   { stdio: 'inherit' },
 );
+let spracheJetzt = 'de';
+globalThis.localStorage = {
+  getItem: (k) => (k === 'autotrd-lang' ? spracheJetzt : null),
+  setItem: () => undefined,
+};
 const { shareCard, zerlegeDepot, KARTE } = await import(BUNDLE);
 
 const tage = [];
@@ -100,7 +116,10 @@ faelle.ganz_leer = {
 const browser = await chromium.launch(CHROME ? { executablePath: CHROME } : {});
 const fehler = [];
 
-for (const [name, d] of Object.entries(faelle)) {
+for (const [fall, d] of Object.entries(faelle)) {
+for (const sprache of ['de', 'en']) {
+  spracheJetzt = sprache;
+  const name = `${fall}-${sprache}`;
   const svg = shareCard(d);
   const html = `<!doctype html><html><head><meta charset="utf-8"><style>
     html,body{margin:0;background:#000} svg{display:block}</style></head>
@@ -149,12 +168,29 @@ for (const [name, d] of Object.entries(faelle)) {
       }
     }
 
+    // Sitzt das Siegel in seinem Kasten? Der Rahmen ist fest 232 px breit;
+    // die Überlappungs-Prüfung oben sieht ihn nicht, weil sie nur <text>
+    // gegen <text> vergleicht. Ein Siegel, das über seinen Rahmen läuft, ist
+    // genau der Schaden, den der Rahmen verhindern soll.
+    let siegelRaus = '';
+    const sT = document.querySelector('[data-rolle="siegel"]');
+    const sR = document.querySelector('[data-rolle="siegelRahmen"]');
+    if (!sT || !sR) {
+      siegelRaus = 'Siegel oder Rahmen fehlt';
+    } else {
+      const bt = sT.getBBox();
+      const br = sR.getBBox();
+      if (bt.x < br.x + 6 || bt.x + bt.width > br.x + br.width - 6) {
+        siegelRaus = `"${sT.textContent}" ${Math.round(bt.width)} px in ${Math.round(br.width)} px`;
+      }
+    }
+
     // Rastern auf demselben Weg wie die App — schlägt das fehl, ist der
     // Teilen-Knopf kaputt.
     let pngLaenge = 0;
     let pngFehler = '';
     try { pngLaenge = await window.__png(); } catch (e) { pngFehler = String(e); }
-    return { raus, ueberlappt, texte: kaesten.length, pngLaenge, pngFehler };
+    return { raus, ueberlappt, siegelRaus, texte: kaesten.length, pngLaenge, pngFehler };
   }, KARTE);
 
   await seite.screenshot({ path: `${SHOTS}/share-${name}.png` });
@@ -162,10 +198,12 @@ for (const [name, d] of Object.entries(faelle)) {
 
   if (mass.raus.length) fehler.push(`${name}: Text außerhalb des Rahmens — ${mass.raus.join('; ')}`);
   if (mass.ueberlappt.length) fehler.push(`${name}: Texte überdecken sich — ${mass.ueberlappt.join('; ')}`);
+  if (mass.siegelRaus) fehler.push(`${name}: Siegel passt nicht in seinen Rahmen — ${mass.siegelRaus}`);
   if (mass.texte < 12) fehler.push(`${name}: nur ${mass.texte} Textelemente`);
   if (mass.pngFehler) fehler.push(`${name}: Rastern fehlgeschlagen — ${mass.pngFehler}`);
   if (mass.pngLaenge < 5000) fehler.push(`${name}: PNG verdächtig klein (${mass.pngLaenge})`);
   await seite.close();
+}
 }
 
 await browser.close();

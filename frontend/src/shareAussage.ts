@@ -59,6 +59,8 @@ export interface AussageEingabe {
   waehrung: string;
 }
 
+import { t } from './i18n.js';
+
 export type AussageTon = 'gruen' | 'rot' | 'neutral';
 
 export interface Aussage {
@@ -117,8 +119,8 @@ export function kartenAussage(e: AussageEingabe): Aussage {
       haupt: `${mitVz(e.renditePct, 2)} %`,
       ton: tonVon(e.renditePct),
       unter:
-        (zeitraumText || 'Zeitraum unbekannt')
-        + (e.betraege ? ` · ${mitVz(e.ergebnis)} ${e.waehrung}` : ' · Beträge ausgeblendet'),
+        (zeitraumText || t('share.zeitraumUnbekannt'))
+        + (e.betraege ? ` · ${mitVz(e.ergebnis)} ${e.waehrung}` : ` · ${t('share.betraegeAus')}`),
       teilbar: true,
     };
   }
@@ -131,15 +133,19 @@ export function kartenAussage(e: AussageEingabe): Aussage {
   // daneben stammen.
   if (e.trades > 0) {
     const tage = tageSpanne(e.vonTag, e.bisTag);
-    const spanne = tage === null ? '' : ` über ${tage} ${tage === 1 ? 'Tag' : 'Tage'}`;
+    const spanne =
+      tage === null
+        ? ''
+        : ` ${t('share.textUeber')} ${tage} ${tage === 1 ? t('share.tag') : t('share.tage')}`;
     return {
       haupt: e.betraege
         ? `${mitVz(e.tradeBilanz)} ${e.waehrung}`
-        : `${e.trades} ${e.trades === 1 ? 'Trade' : 'Trades'}`,
+        : `${e.trades} ${e.trades === 1 ? t('share.einTrade') : t('share.trades')}`,
       ton: tonVon(e.tradeBilanz),
       unter: e.betraege
-        ? `${e.trades} ${e.trades === 1 ? 'Trade' : 'Trades'}${spanne} · noch keine Tageskurve`
-        : `${zeitraumText || 'Zeitraum unbekannt'}${spanne ? '' : ''} · Beträge ausgeblendet`,
+        ? `${e.trades} ${e.trades === 1 ? t('share.einTrade') : t('share.trades')}${spanne}`
+          + ` · ${t('share.keineTageskurve')}`
+        : `${zeitraumText || t('share.zeitraumUnbekannt')} · ${t('share.betraegeAus')}`,
       teilbar: true,
     };
   }
@@ -148,8 +154,8 @@ export function kartenAussage(e: AussageEingabe): Aussage {
   return {
     haupt: '—',
     ton: 'neutral',
-    unter: 'Noch keine abgeschlossenen Trades',
+    unter: t('share.keineTrades'),
     teilbar: false,
-    grund: 'Zum Teilen braucht die Karte mindestens einen abgeschlossenen Trade.',
+    grund: t('share.teilenGrund'),
   };
 }
