@@ -13,6 +13,8 @@ export * from './tuneGrid.js';
 export * from './momentum.js';
 export * from './classAdvisor.js';
 export * from './uebernahmeSchnitt.js';
+export * from './benchmark.js';
+export * from './marktbreite.js';
 export * from './classShadow.js';
 export * from './captureLearning.js';
 export * from './kontoAbgleich.js';

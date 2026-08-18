@@ -46,6 +46,7 @@ import {
   marketFilterPasses,
   momentumEquity,
   positionValue,
+  messeBreite,
   rankMomentum,
   rebalanceOrders,
   targetPortfolio,
@@ -309,6 +310,21 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
   const marktOffen = marketFilterPasses(indexCloses);
   const ziel = targetPortfolio(ranked, marktOffen, MOMENTUM_TOP_N);
 
+  /* ── Marktbreite (Owner 18.08.) — MESSUNG, kein Tor ────────────────────
+   *
+   * Das Ranking oben hat für den ganzen Katalog schon einen 12-1-Score
+   * gerechnet. Der Anteil der positiven Scores ist damit gratis — und er
+   * beantwortet eine Frage, die die Regime-Ampel bauartbedingt nicht
+   * beantworten kann: Trägt die Mehrheit der Titel den Anstieg, oder ein
+   * halbes Dutzend Schwergewichte?
+   *
+   * Sie greift NICHT in `regime.state` ein. An dem hängen fünf Mechanismen,
+   * darunter seit dem 17.08. die Trendstimme — ein neuer Eingang würde alle
+   * fünf gleichzeitig verstellen (siehe shared/src/marktbreite.ts). Erst
+   * messen, dann entscheiden, und dann auf den Größen-Regler statt auf den
+   * Schalter. */
+  const breite = messeBreite(rankedAlle.map((r) => r.score));
+
   // ── 4. Schattendepot ──────────────────────────────────────────────────────
   const bookRef = db.doc('meta/momentumBook');
   const bookSnap = await bookRef.get();
@@ -372,6 +388,10 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
       ranked: ranked.length,
       universum: kandidaten.length,
       marktOffen,
+      /* Marktbreite (18.08.) — steht neben `marktOffen`, damit beide
+       * Sichten auf denselben Markt nebeneinander lesbar sind: der
+       * Index-Filter (Durchschnitt) und die Verteilung dahinter. */
+      breite,
       top: ranked.slice(0, MOMENTUM_TOP_N).map((r) => ({ symbol: r.symbol, score: r.score })),
       ziel: ziel.map((z) => z.symbol),
       gehalten: Object.keys(book.holdings).sort(),

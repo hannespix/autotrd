@@ -333,6 +333,22 @@ export interface SignalKontext {
   forecast?: { dir: string; weight: number };
   /** Regime-Zustand zum Zeitpunkt der Entscheidung. */
   regime?: string;
+  /**
+   * Kam dieser Einstieg NUR durch die ampel-gedeckte Trendstimme zustande?
+   * (Owner 18.08.)
+   *
+   * Die Regel ist seit dem 17.08. scharf und hat die Signalzahl von 0 auf
+   * 23 je Scan gehoben — in den ersten 31 Stunden 18 neue Trades, und der
+   * Gebührenanteil stieg von 57 % auf 68 %. Ob das gute oder teure Trades
+   * sind, kann niemand aus der Summe lesen: Sie stehen im Buch neben
+   * Positionen, die Tage vorher aus einer anderen Logik entstanden.
+   *
+   * Mit diesem Etikett lässt sich die Frage in zwei Wochen beantworten
+   * statt diskutieren — dieselbe Disziplin, mit der der Schatten seine
+   * Varianten trennt. Ein Feature, dessen Ertrag man nicht isolieren kann,
+   * kann man auch nicht verantworten.
+   */
+  soloTrend?: boolean;
 }
 
 export interface TradeRequest {

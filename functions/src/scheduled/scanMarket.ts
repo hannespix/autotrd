@@ -1718,7 +1718,18 @@ async function executeUserTrades(
               price: data.price,
               source: 'engine',
               assetClass: classify(symbol),
-              signalContext: { typ: 'konfluenz', votes: sig.votes, konfluenz, regime },
+              signalContext: {
+                typ: 'konfluenz',
+                votes: sig.votes,
+                konfluenz,
+                regime,
+                // Herkunfts-Etikett (18.08.): Dieser Kauf stand auf WENIGER
+                // Stimmen, als die Konfluenz sonst verlangt — er existiert
+                // also nur wegen der Trendstimme vom 17.08. Ohne dieses
+                // Feld ließe sich ihr Ertrag später nicht von dem der
+                // übrigen Käufe trennen.
+                ...(konfluenz < clamped.signals.minConfluence ? { soloTrend: true } : {}),
+              },
             },
             clamped,
             scanId,
