@@ -473,3 +473,71 @@ describe('Onboarding-Tour ist zweisprachig (Tranche 5d)', () => {
     }
   });
 });
+
+describe('Teilbare Ergebnis-Grafik ist zweisprachig (Tranche 5e)', () => {
+  const karte = readFileSync(join(import.meta.dirname, '..', 'src', 'shareCard.ts'), 'utf8');
+  const aussage = readFileSync(join(import.meta.dirname, '..', 'src', 'shareAussage.ts'), 'utf8');
+  const pruefstand = readFileSync(join(import.meta.dirname, '..', 'e2e', 'share-shot.mjs'), 'utf8');
+
+  it('kein deutscher Literaltext mehr in der Karte', () => {
+    /* Diese Grafik VERLÄSST die App. Deutsche Beschriftung auf einem Bild,
+     * das ein englischsprachiger Nutzer in seine Zeitleiste stellt, ist für
+     * genau das Publikum unlesbar, dem er sie zeigt. */
+    for (const rest of [
+      "'PAPIERKONTO'",
+      "'ECHTGELD'",
+      '>MEIN DEPOT<',
+      '>WOMIT<',
+      "'Trefferquote'",
+      "'Max-Drawdown'",
+      "'Schwächstes'",
+      'Noch zu wenige Tage',
+      'Automatisierter Handel',
+    ]) {
+      expect(karte, `Restliteral: ${rest}`).not.toContain(rest);
+    }
+    expect(karte).toContain("t('share.siegelPapier')");
+    expect(karte).toContain("t('share.kopf')");
+  });
+
+  it('auch die Aussage-Zeilen laufen über t()', () => {
+    for (const rest of [
+      "'Zeitraum unbekannt'",
+      'Beträge ausgeblendet`',
+      "'Noch keine abgeschlossenen Trades'",
+      'noch keine Tageskurve`',
+    ]) {
+      expect(aussage, `Restliteral: ${rest}`).not.toContain(rest);
+    }
+    expect(aussage).toContain("t('share.keineTrades')");
+  });
+
+  it('jede share.*-Zeile hat eine englische Fassung', () => {
+    for (const k of Object.keys(DE).filter((s) => s.startsWith('share.'))) {
+      expect(EN[k as TextSchluessel], `${k} ohne englische Fassung`).toBeTruthy();
+    }
+  });
+
+  it('der Siegel-Kasten wächst mit dem Wort — keine feste Breite mehr', () => {
+    /* Der Bild-Prüfstand meldete beim Übersetzen: „PAPER ACCOUNT" misst
+     * 228 px im 232-px-Kasten, also 2 px Luft je Seite. Das Siegel ist der
+     * eine Text dieser Karte, der nicht verhandelbar ist — klebt er am
+     * Rahmen, liest sich das wie ein Darstellungsfehler, auf einem Bild in
+     * fremden Zeitleisten. Eine feste Breite kann das nächste Wort wieder
+     * sprengen; die abgeleitete kann es nicht. */
+    expect(karte).toContain('function siegelBreite(');
+    expect(karte).toContain('siegelBreite(siegel)');
+    expect(karte).not.toContain('width="232"');
+  });
+
+  it('der Bild-Prüfstand misst BEIDE Sprachen und das Siegel im Rahmen', () => {
+    /* Ein Prüfstand, der die geänderte Sache nicht messen kann, bescheinigt
+     * Fehlerfreiheit, die er nie gesehen hat (CLAUDE.md §6). Vor dieser
+     * Tranche rendert er nur Deutsch und verglich nur <text> gegen <text> —
+     * beides hätte den Siegel-Überlauf durchgelassen. */
+    expect(pruefstand).toContain("for (const sprache of ['de', 'en'])");
+    expect(pruefstand).toContain('autotrd-lang');
+    expect(pruefstand).toContain('siegelRaus');
+    expect(pruefstand).toContain('data-rolle="siegelRahmen"');
+  });
+});

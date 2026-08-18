@@ -27,6 +27,7 @@
  */
 import { type DepotZerlegung, stapelBaender } from '@autotrd/shared';
 import { esc } from './html.js';
+import { t } from './i18n.js';
 import { kartenAussage } from './shareAussage.js';
 
 /** Kantenlänge der quadratischen Karte — passt ohne Zuschnitt überall hin. */
@@ -91,6 +92,26 @@ const mitVorzeichen = (v: number, n = 2): string => `${v > 0 ? '+' : v < 0 ? '�
  * groß ein Überlauf auf einem Bild, das die App verlässt. Der Bild-Prüfstand
  * misst das Ergebnis nach — er hat beide Fassungen bewertet.
  */
+/**
+ * Breite des Siegel-Kastens — abgeleitet aus dem Wort, nicht fest.
+ *
+ * Vorher stand hier 232, passend zu PAPIERKONTO. Der Bild-Prüfstand hat beim
+ * Übersetzen gemeldet: PAPER ACCOUNT misst 228 px in diesem Kasten, also
+ * 2 px Luft je Seite — der Text klebte am Rahmen. Das ist kein
+ * Schönheitsfehler: Das Siegel ist der eine Text, der auf dieser Karte
+ * nicht verhandelbar ist (Kopf dieser Datei, Punkt 1), und ein Siegel, das
+ * am Rahmen klebt oder darüber läuft, liest sich wie ein Darstellungsfehler
+ * — auf einem Bild, das in fremden Zeitleisten landet.
+ *
+ * 17,5 px je Zeichen ist der am gerenderten Bild gemessene Schnitt für
+ * Großbuchstaben bei font-size 24 plus letter-spacing 2; die Formel ist
+ * eine Schätzung, der Prüfstand die Kontrolle. Der Kasten ist rechtsbündig
+ * an KARTE − 90 verankert, wächst also nach links.
+ */
+function siegelBreite(text: string): number {
+  return Math.round(text.length * 17.5 + 36);
+}
+
 function hauptGroesse(text: string): number {
   const max = 140;
   const passt = Math.floor(1020 / (Math.max(1, text.length) * 0.8));
@@ -162,7 +183,7 @@ export function shareCard(d: ShareDaten): string {
   const haupt =
     aussage.ton === 'gruen' ? FARBE.gruen : aussage.ton === 'rot' ? FARBE.rot : FARBE.text2;
   const { linie, flaeche } = kurvenPfad(z.equity, 90, 430, KARTE - 180, 260);
-  const siegel = d.echtgeld ? 'ECHTGELD' : 'PAPIERKONTO';
+  const siegel = d.echtgeld ? t('share.siegelEchtgeld') : t('share.siegelPapier');
 
   // Die drei stärksten Bänder als Streifen unter der Kurve — sie beantworten
   // die Frage, um die es beim Teilen geht: womit eigentlich?
@@ -194,13 +215,13 @@ export function shareCard(d: ShareDaten): string {
    */
   const spalte = (KARTE - 180) / 4;
   const kpis = [
-    kpi(90, 880, 'Trades', String(d.trades)),
-    kpi(90 + spalte, 880, 'Trefferquote', d.trefferquotePct === null ? '—' : `${zahl(d.trefferquotePct, 1)} %`),
-    kpi(90 + 2 * spalte, 880, 'Profit-Faktor', d.profitFaktor === null ? '—' : zahl(d.profitFaktor)),
+    kpi(90, 880, t('share.trades'), String(d.trades)),
+    kpi(90 + spalte, 880, t('share.trefferquote'), d.trefferquotePct === null ? '—' : `${zahl(d.trefferquotePct, 1)} %`),
+    kpi(90 + 2 * spalte, 880, t('share.profitFaktor'), d.profitFaktor === null ? '—' : zahl(d.profitFaktor)),
     kpi(
       90 + 3 * spalte,
       880,
-      'Max-Drawdown',
+      t('share.maxDrawdown'),
       d.maxDrawdownPct === null ? '—' : `${zahl(d.maxDrawdownPct, 1)} %`,
       d.maxDrawdownPct !== null && d.maxDrawdownPct < -10 ? FARBE.rot : FARBE.text,
     ),
@@ -211,7 +232,7 @@ export function shareCard(d: ShareDaten): string {
       e === null
         ? ''
         : `<text x="${90 + i * 560}" y="1030" fill="${FARBE.text3}" font-size="26">`
-          + `${i === 0 ? 'Bestes' : 'Schwächstes'}</text>`
+          + `${i === 0 ? t('share.bestes') : t('share.schwaechstes')}</text>`
           + `<text x="${90 + i * 560}" y="1072" fill="${e.pct >= 0 ? FARBE.gruen : FARBE.rot}" font-size="34" font-weight="600">`
           + `${esc(e.label)} ${esc(mitVorzeichen(e.pct, 1))} %</text>`,
     )
@@ -223,9 +244,16 @@ export function shareCard(d: ShareDaten): string {
     + `<rect width="${KARTE}" height="${KARTE}" fill="${FARBE.bg}"></rect>`
     + `<rect x="40" y="40" width="${KARTE - 80}" height="${KARTE - 80}" rx="36" fill="${FARBE.karte}"></rect>`
     // Kopf
-    + `<text x="90" y="140" fill="${FARBE.text2}" font-size="30" letter-spacing="3">MEIN DEPOT</text>`
-    + `<rect x="${KARTE - 90 - 232}" y="104" width="232" height="46" rx="23" fill="none" stroke="${FARBE.text3}" stroke-width="2"></rect>`
-    + `<text x="${KARTE - 90 - 116}" y="136" fill="${FARBE.text3}" font-size="24" letter-spacing="2" text-anchor="middle">${esc(siegel)}</text>`
+    + `<text x="90" y="140" fill="${FARBE.text2}" font-size="30" letter-spacing="3">${esc(t('share.kopf'))}</text>`
+    /* `data-rolle` an Siegel UND Rahmen: Der Kasten ist 232 px breit und
+     * fest — das Siegel ist der einzige Text der Karte, der in eine
+     * vorgegebene Form muss. „PAPIERKONTO" passt; ob eine Übersetzung
+     * passt, weiß man erst gerendert. Ein Siegel, das über seinen Rahmen
+     * läuft, ist genau der Schaden, den der Kasten verhindern soll
+     * (Kopf dieser Datei, Punkt 1) — deshalb misst share-shot.mjs beide
+     * Kästen gegeneinander, in beiden Sprachen. */
+    + `<rect data-rolle="siegelRahmen" x="${KARTE - 90 - siegelBreite(siegel)}" y="104" width="${siegelBreite(siegel)}" height="46" rx="23" fill="none" stroke="${FARBE.text3}" stroke-width="2"></rect>`
+    + `<text data-rolle="siegel" x="${KARTE - 90 - siegelBreite(siegel) / 2}" y="136" fill="${FARBE.text3}" font-size="24" letter-spacing="2" text-anchor="middle">${esc(siegel)}</text>`
     // Hauptzahl
     /* Schriftgröße nach Textlänge (Bild-Prüfstand 12.08.).
      *
@@ -255,13 +283,13 @@ export function shareCard(d: ShareDaten): string {
     + (linie
       ? `<polygon points="${flaeche}" fill="${haupt}" opacity="0.14"></polygon>`
         + `<polyline points="${linie}" fill="none" stroke="${haupt}" stroke-width="5" stroke-linejoin="round"></polyline>`
-      : `<text x="90" y="560" fill="${FARBE.text3}" font-size="30">Noch zu wenige Tage für eine Kurve</text>`)
+      : `<text x="90" y="560" fill="${FARBE.text3}" font-size="30">${esc(t('share.keineKurve'))}</text>`)
     // Beitrags-Streifen
     /* „WOMIT" nur, wenn darunter auch etwas steht. Eine Überschrift über
      * einer leeren Fläche sieht aus, als sei die Grafik kaputt — und im
      * Anlassfall war sie das auch. */
     + (streifen
-      ? `<text x="90" y="716" fill="${FARBE.text3}" font-size="26" letter-spacing="1.5">WOMIT</text>`
+      ? `<text x="90" y="716" fill="${FARBE.text3}" font-size="26" letter-spacing="1.5">${esc(t('share.womit'))}</text>`
       : '')
     + streifen
     + kpis
@@ -270,7 +298,7 @@ export function shareCard(d: ShareDaten): string {
     + `<line x1="90" y1="1108" x2="${KARTE - 90}" y2="1108" stroke="${FARBE.linie}" stroke-width="2"></line>`
     + `<text x="90" y="1152" fill="${FARBE.akzent}" font-size="34" font-weight="700">autotrd.net</text>`
     + `<text x="${KARTE - 90}" y="1152" fill="${FARBE.text3}" font-size="26" text-anchor="end">`
-    + `Automatisierter Handel, offen nachgerechnet</text>`
+    + `${esc(t('share.fuss'))}</text>`
     + '</svg>'
   );
 }
@@ -282,15 +310,19 @@ export function shareCard(d: ShareDaten): string {
  * weiterreicht, soll trotzdem wissen, worum es sich handelt.
  */
 export function shareText(d: ShareDaten): string {
-  const art = d.echtgeld ? '' : ' (Papierkonto)';
+  const art = d.echtgeld ? '' : ` (${t('share.textPapier')})`;
   const zeit =
     d.zerlegung.tage.length >= 2
-      ? ` ${d.zerlegung.tage[0]} bis ${d.zerlegung.tage[d.zerlegung.tage.length - 1]}`
+      ? ` ${d.zerlegung.tage[0]} ${t('share.textBis')} ${d.zerlegung.tage[d.zerlegung.tage.length - 1]}`
       : '';
-  const quote = d.trefferquotePct === null ? '' : `, Trefferquote ${zahl(d.trefferquotePct, 1)} %`;
+  const quote =
+    d.trefferquotePct === null
+      ? ''
+      : `, ${t('share.textQuote')} ${zahl(d.trefferquotePct, 1)} %`;
   return (
-    `Mein Depot${art}:${zeit} ${mitVorzeichen(d.renditePct, 2)} % über ${d.trades} Trades${quote}.`
-    + ' Gebaut und nachgerechnet mit autotrd.net'
+    `${t('share.textDepot')}${art}:${zeit} ${mitVorzeichen(d.renditePct, 2)} %`
+    + ` ${t('share.textUeber')} ${d.trades} ${t('share.trades')}${quote}.`
+    + ` ${t('share.textFuss')}`
   );
 }
 

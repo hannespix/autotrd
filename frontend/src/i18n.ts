@@ -240,6 +240,39 @@ export const DE = {
   'tour.engineWhyTitel': 'Warum handelt die Engine (nicht)?',
   'tour.engineWhyText':
     'Diese Karte beantwortet die häufigste Frage: Was hat der letzte Scan gesehen, und warum kam (k)ein Trade dabei heraus? Wenn dich etwas wundert — zuerst hier nachsehen.',
+  // Teilbare Ergebnis-Grafik (Tranche 5e). Die Karte VERLÄSST die App —
+  // deutsche Beschriftung auf einem Bild, das ein englischsprachiger Nutzer
+  // in seine Zeitleiste stellt, ist nicht nur unschön, sondern unlesbar für
+  // genau das Publikum, dem er sie zeigt. Das Siegel ist dabei der heikelste
+  // Text: Es sitzt in einem Kasten fester Breite (232 px), also prüft der
+  // Bild-Prüfstand beide Sprachen (share-shot.mjs).
+  'share.kopf': 'MEIN DEPOT',
+  'share.siegelPapier': 'PAPIERKONTO',
+  'share.siegelEchtgeld': 'ECHTGELD',
+  'share.womit': 'WOMIT',
+  'share.trades': 'Trades',
+  'share.trefferquote': 'Trefferquote',
+  'share.profitFaktor': 'Profit-Faktor',
+  'share.maxDrawdown': 'Max-Drawdown',
+  'share.bestes': 'Bestes',
+  'share.schwaechstes': 'Schwächstes',
+  'share.keineKurve': 'Noch zu wenige Tage für eine Kurve',
+  'share.fuss': 'Automatisierter Handel, offen nachgerechnet',
+  'share.textDepot': 'Mein Depot',
+  'share.textPapier': 'Papierkonto',
+  'share.textBis': 'bis',
+  'share.textUeber': 'über',
+  'share.textQuote': 'Trefferquote',
+  'share.textFuss': 'Gebaut und nachgerechnet mit autotrd.net',
+  // Aussage-Zeilen der Karte (shareAussage.ts).
+  'share.zeitraumUnbekannt': 'Zeitraum unbekannt',
+  'share.betraegeAus': 'Beträge ausgeblendet',
+  'share.tag': 'Tag',
+  'share.tage': 'Tage',
+  'share.einTrade': 'Trade',
+  'share.keineTageskurve': 'noch keine Tageskurve',
+  'share.keineTrades': 'Noch keine abgeschlossenen Trades',
+  'share.teilenGrund': 'Zum Teilen braucht die Karte mindestens einen abgeschlossenen Trade.',
   'auth.falscheDaten': 'E-Mail oder Passwort ist falsch.',
   'auth.ungueltigeEmail': 'Das ist keine gültige E-Mail-Adresse.',
   'auth.emailVergeben': 'Für diese E-Mail existiert bereits ein Konto.',
@@ -459,6 +492,33 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'tour.engineWhyTitel': 'Why is the engine (not) trading?',
   'tour.engineWhyText':
     'This card answers the most common question: what did the last scan see, and why did (or did not) a trade come out of it? If something puzzles you — look here first.',
+  // Teilbare Ergebnis-Grafik (Tranche 5e).
+  'share.kopf': 'MY PORTFOLIO',
+  'share.siegelPapier': 'PAPER ACCOUNT',
+  'share.siegelEchtgeld': 'LIVE MONEY',
+  'share.womit': 'DRIVERS',
+  'share.trades': 'Trades',
+  'share.trefferquote': 'Hit rate',
+  'share.profitFaktor': 'Profit factor',
+  'share.maxDrawdown': 'Max drawdown',
+  'share.bestes': 'Best',
+  'share.schwaechstes': 'Weakest',
+  'share.keineKurve': 'Not enough days yet for a curve',
+  'share.fuss': 'Automated trading, openly recomputed',
+  'share.textDepot': 'My portfolio',
+  'share.textPapier': 'paper account',
+  'share.textBis': 'to',
+  'share.textUeber': 'over',
+  'share.textQuote': 'hit rate',
+  'share.textFuss': 'Built and recomputed with autotrd.net',
+  'share.zeitraumUnbekannt': 'Period unknown',
+  'share.betraegeAus': 'amounts hidden',
+  'share.tag': 'day',
+  'share.tage': 'days',
+  'share.einTrade': 'Trade',
+  'share.keineTageskurve': 'no daily curve yet',
+  'share.keineTrades': 'No closed trades yet',
+  'share.teilenGrund': 'To share, the card needs at least one closed trade.',
 };
 
 /**
