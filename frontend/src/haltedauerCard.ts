@@ -13,6 +13,7 @@
  */
 import { type HaltedauerZeile } from '@autotrd/shared';
 import { esc } from './html.js';
+import { t } from './i18n.js';
 
 /** Prozent mit drei Nachkommastellen, deutsches Komma. `null` ⇒ Gedankenstrich. */
 export function pct3(v: number | null): string {
@@ -30,8 +31,8 @@ export function haltedauerTabelle(
   beste: HaltedauerZeile | null,
 ): string {
   return (
-    '<div class="hd-row hd-head"><span>Halten</span><span>n</span><span>netto</span>'
-    + '<span>Treffer</span><span>Kauf</span><span>Verkauf</span></div>'
+    `<div class="hd-row hd-head"><span>${t('hc.halten')}</span><span>n</span><span>${t('hc.netto')}</span>`
+    + `<span>${t('hc.treffer')}</span><span>${t('hc.kauf')}</span><span>${t('hc.verkauf')}</span></div>`
     + zeilen
       .map((z) => {
         const kl = ['hd-row', z.belastbar ? '' : 'hd-dim', z === beste ? 'hd-best' : '']
@@ -39,7 +40,7 @@ export function haltedauerTabelle(
           .join(' ');
         return (
           `<div class="${kl}">`
-          + `<span>${z.tage} ${z.tage === 1 ? 'Tag' : 'Tage'}</span>`
+          + `<span>${z.tage} ${z.tage === 1 ? t('hc.tag') : t('hc.tage')}</span>`
           + `<span>${z.n}</span><span>${esc(pct3(z.nettoPct))}</span>`
           + `<span>${esc(quote1(z.trefferquote))}</span>`
           + `<span>${esc(pct3(z.buyPct))}</span><span>${esc(pct3(z.sellPct))}</span>`
@@ -59,18 +60,17 @@ export function haltedauerTabelle(
  */
 export function haltedauerFazit(beste: HaltedauerZeile | null): string {
   if (!beste) {
-    return 'Noch keine Zeile trägt genug Beobachtungen — die Rückschau arbeitet den Katalog ab.';
+    return t('hc.nochKeineZeile');
   }
   // Die Drift-Warnung ist der ehrlichste Teil der Karte: Verdient nur die
   // Kaufseite, misst man den steigenden Markt und nicht das Signal.
   const drift =
     beste.buyPct !== null && beste.sellPct !== null && beste.sellPct <= 0
-      ? ' Die Kante liegt allein auf der Kaufseite; die Verkaufsseite trägt nichts — das ist das'
-        + ' Muster von Marktdrift, nicht von einer beidseitigen Signalkante.'
+      ? ` ${t('hc.driftWarnung')}`
       : '';
   return (
-    `Bestes gemessenes Halten: ${beste.tage} ${beste.tage === 1 ? 'Handelstag' : 'Handelstage'}`
-    + ` mit ${pct3(beste.nettoPct)} je Signal nach Kosten (n = ${beste.n}).${drift}`
+    `${t('hc.bestesHalten')} ${beste.tage} ${beste.tage === 1 ? t('hc.handelstag') : t('hc.handelstage')}`
+    + ` ${t('hc.mit')} ${pct3(beste.nettoPct)} ${t('hc.jeSignalNachKosten')} (n = ${beste.n}).${drift}`
   );
 }
 

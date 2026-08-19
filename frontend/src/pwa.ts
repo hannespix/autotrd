@@ -6,6 +6,8 @@
  * standalone läuft und der User ihn nicht kürzlich weggeklickt hat.
  */
 
+import { t } from './i18n.js';
+
 const DISMISS_KEY = 'autotrd-pwa-dismissed';
 const DISMISS_DAYS = 14;
 
@@ -32,8 +34,8 @@ function showChip(ev: BeforeInstallPromptEvent): void {
   chip.id = 'pwaChip';
   chip.className = 'pwa-chip';
   chip.innerHTML = `
-    <button type="button" class="pwa-install">⬇ Als App installieren</button>
-    <button type="button" class="pwa-close" aria-label="Hinweis schließen">✕</button>`;
+    <button type="button" class="pwa-install">${t('pw.installieren')}</button>
+    <button type="button" class="pwa-close" aria-label="${t('pw.hinweisSchliessen')}">✕</button>`;
   document.body.append(chip);
 
   chip.querySelector<HTMLButtonElement>('.pwa-install')!.addEventListener('click', () => {
@@ -70,7 +72,7 @@ function initUpdateWatch(): void {
         const chip = document.createElement('div');
         chip.id = 'updChip';
         chip.className = 'pwa-chip';
-        chip.innerHTML = '<button type="button" class="pwa-install">Neue Version — jetzt laden</button>';
+        chip.innerHTML = `<button type="button" class="pwa-install">${t('pw.neueVersion')}</button>`;
         document.body.append(chip);
         chip.querySelector('button')!.addEventListener('click', () => window.location.reload());
       }

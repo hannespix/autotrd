@@ -48,12 +48,11 @@ function renderSetupHint(): void {
     <main class="center">
       <section class="card auth-card" aria-labelledby="t">
         <h1 id="t">autotrd</h1>
-        <p>Firebase-Web-Config fehlt. Für die lokale Entwicklung:</p>
+        <p>${t('mn.setupFehlt')}</p>
         <ol style="padding-left:1.2rem">
-          <li>Firebase-Projekt anlegen (siehe docs/SETUP.md)</li>
-          <li><code>.env.example</code> → <code>frontend/.env.local</code> kopieren und
-              die <code>VITE_FIREBASE_*</code>-Werte eintragen</li>
-          <li><code>npm run dev -w frontend</code> neu starten</li>
+          <li>${t('mn.setupProjekt')}</li>
+          <li><code>.env.example</code> → <code>frontend/.env.local</code> ${t('mn.setupKopieren')}</li>
+          <li><code>npm run dev -w frontend</code> ${t('mn.setupNeustart')}</li>
         </ol>
       </section>
     </main>`;

@@ -5,6 +5,8 @@
  * Der Hotkey ist über `settings.hotkeys.palette` überschreibbar.
  */
 
+import { t } from './i18n.js';
+
 export interface PaletteCommand {
   id: string;
   label: string;
@@ -48,7 +50,7 @@ export function initPalette(opts: PaletteOptions): () => void {
   wrap.innerHTML = `
     <div class="cmdk-bg"></div>
     <div class="cmdk-box" role="dialog" aria-modal="true" aria-label="Command-Palette">
-      <input id="cmdkInput" class="cmdk-inp" placeholder="Symbol oder Befehl … (Esc schließt)"
+      <input id="cmdkInput" class="cmdk-inp" placeholder="${t('pal.platzhalter')}"
         autocomplete="off" spellcheck="false">
       <div id="cmdkList" class="cmdk-list" role="listbox"></div>
     </div>`;
