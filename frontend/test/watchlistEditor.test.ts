@@ -18,6 +18,8 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { DE } from '../src/i18n.js';
+
 const dashboard = readFileSync(join(import.meta.dirname, '..', 'src', 'dashboard.ts'), 'utf8');
 
 describe('Watchlist-Editor — Markup und Verdrahtung', () => {
@@ -54,7 +56,9 @@ describe('Watchlist-Editor — Markup und Verdrahtung', () => {
   it('Client hält die MAX_WATCHLIST-Grenze mit Klartext', () => {
     const add = dashboard.slice(dashboard.indexOf('function wlHinzufuegen'));
     expect(add.slice(0, 900)).toContain('liste.length >= MAX_WATCHLIST');
-    expect(add.slice(0, 900)).toContain('erst eines entfernen');
+    // Wortlaut wohnt seit 5o im Wörterbuch; die Grenze bleibt mit Klartext quittiert.
+    expect(add.slice(0, 900)).toContain("t('wl.begrenztB')");
+    expect(DE['wl.begrenztB']).toContain('erst eines entfernen');
   });
 
   it('der Editor ist verdrahtet (wireWlEditor wird im Init gerufen)', () => {

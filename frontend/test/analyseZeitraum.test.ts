@@ -12,6 +12,8 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { DE } from '../src/i18n.js';
+
 const quelle = (): string =>
   readFileSync(join(import.meta.dirname, '..', 'src', 'dashboard.ts'), 'utf8');
 
@@ -105,8 +107,11 @@ describe('Der Kopf sagt, worauf die Zahlen beruhen', () => {
   it('nennt Anzahl UND Zeitraum', () => {
     // Genau die Angabe fehlte: „Trefferquote 30 %" aus vier Tagen sah aus
     // wie eine aus vier Monaten.
+    // Seit Tranche 5o wohnt der Wortlaut im Wörterbuch — die Aussage bleibt:
+    // Kopf = Anzahl (an.geschlossen) UND Zeitraum (zeitraumLabel) nebeneinander.
     const block = analyseBlock();
-    expect(block).toContain('geschlossen · ${zeitraumLabel(st.anZeitraum)}');
+    expect(block).toContain("${t('an.geschlossen')} · ${zeitraumLabel(st.anZeitraum)}");
+    expect(DE['an.geschlossen']).toBe('geschlossen');
   });
 
   it('und markiert einen Zeitraum, der noch nicht voll belegt ist', () => {
@@ -114,7 +119,8 @@ describe('Der Kopf sagt, worauf die Zahlen beruhen', () => {
   });
 
   it('ein leerer Zeitraum schlägt einen längeren vor, statt nur „leer" zu sagen', () => {
-    expect(analyseBlock()).toContain('längeren Zeitraum wählen?');
+    expect(analyseBlock()).toContain("t('an.laengerWaehlen')");
+    expect(DE['an.laengerWaehlen']).toContain('längeren Zeitraum wählen?');
   });
 });
 

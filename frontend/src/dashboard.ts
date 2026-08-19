@@ -275,13 +275,13 @@ const DEFAULT_HIDDEN = new Set(['chart2', 'news']);
 
 /** Werks-Presets: Sichtbarkeits-Sets über den 13 Panels. */
 const WS_PRESETS: Record<string, { label: string; hidden: string[] }> = {
-  ueberblick: { label: 'Überblick', hidden: ['chart2', 'news'] },
+  ueberblick: { label: t('ws.ueberblick'), hidden: ['chart2', 'news'] },
   fokus: {
-    label: 'Ein-Symbol-Fokus',
+    label: t('ws.fokus'),
     hidden: ['market', 'autosignals', 'history', 'clock', 'strategy', 'chart2'],
   },
   jaeger: {
-    label: 'Signal-Jäger',
+    label: t('ws.jaeger'),
     hidden: ['manualtrade', 'clock', 'market', 'history', 'news', 'chart2'],
   },
 };
@@ -562,7 +562,7 @@ function paletteCommands(): PaletteCommand[] {
   cmds.push(
     {
       id: 'theme',
-      label: 'Hell/Dunkel einstellen (Optionen → Anzeige)',
+      label: t('pal.themaEinstellen'),
       run: () => {
         openOptions();
         (document.querySelector('.otab[data-otab="anzeige"]') as HTMLElement | null)?.click();
@@ -571,16 +571,16 @@ function paletteCommands(): PaletteCommand[] {
     // Auch hier nur die mögliche Aktion: „Engine starten" in der Palette,
     // während sie läuft, wäre derselbe irreführende Knopf wie in der Karte.
     ...(st.strategy.engine.running
-      ? [{ id: 'engine-stop', label: 'Engine stoppen', run: (): void => $('engStop').click() }]
-      : [{ id: 'engine-start', label: 'Engine starten (Paper)', run: (): void => $('engStart').click() }]),
-    { id: 'link-chart', label: 'Chart: Link-Gruppe wechseln', run: () => $('chipChart').click() },
-    { id: 'order-buy', label: 'Kaufen … (Order-Ticket, Shift+B)', hint: 'Order', run: () => openOrderTicket('buy') },
-    { id: 'order-sell', label: 'Verkaufen … (Order-Ticket, Shift+S)', hint: 'Order', run: () => openOrderTicket('sell') },
+      ? [{ id: 'engine-stop', label: t('pal.engineStoppen'), run: (): void => $('engStop').click() }]
+      : [{ id: 'engine-start', label: t('pal.engineStarten'), run: (): void => $('engStart').click() }]),
+    { id: 'link-chart', label: t('pal.linkGruppe'), run: () => $('chipChart').click() },
+    { id: 'order-buy', label: t('pal.kaufen'), hint: 'Order', run: () => openOrderTicket('buy') },
+    { id: 'order-sell', label: t('pal.verkaufen'), hint: 'Order', run: () => openOrderTicket('sell') },
   );
   for (const [id, title] of Object.entries(PANEL_TITLES)) {
     cmds.push({
       id: `panel-${id}`,
-      label: `Panel ${st.wsHidden.has(id) ? 'einblenden' : 'ausblenden'}: ${title}`,
+      label: `Panel ${st.wsHidden.has(id) ? t('pal.einblenden') : t('pal.ausblenden')}: ${title}`,
       hint: 'Panel',
       run: () => togglePanel(id),
     });
@@ -638,9 +638,9 @@ function layout(email: string): string {
           <div class="hint">${t('lay.katalogVorschlag')}</div>
         </div>
         <div class="row">
-          <div class="fld"><label class="lbl">RSI Kauf &lt; ${iBtn('rsiBuy')}</label><input id="sRsiLo" class="inp" type="number"></div>
-          <div class="fld"><label class="lbl">RSI Verkauf &gt; ${iBtn('rsiSell')}</label><input id="sRsiHi" class="inp" type="number"></div>
-          <div class="fld"><label class="lbl">Periode ${iBtn('periode')}</label>
+          <div class="fld"><label class="lbl">${t('lay.rsiKauf')} &lt; ${iBtn('rsiBuy')}</label><input id="sRsiLo" class="inp" type="number"></div>
+          <div class="fld"><label class="lbl">${t('lay.rsiVerkauf')} &gt; ${iBtn('rsiSell')}</label><input id="sRsiHi" class="inp" type="number"></div>
+          <div class="fld"><label class="lbl">${t('lay.periode')} ${iBtn('periode')}</label>
             <select id="sPeriod" class="sel"><option>3mo</option><option>6mo</option><option>1y</option></select></div>
         </div>
         <!-- UI-Audit Punkt 4 (Owner-Go 06.08.): Risiko- und Takt-Felder leben
@@ -658,8 +658,8 @@ function layout(email: string): string {
         <!-- Immer genau EINER sichtbar (renderEngineBadge schaltet um).
              Startzustand „aus", passend zum Default engine.running: false —
              sobald die Strategie geladen ist, korrigiert der Renderer das. -->
-        <button class="btn btn-g" id="engStart">Engine starten</button>
-        <button class="btn btn-r" id="engStop" hidden>Engine stoppen</button>
+        <button class="btn btn-g" id="engStart">${t('lay.engineStartKnopf')}</button>
+        <button class="btn btn-r" id="engStop" hidden>${t('lay.engineStoppKnopf')}</button>
         <div class="hint">${t('lay.engineAn')}</div>
         <p id="accessNote" class="hint" hidden
           style="color:var(--yl,#d9a441);margin-top:6px"></p>
@@ -876,11 +876,11 @@ function layout(email: string): string {
           <span class="gp-tf" id="c2tf" style="margin-left:auto">
             <button class="tf-btn" id="c2Auto"
               title="${t('lay.autoZeitrahmen')}">Auto</button>
-            <button class="tf-btn" data-c2i="1" title="1 Handelstag in 5-Minuten-Kerzen">1T</button>
-            <button class="tf-btn" data-c2i="5" title="~5 Handelstage in 5-Minuten-Kerzen">1W</button>
+            <button class="tf-btn" data-c2i="1" title="${t('lay.tag5minTitel')}">${t('tf.tag')}</button>
+            <button class="tf-btn" data-c2i="5" title="${t('lay.woche5minTitel')}">1W</button>
             <button class="tf-btn" data-c2r="22">1M</button>
             <button class="tf-btn on" data-c2r="66">3M</button>
-            <button class="tf-btn" data-c2r="0">1J</button>
+            <button class="tf-btn" data-c2r="0">${t('tf.jahr')}</button>
           </span>
         </div>
         <div id="chart2Area" style="height:200px"></div>
@@ -912,7 +912,7 @@ function layout(email: string): string {
            fünf Mechaniken mit, ob ein Trade zustande kommt — alle unsichtbar.
            „Es passiert nichts" sah bei einer scharfen Regel bisher genauso aus
            wie bei einem toten System. Diese Karte macht den Unterschied. -->
-      <div class="card" data-panel="engineWhy"><div class="sect">Was die Engine gerade tut ${iBtn('engineWhy')}</div><div class="cbody">
+      <div class="card" data-panel="engineWhy"><div class="sect">${t('lay.engineWhyKopf')} ${iBtn('engineWhy')}</div><div class="cbody">
         <div id="whyAmpel" class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:6px"></div>
         <div id="whyGate"></div>
         <div id="whyExtra" class="hint" style="margin-top:6px"></div>
@@ -1005,14 +1005,14 @@ function layout(email: string): string {
           <button class="tf-btn" id="mtMax" title="${t('lay.maxStueckzahl')}">Max</button>
         </div>
         <div class="mt-sum">
-          <div class="mt-row"><span>Zwischensumme</span><span id="mtSub" class="mono">--</span></div>
-          <div class="mt-row"><span>Gebühren (0,1 % + 5 bp) ${iBtn('fees')}</span><span id="mtFee" class="mono">--</span></div>
-          <div class="mt-row mt-total"><span>Gesamt</span><span id="mtTotal" class="mono">--</span></div>
-          <div class="mt-row"><span>Kaufkraft danach ${iBtn('kaufkraft')}</span><span id="mtCash" class="mono">--</span></div>
+          <div class="mt-row"><span>${t('lay.zwischensumme')}</span><span id="mtSub" class="mono">--</span></div>
+          <div class="mt-row"><span>${t('lay.gebuehrenZeile')} ${iBtn('fees')}</span><span id="mtFee" class="mono">--</span></div>
+          <div class="mt-row mt-total"><span>${t('lay.gesamt')}</span><span id="mtTotal" class="mono">--</span></div>
+          <div class="mt-row"><span>${t('lay.kaufkraftDanach')} ${iBtn('kaufkraft')}</span><span id="mtCash" class="mono">--</span></div>
         </div>
         <div class="row">
-          <button class="btn btn-g" id="mtBuy">Kaufen</button>
-          <button class="btn btn-r" id="mtSell">Verkaufen</button>
+          <button class="btn btn-g" id="mtBuy">${t('lay.kaufen')}</button>
+          <button class="btn btn-r" id="mtSell">${t('lay.verkaufen')}</button>
         </div>
         <div class="hint" id="mtHint">${t('lay.paperAusfuehrung')}</div>
       </div></div>
@@ -1039,11 +1039,11 @@ function layout(email: string): string {
 
       <div class="card" data-panel="fclab"><div class="sect">${t('panel.prognoseLabor')} <span id="flSym" style="float:right;color:var(--t3)"></span></div><div class="cbody">
         <div class="hint">${t('lay.selbstverbesserung')}</div>
-        <label class="lbl">Kombi-Statistik Tages-Prognose (Lookback-Fenster) ${iBtn('fcCombo')}</label>
+        <label class="lbl">${t('lay.komboTages')} ${iBtn('fcCombo')}</label>
         <div id="flCombos" class="fl-tbl"><div class="hint">${t('lay.keinePrognosen')}</div></div>
-        <label class="lbl">Kombi-Statistik Kurzfrist/Intraday (Lookback in 5-min-Bars) ${iBtn('kurzfrist')}</label>
+        <label class="lbl">${t('lay.komboIntraday')} ${iBtn('kurzfrist')}</label>
         <div id="flCombosIntra" class="fl-tbl"><div class="hint">${t('lay.keineKurzfrist')}</div></div>
-        <label class="lbl">Vorhersage vs. Realität ${iBtn('mae')} <span id="flSym2" style="color:var(--t3)"></span></label>
+        <label class="lbl">${t('lay.vorhersageRealitaet')} ${iBtn('mae')} <span id="flSym2" style="color:var(--t3)"></span></label>
         <div id="flRows" class="fl-tbl"><div class="hint">${t('lay.keinePrognosenSym')}</div></div>
       </div></div>
 
@@ -1178,14 +1178,14 @@ function layout(email: string): string {
     <div class="dmodal-bg" data-close="stop"></div>
     <div class="dsheet" style="width:min(560px,100%)">
       <button class="dclose" data-close="stop">✕</button>
-      <h3 style="margin:0 0 6px">Engine gestoppt</h3>
+      <h3 style="margin:0 0 6px">${t('lay.engineGestoppt')}</h3>
       <p class="hint">${t('lay.stoppA')}
         <b>${t('lay.stoppB')}</b> ${t('lay.stoppC')}
-        <b>ungeschützt</b>.</p>
+        <b>${t('lay.ungeschuetzt')}</b>.</p>
       <p class="hint">${t('lay.wasSollPassieren')}</p>
       <div id="stopRows" style="margin-top:8px"></div>
       <div class="row" style="align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap">
-        <button class="btn btn-n" id="stopKeep">Offen lassen</button>
+        <button class="btn btn-n" id="stopKeep">${t('lay.offenLassen')}</button>
         <button class="btn btn-n" id="stopSel">${t('lay.ausgewaehlteSchliessen')}</button>
         <button class="btn btn-r" id="stopAll">${t('lay.alleSchliessen')}</button>
       </div>
@@ -1760,8 +1760,8 @@ function wireChartCtx(): void {
       const fv = sig?.forecastVote;
       $('fcVoteInfo').textContent = fv
         ? fv.factor === null
-          ? `Prognose-Stimme: ${fv.weight}× (konfiguriert — Kante noch ohne Evidenz)`
-          : `Prognose-Stimme: ${fv.weight}× statt ${fv.base}× (realisierte Kante über Zufall: Faktor ${fv.factor})`
+          ? `${t('cx.prognoseStimme')}: ${fv.weight}× ${t('cx.ohneEvidenz')}`
+          : `${t('cx.prognoseStimme')}: ${fv.weight}× ${t('cx.statt')} ${fv.base}× (${t('cx.kanteFaktor')} ${fv.factor})`
         : '';
       if (!sig) { el.textContent = '--'; el.className = 'sval c-t3'; return; }
       el.textContent = sig.direction.toUpperCase();
@@ -2011,9 +2011,7 @@ function renderResBadge(): void {
   const zone = st.intradayDays > 0 ? ` · ${zonenKuerzel(new Date())}` : '';
   // Ohne „Auto ·"-Präfix (07.08.): Auto ist immer an, das Präfix sagte nichts mehr.
   el.textContent = label + zone;
-  el.title = st.intradayDays > 0
-    ? 'Aktive Kerzen-Auflösung — Uhrzeiten auf der Zeitachse und in der Kurszeile stehen in deiner Ortszeit'
-    : 'Aktive Kerzen-Auflösung';
+  el.title = st.intradayDays > 0 ? `${t('rb.aufloesung')} — ${t('rb.ortszeit')}` : t('rb.aufloesung');
   renderMarktBadge();
 }
 
@@ -2034,11 +2032,8 @@ function renderMarktBadge(): void {
     el.hidden = true;
     return;
   }
-  el.textContent = 'Markt zu';
-  el.title =
-    `${st.currentSymbol}: Die Börse dieser Anlageklasse handelt gerade nicht. ` +
-    'Die jüngste Kerze stammt deshalb vom letzten Handelstag — die Uhrzeit in ' +
-    'der Kurszeile gehört zu ihr, nicht zu jetzt.';
+  el.textContent = t('mb.marktZu');
+  el.title = `${st.currentSymbol}: ${t('mb.marktZuTitel')}`;
   el.hidden = false;
 }
 
@@ -2372,8 +2367,8 @@ async function mountSubPanel(kind: 'rsi' | 'macd'): Promise<void> {
   lg.innerHTML =
     kind === 'rsi'
       ? '<span><i class="lg-dot" style="background:#25d0ee"></i>RSI 14</span>' +
-        '<span><i class="lg-dot" style="background:rgba(242,88,107,.6)"></i>70 überkauft</span>' +
-        '<span><i class="lg-dot" style="background:rgba(38,207,157,.6)"></i>30 überverkauft</span>'
+        `<span><i class="lg-dot" style="background:rgba(242,88,107,.6)"></i>70 ${t('sp.ueberkauft')}</span>` +
+        `<span><i class="lg-dot" style="background:rgba(38,207,157,.6)"></i>30 ${t('sp.ueberverkauft')}</span>`
       : '<span><i class="lg-dot" style="background:#25d0ee"></i>MACD</span>' +
         '<span><i class="lg-dot" style="background:#ffb86b"></i>Signal</span>' +
         '<span><i class="lg-dot" style="background:#8b93a8"></i>Histogramm</span>';
@@ -2581,7 +2576,7 @@ function drawPredictionArrow(): void {
     `${(base.x - hx * hw).toFixed(1)},${(base.y - hy * hw).toFixed(1)}`;
   // Label-Pille an der Spitze: markiert den Pfeil klar als MANUELLE
   // User-Prognose (Wunsch 25.07.), Details in Zeile 2 + Erklärung in Legende
-  const title = 'Meine Prognose';
+  const title = t('px.meinePrognose');
   const label = `${pred.targetPrice.toFixed(2)} · ${pred.targetDate.slice(5)}`;
   const pillW = Math.max(title.length, label.length) * 6.6 + 18;
   const pillX = Math.max(4, Math.min(box.width - pillW - 4, tip.x - pillW / 2));
@@ -2736,14 +2731,14 @@ function renderBreaker(b: { am: string; grund: string; verlustPct: number | null
   const grenze = st?.strategy.engine.dailyLossLimitPct ?? 0;
   if (!b) {
     el.textContent = grenze > 0
-      ? `Nicht ausgelöst. Grenze: ${String(grenze).replace('.', ',')} % Tagesverlust.`
-      : 'Ausgeschaltet — trage oben eine Grenze ein, um sie zu aktivieren.';
+      ? `${t('bk.nichtAusgeloest')} ${String(grenze).replace('.', ',')} % ${t('bk.tagesverlust')}`
+      : t('bk.ausgeschaltet');
     el.style.color = '';
     return;
   }
   el.innerHTML =
-    `<b style="color:var(--rd)">Ausgelöst</b> am ${escText(b.am.slice(0, 16).replace('T', ' '))} Uhr`
-    + (b.verlustPct === null ? '' : ` (${b.verlustPct.toFixed(2).replace('.', ',')} % Tagesverlust)`)
+    `<b style="color:var(--rd)">${t('bk.ausgeloest')}</b> ${t('bk.am')} ${escText(b.am.slice(0, 16).replace('T', ' '))} ${t('ab.uhr')}`
+    + (b.verlustPct === null ? '' : ` (${b.verlustPct.toFixed(2).replace('.', ',')} % ${t('bk.tagesverlustKlammer')})`)
     + `.<br />${escText(b.grund)}`;
 }
 
@@ -2931,7 +2926,7 @@ function klassenGewichteAusForm(): Record<string, number> {
 
 /** Ein Regler-Wert als Text — „aus" ist eine andere Aussage als „0,00". */
 function gewichtText(w: number): string {
-  return w === 0 ? 'aus' : `× ${w.toFixed(2).replace('.', ',')}`;
+  return w === 0 ? t('kr.aus') : `× ${w.toFixed(2).replace('.', ',')}`;
 }
 
 /** Schieberegler je Anlageklasse zeichnen (MG2). */
@@ -3048,10 +3043,7 @@ function renderAdvice(): void {
   if (vorschlaege.length === 0) {
     // Bewusst nicht „optimal": Der Prüfer kennt keine Rendite, nur
     // Widersprüche. Diese Unterscheidung darf die Oberfläche nicht verwischen.
-    box.innerHTML =
-      '<p class="hint">✓ Keine widersprüchlichen Einstellungen gefunden. Das heißt nicht ' +
-      '„optimal" — der Prüfer kennt keine Rendite, nur Kombinationen, die gegeneinander ' +
-      'arbeiten. Was sich rechnet, misst der tägliche Selbstoptimierer.</p>';
+    box.innerHTML = `<p class="hint">✓ ${t('av.keineWidersprueche')}</p>`;
     return;
   }
   const farbe: Record<string, string> = {
@@ -3256,7 +3248,7 @@ function ladeBestPractice(): void {
       renderLoadouts(); // Alpha-Leech-Karte im Loadout-Raster nachziehen
     })
     .catch(() => {
-      $('bpBody').textContent = 'Auswertung gerade nicht lesbar.';
+      $('bpBody').textContent = t('bp.nichtLesbar');
     });
 }
 
@@ -3303,10 +3295,10 @@ function openOptions(): void {
   // Asset-Klasse — der User soll wissen, was für sein Symbol tatsächlich gilt.
   const byCls = st.strategy.engine.byClass ?? {};
   const clsTxt = Object.entries(byCls)
-    .map(([c, o]) => `${CLASS_LABELS[c] ?? c}: Stop ${o.stopLossPct ?? '–'} % / Ziel ${o.takeProfitPct ?? '–'} %`)
+    .map(([c, o]) => `${CLASS_LABELS[c] ?? c}: ${t('eo.stop')} ${o.stopLossPct ?? '–'} % / ${t('eo.ziel')} ${o.takeProfitPct ?? '–'} %`)
     .join(' · ');
   $('owClassHint').textContent = clsTxt
-    ? `Abweichende Profile je Anlageklasse (überschreiben die Werte oben): ${clsTxt}`
+    ? `${t('oo.abweichendeProfile')}: ${clsTxt}`
     : '';
   ($('owBreak') as HTMLInputElement).value = String(st.strategy.engine.dailyLossLimitPct ?? 0);
   ($('owFlatten') as HTMLInputElement).checked = st.strategy.engine.flattenOnBreach === true;
@@ -3906,7 +3898,7 @@ function positionsMarker(times: Array<string | number>, sym?: string): ChartMark
     shape: short ? 'arrowDown' : 'arrowUp',
     // Ohne Preis im Text: Der steht schon auf der Preisskala, und zwei Zahlen
     // für dieselbe Sache verdecken nur Kerzen (Owner 04.08.).
-    text: short ? 'Short' : 'Kauf',
+    text: short ? 'Short' : t('sk.kauf'),
   };
 }
 
@@ -3961,17 +3953,17 @@ function applyPosition(): void {
   ];
   if (st.posOpen) {
     const tage = haltedauerTage(p.openedAt, Date.now());
-    teile.splice(1, 0, tage === 0 ? 'heute rein' : tage === 1 ? 'seit 1 Tag' : `seit ${tage} Tagen`);
+    teile.splice(1, 0, tage === 0 ? t('ap.heuteRein') : tage === 1 ? t('ap.seitEinemTag') : `${t('ap.seit')} ${tage} ${t('ap.tagen')}`);
     teile.splice(2, 0, `${fmtNum(lv.entry)} → ${fmtNum(live)}`);
-    if (p.core === true) teile.push('<span class="pos-tag">Sockel</span>');
-    if (lv.stop !== null) teile.push(`Stop ${fmtPct(levelDistPct(lv.stop, live, 'stop', short))}`);
-    else if (lv.stopAtr) teile.push('Stop adaptiv');
-    if (lv.target !== null) teile.push(`Ziel ${fmtPct(levelDistPct(lv.target, live, 'target', short))}`);
-    else if (lv.targetAtr) teile.push('Ziel adaptiv');
+    if (p.core === true) teile.push(`<span class="pos-tag">${t('ew.sockel')}</span>`);
+    if (lv.stop !== null) teile.push(`${t('eo.stop')} ${fmtPct(levelDistPct(lv.stop, live, 'stop', short))}`);
+    else if (lv.stopAtr) teile.push(`${t('eo.stop')} ${t('ap.adaptiv')}`);
+    if (lv.target !== null) teile.push(`${t('eo.ziel')} ${fmtPct(levelDistPct(lv.target, live, 'target', short))}`);
+    else if (lv.targetAtr) teile.push(`${t('eo.ziel')} ${t('ap.adaptiv')}`);
   }
   teile.push(`<span class="pos-fold">${st.posOpen ? '▾' : '▸'}</span>`);
   hud.innerHTML = teile.join(' <span class="pos-sep">·</span> ');
-  hud.title = st.posOpen ? 'Details einklappen' : 'Einstand, Haltedauer und Abstände zu Stop/Ziel zeigen';
+  hud.title = st.posOpen ? t('ap.einklappen') : t('ap.ausklappen');
   hud.hidden = false;
 }
 
@@ -4033,8 +4025,8 @@ function showNewsTooltip(
   tip.innerHTML = `
     <div class="evtip-hd"><span class="mono"></span>
       <span class="${tone}">${day.sentiment >= 0 ? '+' : ''}${day.sentiment.toFixed(2)}</span>
-      <span class="evtip-n">${day.items.length} News</span></div>
-    ${day.veto ? '<div class="evtip-row" style="color:var(--yl,#d9a441)">⏸ News-Veto aktiv — die Engine setzt neue Einstiege hier gerade aus.</div>' : ''}
+      <span class="evtip-n">${day.items.length} ${t('nt.news')}</span></div>
+    ${day.veto ? `<div class="evtip-row" style="color:var(--yl,#d9a441)">⏸ ${t('nt.vetoAktiv')}</div>` : ''}
     <div class="evtip-list"></div>`;
   tip.querySelector('.mono')!.textContent = day.date;
   const list = tip.querySelector('.evtip-list')!;
@@ -4083,7 +4075,7 @@ function applyForecast(): void {
   const info = $('fcInfo');
   if (!st.showForecast || st.cleanView) {
     st.chart.setForecast(null);
-    info.textContent = (intraday ? ifc : fc) && !st.cleanView ? 'Prognose-Layer ausgeblendet.' : '';
+    info.textContent = (intraday ? ifc : fc) && !st.cleanView ? t('px.layerAusgeblendet') : '';
     return;
   }
   if (intraday) {
@@ -4104,19 +4096,17 @@ function applyForecast(): void {
       { time: lastBar.time, value: lastBar.close },
     );
     const dirI = ifc.predictedPct >= 0 ? '↑' : '↓';
-    const calI = ifc.calib
-      ? `, Band = realisierte Fehlerverteilung (n=${ifc.calib.n})`
-      : ', Band = ±1σ';
+    const calI = ifc.calib ? `, ${t('af.bandKalibriert')} (n=${ifc.calib.n})` : ', Band = ±1σ';
     info.textContent =
-      `Kurzfrist ${dirI} ${ifc.predictedPct >= 0 ? '+' : ''}${ifc.predictedPct.toFixed(2)} % ` +
-      `über die nächste Stunde (5-min-Raster, Lookback ${ifc.lookback} Bars${calI})`;
+      `${t('af.kurzfrist')} ${dirI} ${ifc.predictedPct >= 0 ? '+' : ''}${ifc.predictedPct.toFixed(2)} % ` +
+      `${t('af.naechsteStunde')} (Lookback ${ifc.lookback} Bars${calI})`;
     return;
   }
   // Wochen-/Monatskerzen: Die 5-Tage-Prognose lebt UNTER der Kerzenauflösung
   // — ihre Tages-Zukunftspunkte würden nur die Zeitachse verwässern.
   if (st.dailyAgg > 0) {
     st.chart.setForecast(null);
-    info.textContent = fc ? 'Prognose-Overlay nur in der Tages-Sicht (Wochen-/Monatskerzen aktiv).' : '';
+    info.textContent = fc ? t('af.nurTagesSicht') : '';
     return;
   }
   if (!fc || fc.points.length === 0) {
@@ -4131,11 +4121,11 @@ function applyForecast(): void {
   );
   const dir = fc.predictedPct >= 0 ? '↑' : '↓';
   const cal = fc.calib
-    ? `Band = realisierte Fehlerverteilung (n=${fc.calib.n}, MAE ${fc.calib.maePct.toFixed(2)} %)`
-    : 'Band = ±1σ der Regression';
+    ? `${t('af.bandKalibriert')} (n=${fc.calib.n}, MAE ${fc.calib.maePct.toFixed(2)} %)`
+    : t('af.bandSigma');
   info.textContent =
-    `Prognose ${dir} ${fc.predictedPct >= 0 ? '+' : ''}${fc.predictedPct.toFixed(2)} % ` +
-    `über ${fc.points.length} Handelstage (Lookback ${fc.lookback}, ${cal})`;
+    `${t('chart.lblPrognose')} ${dir} ${fc.predictedPct >= 0 ? '+' : ''}${fc.predictedPct.toFixed(2)} % ` +
+    `${t('af.ueber')} ${fc.points.length} ${t('af.handelstage')} (Lookback ${fc.lookback}, ${cal})`;
 }
 
 /** Prognose-Labor: Kombi-Statistik (Tages- ODER Intraday-Pfad) rendern. */
@@ -4158,17 +4148,17 @@ function renderFcLabStats(hostId: string, stats: ForecastStatsDoc | null): void 
     .sort((a, b) => b.hit - a.hit || a.mae - b.mae);
   if (rows.length === 0) {
     host.innerHTML =
-      '<div class="hint">Noch keine bewerteten Prognosen — die Statistik füllt sich, sobald erste Horizonte realisiert sind.</div>';
+      `<div class="hint">${t('fl.nochKeine')}</div>`;
     return;
   }
   const best = stats?.best;
   host.innerHTML =
-    '<div class="fl-row fl-head"><span>Lookback</span><span>n</span><span>Treffer</span><span>MAE</span></div>' +
+    `<div class="fl-row fl-head"><span>Lookback</span><span>n</span><span>${t('fl.treffer')}</span><span>MAE</span></div>` +
     rows
       .map((r) => {
         const isBest = best !== undefined && best.lookback === r.lb;
         return (
-          `<div class="fl-row${isBest ? ' fl-best' : ''}"${isBest ? ' title="Bester Lookback — steuert die Live-Prognose"' : ''}>` +
+          `<div class="fl-row${isBest ? ' fl-best' : ''}"${isBest ? ` title="${t('fl.besterLookback')}"` : ''}>` +
           `<span>${r.lb}</span><span>${r.n}</span>` +
           `<span class="${r.hit >= 50 ? 'c-gn' : 'c-rd'}">${r.hit.toFixed(0)} %</span>` +
           `<span>${r.mae.toFixed(2)} %</span></div>`
@@ -4182,11 +4172,11 @@ function renderFcLabRows(rows: EvaluatedForecastRow[]): void {
   const host = $('flRows');
   const done = rows.filter((r) => r.evaluated && r.evaluatedAt);
   if (done.length === 0) {
-    host.innerHTML = '<div class="hint">Noch keine bewerteten Prognosen für dieses Symbol.</div>';
+    host.innerHTML = `<div class="hint">${t('fl.nochKeineSymbol')}</div>`;
     return;
   }
   host.innerHTML =
-    '<div class="fl-row fl-head"><span>Basis</span><span>Lookback</span><span>Prognose</span><span>Richtung</span><span>MAE</span></div>' +
+    `<div class="fl-row fl-head"><span>${t('fl.basis')}</span><span>Lookback</span><span>${t('chart.lblPrognose')}</span><span>${t('fl.richtung')}</span><span>MAE</span></div>` +
     done
       .map((r) => {
         const hit = r.dirHit === true;
@@ -4745,7 +4735,7 @@ async function rebuildChart2(): Promise<void> {
   // OHLC-Kurszeile auch im Vergleichs-Chart (Grid-Gleichwertigkeit 26.07.)
   const hud2 = document.createElement('div');
   hud2.className = 'gp-hud mono';
-  hud2.title = 'Kurszeile ein-/ausklappen — wirkt auf alle Chart-Fenster';
+  hud2.title = t('gp.kurszeileToggle');
   hud2.addEventListener('click', toggleOhlcAll);
   $('chart2Area').appendChild(hud2);
   st.chart2P.hudEl = hud2;
@@ -5134,7 +5124,7 @@ async function mountGridPanel(p: GridPanel, host: HTMLElement): Promise<void> {
   // für ALLE Fenster gemeinsam.
   const hud = document.createElement('div');
   hud.className = 'gp-hud mono';
-  hud.title = 'Kurszeile ein-/ausklappen — wirkt auf alle Chart-Fenster';
+  hud.title = t('gp.kurszeileToggle');
   hud.addEventListener('click', toggleOhlcAll);
   host.appendChild(hud);
   p.hudEl = hud;
@@ -5255,18 +5245,18 @@ function renderChartGrid(): void {
     el.className = 'gpanel';
     el.innerHTML = `
       <div class="gp-hd">
-        <input class="inp gp-sym" value="${p.sym}" title="Symbol (Enter übernimmt)" />
+        <input class="inp gp-sym" value="${p.sym}" title="${t('gp.symbolEnter')}" />
         <span class="gp-tf">
-          <button class="tf-btn" data-pz="1" title="Alle Charts auf 1 Handelstag zoomen">1T</button>
-          <button class="tf-btn" data-pz="7" title="Alle Charts auf 1 Woche zoomen">1W</button>
-          <button class="tf-btn" data-pz="30" title="Alle Charts auf 1 Monat zoomen">1M</button>
-          <button class="tf-btn" data-pz="365" title="Alle Charts auf 1 Jahr zoomen">1J</button>
-          <button class="tf-btn" data-pz="max" title="Alle Charts: gesamte geladene Historie">Max</button>
+          <button class="tf-btn" data-pz="1" title="${t('gp.zoomTag')}">${t('tf.tag')}</button>
+          <button class="tf-btn" data-pz="7" title="${t('gp.zoomWoche')}">1W</button>
+          <button class="tf-btn" data-pz="30" title="${t('gp.zoomMonat')}">1M</button>
+          <button class="tf-btn" data-pz="365" title="${t('gp.zoomJahr')}">${t('tf.jahr')}</button>
+          <button class="tf-btn" data-pz="max" title="${t('gp.zoomMax')}">Max</button>
         </span>
-        <span class="res-badge mono gp-res" title="Aktive Kerzen-Auflösung dieses Fensters"></span>
-        <button class="tf-btn gp-max" title="Chart im Vollbild (Esc schließt)">⛶</button>
+        <span class="res-badge mono gp-res" title="${t('gp.aufloesung')}"></span>
+        <button class="tf-btn gp-max" title="${t('gp.vollbild')}">⛶</button>
         <button class="tf-btn gp-lock${p.locked ? ' on' : ''}"
-          title="Lock: Zoom, Sichtbereich und Crosshair synchron mit allen gelockten Charts">${p.locked ? ICONS.lock : ICONS.unlock}</button>
+          title="${t('gp.lockTitel')}">${p.locked ? ICONS.lock : ICONS.unlock}</button>
       </div>
       <div class="gp-chart" data-gp="${i}"></div>`;
     const symInp = el.querySelector('.gp-sym') as HTMLInputElement;
@@ -5334,7 +5324,7 @@ function openOrderTicket(side: 'buy' | 'sell'): void {
   if (!st) return;
   st.orderSide = side;
   const title = $('otTitle');
-  title.textContent = side === 'buy' ? 'Kaufen — Paper-Order' : 'Verkaufen — Paper-Order';
+  title.textContent = side === 'buy' ? t('ot.kaufenTitel') : t('ot.verkaufenTitel');
   title.className = side === 'buy' ? 'c-gn' : 'c-rd';
   ($('otSym') as HTMLInputElement).value = st.currentSymbol;
   ($('otQty') as HTMLInputElement).value = '1';
@@ -5415,7 +5405,7 @@ async function submitOrderTicket(): Promise<void> {
     await callTrade({ symbol: sym, side: st.orderSide, qty });
     $('orderModal').classList.remove('show');
   } catch (e) {
-    err.textContent = e instanceof Error && e.message ? e.message : 'Order fehlgeschlagen.';
+    err.textContent = e instanceof Error && e.message ? e.message : `${t('mtr.orderFehlgeschlagen')}.`;
     err.hidden = false;
   } finally {
     btn.disabled = false;
@@ -5606,7 +5596,7 @@ function wireSidebarResize(): void {
     spalten.push(col);
     const grip = document.createElement('div');
     grip.className = `sb-rs sb-rs-${edge}`;
-    grip.title = 'Spaltenbreite ziehen (Doppelklick = zurücksetzen)';
+    grip.title = t('gp.spaltenbreite');
     col.appendChild(grip);
     grip.addEventListener('dblclick', () => {
       col.style.width = '';
@@ -5666,7 +5656,7 @@ function wirePanelChrome(): void {
         ? '<button type="button" class="sect-btn sect-grip" data-grip title="Modul verschieben (ziehen)">⠿</button>'
         : '') +
       '<button type="button" class="sect-btn" data-col title="Modul ein-/ausklappen">▾</button>' +
-      '<button type="button" class="sect-btn" data-x title="Modul ausblenden — wieder einblendbar über Optionen → Module">✕</button>';
+      `<button type="button" class="sect-btn" data-x title="${t('gp.modulAusblenden')}">✕</button>`;
     sect.appendChild(box);
     // Drag-Reorder (Taschenmesser Teil 3): Karte ist nur draggable, solange
     // der Grip gedrückt ist — sonst stört Drag jede Text-Selektion.
@@ -6141,12 +6131,12 @@ function renderWlEditor(s: Strategy): void {
     const x = document.createElement('span');
     x.className = 'x';
     x.textContent = '×';
-    x.title = `${sym} von der Watchlist entfernen`;
+    x.title = `${sym} ${t('wl.entfernen')}`;
     x.addEventListener('click', () => {
       if (!st) return;
       void submitStrategy(
         { ...st.strategy, watchlist: st.strategy.watchlist.filter((w) => w !== sym) },
-        'Watchlist gespeichert.',
+        t('ws.watchlistGespeichert'),
       );
     });
     chip.appendChild(x);
@@ -6163,11 +6153,11 @@ function wlHinzufuegen(roh: string): void {
   const err = $('stratErr');
   if (liste.includes(sym)) return; // schon drauf — kein Fehler, kein Write
   if (liste.length >= MAX_WATCHLIST) {
-    err.textContent = `Watchlist ist auf ${MAX_WATCHLIST} Symbole begrenzt — erst eines entfernen.`;
+    err.textContent = `${t('wl.begrenztA')} ${MAX_WATCHLIST} ${t('wl.begrenztB')}`;
     err.hidden = false;
     return;
   }
-  void submitStrategy({ ...st.strategy, watchlist: [...liste, sym] }, 'Watchlist gespeichert.');
+  void submitStrategy({ ...st.strategy, watchlist: [...liste, sym] }, t('ws.watchlistGespeichert'));
 }
 
 function wireWlEditor(): void {
@@ -6241,14 +6231,14 @@ async function submitStrategy(next: Strategy, hint: string): Promise<void> {
     return;
   }
   err.hidden = true;
-  $('saveHint').textContent = 'Speichere…';
+  $('saveHint').textContent = t('st.speichere');
   try {
     await saveStrategy(next);
     $('saveHint').textContent = hint;
   } catch (e) {
     // Server-Meldung durchreichen (z. B. „E-Mail zuerst bestätigen", Quota)
     const msg = e instanceof Error && e.message ? e.message : '';
-    err.textContent = msg || 'Speichern fehlgeschlagen — bitte erneut versuchen.';
+    err.textContent = msg || t('st.speichernFehlgeschlagen');
     err.hidden = false;
     $('saveHint').textContent = '';
     console.warn('saveStrategy', e);
@@ -6269,7 +6259,7 @@ async function renderMarketTabs(): Promise<void> {
       st.universe = geladen;
     } catch (e) {
       $('mktBody').innerHTML =
-        '<span class="c-t3">Katalog gerade nicht ladbar — bitte Panel erneut öffnen.</span>';
+        `<span class="c-t3">${t('mk.katalogNichtLadbar')}</span>`;
       console.warn('renderMarketTabs', e);
       return;
     }
@@ -6277,7 +6267,7 @@ async function renderMarketTabs(): Promise<void> {
   const tabs = $('mktTabs');
   tabs.innerHTML = '';
   if (!st.universe) {
-    $('mktBody').innerHTML = '<span class="c-t3">Katalog noch nicht geseedet — läuft mit dem ersten Scan.</span>';
+    $('mktBody').innerHTML = `<span class="c-t3">${t('mk.nichtGeseedet')}</span>`;
     return;
   }
   // Marktgruppen-Filter: steht die aktive Klasse auf „versteckt", zur ersten
@@ -6318,7 +6308,7 @@ async function renderMarketGrid(): Promise<void> {
   } catch (e) {
     // Ehrlich scheitern statt den alten Inhalt stehen zu lassen (F8).
     body.innerHTML =
-      '<span class="c-t3">Kurse gerade nicht ladbar — beim nächsten Tab-Wechsel neuer Versuch.</span>';
+      `<span class="c-t3">${t('mk.kurseNichtLadbar')}</span>`;
     console.warn('renderMarketGrid', e);
     return;
   }
@@ -6377,16 +6367,16 @@ function openDetail(symbol: string, name: string, data: MarketDocData | null): v
   const veto = vetoAnzeige()
     && data?.news?.hardEvent
     && Date.now() / 1000 - data.news.hardEvent.published <= NEWS_VETO_WINDOW_SEC
-    ? `<div class="hint" style="color:var(--yl,#d9a441)">⏸ News-Veto aktiv (${esc(data.news.hardEvent.type)}) — die Engine setzt neue Einstiege hier gerade aus. Läuft automatisch 12 h nach dem Ereignis ab; abschaltbar in den Optionen („News-Veto").</div>`
+    ? `<div class="hint" style="color:var(--yl,#d9a441)">⏸ ${t('dt.vetoAktivA')} (${esc(data.news.hardEvent.type)}) ${t('dt.vetoAktivB')}</div>`
     : '';
   sheet.innerHTML = `
     <button class="dclose" data-close="detail">✕</button>
     <h3></h3>
     <div class="dmeta"><span class="mono"></span><span>${CLASS_LABELS[data?.assetClass ?? ''] ?? ''}</span></div>
     <div class="vbig ${q ? pnlClass(q.changePct) : 'c-t3'}">${q ? fmtNum(q.price) : '—'}</div>
-    <div class="smv ${q ? pnlClass(q.changePct) : 'c-t3'}">${q ? fmtPct(q.changePct) : 'Noch keine Scan-Daten — dieses Symbol steht gerade nicht in der Beobachtung.'}</div>
+    <div class="smv ${q ? pnlClass(q.changePct) : 'c-t3'}">${q ? fmtPct(q.changePct) : t('dt.keineScanDaten')}</div>
     <div class="dbtns">
-      ${q ? '<button class="dbtn pri" id="dOpenChart">Im Chart öffnen</button>' : ''}
+      ${q ? `<button class="dbtn pri" id="dOpenChart">${t('dt.imChartOeffnen')}</button>` : ''}
     </div>
     ${veto}
     ${newsHtml ? `<div class="wl-sec" style="margin-top:10px">Schlagzeilen</div><div class="dnews">${newsHtml}</div>` : ''}`;
@@ -6469,7 +6459,7 @@ async function schliessePositionen(symbole: string[]): Promise<void> {
   const fehler: string[] = [];
   let ok = 0;
   for (const [i, sym] of symbole.entries()) {
-    out.innerHTML = `<div class="hint">Schließe ${i + 1}/${symbole.length} …</div>`;
+    out.innerHTML = `<div class="hint">${t('sc.schliesse')} ${i + 1}/${symbole.length} …</div>`;
     const pos = st?.positions.find((p) => p.symbol === sym);
     try {
       // Long wird verkauft, Short wird eingedeckt — der Broker schließt in
@@ -6481,10 +6471,10 @@ async function schliessePositionen(symbole: string[]): Promise<void> {
     }
   }
   out.innerHTML =
-    `<div class="hint">${ok} von ${symbole.length} geschlossen.`
+    `<div class="hint">${ok} ${t('sc.vonGeschlossen')} ${symbole.length}.`
     + (fehler.length > 0
-      ? `<br />Nicht geschlossen — ${escText(fehler.join(' · '))}`
-      : ' Das Depot ist jetzt flach.')
+      ? `<br />${t('sc.nichtGeschlossen')} — ${escText(fehler.join(' · '))}`
+      : ` ${t('sc.depotFlach')}`)
     + '</div>';
 }
 
@@ -6956,9 +6946,9 @@ function renderAnalytics(): void {
   const summary = historySummary(trades);
   if (summary.closed === 0) {
     box.innerHTML = st.anLaedt
-      ? '<div class="hint">Lade Historie …</div>'
-      : `<div class="hint">Keine geschlossenen Trades in diesem Zeitraum${
-          st.anZeitraum === 0 ? '' : ' — längeren Zeitraum wählen?'
+      ? `<div class="hint">${t('an.ladeHistorie')}</div>`
+      : `<div class="hint">${t('an.keineImZeitraum')}${
+          st.anZeitraum === 0 ? '' : ` ${t('an.laengerWaehlen')}`
         }</div>`;
     if (scope) scope.textContent = '';
     return;
@@ -6970,8 +6960,8 @@ function renderAnalytics(): void {
      * ist der Zeitraum gewählt, aber nicht vollständig belegt. */
     const voll = st.tradesDone || historieReicht(st.trades, st.anZeitraum, new Date(), st.tradesDone);
     scope.textContent =
-      `${summary.closed} geschlossen · ${zeitraumLabel(st.anZeitraum)}` +
-      `${st.anLaedt ? ' · lädt …' : voll ? '' : ' (geladen)'}`;
+      `${summary.closed} ${t('an.geschlossen')} · ${zeitraumLabel(st.anZeitraum)}` +
+      `${st.anLaedt ? ` · ${t('an.laedt')}` : voll ? '' : ` (${t('an.geladen')})`}`;
   }
 
   const geschlossen = closedOnly(trades);
@@ -6997,30 +6987,30 @@ function renderAnalytics(): void {
 
   box.innerHTML = `
     <div class="an-kpis">
-      ${kpi('Ergebnis', money(summary.pnl), pnlClass(summary.pnl))}
-      ${kpi('Trefferquote', stats.winRatePct === null ? '—' : `${stats.winRatePct}%`)}
-      ${kpi('Profit-Faktor', stats.profitFactor === null ? '—' : String(stats.profitFactor))}
-      ${kpi('Ø je Trade', stats.expectancy === null ? '—' : money(stats.expectancy),
+      ${kpi(t('an.ergebnis'), money(summary.pnl), pnlClass(summary.pnl))}
+      ${kpi(t('an.trefferquote'), stats.winRatePct === null ? '—' : `${stats.winRatePct}%`)}
+      ${kpi(t('an.profitFaktor'), stats.profitFactor === null ? '—' : String(stats.profitFactor))}
+      ${kpi(t('an.oJeTrade'), stats.expectancy === null ? '—' : money(stats.expectancy),
             pnlClass(stats.expectancy ?? 0))}
-      ${kpi('Bester', summary.bestTrade === null ? '—' : money(summary.bestTrade), 'c-gn')}
-      ${kpi('Schlechtester', summary.worstTrade === null ? '—' : money(summary.worstTrade), 'c-rd')}
-      ${kpi('Längste Verlustserie', String(st_.longestLoss))}
-      ${kpi('Laufende Serie', st_.current === 0 ? '—' : `${st_.current > 0 ? '+' : ''}${st_.current}`,
+      ${kpi(t('an.bester'), summary.bestTrade === null ? '—' : money(summary.bestTrade), 'c-gn')}
+      ${kpi(t('an.schlechtester'), summary.worstTrade === null ? '—' : money(summary.worstTrade), 'c-rd')}
+      ${kpi(t('an.verlustserie'), String(st_.longestLoss))}
+      ${kpi(t('an.laufendeSerie'), st_.current === 0 ? '—' : `${st_.current > 0 ? '+' : ''}${st_.current}`,
             st_.current > 0 ? 'c-gn' : st_.current < 0 ? 'c-rd' : '')}
     </div>
 
     <div class="an-grid">
-      <section><h4>Kontoverlauf (realisiert) ${iBtn('anEquity')}</h4>${areaLine(serie)}</section>
-      <section><h4>Verteilung der Ergebnisse ${iBtn('anHisto')}</h4>${histogram(pnlHistogram(trades))}</section>
-      <section><h4>Ausstiegsgründe ${iBtn('exits')}</h4>${donut(exitSlices)}</section>
-      <section><h4>Ergebnis je Symbol</h4>${hBarChart(
+      <section><h4>${t('an.kontoverlauf')} ${iBtn('anEquity')}</h4>${areaLine(serie)}</section>
+      <section><h4>${t('an.verteilung')} ${iBtn('anHisto')}</h4>${histogram(pnlHistogram(trades))}</section>
+      <section><h4>${t('an.ausstiegsgruende')} ${iBtn('exits')}</h4>${donut(exitSlices)}</section>
+      <section><h4>${t('an.jeSymbol')}</h4>${hBarChart(
         symbole.slice(0, 8).map((b) => ({ label: b.key, value: b.pnl })),
       )}</section>
-      <section><h4>Nach Wochentag (ET)</h4>${barChart(
+      <section><h4>${t('an.nachWochentag')}</h4>${barChart(
         byWeekday(trades).map((b) => ({ label: b.key, value: b.pnl })),
         { labelJede: 1 },
       )}</section>
-      <section><h4>Nach Handelsstunde (ET) ${iBtn('anStunde')}</h4>${barChart(
+      <section><h4>${t('an.nachStunde')} ${iBtn('anStunde')}</h4>${barChart(
         byHour(trades).map((b) => ({ label: b.key, value: b.pnl })),
         { labelJede: 3 },
       )}</section>
@@ -7033,12 +7023,12 @@ const EXIT_LABELS: Record<string, string> = {
   stop_loss: 'Stop-Loss',
   take_profit: 'Take-Profit',
   trailing_stop: 'Trailing-Stop',
-  max_hold: 'Haltedauer',
-  emergency: 'Notbremse',
+  max_hold: t('an.haltedauer'),
+  emergency: t('an.notbremse'),
   // Zwangs-Glattstellung der Tages-Notbremse (Audit 13.08., K-3). Das Wort
   // kommt aus notbremsenExit — journalText erzählt es als „durch die
   // Tages-Notbremse".
-  breaker: 'Notbremse (Glattstellung)',
+  breaker: `${t('an.notbremse')} (${t('an.glattstellung')})`,
   margin_call: 'Margin-Call',
 };
 
@@ -7232,7 +7222,7 @@ function renderPfStats(): void {
   hint.hidden = days >= 7;
   if (!hint.hidden) {
     hint.textContent =
-      `Erst ${days} Snapshot-Tag${days === 1 ? '' : 'e'} — Kennzahlen werden mit jeder weiteren Kurve aussagekräftiger (täglich 23:15).`
+      `${t('ps.erst')} ${days} ${days === 1 ? t('ps.snapshotTag') : t('ps.snapshotTage')} ${t('ps.aussagekraeftiger')}`
       + (wahl.erklaerung ? ` ${wahl.erklaerung}` : '');
   }
   const num = (v: number | null | undefined, digits = 2, suffix = ''): string =>
@@ -7275,7 +7265,7 @@ function renderPfKurven(
     kurve.innerHTML = '';
     ddSvg.innerHTML = '';
     // Warum, nicht nur dass — dieselbe Erklärung wie in der Karte darüber.
-    meta.textContent = depotKurve().erklaerung || 'Noch keine Kurve.';
+    meta.textContent = depotKurve().erklaerung || t('ps.nochKeineKurve');
     return;
   }
   const eq = serie.map((p) => p.equity);
@@ -7451,18 +7441,18 @@ async function svgAlsPng(svg: string, kante: number, skala = 2): Promise<Blob> {
     const bild = new Image();
     await new Promise<void>((fertig, fehler) => {
       bild.onload = () => fertig();
-      bild.onerror = () => fehler(new Error('Grafik konnte nicht gerastert werden'));
+      bild.onerror = () => fehler(new Error(t('sh.nichtGerastert')));
       bild.src = url;
     });
     const leinwand = document.createElement('canvas');
     leinwand.width = kante * skala;
     leinwand.height = kante * skala;
     const ctx = leinwand.getContext('2d');
-    if (!ctx) throw new Error('Canvas nicht verfügbar');
+    if (!ctx) throw new Error(t('sh.canvasFehlt'));
     ctx.drawImage(bild, 0, 0, leinwand.width, leinwand.height);
     return await new Promise<Blob>((fertig, fehler) =>
       leinwand.toBlob(
-        (b) => (b ? fertig(b) : fehler(new Error('PNG-Export fehlgeschlagen'))),
+        (b) => (b ? fertig(b) : fehler(new Error(t('sh.pngFehlgeschlagen')))),
         'image/png',
       ),
     );
@@ -7492,7 +7482,7 @@ async function teileDepotGrafik(): Promise<void> {
   const knopf = $('anShareBtn') as HTMLButtonElement | null;
   if (!st || !status || !knopf) return;
   knopf.disabled = true;
-  status.textContent = 'Grafik wird gebaut…';
+  status.textContent = t('sh.wirdGebaut');
   try {
     const betraege = ($('anShareBetraege') as HTMLInputElement | null)?.checked === true;
     const daten = shareDatenBauen(betraege);
@@ -7513,7 +7503,7 @@ async function teileDepotGrafik(): Promise<void> {
       waehrung: daten.waehrung,
     });
     if (!aussage.teilbar) {
-      status.textContent = aussage.grund ?? 'Noch nichts zu teilen.';
+      status.textContent = aussage.grund ?? t('sh.nichtsZuTeilen');
       return;
     }
     const png = await svgAlsPng(shareCard(daten), KARTE);
@@ -7522,7 +7512,7 @@ async function teileDepotGrafik(): Promise<void> {
 
     if (navigator.canShare?.({ files: [datei] })) {
       await navigator.share({ files: [datei], text, url: 'https://autotrd.net' });
-      status.textContent = 'Geteilt.';
+      status.textContent = t('sh.geteilt');
       return;
     }
     const url = URL.createObjectURL(png);
@@ -7535,12 +7525,12 @@ async function teileDepotGrafik(): Promise<void> {
     // Abtippen. Schlägt das fehl (kein sicherer Kontext), ist das kein Grund
     // für eine Fehlermeldung — das Bild ist da.
     await navigator.clipboard?.writeText(`${text} https://autotrd.net`).catch(() => undefined);
-    status.textContent = 'Bild gespeichert, Text in der Zwischenablage.';
+    status.textContent = t('sh.bildGespeichert');
   } catch (e) {
     // Ein abgebrochener Teilen-Dialog ist kein Fehler.
     const name = e instanceof Error ? e.name : '';
     status.textContent =
-      name === 'AbortError' ? '' : `Fehlgeschlagen: ${e instanceof Error ? e.message : String(e)}`;
+      name === 'AbortError' ? '' : `${t('sh.fehlgeschlagen')}: ${e instanceof Error ? e.message : String(e)}`;
   } finally {
     knopf.disabled = false;
   }
@@ -7568,7 +7558,7 @@ function renderDepotVerlauf(): void {
   const z = zerlegeDepot(wahl.serie, st.trades as HistoryTrade[], { modus: st.dcModus });
   const { svg, legende: legHtml } = depotChart(z);
   halter.innerHTML =
-    svg || `<div class="hint">${escText(wahl.erklaerung || 'Noch keine Kurve.')}</div>`;
+    svg || `<div class="hint">${escText(wahl.erklaerung || t('ps.nochKeineKurve'))}</div>`;
   legende.innerHTML = legHtml;
 
   const teile: string[] = [];
@@ -7578,9 +7568,9 @@ function renderDepotVerlauf(): void {
   teile.push(`${drin} ${drin === 1 ? 'Trade' : 'Trades'} im Bild`);
   // Ehrlich benennen, was NICHT im Bild ist — sonst wirkt die Zerlegung
   // vollständig, obwohl ältere Trades längst in der Bezugslinie stecken.
-  if (z.ausserhalb.vorher > 0) teile.push(`${z.ausserhalb.vorher} älter als das Fenster`);
-  if (z.ausserhalb.nachher > 0) teile.push(`${z.ausserhalb.nachher} nach dem letzten Snapshot`);
-  if (!st.tradesDone) teile.push('Historie nur teilweise geladen');
+  if (z.ausserhalb.vorher > 0) teile.push(`${z.ausserhalb.vorher} ${t('dv.aelterAlsFenster')}`);
+  if (z.ausserhalb.nachher > 0) teile.push(`${z.ausserhalb.nachher} ${t('dv.nachSnapshot')}`);
+  if (!st.tradesDone) teile.push(t('dv.teilweiseGeladen'));
   meta.textContent = teile.join(' · ');
 
   wireDepotVerlauf(z);
@@ -7661,7 +7651,7 @@ function renderExits(s: PortfolioStatsDoc): void {
   const rows = Object.entries(s.exits ?? {}).sort((a, b) => b[1].n - a[1].n);
   const total = rows.reduce((a, [, b]) => a + b.n, 0);
   if (total === 0) {
-    box.innerHTML = '<div class="hint">Noch keine geschlossenen Trades.</div>';
+    box.innerHTML = `<div class="hint">${t('px.keineGeschlossenen')}</div>`;
     return;
   }
   box.innerHTML = rows
@@ -7690,7 +7680,7 @@ function renderCosts(s: PortfolioStatsDoc): void {
   const c = s.costs;
   if (!c || c.n === 0) {
     grid.hidden = true;
-    hint.textContent = 'Reibung wird ab dem ersten geschlossenen Trade mit Gebührensatz gemessen.';
+    hint.textContent = t('pc.reibungAbErstem');
     return;
   }
   grid.hidden = false;
@@ -7712,8 +7702,8 @@ function renderCosts(s: PortfolioStatsDoc): void {
     c.edgeOverCost === null
       ? ''
       : c.edgeOverCost < 2
-        ? `Zu wenig Luft: Die durchschnittliche Gewinnbewegung ist nur das ${c.edgeOverCost.toFixed(1)}-Fache der Handelskosten — davon bleibt kaum etwas übrig. Längere Haltedauer oder größerer Zeitrahmen hilft.`
-        : `Die durchschnittliche Gewinnbewegung ist das ${c.edgeOverCost.toFixed(1)}-Fache der Handelskosten.`;
+        ? `${t('pc.zuWenigLuftA')} ${c.edgeOverCost.toFixed(1)}${t('pc.zuWenigLuftB')}`
+        : `${t('pc.genugLuftA')} ${c.edgeOverCost.toFixed(1)}${t('pc.genugLuftB')}`;
 }
 
 /**
@@ -7797,8 +7787,8 @@ function renderTuneGlobal(stats: GlobalAxisStats): void {
     const roh = Object.keys(stats).length;
     box.innerHTML = `<div class="hint">${
       roh === 0
-        ? 'Noch keine Prüfungen im Kollektiv.'
-        : `${roh} Einstellung(en) in Beobachtung — es fehlen noch Konten oder Prüfungen für ein belastbares Urteil.`
+        ? t('tn.keineKollektiv')
+        : `${roh} ${t('tn.inBeobachtung')}`
     }</div>`;
     return;
   }
@@ -7820,14 +7810,14 @@ function renderTuneGlobal(stats: GlobalAxisStats): void {
 function renderTuneFleet(rows: TuneFleetRow[]): void {
   const box = $('tnFleet');
   if (rows.length === 0) {
-    box.innerHTML = '<div class="hint">Die Flotte startet mit dem nächsten Scan.</div>';
+    box.innerHTML = `<div class="hint">${t('tn.flotteStartet')}</div>`;
     return;
   }
   const ziel = EVIDENCE_DEFAULTS.minTrades;
   box.innerHTML = rows
     .map((r) => {
       const anteil = Math.min(100, Math.round((r.trades / ziel) * 100));
-      const offen = r.open > 0 ? ` · ${r.open} offen` : '';
+      const offen = r.open > 0 ? ` · ${r.open} ${t('pf.offenZaehler')}` : '';
       return (
         `<div class="tn-fl"><span class="tn-nm">${esc(labelVariantId(r.id))}</span>` +
         `<span class="tn-bar"><i style="width:${anteil}%"></i></span>` +
@@ -7848,8 +7838,7 @@ function renderTuneFleet(rows: TuneFleetRow[]): void {
 function renderTuneLog(rows: TuneLogRow[]): void {
   const box = $('tnLog');
   if (rows.length === 0) {
-    box.innerHTML =
-      '<div class="hint">Noch keine Prüfung — der Tuner urteilt täglich nach US-Schluss.</div>';
+    box.innerHTML = `<div class="hint">${t('tn.keinePruefung')}</div>`;
     return;
   }
   box.innerHTML = rows
@@ -7858,16 +7847,16 @@ function renderTuneLog(rows: TuneLogRow[]): void {
         day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
       });
       const marke = r.promoted
-        ? '<span class="tn-tag tn-ok">übernommen</span>'
-        : '<span class="tn-tag">abgelehnt</span>';
+        ? `<span class="tn-tag tn-ok">${t('mt.uebernommen')}</span>`
+        : `<span class="tn-tag">${t('sk.abgelehnt')}</span>`;
       // p-Wert und Stichproben immer mitzeigen: Ohne sie ist „abgelehnt" eine
       // Behauptung, mit ihnen eine nachrechenbare Aussage.
       const zahlen =
         r.nCandidate > 0
           ? `n=${r.nCandidate} vs. ${r.nIncumbent}` +
             (r.p !== null ? ` · p=${r.p.toFixed(3)}` : '') +
-            ` · Vorsprung ${r.edge >= 0 ? '+' : ''}${r.edge.toFixed(2)}`
-          : 'noch keine Schatten-Trades';
+            ` · ${t('sk.vorsprung')} ${r.edge >= 0 ? '+' : ''}${r.edge.toFixed(2)}`
+          : t('tn.keineSchattenTrades');
       return (
         `<div class="tn-e"><div class="tn-h"><span class="tn-nm">${esc(r.change || labelVariantId(r.variantId))}</span>${marke}` +
         `<span class="tn-t mono">${zeit}</span></div>` +
@@ -7975,7 +7964,7 @@ function renderHaltedauer(d: TagRueckblickDoc | null): void {
 
   const zeilen = haltedauerZeilen(d?.horizonte);
   if (zeilen.length === 0) {
-    box.innerHTML = '<div class="hint">Die Rückschau rechnet täglich um 18:30 ET.</div>';
+    box.innerHTML = `<div class="hint">${t('hd.rueckschau')}</div>`;
     if (stand) stand.textContent = '';
     if (fazit) fazit.textContent = '';
     if (meta) meta.textContent = '';
@@ -8007,14 +7996,14 @@ function renderErkenntnisse(c: ErkenntnisChronik | null): void {
   const eintraege = Object.entries(c?.eintraege ?? {});
   if (eintraege.length === 0) {
     box.innerHTML =
-      '<div class="hint">Die erste Chronik entsteht mit dem nächsten Tages-Lauf (17:15 ET).</div>';
+      `<div class="hint">${t('er.ersteChronik')}</div>`;
     return;
   }
   const rang: Record<string, number> = { gilt: 0, gilt_nicht: 1, wartet_auf_daten: 2 };
   const marke: Record<string, string> = {
     gilt: '<span class="tn-tag tn-ok">gilt</span>',
     gilt_nicht: '<span class="tn-tag">widerlegt</span>',
-    wartet_auf_daten: '<span class="tn-tag">wartet auf Daten</span>',
+    wartet_auf_daten: `<span class="tn-tag">${t('er.wartetAufDaten')}</span>`,
   };
   box.innerHTML = eintraege
     .sort((a, b) => (rang[a[1].status] ?? 9) - (rang[b[1].status] ?? 9) || a[0].localeCompare(b[0]))
@@ -8022,12 +8011,12 @@ function renderErkenntnisse(c: ErkenntnisChronik | null): void {
       const belege = Object.entries(e.beleg ?? {})
         .map(([k, v]) => `${k} ${typeof v === 'number' ? String(Math.round(v * 100) / 100).replace('.', ',') : (v ?? '--')}`)
         .join(' · ');
-      const seit = e.seitAt ? `seit ${e.seitAt.slice(0, 10)}` : '';
+      const seit = e.seitAt ? `${t('ap.seit')} ${e.seitAt.slice(0, 10)}` : '';
       // Ein Wechsel ist die eigentliche Nachricht — ohne ihn wüsste man nie,
       // dass eine frühere Annahme gekippt ist.
       const letzter = e.historie?.[e.historie.length - 1];
       const wechsel = letzter
-        ? `<div class="er-vor">Zuvor (${letzter.at.slice(0, 10)}): ${esc(letzter.these)}</div>`
+        ? `<div class="er-vor">${t('er.zuvor')} (${letzter.at.slice(0, 10)}): ${esc(letzter.these)}</div>`
         : '';
       // Status und Datum stehen ÜBER dem Satz, nicht daneben: In einer
       // Flex-Zeile schrumpfen weder das Tag noch das nowrap-Datum, der Satz
@@ -8111,7 +8100,7 @@ function renderAiBericht(d: KiBerichtDoc | null): void {
   meta.textContent = [
     d.modell,
     d.tokens ? `${d.tokens.ein}+${d.tokens.aus} Token` : null,
-    d.laeufeImMonat ? `Lauf ${d.laeufeImMonat} im Monat` : null,
+    d.laeufeImMonat ? `${t('ah.lauf')} ${d.laeufeImMonat} ${t('ah.imMonat')}` : null,
   ]
     .filter(Boolean)
     .join(' · ');
@@ -8125,7 +8114,7 @@ function renderTradeJournal(rows: JournalRow[]): void {
   if (!box) return;
   if (rows.length === 0) {
     box.innerHTML =
-      '<div class="hint">Noch keine Einträge — das Journal beginnt mit dem nächsten gebuchten Trade.</div>';
+      `<div class="hint">${t('tj.keineEintraege')}</div>`;
     return;
   }
   box.innerHTML = rows
@@ -8166,7 +8155,7 @@ function renderTradeJournal(rows: JournalRow[]): void {
         .join('');
       return (
         `<div class="tn-e"><div class="tn-h"><span class="tn-nm">${esc(r.symbol)} · ${
-          r.side === 'buy' ? 'Kauf' : 'Verkauf'
+          r.side === 'buy' ? t('sk.kauf') : t('sk.verkauf')
         } · ${r.qty}</span>${marke}` +
         `<span class="tn-t mono">${zeit}</span></div>` +
         `<div class="tn-r">${esc(these)}</div>` +
@@ -8223,24 +8212,24 @@ function wireTradeJournal(uid: string): void {
  */
 async function positionSchliessen(symbol: string, side: 'buy' | 'sell'): Promise<void> {
   const hint = $('mtHint');
-  hint.textContent = 'Sende Order…';
+  hint.textContent = t('mtr.sendeOrder');
   try {
     await callTrade({ symbol, side });
-    hint.textContent = `Position geschlossen: ${symbol} — Ausführung inkl. Gebühren, siehe Trade-Historie.`;
+    hint.textContent = `${t('mtr.positionGeschlossen')}: ${symbol} — ${t('mtr.inklGebuehren')}`;
   } catch (e) {
-    hint.textContent = (e as { message?: string }).message ?? 'Order fehlgeschlagen';
+    hint.textContent = (e as { message?: string }).message ?? t('mtr.orderFehlgeschlagen');
   }
 }
 
 async function manualTrade(symbol: string, side: 'buy' | 'sell'): Promise<void> {
   const hint = $('mtHint');
-  hint.textContent = 'Sende Order…';
+  hint.textContent = t('mtr.sendeOrder');
   try {
     const qty = eingabeStueckzahl(($('mQty') as HTMLInputElement).value);
     await callTrade({ symbol, side, ...(side === 'buy' ? { qty } : {}) });
-    hint.textContent = `${side === 'buy' ? 'Gekauft' : 'Verkauft'}: ${symbol} — Ausführung inkl. Gebühren, siehe Trade-Historie.`;
+    hint.textContent = `${side === 'buy' ? t('mtr.gekauft') : t('mtr.verkauft')}: ${symbol} — ${t('mtr.inklGebuehren')}`;
   } catch (e) {
-    hint.textContent = (e as { message?: string }).message ?? 'Order fehlgeschlagen';
+    hint.textContent = (e as { message?: string }).message ?? t('mtr.orderFehlgeschlagen');
   }
 }
 
@@ -8257,8 +8246,8 @@ const mtState: {
 function mtDisarm(): void {
   if (mtState.arm !== null) window.clearTimeout(mtState.arm.timer);
   mtState.arm = null;
-  $('mtBuy').textContent = 'Kaufen';
-  $('mtSell').textContent = 'Verkaufen';
+  $('mtBuy').textContent = t('lay.kaufen');
+  $('mtSell').textContent = t('lay.verkaufen');
 }
 
 /** Summen + Kaufkraft live nachrechnen (gleiche Konditionen wie der Server). */
@@ -8312,7 +8301,7 @@ function mtSelect(sym: string): void {
       const m = $('mtMacd');
       if (row?.macd) {
         const bull = row.macd.histogram > 0;
-        m.textContent = bull ? '↑ bullisch' : '↓ bärisch';
+        m.textContent = bull ? `↑ ${t('mtr.bullisch')}` : `↓ ${t('mtr.baerisch')}`;
         m.className = `smv ${bull ? 'c-gn' : 'c-rd'}`;
       } else {
         m.textContent = '--';
@@ -8385,8 +8374,8 @@ function wireManualTrade(): void {
     const total = mtState.price !== null ? money(qty * mtState.price * (1 + PAPER_FEE_RATE)) : '';
     $(side === 'buy' ? 'mtBuy' : 'mtSell').textContent =
       side === 'buy'
-        ? `✓ ${qty} × ${sym}${total ? ` für ${total}` : ''} — bestätigen`
-        : `✓ Position ${sym} komplett verkaufen — bestätigen`;
+        ? `✓ ${qty} × ${sym}${total ? ` ${t('mtr.fuer')} ${total}` : ''} — ${t('mtr.bestaetigen')}`
+        : `✓ ${t('mtr.positionVerkaufen')} ${sym} ${t('mtr.komplettVerkaufen')} — ${t('mtr.bestaetigen')}`;
     // 6 s Bedenkzeit, dann entschärfen — verhindert versehentliche Doppelklicks
     mtState.arm = { side, timer: window.setTimeout(mtDisarm, 6000) };
   };
