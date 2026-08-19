@@ -494,7 +494,37 @@ export async function pflegeSchutz(
   fetchImpl: FetchLike = fetch,
 ): Promise<SchutzBefund> {
   const schutz = pos.schutz;
-  if (!schutz?.orderId) return { stand: 'ok' };
+  if (!schutz?.orderId) {
+    /* Kein Netz da — anlegen (19.08.).
+     *
+     * Bis heute entstand ein Schutz-Stop AUSSCHLIESSLICH nach einem
+     * eröffnenden Fill. Damit verschwand er still und kam nie zurück:
+     *
+     * - Nach einem TEILausstieg storniert der Exit die Order (er muss, sonst
+     *   sind die Stücke reserviert) — angelegt wurde danach nichts mehr. Der
+     *   Rest der Position lag ungeschützt, bis zufällig nachgekauft wurde.
+     * - Scheiterte das erste Anlegen (Netzwerk, kurzer Broker-Fehler), blieb
+     *   die Position dauerhaft ohne Netz. Geloggt wurde eine Warnung, die
+     *   niemand liest.
+     * - Vom Broker übernommene und über den Momentum-Sockel gekaufte
+     *   Positionen hatten nie eins.
+     *
+     * Der Plan wird aus der Position gerechnet, die der Aufrufer schon in der
+     * Hand hat — KEIN zusätzlicher Firestore-Lesevorgang für Positionen, die
+     * ohnehin keins bekommen (Konten ohne Prozent-Stops, Bruchstücke,
+     * Krypto ohne bekanntes Raster). Erst wenn der Plan Ja sagt, liest
+     * `schutzAnlegen` frisch nach und sendet. */
+    const plan = planeSchutzStop(
+      lageAusPosition(pos),
+      risk,
+      klasse,
+      await schutzAsset(verbindung, symbol, klasse, fetchImpl),
+    );
+    if (plan.anlegen) {
+      await schutzAnlegen(verbindung, uid, symbol, risk, klasse, laufId, fetchImpl);
+    }
+    return { stand: 'ok' };
+  }
   try {
     const stand = await alpacaOrderAbfragen(
       verbindung.mode,
