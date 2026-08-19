@@ -634,3 +634,73 @@ describe('Chart-Werkzeugleiste ist zweisprachig (Tranche 5f)', () => {
     }
   });
 });
+
+describe('Auswertungs-Karten sind zweisprachig (Tranche 5g)', () => {
+  /* Performance, Depot-Verlauf, Haltedauer, Erkenntnisse — die vier Karten
+   * mit den langen Erklärabsätzen. Sie sind der Grund, warum meine erste
+   * Zählung des Rests („~60") um mehr als das Vierfache danebenlag: Diese
+   * Texte stehen als Fließtext IM Markup, umbrochen und eingerückt, und
+   * eine Suche nach großgeschriebenen Wörtern in Anführungszeichen findet
+   * davon kein einziges.
+   *
+   * Geschnitten wird JE KARTE, nicht über die ganze Spanne. Der erste
+   * Entwurf nahm alles von der Performance-Karte bis zum Order-Modal — und
+   * meldete prompt Texte aus Karten, die zu späteren Tranchen gehören. Ein
+   * Wächter, der mehr prüft als seine Tranche liefert, ist entweder immer
+   * rot oder er lädt dazu ein, seine Grenze aufzuweichen. */
+  const karte = (panel: string, bis: string): string =>
+    dashboard.slice(dashboard.indexOf(`data-panel="${panel}"`), dashboard.indexOf(bis));
+
+  const KARTEN: ReadonlyArray<readonly [string, string]> = [
+    ['performance', 'data-panel="manualtrade"'],
+    ['depotVerlauf', 'data-panel="haltedauer"'],
+    ['haltedauer', 'data-panel="erkenntnisse"'],
+    ['erkenntnisse', '<div class="dmodal" id="orderModal">'],
+  ];
+
+  it('alle vier Karten sind gefunden und nicht leer', () => {
+    for (const [panel, bis] of KARTEN) {
+      const k = karte(panel, bis);
+      expect(k.length, `Karte ${panel} leer oder Grenze verrutscht`).toBeGreaterThan(300);
+      expect(k).toContain(`data-panel="${panel}"`);
+    }
+  });
+
+  /* Sprachneutral — dieselbe Regel wie bei den Zeitrahmen-Kürzeln in 5f,
+   * nur andersherum: Was in beiden Sprachen IDENTISCH ist, bleibt Literal
+   * und kommt gar nicht erst ins Wörterbuch. Eine Zeile, die nichts
+   * übersetzt, kann trotzdem falsch werden — sie bringt nur Risiko ohne
+   * Nutzen. „Drawdown" und „Sharpe" SIND die englischen Begriffe. */
+  const NEUTRAL = new Set(['Cash', 'Equity (live)', 'Drawdown', 'Sharpe 30', 'Sharpe 90']);
+
+  it('JEDER Textknoten der vier Karten ist übersetzt oder neutral', () => {
+    for (const [panel, bis] of KARTEN) {
+      const ohneAufrufe = karte(panel, bis)
+        .replace(/\$\{t\('[^']+'\)\}/g, '')
+        .replace(/\$\{iBtn\('[^']+'\)\}/g, '');
+      const roh = [...ohneAufrufe.matchAll(/>([^<>{}$]*[A-Za-zÄÖÜäöü][^<>{}$]*)</g)]
+        .map((m) => (m[1] ?? '').split(/\s+/).join(' ').trim())
+        .filter((v) => v.length > 0 && !NEUTRAL.has(v));
+      expect(roh, `${panel}: nicht übersetzt — ${roh.join(' | ')}`).toEqual([]);
+    }
+  });
+
+  it('die langen Erklärabsätze sind vollständig übersetzt, nicht angerissen', () => {
+    /* Der billigste Fehler bei einem umbrochenen Absatz wäre, nur die erste
+     * Zeile zu ersetzen und den Rest stehenzulassen — das Ergebnis wäre ein
+     * halb englischer Satz, und der liest sich schlimmer als ein ganz
+     * deutscher. Deshalb je Absatz eine Probe auf das ENDE. */
+    expect(EN['dc.hinweis']).toContain('since the start of the window');
+    expect(EN['hd.hinweis']).toContain('not the signal');
+    expect(EN['er.hinweis']).toContain('nothing is claimed');
+    for (const k of ['dc.hinweis', 'hd.hinweis', 'er.hinweis'] as const) {
+      expect(EN[k]!.length, `${k} wirkt abgeschnitten`).toBeGreaterThan(200);
+    }
+  });
+
+  it('jede Zeile der vier Karten hat eine englische Fassung', () => {
+    for (const k of Object.keys(DE).filter((s) => /^(pf|dc|hd|er)\./.test(s))) {
+      expect(EN[k as TextSchluessel], `${k} ohne englische Fassung`).toBeTruthy();
+    }
+  });
+});

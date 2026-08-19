@@ -943,25 +943,25 @@ function layout(email: string): string {
              Short-Buch) — renderPortfolio füllt und zeigt ihn. -->
         <p class="hint" id="vCashHint" hidden style="margin:-4px 0 6px"></p>
         <label class="lbl">Equity (live)</label><div id="vEq" class="vbig">--</div>
-        <label class="lbl">Gesamt P&amp;L ${iBtn('gesamtPnl')}</label><div id="vPnl" class="vbig">--</div>
+        <label class="lbl">${t('pf.gesamtPnl')} ${iBtn('gesamtPnl')}</label><div id="vPnl" class="vbig">--</div>
         <!-- Der Maßstab dieser Zahl (Owner-Frage 13.08.: „+2.245 $ hier,
              −1,79 % dort — was ist die Realität?"): Nach einem Depot-Schnitt
              zählt Gesamt P&L erst AB dem Schnitt. Ohne diese Zeile liest
              sich die Zahl wie ein Lebenszeit-Gewinn. renderPortfolio füllt. -->
         <p class="hint" id="vPnlBasis" hidden style="margin:-4px 0 6px"></p>
         <div class="row" style="gap:12px">
-          <div><label class="lbl">Realisiert</label><div id="vClosed" class="smv">--</div></div>
-          <div><label class="lbl">Offen</label><div id="vUnreal" class="smv">--</div></div>
-          <div><label class="lbl">Win Rate</label><div id="vWR" class="smv">--%</div></div>
+          <div><label class="lbl">${t('pf.realisiert')}</label><div id="vClosed" class="smv">--</div></div>
+          <div><label class="lbl">${t('pf.offen')}</label><div id="vUnreal" class="smv">--</div></div>
+          <div><label class="lbl">${t('pf.winRate')}</label><div id="vWR" class="smv">--%</div></div>
         </div>
-        <label class="lbl" style="margin-top:10px">Equity-Kurve ${iBtn('equityCurve')}</label>
+        <label class="lbl" style="margin-top:10px">${t('pf.equityKurve')} ${iBtn('equityCurve')}</label>
         <!-- Zeitachse der Kurve (Owner-Thema „Performance mit Zeitachse"):
              fenstert Sparkline, große Kurve und Drawdown; die Kennzahlen
              darunter bleiben Server-Zahlen mit eigenem Bezugsraum. -->
         <div class="mkt-tabs" id="pfZeit" style="margin:2px 0 4px"></div>
         <svg id="pfSpark" class="pf-spark" viewBox="0 0 100 26" preserveAspectRatio="none" aria-hidden="true"></svg>
         <details id="pfDetail" style="margin-top:4px">
-          <summary class="hint" style="cursor:pointer">Große Kurve + Drawdown anzeigen</summary>
+          <summary class="hint" style="cursor:pointer">${t('pf.grosseKurve')}</summary>
           <div id="pfCurveMeta" class="hint mono" style="margin-top:6px"></div>
           <svg id="pfCurve" viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true" style="display:block;width:100%;height:120px"></svg>
           <label class="lbl" style="margin-top:6px">Drawdown ${iBtn('drawdown')}</label>
@@ -970,29 +970,29 @@ function layout(email: string): string {
         <div class="pf-grid" id="pfGrid" hidden>
           <div><label class="lbl">Sharpe 30 ${iBtn('sharpe')}</label><div id="pfS30" class="smv mono">--</div></div>
           <div><label class="lbl">Sharpe 90</label><div id="pfS90" class="smv mono">--</div></div>
-          <div><label class="lbl">Max-Drawdown ${iBtn('maxdd')}</label><div id="pfDD" class="smv mono">--</div></div>
-          <div><label class="lbl">Hochwasser ${iBtn('hwm')}</label><div id="pfHwm" class="smv mono">--</div></div>
-          <div><label class="lbl">Profit-Faktor ${iBtn('profitFactor')}</label><div id="pfPF" class="smv mono">--</div></div>
-          <div><label class="lbl">Erwartung/Trade ${iBtn('expectancy')}</label><div id="pfExp" class="smv mono">--</div></div>
+          <div><label class="lbl">${t('pf.maxDrawdown')} ${iBtn('maxdd')}</label><div id="pfDD" class="smv mono">--</div></div>
+          <div><label class="lbl">${t('pf.hochwasser')} ${iBtn('hwm')}</label><div id="pfHwm" class="smv mono">--</div></div>
+          <div><label class="lbl">${t('pf.profitFaktor')} ${iBtn('profitFactor')}</label><div id="pfPF" class="smv mono">--</div></div>
+          <div><label class="lbl">${t('pf.erwartungTrade')} ${iBtn('expectancy')}</label><div id="pfExp" class="smv mono">--</div></div>
         </div>
-        <label class="lbl" style="margin-top:10px">Warum geschlossen ${iBtn('exits')}</label>
-        <div id="pfExits" class="fl-tbl"><div class="hint">Noch keine geschlossenen Trades.</div></div>
-        <label class="lbl" style="margin-top:10px">Reibung ${iBtn('kosten')}</label>
+        <label class="lbl" style="margin-top:10px">${t('pf.warumGeschlossen')} ${iBtn('exits')}</label>
+        <div id="pfExits" class="fl-tbl"><div class="hint">${t('pf.keineGeschlossenen')}</div></div>
+        <label class="lbl" style="margin-top:10px">${t('pf.reibung')} ${iBtn('kosten')}</label>
         <div class="pf-grid" id="pfCostGrid" hidden>
-          <div><label class="lbl">Gebühren</label><div id="pfFees" class="smv mono">--</div></div>
-          <div><label class="lbl">Anteil am Ergebnis</label><div id="pfFeeShare" class="smv mono">--</div></div>
-          <div><label class="lbl">Ø Gewinn brutto</label><div id="pfGrossWin" class="smv mono">--</div></div>
-          <div><label class="lbl">Ø Verlust brutto</label><div id="pfGrossLoss" class="smv mono">--</div></div>
-          <div><label class="lbl">Roundtrip-Kosten</label><div id="pfRt" class="smv mono">--</div></div>
-          <div><label class="lbl">Luft über Kosten</label><div id="pfEdge" class="smv mono">--</div></div>
+          <div><label class="lbl">${t('pf.gebuehren')}</label><div id="pfFees" class="smv mono">--</div></div>
+          <div><label class="lbl">${t('pf.anteilErgebnis')}</label><div id="pfFeeShare" class="smv mono">--</div></div>
+          <div><label class="lbl">${t('pf.gewinnBrutto')}</label><div id="pfGrossWin" class="smv mono">--</div></div>
+          <div><label class="lbl">${t('pf.verlustBrutto')}</label><div id="pfGrossLoss" class="smv mono">--</div></div>
+          <div><label class="lbl">${t('pf.roundtripKosten')}</label><div id="pfRt" class="smv mono">--</div></div>
+          <div><label class="lbl">${t('pf.luftUeberKosten')}</label><div id="pfEdge" class="smv mono">--</div></div>
         </div>
         <div class="hint" id="pfCostHint"></div>
-        <div class="hint" id="pfHint">Kennzahlen entstehen ab dem ersten Tages-Snapshot (täglich 23:15).</div>
+        <div class="hint" id="pfHint">${t('pf.abSnapshot')}</div>
         <!-- Owner-Feedback 28.07.: „man schaut meistens auf die Performance, und
              wenn man die History direkt darunter hat, ist das logischer." Stimmt —
              die Analyse ist die Vertiefung genau dieser Kennzahlen, nicht ein
              Anhängsel der Trade-Tabelle. -->
-        <button class="btn btn-g" id="anOpen" style="width:100%;margin-top:8px">Handels-Analyse öffnen</button>
+        <button class="btn btn-g" id="anOpen" style="width:100%;margin-top:8px">${t('pf.analyseOeffnen')}</button>
       </div></div>
 
       <div class="card" data-panel="manualtrade"><div class="sect">${t('panel.manuellerTrade')}</div><div class="cbody">
@@ -1115,17 +1115,13 @@ function layout(email: string): string {
         <div id="skLog" class="tn-log"><div class="hint">Noch kein Lauf — die Suche prüft täglich um 18:10 ET einen Kandidaten.</div></div>
       </div></div>
 
-      <div class="card" data-panel="depotVerlauf"><div class="sect">Depot-Verlauf ${iBtn('depotVerlauf')}
+      <div class="card" data-panel="depotVerlauf"><div class="sect">${t('dc.titel')} ${iBtn('depotVerlauf')}
         <span class="dc-modus">
-          <button id="dcMSym" aria-pressed="true">je Symbol</button>
-          <button id="dcMTrade" aria-pressed="false">je Trade</button>
+          <button id="dcMSym" aria-pressed="true">${t('dc.jeSymbol')}</button>
+          <button id="dcMTrade" aria-pressed="false">${t('dc.jeTrade')}</button>
         </span>
       </div><div class="cbody">
-        <div class="hint">Die dicke Linie ist dein Depot. Die farbigen Flächen zeigen, WOMIT es
-          dorthin kam: Grün baut auf, Rot trägt wieder ab, zuletzt korrigiert der Buchwert der
-          offenen Positionen auf den tatsächlichen Stand. Jede Fläche setzt dort an, wo die vorige
-          aufhört — deshalb endet die Treppe genau auf der Depot-Linie. Die Höhe einer Fläche ist
-          das seit Fensterbeginn aufgelaufene Ergebnis dieses Symbols (oder Trades).</div>
+        <div class="hint">${t('dc.hinweis')}</div>
         <div class="dc-wrap" id="dcWrap"><div id="dcChart"></div><div class="dc-tt" id="dcTip" hidden></div></div>
         <div class="dc-legende" id="dcLegende"></div>
         <div id="dcMeta" class="tn-n mono"></div>
@@ -1134,12 +1130,8 @@ function layout(email: string): string {
       <div class="card" data-panel="haltedauer"><div class="sect">${t('panel.haltedauer')} ${iBtn('haltedauer')}
         <span id="hdStand" class="tn-tag" style="float:right"></span>
       </div><div class="cbody">
-        <div class="hint">Dieselben Kaufsignale, nur unterschiedlich lange gehalten — gerechnet auf der
-          gespeicherten Tages-Historie, jeweils nach Abzug der klassenechten Kosten. Die Zeile mit
-          der besten Netto-Kante ist hervorgehoben; Zeilen mit zu wenig Beobachtungen bleiben blass
-          und zählen nicht mit. Die Spalten Kauf und Verkauf trennen echte Kante von Marktdrift:
-          Trägt nur die Kaufseite, misst man den steigenden Markt und nicht das Signal.</div>
-        <div id="hdTbl" class="hd-tbl" style="margin-top:8px"><div class="hint">Die Rückschau rechnet täglich um 18:30 ET.</div></div>
+        <div class="hint">${t('hd.hinweis')}</div>
+        <div id="hdTbl" class="hd-tbl" style="margin-top:8px"><div class="hint">${t('hd.rueckschau')}</div></div>
         <div id="hdFazit" class="tn-r"></div>
         <div id="hdMeta" class="tn-n mono"></div>
       </div></div>
@@ -1147,13 +1139,10 @@ function layout(email: string): string {
       <div class="card" data-panel="erkenntnisse"><div class="sect">${t('panel.erkenntnisse')} ${iBtn('erkenntnisse')}
         <span id="erDate" class="tn-tag" style="float:right"></span>
       </div><div class="cbody">
-        <div class="hint">Alle anderen Zahlen hier sind Momentaufnahmen — sie werden überschrieben.
-          Diese Sätze bleiben: Jeden Abend prüft das System einen festen Satz Thesen gegen die
-          gemessenen Daten und hält fest, was gilt, seit wann es gilt und was widerlegt wurde.
-          Jede These trägt ihre Belegzahlen; unterhalb eines Mindest-n wird nichts behauptet.</div>
-        <div id="erList" class="er-list" style="margin-top:8px"><div class="hint">Die erste Chronik entsteht mit dem nächsten Tages-Lauf (17:15 ET).</div></div>
-        <label class="lbl" style="margin-top:12px">Tages-Einschätzung ${iBtn('aibericht')} <span id="abStand" class="tn-tag" style="float:right"></span></label>
-        <div id="abText" class="ab-text">Der erste Bericht entsteht mit dem nächsten Tages-Lauf (18:25 ET).</div>
+        <div class="hint">${t('er.hinweis')}</div>
+        <div id="erList" class="er-list" style="margin-top:8px"><div class="hint">${t('er.ersteChronik')}</div></div>
+        <label class="lbl" style="margin-top:12px">${t('er.tagesEinschaetzung')} ${iBtn('aibericht')} <span id="abStand" class="tn-tag" style="float:right"></span></label>
+        <div id="abText" class="ab-text">${t('er.ersterBericht')}</div>
         <div id="abMeta" class="tn-n mono"></div>
       </div></div>
 
