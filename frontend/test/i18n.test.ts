@@ -964,3 +964,114 @@ describe('Ablehnungsgründe, Regime und Zugang (Tranche 5k)', () => {
     }
   });
 });
+
+describe('Tranche 5l — „Warum handelt die Engine?" und die Melde-Texte der Montage', () => {
+  /* Warum hier ein ANDERER Wächter steht als in 5f–5k:
+   *
+   * Die bisherigen Wächter suchten deutsche Wörter (Umlaute, Funktions-
+   * wörter). Genau daran sind sie in dieser Tranche gescheitert: „Kerzen",
+   * „Monatswende", „Gespeichert." und „Sichere …" haben weder Umlaut noch
+   * Artikel — sie standen monatelang unübersetzt da und kein Wächter hat
+   * gemurrt. Ein Wächter, der die Sache nicht messen kann, bescheinigt
+   * Fehlerfreiheit.
+   *
+   * Deshalb dreht dieser Block die Beweislast um: JEDE Zeichenkette in den
+   * beiden Funktionen ist verdächtig, bis sie sich ausweist. Ausweisen kann
+   * sie sich als t()-Aufruf, als DOM-Id/Selektor/Ereignisname (die werden
+   * vorher weggeschnitten) oder als eines der unten NAMENTLICH gelisteten
+   * technischen Wörter. Alles andere ist ein Befund.
+   *
+   * Die Liste zu erweitern ist erlaubt — aber nur mit einem Wort, das
+   * wirklich Code ist. Wer hier einen Anzeigetext einträgt, hebelt den
+   * Wächter aus und das fällt beim Lesen sofort auf. */
+  const funktion = (name: string): string => {
+    const i = dashboard.search(new RegExp(`^(?:export )?(?:async )?function ${name}\\b`, 'm'));
+    const rest = dashboard.slice(i + 20);
+    const j = rest.search(/^(?:export )?(?:async )?function /m);
+    return dashboard.slice(i, j < 0 ? undefined : i + 20 + j);
+  };
+
+  const fremdWorte = (code: string): string[] => {
+    const ohne = code
+      .replace(/\/\*[\s\S]*?\*\//g, ' ') // Kommentare bleiben deutsch (Projekt-Konvention)
+      .replace(/(^|[^:])\/\/.*$/gm, '$1')
+      .replace(/t\('[^']+'\)/g, ' ') // übersetzt = ausgewiesen
+      .replace(/\$\('[^']+'\)/g, ' ') // DOM-Ids
+      .replace(
+        /(getItem|setItem|removeItem|addEventListener|removeEventListener|querySelector|querySelectorAll|closest|matches|getAttribute|setAttribute|hasAttribute|removeAttribute|toggle|add|remove|contains|getElementById|createElement|matchMedia|getPropertyValue|setProperty)\(\s*'[^']*'/g,
+        ' ',
+      )
+      .replace(/'var\(--[^']*'/g, ' '); // CSS-Variablen
+    const worte: string[] = [];
+    for (const m of ohne.matchAll(/'([^']*)'/g)) {
+      worte.push(...(m[1]!.match(/[A-Za-zÄÖÜäöüß]{3,}/g) ?? []));
+    }
+    for (const m of ohne.matchAll(/`([^`]*)`/g)) {
+      const text = m[1]!.replace(/\$\{[^{}]*\}/g, ' ');
+      worte.push(...(text.match(/[A-Za-zÄÖÜäöüß]{3,}/g) ?? []));
+    }
+    return [...new Set(worte)];
+  };
+
+  it('renderEngineWhy: jede Zeichenkette ist t() oder nachweislich technisch', () => {
+    const NEUTRAL = new Set([
+      // CSS / HTML-Gerüst
+      'div', 'class', 'hint', 'mono', 'text', 'color', 'display', 'flex', 'gap',
+      'align', 'items', 'baseline', 'right', 'width', 'inherit',
+      // Kürzel aus dem Heartbeat (Vertrag zum Server — NICHT übersetzen)
+      'approved', 'blocked', 'pending', 'trend', 'geprueft', 'gehandelt', 'laufend',
+      'live', 'kosten', 'halte', 'hebel', 'frei', 'longs', 'ueberfuellt', 'short',
+      'squeeze', 'setup', 'number',
+      // Einheiten und Kennzahl-Namen, die in beiden Sprachen gleich heißen
+      'VIX', 'Vol', 'min',
+    ]);
+    const rest = fremdWorte(funktion('renderEngineWhy')).filter((w) => !NEUTRAL.has(w));
+    expect(rest, `nicht ausgewiesene Zeichenketten: ${rest.join(' | ')}`).toEqual([]);
+  });
+
+  it('mountDashboard: jede Zeichenkette ist t() oder nachweislich technisch', () => {
+    const NEUTRAL = new Set([
+      // CSS / HTML-Gerüst
+      'div', 'class', 'hint', 'card', 'panel', 'style', 'color', 'font', 'family',
+      'monospace', 'margin', 'top', 'text', 'input', 'checked', 'visible', 'data',
+      'btn', 'active', 'show',
+      // DOM-Ids, Datensatz-Namen und Selektor-Teile
+      'chartGrid', 'cmpOverlay', 'subPanels', 'predArrow', 'drawBtn', 'indBtn',
+      'layBtn', 'menuDraw', 'menuInd', 'menuLay', 'leftCol', 'rightCol', 'otSym',
+      'otQty', 'otab', 'opane', 'ouPred', 'ouCmp', 'ouGrid', 'ouSub', 'lodel',
+      'flCombos', 'flCombosIntra', 'stopsym', 'adv', 'titel', 'zoom', 'layer',
+      'ctype', 'scale', 'grid', 'draw',
+      // Speicher-Schlüssel, Tastennamen, Medienabfrage
+      'autotrd', 'chart', 'prefers', 'scheme', 'dark', 'light', 'system', 'Enter',
+      'Escape', 'ctrl',
+      // Werte aus dem Zustand / Vertrag zum Server (NICHT übersetzen)
+      'auto', 'fix', 'frei', 'hold', 'buy', 'trade', 'stop', 'start', 'middle',
+      'end', 'max', 'live', 'status', 'change', 'symbol', 'broker', 'leverage',
+      'approved', 'indices', 'ueberblick', 'trend', 'number', 'string',
+      // Chart-Typen und Indikator-Kürzel (Fachbegriffe, in beiden Sprachen gleich)
+      'candles', 'hollow', 'heikin', 'line', 'area', 'baseline', 'bars', 'hline',
+      'rect', 'rsi', 'macd', 'QQQ',
+      // Eigennamen und Dateinamen-Bestandteile
+      'Alpha', 'Leech', 'Community', 'steuer', 'papierhandel', 'csv', 'charset', 'utf',
+    ]);
+    const rest = fremdWorte(funktion('mountDashboard')).filter((w) => !NEUTRAL.has(w));
+    expect(rest, `nicht ausgewiesene Zeichenketten: ${rest.join(' | ')}`).toEqual([]);
+  });
+
+  it('der Speichern-Zwischenstand vergleicht übersetzt, nicht auf Deutsch', () => {
+    /* Der Merker im Options-Modal („⚠ Noch nicht gespeichert") darf sich
+     * nicht über die laufende Speicher-Meldung legen. Der Vergleich lief
+     * über startsWith('Speichere') — auf Englisch stünde dort „Saving …"
+     * und der Vergleich wäre IMMER falsch: Die Warnung hätte die laufende
+     * Speicherung überschrieben. Übersetzen heißt hier, den Vergleich
+     * mitzuziehen, nicht nur den Text. */
+    expect(dashboard).toContain("m.textContent !== t('mt.speichere')");
+    expect(dashboard).not.toContain("startsWith('Speichere')");
+  });
+
+  it('jede ew./mt.-Zeile hat eine englische Fassung', () => {
+    for (const k of Object.keys(DE).filter((s) => /^(ew|mt)\./.test(s))) {
+      expect(EN[k as TextSchluessel], `${k} ohne englische Fassung`).toBeTruthy();
+    }
+  });
+});
