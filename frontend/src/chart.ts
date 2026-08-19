@@ -14,6 +14,8 @@
 
 import { alsOrtszeit, heikinAshi, lokalerTag, tagesPraefix } from '@autotrd/shared';
 import type { Bar } from '@autotrd/shared';
+import { esc } from './html.js';
+import { t } from './i18n.js';
 
 /**
  * Zeitachse in ORTSZEIT (Owner-Entscheidung 04.08.).
@@ -283,7 +285,7 @@ export async function buildPriceChart(
   if (!lwc) {
     container.innerHTML =
       '<div style="padding:24px 12px;color:var(--t3);font-size:12px">' +
-      'Chart-Bibliothek nicht geladen. Rest des Dashboards funktioniert.</div>';
+      `${esc(t('chart.libFehlt'))}</div>`;
     return null;
   }
 
