@@ -1543,8 +1543,8 @@ function renderBrokerStatus(r: BrokerStatusResult): string {
   const abw =
     r.abweichungen.length > 0
       ? `<table class="tbl st-num" style="width:100%;margin-top:6px">
-           <thead><tr><th>Symbol</th><th class="num">eigenes Buch</th>
-             <th class="num">Broker</th><th class="num">Differenz</th></tr></thead>
+           <thead><tr><th>${t('br.abwSymbol')}</th><th class="num">${t('br.abwEigenes')}</th>
+             <th class="num">${t('br.abwBroker')}</th><th class="num">${t('br.abwDifferenz')}</th></tr></thead>
            <tbody>${r.abweichungen
              .map(
                (a) => `<tr><td>${e(a.symbol)}</td><td class="num">${a.eigeneMenge}</td>
@@ -1552,9 +1552,7 @@ function renderBrokerStatus(r: BrokerStatusResult): string {
                  <td class="num dn"><b>${a.differenz > 0 ? '+' : ''}${a.differenz}</b></td></tr>`,
              )
              .join('')}</tbody></table>
-         <p class="hint">Eine Position, die nur beim Broker liegt, ist ein Risiko,
-           von dem die Engine nichts weiß. Eine, die nur im Buch steht, lässt sie
-           mit einer Deckung rechnen, die es nicht gibt. Beides vor dem Handeln klären.</p>`
+         <p class="hint">${t('br.abwHinweis')}</p>`
       : '';
 
   // Die Reife-Liste ist der Kern der Karte: Sie zeigt, wie weit das System
@@ -1569,38 +1567,38 @@ function renderBrokerStatus(r: BrokerStatusResult): string {
 
   const kante =
     r.kante.nettoPct !== null
-      ? `<p class="hint">Je Trade: <b>${r.kante.bruttoPct?.toFixed(3)} %</b> brutto gegen
-         <b>${r.kante.kostenPct?.toFixed(3)} %</b> Kosten ⇒
-         <b class="${r.kante.nettoPct >= 0 ? 'up' : 'dn'}">${r.kante.nettoPct.toFixed(3)} %</b> netto.
-         Die Kante deckt die Reibung <b>${r.kante.deckung?.toFixed(2)}×</b>${
+      ? `<p class="hint">${t('br.jeTrade')} <b>${r.kante.bruttoPct?.toFixed(3)} %</b> ${t('br.brutto')}
+         <b>${r.kante.kostenPct?.toFixed(3)} %</b> ${t('br.kosten')}
+         <b class="${r.kante.nettoPct >= 0 ? 'up' : 'dn'}">${r.kante.nettoPct.toFixed(3)} %</b> ${t('br.netto')}
+         ${t('br.deckung')} <b>${r.kante.deckung?.toFixed(2)}×</b>${
            (r.kante.deckung ?? 0) < 1
-             ? ' — unter 1 heißt: strukturell defizitär, unabhängig von der Marktphase.'
+             ? t('br.defizitaer')
              : '.'
          }</p>`
       : '';
 
   return `
     <div class="hint" style="margin-bottom:6px"><b>${
-      r.modus === 'live' ? 'ECHTGELD' : 'Papierhandel'
+      r.modus === 'live' ? t('br.echtgeld') : t('br.papierhandel')
     }</b> — ${e(r.meldung)}</div>
     <div class="hint">
-      ${ampel(r.schluesselVorhanden)} Schlüssel hinterlegt ·
-      ${ampel(r.wunschLive)} Strategie auf Echtgeld ·
-      ${ampel(r.envFreigabe)} Umgebungs-Freigabe ·
-      ${ampel(r.reife.bereit)} Live-Reife (${r.reife.erfuellt}/${r.reife.gesamt})
+      ${ampel(r.schluesselVorhanden)} ${t('br.schluessel')} ·
+      ${ampel(r.wunschLive)} ${t('br.strategieLive')} ·
+      ${ampel(r.envFreigabe)} ${t('br.envFreigabe')} ·
+      ${ampel(r.reife.bereit)} ${t('br.liveReife')} (${r.reife.erfuellt}/${r.reife.gesamt})
     </div>
     <table class="tbl st-num" style="width:100%;margin-top:6px">
-      <thead><tr><th>Kriterium</th><th class="num">ist</th><th class="num">soll</th></tr></thead>
+      <thead><tr><th>${t('br.kriterium')}</th><th class="num">${t('br.ist')}</th><th class="num">${t('br.soll')}</th></tr></thead>
       <tbody>${reifeListe}</tbody>
     </table>
     ${kante}
     ${
       k
         ? `<table class="tbl st-num" style="width:100%;margin-top:6px"><tbody>
-             <tr><td>Kontostatus</td><td class="num">${e(k.status)}</td></tr>
-             <tr><td>Barbestand</td><td class="num">${k.cash.toFixed(2)} ${e(k.currency)}</td></tr>
-             <tr><td>Depotwert</td><td class="num">${k.equity.toFixed(2)} ${e(k.currency)}</td></tr>
-             <tr><td>Kaufkraft</td><td class="num">${k.buyingPower.toFixed(2)} ${e(k.currency)}</td></tr>
+             <tr><td>${t('br.kontostatus')}</td><td class="num">${e(k.status)}</td></tr>
+             <tr><td>${t('br.barbestand')}</td><td class="num">${k.cash.toFixed(2)} ${e(k.currency)}</td></tr>
+             <tr><td>${t('br.depotwert')}</td><td class="num">${k.equity.toFixed(2)} ${e(k.currency)}</td></tr>
+             <tr><td>${t('br.kaufkraft')}</td><td class="num">${k.buyingPower.toFixed(2)} ${e(k.currency)}</td></tr>
            </tbody></table>`
         : ''
     }
@@ -1610,10 +1608,10 @@ function renderBrokerStatus(r: BrokerStatusResult): string {
 
 /** Klarnamen der Steuertöpfe — die Kürzel sagen einem Menschen nichts. */
 const TOPF_LABEL: Record<string, string> = {
-  aktien: 'Aktien (§ 20 Abs. 6 S. 4)',
-  sonstige: 'ETFs / Sonstige (§ 20)',
-  termin: 'Termingeschäfte / Leerverkäufe',
-  privat: 'Krypto — privates Veräußerungsgeschäft (§ 23)',
+  aktien: t('tax.topfAktien'),
+  sonstige: t('tax.topfSonstige'),
+  termin: t('tax.topfTermin'),
+  privat: t('tax.topfPrivat'),
 };
 
 /**
@@ -1654,51 +1652,39 @@ function renderSteuerbericht(r: TaxReportResult): string {
   const hinweise: string[] = [];
   if (!b.echtgeld) {
     hinweise.push(
-      '<b>Papierhandel.</b> Diese Zahlen sind nicht steuerbar — Papiergewinne sind ' +
-        'keine Einkünfte. Der Bericht zeigt, wie er bei Echtgeld aussähe.',
+      `<b>${t('tax.papierTitel')}</b> ${t('tax.papierText')}`,
     );
   }
   if (b.privatSteuerfrei !== 0) {
     hinweise.push(
-      `<b>${geld(b.privatSteuerfrei)}</b> aus Krypto sind nach der Ein-Jahres-Frist ` +
-        'steuerfrei und stehen deshalb in keinem Topf.',
+      `<b>${geld(b.privatSteuerfrei)}</b> ${t('tax.steuerfreiText')}`,
     );
   }
   if (b.privatUnterFreigrenze) {
     hinweise.push(
-      `Der § 23-Gewinn von ${geld(b.privatSteuerpflichtig)} liegt unter der Freigrenze ` +
-        `von ${b.rechtsstand.privatFreigrenze} € — dann ist er ganz steuerfrei. Achtung: ` +
-        'Das ist eine Freigrenze, kein Freibetrag; ein Euro darüber macht den ganzen Betrag steuerpflichtig.',
+      `${t('tax.freigrenzeA')} ${geld(b.privatSteuerpflichtig)} ${t('tax.freigrenzeB')} `
+        + `${b.rechtsstand.privatFreigrenze} € ${t('tax.freigrenzeC')}`,
     );
   }
   if (r.historieUnvollstaendig) {
     hinweise.push(
-      '<b>Historie unvollständig.</b> Es wurden nicht alle Trades gelesen — ' +
-        'Anschaffungskurse können fehlen und Gewinne dadurch zu hoch stehen.',
+      `<b>${t('tax.histTitel')}</b> ${t('tax.histText')}`,
     );
   }
   if (b.unpaarbar.length > 0) {
     hinweise.push(
-      `${b.unpaarbar.length} Verkäufe ohne passende Anschaffung — sie sind ` +
-        'ausgelassen statt geraten.',
+      `${b.unpaarbar.length} ${t('tax.unpaarbar')}`,
     );
   }
   if (b.fxLuecken > 0) {
     hinweise.push(
-      `<b>${b.fxLuecken} Vorgänge ohne hinterlegten Wechselkurs.</b> Für sie steht ` +
-        'in der Euro-Spalte nichts — ein aus dem Fremdwährungs-Ergebnis hochgerechneter ' +
-        'Betrag wäre steuerlich unzulässig. Seit dem 04.08. friert jeder Trade den ' +
-        'EZB-Kurs seines Tages mit ein; für ältere holt ' +
-        '<button class="btn btn-n" id="txFx" style="vertical-align:middle">Kurse nachtragen</button> ' +
-        'den unveränderlichen Kurs des jeweiligen Handelstages nach. Danach den ' +
-        'Bericht neu erstellen.',
+      `<b>${b.fxLuecken} ${t('tax.fxLuecken')}</b> ${t('tax.fxText1')} `
+        + `<button class="btn btn-n" id="txFx" style="vertical-align:middle">${t('tax.fxNachtragen')}</button> `
+        + t('tax.fxText2'),
     );
   } else if (b.veraeusserungen.length > 0) {
     hinweise.push(
-      'Die Euro-Beträge sind <b>je Vorgang</b> zum EZB-Kurs seines Tages gerechnet — ' +
-        'Anschaffung und Veräußerung getrennt. Das Fremdwährungs-Ergebnis am Ende ' +
-        'umzurechnen wäre unzulässig und verschluckte genau den Währungsgewinn, ' +
-        'der steuerpflichtig ist.',
+      t('tax.fxOk'),
     );
   }
 
@@ -1709,32 +1695,28 @@ function renderSteuerbericht(r: TaxReportResult): string {
 
   return `
     <table class="tbl st-num" style="width:100%">
-      <thead><tr><th>Topf</th><th class="num">Fälle</th><th class="num">Gewinne</th>
-        <th class="num">Verluste</th><th class="num">Saldo</th><th class="num">Saldo EUR</th></tr></thead>
-      <tbody>${zeilen || '<tr><td colspan="6" class="hint">Keine Veräußerungen in diesem Jahr.</td></tr>'}</tbody>
+      <thead><tr><th>${t('tax.spTopf')}</th><th class="num">${t('tax.spFaelle')}</th><th class="num">${t('tax.spGewinne')}</th>
+        <th class="num">${t('tax.spVerluste')}</th><th class="num">${t('tax.spSaldo')}</th><th class="num">${t('tax.spSaldoEur')}</th></tr></thead>
+      <tbody>${zeilen || `<tr><td colspan="6" class="hint">${t('tax.keineVeraeusserungen')}</td></tr>`}</tbody>
     </table>
-    <p class="hint" style="margin-top:6px">Die Töpfe stehen bewusst einzeln und ohne
-      Gesamtsumme — sie dürfen nicht gegeneinander verrechnet werden.</p>
+    <p class="hint" style="margin-top:6px">${t('tax.toepfeEinzeln')}</p>
     ${hinweise.map((h) => `<p class="hint">${h}</p>`).join('')}
     ${
       offen > 0
-        ? `<p class="hint">${offen} offene Position${offen === 1 ? '' : 'en'} — noch nicht
-           veräußert, also noch nicht steuerbar.${
+        ? `<p class="hint">${offen} ${offen === 1 ? t('tax.offen1') : t('tax.offenMehr')} ${t('tax.offenText')}${
              fristBald.length > 0
-               ? ` Bei ${fristBald.length} davon läuft die Krypto-Jahresfrist noch
-                   (nächste in ${Math.min(...fristBald.map((o) => o.tageBisJahresfrist ?? 0))} Tagen).`
+               ? ` ${t('tax.fristA')} ${fristBald.length} ${t('tax.fristB')}
+                   ${Math.min(...fristBald.map((o) => o.tageBisJahresfrist ?? 0))} ${t('tax.fristC')}`
                : ''
            }</p>`
         : ''
     }
     <div class="row" style="gap:8px;margin-top:8px;align-items:center">
-      <a class="btn btn-n" id="txCsv" href="#" download>CSV herunterladen</a>
-      <span class="hint">${r.gelesen} Trades geprüft · ${b.veraeusserungen.length} Veräußerungen</span>
+      <a class="btn btn-n" id="txCsv" href="#" download>${t('tax.csv')}</a>
+      <span class="hint">${r.gelesen} ${t('tax.gepruefte')} · ${b.veraeusserungen.length} ${t('tax.veraeusserungen')}</span>
     </div>
     <p class="hint" style="margin-top:6px">${e(b.rechtsstandHinweis)}</p>
-    <p class="hint"><b>Keine Steuerberatung.</b> Es wird bewusst keine Steuerschuld
-      gerechnet — sie hängt von Kirchensteuer, Veranlagungsart, Freistellungsaufträgen
-      und Verlustvorträgen ab, die dieses System nicht kennt.</p>`;
+    <p class="hint"><b>${t('tax.keineBeratung')}</b> ${t('tax.keineBeratungText')}</p>`;
 }
 
 /* ── Subscriptions ──────────────────────────────────────────────────── */

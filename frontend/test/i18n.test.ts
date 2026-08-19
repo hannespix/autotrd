@@ -704,3 +704,73 @@ describe('Auswertungs-Karten sind zweisprachig (Tranche 5g)', () => {
     }
   });
 });
+
+describe('Broker-Status und Steuer-Export sind zweisprachig (Tranche 5h)', () => {
+  const rBroker = dashboard.slice(
+    dashboard.indexOf('function renderBrokerStatus'),
+    dashboard.indexOf('const TOPF_LABEL'),
+  );
+  const rSteuer = dashboard.slice(
+    dashboard.indexOf('function renderSteuerbericht'),
+    dashboard.indexOf('/* ── Subscriptions ──'),
+  );
+
+  it('beide Renderer sind gefunden', () => {
+    expect(rBroker.length).toBeGreaterThan(1500);
+    expect(rSteuer.length).toBeGreaterThan(2500);
+  });
+
+  it('kein deutsches Wort mehr im Code der beiden Renderer', () => {
+    /* Anders als im Markup steht der Text hier in Template-Literalen und
+     * String-Ketten. Der erste Entwurf schnitt deshalb erst die
+     * Zeichenketten heraus und prüfte die einzeln — und ließ den
+     * Sabotage-Fund glatt durch: Zwischen Backtick und Apostroph paart ein
+     * Muster quer über den Code hinweg, und der deutsche Satz verschwand im
+     * Rumpf eines benachbarten Treffers.
+     *
+     * Zweiter Anlauf ohne Tokenisierung: deutsche FUNKTIONSWÖRTER direkt im
+     * (kommentarfreien) Code suchen. Sie kommen in Bezeichnern nicht vor —
+     * `hinweise`, `zeilen`, `veraeusserungen` lösen nichts aus —, und
+     * schon eines von ihnen genügt, um einen vergessenen Satz zu verraten,
+     * egal in welcher Zeichenkette er steckt. Ein Wächter, der sein Objekt
+     * erst zerlegen muss, kann sich beim Zerlegen irren; einer, der
+     * geradeaus liest, nicht. */
+    const nurCode = (q: string): string =>
+      q.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    const DEUTSCH =
+      /\b(nicht|werden|wird|dürfen|hängt|steht|stehen|sind|keine|kein|eine|einen|dieses|jeder|gegeneinander|steuerbar|Anschaffung|Veräußerung|Papiergewinne|Steuerschuld)\b/g;
+    for (const [name, q] of [
+      ['renderBrokerStatus', rBroker],
+      ['renderSteuerbericht', rSteuer],
+    ] as const) {
+      const treffer = [...new Set([...nurCode(q).matchAll(DEUTSCH)].map((m) => m[0]))];
+      expect(treffer, `${name}: deutscher Rest — ${treffer.join(' | ')}`).toEqual([]);
+    }
+  });
+
+  it('die §-Angaben stehen unverändert — auch in der englischen Fassung', () => {
+    /* Ein Paragraph benennt deutsches Recht. „Section 20 (6)" wäre eine
+     * Übersetzung, die niemand nachschlagen kann — dieselbe Regel wie bei
+     * den Literatur-Zitaten in den ⓘ-Tips: Übersetzt wird die Erklärung
+     * drumherum, nicht der Beleg. */
+    expect(DE['tax.topfAktien' as TextSchluessel]).toContain('§ 20');
+    expect(EN['tax.topfAktien']).toContain('§ 20');
+    expect(EN['tax.topfPrivat']).toContain('§ 23');
+    expect(EN['tax.freigrenzeA']).toContain('§ 23');
+  });
+
+  it('Freigrenze bleibt als Freigrenze erkennbar, nicht als Freibetrag', () => {
+    /* Der Unterschied ist der ganze Punkt des Absatzes: Ein Euro über der
+     * Grenze macht den GANZEN Betrag steuerpflichtig. „Allowance" allein
+     * würde genau das Gegenteil behaupten. */
+    expect(EN['tax.freigrenzeB']).toContain('exemption limit');
+    expect(EN['tax.freigrenzeC']).toContain('not an allowance');
+    expect(EN['tax.freigrenzeC']).toContain('WHOLE amount taxable');
+  });
+
+  it('jede br.*- und tax.*-Zeile hat eine englische Fassung', () => {
+    for (const k of Object.keys(DE).filter((s) => /^(br|tax)\./.test(s))) {
+      expect(EN[k as TextSchluessel], `${k} ohne englische Fassung`).toBeTruthy();
+    }
+  });
+});
