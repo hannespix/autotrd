@@ -1296,7 +1296,10 @@ describe('Tranche 5p — der Wächter über alle übrigen Quelldateien', () => {
    *  - i18n.ts:     das Wörterbuch selbst.
    *  - legal.ts:    Rechtstexte (Impressum/Datenschutz) bleiben bewusst
    *                 deutsch — Projektentscheidung, deutsches Recht.
-   *  - infotips.ts: die ⓘ-Lehrtexte, ~100 Absätze — Tranche 5q (offen).
+   *  - infotips.ts: führt sein EIGENES zweisprachiges Wörterbuch
+   *                 (INFO_DE/INFO_EN, Vollständigkeit erzwingt
+   *                 infotips.test.ts) — die deutschen Werte dort sind
+   *                 per Design da, wie in i18n.ts.
    *  - dashboard.ts: hat oben seinen eigenen Wächter (eigenes ERLAUBT-Set). */
   const AUSGENOMMEN = new Set(['i18n.ts', 'legal.ts', 'infotips.ts', 'dashboard.ts']);
   // Code-Werte, die wie deutsche Wörter aussehen: Firestore-Feldnamen und
