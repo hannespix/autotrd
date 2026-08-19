@@ -401,3 +401,67 @@ describe('Krypto-Netz: die Invarianten, die keine Einzelprobe erwischt', () => {
     expect(zeile!).not.toMatch(/usSessionClass|klasse\s*[=!]==|'crypto'/);
   });
 });
+
+/**
+ * Selbstheilung des Netzes (19.08.).
+ *
+ * Der Befund, der diese Tests erzwungen hat: Ein Schutz-Stop entstand
+ * AUSSCHLIESSLICH nach einem eröffnenden Fill. Nach einem Teilausstieg —
+ * der die Order stornieren MUSS, sonst sind die Stücke reserviert — kam
+ * nie wieder einer. Die Restposition lag ungeschützt da, und im Dashboard
+ * sah nichts danach aus.
+ */
+describe('pflegeSchutz legt ein fehlendes Netz an', () => {
+  beforeEach(() => {
+    holt.mockReset();
+    setzt.mockReset();
+    setzt.mockResolvedValue(undefined);
+  });
+
+  it('Position ohne Schutz bekommt eine Order — der Fall nach dem Teilausstieg', async () => {
+    const ohne: Position = { ...POS, qty: 6, schutz: null };
+    // schutzAnlegen liest die Position frisch nach.
+    holt.mockResolvedValue({ exists: true, data: () => ohne });
+    const fetchImpl = folge({ body: { id: 'neu1', status: 'new' } });
+
+    const befund = await pflegeSchutz(
+      VERBINDUNG, 'u1', 'AAPL', ohne, RISK, 'stocks_us', 'lauf1', fetchImpl,
+    );
+
+    expect(befund.stand).toBe('ok');
+    // Genau EIN Broker-Aufruf: die neue Stop-Order.
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const [, opts] = fetchImpl.mock.calls[0] as [string, { body: string }];
+    const gesendet = JSON.parse(opts.body) as Record<string, unknown>;
+    expect(gesendet['type']).toBe('stop');
+    expect(gesendet['qty']).toBe('6');
+    expect(setzt).toHaveBeenCalledWith(
+      { schutz: { orderId: 'neu1', stopPreis: expect.any(Number), qty: 6 } },
+      { merge: true },
+    );
+  });
+
+  it('ohne Prozent-Stop wird NICHT angelegt — und nichts nachgelesen', async () => {
+    /* Die Kostenseite: Konten mit reinen ATR-Stops bekommen kein Netz. Der
+     * Plan entscheidet das aus der Position, die der Scan schon in der Hand
+     * hat. Würde stattdessen blind `schutzAnlegen` gerufen, wäre das ein
+     * Firestore-Lesevorgang je Position und Scan — für nichts. */
+    const nurAtr: RiskConfig = { stopLossPct: 0, takeProfitPct: 4, trailingStopPct: 0 };
+    const ohne: Position = { ...POS, schutz: null };
+    const fetchImpl = folge({ body: {} });
+
+    await pflegeSchutz(VERBINDUNG, 'u1', 'AAPL', ohne, nurAtr, 'stocks_us', 'lauf1', fetchImpl);
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(holt).not.toHaveBeenCalled();
+    expect(setzt).not.toHaveBeenCalled();
+  });
+
+  it('Bruchstück-Rest bekommt keins — und liest ebenfalls nichts nach', async () => {
+    const rest: Position = { ...POS, qty: 0.4, schutz: null };
+    const fetchImpl = folge({ body: {} });
+    await pflegeSchutz(VERBINDUNG, 'u1', 'AAPL', rest, RISK, 'stocks_us', 'lauf1', fetchImpl);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(holt).not.toHaveBeenCalled();
+  });
+});
