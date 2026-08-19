@@ -1075,3 +1075,90 @@ describe('Tranche 5l — „Warum handelt die Engine?" und die Melde-Texte der M
     }
   });
 });
+
+describe('Tranche 5m — Legende, Live-Status, Loadouts und Portfolio', () => {
+  /* Dieselbe umgekehrte Beweislast wie in 5l: JEDE Zeichenkette der vier
+   * Funktionen ist verdächtig, bis sie sich als t()-Aufruf, DOM-/CSS-Technik
+   * oder namentlich gelistetes Fachwort ausweist. Die Wortsuche der frühen
+   * Tranchen hätte hier wieder versagt — „Ansehen", „Cover", „SHORT" tragen
+   * weder Umlaut noch Artikel. */
+  const funktion = (name: string): string => {
+    const i = dashboard.search(new RegExp(`^(?:export )?(?:async )?function ${name}\\b`, 'm'));
+    const rest = dashboard.slice(i + 20);
+    const j = rest.search(/^(?:export )?(?:async )?function /m);
+    return dashboard.slice(i, j < 0 ? undefined : i + 20 + j);
+  };
+  const fremdWorte = (code: string): string[] => {
+    const ohne = code
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1')
+      .replace(/t\('[^']+'\)/g, ' ')
+      .replace(/\$\('[^']+'\)/g, ' ')
+      .replace(
+        /(getItem|setItem|addEventListener|querySelector|querySelectorAll|closest|getElementById|createElement|getAttribute|setAttribute)\(\s*'[^']*'/g,
+        ' ',
+      )
+      .replace(/'var\(--[^']*'/g, ' ');
+    const worte: string[] = [];
+    for (const m of ohne.matchAll(/'([^']*)'/g)) {
+      worte.push(...(m[1]!.match(/[A-Za-zÄÖÜäöüß]{3,}/g) ?? []));
+    }
+    for (const m of ohne.matchAll(/`([^`]*)`/g)) {
+      const text = m[1]!.replace(/\$\{[^{}]*\}/g, ' ');
+      worte.push(...(text.match(/[A-Za-zÄÖÜäöüß]{3,}/g) ?? []));
+    }
+    return [...new Set(worte)];
+  };
+  const pruefe = (name: string, neutral: readonly string[]): void => {
+    const erlaubt = new Set(neutral);
+    const rest = fremdWorte(funktion(name)).filter((w) => !erlaubt.has(w));
+    expect(rest, `${name}: nicht ausgewiesene Zeichenketten: ${rest.join(' | ')}`).toEqual([]);
+  };
+
+  it('renderLegend: Indikator-Namen sind Fachsprache, alles andere ist t()', () => {
+    pruefe('renderLegend', [
+      // Indikator-Kürzel — in beiden Sprachen identisch
+      'SMA', 'EMA', 'VWAP', 'Bollinger', 'Session',
+      // Layer-Schlüssel und DOM/CSS
+      'bbU', 'bbL', 'cmp', 'pos', 'seit', 'area', 'buy', 'sell',
+      'class', 'style', 'span', 'title', 'item', 'dot', 'background',
+    ]);
+  });
+
+  it('renderLiveStatus: nur Vertragswerte und CSS bleiben Literale', () => {
+    pruefe('renderLiveStatus', [
+      'live', 'paper', // brokerArt — Vertrag zum Server
+      'class', 'color', 'div', 'hint', 'left', 'margin', 'opacity', 'style', 'top', 'var',
+    ]);
+  });
+
+  it('renderLoadouts: der Eigenname Alpha-Leech bleibt, der Rest ist t()', () => {
+    pruefe('renderLoadouts', [
+      // Eigenname des Features — wird nicht übersetzt (wie in mountDashboard)
+      'Alpha', 'Leech', 'Community',
+      // Statuscode aus dem Best-Practice-Dokument
+      'gekuert',
+      // DOM/CSS und HTML-Entities
+      'amp', 'quot', 'anw', 'btn', 'button', 'card', 'class', 'data', 'div',
+      'eigen', 'esc', 'fehlt', 'head', 'hint', 'length', 'margin', 'off',
+      'risk', 'style', 'top',
+    ]);
+  });
+
+  it('renderPortfolio: Cover/Exit/SHORT sind Fachbegriffe, alles andere ist t()', () => {
+    pruefe('renderPortfolio', [
+      // Fachbegriffe, in beiden Sprachen gleich (Knopf-Beschriftungen)
+      'Cover', 'Exit', 'SHORT',
+      // Seiten-/Zustandswerte und DOM/CSS
+      'buy', 'sell', 'short', 'pos', 'show', 'smooth', 'center',
+      'button', 'class', 'color', 'colspan', 'data', 'exit', 'font', 'hbtn',
+      'smv', 'stag', 'style', 'sub', 'sym', 'var', 'vbig', 'weight',
+    ]);
+  });
+
+  it('jede lg./lv./lo./pf.-Zeile hat eine englische Fassung', () => {
+    for (const k of Object.keys(DE).filter((s) => /^(lg|lv|lo|pf)\./.test(s))) {
+      expect(EN[k as TextSchluessel], `${k} ohne englische Fassung`).toBeTruthy();
+    }
+  });
+});

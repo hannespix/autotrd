@@ -15,6 +15,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { DE } from '../src/i18n.js';
 import { join } from 'node:path';
 
 const dashboard = readFileSync(join(import.meta.dirname, '..', 'src', 'dashboard.ts'), 'utf8');
@@ -37,8 +38,9 @@ describe('Gesamt-P&L-Maßstab — Markup und Logik', () => {
   });
 
   it('nennt Schnitt-Datum und Basis und grenzt gegen die Handels-Analyse ab', () => {
-    expect(dashboard).toContain('Zählt seit Depot-Schnitt am ${datum} (Basis ${money(basis)})');
-    expect(dashboard).toContain('Früher geschlossene Trades stehen NICHT in dieser Zahl');
+    expect(dashboard).toContain("${t('pf.seitSchnittA')} ${datum} (${t('pf.basis')} ${money(basis)})");
+    // Der Wortlaut wohnt seit Tranche 5m im Wörterbuch (Task #139).
+    expect(DE['pf.seitSchnittB']).toContain('Früher geschlossene Trades stehen NICHT in dieser Zahl');
   });
 
   it('der Infotip an der Zahl erklärt beide Fragen (Gesamt vs. Handels-Analyse)', () => {
