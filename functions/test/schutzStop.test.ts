@@ -10,10 +10,14 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Position, RiskConfig } from '../../shared/src/index.js';
 import {
+  KRYPTO_LIMIT_ABSTAND,
   pflegeSchutz,
   planeSchutzStop,
+  rundeAufSchritt,
   rundeStopPreis,
   schutzAufheben,
   schutzStopPreis,
@@ -120,9 +124,11 @@ describe('planeSchutzStop (wann der Broker-Stop überhaupt entsteht)', () => {
     expect(plan.qty).toBe(10);
     expect(plan.stopPreis).toBeGreaterThan(0);
   });
-  it('Krypto bleibt Engine-only', () => {
-    expect(planeSchutzStop(lage, RISK, 'crypto').grund).toBe('klasse_ohne_us_session');
-    expect(planeSchutzStop(lage, RISK, null).grund).toBe('klasse_ohne_us_session');
+  it('Forex/Rohstoffe bleiben Engine-only, unbekannte Klasse ebenfalls', () => {
+    // Historische yfinance-Klassen, die Alpaca gar nicht handelt.
+    expect(planeSchutzStop(lage, RISK, 'forex').grund).toBe('klasse_ohne_us_session');
+    expect(planeSchutzStop(lage, RISK, 'commodities').grund).toBe('klasse_ohne_us_session');
+    expect(planeSchutzStop(lage, RISK, null).grund).toBe('klasse_unbekannt');
   });
   it('Bruchstücke kann Alpaca nicht schützen — 10,4 Stück ⇒ Stop über 10', () => {
     expect(planeSchutzStop({ ...lage, qty: 10.4 }, RISK, 'stocks_us').qty).toBe(10);
@@ -231,5 +237,167 @@ describe('pflegeSchutz (Scan-Takt: buchen, neu anlegen, nachziehen)', () => {
       VERBINDUNG, 'u1', 'AAPL', POS, RISK, 'stocks_us', 'scan1', f as never,
     );
     expect(b.stand).toBe('ok');
+  });
+});
+
+/**
+ * Krypto — Bracket Stufe 1b (19.08.).
+ *
+ * Die Klasse, die das Netz am nötigsten hat: Sie läuft rund um die Uhr,
+ * während der Scan alle fünf Minuten schaut. Bis heute war der Scan dort
+ * der EINZIGE Wächter.
+ *
+ * Geprüft werden hier die vier Stellen, an denen ein Fehler nicht auffällt,
+ * sondern still eine tote Order erzeugt: das Preis-Raster der Münze, die
+ * Mindestgröße, die Richtung der Rundung und der Abstand des Limits. Eine
+ * abgelehnte Order sähe im Log nach „Netz liegt" aus und wäre keins.
+ */
+describe('planeSchutzStop für Krypto (Stufe 1b)', () => {
+  const RISK_K: RiskConfig = { stopLossPct: 2, takeProfitPct: 4, trailingStopPct: 1 };
+  const btc = { side: 'long' as const, qty: 0.25, avgEntry: 60_000 };
+
+  it('legt eine stop_limit-Order an — mit Limit UNTER dem Stop', () => {
+    const plan = planeSchutzStop(btc, RISK_K, 'crypto', { preisSchritt: 1 });
+    expect(plan.anlegen).toBe(true);
+    // Bruchstücke bleiben Bruchstücke: 0,25 BTC werden NICHT auf 0 abgerundet.
+    expect(plan.qty).toBe(0.25);
+    // 60 000 × 0,98 = 58 800, Raster 1 ⇒ ganze Dollar.
+    expect(plan.stopPreis).toBe(58_800);
+    expect(plan.limitPreis).toBeDefined();
+    expect(plan.limitPreis!).toBeLessThan(plan.stopPreis);
+    // 1,5 % unter dem Stop, aufs Raster abgerundet.
+    expect(plan.limitPreis!).toBe(Math.floor(58_800 * (1 - KRYPTO_LIMIT_ABSTAND)));
+  });
+
+  it('ohne bekanntes Preis-Raster wird NICHTS angelegt', () => {
+    /* Der wichtigste Fall: Ein Stop-Preis neben dem Raster wird von Alpaca
+     * abgelehnt. Lieber kein Netz (Zustand wie vor dieser Änderung) als eine
+     * Order-Ablehnung bei jedem Scan — die kostet Broker-Aufrufe und sieht
+     * im Positionsdokument trotzdem nach Schutz aus. */
+    expect(planeSchutzStop(btc, RISK_K, 'crypto', null).grund).toBe('kein_preisraster');
+    expect(planeSchutzStop(btc, RISK_K, 'crypto', {}).grund).toBe('kein_preisraster');
+    expect(planeSchutzStop(btc, RISK_K, 'crypto', { preisSchritt: 0 }).grund).toBe(
+      'kein_preisraster',
+    );
+  });
+
+  it('unter der Mindestgröße der Münze wird NICHTS angelegt', () => {
+    const plan = planeSchutzStop({ ...btc, qty: 0.00005 }, RISK_K, 'crypto', {
+      preisSchritt: 1,
+      mindestGroesse: 0.0001,
+    });
+    expect(plan.anlegen).toBe(false);
+    expect(plan.grund).toBe('unter_mindestgroesse');
+  });
+
+  it('Krypto-Shorts gibt es bei Alpaca nicht — kein Kauf-Stop aus Versehen', () => {
+    const plan = planeSchutzStop({ ...btc, side: 'short' }, RISK_K, 'crypto', {
+      preisSchritt: 1,
+    });
+    expect(plan.anlegen).toBe(false);
+    expect(plan.grund).toBe('krypto_nur_long');
+  });
+
+  it('grobes Raster bei kleinem Kurs: lieber kein Netz als ein Limit AUF dem Stop', () => {
+    /* Ein Limit, das aufs Stop-Niveau hochrundet, ist kein Limit mehr,
+     * sondern eine zweite Auslösemarke — die Order füllte nur bei exakt
+     * diesem Kurs. Genau dann muss der Plan aussteigen. */
+    const plan = planeSchutzStop(
+      { side: 'long', qty: 5, avgEntry: 2 },
+      RISK_K,
+      'crypto',
+      { preisSchritt: 1 },
+    );
+    expect(plan.anlegen).toBe(false);
+    expect(plan.grund).toBe('limit_unter_raster');
+  });
+});
+
+describe('rundeAufSchritt (Preis-Raster der Münze)', () => {
+  it('rundet Long ABWÄRTS und Short AUFWÄRTS — nie enger als geplant', () => {
+    expect(rundeAufSchritt(58_800.75, 1, 'long')).toBe(58_800);
+    expect(rundeAufSchritt(58_800.25, 1, 'short')).toBe(58_801);
+  });
+  it('trifft feine Raster ohne Fließkomma-Schwanz', () => {
+    // 0.1 × 3 ist in Fließkomma 0.30000000000000004 — Alpaca liest das als
+    // ungültigen Preis.
+    expect(rundeAufSchritt(0.34, 0.1, 'long')).toBe(0.3);
+    expect(rundeAufSchritt(0.0001234, 0.0001, 'long')).toBe(0.0001);
+  });
+  it('ohne gültiges Raster bleibt der Preis unverändert', () => {
+    expect(rundeAufSchritt(123.45, 0, 'long')).toBe(123.45);
+    expect(rundeAufSchritt(123.45, Number.NaN, 'long')).toBe(123.45);
+  });
+});
+
+describe('Krypto-Netz: die Invarianten, die keine Einzelprobe erwischt', () => {
+  const RISK_K: RiskConfig = { stopLossPct: 2, takeProfitPct: 4, trailingStopPct: 1 };
+
+  it('über hunderte Raster/Kurs-Paare: Limit IMMER echt unter dem Stop und auf dem Raster', () => {
+    /* Warum eine Eigenschafts-Prüfung und keine weitere Einzelprobe:
+     *
+     * Die beiden Fehler, die hier möglich sind, hängen an der KOMBINATION
+     * aus Kurs und Raster, nicht an einzelnen Werten. Ein Limit, das aufs
+     * Stop-Niveau hochrundet, entsteht nur bei grobem Raster und kleinem
+     * Kurs; ein Preis neben dem Raster nur bei krummen Schritten wie 0,05.
+     * Eine Handvoll Beispiele trifft beides zuverlässig NICHT — und eine
+     * abgelehnte Order fällt im Betrieb nicht auf, weil im Positions-
+     * dokument trotzdem ein Schutz zu stehen scheint. */
+    const raster = [1, 0.5, 0.05, 0.01, 0.001, 0.0001];
+    const kurse = [0.002, 0.05, 1.5, 12.5, 250, 3_400, 61_234.56];
+    let angelegt = 0;
+    for (const schritt of raster) {
+      for (const kurs of kurse) {
+        for (const qty of [0.0005, 0.25, 3, 1_200]) {
+          const plan = planeSchutzStop(
+            { side: 'long', qty, avgEntry: kurs },
+            RISK_K,
+            'crypto',
+            { preisSchritt: schritt },
+          );
+          if (!plan.anlegen) {
+            // Ein Nein ist immer erlaubt — aber nie ohne Begründung.
+            expect(plan.grund, `${schritt}/${kurs}/${qty} ohne Grund`).toBeTruthy();
+            continue;
+          }
+          angelegt++;
+          expect(plan.limitPreis, `${schritt}/${kurs}: kein Limit`).toBeDefined();
+          expect(plan.limitPreis!, `${schritt}/${kurs}: Limit nicht unter Stop`).toBeLessThan(
+            plan.stopPreis,
+          );
+          // Beide Preise müssen exakte Vielfache des Rasters sein.
+          for (const preis of [plan.stopPreis, plan.limitPreis!]) {
+            const rest = Math.abs(preis / schritt - Math.round(preis / schritt));
+            expect(rest, `${schritt}/${kurs}: ${preis} liegt neben dem Raster`).toBeLessThan(1e-6);
+          }
+          // Die Menge wird bei Krypto NIE auf ganze Stücke gerundet.
+          expect(plan.qty).toBe(qty);
+        }
+      }
+    }
+    // Die Probe muss auch wirklich etwas anlegen, sonst prüft sie nichts.
+    expect(angelegt).toBeGreaterThan(50);
+  });
+
+  it('der Storno-vor-Exit-Pfad kennt KEINE Klassen — sonst sperrte das Netz Ausstiege', () => {
+    /* Die eine Regel aus dem Modul-Kopf: Alpaca reserviert die Stücke für
+     * die offene Schutz-Order. Ein eigener Exit MUSS sie vorher stornieren.
+     * Dieser Storno hängt in `broker.ts` allein an `position.schutz` — wer
+     * dort eine Klassen-Bedingung einzöge (etwa `usSessionClass(klasse)`),
+     * würde Krypto-Ausstiege ab sofort mit „insufficient qty" ablehnen
+     * lassen: Das Netz, das schützen soll, würde zur Falle.
+     *
+     * Deshalb wird hier der Quelltext geprüft und nicht das Verhalten: Ein
+     * Verhaltenstest bräuchte den Broker; diese Bedingung ist aber eine
+     * Struktur-Aussage und als solche direkt lesbar. */
+    const quelle = readFileSync(
+      join(import.meta.dirname, '..', 'src', 'core', 'broker.ts'),
+      'utf8',
+    );
+    const zeile = quelle
+      .split('\n')
+      .find((l) => l.includes('const schutz =') && l.includes('position.schutz'));
+    expect(zeile, 'Storno-Bedingung nicht gefunden — Pfad umgebaut?').toBeTruthy();
+    expect(zeile!).not.toMatch(/usSessionClass|klasse\s*[=!]==|'crypto'/);
   });
 });

@@ -35,8 +35,9 @@
  *
  * ── Ehrliche Grenzen (Stufe 1) ────────────────────────────────────────────
  *
- * - Nur US-Session-Klassen: Krypto/Forex haben bei Alpaca eigene
- *   Order-Regeln und bleiben Engine-only.
+ * - Forex/Rohstoffe bleiben Engine-only: Das sind historische
+ *   yfinance-Klassen (`=X`, `=F`), die Alpaca gar nicht handelt.
+ * - KRYPTO seit 19.08. dabei (Stufe 1b) — siehe unten.
  * - Nur GANZE Stücke: Alpaca akzeptiert keine Bruchstück-Stop-Orders. Bei
  *   10,4 Stück schützt der Broker 10; der Rest bleibt Engine-Sache.
  * - Nur Prozent-Stops: Ein ATR-Stop ist eine Funktion des Scan-Zeitpunkts
@@ -54,7 +55,7 @@ import {
   alpacaStopOrder,
   clientOrderId,
 } from './alpacaBroker.js';
-import type { BrokerVerbindung } from './orderRouting.js';
+import { assetStand, type BrokerVerbindung } from './orderRouting.js';
 
 // ── Pure Planung (testbar ohne Broker und ohne Firestore) ───────────────────
 
@@ -77,6 +78,43 @@ export function rundeStopPreis(preis: number, side: 'long' | 'short'): number {
   const roh = preis * faktor;
   return (side === 'long' ? Math.floor(roh) : Math.ceil(roh)) / faktor;
 }
+
+/**
+ * Krypto-Raster: Alpaca gibt je Münze ein `price_increment` vor, und ein
+ * Preis daneben wird ABGELEHNT. Bei BTC/USD ist es `1` — ganze Dollar. Die
+ * Aktien-Regel (zwei Nachkommastellen) wäre dort jedes Mal eine tote Order.
+ *
+ * Gerundet wird wie oben VOM Kurs WEG: Long abwärts, Short aufwärts. Die
+ * Rundung darf den Schutz nur weiter machen, nie enger.
+ */
+export function rundeAufSchritt(preis: number, schritt: number, side: 'long' | 'short'): number {
+  if (!(schritt > 0) || !Number.isFinite(schritt)) return preis;
+  const n = preis / schritt;
+  const gerundet = side === 'long' ? Math.floor(n + 1e-9) : Math.ceil(n - 1e-9);
+  // Nachkommastellen des Rasters übernehmen: 0.1 * 3 ist in Fließkomma
+  // 0.30000000000000004, und Alpaca liest das als ungültigen Preis.
+  const stellen = (String(schritt).split('.')[1] ?? '').length;
+  return Number((gerundet * schritt).toFixed(Math.min(stellen, 10)));
+}
+
+/**
+ * Abstand des Limits unter (Long) bzw. über (Short) dem Stop — Krypto.
+ *
+ * Alpaca kennt für Krypto KEINE einfache Stop-Order, nur `stop_limit`
+ * (geprüft gegen die Alpaca-Doku, 19.08.). Ein Stop-Limit füllt aber
+ * NICHT, wenn der Kurs durch das Limit hindurchspringt — und genau dieser
+ * Sprung ist der Fall, den das Netz fangen soll.
+ *
+ * Deshalb liegt das Limit bewusst WEIT weg: Das Netz soll fangen, nicht den
+ * besten Preis holen. Den besten Preis holt die Engine ohnehin im
+ * 5-Minuten-Takt. Ein enges Limit machte das Netz zur Attrappe — es sähe im
+ * Konto aus wie Schutz und finge im Ernstfall nichts.
+ *
+ * Füllt es trotzdem nicht, ist niemand schlechter dran als heute: Die
+ * ungefüllte Order wird vor dem eigenen Exit storniert (`schutzAufheben`),
+ * und der Exit läuft wie bisher über die Engine.
+ */
+export const KRYPTO_LIMIT_ABSTAND = 0.015;
 
 /**
  * Das Stop-Niveau, das die Engine-Regeln JETZT ergeben — der engere von
@@ -152,26 +190,81 @@ export interface SchutzPlan {
   anlegen: boolean;
   qty: number;
   stopPreis: number;
+  /** Gesetzt ⇒ `stop_limit` statt `stop` (Krypto). */
+  limitPreis?: number;
   /** Klartext, warum NICHT — für Log und Nachvollziehbarkeit. */
   grund?: string;
 }
+
+/** Was der Broker über das Papier weiß — für Krypto zwingend. */
+export interface SchutzAsset {
+  /** `price_increment` (nur Krypto). */
+  preisSchritt?: number | undefined;
+  /** `min_order_size` (nur Krypto). */
+  mindestGroesse?: number | undefined;
+}
+
+const NEIN = (grund: string): SchutzPlan => ({ anlegen: false, qty: 0, stopPreis: 0, grund });
 
 /** Ob (und mit welchen Werten) ein Broker-Stop angelegt wird. */
 export function planeSchutzStop(
   lage: SchutzLage,
   risk: RiskConfig,
   klasse: string | null,
+  asset: SchutzAsset | null = null,
 ): SchutzPlan {
-  if (klasse === null || !usSessionClass(klasse)) {
-    return { anlegen: false, qty: 0, stopPreis: 0, grund: 'klasse_ohne_us_session' };
-  }
+  if (klasse === null) return NEIN('klasse_unbekannt');
+  if (klasse === 'crypto') return planeKryptoSchutz(lage, risk, asset);
+  if (!usSessionClass(klasse)) return NEIN('klasse_ohne_us_session');
   const qty = Math.floor(lage.qty + 1e-9);
-  if (qty < 1) return { anlegen: false, qty: 0, stopPreis: 0, grund: 'bruchstueck' };
+  if (qty < 1) return NEIN('bruchstueck');
   const stopPreis = schutzStopPreis(lage, risk);
-  if (stopPreis === null || !(stopPreis > 0)) {
-    return { anlegen: false, qty: 0, stopPreis: 0, grund: 'kein_prozent_stop' };
-  }
+  if (stopPreis === null || !(stopPreis > 0)) return NEIN('kein_prozent_stop');
   return { anlegen: true, qty, stopPreis };
+}
+
+/**
+ * Krypto (Stufe 1b, 19.08.) — die Klasse, die das Netz am nötigsten hat.
+ *
+ * Sie läuft rund um die Uhr, auch nachts und am Wochenende, während der
+ * Scan nur alle fünf Minuten schaut. Bis heute war der Scan dort der
+ * EINZIGE Wächter: Ein Einbruch um 3 Uhr blieb bis 3:05 unbeantwortet, und
+ * bei einem ausgefallenen Lauf beliebig viel länger.
+ *
+ * Vier Unterschiede zu Aktien, jeder davon ein möglicher Ablehnungsgrund
+ * beim Broker — deshalb wird hier lieber NICHTS angelegt als geraten:
+ *
+ * 1. `stop_limit` statt `stop` (Alpaca kann für Krypto nichts anderes).
+ * 2. Bruchstücke sind der Normalfall, nicht die Ausnahme — kein Abrunden
+ *    auf ganze Stücke, dafür die Mindestgröße der Münze.
+ * 3. Der Preis muss auf dem Raster der Münze liegen (`price_increment`).
+ * 4. Alpaca handelt Krypto nur LONG. Eine Short-Lage kann es hier nicht
+ *    geben; käme sie doch, wäre ein Kauf-Stop die falsche Antwort.
+ */
+function planeKryptoSchutz(
+  lage: SchutzLage,
+  risk: RiskConfig,
+  asset: SchutzAsset | null,
+): SchutzPlan {
+  if (lage.side !== 'long') return NEIN('krypto_nur_long');
+  const schritt = asset?.preisSchritt;
+  if (typeof schritt !== 'number' || !(schritt > 0)) return NEIN('kein_preisraster');
+  const mindest = asset?.mindestGroesse;
+  if (typeof mindest === 'number' && mindest > 0 && lage.qty < mindest) {
+    return NEIN('unter_mindestgroesse');
+  }
+  if (!(lage.qty > 0)) return NEIN('keine_menge');
+  const roh = schutzStopPreis(lage, risk);
+  if (roh === null || !(roh > 0)) return NEIN('kein_prozent_stop');
+  const stopPreis = rundeAufSchritt(roh, schritt, 'long');
+  if (!(stopPreis > 0)) return NEIN('stop_unter_raster');
+  const limitPreis = rundeAufSchritt(stopPreis * (1 - KRYPTO_LIMIT_ABSTAND), schritt, 'long');
+  // Rundet das Limit auf den Stop hoch (grobes Raster, kleiner Preis), wäre
+  // es kein Limit mehr, sondern eine zweite Auslösemarke: Die Order füllte
+  // dann nur bei EXAKT diesem Kurs. Ein Raster unter dem Stop muss übrig
+  // bleiben, sonst gibt es kein Netz.
+  if (!(limitPreis > 0) || limitPreis >= stopPreis) return NEIN('limit_unter_raster');
+  return { anlegen: true, qty: lage.qty, stopPreis, limitPreis };
 }
 
 /**
@@ -208,6 +301,33 @@ function lageAusPosition(pos: Position): SchutzLage {
 
 function posRef(uid: string, symbol: string): FirebaseFirestore.DocumentReference {
   return getFirestore().doc(`users/${uid}/positions/${symbol}`);
+}
+
+/**
+ * Broker-Wissen zum Papier — nur für Krypto nötig, nur dort geholt.
+ *
+ * Ein Fehlschlag ist kein Drama: Ohne Raster legt `planeKryptoSchutz`
+ * nichts an, und die Position bleibt so geschützt wie vor dieser Änderung
+ * (Engine im 5-Minuten-Takt). Ein geworfener Fehler dagegen würde den
+ * gerade gebuchten Trade nachträglich zerschießen.
+ */
+async function schutzAsset(
+  verbindung: BrokerVerbindung,
+  symbol: string,
+  klasse: string | null,
+  fetchImpl: FetchLike,
+): Promise<SchutzAsset | null> {
+  if (klasse !== 'crypto') return null;
+  try {
+    const stand = await assetStand(verbindung, symbol, fetchImpl);
+    if (stand.art !== 'bekannt') return null;
+    return {
+      preisSchritt: stand.asset.preisSchritt,
+      mindestGroesse: stand.asset.mindestGroesse,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -248,7 +368,7 @@ export async function schutzAnlegen(
       ).catch(() => 'weg' as const);
     }
 
-    const plan = planeSchutzStop(lageAusPosition(pos), risk, klasse);
+    const plan = planeSchutzStop(lageAusPosition(pos), risk, klasse, await schutzAsset(verbindung, symbol, klasse, fetchImpl));
     if (!plan.anlegen) {
       if (pos.schutz) await posRef(uid, symbol).set({ schutz: null }, { merge: true });
       logger.debug(`schutzAnlegen ${uid} ${symbol}: kein Broker-Stop (${plan.grund})`);
@@ -261,6 +381,7 @@ export async function schutzAnlegen(
         side: pos.side === 'short' ? 'buy' : 'sell',
         qty: plan.qty,
         stopPreis: plan.stopPreis,
+        ...(plan.limitPreis !== undefined ? { limitPreis: plan.limitPreis } : {}),
         clientOrderId: clientOrderId(
           uid,
           symbol,
@@ -277,7 +398,14 @@ export async function schutzAnlegen(
       return;
     }
     await posRef(uid, symbol).set(
-      { schutz: { orderId: order.id, stopPreis: plan.stopPreis, qty: plan.qty } },
+      {
+        schutz: {
+          orderId: order.id,
+          stopPreis: plan.stopPreis,
+          qty: plan.qty,
+          ...(plan.limitPreis !== undefined ? { limitPreis: plan.limitPreis } : {}),
+        },
+      },
       { merge: true },
     );
     logger.info(`Schutz-Stop ${uid} ${symbol}: ${plan.qty} @ ${plan.stopPreis}`);
@@ -401,9 +529,21 @@ export async function pflegeSchutz(
       };
     }
 
-    // Order steht — Trailing nachziehen?
+    /* Order steht — Trailing nachziehen?
+     *
+     * Bei einer stop_limit-Order (Krypto) wird BEIDES neu geplant, nicht nur
+     * der Stop: Das Limit hängt am Stop, und ein stehen gebliebenes Limit
+     * risse den geplanten Abstand mit jedem Nachziehen weiter auf. Der Plan
+     * kommt deshalb aus derselben Funktion wie beim Anlegen — eine zweite
+     * Rechenstelle wäre die nächste Quelle für Auseinanderlaufen. */
     const side = pos.side === 'short' ? 'short' : 'long';
-    const neu = schutzStopPreis(lageAusPosition(pos), risk);
+    const plan = planeSchutzStop(
+      lageAusPosition(pos),
+      risk,
+      klasse,
+      await schutzAsset(verbindung, symbol, klasse, fetchImpl),
+    );
+    const neu = plan.anlegen ? plan.stopPreis : null;
     if (neu !== null && sollSchutzErsetzen(schutz.stopPreis, neu, side)) {
       const neueId = await alpacaOrderErsetzen(
         verbindung.mode,
@@ -411,9 +551,17 @@ export async function pflegeSchutz(
         neu,
         verbindung.schluessel,
         fetchImpl,
+        plan.limitPreis,
       );
       await posRef(uid, symbol).set(
-        { schutz: { orderId: neueId, stopPreis: neu, qty: schutz.qty } },
+        {
+          schutz: {
+            orderId: neueId,
+            stopPreis: neu,
+            qty: schutz.qty,
+            ...(plan.limitPreis !== undefined ? { limitPreis: plan.limitPreis } : {}),
+          },
+        },
         { merge: true },
       );
       logger.info(`Schutz-Stop nachgezogen ${uid} ${symbol}: ${schutz.stopPreis} → ${neu}`);

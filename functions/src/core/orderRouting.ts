@@ -720,6 +720,13 @@ interface AssetFeld {
   shortable?: unknown;
   easyToBorrow?: unknown;
   marginable?: unknown;
+  preisSchritt?: unknown;
+  mindestGroesse?: unknown;
+}
+
+/** Eine gecachte Zahl zurücklesen — `undefined` statt 0 bei allem Unklaren. */
+function zahlOderUndefiniert(roh: unknown): number | undefined {
+  return typeof roh === 'number' && Number.isFinite(roh) && roh > 0 ? roh : undefined;
 }
 
 /**
@@ -748,6 +755,12 @@ export function feldZuStand(symbol: string, roh: unknown, jetztMs: number): Asse
   const v = typeof feld.v === 'number' ? feld.v : 1;
   if (!bekannt && v < SCHREIBWEISE_V) return null;
   if (!bekannt) return { art: 'fehlt' };
+  /* Krypto-Raster (19.08.): Fehlen sie im Cache-Eintrag, bleiben sie
+   * `undefined` — ein Eintrag von VOR dieser Änderung liest sich dann wie
+   * „unbekannt", nicht wie „0". Die Migration ist damit additiv und braucht
+   * kein Nachziehen alter Dokumente. */
+  const preisSchritt = zahlOderUndefiniert(feld.preisSchritt);
+  const mindestGroesse = zahlOderUndefiniert(feld.mindestGroesse);
   return {
     art: 'bekannt',
     asset: {
@@ -757,6 +770,8 @@ export function feldZuStand(symbol: string, roh: unknown, jetztMs: number): Asse
       shortable: feld.shortable === true,
       easyToBorrow: feld.easyToBorrow === true,
       marginable: feld.marginable === true,
+      ...(preisSchritt !== undefined ? { preisSchritt } : {}),
+      ...(mindestGroesse !== undefined ? { mindestGroesse } : {}),
     },
   };
 }
@@ -807,6 +822,10 @@ export async function assetStand(
                 shortable: wert.shortable,
                 easyToBorrow: wert.easyToBorrow,
                 marginable: wert.marginable,
+                ...(wert.preisSchritt !== undefined ? { preisSchritt: wert.preisSchritt } : {}),
+                ...(wert.mindestGroesse !== undefined
+                  ? { mindestGroesse: wert.mindestGroesse }
+                  : {}),
                 at,
               }
             : { bekannt: false, at, v: SCHREIBWEISE_V },

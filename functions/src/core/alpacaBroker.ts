@@ -573,6 +573,17 @@ export interface AlpacaAsset {
   shortable: boolean;
   easyToBorrow: boolean;
   marginable: boolean;
+  /**
+   * Preis-Raster des Papiers (`price_increment`) — NUR Krypto liefert es.
+   *
+   * Warum das hier hereingehört: Ein Stop-Preis, der nicht auf dem Raster
+   * liegt, wird von Alpaca abgelehnt. Bei BTC/USD ist das Raster `1` — also
+   * ganze Dollar. Ein auf zwei Nachkommastellen gerundeter Stop (unsere
+   * Aktien-Regel) wäre dort jedes Mal eine abgelehnte Order.
+   */
+  preisSchritt?: number;
+  /** Kleinste handelbare Menge (`min_order_size`) — ebenfalls nur Krypto. */
+  mindestGroesse?: number;
 }
 
 /**
@@ -603,6 +614,11 @@ export async function alpacaAsset(
     if (err instanceof AlpacaFehler && err.status === 404) return null;
     throw err;
   }
+  // Alpaca liefert beide als STRING ('1', '0.0001') und nur bei Krypto.
+  // `undefined` heißt „unbekannt", nicht „null" — der Aufrufer entscheidet
+  // dann, dass er lieber nichts tut, als zu raten.
+  const preisSchritt = positiveZahl(d['price_increment']);
+  const mindestGroesse = positiveZahl(d['min_order_size']);
   return {
     symbol: vonAlpacaSymbol(String(d['symbol'] ?? symbol)),
     tradable: d['tradable'] === true,
@@ -610,7 +626,20 @@ export async function alpacaAsset(
     shortable: d['shortable'] === true,
     easyToBorrow: d['easy_to_borrow'] === true,
     marginable: d['marginable'] === true,
+    ...(preisSchritt !== undefined ? { preisSchritt } : {}),
+    ...(mindestGroesse !== undefined ? { mindestGroesse } : {}),
   };
+}
+
+/**
+ * Eine Alpaca-Zahl, die als String kommen kann, in eine POSITIVE Zahl —
+ * oder `undefined`. Kein Fallback auf 0: Ein Raster von 0 wäre eine
+ * Division durch null, eine Mindestgröße von 0 hieße „alles erlaubt".
+ * Beides wäre schlimmer als „weiß ich nicht".
+ */
+function positiveZahl(roh: unknown): number | undefined {
+  const n = typeof roh === 'number' ? roh : typeof roh === 'string' ? Number(roh) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : undefined;
 }
 
 /**
@@ -815,11 +844,20 @@ export async function alpacaStopOrder(
     side: 'buy' | 'sell';
     qty: number;
     stopPreis: number;
+    /**
+     * Gesetzt ⇒ `stop_limit` statt `stop` (Krypto, 19.08.).
+     *
+     * Alpaca unterstützt für Krypto KEINE einfachen Stop-Orders — nur
+     * `stop_limit`, und nur mit `gtc` (gegen die Alpaca-Doku geprüft,
+     * 19.08.). Ohne dieses Feld bleibt alles wie bisher.
+     */
+    limitPreis?: number;
     clientOrderId: string;
   },
   schluessel: AlpacaSchluessel | null = null,
   fetchImpl: FetchLike = fetch,
 ): Promise<OrderErgebnis> {
+  const stopLimit = typeof order.limitPreis === 'number' && order.limitPreis > 0;
   const d = (await alpacaFetch(
     mode,
     '/v2/orders',
@@ -830,8 +868,9 @@ export async function alpacaStopOrder(
         symbol: zuAlpacaSymbol(order.symbol),
         qty: String(order.qty),
         side: order.side,
-        type: 'stop',
+        type: stopLimit ? 'stop_limit' : 'stop',
         stop_price: String(order.stopPreis),
+        ...(stopLimit ? { limit_price: String(order.limitPreis) } : {}),
         time_in_force: 'gtc',
         client_order_id: order.clientOrderId,
       }),
@@ -983,12 +1022,27 @@ export async function alpacaOrderErsetzen(
   stopPreis: number,
   schluessel: AlpacaSchluessel | null = null,
   fetchImpl: FetchLike = fetch,
+  limitPreis?: number,
 ): Promise<string> {
+  /* Bei einer stop_limit-Order MUSS das Limit mitwandern.
+   *
+   * Zöge das Trailing nur den Stop nach, bliebe das Limit auf dem alten,
+   * tieferen Niveau stehen: Der Abstand zwischen Auslösung und Limit würde
+   * mit jedem Nachziehen größer, und aus dem geplanten 1,5-%-Puffer würden
+   * irgendwann 10 %. Das Netz fienge dann zwar noch, aber zu einem Kurs,
+   * den niemand geplant hat. */
+  const mitLimit = typeof limitPreis === 'number' && limitPreis > 0;
   const d = (await alpacaFetch(
     mode,
     `/v2/orders/${encodeURIComponent(orderId)}`,
     schluessel,
-    { method: 'PATCH', body: JSON.stringify({ stop_price: String(stopPreis) }) },
+    {
+      method: 'PATCH',
+      body: JSON.stringify({
+        stop_price: String(stopPreis),
+        ...(mitLimit ? { limit_price: String(limitPreis) } : {}),
+      }),
+    },
     fetchImpl,
   )) as Record<string, unknown>;
   const neueId = String(d['id'] ?? '');

@@ -1014,7 +1014,13 @@ export interface Position {
    * Verkauf daran vorbei wird abgelehnt. Fehlend = kein Broker-Stop
    * (Buch-Position, Bruchstück, ATR-only oder Anlage fehlgeschlagen).
    */
-  schutz?: { orderId: string; stopPreis: number; qty: number } | null;
+  schutz?: {
+    orderId: string;
+    stopPreis: number;
+    qty: number;
+    /** Gesetzt bei `stop_limit` (Krypto) — muss beim Nachziehen mitwandern. */
+    limitPreis?: number;
+  } | null;
 }
 
 export interface Trade {
