@@ -899,3 +899,68 @@ describe('Restmarkup der Karten und Modals (Tranche 5j)', () => {
     }
   });
 });
+
+describe('Ablehnungsgründe, Regime und Zugang (Tranche 5k)', () => {
+  const nurCode = (q: string): string =>
+    q
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1')
+      .replace(/t\('[^']+'\)/g, 't()')
+      .replace(/\.[A-Za-zÄÖÜäöü_$][\w$]*/g, '.x');
+
+  it('renderAccessNote ist vollständig übersetzt', () => {
+    const roh = dashboard.slice(
+      dashboard.indexOf('function renderAccessNote'),
+      dashboard.indexOf('const GATE_TEXT'),
+    );
+    expect(roh).toContain('accessLevel');
+    const DEUTSCH = /\b(Zugang|geprüft|gehandelt|Freischaltung|gesperrt|wende|Betreiber)\b/g;
+    const treffer = [...new Set([...nurCode(roh).matchAll(DEUTSCH)].map((m) => m[0]))];
+    expect(treffer, `deutscher Rest — ${treffer.join(' | ')}`).toEqual([]);
+  });
+
+  it('GATE_TEXT, REGIME_TEXT und KALENDER_TEXT tragen nur noch Schlüssel', () => {
+    /* Diese drei Tabellen sind der meistgelesene Text der App, wenn etwas
+     * nicht wie erwartet läuft: Sie beantworten, warum gerade NICHT
+     * gehandelt wird. Eine unklare Übersetzung führt hier nicht zu
+     * Verwirrung, sondern zu einer falschen Diagnose — wer „die Anlageklasse
+     * steht auf 0" nicht versteht, sucht den Fehler in der Strategie statt
+     * am Regler. */
+    const tab = dashboard.slice(
+      dashboard.indexOf('const GATE_TEXT'),
+      dashboard.indexOf('function renderEngineWhy'),
+    );
+    /* Wortsuche statt Zeichenketten-Extraktion — dieselbe Lehre wie in 5h:
+     * Ein Muster, das Quotes paart, paart quer über den Code und findet
+     * Rümpfe statt Texte. Geradeaus lesen ist zuverlässiger. */
+    const DEUTSCH =
+      /\b(Konten|Notbremse|Einstiege|Ausstiege|abgelehnt|Anlageklasse|Schatten|Leerverkäufe|Markt|steigt|pausiert|Marktstress|geblockt|verliert|Ereignis|Schlagzeilen|erwartete|Bewegung|Gebühren|übersprungen|verkauft|Bedingungen|erfüllt|Aufwärtstrend|ruhig|Seitwärts|Zinsentscheid|Arbeitsmarktbericht|Verbraucherpreise)\b/g;
+    const treffer = [...new Set([...nurCode(tab).matchAll(DEUTSCH)].map((m) => m[0]))];
+    expect(treffer, `deutscher Rest in den Tabellen — ${treffer.join(' | ')}`).toEqual([]);
+  });
+
+  it('jede Bremse behält ihren Namen — die Kürzel sind der Vertrag zum Server', () => {
+    /* Die Schlüssel links (breaker_aktiv, regime_stress …) kommen aus dem
+     * Heartbeat und dürfen sich NICHT ändern; übersetzt wird nur, was rechts
+     * daneben steht. Ein umbenanntes Kürzel wäre kein Übersetzungsfehler,
+     * sondern eine stumme Lücke: Der Zähler käme an, fände keinen Text und
+     * die Bremse verschwände aus der Liste. */
+    const tab = dashboard.slice(
+      dashboard.indexOf('const GATE_TEXT'),
+      dashboard.indexOf('const REGIME_TEXT'),
+    );
+    for (const code of [
+      'breaker_aktiv', 'abgleich_drift', 'klasse_aus', 'regime_gegen_trend',
+      'regime_stress', 'filter_blockiert', 'news_veto', 'unter_kosten',
+      'cluster_voll', 'nicht_handelbar', 'hebel_frei',
+    ]) {
+      expect(tab, `Kürzel ${code} fehlt`).toContain(`'${code}'`);
+    }
+  });
+
+  it('jede acc./gate./reg./kal.-Zeile hat eine englische Fassung', () => {
+    for (const k of Object.keys(DE).filter((s) => /^(acc|gate|reg|kal)\./.test(s))) {
+      expect(EN[k as TextSchluessel], `${k} ohne englische Fassung`).toBeTruthy();
+    }
+  });
+});

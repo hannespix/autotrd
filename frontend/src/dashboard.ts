@@ -5770,11 +5770,11 @@ function renderAccessNote(): void {
   const el = $('accessNote');
   if (st.accessLevel === 'pending') {
     el.textContent =
-      '⏳ Dein Zugang wird noch geprüft. Du kannst alles ansehen und einstellen — '
-      + 'gehandelt wird erst nach der Freischaltung durch den Betreiber, auch bei Engine AN.';
+      t('acc.pendingA')
+      + t('acc.pendingB');
     el.hidden = false;
   } else if (st.accessLevel === 'blocked') {
-    el.textContent = '⛔ Dieses Konto wurde gesperrt. Bitte wende dich an den Betreiber.';
+    el.textContent = t('acc.blocked');
     el.hidden = false;
   } else {
     el.hidden = true;
@@ -5792,29 +5792,29 @@ function renderAccessNote(): void {
  * Nullen liest niemand zweimal.
  */
 const GATE_TEXT: ReadonlyArray<[string, string]> = [
-  ['breaker_aktiv', 'Konten mit ausgelöster Tages-Notbremse (keine neuen Einstiege)'],
-  ['abgleich_drift', 'Konten gesperrt — Buch und Broker-Depot weichen ab (Ausstiege bleiben frei)'],
-  ['klasse_aus', 'abgelehnt — Anlageklasse steht auf 0 (Schatten misst weiter)'],
-  ['regime_gegen_trend', 'Leerverkäufe abgelehnt — der Markt steigt'],
-  ['regime_stress', 'Einstiege pausiert — Marktstress'],
-  ['filter_blockiert', 'geblockt — diese Trade-Sorte verliert nachweislich'],
-  ['news_veto', 'News-Veto — hartes Ereignis in den Schlagzeilen'],
-  ['unter_kosten', 'zu kleine erwartete Bewegung für die Gebühren'],
-  ['cluster_voll', 'abgelehnt — zu viel in derselben Marktgruppe'],
-  ['nicht_handelbar', 'übersprungen — kein Broker verkauft das'],
-  ['hebel_frei', 'Hebel FREIGEGEBEN (alle fünf Bedingungen erfüllt)'],
+  ['breaker_aktiv', t('gate.breakerAktiv')],
+  ['abgleich_drift', t('gate.abgleichDrift')],
+  ['klasse_aus', t('gate.klasseAus')],
+  ['regime_gegen_trend', t('gate.regimeGegenTrend')],
+  ['regime_stress', t('gate.regimeStress')],
+  ['filter_blockiert', t('gate.filterBlockiert')],
+  ['news_veto', t('gate.newsVeto')],
+  ['unter_kosten', t('gate.unterKosten')],
+  ['cluster_voll', t('gate.clusterVoll')],
+  ['nicht_handelbar', t('gate.nichtHandelbar')],
+  ['hebel_frei', t('gate.hebelFrei')],
 ];
 
 const REGIME_TEXT: Record<string, { t: string; c: string }> = {
-  trend: { t: 'Aufwärtstrend — ruhig', c: 'var(--gn)' },
-  seitwaerts: { t: 'Seitwärts', c: 'var(--t3)' },
-  stress: { t: 'Stress — Einstiege pausiert', c: 'var(--rd)' },
+  trend: { t: t('reg.trend'), c: 'var(--gn)' },
+  seitwaerts: { t: t('reg.seitwaerts'), c: 'var(--t3)' },
+  stress: { t: t('reg.stress'), c: 'var(--rd)' },
 };
 
 const KALENDER_TEXT: Record<string, string> = {
-  fomc: 'Fed-Zinsentscheid',
-  nfp: 'US-Arbeitsmarktbericht',
-  cpi: 'US-Verbraucherpreise',
+  fomc: t('kal.fomc'),
+  nfp: t('kal.nfp'),
+  cpi: t('kal.cpi'),
 };
 
 function whyChip(text: string, farbe: string): HTMLElement {
@@ -5861,7 +5861,7 @@ function renderEngineWhy(): void {
   } else if (h.alarm?.aktiv) {
     // Server-Alarm ohne frisches Client-Urteil: der Wächter sieht etwas,
     // das der Client nicht sieht (z. B. Kursquelle) — anzeigen, nicht raten.
-    ampel.append(whyChip(`⚠ ${h.alarm.text ?? 'Wächter-Alarm aktiv'}`, 'var(--rd)'));
+    ampel.append(whyChip(`⚠ ${h.alarm.text ?? t('ew.waechterAlarm')}`, 'var(--rd)'));
   }
   const r = REGIME_TEXT[h.regime?.state ?? ''] ?? { t: 'unbekannt', c: 'var(--t3)' };
   const vix = typeof h.regime?.vix === 'number' ? ` · VIX ${h.regime.vix.toFixed(1)}` : '';
@@ -5897,9 +5897,9 @@ function renderEngineWhy(): void {
       gegenTrend ? 'var(--rd)' : 'var(--t3)',
     );
     chip.title = gegenTrend
-      ? 'Die Konfluenz erzeugt mehr Verkaufs- als Kaufsignale, obwohl der Markt im Aufwärtstrend steht. ' +
-        'Die Regime-Ampel blockt diese Einstiege — sie verhindert also Wetten gegen den Trend, statt zu viel zu sperren.'
-      : 'Richtungen der Konfluenz-Signale im letzten Scan: Kauf, Verkauf, Halten.';
+      ? t('ew.mehrVerkauf') +
+        t('ew.ampelBlockt')
+      : t('ew.richtungen');
     ampel.append(chip);
   }
   /* Signal-Kanten-Chip (MI → 07.08.): Die Regime-Variante ist nach der
@@ -5918,7 +5918,7 @@ function renderEngineWhy(): void {
         alterMin?: number | null;
       } | null,
     ): string => {
-      if (!v || v.kantePct === null) return 'noch keine Daten';
+      if (!v || v.kantePct === null) return t('ew.keineDaten');
       const netto = `${v.kantePct.toFixed(3)} % je Signal (${v.n})`;
       const roh =
         v.rohPct === null || v.rohPct === undefined ? netto : `${netto}, roh ${v.rohPct.toFixed(3)} %`;
@@ -8919,13 +8919,13 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   $('verifyBox').hidden = emailVerified();
   $('verifySend').addEventListener('click', () => {
     sendVerification()
-      .then(() => { $('verifyHint').textContent = 'Mail ist unterwegs (Spam-Ordner prüfen).'; })
-      .catch(() => { $('verifyHint').textContent = 'Senden fehlgeschlagen — kurz warten und erneut.'; });
+      .then(() => { $('verifyHint').textContent = t('mt.mailUnterwegs'); })
+      .catch(() => { $('verifyHint').textContent = t('mt.sendenFehl'); });
   });
   $('verifyDone').addEventListener('click', () => {
     void refreshUser().then((ok) => {
       $('verifyBox').hidden = ok;
-      if (!ok) $('verifyHint').textContent = 'Noch nicht bestätigt — Link in der Mail öffnen.';
+      if (!ok) $('verifyHint').textContent = t('mt.nochNichtBestaetigt');
     });
   });
 
@@ -9124,8 +9124,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   // Kerzen nach — Scrollen ohne Gummiband-Effekt.
   const Y_LABEL: Record<import('./chart.js').YMode, [string, string]> = {
     auto: ['Y auto', 'Y-Skala: automatisch — alles Sichtbare wird eingepasst (Kerzen stauchen sich beim Scrollen). Klick: fester Zoom. Ziehen/Rad auf der Preisskala übernimmt jederzeit manuell.'],
-    fix: ['Y fix', 'Y-Skala: fester Zoom — die Skala wandert mit dem Kurs mit, die Kerzenhöhe bleibt beim Scrollen konstant; bei Ausbrüchen weitet sie kurzzeitig. Klick: manuell.'],
-    frei: ['Y frei', 'Y-Skala: manuell — auf der Preisskala ziehen; Doppelklick auf die Achse setzt zurück. Klick: automatisch.'],
+    fix: ['Y fix', t('mt.ySkalaFix')],
+    frei: ['Y frei', t('mt.ySkalaFrei')],
   };
   const paintYBtn = (): void => {
     if (!st) return;
@@ -9419,7 +9419,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       })
       .catch(() => {
         const el = document.getElementById('lvState');
-        if (el) el.textContent = 'Zustand nicht abrufbar.';
+        if (el) el.textContent = t('mt.zustandNichtAbrufbar');
       });
   };
   $('optBtn')?.addEventListener('click', ladeLiveStatus);
@@ -9544,7 +9544,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     void callDisconnectBroker()
       .then((r) => {
         $('bkOut').innerHTML = `<div class="hint">${
-          r.geloescht ? 'Verbindung getrennt, Schlüssel gelöscht.' : 'Es war nichts verbunden.'
+          r.geloescht ? t('mt.verbindungGetrennt') : t('mt.nichtsVerbunden')
         }</div>`;
       })
       .catch((e) => {
@@ -9639,7 +9639,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         // der Broker gefragt wurde oder die Einstellung gegriffen hat.
         const quelle = r.kapitalQuelle === 'broker' ? ' (vom Broker übernommen)' : '';
         $('rsMsg').textContent =
-          `✓ Zurückgesetzt (${n || 'nichts zu löschen'}) — Kontostand ${r.balance} $${quelle}`
+          `✓ Zurückgesetzt (${n || t('mt.nichtsZuLoeschen')}) — Kontostand ${r.balance} $${quelle}`
           + (r.hinweis ? ` — ${r.hinweis}` : '');
         ($('rsWord') as HTMLInputElement).value = '';
       })
@@ -9719,12 +9719,12 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   });
 
   $('bkrReset').addEventListener('click', () => {
-    $('bkrMsg').textContent = 'Löse …';
+    $('bkrMsg').textContent = t('mt.loese');
     void resetBreaker()
       .then((r) => {
         $('bkrMsg').textContent = r.warAusgeloest
-          ? '✓ Gelöst — Einstiege sind wieder frei.'
-          : 'War nicht ausgelöst.';
+          ? t('mt.geloest')
+          : t('mt.warNichtAusgeloest');
       })
       .catch((e) => ($('bkrMsg').textContent = (e as Error).message));
   });
@@ -9787,7 +9787,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       .then(() => {
         st!.strategy = next;
         openOptions(); // Formular auf die übernommenen Werte ziehen
-        $('bpMsg').textContent = '✓ Übernommen — Watchlist, Kapital und Start/Stop blieben deine.';
+        $('bpMsg').textContent = t('mt.uebernommenBp');
       })
       .catch((e) => ($('bpMsg').textContent = (e as Error).message));
   });
