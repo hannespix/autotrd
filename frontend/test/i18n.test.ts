@@ -541,3 +541,96 @@ describe('Teilbare Ergebnis-Grafik ist zweisprachig (Tranche 5e)', () => {
     expect(pruefstand).toContain('data-rolle="siegelRahmen"');
   });
 });
+
+describe('Chart-Werkzeugleiste ist zweisprachig (Tranche 5f)', () => {
+  /* Der Block zwischen der Chart-Karte und dem Vergleichs-Chart. Er wird
+   * hier ZUR LAUFZEIT abgegrenzt statt über feste Zeilennummern: Ein
+   * Wächter, der an Zeile 728 hängt, prüft nach der nächsten Einfügung
+   * irgendetwas anderes und meldet trotzdem grün. */
+  const block = dashboard.slice(
+    dashboard.indexOf('data-panel="chart"'),
+    dashboard.indexOf('data-panel="chart2"'),
+  );
+  const chartQuelle = readFileSync(join(import.meta.dirname, '..', 'src', 'chart.ts'), 'utf8');
+
+  it('der Block ist überhaupt gefunden worden', () => {
+    // Ohne diese Zeile wäre ein leerer Block ein grüner Test — die
+    // bequemste Art, sich Fehlerfreiheit zu bescheinigen.
+    expect(block.length).toBeGreaterThan(5000);
+    expect(block).toContain('data-ctype="candles"');
+  });
+
+  it('KEIN title-Attribut trägt noch deutschen Text', () => {
+    /* Mechanische Arbeit braucht eine mechanische Kontrolle. ~60 Attribute
+     * einzeln zu pinnen wäre eine Stichprobe — und eine Stichprobe findet
+     * genau die Zeile nicht, die man beim Ersetzen übersprungen hat.
+     * Deshalb: ALLE title-Attribute einsammeln und jedes prüfen. */
+    const roh = [...block.matchAll(/title="([^"]*)"/g)]
+      .map((m) => m[1] ?? '')
+      .filter((v) => !v.startsWith('${t('));
+    expect(roh, `title-Attribute ohne t(): ${roh.join(' | ')}`).toEqual([]);
+  });
+
+  /* Sprachneutrale Beschriftungen — sie bleiben mit Absicht Literale.
+   *
+   * Die Liste ist ausdrücklich eine POSITIVliste, keine Ausnahmeliste: Was
+   * hier nicht steht, muss durch t(). Der erste Entwurf dieses Wächters
+   * suchte stattdessen nach Umlauten — und ließ „Kerzen" durch, weil das
+   * Wort keinen hat. Aufgefallen ist das erst in der Sabotage-Probe, und
+   * genau dafür gibt es sie: Ein Wächter, den man mit einem Wort ohne
+   * Umlaut aushebeln kann, prüft die Rechtschreibung, nicht die Sprache. */
+  const NEUTRAL = new Set([
+    'A', // Link-Gruppe
+    '1W', '1M', '3M', 'Max', // in beiden Sprachen gleich (1T/1J/5J NICHT, s. u.)
+    'SMA20', 'SMA50', 'SMA200', 'EMA9', 'EMA21', 'BB', 'VWAP', 'RSI', 'MACD',
+    'Bars', 'Baseline', 'Heikin-Ashi', // Fachbegriffe, englischen Ursprungs
+    'Lin', 'Log', 'Clean', 'News', 'Position', 'Y auto',
+  ]);
+
+  it('JEDE Beschriftung ist entweder übersetzt oder ausdrücklich neutral', () => {
+    /* Mechanische Arbeit braucht eine mechanische Kontrolle, und diese hier
+     * kennt keine Heuristik: Jeder Textknoten im Block muss ein t()-Aufruf
+     * sein oder namentlich in NEUTRAL stehen. Ein vergessenes deutsches Wort
+     * kann damit nicht durchrutschen, egal wie es geschrieben ist. */
+    const ohneAufrufe = block.replace(/\$\{t\('[^']+'\)\}/g, '');
+    const roh = [...ohneAufrufe.matchAll(/>([^<>{}$]*[A-Za-zÄÖÜäöü][^<>{}$]*)</g)]
+      .map((m) => (m[1] ?? '').trim())
+      .filter((v) => v.length > 0 && !NEUTRAL.has(v));
+    expect(roh, `nicht übersetzt und nicht als neutral erklärt: ${roh.join(' | ')}`).toEqual([]);
+  });
+
+  it('die Zeitrahmen-Kürzel sind übersetzt — 1T ist kein englisches Wort', () => {
+    /* Der leiseste Fehler dieser Tranche wäre, 1T/1J/5J stehenzulassen:
+     * Sie sehen wie Symbole aus, sind aber Abkürzungen für Tag und Jahr.
+     * Ein englischer Nutzer liest „1T" als nichts. */
+    expect(EN['chart.lbl1T']).toBe('1D');
+    expect(EN['chart.lbl1J']).toBe('1Y');
+    expect(EN['chart.lbl5J']).toBe('5Y');
+    // Was gleich BLEIBT, bleibt bewusst gleich: 1W und 1M/3M stimmen in
+    // beiden Sprachen überein und stehen deshalb gar nicht im Wörterbuch.
+    expect(DE['chart.lbl1T' as TextSchluessel]).toBe('1T');
+  });
+
+  it('auch chart.ts selbst hat keinen deutschen Text mehr', () => {
+    /* Eine einzige Zeichenkette — die Meldung, wenn die Chart-Bibliothek
+     * nicht lädt. Sie erscheint genau dann, wenn ohnehin etwas kaputt ist;
+     * dann auf Deutsch zu antworten wäre doppelt unfreundlich.
+     *
+     * Geprüft wird der CODE, nicht die Kommentare: Der erste Entwurf dieses
+     * Wächters suchte den Satz in der ganzen Datei und wurde von einem
+     * Doku-Kommentar rot, der genau dasselbe Wort erklärt. Ein Wächter, der
+     * am Kommentar hängt, zwingt beim nächsten Mal dazu, die Erklärung zu
+     * verstümmeln, statt den Fehler zu beheben. */
+    const ohneKommentare = chartQuelle
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+    expect(ohneKommentare).not.toContain('Chart-Bibliothek nicht geladen');
+    expect(chartQuelle).toContain("t('chart.libFehlt')");
+  });
+
+  it('jede chart.*-Zeile hat eine englische Fassung', () => {
+    for (const k of Object.keys(DE).filter((s) => s.startsWith('chart.'))) {
+      expect(EN[k as TextSchluessel], `${k} ohne englische Fassung`).toBeTruthy();
+    }
+  });
+});

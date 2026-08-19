@@ -725,7 +725,7 @@ function layout(email: string): string {
     <div class="col-m">
       <div class="livebar" id="liveBar"></div>
 
-      <div class="card" data-panel="chart"><div class="sect">${t('panel.chartKopf')} <button class="lchip" id="chipChart" title="Link-Gruppe wechseln (Chart folgt dieser Gruppe)">A</button></div><div class="cbody">
+      <div class="card" data-panel="chart"><div class="sect">${t('panel.chartKopf')} <button class="lchip" id="chipChart" title="${t('chart.linkGruppe')}">A</button></div><div class="cbody">
         <div id="chartMaxScope">
         <div class="chart-hd">
           <span class="chart-nm" id="chSym"></span>
@@ -734,82 +734,82 @@ function layout(email: string): string {
           <span class="chart-px" id="chChg">--</span>
         </div>
         <div class="tf-bar tf-main">
-          <button class="tf-btn" data-zoom="1" title="Auf 1 Handelstag zoomen — die Kerzengröße wählt die Auto-Auflösung">1T</button>
-          <button class="tf-btn" data-zoom="7" title="Auf 1 Woche zoomen">1W</button>
-          <button class="tf-btn" data-zoom="30" title="Auf 1 Monat zoomen">1M</button>
-          <button class="tf-btn" data-zoom="90" title="Auf 3 Monate zoomen">3M</button>
-          <button class="tf-btn" data-zoom="365" title="Auf 1 Jahr zoomen">1J</button>
-          <button class="tf-btn" data-zoom="1825" title="Auf 5 Jahre zoomen">5J</button>
-          <button class="tf-btn" data-zoom="max" title="Gesamte geladene Historie zeigen (lädt weiter nach)">Max</button>
-          <span id="resBadge" class="res-badge mono" title="Aktive Kerzen-Auflösung"></span>
+          <button class="tf-btn" data-zoom="1" title="${t('chart.zoom1T')}">${t('chart.lbl1T')}</button>
+          <button class="tf-btn" data-zoom="7" title="${t('chart.zoom1W')}">1W</button>
+          <button class="tf-btn" data-zoom="30" title="${t('chart.zoom1M')}">1M</button>
+          <button class="tf-btn" data-zoom="90" title="${t('chart.zoom3M')}">3M</button>
+          <button class="tf-btn" data-zoom="365" title="${t('chart.zoom1J')}">${t('chart.lbl1J')}</button>
+          <button class="tf-btn" data-zoom="1825" title="${t('chart.zoom5J')}">${t('chart.lbl5J')}</button>
+          <button class="tf-btn" data-zoom="max" title="${t('chart.zoomMax')}">Max</button>
+          <span id="resBadge" class="res-badge mono" title="${t('chart.resBadge')}"></span>
           <span id="mktBadge" class="res-badge mono" hidden></span>
-          <span id="histHint" class="res-badge mono" hidden>lädt ältere Daten …</span>
-          <button class="tf-btn" id="predBtn" hidden title="Prognose-Pfeil zeichnen: Klick in den Chart setzt den Ziel-Kurs">${ICONS.pencil}</button>
-          <button class="tf-btn" id="jumpStart" title="Animiert zum Anfang der geladenen Historie springen (lädt am Rand automatisch weiter nach)">⇤</button>
-          <button class="tf-btn" id="jumpMid" title="Animiert zur Mitte der Timeline springen">◐</button>
-          <button class="tf-btn" id="jumpEnd" title="Animiert ans Ende (aktuellster Kurs) springen">⇥</button>
-          <button class="tf-btn" id="maxMain" style="margin-left:auto" title="Chart im Vollbild — Legende und Menüs bleiben verfügbar (Esc schließt)">⛶</button>
-          <button class="tf-btn" id="cleanBtn" title="Clean-View: alles Optionale auf einmal ausblenden — nur der Kurs bleibt">Clean</button>
+          <span id="histHint" class="res-badge mono" hidden>${t('chart.lblLaedt')}</span>
+          <button class="tf-btn" id="predBtn" hidden title="${t('chart.predBtn')}">${ICONS.pencil}</button>
+          <button class="tf-btn" id="jumpStart" title="${t('chart.sprungAnfang')}">⇤</button>
+          <button class="tf-btn" id="jumpMid" title="${t('chart.sprungMitte')}">◐</button>
+          <button class="tf-btn" id="jumpEnd" title="${t('chart.sprungEnde')}">⇥</button>
+          <button class="tf-btn" id="maxMain" style="margin-left:auto" title="${t('chart.vollbild')}">⛶</button>
+          <button class="tf-btn" id="cleanBtn" title="${t('chart.clean')}">Clean</button>
           <span class="tool-anchor">
-            <button class="tf-btn" id="indBtn" title="Indikatoren: Overlays im Chart + RSI/MACD-Unterpanels">Indikatoren ▾</button>
+            <button class="tf-btn" id="indBtn" title="${t('chart.indBtn')}">${t('chart.lblIndikatoren')}</button>
             <div id="menuInd" class="tool-menu" hidden>
-              <div class="tm-sec">Overlays — Linien in allen Charts</div>
-              <button class="tf-btn" data-layer="sma20" title="Einfacher gleitender Durchschnitt, 20 Bars">SMA20</button>
-              <button class="tf-btn" data-layer="sma50" title="SMA 50">SMA50</button>
-              <button class="tf-btn" data-layer="sma200" title="SMA 200">SMA200</button>
-              <button class="tf-btn" data-layer="ema9" title="Exponentieller Durchschnitt, 9">EMA9</button>
-              <button class="tf-btn" data-layer="ema21" title="EMA 21">EMA21</button>
-              <button class="tf-btn" data-layer="bb" title="Bollinger-Bänder (20, 2σ)">BB</button>
-              <button class="tf-btn ind-x" data-layer="vwap" title="VWAP (Intraday 1T/1W): volumengewichteter Durchschnitt je Handelstag">VWAP</button>
-              <button class="tf-btn" data-layer="marken" title="Trading-Marken: 52-Wochen-Hoch/Tief (Tagesbasis) + klassische Pivot-Punkte P/R1/S1 aus dem Vortag als Preislinien — die Pivot-Linie trägt zusätzlich die ATR(14) in Prozent (durchschnittliche Tagesspanne, die Basis der adaptiven Stops)">Marken</button>
-              <div class="tm-sec">Chart-Typ (TV-Stil)</div>
-              <button class="tf-btn on" data-ctype="candles" title="Klassische Kerzen: Körper = Eröffnung↔Schluss, Docht = Hoch/Tief">Kerzen</button>
-              <button class="tf-btn" data-ctype="hollow" title="Hohle Kerzen: steigende Kerzen ohne Füllung — Trendrichtung auf einen Blick">Hohl</button>
-              <button class="tf-btn" data-ctype="heikin" title="Heikin-Ashi: geglättete Kerzen (Mittelwerte) — Trends klarer, exakte Kurse verschwimmen">Heikin-Ashi</button>
-              <button class="tf-btn" data-ctype="line" title="Linie: nur Schlusskurse — der ruhigste Blick">Linie</button>
-              <button class="tf-btn" data-ctype="area" title="Berg: Schlusskurs-Linie mit Farbverlauf darunter">Berg</button>
-              <button class="tf-btn" data-ctype="baseline" title="Baseline: grün über/rot unter dem Startkurs des Fensters">Baseline</button>
-              <button class="tf-btn" data-ctype="bars" title="OHLC-Bars: klassische Balken mit Eröffnungs-/Schluss-Nasen">Bars</button>
-              <button class="tf-btn ind-x" id="ctypeCombine" title="Kombi: Linie/Berg/Baseline ZUSÄTZLICH zu den Kerzen zeichnen (bei Kerzen-Typen und Bars ohne Wirkung)">+ Kerzen</button>
-              <div class="tm-sec">Preisskala</div>
-              <button class="tf-btn on" data-scale="0" title="Lineare Skala: gleiche Abstände je Euro/Dollar">Lin</button>
-              <button class="tf-btn" data-scale="1" title="Logarithmische Skala: gleiche Abstände je PROZENT — bei langen Historien ehrlicher">Log</button>
-              <button class="tf-btn" data-scale="2" title="Prozent-Skala: Entwicklung relativ zum Fenster-Start">%</button>
-              <div class="tm-sec">Stil</div>
-              <button class="tf-btn" data-layer="area" title="Flächen-Verlauf unter der Kurslinie — die Farbe folgt dem aktuellen Signal (grün = Kauf, rot = Verkauf, blau = neutral)">Fläche</button>
-              <button class="tf-btn" data-layer="hideCandles" title="Kerzen + Volumen ausblenden (ruhiger Vektor-Look, z. B. mit aktiver Fläche)">Kerzen aus</button>
-              <div class="tm-sec">Unterpanels — synchron zum Haupt-Chart</div>
-              <button class="tf-btn ind-x" data-layer="rsiPanel" title="RSI(14) als Unterpanel">RSI</button>
-              <button class="tf-btn ind-x" data-layer="macdPanel" title="MACD(12/26/9) als Unterpanel">MACD</button>
+              <div class="tm-sec">${t('chart.lblOverlays')}</div>
+              <button class="tf-btn" data-layer="sma20" title="${t('chart.sma20')}">SMA20</button>
+              <button class="tf-btn" data-layer="sma50" title="${t('chart.sma50')}">SMA50</button>
+              <button class="tf-btn" data-layer="sma200" title="${t('chart.sma200')}">SMA200</button>
+              <button class="tf-btn" data-layer="ema9" title="${t('chart.ema9')}">EMA9</button>
+              <button class="tf-btn" data-layer="ema21" title="${t('chart.ema21')}">EMA21</button>
+              <button class="tf-btn" data-layer="bb" title="${t('chart.bb')}">BB</button>
+              <button class="tf-btn ind-x" data-layer="vwap" title="${t('chart.vwap')}">VWAP</button>
+              <button class="tf-btn" data-layer="marken" title="${t('chart.marken')}">${t('chart.lblMarken')}</button>
+              <div class="tm-sec">${t('chart.lblChartTyp')}</div>
+              <button class="tf-btn on" data-ctype="candles" title="${t('chart.tKerzen')}">${t('chart.lblKerzen')}</button>
+              <button class="tf-btn" data-ctype="hollow" title="${t('chart.tHohl')}">${t('chart.lblHohl')}</button>
+              <button class="tf-btn" data-ctype="heikin" title="${t('chart.tHeikin')}">Heikin-Ashi</button>
+              <button class="tf-btn" data-ctype="line" title="${t('chart.tLinie')}">${t('chart.lblLinie')}</button>
+              <button class="tf-btn" data-ctype="area" title="${t('chart.tBerg')}">${t('chart.lblBerg')}</button>
+              <button class="tf-btn" data-ctype="baseline" title="${t('chart.tBaseline')}">Baseline</button>
+              <button class="tf-btn" data-ctype="bars" title="${t('chart.tBars')}">Bars</button>
+              <button class="tf-btn ind-x" id="ctypeCombine" title="${t('chart.tKombi')}">${t('chart.lblPlusKerzen')}</button>
+              <div class="tm-sec">${t('chart.lblPreisskala')}</div>
+              <button class="tf-btn on" data-scale="0" title="${t('chart.skalaLin')}">Lin</button>
+              <button class="tf-btn" data-scale="1" title="${t('chart.skalaLog')}">Log</button>
+              <button class="tf-btn" data-scale="2" title="${t('chart.skalaPct')}">%</button>
+              <div class="tm-sec">${t('chart.lblStil')}</div>
+              <button class="tf-btn" data-layer="area" title="${t('chart.flaeche')}">${t('chart.lblFlaeche')}</button>
+              <button class="tf-btn" data-layer="hideCandles" title="${t('chart.kerzenAus')}">${t('chart.lblKerzenAus')}</button>
+              <div class="tm-sec">${t('chart.lblUnterpanels')}</div>
+              <button class="tf-btn ind-x" data-layer="rsiPanel" title="${t('chart.rsiPanel')}">RSI</button>
+              <button class="tf-btn ind-x" data-layer="macdPanel" title="${t('chart.macdPanel')}">MACD</button>
             </div>
           </span>
           <span class="tool-anchor">
-            <button class="tf-btn" id="drawBtn" title="Zeichenwerkzeuge: Horizontale, Trendlinie, Rechteck — je Symbol gespeichert (dieses Gerät)">Zeichnen ▾</button>
+            <button class="tf-btn" id="drawBtn" title="${t('chart.drawBtn')}">${t('chart.lblZeichnen')}</button>
             <div id="menuDraw" class="tool-menu" hidden>
-              <div class="tm-sec">Werkzeug wählen, dann ins Chart klicken</div>
-              <button class="tf-btn" data-draw="hline" title="Horizontale Preislinie — 1 Klick">— Horizontale</button>
-              <button class="tf-btn" data-draw="trend" title="Trendlinie — 2 Klicks (Start, Ende). Nur in der Tages-Sicht zeichenbar.">╱ Trendlinie</button>
-              <button class="tf-btn" data-draw="rect" title="Rechteck (Zone) — 2 Klicks (gegenüberliegende Ecken). Nur in der Tages-Sicht zeichenbar.">▭ Rechteck</button>
-              <div class="tm-sec">Verwaltung</div>
-              <button class="tf-btn" id="drawClear" title="Alle Zeichnungen dieses Symbols entfernen">Zeichnungen löschen</button>
+              <div class="tm-sec">${t('chart.lblWerkzeug')}</div>
+              <button class="tf-btn" data-draw="hline" title="${t('chart.drawHline')}">${t('chart.lblHorizontale')}</button>
+              <button class="tf-btn" data-draw="trend" title="${t('chart.drawTrend')}">${t('chart.lblTrendlinie')}</button>
+              <button class="tf-btn" data-draw="rect" title="${t('chart.drawRect')}">${t('chart.lblRechteck')}</button>
+              <div class="tm-sec">${t('chart.lblVerwaltung')}</div>
+              <button class="tf-btn" id="drawClear" title="${t('chart.drawClear')}">${t('chart.lblZeichnungenLoeschen')}</button>
             </div>
           </span>
           <span class="tool-anchor">
-            <button class="tf-btn" id="layBtn" title="Layer, Raster & Vergleich">Layer ▾</button>
+            <button class="tf-btn" id="layBtn" title="${t('chart.layBtn')}">${t('chart.lblLayerMenu')}</button>
             <div id="menuLay" class="tool-menu" hidden>
-              <div class="tm-sec">Layer</div>
-              <button class="tf-btn on" id="lyFc" title="Prognose-Overlay ein/aus">Prognose</button>
-              <button class="tf-btn on" id="lyNews" title="News-Punkte ein/aus — nur die Schlagzeilen, die die Engine ohnehin fürs News-Veto lädt (kein zusätzlicher Abruf). Grün/rot = Wortlaut der Schlagzeile, gelber Pfeil = Einstiegs-Veto aktiv.">News</button>
-              <button class="tf-btn on" id="lyPos" title="Offene Position im Chart: Einstiegs-Marke, Preislinien für Stop/Trailing/Ziel und die Kurslinie seit Einstieg (grün im Gewinn, rot im Verlust). Zeigt sich nur, wenn das Konto in diesem Symbol drinsteckt.">Position</button>
-              <button class="tf-btn on" id="yAutoBtn" title="Y-Skalen-Modus: automatisch · fester Zoom · manuell">Y auto</button>
-              <div class="tm-sec">Raster — bis zu 4 Kurse parallel</div>
-              <span class="grid-sw" title="Charts im Raster: 1, 2 oder 4 parallel">
+              <div class="tm-sec">${t('chart.lblLayer')}</div>
+              <button class="tf-btn on" id="lyFc" title="${t('chart.lyFc')}">${t('chart.lblPrognose')}</button>
+              <button class="tf-btn on" id="lyNews" title="${t('chart.lyNews')}">News</button>
+              <button class="tf-btn on" id="lyPos" title="${t('chart.lyPos')}">Position</button>
+              <button class="tf-btn on" id="yAutoBtn" title="${t('chart.yModus')}">Y auto</button>
+              <div class="tm-sec">${t('chart.lblRaster')}</div>
+              <span class="grid-sw" title="${t('chart.raster')}">
                 <button class="tf-btn on" data-grid="1">▭</button>
                 <button class="tf-btn" data-grid="2">▯▯</button>
                 <button class="tf-btn" data-grid="4">⊞</button>
               </span>
-              <div class="tm-sec">Vergleich</div>
-              <input id="cmpSym" class="inp cmp-inp" placeholder="+ Overlay: SYM" title="Zweiten Kurs als %-Linie überlagern (Tageskerzen)" />
+              <div class="tm-sec">${t('chart.lblVergleich')}</div>
+              <input id="cmpSym" class="inp cmp-inp" placeholder="+ Overlay: SYM" title="${t('chart.cmpSym')}" />
             </div>
           </span>
         </div>
@@ -820,38 +820,38 @@ function layout(email: string): string {
                Haupt-Fenster exakt so hoch sitzt wie die Panels — vorher fehlte
                ihm deren Kopfzeile und das Chart klebte 38 px zu weit oben. -->
           <div id="mainHd" class="gp-hd" hidden>
-            <input id="mainHdSym" class="inp mh-sym" title="Symbol des Haupt-Charts (Enter übernimmt)" />
+            <input id="mainHdSym" class="inp mh-sym" title="${t('chart.mainHdSym')}" />
             <span class="gp-tf">
-              <button class="tf-btn" data-zoom="1" title="Auf 1 Handelstag zoomen">1T</button>
-              <button class="tf-btn" data-zoom="7" title="Auf 1 Woche zoomen">1W</button>
-              <button class="tf-btn" data-zoom="30" title="Auf 1 Monat zoomen">1M</button>
-              <button class="tf-btn" data-zoom="365" title="Auf 1 Jahr zoomen">1J</button>
-              <button class="tf-btn" data-zoom="max" title="Gesamte geladene Historie">Max</button>
+              <button class="tf-btn" data-zoom="1" title="${t('chart.zoom1Tkurz')}">${t('chart.lbl1T')}</button>
+              <button class="tf-btn" data-zoom="7" title="${t('chart.zoom1W')}">1W</button>
+              <button class="tf-btn" data-zoom="30" title="${t('chart.zoom1M')}">1M</button>
+              <button class="tf-btn" data-zoom="365" title="${t('chart.zoom1J')}">${t('chart.lbl1J')}</button>
+              <button class="tf-btn" data-zoom="max" title="${t('chart.zoomMaxKurz')}">Max</button>
             </span>
-            <button class="tf-btn mh-max" id="mhMax" title="Chart im Vollbild (Esc schließt)">⛶</button>
+            <button class="tf-btn mh-max" id="mhMax" title="${t('chart.vollbildKurz')}">⛶</button>
             <button class="tf-btn mh-lock" id="lockMain"
-              title="Haupt-Chart in die Lock-Gruppe: Zoom, Sichtbereich und Crosshair laufen auf allen gelockten Charts synchron">${ICONS.unlock}</button>
+              title="${t('chart.lockGruppe')}">${ICONS.unlock}</button>
           </div>
-          <button id="maxExit" class="chart-max-exit" hidden title="Vollbild schließen (Esc)">✕</button>
+          <button id="maxExit" class="chart-max-exit" hidden title="${t('chart.maxExit')}">✕</button>
           <div id="chartHud" class="chart-hud">
             <div class="hud-top">
               <div id="ohlcRow" class="ohlc-row mono" hidden></div>
-              <button id="hudTgl" class="hud-tgl" title="Legende ein-/ausklappen">▾</button>
+              <button id="hudTgl" class="hud-tgl" title="${t('chart.legende')}">▾</button>
             </div>
             <div id="chartLegend" class="chart-legend" hidden></div>
             <div id="posHud" class="pos-hud mono" hidden></div>
           </div>
           <div id="chartArea"></div>
           <button id="jumpNow" class="jump-now" hidden
-            title="Zurück zur Gegenwart — animierter Sprung zum jüngsten Kurs">Jetzt ⇥</button>
+            title="${t('chart.jetzt')}">${t('chart.lblJetzt')}</button>
           <div id="evTip" class="evtip" hidden></div>
           <svg id="predSvg" class="pred-svg" aria-hidden="true"></svg>
           <svg id="drawSvg" class="pred-svg" aria-hidden="true"></svg>
           <div id="predPop" class="pred-pop" hidden>
-            <b>Prognose-Pfeil</b>
-            <label>Ziel-Kurs <input id="ppPrice" class="inp st-num" type="number" step="0.5" /></label>
-            <label>Ziel-Datum <input id="ppDate" class="inp" type="date" /></label>
-            <label>Vertrauen
+            <b>${t('chart.ppTitel')}</b>
+            <label>${t('chart.ppZielKurs')} <input id="ppPrice" class="inp st-num" type="number" step="0.5" /></label>
+            <label>${t('chart.ppZielDatum')} <input id="ppDate" class="inp" type="date" /></label>
+            <label>${t('chart.ppVertrauen')}
               <span class="st-stepper">
                 <button type="button" class="btn btn-n" id="ppConfM">−</button>
                 <b class="mono" id="ppConfV">2</b>
@@ -859,22 +859,22 @@ function layout(email: string): string {
               </span>
             </label>
             <div class="row">
-              <button type="button" class="btn btn-g" id="ppSave">Speichern</button>
-              <button type="button" class="btn btn-n" id="ppDel">Löschen</button>
+              <button type="button" class="btn btn-g" id="ppSave">${t('chart.lblSpeichern')}</button>
+              <button type="button" class="btn btn-n" id="ppDel">${t('chart.lblLoeschen')}</button>
               <button type="button" class="btn btn-n" id="ppClose">✕</button>
             </div>
-            <p class="hint">Der Algorithmus nimmt den Pfeil als gewichtete Stimme (Dicke = Vertrauen).</p>
+            <p class="hint">${t('chart.ppHinweis')}</p>
           </div>
         </div>
         <div id="chartGrid"></div>
         </div>
         <div id="chartHDrag" class="chart-h-drag"
-          title="Chart-Höhe ziehen — gilt für ALLE Fenster; Doppelklick setzt zurück"></div>
+          title="${t('chart.hoeheDrag')}"></div>
         <div id="rsiPanel" class="sub-panel" hidden></div>
         <div id="macdPanel" class="sub-panel" hidden></div>
         </div>
-        <div class="hint">1T/1W: 5-Minuten-Kerzen · 1M–1J: Tageskerzen —
-          aktualisiert der zentrale 5-min-Scan. Zoom bleibt beim Aktualisieren erhalten.</div>
+        <div class="hint">${t('chart.hinweis')} —
+          ${t('chart.hinweis2')}</div>
       </div></div>
 
       <div class="card" data-panel="chart2"><div class="sect">${t('panel.vergleichsChart')}
