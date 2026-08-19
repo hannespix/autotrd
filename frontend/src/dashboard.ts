@@ -5834,7 +5834,7 @@ function renderEngineWhy(): void {
   const h = st.health;
   if (!h) {
     ampel.innerHTML = '';
-    gate.innerHTML = '<div class="hint">Noch keine Scan-Daten.</div>';
+    gate.innerHTML = `<div class="hint">${t('ew.keineScanDaten')}</div>`;
     extra.textContent = '';
     return;
   }
@@ -5863,7 +5863,7 @@ function renderEngineWhy(): void {
     // das der Client nicht sieht (z. B. Kursquelle) — anzeigen, nicht raten.
     ampel.append(whyChip(`⚠ ${h.alarm.text ?? t('ew.waechterAlarm')}`, 'var(--rd)'));
   }
-  const r = REGIME_TEXT[h.regime?.state ?? ''] ?? { t: 'unbekannt', c: 'var(--t3)' };
+  const r = REGIME_TEXT[h.regime?.state ?? ''] ?? { t: t('ew.unbekannt'), c: 'var(--t3)' };
   const vix = typeof h.regime?.vix === 'number' ? ` · VIX ${h.regime.vix.toFixed(1)}` : '';
   const vol = typeof h.regime?.realizedVolPct === 'number' ? ` · Vol ${h.regime.realizedVolPct}%` : '';
   ampel.append(whyChip(`${r.t}${vix}${vol}`, r.c));
@@ -5871,10 +5871,10 @@ function renderEngineWhy(): void {
     const name = KALENDER_TEXT[h.kalender.bevorstehend] ?? h.kalender.bevorstehend;
     ampel.append(whyChip(`${name} in ${h.kalender.stundenBis ?? '?'} h`, 'var(--yl,#d9a441)'));
   }
-  if (h.kalender?.turnOfMonth) ampel.append(whyChip('Monatswende', 'var(--t3)'));
+  if (h.kalender?.turnOfMonth) ampel.append(whyChip(t('ew.monatswende'), 'var(--t3)'));
   if (typeof h.trades === 'number') {
     ampel.append(
-      whyChip(`${h.trades} Trade(s) im letzten Scan`, h.trades > 0 ? 'var(--gn)' : 'var(--t3)'),
+      whyChip(`${h.trades} ${t('ew.tradesLetzterScan')}`, h.trades > 0 ? 'var(--gn)' : 'var(--t3)'),
     );
   }
   /* Was die Engine WOLLTE (04.08.) — nicht nur, was sie durfte.
@@ -5893,7 +5893,7 @@ function renderEngineWhy(): void {
     const hold = sd.hold ?? 0;
     const gegenTrend = h.regime?.state === 'trend' && sell > buy;
     const chip = whyChip(
-      `Signale: ${buy}↑ ${sell}↓ ${hold}·`,
+      `${t('ew.signale')}: ${buy}↑ ${sell}↓ ${hold}·`,
       gegenTrend ? 'var(--rd)' : 'var(--t3)',
     );
     chip.title = gegenTrend
@@ -5909,7 +5909,7 @@ function renderEngineWhy(): void {
    * ihre Kostenschwellen-Teilmenge, netto UND roh. */
   const live = h.signalSchatten?.live;
   if (live && live.n > 0) {
-    const chip = whyChip('Signal-Kante', 'var(--t3)');
+    const chip = whyChip(t('ew.signalKante'), 'var(--t3)');
     const kante = (
       v?: {
         n: number;
@@ -5919,9 +5919,9 @@ function renderEngineWhy(): void {
       } | null,
     ): string => {
       if (!v || v.kantePct === null) return t('ew.keineDaten');
-      const netto = `${v.kantePct.toFixed(3)} % je Signal (${v.n})`;
+      const netto = `${v.kantePct.toFixed(3)} % ${t('ew.jeSignal')} (${v.n})`;
       const roh =
-        v.rohPct === null || v.rohPct === undefined ? netto : `${netto}, roh ${v.rohPct.toFixed(3)} %`;
+        v.rohPct === null || v.rohPct === undefined ? netto : `${netto}, ${t('ew.roh')} ${v.rohPct.toFixed(3)} %`;
       /* Der Horizont gehört an die Kante wie die Einheit an eine Zahl
        * (17.08.): Bis zu diesem Tag stand hier eine Kante von −0,49 % ohne
        * den Hinweis, dass sie über FÜNF MINUTEN gemessen war, während Krypto
@@ -5930,23 +5930,23 @@ function renderEngineWhy(): void {
       if (typeof v.alterMin !== 'number' || !(v.alterMin > 0)) return roh;
       const fenster =
         v.alterMin >= 1_440
-          ? `${(v.alterMin / 1_440).toFixed(1)} Tage`
+          ? `${(v.alterMin / 1_440).toFixed(1)} ${t('ew.tage')}`
           : v.alterMin >= 60
             ? `${(v.alterMin / 60).toFixed(1)} h`
             : `${v.alterMin.toFixed(0)} min`;
-      return `${roh} — Fenster ${fenster}`;
+      return `${roh} — ${t('ew.fenster')} ${fenster}`;
     };
     chip.title =
-      'Gemessene Kante der Signalquelle (Schatten).\n'
-      + `Gehandelte Logik: ${kante(live)}\n`
-      + `Davon über der Kostenschwelle: ${kante(h.signalSchatten?.['live_kosten'])}\n`
-      + `Über die echte Haltedauer: ${kante(h.signalSchatten?.['live_halte'])}\n`
-      + '„roh" ist die Bewegung VOR Gebühren: positiv bei negativer Kante heißt,\n'
-      + 'die Richtung stimmt und die Kosten fressen sie — dann liegt es an der\n'
-      + 'Anlageklasse, nicht an der Logik.\n'
-      + '„Fenster" ist der Zeitraum, über den gemessen wurde. Nur die Zeile mit\n'
-      + 'der echten Haltedauer entscheidet, ob eine abgeschaltete Klasse\n'
-      + 'zurückkommt — sie rechnet mit demselben Fenster, das die Engine hält.';
+      `${t('ew.kanteTitelA')}\n`
+      + `${t('ew.gehandelteLogik')}: ${kante(live)}\n`
+      + `${t('ew.ueberKostenschwelle')} ${kante(h.signalSchatten?.['live_kosten'])}\n`
+      + `${t('ew.ueberHaltedauer')} ${kante(h.signalSchatten?.['live_halte'])}\n`
+      + `${t('ew.kanteTitelB')}\n`
+      + `${t('ew.kanteTitelC')}\n`
+      + `${t('ew.kanteTitelD')}\n`
+      + `${t('ew.kanteTitelE')}\n`
+      + `${t('ew.kanteTitelF')}\n`
+      + t('ew.kanteTitelG');
     ampel.append(chip);
   }
 
@@ -5956,8 +5956,8 @@ function renderEngineWhy(): void {
   const zeilen = GATE_TEXT.filter(([k]) => (g[k] ?? 0) > 0);
   if (zeilen.length === 0) {
     const geprueft = g['geprueft'] ?? 0;
-    gate.innerHTML = `<div class="hint">Im letzten Scan wurde nichts abgelehnt${
-      geprueft > 0 ? ` (${geprueft} Einstiege geprüft)` : ''
+    gate.innerHTML = `<div class="hint">${t('ew.nichtsAbgelehnt')}${
+      geprueft > 0 ? ` (${geprueft} ${t('ew.einstiegeGeprueft')})` : ''
     }.</div>`;
   } else {
     for (const [key, text] of zeilen) {
@@ -5980,15 +5980,15 @@ function renderEngineWhy(): void {
   // Zeile 3: Konten, Sockel und die seltenen Gelegenheiten.
   const teile: string[] = [];
   const k = h.konten;
-  if (k) teile.push(`${k['gehandelt'] ?? 0}/${k['laufend'] ?? 0} Konten aktiv`);
-  if (typeof st.sockelKonten === 'number') teile.push(`Sockel: ${st.sockelKonten} Konto(s)`);
+  if (k) teile.push(`${k['gehandelt'] ?? 0}/${k['laufend'] ?? 0} ${t('ew.kontenAktiv')}`);
+  if (typeof st.sockelKonten === 'number') teile.push(`${t('ew.sockel')}: ${st.sockelKonten} ${t('ew.konten')}`);
   const auf = st.positioning?.auffaellig ?? {};
   const squeeze = Object.entries(auf)
     .filter(([, v]) => v?.state === 'short_squeeze_setup')
     .map(([sym]) => sym);
-  if (squeeze.length > 0) teile.push(`Squeeze-Setup: ${squeeze.slice(0, 4).join(', ')}`);
+  if (squeeze.length > 0) teile.push(`${t('ew.squeezeSetup')}: ${squeeze.slice(0, 4).join(', ')}`);
   const ueberfuellt = Object.values(auf).filter((v) => v?.state === 'longs_ueberfuellt').length;
-  if (ueberfuellt > 0) teile.push(`${ueberfuellt}× überfüllte Longs`);
+  if (ueberfuellt > 0) teile.push(`${ueberfuellt}× ${t('ew.ueberfuellteLongs')}`);
   extra.textContent = teile.join(' · ');
 }
 
@@ -8684,8 +8684,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       $('fcScored').textContent = String(stats?.scored ?? 0);
       $('fcLb').textContent = stats?.best ? String(stats.best.lookback) : '--';
       $('fcTuning').textContent = stats?.tuningActive
-        ? 'Self-Tuning aktiv: Live-Prognosen nutzen die historisch beste Kombi.'
-        : 'Self-Tuning sammelt Evidenz — Defaults aktiv, bis genug Prognosen realisiert sind.';
+        ? t('mt.tuningAktiv')
+        : t('mt.tuningSammelt');
       renderFcLabStats('flCombos', stats);
     }),
     watchForecastStatsIntraday((stats) => renderFcLabStats('flCombosIntra', stats)),
@@ -8931,16 +8931,16 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
 
   // Interaktionen
   $('logoutBtn').addEventListener('click', () => void logout());
-  $('saveBtn').addEventListener('click', () => void submitStrategy(formStrategy(), 'Gespeichert.'));
+  $('saveBtn').addEventListener('click', () => void submitStrategy(formStrategy(), `${t('mt.gespeichert')}.`));
   $('engStart').addEventListener('click', () =>
-    void submitStrategy({ ...formStrategy(), engine: { ...formStrategy().engine, running: true } }, 'Engine-Flag: AN'));
+    void submitStrategy({ ...formStrategy(), engine: { ...formStrategy().engine, running: true } }, t('mt.engineFlagAn')));
   // Stop: erst das Flag setzen, DANN fragen. Die Reihenfolge ist wichtig —
   // der Dialog darf den Stop nicht aufhalten. Wer ihn wegklickt, hat
   // trotzdem gestoppt.
   $('engStop').addEventListener('click', () => {
     void submitStrategy(
       { ...formStrategy(), engine: { ...formStrategy().engine, running: false } },
-      'Engine-Flag: AUS',
+      t('mt.engineFlagAus'),
     ).then(() => {
       zeigeStopDialog();
     });
@@ -8955,7 +8955,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       .map((c) => c.dataset.stopsym ?? '')
       .filter(Boolean);
     if (gewaehlt.length === 0) {
-      $('stopOut').innerHTML = '<div class="hint">Nichts ausgewählt.</div>';
+      $('stopOut').innerHTML = `<div class="hint">${t('mt.nichtsAusgewaehlt')}</div>`;
       return;
     }
     void schliessePositionen(gewaehlt);
@@ -8966,7 +8966,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     const anschalten = btn.dataset['an'] === '1';
     // Der Not-Aus selbst kommt OHNE Rückfrage aus — im Ernstfall zählt jede
     // Sekunde. Nur das LÖSEN fragt nach, denn danach fließt wieder Echtgeld.
-    if (!anschalten && !confirm('Not-Aus wirklich lösen? Danach gehen wieder echte Orders raus.')) return;
+    if (!anschalten && !confirm(t('mt.notAusLoesen'))) return;
     btn.disabled = true;
     adminSetKillSwitch(anschalten)
       .then(ladeKillSwitch)
@@ -9123,9 +9123,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   // hält den Y-Zoom konstant und führt nur die Skalen-MITTE den sichtbaren
   // Kerzen nach — Scrollen ohne Gummiband-Effekt.
   const Y_LABEL: Record<import('./chart.js').YMode, [string, string]> = {
-    auto: ['Y auto', 'Y-Skala: automatisch — alles Sichtbare wird eingepasst (Kerzen stauchen sich beim Scrollen). Klick: fester Zoom. Ziehen/Rad auf der Preisskala übernimmt jederzeit manuell.'],
-    fix: ['Y fix', t('mt.ySkalaFix')],
-    frei: ['Y frei', t('mt.ySkalaFrei')],
+    auto: [t('mt.yLabelAuto'), t('mt.ySkalaAuto')],
+    fix: [t('mt.yLabelFix'), t('mt.ySkalaFix')],
+    frei: [t('mt.yLabelFrei'), t('mt.ySkalaFrei')],
   };
   const paintYBtn = (): void => {
     if (!st) return;
@@ -9373,7 +9373,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         $('predPop').hidden = true;
         return loadPredictionForSymbol();
       })
-      .catch((e) => alert(`Prognose: ${(e as Error).message}`));
+      .catch((e) => alert(`${t('chart.lblPrognose')}: ${(e as Error).message}`));
   });
   $('ppDel').addEventListener('click', () => {
     if (!st) return;
@@ -9384,7 +9384,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         drawPredictionArrow();
         applyOverlays();
       })
-      .catch((e) => alert(`Prognose: ${(e as Error).message}`));
+      .catch((e) => alert(`${t('chart.lblPrognose')}: ${(e as Error).message}`));
   });
 
   // Options-Modal (⚙): Element-Toggles sofort wirksam, Wallet-Basics via saveStrategy
@@ -9428,13 +9428,13 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     const btn = $('lvGo') as HTMLButtonElement;
     const wort = ($('lvWord') as HTMLInputElement).value.trim();
     btn.disabled = true;
-    $('lvOut').innerHTML = '<div class="hint">Bestätige deine Anmeldung …</div>';
+    $('lvOut').innerHTML = `<div class="hint">${t('mt.bestaetigeAnmeldung')}</div>`;
     // Reihenfolge wie beim Broker-Schlüssel: erst Anmeldung auffrischen,
     // dann senden. Der Server prüft `auth_time`; ohne Auffrischen käme der
     // Aufruf mit einem alten Zeitstempel an.
     void frischAnmelden(($('lvPw') as HTMLInputElement).value || undefined)
       .then(() => {
-        $('lvOut').innerHTML = '<div class="hint">Schalte scharf …</div>';
+        $('lvOut').innerHTML = `<div class="hint">${t('mt.schalteScharf')}</div>`;
         return callLiveMode({ live: true, bestaetigung: wort });
       })
       .then((r) => {
@@ -9480,7 +9480,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     const key = ($('bkKey') as HTMLInputElement).value.trim();
     const sec = ($('bkSec') as HTMLInputElement).value.trim();
     if (!key || !sec) {
-      $('bkOut').innerHTML = '<div class="hint">Beide Schlüssel eingeben.</div>';
+      $('bkOut').innerHTML = `<div class="hint">${t('mt.beideSchluessel')}</div>`;
       return;
     }
     const istLive = key.toUpperCase().startsWith('AK');
@@ -9494,13 +9494,13 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
      * war. */
     const vorbereitet = istLive
       ? (() => {
-          $('bkOut').innerHTML = '<div class="hint">Bestätige deine Anmeldung …</div>';
+          $('bkOut').innerHTML = `<div class="hint">${t('mt.bestaetigeAnmeldung')}</div>`;
           return frischAnmelden(($('bkPw') as HTMLInputElement).value || undefined);
         })()
       : Promise.resolve();
     void vorbereitet
       .then(() => {
-        $('bkOut').innerHTML = '<div class="hint">Prüfe Schlüssel bei Alpaca …</div>';
+        $('bkOut').innerHTML = `<div class="hint">${t('mt.pruefeSchluessel')}</div>`;
         return callConnectBroker(key, sec);
       })
       .then((r) => {
@@ -9512,8 +9512,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         ($('bkPw') as HTMLInputElement).value = '';
         ($('bkLiveBox') as HTMLElement).hidden = true;
         $('bkOut').innerHTML =
-          `<div class="hint">✓ ${escText(r.maskiert)} verbunden — ` +
-          `${escText(r.kontoStatus)}, ${r.cash.toFixed(2)} $ Barbestand. ` +
+          `<div class="hint">✓ ${escText(r.maskiert)} ${t('mt.verbunden')} — ` +
+          `${escText(r.kontoStatus)}, ${r.cash.toFixed(2)} $ ${t('br.barbestand')}. ` +
           `${escText(r.meldung)}</div>`;
       })
       .catch((e) => {
@@ -9526,7 +9526,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   $('bkAdopt')?.addEventListener('click', () => {
     const btn = $('bkAdopt') as HTMLButtonElement;
     btn.disabled = true;
-    $('bkOut').innerHTML = '<div class="hint">Übernehme Depot vom Broker …</div>';
+    $('bkOut').innerHTML = `<div class="hint">${t('mt.uebernehmeDepot')}</div>`;
     void callAdoptBroker()
       .then((r) => {
         $('bkOut').innerHTML = `<div class="hint">✓ ${escText(r.meldung)}</div>`;
@@ -9557,7 +9557,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   $('bkGo')?.addEventListener('click', () => {
     const btn = $('bkGo') as HTMLButtonElement;
     btn.disabled = true;
-    $('bkOut').innerHTML = '<div class="hint">Prüfe Verbindung …</div>';
+    $('bkOut').innerHTML = `<div class="hint">${t('mt.pruefeVerbindung')}</div>`;
     void callBrokerStatus()
       .then((r) => {
         $('bkOut').innerHTML = renderBrokerStatus(r);
@@ -9586,7 +9586,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     const jahr = Number(txYear.value);
     const echtgeld = ($('txReal') as HTMLInputElement).checked;
     btn.disabled = true;
-    $('txOut').innerHTML = '<div class="hint">Rechne …</div>';
+    $('txOut').innerHTML = `<div class="hint">${t('mt.rechne')}</div>`;
     void callTaxReport(jahr, echtgeld)
       .then((r) => {
         $('txOut').innerHTML = renderSteuerbericht(r);
@@ -9612,13 +9612,13 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     const btn = (e.target as HTMLElement).closest('#txFx') as HTMLButtonElement | null;
     if (!btn) return;
     btn.disabled = true;
-    btn.textContent = 'Trage nach …';
+    btn.textContent = t('mt.trageNach');
     void callFxNachtragen()
       .then((r) => {
         btn.textContent =
-          `✓ ${r.nachgetragen} Kurse eingefroren` +
-          (r.ohneKurs > 0 ? `, ${r.ohneKurs} ohne auffindbaren Kurs` : '') +
-          ' — jetzt den Bericht neu erstellen';
+          `✓ ${r.nachgetragen} ${t('mt.kurseEingefroren')}` +
+          (r.ohneKurs > 0 ? `, ${r.ohneKurs} ${t('mt.ohneKurs')}` : '') +
+          ` — ${t('mt.berichtNeu')}`;
       })
       .catch((err) => {
         btn.disabled = false;
@@ -9628,7 +9628,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   $('rsGo').addEventListener('click', () => {
     const btn = $('rsGo') as HTMLButtonElement;
     btn.disabled = true;
-    $('rsMsg').textContent = 'Setze zurück …';
+    $('rsMsg').textContent = t('mt.setzeZurueck');
     void resetWallet(RESET_CONFIRM_WORD, ($('rsFromBroker') as HTMLInputElement).checked)
       .then((r) => {
         const n = Object.entries(r.deleted)
@@ -9637,9 +9637,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
           .join(', ');
         // Die Quelle mitschreiben: „100.000 $" ohne Herkunft laesst offen, ob
         // der Broker gefragt wurde oder die Einstellung gegriffen hat.
-        const quelle = r.kapitalQuelle === 'broker' ? ' (vom Broker übernommen)' : '';
+        const quelle = r.kapitalQuelle === 'broker' ? ` (${t('mt.vomBroker')})` : '';
         $('rsMsg').textContent =
-          `✓ Zurückgesetzt (${n || t('mt.nichtsZuLoeschen')}) — Kontostand ${r.balance} $${quelle}`
+          `✓ ${t('mt.zurueckgesetzt')} (${n || t('mt.nichtsZuLoeschen')}) — ${t('mt.kontostand')} ${r.balance} $${quelle}`
           + (r.hinweis ? ` — ${r.hinweis}` : '');
         ($('rsWord') as HTMLInputElement).value = '';
       })
@@ -9656,9 +9656,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       $('optMsg').textContent = problems[0]!;
       return;
     }
-    $('optMsg').textContent = 'Speichere …';
+    $('optMsg').textContent = t('mt.speichere');
     void saveStrategy(strategy)
-      .then(() => ($('optMsg').textContent = '✓ Gespeichert'))
+      .then(() => ($('optMsg').textContent = `✓ ${t('mt.gespeichert')}`))
       .catch((e) => ($('optMsg').textContent = (e as Error).message));
   });
   /* UI-Audit 05.08.: Das Modal mischt drei Speicher-Semantiken — die
@@ -9669,11 +9669,11 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   for (const box of [$('owGrid'), $('owClsRows')]) {
     box.addEventListener('input', () => {
       const m = $('optMsg');
-      if (!m.textContent?.startsWith('Speichere')) m.textContent = '⚠ Noch nicht gespeichert';
+      if (m.textContent !== t('mt.speichere')) m.textContent = `⚠ ${t('mt.nichtGespeichert')}`;
     });
   }
   $('owClsAuto').addEventListener('change', () => {
-    $('optMsg').textContent = '⚠ Noch nicht gespeichert';
+    $('optMsg').textContent = `⚠ ${t('mt.nichtGespeichert')}`;
     // Häkchen weg = die Automatik fasst nichts mehr an — eine stehen
     // gebliebene Überschreib-Warnung wäre dann schlicht falsch.
     if (!($('owClsAuto') as HTMLInputElement).checked) $('owClsMsg').textContent = '';
@@ -9707,13 +9707,13 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       ...st.strategy,
       engine: { ...st.strategy.engine, classWeights: gew },
     };
-    $('owClsMsg').textContent = 'Übernehme …';
+    $('owClsMsg').textContent = t('mt.uebernehme');
     void saveStrategy(next)
       .then(() => {
         st!.strategy = next;
         renderKlassenRegler();
         renderKlassenRat();
-        $('owClsMsg').textContent = `✓ ${rat.aenderungen} Gewicht(e) übernommen`;
+        $('owClsMsg').textContent = `✓ ${rat.aenderungen} ${t('mt.gewichteUebernommen')}`;
       })
       .catch((e) => ($('owClsMsg').textContent = (e as Error).message));
   });
@@ -9741,13 +9741,13 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       $('advMsg').textContent = problems[0]!;
       return;
     }
-    $('advMsg').textContent = 'Übernehme …';
+    $('advMsg').textContent = t('mt.uebernehme');
     void saveStrategy(next)
       .then(() => {
         st!.strategy = next;
         openOptions(); // Formular auf die neuen Werte ziehen
         renderAdvice(); // und erneut prüfen — die Liste muss sichtbar schrumpfen
-        $('advMsg').textContent = `✓ ${gewaehlt.length} übernommen`;
+        $('advMsg').textContent = `✓ ${gewaehlt.length} ${t('mt.uebernommen')}`;
       })
       .catch((e) => ($('advMsg').textContent = (e as Error).message));
   });
@@ -9760,11 +9760,11 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     box.hidden = false;
     if (diff.length === 0) {
       box.innerHTML =
-        '<p class="hint">✓ Deine Einstellungen stimmen mit den bewährten bereits überein.</p>';
+        `<p class="hint">✓ ${t('mt.stimmtUeberein')}</p>`;
       return;
     }
     box.innerHTML =
-      '<p class="hint" style="margin-top:6px">Was sich ändern würde (dein Wert → bewährter Wert):</p>' +
+      `<p class="hint" style="margin-top:6px">${t('mt.wasAendernBp')}</p>` +
       diff
         .map(
           (d) =>
@@ -9782,7 +9782,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       $('bpMsg').textContent = problems[0]!;
       return;
     }
-    $('bpMsg').textContent = 'Übernehme …';
+    $('bpMsg').textContent = t('mt.uebernehme');
     void saveStrategy(next)
       .then(() => {
         st!.strategy = next;
@@ -9802,7 +9802,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         .then(() => {
           eigeneLoadouts = eigeneLoadouts.filter((l) => l.id !== id);
           renderLoadouts();
-          $('loMsg').textContent = 'Loadout gelöscht.';
+          $('loMsg').textContent = t('mt.loadoutGeloescht');
         })
         .catch((err) => ($('loMsg').textContent = (err as Error).message));
       return;
@@ -9852,8 +9852,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     box.hidden = false;
     box.innerHTML =
       zeilen.length === 0
-        ? '<p class="hint">✓ Entspricht bereits deinen Einstellungen.</p>'
-        : `<p class="hint" style="margin-top:6px">„${bpWert(loGewaehlt.titel)}" würde ändern (dein Wert → Loadout):</p>` +
+        ? `<p class="hint">✓ ${t('mt.entsprichtBereits')}</p>`
+        : `<p class="hint" style="margin-top:6px">„${bpWert(loGewaehlt.titel)}" ${t('mt.wuerdeAendern')}</p>` +
           zeilen.join('');
     ($('loAdopt') as HTMLButtonElement).hidden = zeilen.length === 0;
     $('loMsg').textContent = '';
@@ -9866,13 +9866,13 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       $('loMsg').textContent = problems[0]!;
       return;
     }
-    $('loMsg').textContent = 'Übernehme …';
+    $('loMsg').textContent = t('mt.uebernehme');
     const titel = loGewaehlt.titel;
     void saveStrategy(next)
       .then(() => {
         st!.strategy = next;
         openOptions(); // Formular auf die neuen Werte ziehen
-        $('loMsg').textContent = `✓ „${titel}" übernommen — ab jetzt frei anpassbar.`;
+        $('loMsg').textContent = `✓ „${titel}" ${t('mt.loadoutUebernommen')}`;
       })
       .catch((e2) => ($('loMsg').textContent = (e2 as Error).message));
   });
@@ -9880,7 +9880,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     if (!st) return;
     const name = ($('loName') as HTMLInputElement).value.trim();
     if (name.length === 0) {
-      $('loMsg').textContent = 'Bitte zuerst einen Namen eingeben.';
+      $('loMsg').textContent = t('mt.nameEingeben');
       return;
     }
     // Gesichert wird der GESPEICHERTE Stand (st.strategy) — nicht das
@@ -9888,14 +9888,14 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     // zur Wahrheit, und genau das sagt der Platzhalter-Text des Feldes.
     const einstellungen = extrahiereEinstellungen(st.strategy);
     if (!einstellungen) {
-      $('loMsg').textContent = 'Einstellungen unvollständig — bitte einmal speichern.';
+      $('loMsg').textContent = t('mt.optionenUnvollstaendig');
       return;
     }
-    $('loMsg').textContent = 'Sichere …';
+    $('loMsg').textContent = t('mt.sichere');
     void speichereLoadout(st.uid, name, einstellungen, st.strategy.broker.leverage ?? 1)
       .then(() => {
         ($('loName') as HTMLInputElement).value = '';
-        $('loMsg').textContent = `✓ „${name}" gesichert.`;
+        $('loMsg').textContent = `✓ „${name}" ${t('mt.gesichert')}.`;
         ladeLoadouts();
       })
       .catch((e2) => ($('loMsg').textContent = (e2 as Error).message));
