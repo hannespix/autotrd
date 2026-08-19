@@ -39,6 +39,7 @@ import {
   drawdown,
   positionValue,
   reglerSchritt,
+  reibungsProfil,
   schreibeChronik,
   sharpe,
   tradeStats,
@@ -46,6 +47,7 @@ import {
   werteSchattenAus,
   type AccountContribution,
   type BewaehrteEinstellungen,
+  type BrokerFill,
   type ClosedTrade,
   type EngineBilanz,
   type EngineTrade,
@@ -354,9 +356,32 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
       // source='engine' — ein manueller Glückstreffer soll keine
       // Einstellungen adeln, mit denen er nichts zu tun hatte.
       const engineTrades: EngineTrade[] = [];
+      const fills: BrokerFill[] = [];
       for (const t of tradesSnap.docs) {
         const pnl = t.get('pnl') as number | undefined;
         const symbol = t.get('symbol') as string | undefined;
+        /* Reibungs-Messung VOR dem pnl-Filter (19.08.): `pnl` tragen nur
+         * SCHLIESSENDE Trades — die Einstiegs-Reibung entsteht aber beim
+         * Öffnen. Stünde die Sammlung im if-Block darunter, wären genau die
+         * Fills unsichtbar, um die es geht, und die Messung bescheinigte
+         * dem Einstieg für immer 0 gemessene Trades. */
+        const rohKurs = t.get('rawPrice') as number | undefined;
+        const fillKurs = t.get('brokerFillPrice') as number | undefined;
+        const seite = t.get('side') as string | undefined;
+        if (
+          symbol &&
+          (seite === 'buy' || seite === 'sell') &&
+          typeof rohKurs === 'number' && rohKurs > 0 &&
+          typeof fillKurs === 'number' && fillKurs > 0
+        ) {
+          fills.push({
+            side: seite,
+            rawPrice: rohKurs,
+            fillPrice: fillKurs,
+            assetClass: classify(symbol),
+            eroeffnend: !(typeof pnl === 'number' && Number.isFinite(pnl)),
+          });
+        }
         if (typeof pnl === 'number' && Number.isFinite(pnl) && symbol) {
           // qty × price ist der Positionswert beim Schließen. Die Gebühr
           // kommt seit dem 13.08. bevorzugt ECHT aus dem fee-Feld (steht
@@ -416,6 +441,7 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
       // hat. Das Fenster zeigt sie sofort.
       const exits7t = exitBreakdownSeit(closed, fensterSeit);
       const costs = costProfile(closed);
+      const reibung = reibungsProfil(fills);
 
       // ── Klassen-Regler (MG2/MG3/MG4b) ─────────────────────────────────────
       // Die Empfehlung entsteht IMMER — auch ohne Auto-Regler. Sie ist die
@@ -536,6 +562,9 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         exits7t,
         exits7tSeit: fensterSeit,
         costs,
+        // Gemessene Ausführungs-Reibung (19.08.) — Entscheidungskurs gegen
+        // echten Broker-Fill, je Klasse, Einstieg und Ausstieg getrennt.
+        reibung,
         // Empfehlung je Anlageklasse (MG2): Kante, Urteil, Vorschlag und
         // Klartext-Begründung — fertig für die Karte, damit die Oberfläche
         // nicht dieselbe Logik ein zweites Mal implementieren muss.
@@ -567,6 +596,7 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         // Klassen-Aufschlüsselung mit ins Aggregat: Ohne sie sagt das
         // Gesamtbild nur, DASS zu teuer gehandelt wird — nicht wo.
         byClass: attr.byClass,
+        reibung,
       });
 
       // MU3: Engine-Bilanz dieses Kontos gegen die bisherige Kür halten.

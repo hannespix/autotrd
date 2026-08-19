@@ -29,7 +29,13 @@
  * Nutzer registriert — und dann ist es zu spät, die Schwelle nachzurüsten.
  */
 
-import type { AttributionSlice, CostProfile, ExitBucket, TradeStats } from './portfolio.js';
+import type {
+  AttributionSlice,
+  CostProfile,
+  ExitBucket,
+  ReibungJeKlasse,
+  TradeStats,
+} from './portfolio.js';
 
 /** Ab so vielen beitragenden Konten dürfen auch Beträge öffentlich werden. */
 export const MIN_ACCOUNTS_PUBLIC = 3;
@@ -61,6 +67,12 @@ export interface AccountContribution {
   costs?: Pick<CostProfile, 'n' | 'fees' | 'grossPnl'> | undefined;
   /** Ergebnis je Anlageklasse — Grundlage der Klassen-Kante (04.08.). */
   byClass?: Record<string, AttributionSlice> | undefined;
+  /**
+   * Gemessene Ausführungs-Reibung je Klasse (19.08., `reibungsProfil`) —
+   * Basispunkte, also Verhältnisse: Sie verraten keine Kontogröße und sind
+   * darum auch unterhalb der Konten-Schwelle veröffentlichbar.
+   */
+  reibung?: Record<string, ReibungJeKlasse> | undefined;
 }
 
 /** Was eine Anlageklasse über alle Konten hinweg beigetragen hat. */
@@ -136,6 +148,16 @@ export interface TradingHealth {
    * der Kostenschwelle geraten.
    */
   klassen: Record<string, KlassenBefund>;
+  /**
+   * GEMESSENE Ausführungs-Reibung je Klasse in Basispunkten — Entscheidungs-
+   * kurs gegen echten Broker-Fill, getrennt nach Einstieg und Ausstieg.
+   *
+   * Das ist die Zahl, an der der nächste Kostenhebel hängt: Aktien-Einstiege
+   * als Limit-Order lohnen nur, wenn die echte Einstiegs-Reibung die
+   * Modellannahme (5 bp) spürbar übersteigt. Nur Verhältnisse — deshalb ohne
+   * Konten-Schwelle veröffentlichbar.
+   */
+  reibung: Record<string, ReibungJeKlasse>;
 }
 
 const r4 = (x: number): number => Math.round(x * 10_000) / 10_000;
@@ -255,6 +277,43 @@ export function aggregateTradingHealth(
     };
   }
 
+  /* Reibung über ALLE Beiträge, nicht nur `beitragend`: Der Filter oben
+   * verlangt geschlossene Trades — Einstiegs-Reibung fällt aber schon beim
+   * ERSTEN Kauf an, lange bevor irgendetwas geschlossen ist. Ein frisches
+   * Konto, dessen Fills hier fehlten, wäre genau die Lücke, in der die
+   * Messung am nötigsten ist. Gewichtet wird mit n je Konto — ein Mittel
+   * über Konto-Schnitte wäre dieselbe Simpsons-Falle wie bei der
+   * Trefferquote oben. */
+  const reibungRoh: Record<
+    string,
+    { sum: number; n: number; max: number; ein: [number, number]; aus: [number, number] }
+  > = {};
+  for (const c of contributions) {
+    for (const [name, r] of Object.entries(c.reibung ?? {})) {
+      if (!(r.n > 0)) continue;
+      const k = reibungRoh[name] ?? { sum: 0, n: 0, max: -Infinity, ein: [0, 0], aus: [0, 0] };
+      k.sum += r.avgBp * r.n;
+      k.n += r.n;
+      k.max = Math.max(k.max, r.maxBp);
+      k.ein[0] += r.einstieg.avgBp * r.einstieg.n;
+      k.ein[1] += r.einstieg.n;
+      k.aus[0] += r.ausstieg.avgBp * r.ausstieg.n;
+      k.aus[1] += r.ausstieg.n;
+      reibungRoh[name] = k;
+    }
+  }
+  const r1 = (x: number): number => Math.round(x * 10) / 10;
+  const reibung: Record<string, ReibungJeKlasse> = {};
+  for (const [name, k] of Object.entries(reibungRoh)) {
+    reibung[name] = {
+      n: k.n,
+      avgBp: r1(k.sum / k.n),
+      maxBp: r1(k.max),
+      einstieg: { n: k.ein[1], avgBp: k.ein[1] > 0 ? r1(k.ein[0] / k.ein[1]) : 0 },
+      ausstieg: { n: k.aus[1], avgBp: k.aus[1] > 0 ? r1(k.aus[0] / k.aus[1]) : 0 },
+    };
+  }
+
   const oeffentlich = accounts >= minAccountsPublic;
   // Der Gebührenanteil bezieht sich auf den BETRAG des Bruttoergebnisses:
   // Bei einem Bruttoverlust wäre das Verhältnis sonst negativ und läse sich
@@ -274,6 +333,7 @@ export function aggregateTradingHealth(
     fees: oeffentlich ? Math.round(fees * 100) / 100 : null,
     amountsWithheld: !oeffentlich,
     klassen,
+    reibung,
   };
 }
 

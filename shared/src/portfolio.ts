@@ -481,3 +481,102 @@ export function costProfile(closed: ClosedTrade[]): CostProfile {
         : null,
   };
 }
+
+/* ── Einstiegs-Reibung: gemessen statt modelliert (19.08.) ──────────────────
+ *
+ * Das Kostenmodell TIPPT die Ausführungs-Reibung: `CLASS_FEE_PARTS` sagt für
+ * US-Aktien „5 bp Slippage je Seite" — eine Annahme vom Juli. Dabei steht die
+ * echte Zahl längst an jedem gerouteten Trade: `rawPrice` ist der Kurs, bei
+ * dem die Engine entschieden hat, `brokerFillPrice` der Kurs, zu dem der
+ * Broker wirklich ausgeführt hat. Die Differenz IST die bezahlte
+ * Spread+Slippage-Reibung, ohne Modell dazwischen.
+ *
+ * Warum das eine eigene Kennzahl braucht: Der nächste Kostenhebel — Aktien-
+ * Einstiege als Limit-Order, wie Krypto seit dem 15.08. — steht und fällt mit
+ * genau dieser Zahl. Liegt die echte Einstiegs-Reibung bei 2 bp, lohnt der
+ * Hebel das Gegenauslese-Risiko nicht (Gewinner laufen weg, Verlierer füllen);
+ * liegt sie bei 15 bp, ist er Pflicht. Ohne Messung wäre die Entscheidung
+ * geraten — dieselbe Sorte Raten, die bei Krypto 1.316 $ Gebühren auf 691 $
+ * Brutto gekostet hat, bevor jemand nachgemessen hat.
+ *
+ * Ehrliche Grenze: Nachgebuchte Fills (unbookedFills-Reparatur) tragen
+ * `rawPrice = fillPreis`, weil der Entscheidungskurs verloren ist — sie
+ * erscheinen als 0 bp und drücken den Schnitt leicht RUNTER. Das ist die
+ * konservative Richtung: Eine zu klein gemessene Reibung spricht GEGEN den
+ * Umbau, nie dafür. `maxBp` zeigt zusätzlich die Ausreißer, die ein Schnitt
+ * versteckt.
+ */
+
+/** Ein Trade mit echtem Broker-Fill — das Rohmaterial der Reibungs-Messung. */
+export interface BrokerFill {
+  side: 'buy' | 'sell';
+  /** Kurs, bei dem die Engine entschieden hat (`rawPrice` am Trade). */
+  rawPrice: number;
+  /** Kurs, zu dem der Broker wirklich ausgeführt hat (`brokerFillPrice`). */
+  fillPrice: number;
+  assetClass?: string | null;
+  /**
+   * Eröffnet dieser Fill eine Position? Am Trade-Dokument erkennbar daran,
+   * dass nur SCHLIESSENDE Trades ein `pnl` tragen. Die Trennung ist der
+   * Kern: Der Maker-Hebel würde nur EINSTIEGE umstellen — Exits bleiben
+   * Market, ihre Reibung ist der Preis der Sicherheit und steht nicht zur
+   * Debatte.
+   */
+  eroeffnend: boolean;
+}
+
+export interface ReibungSeite {
+  n: number;
+  /** Ø vorzeichenrichtige Reibung in Basispunkten; positiv = bezahlt. */
+  avgBp: number;
+}
+
+export interface ReibungJeKlasse {
+  n: number;
+  avgBp: number;
+  /** Teuerster Einzelfall in bp — Ausreißer, die der Schnitt versteckt. */
+  maxBp: number;
+  einstieg: ReibungSeite;
+  ausstieg: ReibungSeite;
+}
+
+const r1 = (x: number): number => Math.round(x * 10) / 10;
+
+/**
+ * Gemessene Ausführungs-Reibung je Anlageklasse, in Basispunkten.
+ *
+ * Vorzeichen-Konvention: positiv = Geld bezahlt. Ein Kauf, der über dem
+ * Entscheidungskurs füllt, kostet; ein Verkauf, der darunter füllt, ebenso.
+ * Ein Krypto-Limit-Einstieg, der AM Limit füllt, steht bei 0 — das ist kein
+ * Messfehler, sondern genau der Maker-Vorteil, den die Zahl zeigen soll.
+ */
+export function reibungsProfil(fills: readonly BrokerFill[]): Record<string, ReibungJeKlasse> {
+  type Sammler = { sum: number; n: number; max: number; ein: [number, number]; aus: [number, number] };
+  const je = new Map<string, Sammler>();
+  for (const f of fills) {
+    if (!(f.rawPrice > 0) || !(f.fillPrice > 0)) continue;
+    const bp =
+      ((f.side === 'buy' ? f.fillPrice - f.rawPrice : f.rawPrice - f.fillPrice) / f.rawPrice) *
+      10_000;
+    const klasse = f.assetClass ?? 'unbekannt';
+    const s = je.get(klasse) ?? { sum: 0, n: 0, max: -Infinity, ein: [0, 0], aus: [0, 0] };
+    s.sum += bp;
+    s.n += 1;
+    s.max = Math.max(s.max, bp);
+    const seite = f.eroeffnend ? s.ein : s.aus;
+    seite[0] += bp;
+    seite[1] += 1;
+    je.set(klasse, s);
+  }
+  const out: Record<string, ReibungJeKlasse> = {};
+  for (const [klasse, s] of je) {
+    out[klasse] = {
+      n: s.n,
+      avgBp: r1(s.sum / s.n),
+      maxBp: r1(s.max),
+      einstieg: { n: s.ein[1], avgBp: s.ein[1] > 0 ? r1(s.ein[0] / s.ein[1]) : 0 },
+      ausstieg: { n: s.aus[1], avgBp: s.aus[1] > 0 ? r1(s.aus[0] / s.aus[1]) : 0 },
+    };
+  }
+  return out;
+}
