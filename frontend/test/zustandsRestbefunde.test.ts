@@ -11,6 +11,8 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { DE } from '../src/i18n.js';
+
 const dashboard = readFileSync(join(import.meta.dirname, '..', 'src', 'dashboard.ts'), 'utf8');
 
 describe('F7 — Intraday-Stufenwechsel im Grid-Panel', () => {
@@ -40,8 +42,11 @@ describe('F8 — Markt-Browser: Tab-Wechsel-Rennen und ehrliches Scheitern', () 
   });
 
   it('Kurs- und Katalog-Fehler enden in einer Klartext-Meldung, nicht im alten Inhalt', () => {
-    expect(dashboard).toContain('Kurse gerade nicht ladbar');
-    expect(dashboard).toContain('Katalog gerade nicht ladbar');
+    // Wortlaut wohnt seit 5o im Wörterbuch; die ehrliche Fehlermeldung bleibt gepinnt.
+    expect(dashboard).toContain("t('mk.kurseNichtLadbar')");
+    expect(dashboard).toContain("t('mk.katalogNichtLadbar')");
+    expect(DE['mk.kurseNichtLadbar']).toContain('Kurse gerade nicht ladbar');
+    expect(DE['mk.katalogNichtLadbar']).toContain('Katalog gerade nicht ladbar');
   });
 });
 
