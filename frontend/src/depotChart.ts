@@ -28,6 +28,7 @@ import {
   stapelBaender,
 } from '@autotrd/shared';
 import { esc } from './html.js';
+import { t } from './i18n.js';
 import { kurz } from './svgcharts.js';
 
 /** Zeichenfläche in Nutzerkoordinaten; die Karte skaliert per CSS. */
@@ -85,7 +86,7 @@ export function depotChart(z: DepotZerlegung): DepotChartTeile {
   if (z.tage.length < 2) {
     return {
       svg: '',
-      legende: '<div class="hint">Noch zu wenige Snapshot-Tage — die Serie wächst um einen je Tag.</div>',
+      legende: `<div class="hint">${t('dc.zuWenigTage')}</div>`,
     };
   }
   const flaechen = stapelBaender(z);
@@ -217,7 +218,7 @@ export function depotTooltip(z: DepotZerlegung, i: number): string {
   return (
     `<div class="dc-tt-h"><b>${esc(z.tage[i]!)}</b>`
     + `<span class="mono">${esc(z.equity[i]!.toFixed(2).replace('.', ','))}</span></div>`
-    + `<div class="dc-tt-d"><span>seit ${esc(z.tage[0]!)}</span>`
+    + `<div class="dc-tt-d"><span>${t('dc.seit')} ${esc(z.tage[0]!)}</span>`
     + `<b class="${delta >= 0 ? 'c-gn' : 'c-rd'}">${esc(geld(delta))}</b></div>`
     + (zeilen.length > 0 ? `<div class="dc-tt-l">${zeilen.join('')}</div>` : '')
   );

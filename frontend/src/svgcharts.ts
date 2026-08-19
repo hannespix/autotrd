@@ -24,6 +24,7 @@
  */
 
 import { esc } from './html.js';
+import { t } from './i18n.js';
 
 /** Gewinn grün, Verlust rot, exakt 0 neutral — überall gleich. */
 export function pnlColor(v: number): string {
@@ -70,7 +71,7 @@ const svgWrap = (w: number, h: number, inner: string, cls = ''): string =>
   `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet" class="svgc ${cls}" role="img">${inner}</svg>`;
 
 /** Platzhalter statt eines leeren Kastens — „keine Daten" ist eine Aussage. */
-export function leerBild(text = 'Noch keine Daten'): string {
+export function leerBild(text = t('sv.nochKeineDaten')): string {
   return `<div class="svgc-empty hint">${esc(text)}</div>`;
 }
 
@@ -262,7 +263,7 @@ export function areaLine(
   values: number[],
   opts: { width?: number; height?: number; start?: number } = {},
 ): string {
-  if (values.length < 2) return leerBild('Mindestens zwei Trades nötig');
+  if (values.length < 2) return leerBild(t('sv.zweiTradesNoetig'));
   const w = opts.width ?? 640;
   const h = opts.height ?? 200;
   const pad = 4;

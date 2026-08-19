@@ -8,7 +8,7 @@
  * ausgeschlossen (Owner: „ich mag auf keinen Fall irgendwas kaputt machen").
  */
 import { describe, expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { DE, EN, sprachWahl, uebersetze, type TextSchluessel } from '../src/i18n.js';
 
@@ -1228,15 +1228,44 @@ describe('Tranche 5n — die zehn Analyse- und Melde-Funktionen', () => {
   });
 });
 
+/* Gemeinsames Werkzeug der datei-weiten Wächter (5o dashboard.ts, 5p alle
+ * übrigen Quelldateien): Kommentare, t()-Aufrufe und bewusst deutsche Kanäle
+ * (Entwickler-Logs, de-DE-Formatierung) ausblenden, dann deutsche Wörter in
+ * den verbleibenden Zeichenketten suchen — mit der in 5l–5o gehärteten
+ * Wortliste (auch umlautfreie Alltagswörter wie „Kauf", „Gesamt", „starten",
+ * an denen die frühen Tranchen vorbeigelaufen sind). */
+const DEUTSCHE_WORTE =
+  /[ÄÖÜäöüß]|\b(der|die|das|den|und|oder|nicht|kein|keine|noch|wird|ist|sind|von|zum|zur|bitte|mehr|dein|deine|ohne|seit|jetzt|alle|wenn|wurde|kommt|Kauf|Verkauf|Uhr|Tag|Tage|Woche|Monat|geladen|gespeichert|fehlgeschlagen|entfernen|bestätigen|Kaufen|Verkaufen|Kaufkraft|Gesamt|Zwischensumme|starten|stoppen|gestoppt|einstellen|einblenden|ausblenden|lassen|zoomen|Historie|Vorhersage|Prognose|Periode|Handelstag|Kerzen|Speichere|wechseln|Statistik|Fenster|synchron)\b/;
+
+function deutscheTreffer(quelle: string, erlaubt: ReadonlySet<string>): string[] {
+  const code = quelle
+    .replace(/<!--[\s\S]*?-->/g, ' ') // HTML-Kommentare im Template — bleiben deutsch
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1')
+    .replace(/t\('[^']+'\)/g, ' ')
+    .replace(/\$\('[^']+'\)/g, ' ')
+    .replace(/console\.\w+\(\s*'[^']*'/g, ' ') // Entwickler-Logs bleiben deutsch
+    .replace(/toLocaleDateString\('de-DE'/g, ' ')
+    .replace(/toLocaleString\('de-DE'/g, ' ');
+  const treffer: string[] = [];
+  for (const m of code.matchAll(/'([^'\n]*)'/g)) {
+    const roh = m[1]!;
+    if (erlaubt.has(roh)) continue;
+    if (DEUTSCHE_WORTE.test(roh) && /[A-Za-zÄÖÜäöüß]{3,}/.test(roh)) treffer.push(roh.slice(0, 60));
+  }
+  for (const m of code.matchAll(/`([^`]*)`/g)) {
+    const roh = m[1]!.replace(/\$\{[^{}]*\}/g, ' ');
+    if (DEUTSCHE_WORTE.test(roh) && /[A-Za-zÄÖÜäöüß]{3,}/.test(roh)) treffer.push(roh.slice(0, 60));
+  }
+  return [...new Set(treffer)];
+}
+
 describe('Tranche 5o — der datei-weite Rückfall-Wächter', () => {
   it('kein deutscher Anzeigetext mehr in irgendeiner Funktion von dashboard.ts', () => {
     /* Der Abschluss von Phase 1 (Task #139): Die Tranchen-Wächter oben
      * prüfen ihre Funktionen scharf (umgekehrte Beweislast). Dieser Wächter
      * spannt zusätzlich ein Netz über die GANZE Datei — auch über künftige
-     * Funktionen, die es heute noch nicht gibt. Er sucht deutsche Wörter in
-     * Zeichenketten, mit der in 5l–5n gehärteten Wortliste (auch
-     * umlautfreie Alltagswörter wie „Kauf", „Uhr", „Tage", an denen die
-     * frühen Tranchen vorbeigelaufen sind).
+     * Funktionen, die es heute noch nicht gibt.
      *
      * Ausnahmen sind NAMENTLICH gelistet, als ganze Zeichenketten — nicht
      * als Muster, das man dehnen kann. */
@@ -1244,37 +1273,45 @@ describe('Tranche 5o — der datei-weite Rückfall-Wächter', () => {
       'pos:seit', // Layer-Schlüssel der „Seit Einstieg"-Linie — Code, kein Text
       'Short', // Fachbegriff am Positions-Marker, in beiden Sprachen gleich
     ]);
-    const code = dashboard
-      .replace(/<!--[\s\S]*?-->/g, ' ') // HTML-Kommentare im Template — bleiben deutsch
-      .replace(/\/\*[\s\S]*?\*\//g, ' ')
-      .replace(/(^|[^:])\/\/.*$/gm, '$1')
-      .replace(/t\('[^']+'\)/g, ' ')
-      .replace(/\$\('[^']+'\)/g, ' ')
-      .replace(/console\.\w+\(\s*'[^']*'/g, ' ') // Entwickler-Logs bleiben deutsch
-      .replace(/toLocaleDateString\('de-DE'/g, ' ')
-      .replace(/toLocaleString\('de-DE'/g, ' ');
-    const DEUTSCH =
-      /[ÄÖÜäöüß]|\b(der|die|das|den|und|oder|nicht|kein|keine|noch|wird|ist|sind|von|zum|zur|bitte|mehr|dein|deine|ohne|seit|jetzt|alle|wenn|wurde|kommt|Kauf|Verkauf|Uhr|Tag|Tage|Woche|Monat|geladen|gespeichert|fehlgeschlagen|entfernen|bestätigen|Kaufen|Verkaufen|Kaufkraft|Gesamt|Zwischensumme|starten|stoppen|gestoppt|einstellen|einblenden|ausblenden|lassen|zoomen|Historie|Vorhersage|Prognose|Periode|Handelstag|Kerzen|Speichere|wechseln|Statistik|Fenster|synchron)\b/;
-    const treffer: string[] = [];
-    for (const m of code.matchAll(/'([^'\n]*)'/g)) {
-      const roh = m[1]!;
-      if (ERLAUBT.has(roh)) continue;
-      if (DEUTSCH.test(roh) && /[A-Za-zÄÖÜäöüß]{3,}/.test(roh)) treffer.push(roh.slice(0, 60));
-    }
-    for (const m of code.matchAll(/`([^`]*)`/g)) {
-      const roh = m[1]!.replace(/\$\{[^{}]*\}/g, ' ');
-      if (DEUTSCH.test(roh) && /[A-Za-zÄÖÜäöüß]{3,}/.test(roh)) treffer.push(roh.slice(0, 60));
-    }
+    const treffer = deutscheTreffer(dashboard, ERLAUBT);
     expect(
-      [...new Set(treffer)],
-      `deutscher Anzeigetext außerhalb des Wörterbuchs: ${[...new Set(treffer)].join(' | ')}`,
+      treffer,
+      `deutscher Anzeigetext außerhalb des Wörterbuchs: ${treffer.join(' | ')}`,
     ).toEqual([]);
   });
 
   it('jede Zeile der 5o-Präfixe hat eine englische Fassung', () => {
-    const re = /^(cx|rb|mb|sp|bk|av|oo|ap|nt|af|fl|gp|wl|st|mk|dt|sc|an|ps|px|pc|tn|hd|er|tj|mtr|dv|ws|pal|ot|tf|lay)\./;
+    const re =
+      /^(cx|rb|mb|sp|bk|av|oo|ap|nt|af|fl|gp|wl|st|mk|dt|sc|an|ps|px|pc|tn|hd|er|tj|mtr|dv|ws|pal|ot|tf|lay|auth|dc|hc|pw|rh|sv|mn)\./;
     for (const k of Object.keys(DE).filter((s) => re.test(s))) {
       expect(EN[k as TextSchluessel], `${k} ohne englische Fassung`).toBeTruthy();
     }
   });
+});
+
+describe('Tranche 5p — der Wächter über alle übrigen Quelldateien', () => {
+  /* Dasselbe Netz wie über dashboard.ts, gespannt über den GANZEN
+   * src-Ordner per readdirSync — eine künftige Datei ist automatisch
+   * erfasst, ohne dass jemand an diesen Test denkt. Ausnahmen mit Grund:
+   *  - i18n.ts:     das Wörterbuch selbst.
+   *  - legal.ts:    Rechtstexte (Impressum/Datenschutz) bleiben bewusst
+   *                 deutsch — Projektentscheidung, deutsches Recht.
+   *  - infotips.ts: führt sein EIGENES zweisprachiges Wörterbuch
+   *                 (INFO_DE/INFO_EN, Vollständigkeit erzwingt
+   *                 infotips.test.ts) — die deutschen Werte dort sind
+   *                 per Design da, wie in i18n.ts.
+   *  - dashboard.ts: hat oben seinen eigenen Wächter (eigenes ERLAUBT-Set). */
+  const AUSGENOMMEN = new Set(['i18n.ts', 'legal.ts', 'infotips.ts', 'dashboard.ts']);
+  // Code-Werte, die wie deutsche Wörter aussehen: Firestore-Feldnamen und
+  // Typ-Literale (data.ts liest v['von']; quelle === 'keine').
+  const CODE_WERTE = new Set(['von', 'keine']);
+  const srcDir = join(import.meta.dirname, '..', 'src');
+  for (const datei of readdirSync(srcDir).filter(
+    (f) => f.endsWith('.ts') && !AUSGENOMMEN.has(f),
+  )) {
+    it(`${datei}: kein deutscher Anzeigetext außerhalb des Wörterbuchs`, () => {
+      const treffer = deutscheTreffer(readFileSync(join(srcDir, datei), 'utf8'), CODE_WERTE);
+      expect(treffer, `${datei}: ${treffer.join(' | ')}`).toEqual([]);
+    });
+  }
 });

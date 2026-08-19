@@ -38,8 +38,8 @@ export async function frischAnmelden(passwort?: string): Promise<void> {
   if (perGoogle) {
     await reauthenticateWithPopup(u, new GoogleAuthProvider());
   } else {
-    if (!u.email) throw new Error('Zu diesem Konto ist keine E-Mail-Adresse hinterlegt.');
-    if (!passwort) throw new Error('Bitte das Passwort eingeben.');
+    if (!u.email) throw new Error(t('auth.keineEmailHinterlegt'));
+    if (!passwort) throw new Error(t('auth.passwortEingeben'));
     await reauthenticateWithCredential(u, EmailAuthProvider.credential(u.email, passwort));
   }
   await u.getIdToken(true);

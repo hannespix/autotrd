@@ -15,6 +15,8 @@
  * Implementierung der Regler-Logik wäre eine zweite Wahrheit.
  */
 
+import { t } from './i18n.js';
+
 /** Teilmenge eines `KlassenRat`s, die die Warnung braucht (s. data.ts). */
 export interface ReglerRat {
   empfehlung: string;
@@ -46,14 +48,10 @@ export function reglerWarnung(
   if (Math.abs(rat.vorschlag - wert) < 1e-9) return '';
   if (rat.empfehlung === 'abschalten') {
     return (
-      `⚠ Der Auto-Regler stellt ${label} beim nächsten Tageslauf wieder auf 0 — `
-      + 'die gemessene Kante ist strukturell negativ, Abschalten passiert sofort statt '
-      + 'in Schritten. Zum Testen von Hand: „Automatisch nachregeln" abwählen und speichern.'
+      `${t('rh.abschaltenA')} ${label} ${t('rh.abschaltenB')}`
     );
   }
   return (
-    `⚠ Der Auto-Regler zieht ${label} beim nächsten Tageslauf Richtung ${zahl(rat.vorschlag)} `
-    + '(in 0,25er-Schritten). Dauerhaft von Hand steuern: „Automatisch nachregeln" '
-    + 'abwählen und speichern.'
+    `${t('rh.ziehtA')} ${label} ${t('rh.ziehtB')} ${zahl(rat.vorschlag)} ${t('rh.ziehtC')}`
   );
 }
