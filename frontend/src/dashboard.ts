@@ -2250,38 +2250,38 @@ function renderLegend(lines: import('./chart.js').OverlayLine[], intraday: boole
   for (const l of lines) {
     if (l.key === 'bbU' || l.key === 'bbL') continue; // ein Eintrag fürs Band reicht
     if (l.key.startsWith('cmp:')) {
-      items.push({ c: l.color, t: `${l.key.slice(4)} % (Vergleich)`, title: 'Prozent-Entwicklung auf eigener Skala' });
+      items.push({ c: l.color, t: `${l.key.slice(4)} % (${t('lg.vergleich')})`, title: t('lg.vergleichTitel') });
     } else if (l.key === 'pos:seit') {
       items.push({
         c: l.color,
-        t: 'Seit Einstieg',
-        title: 'Kursverlauf ab dem Einstiegs-Bar der offenen Position — grün, wenn die Position gerade im Gewinn liegt',
+        t: t('lg.seitEinstieg'),
+        title: t('lg.seitEinstiegTitel'),
       });
     } else if (NAME[l.key]) {
-      items.push({ c: l.color, t: NAME[l.key]!, title: 'Gilt in allen Charts mit denselben Overlays' });
+      items.push({ c: l.color, t: NAME[l.key]!, title: t('lg.overlayTitel') });
     }
   }
   if (st && !st.cleanView && st.chartLayers.has('area')) {
-    const toneLabel = st.lastSignalDir === 'buy' ? 'Signal KAUF' : st.lastSignalDir === 'sell' ? 'Signal VERKAUF' : 'Signal neutral';
+    const toneLabel = st.lastSignalDir === 'buy' ? t('lg.signalKauf') : st.lastSignalDir === 'sell' ? t('lg.signalVerkauf') : t('lg.signalNeutral');
     items.push({
       c: AREA_TONES[st.lastSignalDir].line,
-      t: `Fläche — ${toneLabel}`,
-      title: 'Der Verlauf unter der Kurslinie färbt sich nach der aktuellen Signal-Richtung des Scans',
+      t: `${t('lg.flaeche')} — ${toneLabel}`,
+      title: t('lg.flaecheTitel'),
     });
   }
   if (st && !st.cleanView && !intraday && st.ui.predArrow && st.prediction) {
     const lastClose = st.bars[st.bars.length - 1]?.close ?? st.prediction.targetPrice;
     items.push({
       c: st.prediction.targetPrice >= lastClose ? '#26cf9d' : '#f2586b',
-      t: 'Meine Prognose — zählt als Stimme im Auto-Trading',
-      title: 'Deine manuell eingezeichnete Kurs-Erwartung; der Algorithmus nimmt sie als gewichtete Stimme (Gewicht = Vertrauen 1–3) in die Handels-Entscheidung auf',
+      t: t('lg.meinePrognose'),
+      title: t('lg.meinePrognoseTitel'),
     });
   }
   if (!intraday && st?.showForecast && !st.cleanView && st.forecast) {
-    items.push({ c: '#25d0ee', t: 'Prognose (gestrichelt, ±1σ)', title: 'Sentiment-gewichtete Regression über die nächsten Handelstage' });
+    items.push({ c: '#25d0ee', t: t('lg.prognose'), title: t('lg.prognoseTitel') });
   }
   if (intraday && st?.showForecast && !st.cleanView && st.forecastIntraday) {
-    items.push({ c: '#25d0ee', t: 'Kurzfrist-Prognose (nächste Stunde)', title: 'Projektion im 5-Minuten-Raster — bei jedem Scan neu berechnet, lernt aus der eigenen Trefferquote' });
+    items.push({ c: '#25d0ee', t: t('lg.kurzPrognose'), title: t('lg.kurzPrognoseTitel') });
   }
   // Legenden-Akkordeon (Feedback 25.07. abends): eingeklappt = nur OHLC-Zeile
   el.hidden = items.length === 0 || !st?.hudOpen;
@@ -2769,13 +2769,13 @@ function renderLiveStatus(s: LiveModeStatus | null, istLive: boolean): void {
   go.hidden = istLive;
   on.hidden = istLive;
   if (istLive) {
-    state.innerHTML = '<b style="color:var(--rd)">ECHTGELD ist scharf.</b> '
-      + 'Gehandelt wird, sobald die Engine auf „Start" steht.';
+    state.innerHTML = `<b style="color:var(--rd)">${t('lv.scharf')}</b> `
+      + t('lv.scharfWann');
     krit.innerHTML = '';
     return;
   }
   if (!s) {
-    state.textContent = 'Zustand wird geladen …';
+    state.textContent = t('lv.laedt');
     return;
   }
 
@@ -2787,23 +2787,23 @@ function renderLiveStatus(s: LiveModeStatus | null, istLive: boolean): void {
   const kontoOk = s.brokerArt === 'live';
   krit.innerHTML =
     zeile(
-      'Echtgeldkonto verbunden',
+      t('lv.kontoVerbunden'),
       kontoOk,
       s.brokerArt === null
-        ? 'kein Broker hinterlegt'
+        ? t('lv.keinBroker')
         : s.brokerArt === 'paper'
-          ? 'verbunden ist ein Papierkonto (PK…)'
-          : 'Echtgeld-Schlüssel liegt verschlüsselt',
+          ? t('lv.papierkonto')
+          : t('lv.schluesselOk'),
     )
     + zeile(
-      'Server-Freigabe',
+      t('lv.serverFreigabe'),
       s.serverFreigabe,
       s.serverFreigabe
-        ? 'der Betreiber hat Echtgeld eingeschaltet'
-        : 'ALPACA_ALLOW_LIVE fehlt — nur der Betreiber kann das setzen',
+        ? t('lv.freigabeAn')
+        : t('lv.freigabeAus'),
     )
     + zeile(
-      `Reife (${s.reife.erfuellt}/${s.reife.gesamt})`,
+      `${t('lv.reife')} (${s.reife.erfuellt}/${s.reife.gesamt})`,
       s.reife.bereit,
       s.reife.fazit,
     )
@@ -2812,15 +2812,14 @@ function renderLiveStatus(s: LiveModeStatus | null, istLive: boolean): void {
           (k) =>
             `<div class="hint" style="margin-left:16px;opacity:.8">${
               k.erfuellt ? '✓' : '○'
-            } ${escText(k.name)}: ${escText(k.ist)} (nötig ${escText(k.soll)})</div>`,
+            } ${escText(k.name)}: ${escText(k.ist)} (${t('lv.noetig')} ${escText(k.soll)})</div>`,
         )
         .join('');
 
   const alles = kontoOk && s.serverFreigabe && s.reife.bereit;
   state.innerHTML = alles
-    ? '<b>Alle Bedingungen erfüllt.</b> Der Schalter unten stellt scharf.'
-    : '<b>Noch nicht scharf schaltbar.</b> Offene Punkte stehen unten — '
-      + 'jeder einzelne verhindert Echtgeld-Handel.';
+    ? `<b>${t('lv.alleErfuellt')}</b> ${t('lv.schalterScharf')}`
+    : `<b>${t('lv.nochNicht')}</b> ${t('lv.offenePunkte')}`;
   // Der Knopf bleibt klickbar, auch wenn etwas fehlt: Die Server-Antwort
   // nennt dann den Grund. Ein ausgegrauter Knopf ohne Begründung ist die
   // schlechtere Auskunft.
@@ -3183,11 +3182,11 @@ function renderLoadouts(): void {
   ): string =>
     `<div class="lo-card">
       <div class="lo-head"><b>${esc(titel)}</b>${
-        eigen ? `<button class="lo-del" data-lodel="${key}" title="Loadout löschen">✕</button>` : ''
+        eigen ? `<button class="lo-del" data-lodel="${key}" title="${t('lo.loeschen')}">✕</button>` : ''
       }</div>
       <div class="hint">${esc(beschreibung)}</div>
       <div class="lo-risk">${esc(risiko)}</div>
-      <button class="btn btn-n" data-lo="${key}" style="margin-top:6px">Ansehen</button>
+      <button class="btn btn-n" data-lo="${key}" style="margin-top:6px">${t('lo.ansehen')}</button>
     </div>`;
   // Alpha-Leech (Owner-Idee 06.08.): die Bewährten Einstellungen (MU3) als
   // Community-Karte IM Loadout-Raster — derselbe Snapshot, derselbe
@@ -3199,25 +3198,21 @@ function renderLoadouts(): void {
     bpKarte = karte(
       'bp',
       'Alpha-Leech (Community)',
-      'Warum selbst tüfteln? Kopiert das Setup des Kontos, dessen ENGINE ' +
-        'gerade am besten läuft — kollektives Lernen zum Nulltarif. GG EZ.',
-      `Belegt statt gehypt: Kante ${kz.kantePct ?? '–'} % je Dollar über ${kz.n} ` +
-        `Engine-Trades in ${Math.round(kz.zeitraumTage)} Tagen. Erfolg von gestern ` +
-        'garantiert nichts für morgen — Details unten bei „Bewährte Einstellungen".',
+      t('lo.leechText'),
+      `${t('lo.belegtA')} ${kz.kantePct ?? '–'} ${t('lo.belegtB')} ${kz.n} `
+        + `${t('lo.belegtC')} ${Math.round(kz.zeitraumTage)} ${t('lo.belegtD')}`,
       false,
     );
   } else if (bestPractice) {
     const anw = bestPractice.anwaerter;
     bpKarte = `<div class="lo-card lo-off">
-      <div class="lo-head"><b>Alpha-Leech (im Anflug)</b></div>
-      <div class="hint">Kopiert künftig das Setup des besten Engine-Kontos —
-        sobald eines die Belege liefert (≥30 Engine-Trades, ≥14 Tage,
-        positive Kante nach Gebühren).</div>
+      <div class="lo-head"><b>${t('lo.leechAnflug')}</b></div>
+      <div class="hint">${t('lo.leechAnflugText')}</div>
       <div class="lo-risk">${esc(
         anw
-          ? `Bester Anwärter: Kante ${anw.kennzahlen.kantePct ?? '–'} % (${anw.kennzahlen.n} Trades)` +
-              (anw.fehlt.length > 0 ? ` — es fehlt: ${anw.fehlt.join(', ')}` : '')
-          : 'Noch keine Auswertung — der erste Snapshot entsteht mit dem nächsten Tageslauf.',
+          ? `${t('lo.besterAnwaerter')} ${anw.kennzahlen.kantePct ?? '–'} % (${anw.kennzahlen.n} ${t('lo.trades')})`
+              + (anw.fehlt.length > 0 ? ` — ${t('lo.esFehlt')} ${anw.fehlt.join(', ')}` : '')
+          : t('lo.keineAuswertung'),
       )}</div>
     </div>`;
   }
@@ -3229,8 +3224,8 @@ function renderLoadouts(): void {
         karte(
           `e:${l.id}`,
           l.name,
-          `Eigener Schnappschuss vom ${l.at.slice(0, 10)}.`,
-          (l.hebel ?? 1) > 1 ? `Enthält ${l.hebel}× Hebel.` : 'Ohne Hebel gespeichert.',
+          `${t('lo.eigenerSchnappschuss')} ${l.at.slice(0, 10)}.`,
+          (l.hebel ?? 1) > 1 ? `${t('lo.enthaelt')} ${l.hebel}× ${t('lo.hebel')}.` : t('lo.ohneHebel'),
           true,
         ),
       )
@@ -6642,9 +6637,7 @@ function renderPortfolio(): void {
     const negativ = cash !== null && cash < 0;
     cashHint.hidden = !negativ;
     cashHint.textContent = negativ
-      ? 'Kein Verlust: Deine Shorts binden 2× ihren Einstand im Buch-Cash — '
-        + '„Equity (live)" ist der echte Kontostand (identisch mit dem Broker). '
-        + `Verfügbar für neue Käufe: ${money(Math.max(0, cash))}.`
+      ? `${t('pf.shortsBinden')} ${money(Math.max(0, cash))}.`
       : '';
   }
   $('vEq').textContent = cash !== null ? money(cash + posValue) : '--';
@@ -6659,12 +6652,13 @@ function renderPortfolio(): void {
   const basisHint = document.getElementById('vPnlBasis');
   if (basisHint) {
     const resetAt = st.wallet?.resetAt;
-    const t = resetAt ? Date.parse(resetAt) : NaN;
-    const datum = Number.isFinite(t) ? new Date(t).toLocaleDateString('de-DE') : null;
+    // `zeit`, nicht `t`: Der alte Name verschattete die Übersetzungsfunktion
+    // t() aus i18n — der Template-String darunter griffe sonst auf die Zahl.
+    const zeit = resetAt ? Date.parse(resetAt) : NaN;
+    const datum = Number.isFinite(zeit) ? new Date(zeit).toLocaleDateString('de-DE') : null;
     basisHint.hidden = !datum;
     basisHint.textContent = datum
-      ? `Zählt seit Depot-Schnitt am ${datum} (Basis ${money(basis)}) = Realisiert + Offen ab dem Schnitt. `
-        + 'Früher geschlossene Trades stehen NICHT in dieser Zahl — die Handels-Analyse zählt sie im gewählten Zeitfenster.'
+      ? `${t('pf.seitSchnittA')} ${datum} (${t('pf.basis')} ${money(basis)}) ${t('pf.seitSchnittB')}`
       : '';
   }
   const closedEl = $('vClosed');
@@ -6679,18 +6673,17 @@ function renderPortfolio(): void {
   unrealEl.className = `smv ${pnlClass(openPnl)}`;
   unrealEl.title =
     ohneKurs > 0
-      ? `Für ${ohneKurs} von ${st.positions.length} Positionen fehlt ein aktueller Kurs — `
-        + 'sie sind mit ihrem Einstand bewertet und stecken NICHT in dieser Zahl.'
+      ? `${t('pf.ohneKursA')} ${ohneKurs} ${t('pf.ohneKursB')} ${st.positions.length} ${t('pf.ohneKursC')}`
       : '';
   $('vWR').textContent = winRate === null ? '--%' : `${winRate}%`;
 
   // Positionen-Tabelle
   $('pCount').textContent =
-    ohneKurs > 0 ? `${st.positions.length} offen · ${ohneKurs} ohne Kurs` : `${st.positions.length} offen`;
+    ohneKurs > 0 ? `${st.positions.length} ${t('pf.offenZaehler')} · ${ohneKurs} ${t('pf.ohneKurs')}` : `${st.positions.length} ${t('pf.offenZaehler')}`;
   const body = $('pBody') as HTMLTableSectionElement;
   body.innerHTML = '';
   if (st.positions.length === 0) {
-    body.innerHTML = '<tr><td colspan="7" class="c-t3">Keine offenen Positionen</td></tr>';
+    body.innerHTML = `<tr><td colspan="7" class="c-t3">${t('pf.keineOffenen')}</td></tr>`;
   }
   for (const p of st.positions) {
     const live = st.posPrices.get(p.symbol);
@@ -6712,7 +6705,7 @@ function renderPortfolio(): void {
     // Klick aufs Symbol holt die Position ins Haupt-Chart (04.08.) — dort
     // zeigen Marke, Preislinien und die Kurve seit Einstieg den ganzen Verlauf
     symTd.className = 'pos-sym';
-    symTd.title = 'Im Chart öffnen — mit Einstieg, Stop/Ziel und Verlauf seit Einstieg';
+    symTd.title = t('pf.imChart');
     symTd.addEventListener('click', () => {
       if (!st) return;
       publishSymbol(st.chartGroup, p.symbol);
@@ -6723,7 +6716,7 @@ function renderPortfolio(): void {
       tag.className = 'stag t-sell';
       tag.style.marginLeft = '6px';
       tag.textContent = 'SHORT';
-      tag.title = 'Leerverkauf — verdient am fallenden Kurs; „Cover" deckt ein';
+      tag.title = t('pf.leerverkauf');
       symTd.appendChild(tag);
     }
     tr.querySelector('[data-exit]')!.addEventListener('click', () => {

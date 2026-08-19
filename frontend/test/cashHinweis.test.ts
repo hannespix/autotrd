@@ -15,6 +15,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { DE } from '../src/i18n.js';
 import { join } from 'node:path';
 
 const dashboard = readFileSync(join(import.meta.dirname, '..', 'src', 'dashboard.ts'), 'utf8');
@@ -39,8 +40,9 @@ describe('Cash-Hinweis — Markup und Logik', () => {
   });
 
   it('erklärt die Short-Mechanik und verweist auf die Equity als echten Stand', () => {
-    expect(dashboard).toContain('Shorts binden 2× ihren Einstand');
-    expect(dashboard).toContain('der echte Kontostand');
+    expect(dashboard).toContain("${t('pf.shortsBinden')} ${money(Math.max(0, cash))}");
+    // Der Wortlaut wohnt seit Tranche 5m im Wörterbuch (Task #139).
+    expect(DE['pf.shortsBinden']).toContain('der echte Kontostand');
   });
 
   it('nennt das verfügbare Kapital als max(0, cash) — Anzeige, keine Arithmetik', () => {

@@ -8,6 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { DE } from '../src/i18n.js';
 import { join } from 'node:path';
 
 const quelle = (): string =>
@@ -45,15 +46,16 @@ describe('Fehlende Kurse stehen dran, statt als Null durchzugehen', () => {
 
   it('und der Grund steht im Tooltip, mit Zahlen', () => {
     const text = quelle();
-    expect(text).toContain('fehlt ein aktueller Kurs');
-    expect(text).toContain('${ohneKurs} von ${st.positions.length}');
+    expect(text).toContain("${t('pf.ohneKursA')} ${ohneKurs} ${t('pf.ohneKursB')} ${st.positions.length} ${t('pf.ohneKursC')}");
+    // Der Wortlaut wohnt seit Tranche 5m im Wörterbuch (Task #139).
+    expect(DE['pf.ohneKursC']).toContain('fehlt ein aktueller Kurs');
   });
 
   it('die Positionsüberschrift nennt es ebenfalls', () => {
     // Der Owner-Screenshot vom 10.08. zeigte 128 von 132 Symbolen ohne Kurs.
     // Auf einen Tooltip zu zeigen reicht dort nicht — es muss ohne Mauszeiger
     // sichtbar sein.
-    expect(quelle()).toContain('${ohneKurs} ohne Kurs');
+    expect(quelle()).toContain("${ohneKurs} ${t('pf.ohneKurs')}");
   });
 
   it('der Stop-Dialog zeigt „—" statt einer erfundenen Null', () => {
