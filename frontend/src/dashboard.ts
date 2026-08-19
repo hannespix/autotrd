@@ -6025,9 +6025,9 @@ function renderEngineWhy(): void {
 /* ── Admin-Verwaltung (Owner 02.08.: „wie kann man andere User freischalten?") ── */
 
 const ACCESS_BADGE: Record<'pending' | 'approved' | 'blocked', string> = {
-  pending: '⏳ wartet',
-  approved: '✓ frei',
-  blocked: '⛔ gesperrt',
+  pending: `⏳ ${t('adm.wartet')}`,
+  approved: `✓ ${t('adm.frei')}`,
+  blocked: `⛔ ${t('adm.gesperrt')}`,
 };
 
 /** Karte zeigen/verstecken — der Server prüft das Admin-Recht ohnehin selbst;
@@ -6042,7 +6042,7 @@ async function loadAdminList(): Promise<void> {
   const list = $('admList');
   const err = $('admErr');
   err.hidden = true;
-  list.innerHTML = '<div class="hint">lädt …</div>';
+  list.innerHTML = `<div class="hint">${t('adm.laedt')}</div>`;
   try {
     const rows = await adminListUsers();
     list.innerHTML = '';
@@ -6057,7 +6057,7 @@ async function loadAdminList(): Promise<void> {
       who.title = row.uid;
       const badge = document.createElement('span');
       badge.className = 'hint';
-      badge.textContent = ACCESS_BADGE[row.accessLevel] + (row.admin ? ' · Admin' : '');
+      badge.textContent = ACCESS_BADGE[row.accessLevel] + (row.admin ? ` · ${t('adm.admin')}` : '');
       // Gesamt-P&L des Kontos (Owner 02.08.) — Formel identisch zur
       // Performance-Karte des Users, gefärbt nach Vorzeichen.
       const perf = document.createElement('span');
@@ -6067,7 +6067,7 @@ async function loadAdminList(): Promise<void> {
         perf.textContent = `${s}${row.pnl.toFixed(2)} $`
           + (row.pnlPct !== null ? ` (${s}${row.pnlPct.toFixed(1)} %)` : '');
         perf.style.color = row.pnl > 0 ? 'var(--gn)' : row.pnl < 0 ? 'var(--rd)' : 'var(--t3)';
-        if (row.equity !== null) perf.title = `Equity: ${row.equity.toFixed(2)} $`;
+        if (row.equity !== null) perf.title = `${t('adm.equity')}: ${row.equity.toFixed(2)} $`;
       } else {
         perf.textContent = '—';
         perf.style.color = 'var(--t3)';
@@ -6080,7 +6080,7 @@ async function loadAdminList(): Promise<void> {
       reife.className = 'mono hint';
       reife.style.whiteSpace = 'nowrap';
       const trades = row.trades ?? 0;
-      reife.textContent = `${trades} Trades · Reife ${row.reife.erfuellt}/${row.reife.gesamt}`
+      reife.textContent = `${trades} ${t('adm.trades')} · ${t('adm.reife')} ${row.reife.erfuellt}/${row.reife.gesamt}`
         + (row.reife.bereit ? ' ✓' : '');
       reife.title = row.reife.fazit;
       if (row.reife.bereit) reife.style.color = 'var(--gn)';
@@ -6089,17 +6089,17 @@ async function loadAdminList(): Promise<void> {
       // Regel hier: keine Knöpfe, statt Knöpfe, die immer scheitern.
       if (row.uid !== st?.uid) {
         line.append(
-          admBtn(row.accessLevel === 'approved' ? 'Sperren' : 'Freischalten', async () => {
+          admBtn(row.accessLevel === 'approved' ? t('adm.sperren') : t('adm.freischalten'), async () => {
             await adminSetAccess(row.uid, row.accessLevel === 'approved' ? 'blocked' : 'approved');
           }, row.accessLevel === 'approved' ? 'btn-r' : 'btn-g'),
-          admBtn(row.admin ? 'Admin entziehen' : 'Zum Admin machen', async () => {
+          admBtn(row.admin ? t('adm.adminEntziehen') : t('adm.zumAdmin'), async () => {
             await adminSetAdmin(row.uid, !row.admin);
           }, 'btn-n'),
         );
       }
       list.append(line);
     }
-    if (rows.length === 0) list.innerHTML = '<div class="hint">Keine Konten gefunden.</div>';
+    if (rows.length === 0) list.innerHTML = `<div class="hint">${t('adm.keineKonten')}</div>`;
   } catch (e) {
     list.innerHTML = '';
     err.textContent = e instanceof Error ? e.message : String(e);
@@ -6114,15 +6114,15 @@ async function ladeKillSwitch(): Promise<void> {
   try {
     const s = await adminLiveStatus();
     state.textContent = s.killSwitch
-      ? `Zustand: AUSGELÖST${s.at ? ` (${new Date(s.at).toLocaleString('de-DE')})` : ''}`
-      : 'Zustand: bereit — Echtgeld-Orders laufen normal';
+      ? `${t('adm.zustand')}: ${t('adm.ausgeloest')}${s.at ? ` (${new Date(s.at).toLocaleString('de-DE')})` : ''}`
+      : `${t('adm.zustand')}: ${t('adm.bereit')}`;
     (state as HTMLElement).style.color = s.killSwitch ? 'var(--rd)' : 'var(--t3)';
-    btn.textContent = s.killSwitch ? 'Not-Aus lösen' : 'NOT-AUS auslösen';
+    btn.textContent = s.killSwitch ? t('adm.notausLoesen') : t('adm.notausAusloesen');
     btn.className = s.killSwitch ? 'btn btn-g' : 'btn btn-r';
     btn.dataset['an'] = s.killSwitch ? '0' : '1';
     btn.hidden = false;
   } catch (e) {
-    state.textContent = `Zustand: nicht lesbar (${e instanceof Error ? e.message : String(e)})`;
+    state.textContent = `${t('adm.zustand')}: ${t('adm.nichtLesbar')} (${e instanceof Error ? e.message : String(e)})`;
     btn.hidden = true;
   }
 }

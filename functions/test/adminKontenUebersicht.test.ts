@@ -35,7 +35,11 @@ describe('Admin-Konten-Übersicht (Quelltext-Wächter)', () => {
   });
 
   it('das Frontend zeigt Trades + Reife-Fortschritt je Konto und hängt sie in die Zeile', () => {
-    expect(dashboard).toContain('Trades · Reife ${row.reife.erfuellt}/${row.reife.gesamt}');
+    /* Seit Tranche 5i (19.08.) tragen die beiden Wörter Schlüssel. Geprüft
+     * wird weiterhin dasselbe: dass Trades UND Reife-Fortschritt in
+     * derselben Zeile stehen — nur nicht mehr über ihre Rechtschreibung. */
+    expect(dashboard).toContain("${trades} ${t('adm.trades')} · ${t('adm.reife')} ");
+    expect(dashboard).toContain('${row.reife.erfuellt}/${row.reife.gesamt}');
     expect(dashboard).toContain('reife.title = row.reife.fazit;');
     expect(dashboard).toContain('line.append(who, perf, reife, badge);');
   });

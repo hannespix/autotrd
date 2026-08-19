@@ -488,6 +488,33 @@ export const DE = {
   'tax.fristA': 'Bei',
   'tax.fristB': 'davon läuft die Krypto-Jahresfrist noch (nächste in',
   'tax.fristC': 'Tagen).',
+  // Admin-Karte und Echtgeld-Not-Aus (Tranche 5i).
+  //
+  // `adm.admin` und `adm.equity` sind in beiden Sprachen dasselbe Wort und
+  // stünden nach der Regel aus 5g eigentlich nicht hier. Sie stehen
+  // trotzdem drin, weil sie MITTEN in zusammengesetzten Zeichenketten
+  // sitzen (`· Admin`, `Equity: 1234 $`) — dort ein Literal stehenzulassen
+  // hieße, den Satz in zwei Regelwerke zu zerlegen. Die Ausnahme kostet
+  // nichts: Wer sie ändert, ändert nur eine Zeile, keine Bedeutung.
+  'adm.wartet': 'wartet',
+  'adm.frei': 'frei',
+  'adm.gesperrt': 'gesperrt',
+  'adm.laedt': 'lädt …',
+  'adm.admin': 'Admin',
+  'adm.equity': 'Equity',
+  'adm.trades': 'Trades',
+  'adm.reife': 'Reife',
+  'adm.sperren': 'Sperren',
+  'adm.freischalten': 'Freischalten',
+  'adm.adminEntziehen': 'Admin entziehen',
+  'adm.zumAdmin': 'Zum Admin machen',
+  'adm.keineKonten': 'Keine Konten gefunden.',
+  'adm.zustand': 'Zustand',
+  'adm.ausgeloest': 'AUSGELÖST',
+  'adm.bereit': 'bereit — Echtgeld-Orders laufen normal',
+  'adm.notausLoesen': 'Not-Aus lösen',
+  'adm.notausAusloesen': 'NOT-AUS auslösen',
+  'adm.nichtLesbar': 'nicht lesbar',
   'auth.falscheDaten': 'E-Mail oder Passwort ist falsch.',
   'auth.ungueltigeEmail': 'Das ist keine gültige E-Mail-Adresse.',
   'auth.emailVergeben': 'Für diese E-Mail existiert bereits ein Konto.',
@@ -930,6 +957,26 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'tax.fristA': 'For',
   'tax.fristB': 'of them the crypto one-year period is still running (the next in',
   'tax.fristC': 'days).',
+  // Admin-Karte und Echtgeld-Not-Aus (Tranche 5i).
+  'adm.wartet': 'pending',
+  'adm.frei': 'approved',
+  'adm.gesperrt': 'blocked',
+  'adm.laedt': 'loading …',
+  'adm.admin': 'Admin',
+  'adm.equity': 'Equity',
+  'adm.trades': 'trades',
+  'adm.reife': 'maturity',
+  'adm.sperren': 'Block',
+  'adm.freischalten': 'Approve',
+  'adm.adminEntziehen': 'Revoke admin',
+  'adm.zumAdmin': 'Make admin',
+  'adm.keineKonten': 'No accounts found.',
+  'adm.zustand': 'State',
+  'adm.ausgeloest': 'TRIPPED',
+  'adm.bereit': 'ready — live-money orders are running normally',
+  'adm.notausLoesen': 'Release emergency stop',
+  'adm.notausAusloesen': 'TRIP EMERGENCY STOP',
+  'adm.nichtLesbar': 'not readable',
 };
 
 /**
