@@ -7,6 +7,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { DE } from '../src/i18n.js';
 import { join } from 'node:path';
 import { eingabeStueckzahl, MAX_QTY } from '@autotrd/shared';
 
@@ -181,6 +182,9 @@ describe('Befund D: die Vorschau sagt, was wirklich passiert', () => {
 
   it('und sagt es dem Nutzer', () => {
     const text = dashboard();
-    expect(text).toContain('Schließt die GANZE Position');
+    // Der Wortlaut wohnt seit Tranche 5n im Wörterbuch (Task #139);
+    // gepinnt bleibt der Schlüssel an der Stelle plus der Text dort.
+    expect(text).toContain("${t('op.schliesstGanze')}");
+    expect(DE['op.schliesstGanze']).toContain('Schließt die GANZE Position');
   });
 });

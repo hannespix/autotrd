@@ -1162,3 +1162,68 @@ describe('Tranche 5m — Legende, Live-Status, Loadouts und Portfolio', () => {
     }
   });
 });
+
+describe('Tranche 5n — die zehn Analyse- und Melde-Funktionen', () => {
+  /* Umgekehrte Beweislast wie in 5l/5m — für zehn Funktionen auf einmal.
+   * Die Positivlisten sind klein gehalten: Was hier NICHT steht und wie
+   * Text aussieht, ist ein Befund. */
+  const funktion = (name: string): string => {
+    const i = dashboard.search(new RegExp(`^(?:export )?(?:async )?function ${name}\\b`, 'm'));
+    const rest = dashboard.slice(i + 20);
+    const j = rest.search(/^(?:export )?(?:async )?function /m);
+    return dashboard.slice(i, j < 0 ? undefined : i + 20 + j);
+  };
+  const fremdWorte = (code: string): string[] => {
+    const ohne = code
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1')
+      .replace(/t\('[^']+'\)/g, ' ')
+      .replace(/\$\('[^']+'\)/g, ' ')
+      .replace(
+        /(getElementById|createElement|addEventListener|querySelectorAll|querySelector|toLocaleString|toLocaleDateString)\(\s*'[^']*'/g,
+        ' ',
+      )
+      .replace(/'var\(--[^']*'/g, ' ');
+    const worte: string[] = [];
+    for (const m of ohne.matchAll(/'([^']*)'/g)) {
+      worte.push(...(m[1]!.match(/[A-Za-zÄÖÜäöüß]{3,}/g) ?? []));
+    }
+    for (const m of ohne.matchAll(/`([^`]*)`/g)) {
+      const text = m[1]!.replace(/\$\{[^{}]*\}/g, ' ');
+      worte.push(...(text.match(/[A-Za-zÄÖÜäöüß]{3,}/g) ?? []));
+    }
+    return [...new Set(worte)];
+  };
+  const NEUTRAL: Record<string, readonly string[]> = {
+    // Statuscodes (Vertrag zum Server) + CSS/DOM; „Dollar/Trades" sind weg.
+    renderKlassenRat: ['global', 'schatten', 'class', 'color', 'div', 'hint', 'inherit',
+      'margin', 'span', 'style', 'title', 'top'],
+    renderAbgleich: ['drift', 'fehler', 'color', 'cursor', 'details', 'div', 'margin',
+      'pointer', 'style', 'summary', 'top', 'var'],
+    renderMomentum: ['class', 'div', 'hint', 'mono', 'row', 'span', 'tag'],
+    renderBestPractice: ['gekuert'],
+    // ATR ist Fachkürzel; stop/target/short sind Code-Werte von levelDistPct.
+    exitOutlook: ['ATR', 'class', 'next', 'pos', 'span', 'stop', 'target', 'short', 'title'],
+    abHinweis: ['bericht', 'chronik', 'fehler', 'kein', 'keine', 'schluessel'],
+    // „Auto" ist die Quelle-Markierung am Symbol — in beiden Sprachen gleich.
+    renderJournal: ['Auto', 'buy', 'sell', 'engine', 'closed', 'class', 'color', 'colspan',
+      'digit', 'span', 'stag', 'style', 'var'],
+    updateOrderPreview: ['buy', 'sell', 'short', 'exposure', 'maximumFractionDigits', 'secs'],
+    renderWatchHint: [],
+    renderStruktur: ['DSR', 'Sharpe', 'Test', 'buy', 'start', 'class', 'digit', 'div',
+      'hint', 'mono', 'number', 'span', 'tag'],
+  };
+  for (const [name, neutral] of Object.entries(NEUTRAL)) {
+    it(`${name}: jede Zeichenkette ist t() oder nachweislich technisch`, () => {
+      const erlaubt = new Set(neutral);
+      const rest = fremdWorte(funktion(name)).filter((w) => !erlaubt.has(w));
+      expect(rest, `${name}: nicht ausgewiesene Zeichenketten: ${rest.join(' | ')}`).toEqual([]);
+    });
+  }
+
+  it('jede kr./ab./mo./bp./eo./ah./jn./op./wh./sk.-Zeile hat eine englische Fassung', () => {
+    for (const k of Object.keys(DE).filter((s) => /^(kr|ab|mo|bp|eo|ah|jn|op|wh|sk)\./.test(s))) {
+      expect(EN[k as TextSchluessel], `${k} ohne englische Fassung`).toBeTruthy();
+    }
+  });
+});

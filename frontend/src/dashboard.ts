@@ -2852,8 +2852,7 @@ function renderAbgleich(
   const el = document.getElementById('bkAuto');
   if (!el) return;
   if (!a) {
-    el.textContent =
-      'Kein automatischer Abgleich bisher — er läuft ab dem nächsten Scan, sobald ein Broker verbunden ist.';
+    el.textContent = t('ab.nochKeiner');
     return;
   }
   const wann = escText(a.at.slice(0, 16).replace('T', ' '));
@@ -2862,29 +2861,32 @@ function renderAbgleich(
    * war, weil nur der LETZTE Zustand gespeichert wurde). Jeder
    * Zustandswechsel steht jetzt mit Uhrzeit hier, neueste zuerst. */
   const LABEL: Record<string, string> = {
-    sauber: 'sauber',
-    drift: 'Abweichung',
-    fehler: 'Broker nicht erreichbar',
-    kein_broker: 'kein Broker',
+    sauber: t('ab.sauber'),
+    drift: t('ab.abweichung'),
+    fehler: t('ab.nichtErreichbar'),
+    kein_broker: t('ab.keinBroker'),
   };
   const verlaufHtml = (a.verlauf ?? [])
     .slice(-5)
     .reverse()
     .map((v) => {
-      const t = escText(v.at.slice(11, 16));
+      // `uhrzeit`, nicht `t`: Der alte Name verschattete die
+      // Übersetzungsfunktion t() aus i18n (gleicher Fund wie in
+      // renderPortfolio, Tranche 5m).
+      const uhrzeit = escText(v.at.slice(11, 16));
       const zusatz = v.nach === 'drift'
-        ? ` (${v.fehlbestand} fehlend, ${v.fremdbestand} fremd)`
+        ? ` (${v.fehlbestand} ${t('ab.fehlend')}, ${v.fremdbestand} ${t('ab.fremd')})`
         : v.fehler ? `: ${escText(v.fehler.slice(0, 60))}` : '';
-      return `<div>${t} Uhr · ${escText(LABEL[v.von ?? ''] ?? '—')} → <b>${escText(LABEL[v.nach] ?? v.nach)}</b>${zusatz}</div>`;
+      return `<div>${uhrzeit} ${t('ab.uhr')} · ${escText(LABEL[v.von ?? ''] ?? '—')} → <b>${escText(LABEL[v.nach] ?? v.nach)}</b>${zusatz}</div>`;
     })
     .join('');
   const verlaufBlock = verlaufHtml
-    ? `<details style="margin-top:4px"><summary style="cursor:pointer">Verlauf (letzte Zustandswechsel)</summary>${verlaufHtml}</details>`
+    ? `<details style="margin-top:4px"><summary style="cursor:pointer">${t('ab.verlauf')}</summary>${verlaufHtml}</details>`
     : '';
   if (a.status === 'fehler') {
     el.innerHTML =
-      `<b>Abgleich nicht möglich</b> (${wann} Uhr): ${escText(a.fehler)}.<br />`
-      + 'Der Handel läuft weiter — ein Netzwerkfehler ist kein Beweis für eine Abweichung.'
+      `<b>${t('ab.nichtMoeglich')}</b> (${wann} ${t('ab.uhr')}): ${escText(a.fehler)}.<br />`
+      + t('ab.netzwerkKeinBeweis')
       + verlaufBlock;
     return;
   }
@@ -2898,20 +2900,20 @@ function renderAbgleich(
      * einen zur Suche nach einem Fehler, den es nicht gibt. */
     if ((a.fehlbestand ?? a.anzahl) > 0) {
       el.innerHTML =
-        `<b style="color:var(--rd)">${a.fehlbestand ?? a.anzahl} Position(en) fehlen beim Broker</b> `
-        + `(${wann} Uhr). <b>Neue Einstiege sind gesperrt</b>, Ausstiege bleiben frei.`
+        `<b style="color:var(--rd)">${a.fehlbestand ?? a.anzahl} ${t('ab.fehlenBeimBroker')}</b> `
+        + `(${wann} ${t('ab.uhr')}). <b>${t('ab.einstiegeGesperrt')}</b>${t('ab.ausstiegeFrei')}`
         + verlaufBlock;
     } else {
       el.innerHTML =
-        `<b>${a.fremdbestand ?? a.anzahl} Position(en) nur beim Broker</b> (${wann} Uhr) — `
-        + 'nicht von dieser Engine eröffnet. Sie bleiben unangetastet, der Handel läuft weiter.'
+        `<b>${a.fremdbestand ?? a.anzahl} ${t('ab.nurBeimBroker')}</b> (${wann} ${t('ab.uhr')}) — `
+        + t('ab.fremdUnangetastet')
         + verlaufBlock;
     }
     return;
   }
   el.innerHTML =
-    `<b style="color:var(--gn)">Buch und Depot stimmen überein</b> (${wann} Uhr) — `
-    + `${a.verglichen} eigene, ${a.brokerPositionen} beim Broker.`
+    `<b style="color:var(--gn)">${t('ab.stimmtUeberein')}</b> (${wann} ${t('ab.uhr')}) — `
+    + `${a.verglichen} ${t('ab.eigene')}, ${a.brokerPositionen} ${t('ab.beimBroker')}`
     + verlaufBlock;
 }
 
@@ -2983,8 +2985,7 @@ function renderKlassenRat(): void {
   if (!rat || rat.raete.length === 0) {
     btn.hidden = true;
     box.innerHTML =
-      '<p class="hint">Noch keine Auswertung. Sie entsteht im Tageslauf nach '
-      + 'US-Börsenschluss, sobald eine Klasse genug Trades hat.</p>';
+      `<p class="hint">${t('kr.keineAuswertung')}</p>`;
     return;
   }
   const farbe: Record<string, string> = {
@@ -2996,17 +2997,17 @@ function renderKlassenRat(): void {
     zu_wenig_daten: 'var(--c-t3, #8b93a7)',
   };
   const wort: Record<string, string> = {
-    verstaerken: 'VERSTÄRKEN',
-    zurueckholen: 'ZURÜCKHOLEN',
-    behalten: 'BEHALTEN',
-    drosseln: 'DROSSELN',
-    abschalten: 'ABSCHALTEN',
-    zu_wenig_daten: 'ZU WENIG DATEN',
+    verstaerken: t('kr.verstaerken'),
+    zurueckholen: t('kr.zurueckholen'),
+    behalten: t('kr.behalten'),
+    drosseln: t('kr.drosseln'),
+    abschalten: t('kr.abschalten'),
+    zu_wenig_daten: t('kr.zuWenigDaten'),
   };
   btn.hidden = rat.aenderungen === 0;
   box.innerHTML =
     `<p class="hint"><b>${rat.fazit}</b>`
-    + (rat.autoTune ? ' · Auto-Regler ist an.' : ' · Auto-Regler ist aus.')
+    + (rat.autoTune ? ` · ${t('kr.reglerAn')}` : ` · ${t('kr.reglerAus')}`)
     + '</p>'
     + rat.raete
         .map((r) => {
@@ -3020,14 +3021,14 @@ function renderKlassenRat(): void {
           // aus, obwohl die Zahl dahinter aus dem Gesamtbestand stammt.
           const quelle =
             r.quelle === 'global'
-              ? ' <span title="Beleg aus dem Gesamtbestand, nicht aus eigenen Trades">· aus dem Gesamtbestand</span>'
+              ? ` <span title="${t('kr.globalTitel')}">· ${t('kr.global')}</span>`
               : r.quelle === 'schatten'
-                ? ' <span title="Beleg aus der Schatten-Messung ohne Ausführung">· aus dem Schatten</span>'
+                ? ` <span title="${t('kr.schattenTitel')}">· ${t('kr.schatten')}</span>`
                 : '';
           return `<div class="hint" style="margin-top:6px">
             <b style="color:${farbe[r.empfehlung] ?? 'inherit'}">${wort[r.empfehlung] ?? r.empfehlung}</b>
             · <b>${CLASS_LABELS[r.klasse] ?? r.klasse}</b>
-            · ${kante} je Dollar (${r.n} Trades)${quelle}${pfeil}<br />${r.grund}</div>`;
+            · ${kante} ${t('kr.jeDollar')} (${r.n} ${t('lo.trades')})${quelle}${pfeil}<br />${r.grund}</div>`;
         })
         .join('');
 }
@@ -3133,29 +3134,26 @@ function renderBestPractice(): void {
   ($('bpAdopt') as HTMLButtonElement).hidden = true;
   $('bpDiff').hidden = true;
   if (!bestPractice) {
-    body.textContent =
-      'Noch keine Auswertung — der erste Snapshot entsteht mit dem nächsten Tageslauf (nach US-Börsenschluss).';
+    body.textContent = t('bp.keineAuswertung');
     return;
   }
   const krit = bestPractice.kriterien;
   const kritTxt = krit
-    ? `mindestens ${krit.minTrades} Engine-Trades, ${krit.minTage} Tage Messzeitraum und eine positive Kante nach Gebühren`
-    : 'genug Belege';
+    ? `${t('bp.mindestens')} ${krit.minTrades} ${t('bp.engineTradesKomma')} ${krit.minTage} ${t('bp.tageUndKante')}`
+    : t('bp.genugBelege');
   if (bestPractice.stand === 'gekuert' && kz) {
     body.innerHTML =
-      `Das Konto mit der besten <b>Engine</b>-Bilanz (nur automatische Trades zählen): ` +
-      `Kante <b>${kz.kantePct ?? '–'} %</b> je gehandeltem Dollar · ${kz.n} Trades · ` +
-      `${Math.round(kz.zeitraumTage)} Tage. Anonymisiert gespeichert — Watchlist, Kapital ` +
-      `und dein Start/Stop-Schalter bleiben bei einer Übernahme unangetastet.`;
+      `${t('bp.besteBilanzA')} ` +
+      `${t('bp.kante')} <b>${kz.kantePct ?? '–'} %</b> ${t('bp.jeDollar')} · ${kz.n} ${t('lo.trades')} · ` +
+      `${Math.round(kz.zeitraumTage)} ${t('bp.tagePunkt')} ${t('bp.anonymisiert')}`;
     return;
   }
   const anw = bestPractice.anwaerter;
   body.textContent =
-    `Noch erfüllt kein Konto die Mindestbelege (${kritTxt}) — der Tages-Beste unter wenigen ` +
-    `Konten wäre sonst überwiegend Zufall.` +
+    `${t('bp.keinKontoA')} (${kritTxt}) ${t('bp.keinKontoB')}` +
     (anw
-      ? ` Bester Anwärter: Kante ${anw.kennzahlen.kantePct ?? '–'} % (${anw.kennzahlen.n} Trades)` +
-        (anw.fehlt.length > 0 ? ` — es fehlt: ${anw.fehlt.join(', ')}.` : '.')
+      ? ` ${t('lo.besterAnwaerter')} ${anw.kennzahlen.kantePct ?? '–'} % (${anw.kennzahlen.n} ${t('lo.trades')})` +
+        (anw.fehlt.length > 0 ? ` — ${t('lo.esFehlt')} ${anw.fehlt.join(', ')}.` : '.')
       : '');
 }
 
@@ -4377,11 +4375,8 @@ function renderWatchHint(): void {
   const tief = watchedSymbols().length;
   el.textContent =
     st.catalogQuotes > 0
-      ? `${st.catalogQuotes} von ${st.catalogOpen} offenen Katalog-Symbolen im letzten Scan ` +
-        `bekurst (alle 5 min). Davon ${tief} tief analysiert: 5-min-Kerzen, Indikatoren, ` +
-        `Prognose, Handel — automatisch gewählt nach Rangliste plus jede offene Position.`
-      : `${tief} Symbole tief analysiert — automatisch gewählt nach Rangliste plus jede ` +
-        `offene Position. Kurse holt der Scan für den ganzen Katalog.`;
+      ? `${st.catalogQuotes} ${t('wh.vonOffenen')} ${st.catalogOpen} ${t('wh.bekurstA')} ${tief} ${t('wh.bekurstB')}`
+      : `${tief} ${t('wh.tiefAnalysiert')}`;
 }
 
 function wireWatchlist(): void {
@@ -5360,7 +5355,7 @@ function updateOrderPreview(): void {
   const age = $('otAge');
   const q = sym === st.currentSymbol ? st.lastQuote : null;
   if (!q) {
-    risk.textContent = 'Kein zentraler Kurs für dieses Symbol im Blick — der Server prüft beim Bestätigen.';
+    risk.textContent = t('op.keinKurs');
     age.textContent = '';
     return;
   }
@@ -5381,17 +5376,17 @@ function updateOrderPreview(): void {
   const wirkMenge = schliesst ? offen.qty : qty;
   const exposure = wirkMenge * q.price;
   const cash = st.wallet?.paperBalance ?? null;
-  const pct = cash && cash > 0 ? ` (${((exposure / cash) * 100).toFixed(1)} % vom Cash)` : '';
+  const pct = cash && cash > 0 ? ` (${((exposure / cash) * 100).toFixed(1)} % ${t('op.vomCash')})` : '';
   const sl = st.strategy.engine.stopLossPct;
   const slLevel = st.orderSide === 'buy' ? q.price * (1 - sl / 100) : q.price * (1 + sl / 100);
   risk.textContent = schliesst
-    ? `Schließt die GANZE Position: ${wirkMenge} × ${fmtNum(q.price)} = ` +
+    ? `${t('op.schliesstGanze')}: ${wirkMenge} × ${fmtNum(q.price)} = ` +
       `$${exposure.toLocaleString('en-US', { maximumFractionDigits: 2 })}${pct} · ` +
-      'die eingetippte Menge gilt hier nicht'
+      t('op.mengeGiltNicht')
     : `${qty} × ${fmtNum(q.price)} = $${exposure.toLocaleString('en-US', { maximumFractionDigits: 2 })}` +
-      `${pct} · Stop-Level ~${fmtNum(slLevel)} (${sl} %)`;
+      `${pct} · ${t('op.stopLevel')} ~${fmtNum(slLevel)} (${sl} %)`;
   const secs = Math.max(0, Math.round((Date.now() - Date.parse(q.updatedAt)) / 1000));
-  age.textContent = `Kurs ${secs < 90 ? `${secs} s` : `${Math.round(secs / 60)} min`} alt (zentraler 5-min-Scan)`;
+  age.textContent = `${t('op.kurs')} ${secs < 90 ? `${secs} s` : `${Math.round(secs / 60)} min`} ${t('op.altScan')}`;
   age.style.color = secs > 600 ? 'var(--rd)' : '';
 }
 
@@ -6548,26 +6543,26 @@ function exitOutlook(p: Position, live: number | undefined): string {
 
   if (lv.stop !== null) {
     const dist = levelDistPct(lv.stop, live, 'stop', short);
-    parts.push(dist <= 0 ? '<b class="c-rd">Stop: löst beim nächsten Scan aus</b>' : `Stop in <b>${fmt(dist)}</b>`);
-    candidates.push({ label: 'Stop', dist });
+    parts.push(dist <= 0 ? `<b class="c-rd">${t('eo.stop')}: ${t('eo.loestAus')}</b>` : `${t('eo.stop')} ${t('eo.inAbstand')} <b>${fmt(dist)}</b>`);
+    candidates.push({ label: t('eo.stop'), dist });
   } else if (lv.stopAtr) {
-    parts.push('Stop: <b>ATR-adaptiv</b>');
+    parts.push(`${t('eo.stop')}: <b>${t('eo.atrAdaptiv')}</b>`);
   }
 
   if (lv.trail !== null) {
     const dist = levelDistPct(lv.trail, live, 'stop', short);
-    parts.push(dist <= 0 ? '<b class="c-rd">Trailing: löst beim nächsten Scan aus</b>' : `Trailing in <b>${fmt(dist)}</b>`);
-    candidates.push({ label: 'Trailing', dist });
+    parts.push(dist <= 0 ? `<b class="c-rd">${t('eo.trailing')}: ${t('eo.loestAus')}</b>` : `${t('eo.trailing')} ${t('eo.inAbstand')} <b>${fmt(dist)}</b>`);
+    candidates.push({ label: t('eo.trailing'), dist });
   } else if (lv.trailWartet) {
-    parts.push('Trailing: <span title="Der nachziehende Stop schärft sich erst, wenn die Position im Gewinn war">wartet auf Gewinn</span>');
+    parts.push(`${t('eo.trailing')}: <span title="${t('eo.wartetTitel')}">${t('eo.wartetAufGewinn')}</span>`);
   }
 
   if (lv.target !== null) {
     const dist = levelDistPct(lv.target, live, 'target', short);
-    parts.push(dist <= 0 ? '<b class="c-gn">Ziel: löst beim nächsten Scan aus</b>' : `Ziel in <b>${fmt(dist)}</b>`);
-    candidates.push({ label: 'Ziel', dist });
+    parts.push(dist <= 0 ? `<b class="c-gn">${t('eo.ziel')}: ${t('eo.loestAus')}</b>` : `${t('eo.ziel')} ${t('eo.inAbstand')} <b>${fmt(dist)}</b>`);
+    candidates.push({ label: t('eo.ziel'), dist });
   } else if (lv.targetAtr) {
-    parts.push('Ziel: <b>ATR-adaptiv</b>');
+    parts.push(`${t('eo.ziel')}: <b>${t('eo.atrAdaptiv')}</b>`);
   }
 
   // Zeitgrenze läuft in Tagen, nicht in Prozent — sie konkurriert deshalb
@@ -6575,12 +6570,12 @@ function exitOutlook(p: Position, live: number | undefined): string {
   const maxDays = risk.maxHoldDays ?? 0;
   if (maxDays > 0 && Number.isFinite(Date.parse(p.openedAt))) {
     const left = maxDays - (Date.now() - Date.parse(p.openedAt)) / 86_400_000;
-    parts.push(left <= 0 ? '<b>Zeitgrenze erreicht</b>' : `Zeit: noch <b>${left.toFixed(1)} Tg</b>`);
-    if (left <= 0) candidates.push({ label: 'Zeitgrenze', dist: -1 });
+    parts.push(left <= 0 ? `<b>${t('eo.zeitgrenze')}</b>` : `${t('eo.zeitNoch')} <b>${left.toFixed(1)} ${t('eo.tg')}</b>`);
+    if (left <= 0) candidates.push({ label: t('eo.zeitgrenzeKurz'), dist: -1 });
   }
 
   const next = candidates.sort((a, b) => a.dist - b.dist)[0];
-  if (next) parts.push(`<span class="pos-next">→ nächster Exit: ${next.label}</span>`);
+  if (next) parts.push(`<span class="pos-next">→ ${t('eo.naechsterExit')}: ${next.label}</span>`);
   return parts.join(' · ');
 }
 
@@ -6843,26 +6838,26 @@ function renderJournal(): void {
     mehr.hidden = false;
     mehr.disabled = st.tradesLoading || st.tradesDone;
     mehr.textContent = st.tradesFehler
-      ? `Nachladen fehlgeschlagen — nochmal versuchen`
+      ? t('jn.nachladenFehler')
       : st.tradesLoading
-        ? 'Lädt …'
+        ? t('jn.laedt')
         : st.tradesDone
-          ? 'Alle Trades geladen'
-          : 'Ältere laden';
+          ? t('jn.alleGeladen')
+          : t('jn.aeltereLaden');
     if (st.tradesFehler) {
       mehr.disabled = false;
       mehr.title = st.tradesFehler;
     } else {
       mehr.title = st.tradesDone
-        ? 'Die Historie ist vollständig geladen'
-        : 'Die nächsten 50 älteren Trades holen';
+        ? t('jn.vollstaendigTitel')
+        : t('jn.aeltereTitel');
     }
   }
 
   jb.innerHTML = '';
   if (zeilen.length === 0) {
     jb.innerHTML = `<tr><td colspan="6" class="c-t3">${
-      st.trades.length === 0 ? 'Keine Trades' : 'Kein Treffer für diesen Filter'
+      st.trades.length === 0 ? t('jn.keineTrades') : t('jn.keinTreffer')
     }</td></tr>`;
     return;
   }
@@ -7735,10 +7730,10 @@ function renderMomentum(m: MomentumDoc | null): void {
   const filter = $('moFilter');
   if (!m) {
     filter.textContent = '';
-    box.innerHTML = '<div class="hint">Das erste Ranking entsteht mit dem nächsten Tages-Lauf (18:00 ET).</div>';
+    box.innerHTML = `<div class="hint">${t('mo.erstesRanking')}</div>`;
     return;
   }
-  filter.textContent = m.marktOffen ? 'Markt offen' : 'Markt ZU';
+  filter.textContent = m.marktOffen ? t('mo.marktOffen') : t('mo.marktZu');
   filter.className = `tn-tag${m.marktOffen ? ' tn-ok' : ''}`;
   $('moEq').textContent = money(m.equity);
   $('moTrades').textContent = String(m.trades);
@@ -7748,14 +7743,16 @@ function renderMomentum(m: MomentumDoc | null): void {
   const top = m.top ?? [];
   box.innerHTML =
     top.length === 0
-      ? '<div class="hint">Kein Symbol mit positivem Momentum — das Depot bleibt flach.</div>'
+      ? `<div class="hint">${t('mo.keinMomentum')}</div>`
       : top
-          .map((t) => {
-            const drin = gehalten.has(t.symbol);
+          // `eintrag`, nicht `t`: Der Parametername verschattete die
+          // Übersetzungsfunktion t() aus i18n.
+          .map((eintrag) => {
+            const drin = gehalten.has(eintrag.symbol);
             return (
-              `<div class="fl-row"><span>${esc(t.symbol)}</span>` +
-              `<span class="mono ${pnlClass(t.score)}">${t.score >= 0 ? '+' : ''}${t.score.toFixed(1)} %</span>` +
-              `<span class="mono">${drin ? 'gehalten' : '—'}</span></div>`
+              `<div class="fl-row"><span>${esc(eintrag.symbol)}</span>` +
+              `<span class="mono ${pnlClass(eintrag.score)}">${eintrag.score >= 0 ? '+' : ''}${eintrag.score.toFixed(1)} %</span>` +
+              `<span class="mono">${drin ? t('mo.gehalten') : '—'}</span></div>`
             );
           })
           .join('');
@@ -7763,15 +7760,12 @@ function renderMomentum(m: MomentumDoc | null): void {
   const teile: string[] = [];
   if (!m.marktOffen) {
     teile.push(
-      'Der Leitindex steht unter seiner 200-Tage-Linie — es wird nichts gekauft. ' +
-        'Momentum-Einbrüche passieren fast immer in Erholungsphasen nach Markteinbrüchen; ' +
-        'flach zu bleiben ist hier die Strategie, nicht ihr Ausfall.',
+      t('mo.leitindexUnter'),
     );
   }
   if (m.fehlendeHistorie > 0) {
     teile.push(
-      `${m.fehlendeHistorie} Symbol(e) haben noch keine 12-Monats-Historie und nehmen am Ranking nicht teil — ` +
-        'die Lücke schließt sich täglich.',
+      `${m.fehlendeHistorie} ${t('mo.ohneHistorie')}`,
     );
   }
   $('moHint').textContent = teile.join(' ');
@@ -7902,8 +7896,7 @@ function renderStruktur(d: StrukturDoc | null): void {
     gen.textContent = '--';
     tries.textContent = '--';
     since.textContent = '--';
-    log.innerHTML =
-      '<div class="hint">Noch kein Lauf — die Suche prüft täglich um 18:10 ET einen Kandidaten.</div>';
+    log.innerHTML = `<div class="hint">${t('sk.nochKeinLauf')}</div>`;
     return;
   }
   gen.textContent = `G${d.generation ?? 0}`;
@@ -7917,19 +7910,19 @@ function renderStruktur(d: StrukturDoc | null): void {
     const zeilen = d.bedingungen?.zeilen ?? [];
     bed.innerHTML =
       zeilen.length === 0
-        ? '<div class="hint">Kommt mit dem ersten Tageslauf.</div>'
+        ? `<div class="hint">${t('sk.kommtMitLauf')}</div>`
         : zeilen
             .map(
               (z) =>
-                `<div class="tn-fl"><span class="tn-tag${z.seite === 'buy' ? ' tn-ok' : ''}">${z.seite === 'buy' ? 'Kauf' : 'Verkauf'}</span>` +
+                `<div class="tn-fl"><span class="tn-tag${z.seite === 'buy' ? ' tn-ok' : ''}">${z.seite === 'buy' ? t('sk.kauf') : t('sk.verkauf')}</span>` +
                 `<span class="tn-nm">${esc(z.label ?? '')}</span>` +
-                `<span class="mono">${z.gefeuert ?? 0}× · ${z.amSignalTag ?? 0}× am Signal-Tag</span></div>`,
+                `<span class="mono">${z.gefeuert ?? 0}× · ${z.amSignalTag ?? 0}× ${t('sk.amSignalTag')}</span></div>`,
             )
             .join('');
   }
   const rows = [...(d.journal ?? [])].reverse().slice(0, 12);
   if (rows.length === 0) {
-    log.innerHTML = '<div class="hint">Journal leer — der nächste Tageslauf schreibt die erste Prüfung.</div>';
+    log.innerHTML = `<div class="hint">${t('sk.journalLeer')}</div>`;
     return;
   }
   log.innerHTML = rows
@@ -7939,17 +7932,17 @@ function renderStruktur(d: StrukturDoc | null): void {
       });
       const marke =
         r.art === 'start'
-          ? '<span class="tn-tag">Startpunkt</span>'
+          ? `<span class="tn-tag">${t('sk.startpunkt')}</span>`
           : r.befoerdert
-            ? '<span class="tn-tag tn-ok">befördert</span>'
-            : '<span class="tn-tag">abgelehnt</span>';
+            ? `<span class="tn-tag tn-ok">${t('sk.befoerdert')}</span>`
+            : `<span class="tn-tag">${t('sk.abgelehnt')}</span>`;
       const fmt = (v: number | null | undefined): string =>
         typeof v === 'number' ? v.toFixed(2) : '--';
       const zahlen =
         r.art === 'start'
-          ? `Versuch ${r.nVersuche}`
-          : `Vorsprung ${fmt(r.vorsprung)} · DSR ${fmt(r.dsr)} · Latte ${fmt(r.latte)}` +
-            ` · Test-Sharpe ${fmt(r.testSharpe)} · n=${r.nSuch}/${r.nTest} · Versuch ${r.nVersuche}`;
+          ? `${t('sk.versuch')} ${r.nVersuche}`
+          : `${t('sk.vorsprung')} ${fmt(r.vorsprung)} · DSR ${fmt(r.dsr)} · ${t('sk.latte')} ${fmt(r.latte)}` +
+            ` · Test-Sharpe ${fmt(r.testSharpe)} · n=${r.nSuch}/${r.nTest} · ${t('sk.versuch')} ${r.nVersuche}`;
       const gruende = r.gruende.length > 0 ? `<div class="tn-r">${esc(r.gruende.join(' · '))}</div>` : '';
       return (
         `<div class="tn-e"><div class="tn-h"><span class="tn-nm">${esc(r.beschreibung)}</span>${marke}` +
@@ -8077,21 +8070,21 @@ function abHinweis(d: KiBerichtDoc): { stand: string; text: string } | null {
       return null;
     case 'kein_schluessel':
       return {
-        stand: 'nicht eingerichtet',
-        text: 'Für die Tages-Einschätzung fehlt noch der API-Schlüssel des Modell-Anbieters (siehe docs/SETUP.md). Alles andere auf dieser Karte läuft ohne ihn.',
+        stand: t('ah.nichtEingerichtet'),
+        text: t('ah.keinSchluessel'),
       };
     case 'keine_chronik':
       return {
-        stand: 'wartet auf Kennzahlen',
-        text: 'Die Einschätzung baut auf der Erkenntnis-Chronik auf, und die entsteht im abendlichen Kennzahlen-Lauf. Sobald der einmal durchgelaufen ist, schreibt der nächste Lauf den Bericht.',
+        stand: t('ah.wartetAufKennzahlen'),
+        text: t('ah.keineChronik'),
       };
     case 'fehler':
       return {
-        stand: 'fehlgeschlagen',
-        text: `Der letzte Versuch ist gescheitert: ${d.fehler ?? 'unbekannter Grund'}. Der nächste Tages-Lauf versucht es erneut.`,
+        stand: t('ah.fehlgeschlagen'),
+        text: `${t('ah.gescheitertA')} ${d.fehler ?? t('ah.unbekannterGrund')}. ${t('ah.gescheitertB')}`,
       };
     default:
-      return { stand: d.stand, text: 'Für heute liegt noch keine Einschätzung vor.' };
+      return { stand: d.stand, text: t('ah.nochKeine') };
   }
 }
 
@@ -8102,7 +8095,7 @@ function renderAiBericht(d: KiBerichtDoc | null): void {
   if (!text || !stand || !meta) return;
   if (!d) {
     stand.textContent = '';
-    text.textContent = 'Der erste Bericht entsteht mit dem nächsten Tages-Lauf (18:25 ET).';
+    text.textContent = t('ah.ersterBericht');
     meta.textContent = '';
     return;
   }
