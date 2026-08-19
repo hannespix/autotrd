@@ -42,7 +42,12 @@ describe('Gesamt-P&L-Maßstab — Markup und Logik', () => {
   });
 
   it('der Infotip an der Zahl erklärt beide Fragen (Gesamt vs. Handels-Analyse)', () => {
-    expect(dashboard).toContain("Gesamt P&amp;L ${iBtn('gesamtPnl')}");
+    /* Seit Tranche 5g (18.08.) trägt die Beschriftung einen Schlüssel statt
+     * des deutschen Wortlauts. Geprüft wird weiterhin dasselbe, nämlich dass
+     * der ⓘ-Knopf AN DIESER ZAHL sitzt — nur nicht mehr über die
+     * Rechtschreibung. Ein Wächter, der an der Sprache klebt, hätte die
+     * Übersetzung blockiert, ohne dass an seiner Aussage etwas dran war. */
+    expect(dashboard).toContain("${t('pf.gesamtPnl')} ${iBtn('gesamtPnl')}");
     expect(infotips).toContain('gesamtPnl:');
     expect(infotips).toContain('Equity (live) − Kapitalbasis');
     expect(infotips).toContain('Die Handels-Analyse beantwortet eine ANDERE Frage');
