@@ -619,7 +619,7 @@ function layout(email: string): string {
       <div class="card" data-panel="strategy"><div class="sect">${t('panel.strategie')}</div><div class="cbody">
         <div class="fld"><label class="lbl">Beobachtet ${iBtn('watchlist')}</label>
           <div id="wlChips" class="wl-chips"></div>
-          <div class="hint" id="wlHint">Automatisch gewählt.</div>
+          <div class="hint" id="wlHint">${t('lay.autoGewaehlt')}</div>
         </div>
         <!-- Watchlist-EDITOR (Stufe 3b, Task 121): Die Chips darüber zeigen,
              was die Engine BEOBACHTET (Rangliste + Positionen, kommt vom
@@ -632,12 +632,10 @@ function layout(email: string): string {
             <span id="wlCount" class="mono" style="color:var(--t3);font-weight:400"></span></label>
           <div id="wlEdit" class="wl-chips"></div>
           <div class="mt-combo" id="wlCombo" style="margin-top:6px">
-            <input id="wlInput" class="inp" placeholder="Symbol suchen oder frei eingeben …" autocomplete="off">
+            <input id="wlInput" class="inp" placeholder="${t('lay.symbolSuchen')}" autocomplete="off">
             <div id="wlSymList" class="mt-list" hidden></div>
           </div>
-          <div class="hint">Katalog als Vorschlag — per Enter geht auch jedes
-            andere Symbol, das Alpaca handelt (der Server prüft gegen das
-            Broker-Universum). Deine Watchlist handelt die Engine mit Vorrang.</div>
+          <div class="hint">${t('lay.katalogVorschlag')}</div>
         </div>
         <div class="row">
           <div class="fld"><label class="lbl">RSI Kauf &lt; ${iBtn('rsiBuy')}</label><input id="sRsiLo" class="inp" type="number"></div>
@@ -649,8 +647,8 @@ function layout(email: string): string {
              NUR noch im Options-Modal. Zwei Eingabeorte für dieselben Werte
              hießen: Wer zuletzt speichert, gewinnt — und die andere Ansicht
              zeigt bis zum Neuladen veraltete Zahlen. -->
-        <p class="hint">Positionsgröße, Stops und Scan-Takt stellst du in den
-          <b>Optionen (⚙)</b> ein — hier lebt nur, was die Signale formt.</p>
+        <p class="hint">${t('lay.reglerHinweisA')}
+          <b>Optionen (⚙)</b> ${t('lay.reglerHinweisB')}</p>
         <p id="stratErr" class="error" hidden></p>
         <button class="btn btn-g" id="saveBtn">Speichern</button>
         <div class="hint" id="saveHint"></div>
@@ -662,16 +660,14 @@ function layout(email: string): string {
              sobald die Strategie geladen ist, korrigiert der Renderer das. -->
         <button class="btn btn-g" id="engStart">Engine starten</button>
         <button class="btn btn-r" id="engStop" hidden>Engine stoppen</button>
-        <div class="hint">Bei Engine AN handelt der zentrale 5-min-Scan
-          automatisch nach deiner Strategie (Paper).</div>
+        <div class="hint">${t('lay.engineAn')}</div>
         <p id="accessNote" class="hint" hidden
           style="color:var(--yl,#d9a441);margin-top:6px"></p>
         <div id="verifyBox" hidden style="margin-top:8px">
-          <p class="hint" style="color:var(--rd)">E-Mail noch nicht bestätigt —
-            der Engine-Start ist bis dahin gesperrt (M7-Schutz).</p>
+          <p class="hint" style="color:var(--rd)">${t('lay.mailUnbestaetigt')}</p>
           <div class="row">
-            <button class="btn btn-n" id="verifySend">Bestätigungs-Mail</button>
-            <button class="btn btn-n" id="verifyDone">Ich habe bestätigt</button>
+            <button class="btn btn-n" id="verifySend">${t('lay.bestaetigungsMail')}</button>
+            <button class="btn btn-n" id="verifyDone">${t('lay.habeBestaetigt')}</button>
           </div>
           <div class="hint" id="verifyHint"></div>
         </div>
@@ -682,16 +678,12 @@ function layout(email: string): string {
            Workspace-Mechanik (applyPanels würde sonst die Admin-Sichtbarkeit
            mit style.display überschreiben). -->
       <div class="card" id="adminCard" hidden><div class="sect">Admin · Freischaltung</div><div class="cbody">
-        <div class="hint">Neue Konten starten auf „wartet" und handeln erst
-          nach der Freischaltung. Das eigene Konto ist serverseitig tabu.</div>
+        <div class="hint">${t('lay.neueKonten')}</div>
         <button class="btn btn-n" id="admReload" style="width:100%;margin:6px 0">Konten laden</button>
         <div id="admList"></div>
         <p id="admErr" class="error" hidden></p>
         <div class="wl-sec" style="margin-top:14px">Echtgeld-Not-Aus</div>
-        <div class="hint">Friert plattformweit alle Echtgeld-Order-Pfade ein
-          (greift auf allen Servern binnen 60 s). Paper-Konten, das eigene Buch
-          und die Depot-Überwachung laufen unverändert weiter — es geht nur
-          keine neue Echtgeld-Order mehr raus.</div>
+        <div class="hint">${t('lay.notausHinweis')}</div>
         <div class="row" style="gap:6px;align-items:center;margin-top:6px">
           <span id="admKillState" class="mono hint">Zustand: …</span>
           <button class="btn btn-r" id="admKillBtn" style="margin-left:auto" hidden></button>
@@ -703,22 +695,20 @@ function layout(email: string): string {
         <div class="row" style="gap:6px;margin-bottom:6px">
           <input id="jFilter" class="inp" placeholder="Symbol filtern …" style="flex:1">
           <select id="jSide" class="inp" style="max-width:110px">
-            <option value="">Alle</option><option value="buy">Nur Käufe</option>
-            <option value="sell">Nur Verkäufe</option><option value="closed">Nur mit P&amp;L</option>
+            <option value="">Alle</option><option value="buy">${t('lay.nurKaeufe')}</option>
+            <option value="sell">${t('lay.nurVerkaeufe')}</option><option value="closed">${t('lay.nurMitPnl')}</option>
           </select>
         </div>
         <div class="tw"><table class="tbl">
           <thead><tr><th>Zeit</th><th>Sym</th><th>Side</th><th>Qty</th><th>Preis</th><th>P&amp;L</th></tr></thead>
           <tbody id="jBody"><tr><td colspan="6" class="c-t3">Keine Trades</td></tr></tbody>
         </table></div>
-        <button class="btn btn-n" id="jMore" style="width:100%;margin-top:6px">Ältere laden</button>
+        <button class="btn btn-n" id="jMore" style="width:100%;margin-top:6px">${t('lay.aeltereLaden')}</button>
       </div></div>
 
       <div class="card" data-panel="journal"><div class="sect">${t('panel.journal')} ${iBtn('tradejournal')}</div><div class="cbody">
-        <div class="hint">Jeder gebuchte Trade landet hier automatisch — mit dem eingefrorenen
-          Signal-Kontext des Moments (Stimmen, Konfluenz, Regime). Deine Aufgabe ist die
-          Bewertung: Note A–D und eine Notiz. Die Fakten selbst sind unveränderlich.</div>
-        <div id="tjList" class="tn-log" style="margin-top:8px"><div class="hint">Noch keine Einträge — das Journal beginnt mit dem nächsten gebuchten Trade.</div></div>
+        <div class="hint">${t('lay.journalHinweis')}</div>
+        <div id="tjList" class="tn-log" style="margin-top:8px"><div class="hint">${t('lay.journalLeer')}</div></div>
       </div></div>
     </div>
 
@@ -878,14 +868,14 @@ function layout(email: string): string {
       </div></div>
 
       <div class="card" data-panel="chart2"><div class="sect">${t('panel.vergleichsChart')}
-        <button class="lchip" id="chipChart2" title="Link-Gruppe wechseln (Vergleichs-Chart folgt dieser Gruppe)">B</button></div><div class="cbody">
+        <button class="lchip" id="chipChart2" title="${t('lay.linkGruppe2')}">B</button></div><div class="cbody">
         <div class="chart-hd">
           <input id="ch2Sym" class="inp mh-sym"
-            title="Vergleichs-Symbol — frei wählbar, unabhängig vom Raster (Enter übernimmt)" />
+            title="${t('lay.vergleichsSymbol')}" />
           <span class="chart-px" id="ch2Px">--</span>
           <span class="gp-tf" id="c2tf" style="margin-left:auto">
             <button class="tf-btn" id="c2Auto"
-              title="Auto-Zeitrahmen: eng zoomen wechselt in die 5-Minuten-Sicht, weit zoomen zurück zu Tageskerzen">Auto</button>
+              title="${t('lay.autoZeitrahmen')}">Auto</button>
             <button class="tf-btn" data-c2i="1" title="1 Handelstag in 5-Minuten-Kerzen">1T</button>
             <button class="tf-btn" data-c2i="5" title="~5 Handelstage in 5-Minuten-Kerzen">1W</button>
             <button class="tf-btn" data-c2r="22">1M</button>
@@ -894,9 +884,7 @@ function layout(email: string): string {
           </span>
         </div>
         <div id="chart2Area" style="height:200px"></div>
-        <div class="hint">Zeitachse + Crosshair laufen synchron zum Haupt-Chart —
-          eigene Link-Gruppe für den Symbol-Vergleich; Zeitrahmen-Wechsel oben
-          gelten auch hier.</div>
+        <div class="hint">${t('lay.vergleichsChartHinweis')}</div>
       </div></div>
 
       <div class="sig-grid" data-panel="sigcards">
@@ -909,7 +897,7 @@ function layout(email: string): string {
       <div class="card" data-panel="autosignals"><div class="sect">${t('panel.autoSignale')}</div><div class="cbody">
         <div class="tw"><table class="tbl">
           <thead><tr><th>Ticker</th><th>RSI</th><th>MACD</th><th>BB %</th><th>Konfluenz</th><th>Signal</th></tr></thead>
-          <tbody id="sigBody"><tr><td colspan="6" class="c-t3">Noch kein Scan</td></tr></tbody>
+          <tbody id="sigBody"><tr><td colspan="6" class="c-t3">${t('lay.keinScan')}</td></tr></tbody>
         </table></div>
       </div></div>
 
@@ -998,7 +986,7 @@ function layout(email: string): string {
       <div class="card" data-panel="manualtrade"><div class="sect">${t('panel.manuellerTrade')}</div><div class="cbody">
         <label class="lbl">Symbol (Katalog)</label>
         <div class="mt-combo">
-          <input id="mSym" class="inp" placeholder="Suchen: Name oder Symbol …" autocomplete="off">
+          <input id="mSym" class="inp" placeholder="${t('lay.suchen')}" autocomplete="off">
           <div id="mSymList" class="mt-list" hidden></div>
         </div>
         <div id="mtInfo" hidden>
@@ -1011,10 +999,10 @@ function layout(email: string): string {
             <div><label class="lbl">Signal ${iBtn('signal')}</label><div id="mtSig" class="smv">--</div></div>
           </div>
         </div>
-        <label class="lbl">Stückzahl</label>
+        <label class="lbl">${t('lay.stueckzahl')}</label>
         <div class="row">
           <input id="mQty" class="inp" type="number" value="1" min="1" style="flex:1">
-          <button class="tf-btn" id="mtMax" title="Maximale Stückzahl nach Kaufkraft (inkl. Gebühren)">Max</button>
+          <button class="tf-btn" id="mtMax" title="${t('lay.maxStueckzahl')}">Max</button>
         </div>
         <div class="mt-sum">
           <div class="mt-row"><span>Zwischensumme</span><span id="mtSub" class="mono">--</span></div>
@@ -1026,8 +1014,7 @@ function layout(email: string): string {
           <button class="btn btn-g" id="mtBuy">Kaufen</button>
           <button class="btn btn-r" id="mtSell">Verkaufen</button>
         </div>
-        <div class="hint" id="mtHint">Paper-Ausführung zum Live-Kurs inkl. Kommission (0,1 %)
-          + Slippage (5 bp) — dieselben Konditionen wie im Backtest.</div>
+        <div class="hint" id="mtHint">${t('lay.paperAusfuehrung')}</div>
       </div></div>
 
       <div class="card" data-panel="clock"><div class="sect">${t('panel.marktUhrKopf')}</div><div class="cbody">
@@ -1046,73 +1033,57 @@ function layout(email: string): string {
           <div><label class="lbl">Bewertet</label><div id="fcScored" class="smv">0</div></div>
           <div><label class="lbl">Lookback</label><div id="fcLb" class="smv">--</div></div>
         </div>
-        <div class="hint" id="fcTuning">Self-Tuning sammelt Evidenz — Defaults aktiv,
-          bis genug Prognosen realisiert sind.</div>
+        <div class="hint" id="fcTuning">${t('lay.selfTuning')}</div>
         <div class="hint" id="fcVoteInfo"></div>
       </div></div>
 
       <div class="card" data-panel="fclab"><div class="sect">${t('panel.prognoseLabor')} <span id="flSym" style="float:right;color:var(--t3)"></span></div><div class="cbody">
-        <div class="hint">Selbstverbesserung: Jede gespeicherte Prognose wird nach Ablauf
-          ihres Horizonts gegen die eingetretene Realität bewertet. Die Trefferquote je
-          Lookback-Fenster steuert, welches Fenster künftige Prognosen nutzen — und ob
-          die Prognose beim Handeln überhaupt mitstimmen darf.</div>
+        <div class="hint">${t('lay.selbstverbesserung')}</div>
         <label class="lbl">Kombi-Statistik Tages-Prognose (Lookback-Fenster) ${iBtn('fcCombo')}</label>
-        <div id="flCombos" class="fl-tbl"><div class="hint">Noch keine bewerteten Prognosen.</div></div>
+        <div id="flCombos" class="fl-tbl"><div class="hint">${t('lay.keinePrognosen')}</div></div>
         <label class="lbl">Kombi-Statistik Kurzfrist/Intraday (Lookback in 5-min-Bars) ${iBtn('kurzfrist')}</label>
-        <div id="flCombosIntra" class="fl-tbl"><div class="hint">Noch keine bewerteten Kurzfrist-Prognosen.</div></div>
+        <div id="flCombosIntra" class="fl-tbl"><div class="hint">${t('lay.keineKurzfrist')}</div></div>
         <label class="lbl">Vorhersage vs. Realität ${iBtn('mae')} <span id="flSym2" style="color:var(--t3)"></span></label>
-        <div id="flRows" class="fl-tbl"><div class="hint">Noch keine bewerteten Prognosen für dieses Symbol.</div></div>
+        <div id="flRows" class="fl-tbl"><div class="hint">${t('lay.keinePrognosenSym')}</div></div>
       </div></div>
 
       <div class="card" data-panel="momentum"><div class="sect">${t('panel.momentum')} ${iBtn('momentum')}
         <span id="moFilter" class="tn-tag" style="float:right"></span>
       </div><div class="cbody">
-        <div class="hint">Statt einer Watchlist wird der GANZE Katalog nach 12-Monats-Momentum
-          sortiert (der letzte Monat zählt nicht mit — auf Monatssicht kehren Kurse eher um).
-          Gekauft werden die stärksten acht, gleichgewichtet, mit Wochen-Rhythmus. Das läuft
-          als Schattendepot neben deiner Strategie: Umgestellt wird erst, wenn es sie
-          nachweislich schlägt.</div>
+        <div class="hint">${t('lay.momentumHinweis')}</div>
         <div class="row" style="gap:12px;margin-top:8px">
           <div><label class="lbl">Schatten-Depot</label><div id="moEq" class="smv mono">--</div></div>
           <div><label class="lbl">Trades</label><div id="moTrades" class="smv mono">0</div></div>
           <div><label class="lbl">Bewertbar</label><div id="moRanked" class="smv mono">--</div></div>
         </div>
         <label class="lbl" style="margin-top:10px">Spitze des Universums</label>
-        <div id="moTop" class="fl-tbl"><div class="hint">Das erste Ranking entsteht mit dem nächsten Tages-Lauf (18:00 ET).</div></div>
+        <div id="moTop" class="fl-tbl"><div class="hint">${t('lay.erstesRanking')}</div></div>
         <div class="hint" id="moHint"></div>
       </div></div>
 
       <div class="card" data-panel="tuner"><div class="sect">${t('panel.autoTuner')} ${iBtn('autotuner')}
-        <label class="tn-sw" title="Abschalten heißt: Die Einstellungen bleiben, wie du sie gesetzt hast."><input type="checkbox" id="tnOn" checked><span>aktiv</span></label>
+        <label class="tn-sw" title="${t('lay.abschaltenHinweis')}"><input type="checkbox" id="tnOn" checked><span>aktiv</span></label>
       </div><div class="cbody">
-        <div class="hint">Jede Variante deiner Einstellung führt ein eigenes Schattenkonto auf
-          denselben Kursen. Schlägt eine davon nachweislich die aktuelle — statistisch geprüft,
-          nicht nach Bauchgefühl —, wird sie übernommen. Hier steht jede Prüfung, auch die
-          abgelehnten.</div>
-        <label class="lbl" style="margin-top:8px">Schatten-Flotte — Fortschritt der Beweisaufnahme</label>
-        <div id="tnFleet" class="fl-tbl"><div class="hint">Die Flotte startet mit dem nächsten Scan.</div></div>
+        <div class="hint">${t('lay.tunerHinweis')}</div>
+        <label class="lbl" style="margin-top:8px">${t('lay.schattenFlotte')}</label>
+        <div id="tnFleet" class="fl-tbl"><div class="hint">${t('lay.flotteStartet')}</div></div>
         <label class="lbl" style="margin-top:10px">Aus allen Konten gelernt ${iBtn('kollektiv')}</label>
-        <div id="tnGlobal" class="fl-tbl"><div class="hint">Noch zu wenige Konten für Kollektivwissen.</div></div>
-        <label class="lbl" style="margin-top:10px">Änderungs-Journal</label>
-        <div id="tnLog" class="tn-log"><div class="hint">Noch keine Prüfung — der Tuner urteilt täglich nach US-Schluss.</div></div>
+        <div id="tnGlobal" class="fl-tbl"><div class="hint">${t('lay.zuWenigKonten')}</div></div>
+        <label class="lbl" style="margin-top:10px">${t('lay.aenderungsJournal')}</label>
+        <div id="tnLog" class="tn-log"><div class="hint">${t('lay.keinePruefung')}</div></div>
       </div></div>
 
       <div class="card" data-panel="struktur"><div class="sect">${t('panel.struktursuche')} ${iBtn('struktursuche')}</div><div class="cbody">
-        <div class="hint">Während der Auto-Tuner an den REGLERN deiner Strategie dreht, baut die
-          Struktursuche am BAUPLAN: Einmal täglich tritt ein mutierter Regelbaum gegen den
-          amtierenden an — Walk-Forward-geprüft, mit einer Latte gegen Zufallstreffer, die mit
-          jedem Versuch wächst. Ein Sieger handelt nur ein Schattenkonto („Struktursuche" im
-          Studio); echtes Kapital bekommt er erst, wenn du ihn dort selbst beförderst.
-          Der Auto-Tuner-Schalter oben gilt auch für diese Suche.</div>
+        <div class="hint">${t('lay.strukturHinweis')}</div>
         <div class="row" style="gap:12px;margin-top:8px">
           <div><label class="lbl">Generation</label><div id="skGen" class="smv mono">--</div></div>
           <div><label class="lbl">Versuche</label><div id="skTries" class="smv mono">--</div></div>
-          <div><label class="lbl">Amtiert seit</label><div id="skSince" class="smv mono">--</div></div>
+          <div><label class="lbl">${t('lay.amtiertSeit')}</label><div id="skSince" class="smv mono">--</div></div>
         </div>
         <label class="lbl" style="margin-top:10px">Amtierender Baum — was feuert?</label>
-        <div id="skBed" class="fl-tbl"><div class="hint">Kommt mit dem ersten Tageslauf.</div></div>
-        <label class="lbl" style="margin-top:10px">Prüf-Journal</label>
-        <div id="skLog" class="tn-log"><div class="hint">Noch kein Lauf — die Suche prüft täglich um 18:10 ET einen Kandidaten.</div></div>
+        <div id="skBed" class="fl-tbl"><div class="hint">${t('lay.kommtMitTageslauf')}</div></div>
+        <label class="lbl" style="margin-top:10px">${t('lay.pruefJournal')}</label>
+        <div id="skLog" class="tn-log"><div class="hint">${t('lay.keinLauf')}</div></div>
       </div></div>
 
       <div class="card" data-panel="depotVerlauf"><div class="sect">${t('dc.titel')} ${iBtn('depotVerlauf')}
@@ -1162,7 +1133,7 @@ function layout(email: string): string {
       <div id="otAge" class="hint"></div>
       <p id="otErr" class="error" hidden></p>
       <div class="dbtns">
-        <button class="dbtn pri" id="otSubmit">Bestätigen (Enter)</button>
+        <button class="dbtn pri" id="otSubmit">${t('lay.bestaetigenEnter')}</button>
         <button class="dbtn" data-order-close>Abbrechen (Esc)</button>
       </div>
     </div>
@@ -1190,17 +1161,17 @@ function layout(email: string): string {
       <div class="an-zeit" id="anZeit"></div>
       <div class="an-share">
         <button class="dbtn" id="anShareBtn">Grafik teilen</button>
-        <label class="an-share-opt"><input type="checkbox" id="anShareBetraege"> Beträge zeigen</label>
+        <label class="an-share-opt"><input type="checkbox" id="anShareBetraege"> ${t('lay.betraegeZeigen')}</label>
         <span id="anShareStatus" class="hint"></span>
       </div>
       <div id="anSharePreview" class="an-share-vor" hidden></div>
-      <div id="anBody"><div class="hint">Noch keine geschlossenen Trades.</div></div>
+      <div id="anBody"><div class="hint">${t('lay.keineGeschlossenen')}</div></div>
     </div>
   </div>
 
   <!-- ── Nach dem Engine-Stop: Positionen schließen? (Owner 05.08.) ──────
        Der Stop pausiert ALLES, auch Stop-Loss und Take-Profit. Wer danach
-       Positionen offen lässt, hält sie ungeschützt. Ein Warnsatz allein
+       Positionen offen lässt, hält sie ${t('lay.ungeschuetzt')}. Ein Warnsatz allein
        verlagert die Arbeit auf den Nutzer; dieser Dialog erledigt sie an
        der Stelle, an der die Frage entsteht. -->
   <div class="dmodal" id="stopModal">
@@ -1208,16 +1179,15 @@ function layout(email: string): string {
     <div class="dsheet" style="width:min(560px,100%)">
       <button class="dclose" data-close="stop">✕</button>
       <h3 style="margin:0 0 6px">Engine gestoppt</h3>
-      <p class="hint">Es werden keine neuen Trades mehr eröffnet — und auch
-        <b>keine Stop-Loss- oder Take-Profit-Ausführungen</b> mehr. Deine offenen
-        Positionen bleiben genau so stehen, wie sie sind, sind ab jetzt aber
+      <p class="hint">${t('lay.stoppA')}
+        <b>${t('lay.stoppB')}</b> ${t('lay.stoppC')}
         <b>ungeschützt</b>.</p>
-      <p class="hint">Was soll damit passieren?</p>
+      <p class="hint">${t('lay.wasSollPassieren')}</p>
       <div id="stopRows" style="margin-top:8px"></div>
       <div class="row" style="align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap">
         <button class="btn btn-n" id="stopKeep">Offen lassen</button>
-        <button class="btn btn-n" id="stopSel">Ausgewählte schließen</button>
-        <button class="btn btn-r" id="stopAll">Alle schließen</button>
+        <button class="btn btn-n" id="stopSel">${t('lay.ausgewaehlteSchliessen')}</button>
+        <button class="btn btn-r" id="stopAll">${t('lay.alleSchliessen')}</button>
       </div>
       <div id="stopOut" style="margin-top:8px"></div>
     </div>

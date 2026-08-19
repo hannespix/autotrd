@@ -837,3 +837,65 @@ describe('Admin-Karte und Not-Aus sind zweisprachig (Tranche 5i)', () => {
     }
   });
 });
+
+describe('Restmarkup der Karten und Modals (Tranche 5j)', () => {
+  const lay = dashboard.slice(
+    dashboard.indexOf('function layout('),
+    dashboard.indexOf('const RESET_CONFIRM_WORD'),
+  );
+
+  it('der layout-Block ist gefunden', () => {
+    expect(lay.length).toBeGreaterThan(40000);
+    expect(lay).toContain('data-panel="strategy"');
+    expect(lay).toContain('id="orderModal"');
+  });
+
+  it('kein deutscher Fließtext mehr im layout-Markup', () => {
+    /* Positivliste wie in 5f — nur Fachbegriffe, Kürzel und Zeichen, die in
+     * beiden Sprachen gleich sind. Alles andere muss durch t(). */
+    const ohne = lay
+      /* Kommentare zuerst: `layout` ist zu zwei Dritteln Erklärung, warum das
+       * Markup so aussieht, wie es aussieht. Diese Sätze sollen deutsch
+       * bleiben — dieses Projekt kommentiert auf Deutsch, und ein Wächter,
+       * der das anschlägt, verlangt eine Übersetzung der Dokumentation, um
+       * eine Übersetzung der Oberfläche zu bescheinigen. */
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1')
+      .replace(/<!--[\s\S]*?-->/g, '')
+      .replace(/\$\{t\('[^']+'\)\}/g, '')
+      .replace(/\$\{iBtn\('[^']+'\)\}/g, '');
+    const DEUTSCH =
+      /\b(nicht|werden|wird|noch|keine|kein|eine|einen|deiner|deine|dein|jeder|jede|sobald|damit|dieses|dieser|bleiben|stellst|handelt|gilt|läuft|zählt)\b/g;
+    const treffer = [...new Set([...ohne.matchAll(DEUTSCH)].map((m) => m[0]))];
+    expect(treffer, `deutscher Rest im Markup — ${treffer.join(' | ')}`).toEqual([]);
+  });
+
+  it('die Engine-Stopp-Warnung bleibt in Teilen und behält ihre Schärfe', () => {
+    /* Dieser Absatz sagt, was NICHT mehr passiert, wenn die Engine aus ist:
+     * keine Stop-Loss- und keine Take-Profit-Ausführungen, offene Positionen
+     * ungeschützt. Das ist die folgenreichste Warnung der Oberfläche.
+     *
+     * Sie ist absichtlich in vier Schlüssel geschnitten statt in einen
+     * Absatz: In einem langen Block fällt eine schwache Übersetzung
+     * niemandem auf — bei „unprotected" als eigener Zeile schon. */
+    expect(EN['lay.stoppB']).toContain('stop-loss');
+    expect(EN['lay.stoppB']).toContain('take-profit');
+    expect(EN['lay.ungeschuetzt']).toBe('unprotected');
+    expect(EN['lay.stoppA']).toContain('No new trades');
+  });
+
+  it('der Not-Aus-Hinweis sagt in beiden Sprachen, was WEITERLÄUFT', () => {
+    /* Die Hälfte der Aussage ist die Einschränkung: Paper, eigenes Buch und
+     * Depot-Überwachung laufen weiter. Ohne sie liest sich der Not-Aus wie
+     * ein Totalausfall — und wer das glaubt, drückt ihn im Ernstfall nicht. */
+    expect(EN['lay.notausHinweis']).toContain('Paper accounts');
+    expect(EN['lay.notausHinweis']).toContain('keep running unchanged');
+    expect(EN['lay.notausHinweis']).toContain('60 s');
+  });
+
+  it('jede lay.*-Zeile hat eine englische Fassung', () => {
+    for (const k of Object.keys(DE).filter((s) => s.startsWith('lay.'))) {
+      expect(EN[k as TextSchluessel], `${k} ohne englische Fassung`).toBeTruthy();
+    }
+  });
+});
