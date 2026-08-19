@@ -774,3 +774,66 @@ describe('Broker-Status und Steuer-Export sind zweisprachig (Tranche 5h)', () =>
     }
   });
 });
+
+describe('Admin-Karte und Not-Aus sind zweisprachig (Tranche 5i)', () => {
+  /* Derselbe Wächter-Bauplan wie in 5h — deutsche Funktionswörter direkt im
+   * kommentarfreien Code, ohne Zeichenketten zu tokenisieren. Die
+   * Erfahrung aus 5f und 5h: Ein Wächter, der clever wird, wird unzuverlässig. */
+  const nurCode = (q: string): string =>
+    q
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1')
+      /* Schlüsselnamen sind CODE, kein Anzeigetext. `t('adm.wartet')` würde
+       * den Wächter sonst mit genau dem Wort auslösen, das er dort sehen
+       * WILL — und die einzige Reparatur wäre, die Schlüssel unlesbar zu
+       * machen. Ein Wächter, der zu englischen Bezeichnern zwingt, verbessert
+       * nichts; er verschiebt nur den deutschen Text in den Dateikopf. */
+      .replace(/t\('[^']+'\)/g, 't()')
+      /* Auch Eigenschaftsnamen sind CODE: `row.reife.bereit` ist ein Feld im
+       * Datenmodell, kein Anzeigetext. Dieses Projekt benennt bewusst auf
+       * Deutsch (reife, bereit, erfuellt) — ein Wächter, der das anschlägt,
+       * verlangt eine Umbenennung des halben Modells, um eine Übersetzung zu
+       * bescheinigen, die damit nichts zu tun hat. */
+      .replace(/\.[A-Za-zÄÖÜäöü_$][\w$]*/g, '.x');
+  /* Roh für die Grenzprüfung, gestrippt für die Wortsuche. Der erste
+   * Entwurf prüfte beides am gestrippten Text — und schlug fehl, weil das
+   * Strippen `s.killSwitch` zu `.x` macht. Ein Wächter darf sein Prüfobjekt
+   * nicht so weit verarbeiten, dass er seine eigene Grenzkontrolle
+   * unbrauchbar macht. */
+  const adminRoh = dashboard.slice(
+    dashboard.indexOf('const ACCESS_BADGE'),
+    dashboard.indexOf('function admBtn'),
+  );
+  const admin = nurCode(adminRoh);
+
+  it('der Block ist gefunden', () => {
+    expect(adminRoh.length).toBeGreaterThan(2000);
+    expect(adminRoh).toContain('adminSetAccess');
+    expect(adminRoh).toContain('killSwitch');
+  });
+
+  it('kein deutsches Wort mehr im Admin-Code', () => {
+    const DEUTSCH =
+      /\b(wartet|gesperrt|frei|lädt|Sperren|Freischalten|entziehen|machen|gefunden|Zustand|AUSGELÖST|bereit|lösen|auslösen|lesbar|laufen|normal)\b/g;
+    const treffer = [...new Set([...admin.matchAll(DEUTSCH)].map((m) => m[0]))];
+    expect(treffer, `deutscher Rest — ${treffer.join(' | ')}`).toEqual([]);
+  });
+
+  it('der Not-Aus bleibt in beiden Sprachen als Not-Aus erkennbar', () => {
+    /* Das ist der Knopf, der ALLE Echtgeld-Orders stoppt. Seine Beschriftung
+     * darf in keiner Sprache harmlos klingen — „Stop" wäre ein Wort für
+     * einen Scan, „TRIP EMERGENCY STOP" ist eines für eine Reißleine. Die
+     * Großschreibung trägt die Dringlichkeit mit, deshalb steht sie im
+     * Wörterbuch und nicht im CSS. */
+    expect(EN['adm.notausAusloesen']).toBe('TRIP EMERGENCY STOP');
+    expect(EN['adm.notausAusloesen']).toBe(EN['adm.notausAusloesen']!.toUpperCase());
+    expect(DE['adm.notausAusloesen' as TextSchluessel]).toBe('NOT-AUS auslösen');
+    expect(EN['adm.ausgeloest']).toBe('TRIPPED');
+  });
+
+  it('jede adm.*-Zeile hat eine englische Fassung', () => {
+    for (const k of Object.keys(DE).filter((s) => s.startsWith('adm.'))) {
+      expect(EN[k as TextSchluessel], `${k} ohne englische Fassung`).toBeTruthy();
+    }
+  });
+});
