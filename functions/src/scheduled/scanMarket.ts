@@ -3378,6 +3378,12 @@ export async function runScan(force = false): Promise<ScanResult> {
       //
       // Kostet nichts: Das Markt-Dokument wird ohnehin gelesen und
       // geschrieben — es kommt nur ein Feld dazu.
+      // BEWUSST 2× Taker, obwohl Krypto-Einstiege seit Hebel 1b Maker
+      // zahlen: Dieses Aggregat trägt >1 000 Alt-Signale, die mit 2× Taker
+      // gerechnet wurden — ein Satzwechsel mittendrin mischte zwei
+      // Gebührenordnungen in eine Zahl. Die Reihe mit den ECHTEN Kosten ist
+      // die HALTE-Reihe unten (roundtripFeeRateForClass), und nur sie
+      // entscheidet den Regler-Rückweg (classAdvisor, 17.08.).
       const kosten = feeRateForClass(classify(symbol)) * 2;
       const vorher = leseSchattenSignal(symDoc.get('lastSignal'), now.getTime());
       if (vorher) {

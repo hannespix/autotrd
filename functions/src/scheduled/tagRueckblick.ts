@@ -34,7 +34,7 @@ import {
   type SchattenKlasse,
   allSymbols,
   classify,
-  feeRateForClass,
+  roundtripFeeRateForClass,
   werteTagRueckblick,
   type TagesKurs,
 } from '../../../shared/src/index.js';
@@ -67,8 +67,17 @@ import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
  * 750er-Fenster hätten sich still mit den neuen aus dem 6000er-Fenster
  * vermischt, und die Kante wäre ein Mittel aus zwei verschiedenen Messungen
  * gewesen. Genau davor warnt dieser Kommentar seit V1.
+ *
+ * V5 (20.08., Owner: „Krypto-Strategie ändern, damit positive Trades möglich
+ * werden"): Kostenwechsel. Bis V4 rechnete die Bewertung Roundtrips als
+ * 2× Taker; seit dem Maker-Umbau der Krypto-Einstiege ist der echte Satz
+ * Maker + Taker (`roundtripFeeRateForClass`, für Krypto 0,40 % statt 0,50 %).
+ * Das Aggregat ist additiv — mit altem Bestand fortgesetzt wäre jede
+ * Krypto-Kante ein Mittel aus zwei Gebührenordnungen. Der Sprung leert es
+ * und startet die Messung mit den echten Kosten neu; eine Nacht Neulauf
+ * ist der Preis für eine Zahl, die eine Aussage ist.
  */
-export const TAG_RUECKBLICK_V = 4;
+export const TAG_RUECKBLICK_V = 5;
 
 /**
  * Wie lange ein Lauf höchstens rechnet — statt eines festen Symbol-Deckels.
@@ -352,7 +361,12 @@ export async function runTagRueckblick(
       // ersten Basistage nicht an zu wenig Historie scheitern.
       const reihe = volle.slice(-(MAX_BASISTAGE + 260));
       const kl = classify(sym);
-      const kosten = feeRateForClass(kl) * 2;
+      // Maker-Einstieg + Taker-Exit — dieselbe Rechnung wie in der
+      // HALTE-Reihe des Signal-Schattens (scanMarket). Dessen 5-Minuten-
+      // Reihe bleibt bewusst bei 2× Taker (Alt-Signale im additiven
+      // Aggregat); HIER geht der Satzwechsel, weil der Versions-Sprung
+      // (TAG_RUECKBLICK_V) das Aggregat leert statt es zu mischen.
+      const kosten = roundtripFeeRateForClass(kl);
 
       const e = werteTagRueckblick(
         reihe,
