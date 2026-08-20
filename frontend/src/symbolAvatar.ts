@@ -29,7 +29,41 @@ export function symbolMonogramm(symbol: string): string {
   return rein.slice(0, 2) || '·';
 }
 
-/** Fertiges Chip-HTML — inhärent escaped (Monogramm ist [A-Z0-9]{1,2}). */
+/**
+ * Basis-URL des Logo-Proxys (Functions „logo") — dasselbe vorhersagbare
+ * Cloud-Run-Muster wie healthz. Stimmt der Host nicht, schlagen die Bilder
+ * fehl und die Monogramme bleiben stehen — die Kette ist fail-safe.
+ */
+const LOGO_BASIS = 'https://logo-6xru5z43xa-uc.a.run.app';
+
+/**
+ * Fertiges Chip-HTML — inhärent escaped: Monogramm ist [A-Z0-9]{1,2}, die
+ * Bild-URL entsteht aus dem gefilterten Symbol ([A-Za-z0-9.^-]) plus
+ * encodeURIComponent. Das echte Logo (Owner 20.08., Reddit-Screenshot)
+ * liegt ÜBER dem Monogramm; lädt es nicht, entfernt die Fehler-Delegation
+ * das Bild und das Monogramm bleibt sichtbar.
+ */
 export function symbolAvatar(symbol: string, klein = false): string {
-  return `<span class="sym-av f${symbolTon(symbol)}${klein ? ' sm' : ''}" aria-hidden="true">${symbolMonogramm(symbol)}</span>`;
+  const rein = symbol.replace(/[^A-Za-z0-9.^-]/g, '').toUpperCase();
+  return (
+    `<span class="sym-av f${symbolTon(symbol)}${klein ? ' sm' : ''}" aria-hidden="true">` +
+    `${symbolMonogramm(symbol)}` +
+    `<img class="sym-logo" loading="lazy" alt="" src="${LOGO_BASIS}/?symbol=${encodeURIComponent(rein)}">` +
+    `</span>`
+  );
+}
+
+/**
+ * Einmalig beim Boot: kaputte Logo-Bilder still entfernen (Capture-Phase,
+ * error-Events bubbeln nicht) — darunter steht immer das Monogramm.
+ */
+export function installiereLogoFallback(): void {
+  document.addEventListener(
+    'error',
+    (e) => {
+      const ziel = e.target;
+      if (ziel instanceof HTMLImageElement && ziel.classList.contains('sym-logo')) ziel.remove();
+    },
+    true,
+  );
 }

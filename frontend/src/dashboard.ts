@@ -99,7 +99,7 @@ import {
   type PriceLineSpec,
 } from './chart.js';
 import { ICONS } from './icons.js';
-import { symbolAvatar } from './symbolAvatar.js';
+import { installiereLogoFallback, symbolAvatar } from './symbolAvatar.js';
 import { starteTour, tourAktiv } from './tour.js';
 import { newsChartMarkers, newsForDay } from './newsMarkers.js';
 import {
@@ -9148,6 +9148,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   $('anShareTrade')?.addEventListener('click', () => void erstelleMaschinenVideo());
   $('anVideoShare')?.addEventListener('click', () => void teileVideoDatei());
   $('anVideoSave')?.addEventListener('click', speichereVideoDatei);
+  // Logo-Fallback der Symbol-Chips: kaputte Bilder weg, Monogramm bleibt.
+  installiereLogoFallback();
   $('anShareBetraege')?.addEventListener('change', renderSharePreview);
   $('anStoryPrev')?.addEventListener('click', () => storyBlaettern(-1));
   $('anStoryNext')?.addEventListener('click', () => storyBlaettern(1));
