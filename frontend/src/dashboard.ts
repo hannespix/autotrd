@@ -218,7 +218,7 @@ import {
   histogram,
 } from './svgcharts.js';
 import { iBtn, initInfoTips } from './infotips.js';
-import { serverText, setzeSprache, sprachWahl, t } from './i18n.js';
+import { serverText, setzeSprache, sprachWahl, t, valText } from './i18n.js';
 import { reglerWarnung } from './reglerHinweis.js';
 import { mountLegalFooter } from './legal.js';
 import {
@@ -6237,7 +6237,7 @@ async function submitStrategy(next: Strategy, hint: string): Promise<void> {
   const err = $('stratErr');
   const problems = validateStrategy(next);
   if (problems.length > 0) {
-    err.textContent = problems[0]!;
+    err.textContent = valText(problems[0]!);
     err.hidden = false;
     return;
   }
@@ -9811,7 +9811,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     const strategy = optionsFormStrategy();
     const problems = validateStrategy(strategy);
     if (problems.length > 0) {
-      $('optMsg').textContent = problems[0]!;
+      $('optMsg').textContent = valText(problems[0]!);
       return;
     }
     $('optMsg').textContent = t('mt.speichere');
@@ -9896,7 +9896,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     const next = applySuggestions(optionsFormStrategy(), gewaehlt);
     const problems = validateStrategy(next);
     if (problems.length > 0) {
-      $('advMsg').textContent = problems[0]!;
+      $('advMsg').textContent = valText(problems[0]!);
       return;
     }
     $('advMsg').textContent = t('mt.uebernehme');
@@ -9937,7 +9937,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     const next = uebernehmeEinstellungen(st.strategy, bestPractice.einstellungen);
     const problems = validateStrategy(next);
     if (problems.length > 0) {
-      $('bpMsg').textContent = problems[0]!;
+      $('bpMsg').textContent = valText(problems[0]!);
       return;
     }
     $('bpMsg').textContent = t('mt.uebernehme');
@@ -10021,7 +10021,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     const next = wendeLoadoutAn(st.strategy, loGewaehlt);
     const problems = validateStrategy(next);
     if (problems.length > 0) {
-      $('loMsg').textContent = problems[0]!;
+      $('loMsg').textContent = valText(problems[0]!);
       return;
     }
     $('loMsg').textContent = t('mt.uebernehme');

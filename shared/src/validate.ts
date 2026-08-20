@@ -5,6 +5,16 @@
  * damit die bekannte kaputte, verschachtelte Alt-Variante
  * (strategy/indices/risk_management/execution) nie wieder gespeichert
  * werden kann. Pure Funktion, keine Laufzeit-Abhängigkeiten.
+ *
+ * ── Meldungen sind CODES, keine Prosa (Sprachumschalter Phase 3) ──────────
+ *
+ * Jedes Problem hat die Form `val.<muster>|<feld>|<p1>|<p2>` — Parameter
+ * enthalten nie ein `|`. Der Klartext (Deutsch ODER Englisch) entsteht erst
+ * im Frontend (`valText` in i18n.ts); dieselben Codes wirft die Callable als
+ * HttpsError, `serverText` löst sie dort auf. Vorher stand hier deutsche
+ * Prosa — im EN-Modus bekam der Nutzer deutsche Ablehnungen. Das Feld steht
+ * IMMER als erster Parameter im Code, damit Logs und Tests greifbar bleiben
+ * (`…|engine.maxOpenPositions|1|8` sagt auch roh, worum es geht).
  */
 
 import type { Strategy } from './strategy.js';
@@ -27,26 +37,24 @@ function isFiniteNumber(v: unknown): v is number {
 
 /**
  * Prüft einen unbekannten Wert gegen das flache Strategie-Schema.
- * Liefert eine Liste von Problemen; leer ⇒ gültig.
+ * Liefert eine Liste von Problem-CODES (Kopf dieser Datei); leer ⇒ gültig.
  */
 export function validateStrategy(value: unknown): string[] {
   const problems: string[] = [];
 
   if (!isRecord(value)) {
-    return ['Strategie muss ein Objekt sein'];
+    return ['val.keinObjekt'];
   }
 
   for (const key of LEGACY_KEYS) {
     if (key in value) {
-      problems.push(
-        `Verbotener Alt-Schema-Schlüssel '${key}' — das Schema ist FLACH (broker/watchlist/engine/indicators/signals)`,
-      );
+      problems.push(`val.altSchema|${key}`);
     }
   }
 
   for (const key of REQUIRED_TOP_KEYS) {
     if (!(key in value)) {
-      problems.push(`Pflichtschlüssel '${key}' fehlt`);
+      problems.push(`val.pflichtFehlt|${key}`);
     }
   }
   if (problems.length > 0) return problems;
@@ -54,23 +62,23 @@ export function validateStrategy(value: unknown): string[] {
   const { broker, watchlist, engine, indicators, signals } = value;
 
   if (!isRecord(broker)) {
-    problems.push('broker muss ein Objekt sein');
+    problems.push('val.objekt|broker');
   } else {
     if (broker.provider !== 'paper' && broker.provider !== 'alpaca') {
-      problems.push("broker.provider muss 'paper' oder 'alpaca' sein");
+      problems.push('val.entweder|broker.provider|paper|alpaca');
     }
     if (broker.mode !== 'paper' && broker.mode !== 'live') {
-      problems.push("broker.mode muss 'paper' oder 'live' sein");
+      problems.push('val.entweder|broker.mode|paper|live');
     }
     if (!isFiniteNumber(broker.initialCapital) || broker.initialCapital <= 0) {
-      problems.push('broker.initialCapital muss eine positive Zahl sein');
+      problems.push('val.zahlPositiv|broker.initialCapital');
     }
     if (typeof broker.paperTrading !== 'boolean') {
-      problems.push('broker.paperTrading muss boolean sein');
+      problems.push('val.boolean|broker.paperTrading');
     }
     // Additiv (Bestands-Strategien haben das Feld nicht): fehlend = 'balance'
     if (broker.sizingBase !== undefined && broker.sizingBase !== 'initial' && broker.sizingBase !== 'balance') {
-      problems.push("broker.sizingBase muss 'initial' oder 'balance' sein");
+      problems.push('val.entweder|broker.sizingBase|initial|balance');
     }
     // Hebel: additiv, fehlend = 1 (aus). Die Obergrenze steht auch hier und
     // nicht nur in der serverseitigen Hülle — ein Wert, den der Server ohnehin
@@ -78,126 +86,126 @@ export function validateStrategy(value: unknown): string[] {
     // Zahl an, nach der nie gehandelt wird.
     if (broker.leverage !== undefined
       && (!isFiniteNumber(broker.leverage) || broker.leverage < 1 || broker.leverage > MAX_LEVERAGE)) {
-      problems.push(`broker.leverage muss zwischen 1 und ${MAX_LEVERAGE} liegen (1 = kein Hebel)`);
+      problems.push(`val.bereichHebel|broker.leverage|1|${MAX_LEVERAGE}`);
     }
   }
 
   if (!Array.isArray(watchlist) || !watchlist.every((s) => typeof s === 'string' && s.length > 0)) {
-    problems.push('watchlist muss ein Array nicht-leerer Symbole sein');
+    problems.push('val.watchlist');
   }
 
   if (!isRecord(engine)) {
-    problems.push('engine muss ein Objekt sein');
+    problems.push('val.objekt|engine');
   } else {
     for (const k of ['checkIntervalMin', 'maxPositionPct'] as const) {
       if (!isFiniteNumber(engine[k]) || (engine[k] as number) <= 0) {
-        problems.push(`engine.${k} muss eine positive Zahl sein`);
+        problems.push(`val.zahlPositiv|engine.${k}`);
       }
     }
     // Stop/Take dürfen 0 sein = „diese Seite ist aus" (Audit 26.07.: die
     // Engine liest 0 seither korrekt als abgeschaltet, nicht als „sofort").
     for (const k of ['stopLossPct', 'takeProfitPct'] as const) {
       if (!isFiniteNumber(engine[k]) || (engine[k] as number) < 0) {
-        problems.push(`engine.${k} muss eine Zahl ≥ 0 sein (0 = aus)`);
+        problems.push(`val.zahlNullAus|engine.${k}`);
       }
     }
     // Obergrenze für die Positionsgröße — ohne sie könnte ein Tippfehler
     // ("100") das gesamte Kapital in eine einzige Position werfen.
     if (isFiniteNumber(engine.maxPositionPct) && (engine.maxPositionPct as number) > 100) {
-      problems.push('engine.maxPositionPct darf höchstens 100 sein');
+      problems.push('val.hoechstens|engine.maxPositionPct|100');
     }
     for (const k of ['trailingStopPct', 'atrStopMult', 'atrTakeMult', 'maxHoldDays'] as const) {
       if (engine[k] !== undefined && (!isFiniteNumber(engine[k]) || (engine[k] as number) < 0)) {
-        problems.push(`engine.${k} muss eine Zahl ≥ 0 sein (0 = aus)`);
+        problems.push(`val.zahlNullAus|engine.${k}`);
       }
     }
     if (engine.cooldownMin !== undefined && (!isFiniteNumber(engine.cooldownMin) || engine.cooldownMin < 0)) {
-      problems.push('engine.cooldownMin muss eine Zahl ≥ 0 sein');
+      problems.push('val.zahlNull|engine.cooldownMin');
     }
     if (engine.maxOpenPositions !== undefined
       && (!isFiniteNumber(engine.maxOpenPositions)
         || engine.maxOpenPositions < 1
         || engine.maxOpenPositions > MAX_OPEN_POSITIONS_CAP)) {
-      problems.push(`engine.maxOpenPositions muss zwischen 1 und ${MAX_OPEN_POSITIONS_CAP} liegen`);
+      problems.push(`val.bereich|engine.maxOpenPositions|1|${MAX_OPEN_POSITIONS_CAP}`);
     }
     if (engine.riskPerTradePct !== undefined
       && (!isFiniteNumber(engine.riskPerTradePct)
         || engine.riskPerTradePct < 0
         || engine.riskPerTradePct > MAX_RISK_PER_TRADE_PCT)) {
-      problems.push(`engine.riskPerTradePct muss zwischen 0 und ${MAX_RISK_PER_TRADE_PCT} liegen (0 = aus)`);
+      problems.push(`val.bereichAus|engine.riskPerTradePct|0|${MAX_RISK_PER_TRADE_PCT}`);
     }
     if (engine.corePct !== undefined
       && (!isFiniteNumber(engine.corePct) || engine.corePct < 0 || engine.corePct > CORE_PCT_CAP)) {
-      problems.push(`engine.corePct muss zwischen 0 und ${CORE_PCT_CAP} liegen (0 = kein Sockel)`);
+      problems.push(`val.bereichSockel|engine.corePct|0|${CORE_PCT_CAP}`);
     }
     if (engine.mode !== undefined && engine.mode !== 'confluence' && engine.mode !== 'momentum') {
-      problems.push("engine.mode muss 'confluence' oder 'momentum' sein");
+      problems.push('val.entweder|engine.mode|confluence|momentum');
     }
     if (engine.byClass !== undefined) {
       if (!isRecord(engine.byClass)) {
-        problems.push('engine.byClass muss ein Objekt sein');
+        problems.push('val.objekt|engine.byClass');
       } else {
         for (const [cls, over] of Object.entries(engine.byClass)) {
           if (!isRecord(over)) {
-            problems.push(`engine.byClass.${cls} muss ein Objekt sein`);
+            problems.push(`val.objekt|engine.byClass.${cls}`);
             continue;
           }
           for (const [k, v] of Object.entries(over)) {
             if (!isFiniteNumber(v) || v < 0) {
-              problems.push(`engine.byClass.${cls}.${k} muss eine Zahl ≥ 0 sein`);
+              problems.push(`val.zahlNull|engine.byClass.${cls}.${k}`);
             }
           }
         }
       }
     }
     if (typeof engine.running !== 'boolean') {
-      problems.push('engine.running muss boolean sein');
+      problems.push('val.boolean|engine.running');
     }
   }
 
   if (!isRecord(indicators)) {
-    problems.push('indicators muss ein Objekt sein');
+    problems.push('val.objekt|indicators');
   } else {
     for (const k of ['rsi', 'macd', 'bollinger'] as const) {
       if (!isRecord(indicators[k])) {
-        problems.push(`indicators.${k} muss ein Objekt sein`);
+        problems.push(`val.objekt|indicators.${k}`);
       }
     }
   }
 
   if (!isRecord(signals)) {
-    problems.push('signals muss ein Objekt sein');
+    problems.push('val.objekt|signals');
   } else {
     if (!isFiniteNumber(signals.minConfluence) || signals.minConfluence < 1) {
-      problems.push('signals.minConfluence muss ≥ 1 sein');
+      problems.push('val.mindestens|signals.minConfluence|1');
     }
     if (typeof signals.period !== 'string' || signals.period.length === 0) {
-      problems.push('signals.period muss ein nicht-leerer String sein');
+      problems.push('val.stringNichtLeer|signals.period');
     }
     if (typeof signals.useForecast !== 'boolean') {
-      problems.push('signals.useForecast muss boolean sein');
+      problems.push('val.boolean|signals.useForecast');
     }
     if (!isFiniteNumber(signals.forecastWeight) || signals.forecastWeight < 0) {
-      problems.push('signals.forecastWeight muss ≥ 0 sein');
+      problems.push('val.zahlNull|signals.forecastWeight');
     }
     if (!isFiniteNumber(signals.forecastThresholdPct) || signals.forecastThresholdPct < 0) {
-      problems.push('signals.forecastThresholdPct muss ≥ 0 sein');
+      problems.push('val.zahlNull|signals.forecastThresholdPct');
     }
     if (signals.exitConfluence !== undefined
       && (!isFiniteNumber(signals.exitConfluence) || signals.exitConfluence < 1)) {
-      problems.push('signals.exitConfluence muss ≥ 1 sein');
+      problems.push('val.mindestens|signals.exitConfluence|1');
     }
     if (signals.forecastSolo !== undefined && typeof signals.forecastSolo !== 'boolean') {
-      problems.push('signals.forecastSolo muss boolean sein');
+      problems.push('val.boolean|signals.forecastSolo');
     }
     if (signals.trendSolo !== undefined && typeof signals.trendSolo !== 'boolean') {
-      problems.push('signals.trendSolo muss boolean sein');
+      problems.push('val.boolean|signals.trendSolo');
     }
     if (signals.timeframe !== undefined && signals.timeframe !== 'daily' && signals.timeframe !== 'intraday') {
-      problems.push("signals.timeframe muss 'daily' oder 'intraday' sein");
+      problems.push('val.entweder|signals.timeframe|daily|intraday');
     }
     if (signals.allowShort !== undefined && typeof signals.allowShort !== 'boolean') {
-      problems.push('signals.allowShort muss boolean sein');
+      problems.push('val.boolean|signals.allowShort');
     }
     // 0 = Kostenschwelle aus. Nach oben gedeckelt, weil ein Tippfehler ("30")
     // sonst jeden Einstieg blockierte und die Engine still stillstünde.
@@ -205,13 +213,13 @@ export function validateStrategy(value: unknown): string[] {
       && (!isFiniteNumber(signals.minEdgeMultiple)
         || signals.minEdgeMultiple < 0
         || signals.minEdgeMultiple > 10)) {
-      problems.push('signals.minEdgeMultiple muss zwischen 0 und 10 liegen (0 = aus)');
+      problems.push('val.bereichAus|signals.minEdgeMultiple|0|10');
     }
     if (signals.newsVeto !== undefined && typeof signals.newsVeto !== 'boolean') {
-      problems.push('signals.newsVeto muss boolean sein');
+      problems.push('val.boolean|signals.newsVeto');
     }
     if (signals.captureGate !== undefined && typeof signals.captureGate !== 'boolean') {
-      problems.push('signals.captureGate muss boolean sein');
+      problems.push('val.boolean|signals.captureGate');
     }
   }
 
