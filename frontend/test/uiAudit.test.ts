@@ -66,3 +66,16 @@ describe('Bedienbarkeit — Trefferflächen', () => {
     expect(css).toMatch(/\.dclose \{[^}]*width: 40px; height: 40px;/);
   });
 });
+
+describe('Layout — Kopf-Floats bleiben im Kartenkopf', () => {
+  it('.sect ist flow-root — sonst quetscht ein abrutschender Kopf-Float den Kartenkörper', () => {
+    /* Owner-Screenshot 20.08.: der Symbol/je-Trade-Umschalter (float:right)
+     * passte in der 280-px-Spalte nicht neben den EN-Titel, rutschte unter
+     * die Kopfzeile und ragte aus .sect — der .cbody (Flex-Container =
+     * eigener Formatierungskontext) wurde NEBEN den Float gequetscht:
+     * Depot-Chart bei 19 % Kartenbreite (gemessen, dc-repro). flow-root
+     * schließt die Floats im Kopf ein; der Kopf wird zweizeilig statt dass
+     * der Körper schrumpft. Gilt für ALLE Kopf-Floats (.sect-tools, #hdStand). */
+    expect(css).toMatch(/\.sect \{[^}]*display: flow-root;/);
+  });
+});
