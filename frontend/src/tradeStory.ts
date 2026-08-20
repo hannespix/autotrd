@@ -97,23 +97,25 @@ export function kursFenster(kurse: readonly KursPunkt[], einstiegMs: number, exi
 }
 
 export interface AktSzene {
-  id: 'scanner' | 'signal' | 'netz' | 'lernen' | 'abspann';
+  id: 'scanner' | 'signal' | 'netz' | 'news' | 'lernen' | 'abspann';
   dauerMs: number;
 }
 
 /**
- * Die Maschinen-Story (~20 s), Schwerpunkte nach Owner-Ansage
- * („Autotuning und Trading"): Signal-Akt und Tuning-Akt tragen das Video.
+ * Die Maschinen-Story (~22 s), Schwerpunkte nach Owner-Ansage
+ * („Autotuning und Trading", Nachfrage 20.08.: „was ist mit den KI-News-
+ * Analysen?"): Signal, Nachrichten-Filter und Tuning tragen das Video.
  * Jeder Akt hat GENAU EIN bewegtes Blickziel und endet mit Lese-Ruhe —
  * die Lehren aus dem Analyse-Video-Schnitt (zu schnell, zu hektisch).
  */
 export function aktPlan(): AktSzene[] {
   return [
-    { id: 'scanner', dauerMs: 3500 },
-    { id: 'signal', dauerMs: 5000 },
-    { id: 'netz', dauerMs: 5000 },
-    { id: 'lernen', dauerMs: 4000 },
-    { id: 'abspann', dauerMs: 2500 },
+    { id: 'scanner', dauerMs: 3000 },
+    { id: 'signal', dauerMs: 4800 },
+    { id: 'netz', dauerMs: 4600 },
+    { id: 'news', dauerMs: 3400 },
+    { id: 'lernen', dauerMs: 3800 },
+    { id: 'abspann', dauerMs: 2400 },
   ];
 }
 

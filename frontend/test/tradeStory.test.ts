@@ -134,12 +134,12 @@ describe('kursFenster — die Bühne des Trades', () => {
 });
 
 describe('aktPlan/aktBei — die fünf Akte', () => {
-  it('Reihenfolge Scanner→Signal→Netz→Tuning→Abspann, ~20 s gesamt', () => {
+  it('Reihenfolge Scanner→Signal→Netz→News→Tuning→Abspann, ~22 s gesamt', () => {
     const plan = aktPlan();
-    expect(plan.map((a) => a.id)).toEqual(['scanner', 'signal', 'netz', 'lernen', 'abspann']);
+    expect(plan.map((a) => a.id)).toEqual(['scanner', 'signal', 'netz', 'news', 'lernen', 'abspann']);
     const gesamt = plan.reduce((s, a) => s + a.dauerMs, 0);
     expect(gesamt).toBeGreaterThanOrEqual(15_000);
-    expect(gesamt).toBeLessThanOrEqual(22_000);
+    expect(gesamt).toBeLessThanOrEqual(24_000);
   });
 
   it('aktBei findet Akt und Fortschritt', () => {
@@ -182,6 +182,14 @@ describe('Quelltext-Pins — Ehrlichkeit des Maschinen-Videos', () => {
     for (const zeile of zeilen) {
       const wert = /:\s*'([^']*)'/.exec(zeile)?.[1] ?? '';
       expect(wert, zeile).not.toMatch(/\d/);
+    }
+  });
+
+  it('der News-Akt malt KEINE erfundenen Schlagzeilen — nur abstrakte Balken und Wörterbuch-Zeilen', () => {
+    const maleNews = video.match(/function maleNews[\s\S]*?\nfunction /)?.[0] ?? '';
+    expect(maleNews.length).toBeGreaterThan(100);
+    for (const aufruf of maleNews.match(/fillText\([^)]*/g) ?? []) {
+      expect(aufruf, aufruf).toMatch(/fillText\(t\('ts\./);
     }
   });
 
