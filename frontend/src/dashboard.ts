@@ -1166,9 +1166,20 @@ function layout(email: string): string {
       <div class="an-share">
         <button class="dbtn" id="anShareBtn">Grafik teilen</button>
         <button class="dbtn" id="anShareAlle">${t('sh.alleLaden')}</button>
-        <button class="dbtn" id="anShareVideo">${t('sh.videoTeilen')}</button>
+        <button class="dbtn" id="anShareVideo">${t('sh.videoErstellen')}</button>
         <label class="an-share-opt"><input type="checkbox" id="anShareBetraege"> ${t('lay.betraegeZeigen')}</label>
         <span id="anShareStatus" class="hint"></span>
+      </div>
+      <!-- Video-Vorschau (Owner-Befund „Permission denied"): navigator.share
+           darf nur direkt nach einem Klick feuern — nach ~12 s Aufnahme ist
+           die Klick-Freigabe abgelaufen. Deshalb ZWEI Schritte: erstellen,
+           ansehen, dann mit frischem Klick teilen. -->
+      <div id="anVideoBox" class="an-video" hidden>
+        <video id="anVideoElem" autoplay muted loop playsinline controls></video>
+        <div class="an-share">
+          <button class="dbtn pri" id="anVideoShare">${t('sh.jetztTeilen')}</button>
+          <button class="dbtn" id="anVideoSave">${t('sh.herunterladen')}</button>
+        </div>
       </div>
       <div id="anSharePreview" class="an-share-vor" hidden></div>
       <!-- Die Story ist klickbar (Owner 20.08.): ◀ ▶ blättern durch die
@@ -7637,12 +7648,16 @@ async function teileAlleKarten(): Promise<void> {
   }
 }
 
-/**
- * Das Story-VIDEO (Owner 20.08.): Die Aufnahme läuft in Echtzeit (~12 s) —
- * der Fortschritt steht deshalb sichtbar im Status, der Knopf ist derweil
- * gesperrt. Dasselbe Teilen-Gate wie bei den Bildern.
- */
-async function teileStoryVideo(): Promise<void> {
+/* Das fertige Video wartet hier auf den ZWEITEN Klick. Warum zwei Schritte:
+ * navigator.share verlangt eine frische Klick-Freigabe — nach ~12 s Aufnahme
+ * ist sie abgelaufen, und der Teilen-Dialog scheitert mit „Permission
+ * denied" (Owner-Befund 20.08.). Also: erstellen, ansehen, dann teilen. */
+let videoDatei: File | null = null;
+let videoUrl: string | null = null;
+let videoText = '';
+
+/** Schritt 1 — Video aufnehmen und als Vorschau zeigen. */
+async function erstelleStoryVideo(): Promise<void> {
   const status = $('anShareStatus');
   const knopf = $('anShareVideo') as HTMLButtonElement | null;
   if (!st || !status || !knopf) return;
@@ -7668,18 +7683,21 @@ async function teileStoryVideo(): Promise<void> {
     const datei = await baueStoryVideo(daten, (prozent) => {
       status.textContent = `${t('sh.videoLaeuft')} … ${prozent} %`;
     });
-    if (navigator.canShare?.({ files: [datei] })) {
-      await navigator.share({ files: [datei], text: shareText(daten), url: 'https://autotrd.net' });
-      status.textContent = t('sh.geteilt');
-      return;
+    if (videoUrl) URL.revokeObjectURL(videoUrl);
+    videoDatei = datei;
+    videoUrl = URL.createObjectURL(datei);
+    videoText = shareText(daten);
+    const elem = $('anVideoElem') as HTMLVideoElement | null;
+    const box = $('anVideoBox');
+    if (elem && box) {
+      elem.src = videoUrl;
+      box.hidden = false;
+      // Systemblatt nur anbieten, wo es Video-Dateien wirklich annimmt.
+      ($('anVideoShare') as HTMLButtonElement).hidden =
+        navigator.canShare?.({ files: [datei] }) !== true;
+      void elem.play().catch(() => undefined);
     }
-    const url = URL.createObjectURL(datei);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = datei.name;
-    a.click();
-    URL.revokeObjectURL(url);
-    status.textContent = t('sh.videoGespeichert');
+    status.textContent = t('sh.videoFertig');
   } catch (e) {
     const name = e instanceof Error ? e.name : '';
     status.textContent =
@@ -7687,6 +7705,32 @@ async function teileStoryVideo(): Promise<void> {
   } finally {
     knopf.disabled = false;
   }
+}
+
+/** Schritt 2 — Teilen mit FRISCHER Klick-Freigabe. */
+async function teileVideoDatei(): Promise<void> {
+  const status = $('anShareStatus');
+  if (!videoDatei || !status) return;
+  try {
+    await navigator.share({ files: [videoDatei], text: videoText, url: 'https://autotrd.net' });
+    status.textContent = t('sh.geteilt');
+  } catch (e) {
+    const name = e instanceof Error ? e.name : '';
+    if (name !== 'AbortError') {
+      status.textContent = `${t('sh.fehlgeschlagen')}: ${serverText(e)}`;
+    }
+  }
+}
+
+/** Herunterladen — der Rechner-Weg (und der Plan B fürs Handy). */
+function speichereVideoDatei(): void {
+  const status = $('anShareStatus');
+  if (!videoDatei || !videoUrl || !status) return;
+  const a = document.createElement('a');
+  a.href = videoUrl;
+  a.download = videoDatei.name;
+  a.click();
+  status.textContent = t('sh.videoGespeichert');
 }
 
 /**
@@ -8934,7 +8978,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   // Teilen sieht, was das Bild preisgibt.
   $('anShareBtn')?.addEventListener('click', () => void teileDepotGrafik());
   $('anShareAlle')?.addEventListener('click', () => void teileAlleKarten());
-  $('anShareVideo')?.addEventListener('click', () => void teileStoryVideo());
+  $('anShareVideo')?.addEventListener('click', () => void erstelleStoryVideo());
+  $('anVideoShare')?.addEventListener('click', () => void teileVideoDatei());
+  $('anVideoSave')?.addEventListener('click', speichereVideoDatei);
   $('anShareBetraege')?.addEventListener('change', renderSharePreview);
   $('anStoryPrev')?.addEventListener('click', () => storyBlaettern(-1));
   $('anStoryNext')?.addEventListener('click', () => storyBlaettern(1));
