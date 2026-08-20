@@ -92,6 +92,21 @@ describe('Quelltext-Pins — Einbau und Palette', () => {
     expect(avatar).toContain('URL.createObjectURL');
   });
 
+  it('keine Callback-Lawine (Vorfall 21.08.): kein globaler Pass aus dem Lader, Pässe koalesziert', () => {
+    const avatar = lese('../src/symbolAvatar.ts');
+    // Der Lader rüstet GEZIELT nach (schmueckeSymbol) — er darf den
+    // globalen Pass nie selbst aufrufen, sonst schaukeln sich die
+    // then-Ketten bei vielen Symbolen zur Thread-Verstopfung auf.
+    const lader = avatar.match(/function ladeLogo[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(lader).toContain('schmueckeSymbol(sym)');
+    expect(lader).not.toContain('schmueckeAvatare');
+    // Render-Stürme: höchstens EIN Pass je Frame.
+    expect(avatar).toContain('requestAnimationFrame');
+    expect(avatar).toMatch(/if \(passGeplant\) return;/);
+    // Laufende Abrufe werden nie doppelt gestartet.
+    expect(avatar).toMatch(/if \(logoLaeuft\.has\(sym\)\) return;/);
+  });
+
   it('die Chip-Palette meidet Gewinn-Grün und Verlust-Rot', () => {
     const block = css.match(/\.sym-av[\s\S]*?\n\n/)?.[0] ?? '';
     expect(block).toContain('.sym-av.f5');
