@@ -209,7 +209,6 @@ import {
   shareText,
 } from './shareCard.js';
 import { shareStory, storyDateiname, type StoryKarte } from './shareStory.js';
-import { baueStoryVideo } from './shareVideo.js';
 import { kartenAussage } from './shareAussage.js';
 import { iBtn, initInfoTips } from './infotips.js';
 import { serverText, setzeSprache, sprachWahl, t, valText } from './i18n.js';
@@ -6988,20 +6987,7 @@ function renderAnalytics(): void {
   const stats = tradeStats(
     geschlossen.map((t) => ({ symbol: t.symbol, pnl: t.pnl!, riskExit: t.riskExit ?? null })),
   );
-  const serie = equityCurve(trades).map((p) => p.value);
   const st_ = streaks(trades);
-
-  // Ausstiegsgründe: die Frage, ob Stop und Take überhaupt erreicht werden
-  // oder ob alles am Signal stirbt (MT1-Befund vom 27.07.).
-  const exits = exitBreakdown(
-    geschlossen.map((t) => ({ symbol: t.symbol, pnl: t.pnl!, riskExit: t.riskExit ?? null })),
-  );
-  const exitSlices = Object.entries(exits).map(([k, b]) => ({
-    label: `${EXIT_LABELS[k] ?? k} (${b.n})`,
-    value: b.pnl,
-  }));
-
-  const symbole = bySymbol(trades);
   const kpi = (label: string, wert: string, cls = ''): string =>
     `<div class="an-kpi"><span class="lbl">${esc(label)}</span><b class="mono ${cls}">${esc(wert)}</b></div>`;
 
@@ -7039,15 +7025,41 @@ function renderAnalytics(): void {
   const kpis = box.querySelector('.an-kpis');
   if (kpis) kpis.innerHTML = kpiHtml;
 
-  const daten = {
-    verlauf: serie,
+  const daten = analyseChartDaten(trades);
+  void ladeAnalyseCharts().then((m) => m.aktualisiereAnalyseCharts(daten));
+}
+
+/**
+ * Diagramm-Daten des Analyse-Fensters — EINE Quelle für die UI-Charts und
+ * das Analyse-Video. Zwei Bauwege würden irgendwann zwei Wahrheiten zeigen.
+ */
+function analyseChartDaten(trades: HistoryTrade[]): {
+  verlauf: number[];
+  histo: Array<{ from: number; to: number; n: number }>;
+  exits: Array<{ label: string; value: number }>;
+  symbole: Array<{ label: string; value: number }>;
+  wochentage: Array<{ label: string; value: number }>;
+  stunden: Array<{ label: string; value: number }>;
+} {
+  const geschlossen = closedOnly(trades);
+  // Ausstiegsgründe: die Frage, ob Stop und Take überhaupt erreicht werden
+  // oder ob alles am Signal stirbt (MT1-Befund vom 27.07.).
+  const exits = exitBreakdown(
+    geschlossen.map((t) => ({ symbol: t.symbol, pnl: t.pnl!, riskExit: t.riskExit ?? null })),
+  );
+  return {
+    verlauf: equityCurve(trades).map((p) => p.value),
     histo: pnlHistogram(trades),
-    exits: exitSlices,
-    symbole: symbole.slice(0, 8).map((b) => ({ label: b.key, value: b.pnl })),
+    exits: Object.entries(exits).map(([k, b]) => ({
+      label: `${EXIT_LABELS[k] ?? k} (${b.n})`,
+      value: b.pnl,
+    })),
+    symbole: bySymbol(trades)
+      .slice(0, 8)
+      .map((b) => ({ label: b.key, value: b.pnl })),
     wochentage: byWeekday(trades).map((b) => ({ label: b.key, value: b.pnl })),
     stunden: byHour(trades).map((b) => ({ label: b.key, value: b.pnl })),
   };
-  void ladeAnalyseCharts().then((m) => m.aktualisiereAnalyseCharts(daten));
 }
 
 /**
@@ -7697,7 +7709,12 @@ async function erstelleStoryVideo(): Promise<void> {
       status.textContent = aussage.grund ?? t('sh.nichtsZuTeilen');
       return;
     }
-    const datei = await baueStoryVideo(daten, (prozent) => {
+    /* Das Analyse-Video (Regie über die Schaubilder) — dynamisch geladen,
+     * weil es über analyseCharts die ECharts-Bibliothek zieht und die nicht
+     * ins Hauptbundle gehört. */
+    const { baueAnalyseVideo } = await import('./analyseVideo.js');
+    const zeitraumTrades = imZeitraum(st.trades as HistoryTrade[], st.anZeitraum, new Date());
+    const datei = await baueAnalyseVideo(daten, analyseChartDaten(zeitraumTrades), (prozent) => {
       status.textContent = `${t('sh.videoLaeuft')} … ${prozent} %`;
     });
     if (videoUrl) URL.revokeObjectURL(videoUrl);
