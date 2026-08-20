@@ -18,13 +18,13 @@ const DAILY_LIMIT = 800; // ~10 h aktive Chart-Zeit bei 45-s-Takt
 
 export const quoteNow = onCall(CALLABLE_OPTS, async (request) => {
   const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError('unauthenticated', 'Anmeldung erforderlich');
+  if (!uid) throw new HttpsError('unauthenticated', 'srv.anmeldungErforderlich');
   if (!(await consumeQuota(uid, 'quoteNow', DAILY_LIMIT))) {
-    throw new HttpsError('resource-exhausted', 'Tageslimit für Kurz-Updates erreicht — der 5-min-Scan läuft weiter');
+    throw new HttpsError('resource-exhausted', 'srv.tageslimitKurzUpdates');
   }
   const symbol = (request.data as { symbol?: unknown })?.symbol;
   if (typeof symbol !== 'string' || !new Set(allSymbols()).has(symbol)) {
-    throw new HttpsError('invalid-argument', 'Unbekanntes Symbol');
+    throw new HttpsError('invalid-argument', 'srv.unbekanntesSymbol');
   }
   const q = await getQuickQuote(symbol);
   await getFirestore()

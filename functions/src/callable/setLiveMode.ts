@@ -76,7 +76,7 @@ export const setLiveMode = onCall(
   CALLABLE_OPTS,
   async (request): Promise<LiveModeErgebnis> => {
     const uid = request.auth?.uid;
-    if (!uid) throw new HttpsError('unauthenticated', 'Anmeldung erforderlich');
+    if (!uid) throw new HttpsError('unauthenticated', 'srv.anmeldungErforderlich');
 
     const { live, bestaetigung, action } = (request.data ?? {}) as {
       live?: unknown;

@@ -169,7 +169,7 @@ export async function resetUserWallet(
   const db = getFirestore();
   const userRef = db.doc(`users/${uid}`);
   const snap = await userRef.get();
-  if (!snap.exists) throw new HttpsError('failed-precondition', 'Profil fehlt');
+  if (!snap.exists) throw new HttpsError('failed-precondition', 'srv.profilFehlt');
 
   const strategy = (snap.get('settings.strategy') as Strategy | undefined) ?? DEFAULT_STRATEGY;
   const startkapital = strategy.broker?.initialCapital;
@@ -184,7 +184,7 @@ export async function resetUserWallet(
     if (!verbindung) {
       throw new HttpsError(
         'failed-precondition',
-        'Kein Broker verbunden — ohne Verbindung gibt es kein Kapital zu übernehmen.',
+        'srv.keinBrokerFuerKapital',
       );
     }
     // Fehler NICHT verschlucken: Wer „vom Broker" wählt und dann stillschweigend
@@ -296,7 +296,7 @@ export async function resetUserWallet(
 
 export const resetWallet = onCall(CALLABLE_OPTS, async (request): Promise<ResetResult> => {
   const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError('unauthenticated', 'Anmeldung erforderlich');
+  if (!uid) throw new HttpsError('unauthenticated', 'srv.anmeldungErforderlich');
 
   const { confirm, vomBroker } = (request.data ?? {}) as {
     confirm?: unknown;

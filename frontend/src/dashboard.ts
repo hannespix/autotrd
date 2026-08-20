@@ -219,7 +219,7 @@ import {
   histogram,
 } from './svgcharts.js';
 import { iBtn, initInfoTips } from './infotips.js';
-import { setzeSprache, sprachWahl, t } from './i18n.js';
+import { serverText, setzeSprache, sprachWahl, t } from './i18n.js';
 import { reglerWarnung } from './reglerHinweis.js';
 import { mountLegalFooter } from './legal.js';
 import {
@@ -5405,7 +5405,7 @@ async function submitOrderTicket(): Promise<void> {
     await callTrade({ symbol: sym, side: st.orderSide, qty });
     $('orderModal').classList.remove('show');
   } catch (e) {
-    err.textContent = e instanceof Error && e.message ? e.message : `${t('mtr.orderFehlgeschlagen')}.`;
+    err.textContent = e instanceof Error && e.message ? serverText(e) : `${t('mtr.orderFehlgeschlagen')}.`;
     err.hidden = false;
   } finally {
     btn.disabled = false;
@@ -6052,7 +6052,7 @@ async function loadAdminList(): Promise<void> {
     if (rows.length === 0) list.innerHTML = `<div class="hint">${t('adm.keineKonten')}</div>`;
   } catch (e) {
     list.innerHTML = '';
-    err.textContent = e instanceof Error ? e.message : String(e);
+    err.textContent = serverText(e);
     err.hidden = false;
   }
 }
@@ -6072,7 +6072,7 @@ async function ladeKillSwitch(): Promise<void> {
     btn.dataset['an'] = s.killSwitch ? '0' : '1';
     btn.hidden = false;
   } catch (e) {
-    state.textContent = `${t('adm.zustand')}: ${t('adm.nichtLesbar')} (${e instanceof Error ? e.message : String(e)})`;
+    state.textContent = `${t('adm.zustand')}: ${t('adm.nichtLesbar')} (${serverText(e)})`;
     btn.hidden = true;
   }
 }
@@ -6089,7 +6089,7 @@ function admBtn(label: string, run: () => Promise<void>, cls: string): HTMLButto
       .then(() => loadAdminList())
       .catch((e: unknown) => {
         const err = $('admErr');
-        err.textContent = e instanceof Error ? e.message : String(e);
+        err.textContent = serverText(e);
         err.hidden = false;
         b.disabled = false;
       });
@@ -6237,7 +6237,7 @@ async function submitStrategy(next: Strategy, hint: string): Promise<void> {
     $('saveHint').textContent = hint;
   } catch (e) {
     // Server-Meldung durchreichen (z. B. „E-Mail zuerst bestätigen", Quota)
-    const msg = e instanceof Error && e.message ? e.message : '';
+    const msg = e instanceof Error && e.message ? serverText(e) : '';
     err.textContent = msg || t('st.speichernFehlgeschlagen');
     err.hidden = false;
     $('saveHint').textContent = '';
@@ -6775,7 +6775,7 @@ async function ladeAeltereTrades(): Promise<void> {
       if (neue.length > 0) break;
     }
   } catch (e) {
-    if (st) st.tradesFehler = e instanceof Error ? e.message : String(e);
+    if (st) st.tradesFehler = serverText(e);
     console.warn('Ältere Trades nicht ladbar:', e);
   } finally {
     // Abmeldung während der Abfrage (Audit 11.08., F12): Das `return` im
@@ -7530,7 +7530,7 @@ async function teileDepotGrafik(): Promise<void> {
     // Ein abgebrochener Teilen-Dialog ist kein Fehler.
     const name = e instanceof Error ? e.name : '';
     status.textContent =
-      name === 'AbortError' ? '' : `${t('sh.fehlgeschlagen')}: ${e instanceof Error ? e.message : String(e)}`;
+      name === 'AbortError' ? '' : `${t('sh.fehlgeschlagen')}: ${serverText(e)}`;
   } finally {
     knopf.disabled = false;
   }
@@ -8947,7 +8947,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       .then(ladeKillSwitch)
       .catch((e: unknown) => {
         const err = $('admErr');
-        err.textContent = e instanceof Error ? e.message : String(e);
+        err.textContent = serverText(e);
         err.hidden = false;
       })
       .finally(() => { btn.disabled = false; });

@@ -66,7 +66,10 @@ describe('die Kette — Quelltext-Wächter', () => {
     const fallback = trade.indexOf('(await ladeUniversumSymbole()).has(symbol)');
     expect(katalog, 'Katalog-Prüfung fehlt').toBeGreaterThan(0);
     expect(fallback, 'Universums-Fallback fehlt').toBeGreaterThan(katalog);
-    expect(trade).toContain('weder im Katalog noch im Alpaca-Universum');
+    // Seit Task #145 wirft trade den Code srv.symbolNichtHandelbarKatalog;
+    // der Klartext („weder im Katalog noch im Alpaca-Universum") wohnt im
+    // Frontend-Wörterbuch — serverCodes.test.ts pinnt DE- und EN-Zeile.
+    expect(trade).toContain("'srv.symbolNichtHandelbarKatalog'");
   });
 
   it('Fail-safe: Lesefehler liefert letzten Stand oder LEER — nie eine Freischaltung', () => {

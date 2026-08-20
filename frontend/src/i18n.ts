@@ -1068,6 +1068,34 @@ export const DE = {
   'mn.setupProjekt': 'Firebase-Projekt anlegen (siehe docs/SETUP.md)',
   'mn.setupKopieren': 'kopieren und die VITE_FIREBASE_*-Werte eintragen',
   'mn.setupNeustart': 'neu starten',
+  'srv.anmeldungErforderlich': 'Anmeldung erforderlich',
+  'srv.emailZuerstBestaetigen': 'Bitte zuerst die E-Mail-Adresse bestätigen — dann lässt sich die Engine starten.',
+  'srv.eigenesKontoTabu': 'Das eigene Konto bleibt tabu (Selbst-Aussperr-Schutz)',
+  'srv.geheimerSchluesselZuKurz': 'Der geheime Schlüssel ist zu kurz.',
+  'srv.keinBrokerFuerDepot': 'Kein Broker verbunden — es gibt kein Depot, das sich übernehmen ließe.',
+  'srv.keinBrokerFuerKapital': 'Kein Broker verbunden — ohne Verbindung gibt es kein Kapital zu übernehmen.',
+  'srv.keinZentralerKurs': 'Kein zentraler Kurs — Symbol zuerst in die Watchlist aufnehmen (nächster Scan liefert Daten)',
+  'srv.liveNichtFreigeschaltet': 'Live-Trading ist nicht freigeschaltet',
+  'srv.nurBetreiber': 'Nur für Betreiber-Konten',
+  'srv.profilFehlt': 'Profil fehlt',
+  'srv.profilFehltEnsure': 'Profil fehlt — ensureProfile zuerst aufrufen',
+  'srv.symbolNichtHandelbar': 'Symbol nicht handelbar',
+  'srv.symbolNichtHandelbarKatalog': 'Symbol nicht handelbar — weder im Katalog noch im Alpaca-Universum',
+  'srv.tageslimitErreicht': 'Tageslimit erreicht — bitte später erneut',
+  'srv.tageslimitKurzUpdates': 'Tageslimit für Kurz-Updates erreicht — der 5-min-Scan läuft weiter',
+  'srv.unbekanntesKonto': 'Unbekanntes Konto',
+  'srv.unbekanntesSymbol': 'Unbekanntes Symbol',
+  'srv.actionUngueltig': 'action muss \'list\', \'set\', \'setAdmin\', \'liveStatus\' oder \'setKillSwitch\' sein',
+  'srv.adminBool': 'admin muss true oder false sein',
+  'srv.anBool': 'an muss true oder false sein',
+  'srv.schluesselErforderlich': 'apiKey und secretKey sind erforderlich',
+  'srv.brokerModePaper': 'broker.mode ist bis M14 fest auf paper',
+  'srv.confidenceUngueltig': 'confidence muss 1, 2 oder 3 sein',
+  'srv.levelUngueltig': 'level muss \'pending\', \'approved\' oder \'blocked\' sein',
+  'srv.sideUngueltig': 'side muss \'buy\' oder \'sell\' sein',
+  'srv.targetUid': 'target muss eine User-UID sein',
+  'srv.targetDateFormat': 'targetDate muss \'YYYY-MM-DD\' sein',
+  'srv.preisePositiv': 'targetPrice/basePrice müssen positive Zahlen sein',
   'auth.falscheDaten': 'E-Mail oder Passwort ist falsch.',
   'auth.ungueltigeEmail': 'Das ist keine gültige E-Mail-Adresse.',
   'auth.emailVergeben': 'Für diese E-Mail existiert bereits ein Konto.',
@@ -1332,6 +1360,34 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'mn.setupProjekt': 'Create a Firebase project (see docs/SETUP.md)',
   'mn.setupKopieren': 'copy it and fill in the VITE_FIREBASE_* values',
   'mn.setupNeustart': 'restart',
+  'srv.anmeldungErforderlich': 'Sign-in required',
+  'srv.emailZuerstBestaetigen': 'Please verify your email address first — then the engine can be started.',
+  'srv.eigenesKontoTabu': 'Your own account is off-limits (self-lockout protection)',
+  'srv.geheimerSchluesselZuKurz': 'The secret key is too short.',
+  'srv.keinBrokerFuerDepot': 'No broker connected — there is no portfolio to adopt.',
+  'srv.keinBrokerFuerKapital': 'No broker connected — without a connection there is no capital to adopt.',
+  'srv.keinZentralerKurs': 'No central price — add the symbol to the watchlist first (the next scan delivers data)',
+  'srv.liveNichtFreigeschaltet': 'Live trading is not enabled',
+  'srv.nurBetreiber': 'Operator accounts only',
+  'srv.profilFehlt': 'Profile missing',
+  'srv.profilFehltEnsure': 'Profile missing — call ensureProfile first',
+  'srv.symbolNichtHandelbar': 'Symbol not tradable',
+  'srv.symbolNichtHandelbarKatalog': 'Symbol not tradable — neither in the catalog nor in the Alpaca universe',
+  'srv.tageslimitErreicht': 'Daily limit reached — please try again later',
+  'srv.tageslimitKurzUpdates': 'Daily limit for quick updates reached — the 5-minute scan keeps running',
+  'srv.unbekanntesKonto': 'Unknown account',
+  'srv.unbekanntesSymbol': 'Unknown symbol',
+  'srv.actionUngueltig': 'action must be \'list\', \'set\', \'setAdmin\', \'liveStatus\' or \'setKillSwitch\'',
+  'srv.adminBool': 'admin must be true or false',
+  'srv.anBool': 'an must be true or false',
+  'srv.schluesselErforderlich': 'apiKey and secretKey are required',
+  'srv.brokerModePaper': 'broker.mode is fixed to paper until M14',
+  'srv.confidenceUngueltig': 'confidence must be 1, 2 or 3',
+  'srv.levelUngueltig': 'level must be \'pending\', \'approved\' or \'blocked\'',
+  'srv.sideUngueltig': 'side must be \'buy\' or \'sell\'',
+  'srv.targetUid': 'target must be a user UID',
+  'srv.targetDateFormat': 'targetDate must be \'YYYY-MM-DD\'',
+  'srv.preisePositiv': 'targetPrice/basePrice must be positive numbers',
   'auth.falscheDaten': 'Email or password is incorrect.',
   'auth.ungueltigeEmail': 'That is not a valid email address.',
   'auth.emailVergeben': 'An account already exists for this email.',
@@ -2104,4 +2160,18 @@ export function setzeSprache(sprache: Sprache): void {
 /** Der Übersetzer fürs UI: deutscher Text oder seine englische Fassung. */
 export function t(schluessel: TextSchluessel): string {
   return uebersetze(schluessel, sprachWahl());
+}
+
+/**
+ * Server-Fehlertext auflösen (Task #145): Die Cloud Functions werfen seit
+ * Tranche 1 `srv.*`-Codes als HttpsError-Message; hier werden sie in die
+ * gewählte Sprache übersetzt. Alles, was KEIN bekannter Code ist — alte
+ * Functions-Stände, Firebase-eigene Fehler, dynamische Meldungen aus
+ * Tranche 2 —, wird unverändert durchgereicht: nie eine leere Meldung,
+ * nie ein roher Schlüssel für Texte, die das Wörterbuch nicht kennt.
+ */
+export function serverText(e: unknown): string {
+  const roh = e instanceof Error ? e.message : String(e ?? '');
+  if (/^srv\.\w+$/.test(roh) && roh in DE) return t(roh as TextSchluessel);
+  return roh;
 }

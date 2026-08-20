@@ -296,7 +296,7 @@ export async function pruefeBrokerStatus(uid: string): Promise<BrokerStatusResul
 
 export const brokerStatus = onCall(CALLABLE_OPTS, async (request): Promise<BrokerStatusResult> => {
   const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError('unauthenticated', 'Anmeldung erforderlich');
+  if (!uid) throw new HttpsError('unauthenticated', 'srv.anmeldungErforderlich');
   if (!(await consumeQuota(uid, 'brokerStatus', DAILY_STATUS_LIMIT))) {
     throw new HttpsError('resource-exhausted', `Höchstens ${DAILY_STATUS_LIMIT} Prüfungen am Tag`);
   }

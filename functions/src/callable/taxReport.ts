@@ -187,7 +187,7 @@ export async function erzeugeSteuerbericht(
 
 export const taxReport = onCall(CALLABLE_OPTS, async (request): Promise<TaxReportResult> => {
   const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError('unauthenticated', 'Anmeldung erforderlich');
+  if (!uid) throw new HttpsError('unauthenticated', 'srv.anmeldungErforderlich');
 
   const { jahr, echtgeld } = (request.data ?? {}) as { jahr?: unknown; echtgeld?: unknown };
   const j = typeof jahr === 'number' ? Math.trunc(jahr) : new Date().getUTCFullYear();

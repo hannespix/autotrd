@@ -184,7 +184,7 @@ export interface AdoptErgebnis {
 
 export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptErgebnis> => {
   const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError('unauthenticated', 'Anmeldung erforderlich');
+  if (!uid) throw new HttpsError('unauthenticated', 'srv.anmeldungErforderlich');
   /* Freischaltung VOR allem anderen (Audit 13.08., Härtung): Die Übernahme
    * ruft Konto, Positionen und Order-Historie beim Broker ab und
    * ÜBERSCHREIBT das eigene Buch — beides hat ein nie freigeschaltetes
@@ -215,7 +215,7 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
   if (!verbindung) {
     throw new HttpsError(
       'failed-precondition',
-      'Kein Broker verbunden — es gibt kein Depot, das sich übernehmen ließe.',
+      'srv.keinBrokerFuerDepot',
     );
   }
 
@@ -281,7 +281,7 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
      * doppelt aus. */
     userRef.collection('tradesArchive').select('brokerOrderId').get(),
   ]);
-  if (!userSnap.exists) throw new HttpsError('failed-precondition', 'Profil fehlt');
+  if (!userSnap.exists) throw new HttpsError('failed-precondition', 'srv.profilFehlt');
   const strategy = (userSnap.get('settings.strategy') as Strategy | undefined) ?? DEFAULT_STRATEGY;
 
   const bekannt = new Set<string>();

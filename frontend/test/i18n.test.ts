@@ -10,7 +10,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { DE, EN, sprachWahl, uebersetze, type TextSchluessel } from '../src/i18n.js';
+import { DE, EN, serverText, sprachWahl, uebersetze, type TextSchluessel } from '../src/i18n.js';
 
 const main = readFileSync(join(import.meta.dirname, '..', 'src', 'main.ts'), 'utf8');
 const auth = readFileSync(join(import.meta.dirname, '..', 'src', 'auth.ts'), 'utf8');
@@ -1282,7 +1282,7 @@ describe('Tranche 5o — der datei-weite Rückfall-Wächter', () => {
 
   it('jede Zeile der 5o-Präfixe hat eine englische Fassung', () => {
     const re =
-      /^(cx|rb|mb|sp|bk|av|oo|ap|nt|af|fl|gp|wl|st|mk|dt|sc|an|ps|px|pc|tn|hd|er|tj|mtr|dv|ws|pal|ot|tf|lay|auth|dc|hc|pw|rh|sv|mn)\./;
+      /^(cx|rb|mb|sp|bk|av|oo|ap|nt|af|fl|gp|wl|st|mk|dt|sc|an|ps|px|pc|tn|hd|er|tj|mtr|dv|ws|pal|ot|tf|lay|auth|dc|hc|pw|rh|sv|mn|srv)\./;
     for (const k of Object.keys(DE).filter((s) => re.test(s))) {
       expect(EN[k as TextSchluessel], `${k} ohne englische Fassung`).toBeTruthy();
     }
@@ -1314,4 +1314,42 @@ describe('Tranche 5p — der Wächter über alle übrigen Quelldateien', () => {
       expect(treffer, `${datei}: ${treffer.join(' | ')}`).toEqual([]);
     });
   }
+});
+
+describe('serverText — Server-Fehlercodes auflösen (Task #145)', () => {
+  it('übersetzt einen bekannten srv.*-Code in die gewählte Sprache', () => {
+    // In Node ohne localStorage ist die Sprachwahl 'de' — exakt der Text,
+    // den die Functions vor Tranche 1 selbst geschickt haben.
+    expect(serverText(new Error('srv.anmeldungErforderlich'))).toBe('Anmeldung erforderlich');
+    expect(EN['srv.anmeldungErforderlich']).toBe('Sign-in required');
+  });
+
+  it('reicht Unbekanntes wortwörtlich durch — nie eine leere Meldung', () => {
+    /* Der Vertrag, an dem alte Clients und Tranche-2-Meldungen hängen:
+     * Firebase-eigene Fehler, dynamische Templates und ein Code, den das
+     * Wörterbuch (noch) nicht kennt, erscheinen unverändert. */
+    expect(serverText(new Error('internal'))).toBe('internal');
+    expect(serverText(new Error('srv.nochNichtVergeben'))).toBe('srv.nochNichtVergeben');
+    expect(serverText(new Error('Tageslimit von 40 Trades erreicht'))).toBe(
+      'Tageslimit von 40 Trades erreicht',
+    );
+    expect(serverText('roher String')).toBe('roher String');
+    expect(serverText(undefined)).toBe('');
+  });
+
+  it('kein rohes e.message mehr in dashboard.ts — jede Anzeige läuft über serverText', () => {
+    /* Erster Wurf dieses Wächters pinnte den Wortlaut EINER Zuweisung
+     * (err.textContent = …) — die Sabotage-Probe umging ihn sofort mit
+     * el.textContent. Deshalb strukturell: JEDES e.message-Vorkommen muss
+     * Teil der erlaubten Bedingungsform sein („gibt es überhaupt eine
+     * Meldung?" vor dem serverText-Aufruf). Ein neues rohes e.message —
+     * egal an welchem Element — kippt die Bilanz.
+     * Grenze: String(e)-Direktanzeigen fängt das nicht; die liefern aber
+     * 'Error: srv.…' und fallen im Review auf. */
+    expect(dashboard).toContain('serverText(e)');
+    const gesamt = (dashboard.match(/\be\.message\b/g) ?? []).length;
+    const erlaubt = (dashboard.match(/e instanceof Error && e\.message \? serverText\(e\)/g) ?? [])
+      .length;
+    expect(gesamt, `rohe e.message-Nutzungen: ${gesamt - erlaubt}`).toBe(erlaubt);
+  });
 });

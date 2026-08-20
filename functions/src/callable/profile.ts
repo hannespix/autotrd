@@ -22,10 +22,10 @@ const DAILY_LIMIT = 60; // idempotent + 1 Call je Login — 60/Tag ist großzüg
 
 export const ensureProfile = onCall(CALLABLE_OPTS, async (request) => {
   const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError('unauthenticated', 'Anmeldung erforderlich');
+  if (!uid) throw new HttpsError('unauthenticated', 'srv.anmeldungErforderlich');
 
   if (!(await consumeQuota(uid, 'ensureProfile', DAILY_LIMIT))) {
-    throw new HttpsError('resource-exhausted', 'Tageslimit erreicht — bitte später erneut');
+    throw new HttpsError('resource-exhausted', 'srv.tageslimitErreicht');
   }
 
   const ref = getFirestore().doc(`users/${uid}`);

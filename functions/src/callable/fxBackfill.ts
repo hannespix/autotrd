@@ -51,7 +51,7 @@ export interface FxNachtragErgebnis {
 
 export const fxNachtragen = onCall(CALLABLE_OPTS, async (request): Promise<FxNachtragErgebnis> => {
   const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError('unauthenticated', 'Anmeldung erforderlich');
+  if (!uid) throw new HttpsError('unauthenticated', 'srv.anmeldungErforderlich');
   if (!(await consumeQuota(uid, 'fxNachtragen', DAILY_LIMIT))) {
     throw new HttpsError('resource-exhausted', `Höchstens ${DAILY_LIMIT} Nachtrag-Läufe am Tag`);
   }
