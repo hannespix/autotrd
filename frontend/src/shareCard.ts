@@ -33,7 +33,7 @@ import { kartenAussage } from './shareAussage.js';
 /** Kantenlänge der quadratischen Karte — passt ohne Zuschnitt überall hin. */
 export const KARTE = 1200;
 
-const FARBE = {
+export const FARBE = {
   bg: '#0b1016',
   karte: '#121a24',
   linie: '#233042',
@@ -79,8 +79,8 @@ export interface ShareDaten {
 
 /** Deutsches Komma UND typografisches Minus — ein ASCII-Bindestrich neben
  *  einem echten Minus in derselben Grafik sieht nach Versehen aus. */
-const zahl = (v: number, n = 2): string => v.toFixed(n).replace('.', ',').replace('-', '−');
-const mitVorzeichen = (v: number, n = 2): string => `${v > 0 ? '+' : v < 0 ? '−' : ''}${zahl(Math.abs(v), n)}`;
+export const zahl = (v: number, n = 2): string => v.toFixed(n).replace('.', ',').replace('-', '−');
+export const mitVorzeichen = (v: number, n = 2): string => `${v > 0 ? '+' : v < 0 ? '−' : ''}${zahl(Math.abs(v), n)}`;
 
 /**
  * Schriftgröße der Hauptzeile, damit sie in den Rahmen passt.
@@ -108,7 +108,7 @@ const mitVorzeichen = (v: number, n = 2): string => `${v > 0 ? '+' : v < 0 ? '�
  * eine Schätzung, der Prüfstand die Kontrolle. Der Kasten ist rechtsbündig
  * an KARTE − 90 verankert, wächst also nach links.
  */
-function siegelBreite(text: string): number {
+export function siegelBreite(text: string): number {
   return Math.round(text.length * 17.5 + 36);
 }
 
