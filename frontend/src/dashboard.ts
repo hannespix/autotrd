@@ -6363,7 +6363,9 @@ async function renderMarketGrid(): Promise<void> {
       cell.style.borderLeftColor = q ? (q.changePct >= 0 ? 'var(--gn)' : 'var(--rd)') : 'var(--bd)';
       cell.innerHTML = `<div class="mkt-sym"></div><div class="mkt-cnm"></div>
         <div class="mkt-pr">--</div><div class="mkt-ch"></div>`;
-      cell.querySelector('.mkt-sym')!.textContent = symbol;
+      const symZeile = cell.querySelector('.mkt-sym')!;
+      symZeile.innerHTML = symbolAvatar(symbol, true);
+      symZeile.appendChild(document.createTextNode(symbol));
       cell.querySelector('.mkt-cnm')!.textContent = name;
       if (q) {
         cell.querySelector('.mkt-pr')!.textContent = fmtNum(q.price);
@@ -6376,6 +6378,7 @@ async function renderMarketGrid(): Promise<void> {
     }
     body.appendChild(g);
   }
+  schmueckeAvatare();
 }
 
 function openDetail(symbol: string, name: string, data: MarketDocData | null): void {

@@ -336,7 +336,7 @@ input { accent-color: var(--ac); }
   text-transform: uppercase; letter-spacing: .5px; cursor: pointer; width: 100%;
   transition: transform .12s var(--e-out), box-shadow .25s, filter .2s;
 }
-.btn:hover { transform: translateY(-1px); filter: brightness(1.06); }
+.btn:hover { filter: brightness(1.06); }
 .btn:active { transform: scale(.98); }
 .btn-g { background: linear-gradient(135deg, var(--gn2), var(--gn)); color: var(--on-gn); box-shadow: var(--glow-gn); }
 .btn-r { background: linear-gradient(135deg, var(--rd2), var(--rd)); color: var(--on-rd); box-shadow: var(--glow-rd); }
@@ -378,6 +378,19 @@ td .sym-av, .lb-sym .sym-av { margin-right: 6px; }
   #sigBody td, #pBody td { font-size: 12px; padding: 7px 6px; }
 }
 
+
+/* Hover-Lifts NUR an echten Zeigern (Owner 21.08.: „Card fokussiert ⇒
+   Scrollen geht nicht immer"): Am Touchscreen klebt :hover an der
+   angetippten Kachel, und der Transform mitten in der Wischgeste ließ das
+   Seiten-Scrollen gelegentlich abreißen. */
+@media (hover: hover) {
+  .btn:hover { transform: translateY(-1px); }
+  .lb-item:hover { transform: translateY(-2px); }
+  .scard:hover { transform: translateY(-2px); }
+  .mkt-cell:hover { transform: translateY(-2px); }
+  .lchip:hover { transform: scale(1.15); }
+}
+
 /* Livebar (Watchlist-Quotes) */
 .livebar { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0; scrollbar-width: none; }
 .livebar::-webkit-scrollbar { display: none; }
@@ -387,7 +400,7 @@ td .sym-av, .lb-sym .sym-av { margin-right: 6px; }
   padding: 7px 14px; border-radius: 8px; min-width: 82px; border: 1px solid var(--bd);
   cursor: pointer; transition: transform .16s var(--e-out), border-color .16s;
 }
-.lb-item:hover, .lb-item.on { transform: translateY(-2px); border-color: var(--ac); }
+.lb-item:hover, .lb-item.on { border-color: var(--ac); }
 .lb-sym { font-size: 10px; color: var(--t3); text-transform: uppercase;
   display: flex; align-items: center; justify-content: center; }
 .lb-sym .sym-av { margin-right: 5px; }
@@ -455,7 +468,7 @@ td .sym-av, .lb-sym .sym-av { margin-right: 6px; }
   border: 1px solid var(--bd); border-radius: 8px; padding: 10px 6px; text-align: center;
   transition: transform .16s var(--e-out), border-color .16s;
 }
-.scard:hover { transform: translateY(-2px); border-color: var(--bd2); }
+.scard:hover { border-color: var(--bd2); }
 .slbl { font-size: 10px; color: var(--t3); text-transform: uppercase; margin-bottom: 4px; }
 .sval { font-size: 17px; font-weight: 800; }
 
@@ -500,7 +513,10 @@ td .sym-av, .lb-sym .sym-av { margin-right: 6px; }
   border-radius: 7px; padding: 8px 9px; cursor: pointer;
   transition: transform .16s var(--e-out), border-color .16s;
 }
-.mkt-cell:hover { border-color: var(--ac); transform: translateY(-2px); }
+.mkt-cell:hover { border-color: var(--ac); }
+.mkt-cell, .lb-item { touch-action: manipulation; }
+.mkt-sym { display: flex; align-items: center; }
+.mkt-sym .sym-av { margin-right: 7px; }
 .mkt-sym { font-size: 11px; font-weight: 700; color: var(--t1); }
 .mkt-cnm { font-size: 10px; color: var(--t3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mkt-pr { font-size: 13px; font-weight: 700; margin-top: 3px; color: var(--t1); }
@@ -542,7 +558,7 @@ td .sym-av, .lb-sym .sym-av { margin-right: 6px; }
   font-size: 10px; font-weight: 800; color: var(--on-ac); line-height: 18px; padding: 0;
   font-family: var(--f-num); box-shadow: var(--glow-ac); transition: transform .12s;
 }
-.lchip:hover { transform: scale(1.15); }
+
 
 /* Command-Palette (M9): Ctrl+K */
 .cmdk { display: none; position: fixed; inset: 0; z-index: 300; }
