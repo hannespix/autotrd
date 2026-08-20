@@ -52,10 +52,26 @@ const logoLager = new Map<string, string | null>();
 const logoLaeuft = new Map<string, Promise<void>>();
 const fehlversuche = new Map<string, number>();
 
-function ladeLogo(sym: string): Promise<void> {
-  let lauf = logoLaeuft.get(sym);
-  if (!lauf) {
-    lauf = (async () => {
+/** Das fertige Logo GEZIELT in alle Chips genau dieses Symbols einsetzen. */
+function schmueckeSymbol(sym: string): void {
+  const url = logoLager.get(sym);
+  if (!url) return;
+  const auswahl = `.sym-av[data-logo-sym="${CSS.escape(sym)}"]`;
+  for (const chip of document.querySelectorAll<HTMLElement>(auswahl)) {
+    if (chip.querySelector('.sym-logo')) continue;
+    const img = document.createElement('img');
+    img.className = 'sym-logo';
+    img.alt = '';
+    img.src = url;
+    chip.appendChild(img);
+  }
+}
+
+function ladeLogo(sym: string): void {
+  if (logoLaeuft.has(sym)) return;
+  logoLaeuft.set(
+    sym,
+    (async () => {
       try {
         const res = await fetch(`${LOGO_BASIS}/?symbol=${encodeURIComponent(sym)}`);
         if (!res.ok) {
@@ -68,6 +84,10 @@ function ladeLogo(sym: string): Promise<void> {
           return;
         }
         logoLager.set(sym, URL.createObjectURL(blob));
+        // GEZIELT nachrüsten — bewusst KEIN globaler Pass: Der rief sich
+        // über die then-Ketten vielfach selbst und verstopfte bei vielen
+        // Symbolen den Haupt-Thread (Owner-Vorfall 21.08.: „Tool hängt").
+        schmueckeSymbol(sym);
       } catch {
         // Netz-Blip: bis zu drei Versuche über spätere Pässe, dann Ruhe.
         const n = (fehlversuche.get(sym) ?? 0) + 1;
@@ -76,35 +96,38 @@ function ladeLogo(sym: string): Promise<void> {
       } finally {
         logoLaeuft.delete(sym);
       }
-    })();
-    logoLaeuft.set(sym, lauf);
-  }
-  return lauf;
+    })(),
+  );
 }
 
 /**
- * Nach jedem Listen-Render aufrufen: setzt vorhandene Logos aus dem Lager
- * in alle Chips ein und stößt fehlende Abrufe an (die dann fertige Chips
- * über einen weiteren Pass nachrüsten).
+ * Nach jedem Listen-Render aufrufen. Render-Stürme werden auf EINEN Pass
+ * je Frame koalesziert; je Symbol läuft höchstens ein Abruf, und fertige
+ * Abrufe rüsten ihre Chips gezielt nach — nie über einen globalen Pass.
  */
+let passGeplant = false;
+
 export function schmueckeAvatare(): void {
-  for (const chip of document.querySelectorAll<HTMLElement>('.sym-av[data-logo-sym]')) {
-    if (chip.querySelector('.sym-logo')) continue;
-    const sym = chip.dataset['logoSym'];
-    if (!sym) continue;
-    const url = logoLager.get(sym);
-    if (url) {
-      const img = document.createElement('img');
-      img.className = 'sym-logo';
-      img.alt = '';
-      img.src = url;
-      chip.appendChild(img);
-    } else if (url === undefined) {
-      void ladeLogo(sym).then(() => {
-        if (logoLager.get(sym)) schmueckeAvatare();
-      });
+  if (passGeplant) return;
+  passGeplant = true;
+  requestAnimationFrame(() => {
+    passGeplant = false;
+    for (const chip of document.querySelectorAll<HTMLElement>('.sym-av[data-logo-sym]')) {
+      if (chip.querySelector('.sym-logo')) continue;
+      const sym = chip.dataset['logoSym'];
+      if (!sym) continue;
+      const url = logoLager.get(sym);
+      if (url) {
+        const img = document.createElement('img');
+        img.className = 'sym-logo';
+        img.alt = '';
+        img.src = url;
+        chip.appendChild(img);
+      } else if (url === undefined) {
+        ladeLogo(sym);
+      }
     }
-  }
+  });
 }
 
 /**
