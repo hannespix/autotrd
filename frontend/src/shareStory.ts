@@ -72,10 +72,32 @@ function rahmen(inhalt: string): string {
 
 /** Sonderbänder tragen im shared-Code deutsche Labels — hier wie im
  *  Depot-Chart über den KEY übersetzt (gleiche Wörterbuch-Einträge). */
-function bandName(key: string, label: string, trades: number): string {
+export function bandName(key: string, label: string, trades: number): string {
   if (key === '__offen__') return t('dc.offenePositionen');
   if (key === '__rest__') return `${t('dc.uebrige')} (${trades})`;
   return label;
+}
+
+/**
+ * EINE Farbzuweisung je Band — Fläche, Legenden-Chip und (seit dem Video)
+ * jede animierte Fassung ziehen aus derselben Map. Zyklisch statt geklemmt
+ * (Owner-Befund 20.08.: sechs Gewinner, alle im selben Hellgrün).
+ */
+export function bandFarben(gezeichnet: ReadonlyArray<{ key: string; summe: number }>): Map<string, string> {
+  let gruenIdx = 0;
+  let rotIdx = 0;
+  const farben = new Map<string, string>();
+  for (const f of gezeichnet) {
+    farben.set(
+      f.key,
+      f.key === '__offen__'
+        ? FARBE.akzent
+        : f.summe >= 0
+          ? GRUEN_STUFEN[gruenIdx++ % GRUEN_STUFEN.length]!
+          : ROT_STUFEN[rotIdx++ % ROT_STUFEN.length]!,
+    );
+  }
+  return farben;
 }
 
 /** Karte 2 — der zerlegte Verlauf: Wasserfall-Bänder unter der Depot-Linie. */
@@ -112,19 +134,7 @@ function verlaufKarte(d: ShareDaten): string {
    * Flächen (Owner-Screenshot 20.08., „kann nicht sehen, welches Symbol zu
    * welcher Linie gehört"). */
   const gezeichnet = flaechen.filter((f) => f.kanten.some(([u, o]) => o - u > 0));
-  let gruenIdx = 0;
-  let rotIdx = 0;
-  const farbeVon = new Map<string, string>();
-  for (const f of gezeichnet) {
-    farbeVon.set(
-      f.key,
-      f.key === '__offen__'
-        ? FARBE.akzent
-        : f.summe >= 0
-          ? GRUEN_STUFEN[gruenIdx++ % GRUEN_STUFEN.length]!
-          : ROT_STUFEN[rotIdx++ % ROT_STUFEN.length]!,
-    );
-  }
+  const farbeVon = bandFarben(gezeichnet);
   const baenderSvg = gezeichnet
     .map((f) => {
       const oben = f.kanten.map(([, o], i) => `${px(i).toFixed(1)},${py(o).toFixed(1)}`);
