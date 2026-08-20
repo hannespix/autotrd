@@ -12,6 +12,9 @@
  * jedem Log aus wie ein ganz normaler Trade.
  */
 
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   CORE_PCT_CAP,
@@ -167,5 +170,47 @@ describe('Besitzgrenze zwischen den zwei Maschinen', () => {
     const altbestand = pos('AAPL');
     expect(altbestand.core).toBeUndefined();
     expect(altbestand.core !== true).toBe(true);
+  });
+});
+
+describe('Sockel-Abwicklung bei corePct 0 (Red-Team-Befund 5, 20.08.)', () => {
+  const hier = dirname(fileURLToPath(import.meta.url));
+  const momentumRun = readFileSync(join(hier, '../src/scheduled/momentumRun.ts'), 'utf8');
+
+  it('corePct 0 heißt ABWICKELN, nicht verwaisen lassen', () => {
+    /* Vorher sprang der Lauf per `continue` raus, BEVOR er verkaufen
+     * konnte — die core-Positionen verloren Rebalancing und Marktfilter-
+     * Exit und zählten in der Kapital-Kachel weiter als „Sockel". Der
+     * blanke continue-Einzeiler darf nie zurückkommen. */
+    expect(momentumRun).not.toContain('if (anteil <= 0) continue;');
+    expect(momentumRun).toContain("riskExit: 'core_aufloesung'");
+  });
+
+  it('die Abwicklung verkauft NUR core-Positionen und läuft ohne Wochentakt-Gate', () => {
+    const block = momentumRun.slice(
+      momentumRun.indexOf('Sockel abgewählt — Bestand ABWICKELN'),
+      momentumRun.indexOf("riskExit: 'core_aufloesung'"),
+    );
+    // Nur der Sockel-Bestand wird angefasst — Engine-Positionen nie.
+    expect(block).toContain('.core === true');
+    // Kein istRebalanceFaellig im Abwicklungs-Block: Wer 0 wählt, meint
+    // jetzt — nicht in bis zu sieben Tagen.
+    expect(block).not.toContain('istRebalanceFaellig');
+    // Und es sind ausschließlich Verkäufe.
+    expect(block).not.toContain("side: 'buy'");
+  });
+
+  it('die Abwicklung steht HINTER dem Reset-Tor, aber vor keinem Einstiegs-Tor', () => {
+    /* tore.handel (Reset läuft = Buchführung gesperrt) muss auch die
+     * Abwicklung stoppen; tore.einstieg darf sie NIE stoppen — Verkäufe
+     * werden in diesem Repo grundsätzlich nicht blockiert. */
+    const toreIdx = momentumRun.indexOf(
+      'Sockel-Rebalancing ${userDoc.id}: übersprungen',
+    );
+    const abwicklungIdx = momentumRun.indexOf('Sockel abgewählt — Bestand ABWICKELN');
+    expect(toreIdx).toBeGreaterThan(0);
+    expect(abwicklungIdx).toBeGreaterThan(toreIdx);
+    const block = momentumRun.slice(abwicklungIdx, momentumRun.indexOf("riskExit: 'core_aufloesung'"));
+    expect(block).not.toContain('tore.einstieg');
   });
 });
