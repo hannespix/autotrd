@@ -8993,8 +8993,17 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       })
       .finally(() => { btn.disabled = false; });
   });
-  document.querySelectorAll('[data-close]').forEach((el) =>
-    el.addEventListener('click', () => closeModal((el as HTMLElement).dataset.close as ModalName)));
+  // Delegiert statt einmalig gebunden (Owner-Screenshot 20.08.): Der
+  // Schließen-Knopf des Detail-Sheets entsteht bei JEDEM openDetail() neu
+  // über sheet.innerHTML — eine Init-Bindung verfehlt ihn für immer. Am
+  // Desktop fiel das nie auf, weil der statische Backdrop (der den Handler
+  // hatte) groß genug zum Klicken ist; am Smartphone füllt das Bottom-Sheet
+  // fast den ganzen Schirm, und der tote ✕ war der einzige Ausweg.
+  document.addEventListener('click', (e) => {
+    const ziel = (e.target as HTMLElement).closest<HTMLElement>('[data-close]');
+    const name = ziel?.dataset['close'];
+    if (name && name in MODAL_IDS) closeModal(name as ModalName);
+  }, { signal: docListenerSignal() });
   $('burgL').addEventListener('click', () => { $('leftCol').classList.toggle('show'); $('olv').classList.toggle('show'); });
   $('burgR').addEventListener('click', () => { $('rightCol').classList.toggle('show'); $('olv').classList.toggle('show'); });
   // Desktop-Sidebars ein-/ausblendbar (Taschenmesser Teil 1) — persistiert
