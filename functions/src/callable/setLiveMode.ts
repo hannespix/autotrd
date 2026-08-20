@@ -131,7 +131,7 @@ export const setLiveMode = onCall(
     if (bestaetigung !== BESTAETIGUNG) {
       throw new HttpsError(
         'invalid-argument',
-        `Zum Scharfschalten muss „${BESTAETIGUNG}" bestätigt werden.`,
+        `srv.scharfschaltenBestaetigen|${BESTAETIGUNG}`,
       );
     }
 
@@ -181,7 +181,7 @@ export const setLiveMode = onCall(
         .join('; ');
       throw new HttpsError(
         'failed-precondition',
-        `Das Konto ist noch nicht reif für Echtgeld. Offen: ${offen}.`,
+        `srv.nochNichtReif|${offen}`,
       );
     }
 

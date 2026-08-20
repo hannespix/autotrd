@@ -1096,6 +1096,29 @@ export const DE = {
   'srv.targetUid': 'target muss eine User-UID sein',
   'srv.targetDateFormat': 'targetDate muss \'YYYY-MM-DD\' sein',
   'srv.preisePositiv': 'targetPrice/basePrice müssen positive Zahlen sein',
+  'srv.hoechstensPruefungen': 'Höchstens {0} Prüfungen am Tag',
+  'srv.verbindungFehlgeschlagen': 'Verbindung fehlgeschlagen: {0}',
+  'srv.kontoGesperrtAlpaca': 'Das Konto ist bei Alpaca gesperrt (Status {0}).',
+  'srv.hoechstensVerbindungen': 'Höchstens {0} Verbindungsversuche am Tag',
+  'srv.jahrAusserhalb': 'Jahr {0} liegt außerhalb des zulässigen Bereichs',
+  'srv.hoechstensSteuerberichte': 'Höchstens {0} Steuerberichte am Tag',
+  'srv.qtyGanzeZahl': 'qty muss eine ganze Zahl 1–{0} sein',
+  'srv.tageslimitTrades': 'Tageslimit von {0} Trades erreicht',
+  'srv.positionslimitErreicht': 'Positionslimit erreicht ({0} offene Positionen) — erst schließen, dann neu eröffnen.',
+  'srv.nichtAusgefuehrt': 'Nicht ausgeführt: {0}',
+  'srv.hoechstensNachtragLaeufe': 'Höchstens {0} Nachtrag-Läufe am Tag',
+  'srv.keinVerwertbaresKapital': 'Der Broker meldet kein verwertbares Kapital (Status {0}).',
+  'srv.resetBestaetigen': 'Zum Bestätigen „{0}" eingeben — der Reset lässt sich nicht rückgängig machen.',
+  'srv.hoechstensResets': 'Höchstens {0} Resets am Tag',
+  'srv.hoechstensUebernahmen': 'Höchstens {0} Übernahmen am Tag',
+  'srv.tageslimitPrognosen': 'Tageslimit von {0} Prognosen erreicht',
+  'srv.targetDateBereich': 'targetDate muss zwischen morgen und +{0} Tagen liegen',
+  'srv.tageslimitSpeicherungen': 'Tageslimit von {0} Speicherungen erreicht',
+  'srv.watchlistBegrenzt': 'Watchlist ist auf {0} Symbole begrenzt',
+  'srv.unbekannteSymbole': 'Unbekannte Symbole (weder Katalog noch Alpaca-Universum): {0}',
+  'srv.scharfschaltenBestaetigen': 'Zum Scharfschalten muss „{0}" bestätigt werden.',
+  'srv.nochNichtReif': 'Das Konto ist noch nicht reif für Echtgeld. Offen: {0}.',
+  'srv.notbremseTageslimit': 'Die Notbremse wurde heute schon {0}-mal gelöst. Das ist der Punkt, an dem eine Pause mehr hilft als ein weiterer Versuch.',
   'auth.falscheDaten': 'E-Mail oder Passwort ist falsch.',
   'auth.ungueltigeEmail': 'Das ist keine gültige E-Mail-Adresse.',
   'auth.emailVergeben': 'Für diese E-Mail existiert bereits ein Konto.',
@@ -1388,6 +1411,29 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'srv.targetUid': 'target must be a user UID',
   'srv.targetDateFormat': 'targetDate must be \'YYYY-MM-DD\'',
   'srv.preisePositiv': 'targetPrice/basePrice must be positive numbers',
+  'srv.hoechstensPruefungen': 'At most {0} checks per day',
+  'srv.verbindungFehlgeschlagen': 'Connection failed: {0}',
+  'srv.kontoGesperrtAlpaca': 'The account is blocked at Alpaca (status {0}).',
+  'srv.hoechstensVerbindungen': 'At most {0} connection attempts per day',
+  'srv.jahrAusserhalb': 'Year {0} is outside the allowed range',
+  'srv.hoechstensSteuerberichte': 'At most {0} tax reports per day',
+  'srv.qtyGanzeZahl': 'qty must be a whole number 1–{0}',
+  'srv.tageslimitTrades': 'Daily limit of {0} trades reached',
+  'srv.positionslimitErreicht': 'Position limit reached ({0} open positions) — close first, then reopen.',
+  'srv.nichtAusgefuehrt': 'Not executed: {0}',
+  'srv.hoechstensNachtragLaeufe': 'At most {0} backfill runs per day',
+  'srv.keinVerwertbaresKapital': 'The broker reports no usable capital (status {0}).',
+  'srv.resetBestaetigen': 'Type "{0}" to confirm — the reset cannot be undone.',
+  'srv.hoechstensResets': 'At most {0} resets per day',
+  'srv.hoechstensUebernahmen': 'At most {0} adoptions per day',
+  'srv.tageslimitPrognosen': 'Daily limit of {0} forecasts reached',
+  'srv.targetDateBereich': 'targetDate must be between tomorrow and +{0} days',
+  'srv.tageslimitSpeicherungen': 'Daily limit of {0} saves reached',
+  'srv.watchlistBegrenzt': 'The watchlist is limited to {0} symbols',
+  'srv.unbekannteSymbole': 'Unknown symbols (neither catalog nor Alpaca universe): {0}',
+  'srv.scharfschaltenBestaetigen': 'To arm live trading, "{0}" must be confirmed.',
+  'srv.nochNichtReif': 'The account is not yet ready for real money. Open: {0}.',
+  'srv.notbremseTageslimit': 'The emergency brake has already been released {0} times today. That is the point where a break helps more than another attempt.',
   'auth.falscheDaten': 'Email or password is incorrect.',
   'auth.ungueltigeEmail': 'That is not a valid email address.',
   'auth.emailVergeben': 'An account already exists for this email.',
@@ -2163,15 +2209,24 @@ export function t(schluessel: TextSchluessel): string {
 }
 
 /**
- * Server-Fehlertext auflösen (Task #145): Die Cloud Functions werfen seit
- * Tranche 1 `srv.*`-Codes als HttpsError-Message; hier werden sie in die
- * gewählte Sprache übersetzt. Alles, was KEIN bekannter Code ist — alte
- * Functions-Stände, Firebase-eigene Fehler, dynamische Meldungen aus
- * Tranche 2 —, wird unverändert durchgereicht: nie eine leere Meldung,
- * nie ein roher Schlüssel für Texte, die das Wörterbuch nicht kennt.
+ * Server-Fehlertext auflösen (Task #145): Die Cloud Functions werfen
+ * `srv.*`-Codes als HttpsError-Message; hier werden sie in die gewählte
+ * Sprache übersetzt. Dynamische Meldungen (Tranche 2) tragen GENAU EINEN
+ * Wert hinter dem ersten `|` — er ersetzt `{0}` im Wörterbuchtext. Ein
+ * einzelner Parameter ist Absicht: So bleibt ein Wert, der selbst `|`
+ * enthält (z. B. eine durchgereichte Broker-Meldung), in einem Stück.
+ * Alles, was KEIN bekannter Code ist — alte Functions-Stände,
+ * Firebase-eigene Fehler, Helfer-Meldungen aus Tranche 3 —, wird
+ * unverändert durchgereicht: nie eine leere Meldung, nie ein roher
+ * Schlüssel für Texte, die das Wörterbuch nicht kennt.
  */
 export function serverText(e: unknown): string {
   const roh = e instanceof Error ? e.message : String(e ?? '');
-  if (/^srv\.\w+$/.test(roh) && roh in DE) return t(roh as TextSchluessel);
+  const trenn = roh.indexOf('|');
+  const code = trenn < 0 ? roh : roh.slice(0, trenn);
+  if (/^srv\.\w+$/.test(code) && code in DE) {
+    const text = t(code as TextSchluessel);
+    return trenn < 0 ? text : text.replaceAll('{0}', roh.slice(trenn + 1));
+  }
   return roh;
 }

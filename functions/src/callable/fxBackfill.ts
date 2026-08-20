@@ -53,7 +53,7 @@ export const fxNachtragen = onCall(CALLABLE_OPTS, async (request): Promise<FxNac
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'srv.anmeldungErforderlich');
   if (!(await consumeQuota(uid, 'fxNachtragen', DAILY_LIMIT))) {
-    throw new HttpsError('resource-exhausted', `Höchstens ${DAILY_LIMIT} Nachtrag-Läufe am Tag`);
+    throw new HttpsError('resource-exhausted', `srv.hoechstensNachtragLaeufe|${DAILY_LIMIT}`);
   }
 
   const db = getFirestore();

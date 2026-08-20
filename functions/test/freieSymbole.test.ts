@@ -52,7 +52,9 @@ describe('symboleAusBloecken — defensives Lesen der Block-Dokumente', () => {
 describe('die Kette — Quelltext-Wächter', () => {
   it('(1) saveStrategy: Nicht-Katalog-Symbole werden gegen das Universum geprüft', () => {
     const filter = strategie.indexOf('unknown.filter((sym) => !universum.has(sym))');
-    const fehler = strategie.indexOf('weder Katalog noch Alpaca-Universum');
+    // Wortlaut wohnt seit #145 im Frontend-Wörterbuch (serverCodes.test.ts
+    // pinnt DE+EN) — der Anker hier ist der geworfene Code.
+    const fehler = strategie.indexOf('srv.unbekannteSymbole');
     expect(filter, 'Universums-Nachprüfung fehlt in saveStrategy').toBeGreaterThan(0);
     expect(fehler).toBeGreaterThan(filter);
   });

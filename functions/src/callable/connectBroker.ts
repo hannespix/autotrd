@@ -177,12 +177,12 @@ export async function verbindeBroker(
     konto = await alpacaKonto(art, schluessel);
   } catch (e) {
     // Die Meldung ist bereits von Schlüsseln gesäubert (AlpacaFehler).
-    throw new HttpsError('failed-precondition', `Verbindung fehlgeschlagen: ${(e as Error).message}`);
+    throw new HttpsError('failed-precondition', `srv.verbindungFehlgeschlagen|${(e as Error).message}`);
   }
   if (konto.accountBlocked || konto.tradingBlocked) {
     throw new HttpsError(
       'failed-precondition',
-      `Das Konto ist bei Alpaca gesperrt (Status ${konto.status}).`,
+      `srv.kontoGesperrtAlpaca|${konto.status}`,
     );
   }
 
@@ -329,7 +329,7 @@ export const connectBroker = onCall(
     if (!(await consumeQuota(uid, 'connectBroker', DAILY_CONNECT_LIMIT))) {
       throw new HttpsError(
         'resource-exhausted',
-        `Höchstens ${DAILY_CONNECT_LIMIT} Verbindungsversuche am Tag`,
+        `srv.hoechstensVerbindungen|${DAILY_CONNECT_LIMIT}`,
       );
     }
     /* Zeitpunkt der letzten echten Anmeldung aus dem ID-Token.

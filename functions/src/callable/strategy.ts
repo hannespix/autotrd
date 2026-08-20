@@ -29,7 +29,7 @@ export const saveStrategy = onCall(CALLABLE_OPTS, async (request) => {
   if (!uid) throw new HttpsError('unauthenticated', 'srv.anmeldungErforderlich');
 
   if (!(await consumeQuota(uid, 'saveStrategy', DAILY_SAVE_LIMIT))) {
-    throw new HttpsError('resource-exhausted', `Tageslimit von ${DAILY_SAVE_LIMIT} Speicherungen erreicht`);
+    throw new HttpsError('resource-exhausted', `srv.tageslimitSpeicherungen|${DAILY_SAVE_LIMIT}`);
   }
 
   const strategy = (request.data as { strategy?: unknown })?.strategy;
@@ -40,7 +40,7 @@ export const saveStrategy = onCall(CALLABLE_OPTS, async (request) => {
   const s = strategy as Strategy;
 
   if (s.watchlist.length > MAX_WATCHLIST) {
-    throw new HttpsError('invalid-argument', `Watchlist ist auf ${MAX_WATCHLIST} Symbole begrenzt`);
+    throw new HttpsError('invalid-argument', `srv.watchlistBegrenzt|${MAX_WATCHLIST}`);
   }
   const ref = getFirestore().doc(`users/${uid}`);
   const vorher = await ref.get();
@@ -79,7 +79,7 @@ export const saveStrategy = onCall(CALLABLE_OPTS, async (request) => {
   if (unknown.length > 0) {
     throw new HttpsError(
       'invalid-argument',
-      `Unbekannte Symbole (weder Katalog noch Alpaca-Universum): ${unknown.join(', ')}`,
+      `srv.unbekannteSymbole|${unknown.join(', ')}`,
     );
   }
   // Broker-Guards: Client kann hierüber NIE live schalten (M8/M14-Thema)

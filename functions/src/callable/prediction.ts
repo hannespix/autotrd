@@ -17,7 +17,7 @@ export const savePrediction = onCall(CALLABLE_OPTS, async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'srv.anmeldungErforderlich');
   if (!(await consumeQuota(uid, 'prediction', DAILY_LIMIT))) {
-    throw new HttpsError('resource-exhausted', `Tageslimit von ${DAILY_LIMIT} Prognosen erreicht`);
+    throw new HttpsError('resource-exhausted', `srv.tageslimitPrognosen|${DAILY_LIMIT}`);
   }
 
   const data = (request.data ?? {}) as {
@@ -49,7 +49,7 @@ export const savePrediction = onCall(CALLABLE_OPTS, async (request) => {
   const today = new Date().toISOString().slice(0, 10);
   const maxDate = new Date(Date.now() + MAX_HORIZON_DAYS * 86_400_000).toISOString().slice(0, 10);
   if (data.targetDate <= today || data.targetDate > maxDate) {
-    throw new HttpsError('invalid-argument', `targetDate muss zwischen morgen und +${MAX_HORIZON_DAYS} Tagen liegen`);
+    throw new HttpsError('invalid-argument', `srv.targetDateBereich|${MAX_HORIZON_DAYS}`);
   }
   const confidence = Number(data.confidence);
   if (![1, 2, 3].includes(confidence)) {

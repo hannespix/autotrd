@@ -67,13 +67,13 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
   let qtyNum: number | undefined;
   if (qty !== undefined && qty !== null) {
     if (typeof qty !== 'number' || !Number.isInteger(qty) || qty < 1 || qty > MAX_QTY) {
-      throw new HttpsError('invalid-argument', `qty muss eine ganze Zahl 1–${MAX_QTY} sein`);
+      throw new HttpsError('invalid-argument', `srv.qtyGanzeZahl|${MAX_QTY}`);
     }
     qtyNum = qty;
   }
 
   if (!(await consumeQuota(uid, 'trades', DAILY_TRADE_LIMIT))) {
-    throw new HttpsError('resource-exhausted', `Tageslimit von ${DAILY_TRADE_LIMIT} Trades erreicht`);
+    throw new HttpsError('resource-exhausted', `srv.tageslimitTrades|${DAILY_TRADE_LIMIT}`);
   }
 
   const db = getFirestore();
@@ -135,7 +135,7 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
     if (offenAktiv >= limit) {
       throw new HttpsError(
         'failed-precondition',
-        `Positionslimit erreicht (${offenAktiv}/${limit} offene Positionen) — erst schließen, dann neu eröffnen.`,
+        `srv.positionslimitErreicht|${offenAktiv}/${limit}`,
       );
     }
   }
@@ -201,7 +201,7 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
     `man-${new Date().toISOString().slice(0, 16)}Z`,
   );
   if (!result.executed) {
-    throw new HttpsError('failed-precondition', `Nicht ausgeführt: ${result.reason}`);
+    throw new HttpsError('failed-precondition', `srv.nichtAusgefuehrt|${result.reason}`);
   }
   return { ok: true, trade: result.trade };
 });
