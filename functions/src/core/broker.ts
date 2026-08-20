@@ -409,6 +409,16 @@ export interface TradeRequest {
    */
   core?: boolean;
   /**
+   * AUSDRÜCKLICHE Aufstockung einer bestehenden Long-Position (Sockel-
+   * Nachschub #345, Red-Team-Befund 20.08.): erlaubt dem Buchungspfad das
+   * Einmischen in die Position, das seit dem Vorfall 05.08. sonst nur
+   * echten Fills offensteht. Nur der wöchentliche Momentum-/Sockel-Lauf
+   * setzt dieses Flag; Scan und Handeingabe nie — deren Wiederholungskauf-
+   * Schutz bleibt unverändert. Ohne echten Fill zahlt die Aufstockung
+   * strikt aus dem Cash (zu_wenig_cash statt Kredit).
+   */
+  aufstockung?: boolean;
+  /**
    * Überzeugungs-Faktor der Positionsgröße (Owner-Direktive 01.08.): skaliert
    * die Tranche mit messbarer Überzeugung (convictionFactor, 0,25–1,5).
    * Fehlt er, gilt exakt die bisherige Größe. Die Klumpengrenze (25 %)
@@ -936,19 +946,34 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
         return { executed: true, trade: { ...trade, id: tradeRef.id } };
       }
       if (posSnap.exists) {
-        /* Nachkauf bleibt VERBOTEN — außer die Stücke liegen bereits im
-         * Depot (Vorfall 05.08.). Ein bestätigter Fill ist ein Fait
-         * accompli: Wer ihn ablehnt, macht die Order nicht ungeschehen,
-         * er macht nur das Buch zum Lügner. Zwei parallele Läufe (Scan +
-         * Momentum) können dasselbe Symbol füllen; der zweite Fill wird
-         * dann in die bestehende Position EINGEMISCHT — gewichteter
-         * Einstand, Stops neu vom gemischten Einstand. */
-        if (!echterFill) return { executed: false, reason: 'position_existiert' };
+        /* Nachkauf bleibt VERBOTEN — außer (a) die Stücke liegen bereits im
+         * Depot (Vorfall 05.08.): Ein bestätigter Fill ist ein Fait
+         * accompli — wer ihn ablehnt, macht die Order nicht ungeschehen,
+         * er macht nur das Buch zum Lügner. Oder (b) der Kauf ist eine
+         * AUSDRÜCKLICHE Aufstockung des wöchentlichen Rebalancings
+         * (Sockel-Nachschub #345; Red-Team-Befund 20.08.: ohne dieses Flag
+         * scheiterte jeder Nachschub-Kauf ohne Broker-Verbindung still an
+         * genau dieser Zeile — der Schatten führte aus, die echten Konten
+         * nicht). Der 05.08.-Schutz gegen Wiederholungskäufe bleibt: Scan
+         * und Handeingabe setzen das Flag nie. */
+        if (!echterFill && req.aufstockung !== true) {
+          return { executed: false, reason: 'position_existiert' };
+        }
         const pos = posSnap.data() as Position;
         if (pos.side === 'short') return { executed: false, reason: 'position_existiert' };
         const qty = req.qty ?? 0;
         if (!(qty > 0)) return { executed: false, reason: 'qty_unter_1' };
         const cost = qty * eff;
+        /* Aufstockung ohne echten Fill zahlt strikt aus dem CASH — der
+         * Nachschub ist aus der Equity dimensioniert und darf nie still
+         * einen Kredit eröffnen. Ein echter Fill wird dagegen IMMER
+         * gebucht (das Geld ist beim Broker geflossen); geht er unter
+         * null, steht der Fehlbetrag als `borrowed` am Trade — dieselbe
+         * Forensik wie beim Neueinstieg (Red-Team-Befund 2, 20.08.). */
+        if (!echterFill && cost > deckung) {
+          return { executed: false, reason: 'zu_wenig_cash' };
+        }
+        const borrowed = roundCents(Math.max(0, cost - Math.max(0, balance)));
         const nQty = pos.qty + qty;
         const nAvg = Math.round(((pos.qty * pos.avgEntry + qty * eff) / nQty) * 10_000) / 10_000;
         const risk = resolveRisk(strategy.engine, req.assetClass ?? classify(req.symbol));
@@ -960,7 +985,10 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
           takeProfit:
             risk.takeProfitPct > 0 ? nAvg * (1 + risk.takeProfitPct / 100) : (pos.takeProfit ?? null),
           highWater: Math.max(pos.highWater ?? nAvg, eff),
-          broker: true,
+          // `broker: true` sagt „liegt real beim Broker" — das darf nur ein
+          // echter Fill behaupten; die Paper-Aufstockung erbt den Stand der
+          // Position aus `...pos`.
+          ...(echterFill ? { broker: true } : {}),
           ...(req.brokerOrderId ? { brokerOrderId: req.brokerOrderId } : {}),
         });
         const trade: Trade & { nachkauf: boolean } = {
@@ -973,7 +1001,14 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
           paper: true,
           nachkauf: true,
         };
-        tx.set(tradeRef, { ...trade, at: Timestamp.now(), rawPrice: req.price, ...herkunft, fee: kosten(qty) });
+        tx.set(tradeRef, {
+          ...trade,
+          at: Timestamp.now(),
+          rawPrice: req.price,
+          ...herkunft,
+          fee: kosten(qty),
+          ...(borrowed > 0 ? { borrowed } : {}),
+        });
         tx.update(userRef, { 'wallet.paperBalance': roundCents(balance - cost), 'wallet.updatedAt': now });
         return { executed: true, trade: { ...trade, id: tradeRef.id } };
       }

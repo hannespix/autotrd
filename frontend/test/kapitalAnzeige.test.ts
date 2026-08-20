@@ -44,9 +44,17 @@ describe('Investitionsquote — Verdrahtung', () => {
      * Schutz darf nicht wie ein Fehler aussehen. Wer die Schwellen
      * verstellt, verstellt diese Aussage — Commit mit Begründung. */
     const fn = dashboard.slice(dashboard.indexOf('function renderKapital'));
-    const kopf = fn.slice(0, 900);
+    const kopf = fn.slice(0, 1200);
     expect(kopf).toContain('k.cashPct > 50');
     expect(kopf).toContain('k.cashPct > 25');
+  });
+
+  it('NEGATIVES Cash (Margin-Schulden) ist ROT, nie grün', () => {
+    /* Red-Team-Befund 3 (20.08.): Ein Margin-Konto hat cashPct < 0 — die
+     * alte Ampel (`< 25 → grün`) färbte Schulden als „Kapital im Einsatz".
+     * Kredit ist der teuerste Zustand der Karte, nicht der beste. */
+    const fn = dashboard.slice(dashboard.indexOf('function renderKapital'));
+    expect(fn.slice(0, 1200)).toContain("k.cashPct < 0 || k.cashPct > 50 ? 'c-rd'");
   });
 
   it('alle Anzeige-Zeilen stehen DE und EN im Wörterbuch, der ⓘ-Tipp in beiden Sprachen', () => {

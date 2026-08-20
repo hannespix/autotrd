@@ -37,6 +37,7 @@ import {
   EXIT_FENSTER_TAGE,
   dailyReturns,
   drawdown,
+  kapitalAufteilung,
   positionValue,
   reglerSchritt,
   reibungsProfil,
@@ -576,14 +577,9 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         // alles als Bargeld liegen lassen"): Wie viel der Equity arbeitet,
         // und in welchem Teil. Ohne die Zahl wäre der Sockel-Nachschub
         // (#345) blind — niemand sähe, ob das Bargeld wirklich schrumpft.
-        kapital: equity > 0
-          ? {
-              investiertPct: r2((positionsValue / equity) * 100),
-              sockelPct: r2((sockelWert / equity) * 100),
-              aktivPct: r2(((positionsValue - sockelWert) / equity) * 100),
-              cashPct: r2((balance / equity) * 100),
-            }
-          : null,
+        // Die Rechnung ist pur in shared (kapitalAufteilung) — Identitäten
+        // statt vier unabhängiger Rundungen (Red-Team-Befund 6).
+        kapital: kapitalAufteilung(equity, positionsValue, sockelWert),
         // Empfehlung je Anlageklasse (MG2): Kante, Urteil, Vorschlag und
         // Klartext-Begründung — fertig für die Karte, damit die Oberfläche
         // nicht dieselbe Logik ein zweites Mal implementieren muss.

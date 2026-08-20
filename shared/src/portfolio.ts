@@ -580,3 +580,42 @@ export function reibungsProfil(fills: readonly BrokerFill[]): Record<string, Rei
   }
   return out;
 }
+
+/**
+ * Kapitaleinsatz-Aufteilung (Owner 20.08.; gehärtet nach Red-Team-Befund
+ * 3+6 am selben Tag): Wie viel der Equity arbeitet, und wo.
+ *
+ * Zwei Härtungen gegenüber der ersten Fassung in snapshotEquity:
+ *  1. IDENTITÄTEN statt unabhängiger Rundung: `cash = 100 − investiert`
+ *     und `aktiv = investiert − sockel`. Vier unabhängig gerundete
+ *     Prozente summierten auf 99,99 oder 100,01 — eine Anzeige, deren
+ *     Teile nicht ihr Ganzes ergeben, lehrt Misstrauen in die richtigen
+ *     Zahlen.
+ *  2. Vorzeichen sind ERLAUBT und gewollt: Ein Margin-Konto hat negatives
+ *     Cash (cashPct < 0 = Schulden), ein tief verlierender Short kann den
+ *     Positionswert unter null drücken (investiertPct < 0). Beides sind
+ *     ehrliche Zustände — die AMPEL im Frontend muss sie kennen, die Zahl
+ *     hier verbiegt sie nicht.
+ */
+export interface KapitalAufteilung {
+  investiertPct: number;
+  sockelPct: number;
+  aktivPct: number;
+  cashPct: number;
+}
+
+export function kapitalAufteilung(
+  equity: number,
+  positionsValue: number,
+  sockelWert: number,
+): KapitalAufteilung | null {
+  if (!(equity > 0)) return null;
+  const investiertPct = r2((positionsValue / equity) * 100);
+  const sockelPct = r2((sockelWert / equity) * 100);
+  return {
+    investiertPct,
+    sockelPct,
+    aktivPct: r2(investiertPct - sockelPct),
+    cashPct: r2(100 - investiertPct),
+  };
+}
