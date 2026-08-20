@@ -304,7 +304,9 @@ export function baueOptionen(d: AnalyseChartDaten, look: ChartLook): Record<Aspe
   const stunden: EChartsCoreOption = {
     ...basis(look),
     tooltip: { ...(basis(look).tooltip as object), valueFormatter: (v: unknown) => kurz(Number(v)) },
-    xAxis: katAchse(look, d.stunden.map((p) => p.label), 2),
+    // Bei einer Handvoll Stunden JEDES Label zeigen — die Ausdünnung ist
+    // für den vollen 24er-Tag gedacht, nicht für vier Balken.
+    xAxis: katAchse(look, d.stunden.map((p) => p.label), d.stunden.length > 8 ? 2 : 0),
     yAxis: wertAchse(look),
     series: [vorzeichenBalken(d.stunden, look, [3, 3, 0, 0])],
   };

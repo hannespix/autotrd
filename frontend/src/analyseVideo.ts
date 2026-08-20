@@ -75,14 +75,23 @@ export interface RegieSzene {
  * Aspekte ohne Daten fliegen raus. Gesamt ~6–15 s.
  */
 export function regiePlan(chart: AnalyseChartDaten): RegieSzene[] {
+  /* Owner-Nachkritik („zu schnell, zu hektisch, zu linear"): Jede Szene
+   * bekommt nach ihrer Animation einen HALTE-MOMENT zum Lesen — das Auge
+   * braucht bei einem neuen Diagramm ~2 s Orientierung plus Lesezeit.
+   * Und es bewegt sich immer nur EIN Blickziel (geteilte Aufmerksamkeit
+   * ist der klassische Multimedia-Fehler): erst zeichnet die Kurve, DANN
+   * zählt die Zahl, dann Ruhe. ~18 s gesamt — Verständnis schlägt Kürze. */
+  /* Zeit-Verteilung nach Kritiker-Befund: Die Symbol-Szene ist der
+   * simpelste Inhalt (kürzeste Ruhe), der Morph-Payoff und der Abspann
+   * brauchen die Lesezeit (vier Zeilen ≈ 4 s auf Handybreite). */
   const plan: RegieSzene[] = [];
-  if (chart.verlauf.length >= 2) plan.push({ id: 'kurve', dauerMs: 4200 });
+  if (chart.verlauf.length >= 2) plan.push({ id: 'kurve', dauerMs: 6000 });
   else plan.push({ id: 'ergebnis', dauerMs: 3000 });
-  if (chart.symbole.length > 0) plan.push({ id: 'symbole', dauerMs: 3400 });
+  if (chart.symbole.length > 0) plan.push({ id: 'symbole', dauerMs: 4200 });
   if (chart.stunden.some((s) => s.value !== 0) && chart.wochentage.some((w) => w.value !== 0)) {
-    plan.push({ id: 'zeitmuster', dauerMs: 3800 });
+    plan.push({ id: 'zeitmuster', dauerMs: 5200 });
   }
-  plan.push({ id: 'cta', dauerMs: 2400 });
+  plan.push({ id: 'cta', dauerMs: 4000 });
   return plan;
 }
 
@@ -122,11 +131,29 @@ export async function baueAnalyseVideo(
   const gesamt = plan.reduce((s, sz) => s + sz.dauerMs, 0);
   const optionen = baueOptionen(chart, VIDEO_LOOK);
 
+  /* Feste y-Spanne über BEIDE Zeitmuster-Aspekte: Ohne sie rescaled die
+   * Achse mitten im Morph, während die Balken schon neu ankern — sie
+   * durchstoßen sichtbar die Null-Linie (Kritiker-No-Go, Frame 13,7 s). */
+  const zeitWerte = [...chart.stunden, ...chart.wochentage].map((b) => b.value);
+  const zeitPuffer = (Math.max(0, ...zeitWerte) - Math.min(0, ...zeitWerte)) * 0.08 || 1;
+  const festeSpanne = {
+    min: Math.floor(Math.min(0, ...zeitWerte) - zeitPuffer),
+    max: Math.ceil(Math.max(0, ...zeitWerte) + zeitPuffer),
+  };
+  const mitFesterAchse = (o: object): object => ({
+    ...o,
+    yAxis: { ...((o as { yAxis?: object }).yAxis ?? {}), ...festeSpanne },
+  });
+
   let buehne: Buehne | null = null;
   let buehneFuer: RegieSzene['id'] | null = null;
 
   const szenenOption = (id: RegieSzene['id']): object =>
-    id === 'kurve' ? optionen.verlauf : id === 'symbole' ? optionen.symbole : optionen.stunden;
+    id === 'kurve'
+      ? optionen.verlauf
+      : id === 'symbole'
+        ? optionen.symbole
+        : mitFesterAchse(optionen.stunden);
   const szenenTitel = (id: RegieSzene['id'], gewechselt: boolean): string =>
     id === 'kurve'
       ? t('an.kontoverlauf')
@@ -153,6 +180,15 @@ export async function baueAnalyseVideo(
     buehneFuer = id;
   };
 
+  /* Bühne der ersten Szene VOR der Aufnahme aufbauen und einen Frame
+   * rendern lassen: Sonst ist Frame 0 — das Poster-Bild im Feed — eine
+   * leere Karte (Kritiker-Befund: ECharts malt erst im nächsten rAF). */
+  const erste = plan[0]!;
+  if (erste.id !== 'ergebnis' && erste.id !== 'cta') {
+    macheBuehne(erste.id);
+    await new Promise((f) => requestAnimationFrame(() => f(undefined)));
+  }
+
   const datei = await nimmClipAuf(
     gesamt,
     (ctx, tMs) => {
@@ -164,6 +200,9 @@ export async function baueAnalyseVideo(
         ctx.save();
         ctx.scale(1080 / 1200, 1080 / 1200);
         maleSzene(ctx, story, szene.id, p);
+        // Auch der Abspann trägt das Siegel: Ausgerechnet der CTA-Frame
+        // wird am ehesten pausiert und gescreenshottet (Kritiker-Befund).
+        if (szene.id === 'cta') maleSiegel(ctx, story.echtgeld);
         ctx.restore();
         return;
       }
@@ -172,11 +211,13 @@ export async function baueAnalyseVideo(
       // Der Umschalt-Moment: Ab der Hälfte der Zeitmuster-Szene morphen die
       // Stunden-Balken in die Wochentage — sichtbarer Aspekt-Wechsel in
       // DERSELBEN Instanz, wie beim Zeitraum-Umschalter im Dashboard.
-      if (szene.id === 'zeitmuster' && p >= 0.5 && buehne && !buehne.gewechselt) {
+      if (szene.id === 'zeitmuster' && p >= 0.55 && buehne && !buehne.gewechselt) {
+        // Erst lesen lassen, dann langsam morphen — der Aspekt-Wechsel ist
+        // der Höhepunkt der Szene, kein weiterer Schnitt.
         buehne.gewechselt = true;
         buehne.chart.setOption({
-          ...optionen.wochentage,
-          animationDurationUpdate: 700,
+          ...mitFesterAchse(optionen.wochentage),
+          animationDurationUpdate: 900,
           tooltip: { show: false },
         });
       }
@@ -195,20 +236,37 @@ export async function baueAnalyseVideo(
        * zur Kurve, nicht auf eine eigene Titelkarte. Prozent nur mit
        * Zeitraum (dieselbe Ehrlichkeitsregel wie auf den Karten). */
       if (szene.id === 'kurve' && story.vonTag && story.bisTag) {
-        const wert = story.renditePct * weich((p * szene.dauerMs) / 1500);
-        ctx.fillStyle = story.renditePct > 0 ? FARBE.gruen : story.renditePct < 0 ? FARBE.rot : FARBE.text2;
-        ctx.font = '700 68px ui-monospace, SFMono-Regular, Menlo, monospace';
-        ctx.textAlign = 'right';
-        // Rechtsbündig UNTER dem Siegel (Chip endet ~150) — nie darüber.
-        ctx.fillText(formatRendite(wert), 1110, 246);
-        ctx.textAlign = 'left';
+        /* EIN Blickziel nach dem anderen (geteilte Aufmerksamkeit ist der
+         * klassische Multimedia-Fehler): 0–1,6 s zeichnet NUR die Kurve,
+         * dann blendet die Zahl ein und zählt in 1,2 s hoch, danach steht
+         * alles still — Lesezeit statt Dauerbewegung. */
+        const tSz = p * szene.dauerMs;
+        if (tSz > 1100) {
+          // Fertig bei ~2,0 s — die stärkste Zahl muss ins Scroll-Fenster
+          // fallen (Kritiker-Befund: vorher erst bei 2,7 s).
+          const wert = story.renditePct * weich((tSz - 1100) / 900);
+          ctx.globalAlpha = weich((tSz - 1100) / 400);
+          ctx.fillStyle = story.renditePct > 0 ? FARBE.gruen : story.renditePct < 0 ? FARBE.rot : FARBE.text2;
+          ctx.font = '700 68px ui-monospace, SFMono-Regular, Menlo, monospace';
+          ctx.textAlign = 'right';
+          // Rechtsbündig UNTER dem Siegel (Chip endet ~150) — nie darüber.
+          ctx.fillText(formatRendite(wert), 1110, 246);
+          ctx.textAlign = 'left';
+          ctx.globalAlpha = 1;
+        }
       }
       ctx.restore();
-      /* Weiche Blende: Die Bühne (Rahmen, Marke, Zeitraum, Siegel) steht
-       * fest — nur die Diagrammfläche blendet beim Szenenwechsel ein. */
+      /* Weiche Blende in BEIDE Richtungen: Die Bühne (Rahmen, Marke,
+       * Zeitraum, Siegel) steht fest — die Diagrammfläche blendet beim
+       * Szenenwechsel aus (300 ms) und ein (600 ms). Ein harter Schnitt
+       * war der Hektik-Treiber Nummer eins (Owner-Nachkritik). */
       if (buehne?.leinwand) {
         ctx.save();
-        ctx.globalAlpha = weich((p * szene.dauerMs) / 350);
+        const tSz = p * szene.dauerMs;
+        // Die Ein-Blende gilt nur ÜBERGÄNGEN — die Eröffnungs-Szene startet
+        // voll sichtbar, sonst ist Frame 0 (das Poster im Feed) wieder leer.
+        const ein = szene === plan[0] ? 1 : weich(tSz / 600);
+        ctx.globalAlpha = Math.min(ein, weich((szene.dauerMs - tSz) / 300));
         ctx.drawImage(buehne.leinwand, CHART_X, CHART_Y, CHART_B, CHART_H);
         ctx.restore();
       }
