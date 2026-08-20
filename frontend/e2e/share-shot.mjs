@@ -44,7 +44,7 @@ globalThis.localStorage = {
   getItem: (k) => (k === 'autotrd-lang' ? spracheJetzt : null),
   setItem: () => undefined,
 };
-const { shareCard, zerlegeDepot, KARTE } = await import(BUNDLE);
+const { shareStory, zerlegeDepot, KARTE } = await import(BUNDLE);
 
 const tage = [];
 const trades = [];
@@ -119,8 +119,11 @@ const fehler = [];
 for (const [fall, d] of Object.entries(faelle)) {
 for (const sprache of ['de', 'en']) {
   spracheJetzt = sprache;
-  const name = `${fall}-${sprache}`;
-  const svg = shareCard(d);
+  /* Seit der Story (20.08.) wird jede KARTE des Falls einzeln gerastert und
+   * vermessen — die CTA-Karte trägt bewusst kein Siegel und weniger Text. */
+  for (const karte of shareStory(d)) {
+  const name = `${fall}-${karte.id}-${sprache}`;
+  const svg = karte.svg;
   const html = `<!doctype html><html><head><meta charset="utf-8"><style>
     html,body{margin:0;background:#000} svg{display:block}</style></head>
     <body>${svg}<script>
@@ -144,7 +147,7 @@ for (const sprache of ['de', 'en']) {
   await seite.goto(pathToFileURL(datei).href);
   await seite.waitForSelector('svg');
 
-  const mass = await seite.evaluate(async (kante) => {
+  const mass = await seite.evaluate(async ({ kante, siegelErwartet }) => {
     const raus = [];
     for (const t of document.querySelectorAll('text')) {
       const b = t.getBBox();
@@ -176,7 +179,7 @@ for (const sprache of ['de', 'en']) {
     const sT = document.querySelector('[data-rolle="siegel"]');
     const sR = document.querySelector('[data-rolle="siegelRahmen"]');
     if (!sT || !sR) {
-      siegelRaus = 'Siegel oder Rahmen fehlt';
+      if (siegelErwartet) siegelRaus = 'Siegel oder Rahmen fehlt';
     } else {
       const bt = sT.getBBox();
       const br = sR.getBBox();
@@ -191,7 +194,7 @@ for (const sprache of ['de', 'en']) {
     let pngFehler = '';
     try { pngLaenge = await window.__png(); } catch (e) { pngFehler = String(e); }
     return { raus, ueberlappt, siegelRaus, texte: kaesten.length, pngLaenge, pngFehler };
-  }, KARTE);
+  }, { kante: KARTE, siegelErwartet: karte.id !== 'cta' });
 
   await seite.screenshot({ path: `${SHOTS}/share-${name}.png` });
   console.log(name, JSON.stringify({ ...mass, raus: mass.raus.length ? mass.raus : 'keine', ueberlappt: mass.ueberlappt.length ? mass.ueberlappt : 'keine' }));
@@ -199,10 +202,11 @@ for (const sprache of ['de', 'en']) {
   if (mass.raus.length) fehler.push(`${name}: Text außerhalb des Rahmens — ${mass.raus.join('; ')}`);
   if (mass.ueberlappt.length) fehler.push(`${name}: Texte überdecken sich — ${mass.ueberlappt.join('; ')}`);
   if (mass.siegelRaus) fehler.push(`${name}: Siegel passt nicht in seinen Rahmen — ${mass.siegelRaus}`);
-  if (mass.texte < 12) fehler.push(`${name}: nur ${mass.texte} Textelemente`);
+  if (mass.texte < (karte.id === 'cta' ? 8 : 10)) fehler.push(`${name}: nur ${mass.texte} Textelemente`);
   if (mass.pngFehler) fehler.push(`${name}: Rastern fehlgeschlagen — ${mass.pngFehler}`);
   if (mass.pngLaenge < 5000) fehler.push(`${name}: PNG verdächtig klein (${mass.pngLaenge})`);
   await seite.close();
+  }
 }
 }
 

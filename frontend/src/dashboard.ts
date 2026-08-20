@@ -206,10 +206,9 @@ import { depotChart, depotTooltip } from './depotChart.js';
 import {
   KARTE,
   type ShareDaten,
-  shareCard,
-  shareDateiname,
   shareText,
 } from './shareCard.js';
+import { shareStory, storyDateiname, type StoryKarte } from './shareStory.js';
 import { kartenAussage } from './shareAussage.js';
 import {
   areaLine,
@@ -1165,10 +1164,18 @@ function layout(email: string): string {
       <div class="an-zeit" id="anZeit"></div>
       <div class="an-share">
         <button class="dbtn" id="anShareBtn">Grafik teilen</button>
+        <button class="dbtn" id="anShareAlle">${t('sh.alleLaden')}</button>
         <label class="an-share-opt"><input type="checkbox" id="anShareBetraege"> ${t('lay.betraegeZeigen')}</label>
         <span id="anShareStatus" class="hint"></span>
       </div>
       <div id="anSharePreview" class="an-share-vor" hidden></div>
+      <!-- Die Story ist klickbar (Owner 20.08.): ◀ ▶ blättern durch die
+           Karten, geteilt wird immer die, die man gerade sieht. -->
+      <div id="anStoryNav" class="an-story-nav" hidden>
+        <button class="dbtn" id="anStoryPrev" aria-label="${t('sh.karte')} ◀">◀</button>
+        <span id="anStoryDots" class="an-story-dots"></span>
+        <button class="dbtn" id="anStoryNext" aria-label="${t('sh.karte')} ▶">▶</button>
+      </div>
       <div id="anBody"><div class="hint">${t('lay.keineGeschlossenen')}</div></div>
     </div>
   </div>
@@ -7467,13 +7474,34 @@ async function svgAlsPng(svg: string, kante: number, skala = 2): Promise<Blob> {
   }
 }
 
+/* Die Story hält ihren Stand im Modul: Welche Karten es gerade gibt und
+ * welche der Nutzer ansieht — geteilt wird IMMER die sichtbare. */
+let storyKarten: StoryKarte[] = [];
+let storyIdx = 0;
+
 /** Vorschau im Analyse-Fenster — man teilt nur, was man vorher gesehen hat. */
 function renderSharePreview(): void {
   const box = $('anSharePreview');
   if (!st || !box) return;
   const betraege = ($('anShareBetraege') as HTMLInputElement | null)?.checked === true;
-  box.innerHTML = shareCard(shareDatenBauen(betraege));
+  storyKarten = shareStory(shareDatenBauen(betraege));
+  if (storyIdx >= storyKarten.length) storyIdx = 0;
+  box.innerHTML = storyKarten[storyIdx]!.svg;
   box.hidden = false;
+  const nav = $('anStoryNav');
+  if (nav) nav.hidden = storyKarten.length < 2;
+  const dots = $('anStoryDots');
+  if (dots) {
+    dots.textContent = storyKarten.map((_, i) => (i === storyIdx ? '●' : '○')).join(' ');
+    dots.setAttribute('aria-label', `${t('sh.karte')} ${storyIdx + 1}/${storyKarten.length}`);
+  }
+}
+
+/** Eine Karte vor oder zurück — die Vorschau folgt. */
+function storyBlaettern(schritt: number): void {
+  if (storyKarten.length < 2) return;
+  storyIdx = (storyIdx + schritt + storyKarten.length) % storyKarten.length;
+  renderSharePreview();
 }
 
 /**
@@ -7512,8 +7540,12 @@ async function teileDepotGrafik(): Promise<void> {
       status.textContent = aussage.grund ?? t('sh.nichtsZuTeilen');
       return;
     }
-    const png = await svgAlsPng(shareCard(daten), KARTE);
-    const datei = new File([png], shareDateiname(daten), { type: 'image/png' });
+    // Geteilt wird die Karte, die in der Vorschau steht — nicht heimlich
+    // eine andere. Ohne Vorschau (Knopf direkt gedrückt) ist es die erste.
+    const karten = shareStory(daten);
+    const karte = karten[Math.min(storyIdx, karten.length - 1)]!;
+    const png = await svgAlsPng(karte.svg, KARTE);
+    const datei = new File([png], storyDateiname(karte.id, daten), { type: 'image/png' });
     const text = shareText(daten);
 
     if (navigator.canShare?.({ files: [datei] })) {
@@ -7534,6 +7566,67 @@ async function teileDepotGrafik(): Promise<void> {
     status.textContent = t('sh.bildGespeichert');
   } catch (e) {
     // Ein abgebrochener Teilen-Dialog ist kein Fehler.
+    const name = e instanceof Error ? e.name : '';
+    status.textContent =
+      name === 'AbortError' ? '' : `${t('sh.fehlgeschlagen')}: ${serverText(e)}`;
+  } finally {
+    knopf.disabled = false;
+  }
+}
+
+/**
+ * Alle Karten der Story auf einmal — für Karussell-Posts (Instagram & Co.
+ * nehmen mehrere Bilder je Beitrag). Am Handy geht der ganze Satz in EIN
+ * Systemblatt; am Rechner laden die PNGs nacheinander herunter.
+ */
+async function teileAlleKarten(): Promise<void> {
+  const status = $('anShareStatus');
+  const knopf = $('anShareAlle') as HTMLButtonElement | null;
+  if (!st || !status || !knopf) return;
+  knopf.disabled = true;
+  status.textContent = t('sh.wirdGebaut');
+  try {
+    const betraege = ($('anShareBetraege') as HTMLInputElement | null)?.checked === true;
+    const daten = shareDatenBauen(betraege);
+    // Dasselbe Gate wie beim Einzelbild: ohne belastbare Aussage kein Satz.
+    const aussage = kartenAussage({
+      kurventage: daten.zerlegung.tage.length,
+      renditePct: daten.renditePct,
+      ergebnis: daten.ergebnis,
+      trades: daten.trades,
+      tradeBilanz: daten.tradeBilanz,
+      vonTag: daten.vonTag,
+      bisTag: daten.bisTag,
+      betraege,
+      waehrung: daten.waehrung,
+    });
+    if (!aussage.teilbar) {
+      status.textContent = aussage.grund ?? t('sh.nichtsZuTeilen');
+      return;
+    }
+    const dateien: File[] = [];
+    for (const karte of shareStory(daten)) {
+      const png = await svgAlsPng(karte.svg, KARTE);
+      dateien.push(new File([png], storyDateiname(karte.id, daten), { type: 'image/png' }));
+    }
+    if (navigator.canShare?.({ files: dateien })) {
+      await navigator.share({ files: dateien, text: shareText(daten), url: 'https://autotrd.net' });
+      status.textContent = t('sh.geteilt');
+      return;
+    }
+    for (const datei of dateien) {
+      const url = URL.createObjectURL(datei);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = datei.name;
+      a.click();
+      URL.revokeObjectURL(url);
+      // Browser drosseln Klick-Downloads in schneller Folge — die Pause
+      // lässt jedem Bild seinen eigenen.
+      await new Promise((f) => setTimeout(f, 350));
+    }
+    status.textContent = t('sh.alleGespeichert');
+  } catch (e) {
     const name = e instanceof Error ? e.name : '';
     status.textContent =
       name === 'AbortError' ? '' : `${t('sh.fehlgeschlagen')}: ${serverText(e)}`;
@@ -8786,7 +8879,12 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   // Teilen-Grafik: Vorschau folgt dem Beträge-Schalter, damit man vor dem
   // Teilen sieht, was das Bild preisgibt.
   $('anShareBtn')?.addEventListener('click', () => void teileDepotGrafik());
+  $('anShareAlle')?.addEventListener('click', () => void teileAlleKarten());
   $('anShareBetraege')?.addEventListener('change', renderSharePreview);
+  $('anStoryPrev')?.addEventListener('click', () => storyBlaettern(-1));
+  $('anStoryNext')?.addEventListener('click', () => storyBlaettern(1));
+  // Klick auf die Vorschau blättert ebenfalls — „klickbar" wörtlich genommen.
+  $('anSharePreview')?.addEventListener('click', () => storyBlaettern(1));
 
   // Link-Bus (M9): Chart- und News-Kontext folgen ihrer jeweiligen Gruppe.
   busSubscribe(CHART_KEY, st.chartGroup, (sym) => {
