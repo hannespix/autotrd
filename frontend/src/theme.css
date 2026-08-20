@@ -1259,6 +1259,10 @@ input { accent-color: var(--ac); }
 
 .an-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .an-grid section { min-width: 0; }
+/* ECharts-Hosts der Analyse: Breite füllt die Karte, Höhe steht am Element
+ * (je Sektion verschieden). min-width:0 hat die section schon — ohne sie
+ * würde der SVG-Renderer die Grid-Spalte aufsprengen. */
+.ec-host { width: 100%; }
 .an-grid h4 {
   margin: 0 0 6px; font-size: 11px; font-weight: 600; color: var(--t2);
   display: flex; align-items: center; gap: 4px;

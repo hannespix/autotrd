@@ -211,13 +211,6 @@ import {
 import { shareStory, storyDateiname, type StoryKarte } from './shareStory.js';
 import { baueStoryVideo } from './shareVideo.js';
 import { kartenAussage } from './shareAussage.js';
-import {
-  areaLine,
-  barChart,
-  donut,
-  hBarChart,
-  histogram,
-} from './svgcharts.js';
 import { iBtn, initInfoTips } from './infotips.js';
 import { serverText, setzeSprache, sprachWahl, t, valText } from './i18n.js';
 import { reglerWarnung } from './reglerHinweis.js';
@@ -6975,6 +6968,9 @@ function renderAnalytics(): void {
           st.anZeitraum === 0 ? '' : ` ${t('an.laengerWaehlen')}`
         }</div>`;
     if (scope) scope.textContent = '';
+    // Der Hinweis hat das Chart-Gerüst überschrieben — Instanzen aufgeben,
+    // sonst malen sie in abgehängte Knoten weiter.
+    void ladeAnalyseCharts().then((m) => m.entsorgeAnalyseCharts());
     return;
   }
   if (scope) {
@@ -7009,8 +7005,7 @@ function renderAnalytics(): void {
   const kpi = (label: string, wert: string, cls = ''): string =>
     `<div class="an-kpi"><span class="lbl">${esc(label)}</span><b class="mono ${cls}">${esc(wert)}</b></div>`;
 
-  box.innerHTML = `
-    <div class="an-kpis">
+  const kpiHtml = `
       ${kpi(t('an.ergebnis'), money(summary.pnl), pnlClass(summary.pnl))}
       ${kpi(t('an.trefferquote'), stats.winRatePct === null ? '—' : `${stats.winRatePct}%`)}
       ${kpi(t('an.profitFaktor'), stats.profitFactor === null ? '—' : String(stats.profitFactor))}
@@ -7020,25 +7015,47 @@ function renderAnalytics(): void {
       ${kpi(t('an.schlechtester'), summary.worstTrade === null ? '—' : money(summary.worstTrade), 'c-rd')}
       ${kpi(t('an.verlustserie'), String(st_.longestLoss))}
       ${kpi(t('an.laufendeSerie'), st_.current === 0 ? '—' : `${st_.current > 0 ? '+' : ''}${st_.current}`,
-            st_.current > 0 ? 'c-gn' : st_.current < 0 ? 'c-rd' : '')}
-    </div>
+            st_.current > 0 ? 'c-gn' : st_.current < 0 ? 'c-rd' : '')}`;
 
+  /* Das Chart-Gerüst wird EINMAL gebaut und danach stehen gelassen: Die
+   * ECharts-Instanzen hängen an den Host-Divs, und nur weil die Hosts beim
+   * Zeitraum-Umschalten überleben, MORPHEN die Werte weich ineinander (die
+   * pixpower-Machart) — ein innerHTML-Neuaufbau je Render würde stattdessen
+   * jedes Mal das Bild austauschen. KPIs werden separat aktualisiert. */
+  const sektion = (key: string, titel: string, hoehe: number): string =>
+    `<section><h4>${titel}</h4><div class="ec-host" id="anEc-${key}" style="height:${hoehe}px"></div></section>`;
+  if (!box.querySelector('.an-grid')) {
+    box.innerHTML = `
+    <div class="an-kpis"></div>
     <div class="an-grid">
-      <section><h4>${t('an.kontoverlauf')} ${iBtn('anEquity')}</h4>${areaLine(serie)}</section>
-      <section><h4>${t('an.verteilung')} ${iBtn('anHisto')}</h4>${histogram(pnlHistogram(trades))}</section>
-      <section><h4>${t('an.ausstiegsgruende')} ${iBtn('exits')}</h4>${donut(exitSlices)}</section>
-      <section><h4>${t('an.jeSymbol')}</h4>${hBarChart(
-        symbole.slice(0, 8).map((b) => ({ label: b.key, value: b.pnl })),
-      )}</section>
-      <section><h4>${t('an.nachWochentag')}</h4>${barChart(
-        byWeekday(trades).map((b) => ({ label: b.key, value: b.pnl })),
-        { labelJede: 1 },
-      )}</section>
-      <section><h4>${t('an.nachStunde')} ${iBtn('anStunde')}</h4>${barChart(
-        byHour(trades).map((b) => ({ label: b.key, value: b.pnl })),
-        { labelJede: 3 },
-      )}</section>
+      ${sektion('verlauf', `${t('an.kontoverlauf')} ${iBtn('anEquity')}`, 210)}
+      ${sektion('verteilung', `${t('an.verteilung')} ${iBtn('anHisto')}`, 190)}
+      ${sektion('exits', `${t('an.ausstiegsgruende')} ${iBtn('exits')}`, 225)}
+      ${sektion('symbole', t('an.jeSymbol'), 205)}
+      ${sektion('wochentage', t('an.nachWochentag'), 190)}
+      ${sektion('stunden', `${t('an.nachStunde')} ${iBtn('anStunde')}`, 190)}
     </div>`;
+  }
+  const kpis = box.querySelector('.an-kpis');
+  if (kpis) kpis.innerHTML = kpiHtml;
+
+  const daten = {
+    verlauf: serie,
+    histo: pnlHistogram(trades),
+    exits: exitSlices,
+    symbole: symbole.slice(0, 8).map((b) => ({ label: b.key, value: b.pnl })),
+    wochentage: byWeekday(trades).map((b) => ({ label: b.key, value: b.pnl })),
+    stunden: byHour(trades).map((b) => ({ label: b.key, value: b.pnl })),
+  };
+  void ladeAnalyseCharts().then((m) => m.aktualisiereAnalyseCharts(daten));
+}
+
+/**
+ * ECharts erst laden, wenn die Analyse wirklich gebraucht wird: dynamic
+ * import ⇒ eigener Chunk, das Hauptbundle wächst durch die Bibliothek nicht.
+ */
+function ladeAnalyseCharts(): Promise<typeof import('./analyseCharts.js')> {
+  return import('./analyseCharts.js');
 }
 
 /** Ausstiegsgründe in Klartext — die Schlüssel kommen aus dem Broker. */

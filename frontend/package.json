@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@autotrd/shared": "*",
+    "echarts": "^6.1.0",
     "firebase": "^11.0.0",
     "lightweight-charts": "4.2.0"
   },
