@@ -47,12 +47,25 @@ describe('regiePlan — die Szenenfolge', () => {
     expect(ids(leer)).toEqual(['ergebnis', 'cta']);
   });
 
-  it('Gesamtlänge bleibt Social-tauglich (~6–17 s), Abspann kurz', () => {
+  it('Gesamtlänge bleibt Social-tauglich (~6–20 s), Abspann kurz', () => {
     const plan = regiePlan(VOLL);
     const gesamt = plan.reduce((s, sz) => s + sz.dauerMs, 0);
     expect(gesamt).toBeGreaterThanOrEqual(6_000);
-    expect(gesamt).toBeLessThanOrEqual(17_000);
-    expect(plan[plan.length - 1]).toEqual({ id: 'cta', dauerMs: 2400 });
+    expect(gesamt).toBeLessThanOrEqual(20_000);
+    // Abspann 4 s: vier Zeilen brauchen Lesezeit (Kritiker-Befund) — und
+    // der Payoff (zeitmuster) bekommt mehr Ruhe als die simple Symbol-Szene.
+    expect(plan[plan.length - 1]).toEqual({ id: 'cta', dauerMs: 4000 });
+    const dauer = new Map(plan.map((s) => [s.id, s.dauerMs]));
+    expect(dauer.get('zeitmuster')!).toBeGreaterThan(dauer.get('symbole')!);
+  });
+
+  it('jede Chart-Szene hat einen Halte-Moment (Dauer ≫ Eintritts-Animation)', () => {
+    // „Zu hektisch" hieß: Szene endet, sobald die Animation fertig ist.
+    // Eintritt 1,1 s + Blende 0,6 s ⇒ unter 4 s bliebe keine Lesezeit.
+    for (const sz of regiePlan(VOLL)) {
+      if (sz.id === 'cta' || sz.id === 'ergebnis') continue;
+      expect(sz.dauerMs, sz.id).toBeGreaterThanOrEqual(4_000);
+    }
   });
 });
 
@@ -86,10 +99,32 @@ describe('Quelltext-Pins — Ehrlichkeit und Bundle', () => {
     expect(video).toContain('formatRendite(wert)');
   });
 
-  it('feste Bühne: die Diagrammfläche blendet weich ein (globalAlpha), Siegel bleibt außerhalb', () => {
-    expect(video).toMatch(/globalAlpha = weich\(/);
-    // Das Siegel wird NACH dem restore gemalt — nie unter der Blende.
-    expect(video.indexOf('globalAlpha = weich(')).toBeLessThan(video.indexOf('maleSiegel(ctx, story.echtgeld)'));
+  it('feste Bühne: die Diagrammfläche blendet weich ein UND aus, Siegel bleibt außerhalb', () => {
+    // Ein-Blende 600 ms und Aus-Blende 300 ms — der harte Schnitt war der
+    // Hektik-Treiber (Owner-Nachkritik „zu schnell, zu hektisch").
+    expect(video).toMatch(/szene === plan\[0\] \? 1 : weich\(tSz \/ 600\)/);
+    expect(video).toMatch(/Math\.min\(ein, weich\(\(szene\.dauerMs - tSz\) \/ 300\)\)/);
+    // Das Chart-Szenen-Siegel (letztes Vorkommen — das erste ist der
+    // Abspann) wird NACH dem restore gemalt — nie unter der Blende.
+    expect(video.indexOf('Math.min(ein, weich(')).toBeLessThan(video.lastIndexOf('maleSiegel(ctx, story.echtgeld)'));
+  });
+
+  it('ein Blickziel nach dem anderen: Zahl NACH der Kurve, fertig im Scroll-Fenster (~2 s)', () => {
+    expect(video).toMatch(/tSz > 1100/);
+    expect(video).toMatch(/weich\(\(tSz - 1100\) \/ 900\)/);
+  });
+
+  it('Kritiker-No-Go gebannt: feste y-Spanne über beide Zeitmuster-Aspekte', () => {
+    // Ohne sie rescaled die Achse mitten im Morph und die Balken
+    // durchstoßen die Null-Linie.
+    expect(video).toMatch(/festeSpanne/);
+    expect(video).toMatch(/mitFesterAchse\(optionen\.stunden\)/);
+    expect(video).toMatch(/mitFesterAchse\(optionen\.wochentage\)/);
+  });
+
+  it('auch der Abspann trägt das Siegel — und Frame 0 ist kein leeres Poster', () => {
+    expect(video).toMatch(/if \(szene\.id === 'cta'\) maleSiegel\(ctx, story\.echtgeld\)/);
+    expect(video).toMatch(/macheBuehne\(erste\.id\)/);
   });
 
   it('das Siegel wird im Frame-Maler gezeichnet (jeder Frame, volle Deckkraft)', () => {
