@@ -105,4 +105,23 @@ describe('die Verdrahtung — alle drei Bücher rechnen mit derselben Mechanik',
     // Symbol, das die AKTIVE Engine hält, bleibt für Sockel-Käufe tabu.
     expect(momentumRun).toContain('if (alle.has(o.symbol) && !aufstockung) continue;');
   });
+
+  it('Aufstockungen tragen das Flag — sonst lehnt der Buchungspfad sie still ab', () => {
+    /* Red-Team-Befund 1 (20.08., HOCH): Ohne Broker-Verbindung ist kein
+     * Kauf ein „echter Fill", und executePaperTrade lehnt Käufe in
+     * bestehende Positionen seit dem 05.08.-Vorfall ab. Jeder Nachschub
+     * scheiterte still an `position_existiert` — der Schatten führte aus,
+     * die echten Konten nicht. Beide Wallet-Pfade müssen das Flag setzen. */
+    expect(momentumRun.match(/\.\.\.\(aufstockung \? \{ aufstockung: true \} : \{\}\),/g) ?? [])
+      .toHaveLength(2);
+  });
+
+  it('der Buchungspfad erlaubt die Aufstockung NUR ausdrücklich und NUR cash-gedeckt', () => {
+    const broker = readFileSync(join(hier, '../src/core/broker.ts'), 'utf8');
+    // Die Tür ist eng: echter Fill ODER ausdrückliches Flag — der
+    // 05.08.-Wiederholungskauf-Schutz für Scan und Handeingabe bleibt.
+    expect(broker).toContain('if (!echterFill && req.aufstockung !== true) {');
+    // Und die Paper-Aufstockung zahlt aus dem Cash, nie auf Kredit.
+    expect(broker).toContain('if (!echterFill && cost > deckung) {');
+  });
 });

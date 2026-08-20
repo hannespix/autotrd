@@ -604,6 +604,10 @@ async function rebalanceMomentumUsers(
             qty,
             source: 'engine',
             assetClass: cls,
+            // Aufstockung ausdrücklich markieren — ohne das Flag lehnt der
+            // Buchungspfad den Kauf in die bestehende Position ab
+            // (05.08.-Schutz; Red-Team-Befund 20.08.).
+            ...(aufstockung ? { aufstockung: true } : {}),
             // Steckbrief fürs Meta-Labeling: Momentum-Käufe lernen getrennt
             bucket: bucketKey({ assetClass: cls, timeframe: 'daily', signature: 'momentum', side: 'long' }),
             signalContext: { typ: 'momentum' },
@@ -814,6 +818,8 @@ async function rebalanceCoreSleeve(
             source: 'engine',
             assetClass: cls,
             core: true, // Besitzkennzeichnung — der Scan lässt sie in Ruhe
+            // Aufstockung ausdrücklich markieren (s. Momentum-Wallet oben).
+            ...(aufstockung ? { aufstockung: true } : {}),
             bucket: bucketKey({ assetClass: cls, timeframe: 'daily', signature: 'core', side: 'long' }),
             signalContext: { typ: 'momentum' },
           },

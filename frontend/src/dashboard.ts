@@ -7770,7 +7770,10 @@ function renderKapital(s: PortfolioStatsDoc): void {
     return;
   }
   const pct = (v: number): string => `${v.toFixed(1)} %`;
-  const ton = k.cashPct > 50 ? 'c-rd' : k.cashPct > 25 ? '' : 'c-gn';
+  // NEGATIVES Cash sind Schulden (Margin) — das darf nie grün leuchten
+  // (Red-Team-Befund 3, 20.08.: „Kapital im Einsatz" auf Kredit ist kein
+  // Erfolg, sondern der teuerste Zustand der Karte).
+  const ton = k.cashPct < 0 || k.cashPct > 50 ? 'c-rd' : k.cashPct > 25 ? '' : 'c-gn';
   box.innerHTML =
     `<div class="fl-row"><span>${t('pf.kapitalInvestiert')}</span>` +
     `<span class="mono">${pct(k.investiertPct)}</span>` +
