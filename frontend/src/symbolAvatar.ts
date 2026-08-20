@@ -37,19 +37,89 @@ export function symbolMonogramm(symbol: string): string {
 const LOGO_BASIS = 'https://logo-6xru5z43xa-uc.a.run.app';
 
 /**
- * Fertiges Chip-HTML — inhärent escaped: Monogramm ist [A-Z0-9]{1,2}, die
- * Bild-URL entsteht aus dem gefilterten Symbol ([A-Za-z0-9.^-]) plus
- * encodeURIComponent. Das echte Logo (Owner 20.08., Reddit-Screenshot)
- * liegt ÜBER dem Monogramm; lädt es nicht, entfernt die Fehler-Delegation
- * das Bild und das Monogramm bleibt sichtbar.
+ * Logo-Lager: EIN Abruf je Symbol pro Sitzung, Ergebnis als blob-URL.
+ *
+ * Owner-Befund 20.08. („Logos kurz da, dann durch Buchstaben ersetzt"):
+ * Die Listen bauen sich im Kurs-Takt per innerHTML neu — direkte
+ * <img src=Proxy>-Elemente wurden dabei mitten im Laden abgeräumt, der
+ * abgebrochene Request feuerte `error`, die Delegation entfernte das Bild,
+ * und das Spiel begann von vorn. Deshalb hängt am Chip-HTML KEIN
+ * Netzwerk-Bild mehr: `schmueckeAvatare()` holt jedes Logo genau einmal,
+ * lagert es als blob-URL und setzt es nach jedem Re-Render aus dem Lager
+ * ein — ohne Netzwerk, ohne Abbruch, ohne Flackern.
+ */
+const logoLager = new Map<string, string | null>();
+const logoLaeuft = new Map<string, Promise<void>>();
+const fehlversuche = new Map<string, number>();
+
+function ladeLogo(sym: string): Promise<void> {
+  let lauf = logoLaeuft.get(sym);
+  if (!lauf) {
+    lauf = (async () => {
+      try {
+        const res = await fetch(`${LOGO_BASIS}/?symbol=${encodeURIComponent(sym)}`);
+        if (!res.ok) {
+          logoLager.set(sym, null);
+          return;
+        }
+        const blob = await res.blob();
+        if (!blob.type.startsWith('image/') || blob.size < 50) {
+          logoLager.set(sym, null);
+          return;
+        }
+        logoLager.set(sym, URL.createObjectURL(blob));
+      } catch {
+        // Netz-Blip: bis zu drei Versuche über spätere Pässe, dann Ruhe.
+        const n = (fehlversuche.get(sym) ?? 0) + 1;
+        fehlversuche.set(sym, n);
+        if (n >= 3) logoLager.set(sym, null);
+      } finally {
+        logoLaeuft.delete(sym);
+      }
+    })();
+    logoLaeuft.set(sym, lauf);
+  }
+  return lauf;
+}
+
+/**
+ * Nach jedem Listen-Render aufrufen: setzt vorhandene Logos aus dem Lager
+ * in alle Chips ein und stößt fehlende Abrufe an (die dann fertige Chips
+ * über einen weiteren Pass nachrüsten).
+ */
+export function schmueckeAvatare(): void {
+  for (const chip of document.querySelectorAll<HTMLElement>('.sym-av[data-logo-sym]')) {
+    if (chip.querySelector('.sym-logo')) continue;
+    const sym = chip.dataset['logoSym'];
+    if (!sym) continue;
+    const url = logoLager.get(sym);
+    if (url) {
+      const img = document.createElement('img');
+      img.className = 'sym-logo';
+      img.alt = '';
+      img.src = url;
+      chip.appendChild(img);
+    } else if (url === undefined) {
+      void ladeLogo(sym).then(() => {
+        if (logoLager.get(sym)) schmueckeAvatare();
+      });
+    }
+  }
+}
+
+/**
+ * Fertiges Chip-HTML — inhärent escaped: Monogramm ist [A-Z0-9]{1,2}, das
+ * data-Attribut trägt nur [A-Z0-9.^-]. Liegt das Logo schon im Lager,
+ * kommt es sofort mit (blob-URL, kein Netzwerk); sonst rüstet
+ * schmueckeAvatare() nach.
  */
 export function symbolAvatar(symbol: string, klein = false): string {
   const rein = symbol.replace(/[^A-Za-z0-9.^-]/g, '').toUpperCase();
+  const url = logoLager.get(rein);
+  const bild = url ? `<img class="sym-logo" alt="" src="${url}">` : '';
   return (
-    `<span class="sym-av f${symbolTon(symbol)}${klein ? ' sm' : ''}" aria-hidden="true">` +
-    `${symbolMonogramm(symbol)}` +
-    `<img class="sym-logo" loading="lazy" alt="" src="${LOGO_BASIS}/?symbol=${encodeURIComponent(rein)}">` +
-    `</span>`
+    `<span class="sym-av f${symbolTon(symbol)}${klein ? ' sm' : ''}" data-logo-sym="${rein}" aria-hidden="true">` +
+    `${symbolMonogramm(symbol)}${bild}</span>`
   );
 }
 

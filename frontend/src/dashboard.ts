@@ -99,7 +99,7 @@ import {
   type PriceLineSpec,
 } from './chart.js';
 import { ICONS } from './icons.js';
-import { installiereLogoFallback, symbolAvatar } from './symbolAvatar.js';
+import { installiereLogoFallback, schmueckeAvatare, symbolAvatar } from './symbolAvatar.js';
 import { starteTour, tourAktiv } from './tour.js';
 import { newsChartMarkers, newsForDay } from './newsMarkers.js';
 import {
@@ -4473,6 +4473,7 @@ function wireWatchlist(): void {
 
   renderStrategyChips();
   wireHistorie();
+  schmueckeAvatare();
 }
 
 /**
@@ -6758,6 +6759,7 @@ function renderPortfolio(): void {
     }
   }
 
+  schmueckeAvatare();
   renderJournal();
   // Nur nachziehen, wenn die Ansicht offen ist: Sechs Diagramme bei jedem
   // Portfolio-Render neu zu bauen, kostet bei jedem eintreffenden Trade
