@@ -80,6 +80,17 @@ export interface ChartLook {
   kat: string[];
   dunkel: boolean;
   animation: boolean;
+  /** Größenfaktor für Schrift und Strichstärken. Ohne Angabe 1 (App-
+   *  Ansicht). Das Video malt dieselben Optionen auf eine 918px-Bühne, die
+   *  im Feed auf Handybreite schrumpft — dort braucht es ~2,6-fache Schrift,
+   *  sonst sind die Skalen unlesbar (Owner-Kritik 20.08.). */
+  skala?: number;
+  /** Schriftfamilie. Ohne Angabe `inherit` (App, SVG-Renderer). Der CANVAS-
+   *  Renderer des Videos braucht eine ECHTE Familie: `ctx.font = "29px
+   *  inherit"` ist ungültig, die Zuweisung wird still verworfen und ALLE
+   *  Chart-Texte fallen auf 10px sans-serif zurück — exakt die „viel zu
+   *  kleinen Achsen" trotz korrekter fontSize in den Optionen. */
+  schrift?: string;
 }
 
 const lies = (s: CSSStyleDeclaration, name: string, fallback: string): string =>
@@ -115,6 +126,9 @@ export function mitAlpha(farbe: string, a: number): string {
 const vorzeichenFarbe = (v: number, look: ChartLook): string =>
   v > 0 ? look.gn : v < 0 ? look.rd : look.leise;
 
+/** Schrift-/Strichgröße nach look.skala — die App bleibt bei Faktor 1. */
+const px = (look: ChartLook, n: number): number => Math.round(n * (look.skala ?? 1));
+
 /** Gemeinsame Grundeinstellungen — Hairline-Raster, leise Achsen, Mono-Zahlen. */
 function basis(look: ChartLook): EChartsCoreOption {
   return {
@@ -123,12 +137,12 @@ function basis(look: ChartLook): EChartsCoreOption {
     animationEasing: 'cubicOut',
     animationDurationUpdate: 550,
     animationEasingUpdate: 'cubicInOut',
-    textStyle: { fontFamily: 'inherit' },
+    textStyle: { fontFamily: look.schrift ?? 'inherit' },
     tooltip: {
       backgroundColor: look.dunkel ? 'rgba(16, 22, 36, .94)' : 'rgba(252, 253, 255, .96)',
       borderColor: look.bd,
       borderWidth: 1,
-      textStyle: { color: look.text, fontSize: 12 },
+      textStyle: { color: look.text, fontSize: px(look, 12) },
       extraCssText: 'border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,.18);',
     },
     grid: { left: 6, right: 10, top: 12, bottom: 4, containLabel: true },
@@ -139,7 +153,7 @@ const wertAchse = (look: ChartLook): Record<string, unknown> => ({
   type: 'value',
   axisLine: { show: false },
   axisTick: { show: false },
-  axisLabel: { color: look.leise, fontSize: 10, formatter: (v: number) => kurz(v) },
+  axisLabel: { color: look.leise, fontSize: px(look, 11), formatter: (v: number) => kurz(v) },
   splitLine: { lineStyle: { color: look.hair } },
 });
 
@@ -148,7 +162,7 @@ const katAchse = (look: ChartLook, labels: string[], jede = 0): Record<string, u
   data: labels,
   axisLine: { lineStyle: { color: look.bd } },
   axisTick: { show: false },
-  axisLabel: { color: look.leise, fontSize: 10, interval: jede },
+  axisLabel: { color: look.leise, fontSize: px(look, 11), interval: jede },
 });
 
 const vorzeichenBalken = (
@@ -184,7 +198,7 @@ export function baueOptionen(d: AnalyseChartDaten, look: ChartLook): Record<Aspe
         type: 'line',
         data: d.verlauf,
         showSymbol: false,
-        lineStyle: { width: 1.8, color: vFarbe },
+        lineStyle: { width: 1.8 * (look.skala ?? 1), color: vFarbe },
         itemStyle: { color: vFarbe },
         areaStyle: {
           color: {
@@ -216,7 +230,7 @@ export function baueOptionen(d: AnalyseChartDaten, look: ChartLook): Record<Aspe
     yAxis: {
       ...wertAchse(look),
       minInterval: 1,
-      axisLabel: { color: look.leise, fontSize: 10, formatter: (v: number) => String(Math.round(v)) },
+      axisLabel: { color: look.leise, fontSize: px(look, 11), formatter: (v: number) => String(Math.round(v)) },
     },
     series: [
       {
@@ -249,9 +263,9 @@ export function baueOptionen(d: AnalyseChartDaten, look: ChartLook): Record<Aspe
     legend: {
       bottom: 0,
       icon: 'roundRect',
-      itemWidth: 9,
-      itemHeight: 9,
-      textStyle: { color: look.text, fontSize: 11 },
+      itemWidth: px(look, 9),
+      itemHeight: px(look, 9),
+      textStyle: { color: look.text, fontSize: px(look, 12) },
     },
     series: [
       {

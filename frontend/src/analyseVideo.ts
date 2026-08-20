@@ -44,6 +44,13 @@ const VIDEO_LOOK: ChartLook = {
   kat: [FARBE.akzent, '#8b7cff', FARBE.gruen, FARBE.rot, '#5ce4fb', '#40e0b4', '#ff8290', FARBE.text2],
   dunkel: true,
   animation: true,
+  /* Die 918px-Bühne schrumpft im Feed auf Handybreite — ohne diesen Faktor
+   * sind die Skalen unlesbar (Owner-Kritik 20.08.: „viel zu kleine Schrift").
+   * Und der Canvas-Renderer braucht eine ECHTE Schriftfamilie: mit dem
+   * App-Default `inherit` verwirft der Canvas jede Font-Zuweisung still und
+   * malt 10px sans-serif — der Faktor käme nie an (siehe ChartLook.schrift). */
+  skala: 2.6,
+  schrift: 'ui-sans-serif, system-ui, sans-serif',
 };
 
 export interface RegieSzene {
@@ -52,18 +59,40 @@ export interface RegieSzene {
 }
 
 /**
- * Die Szenenfolge — Aspekte ohne Daten fliegen raus, die Einladung schließt
- * immer ab. Gesamt ~10–16 s, je nachdem, was das Konto hergibt.
+ * Die Szenenfolge — Regie nach Owner-Kritik 20.08. („Regisseur-mäßig, kein
+ * Werbe-Look, manche Teile fixiert"):
+ *
+ *  - Der HOOK zuerst: keine stehende Titelkarte, sondern die Kurve, die sich
+ *    zeichnet, während die Rendite im Kopf hochzählt — „da geht was" ab
+ *    Sekunde 1. LinkedIn entscheidet in den ersten zwei Sekunden, ob
+ *    weitergeschaut wird.
+ *  - Die Chart-Szenen teilen EINE feste Bühne (Rahmen, Marke, Zeitraum,
+ *    Siegel stehen — nur die Diagrammfläche wechselt, mit weicher Blende).
+ *  - Die Einladung ist eine kurze, leise Schlusskarte (Abspann, keine
+ *    Werbung) — und die Ergebnis-Karte läuft nur noch als Einstieg, wenn es
+ *    keine Kurve gibt (die Zahl ist dann der einzige Inhalt).
+ *
+ * Aspekte ohne Daten fliegen raus. Gesamt ~6–15 s.
  */
 export function regiePlan(chart: AnalyseChartDaten): RegieSzene[] {
-  const plan: RegieSzene[] = [{ id: 'ergebnis', dauerMs: 3000 }];
-  if (chart.verlauf.length >= 2) plan.push({ id: 'kurve', dauerMs: 3200 });
-  if (chart.symbole.length > 0) plan.push({ id: 'symbole', dauerMs: 3200 });
+  const plan: RegieSzene[] = [];
+  if (chart.verlauf.length >= 2) plan.push({ id: 'kurve', dauerMs: 4200 });
+  else plan.push({ id: 'ergebnis', dauerMs: 3000 });
+  if (chart.symbole.length > 0) plan.push({ id: 'symbole', dauerMs: 3400 });
   if (chart.stunden.some((s) => s.value !== 0) && chart.wochentage.some((w) => w.value !== 0)) {
-    plan.push({ id: 'zeitmuster', dauerMs: 3600 });
+    plan.push({ id: 'zeitmuster', dauerMs: 3800 });
   }
-  plan.push({ id: 'cta', dauerMs: 2800 });
+  plan.push({ id: 'cta', dauerMs: 2400 });
   return plan;
+}
+
+/** Weiches Ein/Aus (cubic) — dieselbe Handschrift wie im Story-Video. */
+const weich = (p: number): number => 1 - Math.pow(1 - Math.min(1, Math.max(0, p)), 3);
+
+/** „+5,49 %" im deutschen Format — Vorzeichen immer, echtes Minuszeichen. */
+export function formatRendite(pct: number): string {
+  const betrag = Math.abs(pct).toFixed(2).replace('.', ',');
+  return `${pct < 0 ? '−' : '+'}${betrag} %`;
 }
 
 /* Chart-Fläche in der 1080er-Leinwand: innerhalb der Karte (1200er-Raum
@@ -161,8 +190,28 @@ export async function baueAnalyseVideo(
         ctx.font = '26px ui-sans-serif, system-ui, sans-serif';
         ctx.fillText(`${story.vonTag} → ${story.bisTag}`, 90, 186);
       }
+      /* Der Hook: In der Eröffnungs-Szene zählt die Rendite oben rechts
+       * hoch, während sich die Kurve darunter zeichnet — die Zahl gehört
+       * zur Kurve, nicht auf eine eigene Titelkarte. Prozent nur mit
+       * Zeitraum (dieselbe Ehrlichkeitsregel wie auf den Karten). */
+      if (szene.id === 'kurve' && story.vonTag && story.bisTag) {
+        const wert = story.renditePct * weich((p * szene.dauerMs) / 1500);
+        ctx.fillStyle = story.renditePct > 0 ? FARBE.gruen : story.renditePct < 0 ? FARBE.rot : FARBE.text2;
+        ctx.font = '700 68px ui-monospace, SFMono-Regular, Menlo, monospace';
+        ctx.textAlign = 'right';
+        // Rechtsbündig UNTER dem Siegel (Chip endet ~150) — nie darüber.
+        ctx.fillText(formatRendite(wert), 1110, 246);
+        ctx.textAlign = 'left';
+      }
       ctx.restore();
-      if (buehne?.leinwand) ctx.drawImage(buehne.leinwand, CHART_X, CHART_Y, CHART_B, CHART_H);
+      /* Weiche Blende: Die Bühne (Rahmen, Marke, Zeitraum, Siegel) steht
+       * fest — nur die Diagrammfläche blendet beim Szenenwechsel ein. */
+      if (buehne?.leinwand) {
+        ctx.save();
+        ctx.globalAlpha = weich((p * szene.dauerMs) / 350);
+        ctx.drawImage(buehne.leinwand, CHART_X, CHART_Y, CHART_B, CHART_H);
+        ctx.restore();
+      }
       // Das Siegel zuletzt und in voller Deckkraft — auf JEDEM Frame.
       ctx.save();
       ctx.scale(1080 / 1200, 1080 / 1200);
