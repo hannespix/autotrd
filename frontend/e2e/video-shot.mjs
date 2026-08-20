@@ -152,7 +152,8 @@ const analyse = await seite.evaluate(async () => {
 console.log('Analyse-Video:', JSON.stringify({ ...analyse, stills: analyse.stills }));
 if (!/^autotrd-analyse-.*\.(mp4|webm)$/.test(analyse.name)) fehler.push(`Analyse-Dateiname unerwartet: ${analyse.name}`);
 if (analyse.groesse < 100_000) fehler.push(`Analyse-Video verdächtig klein: ${analyse.groesse} Bytes`);
-if (analyse.plan[0] !== 'ergebnis' || analyse.plan[analyse.plan.length - 1] !== 'cta') {
+// Der Hook eröffnet (Regie 20.08.): Kurve zuerst, kein stehendes Titelbild.
+if (analyse.plan[0] !== 'kurve' || analyse.plan[analyse.plan.length - 1] !== 'cta') {
   fehler.push(`Regie unerwartet: ${analyse.plan.join(' → ')}`);
 }
 if (analyse.stills.length !== analyse.plan.length) {

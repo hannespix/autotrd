@@ -99,6 +99,23 @@ describe('baueOptionen — die alten Regeln überleben den Umzug', () => {
     expect(mitAlpha('#26cf9d', 0.26)).toBe('rgba(38, 207, 157, 0.26)');
     expect(mitAlpha('rgba(1,2,3,.5)', 0.26)).toBe('rgba(1,2,3,.5)');
   });
+
+  it('skala vergrößert Achsen-Schrift und Linienstärke (Owner: „Skalen viel zu klein")', () => {
+    type MitAchse = { yAxis: { axisLabel: { fontSize: number } } };
+    const gross = baueOptionen(DATEN, { ...LOOK, skala: 2.6 });
+    expect((gross.verlauf as unknown as MitAchse).yAxis.axisLabel.fontSize).toBeGreaterThanOrEqual(26);
+    expect((serie(gross.verlauf) as unknown as { lineStyle: { width: number } }).lineStyle.width).toBeGreaterThanOrEqual(4);
+    // Ohne skala (App-Ansicht) bleibt die Schrift moderat.
+    const app = baueOptionen(DATEN, LOOK);
+    expect((app.verlauf as unknown as MitAchse).yAxis.axisLabel.fontSize).toBeLessThanOrEqual(12);
+  });
+
+  it('schrift ersetzt das SVG-only `inherit` (Canvas verwirft ungültige Fonts still)', () => {
+    type MitText = { textStyle: { fontFamily: string } };
+    const canvasLook = baueOptionen(DATEN, { ...LOOK, schrift: 'ui-sans-serif, system-ui, sans-serif' });
+    expect((canvasLook.verlauf as unknown as MitText).textStyle.fontFamily).toContain('ui-sans-serif');
+    expect((baueOptionen(DATEN, LOOK).verlauf as unknown as MitText).textStyle.fontFamily).toBe('inherit');
+  });
 });
 
 describe('Quelltext-Pins — die Refactoring-Fallen', () => {
