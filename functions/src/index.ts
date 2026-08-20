@@ -16,6 +16,7 @@ initializeApp();
 // Function bei Updates für immer privat (403 ohne CORS-Header im Browser)
 
 export { scanMarket, scanNow } from './scheduled/scanMarket.js';
+export { logo } from './http/logo.js';
 export { evalForecasts, evalNow } from './scheduled/evalForecasts.js';
 export { snapshotEquity, snapshotNow } from './scheduled/snapshotEquity.js';
 export { autoTune, tuneNow } from './scheduled/autoTune.js';

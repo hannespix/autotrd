@@ -29,9 +29,14 @@ describe('symbolMonogramm — ein bis zwei saubere Zeichen', () => {
     expect(symbolMonogramm('^^')).toBe('·');
   });
 
-  it('inhärent escaped — auch bösartige Eingaben ergeben kein Markup', () => {
+  it('inhärent escaped — bösartige Eingaben landen nie roh im Markup', () => {
     expect(symbolMonogramm('<script>')).toBe('SC');
-    expect(symbolAvatar('<img src=x>')).not.toContain('<img');
+    const html = symbolAvatar('<img src=x onerror=alert(1)>');
+    // Genau EIN img: unser Logo-Layer — nichts Injiziertes daneben.
+    expect(html.match(/<img/g)?.length).toBe(1);
+    expect(html).toContain('class="sym-logo"');
+    expect(html).not.toContain('onerror');
+    expect(html).not.toContain('src=x');
   });
 });
 
@@ -42,6 +47,15 @@ describe('symbolAvatar — Chip-HTML', () => {
     expect(html).toContain(' sm');
     expect(html).toContain('NV');
     expect(symbolAvatar('NVDA')).not.toContain(' sm');
+  });
+
+  it('legt das echte Logo als Bild über das Monogramm — URL sauber encodiert', () => {
+    const html = symbolAvatar('^NDX');
+    expect(html).toContain('class="sym-logo"');
+    expect(html).toContain('symbol=%5ENDX');
+    expect(html).toContain('loading="lazy"');
+    // Bösartige Eingaben landen NIE roh in der URL.
+    expect(symbolAvatar('"<x>')).toContain('symbol=X');
   });
 });
 
@@ -54,6 +68,17 @@ describe('Quelltext-Pins — Einbau und Palette', () => {
     expect(dashboard).toContain('lbSym.innerHTML = symbolAvatar(sym, true)');
     expect(dashboard).toContain('sigSym.innerHTML = symbolAvatar(sym, true)');
     expect(dashboard).toContain('symTd.innerHTML = symbolAvatar(p.symbol)');
+  });
+
+  it('die Fallback-Kette ist verdrahtet und der Logo-Weg läuft über UNSEREN Proxy', () => {
+    // Als echter Aufruf am Zeilenanfang — ein auskommentierter zählt nicht.
+    expect(dashboard).toMatch(/^\s*installiereLogoFallback\(\);/m);
+    const avatar = lese('../src/symbolAvatar.ts');
+    // Kein Dritt-Host im Frontend: nur der eigene Cloud-Run-Proxy.
+    expect(avatar).toContain("LOGO_BASIS = 'https://logo-6xru5z43xa-uc.a.run.app'");
+    expect(avatar).not.toContain('parqet');
+    // Weißer Ring, damit dunkle Marken-Logos im Dark-Theme lesbar sind.
+    expect(css).toMatch(/\.sym-logo[\s\S]*?background:\s*#fff/);
   });
 
   it('die Chip-Palette meidet Gewinn-Grün und Verlust-Rot', () => {

@@ -354,9 +354,16 @@ input { accent-color: var(--ac); }
   display: inline-flex; align-items: center; justify-content: center;
   width: 24px; height: 24px; border-radius: 50%; flex: 0 0 auto;
   font: 700 10px/1 ui-monospace, 'SF Mono', monospace; letter-spacing: .03em;
-  vertical-align: middle;
+  vertical-align: middle; position: relative; overflow: hidden;
 }
 .sym-av.sm { width: 20px; height: 20px; }
+/* Das echte Logo liegt über dem Monogramm; weißer Ring, damit dunkle
+   Marken-Logos (Uber, Apple …) auch im Dark-Theme lesbar bleiben. */
+.sym-logo {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  border-radius: 50%; object-fit: contain;
+  background: #fff; padding: 2px; box-sizing: border-box;
+}
 .sym-av.f0 { background: var(--ac-soft); color: var(--ac); }
 .sym-av.f1 { background: var(--vi-soft); color: var(--vi); }
 .sym-av.f2 { background: var(--ac-soft); color: var(--ac2); }
@@ -364,6 +371,12 @@ input { accent-color: var(--ac); }
 .sym-av.f4 { background: var(--tk-soft); color: var(--tk); }
 .sym-av.f5 { background: var(--mut-soft); color: var(--t2); }
 td .sym-av, .lb-sym .sym-av { margin-right: 6px; }
+/* Mobil-Lesbarkeit (Owner 20.08.): Symbolzellen brechen nie um, und die
+   Signal-/Positions-Tabellen halten am Handy einen 12px-Schrift-Boden. */
+#sigBody td:first-child, #pBody td:first-child { white-space: nowrap; }
+@media (max-width: 480px) {
+  #sigBody td, #pBody td { font-size: 12px; padding: 7px 6px; }
+}
 
 /* Livebar (Watchlist-Quotes) */
 .livebar { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0; scrollbar-width: none; }
