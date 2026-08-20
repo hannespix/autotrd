@@ -1172,6 +1172,11 @@ function layout(email: string): string {
           <button class="dbtn pri" id="anVideoShare">${t('sh.jetztTeilen')}</button>
           <button class="dbtn" id="anVideoSave">${t('sh.herunterladen')}</button>
         </div>
+        <!-- Meldungen des Teilen-Schritts stehen HIER, nicht oben im Kopf:
+             am Handy ist der Kopf beim zweiten Klick längst aus dem Bild
+             gescrollt, und ein Fehler dort sieht aus wie „gar nichts"
+             (Owner-Befund 20.08., Android). -->
+        <span id="anVideoStatus" class="hint" role="status"></span>
       </div>
       <div id="anSharePreview" class="an-share-vor" hidden></div>
       <!-- Die Story ist klickbar (Owner 20.08.): ◀ ▶ blättern durch die
@@ -7591,7 +7596,9 @@ async function teileDepotGrafik(): Promise<void> {
     const text = shareText(daten);
 
     if (navigator.canShare?.({ files: [datei] })) {
-      await navigator.share({ files: [datei], text, url: 'https://autotrd.net' });
+      // Kein `url` neben `files`: die Kombi ist der bekannte Android-
+      // Stolperstein, und die Adresse steht ohnehin im Text (§ teileVideoDatei).
+      await navigator.share({ files: [datei], text });
       status.textContent = t('sh.geteilt');
       return;
     }
@@ -7652,7 +7659,8 @@ async function teileAlleKarten(): Promise<void> {
       dateien.push(new File([png], storyDateiname(karte.id, daten), { type: 'image/png' }));
     }
     if (navigator.canShare?.({ files: dateien })) {
-      await navigator.share({ files: dateien, text: shareText(daten), url: 'https://autotrd.net' });
+      // Kein `url` neben `files` — siehe teileVideoDatei.
+      await navigator.share({ files: dateien, text: shareText(daten) });
       status.textContent = t('sh.geteilt');
       return;
     }
@@ -7729,6 +7737,8 @@ async function erstelleStoryVideo(): Promise<void> {
       // Systemblatt nur anbieten, wo es Video-Dateien wirklich annimmt.
       ($('anVideoShare') as HTMLButtonElement).hidden =
         navigator.canShare?.({ files: [datei] }) !== true;
+      const videoStatus = $('anVideoStatus');
+      if (videoStatus) videoStatus.textContent = '';
       void elem.play().catch(() => undefined);
     }
     status.textContent = t('sh.videoFertig');
@@ -7741,24 +7751,39 @@ async function erstelleStoryVideo(): Promise<void> {
   }
 }
 
-/** Schritt 2 — Teilen mit FRISCHER Klick-Freigabe. */
+/** Schritt 2 — Teilen mit FRISCHER Klick-Freigabe.
+ *
+ * Jede Antwort dieses Schritts wird SICHTBAR (#anVideoStatus, direkt am
+ * Knopf): Der stumme AbortError-Zweig plus die Meldung oben im Kopf ergaben
+ * am Handy „beim Drücken passiert gar nichts" (Owner-Befund 20.08.) — Android
+ * wirft AbortError auch ohne Nutzer-Abbruch. Kein `url` neben `files`:
+ * geprüft wird mit canShare exakt die Nutzlast, die auch geteilt wird, und
+ * die Feld-Kombi url+files ist genau der bekannte Android-Stolperstein —
+ * die Adresse steht ohnehin im Text. */
 async function teileVideoDatei(): Promise<void> {
-  const status = $('anShareStatus');
+  const status = $('anVideoStatus');
+  const knopf = $('anVideoShare') as HTMLButtonElement | null;
   if (!videoDatei || !status) return;
+  if (knopf) knopf.disabled = true;
   try {
-    await navigator.share({ files: [videoDatei], text: videoText, url: 'https://autotrd.net' });
+    const nutzlast = { files: [videoDatei], text: videoText };
+    await navigator.share(navigator.canShare?.(nutzlast) === true ? nutzlast : { files: [videoDatei] });
     status.textContent = t('sh.geteilt');
   } catch (e) {
     const name = e instanceof Error ? e.name : '';
-    if (name !== 'AbortError') {
-      status.textContent = `${t('sh.fehlgeschlagen')}: ${serverText(e)}`;
-    }
+    console.warn('Video-Teilen fehlgeschlagen:', name, e);
+    status.textContent =
+      name === 'AbortError'
+        ? t('sh.abgebrochen')
+        : t('sh.teilenPlanB').replace('{0}', name || serverText(e));
+  } finally {
+    if (knopf) knopf.disabled = false;
   }
 }
 
 /** Herunterladen — der Rechner-Weg (und der Plan B fürs Handy). */
 function speichereVideoDatei(): void {
-  const status = $('anShareStatus');
+  const status = $('anVideoStatus');
   if (!videoDatei || !videoUrl || !status) return;
   const a = document.createElement('a');
   a.href = videoUrl;

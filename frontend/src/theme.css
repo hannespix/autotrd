@@ -768,6 +768,9 @@ input { accent-color: var(--ac); }
 .an-video { max-width: 420px; margin: 0 auto 10px; }
 .an-video video { display: block; width: 100%; border-radius: 12px; border: 1px solid var(--bd2); background: #000; }
 .an-video .an-share { justify-content: center; margin-top: 8px; }
+/* Teilen-Feedback direkt am Knopf — oben im Kopf ist es am Handy aus dem
+   Bild gescrollt und ein Fehler sieht aus wie „gar nichts" (Owner 20.08.). */
+.an-video #anVideoStatus { display: block; text-align: center; margin-top: 6px; min-height: 1.2em; }
 .an-story-nav { display: flex; align-items: center; justify-content: center; gap: 12px; margin: -2px 0 10px; }
 .an-story-nav .dbtn { flex: 0 0 auto; width: auto; min-width: 64px; }
 .an-story-dots { color: var(--t3); font-size: 13px; letter-spacing: 3px; font-variant-numeric: tabular-nums; }
