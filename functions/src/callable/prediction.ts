@@ -15,7 +15,7 @@ const MAX_HORIZON_DAYS = 60;
 
 export const savePrediction = onCall(CALLABLE_OPTS, async (request) => {
   const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError('unauthenticated', 'Anmeldung erforderlich');
+  if (!uid) throw new HttpsError('unauthenticated', 'srv.anmeldungErforderlich');
   if (!(await consumeQuota(uid, 'prediction', DAILY_LIMIT))) {
     throw new HttpsError('resource-exhausted', `Tageslimit von ${DAILY_LIMIT} Prognosen erreicht`);
   }
@@ -29,7 +29,7 @@ export const savePrediction = onCall(CALLABLE_OPTS, async (request) => {
     clear?: unknown;
   };
   if (typeof data.symbol !== 'string' || !new Set(allSymbols()).has(data.symbol)) {
-    throw new HttpsError('invalid-argument', 'Unbekanntes Symbol');
+    throw new HttpsError('invalid-argument', 'srv.unbekanntesSymbol');
   }
   const ref = getFirestore().doc(`users/${uid}/predictions/${data.symbol}`);
 
@@ -41,10 +41,10 @@ export const savePrediction = onCall(CALLABLE_OPTS, async (request) => {
   const targetPrice = Number(data.targetPrice);
   const basePrice = Number(data.basePrice);
   if (!Number.isFinite(targetPrice) || targetPrice <= 0 || !Number.isFinite(basePrice) || basePrice <= 0) {
-    throw new HttpsError('invalid-argument', 'targetPrice/basePrice müssen positive Zahlen sein');
+    throw new HttpsError('invalid-argument', 'srv.preisePositiv');
   }
   if (typeof data.targetDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(data.targetDate)) {
-    throw new HttpsError('invalid-argument', "targetDate muss 'YYYY-MM-DD' sein");
+    throw new HttpsError('invalid-argument', 'srv.targetDateFormat');
   }
   const today = new Date().toISOString().slice(0, 10);
   const maxDate = new Date(Date.now() + MAX_HORIZON_DAYS * 86_400_000).toISOString().slice(0, 10);
@@ -53,7 +53,7 @@ export const savePrediction = onCall(CALLABLE_OPTS, async (request) => {
   }
   const confidence = Number(data.confidence);
   if (![1, 2, 3].includes(confidence)) {
-    throw new HttpsError('invalid-argument', 'confidence muss 1, 2 oder 3 sein');
+    throw new HttpsError('invalid-argument', 'srv.confidenceUngueltig');
   }
 
   const doc: UserPrediction = {

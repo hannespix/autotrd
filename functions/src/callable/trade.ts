@@ -26,7 +26,7 @@ const MAX_QTY = 10_000;
 
 export const trade = onCall(CALLABLE_OPTS, async (request) => {
   const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError('unauthenticated', 'Anmeldung erforderlich');
+  if (!uid) throw new HttpsError('unauthenticated', 'srv.anmeldungErforderlich');
 
   const { symbol, side, qty } = (request.data ?? {}) as {
     symbol?: unknown;
@@ -50,7 +50,7 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
    * Kein Guard wird dadurch weicher: Kurs-Pflicht, Kurs-Zeitdeckel,
    * Konto-Tore und Quota laufen für beide Wege identisch weiter. */
   if (typeof symbol !== 'string') {
-    throw new HttpsError('invalid-argument', 'Symbol nicht handelbar');
+    throw new HttpsError('invalid-argument', 'srv.symbolNichtHandelbar');
   }
   if (
     !new Set(tradableSymbols()).has(symbol)
@@ -58,11 +58,11 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
   ) {
     throw new HttpsError(
       'invalid-argument',
-      'Symbol nicht handelbar — weder im Katalog noch im Alpaca-Universum',
+      'srv.symbolNichtHandelbarKatalog',
     );
   }
   if (side !== 'buy' && side !== 'sell') {
-    throw new HttpsError('invalid-argument', "side muss 'buy' oder 'sell' sein");
+    throw new HttpsError('invalid-argument', 'srv.sideUngueltig');
   }
   let qtyNum: number | undefined;
   if (qty !== undefined && qty !== null) {
@@ -85,11 +85,11 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
     throw new HttpsError('permission-denied', accessDeniedReason(accessLevelOf(userSnap.data())));
   }
   const strategy = userSnap.get('settings.strategy') as Strategy | undefined;
-  if (!strategy) throw new HttpsError('failed-precondition', 'Profil fehlt — ensureProfile zuerst aufrufen');
+  if (!strategy) throw new HttpsError('failed-precondition', 'srv.profilFehltEnsure');
 
   // M4: Paper only — der Doppel-Guard entscheidet zentral (M13/M14 erweitern das).
   if (resolveBrokerMode(strategy) !== 'paper') {
-    throw new HttpsError('failed-precondition', 'Live-Trading ist nicht freigeschaltet');
+    throw new HttpsError('failed-precondition', 'srv.liveNichtFreigeschaltet');
   }
 
   /* Risiko-Hülle auch für die Handeingabe (Audit 13.08., H3).
@@ -144,7 +144,7 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
   if (!quote || !(quote.price > 0)) {
     throw new HttpsError(
       'failed-precondition',
-      'Kein zentraler Kurs — Symbol zuerst in die Watchlist aufnehmen (nächster Scan liefert Daten)',
+      'srv.keinZentralerKurs',
     );
   }
   /* Kurs-Zeitdeckel (Audit 13.08., B-2): `updatedAt` wurde geschrieben und

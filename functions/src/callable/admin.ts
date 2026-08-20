@@ -60,15 +60,15 @@ export interface AdminUserRow {
 
 export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
   const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError('unauthenticated', 'Anmeldung erforderlich');
+  if (!uid) throw new HttpsError('unauthenticated', 'srv.anmeldungErforderlich');
   if (!(await consumeQuota(uid, 'adminUsers', DAILY_LIMIT))) {
-    throw new HttpsError('resource-exhausted', 'Tageslimit erreicht — bitte später erneut');
+    throw new HttpsError('resource-exhausted', 'srv.tageslimitErreicht');
   }
 
   const db = getFirestore();
   const caller = await db.doc(`users/${uid}`).get();
   if (caller.get('admin') !== true) {
-    throw new HttpsError('permission-denied', 'Nur für Betreiber-Konten');
+    throw new HttpsError('permission-denied', 'srv.nurBetreiber');
   }
 
   const { action, target, level, admin, an } = (request.data ?? {}) as {
@@ -80,10 +80,10 @@ export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
   };
   const targetRef = (): FirebaseFirestore.DocumentReference => {
     if (typeof target !== 'string' || target.length === 0 || target.includes('/')) {
-      throw new HttpsError('invalid-argument', 'target muss eine User-UID sein');
+      throw new HttpsError('invalid-argument', 'srv.targetUid');
     }
     if (target === uid) {
-      throw new HttpsError('failed-precondition', 'Das eigene Konto bleibt tabu (Selbst-Aussperr-Schutz)');
+      throw new HttpsError('failed-precondition', 'srv.eigenesKontoTabu');
     }
     return db.doc(`users/${target}`);
   };
@@ -179,10 +179,10 @@ export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
 
   if (action === 'set') {
     if (typeof level !== 'string' || !LEVELS.has(level)) {
-      throw new HttpsError('invalid-argument', "level muss 'pending', 'approved' oder 'blocked' sein");
+      throw new HttpsError('invalid-argument', 'srv.levelUngueltig');
     }
     const ref = targetRef();
-    if (!(await ref.get()).exists) throw new HttpsError('not-found', 'Unbekanntes Konto');
+    if (!(await ref.get()).exists) throw new HttpsError('not-found', 'srv.unbekanntesKonto');
     await ref.set(
       { accessLevel: level, accessChangedAt: new Date().toISOString(), accessChangedBy: uid },
       { merge: true },
@@ -195,10 +195,10 @@ export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
   // entmachten; den letzten Admin stellt zur Not die Konsole wieder her.
   if (action === 'setAdmin') {
     if (typeof admin !== 'boolean') {
-      throw new HttpsError('invalid-argument', 'admin muss true oder false sein');
+      throw new HttpsError('invalid-argument', 'srv.adminBool');
     }
     const ref = targetRef();
-    if (!(await ref.get()).exists) throw new HttpsError('not-found', 'Unbekanntes Konto');
+    if (!(await ref.get()).exists) throw new HttpsError('not-found', 'srv.unbekanntesKonto');
     await ref.set(
       { admin, adminChangedAt: new Date().toISOString(), adminChangedBy: uid },
       { merge: true },
@@ -224,7 +224,7 @@ export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
 
   if (action === 'setKillSwitch') {
     if (typeof an !== 'boolean') {
-      throw new HttpsError('invalid-argument', 'an muss true oder false sein');
+      throw new HttpsError('invalid-argument', 'srv.anBool');
     }
     await db.doc('meta/live').set(
       { killSwitch: an, killSwitchAt: new Date().toISOString(), killSwitchVon: uid },
@@ -235,6 +235,6 @@ export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
 
   throw new HttpsError(
     'invalid-argument',
-    "action muss 'list', 'set', 'setAdmin', 'liveStatus' oder 'setKillSwitch' sein",
+    'srv.actionUngueltig',
   );
 });

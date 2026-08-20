@@ -26,7 +26,7 @@ const TAGESLIMIT = 5;
 
 export const resetBreaker = onCall(CALLABLE_OPTS, async (request) => {
   const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError('unauthenticated', 'Anmeldung erforderlich');
+  if (!uid) throw new HttpsError('unauthenticated', 'srv.anmeldungErforderlich');
 
   // Ein Limit, weil sonst eine Schleife aus „lösen, weiterhandeln, wieder
   // auslösen" möglich wäre — genau das Verhalten, gegen das die Bremse da
@@ -41,7 +41,7 @@ export const resetBreaker = onCall(CALLABLE_OPTS, async (request) => {
 
   const ref = getFirestore().doc(`users/${uid}`);
   const snap = await ref.get();
-  if (!snap.exists) throw new HttpsError('failed-precondition', 'Profil fehlt');
+  if (!snap.exists) throw new HttpsError('failed-precondition', 'srv.profilFehlt');
 
   const warAusgeloest = typeof snap.get('risk.breakerAusgeloestAm') === 'string';
   await ref.set(

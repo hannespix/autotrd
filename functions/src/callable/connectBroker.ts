@@ -160,7 +160,7 @@ export async function verbindeBroker(
     }
   }
   if (schluessel.secret.trim().length < 20) {
-    throw new HttpsError('invalid-argument', 'Der geheime Schlüssel ist zu kurz.');
+    throw new HttpsError('invalid-argument', 'srv.geheimerSchluesselZuKurz');
   }
 
   /* Probe-Call VOR dem Speichern: Ein Schlüsselpaar, das nicht funktioniert,
@@ -303,7 +303,7 @@ export const connectBroker = onCall(
   CALLABLE_OPTS,
   async (request): Promise<ConnectResult | { ok: true; geloescht: boolean }> => {
     const uid = request.auth?.uid;
-    if (!uid) throw new HttpsError('unauthenticated', 'Anmeldung erforderlich');
+    if (!uid) throw new HttpsError('unauthenticated', 'srv.anmeldungErforderlich');
 
     const { action, apiKey, secretKey } = (request.data ?? {}) as {
       action?: unknown;
@@ -314,7 +314,7 @@ export const connectBroker = onCall(
     if (action === 'disconnect') return trenneBroker(uid);
 
     if (typeof apiKey !== 'string' || typeof secretKey !== 'string') {
-      throw new HttpsError('invalid-argument', 'apiKey und secretKey sind erforderlich');
+      throw new HttpsError('invalid-argument', 'srv.schluesselErforderlich');
     }
     /* Freischaltung VOR dem Außen-Call (Audit 13.08., Härtung): Bis dahin
      * konnte jedes frisch registrierte, nie freigeschaltete Konto Schlüssel

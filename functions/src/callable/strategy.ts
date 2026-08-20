@@ -26,7 +26,7 @@ const DAILY_SAVE_LIMIT = 300;
 
 export const saveStrategy = onCall(CALLABLE_OPTS, async (request) => {
   const uid = request.auth?.uid;
-  if (!uid) throw new HttpsError('unauthenticated', 'Anmeldung erforderlich');
+  if (!uid) throw new HttpsError('unauthenticated', 'srv.anmeldungErforderlich');
 
   if (!(await consumeQuota(uid, 'saveStrategy', DAILY_SAVE_LIMIT))) {
     throw new HttpsError('resource-exhausted', `Tageslimit von ${DAILY_SAVE_LIMIT} Speicherungen erreicht`);
@@ -45,7 +45,7 @@ export const saveStrategy = onCall(CALLABLE_OPTS, async (request) => {
   const ref = getFirestore().doc(`users/${uid}`);
   const vorher = await ref.get();
   if (!vorher.exists) {
-    throw new HttpsError('failed-precondition', 'Profil fehlt — ensureProfile zuerst aufrufen');
+    throw new HttpsError('failed-precondition', 'srv.profilFehltEnsure');
   }
 
   // Katalog-Symbole (yfinance-Konventionen, z. B. '^GSPC' statt 'GSPC') —
@@ -84,14 +84,14 @@ export const saveStrategy = onCall(CALLABLE_OPTS, async (request) => {
   }
   // Broker-Guards: Client kann hierüber NIE live schalten (M8/M14-Thema)
   if (s.broker.mode !== 'paper') {
-    throw new HttpsError('invalid-argument', 'broker.mode ist bis M14 fest auf paper');
+    throw new HttpsError('invalid-argument', 'srv.brokerModePaper');
   }
   // Engine-Start nur mit bestätigter E-Mail (M7 — Missbrauchsbremse:
   // Auto-Trading erzeugt laufende Serverlast pro User)
   if (s.engine.running === true && request.auth?.token.email_verified !== true) {
     throw new HttpsError(
       'failed-precondition',
-      'Bitte zuerst die E-Mail-Adresse bestätigen — dann lässt sich die Engine starten.',
+      'srv.emailZuerstBestaetigen',
     );
   }
 
