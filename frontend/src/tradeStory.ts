@@ -109,14 +109,18 @@ export interface AktSzene {
  * die Lehren aus dem Analyse-Video-Schnitt (zu schnell, zu hektisch).
  */
 export function aktPlan(): AktSzene[] {
+  /* Owner-Feinschliff 20.08.: Die Erklär-Zeile am Akt-Ende soll ~½–1 s
+   * länger stehen. Die Zeit kommt ANS ENDE des Akts (reine Lese-Ruhe),
+   * nicht durch früheres Einblenden — sonst konkurriert der Text wieder
+   * mit dem bewegten Blickziel. Jede Zeile steht jetzt ≥ 2 s. */
   return [
-    { id: 'scanner', dauerMs: 2800 },
-    { id: 'signal', dauerMs: 4800 },
-    { id: 'netz', dauerMs: 4600 },
+    { id: 'scanner', dauerMs: 3500 },
+    { id: 'signal', dauerMs: 5500 },
+    { id: 'netz', dauerMs: 5300 },
     // Owner-Nachkritik: der News-Akt war zu kurz und zu statisch — jetzt
-    // trägt er den vollen Ablauf lesen → bewerten → urteilen (5 s).
-    { id: 'news', dauerMs: 5000 },
-    { id: 'lernen', dauerMs: 3800 },
+    // trägt er den vollen Ablauf lesen → bewerten → urteilen.
+    { id: 'news', dauerMs: 5700 },
+    { id: 'lernen', dauerMs: 4200 },
     { id: 'abspann', dauerMs: 2200 },
   ];
 }

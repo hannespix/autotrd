@@ -134,12 +134,12 @@ describe('kursFenster — die Bühne des Trades', () => {
 });
 
 describe('aktPlan/aktBei — die fünf Akte', () => {
-  it('Reihenfolge Scanner→Signal→Netz→News→Tuning→Abspann, ~22 s gesamt', () => {
+  it('Reihenfolge Scanner→Signal→Netz→News→Tuning→Abspann, ~26 s gesamt', () => {
     const plan = aktPlan();
     expect(plan.map((a) => a.id)).toEqual(['scanner', 'signal', 'netz', 'news', 'lernen', 'abspann']);
     const gesamt = plan.reduce((s, a) => s + a.dauerMs, 0);
     expect(gesamt).toBeGreaterThanOrEqual(15_000);
-    expect(gesamt).toBeLessThanOrEqual(24_000);
+    expect(gesamt).toBeLessThanOrEqual(28_000);
   });
 
   it('aktBei findet Akt und Fortschritt', () => {
