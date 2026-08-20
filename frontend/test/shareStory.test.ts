@@ -105,6 +105,45 @@ describe('shareStory — Ehrlichkeitsregeln je Karte', () => {
     expect(verlauf.svg).toContain('Offene Positionen');
   });
 
+  it('Legenden-Chip trägt die FARBE seiner Fläche (Owner-Befund 20.08.: sechs gleiche Chips)', () => {
+    /* Vorher färbten die Chips nur nach Vorzeichen, die Flächen aber gestuft
+     * — bei sechs Gewinnern sechs identische grüne Chips neben sechs
+     * verschiedenen Flächen: keine Zuordnung möglich. Jetzt kommt beides aus
+     * EINER Zuweisung; der Chip einer Fläche MUSS deren Füllfarbe tragen. */
+    const verlauf = shareStory(fixture()).find((k) => k.id === 'verlauf')!;
+    const flaechenFarben = [...verlauf.svg.matchAll(/<polygon [^>]*fill="([^"]+)" opacity="0.55"/g)].map((m) => m[1]!);
+    const chipFarben = [...verlauf.svg.matchAll(/<rect [^>]*width="22" height="22" rx="5" fill="([^"]+)"/g)].map((m) => m[1]!);
+    expect(chipFarben.length).toBe(flaechenFarben.length);
+    for (const f of chipFarben) expect(flaechenFarben, f).toContain(f);
+  });
+
+  it('sechs Gewinner bekommen sechs VERSCHIEDENE Töne — nie auf einem Ton zusammengeklemmt', () => {
+    /* Der Owner-Fall vom 20.08. wörtlich: SOXX/SMH/SLV/TAN/LIT/INTC alle
+     * positiv — vorher klemmte Math.min alles jenseits der 4. Stufe auf
+     * demselben Hellgrün fest. */
+    const tage = [
+      { date: '2026-08-14', equity: 10_000 },
+      { date: '2026-08-19', equity: 10_600 },
+    ];
+    const trades = ['SOXX', 'SMH', 'SLV', 'TAN', 'LIT', 'INTC'].map((symbol, i) => ({
+      symbol, side: 'sell', qty: 1, price: 100, pnl: 100 - i,
+      executedAt: '2026-08-16T19:00:00.000Z',
+    }));
+    const d = { ...fixture(), zerlegung: zerlegeDepot(tage, trades) };
+    const verlauf = shareStory(d).find((k) => k.id === 'verlauf')!;
+    const chips = [...verlauf.svg.matchAll(/<rect [^>]*width="22" height="22" rx="5" fill="([^"]+)"/g)].map((m) => m[1]!);
+    const gewinnerChips = chips.filter((c) => c !== '#25d0ee');
+    expect(gewinnerChips.length).toBe(6);
+    expect(new Set(gewinnerChips).size).toBe(6);
+  });
+
+  it('dicke Flächen tragen ihren Namen direkt im Bild', () => {
+    // NVDA (+180 auf ~300er-Spanne) ist im Fixture die dickste Fläche —
+    // sie muss ihr Etikett in der Fläche haben, nicht nur in der Legende.
+    const verlauf = shareStory(fixture()).find((k) => k.id === 'verlauf')!;
+    expect(verlauf.svg).toMatch(/text-anchor="middle">[^<]*(NVDA|Offene Positionen)/);
+  });
+
   it('Womit zeigt je Symbol einen Balken mit Anteil an der Basis', () => {
     const womit = shareStory(fixture()).find((k) => k.id === 'womit')!;
     for (const sym of ['NVDA', 'EWJ', 'GLD']) expect(womit.svg).toContain(sym);
