@@ -299,6 +299,19 @@ function maleNews(ctx: CanvasRenderingContext2D, tMs: number): void {
   const kartenB = 840;
   const kartenH = 130;
   const startX = 600 - kartenB / 2;
+  /* Herkunft (Owner-Frage 20.08.): ehrlich-generisch statt Fremdmarken —
+   * Verlagsnamen im eigenen Werbe-Clip sähen nach Empfehlung aus. Die
+   * echten Quellen stehen in der App an jeder Meldung. */
+  const herkunft = weich((tMs - 500) / 420);
+  if (herkunft > 0) {
+    ctx.globalAlpha = herkunft;
+    ctx.fillStyle = FARBE.text3;
+    ctx.font = `26px ${SANS}`;
+    ctx.textAlign = 'center';
+    ctx.fillText(t('ts.newsQuelle'), 600, B_Y + 18);
+    ctx.textAlign = 'left';
+    ctx.globalAlpha = 1;
+  }
   for (let i = 0; i < 3; i++) {
     const y = B_Y + 50 + i * (kartenH + 34);
     const ein = weich((tMs - i * 320) / 420);
