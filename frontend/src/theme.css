@@ -303,7 +303,11 @@ input { accent-color: var(--ac); }
 }
 .card:hover { border-color: var(--bd2); box-shadow: var(--sh-card), var(--rim), var(--glow-ac); }
 @keyframes cardIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-.sect { padding: 8px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--t2); font-weight: 600; border-bottom: 1px solid var(--hair); }
+/* flow-root: Kopf-Floats (.dc-modus, .sect-tools, #hdStand) bleiben IM Kopf.
+ * Ohne das rutscht ein zu breiter Float unter die Kopfzeile, ragt aus .sect
+ * heraus, und der .cbody (Flex = eigener Formatierungskontext) wird NEBEN den
+ * Float gequetscht — Depot-Chart auf 19 % Kartenbreite (Owner-Screenshot 20.08.). */
+.sect { padding: 8px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--t2); font-weight: 600; border-bottom: 1px solid var(--hair); display: flow-root; }
 .cbody { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 
 /* Form */
