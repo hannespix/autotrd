@@ -11,7 +11,12 @@
  * VERSION bumpen ⇒ alte Caches werden beim Activate weggeräumt.
  */
 
-const VERSION = 'v2'; // v2: Navigationen umgehen den HTTP-Cache (no-cache)
+// v3: NUR res.ok wird gecacht. Vorher wanderte ein Asset-404 (Race mit dem
+// Deploy-Swap) in den Cache und wurde per cache-first FÜR IMMER serviert —
+// „nur Hintergrund rendert", Reload und Browser-Cache-Leeren halfen nicht
+// (CacheStorage bleibt), erst der nächste Deploy mit neuem Hash „heilte"
+// (Live-Vorfall 20.08.). Der Bump räumt vergiftete Caches beim Activate weg.
+const VERSION = 'v3';
 const CACHE = `autotrd-${VERSION}`;
 const SHELL = ['/', '/manifest.json', '/favicon.svg'];
 
@@ -45,8 +50,10 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(req, { cache: 'no-cache' })
         .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((cache) => cache.put('/', copy));
+          if (res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE).then((cache) => cache.put('/', copy));
+          }
           return res;
         })
         .catch(() => caches.match('/')),
@@ -60,8 +67,10 @@ self.addEventListener('fetch', (event) => {
         (hit) =>
           hit ??
           fetch(req).then((res) => {
-            const copy = res.clone();
-            caches.open(CACHE).then((cache) => cache.put(req, copy));
+            if (res.ok) {
+              const copy = res.clone();
+              caches.open(CACHE).then((cache) => cache.put(req, copy));
+            }
             return res;
           }),
       ),
@@ -73,8 +82,10 @@ self.addEventListener('fetch', (event) => {
     caches.match(req).then((hit) => {
       const refresh = fetch(req)
         .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((cache) => cache.put(req, copy));
+          if (res.ok) {
+            const copy = res.clone();
+            caches.open(CACHE).then((cache) => cache.put(req, copy));
+          }
           return res;
         })
         .catch(() => hit);
