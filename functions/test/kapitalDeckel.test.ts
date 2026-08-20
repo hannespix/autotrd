@@ -83,4 +83,16 @@ describe('Kapitaldeckel — die Verdrahtung (Quelltext-Wächter)', () => {
   it('scanMarket: das Hebel-Budget speist sich aus dem gedeckelten Cash', () => {
     expect(scan).toMatch(/const kontoCash = kapitalDeckel\(/);
   });
+
+  it('executeTrade: auch die ECHTE Order bemisst sich am gedeckelten Kapital (Red-Team 20.08.)', () => {
+    /* Rest von Hochbefund 1: Der Deckel vom 13.08. saß nur im Buchungspfad —
+     * die reale Alpaca-Order wurde weiter am ungedeckelten Buchstand
+     * bemessen. Beim Anlassfall-Konto ging sie in voller Größe raus; ein
+     * Margin-Konto füllt so etwas auf Kredit. Gedeckelt wird NUR das
+     * Einstiegs-Sizing (planeMenge): Schließende Mengen kommen aus der
+     * Position, eine ausdrückliche req.qty bleibt unangetastet — Exits
+     * werden nie erschwert. */
+    expect(broker).toContain('const deckelOrder = kapitalDeckel(');
+    expect(broker).toMatch(/planeMenge\(req, strategy, \{\s*balance: deckelOrder,/);
+  });
 });
