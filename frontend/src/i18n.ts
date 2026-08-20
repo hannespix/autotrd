@@ -1085,6 +1085,25 @@ export const DE = {
   'mn.setupProjekt': 'Firebase-Projekt anlegen (siehe docs/SETUP.md)',
   'mn.setupKopieren': 'kopieren und die VITE_FIREBASE_*-Werte eintragen',
   'mn.setupNeustart': 'neu starten',
+  // Strategie-Validierung (Phase 3): shared/validateStrategy liefert Codes
+  // `val.muster|feld|p1|p2` — valText() setzt {0}/{1}/{2} ein.
+  'val.keinObjekt': 'Strategie muss ein Objekt sein',
+  'val.altSchema': "Verbotener Alt-Schema-Schlüssel '{0}' — das Schema ist FLACH (broker/watchlist/engine/indicators/signals)",
+  'val.pflichtFehlt': "Pflichtschlüssel '{0}' fehlt",
+  'val.objekt': '{0} muss ein Objekt sein',
+  'val.entweder': "{0} muss '{1}' oder '{2}' sein",
+  'val.zahlPositiv': '{0} muss eine positive Zahl sein',
+  'val.boolean': '{0} muss boolean sein',
+  'val.zahlNullAus': '{0} muss eine Zahl ≥ 0 sein (0 = aus)',
+  'val.zahlNull': '{0} muss eine Zahl ≥ 0 sein',
+  'val.hoechstens': '{0} darf höchstens {1} sein',
+  'val.bereich': '{0} muss zwischen {1} und {2} liegen',
+  'val.bereichAus': '{0} muss zwischen {1} und {2} liegen (0 = aus)',
+  'val.bereichHebel': '{0} muss zwischen {1} und {2} liegen (1 = kein Hebel)',
+  'val.bereichSockel': '{0} muss zwischen {1} und {2} liegen (0 = kein Sockel)',
+  'val.watchlist': 'watchlist muss ein Array nicht-leerer Symbole sein',
+  'val.mindestens': '{0} muss ≥ {1} sein',
+  'val.stringNichtLeer': '{0} muss ein nicht-leerer String sein',
   'srv.anmeldungErforderlich': 'Anmeldung erforderlich',
   'srv.emailZuerstBestaetigen': 'Bitte zuerst die E-Mail-Adresse bestätigen — dann lässt sich die Engine starten.',
   'srv.eigenesKontoTabu': 'Das eigene Konto bleibt tabu (Selbst-Aussperr-Schutz)',
@@ -1428,6 +1447,23 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'mn.setupProjekt': 'Create a Firebase project (see docs/SETUP.md)',
   'mn.setupKopieren': 'copy it and fill in the VITE_FIREBASE_* values',
   'mn.setupNeustart': 'restart',
+  'val.keinObjekt': 'Strategy must be an object',
+  'val.altSchema': "Forbidden legacy key '{0}' — the schema is FLAT (broker/watchlist/engine/indicators/signals)",
+  'val.pflichtFehlt': "Required key '{0}' is missing",
+  'val.objekt': '{0} must be an object',
+  'val.entweder': "{0} must be '{1}' or '{2}'",
+  'val.zahlPositiv': '{0} must be a positive number',
+  'val.boolean': '{0} must be boolean',
+  'val.zahlNullAus': '{0} must be a number ≥ 0 (0 = off)',
+  'val.zahlNull': '{0} must be a number ≥ 0',
+  'val.hoechstens': '{0} must be at most {1}',
+  'val.bereich': '{0} must be between {1} and {2}',
+  'val.bereichAus': '{0} must be between {1} and {2} (0 = off)',
+  'val.bereichHebel': '{0} must be between {1} and {2} (1 = no leverage)',
+  'val.bereichSockel': '{0} must be between {1} and {2} (0 = no core sleeve)',
+  'val.watchlist': 'watchlist must be an array of non-empty symbols',
+  'val.mindestens': '{0} must be ≥ {1}',
+  'val.stringNichtLeer': '{0} must be a non-empty string',
   'srv.anmeldungErforderlich': 'Sign-in required',
   'srv.emailZuerstBestaetigen': 'Please verify your email address first — then the engine can be started.',
   'srv.eigenesKontoTabu': 'Your own account is off-limits (self-lockout protection)',
@@ -2305,6 +2341,12 @@ export function t(schluessel: TextSchluessel): string {
  */
 export function serverText(e: unknown): string {
   const roh = e instanceof Error ? e.message : String(e ?? '');
+  /* Validierungs-Ablehnungen (Phase 3): `saveStrategy` joint mehrere
+   * val.*-Codes mit ' · ' — jeder wird einzeln aufgelöst. Unbekannte
+   * Segmente reicht valText unverändert durch. */
+  if (roh.startsWith('val.')) {
+    return roh.split(' · ').map(valText).join(' · ');
+  }
   const trenn = roh.indexOf('|');
   const code = trenn < 0 ? roh : roh.slice(0, trenn);
   if (/^srv\.\w+$/.test(code) && code in DE) {
@@ -2312,4 +2354,22 @@ export function serverText(e: unknown): string {
     return trenn < 0 ? text : text.replaceAll('{0}', roh.slice(trenn + 1));
   }
   return roh;
+}
+
+/**
+ * Validierungs-Code auflösen (Phase 3): `validateStrategy` (shared) liefert
+ * `val.muster|feld|p1|p2` — anders als bei `srv.*` sind hier MEHRERE
+ * Parameter erlaubt ({0}, {1}, {2}), weil Feldname und Grenzen nie ein `|`
+ * enthalten. Was kein bekannter Code ist, geht unverändert durch — nie ein
+ * roher Schlüssel im UI für Texte, die das Wörterbuch nicht kennt.
+ */
+export function valText(problem: string): string {
+  const teile = problem.split('|');
+  const code = teile[0]!;
+  if (!/^val\.\w+$/.test(code) || !(code in DE)) return problem;
+  let text = t(code as TextSchluessel);
+  for (let i = 1; i < teile.length; i++) {
+    text = text.replaceAll(`{${i - 1}}`, teile[i]!);
+  }
+  return text;
 }

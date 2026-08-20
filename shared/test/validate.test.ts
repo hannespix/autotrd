@@ -22,14 +22,15 @@ describe('validateStrategy (flaches Schema, CLAUDE.md §2)', () => {
     };
     const problems = validateStrategy(legacy);
     expect(problems.length).toBeGreaterThan(0);
-    expect(problems.join('\n')).toMatch(/Alt-Schema/);
+    // Seit Phase 3 sind Meldungen Codes; das Frontend übersetzt (valText).
+    expect(problems.join('\n')).toMatch(/val\.altSchema\|strategy/);
     expect(isStrategy(legacy)).toBe(false);
   });
 
   it('meldet fehlende Pflichtschlüssel', () => {
     const problems = validateStrategy({ broker: DEFAULT_STRATEGY.broker });
     expect(problems).toEqual(
-      expect.arrayContaining([expect.stringContaining("'watchlist' fehlt")]),
+      expect.arrayContaining(['val.pflichtFehlt|watchlist']),
     );
   });
 
