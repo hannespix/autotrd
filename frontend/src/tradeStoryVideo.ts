@@ -158,13 +158,21 @@ function maleChips(ctx: CanvasRenderingContext2D, chips: string[], tMs: number, 
   }
 }
 
-/** Eine erklärende Zeile unten — blendet weich ein, große Schrift. */
+/** Eine erklärende Zeile unten — blendet weich ein, große Schrift.
+ *  Auto-Fit: Läuft der Text über die Karte hinaus, schrumpft die Schrift,
+ *  bis er passt (fing der Prüfstand beim News-Akt: 40px × langer Satz >
+ *  Bühnenbreite — und die EN-Texte sind teils noch länger). */
 function maleZeile(ctx: CanvasRenderingContext2D, text: string, tMs: number, ab: number, betont = false): void {
   const ein = weich((tMs - ab) / 450);
   if (ein <= 0) return;
   ctx.globalAlpha = ein;
   ctx.fillStyle = betont ? FARBE.text : FARBE.text2;
-  ctx.font = `${betont ? 700 : 400} 40px ${SANS}`;
+  let groesse = 40;
+  ctx.font = `${betont ? 700 : 400} ${groesse}px ${SANS}`;
+  while (groesse > 24 && ctx.measureText(text).width > B_B - 20) {
+    groesse -= 2;
+    ctx.font = `${betont ? 700 : 400} ${groesse}px ${SANS}`;
+  }
   ctx.textAlign = 'center';
   ctx.fillText(text, 600, ZEILE_Y);
   ctx.textAlign = 'left';
@@ -282,6 +290,66 @@ export function netzZeile(riskExit: string | null): string {
   }
 }
 
+function maleNews(ctx: CanvasRenderingContext2D, tMs: number): void {
+  maleKopf(ctx, t('ts.titelNews'));
+  /* Drei abstrakte Schlagzeilen-Karten (BEWUSST ohne Text: erfundene
+   * Schlagzeilen wären Fake-News im eigenen Video) — die mittlere bekommt
+   * das Veto-Kreuz. Der Mechanismus ist echt: Der News-Check sitzt im
+   * Einstiegspfad (newsGate), schlechte Nachrichten blocken den Kauf. */
+  const kartenB = 840;
+  const kartenH = 130;
+  const startX = 600 - kartenB / 2;
+  for (let i = 0; i < 3; i++) {
+    const y = B_Y + 50 + i * (kartenH + 34);
+    const ein = weich((tMs - i * 320) / 420);
+    if (ein <= 0) continue;
+    const veto = i === 1 && tMs > 1900;
+    ctx.globalAlpha = ein * (veto ? 0.9 : 1);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
+    ctx.strokeStyle = veto ? FARBE.rot : FARBE.linie;
+    ctx.lineWidth = veto ? 3 : 2;
+    ctx.beginPath();
+    ctx.roundRect(startX, y, kartenB, kartenH, 16);
+    ctx.fill();
+    ctx.stroke();
+    // Abstrakte Textzeilen: zwei graue Balken je Karte.
+    ctx.fillStyle = veto ? 'rgba(255, 95, 95, 0.35)' : 'rgba(159, 176, 196, 0.35)';
+    ctx.beginPath();
+    ctx.roundRect(startX + 32, y + 34, kartenB * (0.62 - i * 0.08), 20, 10);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.roundRect(startX + 32, y + 74, kartenB * (0.4 + i * 0.06), 20, 10);
+    ctx.fill();
+    if (veto) {
+      const kreuz = weich((tMs - 1900) / 350);
+      ctx.globalAlpha = ein * kreuz;
+      ctx.strokeStyle = FARBE.rot;
+      ctx.lineWidth = 9;
+      ctx.lineCap = 'round';
+      const cx = startX + kartenB - 78;
+      const cy = y + kartenH / 2;
+      ctx.beginPath();
+      ctx.moveTo(cx - 26, cy - 26);
+      ctx.lineTo(cx + 26, cy + 26);
+      ctx.moveTo(cx + 26, cy - 26);
+      ctx.lineTo(cx - 26, cy + 26);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+  maleZeile(ctx, t('ts.newsZeile'), tMs, 2100, true);
+  const ein = weich((tMs - 2600) / 450);
+  if (ein > 0) {
+    ctx.globalAlpha = ein;
+    ctx.fillStyle = FARBE.text3;
+    ctx.font = `32px ${SANS}`;
+    ctx.textAlign = 'center';
+    ctx.fillText(t('ts.newsZeile2'), 600, ZEILE_Y + 52);
+    ctx.textAlign = 'left';
+    ctx.globalAlpha = 1;
+  }
+}
+
 function maleLernen(ctx: CanvasRenderingContext2D, tMs: number): void {
   maleKopf(ctx, t('ts.titelTuning'));
   /* Das Prognose-Gitter als Bild: Zellen leuchten der Reihe nach auf (die
@@ -393,6 +461,7 @@ export function maleAkt(
   if (akt === 'scanner') maleScanner(ctx, d, tMs);
   else if (akt === 'signal') maleSignal(ctx, d, lage, tMs);
   else if (akt === 'netz') maleNetz(ctx, d, lage, tMs);
+  else if (akt === 'news') maleNews(ctx, tMs);
   else if (akt === 'lernen') maleLernen(ctx, tMs);
   else maleAbspann(ctx, d, tMs);
 }
