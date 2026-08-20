@@ -975,6 +975,8 @@ function layout(email: string): string {
           <div><label class="lbl">${t('pf.luftUeberKosten')}</label><div id="pfEdge" class="smv mono">--</div></div>
         </div>
         <div class="hint" id="pfCostHint"></div>
+        <label class="lbl" style="margin-top:10px">${t('pf.fillReibung')} ${iBtn('fillReibung')}</label>
+        <div id="pfReibung" class="fl-tbl"><div class="hint">${t('pf.reibungKeineFills')}</div></div>
         <div class="hint" id="pfHint">${t('pf.abSnapshot')}</div>
         <!-- Owner-Feedback 28.07.: „man schaut meistens auf die Performance, und
              wenn man die History direkt darunter hat, ist das logischer." Stimmt —
@@ -7239,6 +7241,7 @@ function renderPfStats(): void {
   exp.className = `smv mono ${s.expectancy !== null ? pnlClass(s.expectancy) : ''}`;
   renderExits(s);
   renderCosts(s);
+  renderReibung(s);
 }
 
 /**
@@ -7704,6 +7707,44 @@ function renderCosts(s: PortfolioStatsDoc): void {
       : c.edgeOverCost < 2
         ? `${t('pc.zuWenigLuftA')} ${c.edgeOverCost.toFixed(1)}${t('pc.zuWenigLuftB')}`
         : `${t('pc.genugLuftA')} ${c.edgeOverCost.toFixed(1)}${t('pc.genugLuftB')}`;
+}
+
+/**
+ * Ausführungs-Reibung (Task #144/#146): gemessene Basispunkte zwischen
+ * Entscheidungskurs und Broker-Fill, je Klasse und Seite. Die Ampel am
+ * Aktien-Einstieg IST die Entscheidungsregel für den Maker-Umbau:
+ * unter 5 bp lohnt kein Limit-Umbau, 5–10 bp verdient eine
+ * Schatten-Messung, darüber ist der Umbau fällig.
+ */
+function renderReibung(s: PortfolioStatsDoc): void {
+  const box = $('pfReibung');
+  const r = s.reibung;
+  const klassen = r ? Object.keys(r).sort() : [];
+  if (klassen.length === 0) {
+    box.innerHTML = `<div class="hint">${t('pf.reibungKeineFills')}</div>`;
+    return;
+  }
+  const bp = (v: number): string => `${v.toFixed(1)} bp`;
+  box.innerHTML = klassen
+    .map((k) => {
+      const z = r![k]!;
+      const einTon =
+        k === 'stocks_us' && z.einstieg.n > 0
+          ? z.einstieg.avgBp > 10
+            ? 'c-rd'
+            : z.einstieg.avgBp >= 5
+              ? ''
+              : 'c-gn'
+          : '';
+      // Klassen-Schlüssel kommen aus der Datenbank — wie bei den
+      // Exit-Gründen auf harmlose Zeichen beschränken.
+      return (
+        `<div class="fl-row"><span>${k.replace(/[^\w-]/g, '')}</span>` +
+        `<span class="mono ${einTon}">${t('pf.reibungEinstieg')} ${z.einstieg.n}× · ${bp(z.einstieg.avgBp)}</span>` +
+        `<span class="mono">${t('pf.reibungAusstieg')} ${z.ausstieg.n}× · ${bp(z.ausstieg.avgBp)} · max ${bp(z.maxBp)}</span></div>`
+      );
+    })
+    .join('');
 }
 
 /**
