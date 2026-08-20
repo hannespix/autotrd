@@ -93,6 +93,74 @@ console.log('Video:', JSON.stringify(ergebnis));
 if (!/^autotrd-story-.*\.(mp4|webm)$/.test(ergebnis.name)) fehler.push(`Dateiname unerwartet: ${ergebnis.name}`);
 if (ergebnis.groesse < 100_000) fehler.push(`Video verdächtig klein: ${ergebnis.groesse} Bytes`);
 
+// 3) Das ANALYSE-Video (Regie über die Schaubilder) — echte Aufnahme, und der
+// beobachter-Haken zieht Standbilder aus GENAU den Frames, die aufgenommen
+// werden (kein zweiter Malpfad). Ehrlichkeit sichtbar: Jedes Standbild einer
+// Zahlen-Szene muss das Siegel tragen — das prüft das Auge am Bild.
+console.log('Analyse-Aufnahme läuft (Echtzeit, ~16 s) …');
+const analyse = await seite.evaluate(async () => {
+  const chart = {
+    verlauf: [0, 640.5, -269.7, -49.3, -355.1],
+    histo: [
+      { from: -1000, to: -300, n: 2 },
+      { from: -300, to: 300, n: 1 },
+      { from: 300, to: 1000, n: 1 },
+    ],
+    exits: [
+      { label: 'Signal (3)', value: 555.1 },
+      { label: 'Stop-Loss (1)', value: -910.2 },
+    ],
+    symbole: [
+      { label: 'NVDA', value: 640.5 },
+      { label: 'GLD', value: 220.4 },
+      { label: 'EWJ', value: -305.8 },
+      { label: 'SMH', value: -910.2 },
+    ],
+    wochentage: [
+      { label: 'Mo', value: 640.5 },
+      { label: 'Di', value: -910.2 },
+      { label: 'Mi', value: -85.4 },
+    ],
+    stunden: [
+      { label: '15', value: 640.5 },
+      { label: '16', value: -995.6 },
+    ],
+  };
+  const plan = window.__m.regiePlan(chart);
+  window.__stills = [];
+  const marken = [];
+  let acc = 0;
+  for (const s of plan) {
+    marken.push({ id: s.id, bei: acc + s.dauerMs * 0.7 });
+    acc += s.dauerMs;
+  }
+  const datei = await window.__m.baueAnalyseVideo(window.__d, chart, undefined, (canvas, tMs) => {
+    const naechste = marken[window.__stills.length];
+    if (naechste && tMs >= naechste.bei) {
+      window.__stills.push({ id: naechste.id, bild: canvas.toDataURL('image/png') });
+    }
+  });
+  return {
+    name: datei.name,
+    groesse: datei.size,
+    plan: plan.map((s) => s.id),
+    stills: window.__stills.map((s) => s.id),
+  };
+});
+console.log('Analyse-Video:', JSON.stringify({ ...analyse, stills: analyse.stills }));
+if (!/^autotrd-analyse-.*\.(mp4|webm)$/.test(analyse.name)) fehler.push(`Analyse-Dateiname unerwartet: ${analyse.name}`);
+if (analyse.groesse < 100_000) fehler.push(`Analyse-Video verdächtig klein: ${analyse.groesse} Bytes`);
+if (analyse.plan[0] !== 'ergebnis' || analyse.plan[analyse.plan.length - 1] !== 'cta') {
+  fehler.push(`Regie unerwartet: ${analyse.plan.join(' → ')}`);
+}
+if (analyse.stills.length !== analyse.plan.length) {
+  fehler.push(`Standbilder fehlen: ${analyse.stills.length}/${analyse.plan.length}`);
+}
+const stills = await seite.evaluate(() => window.__stills);
+for (const s of stills) {
+  writeFileSync(`${SHOTS}/analyse-${s.id}.png`, Buffer.from(s.bild.split(',')[1], 'base64'));
+}
+
 await browser.close();
 if (fehler.length) {
   console.error('FEHLER:\n' + fehler.map((f) => ` · ${f}`).join('\n'));

@@ -56,7 +56,7 @@ function rundRect(ctx: CanvasRenderingContext2D, x: number, y: number, b: number
 }
 
 /** Grundkarte: Hintergrund, Kachel, Fußzeile — auf jedem Frame gleich. */
-function maleRahmen(ctx: CanvasRenderingContext2D): void {
+export function maleRahmen(ctx: CanvasRenderingContext2D): void {
   ctx.globalAlpha = 1;
   ctx.fillStyle = FARBE.bg;
   ctx.fillRect(0, 0, 1200, 1200);
@@ -81,7 +81,7 @@ function maleRahmen(ctx: CanvasRenderingContext2D): void {
 }
 
 /** Das Siegel — IMMER volle Deckkraft, nie Teil einer Animation. */
-function maleSiegel(ctx: CanvasRenderingContext2D, echtgeld: boolean): void {
+export function maleSiegel(ctx: CanvasRenderingContext2D, echtgeld: boolean): void {
   ctx.globalAlpha = 1;
   const siegel = echtgeld ? t('share.siegelEchtgeld') : t('share.siegelPapier');
   const b = siegelBreite(siegel);
@@ -96,7 +96,7 @@ function maleSiegel(ctx: CanvasRenderingContext2D, echtgeld: boolean): void {
   ctx.textAlign = 'left';
 }
 
-function maleKopf(ctx: CanvasRenderingContext2D, titel: string): void {
+export function maleKopf(ctx: CanvasRenderingContext2D, titel: string): void {
   ctx.globalAlpha = 1;
   ctx.fillStyle = FARBE.text2;
   ctx.font = '30px ui-sans-serif, system-ui, sans-serif';
@@ -430,16 +430,22 @@ export function maleSzene(
 }
 
 /**
- * Nimmt das Video in Echtzeit auf (die Aufnahme dauert so lange wie der
- * Clip). MP4, wenn der Browser es aufnehmen kann — sonst WebM; beide gehen
- * am Handy in das System-Teilen-Blatt.
+ * Der Rekorder-Kern: nimmt eine 1080²-Leinwand in Echtzeit auf, während
+ * `maleFrame` jeden Frame malt (die Aufnahme dauert so lange wie der Clip).
+ * MP4, wenn der Browser es aufnehmen kann — sonst WebM; beide gehen am
+ * Handy in das System-Teilen-Blatt.
+ *
+ * `beobachter` ist für den Prüfstand: Er bekommt die Leinwand mitten in der
+ * ECHTEN Aufnahme gereicht und kann Standbilder ziehen — dieselben Frames,
+ * die im Video landen, kein zweiter Malpfad.
  */
-export async function baueStoryVideo(
-  d: ShareDaten,
+export async function nimmClipAuf(
+  gesamtMs: number,
+  maleFrame: (ctx: CanvasRenderingContext2D, tMs: number) => void,
+  dateiStamm: string,
   meldeFortschritt?: (prozent: number) => void,
+  beobachter?: (canvas: HTMLCanvasElement, tMs: number) => void,
 ): Promise<File> {
-  const szenen = videoSzenen(d);
-  const gesamt = szenen.reduce((s, sz) => s + sz.dauerMs, 0);
   const canvas = document.createElement('canvas');
   canvas.width = 1080;
   canvas.height = 1080;
@@ -466,23 +472,10 @@ export async function baueStoryVideo(
   await new Promise<void>((fertig) => {
     const frame = (): void => {
       const tMs = performance.now() - start;
-      let acc = 0;
-      let akt = szenen[szenen.length - 1]!;
-      let p = 1;
-      for (const s of szenen) {
-        if (tMs < acc + s.dauerMs) {
-          akt = s;
-          p = (tMs - acc) / s.dauerMs;
-          break;
-        }
-        acc += s.dauerMs;
-      }
-      ctx.save();
-      ctx.scale(1080 / 1200, 1080 / 1200);
-      maleSzene(ctx, d, akt.id, klemme(p));
-      ctx.restore();
-      meldeFortschritt?.(Math.min(100, Math.round((tMs / gesamt) * 100)));
-      if (tMs >= gesamt + 200) {
+      maleFrame(ctx, tMs);
+      beobachter?.(canvas, tMs);
+      meldeFortschritt?.(Math.min(100, Math.round((tMs / gesamtMs) * 100)));
+      if (tMs >= gesamtMs + 200) {
         fertig();
         return;
       }
@@ -495,6 +488,37 @@ export async function baueStoryVideo(
   for (const spur of strom.getTracks()) spur.stop();
 
   const endung = typ.startsWith('video/mp4') ? 'mp4' : 'webm';
+  return new File([new Blob(teile, { type: typ })], `${dateiStamm}.${endung}`, { type: typ });
+}
+
+/** Welche Szene bei `tMs` dran ist — und wie weit sie ist (0…1). */
+export function szeneBei<S extends { dauerMs: number }>(szenen: S[], tMs: number): { szene: S; p: number } {
+  let acc = 0;
+  for (const s of szenen) {
+    if (tMs < acc + s.dauerMs) return { szene: s, p: klemme((tMs - acc) / s.dauerMs) };
+    acc += s.dauerMs;
+  }
+  return { szene: szenen[szenen.length - 1]!, p: 1 };
+}
+
+/** Das Story-Video: die vier Karten-Szenen, aufgenommen mit `nimmClipAuf`. */
+export async function baueStoryVideo(
+  d: ShareDaten,
+  meldeFortschritt?: (prozent: number) => void,
+): Promise<File> {
+  const szenen = videoSzenen(d);
+  const gesamt = szenen.reduce((s, sz) => s + sz.dauerMs, 0);
   const bis = d.zerlegung.tage[d.zerlegung.tage.length - 1] ?? d.bisTag ?? 'aktuell';
-  return new File([new Blob(teile, { type: typ })], `autotrd-story-${bis}.${endung}`, { type: typ });
+  return nimmClipAuf(
+    gesamt,
+    (ctx, tMs) => {
+      const { szene, p } = szeneBei(szenen, tMs);
+      ctx.save();
+      ctx.scale(1080 / 1200, 1080 / 1200);
+      maleSzene(ctx, d, szene.id, p);
+      ctx.restore();
+    },
+    `autotrd-story-${bis}`,
+    meldeFortschritt,
+  );
 }
