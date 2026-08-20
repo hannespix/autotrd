@@ -209,6 +209,7 @@ import {
   shareText,
 } from './shareCard.js';
 import { shareStory, storyDateiname, type StoryKarte } from './shareStory.js';
+import { baueStoryVideo } from './shareVideo.js';
 import { kartenAussage } from './shareAussage.js';
 import {
   areaLine,
@@ -1165,6 +1166,7 @@ function layout(email: string): string {
       <div class="an-share">
         <button class="dbtn" id="anShareBtn">Grafik teilen</button>
         <button class="dbtn" id="anShareAlle">${t('sh.alleLaden')}</button>
+        <button class="dbtn" id="anShareVideo">${t('sh.videoTeilen')}</button>
         <label class="an-share-opt"><input type="checkbox" id="anShareBetraege"> ${t('lay.betraegeZeigen')}</label>
         <span id="anShareStatus" class="hint"></span>
       </div>
@@ -7636,6 +7638,58 @@ async function teileAlleKarten(): Promise<void> {
 }
 
 /**
+ * Das Story-VIDEO (Owner 20.08.): Die Aufnahme läuft in Echtzeit (~12 s) —
+ * der Fortschritt steht deshalb sichtbar im Status, der Knopf ist derweil
+ * gesperrt. Dasselbe Teilen-Gate wie bei den Bildern.
+ */
+async function teileStoryVideo(): Promise<void> {
+  const status = $('anShareStatus');
+  const knopf = $('anShareVideo') as HTMLButtonElement | null;
+  if (!st || !status || !knopf) return;
+  knopf.disabled = true;
+  try {
+    const betraege = ($('anShareBetraege') as HTMLInputElement | null)?.checked === true;
+    const daten = shareDatenBauen(betraege);
+    const aussage = kartenAussage({
+      kurventage: daten.zerlegung.tage.length,
+      renditePct: daten.renditePct,
+      ergebnis: daten.ergebnis,
+      trades: daten.trades,
+      tradeBilanz: daten.tradeBilanz,
+      vonTag: daten.vonTag,
+      bisTag: daten.bisTag,
+      betraege,
+      waehrung: daten.waehrung,
+    });
+    if (!aussage.teilbar) {
+      status.textContent = aussage.grund ?? t('sh.nichtsZuTeilen');
+      return;
+    }
+    const datei = await baueStoryVideo(daten, (prozent) => {
+      status.textContent = `${t('sh.videoLaeuft')} … ${prozent} %`;
+    });
+    if (navigator.canShare?.({ files: [datei] })) {
+      await navigator.share({ files: [datei], text: shareText(daten), url: 'https://autotrd.net' });
+      status.textContent = t('sh.geteilt');
+      return;
+    }
+    const url = URL.createObjectURL(datei);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = datei.name;
+    a.click();
+    URL.revokeObjectURL(url);
+    status.textContent = t('sh.videoGespeichert');
+  } catch (e) {
+    const name = e instanceof Error ? e.name : '';
+    status.textContent =
+      name === 'AbortError' ? '' : `${t('sh.fehlgeschlagen')}: ${serverText(e)}`;
+  } finally {
+    knopf.disabled = false;
+  }
+}
+
+/**
  * Depot-Verlauf, zerlegt nach Trades (Owner-Wunsch 10.08.).
  *
  * Hier steht nur die Verdrahtung: Zerlegung in shared (`zerlegeDepot`),
@@ -8880,6 +8934,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   // Teilen sieht, was das Bild preisgibt.
   $('anShareBtn')?.addEventListener('click', () => void teileDepotGrafik());
   $('anShareAlle')?.addEventListener('click', () => void teileAlleKarten());
+  $('anShareVideo')?.addEventListener('click', () => void teileStoryVideo());
   $('anShareBetraege')?.addEventListener('change', renderSharePreview);
   $('anStoryPrev')?.addEventListener('click', () => storyBlaettern(-1));
   $('anStoryNext')?.addEventListener('click', () => storyBlaettern(1));
