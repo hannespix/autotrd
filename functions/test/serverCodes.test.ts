@@ -56,15 +56,13 @@ describe('HttpsError-Meldungen sind Codes, keine Klartexte', () => {
   it('auch dynamische Templates sind Parameter-Codes (`srv.xyz|wert`), kein Klartext', () => {
     /* Tranche 2: Ein Template als zweites Argument trägt den Code vor dem
      * ersten `|`, der eine dynamische Wert folgt dahinter ({0} im
-     * Wörterbuch). Namentliche Ausnahme, KEINE dehnbare Regel: trade.ts
-     * setzt kursAlter.grund voran — der Grund entsteht in einem Helfer und
-     * wandert erst mit Tranche 3 (Task #145) auf Codes. */
-    const AUSNAHME = '${kursAlter.grund';
+     * Wörterbuch). Seit Tranche 3a OHNE Ausnahme — auch die frühere
+     * kursAlter.grund-Mischform läuft als Parameter-Code (der Grund selbst
+     * bleibt deutsch, bis kursZuAlt Codes liefert). */
     const verstoesse: string[] = [];
     for (const { name, code } of dateien) {
       for (const m of code.matchAll(/new HttpsError\(\s*'[a-z-]+',\s*`([^`]*)`/g)) {
         const inhalt = m[1]!;
-        if (inhalt.startsWith(AUSNAHME)) continue;
         if (!inhalt.startsWith('srv.')) verstoesse.push(`${name}: ${inhalt.slice(0, 60)}`);
       }
     }
@@ -77,8 +75,14 @@ describe('HttpsError-Meldungen sind Codes, keine Klartexte', () => {
     expect(enStart).toBeGreaterThan(0);
     const deTeil = woerterbuch.slice(0, enStart);
     const enTeil = woerterbuch.slice(enStart);
+    // shared/ liefert Codes an die Callables (bindungsMeldung) — auch die
+    // müssen im Wörterbuch stehen, sonst zeigt serverText den rohen Code.
+    const geteilt = alleQuellen(join(hier, '../../shared/src')).map((p) => ({
+      name: `shared/${p.split('/').pop()!}`,
+      code: readFileSync(p, 'utf8'),
+    }));
     const fehlend: string[] = [];
-    for (const { name, code } of dateien) {
+    for (const { name, code } of [...dateien, ...geteilt]) {
       // \b-Suche statt Quote-Suche: fängt Codes in '…'-Literalen UND in
       // `srv.xyz|${…}`-Templates gleichermaßen.
       for (const m of code.matchAll(/\b(srv\.\w+)\b/g)) {

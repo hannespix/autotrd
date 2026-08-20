@@ -108,7 +108,7 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
    * ein Einstieg und fällt unter die Tore. */
   const tore = kontoTore(userSnap, clamped, new Date());
   if (tore.handel) {
-    throw new HttpsError('failed-precondition', tore.grund ?? 'Konto ist vorübergehend gesperrt');
+    throw new HttpsError('failed-precondition', tore.grund ?? 'srv.kontoVoruebergehendGesperrt');
   }
 
   /* Positionsbestand EINMAL lesen: Er entscheidet, ob dieser Trade ein
@@ -125,7 +125,7 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
     || (side === 'sell' && strategy.signals.allowShort === true && !hatPosition);
   if (istEinstieg) {
     if (tore.einstieg) {
-      throw new HttpsError('failed-precondition', tore.grund ?? 'Einstiege sind gesperrt');
+      throw new HttpsError('failed-precondition', tore.grund ?? 'srv.einstiegeGesperrt');
     }
     /* Positionslimit auch von Hand (Audit 13.08., H3): 50 Käufe am Tag mit
      * je 25 % wären sonst regelkonform gewesen, während der Scan beim
@@ -159,7 +159,7 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
   if (kursAlter.zuAlt) {
     throw new HttpsError(
       'failed-precondition',
-      `${kursAlter.grund ?? 'Kurs ist veraltet'} — Symbol in die Watchlist aufnehmen, der nächste Scan liefert frische Daten`,
+      `srv.kursProblemWatchlist|${kursAlter.grund ?? 'Kurs ist veraltet'}`,
     );
   }
 

@@ -44,9 +44,12 @@ describe('mayTrade', () => {
 });
 
 describe('accessDeniedReason', () => {
-  it('unterscheidet Wartestand und Sperre', () => {
-    expect(accessDeniedReason('pending')).toMatch(/geprüft/);
-    expect(accessDeniedReason('pending')).toMatch(/ansehen/);
-    expect(accessDeniedReason('blocked')).toMatch(/gesperrt/);
+  it('unterscheidet Wartestand und Sperre — als srv.*-Codes', () => {
+    // Seit Task #145 liefert der Helfer Codes; die Wortlaute („geprüft",
+    // „ansehen", „gesperrt") wohnen im Frontend-Wörterbuch, und
+    // serverCodes.test.ts erzwingt dort DE- UND EN-Zeile je Code.
+    expect(accessDeniedReason('pending')).toBe('srv.zugangWirdGeprueft');
+    expect(accessDeniedReason('blocked')).toBe('srv.kontoGesperrtBetreiber');
+    expect(accessDeniedReason('approved')).not.toBe(accessDeniedReason('blocked'));
   });
 });
