@@ -106,6 +106,11 @@ pruefe('Grenze voreingestellt', await seite.locator('#owBreak').inputValue(), (v
 
 // Abgleich Buch ↔ Broker-Depot (M13): Ohne verbundenen Broker muss dort die
 // erklärende Zeile stehen — nicht der Platzhalter „—", der nichts aussagt.
+// #bkAuto lebt seit den Options-Reitern auf „Broker & Echtgeld" — ohne den
+// Reiter-Klick hing der Lauf hier 30 s an einem unsichtbaren Element
+// (Prüfstand-Defekt, gefunden beim UI-Audit 20.08.).
+await seite.locator('.otab[data-otab="broker"]').click();
+await seite.waitForTimeout(500);
 await seite.locator('#bkAuto').scrollIntoViewIfNeeded();
 await seite.waitForTimeout(400);
 await seite.screenshot({ path: `${SHOTS}/04-abgleich.png` });
