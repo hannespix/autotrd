@@ -78,7 +78,10 @@ describe('Beide Handelspfade beachten die Sperre', () => {
     expect(ab, 'Handel-Sperre fehlt im Handels-Callable').toBeGreaterThan(0);
     const einstieg = text.indexOf('const istEinstieg =');
     expect(ab, 'Gate steht hinter der Einstiegs-Unterscheidung').toBeLessThan(einstieg);
-    expect(text.slice(ab, ab + 200)).toContain('HttpsError');
+    // 500 statt 200 Zeichen Fenster: Seit dem #145-Grenzfall (20.08.) steht
+    // zwischen Gate und Wurf ein Begründungs-Kommentar — die Aussage des
+    // Wächters (Gate → harter Wurf) ist unverändert.
+    expect(text.slice(ab, ab + 500)).toContain('HttpsError');
   });
 
   it('beide benutzen DIESELBE Funktion', () => {

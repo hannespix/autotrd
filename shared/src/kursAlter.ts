@@ -40,8 +40,15 @@ export interface KursAlterBefund {
   zuAlt: boolean;
   /** Alter in Minuten (gerundet); `null` = kein lesbarer Zeitstempel. */
   alterMin: number | null;
-  /** Klartext, wenn `zuAlt` — für Fehlermeldung und Log. */
+  /** Klartext, wenn `zuAlt` — für Logs. Für NUTZER-Meldungen gilt `code`. */
   grund?: string;
+  /**
+   * Maschinen-Code, wenn `zuAlt` (#145-Grenzfall, 20.08.): Die Grenze
+   * (trade-Callable) übersetzt Codes in `srv.*`-Schlüssel, damit die
+   * Meldung in der Sprache des Nutzers erscheint — deutscher Klartext im
+   * Fehler wäre für EN-Nutzer unlesbar. `grund` bleibt für Server-Logs.
+   */
+  code?: 'ohne_zeitstempel' | 'tage_alt' | 'min_alt';
 }
 
 /**
@@ -60,7 +67,12 @@ export function kursZuAlt(
 ): KursAlterBefund {
   const t = typeof updatedAt === 'string' ? Date.parse(updatedAt) : Number.NaN;
   if (!Number.isFinite(t)) {
-    return { zuAlt: true, alterMin: null, grund: 'Kurs ohne lesbaren Zeitstempel' };
+    return {
+      zuAlt: true,
+      alterMin: null,
+      grund: 'Kurs ohne lesbaren Zeitstempel',
+      code: 'ohne_zeitstempel',
+    };
   }
   const alterMin = Math.round((jetzt.getTime() - t) / 60_000);
   if (alterMin > KURS_DECKEL_MAX_TAGE * 24 * 60) {
@@ -68,6 +80,7 @@ export function kursZuAlt(
       zuAlt: true,
       alterMin,
       grund: `Kurs ist ${Math.round(alterMin / 1440)} Tage alt — das Symbol wird nicht mehr beobachtet`,
+      code: 'tage_alt',
     };
   }
   const offen = marktOffen ?? marketOpenForClass(assetClass, jetzt);
@@ -76,6 +89,7 @@ export function kursZuAlt(
       zuAlt: true,
       alterMin,
       grund: `Kurs ist ${alterMin} min alt, der Markt ist offen — keine frische Beobachtung`,
+      code: 'min_alt',
     };
   }
   return { zuAlt: false, alterMin };

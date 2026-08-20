@@ -108,7 +108,14 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
    * ein Einstieg und fällt unter die Tore. */
   const tore = kontoTore(userSnap, clamped, new Date());
   if (tore.handel) {
-    throw new HttpsError('failed-precondition', tore.grund ?? 'srv.kontoVoruebergehendGesperrt');
+    /* CODE statt tore.grund (#145-Grenzfall, 20.08.): `grund` ist deutsche
+     * Prosa für Server-Logs — im Fehler wäre sie für EN-Nutzer unlesbar.
+     * Die Tore tragen längst Maschinen-Codes; die Grenze übersetzt sie in
+     * srv.*-Schlüssel, und das Wörterbuch spricht die Sprache des Nutzers. */
+    throw new HttpsError(
+      'failed-precondition',
+      tore.handel === 'reset_laeuft' ? 'srv.resetLaeuft' : 'srv.kontoVoruebergehendGesperrt',
+    );
   }
 
   /* Positionsbestand EINMAL lesen: Er entscheidet, ob dieser Trade ein
@@ -125,7 +132,16 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
     || (side === 'sell' && strategy.signals.allowShort === true && !hatPosition);
   if (istEinstieg) {
     if (tore.einstieg) {
-      throw new HttpsError('failed-precondition', tore.grund ?? 'srv.einstiegeGesperrt');
+      // Wie oben: Code statt Prosa — Breaker und Abgleich-Drift haben
+      // eigene, im Wörterbuch übersetzte Erklärungen.
+      throw new HttpsError(
+        'failed-precondition',
+        tore.einstieg === 'breaker_aktiv'
+          ? 'srv.breakerAktiv'
+          : tore.einstieg === 'abgleich_drift'
+            ? 'srv.abgleichDrift'
+            : 'srv.einstiegeGesperrt',
+      );
     }
     /* Positionslimit auch von Hand (Audit 13.08., H3): 50 Käufe am Tag mit
      * je 25 % wären sonst regelkonform gewesen, während der Scan beim
@@ -157,9 +173,17 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
    * Zeit statt im Raum. */
   const kursAlter = kursZuAlt(quote.updatedAt, classify(symbol), new Date());
   if (kursAlter.zuAlt) {
+    /* Code + Zahl statt kursAlter.grund (#145-Grenzfall, 20.08.): Der
+     * Befund liefert jetzt einen Maschinen-Code und das Alter — die
+     * Prosa in `grund` bleibt den Logs vorbehalten. Der Parameter ist eine
+     * ZAHL, kein Text: serverText setzt sie sprachneutral in {0} ein. */
     throw new HttpsError(
       'failed-precondition',
-      `srv.kursProblemWatchlist|${kursAlter.grund ?? 'Kurs ist veraltet'}`,
+      kursAlter.code === 'tage_alt'
+        ? `srv.kursTageAlt|${Math.round((kursAlter.alterMin ?? 0) / 1440)}`
+        : kursAlter.code === 'min_alt'
+          ? `srv.kursMinAlt|${kursAlter.alterMin ?? 0}`
+          : 'srv.kursOhneZeitstempel',
     );
   }
 
