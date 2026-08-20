@@ -305,6 +305,10 @@ export const INFO_DE: Record<string, Tip> = {
     t: 'Warum geschlossen',
     d: 'Wodurch die Positionen tatsächlich beendet wurden: durch eine Risiko-Marke (Stop-Loss, Take-Profit, Trailing-Stop) oder durch ein SIGNAL — also weil die Indikatoren gedreht haben. Die Verteilung ist aufschlussreicher als jede Einzelzahl: Steht fast alles unter „Signal", werden Stop und Take praktisch nie erreicht. Dann entscheidet nicht deine Risikosteuerung über das Ergebnis, sondern das Kippen einer einzelnen Indikator-Stimme — ein Zeichen dafür, dass die Positionen zu früh wieder rausfliegen.',
   },
+  fillReibung: {
+    t: 'Ausführungs-Reibung',
+    d: 'Der gemessene Abstand zwischen dem Kurs, bei dem die Engine entschieden hat, und dem Kurs, zu dem der Broker wirklich ausgeführt hat — in Basispunkten (1 bp = 0,01 %), getrennt nach Einstieg und Ausstieg. Daran hängt die Frage, ob Aktien-Einstiege als Limit-Order (Maker) laufen sollten: unter 5 bp lohnt der Umbau nicht, ab 10 bp ist er fällig. Die Farbe am US-Aktien-Einstieg zeigt genau diese Regel.',
+  },
   kosten: {
     t: 'Reibung (Handelskosten)',
     d: 'Jeder Roundtrip kostet Kommission plus Slippage — beim Kauf UND beim Verkauf. Entscheidend ist „Luft über Kosten": die durchschnittliche Gewinnbewegung vor Gebühren, geteilt durch diese Kosten. Unter 2 verdient überwiegend der Broker, denn dann geht über die Hälfte jeder Gewinnbewegung für die Reibung drauf. Kurze Zeitrahmen erzeugen kleine Bewegungen — deshalb braucht mehr Handelsfrequenz zwingend auch genug Bewegung je Trade, sonst beschleunigt sie nur den Verlust. „Ø Gewinn brutto" und „Ø Verlust brutto" zeigen die reinen Kursbewegungen ohne Gebühren, damit sichtbar wird, ob die Strategie selbst funktioniert.',
@@ -595,6 +599,10 @@ export const INFO_EN: Record<string, Partial<Tip>> = {
   expectancy: {
     t: 'Expectancy per trade',
     d: 'What an average closed trade brought in (total P&L divided by the count). The number translates the strategy into one sentence: “every trade returns $X on average.” Negative means: trading more often loses money faster — raising the frequency only pays with a positive expectancy.',
+  },
+  fillReibung: {
+    t: 'Execution friction',
+    d: 'The measured gap between the price the engine decided at and the price the broker actually filled — in basis points (1 bp = 0.01%), split into entry and exit. This answers whether stock entries should run as limit (maker) orders: below 5 bp the switch is not worth it, above 10 bp it is due. The color on the US-stock entry shows exactly this rule.',
   },
   kosten: {
     t: 'Friction (trading costs)',

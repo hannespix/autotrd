@@ -10,6 +10,7 @@ import {
   type KanteJeTrade,
   type Position,
   type Quote,
+  type ReibungJeKlasse,
   type ReifeBefund,
   type SchattenKlasse,
   type Steuerbericht,
@@ -803,6 +804,12 @@ export interface PortfolioStatsDoc {
     roundTripPct: number | null;
     edgeOverCost: number | null;
   };
+  /**
+   * Ausführungs-Reibung je Klasse (Task #144): gemessene Basispunkte
+   * zwischen Entscheidungskurs und echtem Broker-Fill, getrennt nach
+   * Einstieg und Ausstieg. Fehlt bei Konten ohne gebuchte Broker-Fills.
+   */
+  reibung?: Record<string, ReibungJeKlasse>;
   /**
    * Empfehlung je Anlageklasse (MG2) — fertig gerechnet vom Tageslauf.
    *
