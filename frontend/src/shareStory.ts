@@ -35,9 +35,13 @@ export interface StoryKarte {
 
 /* Band-Farben nach BEDEUTUNG, nicht nach Reihenfolge: Gewinner grün-,
  * Verlierer rotstufig, der offene Anteil im Akzent. Eine bunte Palette wäre
- * hübscher und stumm — die Frage der Grafik ist, was aufbaut und was abträgt. */
-const GRUEN_STUFEN = ['#34c77b', '#4bd6a4', '#79e0b6', '#a4ead0'] as const;
-const ROT_STUFEN = ['#ff5f5f', '#ff8a7a', '#ffb09c', '#ffd0c2'] as const;
+ * hübscher und stumm — die Frage der Grafik ist, was aufbaut und was abträgt.
+ * Die Töne sind bewusst weit gespreizt (Owner-Screenshot 20.08.: bei sechs
+ * Gewinnern war „welches Symbol ist welche Fläche" nicht zu beantworten);
+ * jenseits der Liste wird ZYKLISCH gefärbt, nie auf dem letzten Ton
+ * zusammengeklemmt — genau das Klemmen hatte alle Flächen gleich gefärbt. */
+const GRUEN_STUFEN = ['#1f9d5b', '#5cd699', '#a9ecd0', '#3f9d8a', '#7ee0c3', '#d6f5e6'] as const;
+const ROT_STUFEN = ['#e04848', '#ff8a7a', '#ffc0b2', '#b8626a'] as const;
 
 const kopfhoehe = 160;
 
@@ -102,41 +106,84 @@ function verlaufKarte(d: ShareDaten): string {
   const px = (i: number): number => x0 + (n < 2 ? 0 : (i / (n - 1)) * breite);
   const py = (v: number): number => y0 + hoehe - ((v - min) / spanne) * hoehe;
 
+  /* EINE Farbzuweisung für Fläche, Beschriftung und Legenden-Chip — vorher
+   * trugen die Chips nur Vorzeichen-Grün/Rot, während die Flächen gestufte
+   * Töne hatten: sechs identische grüne Chips neben sechs verschiedenen
+   * Flächen (Owner-Screenshot 20.08., „kann nicht sehen, welches Symbol zu
+   * welcher Linie gehört"). */
+  const gezeichnet = flaechen.filter((f) => f.kanten.some(([u, o]) => o - u > 0));
   let gruenIdx = 0;
   let rotIdx = 0;
-  const baenderSvg = flaechen
-    .filter((f) => f.kanten.some(([u, o]) => o - u > 0))
+  const farbeVon = new Map<string, string>();
+  for (const f of gezeichnet) {
+    farbeVon.set(
+      f.key,
+      f.key === '__offen__'
+        ? FARBE.akzent
+        : f.summe >= 0
+          ? GRUEN_STUFEN[gruenIdx++ % GRUEN_STUFEN.length]!
+          : ROT_STUFEN[rotIdx++ % ROT_STUFEN.length]!,
+    );
+  }
+  const baenderSvg = gezeichnet
     .map((f) => {
-      const farbe =
-        f.key === '__offen__'
-          ? FARBE.akzent
-          : f.summe >= 0
-            ? GRUEN_STUFEN[Math.min(gruenIdx++, GRUEN_STUFEN.length - 1)]!
-            : ROT_STUFEN[Math.min(rotIdx++, ROT_STUFEN.length - 1)]!;
       const oben = f.kanten.map(([, o], i) => `${px(i).toFixed(1)},${py(o).toFixed(1)}`);
       const unten = f.kanten.map(([u], i) => `${px(i).toFixed(1)},${py(u).toFixed(1)}`).reverse();
-      return `<polygon points="${oben.join(' ')} ${unten.join(' ')}" fill="${farbe}" opacity="0.5"></polygon>`;
+      return `<polygon points="${oben.join(' ')} ${unten.join(' ')}" fill="${farbeVon.get(f.key)!}" opacity="0.55"></polygon>`;
+    })
+    .join('');
+
+  /* Symbolname DIREKT in die Fläche, wo sie dick genug ist — die Legende
+   * bleibt als Rückfallebene für schmale Bänder. Kollidierende Etiketten
+   * entfallen zugunsten des zuerst gesetzten (der Bild-Prüfstand misst
+   * Text-gegen-Text nach). */
+  const gesetzt: Array<{ x: number; y: number }> = [];
+  const etiketten = gezeichnet
+    .map((f) => {
+      let besterIdx = 0;
+      let besteHoehe = 0;
+      f.kanten.forEach(([u, o], i) => {
+        const h = py(u) - py(o);
+        if (h > besteHoehe) {
+          besteHoehe = h;
+          besterIdx = i;
+        }
+      });
+      if (besteHoehe < 40) return '';
+      const [u, o] = f.kanten[besterIdx]!;
+      const name = bandName(f.key, f.label, f.trades).slice(0, 18);
+      // Halbe geschätzte Textbreite als Rand-Klammer — ein mittig verankertes
+      // Etikett ragt sonst bei langen Namen aus dem Rahmen (Bild-Prüfstand).
+      const halbBreit = name.length * 8 + 8;
+      const ex = Math.min(Math.max(px(besterIdx), x0 + halbBreit), x0 + breite - halbBreit);
+      const ey = (py(u) + py(o)) / 2 + 9;
+      if (gesetzt.some((g) => Math.abs(g.x - ex) < 150 && Math.abs(g.y - ey) < 34)) return '';
+      gesetzt.push({ x: ex, y: ey });
+      /* Heller Text mit Kontur-Ring (paint-order) statt dunklem Text: Die
+       * Bandtöne reichen von hell bis dunkel — EIN Element, damit der
+       * Bild-Prüfstand keine Doppel-Texte als Kollision zählt. */
+      return `<text x="${ex.toFixed(1)}" y="${ey.toFixed(1)}" fill="${FARBE.text}" stroke="${FARBE.karte}" stroke-width="5" paint-order="stroke" stroke-linejoin="round" font-size="26" font-weight="700" text-anchor="middle">${esc(name)}</text>`;
     })
     .join('');
 
   const linie = z.equity.map((v, i) => `${px(i).toFixed(1)},${py(v - z.basis).toFixed(1)}`).join(' ');
   const nullY = py(0);
 
-  // Legende: bis zu 6 Einträge in zwei Spalten, jeweils Anteil an der Basis.
+  // Legende: ALLE gezeichneten Bänder (bis zu 10 in zwei Spalten) — eine
+  // Fläche ohne Legenden-Eintrag wäre wieder ein Ratespiel.
   const pctVon = (summe: number): string =>
     z.basis > 0 ? `${mitVorzeichen((summe / z.basis) * 100, 1)} %` : '';
-  const legende = flaechen
-    .filter((f) => f.summe !== 0 || f.key === '__offen__')
-    .slice(0, 6)
+  const legende = gezeichnet
+    .slice(0, 10)
     .map((f, i) => {
-      const farbe = f.key === '__offen__' ? FARBE.akzent : f.summe >= 0 ? FARBE.gruen : FARBE.rot;
+      const farbe = farbeVon.get(f.key)!;
       const lx = 90 + (i % 2) * 520;
-      const ly = 830 + Math.floor(i / 2) * 58;
+      const ly = 820 + Math.floor(i / 2) * 56;
       const name = bandName(f.key, f.label, f.trades).slice(0, 22);
       return (
-        `<rect x="${lx}" y="${ly - 20}" width="22" height="22" rx="5" fill="${farbe}" opacity="0.85"></rect>`
+        `<rect x="${lx}" y="${ly - 20}" width="22" height="22" rx="5" fill="${farbe}" opacity="0.9"></rect>`
         + `<text x="${lx + 36}" y="${ly}" fill="${FARBE.text}" font-size="28">${esc(name)}</text>`
-        + `<text x="${lx + 480}" y="${ly}" fill="${farbe}" font-size="28" font-weight="600" text-anchor="end">${esc(pctVon(f.summe))}</text>`
+        + `<text x="${lx + 480}" y="${ly}" fill="${f.summe >= 0 ? FARBE.gruen : FARBE.rot}" font-size="28" font-weight="600" text-anchor="end">${esc(pctVon(f.summe))}</text>`
       );
     })
     .join('');
@@ -147,6 +194,7 @@ function verlaufKarte(d: ShareDaten): string {
     + baenderSvg
     + `<line x1="${x0}" y1="${nullY.toFixed(1)}" x2="${x0 + breite}" y2="${nullY.toFixed(1)}" stroke="${FARBE.text3}" stroke-width="2" stroke-dasharray="6 6"></line>`
     + `<polyline points="${linie}" fill="none" stroke="${FARBE.text}" stroke-width="5" stroke-linejoin="round"></polyline>`
+    + etiketten
     + legende,
   );
 }
