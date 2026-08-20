@@ -298,7 +298,7 @@ export const brokerStatus = onCall(CALLABLE_OPTS, async (request): Promise<Broke
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'srv.anmeldungErforderlich');
   if (!(await consumeQuota(uid, 'brokerStatus', DAILY_STATUS_LIMIT))) {
-    throw new HttpsError('resource-exhausted', `Höchstens ${DAILY_STATUS_LIMIT} Prüfungen am Tag`);
+    throw new HttpsError('resource-exhausted', `srv.hoechstensPruefungen|${DAILY_STATUS_LIMIT}`);
   }
   return pruefeBrokerStatus(uid);
 });

@@ -194,7 +194,7 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
     throw new HttpsError('permission-denied', accessDeniedReason(accessLevelOf(zugang)));
   }
   if (!(await consumeQuota(uid, 'adoptBroker', DAILY_ADOPT_LIMIT))) {
-    throw new HttpsError('resource-exhausted', `Höchstens ${DAILY_ADOPT_LIMIT} Übernahmen am Tag`);
+    throw new HttpsError('resource-exhausted', `srv.hoechstensUebernahmen|${DAILY_ADOPT_LIMIT}`);
   }
 
   /* Lauf-Marker gegen den parallelen Scan (Audit 13.08., K-5c) — dieselbe

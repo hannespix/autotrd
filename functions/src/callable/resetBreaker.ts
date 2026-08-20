@@ -34,8 +34,7 @@ export const resetBreaker = onCall(CALLABLE_OPTS, async (request) => {
   if (!(await consumeQuota(uid, 'resetBreaker', TAGESLIMIT))) {
     throw new HttpsError(
       'resource-exhausted',
-      `Die Notbremse wurde heute schon ${TAGESLIMIT}-mal gelöst. Das ist der Punkt, `
-        + 'an dem eine Pause mehr hilft als ein weiterer Versuch.',
+      `srv.notbremseTageslimit|${TAGESLIMIT}`,
     );
   }
 

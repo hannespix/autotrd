@@ -193,7 +193,7 @@ export async function resetUserWallet(
     if (!(konto.equity > 0)) {
       throw new HttpsError(
         'failed-precondition',
-        `Der Broker meldet kein verwertbares Kapital (Status ${konto.status}).`,
+        `srv.keinVerwertbaresKapital|${konto.status}`,
       );
     }
     // EQUITY, nicht `cash`: Wer beim Broker Positionen hält, hätte sonst nur
@@ -305,11 +305,11 @@ export const resetWallet = onCall(CALLABLE_OPTS, async (request): Promise<ResetR
   if (confirm !== RESET_CONFIRM_WORD) {
     throw new HttpsError(
       'failed-precondition',
-      `Zum Bestätigen „${RESET_CONFIRM_WORD}" eingeben — der Reset lässt sich nicht rückgängig machen.`,
+      `srv.resetBestaetigen|${RESET_CONFIRM_WORD}`,
     );
   }
   if (!(await consumeQuota(uid, 'resetWallet', DAILY_RESET_LIMIT))) {
-    throw new HttpsError('resource-exhausted', `Höchstens ${DAILY_RESET_LIMIT} Resets am Tag`);
+    throw new HttpsError('resource-exhausted', `srv.hoechstensResets|${DAILY_RESET_LIMIT}`);
   }
   return resetUserWallet(uid, vomBroker === true);
 });

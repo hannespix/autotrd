@@ -1324,6 +1324,20 @@ describe('serverText — Server-Fehlercodes auflösen (Task #145)', () => {
     expect(EN['srv.anmeldungErforderlich']).toBe('Sign-in required');
   });
 
+  it('setzt bei Parameter-Codes den Wert hinter dem ersten | in {0} ein', () => {
+    expect(serverText(new Error('srv.tageslimitTrades|40'))).toBe(
+      'Tageslimit von 40 Trades erreicht',
+    );
+    // Der Wert darf selbst | enthalten (durchgereichte Broker-Meldung) —
+    // er bleibt in einem Stück, weil nur am ERSTEN | getrennt wird.
+    expect(serverText(new Error('srv.verbindungFehlgeschlagen|a|b'))).toBe(
+      'Verbindung fehlgeschlagen: a|b',
+    );
+    // Bestätigungswörter bleiben wörtlich — sie kommen als Parameter vom
+    // Server, nie aus dem Wörterbuch (RESET/ECHTGELD in jeder Sprache gleich).
+    expect(serverText(new Error('srv.resetBestaetigen|RESET'))).toContain('RESET');
+  });
+
   it('reicht Unbekanntes wortwörtlich durch — nie eine leere Meldung', () => {
     /* Der Vertrag, an dem alte Clients und Tranche-2-Meldungen hängen:
      * Firebase-eigene Fehler, dynamische Templates und ein Code, den das

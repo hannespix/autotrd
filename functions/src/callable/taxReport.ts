@@ -194,12 +194,12 @@ export const taxReport = onCall(CALLABLE_OPTS, async (request): Promise<TaxRepor
   // Jahre außerhalb dieser Spanne sind Tippfehler, keine Anfragen. Die
   // Untergrenze ist die Einführung der Abgeltungsteuer.
   if (j < 2009 || j > new Date().getUTCFullYear() + 1) {
-    throw new HttpsError('invalid-argument', `Jahr ${j} liegt außerhalb des zulässigen Bereichs`);
+    throw new HttpsError('invalid-argument', `srv.jahrAusserhalb|${j}`);
   }
   if (!(await consumeQuota(uid, 'taxReport', DAILY_REPORT_LIMIT))) {
     throw new HttpsError(
       'resource-exhausted',
-      `Höchstens ${DAILY_REPORT_LIMIT} Steuerberichte am Tag`,
+      `srv.hoechstensSteuerberichte|${DAILY_REPORT_LIMIT}`,
     );
   }
   return erzeugeSteuerbericht(uid, j, echtgeld === true);

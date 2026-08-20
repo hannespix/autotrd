@@ -28,7 +28,7 @@ describe('saveStrategy: Bestandsschutz (Quelltext-Wächter)', () => {
   it('der Bestands-Filter steht VOR dem Universums-Blick und der Ablehnung', () => {
     const bestandAb = quelle.indexOf('!bestand.has(sym)');
     const universumAb = quelle.indexOf('await ladeUniversumSymbole()');
-    const ablehnungAb = quelle.indexOf('Unbekannte Symbole (weder Katalog noch Alpaca-Universum)');
+    const ablehnungAb = quelle.indexOf('srv.unbekannteSymbole');
     expect(bestandAb).toBeGreaterThan(0);
     // Bestand zuerst (kostenlose Prüfung — das Doc ist ohnehin geladen),
     // Universum nur für den Rest, Ablehnung zuletzt.
@@ -44,8 +44,8 @@ describe('saveStrategy: Bestandsschutz (Quelltext-Wächter)', () => {
   });
 
   it('neue unbekannte Symbole werden weiterhin abgelehnt', () => {
-    expect(quelle).toContain(
-      "`Unbekannte Symbole (weder Katalog noch Alpaca-Universum): ${unknown.join(', ')}`",
-    );
+    // Seit #145 als Parameter-Code — der Klartext („Unbekannte Symbole …")
+    // wohnt im Frontend-Wörterbuch, serverCodes.test.ts pinnt DE+EN.
+    expect(quelle).toContain("`srv.unbekannteSymbole|${unknown.join(', ')}`");
   });
 });

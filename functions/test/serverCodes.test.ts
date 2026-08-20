@@ -53,6 +53,24 @@ describe('HttpsError-Meldungen sind Codes, keine Klartexte', () => {
     expect(verstoesse, `Klartext statt srv.*-Code: ${verstoesse.join(' | ')}`).toEqual([]);
   });
 
+  it('auch dynamische Templates sind Parameter-Codes (`srv.xyz|wert`), kein Klartext', () => {
+    /* Tranche 2: Ein Template als zweites Argument trägt den Code vor dem
+     * ersten `|`, der eine dynamische Wert folgt dahinter ({0} im
+     * Wörterbuch). Namentliche Ausnahme, KEINE dehnbare Regel: trade.ts
+     * setzt kursAlter.grund voran — der Grund entsteht in einem Helfer und
+     * wandert erst mit Tranche 3 (Task #145) auf Codes. */
+    const AUSNAHME = '${kursAlter.grund';
+    const verstoesse: string[] = [];
+    for (const { name, code } of dateien) {
+      for (const m of code.matchAll(/new HttpsError\(\s*'[a-z-]+',\s*`([^`]*)`/g)) {
+        const inhalt = m[1]!;
+        if (inhalt.startsWith(AUSNAHME)) continue;
+        if (!inhalt.startsWith('srv.')) verstoesse.push(`${name}: ${inhalt.slice(0, 60)}`);
+      }
+    }
+    expect(verstoesse, `Klartext-Template statt srv.*|-Code: ${verstoesse.join(' | ')}`).toEqual([]);
+  });
+
   it('jeder geworfene srv.*-Code hat DE- UND EN-Zeile im Frontend-Wörterbuch', () => {
     const woerterbuch = readFileSync(join(hier, '../../frontend/src/i18n.ts'), 'utf8');
     const enStart = woerterbuch.indexOf('export const EN');
@@ -61,7 +79,9 @@ describe('HttpsError-Meldungen sind Codes, keine Klartexte', () => {
     const enTeil = woerterbuch.slice(enStart);
     const fehlend: string[] = [];
     for (const { name, code } of dateien) {
-      for (const m of code.matchAll(/'(srv\.\w+)'/g)) {
+      // \b-Suche statt Quote-Suche: fängt Codes in '…'-Literalen UND in
+      // `srv.xyz|${…}`-Templates gleichermaßen.
+      for (const m of code.matchAll(/\b(srv\.\w+)\b/g)) {
         const schluessel = m[1]!;
         if (!deTeil.includes(`'${schluessel}':`)) fehlend.push(`${name}: ${schluessel} ohne DE`);
         if (!enTeil.includes(`'${schluessel}':`)) fehlend.push(`${name}: ${schluessel} ohne EN`);
