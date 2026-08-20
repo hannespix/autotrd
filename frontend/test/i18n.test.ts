@@ -1047,6 +1047,7 @@ describe('Tranche 5l — „Warum handelt die Engine?" und die Melde-Texte der M
       // Werte aus dem Zustand / Vertrag zum Server (NICHT übersetzen)
       'auto', 'fix', 'frei', 'hold', 'buy', 'trade', 'stop', 'start', 'middle',
       'end', 'max', 'live', 'status', 'change', 'symbol', 'broker', 'leverage',
+      'close', // data-close-Attribut der Modal-Delegation — Code, kein Text
       'approved', 'indices', 'ueberblick', 'trend', 'number', 'string',
       // Chart-Typen und Indikator-Kürzel (Fachbegriffe, in beiden Sprachen gleich)
       'candles', 'hollow', 'heikin', 'line', 'area', 'baseline', 'bars', 'hline',
