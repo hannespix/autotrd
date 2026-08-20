@@ -223,3 +223,33 @@ Für UI-Änderungen zusätzlich mit headless Chrome bei Desktop (1500) **und** P
 - Test-Suite um `forecast_eval` (Lookahead-Regression) und den `running`-Gate.
 - Weitere Broker (IBKR), Krypto-Spot, konfigurierbare Marktzeiten pro Asset-Klasse.
 - Backtest-Ergebnisse ins Dashboard.
+
+## 11. Rolle des Kritikers (Prompt-Strategie, Owner 20.08.)
+
+Jedes größere Arbeitspaket bekommt einen **separaten Kritiker**, der nicht
+selbst implementiert hat. Es gibt zwei Sorten mit verschiedenen Aufträgen —
+sie zu verwechseln macht beide wertlos:
+
+- **UI-Kritiker (Blindvergleich).** Für alles Sichtbare (Chart, Bedienung,
+  mobil). Er vergleicht Screenshots von autotrd und TradingView bei
+  DERSELBEN Aufgabe blind nebeneinander — Desktop und Handy (390 px) — und
+  sagt, welcher besser aussieht und sich besser bedient. Erkennt er unseren,
+  ist das Paket nicht fertig. Nachweis ausschließlich über den Browser:
+  `npm i -D playwright --no-save && npm run chart:shot` plus
+  `frontend/e2e/smoke.mjs`. „Kompiliert sauber" ist kein Beleg (§6).
+- **Engine-Red-Team (Widerlegung).** Für alles Unsichtbare (Kante, Prognose,
+  Messung). Seine Frage ist nicht „ist es gut genug", sondern **„beweise,
+  dass diese Zahl falsch ist"**: Lookahead (§5 — das Gate ist heilig, ein
+  Leck war schon einmal da), Survivorship im Universum, Kosten, die im Test
+  fehlen und live anfallen, zu kleine Stichproben, zu viele Freiheitsgrade,
+  In-Sample-Auswahl, Datums-/DST-Kanten. Jede gemessene Verbesserung gilt
+  als Einbildung, bis sie out-of-sample nach Kosten überlebt. **„Wir sollten
+  nicht handeln" ist ein zulässiges Ergebnis** — der Kritiker darf es nie
+  wegloben.
+
+Warum die Trennung: Beim Sichtbaren entsteht das Urteil ehrlich AUSSERHALB
+des Systems (Blindvergleich). Beim Unsichtbaren wäre „Loop, bis der Kritiker
+begeistert ist" exakt die Definition von Overfitting — dort muss der
+Kritiker ein Gegner sein, kein Publikum. Der kopierfertige Master-Prompt
+steht in MILESTONES.md („Übergabe-Prompt"), Begründung und Kurzvarianten in
+`docs/MASTERPROMPT.md`.
