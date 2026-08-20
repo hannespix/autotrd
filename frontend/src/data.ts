@@ -1118,6 +1118,19 @@ export function watchJournal(uid: string, cb: (rows: JournalRow[]) => void): Uns
 }
 
 /**
+ * Das Journal-Doc zum exakten Ausführungszeitpunkt (Maschinen-Video):
+ * Die geladene Trade-Historie trägt keine Doc-IDs, aber `at` ist der
+ * ISO-Stempel des Trades — eine Gleichheits-Query findet das eingefrorene
+ * Doc ohne Composite-Index.
+ */
+export async function ladeJournalZuZeit(uid: string, at: string): Promise<JournalRow | null> {
+  const q = query(collection(db(), 'users', uid, 'journal'), where('at', '==', at), limit(1));
+  const snap = await getDocs(q);
+  const d = snap.docs[0];
+  return d ? ({ id: d.id, ...(d.data() as Omit<JournalRow, 'id'>) } as JournalRow) : null;
+}
+
+/**
  * Review speichern — bewusst NUR die vier Felder, die die Rules erlauben.
  * Ein versehentlich mitgeschicktes Fakten-Feld ließe die ganze Änderung an
  * den Rules abprallen, und der User sähe ein stummes Nichts.

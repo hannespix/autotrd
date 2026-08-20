@@ -120,6 +120,7 @@ import {
   callSavePrediction,
   loadBarsOnce,
   loadIntraday,
+  ladeJournalZuZeit,
   loadIntradayChunks,
   tagVorTagen,
   loadDailyChunk,
@@ -210,6 +211,13 @@ import {
 } from './shareCard.js';
 import { shareStory, storyDateiname, type StoryKarte } from './shareStory.js';
 import { kartenAussage } from './shareAussage.js';
+import {
+  type KursPunkt,
+  type TradeStoryDaten,
+  kursFenster,
+  storyKontext,
+  waehleTradeStory,
+} from './tradeStory.js';
 import { iBtn, initInfoTips } from './infotips.js';
 import { serverText, setzeSprache, sprachWahl, t, valText } from './i18n.js';
 import { reglerWarnung } from './reglerHinweis.js';
@@ -1159,6 +1167,7 @@ function layout(email: string): string {
         <button class="dbtn" id="anShareBtn">Grafik teilen</button>
         <button class="dbtn" id="anShareAlle">${t('sh.alleLaden')}</button>
         <button class="dbtn" id="anShareVideo">${t('sh.videoErstellen')}</button>
+        <button class="dbtn" id="anShareTrade">${t('ts.knopf')}</button>
         <label class="an-share-opt"><input type="checkbox" id="anShareBetraege"> ${t('lay.betraegeZeigen')}</label>
         <span id="anShareStatus" class="hint"></span>
       </div>
@@ -7693,6 +7702,26 @@ let videoDatei: File | null = null;
 let videoUrl: string | null = null;
 let videoText = '';
 
+/** Fertiges Video in die Vorschau hängen — ein Weg für alle Video-Arten. */
+function zeigeVideoVorschau(datei: File, teilenText: string): void {
+  if (videoUrl) URL.revokeObjectURL(videoUrl);
+  videoDatei = datei;
+  videoUrl = URL.createObjectURL(datei);
+  videoText = teilenText;
+  const elem = $('anVideoElem') as HTMLVideoElement | null;
+  const box = $('anVideoBox');
+  if (elem && box) {
+    elem.src = videoUrl;
+    box.hidden = false;
+    // Systemblatt nur anbieten, wo es Video-Dateien wirklich annimmt.
+    ($('anVideoShare') as HTMLButtonElement).hidden =
+      navigator.canShare?.({ files: [datei] }) !== true;
+    const videoStatus = $('anVideoStatus');
+    if (videoStatus) videoStatus.textContent = '';
+    void elem.play().catch(() => undefined);
+  }
+}
+
 /** Schritt 1 — Video aufnehmen und als Vorschau zeigen. */
 async function erstelleStoryVideo(): Promise<void> {
   const status = $('anShareStatus');
@@ -7725,22 +7754,94 @@ async function erstelleStoryVideo(): Promise<void> {
     const datei = await baueAnalyseVideo(daten, analyseChartDaten(zeitraumTrades), (prozent) => {
       status.textContent = `${t('sh.videoLaeuft')} … ${prozent} %`;
     });
-    if (videoUrl) URL.revokeObjectURL(videoUrl);
-    videoDatei = datei;
-    videoUrl = URL.createObjectURL(datei);
-    videoText = shareText(daten);
-    const elem = $('anVideoElem') as HTMLVideoElement | null;
-    const box = $('anVideoBox');
-    if (elem && box) {
-      elem.src = videoUrl;
-      box.hidden = false;
-      // Systemblatt nur anbieten, wo es Video-Dateien wirklich annimmt.
-      ($('anVideoShare') as HTMLButtonElement).hidden =
-        navigator.canShare?.({ files: [datei] }) !== true;
-      const videoStatus = $('anVideoStatus');
-      if (videoStatus) videoStatus.textContent = '';
-      void elem.play().catch(() => undefined);
+    zeigeVideoVorschau(datei, shareText(daten));
+    status.textContent = t('sh.videoFertig');
+  } catch (e) {
+    const name = e instanceof Error ? e.name : '';
+    status.textContent =
+      name === 'AbortError' ? '' : `${t('sh.fehlgeschlagen')}: ${serverText(e)}`;
+  } finally {
+    knopf.disabled = false;
+  }
+}
+
+/**
+ * Das Maschinen-Video (V2, Owner 20.08.): Autotuning und Trading im
+ * Mittelpunkt, KEINE Ergebniszahlen — deshalb läuft es nicht durchs
+ * kartenAussage-Gate (das bewacht Zahlen-Behauptungen), sondern braucht
+ * nur einen echten, abgeschlossenen Trade mit Kursdaten. Ehrlichkeit:
+ * Einstieg/Ausstieg aus der Historie, Signal-Stimmen aus dem eingefrorenen
+ * Journal — nichts wird rekonstruiert (siehe tradeStory.ts).
+ */
+async function erstelleMaschinenVideo(): Promise<void> {
+  const status = $('anShareStatus');
+  const knopf = $('anShareTrade') as HTMLButtonElement | null;
+  if (!st || !status || !knopf) return;
+  knopf.disabled = true;
+  try {
+    const zeitraumTrades = imZeitraum(st.trades as HistoryTrade[], st.anZeitraum, new Date());
+    const paar = waehleTradeStory(zeitraumTrades, new Date());
+    if (!paar) {
+      status.textContent = t('ts.keinTrade');
+      return;
     }
+    status.textContent = `${t('sh.videoLaeuft')} …`;
+    const eMs = Date.parse(paar.einstieg.executedAt);
+    const xMs = Date.parse(paar.exit.executedAt);
+    // Kurse: 5-Minuten-Bars des Trade-Fensters, sonst Tages-Bars (ältere
+    // oder mehrtägige Trades) — und wenn beides nichts hergibt, ehrlich
+    // absagen statt eine Kurve zu erfinden.
+    const vorTag = new Date(eMs - 86_400_000).toISOString().slice(0, 10);
+    let kurse: KursPunkt[] = [];
+    try {
+      const chunks = await loadIntradayChunks(paar.exit.symbol, vorTag, paar.exit.executedAt.slice(0, 10));
+      kurse = chunks.flatMap((c) => c.bars.map((b) => ({ at: b.time * 1000, c: b.close })));
+    } catch {
+      kurse = [];
+    }
+    let fenster = kursFenster(kurse, eMs, xMs);
+    if (fenster.length < 8) {
+      const jahre = new Set([new Date(eMs).getUTCFullYear(), new Date(xMs).getUTCFullYear()]);
+      const taeglich: KursPunkt[] = [];
+      for (const jahr of jahre) {
+        const bars = await loadDailyChunk(paar.exit.symbol, jahr).catch(() => []);
+        taeglich.push(...bars.map((b) => ({ at: Date.parse(`${b.date}T20:00:00Z`), c: b.close })));
+      }
+      const tagesFenster = kursFenster(taeglich, eMs - 6 * 86_400_000, xMs + 2 * 86_400_000);
+      if (tagesFenster.length > fenster.length) fenster = tagesFenster;
+    }
+    if (fenster.length < 2) {
+      status.textContent = t('ts.keineKurse');
+      return;
+    }
+    // Signal-Kontext aus dem eingefrorenen Journal — fehlertolerant: ohne
+    // Kontext erzählt die Szene den Einstieg ohne Stimmen-Chips.
+    const journal = await ladeJournalZuZeit(st.uid, paar.einstieg.executedAt).catch(() => null);
+    const kontext = storyKontext(journal?.signalContext, paar.einstieg.side);
+    const scannerSymbole = [
+      ...new Set([
+        ...(st.strategy?.watchlist ?? []),
+        ...st.trades.map((tr) => tr.symbol),
+      ]),
+    ];
+    const daten: TradeStoryDaten = {
+      symbol: paar.exit.symbol,
+      einstiegSeite: paar.einstieg.side,
+      einstiegAt: paar.einstieg.executedAt,
+      einstiegPreis: paar.einstieg.price,
+      exitAt: paar.exit.executedAt,
+      exitPreis: paar.exit.price,
+      riskExit: paar.exit.riskExit ?? null,
+      kontext,
+      kurse: fenster,
+      scannerSymbole,
+      echtgeld: st.strategy?.broker?.mode === 'live',
+    };
+    const { baueTradeStoryVideo } = await import('./tradeStoryVideo.js');
+    const datei = await baueTradeStoryVideo(daten, (prozent) => {
+      status.textContent = `${t('sh.videoLaeuft')} … ${prozent} %`;
+    });
+    zeigeVideoVorschau(datei, t('ts.teilenText'));
     status.textContent = t('sh.videoFertig');
   } catch (e) {
     const name = e instanceof Error ? e.name : '';
@@ -9038,6 +9139,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   $('anShareBtn')?.addEventListener('click', () => void teileDepotGrafik());
   $('anShareAlle')?.addEventListener('click', () => void teileAlleKarten());
   $('anShareVideo')?.addEventListener('click', () => void erstelleStoryVideo());
+  $('anShareTrade')?.addEventListener('click', () => void erstelleMaschinenVideo());
   $('anVideoShare')?.addEventListener('click', () => void teileVideoDatei());
   $('anVideoSave')?.addEventListener('click', speichereVideoDatei);
   $('anShareBetraege')?.addEventListener('change', renderSharePreview);
