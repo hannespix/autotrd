@@ -291,6 +291,10 @@ export const DE = {
   'sh.videoLaeuft': 'Video wird aufgenommen',
   'sh.videoGespeichert': 'Video gespeichert',
   'sh.videoNichtMoeglich': 'Dieser Browser kann kein Video aufnehmen',
+  'sh.videoErstellen': 'Video erstellen',
+  'sh.videoFertig': 'Video fertig — ansehen und teilen',
+  'sh.jetztTeilen': 'Teilen',
+  'sh.herunterladen': 'Herunterladen',
   // Chart-Werkzeugleiste (Tranche 5f). Sie ist die dichteste Textfläche der
   // App: ~60 title-Attribute erklären, was ein Knopf tut — genau die Sorte
   // Text, die man nur liest, wenn man etwas NICHT versteht. Auf Deutsch
@@ -1619,6 +1623,10 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'sh.videoLaeuft': 'Recording video',
   'sh.videoGespeichert': 'Video saved',
   'sh.videoNichtMoeglich': 'This browser cannot record video',
+  'sh.videoErstellen': 'Create video',
+  'sh.videoFertig': 'Video ready — review and share',
+  'sh.jetztTeilen': 'Share',
+  'sh.herunterladen': 'Download',
   // Chart-Werkzeugleiste (Tranche 5f).
   'chart.linkGruppe': 'Switch link group (the chart follows this group)',
   'chart.zoom1T': 'Zoom to 1 trading day — the auto resolution picks the candle size',
