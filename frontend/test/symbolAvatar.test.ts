@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { symbolAvatar, symbolMonogramm, symbolTon } from '../src/symbolAvatar.js';
 
 const lese = (rel: string): string => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
+const LOGO_HOST = 'logo-6xru5z43xa-uc.a.run.app';
 
 describe('symbolTon — deterministisch und im Slot-Bereich', () => {
   it('gleiches Symbol ⇒ immer derselbe Ton, Bereich 0…5', () => {
@@ -32,9 +33,9 @@ describe('symbolMonogramm — ein bis zwei saubere Zeichen', () => {
   it('inhärent escaped — bösartige Eingaben landen nie roh im Markup', () => {
     expect(symbolMonogramm('<script>')).toBe('SC');
     const html = symbolAvatar('<img src=x onerror=alert(1)>');
-    // Genau EIN img: unser Logo-Layer — nichts Injiziertes daneben.
-    expect(html.match(/<img/g)?.length).toBe(1);
-    expect(html).toContain('class="sym-logo"');
+    // KEIN img im Grund-HTML (Logos setzt schmueckeAvatare aus dem Lager
+    // ein) — und nichts Injiziertes.
+    expect(html.match(/<img/g)).toBeNull();
     expect(html).not.toContain('onerror');
     expect(html).not.toContain('src=x');
   });
@@ -49,13 +50,15 @@ describe('symbolAvatar — Chip-HTML', () => {
     expect(symbolAvatar('NVDA')).not.toContain(' sm');
   });
 
-  it('legt das echte Logo als Bild über das Monogramm — URL sauber encodiert', () => {
+  it('trägt das Logo-Ziel als sauberes data-Attribut — kein Netzwerk im HTML', () => {
+    // Owner-Befund 21.08.: direkte <img src=Proxy> wurden von den
+    // innerHTML-Re-Renders mitten im Laden abgeräumt (error ⇒ entfernt ⇒
+    // „Logos kurz da, dann Buchstaben"). Das HTML trägt deshalb nur noch
+    // das Ziel; schmueckeAvatare() setzt Logos aus dem Sitzungs-Lager ein.
     const html = symbolAvatar('^NDX');
-    expect(html).toContain('class="sym-logo"');
-    expect(html).toContain('symbol=%5ENDX');
-    expect(html).toContain('loading="lazy"');
-    // Bösartige Eingaben landen NIE roh in der URL.
-    expect(symbolAvatar('"<x>')).toContain('symbol=X');
+    expect(html).toContain('data-logo-sym="^NDX"');
+    expect(html).not.toContain(LOGO_HOST);
+    expect(symbolAvatar('"<x>')).toContain('data-logo-sym="X"');
   });
 });
 
@@ -75,10 +78,18 @@ describe('Quelltext-Pins — Einbau und Palette', () => {
     expect(dashboard).toMatch(/^\s*installiereLogoFallback\(\);/m);
     const avatar = lese('../src/symbolAvatar.ts');
     // Kein Dritt-Host im Frontend: nur der eigene Cloud-Run-Proxy.
-    expect(avatar).toContain("LOGO_BASIS = 'https://logo-6xru5z43xa-uc.a.run.app'");
+    expect(avatar).toContain(`LOGO_BASIS = 'https://${LOGO_HOST}'`);
     expect(avatar).not.toContain('parqet');
     // Weißer Ring, damit dunkle Marken-Logos im Dark-Theme lesbar sind.
     expect(css).toMatch(/\.sym-logo[\s\S]*?background:\s*#fff/);
+  });
+
+  it('das Lager schmückt nach JEDEM Listen-Render — ein Abruf je Symbol', () => {
+    // Beide Render-Wege rufen den Schmück-Pass als echten Aufruf.
+    expect(dashboard.match(/^\s*schmueckeAvatare\(\);/gm)?.length ?? 0).toBeGreaterThanOrEqual(2);
+    const avatar = lese('../src/symbolAvatar.ts');
+    expect(avatar).toContain('logoLager');
+    expect(avatar).toContain('URL.createObjectURL');
   });
 
   it('die Chip-Palette meidet Gewinn-Grün und Verlust-Rot', () => {

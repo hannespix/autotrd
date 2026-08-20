@@ -19,9 +19,12 @@ const cache = new Map<string, { typ: string; bytes: Buffer } | null>();
 
 async function holeLogo(symbol: string): Promise<{ typ: string; bytes: Buffer } | null> {
   const quellen = [`https://assets.parqet.com/logos/symbol/${encodeURIComponent(symbol)}?format=png`];
-  // Alpaca-Krypto heißt BTCUSD/ETHUSD — Parqet führt die Coins unter crypto/.
-  if (symbol.endsWith('USD') && symbol.length > 4) {
-    quellen.push(`https://assets.parqet.com/logos/crypto/${encodeURIComponent(symbol.slice(0, -3))}?format=png`);
+  // Krypto heißt je nach Anzeige BTCUSD ODER BTC-USD (Owner-Screenshot
+  // 21.08.: Bindestrich-Variante blieb ohne Logo) — Parqet führt die Coins
+  // unter crypto/{COIN}, also Suffix samt Bindestrich abstreifen.
+  const coin = symbol.replace(/-?USDT?$/, '');
+  if (coin !== symbol && coin.length >= 2) {
+    quellen.push(`https://assets.parqet.com/logos/crypto/${encodeURIComponent(coin)}?format=png`);
   }
   for (const url of quellen) {
     try {
