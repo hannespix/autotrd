@@ -14,6 +14,10 @@
   --gn: #26cf9d; --gn2: #40e0b4; --gn-soft: rgba(38, 207, 157, .14);
   --rd: #f2586b; --rd2: #ff8290; --rd-soft: rgba(242, 88, 107, .14);
   --vi: #8b7cff; --vi-soft: rgba(139, 124, 255, .16);
+  /* Monogramm-Rollen (Symbol-Chips): Amber, Teal (kein Signal-Grün!), Grau. */
+  --au: #d99b2b; --au-soft: rgba(217, 155, 43, .15);
+  --tk: #3fae94; --tk-soft: rgba(63, 174, 148, .14);
+  --mut-soft: rgba(159, 173, 196, .15);
   --glow-ac: 0 0 20px -4px rgba(0, 212, 255, .6);
   --glow-gn: 0 0 18px -4px rgba(0, 200, 150, .55);
   --glow-rd: 0 0 18px -4px rgba(255, 71, 87, .55);
@@ -107,6 +111,9 @@
   --gn: #0b8f6a; --gn2: #109a74; --gn-soft: rgba(11, 143, 106, .11);
   --rd: #c33a4e; --rd2: #ce4459; --rd-soft: rgba(195, 58, 78, .10);
   --vi: #5b53b8; --vi-soft: rgba(91, 83, 184, .12);
+  --au: #8a6508; --au-soft: rgba(138, 101, 8, .11);
+  --tk: #0e7a63; --tk-soft: rgba(14, 122, 99, .10);
+  --mut-soft: rgba(70, 86, 110, .12);
   /* Auf Papier gibt es kein Leuchten. Aus dem Neon-Schein wird ein weicher
    * farbiger Schlagschatten NACH UNTEN — dieselbe Betonung, nur physikalisch
    * plausibel statt als Schmutzfleck um den Knopf herum. */
@@ -341,6 +348,23 @@ input { accent-color: var(--ac); }
 .smv { color: var(--t2); font-size: 13px; }
 .kpi { display: flex; flex-direction: column; gap: 3px; }
 
+/* ── Symbol-Monogramme (Owner 20.08.): Wiedererkennung ohne Fremd-Logos.
+   Palette bewusst OHNE gn/rd — ein Monogramm darf nie wie P&L aussehen. */
+.sym-av {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: 50%; flex: 0 0 auto;
+  font: 700 10px/1 ui-monospace, 'SF Mono', monospace; letter-spacing: .03em;
+  vertical-align: middle;
+}
+.sym-av.sm { width: 20px; height: 20px; }
+.sym-av.f0 { background: var(--ac-soft); color: var(--ac); }
+.sym-av.f1 { background: var(--vi-soft); color: var(--vi); }
+.sym-av.f2 { background: var(--ac-soft); color: var(--ac2); }
+.sym-av.f3 { background: var(--au-soft); color: var(--au); }
+.sym-av.f4 { background: var(--tk-soft); color: var(--tk); }
+.sym-av.f5 { background: var(--mut-soft); color: var(--t2); }
+td .sym-av, .lb-sym .sym-av { margin-right: 6px; }
+
 /* Livebar (Watchlist-Quotes) */
 .livebar { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0; scrollbar-width: none; }
 .livebar::-webkit-scrollbar { display: none; }
@@ -351,7 +375,9 @@ input { accent-color: var(--ac); }
   cursor: pointer; transition: transform .16s var(--e-out), border-color .16s;
 }
 .lb-item:hover, .lb-item.on { transform: translateY(-2px); border-color: var(--ac); }
-.lb-sym { font-size: 10px; color: var(--t3); text-transform: uppercase; }
+.lb-sym { font-size: 10px; color: var(--t3); text-transform: uppercase;
+  display: flex; align-items: center; justify-content: center; }
+.lb-sym .sym-av { margin-right: 5px; }
 .lb-pr { font-weight: 700; color: var(--t1); margin-top: 2px; }
 .lb-ch { font-size: 10px; margin-top: 1px; }
 

@@ -99,6 +99,7 @@ import {
   type PriceLineSpec,
 } from './chart.js';
 import { ICONS } from './icons.js';
+import { symbolAvatar } from './symbolAvatar.js';
 import { starteTour, tourAktiv } from './tour.js';
 import { newsChartMarkers, newsForDay } from './newsMarkers.js';
 import {
@@ -4412,7 +4413,9 @@ function wireWatchlist(): void {
     const item = document.createElement('div');
     item.className = 'lb-item' + (sym === st.currentSymbol ? ' on' : '');
     item.innerHTML = '<div class="lb-sym"></div><div class="lb-pr">--</div><div class="lb-ch"></div>';
-    item.querySelector('.lb-sym')!.textContent = sym;
+    const lbSym = item.querySelector('.lb-sym')!;
+    lbSym.innerHTML = symbolAvatar(sym, true);
+    lbSym.appendChild(document.createTextNode(sym));
     item.addEventListener('click', () => selectSymbol(sym));
     bar.appendChild(item);
     priceEls.set(sym, {
@@ -4430,7 +4433,9 @@ function wireWatchlist(): void {
     const tr = document.createElement('tr');
     tr.innerHTML = `<td class="mono" style="color:var(--t1);font-weight:700"></td>
       <td>--</td><td>--</td><td>--</td><td>--</td><td><span class="stag t-hold">HOLD</span></td>`;
-    tr.querySelector('td')!.textContent = sym;
+    const sigSym = tr.querySelector('td')!;
+    sigSym.innerHTML = symbolAvatar(sym, true);
+    sigSym.appendChild(document.createTextNode(sym));
     tr.style.cursor = 'pointer';
     tr.addEventListener('click', () => selectSymbol(sym));
     body.appendChild(tr);
@@ -6716,7 +6721,8 @@ function renderPortfolio(): void {
       <td class="${pct !== null ? pnlClass(pct) : ''}">${pct !== null ? fmtPct(pct) : '--'}</td>
       <td><button class="hbtn" data-exit style="color:var(--rd)">${short ? 'Cover' : 'Exit'}</button></td>`;
     const symTd = tr.querySelector('td')!;
-    symTd.textContent = p.symbol;
+    symTd.innerHTML = symbolAvatar(p.symbol);
+    symTd.appendChild(document.createTextNode(p.symbol));
     // Klick aufs Symbol holt die Position ins Haupt-Chart (04.08.) — dort
     // zeigen Marke, Preislinien und die Kurve seit Einstieg den ganzen Verlauf
     symTd.className = 'pos-sym';
