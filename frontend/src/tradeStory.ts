@@ -110,12 +110,14 @@ export interface AktSzene {
  */
 export function aktPlan(): AktSzene[] {
   return [
-    { id: 'scanner', dauerMs: 3000 },
+    { id: 'scanner', dauerMs: 2800 },
     { id: 'signal', dauerMs: 4800 },
     { id: 'netz', dauerMs: 4600 },
-    { id: 'news', dauerMs: 3400 },
+    // Owner-Nachkritik: der News-Akt war zu kurz und zu statisch — jetzt
+    // trägt er den vollen Ablauf lesen → bewerten → urteilen (5 s).
+    { id: 'news', dauerMs: 5000 },
     { id: 'lernen', dauerMs: 3800 },
-    { id: 'abspann', dauerMs: 2400 },
+    { id: 'abspann', dauerMs: 2200 },
   ];
 }
 

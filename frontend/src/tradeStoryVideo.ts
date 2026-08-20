@@ -297,7 +297,6 @@ function maleNews(ctx: CanvasRenderingContext2D, tMs: number): void {
    * das Veto-Kreuz. Der Mechanismus ist echt: Der News-Check sitzt im
    * Einstiegspfad (newsGate), schlechte Nachrichten blocken den Kauf. */
   const kartenB = 840;
-  const kartenH = 130;
   const startX = 600 - kartenB / 2;
   /* Herkunft (Owner-Frage 20.08.): ehrlich-generisch statt Fremdmarken —
    * Verlagsnamen im eigenen Werbe-Clip sähen nach Empfehlung aus. Die
@@ -312,46 +311,92 @@ function maleNews(ctx: CanvasRenderingContext2D, tMs: number): void {
     ctx.textAlign = 'left';
     ctx.globalAlpha = 1;
   }
-  for (let i = 0; i < 3; i++) {
-    const y = B_Y + 50 + i * (kartenH + 34);
-    const ein = weich((tMs - i * 320) / 420);
+  /* Der Ablauf ist die Aussage (Owner-Nachkritik „zu kurz, nicht
+   * aussagekräftig"): Jede Karte strömt herein, ein SCAN-STRAHL läuft
+   * darüber (das Lesen), DANN fällt das Urteil — grüner Haken oder rotes
+   * Kreuz mit „Einstieg blockiert". Erst mit dem Urteil färbt sich die
+   * Karte: erst lesen, dann urteilen. */
+  const KARTE_H = 104;
+  const ABSTAND = 22;
+  for (let i = 0; i < 4; i++) {
+    const y = B_Y + 44 + i * (KARTE_H + ABSTAND);
+    const start = i * 380;
+    const ein = weich((tMs - start) / 380);
     if (ein <= 0) continue;
-    const veto = i === 1 && tMs > 1900;
-    ctx.globalAlpha = ein * (veto ? 0.9 : 1);
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
-    ctx.strokeStyle = veto ? FARBE.rot : FARBE.linie;
-    ctx.lineWidth = veto ? 3 : 2;
+    const strahlStart = start + 420;
+    const strahl = klemme((tMs - strahlStart) / 340);
+    const geurteilt = strahl >= 1;
+    const veto = i === 1;
+    const schub = (1 - ein) * 60;
+    const x = startX + schub;
+    ctx.globalAlpha = ein;
+    ctx.fillStyle = geurteilt && veto ? 'rgba(255, 95, 95, 0.06)' : 'rgba(255, 255, 255, 0.03)';
+    ctx.strokeStyle = geurteilt ? (veto ? FARBE.rot : 'rgba(52, 199, 123, 0.55)') : FARBE.linie;
+    ctx.lineWidth = geurteilt && veto ? 3 : 2;
     ctx.beginPath();
-    ctx.roundRect(startX, y, kartenB, kartenH, 16);
+    ctx.roundRect(x, y, kartenB, KARTE_H, 14);
     ctx.fill();
     ctx.stroke();
-    // Abstrakte Textzeilen: zwei graue Balken je Karte.
-    ctx.fillStyle = veto ? 'rgba(255, 95, 95, 0.35)' : 'rgba(159, 176, 196, 0.35)';
+    // Abstrakte Textzeilen — neutral bis zum Urteil.
+    ctx.fillStyle =
+      geurteilt && veto ? 'rgba(255, 95, 95, 0.4)' : 'rgba(159, 176, 196, 0.35)';
     ctx.beginPath();
-    ctx.roundRect(startX + 32, y + 34, kartenB * (0.62 - i * 0.08), 20, 10);
+    ctx.roundRect(x + 30, y + 26, kartenB * (0.58 - i * 0.05), 18, 9);
     ctx.fill();
     ctx.beginPath();
-    ctx.roundRect(startX + 32, y + 74, kartenB * (0.4 + i * 0.06), 20, 10);
+    ctx.roundRect(x + 30, y + 60, kartenB * (0.36 + i * 0.05), 18, 9);
     ctx.fill();
-    if (veto) {
-      const kreuz = weich((tMs - 1900) / 350);
-      ctx.globalAlpha = ein * kreuz;
-      ctx.strokeStyle = FARBE.rot;
-      ctx.lineWidth = 9;
-      ctx.lineCap = 'round';
-      const cx = startX + kartenB - 78;
-      const cy = y + kartenH / 2;
+    // Der Scan-Strahl: ein heller Streifen wandert über die Karte.
+    if (strahl > 0 && strahl < 1) {
+      ctx.save();
       ctx.beginPath();
-      ctx.moveTo(cx - 26, cy - 26);
-      ctx.lineTo(cx + 26, cy + 26);
-      ctx.moveTo(cx + 26, cy - 26);
-      ctx.lineTo(cx - 26, cy + 26);
-      ctx.stroke();
+      ctx.roundRect(x, y, kartenB, KARTE_H, 14);
+      ctx.clip();
+      const sx = x + kartenB * strahl;
+      const grad = ctx.createLinearGradient(sx - 90, 0, sx + 24, 0);
+      grad.addColorStop(0, 'rgba(37, 208, 238, 0)');
+      grad.addColorStop(0.8, 'rgba(37, 208, 238, 0.22)');
+      grad.addColorStop(1, 'rgba(37, 208, 238, 0)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(x, y, kartenB, KARTE_H);
+      ctx.restore();
+    }
+    // Das Urteil — poppt nach dem Strahl auf.
+    if (geurteilt) {
+      const pop = weich((tMs - (strahlStart + 340)) / 260);
+      ctx.globalAlpha = ein * pop;
+      ctx.lineWidth = 8;
+      ctx.lineCap = 'round';
+      const cy = y + KARTE_H / 2;
+      if (veto) {
+        // Kreuz + wörtliches Urteil: „Einstieg blockiert".
+        ctx.font = `700 32px ${SANS}`;
+        const wortB = ctx.measureText(t('ts.newsVeto')).width;
+        const cx = x + kartenB - 64 - wortB - 34;
+        ctx.strokeStyle = FARBE.rot;
+        ctx.beginPath();
+        ctx.moveTo(cx - 20, cy - 20);
+        ctx.lineTo(cx + 20, cy + 20);
+        ctx.moveTo(cx + 20, cy - 20);
+        ctx.lineTo(cx - 20, cy + 20);
+        ctx.stroke();
+        ctx.fillStyle = FARBE.rot;
+        ctx.fillText(t('ts.newsVeto'), cx + 40, cy + 11);
+      } else {
+        const cx = x + kartenB - 74;
+        ctx.strokeStyle = FARBE.gruen;
+        ctx.beginPath();
+        ctx.moveTo(cx - 22, cy + 2);
+        ctx.lineTo(cx - 6, cy + 18);
+        ctx.lineTo(cx + 24, cy - 16);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = ein;
     }
     ctx.globalAlpha = 1;
   }
-  maleZeile(ctx, t('ts.newsZeile'), tMs, 2100, true);
-  const ein = weich((tMs - 2600) / 450);
+  maleZeile(ctx, t('ts.newsZeile'), tMs, 3100, true);
+  const ein = weich((tMs - 3700) / 450);
   if (ein > 0) {
     ctx.globalAlpha = ein;
     ctx.fillStyle = FARBE.text3;
