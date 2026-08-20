@@ -705,7 +705,6 @@ async function rebalanceCoreSleeve(
       if (!mayTrade(userDoc.data())) continue;
       const clamped = clampStrategyRisk(structuredClone(roh));
       const anteil = corePct(clamped);
-      if (anteil <= 0) continue; // kein Sockel gewünscht
 
       /* Dieselben Konto-Tore wie oben (Audit 13.08., H2): Genau dieser Pfad
        * war der Anlass — ein per Notbremse gesperrtes Konto bekam am selben
@@ -713,6 +712,40 @@ async function rebalanceCoreSleeve(
       const tore = kontoTore(userDoc, clamped, now);
       if (tore.handel) {
         logger.info(`Sockel-Rebalancing ${userDoc.id}: übersprungen — ${tore.handel}`);
+        continue;
+      }
+
+      if (anteil <= 0) {
+        /* Sockel abgewählt — Bestand ABWICKELN statt verwaisen lassen
+         * (Red-Team-Befund 5, 20.08.): Vorher sprang der Lauf hier per
+         * continue raus, BEVOR er verkaufen konnte. Die core-Positionen
+         * verloren damit Rebalancing und Marktfilter-Exit (riskPulse hält
+         * nur die Stops) und zählten in der Kapital-Kachel weiter als
+         * „Sockel" — ein aktiv aussehender Sockel, den niemand führt.
+         * Nur Verkäufe (nie durch Einstiegs-Tore blockiert), täglich bis
+         * leer, kein Wochentakt-Gate: Wer 0 wählt, meint jetzt. */
+        const posSnap = await userDoc.ref.collection('positions').get();
+        const waisen = posSnap.docs.filter((d) => (d.data() as Position).core === true);
+        if (waisen.length === 0) continue;
+        let verkauft = 0;
+        for (const d of waisen) {
+          const pos = d.data() as Position;
+          // Verkäufe schließen zum Kurs, den der Broker ohnehin bekommt —
+          // avgEntry-Fallback wie im Rebalancing oben.
+          const preis = preise.get(d.id) ?? pos.avgEntry;
+          if (!(preis > 0)) continue;
+          const r = await executeTrade(
+            { uid: userDoc.id, symbol: d.id, side: 'sell', price: preis, source: 'engine', riskExit: 'core_aufloesung', assetClass: classify(d.id) },
+            clamped,
+            laufId,
+          );
+          if (r.executed) verkauft += 1;
+        }
+        if (verkauft > 0) {
+          konten += 1;
+          orderSumme += verkauft;
+          logger.info(`Sockel-Abwicklung ${userDoc.id}: ${verkauft}/${waisen.length} Position(en) aufgelöst (corePct 0)`);
+        }
         continue;
       }
 
