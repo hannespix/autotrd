@@ -85,8 +85,9 @@ describe('Quelltext-Pins — Einbau und Palette', () => {
   });
 
   it('das Lager schmückt nach JEDEM Listen-Render — ein Abruf je Symbol', () => {
-    // Beide Render-Wege rufen den Schmück-Pass als echten Aufruf.
-    expect(dashboard.match(/^\s*schmueckeAvatare\(\);/gm)?.length ?? 0).toBeGreaterThanOrEqual(2);
+    // Alle drei Render-Wege (Watchlist, Portfolio, Markt-Übersicht) rufen
+    // den Schmück-Pass als echten Aufruf.
+    expect(dashboard.match(/^\s*schmueckeAvatare\(\);/gm)?.length ?? 0).toBeGreaterThanOrEqual(3);
     const avatar = lese('../src/symbolAvatar.ts');
     expect(avatar).toContain('logoLager');
     expect(avatar).toContain('URL.createObjectURL');
@@ -105,6 +106,21 @@ describe('Quelltext-Pins — Einbau und Palette', () => {
     expect(avatar).toMatch(/if \(passGeplant\) return;/);
     // Laufende Abrufe werden nie doppelt gestartet.
     expect(avatar).toMatch(/if \(logoLaeuft\.has\(sym\)\) return;/);
+  });
+
+  it('Hover-Lifts stehen NUR im (hover: hover)-Block — Touch-Scroll darf nie abreißen', () => {
+    // Owner 21.08.: :hover klebt am Touchscreen an der angetippten Kachel,
+    // und ein Transform mitten in der Wischgeste ließ das Scrollen abreißen.
+    const medienIdx = css.indexOf('@media (hover: hover)');
+    expect(medienIdx).toBeGreaterThan(0);
+    const davor = css.slice(0, medienIdx);
+    for (const zeile of davor.split('\n')) {
+      if (zeile.includes(':hover') && /transform|translate|scale\(/.test(zeile)) {
+        expect.fail(`Hover-Transform außerhalb des (hover: hover)-Blocks: ${zeile.trim()}`);
+      }
+    }
+    // Die Markt-Übersicht trägt die Logo-Chips in der Symbol-Zeile.
+    expect(dashboard).toContain('symZeile.innerHTML = symbolAvatar(symbol, true)');
   });
 
   it('die Chip-Palette meidet Gewinn-Grün und Verlust-Rot', () => {
