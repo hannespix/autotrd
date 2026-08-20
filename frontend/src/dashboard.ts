@@ -7571,7 +7571,7 @@ function renderDepotVerlauf(): void {
   if (z.tage.length >= 2) teile.push(`${z.tage[0]} → ${z.tage[z.tage.length - 1]}`);
   if (wahl.hinweis) teile.push(wahl.hinweis);
   const drin = z.baender.reduce((n, b) => n + b.trades, 0);
-  teile.push(`${drin} ${drin === 1 ? 'Trade' : 'Trades'} im Bild`);
+  teile.push(`${drin} ${drin === 1 ? 'Trade' : 'Trades'} ${t('dc.tradesImBild')}`);
   // Ehrlich benennen, was NICHT im Bild ist — sonst wirkt die Zerlegung
   // vollständig, obwohl ältere Trades längst in der Bezugslinie stecken.
   if (z.ausserhalb.vorher > 0) teile.push(`${z.ausserhalb.vorher} ${t('dv.aelterAlsFenster')}`);

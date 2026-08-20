@@ -178,6 +178,17 @@ export function depotChart(z: DepotZerlegung): DepotChartTeile {
   // ── Legende ──────────────────────────────────────────────────────────────
   const geld = (v: number): string =>
     `${v > 0 ? '+' : ''}${v.toFixed(2).replace('.', ',')}`;
+  /* Die Sonderbaender tragen deutsche Anzeige-Labels aus shared
+   * (depotAufteilung) — im EN-Modus blieben sie deutsch stehen
+   * (Owner-Screenshot 20.08.). Der KEY ist die Wahrheit; die Sprache
+   * entscheidet das Woerterbuch. Symbol-/Trade-Baender bleiben, was sie
+   * sind: Ticker sind keine Uebersetzungssache. */
+  const bandName = (f: BandFlaeche): string =>
+    f.key === '__offen__'
+      ? t('dc.offenePositionen')
+      : f.key === '__rest__'
+        ? `${t('dc.uebrige')} (${f.trades})`
+        : f.label;
   const legende = flaechen
     .filter((f) => f.summe !== 0 || f.key === '__offen__')
     .map((f, rang) => {
@@ -185,7 +196,7 @@ export function depotChart(z: DepotZerlegung): DepotChartTeile {
       return (
         `<span class="dc-leg" data-key="${esc(f.key)}">`
         + `<i style="background:${bandFarbe(f, rang)}"></i>`
-        + `<b>${esc(f.label)}</b>`
+        + `<b>${esc(bandName(f))}</b>`
         + `<span class="mono ${f.summe >= 0 ? 'c-gn' : 'c-rd'}">${esc(geld(f.summe))}</span>`
         + `<span class="dc-leg-n">${esc(zusatz)}</span></span>`
       );
@@ -211,7 +222,7 @@ export function depotTooltip(z: DepotZerlegung, i: number): string {
   const offen = z.offen[i]!;
   if (offen !== 0) {
     zeilen.push(
-      `<div><span>Offene Positionen</span><b class="${offen >= 0 ? 'c-gn' : 'c-rd'}">${esc(geld(offen))}</b></div>`,
+      `<div><span>${t('dc.offenePositionen')}</span><b class="${offen >= 0 ? 'c-gn' : 'c-rd'}">${esc(geld(offen))}</b></div>`,
     );
   }
   const delta = z.equity[i]! - z.basis;
