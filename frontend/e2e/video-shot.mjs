@@ -92,6 +92,8 @@ console.log('Video:', JSON.stringify(ergebnis));
 
 if (!/^autotrd-story-.*\.(mp4|webm)$/.test(ergebnis.name)) fehler.push(`Dateiname unerwartet: ${ergebnis.name}`);
 if (ergebnis.groesse < 100_000) fehler.push(`Video verdächtig klein: ${ergebnis.groesse} Bytes`);
+// Codec-Parameter im Datei-Typ ⇒ Android-share() lehnt mit NotAllowedError ab.
+if (ergebnis.typ.includes(';')) fehler.push(`Datei-Typ trägt Codec-Parameter: ${ergebnis.typ}`);
 
 // 3) Das ANALYSE-Video (Regie über die Schaubilder) — echte Aufnahme, und der
 // beobachter-Haken zieht Standbilder aus GENAU den Frames, die aufgenommen

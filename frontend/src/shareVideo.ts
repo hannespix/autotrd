@@ -487,8 +487,16 @@ export async function nimmClipAuf(
   await gestoppt;
   for (const spur of strom.getTracks()) spur.stop();
 
-  const endung = typ.startsWith('video/mp4') ? 'mp4' : 'webm';
-  return new File([new Blob(teile, { type: typ })], `${dateiStamm}.${endung}`, { type: typ });
+  /* Aufgenommen wird mit vollem Codec-Profil (typ), GESTEMPELT wird die
+   * Datei mit dem Basis-Typ: Chromes Teilen-Liste kennt nur parameterlose
+   * Typen („video/mp4"). Trägt die Datei „video/mp4;codecs=avc1", meldet
+   * canShare zwar true, aber share() antwortet NotAllowedError „Permission
+   * denied" trotz frischer Geste (Owner-Screenshot 20.08., Android — im
+   * Test-Chromium unsichtbar, weil das avc1 nicht kann und den Basis-Typ
+   * wählt). */
+  const basisTyp = typ.split(';')[0]!;
+  const endung = basisTyp === 'video/mp4' ? 'mp4' : 'webm';
+  return new File([new Blob(teile, { type: basisTyp })], `${dateiStamm}.${endung}`, { type: basisTyp });
 }
 
 /** Welche Szene bei `tMs` dran ist — und wie weit sie ist (0…1). */

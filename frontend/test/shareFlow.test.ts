@@ -62,4 +62,14 @@ describe('Teilen-Fluss (Android-Befund 20.08.)', () => {
     const fn = dashboard.match(/function speichereVideoDatei[\s\S]*?\n\}/)?.[0] ?? '';
     expect(fn).toContain("$('anVideoStatus')");
   });
+
+  it('die Videodatei trägt den Basis-Typ ohne Codec-Parameter', () => {
+    // „video/mp4;codecs=avc1" am File ⇒ share() wirft NotAllowedError auf
+    // Android, obwohl canShare true sagt (Owner-Screenshot 20.08.).
+    const video = readFileSync(join(wurzel, 'src', 'shareVideo.ts'), 'utf8');
+    expect(video).toMatch(/basisTyp = typ\.split\(';'\)\[0\]/);
+    const rueckgabe = video.match(/return new File\(\[new Blob[^\n]*\n?[^\n]*/)?.[0] ?? '';
+    expect(rueckgabe).toContain('basisTyp');
+    expect(rueckgabe).not.toMatch(/type:\s*typ\b/);
+  });
 });
