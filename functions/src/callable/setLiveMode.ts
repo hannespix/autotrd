@@ -156,15 +156,13 @@ export const setLiveMode = onCall(
     if (!verbindung) {
       throw new HttpsError(
         'failed-precondition',
-        'Es ist kein Broker-Konto verbunden. Hinterlege zuerst deinen ' +
-          'Echtgeld-Schlüssel (AK…) in der Broker-Karte.',
+        'srv.keinBrokerVerbundenLive',
       );
     }
     if (verbindung.mode !== 'live') {
       throw new HttpsError(
         'failed-precondition',
-        'Verbunden ist ein PAPIERKONTO (PK…). Für Echtgeld-Handel muss ein ' +
-          'Echtgeld-Schlüssel (AK…) hinterlegt sein.',
+        'srv.papierkontoVerbunden',
       );
     }
 

@@ -4,6 +4,9 @@
  * Der Anlassfall vom 12.08. steht als eigener Test drin: zwei Konten, ein
  * Alpaca-Depot, addierte Positionen.
  */
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { bindungsMeldung, pruefeBindung, type Bindung } from '../src/brokerBindung.js';
@@ -69,8 +72,19 @@ describe('bindungsMeldung', () => {
     expect(text).not.toContain('user-1');
   });
 
-  it('erklärt den Grund statt nur abzulehnen', () => {
+  it('erklärt den Grund statt nur abzulehnen — der Wortlaut wohnt im Wörterbuch', () => {
+    // Seit Task #145 liefert der Helfer den Parameter-Code; die Erklärung
+    // („eine einzige Position je Symbol") steht im Frontend-Wörterbuch und
+    // wird hier gegen genau den Code gepinnt, den der Helfer liefert.
     const text = bindungsMeldung('2026-08-01T10:00:00.000Z');
-    expect(text).toContain('eine einzige Position je Symbol');
+    expect(text.startsWith('srv.depotBereitsGebunden|')).toBe(true);
+    const woerterbuch = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '../../frontend/src/i18n.ts'),
+      'utf8',
+    );
+    const zeile = woerterbuch
+      .split('\n')
+      .find((l) => l.includes("'srv.depotBereitsGebunden':") && l.includes('einzige Position'));
+    expect(zeile, 'Erklärtext fehlt im DE-Wörterbuch').toBeTruthy();
   });
 });

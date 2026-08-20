@@ -99,13 +99,10 @@ export function pruefeBindung(
  * dann weiß er es ohnehin.
  */
 export function bindungsMeldung(seit: string): string {
-  return (
-    'Dieses Broker-Depot ist bereits mit einem anderen autotrd-Konto verbunden ' +
-    `(seit ${seit.slice(0, 10)}). Ein Depot kann nur zu einem Konto gehören: ` +
-    'Der Broker führt eine einzige Position je Symbol, zwei Bücher darüber ' +
-    'würden sich gegenseitig Positionen und Stops wegnehmen. ' +
-    'Trenne die Verbindung im anderen Konto oder lege bei Alpaca ein zweites Depot an.'
-  );
+  // Seit Task #145 ein Parameter-Code: Der Erklärtext (warum ein Depot nur
+  // zu EINEM Konto gehören kann) wohnt zweisprachig im Frontend-Wörterbuch
+  // (srv.depotBereitsGebunden), serverText setzt das Datum in {0} ein.
+  return `srv.depotBereitsGebunden|${seit.slice(0, 10)}`;
 }
 
 /**

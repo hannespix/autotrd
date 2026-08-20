@@ -127,8 +127,7 @@ export async function verbindeBroker(
   if (art !== 'paper' && art !== 'live') {
     throw new HttpsError(
       'invalid-argument',
-      'Kein gültiger Alpaca-Schlüssel. Papier-Schlüssel beginnen mit „PK", ' +
-        'Echtgeld-Schlüssel mit „AK".',
+      'srv.keinGueltigerSchluessel',
     );
   }
   if (art === 'live') {

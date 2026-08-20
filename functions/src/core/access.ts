@@ -39,10 +39,11 @@ export function mayTrade(data: Record<string, unknown> | undefined): boolean {
   return accessLevelOf(data) === 'approved';
 }
 
-/** Verständlicher Grund für die Oberfläche bzw. die Fehlermeldung. */
+/**
+ * Grund als srv.*-Code (Task #145): Der Klartext (DE+EN) wohnt im
+ * Frontend-Wörterbuch, serverText löst ihn in der Sprachwahl des Nutzers
+ * auf — serverCodes.test.ts pinnt, dass beide Zeilen existieren.
+ */
 export function accessDeniedReason(level: AccessLevel): string {
-  return level === 'blocked'
-    ? 'Dieses Konto wurde gesperrt. Bitte wende dich an den Betreiber.'
-    : 'Dein Zugang wird noch geprüft. Bis zur Freischaltung kannst du alles ansehen, '
-      + 'aber nicht handeln — du bekommst Bescheid, sobald es so weit ist.';
+  return level === 'blocked' ? 'srv.kontoGesperrtBetreiber' : 'srv.zugangWirdGeprueft';
 }
