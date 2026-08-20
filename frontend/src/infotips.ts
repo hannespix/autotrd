@@ -309,6 +309,10 @@ export const INFO_DE: Record<string, Tip> = {
     t: 'Ausführungs-Reibung',
     d: 'Der gemessene Abstand zwischen dem Kurs, bei dem die Engine entschieden hat, und dem Kurs, zu dem der Broker wirklich ausgeführt hat — in Basispunkten (1 bp = 0,01 %), getrennt nach Einstieg und Ausstieg. Daran hängt die Frage, ob Aktien-Einstiege als Limit-Order (Maker) laufen sollten: unter 5 bp lohnt der Umbau nicht, ab 10 bp ist er fällig. Die Farbe am US-Aktien-Einstieg zeigt genau diese Regel.',
   },
+  kapitalEinsatz: {
+    t: 'Kapitaleinsatz',
+    d: 'Wie viel des Depots tatsächlich arbeitet — und in welchem Teil. „Investiert" ist der Marktwert aller Positionen im Verhältnis zur Equity, aufgeteilt in den ruhigen Momentum-Sockel und den aktiven Engine-Teil; der Rest ist Bargeld. Ziel ist NICHT null Bargeld: Steht der Marktfilter auf Abwärtsmarkt, geht der Sockel bewusst in Cash — das ist Schutz, kein Leerlauf. Dauerhaft hohes Bargeld im Aufwärtsmarkt dagegen heißt, das Geld arbeitet nicht; seit dem Sockel-Nachschub (20.08.) kauft der Wochentakt gehaltene Positionen wieder ans Zielgewicht heran.',
+  },
   kosten: {
     t: 'Reibung (Handelskosten)',
     d: 'Jeder Roundtrip kostet Kommission plus Slippage — beim Kauf UND beim Verkauf. Entscheidend ist „Luft über Kosten": die durchschnittliche Gewinnbewegung vor Gebühren, geteilt durch diese Kosten. Unter 2 verdient überwiegend der Broker, denn dann geht über die Hälfte jeder Gewinnbewegung für die Reibung drauf. Kurze Zeitrahmen erzeugen kleine Bewegungen — deshalb braucht mehr Handelsfrequenz zwingend auch genug Bewegung je Trade, sonst beschleunigt sie nur den Verlust. „Ø Gewinn brutto" und „Ø Verlust brutto" zeigen die reinen Kursbewegungen ohne Gebühren, damit sichtbar wird, ob die Strategie selbst funktioniert.',
@@ -603,6 +607,10 @@ export const INFO_EN: Record<string, Partial<Tip>> = {
   fillReibung: {
     t: 'Execution friction',
     d: 'The measured gap between the price the engine decided at and the price the broker actually filled — in basis points (1 bp = 0.01%), split into entry and exit. This answers whether stock entries should run as limit (maker) orders: below 5 bp the switch is not worth it, above 10 bp it is due. The color on the US-stock entry shows exactly this rule.',
+  },
+  kapitalEinsatz: {
+    t: 'Capital at work',
+    d: 'How much of the account is actually working — and in which part. “Invested” is the market value of all positions relative to equity, split into the calm momentum core and the active engine part; the rest is cash. The goal is NOT zero cash: with the market filter in downtrend mode the core deliberately sits in cash — that is protection, not idleness. Persistently high cash in an uptrend, however, means the money is not working; since the core top-up (Aug 20) the weekly cycle buys held positions back toward their target weight.',
   },
   kosten: {
     t: 'Friction (trading costs)',

@@ -288,10 +288,17 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
       const balance = stand.balance;
 
       let positionsValue = 0;
+      // Sockel getrennt mitzählen (Owner 20.08.: „Geld arbeiten lassen") —
+      // die Investitionsquote unten braucht die Aufteilung, und dieser Loop
+      // bewertet ohnehin jede Position genau einmal.
+      let sockelWert = 0;
       for (const { id, pos } of stand.positionen) {
-        positionsValue += positionValue(pos, await lastPrice(pos.symbol ?? id));
+        const wert = positionValue(pos, await lastPrice(pos.symbol ?? id));
+        positionsValue += wert;
+        if (pos.core === true) sockelWert += wert;
       }
       positionsValue = r2(positionsValue);
+      sockelWert = r2(sockelWert);
       const equity = r2(balance + positionsValue);
 
       await userDoc.ref.collection('equity').doc(date).set({
@@ -565,6 +572,18 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         // Gemessene Ausführungs-Reibung (19.08.) — Entscheidungskurs gegen
         // echten Broker-Fill, je Klasse, Einstieg und Ausstieg getrennt.
         reibung,
+        // Investitionsquote (Owner 20.08.: „Geld arbeiten lassen — nicht
+        // alles als Bargeld liegen lassen"): Wie viel der Equity arbeitet,
+        // und in welchem Teil. Ohne die Zahl wäre der Sockel-Nachschub
+        // (#345) blind — niemand sähe, ob das Bargeld wirklich schrumpft.
+        kapital: equity > 0
+          ? {
+              investiertPct: r2((positionsValue / equity) * 100),
+              sockelPct: r2((sockelWert / equity) * 100),
+              aktivPct: r2(((positionsValue - sockelWert) / equity) * 100),
+              cashPct: r2((balance / equity) * 100),
+            }
+          : null,
         // Empfehlung je Anlageklasse (MG2): Kante, Urteil, Vorschlag und
         // Klartext-Begründung — fertig für die Karte, damit die Oberfläche
         // nicht dieselbe Logik ein zweites Mal implementieren muss.

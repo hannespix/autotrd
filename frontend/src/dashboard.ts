@@ -977,6 +977,8 @@ function layout(email: string): string {
         <div class="hint" id="pfCostHint"></div>
         <label class="lbl" style="margin-top:10px">${t('pf.fillReibung')} ${iBtn('fillReibung')}</label>
         <div id="pfReibung" class="fl-tbl"><div class="hint">${t('pf.reibungKeineFills')}</div></div>
+        <label class="lbl" style="margin-top:10px">${t('pf.kapitalEinsatz')} ${iBtn('kapitalEinsatz')}</label>
+        <div id="pfKapital" class="fl-tbl"><div class="hint">${t('pf.kapitalKeineDaten')}</div></div>
         <div class="hint" id="pfHint">${t('pf.abSnapshot')}</div>
         <!-- Owner-Feedback 28.07.: „man schaut meistens auf die Performance, und
              wenn man die History direkt darunter hat, ist das logischer." Stimmt —
@@ -7242,6 +7244,7 @@ function renderPfStats(): void {
   renderExits(s);
   renderCosts(s);
   renderReibung(s);
+  renderKapital(s);
 }
 
 /**
@@ -7745,6 +7748,35 @@ function renderReibung(s: PortfolioStatsDoc): void {
       );
     })
     .join('');
+}
+
+/**
+ * Investitionsquote (Owner 20.08.: „das Ziel ist, Depot und Geld arbeiten
+ * zu lassen — es geht nicht darum, alles als Bargeld liegen zu lassen").
+ *
+ * Die Karte macht sichtbar, wofür der Sockel-Nachschub (#345) gebaut wurde:
+ * Ohne die Zahl wüsste niemand, ob das Bargeld wirklich schrumpft. Die
+ * Ampel hängt am Bargeld-Anteil — über 50 % arbeitet weniger als die
+ * Hälfte des Depots (rot), unter 25 % ist das Kapital im Einsatz (grün).
+ * Dazwischen neutral: Ein bewusst geschlossener Marktfilter parkt den
+ * Sockel in Cash, und das ist Schutz, kein Fehler — deshalb schreit die
+ * Karte nicht bei jedem erhöhten Bargeld-Stand.
+ */
+function renderKapital(s: PortfolioStatsDoc): void {
+  const box = $('pfKapital');
+  const k = s.kapital;
+  if (!k) {
+    box.innerHTML = `<div class="hint">${t('pf.kapitalKeineDaten')}</div>`;
+    return;
+  }
+  const pct = (v: number): string => `${v.toFixed(1)} %`;
+  const ton = k.cashPct > 50 ? 'c-rd' : k.cashPct > 25 ? '' : 'c-gn';
+  box.innerHTML =
+    `<div class="fl-row"><span>${t('pf.kapitalInvestiert')}</span>` +
+    `<span class="mono">${pct(k.investiertPct)}</span>` +
+    `<span class="mono">${t('pf.kapitalSockel')} ${pct(k.sockelPct)} · ${t('pf.kapitalAktiv')} ${pct(k.aktivPct)}</span></div>` +
+    `<div class="fl-row"><span>${t('pf.kapitalBargeld')}</span>` +
+    `<span class="mono ${ton}">${pct(k.cashPct)}</span><span></span></div>`;
 }
 
 /**

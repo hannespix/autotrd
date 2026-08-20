@@ -811,6 +811,18 @@ export interface PortfolioStatsDoc {
    */
   reibung?: Record<string, ReibungJeKlasse>;
   /**
+   * Investitionsquote (Owner 20.08.: „Geld arbeiten lassen") — Anteile der
+   * Equity in Prozent: investiert gesamt, davon Sockel und aktiver Teil,
+   * Rest Bargeld. `null`/fehlend, solange der Tageslauf das Feld noch nie
+   * geschrieben hat.
+   */
+  kapital?: {
+    investiertPct: number;
+    sockelPct: number;
+    aktivPct: number;
+    cashPct: number;
+  } | null;
+  /**
    * Empfehlung je Anlageklasse (MG2) — fertig gerechnet vom Tageslauf.
    *
    * Die Oberfläche zeigt sie nur an; die Logik steht in `classAdvisor.ts`
