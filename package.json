@@ -20,6 +20,7 @@
     "lint": "eslint .",
     "test": "vitest run",
     "chart:shot": "node frontend/e2e/chart-shot.mjs",
+    "smoke:bundle": "node frontend/e2e/preview-smoke.mjs",
     "emulators": "npm run build -w functions && FUNCTIONS_DISCOVERY_TIMEOUT=60 firebase emulators:start",
     "test:rules": "firebase emulators:exec --only firestore --project demo-rules \"vitest run --config vitest.rules.config.ts\""
   },
