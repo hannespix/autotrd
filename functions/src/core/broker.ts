@@ -616,8 +616,21 @@ export async function executeTrade(
   // nicht über den Buchwert. Der echte Kurs kommt gleich vom Broker zurück
   // und ersetzt ihn beim Buchen.
   const effSchaetzung = effectivePriceForClass(req.price, req.side, klasse);
-  const qty = planeMenge(req, strategy, {
+  /* Auch die ECHTE Order rechnet mit dem gedeckelten Kapital (Red-Team
+   * 20.08., Rest von Hochbefund 1): Der Deckel vom 13.08. saß nur im
+   * Buchungspfad — also genau in der Spur, die ihn am wenigsten braucht.
+   * Die reale Order wurde weiter am ungedeckelten Buchstand bemessen; beim
+   * Anlassfall (Buch +39 311 $, Broker −45 286 $) ging sie in voller Größe
+   * raus, und ein Margin-Konto füllt so etwas auf Kredit. Der Deckel wirkt
+   * hier NUR aufs Einstiegs-Sizing: Schließende Mengen kommen aus der
+   * Position, eine ausdrückliche req.qty bleibt unangetastet (planeMenge). */
+  const deckelOrder = kapitalDeckel(
+    userSnap.get('risk.abgleich'),
     balance,
+    new Date().toISOString(),
+  );
+  const qty = planeMenge(req, strategy, {
+    balance: deckelOrder,
     position,
     effPreis: effSchaetzung,
     fractional,
