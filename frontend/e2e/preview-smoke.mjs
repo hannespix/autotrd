@@ -13,6 +13,7 @@
  * Dev-Smoke).
  */
 import { spawn } from 'node:child_process';
+import { setTimeout as warte } from 'node:timers/promises';
 
 const PORT = 4173;
 const BASIS = `http://127.0.0.1:${PORT}`;
@@ -40,8 +41,9 @@ process.on('SIGINT', () => beenden(130));
 // Warten, bis der Preview-Server antwortet (max. ~20 s).
 let bereit = false;
 for (let i = 0; i < 40 && !bereit; i++) {
-  await new Promise((f) => setTimeout(f, 500));
-  bereit = await fetch(BASIS)
+  await warte(500);
+  bereit = await globalThis
+    .fetch(BASIS)
     .then((r) => r.ok)
     .catch(() => false);
 }
