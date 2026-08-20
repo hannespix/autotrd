@@ -45,6 +45,7 @@ import {
   istRebalanceFaellig,
   marketFilterPasses,
   momentumEquity,
+  nachschubOrders,
   positionValue,
   messeBreite,
   rankMomentum,
@@ -345,6 +346,15 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
   if (faellig) {
     const equity = momentumEquity(book, preise);
     orders = rebalanceOrders(new Set(Object.keys(book.holdings)), ziel, equity);
+    // Nachschub (Owner 20.08.): gehaltene Zielpositionen zurück ans
+    // Zielgewicht — der Schatten misst mit derselben Mechanik wie die
+    // echten Konten, sonst belegt er eine Strategie, die niemand fährt.
+    const werte = new Map<string, number>();
+    for (const [sym, h] of Object.entries(book.holdings)) {
+      const p = preise.get(sym);
+      if (p !== undefined && p > 0) werte.set(sym, h.qty * p);
+    }
+    orders = [...orders, ...nachschubOrders(werte, ziel, equity)];
     // Ohne Kurs keine Order: Ein Kauf zum Einstand eines fremden Symbols
     // wäre erfunden, und erfundene Trades machen die ganze Auswertung wertlos.
     orders = orders.filter((o) => o.side === 'sell' || preise.has(o.symbol));
@@ -532,7 +542,20 @@ async function rebalanceMomentumUsers(
       }
       if (!(equity > 0)) continue;
 
-      const orders = rebalanceOrders(new Set(gehalten.keys()), ziel, equity)
+      // Nachschub (Owner 20.08.): gehaltene Zielpositionen zurück ans
+      // Zielgewicht. Ohne ihn blieben anteilig ausgeführte Erstkäufe für
+      // immer klein und wachsende Equity vergrößerte nur den Bargeld-Rest.
+      const werte = new Map<string, number>();
+      for (const [sym, pos] of gehalten) {
+        const p = preise.get(sym);
+        if (pos.side !== 'short' && p !== undefined && p > 0) {
+          werte.set(sym, positionValue(pos, p));
+        }
+      }
+      const orders = [
+        ...rebalanceOrders(new Set(gehalten.keys()), ziel, equity),
+        ...nachschubOrders(werte, ziel, equity),
+      ]
         // Ohne Kurs kein Kauf — ein erfundener Einstand macht die ganze
         // Auswertung wertlos. Verkäufe brauchen keinen: Sie schließen zum
         // Kurs, den der Broker ohnehin bekommt.
@@ -562,8 +585,12 @@ async function rebalanceMomentumUsers(
         // Käufe stehen unter den Einstiegs-Toren (H2) und dem Positionslimit
         // des Users — bei den Defaults (Limit 10, Zielportfolio 8) ändert das
         // nichts, ein bewusst enger gestelltes Limit gilt jetzt auch hier.
+        // AUSNAHME Positionslimit: Ein Nachschub-Kauf stockt eine BESTEHENDE
+        // Position auf — er öffnet nichts und zählt deshalb nicht gegen das
+        // Limit; sonst könnte ein volles Depot nie ans Zielgewicht zurück.
         if (tore.einstieg) continue;
-        if (offenZahl >= posLimit) continue;
+        const aufstockung = gehalten.has(o.symbol);
+        if (!aufstockung && offenZahl >= posLimit) continue;
         const fractional = cls === 'crypto';
         const roheMenge = (o.notional ?? 0) / preis;
         const qty = fractional ? Math.floor(roheMenge * 1e6) / 1e6 : Math.floor(roheMenge);
@@ -586,7 +613,7 @@ async function rebalanceMomentumUsers(
         );
         if (r.executed) {
           ausgefuehrt += 1;
-          offenZahl += 1;
+          if (!aufstockung) offenZahl += 1;
         }
       }
 
@@ -719,7 +746,23 @@ async function rebalanceCoreSleeve(
       // und schrumpft er mit dem Konto, statt auf einem alten Betrag zu
       // stehen, den niemand mehr nachvollziehen kann.
       const budget = (equity * anteil) / 100;
-      const orders = rebalanceOrders(new Set(sockel.keys()), ziel, budget)
+      // Nachschub (Owner 20.08.: „nicht alles als Bargeld liegen lassen"):
+      // gehaltene Sockel-Positionen zurück ans Zielgewicht. Genau hier
+      // entstand der Bargeld-Berg — `rebalanceOrders` kauft nur FEHLENDE
+      // Symbole, also fand Cash aus Engine-Exits und Equity-Wachstum nie
+      // in den Sockel zurück. Nur Käufe, Toleranzband, Wochentakt: Die
+      // Handelsfrequenz steigt nicht, Gewinner werden nicht gestutzt.
+      const werte = new Map<string, number>();
+      for (const [sym, pos] of sockel) {
+        const p = preise.get(sym);
+        if (pos.side !== 'short' && p !== undefined && p > 0) {
+          werte.set(sym, positionValue(pos, p));
+        }
+      }
+      const orders = [
+        ...rebalanceOrders(new Set(sockel.keys()), ziel, budget),
+        ...nachschubOrders(werte, ziel, budget),
+      ]
         .filter((o) => o.side === 'sell' || preise.has(o.symbol))
         // Sicherung 2: Verkauft wird nur, was dem Sockel gehört.
         .filter((o) => o.side !== 'sell' || sockel.has(o.symbol));
@@ -748,12 +791,15 @@ async function rebalanceCoreSleeve(
           continue;
         }
         // Käufe stehen unter den Einstiegs-Toren (H2) und dem Positionslimit.
+        // Nachschub-Käufe (Aufstockung einer BESTEHENDEN Sockel-Position)
+        // zählen nicht gegen das Limit — sie öffnen nichts.
         if (tore.einstieg) continue;
-        if (offenZahl >= posLimit) continue;
+        const aufstockung = sockel.has(o.symbol);
+        if (!aufstockung && offenZahl >= posLimit) continue;
         // Ein Symbol, das die AKTIVE Engine schon hält, darf der Sockel nicht
         // kaufen — der Broker führte beide zu einer Position zusammen und die
         // Besitzgrenze wäre verwischt. Beim nächsten Takt ist es meist frei.
-        if (alle.has(o.symbol) && !sockel.has(o.symbol)) continue;
+        if (alle.has(o.symbol) && !aufstockung) continue;
         const fractional = cls === 'crypto';
         const roheMenge = (o.notional ?? 0) / preis;
         const qty = fractional ? Math.floor(roheMenge * 1e6) / 1e6 : Math.floor(roheMenge);
@@ -776,7 +822,7 @@ async function rebalanceCoreSleeve(
         );
         if (r.executed) {
           ausgefuehrt += 1;
-          offenZahl += 1;
+          if (!aufstockung) offenZahl += 1;
         }
       }
 

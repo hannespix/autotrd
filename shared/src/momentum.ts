@@ -320,3 +320,61 @@ export function rebalanceOrders(
   }
   return orders;
 }
+
+/**
+ * Toleranzband des Nachschubs: Erst wenn eine gehaltene Zielposition mehr
+ * als diesen Anteil UNTER ihrem Zielgewicht liegt, wird nachgekauft.
+ *
+ * 25 % ist die Abwägung zwischen zwei Fehlern: Ein enges Band (5 %) kaufte
+ * bei jedem Wochentakt ein paar Euro nach — genau das Nachjustieren auf den
+ * Cent, dessen Kosten die Auswertung vom 27.07. verurteilt hat. Ein weites
+ * Band (50 %) ließe die Hälfte des Sockel-Budgets dauerhaft als Bargeld
+ * liegen — genau das, was der Auftrag vom 20.08. abstellt. Bei 25 % ist der
+ * kleinste Nachkauf ein Viertel des Zielgewichts (bei 8 gleichgewichteten
+ * Positionen ~3 % des Budgets) — groß genug, dass die Einstiegsgebühr im
+ * Promillebereich der Order bleibt.
+ */
+export const NACHSCHUB_TOLERANZ = 0.25;
+
+/**
+ * Nachschub-Käufe: gehaltene Zielpositionen zurück ans Zielgewicht.
+ *
+ * `rebalanceOrders` ist ein reiner Bestands-Diff — es kauft, was FEHLT, und
+ * verkauft, was nicht mehr ins Ziel gehört. Was es nie tat: eine gehaltene
+ * Position aufstocken. Drei Wege führten deshalb dauerhaft in Bargeld
+ * (Owner 20.08.: „es geht nicht darum, alles als Bargeld liegen zu
+ * lassen"): Erstkäufe, die bei knappem Cash anteilig ausgeführt wurden,
+ * blieben für immer klein; wachsende Equity vergrößerte das Budget, aber
+ * keine Position; und Cash aus Verkäufen der aktiven Engine fand nie in
+ * den Sockel zurück.
+ *
+ * Bewusst NUR Käufe: Eine Position ÜBER Zielgewicht (der Gewinner des
+ * Portfolios) wird nicht gestutzt — Stutzen wäre ein Roundtrip an Kosten
+ * und verkaufte ausgerechnet das Papier mit dem stärksten Lauf. Das
+ * Toleranzband hält die Nachkäufe selten und groß; der Takt bleibt der
+ * wöchentliche Rebalance-Takt, die Handelsfrequenz steigt nicht.
+ *
+ * `bestandswerte` trägt je GEHALTENEM Symbol den aktuellen Marktwert;
+ * Symbole ohne Eintrag sind Sache von `rebalanceOrders` (Neukauf). Werte
+ * ≤ 0 (Shorts, kaputte Kurse) werden übersprungen — nachgekauft wird nur,
+ * was als Long-Bestand bewertbar ist.
+ */
+export function nachschubOrders(
+  bestandswerte: ReadonlyMap<string, number>,
+  ziel: TargetPosition[],
+  budget: number,
+  toleranz: number = NACHSCHUB_TOLERANZ,
+): RebalanceOrder[] {
+  const orders: RebalanceOrder[] = [];
+  if (!(budget > 0)) return orders;
+  for (const z of ziel) {
+    const wert = bestandswerte.get(z.symbol);
+    if (wert === undefined || !(wert > 0)) continue;
+    const soll = budget * z.weight;
+    if (wert >= soll * (1 - toleranz)) continue;
+    const fehl = Math.floor((soll - wert) * 100) / 100;
+    if (fehl <= 0) continue;
+    orders.push({ symbol: z.symbol, side: 'buy', notional: fehl });
+  }
+  return orders;
+}

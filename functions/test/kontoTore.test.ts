@@ -102,8 +102,11 @@ describe('Konto-Tore — die Verdrahtung (Quelltext-Wächter)', () => {
   it('momentumRun: BEIDE Rebalancing-Pfade (Wallet + Sockel) fragen die Tore', () => {
     expect(momentum.match(/kontoTore\(userDoc, clamped, now\)/g)?.length).toBe(2);
     // Käufe stehen unter Tor und Positionslimit — zweimal (Wallet + Sockel).
+    // Seit dem Nachschub (20.08.) trägt das Limit die Aufstockungs-Ausnahme:
+    // Ein Nachkauf einer BESTEHENDEN Position öffnet nichts und zählt
+    // deshalb nicht — Neueröffnungen bleiben hart gedeckelt.
     expect(momentum.match(/if \(tore\.einstieg\) continue;/g)?.length).toBe(2);
-    expect(momentum.match(/if \(offenZahl >= posLimit\) continue;/g)?.length).toBe(2);
+    expect(momentum.match(/if \(!aufstockung && offenZahl >= posLimit\) continue;/g)?.length).toBe(2);
     // Ein Tor VERSCHIEBT das Rebalancing, es streicht es nicht: Der
     // lastRebalance-Stempel bleibt bei gesperrten Käufen stehen.
     expect(momentum.match(/einstiegGesperrt: tore\.einstieg/g)?.length).toBe(2);
