@@ -2671,6 +2671,10 @@ Kopf der Datei.
 
 ### Und die unbequeme Zusammenfassung
 
+*(Momentaufnahme Mitte August — den LEBENDEN Stand zeigen Performance-Karte
+und `meta/health.trading`, nicht diese Zeilen. Seither: Long live mit PF
+1,23, Maker-Einstiege für Krypto, Klassen-Regler aktiv.)*
+
 Das System handelt gerade **nicht**, und das ist im Moment richtig: Die
 Kante je Trade liegt bei +0,143 % gegen 0,300 % Roundtrip-Kosten (Deckung
 0,48). Jede Änderung, die mehr Trades erzeugt, vergrößert bei dieser Lage
@@ -2682,10 +2686,112 @@ A und B oben.
 
 ## Übergabe-Prompt (so startet man Claude Code in diesem Repo)
 
-> Lies ARCHITECTURE.md, CLAUDE.md und MILESTONES.md. Arbeite nach dem
-> Coding-Loop aus MILESTONES.md am ersten nicht abgehakten Milestone.
-> Verifiziere jede Abnahme wirklich, hake erledigte Tasks ab und committe
-> klein mit deutschen Messages.
+*(Master-Prompt, Owner 20.08. — Begründung und Kurzvarianten in
+`docs/MASTERPROMPT.md`, die Kritiker-Konvention dauerhaft in CLAUDE.md §11.
+Diese Fassung ist gegen den Repo-Stand vom 20.08. kalibriert.)*
+
+> Lies zuerst `ARCHITECTURE.md`, `CLAUDE.md`, `MILESTONES.md` und
+> `docs/VISION.md` — vollständig, nicht überflogen. Sie sind das Gesetz
+> dieses Repos; bei Widerspruch gewinnt `ARCHITECTURE.md`. Antworten,
+> Commits und PR-Texte auf Deutsch.
+>
+> Ich will autotrd.net auf das Niveau der besten Plattformen bringen, die es
+> gibt: **TradingView** bei Chart und Bedienung, ein **professioneller
+> Quant-Desk** bei Engine, Risiko und Messung. Alles auf Produktionsqualität
+> — Chart, Regelwerk, Kostenmodell, Datenqualität, Oberfläche, Tests. Nichts
+> „reicht erstmal".
+>
+> **Fächere Sub-Agenten auf, ein Arbeitspaket je Agent**, und lass sie
+> parallel arbeiten:
+>
+> 1. **ChartKit & TV-Parität** — Zeichenwerkzeuge, Chart-Vorlagen,
+>    Kerzen-Countdown, Bar-Replay (zusammengelegt mit dem M12-Tagesfilm);
+>    EINE LWC-Importstelle (heute `frontend/src/chart.ts` — beim Ausbau dort
+>    bündeln, keine zweite daneben anlegen).
+> 2. **Kante & Konfluenz** — MI/MF1/MG/ME6: warum die Engine stillsteht,
+>    welche Anlageklassen negative Kante haben, welche Lesart des Signals
+>    trägt.
+> 3. **Kosten & Ausführung** — `costGate`, echte Gebühren, Slippage,
+>    Roundtrip-Deckung, gemessene Fill-Reibung. Das Kostenmodell ist heute
+>    der schärfere Gegner als die Strategie.
+> 4. **Strategie-Studio (M10/M11)** — Backtest-Port ehrlich als
+>    *Stresstest*, nicht als Optimierer; Shadow-Modus, Sweeps als Vorschlag,
+>    nie als Automatik.
+> 5. **MO Struktursuche** — die Overfitting-Bremse steht **vor** dem
+>    Suchraum (so gebaut, so halten). Umgekehrt ist das Paket wertlos.
+> 6. **Portfolio & Risiko (M12)** — Multi-Wallet-Migration, Equity-Kurve mit
+>    synchronisiertem Drawdown-Panel. Journal-Autoanlage und Depot-Zerlegung
+>    sind gebaut — pflegen und vertiefen, nicht neu erfinden.
+> 7. **Ehrlichkeits-Schicht** — Altersstempel je Kurs, Quellen-Badge,
+>    gemessene Trefferquote je Prognose, Investitionsquote. Sichtbar,
+>    überall, ohne Ausnahme.
+> 8. **Prüfstand** — `domIds`, `frontend/e2e/smoke.mjs`, `npm run
+>    chart:shot` ausbauen. Regel: *Ein Prüfstand, der die gemeldete Sache
+>    nicht messen kann, bescheinigt Fehlerfreiheit.* Erst den Prüfstand
+>    erweitern, dann die Sache behaupten.
+>
+> **`/loop` auf jedes Paket**, und für jedes Paket läuft ein **separater
+> Kritiker-Agent**, der nicht selbst implementiert hat. Es gibt zwei Sorten
+> Kritiker (Konvention: CLAUDE.md §11), und sie haben unterschiedliche
+> Aufträge:
+>
+> **Der UI-Kritiker** ist ein harter Kritiker. Er nimmt Screenshots von
+> autotrd und von TradingView bei derselben Aufgabe (Symbol laden, Indikator
+> setzen, Zeitraum wechseln, Linie zeichnen, mobil bei 390 px) und
+> vergleicht sie **blind, nebeneinander, ohne zu wissen, welcher welcher
+> ist** — Desktop und Handy. Er sagt, welcher besser aussieht und sich
+> besser bedient. **Erkennt er unseren, ist das Paket nicht fertig, und der
+> Loop läuft weiter.** Nachweis über `npm i -D playwright --no-save && npm
+> run chart:shot` plus `frontend/e2e/smoke.mjs` gegen die Emulator-Suite.
+> Eine Chart-Änderung ohne Browser-Nachweis gilt als unverifiziert —
+> „kompiliert sauber" ist kein Beleg.
+>
+> **Der Engine-Kritiker ist ein Red Team, kein Publikum.** Seine Frage ist
+> nicht „ist es gut genug", sondern **„beweise, dass diese Zahl falsch
+> ist"**. Er sucht gezielt: Lookahead-Lecks (das Gate `base_date < today`
+> ist heilig, ein Leck war schon einmal da), Survivorship im Universum,
+> Kosten, die im Test fehlen und live anfallen, zu kleine Stichproben, zu
+> viele Freiheitsgrade, In-Sample-Auswahl, Datums- und DST-Kanten. **Jede
+> gemessene Verbesserung gilt als Einbildung, bis sie out-of-sample nach
+> Kosten überlebt.** Findet er ein Loch, läuft der Loop weiter — auch wenn
+> die Zahl schön war. Besonders dann.
+>
+> **Der Maßstab der Engine ist Kante nach Kosten, nicht Rendite im
+> Rückblick.** Den aktuellen Stand liefert die MESSUNG — Performance-Karte,
+> `meta/health.trading`, „Die unbequeme Zusammenfassung" oben —, nicht eine
+> hier eingefrorene Zahl: Ein Prompt mit veralteten Zahlen lehrt das
+> Falsche. Ein grüner Backtest ist kein Ergebnis. **„Wir sollten nicht
+> handeln" ist ein zulässiges und zeitweise richtiges Ergebnis** — und wenn
+> ein Paket dahin führt, berichte das so, statt die Frequenz hochzudrehen,
+> bis die Kurve gefällt.
+>
+> **Grenzen, die kein Sub-Agent aufweicht — auch nicht, um „fertig" zu
+> werden:** Paper bleibt Default. M14 Echtgeld bleibt verriegelt und wird
+> ohne ausdrückliches Owner-Go **nicht angefasst**, auch nicht vorbereitend
+> scharfgeschaltet. `classAutoTune` und der Krypto-Regler sind Owner-
+> Entscheidung. Sweep-Sieger werden vorgeschlagen, nie automatisch
+> übernommen. Geld schreibt nur der Server; Clients schreiben nie `wallet`,
+> `positions`, `trades`. Secrets nur in GitHub Secrets / Secret Manager, nie
+> im Bundle, nie im Diff. Flaches Strategie-Schema, `shared/` ist die
+> einzige Wahrheit, Lightweight Charts v4 bleibt gepinnt, Nicht-Kurs-
+> Zeichnung hängt an `lineHost`, nie an der Kerzen-Serie. Exits werden nie
+> gesperrt oder erschwert.
+>
+> **Arbeitsweise:** Coding-Loop aus `MILESTONES.md`. Erster nicht
+> abgehakter Punkt zuerst, nie vorgreifen. Kleine deutsche Commits im
+> Imperativ, erledigte `[ ]` → `[x]` **im selben Commit**, ein PR je Paket,
+> CI muss grün sein (inkl. `check-functions-lock`, Golden-Parity und
+> Rules-Tests). Abnahmen tatsächlich ausführen, nicht behaupten;
+> Fehlschläge ehrlich berichten.
+>
+> Bleiben Fragen offen: **nicht raten**. Mit dem nächsten Paket
+> weiterarbeiten und alle offenen Punkte samt Frage am Ende gesammelt
+> vorlegen — so wie im Abschnitt „Offene Punkte und die Fragen dazu".
+>
+> **Hör nicht auf, bis jeder Kritiker-Agent überzeugt ist:** der
+> UI-Kritiker unseren Chart im Blindvergleich nicht mehr von TradingView
+> unterscheiden kann, und das Red Team an der Engine kein Loch mehr findet.
+> `/loop`, bis es perfekt ist. Fächere Sub-Agenten auf und ultracode.
 
 ---
 
