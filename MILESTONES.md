@@ -2589,6 +2589,8 @@ mit Fragen zusammen."* Hier ist die Zusammenstellung — sortiert danach,
 | **MI2** Signal-Lesart umschalten | Braucht je 200 bewertete Signale in beiden Lesarten. Bei ~13 Symbolen je Scan sind das ein bis zwei Handelstage. Vorher ist jeder Vergleich Rauschen. |
 | **MG-Empfehlung je Klasse** | Der Schatten braucht dieselben 200 Signale, bevor er eine abgeschaltete Klasse zurückholen darf. |
 | **ME6** `captureGate` scharf | `kante_wuerde_blocken` steht auf 0 — aber nur, weil `entryGate.geprueft` ebenfalls 0 ist: Es kommt gar nichts am Tor an. Die Zahl wird erst aussagekräftig, wenn wieder Signale entstehen (siehe MI). |
+| **MK1** Rangliste der Einstiegs-Bremsen | Die Zähler laufen seit 21.08. (#407). Erst nach ~14 Tagen sagt die Verteilung, welche Bremse dominiert — vorher ist jede Ableitung Vermutung mit Zahlen davor. |
+| **MK2** Sizing auf Equity-Basis | Der Schatten misst seit 21.08. (#408). Freigabe erst bei ≥20 Einstiegen über ≥14 Tage, Mehr-Investitionsgrad >10 pp, Kollisionsquote <10 %, Netto nicht schlechter — und Owner-Go. |
 
 ### C. Große Features — Reihenfolge ist eine Wertfrage
 
@@ -2897,3 +2899,79 @@ Diese Fassung ist gegen den Repo-Stand vom 20.08. kalibriert.)*
       Trading-Reiter: Karten-Raster, „Ansehen"-Diff vor jeder Übernahme,
       eigener Schnappschuss per Namen (Rules: users/{uid}/loadouts nur
       Owner). Gesichert wird der GESPEICHERTE Stand, nicht das Formular.
+
+
+---
+
+## MK — Kapital-Auslastung (Owner-Frage 21.08.)
+
+> „Irgendwie gibt es meistens nur 1–2 aktive Positionen … das Bargeld
+> arbeitet zu wenig! Kann man das Konfluenz-Modell anpassen? … Wäge mit
+> deinen Agenten-Teams ab!"
+
+Beantwortet mit einem Rollen-Panel (Risiko-Banker, Quant-PM, Daytrader,
+Kosten-Red-Team, Messungs-Skeptiker) plus einem Red-Team, das den Konsens
+angegriffen hat. **Alle fünf Rollen votierten „bedingt ja" — keine wollte
+eine Schutz-Schwelle lockern.**
+
+### Die Diagnose: zwei getrennte Ursachen
+
+1. **Die Konfluenz-Skala ist grob.** Effektiv vier Kaufstimmen (RSI, MACD,
+   Bollinger, gedeckelte Prognose) gegen Schwelle 2 — aber RSI und
+   Bollinger melden sich nur an Extremen. Im ruhigen Trend liefert
+   praktisch nur MACD. Die Messung vom 17.08. steht im Code:
+   *„13 von 13 Symbolen verfehlten die Konfluenz um genau eine Stimme."*
+   `trendSolo` heilt das nur bei grüner Ampel.
+2. **Das Sizing schrumpft pfadabhängig.** Die Tranche rechnet auf dem
+   verfügbaren Cash (`sizingBase: 'balance'`), nicht auf der Equity. Bei
+   60 % investiertem Sockel ist eine „10-%-Position" real 4 % — und jede
+   weitere schrumpft. Das ist Arithmetik, kein Filter-Urteil.
+
+### Warum nicht einfach mehr handeln
+
+Bei Profitfaktor 1,23 und feeShare 0,57 verschlechtert eine Verdopplung
+der Trade-Zahl bei gleicher Signalqualität das Netto um ~17 %. Dazu der
+Skeptiker: Bei n ≤ 150 ist PF 1,23 statistisch nicht von 1,0 zu
+unterscheiden — ein System mit möglicherweise eingebildeter Kante zu
+skalieren, skaliert im schlechten Fall nur den Drawdown.
+
+### Die beschlossene Reihenfolge
+
+| Hebel | Inhalt | Stand |
+|---|---|---|
+| **MK1** | Gate-Zähler (`pos_limit`, `cooldown_aktiv`, `sockel_besitz`) + `regimeBremse.datenlos` + `knappVerfehlt`/`trendSolo` in der Engine-Why-Karte | ✅ 21.08. (#407) |
+| **MK2** | Sizing-Schatten: Equity-Tranche neben der gebuchten, mit Kollisions-Flag | ✅ 21.08. (#408) |
+| **MK3** | Grenzfall-Schattenbuch (`knappVerfehlt`/`unter_kosten`-Kohorten) | wartet auf MK1-Daten — drei parallele Messungen wären hinterher nicht zuordenbar |
+
+### Vorregistrierte Freigabe-Schwellen (vor den Daten festgelegt)
+
+- **MK2 → Umstellung auf Equity-Basis:** ≥14 Tage, ≥20 Einstiege,
+  Mehr-Investitionsgrad >10 Prozentpunkte, Kollisionsquote <10 %,
+  Schatten-Netto ≥ Ist. Dann mit Cash-Klemme `min(Tranche, Cash)`,
+  Investitions-Cap ≤90 % und Sockel-Budget-Reservierung — nie ohne.
+- **MK3 → feinere Konfluenz:** n≥40, ≥14 Tage, ≥2 Regime-Zustände,
+  PF nach Kosten ≥1,2, feeShare ≤0,5 (liveReadiness-Spiegel). Verfehlt ⇒
+  Schwelle bleibt, Diskussion beendet. **Verboten:** die Formel mit
+  denselben Daten nachjustieren und erneut messen.
+
+### Vom Red-Team verworfen
+
+- `maxPositionPct` 10 → 15 %: zusammen mit Equity-Basis und Conviction 1,25
+  wären das 18,75 % je Position, ×3 im selben Korrelationsblock = 56 % der
+  Equity in einer Wette.
+- Regime-Fallback lockern: Die Seitwärts-Halbierung ist die bezahlte
+  Lektion vom 30.07. (525 Trades in 2 Tagen, Gebühren 4,7× Brutto). Erst
+  `datenlos` zählen, dann urteilen.
+- Kelly-Conviction auf einem unvalidierten Score — zwei gekoppelte
+  unvalidierte Schichten.
+
+### Das unbequeme Ergebnis, das gelten darf
+
+Zeigen die Zähler, dass die dominanten Bremsen `unter_kosten`,
+`cluster_voll` und echtes Seitwärts-Regime sind, fällt die
+Grenzfall-Kohorte durch (erwartbar — sie ist negative Selektion) und ist
+das Sizing-Delta bei 1–2 Positionen klein, dann lautet die richtige
+Antwort: **keine einzige Handelsänderung.** Die 1–2 Positionen wären dann
+kein Defekt, sondern die korrekte Antwort der Filter auf ein Regime ohne
+breite Kante nach Kosten. Was in JEDEM Szenario richtig bleibt, ist allein
+MK1: messen.
