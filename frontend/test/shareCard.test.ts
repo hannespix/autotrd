@@ -11,14 +11,14 @@
  *  · Beträge dürfen NUR erscheinen, wenn sie ausdrücklich angeschaltet
  *    wurden. Die Kontogröße gehört niemandem außer dem Besitzer.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   type DepotTag,
   type HistoryTrade,
   waehleKurve,
   zerlegeDepot,
 } from '@autotrd/shared';
-import { KARTE, type ShareDaten, shareCard, shareDateiname, shareText } from '../src/shareCard.js';
+import { KARTE, type ShareDaten, mitVorzeichen, shareCard, shareDateiname, shareText, zahl } from '../src/shareCard.js';
 
 const SERIE: DepotTag[] = [
   { date: '2026-07-06', equity: 10_000 },
@@ -311,5 +311,44 @@ describe('Ohne Zeitraum keine Prozentzahl (Owner-Befund 12.08.)', () => {
     expect(Number(lang![1])).toBeLessThan(Number(kurz![1]));
     // Und in die nutzbare Breite von 1020 px passen (0,8 em je Zeichen).
     expect(Number(lang![1]) * '−1719,54 USD'.length * 0.8).toBeLessThanOrEqual(1020);
+  });
+});
+
+/* ── Zahlenformat folgt der Sprache (21.08.) ───────────────────────────── */
+
+describe('Zahlen auf der Karte sprechen die Sprache der Karte', () => {
+  const alsSprache = <T>(s: 'de' | 'en', fn: () => T): T => {
+    vi.stubGlobal('localStorage', { getItem: () => s, setItem: () => undefined });
+    try {
+      return fn();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  };
+
+  it('deutsch schreibt Komma, englisch Punkt', () => {
+    /* Bis zum 21.08. stand „+12,7 %" unter „MY PORTFOLIO NOW" — eine
+     * deutsche Zahl unter einer englischen Überschrift. Aufgefallen beim
+     * Bau der Depot-Karte; betrifft alle Karten, weil alle durch `zahl()`
+     * gehen. */
+    expect(alsSprache('de', () => zahl(12.68, 1))).toBe('12,7');
+    expect(alsSprache('en', () => zahl(12.68, 1))).toBe('12.7');
+    expect(alsSprache('de', () => mitVorzeichen(12.68, 1))).toBe('+12,7');
+    expect(alsSprache('en', () => mitVorzeichen(12.68, 1))).toBe('+12.7');
+  });
+
+  it('das typografische Minus bleibt in BEIDEN Sprachen', () => {
+    // Kein ASCII-Bindestrich: er stünde neben echten Minus-Zeichen derselben
+    // Grafik und sähe nach Versehen aus. Das ist keine Sprachfrage.
+    for (const s of ['de', 'en'] as const) {
+      expect(alsSprache(s, () => zahl(-3.5, 1)), s).toContain('−');
+      expect(alsSprache(s, () => zahl(-3.5, 1)), s).not.toContain('-');
+      expect(alsSprache(s, () => mitVorzeichen(-3.5, 1)), s).toBe(s === 'de' ? '−3,5' : '−3.5');
+    }
+  });
+
+  it('die Null trägt kein Vorzeichen — sie behauptet keine Richtung', () => {
+    expect(alsSprache('de', () => mitVorzeichen(0, 1))).toBe('0,0');
+    expect(alsSprache('en', () => mitVorzeichen(0, 1))).toBe('0.0');
   });
 });
