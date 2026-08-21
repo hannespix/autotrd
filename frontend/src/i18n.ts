@@ -449,6 +449,7 @@ export const DE = {
   'tab.eintritt': 'Eintritt',
   'tab.aktuell': 'Aktuell',
   'tab.konfluenz': 'Konfluenz',
+  'tab.sortierenTitel': 'Klick: nach dieser Spalte sortieren — nochmal für die Gegenrichtung',
   'pf.gesamtPnl': 'Gesamt P&amp;L',
   'pf.realisiert': 'Realisiert',
   'pf.offen': 'Offen',
@@ -1827,6 +1828,7 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'tab.eintritt': 'Entry',
   'tab.aktuell': 'Current',
   'tab.konfluenz': 'Confluence',
+  'tab.sortierenTitel': 'Click to sort by this column — click again to reverse',
   // Performance, Depot-Verlauf, Haltedauer, Erkenntnisse (Tranche 5g).
   'pf.gesamtPnl': 'Total P&amp;L',
   'pf.realisiert': 'Realised',

@@ -1270,8 +1270,10 @@ describe('Tranche 5n — die zehn Analyse- und Melde-Funktionen', () => {
     exitOutlook: ['ATR', 'class', 'next', 'pos', 'span', 'stop', 'target', 'short', 'title'],
     abHinweis: ['bericht', 'chronik', 'fehler', 'kein', 'keine', 'schluessel'],
     // „Auto" ist die Quelle-Markierung am Symbol — in beiden Sprachen gleich.
+    // „auf"/„number" kamen mit der Spalten-Sortierung (16:0x): Richtungs-Code
+    // des sortZustand bzw. typeof-Prüfung — Code-Werte, kein Nutzer-Text.
     renderJournal: ['Auto', 'buy', 'sell', 'engine', 'closed', 'class', 'color', 'colspan',
-      'digit', 'span', 'stag', 'style', 'var'],
+      'digit', 'span', 'stag', 'style', 'var', 'auf', 'number'],
     updateOrderPreview: ['buy', 'sell', 'short', 'exposure', 'maximumFractionDigits', 'secs'],
     renderWatchHint: [],
     renderStruktur: ['DSR', 'Sharpe', 'Test', 'buy', 'start', 'class', 'digit', 'div',

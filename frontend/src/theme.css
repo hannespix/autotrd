@@ -6,6 +6,9 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 :root {
+  /* Native Controls (Select-Popup, Scrollbars) folgen dem Theme — sonst
+     malt der Browser helle System-Dropdowns ins dunkle UI (Owner 16:0x). */
+  color-scheme: dark;
   --bg0: #04060c; --bg: #070b13;
   --card: rgba(18, 25, 38, .55); --card-solid: #0e1420; --sd: rgba(30, 41, 61, .5);
   --bd: rgba(255, 255, 255, .10); --bd2: rgba(255, 255, 255, .18); --hair: rgba(255, 255, 255, .06);
@@ -87,6 +90,7 @@
  * auf Papier grell wirkt.
  */
 :root[data-theme='light'] {
+  color-scheme: light;
   /* Papier statt Stahl: ein Hauch Blau im Grund, damit das Petrol verwandt
    * wirkt — aber weit genug entsättigt, dass es nicht selbst als Farbe
    * auftritt. */
@@ -603,6 +607,15 @@ td .sym-av, .lb-sym .sym-av { margin-right: 6px; }
 .tw { overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: 6px; scrollbar-width: thin; scrollbar-color: var(--bd) transparent; }
 .tbl { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; }
 .tbl th { text-align: left; padding: 5px 7px; font-size: 10px; color: var(--t3); font-weight: 500; text-transform: uppercase; border-bottom: 1px solid var(--bd); }
+/* Sortierbare Spalten-Titel (Owner 16:0x): Klick sortiert, Pfeil zeigt die
+   Richtung — dezent im Akzentton, damit der Kopf ruhig bleibt. */
+.tbl th.sortierbar { cursor: pointer; user-select: none; -webkit-user-select: none; }
+.tbl th.sortierbar:hover { color: var(--t1); }
+.tbl th.sort-auf::after { content: ' ↑'; color: var(--ac); }
+.tbl th.sort-ab::after { content: ' ↓'; color: var(--ac); }
+/* Select-Popup: Optionen brauchen DECKENDE Theme-Farben — das native Popup
+   kann kein Glas, und ohne Vorgabe malt es System-Hellblau (Owner 16:0x). */
+select.inp option { background: var(--card-solid); color: var(--t1); }
 .tbl td { padding: 5px 7px; border-bottom: 1px solid var(--hair); }
 .tbl tbody tr { transition: background .12s; }
 .tbl tbody tr:hover { background: var(--hover); }
