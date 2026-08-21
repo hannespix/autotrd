@@ -31,8 +31,9 @@ describe('Panel-Kopf — Pfeil links, Titelzeile klappt, ✕ isoliert rechts', (
   it('die ganze Titelzeile togglet — echte Bedienelemente bleiben unberührt', () => {
     expect(chrome).toContain("sect.addEventListener('click'");
     expect(chrome).toContain("ziel.closest('button, input, select, label, a, .ibtn, .lchip')");
-    // Nachklick eines Grip-Drags darf nicht klappen.
-    expect(chrome).toMatch(/dragEndeUm = Date\.now\(\);/);
+    // Nachklick eines Grip-Drags darf nicht klappen — der Stempel fällt im
+    // Pointer-Drag (startePanelDrag, panelDrag.test.ts), der Filter hier.
+    expect(dashboard).toMatch(/dragEndeUm = Date\.now\(\);/);
     expect(chrome).toContain('Date.now() - dragEndeUm < 400');
     // Der Pfeil selbst stoppt die Propagation — sonst doppelt der Titel-Klick.
     expect(chrome).toContain('ev.stopPropagation();');
