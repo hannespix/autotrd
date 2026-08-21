@@ -198,12 +198,12 @@ describe('Depot-Karte — was halte ich GERADE', () => {
 
   it('Stückzahlen und Beträge sind BETRÄGE — nur mit Schalter', () => {
     const ohne = shareStory(mitPositionen(false)).find((k) => k.id === 'depot')!.svg;
-    expect(ohne).toContain('690.00 → 712.88');
-    expect(ohne).not.toContain('5 × 690.00');
-    expect(texte(ohne).join(' ')).not.toContain('114.40');
+    expect(ohne).toContain('690,00 → 712,88');
+    expect(ohne).not.toContain('5 × 690,00');
+    expect(texte(ohne).join(' ')).not.toContain('114,40');
 
     const mit = shareStory(mitPositionen(true)).find((k) => k.id === 'depot')!.svg;
-    expect(mit).toContain('5 × 690.00 → 712.88');
+    expect(mit).toContain('5 × 690,00 → 712,88');
     expect(texte(mit).join(' ')).toContain('USD');
   });
 
@@ -237,6 +237,27 @@ describe('Depot-Karte — Geometrie, die kein Text-Prüfstand sieht', () => {
       .map((m) => Number(m[1]));
     expect(tagX.length).toBeGreaterThanOrEqual(3);
     for (const x of tagX) expect(x).toBe(340);
+  });
+
+  it('Kurszeile und Prozentzahl sprechen dieselbe Sprache', () => {
+    /* Bild-Befund 21.08. (Zusammenspiel-Prüfung): In derselben Zeile stand
+     * „118.40 → 131.02" mit Punkt neben „+10,7 %" mit Komma — die
+     * Depot-Karte und die sprachabhängige Formatierung entstanden am selben
+     * Abend und liefen aneinander vorbei. Beide Zahlen einer Zeile müssen
+     * denselben Dezimaltrenner benutzen. */
+    const alsSprache = (sp: 'de' | 'en'): string => {
+      globalThis.localStorage = {
+        getItem: () => sp,
+        setItem: () => undefined,
+      } as unknown as Storage;
+      return shareStory(mitPositionen()).find((k) => k.id === 'depot')!.svg;
+    };
+    const de = alsSprache('de');
+    expect(de).toContain('690,00 → 712,88');
+    expect(de).not.toContain('690.00');
+    const en = alsSprache('en');
+    expect(en).toContain('690.00 → 712.88');
+    expect(en).not.toContain('690,00');
   });
 
   it('kein Balken läuft in die Prozent-Spalte — auch nicht bei −100 %', () => {
