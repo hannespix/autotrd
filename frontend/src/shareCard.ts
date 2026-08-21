@@ -27,7 +27,7 @@
  */
 import { type DepotZerlegung, stapelBaender } from '@autotrd/shared';
 import { esc } from './html.js';
-import { t } from './i18n.js';
+import { sprachWahl, t } from './i18n.js';
 import { kartenAussage } from './shareAussage.js';
 
 /** Kantenlänge der quadratischen Karte — passt ohne Zuschnitt überall hin. */
@@ -103,9 +103,23 @@ export interface ShareDaten {
   investiertPct?: number | null | undefined;
 }
 
-/** Deutsches Komma UND typografisches Minus — ein ASCII-Bindestrich neben
- *  einem echten Minus in derselben Grafik sieht nach Versehen aus. */
-export const zahl = (v: number, n = 2): string => v.toFixed(n).replace('.', ',').replace('-', '−');
+/**
+ * Dezimaltrennzeichen nach Sprache, typografisches Minus immer.
+ *
+ * Das Minus ist keine Sprachfrage: Ein ASCII-Bindestrich neben einem echten
+ * Minus in derselben Grafik sieht nach Versehen aus. Das KOMMA ist eine —
+ * bis zum 21.08. schrieb die englische Karte „+12,7 %", also eine deutsche
+ * Zahl unter einer englischen Überschrift. Aufgefallen beim Bau der
+ * Depot-Karte; betrifft alle Karten und das Video, weil alle durch diese
+ * eine Funktion gehen.
+ *
+ * Tausendertrennzeichen gibt es bewusst keine: `toFixed` liefert keine, und
+ * in einer 1200-px-Grafik sind sie eher Störung als Hilfe.
+ */
+export const zahl = (v: number, n = 2): string => {
+  const roh = v.toFixed(n).replace('-', '−');
+  return sprachWahl() === 'en' ? roh : roh.replace('.', ',');
+};
 export const mitVorzeichen = (v: number, n = 2): string => `${v > 0 ? '+' : v < 0 ? '−' : ''}${zahl(Math.abs(v), n)}`;
 
 /**
