@@ -427,6 +427,25 @@ export interface KontenStats {
  * Schlüssel nicht" nicht zu unterscheiden, und beides sähe im Heartbeat
  * gleich aus: Stille.
  */
+/**
+ * Rückstand der Fill-Nachbuchung über alle Konten eines Laufs.
+ *
+ * Vorher gab es diese Zahlen nirgends: Der Erfolgsfall ging in ein Log, der
+ * Rückstand in gar nichts. Eine Heilung, die seit Tagen nichts mehr bucht,
+ * war von einer ohne Arbeit nicht zu unterscheiden — das war der Kern des
+ * Owner-Funds vom 21.08. („5 Trades nicht registriert").
+ */
+export interface NachbuchungsLauf {
+  /** Erfolgreich nachgebuchte Fills. */
+  gebucht: number;
+  /** Danach noch offene Einträge (Untergrenze bei sehr langen Listen). */
+  offen: number;
+  /** Davon aufgegeben — Fall für die Übernahme, nicht für die Heilung. */
+  steckt: number;
+  /** Auf wie vielen Konten etwas feststeckt. */
+  konten: number;
+}
+
 export interface BrokerStats {
   /** Konten mit hinterlegter Verbindung, für die der Abgleich lief. */
   verbunden: number;
@@ -513,6 +532,8 @@ async function executeUserTrades(
   broker: BrokerStats;
   /** Sizing-Schatten über ALLE Konten dieses Laufs (Hebel 2, 21.08.). */
   sizing: SizingSchattenSumme;
+  /** Rückstand der Fill-Nachbuchung über alle Konten (Owner-Fund 21.08.). */
+  nachbuchung: NachbuchungsLauf;
 }> {
   const db = getFirestore();
   let executed = 0;
@@ -551,6 +572,12 @@ async function executeUserTrades(
     cooldown_aktiv: 0,
     sockel_besitz: 0,
   };
+  /* Rückstand der Nachbuchung, über alle Konten summiert. `steckt` ist die
+   * Zahl, auf die es ankommt: Einträge, die die Heilung aufgegeben hat und
+   * die nur noch die Übernahme auflöst. `konten` zählt, auf wie vielen
+   * Büchern so etwas liegt — eine 1 bei 200 Konten liest sich anders als
+   * eine 40. */
+  const nachbuchungLauf: NachbuchungsLauf = { gebucht: 0, offen: 0, steckt: 0, konten: 0 };
   const konten: KontenStats = {
     laufend: 0,
     gehandelt: 0,
@@ -745,8 +772,20 @@ async function executeUserTrades(
        * `strategy` statt `clamped` (das erst später entsteht): Die Buchung
        * eines BEREITS AUSGEFÜHRTEN Fills entscheidet nichts mehr — Menge
        * und Preis stehen fest, die Risiko-Klammer hätte nichts zu klemmen. */
-      const nachgebucht = await bucheUnverbuchteFills(uid, strategy).catch(() => 0);
-      if (nachgebucht > 0) logger.info(`Scan ${uid}: ${nachgebucht} unverbuchte(r) Fill(s) nachgebucht`);
+      const nachbuchung = await bucheUnverbuchteFills(uid, strategy).catch(
+        () => ({ gebucht: 0, offen: 0, steckt: 0 }),
+      );
+      if (nachbuchung.gebucht > 0) {
+        logger.info(`Scan ${uid}: ${nachbuchung.gebucht} unverbuchte(r) Fill(s) nachgebucht`);
+      }
+      /* Der RÜCKSTAND ist die Nachricht, nicht der Erfolg (Owner-Fund
+       * 21.08.). Bis dahin ging nur der Erfolgsfall in ein Log — eine
+       * Heilung, die nichts mehr bucht, sah exakt aus wie eine, die nichts
+       * zu tun hat. Beides steht jetzt im Herzschlag, ohne Konto-Bezug. */
+      nachbuchungLauf.gebucht += nachbuchung.gebucht;
+      nachbuchungLauf.offen += nachbuchung.offen;
+      nachbuchungLauf.steckt += nachbuchung.steckt;
+      if (nachbuchung.steckt > 0) nachbuchungLauf.konten += 1;
 
       const positionsSnap = await userDoc.ref.collection('positions').get();
       // BESITZGRENZE des Kern-Satelliten (04.08.): Sockel-Positionen gehören
@@ -2045,7 +2084,14 @@ async function executeUserTrades(
       logger.error(`Auto-Trading-Fehler für ${uid}`, err);
     }
   }
-  return { executed, gate, konten, broker, sizing: fasseSizingSchatten(sizingAlle) };
+  return {
+    executed,
+    gate,
+    konten,
+    broker,
+    sizing: fasseSizingSchatten(sizingAlle),
+    nachbuchung: nachbuchungLauf,
+  };
 }
 
 /** Obergrenze des zentralen Scan-Sets (Kosten-Guard). */
@@ -3607,6 +3653,9 @@ export async function runScan(force = false): Promise<ScanResult> {
    * Trade-Block gar nicht lief. Eine 0 wäre hier zweideutig: „gemessen und
    * nichts gefunden" sieht sonst aus wie „nicht gemessen". */
   let sizingSchattenLauf: SizingSchattenSumme | null = null;
+  /* Wie oben `null`, solange der Trade-Block nicht lief — sonst behauptete
+   * eine 0 „nichts steckt fest", obwohl gar nicht nachgesehen wurde. */
+  let nachbuchungLaufGesamt: NachbuchungsLauf | null = null;
   try {
     await migrateTimeframeDaily(db);
     await migrateCorePctAll(db);
@@ -3616,6 +3665,7 @@ export async function runScan(force = false): Promise<ScanResult> {
     konten = res.konten;
     brokerStats = res.broker;
     sizingSchattenLauf = res.sizing;
+    nachbuchungLaufGesamt = res.nachbuchung;
   } catch (err) {
     lastError = `trades: ${err instanceof Error ? err.message : String(err)}`.slice(0, 400);
     logger.error('Trade-Block fehlgeschlagen', err);
@@ -3959,6 +4009,12 @@ export async function runScan(force = false): Promise<ScanResult> {
          * Einstiege die vorregistrierten Schwellen halten, ist eine
          * Umstellung verhandelbar — mit Owner-Freigabe. */
         sizingSchatten: sizingSchattenLauf,
+        /* Fill-Nachbuchung (Owner-Fund 21.08.: „5 Trades nicht
+         * registriert"). `steckt > 0` heisst: Die Heilung hat aufgegeben,
+         * hier hilft nur noch die Depot-Übernahme. Genau diese Zahl fehlte
+         * bisher — deshalb konnte ein Rückstand tagelang unbemerkt liegen. */
+        nachbuchung: nachbuchungLaufGesamt,
+
         // Termin-Kalender (04.08., Schatten): Was steht an, und liegt der Tag
         // im Turn-of-the-Month-Fenster? Steuert noch NICHTS — erst wenn die
         // Auswertung über genug Termine zeigt, dass es sich lohnt. Bis dahin
