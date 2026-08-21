@@ -1580,7 +1580,7 @@ function renderBrokerStatus(r: BrokerStatusResult): string {
              <th class="num">${t('br.abwBroker')}</th><th class="num">${t('br.abwDifferenz')}</th></tr></thead>
            <tbody>${r.abweichungen
              .map(
-               (a) => `<tr><td>${e(a.symbol)}</td><td class="num">${a.eigeneMenge}</td>
+               (a) => `<tr><td data-sym="${e(a.symbol)}">${e(a.symbol)}</td><td class="num">${a.eigeneMenge}</td>
                  <td class="num">${a.brokerMenge}</td>
                  <td class="num dn"><b>${a.differenz > 0 ? '+' : ''}${a.differenz}</b></td></tr>`,
              )
@@ -1771,6 +1771,8 @@ function wireChartCtx(): void {
   $('chSub').textContent = resolveName(sym);
   $('flSym').textContent = sym;
   $('flSym2').textContent = sym;
+  $('flSym').dataset.sym = sym; // Anker für den Symbol-Steckbrief (21:2x)
+  $('flSym2').dataset.sym = sym;
   // Nachgeladene Historie ist symbol-spezifisch → beim Wechsel zurücksetzen.
   // st.bars ebenfalls: Sonst verbrennt der Rebuild sein Fit-Token auf den
   // Bars des VORGÄNGER-Symbols, und die neuen Bars kommen ohne Y/X-Fit an
@@ -4241,13 +4243,14 @@ function zeigeSymbolTip(sym: string, x: number, y: number): void {
   tip.style.top = `${y + 14 + b.height > window.innerHeight ? Math.max(8, y - b.height - 12) : y + 14}px`;
 }
 
-/** Steckbrief-Anker unterm Zeiger — überall, wo ein Symbol steht (Owner
- *  18:1x: „überall einbauen wo symbole sind"): Livebar, Auto-Signale,
- *  Markt-Übersicht, Trade-Historie, Positionen, Momentum-Ranking, Chart-Kopf. */
-const SYM_TIP_ANKER =
-  '.lb-item[data-sym], #sigBody tr[data-sym], .mkt-cell[data-sym], '
-  + '#jBody tr[data-sym], #pBody tr[data-sym], #moTop .fl-row[data-sym], '
-  + '#mainHdSym[data-sym]';
+/** Steckbrief-Anker unterm Zeiger — GENERISCH über das data-sym-Attribut
+ *  (Owner 18:1x „überall wo symbole sind" + 21:2x „noch nicht alle!"):
+ *  Jede Stelle, die ein Symbol rendert, trägt data-sym und ist damit
+ *  automatisch Anker — Livebar, Signale, Markt-Übersicht, Historie,
+ *  Positionen, Ranking, Chart-Köpfe (Haupt + Raster), Prognose-Labor,
+ *  Trade-Journal, Abgleich, Stop-Dialog und alle Symbol-Suchlisten.
+ *  Eine NEUE Symbol-Anzeige braucht nur das Attribut, keinen Selektor. */
+const SYM_TIP_ANKER = '[data-sym]';
 function symTipAnker(ziel: Element | null): { sym: string } | null {
   const el = ziel?.closest<HTMLElement>(SYM_TIP_ANKER);
   const sym = el?.dataset.sym;
@@ -4866,8 +4869,10 @@ function wireSymbolAuswahl(
   const nimm = (sym: string): void => {
     list.hidden = true;
     inp.value = sym;
+    inp.dataset.sym = sym; // Anker für den Symbol-Steckbrief (21:2x)
     onSelect(sym);
   };
+  if (inp.value) inp.dataset.sym = inp.value; // Start-Symbol sofort ankerbar
   const zeige = (filter: string): void => {
     const f = filter.trim().toLowerCase();
     const all = paletteSymbols();
@@ -7153,7 +7158,7 @@ function zeigeStopDialog(): void {
       const farbe = pnl === null ? 'var(--t3)' : pnl >= 0 ? 'var(--gn)' : 'var(--rd)';
       return `<label class="hint" style="display:flex;align-items:center;gap:8px;padding:4px 0">
         <input type="checkbox" data-stopsym="${escText(p.symbol)}" checked />
-        <b style="min-width:64px">${escText(p.symbol)}</b>
+        <b style="min-width:64px" data-sym="${escText(p.symbol)}">${escText(p.symbol)}</b>
         <span style="flex:1">${short ? 'Short ' : ''}${p.qty} × ${money(p.avgEntry)}</span>
         <span class="mono" style="color:${farbe}">${
           pnl === null ? '—' : `${pnl >= 0 ? '+' : ''}${money(pnl)}`
@@ -9349,7 +9354,7 @@ function renderTradeJournal(rows: JournalRow[]): void {
         )
         .join('');
       return (
-        `<div class="tn-e"><div class="tn-h"><span class="tn-nm">${esc(r.symbol)} · ${
+        `<div class="tn-e"><div class="tn-h"><span class="tn-nm" data-sym="${esc(r.symbol)}">${esc(r.symbol)} · ${
           r.side === 'buy' ? t('sk.kauf') : t('sk.verkauf')
         } · ${r.qty}</span>${marke}` +
         `<span class="tn-t mono">${zeit}</span></div>` +
