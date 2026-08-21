@@ -64,3 +64,35 @@ describe('Engine-Why-Karte zeigt jeden Grund, den der Scan zählt', () => {
     expect(dashboard).toContain('if (knapp > 0) {');
   });
 });
+
+/* ── Nachbuchungs-Rückstand (Owner-Fund 21.08.) ────────────────────────── */
+
+describe('Der Nachbuchungs-Rückstand erreicht die Karte', () => {
+  /* Derselbe Fehlertyp wie oben, eine Ebene tiefer: Der Scan zählt seit
+   * heute mit, wie viele Fills die Heilung aufgegeben hat. Bliebe die Zahl
+   * im Herzschlag-Dokument stehen, wäre exakt nichts gewonnen — dass
+   * niemand den Rückstand sah, WAR der Fehler, nicht nur seine Begleitung.
+   * Der Owner fragte „funktioniert die Selbstheilung nicht?", weil die App
+   * die Antwort nicht anzeigte. */
+  it('der Scan schreibt ihn in den Herzschlag', () => {
+    expect(scan).toContain('nachbuchung: nachbuchungLaufGesamt,');
+  });
+
+  it('das Dashboard liest ihn und zeigt einen Chip, wenn etwas feststeckt', () => {
+    expect(dashboard).toContain('const steckt = h.nachbuchung?.steckt ?? 0;');
+    expect(dashboard).toContain("whyChip(`${steckt} ${t('ew.nachbuchungSteckt')}`, 'var(--rd)')");
+  });
+
+  it('eine Null erzeugt KEINEN Chip — sonst steht dauerhaft eine Beruhigung da', () => {
+    const stelle = dashboard.indexOf('const steckt = h.nachbuchung?.steckt ?? 0;');
+    expect(stelle).toBeGreaterThan(-1);
+    expect(dashboard.slice(stelle, stelle + 200)).toContain('if (steckt > 0) {');
+  });
+
+  it('der Typ kennt das Feld — inklusive „nicht gemessen"', () => {
+    const daten = lese('frontend', 'src', 'data.ts');
+    expect(daten).toMatch(/nachbuchung\?: \{[\s\S]{0,200}steckt\?: number;/);
+    // `| null` trennt „nicht gemessen" von „nichts gefunden".
+    expect(daten).toMatch(/konten\?: number;\s*\n\s*\} \| null;/);
+  });
+});

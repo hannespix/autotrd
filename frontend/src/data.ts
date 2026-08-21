@@ -1009,6 +1009,22 @@ export interface HealthDoc {
   knappVerfehlt?: number;
   trendSolo?: { erzeugt?: number; ampel?: string };
   /**
+   * Rückstand der Fill-Nachbuchung (Owner-Fund 21.08.: „5 Trades waren
+   * nicht registriert").
+   *
+   * `steckt > 0` heisst: Fills liegen real beim Broker, im Buch fehlen sie,
+   * und die Heilung hat sie aufgegeben — hier hilft nur die Depot-Übernahme.
+   * Genau diese Zahl gab es vorher nirgends; deshalb sah ein Rückstand, der
+   * seit Tagen stand, exakt so aus wie „nichts zu tun". `null` bedeutet
+   * „nicht gemessen" (Trade-Block lief nicht) und ist nicht dasselbe wie 0.
+   */
+  nachbuchung?: {
+    gebucht?: number;
+    offen?: number;
+    steckt?: number;
+    konten?: number;
+  } | null;
+  /**
    * Schatten-Kante je Signal-Variante. `rohPct` ist die Bewegung VOR
    * Gebühren — sie trennt „Signal ist Rauschen" von „Gebühren fressen die
    * Information" und fehlt bei Aggregaten aus der Zeit vor dem 05.08.
