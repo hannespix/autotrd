@@ -1055,7 +1055,6 @@ function layout(email: string): string {
       <div class="card" data-panel="momentum"><div class="sect">${t('panel.momentum')} ${iBtn('momentum')}
         <span id="moFilter" class="tn-tag" style="float:right"></span>
       </div><div class="cbody">
-        <div class="hint">${t('lay.momentumHinweis')}</div>
         <div class="row" style="gap:12px;margin-top:8px">
           <div><label class="lbl">Schatten-Depot</label><div id="moEq" class="smv mono">--</div></div>
           <div><label class="lbl">Trades</label><div id="moTrades" class="smv mono">0</div></div>
@@ -1079,7 +1078,6 @@ function layout(email: string): string {
       </div></div>
 
       <div class="card" data-panel="struktur"><div class="sect">${t('panel.struktursuche')} ${iBtn('struktursuche')}</div><div class="cbody">
-        <div class="hint">${t('lay.strukturHinweis')}</div>
         <div class="row" style="gap:12px;margin-top:8px">
           <div><label class="lbl">Generation</label><div id="skGen" class="smv mono">--</div></div>
           <div><label class="lbl">Versuche</label><div id="skTries" class="smv mono">--</div></div>
@@ -1097,7 +1095,6 @@ function layout(email: string): string {
           <button id="dcMTrade" aria-pressed="false">${t('dc.jeTrade')}</button>
         </span>
       </div><div class="cbody">
-        <div class="hint">${t('dc.hinweis')}</div>
         <div class="dc-wrap" id="dcWrap"><div id="dcChart"></div><div class="dc-tt" id="dcTip" hidden></div></div>
         <div class="dc-legende" id="dcLegende"></div>
         <div id="dcMeta" class="tn-n mono"></div>
@@ -1106,7 +1103,6 @@ function layout(email: string): string {
       <div class="card" data-panel="haltedauer"><div class="sect">${t('panel.haltedauer')} ${iBtn('haltedauer')}
         <span id="hdStand" class="tn-tag" style="float:right"></span>
       </div><div class="cbody">
-        <div class="hint">${t('hd.hinweis')}</div>
         <div id="hdTbl" class="hd-tbl" style="margin-top:8px"><div class="hint">${t('hd.rueckschau')}</div></div>
         <div id="hdFazit" class="tn-r"></div>
         <div id="hdMeta" class="tn-n mono"></div>
@@ -1115,7 +1111,6 @@ function layout(email: string): string {
       <div class="card" data-panel="erkenntnisse"><div class="sect">${t('panel.erkenntnisse')} ${iBtn('erkenntnisse')}
         <span id="erDate" class="tn-tag" style="float:right"></span>
       </div><div class="cbody">
-        <div class="hint">${t('er.hinweis')}</div>
         <div id="erList" class="er-list" style="margin-top:8px"><div class="hint">${t('er.ersteChronik')}</div></div>
         <label class="lbl" style="margin-top:12px">${t('er.tagesEinschaetzung')} ${iBtn('aibericht')} <span id="abStand" class="tn-tag" style="float:right"></span></label>
         <div id="abText" class="ab-text">${t('er.ersterBericht')}</div>
