@@ -40,9 +40,20 @@ describe('Steckbrief-Daten — jeder Katalog-Eintrag hat eine echte Erklärung',
     const xlk = symbolHerkunft('XLK');
     expect(xlk?.gruppe).toBeTruthy();
     expect(xlk?.name).toBe('Technology');
-    expect(symbolHerkunft('GIBTSNICHT')).toBeNull();
-    // Fallback bleibt ehrlich: unbekanntes Symbol ⇒ leerer Text, kein Erfinden.
-    expect(steckbriefText('GIBTSNICHT')).toBe('');
+    expect(xlk?.ausserhalbKatalog).toBeUndefined();
+  });
+
+  it('frei eingegebene Symbole (RCON & Co.) bekommen eine ehrliche Notversorgung', () => {
+    // Owner 21:4x: „rcon hat zb noch keine Symbol Infos" — Alpaca kennt
+    // Tausende Ticker, der Katalog 132. Klasse per Heuristik, Rest ehrlich.
+    const rcon = symbolHerkunft('RCON');
+    expect(rcon?.ausserhalbKatalog).toBe(true);
+    expect(rcon?.klassenLabel).toBeTruthy();
+    expect(rcon?.gruppe).toBe(''); // keine erfundene Gruppe
+    expect(rcon?.name).toBe('RCON');
+    // KEIN erfundener Beschreibungstext — der Aufrufer zeigt den Hinweis.
+    expect(steckbriefText('RCON')).toBe('');
+    expect(symbolHerkunft('  ')).toBeNull();
   });
 });
 
@@ -62,6 +73,8 @@ describe('Steckbrief-UI — Hover am PC, langes Drücken am Touch, Portal an bod
     expect(dashboard).toContain('tr.dataset.sym = p.symbol; // Anker für den Symbol-Steckbrief (18:1x)');
     expect(dashboard).toContain(`data-sym="\${esc(eintrag.symbol)}"`);
     expect(dashboard).toContain('hd.dataset.sym = sym; // Anker für den Symbol-Steckbrief (18:1x)');
+    // Trade-Fenster hat eine EIGENE Auswahl (mtSelect) — auch dort der Anker.
+    expect(dashboard).toContain(".dataset.sym = sym; // Anker für den Steckbrief (21:4x)");
     // Der Raster-Aufbau setzt den Kopf-Wert an EIGENER Stelle — auch dort
     // muss der Anker mitkommen (E2E-Fund: value ohne data-sym).
     expect(dashboard).toContain(".dataset.sym = st.currentSymbol; // Anker für den Symbol-Steckbrief (18:1x)");
@@ -78,6 +91,13 @@ describe('Steckbrief-UI — Hover am PC, langes Drücken am Touch, Portal an bod
     // Guard im Anker + focusin räumt den Klick-Anflug-Timer ab.
     expect(dashboard).toContain('el === document.activeElement');
     expect(dashboard).toContain("document.addEventListener('focusin', (ev) => {");
+  });
+
+  it('Symbole ohne Steckbrief bekommen den ehrlichen Hinweis, kein leeres Kärtchen', () => {
+    expect(dashboard).toContain("herkunft?.ausserhalbKatalog === true");
+    expect(dashboard).toContain("t('steck.ohneEintrag')");
+    // Kein leerer Gruppen-Chip bei katalogfremden Symbolen.
+    expect(dashboard).toContain('herkunft.gruppe ? `<span>${escText(herkunft.gruppe)}</span>` : \'\'');
   });
 
   it('Trade-Fenster zeigt die Zeile FEST — am Touch-Gerät ohne jede Geste', () => {
