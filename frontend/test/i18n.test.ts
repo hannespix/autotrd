@@ -651,14 +651,17 @@ describe('Auswertungs-Karten sind zweisprachig (Tranche 5g)', () => {
   const karte = (panel: string, bis: string): string =>
     dashboard.slice(dashboard.indexOf(`data-panel="${panel}"`), dashboard.indexOf(bis));
 
+  /* Der Depot-Verlauf wohnt seit 21.08. als Galerie-Ansicht IN der
+   * Performance-Karte (#pfSeiteDepot) — sein Markup wird über den
+   * performance-Schnitt mitgeprüft, eine eigene Karten-Grenze gibt es
+   * nicht mehr. */
   const KARTEN: ReadonlyArray<readonly [string, string]> = [
     ['performance', 'data-panel="manualtrade"'],
-    ['depotVerlauf', 'data-panel="haltedauer"'],
     ['haltedauer', 'data-panel="erkenntnisse"'],
     ['erkenntnisse', '<div class="dmodal" id="orderModal">'],
   ];
 
-  it('alle vier Karten sind gefunden und nicht leer', () => {
+  it('alle Karten sind gefunden und nicht leer', () => {
     for (const [panel, bis] of KARTEN) {
       const k = karte(panel, bis);
       expect(k.length, `Karte ${panel} leer oder Grenze verrutscht`).toBeGreaterThan(300);
@@ -1039,6 +1042,7 @@ describe('Tranche 5l — „Warum handelt die Engine?" und die Melde-Texte der M
       'chartGrid', 'cmpOverlay', 'subPanels', 'predArrow', 'drawBtn', 'indBtn',
       'layBtn', 'menuDraw', 'menuInd', 'menuLay', 'leftCol', 'rightCol', 'otSym',
       'otQty', 'otab', 'opane', 'ouPred', 'ouCmp', 'ouGrid', 'ouSub', 'ouAkk', 'akkordeon', 'lodel',
+      'pfAnsicht', 'pfa', 'kurve', 'depot',
       'flCombos', 'flCombosIntra', 'stopsym', 'adv', 'titel', 'zoom', 'layer',
       'ctype', 'scale', 'grid', 'draw',
       // Speicher-Schlüssel, Tastennamen, Medienabfrage
