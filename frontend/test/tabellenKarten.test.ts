@@ -60,7 +60,13 @@ describe('Karten-Layout der Signal-/Positions-Tabellen (mobil)', () => {
   });
 
   it('beide Tabellen tragen die Karten-Klasse, die Zeilen die data-th-Labels', () => {
-    expect(dashboard.match(/class="tbl tbl-karten"/g)?.length ?? 0).toBe(2);
+    // Positionen: Zeilen-Karten; Signale: zusätzlich kompakt (Owner 21.08.
+    // „nehmen zu viel Raum ein" — Kopf mit Signal-Tag + 4 Wert-Spalten).
+    expect(dashboard.match(/class="tbl tbl-karten"/g)?.length ?? 0).toBe(1);
+    expect(dashboard.match(/class="tbl tbl-karten tbl-kompakt"/g)?.length ?? 0).toBe(1);
+    const block = kartenMedienBlock();
+    expect(block).toContain('.tbl-kompakt tr { display: grid;');
+    expect(block).toContain('.tbl-kompakt td:nth-child(6)::before { content: none; }');
     // Kürzel-Labels sind in beiden Sprachen gleich und bleiben Literale …
     for (const label of ['RSI', 'MACD', 'BB %', 'Signal', 'Qty', 'P&amp;L', '%']) {
       expect(dashboard).toContain(`data-th="${label}"`);

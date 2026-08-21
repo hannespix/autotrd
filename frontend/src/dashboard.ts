@@ -896,7 +896,7 @@ function layout(email: string): string {
       </div>
 
       <div class="card" data-panel="autosignals"><div class="sect">${t('panel.autoSignale')}</div><div class="cbody">
-        <div class="tw"><table class="tbl tbl-karten">
+        <div class="tw"><table class="tbl tbl-karten tbl-kompakt">
           <thead><tr><th>Ticker</th><th>RSI</th><th>MACD</th><th>BB %</th><th>Konfluenz</th><th>Signal</th></tr></thead>
           <tbody id="sigBody"><tr><td colspan="6" class="c-t3">${t('lay.keinScan')}</td></tr></tbody>
         </table></div>
