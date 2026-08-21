@@ -712,7 +712,6 @@ function layout(email: string): string {
       </div></div>
 
       <div class="card" data-panel="journal"><div class="sect">${t('panel.journal')} ${iBtn('tradejournal')}</div><div class="cbody">
-        <div class="hint">${t('lay.journalHinweis')}</div>
         <div id="tjList" class="tn-log" style="margin-top:8px"><div class="hint">${t('lay.journalLeer')}</div></div>
       </div></div>
     </div>
@@ -1109,7 +1108,6 @@ function layout(email: string): string {
       <div class="card" data-panel="tuner"><div class="sect">${t('panel.autoTuner')} ${iBtn('autotuner')}
         <label class="tn-sw" title="${t('lay.abschaltenHinweis')}"><input type="checkbox" id="tnOn" checked><span>aktiv</span></label>
       </div><div class="cbody">
-        <div class="hint">${t('lay.tunerHinweis')}</div>
         <label class="lbl" style="margin-top:8px">${t('lay.schattenFlotte')}</label>
         <div id="tnFleet" class="fl-tbl"><div class="hint">${t('lay.flotteStartet')}</div></div>
         <label class="lbl" style="margin-top:10px">Aus allen Konten gelernt ${iBtn('kollektiv')}</label>
@@ -1370,7 +1368,6 @@ function layout(email: string): string {
       <p class="hint">${t('opt.nullSchaltetAb')}</p>
       <p class="hint" id="owClassHint" style="margin-top:4px"></p>
       <div class="wl-sec" style="margin-top:14px">${t('opt.klassenKapital')} ${iBtn('classWeights')}</div>
-      <p class="hint">${t('opt.klassenHint')}</p>
       <div id="owClsRows" class="cls-grid" style="margin-top:6px"></div>
       <label class="opt-check" style="margin-top:8px">
         <input type="checkbox" id="owClsAuto" />
@@ -1392,7 +1389,6 @@ function layout(email: string): string {
       <div id="owAdvice"></div>
       <div class="hint" id="advMsg"></div>
       <div class="wl-sec" style="margin-top:14px">${t('opt.loadouts')} ${iBtn('loadouts')}</div>
-      <p class="hint">${t('opt.loadoutsHint')}</p>
       <div id="loGrid" class="lo-grid"></div>
       <div id="loDiff" hidden></div>
       <div class="row" style="margin-top:6px">
