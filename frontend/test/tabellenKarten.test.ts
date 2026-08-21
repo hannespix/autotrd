@@ -67,7 +67,14 @@ describe('Karten-Layout der Signal-/Positions-Tabellen (mobil)', () => {
     const block = kartenMedienBlock();
     expect(block).toContain('.tbl-kompakt tr { display: grid;');
     expect(block).toContain('.tbl-kompakt td:nth-child(6)::before { content: none; }');
-    expect(block).toContain('.tbl-kompakt-pos tr { display: grid;');
+    // Seit 21:14 („3 statt 4 Zeilen") ist die Positions-Karte ein
+    // Flex-Wrap-Layout: Kopf (Symbol + P&L + % + Exit), ::after-Umbrecher
+    // mit der EINEN Trennlinie, Zahlenzeile „Stück × Einstieg → aktuell".
+    expect(block).toContain('.tbl-kompakt-pos tr { display: flex; flex-wrap: wrap;');
+    expect(block).toContain(".tbl-kompakt-pos td:nth-child(3)::before { content: '×';");
+    expect(block).toContain(".tbl-kompakt-pos td:nth-child(4)::before { content: '→';");
+    expect(block).toContain('.tbl-kompakt-pos td[data-th]::before { content: none; }');
+    expect(block).toContain('.tbl-kompakt-pos tr.pos-sub::after { content: none; }');
     // Der Ausblick-Fuß bleibt Block (bricht um) — und die Desktop-nowrap-Regel
     // darf ihn NIE wieder treffen (ID-Spezifität schlug das Karten-normal;
     // Owner 10:26: Karte lief weiter über und die Liste scrollte horizontal).
