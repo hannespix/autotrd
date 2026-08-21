@@ -151,3 +151,107 @@ describe('shareStory — Ehrlichkeitsregeln je Karte', () => {
     expect(womit.svg).toContain(' %');
   });
 });
+
+/* ── Depot-Karte (Owner 21.08., 21:14: „aktives Depot zum Teilen") ─────── */
+
+function mitPositionen(betraege = false): ShareDaten {
+  return {
+    ...fixture(),
+    betraege,
+    investiertPct: 62.5,
+    positionen: [
+      { symbol: 'QQQ', short: false, einstieg: 690, aktuell: 712.88, pnlPct: 3.32, pnl: 114.4, qty: 5 },
+      { symbol: 'SPY', short: true, einstieg: 630, aktuell: 640.96, pnlPct: -1.74, pnl: -32.88, qty: 3 },
+      { symbol: 'TSLA', short: false, einstieg: 350, aktuell: null, pnlPct: null, pnl: null, qty: 2 },
+    ],
+  };
+}
+
+describe('Depot-Karte — was halte ich GERADE', () => {
+  it('offene Positionen ⇒ die Karte steht direkt hinter dem Ergebnis', () => {
+    expect(shareStory(mitPositionen()).map((k) => k.id)).toEqual([
+      'ergebnis', 'depot', 'verlauf', 'womit', 'cta',
+    ]);
+  });
+
+  it('ohne offene Position entfällt sie ersatzlos — keine leere Grafik', () => {
+    expect(shareStory({ ...fixture(), positionen: [] }).map((k) => k.id)).not.toContain('depot');
+    expect(shareStory(fixture()).map((k) => k.id)).not.toContain('depot');
+  });
+
+  it('Richtung steht dran: Wort UND Pfeil, Short zusätzlich gestrichelt', () => {
+    const svg = shareStory(mitPositionen()).find((k) => k.id === 'depot')!.svg;
+    expect(texte(svg)).toContain('▲ Long');
+    expect(texte(svg)).toContain('▼ Short');
+    // Nicht nur Farbe (Barrierefreiheit): der Short-Rahmen ist gestrichelt.
+    expect(svg).toContain('stroke-dasharray="5 4"');
+  });
+
+  it('ohne Kurs ein neutrales „—" — nie eine grüne Null', () => {
+    const svg = shareStory(mitPositionen()).find((k) => k.id === 'depot')!.svg;
+    expect(texte(svg)).toContain('—');
+    expect(svg).not.toContain('+0,0 %');
+    // Die kurslose Zeile steht hinten: sie behauptet nichts.
+    const symbole = texte(svg).filter((x) => ['QQQ', 'SPY', 'TSLA'].includes(x));
+    expect(symbole).toEqual(['QQQ', 'SPY', 'TSLA']);
+  });
+
+  it('Stückzahlen und Beträge sind BETRÄGE — nur mit Schalter', () => {
+    const ohne = shareStory(mitPositionen(false)).find((k) => k.id === 'depot')!.svg;
+    expect(ohne).toContain('690.00 → 712.88');
+    expect(ohne).not.toContain('5 × 690.00');
+    expect(texte(ohne).join(' ')).not.toContain('114.40');
+
+    const mit = shareStory(mitPositionen(true)).find((k) => k.id === 'depot')!.svg;
+    expect(mit).toContain('5 × 690.00 → 712.88');
+    expect(texte(mit).join(' ')).toContain('USD');
+  });
+
+  it('Kopfzeile nennt Anzahl und Investitionsquote (die Frage „arbeitet das Geld?")', () => {
+    const svg = shareStory(mitPositionen()).find((k) => k.id === 'depot')!.svg;
+    expect(texte(svg).join(' ')).toContain('3 offene Positionen · 63 % investiert');
+  });
+
+  it('viele Positionen: höchstens sieben Zeilen, der Rest wird BENANNT statt still gekappt', () => {
+    const viele = Array.from({ length: 10 }, (_, i) => ({
+      symbol: `SYM${i}`, short: false, einstieg: 100, aktuell: 101 + i,
+      pnlPct: 1 + i, pnl: 10, qty: 1,
+    }));
+    const svg = shareStory({ ...fixture(), positionen: viele }).find((k) => k.id === 'depot')!.svg;
+    const gezeigt = texte(svg).filter((x) => x.startsWith('SYM'));
+    expect(gezeigt.length).toBe(7);
+    expect(texte(svg).join(' ')).toContain('+3 weitere');
+    // Größter Gewinner zuerst — die Karte hat eine Ordnung.
+    expect(gezeigt[0]).toBe('SYM9');
+  });
+});
+
+describe('Depot-Karte — Geometrie, die kein Text-Prüfstand sieht', () => {
+  it('Richtungs-Marke steht in fester Spalte — nie mitten im Symbolnamen', () => {
+    /* Bild-Befund 21.08.: Aus der Zeichenzahl geschätzte Textbreiten lagen
+     * bei „BTC-USD"/„MSFT" daneben, das Tag lief durch den Namen. Der
+     * Bild-Prüfstand misst nur Text gegen Text — diese Klasse Fehler muss
+     * die Geometrie selbst ausschließen. */
+    const svg = shareStory(mitPositionen()).find((k) => k.id === 'depot')!.svg;
+    const tagX = [...svg.matchAll(/<rect x="(\d+)" y="\d+" width="\d+" height="40" rx="20"/g)]
+      .map((m) => Number(m[1]));
+    expect(tagX.length).toBeGreaterThanOrEqual(3);
+    for (const x of tagX) expect(x).toBe(340);
+  });
+
+  it('kein Balken läuft in die Prozent-Spalte — auch nicht bei −100 %', () => {
+    const extrem = {
+      ...fixture(),
+      positionen: [
+        { symbol: 'PLTR', short: false, einstieg: 100, aktuell: 0.01, pnlPct: -99.99, pnl: -999, qty: 1 },
+        { symbol: 'GME', short: false, einstieg: 10, aktuell: 30, pnlPct: 200, pnl: 2000, qty: 1 },
+      ],
+    };
+    const svg = shareStory(extrem).find((k) => k.id === 'depot')!.svg;
+    // Rechtes Balkenende = x + width; die Prozentzahl beginnt frühestens 935.
+    const enden = [...svg.matchAll(/<rect x="([\d.]+)" y="\d+" width="([\d.]+)" height="32"/g)]
+      .map((m) => Number(m[1]) + Number(m[2]));
+    expect(enden.length).toBe(2);
+    for (const e of enden) expect(e).toBeLessThan(935);
+  });
+});

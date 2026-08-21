@@ -8268,8 +8268,34 @@ function shareDatenBauen(betraege: boolean): ShareDaten {
     .filter((tg) => tg.length === 10)
     .sort();
 
+  /* Offene Positionen für die Depot-Karte (Owner 21:14) — mit DERSELBEN
+   * Rechnung wie Positions-Tabelle, Summenzeile und Stop-Dialog
+   * (`positionLage`, F6): Ein geteiltes Bild, das andere Zahlen zeigt als
+   * die App daneben, wäre schlimmer als gar keins. Ohne Kurs bleibt beides
+   * null — die Karte schreibt dann „—" statt einer grünen Null. */
+  const offene = (st?.positions ?? []).map((p) => {
+    const live = st?.posPrices.get(p.symbol) ?? null;
+    const short = p.side === 'short';
+    const { pnl } = positionLage(p, live);
+    const pnlPct =
+      live !== null && p.avgEntry > 0
+        ? (short ? 1 - live / p.avgEntry : live / p.avgEntry - 1) * 100
+        : null;
+    return {
+      symbol: p.symbol,
+      short,
+      einstieg: p.avgEntry,
+      aktuell: live,
+      pnlPct,
+      pnl,
+      qty: p.qty,
+    };
+  });
+
   return {
     zerlegung,
+    positionen: offene,
+    investiertPct: st?.pfStats?.kapital?.investiertPct ?? null,
     renditePct: ((letzte - zerlegung.basis) / basis) * 100,
     ergebnis: letzte - zerlegung.basis,
     tradeBilanz: Math.round(tradeBilanz * 100) / 100,
