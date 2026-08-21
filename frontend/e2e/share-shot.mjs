@@ -75,6 +75,22 @@ const faelle = {
     trefferquotePct: 52.4, profitFaktor: 1.83, trades: trades.length, maxDrawdownPct: -6.8,
     bestes: { label: 'NVDA', pct: 3.1 }, schlechtestes: { label: 'EWJ', pct: -1.4 },
     echtgeld: false, betraege: false,
+    /* Depot-Karte (21:14) mit den Kanten, die weh tun: langes Krypto-Symbol,
+     * ein SHORT (dessen Tag im Englischen anders breit ist), eine Position
+     * OHNE Kurs, ein dreistelliger Prozentwert und mehr als sieben Zeilen —
+     * die „+N weitere"-Zeile muss auch gerendert stehen. */
+    investiertPct: 62.5,
+    positionen: [
+      { symbol: 'BTC-USD', short: false, einstieg: 61234.5, aktuell: 68999.12, pnlPct: 12.68, pnl: 7764.62, qty: 0.42 },
+      { symbol: 'NVDA', short: false, einstieg: 118.4, aktuell: 131.02, pnlPct: 10.66, pnl: 126.2, qty: 10 },
+      { symbol: 'SPY', short: true, einstieg: 630.11, aktuell: 640.96, pnlPct: -1.72, pnl: -32.55, qty: 3 },
+      { symbol: 'EWJ', short: true, einstieg: 74.2, aktuell: 70.05, pnlPct: 5.59, pnl: 41.5, qty: 10 },
+      { symbol: 'GLD', short: false, einstieg: 240.9, aktuell: 238.11, pnlPct: -1.16, pnl: -27.9, qty: 10 },
+      { symbol: 'QQQ', short: false, einstieg: 690, aktuell: 712.88, pnlPct: 3.32, pnl: 114.4, qty: 5 },
+      { symbol: 'TSLA', short: false, einstieg: 350, aktuell: null, pnlPct: null, pnl: null, qty: 2 },
+      { symbol: 'MSFT', short: false, einstieg: 482.7, aktuell: 483.02, pnlPct: 0.07, pnl: 0.31, qty: 1 },
+      { symbol: 'LIT', short: false, einstieg: 74, aktuell: 76.52, pnlPct: 3.4, pnl: 812.35, qty: 323 },
+    ],
     tradeBilanz: trades.reduce((a, t) => a + t.pnl, 0),
     vonTag: trades[0]?.executedAt.slice(0, 10),
     bisTag: trades[trades.length - 1]?.executedAt.slice(0, 10),

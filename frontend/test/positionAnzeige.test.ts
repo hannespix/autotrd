@@ -2,9 +2,13 @@
  * Audit-Befund 11.08. (F6): drei Rechenwege für denselben Positionswert.
  *
  * Die Rechnung selbst prüft `shared/test/positionLage.test.ts`. Hier steht,
- * dass alle drei Anzeigen sie auch benutzen — genau das war der Befund:
+ * dass alle Anzeigen sie auch benutzen — genau das war der Befund:
  * Nicht die Formel wich ab, sondern der Umgang mit einem fehlenden Kurs, und
  * zwar auf demselben Bildschirm.
+ *
+ * Seit 21.08. sind es VIER: Die teilbare Depot-Karte verlässt die App und
+ * darf erst recht keine anderen Zahlen zeigen als die Tabelle daneben —
+ * ein Bild in fremden Zeitleisten kann man nicht nachkorrigieren.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -14,10 +18,10 @@ import { join } from 'node:path';
 const quelle = (): string =>
   readFileSync(join(import.meta.dirname, '..', 'src', 'dashboard.ts'), 'utf8');
 
-describe('Alle drei Anzeigen rechnen mit derselben Funktion', () => {
-  it('genau drei Aufrufe — Summe, Tabelle, Stop-Dialog', () => {
+describe('Alle vier Anzeigen rechnen mit derselben Funktion', () => {
+  it('genau vier Aufrufe — Summe, Tabelle, Stop-Dialog, Teilen-Karte', () => {
     const treffer = quelle().match(/positionLage\(/g) ?? [];
-    expect(treffer.length).toBe(3);
+    expect(treffer.length).toBe(4);
   });
 
   it('keine eigene P&L-Formel mehr im Dashboard', () => {

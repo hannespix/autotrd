@@ -45,6 +45,28 @@ export const FARBE = {
   akzent: '#25d0ee',
 } as const;
 
+/**
+ * Eine offene Position auf der Depot-Karte (Owner 21.08., 21:14: „aktives
+ * Depot zum Teilen, wie roast-my-portfolio auf Reddit").
+ *
+ * Nur was ohne Nachfrage lesbar ist: Was, in welche Richtung, wie weit im
+ * Plus. Die Stückzahl ist ein BETRAG (sie verrät mit dem Kurs die
+ * Positionsgröße) und steht deshalb unter demselben Schalter wie alle
+ * anderen Beträge — Prozente sagen die Leistung, die Kontogröße gehört dem
+ * Besitzer (Kopf dieser Datei, Regel 2).
+ */
+export interface SharePosition {
+  symbol: string;
+  short: boolean;
+  einstieg: number;
+  aktuell: number | null;
+  /** Ergebnis in Prozent; null, solange kein Kurs vorliegt. */
+  pnlPct: number | null;
+  /** Absolutes Ergebnis — nur mit `betraege`. */
+  pnl: number | null;
+  qty: number;
+}
+
 export interface ShareDaten {
   /** Zerlegung des Fensters — liefert Kurve, Zeitraum und Bänder. */
   zerlegung: DepotZerlegung;
@@ -75,6 +97,10 @@ export interface ShareDaten {
   /** Erster/letzter Handelstag im Fenster (ISO) — für „über N Tage". */
   vonTag?: string | undefined;
   bisTag?: string | undefined;
+  /** Offene Positionen JETZT — trägt die Depot-Karte (21:14). */
+  positionen?: readonly SharePosition[] | undefined;
+  /** Anteil des Kapitals, der gerade arbeitet (0–100). */
+  investiertPct?: number | null | undefined;
 }
 
 /** Deutsches Komma UND typografisches Minus — ein ASCII-Bindestrich neben

@@ -26,10 +26,11 @@ import {
   shareCard,
   siegelBreite,
   type ShareDaten,
+  type SharePosition,
 } from './shareCard.js';
 
 export interface StoryKarte {
-  id: 'ergebnis' | 'verlauf' | 'womit' | 'cta';
+  id: 'ergebnis' | 'depot' | 'verlauf' | 'womit' | 'cta';
   svg: string;
 }
 
@@ -98,6 +99,95 @@ export function bandFarben(gezeichnet: ReadonlyArray<{ key: string; summe: numbe
     );
   }
   return farben;
+}
+
+/**
+ * Karte „Mein Depot JETZT" (Owner 21.08., 21:14: „aktives Depot zum Teilen,
+ * ähnlich Handelsanalyse — roast my portfolio").
+ *
+ * Der Unterschied zu allen anderen Karten: Diese zeigt keinen Rückblick,
+ * sondern den STAND. Drei Regeln, die daraus folgen:
+ *
+ *  1. **Richtung steht dran.** Ein Short mit +4 % und ein Long mit +4 % sehen
+ *     als Zahl gleich aus und sind gegenteilige Wetten. Pfeil UND Wort
+ *     tragen sie (wie im Trade-Verlauf), der gestrichelte Rahmen markiert
+ *     die Short-Seite auch ohne Farbsehen.
+ *  2. **Kein Kurs ⇒ keine Zahl.** Eine Position ohne Kurs bekommt „—" in
+ *     neutralem Grau, nie eine grüne Null (dieselbe Regel wie in
+ *     `shareAussage.ts`).
+ *  3. **Stückzahlen sind Beträge.** Sie verraten mit dem Kurs die
+ *     Positionsgröße und stehen deshalb unter dem Beträge-Schalter.
+ */
+function depotKarte(d: ShareDaten): string {
+  const pos = (d.positionen ?? []).slice();
+  // Größter Gewinner zuerst — die Karte soll beim Überfliegen eine Ordnung
+  // haben; ohne Kurs bewertete Zeilen ans Ende (sie behaupten nichts).
+  pos.sort((a, b) => (b.pnlPct ?? -Infinity) - (a.pnlPct ?? -Infinity));
+  const MAX = 7;
+  const zeilen = pos.slice(0, MAX);
+  const rest = pos.length - zeilen.length;
+
+  const y0 = 300;
+  const schritt = 104;
+  /* Achse + Balkenlänge müssen VOR der Prozent-Spalte enden: „−100,0 %" ist
+   * bei 34 px fett ~175 px breit und endet rechtsbündig bei 1110, beginnt
+   * also bei ~935. Balken-über-Text sieht der Bild-Prüfstand nicht (er misst
+   * Text gegen Text) — deshalb hier Reserve statt Hoffnung. */
+  const achse = 760;
+  /* Die Richtungs-Marke steht in einer FESTEN Spalte, nicht direkt hinter
+   * dem Symbolnamen (Bild-Befund 21.08.): Aus der Zeichenzahl geschätzte
+   * Textbreiten liegen bei „BTC-USD" oder „MSFT" daneben, und das Tag lief
+   * mitten durch den Namen. Der Bild-Prüfstand kann das nicht fangen — er
+   * misst Text gegen Text, nicht Rechteck gegen Text (derselbe Grund, aus
+   * dem die WOMIT-Achse rechts der Label-Spalte sitzt). 340 liegt hinter
+   * zehn fetten Zeichen à 38 px; länger wird nicht gezeigt. */
+  const TAG_SPALTE = 340;
+  const halb = 120;
+  const maxPct = Math.max(...zeilen.map((p) => Math.abs(p.pnlPct ?? 0)), 1);
+
+  const zeile = (p: SharePosition, i: number): string => {
+    const y = y0 + i * schritt;
+    const hat = p.pnlPct !== null;
+    const farbe = !hat ? FARBE.text3 : p.pnlPct! > 0 ? FARBE.gruen : p.pnlPct! < 0 ? FARBE.rot : FARBE.text2;
+    const w = hat ? (Math.abs(p.pnlPct!) / maxPct) * halb : 0;
+    const richtung = p.short ? `▼ ${t('share.depotShort')}` : `▲ ${t('share.depotLong')}`;
+    const richtungFarbe = p.short ? FARBE.rot : FARBE.gruen;
+    // Tag-Breite grob aus der Zeichenzahl — SVG kann nicht messen.
+    const tagBreite = richtung.length * 15 + 26;
+    const kurse = `${p.einstieg.toFixed(2)} → ${p.aktuell === null ? '—' : p.aktuell.toFixed(2)}`;
+    const menge = d.betraege ? `${p.qty} × ` : '';
+    return (
+      `<text x="90" y="${y}" fill="${FARBE.text}" font-size="38" font-weight="700">${esc(p.symbol.slice(0, 10))}</text>`
+      + `<rect x="${TAG_SPALTE}" y="${y - 30}" width="${tagBreite}" height="40" rx="20"`
+      + ` fill="none" stroke="${richtungFarbe}" stroke-width="2"${p.short ? ' stroke-dasharray="5 4"' : ''}></rect>`
+      + `<text x="${TAG_SPALTE + tagBreite / 2}" y="${y - 2}" fill="${richtungFarbe}"`
+      + ` font-size="24" text-anchor="middle">${esc(richtung)}</text>`
+      + `<text x="90" y="${y + 36}" fill="${FARBE.text3}" font-size="26">${esc(menge + kurse)}</text>`
+      + `<rect x="${(p.pnlPct !== null && p.pnlPct >= 0 ? achse : achse - w).toFixed(1)}" y="${y - 24}"`
+      + ` width="${Math.max(hat ? 3 : 0, w).toFixed(1)}" height="32" rx="16" fill="${farbe}" opacity="0.85"></rect>`
+      + `<text x="${KARTE - 90}" y="${y + 2}" fill="${farbe}" font-size="34" font-weight="700" text-anchor="end">`
+      + `${esc(hat ? `${mitVorzeichen(p.pnlPct!, 1)} %` : '—')}</text>`
+      + (d.betraege && p.pnl !== null
+        ? `<text x="${KARTE - 90}" y="${y + 36}" fill="${FARBE.text3}" font-size="24" text-anchor="end">${esc(`${mitVorzeichen(p.pnl)} ${d.waehrung}`)}</text>`
+        : '')
+    );
+  };
+
+  const kopfZahl = `${pos.length} ${t(pos.length === 1 ? 'share.depotEine' : 'share.depotOffene')}`;
+  const quote =
+    typeof d.investiertPct === 'number' && Number.isFinite(d.investiertPct)
+      ? ` · ${d.investiertPct.toFixed(0)} % ${t('share.depotInvestiert')}`
+      : '';
+
+  return rahmen(
+    kopfMitSiegel(t('share.storyDepot'), d.echtgeld)
+    + `<text x="90" y="${kopfhoehe + 40}" fill="${FARBE.text3}" font-size="26">${esc(kopfZahl + quote)}</text>`
+    + `<line x1="${achse}" y1="${y0 - 50}" x2="${achse}" y2="${y0 + zeilen.length * schritt - 60}" stroke="${FARBE.linie}" stroke-width="2"></line>`
+    + zeilen.map(zeile).join('')
+    + (rest > 0
+      ? `<text x="90" y="${y0 + zeilen.length * schritt + 8}" fill="${FARBE.text3}" font-size="28">+${rest} ${esc(t('share.depotWeitere'))}</text>`
+      : ''),
+  );
 }
 
 /** Karte 2 — der zerlegte Verlauf: Wasserfall-Bänder unter der Depot-Linie. */
@@ -282,6 +372,11 @@ function ctaKarte(): string {
  */
 export function shareStory(d: ShareDaten): StoryKarte[] {
   const karten: StoryKarte[] = [{ id: 'ergebnis', svg: shareCard(d) }];
+  // Das aktive Depot direkt hinter dem Ergebnis: Es ist die Karte, nach der
+  // in „roast my portfolio"-Fäden gefragt wird — was hältst du GERADE?
+  // Ohne offene Position entfällt sie ersatzlos (leere Grafik = kaputtes
+  // Werkzeug, Kopf dieser Datei).
+  if ((d.positionen?.length ?? 0) > 0) karten.push({ id: 'depot', svg: depotKarte(d) });
   if (d.zerlegung.tage.length >= 2) karten.push({ id: 'verlauf', svg: verlaufKarte(d) });
   if (d.zerlegung.baender.some((b) => b.key !== '__rest__' && b.summe !== 0)) {
     karten.push({ id: 'womit', svg: womitKarte(d) });
