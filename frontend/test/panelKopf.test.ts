@@ -91,4 +91,32 @@ describe('Panel-Kopf — Pfeil links, Titelzeile klappt, ✕ isoliert rechts', (
     expect(css).toContain('.card[data-panel] > .sect { cursor: pointer;');
     expect(css).toMatch(/\.sect-fold \{ margin-right: \d+px; transition: transform/);
   });
+
+  /**
+   * Kopf-Ordnung (Owner-Screenshot 21.08.): Grip und ✕ rutschten mobil in
+   * eine zweite Zeile, Badges standen mal vor, mal hinter dem ✕. Der
+   * Chrome-Bau sortiert jeden Panel-Kopf in die feste Flex-Folge
+   * [Pfeil][Titel+ⓘ+Chip][Meta-Badges][Werkzeuge]; nur .sect-meta darf
+   * (als Ganzes, rechtsbündig) umbrechen.
+   */
+  it('Kopf-Ordnung: Titel- und Meta-Gruppe werden gebaut, Flex nur mit Chrome', () => {
+    expect(chrome).toContain("titel.className = 'sect-titel';");
+    expect(chrome).toContain("meta.className = 'sect-meta';");
+    // Text, ⓘ und Link-Chip gehören zum Titel — alles andere ist Meta.
+    expect(chrome).toContain("kind.classList.contains('ibtn') || kind.classList.contains('lchip')");
+    expect(chrome).toContain('sect.insertBefore(titel, box);');
+    expect(chrome).toContain('if (meta.childNodes.length > 0) sect.insertBefore(meta, box);');
+    // Flex NUR für Köpfe mit Chrome — Alt-Köpfe (Admin, Modals) behalten
+    // flow-root samt Floats (19-%-Karten-Bug, Owner 20.08.).
+    expect(chrome).toContain("sect.classList.add('sect-flex');");
+    expect(css).toContain('.sect.sect-flex { display: flex; flex-wrap: wrap; align-items: center;');
+    expect(css).toContain('.sect-flex > .sect-tools { flex: 0 0 auto; margin-left: auto; float: none; }');
+    expect(css).toContain('.sect-flex > .sect-meta ~ .sect-tools { margin-left: 0; }');
+  });
+
+  it('Titel-Straffung: kurze Substantiv-Titel, das Kurzdatum trägt den Stand', () => {
+    // Die Erklärung der ehemals fragenden Titel lebt im ⓘ-Tip weiter.
+    expect(dashboard).toContain('`Stand ${d.at.slice(8, 10)}.${d.at.slice(5, 7)}.`');
+    expect(dashboard).toContain('`Stand ${c.date.slice(8, 10)}.${c.date.slice(5, 7)}.`');
+  });
 });

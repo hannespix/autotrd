@@ -325,6 +325,24 @@ input { accent-color: var(--ac); }
  * heraus, und der .cbody (Flex = eigener Formatierungskontext) wird NEBEN den
  * Float gequetscht — Depot-Chart auf 19 % Kartenbreite (Owner-Screenshot 20.08.). */
 .sect { padding: 8px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--t2); font-weight: 600; border-bottom: 1px solid var(--hair); display: flow-root; }
+/* Panel-Kopf-Ordnung (Owner-Screenshot 21.08.: Grip/✕ rutschten mobil in
+ * eine zweite Zeile, Badges standen mal vor, mal hinter dem ✕): Köpfe MIT
+ * Chrome (wirePanelChrome setzt .sect-flex) werden Flex mit fester Folge
+ * [Pfeil][Titel][Meta][Werkzeuge]. Alt-Floats in den Markups verlieren als
+ * Flex-Items ihre Wirkung — die Ordnung kommt aus dem Chrome-Bau. Nur die
+ * Meta-Badges dürfen (als Ganzes, rechtsbündig) in eine zweite Zeile
+ * brechen; ⠿/✕ bleiben IMMER oben rechts. Köpfe ohne Chrome (Admin,
+ * Modals) bleiben flow-root mit Floats. */
+.sect.sect-flex { display: flex; flex-wrap: wrap; align-items: center; column-gap: 8px; row-gap: 4px; }
+.sect-flex > .sect-fold { margin-right: 0; }
+/* flex-basis 0, NICHT auto: flex-wrap bricht um, BEVOR es schrumpft — mit
+ * base auto schob ein langer Titel die Werkzeuge in Zeile 2 (fclab auf
+ * 278-px-Sidebar). Mit base 0 startet die Zeile bei Meta+Werkzeugen und
+ * der Titel wächst in den Rest; wird er zu lang, bricht sein TEXT intern um. */
+.sect-flex > .sect-titel { display: inline-flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 0; }
+.sect-flex > .sect-meta { display: inline-flex; align-items: center; gap: 8px; min-width: 0; flex: 0 1 auto; margin-left: auto; }
+.sect-flex > .sect-tools { flex: 0 0 auto; margin-left: auto; float: none; }
+.sect-flex > .sect-meta ~ .sect-tools { margin-left: 0; }
 .cbody { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 
 /* Form */

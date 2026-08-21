@@ -6036,6 +6036,26 @@ function wirePanelChrome(): void {
         : '') +
       `<button type="button" class="sect-btn" data-x title="${t('gp.modulAusblenden')}">✕</button>`;
     sect.appendChild(box);
+    // Kopf in feste Flex-Ordnung bringen (Owner-Screenshot 21.08.: Grip und
+    // ✕ rutschten mobil in eine zweite Zeile, Badges standen mal vor, mal
+    // hinter dem ✕): [Pfeil][Titel+ⓘ+Chip][Meta-Badges][Werkzeuge]. Titel
+    // sind Text-Knoten samt ⓘ und Link-Chip; alles andere (Stand-, Markt-,
+    // Symbol-Badges, Schalter) wandert gesammelt in .sect-meta.
+    const titel = document.createElement('span');
+    titel.className = 'sect-titel';
+    const meta = document.createElement('span');
+    meta.className = 'sect-meta';
+    for (const kind of [...sect.childNodes]) {
+      if (kind === fold || kind === box) continue;
+      const istTitelTeil =
+        kind.nodeType === Node.TEXT_NODE ||
+        (kind instanceof HTMLElement && (kind.classList.contains('ibtn') || kind.classList.contains('lchip')));
+      (istTitelTeil ? titel : meta).appendChild(kind);
+    }
+    sect.insertBefore(titel, box);
+    if (meta.childNodes.length > 0) sect.insertBefore(meta, box);
+    sect.classList.add('sect-flex'); // Flex-Ordnung nur für Köpfe MIT Chrome
+
     // Drag-Reorder: eigenes Pointer-Drag (startePanelDrag) statt HTML5-DnD —
     // die Karte heftet als Clone am Zeiger und die Nachbarn gleiten (FLIP).
     const grip = box.querySelector<HTMLElement>('[data-grip]');
@@ -8787,7 +8807,12 @@ function renderHaltedauer(d: TagRueckblickDoc | null): void {
     return;
   }
   const beste = besteHaltedauer(zeilen);
-  if (stand) stand.textContent = d?.at ? `Stand ${d.at.slice(0, 10)}` : '';
+  if (stand) {
+    // Kurzdatum im Badge — das ISO-Datum sprengte mobil die Kopfzeile
+    // (Owner-Screenshot 21.08.); das volle Datum bleibt im Tooltip.
+    stand.textContent = d?.at ? `Stand ${d.at.slice(8, 10)}.${d.at.slice(5, 7)}.` : '';
+    stand.title = d?.at ? d.at.slice(0, 10) : '';
+  }
   box.innerHTML = haltedauerTabelle(zeilen, beste);
   if (fazit) fazit.textContent = haltedauerFazit(beste);
   if (meta) meta.textContent = haltedauerMeta(d ?? {});
@@ -8808,7 +8833,10 @@ function renderErkenntnisse(c: ErkenntnisChronik | null): void {
   const box = $('erList');
   const stand = $('erDate');
   if (!box) return;
-  if (stand) stand.textContent = c?.date ? `Stand ${c.date}` : '';
+  if (stand) {
+    stand.textContent = c?.date ? `Stand ${c.date.slice(8, 10)}.${c.date.slice(5, 7)}.` : '';
+    stand.title = c?.date ?? '';
+  }
   const eintraege = Object.entries(c?.eintraege ?? {});
   if (eintraege.length === 0) {
     box.innerHTML =
