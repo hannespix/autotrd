@@ -222,6 +222,7 @@ import { iBtn, initInfoTips } from './infotips.js';
 import { serverText, setzeSprache, sprachWahl, t, valText } from './i18n.js';
 import { reglerWarnung } from './reglerHinweis.js';
 import { mountLegalFooter } from './legal.js';
+import { steckbriefText, symbolHerkunft } from './symbolSteckbrief.js';
 import {
   GROUP_COLORS,
   clearSubscribers,
@@ -4194,6 +4195,96 @@ function wireEvTipFokusNetz(): void {
   }, { signal: docListenerSignal() });
 }
 
+/* ── Symbol-Steckbrief (Owner 16:5x: „welche Marken/welche Märkte, was
+ *    verbirgt sich hinter dem Kürzel?") ─────────────────────────────────
+ *
+ * Ein kleines Portal-Kärtchen am Zeiger — Maus: kurzes Verweilen auf einer
+ * Livebar-Kachel oder Signal-Zeile; Touch: langes Drücken. pointer-events:
+ * none — reine Anzeige, kein zweites Bedienelement (nicht überladen). Das
+ * Portal hängt an document.body, nie in einer Glass-Card (§6: backdrop-filter
+ * macht die Card zum Containing Block für fixed). */
+let symTipEl: HTMLElement | null = null;
+let symTipTimer: number | null = null;
+let symTipLangdruck: number | null = null;
+let symTipStart: { x: number; y: number } | null = null;
+
+function symTip(): HTMLElement {
+  if (symTipEl) return symTipEl;
+  symTipEl = document.createElement('div');
+  symTipEl.id = 'symTip';
+  symTipEl.className = 'sym-tip';
+  symTipEl.hidden = true;
+  document.body.appendChild(symTipEl);
+  return symTipEl;
+}
+
+function versteckeSymbolTip(): void {
+  if (symTipTimer !== null) { window.clearTimeout(symTipTimer); symTipTimer = null; }
+  if (symTipLangdruck !== null) { window.clearTimeout(symTipLangdruck); symTipLangdruck = null; }
+  if (symTipEl) symTipEl.hidden = true;
+}
+
+function zeigeSymbolTip(sym: string, x: number, y: number): void {
+  const herkunft = symbolHerkunft(sym);
+  const text = steckbriefText(sym);
+  if (!herkunft && !text) return; // unbekanntes Symbol: lieber nichts als Leeres
+  const tip = symTip();
+  tip.innerHTML =
+    `<div class="sym-tip-kopf">${symbolAvatar(sym, true)}<b>${escText(herkunft?.name ?? sym)}</b><span class="mono">${escText(sym)}</span></div>`
+    + (herkunft ? `<div class="sym-tip-chips"><span>${escText(herkunft.klassenLabel)}</span><span>${escText(herkunft.gruppe)}</span></div>` : '')
+    + (text ? `<div class="sym-tip-text">${escText(text)}</div>` : '');
+  tip.hidden = false;
+  schmueckeAvatare(); // echtes Logo statt Monogramm, sobald geladen
+  const b = tip.getBoundingClientRect();
+  tip.style.left = `${Math.min(Math.max(8, x - b.width / 2), window.innerWidth - b.width - 8)}px`;
+  tip.style.top = `${y + 14 + b.height > window.innerHeight ? Math.max(8, y - b.height - 12) : y + 14}px`;
+}
+
+/** Steckbrief-Anker unterm Zeiger: Livebar-Kachel oder Auto-Signal-Zeile. */
+function symTipAnker(ziel: Element | null): { sym: string } | null {
+  const el = ziel?.closest<HTMLElement>('.lb-item[data-sym], #sigBody tr[data-sym]');
+  const sym = el?.dataset.sym;
+  return sym ? { sym } : null;
+}
+
+function wireSymbolTip(): void {
+  // Maus: kurzes Verweilen zeigt, Verlassen versteckt.
+  document.addEventListener('pointerover', (ev) => {
+    if (ev.pointerType !== 'mouse') return;
+    const anker = symTipAnker(ev.target as Element | null);
+    if (!anker) return;
+    if (symTipTimer !== null) window.clearTimeout(symTipTimer);
+    const { sym } = anker;
+    const x = ev.clientX;
+    const y = ev.clientY;
+    symTipTimer = window.setTimeout(() => { symTipTimer = null; zeigeSymbolTip(sym, x, y); }, 320);
+  }, { signal: docListenerSignal() });
+  document.addEventListener('pointerout', (ev) => {
+    if (ev.pointerType !== 'mouse') return;
+    if (symTipAnker(ev.target as Element | null)) versteckeSymbolTip();
+  }, { signal: docListenerSignal() });
+  // Touch: langes Drücken zeigt; Loslassen, Wischen oder Tippen daneben versteckt.
+  document.addEventListener('pointerdown', (ev) => {
+    if (ev.pointerType === 'mouse') { if (!symTipAnker(ev.target as Element | null)) versteckeSymbolTip(); return; }
+    const anker = symTipAnker(ev.target as Element | null);
+    if (!anker) { versteckeSymbolTip(); return; }
+    symTipStart = { x: ev.clientX, y: ev.clientY };
+    const { sym } = anker;
+    symTipLangdruck = window.setTimeout(() => { symTipLangdruck = null; zeigeSymbolTip(sym, ev.clientX, ev.clientY); }, 450);
+  }, { signal: docListenerSignal() });
+  document.addEventListener('pointermove', (ev) => {
+    if (symTipLangdruck === null || symTipStart === null) return;
+    if (Math.hypot(ev.clientX - symTipStart.x, ev.clientY - symTipStart.y) > 10) {
+      window.clearTimeout(symTipLangdruck);
+      symTipLangdruck = null; // Wischen ist Scrollen, kein Nachschlagen
+    }
+  }, { signal: docListenerSignal() });
+  document.addEventListener('pointerup', () => {
+    if (symTipLangdruck !== null) { window.clearTimeout(symTipLangdruck); symTipLangdruck = null; }
+  }, { signal: docListenerSignal() });
+  window.addEventListener('scroll', versteckeSymbolTip, { passive: true, signal: docListenerSignal() });
+}
+
 /**
  * Prognose-Overlay + Badge anwenden — Tages-Prognose in der Tages-Ansicht,
  * Kurzfrist-Prognose (nächste Stunde, 5-min-Raster) in der Intraday-Ansicht.
@@ -4525,6 +4616,7 @@ function wireWatchlist(): void {
   for (const sym of wl) {
     const item = document.createElement('div');
     item.className = 'lb-item' + (sym === st.currentSymbol ? ' on' : '');
+    item.dataset.sym = sym; // Anker für den Symbol-Steckbrief (16:5x)
     item.innerHTML = '<div class="lb-sym"></div><div class="lb-pr">--</div><div class="lb-ch"></div>';
     const lbSym = item.querySelector('.lb-sym')!;
     lbSym.innerHTML = symbolAvatar(sym, true);
@@ -4544,6 +4636,7 @@ function wireWatchlist(): void {
   const rows = new Map<string, { ind: IndicatorRow | null; sig: SignalRow | null; tr: HTMLTableRowElement }>();
   for (const sym of wl) {
     const tr = document.createElement('tr');
+    tr.dataset.sym = sym; // Anker für den Symbol-Steckbrief (16:5x)
     // data-th spiegelt die Kopfzeile: unter 480px stapelt das Karten-Layout
     // die Zellen als Label:Wert-Paare und zieht die Labels aus dem Attribut.
     tr.innerHTML = `<td class="mono" style="color:var(--t1);font-weight:700"></td>
@@ -6969,6 +7062,7 @@ function openDetail(symbol: string, name: string, data: MarketDocData | null): v
     <button class="dclose" data-close="detail">✕</button>
     <h3></h3>
     <div class="dmeta"><span class="mono"></span><span>${CLASS_LABELS[data?.assetClass ?? ''] ?? ''}</span></div>
+    <div class="hint sym-steck"></div>
     <div class="vbig ${q ? pnlClass(q.changePct) : 'c-t3'}">${q ? fmtNum(q.price) : '—'}</div>
     <div class="smv ${q ? pnlClass(q.changePct) : 'c-t3'}">${q ? fmtPct(q.changePct) : t('dt.keineScanDaten')}</div>
     <div class="dbtns">
@@ -6978,6 +7072,14 @@ function openDetail(symbol: string, name: string, data: MarketDocData | null): v
     ${newsHtml ? `<div class="wl-sec" style="margin-top:10px">Schlagzeilen</div><div class="dnews">${newsHtml}</div>` : ''}`;
   sheet.querySelector('h3')!.textContent = name;
   sheet.querySelector('.dmeta .mono')!.textContent = symbol;
+  // Steckbrief (16:5x): dieselbe kuratierte Zeile wie im Hover-Kärtchen —
+  // im Modal ist Platz, hier steht sie immer.
+  const steck = sheet.querySelector('.sym-steck') as HTMLElement | null;
+  if (steck) {
+    const sText = steckbriefText(symbol);
+    steck.textContent = sText;
+    steck.hidden = sText === '';
+  }
   $('detailModal').classList.add('show');
   sheet.querySelector('#dOpenChart')?.addEventListener('click', () => {
     closeModal('detail');
@@ -10096,6 +10198,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   applySidebars();
   wirePanelChrome();
   wireEvTipFokusNetz();
+  wireSymbolTip();
   wireSidebarResize();
   // Test-Hook (E2E): Reorder über denselben Pfad wie der Drop
   (window as unknown as { __autotrdWs?: unknown }).__autotrdWs = {

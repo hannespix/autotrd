@@ -1366,8 +1366,12 @@ describe('Tranche 5p — der Wächter über alle übrigen Quelldateien', () => {
    *                 (INFO_DE/INFO_EN, Vollständigkeit erzwingt
    *                 infotips.test.ts) — die deutschen Werte dort sind
    *                 per Design da, wie in i18n.ts.
-   *  - dashboard.ts: hat oben seinen eigenen Wächter (eigenes ERLAUBT-Set). */
-  const AUSGENOMMEN = new Set(['i18n.ts', 'legal.ts', 'infotips.ts', 'dashboard.ts']);
+   *  - dashboard.ts: hat oben seinen eigenen Wächter (eigenes ERLAUBT-Set).
+   *  - symbolSteckbrief.ts: führt sein EIGENES kuratiertes Text-Datenmodul
+   *                 (132 Steckbriefe, Vollständigkeit erzwingt
+   *                 symbolSteckbrief.test.ts) — die EN-Fassung folgt als
+   *                 eigene Tranche, wie bei infotips.ts. */
+  const AUSGENOMMEN = new Set(['i18n.ts', 'legal.ts', 'infotips.ts', 'dashboard.ts', 'symbolSteckbrief.ts']);
   // Code-Werte, die wie deutsche Wörter aussehen: Firestore-Feldnamen und
   // Typ-Literale (data.ts liest v['von']; quelle === 'keine').
   const CODE_WERTE = new Set(['von', 'keine']);
