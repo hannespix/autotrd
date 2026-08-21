@@ -206,6 +206,10 @@ export const INFO_DE: Record<string, Tip> = {
     d: 'Beobachtet wird in ZWEI Tiefen. Flach: Jeder der 166 Katalog-Märkte, dessen Börse gerade offen ist, bekommt alle fünf Minuten einen frischen Kurs — nichts läuft mehr unbemerkt weg. Möglich wurde das durch einen Sammel-Abruf, der 20 Symbole pro Anfrage holt: 9 Anfragen für den ganzen Katalog statt 166. Vorher rotierte die Versorgung in 15er-Häppchen durch, ein Symbol konnte also eine Stunde alt sein. Tief: Die Symbole in der Liste hier bekommen zusätzlich 5-Minuten-Kerzen, RSI, MACD, Bollinger, Prognose — und nur sie werden gehandelt. Sie wählt der tägliche Ranglisten-Lauf über den vollen Katalog, plus jede offene Position (die muss drin bleiben, bis sie geschlossen ist, sonst verlöre sie ihren Stop-Loss). Warum nicht alles tief? Ein Kurs ist ein Zahlenwert, eine Tiefenanalyse sind Kerzenreihen und Indikatorrechnungen pro Symbol und Intervall — die flache Stufe kostet fast nichts, die tiefe skaliert direkt mit.',
   },
   // ── Prognose ──
+  fclab: {
+    t: 'Prognose-Labor',
+    d: 'Selbstverbesserung der Prognose: Jede gespeicherte Vorhersage wird nach Ablauf ihres Horizonts gegen die eingetretene Realität bewertet. Die Trefferquote je Lookback-Fenster steuert, welches Fenster künftige Prognosen nutzen — und ob die Prognose beim Handeln überhaupt mitstimmen darf: Ohne nachgewiesene Trefferquote stimmt sie GAR NICHT mit, sie muss sich ihr Gewicht erst verdienen. Die Karte zeigt diese Buchführung — die Kombi-Statistik für Tages- und Kurzfrist-Prognosen sowie „Vorhersage vs. Realität" für das gewählte Symbol.',
+  },
   fcCombo: {
     t: 'Kombi-Statistik (Self-Tuning)',
     d: 'Das System rechnet jede Prognose parallel mit mehreren Lookback-Fenstern als „Schatten" mit und bewertet sie nach Ablauf gegen die Realität. Das Fenster mit der besten realisierten Trefferquote (Tiebreak: kleinste MAE) steuert die Live-Prognose — das ist die Selbstverbesserung. Wichtig: Solange keine Trefferquote nachgewiesen ist, stimmt die Prognose beim Handeln GAR NICHT mit; sie muss sich ihr Gewicht erst verdienen.',
@@ -539,6 +543,10 @@ export const INFO_EN: Record<string, Partial<Tip>> = {
   watchlist: {
     t: 'Watched',
     d: 'Watching happens at TWO depths. Shallow: every one of the 166 catalogue markets whose exchange is currently open gets a fresh price every five minutes — nothing runs away unnoticed any more. That became possible through a batch request fetching 20 symbols per call: 9 requests for the whole catalogue instead of 166. Before, coverage rotated through in chunks of 15, so a symbol could be an hour old. Deep: the symbols in this list additionally get 5-minute candles, RSI, MACD, Bollinger and the forecast — and only they are traded. They are chosen by the daily ranking run across the full catalogue, plus every open position (which has to stay in until it is closed, otherwise it would lose its stop loss). Why not everything deep? A price is one number; a deep analysis is candle series and indicator computations per symbol and interval — the shallow layer costs almost nothing, the deep one scales directly with the count.',
+  },
+  fclab: {
+    t: 'Forecast lab',
+    d: 'Self-improvement of the forecast: every stored prediction is graded against what actually happened once its horizon has passed. The hit rate per lookback window decides which window future forecasts use — and whether the forecast may vote at all when trading: without a proven hit rate it does NOT vote, it has to earn its weight first. The card shows this bookkeeping — the combo statistics for daily and intraday forecasts plus “forecast vs. reality” for the selected symbol.',
   },
   fcCombo: {
     t: 'Combination statistics (self-tuning)',
