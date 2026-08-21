@@ -5709,17 +5709,64 @@ function applyCollapse(): void {
     const btn = card.querySelector<HTMLElement>(':scope > .sect [data-col]');
     const on = st!.collapsed.has(id);
     if (body) body.hidden = on;
-    if (btn) btn.textContent = on ? '▸' : '▾';
+    if (btn) {
+      btn.textContent = on ? '▸' : '▾';
+      btn.setAttribute('aria-expanded', String(!on));
+    }
   });
 }
 
-/** Jede Modul-Karte bekommt ▾ (einklappen) und ✕ (ausblenden) im Kopf. */
+/**
+ * Auf-/Zuklappen einer Karte — mit Sidebar-Akkordeon (Owner 21.08.): Beim
+ * AUFklappen in einer Sidebar-Spalte klappen die sichtbaren Geschwister
+ * derselben Spalte zu (je Spalte nur eine offen — kurze Wege, wenig
+ * Gleichzeitiges). Die Chart-Mittelspalte bleibt bewusst frei: Chart +
+ * Positionen + Markt gleichzeitig zu sehen IST das Dashboard.
+ */
+function klappUm(id: string, card: HTMLElement): void {
+  if (!st) return;
+  const aufklappen = st.collapsed.has(id);
+  if (aufklappen) st.collapsed.delete(id);
+  else st.collapsed.add(id);
+  const spalte = card.parentElement;
+  const akkordeon = spalte?.id === 'leftCol' || spalte?.id === 'rightCol';
+  if (aufklappen && akkordeon && spalte) {
+    for (const nachbar of spalte.querySelectorAll<HTMLElement>(':scope > .card[data-panel]')) {
+      const gid = nachbar.dataset.panel ?? '';
+      // Ausgeblendete Karten (wsHidden) spielen im Akkordeon nicht mit.
+      if (gid && gid !== id && !st.wsHidden.has(gid)) st.collapsed.add(gid);
+    }
+  }
+  localStorage.setItem('autotrd-collapsed', [...st.collapsed].join(','));
+  applyCollapse();
+}
+
+/**
+ * Jede Modul-Karte bekommt ihren Kopf-Chrome. Ergonomie-Umbau (Owner
+ * 21.08.: „Pfeil direkt neben dem Kreuz — dadurch wird oft versehentlich
+ * geschlossen"): Der Klapp-Pfeil sitzt als eigener Knopf ganz LINKS vor dem
+ * Titel, die GANZE Titelzeile klappt per Klick (Fitts: großes Toggle-Ziel),
+ * und das destruktive ✕ bleibt klein und allein rechts. Echte
+ * Bedienelemente im Kopf (Link-Chips, ⓘ, Checkboxen, Auswahlfelder) bleiben
+ * vom Titel-Klick unberührt.
+ */
+let dragEndeUm = 0;
+
 function wirePanelChrome(): void {
   document.querySelectorAll<HTMLElement>('.card[data-panel]').forEach((card) => {
     const sect = card.querySelector<HTMLElement>(':scope > .sect');
     const body = card.querySelector<HTMLElement>(':scope > .cbody');
     const id = card.dataset.panel ?? '';
     if (!sect || !body || !id) return;
+    if (sect.querySelector(':scope > .sect-tools')) return; // idempotent — nie doppeltes Chrome
+    const fold = document.createElement('button');
+    fold.type = 'button';
+    fold.className = 'sect-btn sect-fold';
+    fold.dataset.col = '';
+    fold.title = 'Modul ein-/ausklappen';
+    fold.setAttribute('aria-label', 'Modul ein-/ausklappen');
+    fold.textContent = '▾';
+    sect.prepend(fold);
     const box = document.createElement('span');
     box.className = 'sect-tools';
     const inSidebar = card.parentElement?.id === 'leftCol' || card.parentElement?.id === 'rightCol';
@@ -5727,7 +5774,6 @@ function wirePanelChrome(): void {
       (inSidebar
         ? '<button type="button" class="sect-btn sect-grip" data-grip title="Modul verschieben (ziehen)">⠿</button>'
         : '') +
-      '<button type="button" class="sect-btn" data-col title="Modul ein-/ausklappen">▾</button>' +
       `<button type="button" class="sect-btn" data-x title="${t('gp.modulAusblenden')}">✕</button>`;
     sect.appendChild(box);
     // Drag-Reorder (Taschenmesser Teil 3): Karte ist nur draggable, solange
@@ -5743,15 +5789,21 @@ function wirePanelChrome(): void {
       card.addEventListener('dragend', () => {
         card.classList.remove('dragging');
         card.removeAttribute('draggable');
+        dragEndeUm = Date.now(); // Nachklick des Drags darf nicht klappen
         commitPanelOrder();
       });
     }
-    box.querySelector('[data-col]')!.addEventListener('click', () => {
-      if (!st) return;
-      if (st.collapsed.has(id)) st.collapsed.delete(id);
-      else st.collapsed.add(id);
-      localStorage.setItem('autotrd-collapsed', [...st.collapsed].join(','));
-      applyCollapse();
+    fold.addEventListener('click', (ev) => {
+      ev.stopPropagation(); // sonst klappt der Titelzeilen-Handler doppelt
+      klappUm(id, card);
+    });
+    // Die ganze Titelzeile klappt — außer auf echten Bedienelementen im
+    // Kopf (Link-Chips, ⓘ, Checkboxen, Auswahlfelder, Links).
+    sect.addEventListener('click', (ev) => {
+      const ziel = ev.target as HTMLElement;
+      if (ziel.closest('button, input, select, label, a, .ibtn, .lchip')) return;
+      if (Date.now() - dragEndeUm < 400) return;
+      klappUm(id, card);
     });
     box.querySelector('[data-x]')!.addEventListener('click', () => togglePanel(id));
   });
