@@ -5688,13 +5688,20 @@ function startePanelDrag(card: HTMLElement, start: PointerEvent): void {
   };
 
   const sortiereEin = (): void => {
-    // Ziel-Spalte: die, deren Rechteck den Zeiger horizontal enthält —
-    // über dem Main-Content bleibt die Karte, wo sie ist, bis der Zeiger
-    // eine Sidebar erreicht.
-    const ziel = spalten.find((c) => {
-      const r = c.getBoundingClientRect();
-      return px >= r.left && px <= r.right;
-    });
+    // Ziel-Spalte: erst der echte Punkt-Treffer (funktioniert auch am
+    // Smartphone, wo beide Spalten GESTAPELT dieselbe Breite haben und nur
+    // die Höhe sie trennt), sonst der horizontale Treffer (Desktop: Zeiger
+    // ober-/unterhalb einer Sidebar zählt noch zu ihr). Über dem
+    // Main-Content bleibt die Karte, wo sie ist.
+    const ziel =
+      spalten.find((c) => {
+        const r = c.getBoundingClientRect();
+        return px >= r.left && px <= r.right && py >= r.top && py <= r.bottom;
+      })
+      ?? spalten.find((c) => {
+        const r = c.getBoundingClientRect();
+        return px >= r.left && px <= r.right;
+      });
     if (!ziel) return;
     const geschwister = [...ziel.querySelectorAll<HTMLElement>(':scope > .card[data-panel]')]
       .filter((c) => c !== card);
@@ -5714,7 +5721,19 @@ function startePanelDrag(card: HTMLElement, start: PointerEvent): void {
     raf = 0;
     if (!clone) return;
     clone.style.transform = `translate(${px - offX}px, ${py - offY}px) rotate(1.5deg)`;
+    // Autoscroll an den Bildschirmkanten (Stufe B): Ohne ihn ließe sich am
+    // Smartphone — und in langen Desktop-Spalten — nie ans Listenende
+    // ziehen. Geschwindigkeit wächst zur Kante hin; scrollt die Seite,
+    // rutschen die Karten-Rechtecke unterm stehenden Zeiger weiter durch
+    // sortiereEin nach (es misst immer frisch).
+    const RAND = 90;
+    if (py < RAND) window.scrollBy(0, -Math.ceil((RAND - py) * 0.35));
+    else if (py > window.innerHeight - RAND)
+      window.scrollBy(0, Math.ceil((py - (window.innerHeight - RAND)) * 0.35));
     sortiereEin();
+    // Solange der Zeiger an der Kante steht, kommen keine pointermove-
+    // Events mehr — der Scroll muss sich selbst weitertreiben.
+    if (py < RAND || py > window.innerHeight - RAND) raf = requestAnimationFrame(bewege);
   };
 
   const erstelleClone = (): HTMLElement => {
@@ -5740,6 +5759,9 @@ function startePanelDrag(card: HTMLElement, start: PointerEvent): void {
       if (Math.hypot(px - start.clientX, py - start.clientY) < 5) return;
       clone = erstelleClone();
       card.classList.add('dragging');
+      // Kurzes haptisches „angehoben" am Finger — Geräte ohne Vibration
+      // (und Desktop-Mäuse) überspringen still.
+      if (start.pointerType !== 'mouse') navigator.vibrate?.(10);
     }
     if (!raf) raf = requestAnimationFrame(bewege);
   };
