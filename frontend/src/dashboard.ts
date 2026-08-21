@@ -659,7 +659,12 @@ function layout(email: string): string {
         <div class="hint" id="saveHint"></div>
       </div></div>
 
-      <div class="card" data-panel="engine"><div class="sect">${t('panel.engine')}</div><div class="cbody">
+<!-- Kopf-ⓘ (Text-Diät Stufe 3): der engineMode-Tip war bis dahin
+           nirgends verdrahtet — dabei erklärt er die wichtigste Weiche der
+           Karte (Konfluenz vs. Momentum). Der Einzeiler unter dem Knopf
+           bleibt bewusst: Er beantwortet in einer Zeile, was der wichtigste
+           Knopf der App tut, inklusive „Paper". -->
+      <div class="card" data-panel="engine"><div class="sect">${t('panel.engine')} ${iBtn('engineMode')}</div><div class="cbody">
         <!-- Immer genau EINER sichtbar (renderEngineBadge schaltet um).
              Startzustand „aus", passend zum Default engine.running: false —
              sobald die Strategie geladen ist, korrigiert der Renderer das. -->
@@ -1082,8 +1087,7 @@ function layout(email: string): string {
         <div class="hint" id="fcVoteInfo"></div>
       </div></div>
 
-      <div class="card" data-panel="fclab"><div class="sect">${t('panel.prognoseLabor')} <span id="flSym" style="float:right;color:var(--t3)"></span></div><div class="cbody">
-        <div class="hint">${t('lay.selbstverbesserung')}</div>
+      <div class="card" data-panel="fclab"><div class="sect">${t('panel.prognoseLabor')} ${iBtn('fclab')} <span id="flSym" style="float:right;color:var(--t3)"></span></div><div class="cbody">
         <label class="lbl">${t('lay.komboTages')} ${iBtn('fcCombo')}</label>
         <div id="flCombos" class="fl-tbl"><div class="hint">${t('lay.keinePrognosen')}</div></div>
         <label class="lbl">${t('lay.komboIntraday')} ${iBtn('kurzfrist')}</label>

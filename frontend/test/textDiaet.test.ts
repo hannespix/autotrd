@@ -64,6 +64,28 @@ describe('Text-Diät Stufe 1b — Tuner/Journal/Klassen/Loadouts hinter ihre ⓘ
 });
 
 /**
+ * Stufe 3: Die letzten zwei Karten ohne Kopf-ⓘ. Das Prognose-Labor bekommt
+ * einen eigenen Übersichts-Tip (fclab), der den bisherigen Dauer-Absatz
+ * lay.selbstverbesserung vollständig trägt; die Engine-Karte verdrahtet den
+ * bis dahin UNERREICHBAREN engineMode-Tip (Konfluenz vs. Momentum). Der
+ * Einzeiler unter dem Engine-Knopf bleibt bewusst — er erklärt in einer
+ * Zeile, was der wichtigste Knopf der App tut.
+ */
+describe('Text-Diät Stufe 3 — Kopf-ⓘ für Prognose-Labor und Engine', () => {
+  it('fclab: kein Dauer-Absatz mehr, Karten-ⓘ trägt die Erklärung (DE+EN)', () => {
+    expect(dashboard).not.toContain("t('lay.selbstverbesserung')");
+    expect(dashboard).toContain("${t('panel.prognoseLabor')} ${iBtn('fclab')}");
+    // Beide Sprachblöcke — die Paarpflicht gilt auch für neue Tips.
+    expect(infotips.split('fclab: {').length).toBe(3);
+  });
+
+  it('engine: der engineMode-Tip ist am Karten-Kopf verdrahtet, der Knopf-Einzeiler bleibt', () => {
+    expect(dashboard).toContain("${t('panel.engine')} ${iBtn('engineMode')}");
+    expect(dashboard).toContain("t('lay.engineAn')");
+  });
+});
+
+/**
  * Stufe 2: Die Performance-Karte stapelte bei einem frischen Konto vier
  * „Noch keine …"-Absätze übereinander (Exits, Kosten, Fill-Reibung,
  * Kapitaleinsatz). Jetzt sind Sektionen ohne Daten KOMPLETT zu (Wrapper
