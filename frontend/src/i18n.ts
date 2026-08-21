@@ -442,6 +442,11 @@ export const DE = {
   // erste Zählung übersehen hat (sie suchte großgeschriebene Wörter in
   // Anführungszeichen). Im Wörterbuch stehen sie einzeilig; ersetzt wurde
   // über ein Muster, das Zeilenumbrüche als Leerraum liest.
+  // Mobile Karten-Labels der Signal-/Positions-Tabellen (data-th): nur die
+  // echten Wörter — Kürzel wie Qty/RSI/P&L sind in beiden Sprachen gleich.
+  'tab.eintritt': 'Eintritt',
+  'tab.aktuell': 'Aktuell',
+  'tab.konfluenz': 'Konfluenz',
   'pf.gesamtPnl': 'Gesamt P&amp;L',
   'pf.realisiert': 'Realisiert',
   'pf.offen': 'Offen',
@@ -1797,6 +1802,10 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'chart.ppZielDatum': 'Target date',
   'chart.ppVertrauen': 'Confidence',
   'chart.ppHinweis': 'The algorithm takes the arrow as a weighted vote (thickness = confidence).',
+  // Mobile Karten-Labels der Signal-/Positions-Tabellen (data-th).
+  'tab.eintritt': 'Entry',
+  'tab.aktuell': 'Current',
+  'tab.konfluenz': 'Confluence',
   // Performance, Depot-Verlauf, Haltedauer, Erkenntnisse (Tranche 5g).
   'pf.gesamtPnl': 'Total P&amp;L',
   'pf.realisiert': 'Realised',

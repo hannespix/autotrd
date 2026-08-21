@@ -1148,17 +1148,18 @@ describe('Tranche 5m — Legende, Live-Status, Loadouts und Portfolio', () => {
 
   it('renderPortfolio: Cover/Exit/SHORT sind Fachbegriffe, alles andere ist t()', () => {
     pruefe('renderPortfolio', [
-      // Fachbegriffe, in beiden Sprachen gleich (Knopf-Beschriftungen)
-      'Cover', 'Exit', 'SHORT',
-      // Seiten-/Zustandswerte und DOM/CSS
+      // Fachbegriffe, in beiden Sprachen gleich (Knopf-/Spalten-Beschriftungen;
+      // Qty ist das Karten-Label der Stück-Spalte, echte Wörter laufen als tab.*)
+      'Cover', 'Exit', 'SHORT', 'Qty',
+      // Seiten-/Zustandswerte und DOM/CSS (act = pos-act, amp = P&amp;L)
       'buy', 'sell', 'short', 'pos', 'show', 'smooth', 'center',
-      'button', 'class', 'color', 'colspan', 'data', 'exit', 'font', 'hbtn',
+      'act', 'amp', 'button', 'class', 'color', 'colspan', 'data', 'exit', 'font', 'hbtn',
       'smv', 'stag', 'style', 'sub', 'sym', 'var', 'vbig', 'weight',
     ]);
   });
 
-  it('jede lg./lv./lo./pf.-Zeile hat eine englische Fassung', () => {
-    for (const k of Object.keys(DE).filter((s) => /^(lg|lv|lo|pf)\./.test(s))) {
+  it('jede lg./lv./lo./pf./tab.-Zeile hat eine englische Fassung', () => {
+    for (const k of Object.keys(DE).filter((s) => /^(lg|lv|lo|pf|tab)\./.test(s))) {
       expect(EN[k as TextSchluessel], `${k} ohne englische Fassung`).toBeTruthy();
     }
   });
