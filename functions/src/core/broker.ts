@@ -761,24 +761,118 @@ export async function executeTrade(
  *
  * Bewusst gedeckelt (3 je Lauf): Der Normalzustand ist eine LEERE Liste;
  * die Schleife darf den Scan nie messbar verlängern.
+ *
+ * ── Kopf-Blockade (Owner-Fund 21.08.: „5 Trades nicht registriert") ──────
+ *
+ * Bis dahin nahm die Abfrage schlicht `orderBy('at').limit(3)` — die
+ * ÄLTESTEN drei. Ein Eintrag ohne verwertbaren Fill blieb liegen, eine
+ * scheiternde Buchung ebenfalls. Beim nächsten Lauf griff dieselbe Abfrage
+ * dieselben drei. Steckten die ältesten drei fest, kamen Eintrag vier und
+ * fünf NIE an die Reihe — die Heilung lief, buchte aber für immer nichts,
+ * und niemand sah es, weil nur der Erfolgsfall geloggt wurde.
+ *
+ * Deshalb jetzt: Ein Fehlversuch zählt hoch (`versuche`). Wer die Grenze
+ * reisst, gilt als Fall für die Übernahme und wird beim Auswählen
+ * übersprungen — er blockiert nichts mehr, verschwindet aber auch nicht
+ * still. Gelesen wird ein FENSTER der ältesten Einträge, damit die Auswahl
+ * ohne zweites Sortierfeld (und damit ohne zusammengesetzten Index)
+ * auskommt.
  */
+/** Ab so vielen Fehlversuchen gilt ein Eintrag als Fall für die Übernahme. */
+export const NACHBUCHUNG_TOT_AB = 5;
+/** So viele der ältesten Einträge werden je Lauf betrachtet (Auswahl in JS). */
+const NACHBUCHUNG_FENSTER = 25;
+
+export interface NachbuchungsStand {
+  /** Erfolgreich nachgebuchte Fills in diesem Lauf. */
+  gebucht: number;
+  /** Einträge, die danach noch offen sind (inkl. der festhängenden). */
+  offen: number;
+  /** Davon festhängend: `versuche >= NACHBUCHUNG_TOT_AB` — Fall für Übernahme. */
+  steckt: number;
+}
+
 export async function bucheUnverbuchteFills(
   uid: string,
   strategy: Strategy,
   limit = 3,
-): Promise<number> {
+): Promise<NachbuchungsStand> {
+  const leer: NachbuchungsStand = { gebucht: 0, offen: 0, steckt: 0 };
   const db = getFirestore();
   const userRef = db.collection('users').doc(uid);
-  const offen = await userRef
+  const fenster = await userRef
     .collection('unbookedFills')
     .orderBy('at')
-    .limit(limit)
+    .limit(NACHBUCHUNG_FENSTER)
     .get()
     .catch(() => null);
-  if (!offen || offen.empty) return 0;
+  if (!fenster || fenster.empty) return leer;
+
+  const versucheVon = (d: FirebaseFirestore.QueryDocumentSnapshot): number => {
+    const v = d.get('versuche') as unknown;
+    return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+  };
+  /**
+   * Ohne Preis oder Menge ist nichts zu buchen — und das steht im Eintrag,
+   * nicht erst im Ergebnis. Solche Einträge dürfen deshalb GAR KEINEN Platz
+   * verbrauchen: Sie fünfmal „scheitern" zu lassen, hielte gesunde Fills
+   * fünf Läufe lang auf. In der Emulator-Probe war genau das der
+   * Unterschied zwischen Lauf 1 und Lauf 6.
+   */
+  const unbrauchbar = (d: FirebaseFirestore.QueryDocumentSnapshot): boolean => {
+    const zahl = (x: unknown): number => (typeof x === 'number' && Number.isFinite(x) ? x : 0);
+    return (
+      typeof d.get('symbol') !== 'string'
+      || (d.get('side') !== 'buy' && d.get('side') !== 'sell')
+      || !(zahl(d.get('qty')) > 0)
+      || !(zahl(d.get('fillPreis')) > 0)
+    );
+  };
+  const aufgegeben = (d: FirebaseFirestore.QueryDocumentSnapshot): boolean =>
+    versucheVon(d) >= NACHBUCHUNG_TOT_AB || unbrauchbar(d);
+
+  const steckt = fenster.docs.filter(aufgegeben).length;
+  // Nur die noch Buchbaren, und davon höchstens `limit` je Lauf.
+  const dran = fenster.docs.filter((d) => !aufgegeben(d)).slice(0, limit);
+
+  /* Einen unbrauchbaren Eintrag EINMAL als aufgegeben festschreiben, damit
+   * der Grund im Dokument steht und nicht nur in einer Logzeile von
+   * vorgestern. Danach wird er nie wieder angefasst. */
+  for (const doc of fenster.docs) {
+    if (unbrauchbar(doc) && versucheVon(doc) < NACHBUCHUNG_TOT_AB) {
+      logger.warn(`unbookedFills ${uid}/${doc.id}: kein verwertbarer Fill — Fall für die Übernahme`);
+      await doc.ref
+        .set(
+          {
+            versuche: NACHBUCHUNG_TOT_AB,
+            letzterVersuch: new Date().toISOString(),
+            letzterGrund: 'kein_verwertbarer_fill',
+          },
+          { merge: true },
+        )
+        .catch(() => undefined);
+    }
+  }
+
+  /** Fehlversuch festhalten — nur so verlässt ein toter Eintrag je den Kopf. */
+  const merkeFehlversuch = async (
+    doc: FirebaseFirestore.QueryDocumentSnapshot,
+    grund: string,
+  ): Promise<void> => {
+    await doc.ref
+      .set(
+        {
+          versuche: versucheVon(doc) + 1,
+          letzterVersuch: new Date().toISOString(),
+          letzterGrund: grund.slice(0, 200),
+        },
+        { merge: true },
+      )
+      .catch(() => undefined);
+  };
 
   let gebucht = 0;
-  for (const doc of offen.docs) {
+  for (const doc of dran) {
     const d = doc.data() as {
       symbol?: string;
       side?: 'buy' | 'sell';
@@ -786,10 +880,10 @@ export async function bucheUnverbuchteFills(
       fillPreis?: number | null;
       brokerOrderId?: string | null;
     };
-    if (!d.symbol || !d.side || !(d.qty! > 0) || !(d.fillPreis! > 0)) {
-      logger.warn(`unbookedFills ${uid}/${doc.id}: kein verwertbarer Fill — bleibt liegen (Übernahme)`);
-      continue;
-    }
+    /* `dran` enthält keine unbrauchbaren Einträge mehr — die sind oben
+     * aussortiert. Der Guard bleibt trotzdem stehen: Er trägt die
+     * Nicht-Null-Zusicherungen für den TypeScript-Pfad darunter. */
+    if (!d.symbol || !d.side || !(d.qty! > 0) || !(d.fillPreis! > 0)) continue;
     if (d.brokerOrderId) {
       const schon = await userRef
         .collection('trades')
@@ -825,9 +919,13 @@ export async function bucheUnverbuchteFills(
       logger.info(`unbookedFills ${uid}: ${d.side} ${d.qty} ${d.symbol} @ ${d.fillPreis} nachgebucht`);
     } else {
       logger.warn(`unbookedFills ${uid}/${doc.id}: Nachbuchung scheitert weiter — ${r.reason ?? '?'}`);
+      await merkeFehlversuch(doc, r.reason ?? 'unbekannt');
     }
   }
-  return gebucht;
+  // `offen` zählt das gelesene Fenster minus das, was dieser Lauf gebucht hat.
+  // Bei mehr als `NACHBUCHUNG_FENSTER` Einträgen ist es eine Untergrenze —
+  // die genaue Zahl ist dann ohnehin nicht die interessante Nachricht.
+  return { gebucht, offen: Math.max(0, fenster.size - gebucht), steckt };
 }
 
 export async function executePaperTrade(req: TradeRequest, strategy: Strategy): Promise<TradeResult> {
