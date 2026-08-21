@@ -107,9 +107,24 @@ export const REIFE_SCHWELLEN: ReifeSchwellen = {
   minTageStrecke: 14,
 };
 
+/** Sprachneutrale Kennung je Kriterium (EN-Tranche 5, 21.08.).
+ *
+ *  `name` bleibt daneben stehen: Der deutsche Kurzname steht in
+ *  gespeicherten Reife-Dokumenten und im Fazit-Satz; ihn nachträglich zu
+ *  ändern wäre eine Migration ohne Not. Die Oberfläche übersetzt über den
+ *  Code — und fällt auf `name` zurück, wo ein altes Dokument ihn nicht hat. */
+export type ReifeCode =
+  | 'stichprobe'
+  | 'profitfaktor'
+  | 'gebuehrenanteil'
+  | 'nettoergebnis'
+  | 'messstrecke';
+
 export interface ReifeKriterium {
   /** Kurzname für die Oberfläche. */
   name: string;
+  /** Sprachneutral — die Oberfläche übersetzt hierüber. */
+  code?: ReifeCode;
   erfuellt: boolean;
   /** Was gemessen wurde — als Klartext, damit die Zahl sichtbar bleibt. */
   ist: string;
@@ -124,6 +139,9 @@ export interface ReifeBefund {
   /** Wie viele Kriterien stehen (für eine Fortschrittsanzeige). */
   erfuellt: number;
   gesamt: number;
+  /** Offene Kriterien sprachneutral — die Oberfläche baut daraus ihren Satz.
+   *  Optional, weil ältere gespeicherte Befunde ihn nicht tragen. */
+  offeneCodes?: ReifeCode[];
   /** Ein Satz, der den Zustand zusammenfasst. */
   fazit: string;
 }
@@ -146,12 +164,14 @@ export function liveReife(
   const kriterien: ReifeKriterium[] = [
     {
       name: 'Stichprobe',
+      code: 'stichprobe',
       erfuellt: k.trades >= schwellen.minTrades,
       ist: `${k.trades} Trades`,
       soll: `≥ ${schwellen.minTrades}`,
     },
     {
       name: 'Profitfaktor',
+      code: 'profitfaktor',
       // null (keine Verluste) gilt NICHT als erfüllt: Ein Konto ohne einen
       // einzigen Verlusttrade hat entweder zu wenige Trades oder ein Problem
       // mit der Buchung. Beides ist kein Grund, echtes Geld freizugeben.
@@ -161,18 +181,21 @@ export function liveReife(
     },
     {
       name: 'Gebührenanteil',
+      code: 'gebuehrenanteil',
       erfuellt: k.feeShare !== null && k.feeShare <= schwellen.maxFeeShare,
       ist: pct(k.feeShare),
       soll: `≤ ${Math.round(schwellen.maxFeeShare * 100)} %`,
     },
     {
       name: 'Nettoergebnis',
+      code: 'nettoergebnis',
       erfuellt: k.netPnl !== null && k.netPnl > schwellen.minNetPnl,
       ist: geld(k.netPnl),
       soll: `> ${schwellen.minNetPnl.toFixed(2)} $`,
     },
     {
       name: 'Messstrecke',
+      code: 'messstrecke',
       erfuellt: (k.tageStrecke ?? 0) >= schwellen.minTageStrecke,
       ist: `${k.tageStrecke ?? 0} Tage`,
       soll: `≥ ${schwellen.minTageStrecke}`,
@@ -188,6 +211,10 @@ export function liveReife(
     kriterien,
     erfuellt,
     gesamt: kriterien.length,
+    /* Die offenen Kriterien als CODES — damit die Oberfläche denselben Satz
+     * in jeder Sprache bauen kann, ohne den gespeicherten deutschen `fazit`
+     * zu zerlegen. */
+    offeneCodes: kriterien.filter((x) => !x.erfuellt).map((x) => x.code!),
     fazit: bereit
       ? 'Alle Kriterien erfüllt — der Schalter greift, sobald beide Freigaben stehen.'
       : `Noch nicht bereit (${erfuellt}/${kriterien.length}): ${offen.join(', ')}.`,

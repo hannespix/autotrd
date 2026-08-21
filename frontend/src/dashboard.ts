@@ -79,7 +79,7 @@ import {
   type Wallet,
   positionLage,
   waehleKurve,
-  kurvenErklaerung,
+  erklaerungsTeile,
   bewerteHerzschlag,
   type KurvenWahl,
   benchmarkKurve,
@@ -2879,7 +2879,7 @@ function renderLiveStatus(s: LiveModeStatus | null, istLive: boolean): void {
     + zeile(
       `${t('lv.reife')} (${s.reife.erfuellt}/${s.reife.gesamt})`,
       s.reife.bereit,
-      s.reife.fazit,
+      reifeFazit(s.reife),
     )
     + s.reife.kriterien
         .map(
@@ -6782,7 +6782,7 @@ async function loadAdminList(): Promise<void> {
       const trades = row.trades ?? 0;
       reife.textContent = `${trades} ${t('adm.trades')} · ${t('adm.reife')} ${row.reife.erfuellt}/${row.reife.gesamt}`
         + (row.reife.bereit ? ' ✓' : '');
-      reife.title = row.reife.fazit;
+      reife.title = reifeFazit(row.reife);
       if (row.reife.bereit) reife.style.color = 'var(--gn)';
       line.append(who, perf, reife, badge);
       // Das eigene Konto listet der Server mit, ändern lehnt er ab — dieselbe
@@ -7928,6 +7928,58 @@ const EXIT_LABELS: Record<string, string> = {
  * Kurve aus wie der Depotwert — und ein Konto, dessen Snapshots ein Reset
  * gelöscht hat, sieht aus wie ein kaputtes System.
  */
+/* ── EN-Tranche 5 (21.08.): shared liefert Teile, die Oberfläche den Satz ──
+ *
+ * `kurvenErklaerung()` in shared baut denselben Satz auf Deutsch. Er bleibt
+ * als Referenz-Formulierung stehen — der Golden-Test hält ihn fest, und der
+ * Bild-Prüfstand der Depot-Grafik rendert ihn; die App zeigt seit dieser
+ * Tranche die übersetzte Fassung. Die
+ * Fallunterscheidung liegt weiterhin NUR in shared (`erklaerungsTeile`);
+ * ginge sie hier auseinander, sagten deutsche und englische Fassung
+ * Verschiedenes. */
+function kurvenText(e: Parameters<typeof erklaerungsTeile>[0]): string {
+  return erklaerungsTeile(e)
+    .map((teil) => {
+      switch (teil.code) {
+        case 'ausAbschluessen':
+          return `${t('kv.ausAbschluessen1')} ${teil.trades} ${
+            teil.trades === 1 ? t('kv.abschluss') : t('kv.abschluesse')
+          } ${t('kv.ausAbschluessen2')}`;
+        case 'nochKeineAbschluesse':
+          return t('kv.nochKeine');
+        case 'ohneZeitpunktOderErgebnis':
+          return `${teil.trades} ${
+            teil.trades === 1 ? t('kv.abschlussTraegt') : t('kv.abschluesseTragen')
+          } ${t('kv.ohneZeitpunkt')}`;
+        case 'keineSnapshots':
+          return `${t('kv.keineSnapshots1')}${reset(teil.resetAm)} ${t('kv.keineSnapshots2')} ${teil.uhrzeit}.`;
+        default:
+          return `${t('kv.einSnapshot1')}${reset(teil.resetAm)} ${t('kv.einSnapshot2')} ${teil.uhrzeit}).`;
+      }
+    })
+    .join(' ')
+    .trim();
+}
+
+function reset(am: string | undefined): string {
+  return am ? ` (${t('kv.reset')} ${am})` : '';
+}
+
+/** Fazit der Live-Reife in der Sprache des Nutzers — der gespeicherte
+ *  deutsche Satz bleibt als Rückfallebene für alte Befunde. */
+function reifeFazit(r: {
+  bereit: boolean;
+  erfuellt: number;
+  gesamt: number;
+  offeneCodes?: string[];
+  fazit: string;
+}): string {
+  if (!r.offeneCodes) return r.fazit;
+  if (r.bereit) return t('lv.reifeBereit');
+  const offen = r.offeneCodes.map((c) => t(`lv.krit.${c}` as never)).join(', ');
+  return `${t('lv.reifeNochNicht')} (${r.erfuellt}/${r.gesamt}): ${offen}.`;
+}
+
 function depotKurve(
   quelle?: {
     snapshots: readonly EquitySeriesPoint[];
@@ -7952,7 +8004,7 @@ function depotKurve(
   return {
     ...wahl,
     snapshots: snapshots.length,
-    erklaerung: kurvenErklaerung({
+    erklaerung: kurvenText({
       herkunft: wahl.herkunft,
       snapshots: snapshots.length,
       trades: geschlossen.length,
