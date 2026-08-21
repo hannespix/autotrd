@@ -4150,6 +4150,47 @@ function showNewsTooltip(
 }
 
 /**
+ * Fokus-Netz der News-Bubble (Owner 21.08.: „werden recht lange angezeigt,
+ * auch wenn sie nicht mehr im Fokus sind — bei Fokusverlust ausblenden"):
+ * Die Touch-Lesezeit (4 s nach dem Loslassen) bleibt als OBERGRENZE, aber
+ * jede Interaktion WOANDERS beendet die Bubble sofort — Tipp/Klick
+ * außerhalb von Bubble und Charts, Seiten-Scroll, Fenster-/Tab-Wechsel.
+ */
+function versteckeEvTipSofort(): void {
+  const tip = document.getElementById('evTip');
+  if (!tip || tip.hidden) return;
+  if (evTipTimer !== null) {
+    window.clearTimeout(evTipTimer);
+    evTipTimer = null;
+  }
+  tip.hidden = true;
+  evTipOwner = null;
+}
+
+function wireEvTipFokusNetz(): void {
+  document.addEventListener('pointerdown', (ev) => {
+    const ziel = ev.target as HTMLElement | null;
+    // In der Bubble selbst darf man lesen, ohne sie zu schließen.
+    if (ziel?.closest('#evTip')) return;
+    // Im Chart übernimmt das Crosshair (nächster Tag oder Clear) — als
+    // PUNKT-Treffer gegen die Chart-Rechtecke, nicht über den DOM-Pfad:
+    // über der Zeichenfläche liegen Overlay-Ebenen (HUD, Marken, Zeichnen-
+    // SVG), deren target NICHT im .tv-lightweight-charts-Teilbaum steckt.
+    const inChartFlaeche = [...document.querySelectorAll('.tv-lightweight-charts')].some((c) => {
+      const r = c.getBoundingClientRect();
+      return ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom;
+    });
+    if (inChartFlaeche) return;
+    versteckeEvTipSofort();
+  }, { signal: docListenerSignal() });
+  window.addEventListener('scroll', versteckeEvTipSofort, { passive: true, signal: docListenerSignal() });
+  window.addEventListener('blur', versteckeEvTipSofort, { signal: docListenerSignal() });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') versteckeEvTipSofort();
+  }, { signal: docListenerSignal() });
+}
+
+/**
  * Prognose-Overlay + Badge anwenden — Tages-Prognose in der Tages-Ansicht,
  * Kurzfrist-Prognose (nächste Stunde, 5-min-Raster) in der Intraday-Ansicht.
  */
@@ -9920,6 +9961,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   $('sideR').addEventListener('click', () => { sbState.r = sbState.r !== true; applySidebars(); });
   applySidebars();
   wirePanelChrome();
+  wireEvTipFokusNetz();
   wireSidebarResize();
   // Test-Hook (E2E): Reorder über denselben Pfad wie der Drop
   (window as unknown as { __autotrdWs?: unknown }).__autotrdWs = {

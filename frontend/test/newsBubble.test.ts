@@ -45,6 +45,28 @@ describe('News-Bubble — Portal an document.body', () => {
     expect(block).toContain('z-index: 200');
   });
 
+  it('Fokus-Netz (Owner 21.08.): Fokusverlust blendet die Bubble SOFORT aus', () => {
+    // Die Touch-Lesezeit (4 s) bleibt Obergrenze — aber Tipp/Klick woanders,
+    // Seiten-Scroll und Fenster-/Tab-Wechsel beenden die Bubble sofort.
+    expect(dashboard).toContain('function versteckeEvTipSofort()');
+    const netz = dashboard.match(/function wireEvTipFokusNetz[\s\S]*?\n\}/)?.[0] ?? '';
+    // In der Bubble darf man lesen; im Chart übernimmt das Crosshair — als
+    // PUNKT-Treffer (über der Zeichenfläche liegen Overlay-Ebenen, deren
+    // target nicht im .tv-lightweight-charts-Teilbaum steckt).
+    expect(netz).toContain("ziel?.closest('#evTip')");
+    expect(netz).toContain("document.querySelectorAll('.tv-lightweight-charts')");
+    expect(netz).toContain('if (inChartFlaeche) return;');
+    expect(netz).toContain("window.addEventListener('scroll', versteckeEvTipSofort, { passive: true, signal: docListenerSignal() });");
+    expect(netz).toContain("window.addEventListener('blur', versteckeEvTipSofort, { signal: docListenerSignal() });");
+    expect(netz).toContain("if (document.visibilityState === 'hidden') versteckeEvTipSofort();");
+    // Abmelde-Disziplin: alle Listener hängen am docListenerSignal (die
+    // document-Listener im Haus-Muster — der F11-Zähl-Wächter zählt sie mit).
+    expect((netz.match(/signal: docListenerSignal\(\)/g) ?? []).length).toBe(4);
+    expect(dashboard).toContain('wireEvTipFokusNetz();');
+    // Die Touch-Lesezeit bleibt als Obergrenze bestehen.
+    expect(dashboard).toContain('}, 4000);');
+  });
+
   it('die Bubble hängt im Layout-HTML NICHT mehr fest verdrahtet mit Logik am Card-Platz', () => {
     // Das Grund-HTML darf den Platzhalter tragen (Erst-Render), aber die
     // Doku-Zeile in CLAUDE.md §6 muss das Portal nennen — wer sie liest,
