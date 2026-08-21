@@ -1513,9 +1513,11 @@ export async function loadUniverse(): Promise<Record<string, UniverseClass> | nu
 
 export interface WorkspaceDocData {
   preset: string;
-  /** Panel-Sichtbarkeit + Reihenfolge (id → {hidden, order}); fehlend = sichtbar,
-   *  Reihenfolge = DOM-Default (Taschenmesser Teil 3: Module per Drag sortieren). */
-  panels: Record<string, { hidden?: boolean; order?: number }>;
+  /** Panel-Sichtbarkeit + Reihenfolge + Spalte (id → {hidden, order, col});
+   *  fehlend = sichtbar, Reihenfolge = DOM-Default (Taschenmesser Teil 3).
+   *  `col` seit 21.08. (Pointer-Drag): Karten dürfen zwischen linker und
+   *  rechter Sidebar wechseln — fehlend = Markup-Spalte (abwärtskompatibel). */
+  panels: Record<string, { hidden?: boolean; order?: number; col?: 'leftCol' | 'rightCol' }>;
   /** Link-Gruppen der verlinkbaren Panels (chart/news → 'A'|'B'|'C'). */
   groups: Record<string, string>;
   /** Zuletzt aktives Symbol je Link-Gruppe. */

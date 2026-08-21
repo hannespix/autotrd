@@ -413,6 +413,8 @@ interface DashState {
   wsHidden: Set<string>;
   /** Modul-Reihenfolge je Panel-Id (kleiner = weiter oben; fehlend = DOM-Default). */
   wsOrder: Record<string, number>;
+  /** Sidebar-Spalte je Panel-Id (Pointer-Drag 21.08.); fehlend = Markup-Spalte. */
+  wsCol: Record<string, 'leftCol' | 'rightCol'>;
   wsSaveTimer: number | null;
   paletteDispose: (() => void) | null;
   /** Layer-Toggles: Prognose-Overlay / News-Punkte ein- und ausblenden. */
@@ -5576,9 +5578,18 @@ function togglePanel(id: string): void {
 /* ── Taschenmesser Teil 3: Modul-Reihenfolge + Sidebar-Breiten ─────────── */
 
 /** Karten in beiden Sidebars nach wsOrder sortieren (fehlend = DOM-Index —
- *  stabil, weil sort() stabil ist und der Default die aktuelle Position ist). */
+ *  stabil, weil sort() stabil ist und der Default die aktuelle Position ist).
+ *  Vorher wandern Karten mit gespeicherter Spalte (wsCol) in ihre Sidebar —
+ *  fehlender Eintrag lässt die Markup-Spalte gelten (abwärtskompatibel). */
 function applyPanelOrder(): void {
   if (!st) return;
+  for (const [id, colId] of Object.entries(st.wsCol)) {
+    const card = document.querySelector<HTMLElement>(`.card[data-panel="${id}"]`);
+    const ziel = document.getElementById(colId);
+    const inSidebar = card?.parentElement?.id === 'leftCol' || card?.parentElement?.id === 'rightCol';
+    if (!card || !ziel || !inSidebar || card.parentElement === ziel) continue;
+    ziel.insertBefore(card, ziel.querySelector(':scope > .sb-rs'));
+  }
   for (const colId of ['leftCol', 'rightCol']) {
     const col = document.getElementById(colId);
     if (!col) continue;
@@ -5594,15 +5605,16 @@ function applyPanelOrder(): void {
   }
 }
 
-/** Reihenfolge aus dem DOM einfrieren (nach einem Drop) und speichern. */
+/** Reihenfolge UND Spalte aus dem DOM einfrieren (nach einem Drop) und speichern. */
 function commitPanelOrder(): void {
   if (!st) return;
-  for (const colId of ['leftCol', 'rightCol']) {
+  for (const colId of ['leftCol', 'rightCol'] as const) {
     document
       .getElementById(colId)
       ?.querySelectorAll<HTMLElement>(':scope > .card[data-panel]')
       .forEach((c, i) => {
         st!.wsOrder[c.dataset.panel ?? ''] = i;
+        st!.wsCol[c.dataset.panel ?? ''] = colId;
       });
   }
   scheduleWsSave();
@@ -5623,25 +5635,149 @@ function movePanel(id: string, delta: number): void {
   commitPanelOrder();
 }
 
-/** Spalten-Dragover: die gezogene Karte folgt der Maus (live einsortieren);
- *  Reorder bewusst nur INNERHALB einer Spalte (Karten sind spaltig designt). */
-function wireColumnDnD(): void {
-  for (const colId of ['leftCol', 'rightCol']) {
-    const col = document.getElementById(colId);
-    col?.addEventListener('dragover', (ev) => {
-      const dragging = col.querySelector<HTMLElement>(':scope > .card.dragging');
-      if (!dragging) return;
-      ev.preventDefault();
-      const y = (ev as DragEvent).clientY;
-      const siblings = [...col.querySelectorAll<HTMLElement>(':scope > .card[data-panel]:not(.dragging)')];
-      const next = siblings.find((s) => {
-        const r = s.getBoundingClientRect();
-        return y < r.top + r.height / 2;
-      });
-      if (next) col.insertBefore(dragging, next);
-      else col.insertBefore(dragging, col.querySelector(':scope > .sb-rs'));
+/**
+ * Eigenes Pointer-Drag der Sidebar-Karten (Owner 21.08.: „an den Mauszeiger
+ * oder Finger anheften, animiert an die neue Stelle gleiten"). Bewusst KEIN
+ * HTML5-DnD mehr — das kann weder Touch noch einen eigenen Zeiger-Clone.
+ *
+ * Mechanik: Das Original bleibt als blasser Platzhalter im Fluss (es IST
+ * der Drop-Slot), ein voller Karten-Clone folgt dem Zeiger mit leichtem
+ * Kipp; beim Einsortieren gleiten die Nachbarn per FLIP an ihre neuen
+ * Plätze. Karten dürfen zwischen leftCol und rightCol wechseln — der
+ * Main-Content bleibt bewusst außen vor (Chart-Werkbank, kein Stapel).
+ * Reduzierte Bewegung: kein Gleiten, harte Schnitte, Funktion identisch.
+ */
+function startePanelDrag(card: HTMLElement, start: PointerEvent): void {
+  const quelle = card.parentElement;
+  if (!quelle || !(quelle.id === 'leftCol' || quelle.id === 'rightCol')) return;
+  const r0 = card.getBoundingClientRect();
+  const offX = start.clientX - r0.left;
+  const offY = start.clientY - r0.top;
+  let clone: HTMLElement | null = null;
+  let raf = 0;
+  let px = start.clientX;
+  let py = start.clientY;
+
+  const spalten = ['leftCol', 'rightCol']
+    .map((cid) => document.getElementById(cid))
+    .filter((c): c is HTMLElement => !!c);
+
+  const messeAlle = (): Map<HTMLElement, DOMRect> => {
+    const m = new Map<HTMLElement, DOMRect>();
+    for (const col of spalten)
+      for (const c of col.querySelectorAll<HTMLElement>(':scope > .card[data-panel]'))
+        m.set(c, c.getBoundingClientRect());
+    return m;
+  };
+
+  // FLIP: alte Positionen als Transform rückwärts ansetzen und auf 0
+  // ausklingen lassen — die Nachbarn gleiten statt zu springen.
+  const gleiteNachbarn = (vorher: Map<HTMLElement, DOMRect>): void => {
+    if (reduzierteBewegung) return;
+    for (const [el, alt] of vorher) {
+      if (el === card) continue;
+      const neu = el.getBoundingClientRect();
+      const dx = alt.left - neu.left;
+      const dy = alt.top - neu.top;
+      if (!dx && !dy) continue;
+      el.animate(
+        [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0, 0)' }],
+        { duration: 180, easing: 'ease-out' },
+      );
+    }
+  };
+
+  const sortiereEin = (): void => {
+    // Ziel-Spalte: die, deren Rechteck den Zeiger horizontal enthält —
+    // über dem Main-Content bleibt die Karte, wo sie ist, bis der Zeiger
+    // eine Sidebar erreicht.
+    const ziel = spalten.find((c) => {
+      const r = c.getBoundingClientRect();
+      return px >= r.left && px <= r.right;
     });
-  }
+    if (!ziel) return;
+    const geschwister = [...ziel.querySelectorAll<HTMLElement>(':scope > .card[data-panel]')]
+      .filter((c) => c !== card);
+    const next = geschwister.find((s) => {
+      const r = s.getBoundingClientRect();
+      return py < r.top + r.height / 2;
+    });
+    const anker = next ?? ziel.querySelector(':scope > .sb-rs');
+    if (card.parentElement === ziel && card.nextElementSibling === anker) return;
+    const vorher = messeAlle();
+    if (anker) ziel.insertBefore(card, anker);
+    else ziel.appendChild(card);
+    gleiteNachbarn(vorher);
+  };
+
+  const bewege = (): void => {
+    raf = 0;
+    if (!clone) return;
+    clone.style.transform = `translate(${px - offX}px, ${py - offY}px) rotate(1.5deg)`;
+    sortiereEin();
+  };
+
+  const erstelleClone = (): HTMLElement => {
+    const c = card.cloneNode(true) as HTMLElement;
+    // ID-Zwillinge wären Gift: Renderer schreiben live über getElementById —
+    // träfen sie den Clone, malte das Dashboard in den Geist am Zeiger.
+    c.removeAttribute('id');
+    c.querySelectorAll('[id]').forEach((e) => e.removeAttribute('id'));
+    c.classList.remove('dragging');
+    c.classList.add('panel-fliegt');
+    c.style.width = `${r0.width}px`;
+    c.style.height = `${r0.height}px`;
+    c.style.transform = `translate(${r0.left}px, ${r0.top}px)`;
+    document.body.appendChild(c);
+    return c;
+  };
+
+  const onMove = (ev: PointerEvent): void => {
+    px = ev.clientX;
+    py = ev.clientY;
+    if (!clone) {
+      // Erst ab 5 px Bewegung wird es ein Drag — ein Klick bleibt ein Klick.
+      if (Math.hypot(px - start.clientX, py - start.clientY) < 5) return;
+      clone = erstelleClone();
+      card.classList.add('dragging');
+    }
+    if (!raf) raf = requestAnimationFrame(bewege);
+  };
+
+  const onUp = (): void => {
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onUp);
+    if (raf) cancelAnimationFrame(raf);
+    if (!clone) return; // nie bewegt — der Klick gehört dem Titelzeilen-Handler
+    card.classList.remove('dragging');
+    dragEndeUm = Date.now(); // Nachklick des Drags darf nicht klappen
+    // Der Clone gleitet auf den endgültigen Platz des Originals und löst
+    // sich auf; Sicherheitsnetz gegen stehende Animations-Uhren wie beim
+    // Akkordeon (Headless/gedrosselte Tabs).
+    const geist = clone;
+    clone = null;
+    const weg = (): void => geist.remove();
+    if (reduzierteBewegung) {
+      weg();
+    } else {
+      const rZiel = card.getBoundingClientRect();
+      const anim = geist.animate(
+        [
+          { transform: geist.style.transform, opacity: 0.92 },
+          { transform: `translate(${rZiel.left}px, ${rZiel.top}px)`, opacity: 0.4 },
+        ],
+        { duration: 160, easing: 'ease-out' },
+      );
+      anim.onfinish = weg;
+      window.setTimeout(weg, 400);
+    }
+    commitPanelOrder();
+  };
+
+  window.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', onUp);
 }
 
 /**
@@ -5863,21 +5999,14 @@ function wirePanelChrome(): void {
         : '') +
       `<button type="button" class="sect-btn" data-x title="${t('gp.modulAusblenden')}">✕</button>`;
     sect.appendChild(box);
-    // Drag-Reorder (Taschenmesser Teil 3): Karte ist nur draggable, solange
-    // der Grip gedrückt ist — sonst stört Drag jede Text-Selektion.
+    // Drag-Reorder: eigenes Pointer-Drag (startePanelDrag) statt HTML5-DnD —
+    // die Karte heftet als Clone am Zeiger und die Nachbarn gleiten (FLIP).
     const grip = box.querySelector<HTMLElement>('[data-grip]');
     if (grip) {
-      grip.addEventListener('pointerdown', () => card.setAttribute('draggable', 'true'));
-      grip.addEventListener('pointerup', () => card.removeAttribute('draggable'));
-      card.addEventListener('dragstart', (ev) => {
-        card.classList.add('dragging');
-        (ev as DragEvent).dataTransfer?.setData('text/plain', id);
-      });
-      card.addEventListener('dragend', () => {
-        card.classList.remove('dragging');
-        card.removeAttribute('draggable');
-        dragEndeUm = Date.now(); // Nachklick des Drags darf nicht klappen
-        commitPanelOrder();
+      grip.addEventListener('pointerdown', (ev) => {
+        if (ev.pointerType === 'mouse' && ev.button !== 0) return;
+        ev.preventDefault(); // keine Text-Selektion, kein Scroll-Start am Grip
+        startePanelDrag(card, ev);
       });
     }
     fold.addEventListener('click', (ev) => {
@@ -5912,6 +6041,7 @@ function scheduleWsSave(): void {
           {
             hidden: st!.wsHidden.has(id),
             ...(st!.wsOrder[id] !== undefined ? { order: st!.wsOrder[id] } : {}),
+            ...(st!.wsCol[id] !== undefined ? { col: st!.wsCol[id] } : {}),
           },
         ]),
       ),
@@ -9133,6 +9263,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     wsPreset: 'ueberblick',
     wsHidden: new Set(DEFAULT_HIDDEN),
     wsOrder: {},
+    wsCol: {},
     chartTypeSel: ((): ChartType => {
       const t = (localStorage.getItem('autotrd-chart-style') ?? '').split('|')[0];
       return ['candles', 'hollow', 'heikin', 'line', 'area', 'baseline', 'bars'].includes(t ?? '')
@@ -9462,6 +9593,13 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         .filter(([, cfg]) => typeof cfg?.order === 'number')
         .map(([id, cfg]) => [id, cfg.order as number]),
     );
+    // Spaltenwahl (Pointer-Drag): nur die zwei echten Sidebar-Ids gelten —
+    // alles andere aus dem Doc wird ignoriert, nie ins DOM übernommen.
+    st.wsCol = Object.fromEntries(
+      Object.entries(ws.panels ?? {})
+        .filter(([, cfg]) => cfg?.col === 'leftCol' || cfg?.col === 'rightCol')
+        .map(([id, cfg]) => [id, cfg.col as 'leftCol' | 'rightCol']),
+    );
     applyPanels();
     applyPanelOrder();
     const g = (v: unknown): LinkGroup => (v === 'B' || v === 'C' ? v : 'A');
@@ -9663,7 +9801,6 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   $('sideR').addEventListener('click', () => { sbState.r = sbState.r !== true; applySidebars(); });
   applySidebars();
   wirePanelChrome();
-  wireColumnDnD();
   wireSidebarResize();
   // Test-Hook (E2E): Reorder über denselben Pfad wie der Drop
   (window as unknown as { __autotrdWs?: unknown }).__autotrdWs = {
