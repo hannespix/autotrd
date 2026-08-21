@@ -84,6 +84,24 @@ describe('Pointer-Drag — Anheften, FLIP-Gleiten, Spaltenwechsel', () => {
     expect(data).toContain("col?: 'leftCol' | 'rightCol'");
   });
 
+  it('Mittelspalte (Owner 21.08.): Reorder per Grip, aber nie Main↔Sidebar', () => {
+    // Die Hauptansicht bekommt eine Spalten-Id und ihre Karten den Grip —
+    // sortiert wird NUR innerhalb der Mitte (Chart-Werkbank bleibt).
+    expect(dashboard).toContain('<div class="col-m" id="centerCol">');
+    expect(dashboard).toContain("const inMitte = card.parentElement?.id === 'centerCol';");
+    expect(drag).toContain("quelle.id === 'centerCol'");
+    expect(drag).toContain("(quelle.id === 'centerCol' ? ['centerCol'] : ['leftCol', 'rightCol'])");
+    // Ordnung wird für alle drei Spalten eingefroren, die SPALTE nur für
+    // Sidebars — der Lade-Pfad validiert weiter auf die zwei Sidebar-Ids.
+    expect(dashboard).toContain("for (const colId of ['leftCol', 'rightCol', 'centerCol'] as const) {");
+    expect(dashboard).toContain("if (colId !== 'centerCol') st!.wsCol[c.dataset.panel ?? ''] = colId;");
+    expect(dashboard).toContain("for (const colId of ['leftCol', 'rightCol', 'centerCol']) {");
+    // sig-grid (Signal-Kacheln, kein Karten-Kopf) sortiert als
+    // [data-panel]-Geschwister mit — sonst rutschte es beim Boot-appendChild
+    // vor alle Karten.
+    expect(drag).toContain(":scope > [data-panel]");
+  });
+
   it('CSS: der fliegende Clone existiert, der Grip blockt Touch-Scroll', () => {
     expect(css).toContain('.panel-fliegt { position: fixed;');
     expect(css).toContain('.sect-grip { touch-action: none; }');

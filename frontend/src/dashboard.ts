@@ -721,7 +721,7 @@ function layout(email: string): string {
       </div></div>
     </div>
 
-    <div class="col-m">
+    <div class="col-m" id="centerCol">
       <div class="livebar" id="liveBar"></div>
 
       <div class="card" data-panel="chart"><div class="sect">${t('panel.chartKopf')} <button class="lchip" id="chipChart" title="${t('chart.linkGruppe')}">A</button></div><div class="cbody">
@@ -5592,10 +5592,13 @@ function applyPanelOrder(): void {
     // positioniert und steht nach der Order-Sortierung am Spaltenanfang.
     ziel.appendChild(card);
   }
-  for (const colId of ['leftCol', 'rightCol']) {
+  for (const colId of ['leftCol', 'rightCol', 'centerCol']) {
     const col = document.getElementById(colId);
     if (!col) continue;
-    const cards = [...col.querySelectorAll<HTMLElement>(':scope > .card[data-panel]')];
+    // [data-panel]: In der Mittelspalte sortiert auch das Signal-Kachel-
+    // Grid mit (fehlende Order = DOM-Position, der Default bleibt exakt);
+    // die livebar trägt kein data-panel und bleibt immer oben.
+    const cards = [...col.querySelectorAll<HTMLElement>(':scope > [data-panel]')];
     const pos = new Map(cards.map((c, i) => [c, i]));
     cards
       .sort(
@@ -5610,13 +5613,15 @@ function applyPanelOrder(): void {
 /** Reihenfolge UND Spalte aus dem DOM einfrieren (nach einem Drop) und speichern. */
 function commitPanelOrder(): void {
   if (!st) return;
-  for (const colId of ['leftCol', 'rightCol'] as const) {
+  for (const colId of ['leftCol', 'rightCol', 'centerCol'] as const) {
     document
       .getElementById(colId)
-      ?.querySelectorAll<HTMLElement>(':scope > .card[data-panel]')
+      ?.querySelectorAll<HTMLElement>(':scope > [data-panel]')
       .forEach((c, i) => {
         st!.wsOrder[c.dataset.panel ?? ''] = i;
-        st!.wsCol[c.dataset.panel ?? ''] = colId;
+        // Die Spalte wird nur für Sidebar-Karten persistiert — Mittelspalten-
+        // Karten ziehen nie um, und der Lade-Pfad validiert auf die zwei Ids.
+        if (colId !== 'centerCol') st!.wsCol[c.dataset.panel ?? ''] = colId;
       });
   }
   scheduleWsSave();
@@ -5651,7 +5656,7 @@ function movePanel(id: string, delta: number): void {
  */
 function startePanelDrag(card: HTMLElement, start: PointerEvent): void {
   const quelle = card.parentElement;
-  if (!quelle || !(quelle.id === 'leftCol' || quelle.id === 'rightCol')) return;
+  if (!quelle || !(quelle.id === 'leftCol' || quelle.id === 'rightCol' || quelle.id === 'centerCol')) return;
   const r0 = card.getBoundingClientRect();
   const offX = start.clientX - r0.left;
   const offY = start.clientY - r0.top;
@@ -5660,14 +5665,19 @@ function startePanelDrag(card: HTMLElement, start: PointerEvent): void {
   let px = start.clientX;
   let py = start.clientY;
 
-  const spalten = ['leftCol', 'rightCol']
+  // Mittelspalten-Karten sortieren NUR innerhalb ihrer Spalte; Sidebar-
+  // Karten wechseln wie gehabt zwischen links und rechts.
+  const spalten = (quelle.id === 'centerCol' ? ['centerCol'] : ['leftCol', 'rightCol'])
     .map((cid) => document.getElementById(cid))
     .filter((c): c is HTMLElement => !!c);
 
   const messeAlle = (): Map<HTMLElement, DOMRect> => {
     const m = new Map<HTMLElement, DOMRect>();
+    // [data-panel] statt .card[data-panel]: In der Mittelspalte sortiert das
+    // Signal-Kachel-Grid (sig-grid, kein Karten-Kopf) als Geschwister mit —
+    // es gleitet beim FLIP und behält einen festen Ordnungsplatz.
     for (const col of spalten)
-      for (const c of col.querySelectorAll<HTMLElement>(':scope > .card[data-panel]'))
+      for (const c of col.querySelectorAll<HTMLElement>(':scope > [data-panel]'))
         m.set(c, c.getBoundingClientRect());
     return m;
   };
@@ -5705,7 +5715,7 @@ function startePanelDrag(card: HTMLElement, start: PointerEvent): void {
         return px >= r.left && px <= r.right;
       });
     if (!ziel) return;
-    const geschwister = [...ziel.querySelectorAll<HTMLElement>(':scope > .card[data-panel]')]
+    const geschwister = [...ziel.querySelectorAll<HTMLElement>(':scope > [data-panel]')]
       .filter((c) => c !== card);
     // Entscheidung im Fluss OHNE die gezogene Karte: Nachbarn, die unter ihr
     // liegen, werden um ihre Höhe plus Spalten-Lücke nach oben gedacht.
@@ -6030,8 +6040,12 @@ function wirePanelChrome(): void {
     const box = document.createElement('span');
     box.className = 'sect-tools';
     const inSidebar = card.parentElement?.id === 'leftCol' || card.parentElement?.id === 'rightCol';
+    // Mittelspalte (Owner 21.08.: „oder wenigstens die Reihenfolge
+    // verändern"): auch dort ein Grip — sortiert wird NUR innerhalb der
+    // Spalte, der Umzug Main↔Sidebar bleibt bewusst aus (Chart-Werkbank).
+    const inMitte = card.parentElement?.id === 'centerCol';
     box.innerHTML =
-      (inSidebar
+      (inSidebar || inMitte
         ? '<button type="button" class="sect-btn sect-grip" data-grip title="Modul verschieben (ziehen)">⠿</button>'
         : '') +
       `<button type="button" class="sect-btn" data-x title="${t('gp.modulAusblenden')}">✕</button>`;
