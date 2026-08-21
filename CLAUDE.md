@@ -249,6 +249,17 @@ $PY scripts/forecast_eval.py        # darf nur realisierte Horizonte bewerten
 Für UI-Änderungen zusätzlich mit headless Chrome bei Desktop (1500) **und** Phone
 (390) prüfen. Für Flows mit mehreren Klicks lohnt das `verify`-Skill / Chrome-MCP.
 
+> **Nach einem Stapel Änderungen: ein Zusammenspiel-Durchgang.** Acht einzeln
+> verifizierte Änderungen ergeben keinen verifizierten Stand — Fehler sitzen
+> dann in der **Naht** zwischen ihnen. Beleg 21.08.: Die Depot-Teilen-Karte
+> und die sprachabhängige Zahlenformatierung entstanden am selben Abend in
+> zwei getrennten Änderungen. Beide Prüfstände waren grün; trotzdem stand
+> danach „118.40 → 131.02" mit Punkt neben „+10,7 %" mit Komma in derselben
+> Zeile derselben Karte, weil die zweite Änderung nur umstellte, was es zu
+> ihrer Zeit gab. Kein Unit-Test konnte das sehen — nur das gerenderte Bild.
+> Also: am Ende eines solchen Abends alle Änderungen **gemeinsam** gegen
+> echte Daten im Browser ansehen, nicht nur jede für sich.
+
 ## 9. Git-Konventionen
 
 - **Nie** `~/.hermes/trading/`, `.env`, `*.db`, `*.bak` committen (siehe
