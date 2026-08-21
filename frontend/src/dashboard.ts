@@ -6633,6 +6633,19 @@ function renderEngineWhy(): void {
     chip.title = t('ew.knappTitel');
     ampel.append(chip);
   }
+  /* Nachbuchungs-Rückstand (Owner-Fund 21.08.: „5 Trades nicht
+   * registriert"). Bis dahin gab es diese Zahl nirgends — eine Heilung, die
+   * seit Tagen nichts mehr bucht, war von einer ohne Arbeit nicht zu
+   * unterscheiden. `steckt` ist die Nachricht: Diese Fills liegen real beim
+   * Broker, im Buch fehlen sie, und die Heilung kommt an sie nicht mehr
+   * heran. Der Chip ist rot, weil er Handlung verlangt (Depot-Übernahme),
+   * und er erscheint nur, wenn wirklich etwas feststeckt. */
+  const steckt = h.nachbuchung?.steckt ?? 0;
+  if (steckt > 0) {
+    const chip = whyChip(`${steckt} ${t('ew.nachbuchungSteckt')}`, 'var(--rd)');
+    chip.title = t('ew.nachbuchungTitel');
+    ampel.append(chip);
+  }
   /* Signal-Kanten-Chip (MI → 07.08.): Die Regime-Variante ist nach der
    * vorregistrierten Regel EINGESTELLT (n=5187, Kante −0,29 %, roh −0,004 %
    * gegen live −0,247 %/+0,021 % — sie schlug die gehandelte Logik nicht).
