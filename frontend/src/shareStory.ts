@@ -25,6 +25,7 @@ import {
   mitVorzeichen,
   shareCard,
   siegelBreite,
+  zahl,
   type ShareDaten,
   type SharePosition,
 } from './shareCard.js';
@@ -154,7 +155,12 @@ function depotKarte(d: ShareDaten): string {
     const richtungFarbe = p.short ? FARBE.rot : FARBE.gruen;
     // Tag-Breite grob aus der Zeichenzahl — SVG kann nicht messen.
     const tagBreite = richtung.length * 15 + 26;
-    const kurse = `${p.einstieg.toFixed(2)} → ${p.aktuell === null ? '—' : p.aktuell.toFixed(2)}`;
+    // Über `zahl()`, nicht `toFixed` — sonst stünde „118.40 → 131.02" mit
+    // Punkt direkt neben „+10,7 %" mit Komma, in derselben Zeile derselben
+    // Karte. Aufgefallen erst im gerenderten Bild (Zusammenspiel-Prüfung
+    // 21.08.): Depot-Karte und Zahlenformat entstanden am selben Abend in
+    // zwei getrennten Änderungen und liefen aneinander vorbei.
+    const kurse = `${zahl(p.einstieg)} → ${p.aktuell === null ? '—' : zahl(p.aktuell)}`;
     const menge = d.betraege ? `${p.qty} × ` : '';
     return (
       `<text x="90" y="${y}" fill="${FARBE.text}" font-size="38" font-weight="700">${esc(p.symbol.slice(0, 10))}</text>`
