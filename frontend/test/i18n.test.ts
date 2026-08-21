@@ -15,6 +15,7 @@ import { DE, EN, serverText, sprachWahl, uebersetze, type TextSchluessel } from 
 const main = readFileSync(join(import.meta.dirname, '..', 'src', 'main.ts'), 'utf8');
 const auth = readFileSync(join(import.meta.dirname, '..', 'src', 'auth.ts'), 'utf8');
 const dashboard = readFileSync(join(import.meta.dirname, '..', 'src', 'dashboard.ts'), 'utf8');
+const legal = readFileSync(join(import.meta.dirname, '..', 'src', 'legal.ts'), 'utf8');
 
 describe('die Fallback-Regel — fehlendes Englisch zeigt Deutsch, nie Lücken', () => {
   it('fehlender EN-Eintrag fällt auf den deutschen Text zurück', () => {
@@ -248,6 +249,23 @@ describe('Golden-Wächter — im DE-Modus exakt die bisherigen Texte', () => {
     expect(DE['panel.erkenntnisse']).toBe('Erkenntnisse');
   });
 
+  it('Tranche 5: die deutschen Hauptansicht-Reste sind byte-gleich zum Bestand', () => {
+    expect(DE['lay.optionenWort']).toBe('Optionen');
+    expect(DE['lay.symbolKatalog']).toBe('Symbol (Katalog)');
+    expect(DE['lay.kursEinheit']).toBe('Kurs/Einheit');
+    expect(DE['lay.heute']).toBe('Heute');
+    expect(DE['zr.alles']).toBe('Alles');
+    expect(DE['zr.jahr']).toBe('1J');
+    expect(DE['zr.tagKuerzel']).toBe('T');
+    // Text-Diät-Tabu: Die deutsche Warn-Zeile des Footers bleibt WÖRTLICH —
+    // und die englische trägt dieselbe Härte, nie eine weichere Fassung.
+    expect(DE['legal.zeile']).toBe('Trading birgt erhebliche Verlustrisiken — keine Anlageberatung.');
+    expect(EN['legal.zeile']).toBe('Trading involves a substantial risk of loss — this is not investment advice.');
+    expect(DE['legal.risikohinweis']).toBe('Risikohinweis');
+    expect(DE['legal.impressum']).toBe('Impressum');
+    expect(DE['legal.datenschutz']).toBe('Datenschutz');
+  });
+
   it('Tranche 1: die deutschen Kopfleisten-Texte sind byte-gleich zum Bestand', () => {
     expect(DE['nav.engineAus']).toBe('Engine aus');
     expect(DE['nav.engineAn']).toBe('Engine an');
@@ -298,6 +316,45 @@ describe('Anschluss-Wächter — die Funktion ist verdrahtet, nicht nur vorhande
     // Keine hartkodierten Reste in der Kopfleiste.
     expect(dashboard).not.toContain('>Engine aus</div>');
     expect(dashboard).not.toContain('aria-label="Linkes Panel"');
+  });
+
+  it('Tranche 5: Hauptansicht-Reste ziehen über t() — keine hartkodierten DE-Wörter mehr', () => {
+    for (const k of [
+      "t('opt.speichern')",
+      "t('lay.optionenWort')",
+      "t('lay.symbolKatalog')",
+      "t('lay.kursEinheit')",
+      "t('lay.heute')",
+      "t('tab.konfluenz')}</th>",
+    ]) {
+      expect(dashboard).toContain(k);
+    }
+    // Die früheren Hartkodierungen sind restlos raus.
+    expect(dashboard).not.toContain('>Speichern</button>');
+    expect(dashboard).not.toContain('<b>Optionen (⚙)</b>');
+    expect(dashboard).not.toContain('<th>Konfluenz</th>');
+    expect(dashboard).not.toContain('>Symbol (Katalog)<');
+    expect(dashboard).not.toContain('>Kurs/Einheit<');
+    expect(dashboard).not.toContain('>Heute</label>');
+    // Zeitraum-Chips: UI-Beschriftung läuft über den i18n-Wrapper — das
+    // deutsche shared/zeitraumLabel hängt an keiner Chip-Renderstelle mehr.
+    expect(dashboard).toContain('function zeitraumLabelUi(tage: Zeitraum): string {');
+    expect(dashboard).toContain("if (tage === 0) return t('zr.alles');");
+    expect(dashboard).toContain("if (tage === 365) return t('zr.jahr');");
+    expect(dashboard).toContain("return `${tage}${t('zr.tagKuerzel')}`;");
+    expect((dashboard.match(/zeitraumLabelUi\(/g) ?? []).length).toBe(5); // Definition + 4 Renderstellen
+    expect(dashboard).not.toContain('esc(zeitraumLabel(');
+    expect(dashboard).not.toContain('zeitraumLabel(zr)');
+  });
+
+  it('Tranche 5: der Legal-Footer zieht Beschriftungen über t(), die Rechtstexte bleiben deutsch', () => {
+    for (const k of ["t('legal.zeile')", "t('legal.risikohinweis')", "t('legal.impressum')", "t('legal.datenschutz')"]) {
+      expect(legal).toContain(k);
+    }
+    expect(legal).not.toContain('<span>Trading birgt erhebliche');
+    // Die Rechtstexte (TITLES/TEXTS) sind bewusst NICHT übersetzt — der
+    // Risikohinweis-Volltext bleibt der geprüfte deutsche Wortlaut.
+    expect(legal).toContain("disclaimer: 'Risikohinweis',");
   });
 
   it('der Optionen-Tab „Anzeige" zieht seine Texte über t()', () => {

@@ -34,7 +34,6 @@ import {
   historieReicht,
   imZeitraum,
   zeitraumBeginn,
-  zeitraumLabel,
   ZEITRAEUME,
   type Zeitraum,
   lokalerTag,
@@ -653,9 +652,9 @@ function layout(email: string): string {
              hießen: Wer zuletzt speichert, gewinnt — und die andere Ansicht
              zeigt bis zum Neuladen veraltete Zahlen. -->
         <p class="hint">${t('lay.reglerHinweisA')}
-          <b>Optionen (⚙)</b> ${t('lay.reglerHinweisB')}</p>
+          <b>${t('lay.optionenWort')} (⚙)</b> ${t('lay.reglerHinweisB')}</p>
         <p id="stratErr" class="error" hidden></p>
-        <button class="btn btn-g" id="saveBtn">Speichern</button>
+        <button class="btn btn-g" id="saveBtn">${t('opt.speichern')}</button>
         <div class="hint" id="saveHint"></div>
       </div></div>
 
@@ -905,7 +904,7 @@ function layout(email: string): string {
 
       <div class="card" data-panel="autosignals"><div class="sect">${t('panel.autoSignale')}</div><div class="cbody">
         <div class="tw"><table class="tbl tbl-karten tbl-kompakt">
-          <thead><tr><th>Ticker</th><th>RSI</th><th>MACD</th><th>BB %</th><th>Konfluenz</th><th>Signal</th></tr></thead>
+          <thead><tr><th>Ticker</th><th>RSI</th><th>MACD</th><th>BB %</th><th>${t('tab.konfluenz')}</th><th>Signal</th></tr></thead>
           <tbody id="sigBody"><tr><td colspan="6" class="c-t3">${t('lay.keinScan')}</td></tr></tbody>
         </table></div>
       </div></div>
@@ -1034,7 +1033,7 @@ function layout(email: string): string {
       </div></div>
 
       <div class="card" data-panel="manualtrade"><div class="sect">${t('panel.manuellerTrade')}</div><div class="cbody">
-        <label class="lbl">Symbol (Katalog)</label>
+        <label class="lbl">${t('lay.symbolKatalog')}</label>
         <div class="mt-combo">
           <input id="mSym" class="inp" placeholder="${t('lay.suchen')}" autocomplete="off">
           <div id="mSymList" class="mt-list" hidden></div>
@@ -1042,8 +1041,8 @@ function layout(email: string): string {
         <div id="mtInfo" hidden>
           <div class="hint" id="mtName"></div>
           <div class="row mt-inds">
-            <div><label class="lbl">Kurs/Einheit</label><div id="mtPx" class="smv mono">--</div></div>
-            <div><label class="lbl">Heute</label><div id="mtChg" class="smv mono">--</div></div>
+            <div><label class="lbl">${t('lay.kursEinheit')}</label><div id="mtPx" class="smv mono">--</div></div>
+            <div><label class="lbl">${t('lay.heute')}</label><div id="mtChg" class="smv mono">--</div></div>
             <div><label class="lbl">RSI ${iBtn('rsi')}</label><div id="mtRsi" class="smv mono">--</div></div>
             <div><label class="lbl">MACD ${iBtn('macd')}</label><div id="mtMacd" class="smv">--</div></div>
             <div><label class="lbl">Signal ${iBtn('signal')}</label><div id="mtSig" class="smv">--</div></div>
@@ -7444,6 +7443,15 @@ async function waehleZeitraum(tage: Zeitraum): Promise<void> {
   }
 }
 
+/** Zeitraum-Chip-Beschriftung in der Oberfläche (EN-Tranche 4): „Alles/1J/NT"
+ *  je Sprache. shared/zeitraumLabel bleibt bewusst deutsch — shared hat kein
+ *  i18n, und die Chips sind der einzige sichtbare Verwender. */
+function zeitraumLabelUi(tage: Zeitraum): string {
+  if (tage === 0) return t('zr.alles');
+  if (tage === 365) return t('zr.jahr');
+  return `${tage}${t('zr.tagKuerzel')}`;
+}
+
 /** Die Chip-Leiste über der Auswertung. */
 function renderZeitraumChips(): void {
   const leiste = $('anZeit');
@@ -7451,7 +7459,7 @@ function renderZeitraumChips(): void {
   leiste.innerHTML = ZEITRAEUME.map(
     (z) =>
       `<button class="tf-btn${z === st!.anZeitraum ? ' on' : ''}" data-anz="${z}"` +
-      `${st!.anLaedt ? ' disabled' : ''}>${esc(zeitraumLabel(z))}</button>`,
+      `${st!.anLaedt ? ' disabled' : ''}>${esc(zeitraumLabelUi(z))}</button>`,
   ).join('');
   for (const b of leiste.querySelectorAll<HTMLButtonElement>('[data-anz]')) {
     b.addEventListener('click', () => {
@@ -7492,7 +7500,7 @@ function renderAnalytics(): void {
      * ist der Zeitraum gewählt, aber nicht vollständig belegt. */
     const voll = st.tradesDone || historieReicht(st.trades, st.anZeitraum, new Date(), st.tradesDone);
     scope.textContent =
-      `${summary.closed} ${t('an.geschlossen')} · ${zeitraumLabel(st.anZeitraum)}` +
+      `${summary.closed} ${t('an.geschlossen')} · ${zeitraumLabelUi(st.anZeitraum)}` +
       `${st.anLaedt ? ` · ${t('an.laedt')}` : voll ? '' : ` (${t('an.geladen')})`}`;
   }
 
@@ -7662,7 +7670,7 @@ function renderPfZeitChips(): void {
   if (!leiste || !st) return;
   leiste.innerHTML = ZEITRAEUME.map(
     (z) =>
-      `<button class="tf-btn${z === st!.pfZeitraum ? ' on' : ''}" data-pfz="${z}">${esc(zeitraumLabel(z))}</button>`,
+      `<button class="tf-btn${z === st!.pfZeitraum ? ' on' : ''}" data-pfz="${z}">${esc(zeitraumLabelUi(z))}</button>`,
   ).join('');
   for (const b of leiste.querySelectorAll<HTMLButtonElement>('[data-pfz]')) {
     b.addEventListener('click', () => {
@@ -7764,7 +7772,7 @@ function renderPfStats(): void {
   // aus wie die ganze Historie eines jungen Kontos.
   renderPfKurven(
     serie,
-    (zr === 0 ? '' : `${zeitraumLabel(zr)} · `)
+    (zr === 0 ? '' : `${zeitraumLabelUi(zr)} · `)
       + wahl.hinweis
       // Der Vergleich gehört an die Kurve, nicht in eine eigene Ecke: Wer
       // die Linie sieht, soll die Zahl daneben lesen können.

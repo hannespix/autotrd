@@ -108,9 +108,9 @@ describe('Der Kopf sagt, worauf die Zahlen beruhen', () => {
     // Genau die Angabe fehlte: „Trefferquote 30 %" aus vier Tagen sah aus
     // wie eine aus vier Monaten.
     // Seit Tranche 5o wohnt der Wortlaut im Wörterbuch — die Aussage bleibt:
-    // Kopf = Anzahl (an.geschlossen) UND Zeitraum (zeitraumLabel) nebeneinander.
+    // Kopf = Anzahl (an.geschlossen) UND Zeitraum (zeitraumLabelUi, i18n-fähig) nebeneinander.
     const block = analyseBlock();
-    expect(block).toContain("${t('an.geschlossen')} · ${zeitraumLabel(st.anZeitraum)}");
+    expect(block).toContain("${t('an.geschlossen')} · ${zeitraumLabelUi(st.anZeitraum)}");
     expect(DE['an.geschlossen']).toBe('geschlossen');
   });
 

@@ -10,6 +10,8 @@
  * neue Handelswege) MÜSSEN diese Texte im selben PR mitziehen.
  */
 
+import { t } from './i18n.js';
+
 export type LegalKind = 'impressum' | 'datenschutz' | 'disclaimer';
 
 const TITLES: Record<LegalKind, string> = {
@@ -174,12 +176,16 @@ export function openLegal(kind: LegalKind): void {
 export function mountLegalFooter(container: HTMLElement): void {
   const foot = document.createElement('footer');
   foot.className = 'legal-foot';
+  // EN-Tranche 4: Nur die Footer-BESCHRIFTUNGEN laufen über t() — die
+  // Rechtstexte selbst (TEXTS/TITLES) bleiben bewusst deutsch, und die
+  // deutsche Disclaimer-Zeile bleibt wörtlich erhalten (Text-Diät-Tabu:
+  // Warn-Texte nie abschwächen; die EN-Fassung trägt dieselbe Härte).
   foot.innerHTML = `
-    <span>Trading birgt erhebliche Verlustrisiken — keine Anlageberatung.</span>
+    <span>${t('legal.zeile')}</span>
     <nav>
-      <a href="#" data-legal="disclaimer">Risikohinweis</a>
-      <a href="#" data-legal="impressum">Impressum</a>
-      <a href="#" data-legal="datenschutz">Datenschutz</a>
+      <a href="#" data-legal="disclaimer">${t('legal.risikohinweis')}</a>
+      <a href="#" data-legal="impressum">${t('legal.impressum')}</a>
+      <a href="#" data-legal="datenschutz">${t('legal.datenschutz')}</a>
     </nav>`;
   foot.querySelectorAll<HTMLAnchorElement>('[data-legal]').forEach((a) =>
     a.addEventListener('click', (e) => {
