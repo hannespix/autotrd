@@ -105,6 +105,7 @@ import {
   adminListUsers,
   adminLiveStatus,
   adminSetAccess,
+  adminAbgleich,
   adminSetAdmin,
   adminSetKillSwitch,
   callTrade,
@@ -6785,6 +6786,23 @@ async function loadAdminList(): Promise<void> {
       reife.title = reifeFazit(row.reife);
       if (row.reife.bereit) reife.style.color = 'var(--gn)';
       line.append(who, perf, reife, badge);
+      /* Abgleich-Sperre je Konto sichtbar (Owner 21.08.: „diese Sperre von
+       * anderen Usern für Admin auch sichtbar machen").
+       *
+       * Der Heartbeat meldete nur „1 Konten gesperrt" — welches, stand
+       * nirgends. Der Chip erscheint NUR bei aktiver Sperre: Ein grünes
+       * „alles gut" an jedem Konto wäre Rauschen, das die eine rote Zeile
+       * versteckt, um die es geht. */
+      if (row.abgleich?.sperre) {
+        const chip = document.createElement('span');
+        chip.className = 'stag t-sell';
+        chip.style.whiteSpace = 'nowrap';
+        chip.textContent = t('adm.abgleichGesperrt');
+        chip.title = row.abgleich.fehlbestand > 0
+          ? `${row.abgleich.fehlbestand} ${t('adm.abgleichFehlbestand')}`
+          : t('adm.abgleichKontoGrob');
+        line.append(chip);
+      }
       // Das eigene Konto listet der Server mit, ändern lehnt er ab — dieselbe
       // Regel hier: keine Knöpfe, statt Knöpfe, die immer scheitern.
       if (row.uid !== st?.uid) {
@@ -6796,6 +6814,26 @@ async function loadAdminList(): Promise<void> {
             await adminSetAdmin(row.uid, !row.admin);
           }, 'btn-n'),
         );
+        /* „Abgleichen" nur, wo es etwas zu prüfen gibt — also bei
+         * verbundenem Broker. Der Knopf hebt keine Sperre auf, er misst
+         * neu: Ist die Drift weg (etwa weil eine Order inzwischen
+         * durchlief), fällt die Sperre von selbst. Bleibt sie, sagt die
+         * Antwort warum — und der Weg heißt dann „Depot übernehmen",
+         * bestätigt vom Konto-Inhaber. */
+        if (row.abgleich) {
+          line.append(
+            admBtn(t('adm.abgleichen'), async () => {
+              const erg = await adminAbgleich(row.uid);
+              err.hidden = false;
+              err.style.color = erg.sperre ? 'var(--rd)' : 'var(--gn)';
+              err.textContent = !erg.geprueft
+                ? t('adm.abgleichKeinBroker')
+                : erg.sperre
+                  ? `${t('adm.abgleichBleibt')} ${erg.grund ?? ''}`.trim()
+                  : t('adm.abgleichGeloest');
+            }, 'btn-n'),
+          );
+        }
       }
       list.append(line);
     }

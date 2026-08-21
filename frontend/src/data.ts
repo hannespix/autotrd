@@ -1344,6 +1344,25 @@ export interface AdminUserRow {
   trades: number | null;
   /** Live-Reife-Kurzform aus liveGate.reifeFuerKonto (Server rechnet). */
   reife: { bereit: boolean; erfuellt: number; gesamt: number; fazit: string };
+  /** Broker-Abgleich des Kontos (Owner 21.08.) — `null` ohne Broker/Vermerk.
+   *  Die Sperr-Entscheidung kommt aus derselben Funktion wie im Scan. */
+  abgleich: {
+    sperre: boolean;
+    fehlbestand: number;
+    fremdbestand: number;
+    kontoZustand: string | null;
+    at: string | null;
+  } | null;
+}
+
+/** Ergebnis eines vom Admin ausgelösten Abgleichs. */
+export interface AdminAbgleichErgebnis {
+  geprueft: boolean;
+  zustand: string;
+  sperre: boolean;
+  fehlbestand: number;
+  fremdbestand: number;
+  grund: string | null;
 }
 
 /** Alle Konten (Wartende zuerst) — antwortet nur für Admin-Konten. */
@@ -1358,6 +1377,19 @@ export async function adminSetAccess(
   level: 'pending' | 'approved' | 'blocked',
 ): Promise<void> {
   await httpsCallable(fns(), 'adminUsers')({ action: 'set', target, level });
+}
+
+/**
+ * Broker-Abgleich eines FREMDEN Kontos neu ausführen (Owner 21.08.).
+ *
+ * Hebt keine Sperre auf, sondern misst neu: Stimmen Buch und Broker-Depot
+ * wieder überein, fällt die Sperre von selbst. Bleibt sie, sagt das
+ * Ergebnis warum — dann führt der Weg über `adoptBroker`, den der
+ * Konto-Inhaber bestätigt.
+ */
+export async function adminAbgleich(target: string): Promise<AdminAbgleichErgebnis> {
+  const r = await httpsCallable(fns(), 'adminUsers')({ action: 'abgleich', target });
+  return (r.data as { abgleich: AdminAbgleichErgebnis }).abgleich;
 }
 
 /** Admin-Recht eines FREMDEN Kontos vergeben/entziehen. */

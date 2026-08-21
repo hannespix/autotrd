@@ -32,6 +32,34 @@ import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { consumeQuota } from '../core/broker.js';
 import { accessLevelOf, type AccessLevel } from '../core/access.js';
 import { reifeFuerKonto } from '../core/liveGate.js';
+import { abgleichSperreAusVermerk } from '../core/kontoTore.js';
+import { abgleichFuerKonto, type VerlaufEintrag } from '../core/brokerAbgleich.js';
+
+/**
+ * Abgleich-Vermerk eines fremden Kontos für die Übersicht (21.08.).
+ *
+ * Die Sperr-Entscheidung kommt aus `abgleichSperreAusVermerk` — derselben
+ * Funktion, die der Scan benutzt. Sie hier nachzubauen hiesse, dass die
+ * Admin-Ansicht „gesperrt" sagen könnte, während die Engine handelt (oder
+ * umgekehrt): zwei Wahrheiten über dieselbe Sperre.
+ */
+function abgleichZeile(vermerk: unknown, jetzt: Date): AdminUserRow['abgleich'] {
+  if (typeof vermerk !== 'object' || vermerk === null) return null;
+  const v = vermerk as {
+    at?: unknown;
+    fehlbestand?: unknown;
+    fremdbestand?: unknown;
+    konto?: { zustand?: unknown };
+  };
+  const zahl = (x: unknown): number => (typeof x === 'number' && Number.isFinite(x) ? x : 0);
+  return {
+    sperre: abgleichSperreAusVermerk(vermerk, jetzt),
+    fehlbestand: zahl(v.fehlbestand),
+    fremdbestand: zahl(v.fremdbestand),
+    kontoZustand: typeof v.konto?.zustand === 'string' ? v.konto.zustand : null,
+    at: typeof v.at === 'string' ? v.at : null,
+  };
+}
 
 const DAILY_LIMIT = 300;
 const LEVELS: ReadonlySet<string> = new Set(['pending', 'approved', 'blocked']);
@@ -56,6 +84,35 @@ export interface AdminUserRow {
    *  und Order-Routing benutzen. Eine zweite Rechnung hier wäre eine zweite
    *  Wahrheit über die Echtgeld-Freigabe. */
   reife: { bereit: boolean; erfuellt: number; gesamt: number; fazit: string };
+  /**
+   * Broker-Abgleich des Kontos (Owner 21.08.: „diese Sperre von anderen
+   * Usern für Admin sichtbar machen").
+   *
+   * Der Heartbeat meldet nur eine SUMME („1 Konten gesperrt") — welches
+   * Konto es ist, stand nirgends. Ein Admin sah die Sperre also, konnte
+   * sie aber keinem Konto zuordnen und schon gar nicht helfen.
+   *
+   * Gelesen wird der gespeicherte Vermerk `risk.abgleich`, nicht neu
+   * gemessen: Die Übersicht listet alle Konten auf einmal: ein Broker-Call
+   * je Zeile wäre eine Lawine. Die Sperr-Entscheidung kommt aus derselben
+   * Funktion wie im Scan (`abgleichSperreAusVermerk`) — eine zweite
+   * Auslegung hier wäre eine zweite Wahrheit.
+   *
+   * `null` = das Konto hat keinen Broker verbunden (oder noch nie einen
+   * Abgleich gehabt).
+   */
+  abgleich: {
+    /** Sperrt der Vermerk gerade Einstiege? */
+    sperre: boolean;
+    /** Symbole, die das Buch führt und der Broker nicht (gefährlich). */
+    fehlbestand: number;
+    /** Symbole, die der Broker mehr hält (harmlos). */
+    fremdbestand: number;
+    /** Cash-/Equity-Vergleich: 'sauber' | 'leicht' | 'grob' | fehlend. */
+    kontoZustand: string | null;
+    /** Wann der Vermerk entstand (ISO) — ein alter Vermerk sperrt nicht. */
+    at: string | null;
+  } | null;
 }
 
 export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
@@ -111,6 +168,10 @@ export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
       }
       return preise.get(sym) ?? null;
     };
+    /* EIN Zeitstempel für alle Zeilen: Sonst könnten zwei Konten mit
+     * identischem Vermerk verschieden bewertet werden, nur weil die
+     * Schleife über die Frist lief. */
+    const jetzt = new Date();
     const rows: AdminUserRow[] = await Promise.all(
       snap.docs.map(async (d) => {
         let email: string | null = null;
@@ -165,6 +226,7 @@ export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
             gesamt: befund.gesamt,
             fazit: befund.fazit,
           },
+          abgleich: abgleichZeile(d.get('risk.abgleich'), jetzt),
         };
       }),
     );
@@ -193,6 +255,70 @@ export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
   // Zwei Kontotypen (Owner 02.08.): Admins ernennen/entlassen weitere Admins.
   // Nie sich selbst (targetRef) — so kann ein Admin sich nicht versehentlich
   // entmachten; den letzten Admin stellt zur Not die Konsole wieder her.
+  /**
+   * Broker-Abgleich für ein FREMDES Konto neu ausführen (Owner 21.08.:
+   * „als Admin andere Konten mit Broker abgleichen und Sperre lösen").
+   *
+   * ── Warum das die Sperre NICHT einfach aufhebt ────────────────────────
+   *
+   * Die Abgleich-Sperre ist kein Schalter, sondern ein Messergebnis: Sie
+   * steht, solange das Buch Positionen führt, die der Broker nicht hat
+   * (Fehlbestand), oder Cash und Depotwert grob auseinanderliegen. Sie
+   * schützt davor, dass die Engine auf Basis eines falschen Buchs kauft.
+   * Ein Admin-Knopf „Sperre aus" wäre genau die Art Ausnahme, die den
+   * Schutz wertlos macht — der Fehlbestand wäre ja weiterhin da.
+   *
+   * Deshalb löst dieser Aufruf die URSACHE-Prüfung neu aus: Er misst gegen
+   * den Broker und schreibt den Vermerk neu. Stimmt wieder alles überein,
+   * verschwindet die Sperre von selbst — das ist der Normalfall, wenn die
+   * Drift von einer Order kam, die inzwischen durchgelaufen ist. Bleibt
+   * sie, sagt die Antwort WARUM, und der Weg heißt dann `adoptBroker`
+   * (Buch an Broker angleichen) — ein markierter Schnitt, den der
+   * Konto-Inhaber bestätigt, kein stiller Admin-Eingriff in fremdes Geld.
+   *
+   * Gelesen wird beim Broker, geschrieben nur der Vermerk. Positionen,
+   * Wallet und Strategie des fremden Kontos bleiben unangetastet.
+   */
+  if (action === 'abgleich') {
+    const ref = targetRef();
+    const doc = await ref.get();
+    if (!doc.exists) throw new HttpsError('not-found', 'srv.unbekanntesKonto');
+
+    const positionen = (await ref.collection('positions').get()).docs.map(
+      (d) => d.data() as Position,
+    );
+    const cash = (doc.get('wallet.paperBalance') as number | undefined) ?? 0;
+    let posWert = 0;
+    for (const pos of positionen) {
+      /* Derselbe Kurs-Weg wie in der Liste: der gespeicherte Quote aus
+       * `market/{sym}`. Für den Kontoabgleich zählt die BUCH-Equity — ein
+       * frischer Broker-Kurs hier wäre eine zweite Zeitachse im Vergleich. */
+      const quote = (await db.collection('market').doc(pos.symbol).get()).get('quote') as
+        | { price?: number }
+        | undefined;
+      const kurs = typeof quote?.price === 'number' && quote.price > 0 ? quote.price : null;
+      posWert += positionValue(pos, kurs);
+    }
+    const befund = await abgleichFuerKonto(
+      target as string,
+      positionen,
+      new Date(),
+      doc.get('risk.abgleich') as { status?: string; verlauf?: VerlaufEintrag[] } | undefined,
+      { cash, equity: Math.round((cash + posWert) * 100) / 100 },
+    );
+    return {
+      ok: true,
+      abgleich: {
+        geprueft: befund.geprueft,
+        zustand: befund.zustand,
+        sperre: befund.sperre,
+        fehlbestand: befund.fehlbestand,
+        fremdbestand: befund.fremdbestand,
+        grund: befund.grund ?? null,
+      },
+    };
+  }
+
   if (action === 'setAdmin') {
     if (typeof admin !== 'boolean') {
       throw new HttpsError('invalid-argument', 'srv.adminBool');
