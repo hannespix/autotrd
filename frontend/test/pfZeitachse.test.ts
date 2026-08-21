@@ -43,7 +43,7 @@ describe('Performance-Zeitachse — Markup und Logik', () => {
     // Seit dem 18.08. hängt der Benchmark-Satz hinten dran, deshalb steht der
     // Ausdruck über mehrere Zeilen. Geprüft werden die zwei Teile, auf die es
     // ankommt — nicht die Formatierung.
-    expect(dashboard).toContain("(zr === 0 ? '' : `${zeitraumLabel(zr)} · `)");
+    expect(dashboard).toContain("(zr === 0 ? '' : `${zeitraumLabelUi(zr)} · `)");
     expect(dashboard).toContain('+ wahl.hinweis');
   });
 
