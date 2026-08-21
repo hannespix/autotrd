@@ -38,4 +38,20 @@ describe('Audit-Layout-Fixes 21.08.', () => {
     const fn = dashboard.match(/function setzeKlappzustand[\s\S]*?\n\}/)?.[0] ?? '';
     expect(fn).toMatch(/if \(body\.hidden === zu\) \{[\s\S]*?body\.style\.overflow = '';[\s\S]*?return;/);
   });
+
+  it('Livebar-Scrollbar (Owner 21.08.): am PC dezent und nur unterm Zeiger', () => {
+    // Nur feine Zeiger — Touch behält die unsichtbare native Variante.
+    const fein = css.slice(css.indexOf('@media (pointer: fine)'));
+    expect(fein.length).toBeGreaterThan(0);
+    // Spur IMMER reserviert (display:block + feste Höhe), Daumen erst bei
+    // :hover — so springt beim Überfahren nichts.
+    expect(fein).toContain('.livebar::-webkit-scrollbar { display: block; height: 6px; background: transparent; }');
+    expect(fein).toContain('.livebar::-webkit-scrollbar-thumb { background: transparent; border-radius: 999px; }');
+    expect(fein).toContain('.livebar:hover::-webkit-scrollbar-thumb { background: var(--bd); }');
+    // Firefox-Zweig: thin + transparent, Hover färbt den Daumen im Haus-Ton.
+    expect(fein).toContain('scrollbar-color: transparent transparent;');
+    expect(fein).toContain('.livebar:hover { scrollbar-color: var(--bd) transparent; }');
+    // Der Touch-Grundzustand bleibt unangetastet.
+    expect(css).toContain('.livebar { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0; scrollbar-width: none; }');
+  });
 });
