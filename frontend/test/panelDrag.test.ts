@@ -59,7 +59,7 @@ describe('Pointer-Drag — Anheften, FLIP-Gleiten, Spaltenwechsel', () => {
   it('unterste Position (Owner-Befund 21.08.): stabil einsortieren, ans echte Ende hängen', () => {
     // Entscheidung im Fluss OHNE die gezogene Karte — sonst ist die Wahl
     // bistabil und die Karte flattert am Listenende (Ping-Pong).
-    expect(drag).toContain('r.top - rKarte.height - luecke');
+    expect(drag).toContain('basisTop - rKarte.height - luecke');
     // „Ans Ende" ist appendChild — der alte .sb-rs-Anker steht nach
     // applyPanelOrder am SPALTENANFANG und sortierte nach ganz oben.
     // (Auf den echten Aufruf gepinnt — Kommentare dürfen .sb-rs erklären.)
@@ -82,6 +82,34 @@ describe('Pointer-Drag — Anheften, FLIP-Gleiten, Spaltenwechsel', () => {
     // applyPanelOrder stellt Karten mit gespeicherter Spalte um, bevor sortiert wird.
     expect(dashboard).toContain('for (const [id, colId] of Object.entries(st.wsCol)) {');
     expect(data).toContain("col?: 'leftCol' | 'rightCol'");
+  });
+
+  it('Zitter-Fix (Owner 12:35): Einsortieren rechnet auf Layout-, nie auf FLIP-Zwischenständen', () => {
+    // Während Nachbarn gleiten, ist ihr getBoundingClientRect transient —
+    // eine Entscheidung darauf kippt hin und her (Zittern + Dauer-FLIPs).
+    expect(drag).toContain('const flipVersatz = (el: HTMLElement)');
+    expect(drag).toContain('new DOMMatrixReadOnly(t)');
+    expect(drag).toContain('const basisTop = r.top - flipVersatz(s).y;');
+    // Auch das FLIP-Delta zielt auf die Layout-Ruhe, nicht den Rest-Translate.
+    expect(drag).toContain('const dx = alt.left - (neu.left - v.x);');
+  });
+
+  it('Griff-Pille (Owner 12:35): der Geist ist der Karten-Kopf und klebt am Grip', () => {
+    // Große Module hingen als voller Glass-Klotz am Finger — jetzt fliegt
+    // nur der Kopf (Body aus, Breite gedeckelt), der Grip exakt unterm Zeiger.
+    expect(drag).toContain('const pillenB = Math.min(r0.width, 340);');
+    expect(drag).toContain("if (body) body.style.display = 'none';");
+    expect(drag).toContain('const ankerX = Math.min(Math.max(pillenB - gripVonRechts, 24), pillenB - 12);');
+    expect(drag).toContain('`translate(${px - ankerX}px, ${py - offYc}px) rotate(1.5deg)`');
+    // Abhebe-Pop nur ohne reduzierte Bewegung.
+    expect(drag).toContain('scale(.9)');
+    // DIE „komische Grafikbox": Der Clone erbt mit .card die cardIn-
+    // Animation (fill both, transform none) — sie überschreibt den
+    // inline-translate zum Zeiger. animation:none am Geist ist tragend.
+    expect(css).toMatch(/\.panel-fliegt \{[^}]*animation: none;/);
+    // Doppelklasse: .card { animation: cardIn } steht später im Blatt und
+    // gewinnt sonst bei gleicher Spezifität — der Geist stünde wieder fest.
+    expect(css).toContain('.card.panel-fliegt { animation: none; }');
   });
 
   it('Mittelspalte (Owner 21.08.): Reorder per Grip, aber nie Main↔Sidebar', () => {
