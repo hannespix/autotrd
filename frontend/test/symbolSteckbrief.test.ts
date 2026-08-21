@@ -50,7 +50,41 @@ describe('Steckbrief-UI — Hover am PC, langes Drücken am Touch, Portal an bod
   it('Livebar-Kacheln und Signal-Zeilen tragen den data-sym-Anker', () => {
     expect(dashboard).toContain('item.dataset.sym = sym; // Anker für den Symbol-Steckbrief (16:5x)');
     expect(dashboard).toContain('tr.dataset.sym = sym; // Anker für den Symbol-Steckbrief (16:5x)');
-    expect(dashboard).toContain("'.lb-item[data-sym], #sigBody tr[data-sym]'");
+  });
+
+  it('ÜBERALL, wo Symbole stehen (Owner 18:1x): alle Anker im Selektor', () => {
+    for (const anker of [
+      '.lb-item[data-sym]',
+      '#sigBody tr[data-sym]',
+      '.mkt-cell[data-sym]',
+      '#jBody tr[data-sym]',
+      '#pBody tr[data-sym]',
+      '#moTop .fl-row[data-sym]',
+      '#mainHdSym[data-sym]',
+    ]) {
+      expect(dashboard, `Anker fehlt im Selektor: ${anker}`).toContain(anker);
+    }
+    // … und die Renderer setzen das Attribut wirklich:
+    expect(dashboard).toContain('cell.dataset.sym = symbol; // Anker für den Symbol-Steckbrief (18:1x)');
+    expect(dashboard).toContain('tr.dataset.sym = t.symbol; // Anker für den Symbol-Steckbrief (18:1x)');
+    expect(dashboard).toContain('tr.dataset.sym = p.symbol; // Anker für den Symbol-Steckbrief (18:1x)');
+    expect(dashboard).toContain(`data-sym="\${esc(eintrag.symbol)}"`);
+    expect(dashboard).toContain('hd.dataset.sym = sym; // Anker für den Symbol-Steckbrief (18:1x)');
+    // Der Raster-Aufbau setzt den Kopf-Wert an EIGENER Stelle — auch dort
+    // muss der Anker mitkommen (E2E-Fund: value ohne data-sym).
+    expect(dashboard).toContain(".dataset.sym = st.currentSymbol; // Anker für den Symbol-Steckbrief (18:1x)");
+    // Der fokussierte Symbol-Sucher bleibt Kärtchen-frei (Vorschlagsliste!):
+    // Guard im Anker + focusin räumt den Klick-Anflug-Timer ab.
+    expect(dashboard).toContain('el === document.activeElement');
+    expect(dashboard).toContain("document.addEventListener('focusin', (ev) => {");
+  });
+
+  it('Trade-Fenster zeigt die Zeile FEST — am Touch-Gerät ohne jede Geste', () => {
+    expect(dashboard).toContain('<div class="hint sym-steck" id="mtSteck"></div>');
+    expect(dashboard).toContain("const mtSteckText = steckbriefText(sym);");
+    // Longpress-Kärtchen darf nie über dem öffnenden Detail-Sheet hängen.
+    const openDetailKopf = dashboard.slice(dashboard.indexOf('function openDetail('));
+    expect(openDetailKopf.slice(0, 400)).toContain('versteckeSymbolTip();');
   });
 
   it('das Kärtchen ist ein Portal an document.body — nie in einer Glass-Card (§6)', () => {
