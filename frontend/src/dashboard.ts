@@ -903,7 +903,7 @@ function layout(email: string): string {
       </div></div>
 
       <div class="card" data-panel="positions"><div class="sect">${t('panel.positionenKopf')} <span id="pCount" style="float:right;color:var(--t3)">0 offen</span></div><div class="cbody">
-        <div class="tw"><table class="tbl tbl-karten">
+        <div class="tw"><table class="tbl tbl-karten tbl-kompakt-pos">
           <thead><tr><th>Sym</th><th>Qty</th><th>Eintritt</th><th>Aktuell</th><th>P&amp;L</th><th>%</th><th></th></tr></thead>
           <tbody id="pBody"><tr><td colspan="7" class="c-t3">Keine offenen Positionen</td></tr></tbody>
         </table></div>
