@@ -278,9 +278,19 @@ input { accent-color: var(--ac); }
 /* Fliegender Karten-Clone des Pointer-Drags (Owner 21.08.): heftet am
    Zeiger, leicht gekippt — das Original bleibt als blasser Platzhalter im
    Fluss und markiert den Drop-Slot. */
+/* animation: none ist tragend: Der Clone erbt mit .card die cardIn-
+   Einblende-Animation — sie startet auf dem frisch eingefügten Geist NEU,
+   und ihr fill:both hält transform:none dauerhaft aktiv. Das überschreibt
+   den inline-translate zum Zeiger: Der Geist klebte oben links im Viewport
+   statt am Finger (Owner 12:35: „komische grafikbox"). */
 .panel-fliegt { position: fixed; left: 0; top: 0; z-index: 240; pointer-events: none;
   will-change: transform; opacity: .92; box-shadow: 0 18px 40px rgba(0, 0, 0, .35);
-  transform-origin: 50% 20%; }
+  transform-origin: 50% 20%; animation: none; }
+/* Doppelklasse nötig: .card { animation: cardIn } steht SPÄTER im Blatt und
+   gewinnt bei gleicher Spezifität gegen .panel-fliegt — der Geist bekäme
+   die Einblende-Animation zurück und stünde wieder fest bei (0,0). */
+.card.panel-fliegt { animation: none; }
+
 .sect-grip { touch-action: none; }
 /* ── Wann gilt das Ein-Spalten-Layout? ───────────────────────────────────
    Nicht allein die Breite entscheidet, sondern auch das Eingabegerät.

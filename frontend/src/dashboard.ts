@@ -5658,8 +5658,15 @@ function startePanelDrag(card: HTMLElement, start: PointerEvent): void {
   const quelle = card.parentElement;
   if (!quelle || !(quelle.id === 'leftCol' || quelle.id === 'rightCol' || quelle.id === 'centerCol')) return;
   const r0 = card.getBoundingClientRect();
-  const offX = start.clientX - r0.left;
   const offY = start.clientY - r0.top;
+  // Kompakte Griff-Pille statt Karten-Klotz (Owner 12:35: große Module
+  // „nicht sauber am Finger"): Der Geist zeigt nur den Karten-KOPF, hängt
+  // mit dem Grip exakt unterm Zeiger und bleibt auch auf schwachen Geräten
+  // flüssig — kein 600-px-Glass-Body am Finger.
+  const pillenB = Math.min(r0.width, 340);
+  const gripVonRechts = r0.right - start.clientX;
+  const ankerX = Math.min(Math.max(pillenB - gripVonRechts, 24), pillenB - 12);
+  const offYc = Math.min(offY, 40);
   let clone: HTMLElement | null = null;
   let raf = 0;
   let px = start.clientX;
@@ -5682,15 +5689,30 @@ function startePanelDrag(card: HTMLElement, start: PointerEvent): void {
     return m;
   };
 
+  // Der laufende FLIP-Versatz eines Nachbarn: Während er gleitet, ist sein
+  // getBoundingClientRect ein TRANSIENTER Zwischenstand. Die Einsortier-
+  // Entscheidung muss auf der LAYOUT-Position rechnen (Rect minus aktueller
+  // translate) — sonst kippt sie auf den Zwischenständen hin und her und
+  // die Liste zittert (Owner 12:35: „komische grafikbox, zittert").
+  const flipVersatz = (el: HTMLElement): { x: number; y: number } => {
+    const t = getComputedStyle(el).transform;
+    if (!t || t === 'none') return { x: 0, y: 0 };
+    const m = new DOMMatrixReadOnly(t);
+    return { x: m.m41, y: m.m42 };
+  };
+
   // FLIP: alte Positionen als Transform rückwärts ansetzen und auf 0
   // ausklingen lassen — die Nachbarn gleiten statt zu springen.
   const gleiteNachbarn = (vorher: Map<HTMLElement, DOMRect>): void => {
     if (reduzierteBewegung) return;
     for (const [el, alt] of vorher) {
       if (el === card) continue;
+      // Ziel der Animation ist die LAYOUT-Ruhe — läuft noch ein alter FLIP,
+      // enthielte das Rect dessen Rest-Translate und das Delta wäre falsch.
       const neu = el.getBoundingClientRect();
-      const dx = alt.left - neu.left;
-      const dy = alt.top - neu.top;
+      const v = flipVersatz(el);
+      const dx = alt.left - (neu.left - v.x);
+      const dy = alt.top - (neu.top - v.y);
       if (!dx && !dy) continue;
       el.animate(
         [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0, 0)' }],
@@ -5727,7 +5749,9 @@ function startePanelDrag(card: HTMLElement, start: PointerEvent): void {
     const luecke = Number.parseFloat(getComputedStyle(ziel).rowGap) || 0;
     const next = geschwister.find((s) => {
       const r = s.getBoundingClientRect();
-      const top = card.parentElement === ziel && r.top > rKarte.top ? r.top - rKarte.height - luecke : r.top;
+      // Layout-Position statt animiertem Zwischenstand (flipVersatz, s. o.).
+      const basisTop = r.top - flipVersatz(s).y;
+      const top = card.parentElement === ziel && basisTop > rKarte.top ? basisTop - rKarte.height - luecke : basisTop;
       return py < top + r.height / 2;
     });
     // „Ans Ende" heißt appendChild — NICHT vor .sb-rs: Das Resize-Handle ist
@@ -5745,7 +5769,7 @@ function startePanelDrag(card: HTMLElement, start: PointerEvent): void {
   const bewege = (): void => {
     raf = 0;
     if (!clone) return;
-    clone.style.transform = `translate(${px - offX}px, ${py - offY}px) rotate(1.5deg)`;
+    clone.style.transform = `translate(${px - ankerX}px, ${py - offYc}px) rotate(1.5deg)`;
     // Autoscroll an den Bildschirmkanten (Stufe B): Ohne ihn ließe sich am
     // Smartphone — und in langen Desktop-Spalten — nie ans Listenende
     // ziehen. Geschwindigkeit wächst zur Kante hin; scrollt die Seite,
@@ -5769,10 +5793,20 @@ function startePanelDrag(card: HTMLElement, start: PointerEvent): void {
     c.querySelectorAll('[id]').forEach((e) => e.removeAttribute('id'));
     c.classList.remove('dragging');
     c.classList.add('panel-fliegt');
-    c.style.width = `${r0.width}px`;
-    c.style.height = `${r0.height}px`;
-    c.style.transform = `translate(${r0.left}px, ${r0.top}px)`;
+    const body = c.querySelector<HTMLElement>('.cbody');
+    // Inline-display statt hidden-Attribut: die .cbody-Flex-Regel gewinnt
+    // gegen den [hidden]-UA-Stil — display:none am Element gewinnt sicher.
+    if (body) body.style.display = 'none';
+    c.style.width = `${pillenB}px`;
+    c.style.transform = `translate(${px - ankerX}px, ${py - offYc}px)`;
     document.body.appendChild(c);
+    // „Herauslösen": die Pille poppt am Griffpunkt kurz auf.
+    if (!reduzierteBewegung) {
+      c.animate(
+        [{ transform: `${c.style.transform} scale(.9)` }, { transform: c.style.transform }],
+        { duration: 120, easing: 'ease-out' },
+      );
+    }
     return c;
   };
 
@@ -5812,7 +5846,7 @@ function startePanelDrag(card: HTMLElement, start: PointerEvent): void {
       const anim = geist.animate(
         [
           { transform: geist.style.transform, opacity: 0.92 },
-          { transform: `translate(${rZiel.left}px, ${rZiel.top}px)`, opacity: 0.4 },
+          { transform: `translate(${rZiel.right - pillenB}px, ${rZiel.top}px)`, opacity: 0.4 },
         ],
         { duration: 160, easing: 'ease-out' },
       );
