@@ -4071,6 +4071,15 @@ function showNewsTooltip(
     row.appendChild(src);
     list.appendChild(row);
   }
+  // Portal an document.body (Owner-Bug 21.08.: „Position hängt an der linken
+  // Sidebar, rutscht unter die rechte"): Die Glass-Cards tragen backdrop-filter
+  // und sind damit Containing Block für position:fixed UND eigener Stacking
+  // Context. Solange die Bubble in der Chart-Karte hing, löste der Browser die
+  // Viewport-Koordinaten gegen die Karten-Box auf (Versatz = Sidebar-Breite)
+  // und sperrte z-index 200 ein (die später gemalte rechte Spalte lag drüber).
+  // Am body stimmen Bezugssystem und Stapel-Reihenfolge; nach einem Re-Mount
+  // zieht der nächste Aufruf den frischen Knoten um (unmount räumt den alten).
+  if (tip.parentElement !== document.body) document.body.appendChild(tip);
   tip.hidden = false;
   const w = tip.offsetWidth;
   const h = tip.offsetHeight;
@@ -4089,8 +4098,13 @@ function showNewsTooltip(
     tip.style.top = `${Math.max(8, Math.min(r.top + 10, window.innerHeight - h - 8))}px`;
     return;
   }
-  // Touch/Fallback: am Zeigepunkt, ans Viewport geclampt (position:fixed)
-  tip.style.left = `${Math.min(pos.x + 14, window.innerWidth - w - 8)}px`;
+  // Touch/Fallback: am Zeigepunkt — zusätzlich ins Chart-Fenster geklemmt,
+  // damit die Bubble am rechten Rand nicht über der Preisachse liegt
+  // (Owner-Screenshots 21.08., iPad ohne Sidebar).
+  const g = anker?.getBoundingClientRect();
+  const maxLinks = Math.min(g ? g.right - w - 4 : Infinity, window.innerWidth - w - 8);
+  const minLinks = g ? Math.max(g.left + 4, 8) : 8;
+  tip.style.left = `${Math.max(minLinks, Math.min(pos.x + 14, maxLinks))}px`;
   tip.style.top = `${Math.max(8, Math.min(pos.y - h - 10, window.innerHeight - h - 8))}px`;
 }
 
@@ -10555,6 +10569,9 @@ export function setzeModulZustandZurueck(): void {
 export function unmountDashboard(): void {
   if (!st) return;
   exitAllMax(); // Portal-Elemente vom body zurück, bevor die App-Wurzel geleert wird
+  // Die News-Bubble lebt als Portal am body (showNewsTooltip) — ohne dieses
+  // Aufräumen bliebe nach Logout/Login ein Zwilling mit derselben ID zurück.
+  document.getElementById('evTip')?.remove();
   clearSubs(st.subs);
   clearSubs(st.symbolSubs);
   clearSubs(st.chart2Subs);

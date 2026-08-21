@@ -460,7 +460,11 @@ td .sym-av, .lb-sym .sym-av { margin-right: 6px; }
   background: radial-gradient(135% 75% at 50% -12%, rgba(14, 116, 144, .07), transparent 55%);
   mix-blend-mode: multiply;
 }
-/* Event-Tooltip am Crosshair (M6b) — position:fixed, siehe CLAUDE.md §6 */
+/* Event-Tooltip am Crosshair (M6b) — position:fixed als PORTAL an
+   document.body (showNewsTooltip hängt ihn beim ersten Zeigen um): In einer
+   Glass-Card wäre die Card wegen backdrop-filter Containing Block für fixed
+   (Bubble wandert mit der Sidebar) und eigener Stacking Context (rechte
+   Spalte malt drüber) — Owner-Bug 21.08. Siehe CLAUDE.md §6. */
 .evtip {
   /* über dem Vollbild-Scope (150), unter den Modals (220) — sonst liegen die
      News-Overlays im Chart-Vollbild unsichtbar HINTER dem Chart (Bug 25.07.) */
