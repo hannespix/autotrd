@@ -51,3 +51,4 @@ export * from './wachhund.js';
 export * from './journalText.js';
 export * from './kiBericht.js';
 export * from './tagRueckblick.js';
+export * from './sizingSchatten.js';
