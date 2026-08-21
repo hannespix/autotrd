@@ -51,10 +51,28 @@ describe('Pointer-Drag — Anheften, FLIP-Gleiten, Spaltenwechsel', () => {
 
   it('Spaltenwechsel: Ziel ist die Sidebar unter dem Zeiger, sonst bleibt alles', () => {
     expect(drag).toContain('px >= r.left && px <= r.right;');
-    expect(drag).toContain("const anker = next ?? ziel.querySelector(':scope > .sb-rs');");
     // Drop friert Reihenfolge UND Spalte ein; der Klick-Guard fällt hier.
     expect(drag).toContain('commitPanelOrder();');
     expect(drag).toContain('dragEndeUm = Date.now();');
+  });
+
+  it('unterste Position (Owner-Befund 21.08.): stabil einsortieren, ans echte Ende hängen', () => {
+    // Entscheidung im Fluss OHNE die gezogene Karte — sonst ist die Wahl
+    // bistabil und die Karte flattert am Listenende (Ping-Pong).
+    expect(drag).toContain('r.top - rKarte.height - luecke');
+    // „Ans Ende" ist appendChild — der alte .sb-rs-Anker steht nach
+    // applyPanelOrder am SPALTENANFANG und sortierte nach ganz oben.
+    // (Auf den echten Aufruf gepinnt — Kommentare dürfen .sb-rs erklären.)
+    expect(drag).not.toContain("querySelector(':scope > .sb-rs')");
+    expect(drag).toContain('else ziel.appendChild(card);');
+    // Der Boot-Spaltenumzug nutzt denselben Weg.
+    expect(dashboard).not.toContain("ziel.insertBefore(card, ziel.querySelector(':scope > .sb-rs'));");
+    // Persistenz-Vereinigung: Auch Nicht-Registry-Karten (haltedauer,
+    // erkenntnisse) behalten ihre sortierten Positionen — sonst rutscht
+    // eine ans Ende gezogene Karte beim nächsten Laden zurück.
+    expect(dashboard).toContain(
+      '[...new Set([...Object.keys(PANEL_TITLES), ...Object.keys(st.wsOrder), ...Object.keys(st.wsCol)])]',
+    );
   });
 
   it('die Spalte wird persistiert und beim Laden streng validiert', () => {
