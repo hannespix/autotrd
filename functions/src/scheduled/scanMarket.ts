@@ -78,6 +78,10 @@ import {
   type Position,
   type Strategy,
   type StrategyDoc,
+  sizingSchatten,
+  fasseSizingSchatten,
+  type SizingSchatten,
+  type SizingSchattenSumme,
 } from '../../../shared/src/index.js';
 import { atrPct } from '../../../shared/src/index.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
@@ -507,9 +511,15 @@ async function executeUserTrades(
   gate: EntryGateStats;
   konten: KontenStats;
   broker: BrokerStats;
+  /** Sizing-Schatten über ALLE Konten dieses Laufs (Hebel 2, 21.08.). */
+  sizing: SizingSchattenSumme;
 }> {
   const db = getFirestore();
   let executed = 0;
+  /* Sammelt die Sizing-Schatten ALLER Konten des Laufs. Der Sammler je
+   * Konto (`schattenZeilen`) leert sich mit jedem Konto — diese Liste
+   * hier ist die Grundlage der Freigabe-Entscheidung. */
+  const sizingAlle: SizingSchatten[] = [];
   const broker: BrokerStats = {
     verbunden: 0,
     sauber: 0,
@@ -1085,6 +1095,36 @@ async function executeUserTrades(
       // das nicht abfangen: Seine Transaktion sieht nur den Cash, nicht die
       // Kurse der übrigen Positionen. Ausstiege GEBEN hier nichts zurück; das
       // ist bewusst zu wenig statt zu viel.
+      /* Sizing-Schatten (Kapital-Panel 21.08., Hebel 2) — misst NEBEN dem
+       * gebuchten Trade, wie groß die Position auf EQUITY-Basis wäre.
+       *
+       * `kontoCash` (schon gedeckelt) und `kontoWert` stehen oben und sind
+       * der Stand VOR den Käufen dieses Laufs — genau der
+       * Entscheidungszeitpunkt. Keine Order ändert sich; die Zahlen
+       * entscheiden erst nach 14 Tagen und 20 Einstiegen, ob eine
+       * Umstellung überhaupt verhandelbar ist (vorregistrierte Schwellen).
+       *
+       * Nur ECHTE Einstiege werden gemessen — Exits nie (sie schließen ganz,
+       * eine Größenfrage stellt sich nicht) und der Schatten-Regelbaum nicht
+       * (er bucht kein Geld und misst bereits etwas anderes). */
+      const merkeSizing = (
+        r: { executed: boolean; trade?: { qty: number; price: number } | undefined },
+        sizeFactor: number,
+        symbol: string,
+      ): void => {
+        if (!r.executed || !r.trade) return;
+        sizingAlle.push(
+          sizingSchatten({
+            istQty: r.trade.qty,
+            effPreis: r.trade.price,
+            deckung: kontoCash,
+            equity: kontoCash + kontoWert,
+            maxPositionPct: clamped.engine.maxPositionPct,
+            sizeFactor,
+            fractional: classify(symbol) === 'crypto',
+          }),
+        );
+      };
       let gebundeneKaufkraft = 0;
       /**
        * Margin-Budget für GENAU DIESE Entscheidung — `undefined` heißt: bar
@@ -1582,6 +1622,7 @@ async function executeUserTrades(
                 openedAt: now.toISOString(),
               });
               await ref.set({ lastTrades: { [symbol]: now.toISOString() } }, { merge: true });
+              merkeSizing(r, regimeGroessenFaktor(regime), symbol);
               logger.info(`Strategie-Buy ${uid} ${symbol} („${doc.name}") @ ${data.price}`);
             }
           } else if (dir === 'sell' && pos && pos.side !== 'short') {
@@ -1648,6 +1689,7 @@ async function executeUserTrades(
                 openedAt: now.toISOString(),
               });
               await ref.set({ lastTrades: { [symbol]: now.toISOString() } }, { merge: true });
+              merkeSizing(r, regimeGroessenFaktor(regime), symbol);
               logger.info(`Strategie-Short ${uid} ${symbol} („${doc.name}") @ ${data.price}`);
             }
           }
@@ -1840,6 +1882,7 @@ async function executeUserTrades(
               takeProfit: null,
               openedAt: r.trade?.executedAt ?? now.toISOString(),
             });
+            merkeSizing(r, sizeFactor, symbol);
             logger.info(`Engine-Buy ${uid} ${symbol} @ ${data.price}`);
           }
         } else if (direction === 'sell' && pos && pos.side !== 'short') {
@@ -1938,6 +1981,7 @@ async function executeUserTrades(
               takeProfit: null,
               openedAt: r.trade?.executedAt ?? now.toISOString(),
             });
+            merkeSizing(r, sizeFactor, symbol);
             logger.info(`Engine-Short ${uid} ${symbol} @ ${data.price}`);
           }
         }
@@ -2001,7 +2045,7 @@ async function executeUserTrades(
       logger.error(`Auto-Trading-Fehler für ${uid}`, err);
     }
   }
-  return { executed, gate, konten, broker };
+  return { executed, gate, konten, broker, sizing: fasseSizingSchatten(sizingAlle) };
 }
 
 /** Obergrenze des zentralen Scan-Sets (Kosten-Guard). */
@@ -3559,6 +3603,10 @@ export async function runScan(force = false): Promise<ScanResult> {
   // null = kein Konto hat einen Broker hinterlegt ODER der Block lief nicht.
   // Auch das ist eine Aussage: Ohne verbundenes Konto gibt es nichts zu routen.
   let brokerStats: BrokerStats | null = null;
+  /* Sizing-Schatten des Laufs (Hebel 2, 21.08.) — `null`, wenn der
+   * Trade-Block gar nicht lief. Eine 0 wäre hier zweideutig: „gemessen und
+   * nichts gefunden" sieht sonst aus wie „nicht gemessen". */
+  let sizingSchattenLauf: SizingSchattenSumme | null = null;
   try {
     await migrateTimeframeDaily(db);
     await migrateCorePctAll(db);
@@ -3567,6 +3615,7 @@ export async function runScan(force = false): Promise<ScanResult> {
     entryGate = res.gate;
     konten = res.konten;
     brokerStats = res.broker;
+    sizingSchattenLauf = res.sizing;
   } catch (err) {
     lastError = `trades: ${err instanceof Error ? err.message : String(err)}`.slice(0, 400);
     logger.error('Trade-Block fehlgeschlagen', err);
@@ -3903,6 +3952,13 @@ export async function runScan(force = false): Promise<ScanResult> {
            * Fallback zu lockern: erst zählen, dann urteilen. */
           datenlos: regime.aboveSma200 === null && regime.realizedVolPct === null,
         },
+        /* Was die Tranche auf EQUITY-Basis wäre (Hebel 2, 21.08.) — reine
+         * Messung, keine Order ändert sich. `mehrPct` sagt, wie viel mehr
+         * Kapital gearbeitet hätte; `kollisionsQuotePct`, wie oft der Cash
+         * dafür nicht gereicht hätte. Erst wenn beide über 14 Tage und 20
+         * Einstiege die vorregistrierten Schwellen halten, ist eine
+         * Umstellung verhandelbar — mit Owner-Freigabe. */
+        sizingSchatten: sizingSchattenLauf,
         // Termin-Kalender (04.08., Schatten): Was steht an, und liegt der Tag
         // im Turn-of-the-Month-Fenster? Steuert noch NICHTS — erst wenn die
         // Auswertung über genug Termine zeigt, dass es sich lohnt. Bis dahin
