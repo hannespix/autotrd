@@ -828,22 +828,32 @@ export async function buildPriceChart(
       return fcOn;
     },
     setForecast(overlay, anchor): void {
-      fcOn = overlay !== null && overlay.points.length > 0;
-      if (!overlay || overlay.points.length === 0) {
+      // Sicherheitsnetz (Owner 21.08., #191 „Sektor-ETFs rendern falsch"):
+      // Punkte auf oder vor dem Anker fliegen raus. Ein VERALTETER Forecast
+      // (Basis älter als die jüngste Kerze — Katalog-Symbole außerhalb der
+      // Scan-Rotation) machte die Serie sonst nicht-aufsteigend, LWC warf
+      // „data must be asc ordered by time", und der Abbruch ließ Overlays,
+      // Skala und Unterpanels auf dem Vorgänger-Symbol stehen.
+      const punkte = overlay && anchor
+        ? overlay.points.filter((p) => p.time > anchor.time)
+        : overlay?.points ?? [];
+      fcOn = punkte.length > 0;
+      if (!overlay || punkte.length === 0) {
         fcMid.setData([]);
         fcUp.setData([]);
         fcLo.setData([]);
         return;
       }
+      const band = anchor ? overlay.band.filter((b) => b.time > anchor.time) : overlay.band;
       // Anker (letzter Bar) voranstellen, damit die Linie am Chart andockt
       const mid = anchor
-        ? [{ time: anchor.time, value: anchor.value }, ...overlay.points]
-        : overlay.points;
+        ? [{ time: anchor.time, value: anchor.value }, ...punkte]
+        : punkte;
       // Zeit kann ISO-Tag ODER UNIX-Sekunden sein (Intraday) — gleiche
       // Laundering-Idiomatik wie bei setBars (LWC akzeptiert beides zur Laufzeit)
       fcMid.setData(mid.map((p) => ({ time: zuAchse(p.time) as never as string, value: p.value })));
-      fcUp.setData(overlay.band.map((b) => ({ time: zuAchse(b.time) as never as string, value: b.upper })));
-      fcLo.setData(overlay.band.map((b) => ({ time: zuAchse(b.time) as never as string, value: b.lower })));
+      fcUp.setData(band.map((b) => ({ time: zuAchse(b.time) as never as string, value: b.upper })));
+      fcLo.setData(band.map((b) => ({ time: zuAchse(b.time) as never as string, value: b.lower })));
     },
     setMarkers(markers): void {
       // Anker-Serie, nicht die Kerzen — sonst fehlen News-Punkte, Veto-Kreuze

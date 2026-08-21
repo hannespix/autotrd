@@ -1784,6 +1784,11 @@ function wireChartCtx(): void {
   st.intradayOldest = null;
   st.intradayHistLoading = false;
   st.intradayHistDone = false;
+  // Auch die GEZEIGTEN Bars gehören zum Symbol: applyForecast ankert an
+  // shownDaily — mit den Vorgänger-Bars bekäme die frische Prognose kurz
+  // einen Anker auf fremdem Preisniveau (#191).
+  st.shownDaily = [];
+  st.shownIntraday = [];
 
   st.symbolSubs.push(
     watchMarketDoc(sym, (d) => {
@@ -4241,9 +4246,22 @@ function applyForecast(): void {
     info.textContent = '';
     return;
   }
-  const last = st.bars[st.bars.length - 1];
+  // Anker = letzte GEZEIGTE Kerze (nicht st.bars: die Scan-Bars können hinter
+  // der Katalog-Historie zurückliegen — die Linie dockte dann mitten im Chart
+  // an). Und nur Punkte NACH dem Anker zeichnen — dieselbe Regel wie im
+  // Intraday-Zweig oben. Ein VERALTETER Forecast (Basis älter als die jüngste
+  // Kerze; Symbole außerhalb der Scan-Rotation, Owner 21.08. „Sektor-ETFs")
+  // machte die Anker-Serie sonst nicht-aufsteigend → LWC-Wurf → der Render-
+  // Abbruch ließ Overlays und Skala auf dem Vorgänger-Symbol stehen.
+  const last = st.shownDaily[st.shownDaily.length - 1];
+  const zukunft = last ? fc.points.filter((p) => p.time > last.date) : fc.points;
+  if (last && zukunft.length === 0) {
+    st.chart.setForecast(null);
+    info.textContent = t('af.veraltet');
+    return;
+  }
   st.chart.setForecast(
-    { points: fc.points, band: fc.band },
+    { points: zukunft, band: last ? fc.band.filter((b) => b.time > last.date) : fc.band },
     last ? { time: last.date, value: last.close } : undefined,
   );
   const dir = fc.predictedPct >= 0 ? '↑' : '↓';
@@ -4252,7 +4270,7 @@ function applyForecast(): void {
     : t('af.bandSigma');
   info.textContent =
     `${t('chart.lblPrognose')} ${dir} ${fc.predictedPct >= 0 ? '+' : ''}${fc.predictedPct.toFixed(2)} % ` +
-    `${t('af.ueber')} ${fc.points.length} ${t('af.handelstage')} (Lookback ${fc.lookback}, ${cal})`;
+    `${t('af.ueber')} ${zukunft.length} ${t('af.handelstage')} (Lookback ${fc.lookback}, ${cal})`;
 }
 
 /** Prognose-Labor: Kombi-Statistik (Tages- ODER Intraday-Pfad) rendern. */
@@ -5059,10 +5077,17 @@ function renderGridPanelBars(p: GridPanel): void {
     );
   } else {
     const fc = p.forecast;
-    const wantFc = wantLayer && fc != null && fc.points.length > 0;
+    // Nur Punkte NACH der letzten gezeigten Kerze — ein veralteter Forecast
+    // (Symbol außerhalb der Scan-Rotation) warf sonst LWCs Zeitachsen-
+    // Assertion, exakt wie im Haupt-Chart (#191).
+    const zukunft = wantLayer && fc != null
+      ? (lastB ? fc.points.filter((x) => x.time > lastB.time) : fc.points)
+      : [];
     p.chart.setForecast(
-      wantFc && fc ? { points: fc.points, band: fc.band } : null,
-      wantFc && lastB ? { time: lastB.time, value: lastB.close } : undefined,
+      zukunft.length > 0 && fc
+        ? { points: zukunft, band: lastB ? fc.band.filter((b) => b.time > lastB.time) : fc.band }
+        : null,
+      zukunft.length > 0 && lastB ? { time: lastB.time, value: lastB.close } : undefined,
     );
   }
   renderPanelHud(p, null); // Kurszeile auf den frischen letzten Bar
