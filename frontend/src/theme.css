@@ -377,7 +377,11 @@ td .sym-av, .lb-sym .sym-av { margin-right: 6px; }
    Jede Zeile wird eine Karte, die Zellen stehen als Label:Wert-Paare
    (Label kommt aus data-th, gesetzt beim Zeilen-Bau in dashboard.ts),
    die Symbol-Zelle mit Logo-Chip ist der Karten-Kopf. */
-#sigBody td:first-child, #pBody td:first-child { white-space: nowrap; }
+/* NUR echte Symbol-Zeilen — die Ausblick-Zeile (.pos-sub) ist ebenfalls
+   „erste Zelle ihrer Zeile", und die ID-Spezifität dieser Regel schlug das
+   white-space:normal der Karten (Owner 10:26: Karte lief weiter über und
+   ließ die Liste horizontal scrollen). */
+#sigBody tr:not(.pos-sub) td:first-child, #pBody tr:not(.pos-sub) td:first-child { white-space: nowrap; }
 @media (max-width: 480px) {
   .tbl-karten thead { display: none; }
   .tbl-karten, .tbl-karten tbody, .tbl-karten tr, .tbl-karten td { display: block; }
@@ -426,6 +430,25 @@ td .sym-av, .lb-sym .sym-av { margin-right: 6px; }
   }
   .tbl-kompakt td[data-th]:not(:nth-child(6))::before { font-size: 10px; }
   .tbl-kompakt td:only-child { grid-column: 1 / -1; }
+  /* Kompakte Positions-Karten (Owner 10:26: „ebenfalls kompakter"): Kopf =
+     Symbol links + Exit-Knopf rechts, darunter Qty/Eintritt/Aktuell und
+     P&L/% als Wert-Spalten; der Exit-Ausblick bleibt umbrechender Fuß. */
+  .tbl-kompakt-pos tr { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px 8px; align-items: center; }
+  .tbl-kompakt-pos td { padding: 0; }
+  .tbl-kompakt-pos td:first-child:not(:only-child) {
+    grid-column: 1 / 3; margin-bottom: 3px; padding-bottom: 5px;
+  }
+  .tbl-kompakt-pos td.pos-act {
+    grid-column: 3; grid-row: 1; justify-self: end; align-self: stretch;
+    display: flex; align-items: center; margin-bottom: 3px; padding-bottom: 5px;
+    border-bottom: 1px solid var(--hair);
+  }
+  .tbl-kompakt-pos td[data-th] {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  }
+  .tbl-kompakt-pos td[data-th]::before { font-size: 10px; }
+  .tbl-kompakt-pos td:only-child { grid-column: 1 / -1; }
+  .tbl-kompakt-pos tr.pos-sub { display: block; }
 }
 
 

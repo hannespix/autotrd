@@ -60,13 +60,19 @@ describe('Karten-Layout der Signal-/Positions-Tabellen (mobil)', () => {
   });
 
   it('beide Tabellen tragen die Karten-Klasse, die Zeilen die data-th-Labels', () => {
-    // Positionen: Zeilen-Karten; Signale: zusätzlich kompakt (Owner 21.08.
-    // „nehmen zu viel Raum ein" — Kopf mit Signal-Tag + 4 Wert-Spalten).
-    expect(dashboard.match(/class="tbl tbl-karten"/g)?.length ?? 0).toBe(1);
+    // Beide kompakt (Owner 21.08., zwei Runden): Signale mit Signal-Tag im
+    // Kopf + 4 Wert-Spalten; Positionen mit Exit im Kopf + 3er-Wert-Raster.
     expect(dashboard.match(/class="tbl tbl-karten tbl-kompakt"/g)?.length ?? 0).toBe(1);
+    expect(dashboard.match(/class="tbl tbl-karten tbl-kompakt-pos"/g)?.length ?? 0).toBe(1);
     const block = kartenMedienBlock();
     expect(block).toContain('.tbl-kompakt tr { display: grid;');
     expect(block).toContain('.tbl-kompakt td:nth-child(6)::before { content: none; }');
+    expect(block).toContain('.tbl-kompakt-pos tr { display: grid;');
+    // Der Ausblick-Fuß bleibt Block (bricht um) — und die Desktop-nowrap-Regel
+    // darf ihn NIE wieder treffen (ID-Spezifität schlug das Karten-normal;
+    // Owner 10:26: Karte lief weiter über und die Liste scrollte horizontal).
+    expect(block).toContain('.tbl-kompakt-pos tr.pos-sub { display: block; }');
+    expect(css).toContain('#sigBody tr:not(.pos-sub) td:first-child, #pBody tr:not(.pos-sub) td:first-child { white-space: nowrap; }');
     // Kürzel-Labels sind in beiden Sprachen gleich und bleiben Literale …
     for (const label of ['RSI', 'MACD', 'BB %', 'Signal', 'Qty', 'P&amp;L', '%']) {
       expect(dashboard).toContain(`data-th="${label}"`);
