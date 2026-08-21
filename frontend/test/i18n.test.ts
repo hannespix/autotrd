@@ -1274,8 +1274,11 @@ describe('Tranche 5n — die zehn Analyse- und Melde-Funktionen', () => {
     // „Auto" ist die Quelle-Markierung am Symbol — in beiden Sprachen gleich.
     // „auf"/„number" kamen mit der Spalten-Sortierung (16:0x): Richtungs-Code
     // des sortZustand bzw. typeof-Prüfung — Code-Werte, kein Nutzer-Text.
+    // „title"/„aria"/„label" kamen mit den Richtungs-Marken (21:3x): die
+    // Attributnamen des Erklär-Tooltips — DOM-Technik, kein Nutzer-Text
+    // (der Text selbst läuft über t('jn.*Titel')).
     renderJournal: ['Auto', 'buy', 'sell', 'engine', 'closed', 'class', 'color', 'colspan',
-      'digit', 'span', 'stag', 'style', 'var', 'auf', 'number'],
+      'digit', 'span', 'stag', 'style', 'var', 'auf', 'number', 'title', 'aria', 'label'],
     updateOrderPreview: ['buy', 'sell', 'short', 'exposure', 'maximumFractionDigits', 'secs'],
     renderWatchHint: [],
     renderStruktur: ['DSR', 'Sharpe', 'Test', 'buy', 'start', 'class', 'digit', 'div',

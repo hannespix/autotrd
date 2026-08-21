@@ -917,6 +917,20 @@ export const DE = {
   'jn.aeltereTitel': 'Die nächsten 50 älteren Trades holen',
   'jn.keineTrades': 'Keine Trades',
   'jn.keinTreffer': 'Kein Treffer für diesen Filter',
+  // Richtungs-Marken der Historie (Owner 21:3x): BUY/SELL war zweideutig —
+  // ein Leerverkauf ist ein SELL, sein Eindecken ein BUY.
+  // Kurz, weil die Spalte in der Sidebar schmal ist (E2E-Fund: „Short auf"
+  // wurde zu „SHOR" abgeschnitten). Auf/zu trägt der Pfeil ▲/▼, die volle
+  // Erklärung der title/aria-label-Text.
+  'jn.long': 'Long',
+  'jn.short': 'Short',
+  // Frei eingegebene Symbole (Alpaca kennt Tausende, der Katalog 132):
+  // ehrlicher Hinweis statt erfundener Beschreibung (Owner 21:4x).
+  'steck.ohneEintrag': 'Frei gewähltes Symbol — für dieses Kürzel ist noch keine Beschreibung hinterlegt.',
+  'jn.longAufTitel': 'Kauf — Long-Position eröffnet oder aufgestockt',
+  'jn.longZuTitel': 'Verkauf — Long-Position geschlossen',
+  'jn.shortAufTitel': 'Leerverkauf — Short-Position eröffnet (Gewinn bei fallenden Kursen)',
+  'jn.shortZuTitel': 'Eindeckung — Short-Position durch Rückkauf geschlossen',
   'op.keinKurs': 'Kein zentraler Kurs für dieses Symbol im Blick — der Server prüft beim Bestätigen.',
   'op.vomCash': 'vom Cash',
   'op.schliesstGanze': 'Schließt die GANZE Position',
@@ -2263,6 +2277,13 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'jn.aeltereTitel': 'Fetch the next 50 older trades',
   'jn.keineTrades': 'No trades',
   'jn.keinTreffer': 'No match for this filter',
+  'jn.long': 'Long',
+  'jn.short': 'Short',
+  'steck.ohneEintrag': 'Freely chosen symbol — no description on file for this ticker yet.',
+  'jn.longAufTitel': 'Buy — long position opened or added to',
+  'jn.longZuTitel': 'Sell — long position closed',
+  'jn.shortAufTitel': 'Short sale — short position opened (profits when prices fall)',
+  'jn.shortZuTitel': 'Cover — short position closed by buying back',
   'op.keinKurs': 'No central price in view for this symbol — the server checks on confirmation.',
   'op.vomCash': 'of cash',
   'op.schliesstGanze': 'Closes the ENTIRE position',

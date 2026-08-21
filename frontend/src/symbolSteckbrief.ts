@@ -12,16 +12,28 @@
  * EN-Fassung folgt als eigene Tranche. Die Texte sind Stand August 2026 und
  * BESCHREIBUNG, keine Empfehlung — Gewichtungen in ETFs verschieben sich.
  */
-import { CATALOG, CLASS_LABELS } from '@autotrd/shared';
+import { CATALOG, CLASS_LABELS, classify } from '@autotrd/shared';
 
 export interface SymbolHerkunft {
   klasse: string;
   klassenLabel: string;
   gruppe: string;
   name: string;
+  /** true = nur heuristisch eingeordnet, kein Katalog-Eintrag (Owner 21:4x). */
+  ausserhalbKatalog?: boolean;
 }
 
-/** Klasse, Gruppe und Klarname eines Katalog-Symbols (null = nicht im Katalog). */
+/**
+ * Klasse, Gruppe und Klarname eines Symbols.
+ *
+ * Katalog-Symbole liefern die volle Herkunft. Für FREI eingegebene Symbole
+ * (Alpaca kennt Tausende, der Katalog nur 132 — Owner 21:4x: „RCON hat z. B.
+ * noch keine Symbol-Infos") gibt es eine ehrliche Notversorgung: Die
+ * Assetklasse kommt aus derselben Heuristik, die auch die Engine benutzt
+ * (`classify`), Gruppe bleibt leer, Name ist das Kürzel selbst. Nichts wird
+ * erfunden — das Kärtchen sagt in diesem Fall ausdrücklich, dass kein
+ * Steckbrief hinterlegt ist.
+ */
 export function symbolHerkunft(sym: string): SymbolHerkunft | null {
   for (const [klasse, gruppen] of Object.entries(CATALOG)) {
     for (const [gruppe, eintraege] of Object.entries(gruppen)) {
@@ -32,7 +44,16 @@ export function symbolHerkunft(sym: string): SymbolHerkunft | null {
       }
     }
   }
-  return null;
+  const roh = sym.trim().toUpperCase();
+  if (roh === '') return null;
+  const klasse = classify(roh);
+  return {
+    klasse,
+    klassenLabel: CLASS_LABELS[klasse] ?? klasse,
+    gruppe: '',
+    name: roh,
+    ausserhalbKatalog: true,
+  };
 }
 
 /** Kuratierte Kurzbeschreibung je Symbol — die Marken/Märkte hinterm Kürzel. */
@@ -190,5 +211,8 @@ export function steckbriefText(sym: string): string {
   const kuratiert = STECKBRIEFE[sym];
   if (kuratiert) return kuratiert;
   const h = symbolHerkunft(sym);
-  return h ? `${h.name} — ${h.klassenLabel} (${h.gruppe}).` : '';
+  // Außerhalb des Katalogs gibt es KEINEN erfundenen Satz — der Aufrufer
+  // zeigt dort den ehrlichen Hinweis (t('steck.ohneEintrag')).
+  if (!h || h.ausserhalbKatalog === true) return '';
+  return `${h.name} — ${h.klassenLabel} (${h.gruppe}).`;
 }
