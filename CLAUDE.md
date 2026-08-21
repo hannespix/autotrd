@@ -169,7 +169,11 @@ gesamten Event-Loop ein → Server hängt → Browser bekommt leere Antwort →
   `prefers-reduced-motion`-Guard, Light/Dark via `data-theme`, responsive bis
   ~360 px (dann Off-Canvas-Drawer + Bottom-Sheet-Modal `#detailModal`).
 - Achtung doppelte IDs: Modal-Titel heißt `mvSym` (nicht `mSym` — das ist der
-  Manual-Trade-Input). Chart-Tooltip `position: fixed`.
+  Manual-Trade-Input). Chart-Tooltip (News-Bubble `#evTip`) ist `position:
+  fixed` als **Portal an `document.body`** — nie in eine Glass-Card hängen:
+  `backdrop-filter` macht die Card zum Containing Block für fixed (Bubble
+  wandert dann mit der Sidebar-Breite) und zum eigenen Stacking Context
+  (rechte Spalte malt drüber). Owner-Bug 21.08., Fix in `showNewsTooltip`.
 - Watchlist-Picker schreibt ins versteckte `#sTickers` + `doSave()`; Symbole
   müssen Katalog-Symbole sein (`^NDX`, nicht bloß `NDX`).
 
