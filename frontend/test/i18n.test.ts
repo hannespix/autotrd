@@ -1264,7 +1264,9 @@ describe('Tranche 5n — die zehn Analyse- und Melde-Funktionen', () => {
       'margin', 'span', 'style', 'title', 'top'],
     renderAbgleich: ['drift', 'fehler', 'color', 'cursor', 'details', 'div', 'margin',
       'pointer', 'style', 'summary', 'top', 'var'],
-    renderMomentum: ['class', 'div', 'hint', 'mono', 'row', 'span', 'tag'],
+    // „data"/„sym" kamen mit dem Steckbrief-Anker (18:1x): das data-sym-
+    // Attribut im Zeilen-Template — DOM-Technik, kein Nutzer-Text.
+    renderMomentum: ['class', 'div', 'hint', 'mono', 'row', 'span', 'tag', 'data', 'sym'],
     renderBestPractice: ['gekuert'],
     // ATR ist Fachkürzel; stop/target/short sind Code-Werte von levelDistPct.
     exitOutlook: ['ATR', 'class', 'next', 'pos', 'span', 'stop', 'target', 'short', 'title'],

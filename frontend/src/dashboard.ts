@@ -1041,6 +1041,7 @@ function layout(email: string): string {
         </div>
         <div id="mtInfo" hidden>
           <div class="hint" id="mtName"></div>
+          <div class="hint sym-steck" id="mtSteck"></div>
           <div class="row mt-inds">
             <div><label class="lbl">${t('lay.kursEinheit')}</label><div id="mtPx" class="smv mono">--</div></div>
             <div><label class="lbl">${t('lay.heute')}</label><div id="mtChg" class="smv mono">--</div></div>
@@ -4240,11 +4241,20 @@ function zeigeSymbolTip(sym: string, x: number, y: number): void {
   tip.style.top = `${y + 14 + b.height > window.innerHeight ? Math.max(8, y - b.height - 12) : y + 14}px`;
 }
 
-/** Steckbrief-Anker unterm Zeiger: Livebar-Kachel oder Auto-Signal-Zeile. */
+/** Steckbrief-Anker unterm Zeiger — überall, wo ein Symbol steht (Owner
+ *  18:1x: „überall einbauen wo symbole sind"): Livebar, Auto-Signale,
+ *  Markt-Übersicht, Trade-Historie, Positionen, Momentum-Ranking, Chart-Kopf. */
+const SYM_TIP_ANKER =
+  '.lb-item[data-sym], #sigBody tr[data-sym], .mkt-cell[data-sym], '
+  + '#jBody tr[data-sym], #pBody tr[data-sym], #moTop .fl-row[data-sym], '
+  + '#mainHdSym[data-sym]';
 function symTipAnker(ziel: Element | null): { sym: string } | null {
-  const el = ziel?.closest<HTMLElement>('.lb-item[data-sym], #sigBody tr[data-sym]');
+  const el = ziel?.closest<HTMLElement>(SYM_TIP_ANKER);
   const sym = el?.dataset.sym;
-  return sym ? { sym } : null;
+  // Der fokussierte Symbol-Sucher gehört dem Tippenden — kein Kärtchen über
+  // der aufklappenden Vorschlagsliste.
+  if (!sym || el === document.activeElement) return null;
+  return { sym };
 }
 
 function wireSymbolTip(): void {
@@ -4281,6 +4291,12 @@ function wireSymbolTip(): void {
   }, { signal: docListenerSignal() });
   document.addEventListener('pointerup', () => {
     if (symTipLangdruck !== null) { window.clearTimeout(symTipLangdruck); symTipLangdruck = null; }
+  }, { signal: docListenerSignal() });
+  // Fokus schlägt Hover: Der Klick-Anflug auf den Symbol-Sucher startet den
+  // 320-ms-Timer noch UNfokussiert — beim Fokus räumt focusin Timer + Kärtchen
+  // ab, sonst ploppt es über der Vorschlagsliste auf.
+  document.addEventListener('focusin', (ev) => {
+    if ((ev.target as Element | null)?.closest?.(SYM_TIP_ANKER)) versteckeSymbolTip();
   }, { signal: docListenerSignal() });
   window.addEventListener('scroll', versteckeSymbolTip, { passive: true, signal: docListenerSignal() });
 }
@@ -5565,6 +5581,7 @@ function renderChartGrid(): void {
   // Kopf des Haupt-Fensters nur im Raster (Höhen-Parität mit den Panels)
   $('mainHd').hidden = st.gridMode === 1;
   ($('mainHdSym') as HTMLInputElement).value = st.currentSymbol;
+  ($('mainHdSym') as HTMLInputElement).dataset.sym = st.currentSymbol; // Anker für den Symbol-Steckbrief (18:1x)
   $('lockMain').innerHTML = st.mainLocked ? ICONS.lock : ICONS.unlock;
   $('lockMain').classList.toggle('on', st.mainLocked);
   positionMainHud(); // Kopf sichtbar/versteckt → OHLC-Zeile ans Chart koppeln
@@ -5771,7 +5788,10 @@ function markLivebar(sym: string): void {
     el.classList.toggle('on', el.querySelector('.lb-sym')?.textContent === sym);
   });
   const hd = document.getElementById('mainHdSym') as HTMLInputElement | null;
-  if (hd) hd.value = sym; // Kopf des Haupt-Fensters folgt dem Symbol
+  if (hd) {
+    hd.value = sym; // Kopf des Haupt-Fensters folgt dem Symbol
+    hd.dataset.sym = sym; // Anker für den Symbol-Steckbrief (18:1x)
+  }
 }
 
 /* ── Workspace: Sichtbarkeit, Presets, Persistenz (M9) ──────────────── */
@@ -7010,6 +7030,7 @@ async function renderMarketGrid(): Promise<void> {
       const q = quotes.get(symbol)?.quote;
       const cell = document.createElement('div');
       cell.className = 'mkt-cell';
+      cell.dataset.sym = symbol; // Anker für den Symbol-Steckbrief (18:1x)
       cell.style.borderLeftColor = q ? (q.changePct >= 0 ? 'var(--gn)' : 'var(--rd)') : 'var(--bd)';
       cell.innerHTML = `<div class="mkt-sym"></div><div class="mkt-cnm"></div>
         <div class="mkt-pr">--</div><div class="mkt-ch"></div>`;
@@ -7033,6 +7054,9 @@ async function renderMarketGrid(): Promise<void> {
 
 function openDetail(symbol: string, name: string, data: MarketDocData | null): void {
   if (!st) return;
+  // Longpress zeigte evtl. gerade das Steckbrief-Kärtchen — das Sheet
+  // übernimmt jetzt (es trägt dieselbe Zeile fest), nichts darf drüber hängen.
+  versteckeSymbolTip();
   const sheet = $('detailSheet');
   const q = data?.quote;
   // Schlagzeilen aus der News-Lage des Scans (News-Rückkehr 29.07.) — reine
@@ -7378,6 +7402,7 @@ function renderPortfolio(): void {
       ? (short ? (1 - live / p.avgEntry) : (live / p.avgEntry - 1)) * 100
       : null;
     const tr = document.createElement('tr');
+    tr.dataset.sym = p.symbol; // Anker für den Symbol-Steckbrief (18:1x)
     // data-th wie in der Signal-Tabelle: Labels fürs mobile Karten-Layout.
     tr.innerHTML = `<td style="color:var(--t1);font-weight:700"></td><td data-th="Qty">${p.qty}</td>
       <td data-th="${t('tab.eintritt')}">${fmtNum(p.avgEntry)}</td><td data-th="${t('tab.aktuell')}">${live !== undefined ? fmtNum(live) : '--'}</td>
@@ -7579,6 +7604,7 @@ function renderJournal(): void {
   }
   for (const t of zeilen) {
     const tr = document.createElement('tr');
+    tr.dataset.sym = t.symbol; // Anker für den Symbol-Steckbrief (18:1x)
     const time = new Date(t.executedAt).toLocaleString('de-DE', {
       day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
     });
@@ -8901,7 +8927,7 @@ function renderMomentum(m: MomentumDoc | null): void {
           .map((eintrag) => {
             const drin = gehalten.has(eintrag.symbol);
             return (
-              `<div class="fl-row"><span>${esc(eintrag.symbol)}</span>` +
+              `<div class="fl-row" data-sym="${esc(eintrag.symbol)}"><span>${esc(eintrag.symbol)}</span>` +
               `<span class="mono ${pnlClass(eintrag.score)}">${eintrag.score >= 0 ? '+' : ''}${eintrag.score.toFixed(1)} %</span>` +
               `<span class="mono">${drin ? t('mo.gehalten') : '—'}</span></div>`
             );
@@ -9454,6 +9480,12 @@ function mtSelect(sym: string): void {
   $('mSymList').hidden = true;
   $('mtInfo').hidden = false;
   $('mtName').textContent = resolveName(sym);
+  // Steckbrief fest im Trade-Fenster (18:1x): Wer kauft, sieht, WAS er kauft —
+  // ohne Hover, damit es auch am Touch-Gerät immer da steht.
+  const mtSteck = $('mtSteck');
+  const mtSteckText = steckbriefText(sym);
+  mtSteck.textContent = mtSteckText;
+  mtSteck.style.display = mtSteckText ? '' : 'none';
   clearSubs(mtState.subs);
   mtState.subs.push(
     watchMarketDoc(sym, (d) => {
