@@ -165,6 +165,45 @@ export interface ErklaerungEingabe {
 /** Wann der Tageslauf schreibt — 17:15 New York, in Mitteleuropa 23:15. */
 const SNAPSHOT_UHRZEIT = '23:15';
 
+/* ── Strukturierte Teile statt fertiger Sätze (EN-Tranche 5, 21.08.) ─────
+ *
+ * Der deutsche Satz unten bleibt als Referenz-Formulierung: Der Golden-Test
+ * hält ihn fest, und der Bild-Prüfstand der Depot-Grafik rendert ihn. Die
+ * Oberfläche baut ihren Satz seit dieser Tranche aus den TEILEN — Code plus
+ * Zahlen, aus denen jede Sprache ihre eigene Fassung formt.
+ *
+ * Beide Wege benutzen dieselbe Fallunterscheidung (`erklaerungsTeile`),
+ * damit deutsche und englische Fassung nie auseinanderlaufen. */
+export type KurvenErklaerungTeil =
+  | { code: 'ausAbschluessen'; trades: number }
+  | { code: 'nochKeineAbschluesse' }
+  | { code: 'ohneZeitpunktOderErgebnis'; trades: number }
+  | { code: 'keineSnapshots'; resetAm?: string; uhrzeit: string }
+  | { code: 'einSnapshot'; resetAm?: string; uhrzeit: string };
+
+/** Die Fallunterscheidung — EINE Quelle für beide Sprachen. */
+export function erklaerungsTeile(e: ErklaerungEingabe): KurvenErklaerungTeil[] {
+  if (e.herkunft === 'snapshots') return [];
+  const teile: KurvenErklaerungTeil[] = [];
+  if (e.herkunft === 'trades') {
+    teile.push({ code: 'ausAbschluessen', trades: e.trades });
+  } else if (e.trades <= 0) {
+    teile.push({ code: 'nochKeineAbschluesse' });
+  } else {
+    // Abschlüsse ohne Zeitstempel/Ergebnis sind ein DATENFEHLER — dieser
+    // Fall trägt bewusst keinen Snapshot-Zusatz, sonst klänge er wie
+    // „noch zu früh".
+    return [{ code: 'ohneZeitpunktOderErgebnis', trades: e.trades }];
+  }
+  const reset = e.resetAm && e.resetAm.length >= 10 ? e.resetAm.slice(0, 10) : undefined;
+  if (e.snapshots <= 0) {
+    teile.push({ code: 'keineSnapshots', uhrzeit: SNAPSHOT_UHRZEIT, ...(reset ? { resetAm: reset } : {}) });
+  } else if (e.snapshots === 1) {
+    teile.push({ code: 'einSnapshot', uhrzeit: SNAPSHOT_UHRZEIT, ...(reset ? { resetAm: reset } : {}) });
+  }
+  return teile;
+}
+
 function snapshotSatz(snapshots: number, resetAm: string | undefined): string {
   const seitReset = resetAm && resetAm.length >= 10 ? ` (Reset am ${resetAm.slice(0, 10)})` : '';
   if (snapshots <= 0) {

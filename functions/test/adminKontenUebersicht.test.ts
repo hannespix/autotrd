@@ -40,7 +40,7 @@ describe('Admin-Konten-Übersicht (Quelltext-Wächter)', () => {
      * derselben Zeile stehen — nur nicht mehr über ihre Rechtschreibung. */
     expect(dashboard).toContain("${trades} ${t('adm.trades')} · ${t('adm.reife')} ");
     expect(dashboard).toContain('${row.reife.erfuellt}/${row.reife.gesamt}');
-    expect(dashboard).toContain('reife.title = row.reife.fazit;');
+    expect(dashboard).toContain('reife.title = reifeFazit(row.reife);');
     expect(dashboard).toContain('line.append(who, perf, reife, badge);');
   });
 
