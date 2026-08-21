@@ -946,6 +946,15 @@ function layout(email: string): string {
           <div><label class="lbl">${t('pf.winRate')}</label><div id="vWR" class="smv">--%</div></div>
         </div>
         <label class="lbl" style="margin-top:10px">${t('pf.equityKurve')} ${iBtn('equityCurve')}</label>
+        <!-- Galerie (Owner 21.08.): Equity-Kurve und Depot-Verlauf blättern
+             auf EINEM Platz — die eigene Depot-Verlauf-Karte ist dafür
+             eingezogen (eine Karte weniger). Die dc-Ids bleiben unverändert,
+             renderDepotVerlauf zeichnet weiter an dieselben Halter. -->
+        <div class="mkt-tabs" id="pfAnsicht" style="margin:2px 0 4px">
+          <button class="tf-btn on" data-pfa="kurve">${t('pf.ansichtKurve')}</button>
+          <button class="tf-btn" data-pfa="depot">${t('dc.titel')}</button>
+        </div>
+        <div id="pfSeiteKurve" class="pf-seite">
         <!-- Zeitachse der Kurve (Owner-Thema „Performance mit Zeitachse"):
              fenstert Sparkline, große Kurve und Drawdown; die Kennzahlen
              darunter bleiben Server-Zahlen mit eigenem Bezugsraum. -->
@@ -958,6 +967,19 @@ function layout(email: string): string {
           <label class="lbl" style="margin-top:6px">Drawdown ${iBtn('drawdown')}</label>
           <svg id="pfDDCurve" viewBox="0 0 100 18" preserveAspectRatio="none" aria-hidden="true" style="display:block;width:100%;height:54px"></svg>
         </details>
+        </div>
+        <div id="pfSeiteDepot" class="pf-seite" hidden>
+        <div class="pf-dep-kopf">
+          <span class="dc-modus">
+            <button id="dcMSym" aria-pressed="true">${t('dc.jeSymbol')}</button>
+            <button id="dcMTrade" aria-pressed="false">${t('dc.jeTrade')}</button>
+          </span>
+          ${iBtn('depotVerlauf')}
+        </div>
+        <div class="dc-wrap" id="dcWrap"><div id="dcChart"></div><div class="dc-tt" id="dcTip" hidden></div></div>
+        <div class="dc-legende" id="dcLegende"></div>
+        <div id="dcMeta" class="tn-n mono"></div>
+        </div>
         <div class="pf-grid" id="pfGrid" hidden>
           <div><label class="lbl">Sharpe 30 ${iBtn('sharpe')}</label><div id="pfS30" class="smv mono">--</div></div>
           <div><label class="lbl">Sharpe 90</label><div id="pfS90" class="smv mono">--</div></div>
@@ -1106,16 +1128,9 @@ function layout(email: string): string {
         <div id="skLog" class="tn-log"><div class="hint">${t('lay.keinLauf')}</div></div>
       </div></div>
 
-      <div class="card" data-panel="depotVerlauf"><div class="sect">${t('dc.titel')} ${iBtn('depotVerlauf')}
-        <span class="dc-modus">
-          <button id="dcMSym" aria-pressed="true">${t('dc.jeSymbol')}</button>
-          <button id="dcMTrade" aria-pressed="false">${t('dc.jeTrade')}</button>
-        </span>
-      </div><div class="cbody">
-        <div class="dc-wrap" id="dcWrap"><div id="dcChart"></div><div class="dc-tt" id="dcTip" hidden></div></div>
-        <div class="dc-legende" id="dcLegende"></div>
-        <div id="dcMeta" class="tn-n mono"></div>
-      </div></div>
+<!-- Die Depot-Verlauf-Karte wohnt seit 21.08. als Galerie-Ansicht IN der
+           Performance-Karte (#pfSeiteDepot) — hier bewusst keine eigene Karte
+           mehr, sonst gäbe es die dc-Ids doppelt. -->
 
       <div class="card" data-panel="haltedauer"><div class="sect">${t('panel.haltedauer')} ${iBtn('haltedauer')}
         <span id="hdStand" class="tn-tag" style="float:right"></span>
@@ -9336,6 +9351,29 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   };
   $('dcMSym')?.addEventListener('click', () => setzeModus('symbol'));
   $('dcMTrade')?.addEventListener('click', () => setzeModus('trade'));
+
+  // Galerie der Performance-Karte (Owner 21.08.): Kurve und Depot-Verlauf
+  // blättern auf einem Platz. Die Wahl bleibt Gerät-lokal — sie ist eine
+  // Sehgewohnheit, keine Einstellung.
+  const zeigePfAnsicht = (seite: 'kurve' | 'depot', animiert: boolean): void => {
+    const kurve = document.getElementById('pfSeiteKurve');
+    const depot = document.getElementById('pfSeiteDepot');
+    if (!kurve || !depot) return;
+    kurve.hidden = seite !== 'kurve';
+    depot.hidden = seite !== 'depot';
+    for (const b of document.querySelectorAll<HTMLButtonElement>('#pfAnsicht [data-pfa]'))
+      b.classList.toggle('on', b.dataset['pfa'] === seite);
+    localStorage.setItem('autotrd-pf-ansicht', seite);
+    if (animiert && !reduzierteBewegung) {
+      const ziel = seite === 'kurve' ? kurve : depot;
+      ziel.classList.remove('pf-rein');
+      void ziel.offsetWidth; // Reflow — sonst startet dieselbe Animation nicht erneut
+      ziel.classList.add('pf-rein');
+    }
+  };
+  for (const b of document.querySelectorAll<HTMLButtonElement>('#pfAnsicht [data-pfa]'))
+    b.addEventListener('click', () => zeigePfAnsicht(b.dataset['pfa'] === 'depot' ? 'depot' : 'kurve', true));
+  zeigePfAnsicht(localStorage.getItem('autotrd-pf-ansicht') === 'depot' ? 'depot' : 'kurve', false);
 
   // Teilen-Grafik: Vorschau folgt dem Beträge-Schalter, damit man vor dem
   // Teilen sieht, was das Bild preisgibt.

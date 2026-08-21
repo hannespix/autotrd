@@ -951,6 +951,14 @@ td .sym-av, .lb-sym .sym-av { margin-right: 6px; }
 .dc-modus button { font-size: 10px; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--bd2);
   background: none; color: var(--t3); cursor: pointer; }
 .dc-modus button[aria-pressed="true"] { background: var(--ac-soft); color: var(--t1); border-color: var(--ac); }
+/* Performance-Galerie (Owner 21.08.): Kurve und Depot-Verlauf teilen sich
+   als blätterbare Ansichten einen Platz; die aktive Seite gleitet kurz
+   herein. Reduzierte Bewegung bekommt den harten Schnitt. */
+.pf-dep-kopf { display: flex; align-items: center; gap: 6px; margin: 2px 0 4px; }
+.pf-dep-kopf .dc-modus { float: none; }
+.pf-seite.pf-rein { animation: pfSeiteRein .28s var(--e-out, ease-out); }
+@keyframes pfSeiteRein { from { opacity: 0; transform: translateX(10px); } }
+@media (prefers-reduced-motion: reduce) { .pf-seite.pf-rein { animation: none; } }
 
 /* Haltedauer-Kurve (10.08.): sechs Spalten, kein innerer Scroll.
    Bewusst NICHT `.fl-tbl` mitbenutzt — die deckelt auf 168 px, und fünf
