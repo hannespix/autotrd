@@ -176,6 +176,22 @@ gesamten Event-Loop ein → Server hängt → Browser bekommt leere Antwort →
   (rechte Spalte malt drüber). Owner-Bug 21.08., Fix in `showNewsTooltip`.
 - Watchlist-Picker schreibt ins versteckte `#sTickers` + `doSave()`; Symbole
   müssen Katalog-Symbole sein (`^NDX`, nicht bloß `NDX`).
+- **Bild-Prüfstände messen Text gegen Text — nicht Rechteck gegen Text.**
+  `share-shot.mjs` und `chart:shot` melden „keine Kollision", während ein
+  Tag-Rechteck mitten durch einen Symbolnamen läuft oder ein Balken in die
+  Zahlenspalte ragt. Beides kam am 21.08. beim Bau der Depot-Karte vor und
+  war NUR im angesehenen Bild zu erkennen. Regel: Wo ein gezeichnetes
+  Element neben Text sitzt, muss die GEOMETRIE die Kollision ausschließen
+  (feste Spalte statt aus der Zeichenzahl geschätzter Textbreite; Balken
+  enden vor der Zahlenspalte) — und ein Unit-Wächter pinnt die Koordinate.
+  Aus Zeichenzahl × em geschätzte Breiten liegen bei „BTC-USD" oder „MSFT"
+  zuverlässig daneben.
+- **Symbol-Anzeigen tragen `data-sym`.** Der Steckbrief-Anker ist generisch
+  (`SYM_TIP_ANKER = '[data-sym]'`): Jede neue Stelle, die ein Symbol zeigt,
+  ist damit automatisch erklärbar (Hover ~0,3 s, Touch-Longpress 450 ms) —
+  ohne dass jemand einen Selektor pflegt. Die Umkehrung gilt auch: Wer ein
+  Symbol rendert und das Attribut vergisst, baut eine stumme Stelle
+  (Owner-Befund 21.08.: „noch nicht alle Symbole haben Tooltips").
 
 ## 7. Broker & Sicherheit
 
@@ -185,8 +201,29 @@ gesamten Event-Loop ein → Server hängt → Browser bekommt leere Antwort →
 - Ohne Keys → sauberer Fallback auf `PaperBroker`. Default ist immer Paper.
 - Beim Erweitern der Broker-Schicht diese Guards **nie** lockern und Keys nie in
   Logs/Exceptions/Commits durchsickern lassen.
+- **Sperren löst man über die URSACHE, nie per Override.** Die
+  Abgleich-Sperre (`abgleich_drift`) ist kein Schalter, sondern ein
+  Messergebnis: Sie steht, solange das Buch Positionen führt, die der
+  Broker nicht hat. Ein Knopf „Sperre aus" wäre genau die Ausnahme, die
+  den Schutz wertlos macht — der Fehlbestand bliebe ja. Richtig ist, die
+  Prüfung neu auszulösen (dann fällt die Sperre von selbst, wenn die Drift
+  weg ist) oder das Buch bewusst anzugleichen (`adoptBroker`, markierter
+  Schnitt mit Bestätigung). Dieselbe Regel gilt für jede künftige Sperre:
+  Die Admin-Ansicht darf sie SICHTBAR machen und die Messung anstoßen —
+  ihren Zustand setzen darf nur die Messung selbst.
 
 ## 8. Verifikation (nach jeder nicht-trivialen Änderung)
+
+> **Sabotage-Proben brauchen EINDEUTIGE Anker.** Ein Wächter, der nie rot
+> war, bewacht nichts — deshalb wird jeder neue Wächter einmal absichtlich
+> gebrochen und zurückgebaut, per Text-Ersetzung (nie `git checkout`, das
+> nähme uncommittete Arbeit mit). Der Rückbau muss aber DENSELBEN Ort
+> treffen: Am 21.08. ersetzte eine Probe das erste Vorkommen von „Fee
+> share" (im EN-Block), der Rückbau das erste Vorkommen von
+> „Gebührenanteil" (im DE-Block) — Ergebnis: DE und EN vertauscht. Die
+> volle Suite hat es gefangen, aber verlassen darf man sich darauf nicht.
+> Also: Anker mit genug Kontext wählen (Nachbarzeile, Zeilennummer oder
+> `count == 1` prüfen) und nach dem Rückbau die Suite laufen lassen.
 
 Es gibt keine umfassende Test-Suite — **beobachte echtes Verhalten**:
 
