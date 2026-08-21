@@ -406,6 +406,26 @@ td .sym-av, .lb-sym .sym-av { margin-right: 6px; }
      besteht aus vielen Inline-Stücken (<b>, <span>, ·) — als Flex-Items
      stünden sie ohne Umbruch in EINER Zeile und ragten aus der Karte. */
   .tbl-karten tr.pos-sub td { display: block; padding: 0; font-size: 10px; }
+  /* Kompakte Signal-Karten (Owner 21.08.: „nehmen zu viel Raum ein"):
+     Kopf = Symbol links + Signal-Tag rechts, darunter die vier Messwerte
+     nebeneinander (Label klein über dem Wert) — ~80 px je Symbol statt
+     fünf gestapelter Zeilen. */
+  .tbl-kompakt tr { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px 8px; align-items: center; }
+  .tbl-kompakt td { padding: 0; }
+  .tbl-kompakt td:first-child:not(:only-child) {
+    grid-column: 1 / 4; margin-bottom: 3px; padding-bottom: 5px;
+  }
+  .tbl-kompakt td:nth-child(6) {
+    grid-column: 4; grid-row: 1; justify-self: end; align-self: stretch;
+    display: flex; align-items: center; margin-bottom: 3px; padding-bottom: 5px;
+    border-bottom: 1px solid var(--hair);
+  }
+  .tbl-kompakt td:nth-child(6)::before { content: none; }
+  .tbl-kompakt td[data-th]:not(:nth-child(6)) {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  }
+  .tbl-kompakt td[data-th]:not(:nth-child(6))::before { font-size: 10px; }
+  .tbl-kompakt td:only-child { grid-column: 1 / -1; }
 }
 
 
