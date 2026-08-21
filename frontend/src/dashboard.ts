@@ -896,14 +896,14 @@ function layout(email: string): string {
       </div>
 
       <div class="card" data-panel="autosignals"><div class="sect">${t('panel.autoSignale')}</div><div class="cbody">
-        <div class="tw"><table class="tbl">
+        <div class="tw"><table class="tbl tbl-karten">
           <thead><tr><th>Ticker</th><th>RSI</th><th>MACD</th><th>BB %</th><th>Konfluenz</th><th>Signal</th></tr></thead>
           <tbody id="sigBody"><tr><td colspan="6" class="c-t3">${t('lay.keinScan')}</td></tr></tbody>
         </table></div>
       </div></div>
 
       <div class="card" data-panel="positions"><div class="sect">${t('panel.positionenKopf')} <span id="pCount" style="float:right;color:var(--t3)">0 offen</span></div><div class="cbody">
-        <div class="tw"><table class="tbl">
+        <div class="tw"><table class="tbl tbl-karten">
           <thead><tr><th>Sym</th><th>Qty</th><th>Eintritt</th><th>Aktuell</th><th>P&amp;L</th><th>%</th><th></th></tr></thead>
           <tbody id="pBody"><tr><td colspan="7" class="c-t3">Keine offenen Positionen</td></tr></tbody>
         </table></div>
@@ -4431,8 +4431,11 @@ function wireWatchlist(): void {
   const rows = new Map<string, { ind: IndicatorRow | null; sig: SignalRow | null; tr: HTMLTableRowElement }>();
   for (const sym of wl) {
     const tr = document.createElement('tr');
+    // data-th spiegelt die Kopfzeile: unter 480px stapelt das Karten-Layout
+    // die Zellen als Label:Wert-Paare und zieht die Labels aus dem Attribut.
     tr.innerHTML = `<td class="mono" style="color:var(--t1);font-weight:700"></td>
-      <td>--</td><td>--</td><td>--</td><td>--</td><td><span class="stag t-hold">HOLD</span></td>`;
+      <td data-th="RSI">--</td><td data-th="MACD">--</td><td data-th="BB %">--</td>
+      <td data-th="${t('tab.konfluenz')}">--</td><td data-th="Signal"><span class="stag t-hold">HOLD</span></td>`;
     const sigSym = tr.querySelector('td')!;
     sigSym.innerHTML = symbolAvatar(sym, true);
     sigSym.appendChild(document.createTextNode(sym));
@@ -6719,11 +6722,12 @@ function renderPortfolio(): void {
       ? (short ? (1 - live / p.avgEntry) : (live / p.avgEntry - 1)) * 100
       : null;
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td style="color:var(--t1);font-weight:700"></td><td>${p.qty}</td>
-      <td>${fmtNum(p.avgEntry)}</td><td>${live !== undefined ? fmtNum(live) : '--'}</td>
-      <td class="${pnl !== null ? pnlClass(pnl) : ''}">${pnl !== null ? money(pnl) : '--'}</td>
-      <td class="${pct !== null ? pnlClass(pct) : ''}">${pct !== null ? fmtPct(pct) : '--'}</td>
-      <td><button class="hbtn" data-exit style="color:var(--rd)">${short ? 'Cover' : 'Exit'}</button></td>`;
+    // data-th wie in der Signal-Tabelle: Labels fürs mobile Karten-Layout.
+    tr.innerHTML = `<td style="color:var(--t1);font-weight:700"></td><td data-th="Qty">${p.qty}</td>
+      <td data-th="${t('tab.eintritt')}">${fmtNum(p.avgEntry)}</td><td data-th="${t('tab.aktuell')}">${live !== undefined ? fmtNum(live) : '--'}</td>
+      <td data-th="P&amp;L" class="${pnl !== null ? pnlClass(pnl) : ''}">${pnl !== null ? money(pnl) : '--'}</td>
+      <td data-th="%" class="${pct !== null ? pnlClass(pct) : ''}">${pct !== null ? fmtPct(pct) : '--'}</td>
+      <td class="pos-act"><button class="hbtn" data-exit style="color:var(--rd)">${short ? 'Cover' : 'Exit'}</button></td>`;
     const symTd = tr.querySelector('td')!;
     symTd.innerHTML = symbolAvatar(p.symbol);
     symTd.appendChild(document.createTextNode(p.symbol));
