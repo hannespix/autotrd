@@ -47,6 +47,18 @@ describe('Panel-Kopf — Pfeil links, Titelzeile klappt, ✕ isoliert rechts', (
     expect(klapp).toContain('if (aufklappen && akkordeon && spalte)');
   });
 
+  it('Akkordeon-Schalter (Owner 21.08.): Optionen→Anzeige kann das Mitschließen abstellen', () => {
+    // klappUm respektiert den Schalter; fehlendes Feld bleibt AN.
+    expect(klapp).toContain('st.ui.akkordeon !== false &&');
+    // Checkbox im Options-Modal, geladen und über die Toggle-Schleife gespeichert.
+    expect(dashboard).toContain('id="ouAkk"');
+    expect(dashboard).toContain("($('ouAkk') as HTMLInputElement).checked = st.ui.akkordeon !== false;");
+    expect(dashboard).toContain("['ouAkk', 'akkordeon'],");
+    // Beim Laden aus settings.ui MITFÜHREN — saveUiPrefs schreibt das ganze
+    // Objekt, ein fehlendes Feld wäre beim nächsten Speichern gelöscht.
+    expect(dashboard).toContain('akkordeon: ui?.akkordeon !== false,');
+  });
+
   it('ARIA: der Klapp-Zustand steht als aria-expanded am Knopf', () => {
     const apply = dashboard.match(/function applyCollapse[\s\S]*?\n\}/)?.[0] ?? '';
     expect(apply).toContain("btn.setAttribute('aria-expanded', String(!on));");

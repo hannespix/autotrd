@@ -523,6 +523,9 @@ export interface UiPrefs {
   /** Onboarding-Tour (MU2) gesehen? Auch Abbrechen zählt — der ?-Knopf im
    *  Header holt sie jederzeit zurück, aufgedrängt wird sie nur einmal. */
   tourGesehen?: boolean;
+  /** Sidebar-Akkordeon (Owner 21.08.): Aufklappen schließt die Nachbar-
+   *  Karten der Spalte. Fehlend = AN (heutiges Verhalten), false = aus. */
+  akkordeon?: boolean;
 }
 
 export function watchUserDoc(

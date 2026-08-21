@@ -1038,7 +1038,7 @@ describe('Tranche 5l — „Warum handelt die Engine?" und die Melde-Texte der M
       // DOM-Ids, Datensatz-Namen und Selektor-Teile
       'chartGrid', 'cmpOverlay', 'subPanels', 'predArrow', 'drawBtn', 'indBtn',
       'layBtn', 'menuDraw', 'menuInd', 'menuLay', 'leftCol', 'rightCol', 'otSym',
-      'otQty', 'otab', 'opane', 'ouPred', 'ouCmp', 'ouGrid', 'ouSub', 'lodel',
+      'otQty', 'otab', 'opane', 'ouPred', 'ouCmp', 'ouGrid', 'ouSub', 'ouAkk', 'akkordeon', 'lodel',
       'flCombos', 'flCombosIntra', 'stopsym', 'adv', 'titel', 'zoom', 'layer',
       'ctype', 'scale', 'grid', 'draw',
       // Speicher-Schlüssel, Tastennamen, Medienabfrage

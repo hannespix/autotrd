@@ -367,6 +367,8 @@ interface DashState {
     marketGroups?: Record<string, boolean>;
     /** Onboarding-Tour (MU2) gesehen? Auch Abbrechen zählt. */
     tourGesehen?: boolean;
+    /** Sidebar-Akkordeon an? Fehlend = AN, false = aus (Optionen→Anzeige). */
+    akkordeon?: boolean;
   };
   /** Eingeklappte Module (nur Karten-Körper zu — Gerät-lokal). */
   collapsed: Set<string>;
@@ -1272,6 +1274,8 @@ function layout(email: string): string {
         <span>${t('opt.multiChartRaster')}</span></label>
       <label class="opt-row"><input type="checkbox" id="ouSub" />
         <span>${t('opt.indikatorExtras')}</span></label>
+      <label class="opt-row"><input type="checkbox" id="ouAkk" />
+        <span>${t('opt.sidebarAkkordeon')}</span></label>
       <div class="wl-sec">${t('opt.module')}</div>
       <div id="ouPanels" class="opt-panels"></div>
       <p class="hint">${t('opt.moduleHint')}</p>
@@ -3310,6 +3314,7 @@ function openOptions(): void {
   ($('ouCmp') as HTMLInputElement).checked = st.ui.cmpOverlay;
   ($('ouGrid') as HTMLInputElement).checked = st.ui.chartGrid;
   ($('ouSub') as HTMLInputElement).checked = st.ui.subPanels;
+  ($('ouAkk') as HTMLInputElement).checked = st.ui.akkordeon !== false;
   ($('owCap') as HTMLInputElement).value = String(st.strategy.broker.initialCapital);
   ($('owMax') as HTMLInputElement).value = String(st.strategy.engine.maxPositionPct);
   ($('owRisk') as HTMLInputElement).value = String(
@@ -5793,7 +5798,10 @@ function klappUm(id: string, card: HTMLElement): void {
   if (aufklappen) st.collapsed.delete(id);
   else st.collapsed.add(id);
   const spalte = card.parentElement;
-  const akkordeon = spalte?.id === 'leftCol' || spalte?.id === 'rightCol';
+  // Der Optionen-Schalter (Anzeige → Sidebar-Akkordeon) kann das
+  // Mitschließen der Nachbarn abstellen; fehlendes Feld bedeutet AN.
+  const akkordeon =
+    st.ui.akkordeon !== false && (spalte?.id === 'leftCol' || spalte?.id === 'rightCol');
   if (aufklappen && akkordeon && spalte) {
     for (const nachbar of spalte.querySelectorAll<HTMLElement>(':scope > .card[data-panel]')) {
       const gid = nachbar.dataset.panel ?? '';
@@ -9190,6 +9198,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         // als GANZES Objekt; ein fehlendes Feld wäre beim nächsten Speichern
         // gelöscht und die Tour käme bei jedem Login wieder.
         tourGesehen: ui?.tourGesehen === true,
+        // Fehlend = AN: Bestandskonten behalten das Akkordeon-Verhalten.
+        akkordeon: ui?.akkordeon !== false,
       };
       applyUiPrefs();
       pruefeTourAutostart();
@@ -10010,6 +10020,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     ['ouCmp', 'cmpOverlay'],
     ['ouGrid', 'chartGrid'],
     ['ouSub', 'subPanels'],
+    ['ouAkk', 'akkordeon'],
   ] as const) {
     $(id).addEventListener('change', () => {
       if (!st) return;

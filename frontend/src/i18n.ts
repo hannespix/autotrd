@@ -69,6 +69,8 @@ export const DE = {
   'opt.multiChartRaster': '<b>Multi-Chart-Raster</b> — 1/2/4 Charts parallel mit Lock-Sync.',
   'opt.indikatorExtras':
     '<b>Indikator-Extras</b> — VWAP (Intraday) und RSI/MACD-Unterpanels unter dem Haupt-Chart.',
+  'opt.sidebarAkkordeon':
+    '<b>Sidebar-Akkordeon</b> — beim Aufklappen einer Karte schließen die Nachbarn der Spalte automatisch.',
   'opt.module': 'Module',
   'opt.moduleHint':
     'Abgewählte Module verschwinden komplett (geht auch per ✕ direkt am Modul); ▾ am Modul klappt nur zu. Die Auswahl synct über deine Geräte.',
@@ -1283,6 +1285,8 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'opt.multiChartRaster': '<b>Multi-chart grid</b> — 1/2/4 charts side by side with lock sync.',
   'opt.indikatorExtras':
     '<b>Indicator extras</b> — VWAP (intraday) and RSI/MACD sub-panels below the main chart.',
+  'opt.sidebarAkkordeon':
+    '<b>Sidebar accordion</b> — opening a card automatically collapses its column neighbours.',
   'opt.module': 'Modules',
   'opt.moduleHint':
     'Deselected modules disappear entirely (also works via ✕ on the module itself); ▾ on a module only collapses it. The selection syncs across your devices.',
