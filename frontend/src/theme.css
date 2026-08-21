@@ -1134,7 +1134,10 @@ td .sym-av, .lb-sym .sym-av { margin-right: 6px; }
 /* Ergonomie (Owner 21.08.): Klapp-Pfeil ganz links am Titel, die ganze
    Titelzeile ist das Toggle-Ziel — das ✕ bleibt allein rechts. */
 .card[data-panel] > .sect { cursor: pointer; user-select: none; -webkit-user-select: none; }
-.sect-fold { margin-right: 7px; }
+.sect-fold { margin-right: 7px; transition: transform .22s var(--e-out); }
+/* Zugeklappt dreht der Pfeil zur Seite — animierbar, anders als ein
+   Zeichen-Tausch ▸/▾ (applyCollapse setzt nur noch aria-expanded). */
+.sect-fold[aria-expanded="false"] { transform: rotate(-90deg); }
 .sect-tools { float: right; display: inline-flex; gap: 2px; margin-left: 8px; }
 .sect-btn { background: none; border: 0; color: var(--t3); cursor: pointer; font-size: 11px; padding: 0 5px; border-radius: 4px; line-height: 1.4; }
 .sect-btn:hover { color: var(--t1); background: var(--sd); }

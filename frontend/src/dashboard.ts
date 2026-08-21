@@ -5700,17 +5700,71 @@ function wireSidebarResize(): void {
 
 /* ── Dashboard-Individualisierung Teil 1 (Taschenmesser-Vision 25.07.) ── */
 
+/**
+ * Weiches Auf-/Zuklappen (Owner 21.08.: „richtig schick animieren"): Die
+ * Animation ist reine Kosmetik OBENDRAUF — `hidden` bleibt die eine
+ * Wahrheit über den Zustand, gesetzt beim Zuklappen erst am Ende der
+ * Animation. Laufende Animationen werden bei schnellem Doppel-Toggle
+ * gecancelt; wer weniger Bewegung wünscht (prefers-reduced-motion),
+ * bekommt den harten Schnitt.
+ */
+const reduzierteBewegung = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+/** Die jeweils JÜNGSTE Klapp-Animation je Körper — nur sie darf ihr Sicherheitsnetz ziehen. */
+const aktuelleKlappAnim = new WeakMap<HTMLElement, Animation>();
+
+function setzeKlappzustand(body: HTMLElement, zu: boolean, animiert: boolean): void {
+  body.getAnimations().forEach((a) => a.cancel());
+  aktuelleKlappAnim.delete(body);
+  if (body.hidden === zu) return;
+  if (!animiert || reduzierteBewegung || typeof body.animate !== 'function') {
+    body.hidden = zu;
+    return;
+  }
+  const lauf = { duration: 260, easing: 'cubic-bezier(.4,0,.2,1)' };
+  body.style.overflow = 'hidden';
+  let anim: Animation;
+  let abschliessen: () => void;
+  if (zu) {
+    anim = body.animate([{ height: `${body.scrollHeight}px`, opacity: 1 }, { height: '0px', opacity: 0 }], lauf);
+    abschliessen = () => {
+      body.hidden = true;
+      body.style.overflow = '';
+    };
+  } else {
+    body.hidden = false;
+    anim = body.animate([{ height: '0px', opacity: 0 }, { height: `${body.scrollHeight}px`, opacity: 1 }], lauf);
+    abschliessen = () => {
+      body.style.overflow = '';
+    };
+  }
+  anim.onfinish = abschliessen;
+  aktuelleKlappAnim.set(body, anim);
+  // Sicherheitsnetz: In gedrosselten Tabs (und im Headless-Prüfstand) steht
+  // die Animations-Uhr — onfinish bliebe aus und die Karte hinge zwischen
+  // den Zuständen. Der Timer zieht den Endzustand hart nach; hat inzwischen
+  // ein neuerer Toggle übernommen, gilt dessen Zustand und der Timer tut
+  // nichts.
+  window.setTimeout(() => {
+    if (aktuelleKlappAnim.get(body) !== anim) return;
+    aktuelleKlappAnim.delete(body);
+    anim.cancel();
+    abschliessen();
+  }, 420);
+}
+
 /** Eingeklappte Karten anwenden (nur der Körper zu — Gerät-lokal). */
-function applyCollapse(): void {
+function applyCollapse(animiert = false): void {
   if (!st) return;
   document.querySelectorAll<HTMLElement>('.card[data-panel]').forEach((card) => {
     const id = card.dataset.panel ?? '';
     const body = card.querySelector<HTMLElement>(':scope > .cbody');
     const btn = card.querySelector<HTMLElement>(':scope > .sect [data-col]');
     const on = st!.collapsed.has(id);
-    if (body) body.hidden = on;
+    if (body) setzeKlappzustand(body, on, animiert);
     if (btn) {
-      btn.textContent = on ? '▸' : '▾';
+      // Die Richtung zeigt die CSS-Rotation über aria-expanded — ein
+      // Zeichen-Tausch (▸/▾) ließe sich nicht animieren.
+      btn.textContent = '▾';
       btn.setAttribute('aria-expanded', String(!on));
     }
   });
@@ -5738,7 +5792,7 @@ function klappUm(id: string, card: HTMLElement): void {
     }
   }
   localStorage.setItem('autotrd-collapsed', [...st.collapsed].join(','));
-  applyCollapse();
+  applyCollapse(true);
 }
 
 /**

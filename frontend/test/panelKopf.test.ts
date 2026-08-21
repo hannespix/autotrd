@@ -53,8 +53,26 @@ describe('Panel-Kopf — Pfeil links, Titelzeile klappt, ✕ isoliert rechts', (
     expect(chrome).toContain("fold.setAttribute('aria-label'");
   });
 
+  it('Klappen ist weich animiert — hidden bleibt die Wahrheit, Boot bleibt hart', () => {
+    // Owner 21.08.: „richtig schick animieren". Die Animation ist Kosmetik
+    // OBENDRAUF: Zuklappen setzt hidden erst am Ende (onfinish), schnelles
+    // Doppel-Toggle cancelt laufende Animationen, reduzierte Bewegung und
+    // der Boot-Restore bekommen den harten Schnitt.
+    const setz = dashboard.match(/function setzeKlappzustand[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(setz).toContain('body.getAnimations().forEach((a) => a.cancel());');
+    expect(setz).toContain('if (!animiert || reduzierteBewegung');
+    expect(setz).toContain('body.animate(');
+    expect(setz).toMatch(/anim\.onfinish = \(\) => \{\n\s*body\.hidden = true;/);
+    expect(dashboard).toContain("window.matchMedia?.('(prefers-reduced-motion: reduce)')");
+    // Nutzer-Toggle animiert, der Boot-Aufruf am Ende von wirePanelChrome nicht.
+    expect(klapp).toContain('applyCollapse(true);');
+    expect(chrome).toMatch(/^\s*applyCollapse\(\);\n\}/m);
+    // Der Pfeil dreht per CSS statt Zeichen-Tausch.
+    expect(css).toContain('.sect-fold[aria-expanded="false"] { transform: rotate(-90deg); }');
+  });
+
   it('CSS: Titelzeile zeigt Zeiger-Cursor, Pfeil hat Abstand zum Titel', () => {
     expect(css).toContain('.card[data-panel] > .sect { cursor: pointer;');
-    expect(css).toMatch(/\.sect-fold \{ margin-right: \d+px; \}/);
+    expect(css).toMatch(/\.sect-fold \{ margin-right: \d+px; transition: transform/);
   });
 });
