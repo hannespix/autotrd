@@ -1287,7 +1287,12 @@ td .sym-av, .lb-sym .sym-av { margin-right: 6px; }
 .opt-row input { margin-top: 2px; accent-color: var(--ac); }
 .opt-row b { color: var(--t1); }
 .opt-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.opt-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--t2); }
+/* Block statt flex-column (UI-Audit 21.08.): In der Spalten-Flexbox wurde
+   JEDES Kind ein eigenes Item — das ⓘ stand allein zwischen Beschriftung
+   und Feld, und Selects schrumpften auf 72 px. Als Block fließen Text + ⓘ
+   in einer Zeile, das Feld darunter nimmt die volle Spaltenbreite. */
+.opt-grid label { display: block; font-size: 11px; color: var(--t2); }
+.opt-grid label:not(.opt-check) .inp { display: block; width: 100%; margin-top: 4px; }
 /* Untergruppen-Überschrift im Einstellungs-Raster: volle Breite, damit die
    22 Felder in lesbare Blöcke zerfallen statt in eine anonyme Wand. */
 .opt-sub {
@@ -1331,6 +1336,7 @@ td .sym-av, .lb-sym .sym-av { margin-right: 6px; }
 @media (max-width: 560px) {
   .opt-grid { grid-template-columns: 1fr; gap: 0; }
   .opt-grid label:not(.opt-check) {
+    display: flex;
     flex-direction: row;
     align-items: center;
     gap: 8px;
@@ -1338,7 +1344,7 @@ td .sym-av, .lb-sym .sym-av { margin-right: 6px; }
     border-bottom: 1px dashed color-mix(in srgb, var(--bd) 55%, transparent);
     font-size: 12px;
   }
-  .opt-grid label:not(.opt-check) .inp { margin-left: auto; flex: 0 0 auto; width: 118px; }
+  .opt-grid label:not(.opt-check) .inp { margin-left: auto; flex: 0 0 auto; width: 118px; margin-top: 0; }
   .opt-grid label:not(.opt-check) select.inp { width: auto; max-width: 58%; }
   .opt-grid .opt-sub { margin-top: 14px; border-bottom: 0; }
   .opt-grid .opt-check { border-bottom: 1px dashed color-mix(in srgb, var(--bd) 55%, transparent); padding: 8px 0; margin: 0; }
@@ -1489,11 +1495,25 @@ td .sym-av, .lb-sym .sym-av { margin-right: 6px; }
   }
   /* <select> kann kein ::after tragen (replaced element) — Grundhoehe. */
   select { min-height: 40px; }
+  /* Kopf-Werkzeuge (⠿ ✕): Das ±13-px-Polster ÜBERLAPPTE beim gap von 2 px —
+   * elementFromPoint gab der SPÄTER gemalten ✕-Fläche die Grip-MITTE: Tap
+   * auf ⠿ blendete die Karte aus, Touch-Drag ab Grip-Mitte startete nie
+   * (UI-Audit 21.08., Befund H1). Auf Touch: echter Abstand (gap 12 px)
+   * und horizontal knappes Polster (±5 px) — 10 px Polster < 12 px Lücke,
+   * die Flächen können sich nie mehr überlagern; vertikal bleibt ±13 px. */
+  .sect-tools { gap: 12px; }
+
+  .sect-tools .sect-btn::after { inset: -13px -5px; }
   .tf-btn { position: relative; }
+  /* Chip-Polster ±4 px + row-gap 8 px: Bei umbrechenden Chip-Leisten
+   * klaute das alte ±10-px-Polster die Unterkante des Chips DARÜBER —
+   * „1J" löste ⛶ Vollbild aus (UI-Audit 21.08., Befund M1). 8 px Polster
+   * gesamt = 8 px Zeilen-Lücke: die Zeilen berühren sich, klauen nie. */
+  .tf-bar { row-gap: 8px; }
   .tf-btn::after {
     content: '';
     position: absolute;
-    inset: -10px -2px;
+    inset: -4px -2px;
   }
   .otab, .legal-foot a { position: relative; }
   .otab::after, .legal-foot a::after {

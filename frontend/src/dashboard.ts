@@ -1517,8 +1517,8 @@ function layout(email: string): string {
       <div id="txOut" style="margin-top:8px"></div>
       <div class="wl-sec" style="margin-top:14px">${t('opt.neuAnfangen')} ${iBtn('resetWallet')}</div>
       <p class="hint">${t('opt.resetHint')}</p>
-      <div class="row" style="align-items:center;gap:8px;margin-top:6px">
-        <input id="rsWord" class="inp st-num" style="flex:1;max-width:180px"
+      <div class="row" style="align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap">
+        <input id="rsWord" class="inp st-num" style="flex:1;min-width:150px;max-width:220px"
           type="text" autocomplete="off" spellcheck="false" placeholder="${t('opt.resetTippen')}" />
         <button class="btn btn-r" id="rsGo" disabled>${t('opt.kontoZuruecksetzen')}</button>
       </div>
@@ -6003,7 +6003,12 @@ const aktuelleKlappAnim = new WeakMap<HTMLElement, Animation>();
 function setzeKlappzustand(body: HTMLElement, zu: boolean, animiert: boolean): void {
   body.getAnimations().forEach((a) => a.cancel());
   aktuelleKlappAnim.delete(body);
-  if (body.hidden === zu) return;
+  if (body.hidden === zu) {
+    // Schneller Doppel-Toggle: Die soeben gecancelte Zuklapp-Animation
+    // hinterließe sonst dauerhaft overflow:hidden (UI-Audit 21.08.).
+    body.style.overflow = '';
+    return;
+  }
   if (!animiert || reduzierteBewegung || typeof body.animate !== 'function') {
     body.hidden = zu;
     return;
