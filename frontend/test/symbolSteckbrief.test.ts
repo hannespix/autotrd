@@ -52,18 +52,10 @@ describe('Steckbrief-UI — Hover am PC, langes Drücken am Touch, Portal an bod
     expect(dashboard).toContain('tr.dataset.sym = sym; // Anker für den Symbol-Steckbrief (16:5x)');
   });
 
-  it('ÜBERALL, wo Symbole stehen (Owner 18:1x): alle Anker im Selektor', () => {
-    for (const anker of [
-      '.lb-item[data-sym]',
-      '#sigBody tr[data-sym]',
-      '.mkt-cell[data-sym]',
-      '#jBody tr[data-sym]',
-      '#pBody tr[data-sym]',
-      '#moTop .fl-row[data-sym]',
-      '#mainHdSym[data-sym]',
-    ]) {
-      expect(dashboard, `Anker fehlt im Selektor: ${anker}`).toContain(anker);
-    }
+  it('ÜBERALL, wo Symbole stehen (Owner 18:1x + 21:2x): generischer Anker + Setz-Stellen', () => {
+    // Der Anker ist GENERISCH — jede Stelle mit data-sym ist automatisch
+    // Kärtchen-fähig; eine neue Symbol-Anzeige braucht nur das Attribut.
+    expect(dashboard).toContain("const SYM_TIP_ANKER = '[data-sym]';");
     // … und die Renderer setzen das Attribut wirklich:
     expect(dashboard).toContain('cell.dataset.sym = symbol; // Anker für den Symbol-Steckbrief (18:1x)');
     expect(dashboard).toContain('tr.dataset.sym = t.symbol; // Anker für den Symbol-Steckbrief (18:1x)');
@@ -73,6 +65,15 @@ describe('Steckbrief-UI — Hover am PC, langes Drücken am Touch, Portal an bod
     // Der Raster-Aufbau setzt den Kopf-Wert an EIGENER Stelle — auch dort
     // muss der Anker mitkommen (E2E-Fund: value ohne data-sym).
     expect(dashboard).toContain(".dataset.sym = st.currentSymbol; // Anker für den Symbol-Steckbrief (18:1x)");
+    // Nachzügler-Runde (Owner 21:2x „noch nicht alle!"): Symbol-Sucher
+    // (Haupt-Kopf, Raster-Panels — zentral in wireSymbolAuswahl),
+    // Prognose-Labor-Kopf, Trade-Journal, Broker-Abgleich, Stop-Dialog.
+    expect(dashboard).toContain('inp.dataset.sym = sym; // Anker für den Symbol-Steckbrief (21:2x)');
+    expect(dashboard).toContain('if (inp.value) inp.dataset.sym = inp.value;');
+    expect(dashboard).toContain("$('flSym').dataset.sym = sym;");
+    expect(dashboard).toContain(`<span class="tn-nm" data-sym="\${esc(r.symbol)}">`);
+    expect(dashboard).toContain(`<td data-sym="\${e(a.symbol)}">`);
+    expect(dashboard).toContain(`<b style="min-width:64px" data-sym="\${escText(p.symbol)}">`);
     // Der fokussierte Symbol-Sucher bleibt Kärtchen-frei (Vorschlagsliste!):
     // Guard im Anker + focusin räumt den Klick-Anflug-Timer ab.
     expect(dashboard).toContain('el === document.activeElement');
