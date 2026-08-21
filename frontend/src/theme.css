@@ -302,7 +302,10 @@ input { accent-color: var(--ac); }
    entsteht ein Bereich mit halbem Layout. Dieselbe Bedingung steht als
    `DESKTOP_SPALTEN` in dashboard.ts (gespeicherte Spaltenbreite). */
 @media (max-width: 900px), (pointer: coarse) and (max-width: 1200px) {
-  .sb-rs, .sect-grip { display: none; }
+  /* Spalten-Resize ergibt gestapelt keinen Sinn — der Karten-Grip bleibt
+     seit dem Pointer-Drag (Stufe B) auch am Finger sichtbar: Er ist das
+     dedizierte Anfass-Ziel, touch-action: none verhindert Scroll-Konflikte. */
+  .sb-rs { display: none; }
 }
 .col-m { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
 

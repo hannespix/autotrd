@@ -70,4 +70,23 @@ describe('Pointer-Drag — Anheften, FLIP-Gleiten, Spaltenwechsel', () => {
     expect(css).toContain('.panel-fliegt { position: fixed;');
     expect(css).toContain('.sect-grip { touch-action: none; }');
   });
+
+  it('Stufe B: der Grip bleibt am Finger sichtbar — nur der Spalten-Resize verschwindet', () => {
+    // Vor Stufe B versteckte diese Regel `.sb-rs, .sect-grip` gemeinsam —
+    // damit gab es auf Touch-Geräten keinen Startpunkt für den Drag.
+    expect(css).toMatch(/@media \(max-width: 900px\), \(pointer: coarse\) and \(max-width: 1200px\) \{[\s\S]*?\.sb-rs \{ display: none; \}/);
+    expect(css).not.toMatch(/\.sb-rs, \.sect-grip \{ display: none; \}/);
+  });
+
+  it('Stufe B: gestapelte Spalten treffen per Punkt, die Kante scrollt selbst nach', () => {
+    // Punkt-Treffer zuerst (Smartphone: beide Spalten gleiche Breite),
+    // horizontaler Treffer als Desktop-Fallback.
+    expect(drag).toContain('return px >= r.left && px <= r.right && py >= r.top && py <= r.bottom;');
+    // Autoscroll in beide Richtungen + Selbstantrieb, solange der Zeiger
+    // an der Kante steht (dort kommen keine pointermove-Events mehr).
+    expect(drag).toContain('if (py < RAND) window.scrollBy(0, -Math.ceil((RAND - py) * 0.35));');
+    expect(drag).toContain('if (py < RAND || py > window.innerHeight - RAND) raf = requestAnimationFrame(bewege);');
+    // Haptik nur für echte Finger.
+    expect(drag).toContain("if (start.pointerType !== 'mouse') navigator.vibrate?.(10);");
+  });
 });
