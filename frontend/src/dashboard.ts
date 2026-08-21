@@ -1739,7 +1739,11 @@ function wireChartCtx(): void {
   $('chSub').textContent = resolveName(sym);
   $('flSym').textContent = sym;
   $('flSym2').textContent = sym;
-  // Nachgeladene Historie ist symbol-spezifisch → beim Wechsel zurücksetzen
+  // Nachgeladene Historie ist symbol-spezifisch → beim Wechsel zurücksetzen.
+  // st.bars ebenfalls: Sonst verbrennt der Rebuild sein Fit-Token auf den
+  // Bars des VORGÄNGER-Symbols, und die neuen Bars kommen ohne Y/X-Fit an
+  // (Owner 21.08.: „Y-Achse beim Fokussieren sinnvoll skalieren").
+  st.bars = [];
   st.histBars = [];
   st.histOldest = 0;
   st.histLoading = false;
@@ -1833,8 +1837,13 @@ function renderChart(): void {
   const intradayView = st.intradayDays > 0;
   if (lastRenderIntraday !== intradayView) st.chart.setForecast(null);
   lastRenderIntraday = intradayView;
-  const fit = st.chartFitPending;
-  st.chartFitPending = false;
+  // Fit-Token erst verbrauchen, wenn Kerzen da sind (dasselbe Gate wie in
+  // renderGridPanelBars): Beim Symbolwechsel läuft ein Render noch VOR dem
+  // watchBars-Callback des neuen Symbols — ein hier verbranntes Token ließe
+  // die neuen Bars ohne Fit (und damit ohne frische Y-Skala) stehen.
+  const hatDaten = st.intradayDays > 0 ? st.intradayBars.length > 0 : st.bars.length > 0 || st.histBars.length > 0;
+  const fit = st.chartFitPending && hatDaten;
+  if (fit) st.chartFitPending = false;
   if (st.intradayDays > 0) {
     // Auto-Auflösung: 5m-Basis ggf. zu 15m/1h-Kerzen bündeln (pure, shared)
     st.shownIntraday = aggregateBars(st.intradayBars, st.aggMinutes) as typeof st.shownIntraday;
@@ -4750,6 +4759,11 @@ function wireChart2Ctx(): void {
   p.epoch++;
   const epoch = p.epoch;
   p.fitPending = true;
+  // Bars gehören zum Symbol: nicht geleert, würde das watchMarketDoc-Render
+  // das Fit-Token auf den Bars des Vorgänger-Symbols verbrauchen.
+  p.bars = [];
+  p.intradayBars = [];
+  st.chart2Bars = [];
   ($('ch2Sym') as HTMLInputElement).value = sym;
   st.chart2Subs.push(
     watchMarketDoc(sym, (d) => {
@@ -5139,6 +5153,11 @@ async function mountGridPanel(p: GridPanel, host: HTMLElement): Promise<void> {
   p.chart?.destroy();
   p.chart = null;
   p.fitPending = true;
+  // Bars gehören zum Symbol: Der mergende watchBars-Callback unten behielte
+  // sonst Vorgänger-Bars mit älterem Datum — und der Fit (samt frischer
+  // Y-Skala) liefe über das falsche Preisniveau.
+  p.bars = [];
+  p.intradayBars = [];
   // Lazy-Historie gehört zum Symbol — beim (Neu-)Mounten frisch anfangen
   p.histJahr = null;
   p.histDone = false;

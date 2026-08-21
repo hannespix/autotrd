@@ -473,6 +473,58 @@ for (const [name, wirkung] of [
   await seite.screenshot({ path: `${SHOTS}/${name.replace(':', '-')}.png` });
 }
 
+/* ── Symbolwechsel-Y-Fit (Owner 21.08.) ───────────────────────────────────
+ *
+ * „Manchmal sind die Kerzen so kurz, dass man sie gar nicht erkennt,
+ * manchmal ragen sie aus dem Screen": Nach einer manuellen Achsen-Geste
+ * (frei/fix) behielt die Preisskala die Spanne des VORHERIGEN Symbols —
+ * DOGE (0,08) erschien in einer ±15er-Skala, BTC in einer eingefrorenen
+ * 1.000er-Spanne. Der Fit eines Symbolwechsels muss die Y-Achse fürs neue
+ * Preisniveau frisch rechnen, in JEDEM Y-Modus. Der Prüfstand wechselt vom
+ * 100er-Niveau auf das 1000-fache und verlangt, dass die letzte Kerze
+ * wieder im Sichtfenster (0…420 px) liegt. */
+{
+  const bars1000 = bars.map((b) => ({
+    ...b,
+    open: b.open * 1000,
+    high: b.high * 1000,
+    low: b.low * 1000,
+    close: b.close * 1000,
+  }));
+  for (const modus of ['frei', 'fix']) {
+    await seite.evaluate((m) => {
+      const c = window.__chart;
+      c.setPriceScaleMode(0);
+      c.setBars(window.__bars, { fit: true });
+      c.setYMode(m); // Nutzer übernimmt die Achse auf dem ALTEN Niveau
+    }, modus);
+    await seite.waitForTimeout(200);
+    await seite.evaluate((bs) => {
+      window.__chart.setBars(bs, { fit: true }); // Symbolwechsel: neues Niveau
+    }, bars1000);
+    await seite.waitForTimeout(250);
+    const pixel = await gezeichnet();
+    const co = await seite.evaluate(
+      ([zeit, preis]) => window.__chart.coords(zeit, preis),
+      [letzter.date, letzter.close * 1000],
+    );
+    const drin = co.y !== null && co.y >= 0 && co.y <= 420;
+    const ok = pixel > 500 && drin;
+    zeilen.push(
+      `${ok ? 'OK  ' : 'FEHL'} wechsel:${modus.padEnd(4)} pixel=${String(pixel).padStart(6)} ` +
+        `coords.y=${co.y === null ? 'null' : Math.round(co.y)} (Soll: 0…420)`,
+    );
+    if (!ok) fehler.push(`wechsel:${modus}: pixel=${pixel} coords=${JSON.stringify(co)}`);
+    await seite.screenshot({ path: `${SHOTS}/wechsel-${modus}.png` });
+  }
+  // Zurück in den Grundzustand für die folgenden Fälle.
+  await seite.evaluate(() => {
+    window.__chart.setYMode('auto');
+    window.__chart.setBars(window.__bars, { fit: true });
+  });
+  await seite.waitForTimeout(200);
+}
+
 /* ── Reihenfolgen und Domänenwechsel ──────────────────────────────────────
  *
  * Alles, was oben geprüft wird, läuft in der bequemen Reihenfolge: erst

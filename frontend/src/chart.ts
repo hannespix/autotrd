@@ -680,7 +680,17 @@ export async function buildPriceChart(
         // Expliziter Fit (Symbol-/Zeitrahmen-Wechsel): Fix-Spanne neu
         // einfrieren — die alte gehört zu einem anderen Preisniveau.
         fixReset();
-        chart.priceScale('right').applyOptions({ autoScale: autoScaleOn });
+        // Owner 21.08. („beim Fokussieren eines Symbols die Y-Achse sinnvoll
+        // skalieren"): Der Fit rechnet den Bereich der NEUEN Daten immer
+        // frisch — auch wenn die Achse zuvor manuell gezogen war. Der
+        // Frei-Modus kehrt dabei ehrlich zu Auto zurück (der Y-Knopf zieht
+        // über yModeCb mit); Fix friert am neuen Fenster wieder ein.
+        if (yModus === 'frei') {
+          yModus = 'auto';
+          yModeCb?.('auto');
+        }
+        autoScaleOn = true;
+        chart.priceScale('right').applyOptions({ autoScale: true });
         if (opts.fitTo) {
           // Sanity-Clamp (UI-Audit 25.07.): Ein programmatischer Fit darf die
           // Kerzen nie in eine Ecke quetschen — rechts höchstens ~20 % der
