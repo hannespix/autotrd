@@ -62,7 +62,10 @@ describe('Panel-Kopf — Pfeil links, Titelzeile klappt, ✕ isoliert rechts', (
     expect(setz).toContain('body.getAnimations().forEach((a) => a.cancel());');
     expect(setz).toContain('if (!animiert || reduzierteBewegung');
     expect(setz).toContain('body.animate(');
-    expect(setz).toMatch(/anim\.onfinish = \(\) => \{\n\s*body\.hidden = true;/);
+    expect(setz).toContain('anim.onfinish = abschliessen;');
+    // Sicherheitsnetz gegen stehende Animations-Uhren (gedrosselte Tabs):
+    // der Timer zieht nach — aber nur, wenn kein neuerer Toggle übernahm.
+    expect(setz).toContain('if (aktuelleKlappAnim.get(body) !== anim) return;');
     expect(dashboard).toContain("window.matchMedia?.('(prefers-reduced-motion: reduce)')");
     // Nutzer-Toggle animiert, der Boot-Aufruf am Ende von wirePanelChrome nicht.
     expect(klapp).toContain('applyCollapse(true);');
