@@ -1085,6 +1085,8 @@ describe('Tranche 5l — „Warum handelt die Engine?" und die Melde-Texte der M
       'squeeze', 'setup', 'number',
       // Einheiten und Kennzahl-Namen, die in beiden Sprachen gleich heißen
       'VIX', 'Vol', 'min',
+      // Variablenname im Chip-Template (Kapital-Panel 21.08.) — Code, kein Text.
+      'soloAn',
     ]);
     const rest = fremdWorte(funktion('renderEngineWhy')).filter((w) => !NEUTRAL.has(w));
     expect(rest, `nicht ausgewiesene Zeichenketten: ${rest.join(' | ')}`).toEqual([]);
