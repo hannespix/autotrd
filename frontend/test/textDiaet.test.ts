@@ -39,3 +39,49 @@ describe('Text-Diät Stufe 1 — Dubletten raus, ⓘ-Zugang bleibt', () => {
     });
   }
 });
+
+/**
+ * Stufe 2: Die Performance-Karte stapelte bei einem frischen Konto vier
+ * „Noch keine …"-Absätze übereinander (Exits, Kosten, Fill-Reibung,
+ * Kapitaleinsatz). Jetzt sind Sektionen ohne Daten KOMPLETT zu (Wrapper
+ * hidden) und EIN Sammelsatz (#pfLeer) erklärt, was noch kommt. Die
+ * Sichtbarkeit ist rein datengetrieben — kein gemerkter Zustand, kein
+ * Springen beim Zeitfenster-Wechsel (die Sektionen hängen an Server-
+ * Zahlen, nicht am pfZeit-Chip).
+ */
+const STUFE_2_LEERSAETZE = [
+  "t('pf.keineGeschlossenen')",
+  "t('px.keineGeschlossenen')",
+  "t('pf.reibungKeineFills')",
+  "t('pf.kapitalKeineDaten')",
+  "t('pc.reibungAbErstem')",
+] as const;
+
+describe('Text-Diät Stufe 2 — Performance-Sektionen zu statt Leersatz-Stapel', () => {
+  it('kein einzelner „Noch keine …"-Absatz mehr in der Performance-Karte', () => {
+    for (const aufruf of STUFE_2_LEERSAETZE) expect(dashboard).not.toContain(aufruf);
+  });
+
+  it('die vier Sektions-Wrapper starten zu, der Sammelsatz existiert genau einmal', () => {
+    for (const id of ['pfSekExits', 'pfSekKosten', 'pfSekReibung', 'pfSekKapital']) {
+      expect(dashboard).toContain(`<div id="${id}" hidden>`);
+    }
+    expect(dashboard).toContain('<div class="hint" id="pfLeer" hidden>');
+    expect(dashboard.split("t('pf.sektionenFolgen')").length).toBe(2);
+  });
+
+  it('jeder Sektions-Renderer meldet seinen Daten-Stand an den Wrapper', () => {
+    expect(dashboard).toContain("zeigePfSektion('pfSekExits', total > 0);");
+    expect(dashboard).toContain("zeigePfSektion('pfSekKosten', !!c && c.n > 0);");
+    expect(dashboard).toContain("zeigePfSektion('pfSekReibung', klassen.length > 0);");
+    expect(dashboard).toContain("zeigePfSektion('pfSekKapital', !!k);");
+  });
+
+  it('ohne Stats-Doc schließen die Sektionen ebenfalls — sonst stünde nach einem Reset der alte Stand', () => {
+    // Der Early-Return in renderStats (equityDays === 0) erreicht die
+    // Sektions-Renderer nie — er muss selbst aufräumen.
+    expect(dashboard).toContain('for (const id of PF_SEKTIONEN) zeigePfSektion(id, false);');
+    // Und der Voll-Zweig schaltet den Sammelsatz nach den vier Renderern.
+    expect(dashboard).toMatch(/renderKapital\(s\);\n {2}aktualisierePfLeer\(\);/);
+  });
+});

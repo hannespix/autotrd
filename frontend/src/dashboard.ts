@@ -964,8 +964,17 @@ function layout(email: string): string {
           <div><label class="lbl">${t('pf.profitFaktor')} ${iBtn('profitFactor')}</label><div id="pfPF" class="smv mono">--</div></div>
           <div><label class="lbl">${t('pf.erwartungTrade')} ${iBtn('expectancy')}</label><div id="pfExp" class="smv mono">--</div></div>
         </div>
+<!-- Progressive Karte (Text-Diät Stufe 2): Auswertungs-Sektionen ohne
+             Daten sind KOMPLETT zu (Wrapper hidden) — statt vier gestapelter
+             „Noch keine …"-Absätze erklärt EIN Sammelsatz (#pfLeer), was mit
+             den ersten Trades und Tagesläufen noch erscheint. renderStats
+             steuert die Wrapper rein datengetrieben; die Sektionen hängen
+             nicht am Zeitfenster, deshalb springt beim Chip-Wechsel nichts. -->
+        <div id="pfSekExits" hidden>
         <label class="lbl" style="margin-top:10px">${t('pf.warumGeschlossen')} ${iBtn('exits')}</label>
-        <div id="pfExits" class="fl-tbl"><div class="hint">${t('pf.keineGeschlossenen')}</div></div>
+        <div id="pfExits" class="fl-tbl"></div>
+        </div>
+        <div id="pfSekKosten" hidden>
         <label class="lbl" style="margin-top:10px">${t('pf.reibung')} ${iBtn('kosten')}</label>
         <div class="pf-grid" id="pfCostGrid" hidden>
           <div><label class="lbl">${t('pf.gebuehren')}</label><div id="pfFees" class="smv mono">--</div></div>
@@ -976,10 +985,16 @@ function layout(email: string): string {
           <div><label class="lbl">${t('pf.luftUeberKosten')}</label><div id="pfEdge" class="smv mono">--</div></div>
         </div>
         <div class="hint" id="pfCostHint"></div>
+        </div>
+        <div id="pfSekReibung" hidden>
         <label class="lbl" style="margin-top:10px">${t('pf.fillReibung')} ${iBtn('fillReibung')}</label>
-        <div id="pfReibung" class="fl-tbl"><div class="hint">${t('pf.reibungKeineFills')}</div></div>
+        <div id="pfReibung" class="fl-tbl"></div>
+        </div>
+        <div id="pfSekKapital" hidden>
         <label class="lbl" style="margin-top:10px">${t('pf.kapitalEinsatz')} ${iBtn('kapitalEinsatz')}</label>
-        <div id="pfKapital" class="fl-tbl"><div class="hint">${t('pf.kapitalKeineDaten')}</div></div>
+        <div id="pfKapital" class="fl-tbl"></div>
+        </div>
+        <div class="hint" id="pfLeer" hidden>${t('pf.sektionenFolgen')}</div>
         <div class="hint" id="pfHint">${t('pf.abSnapshot')}</div>
         <!-- Owner-Feedback 28.07.: „man schaut meistens auf die Performance, und
              wenn man die History direkt darunter hat, ist das logischer." Stimmt —
@@ -7429,6 +7444,10 @@ function renderPfStats(): void {
     // Unterschied zwischen „noch nie gehandelt" und „Reset hat die Serie
     // geleert" ist genau die Frage, die hier gestellt wurde.
     if (wahl.erklaerung) hint.textContent = wahl.erklaerung;
+    // Ohne Stats-Doc laufen die Sektions-Renderer nie — die Wrapper hier
+    // schließen, sonst blieben sie nach einem Reset im alten Zustand stehen.
+    for (const id of PF_SEKTIONEN) zeigePfSektion(id, false);
+    aktualisierePfLeer();
     return;
   }
   grid.hidden = false;
@@ -7457,6 +7476,7 @@ function renderPfStats(): void {
   renderCosts(s);
   renderReibung(s);
   renderKapital(s);
+  aktualisierePfLeer();
 }
 
 /**
@@ -8137,6 +8157,26 @@ function wireDepotVerlauf(z: ReturnType<typeof zerlegeDepot>): void {
   }
 }
 
+/**
+ * Progressive Performance-Karte (Text-Diät Stufe 2): Eine Auswertungs-
+ * Sektion ohne Daten wird KOMPLETT versteckt (Label + Inhalt), statt einen
+ * „Noch keine …"-Absatz zu zeigen. Der eine Sammelsatz #pfLeer erscheint,
+ * solange mindestens eine Sektion fehlt — bei einem frischen Konto ersetzt
+ * er vier gestapelte Erklärabsätze durch eine Zeile.
+ */
+const PF_SEKTIONEN = ['pfSekExits', 'pfSekKosten', 'pfSekReibung', 'pfSekKapital'] as const;
+
+function zeigePfSektion(id: (typeof PF_SEKTIONEN)[number], hat: boolean): void {
+  const sek = document.getElementById(id);
+  if (sek) sek.hidden = !hat;
+}
+
+/** Sammelsatz an-/abschalten: sichtbar, sobald irgendeine Sektion zu ist. */
+function aktualisierePfLeer(): void {
+  const leer = document.getElementById('pfLeer');
+  if (leer) leer.hidden = !PF_SEKTIONEN.some((id) => document.getElementById(id)?.hidden);
+}
+
 /** Klarnamen der Ausstiegsgründe — `signal` ist der Sammeltopf ohne Risiko-Exit. */
 const EXIT_LABEL: Record<string, string> = {
   signal: 'Signal',
@@ -8156,8 +8196,9 @@ function renderExits(s: PortfolioStatsDoc): void {
   const box = $('pfExits');
   const rows = Object.entries(s.exits ?? {}).sort((a, b) => b[1].n - a[1].n);
   const total = rows.reduce((a, [, b]) => a + b.n, 0);
+  zeigePfSektion('pfSekExits', total > 0);
   if (total === 0) {
-    box.innerHTML = `<div class="hint">${t('px.keineGeschlossenen')}</div>`;
+    box.innerHTML = '';
     return;
   }
   box.innerHTML = rows
@@ -8184,9 +8225,10 @@ function renderCosts(s: PortfolioStatsDoc): void {
   const grid = $('pfCostGrid');
   const hint = $('pfCostHint');
   const c = s.costs;
+  zeigePfSektion('pfSekKosten', !!c && c.n > 0);
   if (!c || c.n === 0) {
     grid.hidden = true;
-    hint.textContent = t('pc.reibungAbErstem');
+    hint.textContent = '';
     return;
   }
   grid.hidden = false;
@@ -8223,8 +8265,9 @@ function renderReibung(s: PortfolioStatsDoc): void {
   const box = $('pfReibung');
   const r = s.reibung;
   const klassen = r ? Object.keys(r).sort() : [];
+  zeigePfSektion('pfSekReibung', klassen.length > 0);
   if (klassen.length === 0) {
-    box.innerHTML = `<div class="hint">${t('pf.reibungKeineFills')}</div>`;
+    box.innerHTML = '';
     return;
   }
   const bp = (v: number): string => `${v.toFixed(1)} bp`;
@@ -8265,8 +8308,9 @@ function renderReibung(s: PortfolioStatsDoc): void {
 function renderKapital(s: PortfolioStatsDoc): void {
   const box = $('pfKapital');
   const k = s.kapital;
+  zeigePfSektion('pfSekKapital', !!k);
   if (!k) {
-    box.innerHTML = `<div class="hint">${t('pf.kapitalKeineDaten')}</div>`;
+    box.innerHTML = '';
     return;
   }
   const pct = (v: number): string => `${v.toFixed(1)} %`;
