@@ -502,9 +502,21 @@ td .sym-av, .lb-sym .sym-av { margin-right: 6px; }
   .lchip:hover { transform: scale(1.15); }
 }
 
-/* Livebar (Watchlist-Quotes) */
+/* Livebar (Watchlist-Quotes) — am PC mit dezenter Scrollbar, die erst unterm
+   Zeiger erscheint (Owner 21.08.: „hier oben fehlt scrollbar am pc — modern,
+   nur bei mouseover"). Touch behält die unsichtbare native Variante (dort
+   wischt man ohnehin). Die 6px-Spur ist IMMER reserviert — der Daumen wird
+   nur ein-/ausgeblendet, damit beim Hover nichts springt. */
 .livebar { display: flex; gap: 8px; overflow-x: auto; padding: 2px 0; scrollbar-width: none; }
 .livebar::-webkit-scrollbar { display: none; }
+@media (pointer: fine) {
+  .livebar { padding-bottom: 4px; scrollbar-width: thin; scrollbar-color: transparent transparent; }
+  .livebar:hover { scrollbar-color: var(--bd) transparent; }
+  .livebar::-webkit-scrollbar { display: block; height: 6px; background: transparent; }
+  .livebar::-webkit-scrollbar-track { background: transparent; }
+  .livebar::-webkit-scrollbar-thumb { background: transparent; border-radius: 999px; }
+  .livebar:hover::-webkit-scrollbar-thumb { background: var(--bd); }
+}
 .lb-item {
   flex: 0 0 auto; text-align: center; background: var(--sd);
   -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
