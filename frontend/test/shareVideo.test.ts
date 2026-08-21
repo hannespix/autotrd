@@ -8,9 +8,11 @@
  * Deckkraft auf — genau die Größen, um die es geht.
  */
 import { zerlegeDepot } from '@autotrd/shared';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ShareDaten } from '../src/shareCard.js';
-import { maleSzene, videoSzenen, zerlegeHaupt } from '../src/shareVideo.js';
+import { maleSzene, OFFLINE_KODIERUNGEN, VIDEO_FPS, videoSzenen, zerlegeHaupt } from '../src/shareVideo.js';
 
 beforeEach(() => {
   globalThis.localStorage = {
@@ -117,6 +119,50 @@ describe('Ehrlichkeit im Bewegtbild', () => {
     const ende = male('ergebnis', 1).texte.map((z) => z.text);
     expect(ende).toContain('+2,40 %');
     expect(unterwegs).not.toContain('+2,40 %');
+  });
+});
+
+/**
+ * Wächter des Offline-Encoders (Owner 21.08.: „WhatsApp verschickt nur
+ * 3 Sekunden" + „ruckelig"). Wurzel: MediaRecorder streamt Fragmente ohne
+ * verlässliche Container-Dauer, und die Echtzeit-Aufnahme nahm nur die
+ * Frames, die das Gerät schaffte. Der Offline-Pfad (WebCodecs + Muxer mit
+ * echter Dauer im Header, festes 30-fps-Raster) fixt beides — diese Pins
+ * halten die tragenden Entscheidungen fest.
+ */
+describe('Offline-Encoder — echte Dauer im Container, festes Frame-Raster', () => {
+  const quelle = readFileSync(fileURLToPath(new URL('../src/shareVideo.ts', import.meta.url)), 'utf8');
+
+  it('Kaskade: H.264-MP4 vor VP9-WebM — Messenger lesen nur MP4-Dauer zuverlässig', () => {
+    const arten = OFFLINE_KODIERUNGEN.map((k) => k.art);
+    expect(arten.lastIndexOf('mp4')).toBeLessThan(arten.indexOf('webm'));
+    expect(OFFLINE_KODIERUNGEN.some((k) => k.codec.startsWith('avc1.'))).toBe(true);
+    expect(OFFLINE_KODIERUNGEN.some((k) => k.codec.startsWith('vp09.'))).toBe(true);
+  });
+
+  it('alle H.264-Stufen tragen Level 4.0 — 1080×1080@30 sprengt Level 3.1', () => {
+    for (const k of OFFLINE_KODIERUNGEN.filter((k) => k.art === 'mp4')) {
+      expect(k.codec.endsWith('28'), k.codec).toBe(true);
+    }
+    expect(VIDEO_FPS).toBe(30);
+  });
+
+  it('MP4 mit moov voran und avc-Format — sonst liest WhatsApp wieder Fragment-Dauer', () => {
+    expect(quelle).toContain("fastStart: 'in-memory',");
+    expect(quelle).toContain("avc: { format: 'avc' as const }");
+  });
+
+  it('festes Frame-Raster statt Echtzeit — jeder Frame wird gerendert, keiner fällt aus', () => {
+    expect(quelle).toContain('timestamp: Math.round((i * 1_000_000) / VIDEO_FPS),');
+    expect(quelle).toContain('duration: Math.round(1_000_000 / VIDEO_FPS),');
+    // Endstand-Nachlauf wie im Echtzeit-Pfad.
+    expect(quelle).toContain('Math.round(((gesamtMs + 400) / 1000) * VIDEO_FPS)');
+  });
+
+  it('Reihenfolge: erst Offline versuchen, das Echtzeit-Netz bleibt für Browser ohne WebCodecs', () => {
+    expect(quelle).toContain('const wahl = await offlineKodierung();');
+    expect(quelle).toContain('return nimmEchtzeit(canvas, ctx, gesamtMs, maleFrame, dateiStamm, meldeFortschritt, beobachter);');
+    expect(quelle).toContain('canvas.captureStream(30);');
   });
 });
 

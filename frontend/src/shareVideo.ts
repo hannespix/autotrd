@@ -19,6 +19,8 @@
  * Ziffer. Das Teilen-Gate der Bilder gilt unverändert davor.
  */
 import { stapelBaender } from '@autotrd/shared';
+import { ArrayBufferTarget as Mp4Target, Muxer as Mp4Muxer } from 'mp4-muxer';
+import { ArrayBufferTarget as WebmTarget, Muxer as WebmMuxer } from 'webm-muxer';
 import { t } from './i18n.js';
 import { type Aussage, kartenAussage } from './shareAussage.js';
 import { FARBE, mitVorzeichen, siegelBreite, type ShareDaten } from './shareCard.js';
@@ -429,11 +431,149 @@ export function maleSzene(
   else maleCta(ctx, p);
 }
 
+/** Feste Bildrate aller Video-Exporte (Offline-Pfad rendert exakt dieses Raster). */
+export const VIDEO_FPS = 30;
+
 /**
- * Der Rekorder-Kern: nimmt eine 1080²-Leinwand in Echtzeit auf, während
- * `maleFrame` jeden Frame malt (die Aufnahme dauert so lange wie der Clip).
- * MP4, wenn der Browser es aufnehmen kann — sonst WebM; beide gehen am
- * Handy in das System-Teilen-Blatt.
+ * Codec-Kaskade des Offline-Pfads: H.264-MP4 zuerst — WhatsApp & Co. lesen
+ * Dauer-Metadaten nur dort zuverlässig —, VP9-WebM als freier Ersatz für
+ * Browser ohne H.264-Encoder (z. B. Chromium). Alle avc1-Stufen tragen
+ * Level 4.0 (…28): 1080×1080@30 sprengt die Makroblock-Grenze von Level
+ * 3.1, ein 1f-Level würde auf Geräten mit strengem Encoder abgelehnt.
+ */
+export const OFFLINE_KODIERUNGEN = [
+  { codec: 'avc1.640028', art: 'mp4' },
+  { codec: 'avc1.4d0028', art: 'mp4' },
+  { codec: 'avc1.420028', art: 'mp4' },
+  { codec: 'vp09.00.10.08', art: 'webm' },
+] as const;
+
+async function offlineKodierung(): Promise<(typeof OFFLINE_KODIERUNGEN)[number] | null> {
+  if (typeof VideoEncoder === 'undefined') return null;
+  for (const k of OFFLINE_KODIERUNGEN) {
+    try {
+      const sup = await VideoEncoder.isConfigSupported({
+        codec: k.codec,
+        width: 1080,
+        height: 1080,
+        bitrate: 8_000_000,
+        framerate: VIDEO_FPS,
+      });
+      if (sup.supported) return k;
+    } catch {
+      /* Kandidat dem Browser unbekannt — nächste Stufe. */
+    }
+  }
+  return null;
+}
+
+/**
+ * Offline-Aufnahme (WebCodecs): Jeder Frame wird auf einem FESTEN
+ * 30-fps-Zeitraster gemalt und einzeln encodiert — unabhängig davon, wie
+ * schnell das Gerät malt. Das fixt beide Owner-Befunde vom 21.08.:
+ *
+ * 1. „Nur 3 Sekunden": MediaRecorder streamt Fragmente ohne verlässliche
+ *    Gesamtdauer im Container (WebM ohne Duration-Element, MP4 nur
+ *    fragmentiert). Player raten die Dauer aus dem ersten Fragment, und
+ *    WhatsApp SCHNEIDET beim Versand auf die geratene Dauer. Der Muxer
+ *    hier schreibt die echte Dauer in den Header (MP4 mit moov voran).
+ * 2. „Ruckelig": Die Echtzeit-Aufnahme nahm nur die Frames, die das Gerät
+ *    in Echtzeit schaffte — am Handy deutlich unter 30 fps. Offline wird
+ *    JEDER Frame gerendert; die Encodierdauer spielt keine Rolle mehr.
+ */
+async function nimmOffline(
+  wahl: (typeof OFFLINE_KODIERUNGEN)[number],
+  canvas: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D,
+  gesamtMs: number,
+  maleFrame: (ctx: CanvasRenderingContext2D, tMs: number) => void,
+  dateiStamm: string,
+  meldeFortschritt?: (prozent: number) => void,
+  beobachter?: (canvas: HTMLCanvasElement, tMs: number) => void,
+): Promise<File> {
+  const mp4 = wahl.art === 'mp4';
+  let addChunk: (c: EncodedVideoChunk, m?: EncodedVideoChunkMetadata) => void;
+  let schliesseDatei: () => ArrayBuffer;
+  if (mp4) {
+    const muxer = new Mp4Muxer({
+      target: new Mp4Target(),
+      video: { codec: 'avc', width: 1080, height: 1080 },
+      // moov an den Dateianfang: Messenger lesen die Dauer, bevor die
+      // Datei ganz da ist — genau der WhatsApp-Fall.
+      fastStart: 'in-memory',
+    });
+    addChunk = (c, m) => muxer.addVideoChunk(c, m);
+    schliesseDatei = () => {
+      muxer.finalize();
+      return muxer.target.buffer;
+    };
+  } else {
+    const muxer = new WebmMuxer({
+      target: new WebmTarget(),
+      video: { codec: 'V_VP9', width: 1080, height: 1080, frameRate: VIDEO_FPS },
+    });
+    addChunk = (c, m) => muxer.addVideoChunk(c, m);
+    schliesseDatei = () => {
+      muxer.finalize();
+      return muxer.target.buffer;
+    };
+  }
+  let encoderFehler: unknown;
+  const encoder = new VideoEncoder({
+    output: (chunk, meta) => {
+      addChunk(chunk, meta);
+    },
+    error: (e) => {
+      encoderFehler = e;
+    },
+  });
+  encoder.configure({
+    codec: wahl.codec,
+    width: 1080,
+    height: 1080,
+    bitrate: 8_000_000,
+    framerate: VIDEO_FPS,
+    // Length-prefixed NALUs + avcC-Description — das Format, das der
+    // MP4-Muxer erwartet (Annex B wäre für .mp4 falsch).
+    ...(mp4 ? { avc: { format: 'avc' as const } } : {}),
+  });
+
+  // +400 ms Endstand-Nachlauf wie im Echtzeit-Pfad (Szenen klemmen p auf 1).
+  const frames = Math.max(1, Math.round(((gesamtMs + 400) / 1000) * VIDEO_FPS));
+  for (let i = 0; i < frames && encoderFehler === undefined; i++) {
+    const tMs = (i * 1000) / VIDEO_FPS;
+    maleFrame(ctx, tMs);
+    beobachter?.(canvas, tMs);
+    meldeFortschritt?.(Math.min(100, Math.round((tMs / gesamtMs) * 100)));
+    const frame = new VideoFrame(canvas, {
+      timestamp: Math.round((i * 1_000_000) / VIDEO_FPS),
+      duration: Math.round(1_000_000 / VIDEO_FPS),
+    });
+    encoder.encode(frame, { keyFrame: i % (VIDEO_FPS * 2) === 0 });
+    frame.close();
+    // Encoder-Rückstau abbauen und dem UI-Thread regelmäßig Luft lassen.
+    if (encoder.encodeQueueSize > 4 || i % 10 === 9) await new Promise((r) => setTimeout(r));
+  }
+  if (encoderFehler !== undefined) {
+    try {
+      encoder.close();
+    } catch {
+      /* schon zu — egal, der Fehler unten zählt */
+    }
+    throw encoderFehler instanceof Error ? encoderFehler : new Error(String(encoderFehler));
+  }
+  await encoder.flush();
+  encoder.close();
+  const puffer = schliesseDatei();
+  const basisTyp = mp4 ? 'video/mp4' : 'video/webm';
+  return new File([puffer], `${dateiStamm}.${mp4 ? 'mp4' : 'webm'}`, { type: basisTyp });
+}
+
+/**
+ * Der Rekorder-Kern. Primär: Offline-Encoding über WebCodecs + eigenem
+ * Muxer (`nimmOffline`) — korrekte Dauer im Container, jeder Frame im
+ * festen 30-fps-Raster. Netz: die alte Echtzeit-Aufnahme über
+ * MediaRecorder für Browser ohne WebCodecs.
  *
  * `beobachter` ist für den Prüfstand: Er bekommt die Leinwand mitten in der
  * ECHTEN Aufnahme gereicht und kann Standbilder ziehen — dieselben Frames,
@@ -452,6 +592,27 @@ export async function nimmClipAuf(
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error(t('sh.canvasFehlt'));
 
+  const wahl = await offlineKodierung();
+  if (wahl) {
+    try {
+      return await nimmOffline(wahl, canvas, ctx, gesamtMs, maleFrame, dateiStamm, meldeFortschritt, beobachter);
+    } catch {
+      /* Encoder unterwegs gescheitert (Hardware-Grenze o. ä.) → Echtzeit-Netz. */
+    }
+  }
+  return nimmEchtzeit(canvas, ctx, gesamtMs, maleFrame, dateiStamm, meldeFortschritt, beobachter);
+}
+
+/** Das Echtzeit-Netz: die MediaRecorder-Aufnahme (Dauer = Cliplänge). */
+async function nimmEchtzeit(
+  canvas: HTMLCanvasElement,
+  ctx: CanvasRenderingContext2D,
+  gesamtMs: number,
+  maleFrame: (ctx: CanvasRenderingContext2D, tMs: number) => void,
+  dateiStamm: string,
+  meldeFortschritt?: (prozent: number) => void,
+  beobachter?: (canvas: HTMLCanvasElement, tMs: number) => void,
+): Promise<File> {
   const typ = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'].find(
     (m) => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(m),
   );
