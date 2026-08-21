@@ -41,6 +41,29 @@ describe('Text-Diät Stufe 1 — Dubletten raus, ⓘ-Zugang bleibt', () => {
 });
 
 /**
+ * Stufe 1b: Dieselbe Regel wie Stufe 1 für die nächsten vier großen
+ * Erklärabsätze — Auto-Tuner, Trade-Journal, Klassen-Regler und Loadouts.
+ * Die ⓘ-Texte (infotips) sind jeweils AUSFÜHRLICHER als die entfernten
+ * Absätze; verlagert wird also nur die Dublette, keine Information.
+ */
+const STUFE_1B = [
+  { schluessel: 'lay.tunerHinweis', tip: 'autotuner' },
+  { schluessel: 'lay.journalHinweis', tip: 'tradejournal' },
+  { schluessel: 'opt.klassenHint', tip: 'classWeights' },
+  { schluessel: 'opt.loadoutsHint', tip: 'loadouts' },
+] as const;
+
+describe('Text-Diät Stufe 1b — Tuner/Journal/Klassen/Loadouts hinter ihre ⓘ', () => {
+  for (const { schluessel, tip } of STUFE_1B) {
+    it(`${schluessel}: kein Dauer-Absatz mehr, Erklärung über iBtn('${tip}')`, () => {
+      expect(dashboard).not.toContain(`t('${schluessel}')`);
+      expect(dashboard).toContain(`iBtn('${tip}')`);
+      expect(infotips).toContain(`${tip}: {`);
+    });
+  }
+});
+
+/**
  * Stufe 2: Die Performance-Karte stapelte bei einem frischen Konto vier
  * „Noch keine …"-Absätze übereinander (Exits, Kosten, Fill-Reibung,
  * Kapitaleinsatz). Jetzt sind Sektionen ohne Daten KOMPLETT zu (Wrapper

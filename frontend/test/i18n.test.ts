@@ -342,11 +342,11 @@ describe('Anschluss-Wächter — die Funktion ist verdrahtet, nicht nur vorhande
       "t('opt.shorten')",
       "t('opt.nullSchaltetAb')",
       "t('opt.klassenKapital')",
-      "t('opt.klassenHint')",
+      // opt.klassenHint/opt.loadoutsHint: seit der Text-Diät Stufe 1b keine
+      // Dauer-Absätze mehr — die Erklärung lebt in den ⓘ (textDiaet.test.ts).
       "t('opt.autoNachregeln')",
       "t('opt.speichern')",
       "t('opt.jetztPruefen')",
-      "t('opt.loadoutsHint')",
       "t('opt.loName')",
       "t('opt.bewaehrt')",
       "t('opt.notbremseLoesen')",
