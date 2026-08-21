@@ -683,6 +683,15 @@ export interface TradeRow {
   source: 'engine' | 'manual';
   pnl?: number;
   riskExit?: string;
+  /**
+   * Richtung des Geschäfts (Owner 21:3x: „Shorts und Longs besser
+   * markieren"). `side` allein ist zweideutig — ein Leerverkauf ist ein
+   * SELL, sein Eindecken ein BUY. Der Broker schreibt beide Marken seit
+   * dem Short-Umbau mit: `short` am Leerverkauf, `cover` am Eindecken
+   * (functions/src/core/broker.ts). Fehlen beide, ist es ein Long.
+   */
+  short?: boolean;
+  cover?: boolean;
 }
 
 /** Seitengröße der Historie (Owner-Wunsch 28.07.: „über Pagination nachladen

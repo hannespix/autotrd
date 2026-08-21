@@ -4232,10 +4232,23 @@ function zeigeSymbolTip(sym: string, x: number, y: number): void {
   const text = steckbriefText(sym);
   if (!herkunft && !text) return; // unbekanntes Symbol: lieber nichts als Leeres
   const tip = symTip();
+  // Chips: Klasse immer, Gruppe nur wenn es eine gibt (frei eingegebene
+  // Symbole haben keine Katalog-Gruppe — dann bleibt der Chip weg statt leer).
+  const chips = herkunft
+    ? `<div class="sym-tip-chips"><span>${escText(herkunft.klassenLabel)}</span>`
+      + (herkunft.gruppe ? `<span>${escText(herkunft.gruppe)}</span>` : '')
+      + '</div>'
+    : '';
+  // Ehrlich statt leer (Owner 21:4x „RCON hat noch keine Symbol-Infos"):
+  // Für Symbole außerhalb des Katalogs sagt das Kärtchen genau das.
+  const koerper = text
+    ? `<div class="sym-tip-text">${escText(text)}</div>`
+    : herkunft?.ausserhalbKatalog === true
+      ? `<div class="sym-tip-text c-t3">${escText(t('steck.ohneEintrag'))}</div>`
+      : '';
   tip.innerHTML =
     `<div class="sym-tip-kopf">${symbolAvatar(sym, true)}<b>${escText(herkunft?.name ?? sym)}</b><span class="mono">${escText(sym)}</span></div>`
-    + (herkunft ? `<div class="sym-tip-chips"><span>${escText(herkunft.klassenLabel)}</span><span>${escText(herkunft.gruppe)}</span></div>` : '')
-    + (text ? `<div class="sym-tip-text">${escText(text)}</div>` : '');
+    + chips + koerper;
   tip.hidden = false;
   schmueckeAvatare(); // echtes Logo statt Monogramm, sobald geladen
   const b = tip.getBoundingClientRect();
@@ -7533,6 +7546,37 @@ async function ladeAeltereTrades(): Promise<void> {
  * sonst würde die Analyse-Karte je nach Filterfeld andere Kennzahlen zeigen
  * als die Trades, aus denen sie stammt.
  */
+/**
+ * Richtungs-Marke eines Trades (Owner 21:3x: „im Trade Verlauf sollen Shorts
+ * und Longs besser markiert werden").
+ *
+ * BUY/SELL allein war zweideutig: Ein Leerverkauf ist ein SELL, sein
+ * Eindecken ein BUY — in der alten Anzeige sah ein Short-Einstieg exakt aus
+ * wie ein Long-Ausstieg. Der Broker schreibt die Richtung längst mit
+ * (`short` am Leerverkauf, `cover` am Eindecken, functions/src/core/
+ * broker.ts); hier wird sie nur endlich sichtbar. Vier Fälle, vier Marken:
+ * Long-Kauf ▲, Long-Verkauf ▼, Short-Eröffnung ▼ (rot umrandet), Cover ▲.
+ *
+ * Der TEXT nennt nur die Seite (Long/Short), der PFEIL die Richtung —
+ * „▼ Short auf" wurde in der schmalen Sidebar zu „▼ SHOR" abgeschnitten
+ * (E2E-Fund). Die volle Erklärung steht im title/aria-label.
+ */
+function tradeRichtung(zeile: { side: 'buy' | 'sell'; short?: boolean; cover?: boolean }): {
+  klasse: string; pfeil: string; text: string; titel: string;
+} {
+  // `zeile`, nicht `t`: Der Parametername würde die Übersetzungsfunktion
+  // t() verschatten (dieselbe Falle wie in renderMomentum).
+  if (zeile.short === true) {
+    return { klasse: 't-short', pfeil: '▼', text: t('jn.short'), titel: t('jn.shortAufTitel') };
+  }
+  if (zeile.cover === true) {
+    return { klasse: 't-cover', pfeil: '▲', text: t('jn.short'), titel: t('jn.shortZuTitel') };
+  }
+  return zeile.side === 'buy'
+    ? { klasse: 't-buy', pfeil: '▲', text: t('jn.long'), titel: t('jn.longAufTitel') }
+    : { klasse: 't-sell', pfeil: '▼', text: t('jn.long'), titel: t('jn.longZuTitel') };
+}
+
 function renderJournal(): void {
   if (!st) return;
   const jb = $('jBody') as HTMLTableSectionElement;
@@ -7613,8 +7657,9 @@ function renderJournal(): void {
     const time = new Date(t.executedAt).toLocaleString('de-DE', {
       day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
     });
+    const ri = tradeRichtung(t);
     tr.innerHTML = `<td>${time}</td><td style="color:var(--t1)"></td>
-      <td><span class="stag ${t.side === 'buy' ? 't-buy' : 't-sell'}">${t.side.toUpperCase()}</span></td>
+      <td><span class="stag ${ri.klasse}" title="${escText(ri.titel)}" aria-label="${escText(ri.titel)}">${ri.pfeil} ${escText(ri.text)}</span></td>
       <td>${t.qty}</td><td>${fmtNum(t.price)}</td>
       <td class="${t.pnl !== undefined ? pnlClass(t.pnl) : ''}">${t.pnl !== undefined ? money(t.pnl) : '—'}</td>`;
     tr.querySelectorAll('td')[1]!.textContent = t.symbol + (t.source === 'engine' ? ' · Auto' : '');
@@ -9482,6 +9527,7 @@ function mtSelect(sym: string): void {
   mtState.sym = sym;
   mtState.price = null;
   ($('mSym') as HTMLInputElement).value = sym;
+  ($('mSym') as HTMLInputElement).dataset.sym = sym; // Anker für den Steckbrief (21:4x)
   $('mSymList').hidden = true;
   $('mtInfo').hidden = false;
   $('mtName').textContent = resolveName(sym);

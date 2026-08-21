@@ -662,6 +662,21 @@ select.inp option { background: var(--card-solid); color: var(--t1); }
 .t-buy { background: var(--gn-soft); color: var(--gn); }
 .t-sell { background: var(--rd-soft); color: var(--rd); }
 .t-hold { background: var(--chip-bg); color: var(--t2); }
+/* Short-Geschäfte in der Historie (Owner 21:3x: „Shorts und Longs besser
+   markieren"). Die FARBE zeigt weiter die Kursrichtung, auf die gesetzt
+   wird (Short = fallend = rot, Eindecken = steigend = grün); der RAHMEN
+   markiert das Geschäft als Leerverkauf-Seite. Nicht nur Farbe: Der Pfeil
+   ▲/▼ und der Text „Short auf/zu" tragen dieselbe Information ohne
+   Farbsehen (Barrierefreiheit). */
+.t-short { background: var(--rd-soft); color: var(--rd); border: 1px dashed var(--rd); }
+.t-cover { background: var(--gn-soft); color: var(--gn); border: 1px dashed var(--gn); }
+/* Platz für die Richtungs-Marke in der SCHMALEN Sidebar (gemessen: Tabelle
+   435px in einer 280px-Karte — die Marke wurde mittendurch geschnitten,
+   „▼ Short" erschien als „▼ SHOR"). Die Zeit ist die breiteste Spalte und
+   die einzige, die sich gefahrlos umbrechen lässt: „21.08.," / „17:00"
+   übereinander kostet eine Zeilenhöhe und gibt ~50px frei. */
+#jBody td:first-child { white-space: normal; line-height: 1.25; }
+.tbl .stag { white-space: nowrap; }
 
 /* Markt-Übersicht */
 .mkt-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
