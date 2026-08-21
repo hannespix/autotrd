@@ -5588,7 +5588,9 @@ function applyPanelOrder(): void {
     const ziel = document.getElementById(colId);
     const inSidebar = card?.parentElement?.id === 'leftCol' || card?.parentElement?.id === 'rightCol';
     if (!card || !ziel || !inSidebar || card.parentElement === ziel) continue;
-    ziel.insertBefore(card, ziel.querySelector(':scope > .sb-rs'));
+    // appendChild statt insertBefore(.sb-rs): das Resize-Handle ist absolut
+    // positioniert und steht nach der Order-Sortierung am Spaltenanfang.
+    ziel.appendChild(card);
   }
   for (const colId of ['leftCol', 'rightCol']) {
     const col = document.getElementById(colId);
@@ -5705,14 +5707,27 @@ function startePanelDrag(card: HTMLElement, start: PointerEvent): void {
     if (!ziel) return;
     const geschwister = [...ziel.querySelectorAll<HTMLElement>(':scope > .card[data-panel]')]
       .filter((c) => c !== card);
+    // Entscheidung im Fluss OHNE die gezogene Karte: Nachbarn, die unter ihr
+    // liegen, werden um ihre Höhe plus Spalten-Lücke nach oben gedacht.
+    // Ohne diese Korrektur ist die Wahl BISTABIL — jedes Umsortieren
+    // verschiebt die echten Mitten um die Kartenhöhe, derselbe Zeigerstand
+    // kippt zurück, und am Listenende flattert die Karte (Owner-Befund
+    // 21.08.: „unterste Position buggy").
+    const rKarte = card.getBoundingClientRect();
+    const luecke = Number.parseFloat(getComputedStyle(ziel).rowGap) || 0;
     const next = geschwister.find((s) => {
       const r = s.getBoundingClientRect();
-      return py < r.top + r.height / 2;
+      const top = card.parentElement === ziel && r.top > rKarte.top ? r.top - rKarte.height - luecke : r.top;
+      return py < top + r.height / 2;
     });
-    const anker = next ?? ziel.querySelector(':scope > .sb-rs');
-    if (card.parentElement === ziel && card.nextElementSibling === anker) return;
+    // „Ans Ende" heißt appendChild — NICHT vor .sb-rs: Das Resize-Handle ist
+    // absolut positioniert, und nach applyPanelOrder (appendChild aller
+    // Karten) steht es am SPALTENANFANG; ein insertBefore davor sortierte
+    // die Karte nach ganz oben statt nach ganz unten.
+    const naechsteKarte = geschwister.find((s) => card.compareDocumentPosition(s) & Node.DOCUMENT_POSITION_FOLLOWING);
+    if (card.parentElement === ziel && naechsteKarte === next) return;
     const vorher = messeAlle();
-    if (anker) ziel.insertBefore(card, anker);
+    if (next) ziel.insertBefore(card, next);
     else ziel.appendChild(card);
     gleiteNachbarn(vorher);
   };
@@ -6057,8 +6072,14 @@ function scheduleWsSave(): void {
     st.wsSaveTimer = null;
     const data: WorkspaceDocData = {
       preset: st.wsPreset,
+      // Vereinigung statt nur PANEL_TITLES: Auch Karten außerhalb der
+      // Registry (haltedauer, erkenntnisse, …) haben eine sortier- und
+      // verschiebbare Position — ohne sie hier verlöre jeder Drop an ihnen
+      // vorbei beim nächsten Laden eine Position (Owner-Befund 21.08.,
+      // „unterste Position buggy": performance rutschte nach dem Reload
+      // über die ungespeicherten Nachbarn zurück).
       panels: Object.fromEntries(
-        Object.keys(PANEL_TITLES).map((id) => [
+        [...new Set([...Object.keys(PANEL_TITLES), ...Object.keys(st.wsOrder), ...Object.keys(st.wsCol)])].map((id) => [
           id,
           {
             hidden: st!.wsHidden.has(id),
