@@ -6507,6 +6507,13 @@ const GATE_TEXT: ReadonlyArray<[string, string]> = [
   ['cluster_voll', t('gate.clusterVoll')],
   ['nicht_handelbar', t('gate.nichtHandelbar')],
   ['hebel_frei', t('gate.hebelFrei')],
+  /* Die drei stillen Bremsen (Kapital-Panel 21.08.): Sie standen als nackte
+   * continue-Zeilen im Scan und waren von „kein Signal" nicht zu
+   * unterscheiden. Jetzt stehen sie in derselben Liste wie alle anderen
+   * Ablehnungsgründe — und beantworten, welche Bremse wirklich klemmt. */
+  ['pos_limit', t('gate.posLimit')],
+  ['cooldown_aktiv', t('gate.cooldownAktiv')],
+  ['sockel_besitz', t('gate.sockelBesitz')],
 ];
 
 const REGIME_TEXT: Record<string, { t: string; c: string }> = {
@@ -6604,6 +6611,25 @@ function renderEngineWhy(): void {
       ? t('ew.mehrVerkauf') +
         t('ew.ampelBlockt')
       : t('ew.richtungen');
+    ampel.append(chip);
+  }
+  /* „Knapp verfehlt" (Kapital-Panel 21.08., Hebel 1) — die Zahl, die der
+   * Owner-Frage „warum nur 1–2 Positionen?" am nächsten kommt.
+   *
+   * Der Scan zählt seit dem 17.08. mit, wie viele Symbole die Konfluenz um
+   * GENAU EINE Stimme verfehlten (damals 13 von 13); die Trend-Solo-Regel
+   * war die Antwort darauf. Beides stand nur im Scan-Dokument. Nebeneinander
+   * gelesen sagen sie, ob die Regel wirkt — oder ob die Schwelle klemmt,
+   * während die Ampel selten grün ist. Der Chip erscheint nur, wenn es
+   * überhaupt Grenzfälle gab; eine Null wäre hier nur Rauschen. */
+  const knapp = h.knappVerfehlt ?? 0;
+  if (knapp > 0) {
+    const soloAn = h.trendSolo?.erzeugt ?? 0;
+    const chip = whyChip(
+      `${knapp} ${t('ew.knappVerfehlt')}${soloAn > 0 ? ` · ${soloAn} ${t('ew.trendSoloErzeugt')}` : ''}`,
+      soloAn > 0 ? 'var(--gn)' : 'var(--yl,#d9a441)',
+    );
+    chip.title = t('ew.knappTitel');
     ampel.append(chip);
   }
   /* Signal-Kanten-Chip (MI → 07.08.): Die Regime-Variante ist nach der

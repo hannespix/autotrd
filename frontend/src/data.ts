@@ -997,6 +997,18 @@ export interface HealthDoc {
    */
   signalDirs?: { buy?: number; sell?: number; hold?: number };
   /**
+   * Wie oft die Konfluenz um GENAU EINE Stimme verfehlt wurde (17.08.) und
+   * wie oft die Trend-Solo-Regel daraufhin ein Signal erzeugt hat.
+   *
+   * Der Scan schreibt beides längst; sichtbar war es nie. Zusammen
+   * beantworten sie die Kapital-Frage vom 21.08. („nur 1–2 Positionen"):
+   * Sinkt `knappVerfehlt` und steigt `trendSolo.erzeugt`, wirkt die Regel;
+   * bleibt `knappVerfehlt` hoch, während die Ampel selten auf `trend` steht,
+   * ist die Konfluenz-Schwelle die Bremse — und nicht der Positions-Deckel.
+   */
+  knappVerfehlt?: number;
+  trendSolo?: { erzeugt?: number; ampel?: string };
+  /**
    * Schatten-Kante je Signal-Variante. `rohPct` ist die Bewegung VOR
    * Gebühren — sie trennt „Signal ist Rauschen" von „Gebühren fressen die
    * Information" und fehlt bei Aggregaten aus der Zeit vor dem 05.08.

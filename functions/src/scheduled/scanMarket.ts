@@ -354,6 +354,23 @@ export interface EntryGateStats {
    *  gleichzeitig. Steht sie dauerhaft auf 0, ist der Hebel faktisch aus;
    *  steht sie hoch, ist eine Bedingung wirkungslos geworden. */
   hebel_frei: number;
+  /* ── Die drei stillen Bremsen (Kapital-Panel 21.08., Hebel 1) ──────────
+   *
+   * Owner-Befund: „meistens nur 1–2 aktive Positionen, das Bargeld arbeitet
+   * zu wenig." Die Frage, WELCHE Bremse das verursacht, war nicht zu
+   * beantworten: Positions-Deckel, Cooldown und Sockel-Besitzgrenze sind je
+   * drei nackte `continue`-Zeilen ohne Zähler — ein Symbol, das an ihnen
+   * scheitert, sieht im Heartbeat exakt aus wie ein Symbol ohne Signal.
+   *
+   * Diese drei Zahlen ändern NICHTS am Verhalten. Sie beantworten nach ein
+   * paar Tagen die Frage, die das Red-Team an den Anfang gestellt hat:
+   * Welche Bremse klemmt wirklich — und welche ist nur vermutet? */
+  /** Abgelehnt: `maxOpenPositions` bereits erreicht. */
+  pos_limit: number;
+  /** Abgelehnt: Cooldown nach dem letzten Trade dieses Symbols läuft noch. */
+  cooldown_aktiv: number;
+  /** Abgelehnt: Symbol gehört dem Momentum-Sockel (Besitzgrenze). */
+  sockel_besitz: number;
 }
 
 /**
@@ -520,6 +537,9 @@ async function executeUserTrades(
     regime_gegen_trend: 0,
     regime_stress: 0,
     hebel_frei: 0,
+    pos_limit: 0,
+    cooldown_aktiv: 0,
+    sockel_besitz: 0,
   };
   const konten: KontenStats = {
     laufend: 0,
@@ -1439,8 +1459,8 @@ async function executeUserTrades(
                   await ref.set({ lastTrades: { [symbol]: now.toISOString() } }, { merge: true });
                 }
               } else if (dir === 'buy' && !book.positions[symbol]) {
-                if (Object.keys(book.positions).length >= posLimit) continue;
-                if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
+                if (Object.keys(book.positions).length >= posLimit) { gate.pos_limit += 1; continue; }
+                if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) { gate.cooldown_aktiv += 1; continue; }
                 // Dieselben Filter wie im echten Buch — sonst wäre das
                 // A/B-Duell verzerrt: Der Schatten dürfte Trades machen, die
                 // dem echten Konto verboten sind, und gewönne aus dem
@@ -1470,8 +1490,8 @@ async function executeUserTrades(
                 }
               } else if (dir === 'sell' && !book.positions[symbol] && strategy.signals.allowShort === true) {
                 // Shadow-Short (R2): gleiche Entry-Guards wie der echte Pfad
-                if (Object.keys(book.positions).length >= posLimit) continue;
-                if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
+                if (Object.keys(book.positions).length >= posLimit) { gate.pos_limit += 1; continue; }
+                if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) { gate.cooldown_aktiv += 1; continue; }
                 if (entrySperre(symbol, data.atrPct, Object.keys(book.positions), 'short')) continue;
                 const r = shadowTrade(book, symbol, 'sell', data.price, clamped.engine.maxPositionPct, {
                   capital: sizingCapital(),
@@ -1517,10 +1537,10 @@ async function executeUserTrades(
           } else if (dir === 'buy' && !pos) {
             // Entry-Guards der Risiko-Hülle: Positionslimit + Cooldowns
             // (je Strategie UND nach Risk-Exits desselben Wallets)
-            if (positions.size >= posLimit) continue;
-            if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
-            if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
-            if (coreSymbols.has(symbol)) continue; // hält der Sockel — Besitzgrenze
+            if (positions.size >= posLimit) { gate.pos_limit += 1; continue; }
+            if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) { gate.cooldown_aktiv += 1; continue; }
+            if (cooldownActive(engineCooldowns[symbol], now, cdMin)) { gate.cooldown_aktiv += 1; continue; }
+            if (coreSymbols.has(symbol)) { gate.sockel_besitz += 1; continue; } // hält der Sockel
             if (entrySperre(symbol, data.atrPct, alleSymbole(), 'long')) continue;
             // assetClass durchreichen (MA3-Fund 26.07.): Ohne sie schrieb der
             // Broker die Stop/Take-LEVEL mit den GLOBALEN Prozenten fest —
@@ -1592,10 +1612,10 @@ async function executeUserTrades(
           } else if (dir === 'sell' && !pos && strategy.signals.allowShort === true) {
             // Regelbaum-Short (R2): Verkaufs-Signal ohne Position — gleiche
             // Entry-Guards wie beim Kauf, Level gespiegelt im Broker.
-            if (positions.size >= posLimit) continue;
-            if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) continue;
-            if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
-            if (coreSymbols.has(symbol)) continue; // hält der Sockel — Besitzgrenze
+            if (positions.size >= posLimit) { gate.pos_limit += 1; continue; }
+            if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) { gate.cooldown_aktiv += 1; continue; }
+            if (cooldownActive(engineCooldowns[symbol], now, cdMin)) { gate.cooldown_aktiv += 1; continue; }
+            if (coreSymbols.has(symbol)) { gate.sockel_besitz += 1; continue; } // hält der Sockel
             if (entrySperre(symbol, data.atrPct, alleSymbole(), 'short')) continue;
             const r = await executeTrade(
               {
@@ -1744,9 +1764,9 @@ async function executeUserTrades(
           // Positionslimit galt vorher nur für Regelbaum-Käufe — die
           // Konfluenz konnte beliebig viele Positionen öffnen. Und nach
           // einem Risk-Exit hält der Cooldown den Sofort-Rückkauf auf.
-          if (positions.size >= posLimit) continue;
-          if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
-          if (coreSymbols.has(symbol)) continue; // hält der Sockel — Besitzgrenze
+          if (positions.size >= posLimit) { gate.pos_limit += 1; continue; }
+          if (cooldownActive(engineCooldowns[symbol], now, cdMin)) { gate.cooldown_aktiv += 1; continue; }
+          if (coreSymbols.has(symbol)) { gate.sockel_besitz += 1; continue; } // hält der Sockel
           if (entrySperre(symbol, data.atrPct, alleSymbole(), 'long')) continue;
           // Steckbrief des Einstiegs (Trade-Filter, scharf seit 02.08.):
           // Sorten, deren EIGENE Historie n≥30 und t≤−1,5 zeigt, werden
@@ -1850,9 +1870,9 @@ async function executeUserTrades(
           // Leerverkauf (Opt-in): Verkaufs-Signal ohne Position eröffnet
           // einen Short — gleiche Entry-Guards wie beim Kauf (Limit,
           // Cooldown), gleiche Risiko-Hülle, Level gespiegelt im Broker.
-          if (positions.size >= posLimit) continue;
-          if (cooldownActive(engineCooldowns[symbol], now, cdMin)) continue;
-          if (coreSymbols.has(symbol)) continue; // hält der Sockel — Besitzgrenze
+          if (positions.size >= posLimit) { gate.pos_limit += 1; continue; }
+          if (cooldownActive(engineCooldowns[symbol], now, cdMin)) { gate.cooldown_aktiv += 1; continue; }
+          if (coreSymbols.has(symbol)) { gate.sockel_besitz += 1; continue; } // hält der Sockel
           if (entrySperre(symbol, data.atrPct, alleSymbole(), 'short')) continue;
           const bucket = bucketKey({
             assetClass: classify(symbol),
@@ -3528,6 +3548,9 @@ export async function runScan(force = false): Promise<ScanResult> {
     regime_gegen_trend: 0,
     regime_stress: 0,
     hebel_frei: 0,
+    pos_limit: 0,
+    cooldown_aktiv: 0,
+    sockel_besitz: 0,
   };
   let lastError: string | null = null;
   // null = Trade-Block ist gar nicht gelaufen (Fehler davor) — das ist eine
@@ -3871,6 +3894,14 @@ export async function runScan(force = false): Promise<ScanResult> {
           cooldownFaktor: regime.state === 'seitwaerts' ? SEITWAERTS_COOLDOWN_FAKTOR : 1,
           cooldownMindestMin: regime.state === 'seitwaerts' ? SEITWAERTS_COOLDOWN_MIN : null,
           groessenFaktor: regimeGroessenFaktor(regime.state),
+          /* Stand die Ampel auf `seitwaerts`, WEIL nichts gemessen werden
+           * konnte? (Kapital-Panel 21.08., Hebel 1.) Der Fallback ohne
+           * SMA-Lage und ohne realisierte Vol ist absichtlich konservativ —
+           * aber er halbiert die Positionsgröße wie ein echtes
+           * Seitwärts-Regime. Wie oft er greift, hat bisher NIEMAND
+           * gemessen; das Red-Team hat genau deshalb abgelehnt, den
+           * Fallback zu lockern: erst zählen, dann urteilen. */
+          datenlos: regime.aboveSma200 === null && regime.realizedVolPct === null,
         },
         // Termin-Kalender (04.08., Schatten): Was steht an, und liegt der Tag
         // im Turn-of-the-Month-Fenster? Steuert noch NICHTS — erst wenn die
