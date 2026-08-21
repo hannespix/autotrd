@@ -4569,6 +4569,8 @@ function wireWatchlist(): void {
       const dir = r.sig.direction;
       tds[5]!.innerHTML = `<span class="stag t-${dir}">${dir.toUpperCase()}</span>`;
     }
+    // Aktive Sortierung hält Schritt mit frischen Scan-Werten (billig, ~12 Zeilen).
+    sortiereSigZeilen();
   };
 
   for (const sym of wl) {
@@ -4590,6 +4592,73 @@ function wireWatchlist(): void {
   renderStrategyChips();
   wireHistorie();
   schmueckeAvatare();
+  sortiereSigZeilen(); // frisch gebaute Zeilen in die gemerkte Ordnung bringen
+}
+
+/* ── Spalten-Sortierung (Owner 21.08., 16:0x: „bei solchen Tabellen soll man
+ *    nach Spalten-Titeln sortieren können … auf/abwärts je Klick") ─────────
+ *
+ * Sitzungszustand, bewusst nicht persistiert: Eine Sortierung ist ein
+ * Arbeitsgriff, keine Einstellung. Auto-Signale sortieren die DOM-Zeilen
+ * (die Werte leben in den Zellen und werden von paintRow in-place
+ * aktualisiert); die Trade-Historie sortiert die DATEN vor dem Rendern —
+ * ihre Zeit-Spalte („20.08., 15:39") wäre als Text lexikalisch falsch. */
+type SortRichtung = 'auf' | 'ab';
+const sortZustand: { sig: { idx: number; dir: SortRichtung } | null; jn: { idx: number; dir: SortRichtung } | null } =
+  { sig: null, jn: null };
+
+/** Platzhalter-Zellen („--", „—", leer) sortieren IMMER ans Ende. */
+const zelleLeer = (s: string): boolean => s === '' || s === '--' || s === '—';
+
+/** Führende Zahl eines Zellentexts („$-922.99" → −922.99, „0▲ 1▼ / 2" → 0);
+ *  reiner Text (Ticker, HOLD/BUY/SELL) ⇒ null → Wort-Vergleich. */
+function zellZahl(text: string): number | null {
+  const m = /-?\d+(?:\.\d+)?/.exec(text.replace(/[$,%\s]/g, ''));
+  return m ? Number(m[0]) : null;
+}
+
+/** Auto-Signale: DOM-Zeilen nach der gewählten Spalte umsortieren. */
+function sortiereSigZeilen(): void {
+  const s = sortZustand.sig;
+  if (!s) return;
+  const body = $('sigBody') as HTMLTableSectionElement;
+  const dir = s.dir === 'auf' ? 1 : -1;
+  [...body.rows]
+    .filter((r) => r.cells.length > 1)
+    .map((r, i) => ({ r, i, text: r.cells[s.idx]?.textContent?.trim() ?? '' }))
+    .sort((a, b) => {
+      if (zelleLeer(a.text) && zelleLeer(b.text)) return a.i - b.i;
+      if (zelleLeer(a.text)) return 1;
+      if (zelleLeer(b.text)) return -1;
+      const za = zellZahl(a.text);
+      const zb = zellZahl(b.text);
+      if (za !== null && zb !== null) return (za - zb) * dir || a.i - b.i;
+      return a.text.localeCompare(b.text) * dir || a.i - b.i;
+    })
+    .forEach(({ r }) => body.appendChild(r));
+}
+
+/** Spalten-Köpfe einer Tabelle klickbar machen — Pfeil + aria-sort inklusive. */
+function wireSortKopf(bodyId: string, key: 'sig' | 'jn', anwenden: () => void): void {
+  const kopf = ($(bodyId).closest('table') as HTMLTableElement | null)?.tHead?.rows[0];
+  if (!kopf || kopf.dataset.wired === '1') return;
+  kopf.dataset.wired = '1';
+  [...kopf.cells].forEach((th, idx) => {
+    th.classList.add('sortierbar');
+    th.title = t('tab.sortierenTitel');
+    th.addEventListener('click', () => {
+      const alt = sortZustand[key];
+      sortZustand[key] = alt?.idx === idx ? { idx, dir: alt.dir === 'auf' ? 'ab' : 'auf' } : { idx, dir: 'auf' };
+      const neu = sortZustand[key]!;
+      [...kopf.cells].forEach((h, i) => {
+        h.classList.toggle('sort-auf', i === idx && neu.dir === 'auf');
+        h.classList.toggle('sort-ab', i === idx && neu.dir === 'ab');
+        if (i === idx) h.setAttribute('aria-sort', neu.dir === 'auf' ? 'ascending' : 'descending');
+        else h.removeAttribute('aria-sort');
+      });
+      anwenden();
+    });
+  });
 }
 
 /**
@@ -4600,6 +4669,8 @@ function wireWatchlist(): void {
  * demselben Knopf würde jede Seite doppelt laden.
  */
 function wireHistorie(): void {
+  wireSortKopf('sigBody', 'sig', sortiereSigZeilen);
+  wireSortKopf('jBody', 'jn', renderJournal);
   const mehr = $('jMore');
   if (mehr && mehr.dataset.wired !== '1') {
     mehr.dataset.wired = '1';
@@ -7341,6 +7412,31 @@ function renderJournal(): void {
     if (seite) return t.side === seite;
     return true;
   });
+  // Spalten-Sortierung (Owner 16:0x) — auf den DATEN, nicht den Zellen:
+  // „20.08., 15:39" wäre als Text lexikalisch falsch, executedAt (ISO) nicht.
+  const sj = sortZustand.jn;
+  if (sj) {
+    const dir = sj.dir === 'auf' ? 1 : -1;
+    const wert = (x: (typeof zeilen)[number]): string | number | null => {
+      switch (sj.idx) {
+        case 0: return x.executedAt;
+        case 1: return x.symbol;
+        case 2: return x.side;
+        case 3: return x.qty;
+        case 4: return x.price;
+        default: return x.pnl ?? null; // offene Trades ohne P&L ⇒ ans Ende
+      }
+    };
+    zeilen.sort((a, b) => {
+      const va = wert(a);
+      const vb = wert(b);
+      if (va === null && vb === null) return 0;
+      if (va === null) return 1;
+      if (vb === null) return -1;
+      if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir;
+      return String(va).localeCompare(String(vb)) * dir;
+    });
+  }
 
   const zaehler = $('jCount');
   if (zaehler) {
