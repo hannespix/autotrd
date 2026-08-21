@@ -243,8 +243,9 @@ describe('Golden-Wächter — im DE-Modus exakt die bisherigen Texte', () => {
     expect(DE['panel.autoTuner']).toBe('Auto-Tuner');
     expect(DE['panel.struktursuche']).toBe('Struktursuche');
     expect(DE['panel.vergleichsChart']).toBe('Vergleichs-Chart');
-    expect(DE['panel.haltedauer']).toBe('Wie lange halten?');
-    expect(DE['panel.erkenntnisse']).toBe('Was das System gelernt hat');
+    // Owner 21.08.: lange Frage-Titel gestrafft — die Erklärung trägt der ⓘ.
+    expect(DE['panel.haltedauer']).toBe('Haltedauer');
+    expect(DE['panel.erkenntnisse']).toBe('Erkenntnisse');
   });
 
   it('Tranche 1: die deutschen Kopfleisten-Texte sind byte-gleich zum Bestand', () => {

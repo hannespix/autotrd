@@ -210,8 +210,8 @@ export const DE = {
   'panel.autoTuner': 'Auto-Tuner',
   'panel.struktursuche': 'Struktursuche',
   'panel.vergleichsChart': 'Vergleichs-Chart',
-  'panel.haltedauer': 'Wie lange halten?',
-  'panel.erkenntnisse': 'Was das System gelernt hat',
+  'panel.haltedauer': 'Haltedauer',
+  'panel.erkenntnisse': 'Erkenntnisse',
   // ⓘ-Knopf: Die Tip-INHALTE stehen in infotips.ts (eigene Records, s. dort);
   // hier nur die beiden Attribut-Texte des Knopfes selbst.
   'tip.erklaerung': 'Erklärung',
@@ -1418,8 +1418,8 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'panel.autoTuner': 'Auto-tuner',
   'panel.struktursuche': 'Structure search',
   'panel.vergleichsChart': 'Comparison chart',
-  'panel.haltedauer': 'How long to hold?',
-  'panel.erkenntnisse': 'What the system has learned',
+  'panel.haltedauer': 'Holding period',
+  'panel.erkenntnisse': 'Insights',
   'tip.erklaerung': 'Explanation',
   'tip.wasBedeutet': 'What does this mean?',
   'pal.themaEinstellen': 'Set light/dark (Options → Display)',
