@@ -43,8 +43,12 @@ describe('Karten-Layout der Signal-/Positions-Tabellen (mobil)', () => {
     // Kopfzeile weg, Zeilen und Zellen gestapelt, Labels aus data-th.
     expect(block).toContain('.tbl-karten thead { display: none; }');
     expect(block).toContain('content: attr(data-th)');
-    // Der Exit-Ausblick klebt als Fuß an seiner Positions-Karte.
+    // Der Exit-Ausblick klebt als Fuß an seiner Positions-Karte …
     expect(block).toContain(':has(+ .pos-sub)');
+    // … und seine Zelle ist BLOCK, nicht flex: Die vielen Inline-Stücke des
+    // Ausblicks würden als Flex-Items ohne Umbruch aus der Karte ragen
+    // (Owner 21.08.: „die Card läuft über").
+    expect(block).toMatch(/\.tbl-karten tr\.pos-sub td \{ display: block;/);
   });
 
   it('KEINE .tbl-karten-Regel außerhalb des Media-Blocks — Desktop bleibt Tabelle', () => {
