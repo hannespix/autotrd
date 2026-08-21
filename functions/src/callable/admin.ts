@@ -150,7 +150,20 @@ export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
     // wachsen, braucht die Liste ohnehin Suche + Pagination statt mehr Rohdaten.
     const snap = await db
       .collection('users')
-      .select('accessLevel', 'requestedAt', 'admin', 'wallet', 'settings.strategy.broker.initialCapital')
+      // ACHTUNG: `select()` ist eine Feldmaske — was hier fehlt, liefert
+      // `d.get(...)` unten als `undefined`, ohne Fehler und ohne Warnung.
+      // `risk.abgleich` fehlte anfangs: Die Sperr-Anzeige blieb deshalb
+      // immer leer, obwohl der Vermerk im Dokument stand. Wer unten ein
+      // Feld liest, muss es hier eintragen — der Wächter in
+      // functions/test/adminFeldmaske.test.ts gleicht beide Listen ab.
+      .select(
+        'accessLevel',
+        'requestedAt',
+        'admin',
+        'wallet',
+        'settings.strategy.broker.initialCapital',
+        'risk.abgleich',
+      )
       .limit(500)
       .get();
     // Kurs-Cache wie im Equity-Snapshot: je Symbol einmal, nicht je User.
