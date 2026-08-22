@@ -10,6 +10,8 @@
  *     „Aggregat" über ein einziges Konto gibt dessen Beträge preis.
  */
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   MIN_ACCOUNTS_PUBLIC,
@@ -225,5 +227,122 @@ describe('aggregateTradingHealth: Konten je Klasse', () => {
       mitKlasse(5, { fx: { n: 0, pnl: 0, notional: 0 }, gold: { n: 5, pnl: 1, notional: 100 } }),
     ]);
     expect(h.klassen.fx?.konten).toBe(1);
+  });
+});
+
+/* ── Exit-Geld je Ausstiegsgrund (22.08., Multi-Agenten-Befund) ────────────
+ *
+ * Anteil und Trefferquote beantworten „wie oft", nicht „wie viel". In der
+ * Woche zum 22.08. standen die vier Ausstiegsarten bei fast gleichen
+ * Stückzahlen (23/22/21/9) — daraus war nicht ablesbar, ob die 22 Stopps
+ * 200 $ oder 2 000 $ gekostet haben. Genau daran hängt aber, ob das Problem
+ * bei den Gebühren liegt oder beim Bruttoergebnis.
+ *
+ * Die Zahl war die ganze Zeit da: `ExitBucket.pnl` wird in `exitBreakdown`
+ * summiert und reist im Konto-Beitrag bis hierher — verworfen wurde sie erst
+ * vom Parametertyp der letzten Stufe. Eine Zahl, die den ganzen Weg mitreist
+ * und einen Schritt vor dem Ziel wegfällt, ist schwerer zu finden als eine,
+ * die es nie gab. Deshalb steht sie hier fest.
+ */
+describe('Exit-Geld erreicht die letzte Stufe', () => {
+  const mitGeld = (
+    exits: Record<string, { n: number; pnl: number; wins: number }>,
+  ): AccountContribution[] => [konto(10, 5, { exits }), konto(10, 5, { exits })];
+
+  it('pnl je Ausstiegsgrund kommt an und wird summiert', () => {
+    const h = aggregateTradingHealth(
+      mitGeld({
+        stop_loss: { n: 4, pnl: -800, wins: 0 },
+        take_profit: { n: 3, pnl: 300, wins: 3 },
+      }),
+    );
+    // Zwei identische Konten ⇒ doppelte Summen.
+    expect(h.exits['stop_loss']?.pnl).toBe(-1600);
+    expect(h.exits['take_profit']?.pnl).toBe(600);
+  });
+
+  it('die Abdeckung stimmt: Summe der n über alle Eimer == trades7t', () => {
+    /* Auflage aus der Synthese: nicht nur „nicht leer" prüfen. Ein Eimer,
+     * der stillschweigend wegfällt, verschöbe jede Aussage über das Geld —
+     * und wäre an einer bloßen Nicht-Leer-Prüfung vorbeigekommen. */
+    const exits7t = {
+      signal: { n: 21, pnl: 140, wins: 15 },
+      take_profit: { n: 23, pnl: 610, wins: 23 },
+      stop_loss: { n: 22, pnl: -1900, wins: 0 },
+      trailing_stop: { n: 9, pnl: -70, wins: 1 },
+    };
+    const h = aggregateTradingHealth([
+      { ...konto(10, 5), exits7t },
+      { ...konto(10, 5), exits7t },
+    ] as AccountContribution[]);
+    const summeN = Object.values(h.exits7t).reduce((a, e) => a + e.n, 0);
+    expect(summeN).toBe(h.trades7t);
+    expect(Object.keys(h.exits7t).sort()).toEqual(Object.keys(exits7t).sort());
+    // Und das Geld trägt das Vorzeichen, auf das es ankommt.
+    expect(h.exits7t['stop_loss']!.pnl).toBeLessThan(0);
+    expect(h.exits7t['take_profit']!.pnl).toBeGreaterThan(0);
+  });
+
+  it('ein fehlendes pnl im Beitrag zählt als 0, nicht als NaN', () => {
+    // Altbestand aus der Zeit vor dem Feld darf die Summe nicht vergiften:
+    // Ein einziges NaN würde den ganzen Eimer unbrauchbar machen.
+    const h = aggregateTradingHealth([
+      { ...konto(10, 5), exits: { signal: { n: 2, wins: 1 } } },
+      { ...konto(10, 5), exits: { signal: { n: 2, pnl: 50, wins: 1 } } },
+    ] as unknown as AccountContribution[]);
+    expect(h.exits['signal']?.pnl).toBe(50);
+    expect(Number.isFinite(h.exits['signal']!.pnl)).toBe(true);
+  });
+});
+
+describe('Das Urteil behauptet keine Ursache, die es nicht gemessen hat', () => {
+  /* Bis zum 22.08. stand hier „… — Handelsfrequenz zu hoch", gebildet allein
+   * aus feeShare > 0,5, ohne dass eine einzige Frequenzgröße in die
+   * Entscheidung einging. Nachgerechnet trug der Satz auch nicht: ~415 $
+   * Gebühren gegen ~1 650 $ Brutto-Verschlechterung in derselben Woche. */
+  const teuer = () =>
+    tradingVerdict({
+      ...aggregateTradingHealth([
+        konto(10, 5, { costs: { n: 10, fees: 800, grossPnl: 1000 } }),
+        konto(10, 5, { costs: { n: 10, fees: 800, grossPnl: 1000 } }),
+      ]),
+    });
+
+  it('die Gebühren-Aussage bleibt — Kostenwahrheit wird nie abgeschwächt', () => {
+    expect(teuer()).toContain('Gebühren fressen');
+    expect(teuer()).toContain('%');
+  });
+
+  it('die Frequenz-Behauptung ist weg', () => {
+    expect(teuer()).not.toContain('Handelsfrequenz');
+    expect(teuer()).not.toContain('zu hoch');
+  });
+});
+
+describe('Quelltext-Wächter: kein zweiter Gebühren-Quotient', () => {
+  /* Die naheliegende „Reparatur" wäre ein feeShare7t — endlich auf derselben
+   * Zeitachse wie exits7t. Sie ist die SCHLECHTERE Zahl: Ein Quotient mit dem
+   * Bruttoergebnis im Nenner sieht umso besser aus, je schlechter die Woche
+   * war (415/1600 ≈ 0,26 in einer Woche mit ~2 000 $ Verlust), geht bei einer
+   * ausgeglichenen Woche routinemäßig durch null — und stünde als Urteil im
+   * täglichen KI-Bericht. Deshalb steht hier die Geld-SUMME je Ausstiegsgrund
+   * und ausdrücklich kein weiteres Verhältnis. */
+  const quelle = readFileSync(join(import.meta.dirname, '..', 'src', 'tradingHealth.ts'), 'utf8');
+
+  it('feeShare wird genau EINMAL gebildet — kein 7-Tage-Zwilling', () => {
+    // Nur die RECHNUNG zählen, nicht die Typdeklaration — sonst zählt der
+    // Wächter sich selbst an der Schnittstelle fest und wird beim ersten
+    // Umbenennen eines Feldes rot, ohne dass etwas passiert wäre.
+    const treffer = quelle.match(/feeShare:\s*brutto/g) ?? [];
+    expect(treffer, 'feeShare wird nicht genau einmal gerechnet').toHaveLength(1);
+    for (const verboten of ['feeShare7t', 'fees7t', 'grossPnl7t']) {
+      expect(quelle, `${verboten} ist ausdrücklich nicht gewollt`).not.toContain(verboten);
+    }
+  });
+
+  it('das Exit-Geld bleibt eine Summe und wird durch nichts geteilt', () => {
+    const block = quelle.slice(quelle.indexOf('const exitShares'), quelle.indexOf('const exits ='));
+    expect(block).toContain('pnl: Math.round(e.pnl * 100) / 100');
+    expect(block, 'aus dem Exit-Geld ist ein Verhältnis geworden').not.toMatch(/pnl[^;]*\/\s*(summe|brutto|grossPnl)/);
   });
 });

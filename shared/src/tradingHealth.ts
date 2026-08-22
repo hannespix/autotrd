@@ -110,6 +110,32 @@ export interface ExitShare {
   /** Trefferquote INNERHALB dieses Ausstiegsgrunds (0…1). */
   winRate: number;
   n: number;
+  /**
+   * Summe der Ergebnisse dieses Ausstiegsgrunds in $ (22.08.).
+   *
+   * ── Warum das Feld fehlte, obwohl die Zahl da war ──────────────────────
+   *
+   * `ExitBucket` trägt `pnl` seit jeher, `exitBreakdown` summiert es, und
+   * der Konto-Beitrag reicht es bis hierher durch. Verworfen wurde es erst
+   * an der letzten Stufe — vom Parametertyp von `exitShares`, der nur
+   * `{ n, wins }` annahm. Eine Zahl, die den ganzen Weg mitreist und einen
+   * Schritt vor dem Ziel wegfällt, ist schwerer zu finden als eine, die es
+   * nie gab.
+   *
+   * ── Warum ausgerechnet diese Zahl ─────────────────────────────────────
+   *
+   * Anteil und Trefferquote beantworten „wie oft", nicht „wie viel". Am
+   * 22.08. stand der Exit-Mix der Woche bei fast gleichen Stückzahlen
+   * (23/22/21/9) — daraus ist nicht ablesbar, ob die 22 Stopps 200 $ oder
+   * 2 000 $ gekostet haben. Genau an dieser Unterscheidung hängt aber, ob
+   * das Problem bei den Gebühren liegt oder beim Bruttoergebnis; ohne sie
+   * sind alle Gegenmaßnahmen Vermutungen über dieselbe unbekannte Zahl.
+   *
+   * BEWUSST KEIN Verhältnis: Ein Quotient mit dem Bruttoergebnis im Nenner
+   * sieht umso besser aus, je schlechter die Woche war, und geht bei einer
+   * ausgeglichenen Woche durch null. Hier steht die Summe selbst.
+   */
+  pnl: number;
 }
 
 export interface TradingHealth {
@@ -185,8 +211,8 @@ export function aggregateTradingHealth(
   let fees = 0;
   let grossPnl = 0;
   let netPnl = 0;
-  const exitN: Record<string, { n: number; wins: number }> = {};
-  const exitNeuN: Record<string, { n: number; wins: number }> = {};
+  const exitN: Record<string, { n: number; pnl: number; wins: number }> = {};
+  const exitNeuN: Record<string, { n: number; pnl: number; wins: number }> = {};
   const klassenRoh: Record<
     string,
     { n: number; pnl: number; fees: number; notional: number; konten: number }
@@ -220,14 +246,16 @@ export function aggregateTradingHealth(
     }
 
     for (const [grund, b] of Object.entries(c.exits ?? {})) {
-      const e = exitN[grund] ?? { n: 0, wins: 0 };
+      const e = exitN[grund] ?? { n: 0, pnl: 0, wins: 0 };
       e.n += b.n;
+      e.pnl += Number.isFinite(b.pnl) ? b.pnl : 0;
       e.wins += b.wins;
       exitN[grund] = e;
     }
     for (const [grund, b] of Object.entries(c.exits7t ?? {})) {
-      const e = exitNeuN[grund] ?? { n: 0, wins: 0 };
+      const e = exitNeuN[grund] ?? { n: 0, pnl: 0, wins: 0 };
       e.n += b.n;
+      e.pnl += Number.isFinite(b.pnl) ? b.pnl : 0;
       e.wins += b.wins;
       exitNeuN[grund] = e;
     }
@@ -247,7 +275,9 @@ export function aggregateTradingHealth(
     }
   }
 
-  const exitShares = (roh: Record<string, { n: number; wins: number }>): Record<string, ExitShare> => {
+  const exitShares = (
+    roh: Record<string, { n: number; pnl: number; wins: number }>,
+  ): Record<string, ExitShare> => {
     const summe = Object.values(roh).reduce((a, e) => a + e.n, 0);
     const out: Record<string, ExitShare> = {};
     for (const [grund, e] of Object.entries(roh)) {
@@ -255,6 +285,9 @@ export function aggregateTradingHealth(
         share: summe > 0 ? r4(e.n / summe) : 0,
         winRate: e.n > 0 ? r4(e.wins / e.n) : 0,
         n: e.n,
+        // Auf Cent gerundet: Die Summe ist eine Geldgröße, keine Quote —
+        // vier Nachkommastellen wie bei `share` wären hier Scheingenauigkeit.
+        pnl: Math.round(e.pnl * 100) / 100,
       };
     }
     return out;
@@ -365,8 +398,27 @@ export function tradingVerdict(h: TradingHealth): string {
       return `${Math.round(signal * 100)} % der Trades enden am Signal — Stop und Ziel sind praktisch wirkungslos`;
     }
   }
+  /* Die Ursachen-Behauptung ist am 22.08. gestrichen worden, die Zahl bleibt.
+   *
+   * Hier stand „… — Handelsfrequenz zu hoch". Der Satz wurde allein aus
+   * `feeShare > 0.5` gebildet — ohne dass irgendeine Frequenzgröße in die
+   * Entscheidung einging. Er behauptete also eine Ursache, die er nicht
+   * gemessen hatte, und er stand als Urteil im täglichen KI-Bericht.
+   *
+   * Nachgerechnet trug er auch nicht: In der Woche zum 22.08. standen rund
+   * 415 $ Gebühren gegen eine Brutto-Verschlechterung von grob 1 650 $. Die
+   * Frequenz zu halbieren hätte ~200 $ gespart — an einem Problem, das
+   * achtmal so groß war. Erschwerend läuft `feeShare` über ein rollendes
+   * Fenster der letzten Abschlüsse je Konto und nicht über die sieben Tage,
+   * auf die sich der Exit-Mix daneben bezieht; die beiden Zahlen im selben
+   * Bericht sprechen also über verschiedene Zeiträume.
+   *
+   * Die GEBÜHREN-AUSSAGE bleibt unverändert stehen — sie ist Kostenwahrheit
+   * und wird nie abgeschwächt. Was sie nicht sagen darf, ist woher es kommt.
+   * Diese Frage beantwortet ab jetzt `exits7t.<grund>.pnl`: das Geld je
+   * Ausstiegsgrund, das bis heute eine Stufe vor dem Ziel verworfen wurde. */
   if (h.feeShare !== null && h.feeShare > 0.5) {
-    return `Gebühren fressen ${Math.round(h.feeShare * 100)} % des Bruttoergebnisses — Handelsfrequenz zu hoch`;
+    return `Gebühren fressen ${Math.round(h.feeShare * 100)} % des Bruttoergebnisses`;
   }
   if (h.profitFactor !== null && h.profitFactor < 1) {
     return `Profit-Faktor ${h.profitFactor} — die Verluste überwiegen die Gewinne`;
