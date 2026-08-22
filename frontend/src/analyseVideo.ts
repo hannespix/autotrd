@@ -27,6 +27,7 @@ import { CanvasRenderer } from 'echarts/renderers';
 import { type AnalyseChartDaten, type ChartLook, baueOptionen } from './analyseCharts.js';
 import { t } from './i18n.js';
 import { FARBE, type ShareDaten } from './shareCard.js';
+import { seiteZuSzene, type SeitenId } from './seiten.js';
 import { maleKopf, maleRahmen, maleSiegel, maleSzene, nimmClipAuf, szeneBei } from './shareVideo.js';
 
 // Chart-Typen und Komponenten registriert analyseCharts beim Import;
@@ -74,7 +75,10 @@ export interface RegieSzene {
  *
  * Aspekte ohne Daten fliegen raus. Gesamt ~6–15 s.
  */
-export function regiePlan(chart: AnalyseChartDaten): RegieSzene[] {
+export function regiePlan(
+  chart: AnalyseChartDaten,
+  auswahl?: readonly SeitenId[],
+): RegieSzene[] {
   /* Owner-Nachkritik („zu schnell, zu hektisch, zu linear"): Jede Szene
    * bekommt nach ihrer Animation einen HALTE-MOMENT zum Lesen — das Auge
    * braucht bei einem neuen Diagramm ~2 s Orientierung plus Lesezeit.
@@ -84,14 +88,34 @@ export function regiePlan(chart: AnalyseChartDaten): RegieSzene[] {
   /* Zeit-Verteilung nach Kritiker-Befund: Die Symbol-Szene ist der
    * simpelste Inhalt (kürzeste Ruhe), der Morph-Payoff und der Abspann
    * brauchen die Lesezeit (vier Zeilen ≈ 4 s auf Handybreite). */
+  /* Seiten-Auswahl (Owner 22.08.) — dieselbe Liste, die auch die Bilder
+   * steuert. Die Szenen heissen historisch anders als die Karten
+   * (`kurve`/`symbole` statt `verlauf`/`womit`); `seiteZuSzene` hält die
+   * Zuordnung an EINER Stelle, damit die beiden Vokabulare nicht
+   * auseinanderlaufen.
+   *
+   * Die Datenbedingungen bleiben davor stehen: Eine gewählte Szene ohne
+   * Daten entsteht nicht, sonst liefe das Video vier Sekunden gegen eine
+   * leere Fläche. */
+  const dran = (szene: string): boolean => {
+    const seite = seiteZuSzene(szene);
+    return seite === null || auswahl === undefined || auswahl.includes(seite);
+  };
   const plan: RegieSzene[] = [];
-  if (chart.verlauf.length >= 2) plan.push({ id: 'kurve', dauerMs: 6000 });
-  else plan.push({ id: 'ergebnis', dauerMs: 3000 });
-  if (chart.symbole.length > 0) plan.push({ id: 'symbole', dauerMs: 4200 });
-  if (chart.stunden.some((s) => s.value !== 0) && chart.wochentage.some((w) => w.value !== 0)) {
+  if (chart.verlauf.length >= 2) {
+    if (dran('kurve')) plan.push({ id: 'kurve', dauerMs: 6000 });
+  } else if (dran('ergebnis')) {
+    plan.push({ id: 'ergebnis', dauerMs: 3000 });
+  }
+  if (chart.symbole.length > 0 && dran('symbole')) plan.push({ id: 'symbole', dauerMs: 4200 });
+  if (
+    chart.stunden.some((s) => s.value !== 0)
+    && chart.wochentage.some((w) => w.value !== 0)
+    && dran('zeitmuster')
+  ) {
     plan.push({ id: 'zeitmuster', dauerMs: 5200 });
   }
-  plan.push({ id: 'cta', dauerMs: 4000 });
+  if (dran('cta')) plan.push({ id: 'cta', dauerMs: 4000 });
   return plan;
 }
 
@@ -126,8 +150,13 @@ export async function baueAnalyseVideo(
   chart: AnalyseChartDaten,
   meldeFortschritt?: (prozent: number) => void,
   beobachter?: (canvas: HTMLCanvasElement, tMs: number) => void,
+  auswahl?: readonly SeitenId[],
 ): Promise<File> {
-  const plan = regiePlan(chart);
+  const plan = regiePlan(chart, auswahl);
+  /* Ein Video ohne Szene wäre eine Datei, die nichts zeigt — und der
+   * Fehler fiele erst beim Abspielen auf. Wer alles abwählt, bekommt hier
+   * eine Ansage statt eines leeren Clips. */
+  if (plan.length === 0) throw new Error(t('sh.keineSeiten'));
   const gesamt = plan.reduce((s, sz) => s + sz.dauerMs, 0);
   const optionen = baueOptionen(chart, VIDEO_LOOK);
 

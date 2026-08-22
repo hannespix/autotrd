@@ -432,6 +432,14 @@ export function maleSzene(
 }
 
 /** Feste Bildrate aller Video-Exporte (Offline-Pfad rendert exakt dieses Raster). */
+/**
+ * Bildrate des ECHTZEIT-Netzes und Untergrenze der Offline-Aufnahme.
+ *
+ * Die Offline-Aufnahme nimmt die Rate ihres Kandidaten
+ * (`OFFLINE_KODIERUNGEN[].fps`) — 60, wo der Browser es kann. Diese
+ * Konstante bleibt der Wert für den MediaRecorder-Weg, der ohnehin nur so
+ * viele Frames bekommt, wie das Gerät in Echtzeit schafft.
+ */
 export const VIDEO_FPS = 30;
 
 /**
@@ -441,12 +449,50 @@ export const VIDEO_FPS = 30;
  * Level 4.0 (…28): 1080×1080@30 sprengt die Makroblock-Grenze von Level
  * 3.1, ein 1f-Level würde auf Geräten mit strengem Encoder abgelehnt.
  */
+/**
+ * Kandidaten für die Offline-Encodierung, BESTE ZUERST.
+ *
+ * ── Warum die Bildrate am Kandidaten hängt (Owner 22.08.: „laggy und
+ *    stockend") ──────────────────────────────────────────────────────────
+ *
+ * Die Offline-Aufnahme rendert jeden Frame, egal wie langsam das Gerät ist
+ * — es fällt also keiner mehr aus. Was danach noch als Ruckeln übrig
+ * bleibt, ist schlicht die Bildrate: 30 fps sind für bewegte Grafik die
+ * Untergrenze, 60 fps sehen sichtbar flüssiger aus.
+ *
+ * Die Bildrate lässt sich aber NICHT einfach verdoppeln. H.264-Level 4.0
+ * (`…28`) erlaubt 245.760 Makroblöcke/s; 1080×1080 bei 60 fps braucht
+ * 68 × 68 × 60 ≈ 273.000 — Level 4.0 reisst es also. Ein auf 60 gesetzter
+ * `framerate`-Wert mit Level-4.0-Codec fällt bei `isConfigSupported`
+ * durch, und der Clip landete auf dem ECHTZEIT-Netz: genau der Weg, der
+ * Frames verliert. Die „Verbesserung" hätte das Ruckeln verschlimmert.
+ *
+ * Deshalb trägt jeder Kandidat seine Bildrate selbst, und die 60er-Stufen
+ * stehen auf Level 4.2 (`…2a`, 522.240 MB/s). Findet der Browser keine
+ * davon, geht es mit den bewährten 30ern weiter — nie schlechter als
+ * vorher.
+ */
 export const OFFLINE_KODIERUNGEN = [
-  { codec: 'avc1.640028', art: 'mp4' },
-  { codec: 'avc1.4d0028', art: 'mp4' },
-  { codec: 'avc1.420028', art: 'mp4' },
-  { codec: 'vp09.00.10.08', art: 'webm' },
+  // MP4 zuerst — und zwar ALLE, vor jedem WebM. Die Bildrate ist die
+  // zweite Sortierung, nicht die erste: 60 fps sind schöner, aber MP4 ist
+  // die Bedingung dafür, dass WhatsApp die Dauer überhaupt liest. Ein
+  // flüssigeres WebM, das beim Versand auf drei Sekunden geschnitten wird,
+  // ist kein besseres Video.
+  { codec: 'avc1.64002a', art: 'mp4', fps: 60 },
+  { codec: 'avc1.4d002a', art: 'mp4', fps: 60 },
+  { codec: 'avc1.640028', art: 'mp4', fps: 30 },
+  { codec: 'avc1.4d0028', art: 'mp4', fps: 30 },
+  { codec: 'avc1.420028', art: 'mp4', fps: 30 },
+  { codec: 'vp09.00.41.08', art: 'webm', fps: 60 },
+  { codec: 'vp09.00.10.08', art: 'webm', fps: 30 },
 ] as const;
+
+/**
+ * Datenrate zur Bildrate: Bei doppelt so vielen Frames muss die Rate mit,
+ * sonst wird jedes einzelne Bild dünner — Blockartefakte in Bewegung
+ * lesen sich wie Ruckeln, obwohl die Frames alle da sind.
+ */
+export const datenrate = (fps: number): number => (fps >= 60 ? 12_000_000 : 8_000_000);
 
 async function offlineKodierung(): Promise<(typeof OFFLINE_KODIERUNGEN)[number] | null> {
   if (typeof VideoEncoder === 'undefined') return null;
@@ -456,8 +502,8 @@ async function offlineKodierung(): Promise<(typeof OFFLINE_KODIERUNGEN)[number] 
         codec: k.codec,
         width: 1080,
         height: 1080,
-        bitrate: 8_000_000,
-        framerate: VIDEO_FPS,
+        bitrate: datenrate(k.fps),
+        framerate: k.fps,
       });
       if (sup.supported) return k;
     } catch {
@@ -492,6 +538,9 @@ async function nimmOffline(
   beobachter?: (canvas: HTMLCanvasElement, tMs: number) => void,
 ): Promise<File> {
   const mp4 = wahl.art === 'mp4';
+  /* Die Bildrate des gewählten Kandidaten — NICHT die Konstante: Sie ist
+   * an sein Level gebunden (s. OFFLINE_KODIERUNGEN). */
+  const fps = wahl.fps;
   let addChunk: (c: EncodedVideoChunk, m?: EncodedVideoChunkMetadata) => void;
   let schliesseDatei: () => ArrayBuffer;
   if (mp4) {
@@ -510,7 +559,7 @@ async function nimmOffline(
   } else {
     const muxer = new WebmMuxer({
       target: new WebmTarget(),
-      video: { codec: 'V_VP9', width: 1080, height: 1080, frameRate: VIDEO_FPS },
+      video: { codec: 'V_VP9', width: 1080, height: 1080, frameRate: fps },
     });
     addChunk = (c, m) => muxer.addVideoChunk(c, m);
     schliesseDatei = () => {
@@ -531,25 +580,25 @@ async function nimmOffline(
     codec: wahl.codec,
     width: 1080,
     height: 1080,
-    bitrate: 8_000_000,
-    framerate: VIDEO_FPS,
+    bitrate: datenrate(fps),
+    framerate: fps,
     // Length-prefixed NALUs + avcC-Description — das Format, das der
     // MP4-Muxer erwartet (Annex B wäre für .mp4 falsch).
     ...(mp4 ? { avc: { format: 'avc' as const } } : {}),
   });
 
   // +400 ms Endstand-Nachlauf wie im Echtzeit-Pfad (Szenen klemmen p auf 1).
-  const frames = Math.max(1, Math.round(((gesamtMs + 400) / 1000) * VIDEO_FPS));
+  const frames = Math.max(1, Math.round(((gesamtMs + 400) / 1000) * fps));
   for (let i = 0; i < frames && encoderFehler === undefined; i++) {
-    const tMs = (i * 1000) / VIDEO_FPS;
+    const tMs = (i * 1000) / fps;
     maleFrame(ctx, tMs);
     beobachter?.(canvas, tMs);
     meldeFortschritt?.(Math.min(100, Math.round((tMs / gesamtMs) * 100)));
     const frame = new VideoFrame(canvas, {
-      timestamp: Math.round((i * 1_000_000) / VIDEO_FPS),
-      duration: Math.round(1_000_000 / VIDEO_FPS),
+      timestamp: Math.round((i * 1_000_000) / fps),
+      duration: Math.round(1_000_000 / fps),
     });
-    encoder.encode(frame, { keyFrame: i % (VIDEO_FPS * 2) === 0 });
+    encoder.encode(frame, { keyFrame: i % (fps * 2) === 0 });
     frame.close();
     // Encoder-Rückstau abbauen und dem UI-Thread regelmäßig Luft lassen.
     if (encoder.encodeQueueSize > 4 || i % 10 === 9) await new Promise((r) => setTimeout(r));

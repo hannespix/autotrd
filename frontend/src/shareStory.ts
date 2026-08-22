@@ -19,6 +19,7 @@
 import { stapelBaender } from '@autotrd/shared';
 import { esc } from './html.js';
 import { t } from './i18n.js';
+import { seiteGewaehlt, type SeitenId } from './seiten.js';
 import {
   FARBE,
   KARTE,
@@ -376,18 +377,32 @@ function ctaKarte(): string {
  * Die Story in Lese-Reihenfolge: Ergebnis → Verlauf → Womit → Einladung.
  * Verlauf und Womit erscheinen nur, wenn ihre Daten sie tragen.
  */
-export function shareStory(d: ShareDaten): StoryKarte[] {
-  const karten: StoryKarte[] = [{ id: 'ergebnis', svg: shareCard(d) }];
+export function shareStory(d: ShareDaten, auswahl?: readonly SeitenId[]): StoryKarte[] {
+  /* ZWEI Bedingungen je Karte, und sie bedeuten Verschiedenes:
+   *
+   *   `seiteGewaehlt` — will der Nutzer sie sehen?
+   *   die Datenprüfung — hat sie überhaupt etwas zu zeigen?
+   *
+   * Beide müssen erfüllt sein, und keine ersetzt die andere. Eine
+   * abgewählte Karte fehlt, weil jemand das so wollte; eine Karte ohne
+   * Daten fehlt, weil sie sonst leer wäre (Kopf dieser Datei: eine leere
+   * Grafik ist ein kaputtes Werkzeug). */
+  const karten: StoryKarte[] = [];
+  const dran = (id: StoryKarte['id']): boolean => seiteGewaehlt(id, auswahl);
+
+  if (dran('ergebnis')) karten.push({ id: 'ergebnis', svg: shareCard(d) });
   // Das aktive Depot direkt hinter dem Ergebnis: Es ist die Karte, nach der
   // in „roast my portfolio"-Fäden gefragt wird — was hältst du GERADE?
-  // Ohne offene Position entfällt sie ersatzlos (leere Grafik = kaputtes
-  // Werkzeug, Kopf dieser Datei).
-  if ((d.positionen?.length ?? 0) > 0) karten.push({ id: 'depot', svg: depotKarte(d) });
-  if (d.zerlegung.tage.length >= 2) karten.push({ id: 'verlauf', svg: verlaufKarte(d) });
-  if (d.zerlegung.baender.some((b) => b.key !== '__rest__' && b.summe !== 0)) {
+  if (dran('depot') && (d.positionen?.length ?? 0) > 0) {
+    karten.push({ id: 'depot', svg: depotKarte(d) });
+  }
+  if (dran('verlauf') && d.zerlegung.tage.length >= 2) {
+    karten.push({ id: 'verlauf', svg: verlaufKarte(d) });
+  }
+  if (dran('womit') && d.zerlegung.baender.some((b) => b.key !== '__rest__' && b.summe !== 0)) {
     karten.push({ id: 'womit', svg: womitKarte(d) });
   }
-  karten.push({ id: 'cta', svg: ctaKarte() });
+  if (dran('cta')) karten.push({ id: 'cta', svg: ctaKarte() });
   return karten;
 }
 
