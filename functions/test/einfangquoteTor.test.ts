@@ -127,6 +127,28 @@ describe('Quelltext-Wächter: gezählt, nicht entschieden', () => {
     expect(block).not.toContain("vor.get('klassen')");
   });
 
+  it('beide Langhorizont-Slots frieren den ATR ein — sonst misst die Reihe nie', () => {
+    /* Der Fund vom 22.08., unmittelbar nach dem Scharfstellen der Messung:
+     * `einfangquoten` (Fünf-Minuten-Reihe) trug live 11 503 Krypto-Signale,
+     * `einfangquotenHalte` bei allen sechs Klassen n=0. Grund: Tages- und
+     * Halte-Slot schrieben `atrPct`/`barMin` nicht mit, und ohne die bleibt
+     * `erwartetPct` in leseSchattenSignal leer — für immer.
+     *
+     * Eine Messreihe, die strukturell nie eine Zahl produzieren kann, ist
+     * keine Messung, sondern eine Zusage. Und ausgerechnet an DIESER Reihe
+     * hängen zwei Entscheidungen: der Rückweg einer abgeschalteten Klasse
+     * (17.08.) und die gemessene Quote im Kosten-Tor (22.08.). */
+    const einfrier = scan.match(/atrPct: atrPctVal, barMin: BAR_MINUTES\.daily/g) ?? [];
+    expect(einfrier.length, 'ein Slot friert den ATR nicht ein').toBe(3);
+    for (const slot of ['lastSignalTag', 'lastSignalHalte']) {
+      const start = scan.indexOf(`${slot}: {`);
+      expect(start, `${slot} fehlt`).toBeGreaterThan(0);
+      const block = scan.slice(start, scan.indexOf('},', start));
+      expect(block, `${slot} ohne ATR-Einfrierung`).toContain('atrPct: atrPctVal');
+      expect(block, `${slot} ohne Kerzenlänge`).toContain('barMin: BAR_MINUTES.daily');
+    }
+  });
+
   it('ein Lesefehler blockiert den Handel nicht', () => {
     const block = scan.slice(scan.indexOf('let quotenStand'), scan.indexOf('await migrateTimeframeDaily'));
     expect(block).toContain('catch');
