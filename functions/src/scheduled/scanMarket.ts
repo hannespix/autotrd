@@ -34,6 +34,7 @@ import {
   pruefeTagSlot,
   tagSlotAktion,
   werteSchattenAus,
+  type SchattenAuswertung,
   type SchattenBeitrag,
   type SchattenKlasse,
   BAR_MINUTES,
@@ -375,6 +376,24 @@ export interface EntryGateStats {
   cooldown_aktiv: number;
   /** Abgelehnt: Symbol gehört dem Momentum-Sockel (Besitzgrenze). */
   sockel_besitz: number;
+  /* ── Hebel 1a (22.08.): Was die GEMESSENE Einfangquote zusätzlich blockte ──
+   *
+   * Die Einfangquote ist die einzige klassen-scharfe Stellschraube der
+   * Kostenhürde — und sie ist eine Konstante aus EINER Messwoche. Ihr
+   * eigener Quelltext sagt seit dem 04.08., sie „gehört aus der laufenden
+   * Attribution nachgeführt statt hier gepflegt", und `captureLearning.ts`
+   * rechnet diese Nachführung seit dem 11.08. auch aus.
+   *
+   * Angekommen ist sie nie: Der Herzschlag BERICHTET die gemessene Quote
+   * (`einfangquoten`), das Tor rechnet weiter mit der Konstante. Zwischen
+   * Bericht und Wirkung lag also eine Lücke, die man dem Bericht nicht
+   * ansieht — er liest sich, als würde die Zahl schon zählen.
+   *
+   * Diese Zahl schließt die Lücke ZUERST als Messung: Wie viele Einstiege
+   * kämen heute durch, die mit der gemessenen Quote scheitern würden? Das
+   * Verhalten bleibt unverändert, bis diese Zahl über ein paar Tage zeigt,
+   * was das Scharfschalten kosten würde. */
+  quote_wuerde_blocken: number;
 }
 
 /**
@@ -525,6 +544,19 @@ async function executeUserTrades(
    * Order ab, statt eine zweite Position zu eröffnen.
    */
   scanId: string,
+  /**
+   * Gemessene Einfangquoten je Klasse aus dem HALTE-Schatten (Hebel 1a).
+   *
+   * Bewusst die haltedauer-gerechte Reihe und nicht die Fünf-Minuten-Reihe:
+   * Das Tor rechnet die erwartete Bewegung über die Mindesthaltedauer hoch
+   * (bei Krypto 2 880 Minuten). Eine Quote, die über fünf Minuten gemessen
+   * wurde, gegen diese Rechnung zu halten, wäre derselbe Kategorienfehler,
+   * den der Halte-Schatten am 17.08. behoben hat.
+   *
+   * Leeres Objekt ⇒ keine Messung ⇒ `wirksameEinfangquote` fällt auf die
+   * Konstante zurück, und der Schattenzähler bleibt bei 0.
+   */
+  quotenStand: Record<string, SchattenAuswertung>,
 ): Promise<{
   executed: number;
   gate: EntryGateStats;
@@ -571,6 +603,7 @@ async function executeUserTrades(
     pos_limit: 0,
     cooldown_aktiv: 0,
     sockel_besitz: 0,
+    quote_wuerde_blocken: 0,
   };
   /* Rückstand der Nachbuchung, über alle Konten summiert. `steckt` ist die
    * Zahl, auf die es ankommt: Einträge, die die Heilung aufgegeben hat und
@@ -1305,6 +1338,17 @@ async function executeUserTrades(
         const kostenOhneKante = costGate(kostenBasis);
         const mitKante = costGate({ ...kostenBasis, capture: captureForClass(klasse) });
         const kosten = clamped.signals.captureGate !== false ? mitKante : kostenOhneKante;
+        /* Hebel 1a (22.08.) — die gemessene Quote rechnet MIT, entscheidet
+         * aber noch nicht. `wirksameEinfangquote` kann die Konstante nur
+         * unterschreiten, nie überschreiten (Klemmung in captureLearning),
+         * die Schatten-Fassung ist also immer die schärfere von beiden.
+         * Deshalb reicht ein Zähler: Was hier zusätzlich reißt, ist genau
+         * das, was ein Scharfschalten kosten würde. */
+        const gemesseneQuote = wirksameEinfangquote(klasse, quotenStand[klasse]).quote;
+        const mitMessung =
+          gemesseneQuote < captureForClass(klasse)
+            ? costGate({ ...kostenBasis, capture: gemesseneQuote })
+            : mitKante;
         /* Hebel 3 des Rund-um-die-Uhr-Umbaus (Owner 15.08.): Ein SHORT leiht
          * die Papiere und zahlt Zins über die Haltedauer (gemessen ~37 $ je
          * Nacht auf dem aktuellen Short-Buch). Die Hürde eines Short-
@@ -1343,6 +1387,11 @@ async function executeUserTrades(
           // derselbe Einstieg in beiden Zählern und die Zahl läse sich wie
           // ein doppelter Effekt.
           if (kosten.ok && !mitKante.ok) gate.kante_wuerde_blocken += 1;
+          // Hebel 1a: Dieselbe Buchführung wie eine Zeile darüber — nur
+          // zählen, wenn die SCHARFE Fassung durchlässt. Sonst stünde
+          // derselbe Einstieg in zwei Zählern und läse sich wie doppelte
+          // Wirkung.
+          if (kosten.ok && !mitMessung.ok) gate.quote_wuerde_blocken += 1;
           // Hebel 3: Blocks, die NUR die Short-Leihe verursacht — getrennt
           // gezählt, sonst wäre ihre Wirkung von der Basis-Hürde ununter-
           // scheidbar. Zählt nur echte Zusatz-Blocks (Basis ließ durch).
@@ -3641,6 +3690,7 @@ export async function runScan(force = false): Promise<ScanResult> {
     pos_limit: 0,
     cooldown_aktiv: 0,
     sockel_besitz: 0,
+    quote_wuerde_blocken: 0,
   };
   let lastError: string | null = null;
   // null = Trade-Block ist gar nicht gelaufen (Fehler davor) — das ist eine
@@ -3656,10 +3706,32 @@ export async function runScan(force = false): Promise<ScanResult> {
   /* Wie oben `null`, solange der Trade-Block nicht lief — sonst behauptete
    * eine 0 „nichts steckt fest", obwohl gar nicht nachgesehen wurde. */
   let nachbuchungLaufGesamt: NachbuchungsLauf | null = null;
+  /* Hebel 1a (22.08.): Der Stand des HALTE-Schattens VOR diesem Lauf — die
+   * Grundlage der gemessenen Einfangquote im Kosten-Tor.
+   *
+   * Eigener Lesevorgang statt Mitbenutzung des Blocks weiter unten, und das
+   * ist Absicht: Jener Block liest, schreibt und wertet in einem Zug, und er
+   * läuft NACH dem Handel. Ihn hierher zu ziehen hieße, den Schatten-Write
+   * an den Trade-Block zu koppeln — ein Fehler dort nähme dann die Messung
+   * mit. Ein Dokument-Read je Scan ist der Preis dafür, dass beide Wege
+   * unabhängig scheitern können.
+   *
+   * Fehler ⇒ leerer Stand ⇒ das Tor rechnet wie bisher mit der Konstante.
+   * Eine Messung darf den Handel nie blockieren, auch nicht durch Ausfall. */
+  let quotenStand: Record<string, SchattenAuswertung> = {};
+  try {
+    const vor = await db.doc('meta/classShadow').get();
+    const halte = (vor.get('klassenHalte') as Record<string, SchattenKlasse> | undefined) ?? {};
+    quotenStand = Object.fromEntries(
+      Object.entries(halte).map(([kl, k]) => [kl, werteSchattenAus(k)]),
+    );
+  } catch (err) {
+    logger.warn('Einfangquoten-Stand nicht lesbar — Tor rechnet mit der Konstante', err);
+  }
   try {
     await migrateTimeframeDaily(db);
     await migrateCorePctAll(db);
-    const res = await executeUserTrades(marketData, regime.state, scanId);
+    const res = await executeUserTrades(marketData, regime.state, scanId, quotenStand);
     trades = res.executed;
     entryGate = res.gate;
     konten = res.konten;
@@ -3942,6 +4014,26 @@ export async function runScan(force = false): Promise<ScanResult> {
         einfangquoten: schattenStand
           ? Object.fromEntries(
               Object.entries(schattenStand).map(([kl, a]) => {
+                const b = wirksameEinfangquote(kl, a);
+                return [kl, { quote: b.quote, herkunft: b.herkunft, gemessen: b.gemessen, n: b.n }];
+              }),
+            )
+          : null,
+        /* ── Dieselbe Quote, haltedauer-gerecht gemessen (Hebel 1a, 22.08.) ──
+         *
+         * Die Zeile darüber misst über fünf Minuten. Das Kosten-Tor rechnet
+         * die erwartete Bewegung aber über die MINDESTHALTEDAUER hoch — bei
+         * Krypto 2 880 Minuten. Eine Quote aus dem Fünf-Minuten-Fenster
+         * gegen diese Rechnung zu halten, ist derselbe Kategorienfehler, den
+         * der Halte-Schatten am 17.08. für die Klassen-Kante behoben hat.
+         *
+         * DIESE Zahl ist deshalb die, an der abzulesen ist, was ein
+         * Scharfschalten der gemessenen Quote täte — zusammen mit dem
+         * Gate-Zähler `quote_wuerde_blocken`. Die Zeile darüber bleibt als
+         * Diagnose stehen; sie hat den längeren Datenschwanz. */
+        einfangquotenHalte: schattenHalteStand
+          ? Object.fromEntries(
+              Object.entries(schattenHalteStand).map(([kl, a]) => {
                 const b = wirksameEinfangquote(kl, a);
                 return [kl, { quote: b.quote, herkunft: b.herkunft, gemessen: b.gemessen, n: b.n }];
               }),

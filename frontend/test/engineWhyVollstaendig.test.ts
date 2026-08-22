@@ -29,13 +29,20 @@ function gateFelder(): string[] {
 describe('Engine-Why-Karte zeigt jeden Grund, den der Scan zählt', () => {
   it('kein Ablehnungsgrund fehlt in GATE_TEXT', () => {
     /* Ausgenommen sind die Zähler, die KEINE Ablehnung sind: die
-     * Bezugsgröße, zwei Durchlass-/Schatten-Zahlen und die Leih-Teilmenge
-     * von unter_kosten (sie würde doppelt zählen). */
+     * Bezugsgröße, Durchlass-/Schatten-Zahlen und die Leih-Teilmenge
+     * von unter_kosten (sie würde doppelt zählen).
+     *
+     * Eine Ausnahme ist kein Freibrief. `quote_wuerde_blocken` steht hier
+     * NUR, weil es keine Ablehnung ist — sichtbar sein muss es trotzdem,
+     * und genau das prüft der Test darunter. Wer einen Zähler hier einträgt
+     * und ihn nirgends zeigt, baut wieder die Lücke, gegen die diese Datei
+     * geschrieben wurde. */
     const keineAblehnung = new Set([
       'geprueft',
       'ohne_atr_durchgelassen',
       'kante_wuerde_blocken',
       'short_zins_blockt',
+      'quote_wuerde_blocken',
     ]);
     const block = dashboard.slice(
       dashboard.indexOf('const GATE_TEXT'),
@@ -43,6 +50,18 @@ describe('Engine-Why-Karte zeigt jeden Grund, den der Scan zählt', () => {
     );
     const fehlend = gateFelder().filter((f) => !keineAblehnung.has(f) && !block.includes(`'${f}'`));
     expect(fehlend, `ohne Anzeige-Text: ${fehlend.join(', ')}`).toEqual([]);
+  });
+
+  it('der Quoten-Schatten hat einen eigenen Chip statt einer GATE_TEXT-Zeile', () => {
+    /* Hebel 1a (22.08.): Die gemessene Einfangquote stand seit dem 11.08.
+     * im Herzschlag und wirkte nie — weil sie niemand ansah. Der Zähler,
+     * der das beziffert, darf nicht dasselbe Schicksal erleiden. */
+    expect(gateFelder(), 'Zähler wird gar nicht erhoben').toContain('quote_wuerde_blocken');
+    expect(dashboard).toContain("h.entryGate?.quote_wuerde_blocken ?? 0");
+    expect(dashboard).toContain("t('ew.quoteSchatten')");
+    expect(dashboard).toContain("t('ew.quoteTitel')");
+    // Nur bei echten Grenzfällen — eine Null wäre Rauschen.
+    expect(dashboard).toContain('if (quoteSchatten > 0) {');
   });
 
   it('die drei stillen Bremsen stehen in der Liste', () => {

@@ -6747,6 +6747,25 @@ function renderEngineWhy(): void {
    * Broker, im Buch fehlen sie, und die Heilung kommt an sie nicht mehr
    * heran. Der Chip ist rot, weil er Handlung verlangt (Depot-Übernahme),
    * und er erscheint nur, wenn wirklich etwas feststeckt. */
+  /* Schatten der gemessenen Einfangquote (Hebel 1a, 22.08.).
+   *
+   * Der Fehler, den dieser Chip verhindert, ist derselbe, den er meldet:
+   * Die gemessene Quote stand seit dem 11.08. im Herzschlag und wirkte nie
+   * — weil sie niemand ansah. Eine zweite still mitlaufende Zahl wäre
+   * genau dieselbe Lücke noch einmal. Hier steht sie also, sobald sie
+   * etwas zu sagen hat.
+   *
+   * Gelb, nicht rot: Es ist nichts kaputt und nichts blockiert. Die Zahl
+   * beziffert nur, was ein Scharfschalten kosten würde. */
+  const quoteSchatten = h.entryGate?.quote_wuerde_blocken ?? 0;
+  if (quoteSchatten > 0) {
+    const chip = whyChip(
+      `${quoteSchatten} ${t('ew.quoteSchatten')}`,
+      'var(--yl,#d9a441)',
+    );
+    chip.title = t('ew.quoteTitel');
+    ampel.append(chip);
+  }
   const steckt = h.nachbuchung?.steckt ?? 0;
   if (steckt > 0) {
     const chip = whyChip(`${steckt} ${t('ew.nachbuchungSteckt')}`, 'var(--rd)');
