@@ -20,6 +20,7 @@ import { stapelBaender } from '@autotrd/shared';
 import { esc } from './html.js';
 import { t } from './i18n.js';
 import { seiteGewaehlt, type SeitenId } from './seiten.js';
+import { ANIM_BALKEN, ANIM_BALKEN_AB, ANIM_LINIE } from './kartenAnimation.js';
 import {
   FARBE,
   KARTE,
@@ -300,7 +301,7 @@ function verlaufKarte(d: ShareDaten): string {
     + `<text x="90" y="${kopfhoehe + 40}" fill="${FARBE.text3}" font-size="26">${esc(z.tage[0] ?? '')} → ${esc(z.tage[n - 1] ?? '')} · ${esc(t('share.storyBasis'))}</text>`
     + baenderSvg
     + `<line x1="${x0}" y1="${nullY.toFixed(1)}" x2="${x0 + breite}" y2="${nullY.toFixed(1)}" stroke="${FARBE.text3}" stroke-width="2" stroke-dasharray="6 6"></line>`
-    + `<polyline points="${linie}" fill="none" stroke="${FARBE.text}" stroke-width="5" stroke-linejoin="round"></polyline>`
+    + `<polyline points="${linie}" fill="none" stroke="${FARBE.text}" stroke-width="5" stroke-linejoin="round" pathLength="1" ${ANIM_LINIE}></polyline>`
     + etiketten
     + legende,
   );
@@ -411,10 +412,10 @@ function kapitalKarte(d: ShareDaten): string {
         const hAb = (f.ab / gross) * halbe;
         return (
           (f.zu > 0
-            ? `<rect x="${(cx - balkenB / 2).toFixed(1)}" y="${(mitte - hZu).toFixed(1)}" width="${balkenB.toFixed(1)}" height="${hZu.toFixed(1)}" rx="3" fill="${FARBE.gruen}" opacity="0.85"></rect>`
+            ? `<rect x="${(cx - balkenB / 2).toFixed(1)}" y="${(mitte - hZu).toFixed(1)}" width="${balkenB.toFixed(1)}" height="${hZu.toFixed(1)}" rx="3" fill="${FARBE.gruen}" opacity="0.85" ${ANIM_BALKEN}></rect>`
             : '')
           + (f.ab > 0
-            ? `<rect x="${(cx - balkenB / 2).toFixed(1)}" y="${mitte.toFixed(1)}" width="${balkenB.toFixed(1)}" height="${hAb.toFixed(1)}" rx="3" fill="${FARBE.rot}" opacity="0.7"></rect>`
+            ? `<rect x="${(cx - balkenB / 2).toFixed(1)}" y="${mitte.toFixed(1)}" width="${balkenB.toFixed(1)}" height="${hAb.toFixed(1)}" rx="3" fill="${FARBE.rot}" opacity="0.7" ${ANIM_BALKEN_AB}></rect>`
             : '')
         );
       })
@@ -434,7 +435,7 @@ function kapitalKarte(d: ShareDaten): string {
       balken
       + `<line x1="${dx}" y1="${mitte}" x2="${dx + dbreite}" y2="${mitte}" stroke="${FARBE.text3}" stroke-width="2" stroke-dasharray="6 6"></line>`
       + (fluss.length >= 2
-        ? `<polyline points="${linie}" fill="none" stroke="${FARBE.text}" stroke-width="4" stroke-linejoin="round" opacity="0.9"></polyline>`
+        ? `<polyline points="${linie}" fill="none" stroke="${FARBE.text}" stroke-width="4" stroke-linejoin="round" opacity="0.9" pathLength="1" ${ANIM_LINIE}></polyline>`
         : '')
       + `<text x="${dx}" y="${dy + dhoehe + 40}" fill="${FARBE.text3}" font-size="24">${esc(fluss[0]!.tag)}</text>`
       + `<text x="${dx + dbreite}" y="${dy + dhoehe + 40}" fill="${FARBE.text3}" font-size="24" text-anchor="end">${esc(fluss[fluss.length - 1]!.tag)}</text>`;

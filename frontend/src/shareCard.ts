@@ -29,6 +29,7 @@ import { type DepotZerlegung, stapelBaender } from '@autotrd/shared';
 import { esc } from './html.js';
 import { sprachWahl, t } from './i18n.js';
 import { kartenAussage } from './shareAussage.js';
+import { ANIM_LINIE, ANIM_ZAHL } from './kartenAnimation.js';
 
 /** Kantenlänge der quadratischen Karte — passt ohne Zuschnitt überall hin. */
 export const KARTE = 1200;
@@ -329,7 +330,7 @@ export function shareCard(d: ShareDaten): string {
      * Textlänge abhängt, fand dieser Griff die Zeile bei langen Beträgen
      * nicht mehr und ein Test schlug fehl, obwohl die Karte stimmte. Ein
      * Prüfstand, der sein Prüfobjekt nur zufällig trifft, ist keiner. */
-    + `<text data-rolle="haupt" x="90" y="290" fill="${haupt}" font-size="${hauptGroesse(aussage.haupt)}" font-weight="800">${esc(aussage.haupt)}</text>`
+    + `<text data-rolle="haupt" x="90" y="290" fill="${haupt}" font-size="${hauptGroesse(aussage.haupt)}" font-weight="800" ${ANIM_ZAHL}>${esc(aussage.haupt)}</text>`
     /*
      * Zeitraum und Betrag stehen in EINER Zeile unter der großen Zahl.
      *
@@ -343,7 +344,7 @@ export function shareCard(d: ShareDaten): string {
     // Kurve
     + (linie
       ? `<polygon points="${flaeche}" fill="${haupt}" opacity="0.14"></polygon>`
-        + `<polyline points="${linie}" fill="none" stroke="${haupt}" stroke-width="5" stroke-linejoin="round"></polyline>`
+        + `<polyline points="${linie}" fill="none" stroke="${haupt}" stroke-width="5" stroke-linejoin="round" pathLength="1" ${ANIM_LINIE}></polyline>`
       : `<text x="90" y="560" fill="${FARBE.text3}" font-size="30">${esc(t('share.keineKurve'))}</text>`)
     // Beitrags-Streifen
     /* „WOMIT" nur, wenn darunter auch etwas steht. Eine Überschrift über
