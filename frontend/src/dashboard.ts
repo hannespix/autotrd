@@ -211,6 +211,7 @@ import {
   type ShareDaten,
   shareText,
 } from './shareCard.js';
+import { animiereSvg } from './kartenAnimation.js';
 import { shareStory, storyDateiname, type StoryKarte } from './shareStory.js';
 import {
   ALLE_SEITEN,
@@ -8698,7 +8699,12 @@ function renderSharePreview(): void {
     }
     return;
   }
-  box.innerHTML = storyKarten[storyIdx]!.svg;
+  /* NUR hier animiert (Owner 22.08.: „in der in-tool Anzeige bitte die
+   * dynamische Animation verwenden"). Der Bild-Export benutzt den
+   * unveränderten String aus `shareStory` — er kann die Bewegung gar nicht
+   * versehentlich mitnehmen, und eine Rasterung fängt deshalb nie einen
+   * Zwischenstand ein. */
+  box.innerHTML = animiereSvg(storyKarten[storyIdx]!.svg);
   const nav = $('anStoryNav');
   if (nav) nav.hidden = storyKarten.length < 2;
   const dots = $('anStoryDots');
