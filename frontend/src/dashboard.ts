@@ -106,6 +106,7 @@ import {
   adminLiveStatus,
   adminSetAccess,
   adminAbgleich,
+  adminUebernahmeVormerken,
   adminSetAdmin,
   adminSetKillSwitch,
   callTrade,
@@ -1466,6 +1467,10 @@ function layout(email: string): string {
            leert das Buch, aber kein Reset der Welt leert ein Broker-Depot.
            Dieser Knopf holt Bestand, Einstände, Barbestand und die eigene
            Order-Historie vom Broker ins Buch — ohne einen einzigen Handel. -->
+      <!-- Vormerkung eines Admins (22.08.): Er hat eine Abweichung gemessen
+           und bittet um die Übernahme — überschreiben darf er das Buch
+           nicht. Der Kasten steht DIREKT über dem Knopf, den er meint. -->
+      <div id="bkVorgemerkt" hidden></div>
       <div class="row" style="align-items:center;gap:8px;margin-top:6px">
         <button class="btn btn-n" id="bkAdopt">${t('opt.depotUebernehmen')}</button>
       </div>
@@ -2909,6 +2914,39 @@ function renderLiveStatus(s: LiveModeStatus | null, istLive: boolean): void {
  * ist „läuft sauber" von „läuft gar nicht" nicht zu unterscheiden. Deshalb
  * steht hier auch im Gutfall eine Zeile, mit Zeitstempel.
  */
+/**
+ * Der Hinweis auf eine vom Admin vorgemerkte Depot-Übernahme (22.08.).
+ *
+ * Bewusst als Aufforderung und nicht als Warnung formuliert: Es ist nichts
+ * kaputt am Konto des Nutzers — Buch und Depot sind auseinandergelaufen,
+ * und nur er selbst darf entscheiden, das Buch auf den Broker-Stand zu
+ * ziehen. Der Text sagt deshalb geradeheraus, WAS die Übernahme tut
+ * (Bestand und Barbestand werden überschrieben), statt es hinter
+ * „Problem beheben" zu verstecken.
+ */
+function renderVormerkung(
+  v: { at: string; fehlbestand: number; grund: string } | null,
+): void {
+  const el = document.getElementById('bkVorgemerkt');
+  if (!el) return;
+  if (!v) {
+    el.hidden = true;
+    el.innerHTML = '';
+    return;
+  }
+  el.hidden = false;
+  el.className = 'hint';
+  el.style.cssText =
+    'margin-top:8px;padding:8px 10px;border-radius:8px;'
+    + 'border:1px solid var(--rd);color:var(--tx)';
+  const wann = escText(v.at.slice(0, 16).replace('T', ' '));
+  el.innerHTML =
+    `<b>${escText(t('ab.vormerkTitel'))}</b><br>`
+    + `${escText(t('ab.vormerkText'))}<br>`
+    + `<span class="mono">${wann}</span>`
+    + (v.grund ? ` · ${escText(v.grund)}` : '');
+}
+
 function renderAbgleich(
   a: {
     at: string;
@@ -6752,6 +6790,24 @@ function renderAdminCard(): void {
 }
 
 /** Konten laden und als Zeilen mit Aktions-Knöpfen rendern. */
+/**
+ * Ergebnis des letzten Admin-Abgleichs — überlebt den Neuaufbau der Liste.
+ *
+ * Owner-Fund 22.08.: „ich kann ihn als Admin nicht abgleichen und
+ * entsperren." Der Abgleich lief korrekt und schrieb seinen Vermerk; nur
+ * war seine Antwort nach ~200 ms weg. `admBtn` lädt nach jeder Aktion die
+ * Liste neu, und `loadAdminList` beginnt mit `err.hidden = true` — genau
+ * die Zeile, in die der Abgleich gerade sein Ergebnis geschrieben hatte.
+ * Sichtbar blieb: derselbe rote Chip wie vorher. Also sah eine Messung,
+ * die sauber lief, exakt aus wie ein Knopf ohne Funktion.
+ *
+ * Die Meldung gehört ohnehin an die ZEILE, nicht an eine gemeinsame
+ * Fehlerzeile am Kartenrand: Sie handelt von genau einem Konto, und der
+ * Grund („im Buch stehen 2 Positionen, die der Broker nicht hat") ist die
+ * Information, mit der man entscheidet, was als Nächstes zu tun ist.
+ */
+let letzterAbgleich: { uid: string; text: string; sperre: boolean } | null = null;
+
 async function loadAdminList(): Promise<void> {
   const list = $('admList');
   const err = $('admErr');
@@ -6837,18 +6893,55 @@ async function loadAdminList(): Promise<void> {
           line.append(
             admBtn(t('adm.abgleichen'), async () => {
               const erg = await adminAbgleich(row.uid);
-              err.hidden = false;
-              err.style.color = erg.sperre ? 'var(--rd)' : 'var(--gn)';
-              err.textContent = !erg.geprueft
-                ? t('adm.abgleichKeinBroker')
-                : erg.sperre
-                  ? `${t('adm.abgleichBleibt')} ${erg.grund ?? ''}`.trim()
-                  : t('adm.abgleichGeloest');
+              /* In den Merker, NICHT in `err`: Gleich nach dieser Funktion
+               * lädt `admBtn` die Liste neu, und deren erste Zeile ist
+               * `err.hidden = true`. Die Meldung wäre weg, bevor sie jemand
+               * liest (Owner-Fund 22.08.). */
+              letzterAbgleich = {
+                uid: row.uid,
+                sperre: erg.sperre,
+                text: !erg.geprueft
+                  ? t('adm.abgleichKeinBroker')
+                  : erg.sperre
+                    ? `${t('adm.abgleichBleibt')} ${erg.grund ?? ''}`.trim()
+                    : t('adm.abgleichGeloest'),
+              };
+            }, 'btn-n'),
+          );
+          /* „Übernahme vormerken" — der Weg AUS der Sperre, ohne fremdes
+           * Geld anzufassen (Owner-Entscheidung 22.08.). Der Server misst
+           * erneut und legt den Vermerk nur an, wenn eine Sperre wirklich
+           * gemessen wurde; der Konto-Inhaber löst die Übernahme dann
+           * selbst aus. Ein Admin, der fremde Bücher überschreiben kann,
+           * wäre ein stiller Eingriff in fremdes Geld — und bei einer
+           * Abweichung aus einem Broker-Aussetzer zerstörte die
+           * „Heilung" korrekte Daten. */
+          line.append(
+            admBtn(t('adm.vormerken'), async () => {
+              const erg = await adminUebernahmeVormerken(row.uid);
+              letzterAbgleich = {
+                uid: row.uid,
+                sperre: erg.vorgemerkt,
+                text: erg.vorgemerkt
+                  ? t('adm.vormerkGesetzt')
+                  : `${t('adm.vormerkNichtNoetig')} ${erg.abgleich.grund ?? ''}`.trim(),
+              };
             }, 'btn-n'),
           );
         }
       }
       list.append(line);
+      /* Das Ergebnis des letzten Abgleichs steht unter DEM Konto, das es
+       * betrifft — und überlebt damit den Neuaufbau, der es vorher fraß. */
+      if (letzterAbgleich?.uid === row.uid) {
+        const note = document.createElement('div');
+        note.className = 'hint';
+        note.style.cssText = `margin:-2px 0 6px;padding-left:4px;color:${
+          letzterAbgleich.sperre ? 'var(--rd)' : 'var(--gn)'
+        }`;
+        note.textContent = letzterAbgleich.text;
+        list.append(note);
+      }
     }
     if (rows.length === 0) list.innerHTML = `<div class="hint">${t('adm.keineKonten')}</div>`;
   } catch (e) {
@@ -9961,6 +10054,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       if (!st) return;
       renderBreaker(breaker);
       renderAbgleich(u.abgleich);
+      renderVormerkung(u.uebernahmeVorgemerkt);
       st.accessLevel = accessLevel;
       renderAccessNote();
       st.admin = admin;

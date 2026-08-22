@@ -47,7 +47,16 @@ describe('Der Admin misst neu — er übergeht nichts', () => {
 
   it('fremdes Geld bleibt unangetastet: nur der Vermerk entsteht neu', () => {
     const s = admin();
-    const block = s.slice(s.indexOf("if (action === 'abgleich')"), s.indexOf("if (action === 'setAdmin')"));
+    /* Bis zum NÄCHSTEN Zweig, nicht bis zu einem namentlich genannten
+     * (22.08.): Vorher endete der Schnitt fest bei `setAdmin`. Als
+     * `uebernahmeVormerken` dazwischenkam, lag dessen `ref.set(...)` mit im
+     * Block — der Wächter schlug an, obwohl der Abgleich-Zweig unverändert
+     * nichts schreibt. Eine Grenze, die von der Reihenfolge fremder Zweige
+     * abhängt, misst irgendwann etwas anderes als ihr Name sagt. */
+    const start = s.indexOf("if (action === 'abgleich')");
+    const naechster = s.indexOf("if (action === '", start + 10);
+    expect(naechster).toBeGreaterThan(start);
+    const block = s.slice(start, naechster);
     // Keine Schreibzugriffe auf Wallet, Positionen oder Strategie.
     expect(block).not.toMatch(/\.set\(|\.update\(/);
     expect(block).not.toContain('paperBalance:');

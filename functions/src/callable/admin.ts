@@ -26,6 +26,7 @@
 
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
+import { logger } from 'firebase-functions';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { positionValue, type Position } from '../../../shared/src/index.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
@@ -321,6 +322,97 @@ export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
     );
     return {
       ok: true,
+      abgleich: {
+        geprueft: befund.geprueft,
+        zustand: befund.zustand,
+        sperre: befund.sperre,
+        fehlbestand: befund.fehlbestand,
+        fremdbestand: befund.fremdbestand,
+        grund: befund.grund ?? null,
+      },
+    };
+  }
+
+  /**
+   * Übernahme VORMERKEN — der Admin schreibt kein fremdes Buch (22.08.).
+   *
+   * Owner-Entscheidung: Eine echte Drift löst nur die Depot-Übernahme, und
+   * die überschreibt Bestand und Barbestand des Kontos. Dass ein Admin das
+   * für jemand anderen tut, wäre ein stiller Eingriff in fremdes Geld —
+   * käme die Abweichung aus einem Broker-Aussetzer, zerstörte die
+   * „Heilung" korrekte Daten. Also merkt der Admin sie nur VOR: Der
+   * Konto-Inhaber sieht den Hinweis und löst sie selbst aus.
+   *
+   * Das hier ist deshalb bewusst KEIN Geld-Schreibpfad. Geschrieben wird
+   * ausschliesslich ein Vermerk unter `risk.uebernahmeVorgemerkt` —
+   * Positionen, Wallet und Strategie bleiben unberührt.
+   *
+   * Und nur, wo eine Sperre TATSÄCHLICH GEMESSEN wurde: Erst misst der
+   * Server frisch, und nur wenn dieser Befund `sperre` sagt, entsteht der
+   * Vermerk. Damit ist die Aktion ein Reparaturwerkzeug für einen
+   * gemessenen Defekt und kein allgemeines Recht, fremden Nutzern
+   * Aufforderungen ins Konto zu legen.
+   */
+  if (action === 'uebernahmeVormerken') {
+    const ref = targetRef();
+    const doc = await ref.get();
+    if (!doc.exists) throw new HttpsError('not-found', 'srv.unbekanntesKonto');
+
+    const positionen = (await ref.collection('positions').get()).docs.map(
+      (d) => d.data() as Position,
+    );
+    const cash = (doc.get('wallet.paperBalance') as number | undefined) ?? 0;
+    let posWert = 0;
+    for (const pos of positionen) {
+      const quote = (await db.collection('market').doc(pos.symbol).get()).get('quote') as
+        | { price?: number }
+        | undefined;
+      const kurs = typeof quote?.price === 'number' && quote.price > 0 ? quote.price : null;
+      posWert += positionValue(pos, kurs);
+    }
+    const befund = await abgleichFuerKonto(
+      target as string,
+      positionen,
+      new Date(),
+      doc.get('risk.abgleich') as { status?: string; verlauf?: VerlaufEintrag[] } | undefined,
+      { cash, equity: Math.round((cash + posWert) * 100) / 100 },
+    );
+    /* Keine Sperre → kein Vermerk. Kein Fehler: Der Admin hat gerade
+     * gemessen, und das Ergebnis ist die Antwort auf seine Frage. */
+    if (!befund.sperre) {
+      return {
+        ok: true,
+        vorgemerkt: false,
+        abgleich: {
+          geprueft: befund.geprueft,
+          zustand: befund.zustand,
+          /* Aus dem Befund, nie als Literal: Der Sperr-Zustand hat genau
+           * eine Quelle. Ein hingeschriebenes `false` wäre der Anfang
+           * eines Overrides — auch wenn es hier zufällig stimmt. */
+          sperre: befund.sperre,
+          fehlbestand: befund.fehlbestand,
+          fremdbestand: befund.fremdbestand,
+          grund: befund.grund ?? null,
+        },
+      };
+    }
+    await ref.set(
+      {
+        risk: {
+          uebernahmeVorgemerkt: {
+            at: new Date().toISOString(),
+            vonAdmin: uid,
+            fehlbestand: befund.fehlbestand,
+            grund: (befund.grund ?? '').slice(0, 300),
+          },
+        },
+      },
+      { merge: true },
+    );
+    logger.info(`Übernahme vorgemerkt für ${target} durch Admin ${uid}`);
+    return {
+      ok: true,
+      vorgemerkt: true,
       abgleich: {
         geprueft: befund.geprueft,
         zustand: befund.zustand,
