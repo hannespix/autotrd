@@ -8,8 +8,10 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
   DEFAULT_STRATEGY,
+  RISIKO_VERSION,
   applyVariantId,
   buildPriors,
+  istAktuelleRisikoVersion,
   recommendedStart,
   type GlobalAxisStats,
   type Strategy,
@@ -30,7 +32,24 @@ export const ensureProfile = onCall(CALLABLE_OPTS, async (request) => {
 
   const ref = getFirestore().doc(`users/${uid}`);
   const snap = await ref.get();
+  // Bestandskonto — nicht fragen, nicht aussperren (Owner 22.08.: „nur
+  // neue Kunden"). Der Check steht bewusst VOR der Risiko-Prüfung.
   if (snap.exists) return { created: false };
+
+  /* Ab hier entsteht ein NEUES Konto — und dafür ist die Zustimmung zum
+   * Risikohinweis Bedingung, nicht Beiwerk.
+   *
+   * Serverseitig, weil ein Häkchen im Formular keine Zustimmung ist,
+   * sondern eine Anzeige: Wer den Client umgeht, hätte sonst genau das
+   * Konto, das zum Problem wird. Ohne gültige Fassung entsteht deshalb
+   * gar kein Profil — kein Wallet, keine Strategie, keine Zugangsstufe.
+   *
+   * Der Fehler ist eine ANSAGE, kein stilles Scheitern: Die Oberfläche
+   * fängt ihn ab und legt die Bestätigung vor. */
+  const { risiko } = (request.data ?? {}) as { risiko?: unknown };
+  if (!istAktuelleRisikoVersion(risiko)) {
+    throw new HttpsError('failed-precondition', 'srv.risikoBestaetigungFehlt');
+  }
 
   const now = new Date().toISOString();
   const strategy = await startStrategie();
@@ -42,6 +61,10 @@ export const ensureProfile = onCall(CALLABLE_OPTS, async (request) => {
     // (core/access.ts), damit diese Änderung niemanden aussperrt.
     accessLevel: 'pending',
     requestedAt: now,
+    /* Was, wann, zu welcher Fassung — ein blosses `true` bewiese nicht,
+     * WOZU jemand zugestimmt hat. Das Feld liegt ausserhalb von
+     * `settings`: Dort erlauben die Regeln Client-Updates, hier nicht. */
+    risiko: { version: RISIKO_VERSION, at: now },
     profile: {
       createdAt: now,
       plan: 'free',

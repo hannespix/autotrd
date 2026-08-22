@@ -37,6 +37,20 @@ export const DE = {
   'login.oder': 'oder',
   'login.mitGoogle': 'Mit Google anmelden',
   'login.emailFehlt': 'Bitte oben die E-Mail-Adresse eintragen.',
+  'login.risikoHaken':
+    'Ich handele auf eigenes Risiko und habe den Risikohinweis gelesen. '
+    + 'Mir ist bewusst, dass autotrd keine Anlageberatung ist und dass beim '
+    + 'Handel Verluste bis zum Totalverlust des eingesetzten Kapitals möglich sind.',
+  'login.risikoLink': 'Risikohinweis lesen',
+  'login.risikoFehlt': 'Bitte den Risikohinweis bestätigen — ohne das entsteht kein Konto.',
+  'login.risikoTorTitel': 'Noch eine Bestätigung, dann geht es los',
+  'login.risikoTorText':
+    'Für dein Konto fehlt die Bestätigung des Risikohinweises. Sie wird einmalig '
+    + 'bei der Kontoanlage verlangt und mit Datum festgehalten. Ohne sie wird kein '
+    + 'Konto angelegt.',
+  'login.risikoTorWeiter': 'Bestätigen und fortfahren',
+  'srv.risikoBestaetigungFehlt':
+    'Für ein neues Konto ist die Bestätigung des Risikohinweises erforderlich.',
   'login.resetUnterwegs': 'Passwort-Reset-Mail ist unterwegs (Spam-Ordner prüfen).',
   'nav.panelLinks': 'Linkes Panel',
   'nav.panelRechts': 'Rechtes Panel',
@@ -301,6 +315,8 @@ export const DE = {
   'adm.abgleichKontoGrob': 'Cash oder Depotwert weichen grob ab',
   'adm.abgleichen': 'Abgleichen',
   'adm.abgleichGeloest': 'Abgleich sauber — die Sperre ist weg.',
+  'adm.risikoOk': 'Risiko bestätigt',
+  'adm.risikoFassung': 'Zugestimmte Fassung:',
   'adm.vormerken': 'Übernahme vormerken',
   'adm.vormerkGesetzt':
     'Vorgemerkt. Der Konto-Inhaber sieht die Bitte in seiner Broker-Karte und '
@@ -1370,6 +1386,19 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'login.oder': 'or',
   'login.mitGoogle': 'Sign in with Google',
   'login.emailFehlt': 'Please enter your email address above.',
+  'login.risikoHaken':
+    'I trade at my own risk and have read the risk disclosure. '
+    + 'I understand that autotrd is not investment advice and that trading can lead '
+    + 'to losses up to and including the total loss of the capital deployed.',
+  'login.risikoLink': 'Read the risk disclosure',
+  'login.risikoFehlt': 'Please confirm the risk disclosure — no account is created without it.',
+  'login.risikoTorTitel': 'One confirmation, then you are set',
+  'login.risikoTorText':
+    'Your account is missing the risk disclosure confirmation. It is required once when '
+    + 'the account is created and is recorded with a date. Without it no account is created.',
+  'login.risikoTorWeiter': 'Confirm and continue',
+  'srv.risikoBestaetigungFehlt':
+    'Confirming the risk disclosure is required for a new account.',
   'login.resetUnterwegs': 'Password reset email is on its way (check your spam folder).',
   'nav.panelLinks': 'Left panel',
   'nav.panelRechts': 'Right panel',
@@ -1790,6 +1819,8 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'adm.abgleichKontoGrob': 'cash or portfolio value differ substantially',
   'adm.abgleichen': 'Reconcile',
   'adm.abgleichGeloest': 'Reconciliation clean — the lock is gone.',
+  'adm.risikoOk': 'risk confirmed',
+  'adm.risikoFassung': 'Confirmed version:',
   'adm.vormerken': 'Request import',
   'adm.vormerkGesetzt':
     'Requested. The account holder sees the request on their broker card and '

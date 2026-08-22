@@ -230,8 +230,16 @@ function fns(): ReturnType<typeof getFunctions> {
 }
 
 /** Profil (users/{uid}) serverseitig anlegen, falls es noch fehlt. */
-export async function ensureProfile(): Promise<void> {
-  await httpsCallable(fns(), 'ensureProfile')({});
+/**
+ * Profil serverseitig sicherstellen (idempotent).
+ *
+ * `risiko` ist die Fassung des Risikohinweises, der der Nutzer gerade
+ * zugestimmt hat. Für BESTANDSKONTEN spielt sie keine Rolle — der Server
+ * kehrt vorher um. Für ein NEUES Konto ist sie Bedingung: Ohne sie wirft
+ * er `srv.risikoBestaetigungFehlt`, und es entsteht gar kein Profil.
+ */
+export async function ensureProfile(risiko?: string): Promise<void> {
+  await httpsCallable(fns(), 'ensureProfile')(risiko === undefined ? {} : { risiko });
 }
 
 /**
@@ -1395,6 +1403,12 @@ export interface AdminUserRow {
   trades: number | null;
   /** Live-Reife-Kurzform aus liveGate.reifeFuerKonto (Server rechnet). */
   reife: { bereit: boolean; erfuellt: number; gesamt: number; fazit: string };
+  /**
+   * Zustimmung zum Risikohinweis (22.08.) — `null` bei Bestandskonten, die
+   * vor der Pflicht angelegt wurden. `version` sagt, WELCHEM Stand
+   * zugestimmt wurde; ein blosses Ja bewiese das nicht.
+   */
+  risiko: { version: string; at: string } | null;
   /** Broker-Abgleich des Kontos (Owner 21.08.) — `null` ohne Broker/Vermerk.
    *  Die Sperr-Entscheidung kommt aus derselben Funktion wie im Scan. */
   abgleich: {

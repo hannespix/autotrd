@@ -8,6 +8,7 @@ import {
   authErrorMessage,
   loginEmail,
   loginGoogle,
+  logout,
   registerEmail,
   resetPassword,
   watchAuth,
@@ -16,7 +17,8 @@ import { ensureProfile, listenerCount } from './data.js';
 import { t } from './i18n.js';
 import { muxIsLeader } from './mux.js';
 import { mountDashboard, unmountDashboard } from './dashboard.js';
-import { mountLegalFooter } from './legal.js';
+import { mountLegalFooter, openLegal } from './legal.js';
+import { RISIKO_VERSION } from '@autotrd/shared';
 import { initPwa } from './pwa.js';
 
 // Leak-/Mux-Nachweis (M9-Abnahme): aktive Firestore-Listener zählbar machen
@@ -58,6 +60,71 @@ function renderSetupHint(): void {
     </main>`;
 }
 
+/**
+ * Das Risiko-Tor: Wer angemeldet ist, aber noch kein Profil hat, weil die
+ * Bestätigung fehlt (Owner 22.08.).
+ *
+ * Das passiert genau einmal und nur bei NEUEN Konten — etwa wenn jemand
+ * über Google hereinkommt, ohne vorher zugestimmt zu haben. Ohne diese
+ * Seite stünde er in einem halb angemeldeten Zustand: eingeloggt, aber
+ * ohne Konto, und ohne zu erfahren warum.
+ *
+ * Die Seite ist bewusst eine SACKGASSE mit genau einem Ausgang. Ein
+ * „später"-Knopf wäre die Ausnahme, die den Zweck aufhebt: Ein Konto ohne
+ * Zustimmung ist genau das Konto, das zum Problem wird.
+ */
+function renderRisikoTor(): void {
+  app.innerHTML = `
+    <main class="center">
+      <section class="card auth-card" aria-labelledby="rt">
+        <h1 id="rt">AUTO<span class="c-gn">TRD</span></h1>
+        <p class="sub">${t('login.risikoTorTitel')}</p>
+        <p class="hint" id="rtText"></p>
+        <label class="risiko-zeile" for="rtOk">
+          <input type="checkbox" id="rtOk" />
+          <span id="rtHaken"></span>
+        </label>
+        <p id="rtErr" class="error" role="alert" hidden></p>
+        <div class="row">
+          <button type="button" id="rtGo" class="btn btn-g">${t('login.risikoTorWeiter')}</button>
+          <button type="button" id="rtOut" class="btn btn-n">${t('opt.abmelden')}</button>
+        </div>
+      </section>
+    </main>`;
+  mountLegalFooter(app.querySelector('main')!);
+  document.querySelector<HTMLParagraphElement>('#rtText')!.textContent = t('login.risikoTorText');
+
+  const haken = document.querySelector<HTMLSpanElement>('#rtHaken')!;
+  haken.textContent = `${t('login.risikoHaken')} `;
+  const link = document.createElement('a');
+  link.href = '#';
+  link.textContent = t('login.risikoLink');
+  link.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    openLegal('disclaimer');
+  });
+  haken.append(link);
+
+  const fehler = document.querySelector<HTMLParagraphElement>('#rtErr')!;
+  document.querySelector('#rtGo')!.addEventListener('click', () => {
+    fehler.hidden = true;
+    if (!document.querySelector<HTMLInputElement>('#rtOk')!.checked) {
+      fehler.textContent = t('login.risikoFehlt');
+      fehler.hidden = false;
+      return;
+    }
+    ensureProfile(RISIKO_VERSION)
+      .then(() => route())
+      .catch((e: unknown) => {
+        fehler.textContent = String((e as { message?: string })?.message ?? e);
+        fehler.hidden = false;
+      });
+  });
+  document.querySelector('#rtOut')!.addEventListener('click', () => {
+    void logout();
+  });
+}
+
 function renderLogin(): void {
   app.innerHTML = `
     <main class="center">
@@ -71,6 +138,14 @@ function renderLogin(): void {
           <input id="password" name="password" class="inp" type="password" autocomplete="current-password" minlength="6" required />
           <p id="err" class="error" role="alert" hidden></p>
           <p id="info" class="hint" role="status" hidden></p>
+          <!-- Risiko-Bestätigung (Owner 22.08.). Sie gilt nur für NEUE
+               Konten; wer schon eins hat, meldet sich normal an und wird
+               nicht gefragt. Das Häkchen ist die Anzeige — verlangt wird
+               die Zustimmung serverseitig bei der Profil-Anlage. -->
+          <label class="risiko-zeile" for="risikoOk">
+            <input type="checkbox" id="risikoOk" />
+            <span id="risikoText"></span>
+          </label>
           <div class="row">
             <button type="submit" class="btn btn-g">${t('login.anmelden')}</button>
             <button type="button" id="registerBtn" class="btn btn-n">${t('login.registrieren')}</button>
@@ -100,13 +175,44 @@ function renderLogin(): void {
     const { email, password } = fields();
     loginEmail(email, password).catch(showError);
   });
+  /* Der Hinweis trägt einen echten Link auf den Risikohinweis — „gelesen"
+   * bestätigen zu lassen, ohne ihn erreichbar zu machen, wäre eine leere
+   * Geste. */
+  const risikoText = document.querySelector<HTMLSpanElement>('#risikoText')!;
+  risikoText.textContent = `${t('login.risikoHaken')} `;
+  const risikoLink = document.createElement('a');
+  risikoLink.href = '#';
+  risikoLink.textContent = t('login.risikoLink');
+  risikoLink.addEventListener('click', (ev) => {
+    ev.preventDefault();
+    openLegal('disclaimer');
+  });
+  risikoText.append(risikoLink);
+
+  const risikoOk = (): boolean =>
+    document.querySelector<HTMLInputElement>('#risikoOk')!.checked;
+
   document.querySelector('#registerBtn')!.addEventListener('click', () => {
     err.hidden = true;
+    if (!risikoOk()) {
+      err.textContent = t('login.risikoFehlt');
+      err.hidden = false;
+      return;
+    }
     const { email, password } = fields();
     registerEmail(email, password).catch(showError);
   });
   document.querySelector('#googleBtn')!.addEventListener('click', () => {
     err.hidden = true;
+    /* Auch hier kann ein NEUES Konto entstehen — der Weg über Google ist
+     * kein anderer Rechtsvorgang. Wer schon ein Konto hat, wird vom Server
+     * ohnehin durchgelassen; das Häkchen kostet ihn einen Klick, und der
+     * ist billiger als ein Konto ohne Zustimmung. */
+    if (!risikoOk()) {
+      err.textContent = t('login.risikoFehlt');
+      err.hidden = false;
+      return;
+    }
     loginGoogle().catch(showError);
   });
   document.querySelector('#resetBtn')!.addEventListener('click', () => {
@@ -155,8 +261,20 @@ if (!hasFirebaseConfig()) {
   watchAuth((user) => {
     currentUser = user ? { uid: user.uid, email: user.email } : null;
     if (user) {
-      // Profil serverseitig sicherstellen (idempotent), dann Dashboard
-      ensureProfile().catch((e) => console.warn('ensureProfile', e));
+      /* Profil serverseitig sicherstellen (idempotent), dann Dashboard.
+       *
+       * Die Fassung des Risikohinweises geht IMMER mit: Für ein
+       * Bestandskonto kehrt der Server vorher um, für ein neues ist sie
+       * Bedingung. Schlägt genau das fehl, gibt es kein Profil — dann
+       * legt `renderRisikoTor` die Bestätigung vor, statt den Nutzer in
+       * einem halb angemeldeten Zustand stehen zu lassen. */
+      ensureProfile(RISIKO_VERSION).catch((e: unknown) => {
+        if (String((e as { message?: string })?.message ?? '').includes('risikoBestaetigung')) {
+          renderRisikoTor();
+          return;
+        }
+        console.warn('ensureProfile', e);
+      });
     }
     route();
   });

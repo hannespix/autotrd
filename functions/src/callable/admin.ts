@@ -28,7 +28,7 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
-import { positionValue, type Position } from '../../../shared/src/index.js';
+import { leseRisikoVermerk, positionValue, type Position } from '../../../shared/src/index.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { consumeQuota } from '../core/broker.js';
 import { accessLevelOf, type AccessLevel } from '../core/access.js';
@@ -71,6 +71,8 @@ export interface AdminUserRow {
   accessLevel: AccessLevel;
   requestedAt: string | null;
   admin: boolean;
+  /** Zustimmung zum Risikohinweis — `null` bei Bestandskonten. */
+  risiko: { version: string; at: string } | null;
   /** Gesamt-P&L = Equity − Kapitalbasis (Owner 02.08.: „deren aktuelle
    *  performance sehen"). Dieselbe Formel wie die Performance-Karte des
    *  Users selbst; null, wenn das Konto (noch) kein Wallet hat. */
@@ -164,6 +166,7 @@ export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
         'wallet',
         'settings.strategy.broker.initialCapital',
         'risk.abgleich',
+        'risiko',
       )
       .limit(500)
       .get();
@@ -241,6 +244,10 @@ export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
             fazit: befund.fazit,
           },
           abgleich: abgleichZeile(d.get('risk.abgleich'), jetzt),
+          /* Risiko-Bestätigung je Konto (Owner 22.08.: „ich will mich nicht
+           * angreifbar machen"). Eine Zustimmung, die nur in der Datenbank
+           * liegt und nirgends ablesbar ist, hilft im Streitfall nicht. */
+          risiko: leseRisikoVermerk(d.get('risiko')),
         };
       }),
     );
