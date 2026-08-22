@@ -589,8 +589,15 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
       + 'inkl. bereits realisierter Ergebnisse]',
   }));
 
-  // 8) Lauf-Marker aufräumen — die Übernahme ist fertig, der Scan darf wieder.
-  ops.push((b) => b.set(userRef, { risk: { resetLaeuftSeit: null } }, { merge: true }));
+  /* 8) Lauf-Marker aufräumen — die Übernahme ist fertig, der Scan darf
+   * wieder. Zusammen damit fällt die Übernahme-Vormerkung eines Admins
+   * (22.08.): Sie war die Bitte, genau das hier zu tun, und eine Bitte,
+   * die nach Erfüllung stehen bleibt, ist eine Mahnung ohne Anlass. */
+  ops.push((b) => b.set(
+    userRef,
+    { risk: { resetLaeuftSeit: null, uebernahmeVorgemerkt: null } },
+    { merge: true },
+  ));
 
   // In 400er-Stücken committen (WriteBatch-Deckel 500) — Reihenfolge s. o.
   for (let i = 0; i < ops.length; i += 400) {

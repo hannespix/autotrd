@@ -576,6 +576,18 @@ export function watchUserDoc(
       brokerPositionen: number;
       fehler: string;
     } | null;
+    /**
+     * Ein Admin hat für dieses Konto eine Depot-Übernahme VORGEMERKT
+     * (22.08.) — `null`, wenn keine offen ist.
+     *
+     * Bewusst nur eine Vormerkung: Der Admin darf ein fremdes Buch nicht
+     * selbst überschreiben. Käme die Abweichung aus einem Broker-Aussetzer,
+     * zerstörte die „Heilung" korrekte Daten. Der Konto-Inhaber entscheidet
+     * — er sieht hier, dass jemand eine Abweichung gemessen hat, und löst
+     * die Übernahme selbst aus. Nach einer erfolgreichen Übernahme fällt
+     * der Vermerk weg.
+     */
+    uebernahmeVorgemerkt: { at: string; fehlbestand: number; grund: string } | null;
   }) => void,
 ): Unsubscribe {
   return onSnapshot(doc(db(), 'users', uid), (snap) => {
@@ -600,8 +612,31 @@ export function watchUserDoc(
             }
           : null,
       abgleich: leseAbgleich(snap.get('risk.abgleich')),
+      uebernahmeVorgemerkt: leseVormerkung(snap.get('risk.uebernahmeVorgemerkt')),
     });
   });
+}
+
+/**
+ * `risk.uebernahmeVorgemerkt` in eine Form bringen, auf die sich die
+ * Anzeige verlassen kann — oder `null`, wenn nichts offen ist.
+ *
+ * Streng geprüft, weil an diesem Feld eine Aufforderung hängt, die das
+ * eigene Buch überschreibt: Ein halb geschriebener Vermerk darf keinen
+ * Hinweis erzeugen, den niemand gesetzt hat.
+ */
+function leseVormerkung(
+  roh: unknown,
+): { at: string; fehlbestand: number; grund: string } | null {
+  if (typeof roh !== 'object' || roh === null) return null;
+  const v = roh as { at?: unknown; fehlbestand?: unknown; grund?: unknown };
+  if (typeof v.at !== 'string' || v.at.length === 0) return null;
+  return {
+    at: v.at,
+    fehlbestand:
+      typeof v.fehlbestand === 'number' && Number.isFinite(v.fehlbestand) ? v.fehlbestand : 0,
+    grund: typeof v.grund === 'string' ? v.grund : '',
+  };
 }
 
 /** `risk.abgleich` in eine Form bringen, auf die sich die Anzeige verlassen kann. */
@@ -1406,6 +1441,21 @@ export async function adminSetAccess(
 export async function adminAbgleich(target: string): Promise<AdminAbgleichErgebnis> {
   const r = await httpsCallable(fns(), 'adminUsers')({ action: 'abgleich', target });
   return (r.data as { abgleich: AdminAbgleichErgebnis }).abgleich;
+}
+
+/**
+ * Übernahme für ein FREMDES Konto vormerken (22.08.).
+ *
+ * Der Server misst zuerst frisch ab und legt den Vermerk NUR an, wenn der
+ * Befund eine Sperre zeigt. `vorgemerkt: false` heisst also nicht
+ * „fehlgeschlagen", sondern „es gab nichts vorzumerken" — die Antwort auf
+ * genau die Frage, die der Admin mit dem Klick gestellt hat.
+ */
+export async function adminUebernahmeVormerken(
+  target: string,
+): Promise<{ vorgemerkt: boolean; abgleich: AdminAbgleichErgebnis }> {
+  const r = await httpsCallable(fns(), 'adminUsers')({ action: 'uebernahmeVormerken', target });
+  return r.data as { vorgemerkt: boolean; abgleich: AdminAbgleichErgebnis };
 }
 
 /** Admin-Recht eines FREMDEN Kontos vergeben/entziehen. */

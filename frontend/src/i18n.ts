@@ -301,6 +301,11 @@ export const DE = {
   'adm.abgleichKontoGrob': 'Cash oder Depotwert weichen grob ab',
   'adm.abgleichen': 'Abgleichen',
   'adm.abgleichGeloest': 'Abgleich sauber — die Sperre ist weg.',
+  'adm.vormerken': 'Übernahme vormerken',
+  'adm.vormerkGesetzt':
+    'Vorgemerkt. Der Konto-Inhaber sieht die Bitte in seiner Broker-Karte und '
+    + 'löst die Übernahme selbst aus — sein Buch überschreibt niemand sonst.',
+  'adm.vormerkNichtNoetig': 'Nichts vorzumerken — der Abgleich ist sauber.',
   'adm.abgleichBleibt': 'Sperre bleibt:',
   'adm.abgleichKeinBroker': 'Kein Broker verbunden — nichts abzugleichen.',
   'share.storyDepot': 'Mein Depot jetzt',
@@ -892,6 +897,13 @@ export const DE = {
   'kr.schattenTitel': 'Beleg aus der Schatten-Messung ohne Ausführung',
   'kr.schatten': 'aus dem Schatten',
   'ab.nochKeiner': 'Kein automatischer Abgleich bisher — er läuft ab dem nächsten Scan, sobald ein Broker verbunden ist.',
+  'ab.vormerkTitel': 'Ein Administrator bittet um die Depot-Übernahme',
+  'ab.vormerkText':
+    'Beim Abgleich standen in deinem Buch Positionen, die dein Broker nicht führt. '
+    + 'Handeln ist deshalb gesperrt. Nur du kannst das auflösen: Die Übernahme unten liest '
+    + 'Bestand, Einstände und Barbestand von deinem Broker und ÜBERSCHREIBT dein Buch damit. '
+    + 'Sie kauft und verkauft nichts. Prüfe vorher, ob der Broker-Stand stimmt — war die '
+    + 'Abweichung nur eine Störung bei deinem Broker, würdest du korrekte Zahlen überschreiben.',
   'ab.sauber': 'sauber',
   'ab.abweichung': 'Abweichung',
   'ab.nichtErreichbar': 'Broker nicht erreichbar',
@@ -1749,6 +1761,11 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'adm.abgleichKontoGrob': 'cash or portfolio value differ substantially',
   'adm.abgleichen': 'Reconcile',
   'adm.abgleichGeloest': 'Reconciliation clean — the lock is gone.',
+  'adm.vormerken': 'Request import',
+  'adm.vormerkGesetzt':
+    'Requested. The account holder sees the request on their broker card and '
+    + 'runs the import themselves — nobody else overwrites their book.',
+  'adm.vormerkNichtNoetig': 'Nothing to request — the reconciliation is clean.',
   'adm.abgleichBleibt': 'Lock remains:',
   'adm.abgleichKeinBroker': 'No broker connected — nothing to reconcile.',
   'share.storyDepot': 'My portfolio now',
@@ -2294,6 +2311,13 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'kr.schattenTitel': 'Evidence from the shadow measurement without execution',
   'kr.schatten': 'from the shadow',
   'ab.nochKeiner': 'No automatic reconciliation yet — it runs from the next scan onward, once a broker is connected.',
+  'ab.vormerkTitel': 'An administrator is asking you to import your portfolio',
+  'ab.vormerkText':
+    'The reconciliation found positions in your book that your broker does not hold. '
+    + 'Trading is locked because of this. Only you can resolve it: the import below reads '
+    + 'holdings, entry prices and cash from your broker and OVERWRITES your book with them. '
+    + 'It buys and sells nothing. Check that the broker side is correct first — if the '
+    + 'mismatch was only a glitch at your broker, you would overwrite correct figures.',
   'ab.sauber': 'clean',
   'ab.abweichung': 'mismatch',
   'ab.nichtErreichbar': 'broker unreachable',
