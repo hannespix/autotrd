@@ -101,6 +101,27 @@ export interface ShareDaten {
   positionen?: readonly SharePosition[] | undefined;
   /** Anteil des Kapitals, der gerade arbeitet (0–100). */
   investiertPct?: number | null | undefined;
+  /**
+   * Barbestand und Wert der offenen Positionen (Owner 22.08.: „cash,
+   * cashflow, aktive Positionen").
+   *
+   * Beide absolut — die Karte zeigt sie nur, wenn `betraege` an ist. Die
+   * AUFTEILUNG (arbeitet vs. liegt herum) darf sie immer zeigen: Sie ist
+   * eine Quote und verrät kein Vermögen.
+   */
+  bar?: number | null | undefined;
+  positionsWert?: number | null | undefined;
+  /**
+   * Geldbewegung je Handelstag im Fenster.
+   *
+   * `zu` = was aus Verkäufen zurückkam, `ab` = was Käufe gebunden haben,
+   * `realisiert` = das Ergebnis, das dabei hängen blieb. Die ersten beiden
+   * sagen „wie viel wurde bewegt", der dritte „was kam dabei heraus" — das
+   * sind zwei verschiedene Fragen, und beide gehören auf die Karte, weil
+   * ein hoher Umschlag bei magerem Ergebnis genau das Bild ist, das man
+   * sehen will.
+   */
+  cashflow?: readonly { tag: string; zu: number; ab: number; realisiert: number }[] | undefined;
 }
 
 /**

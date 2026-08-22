@@ -32,7 +32,7 @@ import {
 } from './shareCard.js';
 
 export interface StoryKarte {
-  id: 'ergebnis' | 'depot' | 'verlauf' | 'womit' | 'cta';
+  id: 'ergebnis' | 'depot' | 'kapital' | 'verlauf' | 'womit' | 'cta';
   svg: string;
 }
 
@@ -306,6 +306,150 @@ function verlaufKarte(d: ShareDaten): string {
   );
 }
 
+/**
+ * Kapital-Seite (Owner 22.08.: „mein Depot bitte besser darstellen: cash,
+ * cashflow, aktive Positionen (wie viel)").
+ *
+ * Drei Fragen, drei Zonen, von oben nach unten in der Reihenfolge, in der
+ * man sie stellt:
+ *
+ *   1. Arbeitet mein Geld?      Ein geteilter Balken: investiert | bar.
+ *   2. Wie viel liegt herum?    Der Barbestand als Zahl.
+ *   3. Was ging hin und her?    Cashflow je Tag um eine Nulllinie.
+ *
+ * ── Warum Umschlag UND Ergebnis ─────────────────────────────────────────
+ *
+ * „Cashflow" kann zweierlei heissen: wie viel Geld bewegt wurde, oder was
+ * dabei hängen blieb. Das sind verschiedene Fragen, und die interessante
+ * Antwort steht zwischen ihnen — viel Umschlag bei magerem Ergebnis ist
+ * genau das Bild, nach dem man sucht. Deshalb tragen die Balken die
+ * Bewegung und die Linie darüber das realisierte Ergebnis.
+ *
+ * ── Beträge bleiben aus, die Form nicht ─────────────────────────────────
+ *
+ * Ohne `betraege` verschweigt die Karte jede absolute Zahl — sie verlässt
+ * die App, und der eigene Kontostand geht niemanden etwas an. Die
+ * AUFTEILUNG darf trotzdem stehen: Eine Quote verrät kein Vermögen. Die
+ * Balken behalten ihre Form ohne Achsenzahlen; die Aussage „viel bewegt,
+ * wenig verdient" braucht keine Beträge.
+ */
+function kapitalKarte(d: ShareDaten): string {
+  const anzahl = d.positionen?.length ?? 0;
+  /* Die Quote kommt vom Tageslauf — steht sie noch nicht (neues Konto,
+   * Lauf noch nicht durch), wird sie aus den beiden Zahlen gerechnet, die
+   * ohnehin auf derselben Karte stehen: Marktwert gegen Marktwert + Bar.
+   * Das ist keine erfundene Zahl, sondern dieselbe Grösse aus den Daten
+   * daneben — und der Unterschied zwischen einer Karte, die etwas sagt,
+   * und einem leeren Balken mit zwei Gedankenstrichen (Bild-Befund 22.08.). */
+  const ausBestand =
+    typeof d.bar === 'number'
+    && Number.isFinite(d.bar)
+    && typeof d.positionsWert === 'number'
+    && Number.isFinite(d.positionsWert)
+    && d.bar + d.positionsWert > 0
+      ? (d.positionsWert / (d.bar + d.positionsWert)) * 100
+      : null;
+  const roh =
+    typeof d.investiertPct === 'number' && Number.isFinite(d.investiertPct)
+      ? d.investiertPct
+      : ausBestand;
+  const investiert = roh === null ? null : Math.min(100, Math.max(0, roh));
+  const fluss = (d.cashflow ?? []).slice(-30);
+
+  /* ── Zone 1: arbeitet das Geld? ──────────────────────────────────── */
+  const bx = 90;
+  const bw = KARTE - 180;
+  const by = 300;
+  const bh = 56;
+  const anteil = investiert === null ? 0 : investiert / 100;
+  const teil = Math.round(bw * anteil);
+  const quoteBalken =
+    `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="${bh / 2}" fill="${FARBE.linie}"></rect>`
+    + (teil > 0
+      ? `<rect x="${bx}" y="${by}" width="${teil}" height="${bh}" rx="${bh / 2}" fill="${FARBE.akzent}" opacity="0.9"></rect>`
+      : '')
+    + `<text x="${bx}" y="${by - 18}" fill="${FARBE.text3}" font-size="26">${esc(t('share.kapArbeitet'))}</text>`
+    + `<text x="${bx + bw}" y="${by - 18}" fill="${FARBE.text3}" font-size="26" text-anchor="end">${esc(t('share.kapBar'))}</text>`
+    + `<text x="${bx}" y="${by + bh + 42}" fill="${FARBE.text}" font-size="34" font-weight="700">`
+    + `${esc(investiert === null ? '—' : `${zahl(investiert, 0)} %`)}</text>`
+    + `<text x="${bx + bw}" y="${by + bh + 42}" fill="${FARBE.text}" font-size="34" font-weight="700" text-anchor="end">`
+    + `${esc(investiert === null ? '—' : `${zahl(100 - investiert, 0)} %`)}</text>`;
+
+  /* ── Zone 2: die Zahlen daneben ──────────────────────────────────── */
+  const geld = (v: number | null | undefined): string =>
+    d.betraege && typeof v === 'number' && Number.isFinite(v)
+      ? `${zahl(v)} ${d.waehrung}`
+      : '—';
+  const kennzahl = (x: number, label: string, wert: string): string =>
+    `<text x="${x}" y="${470}" fill="${FARBE.text3}" font-size="24" letter-spacing="2">${esc(label.toUpperCase())}</text>`
+    + `<text x="${x}" y="${516}" fill="${FARBE.text}" font-size="40" font-weight="700">${esc(wert)}</text>`;
+  const zahlen =
+    kennzahl(90, t('share.kapPositionen'), String(anzahl))
+    + kennzahl(430, t('share.kapBar'), geld(d.bar))
+    + kennzahl(790, t('share.kapImMarkt'), geld(d.positionsWert));
+
+  /* ── Zone 3: Cashflow je Tag ─────────────────────────────────────── */
+  const dx = 90;
+  const dbreite = KARTE - 180;
+  const dy = 600;
+  const dhoehe = 420;
+  const mitte = dy + dhoehe / 2;
+  let diagramm: string;
+  if (fluss.length === 0) {
+    diagramm =
+      `<text x="${KARTE / 2}" y="${mitte}" fill="${FARBE.text3}" font-size="28" text-anchor="middle">`
+      + `${esc(t('share.kapKeinFluss'))}</text>`;
+  } else {
+    const gross = Math.max(...fluss.map((f) => Math.max(f.zu, f.ab)), 1);
+    const breiteJe = dbreite / fluss.length;
+    const balkenB = Math.max(3, Math.min(28, breiteJe * 0.56));
+    const halbe = dhoehe / 2 - 30;
+    const balken = fluss
+      .map((f, i) => {
+        const cx = dx + breiteJe * (i + 0.5);
+        const hZu = (f.zu / gross) * halbe;
+        const hAb = (f.ab / gross) * halbe;
+        return (
+          (f.zu > 0
+            ? `<rect x="${(cx - balkenB / 2).toFixed(1)}" y="${(mitte - hZu).toFixed(1)}" width="${balkenB.toFixed(1)}" height="${hZu.toFixed(1)}" rx="3" fill="${FARBE.gruen}" opacity="0.85"></rect>`
+            : '')
+          + (f.ab > 0
+            ? `<rect x="${(cx - balkenB / 2).toFixed(1)}" y="${mitte.toFixed(1)}" width="${balkenB.toFixed(1)}" height="${hAb.toFixed(1)}" rx="3" fill="${FARBE.rot}" opacity="0.7"></rect>`
+            : '')
+        );
+      })
+      .join('');
+    /* Die Ergebnis-Linie hat ihre EIGENE Skala: Realisiertes ist um
+     * Grössenordnungen kleiner als der Umschlag: auf derselben Achse wäre
+     * sie eine gerade Linie auf der Null und behauptete „nichts passiert". */
+    const maxErg = Math.max(...fluss.map((f) => Math.abs(f.realisiert)), 1e-9);
+    const linie = fluss
+      .map((f, i) => {
+        const cx = dx + breiteJe * (i + 0.5);
+        const y = mitte - (f.realisiert / maxErg) * (halbe * 0.7);
+        return `${cx.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(' ');
+    diagramm =
+      balken
+      + `<line x1="${dx}" y1="${mitte}" x2="${dx + dbreite}" y2="${mitte}" stroke="${FARBE.text3}" stroke-width="2" stroke-dasharray="6 6"></line>`
+      + (fluss.length >= 2
+        ? `<polyline points="${linie}" fill="none" stroke="${FARBE.text}" stroke-width="4" stroke-linejoin="round" opacity="0.9"></polyline>`
+        : '')
+      + `<text x="${dx}" y="${dy + dhoehe + 40}" fill="${FARBE.text3}" font-size="24">${esc(fluss[0]!.tag)}</text>`
+      + `<text x="${dx + dbreite}" y="${dy + dhoehe + 40}" fill="${FARBE.text3}" font-size="24" text-anchor="end">${esc(fluss[fluss.length - 1]!.tag)}</text>`;
+  }
+
+  return rahmen(
+    kopfMitSiegel(t('share.kapTitel'), d.echtgeld)
+    + `<text x="90" y="200" fill="${FARBE.text3}" font-size="26">${esc(t('share.kapUnter'))}</text>`
+    + quoteBalken
+    + zahlen
+    + `<text x="90" y="${dy - 30}" fill="${FARBE.text3}" font-size="24" letter-spacing="2">${esc(t('share.kapFluss').toUpperCase())}</text>`
+    + diagramm,
+  );
+}
+
 /** Karte 3 — Beitrag je Symbol als Balken um die Mittelachse. */
 function womitKarte(d: ShareDaten): string {
   const z = d.zerlegung;
@@ -395,6 +539,17 @@ export function shareStory(d: ShareDaten, auswahl?: readonly SeitenId[]): StoryK
   // in „roast my portfolio"-Fäden gefragt wird — was hältst du GERADE?
   if (dran('depot') && (d.positionen?.length ?? 0) > 0) {
     karten.push({ id: 'depot', svg: depotKarte(d) });
+  }
+  /* Die Kapital-Seite braucht mindestens EINE Aussage: eine Quote oder
+   * eine Bewegung. Ohne beides bliebe ein leerer Balken über einer leeren
+   * Fläche — genau die tote Grafik, die der Kopf dieser Datei verbietet. */
+  if (
+    dran('kapital')
+    && (typeof d.investiertPct === 'number'
+      || typeof d.bar === 'number'
+      || (d.cashflow?.length ?? 0) > 0)
+  ) {
+    karten.push({ id: 'kapital', svg: kapitalKarte(d) });
   }
   if (dran('verlauf') && d.zerlegung.tage.length >= 2) {
     karten.push({ id: 'verlauf', svg: verlaufKarte(d) });
