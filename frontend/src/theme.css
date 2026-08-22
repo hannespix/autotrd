@@ -1620,3 +1620,19 @@ select.inp option { background: var(--card-solid); color: var(--t1); }
   /* Umgebrochen gehört er nach links zu den Haken, nicht einsam nach rechts. */
   .an-seiten .dbtn { margin-left: 0; }
 }
+
+/* Risiko-Bestätigung in der Anmeldemaske (Owner 22.08.). Bewusst mit
+   Zeilenumbruch statt einzeiliger Verkürzung: Der Text muss lesbar sein,
+   nicht kompakt — an ihm hängt eine Zustimmung. */
+.risiko-zeile {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 10px 0 4px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--t2);
+  cursor: pointer;
+}
+.risiko-zeile input { margin-top: 2px; accent-color: var(--ac); cursor: pointer; flex: none; }
+.risiko-zeile a { color: var(--ac); }

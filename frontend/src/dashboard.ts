@@ -6875,6 +6875,19 @@ async function loadAdminList(): Promise<void> {
        * nirgends. Der Chip erscheint NUR bei aktiver Sperre: Ein grünes
        * „alles gut" an jedem Konto wäre Rauschen, das die eine rote Zeile
        * versteckt, um die es geht. */
+      /* Risiko-Bestätigung als Chip (Owner 22.08.). Gezeigt wird die
+       * FASSUNG mit Datum, nicht ein Häkchen: Im Streitfall zählt, WELCHEM
+       * Text jemand wann zugestimmt hat. Bestandskonten (vor der Pflicht
+       * angelegt) tragen keinen Vermerk — dort steht bewusst nichts statt
+       * eines roten Warnzeichens, denn sie sind nicht säumig. */
+      if (row.risiko) {
+        const rc = document.createElement('span');
+        rc.className = 'stag';
+        rc.style.whiteSpace = 'nowrap';
+        rc.textContent = `${t('adm.risikoOk')} ${row.risiko.at.slice(0, 10)}`;
+        rc.title = `${t('adm.risikoFassung')} ${row.risiko.version}`;
+        line.append(rc);
+      }
       if (row.abgleich?.sperre) {
         const chip = document.createElement('span');
         chip.className = 'stag t-sell';
