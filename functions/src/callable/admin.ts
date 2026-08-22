@@ -28,7 +28,14 @@ import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
-import { leseRisikoVermerk, positionValue, type Position } from '../../../shared/src/index.js';
+import {
+  leseNachricht,
+  leseRisikoVermerk,
+  positionValue,
+  pruefeNachricht,
+  type Position,
+} from '../../../shared/src/index.js';
+import { FADEN_LIMIT } from './nachricht.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { consumeQuota } from '../core/broker.js';
 import { accessLevelOf, type AccessLevel } from '../core/access.js';
@@ -429,6 +436,41 @@ export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
         grund: befund.grund ?? null,
       },
     };
+  }
+
+  /**
+   * Faden eines FREMDEN Kontos lesen (Owner 22.08.: "diese soll der Admin
+   * später für jeden Account auch abrufen können").
+   *
+   * Eigene Tür statt eines Parameters an der Kunden-Callable: "Darf ich
+   * fremde Fäden sehen?" hängt so davon ab, WELCHE Funktion man aufruft --
+   * und die hier prüft oben bereits `admin: true`.
+   */
+  if (action === 'nachrichten') {
+    const ref = targetRef();
+    const snap = await ref.collection('nachrichten').orderBy('at').limit(FADEN_LIMIT).get();
+    return {
+      nachrichten: snap.docs.map((d) => leseNachricht(d.data())).filter((n) => n !== null),
+    };
+  }
+
+  /**
+   * Antworten -- die andere Hälfte der Unterhaltung.
+   *
+   * `von: 'admin'` steht FEST und kommt nicht aus der Anfrage: Der Absender
+   * ist eine Eigenschaft des Weges, nicht des Inhalts.
+   */
+  if (action === 'antworten') {
+    const ref = targetRef();
+    const sauber = pruefeNachricht(an);
+    if (sauber === null) throw new HttpsError('invalid-argument', 'srv.nachrichtLeer');
+    await ref.collection('nachrichten').add({
+      von: 'admin',
+      text: sauber,
+      at: new Date().toISOString(),
+    });
+    logger.info(`Admin ${uid} hat ${target} geantwortet`);
+    return { ok: true };
   }
 
   if (action === 'setAdmin') {

@@ -1636,3 +1636,35 @@ select.inp option { background: var(--card-solid); color: var(--t1); }
 }
 .risiko-zeile input { margin-top: 2px; accent-color: var(--ac); cursor: pointer; flex: none; }
 .risiko-zeile a { color: var(--ac); }
+
+/* Nachrichten-Faden Kunde ↔ Betreiber (Owner 22.08.). Feste Höhe mit
+   eigenem Scroll: Ein Faden, der die Karte auseinanderzieht, schiebt alles
+   darunter aus dem Bild. */
+.faden-liste {
+  max-height: 200px;
+  overflow-y: auto;
+  margin-bottom: 6px;
+}
+.faden-liste:empty { display: none; }
+.faden-zeile {
+  border-left: 2px solid var(--bd2);
+  padding: 3px 0 3px 8px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--t1);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* Die Antwort des Betreibers ist die wichtigere Zeile — sie trägt die Farbe. */
+.faden-admin-zeile, .faden-zeile.faden-admin { border-left-color: var(--ac); }
+.faden-wer { font-weight: 700; margin-right: 6px; color: var(--t2); }
+.faden-wann { color: var(--t3); font-size: 10px; }
+.faden-text { width: 100%; resize: vertical; font-size: 11px; }
+.faden-admin {
+  width: 100%;
+  margin: -2px 0 8px;
+  padding: 8px;
+  border: 1px solid var(--bd2);
+  border-radius: 8px;
+}

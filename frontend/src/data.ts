@@ -1472,6 +1472,34 @@ export async function adminUebernahmeVormerken(
   return r.data as { vorgemerkt: boolean; abgleich: AdminAbgleichErgebnis };
 }
 
+export interface FadenNachricht {
+  von: 'kunde' | 'admin';
+  text: string;
+  at: string;
+}
+
+/** Eigenen Faden lesen -- geht auch fuer wartende Konten. */
+export async function nachrichtenLesen(): Promise<FadenNachricht[]> {
+  const r = await httpsCallable(fns(), 'nachricht')({ action: 'lesen' });
+  return (r.data as { nachrichten: FadenNachricht[] }).nachrichten;
+}
+
+/** Nachricht an den Admin -- die erste ist die zur Anmeldung. */
+export async function nachrichtSenden(text: string): Promise<void> {
+  await httpsCallable(fns(), 'nachricht')({ action: 'senden', text });
+}
+
+/** Faden eines FREMDEN Kontos lesen (Admin). */
+export async function adminNachrichten(target: string): Promise<FadenNachricht[]> {
+  const r = await httpsCallable(fns(), 'adminUsers')({ action: 'nachrichten', target });
+  return (r.data as { nachrichten: FadenNachricht[] }).nachrichten;
+}
+
+/** Antwort in den Faden eines FREMDEN Kontos (Admin). */
+export async function adminAntworten(target: string, an: string): Promise<void> {
+  await httpsCallable(fns(), 'adminUsers')({ action: 'antworten', target, an });
+}
+
 /** Admin-Recht eines FREMDEN Kontos vergeben/entziehen. */
 export async function adminSetAdmin(target: string, admin: boolean): Promise<void> {
   await httpsCallable(fns(), 'adminUsers')({ action: 'setAdmin', target, admin });

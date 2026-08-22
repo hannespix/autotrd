@@ -53,3 +53,4 @@ export * from './kiBericht.js';
 export * from './tagRueckblick.js';
 export * from './sizingSchatten.js';
 export * from './risiko.js';
+export * from './nachrichten.js';

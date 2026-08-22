@@ -28,6 +28,7 @@ export { riskPulse, pulseNow } from './scheduled/riskPulse.js';
 export { wachhund, wachhundNow } from './scheduled/wachhund.js';
 export { kiBericht, kiBerichtNow } from './scheduled/kiBericht.js';
 export { ensureProfile } from './callable/profile.js';
+export { nachricht } from './callable/nachricht.js';
 export { saveStrategy } from './callable/strategy.js';
 export { resetBreaker } from './callable/resetBreaker.js';
 export { quoteNow } from './callable/quoteNow.js';
