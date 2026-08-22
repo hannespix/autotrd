@@ -1590,3 +1590,33 @@ select.inp option { background: var(--card-solid); color: var(--t1); }
     inset: -10px;
   }
 }
+
+/* Seiten-Auswahl der Teilen-Ausgabe (Owner 22.08.) — eine Zeile, die auf
+   360 px umbricht statt zu scrollen: Wer sie auf dem Handy nicht ganz
+   sieht, hakt die untere Hälfte nie an. */
+.an-seiten {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 6px 0 2px;
+}
+.an-seiten > .hint { margin-right: 2px; }
+/* Der Alle/Keine-Knopf ist ein Knopf, kein Balken.
+   `.dsheet .dbtn` setzt `flex: 1; min-width: 130px` — im Fenster-Kontext
+   richtig (dort füllen Knöpfe eine Zeile), hier falsch: Der Knopf zog sich
+   über die ganze Restbreite. Ein `.an-seiten > button` (0,1,1) verliert
+   gegen `.dsheet .dbtn` (0,2,0), deshalb dieselbe Bauform wie bei der
+   Karten-Navigation eine Zeile weiter oben. Nur im Bild zu sehen, in
+   keinem Unit-Test (CLAUDE.md §6). */
+.an-seiten .dbtn {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+  padding: 4px 12px;
+  margin-left: auto;
+}
+@media (max-width: 560px) {
+  /* Umgebrochen gehört er nach links zu den Haken, nicht einsam nach rechts. */
+  .an-seiten .dbtn { margin-left: 0; }
+}

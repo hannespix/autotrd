@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { ShareDaten } from '../src/shareCard.js';
-import { maleSzene, OFFLINE_KODIERUNGEN, VIDEO_FPS, videoSzenen, zerlegeHaupt } from '../src/shareVideo.js';
+import { datenrate, maleSzene, OFFLINE_KODIERUNGEN, VIDEO_FPS, videoSzenen, zerlegeHaupt } from '../src/shareVideo.js';
 
 beforeEach(() => {
   globalThis.localStorage = {
@@ -140,11 +140,38 @@ describe('Offline-Encoder — echte Dauer im Container, festes Frame-Raster', ()
     expect(OFFLINE_KODIERUNGEN.some((k) => k.codec.startsWith('vp09.'))).toBe(true);
   });
 
-  it('alle H.264-Stufen tragen Level 4.0 — 1080×1080@30 sprengt Level 3.1', () => {
+  it('H.264-Level passt zur Bildrate der Stufe — 60 fps sprengen Level 4.0', () => {
+    /* Owner 22.08. („laggy und stockend") — die Bildrate liess sich NICHT
+     * einfach verdoppeln: 1080×1080 bei 60 fps braucht 68 × 68 × 60 ≈
+     * 273.000 Makroblöcke/s, Level 4.0 (`…28`) erlaubt 245.760. Ein
+     * 60er-Kandidat auf Level 4.0 fiele bei `isConfigSupported` durch, und
+     * der Clip landete auf dem Echtzeit-Netz — dem Weg, der Frames
+     * verliert. Die „Verbesserung" hätte das Ruckeln verschlimmert.
+     * Deshalb: 60 fps nur auf Level 4.2 (`…2a`), 30 fps auf 4.0. */
     for (const k of OFFLINE_KODIERUNGEN.filter((k) => k.art === 'mp4')) {
-      expect(k.codec.endsWith('28'), k.codec).toBe(true);
+      expect(k.codec.endsWith(k.fps >= 60 ? '2a' : '28'), `${k.codec}@${k.fps}`).toBe(true);
     }
+    // Es MUSS eine 60er-Stufe geben — sonst ist der Fix stillschweigend weg.
+    expect(OFFLINE_KODIERUNGEN.some((k) => k.fps >= 60)).toBe(true);
+    // …und eine 30er als Netz für Browser ohne Level 4.2.
+    expect(OFFLINE_KODIERUNGEN.some((k) => k.fps === 30)).toBe(true);
+    // Das Echtzeit-Netz bleibt bei 30 — mehr schafft es ohnehin nicht.
     expect(VIDEO_FPS).toBe(30);
+  });
+
+  it('Datenrate wächst mit der Bildrate — sonst wird jedes Bild dünner', () => {
+    /* Doppelt so viele Frames bei gleicher Rate heisst halb so viel pro
+     * Bild. Blockartefakte in Bewegung lesen sich wie Ruckeln, obwohl die
+     * Frames alle da sind — der Fix hätte sich selbst aufgehoben. */
+    expect(datenrate(60)).toBeGreaterThan(datenrate(30));
+    expect(quelle).toContain('bitrate: datenrate(fps),');
+  });
+
+  it('die Probe fragt MIT der Bildrate des Kandidaten', () => {
+    /* Mit einer festen 30 in `isConfigSupported` hätte der Browser eine
+     * Konfiguration bestätigt, die danach gar nicht encodiert wird. */
+    expect(quelle).toContain('bitrate: datenrate(k.fps),');
+    expect(quelle).toContain('framerate: k.fps,');
   });
 
   it('MP4 mit moov voran und avc-Format — sonst liest WhatsApp wieder Fragment-Dauer', () => {
@@ -153,10 +180,10 @@ describe('Offline-Encoder — echte Dauer im Container, festes Frame-Raster', ()
   });
 
   it('festes Frame-Raster statt Echtzeit — jeder Frame wird gerendert, keiner fällt aus', () => {
-    expect(quelle).toContain('timestamp: Math.round((i * 1_000_000) / VIDEO_FPS),');
-    expect(quelle).toContain('duration: Math.round(1_000_000 / VIDEO_FPS),');
+    expect(quelle).toContain('timestamp: Math.round((i * 1_000_000) / fps),');
+    expect(quelle).toContain('duration: Math.round(1_000_000 / fps),');
     // Endstand-Nachlauf wie im Echtzeit-Pfad.
-    expect(quelle).toContain('Math.round(((gesamtMs + 400) / 1000) * VIDEO_FPS)');
+    expect(quelle).toContain('Math.round(((gesamtMs + 400) / 1000) * fps)');
   });
 
   it('Reihenfolge: erst Offline versuchen, das Echtzeit-Netz bleibt für Browser ohne WebCodecs', () => {

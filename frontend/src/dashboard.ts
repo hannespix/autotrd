@@ -212,6 +212,12 @@ import {
   shareText,
 } from './shareCard.js';
 import { shareStory, storyDateiname, type StoryKarte } from './shareStory.js';
+import {
+  ALLE_SEITEN,
+  SEITEN,
+  leseSeitenAuswahl,
+  schreibeSeitenAuswahl,
+} from './seiten.js';
 import { kartenAussage } from './shareAussage.js';
 import {
   type KursPunkt,
@@ -1206,6 +1212,11 @@ function layout(email: string): string {
         <label class="an-share-opt"><input type="checkbox" id="anShareBetraege"> ${t('lay.betraegeZeigen')}</label>
         <span id="anShareStatus" class="hint"></span>
       </div>
+      <!-- Seiten-Auswahl (Owner 22.08.: „per checkbox auswählbare pages was
+           als Bild und Video exportiert wird … und angezeigt wird"). EINE
+           Liste für alle drei Wege — zwei Listen liefen auseinander, sobald
+           jemand nur eine davon pflegt. -->
+      <div class="an-seiten" id="anSeiten"></div>
       <!-- Video-Vorschau (Owner-Befund „Permission denied"): navigator.share
            darf nur direkt nach einem Klick feuern — nach ~12 s Aufnahme ist
            die Klick-Freigabe abgelaufen. Deshalb ZWEI Schritte: erstellen,
@@ -4845,6 +4856,7 @@ function wireHistorie(): void {
     auf.dataset.wired = '1';
     auf.addEventListener('click', () => {
       renderAnalytics(); // frisch rechnen, nicht den Stand vom letzten Öffnen zeigen
+      renderSeitenAuswahl();
       renderSharePreview();
       $('anModal').classList.add('show');
     });
@@ -8570,14 +8582,88 @@ let storyKarten: StoryKarte[] = [];
 let storyIdx = 0;
 
 /** Vorschau im Analyse-Fenster — man teilt nur, was man vorher gesehen hat. */
+/**
+ * Die Seiten-Auswahl als Checkbox-Leiste (Owner 22.08.).
+ *
+ * Sie steuert ALLE drei Wege zugleich — Anzeige, Bild-Export, Video —, weil
+ * es nur eine Liste gibt. Zwei getrennte Auswahlen wären der sichere Weg
+ * dahin, dass jemand eine Seite abwählt und sie im Video trotzdem auftaucht.
+ *
+ * Eine Seite, die es auf einem Weg gar nicht gibt (Depot nur als Bild,
+ * Zeitmuster nur im Video), trägt das im Titel — sonst hakt jemand sie an
+ * und sucht sie danach vergeblich im anderen Format.
+ */
+function renderSeitenAuswahl(): void {
+  const box = $('anSeiten');
+  if (!box) return;
+  const auswahl = leseSeitenAuswahl();
+  box.innerHTML = '';
+
+  const kopf = document.createElement('span');
+  kopf.className = 'hint';
+  kopf.textContent = t('sh.seitenTitel');
+  kopf.title = t('sh.seitenHilfe');
+  box.append(kopf);
+
+  for (const seite of SEITEN) {
+    const lab = document.createElement('label');
+    lab.className = 'an-share-opt';
+    const box2 = document.createElement('input');
+    box2.type = 'checkbox';
+    box2.checked = auswahl.includes(seite.id);
+    box2.addEventListener('change', () => {
+      const naechste = box2.checked
+        ? [...leseSeitenAuswahl(), seite.id]
+        : leseSeitenAuswahl().filter((x) => x !== seite.id);
+      schreibeSeitenAuswahl(naechste);
+      storyIdx = 0;
+      renderSeitenAuswahl();
+      renderSharePreview();
+    });
+    lab.append(box2, document.createTextNode(` ${t(seite.label)}`));
+    /* Nur-Bild/Nur-Video steht im Titel, nicht als Sternchen: Der Hinweis
+     * gehört zur Erklärung der Seite, nicht als Rätsel daneben. */
+    lab.title = t(seite.hilfe);
+    box.append(lab);
+  }
+
+  const alle = document.createElement('button');
+  alle.className = 'dbtn';
+  alle.textContent = auswahl.length === SEITEN.length ? t('sh.alleAus') : t('sh.alleAn');
+  alle.addEventListener('click', () => {
+    schreibeSeitenAuswahl(auswahl.length === SEITEN.length ? [] : ALLE_SEITEN);
+    storyIdx = 0;
+    renderSeitenAuswahl();
+    renderSharePreview();
+  });
+  box.append(alle);
+}
+
 function renderSharePreview(): void {
   const box = $('anSharePreview');
   if (!st || !box) return;
   const betraege = ($('anShareBetraege') as HTMLInputElement | null)?.checked === true;
-  storyKarten = shareStory(shareDatenBauen(betraege));
+  storyKarten = shareStory(shareDatenBauen(betraege), leseSeitenAuswahl());
   if (storyIdx >= storyKarten.length) storyIdx = 0;
-  box.innerHTML = storyKarten[storyIdx]!.svg;
   box.hidden = false;
+  /* Alles abgewählt ist ein gültiger Zustand, kein Absturz: Vorher hätte
+   * `storyKarten[0]!` hier geworfen und die ganze Karte mitgerissen. Der
+   * Hinweis sagt auch, wie man wieder herauskommt. */
+  if (storyKarten.length === 0) {
+    box.innerHTML = `<div class="hint">${esc(t('sh.keineSeiten'))}</div>`;
+    const navLeer = $('anStoryNav');
+    if (navLeer) navLeer.hidden = true;
+    /* Die Punkte MITLEEREN, nicht nur die Navigation verstecken: Sonst
+     * behauptet das Vorlesegerät weiter „Karte 1/5", während gar keine da
+     * ist — im Browser-Durchgang 22.08. genau so aufgefallen. */
+    const dotsLeer = $('anStoryDots');
+    if (dotsLeer) {
+      dotsLeer.textContent = '';
+      dotsLeer.setAttribute('aria-label', t('sh.keineSeiten'));
+    }
+    return;
+  }
+  box.innerHTML = storyKarten[storyIdx]!.svg;
   const nav = $('anStoryNav');
   if (nav) nav.hidden = storyKarten.length < 2;
   const dots = $('anStoryDots');
@@ -8632,7 +8718,7 @@ async function teileDepotGrafik(): Promise<void> {
     }
     // Geteilt wird die Karte, die in der Vorschau steht — nicht heimlich
     // eine andere. Ohne Vorschau (Knopf direkt gedrückt) ist es die erste.
-    const karten = shareStory(daten);
+    const karten = shareStory(daten, leseSeitenAuswahl());
     const karte = karten[Math.min(storyIdx, karten.length - 1)]!;
     const png = await svgAlsPng(karte.svg, KARTE);
     const datei = new File([png], storyDateiname(karte.id, daten), { type: 'image/png' });
@@ -8697,7 +8783,7 @@ async function teileAlleKarten(): Promise<void> {
       return;
     }
     const dateien: File[] = [];
-    for (const karte of shareStory(daten)) {
+    for (const karte of shareStory(daten, leseSeitenAuswahl())) {
       const png = await svgAlsPng(karte.svg, KARTE);
       dateien.push(new File([png], storyDateiname(karte.id, daten), { type: 'image/png' }));
     }
@@ -8785,9 +8871,15 @@ async function erstelleStoryVideo(): Promise<void> {
      * ins Hauptbundle gehört. */
     const { baueAnalyseVideo } = await import('./analyseVideo.js');
     const zeitraumTrades = imZeitraum(st.trades as HistoryTrade[], st.anZeitraum, new Date());
-    const datei = await baueAnalyseVideo(daten, analyseChartDaten(zeitraumTrades), (prozent) => {
-      status.textContent = `${t('sh.videoLaeuft')} … ${prozent} %`;
-    });
+    const datei = await baueAnalyseVideo(
+      daten,
+      analyseChartDaten(zeitraumTrades),
+      (prozent) => {
+        status.textContent = `${t('sh.videoLaeuft')} … ${prozent} %`;
+      },
+      undefined,
+      leseSeitenAuswahl(),
+    );
     zeigeVideoVorschau(datei, shareText(daten));
     status.textContent = t('sh.videoFertig');
   } catch (e) {

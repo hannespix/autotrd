@@ -143,7 +143,16 @@ describe('Quelltext-Pins — Ehrlichkeit und Bundle', () => {
   });
 
   it('Video und UI-Charts teilen die Datenquelle (analyseChartDaten)', () => {
-    expect(dashboard).toMatch(/baueAnalyseVideo\(daten, analyseChartDaten\(/);
+    /* Ohne Zeilenumbrüche zu pinnen (22.08.): Der Aufruf bekam ein
+     * fünftes Argument (Seiten-Auswahl) und wurde dabei mehrzeilig — der
+     * alte Einzeiler-Pin schlug an, obwohl die geprüfte Eigenschaft
+     * unverändert galt. Geprüft wird jetzt der ARGUMENT-BLOCK, nicht sein
+     * Zeilenumbruch. */
+    const i = dashboard.indexOf('baueAnalyseVideo(');
+    expect(i).toBeGreaterThan(-1);
+    const block = dashboard.slice(i, i + 260);
+    expect(block).toContain('daten,');
+    expect(block).toContain('analyseChartDaten(');
   });
 
   it('der Rekorder-Kern behält die MP4-zuerst-Kaskade', () => {
