@@ -103,6 +103,7 @@ import { starteTour, tourAktiv } from './tour.js';
 import { newsChartMarkers, newsForDay } from './newsMarkers.js';
 import {
   adminListUsers,
+  type AdminUserRow,
   adminLiveStatus,
   adminSetAccess,
   adminAbgleich,
@@ -714,12 +715,26 @@ function layout(email: string): string {
            sichtbar. Bewusst OHNE data-panel — die Karte gehört nicht in die
            Workspace-Mechanik (applyPanels würde sonst die Admin-Sichtbarkeit
            mit style.display überschreiben). -->
-      <div class="card" id="adminCard" hidden><div class="sect">Admin · Freischaltung</div><div class="cbody">
+      <div class="card" id="adminCard" hidden><div class="sect">Admin · Freischaltung<span id="admOffen" style="float:right;color:var(--t3)">0</span></div><div class="cbody">
         <div class="hint">${t('lay.neueKonten')}</div>
-        <button class="btn btn-n" id="admReload" style="width:100%;margin:6px 0">Konten laden</button>
+        <!-- Kopfzeile (22.08.): Der vollbreite Lade-Balken war der erste von
+             79 Knoepfen, die sich alle auf 100 % zogen (.btn { width: 100% }).
+             Die id BLEIBT — Zeile ~10928 bindet sie, und der $-Helfer wirft bei
+             fehlendem Element, was die Registrierung des Not-Aus-Handlers
+             direkt darunter mit in den Abgrund risse. -->
+        <div class="row adm-kopf">
+          <button class="hbtn" id="admReload">${t('adm.laden')}</button>
+          <input id="admSuche" class="inp adm-suche" placeholder="${t('adm.filterKonto')}" hidden />
+          <span id="admStand" class="hint mono adm-stand"></span>
+        </div>
+        <!-- Meldeschlitz AUSSERHALB von #admList: Im Erfolgsfall verschwindet
+             die Sperre, die Zeile verlaesst also den Abschnitt OFFEN. Eine
+             Meldung, die nur an der Zeile haengt, kann den Erfolg baulich
+             nicht anzeigen. Die Zeilen-Notiz bleibt zusaetzlich bestehen. -->
+        <div id="admMeldung" class="hint" hidden></div>
         <div id="admList"></div>
         <p id="admErr" class="error" hidden></p>
-        <div class="wl-sec" style="margin-top:14px">Echtgeld-Not-Aus</div>
+        <div class="wl-sec adm-trenner">Echtgeld-Not-Aus</div>
         <div class="hint">${t('lay.notausHinweis')}</div>
         <div class="row" style="gap:6px;align-items:center;margin-top:6px">
           <span id="admKillState" class="mono hint">Zustand: …</span>
@@ -6995,7 +7010,7 @@ let letzterAbgleich: { uid: string; text: string; sperre: boolean } | null = nul
  * Wer gerade entscheidet, ob er freischaltet, will die Unterhaltung neben
  * dem Konto sehen und nicht anstelle davon.
  */
-async function zeigeFaden(uid: string, list: HTMLElement): Promise<void> {
+async function zeigeFaden(uid: string, ziel: HTMLElement): Promise<void> {
   const alt = document.getElementById(`faden-${uid}`);
   if (alt) {
     // Zweiter Klick klappt wieder zu -- ein Knopf, zwei Richtungen.
@@ -7005,7 +7020,7 @@ async function zeigeFaden(uid: string, list: HTMLElement): Promise<void> {
   const box = document.createElement('div');
   box.id = `faden-${uid}`;
   box.className = 'faden-admin';
-  list.append(box);
+  ziel.append(box);
 
   const nachrichten = await adminNachrichten(uid);
   box.innerHTML = '';
@@ -7058,7 +7073,7 @@ async function zeigeFaden(uid: string, list: HTMLElement): Promise<void> {
     void adminAntworten(uid, text)
       .then(() => {
         box.remove();
-        return zeigeFaden(uid, list);
+        return zeigeFaden(uid, ziel);
       })
       .catch((e: unknown) => {
         fehler.textContent = serverText(e);
@@ -7072,174 +7087,470 @@ async function zeigeFaden(uid: string, list: HTMLElement): Promise<void> {
   box.append(feld, reihe);
 }
 
+/* ── Admin-Liste, kompakte Fassung (Owner 22.08.) ──────────────────────────
+ *
+ * Der Befund war messbar, nicht Geschmack: Bei 26 Konten war die Karte
+ * 4 443 px hoch (Desktop) bzw. 6 013 px (390 px) und trug 79 Knoepfe —
+ * jeden einzelnen VOLLBREIT, weil `.btn { width: 100% }` gilt und `admBtn`
+ * inline nur Polsterung und Schriftgroesse setzte. Bei 200 Konten waeren
+ * das rund 30 000 px, also zweiunddreissig Bildschirme.
+ *
+ * Drei Dinge hat der Owner verlangt, und die Gliederung folgt genau ihnen:
+ * uebersichtlich bei sehr vielen Nutzern, Anfragen oben, keine Knopfkolonne.
+ */
+
+/** Der zuletzt geholte Stand — Grundlage fuer Filter und Einzelzeilen-Update. */
+let admZeilen: AdminUserRow[] = [];
+/** Welcher Streifen ist offen? Genau einer, sonst waere die Liste wieder lang. */
+let admOffenerStreifen: string | null = null;
+/** Armierter Knopf und sein Ruecksetz-Timer (zweistufige Bestaetigung). */
+let admArmiert: { btn: HTMLButtonElement; timer: number } | null = null;
+
+function admEntwaffne(): void {
+  if (!admArmiert) return;
+  window.clearTimeout(admArmiert.timer);
+  admArmiert.btn.classList.remove('armed');
+  admArmiert.btn.textContent = admArmiert.btn.dataset['ruhe'] ?? admArmiert.btn.textContent;
+  admArmiert = null;
+}
+
+/**
+ * Ein Knopf, der beim ERSTEN Klick nur scharf wird und erst beim zweiten
+ * ausfuehrt.
+ *
+ * Bewusst KEIN `confirm()`: Browser bieten nach wiederholten Dialogen
+ * „weitere Dialoge unterdruecken" an, und danach liefert `confirm()`
+ * dauerhaft `false`. SPERREN waere dann ein Knopf, der sichtbar nichts tut
+ * — exakt die Fehlersignatur, wegen der `letzterAbgleich` ueberhaupt
+ * existiert (Owner-Fund 22.08.: „ich kann ihn als Admin nicht abgleichen
+ * und entsperren").
+ *
+ * Der armierte Text traegt die VOLLE E-Mail und darf umbrechen: Im Streifen
+ * ist Platz dafuer, in der Zeile waere er es nicht.
+ */
+function admArmBtn(
+  ruhe: string,
+  scharf: string,
+  cls: string,
+  run: () => Promise<void>,
+  nach: () => void,
+): HTMLButtonElement {
+  const b = document.createElement('button');
+  b.className = `btn ${cls} adm-akt`;
+  b.dataset['ruhe'] = ruhe;
+  b.textContent = ruhe;
+  b.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    if (admArmiert?.btn === b) {
+      admEntwaffne();
+      b.disabled = true;
+      run()
+        .then(nach)
+        .catch((e: unknown) => {
+          const err = $('admErr');
+          err.textContent = serverText(e);
+          err.hidden = false;
+          b.disabled = false;
+          void loadAdminList();
+        });
+      return;
+    }
+    admEntwaffne();
+    b.classList.add('armed');
+    b.textContent = scharf;
+    // Nach fuenf Sekunden von selbst entschaerfen — ein scharfer Knopf, der
+    // scharf bleibt, ist beim naechsten Blick eine Falle.
+    admArmiert = { btn: b, timer: window.setTimeout(admEntwaffne, 5000) };
+  });
+  return b;
+}
+
+/** Wartezeit einer Anfrage in Tagen — leer, wenn kein Zeitstempel da ist. */
+function admWartetSeit(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return '';
+  const tage = Math.max(0, Math.floor((Date.now() - ms) / 86_400_000));
+  return `${t('adm.wartetSeit')} ${tage} ${t('adm.tage')}`;
+}
+
+/** Hat dieses Konto einen offenen Vorgang? Die Rangfolge traegt die Sortierung. */
+function admOffenGrund(row: AdminUserRow): 'pending' | 'sperre' | null {
+  if (row.accessLevel === 'pending') return 'pending';
+  if (row.abgleich?.sperre === true) return 'sperre';
+  return null;
+}
+
+/** Farbpunkt der Zeile — Zustand auf einen Blick, aber nie die EINZIGE Anzeige. */
+function admPunktFarbe(row: AdminUserRow): string {
+  if (row.abgleich?.sperre === true) return 'var(--rd)';
+  if (row.accessLevel === 'pending') return 'var(--yl,#d9a441)';
+  if (row.accessLevel === 'blocked') return 'var(--t3)';
+  return 'var(--gn)';
+}
+
+/**
+ * Eine Kontozeile bauen: zweizeiliges Raster plus Aufklapp-Streifen.
+ *
+ * ZWEIZEILIG und nicht mehrspaltig, weil die Karte rund 254 px breit ist
+ * (`.col-l { width: 280px }` minus Polster; per Zieh-Griff 260–560 px).
+ * Der DESKTOP ist damit der engere Fall, nicht die Handy-Schublade — und
+ * eine Media-Query kann eine verstellbare Sidebar-Breite nicht sehen. Also
+ * in jeder Breite gleich gebaut, statt an einer geratenen Grenze umzuklappen.
+ */
+function admZeile(row: AdminUserRow, inOffen: boolean): HTMLElement {
+  const k = document.createElement('div');
+  k.className = 'adm-k';
+  k.dataset['uid'] = row.uid;
+  k.dataset['mail'] = (row.email ?? row.uid).toLowerCase();
+
+  const z = document.createElement('div');
+  z.className = 'adm-z';
+  const z1 = document.createElement('div');
+  z1.className = 'adm-z1';
+  const punkt = document.createElement('span');
+  punkt.className = 'adm-punkt';
+  punkt.style.background = admPunktFarbe(row);
+  const mail = document.createElement('span');
+  mail.className = 'adm-mail mono';
+  mail.textContent = row.email ?? row.uid;
+  mail.title = `${row.email ?? ''}\n${row.uid}`.trim();
+  const ueb = document.createElement('button');
+  ueb.className = 'adm-ueb';
+  ueb.textContent = '⋯';
+  ueb.title = t('adm.mehrAktionen');
+  ueb.setAttribute('aria-label', t('adm.mehrAktionen'));
+  z1.append(punkt, mail, ueb);
+
+  const z2 = document.createElement('div');
+  z2.className = 'adm-z2';
+  if (inOffen) {
+    /* „wartet seit" NUR bei einer Registrierung. Bei einer Abgleich-Sperre
+     * wartet niemand — das Buch ist gesperrt, und der Chip daneben sagt es
+     * bereits. Der Satz stand dort auch nur abgeschnitten („wartet seit
+     * 0…"), weil er sich den Platz mit Stufenwort und Chip teilen musste. */
+    if (row.accessLevel === 'pending') {
+      const seit = document.createElement('span');
+      seit.className = 'adm-meta mono';
+      seit.textContent = admWartetSeit(row.requestedAt);
+      seit.title = row.requestedAt ?? '';
+      z2.append(seit);
+    }
+    /* Die Zugangsstufe als WORT — aber NUR bei den Sperr-Zeilen. Dieser
+     * Abschnitt mischt zwei Sorten: wartende Registrierungen und
+     * FREIGESCHALTETE Konten, deren Buch von der Messung gesperrt wurde.
+     * Ohne das Wort waere der Unterschied nur der 8-px-Punkt, und Farbe
+     * allein ist auf Touch keine Anzeige.
+     *
+     * Bei einer wartenden Registrierung steht die Stufe dagegen schon im
+     * Satz daneben („wartet seit 11 T"). Sie ein zweites Mal zu setzen hat
+     * im Bild genau das abgeschnitten, was man dort liest: Aus „wartet seit
+     * 11 T" wurde „wartet seit 1…". */
+    if (row.accessLevel !== 'pending') {
+      const stufe = document.createElement('span');
+      stufe.className = 'adm-meta';
+      stufe.textContent = ACCESS_BADGE[row.accessLevel];
+      z2.append(stufe);
+    }
+  } else {
+    const perf = document.createElement('span');
+    perf.className = 'adm-pnl mono';
+    if (row.pnl !== null) {
+      const s = row.pnl >= 0 ? '+' : '';
+      perf.textContent = `${s}${row.pnl.toFixed(0)} $`;
+      perf.style.color = row.pnl > 0 ? 'var(--gn)' : row.pnl < 0 ? 'var(--rd)' : 'var(--t3)';
+      if (row.equity !== null) perf.title = `${t('adm.equity')}: ${row.equity.toFixed(2)} $`;
+    } else {
+      perf.textContent = '—';
+      perf.style.color = 'var(--t3)';
+    }
+    const meta = document.createElement('span');
+    meta.className = 'adm-meta mono';
+    meta.textContent = `${row.trades ?? 0} ${t('adm.trades')} · ${t('adm.reife')} ${row.reife.erfuellt}/${row.reife.gesamt}${row.reife.bereit ? ' ✓' : ''}`;
+    meta.title = reifeFazit(row.reife);
+    z2.append(perf, meta);
+  }
+  /* Markenzone: kuerzt NIE. Der Sperr-Chip ist die eine Sache, die in dieser
+   * Liste niemals geschluckt werden darf — genau seine Unsichtbarkeit war
+   * der Owner-Befund vom 21.08. Der Risiko-Chip ist dagegen in den Streifen
+   * gewandert: Ein Vermerk, den JEDES neue Konto traegt, ist in einer
+   * Uebersicht Rauschen, das die eine rote Zeile versteckt. */
+  const mark = document.createElement('span');
+  mark.className = 'adm-mark';
+  if (row.abgleich?.sperre) {
+    const chip = document.createElement('span');
+    chip.className = 'stag t-sell';
+    chip.textContent = t('adm.abgleichKurz');
+    chip.title = row.abgleich.fehlbestand > 0
+      ? `${row.abgleich.fehlbestand} ${t('adm.abgleichFehlbestand')}`
+      : t('adm.abgleichKontoGrob');
+    mark.append(chip);
+  }
+  if (row.admin) {
+    const chip = document.createElement('span');
+    chip.className = 'stag';
+    chip.textContent = t('adm.admin');
+    mark.append(chip);
+  }
+  if (inOffen && row.accessLevel === 'pending' && row.uid !== st?.uid) {
+    mark.append(
+      admBtn(t('adm.freischalten'), async () => {
+        await adminSetAccess(row.uid, 'approved');
+      }, 'btn-g', row.uid),
+    );
+  }
+  z2.append(mark);
+  z.append(z1, z2);
+
+  const strip = document.createElement('div');
+  strip.className = 'adm-strip';
+  strip.hidden = true;
+  /* ZWEI getrennte Bloecke, und das ist der Kern: `.adm-verw` wird beim
+   * Neuzeichnen der Zeile ERNEUT gebaut, `.adm-faden` NIE angefasst. Damit
+   * kann ein Verwaltungsklick einen offenen Faden oder einen halb getippten
+   * Antworttext nicht mehr fressen — #417 wird baulich unmoeglich statt per
+   * Merker verwaltet. */
+  const verw = document.createElement('div');
+  verw.className = 'adm-verw';
+  const faden = document.createElement('div');
+  faden.className = 'adm-faden';
+  strip.append(verw, faden);
+  admFuelleVerw(verw, row, faden);
+
+  const auf = (ev: Event): void => {
+    ev.stopPropagation();
+    admEntwaffne();
+    const offen = !strip.hidden;
+    if (admOffenerStreifen && admOffenerStreifen !== row.uid) {
+      const anderer = $('admList').querySelector<HTMLElement>(`.adm-k[data-uid="${admOffenerStreifen}"] .adm-strip`);
+      if (anderer) anderer.hidden = true;
+    }
+    strip.hidden = offen;
+    admOffenerStreifen = offen ? null : row.uid;
+  };
+  ueb.addEventListener('click', auf);
+  z.addEventListener('click', auf);
+
+  k.append(z, strip);
+  if (admOffenerStreifen === row.uid) strip.hidden = false;
+  return k;
+}
+
+/** Der Inhalt des Verwaltungs-Streifens — alles, was heute als Chip-Gedraenge klebte. */
+function admFuelleVerw(verw: HTMLElement, row: AdminUserRow, fadenBlock: HTMLElement): void {
+  verw.innerHTML = '';
+  const zeile = (text: string, farbe?: string): void => {
+    const d = document.createElement('div');
+    d.className = 'hint mono';
+    d.textContent = text;
+    if (farbe) d.style.color = farbe;
+    verw.append(d);
+  };
+  zeile(row.uid);
+  if (row.risiko) zeile(`${t('adm.risikoOk')} ${row.risiko.at.slice(0, 10)} · ${row.risiko.version}`);
+  if (row.equity !== null) zeile(`${t('adm.equity')}: ${row.equity.toFixed(2)} $`);
+  zeile(reifeFazit(row.reife));
+  if (row.abgleich?.sperre) {
+    zeile(
+      row.abgleich.fehlbestand > 0
+        ? `${row.abgleich.fehlbestand} ${t('adm.abgleichFehlbestand')}`
+        : t('adm.abgleichKontoGrob'),
+      'var(--rd)',
+    );
+  }
+  if (letzterAbgleich?.uid === row.uid) {
+    zeile(letzterAbgleich.text, letzterAbgleich.sperre ? 'var(--rd)' : 'var(--gn)');
+  }
+  // Das eigene Konto listet der Server mit, aendern lehnt er ab — dieselbe
+  // Regel hier: keine Knoepfe, statt Knoepfe, die immer scheitern.
+  if (row.uid === st?.uid) return;
+
+  const nach = (): void => { void loadAdminList(); };
+  /* Einstufig, weil herstellend statt zerstoerend: Ein FREISCHALTEN gibt
+   * Zugang zurueck. Das SPERREN daneben ist armiert. */
+  if (row.accessLevel !== 'approved') {
+    verw.append(
+      admBtn(t('adm.freischalten'), async () => {
+        await adminSetAccess(row.uid, 'approved');
+      }, 'btn-g', row.uid),
+    );
+  } else {
+    verw.append(
+      admArmBtn(
+        t('adm.sperren'),
+        `${t('adm.wirklichSperren')} ${row.email ?? row.uid}`,
+        'btn-r',
+        async () => { await adminSetAccess(row.uid, 'blocked'); },
+        nach,
+      ),
+    );
+  }
+  /* Armiert, und ausdruecklich ROT statt neutral: Heute sieht die
+   * folgenreichste Aktion der Karte aus wie NACHRICHTEN — der Ernannte darf
+   * danach den Ernenner entlassen. */
+  verw.append(
+    admArmBtn(
+      row.admin ? t('adm.adminEntziehen') : t('adm.zumAdmin'),
+      `${row.admin ? t('adm.wirklichAdminNehmen') : t('adm.wirklichAdminGeben')} ${row.email ?? row.uid}`,
+      'btn-r',
+      async () => { await adminSetAdmin(row.uid, !row.admin); },
+      nach,
+    ),
+  );
+  if (row.abgleich) {
+    /* „Abgleichen" hebt keine Sperre auf, es MISST neu — ist die Drift weg,
+     * faellt die Sperre von selbst. Deshalb einstufig, aber nicht harmlos
+     * beschriftet: Die Messung kann ein Konto auch neu sperren. */
+    verw.append(
+      admBtn(t('adm.abgleichen'), async () => {
+        const erg = await adminAbgleich(row.uid);
+        letzterAbgleich = {
+          uid: row.uid,
+          sperre: erg.sperre,
+          text: !erg.geprueft
+            ? t('adm.abgleichKeinBroker')
+            : erg.sperre
+              ? `${t('adm.abgleichBleibt')} ${erg.grund ?? ''}`.trim()
+              : t('adm.abgleichGeloest'),
+        };
+      }, 'btn-n', row.uid),
+      admArmBtn(
+        t('adm.vormerken'),
+        `${t('adm.wirklichVormerken')} ${row.email ?? row.uid}`,
+        'btn-r',
+        async () => {
+          const erg = await adminUebernahmeVormerken(row.uid);
+          letzterAbgleich = {
+            uid: row.uid,
+            sperre: erg.vorgemerkt,
+            text: erg.vorgemerkt
+              ? t('adm.vormerkGesetzt')
+              : `${t('adm.vormerkNichtNoetig')} ${erg.abgleich.grund ?? ''}`.trim(),
+          };
+        },
+        nach,
+      ),
+    );
+  }
+  /* Eigener Knopf statt `admBtn`: Der laedt nach jeder Aktion die Liste neu
+   * — der eben aufgeklappte Faden waere sofort wieder weg (#417). */
+  const fadenBtn = document.createElement('button');
+  fadenBtn.className = 'btn btn-n adm-akt';
+  fadenBtn.textContent = t('adm.faden');
+  fadenBtn.addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    fadenBtn.disabled = true;
+    void zeigeFaden(row.uid, fadenBlock).finally(() => { fadenBtn.disabled = false; });
+  });
+  verw.append(fadenBtn);
+}
+
+/** Ueberschrift eines Abschnitts. */
+function admGruppe(text: string, n: number): HTMLElement {
+  const h = document.createElement('div');
+  h.className = 'adm-grp';
+  h.textContent = `${text} (${n})`;
+  return h;
+}
+
+/**
+ * Die Liste zeichnen — Offen oben, darunter das vollstaendige Register.
+ *
+ * Konten aus OFFEN erscheinen im Register ERNEUT: Offen ist eine SICHT,
+ * keine Umlagerung. Sonst faende der Filter ein Konto nicht, das gerade
+ * oben steht.
+ */
+export function renderAdminRows(rows: AdminUserRow[]): void {
+  const list = $('admList');
+  admZeilen = rows;
+  list.innerHTML = '';
+  const offen = rows
+    .filter((r) => admOffenGrund(r) !== null)
+    .sort((a, b) => {
+      const rang = (r: AdminUserRow): number => (admOffenGrund(r) === 'pending' ? 0 : 1);
+      if (rang(a) !== rang(b)) return rang(a) - rang(b);
+      const zeit = (r: AdminUserRow): number =>
+        Date.parse(r.requestedAt ?? r.abgleich?.at ?? '') || 0;
+      return zeit(a) - zeit(b); // aeltestes zuerst
+    });
+  list.append(admGruppe(t('adm.offen'), offen.length));
+  const offenBox = document.createElement('div');
+  offenBox.className = 'adm-liste offen';
+  offenBox.id = 'admOffenBox';
+  if (offen.length === 0) {
+    const leer = document.createElement('div');
+    leer.className = 'hint';
+    leer.textContent = t('adm.nichtsOffen');
+    offenBox.append(leer);
+  } else {
+    for (const r of offen) offenBox.append(admZeile(r, true));
+  }
+  list.append(offenBox);
+
+  list.append(admGruppe(t('adm.alleKonten'), rows.length));
+  const regBox = document.createElement('div');
+  regBox.className = 'adm-liste register';
+  regBox.id = 'admRegBox';
+  const gruppen: Array<[AdminUserRow['accessLevel'], string]> = [
+    ['pending', t('adm.gruppeWartend')],
+    ['blocked', t('adm.gruppeGesperrt')],
+    ['approved', t('adm.gruppeFrei')],
+  ];
+  for (const [stufe, name] of gruppen) {
+    const teil = rows.filter((r) => r.accessLevel === stufe);
+    if (teil.length === 0) continue; // leere Gruppe entfaellt
+    regBox.append(admGruppe(name, teil.length));
+    for (const r of teil) regBox.append(admZeile(r, false));
+  }
+  list.append(regBox);
+
+  const offenZahl = $('admOffen');
+  offenZahl.textContent = String(offen.length);
+  offenZahl.style.color = offen.length > 0 ? 'var(--ac)' : 'var(--t3)';
+  $('admStand').textContent = `${rows.length} ${t('adm.kontenStand')} · ${t('adm.geladen')} ${new Date().toLocaleTimeString(sprachWahl() === 'en' ? 'en-US' : 'de-DE', { hour: '2-digit', minute: '2-digit' })}`;
+  // Filter erst ab einer Groesse, die ihn braucht — bei acht Konten waere er
+  // Buerokratie.
+  const suche = $('admSuche') as HTMLInputElement;
+  suche.hidden = rows.length <= 12;
+  admFiltere();
+  admZeigeMeldung();
+}
+
+/** Filtertext anwenden — rein im Browser, ohne Serveraufruf. */
+function admFiltere(): void {
+  const suche = $('admSuche') as HTMLInputElement;
+  const q = suche.value.trim().toLowerCase();
+  for (const k of $('admList').querySelectorAll<HTMLElement>('.adm-k')) {
+    k.hidden = q.length > 0 && !(k.dataset['mail'] ?? '').includes(q);
+  }
+}
+
+/**
+ * Die Abgleich-Meldung ueber der Liste.
+ *
+ * Sie steht AUSSERHALB von #admList, und das ist keine Kosmetik: Im
+ * Erfolgsfall verschwindet die Sperre, die Zeile verlaesst also den
+ * Abschnitt OFFEN. Eine Meldung, die nur an der Zeile haengt, kann den
+ * Erfolg baulich nicht anzeigen.
+ */
+function admZeigeMeldung(): void {
+  const m = $('admMeldung');
+  const la = letzterAbgleich;
+  if (!la) { m.hidden = true; return; }
+  const wer = admZeilen.find((r) => r.uid === la.uid);
+  m.textContent = `${wer?.email ?? la.uid} — ${la.text}`;
+  m.style.color = la.sperre ? 'var(--rd)' : 'var(--gn)';
+  m.hidden = false;
+}
+
 async function loadAdminList(): Promise<void> {
   const list = $('admList');
   const err = $('admErr');
   err.hidden = true;
+  admEntwaffne();
   list.innerHTML = `<div class="hint">${t('adm.laedt')}</div>`;
   try {
-    const rows = await adminListUsers();
-    list.innerHTML = '';
-    for (const row of rows) {
-      const line = document.createElement('div');
-      line.className = 'row';
-      line.style.cssText = 'gap:6px;align-items:center;margin:4px 0;flex-wrap:wrap';
-      const who = document.createElement('span');
-      who.className = 'mono';
-      who.style.cssText = 'flex:1;min-width:140px;overflow:hidden;text-overflow:ellipsis';
-      who.textContent = row.email ?? row.uid;
-      who.title = row.uid;
-      const badge = document.createElement('span');
-      badge.className = 'hint';
-      badge.textContent = ACCESS_BADGE[row.accessLevel] + (row.admin ? ` · ${t('adm.admin')}` : '');
-      // Gesamt-P&L des Kontos (Owner 02.08.) — Formel identisch zur
-      // Performance-Karte des Users, gefärbt nach Vorzeichen.
-      const perf = document.createElement('span');
-      perf.className = 'mono';
-      if (row.pnl !== null) {
-        const s = row.pnl >= 0 ? '+' : '';
-        perf.textContent = `${s}${row.pnl.toFixed(2)} $`
-          + (row.pnlPct !== null ? ` (${s}${row.pnlPct.toFixed(1)} %)` : '');
-        perf.style.color = row.pnl > 0 ? 'var(--gn)' : row.pnl < 0 ? 'var(--rd)' : 'var(--t3)';
-        if (row.equity !== null) perf.title = `${t('adm.equity')}: ${row.equity.toFixed(2)} $`;
-      } else {
-        perf.textContent = '—';
-        perf.style.color = 'var(--t3)';
-      }
-      /* Konten-Übersicht (Owner 13.08.): Trades + Reife-Fortschritt je Konto.
-       * Der Befund kommt vom Server aus liveGate.reifeFuerKonto — derselben
-       * Funktion, die die Echtgeld-Freigabe entscheidet. Die Karte zeigt
-       * also den echten Gate-Stand, keine eigene Näherung. */
-      const reife = document.createElement('span');
-      reife.className = 'mono hint';
-      reife.style.whiteSpace = 'nowrap';
-      const trades = row.trades ?? 0;
-      reife.textContent = `${trades} ${t('adm.trades')} · ${t('adm.reife')} ${row.reife.erfuellt}/${row.reife.gesamt}`
-        + (row.reife.bereit ? ' ✓' : '');
-      reife.title = reifeFazit(row.reife);
-      if (row.reife.bereit) reife.style.color = 'var(--gn)';
-      line.append(who, perf, reife, badge);
-      /* Abgleich-Sperre je Konto sichtbar (Owner 21.08.: „diese Sperre von
-       * anderen Usern für Admin auch sichtbar machen").
-       *
-       * Der Heartbeat meldete nur „1 Konten gesperrt" — welches, stand
-       * nirgends. Der Chip erscheint NUR bei aktiver Sperre: Ein grünes
-       * „alles gut" an jedem Konto wäre Rauschen, das die eine rote Zeile
-       * versteckt, um die es geht. */
-      /* Risiko-Bestätigung als Chip (Owner 22.08.). Gezeigt wird die
-       * FASSUNG mit Datum, nicht ein Häkchen: Im Streitfall zählt, WELCHEM
-       * Text jemand wann zugestimmt hat. Bestandskonten (vor der Pflicht
-       * angelegt) tragen keinen Vermerk — dort steht bewusst nichts statt
-       * eines roten Warnzeichens, denn sie sind nicht säumig. */
-      if (row.risiko) {
-        const rc = document.createElement('span');
-        rc.className = 'stag';
-        rc.style.whiteSpace = 'nowrap';
-        rc.textContent = `${t('adm.risikoOk')} ${row.risiko.at.slice(0, 10)}`;
-        rc.title = `${t('adm.risikoFassung')} ${row.risiko.version}`;
-        line.append(rc);
-      }
-      if (row.abgleich?.sperre) {
-        const chip = document.createElement('span');
-        chip.className = 'stag t-sell';
-        chip.style.whiteSpace = 'nowrap';
-        chip.textContent = t('adm.abgleichGesperrt');
-        chip.title = row.abgleich.fehlbestand > 0
-          ? `${row.abgleich.fehlbestand} ${t('adm.abgleichFehlbestand')}`
-          : t('adm.abgleichKontoGrob');
-        line.append(chip);
-      }
-      // Das eigene Konto listet der Server mit, ändern lehnt er ab — dieselbe
-      // Regel hier: keine Knöpfe, statt Knöpfe, die immer scheitern.
-      if (row.uid !== st?.uid) {
-        line.append(
-          admBtn(row.accessLevel === 'approved' ? t('adm.sperren') : t('adm.freischalten'), async () => {
-            await adminSetAccess(row.uid, row.accessLevel === 'approved' ? 'blocked' : 'approved');
-          }, row.accessLevel === 'approved' ? 'btn-r' : 'btn-g'),
-          admBtn(row.admin ? t('adm.adminEntziehen') : t('adm.zumAdmin'), async () => {
-            await adminSetAdmin(row.uid, !row.admin);
-          }, 'btn-n'),
-        );
-        /* „Abgleichen" nur, wo es etwas zu prüfen gibt — also bei
-         * verbundenem Broker. Der Knopf hebt keine Sperre auf, er misst
-         * neu: Ist die Drift weg (etwa weil eine Order inzwischen
-         * durchlief), fällt die Sperre von selbst. Bleibt sie, sagt die
-         * Antwort warum — und der Weg heißt dann „Depot übernehmen",
-         * bestätigt vom Konto-Inhaber. */
-        if (row.abgleich) {
-          line.append(
-            admBtn(t('adm.abgleichen'), async () => {
-              const erg = await adminAbgleich(row.uid);
-              /* In den Merker, NICHT in `err`: Gleich nach dieser Funktion
-               * lädt `admBtn` die Liste neu, und deren erste Zeile ist
-               * `err.hidden = true`. Die Meldung wäre weg, bevor sie jemand
-               * liest (Owner-Fund 22.08.). */
-              letzterAbgleich = {
-                uid: row.uid,
-                sperre: erg.sperre,
-                text: !erg.geprueft
-                  ? t('adm.abgleichKeinBroker')
-                  : erg.sperre
-                    ? `${t('adm.abgleichBleibt')} ${erg.grund ?? ''}`.trim()
-                    : t('adm.abgleichGeloest'),
-              };
-            }, 'btn-n'),
-          );
-          /* „Übernahme vormerken" — der Weg AUS der Sperre, ohne fremdes
-           * Geld anzufassen (Owner-Entscheidung 22.08.). Der Server misst
-           * erneut und legt den Vermerk nur an, wenn eine Sperre wirklich
-           * gemessen wurde; der Konto-Inhaber löst die Übernahme dann
-           * selbst aus. Ein Admin, der fremde Bücher überschreiben kann,
-           * wäre ein stiller Eingriff in fremdes Geld — und bei einer
-           * Abweichung aus einem Broker-Aussetzer zerstörte die
-           * „Heilung" korrekte Daten. */
-          line.append(
-            admBtn(t('adm.vormerken'), async () => {
-              const erg = await adminUebernahmeVormerken(row.uid);
-              letzterAbgleich = {
-                uid: row.uid,
-                sperre: erg.vorgemerkt,
-                text: erg.vorgemerkt
-                  ? t('adm.vormerkGesetzt')
-                  : `${t('adm.vormerkNichtNoetig')} ${erg.abgleich.grund ?? ''}`.trim(),
-              };
-            }, 'btn-n'),
-          );
-        }
-        /* Nachrichten je Konto (Owner 22.08.: "diese soll der Admin spaeter
-         * fuer jeden Account auch abrufen koennen"). Aufklappbar statt
-         * immer offen: Bei zwanzig Konten waere eine Liste aus zwanzig
-         * Faeden keine Uebersicht mehr. */
-        /* Eigener Knopf statt `admBtn`: Der laedt nach jeder Aktion die
-         * Liste neu -- der eben angehaengte Faden waere sofort wieder weg.
-         * Genau dieser Griff hat am 22.08. schon einmal eine Meldung
-         * verschluckt (#417). */
-        const fadenBtn = document.createElement('button');
-        fadenBtn.className = 'btn btn-n';
-        fadenBtn.style.cssText = 'padding:3px 8px;font-size:.78rem';
-        fadenBtn.textContent = t('adm.faden');
-        fadenBtn.addEventListener('click', () => {
-          fadenBtn.disabled = true;
-          void zeigeFaden(row.uid, list).finally(() => {
-            fadenBtn.disabled = false;
-          });
-        });
-        line.append(fadenBtn);
-      }
-      list.append(line);
-      /* Das Ergebnis des letzten Abgleichs steht unter DEM Konto, das es
-       * betrifft — und überlebt damit den Neuaufbau, der es vorher fraß. */
-      if (letzterAbgleich?.uid === row.uid) {
-        const note = document.createElement('div');
-        note.className = 'hint';
-        note.style.cssText = `margin:-2px 0 6px;padding-left:4px;color:${
-          letzterAbgleich.sperre ? 'var(--rd)' : 'var(--gn)'
-        }`;
-        note.textContent = letzterAbgleich.text;
-        list.append(note);
-      }
-    }
-    if (rows.length === 0) list.innerHTML = `<div class="hint">${t('adm.keineKonten')}</div>`;
+    renderAdminRows(await adminListUsers());
   } catch (e) {
     list.innerHTML = '';
     err.textContent = serverText(e);
@@ -7267,21 +7578,72 @@ async function ladeKillSwitch(): Promise<void> {
   }
 }
 
-/** Kleiner Aktions-Knopf: führt aus, lädt danach die Liste neu, zeigt Fehler ehrlich. */
-function admBtn(label: string, run: () => Promise<void>, cls: string): HTMLButtonElement {
+/**
+ * Genau EINE Zeile neu zeichnen, statt die ganze Liste (22.08.).
+ *
+ * ── Warum das die eigentliche Aenderung ist ───────────────────────────────
+ *
+ * `loadAdminList()` nach jeder Aktion war die Wurzel von fuenf Folgefehlern
+ * gleichzeitig: Der Filtertext verlor seine Wirkung, die Scrollposition
+ * sprang, ein offener Streifen schloss sich, der eben aufgeklappte
+ * Nachrichten-Faden wurde gefressen (#417) — und jeder Klick kostete eine
+ * volle Runde ueber alle Konten gegen dasselbe Tageslimit.
+ *
+ * Der naheliegende Weg waere, diesen Zustand zu VERWALTEN: Merker fuer
+ * Filter, Scroll, offenen Streifen. Genau das leckt an jeder neuen Stelle
+ * wieder. Also wird die Fehlerklasse geloescht statt gepflegt: Der Faden
+ * (`.adm-faden`) wird nie angefasst, nur `.adm-z` und `.adm-verw` entstehen
+ * neu. Wechselt die Zeile den Abschnitt, hilft nur der volle Aufbau — das
+ * ist der seltene Fall, und dann ist die Umsortierung auch gewollt.
+ */
+async function admAktualisiereZeile(uid: string): Promise<void> {
+  const rows = await adminListUsers();
+  const vorher = admZeilen.find((r) => r.uid === uid);
+  const nachher = rows.find((r) => r.uid === uid);
+  admZeilen = rows;
+  const k = $('admList').querySelector<HTMLElement>(`.adm-k[data-uid="${uid}"]`);
+  // Abschnittswechsel oder Zeile verschwunden ⇒ voller Aufbau.
+  if (!k || !nachher || !vorher
+    || (admOffenGrund(vorher) === null) !== (admOffenGrund(nachher) === null)
+    || vorher.accessLevel !== nachher.accessLevel) {
+    renderAdminRows(rows);
+    const neu = $('admList').querySelector<HTMLElement>(`.adm-k[data-uid="${uid}"]`);
+    neu?.classList.add('adm-puls');
+    return;
+  }
+  const inOffen = k.closest('#admOffenBox') !== null;
+  const frisch = admZeile(nachher, inOffen);
+  k.querySelector('.adm-z')?.replaceWith(frisch.querySelector('.adm-z')!);
+  const verw = k.querySelector<HTMLElement>('.adm-verw');
+  const faden = k.querySelector<HTMLElement>('.adm-faden');
+  if (verw && faden) admFuelleVerw(verw, nachher, faden);
+  k.classList.add('adm-puls');
+  window.setTimeout(() => k.classList.remove('adm-puls'), 1400);
+  admZeigeMeldung();
+}
+
+/** Kleiner Aktions-Knopf: führt aus, frischt DIESE Zeile auf, zeigt Fehler ehrlich. */
+function admBtn(
+  label: string,
+  run: () => Promise<void>,
+  cls: string,
+  uid: string,
+): HTMLButtonElement {
   const b = document.createElement('button');
-  b.className = `btn ${cls}`;
-  b.style.cssText = 'padding:3px 8px;font-size:.78rem';
+  b.className = `btn ${cls} adm-akt`;
   b.textContent = label;
-  b.addEventListener('click', () => {
+  b.addEventListener('click', (ev) => {
+    ev.stopPropagation();
     b.disabled = true;
     run()
-      .then(() => loadAdminList())
+      .then(() => admAktualisiereZeile(uid))
       .catch((e: unknown) => {
         const err = $('admErr');
         err.textContent = serverText(e);
         err.hidden = false;
         b.disabled = false;
+        // Bei einem Fehler ist der Zustand unklar — dann lieber ganz frisch.
+        void loadAdminList();
       });
   });
   return b;
@@ -10926,6 +11288,9 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     void schliessePositionen(gewaehlt);
   });
   $('admReload').addEventListener('click', () => void loadAdminList().then(ladeKillSwitch));
+  // Filtert rein im Browser ueber den geholten Stand — kein Serveraufruf je
+  // Tastendruck, und das Tageslimit der Admin-Callable bleibt unberuehrt.
+  $('admSuche').addEventListener('input', admFiltere);
   $('admKillBtn').addEventListener('click', () => {
     const btn = $('admKillBtn') as HTMLButtonElement;
     const anschalten = btn.dataset['an'] === '1';

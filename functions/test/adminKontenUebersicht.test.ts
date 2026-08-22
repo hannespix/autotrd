@@ -38,10 +38,20 @@ describe('Admin-Konten-Übersicht (Quelltext-Wächter)', () => {
     /* Seit Tranche 5i (19.08.) tragen die beiden Wörter Schlüssel. Geprüft
      * wird weiterhin dasselbe: dass Trades UND Reife-Fortschritt in
      * derselben Zeile stehen — nur nicht mehr über ihre Rechtschreibung. */
-    expect(dashboard).toContain("${trades} ${t('adm.trades')} · ${t('adm.reife')} ");
-    expect(dashboard).toContain('${row.reife.erfuellt}/${row.reife.gesamt}');
-    expect(dashboard).toContain('reife.title = reifeFazit(row.reife);');
-    expect(dashboard).toContain('line.append(who, perf, reife, badge);');
+    /* Nachgezogen am 22.08. beim Umbau der Karte: Gepinnt wird jetzt das
+     * VERHALTEN statt der Variablennamen. Beide Angaben stehen weiterhin in
+     * derselben Zeile (`.adm-z2`), das Fazit hängt weiterhin als `title`
+     * daran — nur heisst die Variable `meta` statt `reife`, und die Zeile
+     * wird nicht mehr mit `line.append(...)` zusammengesetzt.
+     *
+     * Ein Waechter, den man beim Umbau anfasst, ist eine Gefahr: Er koennte
+     * eine echte Regression durchwinken. Deshalb pinnt er hier ENGER als
+     * vorher — Trades und Reife muessen im SELBEN Textknoten stehen, nicht
+     * nur beide irgendwo vorkommen. */
+    expect(dashboard).toContain("${t('adm.trades')} · ${t('adm.reife')} ${row.reife.erfuellt}/${row.reife.gesamt}");
+    expect(dashboard).toContain('meta.title = reifeFazit(row.reife);');
+    // Und sie sitzen in der Kontozeile, nicht irgendwo sonst.
+    expect(dashboard).toContain("meta.className = 'adm-meta mono';");
   });
 
   it('der Frontend-Typ kennt beide Felder (sonst fällt der Anschluss still weg)', () => {

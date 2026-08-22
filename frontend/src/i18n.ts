@@ -792,6 +792,33 @@ export const DE = {
    * „günstig", „Chance", „überverkauft" oder „dürfte" tragen eine Erwartung
    * über den Kursverlauf — auch wenn sie technisch gemeint sind — und wären
    * Anlageberatung. Der Wächter in signalErklaerung.test.ts prüft die Liste. */
+  /* ── Admin-Karte, kompakte Fassung (22.08.) ───────────────────────────
+   * Der Owner-Befund war "verschwenderisch viele und zu grosse fette
+   * buttons" bei acht Konten — gemessen 79 Knoepfe, alle vollbreit. Diese
+   * Schluessel tragen die Gliederung, die das ersetzt. */
+  'adm.laden': 'Konten laden',
+  'adm.offen': 'Offen',
+  'adm.alleKonten': 'Alle Konten',
+  'adm.nichtsOffen': 'Nichts offen.',
+  'adm.wartetSeit': 'wartet seit',
+  'adm.tage': 'T',
+  'adm.gruppeWartend': 'Wartend',
+  'adm.gruppeGesperrt': 'Gesperrt',
+  'adm.gruppeFrei': 'Freigeschaltet',
+  'adm.filterKonto': 'Konto filtern …',
+  'adm.mehrAktionen': 'Mehr Aktionen',
+  'adm.abgleichKurz': 'ABGLEICH',
+  'adm.kontenStand': 'Konten',
+  'adm.geladen': 'geladen',
+  /* Armierung statt confirm(): Browser bieten nach wiederholten Dialogen
+   * "weitere Dialoge unterdruecken" an; danach liefert confirm() dauerhaft
+   * false, und SPERREN waere ein Knopf, der sichtbar nichts tut — genau die
+   * Fehlersignatur, wegen der letzterAbgleich ueberhaupt existiert. */
+  'adm.wirklichSperren': 'Wirklich sperren?',
+  'adm.wirklichAdminGeben': 'Wirklich zum Admin machen?',
+  'adm.wirklichAdminNehmen': 'Wirklich Admin entziehen?',
+  'adm.wirklichVormerken': 'Wirklich Übernahme vormerken?',
+  'adm.nochmalTippen': 'Nochmal tippen zum Bestätigen',
   'se.soGezaehlt': 'so hat die Regel gezählt. Keine Empfehlung.',
   'se.rsi': 'RSI',
   'se.macd': 'MACD',
@@ -2297,6 +2324,25 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'ew.knappVerfehlt': 'just missed',
   'ew.trendSoloErzeugt': 'created by trend rule anyway',
   'ew.knappTitel': 'Symbols that missed the entry confluence by exactly one vote. When the regime light is on trend, the trend rule still turns them into a buy signal.',
+  'adm.laden': 'Load accounts',
+  'adm.offen': 'Open',
+  'adm.alleKonten': 'All accounts',
+  'adm.nichtsOffen': 'Nothing open.',
+  'adm.wartetSeit': 'waiting for',
+  'adm.tage': 'd',
+  'adm.gruppeWartend': 'Waiting',
+  'adm.gruppeGesperrt': 'Blocked',
+  'adm.gruppeFrei': 'Approved',
+  'adm.filterKonto': 'Filter account \u2026',
+  'adm.mehrAktionen': 'More actions',
+  'adm.abgleichKurz': 'RECONCILE',
+  'adm.kontenStand': 'accounts',
+  'adm.geladen': 'loaded',
+  'adm.wirklichSperren': 'Really block?',
+  'adm.wirklichAdminGeben': 'Really grant admin?',
+  'adm.wirklichAdminNehmen': 'Really revoke admin?',
+  'adm.wirklichVormerken': 'Really flag for import?',
+  'adm.nochmalTippen': 'Tap again to confirm',
   'se.soGezaehlt': 'this is how the rule counted. Not a recommendation.',
   'se.rsi': 'RSI',
   'se.macd': 'MACD',
