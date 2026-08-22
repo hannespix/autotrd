@@ -44,7 +44,21 @@ const VIDEO_LOOK: ChartLook = {
   rd: FARBE.rot,
   kat: [FARBE.akzent, '#8b7cff', FARBE.gruen, FARBE.rot, '#5ce4fb', '#40e0b4', '#ff8290', FARBE.text2],
   dunkel: true,
-  animation: true,
+  /* AUS — und das ist der Kern des Ruckelns (Owner 22.08.: „das andere
+   * Video läuft langsam und ruckelig").
+   *
+   * ECharts treibt seine Animation mit der WANDUHR (eigener rAF-Takt). Die
+   * Offline-Aufnahme malt aber nicht in Echtzeit: Sie rendert Frame für
+   * Frame, so schnell der Encoder mitkommt. Zwischen zwei ausgegebenen
+   * Frames springt die Chart-Animation deshalb mal weit, mal kaum — je
+   * nachdem, wie lange das Encodieren des letzten gedauert hat. Genau das
+   * sieht man als Ruckeln, und es wird schlimmer, je langsamer das Gerät
+   * ist. Das Story-Video malt alles aus `tMs` und war deshalb flüssig.
+   *
+   * Ohne ECharts-Animation kommt die Bewegung aus `mitFortschritt(…, f)`,
+   * und `f` hängt allein am Zeitstempel des Frames. Damit ist jeder Frame
+   * reproduzierbar — bei 30 fps wie bei 60, auf jedem Gerät. */
+  animation: false,
   /* Die 918px-Bühne schrumpft im Feed auf Handybreite — ohne diesen Faktor
    * sind die Skalen unlesbar (Owner-Kritik 20.08.: „viel zu kleine Schrift").
    * Und der Canvas-Renderer braucht eine ECHTE Schriftfamilie: mit dem
@@ -75,6 +89,47 @@ export interface RegieSzene {
  *
  * Aspekte ohne Daten fliegen raus. Gesamt ~6–15 s.
  */
+/**
+ * Eine Chart-Option auf einen Fortschritt `f` (0…1) bringen — die
+ * Bewegung, die vorher ECharts selbst gemacht hat, nur deterministisch.
+ *
+ * Linien werden von links her freigegeben (die ersten `n·f` Punkte),
+ * Balken wachsen aus der Null. Beides hängt AUSSCHLIESSLICH an `f`, also am
+ * Zeitstempel des Frames — nicht daran, wie lange das Encodieren gedauert
+ * hat. Genau darin lag das Ruckeln.
+ *
+ * Pur und ohne DOM, damit es prüfbar bleibt: Ob die Bewegung stimmt, muss
+ * man messen können, ohne ein Video zu bauen.
+ */
+export function mitFortschritt(option: object, f: number): object {
+  const anteil = Math.min(1, Math.max(0, f));
+  if (anteil >= 1) return option;
+  const o = option as { series?: unknown };
+  if (!Array.isArray(o.series)) return option;
+  const series = o.series.map((roh) => {
+    const serie = roh as { type?: unknown; data?: unknown };
+    if (!Array.isArray(serie.data)) return roh;
+    if (serie.type === 'line') {
+      /* Mindestens zwei Punkte: Eine Linie aus einem Punkt ist keine Linie,
+       * und ECharts zeichnete dann für einen Moment gar nichts. */
+      const bis = Math.max(2, Math.ceil(serie.data.length * anteil));
+      return { ...serie, data: serie.data.slice(0, bis) };
+    }
+    if (serie.type === 'bar') {
+      return {
+        ...serie,
+        data: serie.data.map((punkt) => {
+          if (typeof punkt === 'number') return punkt * anteil;
+          const b = punkt as { value?: unknown };
+          return typeof b.value === 'number' ? { ...b, value: b.value * anteil } : punkt;
+        }),
+      };
+    }
+    return roh;
+  });
+  return { ...option, series };
+}
+
 export function regiePlan(
   chart: AnalyseChartDaten,
   auswahl?: readonly SeitenId[],
@@ -139,6 +194,14 @@ interface Buehne {
   chart: echarts.ECharts;
   leinwand: HTMLCanvasElement | null;
   gewechselt: boolean;
+  /**
+   * Zuletzt gesetzter Fortschritt.
+   *
+   * Nur zum Sparen: Steht die Szene still (f schon 1), wird nicht jeder
+   * Frame neu gesetzt — ein voller ECharts-Rendervorgang je Frame über die
+   * gesamte Haltezeit wäre reine Rechenzeit ohne Bildunterschied.
+   */
+  f: number;
 }
 
 /**
@@ -204,8 +267,9 @@ export async function baueAnalyseVideo(
     const instanz = echarts.init(host, undefined, { renderer: 'canvas', width: CHART_B, height: CHART_H });
     // Längere Eintritts-Animation als im UI (die Szene trägt sie), und kein
     // Tooltip — im Video hovert niemand.
-    instanz.setOption({ ...szenenOption(id), animationDuration: 1100, tooltip: { show: false } });
-    buehne = { chart: instanz, leinwand: host.querySelector('canvas'), gewechselt: false };
+    // Startzustand: Fortschritt 0 — die Bewegung setzt die Frame-Schleife.
+    instanz.setOption({ ...mitFortschritt(szenenOption(id), 0), tooltip: { show: false } });
+    buehne = { chart: instanz, leinwand: host.querySelector('canvas'), gewechselt: false, f: 0 };
     buehneFuer = id;
   };
 
@@ -237,18 +301,49 @@ export async function baueAnalyseVideo(
       }
 
       if (buehneFuer !== szene.id) macheBuehne(szene.id);
-      // Der Umschalt-Moment: Ab der Hälfte der Zeitmuster-Szene morphen die
-      // Stunden-Balken in die Wochentage — sichtbarer Aspekt-Wechsel in
-      // DERSELBEN Instanz, wie beim Zeitraum-Umschalter im Dashboard.
-      if (szene.id === 'zeitmuster' && p >= 0.55 && buehne && !buehne.gewechselt) {
-        // Erst lesen lassen, dann langsam morphen — der Aspekt-Wechsel ist
-        // der Höhepunkt der Szene, kein weiterer Schnitt.
-        buehne.gewechselt = true;
-        buehne.chart.setOption({
-          ...mitFesterAchse(optionen.wochentage),
-          animationDurationUpdate: 900,
-          tooltip: { show: false },
-        });
+
+      /* ── Die Chart-Bewegung kommt aus DIESEM Frame ──────────────────────
+       *
+       * Vorher lief sie auf ECharts' eigener Uhr und war damit an die
+       * Encodier-Geschwindigkeit gekoppelt (Kopf von VIDEO_LOOK). Jetzt
+       * rechnet der Frame seinen Fortschritt selbst aus.
+       *
+       * Der Aspekt-Wechsel der Zeitmuster-Szene bleibt ein Wechsel, nur
+       * deterministisch: Die Stunden schrumpfen auf Null, dann wachsen die
+       * Wochentage heraus. ECharts' Update-Animation dazwischen liesse sich
+       * nicht ansteuern — sie hätte dasselbe Uhr-Problem. */
+      if (buehne) {
+        const tSzene = p * szene.dauerMs;
+        const EIN = 1100; // Aufbauzeit einer Szene
+        let ziel: object;
+        let f: number;
+        if (szene.id === 'zeitmuster') {
+          const RAUS = 0.55; // ab hier verschwinden die Stunden
+          const REIN = 0.66; // ab hier kommen die Wochentage
+          if (p < RAUS) {
+            ziel = mitFesterAchse(optionen.stunden);
+            f = Math.min(1, tSzene / EIN);
+          } else if (p < REIN) {
+            ziel = mitFesterAchse(optionen.stunden);
+            f = 1 - (p - RAUS) / (REIN - RAUS);
+          } else {
+            ziel = mitFesterAchse(optionen.wochentage);
+            f = Math.min(1, (p - REIN) / ((1 - REIN) * 0.6));
+          }
+          // Der Titel folgt dem, was zu sehen ist — nicht einem Schalter,
+          // der schon vor dem Bild umspringt.
+          buehne.gewechselt = p >= REIN;
+        } else {
+          ziel = szenenOption(szene.id);
+          f = Math.min(1, tSzene / EIN);
+        }
+        /* Nur setzen, wenn sich etwas ändert: Steht die Szene still, wäre
+         * ein voller ECharts-Rendervorgang je Frame reine Rechenzeit ohne
+         * Bildunterschied — und der Owner-Befund war auch „läuft langsam". */
+        if (Math.abs(f - buehne.f) > 0.002 || (f === 1 && buehne.f !== 1)) {
+          buehne.chart.setOption({ ...mitFortschritt(ziel, f), tooltip: { show: false } }, true);
+          buehne.f = f;
+        }
       }
 
       ctx.save();
