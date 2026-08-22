@@ -54,7 +54,16 @@ describe('Admin-Abgleich: die Antwort überlebt den Neuaufbau', () => {
      * Konten gemeint ist — bei mehreren Zeilen ist das der Unterschied
      * zwischen Information und Rätsel. */
     expect(dashboard).toContain('if (letzterAbgleich?.uid === row.uid) {');
-    expect(dashboard).toContain('note.textContent = letzterAbgleich.text;');
+    /* Nachgezogen am 22.08.: Die Meldung steht weiterhin an DEM Konto (im
+     * Verwaltungs-Streifen dieser Zeile) — und seit dem Umbau ZUSAETZLICH
+     * ueber der Liste. Das ist kein Rueckfall in die anonyme Fehlerzeile am
+     * Kartenrand, vor der der Kommentar oben warnt: Sie nennt die E-Mail.
+     *
+     * Noetig wurde sie, weil im ERFOLGSFALL die Sperre verschwindet und die
+     * Zeile den Abschnitt OFFEN verlaesst — eine Meldung, die nur an der
+     * Zeile haengt, kann den Erfolg baulich nicht anzeigen. */
+    expect(dashboard).toContain('zeile(letzterAbgleich.text,');
+    expect(dashboard).toContain('m.textContent = `${wer?.email ?? la.uid} — ${la.text}`;');
   });
 
   it('gelöst wird grün, bestehende Sperre rot — die Farbe trägt die Nachricht', () => {

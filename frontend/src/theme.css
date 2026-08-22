@@ -1684,3 +1684,75 @@ select.inp option { background: var(--card-solid); color: var(--t1); }
   border: 1px solid var(--bd2);
   border-radius: 8px;
 }
+
+/* ── Admin-Freischaltungskarte, kompakt (Owner 22.08.) ─────────────────────
+ *
+ * Der Anlass: Bei 26 Konten war die Karte 4 443 px hoch (Desktop) bzw.
+ * 6 013 px (390 px) und trug 79 Knoepfe — jeden einzelnen VOLLBREIT, weil
+ * `.btn { width: 100% }` gilt und admBtn inline nur Polsterung und
+ * Schriftgroesse setzte. Bei 200 Konten waeren das ~30 000 px.
+ *
+ * Warum ZWEIZEILIG statt Spaltengitter: Die Karte ist rund 254 px breit
+ * (`.col-l { width: 280px }` minus `.cbody`-Polster), per Zieh-Griff
+ * 260–560 px. Der DESKTOP ist damit der engere Fall, nicht die
+ * Handy-Schublade (min(340px, 88vw)). Eine Media-Query kann eine
+ * verstellbare Sidebar-Breite nicht sehen — also ist die Zeile in jeder
+ * Breite gleich gebaut, statt bei einer geschaetzten Grenze umzuklappen.
+ */
+.adm-kopf { gap: 6px; align-items: center; margin: 6px 0; flex-wrap: wrap; }
+.adm-suche { flex: 1; min-width: 120px; font-size: 11px; padding: 5px 8px; }
+.adm-stand { margin-left: auto; white-space: nowrap; }
+
+/* Beide Listen haben eine feste Hoehengrenze und scrollen in sich. Genau
+ * das haelt den Echtgeld-Not-Aus darunter in Reichweite — er wurde nicht
+ * verschoben, die Liste hoert nur auf, ihn wegzuschieben. Vorbild
+ * `.wl-browse` (max-height + overflow-y in derselben Glass-Card). */
+.adm-liste { overflow-y: auto; margin: 2px 0 8px; }
+.adm-liste.offen { max-height: 300px; }
+.adm-liste.register { max-height: 420px; }
+.adm-grp { position: sticky; top: 0; z-index: 1; background: var(--card-solid);
+  font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+  color: var(--t3); padding: 4px 0 2px; }
+.adm-k { border-bottom: 1px solid var(--bd); }
+.adm-k:last-child { border-bottom: none; }
+.adm-z { display: flex; flex-direction: column; gap: 2px; padding: 6px 0; cursor: pointer; }
+.adm-z1, .adm-z2 { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.adm-punkt { width: 8px; height: 8px; border-radius: 999px; flex: none; }
+.adm-mail { font-size: 12px; color: var(--t1); flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.adm-pnl { font-size: 11px; width: 76px; flex: none; text-align: right; }
+.adm-meta { font-size: 10px; color: var(--t3); flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Die Markenzone kuerzt NIE: Der Sperr-Chip ist die eine Sache, die in
+ * dieser Liste niemals geschluckt werden darf — genau seine Unsichtbarkeit
+ * war der Owner-Befund vom 21.08. */
+.adm-mark { flex: none; display: flex; gap: 4px; align-items: center; }
+.adm-ueb { width: 30px; height: 30px; flex: none; display: flex; align-items: center;
+  justify-content: center; background: none; border: none; color: var(--t3);
+  cursor: pointer; border-radius: 8px; font-size: 15px; line-height: 1; }
+.adm-ueb:hover { background: var(--sd); color: var(--t1); }
+.adm-strip { padding: 2px 0 10px; }
+.adm-verw { display: flex; flex-direction: column; gap: 5px; }
+.adm-verw .hint { margin: 0; }
+/* Zweiklassig (0,2,0) wie `.an-seiten .dbtn` — sonst entschiede die
+ * Quellreihenfolge gegen `.btn`, und genau daran ist der Alle/Keine-Knopf
+ * am 21.08. gescheitert. AUSDRUECKLICH ohne min-height: auf Touch soll
+ * `.btn { min-height: 42px }` weiter greifen. */
+.adm-verw .adm-akt { width: 100%; }
+.adm-z .adm-akt { width: auto; min-width: 0; padding: 4px 10px; font-size: 10px; }
+.adm-puls { animation: admPuls 1.2s var(--e-out) 1; }
+@keyframes admPuls {
+  0% { outline: 2px solid var(--ac); outline-offset: -2px; }
+  100% { outline: 2px solid transparent; outline-offset: -2px; }
+}
+@media (prefers-reduced-motion: reduce) { .adm-puls { animation: none; } }
+.adm-trenner { margin-top: 22px; border-top: 1px solid var(--bd); padding-top: 12px; }
+/* Auf Touch eine ECHTE Box statt eines unsichtbaren ::after-Polsters: In
+ * einer dichten Liste ragte ein Polster in die Nachbarzeile, und die
+ * spaeter gemalte Flaeche gewinnt bei elementFromPoint. */
+@media (pointer: coarse) {
+  .adm-ueb { width: 42px; height: 42px; }
+  .adm-liste.offen { max-height: 260px; }
+  .adm-liste.register { max-height: 320px; }
+  .adm-kopf { gap: 12px; }
+}
