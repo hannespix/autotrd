@@ -3308,6 +3308,9 @@ export async function runScan(force = false): Promise<ScanResult> {
                   price: sig.price,
                   at: now.toISOString(),
                   ...(sigTyp ? { typ: sigTyp } : {}),
+                  ...(typeof atrPctVal === 'number' && Number.isFinite(atrPctVal) && atrPctVal > 0
+                    ? { atrPct: atrPctVal, barMin: BAR_MINUTES.daily }
+                    : {}),
                 },
               }
             : slotAktion === 'loeschen'
@@ -3318,7 +3321,27 @@ export async function runScan(force = false): Promise<ScanResult> {
            * gemeinsamer Slot müsste sich für einen entscheiden, und die
            * Tages-Reihe (n=10, Kante +0,41 %) ist die einzige, die heute
            * überhaupt etwas zeigt. Sie wird nicht abgeräumt, um die neue zu
-           * starten. */
+           * starten.
+           *
+           * ── Warum beide Slots seit dem 22.08. den ATR einfrieren ───────
+           *
+           * Weil sie es vorher NICHT taten und deshalb keine Einfangquote
+           * liefern konnten. `leseSchattenSignal` verlangt `atrPct` und
+           * `barMin`, sonst bleibt `erwartetPct` leer und `nErwartet` steht
+           * für immer auf 0. Genau das stand am 22.08. live im Herzschlag:
+           * `einfangquoten` (Fünf-Minuten-Reihe) trug 11 503 Krypto-Signale,
+           * `einfangquotenHalte` bei allen sechs Klassen n=0.
+           *
+           * Das ist mehr als eine Lücke in einer Anzeige. Die Halte-Reihe
+           * ist die Reihe, die über den Rückweg einer abgeschalteten Klasse
+           * ENTSCHEIDET (17.08.) — und seit dem 22.08. auch die, aus der das
+           * Kosten-Tor seine gemessene Quote zieht. Eine Messreihe, die
+           * strukturell nie eine Zahl produzieren kann, ist keine Messung,
+           * sondern eine Zusage. Der ATR ist später nicht rekonstruierbar,
+           * also muss er hier mit — wie beim Fünf-Minuten-Slot auch.
+           *
+           * `BAR_MINUTES.daily`, weil `atrPctVal` auf TAGES-Kerzen gerechnet
+           * ist (Einheiten-Fix, Audit HOCH-4). */
           ...(halteAktion === 'neu'
             ? {
                 lastSignalHalte: {
@@ -3326,6 +3349,9 @@ export async function runScan(force = false): Promise<ScanResult> {
                   price: sig.price,
                   at: now.toISOString(),
                   ...(sigTyp ? { typ: sigTyp } : {}),
+                  ...(typeof atrPctVal === 'number' && Number.isFinite(atrPctVal) && atrPctVal > 0
+                    ? { atrPct: atrPctVal, barMin: BAR_MINUTES.daily }
+                    : {}),
                 },
               }
             : halteAktion === 'loeschen'
