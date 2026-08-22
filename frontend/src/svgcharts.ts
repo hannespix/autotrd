@@ -61,6 +61,12 @@ export function katColor(i: number): string {
 /** Zahl kompakt: 1.234 → „1,2k". Achsen werden sonst unlesbar. */
 export function kurz(v: number): string {
   const a = Math.abs(v);
+  /* Die Null ist eine Null — nicht „0,00" (Regie-Befund 22.08.). Auf einer
+   * Achse mit −400/−200/200/400 stand plötzlich „0,00" dazwischen und sah
+   * aus wie ein anderer Zahlentyp. Die zwei Nachkommastellen sind für
+   * kleine Beträge gedacht, wo sie etwas unterscheiden; bei exakt Null
+   * unterscheiden sie nichts. */
+  if (v === 0) return '0';
   if (a >= 1_000_000) return `${(v / 1_000_000).toFixed(1).replace('.', ',')}M`;
   if (a >= 1_000) return `${(v / 1_000).toFixed(1).replace('.', ',')}k`;
   if (a >= 10) return v.toFixed(0);

@@ -38,6 +38,12 @@ describe('kurz', () => {
 
   it('behält bei kleinen Beträgen zwei Nachkommastellen', () => {
     expect(kurz(3.5)).toBe('3,50');
+    /* Die Null bleibt eine Null — auf einer Achse mit „200" und „400"
+     * daneben sah „0,00" aus wie ein anderer Zahlentyp (Regie 22.08.). */
+    expect(kurz(0)).toBe('0');
+    expect(kurz(-0)).toBe('0');
+    // Kleine Beträge behalten ihre Nachkommastellen, sie unterscheiden dort.
+    expect(kurz(0.25)).toBe('0,25');
   });
 
   it('kürzt negative Werte mit Vorzeichen', () => {

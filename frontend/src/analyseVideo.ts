@@ -109,25 +109,117 @@ export function mitFortschritt(option: object, f: number): object {
   const series = o.series.map((roh) => {
     const serie = roh as { type?: unknown; data?: unknown };
     if (!Array.isArray(serie.data)) return roh;
-    if (serie.type === 'line') {
-      /* Mindestens zwei Punkte: Eine Linie aus einem Punkt ist keine Linie,
-       * und ECharts zeichnete dann für einen Moment gar nichts. */
-      const bis = Math.max(2, Math.ceil(serie.data.length * anteil));
-      return { ...serie, data: serie.data.slice(0, bis) };
-    }
+    /* Linien werden NICHT mehr über die Daten aufgedeckt (Regie-Befund
+     * 22.08.: „Animationen teilweise sehr komisch").
+     *
+     * Punktweises Freigeben liess die Spitze in Sprüngen wandern — bei 40
+     * Punkten in 1,1 s alle ~28 ms um ~25 px — und ECharts rechnete die
+     * Wertachse jedes Mal aus den SICHTBAREN Daten neu, sodass die ganze
+     * Kurve dabei atmete. Beides sah man sofort und keins davon war
+     * beabsichtigt. Die Kurve wird jetzt einmal fertig gerendert und beim
+     * Zeichnen freigelegt (siehe `kurvenClip`): stufenlos, mit stehender
+     * Achse, und ein Render statt einem je Frame. */
     if (serie.type === 'bar') {
+      /* Gestaffelt statt im Gleichschritt: Balken, die alle gleichzeitig
+       * aus der Null schnellen, wirken wie ein Balkendiagramm, dem jemand
+       * am Regler gedreht hat. Der Versatz ist klein genug, dass die Reihe
+       * als EINE Bewegung liest, und gross genug, dass sie eine Richtung
+       * bekommt. */
+      const n = serie.data.length;
+      const versatz = n > 1 ? Math.min(0.45, n * 0.03) : 0;
+      const skala = (i: number): number => {
+        const start = n > 1 ? (versatz * i) / (n - 1) : 0;
+        return weich((anteil - start) / Math.max(1e-6, 1 - versatz));
+      };
       return {
         ...serie,
-        data: serie.data.map((punkt) => {
-          if (typeof punkt === 'number') return punkt * anteil;
+        data: serie.data.map((punkt, i) => {
+          const f = skala(i);
+          if (typeof punkt === 'number') return punkt * f;
           const b = punkt as { value?: unknown };
-          return typeof b.value === 'number' ? { ...b, value: b.value * anteil } : punkt;
+          return typeof b.value === 'number' ? { ...b, value: b.value * f } : punkt;
         }),
       };
     }
     return roh;
   });
   return { ...option, series };
+}
+
+/**
+ * Linke Kante der Plotfläche in Leinwand-Pixeln.
+ *
+ * `grid: { containLabel: true }` heisst: Wo die Fläche beginnt, hängt an
+ * der Breite der Achsenbeschriftungen und steht nirgends als Zahl. ECharts
+ * kann den Punkt aber ausrechnen — die erste Kategorie liegt am linken
+ * Rand der Fläche.
+ *
+ * Schlägt das fehl (Chart noch nicht vermessen), lieber 0 zurückgeben: Dann
+ * deckt der Schnitt eben auch die Beschriftung mit auf. Das ist ein
+ * Schönheitsfehler; ein Wurf mitten in der Frame-Schleife wäre ein
+ * abgebrochenes Video.
+ */
+function plotLinks(chart: echarts.ECharts): number {
+  try {
+    const x = chart.convertToPixel({ xAxisIndex: 0 }, 0);
+    return typeof x === 'number' && Number.isFinite(x) && x > 0 ? x : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Eine Wertachse auf GLATTE Grenzen bringen.
+ *
+ * Regie-Befund 22.08.: Eine feste Achse aus `floor(min − puffer)` /
+ * `ceil(max + puffer)` liefert krumme Enden — und ECharts setzt an genau
+ * diese Enden zusätzlich zu seinen regulären Ticks je ein Label. In der
+ * Symbol-Szene stand deshalb „−253−200" ineinander, direkt nebeneinander
+ * und unlesbar. Der Bild-Prüfstand sieht so etwas nicht; im Video war es
+ * sofort da.
+ *
+ * Deshalb wird der Bereich auf ein Vielfaches eines glatten Schritts
+ * (1/2/5 × Zehnerpotenz) aufgerundet. Dann fallen die Enden mit den
+ * regulären Ticks zusammen, und es gibt kein zusätzliches Label mehr.
+ */
+export function nettGrenzen(werte: readonly number[]): { min: number; max: number } {
+  const roh = werte.filter((v) => Number.isFinite(v));
+  const tief = Math.min(0, ...roh);
+  const hoch = Math.max(0, ...roh);
+  const spanne = hoch - tief;
+  if (!(spanne > 0)) return { min: -1, max: 1 };
+  /* Fünf Abschnitte als Ziel, und 2,5 gehört in die Auswahl.
+   *
+   * Mit nur {1, 2, 5} und vier Abschnitten sprang die Rundung zu weit: Bei
+   * Werten bis 120 landete die Achse auf ±200, und die Balken füllten
+   * gerade die Hälfte der Fläche — das Diagramm sah leer aus (Bild-Befund
+   * 22.08.). Eine feste Achse soll die Skala ruhig halten, nicht die Daten
+   * kleinrechnen. */
+  const grob = spanne / 5;
+  const zehner = Math.pow(10, Math.floor(Math.log10(grob)));
+  const schritt = [1, 2, 2.5, 5, 10].map((m) => m * zehner).find((k) => k >= grob) ?? 10 * zehner;
+  return {
+    min: Math.floor(tief / schritt) * schritt,
+    max: Math.ceil(hoch / schritt) * schritt,
+  };
+}
+
+/** Zeitmuster-Szene: ab hier blenden die Stunden aus / die Wochentage ein. */
+const ZM_RAUS = 0.55;
+const ZM_REIN = 0.66;
+
+/**
+ * Deckkraft des Charts während des Aspekt-Wechsels.
+ *
+ * Aus dem Bild heraus entstanden (22.08.): Ein Schrumpfen auf Null liess
+ * ein halb aufgegessenes Diagramm stehen. Blenden hat diesen Zustand
+ * nicht — dazwischen ist die Fläche kurz leer, und leer liest sich als
+ * Schnitt, nicht als Defekt.
+ */
+export function wechselAlpha(p: number): number {
+  if (p < ZM_RAUS || p >= ZM_REIN + 0.05) return 1;
+  if (p < ZM_REIN) return 1 - (p - ZM_RAUS) / (ZM_REIN - ZM_RAUS);
+  return (p - ZM_REIN) / 0.05;
 }
 
 export function regiePlan(
@@ -227,11 +319,7 @@ export async function baueAnalyseVideo(
    * Achse mitten im Morph, während die Balken schon neu ankern — sie
    * durchstoßen sichtbar die Null-Linie (Kritiker-No-Go, Frame 13,7 s). */
   const zeitWerte = [...chart.stunden, ...chart.wochentage].map((b) => b.value);
-  const zeitPuffer = (Math.max(0, ...zeitWerte) - Math.min(0, ...zeitWerte)) * 0.08 || 1;
-  const festeSpanne = {
-    min: Math.floor(Math.min(0, ...zeitWerte) - zeitPuffer),
-    max: Math.ceil(Math.max(0, ...zeitWerte) + zeitPuffer),
-  };
+  const festeSpanne = nettGrenzen(zeitWerte);
   const mitFesterAchse = (o: object): object => ({
     ...o,
     yAxis: { ...((o as { yAxis?: object }).yAxis ?? {}), ...festeSpanne },
@@ -240,11 +328,26 @@ export async function baueAnalyseVideo(
   let buehne: Buehne | null = null;
   let buehneFuer: RegieSzene['id'] | null = null;
 
+  /* Die Symbol-Szene hat LIEGENDE Balken — ihre Wertachse ist die x-Achse,
+   * nicht die y (Regie-Befund 22.08.). `mitFesterAchse` hätte hier die
+   * falsche Achse geklemmt und die richtige weiter mitwandern lassen:
+   * Während die Balken wuchsen, hätte ECharts die Skala aus den gerade
+   * sichtbaren Werten neu gerechnet — die fertigen Balken wären beim
+   * Wachsen der übrigen wieder kürzer geworden. */
+  const symbolWerte = chart.symbole.map((b) => b.value);
+  const symboleFest: object = {
+    ...optionen.symbole,
+    xAxis: {
+      ...((optionen.symbole as { xAxis?: object }).xAxis ?? {}),
+      ...nettGrenzen(symbolWerte),
+    },
+  };
+
   const szenenOption = (id: RegieSzene['id']): object =>
     id === 'kurve'
       ? optionen.verlauf
       : id === 'symbole'
-        ? optionen.symbole
+        ? symboleFest
         : mitFesterAchse(optionen.stunden);
   const szenenTitel = (id: RegieSzene['id'], gewechselt: boolean): string =>
     id === 'kurve'
@@ -318,21 +421,31 @@ export async function baueAnalyseVideo(
         let ziel: object;
         let f: number;
         if (szene.id === 'zeitmuster') {
-          const RAUS = 0.55; // ab hier verschwinden die Stunden
-          const REIN = 0.66; // ab hier kommen die Wochentage
-          if (p < RAUS) {
+          /* Der Aspekt-Wechsel BLENDET, er schrumpft nicht.
+           *
+           * Erster Versuch war, die Stunden auf Null zurückzufahren. Im
+           * Bild sah man dabei ein halb aufgegessenes Diagramm: Die
+           * Staffelung wirkt auch rückwärts, also waren die hinteren
+           * Balken schon weg, während die vorderen noch halbhoch standen.
+           * Das liest sich nicht als Übergang, sondern als kaputte Daten.
+           *
+           * Eine Staffelung ist für einen AUFTRITT richtig und für einen
+           * ABGANG falsch — ein Abgang hat keine Richtung, er ist einfach
+           * vorbei. Deshalb bleiben die Stunden bis zuletzt vollständig
+           * und verschwinden über die Deckkraft (`wechselAlpha`). */
+          if (p < ZM_RAUS) {
             ziel = mitFesterAchse(optionen.stunden);
             f = Math.min(1, tSzene / EIN);
-          } else if (p < REIN) {
+          } else if (p < ZM_REIN) {
             ziel = mitFesterAchse(optionen.stunden);
-            f = 1 - (p - RAUS) / (REIN - RAUS);
+            f = 1; // vollständig — das Ausblenden macht die Deckkraft
           } else {
             ziel = mitFesterAchse(optionen.wochentage);
-            f = Math.min(1, (p - REIN) / ((1 - REIN) * 0.6));
+            f = Math.min(1, (p - ZM_REIN) / ((1 - ZM_REIN) * 0.6));
           }
           // Der Titel folgt dem, was zu sehen ist — nicht einem Schalter,
           // der schon vor dem Bild umspringt.
-          buehne.gewechselt = p >= REIN;
+          buehne.gewechselt = p >= ZM_REIN;
         } else {
           ziel = szenenOption(szene.id);
           f = Math.min(1, tSzene / EIN);
@@ -340,7 +453,16 @@ export async function baueAnalyseVideo(
         /* Nur setzen, wenn sich etwas ändert: Steht die Szene still, wäre
          * ein voller ECharts-Rendervorgang je Frame reine Rechenzeit ohne
          * Bildunterschied — und der Owner-Befund war auch „läuft langsam". */
-        if (Math.abs(f - buehne.f) > 0.002 || (f === 1 && buehne.f !== 1)) {
+        /* Die Kurve wird NICHT über die Daten aufgedeckt: Sie steht sofort
+         * fertig da und wird beim Zeichnen freigelegt. Ein Neu-Setzen je
+         * Frame wäre hier reine Rechenzeit — und genau das Verfahren, das
+         * die Achse atmen liess. */
+        if (szene.id === 'kurve') {
+          if (buehne.f !== 1) {
+            buehne.chart.setOption({ ...ziel, tooltip: { show: false } }, true);
+            buehne.f = 1;
+          }
+        } else if (Math.abs(f - buehne.f) > 0.002 || (f === 1 && buehne.f !== 1)) {
           buehne.chart.setOption({ ...mitFortschritt(ziel, f), tooltip: { show: false } }, true);
           buehne.f = f;
         }
@@ -390,7 +512,24 @@ export async function baueAnalyseVideo(
         // Die Ein-Blende gilt nur ÜBERGÄNGEN — die Eröffnungs-Szene startet
         // voll sichtbar, sonst ist Frame 0 (das Poster im Feed) wieder leer.
         const ein = szene === plan[0] ? 1 : weich(tSz / 600);
-        ctx.globalAlpha = Math.min(ein, weich((szene.dauerMs - tSz) / 300));
+        const wechsel = szene.id === 'zeitmuster' ? wechselAlpha(p) : 1;
+        ctx.globalAlpha = Math.min(ein, weich((szene.dauerMs - tSz) / 300)) * wechsel;
+        /* Die Kurve legt sich von links frei — stufenlos, weil hier ein
+         * Rechteck wächst und nicht eine Punktliste (Regie 22.08.).
+         *
+         * Der Schnitt beginnt an der Plotfläche, nicht am Bildrand: Sonst
+         * würden die Achsenbeschriftungen links mit aufgedeckt, und die
+         * Karte sähe für eine Sekunde unfertig aus statt im Aufbau. Ab der
+         * vollen Breite wird gar nicht mehr geschnitten — ein Clip, der
+         * nichts abschneidet, kostet nur Zeit. */
+        const kurvenF = szene.id === 'kurve' ? weich((p * szene.dauerMs) / 1100) : 1;
+        if (kurvenF < 1) {
+          const links = CHART_X + plotLinks(buehne.chart);
+          const breite = (CHART_X + CHART_B - links) * kurvenF;
+          ctx.beginPath();
+          ctx.rect(CHART_X, CHART_Y, links - CHART_X + breite, CHART_H);
+          ctx.clip();
+        }
         ctx.drawImage(buehne.leinwand, CHART_X, CHART_Y, CHART_B, CHART_H);
         ctx.restore();
       }

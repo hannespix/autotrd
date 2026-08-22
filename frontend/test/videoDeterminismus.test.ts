@@ -53,29 +53,76 @@ describe('Die Chart-Bewegung hängt allein am Fortschritt', () => {
     expect(mitFortschritt(balken(), 0.37)).toEqual(mitFortschritt(balken(), 0.37));
   });
 
-  it('Linien geben sich von links frei', () => {
-    const halb = mitFortschritt(linie(), 0.5) as { series: { data: number[] }[] };
-    expect(halb.series[0]!.data).toEqual([1, 2, 3, 4, 5]);
-    const voll = mitFortschritt(linie(), 1) as { series: { data: number[] }[] };
-    expect(voll.series[0]!.data).toHaveLength(10);
+  it('Linien werden NICHT über die Daten aufgedeckt', () => {
+    /* Regie-Befund 22.08.: Punktweises Freigeben liess die Spitze in
+     * Sprüngen wandern (bei 40 Punkten in 1,1 s alle ~28 ms um ~25 px),
+     * und ECharts rechnete die Wertachse aus den SICHTBAREN Daten neu — die
+     * ganze Kurve atmete dabei. Die Linie bleibt deshalb vollständig; das
+     * Aufdecken macht ein Clip beim Zeichnen. */
+    for (const f of [0, 0.001, 0.5, 0.99]) {
+      const o = mitFortschritt(linie(), f) as { series: { data: number[] }[] };
+      expect(o.series[0]!.data, `f=${f}`).toHaveLength(10);
+    }
   });
 
-  it('eine Linie hat NIE weniger als zwei Punkte', () => {
-    /* Bei einem Punkt zeichnet ECharts für einen Moment gar nichts — ein
-     * Loch im Video, das erst beim Ansehen auffällt. */
-    const kaum = mitFortschritt(linie(), 0.001) as { series: { data: number[] }[] };
-    expect(kaum.series[0]!.data.length).toBeGreaterThanOrEqual(2);
+  it('…sondern von einem wachsenden Rechteck', () => {
+    // Stufenlos, und die Achsenbeschriftung links bleibt stehen.
+    expect(quelle).toContain('const kurvenF = szene.id === \'kurve\' ? weich((p * szene.dauerMs) / 1100) : 1;');
+    expect(quelle).toContain('ctx.clip();');
+    expect(quelle).toContain('const links = CHART_X + plotLinks(buehne.chart);');
   });
 
-  it('Balken wachsen aus der Null — mit Vorzeichen', () => {
-    const halb = mitFortschritt(balken(), 0.5) as {
-      series: { data: { value: number; itemStyle?: unknown }[] }[];
-    };
-    expect(halb.series[0]!.data[0]!.value).toBe(5);
+  it('die Kurven-Szene wird nur EINMAL gesetzt', () => {
+    /* Sie steht sofort fertig da. Ein Neu-Setzen je Frame wäre reine
+     * Rechenzeit — und genau das Verfahren, das die Achse atmen liess. */
+    expect(quelle).toContain("if (szene.id === 'kurve') {");
+    expect(quelle).toContain('if (buehne.f !== 1) {');
+  });
+
+  it('Balken wachsen weich aus der Null — mit Vorzeichen', () => {
+    const bei = (f: number): { value: number; itemStyle?: unknown }[] =>
+      (mitFortschritt(balken(), f) as { series: { data: { value: number; itemStyle?: unknown }[] }[] })
+        .series[0]!.data;
+    // Anfang und Ende stehen fest.
+    expect(bei(0)[0]!.value).toBe(0);
+    expect(bei(1)[0]!.value).toBe(10);
+    expect(bei(1)[1]!.value).toBe(-4);
+    // Dazwischen echt dazwischen — und monoton.
+    const mitte = bei(0.5)[0]!.value;
+    expect(mitte).toBeGreaterThan(0);
+    expect(mitte).toBeLessThan(10);
+    expect(bei(0.7)[0]!.value).toBeGreaterThan(mitte);
     // Verlust-Balken schrumpfen zur Null hin, nicht auf die andere Seite.
-    expect(halb.series[0]!.data[1]!.value).toBe(-2);
+    expect(bei(0.5)[1]!.value).toBeLessThanOrEqual(0);
+    expect(bei(0.5)[1]!.value).toBeGreaterThan(-4);
     // Der Stil bleibt erhalten — sonst blinkt die Farbe während des Wachsens.
-    expect(halb.series[0]!.data[0]!.itemStyle).toEqual({ color: 'x' });
+    expect(bei(0.5)[0]!.itemStyle).toEqual({ color: 'x' });
+  });
+
+  it('Balken starten gestaffelt, nicht im Gleichschritt', () => {
+    /* Alle gleichzeitig aus der Null wirkt wie ein Diagramm, an dem jemand
+     * am Regler dreht. Der Versatz gibt der Reihe eine Richtung. */
+    const viele = {
+      series: [{ type: 'bar', data: Array.from({ length: 8 }, () => ({ value: 10 })) }],
+    };
+    const fruh = (mitFortschritt(viele, 0.25) as {
+      series: { data: { value: number }[] }[];
+    }).series[0]!.data.map((d) => d.value);
+    expect(fruh[0]).toBeGreaterThan(fruh[7]!);
+    // …aber am Ende sind alle gleich weit, sonst bliebe die Reihe schief.
+    const spaet = (mitFortschritt(viele, 1) as {
+      series: { data: { value: number }[] }[];
+    }).series[0]!.data.map((d) => d.value);
+    expect(new Set(spaet).size).toBe(1);
+  });
+
+  it('die Wertachse steht still, während die Balken wachsen', () => {
+    /* Sonst rechnet ECharts die Skala aus den sichtbaren Werten neu: Die
+     * fertigen Balken würden beim Wachsen der übrigen wieder kürzer.
+     * Die Symbol-Szene hat LIEGENDE Balken — dort ist es die x-Achse. */
+    expect(quelle).toContain('const symboleFest: object = {');
+    expect(quelle).toContain('xAxis: {');
+    expect(quelle).toContain('const symbolWerte = chart.symbole.map((b) => b.value);');
   });
 
   it('bei f = 1 kommt die Option unverändert zurück', () => {
@@ -98,17 +145,16 @@ describe('Die Chart-Bewegung hängt allein am Fortschritt', () => {
 });
 
 describe('Der Aspekt-Wechsel bleibt ein Wechsel', () => {
-  it('Stunden schrumpfen, dann wachsen die Wochentage', () => {
+  it('er ist aus zwei Fortschritten gebaut, nicht aus einem Übergang', () => {
     /* ECharts' Update-Animation liesse sich nicht ansteuern — sie hätte
-     * dasselbe Uhr-Problem. Der Wechsel ist deshalb aus zwei
-     * Fortschritten gebaut, nicht aus einem Übergang. */
-    expect(quelle).toContain("const RAUS = 0.55;");
-    expect(quelle).toContain("const REIN = 0.66;");
-    expect(quelle).toContain('f = 1 - (p - RAUS) / (REIN - RAUS);');
+     * dasselbe Uhr-Problem. WIE der Wechsel aussieht (blenden statt
+     * schrumpfen), prüft frontend/test/videoRegie.test.ts. */
+    expect(quelle).toContain('const ZM_RAUS = 0.55;');
+    expect(quelle).toContain('const ZM_REIN = 0.66;');
   });
 
   it('der Titel folgt dem Bild, nicht einem vorauseilenden Schalter', () => {
-    expect(quelle).toContain('buehne.gewechselt = p >= REIN;');
+    expect(quelle).toContain('buehne.gewechselt = p >= ZM_REIN;');
   });
 
   it('stillstehende Szenen werden nicht jeden Frame neu gerendert', () => {
