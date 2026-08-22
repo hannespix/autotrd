@@ -82,3 +82,62 @@ describe('engine: die drei Grenzen stehen im Quelltext', () => {
     expect(engine).not.toContain('exitReq = trendSoloAktiv');
   });
 });
+
+/* ── Das Herkunfts-Etikett sitzt dort, wo es feuern kann (22.08.) ──────────
+ *
+ * Multi-Agenten-Befund: `soloTrend` stand seit dem 18.08. an GENAU EINER
+ * Stelle im ganzen Scan — im Cover-Zweig (Kauf auf offenem Short). Das ist
+ * der Signal-AUSSTIEG des Shorts; er verlangt `exitConfluence` (3), und
+ * damit ist `konfluenz < minConfluence` (2) dort unerreichbar.
+ *
+ * Der Kommentar über dem Etikett sagte wörtlich, was die Platzierung selbst
+ * vereitelte: „Ohne dieses Feld ließe sich ihr Ertrag später nicht von dem
+ * der übrigen Käufe trennen." Ergebnis: Die einzige Frequenz-Kohorte, die es
+ * seit dem 17.08. gibt, war dauerhaft unbeurteilbar — und `trendSolo.erzeugt`
+ * im Herzschlag widerlegt das nicht, weil der Zähler je Scan bei 0 anfängt.
+ *
+ * Diese Datei prüft beides: dass die Engine die Erleichterung überhaupt nur
+ * dem Long-EINSTIEG gibt (Verhalten), und dass das Etikett genau dort hängt
+ * (Ort). Ein Etikett, das nie gesetzt wird, täuscht eine leere Kohorte vor —
+ * und das ist schlimmer als gar keines, weil es wie ein Ergebnis aussieht.
+ */
+describe('soloTrend: nur der Long-Einstieg kann unter die Konfluenz fallen', () => {
+  it('die Engine gibt die Erleichterung nur ausserhalb einer Position', () => {
+    // `trendSoloAktiv` verlangt `!inPosition` — der Cover ist per Definition
+    // IN Position. Hier am Quelltext der Entscheidungsfunktion festgenagelt,
+    // weil genau diese Bedingung den Cover-Zweig ausschliesst.
+    const stelle = engine.indexOf('const trendSoloAktiv =');
+    expect(stelle, 'trendSoloAktiv nicht gefunden').toBeGreaterThan(0);
+    const block = engine.slice(stelle, engine.indexOf('const buyReq', stelle));
+    expect(block, 'die !inPosition-Bedingung ist weg').toContain('!inPosition');
+    expect(block, 'die Erleichterung gilt nur der Kaufseite').toContain("votes.macd === 'buy'");
+    // Und der Ausstieg bleibt unberührt: exitReq kommt in der Regel nicht vor.
+    expect(block).not.toContain('exitReq');
+  });
+
+  it('das Etikett steht GENAU EINMAL im Scan', () => {
+    const treffer = scan.match(/soloTrend: true/g) ?? [];
+    expect(treffer, 'Etikett fehlt oder ist dupliziert').toHaveLength(1);
+  });
+
+  it('es steht im Long-Einstieg, nicht im Cover- und nicht im Short-Zweig', () => {
+    const etikett = scan.indexOf('soloTrend: true');
+    const longEinstieg = scan.indexOf("} else if (direction === 'buy' && !pos) {");
+    const shortEinstieg = scan.indexOf("} else if (direction === 'sell' && !pos && allowShort) {");
+    expect(longEinstieg, 'Long-Einstiegszweig nicht gefunden').toBeGreaterThan(0);
+    expect(shortEinstieg, 'Short-Einstiegszweig nicht gefunden').toBeGreaterThan(longEinstieg);
+    // Zwischen Long-Einstieg und Short-Einstieg — also im Long-Zweig.
+    expect(etikett).toBeGreaterThan(longEinstieg);
+    expect(etikett).toBeLessThan(shortEinstieg);
+  });
+
+  it('der Cover-Zweig trägt es nicht mehr', () => {
+    const cover = scan.indexOf("if (direction === 'buy' && pos?.side === 'short') {");
+    const longEinstieg = scan.indexOf("} else if (direction === 'buy' && !pos) {");
+    expect(cover, 'Cover-Zweig nicht gefunden').toBeGreaterThan(0);
+    const block = scan.slice(cover, longEinstieg);
+    expect(block, 'das Etikett ist in den Cover-Zweig zurückgerutscht').not.toContain(
+      'soloTrend: true',
+    );
+  });
+});

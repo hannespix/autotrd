@@ -1873,12 +1873,22 @@ async function executeUserTrades(
                 votes: sig.votes,
                 konfluenz,
                 regime,
-                // Herkunfts-Etikett (18.08.): Dieser Kauf stand auf WENIGER
-                // Stimmen, als die Konfluenz sonst verlangt — er existiert
-                // also nur wegen der Trendstimme vom 17.08. Ohne dieses
-                // Feld ließe sich ihr Ertrag später nicht von dem der
-                // übrigen Käufe trennen.
-                ...(konfluenz < clamped.signals.minConfluence ? { soloTrend: true } : {}),
+                /* Hier stand bis zum 22.08. das Herkunfts-Etikett `soloTrend`
+                 * — an der einzigen Stelle im ganzen Scan, an der es nie
+                 * feuern konnte.
+                 *
+                 * Dieser Zweig ist der COVER: ein Kauf auf offenem Short,
+                 * also der Signal-AUSSTIEG des Shorts. Er verlangt
+                 * `exitConfluence` (3) Stimmen; die Bedingung
+                 * `konfluenz < minConfluence` (2) ist damit unerreichbar.
+                 * Der Kommentar sagte wörtlich, was die Platzierung selbst
+                 * vereitelte: „Ohne dieses Feld ließe sich ihr Ertrag später
+                 * nicht von dem der übrigen Käufe trennen."
+                 *
+                 * Folge: Die einzige Frequenz-Kohorte, die es seit dem
+                 * 17.08. gibt — Käufe, die nur wegen der Trendstimme
+                 * existieren —, war dauerhaft unbeurteilbar. Das Etikett
+                 * sitzt jetzt am LONG-EINSTIEG. */
               },
             },
             clamped,
@@ -1950,6 +1960,29 @@ async function executeUserTrades(
                 minKonfluenz: clamped.signals.minConfluence,
                 ...(vote ? { forecast: { dir: vote.dir, weight: vote.weight } } : {}),
                 regime,
+                /* Herkunfts-Etikett (18.08., hierher versetzt 22.08.):
+                 * Dieser Kauf stand auf WENIGER Stimmen, als die Konfluenz
+                 * sonst verlangt — er existiert also nur wegen der
+                 * Trendstimme vom 17.08. (`trendSolo` senkt die Kaufschwelle
+                 * bei Ampel „trend" von minConfluence 2 auf EINE
+                 * MACD-Stimme, engine.ts).
+                 *
+                 * NUR hier, nicht am Short-Einstieg daneben: Ein Short
+                 * verlangt `sellVotes >= entryReq`, dort ist
+                 * `konfluenz < minConfluence` genauso unerreichbar wie im
+                 * Cover-Zweig oben. Ein Etikett, das nie gesetzt wird,
+                 * täuscht eine leere Kohorte vor.
+                 *
+                 * Rein additiv: Es ändert sich keine Order, keine Größe und
+                 * keine Schwelle. Was sich ändert, ist die Beurteilbarkeit —
+                 * und davon hängt ab, ob `signals.trendSolo` bleibt.
+                 *
+                 * Der Herzschlag-Zähler `trendSolo.erzeugt` beantwortet das
+                 * NICHT: Er fängt in jedem Scan wieder bei 0 an und wird
+                 * alle fünf Minuten überschrieben. Eine 0 dort heißt „in
+                 * diesem Lauf keine", nicht „die Kohorte ist leer". Deshalb
+                 * hängt das Etikett am Trade-Datensatz, wo es kumuliert. */
+                ...(konfluenz < clamped.signals.minConfluence ? { soloTrend: true } : {}),
               },
             },
             clamped,
