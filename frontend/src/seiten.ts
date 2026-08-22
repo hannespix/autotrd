@@ -23,7 +23,14 @@
 /** Kanonische Seiten-Kennung — gilt für Anzeige, Bild und Video. */
 import type { TextSchluessel } from './i18n.js';
 
-export type SeitenId = 'ergebnis' | 'depot' | 'verlauf' | 'womit' | 'zeitmuster' | 'cta';
+export type SeitenId =
+  | 'ergebnis'
+  | 'depot'
+  | 'kapital'
+  | 'verlauf'
+  | 'womit'
+  | 'zeitmuster'
+  | 'cta';
 
 export interface SeitenEintrag {
   id: SeitenId;
@@ -44,6 +51,7 @@ export interface SeitenEintrag {
 export const SEITEN: readonly SeitenEintrag[] = [
   { id: 'ergebnis', label: 'seite.ergebnis', hilfe: 'seite.ergebnisHilfe', bild: true, video: 'ergebnis' },
   { id: 'depot', label: 'seite.depot', hilfe: 'seite.depotHilfe', bild: true, video: null },
+  { id: 'kapital', label: 'seite.kapital', hilfe: 'seite.kapitalHilfe', bild: true, video: null },
   { id: 'verlauf', label: 'seite.verlauf', hilfe: 'seite.verlaufHilfe', bild: true, video: 'kurve' },
   { id: 'womit', label: 'seite.womit', hilfe: 'seite.womitHilfe', bild: true, video: 'symbole' },
   { id: 'zeitmuster', label: 'seite.zeitmuster', hilfe: 'seite.zeitmusterHilfe', bild: false, video: 'zeitmuster' },

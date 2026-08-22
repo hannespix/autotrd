@@ -169,8 +169,10 @@ function mitPositionen(betraege = false): ShareDaten {
 
 describe('Depot-Karte — was halte ich GERADE', () => {
   it('offene Positionen ⇒ die Karte steht direkt hinter dem Ergebnis', () => {
+    /* Die Kapital-Seite (22.08.) steht hinter dem Depot: erst WAS ich
+     * halte, dann WOMIT — Bestand vor Kasse, so liest man ein Depot. */
     expect(shareStory(mitPositionen()).map((k) => k.id)).toEqual([
-      'ergebnis', 'depot', 'verlauf', 'womit', 'cta',
+      'ergebnis', 'depot', 'kapital', 'verlauf', 'womit', 'cta',
     ]);
   });
 

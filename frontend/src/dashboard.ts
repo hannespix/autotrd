@@ -8526,9 +8526,44 @@ function shareDatenBauen(betraege: boolean): ShareDaten {
     };
   });
 
+  /* Kapital-Seite (Owner 22.08.: „cash, cashflow, aktive Positionen").
+   *
+   * Der Barbestand kommt aus dem Buch, der Positionswert aus denselben
+   * Live-Kursen wie die Zeilen darüber — zwei Quellen wären zwei Wahrheiten
+   * auf einer Karte.
+   *
+   * Der Cashflow entsteht aus den Trades des Fensters: Ein Verkauf bringt
+   * Geld zurück (`zu`), ein Kauf bindet welches (`ab`), und `realisiert`
+   * ist das Ergebnis, das dabei hängen blieb. Umschlag und Ertrag sind
+   * verschiedene Fragen; die Karte zeigt beide, weil viel Bewegung bei
+   * magerem Ergebnis genau das Bild ist, nach dem man sucht. */
+  const posWert = offene.reduce(
+    (sum, p) => sum + (p.aktuell !== null ? Math.abs(p.aktuell * p.qty) : 0),
+    0,
+  );
+  const flussProTag = new Map<string, { tag: string; zu: number; ab: number; realisiert: number }>();
+  for (const tr of fenster.trades) {
+    const tag = typeof tr.executedAt === 'string' ? tr.executedAt.slice(0, 10) : null;
+    if (tag === null) continue;
+    const wert = Math.abs((tr.price ?? 0) * (tr.qty ?? 0));
+    const eintrag = flussProTag.get(tag) ?? { tag, zu: 0, ab: 0, realisiert: 0 };
+    /* Verkauf holt Geld ins Konto, Kauf bindet welches — und beim Short
+     * stimmt das ebenfalls: Die Eröffnung IST ein Verkauf, das Eindecken
+     * ein Kauf. Deshalb reicht `side` hier; eine Sonderbehandlung wäre
+     * eine zweite Wahrheit über dieselbe Bewegung. */
+    if (tr.side === 'sell') eintrag.zu += wert;
+    else eintrag.ab += wert;
+    if (typeof tr.pnl === 'number' && Number.isFinite(tr.pnl)) eintrag.realisiert += tr.pnl;
+    flussProTag.set(tag, eintrag);
+  }
+  const cashflow = [...flussProTag.values()].sort((a, b) => a.tag.localeCompare(b.tag));
+
   return {
     zerlegung,
     positionen: offene,
+    bar: st?.wallet?.paperBalance ?? null,
+    positionsWert: Math.round(posWert * 100) / 100,
+    cashflow,
     investiertPct: st?.pfStats?.kapital?.investiertPct ?? null,
     renditePct: ((letzte - zerlegung.basis) / basis) * 100,
     ergebnis: letzte - zerlegung.basis,
