@@ -276,6 +276,32 @@ Für UI-Änderungen zusätzlich mit headless Chrome bei Desktop (1500) **und** P
 - Weitere Broker (IBKR), Krypto-Spot, konfigurierbare Marktzeiten pro Asset-Klasse.
 - Backtest-Ergebnisse ins Dashboard.
 
+## 11a. Arbeitsweise: mehrere Agenten, nicht einer (Owner-Anweisung 22.08.)
+
+> **Wortlaut:** „löse das ganze problem multi-agentisch! lasse parallel
+> mehrere agenten mit unterschiedlichen funktionen, aufgaben und rollen ran.
+> erstelle gerne auch sub-agenten zur prüfung, hinterfragung und
+> verbesserung der jeweiligen aufgaben ran! merke dir diese anweisung für
+> alle künftigen tasks!"
+
+Gilt ab sofort für **jede** nicht-triviale Aufgabe, nicht nur für die, bei
+der sie ausgesprochen wurde. Ein Arbeitspaket wird aufgefächert statt
+seriell abgearbeitet:
+
+- **Verschiedene Rollen, nicht dieselbe Frage mehrfach.** Vier Agenten mit
+  vier Blickwinkeln finden anderes als vier Agenten mit demselben Auftrag.
+  Wer nur Redundanz aufbaut, kauft Rechenzeit statt Erkenntnis.
+- **Prüfer sind eigene Agenten und haben nicht selbst gebaut.** Das ist
+  §11 unten, nur als Ablauf statt als Haltung: Der Prüfer bekommt den
+  Auftrag zu WIDERLEGEN, nicht zu bewerten.
+- **Die Zusammenführung ist wieder eine Rolle.** Aus vier Befunden wird
+  nicht automatisch eine Rangfolge — jemand muss sie begründen.
+
+Was NICHT an Agenten abgegeben wird: `git push`, Merges, alles, was
+Echtgeld oder Freigaben berührt. Agenten untersuchen, schlagen vor und
+widerlegen; die Entscheidung und der Schreibzugriff bleiben an einer
+Stelle.
+
 ## 11. Rolle des Kritikers (Prompt-Strategie, Owner 20.08.)
 
 Jedes größere Arbeitspaket bekommt einen **separaten Kritiker**, der nicht
