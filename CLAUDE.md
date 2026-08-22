@@ -249,6 +249,31 @@ $PY scripts/forecast_eval.py        # darf nur realisierte Horizonte bewerten
 Für UI-Änderungen zusätzlich mit headless Chrome bei Desktop (1500) **und** Phone
 (390) prüfen. Für Flows mit mehreren Klicks lohnt das `verify`-Skill / Chrome-MCP.
 
+> **Der Frische-Check am Bundle-Namen beweist nur das FRONTEND.** Am 22.08.
+> ist der Lauf „Deploy Functions (Firebase)" für #424 fehlgeschlagen — und
+> ich habe den Stand trotzdem als live gemeldet, weil sich der Bundle-Name
+> geändert hatte. Der stammt aber aus „Deploy Frontend (webgo)"; das sind
+> zwei getrennte Workflows, die unabhängig scheitern. Ein grüner CI-Lauf
+> sagt ebenfalls nichts über den Deploy: CI, Frontend-Deploy und
+> Functions-Deploy sind drei Läufe auf denselben Commit.
+>
+> Der Fehler heilte sich hier zufällig selbst (der nächste erfolgreiche
+> Functions-Deploy nahm den Code mit), aber darauf ist kein Verlass. Also:
+> Bei Server-Änderungen die FUNKTION prüfen, nicht die Seite. Eine
+> deployte Callable antwortet unauthentifiziert mit **401**, eine nicht
+> deployte mit **404**:
+>
+> ```bash
+> curl -s -o /dev/null -w "%{http_code}\n" -X POST \
+>   https://<funktionsname>-6xru5z43xa-uc.a.run.app \
+>   -H "Content-Type: application/json" -d '{"data":{}}'
+> ```
+>
+> Der Name ist der EXPORT-Name aus `functions/src/index.ts` (`adminUsers`,
+> nicht `admin`) — ein falscher Name liefert 404 und sieht aus wie ein
+> fehlender Deploy. Für geplante Läufe ist der Beleg ein neues Feld im
+> Herzschlag, nicht der Merge.
+
 > **Nach einem Stapel Änderungen: ein Zusammenspiel-Durchgang.** Acht einzeln
 > verifizierte Änderungen ergeben keinen verifizierten Stand — Fehler sitzen
 > dann in der **Naht** zwischen ihnen. Beleg 21.08.: Die Depot-Teilen-Karte
