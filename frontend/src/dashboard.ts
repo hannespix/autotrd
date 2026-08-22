@@ -218,6 +218,7 @@ import {
 } from './shareCard.js';
 import { animiereSvg } from './kartenAnimation.js';
 import { shareStory, storyDateiname, type StoryKarte } from './shareStory.js';
+import { signalErklaerung } from './signalErklaerung.js';
 import {
   ALLE_SEITEN,
   SEITEN,
@@ -4290,6 +4291,9 @@ function symTip(): HTMLElement {
 }
 
 function versteckeSymbolTip(): void {
+  // Die Erklaer-Variante ist breiter und hoehenbegrenzt — die Klasse muss
+  // weg, sonst erbt der naechste Steckbrief ihr Layout.
+  symTipEl?.classList.remove('warum');
   if (symTipTimer !== null) { window.clearTimeout(symTipTimer); symTipTimer = null; }
   if (symTipLangdruck !== null) { window.clearTimeout(symTipLangdruck); symTipLangdruck = null; }
   if (symTipEl) symTipEl.hidden = true;
@@ -4324,6 +4328,43 @@ function zeigeSymbolTip(sym: string, x: number, y: number): void {
   tip.style.top = `${y + 14 + b.height > window.innerHeight ? Math.max(8, y - b.height - 12) : y + 14}px`;
 }
 
+/**
+ * Das Erklaer-Kaertchen zur Signal-Zelle — in DASSELBE Portal wie der
+ * Steckbrief (Owner-Wunsch 22.08.).
+ *
+ * Es rendert nur, was `signalErklaerung` aus dem Signal-Dokument nachrechnet.
+ * Fehlt das Signal (Symbol nie gescannt), erscheint gar nichts statt einer
+ * erfundenen Begruendung — dieselbe Regel wie beim Steckbrief.
+ */
+function zeigeWarumTip(sym: string, x: number, y: number): void {
+  const daten = sigDaten.get(sym);
+  if (!daten?.sig) return;
+  const e = signalErklaerung(daten.sig, daten.ind);
+  const tip = symTip();
+  tip.classList.add('warum');
+  const punkte = e.bausteine
+    .map(
+      (b) =>
+        `<li><b>${escText(b.quelle)}</b>${b.wert ? ` ${escText(b.wert)}` : ''} — ${escText(b.stimme)}</li>`,
+    )
+    .join('');
+  tip.innerHTML =
+    `<div class="sym-tip-kopf"><b>${escText(e.kopf)}</b></div>`
+    + `<div class="sym-tip-text">${escText(e.zaehlung)}</div>`
+    + (punkte ? `<ul class="warum-liste">${punkte}</ul>` : '')
+    + e.fuss.map((f) => `<div class="sym-tip-text c-t3">${escText(f)}</div>`).join('');
+  tip.hidden = false;
+  const b = tip.getBoundingClientRect();
+  tip.style.left = `${Math.min(Math.max(8, x - b.width / 2), window.innerWidth - b.width - 8)}px`;
+  tip.style.top = `${y + 14 + b.height > window.innerHeight ? Math.max(8, y - b.height - 12) : y + 14}px`;
+}
+
+/** Kaertchen zeigen — Erklaerung oder Steckbrief, je nach Anker. */
+function zeigeTip(anker: { sym: string; warum?: boolean }, x: number, y: number): void {
+  if (anker.warum === true) zeigeWarumTip(anker.sym, x, y);
+  else zeigeSymbolTip(anker.sym, x, y);
+}
+
 /** Steckbrief-Anker unterm Zeiger — GENERISCH über das data-sym-Attribut
  *  (Owner 18:1x „überall wo symbole sind" + 21:2x „noch nicht alle!"):
  *  Jede Stelle, die ein Symbol rendert, trägt data-sym und ist damit
@@ -4332,7 +4373,32 @@ function zeigeSymbolTip(sym: string, x: number, y: number): void {
  *  Trade-Journal, Abgleich, Stop-Dialog und alle Symbol-Suchlisten.
  *  Eine NEUE Symbol-Anzeige braucht nur das Attribut, keinen Selektor. */
 const SYM_TIP_ANKER = '[data-sym]';
-function symTipAnker(ziel: Element | null): { sym: string } | null {
+
+/**
+ * Signal- und Indikatordaten der Auto-Signale-Karte, modulweit erreichbar.
+ *
+ * Die Zeilen-Map lebt in `wireWatchlist` und ist damit fuer den Tooltip
+ * unerreichbar. Statt die Erklaerung in jede Zelle zu schreiben (Text in der
+ * Zelle zerlegte die Sortierung, die `textContent` vergleicht), steht sie
+ * hier — gefuellt an genau den beiden Stellen, an denen frische Werte
+ * eintreffen.
+ */
+const sigDaten = new Map<string, { ind: IndicatorRow | null; sig: SignalRow | null }>();
+
+/** Warum-Anker unterm Zeiger — die Signal-Zelle der Auto-Signale-Karte. */
+const WARUM_ANKER = '[data-warum]';
+function symTipAnker(ziel: Element | null): { sym: string; warum?: boolean } | null {
+  /* Vorrang fuer die Erklaerung (22.08.): Die Signal-Zelle liegt INNERHALB
+   * der Zeile, die schon `data-sym` traegt. Ohne diese Zeile gewaenne der
+   * Steckbrief, und der Owner-Wunsch waere unerreichbar — ein Kaertchen,
+   * das immer vom anderen verdeckt wird.
+   *
+   * Bewusst DASSELBE Element und dieselbe Geste: Zwei Kaertchen gleichzeitig
+   * sind damit strukturell unmoeglich, und das ganze Ausblende-Netz
+   * (Scroll, Fokus, Wischen, Tippen daneben) gilt geschenkt. */
+  const warumEl = ziel?.closest<HTMLElement>(WARUM_ANKER);
+  const warumSym = warumEl?.dataset.warum;
+  if (warumSym) return { sym: warumSym, warum: true };
   const el = ziel?.closest<HTMLElement>(SYM_TIP_ANKER);
   const sym = el?.dataset.sym;
   // Der fokussierte Symbol-Sucher gehört dem Tippenden — kein Kärtchen über
@@ -4348,10 +4414,9 @@ function wireSymbolTip(): void {
     const anker = symTipAnker(ev.target as Element | null);
     if (!anker) return;
     if (symTipTimer !== null) window.clearTimeout(symTipTimer);
-    const { sym } = anker;
     const x = ev.clientX;
     const y = ev.clientY;
-    symTipTimer = window.setTimeout(() => { symTipTimer = null; zeigeSymbolTip(sym, x, y); }, 320);
+    symTipTimer = window.setTimeout(() => { symTipTimer = null; zeigeTip(anker, x, y); }, 320);
   }, { signal: docListenerSignal() });
   document.addEventListener('pointerout', (ev) => {
     if (ev.pointerType !== 'mouse') return;
@@ -4363,8 +4428,9 @@ function wireSymbolTip(): void {
     const anker = symTipAnker(ev.target as Element | null);
     if (!anker) { versteckeSymbolTip(); return; }
     symTipStart = { x: ev.clientX, y: ev.clientY };
-    const { sym } = anker;
-    symTipLangdruck = window.setTimeout(() => { symTipLangdruck = null; zeigeSymbolTip(sym, ev.clientX, ev.clientY); }, 450);
+    const px = ev.clientX;
+    const py = ev.clientY;
+    symTipLangdruck = window.setTimeout(() => { symTipLangdruck = null; zeigeTip(anker, px, py); }, 450);
   }, { signal: docListenerSignal() });
   document.addEventListener('pointermove', (ev) => {
     if (symTipLangdruck === null || symTipStart === null) return;
@@ -4733,6 +4799,9 @@ function wireWatchlist(): void {
   // Signal-Tabelle
   const body = $('sigBody') as HTMLTableSectionElement;
   body.innerHTML = '';
+  /* Alter Stand muss weg: Eine Watchlist-Aenderung laesst sonst Erklaerungen
+   * zu Symbolen stehen, die gar nicht mehr in der Karte sind. */
+  sigDaten.clear();
   const rows = new Map<string, { ind: IndicatorRow | null; sig: SignalRow | null; tr: HTMLTableRowElement }>();
   for (const sym of wl) {
     const tr = document.createElement('tr');
@@ -4741,12 +4810,18 @@ function wireWatchlist(): void {
     // die Zellen als Label:Wert-Paare und zieht die Labels aus dem Attribut.
     tr.innerHTML = `<td class="mono" style="color:var(--t1);font-weight:700"></td>
       <td data-th="RSI">--</td><td data-th="MACD">--</td><td data-th="BB %">--</td>
-      <td data-th="${t('tab.konfluenz')}">--</td><td data-th="Signal"><span class="stag t-hold">HOLD</span></td>`;
+      <td data-th="${t('tab.konfluenz')}">--</td><td data-th="Signal">--</td>`;
     const sigSym = tr.querySelector('td')!;
     sigSym.innerHTML = symbolAvatar(sym, true);
     sigSym.appendChild(document.createTextNode(sym));
     tr.style.cursor = 'pointer';
-    tr.addEventListener('click', () => selectSymbol(sym));
+    /* Der Zeilen-Klick waehlt das Symbol — die Signal-Zelle nicht (22.08.).
+     * Auf dem Handy ist der Longpress dort die einzige Geste; ohne diese
+     * Ausnahme schaltete jedes Nachlesen zusaetzlich das Haupt-Chart um. */
+    tr.addEventListener('click', (ev) => {
+      if ((ev.target as Element | null)?.closest?.(WARUM_ANKER)) return;
+      selectSymbol(sym);
+    });
     body.appendChild(tr);
     rows.set(sym, { ind: null, sig: null, tr });
   }
@@ -4760,7 +4835,12 @@ function wireWatchlist(): void {
     if (r.sig) {
       tds[4]!.textContent = `${r.sig.buyVotes}▲ ${r.sig.sellVotes}▼ / ${r.sig.requiredConfluence}`;
       const dir = r.sig.direction;
-      tds[5]!.innerHTML = `<span class="stag t-${dir}">${dir.toUpperCase()}</span>`;
+      /* `data-warum` traegt das Symbol und macht die Zelle zum Anker der
+       * Erklaerung (22.08.). Das Attribut sitzt am SPAN, nicht am <td>:
+       * `sortiereSigZeilen` vergleicht `cells[idx].textContent`, und der
+       * Zellinhalt bleibt damit exakt „BUY"/„SELL"/„HOLD". */
+      versteckeSymbolTip(); // altes Kaertchen darf keine neue Zeile ueberleben
+      tds[5]!.innerHTML = `<span class="stag t-${dir}" data-warum="${sym}">${dir.toUpperCase()}</span>`;
     }
     // Aktive Sortierung hält Schritt mit frischen Scan-Werten (billig, ~12 Zeilen).
     sortiereSigZeilen();
@@ -4777,8 +4857,20 @@ function wireWatchlist(): void {
           e.ch.className = `lb-ch ${pnlClass(d.quote.changePct)}`;
         }
       }),
-      watchLatestIndicators(sym, (ind) => { const r = rows.get(sym); if (r) { r.ind = ind; paintRow(sym); } }),
-      watchLatestSignal(sym, (sig) => { const r = rows.get(sym); if (r) { r.sig = sig; paintRow(sym); } }),
+      watchLatestIndicators(sym, (ind) => {
+        const r = rows.get(sym);
+        if (!r) return;
+        r.ind = ind;
+        sigDaten.set(sym, { ind, sig: r.sig });
+        paintRow(sym);
+      }),
+      watchLatestSignal(sym, (sig) => {
+        const r = rows.get(sym);
+        if (!r) return;
+        r.sig = sig;
+        sigDaten.set(sym, { ind: r.ind, sig });
+        paintRow(sym);
+      }),
     );
   }
 
