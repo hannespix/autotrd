@@ -6752,6 +6752,24 @@ function renderAdminCard(): void {
 }
 
 /** Konten laden und als Zeilen mit Aktions-Knöpfen rendern. */
+/**
+ * Ergebnis des letzten Admin-Abgleichs — überlebt den Neuaufbau der Liste.
+ *
+ * Owner-Fund 22.08.: „ich kann ihn als Admin nicht abgleichen und
+ * entsperren." Der Abgleich lief korrekt und schrieb seinen Vermerk; nur
+ * war seine Antwort nach ~200 ms weg. `admBtn` lädt nach jeder Aktion die
+ * Liste neu, und `loadAdminList` beginnt mit `err.hidden = true` — genau
+ * die Zeile, in die der Abgleich gerade sein Ergebnis geschrieben hatte.
+ * Sichtbar blieb: derselbe rote Chip wie vorher. Also sah eine Messung,
+ * die sauber lief, exakt aus wie ein Knopf ohne Funktion.
+ *
+ * Die Meldung gehört ohnehin an die ZEILE, nicht an eine gemeinsame
+ * Fehlerzeile am Kartenrand: Sie handelt von genau einem Konto, und der
+ * Grund („im Buch stehen 2 Positionen, die der Broker nicht hat") ist die
+ * Information, mit der man entscheidet, was als Nächstes zu tun ist.
+ */
+let letzterAbgleich: { uid: string; text: string; sperre: boolean } | null = null;
+
 async function loadAdminList(): Promise<void> {
   const list = $('admList');
   const err = $('admErr');
@@ -6837,18 +6855,35 @@ async function loadAdminList(): Promise<void> {
           line.append(
             admBtn(t('adm.abgleichen'), async () => {
               const erg = await adminAbgleich(row.uid);
-              err.hidden = false;
-              err.style.color = erg.sperre ? 'var(--rd)' : 'var(--gn)';
-              err.textContent = !erg.geprueft
-                ? t('adm.abgleichKeinBroker')
-                : erg.sperre
-                  ? `${t('adm.abgleichBleibt')} ${erg.grund ?? ''}`.trim()
-                  : t('adm.abgleichGeloest');
+              /* In den Merker, NICHT in `err`: Gleich nach dieser Funktion
+               * lädt `admBtn` die Liste neu, und deren erste Zeile ist
+               * `err.hidden = true`. Die Meldung wäre weg, bevor sie jemand
+               * liest (Owner-Fund 22.08.). */
+              letzterAbgleich = {
+                uid: row.uid,
+                sperre: erg.sperre,
+                text: !erg.geprueft
+                  ? t('adm.abgleichKeinBroker')
+                  : erg.sperre
+                    ? `${t('adm.abgleichBleibt')} ${erg.grund ?? ''}`.trim()
+                    : t('adm.abgleichGeloest'),
+              };
             }, 'btn-n'),
           );
         }
       }
       list.append(line);
+      /* Das Ergebnis des letzten Abgleichs steht unter DEM Konto, das es
+       * betrifft — und überlebt damit den Neuaufbau, der es vorher fraß. */
+      if (letzterAbgleich?.uid === row.uid) {
+        const note = document.createElement('div');
+        note.className = 'hint';
+        note.style.cssText = `margin:-2px 0 6px;padding-left:4px;color:${
+          letzterAbgleich.sperre ? 'var(--rd)' : 'var(--gn)'
+        }`;
+        note.textContent = letzterAbgleich.text;
+        list.append(note);
+      }
     }
     if (rows.length === 0) list.innerHTML = `<div class="hint">${t('adm.keineKonten')}</div>`;
   } catch (e) {
