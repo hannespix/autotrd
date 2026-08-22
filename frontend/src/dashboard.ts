@@ -106,6 +106,11 @@ import {
   adminLiveStatus,
   adminSetAccess,
   adminAbgleich,
+  adminAntworten,
+  adminNachrichten,
+  nachrichtSenden,
+  nachrichtenLesen,
+  type FadenNachricht,
   adminUebernahmeVormerken,
   adminSetAdmin,
   adminSetKillSwitch,
@@ -682,6 +687,18 @@ function layout(email: string): string {
         <div class="hint">${t('lay.engineAn')}</div>
         <p id="accessNote" class="hint" hidden
           style="color:var(--yl,#d9a441);margin-top:6px"></p>
+        <!-- Faden zum Admin (Owner 22.08.). Steht DIREKT unter der
+             Wartemeldung: Wer liest, dass sein Zugang geprueft wird, hat
+             genau dann die Frage, die er stellen moechte. -->
+        <div id="fadenBox" style="margin-top:8px">
+          <div id="fadenListe" class="faden-liste"></div>
+          <textarea id="fadenText" class="inp faden-text" rows="2"
+            maxlength="2000" placeholder="${t('fd.platzhalter')}"></textarea>
+          <div class="row" style="gap:6px;align-items:center">
+            <button class="btn btn-n" id="fadenSend">${t('fd.senden')}</button>
+            <span class="hint" id="fadenMsg"></span>
+          </div>
+        </div>
         <div id="verifyBox" hidden style="margin-top:8px">
           <p class="hint" style="color:var(--rd)">${t('lay.mailUnbestaetigt')}</p>
           <div class="row">
@@ -6521,6 +6538,45 @@ function renderEngineBadge(running: boolean): void {
  * Schalter, der nichts bewirkt und es nicht sagt, ist eine Falle; deshalb
  * steht der Grund jetzt direkt unter dem Knopf.
  */
+/**
+ * Den Nachrichten-Faden zeichnen (Owner 22.08.).
+ *
+ * Bewusst IMMER sichtbar, nicht nur solange ein Konto wartet: Die
+ * Unterhaltung hoert nach der Freischaltung nicht auf, und ein Weg zum
+ * Betreiber, der nach dem ersten Tag verschwindet, ist keiner.
+ *
+ * Leerer Faden heisst leere Liste und nicht "keine Nachrichten" -- der
+ * Platzhalter im Eingabefeld sagt bereits, wozu das Feld da ist.
+ */
+function renderFaden(nachrichten: readonly FadenNachricht[]): void {
+  const box = document.getElementById('fadenListe');
+  if (!box) return;
+  box.innerHTML = '';
+  for (const n of nachrichten) {
+    const zeile = document.createElement('div');
+    zeile.className = `faden-zeile faden-${n.von}`;
+    const wer = document.createElement('span');
+    wer.className = 'faden-wer';
+    wer.textContent = n.von === 'admin' ? t('fd.vomBetreiber') : t('fd.vonDir');
+    const wann = document.createElement('span');
+    wann.className = 'faden-wann mono';
+    wann.textContent = n.at.slice(0, 16).replace('T', ' ');
+    const text = document.createElement('div');
+    // textContent, nicht innerHTML: Der Inhalt kommt von Menschen.
+    text.textContent = n.text;
+    zeile.append(wer, wann, text);
+    box.append(zeile);
+  }
+  box.scrollTop = box.scrollHeight;
+}
+
+/** Faden laden und zeichnen; Fehler bleiben still, das ist Beiwerk. */
+function ladeFaden(): void {
+  void nachrichtenLesen()
+    .then(renderFaden)
+    .catch(() => undefined);
+}
+
 function renderAccessNote(): void {
   if (!st) return;
   const el = $('accessNote');
@@ -6821,6 +6877,90 @@ function renderAdminCard(): void {
  */
 let letzterAbgleich: { uid: string; text: string; sperre: boolean } | null = null;
 
+/**
+ * Den Faden eines fremden Kontos zeigen und beantworten (Owner 22.08.).
+ *
+ * Er wird UNTER die Kontozeile gehaengt, nicht in ein eigenes Fenster:
+ * Wer gerade entscheidet, ob er freischaltet, will die Unterhaltung neben
+ * dem Konto sehen und nicht anstelle davon.
+ */
+async function zeigeFaden(uid: string, list: HTMLElement): Promise<void> {
+  const alt = document.getElementById(`faden-${uid}`);
+  if (alt) {
+    // Zweiter Klick klappt wieder zu -- ein Knopf, zwei Richtungen.
+    alt.remove();
+    return;
+  }
+  const box = document.createElement('div');
+  box.id = `faden-${uid}`;
+  box.className = 'faden-admin';
+  list.append(box);
+
+  const nachrichten = await adminNachrichten(uid);
+  box.innerHTML = '';
+  if (nachrichten.length === 0) {
+    const leer = document.createElement('div');
+    leer.className = 'hint';
+    leer.textContent = t('adm.fadenLeer');
+    box.append(leer);
+  }
+  for (const n of nachrichten) {
+    const zeile = document.createElement('div');
+    zeile.className = `faden-zeile faden-${n.von}`;
+    const wer = document.createElement('span');
+    wer.className = 'faden-wer';
+    /* In der ADMIN-Ansicht heisst der Kunde „Kunde", nicht „Du" — der
+     * Admin liest hier fremde Post. Im Browser sofort aufgefallen: Über
+     * der Kundennachricht stand „Du" (Befund 22.08.). Und „Betreiber"
+     * statt „Du" auch bei der eigenen Antwort: Bei mehreren Admins wäre
+     * „Du" schlicht unwahr. */
+    wer.textContent = n.von === 'admin' ? t('fd.vomBetreiber') : t('adm.vomKunden');
+    const wann = document.createElement('span');
+    wann.className = 'faden-wann mono';
+    wann.textContent = n.at.slice(0, 16).replace('T', ' ');
+    const text = document.createElement('div');
+    // textContent: Der Inhalt kommt von Menschen, nicht aus dem Code.
+    text.textContent = n.text;
+    zeile.append(wer, wann, text);
+    box.append(zeile);
+  }
+
+  const feld = document.createElement('textarea');
+  feld.className = 'inp faden-text';
+  feld.rows = 2;
+  feld.maxLength = 2000;
+  feld.placeholder = t('adm.antwortPlatzhalter');
+  const fehler = document.createElement('span');
+  fehler.className = 'hint';
+  const senden = document.createElement('button');
+  senden.className = 'btn btn-n';
+  senden.style.cssText = 'padding:3px 8px;font-size:.78rem';
+  senden.textContent = t('adm.antworten');
+  senden.addEventListener('click', () => {
+    const text = feld.value.trim();
+    if (text.length === 0) {
+      fehler.textContent = t('fd.leer');
+      return;
+    }
+    senden.disabled = true;
+    fehler.textContent = '';
+    void adminAntworten(uid, text)
+      .then(() => {
+        box.remove();
+        return zeigeFaden(uid, list);
+      })
+      .catch((e: unknown) => {
+        fehler.textContent = serverText(e);
+        senden.disabled = false;
+      });
+  });
+  const reihe = document.createElement('div');
+  reihe.className = 'row';
+  reihe.style.cssText = 'gap:6px;align-items:center';
+  reihe.append(senden, fehler);
+  box.append(feld, reihe);
+}
+
 async function loadAdminList(): Promise<void> {
   const list = $('admList');
   const err = $('admErr');
@@ -6955,6 +7095,25 @@ async function loadAdminList(): Promise<void> {
             }, 'btn-n'),
           );
         }
+        /* Nachrichten je Konto (Owner 22.08.: "diese soll der Admin spaeter
+         * fuer jeden Account auch abrufen koennen"). Aufklappbar statt
+         * immer offen: Bei zwanzig Konten waere eine Liste aus zwanzig
+         * Faeden keine Uebersicht mehr. */
+        /* Eigener Knopf statt `admBtn`: Der laedt nach jeder Aktion die
+         * Liste neu -- der eben angehaengte Faden waere sofort wieder weg.
+         * Genau dieser Griff hat am 22.08. schon einmal eine Meldung
+         * verschluckt (#417). */
+        const fadenBtn = document.createElement('button');
+        fadenBtn.className = 'btn btn-n';
+        fadenBtn.style.cssText = 'padding:3px 8px;font-size:.78rem';
+        fadenBtn.textContent = t('adm.faden');
+        fadenBtn.addEventListener('click', () => {
+          fadenBtn.disabled = true;
+          void zeigeFaden(row.uid, list).finally(() => {
+            fadenBtn.disabled = false;
+          });
+        });
+        line.append(fadenBtn);
       }
       list.append(line);
       /* Das Ergebnis des letzten Abgleichs steht unter DEM Konto, das es
@@ -10583,6 +10742,35 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   // E-Mail-Verifikation (M7): ohne bestätigte Mail bleibt der Engine-Start
   // serverseitig gesperrt — die Box erklärt das und bietet beide Aktionen an.
   $('verifyBox').hidden = emailVerified();
+  /* Faden zum Betreiber (Owner 22.08.). Einmal beim Aufbau laden und nach
+   * jedem Senden neu -- ein Live-Abo waere fuer einen Faden, in den selten
+   * jemand schreibt, ein Dauer-Listener ohne Gegenwert. */
+  ladeFaden();
+  $('fadenSend').addEventListener('click', () => {
+    const feld = $('fadenText') as HTMLTextAreaElement;
+    const msg = $('fadenMsg');
+    const text = feld.value.trim();
+    if (text.length === 0) {
+      msg.textContent = t('fd.leer');
+      return;
+    }
+    const knopf = $('fadenSend') as HTMLButtonElement;
+    knopf.disabled = true;
+    msg.textContent = '';
+    void nachrichtSenden(text)
+      .then(() => {
+        feld.value = '';
+        msg.textContent = t('fd.gesendet');
+        ladeFaden();
+      })
+      .catch((e: unknown) => {
+        msg.textContent = serverText(e);
+      })
+      .finally(() => {
+        knopf.disabled = false;
+      });
+  });
+
   $('verifySend').addEventListener('click', () => {
     sendVerification()
       .then(() => { $('verifyHint').textContent = t('mt.mailUnterwegs'); })
