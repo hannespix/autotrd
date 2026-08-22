@@ -204,7 +204,18 @@ export interface SignalRow {
   buyVotes: number;
   sellVotes: number;
   requiredConfluence: number;
-  votes: Partial<Record<'rsi' | 'macd' | 'bollinger', 'buy' | 'sell' | 'hold'>>;
+  /**
+   * Stimme je Quelle. `forecast` gehört dazu, auch wenn es lange fehlte
+   * (22.08.): Der Server schreibt den Schlüssel längst, der Client-Typ kannte
+   * ihn nicht — und ohne ihn summieren die Einzelstimmen einer Erklärung
+   * nicht auf die angezeigte Gesamtzahl.
+   *
+   * FEHLT ein Schlüssel, wurde diese Quelle NICHT gerechnet (bei `forecast`
+   * etwa, weil ihr Gewicht 0 war). Das ist etwas anderes als `'hold'`, was
+   * heißt: gerechnet, aber ohne Ausschlag. Wer beides gleich behandelt,
+   * erfindet eine Begründung.
+   */
+  votes: Partial<Record<'rsi' | 'macd' | 'bollinger' | 'forecast', 'buy' | 'sell' | 'hold'>>;
   price: number;
   at: string;
   /** Genauigkeitsgewichtetes Prognose-Stimmgewicht dieses Scans (Teil 4). */

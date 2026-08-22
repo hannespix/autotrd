@@ -785,6 +785,45 @@ export const DE = {
   'ew.knappVerfehlt': 'knapp verfehlt',
   'ew.trendSoloErzeugt': 'per Trend-Regel doch erzeugt',
   'ew.knappTitel': 'Symbole, die die Einstiegs-Konfluenz um genau eine Stimme verfehlt haben. Steht die Ampel auf Trend, erzeugt die Trend-Regel daraus trotzdem ein Kaufsignal.',
+  /* ── Signal-Erklärung am BUY/SELL/HOLD-Etikett (Owner 22.08.) ──────────
+   *
+   * Jeder Satz hier ist gegen drei Regeln geprüft: nur Vergangenheit und
+   * Gegenwart, keine Wertung, keine erfundene Begründung. Wörter wie
+   * „günstig", „Chance", „überverkauft" oder „dürfte" tragen eine Erwartung
+   * über den Kursverlauf — auch wenn sie technisch gemeint sind — und wären
+   * Anlageberatung. Der Wächter in signalErklaerung.test.ts prüft die Liste. */
+  'se.soGezaehlt': 'so hat die Regel gezählt. Keine Empfehlung.',
+  'se.rsi': 'RSI',
+  'se.macd': 'MACD',
+  'se.bollinger': 'Bollinger',
+  'se.prognose': 'Prognose',
+  'se.unterMarke': 'unter der Marke',
+  'se.ueberMarke': 'über der Marke',
+  'se.zwischenMarken': 'zwischen den Marken',
+  'se.kaufstimme': 'Kaufstimme',
+  'se.kaufstimmen': 'Kaufstimmen',
+  'se.verkaufsstimme': 'Verkaufsstimme',
+  'se.verkaufsstimmen': 'Verkaufsstimmen',
+  'se.keineStimme': 'keine Stimme',
+  'se.macdUeber': 'Linie über der Signallinie',
+  'se.macdUnter': 'Linie unter der Signallinie',
+  'se.zaehltHier': 'zählt hier',
+  'se.noetig': 'Nötig:',
+  'se.aufEinerSeite': 'auf einer Seite, und diese Seite muss vorn liegen.',
+  /* Bei Gleichstand darf die Schwelle NICHT als Ursache genannt werden: Die
+   * Sperre ist dann, dass keine Seite vorn liegt — das gilt unabhängig
+   * davon, wie hoch die Schwelle steht. */
+  'se.gleichstand': 'Keine Seite liegt vorn — deshalb entsteht kein Signal, unabhängig von der Schwelle.',
+  'se.eineFehlte': 'Es fehlte eine Stimme zur nötigen Zahl',
+  'se.trendSolo': 'Hier genügte eine Stimme: Sie kam vom MACD, und die Marktampel der Regel stand auf „Trend" — gemessen am Gesamtmarkt, nicht an diesem Wert. Sonst wären zwei nötig gewesen.',
+  'se.stand': 'Stand',
+  'se.systemwerte': 'Tageskerzen · Systemwerte',
+  /* Der wichtigste Satz der ganzen Erklärung. NICHT „ein Signal ist noch
+   * keine Order — danach entscheidet das Einstiegs-Tor": Die angezeigte
+   * Zeile ist gar nicht die Eingabe des Tors. Der Anzeige-Scan rechnet
+   * einmal je Symbol mit den Systemwerten, der Handelspfad rechnet je Konto
+   * komplett neu. Zwei parallele Rechnungen, keine Reihenschaltung. */
+  'se.getrenntGerechnet': 'Ob dein Konto handelt, wird getrennt gerechnet — mit deinen Einstellungen, deinem Bestand und deinem Zeitraster.',
   'ew.quoteSchatten': 'Einstiege unter gemessener Quote',
   'ew.quoteTitel': 'Die Kostenhürde rechnet je Anlageklasse mit einer angenommenen Einfangquote — dem Anteil der Kursbewegung, den die Signale tatsächlich mitnehmen. Diese Annahme stammt aus einer einzigen Messwoche. Parallel läuft die echte Messung mit. Hier steht, wie viele Einstiege dieses Laufs durchgekommen sind, die mit der GEMESSENEN Quote gescheitert wären. Es wird nichts blockiert: Die Zahl beziffert, was ein Scharfschalten kosten würde.',
   'ew.nachbuchungSteckt': 'Fills ohne Buchung',
@@ -2258,6 +2297,30 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'ew.knappVerfehlt': 'just missed',
   'ew.trendSoloErzeugt': 'created by trend rule anyway',
   'ew.knappTitel': 'Symbols that missed the entry confluence by exactly one vote. When the regime light is on trend, the trend rule still turns them into a buy signal.',
+  'se.soGezaehlt': 'this is how the rule counted. Not a recommendation.',
+  'se.rsi': 'RSI',
+  'se.macd': 'MACD',
+  'se.bollinger': 'Bollinger',
+  'se.prognose': 'Forecast',
+  'se.unterMarke': 'below the mark',
+  'se.ueberMarke': 'above the mark',
+  'se.zwischenMarken': 'between the marks',
+  'se.kaufstimme': 'buy vote',
+  'se.kaufstimmen': 'buy votes',
+  'se.verkaufsstimme': 'sell vote',
+  'se.verkaufsstimmen': 'sell votes',
+  'se.keineStimme': 'no vote',
+  'se.macdUeber': 'line above the signal line',
+  'se.macdUnter': 'line below the signal line',
+  'se.zaehltHier': 'counts here as',
+  'se.noetig': 'Needed:',
+  'se.aufEinerSeite': 'on one side, and that side has to be ahead.',
+  'se.gleichstand': 'Neither side is ahead — so no signal forms, regardless of the threshold.',
+  'se.eineFehlte': 'One vote short of the number needed',
+  'se.trendSolo': 'One vote was enough here: it came from MACD, and the rule\u2019s market light read \u201etrend\u201c \u2014 measured on the market as a whole, not on this instrument. Otherwise two would have been needed.',
+  'se.stand': 'As of',
+  'se.systemwerte': 'daily candles \u00b7 system settings',
+  'se.getrenntGerechnet': 'Whether your account trades is calculated separately \u2014 with your settings, your holdings and your time frame.',
   'ew.quoteSchatten': 'entries below measured capture',
   'ew.quoteTitel': 'The cost hurdle uses an assumed capture rate per asset class — the share of a price move the signals actually catch. That assumption comes from a single week of measurement. The real measurement runs alongside it. This is how many entries in this run got through that would have failed against the MEASURED rate. Nothing is blocked: the number quantifies what switching it on would cost.',
   'ew.nachbuchungSteckt': 'fills not booked',

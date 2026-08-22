@@ -556,6 +556,22 @@ td .sym-av, .lb-sym .sym-av { margin-right: 6px; }
   color: var(--t2); background: var(--sd); border: 1px solid var(--bd);
   padding: 2px 7px; border-radius: 999px; }
 .sym-tip-text { margin-top: 7px; font-size: 11px; line-height: 1.5; color: var(--t2); }
+/* Erklaer-Variante des Kaertchens (Signal-Zelle, 22.08.).
+   Zwei Werte, die hier nicht kosmetisch sind:
+   - max-width 320 statt 280: Die Stimm-Zeilen brechen sonst nach jedem
+     zweiten Wort um, und aus vier Punkten werden zwoelf Zeilen.
+   - max-height + overflow-y: Das Kaertchen ist position:fixed und kippt beim
+     Positionieren nur senkrecht. Ohne Deckel laeuft ein langer Fall unten
+     aus dem Bild — und weil pointer-events:none gilt, waere er nicht einmal
+     scrollbar. Genau dann verschwaenden die Schlusssaetze, also der Teil,
+     der die Erklaerung von einer Empfehlung trennt. Deshalb faengt der
+     Deckel ihn ab, und die Liste scrollt statt der Seite. */
+.sym-tip.warum { max-width: 320px; max-height: calc(100vh - 16px); overflow-y: auto;
+  pointer-events: auto; }
+.warum-liste { margin: 7px 0 0; padding-left: 16px; font-size: 11px; line-height: 1.55;
+  color: var(--t2); }
+.warum-liste li { margin: 2px 0; }
+.warum-liste b { color: var(--t1); }
 
 /* Chart */
 .chart-hd { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
