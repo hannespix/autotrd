@@ -1170,8 +1170,11 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
           ...(req.riskExit ? { riskExit: req.riskExit } : {}),
           ...(pos.bucket ? { bucket: pos.bucket } : {}),
         };
+        // Teilschluss sammelt, voller Schluss meldet — wie im sell-Zweig.
+        const teilBisher =
+          typeof pos.teilPnl === 'number' && Number.isFinite(pos.teilPnl) ? pos.teilPnl : 0;
         if (ganz) tx.delete(posRef);
-        else tx.update(posRef, { qty: rest });
+        else tx.update(posRef, { qty: rest, teilPnl: roundCents(teilBisher + pnl) });
         tx.set(tradeRef, {
           ...trade,
           at: Timestamp.now(),
@@ -1182,7 +1185,14 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
           ...anschaffung(pos, now),
         });
         tx.update(userRef, { 'wallet.paperBalance': roundCents(balance + margin + pnl), 'wallet.updatedAt': now });
-        return { executed: true, trade: { ...trade, id: tradeRef.id } };
+        return {
+          executed: true,
+          trade: {
+            ...trade,
+            id: tradeRef.id,
+            ...(ganz ? { filterPnl: roundCents(teilBisher + pnl) } : {}),
+          },
+        };
       }
       if (posSnap.exists) {
         /* Nachkauf bleibt VERBOTEN — außer (a) die Stücke liegen bereits im
@@ -1389,8 +1399,13 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       ...(req.riskExit ? { riskExit: req.riskExit } : {}),
       ...(pos.bucket ? { bucket: pos.bucket } : {}),
     };
+    /* Teilschluss sammelt, voller Schluss meldet (23.08.).
+     *
+     * Sonst zählte EINE Entscheidung zweimal in die Steckbrief-Statistik —
+     * einmal hier, einmal beim Schluss des Restes. Siehe `Position.teilPnl`. */
+    const teilBisher = typeof pos.teilPnl === 'number' && Number.isFinite(pos.teilPnl) ? pos.teilPnl : 0;
     if (ganz) tx.delete(posRef);
-    else tx.update(posRef, { qty: rest });
+    else tx.update(posRef, { qty: rest, teilPnl: roundCents(teilBisher + pnl) });
     tx.set(tradeRef, {
       ...trade,
       at: Timestamp.now(),
@@ -1401,17 +1416,40 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       ...anschaffung(pos, now),
     });
     tx.update(userRef, { 'wallet.paperBalance': roundCents(balance + proceeds), 'wallet.updatedAt': now });
-    return { executed: true, trade: { ...trade, id: tradeRef.id } };
+    /* `filterPnl` steht NUR am Rückgabewert, nicht im Trade-Dokument: Es ist
+     * die Summe über alle Tranchen dieser Position und gehört nicht an einen
+     * einzelnen Trade, der nur seine eigene Tranche verantwortet. */
+    return {
+      executed: true,
+      trade: { ...trade, id: tradeRef.id, ...(ganz ? { filterPnl: roundCents(teilBisher + pnl) } : {}) },
+    };
   }).then(async (result) => {
     // Lernstatistik NACH der Geld-Transaktion (Trade-Filter 31.07.): Ein
     // geschlossener Trade mit Steckbrief zählt in meta/tradeFilter. Bewusst
     // getrennt und fehlertolerant — eine Statistik, deren Ausfall einen
     // Verkauf verhindert, wäre die falsche Prioritätenordnung.
     const t = result.trade as
-      | (Trade & { id: string; pnl?: number; bucket?: string; riskExit?: string; nachkauf?: boolean })
+      | (Trade & {
+          id: string;
+          pnl?: number;
+          bucket?: string;
+          riskExit?: string;
+          nachkauf?: boolean;
+          teilSchluss?: true;
+          filterPnl?: number;
+        })
       | undefined;
-    if (result.executed && t?.bucket && typeof t.pnl === 'number') {
-      await recordFilterStat(t.bucket, t.pnl).catch(() => undefined);
+    /* EINE Entscheidung, EIN Eintrag (23.08.).
+     *
+     * Ein Teilschluss meldet nichts — er sammelt auf `Position.teilPnl`. Erst
+     * der volle Schluss zählt, und zwar mit der Summe über alle Tranchen.
+     * Ohne diese Trennung zählte eine Position, die in zwei Stücken zuging,
+     * doppelt: `n` meinte Buchungen statt Entscheidungen, und weil die
+     * Hälften nicht unabhängig sind, sank `pnlSqSum` — der t-Wert wuchs
+     * betragsmäßig, ein Steckbrief hätte also früher geblockt, als die
+     * Datenlage hergibt. */
+    if (result.executed && t?.bucket && typeof t.pnl === 'number' && t.teilSchluss !== true) {
+      await recordFilterStat(t.bucket, t.filterPnl ?? t.pnl).catch(() => undefined);
     }
     /* Journal-Autoanlage (M12) — gleiche Prioritätenordnung wie die
      * Statistik darüber: nach der Geld-Transaktion, fehlertolerant, nie
