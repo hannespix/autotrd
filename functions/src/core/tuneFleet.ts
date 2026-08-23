@@ -87,9 +87,33 @@ function signalCloses(d: FleetSymbolData, tf: 'daily' | 'intraday'): number[] {
 /**
  * Risiko-Ausstiege einer Schatten-Position prüfen.
  *
- * Bewusst mit denselben Marken wie der echte Pfad (`resolveRisk` je
- * Asset-Klasse): Eine Variante, die großzügigere Stops bekäme, wäre nicht
- * vergleichbar — und genau die Vergleichbarkeit ist der ganze Zweck.
+ * Die Prozentwerte kommen aus `resolveRisk` je Asset-Klasse, also aus
+ * derselben Quelle wie im echten Pfad: Eine Variante, die großzügigere Stops
+ * bekäme, wäre nicht vergleichbar — und genau die Vergleichbarkeit ist der
+ * ganze Zweck.
+ *
+ * ── ABER: NICHT dieselben MARKEN wie der echte Pfad (Befund 23.08.) ───────
+ *
+ * Hier stand bis heute „bewusst mit denselben Marken wie der echte Pfad".
+ * Das war falsch. `riskExitReason` in `broker.ts` prüft VIER Marken in fester
+ * Reihenfolge — nachziehender Stop, fester Stop, Ziel, Zeitgrenze. Diese
+ * Funktion prüft ZWEI: fester Stop und Ziel. Es fehlen das Trailing (im
+ * echten Pfad die ZUERST geprüfte Marke) und `max_hold`.
+ *
+ * Warum das mehr ist als eine Ungenauigkeit: Das Urteil dieser Flotte
+ * verstellt echte Konfiguration — `autoTune` befördert Sieger. Ohne Trailing
+ * laufen Schatten-Positionen bis zum festen Stop, statt vorher am
+ * nachgezogenen auszusteigen. Getroffen sind Varianten NICHT gleichmäßig:
+ * Eine, deren Einstiege typischerweise erst weit laufen und dann drehen,
+ * schneidet im Schatten schlechter ab, als sie live abschnitte — ihr fehlt
+ * genau der Ausstieg, der diesen Verlauf abfängt. Der Vergleich ist also
+ * nicht bloß gröber als die Wirklichkeit, er ist schief.
+ *
+ * Warum es trotzdem so bleibt (vorerst): Das zu ändern verstellt, WAS
+ * befördert wird — ein Eingriff in einen Geld-Pfad, keine Messkorrektur. Er
+ * gehört mit eigener Widerlegung entschieden, nicht nebenbei. Bis dahin ist
+ * die Grenze wenigstens benannt statt bestritten: Wer ein Flotten-Urteil
+ * liest, muss wissen, dass es Positionen ohne nachziehenden Stop bewertet.
  */
 function riskExitReason(
   strategy: Strategy,
