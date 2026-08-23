@@ -1,97 +1,105 @@
 /**
  * Zwei Mess-Reparaturen am Ausstieg — beide am 23.08. an einer gescheiterten
- * Auswertung entstanden, keine ändert Verhalten.
+ * Auswertung entstanden, keine ändert Handelsverhalten.
  *
  * Der Anlass: Der Eimer `trailing_stop` stand mit −2.253 $ auf neun Trades da,
  * und ich wollte daraus schließen, dass der nachziehende Stop Geld kostet. Ein
  * Widerlegungs-Durchgang hat das zerlegt — unter anderem mit zwei Befunden,
- * die nicht die Auswertung betrafen, sondern die MESSUNG selbst:
+ * die nicht die Auswertung betrafen, sondern die MESSUNG selbst.
  *
- *   1. Die Eimer trennen die Mechanismen nicht. `pflegeSchutz` buchte JEDEN
- *      Fill des Broker-Netzes hart als `stop_loss`, obwohl das Netz die
- *      ENGERE der beiden Marken wählt. Löste dort die Trailing-Marke aus,
- *      landete der Trade im Eimer des Einstands-Stops. `stop_loss` war damit
- *      eine Mischung, `trailing_stop` nur der Engine-Zweig — der Vergleich maß
- *      das Trailing zu einem unbekannten Teil gegen sich selbst.
+ * ── Befund 1: die Eimer trennen die Mechanismen nicht ─────────────────────
  *
- *   2. Der Extremkurs fehlte am Trade. Damit ist grundsätzlich nicht
- *      feststellbar, ob ein Trailing-Exit einen Gewinn GESICHERT oder einen
- *      Aufschwung ABGESCHNITTEN hat — beide Fälle sehen im Trade-Log gleich
- *      aus. Ohne diese Zahl bleibt jede Trailing-Bewertung Meinung, egal wie
- *      lange man sammelt.
+ * `pflegeSchutz` buchte JEDEN Fill des Broker-Netzes hart als `stop_loss`,
+ * obwohl das Netz die ENGERE der beiden Marken wählt. Löste dort die
+ * Trailing-Marke aus, landete der Trade im Eimer des Einstands-Stops.
  *
- * Beides ist additiv und rein beschreibend. Kein Buchungspfad, keine
- * Handelsentscheidung und kein Sicherheitsnetz hängt daran.
+ * ── Und der Fehler im ersten Anlauf, den ein zweiter Durchgang fand ───────
+ *
+ * Der erste Versuch RIET die Marke beim Lesen: Er verglich das gespeicherte
+ * Order-Niveau mit einem frisch gerechneten Einstands-Stop. Das lag in drei
+ * realen Zuständen falsch — verbreiterter Stop-Loss (die alte Order wird nie
+ * ersetzt), `adoptBroker` (fremdes Niveau, neuer Einstand), `byClass`-Override
+ * `stopLossPct: 0`. Deshalb steht die Marke jetzt dort, wo sie bekannt ist:
+ * im `Math.max`/`Math.min` selbst, festgehalten beim ANLEGEN der Order.
+ *
+ * ── Befund 2: der Extremkurs fehlte am Trade ──────────────────────────────
+ *
+ * Ohne ihn ist nicht feststellbar, ob ein Trailing-Exit einen Gewinn
+ * GESICHERT oder einen Aufschwung ABGESCHNITTEN hat — beide Fälle sehen im
+ * Trade-Log gleich aus.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { schutzQuelle } from '../src/core/schutzStop.js';
+import { planeSchutzStop, schutzStopMarke, schutzStopPreis } from '../src/core/schutzStop.js';
 import type { RiskConfig } from '@autotrd/shared';
 
 const RISK: RiskConfig = { stopLossPct: 2, takeProfitPct: 4, trailingStopPct: 3 };
 
-describe('schutzQuelle — an welcher Marke stand die Order', () => {
+describe('schutzStopMarke — die Marke wird beim Rechnen festgehalten', () => {
   describe('Long', () => {
-    const lage = { avgEntry: 100, side: 'long' as const };
-    // Einstands-Stop = 100 × (1 − 2 %) = 98,00
-
-    it('eine Order AM Einstands-Stop stammt vom Einstands-Stop', () => {
-      expect(schutzQuelle(98, lage, RISK)).toBe('einstand');
+    it('nie im Plus ⇒ der Einstands-Stop führt', () => {
+      // highWater == avgEntry heißt: kein Anstieg beobachtet, das Trailing
+      // ist gar nicht scharf (`peak > avgEntry`).
+      const m = schutzStopMarke({ qty: 10, avgEntry: 100, highWater: 100, side: 'long' }, RISK);
+      expect(m).toEqual({ preis: 98, marke: 'einstand' });
     });
 
-    it('eine ENGERE Order kann nur vom Trailing stammen', () => {
-      // Es gibt nur zwei Kandidaten; wer 98,00 schlägt, ist der andere.
-      expect(schutzQuelle(99, lage, RISK)).toBe('trailing');
-      expect(schutzQuelle(104.6, lage, RISK)).toBe('trailing');
+    it('im Plus, aber das Trailing liegt weiter ⇒ weiterhin der Einstand', () => {
+      // Trailing 101 × 0,97 = 97,97 < 98,00 ⇒ Math.max nimmt den Einstand.
+      const m = schutzStopMarke({ qty: 10, avgEntry: 100, highWater: 101, side: 'long' }, RISK);
+      expect(m?.marke).toBe('einstand');
+      expect(m?.preis).toBe(98);
     });
 
-    it('eine WEITERE Order ist keine Trailing-Marke', () => {
-      // Kann bei Altbestand oder geänderter Konfiguration vorkommen. Im
-      // Zweifel das bisherige Etikett — nie raten.
-      expect(schutzQuelle(95, lage, RISK)).toBe('einstand');
+    it('im Plus und das Trailing liegt enger ⇒ Trailing', () => {
+      // 110 × 0,97 = 106,70 > 98,00.
+      const m = schutzStopMarke({ qty: 10, avgEntry: 100, highWater: 110, side: 'long' }, RISK);
+      expect(m).toEqual({ preis: 106.7, marke: 'trailing' });
     });
 
-    it('Rundung im Cent-Raster ist dieselbe Marke', () => {
-      expect(schutzQuelle(98.00001, lage, RISK)).toBe('einstand');
-      expect(schutzQuelle(97.99999, lage, RISK)).toBe('einstand');
+    it('ohne Einstands-Stop trägt allein das Trailing', () => {
+      const nurTrail: RiskConfig = { stopLossPct: 0, takeProfitPct: 4, trailingStopPct: 3 };
+      const m = schutzStopMarke({ qty: 10, avgEntry: 100, highWater: 110, side: 'long' }, nurTrail);
+      expect(m).toEqual({ preis: 106.7, marke: 'trailing' });
+    });
+
+    it('ohne Einstands-Stop und nie im Plus gibt es kein Niveau', () => {
+      const nurTrail: RiskConfig = { stopLossPct: 0, takeProfitPct: 4, trailingStopPct: 3 };
+      expect(schutzStopMarke({ qty: 10, avgEntry: 100, highWater: 100, side: 'long' }, nurTrail)).toBeNull();
     });
   });
 
   describe('Short — gespiegelt', () => {
-    const lage = { avgEntry: 100, side: 'short' as const };
-    // Einstands-Stop liegt ÜBER dem Einstand: 100 × (1 + 2 %) = 102,00
-
-    it('eine Order AM Einstands-Stop stammt vom Einstands-Stop', () => {
-      expect(schutzQuelle(102, lage, RISK)).toBe('einstand');
+    it('nie im Plus ⇒ Einstands-Stop ÜBER dem Einstand', () => {
+      const m = schutzStopMarke({ qty: 10, avgEntry: 100, lowWater: 100, side: 'short' }, RISK);
+      expect(m).toEqual({ preis: 102, marke: 'einstand' });
     });
 
-    it('enger heißt beim Short TIEFER', () => {
-      expect(schutzQuelle(101, lage, RISK)).toBe('trailing');
-    });
-
-    it('höher ist keine Trailing-Marke', () => {
-      expect(schutzQuelle(105, lage, RISK)).toBe('einstand');
+    it('im Plus und das Trailing liegt tiefer ⇒ Trailing', () => {
+      // 90 × 1,03 = 92,70 < 102,00 ⇒ Math.min nimmt das Trailing.
+      const m = schutzStopMarke({ qty: 10, avgEntry: 100, lowWater: 90, side: 'short' }, RISK);
+      expect(m?.marke).toBe('trailing');
+      expect(m?.preis).toBeCloseTo(92.7, 6);
     });
   });
 
-  describe('Randfälle', () => {
-    it('ohne Einstands-Stop gab es nur einen Kandidaten', () => {
-      const ohne: RiskConfig = { stopLossPct: 0, takeProfitPct: 4, trailingStopPct: 3 };
-      expect(schutzQuelle(99, { avgEntry: 100, side: 'long' }, ohne)).toBe('trailing');
-    });
+  it('schutzStopPreis liefert unverändert nur das Niveau', () => {
+    // Alle Bestandsaufrufer benutzen weiterhin diese Fassung — die Marke ist
+    // additiv, kein Umbau.
+    const lage = { qty: 10, avgEntry: 100, highWater: 110, side: 'long' as const };
+    expect(schutzStopPreis(lage, RISK)).toBe(schutzStopMarke(lage, RISK)?.preis);
+  });
 
-    it('unbrauchbare Zahlen behalten das bisherige Etikett', () => {
-      // Ein NaN darf keinen Trade zum Trailing-Exit umdeklarieren.
-      expect(schutzQuelle(Number.NaN, { avgEntry: 100, side: 'long' }, RISK)).toBe('einstand');
-      expect(schutzQuelle(99, { avgEntry: Number.NaN, side: 'long' }, RISK)).toBe('einstand');
-      expect(schutzQuelle(99, { avgEntry: 0, side: 'long' }, RISK)).toBe('einstand');
-    });
-
-    it('fehlende Seite gilt als Long', () => {
-      expect(schutzQuelle(99, { avgEntry: 100 }, RISK)).toBe('trailing');
-      expect(schutzQuelle(98, { avgEntry: 100 }, RISK)).toBe('einstand');
-    });
+  it('der Plan trägt die Marke bis zur Order', () => {
+    const plan = planeSchutzStop(
+      { qty: 10, avgEntry: 100, highWater: 110, side: 'long' },
+      RISK,
+      'stocks_us',
+      null,
+    );
+    expect(plan.anlegen).toBe(true);
+    expect(plan.marke).toBe('trailing');
   });
 });
 
@@ -100,32 +108,66 @@ describe('schutzQuelle — an welcher Marke stand die Order', () => {
  * Beide Reparaturen sind einzelne Zeilen an Stellen, die beim Lesen harmlos
  * wirken. Genau so ist der Fehler entstanden, den sie beheben.
  */
-describe('Wächter: das Etikett folgt der Marke', () => {
+describe('Wächter: das Etikett folgt der gespeicherten Marke', () => {
   const scan = readFileSync(join(__dirname, '../src/scheduled/scanMarket.ts'), 'utf8');
   const stop = readFileSync(join(__dirname, '../src/core/schutzStop.ts'), 'utf8');
+  const broker = readFileSync(join(__dirname, '../src/core/broker.ts'), 'utf8');
 
-  it('der Broker-Netz-Fill wird nicht mehr hart als stop_loss gebucht', () => {
-    expect(scan).toContain(
-      "riskExit: befund.quelle === 'trailing' ? 'trailing_stop' : 'stop_loss',",
-    );
-    expect(scan).not.toMatch(/^\s*riskExit: 'stop_loss',$/m);
+  it('die Marke wird beim ANLEGEN geschrieben, nicht später geraten', () => {
+    expect((stop.match(/\.\.\.\(plan\.marke \? \{ quelle: plan\.marke \} : \{\}\),/g) ?? []).length).toBe(2);
+    // Die alte Rate-Funktion darf nicht zurückkommen.
+    expect(stop).not.toContain('export function schutzQuelle');
   });
 
-  it('die Quelle wird am gespeicherten Order-Niveau abgelesen, nicht neu gerechnet', () => {
-    // Die Order wurde mit einem DAMALIGEN highWater gesetzt; der Peak wandert
-    // weiter. Nachrechnen aus dem heutigen Stand ergäbe eine andere Marke.
-    expect(stop).toContain('quelle: schutzQuelle(schutz.stopPreis, pos, risk),');
+  it('gelesen wird die gespeicherte Marke — fehlt sie, bleibt das alte Etikett', () => {
+    /* BEIDE Lesestellen prüfen, nicht nur eine.
+     *
+     * Eine Sabotage-Probe hat genau hier zugeschlagen: Ein `toContain` blieb
+     * grün, während `pflegeSchutz` wieder riet — die zweite Fundstelle in
+     * `schutzAufheben` deckte den Ausdruck zu. Ein Wächter, der die gemeldete
+     * Sache nicht messen kann, bescheinigt Fehlerfreiheit (CLAUDE.md §6). */
+    const treffer = stop.match(/quelle: schutz\.quelle \?\? 'einstand',/g) ?? [];
+    expect(treffer.length).toBe(2); // pflegeSchutz UND schutzAufheben
+    // Und keine der beiden darf einen festen Wert einsetzen.
+    expect(stop).not.toMatch(/quelle: 'trailing',/);
+  });
+
+  it('BEIDE Fill-Pfade stempeln gleich — sonst bleibt die Mischung', () => {
+    // scanMarket über pflegeSchutz …
+    expect(scan).toContain(
+      "riskExit: befund.quelle === 'trailing' ? 'trailing_stop_broker' : 'stop_loss',",
+    );
+    // … und broker.ts über schutzAufheben.
+    expect(broker).toContain(
+      "req.riskExit ?? (aufhebung.quelle === 'trailing' ? 'trailing_stop_broker' : 'stop_loss'),",
+    );
+    // Kein Pfad bucht mehr blind.
+    expect(scan).not.toMatch(/^\s*riskExit: 'stop_loss',$/m);
+    expect(broker).not.toMatch(/riskExit: req\.riskExit \?\? 'stop_loss',/);
+  });
+
+  it('der Broker-Fill bekommt einen EIGENEN Eimer', () => {
+    // Zumischen zu `trailing_stop` verschöbe still Masse zwischen
+    // bestehenden Eimern und mischte zwei verschiedene Mechanismen.
+    expect(scan).not.toContain("? 'trailing_stop' :");
+    expect(broker).not.toContain("? 'trailing_stop' :");
   });
 });
 
 describe('Wächter: der Extremkurs steht am schließenden Trade', () => {
   const broker = readFileSync(join(__dirname, '../src/core/broker.ts'), 'utf8');
 
-  it('anschaffung schreibt peakPrice — Long aus highWater, Short aus lowWater', () => {
-    expect(broker).toContain("const peak = pos.side === 'short' ? pos.lowWater : pos.highWater;");
+  it('Long aus highWater, Short aus lowWater', () => {
+    expect(broker).toContain("const roh = pos.side === 'short' ? pos.lowWater : pos.highWater;");
+  });
+
+  it('nur bei beobachtetem Anstieg — ein Peak am Einstand wäre keine Messung', () => {
+    // Sonst entstünden Trades der Form „40 Tage gehalten, nie im Plus" aus
+    // Positionen, deren Wasserstandsmarke adoptBroker zurückgesetzt hat.
     expect(broker).toContain(
-      "...(typeof peak === 'number' && Number.isFinite(peak) && peak > 0 ? { peakPrice: peak } : {}),",
+      "(pos.side === 'short' ? roh < pos.avgEntry : roh > pos.avgEntry)",
     );
+    expect(broker).toContain("...(peak !== null ? { peakPrice: peak } : {}),");
   });
 
   it('und zwar in derselben Funktion wie Einstand und Eröffnungszeit', () => {

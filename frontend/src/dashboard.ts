@@ -8699,6 +8699,7 @@ const EXIT_LABELS: Record<string, string> = {
   stop_loss: 'Stop-Loss',
   take_profit: 'Take-Profit',
   trailing_stop: 'Trailing-Stop',
+  trailing_stop_broker: 'Trailing-Stop (Broker)',
   max_hold: t('an.haltedauer'),
   emergency: t('an.notbremse'),
   // Zwangs-Glattstellung der Tages-Notbremse (Audit 13.08., K-3). Das Wort
@@ -9826,6 +9827,7 @@ const EXIT_LABEL: Record<string, string> = {
   stop_loss: 'Stop-Loss',
   take_profit: 'Take-Profit',
   trailing_stop: 'Trailing-Stop',
+  trailing_stop_broker: 'Trailing-Stop (Broker)',
   max_hold: 'Haltedauer',
 };
 

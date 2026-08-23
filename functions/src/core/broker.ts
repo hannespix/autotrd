@@ -316,11 +316,25 @@ function anschaffung(pos: Position, jetzt: string): Partial<Trade> {
    *
    * Rein beschreibend: Kein Buchungspfad liest diese Felder, und keine
    * Handelsentscheidung hängt an ihnen. */
-  const peak = pos.side === 'short' ? pos.lowWater : pos.highWater;
+  /* NUR wenn die Position beobachtbar über den Einstand gelaufen ist.
+   *
+   * Ein Peak GLEICH dem Einstand sagt nichts: Er entsteht beim Öffnen (dort
+   * wird `highWater` auf den Einstandskurs gesetzt) und ebenso bei
+   * `adoptBroker`, das die Wasserstandsmarke auf den übernommenen Einstand
+   * zurücksetzt. Beides als Zahl zu schreiben ergäbe Trades der Form
+   * „40 Tage gehalten, nie einen Cent im Plus" — eine Aussage, die die Daten
+   * nicht hergeben. Das Feld wegzulassen ist ehrlicher: Sein Fehlen heißt
+   * genau „kein Anstieg beobachtet", und das stimmt in beiden Fällen. */
+  const roh = pos.side === 'short' ? pos.lowWater : pos.highWater;
+  const peak =
+    typeof roh === 'number' && Number.isFinite(roh) && roh > 0 &&
+    (pos.side === 'short' ? roh < pos.avgEntry : roh > pos.avgEntry)
+      ? roh
+      : null;
   return {
     entryPrice: pos.avgEntry,
     acquiredAt: pos.openedAt,
-    ...(typeof peak === 'number' && Number.isFinite(peak) && peak > 0 ? { peakPrice: peak } : {}),
+    ...(peak !== null ? { peakPrice: peak } : {}),
     ...(Number.isFinite(auf) && Number.isFinite(zu)
       ? { holdingDays: Math.round(((zu - auf) / 86_400_000) * 100) / 100 }
       : {}),
@@ -685,7 +699,14 @@ export async function executeTrade(
           qty: aufhebung.fillQty,
           fillPreis: aufhebung.fillPreis,
           brokerOrderId: aufhebung.orderId,
-          riskExit: req.riskExit ?? 'stop_loss',
+          /* Derselbe Fill kann über `pflegeSchutz` ODER hier entdeckt
+           * werden — das Etikett muss beidesmal dasselbe sein, sonst wäre die
+           * Mischung nicht aufgelöst, sondern nur verkleinert (Befund 23.08.).
+           * Ein ausdrücklich mitgegebener Grund schlägt weiterhin alles: Wer
+           * einen Signal-Exit fährt und dabei die Schutz-Order einsammelt,
+           * hat seinen eigenen Grund. */
+          riskExit:
+            req.riskExit ?? (aufhebung.quelle === 'trailing' ? 'trailing_stop_broker' : 'stop_loss'),
         },
         strategy,
       );
