@@ -274,6 +274,32 @@ Für UI-Änderungen zusätzlich mit headless Chrome bei Desktop (1500) **und** P
 > fehlender Deploy. Für geplante Läufe ist der Beleg ein neues Feld im
 > Herzschlag, nicht der Merge.
 
+> **Ein gemergter PR ist kein deployter PR — und ein Merge-Fehlschlag kann
+> BEIDES verschlucken.** Am 22.08. quittierte GitHub den Merge von #433 mit
+> **502**; der Wiederholversuch meldete „Merge already in progress". Der
+> Commit `9528d85` lag danach tatsächlich auf `main` — aber GitHub hat den
+> PR als „closed without merging" verbucht, und **zur Merge-SHA ist kein
+> einziger Lauf gefeuert**: kein CI-`push`, kein Frontend-Deploy, kein
+> Functions-Deploy. Grün war nur der CI-Lauf am PR-Kopf (Event
+> `pull_request`, andere SHA) — der sagt über `main` nichts. Der
+> Datenschutz-Riegel aus #433 lag also im Quelltext und lief trotzdem
+> nicht. Aufgefallen ist es erst, weil ich den Deploy-Lauf zur SHA gesucht
+> habe statt dem grünen Häkchen am PR zu glauben.
+>
+> Also nach JEDEM Merge: prüfen, dass zur Merge-SHA ein Deploy-Lauf
+> existiert — nicht, dass der PR zu ist.
+>
+> ```bash
+> git fetch origin main && git rev-parse origin/main   # die Merge-SHA
+> # dann: actions_list → gibt es einen Lauf mit genau dieser head_sha?
+> ```
+>
+> Fehlt der Lauf, ist der Weg zurück **nicht** ein manueller Workflow-Start
+> (`actions_run_trigger` liefert hier 403 „Resource not accessible by
+> integration"), sondern ein echter neuer Commit auf `main` — der nimmt den
+> liegengebliebenen Stand mit. Ein leerer Commit wäre der schnelle Weg;
+> besser ist ein Commit, der den Anlass gleich dokumentiert.
+
 > **Nach einem Stapel Änderungen: ein Zusammenspiel-Durchgang.** Acht einzeln
 > verifizierte Änderungen ergeben keinen verifizierten Stand — Fehler sitzen
 > dann in der **Naht** zwischen ihnen. Beleg 21.08.: Die Depot-Teilen-Karte
