@@ -384,6 +384,29 @@ export interface TradeRequest {
   /** Order-Kennung beim Broker — die Brücke zwischen Buch und Depot. */
   brokerOrderId?: string;
   /**
+   * Der REST der schließenden Order ist nachweislich tot (23.08.).
+   *
+   * Nur mit dieser Zusicherung darf ein Teilfill die Position VERKLEINERN
+   * statt sie zu schließen (`schlussMenge`). Ohne sie wäre die Restmenge im
+   * Buch eine geladene Waffe: Eine schließende Order bleibt bei ausbleibendem
+   * Fill BEWUSST stehen (`orderRouting.ts`, „ein später Fill ist erwünscht").
+   * Füllt sie danach doch noch durch, liegen beim Broker null Stücke — und
+   * der nächste Puls sähe im Buch einen Rest, für den er eine ZWEITE
+   * Verkaufsorder losschickt. Genau davor warnt `schutzAufheben` weiter
+   * unten: Aus einem gewollten Ausstieg würde ein ungewollter Leerverkauf in
+   * die Gegenrichtung, ohne Stop.
+   *
+   * Wahr ist die Zusicherung heute an genau EINER Stelle: `pflegeSchutz`
+   * storniert den Rest der Stop-Order selbst, bevor es den gefüllten Teil
+   * meldet. `schutzAufheben` gehört NICHT dazu — dort ist der Stornoversuch
+   * ja gerade fehlgeschlagen (`nicht_stornierbar`), die Order lebt weiter.
+   *
+   * Fehlend = wie bisher ganz schließen. Das ist die konservative Antwort:
+   * Eine zu große Buchung ist ein Fehler in den Zahlen, eine ungedeckte
+   * Rest-Position ein Fehler mit Richtung.
+   */
+  restStorniert?: boolean;
+  /**
    * Leerverkauf erlauben (Owner 26.07.): sell OHNE Position eröffnet dann
    * einen Short statt mit 'keine_position' abzulehnen. Buy auf eine
    * Short-Position deckt IMMER ein (kein Flag nötig — die Position sagt es).
@@ -510,12 +533,28 @@ export function planeMenge(
  * Ohne verwertbare Wunschmenge bleibt es beim heutigen Verhalten (ganz
  * schließen) — eine fehlende Angabe darf nie zu einem Rest führen, den
  * niemand angefordert hat. Mehr als die offene Menge wird nie gebucht.
+ *
+ * UND: Verkleinert wird NUR, wenn der Aufrufer zusichert, dass der Rest der
+ * schließenden Order tot ist (`restStorniert`). Diese Bedingung ist der Kern
+ * der ganzen Funktion, nicht ein Zusatz. Eine schließende Order bleibt bei
+ * ausbleibendem Fill bewusst stehen; füllt sie später doch durch, hält der
+ * Broker null Stücke, während im Buch ein Rest steht. Der nächste Puls
+ * schickte darauf eine zweite Verkaufsorder — und eröffnete damit einen
+ * ungewollten Leerverkauf ohne Stop, exakt die Gefahr, vor der
+ * `schutzAufheben` weiter unten warnt. Die bisherige Sicherung dagegen war,
+ * dass das Buch beim Schließen löscht; wer sie aufgibt, braucht Ersatz.
+ *
+ * Ohne die Zusicherung bleibt es deshalb beim vollen Schluss — auch dann,
+ * wenn dabei zu viel gebucht wird. Eine zu große Buchung ist ein Fehler in
+ * den Zahlen; eine ungedeckte Rest-Position ist ein Fehler mit Richtung.
  */
 export function schlussMenge(
   posQty: number,
   gewuenscht?: number,
+  restStorniert?: boolean,
 ): { menge: number; rest: number; ganz: boolean } {
   const voll = { menge: posQty, rest: 0, ganz: true };
+  if (restStorniert !== true) return voll;
   if (gewuenscht === undefined || !Number.isFinite(gewuenscht) || gewuenscht <= 0) return voll;
   if (gewuenscht >= posQty) return voll;
   const rest = posQty - gewuenscht;
@@ -1073,7 +1112,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       // wenn der Kurs seit dem Leerverkauf GEFALLEN ist.
       if (posSnap.exists && (posSnap.data() as Position).side === 'short') {
         const pos = posSnap.data() as Position;
-        const { menge: qty, rest, ganz } = schlussMenge(pos.qty, req.qty);
+        const { menge: qty, rest, ganz } = schlussMenge(pos.qty, req.qty, req.restStorniert);
         const pnl = (pos.avgEntry - eff) * qty;
         const margin = qty * pos.avgEntry;
         const trade: Trade & {
@@ -1298,7 +1337,7 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
     }
     const pos = posSnap.data() as Position;
     if (pos.side === 'short') return { executed: false, reason: 'short_nachverkauf_verboten' };
-    const { menge: qty, rest, ganz } = schlussMenge(pos.qty, req.qty);
+    const { menge: qty, rest, ganz } = schlussMenge(pos.qty, req.qty, req.restStorniert);
     const proceeds = qty * eff;
     const pnl = (eff - pos.avgEntry) * qty;
     const trade: Trade & { pnl: number; riskExit?: string; teilSchluss?: true } = {

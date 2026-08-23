@@ -1090,12 +1090,25 @@ async function executeUserTrades(
                   riskExit: 'stop_loss',
                   assetClass: cls,
                   brokerOrderId: befund.orderId,
+                  /* Die EINZIGE Stelle, die das zusichern darf: `pflegeSchutz`
+                   * storniert den Rest der Stop-Order selbst, bevor es den
+                   * gefüllten Teil meldet — beim Broker bleibt danach genau
+                   * die Restmenge liegen. Nur deshalb darf das Buch die
+                   * Position verkleinern statt sie zu schließen; überall
+                   * sonst lebt die schließende Order weiter und ein Rest im
+                   * Buch würde eine zweite Verkaufsorder auslösen. */
+                  restStorniert: true,
                 },
                 clamped,
               );
               if (r.executed) {
                 executed += 1;
-                positions.delete(symbol);
+                /* Beim Teilschluss überlebt die Position — sie muss auch in
+                 * der Buchhaltung DIESES Laufs überleben, sonst zählt das
+                 * Positionslimit sie nicht und ein Kauf desselben Symbols
+                 * liefe in den Nachkauf-Zweig, der Einstand und Stop neu
+                 * schriebe. */
+                if (r.trade?.teilSchluss !== true) positions.delete(symbol);
                 engineCooldowns[symbol] = now.toISOString();
                 cooldownUpdates.push(new FieldPath('engineCooldowns', symbol), now.toISOString());
                 logger.info(`Broker-Stop gebucht ${uid} ${symbol} @ ${befund.fillPreis}`);

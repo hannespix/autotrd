@@ -1052,11 +1052,28 @@ export interface Trade {
   /** Eröffnungszeitpunkt der geschlossenen Position (ISO). */
   acquiredAt?: string;
   /**
-   * Haltedauer in Tagen. Heute noch aus Kauf/Verkauf paarbar — aber nur,
-   * WEIL Nachkauf verboten und jeder Verkauf ganz ist. Sobald es Teilverkäufe
-   * gibt, ist die Zuordnung alter Trades nicht mehr eindeutig.
+   * Haltedauer in Tagen. Aus Kauf/Verkauf paarbar, solange Nachkauf verboten
+   * und der Verkauf ganz ist. Seit dem 23.08. gibt es einen — und nur einen —
+   * Teilverkauf: den Teilfill des Broker-Schutz-Stops (`teilSchluss`). Für
+   * solche Trades ist die Zuordnung nicht mehr eindeutig; sie tragen die
+   * Markierung, damit ein Auswerter sie erkennen kann.
    */
   holdingDays?: number;
+  /* ── Teilschluss (23.08.) ─────────────────────────────────────────────── */
+  /**
+   * Dieser schließende Trade hat die Position VERKLEINERT, nicht geschlossen.
+   *
+   * Entsteht ausschließlich, wenn der Broker-Schutz-Stop nur teilweise füllt
+   * und `pflegeSchutz` den Rest der Order storniert. Überall sonst schließt
+   * ein Exit weiterhin ganz — eine schließende Order bleibt bei ausbleibendem
+   * Fill bewusst stehen, ein Rest im Buch würde dort eine zweite
+   * Verkaufsorder auslösen.
+   *
+   * Fehlend = voller Schluss (Normalfall, Altbestand bleibt gültig).
+   */
+  teilSchluss?: true;
+  /** Stücke, die nach diesem Teilschluss in der Position bleiben. */
+  restMenge?: number;
 }
 
 /* ── Exit-Umbau (MX, Owner-Go 09.08.) ────────────────────────────────────
