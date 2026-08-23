@@ -78,9 +78,14 @@ export interface AccountContribution {
 /** Was eine Anlageklasse über alle Konten hinweg beigetragen hat. */
 export interface KlassenBefund {
   n: number;
-  /** Nettoergebnis nach Gebühren. */
-  pnl: number;
-  /** Nur ab MIN_ACCOUNTS_PUBLIC; sonst null (s. Kopfkommentar). */
+  /**
+   * Nettoergebnis nach Gebühren — nur ab MIN_ACCOUNTS_PUBLIC Konten IN DIESER
+   * KLASSE, sonst null. Die klassenweise Zahl ist die richtige: Eine Klasse
+   * mit einem einzigen Konto gäbe sonst dessen Beträge preis, bloß weil
+   * anderswo genug Konten handeln.
+   */
+  pnl: number | null;
+  /** Wie `pnl` — ab MIN_ACCOUNTS_PUBLIC Konten in dieser Klasse, sonst null. */
   fees: number | null;
   /**
    * Nettorendite je gehandeltem Dollar in Prozent. Ein VERHÄLTNIS und damit
@@ -320,10 +325,26 @@ export function aggregateTradingHealth(
   // dreihundert — dieselbe Falle wie bei der Trefferquote oben.
   const klassen: Record<string, KlassenBefund> = {};
   for (const [name, k] of Object.entries(klassenRoh)) {
+    /* Die Schwelle gilt JE KLASSE, nicht global (nachgetragen 23.08.).
+     *
+     * `fees` hing an `accounts` — der Zahl über ALLE Klassen — und `pnl` an
+     * gar nichts. Eine Klasse, die nur ein einziges Konto handelt, gab damit
+     * dessen Beträge preis, sobald irgendwo sonst drei Konten aktiv waren.
+     * Live war genau das der Fall: `stocks_global` und `indices` mit je einem
+     * Konto, in einem Dokument, das öffentlich lesbar ist.
+     *
+     * Das ist derselbe Fehler wie beim Exit-Geld einen Tag zuvor, eine Ebene
+     * tiefer — und `konten` unten sagt seit jeher, warum: „Im zweiten Fall
+     * ist der ‚globale‘ Wert schlicht dessen eigener." Die Zahl stand da, die
+     * Schwelle las sie nicht.
+     *
+     * `k.konten <= accounts` gilt immer, die Prüfung ist also strikt
+     * schärfer als die alte — nie lockerer. */
+    const geldOeffentlich = k.konten >= minAccountsPublic;
     klassen[name] = {
       n: k.n,
-      pnl: Math.round(k.pnl * 100) / 100,
-      fees: accounts >= minAccountsPublic ? Math.round(k.fees * 100) / 100 : null,
+      pnl: geldOeffentlich ? Math.round(k.pnl * 100) / 100 : null,
+      fees: geldOeffentlich ? Math.round(k.fees * 100) / 100 : null,
       kantePct: k.notional > 0 ? r4((k.pnl / k.notional) * 100) : null,
       konten: k.konten,
     };

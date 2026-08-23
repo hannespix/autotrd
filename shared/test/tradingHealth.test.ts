@@ -390,3 +390,95 @@ describe('Quelltext-Wächter: kein zweiter Gebühren-Quotient', () => {
     expect(block, 'aus dem Exit-Geld ist ein Verhältnis geworden').not.toMatch(/pnl[^;]*\/\s*(summe|brutto|grossPnl)/);
   });
 });
+
+describe('Die Klassen-Schwelle gilt JE KLASSE, nicht global', () => {
+  /* Nachgetragen am 23.08. — derselbe Fehler wie beim Exit-Geld tags zuvor,
+   * eine Ebene tiefer. `klassen[].fees` hing an `accounts`, der Zahl über
+   * ALLE Klassen, und `klassen[].pnl` an gar nichts.
+   *
+   * Live gefunden im öffentlich lesbaren `meta/health`: `stocks_global` mit
+   * konten=1, pnl=1.04, fees=3.16 — und `indices` mit konten=1, pnl=-5.57,
+   * fees=6.58. Die Beträge je eines einzelnen Kontos, sichtbar, weil anderswo
+   * sechs Konten handelten.
+   *
+   * Das Bittere: `konten` steht seit jeher daneben und sagt im eigenen
+   * Kommentar, warum das zählt — „Im zweiten Fall ist der ‚globale‘ Wert
+   * schlicht dessen eigener". Die Zahl war da, die Schwelle las sie nicht.
+   */
+  const mitGeld = (
+    klasse: string | null,
+    opts: { costs?: boolean } = {},
+  ): AccountContribution => ({
+    stats: { n: 10, wins: 5, avgWin: 10, avgLoss: -10 },
+    ...(klasse ? { byClass: { [klasse]: { n: 4, pnl: 100, fees: 20, notional: 5000 } } } : {}),
+    ...(opts.costs === false ? {} : { costs: { n: 10, fees: 50, grossPnl: 100 } }),
+  });
+
+  it('eine Klasse mit einem einzigen Konto gibt keine Beträge preis', () => {
+    const h = aggregateTradingHealth([
+      mitGeld('solo'),
+      mitGeld('geteilt'),
+      mitGeld('geteilt'),
+      mitGeld('geteilt'),
+    ]);
+    // Global ist die Schwelle längst überschritten …
+    expect(h.accounts).toBeGreaterThanOrEqual(MIN_ACCOUNTS_PUBLIC);
+    expect(h.amountsWithheld).toBe(false);
+    // … die Solo-Klasse schweigt trotzdem.
+    expect(h.klassen.solo?.konten).toBe(1);
+    expect(h.klassen.solo?.pnl).toBeNull();
+    expect(h.klassen.solo?.fees).toBeNull();
+  });
+
+  it('die Struktur bleibt öffentlich — nur das Geld nicht', () => {
+    const h = aggregateTradingHealth([
+      mitGeld('solo'),
+      mitGeld(null),
+      mitGeld(null),
+    ]);
+    // n, konten und die Kante verraten keine Kontogröße — sie beantworten
+    // aber die Frage, ob die Klasse ihre eigene Reibung verdient.
+    expect(h.klassen.solo?.n).toBe(4);
+    expect(h.klassen.solo?.konten).toBe(1);
+    expect(h.klassen.solo?.kantePct).not.toBeNull();
+  });
+
+  it('ab drei Konten IN DER KLASSE kommen die Beträge', () => {
+    const h = aggregateTradingHealth([
+      mitGeld('geteilt'),
+      mitGeld('geteilt'),
+      mitGeld('geteilt'),
+    ]);
+    expect(h.klassen.geteilt?.konten).toBe(3);
+    expect(h.klassen.geteilt?.pnl).toBe(300);
+    expect(h.klassen.geteilt?.fees).toBe(60);
+  });
+
+  it('die Klassen-Schwelle ist nie lockerer als die globale', () => {
+    // k.konten <= accounts gilt immer — unter der globalen Schwelle kann
+    // deshalb keine Klasse Beträge zeigen.
+    const h = aggregateTradingHealth([
+      mitGeld('a', { costs: false }),
+      mitGeld('a', { costs: false }),
+    ]);
+    expect(h.accounts).toBeLessThan(MIN_ACCOUNTS_PUBLIC);
+    for (const k of Object.values(h.klassen)) {
+      expect(k.pnl).toBeNull();
+      expect(k.fees).toBeNull();
+    }
+  });
+});
+
+describe('Wächter: die Klassen-Beträge hängen an der klassenweisen Zahl', () => {
+  const quelle = readFileSync(join(__dirname, '../src/tradingHealth.ts'), 'utf8');
+
+  it('pnl und fees lesen k.konten, nicht accounts', () => {
+    expect(quelle).toContain('const geldOeffentlich = k.konten >= minAccountsPublic;');
+    // Der alte, zu weite Vergleich darf im Klassen-Block nicht zurückkehren.
+    expect(quelle).not.toMatch(/fees: accounts >= minAccountsPublic/);
+  });
+
+  it('die Kante bleibt öffentlich — sie ist ein Verhältnis', () => {
+    expect(quelle).toContain('kantePct: k.notional > 0 ? r4((k.pnl / k.notional) * 100) : null,');
+  });
+});
