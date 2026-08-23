@@ -300,6 +300,29 @@ Für UI-Änderungen zusätzlich mit headless Chrome bei Desktop (1500) **und** P
 > liegengebliebenen Stand mit. Ein leerer Commit wäre der schnelle Weg;
 > besser ist ein Commit, der den Anlass gleich dokumentiert.
 
+> **Und die Gegenrichtung: Ein ROTER Lauf beweist nicht, dass der Code nicht
+> live ist.** Am 23.08. steht der Deploy-Lauf zu `2d967ff` als „failure" —
+> aber Schritt „Deploy functions + firestore" war erfolgreich, Revision
+> `scanmarket-00222-zav` ging um 05:29:49 hoch. Rot wurde der Lauf erst an
+> der Diagnose danach (`check-scheduler.mjs`), die an einem transienten
+> Google-503 ungefangen ausstieg — und die im Gegensatz zu ihrer
+> Schwester `Secret-Diagnose` kein `continue-on-error` trägt.
+>
+> Hätte ich die Lauffarbe geglaubt, hätte ich einen gefährlichen Stand für
+> nicht deployt gehalten und mir die Dringlichkeit der Korrektur
+> ausgeredet. Also nicht die Farbe des Laufs lesen, sondern den
+> **Deploy-Schritt**:
+>
+> ```bash
+> # actions_list → Lauf-ID zur Merge-SHA, dann:
+> # actions_list list_workflow_jobs → steps[]: hat "Deploy functions +
+> # firestore" conclusion == success? DAS ist der Beleg, nicht run.conclusion.
+> ```
+>
+> Beide Richtungen haben dieselbe Wurzel: Ein Sammel-Signal (PR-Häkchen,
+> Lauf-Farbe) beantwortet nie die Frage „läuft mein Code". Nur der Schritt,
+> der ihn ausliefert, beantwortet sie.
+
 > **Nach einem Stapel Änderungen: ein Zusammenspiel-Durchgang.** Acht einzeln
 > verifizierte Änderungen ergeben keinen verifizierten Stand — Fehler sitzen
 > dann in der **Naht** zwischen ihnen. Beleg 21.08.: Die Depot-Teilen-Karte
