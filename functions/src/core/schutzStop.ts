@@ -186,6 +186,58 @@ export function schutzStopPreis(lage: SchutzLage, risk: RiskConfig): number | nu
   return rundeStopPreis(Math.max(...kandidaten), 'long');
 }
 
+/**
+ * An welcher Marke stand die Schutz-Order — am Einstands-Stop oder am
+ * nachziehenden Stop? (Mess-Korrektur 23.08.)
+ *
+ * Der Anlass ist ein Befund über die STATISTIK, nicht über den Handel: Jeder
+ * Fill des Broker-Netzes wurde bisher hart als `stop_loss` gebucht. Das Netz
+ * wählt aber die ENGERE der beiden Marken (`Math.max` long / `Math.min`
+ * short) — löst dort also die Trailing-Marke aus, landet der Trade trotzdem
+ * im Eimer des Einstands-Stops. Der Kommentar bei `schutzStopPreis` sagt es
+ * über den Befund vom 11.08. schon selbst: „Gebucht wurde der Fill danach als
+ * regulärer `stop_loss`, die Statistik sah also nichts Ungewöhnliches."
+ *
+ * Folge: `stop_loss` ist eine Mischung aus festem Stop UND broker-seitigem
+ * Trailing, `trailing_stop` enthält nur den Engine-Zweig. Ein Vergleich der
+ * beiden Eimer misst das Trailing zu einem unbekannten Teil gegen sich selbst
+ * — und genau daran ist am 23.08. eine Auswertung gescheitert.
+ *
+ * Bestimmt wird die Quelle am TATSÄCHLICHEN Order-Niveau (`pos.schutz
+ * .stopPreis`), nicht durch Nachrechnen aus dem heutigen Stand: Die Order
+ * wurde irgendwann mit einem damaligen `highWater` gesetzt, und der Peak
+ * wandert weiter. Nur das gespeicherte Niveau sagt, was wirklich beim Broker
+ * lag. Ist es enger als der reine Einstands-Stop, kann es nur das Trailing
+ * gewesen sein — das ist die einzige andere Marke, die `schutzStopPreis`
+ * kennt.
+ *
+ * Rein beschreibend: Kein Handelspfad liest das Ergebnis, es setzt nur ein
+ * Etikett.
+ */
+export function schutzQuelle(
+  stopPreis: number,
+  lage: { avgEntry: number; side?: 'long' | 'short' },
+  risk: RiskConfig,
+): 'einstand' | 'trailing' {
+  const short = lage.side === 'short';
+  const sl = risk.stopLossPct > 0 ? risk.stopLossPct : null;
+  // Ohne Einstands-Stop gab es nur einen Kandidaten.
+  if (sl === null) return 'trailing';
+  if (!Number.isFinite(stopPreis) || !Number.isFinite(lage.avgEntry) || lage.avgEntry <= 0) {
+    // Unbrauchbare Zahlen ⇒ beim bisherigen Etikett bleiben, nie raten.
+    return 'einstand';
+  }
+  const einstand = rundeStopPreis(
+    short ? lage.avgEntry * (1 + sl / 100) : lage.avgEntry * (1 - sl / 100),
+    short ? 'short' : 'long',
+  );
+  // Toleranz gegen Rundung und Float-Rauschen — eine Marke, die sich nur im
+  // Cent-Raster unterscheidet, ist dieselbe Marke.
+  const eps = Math.max(1e-9, Math.abs(einstand) * 1e-6);
+  if (short) return stopPreis < einstand - eps ? 'trailing' : 'einstand';
+  return stopPreis > einstand + eps ? 'trailing' : 'einstand';
+}
+
 export interface SchutzPlan {
   anlegen: boolean;
   qty: number;
@@ -465,7 +517,14 @@ export async function schutzAufheben(
 
 export type SchutzBefund =
   | { stand: 'ok' }
-  | { stand: 'gefuellt'; fillPreis: number; fillQty: number; orderId: string };
+  | {
+      stand: 'gefuellt';
+      fillPreis: number;
+      fillQty: number;
+      orderId: string;
+      /** An welcher Marke die Order stand — steuert NUR das Statistik-Etikett. */
+      quelle: 'einstand' | 'trailing';
+    };
 
 /**
  * Laufende Pflege im Scan — für jede Broker-Position mit Schutz-Order.
@@ -556,6 +615,8 @@ export async function pflegeSchutz(
         fillPreis: stand.filledAvgPreis,
         fillQty: stand.filledQty,
         orderId: schutz.orderId,
+        // Am gespeicherten Order-Niveau abgelesen, nicht neu gerechnet.
+        quelle: schutzQuelle(schutz.stopPreis, pos, risk),
       };
     }
 

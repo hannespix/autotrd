@@ -184,7 +184,18 @@ describe('pflegeSchutz (Scan-Takt: buchen, neu anlegen, nachziehen)', () => {
     const b = await pflegeSchutz(
       VERBINDUNG, 'u1', 'AAPL', POS, RISK, 'stocks_us', 'scan1', f as never,
     );
-    expect(b).toEqual({ stand: 'gefuellt', fillPreis: 98.9, fillQty: 10, orderId: 'alt1' });
+    /* `quelle` seit der Mess-Korrektur 23.08.: Die Order lag bei 99,00, der
+     * reine Einstands-Stop läge bei avgEntry 100 × (1 − 2 %) = 98,00. Die
+     * gespeicherte Marke ist also ENGER als der Einstands-Stop — sie kann nur
+     * vom Trailing stammen. Genau diese Lage beschreibt der Befund vom 11.08.
+     * bei `schutzStopPreis`. */
+    expect(b).toEqual({
+      stand: 'gefuellt',
+      fillPreis: 98.9,
+      fillQty: 10,
+      orderId: 'alt1',
+      quelle: 'trailing',
+    });
     expect(setzt).toHaveBeenCalledWith({ schutz: null }, { merge: true });
   });
 

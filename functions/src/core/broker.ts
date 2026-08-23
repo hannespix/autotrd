@@ -303,9 +303,24 @@ export interface TradeResult {
 function anschaffung(pos: Position, jetzt: string): Partial<Trade> {
   const auf = Date.parse(pos.openedAt);
   const zu = Date.parse(jetzt);
+  /* Der Extremkurs seit Einstieg gehört aus DEMSELBEN Grund hierher wie der
+   * Einstand: Er lebt am Positions-Doc, und das ist gleich gelöscht.
+   *
+   * Ohne ihn ist eine Frage grundsätzlich unbeantwortbar — nicht schwer,
+   * sondern unmöglich: Hat ein nachziehender Stop einen Gewinn GESICHERT oder
+   * einen Aufschwung ABGESCHNITTEN? Beides sieht im Trade-Log identisch aus.
+   * Am 23.08. ist genau daran eine Auswertung gescheitert: Der
+   * `trailing_stop`-Eimer stand mit −2.253 $ auf neun Trades da, und es gab
+   * keinen Weg festzustellen, wie weit diese neun Positionen vorher gelaufen
+   * waren. Ohne den Peak bleibt jede Trailing-Bewertung Meinung.
+   *
+   * Rein beschreibend: Kein Buchungspfad liest diese Felder, und keine
+   * Handelsentscheidung hängt an ihnen. */
+  const peak = pos.side === 'short' ? pos.lowWater : pos.highWater;
   return {
     entryPrice: pos.avgEntry,
     acquiredAt: pos.openedAt,
+    ...(typeof peak === 'number' && Number.isFinite(peak) && peak > 0 ? { peakPrice: peak } : {}),
     ...(Number.isFinite(auf) && Number.isFinite(zu)
       ? { holdingDays: Math.round(((zu - auf) / 86_400_000) * 100) / 100 }
       : {}),

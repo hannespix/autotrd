@@ -1059,6 +1059,22 @@ export interface Trade {
    * Markierung, damit ein Auswerter sie erkennen kann.
    */
   holdingDays?: number;
+  /**
+   * Extremkurs, den die Position seit Einstieg erreicht hatte (23.08.).
+   *
+   * Long: der höchste beobachtete Kurs (`highWater`), Short: der tiefste
+   * (`lowWater`). Steht NUR an schließenden Trades, wie `entryPrice` — und aus
+   * demselben Grund: Der Wert lebt am Positions-Doc, das beim Schließen
+   * gelöscht wird, und ist danach aus nichts mehr rekonstruierbar.
+   *
+   * Wozu: Erst mit ihm lässt sich unterscheiden, ob ein nachziehender Stop
+   * einen Gewinn gesichert oder einen Aufschwung abgeschnitten hat. Ohne ihn
+   * sehen beide Fälle im Trade-Log gleich aus. Rein beschreibend — kein
+   * Buchungspfad und keine Handelsentscheidung liest dieses Feld.
+   *
+   * Fehlend = Altbestand oder eine Position ohne beobachteten Extremkurs.
+   */
+  peakPrice?: number;
   /* ── Teilschluss (23.08.) ─────────────────────────────────────────────── */
   /**
    * Dieser schließende Trade hat die Position VERKLEINERT, nicht geschlossen.

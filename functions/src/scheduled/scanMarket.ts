@@ -1087,7 +1087,14 @@ async function executeUserTrades(
                   qty: befund.fillQty,
                   fillPreis: befund.fillPreis,
                   source: 'engine',
-                  riskExit: 'stop_loss',
+                  /* Das Etikett folgt der Marke, an der die Order stand
+                   * (Mess-Korrektur 23.08.). Vorher stand hier hart
+                   * 'stop_loss' — auch wenn beim Broker die Trailing-Marke
+                   * ausgelöst hatte, weil das Netz die ENGERE der beiden
+                   * wählt. Damit war `stop_loss` eine Mischung und
+                   * `trailing_stop` nur der Engine-Zweig; jeder Vergleich der
+                   * Eimer maß das Trailing teilweise gegen sich selbst. */
+                  riskExit: befund.quelle === 'trailing' ? 'trailing_stop' : 'stop_loss',
                   assetClass: cls,
                   brokerOrderId: befund.orderId,
                   /* Die EINZIGE Stelle, die das zusichern darf: `pflegeSchutz`
