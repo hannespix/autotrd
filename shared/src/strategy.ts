@@ -1020,6 +1020,20 @@ export interface Position {
     qty: number;
     /** Gesetzt bei `stop_limit` (Krypto) — muss beim Nachziehen mitwandern. */
     limitPreis?: number;
+    /**
+     * Welche Marke dieses Niveau gesetzt hat: der Einstands-Stop oder der
+     * nachziehende (23.08.).
+     *
+     * Beim ANLEGEN festgehalten, weil nur dort bekannt ist, welcher Kandidat
+     * das `Math.max`/`Math.min` gewonnen hat. Später lässt es sich nicht mehr
+     * zuverlässig rekonstruieren: Ein verbreiterter Stop-Loss ersetzt die alte
+     * Order nicht, und `adoptBroker` übernimmt fremde Niveaus samt neuem
+     * Einstand — beides ließe ein Nachrechnen danebenliegen.
+     *
+     * Steuert AUSSCHLIESSLICH das Statistik-Etikett des Fills. Fehlend =
+     * Altbestand oder adoptierte Order ⇒ es bleibt beim bisherigen Etikett.
+     */
+    quelle?: 'einstand' | 'trailing';
   } | null;
 }
 
@@ -1059,6 +1073,43 @@ export interface Trade {
    * Markierung, damit ein Auswerter sie erkennen kann.
    */
   holdingDays?: number;
+  /**
+   * Höchster im SCAN- UND PULS-TAKT BEOBACHTETER Kurs seit Einstieg (23.08.).
+   * Beim Short der tiefste. Steht nur an schließenden Trades, wie
+   * `entryPrice` — und aus demselben Grund: Der Wert lebt am Positions-Doc,
+   * das beim Schließen gelöscht wird, und ist danach aus nichts mehr
+   * rekonstruierbar.
+   *
+   * Wozu: Erst damit lässt sich unterscheiden, ob ein nachziehender Stop
+   * einen Gewinn gesichert oder einen Aufschwung abgeschnitten hat. Ohne ihn
+   * sehen beide Fälle im Trade-Log gleich aus.
+   *
+   * ── Was die Zahl NICHT ist ───────────────────────────────────────────────
+   *
+   * Kein Intraday-Hoch. Fortgeschrieben wird aus dem 5-Minuten-Scan-Kurs und
+   * dem Minuten-Puls, also aus LETZTEN Kursen — nie aus dem Hoch einer Kerze.
+   * Der Puls überspringt geschlossene Märkte, Aktien haben über Nacht und am
+   * Wochenende gar keine Fortschreibung. Die Verzerrung ist einseitig: Der
+   * Peak wird eher zu NIEDRIG gemessen, jeder Trailing-Ausstieg sieht also
+   * näher am Hoch aus, als er war. Wer damit bewertet, ob das Trailing zu
+   * früh abschneidet, muss das mitrechnen — sonst schönt die Messung genau
+   * die Sache, die sie prüfen soll.
+   *
+   * Der Wert kann außerdem Kurse von NACH dem Ausstieg enthalten: Der Scan
+   * schreibt `highWater` fort, BEVOR er einen Fill der Broker-Order entdeckt.
+   * Erholt sich der Kurs zwischen Auslösung und Scan, steht dieses Hoch mit
+   * im Feld, obwohl die Position es nie gehalten hat.
+   *
+   * Fehlend heißt genau: KEIN Anstieg über den Einstand beobachtet. Das gilt
+   * für Positionen, die nie im Plus standen, und für solche aus
+   * `adoptBroker`, dessen Wasserstandsmarke beim Übernehmen auf den Einstand
+   * zurückgesetzt wird. Ein Peak GLEICH dem Einstand wird bewusst nicht
+   * geschrieben — er sähe aus wie eine Messung und wäre keine.
+   *
+   * Rein beschreibend: Kein Buchungspfad und keine Handelsentscheidung liest
+   * dieses Feld.
+   */
+  peakPrice?: number;
   /* ── Teilschluss (23.08.) ─────────────────────────────────────────────── */
   /**
    * Dieser schließende Trade hat die Position VERKLEINERT, nicht geschlossen.

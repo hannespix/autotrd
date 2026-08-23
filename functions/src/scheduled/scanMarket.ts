@@ -1087,7 +1087,24 @@ async function executeUserTrades(
                   qty: befund.fillQty,
                   fillPreis: befund.fillPreis,
                   source: 'engine',
-                  riskExit: 'stop_loss',
+                  /* Das Etikett folgt der Marke, an der die Order stand
+                   * (Mess-Korrektur 23.08.). Vorher stand hier hart
+                   * 'stop_loss' — auch wenn beim Broker die Trailing-Marke
+                   * ausgelöst hatte, weil das Netz die ENGERE der beiden
+                   * wählt.
+                   *
+                   * EIGENER Eimer, nicht der vorhandene `trailing_stop`, aus
+                   * zwei Gründen. Erstens sind es zwei verschiedene Dinge: Der
+                   * Engine-Ausstieg verkauft zum Scan-Kurs, die GTC-Order beim
+                   * Broker kann bei einer Kurslücke beliebig weit unter der
+                   * Marke füllen — ihre Ergebnisse in einen Topf zu werfen
+                   * verunreinigte genau den Eimer, der bewertet werden soll.
+                   * Zweitens verschöbe ein Zumischen still Masse zwischen
+                   * bestehenden Eimern: Wer danach „vorher gegen nachher"
+                   * vergleicht, misst zuerst die Umbenennung. Ein neuer
+                   * Schlüssel taucht dagegen sichtbar ab dem Umstellungstag
+                   * auf und ist als das erkennbar, was er ist. */
+                  riskExit: befund.quelle === 'trailing' ? 'trailing_stop_broker' : 'stop_loss',
                   assetClass: cls,
                   brokerOrderId: befund.orderId,
                   /* Die EINZIGE Stelle, die das zusichern darf: `pflegeSchutz`

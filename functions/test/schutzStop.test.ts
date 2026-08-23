@@ -172,7 +172,18 @@ describe('schutzAufheben (die Regel, die nie brechen darf)', () => {
       { body: { id: 'o1', status: 'filled', filled_qty: '10', filled_avg_price: '98.4' } },
     );
     const b = await schutzAufheben(VERBINDUNG, 'u1', 'AAPL', { orderId: 'o1' }, f as never);
-    expect(b).toEqual({ stand: 'gefuellt', fillPreis: 98.4, fillQty: 10, orderId: 'o1' });
+    /* `quelle` seit 23.08.: Dieser Pfad muss dasselbe Etikett liefern wie
+     * `pflegeSchutz` — derselbe physische Fill kann über beide Wege entdeckt
+     * werden. Ohne die Angleichung wäre die Mischung nicht aufgelöst, sondern
+     * nur verkleinert. Der Aufrufer gibt hier keine Marke mit ⇒ Altbestand
+     * ⇒ bisheriges Etikett. */
+    expect(b).toEqual({
+      stand: 'gefuellt',
+      fillPreis: 98.4,
+      fillQty: 10,
+      orderId: 'o1',
+      quelle: 'einstand',
+    });
   });
 });
 
@@ -184,8 +195,49 @@ describe('pflegeSchutz (Scan-Takt: buchen, neu anlegen, nachziehen)', () => {
     const b = await pflegeSchutz(
       VERBINDUNG, 'u1', 'AAPL', POS, RISK, 'stocks_us', 'scan1', f as never,
     );
-    expect(b).toEqual({ stand: 'gefuellt', fillPreis: 98.9, fillQty: 10, orderId: 'alt1' });
+    /* `quelle` seit der Mess-Korrektur 23.08.: Gelesen wird die beim ANLEGEN
+     * festgehaltene Marke. `POS.schutz` trägt keine — das ist der Altbestands-
+     * Fall, und der bleibt beim bisherigen Etikett.
+     *
+     * (Am Rande: `POS.schutz.stopPreis` ist 99,00, ein Niveau, das der heutige
+     * Code gar nicht mehr erzeugt — bei `highWater === avgEntry` ist das
+     * Trailing nicht scharf, `schutzStopPreis` liefert 98,00. Die 99,00 sind
+     * exakt der Pegel des Bugs vom 11.08. Ein erster Anlauf dieser Korrektur
+     * hat daraus per Rückrechnung „trailing" abgeleitet und damit dem
+     * Trailing einen fremden Vorfall angelastet — der Grund, warum die Marke
+     * jetzt beim Schreiben festgehalten wird statt beim Lesen geraten.) */
+    expect(b).toEqual({
+      stand: 'gefuellt',
+      fillPreis: 98.9,
+      fillQty: 10,
+      orderId: 'alt1',
+      quelle: 'einstand',
+    });
     expect(setzt).toHaveBeenCalledWith({ schutz: null }, { merge: true });
+  });
+
+  it('ausgelöster Stop mit festgehaltener Trailing-Marke → trailing', () => {
+    // Stimmige Lage: 110 im Plus, Trailing 3 % ⇒ 106,70 schlägt den
+    // Einstands-Stop 98,00. Genau so hätte `planeSchutzStop` sie angelegt.
+    const mitMarke: Position = {
+      ...POS,
+      highWater: 110,
+      schutz: { orderId: 'alt1', stopPreis: 106.7, qty: 10, quelle: 'trailing' },
+    };
+    const f = folge({
+      body: { id: 'alt1', status: 'filled', filled_qty: '10', filled_avg_price: '106.5' },
+    });
+    return pflegeSchutz(
+      VERBINDUNG, 'u1', 'AAPL', mitMarke, RISK, 'stocks_us', 'scan1', f as never,
+    ).then((b) => {
+      expect(b).toEqual({
+        stand: 'gefuellt',
+        fillPreis: 106.5,
+        fillQty: 10,
+        orderId: 'alt1',
+        quelle: 'trailing',
+      });
+    });
   });
 
   it('verschwundene Order (404) → Schutz wird neu angelegt', async () => {
@@ -435,8 +487,11 @@ describe('pflegeSchutz legt ein fehlendes Netz an', () => {
     const gesendet = JSON.parse(opts.body) as Record<string, unknown>;
     expect(gesendet['type']).toBe('stop');
     expect(gesendet['qty']).toBe('6');
+    // `quelle` seit 23.08.: Die Marke wird beim ANLEGEN festgehalten. Hier
+    // ist highWater gleich avgEntry, das Trailing also nicht scharf — der
+    // Einstands-Stop setzt das Niveau.
     expect(setzt).toHaveBeenCalledWith(
-      { schutz: { orderId: 'neu1', stopPreis: expect.any(Number), qty: 6 } },
+      { schutz: { orderId: 'neu1', stopPreis: expect.any(Number), qty: 6, quelle: 'einstand' } },
       { merge: true },
     );
   });

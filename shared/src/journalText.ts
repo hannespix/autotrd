@@ -34,6 +34,10 @@ const EXIT_GRUND: Record<string, string> = {
   stop_loss: 'über den Stop-Loss',
   take_profit: 'über das Gewinnziel',
   trailing_stop: 'über den Trailing-Stop',
+  // Die GTC-Order beim Broker, die am Trailing-Niveau stand (23.08.). Eigener
+  // Grund, weil sie sich anders verhält als der Engine-Ausstieg: Sie füllt
+  // bei einer Kurslücke beliebig weit unter der Marke.
+  trailing_stop_broker: 'über den Trailing-Stop beim Broker',
   max_hold: 'nach Ablauf der maximalen Haltedauer',
   breaker: 'durch die Tages-Notbremse',
 };

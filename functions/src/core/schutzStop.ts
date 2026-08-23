@@ -121,7 +121,36 @@ export const KRYPTO_LIMIT_ABSTAND = 0.015;
  * Einstands-Stop und Trailing (beide in Prozent). `null`, wenn kein
  * Prozent-Stop konfiguriert ist.
  */
-export function schutzStopPreis(lage: SchutzLage, risk: RiskConfig): number | null {
+/** Welche der beiden Marken das Niveau gesetzt hat. */
+export type SchutzMarke = 'einstand' | 'trailing';
+
+/**
+ * Wie `schutzStopPreis`, aber mit der Marke, die gewonnen hat.
+ *
+ * Die Marke wird beim SCHREIBEN festgehalten, nicht beim Lesen geraten
+ * (Befund 23.08.). Ein erster Anlauf verglich später das gespeicherte
+ * Order-Niveau mit einem frisch gerechneten Einstands-Stop — und lag in drei
+ * realen Zuständen falsch:
+ *
+ *   - Wird `stopLossPct` VERBREITERT, ersetzt `sollSchutzErsetzen` die alte
+ *     Order nie (beim Long ersetzt sie nur nach oben). Die alte, engere
+ *     Einstands-Order steht weiter — und sähe gegen den neuen, weiteren
+ *     Einstands-Stop wie eine Trailing-Marke aus.
+ *   - `adoptBroker` übernimmt FREMDE Order-Niveaus ins Buch und ersetzt
+ *     zugleich `avgEntry` durch den Broker-Einstand. Dieses Niveau hat
+ *     `schutzStopPreis` nie berechnet; die Annahme „es gibt nur zwei
+ *     Kandidaten" gilt dort nicht.
+ *   - Ein `byClass`-Override `stopLossPct: 0` entfällt der Klemme in
+ *     `clampStrategyRisk` (die fasst nur `engine.stopLossPct` an) — dann
+ *     gäbe es scheinbar nur noch einen Kandidaten.
+ *
+ * Hier steht die Antwort dagegen an der Stelle, die sie WEISS: im
+ * `Math.max`/`Math.min` selbst. Kein späterer Zustand kann sie verfälschen.
+ */
+export function schutzStopMarke(
+  lage: SchutzLage,
+  risk: RiskConfig,
+): { preis: number; marke: SchutzMarke } | null {
   const sl = risk.stopLossPct > 0 ? risk.stopLossPct : null;
   const trail =
     typeof risk.trailingStopPct === 'number' && risk.trailingStopPct > 0
@@ -141,7 +170,12 @@ export function schutzStopPreis(lage: SchutzLage, risk: RiskConfig): number | nu
       ...(trail !== null && imPlus ? [tief * (1 + trail / 100)] : []),
     ];
     if (kandidaten.length === 0) return null;
-    return rundeStopPreis(Math.min(...kandidaten), 'short');
+    const preis = Math.min(...kandidaten);
+    return {
+      preis: rundeStopPreis(preis, 'short'),
+      marke:
+        trail !== null && imPlus && preis < lage.avgEntry * (1 + (sl ?? 0) / 100) ? 'trailing' : 'einstand',
+    };
   }
   /* Das Trailing zählt erst, wenn die Position IM PLUS war.
    *
@@ -183,13 +217,26 @@ export function schutzStopPreis(lage: SchutzLage, risk: RiskConfig): number | nu
   // das die Engine gerade führen würde. Keine Order ist richtig; eine vom
   // Einstand aus gerechnete wäre die des Befundes.
   if (kandidaten.length === 0) return null;
-  return rundeStopPreis(Math.max(...kandidaten), 'long');
+  const preis = Math.max(...kandidaten);
+  return {
+    preis: rundeStopPreis(preis, 'long'),
+    // Gleichstand zählt als Einstands-Stop: Dann führt der feste Stop, das
+    // Trailing hat nichts hinzugefügt.
+    marke: trail !== null && imPlus && preis > lage.avgEntry * (1 - (sl ?? 0) / 100) ? 'trailing' : 'einstand',
+  };
+}
+
+/** Nur das Niveau — die Fassung, die alle Aufrufer seit jeher benutzen. */
+export function schutzStopPreis(lage: SchutzLage, risk: RiskConfig): number | null {
+  return schutzStopMarke(lage, risk)?.preis ?? null;
 }
 
 export interface SchutzPlan {
   anlegen: boolean;
   qty: number;
   stopPreis: number;
+  /** Welche Marke das Niveau gesetzt hat — wandert ins Positions-Doc. */
+  marke?: SchutzMarke;
   /** Gesetzt ⇒ `stop_limit` statt `stop` (Krypto). */
   limitPreis?: number;
   /** Klartext, warum NICHT — für Log und Nachvollziehbarkeit. */
@@ -218,9 +265,9 @@ export function planeSchutzStop(
   if (!usSessionClass(klasse)) return NEIN('klasse_ohne_us_session');
   const qty = Math.floor(lage.qty + 1e-9);
   if (qty < 1) return NEIN('bruchstueck');
-  const stopPreis = schutzStopPreis(lage, risk);
-  if (stopPreis === null || !(stopPreis > 0)) return NEIN('kein_prozent_stop');
-  return { anlegen: true, qty, stopPreis };
+  const marke = schutzStopMarke(lage, risk);
+  if (marke === null || !(marke.preis > 0)) return NEIN('kein_prozent_stop');
+  return { anlegen: true, qty, stopPreis: marke.preis, marke: marke.marke };
 }
 
 /**
@@ -254,9 +301,9 @@ function planeKryptoSchutz(
     return NEIN('unter_mindestgroesse');
   }
   if (!(lage.qty > 0)) return NEIN('keine_menge');
-  const roh = schutzStopPreis(lage, risk);
-  if (roh === null || !(roh > 0)) return NEIN('kein_prozent_stop');
-  const stopPreis = rundeAufSchritt(roh, schritt, 'long');
+  const roh = schutzStopMarke(lage, risk);
+  if (roh === null || !(roh.preis > 0)) return NEIN('kein_prozent_stop');
+  const stopPreis = rundeAufSchritt(roh.preis, schritt, 'long');
   if (!(stopPreis > 0)) return NEIN('stop_unter_raster');
   const limitPreis = rundeAufSchritt(stopPreis * (1 - KRYPTO_LIMIT_ABSTAND), schritt, 'long');
   // Rundet das Limit auf den Stop hoch (grobes Raster, kleiner Preis), wäre
@@ -264,7 +311,9 @@ function planeKryptoSchutz(
   // dann nur bei EXAKT diesem Kurs. Ein Raster unter dem Stop muss übrig
   // bleiben, sonst gibt es kein Netz.
   if (!(limitPreis > 0) || limitPreis >= stopPreis) return NEIN('limit_unter_raster');
-  return { anlegen: true, qty: lage.qty, stopPreis, limitPreis };
+  // Die Marke überlebt das Münz-Raster: Gerundet wird das Niveau, nicht die
+  // Frage, welcher Kandidat es gesetzt hat.
+  return { anlegen: true, qty: lage.qty, stopPreis, limitPreis, marke: roh.marke };
 }
 
 /**
@@ -404,6 +453,7 @@ export async function schutzAnlegen(
           stopPreis: plan.stopPreis,
           qty: plan.qty,
           ...(plan.limitPreis !== undefined ? { limitPreis: plan.limitPreis } : {}),
+          ...(plan.marke ? { quelle: plan.marke } : {}),
         },
       },
       { merge: true },
@@ -416,7 +466,21 @@ export async function schutzAnlegen(
 
 export type SchutzAufhebung =
   | { stand: 'frei' }
-  | { stand: 'gefuellt'; fillPreis: number; fillQty: number; orderId: string };
+  | {
+      stand: 'gefuellt';
+      fillPreis: number;
+      fillQty: number;
+      orderId: string;
+      /**
+       * Marke der aufgehobenen Order — dieselbe Zusage wie bei `pflegeSchutz`.
+       *
+       * Ohne dieses Feld wäre DIESELBE physische Order je nach Reihenfolge mal
+       * als Trailing- und mal als Einstands-Ausstieg gebucht worden: Ein Fill
+       * kann über `pflegeSchutz` ODER über diesen Weg entdeckt werden. Die
+       * Mischung wäre nicht aufgelöst, nur verkleinert.
+       */
+      quelle: SchutzMarke;
+    };
 
 /**
  * Schutz-Order vor einem EIGENEN Exit aus dem Weg räumen.
@@ -430,7 +494,7 @@ export async function schutzAufheben(
   verbindung: BrokerVerbindung,
   uid: string,
   symbol: string,
-  schutz: { orderId: string },
+  schutz: { orderId: string; quelle?: SchutzMarke },
   fetchImpl: FetchLike = fetch,
 ): Promise<SchutzAufhebung> {
   const befund = await alpacaOrderStornieren(
@@ -454,6 +518,8 @@ export async function schutzAufheben(
       fillPreis: stand.filledAvgPreis,
       fillQty: stand.filledQty,
       orderId: schutz.orderId,
+      // Fehlt sie (Altbestand, adoptierte Fremd-Order): bisheriges Etikett.
+      quelle: schutz.quelle ?? 'einstand',
     };
   }
   // Nicht stornierbar, aber auch nichts ausgeführt (z. B. pending_cancel):
@@ -465,7 +531,14 @@ export async function schutzAufheben(
 
 export type SchutzBefund =
   | { stand: 'ok' }
-  | { stand: 'gefuellt'; fillPreis: number; fillQty: number; orderId: string };
+  | {
+      stand: 'gefuellt';
+      fillPreis: number;
+      fillQty: number;
+      orderId: string;
+      /** An welcher Marke die Order stand — steuert NUR das Statistik-Etikett. */
+      quelle: 'einstand' | 'trailing';
+    };
 
 /**
  * Laufende Pflege im Scan — für jede Broker-Position mit Schutz-Order.
@@ -556,6 +629,10 @@ export async function pflegeSchutz(
         fillPreis: stand.filledAvgPreis,
         fillQty: stand.filledQty,
         orderId: schutz.orderId,
+        /* Die beim Anlegen festgehaltene Marke. Fehlt sie (Altbestand,
+         * adoptierte Fremd-Order), bleibt es beim bisherigen Etikett — nie
+         * geraten. */
+        quelle: schutz.quelle ?? 'einstand',
       };
     }
 
@@ -590,6 +667,9 @@ export async function pflegeSchutz(
             stopPreis: neu,
             qty: schutz.qty,
             ...(plan.limitPreis !== undefined ? { limitPreis: plan.limitPreis } : {}),
+            // Auch die nachgezogene Order trägt ihre Marke — sonst verlöre
+            // eine Position sie beim ersten Nachziehen wieder.
+            ...(plan.marke ? { quelle: plan.marke } : {}),
           },
         },
         { merge: true },
