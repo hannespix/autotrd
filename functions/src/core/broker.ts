@@ -534,6 +534,38 @@ export function planeMenge(
 }
 
 /**
+ * Was ein abgeschlossener Trade an die Steckbrief-Statistik meldet — oder
+ * nichts (23.08.).
+ *
+ * Rein, damit die Regel prüfbar ist statt nur behauptet: Der Buchungspfad
+ * selbst braucht Firestore, diese Entscheidung nicht.
+ *
+ * EINE Entscheidung, EIN Eintrag. Ein Teilschluss meldet nichts — er sammelt
+ * auf `Position.teilPnl`. Erst der volle Schluss zählt, mit der Summe über
+ * alle Tranchen (`filterPnl`).
+ *
+ * Ohne diese Trennung zählte eine Position, die in zwei Stücken zuging,
+ * doppelt. `n` meinte dann Buchungen statt Entscheidungen — und dieselbe
+ * Zahl trägt nicht nur den Block (`FILTER_MIN_SAMPLES`), sondern auch das
+ * HEBEL-Tor (`LEV_MIN_SAMPLES` 30) und die Größen-Verstärkung
+ * (`CONVICTION_MIN_SAMPLES` 15). Eine verdoppelte `n` öffnet den Hebel bei
+ * der halben Evidenz; das ist die teure Richtung, nicht die konservative.
+ */
+export function statistikBeitrag(
+  t:
+    | { bucket?: string; pnl?: number; teilSchluss?: true; filterPnl?: number }
+    | null
+    | undefined,
+): { bucket: string; pnl: number } | null {
+  if (!t?.bucket || typeof t.pnl !== 'number' || !Number.isFinite(t.pnl)) return null;
+  if (t.teilSchluss === true) return null;
+  /* `filterPnl` ist die Summe inklusive früherer Tranchen. Fehlt sie, gab es
+   * keine — dann ist der eigene P&L die ganze Wahrheit. */
+  const summe = typeof t.filterPnl === 'number' && Number.isFinite(t.filterPnl) ? t.filterPnl : t.pnl;
+  return { bucket: t.bucket, pnl: summe };
+}
+
+/**
  * Wie viel eine SCHLIESSENDE Buchung wirklich bewegt — und was übrig bleibt.
  *
  * `planeMenge` fordert beim Schließen immer die volle Position an; der Broker
@@ -1170,8 +1202,11 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
           ...(req.riskExit ? { riskExit: req.riskExit } : {}),
           ...(pos.bucket ? { bucket: pos.bucket } : {}),
         };
+        // Teilschluss sammelt, voller Schluss meldet — wie im sell-Zweig.
+        const teilBisher =
+          typeof pos.teilPnl === 'number' && Number.isFinite(pos.teilPnl) ? pos.teilPnl : 0;
         if (ganz) tx.delete(posRef);
-        else tx.update(posRef, { qty: rest });
+        else tx.update(posRef, { qty: rest, teilPnl: roundCents(teilBisher + pnl) });
         tx.set(tradeRef, {
           ...trade,
           at: Timestamp.now(),
@@ -1182,7 +1217,14 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
           ...anschaffung(pos, now),
         });
         tx.update(userRef, { 'wallet.paperBalance': roundCents(balance + margin + pnl), 'wallet.updatedAt': now });
-        return { executed: true, trade: { ...trade, id: tradeRef.id } };
+        return {
+          executed: true,
+          trade: {
+            ...trade,
+            id: tradeRef.id,
+            ...(ganz ? { filterPnl: roundCents(teilBisher + pnl) } : {}),
+          },
+        };
       }
       if (posSnap.exists) {
         /* Nachkauf bleibt VERBOTEN — außer (a) die Stücke liegen bereits im
@@ -1389,8 +1431,13 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       ...(req.riskExit ? { riskExit: req.riskExit } : {}),
       ...(pos.bucket ? { bucket: pos.bucket } : {}),
     };
+    /* Teilschluss sammelt, voller Schluss meldet (23.08.).
+     *
+     * Sonst zählte EINE Entscheidung zweimal in die Steckbrief-Statistik —
+     * einmal hier, einmal beim Schluss des Restes. Siehe `Position.teilPnl`. */
+    const teilBisher = typeof pos.teilPnl === 'number' && Number.isFinite(pos.teilPnl) ? pos.teilPnl : 0;
     if (ganz) tx.delete(posRef);
-    else tx.update(posRef, { qty: rest });
+    else tx.update(posRef, { qty: rest, teilPnl: roundCents(teilBisher + pnl) });
     tx.set(tradeRef, {
       ...trade,
       at: Timestamp.now(),
@@ -1401,17 +1448,41 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       ...anschaffung(pos, now),
     });
     tx.update(userRef, { 'wallet.paperBalance': roundCents(balance + proceeds), 'wallet.updatedAt': now });
-    return { executed: true, trade: { ...trade, id: tradeRef.id } };
+    /* `filterPnl` steht NUR am Rückgabewert, nicht im Trade-Dokument: Es ist
+     * die Summe über alle Tranchen dieser Position und gehört nicht an einen
+     * einzelnen Trade, der nur seine eigene Tranche verantwortet. */
+    return {
+      executed: true,
+      trade: { ...trade, id: tradeRef.id, ...(ganz ? { filterPnl: roundCents(teilBisher + pnl) } : {}) },
+    };
   }).then(async (result) => {
     // Lernstatistik NACH der Geld-Transaktion (Trade-Filter 31.07.): Ein
     // geschlossener Trade mit Steckbrief zählt in meta/tradeFilter. Bewusst
     // getrennt und fehlertolerant — eine Statistik, deren Ausfall einen
     // Verkauf verhindert, wäre die falsche Prioritätenordnung.
     const t = result.trade as
-      | (Trade & { id: string; pnl?: number; bucket?: string; riskExit?: string; nachkauf?: boolean })
+      | (Trade & {
+          id: string;
+          pnl?: number;
+          bucket?: string;
+          riskExit?: string;
+          nachkauf?: boolean;
+          teilSchluss?: true;
+          filterPnl?: number;
+        })
       | undefined;
-    if (result.executed && t?.bucket && typeof t.pnl === 'number') {
-      await recordFilterStat(t.bucket, t.pnl).catch(() => undefined);
+    /* EINE Entscheidung, EIN Eintrag (23.08.).
+     *
+     * Ein Teilschluss meldet nichts — er sammelt auf `Position.teilPnl`. Erst
+     * der volle Schluss zählt, und zwar mit der Summe über alle Tranchen.
+     * Ohne diese Trennung zählte eine Position, die in zwei Stücken zuging,
+     * doppelt: `n` meinte Buchungen statt Entscheidungen, und weil die
+     * Hälften nicht unabhängig sind, sank `pnlSqSum` — der t-Wert wuchs
+     * betragsmäßig, ein Steckbrief hätte also früher geblockt, als die
+     * Datenlage hergibt. */
+    const beitrag = result.executed ? statistikBeitrag(t) : null;
+    if (beitrag) {
+      await recordFilterStat(beitrag.bucket, beitrag.pnl).catch(() => undefined);
     }
     /* Journal-Autoanlage (M12) — gleiche Prioritätenordnung wie die
      * Statistik darüber: nach der Geld-Transaktion, fehlertolerant, nie

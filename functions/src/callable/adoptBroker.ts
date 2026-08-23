@@ -330,6 +330,19 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
   // Positionen, die das Buch noch nicht kennt — Teil der Wirkungs-Messung
   // (s. istNoOpUebernahme): Eine neue Position ist immer eine Zäsur.
   const buchSymbole = new Set(posSnap.docs.map((d) => d.id));
+  /* Die LERN-Identität der Position überlebt die Übernahme (23.08.).
+   *
+   * Der Bestand folgt dem Broker — Menge, Einstand und Stops kommen von
+   * dort. Der Steckbrief und der aufgelaufene Teil-P&L sind aber keine
+   * Bestandsdaten, sondern die Zugehörigkeit zu einer Messreihe. Sie hier
+   * fallen zu lassen hieße: Eine Position, die bereits teilweise geschlossen
+   * wurde, meldet ihr Ergebnis NIE an die Steckbrief-Statistik.
+   *
+   * Das wiegt einseitig: Ein Teilfill entsteht per Konstruktion an einem
+   * SCHUTZ-STOP, also auf der Verlustseite. Verlorene Verluste lassen den
+   * Eimer besser aussehen, als er ist — und derselbe Eimer öffnet über
+   * `leverageGate` das Hebel-Tor. */
+  const bisherige = new Map(posSnap.docs.map((d) => [d.id, d.data() as Position]));
   let neuePositionen = 0;
   for (const p of brokerPositionen) {
     if (!(p.qty > 0) || !(p.einstand > 0)) continue; // kein Raten bei kaputten Daten
@@ -339,10 +352,16 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
     const short = p.seite === 'short';
     const avg = p.einstand;
     const schutz = schutzJeSymbol.get(p.symbol);
+    const alt = bisherige.get(p.symbol);
     const position: Position = {
       symbol: p.symbol,
       qty: p.qty,
       avgEntry: avg,
+      // Lern-Identität, nicht Bestand — s. Kommentar oben.
+      ...(alt?.bucket ? { bucket: alt.bucket } : {}),
+      ...(typeof alt?.teilPnl === 'number' && Number.isFinite(alt.teilPnl)
+        ? { teilPnl: alt.teilPnl }
+        : {}),
       // Level gespiegelt beim Short — dieselbe Regel wie beim Öffnen.
       stopLoss: risk.stopLossPct > 0 ? avg * (1 + (short ? 1 : -1) * (risk.stopLossPct / 100)) : null,
       takeProfit:

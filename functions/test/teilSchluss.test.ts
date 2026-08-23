@@ -163,9 +163,16 @@ describe('Wächter: die schließenden Zweige lesen die ausgeführte Menge', () =
   });
 
   it('gelöscht wird nur beim vollen Schluss, sonst verkleinert', () => {
-    // `tx.delete(posRef)` darf nirgends mehr ohne die Ganz-Bedingung stehen.
+    /* `tx.delete(posRef)` darf nirgends ohne die Ganz-Bedingung stehen, und
+     * der andere Zweig muss die Menge auf den Rest setzen.
+     *
+     * Die else-Zeile trägt seit dem 23.08. zusätzlich `teilPnl` (die
+     * Lernstatistik sammelt dort auf, statt zweimal zu melden) — deshalb
+     * `qty: rest` als Teilstück statt der ganzen Zeile. Die Aussage bleibt
+     * dieselbe: gelöscht nur bei ganz, sonst verkleinert. */
     const loeschungen = quelle.match(/tx\.delete\(posRef\)/g) ?? [];
-    const bedingte = quelle.match(/if \(ganz\) tx\.delete\(posRef\);\s*\n\s*else tx\.update\(posRef, \{ qty: rest \}\);/g) ?? [];
+    const bedingte =
+      quelle.match(/if \(ganz\) tx\.delete\(posRef\);\s*\n\s*else tx\.update\(posRef, \{ qty: rest[,}]/g) ?? [];
     expect(loeschungen.length).toBe(bedingte.length);
     expect(bedingte.length).toBe(2);
   });

@@ -981,6 +981,25 @@ export interface Position {
    */
   core?: boolean;
   /**
+   * Bereits realisierter P&L aus TEILschlüssen dieser Position (23.08.).
+   *
+   * Nötig, seit ein Teilfill des Broker-Schutz-Stops die Position verkleinert
+   * statt sie zu schließen. Ohne diesen Sammler zählte eine Entscheidung
+   * ZWEIMAL in die Steckbrief-Statistik: einmal beim Teilschluss, einmal beim
+   * Schluss des Restes. `n` meinte dann Buchungen statt Entscheidungen —
+   * `FILTER_MIN_SAMPLES = 30` also 30 Buchungen —, und weil die Hälften nicht
+   * unabhängig sind, sank `pnlSqSum` (P² wird zu P²/2). Der t-Wert wuchs
+   * dadurch betragsmäßig, ein Steckbrief konnte also früher unter
+   * `FILTER_T_BLOCK` rutschen, als die Datenlage hergibt.
+   *
+   * Jetzt sammelt der Teilschluss hier auf und meldet NICHTS; der volle
+   * Schluss meldet einmal, mit der Summe. Damit zählt `n` wieder
+   * Entscheidungen, und der P&L bleibt vollständig.
+   *
+   * Fehlend = kein Teilschluss (Normalfall, Altbestand bleibt gültig).
+   */
+  teilPnl?: number;
+  /**
    * Diese Position liegt WIRKLICH beim Broker (M13, 05.08.).
    *
    * Die Kennzeichnung trennt zwei Dinge, die sonst verschmelzen und dabei
