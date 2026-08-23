@@ -20,14 +20,37 @@
  *   konnte also früher unter `FILTER_T_BLOCK = −1,5` rutschen, als die
  *   Datenlage hergibt, und Einstiege blocken, die nichts getan haben.
  *
- * Die Fehlrichtung ist die konservative (der Code nennt einen falschen Block
- * selbst den billigeren Fehler), und erreichbar ist der Fall nur über einen
- * teilweise gefüllten Broker-Schutz-Stop. Trotzdem: eingebaut, also aufgeräumt.
+ * ── Und die Fehlrichtung ist NICHT die konservative ──────────────────────
+ *
+ * Das stand hier zuerst, mit Verweis darauf, dass ein falscher Block laut
+ * `tradeFilter.ts` der billigere Fehler sei. Ein Widerlegungs-Durchgang hat
+ * es umgedreht: Derselbe `BucketStat` speist nicht nur den Block.
+ *
+ *   `leverageGate`  LEV_MIN_SAMPLES 30, LEV_T_MIN 2, LEV_T_FULL 3
+ *   `conviction`    CONVICTION_MIN_SAMPLES 15, CONVICTION_T_UP 1,5
+ *
+ * Die aufgeblähte `n` kippt damit das HEBEL-Tor bei der halben Evidenz: 15
+ * echte Entscheidungen ergeben 30 Buchungen und erreichen `LEV_MIN_SAMPLES`,
+ * und der ebenfalls aufgeblähte t-Wert trägt über `LEV_T_MIN` hinweg. Echtes
+ * Geld, gehebelt, auf halber Datenbasis — während der Kommentar an
+ * `LEV_T_MIN` ausdrücklich sagt: „Etwas nicht zu tun ist billig, mit Hebel
+ * etwas zu tun ist teuer."
+ *
+ * Erreichbar bleibt der Fall nur über einen teilweise gefüllten
+ * Broker-Schutz-Stop, ist also selten. Selten und teuer ist aber etwas
+ * anderes als selten und billig.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { bucketTStat, FILTER_MIN_SAMPLES, FILTER_T_BLOCK } from '@autotrd/shared';
+import {
+  bucketTStat,
+  CONVICTION_MIN_SAMPLES,
+  FILTER_MIN_SAMPLES,
+  FILTER_T_BLOCK,
+  LEV_MIN_SAMPLES,
+} from '@autotrd/shared';
+import { statistikBeitrag } from '../src/core/broker.js';
 
 describe('Warum Doppelzählen die Schwelle verschiebt — die Rechnung', () => {
   /** Ein Steckbrief aus n identischen Ergebnissen p. */
@@ -69,6 +92,30 @@ describe('Warum Doppelzählen die Schwelle verschiebt — die Rechnung', () => {
     expect(FILTER_T_BLOCK).toBe(-1.5);
   });
 
+  it('aber NICHT immer — die Behauptung gilt nur für den proportionalen Split', () => {
+    /* Ein erster Anlauf behauptete unbedingt „der t-Wert wächst". Das ist zu
+     * viel: Echte Teilschlüsse sind ungleiche Tranchen zu verschiedenen
+     * Kursen, und nur auf einzelnen Entscheidungen. Hier ein Gegenbeispiel —
+     * Teilfill im Plus, Rest tief im Minus: |t| SCHRUMPFT, der Eimer blockt
+     * also später statt früher. Der Fehler hat beide Richtungen. */
+    const basis = { n: 33, wins: 16, pnlSum: 400, pnlSqSum: 33 * 120 ** 2 };
+    const korrekt = {
+      n: basis.n + 1,
+      wins: basis.wins,
+      pnlSum: basis.pnlSum - 200,
+      pnlSqSum: basis.pnlSqSum + 200 ** 2,
+    };
+    const doppelt = {
+      n: basis.n + 2,
+      wins: basis.wins + 1,
+      pnlSum: basis.pnlSum + 300 - 500,
+      pnlSqSum: basis.pnlSqSum + 300 ** 2 + 500 ** 2,
+    };
+    const tK = bucketTStat(korrekt) as number;
+    const tD = bucketTStat(doppelt) as number;
+    expect(Math.abs(tD)).toBeLessThan(Math.abs(tK));
+  });
+
   it('mit echter Streuung wächst der t-Wert durchs Zerlegen', () => {
     // Zwei Entscheidungen: −150 und −50. Zerlegt: viermal −75 bzw. −25.
     const ganz = { n: 2, wins: 0, pnlSum: -200, pnlSqSum: 150 ** 2 + 50 ** 2 };
@@ -81,20 +128,69 @@ describe('Warum Doppelzählen die Schwelle verschiebt — die Rechnung', () => {
   });
 });
 
+describe('Die aufgeblähte n kippt das HEBEL-Tor bei halber Evidenz', () => {
+  it('15 echte Entscheidungen reichen nicht — 30 Buchungen schon', () => {
+    // Der teuerste Teil des Befundes: Derselbe BucketStat trägt nicht nur den
+    // Block, sondern auch leverageGate und conviction.
+    expect(15).toBeLessThan(LEV_MIN_SAMPLES);
+    expect(30).toBeGreaterThanOrEqual(LEV_MIN_SAMPLES);
+    // Und die Größen-Verstärkung greift schon bei der Hälfte davon.
+    expect(CONVICTION_MIN_SAMPLES).toBe(15);
+  });
+});
+
+describe('statistikBeitrag — eine Entscheidung, ein Eintrag', () => {
+  it('ein Teilschluss meldet NICHTS', () => {
+    expect(statistikBeitrag({ bucket: 'b', pnl: -50, teilSchluss: true })).toBeNull();
+  });
+
+  it('der volle Schluss meldet die SUMME über alle Tranchen', () => {
+    // Teilschluss −50 gesammelt, Rest −30 ⇒ die Entscheidung kostete −80.
+    expect(statistikBeitrag({ bucket: 'b', pnl: -30, filterPnl: -80 })).toEqual({
+      bucket: 'b',
+      pnl: -80,
+    });
+  });
+
+  it('ohne Teilschluss ist der eigene P&L die ganze Wahrheit', () => {
+    expect(statistikBeitrag({ bucket: 'b', pnl: -30 })).toEqual({ bucket: 'b', pnl: -30 });
+  });
+
+  it('ohne Steckbrief oder ohne P&L meldet nichts', () => {
+    expect(statistikBeitrag({ pnl: -30 })).toBeNull();
+    expect(statistikBeitrag({ bucket: 'b' })).toBeNull();
+    expect(statistikBeitrag({ bucket: 'b', pnl: Number.NaN })).toBeNull();
+    expect(statistikBeitrag(null)).toBeNull();
+    expect(statistikBeitrag(undefined)).toBeNull();
+  });
+
+  it('der ganze Ablauf: Teilschluss dann Vollschluss ⇒ GENAU ein Eintrag', () => {
+    // Genau die Behauptung des Commits, als Ablauf statt als Textvergleich.
+    const teil = { bucket: 'b', pnl: -50, teilSchluss: true as const };
+    const voll = { bucket: 'b', pnl: -30, filterPnl: -80 };
+    const eintraege = [teil, voll].map(statistikBeitrag).filter((x) => x !== null);
+    expect(eintraege).toHaveLength(1);
+    expect(eintraege[0]).toEqual({ bucket: 'b', pnl: -80 });
+  });
+});
+
 /* ── Quelltext-Wächter ─────────────────────────────────────────────────── */
 describe('Wächter: Teilschluss sammelt, voller Schluss meldet', () => {
   const broker = readFileSync(join(__dirname, '../src/core/broker.ts'), 'utf8');
 
-  it('ein Teilschluss meldet NICHTS an die Lernstatistik', () => {
-    expect(broker).toContain(
-      "if (result.executed && t?.bucket && typeof t.pnl === 'number' && t.teilSchluss !== true) {",
-    );
+  it('der Buchungspfad geht durch die geprüfte Regel, nicht an ihr vorbei', () => {
+    expect(broker).toContain('const beitrag = result.executed ? statistikBeitrag(t) : null;');
+    expect(broker).toContain('await recordFilterStat(beitrag.bucket, beitrag.pnl)');
     // Die alte, bedingungslose Fassung darf nicht zurückkommen.
     expect(broker).not.toMatch(/if \(result\.executed && t\?\.bucket && typeof t\.pnl === 'number'\) \{/);
   });
 
-  it('gemeldet wird die SUMME über alle Tranchen, nicht die letzte', () => {
-    expect(broker).toContain('await recordFilterStat(t.bucket, t.filterPnl ?? t.pnl)');
+  it('die Depot-Übernahme rettet die Lern-Identität', () => {
+    // Sonst meldete eine teilgeschlossene Position ihr Ergebnis NIE — und ein
+    // Teilfill entsteht per Konstruktion auf der Verlustseite.
+    const adopt = readFileSync(join(__dirname, '../src/callable/adoptBroker.ts'), 'utf8');
+    expect(adopt).toContain("...(alt?.bucket ? { bucket: alt.bucket } : {}),");
+    expect(adopt).toContain('teilPnl: alt.teilPnl');
   });
 
   it('beide Schluss-Zweige sammeln auf teilPnl auf', () => {

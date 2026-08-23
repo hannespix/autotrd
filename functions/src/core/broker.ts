@@ -534,6 +534,38 @@ export function planeMenge(
 }
 
 /**
+ * Was ein abgeschlossener Trade an die Steckbrief-Statistik meldet — oder
+ * nichts (23.08.).
+ *
+ * Rein, damit die Regel prüfbar ist statt nur behauptet: Der Buchungspfad
+ * selbst braucht Firestore, diese Entscheidung nicht.
+ *
+ * EINE Entscheidung, EIN Eintrag. Ein Teilschluss meldet nichts — er sammelt
+ * auf `Position.teilPnl`. Erst der volle Schluss zählt, mit der Summe über
+ * alle Tranchen (`filterPnl`).
+ *
+ * Ohne diese Trennung zählte eine Position, die in zwei Stücken zuging,
+ * doppelt. `n` meinte dann Buchungen statt Entscheidungen — und dieselbe
+ * Zahl trägt nicht nur den Block (`FILTER_MIN_SAMPLES`), sondern auch das
+ * HEBEL-Tor (`LEV_MIN_SAMPLES` 30) und die Größen-Verstärkung
+ * (`CONVICTION_MIN_SAMPLES` 15). Eine verdoppelte `n` öffnet den Hebel bei
+ * der halben Evidenz; das ist die teure Richtung, nicht die konservative.
+ */
+export function statistikBeitrag(
+  t:
+    | { bucket?: string; pnl?: number; teilSchluss?: true; filterPnl?: number }
+    | null
+    | undefined,
+): { bucket: string; pnl: number } | null {
+  if (!t?.bucket || typeof t.pnl !== 'number' || !Number.isFinite(t.pnl)) return null;
+  if (t.teilSchluss === true) return null;
+  /* `filterPnl` ist die Summe inklusive früherer Tranchen. Fehlt sie, gab es
+   * keine — dann ist der eigene P&L die ganze Wahrheit. */
+  const summe = typeof t.filterPnl === 'number' && Number.isFinite(t.filterPnl) ? t.filterPnl : t.pnl;
+  return { bucket: t.bucket, pnl: summe };
+}
+
+/**
  * Wie viel eine SCHLIESSENDE Buchung wirklich bewegt — und was übrig bleibt.
  *
  * `planeMenge` fordert beim Schließen immer die volle Position an; der Broker
@@ -1448,8 +1480,9 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
      * Hälften nicht unabhängig sind, sank `pnlSqSum` — der t-Wert wuchs
      * betragsmäßig, ein Steckbrief hätte also früher geblockt, als die
      * Datenlage hergibt. */
-    if (result.executed && t?.bucket && typeof t.pnl === 'number' && t.teilSchluss !== true) {
-      await recordFilterStat(t.bucket, t.filterPnl ?? t.pnl).catch(() => undefined);
+    const beitrag = result.executed ? statistikBeitrag(t) : null;
+    if (beitrag) {
+      await recordFilterStat(beitrag.bucket, beitrag.pnl).catch(() => undefined);
     }
     /* Journal-Autoanlage (M12) — gleiche Prioritätenordnung wie die
      * Statistik darüber: nach der Geld-Transaktion, fehlertolerant, nie
