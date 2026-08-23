@@ -23,39 +23,71 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { schlussMenge } from '../src/core/broker.js';
 
+/* ── Die Gegenprobe zum Fix (Nahtstellen-Prüfung 23.08.) ──────────────────
+ *
+ * Ein Rest im Buch ist NUR dann harmlos, wenn der Rest der schließenden Order
+ * beim Broker tot ist. Eine schließende Order bleibt aber bei ausbleibendem
+ * Fill BEWUSST stehen (`orderRouting.ts`: „ein später Fill ist erwünscht").
+ * Füllt sie später doch durch, hält der Broker null Stücke — und der nächste
+ * Puls sähe im Buch einen Rest, für den er eine ZWEITE Verkaufsorder
+ * losschickt. Aus dem Ausstieg würde ein ungewollter Leerverkauf ohne Stop.
+ *
+ * Nur `pflegeSchutz` storniert den Rest selbst und darf deshalb zusichern.
+ * `schutzAufheben` gehört ausdrücklich NICHT dazu: Dort ist der Stornoversuch
+ * gerade fehlgeschlagen (`nicht_stornierbar`), die Order lebt weiter.
+ */
+describe('ohne Zusicherung wird NICHT verkleinert — die wichtigste Sperre', () => {
+  it('schließt ganz, wenn der Rest der Order weiterleben könnte', () => {
+    expect(schlussMenge(40, 12)).toEqual({ menge: 40, rest: 0, ganz: true });
+    expect(schlussMenge(40, 12, false)).toEqual({ menge: 40, rest: 0, ganz: true });
+    expect(schlussMenge(40, 12, undefined)).toEqual({ menge: 40, rest: 0, ganz: true });
+  });
+
+  it('verkleinert erst mit ausdrücklicher Zusicherung', () => {
+    expect(schlussMenge(40, 12, true)).toEqual({ menge: 12, rest: 28, ganz: false });
+  });
+
+  it('nur ein echtes true zählt, nichts Wahrheitsähnliches', () => {
+    // Ein versehentlich durchgereichter Wahrheitswert darf die Sperre nicht
+    // öffnen — die Zusicherung ist eine Aussage über den Broker, kein Schalter.
+    expect(schlussMenge(40, 12, 1 as unknown as boolean).ganz).toBe(true);
+    expect(schlussMenge(40, 12, 'ja' as unknown as boolean).ganz).toBe(true);
+  });
+});
+
 describe('schlussMenge — was eine schließende Buchung wirklich bewegt', () => {
   describe('Vollausführung: alles bleibt wie bisher', () => {
     it('schließt ganz, wenn die Wunschmenge der Position entspricht', () => {
-      expect(schlussMenge(10, 10)).toEqual({ menge: 10, rest: 0, ganz: true });
+      expect(schlussMenge(10, 10, true)).toEqual({ menge: 10, rest: 0, ganz: true });
     });
 
     it('schließt ganz, wenn keine Menge angegeben ist', () => {
       // Der Normalfall aller Aufrufer: `callable/trade.ts` setzt beim Verkauf
       // bewusst kein `qty`. Eine fehlende Angabe darf nie einen Rest erzeugen,
       // den niemand angefordert hat.
-      expect(schlussMenge(7, undefined)).toEqual({ menge: 7, rest: 0, ganz: true });
+      expect(schlussMenge(7, undefined, true)).toEqual({ menge: 7, rest: 0, ganz: true });
     });
 
     it('bucht NIE mehr als die offene Menge', () => {
       // Ein Fill über die Position hinaus wäre ein Leerverkauf aus Versehen.
-      expect(schlussMenge(5, 8)).toEqual({ menge: 5, rest: 0, ganz: true });
+      expect(schlussMenge(5, 8, true)).toEqual({ menge: 5, rest: 0, ganz: true });
     });
 
     it('behandelt unbrauchbare Angaben wie „keine Angabe"', () => {
-      expect(schlussMenge(4, 0).ganz).toBe(true);
-      expect(schlussMenge(4, -3).ganz).toBe(true);
-      expect(schlussMenge(4, Number.NaN).ganz).toBe(true);
-      expect(schlussMenge(4, Number.POSITIVE_INFINITY).ganz).toBe(true);
+      expect(schlussMenge(4, 0, true).ganz).toBe(true);
+      expect(schlussMenge(4, -3, true).ganz).toBe(true);
+      expect(schlussMenge(4, Number.NaN, true).ganz).toBe(true);
+      expect(schlussMenge(4, Number.POSITIVE_INFINITY, true).ganz).toBe(true);
     });
   });
 
   describe('Teilausführung: der eigentliche Befund', () => {
     it('bucht nur den gefüllten Teil und lässt den Rest stehen', () => {
-      expect(schlussMenge(40, 12)).toEqual({ menge: 12, rest: 28, ganz: false });
+      expect(schlussMenge(40, 12, true)).toEqual({ menge: 12, rest: 28, ganz: false });
     });
 
     it('kann auch Bruchstücke (Krypto)', () => {
-      const r = schlussMenge(0.5, 0.2);
+      const r = schlussMenge(0.5, 0.2, true);
       expect(r.ganz).toBe(false);
       expect(r.menge).toBeCloseTo(0.2, 12);
       expect(r.rest).toBeCloseTo(0.3, 12);
@@ -68,7 +100,7 @@ describe('schlussMenge — was eine schließende Buchung wirklich bewegt', () =>
         [0.5, 0.2],
         [100, 99],
       ] as const) {
-        const r = schlussMenge(pos, fill);
+        const r = schlussMenge(pos, fill, true);
         expect(r.menge + r.rest).toBeCloseTo(pos, 12);
       }
     });
@@ -78,12 +110,12 @@ describe('schlussMenge — was eine schließende Buchung wirklich bewegt', () =>
     it('schließt ganz, wenn der Rest unterhalb der Rauschgrenze liegt', () => {
       // Ein Rest von 1e-9 Stück ist nicht handelbar, würde aber ab da in
       // jedem Abgleich als Drift auftauchen.
-      expect(schlussMenge(10, 10 - 1e-12).ganz).toBe(true);
-      expect(schlussMenge(10, 9.999999999999).ganz).toBe(true);
+      expect(schlussMenge(10, 10 - 1e-12, true).ganz).toBe(true);
+      expect(schlussMenge(10, 9.999999999999, true).ganz).toBe(true);
     });
 
     it('ein echter Rest bleibt aber ein Rest', () => {
-      expect(schlussMenge(10, 9.99).ganz).toBe(false);
+      expect(schlussMenge(10, 9.99, true).ganz).toBe(false);
     });
   });
 
@@ -98,20 +130,20 @@ describe('schlussMenge — was eine schließende Buchung wirklich bewegt', () =>
     const eff = 208.5;
 
     it('Erlös läuft über den gefüllten Teil, nicht über die Position', () => {
-      const { menge } = schlussMenge(posQty, 12);
+      const { menge } = schlussMenge(posQty, 12, true);
       expect(menge * eff).toBeCloseTo(2502, 6);
       // Vorher: 40 × 208,50 = 8.340 $ — 5.838 $ zu viel im Barbestand.
       expect(posQty * eff).toBeCloseTo(8340, 6);
     });
 
     it('realisierter P&L ebenso', () => {
-      const { menge } = schlussMenge(posQty, 12);
+      const { menge } = schlussMenge(posQty, 12, true);
       expect((eff - avgEntry) * menge).toBeCloseTo(-138, 6);
       // Vorher: −460 $ — ein um 322 $ zu großer Verlust.
     });
 
     it('und der Rest bleibt im Buch, also unter Aufsicht', () => {
-      expect(schlussMenge(posQty, 12).rest).toBe(28);
+      expect(schlussMenge(posQty, 12, true).rest).toBe(28);
     });
   });
 });
@@ -125,11 +157,6 @@ describe('schlussMenge — was eine schließende Buchung wirklich bewegt', () =>
  */
 describe('Wächter: die schließenden Zweige lesen die ausgeführte Menge', () => {
   const quelle = readFileSync(join(__dirname, '../src/core/broker.ts'), 'utf8');
-
-  it('beide Schluss-Zweige gehen durch schlussMenge', () => {
-    const treffer = quelle.match(/const \{ menge: qty, rest, ganz \} = schlussMenge\(pos\.qty, req\.qty\)/g);
-    expect(treffer?.length).toBe(2); // sell und cover
-  });
 
   it('keiner der Schluss-Zweige setzt die Menge mehr blind auf pos.qty', () => {
     expect(quelle).not.toContain('const qty = pos.qty;');
@@ -151,10 +178,53 @@ describe('Wächter: die schließenden Zweige lesen die ausgeführte Menge', () =
     expect((quelle.match(/fee: kosten\(qty\)/g) ?? []).length).toBeGreaterThanOrEqual(2);
   });
 
+  it('beide Zweige reichen die Zusicherung durch — nie ohne', () => {
+    const treffer = quelle.match(/schlussMenge\(pos\.qty, req\.qty, req\.restStorniert\)/g);
+    expect(treffer?.length).toBe(2);
+    // Kein Aufruf ohne drittes Argument: sonst verkleinerte der geroutete
+    // Exit-Pfad wieder, und der Rest im Buch würde eine zweite Order auslösen.
+    expect(quelle).not.toMatch(/schlussMenge\(pos\.qty, req\.qty\)/);
+  });
+
   it('ein Teilschluss ist am Trade erkennbar', () => {
     // Ohne Markierung wäre im Nachhinein nicht feststellbar, ob der Fall live
     // überhaupt vorkommt — und genau das ist die offene Frage an die Daten.
     expect((quelle.match(/teilSchluss: true as const/g) ?? []).length).toBe(2);
     expect((quelle.match(/restMenge: rest/g) ?? []).length).toBe(2);
+  });
+});
+
+/* ── Wächter an den Aufrufern ─────────────────────────────────────────────
+ *
+ * Die Zusicherung darf genau dort stehen, wo sie beweisbar stimmt. Wandert
+ * sie irgendwann an eine zweite Stelle, muss das eine bewusste Entscheidung
+ * sein — nicht ein Nebeneffekt beim Kopieren eines Aufrufs.
+ */
+describe('Wächter: wer darf den Rest für tot erklären', () => {
+  const scan = readFileSync(join(__dirname, '../src/scheduled/scanMarket.ts'), 'utf8');
+  const stop = readFileSync(join(__dirname, '../src/core/schutzStop.ts'), 'utf8');
+
+  it('genau ein Aufrufer im ganzen Scan sichert zu', () => {
+    expect((scan.match(/restStorniert: true/g) ?? []).length).toBe(1);
+  });
+
+  it('und die Zusicherung stimmt: pflegeSchutz storniert den Rest selbst', () => {
+    // Fällt dieses Storno weg, ist die Zusicherung falsch — und der Rest im
+    // Buch wäre wieder eine geladene Waffe.
+    expect(stop).toMatch(/if \(stand\.status === 'partially_filled'\) \{\s*\n\s*await alpacaOrderStornieren\(/);
+  });
+
+  it('schutzAufheben sichert NICHTS zu — dort ist das Storno gescheitert', () => {
+    // Der Zweig heißt `nicht_stornierbar`; die Order lebt weiter.
+    expect(stop).toContain("// `nicht_stornierbar`: nachsehen, ob (und wie viel) ausgeführt wurde.");
+    const aufheben = stop.slice(stop.indexOf('export async function schutzAufheben'));
+    const bisNaechste = aufheben.slice(0, aufheben.indexOf('export type SchutzAufhebung') + 1 || aufheben.indexOf('export type SchutzBefund'));
+    expect(bisNaechste).not.toContain('restStorniert');
+  });
+
+  it('ein Teilschluss überlebt die Buchhaltung des laufenden Scans', () => {
+    // Sonst zählt das Positionslimit den Rest nicht, und ein Kauf desselben
+    // Symbols liefe in den Nachkauf-Zweig, der Einstand und Stop neu schriebe.
+    expect(scan).toContain("if (r.trade?.teilSchluss !== true) positions.delete(symbol);");
   });
 });
