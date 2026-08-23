@@ -482,6 +482,51 @@ export function planeMenge(
 }
 
 /**
+ * Wie viel eine SCHLIESSENDE Buchung wirklich bewegt — und was übrig bleibt.
+ *
+ * `planeMenge` fordert beim Schließen immer die volle Position an; der Broker
+ * muss sie aber nicht am Stück füllen. `executeTrade` reicht die tatsächlich
+ * ausgeführte Menge als `req.qty` weiter (`routing.fillMenge`), und der
+ * Schutz-Stop tut dasselbe mit `fillQty` — dort ausdrücklich, denn er
+ * STORNIERT den Rest der Stop-Order (`schutzStop.ts`, „Teilausführung wird
+ * wie eine Ausführung behandelt"). Dieser Rest füllt also garantiert nie nach.
+ *
+ * Wer die Position trotzdem ganz ausbucht, richtet zweierlei Schaden an:
+ *
+ *   1. GELD. Erlös, realisierter P&L und Gebühr laufen über Stücke, die nie
+ *      den Besitzer gewechselt haben. Beim Cover kommt die volle Margin
+ *      zurück statt des gefüllten Anteils.
+ *   2. AUFSICHT — das Schlimmere. Die verbliebenen Stücke liegen weiter beim
+ *      Broker, stehen aber in keinem Buch mehr: kein Stop, kein Trailing,
+ *      kein Signal-Exit, keine Sicht für den Risikolauf. Beim Short bleibt
+ *      ein offener Leerverkauf ohne Absicherung zurück. Der Abgleich stuft
+ *      so etwas als „Fremdbestand" ein — die HARMLOSE Kategorie, ohne Sperre.
+ *
+ * Die Position zu verkleinern statt zu löschen erschwert keinen Ausstieg: Der
+ * gefüllte Teil IST ausgestiegen, und der Rest kommt überhaupt erst dadurch
+ * wieder unter Aufsicht, dass er im Buch steht. Beim nächsten Scan stellt
+ * `pflegeSchutz` ihm einen frischen Stop.
+ *
+ * Ohne verwertbare Wunschmenge bleibt es beim heutigen Verhalten (ganz
+ * schließen) — eine fehlende Angabe darf nie zu einem Rest führen, den
+ * niemand angefordert hat. Mehr als die offene Menge wird nie gebucht.
+ */
+export function schlussMenge(
+  posQty: number,
+  gewuenscht?: number,
+): { menge: number; rest: number; ganz: boolean } {
+  const voll = { menge: posQty, rest: 0, ganz: true };
+  if (gewuenscht === undefined || !Number.isFinite(gewuenscht) || gewuenscht <= 0) return voll;
+  if (gewuenscht >= posQty) return voll;
+  const rest = posQty - gewuenscht;
+  // Float-Rauschen ist kein Restbestand: 10 − 9.999999999 hinterlässt keine
+  // handelbaren Stücke, wohl aber eine Geisterposition, die jeder Abgleich
+  // ab da als Drift meldet.
+  if (rest <= Math.abs(posQty) * 1e-9) return voll;
+  return { menge: gewuenscht, rest, ganz: false };
+}
+
+/**
  * Trade ausführen — mit Order-Routing an den Broker, wenn eins hinterlegt ist.
  *
  * ── Die eine Stelle, an der geroutet wird ─────────────────────────────────
@@ -1028,13 +1073,19 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       // wenn der Kurs seit dem Leerverkauf GEFALLEN ist.
       if (posSnap.exists && (posSnap.data() as Position).side === 'short') {
         const pos = posSnap.data() as Position;
-        const qty = pos.qty;
+        const { menge: qty, rest, ganz } = schlussMenge(pos.qty, req.qty);
         const pnl = (pos.avgEntry - eff) * qty;
         const margin = qty * pos.avgEntry;
-        const trade: Trade & { pnl: number; riskExit?: string; cover: boolean } = {
+        const trade: Trade & {
+          pnl: number;
+          riskExit?: string;
+          cover: boolean;
+          teilSchluss?: true;
+        } = {
           symbol: req.symbol,
           side: 'buy',
           qty,
+          ...(ganz ? {} : { teilSchluss: true as const }),
           price: eff,
           executedAt: now,
           source: req.source,
@@ -1044,13 +1095,15 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
           ...(req.riskExit ? { riskExit: req.riskExit } : {}),
           ...(pos.bucket ? { bucket: pos.bucket } : {}),
         };
-        tx.delete(posRef);
+        if (ganz) tx.delete(posRef);
+        else tx.update(posRef, { qty: rest });
         tx.set(tradeRef, {
           ...trade,
           at: Timestamp.now(),
           rawPrice: req.price,
           ...herkunft,
           fee: kosten(qty),
+          ...(ganz ? {} : { restMenge: rest }),
           ...anschaffung(pos, now),
         });
         tx.update(userRef, { 'wallet.paperBalance': roundCents(balance + margin + pnl), 'wallet.updatedAt': now });
@@ -1245,13 +1298,14 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
     }
     const pos = posSnap.data() as Position;
     if (pos.side === 'short') return { executed: false, reason: 'short_nachverkauf_verboten' };
-    const qty = pos.qty;
+    const { menge: qty, rest, ganz } = schlussMenge(pos.qty, req.qty);
     const proceeds = qty * eff;
     const pnl = (eff - pos.avgEntry) * qty;
-    const trade: Trade & { pnl: number; riskExit?: string } = {
+    const trade: Trade & { pnl: number; riskExit?: string; teilSchluss?: true } = {
       symbol: req.symbol,
       side: 'sell',
       qty,
+      ...(ganz ? {} : { teilSchluss: true as const }),
       price: eff,
       executedAt: now,
       source: req.source,
@@ -1260,13 +1314,15 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       ...(req.riskExit ? { riskExit: req.riskExit } : {}),
       ...(pos.bucket ? { bucket: pos.bucket } : {}),
     };
-    tx.delete(posRef);
+    if (ganz) tx.delete(posRef);
+    else tx.update(posRef, { qty: rest });
     tx.set(tradeRef, {
       ...trade,
       at: Timestamp.now(),
       rawPrice: req.price,
       ...herkunft,
       fee: kosten(qty),
+      ...(ganz ? {} : { restMenge: rest }),
       ...anschaffung(pos, now),
     });
     tx.update(userRef, { 'wallet.paperBalance': roundCents(balance + proceeds), 'wallet.updatedAt': now });
