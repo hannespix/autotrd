@@ -108,7 +108,19 @@ if (schedulerOk) {
   // Jeden fehlenden Zeitplan anlegen. Fehlschläge einzelner Läufe sind hier
   // bewusst nicht tödlich: Ein fehlender Tages-Lauf darf den Deploy nicht rot
   // machen, solange der Scan steht — er kostet einen Tag Kennzahlen, kein Geld.
-  url = await ensureSelfInvoker({ sa, token, project });
+  //
+  // Dieser Aufruf hielt das Versprechen bis zum 23.08. nicht: Ein transienter
+  // Google-503 aus `ensureSelfInvoker` flog ungefangen bis nach oben, das
+  // Skript starb mit Exit 1 — und färbte damit einen Deploy rot, dessen
+  // Functions längst live waren (Lauf zu 2d967ff, Revision scanmarket-00222).
+  // Das ist genau die Fehlerklasse, gegen die dieses Skript gebaut wurde: Der
+  // Kopfkommentar oben beschreibt einen firebase-tools-Abbruch an einem
+  // transienten 503. Ein Prüfstand, der an derselben Laune scheitert wie das,
+  // was er prüfen soll, misst nichts — er würfelt.
+  url = await ensureSelfInvoker({ sa, token, project }).catch((err) => {
+    console.log(`::warning::Service-URL nicht abrufbar (${err.message}) — Zeitplan-Anlage übersprungen.`);
+    return null;
+  });
   job = jobs.find((j) => j.name.endsWith(`/${JOB_ID}`) || j.name.includes('scanMarket')) ?? null;
 
   for (const s of SCHEDULES) {
@@ -126,6 +138,10 @@ if (schedulerOk) {
         }).catch((err) => console.log(`::warning::${s.was}: Zeitplan-Korrektur fehlgeschlagen — ${err.message}`));
       }
       stehen.push(s.was);
+      continue;
+    }
+    if (s.service === 'scanmarket' && !url) {
+      console.log(`::warning::${s.was} (${id}): ohne Service-URL nicht anlegbar — übersprungen.`);
       continue;
     }
     try {
@@ -163,32 +179,16 @@ if (schedulerOk) {
   }
 }
 
-if (schedulerOk && job) {
-  console.log('Force-Run scanMarket …');
-  await gfetch(`https://cloudscheduler.googleapis.com/v1/${job.name}:run`, {
-    token,
-    method: 'POST',
-    body: {},
-  });
-  await sleep(25_000);
-  heartbeat = await readHeartbeat(project);
-
-  if (!heartbeat && !freshlyCreated) {
-    // Bestehender Job feuert ins Leere → Identität/Ziel auf den Deploy-SA
-    // umbiegen (der hat nachweislich Invoker) und noch einmal versuchen.
-    console.log('Kein Heartbeat nach Force-Run — patche Job-Identität auf den Deploy-SA …');
-    await gfetch(`https://cloudscheduler.googleapis.com/v1/${job.name}?updateMask=httpTarget`, {
-      token,
-      method: 'PATCH',
-      body: {
-        name: job.name,
-        httpTarget: {
-          uri: url,
-          httpMethod: 'POST',
-          oidcToken: { serviceAccountEmail: sa.client_email, audience: url },
-        },
-      },
-    });
+/* Die Eskalationsleiter ist BESTES BEMÜHEN, keine Bedingung.
+ *
+ * Jede Sprosse darf scheitern; entschieden wird unten allein am Heartbeat —
+ * so steht es im Kopfkommentar („Exit 1 NUR, wenn am Ende kein Heartbeat
+ * meta/health existiert"). Ohne diesen Rahmen hielt das Skript sein eigenes
+ * Versprechen nicht: Ein transienter 503 an irgendeiner Sprosse beendete es
+ * mit Exit 1, obwohl der Scan nachweislich lief. */
+try {
+  if (schedulerOk && job) {
+    console.log('Force-Run scanMarket …');
     await gfetch(`https://cloudscheduler.googleapis.com/v1/${job.name}:run`, {
       token,
       method: 'POST',
@@ -196,13 +196,47 @@ if (schedulerOk && job) {
     });
     await sleep(25_000);
     heartbeat = await readHeartbeat(project);
+
+    if (!heartbeat && !freshlyCreated && url) {
+      // Bestehender Job feuert ins Leere → Identität/Ziel auf den Deploy-SA
+      // umbiegen (der hat nachweislich Invoker) und noch einmal versuchen.
+      //
+      // `url` MUSS hier stehen: Ohne die Bedingung schriebe eine fehlgeschlagene
+      // URL-Abfrage `uri: null` in einen Job, der bis dahin funktionierte — aus
+      // einer Diagnose würde ein Schaden.
+      console.log('Kein Heartbeat nach Force-Run — patche Job-Identität auf den Deploy-SA …');
+      await gfetch(`https://cloudscheduler.googleapis.com/v1/${job.name}?updateMask=httpTarget`, {
+        token,
+        method: 'PATCH',
+        body: {
+          name: job.name,
+          httpTarget: {
+            uri: url,
+            httpMethod: 'POST',
+            oidcToken: { serviceAccountEmail: sa.client_email, audience: url },
+          },
+        },
+      });
+      await gfetch(`https://cloudscheduler.googleapis.com/v1/${job.name}:run`, {
+        token,
+        method: 'POST',
+        body: {},
+      });
+      await sleep(25_000);
+      heartbeat = await readHeartbeat(project);
+    }
   }
+} catch (err) {
+  console.log(`::warning::Scheduler-Eskalation abgebrochen (${err.message}) — es zählt der Heartbeat.`);
 }
 
 if (!heartbeat) {
   console.log('Eskalation: Direkt-Invoke des scanmarket-Services …');
-  const ok = await invokeScanNow();
-  heartbeat = ok ? await readHeartbeat(project) : null;
+  const ok = await invokeScanNow().catch((err) => {
+    console.log(`::warning::Direkt-Invoke fehlgeschlagen — ${err.message}`);
+    return false;
+  });
+  heartbeat = ok ? await readHeartbeat(project).catch(() => null) : null;
 }
 
 if (heartbeat) {
