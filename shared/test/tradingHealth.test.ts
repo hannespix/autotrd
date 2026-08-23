@@ -245,9 +245,13 @@ describe('aggregateTradingHealth: Konten je Klasse', () => {
  * die es nie gab. Deshalb steht sie hier fest.
  */
 describe('Exit-Geld erreicht die letzte Stufe', () => {
+  /* DREI Konten, nicht zwei: Die Geldsumme je Ausstiegsgrund unterliegt
+   * derselben Schwelle wie `fees` und `netPnl` (MIN_ACCOUNTS_PUBLIC).
+   * Beim Einbau am 22.08. hing sie an nichts — die Tests standen deshalb
+   * mit zwei Konten und haetten die Luecke nie gezeigt. */
   const mitGeld = (
     exits: Record<string, { n: number; pnl: number; wins: number }>,
-  ): AccountContribution[] => [konto(10, 5, { exits }), konto(10, 5, { exits })];
+  ): AccountContribution[] => [konto(10, 5, { exits }), konto(10, 5, { exits }), konto(10, 5, { exits })];
 
   it('pnl je Ausstiegsgrund kommt an und wird summiert', () => {
     const h = aggregateTradingHealth(
@@ -256,9 +260,9 @@ describe('Exit-Geld erreicht die letzte Stufe', () => {
         take_profit: { n: 3, pnl: 300, wins: 3 },
       }),
     );
-    // Zwei identische Konten ⇒ doppelte Summen.
-    expect(h.exits['stop_loss']?.pnl).toBe(-1600);
-    expect(h.exits['take_profit']?.pnl).toBe(600);
+    // Drei identische Konten ⇒ dreifache Summen.
+    expect(h.exits['stop_loss']?.pnl).toBe(-2400);
+    expect(h.exits['take_profit']?.pnl).toBe(900);
   });
 
   it('die Abdeckung stimmt: Summe der n über alle Eimer == trades7t', () => {
@@ -272,6 +276,7 @@ describe('Exit-Geld erreicht die letzte Stufe', () => {
       trailing_stop: { n: 9, pnl: -70, wins: 1 },
     };
     const h = aggregateTradingHealth([
+      { ...konto(10, 5), exits7t },
       { ...konto(10, 5), exits7t },
       { ...konto(10, 5), exits7t },
     ] as AccountContribution[]);
@@ -289,9 +294,10 @@ describe('Exit-Geld erreicht die letzte Stufe', () => {
     const h = aggregateTradingHealth([
       { ...konto(10, 5), exits: { signal: { n: 2, wins: 1 } } },
       { ...konto(10, 5), exits: { signal: { n: 2, pnl: 50, wins: 1 } } },
+      { ...konto(10, 5), exits: { signal: { n: 2, pnl: 50, wins: 1 } } },
     ] as unknown as AccountContribution[]);
-    expect(h.exits['signal']?.pnl).toBe(50);
-    expect(Number.isFinite(h.exits['signal']!.pnl)).toBe(true);
+    expect(h.exits['signal']?.pnl).toBe(100);
+    expect(Number.isFinite(h.exits['signal']!.pnl!)).toBe(true);
   });
 });
 
@@ -319,6 +325,44 @@ describe('Das Urteil behauptet keine Ursache, die es nicht gemessen hat', () => 
   });
 });
 
+describe('Das Exit-Geld unterliegt derselben Schwelle wie fees und netPnl', () => {
+  /* Nachgetragen am 22.08., am selben Tag wie der Einbau. `netPnl`, `fees`
+   * und `klassen[].fees` haengen an `accounts >= MIN_ACCOUNTS_PUBLIC`; das
+   * neue `pnl` je Ausstiegsgrund hing an nichts. Bei EINEM beitragenden
+   * Konto waeren das dessen Betraege mit einem anderen Etikett — in einem
+   * Dokument, das oeffentlich lesbar ist.
+   *
+   * Der Dateikopf von tradingHealth.ts sagt genau, warum das jetzt und
+   * nicht spaeter zu schliessen ist: „Es wird kritisch in dem Moment, in
+   * dem sich der zweite Nutzer registriert — und dann ist es zu spaet, die
+   * Schwelle nachzuruesten." */
+  const exits = { stop_loss: { n: 4, pnl: -800, wins: 0 } };
+
+  it('unter der Schwelle bleibt das Geld weg — Anteil und Quote bleiben', () => {
+    const h = aggregateTradingHealth([konto(10, 5, { exits }), konto(10, 5, { exits })]);
+    expect(h.accounts).toBeLessThan(MIN_ACCOUNTS_PUBLIC);
+    expect(h.exits['stop_loss']?.pnl).toBeNull();
+    // Die STRUKTUR bleibt öffentlich — nur der Betrag nicht.
+    expect(h.exits['stop_loss']?.n).toBe(8);
+    expect(h.exits['stop_loss']?.share).toBe(1);
+    expect(h.amountsWithheld).toBe(true);
+  });
+
+  it('ab der Schwelle kommt es dazu — dieselbe Grenze wie bei fees', () => {
+    const h = aggregateTradingHealth([
+      konto(10, 5, { exits, costs: { n: 10, fees: 50, grossPnl: 100 } }),
+      konto(10, 5, { exits, costs: { n: 10, fees: 50, grossPnl: 100 } }),
+      konto(10, 5, { exits, costs: { n: 10, fees: 50, grossPnl: 100 } }),
+    ]);
+    expect(h.accounts).toBeGreaterThanOrEqual(MIN_ACCOUNTS_PUBLIC);
+    expect(h.exits['stop_loss']?.pnl).toBe(-2400);
+    // Exit-Geld und Gebühren fallen GEMEINSAM — eine gemeinsame Schwelle,
+    // nicht zwei, die auseinanderlaufen können.
+    expect(h.fees).not.toBeNull();
+    expect(h.amountsWithheld).toBe(false);
+  });
+});
+
 describe('Quelltext-Wächter: kein zweiter Gebühren-Quotient', () => {
   /* Die naheliegende „Reparatur" wäre ein feeShare7t — endlich auf derselben
    * Zeitachse wie exits7t. Sie ist die SCHLECHTERE Zahl: Ein Quotient mit dem
@@ -342,7 +386,7 @@ describe('Quelltext-Wächter: kein zweiter Gebühren-Quotient', () => {
 
   it('das Exit-Geld bleibt eine Summe und wird durch nichts geteilt', () => {
     const block = quelle.slice(quelle.indexOf('const exitShares'), quelle.indexOf('const exits ='));
-    expect(block).toContain('pnl: Math.round(e.pnl * 100) / 100');
+    expect(block).toContain('Math.round(e.pnl * 100) / 100');
     expect(block, 'aus dem Exit-Geld ist ein Verhältnis geworden').not.toMatch(/pnl[^;]*\/\s*(summe|brutto|grossPnl)/);
   });
 });

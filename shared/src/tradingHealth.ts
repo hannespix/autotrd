@@ -135,7 +135,12 @@ export interface ExitShare {
    * sieht umso besser aus, je schlechter die Woche war, und geht bei einer
    * ausgeglichenen Woche durch null. Hier steht die Summe selbst.
    */
-  pnl: number;
+  /**
+   * Nur ab MIN_ACCOUNTS_PUBLIC; sonst null — dieselbe Schwelle wie `fees`
+   * und `netPnl`. Ein Geldbetrag je Ausstiegsgrund über EIN Konto ist
+   * dessen Ergebnis mit einem anderen Etikett.
+   */
+  pnl: number | null;
 }
 
 export interface TradingHealth {
@@ -275,6 +280,10 @@ export function aggregateTradingHealth(
     }
   }
 
+  /* `oeffentlich` steht weiter unten, wird hier aber schon gebraucht — die
+   * Geldsumme je Ausstiegsgrund unterliegt derselben Schwelle wie `fees` und
+   * `netPnl`. Deshalb an dieser Stelle einmal vorab bestimmt. */
+  const geldOeffentlich = beitragend.length >= minAccountsPublic;
   const exitShares = (
     roh: Record<string, { n: number; pnl: number; wins: number }>,
   ): Record<string, ExitShare> => {
@@ -285,9 +294,19 @@ export function aggregateTradingHealth(
         share: summe > 0 ? r4(e.n / summe) : 0,
         winRate: e.n > 0 ? r4(e.wins / e.n) : 0,
         n: e.n,
-        // Auf Cent gerundet: Die Summe ist eine Geldgröße, keine Quote —
-        // vier Nachkommastellen wie bei `share` wären hier Scheingenauigkeit.
-        pnl: Math.round(e.pnl * 100) / 100,
+        /* Auf Cent gerundet: Die Summe ist eine Geldgröße, keine Quote —
+         * vier Nachkommastellen wie bei `share` wären hier Scheingenauigkeit.
+         *
+         * UND SIE UNTERLIEGT DER SCHWELLE (nachgetragen 22.08.). Beim Einbau
+         * am selben Tag ist genau das durchgerutscht: `netPnl`, `fees` und
+         * `klassen[].fees` hängen an `accounts >= MIN_ACCOUNTS_PUBLIC`, das
+         * neue `pnl` je Ausstiegsgrund hing an nichts. Bei einem einzigen
+         * beitragenden Konto wären das dessen Beträge mit einem anderen
+         * Etikett — in einem Dokument, das öffentlich lesbar ist. Der
+         * Dateikopf sagt dazu: „Es wird kritisch in dem Moment, in dem sich
+         * der zweite Nutzer registriert — und dann ist es zu spät, die
+         * Schwelle nachzurüsten." */
+        pnl: geldOeffentlich ? Math.round(e.pnl * 100) / 100 : null,
       };
     }
     return out;
