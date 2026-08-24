@@ -2557,10 +2557,36 @@ async function collectScanSymbols(now: Date, uhrOffen: boolean | null = null): P
     const engSnap = await db
       .collection('users')
       .where('settings.strategy.engine.running', '==', true)
-      .select('settings.strategy.watchlist', 'settings.strategy.engine.classWeights')
+      .select(
+        'settings.strategy.watchlist',
+        'settings.strategy.engine.classWeights',
+        // Für den Zugangs-Filter unten — ohne dieses Feld läse
+        // `accessLevelOf` überall „freigeschaltet" (s. dort).
+        'accessLevel',
+      )
       .get();
+    /* NUR freigeschaltete Konten formen den gemeinsamen Scan (Befund 23.08.).
+     *
+     * Diese Abfrage filterte bis heute allein auf `engine.running` — und
+     * `saveStrategy` verlangt fürs Einschalten nur eine bestätigte E-Mail,
+     * nicht die Freischaltung. Wer sich anmeldete, die Mail bestätigte und
+     * die Engine einschaltete, konnte damit OHNE je freigeschaltet zu sein:
+     *
+     *   - Symbole ins gemeinsame Scan-Set drücken. Die Watchlist steht im
+     *     Symbol-Kontingent VOR Ranking und Katalog, verdrängt also die
+     *     Symbole aller anderen.
+     *   - Über `classWeights` eine Anlageklasse für ALLE aktivieren — die
+     *     Verknüpfung darüber ist bewusst ein ODER.
+     *
+     * Beides ist Einfluss auf fremde Konten, den ein Wartender nicht haben
+     * soll. Der Zugangs-Filter gehört deshalb hierher und nicht nur dorthin,
+     * wo gehandelt wird.
+     *
+     * `mayTrade` liest ein FEHLENDES `accessLevel` als freigeschaltet — das
+     * ist für Bestandskonten richtig und bleibt so. */
+    const zugelassen = engSnap.docs.filter((d) => mayTrade(d.data()));
     watchlists = watchlistUnion(
-      engSnap.docs.map((d) => d.get('settings.strategy.watchlist') as unknown),
+      zugelassen.map((d) => d.get('settings.strategy.watchlist') as unknown),
       // Katalog ∪ Alpaca-Universum (Stufe 3, Task 121): `saveStrategy` lässt
       // Universums-Symbole inzwischen auf die Watchlist — der Scan muss sie
       // also auch BEOBACHTEN, sonst gäbe es nie einen Kurs und damit nie
@@ -2570,7 +2596,9 @@ async function collectScanSymbols(now: Date, uhrOffen: boolean | null = null): P
       new Set([...allSymbols(), ...(await ladeUniversumSymbole())]),
     );
     aktiveKlassen = aktiveKlassenAusGewichten(
-      engSnap.docs.map(
+      // Dieselbe Menge wie oben: Wer nicht handeln darf, schaltet auch keine
+      // Klasse für andere frei.
+      zugelassen.map(
         (d) =>
           d.get('settings.strategy.engine.classWeights') as
             | Record<string, number>

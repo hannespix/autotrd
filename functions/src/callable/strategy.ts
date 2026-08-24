@@ -18,6 +18,7 @@ import {
   validateStrategy,
   type Strategy,
 } from '../../../shared/src/index.js';
+import { mayTrade } from '../core/access.js';
 import { consumeQuota } from '../core/broker.js';
 import { ladeUniversumSymbole } from '../core/universumLeser.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
@@ -93,6 +94,24 @@ export const saveStrategy = onCall(CALLABLE_OPTS, async (request) => {
       'failed-precondition',
       'srv.emailZuerstBestaetigen',
     );
+  }
+  /* … und erst ab FREISCHALTUNG (Befund 23.08.).
+   *
+   * Eine laufende Engine ist nicht nur Serverlast für das eigene Konto: Der
+   * Scan las die Watchlists und Klassen-Regler aller Konten mit
+   * `engine.running === true` — ohne Zugangsprüfung. Ein Wartender konnte
+   * damit Symbole ins gemeinsame Set drücken und Anlageklassen für ALLE
+   * aktivieren, ohne je freigeschaltet zu sein.
+   *
+   * Der Scan filtert das seit demselben Befund selbst (`collectScanSymbols`)
+   * — das hier ist die zweite Hälfte: Was gar nicht erst eingeschaltet werden
+   * kann, muss auch nirgends ausgefiltert werden. Zwei Riegel für dieselbe
+   * Tür, weil ein einzelner beim nächsten Umbau übersehen wird.
+   *
+   * Fehlendes `accessLevel` gilt als freigeschaltet — Bestandskonten (der
+   * Owner) haben das Feld nicht und dürfen davon nicht getroffen werden. */
+  if (s.engine.running === true && !mayTrade(vorher.data())) {
+    throw new HttpsError('failed-precondition', 'srv.freischaltungAbwarten');
   }
 
   // Klassen-Regler normalisieren (MG2): nur bekannte Anlageklassen, Werte in
