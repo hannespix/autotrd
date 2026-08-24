@@ -59,7 +59,7 @@ import {
   type AlpacaSchluessel,
 } from '../core/alpacaBroker.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
-import { accessDeniedReason, accessLevelOf, mayTrade } from '../core/access.js';
+import { accessDeniedReason, accessLevelOfSnap, mayTradeSnap } from '../core/access.js';
 import { consumeQuota } from '../core/broker.js';
 import { brokerVerbindungLesend, vergissVerbindung } from '../core/orderRouting.js';
 import { raeumeEigeneOrders } from '../core/orderRaeumung.js';
@@ -451,9 +451,9 @@ export const connectBroker = onCall(
      * Fremd-API-Aufrufe vor jeder menschlichen Prüfung. Das TRENNEN oben
      * bleibt bewusst frei: Ein gesperrtes Konto, das seine Schlüssel
      * entfernen will, soll das immer dürfen. */
-    const zugang = (await getFirestore().doc(`users/${uid}`).get()).data();
-    if (!mayTrade(zugang)) {
-      throw new HttpsError('permission-denied', accessDeniedReason(accessLevelOf(zugang)));
+    const zugangSnap = await getFirestore().doc(`users/${uid}`).get();
+    if (!mayTradeSnap(zugangSnap)) {
+      throw new HttpsError('permission-denied', accessDeniedReason(accessLevelOfSnap(zugangSnap)));
     }
     if (!(await consumeQuota(uid, 'connectBroker', DAILY_CONNECT_LIMIT))) {
       throw new HttpsError(

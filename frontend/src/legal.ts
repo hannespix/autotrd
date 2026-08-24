@@ -93,7 +93,18 @@ const TEXTS: Record<LegalKind, string> = {
     Einschränkung, Datenübertragbarkeit, Widerspruch (Art. 15–21 DSGVO) sowie
     Beschwerde bei einer Aufsichtsbehörde. Zur Konto-Löschung genügt eine
     formlose E-Mail an
-    <a href="mailto:overlord@autotrd.net">overlord@autotrd.net</a>.</p>`,
+    <a href="mailto:overlord@autotrd.net">overlord@autotrd.net</a>; nach
+    einer Sperrung kann der Betreiber dein Konto samt Handelsjournal auch
+    direkt in der App endgültig löschen. Ausgenommen von der Löschung sind
+    rein statistische Zähler (Trefferquote/Ergebnis-Bandbreite je
+    Konfluenz-Muster, Selbstoptimierung der Strategie-Parameter): Sie werden
+    ausschließlich additiv ohne Bezug zu deinem Konto geführt, ein
+    einzelner Beitrag lässt sich technisch nicht mehr herausrechnen und
+    bleibt anonym im kollektiven Wert bestehen. Ebenfalls ausgenommen ist
+    ein interner Prüfvermerk der endgültigen Löschung selbst (Zeitpunkt,
+    ausführender Admin, deine E-Mail-Adresse) — er dient dem Nachweis, dass
+    und wann gelöscht wurde (Art. 17 Abs. 3 lit. e DSGVO), ist für dich
+    selbst nicht einsehbar und wird nirgends sonst verwendet.</p>`,
   disclaimer: `
     <p><strong>autotrd ist keine Anlageberatung.</strong> Alle Signale,
     Prognosen und Kennzahlen dienen Informations- und Lernzwecken; sie sind

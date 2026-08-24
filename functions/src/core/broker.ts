@@ -870,9 +870,13 @@ export async function executeTrade(
      * damals nur der eine Auslöser (qty_unter_1), nicht die Fehlerklasse.
      * Der Stempel gilt für jede Buchungs-Panne, die ein bestätigter Fill
      * hinterlässt. */
+    // update()+FieldPath statt set(merge) (Befund 24.08.): sonst legte ein
+    // gelöschtes Konto sich als Geister-Dok. ohne accessLevel neu an (⇒
+    // sofort wieder „approved"), und ein Objekt-Literal unter
+    // `engineCooldowns` würde die Cooldowns ANDERER Symbole löschen.
     await db
       .doc(`users/${req.uid}`)
-      .set({ engineCooldowns: { [req.symbol]: new Date().toISOString() } }, { merge: true })
+      .update(new FieldPath('engineCooldowns', req.symbol), new Date().toISOString())
       .catch((err: unknown) => logger.warn(`Cooldown nach Fill-Panne ${req.uid}`, err));
   }
 

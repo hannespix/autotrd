@@ -708,7 +708,15 @@ async function executeUserTrades(
     // Fehlertolerant: Ein Schreibfehler darf keinen Scan kippen. Dann läuft
     // der Versuch beim nächsten Durchgang erneut, was folgenlos ist.
     const plan = exitUmbauPlan(strategy.engine, strategy.signals);
-    if (plan) {
+    // mayTrade-Wächter zusätzlich HIER (Befund 24.08., nicht nur bei der
+    // eigentlichen Handelslogik weiter unten): Diese Migrations-Schreibung
+    // bleibt als einzige set(merge) auf verschachtelte, dynamische Felder
+    // stehen (Objekt-Spread über engineTeil — ein sauberer update()-Umbau
+    // bräuchte eine Feld-für-Feld-Zerlegung). Blockierte/archivierte Konten
+    // — die einzigen, die sich löschen lassen — überspringen den Schreib-
+    // vorgang jetzt komplett, statt sich auf den weiter unten stehenden
+    // resetLaeuft-Check zu verlassen, der diese frühe Stelle nicht deckt.
+    if (plan && mayTrade(userDoc.data())) {
       // Sauber trennen: Haltedauern gehören zu `engine`, die Ausstiegs-
       // Konfluenz zu `signals`. Ein pauschales Spread über beide Zweige
       // legte `exitConfluence` zusätzlich unter `engine` ab, wo es niemand
@@ -902,16 +910,16 @@ async function executeUserTrades(
         gate.breaker_aktiv += 1;
         // Grund und Zahl mitschreiben: Eine Sperre ohne Begründung ist im
         // Nachhinein nicht von einem Ausfall zu unterscheiden.
+        // update()+FieldPath je Feld statt set(merge) (Befund 24.08.): sonst
+        // legte ein inzwischen gelöschtes Konto sich als Geister-Dok. ohne
+        // accessLevel neu an (⇒ sofort wieder „approved"), und ein
+        // Objekt-Literal unter `risk` würde Geschwisterfelder
+        // (`resetLaeuftSeit`, `abgleich`) löschen.
         await userDoc.ref
-          .set(
-            {
-              risk: {
-                breakerAusgeloestAm: now.toISOString(),
-                breakerGrund: breaker.grund,
-                breakerVerlustPct: breaker.verlustPct,
-              },
-            },
-            { merge: true },
+          .update(
+            new FieldPath('risk', 'breakerAusgeloestAm'), now.toISOString(),
+            new FieldPath('risk', 'breakerGrund'), breaker.grund,
+            new FieldPath('risk', 'breakerVerlustPct'), breaker.verlustPct,
           )
           .catch((err: unknown) => logger.warn(`Breaker-Vermerk ${uid}`, err));
       }

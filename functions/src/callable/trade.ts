@@ -19,7 +19,7 @@ import { ladeUniversumSymbole } from '../core/universumLeser.js';
 import { kontoTore } from '../core/kontoTore.js';
 import { clampStrategyRisk, maxOpenPositions } from '../core/rulesTrading.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
-import { accessDeniedReason, accessLevelOf, mayTrade } from '../core/access.js';
+import { accessDeniedReason, accessLevelOfSnap, mayTradeSnap } from '../core/access.js';
 
 const DAILY_TRADE_LIMIT = 50;
 const MAX_QTY = 10_000;
@@ -81,8 +81,14 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
   // Zugangsstufe (Owner 26.07.): Ohne Freischaltung keine Order — auch nicht
   // manuell. Die Prüfung steht VOR jeder Preisermittlung, damit ein gesperrtes
   // Konto nicht einmal Marktdaten-Aufrufe auslöst.
-  if (!mayTrade(userSnap.data())) {
-    throw new HttpsError('permission-denied', accessDeniedReason(accessLevelOf(userSnap.data())));
+  //
+  // *Snap statt .data() (Naht-Befund 24.08., vierte Fundstelle desselben
+  // Musters): `.data()` liefert `undefined` auch für ein NICHT MEHR
+  // EXISTIERENDES Dokument, und `mayTrade(undefined)` gilt als
+  // Bestandskonto-Regel `true` — ein bereits endgültig gelöschtes Konto
+  // wäre mit einem noch gültigen Token sonst wieder handelsfähig gewesen.
+  if (!mayTradeSnap(userSnap)) {
+    throw new HttpsError('permission-denied', accessDeniedReason(accessLevelOfSnap(userSnap)));
   }
   const strategy = userSnap.get('settings.strategy') as Strategy | undefined;
   if (!strategy) throw new HttpsError('failed-precondition', 'srv.profilFehltEnsure');

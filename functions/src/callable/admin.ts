@@ -42,6 +42,7 @@ import { accessLevelOf, type AccessLevel } from '../core/access.js';
 import { reifeFuerKonto } from '../core/liveGate.js';
 import { abgleichSperreAusVermerk } from '../core/kontoTore.js';
 import { abgleichFuerKonto, type VerlaufEintrag } from '../core/brokerAbgleich.js';
+import { DAILY_DELETE_LIMIT, DELETE_CONFIRM_WORD, loescheKonto, type LoeschBefund } from '../core/kontoLoeschung.js';
 
 /**
  * Abgleich-Vermerk eines fremden Kontos für die Übersicht (21.08.).
@@ -128,7 +129,15 @@ export interface AdminUserRow {
   } | null;
 }
 
-export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
+export const adminUsers = onCall(
+  /* 300 s statt der 60-s-Voreinstellung (Red-Team-Befund 24.08.): Nur die
+   * `delete`-Action braucht das — sie ruft `trenneBroker` (bis zu 90 s
+   * Order-Sweep, s. connectBroker.ts) UND danach `recursiveDelete` über den
+   * gesamten Konto-Baum. Ein höheres Limit verlangsamt die schnellen
+   * Actions (list/set/nachrichten/…) nicht — es gibt ihnen nur mehr Raum,
+   * bevor Cloud Functions abbricht, falls sie ihn je bräuchten. */
+  { ...CALLABLE_OPTS, timeoutSeconds: 300 },
+  async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'srv.anmeldungErforderlich');
   if (!(await consumeQuota(uid, 'adminUsers', DAILY_LIMIT))) {
@@ -284,6 +293,30 @@ export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
       { merge: true },
     );
     return { ok: true };
+  }
+
+  /* Endgültig löschen (Owner-Frage 24.08.: „gesperrte Konten löschen …
+   * sonst kommt es zu einer Vermüllung der Datenbank" — Antwort: BEIDES,
+   * Archiv-Ablage UND ein echter Löschanspruch, siehe AskUserQuestion-
+   * Entscheidung „Zusätzlich: den Löschanspruch erfüllen").
+   *
+   * Bestätigungswort + eigenes, strenges Tageslimit HIER (Callable-Ebene,
+   * derselbe Ort wie bei `resetWallet`) — die zehn fachlichen
+   * Vorbedingungen (Admin-Ziel-Tabu, Karenzzeit, offene Positionen,
+   * laufender Reset, Live-Verbindung, …) prüft `loescheKonto` selbst,
+   * gegen frisch gelesene Daten, nicht gegen irgendetwas aus `request`. */
+  if (action === 'delete') {
+    const { confirm } = (request.data ?? {}) as { confirm?: unknown };
+    if (confirm !== DELETE_CONFIRM_WORD) {
+      throw new HttpsError('failed-precondition', `srv.loeschenBestaetigen|${DELETE_CONFIRM_WORD}`);
+    }
+    if (!(await consumeQuota(uid, 'adminDelete', DAILY_DELETE_LIMIT))) {
+      throw new HttpsError('resource-exhausted', `srv.hoechstensLoeschungen|${DAILY_DELETE_LIMIT}`);
+    }
+    targetRef(); // wirft bei fehlender/eigener uid — dieselbe Prüfung wie überall sonst
+    const ergebnis: LoeschBefund = await loescheKonto(target as string, uid);
+    logger.info(`Admin ${uid} hat Konto ${target as string} endgültig gelöscht`);
+    return ergebnis;
   }
 
   // Zwei Kontotypen (Owner 02.08.): Admins ernennen/entlassen weitere Admins.

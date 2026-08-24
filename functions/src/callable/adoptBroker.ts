@@ -60,7 +60,7 @@ import {
   type AlpacaGeschlosseneOrder,
 } from '../core/alpacaBroker.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
-import { accessDeniedReason, accessLevelOf, mayTrade } from '../core/access.js';
+import { accessDeniedReason, accessLevelOfSnap, mayTradeSnap } from '../core/access.js';
 import { consumeQuota } from '../core/broker.js';
 import { fxFelder } from '../core/fx.js';
 import { brokerVerbindungLesend } from '../core/orderRouting.js';
@@ -189,9 +189,9 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
    * ruft Konto, Positionen und Order-Historie beim Broker ab und
    * ÜBERSCHREIBT das eigene Buch — beides hat ein nie freigeschaltetes
    * Konto nicht zu tun. */
-  const zugang = (await getFirestore().collection('users').doc(uid).get()).data();
-  if (!mayTrade(zugang)) {
-    throw new HttpsError('permission-denied', accessDeniedReason(accessLevelOf(zugang)));
+  const zugangSnap = await getFirestore().collection('users').doc(uid).get();
+  if (!mayTradeSnap(zugangSnap)) {
+    throw new HttpsError('permission-denied', accessDeniedReason(accessLevelOfSnap(zugangSnap)));
   }
   if (!(await consumeQuota(uid, 'adoptBroker', DAILY_ADOPT_LIMIT))) {
     throw new HttpsError('resource-exhausted', `srv.hoechstensUebernahmen|${DAILY_ADOPT_LIMIT}`);
