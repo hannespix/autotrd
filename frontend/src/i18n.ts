@@ -1368,6 +1368,8 @@ export const DE = {
   'val.stringNichtLeer': '{0} muss ein nicht-leerer String sein',
   'srv.anmeldungErforderlich': 'Anmeldung erforderlich',
   'srv.emailZuerstBestaetigen': 'Bitte zuerst die E-Mail-Adresse bestätigen — dann lässt sich die Engine starten.',
+  'srv.freischaltungAbwarten':
+    'Die Engine startet erst nach der Freischaltung durch den Betreiber. Bis dahin kannst du alles ansehen und einstellen — gehandelt wird nicht.',
   'srv.eigenesKontoTabu': 'Das eigene Konto bleibt tabu (Selbst-Aussperr-Schutz)',
   'srv.geheimerSchluesselZuKurz': 'Der geheime Schlüssel ist zu kurz.',
   'srv.keinBrokerFuerDepot': 'Kein Broker verbunden — es gibt kein Depot, das sich übernehmen ließe.',
@@ -1743,6 +1745,8 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'val.stringNichtLeer': '{0} must be a non-empty string',
   'srv.anmeldungErforderlich': 'Sign-in required',
   'srv.emailZuerstBestaetigen': 'Please verify your email address first — then the engine can be started.',
+  'srv.freischaltungAbwarten':
+    'The engine starts only after the operator approves your account. Until then you can view and configure everything — nothing is traded.',
   'srv.eigenesKontoTabu': 'Your own account is off-limits (self-lockout protection)',
   'srv.geheimerSchluesselZuKurz': 'The secret key is too short.',
   'srv.keinBrokerFuerDepot': 'No broker connected — there is no portfolio to adopt.',

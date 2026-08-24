@@ -157,12 +157,37 @@ describe('Quelltext: der Scan liest die Watchlists durch watchlistUnion', () => 
     const text = readFileSync(pfad, 'utf8');
     // Zwischen der Abfrage und der Klassen-Auswertung liegt die
     // Zuweisung an `watchlists` — dort muss die Funktion stehen.
-    const ab = text.indexOf(".select('settings.strategy.watchlist'");
+    // (Anker auf das Feld statt auf `.select(…)`: Der Aufruf steht seit dem
+    // Zugangs-Filter mehrzeilig. Die Aussage ist unverändert.)
+    const ab = text.indexOf("'settings.strategy.watchlist',");
     expect(ab, 'Watchlist-Abfrage nicht gefunden').toBeGreaterThan(0);
     const bis = text.indexOf('aktiveKlassenAusGewichten(', ab);
     const block = text.slice(ab, bis);
     expect(block).toContain('watchlistUnion(');
     expect(block).not.toContain('flatMap');
+  });
+
+  /* Zweite Eigenschaft derselben Stelle (Befund 23.08.).
+   *
+   * Die Abfrage filterte allein auf `engine.running` — und `saveStrategy`
+   * verlangte fürs Einschalten nur eine bestätigte E-Mail. Ein Wartender
+   * konnte damit Symbole ins gemeinsame Scan-Set drücken und über
+   * `classWeights` Anlageklassen für ALLE aktivieren, ohne je freigeschaltet
+   * zu sein. Beides ist Einfluss auf fremde Konten. */
+  it('nur freigeschaltete Konten formen Watchlist UND aktive Klassen', () => {
+    const text = readFileSync(pfad, 'utf8');
+    const ab = text.indexOf("'settings.strategy.watchlist',");
+    const bis = text.indexOf('aktiveKlassenAusGewichten(', ab);
+    // Der Filter steht vor der Union …
+    expect(text.slice(ab, bis)).toContain('engSnap.docs.filter((d) => mayTrade(d.data()))');
+    // … und BEIDE Auswertungen benutzen die gefilterte Menge, nicht engSnap.
+    const nachFilter = text.slice(ab, text.indexOf('\n  } catch', ab));
+    expect(nachFilter).toContain('zugelassen.map(');
+    expect((nachFilter.match(/zugelassen\.map\(/g) ?? []).length).toBe(2);
+    expect(nachFilter).not.toContain('engSnap.docs.map(');
+    // Das Feld muss mitgelesen werden, sonst läse mayTrade überall
+    // „freigeschaltet".
+    expect(text.slice(ab, bis)).toContain("'accessLevel',");
   });
 });
 
