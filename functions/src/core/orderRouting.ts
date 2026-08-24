@@ -327,6 +327,16 @@ export interface RoutingErgebnis {
   brokerOrderId?: string;
   /** Klartext, falls nicht ausgeführt. Landet im Log, nicht im Buch. */
   grund?: string;
+  /**
+   * Der REST einer TEILGEFÜLLTEN, schließenden Order ist verifiziert
+   * storniert bzw. war zwischenzeitlich selbst voll gefüllt (Root-Cause-
+   * Befund 24.08.). Nur bei `true` darf `broker.ts`s `schlussMenge` die
+   * Position VERKLEINERN statt sie ganz zu schließen — sonst bliebe der
+   * Rest beim Broker unbeaufsichtigt weiterleben: „Position nur beim
+   * Broker", das Muster, das wiederholt zu Reife-Zäsuren zwang, weil erst
+   * eine manuelle Übernahme die Drift wieder einfing.
+   */
+  restStorniert?: boolean;
 }
 
 /**
@@ -371,6 +381,17 @@ export async function routeOrder(
      * ein ungefüllter Limit-Einstieg nicht beim Broker liegen bleibt.
      */
     limitPreis?: number;
+    /**
+     * Diese Order schließt eine Position (Root-Cause-Befund 24.08.).
+     *
+     * Nur dann wird eine TEILAUSFÜHRUNG mit einem verifizierten Storno-
+     * Versuch des Rests nachbereitet (s. `RoutingErgebnis.restStorniert`).
+     * Für eröffnende Orders gilt weiterhin `stornoBeiKeinFill`/gar-kein-
+     * Fill; eine eröffnende Teilausführung braucht keinen Sonderfall — sie
+     * bucht genau die gefüllte Menge, ein Rest-Einstieg ist so oder so
+     * nicht gewollt.
+     */
+    schliessend?: boolean;
   },
   fetchImpl: typeof fetch = fetch,
   warteOpts: { versuche?: number; pauseMs?: number } = {},
@@ -464,11 +485,82 @@ export async function routeOrder(
       // Kennung nachgebucht (Duplicate-Pfad im catch unten).
       return { ausgefuehrt: false, grund: 'kein_fill' };
     }
+
+    /* Teilausführung einer SCHLIESSENDEN Order (Root-Cause-Befund 24.08.,
+     * Owner-Meldung: „jedesmal wenn ich depot vom broker komplett neu
+     * übernehme wird mein reife-Zustand zurückgesetzt").
+     *
+     * Ohne diesen Block wurde jede Teilausführung blind wie eine volle
+     * behandelt — der Aufrufer bucht `fillMenge` und schließt die GANZE
+     * Position (`schlussMenge` ohne Zusicherung), während der unausgeführte
+     * Rest der Verkaufsorder beim Broker unbeaufsichtigt weiterlief. Blieb
+     * er offen (Tagesende, dünnes Buch), hielt der Broker Stücke, von denen
+     * das Buch nichts mehr wusste: „Position nur beim Broker" — genau das
+     * Muster, das jeden manuellen „Depot übernehmen"-Klick zur Reife-Zäsur
+     * machte, weil eine ECHTE Kapitalverschiebung importiert wurde.
+     *
+     * Derselbe verifizierte Storno wie im `kein_fill`-Zweig oben: Nur bei
+     * bestätigtem `storniert`/`weg` gilt der Rest als tot, und NUR DANN
+     * `restStorniert: true`. Jeder andere Ausgang (Storno schlägt fehl,
+     * `nicht_stornierbar` ohne Vollfüllung) lässt `restStorniert`
+     * unbestimmt — der sichere Fallback von #436 bleibt: `schlussMenge`
+     * schließt dann die GANZE Position, eine zu große Buchung ist ein
+     * Fehler in den Zahlen, eine ungedeckte Rest-Position ein Fehler mit
+     * Richtung. */
+    let restStorniert: boolean | undefined;
+    if (
+      auftrag.schliessend === true &&
+      fill.status === 'partially_filled' &&
+      fill.qty < auftrag.qty
+    ) {
+      try {
+        const storno = await alpacaOrderStornieren(
+          verbindung.mode,
+          order.id,
+          verbindung.schluessel,
+          fetchImpl,
+        );
+        if (storno === 'storniert' || storno === 'weg') {
+          restStorniert = true;
+        } else if (storno === 'nicht_stornierbar') {
+          // Zwischen Poll und Storno doch noch vollständig gefüllt — dann
+          // ist der „Rest" nicht tot, sondern längst ausgeführt. Frisch
+          // abfragen und, wenn die GANZE Order jetzt gefüllt ist, die
+          // tatsächliche Gesamtmenge melden (schlussMenge schließt bei
+          // `gewuenscht >= posQty` ohnehin ganz — kein Sonderfall nötig).
+          const stand = await alpacaOrderAbfragen(
+            verbindung.mode,
+            order.id,
+            verbindung.schluessel,
+            fetchImpl,
+          );
+          if (stand && stand.filledQty >= auftrag.qty && stand.filledAvgPreis > 0) {
+            return {
+              ausgefuehrt: true,
+              fillPreis: stand.filledAvgPreis,
+              fillMenge: stand.filledQty,
+              brokerOrderId: order.id,
+              restStorniert: true,
+            };
+          }
+          // Weiterhin nur teilgefüllt — restStorniert bleibt unbestimmt.
+        }
+      } catch (err) {
+        logger.warn(
+          `routeOrder ${auftrag.symbol}: Storno des Teilfill-Rests fehlgeschlagen — `
+            + `Order ${order.id} arbeitet womöglich weiter`,
+          err,
+        );
+        // restStorniert bleibt unbestimmt — sicherer Fallback (s. o.).
+      }
+    }
+
     return {
       ausgefuehrt: true,
       fillPreis: fill.ausfuehrungskurs,
       fillMenge: fill.qty > 0 ? fill.qty : auftrag.qty,
       brokerOrderId: order.id,
+      ...(restStorniert !== undefined ? { restStorniert } : {}),
     };
   } catch (err) {
     /* 422 „client_order_id must be unique" (Audit 13.08., K-2e): Die

@@ -1052,3 +1052,130 @@ describe('K-2 — routeOrder: Storno bei kein_fill, Nachschlag bei duplicate', (
     expect(r.grund).toBe('broker_fehler');
   });
 });
+
+/**
+ * Root-Cause-Fix der wiederkehrenden Broker-Buch-Drift (24.08., Owner-
+ * Meldung: „jedesmal wenn ich depot vom broker komplett neu übernehme wird
+ * mein reife-Zustand zurückgesetzt").
+ *
+ * Vorher wurde JEDE Teilausführung — auch bei einer schließenden Order —
+ * blind wie eine volle behandelt: Der Aufrufer bucht die volle Position,
+ * während der unausgeführte Rest der Verkaufsorder beim Broker
+ * unbeaufsichtigt weiterlief. Blieb er offen, hielt der Broker Stücke, von
+ * denen das Buch nichts mehr wusste — „Position nur beim Broker", genau das
+ * Muster, das jeden manuellen „Depot übernehmen"-Klick zur Reife-Zäsur
+ * machte.
+ *
+ * Diese Tests prüfen NUR den neuen Zweig — die bestehende Sicherung aus
+ * #436 (`schlussMenge` verkleinert NUR mit expliziter Zusicherung) bleibt
+ * unverändert in `functions/test/teilSchluss.test.ts` gepinnt.
+ */
+describe('Root-Cause-Fix: Teilausführung einer SCHLIESSENDEN Order', () => {
+  const verbindung = { mode: 'paper' as const, schluessel: SCHLUESSEL };
+  const schliessend = {
+    uid: 'u1',
+    symbol: 'NVDA',
+    side: 'sell' as const,
+    qty: 25,
+    laufId: 'scan-9',
+    schliessend: true,
+  };
+
+  it('verifizierter Storno gelingt → restStorniert:true, gefüllte Menge gebucht', async () => {
+    const f = antwortFolge(
+      { body: { id: 'o1', status: 'accepted' } },
+      { body: { id: 'o1', status: 'partially_filled', filled_qty: '21', filled_avg_price: '101' } },
+      { body: {} }, // DELETE /v2/orders/o1 — 200 mit JSON-Body = erfolgreich storniert
+    );
+    const r = await routeOrder(verbindung, schliessend, f, SCHNELL);
+    expect(r).toEqual({
+      ausgefuehrt: true,
+      fillPreis: 101,
+      fillMenge: 21,
+      brokerOrderId: 'o1',
+      restStorniert: true,
+    });
+    expect(f).toHaveBeenCalledTimes(3);
+  });
+
+  it('Storno kommt zu spät (422), Order war zwischenzeitlich GANZ gefüllt → volle Menge, restStorniert:true', async () => {
+    const f = antwortFolge(
+      { body: { id: 'o1', status: 'accepted' } },
+      { body: { id: 'o1', status: 'partially_filled', filled_qty: '21', filled_avg_price: '101' } },
+      { ok: false, status: 422, body: 'order is not cancelable' },
+      { body: { id: 'o1', status: 'filled', filled_qty: '25', filled_avg_price: '101.2' } },
+    );
+    const r = await routeOrder(verbindung, schliessend, f, SCHNELL);
+    expect(r).toEqual({
+      ausgefuehrt: true,
+      fillPreis: 101.2,
+      fillMenge: 25,
+      brokerOrderId: 'o1',
+      restStorniert: true,
+    });
+  });
+
+  it('Storno kommt zu spät (422), Order bleibt WEITER nur teilgefüllt → sicherer Fallback, KEINE Zusicherung', async () => {
+    // Der Kern von #436: Ohne bestätigten Storno und ohne Vollfüllung darf
+    // restStorniert NIE gesetzt werden — schlussMenge schließt dann die
+    // GANZE Position (Fehler in den Zahlen ist der sichere Fehler, eine
+    // ungedeckte Rest-Position der gefährliche).
+    const f = antwortFolge(
+      { body: { id: 'o1', status: 'accepted' } },
+      { body: { id: 'o1', status: 'partially_filled', filled_qty: '21', filled_avg_price: '101' } },
+      { ok: false, status: 422, body: 'order is not cancelable' },
+      { body: { id: 'o1', status: 'partially_filled', filled_qty: '22', filled_avg_price: '101.1' } },
+    );
+    const r = await routeOrder(verbindung, schliessend, f, SCHNELL);
+    expect(r.ausgefuehrt).toBe(true);
+    expect(r.fillMenge).toBe(21);
+    expect(r.restStorniert).toBeUndefined();
+  });
+
+  it('Storno-Aufruf wirft (Netzwerkfehler) → sicherer Fallback, kein Crash', async () => {
+    const f = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'DELETE') throw new TypeError('fetch failed');
+      const schritte = [
+        { id: 'o1', status: 'accepted' },
+        { id: 'o1', status: 'partially_filled', filled_qty: '21', filled_avg_price: '101' },
+      ];
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(schritte[Math.min(f.mock.calls.length, schritte.length - 1)]),
+      } as unknown as Response;
+    });
+    const r = await routeOrder(verbindung, schliessend, f, SCHNELL);
+    expect(r.ausgefuehrt).toBe(true);
+    expect(r.fillMenge).toBe(21);
+    expect(r.restStorniert).toBeUndefined();
+  });
+
+  it('volle Ausführung (status filled) löst KEINEN Storno-Versuch aus', async () => {
+    const f = antwortFolge(
+      { body: { id: 'o1', status: 'accepted' } },
+      { body: { id: 'o1', status: 'filled', filled_qty: '25', filled_avg_price: '101' } },
+    );
+    const r = await routeOrder(verbindung, schliessend, f, SCHNELL);
+    expect(r.restStorniert).toBeUndefined();
+    expect(f).toHaveBeenCalledTimes(2); // kein dritter (DELETE-)Aufruf
+  });
+
+  it('ERÖFFNENDE Order (schliessend fehlt): Teilfill wird NICHT storniert', async () => {
+    // Für Einstiege gilt weiterhin die alte Regel — ein Rest-Einstieg ist
+    // ohnehin nicht gewollt, kein Sonderfall nötig.
+    const f = antwortFolge(
+      { body: { id: 'o1', status: 'accepted' } },
+      { body: { id: 'o1', status: 'partially_filled', filled_qty: '2', filled_avg_price: '190' } },
+    );
+    const r = await routeOrder(
+      verbindung,
+      { uid: 'u1', symbol: 'AAPL', side: 'buy', qty: 5, laufId: 'scan-9' },
+      f,
+      SCHNELL,
+    );
+    expect(r.fillMenge).toBe(2);
+    expect(r.restStorniert).toBeUndefined();
+    expect(f).toHaveBeenCalledTimes(2);
+  });
+});

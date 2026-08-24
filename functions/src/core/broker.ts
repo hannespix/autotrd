@@ -425,10 +425,15 @@ export interface TradeRequest {
    * unten: Aus einem gewollten Ausstieg würde ein ungewollter Leerverkauf in
    * die Gegenrichtung, ohne Stop.
    *
-   * Wahr ist die Zusicherung heute an genau EINER Stelle: `pflegeSchutz`
+   * Wahr ist die Zusicherung an ZWEI Stellen (seit 24.08.): `pflegeSchutz`
    * storniert den Rest der Stop-Order selbst, bevor es den gefüllten Teil
-   * meldet. `schutzAufheben` gehört NICHT dazu — dort ist der Stornoversuch
-   * ja gerade fehlgeschlagen (`nicht_stornierbar`), die Order lebt weiter.
+   * meldet — und `routeOrder` (`orderRouting.ts`) storniert seit dem
+   * Root-Cause-Fix der wiederkehrenden Broker-Buch-Drift den Rest einer
+   * teilgefüllten SCHLIESSENDEN Order selbst, bevor `executeTrade` hier
+   * bucht (`RoutingErgebnis.restStorniert`). Beidesmal gilt: nur bei
+   * BESTÄTIGTEM Storno, nie geraten. `schutzAufheben` gehört NICHT dazu —
+   * dort ist der Stornoversuch ja gerade fehlgeschlagen (`nicht_stornierbar`),
+   * die Order lebt weiter.
    *
    * Fehlend = wie bisher ganz schließen. Das ist die konservative Antwort:
    * Eine zu große Buchung ist ein Fehler in den Zahlen, eine ungedeckte
@@ -814,6 +819,11 @@ export async function executeTrade(
     // Schließende bleiben stehen — ihr später Fill ist erwünscht und wird
     // über die positionsstabile Kennung nachgebucht.
     stornoBeiKeinFill: eroeffnet,
+    // Root-Cause-Befund 24.08.: Nur bei einer schließenden Order darf eine
+    // Teilausführung den verifizierten Storno-Nachlauf auslösen — sonst
+    // bliebe ein Teilfill-Rest beim Broker unbeaufsichtigt liegen und
+    // erzeugte „Position nur beim Broker".
+    schliessend: schliesst,
     laufId: lauf,
   });
   if (!routing.ausgefuehrt) {
@@ -829,6 +839,11 @@ export async function executeTrade(
       qty: routing.fillMenge ?? qty,
       fillPreis: routing.fillPreis!,
       ...(routing.brokerOrderId ? { brokerOrderId: routing.brokerOrderId } : {}),
+      // Die Zusicherung kommt AUSSCHLIESSLICH aus dem verifizierten
+      // Routing-Ergebnis, nie aus `req` (das trüge sie hier nie zuverlässig
+      // — kein Aufrufer von `executeTrade` setzt sie). Nur für schließende
+      // Trades überhaupt relevant, `schlussMenge` greift sonst nirgends.
+      ...(schliesst ? { restStorniert: routing.restStorniert === true } : {}),
     },
     strategy,
   ).catch((err: unknown) => ({

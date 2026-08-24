@@ -235,3 +235,46 @@ describe('Wächter: wer darf den Rest für tot erklären', () => {
     expect(scan).toContain("if (r.trade?.teilSchluss !== true) positions.delete(symbol);");
   });
 });
+
+/**
+ * Die ZWEITE legitime Quelle (Root-Cause-Fix 24.08.): `routeOrder` storniert
+ * seit dem Fix der wiederkehrenden Broker-Buch-Drift den Rest einer
+ * teilgefüllten SCHLIESSENDEN Order selbst — dieselbe Bedingung wie bei
+ * `pflegeSchutz`, nur an einer zweiten, ebenso beweisbaren Stelle. Das ist
+ * bewusst die zweite Stelle aus dem Kommentar oben, keine, die aus Versehen
+ * dazukam: Die Zusicherung in `broker.ts` kommt AUSSCHLIESSLICH aus dem
+ * verifizierten `RoutingErgebnis`, nie aus `req` selbst.
+ */
+describe('Wächter: die zweite Quelle (routeOrder → executeTrade)', () => {
+  const broker = readFileSync(join(__dirname, '../src/core/broker.ts'), 'utf8');
+  const routing = readFileSync(join(__dirname, '../src/core/orderRouting.ts'), 'utf8');
+
+  it('executeTrade übergibt schliessend an routeOrder', () => {
+    const ab = broker.indexOf('const routing = await routeOrder(verbindung, {');
+    const bis = broker.indexOf('});', ab);
+    expect(ab).toBeGreaterThan(0);
+    expect(broker.slice(ab, bis)).toContain('schliessend: schliesst,');
+  });
+
+  it('die Buchung übernimmt restStorniert NUR aus dem Routing-Ergebnis, nie aus req', () => {
+    const ab = broker.indexOf('const buchung = await executePaperTrade(');
+    const bis = broker.indexOf('strategy,', ab);
+    expect(ab).toBeGreaterThan(0);
+    const block = broker.slice(ab, bis);
+    expect(block).toContain('restStorniert: routing.restStorniert === true');
+    // Kein Durchreichen von req.restStorniert an dieser Stelle — der Aufrufer
+    // von executeTrade setzt es nie zuverlässig.
+    expect(block).not.toContain('req.restStorniert');
+  });
+
+  it('routeOrder sichert nur bei VERIFIZIERTEM Storno oder verifizierter Vollfüllung zu', () => {
+    // Dieselbe Härte wie bei pflegeSchutz: kein Raten, kein optimistisches
+    // "wird schon geklappt haben". Zwei Stellen setzen `restStorniert` auf
+    // `true` — einmal nach bestätigtem Storno, einmal nach verifizierter
+    // Vollfüllung (`stand.filledQty >= auftrag.qty`) —, keine dritte.
+    const treffer = (routing.match(/restStorniert (?:=|:) true[,;]|restStorniert: true[,;]/g) ?? []).length;
+    expect(treffer).toBe(2);
+    expect(routing).toContain("storno === 'storniert' || storno === 'weg'");
+    expect(routing).toContain('stand.filledQty >= auftrag.qty');
+  });
+});
