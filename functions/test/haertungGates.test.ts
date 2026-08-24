@@ -57,6 +57,19 @@ describe('Freischaltungs-Gate vor jedem Alpaca-Außen-Call', () => {
       expect(q(rel)).toContain('accessDeniedReason(accessLevelOfSnap(');
     }
   });
+
+  it('trade.ts: dieselbe Härtung (vierte Fundstelle, Verifikations-Befund 24.08.)', () => {
+    // Ein Verifikations-Agent fand denselben ungehärteten mayTrade(.data())-
+    // Aufruf hier — aktuell nur zufällig unschädlich, weil ein direkt
+    // folgender strategy-Read bei fehlendem Dokument ebenfalls abbricht.
+    // Zufälliger Schutz durch eine unabhängige zweite Prüfung ist kein
+    // Entwurf; jede künftige Änderung an der strategy-Fallback-Logik hätte
+    // die Lücke wieder geöffnet.
+    const src = q('callable/trade.ts');
+    expect(src).toContain('mayTradeSnap(userSnap)');
+    expect(src).toContain('accessDeniedReason(accessLevelOfSnap(userSnap))');
+    expect(src).not.toContain('mayTrade(userSnap.data())');
+  });
 });
 
 describe('bestPractice hinter der Anonymitätsschwelle', () => {

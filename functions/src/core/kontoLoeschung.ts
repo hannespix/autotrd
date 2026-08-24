@@ -227,7 +227,21 @@ export async function loescheKonto(target: string, ausgefuehrtVon: string): Prom
    * `core/broker.ts` `consumeQuota`) — `recursiveDelete` oben erfasst es
    * nicht. Ohne diese Zeile bliebe genau das Waisen-Dokument zurück, das
    * diese Funktion verhindern soll (Nahtstellen-Befund 24.08.). `delete()`
-   * auf ein nie existierendes Dokument ist ein folgenloses No-Op. */
+   * auf ein nie existierendes Dokument ist ein folgenloses No-Op.
+   *
+   * Ehrliche Grenze (Verifikations-Befund 24.08.): `consumeQuota` selbst
+   * prüft keine Konto-Existenz und legt das Dokument bei jedem Aufruf per
+   * `set(merge)` neu an — in mehreren Callables VOR deren eigenem
+   * mayTradeSnap-Gate. Ein noch gültiges Token des gelöschten Kontos könnte
+   * es innerhalb seiner Restlaufzeit (bis zu dessen Ablauf) also neu
+   * anlegen. Bewusst NICHT behoben: Das Dokument trägt keine
+   * personenbezogenen Daten — nur einen anonymen Tageszähler unter einer
+   * uid als Doc-ID —, und es beheben hieße, `consumeQuota` selbst um eine
+   * Existenzprüfung zu erweitern und damit einen zusätzlichen Read vor
+   * JEDEM quotierten Aufruf im System einzuführen. Das Verhältnis von
+   * Aufwand zu Schutzwert (ein Zähler ohne Personenbezug) rechtfertigt das
+   * nicht — anders als bei Fix 1 (mayTradeSnap), wo echte Handlungsfähigkeit
+   * auf dem Spiel stand. */
   await db.doc(`admin/quotas-${target}`).delete();
 
   let authGeloescht = true;
