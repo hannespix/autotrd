@@ -4,6 +4,8 @@
  */
 
 import {
+  accessLevelOf,
+  type AccessLevel,
   type ErkenntnisChronik,
   type GlobalAxisStats,
   type KiBerichtDoc,
@@ -564,7 +566,7 @@ export function watchUserDoc(
      * Konto nicht an zu handeln" — sie lief, das Konto war nur nicht frei).
      * Fehlendes Feld = Bestandskonto = freigeschaltet.
      */
-    accessLevel: 'pending' | 'approved' | 'blocked';
+    accessLevel: AccessLevel;
     /** Kontotyp (Owner 02.08.): Admins sehen die Freischaltungs-Karte.
      *  Das Feld setzt NUR die Konsole bzw. das adminUsers-Callable —
      *  Client-Updates auf dem User-Doc erlauben die Rules nur für `settings`. */
@@ -610,9 +612,12 @@ export function watchUserDoc(
   }) => void,
 ): Unsubscribe {
   return onSnapshot(doc(db(), 'users', uid), (snap) => {
-    const rawAccess = snap.get('accessLevel') as string | undefined;
     cb({
-      accessLevel: rawAccess === 'pending' || rawAccess === 'blocked' ? rawAccess : 'approved',
+      /* Über die GETEILTE Normalisierung, nicht nachgebaut (24.08.): Die
+       * Kopie hier hätte den neuen Zustand `archiviert` still zu `approved`
+       * gemacht — ein dort fehlender Wert wird freigeschaltet. „EINE Wahrheit
+       * für Scan, Callables und UI" gilt auch für diese Zeile. */
+      accessLevel: accessLevelOf(snap.data()),
       admin: snap.get('admin') === true,
       strategy: (snap.get('settings.strategy') as Strategy | undefined) ?? null,
       wallet: (snap.get('wallet') as Wallet | undefined) ?? null,
@@ -1402,7 +1407,7 @@ export async function callTrade(input: {
 export interface AdminUserRow {
   uid: string;
   email: string | null;
-  accessLevel: 'pending' | 'approved' | 'blocked';
+  accessLevel: AccessLevel;
   requestedAt: string | null;
   admin: boolean;
   /** Gesamt-P&L (Equity − Kapitalbasis) — dieselbe Formel wie die
@@ -1450,7 +1455,7 @@ export async function adminListUsers(): Promise<AdminUserRow[]> {
 /** Zugangsstufe eines FREMDEN Kontos setzen (das eigene ist serverseitig tabu). */
 export async function adminSetAccess(
   target: string,
-  level: 'pending' | 'approved' | 'blocked',
+  level: 'pending' | 'approved' | 'blocked' | 'archiviert',
 ): Promise<void> {
   await httpsCallable(fns(), 'adminUsers')({ action: 'set', target, level });
 }
