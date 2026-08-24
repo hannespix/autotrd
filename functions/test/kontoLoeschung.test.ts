@@ -215,6 +215,14 @@ describe('Quelltext: loescheKonto hält die einzig sichere Reihenfolge', () => {
     expect(text).not.toContain("targetRef.collection('adminAuditLog')");
   });
 
+  it('admin/quotas-{target} wird NACH recursiveDelete mit gelöscht (Naht-Befund 24.08.)', () => {
+    // Liegt außerhalb von users/{uid} — recursiveDelete erfasst es nicht;
+    // ohne diese Zeile bliebe ein Waisen-Dokument mit der uid im Namen.
+    const del = text.indexOf('await db.recursiveDelete(targetRef)');
+    const quotas = text.indexOf('db.doc(`admin/quotas-${target}`).delete()');
+    expect(quotas, 'admin/quotas-{target} wird nicht gelöscht').toBeGreaterThan(del);
+  });
+
   it('der Cache wird verworfen, BEVOR die Live-Verbindung geprüft wird', () => {
     const vergiss = text.indexOf('vergissVerbindung(target)');
     const brokerDoc = text.indexOf("db.doc(`users/${target}/private/broker`)");

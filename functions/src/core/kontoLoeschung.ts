@@ -223,6 +223,13 @@ export async function loescheKonto(target: string, ausgefuehrtVon: string): Prom
 
   await db.recursiveDelete(targetRef);
 
+  /* `admin/quotas-{uid}` liegt AUSSERHALB von `users/{uid}` (Top-Level-Doc,
+   * `core/broker.ts` `consumeQuota`) — `recursiveDelete` oben erfasst es
+   * nicht. Ohne diese Zeile bliebe genau das Waisen-Dokument zurück, das
+   * diese Funktion verhindern soll (Nahtstellen-Befund 24.08.). `delete()`
+   * auf ein nie existierendes Dokument ist ein folgenloses No-Op. */
+  await db.doc(`admin/quotas-${target}`).delete();
+
   let authGeloescht = true;
   try {
     await getAuth().deleteUser(target);

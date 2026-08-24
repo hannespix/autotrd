@@ -100,7 +100,11 @@ const TEXTS: Record<LegalKind, string> = {
     Konfluenz-Muster, Selbstoptimierung der Strategie-Parameter): Sie werden
     ausschließlich additiv ohne Bezug zu deinem Konto geführt, ein
     einzelner Beitrag lässt sich technisch nicht mehr herausrechnen und
-    bleibt anonym im kollektiven Wert bestehen.</p>`,
+    bleibt anonym im kollektiven Wert bestehen. Ebenfalls ausgenommen ist
+    ein interner Prüfvermerk der endgültigen Löschung selbst (Zeitpunkt,
+    ausführender Admin, deine E-Mail-Adresse) — er dient dem Nachweis, dass
+    und wann gelöscht wurde (Art. 17 Abs. 3 lit. e DSGVO), ist für dich
+    selbst nicht einsehbar und wird nirgends sonst verwendet.</p>`,
   disclaimer: `
     <p><strong>autotrd ist keine Anlageberatung.</strong> Alle Signale,
     Prognosen und Kennzahlen dienen Informations- und Lernzwecken; sie sind

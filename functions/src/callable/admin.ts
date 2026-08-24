@@ -129,7 +129,15 @@ export interface AdminUserRow {
   } | null;
 }
 
-export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
+export const adminUsers = onCall(
+  /* 300 s statt der 60-s-Voreinstellung (Red-Team-Befund 24.08.): Nur die
+   * `delete`-Action braucht das — sie ruft `trenneBroker` (bis zu 90 s
+   * Order-Sweep, s. connectBroker.ts) UND danach `recursiveDelete` über den
+   * gesamten Konto-Baum. Ein höheres Limit verlangsamt die schnellen
+   * Actions (list/set/nachrichten/…) nicht — es gibt ihnen nur mehr Raum,
+   * bevor Cloud Functions abbricht, falls sie ihn je bräuchten. */
+  { ...CALLABLE_OPTS, timeoutSeconds: 300 },
+  async (request) => {
   const uid = request.auth?.uid;
   if (!uid) throw new HttpsError('unauthenticated', 'srv.anmeldungErforderlich');
   if (!(await consumeQuota(uid, 'adminUsers', DAILY_LIMIT))) {

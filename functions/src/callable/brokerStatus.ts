@@ -48,7 +48,7 @@ import {
   type AlpacaSchluessel,
 } from '../core/alpacaBroker.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
-import { accessDeniedReason, accessLevelOf, mayTrade } from '../core/access.js';
+import { accessDeniedReason, accessLevelOfSnap, mayTradeSnap } from '../core/access.js';
 import { consumeQuota, resolveBrokerMode } from '../core/broker.js';
 import { entschluessle } from '../core/keyVault.js';
 import { reifeFuerKonto } from '../core/liveGate.js';
@@ -121,8 +121,8 @@ export async function pruefeBrokerStatus(uid: string): Promise<BrokerStatusResul
    * feuert 2–3 Alpaca-Aufrufe je Klick — ein nie freigeschaltetes Konto
    * zog damit bis zu 60× am Tag Fremd-API-Kosten. Das Doc ist ohnehin
    * gerade gelesen; das Gate kostet nichts. */
-  if (!mayTrade(userDoc.data())) {
-    throw new HttpsError('permission-denied', accessDeniedReason(accessLevelOf(userDoc.data())));
+  if (!mayTradeSnap(userDoc)) {
+    throw new HttpsError('permission-denied', accessDeniedReason(accessLevelOfSnap(userDoc)));
   }
   /* `settings.strategy`, nicht `settings` (Audit-Befund 11.08.).
    *

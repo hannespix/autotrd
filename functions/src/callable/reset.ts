@@ -41,14 +41,15 @@
  * Cooldown-Stempel — die Ergebnisse, nicht die Idee.
  */
 
-import { FieldValue, getFirestore } from 'firebase-admin/firestore';
+import { FieldPath, FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
-import { DEFAULT_STRATEGY, type Strategy } from '../../../shared/src/index.js';
+import { DEFAULT_STRATEGY, resetLaeuft, type Strategy } from '../../../shared/src/index.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { consumeQuota } from '../core/broker.js';
 import { alpacaKonto, alpacaPositionen } from '../core/alpacaBroker.js';
 import { brokerVerbindungLesend } from '../core/orderRouting.js';
+import { accessDeniedReason, accessLevelOfSnap, mayTradeSnap } from '../core/access.js';
 
 /**
  * Das Wort, das getippt werden muss.
@@ -170,6 +171,19 @@ export async function resetUserWallet(
   const userRef = db.doc(`users/${uid}`);
   const snap = await userRef.get();
   if (!snap.exists) throw new HttpsError('failed-precondition', 'srv.profilFehlt');
+  /* Freischaltung UND kein laufender anderer Vorgang (Red-Team-Befund
+   * 24.08., im Zug der Konto-Löschung): Bis hierher konnte ein gesperrtes
+   * oder archiviertes Konto sein Wallet trotzdem jederzeit selbst
+   * zurücksetzen — mit einem Marker-Write, der GENAU das Geister-Dok.-Risiko
+   * trug, das an fünf anderen Stellen gehärtet wurde, plus keiner Rücksicht
+   * auf einen zeitgleich laufenden Vorgang (z. B. eine Admin-Löschung
+   * desselben Kontos). Beide Prüfungen spiegeln `kontoLoeschung.ts`. */
+  if (!mayTradeSnap(snap)) {
+    throw new HttpsError('permission-denied', accessDeniedReason(accessLevelOfSnap(snap)));
+  }
+  if (resetLaeuft(snap.get('risk.resetLaeuftSeit'), new Date())) {
+    throw new HttpsError('failed-precondition', 'srv.kontoGeradeInBearbeitung');
+  }
 
   const strategy = (snap.get('settings.strategy') as Strategy | undefined) ?? DEFAULT_STRATEGY;
   const startkapital = strategy.broker?.initialCapital;
@@ -216,8 +230,14 @@ export async function resetUserWallet(
    * ausgegeben, Saldo wieder voll.
    *
    * Der Marker verfällt von selbst (`RESET_SPERRE_MIN`); ein abgestürzter
-   * Reset darf ein Konto nicht dauerhaft stilllegen. */
-  await userRef.set({ risk: { resetLaeuftSeit: now } }, { merge: true });
+   * Reset darf ein Konto nicht dauerhaft stilllegen.
+   *
+   * `update()` mit FieldPath, nicht `set(merge)` (Härtung 24.08.): Das
+   * Dokument existiert hier zwar nachweislich (s. o.), aber derselbe Aufruf
+   * an derselben Stelle wie in fünf anderen Dateien war das Muster, das
+   * dort ein gelöschtes Konto als Geister-Dok. ohne `accessLevel`
+   * wiederauferstehen ließ — konsequent überall gleich. */
+  await userRef.update(new FieldPath('risk', 'resetLaeuftSeit'), now);
 
   const deleted: Record<string, number> = {};
   deleted.tradesArchived = await archiviereTrades(userRef, now);
@@ -244,30 +264,32 @@ export async function resetUserWallet(
   }
   deleted.strategiesCleared = stratSnap.size;
 
-  await userRef.set(
-    {
-      wallet: {
-        paperBalance: balance,
-        currency: 'USD',
-        updatedAt: now,
-        // Die Schnittmarke ist der wichtigste Teil dieses Aufrufs. Ohne sie
-        // täte die Auswertung so, als hätte es die alten Daten nie gegeben —
-        // mit ihr kann sie ehrlich „Kennzahlen seit …" schreiben.
-        resetAt: now,
-        // Kapitalbasis der Gesamt-P&L ab diesem Schnitt (Equity − baseCapital)
-        baseCapital: balance,
-        marginInterestTotal: FieldValue.delete(),
-        marginInterestDate: FieldValue.delete(),
-      },
-      // Kauf-Pausen beziehen sich auf Trades, die es nicht mehr gibt.
-      engineCooldowns: FieldValue.delete(),
-      // Der Reset ist durch — ab hier darf wieder gehandelt werden. Im
-      // SELBEN Schreibvorgang wie der neue Kontostand: Getrennt gäbe es
-      // einen Moment, in dem der Handel frei ist und das Wallet noch nicht
-      // steht.
-      risk: { resetLaeuftSeit: FieldValue.delete() },
-    },
-    { merge: true },
+  /* update()+FieldPath je Feld statt set(merge) (Härtung 24.08.) — dieselbe
+   * Begründung wie beim Marker oben: konsequent dieselbe Form an jeder
+   * Stelle, die auf das User-Root-Dokument schreibt. Zusätzlicher Grund
+   * genau HIER: Ein Objekt-Literal unter `wallet` würde beim geringsten
+   * Tippfehler stille Geschwisterfelder löschen (z. B. `wallet.currency`
+   * gäbe es dann versehentlich nicht mehr, falls hier je ein Feld vergessen
+   * würde) — FieldPath macht jedes Feld einzeln explizit. */
+  await userRef.update(
+    new FieldPath('wallet', 'paperBalance'), balance,
+    new FieldPath('wallet', 'currency'), 'USD',
+    new FieldPath('wallet', 'updatedAt'), now,
+    // Die Schnittmarke ist der wichtigste Teil dieses Aufrufs. Ohne sie
+    // täte die Auswertung so, als hätte es die alten Daten nie gegeben —
+    // mit ihr kann sie ehrlich „Kennzahlen seit …" schreiben.
+    new FieldPath('wallet', 'resetAt'), now,
+    // Kapitalbasis der Gesamt-P&L ab diesem Schnitt (Equity − baseCapital)
+    new FieldPath('wallet', 'baseCapital'), balance,
+    new FieldPath('wallet', 'marginInterestTotal'), FieldValue.delete(),
+    new FieldPath('wallet', 'marginInterestDate'), FieldValue.delete(),
+    // Kauf-Pausen beziehen sich auf Trades, die es nicht mehr gibt.
+    new FieldPath('engineCooldowns'), FieldValue.delete(),
+    // Der Reset ist durch — ab hier darf wieder gehandelt werden. Im
+    // SELBEN Schreibvorgang wie der neue Kontostand: Getrennt gäbe es
+    // einen Moment, in dem der Handel frei ist und das Wallet noch nicht
+    // steht.
+    new FieldPath('risk', 'resetLaeuftSeit'), FieldValue.delete(),
   );
 
   logger.info(`Wallet-Reset ${uid}: ${JSON.stringify(deleted)}, Kontostand ${balance}`);

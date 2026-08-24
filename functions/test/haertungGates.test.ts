@@ -23,7 +23,10 @@ describe('Freischaltungs-Gate vor jedem Alpaca-Außen-Call', () => {
   it('connectBroker: Gate NACH dem Trennen-Zweig, VOR Quota und Probe-Call', () => {
     const src = q('callable/connectBroker.ts');
     const trennen = src.indexOf("if (action === 'disconnect') return trenneBroker(uid);");
-    const gate = src.indexOf('if (!mayTrade(zugang))');
+    // Seit der Härtung 24.08. (mayTradeSnap statt mayTrade(.data())) —
+    // dieselbe Lücke, die ein bereits gelöschtes Konto mit einem noch
+    // gültigen Token wieder erreichbar machte (Nahtstellen-Befund).
+    const gate = src.indexOf('if (!mayTradeSnap(zugangSnap))');
     const quota = src.indexOf("consumeQuota(uid, 'connectBroker'");
     expect(trennen).toBeGreaterThan(-1);
     // Trennen bleibt frei: Ein gesperrtes Konto darf seine Schlüssel
@@ -35,7 +38,7 @@ describe('Freischaltungs-Gate vor jedem Alpaca-Außen-Call', () => {
   it('brokerStatus: Gate direkt nach dem User-Doc, vor jedem Broker-Aufruf', () => {
     const src = q('callable/brokerStatus.ts');
     const fn = src.slice(src.indexOf('export async function pruefeBrokerStatus'));
-    const gate = fn.indexOf('if (!mayTrade(userDoc.data()))');
+    const gate = fn.indexOf('if (!mayTradeSnap(userDoc))');
     const aufruf = fn.indexOf('alpacaKonto(');
     expect(gate).toBeGreaterThan(-1);
     expect(gate).toBeLessThan(aufruf);
@@ -43,7 +46,7 @@ describe('Freischaltungs-Gate vor jedem Alpaca-Außen-Call', () => {
 
   it('adoptBroker: Gate vor Quota, Lauf-Marker und Broker-Abruf', () => {
     const src = q('callable/adoptBroker.ts');
-    const gate = src.indexOf('if (!mayTrade(zugang))');
+    const gate = src.indexOf('if (!mayTradeSnap(zugangSnap))');
     const quota = src.indexOf("consumeQuota(uid, 'adoptBroker'");
     expect(gate).toBeGreaterThan(-1);
     expect(gate).toBeLessThan(quota);
@@ -51,7 +54,7 @@ describe('Freischaltungs-Gate vor jedem Alpaca-Außen-Call', () => {
 
   it('alle drei nennen den Grund über accessDeniedReason — keine stummen 403', () => {
     for (const rel of ['callable/connectBroker.ts', 'callable/brokerStatus.ts', 'callable/adoptBroker.ts']) {
-      expect(q(rel)).toContain('accessDeniedReason(accessLevelOf(');
+      expect(q(rel)).toContain('accessDeniedReason(accessLevelOfSnap(');
     }
   });
 });
