@@ -1702,6 +1702,19 @@ select.inp option { background: var(--card-solid); color: var(--t1); }
 .adm-kopf { gap: 6px; align-items: center; margin: 6px 0; flex-wrap: wrap; }
 .adm-suche { flex: 1; min-width: 120px; font-size: 11px; padding: 5px 8px; }
 .adm-stand { margin-left: auto; white-space: nowrap; }
+/* Der Archiv-Schalter: klein und neben der Suche, kein eigener Block. Die
+ * Zahl dahinter macht die Ablage sichtbar, ohne sie aufzuklappen. */
+.adm-archiv {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--t2);
+  white-space: nowrap;
+  cursor: pointer;
+  min-height: 42px; /* Touch-Ziel wie die adm-Knöpfe (Karte #432) */
+}
+.adm-archiv input { accent-color: var(--ac); }
 
 /* Beide Listen haben eine feste Hoehengrenze und scrollen in sich. Genau
  * das haelt den Echtgeld-Not-Aus darunter in Reichweite — er wurde nicht

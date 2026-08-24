@@ -70,7 +70,10 @@ function abgleichZeile(vermerk: unknown, jetzt: Date): AdminUserRow['abgleich'] 
 }
 
 const DAILY_LIMIT = 300;
-const LEVELS: ReadonlySet<string> = new Set(['pending', 'approved', 'blocked']);
+/* Stufen, die per `action: 'set'` gesetzt werden dürfen. `archiviert` ist
+ * dabei — es ist eine ABLAGE, kein Löschen: Der Betreiber nimmt ein Konto aus
+ * der Liste, ohne etwas zu vernichten, und kann es jederzeit zurückholen. */
+const LEVELS: ReadonlySet<string> = new Set(['pending', 'approved', 'blocked', 'archiviert']);
 
 export interface AdminUserRow {
   uid: string;
@@ -258,8 +261,11 @@ export const adminUsers = onCall(CALLABLE_OPTS, async (request) => {
         };
       }),
     );
-    // Wartende nach oben — sie sind der Grund, warum man die Liste öffnet.
-    const rang: Record<AccessLevel, number> = { pending: 0, blocked: 1, approved: 2 };
+    /* Wartende nach oben — sie sind der Grund, warum man die Liste öffnet.
+     * Archivierte ganz nach unten: Sie sind abgelegt, nicht offen. Das
+     * Frontend blendet sie zusätzlich standardmäßig aus; die Sortierung ist
+     * die zweite Linie, falls jemand den Filter ausschaltet. */
+    const rang: Record<AccessLevel, number> = { pending: 0, blocked: 1, approved: 2, archiviert: 3 };
     rows.sort(
       (a, b) => rang[a.accessLevel] - rang[b.accessLevel]
         || (a.email ?? '￿').localeCompare(b.email ?? '￿'),

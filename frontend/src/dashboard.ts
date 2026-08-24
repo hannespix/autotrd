@@ -448,8 +448,12 @@ interface DashState {
   posOpen: boolean;
   /** News-Lage des aktuellen Chart-Symbols (aus dem market-Doc-Watcher). */
   news: MarketDocData['news'];
-  /** Zugangsstufe des Kontos — 'pending'/'blocked' heißt: der Scan handelt NICHT. */
-  accessLevel: 'pending' | 'approved' | 'blocked';
+  /**
+   * Zugangsstufe des Kontos — alles außer 'approved' heißt: der Scan handelt
+   * NICHT. 'archiviert' ist die Ablage: gesperrt wie 'blocked', zusätzlich
+   * standardmäßig aus der Admin-Liste ausgeblendet, jederzeit zurückholbar.
+   */
+  accessLevel: 'pending' | 'approved' | 'blocked' | 'archiviert';
   /** Kontotyp (Owner 02.08.): Admins sehen die Freischaltungs-Karte. */
   admin: boolean;
   /** Betriebszustand des letzten Scans (meta/health) — Karte „Was die Engine
@@ -725,6 +729,15 @@ function layout(email: string): string {
         <div class="row adm-kopf">
           <button class="hbtn" id="admReload">${t('adm.laden')}</button>
           <input id="admSuche" class="inp adm-suche" placeholder="${t('adm.filterKonto')}" hidden />
+          <!-- Die Ablage ist standardmaessig ZU und zeigt trotzdem ihre Zahl:
+               Ein archiviertes Konto darf nicht wie ein geloeschtes aussehen.
+               Ohne Treffer bleibt der Schalter selbst verborgen, damit der
+               Kopf nicht um eine Sache waechst, die es nicht gibt. -->
+          <label class="adm-archiv" hidden>
+            <input type="checkbox" id="admArchiv" />
+            <span>${t('adm.archivZeigen')}</span>
+            <span id="admArchivZahl" class="mono"></span>
+          </label>
           <span id="admStand" class="hint mono adm-stand"></span>
         </div>
         <!-- Meldeschlitz AUSSERHALB von #admList: Im Erfolgsfall verschwindet
@@ -6971,10 +6984,11 @@ function renderEngineWhy(): void {
 
 /* ── Admin-Verwaltung (Owner 02.08.: „wie kann man andere User freischalten?") ── */
 
-const ACCESS_BADGE: Record<'pending' | 'approved' | 'blocked', string> = {
+const ACCESS_BADGE: Record<'pending' | 'approved' | 'blocked' | 'archiviert', string> = {
   pending: `⏳ ${t('adm.wartet')}`,
   approved: `✓ ${t('adm.frei')}`,
   blocked: `⛔ ${t('adm.gesperrt')}`,
+  archiviert: `🗄 ${t('adm.archiviert')}`,
 };
 
 /** Karte zeigen/verstecken — der Server prüft das Admin-Recht ohnehin selbst;
@@ -7203,6 +7217,9 @@ function admZeile(row: AdminUserRow, inOffen: boolean): HTMLElement {
   k.className = 'adm-k';
   k.dataset['uid'] = row.uid;
   k.dataset['mail'] = (row.email ?? row.uid).toLowerCase();
+  // Der Archiv-Filter unten liest das Attribut, nicht die Zeilen-Daten: Die
+  // Zeile wird beim Umstufen neu befuellt, das Attribut wandert mit.
+  k.dataset['stufe'] = row.accessLevel;
 
   const z = document.createElement('div');
   z.className = 'adm-z';
@@ -7368,11 +7385,34 @@ function admFuelleVerw(verw: HTMLElement, row: AdminUserRow, fadenBlock: HTMLEle
   const nach = (): void => { void loadAdminList(); };
   /* Einstufig, weil herstellend statt zerstoerend: Ein FREISCHALTEN gibt
    * Zugang zurueck. Das SPERREN daneben ist armiert. */
-  if (row.accessLevel !== 'approved') {
+  if (row.accessLevel === 'archiviert') {
+    /* Einstufig, weil herstellend: Zurueckholen gibt Sichtbarkeit zurueck und
+     * nimmt nichts. Ziel ist bewusst 'pending' und nicht 'approved' — aus der
+     * Ablage kommt ein Konto in die Warteschlange zurueck, nicht in den
+     * Handel. */
+    verw.append(
+      admBtn(t('adm.zurueckholen'), async () => {
+        await adminSetAccess(row.uid, 'pending');
+      }, 'btn-g', row.uid),
+    );
+  } else if (row.accessLevel !== 'approved') {
     verw.append(
       admBtn(t('adm.freischalten'), async () => {
         await adminSetAccess(row.uid, 'approved');
       }, 'btn-g', row.uid),
+    );
+    /* Armiert, obwohl nichts vernichtet wird: Die Zeile verschwindet aus der
+     * Liste, und eine Aktion, deren sichtbares Ergebnis „weg" ist, soll man
+     * nicht mit einem Rutscher ausloesen. Neutral statt rot — es ist eine
+     * Ablage, kein Schaden, und die Karte hat schon genug rote Knoepfe. */
+    verw.append(
+      admArmBtn(
+        t('adm.archivieren'),
+        `${t('adm.wirklichArchivieren')} ${row.email ?? row.uid}`,
+        '',
+        async () => { await adminSetAccess(row.uid, 'archiviert'); },
+        nach,
+      ),
     );
   } else {
     verw.append(
@@ -7495,12 +7535,25 @@ export function renderAdminRows(rows: AdminUserRow[]): void {
     ['pending', t('adm.gruppeWartend')],
     ['blocked', t('adm.gruppeGesperrt')],
     ['approved', t('adm.gruppeFrei')],
+    ['archiviert', t('adm.gruppeArchiv')],
   ];
   for (const [stufe, name] of gruppen) {
     const teil = rows.filter((r) => r.accessLevel === stufe);
     if (teil.length === 0) continue; // leere Gruppe entfaellt
     regBox.append(admGruppe(name, teil.length));
     for (const r of teil) regBox.append(admZeile(r, false));
+  }
+  /* Wehr gegen die stille Luecke, die der Pruefstand am 24.08. fand: Die
+   * Gruppen oben sind eine EXPLIZITE Liste. Eine Zeile mit einer Stufe, die
+   * dort fehlt, fiele durch alle Filter und wuerde gar nicht gezeichnet —
+   * die Kopfzeile zaehlte sie, die Liste zeigte sie nicht. Ein Konto waere
+   * unsichtbar, ohne archiviert oder geloescht zu sein. Deshalb faengt ein
+   * Rest-Eimer alles auf, was keine Gruppe hat. */
+  const bekannt = new Set(gruppen.map(([stufe]) => stufe));
+  const rest = rows.filter((r) => !bekannt.has(r.accessLevel));
+  if (rest.length > 0) {
+    regBox.append(admGruppe('?', rest.length));
+    for (const r of rest) regBox.append(admZeile(r, false));
   }
   list.append(regBox);
 
@@ -7520,8 +7573,24 @@ export function renderAdminRows(rows: AdminUserRow[]): void {
 function admFiltere(): void {
   const suche = $('admSuche') as HTMLInputElement;
   const q = suche.value.trim().toLowerCase();
+  const archivAn = ($('admArchiv') as HTMLInputElement | null)?.checked === true;
+  let archiviert = 0;
   for (const k of $('admList').querySelectorAll<HTMLElement>('.adm-k')) {
-    k.hidden = q.length > 0 && !(k.dataset['mail'] ?? '').includes(q);
+    const istArchiv = k.dataset['stufe'] === 'archiviert';
+    if (istArchiv) archiviert += 1;
+    /* Archivierte sind standardmaessig weg — das ist der ganze Zweck der
+     * Stufe. Die Suche findet sie trotzdem: Wer eine Adresse eintippt, sucht
+     * genau dieses Konto und soll es nicht deshalb nicht finden, weil es
+     * abgelegt ist. */
+    const wegenArchiv = istArchiv && !archivAn && q.length === 0;
+    k.hidden = wegenArchiv || (q.length > 0 && !(k.dataset['mail'] ?? '').includes(q));
+  }
+  // Die Zahl macht die Ablage sichtbar, ohne sie aufzuklappen. Ohne sie waere
+  // ein archiviertes Konto von einem geloeschten nicht zu unterscheiden.
+  const zahl = $('admArchivZahl');
+  if (zahl) {
+    zahl.textContent = archiviert > 0 ? `(${archiviert})` : '';
+    (zahl.parentElement as HTMLElement | null)?.toggleAttribute('hidden', archiviert === 0);
   }
 }
 
@@ -11293,6 +11362,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   // Filtert rein im Browser ueber den geholten Stand — kein Serveraufruf je
   // Tastendruck, und das Tageslimit der Admin-Callable bleibt unberuehrt.
   $('admSuche').addEventListener('input', admFiltere);
+  $('admArchiv').addEventListener('change', admFiltere);
   $('admKillBtn').addEventListener('click', () => {
     const btn = $('admKillBtn') as HTMLButtonElement;
     const anschalten = btn.dataset['an'] === '1';

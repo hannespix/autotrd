@@ -1,49 +1,42 @@
 /**
- * Zugangsstufen (Owner-Auftrag 26.07.) — Firebase-Seite.
+ * Zugangsstufe eines Kontos — Server-Seite.
  *
- * „Registrierung nicht für jeden frei. Ohne Freischaltung soll man das Tool
- *  sehen, aber die Engine nicht starten."
+ * Die Wahrheit selbst wohnt seit dem 24.08. in `shared/src/zugang.ts`, damit
+ * Server und Frontend dieselbe Liste lesen: Das Frontend hatte die
+ * Normalisierung nachgebaut, und beim Hinzufügen einer Stufe wäre die Kopie
+ * still falsch geworden — in die gefährliche Richtung, weil ein dort
+ * fehlender Zustand zu `approved` wird.
  *
- * Der Riegel sitzt serverseitig, nicht in der UI: Ohne ihn könnte sich
- * jeder registrieren und sofort handeln — ein verstecktes Formular ist
- * keine Zugangskontrolle.
- *
- * ZWEI Entscheidungen, die man kennen muss:
- *
- * 1. Das Feld liegt als `accessLevel` auf OBERSTER Ebene des User-Dokuments,
- *    NICHT unter `settings`. Die Firestore-Regeln erlauben dem Client
- *    Updates ausschließlich auf `settings` — läge die Stufe dort, könnte
- *    sich jeder mit einem Einzeiler selbst freischalten.
- *
- * 2. FEHLENDES Feld gilt als freigeschaltet. Das ist Absicht: Bestehende
- *    Konten (der Owner selbst) haben das Feld nicht und dürfen durch diese
- *    Änderung nicht ausgesperrt werden. Neu angelegte Profile bekommen
- *    ausdrücklich 'pending' — die Sperre wirkt also ab sofort für jeden
- *    Neuzugang, ohne den laufenden Betrieb anzufassen (additiv + idempotent,
- *    CLAUDE.md §9).
+ * Hier bleibt nur, was serverseitig ist: der Ablehnungsgrund als srv.*-Code.
+ * Der Klartext (DE+EN) wohnt im Frontend-Wörterbuch, `serverText` löst ihn in
+ * der Sprachwahl des Nutzers auf — `serverCodes.test.ts` pinnt, dass beide
+ * Zeilen existieren.
  */
 
-export type AccessLevel = 'pending' | 'approved' | 'blocked';
+import { accessLevelOf, mayTrade, type AccessLevel } from '../../../shared/src/index.js';
 
-/** Stufe aus einem User-Dokument lesen; fehlend = Bestandskonto = frei. */
-export function accessLevelOf(data: Record<string, unknown> | undefined): AccessLevel {
-  const raw = (data?.accessLevel ?? 'approved') as string;
-  return raw === 'pending' || raw === 'blocked' ? raw : 'approved';
-}
+export { accessLevelOf, mayTrade };
+export type { AccessLevel };
 
-/**
- * Darf dieses Konto handeln (Engine starten, Orders auslösen)?
- * EINE Wahrheit für Scan, Callables und UI — nie einzeln nachbauen.
- */
-export function mayTrade(data: Record<string, unknown> | undefined): boolean {
-  return accessLevelOf(data) === 'approved';
-}
-
-/**
- * Grund als srv.*-Code (Task #145): Der Klartext (DE+EN) wohnt im
- * Frontend-Wörterbuch, serverText löst ihn in der Sprachwahl des Nutzers
- * auf — serverCodes.test.ts pinnt, dass beide Zeilen existieren.
- */
+/** Warum ein Konto abgewiesen wurde — als srv.*-Code fürs Frontend. */
 export function accessDeniedReason(level: AccessLevel): string {
-  return level === 'blocked' ? 'srv.kontoGesperrtBetreiber' : 'srv.zugangWirdGeprueft';
+  /* Vollständig statt ternär (23.08.): Ein Ternär hätte jede künftige Stufe
+   * stillschweigend zu „wird gerade geprüft" gemacht — eine Meldung, die
+   * Hoffnung macht, wo keine ist. Der `switch` mit `never`-Abschluss zwingt
+   * den Compiler, hier eine Antwort zu verlangen. */
+  switch (level) {
+    case 'blocked':
+      return 'srv.kontoGesperrtBetreiber';
+    case 'archiviert':
+      return 'srv.kontoArchiviert';
+    case 'pending':
+      return 'srv.zugangWirdGeprueft';
+    case 'approved':
+      // Kein Ablehnungsgrund — der Aufrufer sollte hier gar nicht landen.
+      return 'srv.zugangWirdGeprueft';
+    default: {
+      const _erschoepft: never = level;
+      return _erschoepft;
+    }
+  }
 }

@@ -222,3 +222,45 @@ describe('Textbausteine vollständig', () => {
     expect(dash).toContain("$('admReload').addEventListener");
   });
 });
+
+/* ── Archiv-Zustand (24.08.) ───────────────────────────────────────────────
+ *
+ * Der Browser-Prüfstand (archiv-shot.mjs) hat beim ersten Lauf eine stille
+ * Lücke gefunden: Die Register-Gruppen sind eine EXPLIZITE Liste, und eine
+ * Zeile mit unbekannter Stufe wurde GAR NICHT gezeichnet — die Kopfzeile
+ * zählte 8 Konten, die Liste zeigte 6. Ein Konto war unsichtbar, ohne
+ * archiviert oder gelöscht zu sein. Diese Wächter pinnen die Reparatur.
+ */
+describe('Archiv-Zustand: sichtbar in der Ablage, nie einfach weg', () => {
+  const quelle = readFileSync(join(__dirname, '../src/dashboard.ts'), 'utf8');
+
+  it('die Archiv-Gruppe steht in der Gruppen-Liste', () => {
+    expect(quelle).toContain("['archiviert', t('adm.gruppeArchiv')],");
+  });
+
+  it('ein Rest-Eimer fängt jede Stufe auf, die keine Gruppe hat', () => {
+    // Ohne ihn wiederholte sich die Lücke bei der NÄCHSTEN Stufe.
+    expect(quelle).toContain('const bekannt = new Set(gruppen.map(([stufe]) => stufe));');
+    expect(quelle).toContain('const rest = rows.filter((r) => !bekannt.has(r.accessLevel));');
+  });
+
+  it('der Filter blendet Archivierte standardmäßig aus — die Suche findet sie trotzdem', () => {
+    expect(quelle).toContain("const istArchiv = k.dataset['stufe'] === 'archiviert';");
+    expect(quelle).toContain('const wegenArchiv = istArchiv && !archivAn && q.length === 0;');
+  });
+
+  it('Zurückholen landet auf pending, nicht auf approved', () => {
+    // Aus der Ablage kommt ein Konto in die WARTESCHLANGE zurück, nicht in
+    // den Handel — sonst wäre Archivieren+Zurückholen eine stille
+    // Freischaltung an der Prüfung vorbei.
+    expect(quelle).toContain("admBtn(t('adm.zurueckholen'), async () => {\n        await adminSetAccess(row.uid, 'pending');");
+  });
+
+  it('Archivieren sitzt an wartenden/gesperrten Zeilen, nicht an freien', () => {
+    // Ein aktives Konto legt man nicht direkt ab: erst sperren, dann
+    // archivieren. Der Zustandsweg ist approved → blocked → archiviert.
+    const frei = quelle.slice(quelle.indexOf("if (row.accessLevel === 'archiviert')"));
+    const elseBlock = frei.slice(frei.indexOf('} else {'), frei.indexOf('/* Armiert, und ausdruecklich ROT'));
+    expect(elseBlock).not.toContain("'archiviert'");
+  });
+});

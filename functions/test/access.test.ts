@@ -21,6 +21,16 @@ describe('accessLevelOf', () => {
     expect(accessLevelOf({ accessLevel: 'pending' })).toBe('pending');
     expect(accessLevelOf({ accessLevel: 'blocked' })).toBe('blocked');
     expect(accessLevelOf({ accessLevel: 'approved' })).toBe('approved');
+    expect(accessLevelOf({ accessLevel: 'archiviert' })).toBe('archiviert');
+  });
+
+  it('archiviert ist NICHT freigeschaltet — die Falle der Normalisierung', () => {
+    /* Der gefährlichste Satz dieser Datei ist „unbekannte Werte gelten als
+     * freigeschaltet". Für Tippfehler richtig — für einen VERGESSENEN neuen
+     * Zustand die Umkehrung der Absicht: Wer eine Stufe hinzufügt und sie
+     * nicht in NICHT_FREI einträgt, schaltet sie frei statt sie zu sperren.
+     * Der Typ zwingt zu nichts; dieser Test tut es. */
+    expect(mayTrade({ accessLevel: 'archiviert' })).toBe(false);
   });
 
   it('unbekannte Werte gelten als freigeschaltet, nicht als gesperrt', () => {
@@ -51,5 +61,12 @@ describe('accessDeniedReason', () => {
     expect(accessDeniedReason('pending')).toBe('srv.zugangWirdGeprueft');
     expect(accessDeniedReason('blocked')).toBe('srv.kontoGesperrtBetreiber');
     expect(accessDeniedReason('approved')).not.toBe(accessDeniedReason('blocked'));
+  });
+
+  it('ein archiviertes Konto bekommt KEINE Hoffnungs-Meldung', () => {
+    // Der frühere Ternär hätte jede neue Stufe zu „wird gerade geprüft"
+    // gemacht — eine Meldung, die Hoffnung macht, wo keine ist.
+    expect(accessDeniedReason('archiviert')).toBe('srv.kontoArchiviert');
+    expect(accessDeniedReason('archiviert')).not.toBe(accessDeniedReason('pending'));
   });
 });

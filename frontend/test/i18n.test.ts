@@ -1080,7 +1080,9 @@ describe('Tranche 5l — „Warum handelt die Engine?" und die Melde-Texte der M
       'div', 'class', 'hint', 'mono', 'text', 'color', 'display', 'flex', 'gap',
       'align', 'items', 'baseline', 'right', 'width', 'inherit',
       // Kürzel aus dem Heartbeat (Vertrag zum Server — NICHT übersetzen)
-      'approved', 'blocked', 'pending', 'trend', 'geprueft', 'gehandelt', 'laufend',
+      // 'archiviert' gehört seit dem 24.08. dazu: die vierte Zugangsstufe,
+      // ein Enum-Wert im Vertrag, kein Anzeigetext (der heißt adm.archiviert).
+      'approved', 'blocked', 'pending', 'archiviert', 'trend', 'geprueft', 'gehandelt', 'laufend',
       'live', 'kosten', 'halte', 'hebel', 'frei', 'longs', 'ueberfuellt', 'short',
       'squeeze', 'setup', 'number',
       // Einheiten und Kennzahl-Namen, die in beiden Sprachen gleich heißen
