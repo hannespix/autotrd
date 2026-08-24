@@ -1052,3 +1052,200 @@ describe('K-2 — routeOrder: Storno bei kein_fill, Nachschlag bei duplicate', (
     expect(r.grund).toBe('broker_fehler');
   });
 });
+
+/**
+ * Root-Cause-Fix der wiederkehrenden Broker-Buch-Drift (24.08., Owner-
+ * Meldung: „jedesmal wenn ich depot vom broker komplett neu übernehme wird
+ * mein reife-Zustand zurückgesetzt").
+ *
+ * Vorher wurde JEDE Teilausführung — auch bei einer schließenden Order —
+ * blind wie eine volle behandelt: Der Aufrufer bucht die volle Position,
+ * während der unausgeführte Rest der Verkaufsorder beim Broker
+ * unbeaufsichtigt weiterlief. Blieb er offen, hielt der Broker Stücke, von
+ * denen das Buch nichts mehr wusste — „Position nur beim Broker", genau das
+ * Muster, das jeden manuellen „Depot übernehmen"-Klick zur Reife-Zäsur
+ * machte.
+ *
+ * Diese Tests prüfen NUR den neuen Zweig — die bestehende Sicherung aus
+ * #436 (`schlussMenge` verkleinert NUR mit expliziter Zusicherung) bleibt
+ * unverändert in `functions/test/teilSchluss.test.ts` gepinnt.
+ */
+describe('Root-Cause-Fix: Teilausführung einer SCHLIESSENDEN Order', () => {
+  const verbindung = { mode: 'paper' as const, schluessel: SCHLUESSEL };
+  const schliessend = {
+    uid: 'u1',
+    symbol: 'NVDA',
+    side: 'sell' as const,
+    qty: 25,
+    laufId: 'scan-9',
+    schliessend: true,
+  };
+
+  it('verifizierter Storno gelingt → restStorniert:true, gefüllte Menge gebucht', async () => {
+    const f = antwortFolge(
+      { body: { id: 'o1', status: 'accepted' } },
+      { body: { id: 'o1', status: 'partially_filled', filled_qty: '21', filled_avg_price: '101' } },
+      { body: {} }, // DELETE /v2/orders/o1 — 200 mit JSON-Body = erfolgreich storniert
+      { body: { id: 'o1', status: 'canceled', filled_qty: '21', filled_avg_price: '101' } }, // Nachverifikation
+    );
+    const r = await routeOrder(verbindung, schliessend, f, SCHNELL);
+    expect(r).toEqual({
+      ausgefuehrt: true,
+      fillPreis: 101,
+      fillMenge: 21,
+      brokerOrderId: 'o1',
+      restStorniert: true,
+    });
+    // Der vierte Aufruf IST die Nachverifikation nach dem Storno — ohne ihn
+    // bliebe die vor dem Storno eingefrorene Menge ungeprüft (s. u.).
+    expect(f).toHaveBeenCalledTimes(4);
+  });
+
+  it('Storno gelingt, aber zwischen Poll und Storno-Antwort lief noch ein Teilfill nach (Race) → verifizierte Menge gebucht, nicht die eingefrorene', async () => {
+    // Red-Team-Befund 24.08.: `fill.qty` (21) stammt aus dem Poll VOR dem
+    // Storno-Versuch. Läuft im Netzwerk-Roundtrip bis zur Storno-Antwort
+    // noch ein weiterer Teilfill nach (hier: 23 von 25), gilt der Storno
+    // trotzdem als erfolgreich — der ECHTE Rest von 2 Stück ist tot. Ohne
+    // Nachverifikation würde 21 statt 23 gebucht: Buch größer als Broker,
+    // dieselbe gefährliche Richtung wie #436, nur enger.
+    const f = antwortFolge(
+      { body: { id: 'o1', status: 'accepted' } },
+      { body: { id: 'o1', status: 'partially_filled', filled_qty: '21', filled_avg_price: '101' } },
+      { body: {} }, // DELETE — 200 = erfolgreich storniert (Rest von 2 ist tot)
+      { body: { id: 'o1', status: 'canceled', filled_qty: '23', filled_avg_price: '101.05' } },
+    );
+    const r = await routeOrder(verbindung, schliessend, f, SCHNELL);
+    expect(r).toEqual({
+      ausgefuehrt: true,
+      fillPreis: 101.05,
+      fillMenge: 23,
+      brokerOrderId: 'o1',
+      restStorniert: true,
+    });
+  });
+
+  it('Storno gelingt, Nachverifikation liefert nichts Verwertbares (404) → sicherer Fallback, KEINE Zusicherung', async () => {
+    const f = antwortFolge(
+      { body: { id: 'o1', status: 'accepted' } },
+      { body: { id: 'o1', status: 'partially_filled', filled_qty: '21', filled_avg_price: '101' } },
+      { body: {} }, // DELETE — erfolgreich storniert
+      { ok: false, status: 404, body: '' }, // Order danach nicht mehr auffindbar
+    );
+    const r = await routeOrder(verbindung, schliessend, f, SCHNELL);
+    expect(r.ausgefuehrt).toBe(true);
+    expect(r.fillMenge).toBe(21);
+    expect(r.restStorniert).toBeUndefined();
+  });
+
+  it('Storno gelingt, aber die Nachverifikation SELBST wirft (Netzwerkfehler) → sicherer Fallback, kein Crash', async () => {
+    // Lückenbefund der Delta-Prüfung 24.08.: Der neue alpacaOrderAbfragen-
+    // Aufruf nach bestätigtem Storno kann selbst scheitern (Timeout, 5xx,
+    // Nicht-404). Derselbe try/catch, der schon den Storno-Aufruf selbst
+    // absichert, muss das auffangen — kein Crash, kein geratenes
+    // restStorniert:true, die eingefrorene Menge von vor dem Storno gilt.
+    let calls = 0;
+    const f = vi.fn(async (_url: string, init?: RequestInit) => {
+      calls += 1;
+      if (calls === 1) {
+        return { ok: true, status: 200, text: async () => JSON.stringify({ id: 'o1', status: 'accepted' }) } as unknown as Response;
+      }
+      if (calls === 2) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ id: 'o1', status: 'partially_filled', filled_qty: '21', filled_avg_price: '101' }),
+        } as unknown as Response;
+      }
+      if (calls === 3 && init?.method === 'DELETE') {
+        return { ok: true, status: 200, text: async () => '{}' } as unknown as Response;
+      }
+      throw new TypeError('fetch failed'); // 4. Aufruf: die Nachverifikation
+    });
+    const r = await routeOrder(verbindung, schliessend, f, SCHNELL);
+    expect(r.ausgefuehrt).toBe(true);
+    expect(r.fillMenge).toBe(21);
+    expect(r.restStorniert).toBeUndefined();
+    expect(calls).toBe(4);
+  });
+
+  it('Storno kommt zu spät (422), Order war zwischenzeitlich GANZ gefüllt → volle Menge, restStorniert:true', async () => {
+    const f = antwortFolge(
+      { body: { id: 'o1', status: 'accepted' } },
+      { body: { id: 'o1', status: 'partially_filled', filled_qty: '21', filled_avg_price: '101' } },
+      { ok: false, status: 422, body: 'order is not cancelable' },
+      { body: { id: 'o1', status: 'filled', filled_qty: '25', filled_avg_price: '101.2' } },
+    );
+    const r = await routeOrder(verbindung, schliessend, f, SCHNELL);
+    expect(r).toEqual({
+      ausgefuehrt: true,
+      fillPreis: 101.2,
+      fillMenge: 25,
+      brokerOrderId: 'o1',
+      restStorniert: true,
+    });
+  });
+
+  it('Storno kommt zu spät (422), Order bleibt WEITER nur teilgefüllt → sicherer Fallback, KEINE Zusicherung', async () => {
+    // Der Kern von #436: Ohne bestätigten Storno und ohne Vollfüllung darf
+    // restStorniert NIE gesetzt werden — schlussMenge schließt dann die
+    // GANZE Position (Fehler in den Zahlen ist der sichere Fehler, eine
+    // ungedeckte Rest-Position der gefährliche).
+    const f = antwortFolge(
+      { body: { id: 'o1', status: 'accepted' } },
+      { body: { id: 'o1', status: 'partially_filled', filled_qty: '21', filled_avg_price: '101' } },
+      { ok: false, status: 422, body: 'order is not cancelable' },
+      { body: { id: 'o1', status: 'partially_filled', filled_qty: '22', filled_avg_price: '101.1' } },
+    );
+    const r = await routeOrder(verbindung, schliessend, f, SCHNELL);
+    expect(r.ausgefuehrt).toBe(true);
+    expect(r.fillMenge).toBe(21);
+    expect(r.restStorniert).toBeUndefined();
+  });
+
+  it('Storno-Aufruf wirft (Netzwerkfehler) → sicherer Fallback, kein Crash', async () => {
+    const f = vi.fn(async (url: string, init?: RequestInit) => {
+      if (init?.method === 'DELETE') throw new TypeError('fetch failed');
+      const schritte = [
+        { id: 'o1', status: 'accepted' },
+        { id: 'o1', status: 'partially_filled', filled_qty: '21', filled_avg_price: '101' },
+      ];
+      return {
+        ok: true,
+        status: 200,
+        text: async () => JSON.stringify(schritte[Math.min(f.mock.calls.length, schritte.length - 1)]),
+      } as unknown as Response;
+    });
+    const r = await routeOrder(verbindung, schliessend, f, SCHNELL);
+    expect(r.ausgefuehrt).toBe(true);
+    expect(r.fillMenge).toBe(21);
+    expect(r.restStorniert).toBeUndefined();
+  });
+
+  it('volle Ausführung (status filled) löst KEINEN Storno-Versuch aus', async () => {
+    const f = antwortFolge(
+      { body: { id: 'o1', status: 'accepted' } },
+      { body: { id: 'o1', status: 'filled', filled_qty: '25', filled_avg_price: '101' } },
+    );
+    const r = await routeOrder(verbindung, schliessend, f, SCHNELL);
+    expect(r.restStorniert).toBeUndefined();
+    expect(f).toHaveBeenCalledTimes(2); // kein dritter (DELETE-)Aufruf
+  });
+
+  it('ERÖFFNENDE Order (schliessend fehlt): Teilfill wird NICHT storniert', async () => {
+    // Für Einstiege gilt weiterhin die alte Regel — ein Rest-Einstieg ist
+    // ohnehin nicht gewollt, kein Sonderfall nötig.
+    const f = antwortFolge(
+      { body: { id: 'o1', status: 'accepted' } },
+      { body: { id: 'o1', status: 'partially_filled', filled_qty: '2', filled_avg_price: '190' } },
+    );
+    const r = await routeOrder(
+      verbindung,
+      { uid: 'u1', symbol: 'AAPL', side: 'buy', qty: 5, laufId: 'scan-9' },
+      f,
+      SCHNELL,
+    );
+    expect(r.fillMenge).toBe(2);
+    expect(r.restStorniert).toBeUndefined();
+    expect(f).toHaveBeenCalledTimes(2);
+  });
+});

@@ -578,7 +578,10 @@ async function rebalanceMomentumUsers(
           );
           if (r.executed) {
             ausgefuehrt += 1;
-            offenZahl -= 1;
+            // Teilausführung: Rest lebt beim Broker weiter, die Position
+            // belegt das Limit im selben Lauf also weiter (Naht-Befund
+            // 24.08., s. scanMarket.ts-Kommentar beim Risk-Exit).
+            if (r.trade?.teilSchluss !== true) offenZahl -= 1;
           }
           continue;
         }
@@ -823,7 +826,10 @@ async function rebalanceCoreSleeve(
           );
           if (r.executed) {
             ausgefuehrt += 1;
-            offenZahl -= 1;
+            // Teilausführung: Rest lebt beim Broker weiter, die Position
+            // belegt das Limit im selben Lauf also weiter (Naht-Befund
+            // 24.08., s. scanMarket.ts-Kommentar beim Risk-Exit).
+            if (r.trade?.teilSchluss !== true) offenZahl -= 1;
           }
           continue;
         }

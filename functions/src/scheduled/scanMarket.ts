@@ -1162,7 +1162,11 @@ async function executeUserTrades(
           );
           if (r.executed) {
             executed += 1;
-            positions.delete(symbol);
+            // Teilausführung: Der Rest lebt beim Broker weiter (verifiziert
+            // storniert oder nachverfolgt, s. orderRouting.ts) — die Position
+            // bleibt im lokalen Lauf-Buch, sonst zählte das Positionslimit
+            // im selben Durchlauf zu niedrig (Naht-Befund 24.08.).
+            if (r.trade?.teilSchluss !== true) positions.delete(symbol);
             engineCooldowns[symbol] = now.toISOString();
             cooldownUpdates.push(
               new FieldPath('engineCooldowns', symbol),
@@ -1696,7 +1700,9 @@ async function executeUserTrades(
             );
             if (r.executed) {
               executed += 1;
-              positions.delete(symbol);
+              // Teilausführung: Rest lebt beim Broker weiter, Position bleibt
+              // im lokalen Lauf-Buch (s. Kommentar beim Risk-Exit oben).
+              if (r.trade?.teilSchluss !== true) positions.delete(symbol);
               await ref.set({ lastTrades: { [symbol]: now.toISOString() } }, { merge: true });
               logger.info(`Strategie-Cover ${uid} ${symbol} („${doc.name}") @ ${data.price}`);
             }
@@ -1772,7 +1778,9 @@ async function executeUserTrades(
             );
             if (r.executed) {
               executed += 1;
-              positions.delete(symbol);
+              // Teilausführung: Rest lebt beim Broker weiter, Position bleibt
+              // im lokalen Lauf-Buch (s. Kommentar beim Risk-Exit oben).
+              if (r.trade?.teilSchluss !== true) positions.delete(symbol);
               await ref.set({ lastTrades: { [symbol]: now.toISOString() } }, { merge: true });
               logger.info(`Strategie-Sell ${uid} ${symbol} („${doc.name}") @ ${data.price}`);
             }
@@ -1934,7 +1942,9 @@ async function executeUserTrades(
           );
           if (r.executed) {
             executed += 1;
-            positions.delete(symbol);
+            // Teilausführung: Rest lebt beim Broker weiter, Position bleibt
+            // im lokalen Lauf-Buch (s. Kommentar beim Risk-Exit oben).
+            if (r.trade?.teilSchluss !== true) positions.delete(symbol);
             logger.info(`Engine-Cover ${uid} ${symbol} @ ${data.price}`);
           }
         } else if (direction === 'buy' && !pos) {
@@ -2065,7 +2075,9 @@ async function executeUserTrades(
           );
           if (r.executed) {
             executed += 1;
-            positions.delete(symbol);
+            // Teilausführung: Rest lebt beim Broker weiter, Position bleibt
+            // im lokalen Lauf-Buch (s. Kommentar beim Risk-Exit oben).
+            if (r.trade?.teilSchluss !== true) positions.delete(symbol);
             logger.info(`Engine-Sell ${uid} ${symbol} @ ${data.price}`);
           }
         } else if (direction === 'sell' && !pos && allowShort) {
