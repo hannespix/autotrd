@@ -1137,6 +1137,37 @@ describe('Root-Cause-Fix: Teilausführung einer SCHLIESSENDEN Order', () => {
     expect(r.restStorniert).toBeUndefined();
   });
 
+  it('Storno gelingt, aber die Nachverifikation SELBST wirft (Netzwerkfehler) → sicherer Fallback, kein Crash', async () => {
+    // Lückenbefund der Delta-Prüfung 24.08.: Der neue alpacaOrderAbfragen-
+    // Aufruf nach bestätigtem Storno kann selbst scheitern (Timeout, 5xx,
+    // Nicht-404). Derselbe try/catch, der schon den Storno-Aufruf selbst
+    // absichert, muss das auffangen — kein Crash, kein geratenes
+    // restStorniert:true, die eingefrorene Menge von vor dem Storno gilt.
+    let calls = 0;
+    const f = vi.fn(async (_url: string, init?: RequestInit) => {
+      calls += 1;
+      if (calls === 1) {
+        return { ok: true, status: 200, text: async () => JSON.stringify({ id: 'o1', status: 'accepted' }) } as unknown as Response;
+      }
+      if (calls === 2) {
+        return {
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ id: 'o1', status: 'partially_filled', filled_qty: '21', filled_avg_price: '101' }),
+        } as unknown as Response;
+      }
+      if (calls === 3 && init?.method === 'DELETE') {
+        return { ok: true, status: 200, text: async () => '{}' } as unknown as Response;
+      }
+      throw new TypeError('fetch failed'); // 4. Aufruf: die Nachverifikation
+    });
+    const r = await routeOrder(verbindung, schliessend, f, SCHNELL);
+    expect(r.ausgefuehrt).toBe(true);
+    expect(r.fillMenge).toBe(21);
+    expect(r.restStorniert).toBeUndefined();
+    expect(calls).toBe(4);
+  });
+
   it('Storno kommt zu spät (422), Order war zwischenzeitlich GANZ gefüllt → volle Menge, restStorniert:true', async () => {
     const f = antwortFolge(
       { body: { id: 'o1', status: 'accepted' } },
