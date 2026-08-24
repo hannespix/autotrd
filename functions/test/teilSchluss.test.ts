@@ -32,9 +32,12 @@ import { schlussMenge } from '../src/core/broker.js';
  * Puls sähe im Buch einen Rest, für den er eine ZWEITE Verkaufsorder
  * losschickt. Aus dem Ausstieg würde ein ungewollter Leerverkauf ohne Stop.
  *
- * Nur `pflegeSchutz` storniert den Rest selbst und darf deshalb zusichern.
- * `schutzAufheben` gehört ausdrücklich NICHT dazu: Dort ist der Stornoversuch
- * gerade fehlgeschlagen (`nicht_stornierbar`), die Order lebt weiter.
+ * Zwei Quellen dürfen zusichern, weil beide den Storno selbst verifizieren:
+ * `pflegeSchutz` (Schutz-Stop-Rest) und seit dem Root-Cause-Fix vom 24.08.
+ * auch `routeOrder` selbst (Rest einer schließenden Order, s. Block am
+ * Dateiende). `schutzAufheben` gehört ausdrücklich NICHT dazu: Dort ist der
+ * Stornoversuch gerade fehlgeschlagen (`nicht_stornierbar`), die Order lebt
+ * weiter.
  */
 describe('ohne Zusicherung wird NICHT verkleinert — die wichtigste Sperre', () => {
   it('schließt ganz, wenn der Rest der Order weiterleben könnte', () => {
@@ -233,6 +236,39 @@ describe('Wächter: wer darf den Rest für tot erklären', () => {
     // Sonst zählt das Positionslimit den Rest nicht, und ein Kauf desselben
     // Symbols liefe in den Nachkauf-Zweig, der Einstand und Stop neu schriebe.
     expect(scan).toContain("if (r.trade?.teilSchluss !== true) positions.delete(symbol);");
+  });
+
+  it('JEDE Aufräum-Stelle im Scan prüft die Teilschluss-Zusicherung — keine Ausnahme (Naht-Befund 24.08.)', () => {
+    // Ein Wächter, der nur EINE Fundstelle kennt, schützt nicht vor einer
+    // sechsten, siebten … Stelle, die den Guard vergisst. Deshalb: Gesamtzahl
+    // der Aufräum-Aufrufe MUSS mit der Zahl der bewachten übereinstimmen —
+    // jede neue `positions.delete(symbol)`-Stelle ohne den Guard davor lässt
+    // diesen Test rot werden, auch ohne dass jemand ihren genauen Ort kennt.
+    const gesamt = (scan.match(/positions\.delete\(symbol\)/g) ?? []).length;
+    const bewacht = (
+      scan.match(/if \(r\.trade\?\.teilSchluss !== true\) positions\.delete\(symbol\);/g) ?? []
+    ).length;
+    expect(gesamt).toBeGreaterThan(0);
+    expect(bewacht).toBe(gesamt);
+  });
+});
+
+/**
+ * Dasselbe Muster gilt für die Momentum-/Sockel-Rebalancings: Sie führen
+ * eine eigene lokale Positionszahl (`offenZahl`) statt der `positions`-Map,
+ * aber dieselbe Gefahr — ein Teilschluss darf das Limit im selben Lauf nicht
+ * fälschlich freigeben (Naht-Befund 24.08. zum Root-Cause-Fix #447).
+ */
+describe('Wächter: Teilschluss überlebt auch die Momentum-/Sockel-Buchhaltung', () => {
+  const momentum = readFileSync(join(__dirname, '../src/scheduled/momentumRun.ts'), 'utf8');
+
+  it('JEDE offenZahl-Dekrementierung prüft die Teilschluss-Zusicherung', () => {
+    const gesamt = (momentum.match(/offenZahl -= 1;/g) ?? []).length;
+    const bewacht = (
+      momentum.match(/if \(r\.trade\?\.teilSchluss !== true\) offenZahl -= 1;/g) ?? []
+    ).length;
+    expect(gesamt).toBeGreaterThan(0);
+    expect(bewacht).toBe(gesamt);
   });
 });
 

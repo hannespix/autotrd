@@ -1086,6 +1086,7 @@ describe('Root-Cause-Fix: Teilausführung einer SCHLIESSENDEN Order', () => {
       { body: { id: 'o1', status: 'accepted' } },
       { body: { id: 'o1', status: 'partially_filled', filled_qty: '21', filled_avg_price: '101' } },
       { body: {} }, // DELETE /v2/orders/o1 — 200 mit JSON-Body = erfolgreich storniert
+      { body: { id: 'o1', status: 'canceled', filled_qty: '21', filled_avg_price: '101' } }, // Nachverifikation
     );
     const r = await routeOrder(verbindung, schliessend, f, SCHNELL);
     expect(r).toEqual({
@@ -1095,7 +1096,45 @@ describe('Root-Cause-Fix: Teilausführung einer SCHLIESSENDEN Order', () => {
       brokerOrderId: 'o1',
       restStorniert: true,
     });
-    expect(f).toHaveBeenCalledTimes(3);
+    // Der vierte Aufruf IST die Nachverifikation nach dem Storno — ohne ihn
+    // bliebe die vor dem Storno eingefrorene Menge ungeprüft (s. u.).
+    expect(f).toHaveBeenCalledTimes(4);
+  });
+
+  it('Storno gelingt, aber zwischen Poll und Storno-Antwort lief noch ein Teilfill nach (Race) → verifizierte Menge gebucht, nicht die eingefrorene', async () => {
+    // Red-Team-Befund 24.08.: `fill.qty` (21) stammt aus dem Poll VOR dem
+    // Storno-Versuch. Läuft im Netzwerk-Roundtrip bis zur Storno-Antwort
+    // noch ein weiterer Teilfill nach (hier: 23 von 25), gilt der Storno
+    // trotzdem als erfolgreich — der ECHTE Rest von 2 Stück ist tot. Ohne
+    // Nachverifikation würde 21 statt 23 gebucht: Buch größer als Broker,
+    // dieselbe gefährliche Richtung wie #436, nur enger.
+    const f = antwortFolge(
+      { body: { id: 'o1', status: 'accepted' } },
+      { body: { id: 'o1', status: 'partially_filled', filled_qty: '21', filled_avg_price: '101' } },
+      { body: {} }, // DELETE — 200 = erfolgreich storniert (Rest von 2 ist tot)
+      { body: { id: 'o1', status: 'canceled', filled_qty: '23', filled_avg_price: '101.05' } },
+    );
+    const r = await routeOrder(verbindung, schliessend, f, SCHNELL);
+    expect(r).toEqual({
+      ausgefuehrt: true,
+      fillPreis: 101.05,
+      fillMenge: 23,
+      brokerOrderId: 'o1',
+      restStorniert: true,
+    });
+  });
+
+  it('Storno gelingt, Nachverifikation liefert nichts Verwertbares (404) → sicherer Fallback, KEINE Zusicherung', async () => {
+    const f = antwortFolge(
+      { body: { id: 'o1', status: 'accepted' } },
+      { body: { id: 'o1', status: 'partially_filled', filled_qty: '21', filled_avg_price: '101' } },
+      { body: {} }, // DELETE — erfolgreich storniert
+      { ok: false, status: 404, body: '' }, // Order danach nicht mehr auffindbar
+    );
+    const r = await routeOrder(verbindung, schliessend, f, SCHNELL);
+    expect(r.ausgefuehrt).toBe(true);
+    expect(r.fillMenge).toBe(21);
+    expect(r.restStorniert).toBeUndefined();
   });
 
   it('Storno kommt zu spät (422), Order war zwischenzeitlich GANZ gefüllt → volle Menge, restStorniert:true', async () => {

@@ -506,8 +506,13 @@ export async function routeOrder(
      * unbestimmt — der sichere Fallback von #436 bleibt: `schlussMenge`
      * schließt dann die GANZE Position, eine zu große Buchung ist ein
      * Fehler in den Zahlen, eine ungedeckte Rest-Position ein Fehler mit
-     * Richtung. */
-    let restStorniert: boolean | undefined;
+     * Richtung.
+     *
+     * Beide Erfolgsfälle (bestätigter Storno, verifizierte Vollfüllung)
+     * geben SOFORT mit `restStorniert: true` zurück, sobald die Nachfrage
+     * eine verwertbare Menge liefert — der sichere Fallback ist deshalb
+     * einfach: Läuft dieser Block ohne `return` durch, gilt unten die
+     * eingefrorene `fill`-Menge OHNE Zusicherung. */
     if (
       auftrag.schliessend === true &&
       fill.status === 'partially_filled' &&
@@ -521,7 +526,33 @@ export async function routeOrder(
           fetchImpl,
         );
         if (storno === 'storniert' || storno === 'weg') {
-          restStorniert = true;
+          // Zwischen dem Poll oben (der `fill.qty` befüllt hat) und dieser
+          // Storno-Antwort liegt ein voller Netzwerk-Roundtrip — lief in
+          // diesem Fenster noch ein weiterer Teilfill nach, wäre `fill.qty`
+          // zu klein und der Broker hielte real weniger frei, als das Buch
+          // nach `restStorniert:true` annähme (Red-Team-Befund 24.08.:
+          // derselbe Race, den der `nicht_stornierbar`-Zweig direkt
+          // darunter schon ernst nimmt). Deshalb IMMER frisch nachfragen
+          // und die dabei gemeldete Menge buchen statt der eingefrorenen.
+          const stand = await alpacaOrderAbfragen(
+            verbindung.mode,
+            order.id,
+            verbindung.schluessel,
+            fetchImpl,
+          );
+          if (stand && stand.filledQty > 0 && stand.filledAvgPreis > 0) {
+            return {
+              ausgefuehrt: true,
+              fillPreis: stand.filledAvgPreis,
+              fillMenge: stand.filledQty,
+              brokerOrderId: order.id,
+              restStorniert: true,
+            };
+          }
+          // Abfrage lieferte nichts Verwertbares (z. B. inzwischen 404) —
+          // sicherer Fallback: restStorniert bleibt unbestimmt, die
+          // eingefrorene `fill`-Menge von oben gilt, schlussMenge schließt
+          // dann die GANZE Position (s. Blockkommentar oben).
         } else if (storno === 'nicht_stornierbar') {
           // Zwischen Poll und Storno doch noch vollständig gefüllt — dann
           // ist der „Rest" nicht tot, sondern längst ausgeführt. Frisch
@@ -555,12 +586,15 @@ export async function routeOrder(
       }
     }
 
+    // Kein Storno-Versuch nötig ODER er lieferte keine verwertbare
+    // Verifikation — beide Erfolgsfälle oben haben bereits mit
+    // `restStorniert: true` zurückgegeben. Hier gilt der sichere Fallback:
+    // `restStorniert` bleibt unbestimmt, schlussMenge schließt GANZ.
     return {
       ausgefuehrt: true,
       fillPreis: fill.ausfuehrungskurs,
       fillMenge: fill.qty > 0 ? fill.qty : auftrag.qty,
       brokerOrderId: order.id,
-      ...(restStorniert !== undefined ? { restStorniert } : {}),
     };
   } catch (err) {
     /* 422 „client_order_id must be unique" (Audit 13.08., K-2e): Die
