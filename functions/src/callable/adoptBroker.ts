@@ -250,16 +250,30 @@ export const adoptBroker = onCall(CALLABLE_OPTS, async (request): Promise<AdoptE
    * Stop anzulegen. Deshalb werden unsere offenen Stops hier gelesen und der
    * Position wieder zugeordnet — die Übernahme bleibt dabei reine Leserei:
    * Sie storniert nichts, sie merkt sich nur, was schon da ist. */
-  const schutzJeSymbol = new Map<string, { orderId: string; stopPreis: number; qty: number }>();
+  const schutzJeSymbol = new Map<
+    string,
+    { orderId: string; stopPreis: number; qty: number; limitPreis?: number }
+  >();
   try {
     const offene = await alpacaOrdersOffen(verbindung.mode, verbindung.schluessel);
     for (const o of offene) {
-      if (o.typ !== 'stop' || !o.clientOrderId.startsWith(`${uidSauber}-`)) continue;
+      // `stop` UND `stop_limit`: Krypto-Schutz-Stops gehen als `stop_limit`
+      // raus (`alpacaStopOrder`) — der frühere Filter auf nur `stop` machte
+      // genau sie bei jedem Adopt zu Waisen (Befund 24.08.). Das Limit wird
+      // fürs Buch mitgenommen (vollständiger Steckbrief der Order); das
+      // Nachziehen selbst rechnet Stop UND Limit ohnehin frisch über
+      // `planeSchutzStop` und liest das gespeicherte Feld nicht.
+      if ((o.typ !== 'stop' && o.typ !== 'stop_limit') || !o.clientOrderId.startsWith(`${uidSauber}-`)) continue;
       if (schutzJeSymbol.has(o.symbol)) {
         logger.warn(`adoptBroker ${uid}: mehrere offene Stops für ${o.symbol} — nehme den ersten`);
         continue;
       }
-      schutzJeSymbol.set(o.symbol, { orderId: o.id, stopPreis: o.stopPreis, qty: o.qty });
+      schutzJeSymbol.set(o.symbol, {
+        orderId: o.id,
+        stopPreis: o.stopPreis,
+        qty: o.qty,
+        ...(o.limitPreis > 0 ? { limitPreis: o.limitPreis } : {}),
+      });
     }
   } catch (err) {
     logger.warn(`adoptBroker ${uid}: offene Orders nicht abrufbar — schutz-Felder bleiben leer`, err);

@@ -546,15 +546,21 @@ describe('alpacaOrdersOffen', () => {
         type: 'stop', qty: '5', stop_price: '180.55' },
       { id: 'm1', client_order_id: 'u1-TAN-buy-3-scan-9', symbol: 'TAN', side: 'buy',
         type: 'market', qty: '3', stop_price: null },
+      // Krypto-Schutz ist `stop_limit` — Limit muss mitkommen, sonst kann
+      // weder adoptBroker noch das Nachziehen es je wieder herstellen.
+      { id: 'sl1', client_order_id: 'u1-BTC-USD-sell-1-scan-9-schutz', symbol: 'BTC/USD',
+        side: 'sell', type: 'stop_limit', qty: '1', stop_price: '42100', limit_price: '42000.5' },
     ]);
     const r = await alpacaOrdersOffen('paper', SCHLUESSEL, f);
-    expect(r).toHaveLength(2);
+    expect(r).toHaveLength(3);
     expect(r[0]).toEqual({
       id: 's1', clientOrderId: 'u1-AAPL-sell-5-scan-9-schutz', symbol: 'AAPL',
-      side: 'sell', typ: 'stop', qty: 5, stopPreis: 180.55,
+      side: 'sell', typ: 'stop', qty: 5, stopPreis: 180.55, limitPreis: 0,
     });
     expect(r[1]?.typ).toBe('market');
     expect(r[1]?.stopPreis).toBe(0);
+    expect(r[2]?.typ).toBe('stop_limit');
+    expect(r[2]?.limitPreis).toBe(42000.5);
   });
 
   it('gibt bei kaputter Antwort eine leere Liste zurück', async () => {
