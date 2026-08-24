@@ -15,7 +15,7 @@
  * dieselbe Logik je Wallet-Doc.
  */
 
-import { getFirestore } from 'firebase-admin/firestore';
+import { FieldPath, getFirestore } from 'firebase-admin/firestore';
 import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
@@ -327,18 +327,20 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
        * Ein zusätzlicher Read in die Tagesserie käme bei 288 Scans am Tag
        * teuer, und die Bremse braucht genau eine Zahl, nicht die Serie.
        */
+      // update()+FieldPath je Feld statt set(merge) (Befund 24.08.): Dieser
+      // Tageslauf iteriert über ALLE Konten und ist der am längsten
+      // laufende, am schlechtesten gegen Löschung geschützte Schreiber
+      // (kein resetLaeuft-Gate wie im Scan) — set(merge) auf ein
+      // inzwischen gelöschtes Konto legte es als Geister-Dok. ohne
+      // accessLevel neu an. Ein Objekt-Literal unter `risk` würde zudem
+      // Geschwisterfelder (`resetLaeuftSeit`, `abgleich`) löschen.
       await userDoc.ref
-        .set(
-          {
-            risk: {
-              vortagEquity: equity,
-              vortagEquityAm: date,
-              breakerAusgeloestAm: null,
-              breakerGrund: null,
-              breakerVerlustPct: null,
-            },
-          },
-          { merge: true },
+        .update(
+          new FieldPath('risk', 'vortagEquity'), equity,
+          new FieldPath('risk', 'vortagEquityAm'), date,
+          new FieldPath('risk', 'breakerAusgeloestAm'), null,
+          new FieldPath('risk', 'breakerGrund'), null,
+          new FieldPath('risk', 'breakerVerlustPct'), null,
         )
         .catch((err: unknown) => logger.warn(`Breaker-Armierung ${userDoc.id}`, err));
 

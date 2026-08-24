@@ -29,7 +29,7 @@
  * und eine Meldung, die immer ansteht, liest niemand mehr.
  */
 
-import { getFirestore } from 'firebase-admin/firestore';
+import { FieldPath, getFirestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions/v2';
 import type { Position } from '../../../shared/src/index.js';
 import {
@@ -417,8 +417,19 @@ export async function abgleichFuerKonto(
 }
 
 async function vermerke(uid: string, daten: Record<string, unknown>): Promise<void> {
+  /* `update()` mit FieldPath, NICHT `set(merge)` (Befund 24.08. bei der
+   * Konto-Löschung): `set({risk:{abgleich:daten}}, {merge:true})` legt das
+   * Dokument neu an, falls es inzwischen gelöscht wurde — ein Geister-Dok.
+   * OHNE `accessLevel` gilt sofort wieder als freigeschaltet
+   * (`accessLevelOf`). `update()` auf ein fehlendes Dokument wirft
+   * stattdessen, der bestehende `.catch()` schluckt es wie jeden anderen
+   * Fehler. Der einzelne FieldPath ('risk','abgleich') statt eines
+   * verschachtelten Objekt-Literals ist Pflicht: `update({risk:{...}})`
+   * würde `risk` KOMPLETT ersetzen und Geschwisterfelder wie
+   * `resetLaeuftSeit` löschen — genau das Sperr-Feld, das eine parallele
+   * Löschung/einen parallelen Reset schützt. */
   await getFirestore()
     .doc(`users/${uid}`)
-    .set({ risk: { abgleich: daten } }, { merge: true })
+    .update(new FieldPath('risk', 'abgleich'), daten)
     .catch((err: unknown) => logger.warn(`Abgleich-Vermerk ${uid}`, err));
 }

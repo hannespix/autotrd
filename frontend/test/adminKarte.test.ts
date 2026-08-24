@@ -138,6 +138,36 @@ describe('Kompakter ja, riskanter nein', () => {
   });
 });
 
+describe('Endgültig löschen (24.08., DSGVO Art. 17)', () => {
+  it('nur bei archiviert/blocked sichtbar, nie bei Admin-Zielen', () => {
+    const stelle = admin.indexOf('admLoeschKnopf(row.uid');
+    expect(stelle, 'admLoeschKnopf nicht verdrahtet').toBeGreaterThan(0);
+    const bedingung = admin.slice(admin.lastIndexOf('if (', stelle), stelle);
+    expect(bedingung).toContain("row.accessLevel === 'archiviert'");
+    expect(bedingung).toContain("row.accessLevel === 'blocked'");
+    expect(bedingung).toContain('!row.admin');
+  });
+
+  it('KEIN window.prompt()/confirm() — derselbe Grund wie bei admArmBtn', () => {
+    expect(codeOhneText).not.toContain('window.prompt');
+    expect(codeOhneText).not.toContain('confirm(');
+  });
+
+  it('das Bestätigungswort ist NICHT das Reset-Wort', () => {
+    // Die Konstante steht bei RESET_CONFIRM_WORD, ausserhalb des admin-
+    // Ausschnitts — hier zählt der ganze Quelltext der Datei.
+    expect(dash).toContain("const DELETE_CONFIRM_WORD = 'LOESCHEN';");
+    expect(admin).toContain('DELETE_CONFIRM_WORD');
+  });
+
+  it('der Knopf bleibt gesperrt, bis das Wort exakt dasteht', () => {
+    const stelle = admin.indexOf('function admLoeschKnopf');
+    const block = admin.slice(stelle, admin.indexOf('function renderStrategyChips', stelle));
+    expect(block).toMatch(/go\.disabled = input\.value\.trim\(\) !== DELETE_CONFIRM_WORD/);
+    expect(block).toContain('go.disabled = true;');
+  });
+});
+
 describe('Der Nachrichten-Faden überlebt einen Verwaltungsklick', () => {
   it('Zeile und Verwaltung werden neu gebaut, der Faden NIE angefasst', () => {
     /* #417 wird damit baulich unmöglich statt per Merker verwaltet: Der

@@ -114,6 +114,7 @@ import {
   type FadenNachricht,
   adminUebernahmeVormerken,
   adminSetAdmin,
+  adminDeleteAccount,
   adminSetKillSwitch,
   callTrade,
   leseBestPractice,
@@ -1609,6 +1610,9 @@ function layout(email: string): string {
 
 /** Muss identisch zu RESET_CONFIRM_WORD im Server sein — der prüft es erneut. */
 const RESET_CONFIRM_WORD = 'RESET';
+
+/** Muss identisch zu DELETE_CONFIRM_WORD im Server sein — der prüft es erneut. */
+const DELETE_CONFIRM_WORD = 'LOESCHEN';
 
 /**
  * HTML-Escaping für Text, der aus einer Antwort des Servers stammt.
@@ -7437,6 +7441,19 @@ function admFuelleVerw(verw: HTMLElement, row: AdminUserRow, fadenBlock: HTMLEle
       nach,
     ),
   );
+  /* Endgültig löschen (Owner-Frage 24.08., DSGVO Art. 17) — eigener,
+   * expliziter Zweig statt in die accessLevel-if/else-Kette weiter oben
+   * gefaltet: Die kennt nur „archiviert" vs. „alles andere" und würfe
+   * pending in denselben Topf. Admin-Konten werden gar nicht erst
+   * angeboten (Server lehnt sie ohnehin ab — kein Knopf, der garantiert
+   * scheitert). */
+  if ((row.accessLevel === 'archiviert' || row.accessLevel === 'blocked') && !row.admin) {
+    verw.append(
+      admLoeschKnopf(row.uid, async () => {
+        await adminDeleteAccount(row.uid, DELETE_CONFIRM_WORD);
+      }, nach),
+    );
+  }
   if (row.abgleich) {
     /* „Abgleichen" hebt keine Sperre auf, es MISST neu — ist die Drift weg,
      * faellt die Sperre von selbst. Deshalb einstufig, aber nicht harmlos
@@ -7716,6 +7733,87 @@ function admBtn(
       });
   });
   return b;
+}
+
+/**
+ * Löschen-Knopf mit getipptem Bestätigungswort (24.08., DSGVO Art. 17).
+ *
+ * KEIN `window.prompt()`/`confirm()`: `admArmBtn` weiter oben in dieser
+ * Datei vermeidet `confirm()` aus genau diesem Grund — Browser bieten nach
+ * wiederholten Dialogen „weitere unterdrücken" an, `confirm()`/`prompt()`
+ * liefern danach dauerhaft false/null, und der Knopf wäre einer, der
+ * sichtbar nichts tut, ohne dass der Grund erkennbar ist. Stattdessen ein
+ * echtes Eingabefeld inline —
+ * dasselbe Muster wie `rsWord`/`rsGo` beim Wallet-Reset in den
+ * Einstellungen: Der Client-Guard ist Bequemlichkeit (Knopf bleibt
+ * gesperrt, bis das Wort exakt dasteht), die Sicherung ist serverseitig.
+ */
+function admLoeschKnopf(uid: string, run: () => Promise<void>, nach: () => void): HTMLElement {
+  const host = document.createElement('span');
+  host.style.display = 'inline-flex';
+  host.style.gap = '6px';
+  host.style.alignItems = 'center';
+
+  const zeigeKnopf = (): void => {
+    host.replaceChildren();
+    const b = document.createElement('button');
+    b.className = 'btn btn-r adm-akt';
+    b.textContent = t('adm.endgueltigLoeschen');
+    b.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      zeigeEingabe();
+    });
+    host.append(b);
+  };
+
+  const zeigeEingabe = (): void => {
+    host.replaceChildren();
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'inp st-num';
+    input.style.maxWidth = '150px';
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.placeholder = t('adm.loeschenTippen').replace('{0}', DELETE_CONFIRM_WORD);
+    const go = document.createElement('button');
+    go.className = 'btn btn-r adm-akt';
+    go.textContent = t('adm.endgueltigLoeschen');
+    go.disabled = true;
+    const ab = document.createElement('button');
+    ab.className = 'btn btn-n adm-akt';
+    ab.textContent = t('adm.abbrechen');
+    // Klicks/Tasten im Feld dürfen die Zeile nicht auf-/zuklappen (dieselbe
+    // Absicherung wie bei admArmBtn/admBtn oben — ev.stopPropagation()).
+    for (const ev of ['click', 'keydown']) {
+      input.addEventListener(ev, (e) => e.stopPropagation());
+    }
+    input.addEventListener('input', () => {
+      go.disabled = input.value.trim() !== DELETE_CONFIRM_WORD;
+    });
+    ab.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      zeigeKnopf();
+    });
+    go.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      go.disabled = true;
+      input.disabled = true;
+      ab.disabled = true;
+      run()
+        .then(nach)
+        .catch((e: unknown) => {
+          const err = $('admErr');
+          err.textContent = serverText(e);
+          err.hidden = false;
+          zeigeKnopf();
+        });
+    });
+    host.append(input, go, ab);
+    input.focus();
+  };
+
+  zeigeKnopf();
+  return host;
 }
 
 function renderStrategyChips(): void {

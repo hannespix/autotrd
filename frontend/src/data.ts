@@ -1539,6 +1539,27 @@ export async function adminSetAdmin(target: string, admin: boolean): Promise<voi
   await httpsCallable(fns(), 'adminUsers')({ action: 'setAdmin', target, admin });
 }
 
+/** Befund der endgültigen Löschung — was das Broker-Aufräumen ergeben hat. */
+export interface AdminLoeschBefund {
+  ok: true;
+  uid: string;
+  authGeloescht: boolean;
+}
+
+/**
+ * Ein gesperrtes/archiviertes Konto ENDGÜLTIG löschen (DSGVO Art. 17,
+ * Owner-Frage 24.08.). Unumkehrbar — der Server prüft zehn Vorbedingungen
+ * frisch (Karenzzeit, offene Positionen, laufender Reset, Live-Verbindung,
+ * …) und lehnt ab, statt zu raten.
+ */
+export async function adminDeleteAccount(
+  target: string,
+  confirm: string,
+): Promise<AdminLoeschBefund> {
+  const r = await httpsCallable(fns(), 'adminUsers')({ action: 'delete', target, confirm });
+  return r.data as AdminLoeschBefund;
+}
+
 /** Zustand des Echtgeld-Not-Aus (M14) — nur für Admin-Konten. */
 export interface KillSwitchStatus {
   killSwitch: boolean;
