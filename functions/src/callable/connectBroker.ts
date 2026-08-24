@@ -61,7 +61,8 @@ import {
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { accessDeniedReason, accessLevelOf, mayTrade } from '../core/access.js';
 import { consumeQuota } from '../core/broker.js';
-import { vergissVerbindung } from '../core/orderRouting.js';
+import { brokerVerbindungLesend, vergissVerbindung } from '../core/orderRouting.js';
+import { raeumeEigeneOrders } from '../core/orderRaeumung.js';
 import { vaultBereit, verschluessle } from '../core/keyVault.js';
 import { bindeDepot, loeseDepot } from '../core/brokerBindung.js';
 import { bindungsMeldung } from '../../../shared/src/index.js';
@@ -264,17 +265,61 @@ export async function verbindeBroker(
   };
 }
 
+/** Antwort des Trennens. Genau EINER der drei Zustände:
+ *  `orders` (Papier: Sweep lief, ehrlicher Befund) · `liveOrdersBleiben`
+ *  (Echtgeld: bewusst nichts storniert) · `sweepUnmoeglich` (Verbindung war
+ *  nicht mehr lesbar — Waisen bleiben garantiert stehen). */
+export interface TrennErgebnis {
+  ok: true;
+  geloescht: boolean;
+  orders?: {
+    storniert: number;
+    gefuellt: number;
+    fehler: number;
+    listeFehlgeschlagen: boolean;
+    moeglicherweiseUnvollstaendig: boolean;
+  };
+  liveOrdersBleiben?: true;
+  sweepUnmoeglich?: true;
+}
+
 /** Verbindung lösen — das Schlüsselpaar wird gelöscht, nicht nur deaktiviert. */
-export async function trenneBroker(uid: string): Promise<{ ok: true; geloescht: boolean }> {
-  const ref = getFirestore()
-    .collection('users')
-    .doc(uid)
-    .collection(BROKER_DOC)
-    .doc(BROKER_ID);
+export async function trenneBroker(uid: string): Promise<TrennErgebnis> {
+  const db = getFirestore();
+  const ref = db.collection('users').doc(uid).collection(BROKER_DOC).doc(BROKER_ID);
   const vorher = await ref.get();
   if (!vorher.exists) return { ok: true, geloescht: false };
+  /* Schlüssel JETZT in die Hand nehmen — nach dem Löschen gibt es sie nicht
+   * mehr, und der Order-Sweep unten braucht sie noch. Die LESENDE Variante
+   * ist bewusst gewählt: Ein Storno ist zwar ein Schreibvorgang beim Broker,
+   * aber einer, der Risiko NIMMT statt eingeht — er muss auch laufen, wenn
+   * Echtgeld verriegelt ist (`brokerVerbindung()` gäbe dann `null`), sonst
+   * blieben genau die Live-Orders stehen, die danach niemand mehr erreicht. */
+  const verbindung = await brokerVerbindungLesend(uid);
+  /* Schutz-Order-Kennungen aus dem Buch einsammeln, BEVOR irgendetwas
+   * gelöscht wird: Sie fangen im Sweep auch Orders, deren
+   * clientOrderId-Präfix bei Überlänge gekappt wurde (`clientOrderId()`
+   * kappt den uid-Teil, nie den Schwanz). */
+  const posSnap = await db
+    .collection('users')
+    .doc(uid)
+    .collection('positions')
+    .get()
+    .catch(() => null);
+  const schutzOrderIds = new Map<string, string>(); // orderId → Positions-Doc
+  for (const d of posSnap?.docs ?? []) {
+    const oid = d.get('schutz.orderId') as unknown;
+    if (typeof oid === 'string' && oid) schutzOrderIds.set(oid, d.id);
+  }
   // Löschen statt eines `aktiv: false`-Flags: Ein Schlüssel, der nicht mehr
   // gebraucht wird, soll auch nicht mehr da sein.
+  //
+  // Und ZUERST löschen, dann stornieren: Das Trennen darf nie daran
+  // scheitern, dass Alpaca nicht antwortet — sonst könnte ein Konto mit
+  // widerrufenen Schlüsseln seine Schlüssel nie mehr entfernen (das Trennen
+  // muss IMMER möglich sein, siehe Gate-Kommentar unten). Der Sweep ist
+  // Best-Effort mit den Schlüsseln aus der Hand; sein Befund geht ehrlich
+  // in die Antwort.
   await ref.delete();
   /* Depot-Bindung mit lösen — sonst bliebe das Depot für immer belegt und
    * niemand könnte es je wieder verbinden, auch dieser Nutzer nicht.
@@ -294,13 +339,98 @@ export async function trenneBroker(uid: string): Promise<{ ok: true; geloescht: 
    * — er nimmt mit, was er mitnehmen kann. Die eigentliche Absicherung ist
    * der kurze TTL: Spätestens nach einer Minute liest jede Instanz neu. */
   vergissVerbindung(uid);
-  logger.info(`connectBroker ${uid}: Verbindung getrennt`);
-  return { ok: true, geloescht: true };
+  /* GTC-Waisen abräumen (24.08.): Ohne diesen Sweep arbeiten Schutz-Stops
+   * nach dem Trennen unbeaufsichtigt weiter, reservieren die Stücke gegen
+   * jeden manuellen Verkauf und blockieren die Exits eines Nachfolge-Kontos
+   * auf demselben Depot — und weil die Schlüssel oben gelöscht sind, könnte
+   * sie danach nie wieder jemand stornieren. Nur EIGENE Orders (uid-Präfix
+   * bzw. `schutz.orderId` aus dem Buch); was ein Mensch direkt in der
+   * Alpaca-Oberfläche gestellt hat, bleibt stehen. */
+  let orders: TrennErgebnis['orders'];
+  let liveOrdersBleiben: true | undefined;
+  if (verbindung) {
+    const befund = await raeumeEigeneOrders(
+      verbindung.mode,
+      verbindung.schluessel,
+      uid,
+      new Set(schutzOrderIds.keys()),
+    );
+    if (befund.liveUebersprungen) {
+      /* Echtgeld: bewusst NICHTS storniert (Sperre in `raeumeEigeneOrders`,
+       * Begründung im Modulkopf dort). Die Antwort sagt es dem Nutzer —
+       * er räumt sein Live-Depot selbst im Alpaca-Dashboard auf. */
+      liveOrdersBleiben = true;
+      logger.info(`connectBroker ${uid}: Verbindung getrennt (Live — Orders bleiben stehen)`);
+    } else {
+      orders = {
+        storniert: befund.storniert,
+        gefuellt: befund.gefuellt,
+        fehler: befund.fehler,
+        listeFehlgeschlagen: befund.listeFehlgeschlagen,
+        moeglicherweiseUnvollstaendig: befund.moeglicherweiseUnvollstaendig,
+      };
+      /* Tote `schutz`-Verweise aus dem Buch nehmen — nur dort, wo die Order
+       * nachweislich nicht mehr offen ist, und nur, wenn dort NOCH GENAU
+       * DIESE Order steht: Ein parallel laufender Scan (60-s-Verbindungs-
+       * Cache anderer Instanzen) kann nach dem Storno über `pflegeSchutz`
+       * einen NEUEN Stop eingetragen haben — dessen lebende Kennung zu
+       * löschen hieße, den späteren Exit an der Reservierung scheitern zu
+       * lassen. Deshalb Transaktion mit Vergleich statt blindem Update; und
+       * `update()`, nicht `set(merge)`: Eine parallel gelöschte Position
+       * darf nicht als Geister-Dokument wiederauferstehen. */
+      const ergebnisse = await Promise.allSettled(
+        befund.erledigteOrderIds
+          .filter((oid) => schutzOrderIds.has(oid))
+          .map((oid) =>
+            db.runTransaction(async (tx) => {
+              const pRef = db
+                .collection('users')
+                .doc(uid)
+                .collection('positions')
+                .doc(schutzOrderIds.get(oid) as string);
+              const snap = await tx.get(pRef);
+              if (!snap.exists) return;
+              if ((snap.get('schutz.orderId') as unknown) === oid) {
+                tx.update(pRef, { schutz: null });
+              }
+            }),
+          ),
+      );
+      const putzFehler = ergebnisse.filter((r) => r.status === 'rejected').length;
+      if (putzFehler > 0) {
+        logger.warn(
+          `connectBroker ${uid}: ${putzFehler} schutz-Verweis(e) nicht bereinigt — tote orderId bleibt im Buch`,
+        );
+      }
+      logger.info(
+        `connectBroker ${uid}: Verbindung getrennt — Orders: ${befund.storniert} storniert, `
+          + `${befund.gefuellt} gefüllt, ${befund.fehler} Fehler`
+          + (befund.listeFehlgeschlagen ? ', Liste nicht abrufbar' : '')
+          + (befund.moeglicherweiseUnvollstaendig ? ', evtl. unvollständig (500er-Limit)' : ''),
+      );
+    }
+  } else {
+    logger.info(`connectBroker ${uid}: Verbindung getrennt (kein Order-Sweep — nicht lesbar)`);
+  }
+  return {
+    ok: true,
+    geloescht: true,
+    ...(orders ? { orders } : {}),
+    ...(liveOrdersBleiben ? { liveOrdersBleiben } : {}),
+    // Verbindung nicht lesbar heißt: garantiert kein Sweep — die UI muss
+    // auf mögliche Waisen hinweisen, gerade weil hier sonst nichts käme.
+    ...(!verbindung ? { sweepUnmoeglich: true as const } : {}),
+  };
 }
 
 export const connectBroker = onCall(
-  CALLABLE_OPTS,
-  async (request): Promise<ConnectResult | { ok: true; geloescht: boolean }> => {
+  /* 120 s statt der 60-s-Voreinstellung: Der Order-Sweep beim Trennen läuft
+   * NACH dem Schlüssel-Löschen — stürbe die Function im Sweep, bekäme der
+   * Nutzer einen Fehler, obwohl getrennt wurde, und das Buch bliebe
+   * ungeputzt. Die Frist in `raeumeEigeneOrders` (90 s) liegt bewusst
+   * darunter, damit immer die ehrliche Antwort gewinnt, nie der Timeout. */
+  { ...CALLABLE_OPTS, timeoutSeconds: 120 },
+  async (request): Promise<ConnectResult | TrennErgebnis> => {
     const uid = request.auth?.uid;
     if (!uid) throw new HttpsError('unauthenticated', 'srv.anmeldungErforderlich');
 

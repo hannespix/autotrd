@@ -11956,9 +11956,28 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     btn.disabled = true;
     void callDisconnectBroker()
       .then((r) => {
-        $('bkOut').innerHTML = `<div class="hint">${
-          r.geloescht ? t('mt.verbindungGetrennt') : t('mt.nichtsVerbunden')
-        }</div>`;
+        // Ehrlicher Befund statt bloß „getrennt": Auf Papierkonten storniert
+        // der Server die eigenen offenen Orders (auch Schutz-Stops — das
+        // Depot hat danach KEINE automatische Absicherung mehr). Ein
+        // gefüllter Stop heißt: verkauft, aber noch nicht im Buch. Auf
+        // Echtgeld wird bewusst nichts storniert; und konnte der Sweep gar
+        // nicht laufen, muss der Nutzer im Alpaca-Dashboard selbst prüfen.
+        const teile = [r.geloescht ? t('mt.verbindungGetrennt') : t('mt.nichtsVerbunden')];
+        const o = r.orders;
+        if (o && o.storniert + o.gefuellt > 0) {
+          teile.push(t('mt.ordersStorniert').replace('{0}', String(o.storniert + o.gefuellt)));
+        }
+        if (o && o.gefuellt > 0) {
+          teile.push(t('mt.ordersGefuellt').replace('{0}', String(o.gefuellt)));
+        }
+        if (
+          (o && (o.fehler > 0 || o.listeFehlgeschlagen || o.moeglicherweiseUnvollstaendig)) ||
+          r.sweepUnmoeglich
+        ) {
+          teile.push(t('mt.ordersRest'));
+        }
+        if (r.liveOrdersBleiben) teile.push(t('mt.ordersLiveBleiben'));
+        $('bkOut').innerHTML = `<div class="hint">${teile.join(' ')}</div>`;
       })
       .catch((e) => {
         $('bkOut').innerHTML = `<div class="hint">${escText((e as Error).message)}</div>`;

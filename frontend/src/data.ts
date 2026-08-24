@@ -453,10 +453,28 @@ export async function callAdoptBroker(): Promise<AdoptResult> {
   return r.data as AdoptResult;
 }
 
-/** Verbindung lösen — der Server löscht das Schlüsselpaar. */
-export async function callDisconnectBroker(): Promise<{ ok: true; geloescht: boolean }> {
+/** Verbindung lösen — der Server löscht das Schlüsselpaar und storniert auf
+ *  PAPIERkonten die eigenen offenen Orders (Schutz-Stops eingeschlossen).
+ *  Genau einer der drei Zustände: `orders` (Sweep lief, Befund) ·
+ *  `liveOrdersBleiben` (Echtgeld: bewusst nichts storniert) ·
+ *  `sweepUnmoeglich` (Verbindung nicht mehr lesbar — Waisen bleiben). */
+export interface DisconnectResult {
+  ok: true;
+  geloescht: boolean;
+  orders?: {
+    storniert: number;
+    gefuellt: number;
+    fehler: number;
+    listeFehlgeschlagen: boolean;
+    moeglicherweiseUnvollstaendig: boolean;
+  };
+  liveOrdersBleiben?: true;
+  sweepUnmoeglich?: true;
+}
+
+export async function callDisconnectBroker(): Promise<DisconnectResult> {
   const r = await httpsCallable(fns(), 'connectBroker')({ action: 'disconnect' });
-  return r.data as { ok: true; geloescht: boolean };
+  return r.data as DisconnectResult;
 }
 
 /** Strategie serverseitig validieren + speichern (flaches Schema). */

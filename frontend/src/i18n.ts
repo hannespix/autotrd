@@ -879,6 +879,14 @@ export const DE = {
   'mt.ySkalaFrei': 'Y-Skala: manuell — auf der Preisskala ziehen; Doppelklick auf die Achse setzt zurück. Klick: automatisch.',
   'mt.zustandNichtAbrufbar': 'Zustand nicht abrufbar.',
   'mt.verbindungGetrennt': 'Verbindung getrennt, Schlüssel gelöscht.',
+  'mt.ordersStorniert':
+    '{0} offene Broker-Order(s) beendet — das Depot hat jetzt keine automatische Absicherung (Schutz-Stops) mehr.',
+  'mt.ordersGefuellt':
+    'Davon {0} bereits ausgeführt — dieser Verkauf steht noch nicht im Buch; nach einem Wiederverbinden „Depot übernehmen" ausführen.',
+  'mt.ordersRest':
+    'Möglicherweise stehen noch Orders offen — bitte im Alpaca-Dashboard nachsehen.',
+  'mt.ordersLiveBleiben':
+    'Echtgeld-Depot: Offene Orders wurden bewusst NICHT storniert (Schutz-Stops bleiben aktiv) — bitte selbst im Alpaca-Dashboard aufräumen.',
   'mt.nichtsVerbunden': 'Es war nichts verbunden.',
   'mt.geloest': '✓ Gelöst — Einstiege sind wieder frei.',
   'mt.warNichtAusgeloest': 'War nicht ausgelöst.',
@@ -2407,6 +2415,13 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'mt.ySkalaFrei': 'Y scale: manual — drag on the price scale; a double-click on the axis resets it. Click: automatic.',
   'mt.zustandNichtAbrufbar': 'State not retrievable.',
   'mt.verbindungGetrennt': 'Connection cut, keys deleted.',
+  'mt.ordersStorniert':
+    '{0} open broker order(s) ended — the account no longer has automatic protection (stop orders).',
+  'mt.ordersGefuellt':
+    'Of these, {0} had already executed — that sale is not in the journal yet; run “Adopt account” after reconnecting.',
+  'mt.ordersRest': 'Some orders may still be open — please check your Alpaca dashboard.',
+  'mt.ordersLiveBleiben':
+    'Real-money account: open orders were deliberately NOT cancelled (stop orders stay active) — please tidy up in your Alpaca dashboard yourself.',
   'mt.nichtsVerbunden': 'Nothing was connected.',
   'mt.geloest': '✓ Released — entries are open again.',
   'mt.warNichtAusgeloest': 'It was not tripped.',

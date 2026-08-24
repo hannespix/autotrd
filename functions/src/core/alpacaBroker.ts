@@ -471,6 +471,10 @@ export interface AlpacaOffeneOrder {
   qty: number;
   /** Auslösekurs bei Stop-Orders; 0 sonst. */
   stopPreis: number;
+  /** Limit bei `limit`/`stop_limit` (Krypto-Schutz); 0 sonst. Ohne dieses
+   *  Feld könnte ein Adopt einen `stop_limit`-Schutz nur ohne Limit
+   *  übernehmen — und das Nachziehen (`alpacaOrderErsetzen`) müsste raten. */
+  limitPreis: number;
 }
 
 /**
@@ -506,6 +510,7 @@ export async function alpacaOrdersOffen(
         typ: String(r['type'] ?? ''),
         qty,
         stopPreis: zahl(r['stop_price']),
+        limitPreis: zahl(r['limit_price']),
       },
     ];
   });
