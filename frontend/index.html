@@ -4,7 +4,39 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark light" />
-    <title>autotrd — Paper-Trading</title>
+    <!-- Titel & Beschreibung (Google-Befund 24.08.): Ohne description suchte
+         sich Google den längsten Satz der gerenderten Seite als Snippet —
+         und das war die Risiko-Zeile des Login-Screens („Mir ist bewusst,
+         dass autotrd keine Anlageberatung ist …"). Die Zeile selbst ist
+         Text-Diät-Tabu und bleibt wörtlich; die Lösung ist, Google eine
+         BESSERE Alternative anzubieten, nicht den Warntext anzufassen.
+         „Paper-Trading" allein wäre zudem veraltet: Die Broker-Anbindung
+         ist gebaut (legal.ts) — Titel und Beschreibung nennen beides. -->
+    <title>autotrd — automatisierte Trading-Plattform (Paper &amp; Broker)</title>
+    <meta
+      name="description"
+      content="Automatisiertes Trading für Aktien, ETFs, Krypto, Rohstoffe und Devisen — Live-Dashboard, Konfluenz-Signale, selbstlernende Prognose, Paper- und Broker-Konten. Keine Anlageberatung."
+    />
+    <link rel="canonical" href="https://autotrd.net/" />
+    <!-- Social-Vorschau (Open Graph + Twitter). og:image ist das quadratische
+         App-Icon — kein 1200×630-Banner, aber ehrlich und vorhanden. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="autotrd" />
+    <meta property="og:title" content="autotrd — automatisierte Trading-Plattform" />
+    <meta
+      property="og:description"
+      content="Live-Dashboard, Konfluenz-Signale, selbstlernende Prognose. Paper- und Broker-Konten. Keine Anlageberatung."
+    />
+    <meta property="og:url" content="https://autotrd.net/" />
+    <meta property="og:image" content="https://autotrd.net/icon-512.png" />
+    <meta property="og:locale" content="de_DE" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="autotrd — automatisierte Trading-Plattform" />
+    <meta
+      name="twitter:description"
+      content="Live-Dashboard, Konfluenz-Signale, selbstlernende Prognose. Paper- und Broker-Konten. Keine Anlageberatung."
+    />
+    <meta name="twitter:image" content="https://autotrd.net/icon-512.png" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.json" />
@@ -12,10 +44,42 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="autotrd" />
+    <!-- Strukturierte Daten: sagt Suchmaschinen ausdrücklich, WAS autotrd ist
+         — auch als Gegengewicht zur Verwechslung mit „Auto Trader" (dem
+         Automarktplatz), die Googles KI-Übersicht produziert. Nur Fakten,
+         keine Bewertungen. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "autotrd",
+        "url": "https://autotrd.net/",
+        "applicationCategory": "FinanceApplication",
+        "operatingSystem": "Web",
+        "inLanguage": "de",
+        "description": "Automatisierte Trading-Plattform für Aktien, ETFs, Krypto, Rohstoffe und Devisen: Live-Dashboard, Konfluenz-Signale, selbstlernende Prognose, Paper- und Broker-Konten. Keine Anlageberatung."
+      }
+    </script>
   </head>
   <body>
     <div class="aurora" aria-hidden="true"></div>
-    <div id="app" aria-live="polite"></div>
+    <div id="app" aria-live="polite">
+      <!-- Crawlbarer Erst-Inhalt: Ein Crawler ohne JS sah hier bisher NULL
+           Zeichen Text; Googles Renderer sah als einzigen vollständigen Satz
+           die Risiko-Zeile — und machte sie zum Snippet. Dieser Block gibt
+           der Seite eine echte Selbstbeschreibung. main.ts überschreibt ihn
+           mit dem ersten innerHTML; kein Nutzer sieht ihn länger als den
+           ersten Frame. -->
+      <noscript>
+        <h1>autotrd</h1>
+        <p>
+          Automatisierte Trading-Plattform für Aktien, ETFs, Krypto, Rohstoffe
+          und Devisen: Live-Dashboard, Konfluenz-Signale, selbstlernende
+          Prognose, Paper- und Broker-Konten. Keine Anlageberatung.
+        </p>
+        <p>autotrd benötigt JavaScript.</p>
+      </noscript>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

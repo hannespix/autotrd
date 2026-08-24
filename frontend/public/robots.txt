@@ -1,0 +1,6 @@
+# autotrd.net — alles Öffentliche darf in den Index. Die App selbst ist
+# hinter dem Login; es gibt nur diese eine Seite.
+User-agent: *
+Allow: /
+
+Sitemap: https://autotrd.net/sitemap.xml
