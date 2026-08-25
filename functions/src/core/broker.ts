@@ -632,6 +632,75 @@ export function schlussMenge(
 }
 
 /**
+ * Ein bestätigter Broker-Fill, der nicht gebucht werden konnte, darf NIEMALS
+ * stumm verschwinden (Vorfall 05.08.) — an KEINER der Stellen, an denen ein
+ * Fill entdeckt werden kann: dem regulären Exit über `routeOrder`, einem
+ * beim Aufheben der Schutz-Order entdeckten Fill (`schutzAufheben`) oder
+ * einem von der laufenden Pflege entdeckten Broker-Stop (`pflegeSchutz`).
+ * Er wird festgehalten — mit allem, was zum Nachbuchen nötig ist — und ein
+ * Cooldown gestempelt, damit der nächste Lauf dasselbe Signal nicht sofort
+ * ein zweites Mal kauft (NVDA-Loop-Vorfall 11.08.). `bucheUnverbuchteFills`
+ * holt den Fill beim nächsten Lauf nach; scheitert das dauerhaft, wird er
+ * zum Fall für die Depot-Übernahme (`adoptBroker`).
+ *
+ * Root-Cause-Befund 25.08.: Nur der `routeOrder`-Pfad hatte dieses Netz —
+ * `schutzAufheben` und `pflegeSchutz` buchen ihren Fill direkt und ließen
+ * ihn bei einer scheiternden Buchung folgenlos verschwinden. Genau das
+ * erzeugte „Position fehlt beim Broker": Der Broker hatte längst verkauft,
+ * das Buch erfuhr nie davon. Diese Funktion ist das gemeinsame Netz für
+ * alle drei Stellen.
+ *
+ * `restStorniert` MUSS mit ins Dokument (Red-Team-Befund 25.08.): Ohne die
+ * Zusicherung schließt `schlussMenge` beim Nachbuchen über
+ * `bucheUnverbuchteFills` IMMER die GANZE Position (der sichere Fallback,
+ * s. `teilSchluss.test.ts`). Für einen echten Teilfill — der Normalfall bei
+ * `pflegeSchutz`, die den Rest der Stop-Order selbst storniert, bevor sie
+ * den gefüllten Teil meldet — wäre das eine zu GROSSE Buchung: Die Wallet
+ * würde für Stücke gutgeschrieben, die nie verkauft wurden, und der real
+ * beim Broker verbliebene, jetzt ungeschützte Rest würde zu einem NEUEN
+ * Fremdbestand — der Fehler, den dieser Fix gerade schließt.
+ */
+export async function merkeUnbookedFill(
+  uid: string,
+  symbol: string,
+  side: 'buy' | 'sell',
+  qty: number,
+  fillPreis: number | null,
+  brokerOrderId: string | null,
+  laufId: string,
+  grund: string,
+  restStorniert?: boolean,
+): Promise<void> {
+  logger.error(`FILL NICHT GEBUCHT ${uid} ${symbol} ${side} ${qty} @ ${fillPreis} — ${grund}`);
+  const db = getFirestore();
+  await db
+    .collection('users')
+    .doc(uid)
+    .collection('unbookedFills')
+    .doc()
+    .set({
+      symbol,
+      side,
+      qty,
+      fillPreis: fillPreis ?? null,
+      brokerOrderId: brokerOrderId ?? null,
+      laufId,
+      grund,
+      at: new Date().toISOString(),
+      ...(restStorniert === true ? { restStorniert: true } : {}),
+    })
+    .catch((err: unknown) => logger.error(`unbookedFills ${uid} nicht schreibbar`, err));
+  // update()+FieldPath statt set(merge) (Befund 24.08.): sonst legte ein
+  // gelöschtes Konto sich als Geister-Dok. ohne accessLevel neu an, und ein
+  // Objekt-Literal unter `engineCooldowns` würde die Cooldowns ANDERER
+  // Symbole löschen.
+  await db
+    .doc(`users/${uid}`)
+    .update(new FieldPath('engineCooldowns', symbol), new Date().toISOString())
+    .catch((err: unknown) => logger.warn(`Cooldown nach Fill-Panne ${uid}`, err));
+}
+
+/**
  * Trade ausführen — mit Order-Routing an den Broker, wenn eins hinterlegt ist.
  *
  * ── Die eine Stelle, an der geroutet wird ─────────────────────────────────
@@ -730,7 +799,7 @@ export async function executeTrade(
       },
     );
     if (aufhebung.stand === 'gefuellt') {
-      return executePaperTrade(
+      const aufhebungsBuchung = await executePaperTrade(
         {
           ...req,
           qty: aufhebung.fillQty,
@@ -746,7 +815,27 @@ export async function executeTrade(
             req.riskExit ?? (aufhebung.quelle === 'trailing' ? 'trailing_stop_broker' : 'stop_loss'),
         },
         strategy,
-      );
+      ).catch((err: unknown) => ({
+        executed: false as const,
+        reason: `buchung_exception: ${err instanceof Error ? err.message : String(err)}`.slice(0, 200),
+      }));
+      // Root-Cause-Befund 25.08.: Dieser Fill wurde beim Aufheben der
+      // Schutz-Order entdeckt, nicht über routeOrder — ohne dieses Netz
+      // verschwand eine scheiternde Buchung hier folgenlos, während der
+      // Broker längst verkauft hatte. Siehe `merkeUnbookedFill`.
+      if (!aufhebungsBuchung.executed) {
+        await merkeUnbookedFill(
+          req.uid,
+          req.symbol,
+          req.side,
+          aufhebung.fillQty,
+          aufhebung.fillPreis,
+          aufhebung.orderId,
+          lauf,
+          aufhebungsBuchung.reason ?? 'unbekannt',
+        );
+      }
+      return aufhebungsBuchung;
     }
   }
 
@@ -858,41 +947,27 @@ export async function executeTrade(
    * dass es überhaupt etwas zum Aufräumen gibt und der Fall nicht erst
    * beim Abgleich als anonymer „Fremdbestand" auftaucht. */
   if (!buchung.executed) {
-    logger.error(
-      `FILL NICHT GEBUCHT ${req.uid} ${req.symbol} ${req.side} ` +
-        `${routing.fillMenge ?? qty} @ ${routing.fillPreis} — ${buchung.reason ?? 'unbekannt'}`,
-    );
-    await db
-      .collection('users')
-      .doc(req.uid)
-      .collection('unbookedFills')
-      .doc()
-      .set({
-        symbol: req.symbol,
-        side: req.side,
-        qty: routing.fillMenge ?? qty,
-        fillPreis: routing.fillPreis ?? null,
-        brokerOrderId: routing.brokerOrderId ?? null,
-        laufId: lauf,
-        grund: buchung.reason ?? 'unbekannt',
-        at: new Date().toISOString(),
-      })
-      .catch((err: unknown) => logger.error(`unbookedFills ${req.uid} nicht schreibbar`, err));
     /* Cooldown stempeln (Audit 13.08., K-2a): Ohne ihn sah der nächste
      * 5-Minuten-Scan dasselbe Kaufsignal, keine Position, keinen Cooldown —
      * und kaufte ERNEUT echt, alle fünf Minuten, solange das Signal stand.
      * Genau dieser Loop war der NVDA-Vorfall vom 11.08.; behoben wurde
      * damals nur der eine Auslöser (qty_unter_1), nicht die Fehlerklasse.
      * Der Stempel gilt für jede Buchungs-Panne, die ein bestätigter Fill
-     * hinterlässt. */
-    // update()+FieldPath statt set(merge) (Befund 24.08.): sonst legte ein
-    // gelöschtes Konto sich als Geister-Dok. ohne accessLevel neu an (⇒
-    // sofort wieder „approved"), und ein Objekt-Literal unter
-    // `engineCooldowns` würde die Cooldowns ANDERER Symbole löschen.
-    await db
-      .doc(`users/${req.uid}`)
-      .update(new FieldPath('engineCooldowns', req.symbol), new Date().toISOString())
-      .catch((err: unknown) => logger.warn(`Cooldown nach Fill-Panne ${req.uid}`, err));
+     * hinterlässt — `merkeUnbookedFill` setzt ihn mit. */
+    await merkeUnbookedFill(
+      req.uid,
+      req.symbol,
+      req.side,
+      routing.fillMenge ?? qty,
+      routing.fillPreis ?? null,
+      routing.brokerOrderId ?? null,
+      lauf,
+      buchung.reason ?? 'unbekannt',
+      // Dieselbe Zusicherung wie oben im Buchungsversuch — sonst schließt
+      // ein späterer Nachbuchungsversuch einen echten Teilfill komplett
+      // (Red-Team-Befund 25.08.).
+      schliesst ? routing.restStorniert === true : undefined,
+    );
   }
 
   /* Schutz-Stop anlegen (Bracket Stufe 1): nur nach einem ERÖFFNENDEN,
@@ -1050,6 +1125,7 @@ export async function bucheUnverbuchteFills(
       qty?: number;
       fillPreis?: number | null;
       brokerOrderId?: string | null;
+      restStorniert?: boolean;
     };
     /* `dran` enthält keine unbrauchbaren Einträge mehr — die sind oben
      * aussortiert. Der Guard bleibt trotzdem stehen: Er trägt die
@@ -1078,6 +1154,12 @@ export async function bucheUnverbuchteFills(
         ...(d.brokerOrderId ? { brokerOrderId: d.brokerOrderId } : {}),
         source: 'engine',
         assetClass: classify(d.symbol),
+        // Red-Team-Befund 25.08.: Ohne diese Zusicherung schließt
+        // `schlussMenge` beim Nachbuchen IMMER die GANZE Position — bei
+        // einem echten Teilfill (der Normalfall aus `pflegeSchutz`) eine
+        // zu große Buchung samt falscher Wallet-Gutschrift, und der real
+        // beim Broker verbliebene Rest würde zu neuem Fremdbestand.
+        ...(d.restStorniert === true ? { restStorniert: true } : {}),
       },
       strategy,
     ).catch((err: unknown) => ({
