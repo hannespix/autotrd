@@ -1158,6 +1158,13 @@ async function executeUserTrades(
                 befund.orderId,
                 scanId,
                 r.reason ?? 'unbekannt',
+                // Dieselbe Zusicherung wie beim Buchungsversuch oben:
+                // pflegeSchutz storniert den Rest der Stop-Order selbst,
+                // bevor sie den gefüllten Teil meldet — ohne dieses Flag
+                // schlösse ein späterer Nachbuchungsversuch die GANZE
+                // Position, obwohl der Broker nur einen Teil verkauft hat
+                // (Red-Team-Befund 25.08.).
+                true,
               );
               continue;
             }

@@ -113,3 +113,53 @@ describe('Root-Cause-Fix: Fehlbestand durch ungenetzte Schutz-Stop-Fills', () =>
     expect(block).toContain('await merkeUnbookedFill(');
   });
 });
+
+/**
+ * Red-Team-Befund 25.08. zum Fehlbestand-Fix: `unbookedFills` speicherte
+ * bisher kein `restStorniert` — ohne diese Zusicherung schließt
+ * `schlussMenge` beim Nachbuchen über `bucheUnverbuchteFills` IMMER die
+ * GANZE Position. Für `pflegeSchutz` ist ein Teilfill der NORMALFALL (sie
+ * storniert den Rest der Stop-Order selbst, bevor sie den gefüllten Teil
+ * meldet) — ohne das Flag hätte ein scheiternder Erstversuch beim
+ * Nachbuchen eine zu GROSSE Menge gebucht: falsche Wallet-Gutschrift, und
+ * der real beim Broker verbliebene Rest würde zu einem NEUEN Fremdbestand
+ * — der genau der Fehler ist, den dieser Fix schließen soll.
+ */
+describe('Root-Cause-Fix: restStorniert überlebt die Nachbuchung', () => {
+  it('merkeUnbookedFill schreibt restStorniert nur bei true ins Dokument', () => {
+    const fn = broker.slice(
+      broker.indexOf('export async function merkeUnbookedFill'),
+      broker.indexOf('export async function merkeUnbookedFill') + 2000,
+    );
+    expect(fn).toContain("...(restStorniert === true ? { restStorniert: true } : {}),");
+  });
+
+  it('der routeOrder-Pfad reicht dieselbe Zusicherung an merkeUnbookedFill weiter', () => {
+    const ab = broker.indexOf('if (!buchung.executed) {');
+    expect(ab).toBeGreaterThan(-1);
+    const bis = broker.indexOf('\n  }', ab);
+    const block = broker.slice(ab, bis);
+    expect(block).toContain('schliesst ? routing.restStorniert === true : undefined,');
+  });
+
+  it('der pflegeSchutz-Fehlerzweig übergibt restStorniert:true — sie storniert den Rest ja selbst', () => {
+    const ab = scan.indexOf('await merkeUnbookedFill(');
+    expect(ab).toBeGreaterThan(-1);
+    const bis = scan.indexOf(');', ab);
+    const block = scan.slice(ab, bis);
+    // Der letzte Positionsparameter des Aufrufs ist die
+    // restStorniert-Zusicherung — hartcodiert `true`.
+    expect(block.trimEnd()).toMatch(/\n\s*true,\s*$/);
+  });
+
+  it('bucheUnverbuchteFills liest restStorniert und reicht es an executePaperTrade weiter', () => {
+    const fn = broker.slice(broker.indexOf('export async function bucheUnverbuchteFills'));
+    expect(fn).toContain('restStorniert?: boolean;');
+    const ab = fn.indexOf('const r = await executePaperTrade(');
+    const bis = fn.indexOf('strategy,', ab);
+    expect(ab).toBeGreaterThan(-1);
+    expect(fn.slice(ab, bis)).toContain(
+      "...(d.restStorniert === true ? { restStorniert: true } : {}),",
+    );
+  });
+});

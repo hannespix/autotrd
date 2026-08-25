@@ -649,6 +649,16 @@ export function schlussMenge(
  * erzeugte „Position fehlt beim Broker": Der Broker hatte längst verkauft,
  * das Buch erfuhr nie davon. Diese Funktion ist das gemeinsame Netz für
  * alle drei Stellen.
+ *
+ * `restStorniert` MUSS mit ins Dokument (Red-Team-Befund 25.08.): Ohne die
+ * Zusicherung schließt `schlussMenge` beim Nachbuchen über
+ * `bucheUnverbuchteFills` IMMER die GANZE Position (der sichere Fallback,
+ * s. `teilSchluss.test.ts`). Für einen echten Teilfill — der Normalfall bei
+ * `pflegeSchutz`, die den Rest der Stop-Order selbst storniert, bevor sie
+ * den gefüllten Teil meldet — wäre das eine zu GROSSE Buchung: Die Wallet
+ * würde für Stücke gutgeschrieben, die nie verkauft wurden, und der real
+ * beim Broker verbliebene, jetzt ungeschützte Rest würde zu einem NEUEN
+ * Fremdbestand — der Fehler, den dieser Fix gerade schließt.
  */
 export async function merkeUnbookedFill(
   uid: string,
@@ -659,6 +669,7 @@ export async function merkeUnbookedFill(
   brokerOrderId: string | null,
   laufId: string,
   grund: string,
+  restStorniert?: boolean,
 ): Promise<void> {
   logger.error(`FILL NICHT GEBUCHT ${uid} ${symbol} ${side} ${qty} @ ${fillPreis} — ${grund}`);
   const db = getFirestore();
@@ -676,6 +687,7 @@ export async function merkeUnbookedFill(
       laufId,
       grund,
       at: new Date().toISOString(),
+      ...(restStorniert === true ? { restStorniert: true } : {}),
     })
     .catch((err: unknown) => logger.error(`unbookedFills ${uid} nicht schreibbar`, err));
   // update()+FieldPath statt set(merge) (Befund 24.08.): sonst legte ein
@@ -951,6 +963,10 @@ export async function executeTrade(
       routing.brokerOrderId ?? null,
       lauf,
       buchung.reason ?? 'unbekannt',
+      // Dieselbe Zusicherung wie oben im Buchungsversuch — sonst schließt
+      // ein späterer Nachbuchungsversuch einen echten Teilfill komplett
+      // (Red-Team-Befund 25.08.).
+      schliesst ? routing.restStorniert === true : undefined,
     );
   }
 
@@ -1109,6 +1125,7 @@ export async function bucheUnverbuchteFills(
       qty?: number;
       fillPreis?: number | null;
       brokerOrderId?: string | null;
+      restStorniert?: boolean;
     };
     /* `dran` enthält keine unbrauchbaren Einträge mehr — die sind oben
      * aussortiert. Der Guard bleibt trotzdem stehen: Er trägt die
@@ -1137,6 +1154,12 @@ export async function bucheUnverbuchteFills(
         ...(d.brokerOrderId ? { brokerOrderId: d.brokerOrderId } : {}),
         source: 'engine',
         assetClass: classify(d.symbol),
+        // Red-Team-Befund 25.08.: Ohne diese Zusicherung schließt
+        // `schlussMenge` beim Nachbuchen IMMER die GANZE Position — bei
+        // einem echten Teilfill (der Normalfall aus `pflegeSchutz`) eine
+        // zu große Buchung samt falscher Wallet-Gutschrift, und der real
+        // beim Broker verbliebene Rest würde zu neuem Fremdbestand.
+        ...(d.restStorniert === true ? { restStorniert: true } : {}),
       },
       strategy,
     ).catch((err: unknown) => ({
