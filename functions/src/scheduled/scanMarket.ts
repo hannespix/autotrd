@@ -93,6 +93,7 @@ import {
   bucheUnverbuchteFills,
   executeTrade,
   kapitalDeckel,
+  merkeUnbookedFill,
   resolveBrokerMode,
   riskExitReason,
   type MarginBudget,
@@ -1125,7 +1126,10 @@ async function executeUserTrades(
                   restStorniert: true,
                 },
                 clamped,
-              );
+              ).catch((err: unknown) => ({
+                executed: false as const,
+                reason: `buchung_exception: ${err instanceof Error ? err.message : String(err)}`.slice(0, 200),
+              }));
               if (r.executed) {
                 executed += 1;
                 /* Beim Teilschluss überlebt die Position — sie muss auch in
@@ -1140,8 +1144,21 @@ async function executeUserTrades(
                 continue;
               }
               // Fill bekannt, Buchung gescheitert: NICHT weiterprüfen — ein
-              // Engine-Exit würde denselben Bestand ein zweites Mal verkaufen.
-              logger.error(`Broker-Stop-Fill NICHT gebucht ${uid} ${symbol}: ${r.reason ?? '?'}`);
+              // Engine-Exit würde denselben Bestand ein zweites Mal
+              // verkaufen. Root-Cause-Befund 25.08.: Ohne dieses Netz
+              // verschwand der Fill hier folgenlos — der Broker hatte
+              // längst verkauft, das Buch führte die Position unverändert
+              // weiter. Siehe `merkeUnbookedFill`.
+              await merkeUnbookedFill(
+                uid,
+                symbol,
+                isShort ? 'buy' : 'sell',
+                befund.fillQty,
+                befund.fillPreis,
+                befund.orderId,
+                scanId,
+                r.reason ?? 'unbekannt',
+              );
               continue;
             }
           }

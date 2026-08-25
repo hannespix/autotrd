@@ -62,3 +62,54 @@ describe('K-2b: unbookedFills hat einen Konsumenten', () => {
     expect(broker).toContain('stornoBeiKeinFill: eroeffnet');
   });
 });
+
+/**
+ * Root-Cause-Befund 25.08. (Owner-Meldung: „ständige Unstimmigkeiten
+ * zwischen Autotrd und Alpaca").
+ *
+ * Nur der `routeOrder`-Pfad in `executeTrade` hatte das oben geprüfte Netz
+ * (K-2a/K-2b). Zwei weitere Stellen entdecken ebenfalls einen Broker-Fill,
+ * buchten ihn aber direkt — scheiterte die Buchung, verschwand der Fill
+ * folgenlos: der Broker hatte längst verkauft, das Buch führte die Position
+ * unverändert weiter. Genau das ist „Position fehlt beim Broker" (Fehlbestand,
+ * sperrt neue Einstiege). `merkeUnbookedFill` ist jetzt das gemeinsame Netz
+ * für alle drei Stellen — dieser Wächter stellt sicher, dass keine Stelle
+ * daran vorbeibucht.
+ */
+describe('Root-Cause-Fix: Fehlbestand durch ungenetzte Schutz-Stop-Fills', () => {
+  it('merkeUnbookedFill existiert und wird von scanMarket.ts importiert', () => {
+    expect(broker).toMatch(/export async function merkeUnbookedFill/);
+    expect(scan).toContain('merkeUnbookedFill,');
+  });
+
+  it('genau zwei Aufrufe in broker.ts — routeOrder-Pfad UND schutzAufheben', () => {
+    const treffer = (broker.match(/await merkeUnbookedFill\(/g) ?? []).length;
+    expect(treffer).toBe(2);
+  });
+
+  it('genau ein Aufruf in scanMarket.ts — der pflegeSchutz-Aufrufer', () => {
+    const treffer = (scan.match(/await merkeUnbookedFill\(/g) ?? []).length;
+    expect(treffer).toBe(1);
+  });
+
+  it('schutzAufheben bucht NICHT mehr blind — kein return ohne Buchungsprüfung', () => {
+    // Vorher: `return executePaperTrade(...)` — ein scheiternder Fill
+    // verschwand spurlos. Jetzt muss das Ergebnis erst geprüft werden.
+    const ab = broker.indexOf("if (aufhebung.stand === 'gefuellt') {");
+    expect(ab).toBeGreaterThan(-1);
+    const bis = broker.indexOf('\n  }', ab); // Ende des schutz?.orderId-Blocks
+    const block = broker.slice(ab, bis);
+    expect(block).not.toMatch(/return executePaperTrade\(/);
+    expect(block).toContain('const aufhebungsBuchung = await executePaperTrade(');
+    expect(block).toContain('if (!aufhebungsBuchung.executed)');
+  });
+
+  it('der pflegeSchutz-Fehlerzweig in scanMarket.ts bucht nicht mehr nur ins Log', () => {
+    const ab = scan.indexOf("if (befund.stand === 'gefuellt') {");
+    expect(ab).toBeGreaterThan(-1);
+    const bis = scan.indexOf('\n            }', ab);
+    const block = scan.slice(ab, bis);
+    expect(block).not.toContain("logger.error(`Broker-Stop-Fill NICHT gebucht");
+    expect(block).toContain('await merkeUnbookedFill(');
+  });
+});

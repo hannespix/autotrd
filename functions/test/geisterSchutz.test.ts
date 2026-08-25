@@ -51,9 +51,13 @@ describe('broker.ts — Cooldown-Stempel nach Buchungspanne per FieldPath', () =
   const text = lese('src', 'core', 'broker.ts');
 
   it('engineCooldowns wird über FieldPath(symbol) gesetzt, nicht per Objekt', () => {
+    // Seit dem Root-Cause-Fix 25.08. (gemeinsames Netz `merkeUnbookedFill`
+    // für alle drei Fill-Buchungs-Pfade) trägt der Parameter den generischen
+    // Namen `symbol`, nicht mehr `req.symbol` — die FieldPath-Disziplin
+    // selbst ist unverändert.
     const ab = text.indexOf('Cooldown nach Fill-Panne');
     const block = text.slice(Math.max(0, ab - 200), ab + 300);
-    expect(block).toContain("new FieldPath('engineCooldowns', req.symbol)");
+    expect(block).toContain("new FieldPath('engineCooldowns', symbol)");
     expect(block).not.toContain('{ engineCooldowns:');
   });
 });
