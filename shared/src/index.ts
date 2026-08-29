@@ -51,6 +51,7 @@ export * from './erkenntnisse.js';
 export * from './wachhund.js';
 export * from './journalText.js';
 export * from './kiBericht.js';
+export * from './kiStimme.js';
 export * from './tagRueckblick.js';
 export * from './sizingSchatten.js';
 export * from './risiko.js';
