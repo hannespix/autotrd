@@ -60,13 +60,23 @@ export async function erhebeKiStimme(now = new Date()): Promise<KiStimmeResult> 
   const vorher = (await ref.get()).data() as KiStimmeDoc | undefined;
 
   const momentum = (await db.doc('meta/momentum').get()).data() as
-    | { top?: Array<{ symbol: string; score: number }> }
+    | { top?: Array<{ symbol: string; score: number }>; date?: string }
     | undefined;
   const health = (await db.doc('meta/health').get()).data() ?? {};
   const top = momentum?.top ?? [];
   const schluessel = (process.env.ANTHROPIC_API_KEY ?? '').trim();
 
-  const e = entscheideKiStimmeLauf(vorher, top.length > 0, schluessel.length > 0, now);
+  const heute = now.toISOString().slice(0, 10);
+  /* Nichtleer reicht nicht (Red-Team-Befund 25.08.): `meta/momentum` wird
+   * nur bei einem ERFOLGREICHEN `momentumRun`-Durchlauf mit frischem `date`
+   * neu geschrieben. Scheitert der Lauf an einem Tag, bliebe ohne diesen
+   * Vergleich die Top-8-Liste von GESTERN liegen — und die Stimme würde
+   * stillschweigend auf veralteten Daten erhoben, aber unter dem HEUTIGEN
+   * Datum abgelegt. Der geplante lookahead-sichere Auswertungs-Lauf könnte
+   * das nie erkennen, weil kein Feld den Widerspruch trägt. */
+  const datenDa = top.length > 0 && momentum?.date === heute;
+
+  const e = entscheideKiStimmeLauf(vorher, datenDa, schluessel.length > 0, now);
   if (!e.laufen) {
     logger.info(`kiStimme: übersprungen — ${e.grund}`);
     // Wie beim Lagebericht: `schon_gelaufen`/`monatsdeckel` überschreiben NIE
