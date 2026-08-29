@@ -27,6 +27,7 @@ export { tagRueckblick, tagRueckblickNow } from './scheduled/tagRueckblick.js';
 export { riskPulse, pulseNow } from './scheduled/riskPulse.js';
 export { wachhund, wachhundNow } from './scheduled/wachhund.js';
 export { kiBericht, kiBerichtNow } from './scheduled/kiBericht.js';
+export { kiStimme, kiStimmeNow } from './scheduled/kiStimme.js';
 export { ensureProfile } from './callable/profile.js';
 export { nachricht } from './callable/nachricht.js';
 export { saveStrategy } from './callable/strategy.js';
