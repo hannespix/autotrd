@@ -125,6 +125,13 @@ optimizer:
   # Champion nur ersetzen, wenn der Kandidat um diesen Faktor besser ist
   # (0.1 = 10 % Marge) — sonst tauscht man Rauschen gegen Rauschen.
   promotionMargin: 0.1
+  # Probabilistic Sharpe Ratio der verketteten Out-of-Sample-Tagesrenditen
+  # (gegen Sharpe 0): Wahrscheinlichkeit, dass die OOS-Kante echt ist.
+  minPsrOos: 0.9
+  # Deflated Sharpe (In-Sample, gegen die Zahl der Versuche) zusätzlich als
+  # hartes Gate (true) oder nur im Bericht (false). Die OOS-Kette ist bereits
+  # selektionsfrei; DSR bestraft breite Gitter mit toten Regionen doppelt.
+  dsrIsGate: false
 
 costs:
   # Slippage je Seite in Basispunkten (Marktorder gegen den Spread).

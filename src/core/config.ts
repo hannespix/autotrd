@@ -114,6 +114,10 @@ export const ConfigSchema = z.object({
       holdoutDays: z.number().int().min(0).default(60),
       /** Champion nur ersetzen, wenn Kandidat um diesen Faktor besser ist. */
       promotionMargin: z.number().min(0).default(0.1),
+      /** PSR der verketteten OOS-Tagesrenditen (gegen SR 0) muss diesen Wert erreichen. */
+      minPsrOos: z.number().min(0).max(1).default(0.9),
+      /** Deflated Sharpe (In-Sample) zusätzlich als hartes Gate (sonst nur im Bericht). */
+      dsrIsGate: z.boolean().default(false),
     })
     .default({
       strategies: ['trend_donchian', 'momentum_pullback', 'mean_reversion'],
@@ -130,6 +134,8 @@ export const ConfigSchema = z.object({
       stressCostMultiplier: 1.5,
       holdoutDays: 60,
       promotionMargin: 0.1,
+      minPsrOos: 0.9,
+      dsrIsGate: false,
     }),
   costs: z
     .object({
