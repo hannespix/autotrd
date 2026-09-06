@@ -1,58 +1,40 @@
+// Barrel von @autotrd/shared — nur noch, was Functions und Frontend des
+// Auto-Traders wirklich importieren. Was hier fehlt, gehörte zu Scan,
+// Konfluenz, Prognose, KI, Tuner und Schatten-Flotten und ist mit ihnen
+// gegangen (siehe shared/README.md).
+
+// Schema (Strategie/Wallet/Position/Trade — Altdaten bleiben lesbar) und
+// Einstellungen des Auto-Traders
 export * from './strategy.js';
-export * from './zugang.js';
+export * from './autoSettings.js';
 export * from './validate.js';
-export * from './indicators.js';
-export * from './universe.js';
-export * from './forecast.js';
-export * from './rules/index.js';
-export * from './marketHours.js';
-export * from './kursAlter.js';
-export * from './prediction.js';
-export * from './portfolio.js';
-export * from './autotune.js';
-export * from './tuneGrid.js';
-export * from './momentum.js';
-export * from './classAdvisor.js';
-export * from './uebernahmeSchnitt.js';
-export * from './benchmark.js';
-export * from './marktbreite.js';
-export * from './classShadow.js';
-export * from './captureLearning.js';
-export * from './kontoAbgleich.js';
-export * from './brokerBindung.js';
-export * from './kurveAusTrades.js';
-export * from './bestPractice.js';
-export * from './loadouts.js';
-export * from './overfit.js';
-export * from './liveReadiness.js';
-export * from './fx.js';
-export * from './tax.js';
-export * from './depotAufteilung.js';
-export * from './tradeAnalytics.js';
-export * from './globalLearning.js';
-export * from './tradingHealth.js';
-export * from './margin.js';
-export * from './circuitBreaker.js';
-export * from './costGate.js';
-export * from './riskSizing.js';
-export * from './tuneAdvisor.js';
-export * from './sentiment.js';
-export * from './newsGate.js';
-export * from './tradeFilter.js';
-export * from './regime.js';
-export * from './regimeSignal.js';
-export * from './conviction.js';
-export * from './positioning.js';
-export * from './leverageGate.js';
-export * from './calendar.js';
-export * from './positionView.js';
-export * from './chartTime.js';
-export * from './erkenntnisse.js';
-export * from './wachhund.js';
-export * from './journalText.js';
-export * from './kiBericht.js';
-export * from './kiStimme.js';
-export * from './tagRueckblick.js';
-export * from './sizingSchatten.js';
+
+// Konto, Zugang, Regeln
+export * from './zugang.js';
 export * from './risiko.js';
 export * from './nachrichten.js';
+export * from './brokerBindung.js';
+export * from './circuitBreaker.js';
+export * from './liveReadiness.js';
+export * from './kontoAbgleich.js';
+
+// Markt, Kalender, Katalog
+export * from './universe.js';
+export * from './marketHours.js';
+export * from './calendar.js';
+export * from './fx.js';
+
+// Auswertung (Equity-Snapshot, Historie, Steuer)
+export * from './portfolio.js';
+export * from './positionView.js';
+export * from './tradeAnalytics.js';
+export * from './tradingHealth.js';
+export * from './bestPractice.js';
+export * from './classShadow.js';
+export * from './globalLearning.js';
+export * from './classAdvisor.js';
+export * from './erkenntnisse.js';
+export * from './tax.js';
+
+// Wächter
+export * from './wachhund.js';

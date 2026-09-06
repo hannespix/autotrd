@@ -55,7 +55,9 @@ describe('Config je Nutzer', () => {
 
   it('Alt-Felder werden in die Hülle geklemmt: riskPerTradePct 0 ⇒ Schema-Default, 100 Positionen ⇒ 50, 80 % Tagesverlust ⇒ 50', () => {
     const part = userRiskFrom({ strategy: { engine: { riskPerTradePct: 0, maxPositionPct: 0, maxOpenPositions: 100, dailyLossLimitPct: 80 }, signals: {} } });
-    expect(part.risk).toEqual({ maxDrawdownPct: 10, maxPositions: 50, maxDailyLossPct: 50 });
+    // Seit der Ableitung über `autoSettingsFromLegacy` (shared) kommt der Risiko-Teil
+    // vollständig — die Voreinstellungen sind dieselben wie im Schema des Kerns.
+    expect(part.risk).toEqual({ riskPerTradePct: 0.5, maxPositionPct: 20, maxPositions: 50, maxDailyLossPct: 50, maxDrawdownPct: 10, allowShort: false });
     const { config } = buildUserConfig(globalConfigRaw(undefined), { strategy: { engine: {}, signals: {} } });
     expect(config.risk.riskPerTradePct).toBe(0.5);
     expect(config.risk.allowShort).toBe(false);

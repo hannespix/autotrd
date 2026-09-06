@@ -1,102 +1,67 @@
+/**
+ * Struktur-Prüfung des Alt-Payloads `{ strategy }` (Übergang).
+ *
+ * Nur noch das, was der Auto-Trader daraus liest: `engine.running`. Die
+ * Feld-für-Feld-Prüfung des alten Schemas ist mit dem Scan gegangen — was
+ * bleibt, ist die harte Ablehnung des bekannten kaputten verschachtelten
+ * Alt-Alt-Schemas.
+ */
 import { describe, expect, it } from 'vitest';
-import {
-  DEFAULT_STRATEGY,
-  MAX_LEVERAGE,
-  MAX_OPEN_POSITIONS_CAP,
-  isStrategy,
-  validateStrategy,
-} from '../src/index.js';
+import { DEFAULT_STRATEGY, engineRunningAus, validateStrategy } from '../src/index.js';
 
-describe('validateStrategy (flaches Schema, CLAUDE.md §2)', () => {
+describe('validateStrategy (Struktur des Alt-Payloads)', () => {
   it('akzeptiert DEFAULT_STRATEGY', () => {
     expect(validateStrategy(DEFAULT_STRATEGY)).toEqual([]);
-    expect(isStrategy(DEFAULT_STRATEGY)).toBe(true);
+    expect(engineRunningAus(DEFAULT_STRATEGY)).toBe(false);
   });
 
-  it('lehnt das bekannte kaputte verschachtelte Alt-Schema ab', () => {
+  it('lehnt das bekannte kaputte verschachtelte Alt-Alt-Schema ab', () => {
     const legacy = {
       strategy: { type: 'confluence', parameters: {} },
       indices: [{ symbol: 'NDX' }],
       risk_management: { stop_loss: 2 },
       execution: { interval: 5 },
+      engine: { running: true },
     };
     const problems = validateStrategy(legacy);
-    expect(problems.length).toBeGreaterThan(0);
-    // Seit Phase 3 sind Meldungen Codes; das Frontend übersetzt (valText).
-    expect(problems.join('\n')).toMatch(/val\.altSchema\|strategy/);
-    expect(isStrategy(legacy)).toBe(false);
-  });
-
-  it('meldet fehlende Pflichtschlüssel', () => {
-    const problems = validateStrategy({ broker: DEFAULT_STRATEGY.broker });
-    expect(problems).toEqual(
-      expect.arrayContaining(['val.pflichtFehlt|watchlist']),
-    );
+    expect(problems).toEqual([
+      'val.altSchema|strategy',
+      'val.altSchema|indices',
+      'val.altSchema|risk_management',
+      'val.altSchema|execution',
+    ]);
+    // Aus einem abgelehnten Payload wird NICHTS gelesen — auch kein running.
+    expect(engineRunningAus(legacy)).toBeUndefined();
   });
 
   it('lehnt Nicht-Objekte ab', () => {
-    expect(validateStrategy(null)).toHaveLength(1);
-    expect(validateStrategy('yaml')).toHaveLength(1);
-    expect(validateStrategy([])).toHaveLength(1);
+    for (const x of [null, undefined, 'yaml', 5, []]) {
+      expect(validateStrategy(x)).toEqual(['val.keinObjekt']);
+      expect(engineRunningAus(x)).toBeUndefined();
+    }
   });
 
-  it('prüft Feldtypen im Detail', () => {
-    const broken = structuredClone(DEFAULT_STRATEGY) as Record<string, unknown>;
-    (broken.broker as Record<string, unknown>).initialCapital = -5;
-    (broken.engine as Record<string, unknown>).running = 'yes';
-    (broken.signals as Record<string, unknown>).minConfluence = 0;
-    const problems = validateStrategy(broken);
-    expect(problems).toEqual(
-      expect.arrayContaining([
-        expect.stringContaining('broker.initialCapital'),
-        expect.stringContaining('engine.running'),
-        expect.stringContaining('signals.minConfluence'),
-      ]),
-    );
+  it('engine ist Pflicht und muss ein Objekt sein', () => {
+    expect(validateStrategy({ broker: DEFAULT_STRATEGY.broker })).toEqual(['val.pflichtFehlt|engine']);
+    expect(validateStrategy({ engine: 'an' })).toEqual(['val.objekt|engine']);
+    expect(validateStrategy({ engine: null })).toEqual(['val.objekt|engine']);
   });
-});
 
-describe('Hebel + Positionslimit (28.07.)', () => {
-  const mitBroker = (leverage: unknown): unknown => {
-    const s = structuredClone(DEFAULT_STRATEGY) as Record<string, Record<string, unknown>>;
-    s.broker!.leverage = leverage;
-    return s;
-  };
-  const mitEngine = (maxOpenPositions: unknown): unknown => {
-    const s = structuredClone(DEFAULT_STRATEGY) as Record<string, Record<string, unknown>>;
-    s.engine!.maxOpenPositions = maxOpenPositions;
-    return s;
-  };
+  it('engine.running muss ein Boolean sein — "yes" schaltet nichts ein', () => {
+    expect(validateStrategy({ engine: { running: 'yes' } })).toEqual(['val.boolean|engine.running']);
+    expect(validateStrategy({ engine: {} })).toEqual(['val.boolean|engine.running']);
+    expect(engineRunningAus({ engine: { running: 'yes' } })).toBeUndefined();
+  });
 
-  it('beide Felder dürfen fehlen (Altbestand bleibt gültig)', () => {
-    const s = structuredClone(DEFAULT_STRATEGY) as Record<string, Record<string, unknown>>;
-    delete s.broker!.leverage;
-    delete s.engine!.maxOpenPositions;
+  it('alle anderen Felder sind egal — auch kaputte Handelsparameter blockieren den Schalter nicht', () => {
+    const s = structuredClone(DEFAULT_STRATEGY) as unknown as Record<string, Record<string, unknown>>;
+    s.broker!.initialCapital = -5;
+    s.engine!.maxOpenPositions = 999;
+    s.signals!.minConfluence = 0;
+    s.engine!.running = true;
     expect(validateStrategy(s)).toEqual([]);
-  });
-
-  it('gültige Hebel gehen durch', () => {
-    expect(validateStrategy(mitBroker(1))).toEqual([]);
-    expect(validateStrategy(mitBroker(MAX_LEVERAGE))).toEqual([]);
-  });
-
-  it('Hebel über dem Maximum wird abgelehnt', () => {
-    // Wichtig, dass das schon beim SPEICHERN scheitert: Die Hülle würde ihn
-    // ohnehin klemmen, aber dann zeigte die UI dauerhaft eine Zahl an, nach
-    // der nie gehandelt wird.
-    expect(validateStrategy(mitBroker(MAX_LEVERAGE + 1)).join()).toMatch(/leverage/);
-    expect(validateStrategy(mitBroker(0)).join()).toMatch(/leverage/);
-    expect(validateStrategy(mitBroker('3')).join()).toMatch(/leverage/);
-  });
-
-  it('gültige Positionslimits gehen durch', () => {
-    expect(validateStrategy(mitEngine(1))).toEqual([]);
-    expect(validateStrategy(mitEngine(MAX_OPEN_POSITIONS_CAP))).toEqual([]);
-  });
-
-  it('Positionslimit außerhalb der Spanne wird abgelehnt', () => {
-    expect(validateStrategy(mitEngine(0)).join()).toMatch(/maxOpenPositions/);
-    expect(validateStrategy(mitEngine(MAX_OPEN_POSITIONS_CAP + 1)).join()).toMatch(/maxOpenPositions/);
-    expect(validateStrategy(mitEngine(null)).join()).toMatch(/maxOpenPositions/);
+    expect(engineRunningAus(s)).toBe(true);
+    // Auch ein minimales Objekt reicht: Es wird nur ein Feld gelesen.
+    expect(engineRunningAus({ engine: { running: true } })).toBe(true);
   });
 });

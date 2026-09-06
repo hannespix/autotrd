@@ -1,15 +1,18 @@
 /**
  * Config je Nutzer = globaler Teil (`meta/engineConfig`) + Risiko-Teil des
  * Nutzers (`settings.auto`, sonst aus dem alten `settings.strategy`
- * abgeleitet). Validiert wird das Ergebnis mit demselben `parseConfig()`
- * wie im Dauerprozess — eine Engine startet nie mit einer halb verstandenen
- * Config; ein ungültiger Nutzer-Teil überspringt den Nutzer mit Fehler.
+ * abgeleitet — `autoSettingsFromLegacy` in shared, dieselbe Ableitung wie
+ * Callable und Frontend). Validiert wird das Ergebnis mit demselben
+ * `parseConfig()` wie im Dauerprozess — eine Engine startet nie mit einer
+ * halb verstandenen Config; ein ungültiger Nutzer-Teil überspringt den
+ * Nutzer mit Fehler.
  *
  * Global sind: Universum, Zeitrahmen, Feed, Sitzungsfenster, Kosten,
  * Optimierer, Engine-Feinheiten, Fallback-Strategie. Je Nutzer: `risk`.
  * `notify`/`paths` haben im Takt keine Bedeutung und werden verworfen.
  */
 import { normalizeUserSymbol } from '../../../src/alpaca/symbols.ts';
+import { autoSettingsFromLegacy } from '../../../shared/src/autoSettings.js';
 import { ConfigError, parseConfig, type Config } from '../../../src/core/config.ts';
 import { isRecord, plain } from './firestoreLike.js';
 
@@ -53,18 +56,17 @@ export interface UserRiskPart {
   source: UserRiskSource;
 }
 
-const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
-const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
-
 const AUTO_FIELDS = ['riskPerTradePct', 'maxPositionPct', 'maxPositions', 'maxDailyLossPct', 'maxDrawdownPct'] as const;
 
 /**
  * Risiko-Teil aus den Nutzer-Settings.
  *
  * `settings.auto` wird unverändert durchgereicht (das Schema prüft); die
- * Alt-Felder werden in die Hülle des Schemas geklemmt, weil sie aus einer
- * anderen Welt stammen (riskPerTradePct 0 hieß dort „Prozent-Tranche", hier
- * hieße es „kein Risiko-Budget" ⇒ Stückzahl 0).
+ * Alt-Felder werden über `autoSettingsFromLegacy` (shared) in die Hülle des
+ * Schemas geklemmt, weil sie aus einer anderen Welt stammen (riskPerTradePct
+ * 0 hieß dort „Prozent-Tranche", hier hieße es „kein Risiko-Budget" ⇒
+ * Stückzahl 0). Die Ableitung wohnt in shared, damit Takt, Callable und
+ * Frontend dieselben Zahlen sehen.
  */
 export function userRiskFrom(settings: unknown): UserRiskPart {
   const s = isRecord(settings) ? settings : {};
@@ -77,18 +79,10 @@ export function userRiskFrom(settings: unknown): UserRiskPart {
     return { risk, symbols, source: 'auto' };
   }
   if (isRecord(s.strategy)) {
-    const engine = isRecord(s.strategy.engine) ? s.strategy.engine : {};
-    const signals = isRecord(s.strategy.signals) ? s.strategy.signals : {};
-    const risk: Record<string, unknown> = { maxDrawdownPct: 10 };
-    const rpt = num(engine.riskPerTradePct);
-    if (rpt !== null && rpt > 0) risk.riskPerTradePct = clamp(rpt, 0.01, 5);
-    const mpp = num(engine.maxPositionPct);
-    if (mpp !== null && mpp > 0) risk.maxPositionPct = clamp(mpp, 0.1, 100);
-    const mop = num(engine.maxOpenPositions);
-    if (mop !== null && mop >= 1) risk.maxPositions = clamp(Math.floor(mop), 1, 50);
-    const dll = num(engine.dailyLossLimitPct);
-    if (dll !== null && dll >= 0) risk.maxDailyLossPct = clamp(dll, 0, 50);
-    if (typeof signals.allowShort === 'boolean') risk.allowShort = signals.allowShort;
+    const auto = autoSettingsFromLegacy(s.strategy);
+    const risk: Record<string, unknown> = {};
+    for (const k of AUTO_FIELDS) risk[k] = auto[k];
+    risk.allowShort = auto.allowShort;
     return { risk, symbols: null, source: 'legacy' };
   }
   return { risk: {}, symbols: null, source: 'default' };

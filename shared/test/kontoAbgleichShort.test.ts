@@ -8,10 +8,12 @@
  * Buchführung auf BEIDEN Seiten. Ohne Korrektur war die Einstiegs-Sperre
  * ab ~2,5 % Equity in Shorts dauerhaft an, und ein Dauer-Alarm macht
  * blind für echte Fälle wie die 84 598 $ vom 12.08.
+ *
+ * Geprüft wird hier die pure Rechnung. Die Verdrahtung im alten
+ * `functions/src/core/brokerAbgleich.ts` ist mit dem Rückbau der
+ * Handelsplattform gegangen; der Engine-Takt gleicht Positionen im Kern ab
+ * (`src/engine`).
  */
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { kontoAbgleich } from '../src/kontoAbgleich.js';
 
@@ -63,17 +65,5 @@ describe('kontoAbgleich — short-bewusst', () => {
   it('unsinnige Korrektur zählt als 0 — nie eine erfundene Differenz wegrechnen', () => {
     expect(kontoAbgleich(BUCH, BROKER, undefined, undefined, Number.NaN).zustand).toBe('grob');
     expect(kontoAbgleich(BUCH, BROKER, undefined, undefined, -5_000).zustand).toBe('grob');
-  });
-});
-
-describe('Short-Korrektur — die Verdrahtung (Quelltext-Wächter)', () => {
-  it('der Abgleich liefert die Short-Margin aus den eigenen Positionen', () => {
-    const hier = dirname(fileURLToPath(import.meta.url));
-    const src = readFileSync(
-      join(hier, '../../functions/src/core/brokerAbgleich.ts'),
-      'utf8',
-    );
-    expect(src).toContain("p.side === 'short'");
-    expect(src).toMatch(/kontoAbgleich\(\s*\{ cash: buch\.cash[\s\S]{0,200}shortMargin,\s*\)/);
   });
 });
