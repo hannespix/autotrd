@@ -8,7 +8,7 @@
  * Engine sehen würde.
  */
 import type { AssetClass, Bar, BarSeriesLike, Ms, TimeframeMin } from './types.ts';
-import { bucketStart, dayKey, sessionBounds, type Calendar, type SessionBounds } from './time.ts';
+import { bucketStart, dayKeyFor, sessionBounds, type Calendar, type SessionBounds } from './time.ts';
 
 export class BarSeries implements BarSeriesLike {
   readonly length: number;
@@ -155,7 +155,7 @@ export function aggregate(minuteBars: readonly Bar[], opts: AggregateOptions): B
   };
 
   for (const b of minuteBars) {
-    const day = dayKey(b.t);
+    const day = dayKeyFor(b.t, opts.assetClass);
     if (day !== boundsDay) {
       boundsDay = day;
       bounds = sessionBounds(day, opts.assetClass, opts.calendar);
@@ -194,7 +194,7 @@ export function filterRegularSession(bars: readonly Bar[], assetClass: AssetClas
   let boundsDay = '';
   let bounds: SessionBounds | null = null;
   for (const b of bars) {
-    const day = dayKey(b.t);
+    const day = dayKeyFor(b.t, assetClass);
     if (day !== boundsDay) {
       boundsDay = day;
       bounds = sessionBounds(day, assetClass, calendar);

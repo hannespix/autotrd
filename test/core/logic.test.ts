@@ -1,0 +1,249 @@
+import { describe, expect, it } from 'vitest';
+import { BarSeries } from '../../src/core/bars.ts';
+import { parseConfig } from '../../src/core/config.ts';
+import { advancePosition, decide, openPosition, type LogicContext, type SymbolInput } from '../../src/core/logic.ts';
+import type { Decision, HaltState, PositionState, SessionInfo, Strategy, SymbolSnapshot } from '../../src/core/types.ts';
+import { TIMEFRAMES } from '../../src/core/types.ts';
+
+const cfg = parseConfig({ universe: { symbols: ['AAPL'] } });
+
+function stub(decision: Decision, holdsOvernight = true, warmup = 1): Strategy {
+  return {
+    id: 'stub',
+    timeframes: TIMEFRAMES,
+    paramSpace: [],
+    defaults: {},
+    holdsOvernight,
+    warmupBars: () => warmup,
+    precompute: () => ({}),
+    decide: () => decision,
+  };
+}
+
+function series(closes: number[]): BarSeries {
+  return BarSeries.from(closes.map((c, i) => ({ t: 1_000 + i * 60_000, o: c, h: c + 1, l: c - 1, c, v: 1000 })));
+}
+
+const okSession: SessionInfo = {
+  isRegularSession: true,
+  minutesToClose: 200,
+  minutesSinceOpen: 100,
+  barsSinceOpen: 20,
+  isLastBarOfDay: false,
+  day: '2026-09-04',
+};
+
+function snap(over: Partial<SymbolSnapshot> = {}): SymbolSnapshot {
+  const bars = series([98, 99, 100]);
+  return { symbol: 'AAPL', bars, i: bars.length - 1, position: null, session: okSession, ...over };
+}
+
+const noHalt: HaltState = { halted: false, reason: null, since: null, until: null, note: null };
+
+function ctx(over: Partial<LogicContext> = {}): LogicContext {
+  return {
+    now: 5_000_000,
+    today: '2026-09-04',
+    nextTradingDay: '2026-09-08',
+    account: { equity: 10_000, cash: 10_000, dayStartEquity: 10_000, peakEquity: 10_000, dayTradeCount: 0, patternDayTrader: false },
+    positions: new Map(),
+    pendingEntries: new Set(),
+    halt: noHalt,
+    risk: cfg.risk,
+    session: cfg.session,
+    assetClass: 'us_equity',
+    timeframe: 5,
+    dataFresh: true,
+    localDayTrades: 0,
+    assetFacts: () => ({ tradable: true, shortable: true }),
+    ...over,
+  };
+}
+
+const enterLong: Decision = { kind: 'enter', side: 'long', stop: 98, target: 104, reason: 'test' };
+
+function input(decision: Decision, over: Partial<SymbolInput> = {}, snapOver: Partial<SymbolSnapshot> = {}): SymbolInput {
+  return { snap: snap(snapOver), strategy: stub(decision), params: {}, ind: {}, ...over };
+}
+
+function longPos(over: Partial<PositionState> = {}): PositionState {
+  return openPosition({ symbol: 'AAPL', side: 'long', qty: 10, fillPrice: 95, fillTime: 1, stop: 92, target: 110, strategy: 'stub', entryDay: '2026-09-03', ...over });
+}
+
+describe('Einstieg', () => {
+  it('geht durch alle Tore und wird auf Equity gesized', () => {
+    const r = decide(ctx(), [input(enterLong)]);
+    expect(r.intents).toHaveLength(1);
+    const it0 = r.intents[0]!;
+    expect(it0.kind).toBe('enter');
+    if (it0.kind === 'enter') {
+      // Risiko 0,5 % von 10 000 = 50 $ / 2 $ Abstand = 25; Deckel 20 % = 2000 $ / 100 = 20 ⇒ 20
+      expect(it0.qty).toBe(20);
+      expect(it0.stop).toBe(98);
+      expect(it0.target).toBe(104);
+      expect(it0.refPrice).toBe(100);
+    }
+  });
+
+  it('kein Einstieg vor dem Warmup', () => {
+    const r = decide(ctx(), [input(enterLong, { strategy: stub(enterLong, true, 10) })]);
+    expect(r.intents).toHaveLength(0);
+  });
+
+  it('Stop auf der falschen Seite oder ohne Abstand wird abgelehnt', () => {
+    const bad: Decision = { kind: 'enter', side: 'long', stop: 100.01, reason: 'x' };
+    const r = decide(ctx(), [input(bad)]);
+    expect(r.intents).toHaveLength(0);
+    expect(r.notes.some((n) => n.kind === 'blocked' && /Stop/.test(n.text))).toBe(true);
+    const tooClose: Decision = { kind: 'enter', side: 'long', stop: 99.99, reason: 'x' };
+    expect(decide(ctx(), [input(tooClose)]).intents).toHaveLength(0);
+  });
+
+  it('Ziel auf der falschen Seite wird verworfen, Einstieg bleibt', () => {
+    const r = decide(ctx(), [input({ kind: 'enter', side: 'long', stop: 98, target: 90, reason: 'x' })]);
+    expect(r.intents).toHaveLength(1);
+    expect(r.intents[0]!.kind === 'enter' && r.intents[0]!.target).toBeNull();
+  });
+
+  it.each([
+    ['Halt', { halt: { ...noHalt, halted: true, reason: 'manual' as const } }, /Halt/],
+    ['Daten nicht frisch', { dataFresh: false }, /frisch/],
+    ['Einstiegs-Order offen', { pendingEntries: new Set(['AAPL']) }, /bereits offen/],
+    ['Asset nicht handelbar', { assetFacts: () => ({ tradable: false, shortable: false }) }, /handelbar/],
+  ])('blockiert bei %s', (_name, over, re) => {
+    const r = decide(ctx(over as Partial<LogicContext>), [input(enterLong)]);
+    expect(r.intents).toHaveLength(0);
+    expect(r.notes.some((n) => n.kind === 'blocked' && re.test(n.text))).toBe(true);
+  });
+
+  it('Short nur mit Erlaubnis und shortbarem Asset', () => {
+    const short: Decision = { kind: 'enter', side: 'short', stop: 102, reason: 'x' };
+    expect(decide(ctx(), [input(short)]).intents).toHaveLength(0);
+    const allow = { ...cfg.risk, allowShort: true };
+    expect(decide(ctx({ risk: allow }), [input(short)]).intents).toHaveLength(1);
+    expect(decide(ctx({ risk: allow, assetFacts: () => ({ tradable: true, shortable: false }) }), [input(short)]).intents).toHaveLength(0);
+    expect(decide(ctx({ risk: allow, assetClass: 'crypto' }), [input(short)]).intents).toHaveLength(0);
+  });
+
+  it('Session-Tore: Eröffnungs- und Schlussfenster, außerhalb der Sitzung', () => {
+    const early = decide(ctx(), [input(enterLong, {}, { session: { ...okSession, minutesSinceOpen: 3 } })]);
+    expect(early.intents).toHaveLength(0);
+    const late = decide(ctx(), [input(enterLong, {}, { session: { ...okSession, minutesToClose: 20 } })]);
+    expect(late.intents).toHaveLength(0);
+    const off = decide(ctx(), [input(enterLong, {}, { session: { ...okSession, isRegularSession: false } })]);
+    expect(off.intents).toHaveLength(0);
+    // Tagesbars kennen keine Sitzungsfenster
+    const daily = decide(ctx({ timeframe: 1440 }), [input(enterLong, {}, { session: { ...okSession, minutesSinceOpen: 0 } })]);
+    expect(daily.intents).toHaveLength(1);
+  });
+
+  it('Positionslimit zählt offene Positionen, Pending und Einstiege dieses Zyklus', () => {
+    const risk = { ...cfg.risk, maxPositions: 2 };
+    const positions = new Map([['MSFT', longPos({ symbol: 'MSFT' })]]);
+    const r = decide(ctx({ risk, positions }), [
+      input(enterLong, {}, { symbol: 'AAPL' }),
+      input(enterLong, {}, { symbol: 'NVDA' }),
+    ]);
+    expect(r.intents.filter((i) => i.kind === 'enter')).toHaveLength(1);
+    expect(r.notes.some((n) => /Positionslimit/.test(n.text))).toBe(true);
+  });
+
+  it('PDT: unter 25k und drei Daytrades ⇒ kein Intraday-Einstieg', () => {
+    const acc = { equity: 10_000, cash: 10_000, dayStartEquity: 10_000, peakEquity: 10_000, dayTradeCount: 3, patternDayTrader: false };
+    const intraday = stub(enterLong, false);
+    expect(decide(ctx({ account: acc }), [input(enterLong, { strategy: intraday })]).intents).toHaveLength(0);
+    // über 25k greift die Regel nicht
+    expect(decide(ctx({ account: { ...acc, equity: 30_000, cash: 30_000 } }), [input(enterLong, { strategy: intraday })]).intents).toHaveLength(1);
+    // Übernacht-Strategie mit noch einem freien Daytrade darf
+    expect(decide(ctx({ account: { ...acc, dayTradeCount: 2 } }), [input(enterLong)]).intents).toHaveLength(1);
+    // zwei Intraday-Einstiege im selben Zyklus verbrauchen das Fenster
+    const r = decide(ctx({ account: { ...acc, dayTradeCount: 2 } }), [
+      input(enterLong, { strategy: intraday }, { symbol: 'AAPL' }),
+      input(enterLong, { strategy: intraday }, { symbol: 'MSFT' }),
+    ]);
+    expect(r.intents.filter((i) => i.kind === 'enter')).toHaveLength(1);
+  });
+
+  it('Sizing 0 blockiert mit Grund', () => {
+    const acc = { equity: 300, cash: 300, dayStartEquity: 300, peakEquity: 300, dayTradeCount: 0, patternDayTrader: false };
+    const r = decide(ctx({ account: acc }), [input(enterLong)]);
+    expect(r.intents).toHaveLength(0);
+    expect(r.notes.some((n) => /Sizing/.test(n.text))).toBe(true);
+  });
+});
+
+describe('Offene Position', () => {
+  it('Exit-Signal wird ausgeführt — auch im Halt', () => {
+    const positions = new Map([['AAPL', longPos()]]);
+    const r = decide(ctx({ positions, halt: { ...noHalt, halted: true, reason: 'manual' } }), [
+      input({ kind: 'exit', reason: 'Trendbruch' }, {}, { position: positions.get('AAPL')! }),
+    ]);
+    expect(r.intents).toEqual([{ kind: 'exit', symbol: 'AAPL', reason: 'signal', decidedAt: 5_000_000 }]);
+  });
+
+  it('EOD-Flatten für Intraday-Strategien vor Schluss, nicht für Übernacht-Strategien', () => {
+    const pos = longPos();
+    const positions = new Map([['AAPL', pos]]);
+    const eodSession = { ...okSession, minutesToClose: 5 };
+    const r = decide(ctx({ positions }), [input({ kind: 'hold' }, { strategy: stub({ kind: 'hold' }, false) }, { position: pos, session: eodSession })]);
+    expect(r.intents[0]).toMatchObject({ kind: 'exit', reason: 'eod' });
+    const r2 = decide(ctx({ positions }), [input({ kind: 'hold' }, {}, { position: pos, session: eodSession })]);
+    expect(r2.intents).toHaveLength(0);
+  });
+
+  it('Stop nachziehen nur enger und auf der Verlustseite', () => {
+    const pos = longPos({ stop: 92 });
+    const positions = new Map([['AAPL', pos]]);
+    const tighter = decide(ctx({ positions }), [input({ kind: 'move_stop', stop: 96, reason: 'trail' }, {}, { position: pos })]);
+    expect(tighter.intents[0]).toMatchObject({ kind: 'move_stop', stop: 96 });
+    const looser = decide(ctx({ positions }), [input({ kind: 'move_stop', stop: 90, reason: 'trail' }, {}, { position: pos })]);
+    expect(looser.intents).toHaveLength(0);
+    const aboveMarket = decide(ctx({ positions }), [input({ kind: 'move_stop', stop: 101, reason: 'trail' }, {}, { position: pos })]);
+    expect(aboveMarket.intents).toHaveLength(0);
+  });
+
+  it('Gegensignal bei offener Position wird ignoriert', () => {
+    const pos = longPos();
+    const positions = new Map([['AAPL', pos]]);
+    const r = decide(ctx({ positions }), [input({ kind: 'enter', side: 'short', stop: 105, reason: 'x' }, {}, { position: pos })]);
+    expect(r.intents).toHaveLength(0);
+  });
+});
+
+describe('Konto-Sperren', () => {
+  it('Tages-Notbremse stellt alles glatt und sperrt bis zum nächsten Handelstag', () => {
+    const positions = new Map([['AAPL', longPos()], ['MSFT', longPos({ symbol: 'MSFT' })]]);
+    const acc = { equity: 9_700, cash: 5_000, dayStartEquity: 10_000, peakEquity: 10_000, dayTradeCount: 0, patternDayTrader: false };
+    const r = decide(ctx({ positions, account: acc }), [input(enterLong, {}, { symbol: 'NVDA' })]);
+    expect(r.haltTriggered).toBe(true);
+    expect(r.halt.reason).toBe('daily_loss');
+    expect(r.halt.until).toBe('2026-09-08');
+    expect(r.intents.map((i) => i.kind)).toEqual(['exit', 'exit']);
+    expect(r.intents.every((i) => i.kind === 'exit' && i.reason === 'kill_switch')).toBe(true);
+  });
+
+  it('Drawdown-Sperre bleibt bis manuelles resume', () => {
+    const acc = { equity: 10_500, cash: 10_500, dayStartEquity: 10_500, peakEquity: 12_000, dayTradeCount: 0, patternDayTrader: false };
+    const r = decide(ctx({ account: acc }), [input(enterLong)]);
+    expect(r.halt.reason).toBe('drawdown');
+    expect(r.halt.until).toBeNull();
+    expect(r.intents).toHaveLength(0);
+  });
+
+  it('Tages-Halt endet am Zieltag von selbst', () => {
+    const halt: HaltState = { halted: true, reason: 'daily_loss', since: 1, until: '2026-09-04', note: null };
+    const r = decide(ctx({ halt }), [input(enterLong)]);
+    expect(r.halt.halted).toBe(false);
+    expect(r.intents).toHaveLength(1);
+  });
+});
+
+describe('Positions-Hilfen', () => {
+  it('advancePosition zählt Bars und führt das Hochwasser', () => {
+    const p = advancePosition(advancePosition(longPos({ highWater: 95 }), 99), 97);
+    expect(p.barsHeld).toBe(2);
+    expect(p.highWater).toBe(99);
+    const s = advancePosition(openPosition({ symbol: 'X', side: 'short', qty: 1, fillPrice: 50, fillTime: 1, stop: 55, target: null, strategy: 's', entryDay: 'd' }), 48);
+    expect(s.highWater).toBe(48);
+  });
+});

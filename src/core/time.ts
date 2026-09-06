@@ -90,6 +90,17 @@ export function dayKey(ms: Ms): string {
   return toET(ms).day;
 }
 
+/** UTC-Tag (YYYY-MM-DD) — Krypto handelt in UTC-Tagen. */
+export function utcDayKey(ms: Ms): string {
+  const d = new Date(ms);
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+}
+
+/** Handelstag je Assetklasse: Aktien ET, Krypto UTC. */
+export function dayKeyFor(ms: Ms, assetClass: AssetClass): string {
+  return assetClass === 'crypto' ? utcDayKey(ms) : dayKey(ms);
+}
+
 /** Epoch-ms für eine ET-Wanduhrzeit. Um DST-Wechsel korrekt (zweiter Durchlauf). */
 export function msFromET(y: number, m: number, d: number, hh = 0, mm = 0, ss = 0): Ms {
   const naive = Date.UTC(y, m - 1, d, hh, mm, ss);
