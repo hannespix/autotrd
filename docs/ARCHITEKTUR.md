@@ -28,8 +28,11 @@ verdient oder verliert — und das eine Mal richtig messen.
 
 ## 2. Zielbild
 
-- **Ein Prozess** (Node 22, TypeScript strict), ein VPS oder Container, kein
-  Frontend, keine Datenbank. Zustand liegt als Dateien in `AUTOTRD_HOME`.
+- **Ein Kern** (Node 22, TypeScript strict) in zwei Betriebsarten: als
+  eigener Prozess (Zustand als Dateien in `AUTOTRD_HOME`, Streams) und als
+  Firebase-Function je Minute für die Nutzer der Plattform (Zustand in
+  Firestore, keine Streams; PLATTFORM.md). Beide bauen dieselbe Engine mit
+  injizierten Adaptern — was nur in einer Betriebsart gilt, ist ein Fehler.
 - **Nur Alpaca** — Broker **und** Daten, derselbe Feed (`iex` oder `sip`)
   für Backtest und Live. Was der Backtest nicht sehen konnte, darf die Engine
   nicht handeln.
@@ -156,8 +159,12 @@ den Champion beim Start (und nach Beförderung beim nächsten Neustart).
 
 ## 6. Was bewusst fehlt
 
-Kein Frontend, keine Charts, keine News, kein Sentiment, keine KI-Erklärung,
-keine Prognose, kein Multi-User. Nichts davon hat im Vorgänger einen
-messbaren Beitrag zur Kante nach Kosten geleistet; alles davon hat Zeit
-gekostet. Wer eines davon zurückholt, muss zuerst zeigen, dass es
-out-of-sample nach Kosten etwas ändert — siehe VALIDIERUNG.md.
+Keine Charts, keine News, kein Sentiment, keine KI-Erklärung, keine
+Prognose, keine Strategie-Parameter je Nutzer. Nichts davon hat im
+Vorgänger einen messbaren Beitrag zur Kante nach Kosten geleistet; alles
+davon hat Zeit gekostet. Wer eines davon zurückholt, muss zuerst zeigen,
+dass es out-of-sample nach Kosten etwas ändert — siehe VALIDIERUNG.md.
+
+Multi-User und Frontend bleiben — aber nur als Hülle: Login, Broker-Keys,
+Risiko-Einstellungen, Positionen, Historie, Status. Die Handelsentscheidung
+kommt für alle Nutzer aus demselben Champion und demselben `decide()`.

@@ -8,15 +8,19 @@ haben. Vollständig lesen, bevor du etwas anfasst.
 Sprache: Antworten und Commit-Messages auf **Deutsch** (Imperativ, klein,
 thematisch). Bezeichner im Code Englisch, Kommentare Deutsch.
 
-> **Altbestand:** Die Firebase-Multi-User-Plattform (Verzeichnisse
-> `functions/`, `frontend/`, `shared/`, `reference/`, `supabase/`,
-> `rules-test/`, `scripts-ci/`, Dateien `ARCHITECTURE.md`, `MILESTONES.md`,
-> `firebase.json`, `firestore.*`, `.firebaserc`, `tsconfig.base.json`,
-> `vitest.rules.config.ts`) liegt noch im Baum, wird aber von keinem Werkzeug
-> mehr geprüft oder gebaut. Sie lebt unverändert auf `main`. Die Löschung auf
-> diesem Branch ist ein einzelner Commit, der die ausdrückliche Freigabe des
-> Owners braucht. Die Erkenntnisse daraus stehen in `docs/ARCHITEKTUR.md` und
-> hier in §2.
+> **Zwei Betriebsarten, ein Kern.** `src/` ist der Handelskern. Er läuft als
+> eigener Prozess (`src/cli.ts run`, `docs/BETRIEB.md`) **und** als
+> Firebase-Function je Minute für alle Nutzer der Plattform autotrd.net
+> (`functions/src/scheduled/engineTick.ts`, `docs/PLATTFORM.md`). Login,
+> Key-Tresor, Nutzerverwaltung, Firestore-Regeln und Deploy-Pipelines der
+> alten Plattform bleiben; ihre Signal-Engine (Scan, Prognose, News, KI,
+> Charts) ist entfernt.
+>
+> **Altbestand ohne Funktion:** `reference/`, `supabase/`, `rules-test/`,
+> `ARCHITECTURE.md`, `MILESTONES.md`, `vitest.rules.config.ts` liegen noch im
+> Baum und werden von keinem Werkzeug geprüft. Die Löschung ist ein einzelner
+> Commit, der die ausdrückliche Freigabe des Owners braucht. Die Erkenntnisse
+> aus dem Vorgänger stehen in `docs/ARCHITEKTUR.md` und hier in §2.
 
 ---
 
@@ -50,6 +54,8 @@ thematisch). Bezeichner im Code Englisch, Kommentare Deutsch.
 
 ## 1. Laufzeit-Layout
 
+**Eigener Prozess** (Entwicklung, Backtest, Optimierer, Einzelbetreiber):
+
 | Zweck | Ort |
 |---|---|
 | Programm | dieses Repo, `node src/cli.ts …` (Node ≥ 22.18, Type-Stripping) oder `dist/` nach `npm run build` |
@@ -57,8 +63,24 @@ thematisch). Bezeichner im Code Englisch, Kommentare Deutsch.
 | Secrets | `.env` (Vorlage `.env.example`) — nie committen |
 | State | `AUTOTRD_HOME` bzw. `paths.home` (Default `./var`): `state.json`, `journal.jsonl`, `champion.json`, `bars/`, `calendar.json`, `reports/`, Not-Aus-Datei `HALT` |
 
-Keine Datenbank, kein Frontend, keine Cloud-Functions. Ein Prozess, ein
-Journal (append-only), ein State-Snapshot (atomar geschrieben).
+Ein Prozess, ein Journal (append-only), ein State-Snapshot (atomar
+geschrieben).
+
+**Plattform** (Standard für autotrd.net, Details in `docs/PLATTFORM.md`):
+
+| Zweck | Ort |
+|---|---|
+| Takt | `functions/src/scheduled/engineTick.ts` — `onSchedule('* * * * *')`, `maxInstances: 1`, Lease `meta/engineLease` |
+| Kern-Adapter | `functions/src/engine/` — Firestore-State/-Journal (`StateStoreLike`/`JournalLike` aus `src/core/journal.ts`), geteilte Marktdaten, Spiegel, Kommandos |
+| Config | `meta/engineConfig` (global, aus `config/platform.yaml` per `scripts/sync-engine-config.mjs`) + `users/{uid}.settings.auto` (nur Risiko/Grenzen je Nutzer, nur über `saveStrategy`) |
+| Champion | `meta/champion`, geschrieben vom Optimierer-Workflow (`.github/workflows/optimize.yml`, `scripts/publish-champion.mjs`) |
+| State/Journal | `users/{uid}/private/engineState`, `users/{uid}/journal`, Trades im alten Schema `users/{uid}/trades` |
+| Not-Aus | Kill-Switch `meta/live.killSwitch` (Admin, fail-closed), je Nutzer Callable `engineCommand` (`halt`/`resume`/`flatten`) |
+| Secrets | Functions-Secrets `BROKER_MASTER_KEY`, `ALPACA_API_KEY`/`ALPACA_SECRET_KEY` (Plattform-Datenkey); Nutzer-Keys im Key-Tresor |
+
+Beide Betriebsarten rufen dieselbe Engine (`src/engine/engine.ts`) und
+dieselbe `decide()`. Die Plattform hat keine Streams: Stops liegen beim
+Broker, ein Takt je Minute genügt für den 5-Minuten-Zeitrahmen.
 
 ## 2. Was das Vorgängersystem gelehrt hat (und wie es hier gelöst ist)
 
@@ -73,7 +95,8 @@ Journal (append-only), ein State-Snapshot (atomar geschrieben).
 | Krypto: −1 133 $ bei 25 bp Taker; ohne Krypto +40 $. | Krypto ist Assetklasse mit eigenen Kosten, Default ist `us_equity`. |
 | Sizing auf Cash ⇒ Kapital arbeitete nicht. | Sizing auf Equity, Risiko je Trade über Stop-Distanz. |
 | PDT nur angezeigt, nie geprüft. | `risk/pdt.ts` ist ein Gate unter 25 000 $. |
-| Cloud Scheduler kann kein WebSocket halten; 5-Min-Takt als Kostendeckel. | Datenstrom + `trade_updates` per WebSocket, Timer-getriebene Bucket-Schließung mit Karenz. |
+| Cloud Scheduler kann kein WebSocket halten; 5-Min-Takt als Kostendeckel. | Eigener Prozess: Datenstrom + `trade_updates` per WebSocket. Plattform: Takt je Minute genügt, weil Stops beim Broker liegen und kein Signal-Exit auf Sekunden angewiesen ist. |
+| Nutzer stellten Strategie-Parameter selbst ein; jeder handelte eine andere, nie gemessene Variante. | Strategie und Parameter kommen für alle aus dem Champion; Nutzer stellen nur Risiko und Grenzen ein (`settings.auto`). |
 
 ## 3. Modulkarte (`src/`)
 
@@ -97,6 +120,17 @@ Journal (append-only), ein State-Snapshot (atomar geschrieben).
 | `readiness.ts` | Live-Reife aus dem Journal (≥ 200 Trades, ≥ 30 Tage, PF ≥ 1,2, feeShare ≤ 0,5, netto > 0). |
 | `cli.ts` | `doctor · fetch · backtest · optimize · run · status · flatten · halt · resume · readiness`. |
 
+Plattform (`functions/src/`, `frontend/`, `shared/`):
+
+| Modul | Rolle |
+|---|---|
+| `functions/src/engine/tick.ts` | Ein Takt: Lease, Kalender, Nutzer laden, geteilte Bars, Engine je Nutzer (parallel ≤ 3), Health. |
+| `functions/src/engine/{state,journal,mirror,commands,config,sharedData,strategyFor}.ts` | Firestore-Adapter für den Kern; Spiegel für das Frontend; Kommandos; Config-Ableitung; geteilter Bars-Cache. |
+| `functions/src/core/{brokerZugang,keyVault,liveGate,access}.ts` | Übernommen: Key-Tresor (AES-256-GCM), Broker-Verbindung, Echtgeld-Kette, Freischaltung. |
+| `functions/src/callable/{engineCommand,strategy,connectBroker,setLiveMode,…}.ts` | Callables des Frontends; `saveStrategy` validiert `settings.auto` serverseitig. |
+| `shared/src/autoSettings.ts` | `AutoSettings`, Defaults, Validierung, Ableitung aus alten Feldern. |
+| `frontend/` | Login, Broker-Keys, Auto-Trader-Einstellungen, Positionen, Historie, Champion, Engine-Status/-Kommandos, Admin. |
+
 ## 4. Konventionen
 
 - TS strict, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`,
@@ -105,9 +139,13 @@ Journal (append-only), ein State-Snapshot (atomar geschrieben).
   die Quellen direkt aus; `tsc` schreibt `.js` um).
 - Keine neuen Abhängigkeiten ohne Grund. Laufzeit: `zod`, `yaml`. Streams
   über das globale `WebSocket`, HTTP über `fetch`/`node:http`.
-- Tests: vitest unter `test/<modul>/`. Keine Netzwerkzugriffe, keine echten
-  Keys, Dateien nur unter `os.tmpdir()`. Jede Funktion, die Geld bewegt oder
-  Zeit rechnet, bekommt einen Test mit dem Fall, in dem sie Geld verliert.
+- Tests: vitest unter `test/<modul>/` (Kern) und `functions/test/` (Takt,
+  Adapter). Keine Netzwerkzugriffe, keine echten Keys, Dateien nur unter
+  `os.tmpdir()`. Jede Funktion, die Geld bewegt oder Zeit rechnet, bekommt
+  einen Test mit dem Fall, in dem sie Geld verliert.
+- `functions/` importiert den Kern relativ (`../../../src/...`), nie kopiert.
+  Der Kern kennt Firestore nicht: Er sieht nur `StateStoreLike`/`JournalLike`
+  und injizierte Deps. Alles, was Geld bewegt, bleibt in `src/`.
 - Zeit ist immer Epoch-ms (UTC). `Bar.t` ist der Bucket-BEGINN. ET nur in
   `core/time.ts`. Krypto rechnet in UTC-Tagen (`dayKeyFor`).
 - Preise an Alpaca: Stops VOM Kurs WEG runden, Limits ZUM Kurs HIN.
@@ -123,8 +161,11 @@ node src/cli.ts optimize         # Walk-Forward ⇒ champion.json + Report
 node src/cli.ts run              # Engine (Paper, solange der Guard nicht erfüllt ist)
 ```
 
-Chart-/UI-Prüfstände gibt es nicht mehr — es gibt keine UI. Der Prüfstand
-für alles Unsichtbare ist das **Engine-Red-Team** (siehe §6).
+Plattform zusätzlich: `npm run typecheck --workspace functions`,
+`npm run build --workspace frontend`; die Functions-Tests laufen mit dem
+Firestore-Fake (`functions/test/fakes/firestore.ts`) im selben `npm test`.
+Chart-/UI-Prüfstände gibt es nicht mehr. Der Prüfstand für alles Unsichtbare
+ist das **Engine-Red-Team** (siehe §6).
 
 ## 6. Arbeitsweise (Owner-Anweisungen, weiterhin gültig)
 

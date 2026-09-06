@@ -1,21 +1,31 @@
 # autotrd — Alpaca-Auto-Trader (Neubau)
 
-Ein einzelner Node-Prozess, der bei **Alpaca** handelt: Daten per WebSocket,
-Entscheidungen aus parametrisierten Strategie-Vorlagen, Stops beim Broker,
-tägliche Walk-Forward-Selbstoptimierung mit strengen Gates. Kein Frontend,
-keine Charts, keine Cloud — nur das, was zum Handeln, Absichern und Messen
-nötig ist.
+Ein Handelskern, der bei **Alpaca** handelt: Entscheidungen aus
+parametrisierten Strategie-Vorlagen, Stops beim Broker (Bracket-Orders),
+nächtliche Walk-Forward-Selbstoptimierung mit strengen Gates. Derselbe Kern
+läuft in zwei Betriebsarten:
+
+| Betriebsart | Wo | Für wen |
+|---|---|---|
+| **Plattform** (Standard) | Firebase-Function `engineTick` je Minute, Firestore als State, Login und Keys wie bisher auf autotrd.net, Optimierer nächtlich in GitHub Actions — keine Serverkosten | alle freigeschalteten Nutzer (`docs/PLATTFORM.md`) |
+| **Eigener Prozess** | `node src/cli.ts run` mit WebSocket-Streams, State als Dateien | Entwicklung, Backtests, Optimierer-Läufe, ein einzelner Betreiber (`docs/BETRIEB.md`) |
+
+Keine Charts, keine News, keine Prognose, keine KI-Erklärung — nur das, was
+zum Handeln, Absichern und Messen nötig ist.
 
 > ⚠️ **Kein Finanzrat. Kein Verfahren garantiert Gewinn.** Default ist das
 > Paper-Konto. Echtgeld braucht drei Bedingungen gleichzeitig
 > (`broker.mode: live`, `ALPACA_ALLOW_LIVE=1`, Live-Key `AK…`) und sollte erst
 > nach erfüllter Live-Reife (`autotrd readiness`) eingeschaltet werden.
 
-> **Zu diesem Branch:** Er ist der komplette Neustart des Tools. Die bisherige
-> Firebase-Multi-User-Plattform bleibt unverändert auf `main`; ihre
-> Verzeichnisse liegen hier noch im Baum (werden aber nicht mehr gebaut oder
-> geprüft) und werden nach Freigabe des Owners in einem eigenen Commit
-> entfernt. Was aus ihr gelernt wurde, steht in `docs/ARCHITEKTUR.md`.
+> **Zu diesem Branch:** Er ist der komplette Neustart der Handelslogik. Die
+> bisherige Plattform bleibt unverändert auf `main`. Hier sind `functions/`,
+> `frontend/` und `shared/` auf den neuen Kern umgebaut (Login, Key-Tresor,
+> Nutzerverwaltung und Deploy-Pipelines bleiben); die alte Signal-Engine mit
+> Scan, Prognose, News und KI ist entfernt. Reste ohne Funktion (`reference/`,
+> `supabase/`, `rules-test/`, `ARCHITECTURE.md`, `MILESTONES.md`) werden nach
+> Freigabe des Owners in einem eigenen Commit gelöscht. Was aus dem Vorgänger
+> gelernt wurde, steht in `docs/ARCHITEKTUR.md`.
 
 ## Was es tut
 
@@ -50,8 +60,21 @@ node src/cli.ts backtest               # Champion gegen den Cache
 node src/cli.ts run                    # Engine (Paper)
 ```
 
-Produktiv: `npm run build` und `node dist/cli.js …`, als systemd-Dienst oder
-Container (siehe `ops/`).
+Produktiv als eigener Prozess: `npm run build` und `node dist/cli.js …`, als
+systemd-Dienst oder Container (siehe `ops/`).
+
+## Betrieb als Plattform (autotrd.net)
+
+Der Handelskern läuft für alle freigeschalteten Nutzer als Firebase-Function
+je Minute (`functions/src/scheduled/engineTick.ts`): Lease, Kalender, ein
+gemeinsamer Marktdaten-Abruf, dann je Nutzer Engine bauen, abgleichen,
+entscheiden, Orders senden, Journal und Spiegel nach Firestore schreiben.
+Stops liegen beim Broker, deshalb reicht der Minutentakt. Der nächtliche
+Optimierer läuft in GitHub Actions (`.github/workflows/optimize.yml`) und
+veröffentlicht den Champion nach `meta/champion`; ohne Champion handelt
+niemand. Nutzer stellen im Frontend nur Risiko und Grenzen ein
+(`settings.auto`), Strategie und Parameter entscheidet der Champion für alle.
+Einrichtung, Ablauf und Betriebsregeln: `docs/PLATTFORM.md`.
 
 ## Sicherheitsregeln (nicht verhandelbar)
 
@@ -92,8 +115,12 @@ src/backtest   Portfolio-Simulator, Kosten, Metriken (Sharpe/Sortino/PSR/DSR)
 src/optimize   Walk-Forward, Gates, Champion/Challenger, Report
 src/engine     Buch, Orders, Abgleich, Uhr, Schleife
 src/notify     Telegram · src/status Status-HTTP (127.0.0.1) · src/readiness.ts Live-Reife
-src/cli.ts     Kommandos · config/ Vorlage · ops/ Docker+systemd · docs/ Architektur, Validierung, Betrieb
+src/cli.ts     Kommandos · config/ Vorlage + platform.yaml · ops/ Docker+systemd · docs/ Architektur, Validierung, Betrieb, Plattform
 test/          vitest (keine Netzwerkzugriffe, keine Keys)
+functions/     Firebase: engineTick (Takt je Minute), Firestore-Adapter, engineCommand, Login/Keys/Admin wie bisher
+frontend/      Vite-Frontend: Login, Broker-Keys, Auto-Trader-Einstellungen, Positionen, Historie, Champion, Status
+shared/        Von functions und frontend geteilte Typen/Validierung (settings.auto)
+scripts/       publish-champion, sync-engine-config (Optimierer-Workflow → Firestore)
 ```
 
 Für Claude Code und Mitwirkende: **`CLAUDE.md`** (Regeln, Fallen, Arbeitsweise).

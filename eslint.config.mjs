@@ -1,6 +1,7 @@
-// ESLint Flat Config für den Auto-Trader (src/ + test/).
-// Der Altbestand der Firebase-Plattform (functions/, frontend/, shared/, …)
-// bleibt bis zu seiner Löschung im Baum, wird aber nicht mehr geprüft.
+// ESLint Flat Config für den Handelskern (src/ + test/) und die Betriebs-Skripte.
+// Die Workspaces functions/, frontend/ und shared/ werden über ihre eigenen
+// tsconfigs geprüft (npm run typecheck --workspace …); der Altbestand ohne
+// Funktion (reference/, supabase/, rules-test/) bleibt bis zur Löschung im Baum.
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
@@ -12,7 +13,7 @@ export default tseslint.config(
       '**/lib/**',
       '**/var/**',
       '**/*.d.ts',
-      // Altbestand
+      // eigene Workspaces (eigene tsconfig/Prüfung) und Altbestand
       'frontend/**',
       'functions/**',
       'shared/**',
