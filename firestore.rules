@@ -33,12 +33,13 @@ service cloud.firestore {
        *   autoTune  An/Aus-Schalter des Auto-Tuners (nur `=== false` geprüft)
        *   hotkeys   Tastenkürzel
        *
-       * `strategy` steht bewusst NICHT dabei — sie muss über `saveStrategy`
-       * laufen. Das Callable prüft fünf Dinge, die es sonst nirgends gibt:
-       * Schema (validateStrategy), Watchlist-Länge (MAX_WATCHLIST), nur
-       * Katalog-Symbole, `broker.mode` bleibt paper, und die Engine startet
-       * nur mit bestätigter E-Mail. Ein direkter Schreibzugriff auf
-       * `settings.strategy` umging alle fünf.
+       * `strategy` und `auto` stehen bewusst NICHT dabei — sie müssen über
+       * `saveStrategy` laufen. Das Callable prüft, was es sonst nirgends
+       * gibt: Schema (validateAutoSettings/validateStrategy), nur
+       * Plattform-Symbole, Risiko-Grenzen, `broker.mode` bleibt paper, und
+       * die Engine startet nur mit bestätigter E-Mail. Ein direkter
+       * Schreibzugriff auf `settings.auto` umging alles davon — und der
+       * Engine-Takt (engineTick) liest `settings.auto` ungeprüft.
        *
        * Die Risiko-Hülle (clampStrategyRisk) und das Echtgeld-Doppelschloss
        * (ALPACA_ALLOW_LIVE + Live-Reife) fangen die gefährlichsten Folgen
@@ -138,11 +139,11 @@ service cloud.firestore {
         allow write: if false;
       }
 
-      // Trade-Journal (M12): Die FAKTEN (Symbol, Menge, P&L, Signal-Kontext)
-      // legt ausschliesslich der Server bei der Buchung an. Der Client darf
-      // GENAU seine vier Review-Felder aendern — ein Journal, dessen Fakten
-      // der User editieren kann, waere als Lernwerkzeug wertlos, und ein
-      // frei erfindbarer Eintrag genauso.
+      // Journal: Der Engine-Takt schreibt hier je Takt Entscheidungen,
+      // Orders, Fills und Halts (Wahrheit über das, was die Engine getan
+      // hat). Der Client darf GENAU seine vier Review-Felder aendern — ein
+      // Journal, dessen Fakten der User editieren kann, waere wertlos, und
+      // ein frei erfindbarer Eintrag genauso.
       match /journal/{doc} {
         allow read: if isOwner(uid);
         allow create, delete: if false;
