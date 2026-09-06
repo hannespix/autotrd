@@ -139,6 +139,11 @@ export interface EngineState {
   protectiveOrders: Record<string, string>;
   /** Symbol → laufender eigener Exit (Wiederholversuch). Additiv seit Secreview 2; fehlt in älteren States. */
   pendingExits?: Record<string, PendingExitState>;
+  /**
+   * Symbol → (Broker-Order-ID → bereits gebuchte Exit-Menge). Macht Fill-Buchungen über Neustart und Takt
+   * hinweg idempotent — ein Teilfill wurde sonst nach jedem Start erneut gebucht (Secreview 3, #3). Additiv.
+   */
+  bookedExitQty?: Record<string, Record<string, number>>;
   /** Alpaca-Konto-ID, zu der dieser State gehört (additiv; fehlt in älteren States). Fremdes Konto ⇒ fail-closed. */
   accountId?: string;
   consecutiveErrors: number;
@@ -160,6 +165,7 @@ export function emptyState(mode: 'paper' | 'live', day: string, equity: number):
     pendingEntries: {},
     protectiveOrders: {},
     pendingExits: {},
+    bookedExitQty: {},
     consecutiveErrors: 0,
     dayTrades: {},
     lastBarAt: {},

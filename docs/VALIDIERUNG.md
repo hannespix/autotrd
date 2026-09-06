@@ -154,7 +154,7 @@ Schalter umlegen." `autotrd readiness` prüft das Paper-Journal
 | Abgeschlossene Trades | ≥ 200 |
 | Kalendertage erster Einstieg → letzter Ausstieg | ≥ 30 |
 | Profit-Faktor (Σ Netto-Gewinne / Σ Netto-Verluste) | ≥ 1,2 |
-| Gebührenanteil (Σ Kosten / Σ Brutto-Gewinne) | ≤ 0,5 (ohne Brutto-Gewinne: nicht berechenbar ⇒ fällt durch) |
+| Gebührenanteil (Σ explizite Gebühren / Σ Brutto-Gewinne) | ≤ 0,5 (ohne Brutto-Gewinne: nicht berechenbar ⇒ fällt durch). Live sind das SEC/TAF bzw. Krypto-Taker nach Kostenmodell; Slippage und Spread stecken im Fill-Kurs und damit in Profit-Faktor und Netto — die Zahl ist kleiner als im Simulator, der Slippage getrennt bucht |
 | Netto-Ergebnis | > 0 |
 
 Zusätzlich informativ: der größte Rückgang der kumulierten Netto-PnL. Erst

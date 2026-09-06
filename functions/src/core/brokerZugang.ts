@@ -134,7 +134,12 @@ export async function brokerVerbindung(
   uid: string,
   jetztMs: number = Date.now(),
 ): Promise<BrokerVerbindung | null> {
-  const z = await brokerZugang(uid, jetztMs);
+  let z: BrokerZugang | null;
+  try {
+    z = await brokerZugang(uid, jetztMs);
+  } catch {
+    return null; // nicht lesbar ⇒ nicht routen (Vertrag des Order-Pfads: null heißt „keine Order")
+  }
   if (!z) return null;
   if (z.sperre !== null) {
     if (z.sperre === SPERRE_FREIGABE) {
@@ -203,7 +208,13 @@ export interface BrokerZugang {
  */
 export async function brokerZugang(uid: string, jetztMs: number = Date.now()): Promise<BrokerZugang | null> {
   const v = await brokerVerbindungLesend(uid, jetztMs);
-  if (!v) return null;
+  if (!v) {
+    // Lesefehler ist KEIN „kein Broker": Der Takt darf den Nutzer dann nicht als broker-los behandeln und seine
+    // Kommandos (flatten/halt) verwerfen — er meldet ihn als gescheitert und versucht es im nächsten Takt erneut
+    // (Secreview 3, #6).
+    if (verbindungUnlesbar(uid)) throw new Error('Broker-Verbindung nicht lesbar (Firestore) — nächster Takt versucht es erneut');
+    return null;
+  }
   return { verbindung: v, sperre: await livePfadSperre(uid, v, jetztMs) };
 }
 

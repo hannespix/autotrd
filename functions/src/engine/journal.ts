@@ -19,7 +19,23 @@ import type { JournalEvent, JournalEventKind, JournalLike } from '../../../src/c
 import { errMsg, logger } from '../../../src/core/log.ts';
 import { DAY } from '../../../src/core/time.ts';
 import type { AssetClass, ExitReason, Ms, Trade } from '../../../src/core/types.ts';
-import { BATCH_MAX, isoOf, plain, round2, type DocData, type FirestoreLike, type WriteBatchLike } from './firestoreLike.js';
+import { createHash } from 'node:crypto';
+import { BATCH_MAX, isoOf, plain, round2, type DocData, type FirestoreLike, type WriteBatchLike, type WriteGuard } from './firestoreLike.js';
+
+/**
+ * Deterministische Doc-IDs (Secreview 3, #5): Ein Nachschreiben nach teilweise committetem Batch (oder
+ * einer Function, die zwischen zwei Batches starb) trifft dieselben Docs wieder — `set` ist dann idempotent,
+ * statt Journal- und Trade-Docs zu verdoppeln. Zwei bis aufs Byte gleiche Ereignisse fallen zusammen; das
+ * ist gewollt (dieselbe Information zweimal ist keine zweite Information).
+ */
+export function journalDocId(uid: string, ev: JournalEvent): string {
+  return 'j' + createHash('sha256').update(`${uid}|${ev.ts}|${ev.kind}|${JSON.stringify(plain(ev))}`).digest('hex').slice(0, 24);
+}
+
+export function tradeDocId(uid: string, t: Trade, leg: 'entry' | 'exit'): string {
+  const key = [uid, t.symbol, t.side, t.qty, t.entryTime, t.entryPrice, t.exitTime, t.exitPrice, t.exitReason, leg].join('|');
+  return 't' + createHash('sha256').update(key).digest('hex').slice(0, 24);
+}
 
 export interface FxFelder {
   fxRate?: number;
@@ -202,7 +218,7 @@ export class FirestoreJournal implements JournalLike {
    * Puffer als Batch(es) nach Firestore; bei Erfolg geleert, bei Fehler bleibt er stehen und der Fehler
    * fliegt. `finalOp` (Puffer auf dem State-Doc leeren) landet im LETZTEN Batch — atomar mit dessen Docs.
    */
-  async flush(uid: string, finalOp: ((b: WriteBatchLike) => void) | null = null): Promise<{ events: number; trades: number }> {
+  async flush(uid: string, finalOp: ((b: WriteBatchLike) => void) | null = null, guard: WriteGuard | null = null): Promise<{ events: number; trades: number }> {
     const events = [...this.buffer];
     const journalCol = this.db.collection(`users/${uid}/journal`);
     const tradesCol = this.db.collection(`users/${uid}/trades`);
@@ -211,7 +227,8 @@ export class FirestoreJournal implements JournalLike {
     for (const ev of events) {
       if (!keepEvent(ev)) continue;
       const doc = plain({ ...ev, mode: this.mode });
-      ops.push((b) => b.set(journalCol.doc(), doc));
+      const id = journalDocId(uid, ev);
+      ops.push((b) => b.set(journalCol.doc(id), doc));
       kept++;
     }
     let trades = 0;
@@ -229,12 +246,13 @@ export class FirestoreJournal implements JournalLike {
         at: await this.stamp(),
         orderId: typeof ev.orderId === 'string' ? ev.orderId : null,
       });
-      ops.push((b) => b.set(tradesCol.doc(), docs.entry));
-      ops.push((b) => b.set(tradesCol.doc(), docs.exit));
+      ops.push((b) => b.set(tradesCol.doc(tradeDocId(uid, t, 'entry')), docs.entry));
+      ops.push((b) => b.set(tradesCol.doc(tradeDocId(uid, t, 'exit')), docs.exit));
       trades++;
     }
     if (finalOp) ops.push(finalOp);
     for (let i = 0; i < ops.length; i += BATCH_MAX) {
+      guard?.assert('Journal');
       const batch = this.db.batch();
       for (const op of ops.slice(i, i + BATCH_MAX)) op(batch);
       await batch.commit();

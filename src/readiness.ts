@@ -167,7 +167,10 @@ export function assessReadiness(trades: readonly Trade[], now: Ms, thresholds: P
     },
     {
       name: 'feeShare',
-      label: `Gebührenanteil (Σ Kosten / Σ Brutto-Gewinne) ≤ ${th.maxFeeShare}`,
+      // Live stehen in `fees` nur explizite Gebühren (SEC/TAF, Krypto-Taker); Slippage und Spread stecken im
+      // Fill-Kurs und damit schon in brutto/netto. Der Simulator bucht Slippage getrennt — die Zahl ist
+      // deshalb nicht 1:1 mit dem Optimierer-Gate vergleichbar; Profit-Faktor und Netto tragen die Kosten.
+      label: `Gebührenanteil (Σ explizite Gebühren SEC/TAF bzw. Krypto-Taker / Σ Brutto-Gewinne; Slippage steckt im Kurs) ≤ ${th.maxFeeShare}`,
       pass: feeShare !== null && feeShare <= th.maxFeeShare,
       value: feeShare,
       threshold: th.maxFeeShare,

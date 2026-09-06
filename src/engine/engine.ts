@@ -81,15 +81,25 @@ export interface ProcessEvents {
   off(event: string, listener: (...args: unknown[]) => void): unknown;
 }
 
-/** Der geladene State gehört zu einem anderen Alpaca-Konto als dem verbundenen. */
-export class StateAccountMismatchError extends Error {
-  readonly stateAccountId: string;
-  readonly connectedAccountId: string;
-  constructor(stateAccountId: string, connectedAccountId: string) {
-    super(`State gehört zum Alpaca-Konto ${stateAccountId}, verbunden ist ${connectedAccountId} — State archivieren statt weiterhandeln`);
-    this.name = 'StateAccountMismatchError';
-    this.stateAccountId = stateAccountId;
-    this.connectedAccountId = connectedAccountId;
+/**
+ * Der geladene State gehört nicht zu dieser Engine: anderes Alpaca-Konto (`kind: 'account'`) oder anderer
+ * Modus (`kind: 'mode'`, z. B. Paper-State nach Wechsel auf einen Live-Schlüssel). Fail-closed — der
+ * Functions-Takt archiviert den State und startet neu; der Dauerprozess braucht ein getrenntes Home.
+ */
+export class StateMismatchError extends Error {
+  readonly kind: 'account' | 'mode';
+  readonly stateValue: string;
+  readonly engineValue: string;
+  constructor(kind: 'account' | 'mode', stateValue: string, engineValue: string) {
+    super(
+      kind === 'account'
+        ? `State gehört zum Alpaca-Konto ${stateValue}, verbunden ist ${engineValue} — State archivieren statt weiterhandeln`
+        : `State gehört zum Modus '${stateValue}', die Engine läuft '${engineValue}' — State archivieren bzw. getrenntes Home verwenden`,
+    );
+    this.name = 'StateMismatchError';
+    this.kind = kind;
+    this.stateValue = stateValue;
+    this.engineValue = engineValue;
   }
 }
 
@@ -252,15 +262,11 @@ export class Engine {
     this.account = { equity: acc.equity, cash: acc.cash, dayTradeCount: acc.daytradeCount, patternDayTrader: acc.patternDayTrader };
     const today = dayKeyFor(now, this.assetClass);
     const loaded = await this.stateStore.load();
-    if (loaded && loaded.mode !== this.mode) {
-      throw new Error(`state.json gehört zum Modus '${loaded.mode}', die Engine läuft '${this.mode}' — getrenntes Home verwenden`);
-    }
+    if (loaded && loaded.mode !== this.mode) throw new StateMismatchError('mode', loaded.mode, this.mode);
     // Fremdes Konto (Nutzer hat andere Schlüssel hinterlegt): Das Buch gehört zu einem anderen Depot — ein Abgleich
     // würde dessen Positionen als „fehlt beim Broker" mit geschätztem Kurs ausbuchen (Phantom-Trades). Fail-closed;
     // der Functions-Takt fängt den Fehler und archiviert den State (Secreview 2, M9).
-    if (loaded?.accountId && acc.id && loaded.accountId !== acc.id) {
-      throw new StateAccountMismatchError(loaded.accountId, acc.id);
-    }
+    if (loaded?.accountId && acc.id && loaded.accountId !== acc.id) throw new StateMismatchError('account', loaded.accountId, acc.id);
     const base = loaded ?? emptyState(this.mode, today, acc.equity);
     const st: PersistedState = { ...base, deferredIntents: (base as Partial<PersistedState>).deferredIntents ?? {} };
     if (acc.id) st.accountId = acc.id;
@@ -426,7 +432,11 @@ export class Engine {
     return this.serial.run(async () => {
       const now = this.now();
       if (this.exitsAllowed(now)) {
-        for (const r of await this.requireExecutor().flattenAll(reason)) {
+        const executor = this.requireExecutor();
+        const cancelled = await executor.cancelOwnEntryOrders();
+        const intents = executor.prepareFlatten(reason, cancelled);
+        await this.saveState(); // vorgemerkt: Zeitbudget/Absturz mitten in der Sequenz verliert keine Position
+        for (const r of intents.length ? await executor.execute(intents) : []) {
           this.log.info(`flatten ${r.symbol}: ${r.note}`, { ok: r.ok, orderId: r.orderId ?? null });
         }
       } else {
@@ -934,13 +944,22 @@ export class Engine {
   /**
    * Eigene Einstiegs-Orders aus der Zeit vor einem Neustart/Absturz übernehmen:
    *  - offen ⇒ als Pending (der Fill kommt über syncOrders/Stream);
-   *  - kürzlich GEFÜLLT, aber nicht im Buch (Absturz zwischen Senden und Speichern) ⇒ als Position buchen,
-   *    sofern der Broker sie tatsächlich hält. Ohne diesen Schritt sähe der Abgleich die eigene Position als
-   *    Fremdbestand und zöge die Sperre 'reconcile', die zugleich den adoptierenden Einstieg blockt.
+   *  - kürzlich GEFÜLLT, aber nicht im Buch (Absturz zwischen Senden und Speichern) ⇒ als Position buchen —
+   *    aber nur, wenn die RUNDE noch offen ist: kein Bein gefüllt, kein eigener Exit/Stop dieser Runde gefüllt,
+   *    und der Broker hält genau die gefüllte Menge auf derselben Seite. Sonst gälte eine längst geschlossene
+   *    Runde (oder ein Handkauf des Nutzers) als eigene Position, ihr gefülltes Stop-Bein als Schutz-Stop, und
+   *    der nächste Abgleich buchte Phantom-Exits und räumte die Beine der echten Runde ab (Secreview 3, #1).
+   *    Bei mehreren Kandidaten gewinnt die jüngste Order. Alles Unklare bleibt dem Abgleich (Halt 'reconcile').
    */
   private async adoptOwnEntryOrders(now: Ms): Promise<void> {
     const all = await this.deps.client.listOrders({ status: 'all', symbols: this.cfg.universe.symbols, after: now - Engine.ADOPT_FILL_WINDOW_MS - DAY, nested: true, limit: 500 });
-    const filled: typeof all = [];
+    // Gefüllte eigene Exit-/Stop-Orders je Runde (Anker = entryTime in der Kennung): Runde geschlossen.
+    const closedRounds = new Set<string>();
+    for (const o of all) {
+      const p = parseClientId(o.clientOrderId);
+      if (p && p.mode === this.mode && (p.kind === 'exit' || p.kind === 'stop') && o.filledQty > 0) closedRounds.add(`${o.symbol}|${p.ms}`);
+    }
+    const candidates = new Map<string, (typeof all)[number]>();
     for (const o of all) {
       const p = parseClientId(o.clientOrderId);
       if (!p || p.kind !== 'entry' || p.mode !== this.mode) continue;
@@ -948,17 +967,22 @@ export class Engine {
       if (isOpenStatus(o.status)) {
         this.book.markPending(o.symbol, { clientId: o.clientOrderId, orderId: o.id, intent: null, submittedAt: o.submittedAt ?? now });
         this.log.warn('Offene Einstiegs-Order übernommen', { symbol: o.symbol, clientId: o.clientOrderId });
-      } else if (o.filledQty > 0 && (o.filledAt ?? o.submittedAt ?? 0) >= now - Engine.ADOPT_FILL_WINDOW_MS) {
-        filled.push(o);
+        continue;
       }
+      const filledAt = o.filledAt ?? o.submittedAt ?? 0;
+      if (!(o.filledQty > 0) || filledAt < now - Engine.ADOPT_FILL_WINDOW_MS) continue;
+      if (o.legs.some((l) => l.filledQty > 0)) continue; // Bein gefüllt ⇒ Runde zu
+      if (closedRounds.has(`${o.symbol}|${filledAt}`)) continue; // eigener Exit/Stop dieser Runde gefüllt ⇒ Runde zu
+      const prev = candidates.get(o.symbol);
+      if (!prev || (prev.filledAt ?? prev.submittedAt ?? 0) < filledAt) candidates.set(o.symbol, o);
     }
-    if (filled.length === 0) return;
-    // Nur, was der Broker wirklich hält — eine längst wieder geschlossene Runde darf keine Phantom-Position erzeugen.
+    if (candidates.size === 0) return;
+    // Nur, was der Broker wirklich hält — in genau dieser Menge und auf dieser Seite.
     const held = new Map((await this.deps.client.listPositions()).map((bp) => [bp.symbol, bp]));
-    for (const o of filled) {
+    for (const o of candidates.values()) {
       const bp = held.get(o.symbol);
       const side = o.side === 'buy' ? 'long' : 'short';
-      if (!bp || bp.side !== side || this.book.positions.has(o.symbol)) continue;
+      if (!bp || bp.side !== side || Math.abs(bp.qty - o.filledQty) > 1e-6 || this.book.positions.has(o.symbol)) continue;
       await this.requireExecutor().applyEntryFill(o, now);
       this.journal.append('reconcile', { action: 'adopt_own_fill', symbol: o.symbol, orderId: o.id, clientId: o.clientOrderId, qty: o.filledQty, note: 'Gefüllte eigene Einstiegs-Order ohne Buch-Position (Absturz vor dem Speichern) — als Position gebucht' }, now);
       this.log.warn('Gefüllte eigene Einstiegs-Order übernommen', { symbol: o.symbol, clientId: o.clientOrderId, qty: o.filledQty });

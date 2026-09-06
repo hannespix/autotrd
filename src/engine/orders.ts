@@ -186,8 +186,6 @@ export class OrderExecutor {
   private readonly notify: NotifyFn | null;
   private readonly log: typeof logger;
   private readonly costs: CostConfig | null;
-  /** Bereits gebuchte Exit-Menge je Broker-Order — macht Stream- und REST-Pfad gegeneinander idempotent. */
-  private readonly bookedExitQty = new Map<string, number>();
   /** Symbole, deren Position zu ist und deren Rest-Orders (Ziel-/Stop-Bein) noch abzuräumen sind. */
   private readonly cleanupQueue = new Set<string>();
 
@@ -688,16 +686,16 @@ export class OrderExecutor {
     const sym = order.symbol;
     const pos = this.book.positions.get(sym);
     if (!pos || order.side !== exitSideOf(pos)) return false;
-    const booked = this.bookedExitQty.get(order.id) ?? 0;
+    // Gebuchte Menge je Order lebt im Buch (persistiert): Stream- und REST-Pfad, Neustart und Takt sind
+    // gegeneinander idempotent — ein Teilfill wird nie ein zweites Mal gebucht (Secreview 3, #3).
+    const booked = this.book.bookedExit(sym, order.id);
     const delta = order.filledQty - booked;
     if (!(delta > 1e-9)) return false;
-    // Erst leeren, dann setzen — sonst fiele beim Überlauf genau der Eintrag weg, der die Doppelbuchung verhindert.
-    if (this.bookedExitQty.size > 5000) this.bookedExitQty.clear();
-    this.bookedExitQty.set(order.id, order.filledQty);
+    this.book.markBookedExit(sym, order.id, order.filledQty);
     const price = o.price ?? order.filledAvgPrice;
     if (price === null || price === undefined || !(price > 0)) {
       this.log.warn('Exit-Fill ohne Preis — nicht gebucht', { symbol: sym, orderId: order.id });
-      this.bookedExitQty.set(order.id, booked);
+      this.book.markBookedExit(sym, order.id, booked);
       return false;
     }
     const pending = this.book.pendingExits.get(sym);
@@ -721,10 +719,7 @@ export class OrderExecutor {
       partial: !closed.fullyClosed,
       rMultiple: closed.trade.rMultiple,
     });
-    if (closed.fullyClosed) {
-      this.cleanupQueue.add(sym);
-      this.bookedExitQty.delete(order.id);
-    }
+    if (closed.fullyClosed) this.cleanupQueue.add(sym); // die Buchungs-Merker gehen mit der Position aus dem Buch
     return true;
   }
 
@@ -929,15 +924,36 @@ export class OrderExecutor {
    * die Handpositionen eines Live-Kontos verkauft).
    */
   async flattenAll(reason: ExitReason): Promise<ExecResult[]> {
-    const now = this.now();
     const cancelled = await this.cancelOwnEntryOrders();
+    const intents = this.prepareFlatten(reason, cancelled);
+    return intents.length ? this.execute(intents) : [];
+  }
+
+  /**
+   * Glattstellung VORMERKEN: je Buch-Position ein laufender Exit mit Intent, sofort wiederholbar. Der Aufrufer
+   * speichert den State, BEVOR er ausführt — ein Zeitbudget oder Absturz mitten in der Sequenz verliert dann
+   * keine Position: der nächste Tick/Takt holt die restlichen Exits über `retryPendingExits` nach (Secreview 3, #8).
+   */
+  prepareFlatten(reason: ExitReason, cancelledEntries: readonly string[] = []): ExitIntent[] {
+    const now = this.now();
     const intents: ExitIntent[] = [...this.book.positions.keys()].map((symbol) => ({ kind: 'exit', symbol, reason, decidedAt: now }));
     for (const it of intents) {
       const pos = this.book.positions.get(it.symbol)!;
+      const prev = this.book.pendingExits.get(it.symbol);
+      this.book.pendingExits.set(it.symbol, {
+        clientId: prev?.clientId ?? null,
+        orderId: prev?.orderId ?? null,
+        reason,
+        since: prev?.since ?? now,
+        attempts: prev?.attempts ?? 0,
+        lastAttemptAt: 0, // sofort fällig
+        lastError: 'flatten vorgemerkt — Ausführung folgt',
+        intent: it,
+      });
       this.log.warn(`Flatten ${it.symbol} ${pos.side} ${pos.qty} (${reason})`);
     }
-    this.journal.append('note', { text: `flattenAll (${reason}): eigene Einstiege storniert, Buch-Positionen werden geschlossen`, cancelledEntries: cancelled, positions: intents.map((i) => i.symbol) }, now);
-    return intents.length ? this.execute(intents) : [];
+    this.journal.append('note', { text: `flatten (${reason}): eigene Einstiege storniert, Buch-Positionen vorgemerkt und werden geschlossen`, cancelledEntries: [...cancelledEntries], positions: intents.map((i) => i.symbol) }, now);
+    return intents;
   }
 
   /* ── REST-Fallback zu trade_updates ── */

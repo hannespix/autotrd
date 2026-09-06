@@ -35,13 +35,13 @@ import { DAY, MIN, addDays, dayKeyFor, nextTradingDay, sessionBounds, type Calen
 import type { AssetClass, Ms, Strategy } from '../../../src/core/types.ts';
 import { backfill } from '../../../src/data/backfill.ts';
 import { barStoreRoot, type BarStore, type BaseTimeframe } from '../../../src/data/store.ts';
-import { Engine, StateAccountMismatchError, warmupWindowMs, type EngineTimers, type ProcessEvents } from '../../../src/engine/engine.ts';
+import { Engine, StateMismatchError, warmupWindowMs, type EngineTimers, type ProcessEvents } from '../../../src/engine/engine.ts';
 import { resetLaeuft } from '../../../shared/src/circuitBreaker.js';
 import { mayTrade } from '../../../shared/src/zugang.js';
 import type { BrokerVerbindung, BrokerZugang } from '../core/brokerZugang.js';
 import { applyCommands, claimCommands } from './commands.js';
 import { buildUserConfig, globalConfigRaw, type UserRiskSource } from './config.js';
-import { isRecord, isoOf, plain, type DocData, type DocSnapLike, type FirestoreLike } from './firestoreLike.js';
+import { isRecord, isoOf, plain, type DocData, type DocSnapLike, type FirestoreLike, type WriteGuard } from './firestoreLike.js';
 import { FirestoreJournal, type FxFn } from './journal.js';
 import { mirrorError, mirrorPositions, mirrorQuotes, mirrorUser, type QuoteMark } from './mirror.js';
 import { SharedBarStoreView, cachedAsset, cachedCalendar, delegateClient, sharedStoreFor, withSharedData, type SharedServices } from './sharedData.js';
@@ -171,11 +171,36 @@ export function rotate<T>(items: readonly T[], shift: number): T[] {
   return [...items.slice(k), ...items.slice(0, k)];
 }
 
-/** Nutzer-Lauf mit Zeitbudget: danach gilt er als gescheitert; der Rest läuft ins Leere (REST-Client hat dieselbe Frist). */
-async function withBudget(run: Promise<UserOutcome>, budgetMs: number, uid: string): Promise<UserOutcome> {
+/**
+ * Schreibsperre eines Nutzer-Laufs: bis zur Frist und solange der Takt den Lauf nicht aufgegeben hat. Danach
+ * wirft jeder Firestore-Schreibvorgang des Laufs (State, Journal, Spiegel) — der aufgegebene Lauf kann den
+ * jüngeren Stand des nächsten Takts nicht mehr überschreiben (Secreview 3, #2).
+ */
+export class RunGuard implements WriteGuard {
+  private readonly deadline: Ms;
+  private abandoned = false;
+  constructor(deadline: Ms) {
+    this.deadline = deadline;
+  }
+  abandon(): void {
+    this.abandoned = true;
+  }
+  allowed(): boolean {
+    return !this.abandoned && Date.now() < this.deadline;
+  }
+  assert(what: string): void {
+    if (!this.allowed()) throw new Error(`Lauf aufgegeben (Zeitbudget) — ${what} wird nicht mehr geschrieben`);
+  }
+}
+
+/** Nutzer-Lauf mit Zeitbudget: danach gilt er als gescheitert und darf nichts mehr schreiben (REST-Client hat dieselbe Frist). */
+async function withBudget(run: Promise<UserOutcome>, budgetMs: number, uid: string, guard: RunGuard): Promise<UserOutcome> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<UserOutcome>((resolve) => {
-    timer = setTimeout(() => resolve({ uid, status: 'failed', reason: `Zeitbudget je Nutzer (${budgetMs} ms) überschritten — Lauf aufgegeben`, budgetExceeded: true }), budgetMs);
+    timer = setTimeout(() => {
+      guard.abandon();
+      resolve({ uid, status: 'failed', reason: `Zeitbudget je Nutzer (${budgetMs} ms) überschritten — Lauf aufgegeben`, budgetExceeded: true });
+    }, budgetMs);
   });
   try {
     return await Promise.race([run, timeout]);
@@ -529,7 +554,8 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
       result.skippedUsers.push({ uid: p.uid, reason: 'zeitbudget_takt' });
       return;
     }
-    const o = await withBudget(runUser(ctx, p), budgetMs, p.uid);
+    const guard = new RunGuard(Date.now() + budgetMs);
+    const o = await withBudget(runUser(ctx, p, guard), budgetMs, p.uid, guard);
     if (o.status === 'ok') result.ok++;
     else if (o.status === 'failed') {
       result.failed.push({ uid: o.uid, error: o.reason ?? 'unbekannt' });
@@ -578,14 +604,14 @@ function buildShared(dataClient: AlpacaClient | null, store: BarStore, now: Ms):
   };
 }
 
-async function runUser(ctx: TickContext, p: UserPrep): Promise<UserOutcome> {
+async function runUser(ctx: TickContext, p: UserPrep, guard: RunGuard): Promise<UserOutcome> {
   const { deps, db, now } = ctx;
   const uid = p.uid;
   const started = Date.now();
   const log = userLogger(ctx.log, uid);
   const mode = p.verbindung.mode;
   const journal = new FirestoreJournal({ db, mode, assetClass: ctx.assetClass, fx: deps.fx, log, timestampNow: deps.timestampNow });
-  const stateStore = new FirestoreStateStore(db, uid, { journal });
+  const stateStore = new FirestoreStateStore(db, uid, { journal, guard });
   let engine: Engine | null = null;
   let error: string | null = null;
   let commandsSeen = false;
@@ -621,15 +647,16 @@ async function runUser(ctx: TickContext, p: UserPrep): Promise<UserOutcome> {
     try {
       await engine.start();
     } catch (e) {
-      if (!(e instanceof StateAccountMismatchError)) throw e;
-      // Der State gehört zu einem anderen Alpaca-Konto (Nutzer hat neue Schlüssel hinterlegt): archivieren statt
-      // weiterhandeln — der Abgleich hätte die alten Positionen als „fehlt" mit geschätztem Kurs ausgebucht
-      // (Secreview 2, M9). Der nächste Takt startet mit leerem Buch; die alten Positionen bleiben beim alten Konto.
+      if (!(e instanceof StateMismatchError)) throw e;
+      // Der State gehört zu einem anderen Alpaca-Konto oder Modus (Nutzer hat neue Schlüssel hinterlegt, Paper ⇒ Live):
+      // archivieren statt weiterhandeln — der Abgleich hätte die alten Positionen als „fehlt" mit geschätztem Kurs
+      // ausgebucht (Secreview 2, M9; Secreview 3, #4). Der nächste Takt startet mit leerem Buch; die alten Positionen
+      // bleiben beim alten Konto samt Beinen (DAY-Beine verfallen dort um 16:00 — steht in der Journal-Notiz).
       const archived = await stateStore.archive(now, e.message);
-      journal.append('note', { text: `Engine-State archiviert (${e.message})`, archived }, now);
-      log.warn('Engine-State archiviert — Konto gewechselt', { archived });
+      journal.append('note', { text: `Engine-State archiviert (${e.message}) — Positionen des alten Kontos/Modus bleiben dort samt Schutz-Stops; DAY-Beine verfallen am Sitzungsende`, archived }, now);
+      log.warn('Engine-State archiviert — Konto/Modus gewechselt', { archived, kind: e.kind });
       engine = null;
-      throw new Error(`Konto gewechselt — Engine-State archiviert, nächster Takt startet neu`);
+      throw new Error(`${e.kind === 'mode' ? 'Modus' : 'Konto'} gewechselt — Engine-State archiviert, nächster Takt startet neu`);
     }
     try {
       const cmds = await claimCommands(db, uid);
@@ -655,14 +682,16 @@ async function runUser(ctx: TickContext, p: UserPrep): Promise<UserOutcome> {
   }
   try {
     // Journal-Docs und das Leeren des Puffers im State-Doc in EINEM Batch (Secreview 2, M5).
-    await journal.flush(uid, stateStore.bufferClearOp());
+    await journal.flush(uid, stateStore.bufferClearOp(), guard);
     stateStore.markBufferCleared();
   } catch (e) {
     log.error('Journal nicht schreibbar — Puffer bleibt im State-Doc und wird im nächsten Takt nachgeschrieben', { error: errMsg(e) });
     error ??= `Journal: ${errMsg(e)}`;
   }
   try {
-    if (error === null && engine) {
+    if (!guard.allowed()) {
+      // Aufgegebener Lauf: nichts mehr spiegeln — der Takt hat den Nutzer längst als gescheitert gemeldet.
+    } else if (error === null && engine) {
       const status = engine.status();
       await mirrorPositions(db, uid, status, now);
       await mirrorUser(db, uid, { mode, status, now, lastError: null, champion: { source: p.strategy.source, symbols: p.strategy.tradable }, commandsSeen, configSource: p.configSource, notes: p.strategy.notes });

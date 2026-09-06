@@ -51,6 +51,17 @@ export interface DocRefLike {
   collection(path: string): CollRefLike;
 }
 
+/**
+ * Schreibsperre eines Nutzer-Laufs: Nach dem Zeitbudget (oder wenn der Takt den Lauf aufgegeben hat) darf
+ * kein Firestore-Schreibvorgang mehr beginnen — sonst überschriebe der aufgegebene Lauf, sobald er wieder
+ * CPU bekommt, den jüngeren Stand des nächsten Takts (Secreview 3, #2).
+ */
+export interface WriteGuard {
+  allowed(): boolean;
+  /** Wirft, wenn nicht mehr geschrieben werden darf. */
+  assert(what: string): void;
+}
+
 export interface WriteBatchLike {
   set(ref: DocRefLike, data: DocData, options?: { merge?: boolean }): unknown;
   update(ref: DocRefLike, data: DocData): unknown;

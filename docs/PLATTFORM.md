@@ -27,7 +27,7 @@ WebSocket-Streams. Sie wird für keine der Vorlagen gebraucht, weil Exits
 | `engineTick` | `functions/src/scheduled/engineTick.ts` | `onSchedule('* * * * *')`, us-central1, 512 MiB, 55 s, `maxInstances: 1`, Secrets `BROKER_MASTER_KEY`, `ALPACA_API_KEY`, `ALPACA_SECRET_KEY` |
 | Takt-Logik | `functions/src/engine/tick.ts` | Lease, Nutzerschleife, geteilte Marktdaten, Engine je Nutzer, Health |
 | State | `users/{uid}/private/engineState` | `EngineState` (Buch, Sperren, laufende Exits, Konto-ID) + zurückgestellte Intents + Journal-Puffer des Takts; `private/**` ist für Clients dicht. Abgelöste States (Kontowechsel) unter `private/archiv/engineStates/{iso}` |
-| Journal | `users/{uid}/journal/{autoId}` | Entscheidungen, Orders, Fills, Halts; je Takt EIN Batch, der zugleich den Puffer im State-Doc leert — scheitert er, schreibt der nächste Takt nach |
+| Journal | `users/{uid}/journal/{hash}` | Entscheidungen, Orders, Fills, Halts; je Takt EIN Batch, der zugleich den Puffer im State-Doc leert — scheitert er, schreibt der nächste Takt nach. Doc-IDs sind Inhalts-Hashes, das Nachschreiben ist idempotent (auch Trade-Docs) |
 | Trades | `users/{uid}/trades/{autoId}` | Ein- und Ausstiegs-Fill im bisherigen Schema (Steuer-Export, Historie), EZB-Kurs beim Schreiben eingefroren |
 | Spiegel | `users/{uid}/positions/{symbol}`, `users/{uid}.wallet`, `users/{uid}.engine`, `market/{symbol}.quote` | Was das Frontend liest |
 | Kommandos | `users/{uid}/private/engineCommands` | `halt` / `resume` (Drawdown nur mit `ackDrawdown`) / `flatten` (nur das eigene Buch), gesetzt vom Callable `engineCommand` (nur mit verbundenem Broker), verarbeitet im nächsten Takt, verfallen nach 24 h |
@@ -63,8 +63,11 @@ WebSocket-Streams. Sie wird für keine der Vorlagen gebraucht, weil Exits
    übernehmen, Abgleich, Schutz-Stops), Kommandos anwenden, `tick(now)`,
    `stop()`, Journal und Spiegel schreiben. Jeder Nutzer hat ein Zeitbudget
    (20 s; der REST-Client bekommt dieselbe Frist, 5 s je Aufruf, höchstens
-   ein Wiederholversuch); nach 40 s beginnt der Takt keinen weiteren Nutzer.
-   Fehler eines Nutzers stoppen die anderen nicht.
+   ein Wiederholversuch); danach gilt der Lauf als aufgegeben und darf nichts
+   mehr schreiben (State, Journal, Spiegel) — er kann den nächsten Takt nicht
+   überschreiben. Nach 40 s beginnt der Takt keinen weiteren Nutzer. Fehler
+   eines Nutzers stoppen die anderen nicht; ein Lesefehler am Broker-Doc gilt
+   als Fehler, nie als „kein Broker".
 6. Health schreiben, Lease freigeben.
 
 ## 4. Einstellungen je Nutzer
@@ -85,9 +88,16 @@ das war einer der Fehler des Vorgängers.
 - **Konto- oder Moduswechsel** (andere Schlüssel verbinden, trennen, Paper →
   Live): `connectBroker` archiviert den Engine-State nach
   `private/archiv/engineStates/{iso}`; erkennt der Takt trotzdem einen State
-  eines anderen Alpaca-Kontos (`accountId`), archiviert er ihn selbst und
-  startet im nächsten Takt mit leerem Buch. Positionen des alten Kontos
-  bleiben dort samt Schutz-Stops — sie gehören nicht mehr zu diesem Buch.
+  eines anderen Alpaca-Kontos (`accountId`) oder Modus, archiviert er ihn
+  selbst und startet im nächsten Takt mit leerem Buch. Positionen des alten
+  Kontos bleiben dort samt Schutz-Stops — sie gehören nicht mehr zu diesem
+  Buch; DAY-Beine verfallen dort am Sitzungsende (Journal-Notiz).
+- **Flatten** wird je Position als laufender Exit vorgemerkt und gespeichert,
+  bevor die erste Order geht — ein Zeitbudget oder Absturz mitten in der
+  Sequenz verliert keine Position, der nächste Takt holt den Rest nach.
+- **Eigene Fills nach Absturz** werden nur adoptiert, wenn die Runde
+  nachweislich offen ist (kein Bein, kein eigener Exit gefüllt; Broker hält
+  genau die Menge). Alles andere bleibt dem Abgleich (Halt `reconcile`).
 - **Notbremse** (Tagesverlust, Drawdown): Der Glattstellungs-Exit wird in
   jedem Takt erneut angefordert, bis das Buch leer ist; laufende Exits sind
   im State persistiert und werden nach einem Fehlschlag wiederholt.

@@ -24,7 +24,7 @@
  */
 import type { EngineState, JournalEvent, StateStoreLike } from '../../../src/core/journal.ts';
 import type { Ms } from '../../../src/core/types.ts';
-import { isoOf, plain, type DocData, type DocRefLike, type FirestoreLike, type WriteBatchLike } from './firestoreLike.js';
+import { isoOf, plain, type DocData, type DocRefLike, type FirestoreLike, type WriteBatchLike, type WriteGuard } from './firestoreLike.js';
 
 export function engineStatePath(uid: string): string {
   return `users/${uid}/private/engineState`;
@@ -49,14 +49,16 @@ export class FirestoreStateStore implements StateStoreLike {
   private readonly uid: string;
   private readonly ref: DocRefLike;
   private readonly journal: JournalBufferLike | null;
+  private readonly guard: WriteGuard | null;
   /** true, solange auf dem Doc ein (geladener oder geschriebener) Journal-Puffer liegt. */
   private bufferOnDoc = false;
 
-  constructor(db: FirestoreLike, uid: string, o: { journal?: JournalBufferLike | undefined } = {}) {
+  constructor(db: FirestoreLike, uid: string, o: { journal?: JournalBufferLike | undefined; guard?: WriteGuard | undefined } = {}) {
     this.db = db;
     this.uid = uid;
     this.ref = db.doc(engineStatePath(uid));
     this.journal = o.journal ?? null;
+    this.guard = o.guard ?? null;
   }
 
   async load(): Promise<EngineState | null> {
@@ -75,6 +77,7 @@ export class FirestoreStateStore implements StateStoreLike {
   }
 
   async save(state: EngineState): Promise<void> {
+    this.guard?.assert('State');
     state.updatedAt = Date.now();
     const pending = this.journal?.pendingEvents() ?? [];
     const journalBuffer = pending.length > JOURNAL_BUFFER_MAX ? pending.slice(pending.length - JOURNAL_BUFFER_MAX) : pending;
@@ -88,7 +91,10 @@ export class FirestoreStateStore implements StateStoreLike {
    */
   bufferClearOp(): ((b: WriteBatchLike) => void) | null {
     if (!this.bufferOnDoc) return null;
-    return (b) => b.update(this.ref, { journalBuffer: [] });
+    return (b) => {
+      this.guard?.assert('Journal-Puffer');
+      b.update(this.ref, { journalBuffer: [] });
+    };
   }
 
   /** Nach einem erfolgreichen Batch mit `bufferClearOp`. */
@@ -101,6 +107,7 @@ export class FirestoreStateStore implements StateStoreLike {
    * bleiben beim alten Broker samt Schutz-Stops — sie gehören nicht mehr zu diesem Buch.
    */
   async archive(now: Ms, reason: string): Promise<string | null> {
+    this.guard?.assert('State-Archiv');
     const snap = await this.ref.get();
     if (!snap.exists) return null;
     const path = engineStateArchivePath(this.uid, now);

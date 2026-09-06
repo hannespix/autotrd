@@ -54,6 +54,7 @@ export interface BookStateSlice {
   pendingEntries: Record<string, string>;
   protectiveOrders: Record<string, string>;
   pendingExits: Record<string, PendingExit>;
+  bookedExitQty: Record<string, Record<string, number>>;
   dayTrades: Record<string, number>;
 }
 
@@ -97,6 +98,8 @@ export class Book {
   readonly protectiveOrders = new Map<string, ProtectiveOrder>();
   /** Laufende eigene Exits — persistiert (Wiederholversuch überlebt Neustart und Takt), per REST nachgesehen. */
   readonly pendingExits = new Map<string, PendingExit>();
+  /** Symbol → (Order-ID → gebuchte Exit-Menge) — persistiert, damit Teilfills nach Neustart nicht doppelt buchen. */
+  readonly bookedExitQty = new Map<string, Map<string, number>>();
   /** Lokal gezählte Daytrades je Handelstag. */
   readonly dayTrades = new Map<string, number>();
 
@@ -114,6 +117,10 @@ export class Book {
       if (!b.positions.has(sym)) continue; // ohne Position gibt es nichts zu wiederholen
       b.pendingExits.set(sym, { ...pe, intent: pe.intent ? { ...pe.intent } : null });
     }
+    for (const [sym, byOrder] of Object.entries(s.bookedExitQty ?? {})) {
+      if (!b.positions.has(sym)) continue;
+      b.bookedExitQty.set(sym, new Map(Object.entries(byOrder).filter(([, q]) => typeof q === 'number' && q > 0)));
+    }
     for (const [day, n] of Object.entries(s.dayTrades)) b.dayTrades.set(day, n);
     return b;
   }
@@ -127,9 +134,11 @@ export class Book {
     for (const [sym, po] of this.protectiveOrders) protectiveOrders[sym] = po.clientId;
     const pendingExits: Record<string, PendingExit> = {};
     for (const [sym, pe] of this.pendingExits) pendingExits[sym] = { ...pe, intent: pe.intent ? { ...pe.intent } : null };
+    const bookedExitQty: Record<string, Record<string, number>> = {};
+    for (const [sym, byOrder] of this.bookedExitQty) if (byOrder.size > 0) bookedExitQty[sym] = Object.fromEntries(byOrder);
     const dayTrades: Record<string, number> = {};
     for (const [day, n] of this.dayTrades) dayTrades[day] = n;
-    return { positions, pendingEntries, protectiveOrders, pendingExits, dayTrades };
+    return { positions, pendingEntries, protectiveOrders, pendingExits, bookedExitQty, dayTrades };
   }
 
   open(pos: PositionState): void {
@@ -142,7 +151,26 @@ export class Book {
     this.positions.delete(symbol);
     this.protectiveOrders.delete(symbol);
     this.pendingExits.delete(symbol);
+    this.bookedExitQty.delete(symbol);
     return pos;
+  }
+
+  /** Bereits gebuchte Exit-Menge einer Broker-Order (0, wenn unbekannt). */
+  bookedExit(symbol: string, orderId: string): number {
+    return this.bookedExitQty.get(symbol)?.get(orderId) ?? 0;
+  }
+
+  /** Gebuchte Exit-Menge einer Broker-Order festhalten (kumuliert, wie Alpacas `filled_qty`). */
+  markBookedExit(symbol: string, orderId: string, qty: number): void {
+    let m = this.bookedExitQty.get(symbol);
+    if (!m) {
+      m = new Map();
+      this.bookedExitQty.set(symbol, m);
+    }
+    if (qty > 0) m.set(orderId, qty);
+    else m.delete(orderId);
+    // Handvoll Orders je Position — mehr als 50 heißt Müll, ältester Eintrag fliegt.
+    if (m.size > 50) m.delete(m.keys().next().value!);
   }
 
   markPending(symbol: string, entry: PendingEntry): void {
