@@ -123,7 +123,8 @@ describe('assessReadiness', () => {
     const r = assessReadiness(trades, NOW, { minTrades: 1, minDays: 0 });
     expect(check(r, 'feeShare').value).toBeNull();
     expect(check(r, 'feeShare').pass).toBe(false);
-    expect(check(r, 'profitFactor').value).toBeNull();
+    // Nur Verluste: Profit-Faktor ist 0 (nicht null) und fällt durch
+    expect(check(r, 'profitFactor').value).toBe(0);
     expect(check(r, 'profitFactor').pass).toBe(false);
     expect(r.summary).toContain('Gebührenanteil');
     expect(r.summary).toContain(': –');
