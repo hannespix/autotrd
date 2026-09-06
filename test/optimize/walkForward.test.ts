@@ -52,15 +52,19 @@ describe('walkForward', () => {
       expect(f.best.oosMetrics.trades).toBe(30);
       expect(f.best.oosTrades.length).toBe(30);
       expect(f.best.oosDailyReturns.length).toBe(30);
-      const isCalls = simulate.calls.filter((c) => c.range && c.range.start === f.fold.isStart && c.costMultiplier === 1);
-      expect(isCalls.length).toBe(55);
+      // Der OOS-Lauf eines Folds ist eindeutig (Range exakt [oosStart, oosEnd));
+      // die 55 Aufrufe davor sind die IS-Suche dieses Folds.
+      const oosIdx = simulate.calls.findIndex((c) => c.range && c.range.start === f.fold.oosStart && c.range.end === f.fold.oosEnd);
+      expect(oosIdx).toBeGreaterThanOrEqual(55);
+      expect(simulate.calls.filter((c) => c.range && c.range.start === f.fold.oosStart && c.range.end === f.fold.oosEnd).length).toBe(1);
+      expect(simulate.calls[oosIdx]!.params).toEqual(f.best.params);
+      const isCalls = simulate.calls.slice(oosIdx - 55, oosIdx);
       for (const c of isCalls) {
+        expect(c.costMultiplier).toBe(1);
+        expect(c.range!.start).toBe(f.fold.isStart);
         expect(c.range!.end).toBeLessThan(f.fold.isEnd);
         expect(lowerBound(bars.t, f.fold.isEnd) - lowerBound(bars.t, c.range!.end)).toBe(embargo);
       }
-      const oosCalls = simulate.calls.filter((c) => c.range && c.range.start === f.fold.oosStart && c.range.end === f.fold.oosEnd);
-      expect(oosCalls.length).toBe(1);
-      expect(oosCalls[0]!.params).toEqual(f.best.params);
     }
   });
 

@@ -135,8 +135,8 @@ costs:
   secFeeRate: 0.0000278
   # FINRA Trading Activity Fee je verkaufter Aktie …
   finraTafPerShare: 0.000166
-  finraTafMax: 8.3
   # … gedeckelt je Order (USD).
+  finraTafMax: 8.3
   # Krypto-Taker-Gebühr in % (nur assetClass: crypto).
   cryptoTakerPct: 0.25
   # Leihkosten für Shorts in % p. a. (nur bei allowShort: true).

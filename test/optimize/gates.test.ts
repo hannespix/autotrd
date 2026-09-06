@@ -196,7 +196,8 @@ describe('deflatedSharpeOos', () => {
   });
 
   it('konstante Renditen (Varianz 0) ⇒ null', () => {
-    const returns = Array.from({ length: 3 }, () => Array.from({ length: 40 }, () => 0.01));
+    // 0.25 ist exakt darstellbar — 0.01 hätte durch Rundungsreste eine Scheinvarianz
+    const returns = Array.from({ length: 3 }, () => Array.from({ length: 40 }, () => 0.25));
     const r = deflatedSharpeOos({ wfa: wfaFixture({}, returns), metricsFns: fakeMetricsFns });
     expect(r.dsr).toBeNull();
     expect(r.note).toMatch(/nicht berechenbar/);
@@ -222,7 +223,7 @@ describe('stressTest & neighborhoodTest (mit Fake-Simulator)', () => {
     const simulate = makeFakeSimulate(REWARD_PROFILE);
     const wfa = wfaOf(simulate);
     simulate.calls.length = 0;
-    const s = stressTest({ ...common, wfa, costMultiplier: 1.5, objective: 'sortino' });
+    const s = stressTest({ ...common, simulate, wfa, costMultiplier: 1.5, objective: 'sortino' });
     expect(simulate.calls.length).toBe(8);
     for (const c of simulate.calls) expect(c.costMultiplier).toBe(1.5);
     expect(simulate.calls.map((c) => c.range)).toEqual(wfa.folds.map((f) => ({ start: f.fold.oosStart, end: f.fold.oosEnd })));
@@ -235,7 +236,7 @@ describe('stressTest & neighborhoodTest (mit Fake-Simulator)', () => {
   it('Stress mit ruinösem Faktor kippt das Netto', () => {
     const simulate = makeFakeSimulate(REWARD_PROFILE);
     const wfa = wfaOf(simulate);
-    const s = stressTest({ ...common, wfa, costMultiplier: 100, objective: 'sortino' });
+    const s = stressTest({ ...common, simulate, wfa, costMultiplier: 100, objective: 'sortino' });
     expect(s.netProfit).toBeLessThan(0);
   });
 
@@ -243,7 +244,7 @@ describe('stressTest & neighborhoodTest (mit Fake-Simulator)', () => {
     const simulate = makeFakeSimulate(REWARD_PROFILE);
     const wfa = wfaOf(simulate);
     simulate.calls.length = 0;
-    const n = neighborhoodTest({ ...common, wfa, optimizer: cfg.optimizer });
+    const n = neighborhoodTest({ ...common, simulate, wfa, optimizer: cfg.optimizer });
     const expected = neighbors(wfa.finalParams, strategy.paramSpace);
     expect(n.evaluated).toBe(expected.length);
     expect(simulate.calls.map((c) => c.params)).toEqual(expected);
@@ -260,7 +261,7 @@ describe('stressTest & neighborhoodTest (mit Fake-Simulator)', () => {
   it('Rauschen: die Nachbarn eines Zufallsoptimums sind kein Plateau', () => {
     const simulate = makeFakeSimulate(NOISE_PROFILE);
     const wfa = wfaOf(simulate);
-    const n = neighborhoodTest({ ...common, wfa, optimizer: cfg.optimizer });
+    const n = neighborhoodTest({ ...common, simulate, wfa, optimizer: cfg.optimizer });
     expect(n.medianObjective).toBeLessThan(n.bestObjective);
   });
 
@@ -268,7 +269,7 @@ describe('stressTest & neighborhoodTest (mit Fake-Simulator)', () => {
     const single = fakeStrategy('one', { space: [{ name: 'a', min: 1, max: 1, step: 1, kind: 'int' }], defaults: { a: 1 } });
     const simulate = makeFakeSimulate(REWARD_PROFILE);
     const wfa = walkForward({ ...common, strategy: single, optimizer: cfg.optimizer, simulate, rng: mulberry32(1) });
-    const n = neighborhoodTest({ ...common, strategy: single, wfa, optimizer: cfg.optimizer });
+    const n = neighborhoodTest({ ...common, simulate, strategy: single, wfa, optimizer: cfg.optimizer });
     expect(n.evaluated).toBe(0);
     expect(n.positiveShare).toBe(1);
     expect(n.medianObjective).toBe(n.bestObjective);

@@ -27,10 +27,11 @@ export function hashUnit(s: string): number {
     h ^= s.charCodeAt(i);
     h = Math.imul(h, 0x01000193) >>> 0;
   }
-  // zweite Runde gegen Muster in aufeinanderfolgenden Zeitstempeln
-  h ^= h >>> 13;
+  // zweite Runde gegen Muster in aufeinanderfolgenden Zeitstempeln;
+  // XOR liefert int32 — deshalb nach jedem Schritt zurück auf uint32
+  h = (h ^ (h >>> 13)) >>> 0;
   h = Math.imul(h, 0x5bd1e995) >>> 0;
-  h ^= h >>> 15;
+  h = (h ^ (h >>> 15)) >>> 0;
   return h / 4294967296;
 }
 
