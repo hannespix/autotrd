@@ -9,7 +9,6 @@
  * Per-Perioden-Sharpe der OOS-Tagesrenditen und der Zahl aller Trials.
  */
 import type { OptimizerConfig } from '../core/config.ts';
-import type { Strategy } from '../core/types.ts';
 import { median, objectiveValue, sampleVariance, type ObjectiveId } from './objective.ts';
 import { neighbors } from './search.ts';
 import { candidateRange, simulateWindow, type WfaResult, type WindowSimArgs } from './walkForward.ts';
