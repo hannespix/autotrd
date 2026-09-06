@@ -25,6 +25,17 @@ export default tseslint.config(
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  // Betriebs-Skripte (Optimierer-Workflow) laufen in Node: process/console sind dort global.
+  {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        process: 'readonly',
+        console: 'readonly',
+        URL: 'readonly',
+      },
+    },
+  },
   {
     rules: {
       '@typescript-eslint/no-unused-vars': [

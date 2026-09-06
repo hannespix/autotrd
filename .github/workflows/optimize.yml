@@ -1,0 +1,97 @@
+name: Optimierer (nächtlich)
+
+# Walk-Forward-Selbstoptimierung nach US-Börsenschluss: Bars nachladen,
+# Champion je Symbol bestimmen, Champion + Bericht nach Firestore
+# veröffentlichen. Läuft komplett im GitHub-Actions-Freikontingent —
+# kein Server. Die Engine-Function liest den Champion aus `meta/champion`.
+#
+# 23:00 UTC deckt Sommer- (Schluss 20:00 UTC) und Winterzeit (21:00 UTC) ab.
+
+on:
+  schedule:
+    - cron: '0 23 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      samples:
+        description: 'Stichproben je Fold (leer = Config)'
+        required: false
+        default: ''
+
+concurrency:
+  group: optimize
+  cancel-in-progress: false
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+      ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Abhängigkeiten installieren
+        run: npm ci
+
+      - name: Bars-Cache wiederherstellen
+        uses: actions/cache@v4
+        with:
+          path: var/bars
+          key: bars-${{ hashFiles('config/platform.yaml') }}-${{ github.run_id }}
+          restore-keys: |
+            bars-${{ hashFiles('config/platform.yaml') }}-
+
+      - name: Keys prüfen
+        run: |
+          if [ -z "$ALPACA_API_KEY" ] || [ -z "$ALPACA_SECRET_KEY" ]; then
+            echo "::error::ALPACA_API_KEY / ALPACA_SECRET_KEY fehlen als Repository-Secrets."
+            exit 1
+          fi
+          printf 'ALPACA_API_KEY=%s\nALPACA_SECRET_KEY=%s\nALPACA_ALLOW_LIVE=0\n' "$ALPACA_API_KEY" "$ALPACA_SECRET_KEY" > "$RUNNER_TEMP/.env"
+          chmod 600 "$RUNNER_TEMP/.env"
+
+      - name: Bars und Kalender nachladen
+        run: node src/cli.ts fetch --config config/platform.yaml --env "$RUNNER_TEMP/.env" --home var
+
+      - name: Walk-Forward-Optimierung
+        run: |
+          EXTRA=""
+          if [ -n "${{ github.event.inputs.samples }}" ]; then
+            echo "Hinweis: samples-Override aus workflow_dispatch wird über die Config gesetzt."
+            sed -i "s/^  samples: .*/  samples: ${{ github.event.inputs.samples }}/" config/platform.yaml
+          fi
+          node src/cli.ts optimize --config config/platform.yaml --env "$RUNNER_TEMP/.env" --home var --equity 25000
+
+      - name: Bericht als Artefakt
+        uses: actions/upload-artifact@v4
+        with:
+          name: optimize-report-${{ github.run_id }}
+          path: |
+            var/champion.json
+            var/reports/optimize-*.md
+          retention-days: 90
+
+      - name: Service-Account bereitstellen
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
+
+      - name: Plattform-Config nach Firestore
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+        run: node scripts/sync-engine-config.mjs --config config/platform.yaml
+
+      - name: Champion und Bericht nach Firestore
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+        run: node scripts/publish-champion.mjs --home var
+
+      - name: Ohne Service-Account
+        if: env.FIREBASE_SERVICE_ACCOUNT == ''
+        run: echo "::warning::FIREBASE_SERVICE_ACCOUNT fehlt — Champion nur als Artefakt, nicht veröffentlicht."
