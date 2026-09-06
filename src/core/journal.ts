@@ -7,7 +7,7 @@
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { HaltState, Ms, PositionState, Trade } from './types.ts';
+import type { ExitReason, HaltState, Ms, PositionState, Trade } from './types.ts';
 import { redact } from './log.ts';
 
 export type JournalEventKind =
@@ -106,6 +106,22 @@ export class Journal implements JournalLike {
   }
 }
 
+/**
+ * Laufender eigener Exit — persistiert, damit der Wiederholversuch einen
+ * Neustart bzw. den nächsten Functions-Takt überlebt (Secreview 2, K2: Ein
+ * im Auslöse-Takt gescheiterter Notbremsen-Exit wurde sonst nie wiederholt).
+ */
+export interface PendingExitState {
+  clientId: string | null;
+  orderId: string | null;
+  reason: ExitReason;
+  since: Ms;
+  attempts: number;
+  lastAttemptAt: Ms;
+  lastError: string | null;
+  intent: { kind: 'exit'; symbol: string; reason: ExitReason; decidedAt: Ms } | null;
+}
+
 /** Persistenter Engine-Zustand (Snapshot). */
 export interface EngineState {
   version: 1;
@@ -121,6 +137,10 @@ export interface EngineState {
   pendingEntries: Record<string, string>;
   /** Symbol → client_order_id des Schutz-Stops beim Broker. */
   protectiveOrders: Record<string, string>;
+  /** Symbol → laufender eigener Exit (Wiederholversuch). Additiv seit Secreview 2; fehlt in älteren States. */
+  pendingExits?: Record<string, PendingExitState>;
+  /** Alpaca-Konto-ID, zu der dieser State gehört (additiv; fehlt in älteren States). Fremdes Konto ⇒ fail-closed. */
+  accountId?: string;
   consecutiveErrors: number;
   /** Lokal gezählte Daytrades (ET-Tag → Anzahl), Ergänzung zur Broker-Zahl. */
   dayTrades: Record<string, number>;
@@ -139,6 +159,7 @@ export function emptyState(mode: 'paper' | 'live', day: string, equity: number):
     positions: {},
     pendingEntries: {},
     protectiveOrders: {},
+    pendingExits: {},
     consecutiveErrors: 0,
     dayTrades: {},
     lastBarAt: {},

@@ -59,6 +59,12 @@ export interface LogicContext {
   assetFacts: (symbol: string) => AssetFacts | undefined;
   /** Stop bei Einstieg mindestens diese Distanz (in %) vom Kurs — Schutz vor Null-Risiko-Stops. */
   minStopDistancePct?: number;
+  /**
+   * Einstiege von außen gesperrt (Text = Grund), ohne persistierten Halt: Der Functions-Takt setzt das,
+   * wenn die Echtgeld-Kette (Freigabe, Kill-Switch, Nutzer-Schalter, Reife) nicht geschlossen ist.
+   * Exits, Stop-Nachzüge und Glattstellungen laufen weiter — Exits werden nie gesperrt.
+   */
+  entryLock?: string | null | undefined;
 }
 
 export interface SymbolInput {
@@ -119,6 +125,18 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
       intents.push({ kind: 'exit', symbol: p.symbol, reason, decidedAt: ctx.now });
     }
     return { intents, notes, halt, haltTriggered: true };
+  }
+  // Notbremse steht (Tagesverlust/Drawdown) und das Buch ist nicht leer: Der Glattstellungs-Exit wird in
+  // JEDEM Zyklus erneut angefordert, bis alles zu ist — der Executor ist idempotent (positionsstabile
+  // Kennung). Sonst bliebe eine Position nach einem im Auslöse-Zyklus gescheiterten Exit einfach offen
+  // (Secreview 2, K2: im Functions-Takt gibt es keinen Wiederholversuch über den Takt hinaus).
+  if (halt.halted && (halt.reason === 'daily_loss' || halt.reason === 'drawdown') && ctx.positions.size > 0) {
+    const reason = halt.reason === 'drawdown' ? 'drawdown' : 'kill_switch';
+    for (const p of ctx.positions.values()) {
+      intents.push({ kind: 'exit', symbol: p.symbol, reason, decidedAt: ctx.now });
+    }
+    notes.push({ symbol: '*', kind: 'halt', text: `Notbremse aktiv (${halt.reason}) — offene Positionen werden glattgestellt` });
+    return { intents, notes, halt, haltTriggered: false };
   }
 
   // Preise der Entscheidungs-Bars für Exposure
@@ -186,6 +204,10 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
 
     if (halt.halted) {
       block(`Halt aktiv (${halt.reason})`);
+      continue;
+    }
+    if (ctx.entryLock) {
+      block(`Einstiege gesperrt: ${ctx.entryLock}`);
       continue;
     }
     if (!ctx.dataFresh) {

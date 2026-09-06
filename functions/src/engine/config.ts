@@ -36,14 +36,32 @@ export const DEFAULT_GLOBAL_CONFIG: Record<string, unknown> = {
 /** Felder, die nie aus dem globalen Doc kommen. */
 export const NUR_JE_NUTZER: readonly string[] = ['risk', 'notify', 'paths'];
 
-/** Globaler Roh-Teil: Defaults, überschrieben durch die Felder des Docs (ohne risk/notify/paths). */
+/** Untergrenze der Bar-Karenz im Takt (s) — siehe DEFAULT_GLOBAL_CONFIG. */
+export const TICK_BAR_GRACE_MIN_SEC = (DEFAULT_GLOBAL_CONFIG.engine as { barGraceSec: number }).barGraceSec;
+
+/**
+ * Globaler Roh-Teil: Defaults, überschrieben durch die Felder des Docs (ohne risk/notify/paths).
+ *
+ * Zwei Korrekturen am Doc (Secreview 2, M8): Ein Top-Level `feed` (so schrieb es der Sync-Skript-Stand
+ * vor dem Review) landet in `broker.feed`, damit Optimierer und Engine denselben Feed haben; und
+ * `engine.barGraceSec` unterschreitet nie die Takt-Untergrenze — mit 4 s gälte ein Bucket zur vollen
+ * Minute als geschlossen, bevor Alpaca die letzte Minutenbar per REST liefert.
+ */
 export function globalConfigRaw(doc: Record<string, unknown> | undefined): Record<string, unknown> {
   const out: Record<string, unknown> = plain(DEFAULT_GLOBAL_CONFIG);
   if (!doc) return out;
   for (const [k, v] of Object.entries(doc)) {
-    if (NUR_JE_NUTZER.includes(k)) continue;
+    if (NUR_JE_NUTZER.includes(k) || k === 'feed') continue;
     out[k] = plain(v);
   }
+  const broker: Record<string, unknown> = isRecord(out.broker) ? { ...out.broker } : {};
+  if (doc.feed === 'iex' || doc.feed === 'sip') broker.feed = doc.feed;
+  if (broker.mode !== 'paper' && broker.mode !== 'live') broker.mode = 'paper';
+  out.broker = broker;
+  const engine: Record<string, unknown> = isRecord(out.engine) ? { ...out.engine } : {};
+  const grace = typeof engine.barGraceSec === 'number' ? engine.barGraceSec : TICK_BAR_GRACE_MIN_SEC;
+  engine.barGraceSec = Math.max(grace, TICK_BAR_GRACE_MIN_SEC);
+  out.engine = engine;
   return out;
 }
 

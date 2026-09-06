@@ -17,7 +17,7 @@
  */
 import { existsSync, readFileSync, statSync as fsStatSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import type { AlpacaClient, DataStream, StreamStatus, TradeStream, TradeUpdate } from '../alpaca/types.ts';
+import { isOpenStatus, type AlpacaClient, type DataStream, type StreamStatus, type TradeStream, type TradeUpdate } from '../alpaca/types.ts';
 import type { Config } from '../core/config.ts';
 import { aggregate, BarSeries, normalizeBars } from '../core/bars.ts';
 import { emptyState, ensureDir, homePaths, Journal, StateStore, type EngineState, type HomePaths, type JournalLike, type StateStoreLike } from '../core/journal.ts';
@@ -67,11 +67,30 @@ export interface EngineDeps {
   stateStore?: StateStoreLike | undefined;
   /** Journal; Default `<home>/journal.jsonl` (append-only). */
   journal?: JournalLike | undefined;
+  /**
+   * Einstiegs-Sperre von außen (Grund oder null), je Tick neu abgefragt und NICHT persistiert: Der
+   * Functions-Takt setzt sie, wenn die Echtgeld-Kette nicht geschlossen ist. Exits, Stop-Nachzüge,
+   * Abgleich und Glattstellungen laufen weiter (Exits werden nie gesperrt); eigene offene Einstiegs-
+   * Orders werden beim Start storniert.
+   */
+  entryLock?: (() => string | null) | undefined;
 }
 
 export interface ProcessEvents {
   on(event: string, listener: (...args: unknown[]) => void): unknown;
   off(event: string, listener: (...args: unknown[]) => void): unknown;
+}
+
+/** Der geladene State gehört zu einem anderen Alpaca-Konto als dem verbundenen. */
+export class StateAccountMismatchError extends Error {
+  readonly stateAccountId: string;
+  readonly connectedAccountId: string;
+  constructor(stateAccountId: string, connectedAccountId: string) {
+    super(`State gehört zum Alpaca-Konto ${stateAccountId}, verbunden ist ${connectedAccountId} — State archivieren statt weiterhandeln`);
+    this.name = 'StateAccountMismatchError';
+    this.stateAccountId = stateAccountId;
+    this.connectedAccountId = connectedAccountId;
+  }
 }
 
 /** state.json trägt zusätzlich zurückgestellte Exits/Stop-Nachzüge (Symbol → Intent) — überlebt Neustarts. */
@@ -104,6 +123,8 @@ export interface EngineStatus {
   streamStatus: { data: StreamStatus | null; trade: StreamStatus | null; dataLastMessageAt: Ms | null; tradeLastMessageAt: Ms | null };
   clock: ClockSnapshot | null;
   consecutiveErrors: number;
+  /** Grund der Einstiegs-Sperre von außen (Functions-Takt: Echtgeld-Kette), sonst null. */
+  entryLock: string | null;
   startedAt: Ms | null;
   uptimeMs: number;
   lastTickAt: Ms | null;
@@ -234,9 +255,17 @@ export class Engine {
     if (loaded && loaded.mode !== this.mode) {
       throw new Error(`state.json gehört zum Modus '${loaded.mode}', die Engine läuft '${this.mode}' — getrenntes Home verwenden`);
     }
+    // Fremdes Konto (Nutzer hat andere Schlüssel hinterlegt): Das Buch gehört zu einem anderen Depot — ein Abgleich
+    // würde dessen Positionen als „fehlt beim Broker" mit geschätztem Kurs ausbuchen (Phantom-Trades). Fail-closed;
+    // der Functions-Takt fängt den Fehler und archiviert den State (Secreview 2, M9).
+    if (loaded?.accountId && acc.id && loaded.accountId !== acc.id) {
+      throw new StateAccountMismatchError(loaded.accountId, acc.id);
+    }
     const base = loaded ?? emptyState(this.mode, today, acc.equity);
     const st: PersistedState = { ...base, deferredIntents: (base as Partial<PersistedState>).deferredIntents ?? {} };
-    st.consecutiveErrors = 0;
+    if (acc.id) st.accountId = acc.id;
+    // `consecutiveErrors` bleibt, wie er gespeichert wurde: Ein Neustart (oder der nächste Functions-Takt) ist
+    // kein Beweis, dass der Fehler weg ist — erst ein fehlerfreier Tick setzt den Zähler zurück (Secreview 2, M4).
     st.peakEquity = Math.max(st.peakEquity, acc.equity);
     this.state = st;
     this.book = Book.fromState(st);
@@ -273,12 +302,23 @@ export class Engine {
       strategyIdFor: (s) => this.deps.strategyFor(s)?.strategy.id,
       notify: this.deps.notify,
       log: this.log,
+      costs: this.cfg.costs,
     });
 
     await this.backfillAll(now);
     await this.executor.syncOrders();
+    // Eigene Einstiegs-Orders aus der Zeit vor dem Neustart/Absturz übernehmen — VOR dem Abgleich, damit eine
+    // gefüllte eigene Order nicht als Fremdbestand gilt (Secreview 2, M6).
+    await this.adoptOwnEntryOrders(now);
+    const lock = this.deps.entryLock?.() ?? null;
+    if (lock) {
+      const cancelled = await this.executor.cancelOwnEntryOrders();
+      if (cancelled.length > 0) {
+        this.journal.append('note', { text: `Einstiege gesperrt (${lock}) — eigene offene Einstiegs-Orders storniert`, symbols: cancelled }, now);
+        this.log.warn('Einstiege gesperrt — eigene offene Einstiegs-Orders storniert', { lock, symbols: cancelled });
+      }
+    }
     await this.reconcileInner(now);
-    await this.adoptOpenEntryOrders();
 
     this.deps.dataStream.onBar((s, b) => this.onBar(s, b));
     this.deps.dataStream.onStatus((ev) => {
@@ -386,7 +426,9 @@ export class Engine {
     return this.serial.run(async () => {
       const now = this.now();
       if (this.exitsAllowed(now)) {
-        await this.requireExecutor().flattenAll(reason);
+        for (const r of await this.requireExecutor().flattenAll(reason)) {
+          this.log.info(`flatten ${r.symbol}: ${r.note}`, { ok: r.ok, orderId: r.orderId ?? null });
+        }
       } else {
         // Nach Schluss würde flattenAll die Schutz-Stops abräumen und Marktorders in die Nacht legen —
         // stattdessen je Position einen Exit zurückstellen; die Stops bleiben aktiv.
@@ -458,6 +500,7 @@ export class Engine {
       },
       clock: this.clock.snapshot(),
       consecutiveErrors: st?.consecutiveErrors ?? 0,
+      entryLock: this.deps.entryLock?.() ?? null,
       startedAt: this.startedAt,
       uptimeMs: this.startedAt === null ? 0 : now - this.startedAt,
       lastTickAt: this.lastTickAt,
@@ -542,6 +585,7 @@ export class Engine {
           dataFresh: this.dataFresh(now),
           localDayTrades: this.localDayTrades(today),
           assetFacts: (s) => this.assets.get(s),
+          entryLock: this.deps.entryLock?.() ?? null,
         };
         const res = decide(ctx, inputs);
         const before = st.halt;
@@ -884,15 +928,40 @@ export class Engine {
     }
   }
 
-  /** Offene eigene Einstiegs-Orders (z. B. aus der Zeit vor einem Neustart) als Pending übernehmen. */
-  private async adoptOpenEntryOrders(): Promise<void> {
-    const open = await this.deps.client.listOrders({ status: 'open', symbols: this.cfg.universe.symbols, nested: true });
-    for (const o of open) {
+  /** Fenster, in dem eine gefüllte eigene Einstiegs-Order ohne Buch-Position als „eigener Fill nach Absturz" gilt. */
+  static readonly ADOPT_FILL_WINDOW_MS = 6 * HOUR;
+
+  /**
+   * Eigene Einstiegs-Orders aus der Zeit vor einem Neustart/Absturz übernehmen:
+   *  - offen ⇒ als Pending (der Fill kommt über syncOrders/Stream);
+   *  - kürzlich GEFÜLLT, aber nicht im Buch (Absturz zwischen Senden und Speichern) ⇒ als Position buchen,
+   *    sofern der Broker sie tatsächlich hält. Ohne diesen Schritt sähe der Abgleich die eigene Position als
+   *    Fremdbestand und zöge die Sperre 'reconcile', die zugleich den adoptierenden Einstieg blockt.
+   */
+  private async adoptOwnEntryOrders(now: Ms): Promise<void> {
+    const all = await this.deps.client.listOrders({ status: 'all', symbols: this.cfg.universe.symbols, after: now - Engine.ADOPT_FILL_WINDOW_MS - DAY, nested: true, limit: 500 });
+    const filled: typeof all = [];
+    for (const o of all) {
       const p = parseClientId(o.clientOrderId);
       if (!p || p.kind !== 'entry' || p.mode !== this.mode) continue;
       if (this.book.positions.has(o.symbol) || this.book.pendingEntries.has(o.symbol)) continue;
-      this.book.markPending(o.symbol, { clientId: o.clientOrderId, orderId: o.id, intent: null, submittedAt: o.submittedAt ?? this.now() });
-      this.log.warn('Offene Einstiegs-Order übernommen', { symbol: o.symbol, clientId: o.clientOrderId });
+      if (isOpenStatus(o.status)) {
+        this.book.markPending(o.symbol, { clientId: o.clientOrderId, orderId: o.id, intent: null, submittedAt: o.submittedAt ?? now });
+        this.log.warn('Offene Einstiegs-Order übernommen', { symbol: o.symbol, clientId: o.clientOrderId });
+      } else if (o.filledQty > 0 && (o.filledAt ?? o.submittedAt ?? 0) >= now - Engine.ADOPT_FILL_WINDOW_MS) {
+        filled.push(o);
+      }
+    }
+    if (filled.length === 0) return;
+    // Nur, was der Broker wirklich hält — eine längst wieder geschlossene Runde darf keine Phantom-Position erzeugen.
+    const held = new Map((await this.deps.client.listPositions()).map((bp) => [bp.symbol, bp]));
+    for (const o of filled) {
+      const bp = held.get(o.symbol);
+      const side = o.side === 'buy' ? 'long' : 'short';
+      if (!bp || bp.side !== side || this.book.positions.has(o.symbol)) continue;
+      await this.requireExecutor().applyEntryFill(o, now);
+      this.journal.append('reconcile', { action: 'adopt_own_fill', symbol: o.symbol, orderId: o.id, clientId: o.clientOrderId, qty: o.filledQty, note: 'Gefüllte eigene Einstiegs-Order ohne Buch-Position (Absturz vor dem Speichern) — als Position gebucht' }, now);
+      this.log.warn('Gefüllte eigene Einstiegs-Order übernommen', { symbol: o.symbol, clientId: o.clientOrderId, qty: o.filledQty });
     }
   }
 

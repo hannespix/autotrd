@@ -71,6 +71,8 @@ export interface UserMirror {
   /** Kommando-Doc wurde in diesem Takt geprüft ⇒ `engine.commandAt` zurücksetzen. */
   commandsSeen: boolean;
   configSource?: string | undefined;
+  /** Strategie-Notizen des Takts (Champion fehlt, Zeitrahmen, Sperre) — immer gespiegelt, nur bei Änderung journaliert. */
+  notes?: readonly string[] | undefined;
 }
 
 export function engineFieldOf(m: UserMirror): DocData {
@@ -92,9 +94,11 @@ export function engineFieldOf(m: UserMirror): DocData {
     pendingExits: s.pendingExits,
     deferred: s.deferredIntents,
     consecutiveErrors: s.consecutiveErrors,
+    entryLock: s.entryLock,
     lastTickAt: isoOf(m.now),
     lastError: m.lastError,
     champion: { source: m.champion.source, symbols: m.champion.symbols },
+    notes: [...(m.notes ?? [])],
     ...(m.configSource !== undefined ? { configSource: m.configSource } : {}),
     ...(m.commandsSeen ? { commandAt: null } : {}),
   };

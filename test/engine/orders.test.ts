@@ -260,15 +260,38 @@ describe('OrderExecutor — Exit', () => {
     expect(s.fake.openOrders('AAPL').some((o) => o.type === 'market' && o.side === 'sell')).toBe(true);
   });
 
-  it('flattenAll: alles stornieren, alles schließen, Trades mit dem Grund buchen', async () => {
+  it('flattenAll: nur das eigene Buch — Beine stornieren, Marktorder je Position, Fremdbestand bleibt (Secreview 2, G4)', async () => {
     const s = setup();
-    await filledEntry(s);
-    await s.executor.flattenAll('kill_switch');
-    expect(s.fake.callsOf('cancelAllOrders')).toHaveLength(1);
-    expect(s.fake.callsOf('closeAllPositions')).toHaveLength(1);
-    expect(s.fake.positions.size).toBe(0);
+    const parent = await filledEntry(s);
+    // Handposition des Nutzers im selben Konto: geht die Engine nichts an.
+    s.fake.setPosition('TSLA', 'long', 5, 200, 201);
+    s.fake.autoFillMarket = true;
+    const res = await s.executor.flattenAll('kill_switch');
+    expect(res.map((r) => [r.symbol, r.ok])).toEqual([['AAPL', true]]);
+    expect(s.fake.callsOf('cancelAllOrders')).toHaveLength(0);
+    expect(s.fake.callsOf('closeAllPositions')).toHaveLength(0);
+    expect(s.fake.find(`${parent.id}-sl`)?.status).toBe('canceled');
+    expect(s.fake.positions.has('AAPL')).toBe(false);
+    expect(s.fake.positions.has('TSLA'), 'Fremdbestand darf flattenAll nicht anfassen').toBe(true);
     expect(s.book.positions.size).toBe(0);
     expect(s.journal.trades()[0]?.exitReason).toBe('kill_switch');
+  });
+
+  it('flattenAll: eigene offene Einstiegs-Order wird storniert, ein Fill im Rennen trotzdem gebucht und geschlossen', async () => {
+    const s = setup();
+    const pending = await s.executor.execute([enter()]);
+    expect(pending[0]?.ok).toBe(true);
+    expect(s.book.pendingEntries.has('AAPL')).toBe(true);
+    // Der Storno kommt zu spät: Alpaca hat gerade gefüllt und antwortet 422. Die Marktorder des Exits füllt sofort.
+    s.fake.autoFillMarket = true;
+    s.fake.onCall('cancelOrder', () => {
+      s.fake.fill(pending[0]!.orderId!, 100.4);
+    });
+    const res = await s.executor.flattenAll('manual');
+    expect(s.book.pendingEntries.size).toBe(0);
+    expect(res.map((r) => [r.symbol, r.ok])).toEqual([['AAPL', true]]);
+    expect(s.fake.positions.has('AAPL')).toBe(false);
+    expect(s.journal.trades()[0]?.exitReason).toBe('manual');
   });
 });
 

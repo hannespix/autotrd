@@ -16,6 +16,7 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import { accessDeniedReason, accessLevelOfSnap, mayTradeSnap } from '../core/access.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
+import { brokerVerbindungLesend } from '../core/brokerZugang.js';
 import { commandPatch, commandsPath, parseCommandRequest, type CommandAction, type CommandRequest } from '../engine/commands.js';
 
 export interface EngineCommandErgebnis {
@@ -40,6 +41,9 @@ export const engineCommand = onCall(CALLABLE_OPTS, async (request): Promise<Engi
   } catch (e) {
     throw new HttpsError('invalid-argument', e instanceof Error ? e.message : 'Kommando ungültig');
   }
+  // Ohne Broker gibt es keine Engine, die das Kommando je ausführte — es bliebe liegen und feuerte beim
+  // späteren Verbinden (Secreview 2, G3). Lesende Verbindung genügt für die Prüfung.
+  if ((await brokerVerbindungLesend(uid)) === null) throw new HttpsError('failed-precondition', 'srv.keinBrokerFuerKommando');
 
   const now = Date.now();
   const at = new Date(now).toISOString();

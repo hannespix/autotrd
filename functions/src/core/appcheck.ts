@@ -20,10 +20,19 @@ export const APPCHECK_ENFORCE = process.env.APPCHECK_ENFORCE === '1';
  * CORS-Header. Öffentlich aufrufbar ≠ ungeschützt: Auth/App-Check/Quotas
  * prüft jede Function selbst.
  */
-export const CALLABLE_OPTS = {
+export const CALLABLE_OPTS: { enforceAppCheck: boolean; invoker: 'public'; secrets: string[] } = {
   enforceAppCheck: APPCHECK_ENFORCE,
   invoker: 'public',
-} as const;
+  /**
+   * Hauptschlüssel des Key-Tresors an JEDES Callable binden (Secreview 2, M2):
+   * Ohne ihn speicherte `connectBroker` Papier-Schlüssel im Klartext, und
+   * `brokerStatus`/`setLiveMode`/`resetWallet`/`engineCommand` konnten ein
+   * `v1:`-Chiffrat nicht lesen — während der Takt (mit Secret) dieselben
+   * Docs entschlüsselte. Das Secret muss VOR dem Deploy existieren
+   * (`firebase functions:secrets:set BROKER_MASTER_KEY`, docs/SETUP.md).
+   */
+  secrets: ['BROKER_MASTER_KEY'],
+};
 
 /** Emulator-only-HTTP-Trigger: in Produktion gar nicht erst aufrufbar. */
 export const EMULATOR_TRIGGER_OPTS = { invoker: 'private' } as const;

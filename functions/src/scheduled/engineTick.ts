@@ -25,7 +25,7 @@ import type { AlpacaClient } from '../../../src/alpaca/types.ts';
 import { setLogSink } from '../../../src/core/log.ts';
 import type { AssetClass } from '../../../src/core/types.ts';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
-import { brokerVerbindung, schluesselArt, type BrokerVerbindung } from '../core/brokerZugang.js';
+import { brokerZugang, schluesselArt, type BrokerVerbindung } from '../core/brokerZugang.js';
 import { fxFelder } from '../core/fx.js';
 import { runEngineTick, type TickDeps, type TickResult } from '../engine/tick.js';
 
@@ -66,9 +66,16 @@ export function tickDeps(): TickDeps {
   return {
     db: getFirestore(),
     dataClientFor: plattformDatenclient,
-    brokerVerbindung: (uid, now) => brokerVerbindung(uid, now),
+    brokerZugang: (uid, now) => brokerZugang(uid, now),
     clientFor: (v: BrokerVerbindung, o) =>
-      createAlpacaClient({ mode: v.mode, keyId: v.schluessel.keyId, secret: v.schluessel.secret, feed: o.feed, assetClass: o.assetClass }),
+      createAlpacaClient({
+        mode: v.mode,
+        keyId: v.schluessel.keyId,
+        secret: v.schluessel.secret,
+        feed: o.feed,
+        assetClass: o.assetClass,
+        ...(o.limits ? { timeoutMs: o.limits.timeoutMs, attempts: o.limits.attempts, deadline: o.limits.deadline } : {}),
+      }),
     fx: (iso, waehrung) => fxFelder(iso, waehrung),
   };
 }

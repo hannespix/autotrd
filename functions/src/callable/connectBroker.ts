@@ -62,6 +62,23 @@ import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { accessDeniedReason, accessLevelOfSnap, mayTradeSnap } from '../core/access.js';
 import { bindeDepot, loeseDepot } from '../core/brokerBindung.js';
 import { schluesselArt, vergissVerbindung, type AlpacaSchluessel } from '../core/brokerZugang.js';
+import { FirestoreStateStore } from '../engine/state.js';
+
+/**
+ * Engine-State beim Verbinden/Trennen ablösen (Secreview 2, M9): Das Buch gehört zum bisherigen Konto.
+ * Träfe es auf ein anderes Konto, buchte der Abgleich dessen Positionen als „fehlt beim Broker" mit
+ * geschätztem Kurs aus (Phantom-Trades), und ein Moduswechsel (PK ⇒ AK) ließe jeden Takt am State
+ * scheitern. Archiv statt Löschen: `users/{uid}/private/archiv/engineStates/{iso}`.
+ */
+async function engineStateAbloesen(uid: string, reason: string): Promise<void> {
+  try {
+    const archived = await new FirestoreStateStore(getFirestore(), uid).archive(Date.now(), reason);
+    if (archived) logger.info(`connectBroker ${uid}: Engine-State archiviert (${reason})`);
+  } catch (e) {
+    // Nicht fatal für das Verbinden: Der Takt erkennt ein fremdes Konto am `accountId` im State und archiviert selbst.
+    logger.warn(`connectBroker ${uid}: Engine-State nicht archiviert — der Takt holt es nach`, e);
+  }
+}
 import { vaultBereit, verschluessle } from '../core/keyVault.js';
 import { consumeQuota } from '../core/quota.js';
 
@@ -216,6 +233,7 @@ export async function verbindeBroker(
     logger.warn(`connectBroker ${uid}: Depot bereits gebunden seit ${bindung.seit}`);
     throw new HttpsError('failed-precondition', bindungsMeldung(bindung.seit));
   }
+  await engineStateAbloesen(uid, `Broker verbunden (${art}, Konto ${konto.id})`);
 
   await getFirestore()
     .collection('users')
@@ -285,6 +303,7 @@ export async function trenneBroker(uid: string): Promise<TrennErgebnis> {
   // möglich sein — auch für ein gesperrtes Konto und auch, wenn Alpaca gerade
   // nicht antwortet; deshalb hängt hier kein Außen-Call dran.
   await ref.delete();
+  await engineStateAbloesen(uid, 'Broker getrennt');
   /* Depot-Bindung mit lösen — sonst bliebe das Depot für immer belegt und
    * niemand könnte es je wieder verbinden, auch dieser Nutzer nicht.
    *

@@ -54,6 +54,13 @@ export interface AlpacaClientOptions {
   fetchFn?: typeof fetch;
   /** Default 15000. */
   timeoutMs?: number;
+  /** Versuche je Aufruf (Default 3, Minimum 1). Der Functions-Takt fährt mit 2 — sein Budget ist eine Minute. */
+  attempts?: number;
+  /**
+   * Absolute Frist (Epoch-ms): Danach beginnt kein neuer Versuch mehr, und ein laufender Versuch ist auf die
+   * Restzeit begrenzt. Der Functions-Takt gibt jedem Nutzer ein festes Budget (Secreview 2, M7).
+   */
+  deadline?: number;
   /** Injizierbar (Retry-Backoff). */
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
@@ -274,8 +281,17 @@ export function createAlpacaClient(opts: AlpacaClientOptions): AlpacaClient {
   const feed = opts.feed;
   const fetchFn = opts.fetchFn ?? globalThis.fetch;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const maxAttempts = Math.max(1, Math.floor(opts.attempts ?? MAX_ATTEMPTS));
+  const deadline = opts.deadline ?? null;
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const now = opts.now ?? Date.now;
+  /** Restzeit bis zur Frist; wirft (nicht wiederholbar), wenn sie abgelaufen ist. */
+  const remainingMs = (req: HttpRequest): number => {
+    if (deadline === null) return timeoutMs;
+    const rest = deadline - now();
+    if (rest <= 0) throw new AlpacaError(redact(`Alpaca ${req.method} ${pathOf(req.url)} → Zeitbudget abgelaufen`), 0, null, false);
+    return Math.min(timeoutMs, rest);
+  };
   const tradingBase = TRADING_BASE_URL[mode];
   const isCrypto = assetClass === 'crypto';
 
@@ -294,7 +310,8 @@ export function createAlpacaClient(opts: AlpacaClientOptions): AlpacaClient {
       init.body = JSON.stringify(req.body);
     }
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(new Error(`Timeout nach ${timeoutMs} ms`)), timeoutMs);
+    const budget = remainingMs(req);
+    const timer = setTimeout(() => controller.abort(new Error(`Timeout nach ${budget} ms`)), budget);
     init.signal = controller.signal;
     const started = now();
     try {
@@ -312,7 +329,7 @@ export function createAlpacaClient(opts: AlpacaClientOptions): AlpacaClient {
       logger.debug('Alpaca-Call', { method: req.method, path: pathOf(req.url), status: res.status, ms: now() - started });
       return { status: res.status, text, json };
     } catch (e) {
-      throw transportError(req, e, timeoutMs);
+      throw transportError(req, e, budget);
     } finally {
       clearTimeout(timer);
     }
@@ -327,12 +344,12 @@ export function createAlpacaClient(opts: AlpacaClientOptions): AlpacaClient {
   /** Ein Call mit Retry-Politik. Wirft AlpacaError; akzeptierte Statuscodes kommen als Ergebnis zurück. */
   async function send(req: HttpRequest): Promise<HttpResult> {
     for (let attempt = 0; ; attempt++) {
-      const mayRetry = req.retry && attempt + 1 < MAX_ATTEMPTS;
+      const mayRetry = req.retry && attempt + 1 < maxAttempts;
       let res: HttpResult;
       try {
         res = await attemptOnce(req);
       } catch (e) {
-        if (!mayRetry) throw e;
+        if (!mayRetry || (e instanceof AlpacaError && !e.retryable)) throw e;
         await backoff(attempt, errMsg(e));
         continue;
       }

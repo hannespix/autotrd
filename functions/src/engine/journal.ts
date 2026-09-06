@@ -186,8 +186,23 @@ export class FirestoreJournal implements JournalLike {
     return this.buffer.length;
   }
 
-  /** Puffer als Batch(es) nach Firestore; bei Erfolg geleert, bei Fehler bleibt er stehen und der Fehler fliegt. */
-  async flush(uid: string): Promise<{ events: number; trades: number }> {
+  /** Ungeschriebene Ereignisse — der State-Speicher schreibt sie als Puffer mit ins State-Doc. */
+  pendingEvents(): JournalEvent[] {
+    return [...this.buffer];
+  }
+
+  /** Puffer aus dem State-Doc eines früheren Takts VORNE einreihen (ältere Ereignisse zuerst). */
+  restore(events: JournalEvent[]): void {
+    if (events.length === 0) return;
+    this.buffer.unshift(...events);
+    this.log.warn('Journal-Puffer aus dem State-Doc übernommen — Ereignisse eines früheren Takts werden nachgeschrieben', { events: events.length });
+  }
+
+  /**
+   * Puffer als Batch(es) nach Firestore; bei Erfolg geleert, bei Fehler bleibt er stehen und der Fehler
+   * fliegt. `finalOp` (Puffer auf dem State-Doc leeren) landet im LETZTEN Batch — atomar mit dessen Docs.
+   */
+  async flush(uid: string, finalOp: ((b: WriteBatchLike) => void) | null = null): Promise<{ events: number; trades: number }> {
     const events = [...this.buffer];
     const journalCol = this.db.collection(`users/${uid}/journal`);
     const tradesCol = this.db.collection(`users/${uid}/trades`);
@@ -218,6 +233,7 @@ export class FirestoreJournal implements JournalLike {
       ops.push((b) => b.set(tradesCol.doc(), docs.exit));
       trades++;
     }
+    if (finalOp) ops.push(finalOp);
     for (let i = 0; i < ops.length; i += BATCH_MAX) {
       const batch = this.db.batch();
       for (const op of ops.slice(i, i + BATCH_MAX)) op(batch);

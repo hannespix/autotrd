@@ -75,7 +75,7 @@ geschrieben).
 | Config | `meta/engineConfig` (global, aus `config/platform.yaml` per `scripts/sync-engine-config.mjs`) + `users/{uid}.settings.auto` (nur Risiko/Grenzen je Nutzer, nur über `saveStrategy`) |
 | Champion | `meta/champion`, geschrieben vom Optimierer-Workflow (`.github/workflows/optimize.yml`, `scripts/publish-champion.mjs`) |
 | State/Journal | `users/{uid}/private/engineState`, `users/{uid}/journal`, Trades im alten Schema `users/{uid}/trades` |
-| Not-Aus | Kill-Switch `meta/live.killSwitch` (Admin, fail-closed), je Nutzer Callable `engineCommand` (`halt`/`resume`/`flatten`) |
+| Not-Aus | Kill-Switch `meta/live.killSwitch` (Admin, fail-closed — sperrt Einstiege, nie Exits), je Nutzer Callable `engineCommand` (`halt`/`resume`/`flatten`) |
 | Secrets | Functions-Secrets `BROKER_MASTER_KEY`, `ALPACA_API_KEY`/`ALPACA_SECRET_KEY` (Plattform-Datenkey); Nutzer-Keys im Key-Tresor |
 
 Beide Betriebsarten rufen dieselbe Engine (`src/engine/engine.ts`) und

@@ -134,56 +134,77 @@ export async function brokerVerbindung(
   uid: string,
   jetztMs: number = Date.now(),
 ): Promise<BrokerVerbindung | null> {
-  const v = await brokerVerbindungLesend(uid, jetztMs);
-  if (!v) return null;
-  if (v.mode === 'live') {
-    if (!echtgeldFreigegeben()) {
-      // Bewusst nur `debug`: Bei jedem Trade eines Kontos mit hinterlegtem
+  const z = await brokerZugang(uid, jetztMs);
+  if (!z) return null;
+  if (z.sperre !== null) {
+    if (z.sperre === SPERRE_FREIGABE) {
+      // Bewusst nur `debug`: Bei jedem Takt eines Kontos mit hinterlegtem
       // Live-Schlüssel wäre eine Warnung Lärm, der echte Warnungen zudeckt.
       logger.debug(`brokerVerbindung ${uid}: Echtgeld hinterlegt, Handel verriegelt`);
-      return null;
+    } else {
+      // `warn`: Kill-Switch, fehlender Nutzer-Schalter oder fehlende Reife gehören ins Log.
+      logger.warn(`brokerVerbindung ${uid}: Live-Schlüssel hinterlegt, aber ${z.sperre} — Order-Pfad verriegelt`);
     }
-    if (await killSwitchAktiv(jetztMs)) {
-      // `warn`, nicht `debug`: Der Kill-Switch ist ein Ausnahmezustand, und
-      // jede unterbundene Order gehört ins Log — genau dafür ist er da.
-      logger.warn(`brokerVerbindung ${uid}: Kill-Switch aktiv — Echtgeld-Order unterbunden`);
-      return null;
-    }
-    /* Drei-Guard-Kette AUCH am Order-Pfad (Audit 13.08., K-1).
-     *
-     * Bis heute prüfte diese Funktion für 'live' nur die Betreiber-Freigabe
-     * und den Kill-Switch. Der Modus kommt aber aus dem SCHLÜSSEL-Präfix
-     * (AK… ⇒ live) — nicht aus einer Entscheidung des Nutzers. Konsequenz:
-     * Am Tag von `ALPACA_ALLOW_LIVE=1` hätte JEDES Konto mit hinterlegtem
-     * Live-Schlüssel echt gehandelt, auch mit Paper-Strategie, ohne Reife,
-     * ohne ECHTGELD-Bestätigung — über Scan, Puls, Momentum und den
-     * Kauf-Knopf. Genau die Konten, die als „startklar, aber nicht scharf"
-     * beworben wurden.
-     *
-     * Jetzt gilt hier dieselbe Kette wie in `resolveBrokerMode`: Der
-     * Nutzer-Schalter (`settings.strategy.broker.mode`) und die Live-Reife
-     * müssen JA sagen, sonst bleibt die Order im Buch. Der rohe Feldwert
-     * genügt — ein unlesbares oder fehlendes Feld ist KEIN 'live', die
-     * Kette versagt geschlossen. Die zwei zusätzlichen Reads fallen nur
-     * für Konten mit Live-Schlüssel an.
-     */
-    const schalter = await getFirestore()
-      .doc(`users/${uid}`)
-      .get()
-      .then((d) => d.get('settings.strategy.broker.mode') as unknown)
-      .catch(() => null);
-    const modus = schalter === 'live' ? 'live' : 'paper';
-    const reife = modus === 'live' ? await reifeFuerKonto(uid) : undefined;
-    if (resolveBrokerMode({ broker: { mode: modus } }, reife) !== 'live') {
-      logger.warn(
-        `brokerVerbindung ${uid}: Live-Schlüssel hinterlegt, aber `
-          + (modus !== 'live' ? 'Nutzer-Schalter steht nicht auf live' : 'Live-Reife fehlt')
-          + ' — Order bleibt im Buch',
-      );
-      return null;
-    }
+    return null;
   }
-  return v;
+  return z.verbindung;
+}
+
+export const SPERRE_FREIGABE = 'Echtgeld auf diesem Server nicht freigegeben (ALPACA_ALLOW_LIVE)';
+export const SPERRE_KILL_SWITCH = 'Kill-Switch aktiv';
+export const SPERRE_SCHALTER = 'Nutzer-Schalter steht nicht auf live';
+export const SPERRE_REIFE = 'Live-Reife fehlt';
+
+/**
+ * Warum der ORDER-Pfad dieses Kontos verriegelt ist — `null`, wenn er frei
+ * ist. Für Papierkonten immer `null`; für Live-Konten die Kette aus
+ * `brokerVerbindung` (Freigabe, Kill-Switch, Nutzer-Schalter, Reife), in
+ * dieser Reihenfolge, fail-closed.
+ *
+ * Der Engine-Takt braucht den GRUND, nicht nur das Nein: Ein verriegeltes
+ * Live-Konto wird nicht übersprungen, sondern mit Einstiegs-Sperre
+ * betrieben — Abgleich, Schutz-Stops, Exits und Glattstellungen laufen
+ * weiter (CLAUDE.md §0.4: Exits werden nie gesperrt).
+ */
+export async function livePfadSperre(uid: string, v: BrokerVerbindung, jetztMs: number = Date.now()): Promise<string | null> {
+  if (v.mode !== 'live') return null;
+  if (!echtgeldFreigegeben()) return SPERRE_FREIGABE;
+  if (await killSwitchAktiv(jetztMs)) return SPERRE_KILL_SWITCH;
+  /* Drei-Guard-Kette AUCH am Order-Pfad (Audit 13.08., K-1): Der Modus kommt
+   * aus dem SCHLÜSSEL-Präfix (AK… ⇒ live), nicht aus einer Entscheidung des
+   * Nutzers. Deshalb müssen der Nutzer-Schalter (`settings.strategy.broker.mode`)
+   * und die Live-Reife JA sagen. Der rohe Feldwert genügt — ein unlesbares
+   * oder fehlendes Feld ist KEIN 'live', die Kette versagt geschlossen. Die
+   * zwei zusätzlichen Reads fallen nur für Konten mit Live-Schlüssel an. */
+  const schalter = await getFirestore()
+    .doc(`users/${uid}`)
+    .get()
+    .then((d) => d.get('settings.strategy.broker.mode') as unknown)
+    .catch(() => null);
+  const modus = schalter === 'live' ? 'live' : 'paper';
+  const reife = modus === 'live' ? await reifeFuerKonto(uid) : undefined;
+  if (resolveBrokerMode({ broker: { mode: modus } }, reife) !== 'live') {
+    return modus !== 'live' ? SPERRE_SCHALTER : SPERRE_REIFE;
+  }
+  return null;
+}
+
+/** Verbindung eines Kontos plus Sperrgrund des Order-Pfads (null = frei). */
+export interface BrokerZugang {
+  verbindung: BrokerVerbindung;
+  sperre: string | null;
+}
+
+/**
+ * Zugang für den Engine-Takt: Verbindung (auch Live) UND der Sperrgrund des
+ * Order-Pfads. `null` heißt: kein Broker hinterlegt oder nicht lesbar.
+ * Wer eine Order senden will, prüft `sperre === null` — oder nimmt gleich
+ * `brokerVerbindung()`.
+ */
+export async function brokerZugang(uid: string, jetztMs: number = Date.now()): Promise<BrokerZugang | null> {
+  const v = await brokerVerbindungLesend(uid, jetztMs);
+  if (!v) return null;
+  return { verbindung: v, sperre: await livePfadSperre(uid, v, jetztMs) };
 }
 
 /**

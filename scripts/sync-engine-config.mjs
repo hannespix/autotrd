@@ -6,8 +6,8 @@
  *   node scripts/sync-engine-config.mjs [--config config/platform.yaml] [--dry-run]
  *
  * Es wird NUR der nutzerunabhängige Teil übertragen (universe, timeframe,
- * session, costs, engine, broker.feed). Risiko und Benachrichtigung sind je
- * Nutzer und bleiben in dessen Einstellungen. Die Datei wird vorher mit dem
+ * session, costs, engine ohne barGraceSec, broker.feed). Risiko und
+ * Benachrichtigung sind je Nutzer und bleiben in dessen Einstellungen. Die Datei wird vorher mit dem
  * Schema des Kerns validiert — eine ungültige Config erreicht Firestore nie.
  */
 import { readFileSync } from 'node:fs';
@@ -24,14 +24,17 @@ const dryRun = args.includes('--dry-run');
 const path = resolve(opt('--config', 'config/platform.yaml'));
 
 const cfg = parseConfig(parseYaml(readFileSync(path, 'utf8')));
+// `engine.barGraceSec` gehört dem Prozess, nicht der Plattform: Der Takt zur vollen Minute braucht eine
+// größere Karenz als der Streaming-Prozess (Functions-Default 20 s, Untergrenze im Takt-Leser).
+const { barGraceSec: _barGraceSec, ...engine } = cfg.engine;
 const global = {
   version: 1,
-  feed: cfg.broker.feed,
+  broker: { mode: 'paper', feed: cfg.broker.feed },
   universe: cfg.universe,
   timeframe: cfg.timeframe,
   session: cfg.session,
   costs: cfg.costs,
-  engine: cfg.engine,
+  engine,
   /** Defaults für Nutzer ohne eigene Risiko-Einstellung. */
   riskDefaults: cfg.risk,
   optimizer: { strategies: cfg.optimizer.strategies, lookbackDays: cfg.optimizer.lookbackDays },

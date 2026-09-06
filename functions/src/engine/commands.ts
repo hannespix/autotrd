@@ -15,8 +15,16 @@
  * und einen Drawdown-Halt nur mit ausdrücklicher Bestätigung (`ackDrawdown`).
  */
 import type { JournalLike } from '../../../src/core/journal.ts';
+import { HOUR } from '../../../src/core/time.ts';
 import type { ExitReason, HaltState, Ms } from '../../../src/core/types.ts';
 import { isRecord, isoOf, type FirestoreLike } from './firestoreLike.js';
+
+/**
+ * Verfallsfrist eines Kommandos: Ein `flatten`, das gestern abgesetzt wurde und erst heute einen Takt
+ * findet (Nutzer hatte keinen Broker, Engine war aus), würde eine Position schließen, an die beim
+ * Absetzen niemand gedacht hat (Secreview 2, G3). Verfallene Kommandos stehen mit Grund im Journal.
+ */
+export const COMMAND_TTL_MS = 24 * HOUR;
 
 export type CommandAction = 'halt' | 'resume' | 'flatten';
 export const COMMAND_ACTIONS: readonly CommandAction[] = ['halt', 'resume', 'flatten'];
@@ -125,6 +133,13 @@ export async function applyCommands(engine: CommandTarget, cmds: CommandDoc, jou
   const out: CommandOutcome[] = [];
   for (const { action, at } of list) {
     let outcome: CommandOutcome;
+    const issued = Date.parse(at);
+    if (!Number.isFinite(issued) || now - issued > COMMAND_TTL_MS) {
+      outcome = { action, applied: false, note: `verfallen (abgesetzt ${at}, älter als 24 h) — nicht ausgeführt` };
+      journal.append('note', { text: `Kommando ${action}: ${outcome.note}`, command: action, applied: false, issuedAt: at }, now);
+      out.push(outcome);
+      continue;
+    }
     try {
       outcome = await applyOne(engine, action, cmds);
     } catch (e) {

@@ -16,14 +16,16 @@
  *  4. Jede Position hat einen Schutz-Stop beim Broker; fehlt er, wird er
  *     gesetzt. Rundung: Stops VOM Kurs WEG, Limits ZUM Kurs HIN.
  *
- * Gebühren: Das Live-Buch bucht `fees = 0`. Alpaca weist Aktien-Gebühren
+ * Gebühren: Das Live-Buch bucht regulatorische Gebühren nach Kostenmodell (SEC/TAF, Krypto-Taker). Alpaca weist Aktien-Gebühren
  * (SEC/TAF) und Krypto-Gebühren erst in der Konto-Historie aus — sie
  * werden später aus dem Konto nachgetragen, nicht hier geschätzt; der
  * Simulator rechnet sie über das Kostenmodell.
  */
 import { AlpacaError, isOpenStatus, type AlpacaClient, type AlpacaOrder, type NewOrder, type TradeUpdate } from '../alpaca/types.ts';
+import type { CostConfig } from '../core/config.ts';
 import type { JournalLike } from '../core/journal.ts';
 import { errMsg, logger } from '../core/log.ts';
+import { regulatoryFees } from '../backtest/costs.ts';
 import { openPosition } from '../core/logic.ts';
 import { DAY, dayKeyFor, type Calendar } from '../core/time.ts';
 import type { AssetClass, ExitReason, Ms, OrderIntent, PositionState, Side, TimeframeMin } from '../core/types.ts';
@@ -56,6 +58,13 @@ export interface OrderExecutorArgs {
   strategyIdFor?: ((symbol: string) => string | undefined) | undefined;
   notify?: NotifyFn | undefined;
   log?: typeof logger | undefined;
+  /**
+   * Kostenmodell für `Trade.fees` (Secreview 2, M10): Alpaca-Aktien sind kommissionsfrei, aber Verkäufe
+   * tragen SEC-Gebühr und FINRA TAF, Krypto zahlt Taker-Gebühr auf beiden Seiten — dieselbe Rechnung wie
+   * im Simulator. Ohne Modell stand `fees = 0`, und das Reife-Gate „Gebührenanteil" maß nichts.
+   * Slippage steckt live bereits im Fill-Kurs und wird hier NICHT noch einmal berechnet.
+   */
+  costs?: CostConfig | undefined;
 }
 
 /* ───────────────────────── Rundung & Mengen ───────────────────────── */
@@ -176,6 +185,7 @@ export class OrderExecutor {
   private readonly strategyIdFor: (symbol: string) => string | undefined;
   private readonly notify: NotifyFn | null;
   private readonly log: typeof logger;
+  private readonly costs: CostConfig | null;
   /** Bereits gebuchte Exit-Menge je Broker-Order — macht Stream- und REST-Pfad gegeneinander idempotent. */
   private readonly bookedExitQty = new Map<string, number>();
   /** Symbole, deren Position zu ist und deren Rest-Orders (Ziel-/Stop-Bein) noch abzuräumen sind. */
@@ -195,6 +205,16 @@ export class OrderExecutor {
     this.strategyIdFor = a.strategyIdFor ?? (() => undefined);
     this.notify = a.notify ?? null;
     this.log = a.log ?? logger;
+    this.costs = a.costs ?? null;
+  }
+
+  /** Regulatorische Gebühren beider Seiten eines (Teil-)Trades nach Kostenmodell; 0 ohne Modell. */
+  private tradeFees(pos: PositionState, qty: number, exitPrice: number): number {
+    if (!this.costs) return 0;
+    const entrySide = pos.side === 'long' ? 'buy' : 'sell';
+    const exitSide = pos.side === 'long' ? 'sell' : 'buy';
+    const base = { qty, assetClass: this.assetClass, costs: this.costs, multiplier: 1 };
+    return regulatoryFees({ ...base, side: entrySide, price: pos.entryPrice }) + regulatoryFees({ ...base, side: exitSide, price: exitPrice });
   }
 
   /* ── öffentliche API ── */
@@ -683,7 +703,8 @@ export class OrderExecutor {
     const pending = this.book.pendingExits.get(sym);
     const reason = reasonForOrder(order, o.reason ?? pending?.reason ?? 'signal');
     const exitTime = order.filledAt ?? o.ts;
-    const closed = this.book.closeTrade(sym, delta, price, exitTime, reason, this.assetClass);
+    const fees = this.tradeFees(pos, Math.min(delta, pos.qty), price);
+    const closed = this.book.closeTrade(sym, delta, price, exitTime, reason, this.assetClass, fees);
     if (!closed) return false;
     this.journal.append(
       'fill',
@@ -692,7 +713,7 @@ export class OrderExecutor {
     );
     this.journal.append(
       'trade_closed',
-      { trade: closed.trade, partial: !closed.fullyClosed, dayTrade: closed.dayTrade, orderId: order.id, note: 'fees=0: Broker-Gebühren werden später aus dem Konto nachgetragen' },
+      { trade: closed.trade, partial: !closed.fullyClosed, dayTrade: closed.dayTrade, orderId: order.id, feesModel: this.costs ? 'regulatory' : 'none' },
       exitTime,
     );
     this.log.info(`Trade ${sym} ${closed.trade.side} ${closed.trade.qty} @ ${price} (${reason}) netto ${closed.trade.netPnl.toFixed(2)}`, {
@@ -875,19 +896,48 @@ export class OrderExecutor {
 
   /* ── Alles glatt ── */
 
-  /** Alle Orders stornieren, alle Positionen schließen; Fills werden über syncOrders/Stream gebucht. */
-  async flattenAll(reason: ExitReason): Promise<void> {
-    const now = this.now();
-    for (const [sym, pos] of this.book.positions) {
-      const prev = this.book.pendingExits.get(sym);
-      this.book.pendingExits.set(sym, { clientId: null, orderId: null, reason, since: now, attempts: (prev?.attempts ?? 0) + 1, lastAttemptAt: now, lastError: null, intent: null });
-      this.log.warn(`Flatten ${sym} ${pos.side} ${pos.qty} (${reason})`);
+  /**
+   * Eigene offene Einstiegs-Orders stornieren (Pending bleibt, bis syncOrders den Endstand bucht — ein
+   * Storno kann mit einem Fill rennen). Rückgabe: Symbole, für die ein Storno angefordert wurde.
+   */
+  async cancelOwnEntryOrders(): Promise<string[]> {
+    const out: string[] = [];
+    let touched = 0;
+    for (const [sym, pe] of [...this.book.pendingEntries]) {
+      const o = pe.orderId ? await this.client.getOrder(pe.orderId) : await this.client.getOrderByClientId(pe.clientId);
+      if (!o || !isOpenStatus(o.status)) {
+        touched++; // Endstand (gefüllt/tot) bucht syncOrders
+        continue;
+      }
+      touched++;
+      try {
+        await this.client.cancelOrder(o.id);
+        this.journal.append('order_update', { purpose: 'entry', symbol: sym, orderId: o.id, clientId: o.clientOrderId, event: 'cancel_requested', note: 'Eigene Einstiegs-Order storniert' }, this.now());
+        out.push(sym);
+      } catch (e) {
+        if (!is422(e)) throw e; // 422: nicht mehr stornierbar (gefüllt) — syncOrders bucht den Fill
+      }
     }
-    this.journal.append('note', { text: `flattenAll (${reason}): alle Orders stornieren, alle Positionen schließen`, positions: [...this.book.positions.keys()] }, now);
-    await this.client.cancelAllOrders();
-    await this.client.closeAllPositions(true);
-    for (const sym of this.book.positions.keys()) this.book.protectiveOrders.delete(sym);
-    await this.syncOrders();
+    if (touched > 0) await this.syncOrders();
+    return out;
+  }
+
+  /**
+   * Alles glatt — aber nur das EIGENE Buch: eigene Einstiegs-Orders stornieren, jede Buch-Position über den
+   * regulären Exit-Pfad schließen (Beine stornieren, Marktorder mit positionsstabiler Kennung). Fremdbestand
+   * und fremde Orders im selben Konto bleiben unangetastet (Secreview 2, G4: `closeAllPositions` hätte auch
+   * die Handpositionen eines Live-Kontos verkauft).
+   */
+  async flattenAll(reason: ExitReason): Promise<ExecResult[]> {
+    const now = this.now();
+    const cancelled = await this.cancelOwnEntryOrders();
+    const intents: ExitIntent[] = [...this.book.positions.keys()].map((symbol) => ({ kind: 'exit', symbol, reason, decidedAt: now }));
+    for (const it of intents) {
+      const pos = this.book.positions.get(it.symbol)!;
+      this.log.warn(`Flatten ${it.symbol} ${pos.side} ${pos.qty} (${reason})`);
+    }
+    this.journal.append('note', { text: `flattenAll (${reason}): eigene Einstiege storniert, Buch-Positionen werden geschlossen`, cancelledEntries: cancelled, positions: intents.map((i) => i.symbol) }, now);
+    return intents.length ? this.execute(intents) : [];
   }
 
   /* ── REST-Fallback zu trade_updates ── */

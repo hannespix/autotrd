@@ -11,10 +11,20 @@ service cloud.firestore {
     function signedIn() { return request.auth != null; }
     function isOwner(uid) { return signedIn() && request.auth.uid == uid; }
 
-    // ── Katalog: öffentlich lesbar (auch für Landing Page) ──
-    match /meta/{doc=**} {
+    // ── Plattform-Dokumente: nur die genannten sind öffentlich lesbar ──
+    // (Frontend, Landing Page, Scheduler-Wächter lesen meta/health ohne
+    // Anmeldung). Alles andere unter meta/ ist Serversache: `brokerBindungen`
+    // trägt uids je Depot, `engineLease` den Takt-Halter (Secreview 2, M3).
+    match /meta/{doc} {
+      allow read: if doc in ['champion', 'engineConfig', 'health'];
+      allow write: if false;
+    }
+    match /meta/optimizeReports/{report} {
       allow read: if true;
       allow write: if false;
+    }
+    match /meta/brokerBindungen {
+      allow read, write: if false;
     }
 
     // ── Geteilte Marktdaten: nur eingeloggt lesbar, nie client-schreibbar ──

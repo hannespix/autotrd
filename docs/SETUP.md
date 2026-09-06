@@ -372,10 +372,11 @@ Ein Hauptschlüssel mit Sicherungskopie an fünf Orten ist kein Geheimnis mehr.
 
 ### 2. Deklaration nachziehen
 
-Erst **nach** Schritt 1: In `functions/src/callable/connectBroker.ts` und
-`functions/src/scheduled/scanMarket.ts` muss `secrets: ['BROKER_MASTER_KEY']`
-in den Function-Optionen stehen, sonst erreicht die Variable die Laufzeit
-nie. Umgekehrte Reihenfolge bricht den Deploy mit „Secret does not exist".
+Erst **nach** Schritt 1 deployen: `secrets: ['BROKER_MASTER_KEY']` steht in
+`functions/src/core/appcheck.ts` (`CALLABLE_OPTS`, also für alle Callables)
+und in `functions/src/scheduled/engineTick.ts`, sonst erreicht die Variable
+die Laufzeit nie. Umgekehrte Reihenfolge bricht den Deploy mit „Secret does
+not exist".
 
 ### 3. Was danach möglich ist — und was nicht
 

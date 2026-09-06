@@ -5,18 +5,22 @@
  *   1. Lease `meta/engineLease` (Transaktion) — zwei überlappende Läufe
  *      hätten zwei Bücher auf einem Konto.
  *   2. Nutzerliste: `users where settings.strategy.engine.running == true`,
- *      Zugang (`mayTrade`), Broker-Verbindung (Drei-Guard-Kette + Kill-Switch
- *      in `brokerVerbindung`); ohne Verbindung wird der Nutzer übersprungen.
+ *      Zugang (`mayTrade`), kein laufender Reset, Broker-Zugang
+ *      (`brokerZugang`: Verbindung + Sperrgrund der Echtgeld-Kette). Ohne
+ *      Broker wird der Nutzer übersprungen; ein VERRIEGELTES Live-Konto läuft
+ *      mit Einstiegs-Sperre weiter — Abgleich, Schutz-Stops, Exits und
+ *      Glattstellungen gehen vor (Exits werden nie gesperrt).
  *   3. Globale Config (`meta/engineConfig`) + Champion (`meta/champion`),
  *      Config je Nutzer aus dessen Settings.
  *   4. Marktzeit-Gate: Aktienmarkt zu und niemand hat etwas Zurückgestelltes
  *      oder ein Kommando ⇒ nur Herzschlag.
  *   5. Bars EINMAL je Takt mit dem Plattform-Key in den geteilten Cache;
  *      Nutzer-Engines lesen daraus (keine Datenaufrufe je Nutzer).
- *   6. Je Nutzer (parallel, Limit 3): Engine bauen → start (Konto, Abgleich,
- *      Backfill aus dem Cache, Schutz-Stops) → Kommandos → tick → stop →
- *      Journal-Batch → Spiegel. Fehler je Nutzer fangen, weiter mit dem
- *      nächsten.
+ *   6. Je Nutzer (parallel, Limit 3, Zeitbudget je Nutzer, Reihenfolge
+ *      rotiert je Minute): Engine bauen → start (Konto, Abgleich, Backfill
+ *      aus dem Cache, Schutz-Stops) → Kommandos → tick → stop → Journal-Batch
+ *      (leert atomar den Puffer im State-Doc) → Spiegel. Fehler je Nutzer
+ *      fangen, weiter mit dem nächsten.
  *   7. Herzschlag `meta/health` (Merge) — `bewerteHerzschlag` bleibt gültig.
  *
  * Alles, was Geld bewegt, macht die Engine selbst (`src/engine`): derselbe
@@ -27,13 +31,14 @@ import { join } from 'node:path';
 import type { AlpacaClient, AlpacaClock } from '../../../src/alpaca/types.ts';
 import { parseConfig, type Config } from '../../../src/core/config.ts';
 import { errMsg, logger } from '../../../src/core/log.ts';
-import { DAY, MIN, addDays, dayKeyFor, type Calendar } from '../../../src/core/time.ts';
+import { DAY, MIN, addDays, dayKeyFor, nextTradingDay, sessionBounds, type Calendar } from '../../../src/core/time.ts';
 import type { AssetClass, Ms, Strategy } from '../../../src/core/types.ts';
 import { backfill } from '../../../src/data/backfill.ts';
 import { barStoreRoot, type BarStore, type BaseTimeframe } from '../../../src/data/store.ts';
-import { Engine, warmupWindowMs, type EngineTimers, type ProcessEvents } from '../../../src/engine/engine.ts';
+import { Engine, StateAccountMismatchError, warmupWindowMs, type EngineTimers, type ProcessEvents } from '../../../src/engine/engine.ts';
+import { resetLaeuft } from '../../../shared/src/circuitBreaker.js';
 import { mayTrade } from '../../../shared/src/zugang.js';
-import type { BrokerVerbindung } from '../core/brokerZugang.js';
+import type { BrokerVerbindung, BrokerZugang } from '../core/brokerZugang.js';
 import { applyCommands, claimCommands } from './commands.js';
 import { buildUserConfig, globalConfigRaw, type UserRiskSource } from './config.js';
 import { isRecord, isoOf, plain, type DocData, type DocSnapLike, type FirestoreLike } from './firestoreLike.js';
@@ -52,15 +57,43 @@ export const CONFIG_PATH = 'meta/engineConfig';
 export const LEASE_MS = 90_000;
 export const USERS_PARALLEL = 3;
 export const DEFAULT_TMP_ROOT = '/tmp/autotrd';
+/**
+ * Zeitbudget je Nutzer (Konto, Abgleich, Orders, Journal). Danach gilt der Nutzer als gescheitert und der
+ * Takt geht weiter — ein hängender Broker eines Nutzers darf nicht die Exits aller anderen blockieren
+ * (Secreview 2, M7). Der REST-Client bekommt dieselbe Frist, damit nach dem Budget kein Aufruf mehr beginnt.
+ */
+export const USER_BUDGET_MS = 20_000;
+/** Weiche Frist des ganzen Takts: danach wird kein weiterer Nutzer begonnen (Function-Timeout 55 s). */
+export const TICK_SOFT_DEADLINE_MS = 40_000;
+/** REST je Aufruf im Takt: kurz, höchstens ein Wiederholversuch — 3 × 15 s + Backoff sprengen jedes Budget. */
+export const REQUEST_TIMEOUT_MS = 5_000;
+export const REQUEST_ATTEMPTS = 2;
+
+/** Grenzen des Trading-Clients je Nutzer und Takt. */
+export interface ClientLimits {
+  timeoutMs: number;
+  attempts: number;
+  /** Absolute Frist (Epoch-ms) — danach beginnt kein Aufruf mehr. */
+  deadline: Ms;
+}
+
+export interface ClientOptions {
+  feed: 'iex' | 'sip';
+  assetClass: AssetClass;
+  limits?: ClientLimits | undefined;
+}
 
 export interface TickDeps {
   db: FirestoreLike;
   /** Plattform-Datenclient (Bars, Kalender, Uhr, Stammdaten); null ⇒ kein Datenkey. */
   dataClientFor: (o: { feed: 'iex' | 'sip'; assetClass: AssetClass }) => AlpacaClient | null;
-  /** Order-Pfad-Verbindung eines Nutzers (`core/brokerZugang.brokerVerbindung`). */
-  brokerVerbindung: (uid: string, nowMs: Ms) => Promise<BrokerVerbindung | null>;
-  /** Trading-Client aus den Nutzer-Schlüsseln (`createAlpacaClient`). */
-  clientFor: (v: BrokerVerbindung, o: { feed: 'iex' | 'sip'; assetClass: AssetClass }) => AlpacaClient;
+  /**
+   * Broker-Zugang eines Nutzers (`core/brokerZugang.brokerZugang`): Verbindung plus Sperrgrund des
+   * Order-Pfads (Echtgeld-Kette). null ⇒ kein Broker. Ein gesperrter Zugang läuft mit Einstiegs-Sperre.
+   */
+  brokerZugang: (uid: string, nowMs: Ms) => Promise<BrokerZugang | null>;
+  /** Trading-Client aus den Nutzer-Schlüsseln (`createAlpacaClient`), mit Zeitgrenzen des Takts. */
+  clientFor: (v: BrokerVerbindung, o: ClientOptions) => AlpacaClient;
   /** EZB-Kurs-Felder (`core/fx.fxFelder`). */
   fx: FxFn;
   /** Strategie-Register; Default `src/strategy` (Tests: Skript-Strategie). */
@@ -70,6 +103,10 @@ export interface TickDeps {
   log?: typeof logger | undefined;
   parallel?: number | undefined;
   leaseMs?: number | undefined;
+  /** Zeitbudget je Nutzer (Default USER_BUDGET_MS). */
+  userBudgetMs?: number | undefined;
+  /** Weiche Frist des Takts (Default TICK_SOFT_DEADLINE_MS). */
+  tickSoftDeadlineMs?: number | undefined;
   /** `at`-Stempel der Trade-Docs (Tests). */
   timestampNow?: (() => unknown) | undefined;
 }
@@ -79,6 +116,8 @@ export interface UserOutcome {
   status: 'ok' | 'skipped' | 'failed';
   reason?: string;
   durationMs?: number;
+  /** true, wenn das Zeitbudget je Nutzer gerissen wurde (der Nutzer-Lauf wurde aufgegeben). */
+  budgetExceeded?: boolean;
 }
 
 export interface TickResult {
@@ -123,6 +162,60 @@ export function needsWorkWhileClosed(snap: DocSnapLike): boolean {
   if (!isRecord(e)) return false;
   if (Array.isArray(e.deferred) && e.deferred.length > 0) return true;
   return typeof e.commandAt === 'string';
+}
+
+/** Reihenfolge je Takt verschieben (stabile Query-Reihenfolge ⇒ sonst immer dieselben Nachzügler). */
+export function rotate<T>(items: readonly T[], shift: number): T[] {
+  if (items.length < 2) return [...items];
+  const k = ((shift % items.length) + items.length) % items.length;
+  return [...items.slice(k), ...items.slice(0, k)];
+}
+
+/** Nutzer-Lauf mit Zeitbudget: danach gilt er als gescheitert; der Rest läuft ins Leere (REST-Client hat dieselbe Frist). */
+async function withBudget(run: Promise<UserOutcome>, budgetMs: number, uid: string): Promise<UserOutcome> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<UserOutcome>((resolve) => {
+    timer = setTimeout(() => resolve({ uid, status: 'failed', reason: `Zeitbudget je Nutzer (${budgetMs} ms) überschritten — Lauf aufgegeben`, budgetExceeded: true }), budgetMs);
+  });
+  try {
+    return await Promise.race([run, timeout]);
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+  }
+}
+
+/** Marktzeit ohne Broker-Uhr: algorithmischer NYSE-Kalender (Feiertage, Wochenenden; Frühschlüsse nur mit Kalender). */
+export function fallbackClock(now: Ms): AlpacaClock {
+  const day = dayKeyFor(now, 'us_equity');
+  const today = sessionBounds(day, 'us_equity');
+  const isOpen = today !== null && now >= today.open && now < today.close;
+  const nextDay = today !== null && now < today.open ? day : nextTradingDay(day, 'us_equity');
+  const next = sessionBounds(nextDay, 'us_equity');
+  return {
+    timestamp: now,
+    isOpen,
+    nextOpen: isOpen ? (sessionBounds(nextTradingDay(day, 'us_equity'), 'us_equity')?.open ?? now + DAY) : (next?.open ?? now + DAY),
+    nextClose: isOpen ? today.close : (next?.close ?? now + DAY),
+  };
+}
+
+/** Kommandos eines Nutzers ohne Broker verwerfen (Transaktion) und den Grund spiegeln. */
+async function discardCommandsWithoutBroker(db: FirestoreLike, snap: DocSnapLike, now: Ms, log: typeof logger): Promise<void> {
+  if (!needsWorkWhileClosed(snap) && typeof (snap.get('engine') as { commandAt?: unknown } | undefined)?.commandAt !== 'string') return;
+  try {
+    const cmds = await claimCommands(db, snap.id);
+    const actions = cmds ? Object.keys(cmds) : [];
+    await db.doc(`users/${snap.id}`).set(
+      plain({ engine: { commandAt: null, lastTickAt: isoOf(now), ...(actions.length ? { lastError: `Kommando ${actions.join('/')} verworfen — kein Broker verbunden` } : {}) } }),
+      { merge: true },
+    );
+  } catch (e) {
+    log.warn('Kommandos ohne Broker nicht verwerfbar', { error: errMsg(e) });
+  }
+}
+
+function sameNotes(prev: unknown, notes: readonly string[]): boolean {
+  return Array.isArray(prev) && prev.length === notes.length && prev.every((x, i) => x === notes[i]);
 }
 
 async function parallel<T>(items: readonly T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
@@ -183,6 +276,8 @@ interface UserPrep {
   uid: string;
   snap: DocSnapLike;
   verbindung: BrokerVerbindung;
+  /** Sperrgrund des Order-Pfads (Echtgeld-Kette) — null = frei. */
+  sperre: string | null;
   config: Config;
   configSource: UserRiskSource;
   strategy: StrategyMap;
@@ -199,6 +294,7 @@ interface TickContext {
   calendar: Calendar | undefined;
   shared: SharedServices;
   fetchOk: boolean;
+  budgetMs: number;
 }
 
 export async function runEngineTick(deps: TickDeps, now: Ms = Date.now()): Promise<TickResult> {
@@ -252,7 +348,9 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
     users: result.users,
     ok: result.ok,
     skippedUsers: result.skippedUsers.length,
-    failed: result.failed.map((f) => ({ uid: uidKurz(f.uid), error: f.error })),
+    // Nur der Hash, kein Fehlertext: `meta/health` ist öffentlich, Fehlertexte können Pfade mit uid tragen
+    // (Secreview 2, M1). Der volle Fehler steht privat in `users/{uid}.engine.lastError` und im Log.
+    failed: result.failed.map((f) => ({ uid: uidKurz(f.uid) })),
     fetchOk: result.fetchOk,
     durationMs: Date.now() - started,
     ...extra,
@@ -287,8 +385,11 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
   const usersSnap = await db.collection('users').where('settings.strategy.engine.running', '==', true).get();
   let candidates: DocSnapLike[] = [];
   for (const u of usersSnap.docs) {
-    if (mayTrade(u.data())) candidates.push(u);
-    else result.skippedUsers.push({ uid: u.id, reason: 'zugang' });
+    if (!mayTrade(u.data())) result.skippedUsers.push({ uid: u.id, reason: 'zugang' });
+    // Laufender Konto-Reset (`resetWallet` setzt den Marker, er verfällt von selbst): keine Orders, keine
+    // Trade-Docs hinter dem Archiv-Schnitt, kein Überschreiben des frisch gesetzten Saldos (Secreview 2, G2).
+    else if (resetLaeuft(u.get('risk.resetLaeuftSeit'), new Date(now))) result.skippedUsers.push({ uid: u.id, reason: 'reset_laeuft' });
+    else candidates.push(u);
   }
   const dataClient = deps.dataClientFor({ feed, assetClass });
   if (!dataClient) log.error('Kein Plattform-Datenkey (ALPACA_API_KEY/ALPACA_SECRET_KEY) — keine Bars, keine Einstiege');
@@ -299,9 +400,12 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
     try {
       clock = await shared.getClock();
     } catch (e) {
-      log.warn('Broker-Uhr nicht lesbar — Marktzeit-Gate ausgesetzt, die Engine gatet selbst', { error: errMsg(e) });
+      log.warn('Broker-Uhr nicht lesbar — algorithmischer NYSE-Kalender gatet die Marktzeit', { error: errMsg(e) });
     }
   }
+  // Ohne Broker-Uhr (kein Datenkey, Uhr nicht lesbar): algorithmischer Kalender statt kein Gate — sonst liefen
+  // alle Engines nachts minütlich (Secreview 2, G7). Frühschlüsse kennt der Fallback nur über den Kalender.
+  if (assetClass === 'us_equity' && !clock) clock = fallbackClock(now);
   if (assetClass === 'us_equity' && clock && !clock.isOpen) {
     const needy = candidates.filter(needsWorkWhileClosed);
     if (needy.length === 0) {
@@ -312,26 +416,34 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
     candidates = needy;
   }
 
-  // 3. Verbindung, Config, Strategie je Nutzer
+  // 3. Zugang, Config, Strategie je Nutzer
   const prepared: UserPrep[] = [];
   for (const snap of candidates) {
     const uid = snap.id;
-    let verbindung: BrokerVerbindung | null;
+    let zugang: BrokerZugang | null;
     try {
-      verbindung = await deps.brokerVerbindung(uid, now);
+      zugang = await deps.brokerZugang(uid, now);
     } catch (e) {
       result.failed.push({ uid, error: `Broker-Verbindung: ${errMsg(e)}` });
       continue;
     }
-    if (!verbindung) {
+    if (!zugang) {
       result.skippedUsers.push({ uid, reason: 'kein_broker' });
+      // Ein liegengebliebenes Kommando ohne Broker würde den Nutzer nächtlich in die Lauf-Liste heben und
+      // beim späteren Verbinden feuern (Secreview 2, G3) — verwerfen und dem Nutzer sagen, warum.
+      await discardCommandsWithoutBroker(db, snap, now, log);
       continue;
     }
     try {
       const uc = buildUserConfig(global, snap.get('settings'));
-      const strategy = buildStrategyFor({ champion, config: uc.config, getStrategy: deps.getStrategy, log: userLogger(log, uid) });
+      const sperre = zugang.sperre;
+      // Verriegelt (Echtgeld-Kette offen): keine Einstiege, und Fremdbestand wird nie adoptiert — ein
+      // Schutz-Stop auf eine Handposition wäre eine Order auf einem verriegelten Konto.
+      const config: Config = sperre ? { ...uc.config, engine: { ...uc.config.engine, onOrphan: 'halt' } } : uc.config;
+      const strategy = buildStrategyFor({ champion, config, getStrategy: deps.getStrategy, log: userLogger(log, uid) });
       if (championNote) strategy.notes.unshift(championNote);
-      prepared.push({ uid, snap, verbindung, config: uc.config, configSource: uc.source, strategy });
+      if (sperre) strategy.notes.push(`Einstiege gesperrt: ${sperre} — Abgleich, Schutz-Stops und Exits laufen weiter`);
+      prepared.push({ uid, snap, verbindung: zugang.verbindung, sperre, config, configSource: uc.source, strategy });
     } catch (e) {
       const error = `Config: ${errMsg(e)}`;
       result.failed.push({ uid, error });
@@ -407,13 +519,22 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
     }
   }
 
-  // 5. Je Nutzer
-  const ctx: TickContext = { deps, db, now, log, tmpRoot, assetClass, feed, calendar, shared, fetchOk: result.fetchOk };
-  await parallel(prepared, deps.parallel ?? USERS_PARALLEL, async (p) => {
-    const o = await runUser(ctx, p);
+  // 5. Je Nutzer — Reihenfolge rotiert je Minute, damit ein langsamer Nutzer nicht Takt für Takt dieselben
+  //    Nachfolger verdrängt; je Nutzer ein Zeitbudget; nach der weichen Frist beginnt kein weiterer.
+  const budgetMs = deps.userBudgetMs ?? USER_BUDGET_MS;
+  const softDeadlineMs = deps.tickSoftDeadlineMs ?? TICK_SOFT_DEADLINE_MS;
+  const ctx: TickContext = { deps, db, now, log, tmpRoot, assetClass, feed, calendar, shared, fetchOk: result.fetchOk, budgetMs };
+  await parallel(rotate(prepared, Math.floor(now / MIN)), deps.parallel ?? USERS_PARALLEL, async (p) => {
+    if (Date.now() - started > softDeadlineMs) {
+      result.skippedUsers.push({ uid: p.uid, reason: 'zeitbudget_takt' });
+      return;
+    }
+    const o = await withBudget(runUser(ctx, p), budgetMs, p.uid);
     if (o.status === 'ok') result.ok++;
-    else if (o.status === 'failed') result.failed.push({ uid: o.uid, error: o.reason ?? 'unbekannt' });
-    else result.skippedUsers.push({ uid: o.uid, reason: o.reason ?? 'unbekannt' });
+    else if (o.status === 'failed') {
+      result.failed.push({ uid: o.uid, error: o.reason ?? 'unbekannt' });
+      if (o.budgetExceeded) await mirrorError(db, o.uid, o.reason ?? 'Zeitbudget überschritten', now).catch((err: unknown) => log.warn('Spiegel (Fehler) nicht schreibbar', { error: errMsg(err) }));
+    } else result.skippedUsers.push({ uid: o.uid, reason: o.reason ?? 'unbekannt' });
   });
 
   // 6. Herzschlag
@@ -464,12 +585,14 @@ async function runUser(ctx: TickContext, p: UserPrep): Promise<UserOutcome> {
   const log = userLogger(ctx.log, uid);
   const mode = p.verbindung.mode;
   const journal = new FirestoreJournal({ db, mode, assetClass: ctx.assetClass, fx: deps.fx, log, timestampNow: deps.timestampNow });
-  const stateStore = new FirestoreStateStore(db, uid);
+  const stateStore = new FirestoreStateStore(db, uid, { journal });
   let engine: Engine | null = null;
   let error: string | null = null;
   let commandsSeen = false;
   try {
-    const client = withSharedData(deps.clientFor(p.verbindung, { feed: ctx.feed, assetClass: ctx.assetClass }), ctx.shared);
+    // Frist des REST-Clients knapp VOR dem Budget des Takts: Wenn der Takt aufgibt, beginnt kein Aufruf mehr.
+    const limits: ClientLimits = { timeoutMs: REQUEST_TIMEOUT_MS, attempts: REQUEST_ATTEMPTS, deadline: started + Math.max(1_000, ctx.budgetMs - 1_000) };
+    const client = withSharedData(deps.clientFor(p.verbindung, { feed: ctx.feed, assetClass: ctx.assetClass, limits }), ctx.shared);
     engine = new Engine({
       config: p.config,
       mode,
@@ -488,9 +611,26 @@ async function runUser(ctx: TickContext, p: UserPrep): Promise<UserOutcome> {
       processEvents: NOOP_PROCESS,
       stateStore,
       journal,
+      entryLock: () => p.sperre,
     });
-    for (const n of p.strategy.notes) journal.append('note', { text: n }, now);
-    await engine.start();
+    // Strategie-Notizen („kein Champion", Zeitrahmen-Abweichung, Sperre) nur bei Änderung ins Journal — sonst
+    // ein Dokument je Minute für die Information „nichts passiert" (Secreview 2, G1). Der Spiegel zeigt sie immer.
+    if (!sameNotes((p.snap.get('engine') as { notes?: unknown } | undefined)?.notes, p.strategy.notes)) {
+      for (const n of p.strategy.notes) journal.append('note', { text: n }, now);
+    }
+    try {
+      await engine.start();
+    } catch (e) {
+      if (!(e instanceof StateAccountMismatchError)) throw e;
+      // Der State gehört zu einem anderen Alpaca-Konto (Nutzer hat neue Schlüssel hinterlegt): archivieren statt
+      // weiterhandeln — der Abgleich hätte die alten Positionen als „fehlt" mit geschätztem Kurs ausgebucht
+      // (Secreview 2, M9). Der nächste Takt startet mit leerem Buch; die alten Positionen bleiben beim alten Konto.
+      const archived = await stateStore.archive(now, e.message);
+      journal.append('note', { text: `Engine-State archiviert (${e.message})`, archived }, now);
+      log.warn('Engine-State archiviert — Konto gewechselt', { archived });
+      engine = null;
+      throw new Error(`Konto gewechselt — Engine-State archiviert, nächster Takt startet neu`);
+    }
     try {
       const cmds = await claimCommands(db, uid);
       commandsSeen = true;
@@ -514,16 +654,18 @@ async function runUser(ctx: TickContext, p: UserPrep): Promise<UserOutcome> {
     }
   }
   try {
-    await journal.flush(uid);
+    // Journal-Docs und das Leeren des Puffers im State-Doc in EINEM Batch (Secreview 2, M5).
+    await journal.flush(uid, stateStore.bufferClearOp());
+    stateStore.markBufferCleared();
   } catch (e) {
-    log.error('Journal nicht schreibbar', { error: errMsg(e) });
+    log.error('Journal nicht schreibbar — Puffer bleibt im State-Doc und wird im nächsten Takt nachgeschrieben', { error: errMsg(e) });
     error ??= `Journal: ${errMsg(e)}`;
   }
   try {
     if (error === null && engine) {
       const status = engine.status();
       await mirrorPositions(db, uid, status, now);
-      await mirrorUser(db, uid, { mode, status, now, lastError: null, champion: { source: p.strategy.source, symbols: p.strategy.tradable }, commandsSeen, configSource: p.configSource });
+      await mirrorUser(db, uid, { mode, status, now, lastError: null, champion: { source: p.strategy.source, symbols: p.strategy.tradable }, commandsSeen, configSource: p.configSource, notes: p.strategy.notes });
     } else {
       await mirrorError(db, uid, error ?? 'unbekannt', now);
     }

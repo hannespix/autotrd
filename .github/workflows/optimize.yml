@@ -59,11 +59,17 @@ jobs:
         run: node src/cli.ts fetch --config config/platform.yaml --env "$RUNNER_TEMP/.env" --home var
 
       - name: Walk-Forward-Optimierung
+        env:
+          # Nie direkt in den Shell-Text interpolieren (Secreview 2, G5): Der Wert kommt als Umgebungsvariable
+          # und muss eine ganze Zahl sein, sonst bricht der Schritt ab.
+          SAMPLES_OVERRIDE: ${{ github.event.inputs.samples }}
         run: |
-          EXTRA=""
-          if [ -n "${{ github.event.inputs.samples }}" ]; then
-            echo "Hinweis: samples-Override aus workflow_dispatch wird über die Config gesetzt."
-            sed -i "s/^  samples: .*/  samples: ${{ github.event.inputs.samples }}/" config/platform.yaml
+          if [ -n "$SAMPLES_OVERRIDE" ]; then
+            case "$SAMPLES_OVERRIDE" in
+              ''|*[!0-9]*) echo "::error::samples muss eine ganze Zahl sein: '$SAMPLES_OVERRIDE'"; exit 1 ;;
+            esac
+            echo "Hinweis: samples-Override ($SAMPLES_OVERRIDE) aus workflow_dispatch wird über die Config gesetzt."
+            sed -i "s/^  samples: .*/  samples: $SAMPLES_OVERRIDE/" config/platform.yaml
           fi
           node src/cli.ts optimize --config config/platform.yaml --env "$RUNNER_TEMP/.env" --home var --equity 25000
 

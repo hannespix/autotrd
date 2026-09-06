@@ -7,10 +7,11 @@
  * Ereignissen bzw. per REST gelesenen gefüllten Orders verändert — nie
  * aus dem Absenden einer Order. Der Absende-Zustand ist `pendingEntries`.
  *
- * Persistenz: `EngineState` kennt je Symbol nur die client_order_id der
- * offenen Einstiegs-Order und des Schutz-Stops. Der Einstiegs-Intent
- * (Stop/Ziel/Strategie) ist nach einem Neustart deshalb `null` und wird
- * beim Nachsehen der Order aus deren Beinen rekonstruiert.
+ * Persistenz: `EngineState` kennt je Symbol die client_order_id der
+ * offenen Einstiegs-Order und des Schutz-Stops sowie den laufenden eigenen
+ * Exit samt Intent (für den Wiederholversuch nach Neustart/Takt). Der
+ * Einstiegs-Intent (Stop/Ziel/Strategie) ist nach einem Neustart `null` und
+ * wird beim Nachsehen der Order aus deren Beinen rekonstruiert.
  */
 import type { EngineState } from '../core/journal.ts';
 import { advancePosition } from '../core/logic.ts';
@@ -52,6 +53,7 @@ export interface BookStateSlice {
   positions: Record<string, PositionState>;
   pendingEntries: Record<string, string>;
   protectiveOrders: Record<string, string>;
+  pendingExits: Record<string, PendingExit>;
   dayTrades: Record<string, number>;
 }
 
@@ -63,7 +65,7 @@ export interface ClosedTrade {
   dayTrade: boolean;
 }
 
-/** Trade-Objekt aus Position + Ausstiegsdaten — Backtest wie Live identisch. Gebühren = 0 im Live-Buch (siehe orders.ts). */
+/** Trade-Objekt aus Position + Ausstiegsdaten — Backtest wie Live identisch. Gebühren im Live-Buch nach Kostenmodell (siehe orders.ts). */
 export function buildTrade(pos: PositionState, qty: number, exitPrice: number, exitTime: Ms, reason: ExitReason, fees = 0): Trade {
   const grossPnl = (pos.side === 'long' ? exitPrice - pos.entryPrice : pos.entryPrice - exitPrice) * qty;
   const netPnl = grossPnl - fees;
@@ -93,7 +95,7 @@ export class Book {
   readonly positions = new Map<string, PositionState>();
   readonly pendingEntries = new Map<string, PendingEntry>();
   readonly protectiveOrders = new Map<string, ProtectiveOrder>();
-  /** Laufende eigene Exits (nicht persistiert — nach Neustart per REST nachgesehen). */
+  /** Laufende eigene Exits — persistiert (Wiederholversuch überlebt Neustart und Takt), per REST nachgesehen. */
   readonly pendingExits = new Map<string, PendingExit>();
   /** Lokal gezählte Daytrades je Handelstag. */
   readonly dayTrades = new Map<string, number>();
@@ -108,6 +110,10 @@ export class Book {
       const pos = b.positions.get(sym);
       b.protectiveOrders.set(sym, { orderId: null, clientId, stop: pos?.stop ?? 0 });
     }
+    for (const [sym, pe] of Object.entries(s.pendingExits ?? {})) {
+      if (!b.positions.has(sym)) continue; // ohne Position gibt es nichts zu wiederholen
+      b.pendingExits.set(sym, { ...pe, intent: pe.intent ? { ...pe.intent } : null });
+    }
     for (const [day, n] of Object.entries(s.dayTrades)) b.dayTrades.set(day, n);
     return b;
   }
@@ -119,9 +125,11 @@ export class Book {
     for (const [sym, pe] of this.pendingEntries) pendingEntries[sym] = pe.clientId;
     const protectiveOrders: Record<string, string> = {};
     for (const [sym, po] of this.protectiveOrders) protectiveOrders[sym] = po.clientId;
+    const pendingExits: Record<string, PendingExit> = {};
+    for (const [sym, pe] of this.pendingExits) pendingExits[sym] = { ...pe, intent: pe.intent ? { ...pe.intent } : null };
     const dayTrades: Record<string, number> = {};
     for (const [day, n] of this.dayTrades) dayTrades[day] = n;
-    return { positions, pendingEntries, protectiveOrders, dayTrades };
+    return { positions, pendingEntries, protectiveOrders, pendingExits, dayTrades };
   }
 
   open(pos: PositionState): void {
@@ -175,11 +183,11 @@ export class Book {
    * Vollschluss, wenn Einstiegs- und Ausstiegstag gleich sind) — so zählt
    * Alpaca (Round-Trip), und so gilt die PDT-Regel.
    */
-  closeTrade(symbol: string, qty: number, exitPrice: number, exitTime: Ms, reason: ExitReason, assetClass: AssetClass): ClosedTrade | null {
+  closeTrade(symbol: string, qty: number, exitPrice: number, exitTime: Ms, reason: ExitReason, assetClass: AssetClass, fees = 0): ClosedTrade | null {
     const pos = this.positions.get(symbol);
     if (!pos || !(qty > 0) || !(exitPrice > 0)) return null;
     const q = Math.min(qty, pos.qty);
-    const trade = buildTrade(pos, q, exitPrice, exitTime, reason);
+    const trade = buildTrade(pos, q, exitPrice, exitTime, reason, fees);
     const fullyClosed = q >= pos.qty - 1e-9;
     let dayTrade = false;
     if (fullyClosed) {

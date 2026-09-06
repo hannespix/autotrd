@@ -19,8 +19,8 @@ import { engineStatePath } from '../../src/engine/state.ts';
 import { HEALTH_PATH, LEASE_PATH, runEngineTick, uidKurz, type TickDeps, type TickResult } from '../../src/engine/tick.ts';
 import { FakeFirestore, FakeTimestamp } from '../fakes/firestore.ts';
 
-/** 09:40:05 ET — Bucket 09:35 ist seit 5 s zu (Karenz 4 s in der Test-Config). */
-const T1 = OPEN1 + 10 * MIN + 5_000;
+/** 09:40:25 ET — Bucket 09:35 ist seit 25 s zu (Takt-Karenz mindestens 20 s, `globalConfigRaw` klemmt kleinere Werte). */
+const T1 = OPEN1 + 10 * MIN + 25_000;
 const iso = (ms: number): string => new Date(ms).toISOString();
 const SILENT = { debug: () => undefined, info: () => undefined, warn: () => undefined, error: () => undefined };
 const USER_SETTINGS = { strategy: { engine: { running: true, maxPositionPct: 20, riskPerTradePct: 0.5, maxOpenPositions: 4 }, signals: { allowShort: false }, broker: { mode: 'paper' } } };
@@ -67,7 +67,7 @@ function world(o: { champion?: boolean; extraUsers?: Record<string, FakeAlpaca>;
   const deps: TickDeps = {
     db,
     dataClientFor: () => (o.dataClient === false ? null : data),
-    brokerVerbindung: async (uid) => (uid in clients ? { mode: 'paper', schluessel: { keyId: `PK${uid}`, secret: 'geheim' } } : null),
+    brokerZugang: async (uid) => (uid in clients ? { verbindung: { mode: 'paper', schluessel: { keyId: `PK${uid}`, secret: 'geheim' } }, sperre: null } : null),
     clientFor: (v) => clients[v.schluessel.keyId.slice(2)]!,
     fx: async (at) => ({ fxRate: 1.1, fxDate: at.slice(0, 10), fxSource: 'ecb' }),
     getStrategy: (id) => {
@@ -218,7 +218,8 @@ describe('Engine-Takt — voller Lauf', () => {
     const sell = trades.find((t) => t.side === 'sell')!;
     expect(buy).toMatchObject({ symbol: 'AAPL', qty: 199, price: 100.4, source: 'engine', paper: true, currency: 'USD', fxRate: 1.1, fxSource: 'ecb', strategy: 'test_enter' });
     expect(sell).toMatchObject({ symbol: 'AAPL', qty: 199, price: 98.3, riskExit: 'stop_loss', exitReason: 'stop', entryPrice: 100.4, acquiredAt: iso(T1), fxRate: 1.1, preisQuelle: 'broker' });
-    expect(sell.pnl).toBeCloseTo(-417.9, 2);
+    // Netto nach Kostenmodell (Secreview 2, M10): brutto −417,90 $, SEC-Gebühr + FINRA TAF auf den Verkauf ≈ 0,58 $.
+    expect(sell.pnl).toBeCloseTo(-418.48, 2);
     expect(w.db.get('users/u1')?.engine).toMatchObject({ positions: [], pendingEntries: [], lastError: null });
     expect(w.db.list('users/u1/journal').some((d) => d.data.kind === 'trade_closed')).toBe(true);
   });
@@ -292,7 +293,7 @@ describe('Engine-Takt — voller Lauf', () => {
     const more = [...TEN_CLOSES, 100.5, 100.6, 100.7, 100.8, 100.9];
     w.data.bars.set('AAPL', minuteBars(OPEN1, more));
     w.data.bars.set('SPY', minuteBars(OPEN1, more));
-    await w.run(OPEN1 + 15 * MIN + 5_000);
+    await w.run(OPEN1 + 15 * MIN + 25_000);
     expect(w.trading.callsOf('submitOrder')).toHaveLength(1);
     expect(w.trading.ordersFor('AAPL')[0]?.clientOrderId).toBe(entryClientId('paper', 'AAPL', OPEN1 + 15 * MIN));
     const texte = w.db.list('users/u1/journal').map((d) => String(d.data.text ?? ''));
@@ -310,8 +311,9 @@ describe('Engine-Takt — voller Lauf', () => {
     expect(r.ok).toBe(1);
     expect(r.failed).toEqual([{ uid: 'u5', error: expect.stringContaining('Alpaca HTTP 500') }]);
     const h = w.db.get(HEALTH_PATH)!;
-    const failed = (h.engine as { failed: Array<{ uid: string; error: string }> }).failed;
-    expect(failed).toEqual([{ uid: uidKurz('u5'), error: expect.stringContaining('Alpaca HTTP 500') }]);
+    // Öffentliches Health-Doc: nur der Hash, kein Fehlertext (Secreview 2, M1) — der Fehler steht privat im Spiegel.
+    const failed = (h.engine as { failed: Array<{ uid: string; error?: string }> }).failed;
+    expect(failed).toEqual([{ uid: uidKurz('u5') }]);
     expect(uidKurz('u5')).toHaveLength(10);
     expect(JSON.stringify(h)).not.toContain('"u5"');
     expect(w.db.get('users/u5')?.engine).toMatchObject({ running: true, lastError: expect.stringContaining('Alpaca HTTP 500') });

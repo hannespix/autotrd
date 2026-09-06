@@ -148,13 +148,20 @@ export async function cachedAsset(symbol: string, fetch: () => Promise<AlpacaAss
   return asset;
 }
 
-let calendarMemo: { key: string; days: CalendarDay[] } | null = null;
+const CALENDAR_MEMO_MAX = 8;
+const calendarMemo = new Map<string, CalendarDay[]>();
 
-/** Kalender einmal je Schlüssel (Tag) — der Broker-Kalender ändert sich nicht minütlich. */
+/**
+ * Kalender einmal je Schlüssel (Tag bzw. Zeitraum) — der Broker-Kalender ändert sich nicht minütlich.
+ * Mehrere Schlüssel nebeneinander: Takt (`today`) und Engine (`from..to`) verdrängten sich mit einem
+ * einzigen Slot gegenseitig und kosteten zwei Kalender-Aufrufe je Takt (Secreview 2, G6).
+ */
 export async function cachedCalendar(key: string, fetch: () => Promise<CalendarDay[]>): Promise<CalendarDay[]> {
-  if (calendarMemo && calendarMemo.key === key) return calendarMemo.days;
+  const hit = calendarMemo.get(key);
+  if (hit) return hit;
   const days = await fetch();
-  calendarMemo = { key, days };
+  if (calendarMemo.size >= CALENDAR_MEMO_MAX) calendarMemo.delete(calendarMemo.keys().next().value!);
+  calendarMemo.set(key, days);
   return days;
 }
 
@@ -162,5 +169,5 @@ export async function cachedCalendar(key: string, fetch: () => Promise<CalendarD
 export function resetSharedCaches(): void {
   stores.clear();
   assets.clear();
-  calendarMemo = null;
+  calendarMemo.clear();
 }
