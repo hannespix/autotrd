@@ -457,6 +457,7 @@ export function createDataStream(opts: DataStreamOptions): DataStream {
           session.authFailed(detail);
         } else {
           // z. B. 405 „symbol limit exceeded" (IEX-Basic: 30 Symbole), 400 bei falscher Krypto-Schreibweise
+          rejectSubscribes(detail);
           session.protocolError(detail);
         }
         return;
@@ -500,7 +501,7 @@ export function createDataStream(opts: DataStreamOptions): DataStream {
       if (!session) return; // wird nach der Auth gesendet
       const acked = new Promise<void>((resolve, reject) => {
         const waiter: SubscribeWaiter = { resolve, reject, timer: null, symbols: fresh };
-        waiter.timer = startTimer(coreOpts.timeoutMs, () => {
+        waiter.timer = startTimer(coreOpts.timeoutMs * 1000, () => {
           const i = pendingSubscribes.indexOf(waiter);
           if (i < 0) return;
           pendingSubscribes.splice(i, 1);
