@@ -159,6 +159,8 @@ export class Engine {
   private readonly assets = new Map<string, AssetFacts>();
   private readonly streamStatus: { data: StreamStatus | null; trade: StreamStatus | null } = { data: null, trade: null };
   private timerHandles: unknown[] = [];
+  /** Kalendertag, für den der Kalender zuletzt nachgezogen wurde (ein Aufruf je Tag, auch am Wochenende). */
+  private calendarDay = '';
   private tickQueued = false;
   private running = false;
   private startedAt: Ms | null = null;
@@ -204,16 +206,9 @@ export class Engine {
       this.setHalt('errors', 'Konto gesperrt (trading_blocked/account_blocked)', now);
     }
 
-    // Kalender: Datei/Broker, sonst der mitgegebene Stand, sonst der algorithmische Fallback.
-    try {
-      const cal = await ensureCalendar(this.deps.client, this.paths.calendar, addDays(today, -45), addDays(today, 45), now);
-      if (cal.size > 0) this.calendar = cal;
-    } catch (e) {
-      this.log.warn('Kalender nicht ladbar — Fallback gilt', { error: errMsg(e) });
-    }
-    this.clock = new MarketClock({ assetClass: this.assetClass, calendar: this.calendar, client: this.deps.client, now: this.now });
+    await this.refreshCalendar(today, now);
     await this.clock.refresh();
-    this.rollover(now);
+    await this.rollover(now);
 
     for (const sym of this.cfg.universe.symbols) {
       try {
@@ -408,7 +403,7 @@ export class Engine {
     this.lastTickAt = now;
     try {
       this.checkHaltFile(now);
-      this.rollover(now);
+      await this.rollover(now);
       this.ingestStreamBars();
       st.peakEquity = Math.max(st.peakEquity, this.account.equity);
 
@@ -478,7 +473,7 @@ export class Engine {
           // Feld heißt `note`, nicht `kind`: `kind` ist der Event-Typ des Journals und würde überschrieben.
           this.journal.append('decision', { symbol: n.symbol, note: n.kind, text: n.text, bar: newBars.get(n.symbol)?.t ?? null }, now);
         }
-        for (const it of res.intents) this.journal.append('intent', { ...it }, now);
+        for (const it of res.intents) this.journal.append('intent', { symbol: it.symbol, intent: it }, now);
         if (res.intents.length > 0) {
           const results = await executor.execute(res.intents);
           for (const r of results) {
@@ -573,11 +568,41 @@ export class Engine {
     this.log.warn(`Halt (${reason}): ${note}`);
   }
 
-  /** Neuer Handelstag ⇒ Tagesstart-Equity neu, alte Daytrade-Tage (> 7 Handelstage) vergessen. */
-  private rollover(now: Ms): void {
+  /**
+   * Kalender: Datei/Broker für ±45 Tage um `today`, sonst der mitgegebene Stand, sonst der
+   * algorithmische Fallback. Wird beim Start und an jedem neuen Handelstag aufgerufen — ein
+   * Kalender, der nur 45 Tage über den Start hinausreicht, ließe `nextTradingDay` nach
+   * sechs Wochen Laufzeit ins Leere laufen.
+   */
+  private async refreshCalendar(today: string, now: Ms): Promise<void> {
+    if (today === this.calendarDay) return;
+    this.calendarDay = today;
+    // Reicht der bekannte Kalender 45 Tage in beide Richtungen, ist nichts zu tun; sonst gleich 120 Tage
+    // voraus holen, damit nicht jeder neue Tag einen Broker-Aufruf auslöst.
+    const need = { from: addDays(today, -45), to: addDays(today, 45) };
+    let first: string | null = null;
+    let last: string | null = null;
+    for (const d of this.calendar?.keys() ?? []) {
+      if (first === null || d < first) first = d;
+      if (last === null || d > last) last = d;
+    }
+    if (first !== null && last !== null && first <= need.from && last >= need.to) return;
+    try {
+      const cal = await ensureCalendar(this.deps.client, this.paths.calendar, need.from, addDays(today, 120), now);
+      if (cal.size > 0) this.calendar = cal;
+    } catch (e) {
+      this.log.warn('Kalender nicht ladbar — vorhandener Stand bzw. Fallback gilt', { error: errMsg(e) });
+    }
+    this.clock = new MarketClock({ assetClass: this.assetClass, calendar: this.calendar, client: this.deps.client, now: this.now });
+  }
+
+  /** Neuer Handelstag ⇒ Tagesstart-Equity neu, alte Daytrade-Tage (> 7 Handelstage) vergessen, Kalender nachziehen. */
+  private async rollover(now: Ms): Promise<void> {
     const st = this.st();
     const today = dayKeyFor(now, this.assetClass);
-    if (today === st.day || !isTradingDay(today, this.assetClass, this.calendar)) return;
+    if (today === st.day) return;
+    await this.refreshCalendar(today, now);
+    if (!isTradingDay(today, this.assetClass, this.calendar)) return;
     st.day = today;
     if (this.account.equity > 0) st.dayStartEquity = this.account.equity;
     let keep = today;

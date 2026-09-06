@@ -205,6 +205,7 @@ describe('OrderExecutor — Exit', () => {
     s.fake.onCall('cancelOrder', () => {
       s.fake.fill(`${parent.id}-sl`, 98.3);
     });
+    const before = s.fake.calls.length;
     const res = await s.executor.execute([exit('signal')]);
     expect(res[0]?.ok).toBe(true);
     expect(res[0]?.note).toMatch(/kein Verkauf/);
@@ -214,6 +215,10 @@ describe('OrderExecutor — Exit', () => {
     const t = s.journal.trades()[0]!;
     expect(t.exitReason).toBe('stop');
     expect(t.exitPrice).toBe(98.3);
+    // Der 422-Pfad selbst hat gebucht — nicht erst der Vorab-Check vor der Marktorder (der wäre ein zweites Netz):
+    // nach dem 422 wird nichts mehr storniert oder gelistet.
+    expect(s.fake.calls.slice(before).map((c) => c.method)).toEqual(['listOrders', 'cancelOrder', 'getOrder']);
+    expect(s.journal.readAll().some((e) => e.kind === 'note' && String(e.text).includes('Storno 422'))).toBe(true);
   });
 
   it('Bein schon VOR dem Listen gefüllt (kein Storno-422 möglich) ⇒ trotzdem kein Verkauf', async () => {

@@ -15,7 +15,7 @@ import { logger, registerSecret, setLogLevel } from './core/log.ts';
 import { dayKeyFor, sessionBounds, type Calendar } from './core/time.ts';
 import type { Bar, BarSeriesLike, Params, Strategy, TimeframeMin } from './core/types.ts';
 import { loadCalendarFile } from './data/calendar.ts';
-import { BarStore } from './data/store.ts';
+import { BarStore, barStoreRoot } from './data/store.ts';
 import { loadChampion, type ChampionFile } from './optimize/promote.ts';
 import { getStrategy } from './strategy/index.ts';
 import { mergeParams } from './strategy/params.ts';
@@ -74,7 +74,9 @@ export function bootstrap(opts: AppOptions): App {
     paths,
     journal: new Journal(paths.journal),
     state: new StateStore(paths.state),
-    store: new BarStore(paths.bars),
+    // Derselbe Wurzelpfad wie in der Engine (bars/<assetClass>/<feed>/) — sonst
+    // lesen fetch/backtest und die Engine verschiedene Caches.
+    store: new BarStore(barStoreRoot(paths.bars, config.universe.assetClass, config.broker.feed)),
     calendar,
     client,
     champion: loadChampion(paths.champion),

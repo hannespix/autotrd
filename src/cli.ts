@@ -28,7 +28,7 @@ import { backfill } from './data/backfill.ts';
 import { ensureCalendar } from './data/calendar.ts';
 import { Engine } from './engine/engine.ts';
 import { createNotifier } from './notify/index.ts';
-import { runOptimization } from './optimize/run.ts';
+import { loadDefaultDeps, runOptimization } from './optimize/run.ts';
 import { assessReadiness } from './readiness.ts';
 import { resumeHalt } from './risk/limits.ts';
 import { startStatusServer } from './status/http.ts';
@@ -359,7 +359,9 @@ async function cmdOptimize(app: App, cli: Cli): Promise<number> {
     }
     return s;
   };
+  const deps = await loadDefaultDeps();
   const res = runOptimization({
+    ...deps,
     config: app.config,
     symbols,
     strategies: app.config.optimizer.strategies,
@@ -412,6 +414,8 @@ async function cmdRun(app: App): Promise<number> {
     benchmarkSymbol: app.config.universe.benchmark,
     calendar: app.calendar,
     notify,
+    // Derselbe Bars-Cache wie fetch/backtest/optimize.
+    store: app.store,
   });
   out(`autotrd run · ${app.mode.toUpperCase()} · ${traded.join(', ')} · ${app.config.timeframe} min · Home ${app.home}`);
   if (app.mode === 'live') out('ECHTGELD — Doppel-Guard erfüllt (mode=live, ALPACA_ALLOW_LIVE=1, AK-Key).');

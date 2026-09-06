@@ -984,7 +984,8 @@ export class OrderExecutor {
           const pending = this.book.pendingExits.get(sym);
           const isOwnStop = this.book.protectiveOrders.get(sym)?.orderId === o.id || (own !== null && own.kind === 'stop');
           const hint: ExitReason = isOwnStop ? 'stop' : (pending?.reason ?? 'signal');
-          this.applyExitFill(o, { ts: u.timestamp, reason: hint, price: u.event === 'partial_fill' ? u.price : null });
+          // Preis dieses Fills, nicht der kumulierte Durchschnitt: Nach einem Teilfill wäre der Rest sonst falsch bewertet.
+          this.applyExitFill(o, { ts: u.timestamp, reason: hint, price: u.price });
           return;
         }
         if (pos && o.side !== exitSideOf(pos)) {

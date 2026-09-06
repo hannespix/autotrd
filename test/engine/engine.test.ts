@@ -209,3 +209,33 @@ describe('Engine — ein Zyklus', () => {
     expect(sc.fake.barRequests[0]?.timeframe).toBe('1Day');
   });
 });
+
+describe('Engine — Tagesrollover', () => {
+  it('neuer Handelstag ⇒ dayStartEquity neu, alte Daytrades vergessen, Kalender einmal je Tag geprüft; Wochenende ⇒ nichts', async () => {
+    const sc = await startScenario();
+    await openPositionViaFill(sc);
+    sc.fake.fill('o-1-sl', 98.3);
+    await sc.engine.idle();
+    expect(sc.state()?.dayTrades[DAY1]).toBe(1);
+    const calendarCalls = sc.fake.callsOf('getCalendar').length;
+    sc.fake.account.equity = 99_000;
+    await sc.engine.reconcileNow(sc.now() + 60_000);
+    // Samstag: kein Handelstag ⇒ Tag bleibt, keine Tagesstart-Equity.
+    await sc.engine.tick(msFromET(2026, 9, 5, 10, 0));
+    expect(sc.state()?.day).toBe(DAY1);
+    await sc.engine.tick(msFromET(2026, 9, 5, 10, 0) + 1_000);
+    // Dienstag nach Labor Day: Rollover.
+    await sc.engine.tick(msFromET(2026, 9, 8, 9, 31));
+    const st = sc.state()!;
+    expect(st.day).toBe('2026-09-08');
+    expect(st.dayStartEquity).toBe(99_000);
+    expect(st.dayTrades[DAY1]).toBe(1); // 7 Handelstage noch nicht um
+    expect(sc.events('note').some((e) => e.text === 'Tagesrollover' && e.day === '2026-09-08')).toBe(true);
+    expect(sc.fake.callsOf('getCalendar').length).toBe(calendarCalls); // Datei deckt den Bereich ⇒ kein Broker-Aufruf
+    // Zwölf Handelstage später ist der Daytrade aus dem Fenster.
+    await sc.engine.tick(msFromET(2026, 9, 18, 9, 31));
+    expect(sc.state()?.dayTrades[DAY1]).toBeUndefined();
+    expect(sc.engine.status().localDayTrades).toBe(0);
+  });
+});
+
