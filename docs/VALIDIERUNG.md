@@ -130,8 +130,13 @@ gibt es hier mehrere unabhängige Sperren:
    werden vom Ende der geschlossenen Bar aus gerechnet, nicht vom Beginn.
 5. **Embargo und Holdout** (§3).
 6. **Fills nur an sichtbaren Kursen.** Marktorders füllen am Open der
-   Folgebar plus Kosten; Stop und Ziel füllen innerhalb der Bar, die sie
-   berührt — bei Gap zum Open, nie zum Stop-Kurs.
+   Folgebar plus Kosten — auch Exits auf der letzten Tagesbar (dann am Open
+   des Folgetags, mit Übernacht-Gap; einen Fill zum Schlusskurs der
+   Entscheidungs-Bar gibt es nicht, weil die Engine die Bar erst nach 16:00
+   sieht). Stop und Ziel füllen innerhalb der Bar, die sie berührt — bei Gap
+   zum Open, nie zum Stop-Kurs — und gelten ab dem Einstiegs-Fill, also
+   schon im Einstiegs-Bar. Long-Einstiege werden am Fill gegen das
+   Bargeld nachgesized (Gap-Up erzeugt keinen ungedeckten Hebel).
 7. **Live-Reife ohne Zukunft.** `assessReadiness` ignoriert Trades, deren
    Exit nach `now` liegt.
 
