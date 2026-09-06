@@ -78,3 +78,5 @@ export const healthz = onRequest({ cors: true, invoker: 'public' }, async (_req,
     });
   }
 });
+export { engineTick, engineTickNow } from './scheduled/engineTick.js';
+export { engineCommand } from './callable/engineCommand.js';

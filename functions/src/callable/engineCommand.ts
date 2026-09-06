@@ -16,7 +16,7 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import { accessDeniedReason, accessLevelOfSnap, mayTradeSnap } from '../core/access.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
-import { commandPatch, commandsPath, parseCommandRequest, type CommandAction } from '../engine/commands.js';
+import { commandPatch, commandsPath, parseCommandRequest, type CommandAction, type CommandRequest } from '../engine/commands.js';
 
 export interface EngineCommandErgebnis {
   ok: true;
@@ -34,7 +34,7 @@ export const engineCommand = onCall(CALLABLE_OPTS, async (request): Promise<Engi
   const snap = await userRef.get();
   if (!mayTradeSnap(snap)) throw new HttpsError('permission-denied', accessDeniedReason(accessLevelOfSnap(snap)));
 
-  let req;
+  let req: CommandRequest;
   try {
     req = parseCommandRequest(request.data);
   } catch (e) {

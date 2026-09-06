@@ -128,12 +128,14 @@ export async function mirrorQuotes(db: FirestoreLike, quotes: readonly QuoteMark
   let n = 0;
   for (let i = 0; i < quotes.length; i += BATCH_MAX) {
     const batch = db.batch();
+    let inBatch = 0;
     for (const q of quotes.slice(i, i + BATCH_MAX)) {
       if (!(q.price > 0)) continue;
       batch.set(db.doc(`market/${docIdFor(q.symbol)}`), { quote: { price: q.price, updatedAt: isoOf(q.at), quelle: 'engine' } }, { merge: true });
-      n++;
+      inBatch++;
     }
-    if (n > 0) await batch.commit();
+    if (inBatch > 0) await batch.commit();
+    n += inBatch;
   }
   return n;
 }

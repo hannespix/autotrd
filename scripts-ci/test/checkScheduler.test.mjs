@@ -71,8 +71,8 @@ describe('Die Eskalationsleiter ist bestes Bemühen, keine Bedingung', () => {
 });
 
 describe('Eine Diagnose darf nie beschädigen, was sie prüft', () => {
-  it('ohne Service-URL wird kein scanmarket-Zeitplan angelegt', () => {
-    expect(quelle).toContain("if (s.service === 'scanmarket' && !url) {");
+  it('ohne Service-URL wird kein enginetick-Zeitplan angelegt', () => {
+    expect(quelle).toContain("if (s.service === 'enginetick' && !url) {");
   });
 
   it('und ein funktionierender Job wird nie mit uri null überschrieben', () => {

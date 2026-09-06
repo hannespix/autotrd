@@ -36,7 +36,7 @@ import {
 } from './gcp-lite.mjs';
 
 const REGION = 'us-central1';
-const SERVICE = 'scanmarket';
+const SERVICE = 'enginetick';
 
 /**
  * Cloud-Run-Dienstnamen sind kleingeschrieben — Firebase leitet sie aus dem
