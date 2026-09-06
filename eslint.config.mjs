@@ -1,5 +1,6 @@
-// ESLint Flat Config — gilt für alle Workspaces (shared/functions/frontend).
-// reference/ (Python-Referenz) und Build-Artefakte sind ausgenommen.
+// ESLint Flat Config für den Auto-Trader (src/ + test/).
+// Der Altbestand der Firebase-Plattform (functions/, frontend/, shared/, …)
+// bleibt bis zu seiner Löschung im Baum, wird aber nicht mehr geprüft.
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
@@ -9,8 +10,17 @@ export default tseslint.config(
       '**/node_modules/**',
       '**/dist/**',
       '**/lib/**',
-      'reference/**',
+      '**/var/**',
       '**/*.d.ts',
+      // Altbestand
+      'frontend/**',
+      'functions/**',
+      'shared/**',
+      'reference/**',
+      'rules-test/**',
+      'scripts-ci/**',
+      'supabase/**',
+      'vitest.rules.config.ts',
     ],
   },
   js.configs.recommended,
@@ -21,54 +31,8 @@ export default tseslint.config(
         'error',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
-    },
-  },
-  // Service Worker läuft im Worker-Global-Scope (self/caches/fetch)
-  {
-    files: ['frontend/public/sw.js'],
-    languageOptions: {
-      globals: {
-        self: 'readonly',
-        caches: 'readonly',
-        fetch: 'readonly',
-        URL: 'readonly',
-        Promise: 'readonly',
-        console: 'readonly',
-      },
-    },
-  },
-  /* Browser-Smoke: läuft in Node, steuert aber einen Browser.
-     `Event` steht hier, weil `page.evaluate` Code IM BROWSER ausführt —
-     ESLint sieht nur den Quelltext und kann den Kontextwechsel nicht
-     erkennen. */
-  {
-    files: ['frontend/e2e/**/*.mjs'],
-    languageOptions: {
-      globals: {
-        process: 'readonly',
-        console: 'readonly',
-        Event: 'readonly',
-        URL: 'readonly',
-        // `page.evaluate` läuft im Browser — dessen Globals stehen nur hier.
-        document: 'readonly',
-        window: 'readonly',
-      },
-    },
-  },
-  // CI-Hilfsscripte laufen in Node (process/console sind dort global)
-  {
-    files: ['scripts-ci/**/*.mjs'],
-    languageOptions: {
-      globals: {
-        process: 'readonly',
-        console: 'readonly',
-        fetch: 'readonly',
-        setTimeout: 'readonly',
-        Buffer: 'readonly',
-        URL: 'readonly',
-        URLSearchParams: 'readonly',
-        AbortSignal: 'readonly',
-      },
+      // Ein Auto-Trader darf nie stumm scheitern: leere catch-Blöcke sind verboten.
+      'no-empty': ['error', { allowEmptyCatch: false }],
     },
   },
 );

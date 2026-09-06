@@ -1,0 +1,168 @@
+/**
+ * Journal (append-only JSONL) und State (atomar geschriebenes JSON).
+ *
+ * Das Journal ist die Wahrheit über das, was die Engine getan hat:
+ * Entscheidungen, Orders, Fills, Halts, Fehler. Es wird nie umgeschrieben.
+ * Der State ist ein Snapshot für Neustarts und für `autotrd status`.
+ */
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import type { HaltState, Ms, PositionState, Trade } from './types.ts';
+import { redact } from './log.ts';
+
+export type JournalEventKind =
+  | 'start'
+  | 'stop'
+  | 'decision'
+  | 'intent'
+  | 'order_submitted'
+  | 'order_update'
+  | 'fill'
+  | 'trade_closed'
+  | 'halt'
+  | 'resume'
+  | 'reconcile'
+  | 'error'
+  | 'notify'
+  | 'champion'
+  | 'note';
+
+export interface JournalEvent {
+  ts: Ms;
+  kind: JournalEventKind;
+  [key: string]: unknown;
+}
+
+export function ensureDir(path: string): void {
+  if (!existsSync(path)) mkdirSync(path, { recursive: true });
+}
+
+/** Atomar schreiben: temporäre Datei + rename, damit nie ein halber State liegt. */
+export function writeJsonAtomic(path: string, value: unknown): void {
+  ensureDir(dirname(path));
+  const tmp = `${path}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(value, null, 2));
+  renameSync(tmp, path);
+}
+
+export function readJson<T>(path: string): T | null {
+  if (!existsSync(path)) return null;
+  const text = readFileSync(path, 'utf8');
+  if (!text.trim()) return null;
+  return JSON.parse(text) as T;
+}
+
+export class Journal {
+  readonly path: string;
+  constructor(path: string) {
+    this.path = path;
+    ensureDir(dirname(path));
+  }
+
+  append(kind: JournalEventKind, data: Record<string, unknown> = {}, ts: Ms = Date.now()): void {
+    const ev: JournalEvent = { ts, kind, ...data };
+    appendFileSync(this.path, redact(JSON.stringify(ev)) + '\n');
+  }
+
+  /** Alle Ereignisse lesen (für Auswertung/Live-Reife). Kaputte Zeilen werden übersprungen. */
+  readAll(): JournalEvent[] {
+    if (!existsSync(this.path)) return [];
+    const out: JournalEvent[] = [];
+    for (const line of readFileSync(this.path, 'utf8').split('\n')) {
+      if (!line.trim()) continue;
+      try {
+        out.push(JSON.parse(line) as JournalEvent);
+      } catch {
+        // kaputte Zeile (z. B. Absturz mitten im Schreiben) — bewusst überspringen
+        continue;
+      }
+    }
+    return out;
+  }
+
+  /** Abgeschlossene Trades aus dem Journal. */
+  trades(): Trade[] {
+    return this.readAll()
+      .filter((e) => e.kind === 'trade_closed')
+      .map((e) => e.trade as Trade);
+  }
+}
+
+/** Persistenter Engine-Zustand (Snapshot). */
+export interface EngineState {
+  version: 1;
+  mode: 'paper' | 'live';
+  updatedAt: Ms;
+  /** ET-Tag, für den dayStartEquity gilt. */
+  day: string;
+  dayStartEquity: number;
+  peakEquity: number;
+  halt: HaltState;
+  positions: Record<string, PositionState>;
+  /** Symbol → client_order_id der offenen Einstiegs-Order (Idempotenz über Neustarts). */
+  pendingEntries: Record<string, string>;
+  /** Symbol → client_order_id des Schutz-Stops beim Broker. */
+  protectiveOrders: Record<string, string>;
+  consecutiveErrors: number;
+  /** Lokal gezählte Daytrades (ET-Tag → Anzahl), Ergänzung zur Broker-Zahl. */
+  dayTrades: Record<string, number>;
+  lastBarAt: Record<string, Ms>;
+}
+
+export function emptyState(mode: 'paper' | 'live', day: string, equity: number): EngineState {
+  return {
+    version: 1,
+    mode,
+    updatedAt: Date.now(),
+    day,
+    dayStartEquity: equity,
+    peakEquity: equity,
+    halt: { halted: false, reason: null, since: null, until: null, note: null },
+    positions: {},
+    pendingEntries: {},
+    protectiveOrders: {},
+    consecutiveErrors: 0,
+    dayTrades: {},
+    lastBarAt: {},
+  };
+}
+
+export class StateStore {
+  readonly path: string;
+  constructor(path: string) {
+    this.path = path;
+  }
+
+  load(): EngineState | null {
+    return readJson<EngineState>(this.path);
+  }
+
+  save(state: EngineState): void {
+    state.updatedAt = Date.now();
+    writeJsonAtomic(this.path, state);
+  }
+}
+
+export interface HomePaths {
+  home: string;
+  state: string;
+  journal: string;
+  champion: string;
+  bars: string;
+  calendar: string;
+  reports: string;
+  haltFlag: string;
+}
+
+export function homePaths(home: string): HomePaths {
+  return {
+    home,
+    state: join(home, 'state.json'),
+    journal: join(home, 'journal.jsonl'),
+    champion: join(home, 'champion.json'),
+    bars: join(home, 'bars'),
+    calendar: join(home, 'calendar.json'),
+    reports: join(home, 'reports'),
+    haltFlag: join(home, 'HALT'),
+  };
+}

@@ -1,0 +1,340 @@
+/**
+ * DER Entscheidungspfad. Backtest und Live-Engine rufen `decide()` mit
+ * derselben Sicht auf und bekommen dieselben Order-Intents zurück. Alles,
+ * was hier steht, gilt in beiden Welten — alles, was nur in einer Welt
+ * gilt, ist ein Messfehler (Owner-Erkenntnis: der alte Backtest maß eine
+ * Strategie, die live nie lief).
+ *
+ * Reihenfolge je Zyklus:
+ *   1. Konto-Sperren prüfen (Tagesverlust, Drawdown) → ggf. alles glatt.
+ *   2. Je Symbol: Strategie befragen.
+ *      - Position offen: Exit / Stop nachziehen / EOD-Flatten. Exits werden
+ *        NIE gesperrt (Owner-Regel).
+ *      - Keine Position: Einstieg nur durch alle Tore (Halt, Datenfrische,
+ *        Session, Short-Erlaubnis, Positionslimit, PDT, Stop-Plausibilität,
+ *        Sizing).
+ */
+import type { RiskConfig, SessionConfig } from './config.ts';
+import type {
+  AccountView,
+  AssetClass,
+  HaltState,
+  IndicatorSet,
+  Ms,
+  OrderIntent,
+  Params,
+  PositionState,
+  Strategy,
+  SymbolSnapshot,
+  TimeframeMin,
+} from './types.ts';
+import { checkHalt } from '../risk/limits.ts';
+import { pdtCheck } from '../risk/pdt.ts';
+import { sizePosition } from '../risk/sizing.ts';
+
+export interface AssetFacts {
+  tradable: boolean;
+  shortable: boolean;
+}
+
+export interface LogicContext {
+  now: Ms;
+  today: string;
+  nextTradingDay: string;
+  account: AccountView;
+  positions: ReadonlyMap<string, PositionState>;
+  /** Symbole mit offener, noch ungefüllter Einstiegs-Order. */
+  pendingEntries: ReadonlySet<string>;
+  halt: HaltState;
+  risk: RiskConfig;
+  session: SessionConfig;
+  assetClass: AssetClass;
+  timeframe: TimeframeMin;
+  /** false ⇒ keine neuen Einstiege (Datenstrom alt/abgerissen). */
+  dataFresh: boolean;
+  /** Lokal gezählte Daytrades im 5-Tage-Fenster (Ergänzung zur Broker-Zahl). */
+  localDayTrades: number;
+  assetFacts: (symbol: string) => AssetFacts | undefined;
+  /** Stop bei Einstieg mindestens diese Distanz (in %) vom Kurs — Schutz vor Null-Risiko-Stops. */
+  minStopDistancePct?: number;
+}
+
+export interface SymbolInput {
+  snap: SymbolSnapshot;
+  strategy: Strategy;
+  params: Params;
+  ind: IndicatorSet;
+}
+
+export interface LogicNote {
+  symbol: string;
+  kind: 'blocked' | 'decision' | 'info' | 'halt';
+  text: string;
+}
+
+export interface LogicResult {
+  intents: OrderIntent[];
+  notes: LogicNote[];
+  halt: HaltState;
+  /** true, wenn in diesem Zyklus eine Sperre neu ausgelöst wurde. */
+  haltTriggered: boolean;
+}
+
+export const DEFAULT_MIN_STOP_DISTANCE_PCT = 0.05;
+
+export function qtyStepFor(assetClass: AssetClass): number {
+  return assetClass === 'crypto' ? 0.0001 : 1;
+}
+
+export function grossExposure(positions: ReadonlyMap<string, PositionState>, priceOf: (symbol: string) => number | undefined): number {
+  let sum = 0;
+  for (const p of positions.values()) {
+    const px = priceOf(p.symbol) ?? p.entryPrice;
+    sum += p.qty * px;
+  }
+  return sum;
+}
+
+export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): LogicResult {
+  const intents: OrderIntent[] = [];
+  const notes: LogicNote[] = [];
+
+  // 1. Konto-Sperren
+  const hc = checkHalt({
+    account: ctx.account,
+    halt: ctx.halt,
+    risk: ctx.risk,
+    now: ctx.now,
+    today: ctx.today,
+    nextDay: ctx.nextTradingDay,
+  });
+  const halt = hc.halt;
+  if (hc.lifted) notes.push({ symbol: '*', kind: 'halt', text: halt.note ?? 'Halt geendet' });
+  if (hc.triggered) {
+    notes.push({ symbol: '*', kind: 'halt', text: halt.note ?? 'Halt ausgelöst' });
+    const reason = halt.reason === 'drawdown' ? 'drawdown' : 'kill_switch';
+    for (const p of ctx.positions.values()) {
+      intents.push({ kind: 'exit', symbol: p.symbol, reason, decidedAt: ctx.now });
+    }
+    return { intents, notes, halt, haltTriggered: true };
+  }
+
+  // Preise der Entscheidungs-Bars für Exposure
+  const lastClose = new Map<string, number>();
+  for (const inp of inputs) lastClose.set(inp.snap.symbol, inp.snap.bars.c[inp.snap.i]!);
+  let gross = grossExposure(ctx.positions, (s) => lastClose.get(s));
+  let openCount = ctx.positions.size + ctx.pendingEntries.size;
+  let plannedIntraday = 0;
+
+  for (const inp of inputs) {
+    const { snap, strategy, params, ind } = inp;
+    const sym = snap.symbol;
+    const pos = snap.position;
+    const price = snap.bars.c[snap.i]!;
+
+    if (snap.i + 1 < strategy.warmupBars(params)) {
+      continue;
+    }
+
+    const decision = strategy.decide(snap, ind, params);
+
+    if (pos) {
+      // ── Position offen: Exits sind nie gesperrt ──
+      const mustFlatten =
+        !strategy.holdsOvernight &&
+        snap.session.minutesToClose !== null &&
+        (snap.session.isLastBarOfDay || snap.session.minutesToClose <= ctx.session.flattenBeforeCloseMin);
+      if (mustFlatten) {
+        intents.push({ kind: 'exit', symbol: sym, reason: 'eod', decidedAt: ctx.now });
+        notes.push({ symbol: sym, kind: 'decision', text: 'EOD-Flatten' });
+        continue;
+      }
+      if (decision.kind === 'exit') {
+        intents.push({ kind: 'exit', symbol: sym, reason: 'signal', decidedAt: ctx.now });
+        notes.push({ symbol: sym, kind: 'decision', text: `Exit: ${decision.reason}` });
+        continue;
+      }
+      if (decision.kind === 'move_stop') {
+        const tighter = pos.side === 'long' ? pos.stop === null || decision.stop > pos.stop : pos.stop === null || decision.stop < pos.stop;
+        const onLossSide = pos.side === 'long' ? decision.stop < price : decision.stop > price;
+        if (tighter && onLossSide && Number.isFinite(decision.stop) && decision.stop > 0) {
+          intents.push({ kind: 'move_stop', symbol: sym, stop: decision.stop, reason: decision.reason, decidedAt: ctx.now });
+          notes.push({ symbol: sym, kind: 'decision', text: `Stop → ${decision.stop} (${decision.reason})` });
+        }
+        continue;
+      }
+      if (decision.kind === 'enter' && decision.side !== pos.side) {
+        notes.push({ symbol: sym, kind: 'info', text: 'Gegensignal bei offener Position — ignoriert (kein Reversal)' });
+      }
+      continue;
+    }
+
+    // ── Keine Position ──
+    if (decision.kind !== 'enter') continue;
+
+    const block = (text: string) => notes.push({ symbol: sym, kind: 'blocked', text });
+
+    if (halt.halted) {
+      block(`Halt aktiv (${halt.reason})`);
+      continue;
+    }
+    if (!ctx.dataFresh) {
+      block('Daten nicht frisch');
+      continue;
+    }
+    if (ctx.pendingEntries.has(sym)) {
+      block('Einstiegs-Order bereits offen');
+      continue;
+    }
+    const facts = ctx.assetFacts(sym);
+    if (facts && !facts.tradable) {
+      block('Asset nicht handelbar');
+      continue;
+    }
+    if (decision.side === 'short') {
+      if (!ctx.risk.allowShort) {
+        block('Short nicht erlaubt (risk.allowShort=false)');
+        continue;
+      }
+      if (ctx.assetClass === 'crypto') {
+        block('Krypto: kein Short bei Alpaca');
+        continue;
+      }
+      if (facts && !facts.shortable) {
+        block('Asset nicht shortbar');
+        continue;
+      }
+    }
+    // Session-Tore (nur Intraday-Zeitrahmen bei Aktien)
+    if (ctx.assetClass === 'us_equity' && ctx.timeframe !== 1440) {
+      const so = snap.session.minutesSinceOpen;
+      const tc = snap.session.minutesToClose;
+      if (!snap.session.isRegularSession) {
+        block('Außerhalb der regulären Sitzung');
+        continue;
+      }
+      if (so !== null && so < ctx.session.noEntryFirstMin) {
+        block(`Eröffnungsfenster (${so} < ${ctx.session.noEntryFirstMin} min)`);
+        continue;
+      }
+      if (tc !== null && tc <= ctx.session.noEntryLastMin) {
+        block(`Schlussfenster (${tc} ≤ ${ctx.session.noEntryLastMin} min)`);
+        continue;
+      }
+      if (!strategy.holdsOvernight && tc !== null && tc <= ctx.session.flattenBeforeCloseMin) {
+        block('Flatten-Fenster');
+        continue;
+      }
+    }
+    if (openCount >= ctx.risk.maxPositions) {
+      block(`Positionslimit ${ctx.risk.maxPositions} erreicht`);
+      continue;
+    }
+    // Stop-Plausibilität
+    const minDist = (ctx.minStopDistancePct ?? DEFAULT_MIN_STOP_DISTANCE_PCT) / 100;
+    const stop = decision.stop;
+    const stopOk =
+      Number.isFinite(stop) &&
+      stop > 0 &&
+      (decision.side === 'long' ? stop < price * (1 - minDist) : stop > price * (1 + minDist));
+    if (!stopOk) {
+      block(`Stop unplausibel (${stop} bei Kurs ${price})`);
+      continue;
+    }
+    let target: number | null = null;
+    if (decision.target !== undefined && Number.isFinite(decision.target) && decision.target > 0) {
+      const targetOk = decision.side === 'long' ? decision.target > price : decision.target < price;
+      target = targetOk ? decision.target : null;
+    }
+    // PDT
+    const pdt = pdtCheck({
+      respect: ctx.risk.pdt.respect,
+      minEquity: ctx.risk.pdt.minEquity,
+      maxDayTrades: ctx.risk.pdt.maxDayTrades,
+      equity: ctx.account.equity,
+      brokerCount: ctx.account.dayTradeCount,
+      localCount: ctx.localDayTrades,
+      plannedIntradayEntries: plannedIntraday,
+      intraday: !strategy.holdsOvernight,
+      assetClass: ctx.assetClass,
+    });
+    if (!pdt.allowed) {
+      block(pdt.reason ?? 'PDT');
+      continue;
+    }
+    // Sizing
+    const exposureBudget = (ctx.account.equity * ctx.risk.maxGrossExposurePct) / 100 - gross;
+    const size = sizePosition({
+      equity: ctx.account.equity,
+      cash: ctx.account.cash,
+      price,
+      stop,
+      side: decision.side,
+      riskPct: ctx.risk.riskPerTradePct,
+      maxPositionPct: ctx.risk.maxPositionPct,
+      exposureBudget,
+      qtyStep: qtyStepFor(ctx.assetClass),
+    });
+    if (size.qty <= 0) {
+      block(`Sizing: ${size.reason}`);
+      continue;
+    }
+
+    intents.push({
+      kind: 'enter',
+      symbol: sym,
+      side: decision.side,
+      qty: size.qty,
+      stop,
+      target,
+      refPrice: price,
+      reason: decision.reason,
+      strategy: strategy.id,
+      decidedAt: ctx.now,
+    });
+    notes.push({
+      symbol: sym,
+      kind: 'decision',
+      text: `Enter ${decision.side} ${size.qty} @~${price} stop ${stop}${target ? ` ziel ${target}` : ''}: ${decision.reason}`,
+    });
+    openCount++;
+    gross += size.notional;
+    if (!strategy.holdsOvernight) plannedIntraday++;
+  }
+
+  return { intents, notes, halt, haltTriggered: false };
+}
+
+/** Position nach einer geschlossenen Bar fortschreiben (Haltedauer, Hochwasser). Identisch in Backtest und Live. */
+export function advancePosition(pos: PositionState, close: number): PositionState {
+  const highWater = pos.side === 'long' ? Math.max(pos.highWater, close) : Math.min(pos.highWater, close);
+  return { ...pos, barsHeld: pos.barsHeld + 1, highWater };
+}
+
+/** Neue Position aus einem Fill — Backtest und Live nutzen dieselbe Fabrik. */
+export function openPosition(args: {
+  symbol: string;
+  side: PositionState['side'];
+  qty: number;
+  fillPrice: number;
+  fillTime: Ms;
+  stop: number;
+  target: number | null;
+  strategy: string;
+  entryDay: string;
+}): PositionState {
+  return {
+    symbol: args.symbol,
+    side: args.side,
+    qty: args.qty,
+    entryPrice: args.fillPrice,
+    entryTime: args.fillTime,
+    stop: args.stop,
+    target: args.target,
+    initialStop: args.stop,
+    highWater: args.fillPrice,
+    strategy: args.strategy,
+    barsHeld: 0,
+    entryDay: args.entryDay,
+  };
+}
