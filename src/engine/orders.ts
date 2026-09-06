@@ -385,6 +385,7 @@ export class OrderExecutor {
     const fillTime = order.filledAt ?? ts;
     const stopLeg = order.legs.find(isStopType) ?? null;
     const targetLeg = order.legs.find((l) => l.type === 'limit') ?? null;
+    let grew = false;
     if (!existing) {
       const stop = intent?.stop ?? stopLeg?.stopPrice ?? null;
       const target = intent?.target ?? targetLeg?.limitPrice ?? null;
@@ -402,6 +403,7 @@ export class OrderExecutor {
       );
       this.log.info(`Fill Einstieg ${sym} ${side} ${filled} @ ${avg}`, { orderId: order.id, stop, target });
     } else if (filled > existing.qty + 1e-9) {
+      grew = true;
       this.book.positions.set(sym, { ...existing, qty: filled, entryPrice: avg });
       this.journal.append(
         'fill',
@@ -417,7 +419,72 @@ export class OrderExecutor {
     if (complete) this.book.clearPending(sym);
     if (this.assetClass === 'crypto' && !this.book.protectiveOrders.has(sym) && this.book.positions.has(sym)) {
       await this.placeProtectiveStop(sym, 'Krypto: Schutz-Stop nach Einstiegs-Fill');
+    } else if (grew) {
+      // Ein eigener Stop (Krypto, Nachsetzer) deckt sonst nur die Menge des ersten Teilfills — Bracket-Beine passt Alpaca selbst an.
+      await this.alignOwnStopQty(sym);
     }
+  }
+
+  /** Eigenen Schutz-Stop (Kennung `-s`) auf die Positionsmenge bringen, falls bekannt und offen. */
+  private async alignOwnStopQty(symbol: string): Promise<void> {
+    const prot = this.book.protectiveOrders.get(symbol);
+    if (!prot?.orderId || parseClientId(prot.clientId)?.kind !== 'stop') return;
+    const o = await this.client.getOrder(prot.orderId);
+    if (o && isOpenStatus(o.status)) await this.alignStopQty(symbol, o);
+  }
+
+  /**
+   * Stop-Menge ≠ Positionsmenge ⇒ `replaceOrder({ qty })`; scheitert das, Storno + neuer Stop über die
+   * volle Menge. Nach Teilfills (Krypto) oder einer vom Abgleich übernommenen größeren Broker-Menge
+   * muss der Stop die GANZE Position decken — ein Rest ohne Stop ist nacktes Risiko.
+   */
+  private async alignStopQty(symbol: string, o: AlpacaOrder): Promise<boolean> {
+    const pos = this.book.positions.get(symbol);
+    if (!pos) return false;
+    const want = roundQtyFor(pos.qty, this.assetClass);
+    const remaining = (o.qty ?? 0) - o.filledQty;
+    if (!(want > 0) || Math.abs(remaining - want) < 1e-9) return false;
+    try {
+      const replaced = await this.client.replaceOrder(o.id, { qty: want });
+      this.book.protectiveOrders.set(symbol, { orderId: replaced.id, clientId: replaced.clientOrderId, stop: replaced.stopPrice ?? pos.stop ?? 0 });
+      this.journal.append('order_update', { purpose: 'stop', symbol, event: 'replaced', orderId: replaced.id, replaces: o.id, qtyFrom: remaining, qtyTo: want, note: 'Stop-Menge an Position angepasst' }, this.now());
+      this.log.warn(`Stop-Menge angepasst ${symbol}: ${remaining} → ${want}`, { orderId: replaced.id });
+      return true;
+    } catch (e) {
+      this.log.warn('Stop-Menge nicht ersetzbar — Storno + neuer Stop', { symbol, orderId: o.id, error: errMsg(e) });
+      const outcome = await this.cancelStopOrder(symbol, o.id);
+      if (outcome === 'filled' || !this.book.positions.has(symbol)) return true;
+      const placed = await this.placeProtectiveStop(symbol, 'Stop-Menge angepasst: Ersatz nach gescheitertem Replace');
+      return placed !== null;
+    }
+  }
+
+  /**
+   * Stop-Order stornieren; ist sie inzwischen (teil-)gefüllt, wird der Fill gebucht statt weiter zu
+   * stornieren. 'filled' ⇒ die Order hat die Position (teilweise) geschlossen — nicht nachsetzen.
+   */
+  private async cancelStopOrder(symbol: string, orderId: string): Promise<'gone' | 'filled'> {
+    const pos = this.book.positions.get(symbol);
+    const cur = await this.client.getOrder(orderId);
+    if (cur && cur.filledQty > 0 && pos && cur.side === exitSideOf(pos)) {
+      this.applyExitFill(cur, { ts: this.now(), reason: 'stop' });
+      return 'filled';
+    }
+    if (cur && isOpenStatus(cur.status)) {
+      try {
+        await this.client.cancelOrder(orderId);
+      } catch (ce) {
+        if (!is422(ce)) throw ce;
+        const again = await this.client.getOrder(orderId);
+        if (again && again.filledQty > 0 && pos && again.side === exitSideOf(pos)) {
+          this.applyExitFill(again, { ts: this.now(), reason: 'stop' });
+          return 'filled';
+        }
+      }
+      await this.waitUntilOrderGone(orderId);
+    }
+    this.book.protectiveOrders.delete(symbol);
+    return 'gone';
   }
 
   /* ── Exit ── */
@@ -604,8 +671,9 @@ export class OrderExecutor {
     const booked = this.bookedExitQty.get(order.id) ?? 0;
     const delta = order.filledQty - booked;
     if (!(delta > 1e-9)) return false;
-    this.bookedExitQty.set(order.id, order.filledQty);
+    // Erst leeren, dann setzen — sonst fiele beim Überlauf genau der Eintrag weg, der die Doppelbuchung verhindert.
     if (this.bookedExitQty.size > 5000) this.bookedExitQty.clear();
+    this.bookedExitQty.set(order.id, order.filledQty);
     const price = o.price ?? order.filledAvgPrice;
     if (price === null || price === undefined || !(price > 0)) {
       this.log.warn('Exit-Fill ohne Preis — nicht gebucht', { symbol: sym, orderId: order.id });
@@ -671,25 +739,8 @@ export class OrderExecutor {
       return r(true, `Stop → ${stop} (replace)`, replaced.id);
     } catch (e) {
       this.log.warn('replaceOrder fehlgeschlagen — Storno + neue Stop-Order', { symbol: sym, orderId: prot.id, error: errMsg(e) });
-      const cur = await this.client.getOrder(prot.id);
-      if (cur && cur.filledQty > 0 && cur.side === exitSideOf(pos)) {
-        this.applyExitFill(cur, { ts: this.now(), reason: 'stop' });
-        return r(true, 'Stop-Bein war bereits gefüllt — Trade gebucht', cur.id);
-      }
-      if (cur && isOpenStatus(cur.status)) {
-        try {
-          await this.client.cancelOrder(prot.id);
-        } catch (ce) {
-          if (!is422(ce)) throw ce;
-          const again = await this.client.getOrder(prot.id);
-          if (again && again.filledQty > 0 && again.side === exitSideOf(pos)) {
-            this.applyExitFill(again, { ts: this.now(), reason: 'stop' });
-            return r(true, 'Stop-Bein während des Stornos gefüllt — Trade gebucht', again.id);
-          }
-        }
-        await this.waitUntilOrderGone(prot.id);
-      }
-      this.book.protectiveOrders.delete(sym);
+      const outcome = await this.cancelStopOrder(sym, prot.id);
+      if (outcome === 'filled') return r(true, 'Stop-Bein war bereits gefüllt — Trade gebucht', prot.id);
       if (!this.book.positions.has(sym)) return r(true, 'Position inzwischen geschlossen');
       const placed = await this.placeProtectiveStop(sym, `Stop nachziehen: Ersatz nach gescheitertem Replace (${intent.reason})`, stop);
       return placed ? r(true, `Stop → ${stop} (cancel + neu)`, placed.orderId) : r(false, 'Ersatz-Stop konnte nicht gesetzt werden');
@@ -805,6 +856,8 @@ export class OrderExecutor {
         const pick = stops.find((o) => o.id === known?.orderId || o.clientOrderId === known?.clientId) ?? stops[0]!;
         this.book.protectiveOrders.set(sym, { orderId: pick.id, clientId: pick.clientOrderId, stop: pick.stopPrice ?? pos.stop ?? 0 });
         if (pos.stop === null && pick.stopPrice !== null) this.book.positions.set(sym, { ...pos, stop: pick.stopPrice, initialStop: pick.stopPrice });
+        // Existenz reicht nicht: Der Stop muss die ganze Position decken (Teilfills, Hand-Nachkauf).
+        if (await this.alignStopQty(sym, pick)) fixed.push(sym);
         continue;
       }
       this.book.protectiveOrders.delete(sym);

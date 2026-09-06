@@ -151,7 +151,12 @@ export interface DsrResult {
   sr: number | null;
   /** Anzahl IS-Tagesrenditen. */
   n: number;
+  /** Trials über alle Folds + finale Suche (Vorgabe für `dsr`). */
   nTrials: number;
+  /** Trials nur der finalen Suche (Basis von `dsrFinalOnly`). */
+  nTrialsFinal: number;
+  /** DSR mit nTrials = nur finale Suche — die mildere, zur varSr-Quelle passende Variante. */
+  dsrFinalOnly: number | null;
   /** Verwendete Varianz (je nach `varSrSource`). */
   varSr: number;
   varSrSource: DsrVarSource;
@@ -178,6 +183,7 @@ export function deflatedSharpeIs(a: { wfa: WfaResult; metricsFns: MetricsFns; va
   const returns = wfa.finalIsDailyReturns;
   const n = returns.length;
   const nTrials = Math.max(1, wfa.trials);
+  const nTrialsFinal = Math.max(1, wfa.finalEvaluated);
   const foldSrs: number[] = [];
   for (const f of wfa.folds) {
     const s = metricsFns.sharpeRatio(f.best.oosDailyReturns, 1);
@@ -186,18 +192,36 @@ export function deflatedSharpeIs(a: { wfa: WfaResult; metricsFns: MetricsFns; va
   const varSrTrials = varOf(wfa.finalTrialSharpes);
   const varSrFolds = varOf(foldSrs);
   const varSr = varSrSource === 'trial_sharpes' ? varSrTrials : varSrFolds;
-  const base = { dsr: null, sr: null, n, nTrials, varSr, varSrSource, varSrTrials, varSrFolds, skew: null, kurt: null };
+  const base = { dsr: null, dsrFinalOnly: null, sr: null, n, nTrials, nTrialsFinal, varSr, varSrSource, varSrTrials, varSrFolds, skew: null, kurt: null };
   if (n < DSR_MIN_RETURNS) return { ...base, note: `zu wenige IS-Tagesrenditen (${n} < ${DSR_MIN_RETURNS})` };
   const sr = metricsFns.sharpeRatio(returns, 1);
   if (sr === null || !Number.isFinite(sr)) return { ...base, note: 'Sharpe der IS-Renditen nicht berechenbar (Varianz 0?)' };
   const skew = metricsFns.skewness(returns);
   const kurt = metricsFns.kurtosis(returns);
-  const raw = metricsFns.deflatedSharpe({ sr, n, skew, kurt, nTrials, varSr });
-  const dsr = Number.isFinite(raw) ? raw : null;
+  const fin = (x: number): number | null => (Number.isFinite(x) ? x : null);
+  const dsr = fin(metricsFns.deflatedSharpe({ sr, n, skew, kurt, nTrials, varSr }));
+  // nTrials zählt alle Folds, varSr stammt nur aus der finalen Suche ⇒ überdeflationiert; die
+  // passende Variante mit nTrials = Samples der finalen Suche steht daneben.
+  const dsrFinalOnly = fin(metricsFns.deflatedSharpe({ sr, n, skew, kurt, nTrials: nTrialsFinal, varSr }));
   const detail =
-    `IS-SR/Periode ${sr.toFixed(3)}, n=${n}, Trials=${nTrials}, Schiefe ${skew.toFixed(2)}, Kurtosis ${kurt.toFixed(2)}, ` +
-    `varSr=${varSr.toExponential(2)} aus ${varSrSource} (Trials ${varSrTrials.toExponential(2)}, Folds ${varSrFolds.toExponential(2)})`;
-  return { dsr, sr, n, nTrials, varSr, varSrSource, varSrTrials, varSrFolds, skew, kurt, note: dsr === null ? `DSR nicht berechenbar — ${detail}` : `DSR ${dsr.toFixed(3)}; ${detail}` };
+    `IS-SR/Periode ${sr.toFixed(3)}, n=${n}, Trials=${nTrials} (alle Folds), Schiefe ${skew.toFixed(2)}, Kurtosis ${kurt.toFixed(2)}, ` +
+    `varSr=${varSr.toExponential(2)} aus ${varSrSource} (Trials ${varSrTrials.toExponential(2)}, Folds ${varSrFolds.toExponential(2)}); ` +
+    `DSR bei nTrials=${nTrialsFinal} (nur finale Suche): ${dsrFinalOnly === null ? '–' : dsrFinalOnly.toFixed(3)}`;
+  return {
+    dsr,
+    dsrFinalOnly,
+    sr,
+    n,
+    nTrials,
+    nTrialsFinal,
+    varSr,
+    varSrSource,
+    varSrTrials,
+    varSrFolds,
+    skew,
+    kurt,
+    note: dsr === null ? `DSR nicht berechenbar — ${detail}` : `DSR ${dsr.toFixed(3)}; ${detail}`,
+  };
 }
 
 /* ───────────────────────── Probabilistic Sharpe (Out-of-Sample) ───────────────────────── */
@@ -244,6 +268,11 @@ export interface GateInput {
   metricsFns: MetricsFns;
   /** Nur für die Notiz (annualisierter OOS-Sharpe); Aktien 252, Krypto 365. */
   periodsPerYear?: number | undefined;
+  /**
+   * Amtsinhaber-Modus: bewertet wird nur sauberes OOS (Folds nach fitEnd) — die
+   * Trade-Schwelle gilt anteilig, der DSR ist ohne Suche nicht anwendbar.
+   */
+  incumbent?: { cleanFolds: number; totalFolds: number } | undefined;
 }
 
 export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResult[] } {
@@ -251,12 +280,16 @@ export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResul
   const oos = wfa.oos;
   const gates: GateResult[] = [];
 
+  const inc = a.incumbent;
+  const minTrades = inc ? Math.max(1, Math.ceil((optimizer.minOosTrades * inc.cleanFolds) / Math.max(1, inc.totalFolds))) : optimizer.minOosTrades;
   gates.push({
     name: 'oos_trades',
-    pass: oos.trades >= optimizer.minOosTrades,
+    pass: oos.trades >= minTrades,
     value: oos.trades,
-    threshold: optimizer.minOosTrades,
-    note: `${oos.trades} OOS-Trades über ${wfa.folds.length} Folds`,
+    threshold: minTrades,
+    note: inc
+      ? `${oos.trades} OOS-Trades über ${inc.cleanFolds} saubere von ${inc.totalFolds} Folds (Schwelle anteilig ${minTrades} von ${optimizer.minOosTrades})`
+      : `${oos.trades} OOS-Trades über ${wfa.folds.length} Folds`,
   });
 
   gates.push({
@@ -314,10 +347,16 @@ export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResul
   const dsrNote = a.dsr.dsr === null ? `DSR nicht berechenbar (${a.dsr.note})` : a.dsr.note;
   gates.push({
     name: 'deflated_sharpe_is',
-    pass: dsrIsGate ? dsrOk : true,
+    pass: inc || !dsrIsGate ? true : dsrOk,
     value: a.dsr.dsr,
     threshold: DSR_THRESHOLD,
-    note: dsrIsGate ? (dsrOk ? dsrNote : `${dsrNote} — gilt als durchgefallen`) : `informativ (dsrIsGate=false): ${dsrNote}${dsrOk ? '' : ' — würde als Gate durchfallen'}`,
+    note: inc
+      ? 'nicht anwendbar (Amtsinhaber: feste Parameter, keine Suche, keine Trials)'
+      : dsrIsGate
+        ? dsrOk
+          ? dsrNote
+          : `${dsrNote} — gilt als durchgefallen`
+        : `informativ (dsrIsGate=false): ${dsrNote}${dsrOk ? '' : ' — würde als Gate durchfallen'}`,
   });
 
   gates.push({

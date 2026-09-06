@@ -76,6 +76,10 @@ export interface FoldPlan {
   folds: Fold[];
   /** Letzte `holdoutDays` — für die Auswahl tabu, nur Bericht. */
   holdout: TimeRange | null;
+  /** Effektive Schrittweite (Kalendertage) — immer = oosDays: disjunkte, lückenlose OOS-Kette. */
+  stepDays: number;
+  /** Abweichungen von der Eingabe (z. B. korrigierte Schrittweite). */
+  notes: string[];
 }
 
 export const MIN_FOLDS = 3;
@@ -84,6 +88,11 @@ export const MIN_FOLDS = 3;
  * Rollierende Folds, am ENDE verankert: Der letzte Fold endet exakt vor dem
  * Holdout, damit die jüngsten Daten in die Auswahl eingehen; ein Rest am
  * Anfang dient dem ersten Fold als Warmup.
+ *
+ * Die OOS-Kette ist IMMER disjunkt: stepDays < oosDays ließe dieselben Tage
+ * in mehreren Folds zählen (Red-Team: oos_trades-Gate und PSR-n aufgeblasen)
+ * — die Schrittweite wird dann auf oosDays gesetzt und vermerkt; stepDays >
+ * oosDays hieße Lücken und wird abgewiesen.
  */
 export function buildFolds(a: {
   dataStart: Ms;
@@ -97,18 +106,27 @@ export function buildFolds(a: {
     throw new Error(`buildFolds: ungültige Fenster (is=${a.isDays}, oos=${a.oosDays}, step=${a.stepDays}, holdout=${a.holdoutDays})`);
   }
   if (!(a.dataEnd > a.dataStart)) throw new Error('buildFolds: dataEnd muss nach dataStart liegen');
+  if (a.stepDays > a.oosDays) {
+    throw new Error(`buildFolds: stepDays ${a.stepDays} > oosDays ${a.oosDays} ⇒ Lücken in der OOS-Kette — stepDays = oosDays setzen`);
+  }
+  const notes: string[] = [];
+  let stepDays = a.stepDays;
+  if (stepDays < a.oosDays) {
+    notes.push(`stepDays ${a.stepDays} < oosDays ${a.oosDays}: überlappende OOS-Fenster zählten dieselben Tage mehrfach — Schrittweite auf ${a.oosDays} gesetzt`);
+    stepDays = a.oosDays;
+  }
 
   const selectionEnd = a.dataEnd - a.holdoutDays * DAY;
   const span = selectionEnd - a.dataStart;
   const need = (a.isDays + a.oosDays) * DAY;
-  const step = a.stepDays * DAY;
+  const step = stepDays * DAY;
   const count = span >= need ? Math.floor((span - need) / step) + 1 : 0;
   if (count < MIN_FOLDS) {
     const haveDays = Math.floor((a.dataEnd - a.dataStart) / DAY);
-    const needDays = a.isDays + a.oosDays + (MIN_FOLDS - 1) * a.stepDays + a.holdoutDays;
+    const needDays = a.isDays + a.oosDays + (MIN_FOLDS - 1) * stepDays + a.holdoutDays;
     throw new Error(
       `Walk-Forward braucht mindestens ${MIN_FOLDS} Folds, möglich: ${count}. ` +
-        `Daten: ${haveDays} Tage (Holdout ${a.holdoutDays}); je Fold ${a.isDays} IS + ${a.oosDays} OOS Tage, Schritt ${a.stepDays} ⇒ ` +
+        `Daten: ${haveDays} Tage (Holdout ${a.holdoutDays}); je Fold ${a.isDays} IS + ${a.oosDays} OOS Tage, Schritt ${stepDays} ⇒ ` +
         `mindestens ${needDays} Tage nötig (optimizer.lookbackDays erhöhen oder Fenster verkleinern).`,
     );
   }
@@ -121,7 +139,7 @@ export function buildFolds(a: {
     const isStart = isEnd - a.isDays * DAY;
     folds.push({ index: k, isStart, isEnd, oosStart, oosEnd });
   }
-  return { folds, holdout: a.holdoutDays > 0 ? { start: selectionEnd, end: a.dataEnd } : null };
+  return { folds, holdout: a.holdoutDays > 0 ? { start: selectionEnd, end: a.dataEnd } : null, stepDays, notes };
 }
 
 /** Datenbereich einer Serie: [erste Bar, letzte Bar + 1 ms) — Ende exklusiv. */
@@ -346,8 +364,10 @@ export interface WfaResult {
   finalIsMetrics: Metrics;
   /** Nominales Fenster der finalen Suche; `embargoAtEnd` gilt genau dann, wenn ein Holdout folgt. */
   finalWindow: TimeRange & { embargoAtEnd: boolean };
-  /** Bewertete Parametersätze insgesamt (für den Deflated Sharpe). */
+  /** Bewertete Parametersätze insgesamt über alle Folds + finale Suche (für den Deflated Sharpe). */
   trials: number;
+  /** Bewertete Parametersätze NUR der finalen Suche. */
+  finalEvaluated: number;
   /** Tagesrenditen von finalParams auf dem finalen Suchfenster (IS) — die Zahl, die der DSR deflationiert. */
   finalIsDailyReturns: number[];
   /** IS-Sharpe je Periode aller Kandidaten der finalen Suche (nur berechenbare) — Streuung der Trials für den DSR. */
@@ -424,6 +444,7 @@ export function walkForward(a: WalkForwardArgs): WfaResult {
   const dataRange = dataRangeOf(a.bars);
   const include = a.include ?? [];
   const log = a.log ?? (() => undefined);
+  for (const n of plan.notes) log(`${a.symbol} ${strategy.id}: ${n}`);
 
   let trials = 0;
   const foldResults: WfaFoldResult[] = [];
@@ -485,6 +506,7 @@ export function walkForward(a: WalkForwardArgs): WfaResult {
     finalIsMetrics: fin.result.metrics,
     finalWindow,
     trials,
+    finalEvaluated: fin.evaluated,
     finalIsDailyReturns: fin.result.dailyReturns,
     finalTrialSharpes: fin.trialSharpes,
     holdout,
@@ -494,12 +516,67 @@ export function walkForward(a: WalkForwardArgs): WfaResult {
 }
 
 /**
- * Feste Parameter auf den OOS-Fenstern einer Fold-Liste bewerten — für den
- * Re-Score des amtierenden Champions auf DENSELBEN Folds wie der Kandidat.
+ * Feste Parameter auf den OOS-Fenstern einer Fold-Liste bewerten (nur der
+ * OOS-Median, ohne Gates) — Baustein; der Amtsinhaber läuft über `fixedParamsWfa`.
  */
 export function oosScoreOnFolds(
   a: Omit<WindowSimArgs, 'range' | 'costMultiplier'> & { folds: readonly Fold[]; objective: ObjectiveId },
 ): OosAggregate {
   const pieces = a.folds.map((f) => pieceOf(simulateWindow({ ...a, range: { start: f.oosStart, end: f.oosEnd } })));
   return aggregateOos(pieces, a.objective, a.initialEquity);
+}
+
+/**
+ * WFA-Ergebnis für FESTE Parameter (amtierender Champion) auf gegebenen Folds:
+ * je Fold ein OOS-Lauf (und ein IS-Lauf für den Bericht), dazu ein Lauf auf
+ * dem Fenster des letzten Folds als Basis des Nachbarschaftstests. Keine
+ * Suche ⇒ keine Trials, keine Trial-Sharpes: Der Deflated Sharpe ist hier
+ * nicht anwendbar; alle anderen Gates laufen wie beim Kandidaten.
+ */
+export function fixedParamsWfa(
+  a: Omit<WindowSimArgs, 'range' | 'costMultiplier'> & { folds: readonly Fold[]; optimizer: OptimizerConfig; holdout: TimeRange | null },
+): WfaResult {
+  const { strategy, optimizer, params } = a;
+  if (a.folds.length === 0) throw new Error('fixedParamsWfa: keine Folds');
+  const foldResults: WfaFoldResult[] = [];
+  const pieces: OosPiece[] = [];
+  for (const fold of a.folds) {
+    const isRange = candidateRange(a.bars, { start: fold.isStart, end: fold.isEnd }, strategy, params, optimizer, true);
+    const is = simulateWindow({ ...a, range: isRange });
+    const oos = simulateWindow({ ...a, range: { start: fold.oosStart, end: fold.oosEnd } });
+    foldResults.push({
+      fold,
+      evaluated: 0,
+      best: {
+        params,
+        isMetrics: is.metrics,
+        oosMetrics: oos.metrics,
+        oosTrades: oos.trades,
+        isObjective: objectiveValue(optimizer.objective, is.metrics),
+        oosObjective: objectiveValue(optimizer.objective, oos.metrics),
+        oosDailyReturns: oos.dailyReturns,
+      },
+    });
+    pieces.push(pieceOf(oos));
+  }
+  const last = a.folds[a.folds.length - 1]!;
+  const finalWindow = { start: last.isStart, end: last.oosEnd, embargoAtEnd: a.holdout !== null };
+  const fin = simulateWindow({ ...a, range: candidateRange(a.bars, finalWindow, strategy, params, optimizer, finalWindow.embargoAtEnd) });
+  return {
+    strategyId: strategy.id,
+    symbol: a.symbol,
+    timeframe: a.config.timeframe,
+    folds: foldResults,
+    oos: aggregateOos(pieces, optimizer.objective, a.initialEquity),
+    finalParams: params,
+    finalIsMetrics: fin.metrics,
+    finalWindow,
+    trials: 0,
+    finalEvaluated: 0,
+    finalIsDailyReturns: fin.dailyReturns,
+    finalTrialSharpes: [],
+    holdout: null,
+    dataRange: dataRangeOf(a.bars),
+    embargoBars: embargoBarsFor(strategy, params, optimizer),
+  };
 }

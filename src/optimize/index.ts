@@ -5,7 +5,7 @@
  *   const deps = await loadDefaultDeps();          // Backtester + Strategien
  *   const out = runOptimization({ ...deps, config, symbols, strategies, barsFor, home, initialEquity });
  */
-export { objectiveValue, median, mean, sampleVariance, perPeriodSharpe, type ObjectiveId } from './objective.ts';
+export { objectiveValue, median, mean, sampleVariance, perPeriodSharpe, OBJECTIVE_CAP, PERFECT_WINDOW_BASE, type ObjectiveId } from './objective.ts';
 export {
   mulberry32,
   gridSize,
@@ -32,6 +32,7 @@ export {
   minIsTrades,
   walkForward,
   oosScoreOnFolds,
+  fixedParamsWfa,
   type SimConfig,
   type SimInput,
   type SimulateFn,
@@ -71,6 +72,7 @@ export {
 } from './robustness.ts';
 export {
   emptyChampionFile,
+  fitEndOf,
   loadChampion,
   saveChampion,
   decidePromotion,
@@ -91,6 +93,7 @@ export {
   type OptimizeDeps,
   type OptimizeRunInput,
   type OptimizeRunOutput,
+  type IncumbentEval,
   type StrategyRun,
   type SymbolRun,
 } from './run.ts';

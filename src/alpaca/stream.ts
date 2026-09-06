@@ -501,7 +501,7 @@ export function createDataStream(opts: DataStreamOptions): DataStream {
       if (!session) return; // wird nach der Auth gesendet
       const acked = new Promise<void>((resolve, reject) => {
         const waiter: SubscribeWaiter = { resolve, reject, timer: null, symbols: fresh };
-        waiter.timer = startTimer(coreOpts.timeoutMs * 1000, () => {
+        waiter.timer = startTimer(coreOpts.timeoutMs, () => {
           const i = pendingSubscribes.indexOf(waiter);
           if (i < 0) return;
           pendingSubscribes.splice(i, 1);
