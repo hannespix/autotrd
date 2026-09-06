@@ -67,7 +67,10 @@ function input(decision: Decision, over: Partial<SymbolInput> = {}, snapOver: Pa
 }
 
 function longPos(over: Partial<PositionState> = {}): PositionState {
-  return openPosition({ symbol: 'AAPL', side: 'long', qty: 10, fillPrice: 95, fillTime: 1, stop: 92, target: 110, strategy: 'stub', entryDay: '2026-09-03', ...over });
+  return {
+    ...openPosition({ symbol: 'AAPL', side: 'long', qty: 10, fillPrice: 95, fillTime: 1, stop: 92, target: 110, strategy: 'stub', entryDay: '2026-09-03' }),
+    ...over,
+  };
 }
 
 describe('Einstieg', () => {

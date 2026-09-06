@@ -147,7 +147,7 @@ export class BarStore {
   save(symbol: string, tf: BaseTimeframe, bars: readonly Bar[]): void {
     const normalized = mergeBars([], bars);
     this.cache.set(this.key(symbol, tf), normalized);
-    writeJsonAtomic(this.pathFor(symbol, tf), toFile(symbol, tf, normalized));
+    writeJsonAtomic(this.pathFor(symbol, tf), toFile(symbol, tf, normalized), { compact: true });
   }
 
   /** Neue Bars einarbeiten (gleiches t: die neue gewinnt), speichern, Gesamtstand zurückgeben. */

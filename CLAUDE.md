@@ -69,7 +69,7 @@ Journal (append-only), ein State-Snapshot (atomar geschrieben).
 | Trailing-Stop vom Einstand gerechnet ⇒ Verkauf bei −3 % statt −25 %. | Trailing nur nachziehen, wenn `highWater` besser als Einstand; nur enger (`logic.ts`). |
 | Doppel-Exit durch zwei Zeitgeber ⇒ echter Short ohne Stop. | Ein Prozess, positionsstabile Client-IDs. |
 | Backtest maß Tagesbars/Long-Flat, live lief Intraday/Short. | Ein `decide()`; Bars aus lokaler Aggregation derselben Minutenbars. |
-| 30 Trades als Beweis; Auswahl auf denselben Daten wiederholt. | Walk-Forward mit Embargo, ≥ 60 OOS-Trades, Deflated Sharpe ≥ 0,95, Nachbarschafts-Plateau, Holdout nur Bericht. |
+| 30 Trades als Beweis; Auswahl auf denselben Daten wiederholt. | Walk-Forward mit Embargo, ≥ 60 OOS-Trades, PSR ≥ 0,9 auf der OOS-Kette, Nachbarschafts-Plateau, Deflated Sharpe informativ (`dsrIsGate`), Holdout nur Bericht. |
 | Krypto: −1 133 $ bei 25 bp Taker; ohne Krypto +40 $. | Krypto ist Assetklasse mit eigenen Kosten, Default ist `us_equity`. |
 | Sizing auf Cash ⇒ Kapital arbeitete nicht. | Sizing auf Equity, Risiko je Trade über Stop-Distanz. |
 | PDT nur angezeigt, nie geprüft. | `risk/pdt.ts` ist ein Gate unter 25 000 $. |

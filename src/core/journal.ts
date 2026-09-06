@@ -37,11 +37,11 @@ export function ensureDir(path: string): void {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
 
-/** Atomar schreiben: temporäre Datei + rename, damit nie ein halber State liegt. */
-export function writeJsonAtomic(path: string, value: unknown): void {
+/** Atomar schreiben: temporäre Datei + rename, damit nie ein halber State liegt. `compact` für große Datendateien (Bars-Cache). */
+export function writeJsonAtomic(path: string, value: unknown, opts: { compact?: boolean } = {}): void {
   ensureDir(dirname(path));
   const tmp = `${path}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(value, null, 2));
+  writeFileSync(tmp, opts.compact ? JSON.stringify(value) : JSON.stringify(value, null, 2));
   renameSync(tmp, path);
 }
 
@@ -60,7 +60,8 @@ export class Journal {
   }
 
   append(kind: JournalEventKind, data: Record<string, unknown> = {}, ts: Ms = Date.now()): void {
-    const ev: JournalEvent = { ts, kind, ...data };
+    // `ts`/`kind` gewinnen: Ein Datenfeld namens `kind` darf den Ereignistyp nicht überschreiben.
+    const ev: JournalEvent = { ...data, ts, kind };
     appendFileSync(this.path, redact(JSON.stringify(ev)) + '\n');
   }
 

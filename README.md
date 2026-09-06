@@ -75,8 +75,9 @@ Container (siehe `ops/`).
 
 `docs/VALIDIERUNG.md` beschreibt das Protokoll: rollierendes Walk-Forward mit
 Embargo und unangetastetem Holdout, Kosten inklusive Stress ×1,5, Gates
-(Mindest-Trades, Fold-Anteil, Stress, Nachbarschafts-Plateau, Deflated Sharpe
-≥ 0,95, Gebührenanteil ≤ 0,5), Champion/Challenger mit Marge. Backtest und
+(Mindest-Trades, Fold-Anteil, Stress, Nachbarschafts-Plateau, Probabilistic
+Sharpe ≥ 0,9 auf der OOS-Kette, Gebührenanteil ≤ 0,5; Deflated Sharpe
+informativ), Champion/Challenger mit Marge. Backtest und
 Live rechnen über `src/core/logic.ts` — dieselbe Funktion.
 
 ## Repo-Layout

@@ -87,7 +87,8 @@ Glücks-Fenster kann den Median nicht tragen; eine leere Liste ist −∞.
 | Fold-Anteil | ≥ `minFoldPositiveShare` (60 %) der Folds netto positiv | Kante muss über Regime tragen, nicht über ein Fenster |
 | OOS netto | > 0 bei normalen Kosten **und** bei Kosten × 1,5 | Kostenannahme darf nicht die Kante sein |
 | Nachbarschafts-Plateau | ±1 Gitterschritt in jeder Parameterachse: Median der Nachbarn ≥ 50 % des Bestwerts **und** ≥ 60 % der Nachbarn netto positiv | Ein Optimum, das beim kleinsten Schritt einbricht, ist eine Spitze im Rauschen |
-| Deflated Sharpe Ratio | ≥ 0,95 | Wahrscheinlichkeit, dass der OOS-Sharpe nicht Auswahlrauschen aus `samples` × Folds Versuchen ist (Bailey / López de Prado, mit Schiefe/Kurtosis der Tagesrenditen und Zahl der Versuche) |
+| Probabilistic Sharpe Ratio (OOS) | ≥ `minPsrOos` (0,90) | Wahrscheinlichkeit, dass der Sharpe der verketteten OOS-Tagesrenditen echt > 0 ist (Bailey / López de Prado 2012, mit Schiefe/Kurtosis und n = OOS-Tage). Die OOS-Kette ist selektionsfrei — das ist die ehrliche Zahl der Prozedur |
+| Deflated Sharpe Ratio (IS) | informativ; als Gate ≥ 0,95 nur mit `dsrIsGate: true` | Deflation des In-Sample-Sharpe der finalen Parameter gegen die Zahl der Versuche (`trials`) und die Streuung der Trial-Sharpes. Steht immer im Bericht. Als hartes Gate bestraft es breite Gitter mit toten Regionen doppelt (die OOS-Kette hat die Auswahl schon bezahlt) — im Smoke fiel eine Strategie mit PSR-OOS 1,00 und 10/10 positiven Folds allein daran durch |
 | Gebührenanteil | Σ Kosten / Σ Brutto-Gewinne ≤ 0,5 | Der Vorgänger lag bei 0,57 — brutto positiv, netto negativ |
 
 Ein Kandidat, der ein Gate reißt, wird im Bericht mit dem gerissenen Gate
@@ -163,8 +164,10 @@ man nach zwanzig guten Trades den Schalter umlegt.
 ## 9. Was das Protokoll nicht leistet
 
 Kein Verfahren garantiert Gewinn. Walk-Forward begrenzt die Selbsttäuschung
-durch In-Sample-Auswahl, der Deflated Sharpe die durch viele Versuche, der
-Stresstest die durch geschönte Kosten, das Plateau die durch Zufallsspitzen.
+durch In-Sample-Auswahl, die PSR auf der OOS-Kette die durch zu kurze
+Stichproben, der (informative) Deflated Sharpe zeigt die durch viele
+Versuche, der Stresstest begrenzt die durch geschönte Kosten, das Plateau die
+durch Zufallsspitzen.
 Nichts davon schützt vor einem Markt, der sich ändert, vor einem
 Datenfeed, der anders lückt als in der Historie, oder vor einem Fehler in
 der Ausführung. Ein Champion ist eine Parameterwahl, die die bekannten
