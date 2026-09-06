@@ -33,11 +33,12 @@ function isoMinute(ms: Ms): string {
   return new Date(ms).toISOString().slice(0, 16).replace('T', ' ') + ' UTC';
 }
 
-/** Zahl mit fester Nachkommazahl; ±∞ und null lesbar. */
+/** Zahl mit fester Nachkommazahl; ±∞ und null lesbar; Ganzzahlen ohne Nachkommastellen. */
 export function num(x: number | null | undefined, digits = 2): string {
   if (x === null || x === undefined || Number.isNaN(x)) return '–';
   if (x === Infinity) return '∞';
   if (x === -Infinity) return '−∞';
+  if (Number.isInteger(x)) return String(x);
   return x.toFixed(digits);
 }
 
