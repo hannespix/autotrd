@@ -194,13 +194,11 @@ export async function brokerVerbindung(
  * ist die Absicherung: Ein künftiger Aufrufer muss sich aktiv für die
  * lesende Variante entscheiden, statt sie versehentlich zu erben.
  *
- * EINE gewollte Ausnahme vom „nur lesen": Der Order-Sweep beim TRENNEN
- * (`trenneBroker` → `raeumeEigeneOrders`) storniert mit dieser Verbindung —
- * aber AUSSCHLIESSLICH auf Papierkonten; die Sperre sitzt hart in
- * `raeumeEigeneOrders` selbst. Für Echtgeld gilt sie nicht als Ausnahme:
- * Ein Live-Depot erreicht über diese Verbindung weiterhin kein einziger
- * Schreibpfad (der Storno eines Schutz-Stops GIBT Risiko, er nimmt keins).
- * Neue Ausnahmen brauchen beides: nur Papier, und keine Order ERZEUGEN.
+ * Keine Ausnahmen mehr: Der frühere Order-Sweep beim Trennen ist mit dem
+ * alten Buch entfallen — Schutz-Stops liegen als Bracket-Beine beim Broker
+ * und bleiben beim Trennen bewusst liegen (der Storno eines Schutz-Stops
+ * GIBT Risiko, er nimmt keins). Über diese Verbindung erreicht ein Depot
+ * kein einziger Schreibpfad.
  */
 export async function brokerVerbindungLesend(
   uid: string,

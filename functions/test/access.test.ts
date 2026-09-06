@@ -89,15 +89,15 @@ describe('mayTradeSnap/accessLevelOfSnap — Naht-Befund 24.08.', () => {
   });
 });
 
-describe('Quelltext: die drei Außen-Call-Gates lesen den Snapshot, nicht nur .data()', () => {
+describe('Quelltext: die Außen-Call-Gates lesen den Snapshot, nicht nur .data()', () => {
   // Sabotage-Rückfall wäre: `.data()` direkt an mayTrade/accessLevelOf
   // übergeben, statt den ganzen Snapshot an *Snap zu reichen — dann greift
   // die Härtung oben nicht mehr. Import + Aufruf beide prüfen: Der Import
   // allein (ungenutzt) wäre keine Verdrahtung.
   const stellen = [
     ['connectBroker.ts', 'verbindeBroker'],
-    ['adoptBroker.ts', 'adoptBroker'],
     ['brokerStatus.ts', 'pruefeBrokerStatus'],
+    ['reset.ts', 'resetUserWallet'],
   ] as const;
   for (const [datei] of stellen) {
     it(`${datei} importiert und ruft mayTradeSnap/accessLevelOfSnap`, () => {

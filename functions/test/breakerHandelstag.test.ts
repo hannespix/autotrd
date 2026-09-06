@@ -6,8 +6,7 @@
  *
  * `circuitBreaker.ts` sagt ausdrücklich: „Einmal ausgelöst, bleibt sie
  * ausgelöst — bis jemand sie ausdrücklich zurücksetzt." Dafür gibt es
- * `resetBreaker`, und `snapshotEquity` löscht den Marker einmal täglich um
- * 17:15 ET.
+ * `snapshotEquity` löscht den Marker einmal täglich um 17:15 ET.
  *
  * Verglichen wurde aber gegen `now.toISOString().slice(0, 10)` — den
  * UTC-Kalendertag, während der Handelstag in New York liegt:
@@ -27,7 +26,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { breakerHeuteAusgeloest, handelstagET } from '../src/scheduled/scanMarket.js';
+import { breakerHeuteAusgeloest, handelstagET } from '../src/core/kontoTore.js';
 
 describe('handelstagET', () => {
   it('gibt den New Yorker Kalendertag', () => {
@@ -94,17 +93,14 @@ describe('Die Notbremse bleibt über die UTC-Mitternacht gesperrt', () => {
   });
 });
 
-/* Wie in den Paketen davor: Die Funktion allein sagt nichts darüber, ob die
- * Gates sie benutzen. Es gibt ZWEI — der Scan und die zentralen Konto-Tore
- * (seit 13.08. das Breaker-Gate von Handeingabe UND Momentum-Lauf) —, und
- * eines davon zu vergessen wäre schlimmer als beide falsch zu haben: Der
- * Nutzer bekäme dann je nach Weg eine andere Antwort auf dieselbe Frage. */
-describe('Quelltext: beide Breaker-Gates rechnen in New Yorker Zeit', () => {
+/* Wie in den Paketen davor: Die Funktion allein sagt nichts darüber, ob das
+ * Gate sie benutzt. Seit dem Rückbau der Handelsplattform gibt es genau EIN
+ * Breaker-Gate — die zentralen Konto-Tore —, und die Funktion wohnt dort. */
+describe('Quelltext: das Breaker-Gate rechnet in New Yorker Zeit', () => {
   const quelle = (rel: string[]): string =>
     readFileSync(join(import.meta.dirname, '..', 'src', ...rel), 'utf8');
 
   for (const [name, rel] of [
-    ['Scan', ['scheduled', 'scanMarket.ts']],
     ['Konto-Tore', ['core', 'kontoTore.ts']],
   ] as const) {
     it(`${name} benutzt breakerHeuteAusgeloest`, () => {

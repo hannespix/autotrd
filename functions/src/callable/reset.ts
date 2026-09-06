@@ -24,31 +24,34 @@
  *
  * Die beiden Stellen, an denen man sich dabei vertut:
  *
- *  - Die PROGNOSE-Trefferquoten bleiben. Sie messen, wie gut wir Kurse
- *    vorhersagen — unabhängig davon, ob und wie darauf gehandelt wurde. Das
- *    ist die Trainingshistorie des Selbstoptimierers, und CLAUDE.md §9
- *    verbietet ausdrücklich, sie wegzuwerfen. Sie liegt ohnehin unter
- *    `market/**` und wird hier nie angefasst.
- *  - Die TUNER-Flotte geht. Ihre Kennzahlen stammen aus dem Handel der
- *    Schattenvarianten, also aus derselben vergifteten Quelle. Sie stehen zu
- *    lassen hieße, die neue Engine mit den Vorurteilen der alten zu starten.
+ *  - Die Kursdaten unter `market/**` werden hier nie angefasst.
+ *  - Der Rest-Stand der alten Tuner-Flotte (`tuning`) geht mit: Er stammt
+ *    aus derselben Quelle wie die Trades.
  *
  * ── Was NICHT gelöscht wird, obwohl es verlockend wäre ────────────────────
  *
- * Die Strategie-DEFINITIONEN (Regelbäume) und die gezeichneten
- * Prognose-Pfeile bleiben. Beides ist Arbeit des Users, kein Messergebnis.
- * Zurückgesetzt wird bei den Strategien nur ihr Schattendepot und ihre
- * Cooldown-Stempel — die Ergebnisse, nicht die Idee.
+ * Die Strategie-DEFINITIONEN und die gezeichneten Prognose-Pfeile aus der
+ * alten Oberfläche bleiben. Beides ist Arbeit des Users, kein Messergebnis.
+ *
+ * ── Seit dem Rückbau der Handelsplattform ─────────────────────────────────
+ *
+ * Der Reset setzt das Wallet, archiviert die Trades und löscht Positionen,
+ * Equity-Serie und Kennzahlen des Kontos. Das Depot beim Broker bleibt
+ * unberührt — es gibt kein zweites Buch mehr, das der Reset angleichen
+ * müsste. Broker-Aufrufe laufen über den neuen Client (`src/alpaca/rest.ts`)
+ * und die Verbindung aus `brokerZugang.brokerVerbindungLesend`: einmal zum
+ * Startkapital (`vomBroker`), einmal für den Hinweis am Ende.
  */
 
 import { FieldPath, FieldValue, getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import { DEFAULT_STRATEGY, resetLaeuft, type Strategy } from '../../../shared/src/index.js';
+import { createAlpacaClient } from '../../../src/alpaca/rest.js';
+import type { AlpacaClient } from '../../../src/alpaca/types.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { consumeQuota } from '../core/quota.js';
-import { alpacaKonto, alpacaPositionen } from '../core/alpacaBroker.js';
-import { brokerVerbindungLesend } from '../core/orderRouting.js';
+import { brokerVerbindungLesend } from '../core/brokerZugang.js';
 import { accessDeniedReason, accessLevelOfSnap, mayTradeSnap } from '../core/access.js';
 
 /**
@@ -91,6 +94,24 @@ const ARCHIV_SAMMLUNG = 'tradesArchive';
 
 /** Batch-Größe beim Archivieren — Firestore erlaubt 500 Schreibvorgänge. */
 const ARCHIV_BATCH = 200;
+
+/**
+ * Lesender Client auf das verbundene Konto — oder `null` ohne Verbindung.
+ *
+ * `brokerVerbindungLesend` liefert auch ein Echtgeld-Depot (nur lesen);
+ * hier wird ausschließlich `/v2/account` und `/v2/positions` gefragt.
+ */
+async function brokerClient(uid: string): Promise<AlpacaClient | null> {
+  const verbindung = await brokerVerbindungLesend(uid);
+  if (!verbindung) return null;
+  return createAlpacaClient({
+    mode: verbindung.mode,
+    keyId: verbindung.schluessel.keyId,
+    secret: verbindung.schluessel.secret,
+    feed: 'iex',
+    assetClass: 'us_equity',
+  });
+}
 
 export interface ResetResult {
   ok: true;
@@ -194,8 +215,8 @@ export async function resetUserWallet(
   /** Woher der Startwert stammt — gehört in die Rückmeldung, nicht ins Raten. */
   let kapitalQuelle: 'einstellung' | 'broker' = 'einstellung';
   if (vomBroker) {
-    const verbindung = await brokerVerbindungLesend(uid);
-    if (!verbindung) {
+    const client = await brokerClient(uid);
+    if (!client) {
       throw new HttpsError(
         'failed-precondition',
         'srv.keinBrokerFuerKapital',
@@ -203,7 +224,7 @@ export async function resetUserWallet(
     }
     // Fehler NICHT verschlucken: Wer „vom Broker" wählt und dann stillschweigend
     // den alten Wert bekäme, hielte eine falsche Zahl für die echte.
-    const konto = await alpacaKonto(verbindung.mode, verbindung.schluessel);
+    const konto = await client.getAccount();
     if (!(konto.equity > 0)) {
       throw new HttpsError(
         'failed-precondition',
@@ -221,13 +242,14 @@ export async function resetUserWallet(
   /* Lauf-Marker setzen, BEVOR irgendetwas verschwindet (Audit-Befund 11.08.).
    *
    * Der Reset arbeitet in vielen Schritten und dauert bei gewachsener
-   * Historie Sekunden bis Minuten. Der Scan läuft alle fünf Minuten weiter.
+   * Historie Sekunden bis Minuten. Der Engine-Takt läuft jede Minute weiter.
    * Fällt einer in dieses Fenster, entsteht ein Zustand, den hinterher
    * niemand mehr auseinanderdividiert: eine Position, die nach dem
    * `recursiveDelete` angelegt wurde und deshalb bleibt, während ihr
    * Kauf-Trade schon im Archiv liegt. Oder ein Kauf, dessen Abbuchung das
    * abschließende `paperBalance = startkapital` einfach überschreibt — Geld
-   * ausgegeben, Saldo wieder voll.
+   * ausgegeben, Saldo wieder voll. Der Takt prüft den Marker über die
+   * Konto-Tore (`kontoTore.handel === 'reset_laeuft'`).
    *
    * Der Marker verfällt von selbst (`RESET_SPERRE_MIN`); ein abgestürzter
    * Reset darf ein Konto nicht dauerhaft stilllegen.
@@ -251,19 +273,6 @@ export async function resetUserWallet(
     deleted[name] = vorher;
   }
 
-  // Schattendepots und Handelsstempel der Regelbäume zurücksetzen — die
-  // Bäume selbst bleiben stehen (sie sind eine Idee, kein Messergebnis).
-  const stratSnap = await userRef.collection('strategies').get();
-  for (const doc of stratSnap.docs) {
-    await doc.ref
-      .set(
-        { shadow: FieldValue.delete(), lastTrades: FieldValue.delete(), lastDirs: FieldValue.delete() },
-        { merge: true },
-      )
-      .catch(() => undefined);
-  }
-  deleted.strategiesCleared = stratSnap.size;
-
   /* update()+FieldPath je Feld statt set(merge) (Härtung 24.08.) — dieselbe
    * Begründung wie beim Marker oben: konsequent dieselbe Form an jeder
    * Stelle, die auf das User-Root-Dokument schreibt. Zusätzlicher Grund
@@ -281,9 +290,10 @@ export async function resetUserWallet(
     new FieldPath('wallet', 'resetAt'), now,
     // Kapitalbasis der Gesamt-P&L ab diesem Schnitt (Equity − baseCapital)
     new FieldPath('wallet', 'baseCapital'), balance,
+    // Altfelder der früheren Buchführung (Margin-Zinsen, Kauf-Pausen) —
+    // sie beziehen sich auf Trades, die es nicht mehr gibt.
     new FieldPath('wallet', 'marginInterestTotal'), FieldValue.delete(),
     new FieldPath('wallet', 'marginInterestDate'), FieldValue.delete(),
-    // Kauf-Pausen beziehen sich auf Trades, die es nicht mehr gibt.
     new FieldPath('engineCooldowns'), FieldValue.delete(),
     // Der Reset ist durch — ab hier darf wieder gehandelt werden. Im
     // SELBEN Schreibvorgang wie der neue Kontostand: Getrennt gäbe es
@@ -294,20 +304,20 @@ export async function resetUserWallet(
 
   logger.info(`Wallet-Reset ${uid}: ${JSON.stringify(deleted)}, Kontostand ${balance}`);
   /* Depot-Check NACH dem Reset (Vorfall 05.08.): Liegen beim Broker noch
-   * Positionen, ist das Buch ab jetzt leerer als die Wirklichkeit. Das darf
-   * den Reset nicht verhindern (der ist gewollt und schon passiert), aber
-   * es muss LAUT gesagt werden — mitsamt dem Ausweg. Fehler beim Check sind
-   * egal: Eine Warnung, die nicht ermittelbar ist, fällt weg, mehr nicht. */
+   * Positionen, ist die Anzeige ab jetzt leerer als die Wirklichkeit. Das
+   * darf den Reset nicht verhindern (der ist gewollt und schon passiert),
+   * aber es muss LAUT gesagt werden. Fehler beim Check sind egal: Eine
+   * Warnung, die nicht ermittelbar ist, fällt weg, mehr nicht. */
   let hinweis: string | undefined;
   try {
-    const verbindung = await brokerVerbindungLesend(uid);
-    if (verbindung) {
-      const beimBroker = await alpacaPositionen(verbindung.mode, verbindung.schluessel);
+    const client = await brokerClient(uid);
+    if (client) {
+      const beimBroker = await client.listPositions();
       if (beimBroker.length > 0) {
         hinweis =
           `Achtung: Beim Broker liegen weiterhin ${beimBroker.length} Position(en) — ` +
-          'der Reset leert nur das Buch, nicht das Depot. Nutze „Depot vom Broker ' +
-          'übernehmen" in der Broker-Karte, sonst laufen Buch und Depot auseinander.';
+          'der Reset leert nur die Anzeige in der App, nicht das Depot. Der Engine-Takt ' +
+          'führt den Bestand beim Broker weiter; Stops liegen dort.';
       }
     }
   } catch (err) {

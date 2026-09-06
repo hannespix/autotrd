@@ -1,5 +1,6 @@
 /**
- * Stößt die TÄGLICHEN Läufe an: snapshotEquity und evalForecasts.
+ * Stößt die TÄGLICHEN Läufe an — nach dem Rückbau der Handelsplattform
+ * ist das nur noch snapshotEquity (Equity-Kurve + Kennzahlen).
  *
  * Warum es dieses Skript überhaupt gibt (Diagnose 27.07.):
  * Der Owner meldete, dass Performance-Kurve, Prognose-Genauigkeit und
@@ -18,10 +19,9 @@
  * die Supabase-Migration übernimmt, wird es überflüssig — das Tages-Gate
  * unten sorgt dafür, dass es dann von selbst zum No-Op wird.
  *
- * Jeder Lauf ist idempotent: snapshotEquity schreibt auf die Datums-Doc-ID,
- * evalForecasts bewertet nur unbewertete Prognosen und kennt seinen
- * pendingBatchId. Ein Doppelaufruf am selben Tag schadet also nicht — das
- * Gate spart trotzdem Laufzeit und macht das Actions-Log lesbar.
+ * Der Lauf ist idempotent: snapshotEquity schreibt auf die Datums-Doc-ID.
+ * Ein Doppelaufruf am selben Tag schadet also nicht — das Gate spart
+ * trotzdem Laufzeit und macht das Actions-Log lesbar.
  *
  * Aufruf: node scripts-ci/invoke-daily.mjs [--force]
  * Exit 1, wenn ein angestoßener Lauf danach KEINE frische Spur hinterlässt.
@@ -92,9 +92,12 @@ export function markerIstEndgueltig(marker) {
 }
 
 /**
- * Die drei Läufe. `spur` liest den Nachweis, den die Funktion selbst
+ * Die Läufe. `spur` liest den Nachweis, den die Funktion selbst
  * hinterlässt — nicht den HTTP-Status. Ein 200 beweist nur, dass der
  * Container antwortete; erst die frische Spur beweist, dass er gearbeitet hat.
+ *
+ * Prognose-Bewertung, Universum-Sync, Momentum-Ranking und KI-Lagebericht
+ * sind mit dem Rückbau der Handelsplattform entfallen.
  */
 export const RUNS = [
   {
@@ -104,93 +107,7 @@ export const RUNS = [
       return (await readMeta(project, 'health'))?.equitySnapshot ?? null;
     },
   },
-  {
-    service: 'evalforecasts',
-    label: 'Prognose-Bewertung (Genauigkeit + Labor)',
-    async spur(project) {
-      return (await readMeta(project, 'health'))?.forecastEval ?? null;
-    },
-  },
-  {
-    service: 'universumsyncnow',
-    label: 'Alpaca-Universum (alle handelbaren Papiere)',
-    // MUSS vor momentumrun stehen: Die Rangliste liest die Universum-Blöcke,
-    // die dieser Lauf schreibt — die Reihenfolge dieser Tabelle ist die
-    // Ausführungsreihenfolge (auch mit --only, dort wird nur gefiltert).
-    //
-    // Anlass (13.08., #123): `meta/alpacaUniversum` wurde seit #246 NIE
-    // geschrieben — der 17:30-ET-Scheduler lief, aber sein Abbruchgrund
-    // stand nur in Cloud Logging. Hier landet er im Actions-Log: Der
-    // Endpoint antwortet bei Misserfolg mit `{ ok:false, grund:… }`, und
-    // `logBody` druckt genau diese Antwort.
-    //
-    // Optional, weil der Cloud Scheduler ihn ohnehin täglich fährt und die
-    // Rangliste ohne Universum ehrlich auf den Katalog zurückfällt.
-    optional: true,
-    invokeOpts: { logBody: true },
-    async spur(project) {
-      const doc = await readMeta(project, 'alpacaUniversum');
-      return doc ? { at: doc.at } : null;
-    },
-  },
-  {
-    service: 'momentumrun',
-    label: 'Momentum-Ranking + Sockel-Rebalancing',
-    // Seit dem Kern-Satelliten (04.08.) ist dieser Lauf nicht mehr nur ein
-    // Schattendepot: Er ist der EINZIGE, der den ruhigen Sockel der echten
-    // Konten kauft. Solange er nicht lief, ist `engine.corePct` eine
-    // Einstellung ohne Wirkung — und das sieht im Dashboard exakt so aus wie
-    // ein Sockel, der bewusst in Cash steht. Deshalb gehört er hier dazu.
-    //
-    // Optional, weil der Cloud Scheduler ihn ohnehin täglich um 18:00 ET
-    // fährt: Ein Fehlschlag beim Deploy soll den Deploy nicht rot machen.
-    optional: true,
-    async spur(project) {
-      const doc = await readMeta(project, 'momentum');
-      return doc ? { at: doc.at } : null;
-    },
-  },
-  {
-    service: 'kibericht',
-    label: 'KI-Lagebericht (Tages-Einschätzung)',
-    // MUSS nach snapshotequity stehen: Der Bericht liest die
-    // Erkenntnis-Chronik, und die entsteht erst in diesem Lauf. Die
-    // Reihenfolge dieser Tabelle ist die Ausführungsreihenfolge — auch mit
-    // `--only`, weil dort nur gefiltert wird.
-    //
-    // Optional, weil der Cloud Scheduler ihn ohnehin täglich um 18:25 ET
-    // fährt und ein Modell-Anbieter ausfallen kann: Ein Text, der heute
-    // fehlt, darf keinen Deploy rot machen. Die eigenen Kosten-Guards
-    // (idempotent je Datum, Monatsdeckel) greifen unabhängig davon.
-    optional: true,
-    async spur(project) {
-      return berichtSpur(await readMeta(project, 'aiBericht'));
-    },
-  },
 ];
-
-/**
- * Zählt der Vermerk in `meta/aiBericht` als „heute schon gelaufen"?
- *
- * Nur ein fertiger Bericht tut das. Das Dokument trägt aber AUCH die
- * Fehlzustände `kein_schluessel` und `fehler` ein — absichtlich, damit die
- * Karte den Grund nennt statt „noch kein Bericht" zu zeigen. Wer bloß auf die
- * Existenz des Dokuments prüft, hält genau diese Fehlermeldung für einen
- * Erfolg und überspringt den Lauf für den Rest des Tages.
- *
- * Am 08.08. ist das passiert: Der Deploy vermerkte um 22:25 UTC
- * `kein_schluessel` (das Secret war im selben Lauf erst gebunden worden),
- * und das Gate hätte den ersten echten Bericht bis zum Folgetag verhindert.
- *
- * Die Unterscheidung steht damit an beiden Enden gleich: `entscheideLauf()`
- * in shared/kiBericht.ts sperrt den Tag ebenfalls nur bei `stand === 'bericht'`
- * — ein Fehlversuch darf den nächsten Anlauf nicht blockieren. Der
- * Monatsdeckel bleibt die Kostenbremse für den Fall, dass ein Anbieter
- * dauerhaft ausfällt und mehrere Deploys am Tag es erneut versuchen.
- */
-export function berichtSpur(doc) {
-  return doc?.stand === 'bericht' ? { at: doc.at, date: doc.date } : null;
-}
 
 /**
  * Führt die Läufe aus. `invoke` und `wait` sind injizierbar, damit der Test
@@ -252,7 +169,7 @@ export async function runDaily({
 }
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
-// node scripts-ci/invoke-daily.mjs [--force] [--only snapshotequity,evalforecasts]
+// node scripts-ci/invoke-daily.mjs [--force] [--only snapshotequity]
 if (import.meta.url === `file://${process.argv[1]}`) {
   const args = process.argv.slice(2);
   const onlyIdx = args.indexOf('--only');

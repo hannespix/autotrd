@@ -50,7 +50,8 @@ export type BrokerMode = 'paper' | 'live';
  * damit unverändertes Verhalten. Fehlende Kennzahlen dürfen nie dazu führen,
  * dass eine Prüfung stillschweigend WEGFÄLLT — sie können hier nur dazu
  * führen, dass eine dritte Prüfung nicht hinzukommt. Wer live handelt, reicht
- * sie durch (siehe `scanMarket`); wer nur den Modus anzeigt, nicht.
+ * sie durch (siehe `brokerZugang.brokerVerbindung`); wer nur den Modus
+ * anzeigt, nicht.
  *
  * Der Parameter ist bewusst strukturell (`{ broker: { mode? } }`) statt der
  * vollen `Strategy`: Seit dem Audit-Fix K-1 prüft auch das Order-Routing

@@ -125,7 +125,6 @@ describe('Aggregat über Konten (aggregateTradingHealth)', () => {
 
 describe('Verdrahtung — ohne sie wären die Helfer tot', () => {
   const snapshot = readFileSync(join(hier, '../src/scheduled/snapshotEquity.ts'), 'utf8');
-  const broker = readFileSync(join(hier, '../src/core/broker.ts'), 'utf8');
 
   it('snapshotEquity sammelt die Fills VOR dem pnl-Filter', () => {
     /* Die Falle dieser Verdrahtung: `pnl` tragen nur SCHLIESSENDE Trades.
@@ -140,14 +139,12 @@ describe('Verdrahtung — ohne sie wären die Helfer tot', () => {
     expect(snapshot).toContain('reibungsProfil(fills)');
   });
 
-  it('liest exakt die Felder, die broker.ts schreibt', () => {
-    // Lese- und Schreibstelle gegeneinander gepinnt (Muster executedAt,
-    // 14.08.): Ein umbenanntes Feld ließe die Messung leerlaufen statt
-    // scheitern.
+  it('liest die Felder der Trade-Dokumente: rawPrice, brokerFillPrice, side', () => {
+    // Die Schreibstelle (das alte Buch) ist weg; wer künftig Trades schreibt,
+    // muss genau diese Feldnamen liefern, sonst läuft die Messung leer
+    // statt zu scheitern.
     for (const feld of ["t.get('rawPrice')", "t.get('brokerFillPrice')", "t.get('side')"]) {
       expect(snapshot, `${feld} fehlt`).toContain(feld);
     }
-    expect(broker).toContain('rawPrice: req.price');
-    expect(broker).toContain('brokerFillPrice: req.fillPreis');
   });
 });

@@ -118,8 +118,6 @@ describe('snapshotEquity — die Verdrahtung (Quelltext-Wächter)', () => {
     // die Kumulativ-Zahlen bewegten (PF 0,96→1,18). Beide Seiten gepinnt:
     expect(snapshot).toContain("const at = t.get('executedAt') as string | undefined;");
     expect(snapshot).not.toContain("t.get('at')");
-    const broker = readFileSync(join(hier, '../src/core/broker.ts'), 'utf8');
-    expect(broker).toContain('executedAt: now,');
   });
 
   it('das Fenster wird EINMAL je Lauf gerechnet und je Konto angewandt', () => {

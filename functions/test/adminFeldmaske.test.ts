@@ -22,7 +22,7 @@ const quelle = (): string =>
 
 /** Der `list`-Zweig — nur dort wirkt die Maske. */
 function listBlock(s: string): string {
-  return s.slice(s.indexOf("if (action === 'list')"), s.indexOf("if (action === 'abgleich')"));
+  return s.slice(s.indexOf("if (action === 'list')"), s.indexOf("if (action === 'set')"));
 }
 
 function maske(blk: string): string[] {

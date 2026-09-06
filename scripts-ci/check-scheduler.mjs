@@ -33,6 +33,12 @@ import {
 import { ensureSelfInvoker, invokeScanNow, readHeartbeat } from './invoke-scan.mjs';
 
 const REGION = 'us-central1';
+/* Herzschlag-Job: Der Force-Run und die Eskalationsleiter unten prüfen den
+ * Heartbeat `meta/health` gegen DIESEN Job bzw. Dienst. Er stammt noch vom
+ * alten Marktscan (`scanMarket`, mit dem Rückbau der Handelsplattform
+ * gelöscht); der Integrator zeigt ihn zusammen mit dem SCHEDULES-Eintrag
+ * auf den Engine-Takt (`engineTick`) um — bis dahin scheitert der Force-Run
+ * ehrlich mit einer Warnung, und es zählt allein der Heartbeat. */
 const JOB_ID = 'firebase-schedule-scanMarket-us-central1';
 
 /**
@@ -44,18 +50,16 @@ const JOB_ID = 'firebase-schedule-scanMarket-us-central1';
  * Deploy — diese Tabelle ist die Absicherung, nicht die Quelle der Wahrheit.
  */
 const SCHEDULES = [
-  { fn: 'scanMarket', service: 'scanmarket', cron: '*/5 * * * *', was: 'Marktscan' },
-  // Der Ausstiegs-Wächter läuft MINÜTLICH: Ein Stop-Loss, der fünf Minuten
-  // zu spät auslöst, kostet Geld — ein Einstieg fünf Minuten später fast
-  // nichts (Owner-Wunsch 28.07., Begründung in riskPulse.ts).
-  { fn: 'riskPulse', service: 'riskpulse', cron: '* * * * *', was: 'Risiko-Puls' },
-  { fn: 'evalForecasts', service: 'evalforecasts', cron: '30 16 * * 1-5', was: 'Prognose-Bewertung' },
+  // Marktscan, Risiko-Puls, Prognose-Bewertung, Auto-Tuner, Momentum-Ranking,
+  // Struktursuche und KI-Lagebericht sind mit dem Rückbau der alten
+  // Handelsplattform entfallen.
+  // Der Engine-Takt (Alpaca-Auto-Trader, functions/src/scheduled/engineTick.ts)
+  // läuft MINÜTLICH: Bucket-Schluss, Abgleich, Exits — Einstiege außerhalb der
+  // Sitzung sperrt die Engine selbst; ein verpasster Takt ist in 60 s wieder da.
+  { fn: 'engineTick', service: 'enginetick', cron: '* * * * *', was: 'Engine-Takt' },
   { fn: 'snapshotEquity', service: 'snapshotequity', cron: '15 17 * * *', was: 'Equity-Snapshot' },
-  { fn: 'autoTune', service: 'autotune', cron: '45 17 * * *', was: 'Auto-Tuner' },
-  { fn: 'momentumRun', service: 'momentumrun', cron: '0 18 * * *', was: 'Momentum-Ranking' },
-  { fn: 'strukturSuche', service: 'struktursuche', cron: '10 18 * * *', was: 'Struktursuche' },
-  // Nach allen Tages-Läufen: Der Bericht kommentiert den FERTIGEN Tagesstand.
-  { fn: 'kiBericht', service: 'kibericht', cron: '25 18 * * *', was: 'KI-Lagebericht' },
+  // Der Totmann-Wächter (wachhund.ts) — bewertet den Heartbeat alle 10 min.
+  { fn: 'wachhund', service: 'wachhund', cron: '*/10 * * * *', was: 'Wachhund' },
 ];
 
 const TZ = 'America/New_York';

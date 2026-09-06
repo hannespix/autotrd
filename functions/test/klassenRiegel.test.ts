@@ -2,8 +2,6 @@
  * Zwei Audit-Befunde vom 11.08.: Zahlen, die Handelsentscheidungen steuern.
  */
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { rateKlasse, reglerSchritt, positionValue } from '../../shared/src/index.js';
 
 /* ── Befund A: „drosseln" schaltete abgeschaltete Klassen wieder EIN ───────
@@ -100,16 +98,15 @@ describe('Befund A: eine abgeschaltete Klasse bleibt aus', () => {
   });
 });
 
-/* ── Befund B: Der Momentum-Lauf bewertete Shorts mit falschem Vorzeichen ──
+/* ── Befund B: Shorts wurden mit falschem Vorzeichen bewertet ─────────────
  *
- * Zwei Stellen in `momentumRun.ts` rechneten `equity += qty × Kurs`, während
- * sieben andere Stellen im Repo längst `positionValue` rufen. Für einen Short
- * ist der Marktwert das falsche Vorzeichen: Richtig ist `qty × Einstand +
- * (Einstand − Kurs) × qty` — gebundene Margin plus unrealisierter Gewinn.
- *
- * Dieselbe Formel-Dopplung wie bei `shadowEquity` einen Tag zuvor.
+ * Der alte Momentum-Lauf rechnete `equity += qty × Kurs`, während andere
+ * Stellen längst `positionValue` riefen. Für einen Short ist der Marktwert
+ * das falsche Vorzeichen: Richtig ist `qty × Einstand + (Einstand − Kurs) ×
+ * qty` — gebundene Margin plus unrealisierter Gewinn. `positionValue` ist
+ * die eine Formel, die `snapshotEquity` und die Admin-Übersicht benutzen.
  */
-describe('Befund B: Depotwert im Momentum-Lauf', () => {
+describe('Befund B: Depotwert über positionValue', () => {
   const short = { qty: 100, avgEntry: 50, side: 'short' as const };
 
   it('ein verlustreicher Short senkt die Equity, statt sie zu heben', () => {
@@ -129,24 +126,5 @@ describe('Befund B: Depotwert im Momentum-Lauf', () => {
   it('Longs verhalten sich unverändert', () => {
     expect(positionValue({ qty: 10, avgEntry: 100 }, 120)).toBe(1_200);
     expect(positionValue({ qty: 10, avgEntry: 100 }, null)).toBe(1_000);
-  });
-});
-
-/* Wie bei den Paketen davor: Die Formel allein sagt nichts darüber, ob der
- * Lauf sie auch benutzt. Beide Stellen stecken in einer Firestore-Schleife;
- * ein Test, der sie nachbaut, prüfte die Nachbildung. */
-describe('Quelltext: der Momentum-Lauf rechnet nicht mehr selbst', () => {
-  const pfad = join(import.meta.dirname, '..', 'src', 'scheduled', 'momentumRun.ts');
-
-  it('keine handgerechnete Depotbewertung mehr', () => {
-    const text = readFileSync(pfad, 'utf8');
-    expect(text).not.toMatch(/equity \+= pos\.qty \* /);
-    expect(text).not.toMatch(/equity \+= .*\bpos\.qty\b.*preise\.get/);
-  });
-
-  it('beide Equity-Summen laufen über positionValue', () => {
-    const text = readFileSync(pfad, 'utf8');
-    const treffer = text.match(/equity \+= positionValue\(/g) ?? [];
-    expect(treffer.length, 'Rebalancing UND Kern-Satellit').toBe(2);
   });
 });

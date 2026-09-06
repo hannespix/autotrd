@@ -1,7 +1,8 @@
 name: Scan-Logs (Diagnose)
 
-# Manuell auslösbarer Log-Abruf: holt die jüngsten scanmarket-Logs aus Cloud
-# Logging ins Job-Log — für Fehlersuche ohne GCP-Konsole (SETUP.md §J).
+# Manuell auslösbarer Log-Abruf: holt die jüngsten Logs des Engine-Takts
+# (Dienst `enginetick`, per Input änderbar) aus Cloud Logging ins Job-Log —
+# für Fehlersuche ohne GCP-Konsole (SETUP.md §J).
 
 on:
   workflow_dispatch:
@@ -12,6 +13,9 @@ on:
       severity:
         description: Mindest-Severity (DEFAULT/INFO/WARNING/ERROR)
         default: 'DEFAULT'
+      service:
+        description: Cloud-Run-Dienst (kleingeschriebener Function-Name)
+        default: 'enginetick'
 
 jobs:
   logs:
@@ -35,8 +39,8 @@ jobs:
         run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
 
       # Dependency-frei (gcp-lite) — kein npm ci nötig, Ergebnis in Sekunden.
-      - name: scanmarket-Logs holen
+      - name: Function-Logs holen
         if: env.FIREBASE_SERVICE_ACCOUNT != ''
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
-        run: node scripts-ci/fetch-scan-logs.mjs "${{ inputs.minutes }}" "${{ inputs.severity }}"
+        run: node scripts-ci/fetch-scan-logs.mjs "${{ inputs.minutes }}" "${{ inputs.severity }}" "${{ inputs.service }}"

@@ -63,10 +63,8 @@ jobs:
         run: |
           set -o pipefail
           for versuch in 1 2 3; do
-            # --only firestore = Rules + Indexe (firestore.indexes.json). Die
-            # Feld-Overrides für die collectionGroup-Queries (forecasts +
-            # forecastsIntraday .evaluated) MÜSSEN mit ausrollen, sonst bricht
-            # die Pending-Query der Eval-Pfade live mit FAILED_PRECONDITION.
+            # --only firestore = Rules + Indexe (firestore.indexes.json), damit
+            # Regeln und Functions immer aus demselben Stand kommen.
             if npx firebase-tools deploy --only functions,firestore --non-interactive --force 2>&1 \
                  | tee "$RUNNER_TEMP/deploy.log"; then
               echo "Deploy erfolgreich (Versuch $versuch)."
@@ -128,10 +126,12 @@ jobs:
         if: ${{ !cancelled() && env.FIREBASE_SERVICE_ACCOUNT != '' }}
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
-        run: node scripts-ci/set-public-invoker.mjs ensureprofile savestrategy trade
+        run: node scripts-ci/set-public-invoker.mjs ensureprofile savestrategy
 
-      # Live-Abnahme im Log: Scheduler-Jobs listen, Scan einmal anstoßen,
-      # danach den öffentlichen Heartbeat meta/health prüfen.
+      # Live-Abnahme im Log: Scheduler-Jobs listen, den Herzschlag-Lauf einmal
+      # anstoßen, danach den öffentlichen Heartbeat meta/health prüfen.
+      # (Der Herzschlag-Job zeigt bis zur Integration des Engine-Takts noch
+      # auf den gelöschten Marktscan — siehe check-scheduler.mjs.)
       - name: Scheduler-Diagnose + Scan-Force-Run
         if: ${{ !cancelled() && env.FIREBASE_SERVICE_ACCOUNT != '' }}
         env:
@@ -148,49 +148,35 @@ jobs:
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
         run: >-
-          node scripts-ci/check-secret.mjs ANTHROPIC_API_KEY BROKER_MASTER_KEY
+          node scripts-ci/check-secret.mjs BROKER_MASTER_KEY
           ALPACA_API_KEY ALPACA_SECRET_KEY
 
       # Aufwärm-Lauf nach dem Deploy: Die Zeitpläne stehen (der Schritt davor
-      # legt sie an), aber snapshotEquity und evalForecasts feuern erst am
-      # Abend. Hier dranzuhängen heißt: Nach jedem Merge sind die Karten
-      # binnen Minuten gefüllt statt erst nach US-Schluss.
+      # legt sie an), aber snapshotEquity feuert erst am Abend. Hier
+      # dranzuhängen heißt: Nach jedem Merge ist die Performance-Karte binnen
+      # Minuten gefüllt statt erst nach US-Schluss.
       #
-      # Das ist KEIN Ersatz-Scheduler mehr — die beiden Stopgap-Workflows
-      # (scan-watchdog, daily-jobs) sind am 28.07. entfallen, weil sie seit
-      # der Cloud-Scheduler-Rolle doppelt liefen. Nachweis: Der Heartbeat
-      # stand um 12:35 UTC frisch, also außerhalb des Watchdog-Fensters
-      # (*/15 13-21 UTC) — der echte Scheduler feuert selbst.
-      #
-      # Das Gate im Skript unterscheidet dabei „heute schon gelaufen" von
-      # „heute NACH US-Schluss gelaufen" — ein Mittags-Snapshot füllt die
-      # Karte, verdrängt aber den Abend-Lauf nicht, dessen Schlusskurs die
+      # Das ist KEIN Ersatz-Scheduler — der echte Scheduler feuert selbst.
+      # Das Gate im Skript unterscheidet „heute schon gelaufen" von „heute
+      # NACH US-Schluss gelaufen" — ein Mittags-Snapshot füllt die Karte,
+      # verdrängt aber den Abend-Lauf nicht, dessen Schlusskurs die
       # Equity-Serie tragen soll.
       #
-      # Seit dem Kern-Satelliten (04.08.) ist momentumrun mit dabei: Er ist der
-      # einzige Lauf, der den ruhigen Sockel der echten Konten kauft. Ohne ihn
-      # bliebe `engine.corePct` nach einem Deploy bis 18:00 ET eine Einstellung
-      # ohne Wirkung — und das sieht im Dashboard genauso aus wie ein Sockel,
-      # der bewusst in Cash steht. Der Lauf ist idempotent (Wochen-Takt je
-      # Konto) und als optional markiert, damit er keinen Deploy rot macht.
-      #
-      # kibericht steht am ENDE der Kette und das ist zwingend: Der Bericht
-      # liest die Erkenntnis-Chronik, die erst snapshotequity schreibt. So ist
-      # die Tages-Einschätzung nach einem Merge sofort da statt erst um
-      # 18:25 ET — auch sie optional, denn ein Modell-Anbieter kann ausfallen.
-      - name: Tages-Läufe anstoßen (Kennzahlen, Prognose, Momentum, KI-Bericht)
+      # Prognose-Bewertung, Universum-Sync, Momentum-Lauf und KI-Bericht sind
+      # mit dem Rückbau der alten Handelsplattform entfallen.
+      - name: Tages-Lauf anstoßen (Equity-Snapshot)
         if: ${{ !cancelled() && env.FIREBASE_SERVICE_ACCOUNT != '' }}
         continue-on-error: true
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
         run: >-
           node scripts-ci/invoke-daily.mjs
-          --only snapshotequity,evalforecasts,universumsyncnow,momentumrun,kibericht
+          --only snapshotequity
           ${{ inputs.force_daily && '--force' || '' }}
 
-      # Wenn der Lauf rot wurde (z. B. Scan-Invoke 500): scanmarket-Fehlerlogs
+      # Wenn der Lauf rot wurde (z. B. Invoke 500): Fehlerlogs des Engine-Takts
       # direkt ins Job-Log ziehen — die Ursache soll ohne GCP-Konsole lesbar sein.
-      - name: Scan-Fehlerlogs (Diagnose bei Rot)
+      - name: Engine-Fehlerlogs (Diagnose bei Rot)
         if: ${{ failure() && env.FIREBASE_SERVICE_ACCOUNT != '' }}
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json

@@ -1,7 +1,13 @@
 /**
- * Direkt-Invoke des scanMarket-Laufs — der Cloud-Scheduler-unabhängige Weg,
- * einen Scan auszulösen. Funktioniert mit den Rollen, die der Deploy-SA
- * sicher hat (Cloud Run Admin + Service Account User):
+ * Direkt-Invoke eines geplanten Laufs — der Cloud-Scheduler-unabhängige Weg,
+ * eine Function auszulösen. Funktioniert mit den Rollen, die der Deploy-SA
+ * sicher hat (Cloud Run Admin + Service Account User).
+ *
+ * ACHTUNG: `SERVICE` zeigt noch auf den alten Marktscan (`scanmarket`), der
+ * mit dem Rückbau der Handelsplattform gelöscht wurde. Der Integrator zeigt
+ * ihn auf den Engine-Takt (`enginetick`) um; bis dahin scheitert der
+ * Scan-Invoke ehrlich, und `check-scheduler.mjs` zählt allein den Heartbeat.
+ *
  *
  *   1. Heartbeat meta/health lesen (öffentlich). Mit --if-stale N wird nur
  *      weitergemacht, wenn der letzte Lauf älter als N Minuten ist (Watchdog-
@@ -36,7 +42,7 @@ const SERVICE = 'scanmarket';
  * Cloud-Run-Dienstnamen sind kleingeschrieben — Firebase leitet sie aus dem
  * Export-Namen ab. `snapshotEquity` heißt als Dienst also `snapshotequity`.
  */
-export const DAILY_SERVICES = ['snapshotequity', 'evalforecasts'];
+export const DAILY_SERVICES = ['snapshotequity'];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -142,7 +148,7 @@ export async function invokeService(service, { timeoutMs = 540_000, logBody = fa
   return false;
 }
 
-/** Stößt genau einen Scan an; liefert true, wenn danach ein Heartbeat existiert. */
+/** Stößt genau einen Lauf des Herzschlag-Dienstes an; liefert true, wenn danach ein Heartbeat existiert. */
 export async function invokeScanNow({ waitSec = 25 } = {}) {
   await invokeService(SERVICE);
   await sleep(waitSec * 1000);
