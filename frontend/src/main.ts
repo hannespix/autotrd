@@ -1,5 +1,5 @@
 /**
- * Einstieg: Auth-Gate → Login (Frosted Aurora) → Dashboard (M3-Port).
+ * Einstieg: Auth-Gate → Login (Frosted Aurora) → Dashboard des Auto-Traders.
  */
 
 import './theme.css';
@@ -21,7 +21,7 @@ import { mountLegalFooter, openLegal } from './legal.js';
 import { RISIKO_VERSION } from '@autotrd/shared';
 import { initPwa } from './pwa.js';
 
-// Leak-/Mux-Nachweis (M9-Abnahme): aktive Firestore-Listener zählbar machen
+// Leak-/Mux-Nachweis (E2E): aktive Firestore-Listener zählbar machen
 // + Leader-Status des Fensters (BroadcastChannel-Multiplexing)
 (window as unknown as {
   __autotrd: { listenerCount: () => number; muxIsLeader: () => boolean };
@@ -233,14 +233,8 @@ function renderLogin(): void {
   });
 }
 
-// Es gibt nur noch eine Ansicht: das Dashboard. Bis 28.07. hing hier ein
-// zweiter Zweig für das Strategie-Studio unter '#/strategy'. Das Studio ist
-// weg, weil von Hand gebaute Regelbäume als EINZIGES am Selbstoptimierer
-// vorbeiliefen — er liest und schreibt `settings.strategy`, Bäume fasst er
-// nicht an. Eine gezeichnete Strategie war damit für immer eingefroren und
-// beanspruchte trotzdem ihre Symbole exklusiv, verdrängte also genau den
-// Pfad, der sich täglich verbessert. Der Regelbaum selbst bleibt — als
-// Suchraum für den Optimierer statt als Zeichenfläche.
+// Es gibt genau eine Ansicht: das Dashboard des Auto-Traders. Der Hash
+// bleibt ohne Bedeutung — ein Wechsel rendert nur neu.
 let currentUser: { uid: string; email: string | null } | null = null;
 
 function route(): void {

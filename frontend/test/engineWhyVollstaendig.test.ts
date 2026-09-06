@@ -1,117 +1,83 @@
 /**
- * Was der Server zählt, muss die Karte auch zeigen (Kapital-Panel 21.08.).
+ * Was der Kern als Halt-Grund kennt, muss die Karte auch benennen.
  *
- * Die Engine-Why-Karte listet Ablehnungsgründe aus `EntryGateStats`. Kommt
- * serverseitig ein Grund dazu, ohne dass die Liste im Dashboard nachzieht,
- * zählt die Engine ihn still mit — und die Karte behauptet weiter, es sei
- * „nichts abgelehnt" worden. Genau diese Lücke war der Grund, warum die
- * Frage „warum nur 1–2 Positionen?" monatelang unbeantwortbar blieb.
+ * Die Engine-Karte und „Warum handelt die Engine (nicht)?" übersetzen
+ * `HaltReason` (src/core/types.ts) in Klartext. Kommt im Kern ein Grund
+ * dazu, ohne dass die Tabelle im Dashboard nachzieht, stünde dort das rohe
+ * Kürzel — und die Karte hätte keine Erklärung für genau die Sperre, die
+ * gerade greift. Dieser Test liest BEIDE Dateien und vergleicht sie.
  *
- * Dieser Test liest BEIDE Dateien und vergleicht sie.
+ * Dazu die Regeln der Kommandos (CLAUDE.md §0.5: Sperren löst man über die
+ * Ursache), so wie die Oberfläche sie dem Nutzer zeigen muss.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const lese = (...teile: string[]): string =>
-  readFileSync(join(import.meta.dirname, '..', '..', ...teile), 'utf8');
-
-const scan = lese('functions', 'src', 'scheduled', 'scanMarket.ts');
+const lese = (...teile: string[]): string => readFileSync(join(import.meta.dirname, '..', '..', ...teile), 'utf8');
 const dashboard = lese('frontend', 'src', 'dashboard.ts');
+const types = lese('src', 'core', 'types.ts');
 
-/** Felder der EntryGateStats-Struktur (ohne Kommentare). */
-function gateFelder(): string[] {
-  const start = scan.indexOf('export interface EntryGateStats {');
-  const ende = scan.indexOf('\n}', start);
-  return [...scan.slice(start, ende).matchAll(/^\s{2}(\w+): number;$/gm)].map((m) => m[1]!);
+/** Die Halt-Gründe des Kerns aus der Typdefinition. */
+function haltGruende(): string[] {
+  const m = types.match(/export type HaltReason = ([^;]+);/);
+  expect(m, 'HaltReason nicht gefunden').toBeTruthy();
+  return [...m![1]!.matchAll(/'([a-z_]+)'/g)].map((x) => x[1]!);
 }
 
-describe('Engine-Why-Karte zeigt jeden Grund, den der Scan zählt', () => {
-  it('kein Ablehnungsgrund fehlt in GATE_TEXT', () => {
-    /* Ausgenommen sind die Zähler, die KEINE Ablehnung sind: die
-     * Bezugsgröße, Durchlass-/Schatten-Zahlen und die Leih-Teilmenge
-     * von unter_kosten (sie würde doppelt zählen).
-     *
-     * Eine Ausnahme ist kein Freibrief. `quote_wuerde_blocken` steht hier
-     * NUR, weil es keine Ablehnung ist — sichtbar sein muss es trotzdem,
-     * und genau das prüft der Test darunter. Wer einen Zähler hier einträgt
-     * und ihn nirgends zeigt, baut wieder die Lücke, gegen die diese Datei
-     * geschrieben wurde. */
-    const keineAblehnung = new Set([
-      'geprueft',
-      'ohne_atr_durchgelassen',
-      'kante_wuerde_blocken',
-      'short_zins_blockt',
-      'quote_wuerde_blocken',
-    ]);
-    const block = dashboard.slice(
-      dashboard.indexOf('const GATE_TEXT'),
-      dashboard.indexOf('const REGIME_TEXT'),
-    );
-    const fehlend = gateFelder().filter((f) => !keineAblehnung.has(f) && !block.includes(`'${f}'`));
-    expect(fehlend, `ohne Anzeige-Text: ${fehlend.join(', ')}`).toEqual([]);
-  });
-
-  it('der Quoten-Schatten hat einen eigenen Chip statt einer GATE_TEXT-Zeile', () => {
-    /* Hebel 1a (22.08.): Die gemessene Einfangquote stand seit dem 11.08.
-     * im Herzschlag und wirkte nie — weil sie niemand ansah. Der Zähler,
-     * der das beziffert, darf nicht dasselbe Schicksal erleiden. */
-    expect(gateFelder(), 'Zähler wird gar nicht erhoben').toContain('quote_wuerde_blocken');
-    expect(dashboard).toContain("h.entryGate?.quote_wuerde_blocken ?? 0");
-    expect(dashboard).toContain("t('ew.quoteSchatten')");
-    expect(dashboard).toContain("t('ew.quoteTitel')");
-    // Nur bei echten Grenzfällen — eine Null wäre Rauschen.
-    expect(dashboard).toContain('if (quoteSchatten > 0) {');
-  });
-
-  it('die drei stillen Bremsen stehen in der Liste', () => {
-    for (const f of ['pos_limit', 'cooldown_aktiv', 'sockel_besitz']) {
-      expect(gateFelder(), `${f} wird gar nicht gezählt`).toContain(f);
-      expect(dashboard, `${f} ohne Anzeige`).toContain(`['${f}', t(`);
+describe('Halt-Gründe: Kern und Karte kennen dieselben', () => {
+  it('HALT_TEXT deckt jeden HaltReason ab', () => {
+    const block = dashboard.match(/const HALT_TEXT: Record<string, string> = \{[\s\S]*?\};/)?.[0] ?? '';
+    for (const g of haltGruende()) {
+      // Schlüssel wie im Vertrag: daily_loss, drawdown, manual, errors, reconcile.
+      expect(block, `HALT_TEXT ohne ${g}`).toMatch(new RegExp(`^\\s*${g}: t\\('halt\\.`, 'm'));
     }
   });
 
-  it('„knapp verfehlt" und die Trend-Regel stehen nebeneinander in der Ampel-Zeile', () => {
-    /* Einzeln sind beide Zahlen mehrdeutig: Viele Grenzfälle können heißen
-     * „Schwelle zu hoch" ODER „Ampel selten grün". Erst zusammen sagen sie,
-     * ob die Trend-Regel greift. */
-    expect(dashboard).toContain('const knapp = h.knappVerfehlt ?? 0;');
-    expect(dashboard).toContain("const soloAn = h.trendSolo?.erzeugt ?? 0;");
-    expect(dashboard).toContain("t('ew.knappVerfehlt')");
-    expect(dashboard).toContain("t('ew.trendSoloErzeugt')");
-    // Eine Null wäre Rauschen — der Chip erscheint nur bei echten Grenzfällen.
-    expect(dashboard).toContain('if (knapp > 0) {');
+  it('„Warum handelt die Engine (nicht)?" hat für jeden Grund eine eigene Erklärung', () => {
+    const fn = dashboard.slice(dashboard.indexOf('function renderEngineWhy'));
+    const block = fn.slice(0, fn.indexOf('\n}'));
+    expect(haltGruende()).toEqual(['daily_loss', 'drawdown', 'manual', 'errors', 'reconcile']);
+    for (const k of ['ew.g.haltTag', 'ew.g.haltDrawdown', 'ew.g.haltManual', 'ew.g.haltReconcile', 'ew.g.haltErrors']) {
+      expect(block, `${k} fehlt`).toContain(`t('${k}')`);
+    }
+  });
+
+  it('der Test erkennt einen eingebauten Fehler', () => {
+    const block = 'const HALT_TEXT: Record<string, string> = {\n  manual: t(\'halt.manual\'),\n};';
+    expect(block).not.toMatch(/^\s*drawdown: t\('halt\./m);
   });
 });
 
-/* ── Nachbuchungs-Rückstand (Owner-Fund 21.08.) ────────────────────────── */
+describe('Kommandos folgen den Regeln des Kerns', () => {
+  const cmds = dashboard.match(/function renderEngineCommands[\s\S]*?\n\}/)?.[0] ?? '';
 
-describe('Der Nachbuchungs-Rückstand erreicht die Karte', () => {
-  /* Derselbe Fehlertyp wie oben, eine Ebene tiefer: Der Scan zählt seit
-   * heute mit, wie viele Fills die Heilung aufgegeben hat. Bliebe die Zahl
-   * im Herzschlag-Dokument stehen, wäre exakt nichts gewonnen — dass
-   * niemand den Rückstand sah, WAR der Fehler, nicht nur seine Begleitung.
-   * Der Owner fragte „funktioniert die Selbstheilung nicht?", weil die App
-   * die Antwort nicht anzeigte. */
-  it('der Scan schreibt ihn in den Herzschlag', () => {
-    expect(scan).toContain('nachbuchung: nachbuchungLaufGesamt,');
+  it('Resume ist bei einem Tages-Halt gesperrt — er endet von selbst', () => {
+    expect(cmds).toContain("h.reason === 'daily_loss'");
+    expect(cmds).toContain("t('cmd.tagesHaltEndet')");
   });
 
-  it('das Dashboard liest ihn und zeigt einen Chip, wenn etwas feststeckt', () => {
-    expect(dashboard).toContain('const steckt = h.nachbuchung?.steckt ?? 0;');
-    expect(dashboard).toContain("whyChip(`${steckt} ${t('ew.nachbuchungSteckt')}`, 'var(--rd)')");
+  it('ein Drawdown-Halt verlangt die ausdrückliche Bestätigung', () => {
+    const modal = dashboard.match(/function zeigeCmdModal[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(modal).toContain("st.engine?.halt?.reason === 'drawdown'");
+    // Ohne Häkchen wird nichts gesendet — der Takt ignorierte das Resume ohnehin.
+    expect(dashboard).toContain("$('cmdErr').textContent = t('cmd.ackFehlt');");
+    expect(dashboard).toContain('ackDrawdown: true');
   });
 
-  it('eine Null erzeugt KEINEN Chip — sonst steht dauerhaft eine Beruhigung da', () => {
-    const stelle = dashboard.indexOf('const steckt = h.nachbuchung?.steckt ?? 0;');
-    expect(stelle).toBeGreaterThan(-1);
-    expect(dashboard.slice(stelle, stelle + 200)).toContain('if (steckt > 0) {');
+  it('Halt wird sofort hinterlegt — es sperrt nur Einstiege, nie Exits', () => {
+    expect(dashboard).toContain("void sendeKommando('halt', '', false)");
   });
 
-  it('der Typ kennt das Feld — inklusive „nicht gemessen"', () => {
-    const daten = lese('frontend', 'src', 'data.ts');
-    expect(daten).toMatch(/nachbuchung\?: \{[\s\S]{0,200}steckt\?: number;/);
-    // `| null` trennt „nicht gemessen" von „nichts gefunden".
-    expect(daten).toMatch(/konten\?: number;\s*\n\s*\} \| null;/);
+  it('Flatten fragt nach — es ist unumkehrbar', () => {
+    expect(dashboard).toContain("zeigeCmdModal('flatten')");
+    expect(dashboard).not.toMatch(/sendeKommando\('flatten'/);
+  });
+
+  it('die Antwort heißt „hinterlegt", nicht „ausgeführt"', () => {
+    // Der Takt führt aus — im nächsten Lauf. Eine Anzeige „erledigt" wäre gelogen.
+    const fn = dashboard.match(/async function sendeKommando[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(fn).toContain("t('cmd.hinterlegt')");
+    expect(fn).toContain("t('cmd.wirktNaechsterTakt')");
   });
 });

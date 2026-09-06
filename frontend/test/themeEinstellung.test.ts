@@ -2,7 +2,7 @@
  * Theme-Wahl in Optionen → Anzeige (Owner 15.08.).
  *
  * Der Kopfleisten-Knopf ◐ wurde ständig aus Versehen getippt — die Wahl
- * wohnt jetzt im Options-Modal unter „Anzeige", mit drei Zuständen:
+ * wohnt im Options-Modal unter „Anzeige", mit drei Zuständen:
  * 'system' (Standard — folgt prefers-color-scheme, auch live beim
  * Geräte-Umschalten), 'light' und 'dark' als feste manuelle Wahlen.
  */
@@ -34,17 +34,26 @@ describe('Theme-Einstellung — Quelltext-Wächter', () => {
     expect(main).toContain("'(prefers-color-scheme: dark)'");
   });
 
-  it('Systemwechsel schaltet live um — nur im System-Modus, mit Chart-Neubau', () => {
+  it('Systemwechsel schaltet live um — nur im System-Modus', () => {
     const stelle = dashboard.indexOf("systemDunkel?.addEventListener?.('change'");
     expect(stelle, 'matchMedia-Listener fehlt').toBeGreaterThan(0);
     const block = dashboard.slice(stelle, stelle + 300);
     expect(block).toContain("if (themeWahl() !== 'system') return;");
-    expect(block).toContain('void rebuildChart();');
+    expect(block).toContain('wendeThemeAn();');
   });
 
-  it('manuelle Wahl wird gespeichert und baut die Charts neu', () => {
+  it('manuelle Wahl wird gespeichert und sofort angewandt', () => {
     expect(dashboard).toContain("localStorage.setItem('autotrd-theme', ouTheme.value);");
     const stelle = dashboard.indexOf("localStorage.setItem('autotrd-theme', ouTheme.value);");
-    expect(dashboard.slice(stelle, stelle + 200)).toContain('void rebuildChart();');
+    expect(dashboard.slice(stelle, stelle + 200)).toContain('wendeThemeAn();');
+  });
+
+  it('die Sprachwahl sitzt daneben und lädt die App neu', () => {
+    // Ein Reload statt Soft-Re-Render: Das Dashboard hält Listener und
+    // Zustand — ein halb neu gerendertes UI wäre die fehleranfälligste Variante.
+    expect(dashboard).toContain('<option value="de">Deutsch</option>');
+    expect(dashboard).toContain('<option value="en">English</option>');
+    expect(dashboard).toContain("setzeSprache(ouLang.value === 'en' ? 'en' : 'de');");
+    expect(dashboard).toContain('location.reload();');
   });
 });

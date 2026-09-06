@@ -98,7 +98,7 @@ export interface AdminUserRow {
    *  `liveGate.reifeFuerKonto` — derselben Funktion, die Scan, brokerStatus
    *  und Order-Routing benutzen. Eine zweite Rechnung hier wäre eine zweite
    *  Wahrheit über die Echtgeld-Freigabe. */
-  reife: { bereit: boolean; erfuellt: number; gesamt: number; fazit: string };
+  reife: { bereit: boolean; erfuellt: number; gesamt: number; fazit: string; offeneCodes?: string[] };
   /**
    * Broker-Abgleich des Kontos (Owner 21.08.: „diese Sperre von anderen
    * Usern für Admin sichtbar machen").
@@ -262,6 +262,8 @@ export const adminUsers = onCall(
             erfuellt: befund.erfuellt,
             gesamt: befund.gesamt,
             fazit: befund.fazit,
+            // Sprachneutrale Codes der offenen Kriterien — die Oberfläche baut daraus ihren Satz.
+            ...(befund.offeneCodes ? { offeneCodes: [...befund.offeneCodes] } : {}),
           },
           abgleich: abgleichZeile(d.get('risk.abgleich'), jetzt),
           /* Risiko-Bestätigung je Konto (Owner 22.08.: „ich will mich nicht

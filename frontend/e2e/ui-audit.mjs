@@ -162,9 +162,6 @@ for (const theme of THEMES) {
   await seite.fill('#password', 'Testpasswort123!');
   await seite.locator('#signupBtn, button:has-text("Registrieren")').first().click();
   await seite.waitForTimeout(5000);
-  // Onboarding-Tour schliessen — ihr Backdrop schluckt sonst jeden Klick.
-  await seite.locator('.tour-x, [data-tour="x"]').first().click({ timeout: 3000 }).catch(() => {});
-  await seite.waitForTimeout(600);
 
   for (const vp of VIEWPORTS) {
     await seite.setViewportSize({ width: vp.width, height: vp.height });
@@ -185,21 +182,21 @@ for (const theme of THEMES) {
     for (const k of m1.kontrast) melde(vp.name, theme, 'kontrast', `${k.sel} ratio ${k.ratio}`);
 
     // ── Dashboard Mitte (Performance-Karte) + unten ──
-    await seite.evaluate(() => document.querySelector('[data-panel="portfolio"], #pfReibung')?.scrollIntoView({ block: 'center' }));
+    await seite.evaluate(() => document.querySelector('[data-panel="performance"], #pfGrid')?.scrollIntoView({ block: 'center' }));
     await seite.waitForTimeout(400);
     await seite.screenshot({ path: `${SHOTS}/${tag}-11-performance.png` });
     await seite.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
     await seite.waitForTimeout(400);
     await seite.screenshot({ path: `${SHOTS}/${tag}-12-unten.png` });
 
-    // ── Detail-Sheet (Symbol antippen) ──
+    // ── Kommando-Dialog (Flatten mit Bestätigung) ──
     await seite.evaluate(() => window.scrollTo(0, 0));
-    await seite.locator('.wl-item, .tile, [data-sym]').first().click({ timeout: 3000 }).catch(() => {});
-    await seite.waitForTimeout(1500);
-    await seite.screenshot({ path: `${SHOTS}/${tag}-20-detail.png` });
+    await seite.locator('#engFlatten').click({ timeout: 3000 }).catch(() => {});
+    await seite.waitForTimeout(800);
+    await seite.screenshot({ path: `${SHOTS}/${tag}-20-kommando.png` });
     const m2 = await seite.evaluate(MESSUNGEN);
-    for (const o of m2.overflow) melde(vp.name, theme, 'overflow/detail', o);
-    await seite.locator('[data-close="detail"], .dclose').first().click({ timeout: 2000 }).catch(() => {});
+    for (const o of m2.overflow) melde(vp.name, theme, 'overflow/kommando', o);
+    await seite.keyboard.press('Escape');
     await seite.waitForTimeout(500);
 
     // ── Drawer (nur mobil): Burger links ──

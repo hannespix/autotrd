@@ -1,14 +1,11 @@
 /**
- * Audit-Befund 11.08. (F6): drei Rechenwege für denselben Positionswert.
+ * Audit-Befund 11.08. (F6): mehrere Rechenwege für denselben Positionswert.
  *
  * Die Rechnung selbst prüft `shared/test/positionLage.test.ts`. Hier steht,
  * dass alle Anzeigen sie auch benutzen — genau das war der Befund:
  * Nicht die Formel wich ab, sondern der Umgang mit einem fehlenden Kurs, und
- * zwar auf demselben Bildschirm.
- *
- * Seit 21.08. sind es VIER: Die teilbare Depot-Karte verlässt die App und
- * darf erst recht keine anderen Zahlen zeigen als die Tabelle daneben —
- * ein Bild in fremden Zeitleisten kann man nicht nachkorrigieren.
+ * zwar auf demselben Bildschirm. Im Auto-Trader sind es ZWEI Anzeigen:
+ * die Kennzahlen-Summe und die Positionstabelle.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -18,15 +15,15 @@ import { join } from 'node:path';
 const quelle = (): string =>
   readFileSync(join(import.meta.dirname, '..', 'src', 'dashboard.ts'), 'utf8');
 
-describe('Alle vier Anzeigen rechnen mit derselben Funktion', () => {
-  it('genau vier Aufrufe — Summe, Tabelle, Stop-Dialog, Teilen-Karte', () => {
+describe('Beide Anzeigen rechnen mit derselben Funktion', () => {
+  it('genau zwei Aufrufe — Summe und Tabelle', () => {
     const treffer = quelle().match(/positionLage\(/g) ?? [];
-    expect(treffer.length).toBe(4);
+    expect(treffer.length).toBe(2);
   });
 
   it('keine eigene P&L-Formel mehr im Dashboard', () => {
     /* Die alte Schreibweise `(avgEntry - kurs) * qty` in ihren Varianten.
-     * Solange sie irgendwo steht, kann eine vierte Anzeige entstehen, die
+     * Solange sie irgendwo steht, kann eine dritte Anzeige entstehen, die
      * wieder anders mit fehlenden Kursen umgeht. */
     const text = quelle();
     expect(text).not.toContain('(p.avgEntry - live) * p.qty');
@@ -51,22 +48,20 @@ describe('Fehlende Kurse stehen dran, statt als Null durchzugehen', () => {
   it('und der Grund steht im Tooltip, mit Zahlen', () => {
     const text = quelle();
     expect(text).toContain("${t('pf.ohneKursA')} ${ohneKurs} ${t('pf.ohneKursB')} ${st.positions.length} ${t('pf.ohneKursC')}");
-    // Der Wortlaut wohnt seit Tranche 5m im Wörterbuch (Task #139).
     expect(DE['pf.ohneKursC']).toContain('fehlt ein aktueller Kurs');
   });
 
   it('die Positionsüberschrift nennt es ebenfalls', () => {
-    // Der Owner-Screenshot vom 10.08. zeigte 128 von 132 Symbolen ohne Kurs.
-    // Auf einen Tooltip zu zeigen reicht dort nicht — es muss ohne Mauszeiger
+    // Auf einen Tooltip zu zeigen reicht nicht — es muss ohne Mauszeiger
     // sichtbar sein.
     expect(quelle()).toContain("${ohneKurs} ${t('pf.ohneKurs')}");
   });
 
-  it('der Stop-Dialog zeigt „—" statt einer erfundenen Null', () => {
+  it('die Tabelle zeigt „--" statt einer erfundenen Null', () => {
     const text = quelle();
-    const ab = text.indexOf('function zeigeStopDialog(');
-    const block = text.slice(ab, text.indexOf('.join(\'\');', ab));
-    expect(block).toContain("pnl === null ? '—'");
+    const ab = text.indexOf('for (const p of st.positions) {', text.indexOf('// Positionen-Tabelle'));
+    const block = text.slice(ab, text.indexOf('body.appendChild(tr);', ab));
+    expect(block).toContain("${pnl !== null ? money(pnl) : '--'}");
   });
 
   it('der Wert bleibt trotzdem auf Einstand — die Equity bricht nicht ein', () => {
@@ -75,5 +70,15 @@ describe('Fehlende Kurse stehen dran, statt als Null durchzugehen', () => {
      * Tag gegen eine Bezugsgröße, die es nie gab. */
     const text = quelle();
     expect(text).toContain('posValue += lage.wert;');
+  });
+
+  it('die Kurse kommen je Positions-Symbol aus market/{sym}.quote — und die Abos werden nachgeführt', () => {
+    const text = quelle();
+    const ab = text.indexOf('function syncPositionQuotes');
+    const block = text.slice(ab, text.indexOf('\n}', ab));
+    expect(block).toContain('watchMarketDoc(sym,');
+    // Geschlossene Positionen verlieren ihr Abo — sonst wächst die Listener-Zahl mit jeder Runde.
+    expect(block).toContain('st.positionSubs.delete(sym);');
+    expect(block).toContain('st.posPrices.delete(sym);');
   });
 });
