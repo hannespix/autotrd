@@ -3,16 +3,14 @@
  * eine Function auszulösen. Funktioniert mit den Rollen, die der Deploy-SA
  * sicher hat (Cloud Run Admin + Service Account User).
  *
- * ACHTUNG: `SERVICE` zeigt noch auf den alten Marktscan (`scanmarket`), der
- * mit dem Rückbau der Handelsplattform gelöscht wurde. Der Integrator zeigt
- * ihn auf den Engine-Takt (`enginetick`) um; bis dahin scheitert der
- * Scan-Invoke ehrlich, und `check-scheduler.mjs` zählt allein den Heartbeat.
- *
+ * `SERVICE` ist der Engine-Takt (`enginetick`, functions/src/scheduled/
+ * engineTick.ts); der alte Marktscan (`scanmarket`) ist mit dem Rückbau der
+ * Handelsplattform gelöscht.
  *
  *   1. Heartbeat meta/health lesen (öffentlich). Mit --if-stale N wird nur
  *      weitergemacht, wenn der letzte Lauf älter als N Minuten ist (Watchdog-
- *      Modus: kein Doppel-Scan, wenn der echte Scheduler längst läuft).
- *   2. scanmarket-Cloud-Run-Service holen, dem SA selbst roles/run.invoker
+ *      Modus: kein Doppel-Takt, wenn der echte Scheduler längst läuft).
+ *   2. enginetick-Cloud-Run-Service holen, dem SA selbst roles/run.invoker
  *      geben (idempotent) und den Service mit ID-Token per POST aufrufen.
  *   3. Heartbeat erneut prüfen — erst der beweist den erfolgreichen Lauf.
  *

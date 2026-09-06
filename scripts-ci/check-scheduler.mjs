@@ -34,11 +34,9 @@ import { ensureSelfInvoker, invokeScanNow, readHeartbeat } from './invoke-scan.m
 
 const REGION = 'us-central1';
 /* Herzschlag-Job: Der Force-Run und die Eskalationsleiter unten prüfen den
- * Heartbeat `meta/health` gegen DIESEN Job bzw. Dienst. Er stammt noch vom
- * alten Marktscan (`scanMarket`, mit dem Rückbau der Handelsplattform
- * gelöscht); der Integrator zeigt ihn zusammen mit dem SCHEDULES-Eintrag
- * auf den Engine-Takt (`engineTick`) um — bis dahin scheitert der Force-Run
- * ehrlich mit einer Warnung, und es zählt allein der Heartbeat. */
+ * Heartbeat `meta/health` gegen DIESEN Job bzw. Dienst — den Engine-Takt
+ * (`engineTick`, je Minute). Der alte Marktscan (`scanMarket`) ist mit dem
+ * Rückbau der Handelsplattform gelöscht. */
 const JOB_ID = 'firebase-schedule-engineTick-us-central1';
 
 /**
