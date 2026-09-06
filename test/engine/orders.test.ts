@@ -12,10 +12,11 @@ import { OPEN1, tmpHome } from '../fakes/harness.ts';
 
 const T = OPEN1 + 10 * MIN + 5_000;
 
-function setup(o: { assetClass?: AssetClass; holdsOvernight?: boolean; book?: Book } = {}) {
+function setup(o: { assetClass?: AssetClass; holdsOvernight?: boolean; book?: Book; fake?: FakeAlpaca } = {}) {
   const assetClass = o.assetClass ?? 'us_equity';
   let now = T;
-  const fake = new FakeAlpaca({ assetClass, now: () => now });
+  const fake = o.fake ?? new FakeAlpaca({ assetClass, now: () => now });
+  fake.now = () => now;
   const book = o.book ?? new Book();
   const journal = new Journal(join(tmpHome(), 'journal.jsonl'));
   const sleeps: number[] = [];
@@ -92,8 +93,7 @@ describe('OrderExecutor — Einstieg', () => {
       ['limit', null, 104.38],
     ]);
     // Zweiter Executor (Neustart ohne Pending) ⇒ Broker kennt die Kennung ⇒ nicht erneut senden.
-    const s2 = setup();
-    s2.fake.orders.set(o.id, s2.fake.orders.get(o.id) ?? s.fake.find(o.id)!);
+    const s2 = setup({ fake: s.fake });
     const res = await s2.executor.execute([enter()]);
     expect(res[0]?.note).toMatch(/existiert bereits/);
     expect(s2.fake.callsOf('submitOrder')).toHaveLength(0);
@@ -147,9 +147,7 @@ describe('OrderExecutor — Einstieg', () => {
     const state = { ...emptyState('paper', '2026-09-01', 100_000), ...s.book.toState() };
     const restored = Book.fromState(state);
     expect(restored.pendingEntries.get('AAPL')?.intent).toBeNull();
-    const s2 = setup({ book: restored });
-    s2.fake.orders.set(parent.id, s.fake.find(parent.id)!);
-    for (const leg of s.fake.find(parent.id)!.legs) s2.fake.orders.set(leg.id, s.fake.find(leg.id)!);
+    const s2 = setup({ book: restored, fake: s.fake });
     await s2.executor.syncOrders();
     const pos = restored.positions.get('AAPL')!;
     expect(pos).toMatchObject({ qty: 199, entryPrice: 100.4, stop: 98.36, target: 104.38, strategy: 'restored' });

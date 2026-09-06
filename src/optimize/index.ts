@@ -58,6 +58,7 @@ export {
   neighborhoodTest,
   deflatedSharpeIs,
   probabilisticSharpeOos,
+  gateOptions,
   robustnessGates,
   type MetricsFns,
   type GateResult,

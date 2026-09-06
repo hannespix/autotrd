@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import type { CostConfig, OptimizerConfig } from '../core/config.ts';
 import { ensureDir } from '../core/journal.ts';
 import type { AssetClass, Metrics, Ms, Params, TimeframeMin } from '../core/types.ts';
-import type { GateResult } from './robustness.ts';
+import { gateOptions, type GateResult } from './robustness.ts';
 import type { SymbolRun } from './run.ts';
 import type { TimeRange } from './walkForward.ts';
 
@@ -117,10 +117,11 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
     `- Suche: ${o.samples} Samples je Fold, Seed ${o.seed}, Objective \`${o.objective}\`, IS ${o.isDays} / OOS ${o.oosDays} / Schritt ${o.stepDays} Tage, ` +
       `Holdout ${o.holdoutDays} Tage, Embargo ${o.embargoBars > 0 ? `${o.embargoBars} Bars` : 'automatisch (Warmup + 20 Bars)'}`,
   );
+  const go = gateOptions(o);
   out.push(
     `- Gates: ≥ ${o.minOosTrades} OOS-Trades, ≥ ${Math.round(o.minFoldPositiveShare * 100)} % Folds positiv, OOS netto > 0 (auch bei Kosten ×${o.stressCostMultiplier}), ` +
-      `Nachbarschafts-Plateau, PSR (OOS, sr0 = 0) ≥ 0.90, DSR (IS, deflationiert um alle Trials) ≥ 0.95, Gebührenanteil ≤ 50 %; ` +
-      `Beförderungsmarge ${Math.round(o.promotionMargin * 100)} %`,
+      `Nachbarschafts-Plateau, PSR (OOS, sr0 = 0) ≥ ${go.minPsrOos}, DSR (IS, deflationiert um alle Trials) ≥ 0.95 ${go.dsrIsGate ? 'als Gate' : 'nur informativ (dsrIsGate=false)'}, ` +
+      `Gebührenanteil ≤ 50 %; Beförderungsmarge ${Math.round(o.promotionMargin * 100)} %`,
   );
   out.push(`- Startkapital je Fenster: ${meta.initialEquity}`);
   out.push('');

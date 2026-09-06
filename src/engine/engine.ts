@@ -475,7 +475,8 @@ export class Engine {
         }
         for (const n of res.notes) {
           if (n.kind === 'info') continue;
-          this.journal.append('decision', { symbol: n.symbol, kind: n.kind, text: n.text, bar: newBars.get(n.symbol)?.t ?? null }, now);
+          // Feld heißt `note`, nicht `kind`: `kind` ist der Event-Typ des Journals und würde überschrieben.
+          this.journal.append('decision', { symbol: n.symbol, note: n.kind, text: n.text, bar: newBars.get(n.symbol)?.t ?? null }, now);
         }
         for (const it of res.intents) this.journal.append('intent', { ...it }, now);
         if (res.intents.length > 0) {

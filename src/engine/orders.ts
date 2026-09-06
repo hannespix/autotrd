@@ -256,7 +256,7 @@ export class OrderExecutor {
     const rounded: EnterIntent = { ...intent, qty, stop, target };
 
     const existing = await this.client.getOrderByClientId(clientId);
-    if (existing) return this.adoptExistingEntry(existing, rounded, clientId);
+    if (existing) return this.adoptExistingEntry(await this.withLegs(existing), rounded, clientId);
 
     const holdsOvernight = this.holdsOvernightFor(sym);
     const order = this.buildEntryOrder(rounded, clientId, holdsOvernight);
@@ -337,6 +337,12 @@ export class OrderExecutor {
       return { ...base, note: 'Einstiegs-Order war bereits gefüllt — Position aus dem Fill gebucht' };
     }
     return { ...base, note: `Order zur Kennung bereits ${order.status} — kein zweiter Versuch im selben Bucket` };
+  }
+
+  /** `by_client_order_id` liefert bei Alpaca keine Beine — für Bracket-Orders per ID (nested) nachladen. */
+  private async withLegs(o: AlpacaOrder): Promise<AlpacaOrder> {
+    if (o.orderClass !== 'bracket' || o.legs.length > 0) return o;
+    return (await this.client.getOrder(o.id)) ?? o;
   }
 
   /** Krypto: kurz auf den Fill der Marktorder warten, damit der Schutz-Stop sofort folgt. */
@@ -843,7 +849,8 @@ export class OrderExecutor {
     const now = this.now();
     // (a) Offene Einstiege
     for (const [sym, pe] of [...this.book.pendingEntries]) {
-      const o = pe.orderId ? await this.client.getOrder(pe.orderId) : await this.client.getOrderByClientId(pe.clientId);
+      let o = pe.orderId ? await this.client.getOrder(pe.orderId) : await this.client.getOrderByClientId(pe.clientId);
+      if (o) o = await this.withLegs(o);
       if (!o) {
         if (now - pe.submittedAt > OrderExecutor.PENDING_ENTRY_TTL_MS) {
           this.book.clearPending(sym);

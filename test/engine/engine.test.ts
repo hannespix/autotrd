@@ -31,7 +31,7 @@ describe('Engine — ein Zyklus', () => {
     expect(sl.stopPrice).toBe(98.36); // 100.37 · 0.98 = 98.3626 → abgerundet (vom Kurs weg)
     expect(tp.limitPrice).toBe(104.38); // 100.37 · 1.04 = 104.3848 → abgerundet (zum Kurs hin)
     expect(sc.events('order_submitted')).toHaveLength(1);
-    expect(sc.events('decision').some((e) => e.kind === 'decision' && String(e.text).startsWith('Enter long 199'))).toBe(true);
+    expect(sc.events('decision').some((e) => e.note === 'decision' && String(e.text).startsWith('Enter long 199'))).toBe(true);
     // Bars-Cache wurde geschrieben
     expect(existsSync(join(sc.home, 'bars', 'us_equity', 'iex', 'AAPL_1Min.json'))).toBe(true);
     expect(sc.state()?.lastBarAt.AAPL).toBe(OPEN1 + 5 * MIN);
@@ -101,7 +101,7 @@ describe('Engine — ein Zyklus', () => {
     expect(sc.fake.callsOf('submitOrder')).toHaveLength(0);
     expect(sc.engine.status().halt).toMatchObject({ halted: true, reason: 'manual' });
     expect(sc.events('halt').some((e) => e.reason === 'manual')).toBe(true);
-    expect(sc.events('decision').some((e) => e.kind === 'blocked' && String(e.text).includes('Halt aktiv (manual)'))).toBe(true);
+    expect(sc.events('decision').some((e) => e.note === 'blocked' && String(e.text).includes('Halt aktiv (manual)'))).toBe(true);
 
     unlinkSync(sc.paths.haltFlag);
     sc.pushBars('AAPL', BARS_10_14());
@@ -138,7 +138,7 @@ describe('Engine — ein Zyklus', () => {
     expect(sc.engine.status().consecutiveErrors).toBe(3);
     expect(sc.engine.status().halt).toMatchObject({ halted: true, reason: 'errors' });
     expect(sc.notifications.some((n) => n.level === 'error' && n.text.includes('errors'))).toBe(true);
-    expect(sc.events('error')).toHaveLength(3);
+    expect(sc.events('error').filter((e) => e.where === 'tick')).toHaveLength(3); // je Tick: Executor-Detail + Tick-Zähler
     expect(sc.fake.callsOf('submitOrder')).toHaveLength(0);
     // Nächster Tick ohne Fehler: Zähler zurück, Halt bleibt (kein Selbstheilen einer Fehlerserie).
     await sc.engine.tick(now);
@@ -152,7 +152,7 @@ describe('Engine — ein Zyklus', () => {
     sc.pushBars('AAPL', minuteBars(OPEN1, TEN_CLOSES)); // Frische = 09:40
     await sc.engine.tick(OPEN1 + 10 * MIN + 200_000); // 09:43:20 ⇒ 200 s alt > 180 s
     expect(sc.fake.callsOf('submitOrder')).toHaveLength(0);
-    expect(sc.events('decision').some((e) => e.kind === 'blocked' && e.text === 'Daten nicht frisch')).toBe(true);
+    expect(sc.events('decision').some((e) => e.note === 'blocked' && e.text === 'Daten nicht frisch')).toBe(true);
 
     const sc2 = await startScenario({ defaultStrategy: scriptedStrategy({ enterAt: 1, exitAt: 2 }) });
     await openPositionViaFill(sc2);

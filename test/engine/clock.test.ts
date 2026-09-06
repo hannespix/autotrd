@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { AlpacaError } from '../../src/alpaca/types.ts';
+import { setLogSink } from '../../src/core/log.ts';
 import { HOUR, msFromET } from '../../src/core/time.ts';
 import { MarketClock } from '../../src/engine/clock.ts';
 import { FakeAlpaca } from '../fakes/fakeAlpaca.ts';
+
+setLogSink(() => undefined);
 
 describe('MarketClock', () => {
   it('Krypto ist immer offen', () => {

@@ -44,8 +44,18 @@ export const NEIGHBOR_MEDIAN_RATIO = 0.5;
 export const NEIGHBOR_POSITIVE_SHARE = 0.6;
 /** Deflated Sharpe (In-Sample, finales Suchfenster): Wahrscheinlichkeit, dass die selektierte Zahl nicht Auswahlrauschen ist. */
 export const DSR_THRESHOLD = 0.95;
-/** Probabilistic Sharpe (Out-of-Sample, sr0 = 0): Wahrscheinlichkeit eines positiven wahren OOS-Sharpe. */
+/** Probabilistic Sharpe (Out-of-Sample, sr0 = 0): Vorgabe-Schwelle, wenn `optimizer.minPsrOos` fehlt. */
 export const PSR_THRESHOLD = 0.9;
+
+/**
+ * Optionale Optimierer-Felder, die das Config-Schema erst nachzieht. Der Cast
+ * hält den Typecheck unabhängig vom Schema-Stand grün; die Vorgaben sind
+ * die abgestimmten Defaults (PSR ≥ 0,9; DSR-IS nur informativ).
+ */
+export function gateOptions(optimizer: OptimizerConfig): { minPsrOos: number; dsrIsGate: boolean } {
+  const o = optimizer as { minPsrOos?: number; dsrIsGate?: boolean };
+  return { minPsrOos: o.minPsrOos ?? PSR_THRESHOLD, dsrIsGate: o.dsrIsGate ?? false };
+}
 /** Gebühren dürfen höchstens diesen Anteil des Bruttogewinns fressen. */
 export const FEE_SHARE_MAX = 0.5;
 /** Unter so vielen Tagesrenditen sind Schiefe/Kurtosis nicht schätzbar — PSR/DSR dann null (⇒ Gate fällt). */
@@ -286,22 +296,28 @@ export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResul
       `${(a.neighborhood.positiveShare * 100).toFixed(0)} % der Nachbarn positiv (≥ ${NEIGHBOR_POSITIVE_SHARE * 100} %: ${nbShareOk ? 'ja' : 'nein'})`,
   });
 
+  const { minPsrOos, dsrIsGate } = gateOptions(optimizer);
   const srAnnual = a.metricsFns.sharpeRatio(oos.dailyReturns, a.periodsPerYear ?? 252);
   const srNote = srAnnual === null ? 'Sharpe p. a. nicht berechenbar' : `OOS-Sharpe p. a. ${srAnnual.toFixed(2)}`;
   gates.push({
     name: 'probabilistic_sharpe_oos',
-    pass: a.psr.psr !== null && a.psr.psr >= PSR_THRESHOLD,
+    pass: a.psr.psr !== null && a.psr.psr >= minPsrOos,
     value: a.psr.psr,
-    threshold: PSR_THRESHOLD,
+    threshold: minPsrOos,
     note: a.psr.psr === null ? `PSR nicht berechenbar — gilt als durchgefallen (${a.psr.note}); ${srNote}` : `${a.psr.note}; ${srNote}`,
   });
 
+  // Die OOS-Kette ist die selektionsfreie Evidenz; der DSR beantwortet die
+  // In-Sample-Frage und bestraft breite Gitter mit toten Regionen doppelt.
+  // Deshalb blockiert er nur auf ausdrücklichen Wunsch — der Wert bleibt sichtbar.
+  const dsrOk = a.dsr.dsr !== null && a.dsr.dsr >= DSR_THRESHOLD;
+  const dsrNote = a.dsr.dsr === null ? `DSR nicht berechenbar (${a.dsr.note})` : a.dsr.note;
   gates.push({
     name: 'deflated_sharpe_is',
-    pass: a.dsr.dsr !== null && a.dsr.dsr >= DSR_THRESHOLD,
+    pass: dsrIsGate ? dsrOk : true,
     value: a.dsr.dsr,
     threshold: DSR_THRESHOLD,
-    note: a.dsr.dsr === null ? `DSR nicht berechenbar — gilt als durchgefallen (${a.dsr.note})` : a.dsr.note,
+    note: dsrIsGate ? (dsrOk ? dsrNote : `${dsrNote} — gilt als durchgefallen`) : `informativ (dsrIsGate=false): ${dsrNote}${dsrOk ? '' : ' — würde als Gate durchfallen'}`,
   });
 
   gates.push({

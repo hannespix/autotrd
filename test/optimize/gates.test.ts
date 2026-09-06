@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Metrics } from '../../src/core/types.ts';
 import { objectiveValue } from '../../src/optimize/objective.ts';
+import type { OptimizerConfig } from '../../src/core/config.ts';
 import {
   DSR_MIN_RETURNS,
   deflatedSharpeIs,
+  gateOptions,
   neighborhoodTest,
   probabilisticSharpeOos,
   robustnessGates,
@@ -17,6 +19,11 @@ import { walkForward, type WfaResult } from '../../src/optimize/walkForward.ts';
 import { NOISE_PROFILE, REWARD_PROFILE, dailyBars, fakeMetricsFns, fakeStrategy, makeFakeSimulate, simConfigOf, testConfig } from './fakes.ts';
 
 const cfg = testConfig();
+
+/** Optimierer-Config mit den Gate-Schaltern (Schema zieht die Felder nach; bis dahin per Cast). */
+function withGateFlags(flags: { dsrIsGate?: boolean; minPsrOos?: number }): OptimizerConfig {
+  return { ...cfg.optimizer, ...flags } as OptimizerConfig;
+}
 
 function metrics(over: Partial<Metrics> = {}): Metrics {
   return {
@@ -177,14 +184,42 @@ describe('robustnessGates', () => {
     expect(r.gates[5]!.note).toMatch(/Sharpe p\. a\./);
   });
 
-  it('(7) DSR (IS) < 0,95 oder nicht berechenbar', () => {
-    expect(failing(robustnessGates(gateInput({ dsr: dsrOf(0.949) })))).toEqual(['deflated_sharpe_is']);
-    const r = robustnessGates(gateInput({ dsr: dsrOf(null) }));
+  it('(7) DSR (IS) blockiert NICHT, solange dsrIsGate=false — der Wert bleibt sichtbar', () => {
+    expect(gateOptions(cfg.optimizer)).toEqual({ minPsrOos: 0.9, dsrIsGate: false });
+    const low = robustnessGates(gateInput({ dsr: dsrOf(0.1) }));
+    expect(low.pass).toBe(true);
+    expect(failing(low)).toEqual([]);
+    const g = low.gates[6]!;
+    expect(g.name).toBe('deflated_sharpe_is');
+    expect(g.value).toBe(0.1);
+    expect(g.threshold).toBe(0.95);
+    expect(g.note).toMatch(/^informativ \(dsrIsGate=false\)/);
+    expect(g.note).toMatch(/würde als Gate durchfallen/);
+    const nul = robustnessGates(gateInput({ dsr: dsrOf(null) }));
+    expect(nul.pass).toBe(true);
+    expect(nul.gates[6]!.note).toMatch(/informativ/);
+    const ok = robustnessGates(gateInput({ dsr: dsrOf(0.99) }));
+    expect(ok.gates[6]!.note).not.toMatch(/durchfallen/);
+  });
+
+  it('(7b) DSR (IS) < 0,95 oder nicht berechenbar blockiert mit dsrIsGate=true', () => {
+    const on = withGateFlags({ dsrIsGate: true });
+    expect(gateOptions(on).dsrIsGate).toBe(true);
+    expect(failing(robustnessGates(gateInput({ optimizer: on, dsr: dsrOf(0.949) })))).toEqual(['deflated_sharpe_is']);
+    const r = robustnessGates(gateInput({ optimizer: on, dsr: dsrOf(null) }));
     expect(failing(r)).toEqual(['deflated_sharpe_is']);
     expect(r.gates[6]!.value).toBeNull();
-    expect(r.gates[6]!.threshold).toBe(0.95);
     expect(r.gates[6]!.note).toMatch(/nicht berechenbar/);
-    expect(robustnessGates(gateInput({ dsr: dsrOf(0.95) })).pass).toBe(true);
+    expect(r.gates[6]!.note).not.toMatch(/informativ/);
+    expect(robustnessGates(gateInput({ optimizer: on, dsr: dsrOf(0.95) })).pass).toBe(true);
+  });
+
+  it('(6b) PSR-Schwelle kommt aus optimizer.minPsrOos', () => {
+    const strict = withGateFlags({ minPsrOos: 0.99 });
+    const r = robustnessGates(gateInput({ optimizer: strict, psr: psrOf(0.95) }));
+    expect(failing(r)).toEqual(['probabilistic_sharpe_oos']);
+    expect(r.gates[5]!.threshold).toBe(0.99);
+    expect(robustnessGates(gateInput({ optimizer: withGateFlags({ minPsrOos: 0.5 }), psr: psrOf(0.6) })).pass).toBe(true);
   });
 
   it('(8) Gebühren fressen mehr als die Hälfte — nicht berechenbar ist kein Urteil', () => {
@@ -196,8 +231,11 @@ describe('robustnessGates', () => {
   });
 
   it('mehrere Verstöße werden alle gemeldet', () => {
-    const r = robustnessGates(gateInput({ wfa: wfaFixture({ trades: 1, netProfit: -1, feeShare: 0.9 }), dsr: dsrOf(0.1), psr: psrOf(0.2) }));
+    const r = robustnessGates(gateInput({ optimizer: withGateFlags({ dsrIsGate: true }), wfa: wfaFixture({ trades: 1, netProfit: -1, feeShare: 0.9 }), dsr: dsrOf(0.1), psr: psrOf(0.2) }));
     expect(failing(r)).toEqual(['oos_trades', 'oos_net_profit', 'probabilistic_sharpe_oos', 'deflated_sharpe_is', 'fee_share']);
+    // ohne dsrIsGate bleibt DSR-IS informativ
+    const soft = robustnessGates(gateInput({ wfa: wfaFixture({ trades: 1, netProfit: -1, feeShare: 0.9 }), dsr: dsrOf(0.1), psr: psrOf(0.2) }));
+    expect(failing(soft)).toEqual(['oos_trades', 'oos_net_profit', 'probabilistic_sharpe_oos', 'fee_share']);
   });
 });
 
