@@ -165,6 +165,19 @@ describe('Einstieg', () => {
       input(enterLong, { strategy: intraday }, { symbol: 'MSFT' }),
     ]);
     expect(r.intents.filter((i) => i.kind === 'enter')).toHaveLength(1);
+    // auch Übernacht-Einstiege belegen die Reserve (ein Stop am selben Tag wäre ein Daytrade)
+    const r2 = decide(ctx({ account: { ...acc, dayTradeCount: 2 } }), [
+      input(enterLong, {}, { symbol: 'AAPL' }),
+      input(enterLong, {}, { symbol: 'MSFT' }),
+      input(enterLong, {}, { symbol: 'NVDA' }),
+    ]);
+    expect(r2.intents.filter((i) => i.kind === 'enter')).toHaveLength(1);
+  });
+
+  it('offene Einstiegs-Orders belegen das Exposure-Budget', () => {
+    // Budget 100 % von 10 000; eine offene Order über 9 500 $ lässt nur 500 $ ⇒ 5 Stück
+    const r = decide(ctx({ pendingEntries: new Set(['MSFT']), pendingNotional: new Map([['MSFT', 9_500]]) }), [input(enterLong)]);
+    expect(r.intents[0]).toMatchObject({ kind: 'enter', qty: 5 });
   });
 
   it('Sizing 0 blockiert mit Grund', () => {

@@ -45,6 +45,8 @@ export interface LogicContext {
   positions: ReadonlyMap<string, PositionState>;
   /** Symbole mit offener, noch ungefüllter Einstiegs-Order. */
   pendingEntries: ReadonlySet<string>;
+  /** Nominalwert (qty × Referenzkurs) der offenen Einstiegs-Orders je Symbol — belegt Exposure-Budget. */
+  pendingNotional?: ReadonlyMap<string, number> | undefined;
   halt: HaltState;
   risk: RiskConfig;
   session: SessionConfig;
@@ -123,8 +125,12 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
   const lastClose = new Map<string, number>();
   for (const inp of inputs) lastClose.set(inp.snap.symbol, inp.snap.bars.c[inp.snap.i]!);
   let gross = grossExposure(ctx.positions, (s) => lastClose.get(s));
+  // Offene Einstiegs-Orders belegen Exposure-Budget, sobald sie füllen — mitzählen.
+  if (ctx.pendingNotional) for (const n of ctx.pendingNotional.values()) gross += n;
   let openCount = ctx.positions.size + ctx.pendingEntries.size;
-  let plannedIntraday = 0;
+  // Unter der PDT-Schwelle zählt jeder geplante Einstieg gegen die Reserve — auch ein
+  // Übernacht-Einstieg kann noch am selben Tag ausgestoppt werden (Red-Team-Befund).
+  let plannedEntries = 0;
 
   for (const inp of inputs) {
     const { snap, strategy, params, ind } = inp;
@@ -140,10 +146,14 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
 
     if (pos) {
       // ── Position offen: Exits sind nie gesperrt ──
+      // EOD-Flatten am LETZTEN Entscheidungspunkt vor der Frist: Würde die nächste
+      // Bar erst nach (Schluss − flattenBeforeCloseMin) schließen, muss jetzt raus.
+      // Der Fill liegt dann am Open der Folgebar — ein Kurs, den es live gibt
+      // (Red-Team-Befund: ein Fill am Close der Entscheidungs-Bar existiert live nicht).
       const mustFlatten =
         !strategy.holdsOvernight &&
         snap.session.minutesToClose !== null &&
-        (snap.session.isLastBarOfDay || snap.session.minutesToClose <= ctx.session.flattenBeforeCloseMin);
+        snap.session.minutesToClose - ctx.timeframe < ctx.session.flattenBeforeCloseMin;
       if (mustFlatten) {
         intents.push({ kind: 'exit', symbol: sym, reason: 'eod', decidedAt: ctx.now });
         notes.push({ symbol: sym, kind: 'decision', text: 'EOD-Flatten' });
@@ -221,7 +231,8 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
         block(`Schlussfenster (${tc} ≤ ${ctx.session.noEntryLastMin} min)`);
         continue;
       }
-      if (!strategy.holdsOvernight && tc !== null && tc <= ctx.session.flattenBeforeCloseMin) {
+      // Kein Einstieg, der am nächsten Entscheidungspunkt sofort wieder glattgestellt würde.
+      if (!strategy.holdsOvernight && tc !== null && tc - ctx.timeframe < ctx.session.flattenBeforeCloseMin) {
         block('Flatten-Fenster');
         continue;
       }
@@ -254,7 +265,7 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
       equity: ctx.account.equity,
       brokerCount: ctx.account.dayTradeCount,
       localCount: ctx.localDayTrades,
-      plannedIntradayEntries: plannedIntraday,
+      plannedIntradayEntries: plannedEntries,
       intraday: !strategy.holdsOvernight,
       assetClass: ctx.assetClass,
     });
@@ -299,7 +310,7 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
     });
     openCount++;
     gross += size.notional;
-    if (!strategy.holdsOvernight) plannedIntraday++;
+    plannedEntries++;
   }
 
   return { intents, notes, halt, haltTriggered: false };

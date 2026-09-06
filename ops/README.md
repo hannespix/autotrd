@@ -53,11 +53,14 @@ sudo systemctl daemon-reload
 ```
 
 Vor dem ersten Start die Umgebung prüfen — als Dienstnutzer, mit derselben
-Config und denselben Secrets, die der Dienst sieht:
+Config und denselben Secrets, die der Dienst sieht. Die Secrets kommen über
+`--env /etc/autotrd/.env` in den Prozess, nie über die Kommandozeile: Was in
+Prozessargumenten steht, ist in `/proc/*/cmdline` für jeden lokalen Nutzer
+lesbar.
 
 ```bash
-sudo -u autotrd env $(grep -v '^#' /etc/autotrd/.env | xargs) AUTOTRD_HOME=/var/lib/autotrd \
-  node /opt/autotrd/dist/cli.js doctor --config /etc/autotrd/config.yaml
+sudo -u autotrd env AUTOTRD_HOME=/var/lib/autotrd \
+  node /opt/autotrd/dist/cli.js doctor --config /etc/autotrd/config.yaml --env /etc/autotrd/.env
 ```
 
 `doctor` prüft Keys (Präfix PK/AK gegen den Modus), Konto, Uhr, Kalender,
@@ -68,8 +71,8 @@ Tipp: Ein kleiner Wrapper spart die lange Zeile:
 ```bash
 sudo tee /usr/local/bin/autotrd >/dev/null <<'SH'
 #!/bin/sh
-exec sudo -u autotrd env $(grep -v '^#' /etc/autotrd/.env | xargs) AUTOTRD_HOME=/var/lib/autotrd \
-  node /opt/autotrd/dist/cli.js "$@" --config /etc/autotrd/config.yaml
+exec sudo -u autotrd env AUTOTRD_HOME=/var/lib/autotrd \
+  node /opt/autotrd/dist/cli.js "$@" --config /etc/autotrd/config.yaml --env /etc/autotrd/.env
 SH
 sudo chmod 755 /usr/local/bin/autotrd
 ```

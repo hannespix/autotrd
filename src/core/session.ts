@@ -42,8 +42,9 @@ export function buildSessionInfo(
   const end = inSession ? bucketEnd(t, tf, bounds) : t + tf * MIN;
   const minutesToClose = Math.max(0, Math.round((bounds.close - end) / MIN));
   const minutesSinceOpen = Math.max(0, Math.round((end - bounds.open) / MIN));
-  const nextIsOtherDay = i + 1 < bars.length ? dayKeyFor(bars.t[i + 1]!, assetClass) !== day : true;
-  const isLastBarOfDay = tf === 1440 || end >= bounds.close || (nextIsOtherDay && i + 1 < bars.length);
+  // Bewusst OHNE Blick auf bars.t[i + 1]: Die Sitzungs-Sicht darf nie von einer
+  // Bar abhängen, die es zum Entscheidungszeitpunkt noch nicht gibt.
+  const isLastBarOfDay = tf === 1440 || end >= bounds.close;
   return {
     isRegularSession: inSession,
     minutesToClose,

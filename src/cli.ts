@@ -30,7 +30,6 @@ import { Engine } from './engine/engine.ts';
 import { createNotifier } from './notify/index.ts';
 import { loadDefaultDeps, runOptimization } from './optimize/run.ts';
 import { assessReadiness } from './readiness.ts';
-import { resumeHalt } from './risk/limits.ts';
 import { startStatusServer } from './status/http.ts';
 import { getStrategy, strategyIds } from './strategy/index.ts';
 import { mergeParams, validateParams } from './strategy/params.ts';
@@ -47,10 +46,11 @@ Gemeinsame Optionen:
   --json             Maschinenlesbare Ausgabe (status, readiness, backtest)
 
 backtest:  --strategy <id> --params a=1,b=2 --days <n> --symbols A,B --from YYYY-MM-DD --to YYYY-MM-DD --stress <faktor> --equity <usd>
-optimize:  --equity <usd> --days <n>
+optimize:  --equity <usd>            (Zeitraum: optimizer.lookbackDays aus der Config)
 fetch:     --days <n>
+halt:      --reason <text>
 flatten:   --yes
-resume:    --ack-drawdown
+resume:    --ack-drawdown            (Drawdown-Halt bewusst aufheben; Peak = aktuelle Equity)
 `;
 
 interface Cli {
@@ -173,6 +173,11 @@ async function cmdDoctor(app: App): Promise<number> {
     ['Kalender', app.calendar ? `${app.calendar.size} Handelstage gecacht` : 'nicht gecacht (Fallback-Kalender)'],
   ];
   table(rows);
+  const streamSymbols = allSymbols(app.config).length;
+  if (app.config.broker.feed === 'iex' && streamSymbols > 30) {
+    out(`  WARNUNG: ${streamSymbols} Symbole (inkl. Benchmark) — der IEX-Datenstrom des Basis-Plans erlaubt 30. Die Subscription würde mit 405 scheitern.`);
+    hard++;
+  }
   out();
   out('Champion:');
   if (!app.champion) {
@@ -540,19 +545,14 @@ function cmdResume(app: App, cli: Cli): number {
       out(`Drawdown-Halt aktiv (${state.halt.note ?? ''}). Aufheben nur bewusst: autotrd resume --ack-drawdown (setzt den Peak auf die aktuelle Equity).`);
       return 1;
     }
-    const age = Date.now() - state.updatedAt;
-    if (age < 15_000) {
-      out('Die Engine schreibt den State gerade (läuft). Erst stoppen, dann resume — sonst überschreibt die Engine die Aufhebung.');
-      return 1;
-    }
-    const account = { equity: state.peakEquity, cash: 0, dayStartEquity: state.dayStartEquity, peakEquity: state.peakEquity, dayTradeCount: 0, patternDayTrader: false };
-    const r = resumeHalt(state.halt, account, Date.now(), `resume (${state.halt.reason}) durch Operator`);
-    state.halt = r.halt;
-    // Peak auf den letzten bekannten Stand setzen; die Engine korrigiert beim Start mit der echten Equity.
-    state.peakEquity = state.dayStartEquity;
-    app.state.save(state);
-    app.journal.append('resume', { note: r.halt.note });
-    out(`Halt aufgehoben (${r.halt.note}). Peak wird beim nächsten Engine-Start auf die aktuelle Equity gesetzt.`);
+    // Kein Schreiben in den State der (vielleicht laufenden) Engine: Der RESUME-Marker
+    // wird vom nächsten Tick bzw. beim nächsten Start verarbeitet — mit der echten
+    // Equity als neuem Peak und einem Journal-Eintrag. Damit gibt es kein Race und
+    // keine Rückmeldung, die mehr behauptet, als passiert ist.
+    const note = `resume (${state.halt.reason}) durch Operator ${new Date().toISOString()}`;
+    writeFileSync(join(app.home, 'RESUME'), note + '\n');
+    app.journal.append('note', { note: `RESUME-Marker gesetzt: ${note}` });
+    out(`RESUME-Marker gesetzt (${join(app.home, 'RESUME')}). Die Engine hebt den Halt beim nächsten Tick bzw. Start auf und setzt den Peak auf die aktuelle Equity.`);
   }
   return 0;
 }

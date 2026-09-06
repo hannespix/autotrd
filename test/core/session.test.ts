@@ -36,10 +36,12 @@ describe('buildSessionInfo (Aktien, 5 min)', () => {
     expect(last.barsSinceOpen).toBe(perDay);
   });
 
-  it('ein abgeschnittener Tag endet mit der letzten vorhandenen Bar, wenn ein neuer Tag folgt', () => {
+  it('blickt nie auf die Folgebar: ein abgeschnittener Tag gilt NICHT als beendet (kein Lookahead)', () => {
     const cut = BarSeries.from([...day5min(3, 12 * 60), ...day5min(4)]);
     const idx = day5min(3, 12 * 60).length - 1;
-    expect(buildSessionInfo(cut, idx, 5, 'us_equity').isLastBarOfDay).toBe(true);
+    const si = buildSessionInfo(cut, idx, 5, 'us_equity');
+    expect(si.isLastBarOfDay).toBe(false);
+    expect(si.minutesToClose).toBe(235);
   });
 
   it('Frühschluss laut Kalender', () => {

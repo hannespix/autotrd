@@ -9,17 +9,46 @@ import type { Metrics } from '../core/types.ts';
 
 export type ObjectiveId = OptimizerConfig['objective'];
 
+/** Endliche Objectives werden hierauf geklemmt — ±∞ bleibt Sentinel für "kein Beleg". */
+export const OBJECTIVE_CAP = 1e6;
 /**
- * Objective einer Metrik-Menge. Nicht berechenbar (null/NaN) und
- * 0 Trades ⇒ −Infinity, damit solche Kandidaten in jeder Rangfolge
- * ganz unten landen, ohne dass ein Aufrufer Sonderfälle prüfen muss.
+ * Fenster ohne Verlusttag bei positivem Mittel: Sortino wäre +∞ (Downside 0).
+ * Solche Fenster rangieren über jedem endlichen Sortino, untereinander nach
+ * Sharpe — die Basis liegt weit über realistischen Sortino-Werten.
+ */
+export const PERFECT_WINDOW_BASE = 1e5;
+
+function clamp(v: number): number {
+  if (v === -Infinity) return -Infinity;
+  return Math.max(-OBJECTIVE_CAP, Math.min(OBJECTIVE_CAP, v));
+}
+
+/**
+ * Sortino mit Rückfall: `sortinoRatio` liefert null ohne Verlusttag (Downside
+ * 0) — das ist der BESTE Fall, nicht der schlechteste. Red-Team-Befund: als
+ * −∞ zog ein perfekter Fold den Fold-Median nach unten und ein perfekter
+ * IS-Kandidat konnte nie `best` werden.
+ */
+function sortinoObjective(m: Metrics): number {
+  if (m.sortino !== null && Number.isFinite(m.sortino)) return m.sortino;
+  const sharpe = m.sharpe;
+  if (sharpe === null || !Number.isFinite(sharpe)) return m.netProfit > 0 ? OBJECTIVE_CAP : -Infinity;
+  if (sharpe > 0) return PERFECT_WINDOW_BASE + sharpe;
+  // Renditen ≥ 0 mit Mittel ≤ 0 gibt es nur als "alle null" (dann ist Sharpe null) — Sicherheitsnetz.
+  return sharpe;
+}
+
+/**
+ * Objective einer Metrik-Menge. 0 Trades ⇒ −Infinity (kein Beleg), damit
+ * solche Kandidaten in jeder Rangfolge ganz unten landen; nicht berechenbar
+ * (null/NaN) ebenso. Endliche Werte auf ±OBJECTIVE_CAP geklemmt.
  */
 export function objectiveValue(id: ObjectiveId, m: Metrics): number {
   if (!(m.trades > 0)) return -Infinity;
   let v: number | null;
   switch (id) {
     case 'sortino':
-      v = m.sortino;
+      v = sortinoObjective(m);
       break;
     case 'sharpe':
       v = m.sharpe;
@@ -31,7 +60,7 @@ export function objectiveValue(id: ObjectiveId, m: Metrics): number {
       break;
   }
   if (v === null || Number.isNaN(v)) return -Infinity;
-  return v;
+  return clamp(v);
 }
 
 /* ───────────────────────── Kleine Statistik-Helfer ───────────────────────── */

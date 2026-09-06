@@ -23,9 +23,20 @@
  * Einstiegs-Bar: Live sind die Bracket-Beine sofort aktiv, und jedes Hoch/
  * Tief der Bar liegt zeitlich NACH dem Open — ein Stop-Fill im Einstiegs-
  * Bar ergibt einen Trade mit barsHeld 0.
+ *
+ * Kein Market-on-Close: Auch ein Exit, der an der letzten Bar des Tages
+ * entschieden wird, füllt erst am Open der nächsten Bar desselben Symbols
+ * — mit Übernacht-Gap. Live ist die 16:00-Bar erst um 16:00:04 geschlossen,
+ * die Marktorder geht nach Börsenschluss raus und füllt am Folge-Open
+ * (Red-Team-Befund). Ohne Folgebar (Datenende) gibt es keinen Fill, nur
+ * eine Notiz.
+ *
+ * Bargeld: Das Sizing lief gegen das Bargeld zum Entscheidungs-Close; ein
+ * Gap-Open darf das Konto nicht ins Minus hebeln — Long-Fills werden gegen
+ * das Bargeld am Fill nachgesizet (0 Stück ⇒ kein Fill, Notiz).
  */
 import type { CostConfig, RiskConfig, SessionConfig } from '../core/config.ts';
-import { advancePosition, decide, openPosition, type LogicContext, type SymbolInput } from '../core/logic.ts';
+import { advancePosition, decide, openPosition, qtyStepFor, type LogicContext, type SymbolInput } from '../core/logic.ts';
 import {
   DAY,
   MIN,
@@ -311,15 +322,34 @@ export function simulate(input: SimInput): SimResult {
     }
   };
 
+  const cashReduced = new Map<string, number>();
+  const cashRejected = new Map<string, number>();
+  const bump = (m: Map<string, number>, k: string) => m.set(k, (m.get(k) ?? 0) + 1);
+
   const openFromIntent = (s: SymState, intent: EnterIntent, price: number, time: Ms): void => {
     const side: FillSide = intent.side === 'long' ? 'buy' : 'sell';
-    const cost = fillCosts({ side, qty: intent.qty, price, assetClass, costs, multiplier: mult }).total;
-    if (intent.side === 'long') cash -= intent.qty * price + cost;
-    else cash += intent.qty * price - cost;
+    let qty = intent.qty;
+    if (intent.side === 'long') {
+      // Stückzahl, die das Bargeld am Fill inkl. Kosten je Stück deckt — abgerundet auf die Stückelung.
+      const unitOutlay = price + fillCosts({ side, qty: 1, price, assetClass, costs, multiplier: mult }).total;
+      const step = qtyStepFor(assetClass);
+      const affordable = Number((Math.floor(cash / unitOutlay / step) * step).toFixed(8));
+      if (affordable < qty) {
+        if (affordable <= 0) {
+          bump(cashRejected, s.symbol);
+          return;
+        }
+        bump(cashReduced, s.symbol);
+        qty = affordable;
+      }
+    }
+    const cost = fillCosts({ side, qty, price, assetClass, costs, multiplier: mult }).total;
+    if (intent.side === 'long') cash -= qty * price + cost;
+    else cash += qty * price - cost;
     s.pos = openPosition({
       symbol: s.symbol,
       side: intent.side,
-      qty: intent.qty,
+      qty,
       fillPrice: price,
       fillTime: time,
       stop: intent.stop,
@@ -380,7 +410,6 @@ export function simulate(input: SimInput): SimResult {
 
   /* ── Hauptschleife ── */
   const here: SymState[] = [];
-  const sessions = new Map<string, SessionInfo>();
   for (let ti = 0; ti < times.length; ti++) {
     const t = times[ti]!;
     if (range && t >= range.end) break;
@@ -488,11 +517,9 @@ export function simulate(input: SimInput): SimResult {
     /* 4. Entscheidung — EIN Aufruf mit allen Symbolen (Portfolio-Sicht) */
     const benchSnap = bench && benchIdx >= 0 ? { bars: bench.prefix(benchIdx + 1), i: benchIdx } : undefined;
     const inputs: SymbolInput[] = [];
-    sessions.clear();
     for (const s of here) {
       const i = s.cursor - 1;
       const session = sessionInfoIncremental({ t, day, barsSinceOpen: s.barsSinceOpen, tf, assetClass, bounds });
-      sessions.set(s.symbol, session);
       const snap: SymbolSnapshot = { symbol: s.symbol, bars: s.series.prefix(i + 1), i, position: s.pos, session, benchmark: benchSnap };
       inputs.push({ snap, strategy: s.strategy, params: s.params, ind: s.ind });
     }
@@ -523,7 +550,6 @@ export function simulate(input: SimInput): SimResult {
         haltNote(`${new Date(now).toISOString()} Halt: ${n.text}`);
       }
     }
-    let mocFilled = false;
     for (const it of res.intents) {
       const s = bySymbol.get(it.symbol);
       if (!s) continue;
@@ -531,18 +557,12 @@ export function simulate(input: SimInput): SimResult {
         s.pendingEnter = it;
         pendingEntries.add(s.symbol);
       } else if (it.kind === 'exit') {
-        // Letzte Bar des Tages: kein Folge-Open mehr ⇒ Market-on-Close am Schluss dieser Bar.
-        if (s.pos && sessions.get(s.symbol)?.isLastBarOfDay) {
-          closeTrade(s, s.lastClose, now, it.reason, true);
-          mocFilled = true;
-        } else {
-          s.pendingExit = it;
-        }
+        // Auch an der letzten Tagesbar: Fill erst am nächsten Open (kein Market-on-Close, siehe Kopf).
+        s.pendingExit = it;
       } else {
         s.pendingStop = it.stop;
       }
     }
-    if (mocFilled) markEquity();
     equityCurve.push({ t, equity });
     dayCloseEquity = equity;
     dayHadPoints = true;
@@ -556,9 +576,11 @@ export function simulate(input: SimInput): SimResult {
     if (s.pos) {
       const p = s.pos;
       const unreal = (p.side === 'long' ? s.lastClose - p.entryPrice : p.entryPrice - s.lastClose) * p.qty;
-      notes.push(`Offen am Ende: ${p.symbol} ${p.side} ${p.qty} @ ${p.entryPrice} (unrealisiert ${unreal.toFixed(2)})`);
+      notes.push(`Offen am Ende: ${p.symbol} ${p.side} ${p.qty} @ ${p.entryPrice} (unrealisiert ${unreal.toFixed(2)}, ohne Exit-Kosten)`);
     }
   }
+  for (const [sym, n] of cashRejected) notes.push(`Bargeld reicht am Fill nicht: ${sym} ×${n} (kein Fill)`);
+  for (const [sym, n] of cashReduced) notes.push(`Stückzahl am Fill reduziert (Bargeld): ${sym} ×${n}`);
   if (blocked.size > 0) {
     const parts = [...blocked.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ×${n}`);
     notes.push(`Blockierte Einstiege: ${parts.join(', ')}`);

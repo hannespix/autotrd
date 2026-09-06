@@ -334,6 +334,101 @@ describe('DataStream', () => {
     expect(logLines.some((l) => l.includes('kaputter Status-Callback'))).toBe(true);
   });
 
+  it('Fehler-Frame auf subscribe (405) ⇒ subscribeBars lehnt mit Code + Text ab; Verbindung bleibt; Symbole gelten als nicht abonniert', async () => {
+    const h = harness();
+    const stream = createDataStream({ ...h.opts, feed: 'iex', assetClass: 'us_equity' });
+    stream.onStatus((ev) => h.statuses.push(ev));
+    void stream.connect();
+    const ws = h.sockets[0]!;
+    await dataAuth(ws);
+    const sub = stream.subscribeBars(['AAPL', 'MSFT']);
+    sub.catch(() => {});
+    await flush();
+    ws.serverSend([{ T: 'error', code: 405, msg: 'symbol limit exceeded' }]);
+    await expect(sub).rejects.toThrow(/405.*symbol limit exceeded/);
+    expect(ws.closeCalls).toBe(0);
+    expect(h.statuses[h.statuses.length - 1]).toMatchObject({ status: 'error' });
+    // Nach einem Reconnect werden die abgelehnten Symbole NICHT nachgeholt …
+    ws.serverClose();
+    await flush();
+    const ws2 = h.sockets[1]!;
+    await dataAuth(ws2);
+    expect(ws2.frames()).toEqual([{ action: 'auth', key: KEY, secret: SECRET }]);
+    // … ein neuer Versuch ist aber möglich.
+    const again = stream.subscribeBars(['AAPL']);
+    expect(ws2.frames()[1]).toEqual({ action: 'subscribe', bars: ['AAPL'] });
+    ws2.serverSend([{ T: 'subscription', bars: ['AAPL'] }]);
+    await again;
+  });
+
+  it('Timeout (injizierbar): connect() und subscribeBars() lehnen ohne Bestätigung ab; Verbindung und Reconnect bleiben unberührt', async () => {
+    const h = harness();
+    const stream = createDataStream({ ...h.opts, feed: 'iex', assetClass: 'us_equity', timeoutMs: 20 });
+    stream.onStatus((ev) => h.statuses.push(ev));
+    const connected = stream.connect();
+    connected.catch(() => {});
+    const ws = h.sockets[0]!;
+    ws.open();
+    ws.serverSend([{ T: 'success', msg: 'connected' }]);
+    await flush();
+    // Der Server bestätigt die Auth nie.
+    await expect(connected).rejects.toThrow(/connect\(\) ohne Bestätigung nach 20 ms/);
+    expect(ws.closeCalls).toBe(0);
+    expect(h.sleeps).toHaveLength(0);
+    // Eine späte Auth wird trotzdem verarbeitet; ein neues connect() ist dann sofort erfüllt.
+    ws.serverSend([{ T: 'success', msg: 'authenticated' }]);
+    await flush();
+    expect(h.statusList()).toContain('authenticated');
+    await stream.connect();
+    const sub = stream.subscribeBars(['AAPL']);
+    sub.catch(() => {});
+    await expect(sub).rejects.toThrow(/subscribe AAPL ohne Bestätigung nach 20 ms/);
+    // Symbol gilt als nicht abonniert: ein zweiter Versuch sendet erneut.
+    const again = stream.subscribeBars(['AAPL']);
+    expect(ws.frames().filter((f) => f.action === 'subscribe')).toHaveLength(2);
+    ws.serverSend([{ T: 'subscription', bars: ['AAPL'] }]);
+    await again;
+  });
+
+  it('erster Auth-Fehler ⇒ connect() lehnt sofort ab (Daten- und Trade-Stream); Reconnect läuft weiter', async () => {
+    const h = harness();
+    const stream = createDataStream({ ...h.opts, feed: 'iex', assetClass: 'us_equity', timeoutMs: 500 });
+    const connected = stream.connect();
+    connected.catch(() => {});
+    const ws = h.sockets[0]!;
+    ws.open();
+    ws.serverSend([{ T: 'success', msg: 'connected' }]);
+    await flush();
+    ws.serverSend([{ T: 'error', code: 402, msg: 'auth failed' }]);
+    await expect(connected).rejects.toThrow(/Auth fehlgeschlagen \(1\/3\).*402.*auth failed/);
+    await flush();
+    expect(h.sockets).toHaveLength(2);
+    expect(h.sleeps).toHaveLength(1);
+
+    const t = harness();
+    const trade = createTradeStream({ ...t.opts, mode: 'paper', timeoutMs: 500 });
+    const tc = trade.connect();
+    tc.catch(() => {});
+    t.sockets[0]!.open();
+    t.sockets[0]!.serverSend({ stream: 'authorization', data: { status: 'unauthorized', message: 'access key verification failed' } });
+    await expect(tc).rejects.toThrow(/unauthorized.*access key verification failed/);
+    await flush();
+    expect(t.sockets).toHaveLength(2);
+  });
+
+  it('Fehler-Frame in der Auth-Phase (406) ⇒ connect() lehnt mit Code ab; ob die Verbindung fällt, entscheidet der Server', async () => {
+    const h = harness();
+    const stream = createDataStream({ ...h.opts, feed: 'iex', assetClass: 'us_equity', timeoutMs: 500 });
+    const connected = stream.connect();
+    connected.catch(() => {});
+    const ws = h.sockets[0]!;
+    ws.open();
+    ws.serverSend([{ T: 'error', code: 406, msg: 'connection limit exceeded' }]);
+    await expect(connected).rejects.toThrow(/406.*connection limit exceeded/);
+    expect(ws.closeCalls).toBe(0);
+    expect(h.sockets).toHaveLength(1);
+  });
+
   it('close(): Socket zu, Status disconnected, kein Reconnect', async () => {
     const h = harness();
     const stream = createDataStream({ ...h.opts, feed: 'iex', assetClass: 'us_equity' });

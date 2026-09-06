@@ -73,6 +73,22 @@ describe('checkHalt', () => {
     expect(checkHalt({ ...inp, halt: dd, today: '2027-01-01', account: acc() }).halt.halted).toBe(true);
   });
 
+  it('misst auch im Halt weiter und eskaliert (HALT-Datei darf die Notbremse nicht abschalten)', () => {
+    const manual: HaltState = { halted: true, reason: 'manual', since: 1, until: null, note: null };
+    const r = checkHalt({ ...inp, halt: manual, account: acc({ equity: 9_500 }) });
+    expect(r.triggered).toBe(true);
+    expect(r.halt.reason).toBe('daily_loss');
+    // im Tages-Halt löst derselbe Tagesverlust nicht erneut aus, ein Drawdown aber schon
+    const day: HaltState = { halted: true, reason: 'daily_loss', since: 1, until: '2026-09-08', note: null };
+    expect(checkHalt({ ...inp, halt: day, account: acc({ equity: 9_500 }) }).triggered).toBe(false);
+    const esc = checkHalt({ ...inp, halt: day, account: acc({ equity: 8_900, peakEquity: 10_000 }) });
+    expect(esc.triggered).toBe(true);
+    expect(esc.halt.reason).toBe('drawdown');
+    // im Drawdown-Halt wird nichts mehr eskaliert
+    const dd: HaltState = { halted: true, reason: 'drawdown', since: 1, until: null, note: null };
+    expect(checkHalt({ ...inp, halt: dd, account: acc({ equity: 5_000, peakEquity: 10_000 }) }).triggered).toBe(false);
+  });
+
   it('resumeHalt setzt den Peak neu', () => {
     const dd: HaltState = { halted: true, reason: 'drawdown', since: 1, until: null, note: null };
     const r = resumeHalt(dd, acc({ equity: 9_000, peakEquity: 10_000 }), 2, 'Owner');

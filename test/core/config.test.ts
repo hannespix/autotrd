@@ -31,8 +31,18 @@ describe('parseConfig', () => {
     expect(() => parseConfig({ universe: { symbols: [] } })).toThrow(ConfigError);
   });
 
-  it('OOS-Lücken (stepDays > oosDays) sind verboten', () => {
+  it('stepDays muss gleich oosDays sein (weder Lücken noch Doppelzählung)', () => {
     expect(() => parseConfig({ ...minimal, optimizer: { oosDays: 30, stepDays: 45 } })).toThrow(/stepDays/);
+    expect(() => parseConfig({ ...minimal, optimizer: { oosDays: 30, stepDays: 10 } })).toThrow(/stepDays/);
+    expect(parseConfig({ ...minimal, optimizer: { oosDays: 20, stepDays: 20 } }).optimizer.stepDays).toBe(20);
+  });
+
+  it('normalisiert Symbole auf die Alpaca-Schreibweise und entfernt Duplikate', () => {
+    const cfg = parseConfig({ universe: { symbols: ['brk-b', 'aapl', 'AAPL'], benchmark: 'spy' } });
+    expect(cfg.universe.symbols).toEqual(['BRK.B', 'AAPL']);
+    expect(cfg.universe.benchmark).toBe('SPY');
+    const crypto = parseConfig({ universe: { assetClass: 'crypto', symbols: ['btcusd', 'ETH-USD'] } });
+    expect(crypto.universe.symbols).toEqual(['BTC/USD', 'ETH/USD']);
   });
 });
 

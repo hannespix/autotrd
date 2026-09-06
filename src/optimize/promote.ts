@@ -1,9 +1,14 @@
 /**
  * Champion/Challenger: Wer darf live handeln? Der Champion je Symbol steht
  * in `champion.json`; ein Kandidat ersetzt ihn nur, wenn er die Gates
- * besteht UND den amtierenden Champion — auf DENSELBEN OOS-Folds neu
- * bewertet — um eine Marge schlägt. "Kein Handel" ist ein vollwertiger
- * Zustand (`noTrade`), kein Fehlerfall.
+ * besteht UND den amtierenden Champion — auf SAUBEREM OOS neu bewertet —
+ * um eine Marge schlägt. "Kein Handel" ist ein vollwertiger Zustand
+ * (`noTrade`), kein Fehlerfall.
+ *
+ * Sauber heißt: nur OOS-Folds, die NACH dem Fit-Fenster des Champions
+ * beginnen (`fitEnd`). Red-Team-Befund: finalParams entstehen auf dem
+ * letzten Suchfenster; beim Folgelauf liegen die meisten OOS-Folds genau
+ * dort — ein Re-Score darauf wäre In-Sample.
  */
 import type { Journal } from '../core/journal.ts';
 import { readJson, writeJsonAtomic } from '../core/journal.ts';
@@ -22,6 +27,13 @@ export interface ChampionEntry {
   decidedAt: Ms;
   trials: number;
   dataRange: TimeRange;
+  /** Ende des Fensters, aus dem `params` stammen — OOS davor ist für den Re-Score tabu. Fehlt es (alte Datei): decidedAt. */
+  fitEnd?: Ms;
+}
+
+/** Fit-Ende eines Champions; alte Dateien ohne Feld: Beförderungszeitpunkt (konservativ). */
+export function fitEndOf(entry: ChampionEntry): Ms {
+  return entry.fitEnd ?? entry.decidedAt;
 }
 
 export interface NoTradeEntry {
@@ -68,8 +80,14 @@ export interface PromotionDecision {
 
 export interface PromotionInput {
   incumbent: ChampionEntry | null;
-  /** Score der Incumbent-Params auf denselben OOS-Folds JETZT; null = nicht bewertbar (Strategie/Zeitrahmen unbekannt). */
+  /**
+   * Score des Amtsinhabers JETZT: OOS-Median auf sauberen Folds nach fitEnd;
+   * bei zu wenig sauberem OOS der Beförderungs-Score; null = nicht bewertbar
+   * (Strategie/Zeitrahmen unbekannt).
+   */
   incumbentRescore: number | null;
+  /** Gates des Amtsinhabers auf sauberem OOS: true/false; null = nicht geprüft (zu wenig sauberes OOS oder nicht bewertbar). */
+  incumbentPass: boolean | null;
   candidate: { entry: ChampionEntry; pass: boolean } | null;
   /** Kandidat muss den Incumbent um diesen Faktor schlagen (0.1 = 10 %). */
   margin: number;
@@ -79,51 +97,64 @@ const f3 = (x: number | null): string => (x === null ? '–' : x === -Infinity ?
 
 /**
  * Regeln (eine Änderung je Symbol je Lauf):
- * - Kandidat besteht: ohne Incumbent ⇒ promote; sonst nur, wenn
- *   score ≥ rescore × (1 + margin) — bei rescore ≤ 0 (oder nicht bewertbar)
- *   reicht score > 0; sonst keep.
- * - Kandidat fällt durch (oder fehlt): Incumbent mit rescore > 0 ⇒ keep;
- *   Incumbent mit rescore ≤ 0 ⇒ demote_to_notrade; kein Incumbent ⇒ stay_notrade.
+ * - Kandidat besteht: ohne Incumbent ⇒ promote; Incumbent reißt die Gates ⇒
+ *   promote; sonst nur, wenn score ≥ rescore × (1 + margin) — bei rescore ≤ 0
+ *   (oder nicht bewertbar) reicht score > 0; sonst keep.
+ * - Kandidat fällt durch (oder fehlt): Incumbent reißt die Gates ⇒
+ *   demote_to_notrade; Incumbent mit rescore > 0 ⇒ keep (auch ungeprüft bei zu
+ *   wenig sauberem OOS); rescore ≤ 0 oder nicht bewertbar ⇒ demote_to_notrade;
+ *   kein Incumbent ⇒ stay_notrade.
  */
 export function decidePromotion(a: PromotionInput): PromotionDecision {
-  const { incumbent, incumbentRescore, candidate, margin } = a;
+  const { incumbent, incumbentRescore, incumbentPass, candidate, margin } = a;
   const cand = candidate && candidate.pass ? candidate.entry : null;
 
   if (cand) {
     if (!incumbent) {
       return { action: 'promote', reason: `erste Beförderung: ${cand.strategy} besteht alle Gates (Score ${f3(cand.score)})` };
     }
+    if (incumbentPass === false) {
+      return {
+        action: 'promote',
+        reason: `Incumbent ${incumbent.strategy} reißt die Gates auf sauberem OOS (Score ${f3(incumbentRescore)}); Kandidat ${cand.strategy} besteht sie (Score ${f3(cand.score)})`,
+      };
+    }
     const rescore = incumbentRescore;
     if (rescore === null || rescore <= 0) {
       if (cand.score > 0) {
         return {
           action: 'promote',
-          reason: `Incumbent ${incumbent.strategy} liefert auf den aktuellen Folds ${rescore === null ? 'keinen bewertbaren' : `Score ${f3(rescore)} ≤ 0`}, Kandidat ${cand.strategy} Score ${f3(cand.score)} > 0`,
+          reason: `Incumbent ${incumbent.strategy} liefert ${rescore === null ? 'keinen bewertbaren Score' : `Score ${f3(rescore)} ≤ 0`}, Kandidat ${cand.strategy} Score ${f3(cand.score)} > 0`,
         };
       }
       return { action: 'keep', reason: `Kandidat ${cand.strategy} besteht die Gates, aber Score ${f3(cand.score)} ≤ 0 — Incumbent bleibt` };
     }
     const needed = rescore * (1 + margin);
+    const basis = incumbentPass === null ? 'Beförderungs-Score, kein sauberes OOS' : 'sauberes OOS';
     if (cand.score >= needed) {
       return {
         action: 'promote',
-        reason: `Kandidat ${cand.strategy} Score ${f3(cand.score)} ≥ ${f3(needed)} (Incumbent ${incumbent.strategy} ${f3(rescore)} × ${(1 + margin).toFixed(2)})`,
+        reason: `Kandidat ${cand.strategy} Score ${f3(cand.score)} ≥ ${f3(needed)} (Incumbent ${incumbent.strategy} ${f3(rescore)} × ${(1 + margin).toFixed(2)}, ${basis})`,
       };
     }
     return {
       action: 'keep',
-      reason: `Kandidat ${cand.strategy} Score ${f3(cand.score)} < ${f3(needed)} (Incumbent ${incumbent.strategy} ${f3(rescore)} × ${(1 + margin).toFixed(2)}) — Marge nicht erreicht`,
+      reason: `Kandidat ${cand.strategy} Score ${f3(cand.score)} < ${f3(needed)} (Incumbent ${incumbent.strategy} ${f3(rescore)} × ${(1 + margin).toFixed(2)}, ${basis}) — Marge nicht erreicht`,
     };
   }
 
   const why = candidate ? `bester Kandidat ${candidate.entry.strategy} (Score ${f3(candidate.entry.score)}) fällt durch die Gates` : 'kein bewertbarer Kandidat';
   if (incumbent) {
+    if (incumbentPass === false) {
+      return { action: 'demote_to_notrade', reason: `${why}; Incumbent ${incumbent.strategy} reißt die Gates auf sauberem OOS (Score ${f3(incumbentRescore)}) — kein Handel` };
+    }
     if (incumbentRescore !== null && incumbentRescore > 0) {
-      return { action: 'keep', reason: `${why}; Incumbent ${incumbent.strategy} hält Score ${f3(incumbentRescore)} > 0 auf den aktuellen Folds` };
+      const how = incumbentPass === true ? 'besteht die Gates auf sauberem OOS' : 'ungeprüft (zu wenig sauberes OOS), Beförderungs-Score gilt weiter';
+      return { action: 'keep', reason: `${why}; Incumbent ${incumbent.strategy} hält Score ${f3(incumbentRescore)} > 0 — ${how}` };
     }
     return {
       action: 'demote_to_notrade',
-      reason: `${why}; Incumbent ${incumbent.strategy} ${incumbentRescore === null ? 'nicht mehr bewertbar' : `Score ${f3(incumbentRescore)} ≤ 0 auf den aktuellen Folds`} — kein Handel`,
+      reason: `${why}; Incumbent ${incumbent.strategy} ${incumbentRescore === null ? 'nicht mehr bewertbar' : `Score ${f3(incumbentRescore)} ≤ 0 auf sauberem OOS`} — kein Handel`,
     };
   }
   return { action: 'stay_notrade', reason: `${why}; kein Champion — kein Handel` };
@@ -177,6 +208,7 @@ export function journalDecision(
     candidate: ChampionEntry | null;
     candidatePass: boolean;
     incumbentRescore: number | null;
+    incumbentPass?: boolean | null | undefined;
     now: Ms;
   },
 ): void {
@@ -188,10 +220,12 @@ export function journalDecision(
       reason: a.decision.reason,
       strategy: a.chosen?.strategy ?? null,
       params: a.chosen?.params ?? null,
+      fitEnd: a.chosen ? fitEndOf(a.chosen) : null,
       candidateStrategy: a.candidate?.strategy ?? null,
       candidateScore: finiteOrNull(a.candidate?.score),
       candidatePass: a.candidatePass,
       incumbentRescore: finiteOrNull(a.incumbentRescore),
+      incumbentPass: a.incumbentPass ?? null,
     },
     a.now,
   );

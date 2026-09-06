@@ -243,20 +243,55 @@ describe('EOD-Flatten', () => {
     expect(res.metrics.exposurePct).toBeCloseTo((155 / 156) * 100, 9);
   });
 
-  it('flattenBeforeCloseMin=0: Exit an der letzten Bar als Market-on-Close am Close dieser Bar', () => {
+  it('Exit an der letzten Tagesbar füllt am Open des nächsten Handelstags (Übernacht-Gap) — nie am Close', () => {
+    // flattenBeforeCloseMin=0 ⇒ EOD-Entscheidung erst an der 15:55-Bar; live geht die Order nach 16:00 raus.
     const cfg0 = baseConfig({ session: { flattenBeforeCloseMin: 0, noEntryLastMin: 30 } });
     const res = simulate({
-      bars: barsMap({ AAA: fullDay5(D1, 100, { 77: [100, 101, 99, 101] }) }),
+      bars: barsMap({ AAA: [...fullDay5(D1, 100, { 77: [100, 101, 99, 101] }), ...fullDay5(D2, 95)] }),
       strategyFor: () => ({ strategy: alwaysLong(false), params: {} }),
       config: cfg0,
       initialEquity: 100_000,
     });
-    expect(res.trades).toHaveLength(1);
+    expect(res.trades.length).toBeGreaterThanOrEqual(1);
     const t = res.trades[0]!;
     expect(t.exitReason).toBe('eod');
-    expect(t.exitPrice).toBe(101);
-    expect(t.exitTime).toBe(msFromET(2026, 9, 1, 16, 0));
-    expect(res.finalEquity).toBeCloseTo(100_000 + t.netPnl, 6);
+    expect(t.exitPrice).toBe(95);
+    expect(t.exitTime).toBe(msFromET(2026, 9, 2, 9, 30));
+    expect(dayKeyFor(t.entryTime, 'us_equity')).toBe(D1);
+    const sumNet = res.trades.reduce((a, x) => a + x.netPnl, 0);
+    const open = res.notes.some((n) => n.startsWith('Offen am Ende'));
+    if (!open) expect(res.finalEquity).toBeCloseTo(100_000 + sumNet, 6);
+  });
+
+  it('Signal-Exit an der letzten Tagesbar ohne Folgetag: kein Fill, Position bleibt offen (Notiz)', () => {
+    const cfg0 = baseConfig({ session: { flattenBeforeCloseMin: 0 } });
+    const res = simulate({
+      bars: barsMap({ AAA: fullDay5(D1, 100) }),
+      strategyFor: () => ({ strategy: alwaysLong(false), params: {} }),
+      config: cfg0,
+      initialEquity: 100_000,
+    });
+    expect(res.trades).toHaveLength(0);
+    expect(res.notes.some((n) => n.includes('Exit AAA (eod) ohne Folgebar'))).toBe(true);
+    expect(res.notes.some((n) => n.includes('ohne Exit-Kosten'))).toBe(true);
+  });
+
+  it('Tagesbars: Signal-Exit füllt am Open des Folgetags, nicht am Close der Entscheidungs-Bar', () => {
+    const days = [D1, D2, D3, '2026-09-04'];
+    const bars = days.map((day, k) => {
+      const { y, m, d } = { y: 2026, m: 9, d: Number(day.slice(-2)) };
+      const [o, c] = k === 2 ? [100, 110] : [100, 100];
+      return { t: msFromET(y, m, d, 9, 30), o, h: Math.max(o, c), l: Math.min(o, c), c, v: 1_000 };
+    });
+    const res = simulate({
+      bars: barsMap({ AAA: bars }),
+      strategyFor: () => ({ strategy: enterAt(0, { stop: 50, exitAt: 2 }), params: {} }),
+      config: baseConfig({ timeframe: 1440 }),
+      initialEquity: 100_000,
+    });
+    expect(res.trades).toHaveLength(1);
+    expect(res.trades[0]!.exitTime).toBe(msFromET(2026, 9, 4, 9, 30));
+    expect(res.trades[0]!.exitPrice).toBe(100);
   });
 });
 
@@ -327,6 +362,37 @@ describe('Buchhaltung', () => {
     expect(compounded).toBeCloseTo(res.finalEquity, 6);
     expect(res.metrics.trades).toBe(res.trades.length);
     expect(res.metrics.days).toBe(3);
+  });
+
+  it('Gap-Open über dem Entscheidungs-Close: Stückzahl wird gegen das Bargeld am Fill nachgesizet', () => {
+    const ohlc = flat(78, 100);
+    ohlc[1] = [120, 121, 119, 120];
+    const strategy = strategyOf({
+      decide: (snap) => (snap.position ? { kind: 'hold' } : { kind: 'enter', side: 'long', stop: snap.bars.c[snap.i]! * 0.95, reason: 'always' }),
+    });
+    const res = simulate({
+      bars: barsMap({ AAA: dayBars5(D1, ohlc) }),
+      strategyFor: () => ({ strategy, params: {} }),
+      config: baseConfig({ risk: { riskPerTradePct: 5, maxPositionPct: 100, maxGrossExposurePct: 100 } }),
+      initialEquity: 10_000,
+    });
+    const t = res.trades[0]!;
+    expect(t.entryPrice).toBe(120);
+    // 10 000 / (120 + 120·5 bps) = 83,29 ⇒ 83 Stück; das Bargeld bleibt ≥ 0.
+    expect(t.qty).toBe(83);
+    expect(83 * 120 + fillCosts({ side: 'buy', qty: 83, price: 120, assetClass: 'us_equity', costs: C, multiplier: 1 }).total).toBeLessThanOrEqual(10_000);
+    expect(res.notes.some((n) => n.startsWith('Stückzahl am Fill reduziert (Bargeld): AAA ×1'))).toBe(true);
+    const sumNet = res.trades.reduce((a, x) => a + x.netPnl, 0);
+    expect(res.finalEquity).toBeCloseTo(10_000 + sumNet, 6);
+  });
+
+  it('reicht das Bargeld am Fill für kein einziges Stück ⇒ kein Fill, Notiz', () => {
+    const ohlc = flat(6, 100);
+    ohlc[2] = [30_000, 30_000, 30_000, 30_000];
+    const res = run({ bars: barsMap({ AAA: dayBars5(D1, ohlc) }), strategy: enterAt(1, { stop: 95 }), initialEquity: 10_000 });
+    expect(res.trades).toHaveLength(0);
+    expect(res.notes.some((n) => n.startsWith('Bargeld reicht am Fill nicht: AAA ×1'))).toBe(true);
+    expect(res.finalEquity).toBe(10_000);
   });
 
   it('costMultiplier 2 verdoppelt die Kosten identischer Trades', () => {

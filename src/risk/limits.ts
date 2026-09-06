@@ -48,10 +48,11 @@ export function checkHalt(inp: HaltCheckInput): HaltCheckResult {
     lifted = true;
   }
 
-  if (halt.halted) return { halt, triggered: false, lifted };
-
+  // Die Messung läuft IMMER — auch im Halt (HALT-Datei, Abgleich, Fehlerserie). Ein
+  // bestehender Halt sperrt nur Einstiege; die Notbremsen müssen weiterhin glattstellen
+  // können. Eskaliert wird nur zu einem strengeren Grund (drawdown > daily_loss > Rest).
   const dd = drawdownPct(inp.account);
-  if (inp.risk.maxDrawdownPct > 0 && dd >= inp.risk.maxDrawdownPct) {
+  if (inp.risk.maxDrawdownPct > 0 && dd >= inp.risk.maxDrawdownPct && halt.reason !== 'drawdown') {
     return {
       halt: {
         halted: true,
@@ -66,7 +67,7 @@ export function checkHalt(inp: HaltCheckInput): HaltCheckResult {
   }
 
   const dl = dailyLossPct(inp.account);
-  if (inp.risk.maxDailyLossPct > 0 && dl <= -inp.risk.maxDailyLossPct) {
+  if (inp.risk.maxDailyLossPct > 0 && dl <= -inp.risk.maxDailyLossPct && halt.reason !== 'drawdown' && halt.reason !== 'daily_loss') {
     return {
       halt: {
         halted: true,

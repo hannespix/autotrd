@@ -11,6 +11,11 @@
  *    Stück ist Schluss (Status 'error' mit Detail) — falsche Keys werden
  *    durch Wiederholen nicht richtig.
  *  - close() beendet endgültig, ohne Reconnect.
+ *  - Nichts wartet ewig: connect() und subscribeBars() lehnen ab, wenn der
+ *    Server mit einem Fehler-Frame antwortet (Code + Text) oder die Antwort
+ *    nach timeoutMs (15 s) ausbleibt. Ein hängendes Warten hier hieße: die
+ *    Engine setzt nie ihre Timer — der Prozess sieht lebendig aus und tut
+ *    nichts (Security-Befund #5). Der Reconnect läuft davon unberührt weiter.
  *  - Callbacks laufen in try/catch: Ein werfender Callback darf den Strom
  *    nicht abreißen lassen.
  *
@@ -19,7 +24,7 @@
  * Empfangsreihenfolge verarbeitet.
  */
 import type { AssetClass, Bar, Ms } from '../core/types.ts';
-import { errMsg, logger } from '../core/log.ts';
+import { errMsg, logger, registerSecret } from '../core/log.ts';
 import type { DataStream, StreamStatus, StreamStatusEvent, TradeStream, TradeUpdate } from './types.ts';
 import { isObject, mapBar, mapTradeUpdate, toStr, type RawObject } from './raw.ts';
 
@@ -39,6 +44,8 @@ export interface StreamOptions {
   sleep?: (ms: number) => Promise<void>;
   /** Obergrenze des Reconnect-Backoffs (Default 30 000). */
   maxBackoffMs?: number;
+  /** Wartezeit für connect()/subscribeBars() auf die Server-Bestätigung (Default 15 000). */
+  timeoutMs?: number;
 }
 
 export type DataStreamOptions = StreamOptions & { feed: 'iex' | 'sip'; assetClass: AssetClass };
@@ -56,6 +63,7 @@ export const TRADE_STREAM_URL: Record<'paper' | 'live', string> = {
 
 const BASE_BACKOFF_MS = 1_000;
 const DEFAULT_MAX_BACKOFF_MS = 30_000;
+const DEFAULT_TIMEOUT_MS = 15_000;
 const JITTER_MS = 500;
 const MAX_AUTH_FAILURES = 3;
 /** Daten-Stream-Fehlercodes, die Auth bedeuten (401 nicht authentifiziert, 402 Auth fehlgeschlagen, 403 bereits authentifiziert). */
@@ -72,9 +80,12 @@ interface Session {
   subscribed(): void;
   /** Der Strom ist für den Aufrufer benutzbar — löst connect() ein. */
   ready(): void;
-  /** Auth-Fehler: zählt; ab dem dritten endgültig. Schließt die Verbindung. */
+  /** Auth-Fehler: zählt; ab dem dritten endgültig. Schließt die Verbindung, lehnt wartende connect() ab. */
   authFailed(detail: string): void;
-  /** Sonstiger Protokollfehler: nur melden — ob die Verbindung fällt, entscheidet der Server. */
+  /**
+   * Sonstiger Protokollfehler: melden und wartende connect() ablehnen — ob
+   * die Verbindung fällt, entscheidet der Server.
+   */
   protocolError(detail: string): void;
 }
 
@@ -93,11 +104,20 @@ interface CoreOptions {
   now: () => number;
   sleep: (ms: number) => Promise<void>;
   maxBackoffMs: number;
+  timeoutMs: number;
 }
 
 interface Waiter {
   resolve: () => void;
   reject: (e: Error) => void;
+  timer: NodeJS.Timeout | null;
+}
+
+/** Timer, der den Prozess nicht am Leben hält — die Verbindung selbst tut das schon. */
+function startTimer(ms: number, fn: () => void): NodeJS.Timeout {
+  const timer = setTimeout(fn, ms);
+  timer.unref();
+  return timer;
 }
 
 interface StreamCore {
@@ -143,6 +163,7 @@ function createCore(name: string, adapter: ProtocolAdapter, opts: CoreOptions): 
   let authFailures = 0;
   let isAuthenticated = false;
   let lastMsgAt: Ms | null = null;
+  let lastStatus: StreamStatus = 'disconnected';
   let queue: Promise<void> = Promise.resolve(); // Nachrichten strikt in Empfangsreihenfolge
   const statusCbs: ((ev: StreamStatusEvent) => void)[] = [];
   const connectWaiters: Waiter[] = [];
@@ -156,6 +177,7 @@ function createCore(name: string, adapter: ProtocolAdapter, opts: CoreOptions): 
   }
 
   function emitStatus(status: StreamStatus, detail?: string): void {
+    lastStatus = status;
     const ev: StreamStatusEvent = detail === undefined ? { status, at: opts.now() } : { status, detail, at: opts.now() };
     logger.debug(`${name}: ${status}`, detail === undefined ? {} : { detail });
     for (const cb of statusCbs) safeCall(() => cb(ev), 'Status-Callback');
@@ -164,6 +186,7 @@ function createCore(name: string, adapter: ProtocolAdapter, opts: CoreOptions): 
   function settleWaiters(err: Error | null): void {
     const waiters = connectWaiters.splice(0);
     for (const w of waiters) {
+      if (w.timer) clearTimeout(w.timer);
       if (err) w.reject(err);
       else w.resolve();
     }
@@ -205,7 +228,10 @@ function createCore(name: string, adapter: ProtocolAdapter, opts: CoreOptions): 
           settleWaiters(new Error(`${name}: ${msg}`));
           return;
         }
-        emitStatus('error', `Auth fehlgeschlagen (${authFailures}/${MAX_AUTH_FAILURES}): ${detail}`);
+        const msg = `Auth fehlgeschlagen (${authFailures}/${MAX_AUTH_FAILURES}): ${detail}`;
+        emitStatus('error', msg);
+        // Wer auf connect() wartet, erfährt es sofort — der Reconnect läuft trotzdem weiter.
+        settleWaiters(new Error(`${name}: ${msg}`));
         // Der Server trennt nach Auth-Fehlern ohnehin; wir warten nicht darauf.
         teardown(gen, sock, detail);
       },
@@ -213,6 +239,8 @@ function createCore(name: string, adapter: ProtocolAdapter, opts: CoreOptions): 
         if (gen !== generation) return;
         logger.warn(`${name}: Protokollfehler`, { detail });
         emitStatus('error', detail);
+        // Ein Fehler-Frame während der Auth-/Listen-Phase: connect() nicht hängen lassen.
+        settleWaiters(new Error(`${name}: ${detail}`));
       },
     };
   }
@@ -316,7 +344,15 @@ function createCore(name: string, adapter: ProtocolAdapter, opts: CoreOptions): 
       // Sofort erfüllt nur bei stehender, authentifizierter Verbindung; während eines
       // Reconnects wartet der Aufrufer wie beim ersten Verbinden auf die nächste Auth.
       if (isAuthenticated && ws) return Promise.resolve();
-      const p = new Promise<void>((resolve, reject) => connectWaiters.push({ resolve, reject }));
+      const p = new Promise<void>((resolve, reject) => {
+        const waiter: Waiter = { resolve, reject, timer: null };
+        waiter.timer = startTimer(opts.timeoutMs, () => {
+          const i = connectWaiters.indexOf(waiter);
+          if (i >= 0) connectWaiters.splice(i, 1);
+          reject(new Error(`${name}: connect() ohne Bestätigung nach ${opts.timeoutMs} ms (Status: ${lastStatus})`));
+        });
+        connectWaiters.push(waiter);
+      });
       if (!started) {
         started = true;
         openSocket();
@@ -345,21 +381,44 @@ function defaultOptions(o: StreamOptions): CoreOptions {
     now: o.now ?? Date.now,
     sleep: o.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms))),
     maxBackoffMs: o.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS,
+    timeoutMs: o.timeoutMs ?? DEFAULT_TIMEOUT_MS,
   };
 }
 
 /* ───────────────────────── Daten-Stream (Bars) ───────────────────────── */
 
+interface SubscribeWaiter extends Waiter {
+  symbols: string[];
+}
+
 export function createDataStream(opts: DataStreamOptions): DataStream {
+  registerSecret(opts.keyId);
+  registerSecret(opts.secret);
+  const coreOpts = defaultOptions(opts);
   const desired = new Set<string>();
   const barCbs: ((symbol: string, bar: Bar) => void)[] = [];
-  let pendingSubscribes: (() => void)[] = [];
+  let pendingSubscribes: SubscribeWaiter[] = [];
   let live: Session | null = null;
 
+  /** Bestätigt (oder Verbindung weg — nach dem Reconnect wird ohnehin neu abonniert). */
   const settleSubscribes = (): void => {
     const waiting = pendingSubscribes;
     pendingSubscribes = [];
-    for (const resolve of waiting) resolve();
+    for (const w of waiting) {
+      if (w.timer) clearTimeout(w.timer);
+      w.resolve();
+    }
+  };
+
+  /** Abgelehnt: Die Symbole gelten als NICHT abonniert und werden auch nach einem Reconnect nicht nachgeholt. */
+  const rejectSubscribes = (detail: string): void => {
+    const waiting = pendingSubscribes;
+    pendingSubscribes = [];
+    for (const w of waiting) {
+      if (w.timer) clearTimeout(w.timer);
+      for (const s of w.symbols) desired.delete(s);
+      w.reject(new Error(`DataStream: subscribe ${w.symbols.join(',')} abgelehnt — ${detail}`));
+    }
   };
 
   const sendSubscribe = (session: Session, symbols: readonly string[]): void => {
@@ -394,8 +453,12 @@ export function createDataStream(opts: DataStreamOptions): DataStream {
       if (type === 'error') {
         const code = typeof msg.code === 'number' ? msg.code : null;
         const detail = `Alpaca-Fehler ${code ?? '?'}: ${toStr(msg.msg) ?? ''}`;
-        if (code !== null && AUTH_ERROR_CODES.has(code)) session.authFailed(detail);
-        else session.protocolError(detail);
+        if (code !== null && AUTH_ERROR_CODES.has(code)) {
+          session.authFailed(detail);
+        } else {
+          // z. B. 405 „symbol limit exceeded" (IEX-Basic: 30 Symbole), 400 bei falscher Krypto-Schreibweise
+          session.protocolError(detail);
+        }
         return;
       }
       if (type === 'b') {
@@ -425,7 +488,7 @@ export function createDataStream(opts: DataStreamOptions): DataStream {
     },
   };
 
-  const core = createCore('DataStream', adapter, defaultOptions(opts));
+  const core = createCore('DataStream', adapter, coreOpts);
 
   return {
     connect: () => core.connect(),
@@ -435,7 +498,17 @@ export function createDataStream(opts: DataStreamOptions): DataStream {
       if (fresh.length === 0) return;
       const session = live ?? core.session();
       if (!session) return; // wird nach der Auth gesendet
-      const acked = new Promise<void>((resolve) => pendingSubscribes.push(resolve));
+      const acked = new Promise<void>((resolve, reject) => {
+        const waiter: SubscribeWaiter = { resolve, reject, timer: null, symbols: fresh };
+        waiter.timer = startTimer(coreOpts.timeoutMs, () => {
+          const i = pendingSubscribes.indexOf(waiter);
+          if (i < 0) return;
+          pendingSubscribes.splice(i, 1);
+          for (const s of fresh) desired.delete(s);
+          reject(new Error(`DataStream: subscribe ${fresh.join(',')} ohne Bestätigung nach ${coreOpts.timeoutMs} ms`));
+        });
+        pendingSubscribes.push(waiter);
+      });
       sendSubscribe(session, fresh);
       await acked;
     },
@@ -451,6 +524,8 @@ export function createDataStream(opts: DataStreamOptions): DataStream {
 /* ───────────────────────── Trade-Stream (trade_updates) ───────────────────────── */
 
 export function createTradeStream(opts: TradeStreamOptions): TradeStream {
+  registerSecret(opts.keyId);
+  registerSecret(opts.secret);
   const updateCbs: ((u: TradeUpdate) => void)[] = [];
   const coreOpts = defaultOptions(opts);
 

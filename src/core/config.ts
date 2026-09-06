@@ -12,6 +12,7 @@ import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import { TIMEFRAMES, type TimeframeMin } from './types.ts';
+import { normalizeUserSymbol } from '../alpaca/symbols.ts';
 
 const pct = (max: number) => z.number().min(0).max(max);
 
@@ -23,12 +24,21 @@ export const ConfigSchema = z.object({
       feed: z.enum(['iex', 'sip']).default('iex'),
     })
     .default({ mode: 'paper', feed: 'iex' }),
-  universe: z.object({
-    assetClass: z.enum(['us_equity', 'crypto']).default('us_equity'),
-    symbols: z.array(z.string().min(1)).min(1).max(50),
-    /** Benchmark für Marktfilter (z. B. SPY). Wird mitgeladen, nie gehandelt. */
-    benchmark: z.string().min(1).optional(),
-  }),
+  universe: z
+    .object({
+      assetClass: z.enum(['us_equity', 'crypto']).default('us_equity'),
+      symbols: z.array(z.string().min(1)).min(1).max(50),
+      /** Benchmark für Marktfilter (z. B. SPY). Wird mitgeladen, nie gehandelt. */
+      benchmark: z.string().min(1).optional(),
+    })
+    // Kanonische Alpaca-Schreibweise (BRK-B → BRK.B, btcusd → BTC/USD) und Duplikate raus —
+    // sonst bucht ein Fill unter „BTC/USD", während die Entscheidung „BTCUSD" ohne Position sieht.
+    .transform((u) => {
+      const symbols = [...new Set(u.symbols.map((s) => normalizeUserSymbol(s, u.assetClass)))];
+      return u.benchmark === undefined
+        ? { assetClass: u.assetClass, symbols }
+        : { assetClass: u.assetClass, symbols, benchmark: normalizeUserSymbol(u.benchmark, u.assetClass) };
+    }),
   /** Strategie-Zeitrahmen in Minuten (1440 = Tagesbars). */
   timeframe: z
     .number()
@@ -261,8 +271,10 @@ export function parseConfig(raw: unknown): Config {
     throw new ConfigError(`Config ungültig:\n  ${msg}`);
   }
   const cfg = res.data;
-  if (cfg.optimizer.stepDays > cfg.optimizer.oosDays) {
-    throw new ConfigError('optimizer.stepDays darf nicht größer als optimizer.oosDays sein (OOS-Lücken).');
+  if (cfg.optimizer.stepDays !== cfg.optimizer.oosDays) {
+    // Größer ⇒ Lücken in der OOS-Kette; kleiner ⇒ dieselben OOS-Tage zählen mehrfach
+    // (Red-Team: bei step 10 / oos 30 wären Trades und PSR-n um ×2,75 aufgeblasen).
+    throw new ConfigError('optimizer.stepDays muss gleich optimizer.oosDays sein (lückenlose, überlappungsfreie OOS-Kette).');
   }
   return cfg;
 }

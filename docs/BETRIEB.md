@@ -38,8 +38,8 @@ mit dem Wrapper aus ops/README.md):
 | `run` | Die Engine: Streams verbinden, Buch abgleichen, Bars schließen, entscheiden, Orders routen. Läuft, bis SIGINT/SIGTERM kommt. Startet nicht, wenn kein Symbol handelbar ist (kein Champion, `allowWithoutChampion: false`). |
 | `status` | Zustand aus `state.json` und Journal (Engine aktiv?, Halt, Positionen, Tages- und Gesamt-Netto) und — wenn Keys da sind — Konto und Broker-Positionen. `--json` für Skripte. Braucht keine laufende Engine. |
 | `flatten` | Not-Aus: alle offenen Orders stornieren, alle Positionen per Marktorder schließen, HALT-Datei setzen. Fragt nach, außer mit `--yes`. |
-| `halt` | HALT-Datei setzen: keine neuen Einstiege; Exits, Stops, EOD-Flatten laufen weiter. |
-| `resume` | HALT-Datei entfernen. Einen Drawdown-Halt hebt nur `--ack-drawdown` auf — das setzt den Equity-Peak neu und steht mit Grund im Journal. Tages-Halts enden von selbst und lassen sich nicht vorzeitig aufheben. |
+| `halt` | HALT-Datei setzen (`--reason <text>` als Notiz): keine neuen Einstiege; Exits, Stops, EOD-Flatten und die Notbremsen laufen weiter. |
+| `resume` | HALT-Datei entfernen. Einen Drawdown-Halt hebt nur `--ack-drawdown` auf: Die CLI setzt dazu einen RESUME-Marker im State-Verzeichnis, den die Engine beim nächsten Tick bzw. Start verarbeitet — Peak = aktuelle Equity, Journal-Eintrag `resume`. Tages-Halts enden von selbst und lassen sich nicht vorzeitig aufheben. |
 | `readiness` | Live-Reife aus dem Journal (VALIDIERUNG.md §8): fünf Kriterien, Ergebnis ERREICHT / NICHT ERREICHT, `--json` für Skripte. |
 
 ## 3. Wo was liegt (`AUTOTRD_HOME`, Default `./var`)
@@ -144,7 +144,10 @@ ist. Es gibt keinen Schalter, der eine Sperre ignoriert — absichtlich.
   Positionen werden über das Symbol, Schutz-Stops und offene Einstiege über
   ihre `client_order_id` wiedergefunden — Neustarts erzeugen keine doppelten
   Orders. Während der Abwesenheit beim Broker geschlossene Positionen
-  (Stop-Fill) werden mit `exitReason: "reconcile"` nachgebucht.
+  werden nachgebucht: Ist der Fill des Stop-/Ziel-Beins per REST auffindbar,
+  mit `exitReason: "stop"`/`"target"` zum echten Fill-Kurs; ist die Position
+  ohne auffindbaren Fill verschwunden, mit `exitReason: "reconcile"` zum
+  geschätzten Kurs (laut im Log).
 - **Fremde Positionen** (im Alpaca-Dashboard von Hand eröffnet, nicht im
   Buch): `engine.onOrphan: halt` (Default) ⇒ Halt `reconcile`, keine
   Einstiege, bis die Position weg ist oder `adopt` konfiguriert wird
