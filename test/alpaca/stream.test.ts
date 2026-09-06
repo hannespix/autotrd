@@ -453,6 +453,8 @@ describe('TradeStream', () => {
     const stream = createTradeStream({ ...h.opts, mode: 'paper' });
     stream.onStatus((ev) => h.statuses.push(ev));
     const connected = stream.connect();
+    // Die Ablehnung kommt mitten in der Schleife — ohne frühen Handler meldet Node eine unbehandelte Rejection.
+    connected.catch(() => {});
     for (let i = 0; i < 3; i++) {
       const ws = h.sockets[i]!;
       ws.open();

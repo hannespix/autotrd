@@ -303,39 +303,56 @@ export function rollingMin(x: Series, n: number): Float64Array {
 /* ───────────────────────── Streuung ───────────────────────── */
 
 /**
- * Laufende Momente über [i-n+1, i]. Die Summen werden um den ersten
- * endlichen Wert verschoben geführt: Bei Kursen um 500 und σ um 1 frisst
- * E[x²]−E[x]² sonst die Genauigkeit auf. Der Versatz ist kausal (erster
- * Wert) und daher präfix-stabil.
+ * Laufende Momente über [i-n+1, i] als gleitendes Welford-Update: M2 wird
+ * um den laufenden Fenster-Mittelwert geführt, nicht als Σx² − n·mean².
+ * Warum: Bei Kursen um 500 und σ um 0.01 frisst die Differenz zweier
+ * großer Zahlen die Genauigkeit auf (Beleg: Referenztest mit n = 2).
+ * Ersetzen von u durch v im vollen Fenster ist exakt in reeller Arithmetik:
+ *   mean' = mean + (v−u)/n,  M2' = M2 + (v−u)·(v − mean' + u − mean).
+ * Nach einer NaN-Episode wird das Fenster einmal neu aufgebaut (O(n),
+ * selten) — kausal bleibt alles, denn es werden nur Bars ≤ i gelesen.
  */
 function windowMoments(x: Series, n: number, emit: (i: number, mean: number, sd: number) => void): void {
   const len = x.length;
-  let sum = 0;
-  let sumSq = 0;
+  let mean = 0;
+  let m2 = 0;
   let bad = 0;
-  let offset = NaN_;
+  let valid = false;
   for (let i = 0; i < len; i++) {
     const v = x[i]!;
-    if (Number.isFinite(v)) {
-      if (Number.isNaN(offset)) offset = v;
-      const d = v - offset;
-      sum += d;
-      sumSq += d * d;
-    } else bad++;
-    if (i >= n) {
+    if (!Number.isFinite(v)) bad++;
+    if (i >= n && !Number.isFinite(x[i - n]!)) bad--;
+    if (bad > 0) {
+      valid = false;
+      continue;
+    }
+    if (i < n - 1) {
+      // Aufbau: alle Werte bis hier endlich (sonst wäre bad > 0) — Welford-Add.
+      const delta = v - mean;
+      mean += delta / (i + 1);
+      m2 += delta * (v - mean);
+      continue;
+    }
+    if (i === n - 1) {
+      const delta = v - mean;
+      mean += delta / n;
+      m2 += delta * (v - mean);
+      valid = true;
+    } else if (valid) {
       const u = x[i - n]!;
-      if (Number.isFinite(u)) {
-        const d = u - offset;
-        sum -= d;
-        sumSq -= d * d;
-      } else bad--;
+      const next = mean + (v - u) / n;
+      m2 += (v - u) * (v - next + u - mean);
+      mean = next;
+    } else {
+      // Erstes volles Fenster nach einer NaN-Episode: zwei Durchläufe über [i-n+1, i].
+      let sum = 0;
+      for (let k = i - n + 1; k <= i; k++) sum += x[k]!;
+      mean = sum / n;
+      m2 = 0;
+      for (let k = i - n + 1; k <= i; k++) m2 += (x[k]! - mean) ** 2;
+      valid = true;
     }
-    if (i >= n - 1 && bad === 0) {
-      const mean = sum / n;
-      let variance = sumSq / n - mean * mean;
-      if (variance < 0) variance = 0; // Rundungsrest
-      emit(i, offset + mean, Math.sqrt(variance));
-    }
+    emit(i, mean, Math.sqrt(m2 > 0 ? m2 / n : 0));
   }
 }
 

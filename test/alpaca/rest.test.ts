@@ -119,7 +119,9 @@ describe('Basis-URL und Header', () => {
     expect(call.headers['Content-Type']).toBeUndefined();
 
     const live = makeClient(() => json(orderRaw()), { mode: 'live' });
-    await live.client.submitOrder({ ...BRACKET, orderClass: undefined, takeProfit: undefined, stopLoss: undefined } as NewOrder);
+    // exactOptionalPropertyTypes: Felder weglassen statt auf undefined setzen
+    const { orderClass: _oc, takeProfit: _tp, stopLoss: _sl, ...simple } = BRACKET;
+    await live.client.submitOrder(simple);
     expect(live.client.mode).toBe('live');
     expect(live.calls[0]!.url.origin).toBe('https://api.alpaca.markets');
     expect(live.calls[0]!.method).toBe('POST');

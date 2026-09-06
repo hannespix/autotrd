@@ -142,7 +142,6 @@ function createCore(name: string, adapter: ProtocolAdapter, opts: CoreOptions): 
   let reconnectAttempt = 0;
   let authFailures = 0;
   let isAuthenticated = false;
-  let everReady = false;
   let lastMsgAt: Ms | null = null;
   let queue: Promise<void> = Promise.resolve(); // Nachrichten strikt in Empfangsreihenfolge
   const statusCbs: ((ev: StreamStatusEvent) => void)[] = [];
@@ -193,7 +192,6 @@ function createCore(name: string, adapter: ProtocolAdapter, opts: CoreOptions): 
       },
       ready() {
         if (gen !== generation) return;
-        everReady = true;
         settleWaiters(null);
       },
       authFailed(detail) {
@@ -315,7 +313,9 @@ function createCore(name: string, adapter: ProtocolAdapter, opts: CoreOptions): 
     connect(): Promise<void> {
       if (closedByUser) return Promise.reject(new Error(`${name}: bereits geschlossen`));
       if (fatal) return Promise.reject(new Error(`${name}: endgültig gescheitert`));
-      if (everReady && ws) return Promise.resolve();
+      // Sofort erfüllt nur bei stehender, authentifizierter Verbindung; während eines
+      // Reconnects wartet der Aufrufer wie beim ersten Verbinden auf die nächste Auth.
+      if (isAuthenticated && ws) return Promise.resolve();
       const p = new Promise<void>((resolve, reject) => connectWaiters.push({ resolve, reject }));
       if (!started) {
         started = true;
