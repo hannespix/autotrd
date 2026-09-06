@@ -7,6 +7,11 @@
   "engines": {
     "node": ">=22.18"
   },
+  "workspaces": [
+    "shared",
+    "functions",
+    "frontend"
+  ],
   "bin": {
     "autotrd": "dist/cli.js"
   },
