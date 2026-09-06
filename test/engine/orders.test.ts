@@ -93,10 +93,11 @@ describe('OrderExecutor — Einstieg', () => {
       ['limit', null, 104.38],
     ]);
     // Zweiter Executor (Neustart ohne Pending) ⇒ Broker kennt die Kennung ⇒ nicht erneut senden.
+    const submitsBefore = s.fake.callsOf('submitOrder').length;
     const s2 = setup({ fake: s.fake });
     const res = await s2.executor.execute([enter()]);
     expect(res[0]?.note).toMatch(/existiert bereits/);
-    expect(s2.fake.callsOf('submitOrder')).toHaveLength(0);
+    expect(s2.fake.callsOf('submitOrder')).toHaveLength(submitsBefore);
     expect(s2.book.pendingEntries.get('AAPL')?.clientId).toBe(o.clientOrderId);
   });
 
