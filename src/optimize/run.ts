@@ -32,6 +32,7 @@ import {
   robustnessGates,
   stressTest,
   type DsrResult,
+  type DsrVarSource,
   type GateResult,
   type MetricsFns,
   type NeighborhoodResult,
@@ -98,6 +99,8 @@ export interface OptimizeRunInput {
   getStrategy?: ((id: string) => Strategy) | undefined;
   /** Journal-Pfad; Standard homePaths(home).journal. */
   journalPath?: string | undefined;
+  /** Streuungsquelle des Deflated Sharpe; Vorgabe 'fold_sharpes' (siehe robustness.ts). */
+  dsrVarSource?: DsrVarSource | undefined;
   now?: (() => Ms) | undefined;
   log?: ((msg: string) => void) | undefined;
 }
@@ -218,7 +221,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
           const wfa = walkForward({ ...common, strategy, optimizer, rng, include, log });
           const stress = stressTest({ ...common, strategy, wfa, costMultiplier: optimizer.stressCostMultiplier, objective: optimizer.objective });
           const neighborhood = neighborhoodTest({ ...common, strategy, wfa, optimizer });
-          const dsr = deflatedSharpeOos({ wfa, metricsFns: deps.metricsFns });
+          const dsr = deflatedSharpeOos({ wfa, metricsFns: deps.metricsFns, varSrSource: input.dsrVarSource });
           const g = robustnessGates({
             wfa,
             optimizer,

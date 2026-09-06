@@ -119,6 +119,19 @@ export function neighborhoodTest(
 
 /* ───────────────────────── Deflated Sharpe ───────────────────────── */
 
+/**
+ * Quelle der Sharpe-Streuung im Deflated Sharpe:
+ * - 'fold_sharpes' (Vorgabe laut Spezifikation): Varianz der OOS-Fold-Sharpes.
+ *   Achtung: Bei kurzen Folds misst das vor allem Stichprobenrauschen
+ *   (≈ 1/Bars je Fold) und treibt den erwarteten Max-Sharpe so hoch, dass
+ *   auch starke Strategien durchfallen — Integrationslauf: Sharpe p. a. 12,
+ *   10/10 Folds positiv, DSR 0,08.
+ * - 'trial_sharpes' (Bailey/López de Prado): Varianz der IS-Sharpes aller
+ *   bewerteten Parametersätze — die Streuung der Trials, die das Auswahl-
+ *   Maximum tatsächlich erzeugt.
+ */
+export type DsrVarSource = 'fold_sharpes' | 'trial_sharpes';
+
 export interface DsrResult {
   dsr: number | null;
   psr: number | null;
@@ -126,18 +139,23 @@ export interface DsrResult {
   sr: number | null;
   n: number;
   nTrials: number;
+  /** Verwendete Varianz (je nach `varSrSource`). */
   varSr: number;
+  varSrSource: DsrVarSource;
+  varSrFolds: number;
+  varSrTrials: number;
   note: string;
 }
 
 /**
  * DSR auf den verketteten OOS-Tagesrenditen: nTrials = alle bewerteten
- * Parametersätze, varSr = Varianz der Fold-Sharpes (je Fold per Periode).
+ * Parametersätze, varSr laut `varSrSource` (Vorgabe: Fold-Sharpes).
  * Alles per Periode (periodsPerYear = 1), wie die Formel es verlangt —
  * annualisierte Werte würden n und Sharpe gegeneinander verfälschen.
  */
-export function deflatedSharpeOos(a: { wfa: WfaResult; metricsFns: MetricsFns }): DsrResult {
+export function deflatedSharpeOos(a: { wfa: WfaResult; metricsFns: MetricsFns; varSrSource?: DsrVarSource | undefined }): DsrResult {
   const { wfa, metricsFns } = a;
+  const varSrSource: DsrVarSource = a.varSrSource ?? 'fold_sharpes';
   const returns = wfa.oos.dailyReturns;
   const n = returns.length;
   const nTrials = Math.max(1, wfa.trials);
@@ -146,8 +164,11 @@ export function deflatedSharpeOos(a: { wfa: WfaResult; metricsFns: MetricsFns })
     const s = metricsFns.sharpeRatio(f.best.oosDailyReturns, 1);
     if (s !== null && Number.isFinite(s)) foldSrs.push(s);
   }
-  const varSr = foldSrs.length >= 2 ? (sampleVariance(foldSrs) ?? DSR_VAR_SR_FALLBACK) : DSR_VAR_SR_FALLBACK;
-  const base = { dsr: null, psr: null, sr: null, n, nTrials, varSr };
+  const varOf = (xs: readonly number[]): number => (xs.length >= 2 ? (sampleVariance(xs) ?? DSR_VAR_SR_FALLBACK) : DSR_VAR_SR_FALLBACK);
+  const varSrFolds = varOf(foldSrs);
+  const varSrTrials = varOf(wfa.trialSharpes);
+  const varSr = varSrSource === 'trial_sharpes' ? varSrTrials : varSrFolds;
+  const base = { dsr: null, psr: null, sr: null, n, nTrials, varSr, varSrSource, varSrFolds, varSrTrials };
   if (n < DSR_MIN_RETURNS) return { ...base, note: `zu wenige OOS-Tagesrenditen (${n} < ${DSR_MIN_RETURNS})` };
   const sr = metricsFns.sharpeRatio(returns, 1);
   if (sr === null || !Number.isFinite(sr)) return { ...base, note: 'Sharpe der OOS-Renditen nicht berechenbar (Varianz 0?)' };
@@ -157,11 +178,12 @@ export function deflatedSharpeOos(a: { wfa: WfaResult; metricsFns: MetricsFns })
   const psrRaw = metricsFns.probabilisticSharpe({ sr, n, skew, kurt });
   const dsr = Number.isFinite(dsrRaw) ? dsrRaw : null;
   const psr = Number.isFinite(psrRaw) ? psrRaw : null;
-  const note =
-    dsr === null
-      ? `DSR nicht berechenbar (SR=${sr.toFixed(3)}, n=${n}, Trials=${nTrials}, varSr=${varSr.toExponential(2)})`
-      : `SR/Periode ${sr.toFixed(3)}, n=${n}, Trials=${nTrials}, varSr=${varSr.toExponential(2)}, PSR=${psr === null ? '–' : psr.toFixed(3)}`;
-  return { dsr, psr, sr, n, nTrials, varSr, note };
+  const detail =
+    `SR/Periode ${sr.toFixed(3)}, n=${n}, Trials=${nTrials}, Schiefe ${skew.toFixed(2)}, Kurtosis ${kurt.toFixed(2)}, ` +
+    `varSr=${varSr.toExponential(2)} aus ${varSrSource} (Folds ${varSrFolds.toExponential(2)}, Trials ${varSrTrials.toExponential(2)}), ` +
+    `PSR=${psr === null ? '–' : psr.toFixed(3)}`;
+  const note = dsr === null ? `DSR nicht berechenbar — ${detail}` : detail;
+  return { dsr, psr, sr, n, nTrials, varSr, varSrSource, varSrFolds, varSrTrials, note };
 }
 
 /* ───────────────────────── Die Gates ───────────────────────── */

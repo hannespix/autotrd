@@ -68,6 +68,8 @@ export function sessionBucketTimes(args: {
         }
       }
     }
+    if (k >= n) break;
+    // Erst NACH dem Abbruch weiterblättern — sonst wirft ein Broker-Kalender, der genau hier endet.
     day = nextTradingDay(day, assetClass, calendar);
   }
   if (k < n) throw new Error(`sessionBucketTimes: nur ${k} von ${n} Buckets erzeugt`);

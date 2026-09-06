@@ -40,8 +40,12 @@ describe('walkForward', () => {
     expect(wfa.timeframe).toBe(1440);
   });
 
-  it('zählt alle bewerteten Parametersätze als Trials', () => {
+  it('zählt alle bewerteten Parametersätze als Trials und sammelt ihre IS-Sharpes', () => {
     expect(wfa.trials).toBe(8 * 55 + 55);
+    expect(wfa.trialSharpes.length).toBe(wfa.trials);
+    for (const s of wfa.trialSharpes) expect(Number.isFinite(s)).toBe(true);
+    // a = 10 hat die stärkste Kante ⇒ der größte Trial-Sharpe gehört zu einem a-=-10-Kandidaten und liegt über dem Median
+    expect(Math.max(...wfa.trialSharpes)).toBeGreaterThan(median(wfa.trialSharpes));
   });
 
   it('IS-Läufe enden vor isEnd − Embargo, OOS-Läufe decken genau [oosStart, oosEnd)', () => {

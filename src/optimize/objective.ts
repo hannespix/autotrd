@@ -65,3 +65,19 @@ export function sampleVariance(xs: readonly number[]): number | null {
   for (const x of xs) s += (x - m) * (x - m);
   return s / (xs.length - 1);
 }
+
+/**
+ * Sharpe je Periode (Mittel / Stichproben-Standardabweichung, nicht
+ * annualisiert). Für die Streuung der Trials im Deflated Sharpe — bewusst
+ * ohne Injektion, damit walkForward keine Statistik-Abhängigkeit braucht.
+ */
+export function perPeriodSharpe(returns: readonly number[]): number | null {
+  if (returns.length < 2) return null;
+  const m = mean(returns);
+  let s = 0;
+  for (const r of returns) s += (r - m) * (r - m);
+  const sd = Math.sqrt(s / (returns.length - 1));
+  if (!(sd > 0)) return null;
+  const v = m / sd;
+  return Number.isFinite(v) ? v : null;
+}

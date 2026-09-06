@@ -150,7 +150,7 @@ export async function reconcile(a: ReconcileArgs): Promise<ReconcileResult> {
   }
 
   // 2. Broker → Buch: Fremdbestand.
-  for (const [sym, bp] of broker) {
+  for (const sym of broker.keys()) {
     if (a.book.positions.has(sym) || a.book.pendingEntries.has(sym)) continue;
     if (!orphans.includes(sym)) orphans.push(sym);
   }

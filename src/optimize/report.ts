@@ -188,6 +188,10 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
       out.push('');
       out.push(gatesTable(s.gates));
       out.push('');
+      // Die DSR-Rohwerte gehören sichtbar in den Bericht: Ein Gate, das nur
+      // "0.000" sagt, lässt sich nicht hinterfragen.
+      out.push(`DSR-Details: ${s.dsr.note}`);
+      out.push('');
       out.push(
         table(
           ['Fold', 'IS', 'OOS', 'Params', 'IS-Objective', 'OOS-Objective', 'OOS-Trades', 'OOS-Netto'],

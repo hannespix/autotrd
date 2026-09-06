@@ -24,7 +24,7 @@ import type {
   TimeframeMin,
   Trade,
 } from '../core/types.ts';
-import { mean, median, objectiveValue, type ObjectiveId } from './objective.ts';
+import { mean, median, objectiveValue, perPeriodSharpe, type ObjectiveId } from './objective.ts';
 import { sampleParams } from './search.ts';
 
 /* ───────────────────────── Injektionspunkt Simulator ───────────────────────── */
@@ -348,6 +348,8 @@ export interface WfaResult {
   finalWindow: TimeRange & { embargoAtEnd: boolean };
   /** Bewertete Parametersätze insgesamt (für den Deflated Sharpe). */
   trials: number;
+  /** IS-Sharpe je Periode aller Trials (nur berechenbare) — Streuung der Trials für den Deflated Sharpe. */
+  trialSharpes: number[];
   /** finalParams auf dem Holdout — NUR Bericht, nie Auswahl. */
   holdout: (TimeRange & { metrics: Metrics }) | null;
   dataRange: TimeRange;
@@ -377,6 +379,8 @@ interface WindowSearch {
   result: SimResult;
   objective: number;
   evaluated: number;
+  /** IS-Sharpe je Periode aller Kandidaten dieses Fensters (nur berechenbare). */
+  trialSharpes: number[];
 }
 
 /** Mindest-Trades im IS, damit ein Kandidat überhaupt gewählt werden darf. */
@@ -392,11 +396,14 @@ function searchWindow(a: WalkForwardArgs, window: TimeRange, include: readonly P
 
   let best: WindowSearch | null = null;
   let fallback: WindowSearch | null = null;
+  const trialSharpes: number[] = [];
   for (const params of candidates) {
     const range = candidateRange(a.bars, window, strategy, params, optimizer, embargoAtEnd);
     const result = simulateWindow({ ...a, params, range });
     const objective = objectiveValue(optimizer.objective, result.metrics);
-    const cand: WindowSearch = { params, result, objective, evaluated: 0 };
+    const sr = perPeriodSharpe(result.dailyReturns);
+    if (sr !== null) trialSharpes.push(sr);
+    const cand: WindowSearch = { params, result, objective, evaluated: 0, trialSharpes: [] };
     // Bei Gleichstand bleibt der frühere Kandidat — deterministisch und
     // zugunsten von Defaults/Champion, die vorne in der Liste stehen.
     if (result.metrics.trades >= floor && (best === null || objective > best.objective)) best = cand;
@@ -404,7 +411,7 @@ function searchWindow(a: WalkForwardArgs, window: TimeRange, include: readonly P
   }
   const chosen = best ?? fallback;
   if (!chosen) throw new Error(`Keine Kandidaten für ${strategy.id} — leerer Parameterraum?`);
-  return { ...chosen, evaluated: candidates.length };
+  return { ...chosen, evaluated: candidates.length, trialSharpes };
 }
 
 /* ───────────────────────── Walk-Forward ───────────────────────── */
@@ -417,12 +424,14 @@ export function walkForward(a: WalkForwardArgs): WfaResult {
   const log = a.log ?? (() => undefined);
 
   let trials = 0;
+  const trialSharpes: number[] = [];
   const foldResults: WfaFoldResult[] = [];
   const pieces: OosPiece[] = [];
 
   for (const fold of plan.folds) {
     const is = searchWindow(a, { start: fold.isStart, end: fold.isEnd }, include, true);
     trials += is.evaluated;
+    trialSharpes.push(...is.trialSharpes);
     const oos = simulateWindow({ ...a, params: is.params, range: { start: fold.oosStart, end: fold.oosEnd } });
     const oosObjective = objectiveValue(optimizer.objective, oos.metrics);
     foldResults.push({
@@ -453,6 +462,7 @@ export function walkForward(a: WalkForwardArgs): WfaResult {
   const finalInclude = [...include, ...foldResults.map((f) => f.best.params)];
   const fin = searchWindow(a, finalWindow, finalInclude, finalWindow.embargoAtEnd);
   trials += fin.evaluated;
+  trialSharpes.push(...fin.trialSharpes);
 
   let holdout: WfaResult['holdout'] = null;
   if (plan.holdout) {
@@ -476,6 +486,7 @@ export function walkForward(a: WalkForwardArgs): WfaResult {
     finalIsMetrics: fin.result.metrics,
     finalWindow,
     trials,
+    trialSharpes,
     holdout,
     dataRange,
     embargoBars: embargoBarsFor(strategy, strategy.defaults, optimizer),

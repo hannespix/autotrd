@@ -5,7 +5,7 @@
  *   const deps = await loadDefaultDeps();          // Backtester + Strategien
  *   const out = runOptimization({ ...deps, config, symbols, strategies, barsFor, home, initialEquity });
  */
-export { objectiveValue, median, mean, sampleVariance, type ObjectiveId } from './objective.ts';
+export { objectiveValue, median, mean, sampleVariance, perPeriodSharpe, type ObjectiveId } from './objective.ts';
 export {
   mulberry32,
   gridSize,
@@ -63,6 +63,7 @@ export {
   type StressResult,
   type NeighborhoodResult,
   type DsrResult,
+  type DsrVarSource,
 } from './robustness.ts';
 export {
   emptyChampionFile,

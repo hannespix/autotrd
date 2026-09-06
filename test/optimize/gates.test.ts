@@ -73,6 +73,7 @@ function wfaFixture(over: Partial<WfaResult['oos']> = {}, foldReturns?: number[]
     finalIsMetrics: metrics(),
     finalWindow: { start: 0, end: 10, embargoAtEnd: true },
     trials: 250,
+    trialSharpes: [0.1, 0.2, 0.3, 0.4],
     holdout: null,
     dataRange: { start: 0, end: 10 },
     embargoBars: 25,
@@ -207,6 +208,37 @@ describe('deflatedSharpeOos', () => {
     const returns = [Array.from({ length: 40 }, (_, i) => 0.01 + 0.002 * Math.sin(i)), [0.01], [0.01]];
     const r = deflatedSharpeOos({ wfa: wfaFixture({}, returns), metricsFns: fakeMetricsFns });
     expect(r.varSr).toBe(0.01);
+    expect(r.varSrSource).toBe('fold_sharpes');
+  });
+
+  it("varSrSource 'trial_sharpes' nimmt die Streuung der IS-Trial-Sharpes; beide Werte stehen in der Notiz", () => {
+    const wfa = wfaFixture();
+    const folds = deflatedSharpeOos({ wfa, metricsFns: fakeMetricsFns });
+    const trials = deflatedSharpeOos({ wfa, metricsFns: fakeMetricsFns, varSrSource: 'trial_sharpes' });
+    // Stichprobenvarianz von [0.1, 0.2, 0.3, 0.4] = 0.01666…
+    expect(trials.varSr).toBeCloseTo(0.016667, 5);
+    expect(trials.varSrSource).toBe('trial_sharpes');
+    expect(trials.varSrTrials).toBe(trials.varSr);
+    expect(folds.varSrFolds).toBe(folds.varSr);
+    expect(folds.varSrTrials).toBe(trials.varSr);
+    expect(trials.note).toMatch(/aus trial_sharpes/);
+    expect(folds.note).toMatch(/aus fold_sharpes/);
+    expect(folds.note).toMatch(/Schiefe/);
+    // gleiche Renditen, andere Streuung ⇒ nur varSr und DSR dürfen sich unterscheiden
+    expect(trials.sr).toBe(folds.sr);
+    expect(trials.psr).toBe(folds.psr);
+  });
+
+  it('die Fold-Streuung kurzer Folds kann eine starke Kante allein am DSR scheitern lassen (dokumentierter Befund)', () => {
+    // 10 Folds à 30 Tage mit stark schwankender Fold-Güte, aber klar positiver Gesamtkante
+    const rng = mulberry32(9);
+    const returns = Array.from({ length: 10 }, (_, k) => Array.from({ length: 30 }, () => (k % 2 ? 0.02 : 0.004) + (rng() - 0.5) * 0.02));
+    const wfa = { ...wfaFixture({}, returns), trials: 90, trialSharpes: Array.from({ length: 90 }, (_, i) => 0.3 + 0.002 * i) };
+    const folds = deflatedSharpeOos({ wfa, metricsFns: fakeMetricsFns });
+    const trials = deflatedSharpeOos({ wfa, metricsFns: fakeMetricsFns, varSrSource: 'trial_sharpes' });
+    expect(folds.psr!).toBeGreaterThan(0.99);
+    expect(folds.varSrFolds).toBeGreaterThan(folds.varSrTrials);
+    expect(trials.dsr!).toBeGreaterThan(folds.dsr!);
   });
 });
 
