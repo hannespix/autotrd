@@ -207,8 +207,10 @@ export function simulate(input: SimInput): SimResult {
   const { assetClass, timeframe: tf, risk, session: sessionCfg, costs } = config;
   const mult = input.costMultiplier ?? 1;
   const notes: string[] = [];
-  const note = (s: string) => {
-    if (notes.length < MAX_NOTES) notes.push(s);
+  let haltNotes = 0;
+  // Halt-Notizen sind gedeckelt (ein Halt je Tag über Jahre wäre Rauschen); die Bilanz am Ende nie.
+  const haltNote = (s: string) => {
+    if (haltNotes++ < MAX_NOTES) notes.push(s);
   };
 
   /* ── Symbole einrichten: Indikatoren einmal je Symbol ── */
@@ -513,7 +515,7 @@ export function simulate(input: SimInput): SimResult {
         const k = blockKey(n.text);
         blocked.set(k, (blocked.get(k) ?? 0) + 1);
       } else if (n.kind === 'halt') {
-        note(`${new Date(now).toISOString()} Halt: ${n.text}`);
+        haltNote(`${new Date(now).toISOString()} Halt: ${n.text}`);
       }
     }
     let mocFilled = false;
@@ -544,19 +546,20 @@ export function simulate(input: SimInput): SimResult {
   /* ── Abschluss ── */
   if (dayHadPoints) dailyReturns.push(dayCloseEquity / lastDayEquity - 1);
   for (const s of syms) {
-    if (s.pendingEnter) note(`Einstieg ${s.symbol} ohne Folgebar verworfen (Datenende)`);
-    if (s.pendingExit) note(`Exit ${s.symbol} (${s.pendingExit.reason}) ohne Folgebar — Position bleibt offen (Datenende)`);
+    if (s.pendingEnter) notes.push(`Einstieg ${s.symbol} ohne Folgebar verworfen (Datenende)`);
+    if (s.pendingExit) notes.push(`Exit ${s.symbol} (${s.pendingExit.reason}) ohne Folgebar — Position bleibt offen (Datenende)`);
     if (s.pos) {
       const p = s.pos;
       const unreal = (p.side === 'long' ? s.lastClose - p.entryPrice : p.entryPrice - s.lastClose) * p.qty;
-      note(`Offen am Ende: ${p.symbol} ${p.side} ${p.qty} @ ${p.entryPrice} (unrealisiert ${unreal.toFixed(2)})`);
+      notes.push(`Offen am Ende: ${p.symbol} ${p.side} ${p.qty} @ ${p.entryPrice} (unrealisiert ${unreal.toFixed(2)})`);
     }
   }
   if (blocked.size > 0) {
     const parts = [...blocked.entries()].sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ×${n}`);
-    note(`Blockierte Einstiege: ${parts.join(', ')}`);
+    notes.push(`Blockierte Einstiege: ${parts.join(', ')}`);
   }
-  if (halt.halted) note(`Halt am Ende aktiv (${halt.reason}): ${halt.note ?? ''}`);
+  if (haltNotes > MAX_NOTES) notes.push(`… ${haltNotes - MAX_NOTES} weitere Halt-Notizen unterdrückt`);
+  if (halt.halted) notes.push(`Halt am Ende aktiv (${halt.reason}): ${halt.note ?? ''}`);
 
   let days = 0;
   if (range) days = Math.max(1, Math.ceil((range.end - range.start) / DAY));

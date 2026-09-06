@@ -3,8 +3,8 @@ import { fillCosts, regulatoryFees } from '../../src/backtest/costs.ts';
 import { simulate, type SimInput } from '../../src/backtest/simulator.ts';
 import { randomWalkBars } from '../../src/backtest/synthetic.ts';
 import { BarSeries } from '../../src/core/bars.ts';
-import { dayKeyFor, msFromET, MIN } from '../../src/core/time.ts';
-import type { Decision, Params, Strategy, SymbolSnapshot, Trade } from '../../src/core/types.ts';
+import { dayKeyFor, msFromET } from '../../src/core/time.ts';
+import type { Decision, Strategy, Trade } from '../../src/core/types.ts';
 import { baseConfig, barsMap, dayBars5, flat, fullDay5, strategyOf, type Ohlc } from './helpers.ts';
 
 const D1 = '2026-09-01'; // Dienstag
@@ -551,8 +551,3 @@ describe('Datenende', () => {
     expect(res.metrics.exposurePct).toBe(0);
   });
 });
-
-// Typ-Anker: die Strategie-Signatur des Vertrags bleibt benutzbar.
-const _typeAnchor: (snap: SymbolSnapshot, ind: Record<string, Float64Array>, p: Params) => Decision = () => ({ kind: 'hold' });
-void _typeAnchor;
-void MIN;
