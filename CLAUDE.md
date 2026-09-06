@@ -1,407 +1,150 @@
-# CLAUDE.md — Entwickler-Leitfaden für autotrd
+# CLAUDE.md — Regelwerk für den Alpaca-Auto-Trader (Neubau, Branch `claude/auto-trader-alpaca-rebuild-lghm4u`)
 
 Diese Datei richtet sich an **Claude Code** (und Menschen), die an diesem Repo
-arbeiten. Sie beschreibt die Architektur, die **nicht-offensichtlichen Fallen**
-und die Konventionen, die man kennen muss, bevor man Code ändert.
+arbeiten. Sie beschreibt die Architektur des Neubaus, die **nicht
+verhandelbaren Regeln** und die Fallen, die im Vorgängersystem Geld gekostet
+haben. Vollständig lesen, bevor du etwas anfasst.
 
-> **⚠️ Zielarchitektur beachten:** Das Projekt wird zu einer Multi-User-
-> TypeScript-Plattform (Firebase + autotrd.net) umgebaut — **zuerst
-> [ARCHITECTURE.md](ARCHITECTURE.md) + [MILESTONES.md](MILESTONES.md) lesen.**
-> Der Python-Code liegt jetzt unter **`reference/`** (alle `scripts/…`-Pfade in
-> diesem Dokument sind relativ dazu) und dient als Referenz-Implementierung
-> für Parity-Tests; neue Features entstehen in TS unter `functions/`+`frontend/`.
-> Die Fallen unten (flaches Schema, Lookahead-Gate, Wilder-RSI, Frontend-
-> Konventionen) gelten fachlich auch für die TS-Portierung weiter. Bitte
-vollständig lesen, bevor du etwas anfasst — mehrere Bugs hier kommen zuverlässig
-zurück, wenn man die Regeln unten nicht befolgt.
+Sprache: Antworten und Commit-Messages auf **Deutsch** (Imperativ, klein,
+thematisch). Bezeichner im Code Englisch, Kommentare Deutsch.
 
-Sprache: Antworten und Commit-Messages auf **Deutsch**.
+> **Altbestand:** Die Firebase-Multi-User-Plattform (Verzeichnisse
+> `functions/`, `frontend/`, `shared/`, `reference/`, `supabase/`,
+> `rules-test/`, `scripts-ci/`, Dateien `ARCHITECTURE.md`, `MILESTONES.md`,
+> `firebase.json`, `firestore.*`, `.firebaserc`, `tsconfig.base.json`,
+> `vitest.rules.config.ts`) liegt noch im Baum, wird aber von keinem Werkzeug
+> mehr geprüft oder gebaut. Sie lebt unverändert auf `main`. Die Löschung auf
+> diesem Branch ist ein einzelner Commit, der die ausdrückliche Freigabe des
+> Owners braucht. Die Erkenntnisse daraus stehen in `docs/ARCHITEKTUR.md` und
+> hier in §2.
 
 ---
 
 ## 0. TL;DR der harten Regeln
 
-1. **Schema ist flach.** `broker/watchlist/engine/indicators/signals` — nie
-   verschachteln (§2).
-2. **State lebt in `~/.hermes/trading/`**, nicht im Repo-Ordner (§1).
-3. **Interpreter = das venv**, nicht das System-Python (§1).
-4. **Kurs-/TA-Endpoints im Dashboard sind `def`, nie `async def`** — sonst
-   friert der Event-Loop ein → weißer Screen (§4).
-5. **Prognose-Evaluation ohne Lookahead** — das Gate ist heilig (§5).
-6. **Frontend nur direkt in `scripts/static/index.html`** editieren (§6).
-7. Nach jeder nicht-trivialen Änderung: **verifizieren** wie in §8.
+1. **Ein Entscheidungspfad.** Backtest und Live-Engine rufen dieselbe Funktion
+   `decide()` in `src/core/logic.ts`. Was nur in einer Welt gilt, ist ein
+   Messfehler — nie „im Backtest abkürzen" oder „live etwas dazurechnen".
+2. **Kein Lookahead.** Indikatoren sind kausal; jede neue Indikator-/
+   Strategie-Funktion bekommt einen Präfix-Konsistenz-Test
+   (`precompute(bars.prefix(i+1))[i] === precompute(bars)[i]`). Der Simulator
+   reicht Strategien nur `bars.prefix(i+1)` — das bleibt so.
+3. **Echtgeld-Doppel-Guard.** Live nur, wenn `broker.mode: live` UND
+   `ALPACA_ALLOW_LIVE=1` UND ein Live-Key (`AK…`). Fehlt eins ⇒ Paper. Ein
+   Live-Key gegen Paper wird abgelehnt (`resolveMode`). Nie lockern.
+4. **Exits werden nie gesperrt.** Halt, Datenalter, PDT, Positionslimit
+   blockieren nur Einstiege. Stops liegen beim Broker (Bracket-Bein oder
+   GTC-Stop), nicht nur im Prozess.
+5. **Sperren löst man über die Ursache, nie per Override.** Tages-Halt endet
+   am nächsten Handelstag von selbst; Drawdown-Halt nur über `resume`, das den
+   Peak neu setzt und im Journal steht. Kein Schalter „Sperre aus".
+6. **Idempotenz an der logischen Einheit.** Einstiegs-Order-ID aus
+   (mode, symbol, Bucket-Beginn); Exit-ID aus (mode, symbol, entryTime). Vor
+   dem Senden per `getOrderByClientId` prüfen. Nichts buchen ohne Fill.
+7. **Storno vor eigenem Exit; 422 ⇒ nachsehen, nie nachverkaufen.**
+8. **Keys nie im Log.** `registerSecret()` beim Start, alles durch `redact()`.
+9. **„Wir sollten nicht handeln" ist ein zulässiges Ergebnis.** Der Optimierer
+   schreibt Symbole ohne bestandene Gates nach `noTrade`. Niemand „hilft nach".
+10. **Verifizieren, nicht glauben.** `npm run check` (typecheck + lint + test)
+    vor jedem Commit; ein neuer Wächter wird einmal absichtlich gebrochen.
 
----
+## 1. Laufzeit-Layout
 
-## 1. Laufzeit-Layout (Pfad-Annahmen)
+| Zweck | Ort |
+|---|---|
+| Programm | dieses Repo, `node src/cli.ts …` (Node ≥ 22.18, Type-Stripping) oder `dist/` nach `npm run build` |
+| Config | `config/config.yaml` (Vorlage: `config/config.example.yaml`), Schema in `src/core/config.ts` |
+| Secrets | `.env` (Vorlage `.env.example`) — nie committen |
+| State | `AUTOTRD_HOME` bzw. `paths.home` (Default `./var`): `state.json`, `journal.jsonl`, `champion.json`, `bars/`, `calendar.json`, `reports/`, Not-Aus-Datei `HALT` |
 
-Der Code trennt **Programm** (dieses Repo) von **State** (Home-Verzeichnis):
+Keine Datenbank, kein Frontend, keine Cloud-Functions. Ein Prozess, ein
+Journal (append-only), ein State-Snapshot (atomar geschrieben).
 
-| Zweck                | Ort                                              |
-|----------------------|--------------------------------------------------|
-| Python-Interpreter   | `~/.hermes/hermes-agent/venv/bin/python`         |
-| Live-Config          | `~/.hermes/trading/strategy.yaml`                |
-| Engine-Flag & Scans  | `~/.hermes/trading/engine_state.json`            |
-| Positionen / Trades  | `~/.hermes/trading/{positions,trade_log}.json`   |
-| Letzte Signale       | `~/.hermes/trading/signals.json`                 |
-| Zeitreihen-Store     | `~/.hermes/trading/history.db` (SQLite, WAL)     |
-| Secrets              | `~/.hermes/.env`                                  |
-| Auto-Loop-Wrapper    | `~/.hermes/scripts/run_scan.sh`                  |
+## 2. Was das Vorgängersystem gelehrt hat (und wie es hier gelöst ist)
 
-> Das System-`python` (3.14) hat die Deps **nicht**. Immer das venv nutzen —
-> auch für Ad-hoc-Tests: `~/.hermes/hermes-agent/venv/bin/python scripts/…`.
+| Befund (Owner, Juli–Sept. 2026) | Konsequenz hier |
+|---|---|
+| „Der Handel funktioniert; er wird zu Tode gehandelt." Gebühren 3 049 $ bei brutto +1 456 $; 525 Trades in 2 Tagen. | Wenige Einstiege, Exits über Stop/Ziel/Trailing, Kosten im Simulator inkl. Stress ×1,5, Gate `feeShare ≤ 0,5`. |
+| Signal-Exits schnitten Gewinner ab; Take-Profit-Exits gewannen 26/26. | Bracket-Orders mit Ziel; Signal-Exit nur als Trendbruch. |
+| Trailing-Stop vom Einstand gerechnet ⇒ Verkauf bei −3 % statt −25 %. | Trailing nur nachziehen, wenn `highWater` besser als Einstand; nur enger (`logic.ts`). |
+| Doppel-Exit durch zwei Zeitgeber ⇒ echter Short ohne Stop. | Ein Prozess, positionsstabile Client-IDs. |
+| Backtest maß Tagesbars/Long-Flat, live lief Intraday/Short. | Ein `decide()`; Bars aus lokaler Aggregation derselben Minutenbars. |
+| 30 Trades als Beweis; Auswahl auf denselben Daten wiederholt. | Walk-Forward mit Embargo, ≥ 60 OOS-Trades, Deflated Sharpe ≥ 0,95, Nachbarschafts-Plateau, Holdout nur Bericht. |
+| Krypto: −1 133 $ bei 25 bp Taker; ohne Krypto +40 $. | Krypto ist Assetklasse mit eigenen Kosten, Default ist `us_equity`. |
+| Sizing auf Cash ⇒ Kapital arbeitete nicht. | Sizing auf Equity, Risiko je Trade über Stop-Distanz. |
+| PDT nur angezeigt, nie geprüft. | `risk/pdt.ts` ist ein Gate unter 25 000 $. |
+| Cloud Scheduler kann kein WebSocket halten; 5-Min-Takt als Kostendeckel. | Datenstrom + `trade_updates` per WebSocket, Timer-getriebene Bucket-Schließung mit Karenz. |
 
-Wenn du Pfade portabler machen willst (z. B. `AUTOTRD_HOME`-Env-Var), ist das
-eine legitime Verbesserung — aber **an einer Stelle zentralisieren** und alle
-Leser (Engine, Dashboard, cron_task, forecast_eval) gleichzeitig umstellen,
-sonst lesen Loop und Dashboard verschiedene State-Files (siehe §2, running-Gate).
+## 3. Modulkarte (`src/`)
 
-## 2. Die Doppel-Architektur-Falle (WICHTIGSTE Regel)
+| Modul | Rolle |
+|---|---|
+| `core/types.ts` | Alle geteilten Typen (Bar, Strategy, Decision, OrderIntent, Trade, Metrics). |
+| `core/config.ts` | zod-Schema, `.env`-Parser, `resolveMode` (Doppel-Guard). |
+| `core/time.ts` | ET-Zeitlogik (DST via Intl), NYSE-Kalender-Fallback, Buckets. |
+| `core/bars.ts` | Kolumnare `BarSeries`, `aggregate()` aus Minutenbars. |
+| `core/session.ts` | Sitzungs-Sicht je geschlossener Bar (Minuten bis Schluss, letzte Bar). |
+| `core/logic.ts` | `decide()`: Tore, Sizing, Exits — für Backtest UND Live. |
+| `core/journal.ts`, `core/log.ts` | Journal/State, Logging mit Schwärzung. |
+| `risk/` | Sizing, Tages-/Drawdown-Halt, PDT. |
+| `alpaca/` | Vertrag (`types.ts`), REST-Client (`rest.ts`), Streams (`stream.ts`), Symbol-Mapping. |
+| `data/` | Bars-Cache auf Platte, inkrementeller Backfill, Kalender. |
+| `strategy/` | Indikatoren (kausal) und Vorlagen: `trend_donchian`, `momentum_pullback`, `mean_reversion`, `orb_breakout`. |
+| `backtest/` | Portfolio-Simulator (Fills am nächsten Open, Stop vor Ziel), Kosten, Metriken (Sharpe/Sortino/PSR/DSR). |
+| `optimize/` | Walk-Forward, Robustheits-Gates, Champion/Challenger, Report. |
+| `engine/` | Buch, Order-Ausführung, Abgleich, Uhr, Schleife. |
+| `notify/`, `status/` | Telegram, Status-HTTP (nur 127.0.0.1). |
+| `readiness.ts` | Live-Reife aus dem Journal (≥ 200 Trades, ≥ 30 Tage, PF ≥ 1,2, feeShare ≤ 0,5, netto > 0). |
+| `cli.ts` | `doctor · fetch · backtest · optimize · run · status · flatten · halt · resume · readiness`. |
 
-Es existierten historisch **zwei** Schemata. Nur das **flache** ist korrekt:
+## 4. Konventionen
 
-**✅ Richtig (flach):**
-```yaml
-broker: {provider, mode, initial_capital, paper_trading}
-watchlist: [SYM, …]
-engine: {check_interval_min, max_position_pct, stop_loss_pct, take_profit_pct}
-indicators: {rsi:{…}, macd:{…}, bollinger:{…}}
-signals: {min_confluence, period, use_forecast, forecast_weight, forecast_threshold_pct}
-```
+- TS strict, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`,
+  `erasableSyntaxOnly` (keine Parameter-Properties, keine enums),
+  `verbatimModuleSyntax`, relative Imports **mit `.ts`-Endung** (Node führt
+  die Quellen direkt aus; `tsc` schreibt `.js` um).
+- Keine neuen Abhängigkeiten ohne Grund. Laufzeit: `zod`, `yaml`. Streams
+  über das globale `WebSocket`, HTTP über `fetch`/`node:http`.
+- Tests: vitest unter `test/<modul>/`. Keine Netzwerkzugriffe, keine echten
+  Keys, Dateien nur unter `os.tmpdir()`. Jede Funktion, die Geld bewegt oder
+  Zeit rechnet, bekommt einen Test mit dem Fall, in dem sie Geld verliert.
+- Zeit ist immer Epoch-ms (UTC). `Bar.t` ist der Bucket-BEGINN. ET nur in
+  `core/time.ts`. Krypto rechnet in UTC-Tagen (`dayKeyFor`).
+- Preise an Alpaca: Stops VOM Kurs WEG runden, Limits ZUM Kurs HIN.
 
-**❌ Falsch (verschachtelt — verursacht den UI-Speichern-Bug):**
-```yaml
-strategy: {type, parameters, …}
-indices: [{symbol}]
-risk_management: {…}
-execution: {…}
-```
-
-Symptome der kaputten Variante: `broker:`/`watchlist:` fehlen; `cron_task.py`
-zeigt auf `<repo>/data` statt `~/.hermes/trading/`; das UI kann die Strategie
-nicht speichern. **Fix:** immer auf flaches Schema + `~/.hermes/trading/`
-zurückbiegen.
-
-> **Der `running`-Gate MUSS denselben State-File lesen wie das Dashboard
-> schreibt** (`~/.hermes/trading/engine_state.json`). Lesen Loop und Dashboard
-> verschiedene Dateien, handelt der Loop nie — obwohl das UI „ON" zeigt.
-
-## 3. Dateien & Verantwortlichkeiten (`scripts/`)
-
-| Datei                     | Rolle |
-|---------------------------|-------|
-| `trading_dashboard.py`    | FastAPI-App (`:8080`) + alle `/api/*`-Endpoints; startet via `__main__` mit uvicorn. |
-| `trading_engine.py`       | Konfluenz-Logik, Positionsführung, `_execute_trade` → Broker-Routing, `_forecast_vote()`. |
-| `cron_task.py`            | Ein Scan-Zyklus (vom Timer aufgerufen); respektiert den `running`-Gate; bewertet fällige Prognosen. |
-| `market_data.py`          | yfinance-Wrapper (Kurse, History, Ticker-Resolve). |
-| `market_universe.py`      | Katalog aller handelbaren Assets (166 Symbole, 10 Klassen, yfinance-Konventionen); Klarnamen-Resolve. |
-| `history_store.py`        | SQLite-Zeitreihen (`history.db`, WAL); jeder Scan & jede Kursansicht hängt eine Observation an. |
-| `forecaster.py`           | Sentiment-gewichtete Regression-Prognose; loggt Shadow-Forecasts über `(w, lookback)`-Gitter. |
-| `forecast_eval.py`        | Self-Improvement: bewertet fällige Prognosen, tunt `best_params`. **Kein Lookahead** (§5). |
-| `news_feed.py`            | Gratis-News. TS-Rolle seit 29.07. **umgekehrt**: Feeds speisen ein Einstiegs-VETO (`functions/core/news.ts` + `shared/newsGate.ts`), keine Anzeige-Maschinerie (MILESTONES M6, Teil-Rückkehr). |
-| `sentiment.py`            | Lexikon-Sentiment. Seit 29.07. wieder portiert (`shared/sentiment.ts`, Golden-Parity) — nur Veto + Schatten-Statistik, kein Prognose-Tilt. |
-| `ai_analyst.py`           | Claude-Erklärung pro Tag. **NICHT portiert** (s. o.). |
-| `ai_tuner.py`             | Täglicher KI-Review. **NICHT portiert** (s. o.) — das TS-Suchgitter ist fest. |
-| `event_engine.py`         | News auf Chart-Tage mappen. **NICHT portiert** (s. o.). |
-| `broker.py`               | `get_broker(strategy)` → `PaperBroker` \| `AlpacaBroker`; liest Keys aus env; **live hart geguarded** (§7). |
-| `backtest_engine.py`      | Strategie-Backtests (Sharpe/Drawdown). |
-| `static/index.html`       | Komplettes Frontend (hand-maintained, ~87 KB). |
-
-Sub-Skill-Ordner (`market-data/`, `technical-analysis/`, `trading-news/`,
-`daytrading-automation/`) tragen jeweils eine `SKILL.md` + Scripts aus der
-Hermes-Skill-Historie. `technical-analysis/scripts/technical_analysis.py`
-liefert die RSI/MACD/BBands-Berechnung (nutzt `ta` + `mplfinance`).
-
-## 4. Async-Blocking-Falle (Dashboard)
-
-`yfinance`-Calls **blockieren**. Im FastAPI-Dashboard MÜSSEN kurs-/TA-Endpoints
-gewöhnliche `def`-Funktionen sein (FastAPI führt die im Threadpool aus), **nicht**
-`async def`. Ein `async def`-Endpoint, der blockierend yfinance ruft, friert den
-gesamten Event-Loop ein → Server hängt → Browser bekommt leere Antwort →
-**weißer Screen**.
-
-- Symptom „Dashboard weiß / hängt" = fast immer ein geblockter Loop.
-- Schnelltest: `/api/status` muss **<1 s** antworten, während `/api/pulse` läuft.
-- Frontend-Polling ist bewusst langsam (Puls/Chart 60 s).
-
-## 5. Prognose-Kern & Self-Tuning (kein Lookahead!)
-
-- `forecaster.py` loggt „Shadow"-Prognosen über ein Gitter aus
-  `WEIGHT_GRID × LOOKBACK_GRID (=[10,20,30])` — ~15 Kombis/Tag.
-- `forecast_eval.py` bewertet nur Prognosen, deren **letzter Horizont-Tag
-  realisiert** ist, mit striktem Gate `base_date < today`. Der `UNIQUE`-Index
-  `(symbol, base_date, w, lookback)` verhindert Doppel-Logs.
-- **Diese Gates nie aufweichen.** Ein früherer HIGH-Bug war exakt ein
-  Lookahead-Leck hier; adversarial gefixt. Jede Änderung an der Zeitlogik ist
-  hochriskant — mit echten Datumsgrenzen testen (§8).
-- **Prognose treibt Trades:** `trading_engine._forecast_vote()` gibt der
-  Konfluenz eine gewichtete Richtungsstimme, gesteuert über `signals.use_forecast`,
-  `forecast_weight`, `forecast_threshold_pct` in `strategy.yaml`.
-
-## 6. Frontend-Konventionen (`static/index.html`)
-
-- **Direkt editieren.** Es gab einen Generator (`gen_dashboard.py`), der
-  korruptes HTML erzeugte — er wurde aus dem Repo entfernt. Nicht wieder einführen.
-- Charts: **TradingView Lightweight Charts v4.2.0** (CDN, gepinnt). **Nicht auf
-  v5 bumpen**, ohne `addCandlestickSeries` → `addSeries(...)` umzuschreiben.
-  React Flow ist für Kurse falsch.
-- `LightweightCharts` **nicht** auf Top-Level referenzieren (CDN-Fail würde
-  sonst das gesamte JS killen) — Guards in `buildPriceChart`/`loadTrend`,
-  `crosshair.mode: 0` statt Enum.
-- **Anker-Serie statt Kerzen-Serie.** Lightweight Charts zeichnet NICHTS, was
-  an einer `visible: false`-Serie hängt: keine Marker, keine Preislinien; auch
-  `priceToCoordinate`/`coordinateToPrice` liefern dann Unbrauchbares. Die
-  Kerzen-Serie ist genau dann unsichtbar, wenn der Nutzer Linie/Berg/Baseline/
-  Bars wählt oder den Vektor-Look einschaltet. Alles Nicht-Kurs-Zeichnerische
-  hängt deshalb an `lineHost` (transparente Linien-Serie mit denselben
-  Schlusskursen, `frontend/src/chart.ts`) — News-Punkte, Veto-Kreuze,
-  Kauf-Pfeile, Einstieg/Stop/Ziel, Zeichenwerkzeuge, Prognose-Pfeil. Der
-  Fehler kam zweimal zurück (Owner 11.08.); die Sperre ist
-  `npm run chart:shot` (zählt Marker-Pixel je Chart-Typ) plus der
-  Quelltext-Wächter `frontend/test/chartAnkerSerie.test.ts`.
-- **Chart-Änderungen ohne Browser-Nachweis sind unverifiziert.** typecheck,
-  eslint und die Unit-Tests können die einzige Frage, die bei einem Chart
-  zählt — *zeichnet er?* —, nicht beantworten. Vor jedem Chart-Commit:
-  `npm i -D playwright --no-save && npm run chart:shot`. Prüft der Prüfstand
-  die geänderte Sache nicht, ist er zuerst zu erweitern: Ein Prüfstand, der
-  die gemeldete Sache nicht messen kann, bescheinigt Fehlerfreiheit.
-- UI ist „Frosted Aurora": Glass-Cards, eine GPU-Aurora-Layer, Mono-Zahlen,
-  `prefers-reduced-motion`-Guard, Light/Dark via `data-theme`, responsive bis
-  ~360 px (dann Off-Canvas-Drawer + Bottom-Sheet-Modal `#detailModal`).
-- Achtung doppelte IDs: Modal-Titel heißt `mvSym` (nicht `mSym` — das ist der
-  Manual-Trade-Input). Chart-Tooltip (News-Bubble `#evTip`) ist `position:
-  fixed` als **Portal an `document.body`** — nie in eine Glass-Card hängen:
-  `backdrop-filter` macht die Card zum Containing Block für fixed (Bubble
-  wandert dann mit der Sidebar-Breite) und zum eigenen Stacking Context
-  (rechte Spalte malt drüber). Owner-Bug 21.08., Fix in `showNewsTooltip`.
-- Watchlist-Picker schreibt ins versteckte `#sTickers` + `doSave()`; Symbole
-  müssen Katalog-Symbole sein (`^NDX`, nicht bloß `NDX`).
-- **Bild-Prüfstände messen Text gegen Text — nicht Rechteck gegen Text.**
-  `share-shot.mjs` und `chart:shot` melden „keine Kollision", während ein
-  Tag-Rechteck mitten durch einen Symbolnamen läuft oder ein Balken in die
-  Zahlenspalte ragt. Beides kam am 21.08. beim Bau der Depot-Karte vor und
-  war NUR im angesehenen Bild zu erkennen. Regel: Wo ein gezeichnetes
-  Element neben Text sitzt, muss die GEOMETRIE die Kollision ausschließen
-  (feste Spalte statt aus der Zeichenzahl geschätzter Textbreite; Balken
-  enden vor der Zahlenspalte) — und ein Unit-Wächter pinnt die Koordinate.
-  Aus Zeichenzahl × em geschätzte Breiten liegen bei „BTC-USD" oder „MSFT"
-  zuverlässig daneben.
-- **Symbol-Anzeigen tragen `data-sym`.** Der Steckbrief-Anker ist generisch
-  (`SYM_TIP_ANKER = '[data-sym]'`): Jede neue Stelle, die ein Symbol zeigt,
-  ist damit automatisch erklärbar (Hover ~0,3 s, Touch-Longpress 450 ms) —
-  ohne dass jemand einen Selektor pflegt. Die Umkehrung gilt auch: Wer ein
-  Symbol rendert und das Attribut vergisst, baut eine stumme Stelle
-  (Owner-Befund 21.08.: „noch nicht alle Symbole haben Tooltips").
-
-## 7. Broker & Sicherheit
-
-- `broker.py` liest Keys **nur** aus env / `~/.hermes/.env`, loggt sie **nie**.
-- **Echtgeld erfordert BEIDES:** `strategy.yaml broker.mode: live` **UND**
-  env `ALPACA_ALLOW_LIVE=1`. Fehlt eins → automatischer Downgrade auf Paper.
-- Ohne Keys → sauberer Fallback auf `PaperBroker`. Default ist immer Paper.
-- Beim Erweitern der Broker-Schicht diese Guards **nie** lockern und Keys nie in
-  Logs/Exceptions/Commits durchsickern lassen.
-- **Sperren löst man über die URSACHE, nie per Override.** Die
-  Abgleich-Sperre (`abgleich_drift`) ist kein Schalter, sondern ein
-  Messergebnis: Sie steht, solange das Buch Positionen führt, die der
-  Broker nicht hat. Ein Knopf „Sperre aus" wäre genau die Ausnahme, die
-  den Schutz wertlos macht — der Fehlbestand bliebe ja. Richtig ist, die
-  Prüfung neu auszulösen (dann fällt die Sperre von selbst, wenn die Drift
-  weg ist) oder das Buch bewusst anzugleichen (`adoptBroker`, markierter
-  Schnitt mit Bestätigung). Dieselbe Regel gilt für jede künftige Sperre:
-  Die Admin-Ansicht darf sie SICHTBAR machen und die Messung anstoßen —
-  ihren Zustand setzen darf nur die Messung selbst.
-
-## 8. Verifikation (nach jeder nicht-trivialen Änderung)
-
-> **Sabotage-Proben brauchen EINDEUTIGE Anker.** Ein Wächter, der nie rot
-> war, bewacht nichts — deshalb wird jeder neue Wächter einmal absichtlich
-> gebrochen und zurückgebaut, per Text-Ersetzung (nie `git checkout`, das
-> nähme uncommittete Arbeit mit). Der Rückbau muss aber DENSELBEN Ort
-> treffen: Am 21.08. ersetzte eine Probe das erste Vorkommen von „Fee
-> share" (im EN-Block), der Rückbau das erste Vorkommen von
-> „Gebührenanteil" (im DE-Block) — Ergebnis: DE und EN vertauscht. Die
-> volle Suite hat es gefangen, aber verlassen darf man sich darauf nicht.
-> Also: Anker mit genug Kontext wählen (Nachbarzeile, Zeilennummer oder
-> `count == 1` prüfen) und nach dem Rückbau die Suite laufen lassen.
-
-Es gibt keine umfassende Test-Suite — **beobachte echtes Verhalten**:
+## 5. Verifikation
 
 ```bash
-PY=~/.hermes/hermes-agent/venv/bin/python
-
-# a) Import-/Syntax-Smoke
-$PY -c "import scripts.trading_engine, scripts.trading_dashboard, scripts.forecaster"
-
-# b) Ein Scan-Zyklus (außerhalb Marktzeiten mit --force über den Wrapper)
-$PY scripts/cron_task.py            # schreibt signals.json / history.db
-
-# c) Dashboard live + Blocking-Test
-$PY scripts/trading_dashboard.py &  # :8080
-curl -s -m 1 localhost:8080/api/status   # MUSS <1s antworten
-curl -s localhost:8080/api/pulse >/dev/null &   # währenddessen …
-curl -s -m 1 localhost:8080/api/status   # … immer noch <1s? sonst §4-Regression
-
-# d) Prognose-Evaluation ohne Lookahead
-$PY scripts/forecast_eval.py        # darf nur realisierte Horizonte bewerten
+npm run check                    # typecheck + lint + alle Tests
+node src/cli.ts doctor           # Keys, Modus, Konto, Uhr, Assets (braucht .env)
+node src/cli.ts fetch            # Bars + Kalender in den Cache
+node src/cli.ts backtest         # Champion/Default gegen den Cache
+node src/cli.ts optimize         # Walk-Forward ⇒ champion.json + Report
+node src/cli.ts run              # Engine (Paper, solange der Guard nicht erfüllt ist)
 ```
 
-Für UI-Änderungen zusätzlich mit headless Chrome bei Desktop (1500) **und** Phone
-(390) prüfen. Für Flows mit mehreren Klicks lohnt das `verify`-Skill / Chrome-MCP.
+Chart-/UI-Prüfstände gibt es nicht mehr — es gibt keine UI. Der Prüfstand
+für alles Unsichtbare ist das **Engine-Red-Team** (siehe §6).
 
-> **Der Frische-Check am Bundle-Namen beweist nur das FRONTEND.** Am 22.08.
-> ist der Lauf „Deploy Functions (Firebase)" für #424 fehlgeschlagen — und
-> ich habe den Stand trotzdem als live gemeldet, weil sich der Bundle-Name
-> geändert hatte. Der stammt aber aus „Deploy Frontend (webgo)"; das sind
-> zwei getrennte Workflows, die unabhängig scheitern. Ein grüner CI-Lauf
-> sagt ebenfalls nichts über den Deploy: CI, Frontend-Deploy und
-> Functions-Deploy sind drei Läufe auf denselben Commit.
->
-> Der Fehler heilte sich hier zufällig selbst (der nächste erfolgreiche
-> Functions-Deploy nahm den Code mit), aber darauf ist kein Verlass. Also:
-> Bei Server-Änderungen die FUNKTION prüfen, nicht die Seite. Eine
-> deployte Callable antwortet unauthentifiziert mit **401**, eine nicht
-> deployte mit **404**:
->
-> ```bash
-> curl -s -o /dev/null -w "%{http_code}\n" -X POST \
->   https://<funktionsname>-6xru5z43xa-uc.a.run.app \
->   -H "Content-Type: application/json" -d '{"data":{}}'
-> ```
->
-> Der Name ist der EXPORT-Name aus `functions/src/index.ts` (`adminUsers`,
-> nicht `admin`) — ein falscher Name liefert 404 und sieht aus wie ein
-> fehlender Deploy. Für geplante Läufe ist der Beleg ein neues Feld im
-> Herzschlag, nicht der Merge.
+## 6. Arbeitsweise (Owner-Anweisungen, weiterhin gültig)
 
-> **Ein gemergter PR ist kein deployter PR — und ein Merge-Fehlschlag kann
-> BEIDES verschlucken.** Am 22.08. quittierte GitHub den Merge von #433 mit
-> **502**; der Wiederholversuch meldete „Merge already in progress". Der
-> Commit `9528d85` lag danach tatsächlich auf `main` — aber GitHub hat den
-> PR als „closed without merging" verbucht, und **zur Merge-SHA ist kein
-> einziger Lauf gefeuert**: kein CI-`push`, kein Frontend-Deploy, kein
-> Functions-Deploy. Grün war nur der CI-Lauf am PR-Kopf (Event
-> `pull_request`, andere SHA) — der sagt über `main` nichts. Der
-> Datenschutz-Riegel aus #433 lag also im Quelltext und lief trotzdem
-> nicht. Aufgefallen ist es erst, weil ich den Deploy-Lauf zur SHA gesucht
-> habe statt dem grünen Häkchen am PR zu glauben.
->
-> Also nach JEDEM Merge: prüfen, dass zur Merge-SHA ein Deploy-Lauf
-> existiert — nicht, dass der PR zu ist.
->
-> ```bash
-> git fetch origin main && git rev-parse origin/main   # die Merge-SHA
-> # dann: actions_list → gibt es einen Lauf mit genau dieser head_sha?
-> ```
->
-> Fehlt der Lauf, ist der Weg zurück **nicht** ein manueller Workflow-Start
-> (`actions_run_trigger` liefert hier 403 „Resource not accessible by
-> integration"), sondern ein echter neuer Commit auf `main` — der nimmt den
-> liegengebliebenen Stand mit. Ein leerer Commit wäre der schnelle Weg;
-> besser ist ein Commit, der den Anlass gleich dokumentiert.
+- **Multi-agentisch** (22.08.): Jede nicht-triviale Aufgabe wird auf mehrere
+  Agenten mit verschiedenen Rollen aufgefächert; Prüfer haben nicht selbst
+  gebaut und bekommen den Auftrag zu WIDERLEGEN. `git push`, Merges und alles
+  Echtgeld-Nahe bleiben an einer Stelle.
+- **Engine-Red-Team** (20.08.): Für Kante, Prognose, Messung lautet die Frage
+  „beweise, dass diese Zahl falsch ist" — Lookahead, Survivorship, fehlende
+  Kosten, zu kleine Stichproben, zu viele Freiheitsgrade, DST-/Datumskanten.
+  Jede gemessene Verbesserung gilt als Einbildung, bis sie out-of-sample nach
+  Kosten überlebt. Der Kritiker darf „nicht handeln" nie wegloben.
+- **Echtgeld erst nach Live-Reife** („bis man sicher nur noch Gewinn
+  schreibt, dann erst den Schalter umlegen"). `readiness` misst das aus dem
+  Journal des Paper-Betriebs.
 
-> **Und die Gegenrichtung: Ein ROTER Lauf beweist nicht, dass der Code nicht
-> live ist.** Am 23.08. steht der Deploy-Lauf zu `2d967ff` als „failure" —
-> aber Schritt „Deploy functions + firestore" war erfolgreich, Revision
-> `scanmarket-00222-zav` ging um 05:29:49 hoch. Rot wurde der Lauf erst an
-> der Diagnose danach (`check-scheduler.mjs`), die an einem transienten
-> Google-503 ungefangen ausstieg — und die im Gegensatz zu ihrer
-> Schwester `Secret-Diagnose` kein `continue-on-error` trägt.
->
-> Hätte ich die Lauffarbe geglaubt, hätte ich einen gefährlichen Stand für
-> nicht deployt gehalten und mir die Dringlichkeit der Korrektur
-> ausgeredet. Also nicht die Farbe des Laufs lesen, sondern den
-> **Deploy-Schritt**:
->
-> ```bash
-> # actions_list → Lauf-ID zur Merge-SHA, dann:
-> # actions_list list_workflow_jobs → steps[]: hat "Deploy functions +
-> # firestore" conclusion == success? DAS ist der Beleg, nicht run.conclusion.
-> ```
->
-> Beide Richtungen haben dieselbe Wurzel: Ein Sammel-Signal (PR-Häkchen,
-> Lauf-Farbe) beantwortet nie die Frage „läuft mein Code". Nur der Schritt,
-> der ihn ausliefert, beantwortet sie.
+## 7. Git
 
-> **Nach einem Stapel Änderungen: ein Zusammenspiel-Durchgang.** Acht einzeln
-> verifizierte Änderungen ergeben keinen verifizierten Stand — Fehler sitzen
-> dann in der **Naht** zwischen ihnen. Beleg 21.08.: Die Depot-Teilen-Karte
-> und die sprachabhängige Zahlenformatierung entstanden am selben Abend in
-> zwei getrennten Änderungen. Beide Prüfstände waren grün; trotzdem stand
-> danach „118.40 → 131.02" mit Punkt neben „+10,7 %" mit Komma in derselben
-> Zeile derselben Karte, weil die zweite Änderung nur umstellte, was es zu
-> ihrer Zeit gab. Kein Unit-Test konnte das sehen — nur das gerenderte Bild.
-> Also: am Ende eines solchen Abends alle Änderungen **gemeinsam** gegen
-> echte Daten im Browser ansehen, nicht nur jede für sich.
-
-## 9. Git-Konventionen
-
-- **Nie** `~/.hermes/trading/`, `.env`, `*.db`, `*.bak` committen (siehe
-  `.gitignore`). Vor jedem Commit prüfen, dass keine Keys im Diff stehen.
-- Kleine, thematische Commits; deutsche Messages im Imperativ.
-- State-Format-Migrationen (z. B. neue Spalte in `history.db`) additiv +
-  idempotent halten und beim Start migrieren — nie bestehende `history.db`
-  löschen (sie ist die Trainingshistorie des Self-Tuners).
-
-## 10. Roadmap-Ideen (offen)
-
-- Portable Pfade via `AUTOTRD_HOME` statt hartkodiertem `~/.hermes` (§1).
-- Test-Suite um `forecast_eval` (Lookahead-Regression) und den `running`-Gate.
-- Weitere Broker (IBKR), Krypto-Spot, konfigurierbare Marktzeiten pro Asset-Klasse.
-- Backtest-Ergebnisse ins Dashboard.
-
-## 11a. Arbeitsweise: mehrere Agenten, nicht einer (Owner-Anweisung 22.08.)
-
-> **Wortlaut:** „löse das ganze problem multi-agentisch! lasse parallel
-> mehrere agenten mit unterschiedlichen funktionen, aufgaben und rollen ran.
-> erstelle gerne auch sub-agenten zur prüfung, hinterfragung und
-> verbesserung der jeweiligen aufgaben ran! merke dir diese anweisung für
-> alle künftigen tasks!"
-
-Gilt ab sofort für **jede** nicht-triviale Aufgabe, nicht nur für die, bei
-der sie ausgesprochen wurde. Ein Arbeitspaket wird aufgefächert statt
-seriell abgearbeitet:
-
-- **Verschiedene Rollen, nicht dieselbe Frage mehrfach.** Vier Agenten mit
-  vier Blickwinkeln finden anderes als vier Agenten mit demselben Auftrag.
-  Wer nur Redundanz aufbaut, kauft Rechenzeit statt Erkenntnis.
-- **Prüfer sind eigene Agenten und haben nicht selbst gebaut.** Das ist
-  §11 unten, nur als Ablauf statt als Haltung: Der Prüfer bekommt den
-  Auftrag zu WIDERLEGEN, nicht zu bewerten.
-- **Die Zusammenführung ist wieder eine Rolle.** Aus vier Befunden wird
-  nicht automatisch eine Rangfolge — jemand muss sie begründen.
-
-Was NICHT an Agenten abgegeben wird: `git push`, Merges, alles, was
-Echtgeld oder Freigaben berührt. Agenten untersuchen, schlagen vor und
-widerlegen; die Entscheidung und der Schreibzugriff bleiben an einer
-Stelle.
-
-## 11. Rolle des Kritikers (Prompt-Strategie, Owner 20.08.)
-
-Jedes größere Arbeitspaket bekommt einen **separaten Kritiker**, der nicht
-selbst implementiert hat. Es gibt zwei Sorten mit verschiedenen Aufträgen —
-sie zu verwechseln macht beide wertlos:
-
-- **UI-Kritiker (Blindvergleich).** Für alles Sichtbare (Chart, Bedienung,
-  mobil). Er vergleicht Screenshots von autotrd und TradingView bei
-  DERSELBEN Aufgabe blind nebeneinander — Desktop und Handy (390 px) — und
-  sagt, welcher besser aussieht und sich besser bedient. Erkennt er unseren,
-  ist das Paket nicht fertig. Nachweis ausschließlich über den Browser:
-  `npm i -D playwright --no-save && npm run chart:shot` plus
-  `frontend/e2e/smoke.mjs`. „Kompiliert sauber" ist kein Beleg (§6).
-- **Engine-Red-Team (Widerlegung).** Für alles Unsichtbare (Kante, Prognose,
-  Messung). Seine Frage ist nicht „ist es gut genug", sondern **„beweise,
-  dass diese Zahl falsch ist"**: Lookahead (§5 — das Gate ist heilig, ein
-  Leck war schon einmal da), Survivorship im Universum, Kosten, die im Test
-  fehlen und live anfallen, zu kleine Stichproben, zu viele Freiheitsgrade,
-  In-Sample-Auswahl, Datums-/DST-Kanten. Jede gemessene Verbesserung gilt
-  als Einbildung, bis sie out-of-sample nach Kosten überlebt. **„Wir sollten
-  nicht handeln" ist ein zulässiges Ergebnis** — der Kritiker darf es nie
-  wegloben.
-
-Warum die Trennung: Beim Sichtbaren entsteht das Urteil ehrlich AUSSERHALB
-des Systems (Blindvergleich). Beim Unsichtbaren wäre „Loop, bis der Kritiker
-begeistert ist" exakt die Definition von Overfitting — dort muss der
-Kritiker ein Gegner sein, kein Publikum. Der kopierfertige Master-Prompt
-steht in MILESTONES.md („Übergabe-Prompt"), Begründung und Kurzvarianten in
-`docs/MASTERPROMPT.md`.
+- Nie `.env`, `var/`, `*.db`, `*.bak` committen. Vor jedem Commit prüfen,
+  dass keine Keys im Diff stehen.
+- Kleine, thematische Commits, deutsche Messages im Imperativ.
+- State-Formate (`state.json`, `champion.json`, Bars-Cache) tragen `version`;
+  Migrationen additiv und idempotent.
