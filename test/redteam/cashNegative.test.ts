@@ -28,8 +28,10 @@ describe('RED-TEAM Cash negativ', () => {
     // Die Position wird danach von der Tages-Notbremse geschlossen (Equity 7 994 nach Rückfall auf 100) — sie steht in trades.
     const t = res.trades[0]!;
     expect(t.entryPrice).toBe(120);
-    expect(t.qty).toBe(100);
-    // Erwartet: qty·Fill + Kosten ≤ Bargeld (10 000). Beobachtet: 100 × 120 = 12 000 — 2 000 $ ungedeckt, kein Marginzins, keine Ablehnung.
+    // Behoben: Am Fill wird gegen das Bargeld nachgesized (100 Stück zum Close ⇒ 83 zum Gap-Open).
+    expect(t.qty).toBeLessThan(100);
+    expect(t.qty).toBeGreaterThan(0);
     expect(t.qty * t.entryPrice + t.fees).toBeLessThanOrEqual(initialEquity);
+    expect(res.notes.some((n) => /Bargeld reicht am Fill nicht|nachgesized|reduziert/i.test(n))).toBe(true);
   });
 });

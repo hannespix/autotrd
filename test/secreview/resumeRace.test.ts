@@ -10,7 +10,7 @@
  *
  * Dieser Test SCHLÄGT FEHL, solange der Bug existiert.
  */
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -37,12 +37,18 @@ describe('secreview: resume gegen eine hängende Engine', () => {
     const cfg = join(dir, 'config.yaml');
     writeFileSync(cfg, 'universe:\n  symbols: [AAPL]\n');
     const code = await main(['resume', '--ack-drawdown', '--config', cfg, '--env', join(dir, '.env'), '--home', sc.home]);
-    expect(code).toBe(0); // CLI: „Halt aufgehoben"
-    expect(readJson<EngineState>(sc.paths.state)!.halt.halted).toBe(false);
-    expect(sc.journal.readAll().filter((e) => e.kind === 'resume')).toHaveLength(1);
+    expect(code).toBe(0);
+    // Die CLI schreibt NICHT in den State der (vielleicht laufenden) Engine, sondern setzt
+    // einen RESUME-Marker; der Halt steht bis zum nächsten Tick, kein falsches „aufgehoben".
+    expect(existsSync(join(sc.home, 'RESUME'))).toBe(true);
+    expect(readJson<EngineState>(sc.paths.state)!.halt.halted).toBe(true);
+    expect(sc.journal.readAll().filter((e) => e.kind === 'resume')).toHaveLength(0);
 
-    // Engine kommt aus dem Hänger zurück und tickt einmal:
+    // Engine kommt aus dem Hänger zurück und tickt einmal: Marker verarbeitet, Peak = Equity, Journal 'resume'.
     await sc.engine.tick(OPEN1 + 11 * MIN);
-    expect(readJson<EngineState>(sc.paths.state)!.halt.halted, 'resume war wirkungslos — die laufende Engine hat ihren Halt zurückgeschrieben').toBe(false);
+    expect(readJson<EngineState>(sc.paths.state)!.halt.halted, 'RESUME-Marker wurde nicht verarbeitet').toBe(false);
+    expect(readJson<EngineState>(sc.paths.state)!.peakEquity).toBe(85_000);
+    expect(existsSync(join(sc.home, 'RESUME'))).toBe(false);
+    expect(sc.journal.readAll().filter((e) => e.kind === 'resume')).toHaveLength(1);
   });
 });

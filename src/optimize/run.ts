@@ -1,23 +1,30 @@
 /**
  * Ein Optimierungslauf: je Symbol × Strategie Walk-Forward → Stress,
- * Nachbarschaft, Deflated Sharpe → Gates → Champion/Challenger-Entscheidung
- * → champion.json, Journal, Markdown-Bericht.
+ * Nachbarschaft, PSR (OOS), DSR (IS) → Gates → Champion/Challenger-
+ * Entscheidung → champion.json, Journal, Markdown-Bericht.
  *
  * Simulator, Statistik und Strategie-Register werden INJIZIERT. Die
  * Standard-Implementierungen (Backtester, Strategien) lädt `loadDefaultDeps()`
  * asynchron nach — so bleibt `runOptimization` synchron und ohne statische
  * Abhängigkeit auf Module, die parallel entstehen; Tests laufen mit Fakes.
+ *
+ * Der amtierende Champion wird NICHT auf denselben Folds wie der Kandidat
+ * bewertet, sondern nur auf OOS-Folds, die nach seinem Fit-Fenster beginnen
+ * (`fitEnd`) — und durch dieselben Gates. Seine Parameter fließen auch nicht
+ * mehr in die Kandidatensuche ein: Sie wurden auf Daten gefittet, die in den
+ * OOS-Fenstern der Kandidaten liegen (Red-Team-Befund).
  */
 import type { Config } from '../core/config.ts';
 import { Journal, homePaths } from '../core/journal.ts';
 import { errMsg } from '../core/log.ts';
 import type { Calendar } from '../core/time.ts';
-import { dayKey } from '../core/time.ts';
+import { DAY, dayKey } from '../core/time.ts';
 import type { BarSeriesLike, Ms, Strategy } from '../core/types.ts';
 import {
   applyDecision,
   decidePromotion,
   emptyChampionFile,
+  fitEndOf,
   journalDecision,
   loadChampion,
   saveChampion,
@@ -42,8 +49,9 @@ import {
 } from './robustness.ts';
 import { mulberry32 } from './search.ts';
 import {
+  MIN_FOLDS,
+  fixedParamsWfa,
   foldPlanForBars,
-  oosScoreOnFolds,
   walkForward,
   type SimConfig,
   type SimulateFn,
@@ -122,6 +130,23 @@ export interface StrategyRun {
   psr: PsrResult;
 }
 
+/** Re-Score des amtierenden Champions auf sauberem OOS (Folds nach fitEnd). */
+export interface IncumbentEval {
+  strategy: string;
+  fitEnd: Ms;
+  cleanFolds: number;
+  totalFolds: number;
+  /** Kalendertage sauberes OOS. */
+  cleanDays: number;
+  trades: number;
+  /** OOS-Median auf sauberen Folds; bei zu wenig sauberem OOS der Beförderungs-Score. */
+  score: number | null;
+  /** true/false = Gates auf sauberem OOS; null = nicht geprüft (zu wenig sauberes OOS). */
+  pass: boolean | null;
+  gates: GateResult[];
+  note: string;
+}
+
 export interface SymbolRun {
   symbol: string;
   /** Absteigend nach Score sortiert. */
@@ -131,6 +156,7 @@ export interface SymbolRun {
   chosen: ChampionEntry | null;
   incumbent: ChampionEntry | null;
   incumbentRescore: number | null;
+  incumbentEval: IncumbentEval | null;
   errors: string[];
 }
 
@@ -205,25 +231,28 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       log(`${symbol}: ${errMsg(e)}`);
     }
 
-    if (bars) {
+    const common = bars
+      ? {
+          symbol,
+          bars,
+          benchmark: input.benchmark,
+          config: simConfig,
+          initialEquity: input.initialEquity,
+          calendar: input.calendar,
+          simulate: deps.simulate,
+        }
+      : null;
+
+    if (bars && common) {
       const first = bars.t[0]!;
       const last = bars.t[bars.length - 1]! + 1;
       dataRange = dataRange ? { start: Math.min(dataRange.start, first), end: Math.max(dataRange.end, last) } : { start: first, end: last };
 
-      const common = {
-        symbol,
-        bars,
-        benchmark: input.benchmark,
-        config: simConfig,
-        initialEquity: input.initialEquity,
-        calendar: input.calendar,
-        simulate: deps.simulate,
-      };
-
       for (const strategy of usable) {
         try {
-          const include = incumbent && incumbent.strategy === strategy.id ? [incumbent.params] : [];
-          const wfa = walkForward({ ...common, strategy, optimizer, rng, include, log });
+          // Kein `include` des Amtsinhabers: seine Params stammen aus einem Fit-Fenster,
+          // das in den OOS-Fenstern der Kandidaten liegt — Defaults bleiben drin (walkForward).
+          const wfa = walkForward({ ...common, strategy, optimizer, rng, log });
           const stress = stressTest({ ...common, strategy, wfa, costMultiplier: optimizer.stressCostMultiplier, objective: optimizer.objective });
           const neighborhood = neighborhoodTest({ ...common, strategy, wfa, optimizer });
           const dsr = deflatedSharpeIs({ wfa, metricsFns: deps.metricsFns, varSrSource: input.dsrVarSource });
@@ -242,29 +271,65 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
     const bestPassed = results.find((r) => r.pass) ?? null;
     const bestAny = results[0] ?? null;
 
-    // Amtierenden Champion auf DENSELBEN Folds neu bewerten — ein alter Score
-    // aus einer anderen Datenlage ist kein Vergleichsmaßstab.
+    // Amtierenden Champion NUR auf sauberem OOS (Folds nach fitEnd) und durch dieselben
+    // Gates bewerten. Reicht das saubere OOS nicht, gilt der bei der Beförderung belegte
+    // Score weiter — eine Datenlücke ist kein Beleg gegen den Champion.
     let incumbentRescore: number | null = null;
-    if (incumbent && bars) {
+    let incumbentPass: boolean | null = null;
+    let incumbentEval: IncumbentEval | null = null;
+    if (incumbent && bars && common) {
       try {
         const strat = deps.getStrategy(incumbent.strategy);
         if (incumbent.timeframe !== cfg.timeframe || !strat.timeframes.includes(cfg.timeframe)) {
           errors.push(`Champion ${incumbent.strategy}: Zeitrahmen ${incumbent.timeframe} ≠ ${cfg.timeframe} — nicht vergleichbar`);
         } else {
-          const folds = foldPlanForBars(bars, optimizer).folds;
-          incumbentRescore = oosScoreOnFolds({
-            symbol,
-            strategy: strat,
-            params: incumbent.params,
-            bars,
-            benchmark: input.benchmark,
-            config: simConfig,
-            initialEquity: input.initialEquity,
-            calendar: input.calendar,
-            simulate: deps.simulate,
-            folds,
-            objective: optimizer.objective,
-          }).objectiveMedian;
+          const plan = foldPlanForBars(bars, optimizer);
+          const fitEnd = fitEndOf(incumbent);
+          const clean = plan.folds.filter((f) => f.oosStart >= fitEnd);
+          const cleanDays = Math.round(clean.reduce((s, f) => s + (f.oosEnd - f.oosStart) / DAY, 0));
+          const base = { strategy: incumbent.strategy, fitEnd, cleanFolds: clean.length, totalFolds: plan.folds.length, cleanDays };
+          if (clean.length < MIN_FOLDS) {
+            incumbentRescore = incumbent.score;
+            incumbentEval = {
+              ...base,
+              trades: 0,
+              score: incumbent.score,
+              pass: null,
+              gates: [],
+              note: `zu wenig sauberes OOS nach fitEnd (${clean.length} von ${plan.folds.length} Folds, ${cleanDays} Tage; mindestens ${MIN_FOLDS} Folds) — Beförderungs-Score ${incumbent.score.toFixed(3)} gilt weiter`,
+            };
+          } else {
+            const wfa = fixedParamsWfa({ ...common, strategy: strat, params: incumbent.params, folds: clean, optimizer, holdout: plan.holdout });
+            const stress = stressTest({ ...common, strategy: strat, wfa, costMultiplier: optimizer.stressCostMultiplier, objective: optimizer.objective });
+            const neighborhood = neighborhoodTest({ ...common, strategy: strat, wfa, optimizer });
+            const dsr = deflatedSharpeIs({ wfa, metricsFns: deps.metricsFns, varSrSource: input.dsrVarSource });
+            const psr = probabilisticSharpeOos({ wfa, metricsFns: deps.metricsFns });
+            const g = robustnessGates({
+              wfa,
+              optimizer,
+              stressOos: stress,
+              neighborhood,
+              dsr,
+              psr,
+              metricsFns: deps.metricsFns,
+              periodsPerYear,
+              incumbent: { cleanFolds: clean.length, totalFolds: plan.folds.length },
+            });
+            incumbentRescore = wfa.oos.objectiveMedian;
+            incumbentPass = g.pass;
+            const failed = g.gates.filter((x) => !x.pass).map((x) => x.name);
+            incumbentEval = {
+              ...base,
+              trades: wfa.oos.trades,
+              score: incumbentRescore,
+              pass: g.pass,
+              gates: g.gates,
+              note: g.pass
+                ? `Gates auf sauberem OOS bestanden (${clean.length} von ${plan.folds.length} Folds, ${cleanDays} Tage, ${wfa.oos.trades} Trades)`
+                : `Gates auf sauberem OOS gerissen: ${failed.join(', ')} (${clean.length} von ${plan.folds.length} Folds, ${cleanDays} Tage, ${wfa.oos.trades} Trades)`,
+            };
+          }
+          log(`${symbol} Champion ${incumbent.strategy}: ${incumbentEval.note}`);
         }
       } catch (e) {
         errors.push(`Champion ${incumbent.strategy}: Re-Score fehlgeschlagen — ${errMsg(e)}`);
@@ -281,6 +346,8 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       decidedAt: runAt,
       trials: r.wfa.trials,
       dataRange: r.wfa.dataRange,
+      // Ende des Fensters, aus dem finalParams stammen: OOS davor ist für spätere Re-Scores tabu.
+      fitEnd: r.wfa.finalWindow.end,
     });
 
     let decision: PromotionDecision;
@@ -295,6 +362,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       decision = decidePromotion({
         incumbent,
         incumbentRescore,
+        incumbentPass,
         candidate: candidate ? { entry: candidate, pass: bestPassed !== null } : null,
         margin: optimizer.promotionMargin,
       });
@@ -302,9 +370,9 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
 
     champion = applyDecision({ file: champion, symbol, decision, candidate, bestScore: bestAny ? bestAny.score : null, now: runAt });
     const chosen = decision.action === 'promote' ? champion.symbols[symbol]! : decision.action === 'keep' ? incumbent : null;
-    journalDecision(journal, { symbol, decision, chosen, candidate, candidatePass: bestPassed !== null, incumbentRescore, now: runAt });
+    journalDecision(journal, { symbol, decision, chosen, candidate, candidatePass: bestPassed !== null, incumbentRescore, incumbentPass, now: runAt });
     log(`${symbol}: ${decision.action} — ${decision.reason}`);
-    runs.push({ symbol, results, decision, chosen, incumbent, incumbentRescore, errors });
+    runs.push({ symbol, results, decision, chosen, incumbent, incumbentRescore, incumbentEval, errors });
   }
 
   saveChampion(paths.champion, champion);

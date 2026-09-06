@@ -8,13 +8,15 @@ import {
   decidePromotion,
   emptyChampionFile,
   finiteOrNull,
+  fitEndOf,
   journalDecision,
   loadChampion,
   saveChampion,
   type ChampionEntry,
+  type PromotionInput,
 } from '../../src/optimize/promote.ts';
 
-function entry(strategy: string, score: number): ChampionEntry {
+function entry(strategy: string, score: number, extra: Partial<ChampionEntry> = {}): ChampionEntry {
   return {
     strategy,
     params: { a: 1 },
@@ -36,60 +38,91 @@ function entry(strategy: string, score: number): ChampionEntry {
     decidedAt: 1,
     trials: 10,
     dataRange: { start: 0, end: 1 },
+    ...extra,
   };
 }
 
 describe('decidePromotion', () => {
   const inc = entry('old', 1);
+  const decide = (over: Partial<PromotionInput>) =>
+    decidePromotion({ incumbent: inc, incumbentRescore: 1, incumbentPass: true, candidate: { entry: entry('new', 2), pass: true }, margin: 0.1, ...over });
 
   it('erste Beförderung ohne Incumbent', () => {
-    const d = decidePromotion({ incumbent: null, incumbentRescore: null, candidate: { entry: entry('new', 0.5), pass: true }, margin: 0.1 });
+    const d = decide({ incumbent: null, incumbentRescore: null, incumbentPass: null, candidate: { entry: entry('new', 0.5), pass: true } });
     expect(d.action).toBe('promote');
     expect(d.reason).toMatch(/erste Beförderung/);
   });
 
   it('Marge: Kandidat muss rescore × (1 + margin) erreichen', () => {
-    const at = (score: number) => decidePromotion({ incumbent: inc, incumbentRescore: 1, candidate: { entry: entry('new', score), pass: true }, margin: 0.1 }).action;
+    const at = (score: number) => decide({ candidate: { entry: entry('new', score), pass: true } }).action;
     expect(at(1.05)).toBe('keep');
     expect(at(1.0999)).toBe('keep');
     expect(at(1.1)).toBe('promote');
     expect(at(2)).toBe('promote');
-    expect(decidePromotion({ incumbent: inc, incumbentRescore: 1, candidate: { entry: entry('new', 1.05), pass: true }, margin: 0 }).action).toBe('promote');
+    expect(decide({ candidate: { entry: entry('new', 1.05), pass: true }, margin: 0 }).action).toBe('promote');
+    expect(decide({ candidate: { entry: entry('new', 1.05), pass: true } }).reason).toMatch(/Marge nicht erreicht/);
   });
 
-  it('der Vergleich läuft gegen den RE-SCORE, nicht gegen den alten Champion-Score', () => {
+  it('der Vergleich läuft gegen den RE-SCORE auf sauberem OOS, nicht gegen den alten Champion-Score', () => {
     // alter Score 1, heute nur noch 0.5 ⇒ Kandidat 0.6 reicht
-    const d = decidePromotion({ incumbent: inc, incumbentRescore: 0.5, candidate: { entry: entry('new', 0.6), pass: true }, margin: 0.1 });
+    expect(decide({ incumbentRescore: 0.5, candidate: { entry: entry('new', 0.6), pass: true } }).action).toBe('promote');
+  });
+
+  it('ungeprüfter Incumbent (zu wenig sauberes OOS): Beförderungs-Score als Maßstab, Marge gilt', () => {
+    const d = decide({ incumbentRescore: 1, incumbentPass: null, candidate: { entry: entry('new', 1.05), pass: true } });
+    expect(d.action).toBe('keep');
+    expect(d.reason).toMatch(/Beförderungs-Score, kein sauberes OOS/);
+    expect(decide({ incumbentRescore: 1, incumbentPass: null, candidate: { entry: entry('new', 1.2), pass: true } }).action).toBe('promote');
+  });
+
+  it('Incumbent reißt die Gates: bestandener Kandidat übernimmt ohne Marge', () => {
+    const d = decide({ incumbentRescore: 5, incumbentPass: false, candidate: { entry: entry('new', 0.2), pass: true } });
     expect(d.action).toBe('promote');
+    expect(d.reason).toMatch(/reißt die Gates/);
   });
 
   it('Incumbent ohne Kante (rescore ≤ 0 oder null): Kandidat mit Score > 0 übernimmt', () => {
-    expect(decidePromotion({ incumbent: inc, incumbentRescore: -0.2, candidate: { entry: entry('new', 0.3), pass: true }, margin: 0.1 }).action).toBe('promote');
-    expect(decidePromotion({ incumbent: inc, incumbentRescore: 0, candidate: { entry: entry('new', 0.3), pass: true }, margin: 0.1 }).action).toBe('promote');
-    expect(decidePromotion({ incumbent: inc, incumbentRescore: null, candidate: { entry: entry('new', 0.3), pass: true }, margin: 0.1 }).action).toBe('promote');
-    expect(decidePromotion({ incumbent: inc, incumbentRescore: -0.2, candidate: { entry: entry('new', -0.1), pass: true }, margin: 0.1 }).action).toBe('keep');
+    expect(decide({ incumbentRescore: -0.2, candidate: { entry: entry('new', 0.3), pass: true } }).action).toBe('promote');
+    expect(decide({ incumbentRescore: 0, candidate: { entry: entry('new', 0.3), pass: true } }).action).toBe('promote');
+    expect(decide({ incumbentRescore: null, incumbentPass: null, candidate: { entry: entry('new', 0.3), pass: true } }).action).toBe('promote');
+    expect(decide({ incumbentRescore: -0.2, candidate: { entry: entry('new', -0.1), pass: true } }).action).toBe('keep');
   });
 
-  it('Kandidat fällt durch: Incumbent mit Kante bleibt, ohne Kante ⇒ kein Handel', () => {
+  it('Kandidat fällt durch: Incumbent mit Kante bleibt, ohne Kante oder mit gerissenen Gates ⇒ kein Handel', () => {
     const fail = { entry: entry('new', 2), pass: false };
-    const keep = decidePromotion({ incumbent: inc, incumbentRescore: 0.5, candidate: fail, margin: 0.1 });
+    const keep = decide({ incumbentRescore: 0.5, candidate: fail });
     expect(keep.action).toBe('keep');
     expect(keep.reason).toMatch(/fällt durch/);
-    expect(decidePromotion({ incumbent: inc, incumbentRescore: 0, candidate: fail, margin: 0.1 }).action).toBe('demote_to_notrade');
-    expect(decidePromotion({ incumbent: inc, incumbentRescore: -1, candidate: fail, margin: 0.1 }).action).toBe('demote_to_notrade');
-    expect(decidePromotion({ incumbent: inc, incumbentRescore: null, candidate: fail, margin: 0.1 }).action).toBe('demote_to_notrade');
+    expect(keep.reason).toMatch(/besteht die Gates/);
+    const unchecked = decide({ incumbentRescore: 0.5, incumbentPass: null, candidate: fail });
+    expect(unchecked.action).toBe('keep');
+    expect(unchecked.reason).toMatch(/ungeprüft/);
+    expect(decide({ incumbentRescore: 0, candidate: fail }).action).toBe('demote_to_notrade');
+    expect(decide({ incumbentRescore: -1, candidate: fail }).action).toBe('demote_to_notrade');
+    expect(decide({ incumbentRescore: null, incumbentPass: null, candidate: fail }).action).toBe('demote_to_notrade');
+    const torn = decide({ incumbentRescore: 3, incumbentPass: false, candidate: fail });
+    expect(torn.action).toBe('demote_to_notrade');
+    expect(torn.reason).toMatch(/reißt die Gates/);
+    expect(decide({ incumbentRescore: 3, incumbentPass: false, candidate: null }).action).toBe('demote_to_notrade');
   });
 
   it('kein Incumbent und kein bestandener Kandidat ⇒ stay_notrade', () => {
-    expect(decidePromotion({ incumbent: null, incumbentRescore: null, candidate: { entry: entry('new', 2), pass: false }, margin: 0.1 }).action).toBe('stay_notrade');
-    const d = decidePromotion({ incumbent: null, incumbentRescore: null, candidate: null, margin: 0.1 });
+    expect(decide({ incumbent: null, incumbentRescore: null, incumbentPass: null, candidate: { entry: entry('new', 2), pass: false } }).action).toBe('stay_notrade');
+    const d = decide({ incumbent: null, incumbentRescore: null, incumbentPass: null, candidate: null });
     expect(d.action).toBe('stay_notrade');
     expect(d.reason).toMatch(/kein bewertbarer Kandidat/);
   });
 
   it('ein durchgefallener Kandidat wird nie befördert — auch mit hohem Score', () => {
-    const d = decidePromotion({ incumbent: null, incumbentRescore: null, candidate: { entry: entry('new', 99), pass: false }, margin: 0 });
+    const d = decide({ incumbent: null, incumbentRescore: null, incumbentPass: null, candidate: { entry: entry('new', 99), pass: false }, margin: 0 });
     expect(d.action).not.toBe('promote');
+  });
+});
+
+describe('fitEndOf', () => {
+  it('nimmt fitEnd, sonst konservativ decidedAt (alte Dateien)', () => {
+    expect(fitEndOf(entry('s', 1, { decidedAt: 500, fitEnd: 400 }))).toBe(400);
+    expect(fitEndOf(entry('s', 1, { decidedAt: 500 }))).toBe(500);
   });
 });
 
@@ -104,11 +137,12 @@ describe('applyDecision & Champion-Datei', () => {
     return d;
   };
 
-  it('promote setzt den Champion und löscht noTrade; keep ändert nichts', () => {
+  it('promote setzt den Champion (inkl. fitEnd) und löscht noTrade; keep ändert nichts', () => {
     const file = { ...emptyChampionFile(0), noTrade: { AAA: { reason: 'x', decidedAt: 0, bestScore: null } } };
-    const cand = entry('new', 1.5);
+    const cand = entry('new', 1.5, { fitEnd: 77 });
     const out = applyDecision({ file, symbol: 'AAA', decision: { action: 'promote', reason: 'r' }, candidate: cand, bestScore: 1.5, now: 42 });
     expect(out.symbols.AAA).toEqual({ ...cand, decidedAt: 42 });
+    expect(out.symbols.AAA!.fitEnd).toBe(77);
     expect(out.noTrade.AAA).toBeUndefined();
     expect(out.updatedAt).toBe(42);
     // Eingabe unverändert (neues Objekt)
@@ -142,7 +176,7 @@ describe('applyDecision & Champion-Datei', () => {
     const dir = tmp();
     const path = join(dir, 'champion.json');
     expect(loadChampion(path)).toBeNull();
-    const file = { ...emptyChampionFile(5), symbols: { AAA: entry('s', 1.25) } };
+    const file = { ...emptyChampionFile(5), symbols: { AAA: entry('s', 1.25, { fitEnd: 9 }) } };
     saveChampion(path, file);
     expect(loadChampion(path)).toEqual(file);
     expect(JSON.parse(readFileSync(path, 'utf8')).version).toBe(1);
@@ -157,20 +191,21 @@ describe('applyDecision & Champion-Datei', () => {
     expect(finiteOrNull(null)).toBeNull();
   });
 
-  it('journalDecision schreibt einen champion-Eintrag', () => {
+  it('journalDecision schreibt einen champion-Eintrag mit fitEnd und Gate-Status', () => {
     const dir = tmp();
     const journal = new Journal(join(dir, 'journal.jsonl'));
     journalDecision(journal, {
       symbol: 'AAA',
       decision: { action: 'promote', reason: 'weil' },
-      chosen: entry('s', 1),
+      chosen: entry('s', 1, { fitEnd: 123 }),
       candidate: entry('s', 1),
       candidatePass: true,
       incumbentRescore: -Infinity,
+      incumbentPass: false,
       now: 99,
     });
     const events = journal.readAll();
     expect(events.length).toBe(1);
-    expect(events[0]).toMatchObject({ ts: 99, kind: 'champion', symbol: 'AAA', action: 'promote', strategy: 's', candidatePass: true, incumbentRescore: null });
+    expect(events[0]).toMatchObject({ ts: 99, kind: 'champion', symbol: 'AAA', action: 'promote', strategy: 's', fitEnd: 123, candidatePass: true, incumbentRescore: null, incumbentPass: false });
   });
 });

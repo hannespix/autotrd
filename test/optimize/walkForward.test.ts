@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { median, objectiveValue } from '../../src/optimize/objective.ts';
 import { mulberry32 } from '../../src/optimize/search.ts';
-import { aggregateOos, foldPlanForBars, lowerBound, oosScoreOnFolds, walkForward, type OosPiece } from '../../src/optimize/walkForward.ts';
+import { aggregateOos, fixedParamsWfa, foldPlanForBars, lowerBound, oosScoreOnFolds, walkForward, type OosPiece } from '../../src/optimize/walkForward.ts';
 import { REWARD_PROFILE, dailyBars, fakeStrategy, makeFakeSimulate, simConfigOf, testConfig } from './fakes.ts';
 
 const bars = dailyBars(400);
@@ -42,6 +42,7 @@ describe('walkForward', () => {
 
   it('zählt alle bewerteten Parametersätze als Trials; finale Suche liefert IS-Renditen und Trial-Sharpes', () => {
     expect(wfa.trials).toBe(8 * 55 + 55);
+    expect(wfa.finalEvaluated).toBe(55);
     // finales Fenster: 150 Bars minus 25 Embargo ⇒ 125 Tagesrenditen von finalParams
     expect(wfa.finalIsDailyReturns.length).toBe(150 - 25);
     expect(wfa.finalTrialSharpes.length).toBe(55);
@@ -245,5 +246,43 @@ describe('oosScoreOnFolds', () => {
     expect(simulate.calls.map((c) => c.range)).toEqual(folds.map((f) => ({ start: f.oosStart, end: f.oosEnd })));
     // dieselben Params wie die WFA-Folds (a = 10, gemeinsames Rauschen) ⇒ identischer OOS-Median
     expect(agg.objectiveMedian).toBe(runWfa().wfa.oos.objectiveMedian);
+  });
+});
+
+describe('fixedParamsWfa (Amtsinhaber ohne Suche)', () => {
+  it('bewertet feste Params nur auf den übergebenen Folds — ohne Trials, mit IS-Lauf für die Nachbarschaft', () => {
+    const simulate = makeFakeSimulate(REWARD_PROFILE);
+    const plan = foldPlanForBars(bars, cfg.optimizer);
+    const clean = plan.folds.slice(5); // z. B. nur die letzten 3 Folds sind sauber
+    const w = fixedParamsWfa({
+      symbol: 'AAA',
+      strategy,
+      params: { a: 10, b: 0 },
+      bars,
+      config: simConfigOf(cfg),
+      initialEquity: 10_000,
+      simulate,
+      folds: clean,
+      optimizer: cfg.optimizer,
+      holdout: plan.holdout,
+    });
+    expect(w.folds.length).toBe(3);
+    expect(w.folds.map((f) => f.fold.index)).toEqual([5, 6, 7]);
+    expect(w.trials).toBe(0);
+    expect(w.finalEvaluated).toBe(0);
+    expect(w.finalTrialSharpes).toEqual([]);
+    expect(w.finalParams).toEqual({ a: 10, b: 0 });
+    expect(w.oos.trades).toBe(90);
+    expect(w.finalWindow).toEqual({ start: clean[2]!.isStart, end: clean[2]!.oosEnd, embargoAtEnd: true });
+    expect(w.finalIsDailyReturns.length).toBe(150 - 25);
+    expect(w.holdout).toBeNull();
+    // OOS-Aufrufe exakt auf den sauberen Fenstern, nie davor
+    const oosCalls = simulate.calls.filter((c) => clean.some((f) => c.range!.start === f.oosStart && c.range!.end === f.oosEnd));
+    expect(oosCalls.length).toBe(3);
+    for (const c of simulate.calls) expect(c.range!.start).toBeGreaterThanOrEqual(clean[0]!.isStart);
+    // gleicher OOS-Median wie die reine Fold-Bewertung
+    const agg = oosScoreOnFolds({ symbol: 'AAA', strategy, params: { a: 10, b: 0 }, bars, config: simConfigOf(cfg), initialEquity: 10_000, simulate, folds: clean, objective: 'sortino' });
+    expect(w.oos.objectiveMedian).toBe(agg.objectiveMedian);
+    expect(() => fixedParamsWfa({ symbol: 'AAA', strategy, params: { a: 1, b: 1 }, bars, config: simConfigOf(cfg), initialEquity: 10_000, simulate, folds: [], optimizer: cfg.optimizer, holdout: null })).toThrow(/keine Folds/);
   });
 });

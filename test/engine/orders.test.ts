@@ -325,6 +325,44 @@ describe('OrderExecutor — Stops', () => {
   });
 });
 
+describe('OrderExecutor — Stop-Menge', () => {
+  it('Krypto-Teilfill: Stop folgt der Menge; scheitert das Replace ⇒ Storno + neuer Stop über die volle Menge', async () => {
+    const s = setup({ assetClass: 'crypto' });
+    await s.executor.execute([enter({ symbol: 'BTC/USD', qty: 2, stop: 98, target: null, refPrice: 100 })]);
+    const entry = s.fake.ordersFor('BTC/USD')[0]!;
+    await s.executor.handleTradeUpdate(s.fake.fill(entry.id, 100, 1));
+    const first = s.fake.openOrders('BTC/USD').find((o) => o.type === 'stop_limit')!;
+    expect(first.qty).toBe(1);
+    s.fake.throwOn('replaceOrder', new AlpacaError('Alpaca 422: not replaceable', 422, null, false), 1);
+    await s.executor.handleTradeUpdate(s.fake.fill(entry.id, 100));
+    const pos = s.book.positions.get('BTC/USD')!;
+    expect(pos.qty).toBe(2);
+    expect(s.fake.find(first.id)?.status).toBe('canceled');
+    const stops = s.fake.openOrders('BTC/USD').filter((o) => o.type === 'stop_limit');
+    expect(stops).toHaveLength(1);
+    expect(stops[0]).toMatchObject({ qty: 2, stopPrice: 98, timeInForce: 'gtc' });
+    expect(stops[0]?.clientOrderId).toBe(stopClientId('paper', 'BTC/USD', pos.entryTime, 1));
+    expect(s.book.protectiveOrders.get('BTC/USD')?.orderId).toBe(stops[0]?.id);
+    // Danach passt alles ⇒ ensureProtectiveStops rührt nichts an.
+    expect(await s.executor.ensureProtectiveStops()).toEqual([]);
+    expect(s.fake.callsOf('replaceOrder')).toHaveLength(1);
+  });
+
+  it('Aktien: verkleinerte Position (Teil-Exit) ⇒ Stop-Menge wird beim Abgleich verkleinert', async () => {
+    const s = setup();
+    const parent = await filledEntry(s);
+    await s.executor.execute([exit('signal')]);
+    const exitOrder = s.fake.openOrders('AAPL').find((o) => o.type === 'market')!;
+    await s.executor.handleTradeUpdate(s.fake.fill(exitOrder.id, 101, 50));
+    s.fake.find(exitOrder.id)!.status = 'canceled'; // Rest der Exit-Order tot ⇒ 149 bleiben, ohne Stop
+    expect(s.book.positions.get('AAPL')?.qty).toBe(149);
+    expect(await s.executor.ensureProtectiveStops()).toEqual(['AAPL']);
+    const stop = s.fake.openOrders('AAPL').find((o) => o.type === 'stop')!;
+    expect(stop.qty).toBe(149);
+    expect(s.fake.find(`${parent.id}-sl`)?.status).toBe('canceled');
+  });
+});
+
 describe('OrderExecutor — Krypto', () => {
   it('kein Bracket: Marktorder gtc mit 4-Dezimal-Menge, danach eigene stop_limit-Order', async () => {
     const s = setup({ assetClass: 'crypto' });

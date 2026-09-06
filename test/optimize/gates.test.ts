@@ -85,6 +85,7 @@ function wfaFixture(over: Partial<WfaResult['oos']> = {}, foldReturns?: number[]
     finalIsMetrics: metrics(),
     finalWindow: { start: 0, end: 10, embargoAtEnd: true },
     trials: 250,
+    finalEvaluated: 50,
     // IS-Sharpe ≈ 0,7 je Periode — moderat genug, dass die Deflation sichtbar bleibt
     // (bei Sharpe ≈ 3,5 sättigt Φ auf exakt 1 und jeder Vergleich wird blind)
     finalIsDailyReturns: Array.from({ length: 120 }, (_, i) => 0.01 + 0.02 * Math.sin(i + 7)),
@@ -98,7 +99,21 @@ function wfaFixture(over: Partial<WfaResult['oos']> = {}, foldReturns?: number[]
 }
 
 function dsrOf(value: number | null): DsrResult {
-  return { dsr: value, sr: 1, n: 120, nTrials: 250, varSr: 0.01, varSrSource: 'trial_sharpes', varSrTrials: 0.01, varSrFolds: 0.05, skew: 0, kurt: 3, note: `DSR ${value ?? 'null'} (Fixture)` };
+  return {
+    dsr: value,
+    dsrFinalOnly: value,
+    sr: 1,
+    n: 120,
+    nTrials: 250,
+    nTrialsFinal: 50,
+    varSr: 0.01,
+    varSrSource: 'trial_sharpes',
+    varSrTrials: 0.01,
+    varSrFolds: 0.05,
+    skew: 0,
+    kurt: 3,
+    note: `DSR ${value ?? 'null'} (Fixture)`,
+  };
 }
 
 function psrOf(value: number | null): PsrResult {
@@ -214,6 +229,22 @@ describe('robustnessGates', () => {
     expect(robustnessGates(gateInput({ optimizer: on, dsr: dsrOf(0.95) })).pass).toBe(true);
   });
 
+  it('Amtsinhaber-Modus: Trade-Schwelle anteilig zu den sauberen Folds, DSR nicht anwendbar', () => {
+    const half = { cleanFolds: 4, totalFolds: 8 };
+    const ok = robustnessGates(gateInput({ incumbent: half, wfa: wfaFixture({ trades: 30 }), dsr: dsrOf(0.1) }));
+    expect(ok.pass).toBe(true);
+    expect(ok.gates[0]!.threshold).toBe(30);
+    expect(ok.gates[0]!.note).toMatch(/anteilig 30 von 60/);
+    expect(ok.gates[6]!.pass).toBe(true);
+    expect(ok.gates[6]!.note).toMatch(/nicht anwendbar/);
+    // auch mit dsrIsGate=true bleibt der DSR beim Amtsinhaber außen vor (keine Suche, keine Trials)
+    expect(robustnessGates(gateInput({ optimizer: withGateFlags({ dsrIsGate: true }), incumbent: half, wfa: wfaFixture({ trades: 30 }), dsr: dsrOf(null) })).pass).toBe(true);
+    const tooFew = robustnessGates(gateInput({ incumbent: half, wfa: wfaFixture({ trades: 29 }) }));
+    expect(failing(tooFew)).toEqual(['oos_trades']);
+    // alle Folds sauber ⇒ volle Schwelle
+    expect(robustnessGates(gateInput({ incumbent: { cleanFolds: 8, totalFolds: 8 }, wfa: wfaFixture({ trades: 59 }) })).pass).toBe(false);
+  });
+
   it('(6b) PSR-Schwelle kommt aus optimizer.minPsrOos', () => {
     const strict = withGateFlags({ minPsrOos: 0.99 });
     const r = robustnessGates(gateInput({ optimizer: strict, psr: psrOf(0.95) }));
@@ -304,6 +335,16 @@ describe('deflatedSharpeIs', () => {
     const many = deflatedSharpeIs({ wfa: wfaFixture({}, undefined, { trials: 100_000, finalTrialSharpes: spread }), metricsFns: fakeMetricsFns });
     expect(few.dsr!).toBeGreaterThan(0.9);
     expect(many.dsr!).toBeLessThan(0.5);
+  });
+
+  it('weist die Variante mit nTrials = Samples der finalen Suche aus (milder als über alle Folds)', () => {
+    const spread = Array.from({ length: 50 }, (_, i) => i / 49);
+    const r = deflatedSharpeIs({ wfa: wfaFixture({}, undefined, { trials: 500, finalEvaluated: 10, finalTrialSharpes: spread }), metricsFns: fakeMetricsFns });
+    expect(r.nTrials).toBe(500);
+    expect(r.nTrialsFinal).toBe(10);
+    expect(r.dsrFinalOnly!).toBeGreaterThan(r.dsr!);
+    expect(r.note).toMatch(/Trials=500 \(alle Folds\)/);
+    expect(r.note).toMatch(/nTrials=10 \(nur finale Suche\)/);
   });
 
   it("varSrSource 'fold_sharpes' nimmt die OOS-Fold-Streuung; beide Werte stehen in der Notiz", () => {

@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import type { CostConfig, OptimizerConfig } from '../core/config.ts';
 import { ensureDir } from '../core/journal.ts';
 import type { AssetClass, Metrics, Ms, Params, TimeframeMin } from '../core/types.ts';
+import { fitEndOf } from './promote.ts';
 import { gateOptions, type GateResult } from './robustness.ts';
 import type { SymbolRun } from './run.ts';
 import type { TimeRange } from './walkForward.ts';
@@ -176,10 +177,22 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
     out.push(`**Entscheidung: ${r.decision.action}** — ${r.decision.reason}`);
     if (r.incumbent) {
       out.push('');
+      const ev = r.incumbentEval;
       out.push(
         `Amtierender Champion: ${r.incumbent.strategy} ${paramsJson(r.incumbent.params)} (Score bei Beförderung ${num(r.incumbent.score, 3)}, ` +
-          `Re-Score auf den aktuellen Folds ${num(r.incumbentRescore, 3)})`,
+          `Fit-Ende ${isoDay(fitEndOf(r.incumbent))}, Re-Score ${num(r.incumbentRescore, 3)})`,
       );
+      if (ev) {
+        out.push('');
+        out.push(
+          `Sauberes OOS nach Fit-Ende: ${ev.cleanFolds} von ${ev.totalFolds} Folds, ${ev.cleanDays} Tage, ${ev.trades} Trades — ` +
+            `${ev.pass === null ? 'nicht geprüft' : ev.pass ? 'Gates bestanden' : 'Gates gerissen'}: ${ev.note}`,
+        );
+        if (ev.gates.length) {
+          out.push('');
+          out.push(gatesTable(ev.gates));
+        }
+      }
     }
     out.push('');
 

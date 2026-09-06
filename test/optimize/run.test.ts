@@ -6,6 +6,8 @@ import { Journal, homePaths } from '../../src/core/journal.ts';
 import type { Strategy } from '../../src/core/types.ts';
 import { loadChampion, saveChampion, emptyChampionFile, type ChampionEntry } from '../../src/optimize/promote.ts';
 import { runOptimization, type OptimizeRunInput } from '../../src/optimize/run.ts';
+import { paramKey } from '../../src/optimize/search.ts';
+import { foldPlanForBars } from '../../src/optimize/walkForward.ts';
 import { DEAD_PROFILE, NOISE_PROFILE, REWARD_PROFILE, dailyBars, fakeMetricsFns, fakeStrategy, makeFakeSimulate, testConfig, type FakeSimOptions } from './fakes.ts';
 
 const bars = dailyBars(400);
@@ -34,9 +36,9 @@ const tmp = () => {
   return d;
 };
 
-function input(home: string, over: Partial<OptimizeRunInput> & { seed?: number; symbols?: string[]; strategies?: string[] } = {}): OptimizeRunInput {
+function input(home: string, over: Partial<OptimizeRunInput> & { seed?: number; symbols?: string[]; strategies?: string[]; samples?: number } = {}): OptimizeRunInput {
   const symbols = over.symbols ?? ['AAA', 'BBB'];
-  const cfg = testConfig({ symbols, home, optimizer: { seed: over.seed ?? 7 } });
+  const cfg = testConfig({ symbols, home, optimizer: { seed: over.seed ?? 7, ...(over.samples ? { samples: over.samples } : {}) } });
   return {
     config: cfg,
     symbols,
@@ -52,8 +54,24 @@ function input(home: string, over: Partial<OptimizeRunInput> & { seed?: number; 
   };
 }
 
+/** Veralteter Champion-Eintrag (ohne fitEnd, alte Datei). */
+function staleEntry(strategy: string, params: Record<string, number>, extra: Partial<ChampionEntry> = {}): ChampionEntry {
+  return {
+    strategy,
+    params,
+    timeframe: 1440,
+    score: 2,
+    oos: { objectiveMedian: 2, objectiveMean: 2, positiveFoldShare: 1, trades: 100, netProfit: 1, netReturnPct: 1, maxDrawdownPct: 1, dailyReturns: [], profitFactor: null, feeShare: null },
+    gates: [],
+    decidedAt: 1,
+    trials: 1,
+    dataRange: { start: 0, end: 1 },
+    ...extra,
+  };
+}
+
 describe('runOptimization (Ende-zu-Ende)', () => {
-  it('befördert die Strategie mit echter Kante, schreibt Champion, Journal und Bericht', () => {
+  it('befördert die Strategie mit echter Kante, schreibt Champion (mit fitEnd), Journal und Bericht', () => {
     const home = tmp();
     const out = runOptimization(input(home));
 
@@ -69,6 +87,7 @@ describe('runOptimization (Ende-zu-Ende)', () => {
       expect(r.results[1]!.pass).toBe(false);
       expect(r.errors).toEqual([]);
       expect(r.incumbent).toBeNull();
+      expect(r.incumbentEval).toBeNull();
     }
 
     // Champion-Datei
@@ -87,11 +106,13 @@ describe('runOptimization (Ende-zu-Ende)', () => {
     expect(e.gates.every((g) => g.pass)).toBe(true);
     expect(e.trials).toBe(8 * 55 + 55);
     expect(e.dataRange).toEqual({ start: bars.t[0]!, end: bars.t[399]! + 1 });
+    const plan = foldPlanForBars(bars, out.runs[0]!.results[0]!.wfa.folds.length ? testConfig().optimizer : testConfig().optimizer);
+    expect(e.fitEnd).toBe(plan.folds[plan.folds.length - 1]!.oosEnd);
 
     // Journal
     const events = new Journal(paths.journal).readAll();
     expect(events.filter((ev) => ev.kind === 'champion').length).toBe(2);
-    expect(events[0]).toMatchObject({ kind: 'champion', symbol: 'AAA', action: 'promote', strategy: 'edge' });
+    expect(events[0]).toMatchObject({ kind: 'champion', symbol: 'AAA', action: 'promote', strategy: 'edge', fitEnd: e.fitEnd });
 
     // Bericht
     expect(out.reportPath).toBe(join(paths.reports, 'optimize-2026-09-06.md'));
@@ -108,20 +129,42 @@ describe('runOptimization (Ende-zu-Ende)', () => {
     expect(text).toMatch(/\| edge \|[^\n]*✔ 8\/8/);
     expect(text).toContain('PSR (OOS): PSR ');
     expect(text).toContain('DSR (IS): DSR ');
+    expect(text).toContain('(alle Folds)');
+    expect(text).toContain('nur finale Suche');
   });
 
-  it('zweiter Lauf mit demselben Champion: Kandidat schlägt die Marge nicht ⇒ keep, Datei unverändert', () => {
+  it('Folgelauf am selben Tag: kein sauberes OOS nach fitEnd ⇒ Beförderungs-Score gilt, Kandidat schlägt die Marge nicht ⇒ keep', () => {
     const home = tmp();
     const first = runOptimization(input(home));
     const second = runOptimization(input(home, { now: () => NOW + 1 }));
     for (const r of second.runs) {
       expect(r.incumbent).not.toBeNull();
-      expect(r.incumbentRescore).toBeGreaterThan(0);
+      expect(r.incumbentEval).not.toBeNull();
+      expect(r.incumbentEval!.pass).toBeNull();
+      expect(r.incumbentEval!.cleanFolds).toBe(0);
+      expect(r.incumbentEval!.note).toMatch(/zu wenig sauberes OOS/);
+      expect(r.incumbentRescore).toBe(r.incumbent!.score);
       expect(r.decision.action).toBe('keep');
       expect(r.decision.reason).toMatch(/Marge nicht erreicht/);
       expect(r.chosen).toEqual(r.incumbent);
     }
     expect(second.champion.symbols).toEqual(first.champion.symbols);
+    const text = readFileSync(second.reportPath, 'utf8');
+    expect(text).toContain('Sauberes OOS nach Fit-Ende: 0 von 8 Folds');
+    expect(text).toContain('Fit-Ende ');
+  });
+
+  it('Incumbent-Params fließen NICHT mehr in die Kandidatensuche ein (Leck: gefittet auf Kandidaten-OOS)', () => {
+    const home = tmp();
+    const paths = homePaths(home);
+    const incParams = { a: 3, b: 1 };
+    saveChampion(paths.champion, { ...emptyChampionFile(1), symbols: { AAA: staleEntry('edge', incParams, { decidedAt: 1 }) } });
+    const simulate = makeFakeSimulate((id) => profiles[id] ?? NOISE_PROFILE);
+    runOptimization(input(home, { symbols: ['AAA'], strategies: ['edge'], samples: 4, simulate }));
+    // Die ersten 4 Aufrufe sind die IS-Suche des ersten Folds: Defaults zuerst, danach Zufall — nie der Incumbent an Position 2.
+    const first = simulate.calls.slice(0, 4).map((c) => paramKey(c.params));
+    expect(first[0]).toBe(paramKey(strategies.edge!.defaults));
+    expect(first[1]).not.toBe(paramKey(incParams));
   });
 
   it('reines Rauschen (Erwartungswert 0, Kosten > 0) wird NIE befördert — über mehrere Seeds und Symbole', () => {
@@ -141,53 +184,61 @@ describe('runOptimization (Ende-zu-Ende)', () => {
     }
   });
 
-  it('ein Champion ohne Kante wird auf denselben Folds re-bewertet und degradiert', () => {
+  it('ein Champion ohne Kante wird auf sauberem OOS durch die Gates geprüft und degradiert', () => {
     const home = tmp();
     const paths = homePaths(home);
-    const stale: ChampionEntry = {
-      strategy: 'dead',
-      params: { a: 3, b: 1 },
-      timeframe: 1440,
-      score: 2,
-      oos: { objectiveMedian: 2, objectiveMean: 2, positiveFoldShare: 1, trades: 100, netProfit: 1, netReturnPct: 1, maxDrawdownPct: 1, dailyReturns: [], profitFactor: null, feeShare: null },
-      gates: [],
-      decidedAt: 1,
-      trials: 1,
-      dataRange: { start: 0, end: 1 },
-    };
-    saveChampion(paths.champion, { ...emptyChampionFile(1), symbols: { AAA: stale } });
+    // alte Datei ohne fitEnd ⇒ fitEnd = decidedAt = 1 ⇒ alle 8 Folds sauber
+    saveChampion(paths.champion, { ...emptyChampionFile(1), symbols: { AAA: staleEntry('dead', { a: 3, b: 1 }) } });
     const out = runOptimization(input(home, { symbols: ['AAA'], strategies: ['dead'] }));
     const r = out.runs[0]!;
-    expect(r.incumbentRescore).not.toBeNull();
+    const ev = r.incumbentEval!;
+    expect(ev.cleanFolds).toBe(8);
+    expect(ev.totalFolds).toBe(8);
+    expect(ev.cleanDays).toBe(240);
+    expect(ev.pass).toBe(false);
+    expect(ev.gates.length).toBe(8);
+    expect(ev.gates.find((g) => g.name === 'deflated_sharpe_is')!.note).toMatch(/nicht anwendbar/);
+    expect(r.incumbentRescore).toBe(ev.score);
     expect(r.incumbentRescore!).toBeLessThanOrEqual(0);
     expect(r.decision.action).toBe('demote_to_notrade');
+    expect(r.decision.reason).toMatch(/reißt die Gates/);
     expect(out.champion.symbols.AAA).toBeUndefined();
     expect(out.champion.noTrade.AAA!.reason).toMatch(/kein Handel/);
     const text = readFileSync(out.reportPath, 'utf8');
     expect(text).toContain('**Entscheidung: demote_to_notrade**');
     expect(text).toContain('Amtierender Champion: dead');
+    expect(text).toContain('Sauberes OOS nach Fit-Ende: 8 von 8 Folds, 240 Tage');
+    expect(text).toContain('Gates gerissen');
   });
 
-  it('ein Kandidat mit Kante ersetzt einen Champion ohne Kante', () => {
+  it('ein Champion mit zu wenig sauberem OOS wird NICHT degradiert — auch wenn seine Params heute nichts taugen', () => {
     const home = tmp();
     const paths = homePaths(home);
-    const stale: ChampionEntry = {
-      strategy: 'dead',
-      params: { a: 3, b: 1 },
-      timeframe: 1440,
-      score: 2,
-      oos: { objectiveMedian: 2, objectiveMean: 2, positiveFoldShare: 1, trades: 100, netProfit: 1, netReturnPct: 1, maxDrawdownPct: 1, dailyReturns: [], profitFactor: null, feeShare: null },
-      gates: [],
-      decidedAt: 1,
-      trials: 1,
-      dataRange: { start: 0, end: 1 },
-    };
-    saveChampion(paths.champion, { ...emptyChampionFile(1), symbols: { AAA: stale } });
+    const plan = foldPlanForBars(bars, testConfig().optimizer);
+    // fitEnd nach dem 6. Fold ⇒ nur 2 saubere Folds (< 3)
+    const fitEnd = plan.folds[5]!.oosEnd;
+    saveChampion(paths.champion, { ...emptyChampionFile(1), symbols: { AAA: staleEntry('dead', { a: 3, b: 1 }, { fitEnd, score: 0.7 }) } });
+    const out = runOptimization(input(home, { symbols: ['AAA'], strategies: ['dead'] }));
+    const r = out.runs[0]!;
+    expect(r.incumbentEval!.cleanFolds).toBe(2);
+    expect(r.incumbentEval!.pass).toBeNull();
+    expect(r.incumbentRescore).toBe(0.7);
+    expect(r.decision.action).toBe('keep');
+    expect(r.decision.reason).toMatch(/ungeprüft/);
+    expect(out.champion.symbols.AAA).toBeDefined();
+  });
+
+  it('ein Kandidat mit Kante ersetzt einen Champion, der die Gates auf sauberem OOS reißt', () => {
+    const home = tmp();
+    const paths = homePaths(home);
+    saveChampion(paths.champion, { ...emptyChampionFile(1), symbols: { AAA: staleEntry('dead', { a: 3, b: 1 }) } });
     const out = runOptimization(input(home, { symbols: ['AAA'], strategies: ['edge', 'dead'] }));
     const r = out.runs[0]!;
+    expect(r.incumbentEval!.pass).toBe(false);
     expect(r.decision.action).toBe('promote');
+    expect(r.decision.reason).toMatch(/reißt die Gates/);
     expect(out.champion.symbols.AAA!.strategy).toBe('edge');
-    expect(r.decision.reason).toMatch(/≤ 0/);
+    expect(out.champion.symbols.AAA!.fitEnd).toBeDefined();
   });
 
   it('Strategien ohne passenden Zeitrahmen werden übersprungen; ohne Kandidat bleibt es bei kein Handel', () => {

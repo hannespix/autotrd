@@ -11,7 +11,8 @@ import { homePaths, Journal, readJson, type EngineState, type HomePaths, type Jo
 import { setLogSink } from '../../src/core/log.ts';
 import { addDays, msFromET, MIN, type CalendarDay } from '../../src/core/time.ts';
 import type { Bar, Decision, Ms, Strategy } from '../../src/core/types.ts';
-import { Engine } from '../../src/engine/engine.ts';
+import type { BarStore } from '../../src/data/store.ts';
+import { Engine, type ProcessEvents } from '../../src/engine/engine.ts';
 import { FakeAlpaca } from './fakeAlpaca.ts';
 import { FakeDataStream, FakeTradeStream } from './fakeStreams.ts';
 
@@ -133,6 +134,9 @@ export interface ScenarioOptions {
   start?: boolean;
   calendar?: CalendarDay[];
   fake?: FakeAlpaca;
+  store?: BarStore;
+  statSync?: (path: string) => unknown;
+  processEvents?: ProcessEvents;
 }
 
 export async function startScenario(o: ScenarioOptions = {}): Promise<Scenario> {
@@ -175,6 +179,9 @@ export async function startScenario(o: ScenarioOptions = {}): Promise<Scenario> 
       clearInterval: () => undefined,
     },
     sleep: async () => undefined,
+    store: o.store,
+    statSync: o.statSync,
+    processEvents: o.processEvents,
   });
   const journal = new Journal(paths.journal);
   const sc: Scenario = {

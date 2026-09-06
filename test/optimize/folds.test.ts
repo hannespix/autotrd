@@ -35,11 +35,16 @@ describe('buildFolds', () => {
     }
   });
 
-  it('bei step < oos überlappen die OOS-Fenster um genau step', () => {
-    const { folds } = buildFolds({ ...base, stepDays: 15 });
-    for (let k = 1; k < folds.length; k++) {
-      expect(folds[k]!.oosStart - folds[k - 1]!.oosStart).toBe(15 * DAY);
-    }
+  it('step < oos wird auf oos gesetzt (disjunkte Kette) und vermerkt; step > oos wird abgewiesen', () => {
+    const plan = buildFolds({ ...base, stepDays: 15 });
+    expect(plan.stepDays).toBe(30);
+    expect(plan.notes.length).toBe(1);
+    expect(plan.notes[0]).toMatch(/stepDays 15 < oosDays 30/);
+    for (let k = 1; k < plan.folds.length; k++) expect(plan.folds[k]!.oosStart).toBe(plan.folds[k - 1]!.oosEnd);
+    expect(plan.folds.length).toBe(8);
+    expect(buildFolds(base).notes).toEqual([]);
+    expect(buildFolds(base).stepDays).toBe(30);
+    expect(() => buildFolds({ ...base, stepDays: 31 })).toThrow(/Lücken/);
   });
 
   it('der Holdout am Ende ist für alle Folds tabu', () => {

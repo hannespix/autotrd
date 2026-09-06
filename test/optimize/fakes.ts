@@ -199,9 +199,10 @@ function metricsOf(trades: Trade[], equity: EquityPoint[], dailyReturns: number[
     netProfit: final - initial,
     netReturnPct: initial > 0 ? ((final - initial) / initial) * 100 : 0,
     cagrPct: null,
+    // exakt wie backtest/metrics.ts: annualisiert, null bei < 2 Werten, σ = 0 bzw. ohne Verlusttag —
+    // der Rückfall für Fenster ohne Verlusttag lebt in der Produktion (objective.ts), nicht im Fake
     sharpe: n > 1 && std > 0 ? (mu / std) * Math.sqrt(252) : null,
-    // leicht regularisiert, damit ein Fenster ohne Verlusttag endlich bleibt
-    sortino: n > 0 ? mu / (downside + 1e-4) : null,
+    sortino: n > 1 && downside > 0 ? (mu / downside) * Math.sqrt(252) : null,
     maxDrawdownPct: maxDd * 100,
     profitFactor: losses > 0 ? wins / losses : null,
     winRatePct: trades.length ? (winCount / trades.length) * 100 : null,

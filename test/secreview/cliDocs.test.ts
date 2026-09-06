@@ -18,9 +18,9 @@ function fnBody(src: string, name: string): string {
 }
 
 describe('secreview: CLI/Docs-Abgleich', () => {
-  it('USAGE verspricht `optimize --days <n>` — cmdOptimize liest die Option nicht (lookbackDays kommt nur aus der Config)', () => {
-    expect(cli).toMatch(/optimize:\s+--equity <usd> --days <n>/);
-    expect(fnBody(cli, 'cmdOptimize'), 'cmdOptimize ignoriert --days').toMatch(/values\.days/);
+  it('USAGE verspricht für optimize keine Option, die cmdOptimize nicht liest (--days kommt nur aus der Config)', () => {
+    expect(cli).not.toMatch(/optimize:[^\n]*--days/);
+    expect(fnBody(cli, 'cmdOptimize')).not.toMatch(/values\.days/);
   });
 
   it('`halt --reason <text>` existiert in der CLI, fehlt aber in USAGE und BETRIEB.md §2', () => {

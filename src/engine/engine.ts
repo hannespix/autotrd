@@ -15,7 +15,8 @@
  * läuft hintereinander durch eine Warteschlange: Ein Fill, der während
  * eines Ticks eintrifft, wird nach dem Tick verarbeitet — nie mittendrin.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, statSync as fsStatSync, unlinkSync } from 'node:fs';
+import { join } from 'node:path';
 import type { AlpacaClient, DataStream, StreamStatus, TradeStream, TradeUpdate } from '../alpaca/types.ts';
 import type { Config } from '../core/config.ts';
 import { aggregate, BarSeries, normalizeBars } from '../core/bars.ts';
@@ -24,7 +25,7 @@ import { errMsg, logger } from '../core/log.ts';
 import { decide, type AssetFacts, type LogicContext, type SymbolInput } from '../core/logic.ts';
 import { buildSessionInfo } from '../core/session.ts';
 import { DAY, HOUR, MIN, addDays, dayKeyFor, isTradingDay, prevTradingDay, sessionBounds, type Calendar } from '../core/time.ts';
-import type { AccountView, AssetClass, Bar, ExitReason, HaltState, IndicatorSet, Ms, Params, PositionState, Strategy, TimeframeMin } from '../core/types.ts';
+import type { AccountView, AssetClass, Bar, ExitReason, HaltState, IndicatorSet, Ms, OrderIntent, Params, PositionState, Strategy, TimeframeMin } from '../core/types.ts';
 import { resumeHalt } from '../risk/limits.ts';
 import { backfill } from '../data/backfill.ts';
 import { ensureCalendar } from '../data/calendar.ts';
@@ -58,6 +59,23 @@ export interface EngineDeps {
   sleep?: ((ms: number) => Promise<void>) | undefined;
   /** Bars-Cache; Default: `<home>/bars/<assetClass>/<feed>` (siehe data/store.ts). */
   store?: BarStore | undefined;
+  /** Injizierbar für Tests: Prüfung der HALT-Datei (jeder Fehler außer ENOENT ⇒ Halt, fail-closed). */
+  statSync?: ((path: string) => unknown) | undefined;
+  /** Injizierbar für Tests: Quelle von unhandledRejection/uncaughtException (Default: process). */
+  processEvents?: ProcessEvents | undefined;
+}
+
+export interface ProcessEvents {
+  on(event: string, listener: (...args: unknown[]) => void): unknown;
+  off(event: string, listener: (...args: unknown[]) => void): unknown;
+}
+
+/** state.json trägt zusätzlich zurückgestellte Exits/Stop-Nachzüge (Symbol → Intent) — überlebt Neustarts. */
+export type PersistedState = EngineState & { deferredIntents: Record<string, OrderIntent> };
+
+/** Pfad der RESUME-Datei: Inhalt = Notiz; hebt einen stehenden Halt (drawdown/manual/errors/reconcile) auf. */
+export function resumeFlagPath(home: string): string {
+  return join(home, 'RESUME');
 }
 
 export interface EngineStatus {
@@ -67,6 +85,8 @@ export interface EngineStatus {
   positions: PositionState[];
   pendingEntries: string[];
   pendingExits: string[];
+  /** Nach Sitzungsschluss entschiedene Exits/Stop-Nachzüge, die bei der nächsten Eröffnung laufen. */
+  deferredIntents: string[];
   protectiveOrders: Record<string, string>;
   lastBarAt: Record<string, Ms>;
   equity: number;
@@ -84,6 +104,7 @@ export interface EngineStatus {
   uptimeMs: number;
   lastTickAt: Ms | null;
   lastReconcileAt: Ms | null;
+  lastFlushAt: Ms | null;
 }
 
 interface AccountInfo {
@@ -144,7 +165,7 @@ export class Engine {
   private clock: MarketClock;
   private book = new Book();
   private executor: OrderExecutor | null = null;
-  private state: EngineState | null = null;
+  private state: PersistedState | null = null;
   private account: AccountInfo = { equity: 0, cash: 0, dayTradeCount: 0, patternDayTrader: false };
 
   /** Basis-Bars je Symbol (1Min bzw. 1Day) — Backfill + Stream. */
@@ -152,7 +173,16 @@ export class Engine {
   /** Stream-Minutenbars bei Tages-Zeitrahmen (werden nicht gespeichert; der Tages-Backfill ersetzt sie). */
   private readonly streamMinute = new Map<string, Bar[]>();
   private readonly incoming = new Map<string, Bar[]>();
-  private readonly dirtyStore = new Set<string>();
+  /** Stream-Bars seit dem letzten Cache-Flush (nur Neues anhängen, nie die ganze Datei je Bar). */
+  private readonly pendingFlush = new Map<string, Bar[]>();
+  private lastFlushAt: Ms | null = null;
+  /** Stream-Abriss: ab letzter Nachricht − 2 min nachladen, sobald wieder abonniert. */
+  private reconnectFrom: Ms | null = null;
+  private reconnectDue = false;
+  private readonly resumeFlag: string;
+  private readonly statSync: (path: string) => unknown;
+  private readonly processEvents: ProcessEvents;
+  private processHandlersOn = false;
   private readonly aggDirty = new Set<string>();
   private readonly aggCache = new Map<string, { gridKey: number; series: BarSeries }>();
   private readonly indCache = new Map<string, { barT: Ms; strategyId: string; paramsKey: string; ind: IndicatorSet }>();
@@ -181,6 +211,9 @@ export class Engine {
     this.log = deps.log ?? logger;
     this.now = deps.now ?? (() => Date.now());
     this.timers = deps.timers ?? defaultTimers;
+    this.resumeFlag = resumeFlagPath(deps.home);
+    this.statSync = deps.statSync ?? ((p) => fsStatSync(p));
+    this.processEvents = deps.processEvents ?? (process as unknown as ProcessEvents);
     this.calendar = deps.calendar;
     this.clock = new MarketClock({ assetClass: this.assetClass, calendar: this.calendar, client: deps.client, now: this.now });
   }
@@ -197,11 +230,13 @@ export class Engine {
     if (loaded && loaded.mode !== this.mode) {
       throw new Error(`state.json gehört zum Modus '${loaded.mode}', die Engine läuft '${this.mode}' — getrenntes Home verwenden`);
     }
-    const st = loaded ?? emptyState(this.mode, today, acc.equity);
+    const base = loaded ?? emptyState(this.mode, today, acc.equity);
+    const st: PersistedState = { ...base, deferredIntents: (base as Partial<PersistedState>).deferredIntents ?? {} };
     st.consecutiveErrors = 0;
     st.peakEquity = Math.max(st.peakEquity, acc.equity);
     this.state = st;
     this.book = Book.fromState(st);
+    this.processResumeFlag(now);
     if (acc.tradingBlocked || acc.accountBlocked) {
       this.setHalt('errors', 'Konto gesperrt (trading_blocked/account_blocked)', now);
     }
@@ -244,7 +279,12 @@ export class Engine {
     this.deps.dataStream.onBar((s, b) => this.onBar(s, b));
     this.deps.dataStream.onStatus((ev) => {
       this.streamStatus.data = ev.status;
-      if (ev.status === 'disconnected' || ev.status === 'error') this.log.warn('DataStream', { status: ev.status, detail: ev.detail });
+      if (ev.status === 'disconnected' || ev.status === 'error') {
+        this.log.warn('DataStream', { status: ev.status, detail: ev.detail });
+        if (this.reconnectFrom === null) this.reconnectFrom = (this.deps.dataStream.lastMessageAt() ?? this.now()) - 2 * MIN;
+      } else if (ev.status === 'subscribed' && this.reconnectFrom !== null) {
+        this.reconnectDue = true;
+      }
     });
     this.deps.tradeStream.onUpdate((u) => {
       void this.onTradeUpdate(u);
@@ -267,6 +307,11 @@ export class Engine {
 
     this.running = true;
     this.startedAt = now;
+    if (!this.processHandlersOn) {
+      this.processEvents.on('unhandledRejection', this.onUnhandledRejection);
+      this.processEvents.on('uncaughtException', this.onUncaughtException);
+      this.processHandlersOn = true;
+    }
     this.timerHandles.push(this.timers.setInterval(() => this.scheduleTick(), 1000));
     this.timerHandles.push(this.timers.setInterval(() => void this.reconcileNow(), this.cfg.engine.reconcileEverySec * 1000));
     this.timerHandles.push(this.timers.setInterval(() => void this.clock.refresh(), 60_000));
@@ -283,6 +328,11 @@ export class Engine {
     this.running = false;
     for (const h of this.timerHandles) this.timers.clearInterval(h);
     this.timerHandles = [];
+    if (this.processHandlersOn) {
+      this.processEvents.off('unhandledRejection', this.onUnhandledRejection);
+      this.processEvents.off('uncaughtException', this.onUncaughtException);
+      this.processHandlersOn = false;
+    }
     await this.serial.run(async () => {
       try {
         await this.deps.dataStream.close();
@@ -294,7 +344,7 @@ export class Engine {
       } catch (e) {
         this.log.warn('TradeStream schließen fehlgeschlagen', { error: errMsg(e) });
       }
-      this.flushStore(true);
+      this.flushStore(true, this.now());
       if (this.state) {
         this.saveState();
         this.journal.append('stop', { positions: [...this.book.positions.keys()], halt: this.state.halt }, this.now());
@@ -330,7 +380,17 @@ export class Engine {
   /** Alles glatt (kill_switch/manual) — Fills bucht der Abgleich. */
   flatten(reason: ExitReason): Promise<void> {
     return this.serial.run(async () => {
-      await this.requireExecutor().flattenAll(reason);
+      const now = this.now();
+      if (this.exitsAllowed(now)) {
+        await this.requireExecutor().flattenAll(reason);
+      } else {
+        // Nach Schluss würde flattenAll die Schutz-Stops abräumen und Marktorders in die Nacht legen —
+        // stattdessen je Position einen Exit zurückstellen; die Stops bleiben aktiv.
+        const st = this.st();
+        for (const sym of this.book.positions.keys()) st.deferredIntents[sym] = { kind: 'exit', symbol: sym, reason, decidedAt: now };
+        this.journal.append('note', { text: `flatten (${reason}) außerhalb der Sitzung — bis zur Eröffnung zurückgestellt, Schutz-Stops bleiben liegen`, positions: [...this.book.positions.keys()] }, now);
+        this.log.warn(`flatten (${reason}) außerhalb der Sitzung — zurückgestellt`, { positions: [...this.book.positions.keys()] });
+      }
       this.saveState();
     });
   }
@@ -361,6 +421,7 @@ export class Engine {
       positions: [...this.book.positions.values()],
       pendingEntries: [...this.book.pendingEntries.keys()],
       pendingExits: [...this.book.pendingExits.keys()],
+      deferredIntents: Object.keys(st?.deferredIntents ?? {}),
       protectiveOrders: prot,
       lastBarAt: { ...(st?.lastBarAt ?? {}) },
       equity: this.account.equity,
@@ -383,6 +444,7 @@ export class Engine {
       uptimeMs: this.startedAt === null ? 0 : now - this.startedAt,
       lastTickAt: this.lastTickAt,
       lastReconcileAt: this.lastReconcileAt,
+      lastFlushAt: this.lastFlushAt,
     };
   }
 
@@ -402,10 +464,14 @@ export class Engine {
     const executor = this.requireExecutor();
     this.lastTickAt = now;
     try {
+      this.processResumeFlag(now);
       this.checkHaltFile(now);
       await this.rollover(now);
       this.ingestStreamBars();
+      await this.backfillAfterReconnect(now);
       st.peakEquity = Math.max(st.peakEquity, this.account.equity);
+      // Zuerst, was seit Sitzungsschluss wartet — mit derselben Idempotenz wie jeder andere Intent.
+      let failures = await this.runDeferred(now);
 
       const closedBefore = now - this.cfg.engine.barGraceSec * 1000;
       const benchSym = this.deps.benchmarkSymbol;
@@ -438,7 +504,7 @@ export class Engine {
         });
       }
 
-      let failures = 0;
+      const exitsAllowed = this.exitsAllowed(now);
       if (inputs.length > 0) {
         const today = this.clock.today(now);
         const ctx: LogicContext = {
@@ -448,6 +514,8 @@ export class Engine {
           account: this.accountView(),
           positions: this.book.positions,
           pendingEntries: new Set(this.book.pendingEntries.keys()),
+          // Offene Einstiegs-Orders belegen Exposure-Budget, sobald sie füllen (Red-Team-Befund 10).
+          pendingNotional: this.pendingNotional(),
           halt: st.halt,
           risk: this.cfg.risk,
           session: this.cfg.session,
@@ -473,9 +541,21 @@ export class Engine {
           // Feld heißt `note`, nicht `kind`: `kind` ist der Event-Typ des Journals und würde überschrieben.
           this.journal.append('decision', { symbol: n.symbol, note: n.kind, text: n.text, bar: newBars.get(n.symbol)?.t ?? null }, now);
         }
-        for (const it of res.intents) this.journal.append('intent', { symbol: it.symbol, intent: it }, now);
-        if (res.intents.length > 0) {
-          const results = await executor.execute(res.intents);
+        const dueNow: OrderIntent[] = [];
+        for (const it of res.intents) {
+          this.journal.append('intent', { symbol: it.symbol, intent: it }, now);
+          if (it.kind !== 'enter' && !exitsAllowed) {
+            // Nach Schluss entschieden (letzte Tagesbar, Halt-Exit): Der Exit würde die Schutz-Stops stornieren und
+            // eine day-Marktorder in die Nacht legen ⇒ zurückstellen; die Beine bleiben liegen. Ein Exit verdrängt
+            // einen zurückgestellten Stop-Nachzug, nie umgekehrt.
+            const prev = st.deferredIntents[it.symbol];
+            if (!(prev?.kind === 'exit' && it.kind === 'move_stop')) st.deferredIntents[it.symbol] = it;
+            this.journal.append('note', { symbol: it.symbol, text: `${it.kind} außerhalb der Sitzung entschieden — bis zur nächsten Eröffnung zurückgestellt (Schutz-Stops bleiben liegen)` }, now);
+            this.log.warn(`${it.kind} ${it.symbol} außerhalb der Sitzung — zurückgestellt`);
+          } else dueNow.push(it);
+        }
+        if (dueNow.length > 0) {
+          const results = await executor.execute(dueNow);
           for (const r of results) {
             if (!r.ok) failures++;
             this.log.info(`Intent ${r.kind} ${r.symbol}: ${r.note}`, { ok: r.ok, orderId: r.orderId ?? null });
@@ -489,8 +569,8 @@ export class Engine {
         st.lastBarAt[sym] = bar.t;
       }
       this.book.advanceAll(closes);
-      for (const r of await executor.retryPendingExits()) if (!r.ok) failures++;
-      if (newBars.size > 0) this.flushStore(false);
+      if (exitsAllowed) for (const r of await executor.retryPendingExits()) if (!r.ok) failures++;
+      this.flushStore(false, now);
       if (failures > 0) throw new Error(`${failures} Order-Ausführung(en) fehlgeschlagen`);
       st.consecutiveErrors = 0;
     } catch (e) {
@@ -501,10 +581,91 @@ export class Engine {
 
   /* ───────────────────────── Bausteine ───────────────────────── */
 
-  private st(): EngineState {
+  private st(): PersistedState {
     if (!this.state) throw new Error('Engine nicht gestartet');
     return this.state;
   }
+
+  /** Aktien: eigene Exits nur in der regulären Sitzung (ab Eröffnung + Karenz, vor Schluss); Krypto: immer. */
+  private exitsAllowed(now: Ms): boolean {
+    if (this.assetClass === 'crypto') return true;
+    const b = this.clock.sessionBoundsToday(now);
+    return b !== null && now >= b.open + this.cfg.engine.barGraceSec * 1000 && now < b.close;
+  }
+
+  /** Zurückgestellte Exits/Stop-Nachzüge ausführen, sobald die Sitzung offen ist. Gibt die Zahl der Fehlschläge zurück. */
+  private async runDeferred(now: Ms): Promise<number> {
+    const st = this.st();
+    const list = Object.values(st.deferredIntents);
+    if (list.length === 0 || !this.exitsAllowed(now)) return 0;
+    let failures = 0;
+    const results = await this.requireExecutor().execute(list);
+    for (const r of results) {
+      if (r.ok) delete st.deferredIntents[r.symbol];
+      else failures++;
+      this.journal.append('note', { symbol: r.symbol, text: `Zurückgestellter ${r.kind} ausgeführt: ${r.note}`, ok: r.ok }, now);
+      this.log.info(`Zurückgestellter ${r.kind} ${r.symbol}: ${r.note}`, { ok: r.ok });
+    }
+    return failures;
+  }
+
+  /**
+   * RESUME-Datei (Inhalt = Notiz): hebt einen stehenden Halt (drawdown/manual/errors/reconcile) auf und setzt
+   * den Peak auf die aktuelle Equity. Läuft im Tick UND beim Start — kein Rennen mehr zwischen CLI und Engine
+   * um state.json. Ein Tages-Halt endet von selbst und wird nicht angefasst.
+   */
+  private processResumeFlag(now: Ms): void {
+    let note: string;
+    try {
+      if (!existsSync(this.resumeFlag)) return;
+      note = readFileSync(this.resumeFlag, 'utf8').trim() || 'RESUME-Datei';
+    } catch (e) {
+      this.log.warn('RESUME-Datei nicht lesbar', { error: errMsg(e) });
+      return;
+    }
+    const st = this.st();
+    if (st.halt.halted && st.halt.reason !== 'daily_loss') {
+      const r = resumeHalt(st.halt, this.accountView(), now, `RESUME-Datei: ${note}`);
+      st.halt = r.halt;
+      st.peakEquity = r.account.peakEquity;
+      this.journal.append('resume', { note: r.halt.note, peakEquity: st.peakEquity }, now);
+      this.log.warn('Halt per RESUME-Datei aufgehoben', { note, peakEquity: st.peakEquity });
+    } else {
+      const text = st.halt.halted ? 'RESUME ignoriert: Tages-Halt endet von selbst am nächsten Handelstag' : 'RESUME ohne aktiven Halt — nichts aufzuheben';
+      this.journal.append('note', { text, resume: note }, now);
+      this.log.info(text);
+    }
+    try {
+      unlinkSync(this.resumeFlag);
+    } catch (e) {
+      this.log.warn('RESUME-Datei nicht löschbar', { error: errMsg(e) });
+    }
+  }
+
+  private readonly onUnhandledRejection = (reason: unknown): void => {
+    const msg = errMsg(reason);
+    this.log.error('unhandledRejection — Halt (errors)', { error: msg });
+    void this.serial.run(async () => {
+      if (!this.state) return;
+      const now = this.now();
+      this.journal.append('error', { where: 'unhandledRejection', error: msg }, now);
+      if (!this.state.halt.halted) this.setHalt('errors', `unhandledRejection: ${msg}`, now);
+      await this.say('error', `unhandledRejection: ${msg}`);
+      this.saveState();
+    });
+  };
+
+  private readonly onUncaughtException = (err: unknown): void => {
+    const msg = errMsg(err);
+    this.log.error('uncaughtException — Halt (errors), Engine wird gestoppt', { error: msg });
+    if (this.state) {
+      const now = this.now();
+      this.journal.append('error', { where: 'uncaughtException', error: msg }, now);
+      if (!this.state.halt.halted) this.setHalt('errors', `uncaughtException: ${msg}`, now);
+      this.saveState();
+    }
+    void this.stop().catch((e) => this.log.error('Stop nach uncaughtException fehlgeschlagen', { error: errMsg(e) }));
+  };
 
   private requireExecutor(): OrderExecutor {
     if (!this.executor) throw new Error('Engine nicht gestartet');
@@ -529,6 +690,13 @@ export class Engine {
     };
   }
 
+  /** Nominalwert (qty × Referenzkurs) je offener Einstiegs-Order; nach Neustart ohne Intent unbekannt ⇒ nicht gezählt. */
+  private pendingNotional(): ReadonlyMap<string, number> {
+    const out = new Map<string, number>();
+    for (const [sym, pe] of this.book.pendingEntries) if (pe.intent) out.set(sym, pe.intent.qty * pe.intent.refPrice);
+    return out;
+  }
+
   private dataFresh(now: Ms): boolean {
     const last = this.deps.dataStream.lastMessageAt();
     return last !== null && now - last <= this.cfg.engine.maxDataAgeSec * 1000;
@@ -549,11 +717,23 @@ export class Engine {
     return this.book.dayTradesIn(days);
   }
 
+  /** HALT-Datei prüfen — fail-closed: Jeder Fehler außer ENOENT gilt als gesetzt (mit Notiz). */
+  private haltFlag(): { present: boolean; error: string | null } {
+    try {
+      this.statSync(this.paths.haltFlag);
+      return { present: true, error: null };
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException | null)?.code;
+      if (code === 'ENOENT') return { present: false, error: null };
+      return { present: true, error: errMsg(e) };
+    }
+  }
+
   private checkHaltFile(now: Ms): void {
     const st = this.st();
-    const present = existsSync(this.paths.haltFlag);
+    const { present, error } = this.haltFlag();
     if (present && !st.halt.halted) {
-      this.setHalt('manual', 'HALT-Datei gesetzt — keine Einstiege, Exits laufen', now);
+      this.setHalt('manual', error ? `HALT-Datei nicht prüfbar (${error}) — fail-closed: keine Einstiege` : 'HALT-Datei gesetzt — keine Einstiege, Exits laufen', now);
     } else if (!present && st.halt.halted && st.halt.reason === 'manual') {
       st.halt = { halted: false, reason: null, until: null, since: null, note: 'HALT-Datei entfernt' };
       this.journal.append('resume', { note: 'HALT-Datei entfernt' }, now);
@@ -605,6 +785,8 @@ export class Engine {
     if (!isTradingDay(today, this.assetClass, this.calendar)) return;
     st.day = today;
     if (this.account.equity > 0) st.dayStartEquity = this.account.equity;
+    this.flushStore(true, now);
+    this.pruneCaches(now);
     let keep = today;
     try {
       for (let i = 0; i < 7; i++) keep = prevTradingDay(keep, this.assetClass, this.calendar);
@@ -616,25 +798,70 @@ export class Engine {
     this.log.info('Neuer Handelstag', { day: today, dayStartEquity: st.dayStartEquity });
   }
 
-  private async backfillAll(now: Ms): Promise<void> {
+  /** Tagesbeginn: Cache auf optimizer.lookbackDays + 30 Tage kürzen, In-Memory-Basis auf das Warmup-Fenster. */
+  private pruneCaches(now: Ms): void {
+    const keepFrom = now - (this.cfg.optimizer.lookbackDays + 30) * DAY;
+    for (const sym of this.allSymbols()) {
+      try {
+        this.store.prune(sym, this.baseTf, keepFrom);
+      } catch (e) {
+        this.log.warn('Bars-Cache nicht gekürzt', { symbol: sym, error: errMsg(e) });
+      }
+    }
+    const trimFrom = now - this.warmupMs();
+    for (const [sym, bars] of this.base) {
+      if (bars.length > 0 && bars[0]!.t < trimFrom) {
+        this.base.set(sym, bars.filter((b) => b.t >= trimFrom));
+        this.aggDirty.add(sym);
+      }
+    }
+  }
+
+  private warmupMs(): number {
     let warm = 0;
     for (const sym of this.cfg.universe.symbols) {
       const c = this.deps.strategyFor(sym);
       if (c) warm = Math.max(warm, c.strategy.warmupBars(c.params));
     }
-    const from = now - warmupWindowMs(warm || 50, this.tf, this.assetClass);
-    const res = await backfill({
+    return warmupWindowMs(warm || 50, this.tf, this.assetClass);
+  }
+
+  private async backfillRange(from: Ms, to: Ms, exact: boolean): Promise<Map<string, Bar[]>> {
+    return backfill({
       client: this.deps.client,
       store: this.store,
       symbols: this.allSymbols(),
       tf: this.baseTf,
       from,
-      to: now,
+      to,
       feed: this.cfg.broker.feed,
+      assetClass: this.assetClass,
+      calendar: this.calendar,
+      exact,
       log: (m) => this.log.info(m),
     });
+  }
+
+  private async backfillAll(now: Ms): Promise<void> {
+    const res = await this.backfillRange(now - this.warmupMs(), now, false);
     for (const [sym, bars] of res) {
       this.base.set(sym, bars);
+      this.aggDirty.add(sym);
+    }
+  }
+
+  /** Nach einem Stream-Abriss die Lücke ab letzter Nachricht − 2 min nachladen (nur Minutenbasis). */
+  private async backfillAfterReconnect(now: Ms): Promise<void> {
+    if (!this.reconnectDue || this.reconnectFrom === null) return;
+    const from = this.reconnectFrom;
+    this.reconnectDue = false;
+    this.reconnectFrom = null;
+    if (this.baseTf !== '1Min') return;
+    this.journal.append('note', { text: 'Datenstrom wieder verbunden — Lücke nachladen', from }, now);
+    const res = await this.backfillRange(from, now, true);
+    for (const [sym, bars] of res) {
+      if (bars.length === 0) continue;
+      this.base.set(sym, mergeBars(this.base.get(sym) ?? [], bars));
       this.aggDirty.add(sym);
     }
   }
@@ -681,27 +908,29 @@ export class Engine {
         this.streamMinute.set(sym, merged);
       } else {
         this.base.set(sym, mergeBars(this.base.get(sym) ?? [], fresh));
-        this.dirtyStore.add(sym);
+        this.pendingFlush.set(sym, mergeBars(this.pendingFlush.get(sym) ?? [], fresh));
       }
       this.aggDirty.add(sym);
     }
     this.incoming.clear();
   }
 
-  /** Neue Stream-Bars in den Cache schreiben (je geschlossener Strategie-Bar bzw. beim Stopp). */
-  private flushStore(force: boolean): void {
-    if (this.dirtyStore.size === 0) return;
-    for (const sym of [...this.dirtyStore]) {
-      const bars = this.base.get(sym);
-      if (!bars) continue;
+  static readonly FLUSH_EVERY_MS = 5 * MIN;
+
+  /** Neue Stream-Bars in den Cache schreiben — höchstens alle 5 min, beim Stopp und am Tagesende (force). */
+  private flushStore(force: boolean, now: Ms): void {
+    if (this.pendingFlush.size === 0) return;
+    if (!force && this.lastFlushAt !== null && now - this.lastFlushAt < Engine.FLUSH_EVERY_MS) return;
+    for (const [sym, bars] of [...this.pendingFlush]) {
       try {
         this.store.upsert(sym, this.baseTf, bars);
-        this.dirtyStore.delete(sym);
+        this.pendingFlush.delete(sym);
       } catch (e) {
         this.log.warn('Bars-Cache nicht schreibbar', { symbol: sym, error: errMsg(e) });
         if (!force) return;
       }
     }
+    this.lastFlushAt = now;
   }
 
   /** Geschlossene Bars des Strategie-Zeitrahmens (gecacht je Bucket bzw. bis neue Basis-Bars kommen). */

@@ -1,5 +1,5 @@
 /** Öffentliche Oberfläche der Engine (für cli.ts/app.ts und Tests). */
-export { Engine, warmupWindowMs, type EngineDeps, type EngineStatus, type EngineTimers } from './engine.ts';
+export { Engine, resumeFlagPath, warmupWindowMs, type EngineDeps, type EngineStatus, type EngineTimers, type PersistedState, type ProcessEvents } from './engine.ts';
 export { Book, buildTrade, type BookStateSlice, type ClosedTrade, type EnterIntent, type ExitIntent, type MoveStopIntent, type PendingEntry, type PendingExit, type ProtectiveOrder } from './book.ts';
 export {
   OrderExecutor,

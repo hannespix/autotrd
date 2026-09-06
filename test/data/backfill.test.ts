@@ -4,9 +4,9 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { AlpacaError } from '../../src/alpaca/types.ts';
 import { setLogSink } from '../../src/core/log.ts';
-import { DAY, MIN } from '../../src/core/time.ts';
+import { DAY, MIN, msFromET } from '../../src/core/time.ts';
 import type { Bar } from '../../src/core/types.ts';
-import { BACKFILL_MAX_SPAN_MS, backfill, backfillStart, splitSpan } from '../../src/data/backfill.ts';
+import { BACKFILL_MAX_SPAN_MS, backfill, backfillStart, findGaps, splitSpan } from '../../src/data/backfill.ts';
 import { BarStore } from '../../src/data/store.ts';
 import { FakeAlpaca } from '../fakes/fakeAlpaca.ts';
 
@@ -65,6 +65,42 @@ describe('backfill', () => {
     await backfill({ client: fake, store: s, symbols: ['AAPL'], tf: '1Day', from: T0 - 400 * DAY, to: T0, feed: 'iex' });
     expect(fake.barRequests).toHaveLength(1);
     expect(fake.barRequests[0]?.timeframe).toBe('1Day');
+  });
+
+  it('heilt Lücken innerhalb der Sitzung genau einmal (Marker) und hält das Budget je Lauf ein', async () => {
+    const s = store();
+    const fake = new FakeAlpaca();
+    const open = msFromET(2026, 9, 1, 10, 0);
+    s.save('AAPL', '1Min', [bar(open), bar(open + 15 * MIN), bar(open + 30 * MIN)]); // zwei Löcher: 10:01–10:14, 10:16–10:29
+    const args = { client: fake, store: s, symbols: ['AAPL'], tf: '1Min' as const, from: open, to: open + 30 * MIN, feed: 'iex' as const, maxGapRanges: 1 };
+    await backfill(args);
+    expect(fake.barRequests.map((r) => [r.start, r.end])).toEqual([[open + MIN, open + 14 * MIN]]);
+    expect(s.gapMarks('AAPL', '1Min').has(`${open + MIN}-${open + 14 * MIN}`)).toBe(true);
+    await backfill(args);
+    expect(fake.barRequests).toHaveLength(2);
+    expect(fake.barRequests[1]).toMatchObject({ start: open + 16 * MIN, end: open + 29 * MIN });
+    await backfill(args);
+    expect(fake.barRequests).toHaveLength(2); // beide Lücken geprüft (IEX ohne Trades) — nie wieder angefordert
+    expect(s.load('AAPL', '1Min')).toHaveLength(3);
+  });
+
+  it('exact: lädt genau [from, to], unabhängig vom Cache-Stand (Reconnect-Nachlauf)', async () => {
+    const s = store();
+    const fake = new FakeAlpaca();
+    const open = msFromET(2026, 9, 1, 10, 0);
+    s.save('AAPL', '1Min', [bar(open), bar(open + 20 * MIN)]);
+    fake.bars.set('AAPL', Array.from({ length: 21 }, (_, i) => bar(open + i * MIN, 50 + i)));
+    const res = await backfill({ client: fake, store: s, symbols: ['AAPL'], tf: '1Min', from: open + 5 * MIN, to: open + 20 * MIN, feed: 'iex', exact: true, maxGapRanges: 0 });
+    expect(fake.barRequests[0]).toMatchObject({ start: open + 5 * MIN, end: open + 20 * MIN });
+    expect(res.get('AAPL')?.map((b) => b.c)).toEqual(Array.from({ length: 16 }, (_, i) => 55 + i));
+  });
+
+  it('findGaps: Sitzungsrand und Tageswechsel sind keine Lücken, eine fehlende Minute auch nicht', () => {
+    const open = msFromET(2026, 9, 1, 9, 30);
+    const nextOpen = msFromET(2026, 9, 2, 9, 30);
+    const bars = [bar(open - 5 * MIN), bar(open), bar(open + 2 * MIN), bar(open + 6 * MIN), bar(nextOpen)];
+    expect(findGaps(bars, open - DAY, nextOpen + DAY, 'us_equity')).toEqual([{ start: open + 3 * MIN, end: open + 5 * MIN }]);
+    expect(findGaps(bars, open + 4 * MIN, nextOpen + DAY, 'us_equity')).toEqual([]);
   });
 
   it('überspringt Symbole ohne Nachladebedarf und macht bei Fehlern je Block weiter', async () => {

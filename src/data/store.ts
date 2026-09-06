@@ -19,6 +19,9 @@ import type { Bar, Ms } from '../core/types.ts';
 
 export type BaseTimeframe = '1Min' | '1Day';
 
+/** Höchstzahl gemerkter Lücken-Marker je Symbol-Datei. */
+export const GAP_MARKS_MAX = 5000;
+
 export interface BarFile {
   version: 1;
   symbol: string;
@@ -168,6 +171,34 @@ export class BarStore {
     const bars = this.current(symbol, tf);
     const kept = bars.filter((b) => b.t >= olderThan);
     if (kept.length !== bars.length) this.save(symbol, tf, kept);
+  }
+
+  /* ── Lücken-Marker: einmal geprüfte Lücken (IEX ohne Trades bleiben leer) nicht endlos nachladen ── */
+
+  gapMarkPath(symbol: string, tf: BaseTimeframe): string {
+    return join(this.root, `${symbol.replace(/[^A-Za-z0-9._-]/g, '-')}_${tf}.gaps.json`);
+  }
+
+  /** Bereits geprüfte Lücken (Schlüssel `<start>-<end>`). */
+  gapMarks(symbol: string, tf: BaseTimeframe): Set<string> {
+    const path = this.gapMarkPath(symbol, tf);
+    if (!existsSync(path)) return new Set();
+    try {
+      const raw = readJson<{ version?: number; checked?: unknown }>(path);
+      return new Set(Array.isArray(raw?.checked) ? raw.checked.filter((k): k is string => typeof k === 'string') : []);
+    } catch (e) {
+      logger.warn('BarStore: Lücken-Marker unlesbar — wird neu aufgebaut', { path, error: errMsg(e) });
+      return new Set();
+    }
+  }
+
+  markGapsChecked(symbol: string, tf: BaseTimeframe, keys: Iterable<string>): void {
+    const set = this.gapMarks(symbol, tf);
+    for (const k of keys) set.add(k);
+    // Gedeckelt: die ältesten Marker fallen zuerst (Lücken vor dem Prune-Horizont sind ohnehin egal).
+    const all = [...set];
+    const kept = all.length > GAP_MARKS_MAX ? all.slice(all.length - GAP_MARKS_MAX) : all;
+    writeJsonAtomic(this.gapMarkPath(symbol, tf), { version: 1, checked: kept }, { compact: true });
   }
 
   /** Verwaiste Temp-Dateien eines abgebrochenen Schreibvorgangs entfernen. */

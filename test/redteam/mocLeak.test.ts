@@ -46,9 +46,12 @@ describe('RED-TEAM MOC-Leck', () => {
     });
     const t1 = res.trades[0]!;
     expect(t1.exitReason).toBe('eod');
-    // Erreichbar ist frühestens das Open der Folgebar (D2 09:30 = 95). Beobachtet: 105 um 16:00 (D1).
-    expect(t1.exitTime).toBeGreaterThanOrEqual(msFromET(2026, 9, 2, 9, 30));
-    expect(t1.exitPrice).toBe(95);
+    // Behoben: Der Flatten-Entscheid fällt am letzten Entscheidungspunkt VOR der Frist (15:45 bei
+    // tf=15) und füllt am Open der 15:45-Bar (100) — nie am 16:00-Close (105), den es live nicht gibt.
+    expect(t1.exitTime).toBe(msFromET(2026, 9, 1, 15, 45));
+    expect(t1.exitPrice).toBe(100);
+    // Keine Übernacht-Haltung: der nächste Einstieg liegt am Folgetag.
+    expect(res.trades.every((t) => t.exitTime < msFromET(2026, 9, 1, 16, 0) || t.entryTime >= msFromET(2026, 9, 2, 9, 30))).toBe(true);
   });
 
   it('tf=1440: Signal-Exit füllt am Close der Entscheidungs-Bar, nicht am Open des Folgetags', () => {
