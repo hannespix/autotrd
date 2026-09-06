@@ -461,7 +461,11 @@ export class OrderExecutor {
         this.journal.append('note', { symbol: sym, text: pe.lastError }, this.now());
         return r(false, pe.lastError);
       }
-      // 3. Eigene Marktorder mit positionsstabiler Kennung — nie closePosition (keine client_order_id möglich).
+      // 3. Letzter Blick ins geschlossene Orderbuch: Ein Bein, das VOR dem Listen gefüllt hat, war nie „offen" —
+      //    ohne diese Prüfung würde die Marktorder eine Position verkaufen, die es nicht mehr gibt (Leerverkauf).
+      await this.syncExitFillsFor([sym]);
+      if (!this.book.positions.has(sym)) return r(true, 'Position war bereits durch ein gefülltes Bein geschlossen — kein Verkauf');
+      // 4. Eigene Marktorder mit positionsstabiler Kennung — nie closePosition (keine client_order_id möglich).
       const cur = this.book.positions.get(sym)!;
       const chosen = await this.nextExitClientId(sym, cur, pe);
       if (chosen.done) return r(true, chosen.note, { orderId: chosen.orderId, clientId: chosen.clientId });
@@ -858,19 +862,7 @@ export class OrderExecutor {
       }
     }
     // (b) Exit-Fills aller Positionen (Beine, eigene Exits, Flatten)
-    const symbols = [...this.book.positions.keys()];
-    if (symbols.length > 0) {
-      let minEntry = Number.POSITIVE_INFINITY;
-      for (const p of this.book.positions.values()) minEntry = Math.min(minEntry, p.entryTime);
-      const closed = flattenOrders(await this.client.listOrders({ status: 'closed', symbols, after: minEntry - 3 * DAY, nested: true, limit: 500 }));
-      for (const o of closed) {
-        const pos = this.book.positions.get(o.symbol);
-        if (!pos || o.filledQty <= 0 || o.side !== exitSideOf(pos)) continue;
-        if (o.filledAt !== null && o.filledAt < pos.entryTime) continue; // Fill aus einer früheren Runde desselben Symbols
-        const pending = this.book.pendingExits.get(o.symbol);
-        this.applyExitFill(o, { ts: now, reason: pending?.reason ?? 'signal' });
-      }
-    }
+    await this.syncExitFillsFor([...this.book.positions.keys()]);
     // (c) Eigene Exit-Orders: tote Orders für den Wiederholversuch freigeben
     for (const [sym, pe] of [...this.book.pendingExits]) {
       if (!this.book.positions.has(sym)) {
@@ -905,6 +897,22 @@ export class OrderExecutor {
     }
     // (e) Rest-Orders geschlossener Positionen abräumen
     await this.cleanupClosed();
+  }
+
+  /** Gefüllte Orders auf der Exit-Seite seit Einstieg buchen (Beine, eigene Exits, Flatten-Schlüsse, Fremdverkäufe). */
+  private async syncExitFillsFor(symbols: readonly string[]): Promise<void> {
+    const list = symbols.filter((s) => this.book.positions.has(s));
+    if (list.length === 0) return;
+    let minEntry = Number.POSITIVE_INFINITY;
+    for (const s of list) minEntry = Math.min(minEntry, this.book.positions.get(s)!.entryTime);
+    const closed = flattenOrders(await this.client.listOrders({ status: 'closed', symbols: list, after: minEntry - 3 * DAY, nested: true, limit: 500 }));
+    for (const o of closed) {
+      const pos = this.book.positions.get(o.symbol);
+      if (!pos || o.filledQty <= 0 || o.side !== exitSideOf(pos)) continue;
+      if (o.filledAt !== null && o.filledAt < pos.entryTime) continue; // Fill aus einer früheren Runde desselben Symbols
+      const pending = this.book.pendingExits.get(o.symbol);
+      this.applyExitFill(o, { ts: this.now(), reason: pending?.reason ?? 'signal' });
+    }
   }
 
   /** Offene Exit-artige Orders (Stop/Limit auf der Gegenseite) für Symbole ohne Position stornieren. */

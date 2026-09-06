@@ -348,8 +348,10 @@ export interface WfaResult {
   finalWindow: TimeRange & { embargoAtEnd: boolean };
   /** Bewertete Parametersätze insgesamt (für den Deflated Sharpe). */
   trials: number;
-  /** IS-Sharpe je Periode aller Trials (nur berechenbare) — Streuung der Trials für den Deflated Sharpe. */
-  trialSharpes: number[];
+  /** Tagesrenditen von finalParams auf dem finalen Suchfenster (IS) — die Zahl, die der DSR deflationiert. */
+  finalIsDailyReturns: number[];
+  /** IS-Sharpe je Periode aller Kandidaten der finalen Suche (nur berechenbare) — Streuung der Trials für den DSR. */
+  finalTrialSharpes: number[];
   /** finalParams auf dem Holdout — NUR Bericht, nie Auswahl. */
   holdout: (TimeRange & { metrics: Metrics }) | null;
   dataRange: TimeRange;
@@ -424,14 +426,12 @@ export function walkForward(a: WalkForwardArgs): WfaResult {
   const log = a.log ?? (() => undefined);
 
   let trials = 0;
-  const trialSharpes: number[] = [];
   const foldResults: WfaFoldResult[] = [];
   const pieces: OosPiece[] = [];
 
   for (const fold of plan.folds) {
     const is = searchWindow(a, { start: fold.isStart, end: fold.isEnd }, include, true);
     trials += is.evaluated;
-    trialSharpes.push(...is.trialSharpes);
     const oos = simulateWindow({ ...a, params: is.params, range: { start: fold.oosStart, end: fold.oosEnd } });
     const oosObjective = objectiveValue(optimizer.objective, oos.metrics);
     foldResults.push({
@@ -462,7 +462,6 @@ export function walkForward(a: WalkForwardArgs): WfaResult {
   const finalInclude = [...include, ...foldResults.map((f) => f.best.params)];
   const fin = searchWindow(a, finalWindow, finalInclude, finalWindow.embargoAtEnd);
   trials += fin.evaluated;
-  trialSharpes.push(...fin.trialSharpes);
 
   let holdout: WfaResult['holdout'] = null;
   if (plan.holdout) {
@@ -486,7 +485,8 @@ export function walkForward(a: WalkForwardArgs): WfaResult {
     finalIsMetrics: fin.result.metrics,
     finalWindow,
     trials,
-    trialSharpes,
+    finalIsDailyReturns: fin.result.dailyReturns,
+    finalTrialSharpes: fin.trialSharpes,
     holdout,
     dataRange,
     embargoBars: embargoBarsFor(strategy, strategy.defaults, optimizer),

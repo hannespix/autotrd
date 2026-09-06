@@ -138,10 +138,62 @@ describe('Stop und Ziel', () => {
     expect(res.trades[0]!.exitPrice).toBe(107);
   });
 
-  it('Stop wird erst ab der Bar NACH dem Einstiegs-Fill geprüft', () => {
-    const { res } = setup([100, 101, 99, 100], [100, 101, 94, 100]);
-    expect(res.trades).toHaveLength(0);
-    expect(res.notes.some((n) => n.startsWith('Offen am Ende: AAA'))).toBe(true);
+  describe('Bracket-Beine sind ab dem Fill aktiv — Prüfung schon im Einstiegs-Bar', () => {
+    it('Stop im Einstiegs-Bar gerissen ⇒ Trade mit barsHeld 0, Ein- und Ausstieg in derselben Bar', () => {
+      const { res, bars } = setup([100, 101, 99, 100], [100, 101, 94, 100]);
+      expect(res.trades).toHaveLength(1);
+      const t = res.trades[0]!;
+      expect(t.exitReason).toBe('stop');
+      expect(t.exitPrice).toBe(95);
+      expect(t.entryPrice).toBe(100);
+      expect(t.entryTime).toBe(bars[2]!.t);
+      expect(t.exitTime).toBe(bars[2]!.t);
+      expect(t.barsHeld).toBe(0);
+      expect(t.mae).toBe(94);
+      expect(res.notes.some((n) => n.startsWith('Offen am Ende'))).toBe(false);
+      expect(res.finalEquity).toBeCloseTo(100_000 + t.netPnl, 6);
+    });
+
+    it('Open des Einstiegs-Bars liegt schon unter dem Stop ⇒ Stop-Fill am Open (Brutto 0, nur Kosten)', () => {
+      const { res } = setup([100, 101, 99, 100], [94, 95, 93, 94]);
+      expect(res.trades).toHaveLength(1);
+      const t = res.trades[0]!;
+      expect(t.exitReason).toBe('stop');
+      expect(t.entryPrice).toBe(94);
+      expect(t.exitPrice).toBe(94);
+      expect(t.grossPnl).toBe(0);
+      expect(t.netPnl).toBeLessThan(0);
+      expect(t.barsHeld).toBe(0);
+    });
+
+    it('Ziel im Einstiegs-Bar erreicht ⇒ Limit-Fill am Ziel, barsHeld 0', () => {
+      const { res } = setup([100, 101, 99, 100], [100, 106, 99, 100]);
+      expect(res.trades).toHaveLength(1);
+      expect(res.trades[0]!.exitReason).toBe('target');
+      expect(res.trades[0]!.exitPrice).toBe(105);
+      expect(res.trades[0]!.barsHeld).toBe(0);
+    });
+
+    it('beides im Einstiegs-Bar ⇒ Stop (pessimistisch)', () => {
+      const { res } = setup([100, 101, 99, 100], [100, 106, 94, 100]);
+      expect(res.trades[0]!.exitReason).toBe('stop');
+      expect(res.trades[0]!.barsHeld).toBe(0);
+    });
+
+    it('Short gespiegelt: Hoch über dem Stop im Einstiegs-Bar', () => {
+      const cfgShort = baseConfig({ risk: { allowShort: true } });
+      const ohlc: Ohlc[] = [...flat(2, 100), [100, 106, 99, 100], ...flat(3, 100)];
+      const res = simulate({
+        bars: barsMap({ AAA: dayBars5(D1, ohlc) }),
+        strategyFor: () => ({ strategy: enterAt(1, { side: 'short', stop: 105, target: 95 }), params: {} }),
+        config: cfgShort,
+        initialEquity: 100_000,
+      });
+      expect(res.trades).toHaveLength(1);
+      expect(res.trades[0]!.exitReason).toBe('stop');
+      expect(res.trades[0]!.exitPrice).toBe(105);
+      expect(res.trades[0]!.barsHeld).toBe(0);
+    });
   });
 
   it('Short gespiegelt: Stop oben, Ziel unten; beides ⇒ Stop', () => {
@@ -260,6 +312,8 @@ describe('Buchhaltung', () => {
     });
     expect(res.trades.length).toBeGreaterThan(10);
     expect(res.trades.some((t) => t.side === 'short')).toBe(true);
+    // Auch Stops im Einstiegs-Bar (barsHeld 0) kommen vor und halten die Invariante.
+    expect(res.trades.some((t) => t.barsHeld === 0 && t.exitReason === 'stop')).toBe(true);
     expect(res.notes.some((n) => n.startsWith('Offen am Ende'))).toBe(false);
     const sumNet = res.trades.reduce((s, t) => s + t.netPnl, 0);
     expect(res.finalEquity).toBeCloseTo(100_000 + sumNet, 6);

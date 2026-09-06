@@ -10,7 +10,8 @@
  * Zeitmodell je Zeitpunkt t (Bucket-Beginn, Vereinigung aller Symbole):
  *   1. Tageswechsel: dayStartEquity, Short-Leihe, PDT-Fenster.
  *   2. Fills der Intents vom VORIGEN Zeitpunkt am OPEN dieser Bar
- *      (Stop nachziehen → Exit → Stop/Ziel intrabar → Einstieg).
+ *      (Stop nachziehen → Exit → Einstieg), danach Stop/Ziel intrabar —
+ *      auch für die eben gefüllte Position.
  *   3. `advancePosition` für offene Positionen, Mark-to-Market.
  *   4. `decide()` mit Präfix-Sicht `series.prefix(i+1)` — eine Strategie
  *      kann physisch nicht in die Zukunft sehen.
@@ -18,8 +19,10 @@
  * Fill-Konventionen (siehe costs.ts): Buchung zum Referenzkurs, Slippage
  * und Spread als Kostenposten. Stop-Fills sind Marktorders (mit Slippage),
  * Ziel-Fills Limits (nur Gebühren). Beides in einer Bar ⇒ Stop
- * (pessimistisch). Stop/Ziel gelten ab der Bar NACH dem Einstiegs-Fill —
- * das ist eine bewusst dokumentierte, leicht optimistische Vereinfachung.
+ * (pessimistisch). Stop/Ziel gelten ab dem Fill, also schon im
+ * Einstiegs-Bar: Live sind die Bracket-Beine sofort aktiv, und jedes Hoch/
+ * Tief der Bar liegt zeitlich NACH dem Open — ein Stop-Fill im Einstiegs-
+ * Bar ergibt einen Trade mit barsHeld 0.
  */
 import type { CostConfig, RiskConfig, SessionConfig } from '../core/config.ts';
 import { advancePosition, decide, openPosition, type LogicContext, type SymbolInput } from '../core/logic.ts';
@@ -445,18 +448,20 @@ export function simulate(input: SimInput): SimResult {
           s.pendingExit = null;
           if (s.pos) closeTrade(s, o, t, ex.reason, true);
         }
+        if (s.pendingEnter) {
+          const en = s.pendingEnter;
+          s.pendingEnter = null;
+          pendingEntries.delete(s.symbol);
+          if (!s.pos) openFromIntent(s, en, o, t);
+        }
+        // Stop/Ziel intrabar — für Bestand UND die eben am Open gefüllte Position (Bracket-Beine sind sofort aktiv).
+        // Bestand und offener Einstiegs-Intent schließen sich aus: decide() emittiert `enter` nur ohne Position.
         if (s.pos) {
           const hit = checkStopTarget(s.pos, o, h, l);
           if (hit) {
             updateExcursion(s, l, h);
             closeTrade(s, hit.price, t, hit.reason, hit.reason === 'stop');
           }
-        }
-        if (s.pendingEnter) {
-          const en = s.pendingEnter;
-          s.pendingEnter = null;
-          pendingEntries.delete(s.symbol);
-          if (!s.pos) openFromIntent(s, en, o, t);
         }
         if (s.pos) {
           updateExcursion(s, l, h);

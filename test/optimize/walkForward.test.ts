@@ -40,12 +40,14 @@ describe('walkForward', () => {
     expect(wfa.timeframe).toBe(1440);
   });
 
-  it('zählt alle bewerteten Parametersätze als Trials und sammelt ihre IS-Sharpes', () => {
+  it('zählt alle bewerteten Parametersätze als Trials; finale Suche liefert IS-Renditen und Trial-Sharpes', () => {
     expect(wfa.trials).toBe(8 * 55 + 55);
-    expect(wfa.trialSharpes.length).toBe(wfa.trials);
-    for (const s of wfa.trialSharpes) expect(Number.isFinite(s)).toBe(true);
-    // a = 10 hat die stärkste Kante ⇒ der größte Trial-Sharpe gehört zu einem a-=-10-Kandidaten und liegt über dem Median
-    expect(Math.max(...wfa.trialSharpes)).toBeGreaterThan(median(wfa.trialSharpes));
+    // finales Fenster: 150 Bars minus 25 Embargo ⇒ 125 Tagesrenditen von finalParams
+    expect(wfa.finalIsDailyReturns.length).toBe(150 - 25);
+    expect(wfa.finalTrialSharpes.length).toBe(55);
+    for (const s of wfa.finalTrialSharpes) expect(Number.isFinite(s)).toBe(true);
+    // a = 10 hat die stärkste Kante ⇒ der größte Trial-Sharpe liegt über dem Median
+    expect(Math.max(...wfa.finalTrialSharpes)).toBeGreaterThan(median(wfa.finalTrialSharpes));
   });
 
   it('IS-Läufe enden vor isEnd − Embargo, OOS-Läufe decken genau [oosStart, oosEnd)', () => {

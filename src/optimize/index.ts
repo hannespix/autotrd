@@ -50,12 +50,14 @@ export {
   NEIGHBOR_MEDIAN_RATIO,
   NEIGHBOR_POSITIVE_SHARE,
   DSR_THRESHOLD,
+  PSR_THRESHOLD,
   FEE_SHARE_MAX,
   DSR_MIN_RETURNS,
   DSR_VAR_SR_FALLBACK,
   stressTest,
   neighborhoodTest,
-  deflatedSharpeOos,
+  deflatedSharpeIs,
+  probabilisticSharpeOos,
   robustnessGates,
   type MetricsFns,
   type GateResult,
@@ -64,6 +66,7 @@ export {
   type NeighborhoodResult,
   type DsrResult,
   type DsrVarSource,
+  type PsrResult,
 } from './robustness.ts';
 export {
   emptyChampionFile,

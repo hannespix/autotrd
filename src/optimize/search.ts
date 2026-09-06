@@ -8,17 +8,8 @@
  */
 import type { Params, ParamSpec } from '../core/types.ts';
 
-/** mulberry32 — kleiner, deterministischer PRNG (32-Bit-Seed, [0,1)). */
-export function mulberry32(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) >>> 0;
-    let t = a;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+/** Ein Generator im Repo: der seedbare mulberry32 des Backtesters. */
+export { mulberry32 } from '../backtest/synthetic.ts';
 
 /* ───────────────────────── Gitter ───────────────────────── */
 

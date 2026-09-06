@@ -66,8 +66,13 @@ export interface FakeSimOptions {
 
 /** Zufallsrenditen als Kante: Erwartungswert 0, Kosten > 0 — darf nie befördert werden. */
 export const NOISE_PROFILE: FakeSimOptions = { edge: () => 0, noise: 0.03, noiseKey: 'params', costPerTrade: 0.001 };
-/** Echte Kante, wächst mit Param a; gemeinsames Rauschen ⇒ Objective streng monoton in a. */
-export const REWARD_PROFILE: FakeSimOptions = { edge: (p) => (p.a ?? 0) * 0.002, noise: 0.03, noiseKey: 'time', costPerTrade: 0.0005 };
+/**
+ * Echte Kante, wächst mit Param a (0,015 … 0,020 je Bar); gemeinsames Rauschen
+ * ⇒ Objective streng monoton in a. Der ganze Raum trägt die Kante (Plateau):
+ * Ein Raum, in dem nur wenige Punkte verdienen, hätte eine so große
+ * Trial-Streuung, dass der Deflated Sharpe die Auswahl zu Recht anzweifelt.
+ */
+export const REWARD_PROFILE: FakeSimOptions = { edge: (p) => 0.015 + 0.0005 * (p.a ?? 0), noise: 0.03, noiseKey: 'time', costPerTrade: 0.0005 };
 /** Sicher verlierende Strategie (für Degradierungs-Tests). */
 export const DEAD_PROFILE: FakeSimOptions = { edge: () => -0.004, noise: 0.03, noiseKey: 'params', costPerTrade: 0.001 };
 

@@ -105,7 +105,9 @@ describe('runOptimization (Ende-zu-Ende)', () => {
     expect(text).toContain('## BBB');
     expect(text).toContain('finalParams: `{"a":10');
     expect(text).toMatch(/\| noise \|[^\n]*✘/);
-    expect(text).toMatch(/\| edge \|[^\n]*✔ 7\/7/);
+    expect(text).toMatch(/\| edge \|[^\n]*✔ 8\/8/);
+    expect(text).toContain('PSR (OOS): PSR ');
+    expect(text).toContain('DSR (IS): DSR ');
   });
 
   it('zweiter Lauf mit demselben Champion: Kandidat schlägt die Marge nicht ⇒ keep, Datei unverändert', () => {
@@ -130,7 +132,7 @@ describe('runOptimization (Ende-zu-Ende)', () => {
         expect(r.decision.action).toBe('stay_notrade');
         expect(r.chosen).toBeNull();
         expect(r.results[0]!.pass).toBe(false);
-        expect(r.results[0]!.gates.some((g) => g.name === 'deflated_sharpe' && !g.pass)).toBe(true);
+        expect(r.results[0]!.gates.some((g) => g.name === 'probabilistic_sharpe_oos' && !g.pass)).toBe(true);
       }
       expect(out.champion.symbols).toEqual({});
       expect(Object.keys(out.champion.noTrade).sort()).toEqual(['AAA', 'BBB', 'CCC']);

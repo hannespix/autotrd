@@ -99,9 +99,11 @@ export class FakeTradeStream implements TradeStream {
     for (const cb of this.cbs) cb(u);
   }
 
-  /** Fills des Fake-Brokers automatisch durchreichen. */
+  /** Fills des Fake-Brokers automatisch durchreichen — bis der Stream geschlossen wird (Engine-Neustart im selben Test). */
   attach(fake: { onTradeUpdate(cb: (u: TradeUpdate) => void): void }): void {
-    fake.onTradeUpdate((u) => this.emit(u));
+    fake.onTradeUpdate((u) => {
+      if (!this.closed) this.emit(u);
+    });
   }
 
   emitStatus(status: StreamStatus, detail?: string): void {

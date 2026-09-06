@@ -62,6 +62,7 @@ export class FakeAlpaca implements AlpacaClient {
   private seq = 0;
   private readonly meta = new Map<string, OrderMeta>();
   private readonly failures = new Map<string, { error: unknown; times: number }>();
+  private readonly hooks = new Map<string, { fn: () => void; times: number }>();
   private readonly listeners: Array<(u: TradeUpdate) => void> = [];
 
   constructor(opts: FakeAlpacaOptions = {}) {
@@ -97,6 +98,11 @@ export class FakeAlpaca implements AlpacaClient {
 
   clearFailures(): void {
     this.failures.clear();
+  }
+
+  /** Vor dem nächsten Aufruf von `method` etwas geschehen lassen (z. B. ein Bein füllen, bevor der Storno greift). */
+  onCall(method: keyof AlpacaClient, fn: () => void, times = 1): void {
+    this.hooks.set(method, { fn, times });
   }
 
   onTradeUpdate(cb: (u: TradeUpdate) => void): void {
@@ -418,6 +424,12 @@ export class FakeAlpaca implements AlpacaClient {
 
   private guard(method: string, ...args: unknown[]): void {
     this.calls.push({ method, args });
+    const h = this.hooks.get(method);
+    if (h && h.times > 0) {
+      h.times--;
+      if (h.times <= 0) this.hooks.delete(method);
+      h.fn();
+    }
     const f = this.failures.get(method);
     if (f && f.times > 0) {
       f.times--;

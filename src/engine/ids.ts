@@ -15,7 +15,7 @@
  * über das Präfix derselben Einheit zugeordnet.
  */
 import type { AssetClass, Ms, TimeframeMin } from '../core/types.ts';
-import { bucketStart, dayKey, msFromET, parseDay, sessionBounds, MIN, type Calendar } from '../core/time.ts';
+import { bucketStart, dayKeyFor, msFromET, parseDay, sessionBounds, MIN, type Calendar } from '../core/time.ts';
 
 export type ClientIdKind = 'entry' | 'exit' | 'stop';
 export type ClientIdMode = 'paper' | 'live';
@@ -106,13 +106,13 @@ export function clientIdMatchesSymbol(id: string, symbol: string): boolean {
  * Anker nie null ist.
  */
 export function decisionBucketStart(decidedAt: Ms, tf: TimeframeMin, assetClass: AssetClass, calendar?: Calendar): Ms {
-  const day = dayKey(decidedAt);
+  const day = dayKeyFor(decidedAt, assetClass);
   const bounds = sessionBounds(day, assetClass, calendar);
   const aligned = bucketStart(decidedAt, tf, bounds);
   if (aligned !== null) return aligned;
   if (tf === 1440) {
     const { y, m, d } = parseDay(day);
-    return msFromET(y, m, d);
+    return assetClass === 'crypto' ? Date.UTC(y, m - 1, d) : msFromET(y, m, d);
   }
   const size = tf * MIN;
   return Math.floor(decidedAt / size) * size;

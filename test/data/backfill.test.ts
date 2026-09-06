@@ -37,6 +37,7 @@ describe('backfill', () => {
   it('Tagesbars: lädt die letzte Bar erneut (der laufende Tag kann unfertig sein)', () => {
     const s = store();
     s.upsert('AAPL', '1Day', [bar(T0)]);
+    s.upsert('AAPL', '1Min', [bar(T0)]);
     expect(backfillStart(s, 'AAPL', '1Day', T0 - DAY)).toBe(T0);
     expect(backfillStart(s, 'AAPL', '1Min', T0 - DAY)).toBe(T0 + 1);
     expect(backfillStart(s, 'MSFT', '1Min', T0 - DAY)).toBe(T0 - DAY);
@@ -75,7 +76,7 @@ describe('backfill', () => {
     const logs: string[] = [];
     const res = await backfill({ client: fake, store: s, symbols: ['AAPL', 'MSFT'], tf: '1Min', from: T0 - 2 * MIN, to: T0, feed: 'iex', log: (m) => logs.push(m) });
     // AAPL: lastTime = to ⇒ start > to ⇒ keine Anfrage. MSFT: erste Anfrage scheitert ⇒ geloggt, Ergebnis leer, kein Wurf.
-    expect(fake.barRequests.map((r) => r.symbols)).toEqual([['MSFT']]);
+    expect(fake.callsOf('getBars').map((c) => (c.args[0] as { symbols: string[] }).symbols)).toEqual([['MSFT']]);
     expect(logs.some((l) => l.includes('fehlgeschlagen'))).toBe(true);
     expect(res.get('AAPL')).toHaveLength(1);
     expect(res.get('MSFT')).toEqual([]);

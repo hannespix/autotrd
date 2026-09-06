@@ -4,9 +4,12 @@
  * in den Bericht — eine Ablehnung ist damit nachvollziehbar, nie ein
  * stummes "irgendwas hat nicht gepasst".
  *
- * Stress- und Nachbarschaftstest führen eigene Simulationen aus (injizierter
- * Simulator); der Deflated Sharpe (Bailey/López de Prado) rechnet mit
- * Per-Perioden-Sharpe der OOS-Tagesrenditen und der Zahl aller Trials.
+ * Zwei statistische Gates mit klarer Arbeitsteilung:
+ * - PSR auf OUT-OF-SAMPLE (sr0 = 0): die ehrliche Zahl der Prozedur — die
+ *   OOS-Renditen wurden nicht selektiert, also wird nichts deflationiert.
+ * - DSR auf IN-SAMPLE (finales Suchfenster): deflationiert die SELEKTIERTE
+ *   Zahl um die Zahl der Trials und ihre Streuung (Bailey/López de Prado).
+ *   DSR auf OOS wäre doppelt konservativ und nicht lehrbuchgemäß.
  */
 import type { OptimizerConfig } from '../core/config.ts';
 import { median, objectiveValue, sampleVariance, type ObjectiveId } from './objective.ts';
@@ -39,11 +42,13 @@ export interface GateResult {
 export const NEIGHBOR_MEDIAN_RATIO = 0.5;
 /** Nachbarschaft: Anteil der Nachbarn mit positivem Netto. */
 export const NEIGHBOR_POSITIVE_SHARE = 0.6;
-/** Deflated Sharpe: Wahrscheinlichkeit, dass der OOS-Sharpe nicht Auswahlrauschen ist. */
+/** Deflated Sharpe (In-Sample, finales Suchfenster): Wahrscheinlichkeit, dass die selektierte Zahl nicht Auswahlrauschen ist. */
 export const DSR_THRESHOLD = 0.95;
+/** Probabilistic Sharpe (Out-of-Sample, sr0 = 0): Wahrscheinlichkeit eines positiven wahren OOS-Sharpe. */
+export const PSR_THRESHOLD = 0.9;
 /** Gebühren dürfen höchstens diesen Anteil des Bruttogewinns fressen. */
 export const FEE_SHARE_MAX = 0.5;
-/** Unter so vielen OOS-Tagesrenditen sind Schiefe/Kurtosis nicht schätzbar — DSR dann null. */
+/** Unter so vielen Tagesrenditen sind Schiefe/Kurtosis nicht schätzbar — PSR/DSR dann null (⇒ Gate fällt). */
 export const DSR_MIN_RETURNS = 30;
 /** Varianz der Fold-Sharpes, wenn weniger als 2 Folds einen Wert liefern. */
 export const DSR_VAR_SR_FALLBACK = 0.01;
@@ -117,46 +122,50 @@ export function neighborhoodTest(
   return { medianObjective: median(objectives), bestObjective, positiveShare: positive / nb.length, evaluated: nb.length };
 }
 
-/* ───────────────────────── Deflated Sharpe ───────────────────────── */
+/* ───────────────────────── Deflated Sharpe (In-Sample) ───────────────────────── */
 
 /**
  * Quelle der Sharpe-Streuung im Deflated Sharpe:
- * - 'fold_sharpes' (Vorgabe laut Spezifikation): Varianz der OOS-Fold-Sharpes.
- *   Achtung: Bei kurzen Folds misst das vor allem Stichprobenrauschen
- *   (≈ 1/Bars je Fold) und treibt den erwarteten Max-Sharpe so hoch, dass
- *   auch starke Strategien durchfallen — Integrationslauf: Sharpe p. a. 12,
- *   10/10 Folds positiv, DSR 0,08.
- * - 'trial_sharpes' (Bailey/López de Prado): Varianz der IS-Sharpes aller
- *   bewerteten Parametersätze — die Streuung der Trials, die das Auswahl-
- *   Maximum tatsächlich erzeugt.
+ * - 'trial_sharpes' (Vorgabe, Lehrbuch): Varianz der IS-Sharpes aller
+ *   Kandidaten der finalen Suche — die Streuung der Trials, aus denen das
+ *   Auswahl-Maximum stammt.
+ * - 'fold_sharpes': Varianz der OOS-Fold-Sharpes. Misst bei kurzen Folds
+ *   vor allem Stichprobenrauschen (≈ 1/Bars je Fold) — Integrationslauf:
+ *   Sharpe p. a. 12, 10/10 Folds positiv, DSR 0,08. Nur noch als Option.
  */
-export type DsrVarSource = 'fold_sharpes' | 'trial_sharpes';
+export type DsrVarSource = 'trial_sharpes' | 'fold_sharpes';
 
 export interface DsrResult {
   dsr: number | null;
-  psr: number | null;
-  /** Per-Perioden-Sharpe der OOS-Tagesrenditen. */
+  /** Per-Perioden-Sharpe der IS-Tagesrenditen von finalParams. */
   sr: number | null;
+  /** Anzahl IS-Tagesrenditen. */
   n: number;
   nTrials: number;
   /** Verwendete Varianz (je nach `varSrSource`). */
   varSr: number;
   varSrSource: DsrVarSource;
-  varSrFolds: number;
   varSrTrials: number;
+  varSrFolds: number;
+  skew: number | null;
+  kurt: number | null;
   note: string;
 }
 
+function varOf(xs: readonly number[]): number {
+  return xs.length >= 2 ? (sampleVariance(xs) ?? DSR_VAR_SR_FALLBACK) : DSR_VAR_SR_FALLBACK;
+}
+
 /**
- * DSR auf den verketteten OOS-Tagesrenditen: nTrials = alle bewerteten
- * Parametersätze, varSr laut `varSrSource` (Vorgabe: Fold-Sharpes).
- * Alles per Periode (periodsPerYear = 1), wie die Formel es verlangt —
- * annualisierte Werte würden n und Sharpe gegeneinander verfälschen.
+ * DSR der selektierten IS-Zahl: Tagesrenditen von finalParams auf dem
+ * finalen Suchfenster, nTrials = alle bewerteten Parametersätze der WFA,
+ * varSr laut `varSrSource`. Alles per Periode (periodsPerYear = 1), wie die
+ * Formel es verlangt — annualisierte Werte würden n und Sharpe verfälschen.
  */
-export function deflatedSharpeOos(a: { wfa: WfaResult; metricsFns: MetricsFns; varSrSource?: DsrVarSource | undefined }): DsrResult {
+export function deflatedSharpeIs(a: { wfa: WfaResult; metricsFns: MetricsFns; varSrSource?: DsrVarSource | undefined }): DsrResult {
   const { wfa, metricsFns } = a;
-  const varSrSource: DsrVarSource = a.varSrSource ?? 'fold_sharpes';
-  const returns = wfa.oos.dailyReturns;
+  const varSrSource: DsrVarSource = a.varSrSource ?? 'trial_sharpes';
+  const returns = wfa.finalIsDailyReturns;
   const n = returns.length;
   const nTrials = Math.max(1, wfa.trials);
   const foldSrs: number[] = [];
@@ -164,26 +173,51 @@ export function deflatedSharpeOos(a: { wfa: WfaResult; metricsFns: MetricsFns; v
     const s = metricsFns.sharpeRatio(f.best.oosDailyReturns, 1);
     if (s !== null && Number.isFinite(s)) foldSrs.push(s);
   }
-  const varOf = (xs: readonly number[]): number => (xs.length >= 2 ? (sampleVariance(xs) ?? DSR_VAR_SR_FALLBACK) : DSR_VAR_SR_FALLBACK);
+  const varSrTrials = varOf(wfa.finalTrialSharpes);
   const varSrFolds = varOf(foldSrs);
-  const varSrTrials = varOf(wfa.trialSharpes);
   const varSr = varSrSource === 'trial_sharpes' ? varSrTrials : varSrFolds;
-  const base = { dsr: null, psr: null, sr: null, n, nTrials, varSr, varSrSource, varSrFolds, varSrTrials };
+  const base = { dsr: null, sr: null, n, nTrials, varSr, varSrSource, varSrTrials, varSrFolds, skew: null, kurt: null };
+  if (n < DSR_MIN_RETURNS) return { ...base, note: `zu wenige IS-Tagesrenditen (${n} < ${DSR_MIN_RETURNS})` };
+  const sr = metricsFns.sharpeRatio(returns, 1);
+  if (sr === null || !Number.isFinite(sr)) return { ...base, note: 'Sharpe der IS-Renditen nicht berechenbar (Varianz 0?)' };
+  const skew = metricsFns.skewness(returns);
+  const kurt = metricsFns.kurtosis(returns);
+  const raw = metricsFns.deflatedSharpe({ sr, n, skew, kurt, nTrials, varSr });
+  const dsr = Number.isFinite(raw) ? raw : null;
+  const detail =
+    `IS-SR/Periode ${sr.toFixed(3)}, n=${n}, Trials=${nTrials}, Schiefe ${skew.toFixed(2)}, Kurtosis ${kurt.toFixed(2)}, ` +
+    `varSr=${varSr.toExponential(2)} aus ${varSrSource} (Trials ${varSrTrials.toExponential(2)}, Folds ${varSrFolds.toExponential(2)})`;
+  return { dsr, sr, n, nTrials, varSr, varSrSource, varSrTrials, varSrFolds, skew, kurt, note: dsr === null ? `DSR nicht berechenbar — ${detail}` : `DSR ${dsr.toFixed(3)}; ${detail}` };
+}
+
+/* ───────────────────────── Probabilistic Sharpe (Out-of-Sample) ───────────────────────── */
+
+export interface PsrResult {
+  psr: number | null;
+  /** Per-Perioden-Sharpe der verketteten OOS-Tagesrenditen. */
+  sr: number | null;
+  /** Anzahl OOS-Tagesrenditen. */
+  n: number;
+  skew: number | null;
+  kurt: number | null;
+  note: string;
+}
+
+/** PSR der OOS-Kette mit sr0 = 0: Wahrscheinlichkeit, dass der wahre OOS-Sharpe positiv ist. */
+export function probabilisticSharpeOos(a: { wfa: WfaResult; metricsFns: MetricsFns }): PsrResult {
+  const { wfa, metricsFns } = a;
+  const returns = wfa.oos.dailyReturns;
+  const n = returns.length;
+  const base = { psr: null, sr: null, n, skew: null, kurt: null };
   if (n < DSR_MIN_RETURNS) return { ...base, note: `zu wenige OOS-Tagesrenditen (${n} < ${DSR_MIN_RETURNS})` };
   const sr = metricsFns.sharpeRatio(returns, 1);
   if (sr === null || !Number.isFinite(sr)) return { ...base, note: 'Sharpe der OOS-Renditen nicht berechenbar (Varianz 0?)' };
   const skew = metricsFns.skewness(returns);
   const kurt = metricsFns.kurtosis(returns);
-  const dsrRaw = metricsFns.deflatedSharpe({ sr, n, skew, kurt, nTrials, varSr });
-  const psrRaw = metricsFns.probabilisticSharpe({ sr, n, skew, kurt });
-  const dsr = Number.isFinite(dsrRaw) ? dsrRaw : null;
-  const psr = Number.isFinite(psrRaw) ? psrRaw : null;
-  const detail =
-    `SR/Periode ${sr.toFixed(3)}, n=${n}, Trials=${nTrials}, Schiefe ${skew.toFixed(2)}, Kurtosis ${kurt.toFixed(2)}, ` +
-    `varSr=${varSr.toExponential(2)} aus ${varSrSource} (Folds ${varSrFolds.toExponential(2)}, Trials ${varSrTrials.toExponential(2)}), ` +
-    `PSR=${psr === null ? '–' : psr.toFixed(3)}`;
-  const note = dsr === null ? `DSR nicht berechenbar — ${detail}` : detail;
-  return { dsr, psr, sr, n, nTrials, varSr, varSrSource, varSrFolds, varSrTrials, note };
+  const raw = metricsFns.probabilisticSharpe({ sr, n, skew, kurt });
+  const psr = Number.isFinite(raw) ? raw : null;
+  const detail = `OOS-SR/Periode ${sr.toFixed(3)}, n=${n}, Schiefe ${skew.toFixed(2)}, Kurtosis ${kurt.toFixed(2)}, sr0=0`;
+  return { psr, sr, n, skew, kurt, note: psr === null ? `PSR nicht berechenbar — ${detail}` : `PSR ${psr.toFixed(3)}; ${detail}` };
 }
 
 /* ───────────────────────── Die Gates ───────────────────────── */
@@ -193,7 +227,10 @@ export interface GateInput {
   optimizer: OptimizerConfig;
   stressOos: { netProfit: number; objectiveMedian: number };
   neighborhood: { medianObjective: number; bestObjective: number; positiveShare: number };
-  dsr: number | null;
+  /** Deflated Sharpe der selektierten IS-Zahl (deflatedSharpeIs). */
+  dsr: DsrResult;
+  /** Probabilistic Sharpe der OOS-Kette (probabilisticSharpeOos). */
+  psr: PsrResult;
   metricsFns: MetricsFns;
   /** Nur für die Notiz (annualisierter OOS-Sharpe); Aktien 252, Krypto 365. */
   periodsPerYear?: number | undefined;
@@ -250,16 +287,21 @@ export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResul
   });
 
   const srAnnual = a.metricsFns.sharpeRatio(oos.dailyReturns, a.periodsPerYear ?? 252);
-  const srNote = srAnnual === null ? 'Sharpe p. a. nicht berechenbar' : `Sharpe p. a. ${srAnnual.toFixed(2)}`;
+  const srNote = srAnnual === null ? 'Sharpe p. a. nicht berechenbar' : `OOS-Sharpe p. a. ${srAnnual.toFixed(2)}`;
   gates.push({
-    name: 'deflated_sharpe',
-    pass: a.dsr !== null && a.dsr >= DSR_THRESHOLD,
-    value: a.dsr,
+    name: 'probabilistic_sharpe_oos',
+    pass: a.psr.psr !== null && a.psr.psr >= PSR_THRESHOLD,
+    value: a.psr.psr,
+    threshold: PSR_THRESHOLD,
+    note: a.psr.psr === null ? `PSR nicht berechenbar — gilt als durchgefallen (${a.psr.note}); ${srNote}` : `${a.psr.note}; ${srNote}`,
+  });
+
+  gates.push({
+    name: 'deflated_sharpe_is',
+    pass: a.dsr.dsr !== null && a.dsr.dsr >= DSR_THRESHOLD,
+    value: a.dsr.dsr,
     threshold: DSR_THRESHOLD,
-    note:
-      a.dsr === null
-        ? `DSR nicht berechenbar (zu wenige Renditen oder Varianz 0) — gilt als durchgefallen; ${srNote}`
-        : `DSR ${a.dsr.toFixed(3)} bei ${wfa.trials} Trials, n=${oos.dailyReturns.length}; ${srNote}`,
+    note: a.dsr.dsr === null ? `DSR nicht berechenbar — gilt als durchgefallen (${a.dsr.note})` : a.dsr.note,
   });
 
   gates.push({

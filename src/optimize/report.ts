@@ -119,7 +119,8 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
   );
   out.push(
     `- Gates: ≥ ${o.minOosTrades} OOS-Trades, ≥ ${Math.round(o.minFoldPositiveShare * 100)} % Folds positiv, OOS netto > 0 (auch bei Kosten ×${o.stressCostMultiplier}), ` +
-      `Nachbarschafts-Plateau, DSR ≥ 0.95, Gebührenanteil ≤ 50 %; Beförderungsmarge ${Math.round(o.promotionMargin * 100)} %`,
+      `Nachbarschafts-Plateau, PSR (OOS, sr0 = 0) ≥ 0.90, DSR (IS, deflationiert um alle Trials) ≥ 0.95, Gebührenanteil ≤ 50 %; ` +
+      `Beförderungsmarge ${Math.round(o.promotionMargin * 100)} %`,
   );
   out.push(`- Startkapital je Fenster: ${meta.initialEquity}`);
   out.push('');
@@ -188,9 +189,11 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
       out.push('');
       out.push(gatesTable(s.gates));
       out.push('');
-      // Die DSR-Rohwerte gehören sichtbar in den Bericht: Ein Gate, das nur
-      // "0.000" sagt, lässt sich nicht hinterfragen.
-      out.push(`DSR-Details: ${s.dsr.note}`);
+      // Die Rohwerte beider Sharpe-Gates gehören sichtbar in den Bericht: Ein
+      // Gate, das nur "0.000" sagt, lässt sich nicht hinterfragen.
+      out.push(`PSR (OOS): ${s.psr.note}`);
+      out.push('');
+      out.push(`DSR (IS): ${s.dsr.note}`);
       out.push('');
       out.push(
         table(

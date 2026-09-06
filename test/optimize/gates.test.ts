@@ -3,11 +3,14 @@ import type { Metrics } from '../../src/core/types.ts';
 import { objectiveValue } from '../../src/optimize/objective.ts';
 import {
   DSR_MIN_RETURNS,
-  deflatedSharpeOos,
+  deflatedSharpeIs,
   neighborhoodTest,
+  probabilisticSharpeOos,
   robustnessGates,
   stressTest,
+  type DsrResult,
   type GateInput,
+  type PsrResult,
 } from '../../src/optimize/robustness.ts';
 import { mulberry32, neighbors } from '../../src/optimize/search.ts';
 import { walkForward, type WfaResult } from '../../src/optimize/walkForward.ts';
@@ -35,9 +38,11 @@ function metrics(over: Partial<Metrics> = {}): Metrics {
   };
 }
 
+const strongReturns = (n: number, k = 0) => Array.from({ length: n }, (_, i) => 0.01 + 0.004 * Math.sin(i + k));
+
 /** Handgebautes WFA-Ergebnis, das alle Gates besteht. */
-function wfaFixture(over: Partial<WfaResult['oos']> = {}, foldReturns?: number[][]): WfaResult {
-  const returns = foldReturns ?? Array.from({ length: 5 }, (_, k) => Array.from({ length: 30 }, (_, i) => 0.01 + 0.004 * Math.sin(i + k)));
+function wfaFixture(over: Partial<WfaResult['oos']> = {}, foldReturns?: number[][], extra: Partial<WfaResult> = {}): WfaResult {
+  const returns = foldReturns ?? Array.from({ length: 5 }, (_, k) => strongReturns(30, k));
   const folds = returns.map((r, k) => ({
     fold: { index: k, isStart: k, isEnd: k + 1, oosStart: k + 1, oosEnd: k + 2 },
     evaluated: 50,
@@ -73,11 +78,24 @@ function wfaFixture(over: Partial<WfaResult['oos']> = {}, foldReturns?: number[]
     finalIsMetrics: metrics(),
     finalWindow: { start: 0, end: 10, embargoAtEnd: true },
     trials: 250,
-    trialSharpes: [0.1, 0.2, 0.3, 0.4],
+    // IS-Sharpe ≈ 0,7 je Periode — moderat genug, dass die Deflation sichtbar bleibt
+    // (bei Sharpe ≈ 3,5 sättigt Φ auf exakt 1 und jeder Vergleich wird blind)
+    finalIsDailyReturns: Array.from({ length: 120 }, (_, i) => 0.01 + 0.02 * Math.sin(i + 7)),
+    // enges Plateau: alle Trials nahe beieinander
+    finalTrialSharpes: Array.from({ length: 50 }, (_, i) => 0.6 + 0.004 * i),
     holdout: null,
     dataRange: { start: 0, end: 10 },
     embargoBars: 25,
+    ...extra,
   };
+}
+
+function dsrOf(value: number | null): DsrResult {
+  return { dsr: value, sr: 1, n: 120, nTrials: 250, varSr: 0.01, varSrSource: 'trial_sharpes', varSrTrials: 0.01, varSrFolds: 0.05, skew: 0, kurt: 3, note: `DSR ${value ?? 'null'} (Fixture)` };
+}
+
+function psrOf(value: number | null): PsrResult {
+  return { psr: value, sr: 0.5, n: 150, skew: 0, kurt: 3, note: `PSR ${value ?? 'null'} (Fixture)` };
 }
 
 function gateInput(over: Partial<GateInput> = {}): GateInput {
@@ -86,7 +104,8 @@ function gateInput(over: Partial<GateInput> = {}): GateInput {
     optimizer: cfg.optimizer,
     stressOos: { netProfit: 200, objectiveMedian: 0.8 },
     neighborhood: { medianObjective: 0.8, bestObjective: 1, positiveShare: 0.75 },
-    dsr: 0.99,
+    dsr: dsrOf(0.99),
+    psr: psrOf(0.99),
     metricsFns: fakeMetricsFns,
     ...over,
   };
@@ -98,14 +117,15 @@ describe('robustnessGates', () => {
   it('bestehen alle Gates, ist pass = true', () => {
     const r = robustnessGates(gateInput());
     expect(r.pass).toBe(true);
-    expect(r.gates.length).toBe(7);
+    expect(r.gates.length).toBe(8);
     expect(r.gates.map((g) => g.name)).toEqual([
       'oos_trades',
       'fold_positive_share',
       'oos_net_profit',
       'stress_costs',
       'neighborhood_plateau',
-      'deflated_sharpe',
+      'probabilistic_sharpe_oos',
+      'deflated_sharpe_is',
       'fee_share',
     ]);
     for (const g of r.gates) expect(g.note.length).toBeGreaterThan(0);
@@ -146,99 +166,128 @@ describe('robustnessGates', () => {
     expect(r.gates[4]!.value).toBe(0.3);
   });
 
-  it('(6) DSR < 0,95 oder nicht berechenbar', () => {
-    expect(failing(robustnessGates(gateInput({ dsr: 0.949 })))).toEqual(['deflated_sharpe']);
-    const r = robustnessGates(gateInput({ dsr: null }));
-    expect(failing(r)).toEqual(['deflated_sharpe']);
+  it('(6) PSR (OOS) < 0,90 oder nicht berechenbar', () => {
+    expect(failing(robustnessGates(gateInput({ psr: psrOf(0.899) })))).toEqual(['probabilistic_sharpe_oos']);
+    const r = robustnessGates(gateInput({ psr: psrOf(null) }));
+    expect(failing(r)).toEqual(['probabilistic_sharpe_oos']);
     expect(r.gates[5]!.value).toBeNull();
+    expect(r.gates[5]!.threshold).toBe(0.9);
     expect(r.gates[5]!.note).toMatch(/nicht berechenbar/);
-    expect(robustnessGates(gateInput({ dsr: 0.95 })).pass).toBe(true);
+    expect(robustnessGates(gateInput({ psr: psrOf(0.9) })).pass).toBe(true);
+    expect(r.gates[5]!.note).toMatch(/Sharpe p\. a\./);
   });
 
-  it('(7) Gebühren fressen mehr als die Hälfte — nicht berechenbar ist kein Urteil', () => {
+  it('(7) DSR (IS) < 0,95 oder nicht berechenbar', () => {
+    expect(failing(robustnessGates(gateInput({ dsr: dsrOf(0.949) })))).toEqual(['deflated_sharpe_is']);
+    const r = robustnessGates(gateInput({ dsr: dsrOf(null) }));
+    expect(failing(r)).toEqual(['deflated_sharpe_is']);
+    expect(r.gates[6]!.value).toBeNull();
+    expect(r.gates[6]!.threshold).toBe(0.95);
+    expect(r.gates[6]!.note).toMatch(/nicht berechenbar/);
+    expect(robustnessGates(gateInput({ dsr: dsrOf(0.95) })).pass).toBe(true);
+  });
+
+  it('(8) Gebühren fressen mehr als die Hälfte — nicht berechenbar ist kein Urteil', () => {
     expect(failing(robustnessGates(gateInput({ wfa: wfaFixture({ feeShare: 0.51 }) })))).toEqual(['fee_share']);
     expect(robustnessGates(gateInput({ wfa: wfaFixture({ feeShare: 0.5 }) })).pass).toBe(true);
     const r = robustnessGates(gateInput({ wfa: wfaFixture({ feeShare: null }) }));
     expect(r.pass).toBe(true);
-    expect(r.gates[6]!.note).toMatch(/kein Urteil/);
+    expect(r.gates[7]!.note).toMatch(/kein Urteil/);
   });
 
   it('mehrere Verstöße werden alle gemeldet', () => {
-    const r = robustnessGates(gateInput({ wfa: wfaFixture({ trades: 1, netProfit: -1, feeShare: 0.9 }), dsr: 0.1 }));
-    expect(failing(r)).toEqual(['oos_trades', 'oos_net_profit', 'deflated_sharpe', 'fee_share']);
+    const r = robustnessGates(gateInput({ wfa: wfaFixture({ trades: 1, netProfit: -1, feeShare: 0.9 }), dsr: dsrOf(0.1), psr: psrOf(0.2) }));
+    expect(failing(r)).toEqual(['oos_trades', 'oos_net_profit', 'probabilistic_sharpe_oos', 'deflated_sharpe_is', 'fee_share']);
   });
 });
 
-describe('deflatedSharpeOos', () => {
-  it('starke, stabile OOS-Renditen ⇒ DSR nahe 1', () => {
-    const r = deflatedSharpeOos({ wfa: wfaFixture(), metricsFns: fakeMetricsFns });
-    expect(r.dsr).not.toBeNull();
-    expect(r.dsr!).toBeGreaterThan(0.99);
+describe('probabilisticSharpeOos', () => {
+  it('starke, stabile OOS-Renditen ⇒ PSR nahe 1 (sr0 = 0)', () => {
+    const r = probabilisticSharpeOos({ wfa: wfaFixture(), metricsFns: fakeMetricsFns });
     expect(r.psr!).toBeGreaterThan(0.99);
     expect(r.n).toBe(150);
-    expect(r.nTrials).toBe(250);
-    expect(r.varSr).toBeGreaterThanOrEqual(0);
-    expect(r.note).toMatch(/Trials=250/);
+    expect(r.sr!).toBeGreaterThan(0);
+    expect(r.note).toMatch(/OOS-SR\/Periode/);
+    expect(r.note).toMatch(/sr0=0/);
   });
 
-  it('Renditen mit Erwartungswert 0 ⇒ DSR klein', () => {
+  it('Renditen mit Erwartungswert 0 ⇒ PSR nahe 0,5, negative ⇒ klein', () => {
     const rng = mulberry32(3);
-    const returns = Array.from({ length: 5 }, () => Array.from({ length: 30 }, () => (rng() - 0.5) * 0.02));
-    const r = deflatedSharpeOos({ wfa: wfaFixture({}, returns), metricsFns: fakeMetricsFns });
-    expect(r.dsr).not.toBeNull();
-    expect(r.dsr!).toBeLessThan(0.5);
+    const zero = Array.from({ length: 5 }, () => Array.from({ length: 30 }, () => (rng() - 0.5) * 0.02));
+    const r0 = probabilisticSharpeOos({ wfa: wfaFixture({}, zero), metricsFns: fakeMetricsFns });
+    expect(r0.psr!).toBeLessThan(0.9);
+    const neg = zero.map((f) => f.map((x) => x - 0.005));
+    const rNeg = probabilisticSharpeOos({ wfa: wfaFixture({}, neg), metricsFns: fakeMetricsFns });
+    expect(rNeg.psr!).toBeLessThan(0.1);
   });
 
-  it('zu wenige Renditen ⇒ null mit Notiz', () => {
-    const returns = [[0.01, 0.02], [0.01, 0.02], [0.01, 0.02]];
-    const r = deflatedSharpeOos({ wfa: wfaFixture({}, returns), metricsFns: fakeMetricsFns });
-    expect(r.dsr).toBeNull();
-    expect(r.note).toMatch(new RegExp(`${DSR_MIN_RETURNS}`));
-  });
-
-  it('konstante Renditen (Varianz 0) ⇒ null', () => {
+  it('zu wenige Renditen oder Varianz 0 ⇒ null mit Notiz', () => {
+    const few = probabilisticSharpeOos({ wfa: wfaFixture({}, [[0.01, 0.02], [0.01, 0.02], [0.01, 0.02]]), metricsFns: fakeMetricsFns });
+    expect(few.psr).toBeNull();
+    expect(few.note).toMatch(new RegExp(`${DSR_MIN_RETURNS}`));
     // 0.25 ist exakt darstellbar — 0.01 hätte durch Rundungsreste eine Scheinvarianz
-    const returns = Array.from({ length: 3 }, () => Array.from({ length: 40 }, () => 0.25));
-    const r = deflatedSharpeOos({ wfa: wfaFixture({}, returns), metricsFns: fakeMetricsFns });
-    expect(r.dsr).toBeNull();
-    expect(r.note).toMatch(/nicht berechenbar/);
+    const flat = probabilisticSharpeOos({ wfa: wfaFixture({}, Array.from({ length: 3 }, () => Array.from({ length: 40 }, () => 0.25))), metricsFns: fakeMetricsFns });
+    expect(flat.psr).toBeNull();
+    expect(flat.note).toMatch(/nicht berechenbar/);
   });
+});
 
-  it('bei weniger als 2 Fold-Sharpes gilt der Fallback varSr = 0,01', () => {
-    const returns = [Array.from({ length: 40 }, (_, i) => 0.01 + 0.002 * Math.sin(i)), [0.01], [0.01]];
-    const r = deflatedSharpeOos({ wfa: wfaFixture({}, returns), metricsFns: fakeMetricsFns });
-    expect(r.varSr).toBe(0.01);
-    expect(r.varSrSource).toBe('fold_sharpes');
-  });
-
-  it("varSrSource 'trial_sharpes' nimmt die Streuung der IS-Trial-Sharpes; beide Werte stehen in der Notiz", () => {
+describe('deflatedSharpeIs', () => {
+  it('deflationiert die IS-Zahl von finalParams mit allen Trials und der Streuung der finalen Suche', () => {
     const wfa = wfaFixture();
-    const folds = deflatedSharpeOos({ wfa, metricsFns: fakeMetricsFns });
-    const trials = deflatedSharpeOos({ wfa, metricsFns: fakeMetricsFns, varSrSource: 'trial_sharpes' });
-    // Stichprobenvarianz von [0.1, 0.2, 0.3, 0.4] = 0.01666…
-    expect(trials.varSr).toBeCloseTo(0.016667, 5);
-    expect(trials.varSrSource).toBe('trial_sharpes');
-    expect(trials.varSrTrials).toBe(trials.varSr);
-    expect(folds.varSrFolds).toBe(folds.varSr);
-    expect(folds.varSrTrials).toBe(trials.varSr);
-    expect(trials.note).toMatch(/aus trial_sharpes/);
-    expect(folds.note).toMatch(/aus fold_sharpes/);
-    expect(folds.note).toMatch(/Schiefe/);
-    // gleiche Renditen, andere Streuung ⇒ nur varSr und DSR dürfen sich unterscheiden
-    expect(trials.sr).toBe(folds.sr);
-    expect(trials.psr).toBe(folds.psr);
+    const r = deflatedSharpeIs({ wfa, metricsFns: fakeMetricsFns });
+    expect(r.n).toBe(120);
+    expect(r.nTrials).toBe(250);
+    expect(r.varSrSource).toBe('trial_sharpes');
+    expect(r.varSr).toBe(r.varSrTrials);
+    // Stichprobenvarianz von 1.5 + 0.004·i, i = 0…49 ⇒ 0.004² · Var(i) = 1.6e-5 · 212.5
+    expect(r.varSrTrials).toBeCloseTo(0.0034, 4);
+    expect(r.sr!).toBeGreaterThan(0.6);
+    expect(r.sr!).toBeLessThan(0.8);
+    expect(r.dsr!).toBeGreaterThan(0.99);
+    expect(r.note).toMatch(/IS-SR\/Periode/);
+    expect(r.note).toMatch(/aus trial_sharpes/);
+    expect(r.note).toMatch(/Schiefe/);
   });
 
-  it('die Fold-Streuung kurzer Folds kann eine starke Kante allein am DSR scheitern lassen (dokumentierter Befund)', () => {
-    // 10 Folds à 30 Tage mit stark schwankender Fold-Güte, aber klar positiver Gesamtkante
-    const rng = mulberry32(9);
-    const returns = Array.from({ length: 10 }, (_, k) => Array.from({ length: 30 }, () => (k % 2 ? 0.02 : 0.004) + (rng() - 0.5) * 0.02));
-    const wfa = { ...wfaFixture({}, returns), trials: 90, trialSharpes: Array.from({ length: 90 }, (_, i) => 0.3 + 0.002 * i) };
-    const folds = deflatedSharpeOos({ wfa, metricsFns: fakeMetricsFns });
-    const trials = deflatedSharpeOos({ wfa, metricsFns: fakeMetricsFns, varSrSource: 'trial_sharpes' });
-    expect(folds.psr!).toBeGreaterThan(0.99);
-    expect(folds.varSrFolds).toBeGreaterThan(folds.varSrTrials);
-    expect(trials.dsr!).toBeGreaterThan(folds.dsr!);
+  it('große Trial-Streuung deflationiert dieselbe IS-Zahl bis zum Durchfallen', () => {
+    const narrow = deflatedSharpeIs({ wfa: wfaFixture(), metricsFns: fakeMetricsFns });
+    // Trials, die von 0 bis zum Maximum streuen: das Maximum von 250 Rausch-Trials läge dann ähnlich hoch
+    const wide = deflatedSharpeIs({ wfa: wfaFixture({}, undefined, { finalTrialSharpes: Array.from({ length: 50 }, (_, i) => (i / 49) * 2.2) }), metricsFns: fakeMetricsFns });
+    expect(wide.sr).toBe(narrow.sr);
+    expect(wide.varSr).toBeGreaterThan(narrow.varSr);
+    expect(wide.dsr!).toBeLessThan(narrow.dsr!);
+    expect(wide.dsr!).toBeLessThan(0.95);
+  });
+
+  it('mehr Trials bei gleicher Streuung ⇒ kleinerer DSR', () => {
+    const spread = Array.from({ length: 50 }, (_, i) => i / 49);
+    const few = deflatedSharpeIs({ wfa: wfaFixture({}, undefined, { trials: 10, finalTrialSharpes: spread }), metricsFns: fakeMetricsFns });
+    const many = deflatedSharpeIs({ wfa: wfaFixture({}, undefined, { trials: 100_000, finalTrialSharpes: spread }), metricsFns: fakeMetricsFns });
+    expect(few.dsr!).toBeGreaterThan(0.9);
+    expect(many.dsr!).toBeLessThan(0.5);
+  });
+
+  it("varSrSource 'fold_sharpes' nimmt die OOS-Fold-Streuung; beide Werte stehen in der Notiz", () => {
+    const wfa = wfaFixture();
+    const trials = deflatedSharpeIs({ wfa, metricsFns: fakeMetricsFns });
+    const folds = deflatedSharpeIs({ wfa, metricsFns: fakeMetricsFns, varSrSource: 'fold_sharpes' });
+    expect(folds.varSrSource).toBe('fold_sharpes');
+    expect(folds.varSr).toBe(folds.varSrFolds);
+    expect(folds.varSrFolds).toBe(trials.varSrFolds);
+    expect(folds.varSrTrials).toBe(trials.varSrTrials);
+    expect(folds.note).toMatch(/aus fold_sharpes/);
+    expect(trials.note).toMatch(/Trials .* Folds/);
+    expect(folds.sr).toBe(trials.sr);
+  });
+
+  it('zu wenige IS-Renditen ⇒ null; weniger als 2 Trial-Sharpes ⇒ Fallback varSr = 0,01', () => {
+    const few = deflatedSharpeIs({ wfa: wfaFixture({}, undefined, { finalIsDailyReturns: [0.01, 0.02] }), metricsFns: fakeMetricsFns });
+    expect(few.dsr).toBeNull();
+    expect(few.note).toMatch(/zu wenige IS-Tagesrenditen/);
+    const one = deflatedSharpeIs({ wfa: wfaFixture({}, undefined, { finalTrialSharpes: [1] }), metricsFns: fakeMetricsFns });
+    expect(one.varSr).toBe(0.01);
+    expect(one.dsr).not.toBeNull();
   });
 });
 
@@ -305,5 +354,14 @@ describe('stressTest & neighborhoodTest (mit Fake-Simulator)', () => {
     expect(n.evaluated).toBe(0);
     expect(n.positiveShare).toBe(1);
     expect(n.medianObjective).toBe(n.bestObjective);
+  });
+
+  it('echte Kante mit Plateau: PSR (OOS) und DSR (IS) bestehen; Rauschen fällt an beiden', () => {
+    const edge = wfaOf(makeFakeSimulate(REWARD_PROFILE));
+    expect(probabilisticSharpeOos({ wfa: edge, metricsFns: fakeMetricsFns }).psr!).toBeGreaterThan(0.9);
+    expect(deflatedSharpeIs({ wfa: edge, metricsFns: fakeMetricsFns }).dsr!).toBeGreaterThan(0.95);
+    const noise = wfaOf(makeFakeSimulate(NOISE_PROFILE));
+    expect(probabilisticSharpeOos({ wfa: noise, metricsFns: fakeMetricsFns }).psr!).toBeLessThan(0.9);
+    expect(deflatedSharpeIs({ wfa: noise, metricsFns: fakeMetricsFns }).dsr!).toBeLessThan(0.95);
   });
 });

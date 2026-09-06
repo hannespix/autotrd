@@ -27,8 +27,9 @@ import {
 } from './promote.ts';
 import { renderReport, writeReport } from './report.ts';
 import {
-  deflatedSharpeOos,
+  deflatedSharpeIs,
   neighborhoodTest,
+  probabilisticSharpeOos,
   robustnessGates,
   stressTest,
   type DsrResult,
@@ -36,6 +37,7 @@ import {
   type GateResult,
   type MetricsFns,
   type NeighborhoodResult,
+  type PsrResult,
   type StressResult,
 } from './robustness.ts';
 import { mulberry32 } from './search.ts';
@@ -99,7 +101,7 @@ export interface OptimizeRunInput {
   getStrategy?: ((id: string) => Strategy) | undefined;
   /** Journal-Pfad; Standard homePaths(home).journal. */
   journalPath?: string | undefined;
-  /** Streuungsquelle des Deflated Sharpe; Vorgabe 'fold_sharpes' (siehe robustness.ts). */
+  /** Streuungsquelle des Deflated Sharpe; Vorgabe 'trial_sharpes' (siehe robustness.ts). */
   dsrVarSource?: DsrVarSource | undefined;
   now?: (() => Ms) | undefined;
   log?: ((msg: string) => void) | undefined;
@@ -114,7 +116,10 @@ export interface StrategyRun {
   score: number;
   stress: StressResult;
   neighborhood: NeighborhoodResult;
+  /** Deflated Sharpe der selektierten IS-Zahl. */
   dsr: DsrResult;
+  /** Probabilistic Sharpe der OOS-Kette. */
+  psr: PsrResult;
 }
 
 export interface SymbolRun {
@@ -221,17 +226,10 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
           const wfa = walkForward({ ...common, strategy, optimizer, rng, include, log });
           const stress = stressTest({ ...common, strategy, wfa, costMultiplier: optimizer.stressCostMultiplier, objective: optimizer.objective });
           const neighborhood = neighborhoodTest({ ...common, strategy, wfa, optimizer });
-          const dsr = deflatedSharpeOos({ wfa, metricsFns: deps.metricsFns, varSrSource: input.dsrVarSource });
-          const g = robustnessGates({
-            wfa,
-            optimizer,
-            stressOos: stress,
-            neighborhood,
-            dsr: dsr.dsr,
-            metricsFns: deps.metricsFns,
-            periodsPerYear,
-          });
-          results.push({ strategyId: strategy.id, wfa, gates: g.gates, pass: g.pass, score: wfa.oos.objectiveMedian, stress, neighborhood, dsr });
+          const dsr = deflatedSharpeIs({ wfa, metricsFns: deps.metricsFns, varSrSource: input.dsrVarSource });
+          const psr = probabilisticSharpeOos({ wfa, metricsFns: deps.metricsFns });
+          const g = robustnessGates({ wfa, optimizer, stressOos: stress, neighborhood, dsr, psr, metricsFns: deps.metricsFns, periodsPerYear });
+          results.push({ strategyId: strategy.id, wfa, gates: g.gates, pass: g.pass, score: wfa.oos.objectiveMedian, stress, neighborhood, dsr, psr });
           log(`${symbol} ${strategy.id}: Gates ${g.pass ? 'bestanden' : 'NICHT bestanden'} (${g.gates.filter((x) => !x.pass).map((x) => x.name).join(', ') || '–'})`);
         } catch (e) {
           errors.push(`${strategy.id}: ${errMsg(e)}`);
