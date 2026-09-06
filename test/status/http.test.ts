@@ -22,13 +22,16 @@ const base = (s: StatusServer): string => `http://${s.host}:${s.port}`;
 
 describe('startStatusServer', () => {
   it('bindet an 127.0.0.1 und einen zufälligen Port bei port 0', async () => {
-    srv = await startStatusServer({ port: 0, status: () => ({}) });
+    srv = startStatusServer({ port: 0, status: () => ({}) });
+    expect(srv.port).toBe(0); // noch nicht gebunden
+    await srv.ready;
     expect(srv.host).toBe('127.0.0.1');
     expect(srv.port).toBeGreaterThan(0);
   });
 
   it('GET /health ⇒ 200 {ok:true, ts}', async () => {
-    srv = await startStatusServer({ port: 0, status: () => ({}) });
+    srv = startStatusServer({ port: 0, status: () => ({}) });
+    await srv.ready;
     const r = await fetch(`${base(srv)}/health`);
     expect(r.status).toBe(200);
     expect(r.headers.get('content-type')).toContain('application/json');
@@ -41,7 +44,7 @@ describe('startStatusServer', () => {
   it('GET /status ⇒ JSON des Providers, bei jedem Aufruf frisch, Secrets geschwärzt', async () => {
     registerSecret('geheimer-status-token');
     let n = 0;
-    srv = await startStatusServer({
+    srv = startStatusServer({
       port: 0,
       status: () => ({
         mode: 'paper',
@@ -52,6 +55,7 @@ describe('startStatusServer', () => {
         nested: { positions: [{ symbol: 'SPY', qty: 3 }] },
       }),
     });
+    await srv.ready;
     const r1 = await fetch(`${base(srv)}/status?x=1`);
     expect(r1.status).toBe(200);
     const j1 = (await r1.json()) as Record<string, unknown>;
@@ -67,7 +71,8 @@ describe('startStatusServer', () => {
   });
 
   it('andere Pfade ⇒ 404, andere Methoden ⇒ 405', async () => {
-    srv = await startStatusServer({ port: 0, status: () => ({}) });
+    srv = startStatusServer({ port: 0, status: () => ({}) });
+    await srv.ready;
     expect((await fetch(`${base(srv)}/`)).status).toBe(404);
     expect((await fetch(`${base(srv)}/foo`)).status).toBe(404);
     const post = await fetch(`${base(srv)}/status`, { method: 'POST', body: '{}' });
@@ -78,13 +83,14 @@ describe('startStatusServer', () => {
 
   it('ein werfender Provider ergibt 500, der Server läuft weiter', async () => {
     let fail = true;
-    srv = await startStatusServer({
+    srv = startStatusServer({
       port: 0,
       status: () => {
         if (fail) throw new Error('Buch nicht geladen');
         return { ok: 1 };
       },
     });
+    await srv.ready;
     const r = await fetch(`${base(srv)}/status`);
     expect(r.status).toBe(500);
     expect(((await r.json()) as { error: string }).error).toContain('Buch nicht geladen');
@@ -96,14 +102,27 @@ describe('startStatusServer', () => {
   });
 
   it('close() beendet den Server; danach ist der Port zu', async () => {
-    const s = await startStatusServer({ port: 0, status: () => ({}) });
+    const s = startStatusServer({ port: 0, status: () => ({}) });
+    await s.ready;
     expect((await fetch(`${base(s)}/health`)).status).toBe(200);
     await s.close();
     await expect(fetch(`${base(s)}/health`)).rejects.toThrow();
   });
 
+  it('belegter Port ⇒ ready lehnt ab, Fehler ist geloggt, close() löst trotzdem', async () => {
+    srv = startStatusServer({ port: 0, status: () => ({}) });
+    await srv.ready;
+    const second = startStatusServer({ port: srv.port, status: () => ({}) });
+    await expect(second.ready).rejects.toThrow(/EADDRINUSE/);
+    expect(lines.some((l) => l.includes('Status-Endpunkt konnte nicht starten') && l.includes('"level":"error"'))).toBe(true);
+    await expect(second.close()).resolves.toBeUndefined();
+    // der erste Server ist davon unberührt
+    expect((await fetch(`${base(srv)}/health`)).status).toBe(200);
+  });
+
   it('ein Bind auf alle Schnittstellen wird gewarnt (nicht verhindert)', async () => {
-    srv = await startStatusServer({ port: 0, status: () => ({}), host: '0.0.0.0' });
+    srv = startStatusServer({ port: 0, status: () => ({}), host: '0.0.0.0' });
+    await srv.ready;
     expect(lines.some((l) => l.includes('allen Schnittstellen') && l.includes('"level":"warn"'))).toBe(true);
   });
 });

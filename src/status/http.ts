@@ -10,10 +10,12 @@
  * gehört nicht ins Netz. Wer ihn von außen braucht, tunnelt (`ssh -L`).
  * Ein Bind auf alle Schnittstellen wird geloggt, nicht verhindert.
  *
- * `port: 0` ⇒ das Betriebssystem wählt einen freien Port (Tests); der
- * echte Port steht im Rückgabewert. Weil `listen` asynchron ist, ist die
- * Funktion asynchron — ein belegter Port scheitert damit beim Start, nicht
- * still im Hintergrund.
+ * Die Funktion kehrt sofort zurück (die Engine wartet nicht auf den
+ * Status-Endpunkt). `listen` ist asynchron: `ready` wird erfüllt, sobald
+ * der Server lauscht, und abgelehnt, wenn der Port nicht zu binden ist —
+ * der Fehler ist dann geloggt, die Engine läuft weiter. Bei `port: 0`
+ * wählt das Betriebssystem einen freien Port (Tests); `port` liefert ihn
+ * nach `await ready`.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { errMsg, logger, safeStringify } from '../core/log.ts';
@@ -30,8 +32,11 @@ export interface StatusServerOptions {
 }
 
 export interface StatusServer {
+  /** Tatsächlicher Port — bei `port: 0` erst nach `await ready` gültig. */
   readonly port: number;
   readonly host: string;
+  /** Erfüllt, sobald der Server lauscht; abgelehnt, wenn der Port nicht zu binden ist. */
+  readonly ready: Promise<void>;
   close(): Promise<void>;
 }
 
@@ -78,7 +83,7 @@ export function handleStatusRequest(status: StatusProvider, req: IncomingMessage
   reply(res, 404, '{"error":"nicht gefunden"}');
 }
 
-export async function startStatusServer(a: StatusServerOptions): Promise<StatusServer> {
+export function startStatusServer(a: StatusServerOptions): StatusServer {
   const host = a.host ?? DEFAULT_STATUS_HOST;
   if (host === '' || host === '0.0.0.0' || host === '::') {
     logger.warn('Status-Endpunkt lauscht auf allen Schnittstellen — Kontodaten sind damit im Netz sichtbar', { host });
@@ -86,23 +91,31 @@ export async function startStatusServer(a: StatusServerOptions): Promise<StatusS
   const server = createServer((req, res) => handleStatusRequest(a.status, req, res));
   server.keepAliveTimeout = 5_000;
 
-  await new Promise<void>((resolve, reject) => {
-    const onError = (e: Error): void => reject(e);
+  let bound = a.port;
+  const ready = new Promise<void>((resolve, reject) => {
+    const onError = (e: Error): void => {
+      logger.error('Status-Endpunkt konnte nicht starten', { host, port: a.port, error: errMsg(e) });
+      reject(e);
+    };
     server.once('error', onError);
     server.listen(a.port, host, () => {
       server.off('error', onError);
+      server.on('error', (e) => logger.error('Status-Endpunkt: Fehler', { error: errMsg(e) }));
+      const addr = server.address();
+      if (addr !== null && typeof addr === 'object') bound = addr.port;
+      logger.info('Status-Endpunkt bereit', { host, port: bound });
       resolve();
     });
   });
-  server.on('error', (e) => logger.error('Status-Endpunkt: Fehler', { error: errMsg(e) }));
-
-  const addr = server.address();
-  const port = addr !== null && typeof addr === 'object' ? addr.port : a.port;
-  logger.info('Status-Endpunkt bereit', { host, port });
+  // Ohne Beobachter darf ein Bind-Fehler den Prozess nicht als „unhandled rejection" beenden — er ist geloggt.
+  ready.catch(() => undefined);
 
   return {
-    port,
+    get port() {
+      return bound;
+    },
     host,
+    ready,
     close: () =>
       new Promise<void>((resolve) => {
         server.close(() => resolve());

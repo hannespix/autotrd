@@ -318,6 +318,7 @@ function windowMoments(x: Series, n: number, emit: (i: number, mean: number, sd:
   let m2 = 0;
   let bad = 0;
   let valid = false;
+  let slides = 0;
   for (let i = 0; i < len; i++) {
     const v = x[i]!;
     if (!Number.isFinite(v)) bad++;
@@ -338,19 +339,26 @@ function windowMoments(x: Series, n: number, emit: (i: number, mean: number, sd:
       mean += delta / n;
       m2 += delta * (v - mean);
       valid = true;
-    } else if (valid) {
+      slides = 0;
+    } else if (valid && slides < n) {
       const u = x[i - n]!;
       const next = mean + (v - u) / n;
       m2 += (v - u) * (v - next + u - mean);
       mean = next;
+      slides++;
     } else {
-      // Erstes volles Fenster nach einer NaN-Episode: zwei Durchläufe über [i-n+1, i].
+      // Neuaufbau in zwei Durchläufen über [i-n+1, i]: nach einer NaN-Episode
+      // und planmäßig alle n Bars. Der Rundungsrest im gleitenden M2 ist
+      // absolut und stammt aus FRÜHEREN Fenstern — nach einem Regimewechsel
+      // von großer zu winziger Volatilität würde er das kleine σ verfälschen.
+      // Kosten: 2n Operationen je n Bars, also amortisiert O(1) je Bar.
       let sum = 0;
       for (let k = i - n + 1; k <= i; k++) sum += x[k]!;
       mean = sum / n;
       m2 = 0;
       for (let k = i - n + 1; k <= i; k++) m2 += (x[k]! - mean) ** 2;
       valid = true;
+      slides = 0;
     }
     emit(i, mean, Math.sqrt(m2 > 0 ? m2 / n : 0));
   }

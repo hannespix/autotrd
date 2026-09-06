@@ -342,14 +342,35 @@ describe('Indikatoren: optimierte Implementierung == naive Referenz', () => {
     for (const n of [2, 10, 20, 30]) {
       const sd = naiveStd(c, n);
       const mean = naiveSma(c, n);
-      expectSeries(stddev(c, n), sd, 1e-8);
-      const z = mean.map((m, i) => (Number.isNaN(m) || sd[i] === 0 ? N : (c[i]! - m) / sd[i]!));
-      expectSeries(zscore(c, n), z, 1e-8);
+      expectSeries(stddev(c, n), sd, 1e-9);
+      // z ist schlecht konditioniert, wenn σ gegen 0 geht (zwei fast gleiche
+      // Kurse bei n = 2): jeder Rundungsrest wird durch 1/σ verstärkt. Für
+      // solche Fenster wird nur das Vorzeichen geprüft, sonst die Zahl.
+      const z = zscore(c, n);
+      for (let i = 0; i < c.length; i++) {
+        const m = mean[i]!;
+        if (Number.isNaN(m)) {
+          expect(Number.isNaN(z[i]!)).toBe(true);
+          continue;
+        }
+        const e = (c[i]! - m) / sd[i]!;
+        if (sd[i]! < 1e-3 * Math.abs(m)) expect(Math.sign(z[i]!)).toBe(Math.sign(e));
+        else expect(Math.abs(z[i]! - e) <= 1e-9 * Math.max(1, Math.abs(e)), `n=${n} i=${i}: ${z[i]} vs ${e}`).toBe(true);
+      }
     }
   });
-  it('stddev bleibt bei großen Kursniveaus genau (Versatz-Summen)', () => {
+  it('stddev bleibt bei großen Kursniveaus genau', () => {
     const big = Float64Array.from(c, (v) => v + 50_000);
-    expectSeries(stddev(big, 20), naiveStd(big, 20), 1e-7);
+    expectSeries(stddev(big, 20), naiveStd(big, 20), 1e-9);
+  });
+  it('stddev übersteht den Regimewechsel von großer zu winziger Volatilität (periodischer Neuaufbau)', () => {
+    const n = 20;
+    const x = Float64Array.from({ length: 400 }, (_, i) => (i < 200 ? 1000 * Math.sin(i) : 1 + 0.001 * Math.sin(i)));
+    const got = stddev(x, n);
+    const ref = naiveStd(x, n);
+    for (let i = 200 + 2 * n; i < x.length; i++) {
+      expect(Math.abs(got[i]! - ref[i]!) <= 1e-9 * ref[i]!, `i=${i}: ${got[i]} vs ${ref[i]}`).toBe(true);
+    }
   });
 });
 
