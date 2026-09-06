@@ -13,7 +13,7 @@
  *   resume     HALT-Datei entfernen; Drawdown-Halt nur mit --ack-drawdown
  *   readiness  Live-Reife aus dem Journal
  */
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { createDataStream, createTradeStream } from './alpaca/stream.ts';
@@ -260,12 +260,18 @@ async function cmdFetch(app: App, cli: Cli): Promise<number> {
   return 0;
 }
 
+function dayToMs(day: string, endOfDay = false): number {
+  const { y, m, d } = parseDay(day);
+  return endOfDay ? msFromET(y, m, d, 23, 59, 59) : msFromET(y, m, d);
+}
+
 function rangeFromArgs(cli: Cli, lastBarMs: number, defaultDays: number): { start: number; end: number } {
   const from = str(cli.values.from);
   const to = str(cli.values.to);
-  const end = to ? msFromET(...Object.values(parseDay(to)) as [number, number, number], 23, 59) : lastBarMs + 1;
+  const end = to ? dayToMs(to, true) : lastBarMs + 1;
   const days = num(cli.values.days, defaultDays);
-  const start = from ? msFromET(...Object.values(parseDay(from)) as [number, number, number]) : end - days * DAY;
+  const start = from ? dayToMs(from) : end - days * DAY;
+  if (start >= end) throw new Error(`Zeitraum leer: --from ${from ?? '?'} liegt nicht vor --to/Datenende.`);
   return { start, end };
 }
 
@@ -612,9 +618,4 @@ if (isDirect) {
       else out(`Fehler: ${errMsg(e)}`);
       process.exitCode = 1;
     });
-}
-
-// Hilfsfunktion für Tests: Config-Datei-Inhalt lesen (bewusst hier, damit cli.ts keine weiteren Module braucht)
-export function readText(path: string): string {
-  return readFileSync(path, 'utf8');
 }
