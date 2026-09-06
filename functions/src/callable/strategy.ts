@@ -19,7 +19,7 @@ import {
   type Strategy,
 } from '../../../shared/src/index.js';
 import { mayTrade } from '../core/access.js';
-import { consumeQuota } from '../core/broker.js';
+import { consumeQuota } from '../core/quota.js';
 import { ladeUniversumSymbole } from '../core/universumLeser.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 

@@ -33,6 +33,23 @@ export interface JournalEvent {
   [key: string]: unknown;
 }
 
+/**
+ * Minimalvertrag des State-Speichers: Datei (`StateStore`) oder Firestore
+ * (Functions-Takt). `load`/`save` dürfen asynchron sein — die Engine wartet
+ * an jeder Stelle darauf.
+ */
+export interface StateStoreLike {
+  load(): Promise<EngineState | null> | EngineState | null;
+  save(state: EngineState): Promise<void> | void;
+}
+
+/** Minimalvertrag des Journals: Datei (`Journal`) oder gepufferter Firestore-Schreiber. */
+export interface JournalLike {
+  append(kind: JournalEventKind, data?: Record<string, unknown>, ts?: Ms): void;
+  readAll(): JournalEvent[];
+  trades(): Trade[];
+}
+
 export function ensureDir(path: string): void {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
@@ -52,7 +69,7 @@ export function readJson<T>(path: string): T | null {
   return JSON.parse(text) as T;
 }
 
-export class Journal {
+export class Journal implements JournalLike {
   readonly path: string;
   constructor(path: string) {
     this.path = path;
@@ -128,7 +145,7 @@ export function emptyState(mode: 'paper' | 'live', day: string, equity: number):
   };
 }
 
-export class StateStore {
+export class StateStore implements StateStoreLike {
   readonly path: string;
   constructor(path: string) {
     this.path = path;

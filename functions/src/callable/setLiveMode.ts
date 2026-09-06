@@ -44,7 +44,7 @@ import { logger } from 'firebase-functions/v2';
 import type { ReifeBefund } from '../../../shared/src/index.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { reifeFuerKonto } from '../core/liveGate.js';
-import { brokerVerbindungLesend } from '../core/orderRouting.js';
+import { brokerVerbindungLesend } from '../core/brokerZugang.js';
 
 /**
  * Wie frisch die Anmeldung sein muss, um auf Echtgeld zu schalten.

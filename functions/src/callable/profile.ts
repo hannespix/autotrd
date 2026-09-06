@@ -17,7 +17,7 @@ import {
   type Strategy,
 } from '../../../shared/src/index.js';
 import { clampStrategyRisk } from '../core/rulesTrading.js';
-import { consumeQuota } from '../core/broker.js';
+import { consumeQuota } from '../core/quota.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 
 const DAILY_LIMIT = 60; // idempotent + 1 Call je Login — 60/Tag ist großzügig

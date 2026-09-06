@@ -22,7 +22,7 @@
  * Simulator rechnet sie über das Kostenmodell.
  */
 import { AlpacaError, isOpenStatus, type AlpacaClient, type AlpacaOrder, type NewOrder, type TradeUpdate } from '../alpaca/types.ts';
-import type { Journal } from '../core/journal.ts';
+import type { JournalLike } from '../core/journal.ts';
 import { errMsg, logger } from '../core/log.ts';
 import { openPosition } from '../core/logic.ts';
 import { DAY, dayKeyFor, type Calendar } from '../core/time.ts';
@@ -44,7 +44,7 @@ export type NotifyFn = (level: 'info' | 'warn' | 'error', text: string) => Promi
 export interface OrderExecutorArgs {
   client: AlpacaClient;
   book: Book;
-  journal: Journal;
+  journal: JournalLike;
   mode: 'paper' | 'live';
   assetClass: AssetClass;
   timeframe: TimeframeMin;
@@ -165,7 +165,7 @@ export class OrderExecutor {
 
   private readonly client: AlpacaClient;
   private readonly book: Book;
-  private readonly journal: Journal;
+  private readonly journal: JournalLike;
   private readonly mode: 'paper' | 'live';
   private readonly assetClass: AssetClass;
   private readonly timeframe: TimeframeMin;

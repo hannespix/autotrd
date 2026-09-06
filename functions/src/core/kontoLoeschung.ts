@@ -62,7 +62,7 @@ import { logger } from 'firebase-functions/v2';
 import { accessLevelOf, type AccessLevel } from './access.js';
 import { resetLaeuft } from '../../../shared/src/index.js';
 import { trenneBroker, type TrennErgebnis } from '../callable/connectBroker.js';
-import { vergissVerbindung } from './orderRouting.js';
+import { vergissVerbindung } from './brokerZugang.js';
 
 /** Das Wort, das getippt werden muss — dieselbe Idee wie RESET/ECHTGELD:
  *  ein Klick auf „Ja" wird weggeklickt, ohne gelesen zu werden; Tippen

@@ -39,7 +39,7 @@ import {
   type SteuerTrade,
 } from '../../../shared/src/index.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
-import { consumeQuota } from '../core/broker.js';
+import { consumeQuota } from '../core/quota.js';
 
 /**
  * Höchstens zwanzig Berichte am Tag.

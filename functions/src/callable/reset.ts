@@ -46,7 +46,7 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import { DEFAULT_STRATEGY, resetLaeuft, type Strategy } from '../../../shared/src/index.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
-import { consumeQuota } from '../core/broker.js';
+import { consumeQuota } from '../core/quota.js';
 import { alpacaKonto, alpacaPositionen } from '../core/alpacaBroker.js';
 import { brokerVerbindungLesend } from '../core/orderRouting.js';
 import { accessDeniedReason, accessLevelOfSnap, mayTradeSnap } from '../core/access.js';

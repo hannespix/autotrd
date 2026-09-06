@@ -37,20 +37,21 @@ import {
 } from '../../../shared/src/index.js';
 import { FADEN_LIMIT } from './nachricht.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
-import { consumeQuota } from '../core/broker.js';
+import { consumeQuota } from '../core/quota.js';
 import { accessLevelOf, type AccessLevel } from '../core/access.js';
 import { reifeFuerKonto } from '../core/liveGate.js';
 import { abgleichSperreAusVermerk } from '../core/kontoTore.js';
-import { abgleichFuerKonto, type VerlaufEintrag } from '../core/brokerAbgleich.js';
 import { DAILY_DELETE_LIMIT, DELETE_CONFIRM_WORD, loescheKonto, type LoeschBefund } from '../core/kontoLoeschung.js';
 
 /**
  * Abgleich-Vermerk eines fremden Kontos für die Übersicht (21.08.).
  *
- * Die Sperr-Entscheidung kommt aus `abgleichSperreAusVermerk` — derselben
- * Funktion, die der Scan benutzt. Sie hier nachzubauen hiesse, dass die
- * Admin-Ansicht „gesperrt" sagen könnte, während die Engine handelt (oder
- * umgekehrt): zwei Wahrheiten über dieselbe Sperre.
+ * Die Sperr-Entscheidung kommt aus `abgleichSperreAusVermerk` (Konto-Tore)
+ * — derselben Funktion, die die Einstiegs-Tore benutzen. Sie hier
+ * nachzubauen hiesse, dass die Admin-Ansicht „gesperrt" sagen könnte,
+ * während die Engine handelt (oder umgekehrt): zwei Wahrheiten über
+ * dieselbe Sperre. Der Vermerk selbst stammt aus dem Buch/Broker-Abgleich
+ * der alten Plattform; ein alter Vermerk sperrt nicht (Frist in den Toren).
  */
 function abgleichZeile(vermerk: unknown, jetzt: Date): AdminUserRow['abgleich'] {
   if (typeof vermerk !== 'object' || vermerk === null) return null;
@@ -131,11 +132,11 @@ export interface AdminUserRow {
 
 export const adminUsers = onCall(
   /* 300 s statt der 60-s-Voreinstellung (Red-Team-Befund 24.08.): Nur die
-   * `delete`-Action braucht das — sie ruft `trenneBroker` (bis zu 90 s
-   * Order-Sweep, s. connectBroker.ts) UND danach `recursiveDelete` über den
-   * gesamten Konto-Baum. Ein höheres Limit verlangsamt die schnellen
-   * Actions (list/set/nachrichten/…) nicht — es gibt ihnen nur mehr Raum,
-   * bevor Cloud Functions abbricht, falls sie ihn je bräuchten. */
+   * `delete`-Action braucht das — sie ruft `trenneBroker` UND danach
+   * `recursiveDelete` über den gesamten Konto-Baum (bei gewachsener
+   * Historie Minuten). Ein höheres Limit verlangsamt die schnellen Actions
+   * (list/set/nachrichten/…) nicht — es gibt ihnen nur mehr Raum, bevor
+   * Cloud Functions abbricht, falls sie ihn je bräuchten. */
   { ...CALLABLE_OPTS, timeoutSeconds: 300 },
   async (request) => {
   const uid = request.auth?.uid;
@@ -319,163 +320,11 @@ export const adminUsers = onCall(
     return ergebnis;
   }
 
-  // Zwei Kontotypen (Owner 02.08.): Admins ernennen/entlassen weitere Admins.
-  // Nie sich selbst (targetRef) — so kann ein Admin sich nicht versehentlich
-  // entmachten; den letzten Admin stellt zur Not die Konsole wieder her.
-  /**
-   * Broker-Abgleich für ein FREMDES Konto neu ausführen (Owner 21.08.:
-   * „als Admin andere Konten mit Broker abgleichen und Sperre lösen").
-   *
-   * ── Warum das die Sperre NICHT einfach aufhebt ────────────────────────
-   *
-   * Die Abgleich-Sperre ist kein Schalter, sondern ein Messergebnis: Sie
-   * steht, solange das Buch Positionen führt, die der Broker nicht hat
-   * (Fehlbestand), oder Cash und Depotwert grob auseinanderliegen. Sie
-   * schützt davor, dass die Engine auf Basis eines falschen Buchs kauft.
-   * Ein Admin-Knopf „Sperre aus" wäre genau die Art Ausnahme, die den
-   * Schutz wertlos macht — der Fehlbestand wäre ja weiterhin da.
-   *
-   * Deshalb löst dieser Aufruf die URSACHE-Prüfung neu aus: Er misst gegen
-   * den Broker und schreibt den Vermerk neu. Stimmt wieder alles überein,
-   * verschwindet die Sperre von selbst — das ist der Normalfall, wenn die
-   * Drift von einer Order kam, die inzwischen durchgelaufen ist. Bleibt
-   * sie, sagt die Antwort WARUM, und der Weg heißt dann `adoptBroker`
-   * (Buch an Broker angleichen) — ein markierter Schnitt, den der
-   * Konto-Inhaber bestätigt, kein stiller Admin-Eingriff in fremdes Geld.
-   *
-   * Gelesen wird beim Broker, geschrieben nur der Vermerk. Positionen,
-   * Wallet und Strategie des fremden Kontos bleiben unangetastet.
-   */
-  if (action === 'abgleich') {
-    const ref = targetRef();
-    const doc = await ref.get();
-    if (!doc.exists) throw new HttpsError('not-found', 'srv.unbekanntesKonto');
-
-    const positionen = (await ref.collection('positions').get()).docs.map(
-      (d) => d.data() as Position,
-    );
-    const cash = (doc.get('wallet.paperBalance') as number | undefined) ?? 0;
-    let posWert = 0;
-    for (const pos of positionen) {
-      /* Derselbe Kurs-Weg wie in der Liste: der gespeicherte Quote aus
-       * `market/{sym}`. Für den Kontoabgleich zählt die BUCH-Equity — ein
-       * frischer Broker-Kurs hier wäre eine zweite Zeitachse im Vergleich. */
-      const quote = (await db.collection('market').doc(pos.symbol).get()).get('quote') as
-        | { price?: number }
-        | undefined;
-      const kurs = typeof quote?.price === 'number' && quote.price > 0 ? quote.price : null;
-      posWert += positionValue(pos, kurs);
-    }
-    const befund = await abgleichFuerKonto(
-      target as string,
-      positionen,
-      new Date(),
-      doc.get('risk.abgleich') as { status?: string; verlauf?: VerlaufEintrag[] } | undefined,
-      { cash, equity: Math.round((cash + posWert) * 100) / 100 },
-    );
-    return {
-      ok: true,
-      abgleich: {
-        geprueft: befund.geprueft,
-        zustand: befund.zustand,
-        sperre: befund.sperre,
-        fehlbestand: befund.fehlbestand,
-        fremdbestand: befund.fremdbestand,
-        grund: befund.grund ?? null,
-      },
-    };
-  }
-
-  /**
-   * Übernahme VORMERKEN — der Admin schreibt kein fremdes Buch (22.08.).
-   *
-   * Owner-Entscheidung: Eine echte Drift löst nur die Depot-Übernahme, und
-   * die überschreibt Bestand und Barbestand des Kontos. Dass ein Admin das
-   * für jemand anderen tut, wäre ein stiller Eingriff in fremdes Geld —
-   * käme die Abweichung aus einem Broker-Aussetzer, zerstörte die
-   * „Heilung" korrekte Daten. Also merkt der Admin sie nur VOR: Der
-   * Konto-Inhaber sieht den Hinweis und löst sie selbst aus.
-   *
-   * Das hier ist deshalb bewusst KEIN Geld-Schreibpfad. Geschrieben wird
-   * ausschliesslich ein Vermerk unter `risk.uebernahmeVorgemerkt` —
-   * Positionen, Wallet und Strategie bleiben unberührt.
-   *
-   * Und nur, wo eine Sperre TATSÄCHLICH GEMESSEN wurde: Erst misst der
-   * Server frisch, und nur wenn dieser Befund `sperre` sagt, entsteht der
-   * Vermerk. Damit ist die Aktion ein Reparaturwerkzeug für einen
-   * gemessenen Defekt und kein allgemeines Recht, fremden Nutzern
-   * Aufforderungen ins Konto zu legen.
-   */
-  if (action === 'uebernahmeVormerken') {
-    const ref = targetRef();
-    const doc = await ref.get();
-    if (!doc.exists) throw new HttpsError('not-found', 'srv.unbekanntesKonto');
-
-    const positionen = (await ref.collection('positions').get()).docs.map(
-      (d) => d.data() as Position,
-    );
-    const cash = (doc.get('wallet.paperBalance') as number | undefined) ?? 0;
-    let posWert = 0;
-    for (const pos of positionen) {
-      const quote = (await db.collection('market').doc(pos.symbol).get()).get('quote') as
-        | { price?: number }
-        | undefined;
-      const kurs = typeof quote?.price === 'number' && quote.price > 0 ? quote.price : null;
-      posWert += positionValue(pos, kurs);
-    }
-    const befund = await abgleichFuerKonto(
-      target as string,
-      positionen,
-      new Date(),
-      doc.get('risk.abgleich') as { status?: string; verlauf?: VerlaufEintrag[] } | undefined,
-      { cash, equity: Math.round((cash + posWert) * 100) / 100 },
-    );
-    /* Keine Sperre → kein Vermerk. Kein Fehler: Der Admin hat gerade
-     * gemessen, und das Ergebnis ist die Antwort auf seine Frage. */
-    if (!befund.sperre) {
-      return {
-        ok: true,
-        vorgemerkt: false,
-        abgleich: {
-          geprueft: befund.geprueft,
-          zustand: befund.zustand,
-          /* Aus dem Befund, nie als Literal: Der Sperr-Zustand hat genau
-           * eine Quelle. Ein hingeschriebenes `false` wäre der Anfang
-           * eines Overrides — auch wenn es hier zufällig stimmt. */
-          sperre: befund.sperre,
-          fehlbestand: befund.fehlbestand,
-          fremdbestand: befund.fremdbestand,
-          grund: befund.grund ?? null,
-        },
-      };
-    }
-    await ref.set(
-      {
-        risk: {
-          uebernahmeVorgemerkt: {
-            at: new Date().toISOString(),
-            vonAdmin: uid,
-            fehlbestand: befund.fehlbestand,
-            grund: (befund.grund ?? '').slice(0, 300),
-          },
-        },
-      },
-      { merge: true },
-    );
-    logger.info(`Übernahme vorgemerkt für ${target} durch Admin ${uid}`);
-    return {
-      ok: true,
-      vorgemerkt: true,
-      abgleich: {
-        geprueft: befund.geprueft,
-        zustand: befund.zustand,
-        sperre: befund.sperre,
-        fehlbestand: befund.fehlbestand,
-        fremdbestand: befund.fremdbestand,
-        grund: befund.grund ?? null,
-      },
-    };
-  }
+  /* Die Aktionen `abgleich` und `uebernahmeVormerken` sind mit dem Rückbau
+   * der Handelsplattform entfallen: Es gibt kein eigenes Buch mehr, das
+   * gegen den Broker abzugleichen wäre — der Bestand beim Broker ist der
+   * Bestand. Ein noch gespeicherter Vermerk `risk.abgleich` wird oben nur
+   * noch angezeigt (und verfällt über die Frist in den Konto-Toren). */
 
   /**
    * Faden eines FREMDEN Kontos lesen (Owner 22.08.: "diese soll der Admin
@@ -512,6 +361,9 @@ export const adminUsers = onCall(
     return { ok: true };
   }
 
+  // Zwei Kontotypen (Owner 02.08.): Admins ernennen/entlassen weitere Admins.
+  // Nie sich selbst (targetRef) — so kann ein Admin sich nicht versehentlich
+  // entmachten; den letzten Admin stellt zur Not die Konsole wieder her.
   if (action === 'setAdmin') {
     if (typeof admin !== 'boolean') {
       throw new HttpsError('invalid-argument', 'srv.adminBool');
@@ -527,11 +379,11 @@ export const adminUsers = onCall(
 
   /* Owner-Kill-Switch (M14): plattformweiter Not-Aus für Echtgeld-Orders.
    *
-   * `meta/live.killSwitch` wird vom Order-Routing bei jeder Live-Verbindung
-   * geprüft (60-s-Cache je Instanz, Lesefehler = angehalten). Der Schalter
-   * betrifft NUR Echtgeld: Paper-Routing, eigenes Buch und der lesende
-   * Abgleich laufen unverändert weiter — Positionen werden also weiterhin
-   * überwacht, es geht nur keine neue Live-Order mehr raus. */
+   * `meta/live.killSwitch` wird in `brokerZugang.brokerVerbindung` bei jeder
+   * Live-Verbindung geprüft (60-s-Cache je Instanz, Lesefehler =
+   * angehalten). Der Schalter betrifft NUR Echtgeld: Papierkonten und der
+   * lesende Blick auf ein Live-Depot laufen unverändert weiter — es geht
+   * nur keine neue Live-Order mehr raus. */
   if (action === 'liveStatus') {
     const doc = await db.doc('meta/live').get();
     return {

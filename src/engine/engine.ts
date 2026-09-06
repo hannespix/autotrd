@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import type { AlpacaClient, DataStream, StreamStatus, TradeStream, TradeUpdate } from '../alpaca/types.ts';
 import type { Config } from '../core/config.ts';
 import { aggregate, BarSeries, normalizeBars } from '../core/bars.ts';
-import { emptyState, ensureDir, homePaths, Journal, StateStore, type EngineState, type HomePaths } from '../core/journal.ts';
+import { emptyState, ensureDir, homePaths, Journal, StateStore, type EngineState, type HomePaths, type JournalLike, type StateStoreLike } from '../core/journal.ts';
 import { errMsg, logger } from '../core/log.ts';
 import { decide, type AssetFacts, type LogicContext, type SymbolInput } from '../core/logic.ts';
 import { buildSessionInfo } from '../core/session.ts';
@@ -63,6 +63,10 @@ export interface EngineDeps {
   statSync?: ((path: string) => unknown) | undefined;
   /** Injizierbar für Tests: Quelle von unhandledRejection/uncaughtException (Default: process). */
   processEvents?: ProcessEvents | undefined;
+  /** State-Speicher; Default `<home>/state.json`. Der Functions-Takt injiziert Firestore (load/save asynchron). */
+  stateStore?: StateStoreLike | undefined;
+  /** Journal; Default `<home>/journal.jsonl` (append-only). */
+  journal?: JournalLike | undefined;
 }
 
 export interface ProcessEvents {
@@ -153,8 +157,8 @@ export class Engine {
   private readonly baseTf: BaseTimeframe;
   private readonly assetClass: AssetClass;
   private readonly paths: HomePaths;
-  private readonly journal: Journal;
-  private readonly stateStore: StateStore;
+  private readonly journal: JournalLike;
+  private readonly stateStore: StateStoreLike;
   private readonly store: BarStore;
   private readonly log: typeof logger;
   private readonly now: () => Ms;
@@ -205,8 +209,8 @@ export class Engine {
     this.baseTf = this.tf === 1440 ? '1Day' : '1Min';
     this.assetClass = deps.config.universe.assetClass;
     this.paths = homePaths(deps.home);
-    this.journal = new Journal(this.paths.journal);
-    this.stateStore = new StateStore(this.paths.state);
+    this.journal = deps.journal ?? new Journal(this.paths.journal);
+    this.stateStore = deps.stateStore ?? new StateStore(this.paths.state);
     this.store = deps.store ?? new BarStore(barStoreRoot(this.paths.bars, this.assetClass, deps.config.broker.feed));
     this.log = deps.log ?? logger;
     this.now = deps.now ?? (() => Date.now());
@@ -226,7 +230,7 @@ export class Engine {
     const acc = await this.deps.client.getAccount();
     this.account = { equity: acc.equity, cash: acc.cash, dayTradeCount: acc.daytradeCount, patternDayTrader: acc.patternDayTrader };
     const today = dayKeyFor(now, this.assetClass);
-    const loaded = this.stateStore.load();
+    const loaded = await this.stateStore.load();
     if (loaded && loaded.mode !== this.mode) {
       throw new Error(`state.json gehört zum Modus '${loaded.mode}', die Engine läuft '${this.mode}' — getrenntes Home verwenden`);
     }
@@ -321,7 +325,7 @@ export class Engine {
       now,
     );
     this.log.info(`Engine gestartet (${this.mode})`, { symbols: this.cfg.universe.symbols, timeframe: this.tf, equity: acc.equity });
-    this.saveState();
+    await this.saveState();
   }
 
   async stop(): Promise<void> {
@@ -346,7 +350,7 @@ export class Engine {
       }
       this.flushStore(true, this.now());
       if (this.state) {
-        this.saveState();
+        await this.saveState();
         this.journal.append('stop', { positions: [...this.book.positions.keys()], halt: this.state.halt }, this.now());
       }
       this.log.info('Engine gestoppt — Positionen bleiben, Stops liegen beim Broker');
@@ -373,7 +377,7 @@ export class Engine {
       } catch (e) {
         await this.onError('reconcile', e, now);
       }
-      this.saveState();
+      await this.saveState();
     });
   }
 
@@ -391,7 +395,7 @@ export class Engine {
         this.journal.append('note', { text: `flatten (${reason}) außerhalb der Sitzung — bis zur Eröffnung zurückgestellt, Schutz-Stops bleiben liegen`, positions: [...this.book.positions.keys()] }, now);
         this.log.warn(`flatten (${reason}) außerhalb der Sitzung — zurückgestellt`, { positions: [...this.book.positions.keys()] });
       }
-      this.saveState();
+      await this.saveState();
     });
   }
 
@@ -404,7 +408,21 @@ export class Engine {
       st.halt = r.halt;
       st.peakEquity = r.account.peakEquity;
       this.journal.append('resume', { note: r.halt.note }, now);
-      this.saveState();
+      await this.saveState();
+    });
+  }
+
+  /**
+   * Manueller Halt per Kommando (Functions-Takt, API): keine Einstiege, Exits laufen weiter.
+   * Steht bereits ein Halt, bleibt er — Sperren eskalieren nur, sie werden nicht ersetzt.
+   */
+  halt(note: string): Promise<void> {
+    return this.serial.run(async () => {
+      const st = this.st();
+      const now = this.now();
+      if (st.halt.halted) this.journal.append('note', { text: `halt: bereits gesperrt (${st.halt.reason ?? '?'}) — Kommando ohne Wirkung`, note }, now);
+      else this.setHalt('manual', note, now);
+      await this.saveState();
     });
   }
 
@@ -576,7 +594,7 @@ export class Engine {
     } catch (e) {
       await this.onError('tick', e, now);
     }
-    this.saveState();
+    await this.saveState();
   }
 
   /* ───────────────────────── Bausteine ───────────────────────── */
@@ -651,7 +669,7 @@ export class Engine {
       this.journal.append('error', { where: 'unhandledRejection', error: msg }, now);
       if (!this.state.halt.halted) this.setHalt('errors', `unhandledRejection: ${msg}`, now);
       await this.say('error', `unhandledRejection: ${msg}`);
-      this.saveState();
+      await this.saveState();
     });
   };
 
@@ -662,7 +680,7 @@ export class Engine {
       const now = this.now();
       this.journal.append('error', { where: 'uncaughtException', error: msg }, now);
       if (!this.state.halt.halted) this.setHalt('errors', `uncaughtException: ${msg}`, now);
-      this.saveState();
+      void this.saveState();
     }
     void this.stop().catch((e) => this.log.error('Stop nach uncaughtException fehlgeschlagen', { error: errMsg(e) }));
   };
@@ -889,10 +907,10 @@ export class Engine {
       if (!this.executor || !this.state) return;
       try {
         await this.executor.handleTradeUpdate(u);
-        this.saveState();
+        await this.saveState();
       } catch (e) {
         await this.onError('trade_update', e, this.now());
-        this.saveState();
+        await this.saveState();
       }
     });
   }
@@ -1018,11 +1036,11 @@ export class Engine {
     }
   }
 
-  private saveState(): void {
+  private async saveState(): Promise<void> {
     if (!this.state) return;
     Object.assign(this.state, this.book.toState());
     try {
-      this.stateStore.save(this.state);
+      await this.stateStore.save(this.state);
     } catch (e) {
       this.log.error('State nicht speicherbar', { error: errMsg(e) });
     }

@@ -31,7 +31,7 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
 import { brauchtUmrechnung, currencyForSymbol } from '../../../shared/src/index.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
-import { consumeQuota } from '../core/broker.js';
+import { consumeQuota } from '../core/quota.js';
 import { fxKursFuer } from '../core/fx.js';
 
 /** Wie beim Steuerbericht: die volle Historie, mit Reißleine. */

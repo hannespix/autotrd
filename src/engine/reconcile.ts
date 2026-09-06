@@ -17,7 +17,7 @@
  */
 import type { AlpacaClient, AlpacaPosition } from '../alpaca/types.ts';
 import type { Config } from '../core/config.ts';
-import type { EngineState, Journal } from '../core/journal.ts';
+import type { EngineState, JournalLike } from '../core/journal.ts';
 import { errMsg, logger } from '../core/log.ts';
 import { openPosition } from '../core/logic.ts';
 import { dayKeyFor } from '../core/time.ts';
@@ -53,7 +53,7 @@ export interface ReconcileResult {
 export interface ReconcileArgs {
   client: AlpacaClient;
   book: Book;
-  journal: Journal;
+  journal: JournalLike;
   config: Config;
   state: EngineState;
   now: Ms;

@@ -16,7 +16,7 @@
 import { getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { leseNachricht, pruefeNachricht } from '../../../shared/src/index.js';
-import { consumeQuota } from '../core/broker.js';
+import { consumeQuota } from '../core/quota.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 
 /** Genug für eine Unterhaltung, zu wenig zum Zuspammen. */
