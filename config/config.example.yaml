@@ -132,6 +132,13 @@ optimizer:
   # hartes Gate (true) oder nur im Bericht (false). Die OOS-Kette ist bereits
   # selektionsfrei; DSR bestraft breite Gitter mit toten Regionen doppelt.
   dsrIsGate: false
+  # Höchstanteil des OOS-Nettos, den EIN einzelner Fold tragen darf.
+  # Die Lücke, die das schließt: Der TSLA-Champion vom 07.09. bestand alle
+  # acht Gates — 103 OOS-Trades, +958 $, 5 von 7 Folds positiv, PSR 0,95.
+  # Von den +958 $ stammten +919 $ aus EINEM Monat. Ohne diesen Fold blieben
+  # +39 $ über 91 Trades, und der unberührte Holdout war negativ. Kein Gate
+  # schaute darauf: `fold_positive_share` zählt Folds, nicht ihr Gewicht.
+  maxFoldNetShare: 0.5
   # Gepoolt bewerten: EIN Parametersatz je Strategie über das GANZE Universum
   # in einem Simulationslauf (ein Konto, ein Positionslimit, eine Notbremse),
   # statt jedes Symbol für sich. Je Symbol lautet die Frage „hat die Strategie

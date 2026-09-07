@@ -126,7 +126,7 @@ describe('runOptimization (Ende-zu-Ende)', () => {
     expect(text).toContain('## BBB');
     expect(text).toContain('finalParams: `{"a":10');
     expect(text).toMatch(/\| noise \|[^\n]*✘/);
-    expect(text).toMatch(/\| edge \|[^\n]*✔ 8\/8/);
+    expect(text).toMatch(/\| edge \|[^\n]*✔ 9\/9/);
     expect(text).toContain('PSR (OOS): PSR ');
     expect(text).toContain('DSR (IS): DSR ');
     expect(text).toContain('(alle Folds)');
@@ -196,7 +196,7 @@ describe('runOptimization (Ende-zu-Ende)', () => {
     expect(ev.totalFolds).toBe(8);
     expect(ev.cleanDays).toBe(240);
     expect(ev.pass).toBe(false);
-    expect(ev.gates.length).toBe(8);
+    expect(ev.gates.length).toBe(9);
     expect(ev.gates.find((g) => g.name === 'deflated_sharpe_is')!.note).toMatch(/nicht anwendbar/);
     expect(r.incumbentRescore).toBe(ev.score);
     expect(r.incumbentRescore!).toBeLessThanOrEqual(0);

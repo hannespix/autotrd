@@ -310,6 +310,29 @@ export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResul
     note: `OOS netto ${oos.netProfit.toFixed(2)} (${oos.netReturnPct.toFixed(2)} %), MaxDD ${oos.maxDrawdownPct.toFixed(2)} %`,
   });
 
+  // Konzentration: Trägt EIN Fold das ganze Ergebnis? Ein Gewinn, der an
+  // einem einzelnen Fenster hängt, ist ein Ereignis und keine Kante — und
+  // genau so ist der TSLA-Champion vom 07.09. durch alle Gates gekommen
+  // (96 % des Nettos aus einem Monat, Holdout danach negativ).
+  const foldNetto = wfa.folds.map((f) => f.best.oosMetrics.netProfit);
+  const summeNetto = foldNetto.reduce((sum, x) => sum + x, 0);
+  const groesster = foldNetto.length > 0 ? Math.max(...foldNetto) : 0;
+  // Nur bei positivem Gesamtergebnis aussagekräftig; ist es das nicht,
+  // fällt der Kandidat ohnehin schon an `oos_net_profit`.
+  const konzentration = summeNetto > 0 ? groesster / summeNetto : 0;
+  gates.push({
+    name: 'fold_concentration',
+    pass: summeNetto <= 0 || konzentration <= optimizer.maxFoldNetShare,
+    value: konzentration,
+    threshold: optimizer.maxFoldNetShare,
+    note:
+      summeNetto <= 0
+        ? 'OOS-Netto nicht positiv — Konzentration nicht aussagekräftig (siehe oos_net_profit)'
+        : `bester Fold trägt ${(konzentration * 100).toFixed(0)} % des OOS-Nettos ` +
+          `(${groesster.toFixed(2)} von ${summeNetto.toFixed(2)} über ${foldNetto.length} Folds); ` +
+          `ohne ihn blieben ${(summeNetto - groesster).toFixed(2)}`,
+  });
+
   gates.push({
     name: 'stress_costs',
     pass: a.stressOos.netProfit > 0,
