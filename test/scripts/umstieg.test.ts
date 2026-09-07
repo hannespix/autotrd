@@ -1,14 +1,14 @@
 /**
  * Umstiegs-Planung: Wer wird ausgeschaltet, wer bleibt, was wird archiviert.
- * Die Regeln stehen in scripts/lib/umstieg.mjs — hier der Fall, in dem sie
+ * Die Regeln stehen in scripts/module/umstieg.mjs — hier der Fall, in dem sie
  * Geld kosten würden: ein Nutzer, der im Altsystem „an" hatte, darf nach dem
  * Umstieg NICHT ungefragt mit dem Champion handeln.
  */
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error — .mjs ohne Typen
-import { planeUmstieg, userSichtVon } from '../../scripts/lib/umstieg.mjs';
+import { planeUmstieg, userSichtVon } from '../../scripts/module/umstieg.mjs';
 // @ts-expect-error — .mjs ohne Typen
-import { engineConfigDocFrom } from '../../scripts/lib/engineConfig.mjs';
+import { engineConfigDocFrom } from '../../scripts/module/engineConfig.mjs';
 import { parseConfig } from '../../src/core/config.ts';
 import { readFileSync } from 'node:fs';
 import { parse as parseYaml } from 'yaml';

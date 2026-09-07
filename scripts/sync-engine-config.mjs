@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { parseConfig } from '../src/core/config.ts';
-import { engineConfigDocFrom } from './lib/engineConfig.mjs';
+import { engineConfigDocFrom } from './module/engineConfig.mjs';
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => {

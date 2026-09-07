@@ -20,8 +20,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { parseConfig } from '../src/core/config.ts';
-import { engineConfigDocFrom } from './lib/engineConfig.mjs';
-import { planeUmstieg, userSichtVon } from './lib/umstieg.mjs';
+import { engineConfigDocFrom } from './module/engineConfig.mjs';
+import { planeUmstieg, userSichtVon } from './module/umstieg.mjs';
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => {
