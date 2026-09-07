@@ -1,33 +1,33 @@
-name: Krypto-Probe (Erkundung, von Hand)
+name: Probe (Erkundung, von Hand)
 
-# Walk-Forward über Krypto — als MESSUNG, nicht als Produktivlauf.
+# Walk-Forward über eine Erkundungs-Config — als MESSUNG, nicht als Produktivlauf.
 #
 # ── Der Unterschied zu optimize.yml ───────────────────────────────────────
 #
 # optimize.yml veröffentlicht sein Ergebnis: `meta/engineConfig` und
-# `meta/champion`. Genau das darf hier NICHT passieren. Ein Krypto-Champion
-# in `meta/champion` würde die Engine aller eingeschalteten Nutzer beim
-# nächsten Takt auf Krypto umstellen — mit einer Assetklasse, die im
-# Vorgängersystem −1 133 $ gekostet hat und deren Kante hier gerade erst
-# geprüft wird.
+# `meta/champion`. Genau das darf hier NICHT passieren. Ein Champion aus
+# einer Erkundung würde die Engine aller eingeschalteten Nutzer beim
+# nächsten Takt umstellen — auf eine Assetklasse, ein Universum oder einen
+# Bewertungsmodus, der hier gerade erst geprüft wird.
 #
 # Dieser Workflow hat deshalb WEDER einen Service-Account NOCH die beiden
 # Veröffentlichungs-Schritte. Er kann Firestore nicht anfassen, auch nicht
 # versehentlich. Das Ergebnis ist ein Artefakt, das ein Mensch liest.
 #
-# Ein Krypto-Champion darf erst auf die Plattform, wenn er dieselbe
+# Ein Ergebnis von hier darf erst auf die Plattform, wenn es dieselbe
 # Walk-Forward-Prüfung bestanden hat UND das Konzentrations-Gate steht
-# (siehe docs/ARCHITEKTUR.md — ein einzelner starker Fold ist kein Beleg).
+# (ein einzelner starker Fold ist kein Beleg).
 
 on:
   workflow_dispatch:
     inputs:
       config:
-        description: 'Welcher Zeitrahmen'
+        description: 'Welche Erkundung'
         required: true
-        default: 'config/crypto-60.yaml'
+        default: 'config/pooled-us30.yaml'
         type: choice
         options:
+          - config/pooled-us30.yaml
           - config/crypto-60.yaml
           - config/crypto-1440.yaml
       samples:
@@ -36,7 +36,7 @@ on:
         default: ''
 
 concurrency:
-  group: krypto-probe
+  group: probe
   cancel-in-progress: false
 
 jobs:
@@ -61,23 +61,25 @@ jobs:
       - name: Bars-Cache wiederherstellen
         uses: actions/cache@v4
         with:
-          path: var-krypto/bars
-          key: krypto-bars-${{ hashFiles(github.event.inputs.config) }}-${{ github.run_id }}
+          path: var-probe/bars
+          key: probe-bars-${{ hashFiles(github.event.inputs.config) }}-${{ github.run_id }}
           restore-keys: |
-            krypto-bars-${{ hashFiles(github.event.inputs.config) }}-
+            probe-bars-${{ hashFiles(github.event.inputs.config) }}-
 
-      # Doppelter Boden: Der choice-Eingang lässt ohnehin nur die zwei
-      # Krypto-Dateien zu — aber wenn jemand später eine Option ergänzt,
-      # soll ein Aktien-Universum hier hart abbrechen statt still zu laufen.
-      - name: Guard — ist das wirklich eine Krypto-Config?
+      # Doppelter Boden: Der choice-Eingang lässt ohnehin nur Erkundungs-
+      # Dateien zu — aber wenn jemand später eine Option ergänzt, darf hier
+      # NIE die Plattform-Config laufen. Ihre Symbole und ihr Champion sind
+      # das, was Nutzer tatsächlich handeln.
+      - name: Guard — niemals die Plattform-Config
         run: |
           if [ ! -f "$CONFIG" ]; then
             echo "::error::Config nicht gefunden: $CONFIG"; exit 1
           fi
-          if ! grep -qE '^[[:space:]]*assetClass:[[:space:]]*crypto[[:space:]]*$' "$CONFIG"; then
-            echo "::error::$CONFIG ist keine Krypto-Config (assetClass: crypto fehlt) — dieser Workflow ist nur dafür."
-            exit 1
-          fi
+          case "$CONFIG" in
+            config/platform.yaml)
+              echo "::error::$CONFIG ist die Plattform-Config — dieser Workflow ist nur für Erkundungen."
+              exit 1 ;;
+          esac
           echo "Config: $CONFIG"
 
       - name: Keys prüfen
@@ -90,7 +92,7 @@ jobs:
           chmod 600 "$RUNNER_TEMP/.env"
 
       - name: Bars nachladen
-        run: node src/cli.ts fetch --config "$CONFIG" --env "$RUNNER_TEMP/.env" --home var-krypto
+        run: node src/cli.ts fetch --config "$CONFIG" --env "$RUNNER_TEMP/.env" --home var-probe
 
       - name: Walk-Forward-Optimierung
         env:
@@ -105,29 +107,29 @@ jobs:
             echo "Hinweis: samples-Override ($SAMPLES_OVERRIDE) wird über die Config gesetzt."
             sed -i "s/^  samples: .*/  samples: $SAMPLES_OVERRIDE/" "$CONFIG"
           fi
-          node src/cli.ts optimize --config "$CONFIG" --env "$RUNNER_TEMP/.env" --home var-krypto --equity 25000
+          node src/cli.ts optimize --config "$CONFIG" --env "$RUNNER_TEMP/.env" --home var-probe --equity 25000
 
       - name: Bericht als Artefakt
         uses: actions/upload-artifact@v4
         with:
-          name: krypto-probe-${{ github.run_id }}
+          name: probe-${{ github.run_id }}
           path: |
-            var-krypto/champion.json
-            var-krypto/reports/optimize-*.md
+            var-probe/champion.json
+            var-probe/reports/optimize-*.md
           retention-days: 90
 
       - name: Ergebnis in der Zusammenfassung
         if: always()
         run: |
           {
-            echo "## Krypto-Probe — $CONFIG"
+            echo "## Probe — $CONFIG"
             echo
             echo "**Nicht veröffentlicht.** Dieser Lauf schreibt nichts nach Firestore;"
-            echo "das Ergebnis liegt als Artefakt \`krypto-probe-${{ github.run_id }}\`."
+            echo "das Ergebnis liegt als Artefakt \`probe-${{ github.run_id }}\`."
             echo
-            if [ -f var-krypto/champion.json ]; then
+            if [ -f var-probe/champion.json ]; then
               node -e '
-                const c = require("./var-krypto/champion.json");
+                const c = require("./var-probe/champion.json");
                 const s = Object.keys(c.symbols ?? {});
                 const n = Object.keys(c.noTrade ?? {});
                 console.log("| | |"); console.log("|---|---|");
