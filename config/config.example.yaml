@@ -132,6 +132,15 @@ optimizer:
   # hartes Gate (true) oder nur im Bericht (false). Die OOS-Kette ist bereits
   # selektionsfrei; DSR bestraft breite Gitter mit toten Regionen doppelt.
   dsrIsGate: false
+  # Gepoolt bewerten: EIN Parametersatz je Strategie über das GANZE Universum
+  # in einem Simulationslauf (ein Konto, ein Positionslimit, eine Notbremse),
+  # statt jedes Symbol für sich. Je Symbol lautet die Frage „hat die Strategie
+  # eine Kante auf LTC?" — bei 33 OOS-Trades gegen ein Gate von 60 nicht zu
+  # beantworten. Gepoolt lautet sie „hat sie eine Kante in dieser
+  # Assetklasse?" und hat bei 30 Symbolen rund dreißigmal so viele Trades.
+  # Zugleich fällt ein ungezählter Freiheitsgrad weg: „bestes Symbol aus
+  # dreißig" ist selbst eine Auswahl, die sonst niemand deflationiert.
+  pooled: false
 
 costs:
   # Slippage je Seite in Basispunkten (Marktorder gegen den Spread).

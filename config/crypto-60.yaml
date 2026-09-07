@@ -100,6 +100,7 @@ optimizer:
   promotionMargin: 0.1
   minPsrOos: 0.9
   dsrIsGate: false
+  pooled: false          # gepoolt statt je Symbol bewerten (siehe config.example.yaml)
 
 costs:
   slippageBps: 3

@@ -128,6 +128,19 @@ export const ConfigSchema = z.object({
       minPsrOos: z.number().min(0).max(1).default(0.9),
       /** Deflated Sharpe (In-Sample) zusätzlich als hartes Gate (sonst nur im Bericht). */
       dsrIsGate: z.boolean().default(false),
+      /**
+       * Gepoolt bewerten: EIN Parametersatz je Strategie über das GANZE
+       * Universum in einem Simulationslauf (ein Konto, ein Positionslimit),
+       * statt je Symbol getrennt.
+       *
+       * Warum: Je Symbol fragt der Optimierer „hat die Strategie eine Kante
+       * auf LTC?" — bei 33 OOS-Trades gegen ein Gate von 60 unbeantwortbar.
+       * Gepoolt lautet die Frage „hat sie eine Kante in dieser Assetklasse?"
+       * und hat bei 30 Symbolen rund dreißigmal so viele Trades. Zugleich
+       * fällt ein ungezählter Freiheitsgrad weg: „bestes Symbol aus dreißig"
+       * ist selbst eine Auswahl, die heute niemand deflationiert.
+       */
+      pooled: z.boolean().default(false),
     })
     .default({
       strategies: ['trend_donchian', 'momentum_pullback', 'mean_reversion'],
@@ -146,6 +159,7 @@ export const ConfigSchema = z.object({
       promotionMargin: 0.1,
       minPsrOos: 0.9,
       dsrIsGate: false,
+      pooled: false,
     }),
   costs: z
     .object({
