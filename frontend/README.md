@@ -23,7 +23,7 @@ Firestore spiegelt, und schreibt ausschließlich über Callable Functions.
 - **Positionen** (bewertet mit `market/{sym}.quote`), **Handelshistorie** mit
   Paging, **Performance** (Cash/Equity/P&L/Equity-Kurve).
 - **„Warum handelt die Engine (nicht)?"** aus `engine` + `meta/health.engine`;
-  **Champion-Karte** aus `meta/champion` mit Bericht aus `meta/optimizeReports`.
+  **Champion-Karte** aus `meta/champion` mit Bericht aus `meta/optimizeReports/berichte`.
 - **Optionen:** Broker (Schlüssel, Echtgeld-Schalter, Live-Reife), Konto
   (Abmelden, Steuer-Export, Neu anfangen), Anzeige (Theme, Sprache). Not-Aus, PWA.
 

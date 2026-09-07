@@ -11,11 +11,12 @@
  *   users/{uid}/trades          zwei Fills je abgeschlossenem Trade
  *   users/{uid}/equity, stats   Tages-Snapshots und Kennzahlen (snapshotEquity)
  *   market/{sym}.quote          letzter Close je Takt
- *   meta/health, engineConfig, champion, optimizeReports/{date}
+ *   meta/health, engineConfig, champion, optimizeReports/berichte/{date}
  */
 
 import {
   accessLevelOf,
+  BERICHTE_SEGMENTE,
   type AccessLevel,
   type AutoSettings,
   type KanteJeTrade,
@@ -733,12 +734,12 @@ export interface OptimizeReportDoc {
 }
 
 /**
- * Der jüngste Optimierer-Bericht (`meta/optimizeReports/{date}`) — einmalig
+ * Der jüngste Optimierer-Bericht (`meta/optimizeReports/berichte/{date}`) — einmalig
  * beim Öffnen, kein Listener: Der Bericht ändert sich einmal pro Nacht und
  * ist bis zu 900 kB groß.
  */
 export async function loadOptimizeReport(): Promise<OptimizeReportDoc | null> {
-  const q = query(collection(db(), 'meta', 'optimizeReports'), orderBy('date', 'desc'), limit(1));
+  const q = query(collection(db(), ...BERICHTE_SEGMENTE), orderBy('date', 'desc'), limit(1));
   const snap = await getDocs(q);
   const d = snap.docs[0];
   if (!d) return null;
