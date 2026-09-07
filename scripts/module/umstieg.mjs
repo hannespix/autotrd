@@ -8,6 +8,9 @@
  *    dort eine andere, nie gemessene Strategie — der Champion des Neubaus
  *    darf nicht ungefragt für ihn loslegen. Einschalten ist eine bewusste
  *    Entscheidung in der neuen Einstellungskarte.
+ *  - `nur` kehrt das um: Dann bleibt AUSSCHLIESSLICH die genannte Liste an,
+ *    Admin-Rechte zählen nicht mehr. Das ist der kontrollierte Start — ein
+ *    Konto handelt, alle anderen schalten sich bewusst selbst wieder ein.
  *  - Alte Positions-Spiegel (`users/{uid}/positions`) stammen aus dem
  *    internen Papierbuch bzw. dem alten Broker-Buch. Der neue Takt schreibt
  *    diesen Spiegel ausschließlich aus seinem eigenen Buch; alte Docs werden
@@ -18,17 +21,20 @@
 
 /**
  * @param {UserSicht[]} users
- * @param {{ behalten?: string[] }} o
+ * @param {{ behalten?: string[]; nur?: string[] }} o
  * @returns {{ ausschalten: string[]; behalten: string[]; archivieren: Array<{ uid: string; docs: string[] }> }}
  */
 export function planeUmstieg(users, o = {}) {
   const keep = new Set(o.behalten ?? []);
+  const nur = o.nur && o.nur.length > 0 ? new Set(o.nur) : null;
   const ausschalten = [];
   const behalten = [];
   const archivieren = [];
   for (const u of users) {
     if (u.running) {
-      if (u.admin || keep.has(u.uid)) behalten.push(u.uid);
+      // `nur` schlägt alles: weder Admin-Recht noch Behalten-Liste hebeln es aus.
+      const bleibt = nur ? nur.has(u.uid) : u.admin || keep.has(u.uid);
+      if (bleibt) behalten.push(u.uid);
       else ausschalten.push(u.uid);
     }
     if (u.positions.length > 0) archivieren.push({ uid: u.uid, docs: [...u.positions] });

@@ -31,6 +31,25 @@ describe('Umstieg: Planung', () => {
     ]);
   });
 
+  it('--only schlägt Admin-Recht und Behalten-Liste: nur die genannten Konten bleiben an', () => {
+    const users = [
+      userSichtVon('owner', { admin: true, settings: { strategy: { engine: { running: true } } } }, []),
+      userSichtVon('admin2', { admin: true, settings: { strategy: { engine: { running: true } } } }, []),
+      userSichtVon('alice', { settings: { strategy: { engine: { running: true } } } }, []),
+      userSichtVon('bob', { settings: { strategy: { engine: { running: false } } } }, []),
+    ];
+    const plan = planeUmstieg(users, { behalten: ['alice'], nur: ['owner'] });
+    expect(plan.behalten).toEqual(['owner']);
+    expect(plan.ausschalten).toEqual(['admin2', 'alice']);
+    // bob war schon aus — er taucht in keiner der beiden Listen auf.
+    expect(plan.ausschalten).not.toContain('bob');
+  });
+
+  it('leeres --only ändert nichts an der Admin-Regel', () => {
+    const users = [userSichtVon('owner', { admin: true, settings: { strategy: { engine: { running: true } } } }, [])];
+    expect(planeUmstieg(users, { nur: [] }).behalten).toEqual(['owner']);
+  });
+
   it('kaputte Nutzer-Docs (settings kein Objekt) gelten als „aus" und ohne Admin', () => {
     const s = userSichtVon('x', { settings: 'kaputt', admin: 'ja' }, []);
     expect(s).toEqual({ uid: 'x', admin: false, running: false, positions: [] });

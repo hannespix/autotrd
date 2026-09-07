@@ -17,8 +17,12 @@ on:
         description: 'Nur berichten, nichts schreiben'
         type: boolean
         default: true
+      only:
+        description: 'NUR diese Konten bleiben an (uid oder E-Mail, Komma-getrennt) — Admin-Rechte zählen dann nicht'
+        required: false
+        default: ''
       keep:
-        description: 'uids, deren Engine AN bleiben soll (Komma-getrennt; Admins bleiben ohnehin an)'
+        description: 'Zusätzlich zu den Admins an lassen (uid oder E-Mail, Komma-getrennt). Wird ignoriert, wenn „only" gesetzt ist'
         required: false
         default: ''
 
@@ -56,13 +60,21 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
           DRY_RUN: ${{ inputs.dry_run }}
           KEEP: ${{ inputs.keep }}
+          ONLY: ${{ inputs.only }}
         run: |
           ARGS="--config config/platform.yaml"
           if [ "$DRY_RUN" = "true" ]; then ARGS="$ARGS --dry-run"; fi
-          if [ -n "$KEEP" ]; then
-            case "$KEEP" in
-              *[!A-Za-z0-9,_-]*) echo "::error::--keep enthält unerlaubte Zeichen: '$KEEP'"; exit 1 ;;
+          # uids und E-Mail-Adressen: Buchstaben, Ziffern, . _ - @ und das Trennkomma.
+          pruefe() {
+            case "$2" in
+              *[!A-Za-z0-9,._@-]*) echo "::error::$1 enthält unerlaubte Zeichen: '$2'"; exit 1 ;;
             esac
+          }
+          if [ -n "$ONLY" ]; then
+            pruefe --only "$ONLY"
+            ARGS="$ARGS --only $ONLY"
+          elif [ -n "$KEEP" ]; then
+            pruefe --keep "$KEEP"
             ARGS="$ARGS --keep $KEEP"
           fi
           node scripts/umstieg.mjs $ARGS

@@ -172,7 +172,9 @@ Functions-Deploy selbst (`--force`), `engineTick` legt er als Minutenjob an.
    mit `dry_run: true` (nur Bericht im Job-Log), dann mit `dry_run: false`.
    Er schreibt `meta/engineConfig`, schaltet die Engine für alle Nutzer außer
    Admins aus (`keep` für Ausnahmen) und verschiebt alte Positions-Spiegel
-   nach `positionsArchiv`. Nichts wird gelöscht, was nicht archiviert wird.
+   nach `positionsArchiv`. Für einen kontrollierten Start mit EINEM Konto:
+   `only` setzen (uid oder E-Mail) — dann bleibt nur dieses Konto an, auch
+   Admins werden ausgeschaltet und schalten sich bewusst selbst wieder ein. Nichts wird gelöscht, was nicht archiviert wird.
    Lokal geht dasselbe mit `node scripts/umstieg.mjs [--dry-run]`, dann
    braucht es `GOOGLE_APPLICATION_CREDENTIALS`.
 3. Optimierer-Workflow per `workflow_dispatch` starten. Erst mit
