@@ -34,6 +34,7 @@ WebSocket-Streams. Sie wird für keine der Vorlagen gebraucht, weil Exits
 | Config | `meta/engineConfig` (global) + `users/{uid}.settings.auto` (Risiko je Nutzer) | Quelle: `config/platform.yaml` über `scripts/sync-engine-config.mjs` |
 | Champion | `meta/champion`, Berichte `meta/optimizeReports/{date}` | Vom nächtlichen Optimierer (`.github/workflows/optimize.yml`) veröffentlicht |
 | Lease | `meta/engineLease` | Transaktion mit 90 s TTL — zwei Takte laufen nie gleichzeitig |
+| Wächter | `wachhund` (alle 10 min) | Schlägt Alarm, wenn `meta/health.lastRunAt` älter als 10 Minuten ist (`TAKT_TOT_MIN`) oder ein voller Takt keine Kurse bekam; Telegram/Nachricht wie bisher |
 | Health | `meta/health` | `lastRunAt`, `lastRunSkipped`, `engine.{users, ok, failed, durationMs}` — Nutzer nur als kurzer Hash, keine Fehlertexte; `healthz`, `wachhund` und `check-scheduler` lesen es |
 | Öffentlich lesbar | `meta/champion`, `meta/engineConfig`, `meta/health`, `meta/optimizeReports/*` | Alles andere unter `meta/` (Lease, Depot-Bindungen) ist Serversache (Rules-Allowlist) |
 
