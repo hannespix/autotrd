@@ -168,12 +168,13 @@ Functions-Deploy selbst (`--force`), `engineTick` legt er als Minutenjob an.
 
 1. Deploys abwarten (Functions inkl. Rules, Frontend). `check-scheduler`
    im Deploy-Log meldet den Job `engineTick`.
-2. Einmalig `node scripts/umstieg.mjs --dry-run`, dann ohne `--dry-run`
-   (mit `GOOGLE_APPLICATION_CREDENTIALS` auf einen Service-Account):
-   schreibt `meta/engineConfig`, schaltet die Engine für alle Nutzer außer
-   Admins aus (`--keep uid,…` für Ausnahmen) und verschiebt alte
-   Positions-Spiegel nach `positionsArchiv`. Nichts wird gelöscht, was
-   nicht archiviert wird.
+2. Einmalig den Workflow **„Umstieg (einmalig, von Hand)"** starten — erst
+   mit `dry_run: true` (nur Bericht im Job-Log), dann mit `dry_run: false`.
+   Er schreibt `meta/engineConfig`, schaltet die Engine für alle Nutzer außer
+   Admins aus (`keep` für Ausnahmen) und verschiebt alte Positions-Spiegel
+   nach `positionsArchiv`. Nichts wird gelöscht, was nicht archiviert wird.
+   Lokal geht dasselbe mit `node scripts/umstieg.mjs [--dry-run]`, dann
+   braucht es `GOOGLE_APPLICATION_CREDENTIALS`.
 3. Optimierer-Workflow per `workflow_dispatch` starten. Erst mit
    `meta/champion` handelt jemand.
 4. Eigenes Konto: Broker-Schlüssel prüfen, Einstellungen speichern, Engine
