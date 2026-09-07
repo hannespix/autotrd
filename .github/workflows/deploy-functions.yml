@@ -126,13 +126,11 @@ jobs:
         if: ${{ !cancelled() && env.FIREBASE_SERVICE_ACCOUNT != '' }}
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
-        run: node scripts-ci/set-public-invoker.mjs ensureprofile savestrategy
+        run: node scripts-ci/set-public-invoker.mjs ensureprofile savestrategy enginecommand connectbroker brokerstatus setlivemode
 
-      # Live-Abnahme im Log: Scheduler-Jobs listen, den Herzschlag-Lauf einmal
+      # Live-Abnahme im Log: Scheduler-Jobs listen, den Engine-Takt einmal
       # anstoßen, danach den öffentlichen Heartbeat meta/health prüfen.
-      # (Der Herzschlag-Job zeigt bis zur Integration des Engine-Takts noch
-      # auf den gelöschten Marktscan — siehe check-scheduler.mjs.)
-      - name: Scheduler-Diagnose + Scan-Force-Run
+      - name: Scheduler-Diagnose + Engine-Takt-Force-Run
         if: ${{ !cancelled() && env.FIREBASE_SERVICE_ACCOUNT != '' }}
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json

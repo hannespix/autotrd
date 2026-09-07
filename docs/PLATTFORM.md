@@ -136,3 +136,49 @@ das war einer der Fehler des Vorgängers.
    Minuten-Job `engineTick` an und prüft ihn.
 5. Erster Optimierer-Lauf per `workflow_dispatch`, danach nächtlich. Ohne
    Champion handelt niemand.
+
+## 7. Umstieg vom Altsystem — auf demselben Firebase-Projekt
+
+Der Neubau läuft auf dem bestehenden Projekt (`.firebaserc`), mit denselben
+Auth-Nutzern, Firestore-Dokumenten, Secrets, Domain und Deploy-Pipelines.
+Ein Merge nach `main` löst Functions- und Frontend-Deploy wie bisher aus;
+die alten Scan-/Prognose-/KI-Functions samt Scheduler-Jobs entfernt der
+Functions-Deploy selbst (`--force`), `engineTick` legt er als Minutenjob an.
+
+**Vor dem Merge (Owner):**
+
+1. `firebase functions:secrets:set BROKER_MASTER_KEY` — muss existieren,
+   sonst bricht der Deploy ab. Gibt es das Secret schon, unbedingt dasselbe
+   behalten: Verschlüsselte Schlüssel im Tresor sind sonst unlesbar.
+   Klartext-Altbestand funktioniert weiter.
+2. `ALPACA_API_KEY`/`ALPACA_SECRET_KEY` als Functions-Secrets prüfen
+   (`firebase functions:secrets:access ALPACA_API_KEY`); Paper-Keys genügen.
+3. Dieselben beiden Paper-Keys als GitHub-Repo-Secrets für den Optimierer
+   (`optimize.yml`); `FIREBASE_SERVICE_ACCOUNT` gibt es bereits.
+4. `ALPACA_ALLOW_LIVE` NICHT setzen — Echtgeld bleibt verriegelt.
+
+**Nach dem Merge, in dieser Reihenfolge:**
+
+1. Deploys abwarten (Functions inkl. Rules, Frontend). `check-scheduler`
+   im Deploy-Log meldet den Job `engineTick`.
+2. Einmalig `node scripts/umstieg.mjs --dry-run`, dann ohne `--dry-run`
+   (mit `GOOGLE_APPLICATION_CREDENTIALS` auf einen Service-Account):
+   schreibt `meta/engineConfig`, schaltet die Engine für alle Nutzer außer
+   Admins aus (`--keep uid,…` für Ausnahmen) und verschiebt alte
+   Positions-Spiegel nach `positionsArchiv`. Nichts wird gelöscht, was
+   nicht archiviert wird.
+3. Optimierer-Workflow per `workflow_dispatch` starten. Erst mit
+   `meta/champion` handelt jemand.
+4. Eigenes Konto: Broker-Schlüssel prüfen, Einstellungen speichern, Engine
+   einschalten, ersten Takt in der Engine-Karte beobachten.
+
+**Was Nutzer wissen müssen:** Handel nur mit eigenem Alpaca-Paper-Schlüssel
+(das interne Papierbuch gibt es nicht mehr, die Historie bleibt). Offene
+Alpaca-Positionen aus dem Altsystem gelten als Fremdbestand — die Engine
+steigt erst ein, wenn sie geschlossen sind; die alten Broker-Stops bleiben
+wirksam. Risiko-Einstellungen werden aus den alten Feldern abgeleitet, bis
+sie in der neuen Karte gespeichert werden.
+
+**Rückweg:** Merge zurückdrehen, `main` neu deployen. Der Neubau legt nur
+zusätzliche Dokumente an (`private/engineState`, Journal, Trades im alten
+Schema, `positionsArchiv`); die Daten des Altsystems bleiben unverändert.

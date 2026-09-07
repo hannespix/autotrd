@@ -14,6 +14,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { parseConfig } from '../src/core/config.ts';
+import { engineConfigDocFrom } from './lib/engineConfig.mjs';
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => {
@@ -24,22 +25,7 @@ const dryRun = args.includes('--dry-run');
 const path = resolve(opt('--config', 'config/platform.yaml'));
 
 const cfg = parseConfig(parseYaml(readFileSync(path, 'utf8')));
-// `engine.barGraceSec` gehört dem Prozess, nicht der Plattform: Der Takt zur vollen Minute braucht eine
-// größere Karenz als der Streaming-Prozess (Functions-Default 20 s, Untergrenze im Takt-Leser).
-const { barGraceSec: _barGraceSec, ...engine } = cfg.engine;
-const global = {
-  version: 1,
-  broker: { mode: 'paper', feed: cfg.broker.feed },
-  universe: cfg.universe,
-  timeframe: cfg.timeframe,
-  session: cfg.session,
-  costs: cfg.costs,
-  engine,
-  /** Defaults für Nutzer ohne eigene Risiko-Einstellung. */
-  riskDefaults: cfg.risk,
-  optimizer: { strategies: cfg.optimizer.strategies, lookbackDays: cfg.optimizer.lookbackDays },
-  source: 'config/platform.yaml',
-};
+const global = engineConfigDocFrom(cfg);
 console.log(JSON.stringify(global, null, 2));
 
 if (dryRun) {
