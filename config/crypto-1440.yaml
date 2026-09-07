@@ -1,0 +1,127 @@
+# Krypto-Probe, TAGESBARS — NUR Erkundung, NIE die Plattform-Config.
+#
+# ── Warum es diese Datei gibt ─────────────────────────────────────────────
+#
+# Im Vorgängersystem war Krypto der größte Einzelverlust: −1 133 $, während
+# der Rest +40 $ machte. Die Ursache ist rechenbar, nicht mysteriös. Alpaca
+# nimmt die Taker-Gebühr auf BEIDEN Seiten:
+#
+#   Krypto  0,25 % × 2  +  Slippage/Spread 0,05 % × 2  ≈ 0,60 % je Round-Trip
+#   Aktien              nur Slippage/Spread 0,05 % × 2  ≈ 0,10 % je Round-Trip
+#
+# Krypto kostet also rund SECHSMAL so viel je Trade. Der Aktien-Champion
+# (TSLA) besteht das Gate `feeShare ≤ 0,5` mit 32 %; dasselbe Handelsverhalten
+# in Krypto läge bei ~190 % und fiele sofort durch.
+#
+# Entscheidend: Die Gebühr fällt je ROUND-TRIP an, nicht je Zeiteinheit. Wer
+# 20 Minuten hält, zahlt dasselbe wie wer drei Tage hält. Der einzige Hebel
+# ist deshalb ein größerer erwarteter Zug je Trade — also ein längerer
+# Zeitrahmen. Diese Datei geht den Hebel bis zum Anschlag: TAGESBARS. Bei
+# einem Zug von mehreren Prozent je Trade sind 0,60 % Kosten ein kleiner
+# Anteil — das ist die Konstellation, in der Krypto überhaupt eine Chance hat.
+# Das Gegenstück mit Stundenbars ist config/crypto-60.yaml.
+#
+# ── Was hier NICHT verändert wurde ────────────────────────────────────────
+#
+# Kein Gate ist gelockert: minOosTrades, minFoldPositiveShare, minPsrOos,
+# stressCostMultiplier und feeShare stehen exakt wie in config/platform.yaml.
+# Verändert sind nur Zeitrahmen, Assetklasse und das Datenfenster. Wer die
+# Latte senkt, um ein Ergebnis zu bekommen, misst nichts mehr (CLAUDE.md §0.9).
+#
+# ── Wie das gefahren wird ─────────────────────────────────────────────────
+#
+# Über .github/workflows/krypto-probe.yml. Der Workflow schreibt NICHTS nach
+# Firestore — kein meta/champion, kein meta/engineConfig. Ergebnis ist ein
+# Artefakt. Ein Krypto-Champion darf erst auf die Plattform, wenn er dieselbe
+# Walk-Forward-Prüfung bestanden hat UND das Konzentrations-Gate steht.
+
+broker:
+  mode: paper
+  feed: iex            # für Krypto ohne Wirkung — eigener Endpunkt (/v1beta3/crypto/us)
+
+universe:
+  assetClass: crypto
+  # Liquide USD-Paare bei Alpaca. Keine Stablecoins (USDT/USD hat keinen Zug,
+  # nur Gebühren). Ein Paar, das Alpaca nicht führt, liefert keine Bars und
+  # landet folgerichtig in noTrade — es kippt den Lauf nicht.
+  symbols: [BTC/USD, ETH/USD, SOL/USD, LTC/USD, LINK/USD, AVAX/USD, DOT/USD, AAVE/USD, UNI/USD, DOGE/USD]
+  # BTC als Marktfilter für die Alts — dieselbe Rolle, die SPY bei Aktien hat.
+  benchmark: BTC/USD
+
+timeframe: 1440
+
+# Für Krypto ohne Wirkung (24/7, keine Sitzungsgrenzen — src/core/time.ts),
+# aber ausdrücklich auf 0, damit niemand hier eine Wirkung vermutet.
+session:
+  noEntryFirstMin: 0
+  noEntryLastMin: 0
+  flattenBeforeCloseMin: 0
+
+risk:
+  riskPerTradePct: 0.5
+  maxPositionPct: 20
+  # Krypto läuft stark im Gleichschritt mit BTC: vier Positionen sind eher
+  # eine vierfache Wette als vier Wetten. Bewusst wie bei Aktien belassen,
+  # damit die Zahlen vergleichbar bleiben — beim Auswerten mitdenken.
+  maxPositions: 4
+  maxGrossExposurePct: 100
+  maxDailyLossPct: 2
+  maxDrawdownPct: 10
+  # Alpaca bietet Krypto nur als Spot. Die Engine blockt Shorts ohnehin
+  # ("Krypto: kein Short bei Alpaca", src/core/logic.ts) — hier explizit.
+  allowShort: false
+  pdt:
+    # Krypto ist kein Wertpapier; das Gate greift laut src/risk/pdt.ts nicht.
+    # Die Einstellung bleibt trotzdem stehen, damit die Datei vollständig ist.
+    respect: true
+    minEquity: 25000
+    maxDayTrades: 3
+
+strategy:
+  id: trend_donchian
+  params: {}
+  allowWithoutChampion: false
+
+optimizer:
+  # orb_breakout fehlt bewusst: Die Strategie kennt nur Intraday-Zeitrahmen
+  # bis 30 Minuten (src/strategy/orbBreakout.ts) und braucht eine
+  # Eröffnungsspanne — bei 24/7 gibt es keine Eröffnung.
+  strategies: [trend_donchian, momentum_pullback, mean_reversion]
+  # Größeres Datenfenster statt niedrigerer Latte. Bei Tagesbars sind 400 Tage
+  # nur 400 Bars; die 60 OOS-Trades wären dann nur erreichbar, wenn man das
+  # Gate senkt — und wer die Latte senkt, um ein Ergebnis zu bekommen, misst
+  # nichts mehr. Also andersherum: 1400 Kalendertage (≈ 3,8 Jahre, Alpaca hat
+  # so weit Krypto-Historie), IS 365, OOS 90 ⇒ 9 Folds à 90 Tage = 810 OOS-Bars.
+  # Damit genügt ein Trade je ~13 Tagen fürs Gate — für eine Tages-Trendfolge
+  # eine normale Frequenz.
+  lookbackDays: 1400
+  isDays: 365
+  oosDays: 90
+  stepDays: 90
+  embargoBars: 0
+  samples: 150
+  seed: 42
+  minOosTrades: 60
+  minFoldPositiveShare: 0.6
+  objective: sortino
+  stressCostMultiplier: 1.5
+  holdoutDays: 180        # proportional zum größeren Fenster
+  promotionMargin: 0.1
+  minPsrOos: 0.9
+  dsrIsGate: false
+
+costs:
+  slippageBps: 3
+  spreadBps: 2
+  secFeeRate: 0.0000278      # Aktien-Gebühren, für Krypto ohne Wirkung
+  finraTafPerShare: 0.000166
+  finraTafMax: 8.3
+  cryptoTakerPct: 0.25       # DIE Zahl, um die es hier geht — je Seite
+  shortBorrowAnnualPct: 1
+
+engine:
+  reconcileEverySec: 60
+  barGraceSec: 4
+  maxDataAgeSec: 180
+  maxConsecutiveErrors: 5
+  onOrphan: halt
