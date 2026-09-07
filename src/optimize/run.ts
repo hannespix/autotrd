@@ -52,7 +52,10 @@ import {
   MIN_FOLDS,
   fixedParamsWfa,
   foldPlanForBars,
+  korbVon,
   walkForward,
+  zeitachseVon,
+  type BarsInput,
   type SimConfig,
   type SimulateFn,
   type TimeRange,
@@ -166,6 +169,83 @@ export interface OptimizeRunOutput {
   reportPath: string;
 }
 
+/* ───────────────────────── Einheiten: ein Symbol oder der Korb ───────────────────────── */
+
+/**
+ * Bewertungseinheit. Je Symbol ist sie ein Symbol; gepoolt ist sie das ganze
+ * Universum in EINEM Simulationslauf mit EINEM Konto — inklusive
+ * Positionslimit, Brutto-Exposure und Notbremsen, also so, wie es live läuft.
+ */
+interface Einheit {
+  /** Anzeige- und Journalschlüssel. */
+  key: string;
+  /** Symbole, auf die die Entscheidung angewandt wird. */
+  symbols: string[];
+  bars: BarsInput | null;
+  errors: string[];
+}
+
+/** Anzeigename eines Korbs — taucht im Bericht und im Journal auf. */
+export function korbName(anzahl: number): string {
+  return `Korb (${anzahl} Symbole)`;
+}
+
+function einheitenVon(input: OptimizeRunInput, pooled: boolean, log: (m: string) => void): Einheit[] {
+  const geladen: { symbol: string; bars: BarSeriesLike }[] = [];
+  const fehler: string[] = [];
+  for (const symbol of input.symbols) {
+    try {
+      const b = input.barsFor(symbol);
+      if (b.length === 0) throw new Error('keine Bars');
+      geladen.push({ symbol, bars: b });
+    } catch (e) {
+      fehler.push(`${symbol}: ${errMsg(e)}`);
+      log(`${symbol}: ${errMsg(e)}`);
+    }
+  }
+
+  if (!pooled) {
+    return input.symbols.map((symbol) => {
+      const g = geladen.find((x) => x.symbol === symbol);
+      const eigener = fehler.filter((f) => f.startsWith(`${symbol}: `)).map((f) => `Bars: ${f.slice(symbol.length + 2)}`);
+      return { key: symbol, symbols: [symbol], bars: g ? g.bars : null, errors: eigener };
+    });
+  }
+
+  // Gepoolt: eine Einheit. Symbole ohne Bars fallen aus dem Korb, bleiben
+  // aber in `symbols` — sonst behielten sie stumm einen alten Champion,
+  // obwohl über sie gerade nichts gemessen wurde.
+  const korb = new Map(geladen.map((g) => [g.symbol, g.bars]));
+  return [
+    {
+      key: korbName(korb.size),
+      symbols: [...input.symbols],
+      bars: korb.size > 0 ? korb : null,
+      errors: fehler.length > 0 ? [`ohne Bars, nicht im Korb: ${fehler.join('; ')}`] : [],
+    },
+  ];
+}
+
+/**
+ * Amtierender Champion einer Einheit.
+ *
+ * Gepoolt zählt er nur, wenn ALLE Symbole denselben Eintrag tragen — also
+ * wenn er aus einem gepoolten Lauf stammt. Ein je Symbol gefitteter Champion
+ * ist mit einem Korb-Kandidaten nicht vergleichbar; ihn trotzdem als
+ * Amtsinhaber zu führen, hieße Äpfel gegen Birnen anzutreten und dem
+ * Kandidaten eine Marge abzuverlangen, die keine Bedeutung hat.
+ */
+function amtsinhaberVon(champion: ChampionFile, einheit: Einheit): ChampionEntry | null {
+  const erster = champion.symbols[einheit.symbols[0]!] ?? null;
+  if (einheit.symbols.length === 1 || !erster) return erster;
+  for (const sym of einheit.symbols) {
+    const e = champion.symbols[sym];
+    if (!e || e.strategy !== erster.strategy || e.fitEnd !== erster.fitEnd) return null;
+    if (JSON.stringify(e.params) !== JSON.stringify(erster.params)) return null;
+  }
+  return erster;
+}
+
 function resolveDeps(input: OptimizeRunInput): OptimizeDeps {
   const missing: string[] = [];
   if (!input.simulate) missing.push('simulate');
@@ -214,23 +294,16 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
   let champion = loadChampion(paths.champion) ?? emptyChampionFile(now());
   const runs: SymbolRun[] = [];
   let dataRange: TimeRange | null = null;
+  const einheiten = einheitenVon(input, optimizer.pooled, log);
 
-  for (const symbol of input.symbols) {
+  for (const einheit of einheiten) {
+    const symbol = einheit.key;
     const runAt = now();
-    const incumbent = champion.symbols[symbol] ?? null;
-    const errors: string[] = [];
+    const incumbent = amtsinhaberVon(champion, einheit);
+    const errors: string[] = [...einheit.errors];
     const results: StrategyRun[] = [];
 
-    let bars: BarSeriesLike | null = null;
-    try {
-      const b = input.barsFor(symbol);
-      if (b.length === 0) throw new Error('keine Bars');
-      bars = b;
-    } catch (e) {
-      errors.push(`Bars: ${errMsg(e)}`);
-      log(`${symbol}: ${errMsg(e)}`);
-    }
-
+    const bars = einheit.bars;
     const common = bars
       ? {
           symbol,
@@ -244,8 +317,9 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       : null;
 
     if (bars && common) {
-      const first = bars.t[0]!;
-      const last = bars.t[bars.length - 1]! + 1;
+      const achse = zeitachseVon(korbVon(symbol, bars));
+      const first = achse.t[0]!;
+      const last = achse.t[achse.length - 1]! + 1;
       dataRange = dataRange ? { start: Math.min(dataRange.start, first), end: Math.max(dataRange.end, last) } : { start: first, end: last };
 
       for (const strategy of usable) {
@@ -283,7 +357,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
         if (incumbent.timeframe !== cfg.timeframe || !strat.timeframes.includes(cfg.timeframe)) {
           errors.push(`Champion ${incumbent.strategy}: Zeitrahmen ${incumbent.timeframe} ≠ ${cfg.timeframe} — nicht vergleichbar`);
         } else {
-          const plan = foldPlanForBars(bars, optimizer);
+          const plan = foldPlanForBars(zeitachseVon(korbVon(symbol, bars)), optimizer);
           const fitEnd = fitEndOf(incumbent);
           const clean = plan.folds.filter((f) => f.oosStart >= fitEnd);
           const cleanDays = Math.round(clean.reduce((s, f) => s + (f.oosEnd - f.oosStart) / DAY, 0));
@@ -368,8 +442,14 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       });
     }
 
-    champion = applyDecision({ file: champion, symbol, decision, candidate, bestScore: bestAny ? bestAny.score : null, now: runAt });
-    const chosen = decision.action === 'promote' ? champion.symbols[symbol]! : decision.action === 'keep' ? incumbent : null;
+    // Gepoolt gilt EINE Entscheidung für den ganzen Korb: derselbe Eintrag
+    // wird für jedes Symbol geschrieben. Damit bleibt das Champion-Format je
+    // Symbol — Engine, Frontend und Plattform brauchen keine Zeile Änderung.
+    for (const sym of einheit.symbols) {
+      champion = applyDecision({ file: champion, symbol: sym, decision, candidate, bestScore: bestAny ? bestAny.score : null, now: runAt });
+    }
+    const ersteszSymbol = einheit.symbols[0]!;
+    const chosen = decision.action === 'promote' ? champion.symbols[ersteszSymbol]! : decision.action === 'keep' ? incumbent : null;
     journalDecision(journal, { symbol, decision, chosen, candidate, candidatePass: bestPassed !== null, incumbentRescore, incumbentPass, now: runAt });
     log(`${symbol}: ${decision.action} — ${decision.reason}`);
     runs.push({ symbol, results, decision, chosen, incumbent, incumbentRescore, incumbentEval, errors });

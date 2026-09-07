@@ -14,7 +14,7 @@
 import type { OptimizerConfig } from '../core/config.ts';
 import { median, objectiveValue, sampleVariance, type ObjectiveId } from './objective.ts';
 import { neighbors } from './search.ts';
-import { candidateRange, simulateWindow, type WfaResult, type WindowSimArgs } from './walkForward.ts';
+import { candidateRange, korbVon, simulateWindow, zeitachseVon, type WfaResult, type WindowSimArgs } from './walkForward.ts';
 
 /* ───────────────────────── Injektionspunkt Statistik ───────────────────────── */
 
@@ -123,8 +123,10 @@ export function neighborhoodTest(
   }
   const objectives: number[] = [];
   let positive = 0;
+  // Embargo misst in Bars — bei einem Korb auf der vereinigten Zeitachse.
+  const achse = zeitachseVon(korbVon(a.symbol, a.bars));
   for (const params of nb) {
-    const range = candidateRange(a.bars, wfa.finalWindow, strategy, params, optimizer, wfa.finalWindow.embargoAtEnd);
+    const range = candidateRange(achse, wfa.finalWindow, strategy, params, optimizer, wfa.finalWindow.embargoAtEnd);
     const r = simulateWindow({ ...a, params, range });
     objectives.push(objectiveValue(optimizer.objective, r.metrics));
     if (r.metrics.netProfit > 0) positive++;

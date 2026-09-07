@@ -1,0 +1,116 @@
+# Probe: GEPOOLTE Bewertung über 30 liquide US-Werte — NUR Erkundung.
+#
+# ── Was hier anders ist ───────────────────────────────────────────────────
+#
+# `optimizer.pooled: true`. Statt je Symbol zu fragen „hat trend_donchian
+# eine Kante auf TSLA?" (im Lauf vom 07.09. hatte das beste Symbol 33
+# OOS-Trades gegen ein Gate von 60 — unbeantwortbar) fragt der Optimierer
+# EINMAL: „hat die Strategie eine Kante auf diesem Korb?" Ein Parametersatz,
+# ein Simulationslauf über alle 30 Symbole, EIN Konto — mit Positionslimit,
+# Brutto-Exposure und Notbremsen, also so, wie es live liefe.
+#
+# Nebeneffekt, der genauso zählt: „bestes Symbol aus dreißig" ist selbst
+# eine Auswahl. Je Symbol deflationiert der DSR die Parameter-Trials, aber
+# niemand die Symbolwahl. Gepoolt gibt es diese Wahl nicht mehr.
+#
+# ── Woher die 30 kommen ───────────────────────────────────────────────────
+#
+# Nach LIQUIDITÄT, nicht nach Ertrag: die großen Index-ETFs und die
+# umsatzstärksten US-Einzelwerte. Ein Universum nach vergangener Rendite
+# zusammenzustellen wäre Selektionsbias in Reinform — man nähme genau das
+# auf, was gerade gut lief, und die Holdouts bestrafen das zuverlässig.
+# Liquidität ist beständig und sagt nichts über die Rendite.
+#
+# 30 ist zugleich die harte Grenze des Alpaca-IEX-Basisplans (darüber
+# `405 symbol limit exceeded`).
+#
+# ── Wie das gefahren wird ─────────────────────────────────────────────────
+#
+# Über den Probe-Workflow. Der schreibt NICHTS nach Firestore — kein
+# meta/champion, kein meta/engineConfig. Ergebnis ist ein Artefakt.
+
+broker:
+  mode: paper          # Der Modus je Nutzer kommt aus dem Live-Schalter der Plattform, nicht von hier.
+  feed: iex            # Datenfeed für Optimierer UND Engine — identisch, sonst misst man etwas anderes als man handelt.
+
+universe:
+  assetClass: us_equity
+  # 4 Index-ETFs + 26 umsatzstarke Einzelwerte, quer über die Sektoren.
+  symbols:
+    [SPY, QQQ, IWM, DIA,
+     AAPL, MSFT, NVDA, AMZN, META, GOOGL, TSLA, AVGO, AMD, NFLX,
+     CRM, ORCL, ADBE, INTC, CSCO, QCOM,
+     JPM, BAC, WFC,
+     XOM, CVX,
+     JNJ, PFE, UNH,
+     WMT, DIS]
+  benchmark: SPY
+
+timeframe: 5
+
+session:
+  noEntryFirstMin: 5
+  noEntryLastMin: 30
+  flattenBeforeCloseMin: 5
+
+risk:
+  riskPerTradePct: 0.5
+  maxPositionPct: 20
+  maxPositions: 4
+  maxGrossExposurePct: 100
+  maxDailyLossPct: 2
+  maxDrawdownPct: 10
+  allowShort: false
+  pdt:
+    respect: true
+    minEquity: 25000
+    maxDayTrades: 3
+
+strategy:
+  id: trend_donchian
+  params: {}
+  allowWithoutChampion: false   # Ohne Champion handelt niemand — der Optimierer entscheidet.
+
+optimizer:
+  strategies: [trend_donchian, momentum_pullback, mean_reversion, orb_breakout]
+  lookbackDays: 400
+  isDays: 120
+  oosDays: 30
+  stepDays: 30
+  embargoBars: 0
+  samples: 150
+  seed: 42
+  minOosTrades: 60
+  minFoldPositiveShare: 0.6
+  objective: sortino
+  stressCostMultiplier: 1.5
+  holdoutDays: 60
+  promotionMargin: 0.1
+  minPsrOos: 0.9
+  dsrIsGate: false
+  pooled: true           # DER Punkt dieser Datei
+
+costs:
+  slippageBps: 3
+  spreadBps: 2
+  secFeeRate: 0.0000278
+  finraTafPerShare: 0.000166
+  finraTafMax: 8.3
+  cryptoTakerPct: 0.25
+  shortBorrowAnnualPct: 1
+
+engine:
+  reconcileEverySec: 60
+  barGraceSec: 4
+  maxDataAgeSec: 180
+  maxConsecutiveErrors: 5
+  onOrphan: halt
+
+notify:
+  telegram: false
+
+status:
+  httpPort: 0
+
+paths:
+  home: ./var

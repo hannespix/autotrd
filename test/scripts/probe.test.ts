@@ -21,7 +21,9 @@ const lies = (p: string): string => readFileSync(new URL(`../../${p}`, import.me
 const config = (p: string) => parseConfig(parseYaml(lies(p)));
 
 const KRYPTO = ['config/crypto-60.yaml', 'config/crypto-1440.yaml'];
-const WORKFLOW = '.github/workflows/krypto-probe.yml';
+/** Alle Erkundungs-Configs — jede muss die Gates der Plattform halten. */
+const PROBEN = [...KRYPTO, 'config/pooled-us30.yaml'];
+const WORKFLOW = '.github/workflows/probe.yml';
 
 describe('Krypto-Configs', () => {
   it.each(KRYPTO)('%s ist eine gültige Krypto-Config ohne Shorts', (pfad) => {
@@ -33,7 +35,7 @@ describe('Krypto-Configs', () => {
     expect(c.optimizer.strategies).not.toContain('orb_breakout');
   });
 
-  it.each(KRYPTO)('%s lockert KEIN Gate gegenüber der Plattform-Config', (pfad) => {
+  it.each(PROBEN)('%s lockert KEIN Gate gegenüber der Plattform-Config', (pfad) => {
     const p = config('config/platform.yaml').optimizer;
     const k = config(pfad).optimizer;
     // Jede dieser Zahlen ist eine Hürde. Sie darf für Krypto strenger sein,
@@ -86,17 +88,25 @@ describe('Krypto-Probe-Workflow', () => {
     expect(Object.keys(ausloeser)).toEqual(['workflow_dispatch']);
   });
 
-  it('arbeitet in einem eigenen Ablageort, damit der Aktien-Lauf unberührt bleibt', () => {
+  it('arbeitet in einem eigenen Ablageort, damit der Produktivlauf unberührt bleibt', () => {
     const text = wf();
-    expect(text).toContain('--home var-krypto');
+    expect(text).toContain('--home var-probe');
     expect(text).not.toContain('--home var ');
   });
 
-  it('bietet nur die Krypto-Configs zur Auswahl an', () => {
+  it('bietet NIE die Plattform-Config zur Auswahl an', () => {
     const d = parseYaml(wf()) as Record<string, never>;
     const ausloeser = (d as { on?: unknown; true?: unknown }).on ?? (d as { true?: unknown }).true;
     const optionen = (ausloeser as { workflow_dispatch: { inputs: { config: { options: string[] } } } })
       .workflow_dispatch.inputs.config.options;
-    expect([...optionen].sort()).toEqual([...KRYPTO].sort());
+    // Jede Krypto-Config muss wählbar bleiben …
+    for (const k of KRYPTO) expect(optionen).toContain(k);
+    // … und die Plattform-Config darf es nie sein: ihr Champion ist das,
+    // was Nutzer tatsächlich handeln.
+    expect(optionen).not.toContain('config/platform.yaml');
+  });
+
+  it('bricht ab, falls doch jemand die Plattform-Config unterschiebt', () => {
+    expect(wf()).toContain('config/platform.yaml)');
   });
 });

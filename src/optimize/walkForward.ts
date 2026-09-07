@@ -143,13 +143,58 @@ export function buildFolds(a: {
 }
 
 /** Datenbereich einer Serie: [erste Bar, letzte Bar + 1 ms) — Ende exklusiv. */
-export function dataRangeOf(bars: BarSeriesLike): TimeRange {
+/* ───────────────────────── Ein Symbol oder ein Korb ───────────────────────── */
+
+/**
+ * Fold-Plan und Embargo brauchen nur die Zeitachse, nicht die Kurse.
+ * `BarSeriesLike` erfüllt das strukturell — deshalb bleiben alle bestehenden
+ * Aufrufer unverändert.
+ */
+export interface Zeitachse {
+  readonly length: number;
+  readonly t: Float64Array;
+}
+
+/**
+ * Bars eines Walk-Forward: EIN Symbol oder ein KORB.
+ *
+ * Gepoolt zu bewerten heißt nicht, hinterher Zahlen zusammenzurechnen —
+ * zehn Symbole mit je vollem Startkapital wären zehnfacher Hebel. Es heißt,
+ * denselben Parametersatz in EINEM Simulationslauf über alle Symbole zu
+ * fahren: ein Konto, ein Positionslimit, eine Notbremse. Genau das, was die
+ * Engine live tut. Der Simulator kann das seit jeher (`SimInput.bars` ist
+ * eine Map); hier fehlte nur der Weg dorthin.
+ */
+export type BarsInput = BarSeriesLike | ReadonlyMap<string, BarSeriesLike>;
+
+/** Ein Symbol oder ein Korb ⇒ intern IMMER ein Korb (ein Pfad, keine Kopie). */
+export function korbVon(symbol: string, bars: BarsInput): ReadonlyMap<string, BarSeriesLike> {
+  return bars instanceof Map ? bars : new Map([[symbol, bars as BarSeriesLike]]);
+}
+
+/**
+ * Vereinigte Zeitachse eines Korbs — aufsteigend, ohne Dubletten.
+ * Bei einem Symbol ist das dessen eigene Achse; bei gleicher Assetklasse und
+ * gleichem Zeitrahmen liegen die Achsen ohnehin deckungsgleich, sodass der
+ * Fold-Plan derselbe bleibt wie beim Einzelsymbol.
+ */
+export function zeitachseVon(korb: ReadonlyMap<string, BarSeriesLike>): Zeitachse {
+  const serien = [...korb.values()].filter((b) => b.length > 0);
+  if (serien.length === 0) throw new Error('Keine Bars — Walk-Forward unmöglich');
+  if (serien.length === 1) return serien[0]!;
+  const alle = new Set<number>();
+  for (const b of serien) for (let i = 0; i < b.length; i++) alle.add(b.t[i]!);
+  const t = Float64Array.from([...alle].sort((x, y) => x - y));
+  return { length: t.length, t };
+}
+
+export function dataRangeOf(bars: Zeitachse): TimeRange {
   if (bars.length === 0) throw new Error('Keine Bars — Walk-Forward unmöglich');
   return { start: bars.t[0]!, end: bars.t[bars.length - 1]! + 1 };
 }
 
 /** Fold-Plan direkt aus Serie + Optimierer-Config (identisch für alle Strategien eines Symbols). */
-export function foldPlanForBars(bars: BarSeriesLike, optimizer: OptimizerConfig): FoldPlan {
+export function foldPlanForBars(bars: Zeitachse, optimizer: OptimizerConfig): FoldPlan {
   const range = dataRangeOf(bars);
   return buildFolds({
     dataStart: range.start,
@@ -187,7 +232,7 @@ export function embargoBarsFor(strategy: Strategy, params: Params, optimizer: Op
  * Bereich) — der Aufrufer bricht dann mit klarer Meldung ab, statt ein
  * Fenster ohne Entscheidungen still als "0 Trades" zu werten.
  */
-export function embargoedEnd(bars: BarSeriesLike, isStart: Ms, isEnd: Ms, embargoBars: number): Ms {
+export function embargoedEnd(bars: Zeitachse, isStart: Ms, isEnd: Ms, embargoBars: number): Ms {
   if (embargoBars <= 0) return isEnd;
   const j = lowerBound(bars.t, isEnd);
   const i0 = lowerBound(bars.t, isStart);
@@ -198,7 +243,7 @@ export function embargoedEnd(bars: BarSeriesLike, isStart: Ms, isEnd: Ms, embarg
 
 /** Effektiver Entscheidungsbereich eines Kandidaten in einem Fenster (Embargo am Ende, wenn gewünscht). */
 export function candidateRange(
-  bars: BarSeriesLike,
+  bars: Zeitachse,
   window: TimeRange,
   strategy: Strategy,
   params: Params,
@@ -220,10 +265,11 @@ export function candidateRange(
 /* ───────────────────────── Ein Simulationslauf ───────────────────────── */
 
 export interface WindowSimArgs {
+  /** Einzelsymbol ODER Anzeigename des Korbs (siehe `BarsInput`). */
   symbol: string;
   strategy: Strategy;
   params: Params;
-  bars: BarSeriesLike;
+  bars: BarsInput;
   benchmark?: BarSeriesLike | undefined;
   config: SimConfig;
   initialEquity: number;
@@ -233,11 +279,16 @@ export interface WindowSimArgs {
   costMultiplier?: number | undefined;
 }
 
-/** Ein Symbol, ein Parametersatz, ein Zeitfenster — durch den echten Simulator. */
+/**
+ * Ein Korb (oft: ein Symbol), EIN Parametersatz, ein Zeitfenster — durch den
+ * echten Simulator. Bei mehreren Symbolen teilen sie sich ein Konto, das
+ * Positionslimit und die Notbremsen; das ist der Sinn der Sache.
+ */
 export function simulateWindow(a: WindowSimArgs): SimResult {
+  const korb = korbVon(a.symbol, a.bars);
   const input: SimInput = {
-    bars: new Map([[a.symbol, a.bars]]),
-    strategyFor: (s) => (s === a.symbol ? { strategy: a.strategy, params: a.params } : null),
+    bars: korb,
+    strategyFor: (s) => (korb.has(s) ? { strategy: a.strategy, params: a.params } : null),
     config: a.config,
     initialEquity: a.initialEquity,
     range: { start: a.range.start, end: a.range.end },
@@ -380,10 +431,11 @@ export interface WfaResult {
 }
 
 export interface WalkForwardArgs {
+  /** Einzelsymbol ODER Anzeigename des Korbs. */
   symbol: string;
   strategy: Strategy;
-  /** Bars im Strategie-Zeitrahmen. */
-  bars: BarSeriesLike;
+  /** Bars im Strategie-Zeitrahmen — ein Symbol oder ein ganzer Korb. */
+  bars: BarsInput;
   benchmark?: BarSeriesLike | undefined;
   config: SimConfig;
   optimizer: OptimizerConfig;
@@ -410,7 +462,7 @@ export function minIsTrades(optimizer: OptimizerConfig): number {
   return Math.max(10, Math.floor(optimizer.minOosTrades / 4));
 }
 
-function searchWindow(a: WalkForwardArgs, window: TimeRange, include: readonly Params[], embargoAtEnd: boolean): WindowSearch {
+function searchWindow(a: WalkForwardArgs, achse: Zeitachse, window: TimeRange, include: readonly Params[], embargoAtEnd: boolean): WindowSearch {
   const { strategy, optimizer } = a;
   const seeds: Params[] = [strategy.defaults, ...include].map((p) => ({ ...strategy.defaults, ...p }));
   const candidates = sampleParams(strategy.paramSpace, optimizer.samples, a.rng, seeds).map((p) => ({ ...strategy.defaults, ...p }));
@@ -420,7 +472,7 @@ function searchWindow(a: WalkForwardArgs, window: TimeRange, include: readonly P
   let fallback: WindowSearch | null = null;
   const trialSharpes: number[] = [];
   for (const params of candidates) {
-    const range = candidateRange(a.bars, window, strategy, params, optimizer, embargoAtEnd);
+    const range = candidateRange(achse, window, strategy, params, optimizer, embargoAtEnd);
     const result = simulateWindow({ ...a, params, range });
     const objective = objectiveValue(optimizer.objective, result.metrics);
     const sr = perPeriodSharpe(result.dailyReturns);
@@ -440,8 +492,10 @@ function searchWindow(a: WalkForwardArgs, window: TimeRange, include: readonly P
 
 export function walkForward(a: WalkForwardArgs): WfaResult {
   const { strategy, optimizer } = a;
-  const plan = foldPlanForBars(a.bars, optimizer);
-  const dataRange = dataRangeOf(a.bars);
+  // Ein Symbol oder ein Korb — der Fold-Plan hängt nur an der Zeitachse.
+  const achse = zeitachseVon(korbVon(a.symbol, a.bars));
+  const plan = foldPlanForBars(achse, optimizer);
+  const dataRange = dataRangeOf(achse);
   const include = a.include ?? [];
   const log = a.log ?? (() => undefined);
   for (const n of plan.notes) log(`${a.symbol} ${strategy.id}: ${n}`);
@@ -451,7 +505,7 @@ export function walkForward(a: WalkForwardArgs): WfaResult {
   const pieces: OosPiece[] = [];
 
   for (const fold of plan.folds) {
-    const is = searchWindow(a, { start: fold.isStart, end: fold.isEnd }, include, true);
+    const is = searchWindow(a, achse, { start: fold.isStart, end: fold.isEnd }, include, true);
     trials += is.evaluated;
     const oos = simulateWindow({ ...a, params: is.params, range: { start: fold.oosStart, end: fold.oosEnd } });
     const oosObjective = objectiveValue(optimizer.objective, oos.metrics);
@@ -481,7 +535,7 @@ export function walkForward(a: WalkForwardArgs): WfaResult {
   const last = plan.folds[plan.folds.length - 1]!;
   const finalWindow = { start: last.isStart, end: last.oosEnd, embargoAtEnd: plan.holdout !== null };
   const finalInclude = [...include, ...foldResults.map((f) => f.best.params)];
-  const fin = searchWindow(a, finalWindow, finalInclude, finalWindow.embargoAtEnd);
+  const fin = searchWindow(a, achse, finalWindow, finalInclude, finalWindow.embargoAtEnd);
   trials += fin.evaluated;
 
   let holdout: WfaResult['holdout'] = null;
@@ -540,8 +594,9 @@ export function fixedParamsWfa(
   if (a.folds.length === 0) throw new Error('fixedParamsWfa: keine Folds');
   const foldResults: WfaFoldResult[] = [];
   const pieces: OosPiece[] = [];
+  const achse = zeitachseVon(korbVon(a.symbol, a.bars));
   for (const fold of a.folds) {
-    const isRange = candidateRange(a.bars, { start: fold.isStart, end: fold.isEnd }, strategy, params, optimizer, true);
+    const isRange = candidateRange(achse, { start: fold.isStart, end: fold.isEnd }, strategy, params, optimizer, true);
     const is = simulateWindow({ ...a, range: isRange });
     const oos = simulateWindow({ ...a, range: { start: fold.oosStart, end: fold.oosEnd } });
     foldResults.push({
@@ -561,7 +616,7 @@ export function fixedParamsWfa(
   }
   const last = a.folds[a.folds.length - 1]!;
   const finalWindow = { start: last.isStart, end: last.oosEnd, embargoAtEnd: a.holdout !== null };
-  const fin = simulateWindow({ ...a, range: candidateRange(a.bars, finalWindow, strategy, params, optimizer, finalWindow.embargoAtEnd) });
+  const fin = simulateWindow({ ...a, range: candidateRange(achse, finalWindow, strategy, params, optimizer, finalWindow.embargoAtEnd) });
   return {
     strategyId: strategy.id,
     symbol: a.symbol,
@@ -576,7 +631,7 @@ export function fixedParamsWfa(
     finalIsDailyReturns: fin.dailyReturns,
     finalTrialSharpes: [],
     holdout: null,
-    dataRange: dataRangeOf(a.bars),
+    dataRange: dataRangeOf(achse),
     embargoBars: embargoBarsFor(strategy, params, optimizer),
   };
 }
