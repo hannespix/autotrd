@@ -24,6 +24,18 @@ Firestore spiegelt, und schreibt ausschließlich über Callable Functions.
   Paging, **Performance** (Cash/Equity/P&L/Equity-Kurve).
 - **„Warum handelt die Engine (nicht)?"** aus `engine` + `meta/health.engine`;
   **Champion-Karte** aus `meta/champion` mit Bericht aus `meta/optimizeReports/berichte`.
+
+## `overrides` in der Wurzel-package.json — nicht entfernen
+
+`firebase@11.10.0` hängt fest an `@firebase/app@0.13.2`, seine Teilpakete
+(`auth`, `app-check`, `firestore`, `functions`) fordern aber `0.14.4`. Ohne
+Auflösung installiert npm BEIDE — zwei Komponenten-Registries im selben
+Bundle. Die Teilpakete registrieren sich dann in der einen, `initializeApp()`
+liest die andere, und `getAuth()` wirft beim Start
+`Component auth has not been registered yet`: weiße Seite, ohne dass ein Test
+etwas merkt. Deshalb steht in der Wurzel-package.json
+`"overrides": { "@firebase/app": "0.14.4" }`, und
+`frontend/test/firebaseEinmal.test.ts` hält genau eine Kopie fest.
 - **Optionen:** Broker (Schlüssel, Echtgeld-Schalter, Live-Reife), Konto
   (Abmelden, Steuer-Export, Neu anfangen), Anzeige (Theme, Sprache). Not-Aus, PWA.
 

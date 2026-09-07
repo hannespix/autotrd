@@ -2,7 +2,7 @@
   "name": "autotrd",
   "private": true,
   "version": "2.0.0",
-  "description": "autotrd — schlanker Alpaca-Auto-Trader mit Walk-Forward-Selbstoptimierung",
+  "description": "autotrd \u2014 schlanker Alpaca-Auto-Trader mit Walk-Forward-Selbstoptimierung",
   "type": "module",
   "engines": {
     "node": ">=22.18"
@@ -42,5 +42,8 @@
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.65.0",
     "vitest": "^4.1.10"
+  },
+  "overrides": {
+    "@firebase/app": "0.14.4"
   }
 }
