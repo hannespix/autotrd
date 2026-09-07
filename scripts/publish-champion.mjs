@@ -4,8 +4,10 @@
  *
  *   node scripts/publish-champion.mjs --home var [--dry-run]
  *
- * Schreibt `meta/champion` (die champion.json, unverändert) und
- * `meta/optimizeReports/<YYYY-MM-DD>` (Markdown des jüngsten Berichts).
+ * Schreibt `meta/champion` (die champion.json, unverändert) und den
+ * Markdown des jüngsten Berichts nach `meta/optimizeReports/berichte/<YYYY-MM-DD>`
+ * (Pfad aus shared/src/berichte.ts — `meta/optimizeReports` ist ein Dokument,
+ * die Berichte liegen in seiner Unter-Collection).
  * Beides enthält keine Konto- oder Nutzerdaten; `meta/**` ist absichtlich
  * für alle lesbar, damit das Frontend Champion und Bericht zeigen kann.
  *
@@ -14,6 +16,9 @@
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { berichtPfad } from '../shared/src/berichte.ts';
+
+const CHAMPION_PFAD = 'meta/champion';
 
 const args = process.argv.slice(2);
 const opt = (name, fallback) => {
@@ -44,12 +49,16 @@ const latestReport = reports[reports.length - 1] ?? null;
 const reportDate = latestReport ? latestReport.slice('optimize-'.length, -3) : new Date().toISOString().slice(0, 10);
 const reportText = latestReport ? readFileSync(join(reportsDir, latestReport), 'utf8') : '';
 
+// Die Zielpfade gehören in die Ausgabe: Der erste Lauf nach dem Umstieg
+// scheiterte an einem Pfad mit ungerader Segmentzahl, und der Trockenlauf
+// hätte das nie gezeigt, weil er vor Firestore aufhört.
 const summary = {
   symbols: Object.keys(champion.symbols),
   noTrade: Object.keys(champion.noTrade ?? {}),
   updatedAt: champion.updatedAt,
   reportDate,
   reportBytes: reportText.length,
+  ziele: latestReport ? [CHAMPION_PFAD, berichtPfad(reportDate)] : [CHAMPION_PFAD],
 };
 console.log(JSON.stringify(summary, null, 2));
 
@@ -78,7 +87,7 @@ const reportDoc = {
 };
 
 const batch = db.batch();
-batch.set(db.doc('meta/champion'), { ...champion, publishedAt: Timestamp.now() });
-if (latestReport) batch.set(db.doc(`meta/optimizeReports/${reportDate}`), reportDoc);
+batch.set(db.doc(CHAMPION_PFAD), { ...champion, publishedAt: Timestamp.now() });
+if (latestReport) batch.set(db.doc(berichtPfad(reportDate)), reportDoc);
 await batch.commit();
-console.log(`Veröffentlicht: meta/champion (${summary.symbols.length} Symbole, ${summary.noTrade.length} noTrade)` + (latestReport ? `, meta/optimizeReports/${reportDate}` : ''));
+console.log(`Veröffentlicht: meta/champion (${summary.symbols.length} Symbole, ${summary.noTrade.length} noTrade)` + (latestReport ? `, ${berichtPfad(reportDate)}` : ''));

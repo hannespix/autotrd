@@ -38,3 +38,6 @@ export * from './tax.js';
 
 // Wächter
 export * from './wachhund.js';
+
+// Plattform-Pfade
+export * from './berichte.js';

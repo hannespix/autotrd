@@ -19,7 +19,10 @@ service cloud.firestore {
       allow read: if doc in ['champion', 'engineConfig', 'health'];
       allow write: if false;
     }
-    match /meta/optimizeReports/{report} {
+    // Berichte liegen in der Unter-Collection `berichte` des Dokuments
+    // `meta/optimizeReports` — ein Firestore-Dokumentpfad braucht eine GERADE
+    // Zahl an Segmenten, `meta/optimizeReports/{datum}` hätte drei (shared/src/berichte.ts).
+    match /meta/optimizeReports/berichte/{report} {
       allow read: if true;
       allow write: if false;
     }
