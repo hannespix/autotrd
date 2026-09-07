@@ -148,14 +148,20 @@ Functions-Deploy selbst (`--force`), `engineTick` legt er als Minutenjob an.
 
 **Vor dem Merge (Owner):**
 
-1. `firebase functions:secrets:set BROKER_MASTER_KEY` — muss existieren,
-   sonst bricht der Deploy ab. Gibt es das Secret schon, unbedingt dasselbe
-   behalten: Verschlüsselte Schlüssel im Tresor sind sonst unlesbar.
-   Klartext-Altbestand funktioniert weiter.
-2. `ALPACA_API_KEY`/`ALPACA_SECRET_KEY` als Functions-Secrets prüfen
-   (`firebase functions:secrets:access ALPACA_API_KEY`); Paper-Keys genügen.
-3. Dieselben beiden Paper-Keys als GitHub-Repo-Secrets für den Optimierer
-   (`optimize.yml`); `FIREBASE_SERVICE_ACCOUNT` gibt es bereits.
+1. `firebase functions:secrets:set BROKER_MASTER_KEY` — muss existieren, sonst
+   bricht der Deploy ab (neu: alle Callables binden es, `CALLABLE_OPTS`). Ob es
+   schon da ist, sagt der Schritt „Secret-Diagnose" im letzten Deploy-Log.
+   Gibt es das Secret bereits, dasselbe behalten. Neu anlegen ist unkritisch,
+   solange nie eine Function den Schlüssel gebunden hatte: Dann liegen alle
+   Broker-Geheimnisse als Klartext-Altbestand, den `entschluessle` unverändert
+   zurückgibt. Ab jetzt verschlüsselt `connectBroker` beim nächsten Verbinden.
+2. `ALPACA_API_KEY`/`ALPACA_SECRET_KEY` als Functions-Secrets: stehen bereits,
+   der alte `universumSync` band sie. Paper-Keys genügen (nur Marktdaten).
+3. Dieselben beiden Paper-Keys als **GitHub-Repo-Secrets** für den Optimierer
+   (`optimize.yml`). Das ist der einzige wirklich neue Schritt: Das Altsystem
+   brauchte die Alpaca-Keys nur als Functions-Secrets (`universumSync`).
+   `FIREBASE_SERVICE_ACCOUNT` gibt es bereits. Fehlen sie, überspringt der
+   nächtliche Lauf sich mit einer Warnung — ohne Champion handelt niemand.
 4. `ALPACA_ALLOW_LIVE` NICHT setzen — Echtgeld bleibt verriegelt.
 
 **Nach dem Merge, in dieser Reihenfolge:**

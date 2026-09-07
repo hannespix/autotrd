@@ -46,9 +46,20 @@ jobs:
           restore-keys: |
             bars-${{ hashFiles('config/platform.yaml') }}-
 
+      # Die Alpaca-Keys sind hier REPOSITORY-Secrets — das Altsystem brauchte sie
+      # nur als Functions-Secrets (universumSync), also sind sie neu anzulegen.
+      # Nächtlich fehlend ⇒ Warnung und Abbruch ohne Rot (sonst färbt sich das
+      # Repo jede Nacht rot, bis sie stehen); von Hand gestartet ⇒ harter Fehler,
+      # weil dann jemand ein Ergebnis erwartet.
       - name: Keys prüfen
+        id: keys
         run: |
           if [ -z "$ALPACA_API_KEY" ] || [ -z "$ALPACA_SECRET_KEY" ]; then
+            if [ "${{ github.event_name }}" = "schedule" ]; then
+              echo "::warning::ALPACA_API_KEY / ALPACA_SECRET_KEY fehlen als Repository-Secrets — Lauf übersprungen. Ohne Champion handelt niemand."
+              echo "skip=1" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             echo "::error::ALPACA_API_KEY / ALPACA_SECRET_KEY fehlen als Repository-Secrets."
             exit 1
           fi
@@ -56,9 +67,11 @@ jobs:
           chmod 600 "$RUNNER_TEMP/.env"
 
       - name: Bars und Kalender nachladen
+        if: steps.keys.outputs.skip != '1'
         run: node src/cli.ts fetch --config config/platform.yaml --env "$RUNNER_TEMP/.env" --home var
 
       - name: Walk-Forward-Optimierung
+        if: steps.keys.outputs.skip != '1'
         env:
           # Nie direkt in den Shell-Text interpolieren (Secreview 2, G5): Der Wert kommt als Umgebungsvariable
           # und muss eine ganze Zahl sein, sonst bricht der Schritt ab.
@@ -74,6 +87,7 @@ jobs:
           node src/cli.ts optimize --config config/platform.yaml --env "$RUNNER_TEMP/.env" --home var --equity 25000
 
       - name: Bericht als Artefakt
+        if: steps.keys.outputs.skip != '1'
         uses: actions/upload-artifact@v4
         with:
           name: optimize-report-${{ github.run_id }}
@@ -83,21 +97,21 @@ jobs:
           retention-days: 90
 
       - name: Service-Account bereitstellen
-        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        if: steps.keys.outputs.skip != '1' && env.FIREBASE_SERVICE_ACCOUNT != ''
         run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
 
       - name: Plattform-Config nach Firestore
-        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        if: steps.keys.outputs.skip != '1' && env.FIREBASE_SERVICE_ACCOUNT != ''
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
         run: node scripts/sync-engine-config.mjs --config config/platform.yaml
 
       - name: Champion und Bericht nach Firestore
-        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        if: steps.keys.outputs.skip != '1' && env.FIREBASE_SERVICE_ACCOUNT != ''
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
         run: node scripts/publish-champion.mjs --home var
 
       - name: Ohne Service-Account
-        if: env.FIREBASE_SERVICE_ACCOUNT == ''
+        if: steps.keys.outputs.skip != '1' && env.FIREBASE_SERVICE_ACCOUNT == ''
         run: echo "::warning::FIREBASE_SERVICE_ACCOUNT fehlt — Champion nur als Artefakt, nicht veröffentlicht."
