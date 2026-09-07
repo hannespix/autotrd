@@ -1,0 +1,140 @@
+name: Krypto-Probe (Erkundung, von Hand)
+
+# Walk-Forward über Krypto — als MESSUNG, nicht als Produktivlauf.
+#
+# ── Der Unterschied zu optimize.yml ───────────────────────────────────────
+#
+# optimize.yml veröffentlicht sein Ergebnis: `meta/engineConfig` und
+# `meta/champion`. Genau das darf hier NICHT passieren. Ein Krypto-Champion
+# in `meta/champion` würde die Engine aller eingeschalteten Nutzer beim
+# nächsten Takt auf Krypto umstellen — mit einer Assetklasse, die im
+# Vorgängersystem −1 133 $ gekostet hat und deren Kante hier gerade erst
+# geprüft wird.
+#
+# Dieser Workflow hat deshalb WEDER einen Service-Account NOCH die beiden
+# Veröffentlichungs-Schritte. Er kann Firestore nicht anfassen, auch nicht
+# versehentlich. Das Ergebnis ist ein Artefakt, das ein Mensch liest.
+#
+# Ein Krypto-Champion darf erst auf die Plattform, wenn er dieselbe
+# Walk-Forward-Prüfung bestanden hat UND das Konzentrations-Gate steht
+# (siehe docs/ARCHITEKTUR.md — ein einzelner starker Fold ist kein Beleg).
+
+on:
+  workflow_dispatch:
+    inputs:
+      config:
+        description: 'Welcher Zeitrahmen'
+        required: true
+        default: 'config/crypto-60.yaml'
+        type: choice
+        options:
+          - config/crypto-60.yaml
+          - config/crypto-1440.yaml
+      samples:
+        description: 'Stichproben je Fold (leer = Config)'
+        required: false
+        default: ''
+
+concurrency:
+  group: krypto-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+      ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+      CONFIG: ${{ github.event.inputs.config }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Abhängigkeiten installieren
+        run: npm ci
+
+      # Eigener Cache-Schlüssel: Krypto-Bars dürfen den Aktien-Cache von
+      # optimize.yml nicht überschreiben und umgekehrt.
+      - name: Bars-Cache wiederherstellen
+        uses: actions/cache@v4
+        with:
+          path: var-krypto/bars
+          key: krypto-bars-${{ hashFiles(github.event.inputs.config) }}-${{ github.run_id }}
+          restore-keys: |
+            krypto-bars-${{ hashFiles(github.event.inputs.config) }}-
+
+      # Doppelter Boden: Der choice-Eingang lässt ohnehin nur die zwei
+      # Krypto-Dateien zu — aber wenn jemand später eine Option ergänzt,
+      # soll ein Aktien-Universum hier hart abbrechen statt still zu laufen.
+      - name: Guard — ist das wirklich eine Krypto-Config?
+        run: |
+          if [ ! -f "$CONFIG" ]; then
+            echo "::error::Config nicht gefunden: $CONFIG"; exit 1
+          fi
+          if ! grep -qE '^[[:space:]]*assetClass:[[:space:]]*crypto[[:space:]]*$' "$CONFIG"; then
+            echo "::error::$CONFIG ist keine Krypto-Config (assetClass: crypto fehlt) — dieser Workflow ist nur dafür."
+            exit 1
+          fi
+          echo "Config: $CONFIG"
+
+      - name: Keys prüfen
+        run: |
+          if [ -z "$ALPACA_API_KEY" ] || [ -z "$ALPACA_SECRET_KEY" ]; then
+            echo "::error::ALPACA_API_KEY / ALPACA_SECRET_KEY fehlen als Repository-Secrets."
+            exit 1
+          fi
+          printf 'ALPACA_API_KEY=%s\nALPACA_SECRET_KEY=%s\nALPACA_ALLOW_LIVE=0\n' "$ALPACA_API_KEY" "$ALPACA_SECRET_KEY" > "$RUNNER_TEMP/.env"
+          chmod 600 "$RUNNER_TEMP/.env"
+
+      - name: Bars nachladen
+        run: node src/cli.ts fetch --config "$CONFIG" --env "$RUNNER_TEMP/.env" --home var-krypto
+
+      - name: Walk-Forward-Optimierung
+        env:
+          # Nie in den Shell-Text interpolieren (Secreview 2, G5): kommt als
+          # Umgebungsvariable und muss eine ganze Zahl sein.
+          SAMPLES_OVERRIDE: ${{ github.event.inputs.samples }}
+        run: |
+          if [ -n "$SAMPLES_OVERRIDE" ]; then
+            case "$SAMPLES_OVERRIDE" in
+              ''|*[!0-9]*) echo "::error::samples muss eine ganze Zahl sein: '$SAMPLES_OVERRIDE'"; exit 1 ;;
+            esac
+            echo "Hinweis: samples-Override ($SAMPLES_OVERRIDE) wird über die Config gesetzt."
+            sed -i "s/^  samples: .*/  samples: $SAMPLES_OVERRIDE/" "$CONFIG"
+          fi
+          node src/cli.ts optimize --config "$CONFIG" --env "$RUNNER_TEMP/.env" --home var-krypto --equity 25000
+
+      - name: Bericht als Artefakt
+        uses: actions/upload-artifact@v4
+        with:
+          name: krypto-probe-${{ github.run_id }}
+          path: |
+            var-krypto/champion.json
+            var-krypto/reports/optimize-*.md
+          retention-days: 90
+
+      - name: Ergebnis in der Zusammenfassung
+        if: always()
+        run: |
+          {
+            echo "## Krypto-Probe — $CONFIG"
+            echo
+            echo "**Nicht veröffentlicht.** Dieser Lauf schreibt nichts nach Firestore;"
+            echo "das Ergebnis liegt als Artefakt \`krypto-probe-${{ github.run_id }}\`."
+            echo
+            if [ -f var-krypto/champion.json ]; then
+              node -e '
+                const c = require("./var-krypto/champion.json");
+                const s = Object.keys(c.symbols ?? {});
+                const n = Object.keys(c.noTrade ?? {});
+                console.log("| | |"); console.log("|---|---|");
+                console.log("| Gehandelt | " + (s.length ? s.join(", ") : "_keins_") + " |");
+                console.log("| noTrade | " + (n.length ? n.join(", ") : "—") + " |");
+              '
+            else
+              echo "_Kein champion.json — der Lauf ist vor der Auswertung abgebrochen._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
