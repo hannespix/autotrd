@@ -16,26 +16,11 @@ jobs:
           cache: npm
       - name: Abhängigkeiten installieren
         run: npm ci
-      # functions/ hat ein EIGENES Lockfile (der Cloud-Build macht damit
-      # npm ci). Ein `npm install --workspace functions` schreibt nur das
-      # Root-Lockfile — dann ist hier alles grün und der Deploy bricht danach
-      # für ALLE Functions ab. Vor dem Merge prüfen, nicht danach.
-      - name: functions-Lockfile synchron?
-        run: node scripts-ci/check-functions-lock.mjs
       - name: Lint
         run: npm run lint
       - name: Typecheck
         run: npm run typecheck
-      - name: Tests (Vitest, inkl. Golden-Parity)
+      - name: Tests (Vitest)
         run: npm test
-
-      # Firestore-Emulator (firebase-tools) verlangt Java >= 21
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '21'
-      - name: Firestore-Rules-Tests (Emulator)
-        run: npm run test:rules
-
-      - name: Build (alle Workspaces)
+      - name: Build
         run: npm run build

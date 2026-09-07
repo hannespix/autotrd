@@ -2,7 +2,7 @@
   "name": "@autotrd/functions",
   "private": true,
   "version": "0.1.0",
-  "description": "Cloud Functions (Node 20, TS) — Scan-Engine, Forecaster, Trades, KI",
+  "description": "Cloud Functions (Node 22, TS) — Engine-Takt, Nutzer, Keys, Steuer",
   "type": "module",
   "main": "lib/functions/src/index.js",
   "scripts": {
@@ -10,10 +10,10 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "0.116.0",
     "@firebase/app": "0.14.4",
     "firebase-admin": "13.10.0",
     "firebase-functions": "6.6.0",
-    "zod": "4.4.3"
+    "yaml": "^2.9.0",
+    "zod": "^4.5.4"
   }
 }

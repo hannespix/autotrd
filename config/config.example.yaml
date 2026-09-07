@@ -1,0 +1,178 @@
+# ─────────────────────────────────────────────────────────────────────────
+# autotrd — Beispiel-Konfiguration (Schema: src/core/config.ts)
+#
+# Nach /etc/autotrd/config.yaml (Server) bzw. ./config.yaml (lokal) kopieren.
+# Secrets (Alpaca-Keys, Telegram) stehen NICHT hier, sondern in .env —
+# siehe .env.example. Jede Option ist kommentiert; die Werte sind die
+# empfohlenen Startwerte für einen Paper-Betrieb.
+#
+# Echtgeld-Doppel-Guard: broker.mode=live wirkt nur zusammen mit
+# ALPACA_ALLOW_LIVE=1 in .env UND einem Live-Key (AK…). Fehlt eines davon,
+# läuft der Prozess als Paper — ein Live-Key gegen Paper wird abgelehnt.
+# ─────────────────────────────────────────────────────────────────────────
+
+broker:
+  # paper | live — Paper ist der Default und bleibt es, bis die Live-Reife
+  # (autotrd readiness) erreicht ist.
+  mode: paper
+  # Datenfeed für Backtest UND Live: iex (kostenlos, nur IEX-Börse) oder sip
+  # (alle Börsen, kostenpflichtiges Alpaca-Datenabo). Immer derselbe Feed
+  # für Messung und Handel — sonst misst man etwas anderes, als man handelt.
+  feed: iex
+
+universe:
+  # us_equity | crypto. Krypto handelt 24/7 in UTC-Tagen, kein Short.
+  assetClass: us_equity
+  # Gehandelte Symbole in Alpaca-Schreibweise (max. 50). Liquide Werte mit
+  # engem Spread — bei IEX-Daten sind illiquide Titel lückenhaft.
+  symbols:
+    - SPY
+    - QQQ
+    - AAPL
+    - MSFT
+    - NVDA
+    - AMZN
+    - META
+    - GOOGL
+    - AMD
+    - TSLA
+  # Benchmark für Marktfilter der Strategien. Wird mitgeladen, nie gehandelt.
+  benchmark: SPY
+
+# Strategie-Zeitrahmen in Minuten: 1, 2, 3, 5, 10, 15, 30, 60 oder 1440
+# (Tagesbars). Höhere Zeitrahmen entstehen lokal aus 1-Minuten-Bars.
+timeframe: 5
+
+session:
+  # Keine Einstiege in den ersten X Minuten nach Eröffnung (Eröffnungsrauschen).
+  noEntryFirstMin: 5
+  # Keine Einstiege in den letzten X Minuten vor Schluss.
+  noEntryLastMin: 30
+  # Intraday-Strategien: X Minuten vor Schluss alles glattstellen.
+  flattenBeforeCloseMin: 5
+
+risk:
+  # Risiko je Trade in % der Equity — die Distanz Einstand ↔ Stop, nicht
+  # die Positionsgröße. 0.5 % heißt: Ein Stop-Fill kostet 0,5 % des Kontos.
+  riskPerTradePct: 0.5
+  # Deckel für eine einzelne Position in % der Equity.
+  maxPositionPct: 20
+  # Höchstzahl gleichzeitig offener Positionen (inkl. offener Einstiegs-Orders).
+  maxPositions: 4
+  # Brutto-Exposure (Summe aller |Positionen|) in % der Equity. 100 = kein Hebel.
+  maxGrossExposurePct: 100
+  # Tages-Notbremse: Ab diesem Tagesverlust (in %) wird alles glattgestellt
+  # und bis zum nächsten Handelstag pausiert.
+  maxDailyLossPct: 2
+  # Drawdown-Sperre vom Equity-Hoch (in %): Halt bis zu einem manuellen
+  # `autotrd resume`, das den Peak neu setzt und im Journal steht.
+  maxDrawdownPct: 10
+  # Leerverkäufe erlauben? Nur Aktien; Krypto kennt bei Alpaca kein Short.
+  allowShort: false
+  pdt:
+    # Pattern-Day-Trader-Regel respektieren: Unter minEquity höchstens
+    # maxDayTrades Daytrades in fünf Handelstagen — der vierte sperrt das Konto.
+    respect: true
+    # Equity-Schwelle der PDT-Regel (FINRA: 25 000 $).
+    minEquity: 25000
+    # Erlaubte Daytrades im 5-Tage-Fenster unterhalb der Schwelle (0–3).
+    maxDayTrades: 3
+
+strategy:
+  # Fallback-Strategie, wenn keine Champion-Datei (aus `autotrd optimize`) vorliegt:
+  # trend_donchian | momentum_pullback | mean_reversion
+  id: trend_donchian
+  # Feste Parameter für den Fallback (leer = Strategie-Defaults). Ausschließlich
+  # Zahlen, z. B. { channelLen: 20, atrLen: 14 } — siehe paramSpace der Strategie.
+  params: {}
+  # Ohne Champion handeln? false = ohne bestandene Walk-Forward-Prüfung wird
+  # NICHT gehandelt (Kein Handel ist ein reguläres Ergebnis). true nur für
+  # Paper-Erkundung.
+  allowWithoutChampion: false
+
+optimizer:
+  # Strategien, die der Walk-Forward-Optimierer gegeneinander prüft.
+  strategies:
+    - trend_donchian
+    - momentum_pullback
+    - mean_reversion
+  # Historie in Kalendertagen, die geladen und bewertet wird.
+  lookbackDays: 400
+  # In-Sample-Fenster je Fold (Kalendertage): hier wird gesucht.
+  isDays: 120
+  # Out-of-Sample-Fenster je Fold (Kalendertage): hier wird nur gemessen.
+  oosDays: 30
+  # Schrittweite der Folds (Kalendertage). = oosDays ⇒ lückenlose OOS-Kette;
+  # darf nicht größer als oosDays sein.
+  stepDays: 30
+  # Sperrzone zwischen IS und OOS in Bars, damit kein Zustand hinüberleckt.
+  # 0 = automatisch (Warmup der Strategie + maximale Haltedauer).
+  embargoBars: 0
+  # Zufalls-Stichproben aus dem Parameterraum je Fold (4–5000).
+  samples: 150
+  # Startwert des Zufallsgenerators — gleiche Config, gleiche Stichprobe.
+  seed: 42
+  # Mindestzahl OOS-Trades über alle Folds; darunter ist jede Kennzahl Rauschen.
+  minOosTrades: 60
+  # Anteil der Folds, die out-of-sample netto positiv sein müssen (0–1).
+  minFoldPositiveShare: 0.6
+  # Zielfunktion (Median über die Folds): sortino | sharpe | return_over_dd
+  objective: sortino
+  # Kosten-Stress: Der Kandidat muss auch bei ×Faktor Kosten bestehen.
+  stressCostMultiplier: 1.5
+  # Jüngste Kalendertage, die NIE zur Auswahl benutzt werden (nur Bericht).
+  holdoutDays: 60
+  # Champion nur ersetzen, wenn der Kandidat um diesen Faktor besser ist
+  # (0.1 = 10 % Marge) — sonst tauscht man Rauschen gegen Rauschen.
+  promotionMargin: 0.1
+  # Probabilistic Sharpe Ratio der verketteten Out-of-Sample-Tagesrenditen
+  # (gegen Sharpe 0): Wahrscheinlichkeit, dass die OOS-Kante echt ist.
+  minPsrOos: 0.9
+  # Deflated Sharpe (In-Sample, gegen die Zahl der Versuche) zusätzlich als
+  # hartes Gate (true) oder nur im Bericht (false). Die OOS-Kette ist bereits
+  # selektionsfrei; DSR bestraft breite Gitter mit toten Regionen doppelt.
+  dsrIsGate: false
+
+costs:
+  # Slippage je Seite in Basispunkten (Marktorder gegen den Spread).
+  slippageBps: 3
+  # Halber Spread je Seite in Basispunkten.
+  spreadBps: 2
+  # SEC-Gebühr auf Verkaufserlöse (Satz; wird jährlich angepasst).
+  secFeeRate: 0.0000278
+  # FINRA Trading Activity Fee je verkaufter Aktie …
+  finraTafPerShare: 0.000166
+  # … gedeckelt je Order (USD).
+  finraTafMax: 8.3
+  # Krypto-Taker-Gebühr in % (nur assetClass: crypto).
+  cryptoTakerPct: 0.25
+  # Leihkosten für Shorts in % p. a. (nur bei allowShort: true).
+  shortBorrowAnnualPct: 1
+
+engine:
+  # Abgleich Buch ↔ Broker (Positionen, Orders) alle X Sekunden.
+  reconcileEverySec: 60
+  # Karenz nach Bucket-Ende in Sekunden, bis die letzte Minuten-Bar da ist.
+  barGraceSec: 4
+  # Ohne frische Daten (Sekunden) keine neuen Einstiege — Exits laufen weiter.
+  maxDataAgeSec: 180
+  # Nach X Fehlern in Folge Halt (Grund: errors) bis `autotrd resume`.
+  maxConsecutiveErrors: 5
+  # Fremde Positionen beim Broker, die nicht im Buch stehen:
+  # halt = keine neuen Einstiege bis geklärt | adopt = übernehmen mit Schutz-Stop
+  onOrphan: halt
+
+notify:
+  # Telegram-Benachrichtigung (Fills, Halts, Fehler). Braucht TELEGRAM_BOT_TOKEN
+  # und TELEGRAM_CHAT_ID in .env; fehlen sie, landet alles nur im Log.
+  telegram: false
+
+status:
+  # HTTP-Status auf 127.0.0.1:<port> (GET /health, GET /status). 0 = aus.
+  # Nie öffentlich binden — der Status enthält Kontodaten.
+  httpPort: 8787
+
+paths:
+  # Ablage für State, Journal, Bars-Cache, Champion und Reports.
+  # Die Umgebungsvariable AUTOTRD_HOME überschreibt diesen Wert.
+  home: ./var

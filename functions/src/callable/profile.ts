@@ -9,15 +9,10 @@ import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import {
   DEFAULT_STRATEGY,
   RISIKO_VERSION,
-  applyVariantId,
-  buildPriors,
   istAktuelleRisikoVersion,
-  recommendedStart,
-  type GlobalAxisStats,
   type Strategy,
 } from '../../../shared/src/index.js';
-import { clampStrategyRisk } from '../core/rulesTrading.js';
-import { consumeQuota } from '../core/broker.js';
+import { consumeQuota } from '../core/quota.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 
 const DAILY_LIMIT = 60; // idempotent + 1 Call je Login — 60/Tag ist großzügig
@@ -52,7 +47,7 @@ export const ensureProfile = onCall(CALLABLE_OPTS, async (request) => {
   }
 
   const now = new Date().toISOString();
-  const strategy = await startStrategie();
+  const strategy = startStrategie();
   await ref.set({
     // Zugangsstufe (Owner-Auftrag 26.07.): NEUE Konten starten auf 'pending'
     // und dürfen ansehen, aber nicht handeln. Das Feld liegt bewusst außerhalb
@@ -85,36 +80,16 @@ export const ensureProfile = onCall(CALLABLE_OPTS, async (request) => {
 });
 
 /**
- * Die Startstrategie eines NEUEN Kontos (Owner-Wunsch 28.07.: „das Tool soll
- * sich als Gesamtes verbessern, nicht nur pro User").
+ * Die Startstrategie eines NEUEN Kontos: die Fabrik-Defaults.
  *
- * Bisher startete jedes Konto bei den Fabrik-Defaults und musste die
- * Erfahrung des Systems von null neu erarbeiten — bei einem Tuner, der
- * Signifikanz verlangt, sind das Wochen. Jetzt beginnt es dort, wo das
- * Kollektiv nachweislich steht.
- *
- * Drei Sicherungen, die das harmlos machen:
- *
- *  1. **Nur der Startpunkt.** Der lokale Tuner korrigiert danach wie bisher;
- *     nichts hier ersetzt eine lokale Signifikanzprüfung.
- *  2. **Höchstens eine Änderung je Achse** (`recommendedStart`) — sonst
- *     stapelten sich Effekte, die einzeln geprüft wurden und gemeinsam nie.
- *  3. **Die Risiko-Hülle läuft zuletzt.** Was ein Mensch über die Oberfläche
- *     nicht einstellen dürfte, kommt auch hier nicht durch.
- *
- * Fällt irgendetwas davon aus, gibt es die Defaults — ein Profil darf an
- * einer Empfehlung niemals scheitern.
+ * Bis zum Rückbau der Handelsplattform begann ein Konto dort, wo der
+ * kollektive Auto-Tuner (`meta/tuneGlobal`) nachweislich stand, geklemmt
+ * durch die Risiko-Hülle des alten Regelwerks. Tuner und Hülle sind mit der
+ * alten Engine gegangen; die Parameter, nach denen der neue Kern handelt,
+ * kommen aus `meta/champion` (Walk-Forward-Optimierer) — nicht aus dem
+ * Nutzerprofil. `settings.strategy` trägt hier nur noch, was die Oberfläche
+ * braucht (Watchlist, `engine.running`, Broker-Schalter).
  */
-async function startStrategie(): Promise<Strategy> {
-  const basis = structuredClone(DEFAULT_STRATEGY) as Strategy;
-  try {
-    const axes = (await getFirestore().doc('meta/tuneGlobal').get()).get('axes') as
-      | GlobalAxisStats
-      | undefined;
-    if (!axes) return basis;
-    for (const id of recommendedStart(buildPriors(axes))) applyVariantId(basis, id);
-    return clampStrategyRisk(basis);
-  } catch {
-    return basis;
-  }
+function startStrategie(): Strategy {
+  return structuredClone(DEFAULT_STRATEGY) as Strategy;
 }

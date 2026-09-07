@@ -1,7 +1,7 @@
 {
-  "name": "autotrd — Paper-Trading",
+  "name": "autotrd — Auto-Trader (Paper & Broker)",
   "short_name": "autotrd",
-  "description": "Automatisiertes Trading für Aktien, ETFs, Krypto, Rohstoffe & Devisen: Scans, Konfluenz-Signale, selbstlernende Prognosen. Paper- und Broker-Konten. Kein Finanzrat.",
+  "description": "Automatisiertes Trading für Aktien und ETFs: Auto-Trader mit walk-forward-geprüftem Champion, Risiko-Bremsen und Live-Dashboard. Paper- und Broker-Konten. Kein Finanzrat.",
   "id": "/",
   "start_url": "/",
   "scope": "/",

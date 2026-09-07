@@ -1,34 +1,17 @@
 /**
- * Audit-Befunde 11.08. (F9, F10, F11): Modulzustand überlebte das Abmelden.
+ * Modulzustand überlebt das Abmelden nicht (Audit-Befunde F9/F10/F11,
+ * fortgeschrieben für den Auto-Trader).
  *
- * ── Eine Ursache, drei Wirkungen ──────────────────────────────────────────
+ * `unmountDashboard` räumt, was im `st`-Objekt hängt. Alles, was als
+ * Modulvariable daneben liegt, bliebe sonst stehen und wäre beim nächsten
+ * Anmelden noch da — beim Nutzerwechsel auf demselben Gerät sähe der
+ * Nachfolger die Admin-Liste des Vorgängers, ein armierter Admin-Knopf
+ * feuerte mit seinem Timer in ein totes DOM, eine offene Kommando-
+ * Bestätigung träfe das falsche Konto.
  *
- * `unmountDashboard` räumte gründlich auf — aber nur, was im `st`-Objekt
- * hing. Alles, was als Modulvariable daneben liegt, blieb stehen und war
- * beim nächsten Anmelden noch da:
- *
- *  - **F11 (Listener-Leck):** `mtState.subs` hält einen `onSnapshot` auf den
- *    Kurs des zuletzt gewählten Handels-Symbols. Nach dem Abmelden lief er
- *    weiter — Firestore-Verbindung, Kosten, und ein Callback, das in ein
- *    geleertes DOM schreibt.
- *  - **F11 (scharfe Order):** `mtState.arm` ist der Zwei-Klick-Schutz mit
- *    Zeitfenster. Sein `setTimeout` feuerte nach dem Abmelden in Knöpfe, die
- *    es nicht mehr gibt.
- *  - **F9 (fremde Loadouts):** `eigeneLoadouts` und `loGewaehlt` gehören dem
- *    Konto. Meldet sich auf demselben Gerät jemand anders an, sah er bis zum
- *    ersten Nachladen die Loadouts seines Vorgängers.
- *  - **F10 (Tour einmal je Gerät):** `tourAutostartGeprueft` blieb `true`.
- *    Der zweite Nutzer bekam die Einführung nie zu sehen — genau der, der
- *    sie am nötigsten hätte.
- *
- * ── Warum das hier als Quelltext-Test steht ───────────────────────────────
- *
- * Die Funktion ist reines Aufräumen ohne Rückgabewert; ihr Ergebnis ist
- * modulinterner Zustand, den kein Test von außen sieht. Was prüfbar bleibt
- * und den Befund tatsächlich abdeckt: dass sie JEDE nutzergebundene
- * Modulvariable anfasst und dass `unmountDashboard` sie aufruft. Genau
- * daran hing der Fehler — nicht am Zurücksetzen selbst, sondern daran, dass
- * es niemand tat.
+ * Die Funktion ist reines Aufräumen ohne Rückgabewert; prüfbar bleibt, dass
+ * sie JEDE nutzergebundene Modulvariable anfasst und dass `unmountDashboard`
+ * sie aufruft — genau daran hing der ursprüngliche Fehler.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -44,55 +27,33 @@ const resetBlock = (): string => {
   return text.slice(ab, text.indexOf('\n}', ab));
 };
 
-describe('Das Trade-Fenster lässt nichts zurück', () => {
-  it('löst seine Listener', () => {
-    const b = resetBlock();
-    expect(b).toContain('for (const u of mtState.subs) u();');
-    expect(b).toContain('mtState.subs.length = 0;');
-  });
-
-  it('löscht den Timer der scharfen Order', () => {
-    /* Nicht nur `arm = null`: Der Timer läuft dann trotzdem und greift auf
-     * Knöpfe zu, die es nicht mehr gibt. */
-    const b = resetBlock();
-    expect(b).toContain('window.clearTimeout(mtState.arm.timer)');
-    expect(b).toContain('mtState.arm = null;');
-  });
-
-  it('vergisst Symbol und Kurs', () => {
-    const b = resetBlock();
-    expect(b).toContain('mtState.sym = null;');
-    expect(b).toContain('mtState.price = null;');
-  });
-});
-
 describe('Nutzergebundene Daten überleben den Wechsel nicht', () => {
   for (const [name, zuweisung] of [
-    ['Loadouts', 'eigeneLoadouts = [];'],
-    ['gewähltes Loadout', 'loGewaehlt = null;'],
-    ['bewährte Einstellungen', 'bestPractice = null;'],
-    ['Zeichnungen-Cache', 'zeichnungenCache = null;'],
-    ['Tour-Merker', 'tourAutostartGeprueft = false;'],
+    ['Admin-Liste', 'admZeilen = [];'],
+    ['offener Admin-Streifen', 'admOffenerStreifen = null;'],
+    ['offene Kommando-Bestätigung', 'cmdOffen = null;'],
+    ['Tabellen-Sortierung', 'sortZustand.jn = null;'],
   ] as const) {
     it(`${name} wird zurückgesetzt`, () => {
       expect(resetBlock()).toContain(zuweisung);
     });
   }
-});
 
-describe('Freilaufende Timer werden gestoppt', () => {
-  it('der Auflösungs-Timer', () => {
-    // Er hängt an keinem `st` und feuert nach dem Abmelden in eine
-    // Oberfläche, die es nicht mehr gibt.
-    const b = resetBlock();
-    expect(b).toContain('window.clearTimeout(autoResTimer)');
-    expect(b).toContain('autoResTimer = null;');
+  it('der armierte Admin-Knopf wird entschärft — samt Timer', () => {
+    /* Nicht nur `admArmiert = null`: Der Timer liefe dann trotzdem und
+     * griffe auf Knöpfe zu, die es nicht mehr gibt. admEntwaffne räumt
+     * beides. */
+    expect(resetBlock()).toContain('admEntwaffne();');
+    const text = quelle();
+    const ab = text.indexOf('function admEntwaffne(): void {');
+    const block = text.slice(ab, text.indexOf('\n}', ab));
+    expect(block).toContain('window.clearTimeout(admArmiert.timer);');
+    expect(block).toContain('admArmiert = null;');
   });
 
-  it('der Ereignis-Tooltip-Timer', () => {
-    const b = resetBlock();
-    expect(b).toContain('window.clearTimeout(evTipTimer)');
-    expect(b).toContain('evTipTimer = null;');
+  it('die anonymen document-Listener werden auf einmal gelöst', () => {
+    expect(resetBlock()).toContain('docListenerAbort?.abort();');
+    expect(resetBlock()).toContain('docListenerAbort = null;');
   });
 });
 
@@ -117,15 +78,33 @@ describe('Die Verdrahtung', () => {
     expect(reset).toBeLessThan(nullen);
   });
 
-  it('das Aufräumen der st-gebundenen Listener bleibt bestehen', () => {
-    // Der neue Teil ergänzt den alten, er ersetzt ihn nicht.
+  it('das Aufräumen der st-gebundenen Listener und Timer bleibt bestehen', () => {
+    // Der Modul-Reset ergänzt das Aufräumen, er ersetzt es nicht: Firestore-
+    // Abos (globale + je Positions-Symbol) und Timer hängen an `st`.
     const text = quelle();
     const ab = text.indexOf('export function unmountDashboard(): void {');
     const block = text.slice(ab, text.indexOf('st = null;', ab));
-    for (const feld of ['st.subs', 'st.symbolSubs', 'st.chart2Subs', 'st.watchlistSubs']) {
-      expect(block, feld).toContain(`clearSubs(${feld})`);
-    }
+    expect(block).toContain('for (const u of st.subs) u();');
     expect(block).toContain('for (const u of st.positionSubs.values()) u();');
     expect(block).toContain('for (const t of st.timers) clearInterval(t);');
+    expect(block).toContain("document.removeEventListener('keydown', onEscape);");
+  });
+
+  it('jedes Firestore-Abo des Mounts landet in st.subs — sonst überlebt es das Abmelden', () => {
+    const text = quelle();
+    const ab = text.indexOf('export function mountDashboard(');
+    const mount = text.slice(ab, text.indexOf('\nfunction onEscape', ab));
+    for (const w of ['watchUserDoc(', 'watchPositions(', 'watchTrades(', 'watchPortfolioStats(', 'watchEquitySeries(', 'watchHealth(', 'watchEngineConfig(', 'watchChampion(']) {
+      expect(mount, `${w} fehlt im Mount`).toContain(w);
+    }
+    const pushAb = mount.indexOf('st.subs.push(');
+    const pushBis = mount.indexOf('\n  );', pushAb);
+    const pushBlock = mount.slice(pushAb, pushBis);
+    for (const w of ['watchUserDoc(', 'watchPositions(', 'watchTrades(', 'watchPortfolioStats(', 'watchEquitySeries(', 'watchHealth(', 'watchEngineConfig(', 'watchChampion(']) {
+      expect(pushBlock, `${w} steht nicht in st.subs.push`).toContain(w);
+    }
+    // Die Kurs-Abos je Positions-Symbol haben ihre eigene Map — und die wird
+    // beim Unmount geleert (s. o.).
+    expect(text).toContain('st.positionSubs.set(');
   });
 });

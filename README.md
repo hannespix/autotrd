@@ -1,86 +1,129 @@
-# autotrd
+# autotrd — Alpaca-Auto-Trader (Neubau)
 
-**autotrd.net** — Paper-Daytrading-Plattform mit Live-Dashboard, technischer
-Konfluenz-Signalgebung, self-tunender Kursprognose und
-KI-News-Analyse. Multi-User, realtime, gebaut auf Firebase + TypeScript.
+Ein Handelskern, der bei **Alpaca** handelt: Entscheidungen aus
+parametrisierten Strategie-Vorlagen, Stops beim Broker (Bracket-Orders),
+nächtliche Walk-Forward-Selbstoptimierung mit strengen Gates. Derselbe Kern
+läuft in zwei Betriebsarten:
 
-> ⚠️ **Kein Finanzrat.** Standard ist Paper-Trading (simuliertes Geld).
-> Echtgeld-Anbindung ist bewusst mehrfach verriegelt (siehe MILESTONES M8).
+| Betriebsart | Wo | Für wen |
+|---|---|---|
+| **Plattform** (Standard) | Firebase-Function `engineTick` je Minute, Firestore als State, Login und Keys wie bisher auf autotrd.net, Optimierer nächtlich in GitHub Actions — keine Serverkosten | alle freigeschalteten Nutzer (`docs/PLATTFORM.md`) |
+| **Eigener Prozess** | `node src/cli.ts run` mit WebSocket-Streams, State als Dateien | Entwicklung, Backtests, Optimierer-Läufe, ein einzelner Betreiber (`docs/BETRIEB.md`) |
 
-## Die drei Dokumente (in dieser Reihenfolge lesen)
+Keine Charts, keine News, keine Prognose, keine KI-Erklärung — nur das, was
+zum Handeln, Absichern und Messen nötig ist.
 
-1. **[ARCHITECTURE.md](ARCHITECTURE.md)** — Zielarchitektur: TS-Monorepo,
-   Firebase (Auth/Firestore/Functions), Frontend auf webgo/autotrd.net,
-   GitHub-Actions-Deploy, Datenmodell, Security.
-2. **[MILESTONES.md](MILESTONES.md)** — Fahrplan M0–M8 **und der Coding-Loop**:
-   wie hier gearbeitet, verifiziert und committet wird.
-3. **[CLAUDE.md](CLAUDE.md)** — Fallen & Konventionen des bestehenden Codes
-   (flaches Schema, Lookahead-Gate, Wilder-RSI, Frontend-Regeln) — gelten
-   fachlich auch für die TS-Portierung.
+> ⚠️ **Kein Finanzrat. Kein Verfahren garantiert Gewinn.** Default ist das
+> Paper-Konto. Echtgeld braucht drei Bedingungen gleichzeitig
+> (`broker.mode: live`, `ALPACA_ALLOW_LIVE=1`, Live-Key `AK…`) und sollte erst
+> nach erfüllter Live-Reife (`autotrd readiness`) eingeschaltet werden.
 
-Zusätzlich: **[docs/SETUP.md](docs/SETUP.md)** — einmalige Owner-Einrichtung
-(Firebase-Projekt, GitHub Secrets, webgo-FTPS), damit Merge auf `main`
-automatisch deployt. Und **[docs/VISION.md](docs/VISION.md)** — die
-Produktvision hinter den Ausbau-Milestones M9–M14 (Linked Workspaces,
-Struktursuche im Regelbaum, Tagesfilm, Alpaca-Paper, Realtime-Streamer).
+> **Zu diesem Branch:** Er ist der komplette Neustart der Handelslogik. Die
+> bisherige Plattform bleibt unverändert auf `main`. Hier sind `functions/`,
+> `frontend/` und `shared/` auf den neuen Kern umgebaut (Login, Key-Tresor,
+> Nutzerverwaltung und Deploy-Pipelines bleiben); die alte Signal-Engine mit
+> Scan, Prognose, News und KI ist entfernt. Reste ohne Funktion (`reference/`,
+> `supabase/`, `rules-test/`, `ARCHITECTURE.md`, `MILESTONES.md`) werden nach
+> Freigabe des Owners in einem eigenen Commit gelöscht. Was aus dem Vorgänger
+> gelernt wurde, steht in `docs/ARCHITEKTUR.md`.
+
+## Was es tut
+
+| Schritt | Werkzeug |
+|---|---|
+| Marktdaten laden (1-Min- oder Tagesbars) und lokal auf den Strategie-Zeitrahmen aggregieren | `autotrd fetch` |
+| Strategie gegen die Historie simulieren — mit **demselben** Entscheidungspfad wie live | `autotrd backtest` |
+| Walk-Forward-Optimierung je Symbol × Strategie, Robustheits-Gates, Champion-Datei | `autotrd optimize` |
+| Handeln: Streaming-Bars → Entscheidung → Bracket-Order (Stop + Ziel beim Broker) → Abgleich | `autotrd run` |
+| Prüfen, überwachen, stoppen | `autotrd doctor`, `status`, `halt`, `resume`, `flatten`, `readiness` |
+
+Die Strategie-Vorlagen: `trend_donchian` (Ausbruch + ATR-Trailing),
+`momentum_pullback` (Trend + RSI-Rücksetzer), `mean_reversion` (RSI/z-Score
+im Aufwärtstrend), `orb_breakout` (Opening-Range, intraday, EOD-Flatten).
+Welche Vorlage mit welchen Parametern ein Symbol handelt, entscheidet der
+Optimierer — oder er entscheidet **„nicht handeln"** (`noTrade`), wenn kein
+Kandidat die Gates besteht.
+
+## Schnellstart
+
+```bash
+# Voraussetzung: Node ≥ 22.18 (führt TypeScript direkt aus)
+npm ci
+cp .env.example .env                  # Paper-Keys (PK…) eintragen
+cp config/config.example.yaml config/config.yaml
+
+npm run check                          # typecheck + lint + Tests
+node src/cli.ts doctor                 # Keys, Modus, Konto, Uhr, Assets, Cache
+node src/cli.ts fetch                  # Kalender + Bars (optimizer.lookbackDays)
+node src/cli.ts optimize               # ⇒ var/champion.json + var/reports/optimize-*.md
+node src/cli.ts backtest               # Champion gegen den Cache
+node src/cli.ts run                    # Engine (Paper)
+```
+
+Produktiv als eigener Prozess: `npm run build` und `node dist/cli.js …`, als
+systemd-Dienst oder Container (siehe `ops/`).
+
+## Betrieb als Plattform (autotrd.net)
+
+Der Handelskern läuft für alle freigeschalteten Nutzer als Firebase-Function
+je Minute (`functions/src/scheduled/engineTick.ts`): Lease, Kalender, ein
+gemeinsamer Marktdaten-Abruf, dann je Nutzer Engine bauen, abgleichen,
+entscheiden, Orders senden, Journal und Spiegel nach Firestore schreiben.
+Stops liegen beim Broker, deshalb reicht der Minutentakt. Der nächtliche
+Optimierer läuft in GitHub Actions (`.github/workflows/optimize.yml`) und
+veröffentlicht den Champion nach `meta/champion`; ohne Champion handelt
+niemand. Nutzer stellen im Frontend nur Risiko und Grenzen ein
+(`settings.auto`), Strategie und Parameter entscheidet der Champion für alle.
+Einrichtung, Ablauf und Betriebsregeln: `docs/PLATTFORM.md`.
+
+## Sicherheitsregeln (nicht verhandelbar)
+
+- **Echtgeld-Doppel-Guard** — fehlt eine der drei Bedingungen, läuft alles
+  gegen Paper. Ein Live-Key gegen Paper wird abgelehnt.
+- **Stops liegen beim Broker.** Jeder Einstieg ist eine Bracket-Order; der
+  Abgleich setzt fehlende Schutz-Stops nach. Stirbt der Prozess, bleiben die
+  Stops.
+- **Exits werden nie gesperrt.** Halt, PDT, Datenalter und Positionslimit
+  blockieren nur Einstiege.
+- **Tages-Notbremse und Drawdown-Halt** stellen glatt; der Tages-Halt endet
+  von selbst am nächsten Handelstag, der Drawdown-Halt nur über
+  `autotrd resume --ack-drawdown`.
+- **Not-Aus**: `autotrd halt` (keine Einstiege) oder `autotrd flatten --yes`
+  (alles schließen). Beides setzt die Datei `HALT` im State-Verzeichnis, die
+  die laufende Engine jede Sekunde prüft.
+- **PDT-Regel** unter 25 000 $ Equity ist ein Gate, keine Anzeige.
+- **Keys** stehen nur in `.env`, werden nie geloggt (Schwärzung).
+
+## Validierung
+
+`docs/VALIDIERUNG.md` beschreibt das Protokoll: rollierendes Walk-Forward mit
+Embargo und unangetastetem Holdout, Kosten inklusive Stress ×1,5, Gates
+(Mindest-Trades, Fold-Anteil, Stress, Nachbarschafts-Plateau, Probabilistic
+Sharpe ≥ 0,9 auf der OOS-Kette, Gebührenanteil ≤ 0,5; Deflated Sharpe
+informativ), Champion/Challenger mit Marge. Backtest und
+Live rechnen über `src/core/logic.ts` — dieselbe Funktion.
 
 ## Repo-Layout
 
 ```
-frontend/    SPA (Vite+TS, Firebase SDK) → FTPS-Deploy auf autotrd.net   [ab M1]
-functions/   Cloud Functions: Scan-Engine, Forecaster, Trades, KI        [ab M1]
-shared/      Geteilte Typen — das flache Strategie-/Firestore-Schema
-reference/   ⭐ Lauffähige Python-Referenz (der bisherige Single-User-Bot)
-             + golden/ Fixtures für Parity-Tests. Wird erst eingefroren,
-             wenn TS nachweislich gleich rechnet (MILESTONES M5).
-firestore.rules · firebase.json · .github/workflows/   Infrastruktur
+src/core       Typen, Config (zod), ET-Zeit/DST, Bars, Session, Entscheidungspfad, Journal
+src/risk       Sizing auf Equity, Tages-/Drawdown-Halt, PDT
+src/alpaca     REST-Client, WebSocket-Streams, Symbol-Mapping
+src/data       Bars-Cache, Backfill, Kalender
+src/strategy   Indikatoren (kausal) + Vorlagen
+src/backtest   Portfolio-Simulator, Kosten, Metriken (Sharpe/Sortino/PSR/DSR)
+src/optimize   Walk-Forward, Gates, Champion/Challenger, Report
+src/engine     Buch, Orders, Abgleich, Uhr, Schleife
+src/notify     Telegram · src/status Status-HTTP (127.0.0.1) · src/readiness.ts Live-Reife
+src/cli.ts     Kommandos · config/ Vorlage + platform.yaml · ops/ Docker+systemd · docs/ Architektur, Validierung, Betrieb, Plattform
+test/          vitest (keine Netzwerkzugriffe, keine Keys)
+functions/     Firebase: engineTick (Takt je Minute), Firestore-Adapter, engineCommand, Login/Keys/Admin wie bisher
+frontend/      Vite-Frontend: Login, Broker-Keys, Auto-Trader-Einstellungen, Positionen, Historie, Champion, Status
+shared/        Von functions und frontend geteilte Typen/Validierung (settings.auto)
+scripts/       publish-champion, sync-engine-config (Optimierer-Workflow → Firestore)
 ```
 
-## Lokal entwickeln (TS-Zielsystem)
-
-```bash
-npm ci                       # installiert alle Workspaces (shared/functions/frontend)
-
-npm run lint                 # ESLint über das ganze Repo
-npm run typecheck            # tsc strict in allen Workspaces
-npm test                     # Vitest (shared-Tests, später Parity-Tests)
-npm run build                # baut shared + functions + frontend
-
-# Emulator-Suite (Auth :9099, Firestore :8081, Functions :5001, UI :4000).
-# Ohne echtes Firebase-Projekt mit einer demo-Projekt-ID starten:
-npm run build -w functions
-npx firebase emulators:start --project demo-autotrd
-curl localhost:5001/demo-autotrd/us-central1/healthz   # Smoke: {"ok":true,…}
-
-# Frontend-Dev-Server (http://localhost:5173):
-cp frontend/.env.example frontend/.env.local   # Werte eintragen — ODER:
-# VITE_FIREBASE_USE_EMULATORS=1 setzen, dann reichen Dummy-Werte und
-# Login/Registrierung laufen gegen den lokalen Auth-Emulator.
-npm run dev -w frontend
-```
-
-Ohne Firebase-Web-Config zeigt das Frontend einen Einrichtungs-Hinweis statt
-des Logins — fehlende Config bricht also nichts.
-
-## Python-Referenz lokal laufen lassen
-
-```bash
-cd reference
-python -m venv .venv && . .venv/bin/activate      # Python 3.11–3.13
-pip install -r requirements.txt
-mkdir -p ~/.hermes/trading
-cp config/strategy.example.yaml ~/.hermes/trading/strategy.yaml
-python scripts/trading_dashboard.py               # ► http://localhost:8080
-# Optional als Dienst: bash deploy/install.sh (systemd --user Units)
-```
-
-Secrets: `.env.example` → `~/.hermes/.env` (Referenz) bzw. GitHub Secrets /
-Firebase Secret Manager (Zielsystem). **Nie committen.**
-
-## Für Claude Code
-
-> Lies ARCHITECTURE.md, CLAUDE.md und MILESTONES.md. Arbeite nach dem
-> Coding-Loop aus MILESTONES.md am ersten nicht abgehakten Milestone.
+Für Claude Code und Mitwirkende: **`CLAUDE.md`** (Regeln, Fallen, Arbeitsweise).
 
 ## Lizenz / Haftung
 

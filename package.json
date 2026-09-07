@@ -1,34 +1,44 @@
 {
   "name": "autotrd",
   "private": true,
-  "version": "0.1.0",
-  "description": "autotrd.net — Paper-Daytrading-Plattform (Firebase + TypeScript)",
+  "version": "2.0.0",
+  "description": "autotrd — schlanker Alpaca-Auto-Trader mit Walk-Forward-Selbstoptimierung",
+  "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.18"
   },
   "workspaces": [
     "shared",
     "functions",
     "frontend"
   ],
-  "overrides": {
-    "uuid": "^11.1.1"
+  "bin": {
+    "autotrd": "dist/cli.js"
   },
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
-    "typecheck": "npm run typecheck --workspaces --if-present",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "lint": "eslint .",
     "test": "vitest run",
-    "chart:shot": "node frontend/e2e/chart-shot.mjs",
-    "smoke:bundle": "node frontend/e2e/preview-smoke.mjs",
-    "emulators": "npm run build -w functions && FUNCTIONS_DISCOVERY_TIMEOUT=60 firebase emulators:start",
-    "test:rules": "firebase emulators:exec --only firestore --project demo-rules \"vitest run --config vitest.rules.config.ts\""
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm run lint && npm test",
+    "autotrd": "node src/cli.ts",
+    "doctor": "node src/cli.ts doctor",
+    "fetch": "node src/cli.ts fetch",
+    "backtest": "node src/cli.ts backtest",
+    "optimize": "node src/cli.ts optimize",
+    "run": "node src/cli.ts run",
+    "status": "node src/cli.ts status",
+    "flatten": "node src/cli.ts flatten"
+  },
+  "dependencies": {
+    "yaml": "^2.9.0",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@firebase/rules-unit-testing": "^5.0.1",
+    "@types/node": "^22.19.0",
     "eslint": "^10.7.0",
-    "firebase-tools": "^15.24.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.65.0",
     "vitest": "^4.1.10"

@@ -1,12 +1,12 @@
 /**
  * Tests für den Tages-Läufe-Anstoß (invoke-daily.mjs).
  *
- * Warum das getestet gehört: Dieses Skript ist derzeit der EINZIGE Weg, auf
- * dem snapshotEquity und evalForecasts live überhaupt laufen —
- * es gibt im Projekt keinen Cloud-Scheduler-Job (Diagnose 27.07.). Wenn die
- * Ablauflogik hier kippt, bleiben Performance-Kurve, Prognose-Genauigkeit und
- * Prognose-Labor still leer, ohne dass irgendwo etwas rot wird. Genau dieser
- * lautlose Ausfall war der Fehler, den der Owner gemeldet hat.
+ * Warum das getestet gehört: Dieses Skript war lange der EINZIGE Weg, auf
+ * dem snapshotEquity live überhaupt lief — es gab im Projekt keinen
+ * Cloud-Scheduler-Job (Diagnose 27.07.). Wenn die Ablauflogik hier kippt,
+ * bleibt die Performance-Kurve still leer, ohne dass irgendwo etwas rot
+ * wird. Genau dieser lautlose Ausfall war der Fehler, den der Owner gemeldet
+ * hat.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -190,19 +190,24 @@ describe('runDaily', () => {
 });
 
 /**
- * Die Lauf-Liste selbst (04.08.).
+ * Die Lauf-Liste selbst.
  *
  * Warum das geprüft gehört: `RUNS` ist der Unterschied zwischen „läuft" und
  * „läuft nicht" — und ein fehlender Eintrag erzeugt keinen Fehler, sondern
- * Stille. Genau daran hing der Kern-Satellit: `engine.corePct` war gesetzt,
- * aber der einzige Lauf, der den Sockel kauft, wurde beim Deploy nicht
- * angestoßen. Im Dashboard sieht das exakt aus wie ein Sockel, der bewusst
- * in Cash steht.
+ * Stille. Nach dem Rückbau der Handelsplattform bleibt genau ein Tageslauf:
+ * der Equity-Snapshot, der Performance-Kurve und Kennzahlen füllt.
  */
 describe('RUNS', () => {
-  it('enthält den Momentum-Lauf — er kauft den Sockel', () => {
+  it('enthält den Equity-Snapshot — er füllt die Performance-Kurve', () => {
     const services = RUNS.map((r) => r.service);
-    expect(services, 'momentumrun muss beim Deploy mit angestoßen werden').toContain('momentumrun');
+    expect(services, 'snapshotequity muss beim Deploy angestoßen werden').toContain('snapshotequity');
+  });
+
+  it('enthält keinen der gelöschten Läufe mehr', () => {
+    const services = RUNS.map((r) => r.service);
+    for (const weg of ['evalforecasts', 'universumsyncnow', 'momentumrun', 'kibericht']) {
+      expect(services, `${weg} ist mit der Handelsplattform gegangen`).not.toContain(weg);
+    }
   });
 
   it('jeder Lauf hat eine Spur-Funktion — HTTP 200 beweist nichts', () => {
@@ -212,26 +217,5 @@ describe('RUNS', () => {
       expect(typeof r.spur, `${r.service} ohne spur()`).toBe('function');
       expect(r.label?.length ?? 0, `${r.service} ohne Label`).toBeGreaterThan(0);
     }
-  });
-
-  it('der Momentum-Lauf ist optional — er darf keinen Deploy rot machen', () => {
-    // Der Cloud Scheduler fährt ihn ohnehin täglich; ein Fehlschlag beim
-    // Deploy ist ärgerlich, aber kein Grund, das Release zu blockieren.
-    const mom = RUNS.find((r) => r.service === 'momentumrun');
-    expect(mom?.optional).toBe(true);
-  });
-
-  it('der Universum-Sync steht VOR dem Momentum-Lauf und druckt seine Antwort', () => {
-    // Anlass (13.08., #123): meta/alpacaUniversum wurde seit #246 NIE
-    // geschrieben — der Grund stand nur in Cloud Logging. Die Rangliste liest
-    // die Blöcke, die der Sync schreibt: Reihenfolge ist Ausführungsreihenfolge.
-    const services = RUNS.map((r) => r.service);
-    const uni = services.indexOf('universumsyncnow');
-    expect(uni, 'universumsyncnow fehlt in RUNS').toBeGreaterThanOrEqual(0);
-    expect(uni).toBeLessThan(services.indexOf('momentumrun'));
-    const run = RUNS.find((r) => r.service === 'universumsyncnow');
-    expect(run?.optional).toBe(true);
-    // logBody: Die HTTP-Antwort IST die Diagnose ({ok:false, grund:…}).
-    expect(run?.invokeOpts).toEqual({ logBody: true });
   });
 });

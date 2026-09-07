@@ -1,0 +1,55 @@
+# autotrd — systemd-Unit. Installation: ops/README.md
+#   install -m 644 ops/autotrd.service /etc/systemd/system/autotrd.service
+#   systemctl daemon-reload && systemctl enable --now autotrd
+[Unit]
+Description=autotrd — Alpaca-Auto-Trader
+Documentation=file:///opt/autotrd/docs/BETRIEB.md
+After=network-online.target
+Wants=network-online.target
+# Kein Startlimit: Nach einem Absturz soll die Engine immer wieder hochkommen.
+# Ein Neustart ist idempotent — Positionen bleiben beim Broker geschützt.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=autotrd
+Group=autotrd
+WorkingDirectory=/opt/autotrd
+# Secrets NUR hier (ALPACA_API_KEY, ALPACA_SECRET_KEY, ALPACA_ALLOW_LIVE, TELEGRAM_*).
+EnvironmentFile=/etc/autotrd/.env
+Environment=NODE_ENV=production
+Environment=AUTOTRD_HOME=/var/lib/autotrd
+ExecStart=/usr/bin/node dist/cli.js run --config /etc/autotrd/config.yaml
+Restart=always
+RestartSec=10
+# SIGINT = geordneter Stopp: laufende Arbeit abschließen, Journal schreiben.
+# Es wird NICHT glattgestellt — Stops liegen beim Broker und schützen weiter.
+KillSignal=SIGINT
+KillMode=mixed
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=autotrd
+
+# ── Härtung ────────────────────────────────────────────────────────────────
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+# Einziger beschreibbarer Ort: State, Journal, Bars-Cache, Champion, Reports.
+ReadWritePaths=/var/lib/autotrd
+StateDirectory=autotrd
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+UMask=0077
+# MemoryDenyWriteExecute NICHT setzen: Node/V8 (JIT) braucht W+X-Speicher.
+
+[Install]
+WantedBy=multi-user.target

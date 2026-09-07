@@ -1,0 +1,99 @@
+/**
+ * Öffentliche Schnittstelle des Optimierers.
+ *
+ * Einstieg für die CLI:
+ *   const deps = await loadDefaultDeps();          // Backtester + Strategien
+ *   const out = runOptimization({ ...deps, config, symbols, strategies, barsFor, home, initialEquity });
+ */
+export { objectiveValue, median, mean, sampleVariance, perPeriodSharpe, OBJECTIVE_CAP, PERFECT_WINDOW_BASE, type ObjectiveId } from './objective.ts';
+export {
+  mulberry32,
+  gridSize,
+  axisCount,
+  axisValue,
+  axisValues,
+  axisIndex,
+  paramKey,
+  snapToGrid,
+  sampleParams,
+  neighbors,
+} from './search.ts';
+export {
+  MIN_FOLDS,
+  buildFolds,
+  dataRangeOf,
+  foldPlanForBars,
+  lowerBound,
+  embargoBarsFor,
+  embargoedEnd,
+  candidateRange,
+  simulateWindow,
+  aggregateOos,
+  minIsTrades,
+  walkForward,
+  oosScoreOnFolds,
+  fixedParamsWfa,
+  type SimConfig,
+  type SimInput,
+  type SimulateFn,
+  type TimeRange,
+  type Fold,
+  type FoldPlan,
+  type WindowSimArgs,
+  type OosPiece,
+  type OosAggregate,
+  type WfaCandidate,
+  type WfaFoldResult,
+  type WfaResult,
+  type WalkForwardArgs,
+} from './walkForward.ts';
+export {
+  NEIGHBOR_MEDIAN_RATIO,
+  NEIGHBOR_POSITIVE_SHARE,
+  DSR_THRESHOLD,
+  PSR_THRESHOLD,
+  FEE_SHARE_MAX,
+  DSR_MIN_RETURNS,
+  DSR_VAR_SR_FALLBACK,
+  stressTest,
+  neighborhoodTest,
+  deflatedSharpeIs,
+  probabilisticSharpeOos,
+  gateOptions,
+  robustnessGates,
+  type MetricsFns,
+  type GateResult,
+  type GateInput,
+  type StressResult,
+  type NeighborhoodResult,
+  type DsrResult,
+  type DsrVarSource,
+  type PsrResult,
+} from './robustness.ts';
+export {
+  emptyChampionFile,
+  fitEndOf,
+  loadChampion,
+  saveChampion,
+  decidePromotion,
+  applyDecision,
+  journalDecision,
+  finiteOrNull,
+  type ChampionEntry,
+  type ChampionFile,
+  type NoTradeEntry,
+  type PromotionAction,
+  type PromotionDecision,
+  type PromotionInput,
+} from './promote.ts';
+export { renderReport, writeReport, isoDay, num, type ReportMeta } from './report.ts';
+export {
+  runOptimization,
+  loadDefaultDeps,
+  type OptimizeDeps,
+  type OptimizeRunInput,
+  type OptimizeRunOutput,
+  type IncumbentEval,
+  type StrategyRun,
+  type SymbolRun,
+} from './run.ts';

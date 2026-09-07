@@ -1,234 +1,57 @@
 /**
  * Datenschicht — ausschließlich Firestore (`onSnapshot`/`getDocs`) und
- * Callables; kein fetch-Polling, kein /api/* (MILESTONES M3).
+ * Callables; kein fetch-Polling, kein /api/*.
+ *
+ * Was hier steht, ist genau das, was der Engine-Takt (`functions/src/engine`)
+ * schreibt und was die bleibenden Callables anbieten:
+ *
+ *   users/{uid}                 settings.strategy.engine.running (Schalter),
+ *                               settings.auto (Risiko), wallet, engine (Spiegel)
+ *   users/{uid}/positions       Positions-Docs im alten Schema (+ Engine-Felder)
+ *   users/{uid}/trades          zwei Fills je abgeschlossenem Trade
+ *   users/{uid}/equity, stats   Tages-Snapshots und Kennzahlen (snapshotEquity)
+ *   market/{sym}.quote          letzter Close je Takt
+ *   meta/health, engineConfig, champion, optimizeReports/{date}
  */
 
 import {
   accessLevelOf,
   type AccessLevel,
-  type ErkenntnisChronik,
-  type GlobalAxisStats,
-  type KiBerichtDoc,
+  type AutoSettings,
   type KanteJeTrade,
   type Position,
   type Quote,
-  type ReibungJeKlasse,
   type ReifeBefund,
-  type SchattenKlasse,
   type Steuerbericht,
   type Strategy,
   type Wallet,
 } from '@autotrd/shared';
 import {
   collection,
-  deleteDoc,
   doc,
-  getDoc,
   getDocs,
   limit,
   onSnapshot as fsOnSnapshot,
   orderBy,
   query,
-  setDoc,
   startAfter,
-  updateDoc,
-  where,
-  documentId,
   type QueryDocumentSnapshot,
   type Unsubscribe,
 } from 'firebase/firestore';
-
-// ── Listener-Buchhaltung (M9): jeder onSnapshot läuft über diesen Wrapper,
-// damit Panel-Wechsel nachweislich keine Listener leaken (E2E-Zähler).
-// Der Zähler liegt in listeners.ts statt hier, damit ihn auch Module
-// hochzählen können, die data.ts nicht importieren.
-import { listenerCount, trackListener } from './listeners.js';
-
-export { listenerCount };
-
-const onSnapshot = ((...args: Parameters<typeof fsOnSnapshot>): Unsubscribe =>
-  trackListener(
-    (fsOnSnapshot as (...a: unknown[]) => Unsubscribe)(...args),
-  )) as typeof fsOnSnapshot;
 import { connectFunctionsEmulator, getFunctions, httpsCallable } from 'firebase/functions';
 import { getApp } from 'firebase/app';
 import { db } from './firebase.js';
 import { muxWatch } from './mux.js';
-import type { ChartBar } from './chart.js';
+import { listenerCount, trackListener } from './listeners.js';
 
-export interface MarketDocData {
-  name?: string;
-  assetClass?: string;
-  quote?: Quote;
-  /** News-Lage (News-Rückkehr 29.07.): Veto-Grundlage + Schlagzeilen-Anzeige. */
-  news?: import('@autotrd/shared').NewsSnapshot | null;
-  forecast?: {
-    points: Array<{ time: string; value: number }>;
-    band: Array<{ time: string; upper: number; lower: number }>;
-    lookback: number;
-    predictedPct: number;
-    baseDate: string;
-    /** Band-Kalibrierung aus realisierter Fehlerverteilung (null = ±1σ Regression). */
-    calib?: { s: number; maePct: number; n: number } | null;
-  } | null;
-  /** Kurzfrist-Prognose (nächste Stunde, 5-min-Raster) — je Scan erneuert. */
-  forecastIntraday?: {
-    points: Array<{ t: number; value: number }>;
-    band: Array<{ t: number; upper: number; lower: number }>;
-    lookback: number;
-    predictedPct: number;
-    baseT: number;
-    updatedAt: string;
-    calib?: { s: number; maePct: number; n: number } | null;
-  } | null;
-}
+export { listenerCount };
 
-/** Aggregat je Lookback-Fenster — Rohmaterial des Self-Tunings. */
-export interface ComboStatRow {
-  n: number;
-  hits: number;
-  maeSum: number;
-}
-
-export interface ForecastStatsDoc {
-  scored?: number;
-  dirAccuracy?: number | null;
-  best?: { lookback: number };
-  tuningActive?: boolean;
-  combos?: Record<string, ComboStatRow>;
-  updatedAt?: string;
-}
-
-export function watchForecastStats(cb: (stats: ForecastStatsDoc | null) => void): Unsubscribe {
-  return muxWatch(
-    'forecastStats',
-    (emit) =>
-      onSnapshot(doc(db(), 'meta', 'forecastStats'), (snap) =>
-        emit(snap.exists() ? snap.data() : null),
-      ),
-    (p) => cb(p as ForecastStatsDoc | null),
-  );
-}
-
-/** Kurzfrist-Lernstatistik (meta/forecastStatsIntraday) — gleiche Struktur. */
-export function watchForecastStatsIntraday(
-  cb: (stats: ForecastStatsDoc | null) => void,
-): Unsubscribe {
-  return muxWatch(
-    'forecastStatsIntraday',
-    (emit) =>
-      onSnapshot(doc(db(), 'meta', 'forecastStatsIntraday'), (snap) =>
-        emit(snap.exists() ? snap.data() : null),
-      ),
-    (p) => cb(p as ForecastStatsDoc | null),
-  );
-}
-
-/** Was die Engine im letzten Scan angefasst hat — zwei Tiefen, eine Quelle. */
-export interface WatchScope {
-  /** Tief analysiert: 5-min-Kerzen, Indikatoren, Prognose, Handelsentscheidung. */
-  symbols: string[];
-  /** Katalog-Symbole mit offenem Markt in diesem Scan. */
-  catalogOpen: number;
-  /** Davon frisch bekurst (Spark-Bündel). Weicht ab ⇒ ein Chunk hat gepatzt. */
-  catalogQuotes: number;
-}
-
-/**
- * Die Symbole, die die Engine gerade beobachtet und handelt.
- *
- * Quelle ist der Heartbeat des Scans, nicht eine gespeicherte Auswahl: Was
- * das Dashboard zeigt, MUSS das sein, was die Engine tatsächlich anfasst.
- * Bis 28.07. war es eine handverlesene Watchlist — die Anzeige konnte also
- * Symbole zeigen, die längst nicht mehr gehandelt wurden, und umgekehrt.
- *
- * `symbols` ist dabei nur die TIEFE Stufe. Kurse bekommt seit dem
- * Batch-Umbau der ganze Katalog bei jedem Scan (Owner-Frage: „kann das tool
- * nicht alles immer parallel beobachten?"); `catalogOpen`/`catalogQuotes`
- * machen das sichtbar, statt es dem Nutzer als „nur xx Symbole" zu zeigen.
- */
-export function watchWatchedSymbols(cb: (scope: WatchScope) => void): Unsubscribe {
-  return muxWatch(
-    'watched',
-    (emit) =>
-      onSnapshot(doc(db(), 'meta', 'health'), (snap) =>
-        emit(
-          snap.exists()
-            ? {
-                symbols: (snap.get('watched') as string[] | undefined) ?? [],
-                catalogOpen: (snap.get('catalogOpen') as number | undefined) ?? 0,
-                catalogQuotes: (snap.get('catalogQuotes') as number | undefined) ?? 0,
-              }
-            : { symbols: [], catalogOpen: 0, catalogQuotes: 0 },
-        ),
-      ),
-    (p) => cb(p as WatchScope),
-  );
-}
-
-/** Bewertete Shadow-Prognose (market/{sym}/forecasts) fürs Prognose-Labor. */
-export interface EvaluatedForecastRow {
-  baseDate: string;
-  lookback: number;
-  predictedPct: number;
-  evaluated: boolean;
-  evaluatedAt?: string;
-  maePct?: number;
-  dirHit?: boolean;
-  nPoints?: number;
-}
-
-/**
- * Letzte bewertete Prognosen eines Symbols (Vorhersage vs. Realität).
- * orderBy(evaluatedAt) filtert implizit auf bewertete Docs — unbewertete
- * haben das Feld nicht und fehlen im Index (kein Composite-Index nötig).
- */
-export function watchEvaluatedForecasts(
-  symbol: string,
-  cb: (rows: EvaluatedForecastRow[]) => void,
-): Unsubscribe {
-  return muxWatch(
-    `fclab:${symbol}`,
-    (emit) => {
-      const q = query(
-        collection(db(), 'market', symbol, 'forecasts'),
-        orderBy('evaluatedAt', 'desc'),
-        limit(8),
-      );
-      return onSnapshot(q, (snap) => emit(snap.docs.map((d) => d.data())));
-    },
-    (p) => cb(p as EvaluatedForecastRow[]),
-  );
-}
-
-export interface SignalRow {
-  direction: 'buy' | 'sell' | 'hold';
-  buyVotes: number;
-  sellVotes: number;
-  requiredConfluence: number;
-  /**
-   * Stimme je Quelle. `forecast` gehört dazu, auch wenn es lange fehlte
-   * (22.08.): Der Server schreibt den Schlüssel längst, der Client-Typ kannte
-   * ihn nicht — und ohne ihn summieren die Einzelstimmen einer Erklärung
-   * nicht auf die angezeigte Gesamtzahl.
-   *
-   * FEHLT ein Schlüssel, wurde diese Quelle NICHT gerechnet (bei `forecast`
-   * etwa, weil ihr Gewicht 0 war). Das ist etwas anderes als `'hold'`, was
-   * heißt: gerechnet, aber ohne Ausschlag. Wer beides gleich behandelt,
-   * erfindet eine Begründung.
-   */
-  votes: Partial<Record<'rsi' | 'macd' | 'bollinger' | 'forecast', 'buy' | 'sell' | 'hold'>>;
-  price: number;
-  at: string;
-  /** Genauigkeitsgewichtetes Prognose-Stimmgewicht dieses Scans (Teil 4). */
-  forecastVote?: { base: number; weight: number; factor: number | null };
-}
-
-export interface IndicatorRow {
-  rsi: number | null;
-  macd: { line: number; signal: number; histogram: number } | null;
-  bollinger: { upper: number; middle: number; lower: number; pctB: number } | null;
-}
+// ── Listener-Buchhaltung: jeder onSnapshot läuft über diesen Wrapper, damit
+// Mount/Unmount nachweislich keine Listener leaken (E2E-Zähler in main.ts).
+const onSnapshot = ((...args: Parameters<typeof fsOnSnapshot>): Unsubscribe =>
+  trackListener(
+    (fsOnSnapshot as (...a: unknown[]) => Unsubscribe)(...args),
+  )) as typeof fsOnSnapshot;
 
 const useEmulators = import.meta.env.VITE_FIREBASE_USE_EMULATORS === '1';
 let fnsEmulatorConnected = false;
@@ -242,7 +65,18 @@ function fns(): ReturnType<typeof getFunctions> {
   return f;
 }
 
-/** Profil (users/{uid}) serverseitig anlegen, falls es noch fehlt. */
+/* ── Kleine Leser: Firestore-Rohwerte in verlässliche Formen ─────────────── */
+
+const istObjekt = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+const zahlOderNull = (v: unknown): number | null =>
+  typeof v === 'number' && Number.isFinite(v) ? v : null;
+const textOderNull = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+const textListe = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+
+/* ── Profil / Konto ──────────────────────────────────────────────────────── */
+
 /**
  * Profil serverseitig sicherstellen (idempotent).
  *
@@ -255,34 +89,6 @@ export async function ensureProfile(risiko?: string): Promise<void> {
   await httpsCallable(fns(), 'ensureProfile')(risiko === undefined ? {} : { risiko });
 }
 
-/**
- * Handelshistorie, Positionen und Kennzahlen auf null — Kursdaten bleiben.
- *
- * Das Bestätigungswort geht mit auf die Leitung und wird SERVERSEITIG noch
- * einmal geprüft. Ein Client-Guard allein wäre bei einer unumkehrbaren
- * Aktion keine Sicherung, nur eine Bequemlichkeit.
- */
-export async function resetWallet(
-  confirm: string,
-  /**
-   * Startkapital vom verbundenen Broker holen statt aus den Einstellungen.
-   *
-   * Nur beim Reset moeglich, nicht laufend: Der Kontostand ist die
-   * Bezugsgroesse jeder Kennzahl. Wechselt er mitten in der Messung, beziehen
-   * sich alte und neue Zahlen auf verschiedene Kapitalbasen.
-   */
-  vomBroker = false,
-): Promise<ResetWalletResult> {
-  const r = await httpsCallable(fns(), 'resetWallet')({ confirm, vomBroker });
-  return r.data as ResetWalletResult;
-}
-
-/** Tages-Notbremse von Hand entriegeln (M12). */
-export async function resetBreaker(): Promise<{ ok: true; warAusgeloest: boolean }> {
-  const r = await httpsCallable(fns(), 'resetBreaker')({});
-  return r.data as { ok: true; warAusgeloest: boolean };
-}
-
 export interface ResetWalletResult {
   ok: true;
   deleted: Record<string, number>;
@@ -292,8 +98,20 @@ export interface ResetWalletResult {
    *  Broker gefragt wurde oder die Einstellung gegriffen hat. */
   kapitalQuelle: 'einstellung' | 'broker';
   /** Warnung, wenn beim Broker noch Positionen liegen — der Reset leert nur
-   *  das Buch, nie das Depot (Vorfall 05.08.). */
+   *  das Buch, nie das Depot. */
   hinweis?: string;
+}
+
+/**
+ * Handelshistorie, Positionen und Kennzahlen auf null — Kursdaten bleiben.
+ *
+ * Das Bestätigungswort geht mit auf die Leitung und wird SERVERSEITIG noch
+ * einmal geprüft. Ein Client-Guard allein wäre bei einer unumkehrbaren
+ * Aktion keine Sicherung, nur eine Bequemlichkeit.
+ */
+export async function resetWallet(confirm: string, vomBroker = false): Promise<ResetWalletResult> {
+  const r = await httpsCallable(fns(), 'resetWallet')({ confirm, vomBroker });
+  return r.data as ResetWalletResult;
 }
 
 export interface TaxReportResult {
@@ -304,30 +122,26 @@ export interface TaxReportResult {
   historieUnvollstaendig: boolean;
 }
 
-/**
- * Jahres-Steuerbericht serverseitig rechnen lassen.
- *
- * Bewusst KEIN Client-Rechenweg: Der Bericht braucht die volle Historie
- * inklusive Archiv, und die liegt hinter den Firestore-Regeln. Ihn im Browser
- * zu rechnen hieße, alle Trades aller Jahre zu laden — teuer und langsam,
- * ohne dass der Nutzer etwas davon hätte.
- */
+/** Jahres-Steuerbericht serverseitig rechnen lassen (volle Historie inkl. Archiv). */
 export async function callTaxReport(jahr: number, echtgeld: boolean): Promise<TaxReportResult> {
   const r = await httpsCallable(fns(), 'taxReport')({ jahr, echtgeld });
   return r.data as TaxReportResult;
 }
 
-/** Fehlende Wechselkurse historischer Trades einfrieren (Kurs des Handelstages). */
 export interface FxNachtragErgebnis {
   ok: true;
   geprueft: number;
   nachgetragen: number;
   ohneKurs: number;
 }
+
+/** Fehlende Wechselkurse historischer Trades einfrieren (Kurs des Handelstages). */
 export async function callFxNachtragen(): Promise<FxNachtragErgebnis> {
   const r = await httpsCallable(fns(), 'fxNachtragen')({});
   return r.data as FxNachtragErgebnis;
 }
+
+/* ── Broker-Zugang & Echtgeld-Schalter ───────────────────────────────────── */
 
 export interface BrokerStatusResult {
   ok: true;
@@ -358,12 +172,7 @@ export interface BrokerStatusResult {
   fehler?: string;
 }
 
-/**
- * Zustand der Broker-Anbindung prüfen, ohne zu handeln.
- *
- * Bewusst ein reiner Lese-Aufruf: Wer die Anbindung erst beim ersten Trade
- * testet, testet sie mit Geld.
- */
+/** Zustand der Broker-Anbindung prüfen, ohne zu handeln. */
 export async function callBrokerStatus(): Promise<BrokerStatusResult> {
   const r = await httpsCallable(fns(), 'brokerStatus')({});
   return r.data as BrokerStatusResult;
@@ -372,9 +181,7 @@ export async function callBrokerStatus(): Promise<BrokerStatusResult> {
 export interface ConnectResult {
   ok: true;
   maskiert: string;
-  /** Papier- oder Echtgeldkonto — bestimmt, wie die Karte es anzeigt. */
   art: 'paper' | 'live';
-  /** Liegt das Geheimnis verschlüsselt? Bei Echtgeld immer `true`. */
   verschluesselt: boolean;
   kontoStatus: string;
   cash: number;
@@ -383,81 +190,16 @@ export interface ConnectResult {
 }
 
 /**
- * Eigenes Alpaca-PAPIERKONTO verbinden.
- *
- * Die Schlüssel gehen einmal zum Server und kommen nie zurück — auch nicht
- * an den, der sie gerade gesetzt hat. Was zurückkommt, ist der Kontostatus
- * und eine maskierte Kennung. Echtgeld-Schlüssel (AK…) weist der Server ab.
+ * Eigenes Alpaca-Konto verbinden. Die Schlüssel gehen einmal zum Server und
+ * kommen nie zurück; die Antwort ist der Kontostatus und eine maskierte
+ * Kennung. Echtgeld-Schlüssel (AK…) verlangen eine frische Anmeldung.
  */
-export async function callConnectBroker(
-  apiKey: string,
-  secretKey: string,
-): Promise<ConnectResult> {
+export async function callConnectBroker(apiKey: string, secretKey: string): Promise<ConnectResult> {
   const r = await httpsCallable(fns(), 'connectBroker')({ apiKey, secretKey });
   return r.data as ConnectResult;
 }
 
-export interface LiveModeStatus {
-  reife: {
-    bereit: boolean;
-    erfuellt: number;
-    gesamt: number;
-    fazit: string;
-    kriterien: { name: string; erfuellt: boolean; ist: string; soll: string }[];
-  };
-  brokerArt: 'paper' | 'live' | null;
-  serverFreigabe: boolean;
-}
-
-export interface LiveModeErgebnis {
-  ok: true;
-  modus: 'paper' | 'live';
-  meldung: string;
-  status?: LiveModeStatus;
-}
-
-/**
- * Echtgeld-Schalter (M14) — abfragen oder umlegen.
- *
- * Der Server entscheidet, nicht der Client: Reife, verbundene Kontoart und
- * die Frische der Anmeldung werden dort geprüft. Die Oberfläche zeigt nur,
- * was zurückkommt — sonst gäbe es zwei Fassungen derselben Regel, und die
- * im Browser wäre die, die zuerst veraltet.
- */
-export async function callLiveMode(
-  arg: { action: 'status' } | { live: boolean; bestaetigung?: string },
-): Promise<LiveModeErgebnis> {
-  const r = await httpsCallable(fns(), 'setLiveMode')(arg);
-  return r.data as LiveModeErgebnis;
-}
-
-export interface AdoptResult {
-  ok: true;
-  positionen: number;
-  geloescht: number;
-  trades: number;
-  cash: number;
-  meldung: string;
-}
-
-/**
- * Depot vom Broker ins Buch übernehmen (Vorfall 05.08.).
- *
- * Liest Bestand, Einstände, Barbestand und die eigene Order-Historie vom
- * Broker und schreibt das Buch darauf um — kauft und verkauft NICHTS. Der
- * Weg zurück zur einen Wahrheit, wenn Buch und Depot auseinandergelaufen
- * sind (z. B. nach „Neu anfangen" mit verbundenem Broker).
- */
-export async function callAdoptBroker(): Promise<AdoptResult> {
-  const r = await httpsCallable(fns(), 'adoptBroker')({});
-  return r.data as AdoptResult;
-}
-
-/** Verbindung lösen — der Server löscht das Schlüsselpaar und storniert auf
- *  PAPIERkonten die eigenen offenen Orders (Schutz-Stops eingeschlossen).
- *  Genau einer der drei Zustände: `orders` (Sweep lief, Befund) ·
- *  `liveOrdersBleiben` (Echtgeld: bewusst nichts storniert) ·
- *  `sweepUnmoeglich` (Verbindung nicht mehr lesbar — Waisen bleiben). */
+/** Verbindung lösen — der Server löscht das Schlüsselpaar. */
 export interface DisconnectResult {
   ok: true;
   geloescht: boolean;
@@ -477,279 +219,221 @@ export async function callDisconnectBroker(): Promise<DisconnectResult> {
   return r.data as DisconnectResult;
 }
 
-/** Strategie serverseitig validieren + speichern (flaches Schema). */
-export async function saveStrategy(strategy: Strategy): Promise<void> {
-  await httpsCallable(fns(), 'saveStrategy')({ strategy });
+export interface LiveModeStatus {
+  reife: {
+    bereit: boolean;
+    erfuellt: number;
+    gesamt: number;
+    fazit: string;
+    offeneCodes?: string[];
+    kriterien: { name: string; erfuellt: boolean; ist: string; soll: string }[];
+  };
+  brokerArt: 'paper' | 'live' | null;
+  serverFreigabe: boolean;
 }
 
-export function watchMarketDoc(
-  symbol: string,
-  cb: (data: MarketDocData | null) => void,
-): Unsubscribe {
-  return muxWatch(
-    `marketDoc:${symbol}`,
-    (emit) =>
-      onSnapshot(doc(db(), 'market', symbol), (snap) => emit(snap.exists() ? snap.data() : null)),
-    (p) => cb(p as MarketDocData | null),
-  );
+export interface LiveModeErgebnis {
+  ok: true;
+  modus: 'paper' | 'live';
+  meldung: string;
+  status?: LiveModeStatus;
 }
 
-export function watchBars(symbol: string, cb: (bars: ChartBar[]) => void): Unsubscribe {
-  return muxWatch(
-    `bars:${symbol}`,
-    (emit) => {
-      const q = query(collection(db(), 'market', symbol, 'bars'), orderBy(documentId()));
-      return onSnapshot(q, (snap) =>
-        emit(snap.docs.map((d) => ({ date: d.id, ...(d.data() as Omit<ChartBar, 'date'>) }))),
-      );
-    },
-    (p) => cb(p as ChartBar[]),
-  );
+/** Echtgeld-Schalter — abfragen oder umlegen. Der Server entscheidet. */
+export async function callLiveMode(
+  arg: { action: 'status' } | { live: boolean; bestaetigung?: string },
+): Promise<LiveModeErgebnis> {
+  const r = await httpsCallable(fns(), 'setLiveMode')(arg);
+  return r.data as LiveModeErgebnis;
 }
 
-// Achtung: Firestore unterstützt KEINE absteigenden Key-Scans
-// (orderBy(documentId(), 'desc')) — deshalb sortieren beide Queries über
-// echte Felder (`at` bzw. `date`), die der Scan mitschreibt.
-export function watchLatestSignal(
-  symbol: string,
-  cb: (sig: SignalRow | null) => void,
-): Unsubscribe {
-  return muxWatch(
-    `signal:${symbol}`,
-    (emit) => {
-      const q = query(
-        collection(db(), 'market', symbol, 'signals'),
-        orderBy('at', 'desc'),
-        limit(1),
-      );
-      return onSnapshot(q, (snap) => emit(snap.empty ? null : snap.docs[0]!.data()));
-    },
-    (p) => cb(p as SignalRow | null),
-  );
+/* ── Engine-Schalter, Einstellungen, Kommandos ───────────────────────────── */
+
+/**
+ * `saveStrategy` (neues Payload): entweder den Engine-Schalter oder die
+ * Einstellungen des Auto-Traders — nie beides in einem Aufruf, damit der
+ * Server jede Änderung einzeln prüfen und ablehnen kann.
+ */
+export type SaveStrategyPayload = { engineRunning: boolean } | { auto: AutoSettings };
+
+export async function saveStrategy(payload: SaveStrategyPayload): Promise<void> {
+  await httpsCallable(fns(), 'saveStrategy')(payload);
 }
 
-export function watchLatestIndicators(
-  symbol: string,
-  cb: (row: IndicatorRow | null) => void,
-): Unsubscribe {
-  return muxWatch(
-    `indicators:${symbol}`,
-    (emit) => {
-      const q = query(
-        collection(db(), 'market', symbol, 'indicators'),
-        orderBy('date', 'desc'),
-        limit(1),
-      );
-      return onSnapshot(q, (snap) => emit(snap.empty ? null : snap.docs[0]!.data()));
-    },
-    (p) => cb(p as IndicatorRow | null),
-  );
+export type EngineCommandAction = 'halt' | 'resume' | 'flatten';
+
+export interface EngineCommandRequest {
+  action: EngineCommandAction;
+  reason?: string;
+  ackDrawdown?: boolean;
 }
 
-/** Optionale UI-Elemente (Options-Modal ⚙, settings.ui) — synct über Geräte. */
-export interface UiPrefs {
-  /** Prognose-Pfeil ✏ — Opt-in (Feedback 25.07.): default AUS, gilt auch für den Scan-Vote. */
-  predArrow?: boolean;
-  /** Vergleichs-Overlay-Eingabe im Chart (default an). */
-  cmpOverlay?: boolean;
-  /** Multi-Chart-Raster-Umschalter 1/2/4 (default an). */
-  chartGrid?: boolean;
-  /** Indikator-Extras: VWAP-Chip + RSI/MACD-Unterpanels (default an). */
-  subPanels?: boolean;
-  /** Marktgruppen-Filter (Taschenmesser Teil 2): Klassen-Key → sichtbar?
-   *  Fehlender Eintrag = sichtbar (Opt-out-Filter, default alles an). */
-  marketGroups?: Record<string, boolean>;
-  /** Onboarding-Tour (MU2) gesehen? Auch Abbrechen zählt — der ?-Knopf im
-   *  Header holt sie jederzeit zurück, aufgedrängt wird sie nur einmal. */
-  tourGesehen?: boolean;
-  /** Sidebar-Akkordeon (Owner 21.08.): Aufklappen schließt die Nachbar-
-   *  Karten der Spalte. Fehlend = AN (heutiges Verhalten), false = aus. */
-  akkordeon?: boolean;
+export interface EngineCommandErgebnis {
+  ok: true;
+  action: EngineCommandAction;
+  /** Wann das Kommando hinterlegt wurde (ISO). Wirksam wird es im nächsten Takt. */
+  at: string;
 }
 
-export function watchUserDoc(
-  uid: string,
-  cb: (data: {
-    strategy: Strategy | null;
-    wallet: Wallet | null;
-    /** Nutzer-Hotkeys (M9, settings.hotkeys) — z. B. { palette, buy, sell }. */
-    hotkeys: Record<string, string> | null;
-    ui: UiPrefs | null;
-    /** Auto-Tuner-Schalter (MT5). Fehlt das Feld, ist der Tuner AN. */
-    autoTune: boolean;
-    /**
-     * Zugangsstufe (Owner 26.07.): 'pending' = angelegt, wartet auf
-     * Freischaltung — der Scan überspringt das Konto STILL. Genau deshalb
-     * muss die Oberfläche es zeigen (Fund 01.08.: „Engine fängt bei neuem
-     * Konto nicht an zu handeln" — sie lief, das Konto war nur nicht frei).
-     * Fehlendes Feld = Bestandskonto = freigeschaltet.
-     */
-    accessLevel: AccessLevel;
-    /** Kontotyp (Owner 02.08.): Admins sehen die Freischaltungs-Karte.
-     *  Das Feld setzt NUR die Konsole bzw. das adminUsers-Callable —
-     *  Client-Updates auf dem User-Doc erlauben die Rules nur für `settings`. */
-    admin: boolean;
-    /**
-     * Zustand der Tages-Notbremse (M12) — `null`, solange sie nicht
-     * ausgelöst ist. Gehört an dieselbe Stelle wie die Strategie, weil die
-     * Oberfläche beides gemeinsam zeigt: die Grenze und ob sie greift.
-     */
-    breaker: { am: string; grund: string; verlustPct: number | null } | null;
-    /**
-     * Letzter automatischer Abgleich Buch ↔ Broker-Depot (M13) — `null`,
-     * solange kein Broker verbunden ist oder noch kein Scan gelaufen ist.
-     *
-     * Die Anzeige ist der eigentliche Zweck der Verbindung, nicht Beiwerk:
-     * Wer sein Konto verbindet, will sehen, ob die Order dort ankommt.
-     * Ohne diese Zeile sieht ein sauberer Abgleich exakt aus wie gar keiner.
-     */
-    abgleich: {
-      at: string;
-      status: string;
-      anzahl: number;
-      /** Im Buch, aber nicht beim Broker — das ist die gefährliche Richtung. */
-      fehlbestand: number;
-      /** Nur beim Broker — Fremdbestand, sperrt nicht. */
-      fremdbestand: number;
-      verglichen: number;
-      brokerPositionen: number;
-      fehler: string;
-    } | null;
-    /**
-     * Ein Admin hat für dieses Konto eine Depot-Übernahme VORGEMERKT
-     * (22.08.) — `null`, wenn keine offen ist.
-     *
-     * Bewusst nur eine Vormerkung: Der Admin darf ein fremdes Buch nicht
-     * selbst überschreiben. Käme die Abweichung aus einem Broker-Aussetzer,
-     * zerstörte die „Heilung" korrekte Daten. Der Konto-Inhaber entscheidet
-     * — er sieht hier, dass jemand eine Abweichung gemessen hat, und löst
-     * die Übernahme selbst aus. Nach einer erfolgreichen Übernahme fällt
-     * der Vermerk weg.
-     */
-    uebernahmeVorgemerkt: { at: string; fehlbestand: number; grund: string } | null;
-  }) => void,
-): Unsubscribe {
+/**
+ * halt · resume · flatten — das Callable hinterlegt nur; ausgeführt wird im
+ * nächsten Takt (CLAUDE.md §0.5: Sperren löst man über die Ursache).
+ */
+export async function engineCommand(req: EngineCommandRequest): Promise<EngineCommandErgebnis> {
+  const r = await httpsCallable(fns(), 'engineCommand')(req);
+  return r.data as EngineCommandErgebnis;
+}
+
+/* ── User-Doc: Schalter, Einstellungen, Wallet, Engine-Spiegel ───────────── */
+
+export interface EngineHalt {
+  halted: boolean;
+  reason: string | null;
+  since: number | null;
+  /** ET-Tag, an dem ein Tages-Halt von selbst endet. */
+  until: string | null;
+  note: string | null;
+}
+
+/** `users/{uid}.engine` — der Spiegel des letzten Takts (Anzeige, nie Wahrheit). */
+export interface EngineMirror {
+  mode: 'paper' | 'live' | null;
+  halt: EngineHalt | null;
+  equity: number | null;
+  cash: number | null;
+  dayStartEquity: number | null;
+  peakEquity: number | null;
+  day: string | null;
+  dayTradeCount: number | null;
+  localDayTrades: number | null;
+  patternDayTrader: boolean;
+  positions: string[];
+  pendingEntries: string[];
+  pendingExits: string[];
+  /** Nach Sitzungsschluss entschiedene Exits, die bei der nächsten Eröffnung laufen. */
+  deferred: string[];
+  consecutiveErrors: number;
+  /** Einstiegssperre des Kerns (Datenalter, Abgleich, …) — null = frei. */
+  entryLock: string | null;
+  lastTickAt: string | null;
+  lastError: string | null;
+  champion: { source: string; symbols: string[] } | null;
+  /** Strategie-Notizen des Takts (Champion fehlt, Zeitrahmen weicht ab, Sperre). */
+  notes: string[];
+  configSource: string | null;
+  /** Ein Kommando wartet auf den nächsten Takt (vom Callable gestempelt). */
+  commandAt: string | null;
+}
+
+function leseHalt(roh: unknown): EngineHalt | null {
+  if (!istObjekt(roh)) return null;
+  return {
+    halted: roh.halted === true,
+    reason: textOderNull(roh.reason),
+    since: zahlOderNull(roh.since),
+    until: textOderNull(roh.until),
+    note: textOderNull(roh.note),
+  };
+}
+
+/** Engine-Spiegel in eine Form bringen, auf die sich die Anzeige verlassen kann. */
+export function leseEngine(roh: unknown): EngineMirror | null {
+  if (!istObjekt(roh)) return null;
+  const champ = istObjekt(roh.champion)
+    ? { source: textOderNull(roh.champion.source) ?? '', symbols: textListe(roh.champion.symbols) }
+    : null;
+  return {
+    mode: roh.mode === 'live' ? 'live' : roh.mode === 'paper' ? 'paper' : null,
+    halt: leseHalt(roh.halt),
+    equity: zahlOderNull(roh.equity),
+    cash: zahlOderNull(roh.cash),
+    dayStartEquity: zahlOderNull(roh.dayStartEquity),
+    peakEquity: zahlOderNull(roh.peakEquity),
+    day: textOderNull(roh.day),
+    dayTradeCount: zahlOderNull(roh.dayTradeCount),
+    localDayTrades: zahlOderNull(roh.localDayTrades),
+    patternDayTrader: roh.patternDayTrader === true,
+    positions: textListe(roh.positions),
+    pendingEntries: textListe(roh.pendingEntries),
+    pendingExits: textListe(roh.pendingExits),
+    deferred: textListe(roh.deferred),
+    consecutiveErrors: zahlOderNull(roh.consecutiveErrors) ?? 0,
+    entryLock: textOderNull(roh.entryLock),
+    lastTickAt: textOderNull(roh.lastTickAt),
+    lastError: textOderNull(roh.lastError),
+    champion: champ,
+    notes: textListe(roh.notes),
+    configSource: textOderNull(roh.configSource),
+    commandAt: textOderNull(roh.commandAt),
+  };
+}
+
+export interface UserDocData {
+  /**
+   * Zugangsstufe: 'pending' = angelegt, wartet auf Freischaltung — der Takt
+   * überspringt das Konto STILL. Fehlendes Feld = Bestandskonto = frei.
+   */
+  accessLevel: AccessLevel;
+  /** Admins sehen die Freischaltungs-Karte. Setzt nur der Server. */
+  admin: boolean;
+  /** Alte Strategie — gebraucht werden `engine.running` (Schalter) und
+   *  `broker.initialCapital` (Kapitalbasis, wenn `wallet.baseCapital` fehlt). */
+  strategy: Strategy | null;
+  /** `settings.auto` roh (Teilmenge erlaubt) — die Anzeige mischt Defaults dazu. */
+  auto: Partial<AutoSettings> | null;
+  wallet: Wallet | null;
+  engine: EngineMirror | null;
+}
+
+export function watchUserDoc(uid: string, cb: (data: UserDocData) => void): Unsubscribe {
   return onSnapshot(doc(db(), 'users', uid), (snap) => {
+    const autoRoh = snap.get('settings.auto') as unknown;
     cb({
-      /* Über die GETEILTE Normalisierung, nicht nachgebaut (24.08.): Die
-       * Kopie hier hätte den neuen Zustand `archiviert` still zu `approved`
-       * gemacht — ein dort fehlender Wert wird freigeschaltet. „EINE Wahrheit
-       * für Scan, Callables und UI" gilt auch für diese Zeile. */
       accessLevel: accessLevelOf(snap.data()),
       admin: snap.get('admin') === true,
       strategy: (snap.get('settings.strategy') as Strategy | undefined) ?? null,
+      auto: istObjekt(autoRoh) ? (autoRoh as Partial<AutoSettings>) : null,
       wallet: (snap.get('wallet') as Wallet | undefined) ?? null,
-      hotkeys: (snap.get('settings.hotkeys') as Record<string, string> | undefined) ?? null,
-      ui: (snap.get('settings.ui') as UiPrefs | undefined) ?? null,
-      // Dieselbe Default-Regel wie im Scheduler (`!== false`): Wer nie etwas
-      // eingestellt hat, bekommt die Selbstverbesserung — abstellen ist eine
-      // bewusste Entscheidung, nicht der Zufall eines fehlenden Feldes.
-      autoTune: snap.get('settings.autoTune') !== false,
-      breaker:
-        typeof snap.get('risk.breakerAusgeloestAm') === 'string'
-          ? {
-              am: snap.get('risk.breakerAusgeloestAm') as string,
-              grund: (snap.get('risk.breakerGrund') as string | undefined) ?? '',
-              verlustPct: (snap.get('risk.breakerVerlustPct') as number | null | undefined) ?? null,
-            }
-          : null,
-      abgleich: leseAbgleich(snap.get('risk.abgleich')),
-      uebernahmeVorgemerkt: leseVormerkung(snap.get('risk.uebernahmeVorgemerkt')),
+      engine: leseEngine(snap.get('engine')),
     });
   });
 }
 
-/**
- * `risk.uebernahmeVorgemerkt` in eine Form bringen, auf die sich die
- * Anzeige verlassen kann — oder `null`, wenn nichts offen ist.
- *
- * Streng geprüft, weil an diesem Feld eine Aufforderung hängt, die das
- * eigene Buch überschreibt: Ein halb geschriebener Vermerk darf keinen
- * Hinweis erzeugen, den niemand gesetzt hat.
- */
-function leseVormerkung(
-  roh: unknown,
-): { at: string; fehlbestand: number; grund: string } | null {
-  if (typeof roh !== 'object' || roh === null) return null;
-  const v = roh as { at?: unknown; fehlbestand?: unknown; grund?: unknown };
-  if (typeof v.at !== 'string' || v.at.length === 0) return null;
-  return {
-    at: v.at,
-    fehlbestand:
-      typeof v.fehlbestand === 'number' && Number.isFinite(v.fehlbestand) ? v.fehlbestand : 0,
-    grund: typeof v.grund === 'string' ? v.grund : '',
-  };
+/* ── Positionen, Kurse ───────────────────────────────────────────────────── */
+
+/** Positions-Doc im alten Schema plus die Felder, die der Takt zusätzlich schreibt. */
+export interface PositionRow extends Position {
+  strategy?: string;
+  initialStop?: number | null;
+  barsHeld?: number;
+  entryDay?: string;
+  quelle?: string;
+  updatedAt?: string;
 }
 
-/** `risk.abgleich` in eine Form bringen, auf die sich die Anzeige verlassen kann. */
-/** Ein Zustandswechsel im Broker-Verlaufsprotokoll (Owner-Meldung 05.08.). */
-export interface AbgleichVerlaufEintrag {
-  at: string;
-  von: string | null;
-  nach: string;
-  fehlbestand: number;
-  fremdbestand: number;
-  fehler: string;
-}
-
-function leseAbgleich(roh: unknown): {
-  at: string;
-  status: string;
-  anzahl: number;
-  fehlbestand: number;
-  fremdbestand: number;
-  verglichen: number;
-  brokerPositionen: number;
-  fehler: string;
-  verlauf: AbgleichVerlaufEintrag[];
-} | null {
-  if (!roh || typeof roh !== 'object') return null;
-  const r = roh as Record<string, unknown>;
-  if (typeof r['at'] !== 'string') return null;
-  const zahl = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
-  const verlauf: AbgleichVerlaufEintrag[] = Array.isArray(r['verlauf'])
-    ? (r['verlauf'] as unknown[]).flatMap((e) => {
-        if (!e || typeof e !== 'object') return [];
-        const v = e as Record<string, unknown>;
-        if (typeof v['at'] !== 'string' || typeof v['nach'] !== 'string') return [];
-        return [{
-          at: v['at'],
-          von: typeof v['von'] === 'string' ? v['von'] : null,
-          nach: v['nach'],
-          fehlbestand: zahl(v['fehlbestand']),
-          fremdbestand: zahl(v['fremdbestand']),
-          fehler: typeof v['fehler'] === 'string' ? v['fehler'] : '',
-        }];
-      })
-    : [];
-  return {
-    at: r['at'],
-    status: typeof r['status'] === 'string' ? r['status'] : 'unbekannt',
-    anzahl: zahl(r['anzahl']),
-    fehlbestand: zahl(r['fehlbestand']),
-    fremdbestand: zahl(r['fremdbestand']),
-    verglichen: zahl(r['verglichen']),
-    brokerPositionen: zahl(r['brokerPositionen']),
-    fehler: typeof r['fehler'] === 'string' ? r['fehler'] : '',
-    verlauf,
-  };
-}
-
-/** UI-Präferenzen speichern — Rules erlauben Owner-Updates nur aufs settings-Feld. */
-export async function saveUiPrefs(uid: string, ui: UiPrefs): Promise<void> {
-  await updateDoc(doc(db(), 'users', uid), { 'settings.ui': ui });
-}
-
-/** Auto-Tuner an-/abschalten (MT5) — dasselbe Feld, das `tuneAll` prüft. */
-export async function saveAutoTune(uid: string, on: boolean): Promise<void> {
-  await updateDoc(doc(db(), 'users', uid), { 'settings.autoTune': on });
-}
-
-export function watchPositions(uid: string, cb: (positions: Position[]) => void): Unsubscribe {
+export function watchPositions(uid: string, cb: (positions: PositionRow[]) => void): Unsubscribe {
   return onSnapshot(collection(db(), 'users', uid, 'positions'), (snap) => {
-    cb(snap.docs.map((d) => d.data() as Position));
+    cb(snap.docs.map((d) => d.data() as PositionRow));
   });
 }
+
+export interface MarketDocData {
+  quote?: Quote;
+}
+
+/** `market/{sym}` — nur der Kurs interessiert; über den Mux (ein Listener je Browser). */
+export function watchMarketDoc(symbol: string, cb: (data: MarketDocData | null) => void): Unsubscribe {
+  return muxWatch(
+    `marketDoc:${symbol}`,
+    (emit) =>
+      onSnapshot(doc(db(), 'market', symbol), (snap) =>
+        emit(snap.exists() ? { quote: snap.get('quote') as Quote | undefined } : null),
+      ),
+    (p) => cb(p as MarketDocData | null),
+  );
+}
+
+/* ── Handelshistorie mit Paging ──────────────────────────────────────────── */
 
 export interface TradeRow {
   symbol: string;
@@ -760,35 +444,24 @@ export interface TradeRow {
   source: 'engine' | 'manual';
   pnl?: number;
   riskExit?: string;
-  /**
-   * Richtung des Geschäfts (Owner 21:3x: „Shorts und Longs besser
-   * markieren"). `side` allein ist zweideutig — ein Leerverkauf ist ein
-   * SELL, sein Eindecken ein BUY. Der Broker schreibt beide Marken seit
-   * dem Short-Umbau mit: `short` am Leerverkauf, `cover` am Eindecken
-   * (functions/src/core/broker.ts). Fehlen beide, ist es ein Long.
-   */
+  /** Richtung: `short` am Leerverkauf, `cover` am Eindecken; fehlen beide, ist es ein Long. */
   short?: boolean;
   cover?: boolean;
+  /** Engine-Felder an schließenden Fills (additiv). */
+  strategy?: string;
+  exitReason?: string;
+  rMultiple?: number;
+  holdingDays?: number;
+  fee?: number;
 }
 
-/** Seitengröße der Historie (Owner-Wunsch 28.07.: „über Pagination nachladen
- *  damit nicht immer alle direkt geladen werden"). */
+/** Seitengröße der Historie. */
 export const TRADE_PAGE = 50;
 
 /**
- * Der LIVE-KOPF der Handelshistorie: die neuesten `pageSize` Trades.
- *
- * Bewusst gedeckelt und bewusst NICHT die ganze Historie: Ein `onSnapshot`
- * ohne Limit hielte jede Zeile dauerhaft im Speicher und im Abrechnungs-
- * zähler — bei einem System, das alle fünf Minuten handeln soll, wächst das
- * unbegrenzt. Ältere Seiten kommen über `loadMoreTrades` als EINMALIGE
- * Abfrage dazu, ohne Listener.
- *
- * Sortiert wird über `executedAt` (ISO-String): lexikografisch identisch mit
- * chronologisch, einfeldrig — also ohne zusammengesetzten Index, und
- * derselbe Schlüssel, den die Seiten-Abfrage als Cursor benutzt. Über zwei
- * verschiedene Felder zu sortieren (`at` live, `executedAt` paginiert) wäre
- * die klassische Quelle für doppelte oder übersprungene Zeilen an der Naht.
+ * Der LIVE-KOPF der Handelshistorie: die neuesten `pageSize` Trades. Ältere
+ * Seiten kommen über `loadMoreTrades` als EINMALIGE Abfrage dazu — sortiert
+ * über `executedAt` (ISO), derselbe Schlüssel wie der Seiten-Cursor.
  */
 export function watchTrades(
   uid: string,
@@ -805,38 +478,17 @@ export function watchTrades(
   });
 }
 
-/**
- * Seiten-Cursor der Handelshistorie: das LETZTE Dokument der geladenen Seite,
- * nicht dessen Zeitstempel.
- *
- * Warum das wichtig ist (Owner-Fund 04.08.: „warum kann man nicht mehr weitere
- * laden?"): Ein Zeitstempel-Cursor mit `startAfter(executedAt)` springt über
- * ALLE Zeilen mit exakt diesem Wert hinweg. Der Momentum-Sockel schreibt aber
- * bis zu 38 Orders in einem Rutsch — landen davon zwei in derselben
- * Millisekunde und fällt die Seitengrenze genau dazwischen, verschwinden
- * Zeilen lautlos, und im Extremfall besteht die nächste Seite nur aus schon
- * bekannten Zeilen: Der Knopf reagiert, es passiert nur nichts Sichtbares.
- * Ein Dokument-Cursor ist in Firestore eindeutig und kennt das Problem nicht.
- */
+/** Dokument-Cursor (eindeutig) statt Zeitstempel — zwei Fills in derselben
+ *  Millisekunde würden ein Zeitstempel-Cursor lautlos überspringen. */
 export type TradeCursor = QueryDocumentSnapshot;
 
 export interface TradePage {
   rows: TradeRow[];
-  /** Letztes Dokument dieser Seite — Cursor für die nächste. */
   cursor: TradeCursor | null;
   /** Keine weiteren Zeilen mehr (Seite kam unvollständig zurück). */
   done: boolean;
 }
 
-/**
- * Eine ÄLTERE Seite nachladen (einmalige Abfrage, kein Listener).
- *
- * `done` wird aus einer unvollständigen Seite abgeleitet, nicht aus einer
- * zusätzlichen Zählabfrage: Kommen weniger als `pageSize` Zeilen zurück, gibt
- * es keine älteren mehr. Das spart eine Abfrage pro Klick — und `count()`
- * über eine wachsende Historie zu rechnen, nur um einen Knopf auszugrauen,
- * wäre genau die Sorte Kosten, die niemand bemerkt.
- */
 export async function loadMoreTrades(
   uid: string,
   after: TradeCursor,
@@ -856,8 +508,7 @@ export async function loadMoreTrades(
   };
 }
 
-/* ── Portfolio-Kennzahlen (M12): schreibt NUR der tägliche snapshotEquity-
-   Scheduler — das Dashboard liest genau ein Stats-Doc + die Equity-Serie. ── */
+/* ── Portfolio-Kennzahlen und Equity-Serie (snapshotEquity) ──────────────── */
 
 export interface PortfolioStatsDoc {
   equityDays: number;
@@ -873,73 +524,6 @@ export interface PortfolioStatsDoc {
   expectancy: number | null;
   avgWin: number | null;
   avgLoss: number | null;
-  bySymbol: Record<string, { pnl: number; n: number }>;
-  byClass: Record<string, { pnl: number; n: number }>;
-  /**
-   * Ausstiegsgründe (MT1): stop_loss · take_profit · trailing_stop · signal.
-   * Steht fast alles unter `signal`, sind Stop und Take reine Dekoration —
-   * dann entscheidet nicht die Risikosteuerung, sondern eine gekippte
-   * Indikator-Stimme über das Ergebnis.
-   */
-  exits?: Record<string, { n: number; pnl: number; wins: number }>;
-  /** Kostenprofil (MT1) — hat die Strategie Luft über der Reibung? */
-  costs?: {
-    n: number;
-    fees: number;
-    grossPnl: number;
-    feeSharePct: number | null;
-    avgWinGrossPct: number | null;
-    avgLossGrossPct: number | null;
-    roundTripPct: number | null;
-    edgeOverCost: number | null;
-  };
-  /**
-   * Ausführungs-Reibung je Klasse (Task #144): gemessene Basispunkte
-   * zwischen Entscheidungskurs und echtem Broker-Fill, getrennt nach
-   * Einstieg und Ausstieg. Fehlt bei Konten ohne gebuchte Broker-Fills.
-   */
-  reibung?: Record<string, ReibungJeKlasse>;
-  /**
-   * Investitionsquote (Owner 20.08.: „Geld arbeiten lassen") — Anteile der
-   * Equity in Prozent: investiert gesamt, davon Sockel und aktiver Teil,
-   * Rest Bargeld. `null`/fehlend, solange der Tageslauf das Feld noch nie
-   * geschrieben hat.
-   */
-  kapital?: {
-    investiertPct: number;
-    sockelPct: number;
-    aktivPct: number;
-    cashPct: number;
-  } | null;
-  /**
-   * Empfehlung je Anlageklasse (MG2) — fertig gerechnet vom Tageslauf.
-   *
-   * Die Oberfläche zeigt sie nur an; die Logik steht in `classAdvisor.ts`
-   * und läuft serverseitig. Zwei Implementierungen derselben Regel wären
-   * zwei Wahrheiten, sobald eine davon nachzieht.
-   */
-  classAdvice?: {
-    raete: Array<{
-      klasse: string;
-      n: number;
-      kantePct: number | null;
-      gewicht: number;
-      empfehlung: string;
-      vorschlag: number;
-      grund: string;
-      /**
-       * Woher der Beleg stammt (MG5) — optional, weil Dokumente aus der Zeit
-       * vor dem 09.08. das Feld nicht tragen. Fehlt es, war es zwangsläufig
-       * ein eigener Beleg: Damals gab es keine andere Quelle.
-       */
-      quelle?: 'eigen' | 'global' | 'schatten' | 'keine';
-    }>;
-    aenderungen: number;
-    fazit: string;
-    autoTune: boolean;
-    bewegt?: Array<{ klasse: string; von: number; nach: number; grund: string }>;
-    at: string;
-  };
   updatedAt: string;
 }
 
@@ -955,472 +539,236 @@ export function watchPortfolioStats(
 export interface EquitySeriesPoint {
   date: string;
   equity: number;
-  /**
-   * Schlusskurs des Vergleichsindex an diesem Tag (Owner 18.08.).
-   *
-   * Der ROHE Kurs, nicht die fertige Vergleichslinie — die entsteht erst
-   * durch `benchmarkKurve()`, weil sie von der Basis abhängt und die Basis
-   * bei jedem Depot-Schnitt wandert. Fehlend = an dem Tag nicht erhoben.
-   */
-  benchClose?: number | null;
 }
 
-export function watchEquitySeries(
-  uid: string,
-  cb: (points: EquitySeriesPoint[]) => void,
-): Unsubscribe {
-  const q = query(
-    collection(db(), 'users', uid, 'equity'),
-    orderBy('date', 'desc'),
-    limit(120),
-  );
+export function watchEquitySeries(uid: string, cb: (points: EquitySeriesPoint[]) => void): Unsubscribe {
+  const q = query(collection(db(), 'users', uid, 'equity'), orderBy('date', 'desc'), limit(120));
   return onSnapshot(q, (snap) => {
     cb(
       snap.docs
-        .map((d) => ({
-          date: d.get('date') as string,
-          equity: d.get('equity') as number,
-          benchClose: (d.get('benchClose') as number | undefined) ?? null,
-        }))
+        .map((d) => ({ date: d.get('date') as string, equity: d.get('equity') as number }))
+        .filter((p) => typeof p.date === 'string' && typeof p.equity === 'number')
         .reverse(),
     );
   });
 }
 
-/**
- * Eintrag im Änderungs-Journal des Auto-Tuners (MT5).
- *
- * Es steht bewusst JEDE Prüfung drin, auch die abgelehnten: Ein Journal, das
- * nur Erfolge zeigt, verschweigt das Interessante — wie viele Ideen
- * ausprobiert und verworfen wurden, und woran es lag.
- */
-export interface TuneLogRow {
-  at: string;
-  variantId: string;
-  /** Klartext: „Mindest-Haltedauer 60 → 120". */
-  change: string;
-  reason: string;
-  promoted: boolean;
-  p: number | null;
-  edge: number;
-  nCandidate: number;
-  nIncumbent: number;
+/* ── meta/*: Herzschlag, Config, Champion, Bericht ───────────────────────── */
+
+/** `meta/health.engine` — was der letzte Takt über sich selbst sagt. */
+export interface HealthEngine {
+  at?: string;
+  users?: number;
+  ok?: number;
+  skippedUsers?: number;
+  failed?: Array<{ uid: string; error: string }>;
+  fetchOk?: boolean;
+  durationMs?: number;
+  symbols?: number;
+  /** Symbole mit Champion; null = kein Champion-Doc. */
+  champion?: number | null;
+  skipped?: string;
+  nextOpen?: string;
+  error?: string;
 }
 
-export function watchTuneLog(uid: string, cb: (rows: TuneLogRow[]) => void): Unsubscribe {
-  const q = query(collection(db(), 'users', uid, 'tuneLog'), orderBy('at', 'desc'), limit(24));
-  return onSnapshot(q, (snap) => cb(snap.docs.map((d) => d.data() as TuneLogRow)));
-}
-
-/**
- * Tages-Stand des Momentum-Rankings (meta/momentum).
- *
- * Öffentlich lesbar wie alle meta-Dokumente: Das Ranking ist keine
- * Nutzerdatei, sondern eine Eigenschaft des Marktes — und es kostet keinen
- * zusätzlichen Read, wenn alle dieselbe Zeile lesen.
- */
-export interface MomentumDoc {
-  at: string;
-  date: string;
-  /** Bewertbare Symbole (mit genug Historie) von `universum` insgesamt. */
-  ranked: number;
-  universum: number;
-  /** Marktfilter: steht der Leitindex über seiner 200-Tage-Linie? */
-  marktOffen: boolean;
-  top: Array<{ symbol: string; score: number }>;
-  ziel: string[];
-  gehalten: string[];
-  equity: number;
-  trades: number;
-  rebalanced: boolean;
-  fehlendeHistorie: number;
-}
-
-export function watchMomentum(cb: (doc: MomentumDoc | null) => void): Unsubscribe {
-  return onSnapshot(doc(db(), 'meta', 'momentum'), (snap) =>
-    cb(snap.exists() ? (snap.data() as MomentumDoc) : null),
-  );
-}
-
-/**
- * Der Betriebszustand der Engine, wie ihn der Scan hinterlässt (meta/health).
- *
- * Warum das ins Dashboard gehört (Owner 04.08.: „das ist sehr langweilig
- * anzuschauen"): Seit dem 04.08. entscheiden fünf Mechaniken mit, ob ein
- * Trade zustande kommt — Regime-Ampel, Trade-Filter, News-Veto,
- * Kostenschwelle und Hebel-Ampel. Alle arbeiten unsichtbar. Ein Nutzer sieht
- * bisher nur, DASS nichts passiert, und das sieht bei einer scharfen Regel
- * genauso aus wie bei einem toten System. Diese Zahlen machen aus „es tut
- * sich nichts" ein „6 Leerverkäufe abgelehnt, weil der Markt steigt".
- */
 export interface HealthDoc {
-  lastScanAt?: string;
-  /** Jeder Lauf stempelt das — auch der Skip-Pfad. Herzschlag des Wächters. */
   lastRunAt?: string;
   lastRunSkipped?: string | null;
   symbolsOk?: number;
   symbolsFailed?: number;
-  /** Urteil des wachhund-Schedulers (Audit 13.08., K-4a). */
+  /** Urteil des wachhund-Schedulers. */
   alarm?: { aktiv?: boolean; grund?: string; text?: string; seit?: string; at?: string };
-  trades?: number;
-  entryGate?: Record<string, number>;
-  /**
-   * Richtungs-Verteilung der Signale des letzten Scans (04.08.).
-   *
-   * Beantwortet die Frage, die die Blockade-Zähler offenlassen: Ein Scan ohne
-   * Trades kann ein ruhiger Markt sein (viel `hold`) oder einer, in dem die
-   * Engine gegen den Trend wollte und gestoppt wurde (viel `sell` bei Regime
-   * `trend`). Beides sieht sonst gleich aus.
-   */
-  signalDirs?: { buy?: number; sell?: number; hold?: number };
-  /**
-   * Wie oft die Konfluenz um GENAU EINE Stimme verfehlt wurde (17.08.) und
-   * wie oft die Trend-Solo-Regel daraufhin ein Signal erzeugt hat.
-   *
-   * Der Scan schreibt beides längst; sichtbar war es nie. Zusammen
-   * beantworten sie die Kapital-Frage vom 21.08. („nur 1–2 Positionen"):
-   * Sinkt `knappVerfehlt` und steigt `trendSolo.erzeugt`, wirkt die Regel;
-   * bleibt `knappVerfehlt` hoch, während die Ampel selten auf `trend` steht,
-   * ist die Konfluenz-Schwelle die Bremse — und nicht der Positions-Deckel.
-   */
-  knappVerfehlt?: number;
-  trendSolo?: { erzeugt?: number; ampel?: string };
-  /**
-   * Rückstand der Fill-Nachbuchung (Owner-Fund 21.08.: „5 Trades waren
-   * nicht registriert").
-   *
-   * `steckt > 0` heisst: Fills liegen real beim Broker, im Buch fehlen sie,
-   * und die Heilung hat sie aufgegeben — hier hilft nur die Depot-Übernahme.
-   * Genau diese Zahl gab es vorher nirgends; deshalb sah ein Rückstand, der
-   * seit Tagen stand, exakt so aus wie „nichts zu tun". `null` bedeutet
-   * „nicht gemessen" (Trade-Block lief nicht) und ist nicht dasselbe wie 0.
-   */
-  nachbuchung?: {
-    gebucht?: number;
-    offen?: number;
-    steckt?: number;
-    konten?: number;
-  } | null;
-  /**
-   * Schatten-Kante je Signal-Variante. `rohPct` ist die Bewegung VOR
-   * Gebühren — sie trennt „Signal ist Rauschen" von „Gebühren fressen die
-   * Information" und fehlt bei Aggregaten aus der Zeit vor dem 05.08.
-   */
-  signalSchatten?: Record<
-    string,
-    {
-      n: number;
-      kantePct: number | null;
-      rohPct?: number | null;
-      /**
-       * Mittlerer gemessener Horizont in Minuten (17.08.) — die EINHEIT der
-       * Kante. Ohne sie ließ sich nicht sehen, dass die Krypto-Kante über
-       * fünf Minuten entstand, während live 48 h gehalten werden muss.
-       * Fehlend = Aggregat aus der Zeit vor der Messung.
-       */
-      alterMin?: number | null;
-    } | null
-  > | null;
-  konten?: Record<string, number>;
-  regime?: { state?: string; vix?: number | null; realizedVolPct?: number | null; aboveSma200?: boolean | null };
-  kalender?: { bevorstehend?: string | null; stundenBis?: number | null; turnOfMonth?: boolean; fomcVeraltet?: boolean };
-  watched?: string[];
+  engine?: HealthEngine;
 }
 
 export function watchHealth(cb: (doc: HealthDoc | null) => void): Unsubscribe {
-  return onSnapshot(doc(db(), 'meta', 'health'), (snap) =>
-    cb(snap.exists() ? (snap.data() as HealthDoc) : null),
+  return muxWatch(
+    'health',
+    (emit) =>
+      onSnapshot(doc(db(), 'meta', 'health'), (snap) => emit(snap.exists() ? snap.data() : null)),
+    (p) => cb(p as HealthDoc | null),
   );
 }
 
-/** Auffällige Positionierungen des letzten Tageslaufs (meta/positioning). */
-export interface PositioningDoc {
-  at?: string;
-  abgedeckt?: number;
-  zustaende?: Record<string, number>;
-  auffaellig?: Record<string, { state?: string; fundingAnnualPct?: number | null; oiChangePct?: number | null }>;
+/** Eingebautes Universum des Takts, wenn `meta/engineConfig` fehlt (functions/src/engine/config.ts). */
+export const DEFAULT_UNIVERSE: readonly string[] = [
+  'SPY', 'QQQ', 'AAPL', 'MSFT', 'NVDA', 'AMZN', 'META', 'GOOGL', 'AMD', 'TSLA',
+];
+
+/** Globaler Teil der Engine-Config (`meta/engineConfig`) — nur was die Anzeige braucht. */
+export interface EngineConfigDoc {
+  universe: { assetClass: string; symbols: string[] };
+  timeframe: number | null;
 }
 
-export function watchPositioning(cb: (doc: PositioningDoc | null) => void): Unsubscribe {
-  return onSnapshot(doc(db(), 'meta', 'positioning'), (snap) =>
-    cb(snap.exists() ? (snap.data() as PositioningDoc) : null),
+export function watchEngineConfig(cb: (cfg: EngineConfigDoc | null) => void): Unsubscribe {
+  return muxWatch(
+    'engineConfig',
+    (emit) =>
+      onSnapshot(doc(db(), 'meta', 'engineConfig'), (snap) => {
+        if (!snap.exists()) {
+          emit(null);
+          return;
+        }
+        const u = snap.get('universe') as unknown;
+        const symbols = istObjekt(u) ? textListe(u.symbols) : [];
+        emit({
+          universe: {
+            assetClass: istObjekt(u) && u.assetClass === 'crypto' ? 'crypto' : 'us_equity',
+            symbols: symbols.length > 0 ? symbols : [...DEFAULT_UNIVERSE],
+          },
+          timeframe: zahlOderNull(snap.get('timeframe')),
+        });
+      }),
+    (p) => cb(p as EngineConfigDoc | null),
   );
 }
 
-/**
- * Stand EINER Variante der Schatten-Flotte.
- *
- * Ohne diese Zeile zeigte das Journal nur fertige Urteile — und ein Urteil,
- * das „zu wenig Evidenz" lautet, wäre ohne den Fortschritt unlesbar: Man
- * sähe nicht, ob eine Variante gerade erst angefangen hat oder seit Wochen
- * kaum handelt (was selbst schon ein Befund ist).
- */
-export interface TuneFleetRow {
-  id: string;
-  /** Abgeschlossene Schatten-Trades — die Stichprobe des Vergleichs. */
-  trades: number;
-  /** Summe der Ergebnisse dieser Trades. */
-  pnl: number;
-  /** Aktuell offene Schatten-Positionen. */
-  open: number;
-  startedAt: string;
-}
-
-interface FleetVariantDoc {
-  book?: { positions?: Record<string, unknown> };
-  pnls?: number[];
-  startedAt?: string;
-}
-
-export function watchTuneFleet(uid: string, cb: (rows: TuneFleetRow[]) => void): Unsubscribe {
-  return onSnapshot(doc(db(), 'users', uid, 'tuning', 'fleet'), (snap) => {
-    const variants = (snap.get('variants') as Record<string, FleetVariantDoc> | undefined) ?? {};
-    cb(
-      Object.entries(variants)
-        .map(([id, v]) => {
-          const pnls = v.pnls ?? [];
-          return {
-            id,
-            trades: pnls.length,
-            pnl: pnls.reduce((a, b) => a + b, 0),
-            open: Object.keys(v.book?.positions ?? {}).length,
-            startedAt: v.startedAt ?? '',
-          };
-        })
-        .sort((a, b) => b.trades - a.trades || a.id.localeCompare(b.id)),
-    );
-  });
-}
-
-/**
- * Trade-Journal-Zeile (M12): Die FAKTEN legt der Server bei der Buchung an
- * (Doc-ID = Trade-ID), die Review-Felder ergänzt der User — die Rules lassen
- * ihn ausschließlich `notes/tags/mistakes/review` ändern.
- */
-export interface JournalRow {
-  id: string;
-  at: string;
-  symbol: string;
-  side: 'buy' | 'sell';
-  qty: number;
-  price: number;
-  source: 'engine' | 'manual';
-  assetClass?: string;
-  art: 'entry' | 'exit';
-  pnl?: number;
-  riskExit?: string;
-  bucket?: string;
-  nachkauf?: boolean;
-  /** Eingefrorene Momentaufnahme des Signals — warum die Engine gehandelt hat. */
-  signalContext?: {
-    typ?: string;
-    votes?: Record<string, string>;
-    konfluenz?: number;
-    minKonfluenz?: number;
-    forecast?: { dir?: string; weight?: number };
-    regime?: string;
+/** Ein Champion je Symbol (`meta/champion.symbols[sym]`, Format der champion.json). */
+export interface ChampionEntryDoc {
+  strategy: string;
+  timeframe: number | null;
+  score: number | null;
+  oos: {
+    trades: number | null;
+    netProfit: number | null;
+    netReturnPct: number | null;
+    positiveFoldShare: number | null;
+    profitFactor: number | null;
+    maxDrawdownPct: number | null;
+    feeShare: number | null;
   };
-  /* Review-Felder des Users. */
-  review?: string;
-  notes?: string;
-  tags?: string[];
-  mistakes?: string[];
+  gates: Array<{ name: string; pass: boolean; note: string }>;
+  decidedAt: number | null;
+  trials: number | null;
 }
 
-export function watchJournal(uid: string, cb: (rows: JournalRow[]) => void): Unsubscribe {
-  const q = query(collection(db(), 'users', uid, 'journal'), orderBy('at', 'desc'), limit(12));
-  return onSnapshot(q, (snap) =>
-    cb(snap.docs.map((d) => ({ id: d.id, ...(d.data() as Omit<JournalRow, 'id'>) }))),
+export interface NoTradeDoc {
+  reason: string;
+  decidedAt: number | null;
+  bestScore: number | null;
+}
+
+export interface ChampionDoc {
+  version: number | null;
+  updatedAt: number | null;
+  symbols: Record<string, ChampionEntryDoc>;
+  noTrade: Record<string, NoTradeDoc>;
+}
+
+function leseChampionEntry(roh: unknown): ChampionEntryDoc | null {
+  if (!istObjekt(roh) || typeof roh.strategy !== 'string') return null;
+  const oos = istObjekt(roh.oos) ? roh.oos : {};
+  const gates = Array.isArray(roh.gates)
+    ? roh.gates.flatMap((g: unknown) =>
+        istObjekt(g) && typeof g.name === 'string'
+          ? [{ name: g.name, pass: g.pass === true, note: textOderNull(g.note) ?? '' }]
+          : [],
+      )
+    : [];
+  return {
+    strategy: roh.strategy,
+    timeframe: zahlOderNull(roh.timeframe),
+    score: zahlOderNull(roh.score),
+    oos: {
+      trades: zahlOderNull(oos.trades),
+      netProfit: zahlOderNull(oos.netProfit),
+      netReturnPct: zahlOderNull(oos.netReturnPct),
+      positiveFoldShare: zahlOderNull(oos.positiveFoldShare),
+      profitFactor: zahlOderNull(oos.profitFactor),
+      maxDrawdownPct: zahlOderNull(oos.maxDrawdownPct),
+      feeShare: zahlOderNull(oos.feeShare),
+    },
+    gates,
+    decidedAt: zahlOderNull(roh.decidedAt),
+    trials: zahlOderNull(roh.trials),
+  };
+}
+
+/** `meta/champion` in eine Form bringen, auf die sich die Anzeige verlassen kann. */
+export function leseChampion(roh: unknown): ChampionDoc | null {
+  if (!istObjekt(roh)) return null;
+  const symbols: Record<string, ChampionEntryDoc> = {};
+  if (istObjekt(roh.symbols)) {
+    for (const [sym, e] of Object.entries(roh.symbols)) {
+      const entry = leseChampionEntry(e);
+      if (entry) symbols[sym] = entry;
+    }
+  }
+  const noTrade: Record<string, NoTradeDoc> = {};
+  if (istObjekt(roh.noTrade)) {
+    for (const [sym, e] of Object.entries(roh.noTrade)) {
+      if (!istObjekt(e)) continue;
+      noTrade[sym] = {
+        reason: textOderNull(e.reason) ?? '',
+        decidedAt: zahlOderNull(e.decidedAt),
+        bestScore: zahlOderNull(e.bestScore),
+      };
+    }
+  }
+  return {
+    version: zahlOderNull(roh.version),
+    updatedAt: zahlOderNull(roh.updatedAt),
+    symbols,
+    noTrade,
+  };
+}
+
+export function watchChampion(cb: (doc: ChampionDoc | null) => void): Unsubscribe {
+  return muxWatch(
+    'champion',
+    (emit) =>
+      onSnapshot(doc(db(), 'meta', 'champion'), (snap) =>
+        emit(snap.exists() ? leseChampion(snap.data()) : null),
+      ),
+    (p) => cb(p as ChampionDoc | null),
   );
 }
 
+export interface OptimizeReportDoc {
+  date: string;
+  markdown: string;
+  truncated: boolean;
+}
+
 /**
- * Das Journal-Doc zum exakten Ausführungszeitpunkt (Maschinen-Video):
- * Die geladene Trade-Historie trägt keine Doc-IDs, aber `at` ist der
- * ISO-Stempel des Trades — eine Gleichheits-Query findet das eingefrorene
- * Doc ohne Composite-Index.
+ * Der jüngste Optimierer-Bericht (`meta/optimizeReports/{date}`) — einmalig
+ * beim Öffnen, kein Listener: Der Bericht ändert sich einmal pro Nacht und
+ * ist bis zu 900 kB groß.
  */
-export async function ladeJournalZuZeit(uid: string, at: string): Promise<JournalRow | null> {
-  const q = query(collection(db(), 'users', uid, 'journal'), where('at', '==', at), limit(1));
+export async function loadOptimizeReport(): Promise<OptimizeReportDoc | null> {
+  const q = query(collection(db(), 'meta', 'optimizeReports'), orderBy('date', 'desc'), limit(1));
   const snap = await getDocs(q);
   const d = snap.docs[0];
-  return d ? ({ id: d.id, ...(d.data() as Omit<JournalRow, 'id'>) } as JournalRow) : null;
-}
-
-/**
- * Review speichern — bewusst NUR die vier Felder, die die Rules erlauben.
- * Ein versehentlich mitgeschicktes Fakten-Feld ließe die ganze Änderung an
- * den Rules abprallen, und der User sähe ein stummes Nichts.
- */
-export async function saveJournalReview(
-  uid: string,
-  id: string,
-  patch: { review?: string; notes?: string; tags?: string[]; mistakes?: string[] },
-): Promise<void> {
-  const erlaubt: Record<string, unknown> = {};
-  if (patch.review !== undefined) erlaubt.review = patch.review;
-  if (patch.notes !== undefined) erlaubt.notes = patch.notes;
-  if (patch.tags !== undefined) erlaubt.tags = patch.tags;
-  if (patch.mistakes !== undefined) erlaubt.mistakes = patch.mistakes;
-  await updateDoc(doc(db(), 'users', uid, 'journal', id), erlaubt);
-}
-
-/**
- * Prüf-Journal-Zeile der Struktursuche (MO Teil 2) — der Server schreibt
- * jede Prüfung mit ihren Zahlen ins State-Doc, damit „abgelehnt" eine
- * nachrechenbare Aussage ist und keine Behauptung.
- */
-export interface StrukturJournalRow {
-  at: string;
-  art: 'start' | 'kandidat';
-  /** Klartext der Mutation, z. B. „Operator gekippt: rsi lt→gt". */
-  beschreibung: string;
-  befoerdert: boolean;
-  /** Such-Sharpe-Vorsprung des Kandidaten gegen den Amtierenden. */
-  vorsprung: number | null;
-  suchSharpe: number | null;
-  testSharpe: number | null;
-  /** Deflated-Sharpe-Wahrscheinlichkeit (Beförderung verlangt ≥ 0,95). */
-  dsr: number | null;
-  /** E[max SR] aus nVersuche Zufallsversuchen — die wachsende Latte. */
-  latte: number | null;
-  nVersuche: number;
-  nSuch: number;
-  nTest: number;
-  gruende: string[];
-}
-
-/** State der Struktursuche (users/{uid}/tuning/struktur, server-geschrieben). */
-export interface StrukturDoc {
-  amtierendSeit?: string;
-  /** KUMULATIV über die Lebenszeit der Suche — die DSR-Latte wächst mit. */
-  nVersuche?: number;
-  /** Zahl der Beförderungen; Generation 0 ist der kompilierte Startpunkt. */
-  generation?: number;
-  journal?: StrukturJournalRow[];
-  /** Feuer-Statistik der Blätter des amtierenden Baums (je Tageslauf frisch). */
-  bedingungen?: {
-    at?: string;
-    zeilen?: Array<{ seite?: string; label?: string; gefeuert?: number; amSignalTag?: number }>;
+  if (!d) return null;
+  return {
+    date: textOderNull(d.get('date')) ?? d.id,
+    markdown: textOderNull(d.get('markdown')) ?? '',
+    truncated: d.get('truncated') === true,
   };
-  updatedAt?: string;
 }
 
-/**
- * Erkenntnis-Chronik (`meta/erkenntnisse`, Owner-Go 08.08.).
- *
- * Über den Mux wie die anderen `meta`-Dokumente: EIN Listener je Browser,
- * nicht je Tab. Der Inhalt ist bewusst öffentlich lesbar — Thesen, Quoten und
- * Zählwerte, keine Beträge und keine Kennungen.
- */
-export function watchErkenntnisse(cb: (c: ErkenntnisChronik | null) => void): Unsubscribe {
-  return muxWatch(
-    'erkenntnisse',
-    (emit) =>
-      onSnapshot(doc(db(), 'meta', 'erkenntnisse'), (snap) =>
-        emit(snap.exists() ? (snap.data() as ErkenntnisChronik) : null),
-      ),
-    (p) => cb(p as ErkenntnisChronik | null),
-  );
+/* ── Nachrichten-Faden (Kunde ↔ Betreiber) ───────────────────────────────── */
+
+export interface FadenNachricht {
+  von: 'kunde' | 'admin';
+  text: string;
+  at: string;
 }
 
-/**
- * Täglicher KI-Lagebericht (`meta/aiBericht`) — ein Text, den ein Modell aus
- * der Chronik und den Messständen schreibt. Wie alle `meta`-Dokumente
- * öffentlich lesbar; er enthält keine Kontodaten, sondern nur das
- * Gesamtbild, das ohnehin im Heartbeat steht.
- */
-export function watchAiBericht(cb: (d: KiBerichtDoc | null) => void): Unsubscribe {
-  return muxWatch(
-    'aiBericht',
-    (emit) =>
-      onSnapshot(doc(db(), 'meta', 'aiBericht'), (snap) =>
-        emit(snap.exists() ? (snap.data() as KiBerichtDoc) : null),
-      ),
-    (p) => cb(p as KiBerichtDoc | null),
-  );
+/** Eigenen Faden lesen — geht auch für wartende Konten. */
+export async function nachrichtenLesen(): Promise<FadenNachricht[]> {
+  const r = await httpsCallable(fns(), 'nachricht')({ action: 'lesen' });
+  return (r.data as { nachrichten: FadenNachricht[] }).nachrichten;
 }
 
-/** Ein Halte-Horizont der Rückschau — gesamt und getrennt nach Richtung. */
-export interface HorizontStand {
-  klasse?: SchattenKlasse;
-  buy?: SchattenKlasse;
-  sell?: SchattenKlasse;
+/** Nachricht an den Admin — die erste ist die zur Anmeldung. */
+export async function nachrichtSenden(text: string): Promise<void> {
+  await httpsCallable(fns(), 'nachricht')({ action: 'senden', text });
 }
 
-/**
- * Tages-Rückschau (`meta/tagRueckblick`) — die Kante über die Haltedauer.
- *
- * Bis jetzt lag diese Messung nur in Firestore und war nirgends zu sehen.
- * Sie ist die Antwort auf die Frage, an der die Profitabilität hängt: Wie
- * lange halten? Wie alle `meta`-Dokumente öffentlich lesbar — sie enthält
- * ausschließlich Quoten und Zählwerte, keine Beträge und keine Kennungen.
- */
-export interface TagRueckblickDoc {
-  gesamt?: SchattenKlasse;
-  klassen?: Record<string, SchattenKlasse>;
-  nachRichtung?: { buy?: SchattenKlasse; sell?: SchattenKlasse };
-  horizonte?: Record<string, HorizontStand>;
-  /** Zeitpunkt des letzten Beitrags — nicht der letzten Lauf-Auslösung. */
-  at?: string;
-  /** Rechnungs-Version; ein Wechsel verwirft das Aggregat (siehe Scheduler). */
-  version?: number;
-  /** Wie viele Basistage je Symbol bewertet wurden. */
-  fenster?: number;
-  /**
-   * Wie viele Symbole in der Summe stecken.
-   *
-   * Ohne diese Zahl ist die Kante nicht lesbar: `n` zählt Basistage, und 534
-   * Beobachtungen aus zwölf Index-Symbolen sehen genauso aus wie 534 aus dem
-   * halben Katalog — sagen aber etwas völlig anderes.
-   */
-  symbole?: number;
-}
-
-export function watchTagRueckblick(cb: (d: TagRueckblickDoc | null) => void): Unsubscribe {
-  return muxWatch(
-    'tagRueckblick',
-    (emit) =>
-      onSnapshot(doc(db(), 'meta', 'tagRueckblick'), (snap) =>
-        emit(snap.exists() ? (snap.data() as TagRueckblickDoc) : null),
-      ),
-    (p) => cb(p as TagRueckblickDoc | null),
-  );
-}
-
-export function watchStruktur(uid: string, cb: (d: StrukturDoc | null) => void): Unsubscribe {
-  return onSnapshot(doc(db(), 'users', uid, 'tuning', 'struktur'), (snap) =>
-    cb(snap.exists() ? (snap.data() as StrukturDoc) : null),
-  );
-}
-
-/**
- * Kollektives Vorwissen (`meta/tuneGlobal`) — öffentlich lesbar wie die
- * anderen `meta`-Dokumente, weil es ausschließlich Zählwerte enthält:
- * wie oft eine Einstellungs-Änderung geprüft und wie oft sie übernommen
- * wurde. Keine Trades, keine Beträge, keine Kennungen.
- */
-export function watchTuneGlobal(cb: (stats: GlobalAxisStats) => void): Unsubscribe {
-  return muxWatch(
-    'tuneGlobal',
-    (emit) =>
-      onSnapshot(doc(db(), 'meta', 'tuneGlobal'), (snap) =>
-        emit(snap.exists() ? ((snap.get('axes') as GlobalAxisStats | undefined) ?? {}) : {}),
-      ),
-    (p) => cb(p as GlobalAxisStats),
-  );
-}
-
-/** Manueller Paper-Trade über das trade-Callable (Preis kommt vom Server). */
-export async function callTrade(input: {
-  symbol: string;
-  side: 'buy' | 'sell';
-  qty?: number;
-}): Promise<void> {
-  await httpsCallable(fns(), 'trade')(input);
-}
-
-/* ── Admin-Verwaltung (Owner 02.08.): Freischalten aus der App ── */
+/* ── Admin-Verwaltung: Freischalten aus der App ──────────────────────────── */
 
 export interface AdminUserRow {
   uid: string;
@@ -1428,23 +776,15 @@ export interface AdminUserRow {
   accessLevel: AccessLevel;
   requestedAt: string | null;
   admin: boolean;
-  /** Gesamt-P&L (Equity − Kapitalbasis) — dieselbe Formel wie die
-   *  Performance-Karte; null ohne Wallet/Kapitalbasis. */
+  /** Gesamt-P&L (Equity − Kapitalbasis) — dieselbe Formel wie die Performance-Karte. */
   pnl: number | null;
   pnlPct: number | null;
   equity: number | null;
-  /** Geschlossene Trades laut Konto-Statistik; null ohne Statistik. */
   trades: number | null;
-  /** Live-Reife-Kurzform aus liveGate.reifeFuerKonto (Server rechnet). */
-  reife: { bereit: boolean; erfuellt: number; gesamt: number; fazit: string };
-  /**
-   * Zustimmung zum Risikohinweis (22.08.) — `null` bei Bestandskonten, die
-   * vor der Pflicht angelegt wurden. `version` sagt, WELCHEM Stand
-   * zugestimmt wurde; ein blosses Ja bewiese das nicht.
-   */
+  reife: { bereit: boolean; erfuellt: number; gesamt: number; fazit: string; offeneCodes?: string[] };
+  /** Zustimmung zum Risikohinweis — `null` bei Bestandskonten vor der Pflicht. */
   risiko: { version: string; at: string } | null;
-  /** Broker-Abgleich des Kontos (Owner 21.08.) — `null` ohne Broker/Vermerk.
-   *  Die Sperr-Entscheidung kommt aus derselben Funktion wie im Scan. */
+  /** Broker-Abgleich (Altfeld) — `null` ohne Vermerk; sperrt weiterhin, wenn gesetzt. */
   abgleich: {
     sperre: boolean;
     fehlbestand: number;
@@ -1452,16 +792,6 @@ export interface AdminUserRow {
     kontoZustand: string | null;
     at: string | null;
   } | null;
-}
-
-/** Ergebnis eines vom Admin ausgelösten Abgleichs. */
-export interface AdminAbgleichErgebnis {
-  geprueft: boolean;
-  zustand: string;
-  sperre: boolean;
-  fehlbestand: number;
-  fremdbestand: number;
-  grund: string | null;
 }
 
 /** Alle Konten (Wartende zuerst) — antwortet nur für Admin-Konten. */
@@ -1476,51 +806,6 @@ export async function adminSetAccess(
   level: 'pending' | 'approved' | 'blocked' | 'archiviert',
 ): Promise<void> {
   await httpsCallable(fns(), 'adminUsers')({ action: 'set', target, level });
-}
-
-/**
- * Broker-Abgleich eines FREMDEN Kontos neu ausführen (Owner 21.08.).
- *
- * Hebt keine Sperre auf, sondern misst neu: Stimmen Buch und Broker-Depot
- * wieder überein, fällt die Sperre von selbst. Bleibt sie, sagt das
- * Ergebnis warum — dann führt der Weg über `adoptBroker`, den der
- * Konto-Inhaber bestätigt.
- */
-export async function adminAbgleich(target: string): Promise<AdminAbgleichErgebnis> {
-  const r = await httpsCallable(fns(), 'adminUsers')({ action: 'abgleich', target });
-  return (r.data as { abgleich: AdminAbgleichErgebnis }).abgleich;
-}
-
-/**
- * Übernahme für ein FREMDES Konto vormerken (22.08.).
- *
- * Der Server misst zuerst frisch ab und legt den Vermerk NUR an, wenn der
- * Befund eine Sperre zeigt. `vorgemerkt: false` heisst also nicht
- * „fehlgeschlagen", sondern „es gab nichts vorzumerken" — die Antwort auf
- * genau die Frage, die der Admin mit dem Klick gestellt hat.
- */
-export async function adminUebernahmeVormerken(
-  target: string,
-): Promise<{ vorgemerkt: boolean; abgleich: AdminAbgleichErgebnis }> {
-  const r = await httpsCallable(fns(), 'adminUsers')({ action: 'uebernahmeVormerken', target });
-  return r.data as { vorgemerkt: boolean; abgleich: AdminAbgleichErgebnis };
-}
-
-export interface FadenNachricht {
-  von: 'kunde' | 'admin';
-  text: string;
-  at: string;
-}
-
-/** Eigenen Faden lesen -- geht auch fuer wartende Konten. */
-export async function nachrichtenLesen(): Promise<FadenNachricht[]> {
-  const r = await httpsCallable(fns(), 'nachricht')({ action: 'lesen' });
-  return (r.data as { nachrichten: FadenNachricht[] }).nachrichten;
-}
-
-/** Nachricht an den Admin -- die erste ist die zur Anmeldung. */
-export async function nachrichtSenden(text: string): Promise<void> {
-  await httpsCallable(fns(), 'nachricht')({ action: 'senden', text });
 }
 
 /** Faden eines FREMDEN Kontos lesen (Admin). */
@@ -1539,28 +824,19 @@ export async function adminSetAdmin(target: string, admin: boolean): Promise<voi
   await httpsCallable(fns(), 'adminUsers')({ action: 'setAdmin', target, admin });
 }
 
-/** Befund der endgültigen Löschung — was das Broker-Aufräumen ergeben hat. */
 export interface AdminLoeschBefund {
   ok: true;
   uid: string;
   authGeloescht: boolean;
 }
 
-/**
- * Ein gesperrtes/archiviertes Konto ENDGÜLTIG löschen (DSGVO Art. 17,
- * Owner-Frage 24.08.). Unumkehrbar — der Server prüft zehn Vorbedingungen
- * frisch (Karenzzeit, offene Positionen, laufender Reset, Live-Verbindung,
- * …) und lehnt ab, statt zu raten.
- */
-export async function adminDeleteAccount(
-  target: string,
-  confirm: string,
-): Promise<AdminLoeschBefund> {
+/** Ein gesperrtes/archiviertes Konto ENDGÜLTIG löschen (DSGVO Art. 17) — unumkehrbar. */
+export async function adminDeleteAccount(target: string, confirm: string): Promise<AdminLoeschBefund> {
   const r = await httpsCallable(fns(), 'adminUsers')({ action: 'delete', target, confirm });
   return r.data as AdminLoeschBefund;
 }
 
-/** Zustand des Echtgeld-Not-Aus (M14) — nur für Admin-Konten. */
+/** Zustand des Echtgeld-Not-Aus — nur für Admin-Konten. */
 export interface KillSwitchStatus {
   killSwitch: boolean;
   at: string | null;
@@ -1576,282 +852,3 @@ export async function adminLiveStatus(): Promise<KillSwitchStatus> {
 export async function adminSetKillSwitch(an: boolean): Promise<void> {
   await httpsCallable(fns(), 'adminUsers')({ action: 'setKillSwitch', an });
 }
-
-/* ── Bewährte Einstellungen (MU3, meta/bestPractice) ─────────────────────────
- * Täglicher, anonymisierter Snapshot des Kontos mit der besten
- * ENGINE-Attribution — öffentlich lesbar wie alle meta-Dokumente, weil er
- * weder User-Kennung noch Watchlist noch Kapital enthält. */
-
-export interface BestPracticeKennzahlen {
-  n: number;
-  kantePct: number | null;
-  pnl: number;
-  fees: number;
-  notional: number;
-  zeitraumTage: number;
-}
-
-export interface BestPractice {
-  at: string;
-  stand: 'gekuert' | 'kein_kandidat';
-  kriterien: { minTrades: number; minTage: number } | null;
-  kennzahlen: BestPracticeKennzahlen | null;
-  einstellungen: import('@autotrd/shared').BewaehrteEinstellungen | null;
-  anwaerter: { kennzahlen: BestPracticeKennzahlen; fehlt: string[] } | null;
-}
-
-function parseKennzahlen(roh: unknown): BestPracticeKennzahlen | null {
-  if (!roh || typeof roh !== 'object') return null;
-  const o = roh as Record<string, unknown>;
-  if (typeof o.n !== 'number') return null;
-  return {
-    n: o.n,
-    kantePct: typeof o.kantePct === 'number' ? o.kantePct : null,
-    pnl: typeof o.pnl === 'number' ? o.pnl : 0,
-    fees: typeof o.fees === 'number' ? o.fees : 0,
-    notional: typeof o.notional === 'number' ? o.notional : 0,
-    zeitraumTage: typeof o.zeitraumTage === 'number' ? o.zeitraumTage : 0,
-  };
-}
-
-export async function leseBestPractice(): Promise<BestPractice | null> {
-  const snap = await getDoc(doc(db(), 'meta', 'bestPractice'));
-  if (!snap.exists()) return null;
-  const d = snap.data() as Record<string, unknown>;
-  const stand = d.stand === 'gekuert' ? 'gekuert' : 'kein_kandidat';
-  const krit = d.kriterien as { minTrades?: unknown; minTage?: unknown } | undefined;
-  const anw = d.anwaerter as { kennzahlen?: unknown; fehlt?: unknown } | undefined;
-  const anwKz = anw ? parseKennzahlen(anw.kennzahlen) : null;
-  const einst = d.einstellungen as Record<string, unknown> | undefined;
-  const einstOk =
-    einst &&
-    typeof einst.engine === 'object' &&
-    typeof einst.signals === 'object' &&
-    typeof einst.indicators === 'object';
-  return {
-    at: typeof d.at === 'string' ? d.at : '',
-    stand,
-    kriterien:
-      krit && typeof krit.minTrades === 'number' && typeof krit.minTage === 'number'
-        ? { minTrades: krit.minTrades, minTage: krit.minTage }
-        : null,
-    kennzahlen: parseKennzahlen(d.kennzahlen),
-    einstellungen: einstOk
-      ? (einst as unknown as import('@autotrd/shared').BewaehrteEinstellungen)
-      : null,
-    anwaerter:
-      anwKz !== null
-        ? {
-            kennzahlen: anwKz,
-            fehlt: Array.isArray(anw?.fehlt) ? anw.fehlt.filter((f) => typeof f === 'string') : [],
-          }
-        : null,
-  };
-}
-
-/* ── Eigene Loadouts (MU4, users/{uid}/loadouts) ─────────────────────────────
- * Benannte Einstellungs-Schnappschüsse — reine Präferenz-KOPIEN, per Rules
- * nur vom Owner lesbar/schreibbar. Wirksam wird ein Loadout erst über
- * saveStrategy (Server-Validierung), nie durch das Speichern hier. */
-
-export interface EigenesLoadout {
-  id: string;
-  name: string;
-  at: string;
-  einstellungen: import('@autotrd/shared').BewaehrteEinstellungen;
-  hebel?: number;
-}
-
-export async function leseLoadouts(uid: string): Promise<EigenesLoadout[]> {
-  const snap = await getDocs(collection(db(), 'users', uid, 'loadouts'));
-  return snap.docs
-    .flatMap((d) => {
-      const name = d.get('name') as unknown;
-      const at = d.get('at') as unknown;
-      const e = d.get('einstellungen') as Record<string, unknown> | undefined;
-      const hebel = d.get('hebel') as unknown;
-      const ok =
-        typeof name === 'string' &&
-        typeof at === 'string' &&
-        e &&
-        typeof e.engine === 'object' &&
-        typeof e.signals === 'object' &&
-        typeof e.indicators === 'object';
-      if (!ok) return [];
-      return [
-        {
-          id: d.id,
-          name,
-          at,
-          einstellungen: e as unknown as import('@autotrd/shared').BewaehrteEinstellungen,
-          ...(typeof hebel === 'number' ? { hebel } : {}),
-        },
-      ];
-    })
-    .sort((a, b) => a.name.localeCompare(b.name));
-}
-
-export async function speichereLoadout(
-  uid: string,
-  name: string,
-  einstellungen: import('@autotrd/shared').BewaehrteEinstellungen,
-  hebel: number,
-): Promise<void> {
-  await setDoc(doc(collection(db(), 'users', uid, 'loadouts')), {
-    name,
-    at: new Date().toISOString(),
-    einstellungen,
-    ...(hebel > 1 ? { hebel } : {}),
-  });
-}
-
-export async function loescheLoadout(uid: string, id: string): Promise<void> {
-  await deleteDoc(doc(db(), 'users', uid, 'loadouts', id));
-}
-
-export interface UniverseEntry {
-  symbol: string;
-  name: string;
-}
-export interface UniverseClass {
-  label: string;
-  groups: Record<string, UniverseEntry[]>;
-}
-
-/** Katalog aus meta/universe (einmalig; ändert sich praktisch nie). */
-export async function loadUniverse(): Promise<Record<string, UniverseClass> | null> {
-  const snap = await getDoc(doc(db(), 'meta', 'universe'));
-  if (!snap.exists()) return null;
-  return (snap.data() as { classes: Record<string, UniverseClass> }).classes;
-}
-
-/* ── Workspace-Persistenz (M9): users/{uid}/workspaces/{wsId} ── */
-
-export interface WorkspaceDocData {
-  preset: string;
-  /** Panel-Sichtbarkeit + Reihenfolge + Spalte (id → {hidden, order, col});
-   *  fehlend = sichtbar, Reihenfolge = DOM-Default (Taschenmesser Teil 3).
-   *  `col` seit 21.08. (Pointer-Drag): Karten dürfen zwischen linker und
-   *  rechter Sidebar wechseln — fehlend = Markup-Spalte (abwärtskompatibel). */
-  panels: Record<string, { hidden?: boolean; order?: number; col?: 'leftCol' | 'rightCol' }>;
-  /** Link-Gruppen der verlinkbaren Panels (chart/news → 'A'|'B'|'C'). */
-  groups: Record<string, string>;
-  /** Zuletzt aktives Symbol je Link-Gruppe. */
-  symbols: Record<string, string>;
-  updatedAt: string;
-}
-
-export async function loadWorkspace(uid: string): Promise<WorkspaceDocData | null> {
-  const snap = await getDoc(doc(db(), 'users', uid, 'workspaces', 'default'));
-  return snap.exists() ? (snap.data() as WorkspaceDocData) : null;
-}
-
-export async function saveWorkspace(uid: string, data: WorkspaceDocData): Promise<void> {
-  await setDoc(doc(db(), 'users', uid, 'workspaces', 'default'), data);
-}
-
-/** Quotes aller vorhandenen market/**-Docs (für die Markt-Übersicht). */
-export async function loadMarketQuotes(): Promise<Map<string, MarketDocData>> {
-  const snap = await getDocs(collection(db(), 'market'));
-  const map = new Map<string, MarketDocData>();
-  for (const d of snap.docs) map.set(d.id, d.data() as MarketDocData);
-  return map;
-}
-
-/** Tiefe Historie (Chart-Audit 2): EIN Jahres-Chunk market/{sym}/ohlcDaily/{JAHR}. */
-export async function loadDailyChunk(symbol: string, year: number): Promise<ChartBar[]> {
-  const snap = await getDoc(doc(db(), 'market', symbol, 'ohlcDaily', String(year)));
-  if (!snap.exists()) return [];
-  const days = (snap.data() as { days?: Record<string, { open: number; high: number; low: number; close: number; volume: number }> }).days ?? {};
-  return Object.entries(days)
-    .map(([date, b]) => ({ date, ...b }))
-    .sort((a, b) => (a.date < b.date ? -1 : 1));
-}
-
-/** Kurz-Update fürs aktive Symbol — Server schreibt den frischen Kurs in
- *  market/{sym}.quote (alle Clients sehen ihn via onSnapshot). */
-export async function callQuoteNow(symbol: string): Promise<void> {
-  await httpsCallable(fns(), 'quoteNow')({ symbol });
-}
-
-/** Aktive User-Prognose (Chart-Pfeil) eines Symbols — null wenn keine. */
-export async function loadPrediction(
-  uid: string,
-  symbol: string,
-): Promise<import('@autotrd/shared').UserPrediction | null> {
-  const snap = await getDoc(doc(db(), 'users', uid, 'predictions', symbol));
-  return snap.exists() ? (snap.data() as import('@autotrd/shared').UserPrediction) : null;
-}
-
-export async function callSavePrediction(input: {
-  symbol: string;
-  targetPrice?: number;
-  targetDate?: string;
-  confidence?: number;
-  basePrice?: number;
-  clear?: boolean;
-}): Promise<void> {
-  await httpsCallable(fns(), 'savePrediction')(input);
-}
-
-/** Bars einmalig für die Studio-Vorschau (gecachte Tages-Bars, aufsteigend). */
-export async function loadBarsOnce(symbol: string): Promise<ChartBar[]> {
-  const q = query(collection(db(), 'market', symbol, 'bars'), orderBy(documentId()));
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => ({ date: d.id, ...(d.data() as Omit<ChartBar, 'date'>) }));
-}
-
-/** ISO-Tag `tage` Kalendertage vor heute (UTC) — Schlüssel-Arithmetik für
- *  die ohlc5m-Chunk-Queries (Doc-IDs sind ET-Tage im Format YYYY-MM-DD). */
-export function tagVorTagen(tage: number): string {
-  return new Date(Date.now() - tage * 86_400_000).toISOString().slice(0, 10);
-}
-
-/** Ein geladener 5m-Chunk: ET-Handelstag + dessen Bars (aufsteigend). */
-export interface IntradayChunk {
-  day: string;
-  bars: import('./chart.js').IntradayChartBar[];
-}
-
-/**
- * 5m-Chunks eines Schlüssel-Fensters [vonTag, bisTag] laden (Zoom-Kontinuum
- * 06.08.). Die Doc-IDs sind ET-Tage — ein Range-Scan über die documentId
- * liest also GENAU die gewünschten Tage statt der ganzen Collection. Das ist
- * die Grundlage des dynamischen Nachladens: Die Collection wächst um ein Doc
- * pro Handelstag, und ein Voll-Scan würde jeden Chart-Refresh mit der
- * gesamten Intraday-Geschichte bezahlen.
- */
-export async function loadIntradayChunks(
-  symbol: string,
-  vonTag: string,
-  bisTag: string,
-): Promise<IntradayChunk[]> {
-  const q = query(
-    collection(db(), 'market', symbol, 'ohlc5m'),
-    where(documentId(), '>=', vonTag),
-    where(documentId(), '<=', bisTag),
-    orderBy(documentId()),
-  );
-  const snap = await getDocs(q);
-  return snap.docs.map((d) => {
-    const data = d.data() as { bars?: Array<{ t: number; o: number; h: number; l: number; c: number; v: number }> };
-    return {
-      day: d.id,
-      bars: (data.bars ?? []).map((b) => ({ time: b.t, open: b.o, high: b.h, low: b.l, close: b.c, volume: b.v })),
-    };
-  });
-}
-
-/** 5m-Intraday-Bars der letzten N Handelstage aus market/{sym}/ohlc5m
- *  (Chunk-Doc je ET-Tag; Chart-Feedback 24.07.: „minutengenaue Daten").
- *  Cutoff mit Wochenend-/Feiertagspuffer, dann auf die letzten N Handelstage
- *  geschnitten — liest ein paar Tage mehr als nötig, nie die ganze Collection. */
-export async function loadIntraday(
-  symbol: string,
-  days: number,
-): Promise<import('./chart.js').IntradayChartBar[]> {
-  const n = Math.max(days, 1);
-  const chunks = await loadIntradayChunks(symbol, tagVorTagen(Math.ceil(n * 1.6) + 4), '9999-12-31');
-  return chunks.slice(-n).flatMap((c) => c.bars);
-}
-

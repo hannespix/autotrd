@@ -1,34 +1,72 @@
 /**
- * Konto-Tore für Order-Pfade AUSSERHALB des 5-Minuten-Scans
- * (Audit 13.08., Hochbefunde H2/H3).
+ * Konto-Tore — die Sperren eines Kontos aus seinem gespeicherten Zustand
+ * (Audit 13.08., Hochbefunde H2/H3; seit dem Rückbau der Handelsplattform
+ * die EINE Stelle, an der ein Order-Pfad sie abfragt).
  *
- * ── Der Befund ────────────────────────────────────────────────────────────
+ * ── Der Befund, der sie entstehen ließ ────────────────────────────────────
  *
- * Der Scan prüft vor jedem Einstieg Notbremse und Abgleich-Sperre — die
- * beiden anderen Order-Pfade taten es nicht: `momentumRun` (Momentum-Depot
- * und Kern-Sockel) kannte weder Bremse noch Sperre, die Handeingabe
- * (`trade`-Callable) kannte zwar die Bremse, aber keine Abgleich-Sperre und
- * kein Positionslimit. Ein Konto, das der Scan längst gesperrt hatte, bekam
- * am selben Tag Sockel-Käufe bis 60 % der Equity — der eigene Leitsatz der
- * Notbremse („eine Bremse, die man umgehen kann, ist keine") war an zwei von
- * drei Pfaden verletzt.
+ * Der alte Scan prüfte vor jedem Einstieg Notbremse und Abgleich-Sperre —
+ * die anderen Order-Pfade taten es nicht. Ein Konto, das der Scan längst
+ * gesperrt hatte, bekam am selben Tag anderswo Käufe — der eigene Leitsatz
+ * der Notbremse („eine Bremse, die man umgehen kann, ist keine") war
+ * verletzt. Seitdem gibt es die Entscheidung genau einmal, hier.
  *
  * ── Warum aus dem VERMERK statt live gerechnet ────────────────────────────
  *
- * Der Scan misst alle fünf Minuten Equity und Broker-Abgleich und schreibt
- * beides ans User-Dokument (`risk.*`). Diese Pfade laufen seltener (täglich
- * bzw. auf Klick) und haben weder frische Kurse noch einen Grund, den Broker
- * ein zweites Mal zu fragen: Was hier zählt, ist der ZUSTAND der Sperren.
- * Dieselbe Entscheidung wie in der Handeingabe seit M12 — jetzt an einer
- * Stelle statt in Kopien, die auseinanderlaufen.
+ * `snapshotEquity` schreibt täglich die Bezugsgröße der Notbremse ans
+ * User-Dokument (`risk.vortagEquity*`); ein ausgelöster Breaker und der
+ * Abgleich-Vermerk stehen daneben (`risk.breaker*`, `risk.abgleich`). Was
+ * hier zählt, ist der ZUSTAND der Sperren — nicht eine Neuvermessung mit
+ * frischen Kursen.
  *
- * Exits durchlaufen die Einstiegs-Tore NIE (Leitsatz aus dem Scan): Eine
- * offene Position muss schließbar bleiben, gerade wenn das Konto brennt.
+ * Exits durchlaufen die Einstiegs-Tore NIE (CLAUDE.md §0.4): Eine offene
+ * Position muss schließbar bleiben, gerade wenn das Konto brennt.
  */
 
 import { pruefeBreaker, resetLaeuft, type Strategy } from '../../../shared/src/index.js';
-import { KAPITAL_DECKEL_STD } from './broker.js';
-import { breakerHeuteAusgeloest, handelstagET } from '../scheduled/scanMarket.js';
+
+/**
+ * Wie lange ein Konto-Abgleich-Vermerk nachwirkt (Stunden).
+ *
+ * 24 Stunden überbrücken Wochenenden und Ausfälle der Broker-API, ohne dass
+ * eine uralte Zahl ewig weiterklemmt. Nach Ablauf gilt der Vermerk als
+ * verfallen und sperrt nicht mehr.
+ */
+export const KAPITAL_DECKEL_STD = 24;
+
+/**
+ * Handelstag in New York als `YYYY-MM-DD`.
+ *
+ * NICHT UTC: Sonst zählte der Abend nach 20:00 ET (Sommer) bzw. 19:00 ET
+ * (Winter) schon als neuer Tag, und die Notbremse löste sich rund fünfzehn
+ * Stunden vor dem nächsten regulären Reset von selbst — obwohl sie
+ * ausgelöst war und niemand sie entriegelt hat. Krypto läuft durch, der
+ * Fall ist also nicht theoretisch. Beide Seiten des Vergleichs laufen durch
+ * diese Funktion; das gespeicherte Format bleibt ein ISO-Zeitstempel.
+ */
+export function handelstagET(zeit: Date): string {
+  const p = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(zeit);
+  const teil = (t: string): string => p.find((x) => x.type === t)?.value ?? '';
+  return `${teil('year')}-${teil('month')}-${teil('day')}`;
+}
+
+/**
+ * Hat die Notbremse an DEMSELBEN Handelstag schon ausgelöst?
+ *
+ * `null`/fehlend heißt „nie ausgelöst"; ein unlesbarer Zeitstempel gilt
+ * bewusst als ausgelöst — im Zweifel gesperrt lassen, nicht freigeben.
+ */
+export function breakerHeuteAusgeloest(marker: unknown, jetzt: Date): boolean {
+  if (typeof marker !== 'string' || marker === '') return false;
+  const t = Date.parse(marker);
+  if (!Number.isFinite(t)) return true;
+  return handelstagET(new Date(t)) === handelstagET(jetzt);
+}
 
 export interface KontoTore {
   /**
@@ -45,11 +83,12 @@ export interface KontoTore {
 /**
  * Sperr-Entscheidung aus dem gespeicherten Abgleich-Vermerk (`risk.abgleich`).
  *
- * Spiegelt die Live-Entscheidung von `abgleichFuerKonto`: Fehlbestand (Buch
- * hält Positionen, die der Broker nicht hat) sperrt, grobe Cash-Abweichung
- * (`konto.zustand === 'grob'`) sperrt, Fremdbestand und kleine Drift nicht.
- * Ein alter Vermerk (Broker längst getrennt) sperrt NICHT — der Live-Abgleich
- * würde dann `kein_broker` melden; dieselbe Frist wie beim Kapitaldeckel.
+ * Fehlbestand (Buch hielt Positionen, die der Broker nicht hat) sperrt,
+ * grobe Cash-Abweichung (`konto.zustand === 'grob'`) sperrt, Fremdbestand
+ * und kleine Drift nicht. Ein alter Vermerk sperrt NICHT — dieselbe Frist
+ * wie beim Kapitaldeckel (`KAPITAL_DECKEL_STD`). Der Vermerk stammt aus dem
+ * Buch/Broker-Abgleich der alten Plattform; wer ihn heute noch trägt, wird
+ * spätestens nach der Frist wieder frei.
  */
 export function abgleichSperreAusVermerk(vermerk: unknown, jetzt: Date): boolean {
   if (typeof vermerk !== 'object' || vermerk === null) return false;
@@ -86,8 +125,9 @@ export function kontoTore(
   const breaker = pruefeBreaker(
     {
       vortagEquity: vortag,
-      // Zustand, keine Neuvermessung: Die Grenzprüfung selbst macht der Scan
-      // mit frischen Kursen. Hier zählt, OB die Bremse heute ausgelöst ist.
+      // Zustand, keine Neuvermessung: Die Grenzprüfung selbst macht der
+      // Engine-Takt mit frischen Kursen. Hier zählt, OB die Bremse heute
+      // ausgelöst ist.
       jetztEquity: vortag,
       vortagEquityAm: (snap.get('risk.vortagEquityAm') as string | undefined) ?? undefined,
       heute: handelstagET(jetzt),

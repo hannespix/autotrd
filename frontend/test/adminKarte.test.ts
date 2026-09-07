@@ -22,7 +22,7 @@ import { DE, EN } from '../src/i18n.js';
 const dash = readFileSync(join(import.meta.dirname, '..', 'src', 'dashboard.ts'), 'utf8');
 const css = readFileSync(join(import.meta.dirname, '..', 'src', 'theme.css'), 'utf8');
 /** Nur der Admin-Teil — sonst treffen die Wächter zufällig anderen Code. */
-const admin = dash.slice(dash.indexOf('let admZeilen'), dash.indexOf('function renderStrategyChips'));
+const admin = dash.slice(dash.indexOf('let admZeilen'), dash.indexOf('function syncPositionQuotes'));
 /**
  * Derselbe Ausschnitt OHNE Kommentare.
  *
@@ -93,16 +93,24 @@ describe('Anfragen oben', () => {
 });
 
 describe('Kompakter ja, riskanter nein', () => {
-  const scharf = ['adm.wirklichSperren', 'adm.wirklichAdminGeben', 'adm.wirklichAdminNehmen', 'adm.wirklichVormerken'];
+  const scharf = ['adm.wirklichSperren', 'adm.wirklichArchivieren', 'adm.wirklichAdminGeben', 'adm.wirklichAdminNehmen'];
 
-  it('die drei folgenreichen Eingriffe sind armiert', () => {
-    // Sperren, Admin-Rechte und die Übernahme-Vormerkung berühren fremde
-    // Rechte bzw. fremdes Geld. Sie kosten künftig drei bewusste Schritte:
-    // öffnen, armieren, bestätigen.
+  it('die folgenreichen Eingriffe sind armiert', () => {
+    // Sperren, Archivieren und Admin-Rechte berühren fremde Rechte. Sie
+    // kosten drei bewusste Schritte: öffnen, armieren, bestätigen.
     for (const k of scharf) expect(admin, `${k} nicht verdrahtet`).toContain(k);
     expect(admin).toContain("admArmBtn(\n        t('adm.sperren'),");
     expect(admin).toMatch(/admArmBtn\(\s*row\.admin \? t\('adm\.adminEntziehen'\)/);
-    expect(admin).toMatch(/admArmBtn\(\s*t\('adm\.vormerken'\)/);
+    expect(admin).toMatch(/admArmBtn\(\s*t\('adm\.archivieren'\)/);
+  });
+
+  it('keine Abgleich-Aktionen mehr — der Abgleich lebt im Takt, nicht in der Karte', () => {
+    // Der alte Handelskern maß per Knopf; der Takt gleicht jede Minute ab
+    // und sperrt selbst (HaltReason 'reconcile'). Ein Knopf, der „neu
+    // misst", hätte hier keinen Gegenpart mehr.
+    expect(admin).not.toContain('adminAbgleich(');
+    expect(admin).not.toContain('adm.vormerken');
+    expect(dash).not.toContain('uebernahmeVormerken');
   });
 
   it('ZUM ADMIN MACHEN ist rot — heute sah es aus wie NACHRICHTEN', () => {
@@ -214,13 +222,6 @@ describe('Die Sperr-Marke wird nie geschluckt', () => {
     expect(verw).toContain("t('adm.risikoOk')");
   });
 
-  it('die Abgleich-Meldung steht AUSSERHALB der Liste', () => {
-    /* Im Erfolgsfall verschwindet die Sperre, die Zeile verlässt also den
-     * Abschnitt OFFEN. Eine Meldung an der Zeile könnte den Erfolg baulich
-     * nicht anzeigen. */
-    expect(dash).toContain('<div id="admMeldung"');
-    expect(dash.indexOf('<div id="admMeldung"')).toBeLessThan(dash.indexOf('<div id="admList">'));
-  });
 });
 
 describe('Textbausteine vollständig', () => {
@@ -230,7 +231,7 @@ describe('Textbausteine vollständig', () => {
       'adm.tage', 'adm.gruppeWartend', 'adm.gruppeGesperrt', 'adm.gruppeFrei',
       'adm.filterKonto', 'adm.mehrAktionen', 'adm.abgleichKurz', 'adm.kontenStand',
       'adm.geladen', 'adm.wirklichSperren', 'adm.wirklichAdminGeben',
-      'adm.wirklichAdminNehmen', 'adm.wirklichVormerken',
+      'adm.wirklichAdminNehmen', 'adm.wirklichArchivieren',
     ];
     for (const k of neu) {
       expect((DE as Record<string, string>)[k], `DE fehlt: ${k}`).toBeTruthy();
@@ -245,7 +246,7 @@ describe('Textbausteine vollständig', () => {
     expect(dash).toContain('id="admKillBtn"');
   });
 
-  it('id="admReload" bleibt — Zeile ~11277 bindet sie', () => {
+  it('id="admReload" bleibt — der Mount bindet sie', () => {
     /* $ ist getElementById(id)! und wirft bei fehlendem Element; die
      * nächste Zeile registriert den Not-Aus-Handler. Beides stürbe mit. */
     expect(dash).toContain('id="admReload"');

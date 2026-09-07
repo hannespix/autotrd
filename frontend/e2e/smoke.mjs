@@ -4,13 +4,12 @@
  * ── Warum es das gibt ─────────────────────────────────────────────────────
  *
  * Typecheck, Build und die Vitest-Suite prüfen alles außer der einen Frage,
- * die bei UI-Arbeit zählt: Sieht das im Browser so aus, wie es soll? In
- * zwei PRs hintereinander musste die Antwort „nur kompiliert geprüft"
- * lauten — und beim ersten echten Durchlauf fiel sofort ein Layoutfehler
- * auf, den keine der anderen Stufen hätte finden können: `.opt-grid label`
- * setzt `flex-direction: column`, ein Inline-`display:flex` überschreibt
- * nur `display`. Die `flex-basis`-Angaben wirkten dadurch auf die HÖHE, und
- * aus zehn kompakten Regler-Zeilen wurden zehn 120 px hohe Blöcke.
+ * die bei UI-Arbeit zählt: Sieht das im Browser so aus, wie es soll? Ein
+ * einzelner Zugriff auf ein fehlendes Element reißt das ganze Dashboard mit
+ * (weißer Screen) — und das findet keine der anderen Stufen. Der Lauf
+ * registriert einen frischen Nutzer, wartet auf die Karten und prüft die
+ * Anschlussstellen des Auto-Traders: Engine-Karte, Einstellungen,
+ * Symbolauswahl, Champion-Karte, Warum-Karte und den Broker-Reiter.
  *
  * ── Warum NICHT in der CI ─────────────────────────────────────────────────
  *
@@ -57,6 +56,7 @@ const pruefe = (name, ist, soll) => {
   console.log(`${ok ? '  ok  ' : '  FEHLER '} ${name}: ${String(ist).slice(0, 80)}`);
   if (!ok) fehler.push(`${name}: ${String(ist)}`);
 };
+const text = async (selektor) => ((await seite.locator(selektor).textContent().catch(() => '')) ?? '').trim();
 
 await seite.goto(BASIS, { waitUntil: 'networkidle' });
 pruefe('Titel', await seite.title(), (t) => t.includes('autotrd'));
@@ -70,53 +70,47 @@ await seite.waitForTimeout(4000);
 pruefe('Karten nach Login', await seite.locator('.card').count(), (n) => n > 5);
 await seite.screenshot({ path: `${SHOTS}/01-dashboard.png` });
 
+// Engine-Karte: Ohne Takt steht dort der erklärende Hinweis, nie ein leerer
+// Kasten; der Schalter ist da und im Ruhezustand ausgeschaltet.
+pruefe('Engine-Status-Text', await text('#engStatus'), (t) => t.length > 10);
+pruefe('Engine-Schalter (Start)', await seite.locator('#engStart').count(), 1);
+pruefe('Engine-Badge', await text('#engBadge'), (t) => t.length > 0);
+// Kommandos: Halt ist klickbar, Resume ohne Halt gesperrt (Grund im title).
+pruefe('Halt klickbar', await seite.locator('#engHalt').isEnabled(), true);
+pruefe('Resume ohne Halt gesperrt', await seite.locator('#engResume').isDisabled(), true);
+
+// Einstellungen des Auto-Traders: sieben Felder mit sinnvollen Werten aus
+// dem gespeicherten Stand (oder der Ableitung aus dem Alt-Schema).
+await seite.locator('#asGrid').scrollIntoViewIfNeeded();
+await seite.waitForTimeout(400);
+await seite.screenshot({ path: `${SHOTS}/02-einstellungen.png` });
+pruefe('Risiko je Trade > 0', await seite.locator('#asRisk').inputValue(), (v) => Number(v) > 0);
+pruefe('Positionen ≥ 1', await seite.locator('#asMaxN').inputValue(), (v) => Number(v) >= 1);
+pruefe('Symbolauswahl gefüllt', await seite.locator('#asSymbols input[type=checkbox]').count(), (n) => n > 0);
+pruefe('Symbolzähler', await text('#asSymCount'), (t) => /\d/.test(t));
+
+// Champion- und Warum-Karte: Ohne meta/champion und ohne Takt zeigen beide
+// ein Ergebnis mit Worten — kein leerer Kasten, kein „undefined".
+pruefe('Champion-Karte', await text('#chList'), (t) => t.length > 5 && !t.includes('undefined'));
+pruefe('Warum-Ampel', await seite.locator('#whyAmpel > *').count(), (n) => n > 0);
+pruefe('Warum-Gründe', await text('#whyGate'), (t) => !t.includes('undefined'));
+await seite.locator('#whyAmpel').scrollIntoViewIfNeeded();
+await seite.waitForTimeout(400);
+await seite.screenshot({ path: `${SHOTS}/03-warum-champion.png` });
+
+// Optionen → Broker: Schlüsselfelder und Echtgeld-Schalter sind da; ohne
+// Verbindung steht der Status als Text, nicht als Platzhalter.
 await seite.locator('#optBtn, [title*="Einstellung"]').first().click().catch(() => {});
 await seite.waitForTimeout(1200);
-
-// Kapital-Regler je Anlageklasse (MG2)
-await seite.locator('#owClsRows').scrollIntoViewIfNeeded();
-await seite.waitForTimeout(400);
-await seite.screenshot({ path: `${SHOTS}/02-klassenregler.png` });
-pruefe('Schieberegler', await seite.locator('#owClsRows input[type=range]').count(), (n) => n >= 8);
-// Höhe einer Zeile: der Layoutfehler von 04.08. machte daraus ~120 px.
-const zeilenHoehe = await seite
-  .locator('#owClsRows label')
-  .first()
-  .evaluate((el) => el.getBoundingClientRect().height);
-pruefe('Zeilenhöhe kompakt', Math.round(zeilenHoehe), (h) => h > 0 && h < 60);
-
-await seite
-  .locator('#owClsRows input[type=range]')
-  .first()
-  .evaluate((el) => {
-    el.value = '0';
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-  });
-await seite.waitForTimeout(300);
-pruefe('Anzeige bei 0', await seite.locator('#owClsRows [data-clsval]').first().textContent(), 'aus');
-
-// Tages-Notbremse (M12)
-await seite.locator('#bkrState').scrollIntoViewIfNeeded();
-await seite.waitForTimeout(400);
-await seite.screenshot({ path: `${SHOTS}/03-notbremse.png` });
-pruefe('Notbremse-Text', (await seite.locator('#bkrState').textContent())?.trim(), (t) =>
-  t.includes('Grenze'),
-);
-pruefe('Grenze voreingestellt', await seite.locator('#owBreak').inputValue(), (v) => Number(v) > 0);
-
-// Abgleich Buch ↔ Broker-Depot (M13): Ohne verbundenen Broker muss dort die
-// erklärende Zeile stehen — nicht der Platzhalter „—", der nichts aussagt.
-// #bkAuto lebt seit den Options-Reitern auf „Broker & Echtgeld" — ohne den
-// Reiter-Klick hing der Lauf hier 30 s an einem unsichtbaren Element
-// (Prüfstand-Defekt, gefunden beim UI-Audit 20.08.).
 await seite.locator('.otab[data-otab="broker"]').click();
-await seite.waitForTimeout(500);
-await seite.locator('#bkAuto').scrollIntoViewIfNeeded();
+await seite.waitForTimeout(1500);
+await seite.locator('#bkKey').scrollIntoViewIfNeeded();
+await seite.screenshot({ path: `${SHOTS}/04-broker.png` });
+pruefe('Schlüsselfeld', await seite.locator('#bkKey').count(), 1);
+pruefe('Echtgeld-Schalter', await seite.locator('#lvOn').count(), 1);
+pruefe('Broker-Status-Text', await text('#bkOut'), (t) => t.length > 5);
+await seite.keyboard.press('Escape');
 await seite.waitForTimeout(400);
-await seite.screenshot({ path: `${SHOTS}/04-abgleich.png` });
-pruefe('Abgleich-Zeile', (await seite.locator('#bkAuto').textContent())?.trim(), (t) =>
-  t.includes('automatischer Abgleich'),
-);
 
 console.log(`\nJS-Fehler und Abweichungen: ${fehler.length}`);
 for (const f of fehler) console.log('  ', f);

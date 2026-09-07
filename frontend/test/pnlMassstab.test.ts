@@ -1,17 +1,11 @@
 /**
  * Maßstab der Gesamt-P&L (Owner-Frage 13.08., „was ist die Realität???").
  *
- * Der Screenshot zeigte „Gesamt P&L +$2.245,47" (grün) neben einer
- * Handels-Analyse mit „−1,79 % / −$1.719,53" (rot) — und las sich wie ein
- * Widerspruch. Tatsächlich sind es zwei Zeiträume: Gesamt P&L = Equity −
- * Kapitalbasis, und die Basis wurde beim Depot-Schnitt (Übernahme 13.08.)
- * neu geankert — die Zahl zählt erst AB dem Schnitt (Realisiert seitdem: 0,
- * Offen: +2.245). Die Handels-Analyse zählt die 9 GESCHLOSSENEN Trades im
- * Zeitfenster — alle vor dem Schnitt (−1.719). Beide stimmen.
- *
- * Eine grüne Zahl, die sich ohne Kontext wie Lebenszeit-Gewinn liest, ist
- * aber ein Anzeige-Fehler in Richtung „gefühlter Gewinn" — deshalb steht der
- * Maßstab jetzt direkt an der Zahl, und der Infotip erklärt beide Fragen.
+ * Gesamt P&L = Equity − Kapitalbasis, und die Basis wird beim Depot-Schnitt
+ * (Reset) neu geankert — die Zahl zählt erst AB dem Schnitt. Eine grüne
+ * Zahl, die sich ohne Kontext wie Lebenszeit-Gewinn liest, ist ein
+ * Anzeige-Fehler in Richtung „gefühlter Gewinn" — deshalb steht der
+ * Maßstab direkt an der Zahl, und der Infotip erklärt beide Fragen.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -37,21 +31,19 @@ describe('Gesamt-P&L-Maßstab — Markup und Logik', () => {
     expect(render.slice(stelle, stelle + 700)).toContain('basisHint.hidden = !datum');
   });
 
-  it('nennt Schnitt-Datum und Basis und grenzt gegen die Handels-Analyse ab', () => {
+  it('nennt Schnitt-Datum und Basis und grenzt gegen die Historie ab', () => {
     expect(dashboard).toContain("${t('pf.seitSchnittA')} ${datum} (${t('pf.basis')} ${money(basis)})");
-    // Der Wortlaut wohnt seit Tranche 5m im Wörterbuch (Task #139).
     expect(DE['pf.seitSchnittB']).toContain('Früher geschlossene Trades stehen NICHT in dieser Zahl');
   });
 
-  it('der Infotip an der Zahl erklärt beide Fragen (Gesamt vs. Handels-Analyse)', () => {
-    /* Seit Tranche 5g (18.08.) trägt die Beschriftung einen Schlüssel statt
-     * des deutschen Wortlauts. Geprüft wird weiterhin dasselbe, nämlich dass
-     * der ⓘ-Knopf AN DIESER ZAHL sitzt — nur nicht mehr über die
-     * Rechtschreibung. Ein Wächter, der an der Sprache klebt, hätte die
-     * Übersetzung blockiert, ohne dass an seiner Aussage etwas dran war. */
+  it('die Basis ist wallet.baseCapital, sonst das Startkapital der Strategie', () => {
+    expect(dashboard).toContain('const basis = st.wallet?.baseCapital ?? st.strategy.broker.initialCapital;');
+  });
+
+  it('der Infotip an der Zahl erklärt beide Fragen (Gesamt vs. Historie)', () => {
     expect(dashboard).toContain("${t('pf.gesamtPnl')} ${iBtn('gesamtPnl')}");
     expect(infotips).toContain('gesamtPnl:');
     expect(infotips).toContain('Equity (live) − Kapitalbasis');
-    expect(infotips).toContain('Die Handels-Analyse beantwortet eine ANDERE Frage');
+    expect(infotips).toContain('Die Handelshistorie beantwortet eine ANDERE Frage');
   });
 });

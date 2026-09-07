@@ -1,16 +1,19 @@
 /**
- * Wächter der Validierungs-Codes (Sprachumschalter Phase 3).
+ * Wächter der Validierungs-Codes.
  *
- * `validateStrategy` (shared) liefert seit Phase 3 Codes statt deutscher
- * Prosa — `valText` macht daraus den Klartext der gewählten Sprache. Die
+ * `validateAutoSettings` (Einstellungen des Auto-Traders) und
+ * `validateStrategy` (Struktur des Alt-Payloads) liefern CODES statt Prosa —
+ * `valText` macht daraus den Klartext der gewählten Sprache. Die
  * Vollständigkeits-Probe unten ist der eigentliche Vertrag: JEDER Code, den
- * die Validierung erzeugen kann, muss sich auflösen. Ein Code ohne
- * Wörterbuch-Eintrag stünde sonst roh im UI — genau der Zustand, den die
- * Phase beenden soll.
+ * eine der beiden Prüfungen erzeugen kann, muss sich auflösen. Ein Code ohne
+ * Wörterbuch-Eintrag stünde sonst roh im UI (valText reicht Unbekanntes
+ * wortwörtlich durch — genau deshalb ist die Lücke hier ein Testfehler).
  */
-import { validateStrategy, DEFAULT_STRATEGY } from '@autotrd/shared';
+import { AUTO_SYMBOLS_MAX, validateAutoSettings, validateStrategy } from '@autotrd/shared';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { serverText, valText } from '../src/i18n.js';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { DE, serverText, valText } from '../src/i18n.js';
 
 let sprache: string | null = null;
 beforeEach(() => {
@@ -23,17 +26,15 @@ beforeEach(() => {
 
 describe('valText — Codes werden Klartext', () => {
   it('setzt Feld und Grenzen ein (Deutsch)', () => {
-    expect(valText('val.entweder|broker.mode|paper|live')).toBe(
-      "broker.mode muss 'paper' oder 'live' sein",
-    );
-    expect(valText('val.bereich|engine.maxOpenPositions|1|8')).toBe(
-      'engine.maxOpenPositions muss zwischen 1 und 8 liegen',
-    );
+    expect(valText('val.bereich|maxPositionPct|0|100')).toBe('maxPositionPct muss zwischen 0 und 100 liegen');
+    expect(valText('val.zahl|riskPerTradePct')).toBe('riskPerTradePct muss eine Zahl sein');
+    expect(valText('val.unbekannteSymbole|symbols|ZZZZ, YYYY')).toBe('Nicht im Plattform-Universum: ZZZZ, YYYY');
   });
 
   it('übersetzt nach Englisch, wenn EN gewählt ist', () => {
     sprache = 'en';
-    expect(valText('val.pflichtFehlt|watchlist')).toBe("Required key 'watchlist' is missing");
+    expect(valText('val.pflichtFehlt|engine')).toBe("Required key 'engine' is missing");
+    expect(valText('val.ganzzahl|maxPositions')).toBe('maxPositions must be an integer');
   });
 
   it('reicht Unbekanntes unverändert durch — nie ein roher Schlüssel im UI', () => {
@@ -42,52 +43,54 @@ describe('valText — Codes werden Klartext', () => {
   });
 
   it('serverText löst die von saveStrategy gejointen Codes auf', () => {
-    const e = new Error('val.pflichtFehlt|watchlist · val.watchlist');
-    expect(serverText(e)).toBe(
-      "Pflichtschlüssel 'watchlist' fehlt · watchlist muss ein Array nicht-leerer Symbole sein",
-    );
+    const e = new Error('val.zahl|riskPerTradePct · val.boolean|allowShort');
+    expect(serverText(e)).toBe('riskPerTradePct muss eine Zahl sein · allowShort muss boolean sein');
   });
 });
 
 describe('Vollständigkeit — jeder erzeugbare Code hat einen Wörterbuch-Eintrag', () => {
-  /** Eine Strategie, die möglichst viele Prüfzweige gleichzeitig reißt. */
-  function kaputt(): unknown {
-    const s = structuredClone(DEFAULT_STRATEGY) as Record<string, Record<string, unknown>>;
-    s.broker = { provider: 'x', mode: 'x', initialCapital: -1, paperTrading: 'x', sizingBase: 'x', leverage: 999 };
-    s.engine = {
-      checkIntervalMin: -1, maxPositionPct: 200, stopLossPct: -1, takeProfitPct: -1,
-      trailingStopPct: -1, atrStopMult: -1, maxHoldDays: -1, cooldownMin: -1,
-      maxOpenPositions: 0, riskPerTradePct: 999, corePct: 999, mode: 'x',
-      byClass: { aktien: 'x', krypto: { w: -1 } }, running: 'x',
-    };
-    s.indicators = { rsi: 1, macd: 1, bollinger: 1 } as unknown as Record<string, unknown>;
-    s.signals = {
-      minConfluence: 0, period: '', useForecast: 'x', forecastWeight: -1,
-      forecastThresholdPct: -1, exitConfluence: 0, forecastSolo: 'x', trendSolo: 'x',
-      timeframe: 'x', allowShort: 'x', minEdgeMultiple: 99, newsVeto: 'x', captureGate: 'x',
-    };
-    (s as Record<string, unknown>).watchlist = [''];
-    return s;
+  /** Eingaben, die zusammen JEDEN Zweig von validateAutoSettings reißen. */
+  const autoFaelle: Array<[unknown, readonly string[] | undefined]> = [
+    [null, undefined],
+    [{ riskPerTradePct: 'x', maxPositionPct: 200, maxPositions: 2.5, maxDailyLossPct: -1, maxDrawdownPct: 95, allowShort: 'ja', notifyTelegram: 1, symbols: 'SPY' }, undefined],
+    [{ riskPerTradePct: 1, maxPositionPct: 10, maxPositions: 2, maxDailyLossPct: 1, maxDrawdownPct: 5, allowShort: false, symbols: ['SP Y'] }, undefined],
+    [{ riskPerTradePct: 1, maxPositionPct: 10, maxPositions: 2, maxDailyLossPct: 1, maxDrawdownPct: 5, allowShort: false, symbols: Array.from({ length: AUTO_SYMBOLS_MAX + 1 }, (_, i) => `S${i}`) }, undefined],
+    [{ riskPerTradePct: 1, maxPositionPct: 10, maxPositions: 2, maxDailyLossPct: 1, maxDrawdownPct: 5, allowShort: false, symbols: ['ZZZZ'] }, ['SPY']],
+  ];
+  /** Eingaben, die jeden Zweig der Struktur-Prüfung des Alt-Payloads reißen. */
+  const strategieFaelle: unknown[] = [null, 'yaml', [], { strategy: {}, indices: {} }, {}, { engine: 'x' }, { engine: { running: 'x' } }];
+
+  function alleCodes(): Set<string> {
+    const codes = new Set<string>();
+    for (const [wert, universum] of autoFaelle) for (const p of validateAutoSettings(wert, universum).fehler) codes.add(p);
+    for (const wert of strategieFaelle) for (const p of validateStrategy(wert)) codes.add(p);
+    return codes;
   }
 
   it('kein Code bleibt unaufgelöst, kein Platzhalter bleibt stehen', () => {
-    const probleme = validateStrategy(kaputt());
-    // Der Fixture-Wert reißt bewusst VIELE Zweige — wächst die Validierung,
-    // ohne dass ein neuer Code hier durchläuft, ist das ein Testloch, kein
-    // Fehler. Die Zahl pinnt den Anspruch.
-    expect(probleme.length).toBeGreaterThanOrEqual(25);
-    for (const p of probleme) {
+    const codes = alleCodes();
+    // Die Fixtures reißen bewusst JEDEN Zweig — wächst eine der Prüfungen,
+    // ohne dass ihr neuer Code hier durchläuft, ist das ein Testloch. Die
+    // Zahl pinnt den Anspruch (Stand: 11 Muster, 16 verschiedene Codes).
+    expect(codes.size).toBeGreaterThanOrEqual(16);
+    for (const p of codes) {
       const text = valText(p);
       expect(text, p).not.toMatch(/^val\./);
       expect(text, p).not.toContain('{');
     }
   });
 
-  it('auch die Grunddiagnosen lösen sich auf', () => {
-    for (const wert of [null, 'yaml', [], { strategy: {} }, {}]) {
-      for (const p of validateStrategy(wert)) {
-        expect(valText(p), p).not.toMatch(/^val\./);
-      }
-    }
+  it('jedes Muster der beiden Prüfungen hat eine Zeile — und keine Zeile ist ohne Erzeuger', () => {
+    /* Gegenrichtung: Das Wörterbuch trägt keine val.-Zeilen mehr für Zweige,
+     * die es nicht mehr gibt (Hebel, Sockel, Watchlist, …). Karteileichen
+     * täuschten sonst vor, ein Code könne noch fallen. */
+    const shared = ['validate.ts', 'autoSettings.ts']
+      .map((f) => readFileSync(join(import.meta.dirname, '..', '..', 'shared', 'src', f), 'utf8'))
+      .join('\n');
+    const erzeugbar = new Set([...shared.matchAll(/\b(val\.\w+)\b/g)].map((m) => m[1]!));
+    const imWoerterbuch = Object.keys(DE).filter((k) => k.startsWith('val.'));
+    expect(imWoerterbuch.filter((k) => !erzeugbar.has(k)), 'val.-Zeilen ohne Erzeuger').toEqual([]);
+    expect([...erzeugbar].filter((k) => !imWoerterbuch.includes(k)), 'Muster ohne Wörterbuch-Zeile').toEqual([]);
+    expect(erzeugbar.size).toBeGreaterThanOrEqual(11);
   });
 });

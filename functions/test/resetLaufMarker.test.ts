@@ -76,58 +76,28 @@ describe('Reset selbst prüft Freischaltung und laufende Vorgänge (Red-Team-Bef
   });
 });
 
-describe('Beide Handelspfade beachten die Sperre', () => {
-  it('der Scan überspringt ein Konto im Reset', () => {
-    const text = quelle('scheduled', 'scanMarket.ts');
-    expect(text).toContain("resetLaeuft(userDoc.get('risk.resetLaeuftSeit')");
-    const ab = text.indexOf("resetLaeuft(userDoc.get('risk.resetLaeuftSeit')");
-    expect(text.slice(ab, ab + 200)).toContain('continue;');
-  });
-
-  it('und zählt es, statt still zu schweigen', () => {
-    // Ein übersprungenes Konto ist ein Nicht-Ereignis. Steht die Zahl über
-    // mehrere Scans hinweg > 0, hängt ein Reset — das ist ein Hinweis, den
-    // man nur sieht, wenn er gezählt wird.
-    const text = quelle('scheduled', 'scanMarket.ts');
-    expect(text).toContain('konten.reset_laeuft += 1;');
-    expect(text).toContain('reset_laeuft: number;');
-    expect(text).toContain('reset_laeuft: 0,');
-  });
-
-  it('der manuelle Handel lehnt ab — auch den Verkauf', () => {
+describe('Die Konto-Tore beachten die Sperre — in jede Richtung', () => {
+  it('der Marker sperrt JEDEN Handel, nicht nur Einstiege', () => {
     /* Anders als bei der Notbremse, die Verkäufe ausdrücklich durchlässt.
      * Hier geht es nicht um Risiko, sondern um Buchführung: Ein Verkauf
      * mitten im Archivieren hinterlässt einen Trade, den der Reset nicht
-     * mehr mitnimmt.
-     *
-     * Seit dem 13.08. entscheidet das zentral core/kontoTore.ts: Die Sperre
-     * steht dort als `handel` (nicht `einstieg`) — sie trifft also jede
-     * Richtung. Hier bleibt zu prüfen, dass das Callable sie VOR der
-     * Einstiegs-Unterscheidung abfragt und hart ablehnt. */
+     * mehr mitnimmt. Seit dem 13.08. entscheidet das zentral
+     * core/kontoTore.ts: Die Sperre steht dort als `handel` (nicht
+     * `einstieg`). */
     const tore = quelle('core', 'kontoTore.ts');
     const abTore = tore.indexOf("resetLaeuft(snap.get('risk.resetLaeuftSeit')");
     expect(abTore, 'Reset-Gate fehlt in den Konto-Toren').toBeGreaterThan(0);
     expect(tore.slice(abTore, abTore + 200)).toContain("handel: 'reset_laeuft'");
-
-    const text = quelle('callable', 'trade.ts');
-    const ab = text.indexOf('if (tore.handel)');
-    expect(ab, 'Handel-Sperre fehlt im Handels-Callable').toBeGreaterThan(0);
-    const einstieg = text.indexOf('const istEinstieg =');
-    expect(ab, 'Gate steht hinter der Einstiegs-Unterscheidung').toBeLessThan(einstieg);
-    // 500 statt 200 Zeichen Fenster: Seit dem #145-Grenzfall (20.08.) steht
-    // zwischen Gate und Wurf ein Begründungs-Kommentar — die Aussage des
-    // Wächters (Gate → harter Wurf) ist unverändert.
-    expect(text.slice(ab, ab + 500)).toContain('HttpsError');
   });
 
-  it('beide benutzen DIESELBE Funktion', () => {
+  it('Reset und Tore benutzen DIESELBE Verfalls-Funktion', () => {
     // Zwei Ableitungen wären zwei Gelegenheiten, das Verfallsfenster
     // verschieden zu setzen.
     for (const pfad of [
-      ['scheduled', 'scanMarket.ts'],
+      ['callable', 'reset.ts'],
       ['core', 'kontoTore.ts'],
     ] as const) {
-      expect(quelle(...pfad)).toContain('resetLaeuft');
+      expect(quelle(...pfad)).toContain('resetLaeuft(');
     }
   });
 });

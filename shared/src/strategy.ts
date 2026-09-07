@@ -7,7 +7,13 @@
  * Alt-Variante). Frontend UND Functions importieren von hier.
  */
 
-import { MIN_EDGE_MULTIPLE } from './costGate.js';
+/**
+ * Wie viel die erwartete Bewegung über den Handelskosten liegen musste —
+ * Voreinstellung für `signals.minEdgeMultiple` (Kostenschwelle des alten
+ * Scans). Stand in costGate.ts; die Schwelle selbst ist mit dem Scan
+ * gegangen, die Zahl bleibt, weil sie im gespeicherten Schema steht.
+ */
+export const MIN_EDGE_MULTIPLE = 3;
 
 // ── Strategie (users/{uid}.settings.strategy) ────────────────────────────────
 

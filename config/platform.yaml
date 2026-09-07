@@ -1,0 +1,89 @@
+# Plattform-Config des Auto-Traders — EINE Quelle für alle Nutzer.
+#
+# Der nächtliche Optimierer (GitHub Actions, .github/workflows/optimize.yml)
+# rechnet mit genau dieser Datei; `scripts/sync-engine-config.mjs` schreibt
+# ihren globalen Teil nach Firestore `meta/engineConfig`, von wo die
+# Engine-Function (engineTick) ihn je Minute liest. Nutzerabhängig ist NUR
+# `risk` (Risiko je Trade, Deckel, Notbremsen, Shorts) und `notify` — die
+# Werte hier sind die Defaults für Nutzer ohne eigene Einstellung.
+#
+# Marktdaten sind nutzerunabhängig: ein Universum, ein Zeitrahmen, ein
+# Champion für alle. Nutzer können in ihren Einstellungen eine Teilmenge
+# der Symbole wählen, aber keine hinzufügen (IEX-Basis-Plan: max. 30).
+
+broker:
+  mode: paper          # Der Modus je Nutzer kommt aus dem Live-Schalter der Plattform, nicht von hier.
+  feed: iex            # Datenfeed für Optimierer UND Engine — identisch, sonst misst man etwas anderes als man handelt.
+
+universe:
+  assetClass: us_equity
+  symbols: [SPY, QQQ, AAPL, MSFT, NVDA, AMZN, META, GOOGL, AMD, TSLA]
+  benchmark: SPY
+
+timeframe: 5
+
+session:
+  noEntryFirstMin: 5
+  noEntryLastMin: 30
+  flattenBeforeCloseMin: 5
+
+risk:
+  riskPerTradePct: 0.5
+  maxPositionPct: 20
+  maxPositions: 4
+  maxGrossExposurePct: 100
+  maxDailyLossPct: 2
+  maxDrawdownPct: 10
+  allowShort: false
+  pdt:
+    respect: true
+    minEquity: 25000
+    maxDayTrades: 3
+
+strategy:
+  id: trend_donchian
+  params: {}
+  allowWithoutChampion: false   # Ohne Champion handelt niemand — der Optimierer entscheidet.
+
+optimizer:
+  strategies: [trend_donchian, momentum_pullback, mean_reversion, orb_breakout]
+  lookbackDays: 400
+  isDays: 120
+  oosDays: 30
+  stepDays: 30
+  embargoBars: 0
+  samples: 150
+  seed: 42
+  minOosTrades: 60
+  minFoldPositiveShare: 0.6
+  objective: sortino
+  stressCostMultiplier: 1.5
+  holdoutDays: 60
+  promotionMargin: 0.1
+  minPsrOos: 0.9
+  dsrIsGate: false
+
+costs:
+  slippageBps: 3
+  spreadBps: 2
+  secFeeRate: 0.0000278
+  finraTafPerShare: 0.000166
+  finraTafMax: 8.3
+  cryptoTakerPct: 0.25
+  shortBorrowAnnualPct: 1
+
+engine:
+  reconcileEverySec: 60
+  barGraceSec: 4
+  maxDataAgeSec: 180
+  maxConsecutiveErrors: 5
+  onOrphan: halt
+
+notify:
+  telegram: false
+
+status:
+  httpPort: 0
+
+paths:
+  home: ./var

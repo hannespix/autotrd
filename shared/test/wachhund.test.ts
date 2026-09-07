@@ -11,7 +11,7 @@ import {
   bewerteHerzschlag,
   naechsterAlarm,
   KURSQUELLE_MIN_FEHLER,
-  SCAN_TOT_MIN,
+  TAKT_TOT_MIN,
   type AlarmZustand,
 } from '../src/wachhund.js';
 
@@ -34,17 +34,17 @@ describe('bewerteHerzschlag', () => {
   });
 
   it('schlägt an, wenn der Scan länger als die Schwelle steht', () => {
-    const u = bewerteHerzschlag({ jetztMs: T0, lastRunAt: vor(SCAN_TOT_MIN + 1) });
+    const u = bewerteHerzschlag({ jetztMs: T0, lastRunAt: vor(TAKT_TOT_MIN + 1) });
     expect(u.ok).toBe(false);
     expect(u.grund).toBe('scan_steht');
-    expect(u.minutenAlt).toBe(SCAN_TOT_MIN + 1);
+    expect(u.minutenAlt).toBe(TAKT_TOT_MIN + 1);
     // Der Satz muss sagen, was auf dem Spiel steht — nicht nur „ist alt".
     expect(u.text).toContain('Stops');
   });
 
   it('toleriert genau die Schwelle — vier verpasste Läufe, nicht drei', () => {
     // Ein langsamer Lauf oder ein Deploy-Fenster darf keinen Alarm werfen.
-    const u = bewerteHerzschlag({ jetztMs: T0, lastRunAt: vor(SCAN_TOT_MIN) });
+    const u = bewerteHerzschlag({ jetztMs: T0, lastRunAt: vor(TAKT_TOT_MIN) });
     expect(u.ok).toBe(true);
   });
 

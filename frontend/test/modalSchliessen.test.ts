@@ -1,12 +1,12 @@
 /**
  * Modal-Schließen per Delegation (Owner-Screenshot 20.08.).
  *
- * Der Befund: Der ✕ des Markt-Detail-Sheets hatte am Smartphone keine
- * Funktion. Ursache war KEIN Touch-Problem, sondern eine Einmal-Bindung —
- * `querySelectorAll('[data-close]')` beim Init verfehlt jeden Knopf, der
- * später per innerHTML entsteht (openDetail baut das Sheet bei jedem
- * Öffnen neu). Am Desktop kaschierte der große, statisch gebundene
- * Backdrop den toten Knopf; am Telefon füllt das Sheet den Schirm.
+ * Der Befund damals: Ein ✕, das per innerHTML entsteht, verfehlt eine
+ * Einmal-Bindung beim Init. Am Desktop kaschierte der große, statisch
+ * gebundene Backdrop den toten Knopf; am Telefon füllt das Sheet den Schirm.
+ * Deshalb ein delegierter Handler über `closest('[data-close]')` — und
+ * jedes Modal des Auto-Traders (Optionen, Bericht, Kommando-Bestätigung)
+ * hängt an genau dieser Delegation.
  */
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -20,18 +20,30 @@ describe('data-close — ein delegierter Handler statt Einmal-Bindung', () => {
   });
 
   it('die Delegation läuft über closest, damit auch das ✕-INNERE trifft', () => {
-    // closest statt e.target-Vergleich: Ein Tipp landet gern auf einem
-    // Kind-Knoten (Textknoten/Icon) — ohne closest wäre der Knopf nur an
-    // seinen Rändern klickbar, exakt das „geht manchmal nicht"-Gefühl.
     expect(dashboard).toContain(".closest<HTMLElement>('[data-close]')");
     expect(dashboard).toContain('if (name && name in MODAL_IDS) closeModal(name as ModalName);');
   });
 
-  it('der dynamische ✕ im Detail-Sheet trägt data-close="detail"', () => {
-    /* openDetail schreibt das Sheet komplett neu — verliert der Knopf sein
-     * data-close-Attribut, ist er wieder tot, egal wie gut die Delegation
-     * ist. Der Pin hält beide Enden des Vertrags fest. */
-    const fn = dashboard.slice(dashboard.indexOf('function openDetail'));
-    expect(fn.slice(0, 2500)).toContain('<button class="dclose" data-close="detail">');
+  it('jedes Modal ist in MODAL_IDS registriert und trägt Backdrop und ✕ mit data-close', () => {
+    const ids = dashboard.match(/const MODAL_IDS = \{[\s\S]*?\} as const;/)?.[0] ?? '';
+    for (const [name, id] of [['options', 'optModal'], ['report', 'reportModal'], ['cmd', 'cmdModal']] as const) {
+      expect(ids, `${name} fehlt in MODAL_IDS`).toContain(`${name}: '${id}'`);
+      expect(dashboard).toContain(`<div class="dmodal" id="${id}">`);
+      expect(dashboard).toContain(`<div class="dmodal-bg" data-close="${name}"></div>`);
+      expect(dashboard).toContain(`<button class="dclose" data-close="${name}">✕</button>`);
+    }
+  });
+
+  it('Escape schließt alle drei — und die mobilen Schubladen', () => {
+    const fn = dashboard.slice(dashboard.indexOf('function onEscape'));
+    const block = fn.slice(0, fn.indexOf('\n}'));
+    for (const name of ['options', 'report', 'cmd']) expect(block).toContain(`closeModal('${name}');`);
+    expect(block).toContain("document.getElementById('olv')?.classList.remove('show');");
+  });
+
+  it('das Schließen der Kommando-Bestätigung vergisst das offene Kommando', () => {
+    // Sonst feuerte ein späteres „Ausführen" das Kommando von vorhin.
+    const fn = dashboard.slice(dashboard.indexOf('function closeModal'));
+    expect(fn.slice(0, 300)).toContain("if (which === 'cmd') cmdOffen = null;");
   });
 });

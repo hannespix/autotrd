@@ -24,23 +24,24 @@
  *     damit der Kontoinhaber Zeit hat, eine Sperre zu bemerken und zu
  *     widersprechen. Ein fehlender/kaputter Zeitstempel blockiert — nicht
  *     verifizierbares Alter ist NICHT „alt genug".
- *  6. Kein Reset/Adopt/Löschung läuft gerade — derselbe `resetLaeuftSeit`-
- *     Marker wie bei `resetWallet`/`adoptBroker`.
+ *  6. Kein Reset/Löschung läuft gerade — derselbe `resetLaeuftSeit`-
+ *     Marker wie bei `resetWallet`.
  *  7. Keine offenen Positionen (`users/{uid}/positions`).
- *  8. Keine offenen `unbookedFills` — sonst liegt beim Broker echtes,
- *     noch nicht gebuchtes Geld/eine Position.
- *  9. Keine LIVE-Broker-Verbindung — Echtgeld-Orders werden NIE automatisch
- *     angefasst (dieselbe Regel wie in `orderRaeumung.ts`); eine
- *     Papier-Verbindung wird ÜBER `trenneBroker()` mit aufgeräumt
- *     (Order-Sweep + Depot-Freigabe, bereits gebaut und getestet).
+ *  8. Keine offenen `unbookedFills` — Altbestand der früheren Buchführung;
+ *     ein Rest dort hieße, dass beim Broker etwas lag, das nie verbucht
+ *     wurde. Die Sammlung ist leer, sobald das Buch sauber war.
+ *  9. Keine LIVE-Broker-Verbindung — ein Echtgeld-Depot wird NIE nebenbei
+ *     entkoppelt; eine Papier-Verbindung wird ÜBER `trenneBroker()` mit
+ *     gelöst (Schlüssel löschen + Depot-Freigabe; offene Orders bleiben
+ *     beim Broker, der neue Kern hält seine Stops dort selbst).
  * 10. Bestätigungswort + eigenes Tageslimit — geprüft im Callable, bevor
  *     diese Funktion überhaupt gerufen wird.
  *
  * ── Reihenfolge der eigentlichen Löschung ──────────────────────────────────
  *
- * Marker ZUERST (wie bei reset.ts) → Broker aufräumen (`trenneBroker`,
- * löst auch `meta/brokerBindungen` — sonst bliebe das Papierdepot für immer
- * für niemanden mehr verbindbar) → Audit-Eintrag AUSSERHALB des Ziel-Baums,
+ * Marker ZUERST (wie bei reset.ts) → Broker lösen (`trenneBroker`, löst
+ * auch `meta/brokerBindungen` — sonst bliebe das Papierdepot für immer für
+ * niemanden mehr verbindbar) → Audit-Eintrag AUSSERHALB des Ziel-Baums,
  * VOR dem Löschen (der Baum, den er beschreibt, existiert danach nicht
  * mehr) → `recursiveDelete` auf den gesamten Firestore-Baum → zuletzt das
  * Auth-Konto. Auth zuletzt, nicht zuerst: Ein bereits ausgestelltes,
@@ -62,7 +63,7 @@ import { logger } from 'firebase-functions/v2';
 import { accessLevelOf, type AccessLevel } from './access.js';
 import { resetLaeuft } from '../../../shared/src/index.js';
 import { trenneBroker, type TrennErgebnis } from '../callable/connectBroker.js';
-import { vergissVerbindung } from './orderRouting.js';
+import { vergissVerbindung } from './brokerZugang.js';
 
 /** Das Wort, das getippt werden muss — dieselbe Idee wie RESET/ECHTGELD:
  *  ein Klick auf „Ja" wird weggeklickt, ohne gelesen zu werden; Tippen
@@ -190,8 +191,8 @@ export async function loescheKonto(target: string, ausgefuehrtVon: string): Prom
       throw new HttpsError('internal', 'srv.loeschMarkerFehlgeschlagen', String(err));
     });
 
-  /* Broker aufräumen — nur Papier erreicht diesen Punkt (liveBrokerVerbunden
-   * wurde oben geprüft): Order-Sweep + `meta/brokerBindungen`-Freigabe.
+  /* Broker lösen — nur Papier erreicht diesen Punkt (liveBrokerVerbunden
+   * wurde oben geprüft): Schlüssel löschen + `meta/brokerBindungen`-Freigabe.
    * `trenneBroker` ist ein No-Op, wenn nie eine Verbindung bestand. */
   let broker: TrennErgebnis | undefined;
   try {
@@ -224,7 +225,7 @@ export async function loescheKonto(target: string, ausgefuehrtVon: string): Prom
   await db.recursiveDelete(targetRef);
 
   /* `admin/quotas-{uid}` liegt AUSSERHALB von `users/{uid}` (Top-Level-Doc,
-   * `core/broker.ts` `consumeQuota`) — `recursiveDelete` oben erfasst es
+   * `core/quota.ts` `consumeQuota`) — `recursiveDelete` oben erfasst es
    * nicht. Ohne diese Zeile bliebe genau das Waisen-Dokument zurück, das
    * diese Funktion verhindern soll (Nahtstellen-Befund 24.08.). `delete()`
    * auf ein nie existierendes Dokument ist ein folgenloses No-Op.

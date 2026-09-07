@@ -1,16 +1,17 @@
 /**
- * ⓘ-Tips zweisprachig (Task #139, Tranche 5).
+ * ⓘ-Tips zweisprachig.
  *
  * Die Tips sind der größte Textbestand der App und bleiben deshalb in ihrem
- * eigenen Modul — zwei Records nebeneinander statt 140 Einträge im
- * allgemeinen Wörterbuch. Diese Tests pinnen die drei Eigenschaften, an
- * denen der Umbau scheitern könnte:
+ * eigenen Modul — zwei Records nebeneinander statt Dutzende Einträge im
+ * allgemeinen Wörterbuch. Diese Tests pinnen die Eigenschaften, an denen
+ * der Bestand scheitern könnte:
  *
- *   1. Der DEUTSCHE Bestand ist unverändert (Golden-Pins) — im DE-Modus
- *      rendert die App nachweislich dieselben Texte wie vorher.
+ *   1. Jeder ⓘ-Knopf im Dashboard findet seinen Tip — ein unbekannter
+ *      Schlüssel rendert STILL nichts (iBtn liefert '').
  *   2. Der Fallback ist FELDWEISE: eine übersetzte Überschrift ohne
  *      übersetzten Fließtext zeigt Englisch oben, Deutsch unten — nie leer.
- *   3. `INFO_EN` erfindet keine Schlüssel (Karteileichen).
+ *   3. `INFO_EN` erfindet keine Schlüssel und lässt keinen aus.
+ *   4. Die Tips beschreiben den Auto-Trader — nicht den alten Scan.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -18,10 +19,9 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { INFO, INFO_DE, INFO_EN, waehleTips, type Tip } from '../src/infotips';
 
-const quelle = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), '../src/infotips.ts'),
-  'utf8',
-);
+const hier = dirname(fileURLToPath(import.meta.url));
+const quelle = readFileSync(join(hier, '../src/infotips.ts'), 'utf8');
+const dashboard = readFileSync(join(hier, '../src/dashboard.ts'), 'utf8');
 
 describe('Fallback-Regel der Tips (pur)', () => {
   const de: Record<string, Tip> = {
@@ -58,6 +58,24 @@ describe('Fallback-Regel der Tips (pur)', () => {
   });
 });
 
+describe('Jeder ⓘ-Knopf findet seinen Tip', () => {
+  const benutzt = [...new Set([...dashboard.matchAll(/iBtn\('([A-Za-z0-9_]+)'\)/g)].map((m) => m[1]!))];
+
+  it('das Dashboard trägt ⓘ-Knöpfe — der Test darf nicht leerlaufen', () => {
+    expect(benutzt.length).toBeGreaterThan(15);
+  });
+
+  it('kein Knopf zeigt auf einen Schlüssel, den es nicht gibt (iBtn rendert dann STILL nichts)', () => {
+    const fehlend = benutzt.filter((k) => !Object.hasOwn(INFO_DE, k));
+    expect(fehlend, `iBtn ohne Tip: ${fehlend.join(', ')}`).toEqual([]);
+  });
+
+  it('kein Tip ohne Knopf — Karteileichen wandern sonst still ins Bundle', () => {
+    const ungenutzt = Object.keys(INFO_DE).filter((k) => !benutzt.includes(k));
+    expect(ungenutzt, `Tips ohne ⓘ: ${ungenutzt.join(', ')}`).toEqual([]);
+  });
+});
+
 describe('Wörterbuch-Hygiene der Tips', () => {
   it('INFO_EN kennt keine Karteileichen — jede ID existiert in INFO_DE', () => {
     for (const id of Object.keys(INFO_EN)) {
@@ -66,17 +84,10 @@ describe('Wörterbuch-Hygiene der Tips', () => {
   });
 
   it('INFO_EN ist VOLLSTÄNDIG — jeder deutsche Tip hat eine englische Fassung', () => {
-    /* Seit dem 18.08. (Tranche 5c) sind alle 70 Tips übersetzt. Dieser Test
-     * hält den Zustand — er widerspricht dem Fallback NICHT, sondern greift
-     * woanders: Der Fallback ist das Laufzeit-Netz (nie ein leeres Popover),
-     * dieser Test die Review-Pflicht (ein neuer Tip kommt zweisprachig).
-     *
-     * Ohne ihn verfiele die englische Oberfläche schleichend zurück, und
-     * zwar unbemerkt — GERADE WEIL der Fallback so leise ist: Wer einen
-     * deutschen Tip ergänzt und den englischen vergisst, sieht keinen
-     * Fehler, keine Warnung und keinen roten Balken. Er sieht im
-     * Englisch-Modus einen deutschen Absatz, den er selbst für richtig
-     * hält. Diese Zeile macht daraus einen roten Balken. */
+    /* Der Fallback ist das Laufzeit-Netz (nie ein leeres Popover), dieser
+     * Test die Review-Pflicht (ein neuer Tip kommt zweisprachig). Ohne ihn
+     * verfiele die englische Oberfläche schleichend — GERADE WEIL der
+     * Fallback so leise ist. */
     const ohneEn = Object.keys(INFO_DE).filter((id) => {
       const u = INFO_EN[id];
       return !u || !u.t || u.t.length === 0 || !u.d || u.d.length === 0;
@@ -86,17 +97,11 @@ describe('Wörterbuch-Hygiene der Tips', () => {
 
   it('keine englische Fassung ist bloß der deutsche Text', () => {
     /* Der billigste Weg, den Vollständigkeits-Test zu bestehen, wäre, den
-     * deutschen Text nach INFO_EN zu kopieren. Das Ergebnis wäre schlimmer
-     * als eine Lücke: Der Fallback ist als „noch nicht übersetzt" lesbar,
-     * eine Kopie behauptet, sie sei die Übersetzung.
-     *
-     * Ausnahmen brauchen einen Namen und einen Grund — eine Ausnahme ohne
-     * beides ist der Anfang einer stillen Liste. */
+     * deutschen Text nach INFO_EN zu kopieren. Ausnahmen brauchen einen
+     * Namen und einen Grund. */
     const gleichErlaubt = new Set([
-      'loadouts', // deutsches Lehnwort aus dem Englischen: „Loadouts" ist beides
-      'macd', // ausgeschriebener Fachbegriff — „Moving Average Convergence/Divergence"
-      //        steht im Deutschen bereits englisch da; eine Eindeutschung wäre
-      //        keine Übersetzung, sondern eine Erfindung.
+      'engine', // Fachwort, in beiden Sprachen gleich
+      'engineKommandos', // „Halt · Resume · Flatten" — die Kommandonamen sind der Vertrag zum Kern
     ]);
     for (const [id, tip] of Object.entries(INFO_DE)) {
       if (!gleichErlaubt.has(id)) {
@@ -104,19 +109,6 @@ describe('Wörterbuch-Hygiene der Tips', () => {
       }
       expect(INFO_EN[id]?.d, `Text von „${id}" ist unübersetzt`).not.toBe(tip.d);
     }
-  });
-
-  it('auch die Regel-Bausteine (node:*) sind übersetzt', () => {
-    /* Ihre Schlüssel tragen einen Doppelpunkt und rutschten deshalb durch
-     * jede Prüfung, die Schlüssel mit /[a-zA-Z0-9_]+/ zählt — beim Abschluss
-     * von Tranche 5c fehlten genau diese sieben, und aufgefallen ist es erst
-     * durch den Vollständigkeits-Test darüber. Diese Zeilen halten sie
-     * einzeln fest, damit sie nicht ein zweites Mal unsichtbar werden. */
-    for (const id of Object.keys(INFO_DE).filter((k) => k.startsWith('node:'))) {
-      expect(INFO_EN[id]?.t, `${id} ohne englische Überschrift`).toBeTruthy();
-      expect(INFO_EN[id]?.d, `${id} ohne englischen Text`).toBeTruthy();
-    }
-    expect(INFO_EN['node:crossover']?.t).toBe('Rule: crossover');
   });
 
   it('kein deutscher Tip ist leer — INFO_DE ist die Quelle der Wahrheit', () => {
@@ -127,76 +119,42 @@ describe('Wörterbuch-Hygiene der Tips', () => {
   });
 
   it('INFO ist im Testlauf (kein localStorage-Stub) die deutsche Fassung', () => {
-    // Standard ist 'de' — auch ohne localStorage (s. sprachWahl).
     expect(INFO).toBe(INFO_DE);
   });
 });
 
-describe('Golden-Wächter — die deutschen Tips sind byte-gleich zum Bestand', () => {
-  it('Überschriften der übersetzten Häppchen unverändert', () => {
-    expect(INFO_DE['riskPerTrade']?.t).toBe('Risiko je Trade');
-    expect(INFO_DE['maxOpenPositions']?.t).toBe('Max. gleichzeitige Positionen');
-    expect(INFO_DE['corePct']?.t).toBe('Ruhiger Sockel %');
-    expect(INFO_DE['leverage']?.t).toBe('Hebel (Margin)');
-    expect(INFO_DE['exits']?.t).toBe('Warum geschlossen');
-    expect(INFO_DE['stopLoss']?.t).toBe('Stop-Loss');
-    expect(INFO_DE['takeProfit']?.t).toBe('Take-Profit');
-    expect(INFO_DE['trailingStop']?.t).toBe('Nachziehender Stop (Trailing-Stop)');
-    expect(INFO_DE['maxHold']?.t).toBe('Maximale Haltedauer');
-    expect(INFO_DE['atrStop']?.t).toBe('ATR-Stop (volatilitätsadaptiv)');
-    expect(INFO_DE['atrTake']?.t).toBe('ATR-Ziel');
+describe('Die Tips beschreiben den Auto-Trader, nicht den alten Scan', () => {
+  it('kein Tip erwähnt Konfluenz, Prognose, Tuner oder Regime-Ampel', () => {
+    for (const [id, tip] of Object.entries(INFO_DE)) {
+      expect(tip.d, id).not.toMatch(/Konfluenz|Prognose|Auto-Tuner|Regime-Ampel|News-Veto/);
+    }
   });
 
-  it('Kernaussagen der langen Texte unverändert', () => {
-    expect(INFO_DE['stopLoss']?.d).toContain('Automatische Verkaufs-Reißleine');
-    expect(INFO_DE['riskPerTrade']?.d).toContain('wie viel darf ich verlieren, wenn der Stop greift');
-    expect(INFO_DE['corePct']?.d).toContain('200-Tage-Schnitt');
-    expect(INFO_DE['leverage']?.d).toContain('Margin-Call');
-    expect(INFO_DE['atrStop']?.d).toContain('Typisch: 1,5–3');
+  it('die Kern-Regeln stehen drin: Exits nie gesperrt, Tages-Halt endet von selbst, Drawdown braucht Resume', () => {
+    expect(INFO_DE['engineKommandos']?.d).toContain('Exits werden nie gesperrt');
+    expect(INFO_DE['engineKommandos']?.d).toContain('endet von selbst am nächsten Handelstag');
+    expect(INFO_DE['maxDrawdown']?.d).toContain('RESUME');
+    expect(INFO_DE['dailyLossLimit']?.d).toContain('nicht per Knopf');
+  });
+
+  it('„kein Handel" ist ein zulässiges Ergebnis — der Tip sagt es (CLAUDE.md §0.9)', () => {
+    expect(INFO_DE['symbolauswahl']?.d).toContain('zulässiges Ergebnis, kein Fehler');
+    expect(INFO_EN['symbolauswahl']?.d).toContain('legitimate outcome, not an error');
+  });
+
+  it('die englischen Fassungen tragen die Broker-Fachbegriffe', () => {
+    expect(INFO_EN['riskPerTrade']?.t).toBe('Risk per trade');
+    expect(INFO_EN['maxDrawdown']?.t).toBe('Drawdown lock');
+    expect(INFO_EN['dailyLossLimit']?.t).toBe('Daily loss brake');
+    expect(INFO_EN['allowShort']?.d).toContain('theoretically unlimited');
+    expect(INFO_EN['champion']?.d).toContain('walk-forward');
   });
 
   it('der ⓘ-Knopf zieht seine Attribut-Texte über t() (Anschluss-Wächter)', () => {
-    // Die Tip-INHALTE stehen hier im Modul, aber die beiden Attribute des
-    // Knopfes gehören ins allgemeine Wörterbuch — sonst bliebe der
-    // Screenreader-Text auch im EN-Modus deutsch.
     expect(quelle).toContain("uebersetzt('tip.erklaerung')");
     expect(quelle).toContain("uebersetzt('tip.wasBedeutet')");
     expect(quelle).not.toContain('aria-label="Erklärung:');
     expect(quelle).not.toContain('title="Was bedeutet das?"');
-    // Die Auswahl passiert zur Modul-Ladezeit aus der gespeicherten Wahl.
     expect(quelle).toContain('waehleTips(INFO_DE, INFO_EN, sprachWahl())');
-  });
-
-  it('die englischen Fassungen tragen die Broker-Fachbegriffe', () => {
-    expect(INFO_EN['stopLoss']?.t).toBe('Stop loss');
-    expect(INFO_EN['takeProfit']?.t).toBe('Take profit');
-    expect(INFO_EN['trailingStop']?.t).toBe('Trailing stop');
-    expect(INFO_EN['leverage']?.d).toContain('margin call');
-    // Häppchen 5b: Signale, Takt und Schutzschalter.
-    expect(INFO_EN['rsiBuy']?.t).toBe('RSI buy threshold');
-    expect(INFO_EN['minConfluence']?.t).toBe('Confluence for the entry');
-    expect(INFO_EN['cooldownMin']?.d).toContain('whipsaw');
-    expect(INFO_EN['minEdgeMultiple']?.d).toContain('square root of the holding period');
-    expect(INFO_EN['dailyLossLimit']?.d).toContain('it blocks ENTRIES');
-    expect(INFO_EN['regimeGate']?.d).toContain('200-day average');
-    expect(INFO_EN['allowShort']?.d).toContain('theoretically unlimited');
-  });
-
-  it('Häppchen 5b: die deutschen Vorlagen sind byte-gleich geblieben', () => {
-    expect(INFO_DE['rsiBuy']?.t).toBe('RSI-Kaufschwelle');
-    expect(INFO_DE['rsiSell']?.t).toBe('RSI-Verkaufsschwelle');
-    expect(INFO_DE['konfluenz']?.t).toBe('Minimale Konfluenz');
-    expect(INFO_DE['minConfluence']?.t).toBe('Konfluenz für den Einstieg');
-    expect(INFO_DE['exitConfluence']?.t).toBe('Konfluenz für den Ausstieg');
-    expect(INFO_DE['signalTimeframe']?.t).toBe('Signal-Zeitrahmen');
-    expect(INFO_DE['cooldownMin']?.t).toBe('Kauf-Pause nach Verkauf');
-    expect(INFO_DE['minEdgeMultiple']?.t).toBe('Kostenschwelle');
-    expect(INFO_DE['dailyLossLimit']?.t).toBe('Tages-Notbremse');
-    expect(INFO_DE['flattenOnBreach']?.t).toBe('Bei Notbremse glattstellen');
-    expect(INFO_DE['regimeGate']?.t).toBe('Markt-Ampel');
-    expect(INFO_DE['newsVeto']?.t).toBe('News-Veto');
-    expect(INFO_DE['allowShort']?.t).toBe('Shorten (Leerverkäufe)');
-    expect(INFO_DE['minEdgeMultiple']?.d).toContain('Wurzel aus der Haltedauer');
-    expect(INFO_DE['dailyLossLimit']?.d).toContain('Sie sperrt EINSTIEGE');
   });
 });

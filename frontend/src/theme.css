@@ -1769,3 +1769,19 @@ select.inp option { background: var(--card-solid); color: var(--t1); }
   .adm-liste.register { max-height: 320px; }
   .adm-kopf { gap: 12px; }
 }
+
+/* ── Auto-Trader-Karten (Umbau 09/2026): Engine-Status, Symbolauswahl,
+   Champion-Tabelle, Optimierer-Bericht ─────────────────────────────── */
+.eng-status { display: flex; flex-direction: column; gap: 3px; }
+.eng-row { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; font-size: 11px; }
+.eng-row .mono { text-align: right; color: var(--t1); font-variant-numeric: tabular-nums; }
+.eng-note { padding: 4px 8px; border-left: 2px solid var(--bd2); }
+.as-symbols { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 4px 8px; }
+.as-sym { display: flex; align-items: center; gap: 5px; font-size: 11px; cursor: pointer; }
+.as-sym input { accent-color: var(--ac); margin: 0; }
+.ch-tbl { max-height: 260px; }
+.ch-row { display: grid; grid-template-columns: 1.1fr 1.6fr 0.8fr 0.8fr 1fr 0.8fr; gap: 4px; padding: 3px 6px; border-bottom: 1px solid var(--hair); font-variant-numeric: tabular-nums; }
+.ch-row span { text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-row span:first-child, .ch-row span:nth-child(2) { text-align: left; }
+.ch-row.ch-aus { opacity: .5; }
+.report-pre { white-space: pre-wrap; word-break: break-word; font-size: 11px; line-height: 1.45; color: var(--t2); max-height: 70vh; overflow: auto; padding: 8px 10px; border: 1px solid var(--hair); border-radius: 8px; background: var(--sd); }

@@ -89,8 +89,8 @@ describe('Element-IDs: jeder Zugriff findet ein Element', () => {
   it('findet überhaupt etwas — der Test darf nicht still leerlaufen', () => {
     // Ein Test, der wegen einer geänderten Schreibweise nichts mehr
     // erkennt, ist schlimmer als keiner: Er meldet dauerhaft „grün".
-    expect(benutzt.size).toBeGreaterThan(100);
-    expect(vergeben.size).toBeGreaterThan(100);
+    expect(benutzt.size).toBeGreaterThan(60);
+    expect(vergeben.size).toBeGreaterThan(80);
   });
 
   it('erkennt einen eingebauten Fehler', () => {

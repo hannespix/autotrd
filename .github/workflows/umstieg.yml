@@ -1,0 +1,68 @@
+# Umstieg vom Altsystem auf den Engine-Takt — von Hand auszulösen.
+#
+# Warum als Workflow und nicht nur als Skript: `scripts/umstieg.mjs` braucht
+# einen Service-Account für Firestore. Den gibt es hier bereits als Secret
+# (FIREBASE_SERVICE_ACCOUNT), also läuft der Umstieg über die Actions-Seite
+# statt auf einem Rechner, auf dem erst Schlüssel abgelegt werden müssten.
+#
+# Reihenfolge nach dem Merge: Deploys abwarten → dieser Workflow mit
+# `dry_run: true` (nur Bericht) → derselbe mit `dry_run: false` → Optimierer
+# starten. Details in docs/PLATTFORM.md §7.
+name: Umstieg (einmalig, von Hand)
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Nur berichten, nichts schreiben'
+        type: boolean
+        default: true
+      keep:
+        description: 'uids, deren Engine AN bleiben soll (Komma-getrennt; Admins bleiben ohnehin an)'
+        required: false
+        default: ''
+
+concurrency: umstieg
+
+jobs:
+  umstieg:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+    steps:
+      - name: Guard — Service-Account vorhanden?
+        if: env.FIREBASE_SERVICE_ACCOUNT == ''
+        run: |
+          echo "::error::FIREBASE_SERVICE_ACCOUNT fehlt — ohne Service-Account kein Zugriff auf Firestore."
+          exit 1
+
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Abhängigkeiten installieren
+        run: npm ci
+
+      - name: Service-Account bereitstellen
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
+
+      # Der Schritt ist absichtlich der einzige, der schreibt — und er schreibt
+      # nur mit `dry_run: false`. Die Ausgabe (Nutzerzahl, wer ausgeschaltet
+      # wird, wie viele Positions-Spiegel archiviert werden) steht im Job-Log.
+      - name: Umstieg ausführen
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+          DRY_RUN: ${{ inputs.dry_run }}
+          KEEP: ${{ inputs.keep }}
+        run: |
+          ARGS="--config config/platform.yaml"
+          if [ "$DRY_RUN" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          if [ -n "$KEEP" ]; then
+            case "$KEEP" in
+              *[!A-Za-z0-9,_-]*) echo "::error::--keep enthält unerlaubte Zeichen: '$KEEP'"; exit 1 ;;
+            esac
+            ARGS="$ARGS --keep $KEEP"
+          fi
+          node scripts/umstieg.mjs $ARGS

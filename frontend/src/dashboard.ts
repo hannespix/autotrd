@@ -1,308 +1,99 @@
 /**
- * Dashboard-View — Port des Frosted-Aurora-Dashboards (M3) auf Firestore.
- * Alle Daten kommen per onSnapshot/getDocs aus market/** und users/{uid},
- * Aktionen laufen über Callables (ensureProfile, saveStrategy). Kein /api/*.
+ * Dashboard-View — die Oberfläche des Auto-Traders.
+ *
+ * Alle Daten kommen per onSnapshot/getDocs aus users/{uid}, market/** und
+ * meta/**; Aktionen laufen über Callables (saveStrategy, engineCommand,
+ * connectBroker, …). Kein /api/*, keine Handelslogik im Browser: Der Takt
+ * (`functions/src/engine`) entscheidet, die Oberfläche zeigt und schaltet.
+ *
+ * Karten: Engine (Schalter, Status, Halt/Resume/Flatten) · Einstellungen
+ * des Auto-Traders · Admin · Positionen · „Warum handelt die Engine
+ * (nicht)?" · Champion · Handelshistorie · Performance. Optionen (⚙):
+ * Anzeige, Broker & Echtgeld, Konto & Steuer.
  */
 
 import {
-  CLASS_LABELS,
-  DEFAULT_MAX_OPEN_POSITIONS,
-  DEFAULT_RISK_PER_TRADE_PCT,
+  AUTO_DEFAULTS,
+  AUTO_GRENZEN,
+  AUTO_SYMBOLS_MAX,
+  autoSettingsFromLegacy,
   DEFAULT_STRATEGY,
-  EVIDENCE_DEFAULTS,
-  eingabeStueckzahl,
-  MAX_LEVERAGE,
-  MAX_WATCHLIST,
-  CORE_PCT_CAP,
-  DEFAULT_CORE_PCT,
-  MAX_OPEN_POSITIONS_CAP,
-  MAX_RISK_PER_TRADE_PCT,
-  MIN_EDGE_MULTIPLE,
-  NEWS_VETO_WINDOW_SEC,
-  PAPER_FEE_RATE,
-  adviseStrategy,
-  aggregateBars,
-  aggregateDailyBars,
-  applySuggestions,
-  bollinger,
-  buildPriors,
-  byHour,
-  bySymbol,
-  byWeekday,
-  classify,
   closedOnly,
-  historieReicht,
+  equityCurve,
   imZeitraum,
+  positionLage,
+  resolveName,
+  validateAutoSettings,
   zeitraumBeginn,
   ZEITRAEUME,
-  type Zeitraum,
-  lokalerTag,
-  marketOpenForClass,
-  ema,
-  entryAnchor,
-  equityCurve,
-  exitBreakdown,
-  besteHaltedauer,
-  zerlegeDepot,
-  haltedauerTage,
-  haltedauerZeilen,
-  historySummary,
-  labelVariantId,
-  levelDistPct,
-  macd,
-  pnlHistogram,
-  positionLevels,
-  positionPnl,
-  resolveName,
-  resolveRisk,
-  sma,
-  streaks,
-  extrahiereEinstellungen,
-  LOADOUTS,
-  tradeStats,
-  uebernehmeEinstellungen,
-  validateStrategy,
-  vergleicheEinstellungen,
-  vwapSessions,
-  wendeLoadoutAn,
-  tagesPraefix,
-  wilderRsi,
-  journalThese,
-  zonenKuerzel,
-  type ErkenntnisChronik,
-  type GlobalAxisStats,
-  type KiBerichtDoc,
+  type AutoSettings,
   type HistoryTrade,
-  type Position,
-  type PositionLevels,
   type Strategy,
   type Wallet,
-  positionLage,
-  waehleKurve,
-  erklaerungsTeile,
-  bewerteHerzschlag,
-  type KurvenWahl,
-  benchmarkKurve,
-  benchmarkSatz,
+  type Zeitraum,
 } from '@autotrd/shared';
 import type { Unsubscribe } from 'firebase/firestore';
-import {
-  buildIndicatorPanel,
-  buildPriceChart,
-  type ChartBar,
-  type ChartMarker,
-  type ChartType,
-  type IndicatorPanelHandle,
-  type PanelLine,
-  type PriceChartHandle,
-  type PriceLineSpec,
-} from './chart.js';
 import { ICONS } from './icons.js';
 import { installiereLogoFallback, schmueckeAvatare, symbolAvatar } from './symbolAvatar.js';
-import { starteTour, tourAktiv } from './tour.js';
-import { newsChartMarkers, newsForDay } from './newsMarkers.js';
 import {
-  adminListUsers,
-  type AdminUserRow,
-  adminLiveStatus,
-  adminSetAccess,
-  adminAbgleich,
   adminAntworten,
-  adminNachrichten,
-  nachrichtSenden,
-  nachrichtenLesen,
-  type FadenNachricht,
-  adminUebernahmeVormerken,
-  adminSetAdmin,
   adminDeleteAccount,
+  adminListUsers,
+  adminLiveStatus,
+  adminNachrichten,
+  adminSetAccess,
+  adminSetAdmin,
   adminSetKillSwitch,
-  callTrade,
-  leseBestPractice,
-  leseLoadouts,
-  loadMarketQuotes,
-  loadUniverse,
-  loadWorkspace,
-  loescheLoadout,
-  saveStrategy,
-  speichereLoadout,
-  saveWorkspace,
-  callSavePrediction,
-  loadBarsOnce,
-  loadIntraday,
-  ladeJournalZuZeit,
-  loadIntradayChunks,
-  tagVorTagen,
-  loadDailyChunk,
-  loadPrediction,
-  callQuoteNow,
-  saveAutoTune,
-  saveUiPrefs,
-  watchBars,
-  watchLatestIndicators,
-  watchLatestSignal,
-  watchMarketDoc,
-  watchEvaluatedForecasts,
-  watchForecastStats,
-  watchForecastStatsIntraday,
-  watchPositions,
-  watchTrades,
-  loadMoreTrades,
-  TRADE_PAGE,
-  watchUserDoc,
-  watchWatchedSymbols,
-  watchPortfolioStats,
-  watchEquitySeries,
-  watchMomentum,
-  watchHealth,
-  watchPositioning,
-  saveJournalReview,
-  watchAiBericht,
-  watchErkenntnisse,
-  watchTagRueckblick,
-  watchJournal,
-  watchStruktur,
-  watchTuneFleet,
-  watchTuneGlobal,
-  watchTuneLog,
-  type EvaluatedForecastRow,
-  type ForecastStatsDoc,
-  type HealthDoc,
-  type TradeCursor,
-  type PositioningDoc,
-  type IndicatorRow,
-  type MarketDocData,
-  type SignalRow,
-  type TradeRow,
-  type UniverseClass,
-  type WorkspaceDocData,
-  type PortfolioStatsDoc,
-  type BestPractice,
-  type EigenesLoadout,
-  type EquitySeriesPoint,
-  type MomentumDoc,
-  type JournalRow,
-  type StrukturDoc,
-  type TagRueckblickDoc,
-  type TuneFleetRow,
-  type TuneLogRow,
   callBrokerStatus,
   callConnectBroker,
-  callAdoptBroker,
   callDisconnectBroker,
-  callLiveMode,
-  type LiveModeStatus,
-  type BrokerStatusResult,
-  type AbgleichVerlaufEintrag,
   callFxNachtragen,
+  callLiveMode,
   callTaxReport,
-  type TaxReportResult,
-  resetBreaker,
+  DEFAULT_UNIVERSE,
+  engineCommand,
+  loadMoreTrades,
+  loadOptimizeReport,
+  nachrichtenLesen,
+  nachrichtSenden,
   resetWallet,
+  saveStrategy,
+  TRADE_PAGE,
+  watchChampion,
+  watchEngineConfig,
+  watchEquitySeries,
+  watchHealth,
+  watchMarketDoc,
+  watchPortfolioStats,
+  watchPositions,
+  watchTrades,
+  watchUserDoc,
+  type AdminUserRow,
+  type BrokerStatusResult,
+  type ChampionDoc,
+  type EngineCommandAction,
+  type EngineMirror,
+  type EquitySeriesPoint,
+  type FadenNachricht,
+  type HealthDoc,
+  type LiveModeStatus,
+  type PortfolioStatsDoc,
+  type PositionRow,
+  type TaxReportResult,
+  type TradeCursor,
+  type TradeRow,
 } from './data.js';
-import {
-  emailVerified,
-  frischAnmelden,
-  logout,
-  refreshUser,
-  sendVerification,
-} from './auth.js';
+import { emailVerified, frischAnmelden, logout, refreshUser, sendVerification } from './auth.js';
 import { esc } from './html.js';
-import {
-  haltedauerFazit,
-  haltedauerMeta,
-  haltedauerTabelle,
-} from './haltedauerCard.js';
-import { depotChart, depotTooltip } from './depotChart.js';
-import {
-  KARTE,
-  type ShareDaten,
-  shareText,
-} from './shareCard.js';
-import { animiereSvg } from './kartenAnimation.js';
-import { shareStory, storyDateiname, type StoryKarte } from './shareStory.js';
-import { signalErklaerung } from './signalErklaerung.js';
-import {
-  ALLE_SEITEN,
-  SEITEN,
-  leseSeitenAuswahl,
-  schreibeSeitenAuswahl,
-} from './seiten.js';
-import { kartenAussage } from './shareAussage.js';
-import {
-  type KursPunkt,
-  type TradeStoryDaten,
-  kursFenster,
-  storyKontext,
-  waehleTradeStory,
-} from './tradeStory.js';
 import { iBtn, initInfoTips } from './infotips.js';
 import { serverText, setzeSprache, sprachWahl, t, valText } from './i18n.js';
-import { reglerWarnung } from './reglerHinweis.js';
 import { mountLegalFooter } from './legal.js';
-import { steckbriefText, symbolHerkunft } from './symbolSteckbrief.js';
-import {
-  GROUP_COLORS,
-  clearSubscribers,
-  groupSymbol,
-  nextGroup,
-  publishSymbol,
-  seedSymbols,
-  setGroup,
-  subscribe as busSubscribe,
-  type LinkGroup,
-} from './linkbus.js';
-import { initPalette, matchesHotkey, type PaletteCommand } from './palette.js';
 
-const CLASS_ORDER = [
-  'indices', 'forex', 'crypto', 'commodities', 'rates_bonds',
-  'etf_sectors', 'etf_regions', 'etf_thematic', 'stocks_us', 'stocks_global',
-];
+/* ── Karten-Registry ──────────────────────────────────────────────────── */
 
-/* ── Workspace-Panels & Presets (M9) ────────────────────────────────── */
-
-/* Werte über t() zur MODUL-Ladezeit: sicher, weil der Sprachwechsel bewusst
- * per location.reload() arbeitet — jede Seite lädt das Modul in genau einer
- * Sprache. Die IDs (Schlüssel) sind Persistenz-Format (Workspace-Doc) und
- * bleiben sprachunabhängig. */
-const PANEL_TITLES: Record<string, string> = {
-  strategy: t('panel.strategie'),
-  engine: t('panel.engine'),
-  history: t('panel.historie'),
-  journal: t('panel.journal'),
-  chart: t('panel.chart'),
-  sigcards: t('panel.indikatorKacheln'),
-  autosignals: t('panel.autoSignale'),
-  positions: t('panel.positionen'),
-  market: t('panel.markt'),
-  performance: t('panel.performance'),
-  manualtrade: t('panel.manuellerTrade'),
-  clock: t('panel.marktUhr'),
-  forecastacc: t('panel.prognoseGenauigkeit'),
-  fclab: t('panel.prognoseLabor'),
-  momentum: t('panel.momentum'),
-  tuner: t('panel.autoTuner'),
-  struktur: t('panel.struktursuche'),
-  chart2: t('panel.vergleichsChart'),
-};
-
-/** Panels, die ohne gespeicherten Workspace ausgeblendet starten.
- *  `news` seit 28.07.: Der Scan holt keine News mehr (Owner-Direktive —
- *  Performance vor Erklärung); die Karte zeigte nur noch stehengebliebene
- *  Einträge. Wer sie sehen will, kann sie im Workspace-Menü einblenden. */
-const DEFAULT_HIDDEN = new Set(['chart2', 'news']);
-
-/** Werks-Presets: Sichtbarkeits-Sets über den 13 Panels. */
-const WS_PRESETS: Record<string, { label: string; hidden: string[] }> = {
-  ueberblick: { label: t('ws.ueberblick'), hidden: ['chart2', 'news'] },
-  fokus: {
-    label: t('ws.fokus'),
-    hidden: ['market', 'autosignals', 'history', 'clock', 'strategy', 'chart2'],
-  },
-  jaeger: {
-    label: t('ws.jaeger'),
-    hidden: ['manualtrade', 'clock', 'market', 'history', 'news', 'chart2'],
-  },
-};
+/* Karten-IDs = data-panel-Attribut: engine · settings · positions · engineWhy ·
+ * champion · history · performance. Texte über t() zur MODUL-Ladezeit sind
+ * sicher, weil der Sprachwechsel bewusst per location.reload() arbeitet. */
 
 const fmtNum = (n: number | null | undefined): string => {
   if (n === null || n === undefined || !Number.isFinite(n)) return '--';
@@ -313,306 +104,65 @@ const fmtNum = (n: number | null | undefined): string => {
 const fmtPct = (n: number | null | undefined): string =>
   n === null || n === undefined ? '--' : `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
 const pnlClass = (n: number): string => (n >= 0 ? 'c-gn' : 'c-rd');
+const money = (n: number | null | undefined): string =>
+  n === null || n === undefined ? '--' : '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** Zeitstempel als `dd.mm. hh:mm` in der gewählten Sprache — für Status-Zeilen. */
+function wann(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return iso;
+  return new Date(ms).toLocaleString(sprachWahl() === 'en' ? 'en-GB' : 'de-DE', {
+    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+  });
+}
+
+/** Alter eines Zeitstempels in Minuten; null, wenn unbrauchbar. */
+function alterMin(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? Math.max(0, (Date.now() - ms) / 60_000) : null;
+}
 
 interface DashState {
   uid: string;
   email: string;
+  /** Alte Strategie — nur `engine.running` (Schalter) und `broker` (Modus, Kapitalbasis). */
   strategy: Strategy;
-  currentSymbol: string;
-  universe: Record<string, UniverseClass> | null;
-  marketClass: string;
-  chart: PriceChartHandle | null;
-  bars: ChartBar[];
-  range: number; // Anzahl Bars, 0 = alle
-  /** Intraday-Zeitrahmen aktiv? Anzahl Handelstage (0 = Tageskerzen). */
-  intradayDays: number;
-  intradayBars: import('./chart.js').IntradayChartBar[];
-  /** Tiefe Historie (Chart-Audit 2): ältere Jahres-Chunks, nahtlos vorn dran. */
-  histBars: ChartBar[];
-  histOldest: number;
-  histLoading: boolean;
-  histDone: boolean;
-  /** Leere Jahres-Chunks in Folge — zwei davon heißen: Datenanfang erreicht
-   *  (Zoom-Kontinuum 06.08.; ersetzt den alten festen 5-Jahres-Stop). */
-  histEmptyStreak: number;
-  /** Auto-Auflösung: Kerzengröße folgt der Zoomstufe (TradingView-Gefühl). */
-  autoRes: boolean;
-  /** Aggregations-Fenster der Intraday-Ansicht in Minuten (5/15/60). */
-  aggMinutes: number;
-  /** Tages-Aggregation der Anzeige: 0 = Tages-, 7 = Wochen-, 30 = Monatskerzen
-   *  (Zoom-Kontinuum 06.08.; greift nur im Auto-Modus). */
-  dailyAgg: 0 | 7 | 30;
-  /** Aktuell GEZEIGTE Tages-Bars (ggf. Wochen/Monat) — Quelle für Overlays,
-   *  Marker, HUD und die Index↔Zeit-Umrechnung des Auto-Zoom-Wächters. */
-  shownDaily: ChartBar[];
-  /** Aktuell GEZEIGTE Intraday-Bars (ggf. aggregiert) — Quelle für Overlays. */
-  shownIntraday: import('./chart.js').IntradayChartBar[];
-  /** Ältester geladener ohlc5m-Chunk-Tag — das Intraday-Fenster wächst beim
-   *  Rückwärts-Scrollen chunkweise (Zoom-Kontinuum 06.08.). */
-  intradayOldest: string | null;
-  intradayHistLoading: boolean;
-  intradayHistDone: boolean;
-  /** Y-Skalen-Modus (Owner-Idee 06.08.): 'auto' = einpassen, 'fix' = fester
-   *  Zoom + Nachführen (Kerzenhöhe bleibt beim Scrollen konstant), 'frei' =
-   *  manuell an der Preisskala ziehen. */
-  yMode: import('./chart.js').YMode;
-  /** fitContent beim nächsten renderChart (nur Symbol-/Zeitrahmen-Wechsel). */
-  chartFitPending: boolean;
-  /** Aktive Indikator-Overlays (sma20/sma50/sma200/ema9/ema21/bb). */
-  chartLayers: Set<string>;
-  /** Chart-Typ (TV-Parität Teil 1): candles/hollow/heikin/line/area/baseline/bars. */
-  chartTypeSel: ChartType;
-  /** Kombi: Linientyp zusätzlich zu den Kerzen (Gerät-lokal). */
-  typeCombine: boolean;
-  /** Preisskala: 0 = linear, 1 = log, 2 = Prozent. */
-  scaleMode: 0 | 1 | 2;
-  /** In-Chart-Legende aufgeklappt? (Gerät-lokal; mobil default zu). */
-  hudOpen: boolean;
-  /** OHLC-Kurszeile aufgeklappt? EIN Zustand für ALLE Fenster (Accordion,
-   *  Owner-Wunsch 26.07.) — Gerät-lokal, Klick auf die Zeile toggelt. */
-  ohlcOpen: boolean;
-  /** Aktive User-Prognose (Chart-Pfeil) des aktuellen Symbols. */
-  prediction: import('@autotrd/shared').UserPrediction | null;
-  predMode: boolean;
-  /** Optionale Elemente (Options-Modal ⚙, settings.ui) — ✏ ist Opt-in. */
-  ui: {
-    predArrow: boolean;
-    cmpOverlay: boolean;
-    chartGrid: boolean;
-    subPanels: boolean;
-    /** Marktgruppen-Filter: Klassen-Key → false = versteckt (fehlend = sichtbar). */
-    marketGroups?: Record<string, boolean>;
-    /** Onboarding-Tour (MU2) gesehen? Auch Abbrechen zählt. */
-    tourGesehen?: boolean;
-    /** Sidebar-Akkordeon an? Fehlend = AN, false = aus (Optionen→Anzeige). */
-    akkordeon?: boolean;
-  };
-  /** Eingeklappte Module (nur Karten-Körper zu — Gerät-lokal). */
-  collapsed: Set<string>;
-  /** Clean-View: blendet alles Optionale aus, ohne die Auswahl zu verlieren. */
-  cleanView: boolean;
-  /** Richtung des letzten Scan-Signals — färbt den Flächen-Verlauf. */
-  lastSignalDir: 'buy' | 'sell' | 'hold';
-  /** Indikator-Unterpanels (RSI/MACD) — Zeitachse synchron zum Haupt-Chart. */
-  subCharts: { rsi: IndicatorPanelHandle | null; macd: IndicatorPanelHandle | null };
-  /** Multi-Chart-Raster (Chart-Vision): 1 = nur Haupt-Chart, 2/4 = Panels daneben. */
-  gridMode: 1 | 2 | 4;
-  /** Haupt-Chart Teil der Lock-Gruppe (Zoom/Crosshair synchron)? */
-  mainLocked: boolean;
-  gridPanels: GridPanel[];
-  /** Zweites Symbol als %-Vergleichslinie (null = aus). */
-  overlaySymbol: string | null;
-  overlayBars: import('./chart.js').ChartBar[];
+  /** Einstellungen des Auto-Traders, mit Defaults aufgefüllt. */
+  auto: AutoSettings;
+  /** Gespeicherte Symbol-Auswahl (null = ganzes Universum). */
+  autoSymbols: string[] | null;
+  engine: EngineMirror | null;
   wallet: Wallet | null;
-  positions: Position[];
+  positions: PositionRow[];
   trades: TradeRow[];
-  forecast: MarketDocData['forecast'];
-  /** Kurzfrist-Prognose (Intraday-Ansicht, 5-min-Raster). */
-  forecastIntraday: MarketDocData['forecastIntraday'];
-  /** Link-Bus (M9): Gruppen der verlinkbaren Panels. */
-  chartGroup: LinkGroup;
-  /** Vergleichs-Chart (M9 Chart-Stack): eigene Gruppe, synchrone Zeitachse. */
-  chart2Group: LinkGroup;
-  chart2Symbol: string;
-  chart2: PriceChartHandle | null;
-  chart2Bars: ChartBar[];
-  chart2Subs: Unsubscribe[];
-  /** Panel-Zustand des Vergleichs-Charts — volle Grid-Parität (User-Wunsch 25.07.). */
-  chart2P: GridPanel;
-  /** Letzter Quote des Chart-Symbols (fürs Order-Ticket: Preis + Alter). */
-  lastQuote: { price: number; updatedAt: string } | null;
-  /** Order-Ticket (Shift+B/S). */
-  orderSide: 'buy' | 'sell';
-  /** Nutzer-Hotkeys aus settings.hotkeys (Defaults siehe HOTKEY_DEFAULTS). */
-  hotkeys: Record<string, string>;
-  /** Workspace (M9): Preset + ausgeblendete Panels + Save-Debounce. */
-  wsPreset: string;
-  wsHidden: Set<string>;
-  /** Modul-Reihenfolge je Panel-Id (kleiner = weiter oben; fehlend = DOM-Default). */
-  wsOrder: Record<string, number>;
-  /** Sidebar-Spalte je Panel-Id (Pointer-Drag 21.08.); fehlend = Markup-Spalte. */
-  wsCol: Record<string, 'leftCol' | 'rightCol'>;
-  wsSaveTimer: number | null;
-  paletteDispose: (() => void) | null;
-  /** Layer-Toggles: Prognose-Overlay / News-Punkte ein- und ausblenden. */
-  showForecast: boolean;
-  /** News-Punkte im Chart (Rückkehr 29.07.) — Quelle sind NUR die fürs
-   *  Veto ohnehin geladenen Schlagzeilen (market/{sym}.news), kein Nachladen. */
-  showNews: boolean;
-  /**
-   * Positions-Overlay (Owner-Wunsch 04.08.): Einstiegs-Marke, Preislinien für
-   * Stop/Trailing/Ziel und die Kurve seit Einstieg — sichtbar, sobald das
-   * Chart ein Symbol zeigt, in dem das Konto drinsteckt. Default AN.
-   */
-  showPos: boolean;
-  /** Positions-Chip aufgeklappt? Zu = nur Seite, Stück und Ergebnis. */
-  posOpen: boolean;
-  /** News-Lage des aktuellen Chart-Symbols (aus dem market-Doc-Watcher). */
-  news: MarketDocData['news'];
-  /**
-   * Zugangsstufe des Kontos — alles außer 'approved' heißt: der Scan handelt
-   * NICHT. 'archiviert' ist die Ablage: gesperrt wie 'blocked', zusätzlich
-   * standardmäßig aus der Admin-Liste ausgeblendet, jederzeit zurückholbar.
-   */
-  accessLevel: 'pending' | 'approved' | 'blocked' | 'archiviert';
-  /** Kontotyp (Owner 02.08.): Admins sehen die Freischaltungs-Karte. */
-  admin: boolean;
-  /** Betriebszustand des letzten Scans (meta/health) — Karte „Was die Engine
-   *  gerade tut". Öffentlich lesbar, deshalb ohne Callable direkt abonniert. */
-  health: HealthDoc | null;
-  /** Auffällige Positionierungen des letzten Tageslaufs (meta/positioning). */
-  positioning: PositioningDoc | null;
-  /** Sockel-Kennzahlen des letzten Momentum-Laufs (meta/momentum). */
-  sockelKonten: number | null;
-  /** Zuletzt gesetzte News-Punkte im Haupt-Chart (E2E-Hook, 26.07.). */
-  lastMainMarkers?: number;
-  /** Live-Preise der Positions-Symbole (aus market/{sym}.quote). */
-  posPrices: Map<string, number>;
-  /** Portfolio-Kennzahlen (M12): schreibt der tägliche snapshotEquity-Lauf. */
-  pfStats: PortfolioStatsDoc | null;
-  equitySeries: EquitySeriesPoint[];
-  subs: Unsubscribe[]; // globale Subs (Settings, Wallet, Positionen, Trades)
-  symbolSubs: Unsubscribe[]; // pro Chart-Symbol
-  watchlistSubs: Unsubscribe[]; // pro beobachtetem Symbol (Livebar + Tabelle)
-  /**
-   * Was die Engine gerade beobachtet — kommt aus dem Heartbeat, nicht aus
-   * einer gespeicherten Auswahl. Leer, bis der erste Scan geschrieben hat;
-   * dann greift der Default als Boden (siehe `watchedSymbols`).
-   */
-  watched: string[];
-  /** Historie: älteste geladene Zeile — Cursor der nächsten Seite. */
   tradesCursor: TradeCursor | null;
-  /** Gewählter Zeitraum der Handels-Analyse in Tagen (0 = alles). */
-  anZeitraum: Zeitraum;
-  /** Zeitraum der Equity-Kurve auf der Performance-Karte (Owner-Thema
-   *  „Performance mit Zeitachse"; 0 = alles, wie bisher). Fenstert NUR die
-   *  gezeichnete Kurve samt Drawdown — die Kennzahlen darunter bleiben die
-   *  Server-Zahlen mit ihren eigenen Bezugsräumen (Sharpe 30/90 etc.). */
-  pfZeitraum: Zeitraum;
-  /** Läuft gerade ein Nachladen für den gewählten Zeitraum? */
-  anLaedt: boolean;
-  /** Letzter Nachlade-Fehler — sichtbar statt nur in der Konsole. */
-  tradesFehler: string | null;
-  /** Keine älteren Zeilen mehr — der Knopf verschwindet. */
   tradesDone: boolean;
   tradesLoading: boolean;
-  /** Katalog-Symbole mit offenem Markt im letzten Scan (Heartbeat). */
-  catalogOpen: number;
-  /** Davon frisch bekurst — s. `renderWatchHint`. */
-  catalogQuotes: number;
-  positionSubs: Map<string, Unsubscribe>; // Quotes je Positions-Symbol
-  /** Zerlegung des Depot-Verlaufs: je Symbol gebündelt oder je Trade einzeln. */
-  dcModus: 'symbol' | 'trade';
-  timers: number[];
-}
-
-/** Zusatz-Panel im Multi-Chart-Raster: eigenes Symbol + Zeitrahmen + Lock. */
-interface GridPanel {
-  sym: string;
-  range: number; // Bars (0 = alle, wie Haupt-Chart)
-  locked: boolean;
-  chart: PriceChartHandle | null;
-  bars: ChartBar[];
+  tradesFehler: string | null;
+  /** Live-Preise der Positions-Symbole (aus market/{sym}.quote). */
+  posPrices: Map<string, number>;
+  positionSubs: Map<string, Unsubscribe>;
+  pfStats: PortfolioStatsDoc | null;
+  equitySeries: EquitySeriesPoint[];
+  /** Zeitraum der Equity-Kurve (0 = alles). */
+  pfZeitraum: Zeitraum;
+  health: HealthDoc | null;
+  champion: ChampionDoc | null;
+  /** Plattform-Universum (meta/engineConfig), Fallback: eingebaute Liste. */
+  universe: string[];
+  accessLevel: 'pending' | 'approved' | 'blocked' | 'archiviert';
+  admin: boolean;
+  /** Eingeklappte Karten (Gerät-lokal). */
+  collapsed: Set<string>;
   subs: Unsubscribe[];
-  epoch: number;
-  fitPending: boolean;
-  /** Prognose des Panel-Symbols (Prognose 2.0: das Herzstück gehört in JEDES Chart). */
-  forecast: MarketDocData['forecast'];
-  /** Kurzfrist-Prognose des Panel-Symbols (Intraday-Sicht). */
-  forecastIntraday: MarketDocData['forecastIntraday'];
-  /** 0 = Tages-Sicht; 1/5 = 5-min-Sicht (Grid-Parität, User-Wunsch 25.07.). */
-  intradayDays: number;
-  intradayBars: import('./chart.js').IntradayChartBar[];
-  /** News-Lage des Panel-Symbols (News-Punkte in JEDEM Chart, 29.07.). */
-  news: MarketDocData['news'];
-  /** Zeit-Domäne des letzten Renders (Prognose-Räumung beim Moduswechsel). */
-  lastRenderIntraday?: boolean;
-  /** Zuletzt gesetzte News-Punkte (E2E-Hook, 26.07.). */
-  lastMarkers?: number;
-  /** Auto-Zeitrahmen (Grid-Gleichwertigkeit 26.07.): eng zoomen → 5-min-
-   *  Sicht, weit zoomen → Tageskerzen — wie „Auto" am Haupt-Chart. */
-  auto: boolean;
-  /** Wechsel läuft gerade (eigene setVisibleRange-Events ignorieren). */
-  autoBusy?: boolean;
-  autoTimer?: number | null;
-  /** OHLC-Kurszeile des Fensters (In-Chart-Overlay; Accordion-Zustand global). */
-  hudEl?: HTMLElement | null;
-  /** Lazy-Historie des Panels (Klon-Parität 07.08.): ältestes geladenes
-   *  ohlcDaily-Jahr, Lauf-/Ende-Flags, Leerjahr-Strähne. */
-  histJahr?: number | null;
-  histLoading?: boolean;
-  histDone?: boolean;
-  leerJahre?: number;
-  /** Auflösungs-Badge im Panel-Kopf (Grid-Audit 07.08. — wie resBadge oben). */
-  resEl?: HTMLElement | null;
+  timers: number[];
 }
 
 let st: DashState | null = null;
 
-// Bus-Abonnenten-Schlüssel der beiden verlinkbaren Panels (M9)
-const CHART_KEY = {};
-const CHART2_KEY = {};
-
-const HOTKEY_DEFAULTS: Record<string, string> = {
-  palette: 'ctrl+k',
-  buy: 'shift+b',
-  sell: 'shift+s',
-};
-
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
-
-/** Katalog flach für die Palette (Symbol + Klarname); Fallback: Watchlist. */
-function paletteSymbols(): Array<{ symbol: string; name: string }> {
-  if (!st) return [];
-  if (st.universe) {
-    const out: Array<{ symbol: string; name: string }> = [];
-    for (const cls of Object.values(st.universe)) {
-      for (const entries of Object.values(cls.groups)) out.push(...entries);
-    }
-    return out;
-  }
-  return watchedSymbols().map((symbol) => ({ symbol, name: resolveName(symbol) }));
-}
-
-function paletteCommands(): PaletteCommand[] {
-  if (!st) return [];
-  const cmds: PaletteCommand[] = [];
-  for (const [id, p] of Object.entries(WS_PRESETS)) {
-    cmds.push({
-      id: `preset-${id}`,
-      label: `Preset: ${p.label}`,
-      hint: 'Workspace',
-      run: () => applyPreset(id),
-    });
-  }
-  cmds.push(
-    {
-      id: 'theme',
-      label: t('pal.themaEinstellen'),
-      run: () => {
-        openOptions();
-        (document.querySelector('.otab[data-otab="anzeige"]') as HTMLElement | null)?.click();
-      },
-    },
-    // Auch hier nur die mögliche Aktion: „Engine starten" in der Palette,
-    // während sie läuft, wäre derselbe irreführende Knopf wie in der Karte.
-    ...(st.strategy.engine.running
-      ? [{ id: 'engine-stop', label: t('pal.engineStoppen'), run: (): void => $('engStop').click() }]
-      : [{ id: 'engine-start', label: t('pal.engineStarten'), run: (): void => $('engStart').click() }]),
-    { id: 'link-chart', label: t('pal.linkGruppe'), run: () => $('chipChart').click() },
-    { id: 'order-buy', label: t('pal.kaufen'), hint: 'Order', run: () => openOrderTicket('buy') },
-    { id: 'order-sell', label: t('pal.verkaufen'), hint: 'Order', run: () => openOrderTicket('sell') },
-  );
-  for (const [id, title] of Object.entries(PANEL_TITLES)) {
-    cmds.push({
-      id: `panel-${id}`,
-      label: `Panel ${st.wsHidden.has(id) ? t('pal.einblenden') : t('pal.ausblenden')}: ${title}`,
-      hint: 'Panel',
-      run: () => togglePanel(id),
-    });
-  }
-  return cmds;
-}
 
 /* ── Markup ─────────────────────────────────────────────────────────── */
 
@@ -624,79 +174,32 @@ function layout(email: string): string {
     <div class="spacer"></div>
     <div id="engBadge" class="badge b-off">${t('nav.engineAus')}</div>
     <button class="hbtn" id="optBtn" title="${t('nav.optionenTitle')}">${ICONS.gear}</button>
-    <button class="hbtn" id="tourBtn" title="${t('nav.tourTitle')}">?</button>
     <button class="hbtn sb-tgl" id="sideL" title="${t('nav.spalteLinks')}">◧</button>
     <button class="hbtn sb-tgl" id="sideR" title="${t('nav.spalteRechts')}">◨</button>
-    <!-- Hell/Dunkel wohnt seit 15.08. in Optionen → Anzeige (Owner: der
-         Kopfleisten-Knopf wurde ständig aus Versehen getippt). -->
-
     <span class="user">${email.replace(/[<>&]/g, '')}</span>
-    <!-- „Abmelden" saß bis 28.07. hier, direkt neben dem rechten Hamburger —
-         und wurde beim Griff nach dem Menü ständig mitgetroffen (Owner-
-         Screenshot). Eine Aktion, die die Sitzung beendet, gehört nicht
-         fingerbreit neben eine, die man dauernd braucht: Sie steht jetzt
-         unten im Options-Modal (⚙). -->
     <button class="burg" id="burgR" aria-label="${t('nav.panelRechts')}">☰</button>
   </header>
   <div class="overlay" id="olv"></div>
 
   <div class="app">
     <div class="col-l" id="leftCol">
-      <div class="card" data-panel="strategy"><div class="sect">${t('panel.strategie')}</div><div class="cbody">
-        <div class="fld"><label class="lbl">Beobachtet ${iBtn('watchlist')}</label>
-          <div id="wlChips" class="wl-chips"></div>
-          <div class="hint" id="wlHint">${t('lay.autoGewaehlt')}</div>
-        </div>
-        <!-- Watchlist-EDITOR (Stufe 3b, Task 121): Die Chips darüber zeigen,
-             was die Engine BEOBACHTET (Rangliste + Positionen, kommt vom
-             Heartbeat). Hier dagegen steht DEINE Auswahl — sie geht mit
-             Vorrang in den Scan und darf seit #283 jedes Symbol enthalten,
-             das der Broker laut Universum wirklich handelt. Gespeichert wird
-             sofort je Änderung; die Serverantwort (z. B. „weder Katalog noch
-             Alpaca-Universum") landet sichtbar in #stratErr. -->
-        <div class="fld"><label class="lbl">Watchlist
-            <span id="wlCount" class="mono" style="color:var(--t3);font-weight:400"></span></label>
-          <div id="wlEdit" class="wl-chips"></div>
-          <div class="mt-combo" id="wlCombo" style="margin-top:6px">
-            <input id="wlInput" class="inp" placeholder="${t('lay.symbolSuchen')}" autocomplete="off">
-            <div id="wlSymList" class="mt-list" hidden></div>
-          </div>
-          <div class="hint">${t('lay.katalogVorschlag')}</div>
-        </div>
-        <div class="row">
-          <div class="fld"><label class="lbl">${t('lay.rsiKauf')} &lt; ${iBtn('rsiBuy')}</label><input id="sRsiLo" class="inp" type="number"></div>
-          <div class="fld"><label class="lbl">${t('lay.rsiVerkauf')} &gt; ${iBtn('rsiSell')}</label><input id="sRsiHi" class="inp" type="number"></div>
-          <div class="fld"><label class="lbl">${t('lay.periode')} ${iBtn('periode')}</label>
-            <select id="sPeriod" class="sel"><option>3mo</option><option>6mo</option><option>1y</option></select></div>
-        </div>
-        <!-- UI-Audit Punkt 4 (Owner-Go 06.08.): Risiko- und Takt-Felder leben
-             NUR noch im Options-Modal. Zwei Eingabeorte für dieselben Werte
-             hießen: Wer zuletzt speichert, gewinnt — und die andere Ansicht
-             zeigt bis zum Neuladen veraltete Zahlen. -->
-        <p class="hint">${t('lay.reglerHinweisA')}
-          <b>${t('lay.optionenWort')} (⚙)</b> ${t('lay.reglerHinweisB')}</p>
-        <p id="stratErr" class="error" hidden></p>
-        <button class="btn btn-g" id="saveBtn">${t('opt.speichern')}</button>
-        <div class="hint" id="saveHint"></div>
-      </div></div>
-
-<!-- Kopf-ⓘ (Text-Diät Stufe 3): der engineMode-Tip war bis dahin
-           nirgends verdrahtet — dabei erklärt er die wichtigste Weiche der
-           Karte (Konfluenz vs. Momentum). Der Einzeiler unter dem Knopf
-           bleibt bewusst: Er beantwortet in einer Zeile, was der wichtigste
-           Knopf der App tut, inklusive „Paper". -->
-      <div class="card" data-panel="engine"><div class="sect">${t('panel.engine')} ${iBtn('engineMode')}</div><div class="cbody">
-        <!-- Immer genau EINER sichtbar (renderEngineBadge schaltet um).
-             Startzustand „aus", passend zum Default engine.running: false —
-             sobald die Strategie geladen ist, korrigiert der Renderer das. -->
+      <div class="card" data-panel="engine"><div class="sect">${t('panel.engine')} ${iBtn('engine')}</div><div class="cbody">
+        <!-- Immer genau EINER sichtbar (renderEngineBadge schaltet um). -->
         <button class="btn btn-g" id="engStart">${t('lay.engineStartKnopf')}</button>
         <button class="btn btn-r" id="engStop" hidden>${t('lay.engineStoppKnopf')}</button>
-        <div class="hint">${t('lay.engineAn')}</div>
-        <p id="accessNote" class="hint" hidden
-          style="color:var(--yl,#d9a441);margin-top:6px"></p>
-        <!-- Faden zum Admin (Owner 22.08.). Steht DIREKT unter der
-             Wartemeldung: Wer liest, dass sein Zugang geprueft wird, hat
-             genau dann die Frage, die er stellen moechte. -->
+        <div class="hint">${t('eng.schalterHint')}</div>
+        <p id="engMsg" class="hint" hidden></p>
+        <p id="accessNote" class="hint" hidden style="color:var(--yl,#d9a441);margin-top:6px"></p>
+        <div class="wl-sec">${t('eng.statusTitel')}</div>
+        <div id="engStatus" class="eng-status"><div class="hint">${t('eng.keinTakt')}</div></div>
+        <div class="wl-sec">${t('eng.kommandos')} ${iBtn('engineKommandos')}</div>
+        <div class="row" style="flex-wrap:wrap;gap:6px">
+          <button class="btn btn-n" id="engHalt">${t('eng.halt')}</button>
+          <button class="btn btn-n" id="engResume">${t('eng.resume')}</button>
+          <button class="btn btn-r" id="engFlatten">${t('eng.flatten')}</button>
+        </div>
+        <p class="hint" id="engCmdMsg"></p>
+        <!-- Faden zum Admin: direkt unter der Wartemeldung, wo die Frage entsteht. -->
         <div id="fadenBox" style="margin-top:8px">
           <div id="fadenListe" class="faden-liste"></div>
           <textarea id="fadenText" class="inp faden-text" rows="2"
@@ -716,24 +219,47 @@ function layout(email: string): string {
         </div>
       </div></div>
 
-      <!-- Admin-Verwaltung (Owner 02.08.): nur für Konten mit admin:true
-           sichtbar. Bewusst OHNE data-panel — die Karte gehört nicht in die
-           Workspace-Mechanik (applyPanels würde sonst die Admin-Sichtbarkeit
-           mit style.display überschreiben). -->
+      <div class="card" data-panel="settings"><div class="sect">${t('panel.einstellungen')} ${iBtn('autoSettings')}</div><div class="cbody">
+        <p class="hint">${t('as.hint')}</p>
+        <div class="opt-grid" id="asGrid">
+          <label>${t('as.riskPerTrade')} ${iBtn('riskPerTrade')}
+            <input id="asRisk" class="inp st-num" type="number" min="${AUTO_GRENZEN.riskPerTradePct[0]}" max="${AUTO_GRENZEN.riskPerTradePct[1]}" step="0.1" /></label>
+          <label>${t('as.maxPositionPct')} ${iBtn('maxPos')}
+            <input id="asMaxPct" class="inp st-num" type="number" min="${AUTO_GRENZEN.maxPositionPct[0]}" max="${AUTO_GRENZEN.maxPositionPct[1]}" step="1" /></label>
+          <label>${t('as.maxPositions')} ${iBtn('maxOpenPositions')}
+            <input id="asMaxN" class="inp st-num" type="number" min="${AUTO_GRENZEN.maxPositions[0]}" max="${AUTO_GRENZEN.maxPositions[1]}" step="1" /></label>
+          <label>${t('as.maxDailyLoss')} ${iBtn('dailyLossLimit')}
+            <input id="asDaily" class="inp st-num" type="number" min="${AUTO_GRENZEN.maxDailyLossPct[0]}" max="${AUTO_GRENZEN.maxDailyLossPct[1]}" step="0.5" /></label>
+          <label>${t('as.maxDrawdown')} ${iBtn('maxDrawdown')}
+            <input id="asDd" class="inp st-num" type="number" min="${AUTO_GRENZEN.maxDrawdownPct[0]}" max="${AUTO_GRENZEN.maxDrawdownPct[1]}" step="1" /></label>
+          <label class="opt-check">
+            <input type="checkbox" id="asShort" />
+            <span>${t('as.allowShort')} ${iBtn('allowShort')}</span></label>
+          <label class="opt-check">
+            <input type="checkbox" id="asTelegram" />
+            <span>${t('as.telegram')} ${iBtn('telegram')}</span></label>
+        </div>
+        <div class="wl-sec">${t('as.symbole')} ${iBtn('symbolauswahl')}</div>
+        <div class="row" style="gap:6px;margin-bottom:4px">
+          <button class="tf-btn" id="asAlle">${t('as.alle')}</button>
+          <button class="tf-btn" id="asKeine">${t('as.keine')}</button>
+          <span class="hint" id="asSymCount" style="margin-left:auto"></span>
+        </div>
+        <div id="asSymbols" class="as-symbols"></div>
+        <p id="asErr" class="error" hidden></p>
+        <div class="row" style="margin-top:8px;align-items:center">
+          <button class="btn btn-g" id="asSave">${t('opt.speichern')}</button>
+          <span class="hint" id="asMsg"></span>
+        </div>
+      </div></div>
+
+      <!-- Admin-Verwaltung: nur für Konten mit admin:true sichtbar. Bewusst
+           OHNE data-panel — die Karte gehört nicht in die Klapp-Mechanik. -->
       <div class="card" id="adminCard" hidden><div class="sect">Admin · Freischaltung<span id="admOffen" style="float:right;color:var(--t3)">0</span></div><div class="cbody">
         <div class="hint">${t('lay.neueKonten')}</div>
-        <!-- Kopfzeile (22.08.): Der vollbreite Lade-Balken war der erste von
-             79 Knoepfen, die sich alle auf 100 % zogen (.btn { width: 100% }).
-             Die id BLEIBT — Zeile ~10928 bindet sie, und der $-Helfer wirft bei
-             fehlendem Element, was die Registrierung des Not-Aus-Handlers
-             direkt darunter mit in den Abgrund risse. -->
         <div class="row adm-kopf">
           <button class="hbtn" id="admReload">${t('adm.laden')}</button>
           <input id="admSuche" class="inp adm-suche" placeholder="${t('adm.filterKonto')}" hidden />
-          <!-- Die Ablage ist standardmaessig ZU und zeigt trotzdem ihre Zahl:
-               Ein archiviertes Konto darf nicht wie ein geloeschtes aussehen.
-               Ohne Treffer bleibt der Schalter selbst verborgen, damit der
-               Kopf nicht um eine Sache waechst, die es nicht gibt. -->
           <label class="adm-archiv" hidden>
             <input type="checkbox" id="admArchiv" />
             <span>${t('adm.archivZeigen')}</span>
@@ -741,11 +267,6 @@ function layout(email: string): string {
           </label>
           <span id="admStand" class="hint mono adm-stand"></span>
         </div>
-        <!-- Meldeschlitz AUSSERHALB von #admList: Im Erfolgsfall verschwindet
-             die Sperre, die Zeile verlaesst also den Abschnitt OFFEN. Eine
-             Meldung, die nur an der Zeile haengt, kann den Erfolg baulich
-             nicht anzeigen. Die Zeilen-Notiz bleibt zusaetzlich bestehen. -->
-        <div id="admMeldung" class="hint" hidden></div>
         <div id="admList"></div>
         <p id="admErr" class="error" hidden></p>
         <div class="wl-sec adm-trenner">Echtgeld-Not-Aus</div>
@@ -755,237 +276,48 @@ function layout(email: string): string {
           <button class="btn btn-r" id="admKillBtn" style="margin-left:auto" hidden></button>
         </div>
       </div></div>
-
-      <div class="card" data-panel="history"><div class="sect">${t('panel.historie')}
-        <span id="jCount" style="float:right;color:var(--t3)">0</span></div><div class="cbody">
-        <div class="row" style="gap:6px;margin-bottom:6px">
-          <input id="jFilter" class="inp" placeholder="Symbol filtern …" style="flex:1">
-          <select id="jSide" class="inp" style="max-width:110px">
-            <option value="">Alle</option><option value="buy">${t('lay.nurKaeufe')}</option>
-            <option value="sell">${t('lay.nurVerkaeufe')}</option><option value="closed">${t('lay.nurMitPnl')}</option>
-          </select>
-        </div>
-        <div class="tw"><table class="tbl">
-          <thead><tr><th>Zeit</th><th>Sym</th><th>Side</th><th>Qty</th><th>Preis</th><th>P&amp;L</th></tr></thead>
-          <tbody id="jBody"><tr><td colspan="6" class="c-t3">Keine Trades</td></tr></tbody>
-        </table></div>
-        <button class="btn btn-n" id="jMore" style="width:100%;margin-top:6px">${t('lay.aeltereLaden')}</button>
-      </div></div>
-
-      <div class="card" data-panel="journal"><div class="sect">${t('panel.journal')} ${iBtn('tradejournal')}</div><div class="cbody">
-        <div id="tjList" class="tn-log" style="margin-top:8px"><div class="hint">${t('lay.journalLeer')}</div></div>
-      </div></div>
     </div>
 
     <div class="col-m" id="centerCol">
-      <div class="livebar" id="liveBar"></div>
-
-      <div class="card" data-panel="chart"><div class="sect">${t('panel.chartKopf')} <button class="lchip" id="chipChart" title="${t('chart.linkGruppe')}">A</button></div><div class="cbody">
-        <div id="chartMaxScope">
-        <div class="chart-hd">
-          <span class="chart-nm" id="chSym"></span>
-          <span class="chart-sub" id="chSub"></span>
-          <span class="chart-px" id="chPx">--</span>
-          <span class="chart-px" id="chChg">--</span>
-        </div>
-        <div class="tf-bar tf-main">
-          <button class="tf-btn" data-zoom="1" title="${t('chart.zoom1T')}">${t('chart.lbl1T')}</button>
-          <button class="tf-btn" data-zoom="7" title="${t('chart.zoom1W')}">1W</button>
-          <button class="tf-btn" data-zoom="30" title="${t('chart.zoom1M')}">1M</button>
-          <button class="tf-btn" data-zoom="90" title="${t('chart.zoom3M')}">3M</button>
-          <button class="tf-btn" data-zoom="365" title="${t('chart.zoom1J')}">${t('chart.lbl1J')}</button>
-          <button class="tf-btn" data-zoom="1825" title="${t('chart.zoom5J')}">${t('chart.lbl5J')}</button>
-          <button class="tf-btn" data-zoom="max" title="${t('chart.zoomMax')}">Max</button>
-          <span id="resBadge" class="res-badge mono" title="${t('chart.resBadge')}"></span>
-          <span id="mktBadge" class="res-badge mono" hidden></span>
-          <span id="histHint" class="res-badge mono" hidden>${t('chart.lblLaedt')}</span>
-          <button class="tf-btn" id="predBtn" hidden title="${t('chart.predBtn')}">${ICONS.pencil}</button>
-          <button class="tf-btn" id="jumpStart" title="${t('chart.sprungAnfang')}">⇤</button>
-          <button class="tf-btn" id="jumpMid" title="${t('chart.sprungMitte')}">◐</button>
-          <button class="tf-btn" id="jumpEnd" title="${t('chart.sprungEnde')}">⇥</button>
-          <button class="tf-btn" id="maxMain" style="margin-left:auto" title="${t('chart.vollbild')}">⛶</button>
-          <button class="tf-btn" id="cleanBtn" title="${t('chart.clean')}">Clean</button>
-          <span class="tool-anchor">
-            <button class="tf-btn" id="indBtn" title="${t('chart.indBtn')}">${t('chart.lblIndikatoren')}</button>
-            <div id="menuInd" class="tool-menu" hidden>
-              <div class="tm-sec">${t('chart.lblOverlays')}</div>
-              <button class="tf-btn" data-layer="sma20" title="${t('chart.sma20')}">SMA20</button>
-              <button class="tf-btn" data-layer="sma50" title="${t('chart.sma50')}">SMA50</button>
-              <button class="tf-btn" data-layer="sma200" title="${t('chart.sma200')}">SMA200</button>
-              <button class="tf-btn" data-layer="ema9" title="${t('chart.ema9')}">EMA9</button>
-              <button class="tf-btn" data-layer="ema21" title="${t('chart.ema21')}">EMA21</button>
-              <button class="tf-btn" data-layer="bb" title="${t('chart.bb')}">BB</button>
-              <button class="tf-btn ind-x" data-layer="vwap" title="${t('chart.vwap')}">VWAP</button>
-              <button class="tf-btn" data-layer="marken" title="${t('chart.marken')}">${t('chart.lblMarken')}</button>
-              <div class="tm-sec">${t('chart.lblChartTyp')}</div>
-              <button class="tf-btn on" data-ctype="candles" title="${t('chart.tKerzen')}">${t('chart.lblKerzen')}</button>
-              <button class="tf-btn" data-ctype="hollow" title="${t('chart.tHohl')}">${t('chart.lblHohl')}</button>
-              <button class="tf-btn" data-ctype="heikin" title="${t('chart.tHeikin')}">Heikin-Ashi</button>
-              <button class="tf-btn" data-ctype="line" title="${t('chart.tLinie')}">${t('chart.lblLinie')}</button>
-              <button class="tf-btn" data-ctype="area" title="${t('chart.tBerg')}">${t('chart.lblBerg')}</button>
-              <button class="tf-btn" data-ctype="baseline" title="${t('chart.tBaseline')}">Baseline</button>
-              <button class="tf-btn" data-ctype="bars" title="${t('chart.tBars')}">Bars</button>
-              <button class="tf-btn ind-x" id="ctypeCombine" title="${t('chart.tKombi')}">${t('chart.lblPlusKerzen')}</button>
-              <div class="tm-sec">${t('chart.lblPreisskala')}</div>
-              <button class="tf-btn on" data-scale="0" title="${t('chart.skalaLin')}">Lin</button>
-              <button class="tf-btn" data-scale="1" title="${t('chart.skalaLog')}">Log</button>
-              <button class="tf-btn" data-scale="2" title="${t('chart.skalaPct')}">%</button>
-              <div class="tm-sec">${t('chart.lblStil')}</div>
-              <button class="tf-btn" data-layer="area" title="${t('chart.flaeche')}">${t('chart.lblFlaeche')}</button>
-              <button class="tf-btn" data-layer="hideCandles" title="${t('chart.kerzenAus')}">${t('chart.lblKerzenAus')}</button>
-              <div class="tm-sec">${t('chart.lblUnterpanels')}</div>
-              <button class="tf-btn ind-x" data-layer="rsiPanel" title="${t('chart.rsiPanel')}">RSI</button>
-              <button class="tf-btn ind-x" data-layer="macdPanel" title="${t('chart.macdPanel')}">MACD</button>
-            </div>
-          </span>
-          <span class="tool-anchor">
-            <button class="tf-btn" id="drawBtn" title="${t('chart.drawBtn')}">${t('chart.lblZeichnen')}</button>
-            <div id="menuDraw" class="tool-menu" hidden>
-              <div class="tm-sec">${t('chart.lblWerkzeug')}</div>
-              <button class="tf-btn" data-draw="hline" title="${t('chart.drawHline')}">${t('chart.lblHorizontale')}</button>
-              <button class="tf-btn" data-draw="trend" title="${t('chart.drawTrend')}">${t('chart.lblTrendlinie')}</button>
-              <button class="tf-btn" data-draw="rect" title="${t('chart.drawRect')}">${t('chart.lblRechteck')}</button>
-              <div class="tm-sec">${t('chart.lblVerwaltung')}</div>
-              <button class="tf-btn" id="drawClear" title="${t('chart.drawClear')}">${t('chart.lblZeichnungenLoeschen')}</button>
-            </div>
-          </span>
-          <span class="tool-anchor">
-            <button class="tf-btn" id="layBtn" title="${t('chart.layBtn')}">${t('chart.lblLayerMenu')}</button>
-            <div id="menuLay" class="tool-menu" hidden>
-              <div class="tm-sec">${t('chart.lblLayer')}</div>
-              <button class="tf-btn on" id="lyFc" title="${t('chart.lyFc')}">${t('chart.lblPrognose')}</button>
-              <button class="tf-btn on" id="lyNews" title="${t('chart.lyNews')}">News</button>
-              <button class="tf-btn on" id="lyPos" title="${t('chart.lyPos')}">Position</button>
-              <button class="tf-btn on" id="yAutoBtn" title="${t('chart.yModus')}">Y auto</button>
-              <div class="tm-sec">${t('chart.lblRaster')}</div>
-              <span class="grid-sw" title="${t('chart.raster')}">
-                <button class="tf-btn on" data-grid="1">▭</button>
-                <button class="tf-btn" data-grid="2">▯▯</button>
-                <button class="tf-btn" data-grid="4">⊞</button>
-              </span>
-              <div class="tm-sec">${t('chart.lblVergleich')}</div>
-              <input id="cmpSym" class="inp cmp-inp" placeholder="+ Overlay: SYM" title="${t('chart.cmpSym')}" />
-            </div>
-          </span>
-        </div>
-        <div class="hint" id="fcInfo" style="margin-bottom:4px"></div>
-        <div id="chartRow" class="chart-row" data-mode="1">
-        <div id="chartWrap" class="chart-wrap">
-          <!-- Kopf NUR im Raster (26.07.): strukturgleich zu .gp-hd, damit das
-               Haupt-Fenster exakt so hoch sitzt wie die Panels — vorher fehlte
-               ihm deren Kopfzeile und das Chart klebte 38 px zu weit oben. -->
-          <div id="mainHd" class="gp-hd" hidden>
-            <input id="mainHdSym" class="inp mh-sym" title="${t('chart.mainHdSym')}" />
-            <span class="gp-tf">
-              <button class="tf-btn" data-zoom="1" title="${t('chart.zoom1Tkurz')}">${t('chart.lbl1T')}</button>
-              <button class="tf-btn" data-zoom="7" title="${t('chart.zoom1W')}">1W</button>
-              <button class="tf-btn" data-zoom="30" title="${t('chart.zoom1M')}">1M</button>
-              <button class="tf-btn" data-zoom="365" title="${t('chart.zoom1J')}">${t('chart.lbl1J')}</button>
-              <button class="tf-btn" data-zoom="max" title="${t('chart.zoomMaxKurz')}">Max</button>
-            </span>
-            <button class="tf-btn mh-max" id="mhMax" title="${t('chart.vollbildKurz')}">⛶</button>
-            <button class="tf-btn mh-lock" id="lockMain"
-              title="${t('chart.lockGruppe')}">${ICONS.unlock}</button>
-          </div>
-          <button id="maxExit" class="chart-max-exit" hidden title="${t('chart.maxExit')}">✕</button>
-          <div id="chartHud" class="chart-hud">
-            <div class="hud-top">
-              <div id="ohlcRow" class="ohlc-row mono" hidden></div>
-              <button id="hudTgl" class="hud-tgl" title="${t('chart.legende')}">▾</button>
-            </div>
-            <div id="chartLegend" class="chart-legend" hidden></div>
-            <div id="posHud" class="pos-hud mono" hidden></div>
-          </div>
-          <div id="chartArea"></div>
-          <button id="jumpNow" class="jump-now" hidden
-            title="${t('chart.jetzt')}">${t('chart.lblJetzt')}</button>
-          <div id="evTip" class="evtip" hidden></div>
-          <svg id="predSvg" class="pred-svg" aria-hidden="true"></svg>
-          <svg id="drawSvg" class="pred-svg" aria-hidden="true"></svg>
-          <div id="predPop" class="pred-pop" hidden>
-            <b>${t('chart.ppTitel')}</b>
-            <label>${t('chart.ppZielKurs')} <input id="ppPrice" class="inp st-num" type="number" step="0.5" /></label>
-            <label>${t('chart.ppZielDatum')} <input id="ppDate" class="inp" type="date" /></label>
-            <label>${t('chart.ppVertrauen')}
-              <span class="st-stepper">
-                <button type="button" class="btn btn-n" id="ppConfM">−</button>
-                <b class="mono" id="ppConfV">2</b>
-                <button type="button" class="btn btn-n" id="ppConfP">+</button>
-              </span>
-            </label>
-            <div class="row">
-              <button type="button" class="btn btn-g" id="ppSave">${t('chart.lblSpeichern')}</button>
-              <button type="button" class="btn btn-n" id="ppDel">${t('chart.lblLoeschen')}</button>
-              <button type="button" class="btn btn-n" id="ppClose">✕</button>
-            </div>
-            <p class="hint">${t('chart.ppHinweis')}</p>
-          </div>
-        </div>
-        <div id="chartGrid"></div>
-        </div>
-        <div id="chartHDrag" class="chart-h-drag"
-          title="${t('chart.hoeheDrag')}"></div>
-        <div id="rsiPanel" class="sub-panel" hidden></div>
-        <div id="macdPanel" class="sub-panel" hidden></div>
-        </div>
-        <div class="hint">${t('chart.hinweis')} —
-          ${t('chart.hinweis2')}</div>
-      </div></div>
-
-      <div class="card" data-panel="chart2"><div class="sect">${t('panel.vergleichsChart')}
-        <button class="lchip" id="chipChart2" title="${t('lay.linkGruppe2')}">B</button></div><div class="cbody">
-        <div class="chart-hd">
-          <input id="ch2Sym" class="inp mh-sym"
-            title="${t('lay.vergleichsSymbol')}" />
-          <span class="chart-px" id="ch2Px">--</span>
-          <span class="gp-tf" id="c2tf" style="margin-left:auto">
-            <button class="tf-btn" id="c2Auto"
-              title="${t('lay.autoZeitrahmen')}">Auto</button>
-            <button class="tf-btn" data-c2i="1" title="${t('lay.tag5minTitel')}">${t('tf.tag')}</button>
-            <button class="tf-btn" data-c2i="5" title="${t('lay.woche5minTitel')}">1W</button>
-            <button class="tf-btn" data-c2r="22">1M</button>
-            <button class="tf-btn on" data-c2r="66">3M</button>
-            <button class="tf-btn" data-c2r="0">${t('tf.jahr')}</button>
-          </span>
-        </div>
-        <div id="chart2Area" style="height:200px"></div>
-        <div class="hint">${t('lay.vergleichsChartHinweis')}</div>
-      </div></div>
-
-      <div class="sig-grid" data-panel="sigcards">
-        <div class="scard"><div class="slbl">RSI (14)</div><div id="vRSI" class="sval c-ac">--</div></div>
-        <div class="scard"><div class="slbl">MACD</div><div id="vMacd" class="sval c-ac">--</div></div>
-        <div class="scard"><div class="slbl">BB Pos %</div><div id="vBB" class="sval c-ac">--</div></div>
-        <div class="scard"><div class="slbl">Signal</div><div id="vSig" class="sval c-t3">--</div></div>
-      </div>
-
-      <div class="card" data-panel="autosignals"><div class="sect">${t('panel.autoSignale')}</div><div class="cbody">
-        <div class="tw"><table class="tbl tbl-karten tbl-kompakt">
-          <thead><tr><th>Ticker</th><th>RSI</th><th>MACD</th><th>BB %</th><th>${t('tab.konfluenz')}</th><th>Signal</th></tr></thead>
-          <tbody id="sigBody"><tr><td colspan="6" class="c-t3">${t('lay.keinScan')}</td></tr></tbody>
-        </table></div>
-      </div></div>
-
       <div class="card" data-panel="positions"><div class="sect">${t('panel.positionenKopf')} <span id="pCount" style="float:right;color:var(--t3)">0 offen</span></div><div class="cbody">
         <div class="tw"><table class="tbl tbl-karten tbl-kompakt-pos">
-          <thead><tr><th>Sym</th><th>Qty</th><th>Eintritt</th><th>Aktuell</th><th>P&amp;L</th><th>%</th><th></th></tr></thead>
-          <tbody id="pBody"><tr><td colspan="7" class="c-t3">Keine offenen Positionen</td></tr></tbody>
+          <thead><tr><th>Sym</th><th>Qty</th><th>${t('tab.eintritt')}</th><th>${t('tab.aktuell')}</th><th>P&amp;L</th><th>%</th><th></th></tr></thead>
+          <tbody id="pBody"><tr><td colspan="7" class="c-t3">${t('pf.keineOffenen')}</td></tr></tbody>
         </table></div>
+        <p class="hint">${t('pos.stopsBeimBroker')}</p>
       </div></div>
 
-      <!-- Betriebszustand (04.08.): Seit der Performance-Offensive entscheiden
-           fünf Mechaniken mit, ob ein Trade zustande kommt — alle unsichtbar.
-           „Es passiert nichts" sah bei einer scharfen Regel bisher genauso aus
-           wie bei einem toten System. Diese Karte macht den Unterschied. -->
       <div class="card" data-panel="engineWhy"><div class="sect">${t('lay.engineWhyKopf')} ${iBtn('engineWhy')}</div><div class="cbody">
         <div id="whyAmpel" class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:6px"></div>
         <div id="whyGate"></div>
         <div id="whyExtra" class="hint" style="margin-top:6px"></div>
       </div></div>
 
-      <div class="card" data-panel="market"><div class="sect">${t('panel.markt')}</div><div class="cbody">
-        <div class="mkt-tabs" id="mktTabs"></div>
-        <div id="mktBody"><span class="c-t3">Lade Katalog…</span></div>
+      <div class="card" data-panel="champion"><div class="sect">${t('panel.champion')} ${iBtn('champion')}
+        <span id="chStand" class="tn-tag" style="float:right"></span>
+      </div><div class="cbody">
+        <div id="chList" class="fl-tbl ch-tbl"><div class="hint">${t('ch.keiner')}</div></div>
+        <div id="chNoTrade" class="hint"></div>
+        <div class="row" style="align-items:center;gap:8px;margin-top:6px">
+          <button class="btn btn-n" id="chReport">${t('ch.berichtOeffnen')}</button>
+          <span class="hint" id="chMsg"></span>
+        </div>
+      </div></div>
+
+      <div class="card" data-panel="history"><div class="sect">${t('panel.historie')}
+        <span id="jCount" style="float:right;color:var(--t3)">0</span></div><div class="cbody">
+        <div class="row" style="gap:6px;margin-bottom:6px">
+          <input id="jFilter" class="inp" placeholder="${t('jn.symbolFiltern')}" style="flex:1">
+          <select id="jSide" class="inp" style="max-width:110px">
+            <option value="">${t('jn.alle')}</option><option value="buy">${t('lay.nurKaeufe')}</option>
+            <option value="sell">${t('lay.nurVerkaeufe')}</option><option value="closed">${t('lay.nurMitPnl')}</option>
+          </select>
+        </div>
+        <div class="tw"><table class="tbl">
+          <thead><tr><th>${t('tab.zeit')}</th><th>Sym</th><th>Side</th><th>Qty</th><th>${t('tab.preis')}</th><th>P&amp;L</th></tr></thead>
+          <tbody id="jBody"><tr><td colspan="6" class="c-t3">${t('jn.keineTrades')}</td></tr></tbody>
+        </table></div>
+        <button class="btn btn-n" id="jMore" style="width:100%;margin-top:6px">${t('lay.aeltereLaden')}</button>
       </div></div>
     </div>
 
@@ -997,10 +329,8 @@ function layout(email: string): string {
         <p class="hint" id="vCashHint" hidden style="margin:-4px 0 6px"></p>
         <label class="lbl">Equity (live)</label><div id="vEq" class="vbig">--</div>
         <label class="lbl">${t('pf.gesamtPnl')} ${iBtn('gesamtPnl')}</label><div id="vPnl" class="vbig">--</div>
-        <!-- Der Maßstab dieser Zahl (Owner-Frage 13.08.: „+2.245 $ hier,
-             −1,79 % dort — was ist die Realität?"): Nach einem Depot-Schnitt
-             zählt Gesamt P&L erst AB dem Schnitt. Ohne diese Zeile liest
-             sich die Zahl wie ein Lebenszeit-Gewinn. renderPortfolio füllt. -->
+        <!-- Maßstab der Zahl: Nach einem Depot-Schnitt zählt Gesamt P&L erst
+             AB dem Schnitt. renderPortfolio füllt. -->
         <p class="hint" id="vPnlBasis" hidden style="margin:-4px 0 6px"></p>
         <div class="row" style="gap:12px">
           <div><label class="lbl">${t('pf.realisiert')}</label><div id="vClosed" class="smv">--</div></div>
@@ -1008,18 +338,6 @@ function layout(email: string): string {
           <div><label class="lbl">${t('pf.winRate')}</label><div id="vWR" class="smv">--%</div></div>
         </div>
         <label class="lbl" style="margin-top:10px">${t('pf.equityKurve')} ${iBtn('equityCurve')}</label>
-        <!-- Galerie (Owner 21.08.): Equity-Kurve und Depot-Verlauf blättern
-             auf EINEM Platz — die eigene Depot-Verlauf-Karte ist dafür
-             eingezogen (eine Karte weniger). Die dc-Ids bleiben unverändert,
-             renderDepotVerlauf zeichnet weiter an dieselben Halter. -->
-        <div class="mkt-tabs" id="pfAnsicht" style="margin:2px 0 4px">
-          <button class="tf-btn on" data-pfa="kurve">${t('pf.ansichtKurve')}</button>
-          <button class="tf-btn" data-pfa="depot">${t('dc.titel')}</button>
-        </div>
-        <div id="pfSeiteKurve" class="pf-seite">
-        <!-- Zeitachse der Kurve (Owner-Thema „Performance mit Zeitachse"):
-             fenstert Sparkline, große Kurve und Drawdown; die Kennzahlen
-             darunter bleiben Server-Zahlen mit eigenem Bezugsraum. -->
         <div class="mkt-tabs" id="pfZeit" style="margin:2px 0 4px"></div>
         <svg id="pfSpark" class="pf-spark" viewBox="0 0 100 26" preserveAspectRatio="none" aria-hidden="true"></svg>
         <details id="pfDetail" style="margin-top:4px">
@@ -1029,19 +347,6 @@ function layout(email: string): string {
           <label class="lbl" style="margin-top:6px">Drawdown ${iBtn('drawdown')}</label>
           <svg id="pfDDCurve" viewBox="0 0 100 18" preserveAspectRatio="none" aria-hidden="true" style="display:block;width:100%;height:54px"></svg>
         </details>
-        </div>
-        <div id="pfSeiteDepot" class="pf-seite" hidden>
-        <div class="pf-dep-kopf">
-          <span class="dc-modus">
-            <button id="dcMSym" aria-pressed="true">${t('dc.jeSymbol')}</button>
-            <button id="dcMTrade" aria-pressed="false">${t('dc.jeTrade')}</button>
-          </span>
-          ${iBtn('depotVerlauf')}
-        </div>
-        <div class="dc-wrap" id="dcWrap"><div id="dcChart"></div><div class="dc-tt" id="dcTip" hidden></div></div>
-        <div class="dc-legende" id="dcLegende"></div>
-        <div id="dcMeta" class="tn-n mono"></div>
-        </div>
         <div class="pf-grid" id="pfGrid" hidden>
           <div><label class="lbl">Sharpe 30 ${iBtn('sharpe')}</label><div id="pfS30" class="smv mono">--</div></div>
           <div><label class="lbl">Sharpe 90</label><div id="pfS90" class="smv mono">--</div></div>
@@ -1050,270 +355,39 @@ function layout(email: string): string {
           <div><label class="lbl">${t('pf.profitFaktor')} ${iBtn('profitFactor')}</label><div id="pfPF" class="smv mono">--</div></div>
           <div><label class="lbl">${t('pf.erwartungTrade')} ${iBtn('expectancy')}</label><div id="pfExp" class="smv mono">--</div></div>
         </div>
-<!-- Progressive Karte (Text-Diät Stufe 2): Auswertungs-Sektionen ohne
-             Daten sind KOMPLETT zu (Wrapper hidden) — statt vier gestapelter
-             „Noch keine …"-Absätze erklärt EIN Sammelsatz (#pfLeer), was mit
-             den ersten Trades und Tagesläufen noch erscheint. renderStats
-             steuert die Wrapper rein datengetrieben; die Sektionen hängen
-             nicht am Zeitfenster, deshalb springt beim Chip-Wechsel nichts. -->
-        <div id="pfSekExits" hidden>
-        <label class="lbl" style="margin-top:10px">${t('pf.warumGeschlossen')} ${iBtn('exits')}</label>
-        <div id="pfExits" class="fl-tbl"></div>
-        </div>
-        <div id="pfSekKosten" hidden>
-        <label class="lbl" style="margin-top:10px">${t('pf.reibung')} ${iBtn('kosten')}</label>
-        <div class="pf-grid" id="pfCostGrid" hidden>
-          <div><label class="lbl">${t('pf.gebuehren')}</label><div id="pfFees" class="smv mono">--</div></div>
-          <div><label class="lbl">${t('pf.anteilErgebnis')}</label><div id="pfFeeShare" class="smv mono">--</div></div>
-          <div><label class="lbl">${t('pf.gewinnBrutto')}</label><div id="pfGrossWin" class="smv mono">--</div></div>
-          <div><label class="lbl">${t('pf.verlustBrutto')}</label><div id="pfGrossLoss" class="smv mono">--</div></div>
-          <div><label class="lbl">${t('pf.roundtripKosten')}</label><div id="pfRt" class="smv mono">--</div></div>
-          <div><label class="lbl">${t('pf.luftUeberKosten')}</label><div id="pfEdge" class="smv mono">--</div></div>
-        </div>
-        <div class="hint" id="pfCostHint"></div>
-        </div>
-        <div id="pfSekReibung" hidden>
-        <label class="lbl" style="margin-top:10px">${t('pf.fillReibung')} ${iBtn('fillReibung')}</label>
-        <div id="pfReibung" class="fl-tbl"></div>
-        </div>
-        <div id="pfSekKapital" hidden>
-        <label class="lbl" style="margin-top:10px">${t('pf.kapitalEinsatz')} ${iBtn('kapitalEinsatz')}</label>
-        <div id="pfKapital" class="fl-tbl"></div>
-        </div>
-        <div class="hint" id="pfLeer" hidden>${t('pf.sektionenFolgen')}</div>
         <div class="hint" id="pfHint">${t('pf.abSnapshot')}</div>
-        <!-- Owner-Feedback 28.07.: „man schaut meistens auf die Performance, und
-             wenn man die History direkt darunter hat, ist das logischer." Stimmt —
-             die Analyse ist die Vertiefung genau dieser Kennzahlen, nicht ein
-             Anhängsel der Trade-Tabelle. -->
-        <button class="btn btn-g" id="anOpen" style="width:100%;margin-top:8px">${t('pf.analyseOeffnen')}</button>
       </div></div>
-
-      <div class="card" data-panel="manualtrade"><div class="sect">${t('panel.manuellerTrade')}</div><div class="cbody">
-        <label class="lbl">${t('lay.symbolKatalog')}</label>
-        <div class="mt-combo">
-          <input id="mSym" class="inp" placeholder="${t('lay.suchen')}" autocomplete="off">
-          <div id="mSymList" class="mt-list" hidden></div>
-        </div>
-        <div id="mtInfo" hidden>
-          <div class="hint" id="mtName"></div>
-          <div class="hint sym-steck" id="mtSteck"></div>
-          <div class="row mt-inds">
-            <div><label class="lbl">${t('lay.kursEinheit')}</label><div id="mtPx" class="smv mono">--</div></div>
-            <div><label class="lbl">${t('lay.heute')}</label><div id="mtChg" class="smv mono">--</div></div>
-            <div><label class="lbl">RSI ${iBtn('rsi')}</label><div id="mtRsi" class="smv mono">--</div></div>
-            <div><label class="lbl">MACD ${iBtn('macd')}</label><div id="mtMacd" class="smv">--</div></div>
-            <div><label class="lbl">Signal ${iBtn('signal')}</label><div id="mtSig" class="smv">--</div></div>
-          </div>
-        </div>
-        <label class="lbl">${t('lay.stueckzahl')}</label>
-        <div class="row">
-          <input id="mQty" class="inp" type="number" value="1" min="1" style="flex:1">
-          <button class="tf-btn" id="mtMax" title="${t('lay.maxStueckzahl')}">Max</button>
-        </div>
-        <div class="mt-sum">
-          <div class="mt-row"><span>${t('lay.zwischensumme')}</span><span id="mtSub" class="mono">--</span></div>
-          <div class="mt-row"><span>${t('lay.gebuehrenZeile')} ${iBtn('fees')}</span><span id="mtFee" class="mono">--</span></div>
-          <div class="mt-row mt-total"><span>${t('lay.gesamt')}</span><span id="mtTotal" class="mono">--</span></div>
-          <div class="mt-row"><span>${t('lay.kaufkraftDanach')} ${iBtn('kaufkraft')}</span><span id="mtCash" class="mono">--</span></div>
-        </div>
-        <div class="row">
-          <button class="btn btn-g" id="mtBuy">${t('lay.kaufen')}</button>
-          <button class="btn btn-r" id="mtSell">${t('lay.verkaufen')}</button>
-        </div>
-        <div class="hint" id="mtHint">${t('lay.paperAusfuehrung')}</div>
-      </div></div>
-
-      <div class="card" data-panel="clock"><div class="sect">${t('panel.marktUhrKopf')}</div><div class="cbody">
-        <div id="marketClock" class="clock">--:--:--</div>
-        <div class="phases">
-          <div class="ph" id="phPre">Pre-Mkt</div>
-          <div class="ph" id="phMain">Regular</div>
-          <div class="ph" id="phAft">After-Hrs</div>
-        </div>
-      </div></div>
-
-      <div class="card" data-panel="forecastacc"><div class="sect">${t('panel.prognoseGenauigkeit')}</div><div class="cbody kpi">
-        <label class="lbl">Richtungs-Trefferquote ${iBtn('fcCombo')}</label>
-        <div id="fcAcc" class="vbig c-ac">--</div>
-        <div class="row" style="gap:12px">
-          <div><label class="lbl">Bewertet</label><div id="fcScored" class="smv">0</div></div>
-          <div><label class="lbl">Lookback</label><div id="fcLb" class="smv">--</div></div>
-        </div>
-        <div class="hint" id="fcTuning">${t('lay.selfTuning')}</div>
-        <div class="hint" id="fcVoteInfo"></div>
-      </div></div>
-
-      <div class="card" data-panel="fclab"><div class="sect">${t('panel.prognoseLabor')} ${iBtn('fclab')} <span id="flSym" style="float:right;color:var(--t3)"></span></div><div class="cbody">
-        <label class="lbl">${t('lay.komboTages')} ${iBtn('fcCombo')}</label>
-        <div id="flCombos" class="fl-tbl"><div class="hint">${t('lay.keinePrognosen')}</div></div>
-        <label class="lbl">${t('lay.komboIntraday')} ${iBtn('kurzfrist')}</label>
-        <div id="flCombosIntra" class="fl-tbl"><div class="hint">${t('lay.keineKurzfrist')}</div></div>
-        <label class="lbl">${t('lay.vorhersageRealitaet')} ${iBtn('mae')} <span id="flSym2" style="color:var(--t3)"></span></label>
-        <div id="flRows" class="fl-tbl"><div class="hint">${t('lay.keinePrognosenSym')}</div></div>
-      </div></div>
-
-      <div class="card" data-panel="momentum"><div class="sect">${t('panel.momentum')} ${iBtn('momentum')}
-        <span id="moFilter" class="tn-tag" style="float:right"></span>
-      </div><div class="cbody">
-        <div class="row" style="gap:12px;margin-top:8px">
-          <div><label class="lbl">Schatten-Depot</label><div id="moEq" class="smv mono">--</div></div>
-          <div><label class="lbl">Trades</label><div id="moTrades" class="smv mono">0</div></div>
-          <div><label class="lbl">Bewertbar</label><div id="moRanked" class="smv mono">--</div></div>
-        </div>
-        <label class="lbl" style="margin-top:10px">Spitze des Universums</label>
-        <div id="moTop" class="fl-tbl"><div class="hint">${t('lay.erstesRanking')}</div></div>
-        <div class="hint" id="moHint"></div>
-      </div></div>
-
-      <div class="card" data-panel="tuner"><div class="sect">${t('panel.autoTuner')} ${iBtn('autotuner')}
-        <label class="tn-sw" title="${t('lay.abschaltenHinweis')}"><input type="checkbox" id="tnOn" checked><span>aktiv</span></label>
-      </div><div class="cbody">
-        <label class="lbl" style="margin-top:8px">${t('lay.schattenFlotte')}</label>
-        <div id="tnFleet" class="fl-tbl"><div class="hint">${t('lay.flotteStartet')}</div></div>
-        <label class="lbl" style="margin-top:10px">Aus allen Konten gelernt ${iBtn('kollektiv')}</label>
-        <div id="tnGlobal" class="fl-tbl"><div class="hint">${t('lay.zuWenigKonten')}</div></div>
-        <label class="lbl" style="margin-top:10px">${t('lay.aenderungsJournal')}</label>
-        <div id="tnLog" class="tn-log"><div class="hint">${t('lay.keinePruefung')}</div></div>
-      </div></div>
-
-      <div class="card" data-panel="struktur"><div class="sect">${t('panel.struktursuche')} ${iBtn('struktursuche')}</div><div class="cbody">
-        <div class="row" style="gap:12px;margin-top:8px">
-          <div><label class="lbl">Generation</label><div id="skGen" class="smv mono">--</div></div>
-          <div><label class="lbl">Versuche</label><div id="skTries" class="smv mono">--</div></div>
-          <div><label class="lbl">${t('lay.amtiertSeit')}</label><div id="skSince" class="smv mono">--</div></div>
-        </div>
-        <label class="lbl" style="margin-top:10px">Amtierender Baum — was feuert?</label>
-        <div id="skBed" class="fl-tbl"><div class="hint">${t('lay.kommtMitTageslauf')}</div></div>
-        <label class="lbl" style="margin-top:10px">${t('lay.pruefJournal')}</label>
-        <div id="skLog" class="tn-log"><div class="hint">${t('lay.keinLauf')}</div></div>
-      </div></div>
-
-<!-- Die Depot-Verlauf-Karte wohnt seit 21.08. als Galerie-Ansicht IN der
-           Performance-Karte (#pfSeiteDepot) — hier bewusst keine eigene Karte
-           mehr, sonst gäbe es die dc-Ids doppelt. -->
-
-      <div class="card" data-panel="haltedauer"><div class="sect">${t('panel.haltedauer')} ${iBtn('haltedauer')}
-        <span id="hdStand" class="tn-tag" style="float:right"></span>
-      </div><div class="cbody">
-        <div id="hdTbl" class="hd-tbl" style="margin-top:8px"><div class="hint">${t('hd.rueckschau')}</div></div>
-        <div id="hdFazit" class="tn-r"></div>
-        <div id="hdMeta" class="tn-n mono"></div>
-      </div></div>
-
-      <div class="card" data-panel="erkenntnisse"><div class="sect">${t('panel.erkenntnisse')} ${iBtn('erkenntnisse')}
-        <span id="erDate" class="tn-tag" style="float:right"></span>
-      </div><div class="cbody">
-        <div id="erList" class="er-list" style="margin-top:8px"><div class="hint">${t('er.ersteChronik')}</div></div>
-        <label class="lbl" style="margin-top:12px">${t('er.tagesEinschaetzung')} ${iBtn('aibericht')} <span id="abStand" class="tn-tag" style="float:right"></span></label>
-        <div id="abText" class="ab-text">${t('er.ersterBericht')}</div>
-        <div id="abMeta" class="tn-n mono"></div>
-      </div></div>
-
     </div>
   </div>
 
-  <div class="dmodal" id="orderModal">
-    <div class="dmodal-bg" data-order-close></div>
-    <div class="dsheet" style="width:min(420px,100%)">
-      <span class="paper-badge">PAPER</span>
-      <h3 id="otTitle">Order</h3>
-      <div class="fld"><label class="lbl">Symbol</label>
-        <input id="otSym" class="inp" autocomplete="off" spellcheck="false"></div>
-      <div class="fld"><label class="lbl">Menge</label>
-        <input id="otQty" class="inp" type="number" min="1" value="1"></div>
-      <div id="otRisk" class="hint" style="margin-top:6px"></div>
-      <div id="otAge" class="hint"></div>
-      <p id="otErr" class="error" hidden></p>
-      <div class="dbtns">
-        <button class="dbtn pri" id="otSubmit">${t('lay.bestaetigenEnter')}</button>
-        <button class="dbtn" data-order-close>Abbrechen (Esc)</button>
-      </div>
-    </div>
-  </div>
-
-  <div class="dmodal" id="detailModal">
-    <div class="dmodal-bg" data-close="detail"></div>
-    <div class="dsheet" id="detailSheet"></div>
-  </div>
-
-  <!-- Handels-Analyse als eigene Vollbild-Ansicht (Owner-Feedback 28.07.:
-       „passt von der Größe nicht" in die 280-px-Spalte). Sechs Diagramme
-       sind kein Seitenleisten-Widget: Man schaut sie selten an, dann aber
-       gründlich — und dafür brauchen sie die ganze Breite, ohne dem
-       Live-Chart Platz wegzunehmen. -->
-  <div class="dmodal" id="anModal">
-    <div class="dmodal-bg" data-close="analytics"></div>
+  <!-- Optimierer-Bericht (Markdown als vorformatierter Text) -->
+  <div class="dmodal" id="reportModal">
+    <div class="dmodal-bg" data-close="report"></div>
     <div class="dsheet dsheet-wide">
-      <button class="dclose" data-close="analytics">✕</button>
-      <h3>Handels-Analyse <span id="anScope" class="an-scope"></span></h3>
-      <!-- Zeitraum-Umschalter (Owner 11.08.: „zeigt nur einen definierten,
-           sehr kurzen Bereich"). Reicht die geladene Historie nicht bis zum
-           Anfang des gewählten Zeitraums, wird selbst nachgeladen — sonst
-           behauptete die Auswertung „90 Tage" und zeigte vier. -->
-      <div class="an-zeit" id="anZeit"></div>
-      <div class="an-share">
-        <button class="dbtn" id="anShareBtn">Grafik teilen</button>
-        <button class="dbtn" id="anShareAlle">${t('sh.alleLaden')}</button>
-        <button class="dbtn" id="anShareVideo">${t('sh.videoErstellen')}</button>
-        <button class="dbtn" id="anShareTrade">${t('ts.knopf')}</button>
-        <label class="an-share-opt"><input type="checkbox" id="anShareBetraege"> ${t('lay.betraegeZeigen')}</label>
-        <span id="anShareStatus" class="hint"></span>
-      </div>
-      <!-- Seiten-Auswahl (Owner 22.08.: „per checkbox auswählbare pages was
-           als Bild und Video exportiert wird … und angezeigt wird"). EINE
-           Liste für alle drei Wege — zwei Listen liefen auseinander, sobald
-           jemand nur eine davon pflegt. -->
-      <div class="an-seiten" id="anSeiten"></div>
-      <!-- Video-Vorschau (Owner-Befund „Permission denied"): navigator.share
-           darf nur direkt nach einem Klick feuern — nach ~12 s Aufnahme ist
-           die Klick-Freigabe abgelaufen. Deshalb ZWEI Schritte: erstellen,
-           ansehen, dann mit frischem Klick teilen. -->
-      <div id="anVideoBox" class="an-video" hidden>
-        <video id="anVideoElem" autoplay muted loop playsinline controls></video>
-        <div class="an-share">
-          <button class="dbtn pri" id="anVideoShare">${t('sh.jetztTeilen')}</button>
-          <button class="dbtn" id="anVideoSave">${t('sh.herunterladen')}</button>
-        </div>
-        <!-- Meldungen des Teilen-Schritts stehen HIER, nicht oben im Kopf:
-             am Handy ist der Kopf beim zweiten Klick längst aus dem Bild
-             gescrollt, und ein Fehler dort sieht aus wie „gar nichts"
-             (Owner-Befund 20.08., Android). -->
-        <span id="anVideoStatus" class="hint" role="status"></span>
-      </div>
-      <div id="anSharePreview" class="an-share-vor" hidden></div>
-      <!-- Die Story ist klickbar (Owner 20.08.): ◀ ▶ blättern durch die
-           Karten, geteilt wird immer die, die man gerade sieht. -->
-      <div id="anStoryNav" class="an-story-nav" hidden>
-        <button class="dbtn" id="anStoryPrev" aria-label="${t('sh.karte')} ◀">◀</button>
-        <span id="anStoryDots" class="an-story-dots"></span>
-        <button class="dbtn" id="anStoryNext" aria-label="${t('sh.karte')} ▶">▶</button>
-      </div>
-      <div id="anBody"><div class="hint">${t('lay.keineGeschlossenen')}</div></div>
+      <button class="dclose" data-close="report">✕</button>
+      <h3 id="reportTitle">${t('ch.bericht')}</h3>
+      <p class="hint" id="reportMeta"></p>
+      <pre id="reportBody" class="report-pre"></pre>
     </div>
   </div>
 
-  <!-- ── Nach dem Engine-Stop: Positionen schließen? (Owner 05.08.) ──────
-       Der Stop pausiert ALLES, auch Stop-Loss und Take-Profit. Wer danach
-       Positionen offen lässt, hält sie ${t('lay.ungeschuetzt')}. Ein Warnsatz allein
-       verlagert die Arbeit auf den Nutzer; dieser Dialog erledigt sie an
-       der Stelle, an der die Frage entsteht. -->
-  <div class="dmodal" id="stopModal">
-    <div class="dmodal-bg" data-close="stop"></div>
-    <div class="dsheet" style="width:min(560px,100%)">
-      <button class="dclose" data-close="stop">✕</button>
-      <h3 style="margin:0 0 6px">${t('lay.engineGestoppt')}</h3>
-      <p class="hint">${t('lay.stoppA')}
-        <b>${t('lay.stoppB')}</b> ${t('lay.stoppC')}
-        <b>${t('lay.ungeschuetzt')}</b>.</p>
-      <p class="hint">${t('lay.wasSollPassieren')}</p>
-      <div id="stopRows" style="margin-top:8px"></div>
-      <div class="row" style="align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap">
-        <button class="btn btn-n" id="stopKeep">${t('lay.offenLassen')}</button>
-        <button class="btn btn-n" id="stopSel">${t('lay.ausgewaehlteSchliessen')}</button>
-        <button class="btn btn-r" id="stopAll">${t('lay.alleSchliessen')}</button>
+  <!-- Bestätigung für Resume (Drawdown) und Flatten -->
+  <div class="dmodal" id="cmdModal">
+    <div class="dmodal-bg" data-close="cmd"></div>
+    <div class="dsheet" style="width:min(520px,100%)">
+      <button class="dclose" data-close="cmd">✕</button>
+      <h3 id="cmdTitle"></h3>
+      <p class="hint" id="cmdText"></p>
+      <label class="opt-check" id="cmdAckRow" hidden>
+        <input type="checkbox" id="cmdAck" />
+        <span id="cmdAckText"></span></label>
+      <div class="fld" style="margin-top:8px"><label class="lbl" for="cmdReason">${t('cmd.grund')}</label>
+        <input id="cmdReason" class="inp" maxlength="200" autocomplete="off" /></div>
+      <p id="cmdErr" class="error" hidden></p>
+      <div class="dbtns">
+        <button class="dbtn pri" id="cmdGo"></button>
+        <button class="dbtn" data-close="cmd">${t('cmd.abbrechen')}</button>
       </div>
-      <div id="stopOut" style="margin-top:8px"></div>
     </div>
   </div>
 
@@ -1322,16 +396,12 @@ function layout(email: string): string {
     <div class="dsheet" style="width:min(560px,100%)">
       <button class="dclose" data-close="options">✕</button>
       <h3>${t('opt.titel')}</h3>
-      <!-- UI-Audit Punkt 6 (Owner-Go 06.08.): elf Themen in einem Scroll-
-           Container waren nur per Suchen-und-Scrollen bedienbar. Vier Reiter
-           gruppieren nach Aufgabe; die Inhalte selbst sind unverändert. -->
       <div class="otabs" id="owTabs">
-        <button class="otab" data-otab="anzeige">${t('opt.tabAnzeige')}</button>
-        <button class="otab active" data-otab="trading">${t('opt.tabTrading')}</button>
+        <button class="otab active" data-otab="anzeige">${t('opt.tabAnzeige')}</button>
         <button class="otab" data-otab="broker">${t('opt.tabBroker')}</button>
         <button class="otab" data-otab="konto">${t('opt.tabKonto')}</button>
       </div>
-      <div data-opane="anzeige" hidden>
+      <div data-opane="anzeige">
       <div class="wl-sec">${t('opt.darstellung')}</div>
       <label class="opt-row"><span>${t('opt.hellDunkel')}</span>
         <select id="ouTheme" class="inp" style="max-width:140px;margin-left:auto">
@@ -1346,140 +416,8 @@ function layout(email: string): string {
           <option value="de">Deutsch</option>
           <option value="en">English</option>
         </select></label>
-      <div class="wl-sec">${t('opt.optionaleElemente')}</div>
-      <label class="opt-row"><input type="checkbox" id="ouPred" />
-        <span>${t('opt.prognosePfeil')}</span></label>
-      <label class="opt-row"><input type="checkbox" id="ouCmp" />
-        <span>${t('opt.vergleichsOverlay')}</span></label>
-      <label class="opt-row"><input type="checkbox" id="ouGrid" />
-        <span>${t('opt.multiChartRaster')}</span></label>
-      <label class="opt-row"><input type="checkbox" id="ouSub" />
-        <span>${t('opt.indikatorExtras')}</span></label>
-      <label class="opt-row"><input type="checkbox" id="ouAkk" />
-        <span>${t('opt.sidebarAkkordeon')}</span></label>
       <div class="wl-sec">${t('opt.module')}</div>
-      <div id="ouPanels" class="opt-panels"></div>
-      <p class="hint">${t('opt.moduleHint')}</p>
-      <div class="wl-sec">${t('opt.marktgruppen')}</div>
-      <div id="ouGroups" class="opt-panels"></div>
-      <p class="hint">${t('opt.marktgruppenHint')}</p>
-      </div>
-      <div data-opane="trading">
-      <div class="wl-sec">${t('opt.paperWallet')}</div>
-      <!-- Startkapital wirkt an ZWEI Stellen verschieden — ohne diesen
-           Hinweis wartet man auf einen Kontostand, der sich nie ändert. -->
-      <p class="hint">${t('opt.startkapitalHint')}</p>
-      <div class="opt-grid" id="owGrid">
-        <div class="opt-sub">${t('opt.kapitalPosition')}</div>
-        <label>${t('opt.startkapital')}
-          <input id="owCap" class="inp st-num" type="number" min="100" step="500" /></label>
-        <label>${t('opt.investmentJeTrade')}
-          <input id="owMax" class="inp st-num" type="number" min="1" max="100" step="1" /></label>
-        <label>${t('opt.risikoJeTrade')} ${iBtn('riskPerTrade')}
-          <input id="owRisk" class="inp st-num" type="number" min="0" max="5" step="0.25" /></label>
-        <label>${t('opt.maxPositionen')} ${iBtn('maxOpenPositions')}
-          <input id="owMaxPos" class="inp st-num" type="number" min="1" max="${MAX_OPEN_POSITIONS_CAP}" step="1" /></label>
-        <label>${t('opt.ruhigerSockel')} ${iBtn('corePct')}
-          <input id="owCore" class="inp st-num" type="number" min="0" max="${CORE_PCT_CAP}" step="5" /></label>
-        <label>${t('opt.hebel')} ${iBtn('leverage')}
-          <select id="owLev" class="inp st-num">
-            <option value="1">${t('opt.hebel1')}</option>
-            <option value="2">${t('opt.hebel2')}</option>
-            <option value="3">${t('opt.hebel3')}</option>
-          </select></label>
-        <div class="opt-sub">${t('opt.ausstiege')} ${iBtn('exits')}</div>
-        <label>${t('opt.stopLoss')} ${iBtn('stopLoss')}
-          <input id="owSl" class="inp st-num" type="number" min="0" step="0.5" /></label>
-        <label>${t('opt.takeProfit')} ${iBtn('takeProfit')}
-          <input id="owTp" class="inp st-num" type="number" min="0" step="0.5" /></label>
-        <label>${t('opt.trailing')} ${iBtn('trailingStop')}
-          <input id="owTrail" class="inp st-num" type="number" min="0" step="0.5" /></label>
-        <label>${t('opt.maxHalte')} ${iBtn('maxHold')}
-          <input id="owHold" class="inp st-num" type="number" min="0" step="1" /></label>
-        <label>${t('opt.atrStop')} ${iBtn('atrStop')}
-          <input id="owAtrS" class="inp st-num" type="number" min="0" step="0.5" /></label>
-        <label>${t('opt.atrZiel')} ${iBtn('atrTake')}
-          <input id="owAtrT" class="inp st-num" type="number" min="0" step="0.5" /></label>
-        <div class="opt-sub">${t('opt.signaleTakt')}</div>
-        <label>${t('opt.signalZeitrahmen')} ${iBtn('signalTimeframe')}
-          <select id="owTf" class="inp st-num">
-            <option value="intraday">${t('opt.tf5m')}</option>
-            <option value="daily">${t('opt.tfDaily')}</option>
-          </select></label>
-        <label>${t('opt.kaufPause')} ${iBtn('cooldownMin')}
-          <input id="owCd" class="inp st-num" type="number" min="5" max="1440" step="5" /></label>
-        <label>${t('opt.konfluenzEinstieg')} ${iBtn('minConfluence')}
-          <input id="owMinC" class="inp st-num" type="number" min="1" max="6" step="1" /></label>
-        <label>${t('opt.konfluenzAusstieg')} ${iBtn('exitConfluence')}
-          <input id="owExitC" class="inp st-num" type="number" min="1" max="6" step="1" /></label>
-        <div class="opt-sub">${t('opt.schutzschalter')}</div>
-        <label>${t('opt.kostenschwelle')} ${iBtn('minEdgeMultiple')}
-          <input id="owEdge" class="inp st-num" type="number" min="0" max="10" step="0.5" /></label>
-        <label>${t('opt.tagesNotbremsePct')} ${iBtn('dailyLossLimit')}
-          <input id="owBreak" class="inp st-num" type="number" min="0" max="25" step="0.5" /></label>
-        <label class="opt-check">
-          <input type="checkbox" id="owFlatten" />
-          <span>${t('opt.flatten')} ${iBtn('flattenOnBreach')}</span></label>
-        <label class="opt-check">
-          <input type="checkbox" id="owRegimeGate" />
-          <span>${t('opt.regimeGate')} ${iBtn('regimeGate')}</span></label>
-        <label class="opt-check">
-          <input type="checkbox" id="owNewsVeto" />
-          <span>${t('opt.newsVeto')} ${iBtn('newsVeto')}</span></label>
-        <div class="opt-sub">${t('opt.experimente')}</div>
-        <label class="opt-check">
-          <input type="checkbox" id="owShort" />
-          <span>${t('opt.shorten')} ${iBtn('allowShort')}</span></label>
-      </div>
-      <p class="hint">${t('opt.nullSchaltetAb')}</p>
-      <p class="hint" id="owClassHint" style="margin-top:4px"></p>
-      <div class="wl-sec" style="margin-top:14px">${t('opt.klassenKapital')} ${iBtn('classWeights')}</div>
-      <div id="owClsRows" class="cls-grid" style="margin-top:6px"></div>
-      <label class="opt-check" style="margin-top:8px">
-        <input type="checkbox" id="owClsAuto" />
-        <span>${t('opt.autoNachregeln')} ${iBtn('classAutoTune')}</span></label>
-      <div id="owClsAdvice" style="margin-top:8px"></div>
-      <div class="row" style="margin-top:6px">
-        <button class="btn btn-n" id="owClsApply" hidden>${t('opt.vorschlagUebernehmen')}</button>
-        <span class="hint" id="owClsMsg"></span>
-      </div>
-      <div class="row" style="margin-top:8px">
-        <button class="btn btn-g" id="owSave">${t('opt.speichern')}</button>
-        <span class="hint" id="optMsg"></span>
-      </div>
-      <div class="wl-sec" style="margin-top:14px">${t('opt.einstellungenPruefen')} ${iBtn('adviseSettings')}</div>
-      <div class="row">
-        <button class="btn btn-n" id="owCheck">${t('opt.jetztPruefen')}</button>
-        <button class="btn btn-g" id="owApply" hidden>${t('opt.ausgewaehlteUebernehmen')}</button>
-      </div>
-      <div id="owAdvice"></div>
-      <div class="hint" id="advMsg"></div>
-      <div class="wl-sec" style="margin-top:14px">${t('opt.loadouts')} ${iBtn('loadouts')}</div>
-      <div id="loGrid" class="lo-grid"></div>
-      <div id="loDiff" hidden></div>
-      <div class="row" style="margin-top:6px">
-        <button class="btn btn-g" id="loAdopt" hidden>${t('opt.uebernehmen')}</button>
-        <span class="hint" id="loMsg"></span>
-      </div>
-      <div class="row" style="margin-top:8px;flex-wrap:wrap;gap:6px;align-items:center">
-        <input id="loName" class="inp" style="flex:1;min-width:150px" maxlength="40"
-          placeholder="${t('opt.loName')}" />
-        <button class="btn btn-n" id="loSave">${t('opt.alsLoadoutSpeichern')}</button>
-      </div>
-      <div class="wl-sec" style="margin-top:14px">${t('opt.bewaehrt')} ${iBtn('bestPractice')}</div>
-      <p class="hint" id="bpBody">${t('opt.lade')}</p>
-      <div id="bpDiff" hidden></div>
-      <div class="row" style="margin-top:6px">
-        <button class="btn btn-n" id="bpPreview" hidden>${t('opt.unterschiedeAnsehen')}</button>
-        <button class="btn btn-g" id="bpAdopt" hidden>${t('opt.uebernehmen')}</button>
-        <span class="hint" id="bpMsg"></span>
-      </div>
-      <div class="wl-sec" style="margin-top:14px">${t('opt.notbremse')} ${iBtn('dailyLossLimit')}</div>
-      <p class="hint" id="bkrState">—</p>
-      <div class="row" style="align-items:center;gap:8px">
-        <button class="btn btn-n" id="bkrReset">${t('opt.notbremseLoesen')}</button>
-        <span class="hint" id="bkrMsg"></span>
-      </div>
+      <p class="hint">${t('opt.klappHint')}</p>
       </div>
       <div data-opane="broker" hidden>
       <div class="wl-sec">${t('opt.echtgeldAnbindung')} ${iBtn('brokerStatus')}</div>
@@ -1491,8 +429,7 @@ function layout(email: string): string {
           autocomplete="off" spellcheck="false" placeholder="Secret-Key" />
         <button class="btn btn-n" id="bkSave">${t('opt.verbinden')}</button>
       </div>
-      <!-- Echtgeld-Schlüssel sind seit 05.08. erlaubt (verschlüsselte Ablage).
-           Das Passwortfeld erscheint erst, wenn ein AK…-Schlüssel eingegeben
+      <!-- Das Passwortfeld erscheint erst, wenn ein AK…-Schlüssel eingegeben
            wird — für Papierkonten wäre es Reibung ohne Schutzwirkung. -->
       <div id="bkLiveBox" hidden style="margin-top:6px">
         <p class="hint" style="border-left:3px solid var(--rd);padding-left:8px">
@@ -1502,10 +439,6 @@ function layout(email: string): string {
           autocomplete="current-password" placeholder="${t('opt.pwPlatzhalter')}" />
       </div>
       <p class="hint">${t('opt.pkAkHint')}</p>
-      <!-- Die Schlüssel liegen nicht dort, wo man sie sucht: Das Paper-
-           Dashboard ist eine eigene Oberfläche, und der Knopf zum Erzeugen
-           steht rechts in der Seitenleiste. Ohne diese drei Links kostet der
-           erste Versuch mehr Zeit als die ganze Einrichtung. -->
       <p class="hint">
         <a href="https://app.alpaca.markets/signup" target="_blank" rel="noopener noreferrer">${t('opt.linkKonto')}</a>
         &nbsp;·&nbsp;
@@ -1517,31 +450,12 @@ function layout(email: string): string {
         <button class="btn btn-n" id="bkGo">${t('opt.verbindungPruefen')}</button>
         <button class="btn btn-n" id="bkDel">${t('opt.trennen')}</button>
       </div>
-      <!-- Der LAUFENDE Abgleich, nicht der auf Knopfdruck. Ein sauberer
-           Abgleich sieht ohne diese Zeile aus wie gar keiner — und genau
-           das war die offene Frage nach dem Verbinden: „Was bringt mir das
-           jetzt?" -->
-      <p class="hint" id="bkAuto" style="margin-top:8px">—</p>
-      <!-- Der Weg zurück zur einen Wahrheit (Vorfall 05.08.): „Neu anfangen"
-           leert das Buch, aber kein Reset der Welt leert ein Broker-Depot.
-           Dieser Knopf holt Bestand, Einstände, Barbestand und die eigene
-           Order-Historie vom Broker ins Buch — ohne einen einzigen Handel. -->
-      <!-- Vormerkung eines Admins (22.08.): Er hat eine Abweichung gemessen
-           und bittet um die Übernahme — überschreiben darf er das Buch
-           nicht. Der Kasten steht DIREKT über dem Knopf, den er meint. -->
-      <div id="bkVorgemerkt" hidden></div>
-      <div class="row" style="align-items:center;gap:8px;margin-top:6px">
-        <button class="btn btn-n" id="bkAdopt">${t('opt.depotUebernehmen')}</button>
-      </div>
-      <p class="hint">${t('opt.depotUebernehmenHint')}</p>
       <div id="bkOut" style="margin-top:8px"></div>
 
-      <!-- ── Echtgeld scharf stellen (M14, Owner-Go 05.08.) ──────────────
-           Der Schalter, den der Owner meint. Er steht bewusst HIER, direkt
-           unter der Broker-Karte: Ohne verbundenes Echtgeldkonto ist er
-           gegenstandslos, und die Reihenfolge auf dem Bildschirm soll die
-           Reihenfolge der Schritte sein. Das Tipp-Wort ECHTGELD ist
-           serverseitig gepinnt und bleibt in JEDER Sprache wörtlich. -->
+      <!-- Echtgeld scharf stellen: direkt unter der Broker-Karte — ohne
+           verbundenes Echtgeldkonto ist der Schalter gegenstandslos. Das
+           Tipp-Wort ECHTGELD ist serverseitig gepinnt und bleibt in JEDER
+           Sprache wörtlich. -->
       <div class="wl-sec" style="margin-top:14px">${t('opt.scharfStellen')}</div>
       <p class="hint">${t('opt.scharfHint')}</p>
       <p class="hint" id="lvState">—</p>
@@ -1588,11 +502,7 @@ function layout(email: string): string {
           type="text" autocomplete="off" spellcheck="false" placeholder="${t('opt.resetTippen')}" />
         <button class="btn btn-r" id="rsGo" disabled>${t('opt.kontoZuruecksetzen')}</button>
       </div>
-      <!-- Startkapital vom Broker (Owner-Frage 05.08.). Bewusst NUR hier:
-           Der Kontostand ist die Bezugsgroesse jeder Kennzahl — mitten in der
-           Messung gewechselt, beziehen sich alte und neue Zahlen auf
-           verschiedene Kapitalbasen. Beim Reset ist die Historie ohnehin weg.
-           Das Tipp-Wort RESET ist serverseitig gepinnt (RESET_CONFIRM_WORD)
+      <!-- Das Tipp-Wort RESET ist serverseitig gepinnt (RESET_CONFIRM_WORD)
            und bleibt in JEDER Sprache wörtlich. -->
       <div class="row" style="align-items:center;gap:8px;margin-top:6px">
         <label class="hint" style="display:flex;align-items:center;gap:6px">
@@ -1604,7 +514,6 @@ function layout(email: string): string {
       </div>
     </div>
   </div>
-
 `;
 }
 
@@ -1614,18 +523,13 @@ const RESET_CONFIRM_WORD = 'RESET';
 /** Muss identisch zu DELETE_CONFIRM_WORD im Server sein — der prüft es erneut. */
 const DELETE_CONFIRM_WORD = 'LOESCHEN';
 
-/**
- * HTML-Escaping für Text, der aus einer Antwort des Servers stammt.
- *
- * Modul-weit, weil Broker-Meldungen und Steuer-Hinweise dieselbe Behandlung
- * brauchen: Beide enthalten Text, den nicht dieser Code geschrieben hat.
- */
+/** HTML-Escaping für Text, der aus einer Antwort des Servers stammt. */
 function escText(s: string): string {
-  return s.replace(
-    /[<>&"]/g,
-    (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]!,
-  );
+  return esc(s);
 }
+
+
+/* ── Broker-Status & Steuerbericht (Optionen) ───────────────────────── */
 
 /**
  * Broker-Status als Karte.
@@ -1672,9 +576,7 @@ function renderBrokerStatus(r: BrokerStatusResult): string {
          <b>${r.kante.kostenPct?.toFixed(3)} %</b> ${t('br.kosten')}
          <b class="${r.kante.nettoPct >= 0 ? 'up' : 'dn'}">${r.kante.nettoPct.toFixed(3)} %</b> ${t('br.netto')}
          ${t('br.deckung')} <b>${r.kante.deckung?.toFixed(2)}×</b>${
-           (r.kante.deckung ?? 0) < 1
-             ? t('br.defizitaer')
-             : '.'
+           (r.kante.deckung ?? 0) < 1 ? t('br.defizitaer') : '.'
          }</p>`
       : '';
 
@@ -1751,32 +653,16 @@ function renderSteuerbericht(r: TaxReportResult): string {
     .join('');
 
   const hinweise: string[] = [];
-  if (!b.echtgeld) {
-    hinweise.push(
-      `<b>${t('tax.papierTitel')}</b> ${t('tax.papierText')}`,
-    );
-  }
-  if (b.privatSteuerfrei !== 0) {
-    hinweise.push(
-      `<b>${geld(b.privatSteuerfrei)}</b> ${t('tax.steuerfreiText')}`,
-    );
-  }
+  if (!b.echtgeld) hinweise.push(`<b>${t('tax.papierTitel')}</b> ${t('tax.papierText')}`);
+  if (b.privatSteuerfrei !== 0) hinweise.push(`<b>${geld(b.privatSteuerfrei)}</b> ${t('tax.steuerfreiText')}`);
   if (b.privatUnterFreigrenze) {
     hinweise.push(
       `${t('tax.freigrenzeA')} ${geld(b.privatSteuerpflichtig)} ${t('tax.freigrenzeB')} `
         + `${b.rechtsstand.privatFreigrenze} € ${t('tax.freigrenzeC')}`,
     );
   }
-  if (r.historieUnvollstaendig) {
-    hinweise.push(
-      `<b>${t('tax.histTitel')}</b> ${t('tax.histText')}`,
-    );
-  }
-  if (b.unpaarbar.length > 0) {
-    hinweise.push(
-      `${b.unpaarbar.length} ${t('tax.unpaarbar')}`,
-    );
-  }
+  if (r.historieUnvollstaendig) hinweise.push(`<b>${t('tax.histTitel')}</b> ${t('tax.histText')}`);
+  if (b.unpaarbar.length > 0) hinweise.push(`${b.unpaarbar.length} ${t('tax.unpaarbar')}`);
   if (b.fxLuecken > 0) {
     hinweise.push(
       `<b>${b.fxLuecken} ${t('tax.fxLuecken')}</b> ${t('tax.fxText1')} `
@@ -1784,9 +670,7 @@ function renderSteuerbericht(r: TaxReportResult): string {
         + t('tax.fxText2'),
     );
   } else if (b.veraeusserungen.length > 0) {
-    hinweise.push(
-      t('tax.fxOk'),
-    );
+    hinweise.push(t('tax.fxOk'));
   }
 
   const offen = b.offen.length;
@@ -1820,1083 +704,29 @@ function renderSteuerbericht(r: TaxReportResult): string {
     <p class="hint"><b>${t('tax.keineBeratung')}</b> ${t('tax.keineBeratungText')}</p>`;
 }
 
-/* ── Subscriptions ──────────────────────────────────────────────────── */
+/* ── Echtgeld-Schalter (Optionen → Broker) ──────────────────────────── */
 
-function clearSubs(list: Unsubscribe[]): void {
-  for (const u of list) u();
-  list.length = 0;
+/** Fazit der Live-Reife in der Sprache des Nutzers — der gespeicherte
+ *  deutsche Satz bleibt als Rückfallebene für alte Befunde. */
+function reifeFazit(r: {
+  bereit: boolean;
+  erfuellt: number;
+  gesamt: number;
+  offeneCodes?: string[];
+  fazit: string;
+}): string {
+  if (!r.offeneCodes) return r.fazit;
+  if (r.bereit) return t('lv.reifeBereit');
+  const offen = r.offeneCodes.map((c) => t(`lv.krit.${c}` as never)).join(', ');
+  return `${t('lv.reifeNochNicht')} (${r.erfuellt}/${r.gesamt}): ${offen}.`;
 }
 
 /**
- * Chart-Kontext (Link-Gruppe `chartGroup`): Kursheader, Bars, Prognose,
- * Event-Marker + Indikator-Kacheln — alles, was das Chart-Symbol beschreibt.
- */
-function wireChartCtx(): void {
-  if (!st) return;
-  clearSubs(st.symbolSubs);
-  const sym = st.currentSymbol;
-  $('chSym').textContent = sym;
-  $('chSub').textContent = resolveName(sym);
-  $('flSym').textContent = sym;
-  $('flSym2').textContent = sym;
-  $('flSym').dataset.sym = sym; // Anker für den Symbol-Steckbrief (21:2x)
-  $('flSym2').dataset.sym = sym;
-  // Nachgeladene Historie ist symbol-spezifisch → beim Wechsel zurücksetzen.
-  // st.bars ebenfalls: Sonst verbrennt der Rebuild sein Fit-Token auf den
-  // Bars des VORGÄNGER-Symbols, und die neuen Bars kommen ohne Y/X-Fit an
-  // (Owner 21.08.: „Y-Achse beim Fokussieren sinnvoll skalieren").
-  st.bars = [];
-  st.histBars = [];
-  st.histOldest = 0;
-  st.histLoading = false;
-  st.histDone = false;
-  st.histEmptyStreak = 0;
-  st.intradayBars = [];
-  st.intradayOldest = null;
-  st.intradayHistLoading = false;
-  st.intradayHistDone = false;
-  // Auch die GEZEIGTEN Bars gehören zum Symbol: applyForecast ankert an
-  // shownDaily — mit den Vorgänger-Bars bekäme die frische Prognose kurz
-  // einen Anker auf fremdem Preisniveau (#191).
-  st.shownDaily = [];
-  st.shownIntraday = [];
-
-  st.symbolSubs.push(
-    watchMarketDoc(sym, (d) => {
-      const q = d?.quote;
-      if (st) st.lastQuote = q ? { price: q.price, updatedAt: q.updatedAt } : null;
-      $('chPx').textContent = q ? fmtNum(q.price) : '--';
-      const chg = $('chChg');
-      chg.textContent = q ? fmtPct(q.changePct) : '--';
-      chg.className = `chart-px ${q ? pnlClass(q.changePct) : ''}`;
-      if (st) {
-        st.forecast = d?.forecast ?? null;
-        st.forecastIntraday = d?.forecastIntraday ?? null;
-        st.news = d?.news ?? null;
-        applyForecast();
-        applyMarkers(); // News-Punkte folgen dem market-Doc (29.07.)
-      }
-    }),
-    watchBars(sym, (bars) => {
-      if (!st) return;
-      st.bars = bars;
-      if (st.intradayDays > 0) void loadIntradayView();
-      else {
-        renderChart();
-        // Anfangs-Puffer (Owner 06.08.): Historie schon beim Laden anwärmen,
-        // nicht erst beim ersten Scroll — die Kette füllt bis zum Soll.
-        if (st.histBars.length === 0 && !st.histLoading && !st.histDone && bars.length > 0) {
-          void loadOlderDaily();
-        }
-      }
-    }),
-    watchEvaluatedForecasts(sym, (rows) => renderFcLabRows(rows)),
-    watchLatestIndicators(sym, (row) => renderIndicatorCards(row)),
-    watchLatestSignal(sym, (sig) => {
-      const el = $('vSig');
-      if (st) {
-        st.lastSignalDir = sig?.direction ?? 'hold';
-        applyArea(); // Signal-Richtung färbt den Flächen-Verlauf sofort um
-      }
-      // Genauigkeitsgewichtetes Vote (Teil 4): Transparenz in der Karte
-      const fv = sig?.forecastVote;
-      $('fcVoteInfo').textContent = fv
-        ? fv.factor === null
-          ? `${t('cx.prognoseStimme')}: ${fv.weight}× ${t('cx.ohneEvidenz')}`
-          : `${t('cx.prognoseStimme')}: ${fv.weight}× ${t('cx.statt')} ${fv.base}× (${t('cx.kanteFaktor')} ${fv.factor})`
-        : '';
-      if (!sig) { el.textContent = '--'; el.className = 'sval c-t3'; return; }
-      el.textContent = sig.direction.toUpperCase();
-      el.className = `sval ${sig.direction === 'buy' ? 'c-gn' : sig.direction === 'sell' ? 'c-rd' : 'c-t3'}`;
-    }),
-  );
-}
-
-/** Link-Chips einfärben (Aurora-Farben je Gruppe). */
-function paintChips(): void {
-  if (!st) return;
-  for (const [id, group] of [
-    ['chipChart', st.chartGroup],
-    ['chipChart2', st.chart2Group],
-  ] as const) {
-    const chip = $(id);
-    chip.textContent = group;
-    chip.style.background = GROUP_COLORS[group];
-  }
-}
-
-function renderIndicatorCards(row: IndicatorRow | null): void {
-  $('vRSI').textContent = row?.rsi != null ? row.rsi.toFixed(1) : '--';
-  $('vMacd').textContent = row?.macd ? row.macd.line.toFixed(2) : '--';
-  $('vBB').textContent = row?.bollinger ? row.bollinger.pctB.toFixed(0) : '--';
-}
-
-function renderChart(): void {
-  if (!st?.chart) return;
-  // Chart-Typ + Skala aus dem Geräte-Speicher anwenden — das Chart mountet
-  // asynchron NACH dem Menü-Wiring (setChartType no-opt bei gleichem Typ).
-  st.chart.setChartType(st.chartTypeSel);
-  st.chart.setTypeCombine(st.typeCombine);
-  st.chart.setPriceScaleMode(st.scaleMode);
-  // Zeit-Domänen-Wechsel (ISO-Tage ↔ UNIX-Sekunden): das alte Prognose-
-  // Overlay MUSS vor setBars raus — gemischte Zeittypen auf einer Achse
-  // korrumpieren sonst den Fit (1W→1J-Regression, E2E 25.07.).
-  const intradayView = st.intradayDays > 0;
-  if (lastRenderIntraday !== intradayView) st.chart.setForecast(null);
-  lastRenderIntraday = intradayView;
-  // Fit-Token erst verbrauchen, wenn Kerzen da sind (dasselbe Gate wie in
-  // renderGridPanelBars): Beim Symbolwechsel läuft ein Render noch VOR dem
-  // watchBars-Callback des neuen Symbols — ein hier verbranntes Token ließe
-  // die neuen Bars ohne Fit (und damit ohne frische Y-Skala) stehen.
-  const hatDaten = st.intradayDays > 0 ? st.intradayBars.length > 0 : st.bars.length > 0 || st.histBars.length > 0;
-  const fit = st.chartFitPending && hatDaten;
-  if (fit) st.chartFitPending = false;
-  if (st.intradayDays > 0) {
-    // Auto-Auflösung: 5m-Basis ggf. zu 15m/1h-Kerzen bündeln (pure, shared)
-    st.shownIntraday = aggregateBars(st.intradayBars, st.aggMinutes) as typeof st.shownIntraday;
-    // Fit aufs ANGEFORDERTE Fenster (1T/1W), nicht auf alles Geladene: Das
-    // Intraday-Fenster wächst beim Rückwärts-Scrollen — ein fitContent über
-    // die ganze Lazy-Historie würde den 1T-Klick ad absurdum führen.
-    let fitTo: { from: number; to: number } | undefined;
-    if (fit && st.shownIntraday.length > 1) {
-      // ET-Näherung (−5 h) nur fürs Bündeln nach Handelstagen — dieselbe
-      // Tages-Logik wie die ohlc5m-Chunks, ohne echte Zeitzonen-Tabelle.
-      const tagVonBar = (t: number): string => new Date((t - 5 * 3600) * 1000).toISOString().slice(0, 10);
-      const tage = new Set<string>();
-      let idx = 0;
-      for (let i = st.shownIntraday.length - 1; i >= 0; i--) {
-        tage.add(tagVonBar(st.shownIntraday[i]!.time));
-        if (tage.size > st.intradayDays) {
-          idx = i + 1;
-          break;
-        }
-      }
-      if (idx > 0) fitTo = { from: idx - 0.5, to: st.shownIntraday.length + 3 };
-    }
-    st.chart.setBars(st.shownIntraday, { fit, fitTo, timeVisible: true });
-    applyForecast(); // Kurzfrist-Prognose (nächste Stunde) im Intraday-Chart
-    applyMarkers(); // News-Punkte am Tages-Start-Bar (Zeit-Domäne wechselt mit)
-    applyOverlays();
-    applyPosition();
-    updateSubPanels();
-    renderResBadge();
-    renderOhlcHud(null);
-    return;
-  }
-  // Zoom-Kontinuum (06.08.): Weit rausgezoomt werden die Tages-Bars zu
-  // Wochen-/Monatskerzen gebündelt — dieselbe Mechanik wie 5m→15m→1h, nur
-  // eine Etage höher. Nur im Auto-Modus; manuelle Stufen bleiben Tageskerzen.
-  const roh = dailySource();
-  const bars =
-    st.autoRes && st.dailyAgg > 0
-      ? aggregateDailyBars(roh, st.dailyAgg === 7 ? 'week' : 'month')
-      : roh;
-  st.shownDaily = bars;
-  // Fit-Ziel deterministisch bestimmen (kein fitContent-Race):
-  // Auto-Modus → Startfenster ~120 Tage (alles Ältere per Scrollen erreichbar);
-  // aktiver Prognose-Pfeil → rechts Platz einkalkulieren (Feedback 25.07.).
-  const arrowActive = st.ui.predArrow && st.prediction !== null && !st.cleanView;
-  // Pfeil-Polster HORIZONT-basiert (UI-Audit 25.07.): Handelstage bis zum
-  // Prognoseziel + kleine Marge. Nie proportional zur Datenlänge — mit der
-  // 5-Jahres-Historie polsterte `len*0.25` sonst hunderte Leertage rechts.
-  const lastDate = bars[bars.length - 1]?.date ?? '';
-  const arrowPad = arrowActive
-    ? Math.min(
-        30,
-        Math.max(16, Math.ceil(((Date.parse(st.prediction!.targetDate) - Date.parse(lastDate)) / 86_400_000) * (5 / 7)) + 4),
-      )
-    : 0;
-  const fitTo = !fit
-    ? undefined
-    : st.autoRes && bars.length > 130
-      ? { from: bars.length - 120, to: bars.length + (arrowActive ? arrowPad : 3) }
-      : arrowActive
-        ? { from: -0.5, to: bars.length + arrowPad }
-        : undefined;
-  st.chart.setBars(bars, { fit, fitTo, timeVisible: false });
-  applyForecast();
-  applyMarkers(); // Zeit-Domäne der News-Punkte folgt der Sicht (26.07.)
-  applyOverlays();
-  applyPosition();
-  drawPredictionArrow();
-  updateSubPanels();
-  renderResBadge();
-  renderOhlcHud(null); // HUD auf den letzten Bar (bis das Crosshair übernimmt)
-}
-
-/** Tages-Quelle für Chart/Overlays/Panels: nachgeladene Historie + Live-Bars.
- *  Im Auto-Modus IMMER alles (das Fenster steuert der Zoom) — manuelle
- *  Stufen behalten ihre Slices (1M/3M). */
-function dailySource(): ChartBar[] {
-  if (!st) return [];
-  const all = st.histBars.length > 0 ? [...st.histBars, ...st.bars] : st.bars;
-  return st.autoRes ? all : st.range > 0 ? all.slice(-st.range) : all;
-}
-
-/** Ältere Jahres-Chunks nahtlos vorn anfügen (Links-Scroll ans Datenende).
- *  Seit 06.08. OHNE festen 5-Jahres-Stop: Der Server füllt die volle Yahoo-
- *  Historie (range=max) — Schluss ist erst, wenn zwei Jahres-Chunks in Folge
- *  leer bleiben (= Datenanfang) oder die Sicherheitsuntergrenze greift. */
-/** Links-Puffer-Soll in GEZEIGTEN Bars: ~3 Bildschirmbreiten (min. 90). */
-function pufferBedarf(range: { from: number; to: number }): number {
-  return Math.max(90, (range.to - range.from) * 3);
-}
-
-async function loadOlderDaily(): Promise<void> {
-  if (!st || st.histLoading || st.histDone || st.intradayDays > 0 || st.bars.length === 0) return;
-  st.histLoading = true;
-  $('histHint').hidden = false;
-  try {
-    const sym = st.currentSymbol;
-    // KETTE statt Einzelschritt (Owner 06.08.: „Preloading noch nicht
-    // ausreichend"): Ein Jahres-Chunk pro Scroll-Ereignis war zu träge —
-    // wer schwungvoll nach links wirft, überholt den Nachschub. Die Kette
-    // lädt in EINEM Anstoß weiter, bis der Puffer das Soll trägt oder der
-    // Datenanfang erreicht ist; der Deckel ist nur die Notbremse.
-    for (let schritt = 0; schritt < 10; schritt++) {
-      if (!st || st.currentSymbol !== sym || st.histDone) return;
-      const first = (st.histBars[0] ?? st.bars[0])!;
-      const year = st.histOldest > 0 ? st.histOldest - 1 : Number(first.date.slice(0, 4));
-      if (year < 1900) {
-        st.histDone = true;
-        return;
-      }
-      const chunk = await loadDailyChunk(sym, year);
-      if (!st || st.currentSymbol !== sym) return;
-      st.histOldest = year;
-      const prepend = chunk.filter((b) => b.date < first.date);
-      if (prepend.length === 0) {
-        st.histEmptyStreak += 1;
-        if (st.histEmptyStreak >= 2) {
-          st.histDone = true; // zwei leere Jahre = Anfang erreicht
-          return;
-        }
-        continue; // einzelnes leeres Jahr überspringen, Kette läuft weiter
-      }
-      st.histEmptyStreak = 0;
-      const r = st.chart?.getVisibleRange();
-      // Position in GEZEIGTEN Bars halten: In der Wochen-/Monats-Sicht ist der
-      // Versatz nicht die Zahl der Tages-Bars, sondern die der neuen Kerzen.
-      const vorher = st.shownDaily.length;
-      st.histBars = [...prepend, ...st.histBars];
-      renderChart(); // ohne Fit — und die Position exakt halten:
-      const delta = st.shownDaily.length - vorher;
-      if (r && st.chart && delta > 0) {
-        st.chart.setVisibleRange({ from: r.from + delta, to: r.to + delta });
-      }
-      const jetzt = st.chart?.getVisibleRange();
-      if (jetzt && jetzt.from >= pufferBedarf(jetzt)) return; // Puffer steht
-    }
-  } catch {
-    /* nächster Scroll-Versuch */
-  } finally {
-    if (st) st.histLoading = false;
-    $('histHint').hidden = true;
-  }
-}
-
-/** Ältere 5m-Chunks vorn anfügen (Links-Scroll in der Intraday-Sicht) —
- *  Gegenstück zu loadOlderDaily, eine Etage tiefer (Zoom-Kontinuum 06.08.). */
-async function loadOlderIntraday(): Promise<void> {
-  if (
-    !st || st.intradayHistLoading || st.intradayHistDone ||
-    st.intradayDays === 0 || st.intradayOldest === null
-  ) return;
-  st.intradayHistLoading = true;
-  $('histHint').hidden = false;
-  try {
-    const sym = st.currentSymbol;
-    // Kette wie bei loadOlderDaily: ~5 Handelstage je Schritt (9 Kalendertage
-    // decken Wochenende + Feiertage), bis der Puffer das Soll trägt.
-    for (let schritt = 0; schritt < 6; schritt++) {
-      if (
-        !st || st.currentSymbol !== sym || st.intradayDays === 0 ||
-        st.intradayHistDone || st.intradayOldest === null
-      ) return;
-      const chunks = await loadIntradayChunks(sym, tagMinus(st.intradayOldest, 9), tagMinus(st.intradayOldest, 1));
-      if (!st || st.currentSymbol !== sym || st.intradayDays === 0) return;
-      if (chunks.length === 0) {
-        st.intradayHistDone = true; // Datenanfang der 5m-Chunks erreicht
-        return;
-      }
-      const r = st.chart?.getVisibleRange();
-      const vorher = st.shownIntraday.length;
-      st.intradayBars = [...chunks.flatMap((c) => c.bars), ...st.intradayBars];
-      st.intradayOldest = chunks[0]!.day;
-      renderChart();
-      const delta = st.shownIntraday.length - vorher;
-      if (r && st.chart && delta > 0) {
-        st.chart.setVisibleRange({ from: r.from + delta, to: r.to + delta });
-      }
-      const jetzt = st.chart?.getVisibleRange();
-      if (jetzt && jetzt.from >= pufferBedarf(jetzt)) return; // Puffer steht
-    }
-  } catch {
-    /* nächster Scroll-Versuch */
-  } finally {
-    if (st) st.intradayHistLoading = false;
-    $('histHint').hidden = true;
-  }
-}
-
-/** Badge neben den Zeitrahmen: aktive Kerzen-Auflösung (+ Auto-Hinweis). */
-function renderResBadge(): void {
-  if (!st) return;
-  const label =
-    st.intradayDays > 0
-      ? st.aggMinutes >= 60
-        ? `${st.aggMinutes / 60}h`
-        : `${st.aggMinutes}m`
-      : st.dailyAgg === 7
-        ? '1W'
-        : st.dailyAgg === 30
-          ? '1Mo'
-          : '1D';
-  const el = $('resBadge');
-  // Zeitzone nur bei Intraday nennen — Tageskerzen tragen den Handelstag in
-  // Börsenzeit und haben gar keine Uhrzeit, auf die sich ein Kürzel bezöge.
-  const zone = st.intradayDays > 0 ? ` · ${zonenKuerzel(new Date())}` : '';
-  // Ohne „Auto ·"-Präfix (07.08.): Auto ist immer an, das Präfix sagte nichts mehr.
-  el.textContent = label + zone;
-  el.title = st.intradayDays > 0 ? `${t('rb.aufloesung')} — ${t('rb.ortszeit')}` : t('rb.aufloesung');
-  renderMarktBadge();
-}
-
-/**
- * Markt-Status des gezeigten Symbols (Owner-Fund 04.08.).
- *
- * Warum das hier steht: Der Owner sah bei GOOGL und AMZN „22:00", während es
- * bei ihm 15:15 war — und hielt es für einen Anzeigefehler. Es war der
- * gestrige US-Schluss (16:00 New York). Vor der Eröffnung um 15:30 unserer
- * Zeit KANN die jüngste Kerze nicht von heute sein; bei Krypto dagegen ist
- * sie es immer. Ohne diesen Hinweis sieht beides gleich aus wie ein Fehler.
- */
-function renderMarktBadge(): void {
-  if (!st) return;
-  const el = $('mktBadge');
-  const klasse = classify(st.currentSymbol);
-  if (marketOpenForClass(klasse, new Date())) {
-    el.hidden = true;
-    return;
-  }
-  el.textContent = t('mb.marktZu');
-  el.title = `${st.currentSymbol}: ${t('mb.marktZuTitel')}`;
-  el.hidden = false;
-}
-
-/** SMA/EMA/BB-Linien für beliebige Bars — gilt für Haupt-Chart UND Grid-Panels
- *  (User-Feedback 25.07.: aktive Overlays auf allen Charts). */
-function baseOverlayLines(
-  times: Array<string | number>,
-  closes: number[],
-): import('./chart.js').OverlayLine[] {
-  const lines: import('./chart.js').OverlayLine[] = [];
-  if (!st) return lines;
-  const pts = (series: (number | null)[]): Array<{ time: string | number; value: number }> =>
-    series.flatMap((v, i) => (v === null ? [] : [{ time: times[i]!, value: v }]));
-  const L = st.chartLayers;
-  if (L.has('sma20')) lines.push({ key: 'sma20', color: '#ffb86b', points: pts(sma(closes, 20)) });
-  if (L.has('sma50')) lines.push({ key: 'sma50', color: '#25d0ee', points: pts(sma(closes, 50)) });
-  if (L.has('sma200')) lines.push({ key: 'sma200', color: '#b98aff', points: pts(sma(closes, 200)) });
-  if (L.has('ema9')) lines.push({ key: 'ema9', color: '#40e0b4', points: pts(ema(closes, 9)) });
-  if (L.has('ema21')) lines.push({ key: 'ema21', color: '#ff8290', points: pts(ema(closes, 21)) });
-  if (L.has('bb')) {
-    const b = bollinger(closes);
-    lines.push(
-      { key: 'bbU', color: 'rgba(37,208,238,.4)', width: 1, points: pts(b.upper) },
-      { key: 'bbM', color: 'rgba(37,208,238,.6)', width: 1, points: pts(b.middle) },
-      { key: 'bbL', color: 'rgba(37,208,238,.4)', width: 1, points: pts(b.lower) },
-    );
-  }
-  return lines;
-}
-
-/** Indikator-/Vergleichs-Overlays aus den aktuell gezeigten Bars berechnen. */
-function applyOverlays(): void {
-  if (!st?.chart) return;
-  const intraday = st.intradayDays > 0;
-  // GEZEIGTE Bars als Basis (Zoom-Kontinuum): In der Wochen-/Monats-Sicht
-  // rechnen SMA & Co. auf Wochen-/Monats-Closes — wie TradingView. Fremde
-  // Zeitpunkte (Tages-Raster) würden zudem die LWC-Zeitachse aufblähen, die
-  // aus der VEREINIGUNG aller Serien-Zeitpunkte entsteht.
-  const daily = intraday ? [] : st.shownDaily;
-  const times: Array<string | number> = intraday
-    ? st.shownIntraday.map((b) => b.time)
-    : daily.map((b) => b.date);
-  const closes = intraday ? st.shownIntraday.map((b) => b.close) : daily.map((b) => b.close);
-  const lines = st.cleanView ? [] : baseOverlayLines(times, closes);
-  const pts = (series: (number | null)[]): Array<{ time: string | number; value: number }> =>
-    series.flatMap((v, i) => (v === null ? [] : [{ time: times[i]!, value: v }]));
-  // VWAP nur intraday (Session-Konzept) und nur mit aktivierten Indikator-Extras
-  if (!st.cleanView && intraday && st.ui.subPanels && st.chartLayers.has('vwap')) {
-    lines.push({ key: 'vwap', color: '#f2d16b', width: 2, points: pts(vwapSessions(st.shownIntraday)) });
-  }
-  // Vergleichs-Overlay (Tageskerzen): %-Entwicklung ab erstem gemeinsamen Tag
-  if (!st.cleanView && !intraday && st.overlaySymbol && st.overlayBars.length > 1) {
-    const firstDate = daily[0]?.date ?? '';
-    const cmp = st.overlayBars.filter((b) => b.date >= firstDate);
-    const base = cmp[0]?.close;
-    if (base && base > 0) {
-      lines.push({
-        key: `cmp:${st.overlaySymbol}`,
-        color: '#b98aff',
-        width: 2,
-        separateScale: true,
-        points: cmp.map((b) => ({ time: b.date, value: ((b.close - base) / base) * 100 })),
-      });
-    }
-  }
-  // Kurslinie seit Einstieg — zuletzt, damit sie über den Indikatoren liegt
-  const verlauf = positionsVerlauf(times, closes);
-  if (verlauf) lines.push(verlauf);
-  st.chart.setOverlays(lines);
-  renderLegend(lines, intraday);
-  applyArea();
-}
-
-/** Signal-Farbtöne des Flächen-Verlaufs (Kauf grün, Verkauf rot, neutral blau). */
-const AREA_TONES = {
-  buy: { line: '#26cf9d', top: 'rgba(38,207,157,.35)', bottom: 'rgba(38,207,157,0)' },
-  sell: { line: '#f2586b', top: 'rgba(242,88,107,.32)', bottom: 'rgba(242,88,107,0)' },
-  hold: { line: '#25d0ee', top: 'rgba(37,208,238,.28)', bottom: 'rgba(37,208,238,0)' },
-} as const;
-
-/** Flächen-Verlauf (Vektor-Look) + Kerzen-Sichtbarkeit anwenden. */
-function applyArea(): void {
-  if (!st?.chart) return;
-  const want = !st.cleanView && st.chartLayers.has('area');
-  const { times, closes } = shownSeries();
-  st.chart.setArea(
-    want && closes.length > 0 ? closes.map((c, i) => ({ time: times[i]!, value: c })) : null,
-    AREA_TONES[st.lastSignalDir],
-  );
-  // „Kerzen aus" nur sinnvoll, wenn eine Linie/Fläche den Kurs weiter zeigt
-  const hide = !st.cleanView && st.chartLayers.has('hideCandles') && want;
-  st.chart.setCandlesVisible(!hide);
-}
-
-/** OHLC-Bar fürs HUD (Crosshair-Daten oder letzter Bar einer Quelle). */
-type HudBar = { time: string; open: number; high: number; low: number; close: number; volume: number | null };
-
-/** Letzten Bar einer Quelle (daily ODER intraday) als HUD-Bar aufbereiten. */
-function lastHudBar(
-  src: Array<({ date: string } | { time: number }) & { open: number; high: number; low: number; close: number; volume?: number | null }>,
-): HudBar | null {
-  const last = src[src.length - 1];
-  if (!last) return null;
-  const time = 'date' in last ? last.date : intradayLabel(last.time);
-  return { time, open: last.open, high: last.high, low: last.low, close: last.close, volume: last.volume ?? null };
-}
-
-/**
- * Uhrzeit eines Intraday-Bars — mit Tages-Angabe, wenn er nicht von heute ist.
- *
- * Owner-Fund 04.08.: „bei Google und Amazon wird 22 Uhr gezeigt, obwohl hier
- * 15:15 ist". Die 22:00 stimmten — es war der gestrige US-Schluss (16:00 New
- * York). Falsch war nur, dass nichts es sagte: Eine nackte Uhrzeit liest man
- * als „jetzt". Vor der US-Eröffnung um 15:30 unserer Zeit ist die jüngste
- * Kerze zwangsläufig von gestern, bei Krypto dagegen von eben — daher zeigten
- * verschiedene Charts verschiedene Uhrzeiten, ohne dass eine falsch war.
- */
-function intradayLabel(sek: number): string {
-  const d = new Date(sek * 1000);
-  const uhr = d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
-  const praefix = tagesPraefix(lokalerTag(d), lokalerTag(new Date()));
-  return praefix ? `${praefix} ${uhr}` : uhr;
-}
-
-/** Gemeinsames HUD-Format ALLER Fenster: Symbol · Zeit · O H L C (±%) · Vol. */
-function hudHtml(sym: string, bar: HudBar): string {
-  const up = bar.close >= bar.open;
-  const pct = bar.open > 0 ? ((bar.close / bar.open - 1) * 100).toFixed(2) : '0.00';
-  const vol =
-    bar.volume === null || bar.volume === 0
-      ? ''
-      : ` · Vol ${bar.volume >= 1e6 ? `${(bar.volume / 1e6).toFixed(1)}M` : Math.round(bar.volume).toLocaleString('de-DE')}`;
-  return `<span class="hud-fold">▾</span> <b>${sym}</b> <span class="c-t3">${bar.time}</span>
-    <span class="${up ? 'c-gn' : 'c-rd'}">O ${fmtNum(bar.open)} H ${fmtNum(bar.high)} L ${fmtNum(bar.low)} C ${fmtNum(bar.close)} (${up ? '+' : ''}${pct} %)</span>${vol}`;
-}
-
-/** In-Chart-HUD (TV-Stil, UI-Audit 25.07.): Symbol · O H L C · Vol des Bars
- *  unterm Crosshair — ohne Crosshair der letzte Bar. Grün/rot nach C≥O.
- *  Seit 26.07. ein Accordion: Klick klappt die Zeile in ALLEN Fenstern. */
-function renderOhlcHud(d: HudBar | null): void {
-  if (!st) return;
-  const el = $('ohlcRow');
-  if (st.cleanView) {
-    el.hidden = true;
-    return;
-  }
-  if (!st.ohlcOpen) {
-    el.innerHTML = '<span class="hud-fold">▸ OHLC</span>';
-    el.hidden = false;
-    return;
-  }
-  const bar = d ?? lastHudBar(st.intradayDays > 0 ? st.shownIntraday : st.shownDaily);
-  if (!bar) {
-    el.hidden = true;
-    return;
-  }
-  el.innerHTML = hudHtml(st.currentSymbol, bar);
-  el.hidden = false;
-}
-
-/** OHLC-Kurszeile eines Raster-/Vergleichs-Fensters (Grid-Gleichwertigkeit
- *  26.07.: „alles soll gleichwertig sein") — gleiche Daten, gleicher
- *  Accordion-Zustand wie das Haupt-Fenster. */
-function renderPanelHud(p: GridPanel, d: HudBar | null): void {
-  const el = p.hudEl;
-  if (!el) return;
-  if (!st || st.cleanView) {
-    el.hidden = true;
-    return;
-  }
-  if (!st.ohlcOpen) {
-    el.innerHTML = '<span class="hud-fold">▸ OHLC</span>';
-    el.hidden = false;
-    return;
-  }
-  const src = p.intradayDays > 0 ? p.intradayBars : p.range > 0 ? p.bars.slice(-p.range) : p.bars;
-  const bar = d ?? lastHudBar(src);
-  if (!bar) {
-    el.hidden = true;
-    return;
-  }
-  el.innerHTML = hudHtml(p.sym, bar);
-  el.hidden = false;
-}
-
-/** EIN Klick, ALLE Fenster: Accordion-Zustand der Kurszeile umschalten. */
-function toggleOhlcAll(): void {
-  if (!st) return;
-  st.ohlcOpen = !st.ohlcOpen;
-  localStorage.setItem('autotrd-ohlc', st.ohlcOpen ? '1' : '0');
-  renderOhlcHud(null);
-  for (const p of st.gridPanels) renderPanelHud(p, null);
-  renderPanelHud(st.chart2P, null);
-}
-
-/** Legende: beschriftet jede aktive Linie mit Farbe (gilt für alle Charts). */
-function renderLegend(lines: import('./chart.js').OverlayLine[], intraday: boolean): void {
-  const el = $('chartLegend');
-  const NAME: Record<string, string> = {
-    sma20: 'SMA 20',
-    sma50: 'SMA 50',
-    sma200: 'SMA 200',
-    ema9: 'EMA 9',
-    ema21: 'EMA 21',
-    bbM: 'Bollinger 20 ±2σ',
-    vwap: 'VWAP (Session)',
-  };
-  const items: Array<{ c: string; t: string; title: string }> = [];
-  for (const l of lines) {
-    if (l.key === 'bbU' || l.key === 'bbL') continue; // ein Eintrag fürs Band reicht
-    if (l.key.startsWith('cmp:')) {
-      items.push({ c: l.color, t: `${l.key.slice(4)} % (${t('lg.vergleich')})`, title: t('lg.vergleichTitel') });
-    } else if (l.key === 'pos:seit') {
-      items.push({
-        c: l.color,
-        t: t('lg.seitEinstieg'),
-        title: t('lg.seitEinstiegTitel'),
-      });
-    } else if (NAME[l.key]) {
-      items.push({ c: l.color, t: NAME[l.key]!, title: t('lg.overlayTitel') });
-    }
-  }
-  if (st && !st.cleanView && st.chartLayers.has('area')) {
-    const toneLabel = st.lastSignalDir === 'buy' ? t('lg.signalKauf') : st.lastSignalDir === 'sell' ? t('lg.signalVerkauf') : t('lg.signalNeutral');
-    items.push({
-      c: AREA_TONES[st.lastSignalDir].line,
-      t: `${t('lg.flaeche')} — ${toneLabel}`,
-      title: t('lg.flaecheTitel'),
-    });
-  }
-  if (st && !st.cleanView && !intraday && st.ui.predArrow && st.prediction) {
-    const lastClose = st.bars[st.bars.length - 1]?.close ?? st.prediction.targetPrice;
-    items.push({
-      c: st.prediction.targetPrice >= lastClose ? '#26cf9d' : '#f2586b',
-      t: t('lg.meinePrognose'),
-      title: t('lg.meinePrognoseTitel'),
-    });
-  }
-  if (!intraday && st?.showForecast && !st.cleanView && st.forecast) {
-    items.push({ c: '#25d0ee', t: t('lg.prognose'), title: t('lg.prognoseTitel') });
-  }
-  if (intraday && st?.showForecast && !st.cleanView && st.forecastIntraday) {
-    items.push({ c: '#25d0ee', t: t('lg.kurzPrognose'), title: t('lg.kurzPrognoseTitel') });
-  }
-  // Legenden-Akkordeon (Feedback 25.07. abends): eingeklappt = nur OHLC-Zeile
-  el.hidden = items.length === 0 || !st?.hudOpen;
-  el.innerHTML = items
-    .map((i) => `<span class="lg-item" title="${i.title}"><i class="lg-dot" style="background:${i.c}"></i>${i.t}</span>`)
-    .join('');
-}
-
-/* ── Indikator-Unterpanels (Chart-Vision): RSI/MACD, Zeitachse synchron ── */
-
-const subEpochs = { rsi: 0, macd: 0 };
-// Länge der Anker-Zeitachse je Panel (E2E-Hook: Domänen-Parität mit Haupt-Chart)
-const subAnchorLens = { rsi: -1, macd: -1 };
-
-/** Zeiten + Schlusskurse der aktuell gezeigten Bars (Tages- oder Intraday-Sicht). */
-function shownSeries(): { times: Array<string | number>; closes: number[] } {
-  if (!st) return { times: [], closes: [] };
-  if (st.intradayDays > 0) {
-    return { times: st.shownIntraday.map((b) => b.time), closes: st.shownIntraday.map((b) => b.close) };
-  }
-  const bars = st.shownDaily;
-  return { times: bars.map((b) => b.date), closes: bars.map((b) => b.close) };
-}
-
-function renderSubPanel(kind: 'rsi' | 'macd'): void {
-  const handle = st?.subCharts[kind];
-  if (!st || !handle) return;
-  const { times, closes } = shownSeries();
-  const pts = (series: (number | null)[]): PanelLine['points'] =>
-    series.flatMap((v, i) => (v === null ? [] : [{ time: times[i]!, value: v }]));
-  // Zeitachsen-Anker (User-Screenshot 26.07.: „Datumleisten laufen auseinander"):
-  // LWC baut die Zeitskala aus der VEREINIGUNG aller Serien-Zeitpunkte. Fehlen
-  // dem Panel Zeitpunkte des Haupt-Charts (MACD-Anlauf-Nulls werden gefiltert,
-  // Prognose-Whitespace rechts existiert nur im Haupt-Chart), zeigen gleiche
-  // logische Indizes VERSCHIEDENE Daten. Die Hilfslinien laufen deshalb über
-  // die komplette Haupt-Domäne inkl. der aktiven Prognose-Zukunftspunkte.
-  const anchorTimes: Array<string | number> = [...times];
-  const lastT = times[times.length - 1];
-  if (st.showForecast && !st.cleanView && lastT !== undefined) {
-    if (st.intradayDays > 0 && st.forecastIntraday) {
-      for (const p of st.forecastIntraday.points) if (p.t > (lastT as number)) anchorTimes.push(p.t);
-    } else if (st.intradayDays === 0 && st.forecast) {
-      for (const p of st.forecast.points) if (p.time > (lastT as string)) anchorTimes.push(p.time);
-    }
-  }
-  subAnchorLens[kind] = anchorTimes.length; // E2E-Hook (Domänen-Parität)
-  if (kind === 'rsi') {
-    handle.setSeries([
-      { key: 'g70', color: 'rgba(242,88,107,.35)', width: 1, dashed: true, points: anchorTimes.map((t) => ({ time: t, value: 70 })) },
-      { key: 'g30', color: 'rgba(38,207,157,.35)', width: 1, dashed: true, points: anchorTimes.map((t) => ({ time: t, value: 30 })) },
-      { key: 'rsi', color: '#25d0ee', width: 2, points: pts(wilderRsi(closes, 14)) },
-    ]);
-  } else {
-    const m = macd(closes);
-    handle.setSeries([
-      // Null-Linie = Zeitachsen-Anker + fachlicher Standard im MACD
-      { key: 'g0', color: 'rgba(139,147,168,.3)', width: 1, dashed: true, points: anchorTimes.map((t) => ({ time: t, value: 0 })) },
-      {
-        key: 'hist',
-        color: 'rgba(139,147,168,.4)',
-        type: 'histogram',
-        points: m.histogram.flatMap((v, i) =>
-          v === null
-            ? []
-            : [{ time: times[i]!, value: v, color: v >= 0 ? 'rgba(38,207,157,.45)' : 'rgba(242,88,107,.45)' }],
-        ),
-      },
-      { key: 'line', color: '#25d0ee', width: 2, points: pts(m.line) },
-      { key: 'signal', color: '#ffb86b', width: 1, points: pts(m.signal) },
-    ]);
-  }
-  // Zeitachse ans Haupt-Chart anlegen (pushRange markiert das als Echo)
-  const r = st.chart?.getVisibleRange();
-  if (r) pushRange(handle, r);
-}
-
-async function mountSubPanel(kind: 'rsi' | 'macd'): Promise<void> {
-  const epoch = ++subEpochs[kind];
-  const handle = await buildIndicatorPanel($(`${kind}Panel`), kind === 'rsi' ? 'RSI 14' : 'MACD 12/26/9');
-  if (!st || epoch !== subEpochs[kind] || !handle) {
-    handle?.destroy();
-    return;
-  }
-  st.subCharts[kind] = handle;
-  // Mini-Legende ins Panel (Beschriftungs-Wunsch 25.07.)
-  const lg = document.createElement('div');
-  lg.className = 'sub-legend';
-  lg.innerHTML =
-    kind === 'rsi'
-      ? '<span><i class="lg-dot" style="background:#25d0ee"></i>RSI 14</span>' +
-        `<span><i class="lg-dot" style="background:rgba(242,88,107,.6)"></i>70 ${t('sp.ueberkauft')}</span>` +
-        `<span><i class="lg-dot" style="background:rgba(38,207,157,.6)"></i>30 ${t('sp.ueberverkauft')}</span>`
-      : '<span><i class="lg-dot" style="background:#25d0ee"></i>MACD</span>' +
-        '<span><i class="lg-dot" style="background:#ffb86b"></i>Signal</span>' +
-        '<span><i class="lg-dot" style="background:#8b93a8"></i>Histogramm</span>';
-  $(`${kind}Panel`).appendChild(lg);
-  armGestureTracking($(`${kind}Panel`));
-  handle.onVisibleRangeChange((range) => {
-    // Unterpanels sind Blätter im Sync-Graph: Echos enden hier. Und ohne
-    // frische User-Geste (Daten-Refit!) wird nichts zurückgereicht.
-    if (!range || !st || matchEcho(handle, range)) return;
-    if (!recentGesture($(`${kind}Panel`))) return;
-    pushRange(st.chart, range, handle);
-    pushRange(kind === 'rsi' ? st.subCharts.macd : st.subCharts.rsi, range, handle);
-  });
-  renderSubPanel(kind);
-}
-
-/** Panels an Layer-Chips + ⚙-Option angleichen (mount/unmount + Daten). */
-function updateSubPanels(): void {
-  if (!st) return;
-  for (const kind of ['rsi', 'macd'] as const) {
-    const want = st.ui.subPanels && !st.cleanView && st.chartLayers.has(`${kind}Panel`);
-    const el = $(`${kind}Panel`);
-    el.hidden = !want;
-    if (!want) {
-      subEpochs[kind]++;
-      st.subCharts[kind]?.destroy();
-      st.subCharts[kind] = null;
-      el.innerHTML = '';
-      continue;
-    }
-    if (st.subCharts[kind]) renderSubPanel(kind);
-    else void mountSubPanel(kind);
-  }
-}
-
-/** Prognose-Pfeil im TradingView-Stil (User-Referenz 25.07.): fetter,
- *  gefüllter Vektor-Pfeil — grün = Ziel über Kurs, rot = darunter; Dicke
- *  wächst mit dem Vertrauen, Label als Pille an der Spitze. */
-/* ── Zeichenwerkzeuge (Chart-Vision Teil 2): Horizontale, Trendlinie, Rechteck ──
- *
- * Bewusste V1-Grenzen: Zeitanker sind ISO-Tage — Trendlinie und Rechteck sind
- * deshalb nur in der TAGES-Sicht zeichen- und sichtbar (im Intraday-Chart
- * gibt es die Tages-Koordinate nicht, coords() liefert x=null und die Form
- * verschwindet ehrlich statt falsch zu sitzen). Die Horizontale hängt nur am
- * Preis und gilt in jeder Sicht. Gespeichert je Symbol auf DIESEM Gerät
- * (localStorage) — Zeichnungen sind Arbeitsnotizen, keine Kontodaten. */
-
-type ZeichnungsPunkt = { date: string; preis: number };
-type Zeichnung =
-  | { art: 'hline'; preis: number }
-  | { art: 'trend' | 'rect'; a: ZeichnungsPunkt; b: ZeichnungsPunkt };
-
-const ZEICHNUNGEN_KEY = 'autotrd-zeichnungen';
-let zeichnenTool: 'hline' | 'trend' | 'rect' | null = null;
-let zeichnenStart: ZeichnungsPunkt | null = null;
-/** Letzter Handelstag unterm Crosshair — der Zeitanker für Klick-Punkte. */
-let zeichnenTag: string | null = null;
-let zeichnungenCache: Record<string, Zeichnung[]> | null = null;
-
-function alleZeichnungen(): Record<string, Zeichnung[]> {
-  if (!zeichnungenCache) {
-    try {
-      zeichnungenCache = JSON.parse(localStorage.getItem(ZEICHNUNGEN_KEY) ?? '{}') as Record<string, Zeichnung[]>;
-    } catch {
-      zeichnungenCache = {};
-    }
-  }
-  return zeichnungenCache;
-}
-
-function speichereZeichnungen(): void {
-  localStorage.setItem(ZEICHNUNGEN_KEY, JSON.stringify(alleZeichnungen()));
-}
-
-function syncDrawButtons(): void {
-  document.querySelectorAll<HTMLButtonElement>('[data-draw]').forEach((b) => {
-    b.classList.toggle('on', b.dataset.draw === zeichnenTool);
-  });
-  const area = document.getElementById('chartArea');
-  if (area) area.style.cursor = zeichnenTool ? 'crosshair' : '';
-}
-
-const ZEICHNEN_FARBE = '#8ec5ff';
-
-function renderZeichnungen(): void {
-  const svg = document.getElementById('drawSvg');
-  if (!svg || !st) return;
-  svg.innerHTML = '';
-  if (st.cleanView || !st.chart) return;
-  const liste = alleZeichnungen()[st.currentSymbol] ?? [];
-  if (liste.length === 0 && !zeichnenStart) return;
-  const box = svg.getBoundingClientRect();
-  if (box.width < 10) return;
-  svg.setAttribute('viewBox', `0 0 ${box.width} ${box.height}`);
-  // Für die Horizontale braucht coords() irgendeine in DIESER Sicht gültige
-  // Zeit — der jüngste Bar der gezeigten Serie ist immer eine.
-  const zeitanker =
-    st.intradayDays > 0
-      ? st.shownIntraday[st.shownIntraday.length - 1]?.time
-      : st.shownDaily[st.shownDaily.length - 1]?.date;
-  if (zeitanker === undefined) return;
-  const teile: string[] = [];
-  const clip = (v: number): string => Math.max(-2000, Math.min(4000, v)).toFixed(1);
-  for (const z of liste) {
-    if (z.art === 'hline') {
-      const y = st.chart.coords(zeitanker, z.preis).y;
-      if (y === null) continue;
-      teile.push(
-        `<line x1="0" y1="${clip(y)}" x2="${box.width}" y2="${clip(y)}" stroke="${ZEICHNEN_FARBE}" stroke-width="1.2" stroke-dasharray="6 4"/>`,
-        `<text x="6" y="${clip(y - 4)}" fill="${ZEICHNEN_FARBE}" font-size="10" font-family="var(--f-num)">${z.preis.toFixed(2)}</text>`,
-      );
-      continue;
-    }
-    const pa = st.chart.coords(z.a.date, z.a.preis);
-    const pb = st.chart.coords(z.b.date, z.b.preis);
-    if (pa.x === null || pa.y === null || pb.x === null || pb.y === null) continue;
-    if (z.art === 'trend') {
-      teile.push(
-        `<line x1="${clip(pa.x)}" y1="${clip(pa.y)}" x2="${clip(pb.x)}" y2="${clip(pb.y)}" stroke="${ZEICHNEN_FARBE}" stroke-width="1.6"/>`,
-      );
-    } else {
-      const x = Math.min(pa.x, pb.x);
-      const y = Math.min(pa.y, pb.y);
-      teile.push(
-        `<rect x="${clip(x)}" y="${clip(y)}" width="${Math.abs(pb.x - pa.x).toFixed(1)}" height="${Math.abs(pb.y - pa.y).toFixed(1)}" fill="${ZEICHNEN_FARBE}" fill-opacity="0.10" stroke="${ZEICHNEN_FARBE}" stroke-width="1"/>`,
-      );
-    }
-  }
-  // Laufende Zwei-Klick-Zeichnung: den gesetzten Startpunkt markieren.
-  if (zeichnenStart) {
-    const p = st.chart.coords(zeichnenStart.date, zeichnenStart.preis);
-    if (p.x !== null && p.y !== null) {
-      teile.push(
-        `<circle cx="${clip(p.x)}" cy="${clip(p.y)}" r="3.5" fill="none" stroke="${ZEICHNEN_FARBE}" stroke-width="1.5"/>`,
-      );
-    }
-  }
-  svg.innerHTML = teile.join('');
-}
-
-function drawPredictionArrow(): void {
-  // Zeichnungen teilen sich die Refresh-Trigger mit dem Prognose-Pfeil
-  // (Range-Change, Resize, Chart-Neuaufbau, Clean-Toggle) — EIN Einhängepunkt
-  // statt sechs verstreuten Aufrufstellen. Muss VOR den frühen Returns stehen.
-  renderZeichnungen();
-  const svg = document.getElementById('predSvg');
-  if (!svg || !st) return;
-  svg.innerHTML = '';
-  const pred = st.prediction;
-  const active =
-    st.ui.predArrow && !st.cleanView && pred !== null && st.chart !== null &&
-    st.intradayDays === 0 && st.dailyAgg === 0 && st.bars.length > 0;
-  if (!active || !pred || !st.chart) return;
-  const last = st.bars[st.bars.length - 1]!;
-  const start = st.chart.coords(last.date, last.close);
-  const yEnd = st.chart.coords(last.date, pred.targetPrice).y;
-  if (start.x === null || start.y === null || yEnd === null) return;
-  const box = svg.getBoundingClientRect();
-  const up = pred.targetPrice >= last.close;
-  const color = up ? '#26cf9d' : '#f2586b';
-  const p0 = { x: start.x, y: start.y };
-  const p2 = { x: Math.min(box.width - 28, start.x + Math.max(90, box.width * 0.16)), y: yEnd };
-  const p1 = { x: (p0.x + p2.x) / 2, y: p0.y }; // erst flach anlaufen, dann zum Ziel
-  const q = (t: number): { x: number; y: number } => ({
-    x: (1 - t) ** 2 * p0.x + 2 * (1 - t) * t * p1.x + t ** 2 * p2.x,
-    y: (1 - t) ** 2 * p0.y + 2 * (1 - t) * t * p1.y + t ** 2 * p2.y,
-  });
-  const dq = (t: number): { x: number; y: number } => ({
-    x: 2 * (1 - t) * (p1.x - p0.x) + 2 * t * (p2.x - p1.x),
-    y: 2 * (1 - t) * (p1.y - p0.y) + 2 * t * (p2.y - p1.y),
-  });
-  // Schaft als Band entlang der Kurve (schmal am Start, breiter zur Spitze)
-  const wStart = 1.5 + pred.confidence * 1.2;
-  const wEnd = wStart * 2.2;
-  const headLen = 12 + pred.confidence * 4;
-  const approxLen = Math.hypot(p2.x - p0.x, p2.y - p0.y) * 1.05;
-  const tHead = Math.max(0.5, 1 - headLen / approxLen);
-  const N = 14;
-  const leftPts: string[] = [];
-  const rightPts: string[] = [];
-  for (let i = 0; i <= N; i++) {
-    const t = (i / N) * tHead;
-    const c = q(t);
-    const d = dq(t);
-    const len = Math.hypot(d.x, d.y) || 1;
-    const nx = -d.y / len;
-    const ny = d.x / len;
-    const w = wStart + (wEnd - wStart) * (i / N);
-    leftPts.push(`${(c.x + nx * w).toFixed(1)},${(c.y + ny * w).toFixed(1)}`);
-    rightPts.unshift(`${(c.x - nx * w).toFixed(1)},${(c.y - ny * w).toFixed(1)}`);
-  }
-  // Pfeilspitze: Dreieck tangential zur Kurve, deutlich breiter als der Schaft
-  const base = q(tHead);
-  const dHead = dq(tHead);
-  const hl = Math.hypot(dHead.x, dHead.y) || 1;
-  const ux = dHead.x / hl;
-  const uy = dHead.y / hl;
-  const hx = -uy;
-  const hy = ux;
-  const hw = wEnd * 2.4;
-  const tip = { x: base.x + ux * headLen, y: base.y + uy * headLen };
-  const head =
-    `${(base.x + hx * hw).toFixed(1)},${(base.y + hy * hw).toFixed(1)} ` +
-    `${tip.x.toFixed(1)},${tip.y.toFixed(1)} ` +
-    `${(base.x - hx * hw).toFixed(1)},${(base.y - hy * hw).toFixed(1)}`;
-  // Label-Pille an der Spitze: markiert den Pfeil klar als MANUELLE
-  // User-Prognose (Wunsch 25.07.), Details in Zeile 2 + Erklärung in Legende
-  const title = t('px.meinePrognose');
-  const label = `${pred.targetPrice.toFixed(2)} · ${pred.targetDate.slice(5)}`;
-  const pillW = Math.max(title.length, label.length) * 6.6 + 18;
-  const pillX = Math.max(4, Math.min(box.width - pillW - 4, tip.x - pillW / 2));
-  const pillY = up ? Math.max(4, tip.y - 48) : Math.min(box.height - 38, tip.y + 12);
-  svg.setAttribute('viewBox', `0 0 ${box.width} ${box.height}`);
-  svg.innerHTML = `
-    <path d="M${leftPts.join(' L')} L${rightPts.join(' L')} Z" fill="${color}" opacity="0.88" />
-    <path d="M${head} Z" fill="${color}" opacity="0.95" />
-    <g class="pred-pill">
-      <rect x="${pillX}" y="${pillY}" width="${pillW}" height="34" rx="10"
-        fill="var(--card-solid, #0e1420)" stroke="${color}" stroke-width="1.2" opacity="0.95" />
-      <text x="${pillX + pillW / 2}" y="${pillY + 13}" text-anchor="middle" class="pred-label pred-label-t">${title}</text>
-      <text x="${pillX + pillW / 2}" y="${pillY + 27}" text-anchor="middle"
-        class="pred-label" style="fill:${color}">${label}</text>
-    </g>`;
-}
-
-function openPredPop(price: number): void {
-  if (!st) return;
-  const pop = $('predPop');
-  ($('ppPrice') as HTMLInputElement).value = price.toFixed(2);
-  ($('ppDate') as HTMLInputElement).value =
-    st.prediction?.targetDate ?? new Date(Date.now() + 14 * 86_400_000).toISOString().slice(0, 10);
-  $('ppConfV').textContent = String(st.prediction?.confidence ?? 2);
-  ($('ppDel') as HTMLButtonElement).hidden = !st.prediction;
-  pop.hidden = false;
-}
-
-async function loadPredictionForSymbol(): Promise<void> {
-  if (!st) return;
-  const sym = st.currentSymbol;
-  const pred = await loadPrediction(st.uid, sym).catch(() => null);
-  if (!st || st.currentSymbol !== sym) return;
-  st.prediction = pred;
-  // Aktiver Pfeil braucht sein Horizont-Polster rechts → Neu-Fit anfordern
-  // (renderChart zeichnet Pfeil + Legende dann selbst mit).
-  if (st.ui.predArrow && pred && !st.cleanView && st.intradayDays === 0) {
-    st.chartFitPending = true;
-    renderChart();
-    return;
-  }
-  drawPredictionArrow();
-  applyOverlays(); // Legende um den „Meine Prognose"-Eintrag aktualisieren
-}
-
-/* ── Options-Modal (⚙, Feedback 25.07.): Elemente + Paper-Wallet-Basics ── */
-
-/** Sichtbarkeit der optionalen Elemente anwenden (settings.ui). */
-function applyUiPrefs(): void {
-  if (!st) return;
-  const u = st.ui;
-  ($('predBtn') as HTMLButtonElement).hidden = !u.predArrow;
-  if (!u.predArrow) {
-    st.predMode = false;
-    $('predBtn').classList.remove('on');
-    $('predPop').hidden = true;
-  }
-  drawPredictionArrow();
-  ($('cmpSym') as HTMLInputElement).hidden = !u.cmpOverlay;
-  if (!u.cmpOverlay && st.overlaySymbol) {
-    st.overlaySymbol = null;
-    ($('cmpSym') as HTMLInputElement).value = '';
-    applyOverlays();
-  }
-  const sw = document.querySelector('.grid-sw') as HTMLElement | null;
-  if (sw) sw.hidden = !u.chartGrid;
-  if (!u.chartGrid && st.gridMode !== 1) {
-    st.gridMode = 1;
-    renderChartGrid();
-  }
-  if (!u.chartGrid) ($('lockMain') as HTMLButtonElement).hidden = true;
-  // Indikator-Extras (VWAP-Chip + RSI/MACD-Unterpanels)
-  document.querySelectorAll('.ind-x').forEach((el) => ((el as HTMLElement).hidden = !u.subPanels));
-  applyOverlays();
-  updateSubPanels();
-  applyGroupFilter(); // Marktgruppen (synct über Geräte wie die Module)
-}
-
-/**
- * Die Optionen-Maske als Strategie-Objekt.
- *
- * Eigene Funktion, weil sie ZWEI Aufrufer hat: Speichern und Prüfen. Der
- * Prüfer muss den Stand im FORMULAR sehen, nicht den gespeicherten — sonst
- * meldet er nichts, wenn man den Hebel gerade hochgestellt und noch nicht
- * gespeichert hat, und das ist der Moment, in dem man ihn braucht.
- */
-function optionsFormStrategy(): Strategy {
-  const basis = st?.strategy ?? DEFAULT_STRATEGY;
-  const num = (id: string): number => Number(($(id) as HTMLInputElement).value);
-  return {
-    ...basis,
-    broker: {
-      ...basis.broker,
-      initialCapital: num('owCap'),
-      // UI-Audit Punkt 5 (Owner-Go 06.08.): Cash-Sizing ist die einzige
-      // Basis — die fixe Startkapital-Tranche ließ Käufe grundlos scheitern.
-      sizingBase: 'balance',
-      leverage: Math.min(MAX_LEVERAGE, Math.max(1, num('owLev') || 1)),
-    },
-    engine: {
-      ...basis.engine,
-      maxPositionPct: num('owMax'),
-      // Der exklusive Momentum-Modus ist im „Ruhigen Sockel %" aufgegangen
-      // (Kern-Satellit) — kein Konto nutzte ihn mehr (Heartbeat momentum=0).
-      mode: 'confluence',
-      riskPerTradePct: Math.min(MAX_RISK_PER_TRADE_PCT, Math.max(0, num('owRisk'))),
-      maxOpenPositions: Math.min(
-        MAX_OPEN_POSITIONS_CAP,
-        Math.max(1, num('owMaxPos') || DEFAULT_MAX_OPEN_POSITIONS)),
-      corePct: Math.min(CORE_PCT_CAP, Math.max(0, num('owCore'))),
-      stopLossPct: num('owSl'),
-      takeProfitPct: num('owTp'),
-      trailingStopPct: num('owTrail'),
-      maxHoldDays: num('owHold'),
-      atrStopMult: num('owAtrS'),
-      atrTakeMult: num('owAtrT'),
-      cooldownMin: Math.min(1440, Math.max(5, num('owCd') || 15)),
-      dailyLossLimitPct: Math.min(25, Math.max(0, num('owBreak') || 0)),
-      flattenOnBreach: ($('owFlatten') as HTMLInputElement).checked,
-      // Alle Klassen explizit, auch die auf 1: `saveStrategy` schreibt die
-      // Strategie als Ganzes, aber ein weggelassener Schlüssel wäre beim
-      // nächsten Öffnen nicht von „bewusst auf 1 gestellt" zu unterscheiden.
-      classWeights: klassenGewichteAusForm(),
-      classAutoTune: ($('owClsAuto') as HTMLInputElement).checked,
-    },
-    signals: {
-      ...basis.signals,
-      minConfluence: Math.max(1, num('owMinC')),
-      exitConfluence: Math.max(1, num('owExitC')),
-      minEdgeMultiple: Math.min(10, Math.max(0, num('owEdge'))),
-      // Kein Allein-Entscheidungsrecht für die Prognose mehr — ihre gemessene
-      // Genauigkeit trägt es nicht; sie stimmt als EINE Stimme weiter mit.
-      forecastSolo: false,
-      timeframe: ($('owTf') as HTMLSelectElement).value === 'daily' ? 'daily' : 'intraday',
-      allowShort: ($('owShort') as HTMLInputElement).checked,
-      newsVeto: ($('owNewsVeto') as HTMLInputElement).checked,
-      regimeGate: ($('owRegimeGate') as HTMLInputElement).checked,
-    },
-  };
-}
-
-/**
- * Zustand der Tages-Notbremse zeigen (M12).
- *
- * Sie ist eine stille Sperre — ohne diese Zeile sähe ein gebremstes Konto
- * exakt aus wie ein ruhiger Markt. Genau der Fehler, den die Karte „Warum
- * handelt die Engine (nicht)?" für die Filter längst behebt.
- */
-function renderBreaker(b: { am: string; grund: string; verlustPct: number | null } | null): void {
-  const el = document.getElementById('bkrState');
-  if (!el) return;
-  const grenze = st?.strategy.engine.dailyLossLimitPct ?? 0;
-  if (!b) {
-    el.textContent = grenze > 0
-      ? `${t('bk.nichtAusgeloest')} ${String(grenze).replace('.', ',')} % ${t('bk.tagesverlust')}`
-      : t('bk.ausgeschaltet');
-    el.style.color = '';
-    return;
-  }
-  el.innerHTML =
-    `<b style="color:var(--rd)">${t('bk.ausgeloest')}</b> ${t('bk.am')} ${escText(b.am.slice(0, 16).replace('T', ' '))} ${t('ab.uhr')}`
-    + (b.verlustPct === null ? '' : ` (${b.verlustPct.toFixed(2).replace('.', ',')} % ${t('bk.tagesverlustKlammer')})`)
-    + `.<br />${escText(b.grund)}`;
-}
-
-/**
- * Die drei Guards des Echtgeld-Handels anzeigen (M14, 05.08.).
+ * Die drei Guards des Echtgeld-Handels anzeigen.
  *
  * Alle drei stehen zusammen in einer Liste, weil die Frage, die hier
  * beantwortet werden muss, immer dieselbe ist: „Warum handelt es noch nicht
- * mit echtem Geld?" Wären sie über drei Karten verteilt, wäre die Antwort
- * eine Suchaufgabe — und der wahrscheinlichste Schluss der falsche
- * („kaputt") statt des richtigen („eine Bedingung fehlt noch").
+ * mit echtem Geld?" — die Antwort ist „eine Bedingung fehlt noch", nicht „kaputt".
  */
 function renderLiveStatus(s: LiveModeStatus | null, istLive: boolean): void {
   const state = document.getElementById('lvState');
@@ -2911,8 +741,7 @@ function renderLiveStatus(s: LiveModeStatus | null, istLive: boolean): void {
   go.hidden = istLive;
   on.hidden = istLive;
   if (istLive) {
-    state.innerHTML = `<b style="color:var(--rd)">${t('lv.scharf')}</b> `
-      + t('lv.scharfWann');
+    state.innerHTML = `<b style="color:var(--rd)">${t('lv.scharf')}</b> ` + t('lv.scharfWann');
     krit.innerHTML = '';
     return;
   }
@@ -2931,24 +760,10 @@ function renderLiveStatus(s: LiveModeStatus | null, istLive: boolean): void {
     zeile(
       t('lv.kontoVerbunden'),
       kontoOk,
-      s.brokerArt === null
-        ? t('lv.keinBroker')
-        : s.brokerArt === 'paper'
-          ? t('lv.papierkonto')
-          : t('lv.schluesselOk'),
+      s.brokerArt === null ? t('lv.keinBroker') : s.brokerArt === 'paper' ? t('lv.papierkonto') : t('lv.schluesselOk'),
     )
-    + zeile(
-      t('lv.serverFreigabe'),
-      s.serverFreigabe,
-      s.serverFreigabe
-        ? t('lv.freigabeAn')
-        : t('lv.freigabeAus'),
-    )
-    + zeile(
-      `${t('lv.reife')} (${s.reife.erfuellt}/${s.reife.gesamt})`,
-      s.reife.bereit,
-      reifeFazit(s.reife),
-    )
+    + zeile(t('lv.serverFreigabe'), s.serverFreigabe, s.serverFreigabe ? t('lv.freigabeAn') : t('lv.freigabeAus'))
+    + zeile(`${t('lv.reife')} (${s.reife.erfuellt}/${s.reife.gesamt})`, s.reife.bereit, reifeFazit(s.reife))
     + s.reife.kriterien
         .map(
           (k) =>
@@ -2968,3710 +783,209 @@ function renderLiveStatus(s: LiveModeStatus | null, istLive: boolean): void {
   on.hidden = !alles;
 }
 
-/**
- * Zustand des laufenden Abgleichs Buch ↔ Broker-Depot zeigen (M13).
- *
- * Er läuft bei jedem Scan und meldet sich nur, wenn etwas nicht stimmt —
- * dieselbe Stille wie bei der Notbremse, und dasselbe Problem: Ohne Anzeige
- * ist „läuft sauber" von „läuft gar nicht" nicht zu unterscheiden. Deshalb
- * steht hier auch im Gutfall eine Zeile, mit Zeitstempel.
- */
-/**
- * Der Hinweis auf eine vom Admin vorgemerkte Depot-Übernahme (22.08.).
- *
- * Bewusst als Aufforderung und nicht als Warnung formuliert: Es ist nichts
- * kaputt am Konto des Nutzers — Buch und Depot sind auseinandergelaufen,
- * und nur er selbst darf entscheiden, das Buch auf den Broker-Stand zu
- * ziehen. Der Text sagt deshalb geradeheraus, WAS die Übernahme tut
- * (Bestand und Barbestand werden überschrieben), statt es hinter
- * „Problem beheben" zu verstecken.
- */
-function renderVormerkung(
-  v: { at: string; fehlbestand: number; grund: string } | null,
-): void {
-  const el = document.getElementById('bkVorgemerkt');
-  if (!el) return;
-  if (!v) {
-    el.hidden = true;
-    el.innerHTML = '';
-    return;
-  }
-  el.hidden = false;
-  el.className = 'hint';
-  el.style.cssText =
-    'margin-top:8px;padding:8px 10px;border-radius:8px;'
-    + 'border:1px solid var(--rd);color:var(--tx)';
-  const wann = escText(v.at.slice(0, 16).replace('T', ' '));
-  el.innerHTML =
-    `<b>${escText(t('ab.vormerkTitel'))}</b><br>`
-    + `${escText(t('ab.vormerkText'))}<br>`
-    + `<span class="mono">${wann}</span>`
-    + (v.grund ? ` · ${escText(v.grund)}` : '');
-}
-
-function renderAbgleich(
-  a: {
-    at: string;
-    status: string;
-    anzahl: number;
-    /** Im Buch, nicht beim Broker — die gefährliche Richtung, sperrt. */
-    fehlbestand?: number;
-    /** Nur beim Broker — Fremdbestand, sperrt nicht. */
-    fremdbestand?: number;
-    verglichen: number;
-    brokerPositionen: number;
-    fehler: string;
-    verlauf?: AbgleichVerlaufEintrag[];
-  } | null,
-): void {
-  const el = document.getElementById('bkAuto');
-  if (!el) return;
-  if (!a) {
-    el.textContent = t('ab.nochKeiner');
-    return;
-  }
-  const wann = escText(a.at.slice(0, 16).replace('T', ' '));
-  /* Verlaufsprotokoll (Owner-Meldung 05.08.: „ca. 1 Stunde keine
-   * Verbindung" — und hinterher konnte niemand sagen, was in der Stunde
-   * war, weil nur der LETZTE Zustand gespeichert wurde). Jeder
-   * Zustandswechsel steht jetzt mit Uhrzeit hier, neueste zuerst. */
-  const LABEL: Record<string, string> = {
-    sauber: t('ab.sauber'),
-    drift: t('ab.abweichung'),
-    fehler: t('ab.nichtErreichbar'),
-    kein_broker: t('ab.keinBroker'),
-  };
-  const verlaufHtml = (a.verlauf ?? [])
-    .slice(-5)
-    .reverse()
-    .map((v) => {
-      // `uhrzeit`, nicht `t`: Der alte Name verschattete die
-      // Übersetzungsfunktion t() aus i18n (gleicher Fund wie in
-      // renderPortfolio, Tranche 5m).
-      const uhrzeit = escText(v.at.slice(11, 16));
-      const zusatz = v.nach === 'drift'
-        ? ` (${v.fehlbestand} ${t('ab.fehlend')}, ${v.fremdbestand} ${t('ab.fremd')})`
-        : v.fehler ? `: ${escText(v.fehler.slice(0, 60))}` : '';
-      return `<div>${uhrzeit} ${t('ab.uhr')} · ${escText(LABEL[v.von ?? ''] ?? '—')} → <b>${escText(LABEL[v.nach] ?? v.nach)}</b>${zusatz}</div>`;
-    })
-    .join('');
-  const verlaufBlock = verlaufHtml
-    ? `<details style="margin-top:4px"><summary style="cursor:pointer">${t('ab.verlauf')}</summary>${verlaufHtml}</details>`
-    : '';
-  if (a.status === 'fehler') {
-    el.innerHTML =
-      `<b>${t('ab.nichtMoeglich')}</b> (${wann} ${t('ab.uhr')}): ${escText(a.fehler)}.<br />`
-      + t('ab.netzwerkKeinBeweis')
-      + verlaufBlock;
-    return;
-  }
-  if (a.status === 'drift') {
-    /* Zwei Arten von Drift, zwei Aussagen (Live-Fund 05.08.).
-     *
-     * Fehlbestand heißt: Im Buch stehen Stücke, die der Broker nicht hat —
-     * die Engine rechnet mit etwas, das es nicht gibt. Fremdbestand heißt:
-     * Beim Broker liegt etwas, das die Engine nie anfassen wird. Nur das
-     * erste sperrt. Eine Anzeige, die beides „Abweichung" nennt, treibt
-     * einen zur Suche nach einem Fehler, den es nicht gibt. */
-    if ((a.fehlbestand ?? a.anzahl) > 0) {
-      el.innerHTML =
-        `<b style="color:var(--rd)">${a.fehlbestand ?? a.anzahl} ${t('ab.fehlenBeimBroker')}</b> `
-        + `(${wann} ${t('ab.uhr')}). <b>${t('ab.einstiegeGesperrt')}</b>${t('ab.ausstiegeFrei')}`
-        + verlaufBlock;
-    } else {
-      el.innerHTML =
-        `<b>${a.fremdbestand ?? a.anzahl} ${t('ab.nurBeimBroker')}</b> (${wann} ${t('ab.uhr')}) — `
-        + t('ab.fremdUnangetastet')
-        + verlaufBlock;
-    }
-    return;
-  }
-  el.innerHTML =
-    `<b style="color:var(--gn)">${t('ab.stimmtUeberein')}</b> (${wann} ${t('ab.uhr')}) — `
-    + `${a.verglichen} ${t('ab.eigene')}, ${a.brokerPositionen} ${t('ab.beimBroker')}`
-    + verlaufBlock;
-}
-
-/** Aktuelle Reglerstellungen je Anlageklasse aus dem Formular. */
-function klassenGewichteAusForm(): Record<string, number> {
-  const out: Record<string, number> = {};
-  $('owClsRows')
-    .querySelectorAll<HTMLInputElement>('input[data-cls]')
-    .forEach((r) => {
-      const k = r.dataset.cls ?? '';
-      if (k) out[k] = Math.min(1.5, Math.max(0, Number(r.value)));
-    });
-  return out;
-}
-
-/** Ein Regler-Wert als Text — „aus" ist eine andere Aussage als „0,00". */
-function gewichtText(w: number): string {
-  return w === 0 ? t('kr.aus') : `× ${w.toFixed(2).replace('.', ',')}`;
-}
-
-/** Schieberegler je Anlageklasse zeichnen (MG2). */
-function renderKlassenRegler(): void {
-  const gew = st?.strategy.engine.classWeights ?? {};
-  $('owClsRows').innerHTML = Object.entries(CLASS_LABELS)
-    .map(([k, label]) => {
-      const w = Math.min(1.5, Math.max(0, gew[k] ?? 1));
-      return `<label class="cls-row">
-        <span>${label}</span>
-        <input type="range" data-cls="${k}" min="0" max="1.5" step="0.25" value="${w}" />
-        <span class="mono cls-val" data-clsval="${k}">${gewichtText(w)}</span>
-      </label>`;
-    })
-    .join('');
-  $('owClsRows')
-    .querySelectorAll<HTMLInputElement>('input[data-cls]')
-    .forEach((r) =>
-      r.addEventListener('input', () => {
-        const k = r.dataset.cls ?? '';
-        const feld = $('owClsRows').querySelector(`[data-clsval="${k}"]`);
-        if (feld) feld.textContent = gewichtText(Number(r.value));
-        zeigeReglerWarnung(k, Number(r.value));
-      }),
-    );
-}
-
-/**
- * Warnung an Ort und Stelle, wenn der Auto-Regler einen Handwert wieder
- * überschreiben wird (Owner-Befund 15.08.: „options broken?" — war die
- * Automatik). Speist sich aus derselben Empfehlung, nach der der Tageslauf
- * entscheidet; Begründung in `reglerHinweis.ts`.
- */
-function zeigeReglerWarnung(klasse: string, wert: number): void {
-  const autoAn = ($('owClsAuto') as HTMLInputElement).checked;
-  const rat = st?.pfStats?.classAdvice?.raete.find((r) => r.klasse === klasse);
-  $('owClsMsg').textContent = reglerWarnung(autoAn, rat, wert, CLASS_LABELS[klasse] ?? klasse);
-}
-
-/**
- * Empfehlungs-Karte je Anlageklasse (MG2).
- *
- * Die Zahlen kommen fertig vom Tageslauf (`stats/main.classAdvice`) — die
- * Oberfläche rechnet bewusst nichts nach. Zwei Implementierungen derselben
- * Regel wären zwei Wahrheiten, sobald eine davon nachzieht.
- */
-function renderKlassenRat(): void {
-  const box = $('owClsAdvice');
-  const rat = st?.pfStats?.classAdvice;
-  const btn = $('owClsApply') as HTMLButtonElement;
-  if (!rat || rat.raete.length === 0) {
-    btn.hidden = true;
-    box.innerHTML =
-      `<p class="hint">${t('kr.keineAuswertung')}</p>`;
-    return;
-  }
-  const farbe: Record<string, string> = {
-    verstaerken: 'var(--gr, #3fa971)',
-    zurueckholen: 'var(--gr, #3fa971)',
-    behalten: 'var(--c-t3, #8b93a7)',
-    drosseln: 'var(--yl, #d9a441)',
-    abschalten: 'var(--rd)',
-    zu_wenig_daten: 'var(--c-t3, #8b93a7)',
-  };
-  const wort: Record<string, string> = {
-    verstaerken: t('kr.verstaerken'),
-    zurueckholen: t('kr.zurueckholen'),
-    behalten: t('kr.behalten'),
-    drosseln: t('kr.drosseln'),
-    abschalten: t('kr.abschalten'),
-    zu_wenig_daten: t('kr.zuWenigDaten'),
-  };
-  btn.hidden = rat.aenderungen === 0;
-  box.innerHTML =
-    `<p class="hint"><b>${rat.fazit}</b>`
-    + (rat.autoTune ? ` · ${t('kr.reglerAn')}` : ` · ${t('kr.reglerAus')}`)
-    + '</p>'
-    + rat.raete
-        .map((r) => {
-          const kante = r.kantePct === null ? '—' : `${r.kantePct.toFixed(3)} %`.replace('.', ',');
-          const pfeil =
-            Math.abs(r.vorschlag - r.gewicht) > 1e-9
-              ? ` · ${gewichtText(r.gewicht)} → <b>${gewichtText(r.vorschlag)}</b>`
-              : '';
-          // Ein Beleg aus fremden Konten muss als solcher erkennbar sein:
-          // „ABSCHALTEN" neben 4 eigenen Trades sieht sonst nach einem Fehler
-          // aus, obwohl die Zahl dahinter aus dem Gesamtbestand stammt.
-          const quelle =
-            r.quelle === 'global'
-              ? ` <span title="${t('kr.globalTitel')}">· ${t('kr.global')}</span>`
-              : r.quelle === 'schatten'
-                ? ` <span title="${t('kr.schattenTitel')}">· ${t('kr.schatten')}</span>`
-                : '';
-          return `<div class="hint" style="margin-top:6px">
-            <b style="color:${farbe[r.empfehlung] ?? 'inherit'}">${wort[r.empfehlung] ?? r.empfehlung}</b>
-            · <b>${CLASS_LABELS[r.klasse] ?? r.klasse}</b>
-            · ${kante} ${t('kr.jeDollar')} (${r.n} ${t('lo.trades')})${quelle}${pfeil}<br />${r.grund}</div>`;
-        })
-        .join('');
-}
-
-/**
- * Prüf-Ergebnis rendern.
- *
- * Nichts wird automatisch geändert: Erst anzeigen, dann ankreuzen, dann
- * übernehmen. Ein Knopf, der Einstellungen still umschreibt, nimmt genau die
- * Entscheidung ab, die dem User gehört — und der GRUND steht bei jedem
- * Vorschlag, damit man beim nächsten Mal selbst darauf kommt.
- */
-function renderAdvice(): void {
-  const box = $('owAdvice');
-  const vorschlaege = adviseStrategy(optionsFormStrategy());
-  ($('owApply') as HTMLButtonElement).hidden = vorschlaege.length === 0;
-  if (vorschlaege.length === 0) {
-    // Bewusst nicht „optimal": Der Prüfer kennt keine Rendite, nur
-    // Widersprüche. Diese Unterscheidung darf die Oberfläche nicht verwischen.
-    box.innerHTML = `<p class="hint">✓ ${t('av.keineWidersprueche')}</p>`;
-    return;
-  }
-  const farbe: Record<string, string> = {
-    kritisch: 'var(--rd)',
-    wichtig: 'var(--yl, #d9a441)',
-    hinweis: 'var(--c-t3, #8b93a7)',
-  };
-  box.innerHTML = vorschlaege
-    .map(
-      (v) => `<label class="opt-row" style="align-items:flex-start;margin-top:10px">
-        <input type="checkbox" data-adv="${v.key}" checked />
-        <span><b style="color:${farbe[v.severity]}">${v.severity.toUpperCase()}</b> ·
-        <b>${v.label}</b>: ${String(v.current)} → <b>${String(v.suggested)}</b><br />
-        <span class="hint">${v.reason}</span></span></label>`,
-    )
-    .join('');
-}
-
-/* ── Onboarding-Tour (MU2): sechs Stationen über der echten UI ──────────────
- * Aufgedrängt wird sie genau EINMAL (settings.ui.tourGesehen — auch
- * Abbrechen zählt); der ?-Knopf im Header holt sie jederzeit zurück. */
-const TOUR_STATIONEN = [
-  { ziel: '.card[data-panel="strategy"]', titel: t('tour.strategieTitel'), text: t('tour.strategieText') },
-  { ziel: '.card[data-panel="chart"]', titel: t('tour.chartTitel'), text: t('tour.chartText') },
-  { ziel: '.card[data-panel="engine"]', titel: t('tour.engineTitel'), text: t('tour.engineText') },
-  {
-    ziel: '.card[data-panel="performance"]',
-    titel: t('tour.performanceTitel'),
-    text: t('tour.performanceText'),
-  },
-  { ziel: '#optBtn', titel: t('tour.optionenTitel'), text: t('tour.optionenText') },
-  {
-    ziel: '.card[data-panel="engineWhy"]',
-    titel: t('tour.engineWhyTitel'),
-    text: t('tour.engineWhyText'),
-  },
-];
-
-function starteAppTour(): void {
-  if (tourAktiv()) return;
-  starteTour(TOUR_STATIONEN, () => {
-    if (!st || st.ui.tourGesehen === true) return;
-    st.ui = { ...st.ui, tourGesehen: true };
-    void saveUiPrefs(st.uid, st.ui);
-  });
-}
-
-let tourAutostartGeprueft = false;
-function pruefeTourAutostart(): void {
-  if (tourAutostartGeprueft || !st) return;
-  tourAutostartGeprueft = true;
-  if (st.ui.tourGesehen === true) return;
-  // Kurz warten, bis Layout und erste Daten stehen — eine Tour über ein
-  // halb gerendertes Dashboard zeigt auf springende Ziele.
-  window.setTimeout(() => {
-    if (st && st.ui.tourGesehen !== true) starteAppTour();
-  }, 1500);
-}
-
-/* ── Bewährte Einstellungen (MU3): täglicher, anonymisierter Snapshot des
- * Kontos mit der besten ENGINE-Bilanz — ansehen, Unterschiede prüfen, dann
- * bewusst übernehmen. Nie automatisch: Wenn alle auf den Besten springen,
- * stirbt die Vielfalt, aus der das kollektive Lernen seine Information zieht. */
-let bestPractice: BestPractice | null = null;
-
-function bpWert(v: unknown): string {
-  const esc = (s: string): string =>
-    s.replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]!);
-  if (v === undefined || v === null) return '–';
-  if (typeof v === 'object') return esc(JSON.stringify(v));
-  return esc(String(v));
-}
-
-function renderBestPractice(): void {
-  const body = $('bpBody');
-  const kz = bestPractice?.kennzahlen ?? null;
-  ($('bpPreview') as HTMLButtonElement).hidden = !(
-    bestPractice?.stand === 'gekuert' && bestPractice.einstellungen !== null
-  );
-  ($('bpAdopt') as HTMLButtonElement).hidden = true;
-  $('bpDiff').hidden = true;
-  if (!bestPractice) {
-    body.textContent = t('bp.keineAuswertung');
-    return;
-  }
-  const krit = bestPractice.kriterien;
-  const kritTxt = krit
-    ? `${t('bp.mindestens')} ${krit.minTrades} ${t('bp.engineTradesKomma')} ${krit.minTage} ${t('bp.tageUndKante')}`
-    : t('bp.genugBelege');
-  if (bestPractice.stand === 'gekuert' && kz) {
-    body.innerHTML =
-      `${t('bp.besteBilanzA')} ` +
-      `${t('bp.kante')} <b>${kz.kantePct ?? '–'} %</b> ${t('bp.jeDollar')} · ${kz.n} ${t('lo.trades')} · ` +
-      `${Math.round(kz.zeitraumTage)} ${t('bp.tagePunkt')} ${t('bp.anonymisiert')}`;
-    return;
-  }
-  const anw = bestPractice.anwaerter;
-  body.textContent =
-    `${t('bp.keinKontoA')} (${kritTxt}) ${t('bp.keinKontoB')}` +
-    (anw
-      ? ` ${t('lo.besterAnwaerter')} ${anw.kennzahlen.kantePct ?? '–'} % (${anw.kennzahlen.n} ${t('lo.trades')})` +
-        (anw.fehlt.length > 0 ? ` — ${t('lo.esFehlt')} ${anw.fehlt.join(', ')}.` : '.')
-      : '');
-}
-
-/* ── Loadouts (MU4): Preset-Karten + eigene Schnappschüsse ──────────────────
- * Eingebaute Charaktere aus shared (LOADOUTS) + users/{uid}/loadouts.
- * Übernahme läuft über wendeLoadoutAn → validateStrategy → saveStrategy —
- * dieselbe Schiene wie MU3, keine zweite Maschinerie. */
-let eigeneLoadouts: EigenesLoadout[] = [];
-let loGewaehlt: {
-  titel: string;
-  einstellungen: import('@autotrd/shared').BewaehrteEinstellungen;
-  hebel?: number;
-} | null = null;
-
-function renderLoadouts(): void {
-  const esc = (s: string): string =>
-    s.replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]!);
-  const karte = (
-    key: string,
-    titel: string,
-    beschreibung: string,
-    risiko: string,
-    eigen: boolean,
-  ): string =>
-    `<div class="lo-card">
-      <div class="lo-head"><b>${esc(titel)}</b>${
-        eigen ? `<button class="lo-del" data-lodel="${key}" title="${t('lo.loeschen')}">✕</button>` : ''
-      }</div>
-      <div class="hint">${esc(beschreibung)}</div>
-      <div class="lo-risk">${esc(risiko)}</div>
-      <button class="btn btn-n" data-lo="${key}" style="margin-top:6px">${t('lo.ansehen')}</button>
-    </div>`;
-  // Alpha-Leech (Owner-Idee 06.08.): die Bewährten Einstellungen (MU3) als
-  // Community-Karte IM Loadout-Raster — derselbe Snapshot, derselbe
-  // Übernahme-Weg, nur dort sichtbar, wo man nach Loadouts sucht. Solange
-  // kein Konto die Belege erfüllt, zeigt die Karte ehrlich den Anwärter.
-  let bpKarte = '';
-  if (bestPractice?.stand === 'gekuert' && bestPractice.einstellungen && bestPractice.kennzahlen) {
-    const kz = bestPractice.kennzahlen;
-    bpKarte = karte(
-      'bp',
-      'Alpha-Leech (Community)',
-      t('lo.leechText'),
-      `${t('lo.belegtA')} ${kz.kantePct ?? '–'} ${t('lo.belegtB')} ${kz.n} `
-        + `${t('lo.belegtC')} ${Math.round(kz.zeitraumTage)} ${t('lo.belegtD')}`,
-      false,
-    );
-  } else if (bestPractice) {
-    const anw = bestPractice.anwaerter;
-    bpKarte = `<div class="lo-card lo-off">
-      <div class="lo-head"><b>${t('lo.leechAnflug')}</b></div>
-      <div class="hint">${t('lo.leechAnflugText')}</div>
-      <div class="lo-risk">${esc(
-        anw
-          ? `${t('lo.besterAnwaerter')} ${anw.kennzahlen.kantePct ?? '–'} % (${anw.kennzahlen.n} ${t('lo.trades')})`
-              + (anw.fehlt.length > 0 ? ` — ${t('lo.esFehlt')} ${anw.fehlt.join(', ')}` : '')
-          : t('lo.keineAuswertung'),
-      )}</div>
-    </div>`;
-  }
-  $('loGrid').innerHTML =
-    LOADOUTS.map((l) => karte(`b:${l.id}`, l.titel, l.beschreibung, l.risiko, false)).join('') +
-    bpKarte +
-    eigeneLoadouts
-      .map((l) =>
-        karte(
-          `e:${l.id}`,
-          l.name,
-          `${t('lo.eigenerSchnappschuss')} ${l.at.slice(0, 10)}.`,
-          (l.hebel ?? 1) > 1 ? `${t('lo.enthaelt')} ${l.hebel}× ${t('lo.hebel')}.` : t('lo.ohneHebel'),
-          true,
-        ),
-      )
-      .join('');
-}
-
-function ladeLoadouts(): void {
-  $('loDiff').hidden = true;
-  ($('loAdopt') as HTMLButtonElement).hidden = true;
-  loGewaehlt = null;
-  renderLoadouts(); // eingebaute sofort zeigen, eigene folgen asynchron
-  if (!st) return;
-  void leseLoadouts(st.uid)
-    .then((liste) => {
-      eigeneLoadouts = liste;
-      renderLoadouts();
-    })
-    .catch(() => undefined);
-}
-
-function ladeBestPractice(): void {
-  // Der Status wird SYNCHRON geleert: Die ✓-Meldung einer gerade erfolgten
-  // Übernahme entsteht NACH diesem Aufruf und soll das asynchrone Nachladen
-  // überleben — renderBestPractice fasst bpMsg deshalb nicht an.
-  $('bpMsg').textContent = '';
-  void leseBestPractice()
-    .then((bp) => {
-      bestPractice = bp;
-      renderBestPractice();
-      renderLoadouts(); // Alpha-Leech-Karte im Loadout-Raster nachziehen
-    })
-    .catch(() => {
-      $('bpBody').textContent = t('bp.nichtLesbar');
-    });
-}
-
-function openOptions(): void {
-  if (!st) return;
-  ladeBestPractice();
-  ladeLoadouts();
-  ($('ouPred') as HTMLInputElement).checked = st.ui.predArrow;
-  ($('ouCmp') as HTMLInputElement).checked = st.ui.cmpOverlay;
-  ($('ouGrid') as HTMLInputElement).checked = st.ui.chartGrid;
-  ($('ouSub') as HTMLInputElement).checked = st.ui.subPanels;
-  ($('ouAkk') as HTMLInputElement).checked = st.ui.akkordeon !== false;
-  ($('owCap') as HTMLInputElement).value = String(st.strategy.broker.initialCapital);
-  ($('owMax') as HTMLInputElement).value = String(st.strategy.engine.maxPositionPct);
-  ($('owRisk') as HTMLInputElement).value = String(
-    st.strategy.engine.riskPerTradePct ?? DEFAULT_RISK_PER_TRADE_PCT);
-  ($('owMaxPos') as HTMLInputElement).value = String(
-    st.strategy.engine.maxOpenPositions ?? DEFAULT_MAX_OPEN_POSITIONS);
-  // Fehlendes Feld zeigt den Default (Owner-Anweisung 04.08.: „bitte bei
-  // jedem Konto automatisch als Standardeinstellung setzen"). Vorher stand
-  // hier bewusst 0, weil der Sockel nur für neue Konten galt — mit der
-  // Migration corePctAll_2026_08_04 hat jedes Konto einen echten Wert, und
-  // das Formular soll dieselbe Wahrheit zeigen wie der Server.
-  ($('owCore') as HTMLInputElement).value = String(
-    st.strategy.engine.corePct ?? DEFAULT_CORE_PCT);
-  ($('owLev') as HTMLSelectElement).value = String(
-    Math.min(MAX_LEVERAGE, Math.max(1, Math.round(st.strategy.broker.leverage ?? 1))));
-  ($('owSl') as HTMLInputElement).value = String(st.strategy.engine.stopLossPct);
-  ($('owTp') as HTMLInputElement).value = String(st.strategy.engine.takeProfitPct);
-  ($('owTrail') as HTMLInputElement).value = String(st.strategy.engine.trailingStopPct ?? 0);
-  ($('owHold') as HTMLInputElement).value = String(st.strategy.engine.maxHoldDays ?? 0);
-  ($('owAtrS') as HTMLInputElement).value = String(st.strategy.engine.atrStopMult ?? 0);
-  ($('owAtrT') as HTMLInputElement).value = String(st.strategy.engine.atrTakeMult ?? 0);
-  ($('owTf') as HTMLSelectElement).value = st.strategy.signals.timeframe ?? 'intraday';
-  ($('owCd') as HTMLInputElement).value = String(st.strategy.engine.cooldownMin ?? 15);
-  ($('owMinC') as HTMLInputElement).value = String(st.strategy.signals.minConfluence);
-  ($('owExitC') as HTMLInputElement).value = String(
-    st.strategy.signals.exitConfluence ?? Math.max(1, st.strategy.signals.minConfluence - 1));
-  ($('owEdge') as HTMLInputElement).value = String(
-    st.strategy.signals.minEdgeMultiple ?? MIN_EDGE_MULTIPLE);
-  ($('owShort') as HTMLInputElement).checked = st.strategy.signals.allowShort === true;
-  ($('owNewsVeto') as HTMLInputElement).checked = st.strategy.signals.newsVeto !== false; // fehlend = an
-  ($('owRegimeGate') as HTMLInputElement).checked = st.strategy.signals.regimeGate !== false; // fehlend = an
-  // Klassen-Profile transparent machen: Sie überschreiben die Werte oben je
-  // Asset-Klasse — der User soll wissen, was für sein Symbol tatsächlich gilt.
-  const byCls = st.strategy.engine.byClass ?? {};
-  const clsTxt = Object.entries(byCls)
-    .map(([c, o]) => `${CLASS_LABELS[c] ?? c}: ${t('eo.stop')} ${o.stopLossPct ?? '–'} % / ${t('eo.ziel')} ${o.takeProfitPct ?? '–'} %`)
-    .join(' · ');
-  $('owClassHint').textContent = clsTxt
-    ? `${t('oo.abweichendeProfile')}: ${clsTxt}`
-    : '';
-  ($('owBreak') as HTMLInputElement).value = String(st.strategy.engine.dailyLossLimitPct ?? 0);
-  ($('owFlatten') as HTMLInputElement).checked = st.strategy.engine.flattenOnBreach === true;
-  // AN, außer ausdrücklich abgewählt — dieselbe Lesart wie im Abendlauf
-  // (`!== false`). Stünde hier `=== true`, zeigte das UI „aus", während der
-  // Regler in Wahrheit arbeitet: der schlimmste denkbare Zustand für einen
-  // Schalter, der Kapital bewegt.
-  ($('owClsAuto') as HTMLInputElement).checked = st.strategy.engine.classAutoTune !== false;
-  renderKlassenRegler();
-  renderKlassenRat();
-  // Module: Checkbox je Panel — gleiche Wahrheit wie ✕ am Modul und die Palette
-  $('ouPanels').innerHTML = Object.entries(PANEL_TITLES)
-    .map(
-      ([id, title]) =>
-        `<label class="opt-chk"><input type="checkbox" data-mod="${id}" ${st!.wsHidden.has(id) ? '' : 'checked'} /> ${title}</label>`,
-    )
-    .join('');
-  $('ouPanels')
-    .querySelectorAll<HTMLInputElement>('input[data-mod]')
-    .forEach((cb) => cb.addEventListener('change', () => togglePanel(cb.dataset.mod ?? '')));
-  // Marktgruppen-Filter (Taschenmesser Teil 2): reine Anzeige-Wahrheit in
-  // settings.ui.marketGroups — fehlender Eintrag = sichtbar.
-  $('ouGroups').innerHTML = Object.entries(CLASS_LABELS)
-    .map(
-      ([cls, label]) =>
-        `<label class="opt-chk"><input type="checkbox" data-grp="${cls}" ${st!.ui.marketGroups?.[cls] === false ? '' : 'checked'} /> ${label}</label>`,
-    )
-    .join('');
-  $('ouGroups')
-    .querySelectorAll<HTMLInputElement>('input[data-grp]')
-    .forEach((cb) =>
-      cb.addEventListener('change', () => {
-        if (!st) return;
-        const groups = { ...(st.ui.marketGroups ?? {}) };
-        if (cb.checked) delete groups[cb.dataset.grp ?? ''];
-        else groups[cb.dataset.grp ?? ''] = false;
-        st.ui = { ...st.ui, marketGroups: groups };
-        applyGroupFilter();
-        void saveUiPrefs(st.uid, st.ui);
-      }),
-    );
-  $('optMsg').textContent = '';
-  $('optModal').classList.add('show');
-}
-
-/** Marktgruppen-Filter anwenden: Markt-Browser-Tabs neu bauen (die Builder
- *  überspringen versteckte Klassen; der Picker filtert bei jedem Öffnen). */
-function applyGroupFilter(): void {
-  void renderMarketTabs();
-}
-
-/* ── Auto-Auflösung (TradingView-Gefühl, Feedback 25.07.): Die Kerzengröße
-   folgt der sichtbaren Zeitspanne — daily ↔ 1h ↔ 15m ↔ 5m, client-seitig
-   aggregiert; beim Wechsel bleibt das ZEITfenster erhalten (kein Neu-Fit). ── */
-
-let autoResTimer: number | null = null;
-let autoSwitching = false;
-/** Y-Modus-Knopf neu malen — gesetzt im UI-Init, gerufen bei Gesten-Übernahme. */
-let malYModusKnopf: (() => void) | null = null;
-
-function barTimeMs(b: { time: number } | { date: string }): number {
-  return 'time' in b ? b.time * 1000 : Date.parse(b.date);
-}
-
-function currentSource(): Array<{ time: number } | { date: string }> {
-  if (!st) return [];
-  return st.intradayDays > 0 ? st.shownIntraday : st.shownDaily;
-}
-
-/** ISO-Tag `tage` Kalendertage vor einem ISO-Tag (Chunk-Schlüssel-Arithmetik). */
-function tagMinus(tag: string, tage: number): string {
-  return new Date(Date.parse(`${tag}T00:00:00Z`) - tage * 86_400_000).toISOString().slice(0, 10);
-}
-
-/**
- * Sorgt dafür, dass das geladene Intraday-Fenster den Zeitpunkt `t0` (ms)
- * abdeckt — nötigenfalls wächst es per Chunk-Range-Query rückwärts (Zoom-
- * Kontinuum 06.08.). Liefert false, wenn die 5m-Daten schlicht nicht so weit
- * zurückreichen (dann bleibt die Tages-Sicht die ehrliche Antwort).
- */
-async function sichereIntradayAbdeckung(t0: number): Promise<boolean> {
-  if (!st) return false;
-  const sym = st.currentSymbol;
-  if (st.intradayBars.length === 0) {
-    const chunks = await loadIntradayChunks(sym, tagVorTagen(9), '9999-12-31');
-    if (!st || st.currentSymbol !== sym || chunks.length === 0) return false;
-    st.intradayBars = chunks.flatMap((c) => c.bars);
-    st.intradayOldest = chunks[0]!.day;
-  }
-  const zielTag = new Date(Math.max(t0 - 36 * 3_600_000, 0)).toISOString().slice(0, 10);
-  if (!st.intradayHistDone && st.intradayOldest !== null && zielTag < st.intradayOldest) {
-    const chunks = await loadIntradayChunks(sym, zielTag, tagMinus(st.intradayOldest, 1));
-    if (!st || st.currentSymbol !== sym) return false;
-    if (chunks.length === 0) {
-      st.intradayHistDone = true; // unterhalb des Fensters existiert nichts mehr
-    } else {
-      st.intradayBars = [...chunks.flatMap((c) => c.bars), ...st.intradayBars];
-      st.intradayOldest = chunks[0]!.day;
-      // Query lief bis ganz nach unten — begann sie NACH dem Ziel, ist das
-      // der Datenanfang (die Chunks sind seit dem Erst-Backfill lückenlos).
-      if (chunks[0]!.day > zielTag) st.intradayHistDone = true;
-    }
-  }
-  const cover0 = st.intradayBars[0]!.time * 1000;
-  return t0 >= cover0 - 12 * 3_600_000;
-}
-
-function maybeAutoSwitch(): void {
-  if (!st?.autoRes || !st.chart || autoSwitching) return;
-  const r = st.chart.getVisibleRange();
-  const src = currentSource();
-  if (!r || src.length < 2) return;
-  let i0 = Math.max(0, Math.min(src.length - 1, Math.floor(r.from)));
-  const i1 = Math.max(0, Math.min(src.length - 1, Math.ceil(r.to)));
-  // Leerraum rechts (rightOffset/Pan): beide Indizes clampen sonst auf den
-  // letzten Bar — dann zählt das kleinste echte Fenster (1 Bar zurück).
-  if (i1 <= i0) i0 = Math.max(0, i1 - 1);
-  if (i1 <= i0) return;
-  const t0 = barTimeMs(src[i0]!);
-  const t1 = barTimeMs(src[i1]!);
-  const days = (t1 - t0) / 86_400_000;
-  // Will der User ein deutlich breiteres Fenster, als die Intraday-Quelle
-  // hergibt (viel Leerraum über die Quelle hinaus), zurück zu daily.
-  const wantsWider = st.intradayDays > 0 && r.to - r.from > src.length + 6;
-  // Das volle Kontinuum (06.08.): 5m → 15m → 1h → 1D → 1W → 1M. Die
-  // Tages-Schwellen zielen auf ~500 sichtbare Kerzen je Stufe — dieselbe
-  // Dichte, bei der auch TradingView die Auflösung wechselt.
-  const level = wantsWider
-    ? 0
-    : days <= 1.6
-      ? 5
-      : days <= 3.5
-        ? 15
-        : days <= 8
-          ? 60
-          : days <= 740
-            ? 0
-            : days <= 3600
-              ? -7
-              : -30;
-  const current = st.intradayDays > 0 ? st.aggMinutes : -st.dailyAgg;
-  if (level === current) return;
-  void switchAutoLevel(level, t0, t1, wantsWider);
-}
-
-async function switchAutoLevel(level: number, t0: number, t1: number, refit = false): Promise<void> {
-  if (!st) return;
-  autoSwitching = true;
-  try {
-    if (level > 0) {
-      // Fenster nicht abgedeckt (zu weit in der Vergangenheit, keine 5m-Daten)
-      // → Tages-Sicht bleibt; die Chunk-Historie wächst mit jedem Handelstag.
-      if (!(await sichereIntradayAbdeckung(t0))) return;
-      if (!st) return;
-      st.intradayDays = 5;
-      st.aggMinutes = level;
-      st.dailyAgg = 0;
-    } else {
-      st.intradayDays = 0;
-      st.dailyAgg = level === -7 ? 7 : level === -30 ? 30 : 0;
-    }
-    // Beim „will-breiter"-Rücksprung auf daily frisch fitten — das schmale
-    // Intraday-Zeitfenster wäre sonst als Mini-Ausschnitt verwirrend.
-    if (refit) st.chartFitPending = true;
-    renderChart(); // sonst bewusst OHNE Fit — der User-Zoom bestimmt das Fenster
-    if (refit) return;
-    // Zeitfenster in der neuen Quelle wiederfinden und exakt setzen
-    const src = currentSource();
-    if (src.length > 1 && st.chart) {
-      let i0 = src.findIndex((b) => barTimeMs(b) >= t0);
-      if (i0 < 0) i0 = 0;
-      let i1 = src.length - 1;
-      for (let i = src.length - 1; i >= 0; i--) {
-        if (barTimeMs(src[i]!) <= t1) {
-          i1 = i;
-          break;
-        }
-      }
-      if (i1 > i0) st.chart.setVisibleRange({ from: i0 - 0.5, to: i1 + 0.5 });
-    }
-  } finally {
-    // setVisibleRange feuert selbst Range-Events — Wächter kurz entschärfen
-    window.setTimeout(() => {
-      autoSwitching = false;
-    }, 400);
-  }
-}
-
-/**
- * Am Anfang der 5m-Daten nahtlos in die Tages-Sicht übergehen (Owner-Fund
- * 07.08.). Die 5m-Chunks reichen nur bis Ende Juli zurück — wer bei 1T/1W
- * weiter nach links zieht, landete an einer harten Wand. Statt dort zu
- * stoppen, wechselt der Chart auf Tageskerzen (dort trägt die volle
- * Historie) und behält das Zeitfenster; ist es für Tageskerzen zu schmal
- * (unter ~12 Kalendertagen gäbe es nur 1–2 Kerzen), wird es nach links auf
- * ein lesbares Minimum geweitet. Danach übernimmt loadOlderDaily.
- */
-async function intradayZuDaily(): Promise<void> {
-  if (!st?.chart || st.intradayDays === 0 || autoSwitching) return;
-  const r = st.chart.getVisibleRange();
-  const src = st.shownIntraday;
-  if (!r || src.length < 2) return;
-  const i0 = Math.max(0, Math.min(src.length - 1, Math.floor(r.from)));
-  const i1 = Math.max(i0 + 1, Math.min(src.length - 1, Math.ceil(r.to)));
-  const t1 = src[i1]!.time * 1000;
-  const t0 = Math.min(src[i0]!.time * 1000, t1 - 12 * 86_400_000);
-  await switchAutoLevel(0, t0, t1);
-}
-
-/** Seit 07.08. nur noch das Auflösungs-Badge: Auto ist immer an, die
- *  Zoom-Buttons sind momentane Aktionen ohne on-Zustand. */
-function updateAutoUi(): void {
-  renderResBadge();
-}
-
-/**
- * Zoom-Button-Fahrt (Owner 07.08.): das Sichtfenster sanft auf die letzten
- * N Tage fahren (null = gesamte geladene Historie). Wechselt das Ziel die
- * Auflösungs-Ebene (z. B. 1T braucht 5m-Kerzen), schaltet switchAutoLevel
- * hart um und setzt das Fenster exakt — eine Kerzen-Morph-Animation über
- * einen Quellenwechsel hinweg gibt es nicht. Innerhalb derselben Ebene
- * fährt animateVisibleRange weich (easeOutCubic); die debounced
- * Auto-/Nachlade-Logik greift nach dem Ausrollen von selbst.
- */
-async function zoomAufTage(tage: number | null): Promise<void> {
-  if (!st?.chart) return;
-  const src = currentSource();
-  if (src.length < 2) return;
-  const lastMs = barTimeMs(src[src.length - 1]!);
-  if (tage !== null) {
-    const zielLevel =
-      tage <= 1.6 ? 5 : tage <= 3.5 ? 15 : tage <= 8 ? 60 : tage <= 740 ? 0 : tage <= 3600 ? -7 : -30;
-    const aktuell = st.intradayDays > 0 ? st.aggMinutes : -st.dailyAgg;
-    if (zielLevel !== aktuell) {
-      await switchAutoLevel(zielLevel, lastMs - tage * 86_400_000, lastMs);
-      return;
-    }
-  } else {
-    void loadOlderDaily(); // Max: die Ketten-Nachladung anwerfen
-  }
-  const neu = currentSource();
-  const len = neu.length;
-  let from = -0.5;
-  if (tage !== null) {
-    const grenze = barTimeMs(neu[len - 1]!) - tage * 86_400_000;
-    let idx = len - 2;
-    while (idx > 0 && barTimeMs(neu[idx]!) > grenze) idx--;
-    from = idx - 0.5;
-  }
-  st.chart.animateVisibleRange({ from, to: len - 1 + 3 });
-}
-
-/** OHLC-Zeile ans CHART koppeln, nicht an den Fenster-Rahmen: Im Raster
- *  schiebt die Kopfzeile das Chart nach unten — der ▸-OHLC-Chip überlappte
- *  sonst das Symbolfeld (User-Screenshot 26.07., „nicht homogen"). */
-function positionMainHud(): void {
-  $('chartHud').style.top = `${$('chartArea').offsetTop + 6}px`;
-}
-
-/* ── Auto-Zeitrahmen je Raster-/Vergleichs-Fenster (Grid-Gleichwertigkeit
-   26.07.: „auto view für ALLE grid fenster"): abgespeckte Version des Haupt-
-   Auto — zwei Stufen (Tageskerzen ↔ 5-min-Sicht), das ZEITfenster bleibt
-   beim Wechsel erhalten. Debounced pro Panel; eigene Wechsel triggern sich
-   über autoBusy nicht selbst. ── */
-
-function schedulePanelAuto(p: GridPanel): void {
-  if (!p.auto) return;
-  if (p.autoTimer != null) window.clearTimeout(p.autoTimer);
-  p.autoTimer = window.setTimeout(() => {
-    p.autoTimer = null;
-    // Wechsel läuft noch (autoBusy)? Wiedervorlage statt verwerfen — sonst
-    // verschluckt das Busy-Fenster den direkt folgenden Gegen-Zoom und das
-    // Panel bleibt dauerhaft in der falschen Sicht hängen (E2E-Fund 26.07.).
-    if (p.autoBusy) {
-      schedulePanelAuto(p);
-      return;
-    }
-    void panelMaybeAutoSwitch(p);
-  }, 350);
-}
-
-/** Quelle des Panels in Render-Reihenfolge (für Index→Zeit-Umrechnung). */
-function panelSource(p: GridPanel): Array<{ time: number } | { date: string }> {
-  return p.intradayDays > 0 ? p.intradayBars : p.range > 0 ? p.bars.slice(-p.range) : p.bars;
-}
-
-async function panelMaybeAutoSwitch(p: GridPanel): Promise<void> {
-  if (!p.auto || !p.chart || p.autoBusy) return;
-  const r = p.chart.getVisibleRange();
-  const src = panelSource(p);
-  if (!r || src.length < 2) return;
-  let i0 = Math.max(0, Math.min(src.length - 1, Math.floor(r.from)));
-  const i1 = Math.max(0, Math.min(src.length - 1, Math.ceil(r.to)));
-  if (i1 <= i0) i0 = Math.max(0, i1 - 1);
-  if (i1 <= i0) return;
-  const t0 = barTimeMs(src[i0]!);
-  const t1 = barTimeMs(src[i1]!);
-  const days = (t1 - t0) / 86_400_000;
-  const intraday = p.intradayDays > 0;
-  // Will der User deutlich mehr sehen, als die ~5 Intraday-Tage hergeben?
-  const wantsWider = intraday && r.to - r.from > src.length + 6;
-  const wantIntraday = !wantsWider && days <= 8;
-  if (wantIntraday === intraday) return;
-  p.autoBusy = true;
-  try {
-    if (wantIntraday) {
-      // Abdeckung prüfen — vorhandene Bars können aus einer 1T-Sicht stammen
-      // und decken das Fenster dann nicht (E2E-Fund 26.07.): dann die vollen
-      // ~5 Handelstage nachladen und erneut prüfen.
-      const covers = (b: typeof p.intradayBars): boolean =>
-        b.length > 0 && t0 >= b[0]!.time * 1000 - 12 * 3_600_000;
-      if (!covers(p.intradayBars)) {
-        const sym = p.sym;
-        const chunks = await loadIntraday(sym, 5);
-        if (p.sym !== sym || !p.auto) return;
-        if (chunks.length > 0) p.intradayBars = chunks;
-      }
-      if (!covers(p.intradayBars)) return; // 5-min-Daten decken das Fenster nicht → daily bleiben
-      p.intradayDays = 5;
-    } else {
-      p.intradayDays = 0;
-      if (wantsWider) p.fitPending = true; // Rücksprung: frisch fitten (Mini-Ausschnitt wäre verwirrend)
-    }
-    renderGridPanelBars(p);
-    // Zeitfenster in der neuen Quelle wiederfinden — der Zoom bestimmt die Sicht
-    if (!wantsWider && p.chart) {
-      const dst = panelSource(p);
-      if (dst.length > 1) {
-        let j0 = dst.findIndex((b) => barTimeMs(b) >= t0);
-        if (j0 < 0) j0 = 0;
-        let j1 = dst.length - 1;
-        for (let i = dst.length - 1; i >= 0; i--) {
-          if (barTimeMs(dst[i]!) <= t1) {
-            j1 = i;
-            break;
-          }
-        }
-        if (j1 > j0) p.chart.setVisibleRange({ from: j0 - 0.5, to: j1 + 0.5 });
-      }
-    }
-    saveGridPrefs();
-    syncPanelTfButtons();
-  } finally {
-    // setVisibleRange feuert selbst Range-Events — Wächter kurz entschärfen
-    window.setTimeout(() => {
-      p.autoBusy = false;
-    }, 400);
-  }
-}
-
-/** 5m-Chunks laden und rendern (1T/1W) — Chart-Feedback 24.07.
- *  Seit 06.08. MERGEND statt ersetzend: Der Refresh (jeder Scan feuert
- *  watchBars) holt nur die jüngsten Tage und lässt eine per Rückwärts-Scroll
- *  gewachsene Lazy-Historie in Ruhe — sonst spränge die Ansicht beim
- *  nächsten Scan zurück und das Nachgeladene wäre weg. */
-async function loadIntradayView(): Promise<void> {
-  if (!st) return;
-  const sym = st.currentSymbol;
-  const n = Math.max(st.intradayDays, 1);
-  const frisch = await loadIntradayChunks(sym, tagVorTagen(Math.ceil(n * 1.6) + 4), '9999-12-31');
-  if (!st || st.currentSymbol !== sym || st.intradayDays === 0) return;
-  const fenster = frisch.slice(-n);
-  const neu = fenster.flatMap((c) => c.bars);
-  if (neu.length === 0) {
-    if (st.intradayBars.length === 0) renderChart();
-    return;
-  }
-  const schnitt = neu[0]!.time;
-  const alt = st.intradayBars.filter((b) => b.time < schnitt);
-  st.intradayBars = [...alt, ...neu];
-  if (alt.length === 0) st.intradayOldest = fenster[0]!.day;
-  renderChart();
-}
-
-/**
- * Marker auf dem Haupt-Chart — die EINE Stelle für setMarkers (verteilte
- * Aufrufe waren früher die Quelle von Sync-Fehlern).
- *
- * Seit 29.07. wieder mit Inhalt: News-Punkte aus `market/{sym}.news` — den
- * Schlagzeilen, die der Scan ohnehin fürs Einstiegs-Veto lädt (Owner: „nur
- * die auch genutzt werden, nicht extra nach News suchen"). Läuft das Veto,
- * zeigt ein gelber Pfeil den auslösenden Bar.
- */
-function applyMarkers(): void {
-  if (!st?.chart) return;
-  const intraday = st.intradayDays > 0;
-  // GEZEIGTE Bars als Zeitraster (Zoom-Kontinuum): In der Wochen-/Monats-
-  // Sicht landen News- und Einstiegs-Marker auf der Kerze ihres Buckets —
-  // ein Tages-Datum, das es als Serien-Zeitpunkt nicht gibt, zeichnet LWC
-  // schlicht nicht. Nebeneffekt: Marker funktionieren jetzt auch auf der
-  // nachgeladenen Tiefen-Historie (vorher nur auf dem rollierenden Jahr).
-  const times: Array<string | number> = intraday
-    ? st.shownIntraday.map((b) => b.time)
-    : st.shownDaily.map((b) => b.date);
-  const markers: ChartMarker[] =
-    st.showNews && !st.cleanView
-      ? newsChartMarkers(st.news, times, Math.floor(Date.now() / 1000), vetoAnzeige())
-      : [];
-  const einstieg = positionsMarker(times);
-  if (einstieg) markers.push(einstieg);
-  st.lastMainMarkers = markers.length; // E2E-Hook
-  st.chart.setMarkers(markers);
-}
-
-/* ── Offene Position im Chart (Owner-Wunsch 04.08.) ──────────────────────
- * „Wenn man in einem aktiven Trade das Chart öffnet: wann bin ich rein und
- * wie ist es seither gelaufen?" — Antwort in drei Schichten:
- *   1. Marke am Einstiegs-Bar (Pfeil hoch beim Long, runter beim Short),
- *   2. waagerechte Linien für Einstand, Stop, Trailing und Ziel,
- *   3. die Kurslinie SEIT dem Einstieg, gefärbt nach aktuellem Ergebnis.
- * Alle Zahlen stammen aus `positionLevels`/`positionPnl` (shared) — derselben
- * Rechnung wie die Positionstabelle, damit Chart und Tabelle nie widersprechen.
- */
-const POS_FARBEN = {
-  entry: '#e8c76a',
-  stop: '#f2586b',
-  trail: '#f0913c',
-  target: '#26cf9d',
-  gewinn: 'rgba(38,207,157,.9)',
-  verlust: 'rgba(242,88,107,.9)',
-} as const;
-
-/**
- * Offene Position eines Symbols — null, wenn keine da ist, der Layer aus ist
- * oder der Clean-View läuft (der blendet alles Optionale aus). Gilt für JEDES
- * Chart-Fenster (Grid-Gleichwertigkeit), nicht nur fürs Haupt-Chart.
- */
-function posFuerSymbol(sym: string): Position | null {
-  if (!st || !st.showPos || st.cleanView) return null;
-  return st.positions.find((p) => p.symbol === sym) ?? null;
-}
-
-/** Offene Position im gerade gezeigten Haupt-Symbol. */
-function posImChart(): Position | null {
-  return st ? posFuerSymbol(st.currentSymbol) : null;
-}
-
-/** Level der offenen Position (klassen-aufgelöst wie in der Engine). */
-function posLevels(p: Position): PositionLevels {
-  return positionLevels(p, resolveRisk(st!.strategy.engine, classify(p.symbol)));
-}
-
-/** Zuletzt bekannter Kurs der Position (Quote-Abo, sonst letzter Bar). */
-function posKurs(p: Position, fallback?: number): number {
-  const live = st?.posPrices.get(p.symbol);
-  if (live !== undefined && live > 0) return live;
-  if (fallback !== undefined && fallback > 0) return fallback;
-  const closes = shownSeries().closes;
-  return closes[closes.length - 1] ?? p.avgEntry;
-}
-
-/**
- * Preislinien für Einstand, Stop, Trailing und Ziel einer Position.
- *
- * Bewusst karg (Owner 04.08.: „überlagert zu viel Info"): NUR der Einstand
- * bekommt einen Preis-Kasten auf der Skala — jeder weitere Kasten überdeckt
- * einen echten Skalenwert, und mit vieren war die Preisachse unlesbar.
- * Titel-Texte im Chart entfallen ganz; sie standen doppelt zum Achsen-Label
- * und lagen quer über den Kerzen. Welche Linie welche ist, sagt die Farbe
- * (rot = Stop, orange = Trailing, grün = Ziel) und der Chip mit den
- * Prozent-Abständen.
- */
-/** ATR(14) nach Wilder, in Prozent des letzten Schlusskurses — null bei zu wenig Daten. */
-function atrPct14(daily: ChartBar[]): number | null {
-  const n = 14;
-  if (daily.length < n + 1) return null;
-  const tr = (i: number): number => {
-    const b = daily[i]!;
-    const prevClose = daily[i - 1]!.close;
-    return Math.max(b.high - b.low, Math.abs(b.high - prevClose), Math.abs(b.low - prevClose));
-  };
-  let atr = 0;
-  for (let i = 1; i <= n; i++) atr += tr(i);
-  atr /= n;
-  for (let i = n + 1; i < daily.length; i++) atr = (atr * (n - 1) + tr(i)) / n;
-  const last = daily[daily.length - 1]!.close;
-  return last > 0 ? (atr / last) * 100 : null;
-}
-
-/** Dezente, signal-neutrale Farbe — die Marken sind Landkarte, kein Urteil. */
-const MARKEN_FARBE = '#9aa4b5';
-
-/**
- * Ab welcher Chart-Breite die Marken überhaupt beschriftet werden.
- *
- * ── Owner-Feedback 11.08.: „Marken überdecken zu viel wichtiger Infos" ────
- *
- * Die Regel steht seit dem 04.08. im Kopf von `PriceLineSpec`: Der Titel
- * „steht IM Chart und verdeckt Kurs — meist sagt schon das Achsen-Label
- * alles". R1 und S1 befolgen sie, die drei Marken darunter taten es nicht:
- * `52W-Hoch`, `52W-Tief` und vor allem `Pivot · ATR 5,4 %` sind auf einem
- * Telefon breite Kästen mitten im Kursverlauf — und sie sitzen ausgerechnet
- * rechts, wo die JÜNGSTEN Kerzen stehen.
- *
- * Unter dieser Breite tragen die Marken deshalb gar keinen Text. Die
- * gestrichelte Linie zeigt das Niveau, das Achsen-Label den Kurs; welche
- * Linie welche ist, sagt die Legende beim Antippen. Darüber bleiben sie
- * beschriftet, aber kurz.
- *
- * 640 px ist dieselbe Grenze, an der auch das OHLC-HUD standardmäßig
- * aufklappt — eine Schwelle im ganzen Dashboard, nicht zwei.
- */
-const MARKEN_TEXT_AB_PX = 640;
-
-/**
- * Marken-Titel nur, wo Platz ist — sonst der leere String.
- *
- * Leer und nicht `undefined`: `PriceLineSpec.title` ist unter
- * `exactOptionalPropertyTypes` ein `string`, und die Chart-Schicht setzt
- * ohnehin `spec.title ?? ''`. Ein leerer Titel IST dort „kein Text".
- */
-function markenTitel(text: string): string {
-  return window.innerWidth >= MARKEN_TEXT_AB_PX ? text : '';
-}
-
-/**
- * Trading-Marken (Chart-Vision, letzter offener Punkt): 52-Wochen-Hoch/Tief
- * plus klassische Pivots aus dem Vortag. Beides rechnet IMMER auf Tagesbasis
- * — auch in der Intraday-Sicht, wo die Pivots ihren eigentlichen Zweck haben
- * (Intraday-Niveaus aus dem vollendeten Vortag). Der letzte Daily-Bar ist der
- * LAUFENDE Tag und darf deshalb nicht in die Pivots; die 52W-Marken nehmen
- * ihn mit (ein neues Jahreshoch ist sofort eines).
- */
-function markenLinien(daily: ChartBar[]): PriceLineSpec[] {
-  if (!st || st.cleanView || !st.chartLayers.has('marken')) return [];
-  if (daily.length < 21) return []; // zu dünne Tageshistorie für ehrliche Marken
-  const jahr = daily.slice(-252);
-  let hoch = -Infinity;
-  let tief = Infinity;
-  for (const b of jahr) {
-    hoch = Math.max(hoch, b.high);
-    tief = Math.min(tief, b.low);
-  }
-  const v = daily[daily.length - 2]!;
-  const p = (v.high + v.low + v.close) / 3;
-  const atr = atrPct14(daily);
-  /* Kurze Titel, und nur auf breiten Schirmen (Owner 11.08.).
-   *
-   * `52W-Hoch` und `Pivot · ATR 5,4 %` waren auf dem Telefon breite Kästen
-   * mitten im Kursverlauf — ausgerechnet rechts, wo die jüngsten Kerzen
-   * stehen. Dort schweigen die Marken jetzt ganz; das Niveau zeigt die
-   * gestrichelte Linie, den Kurs das Achsen-Label.
-   *
-   * Auf breiten Schirmen bleiben sie beschriftet, aber kürzer: `52W ↑` sagt
-   * dasselbe wie `52W-Hoch` in halber Breite. Das ATR bleibt am Pivot — dort
-   * war nie zu wenig Platz, und es ist die Zahl, die den Abstand zwischen den
-   * Niveaus überhaupt einordnet. */
-  return [
-    { key: 'mk:52h', price: hoch, color: MARKEN_FARBE, style: 2, width: 1, title: markenTitel('52W ↑') },
-    { key: 'mk:52t', price: tief, color: MARKEN_FARBE, style: 2, width: 1, title: markenTitel('52W ↓') },
-    {
-      key: 'mk:p',
-      price: p,
-      color: MARKEN_FARBE,
-      style: 1,
-      width: 1,
-      title: markenTitel(atr !== null ? `Pivot · ATR ${atr.toFixed(1)} %` : 'Pivot'),
-    },
-    // R1/S1 bewusst ohne Text (Owner-Regel: Linien-Titel sparsam) — das
-    // Achsen-Label trägt den Kurs, die Nähe zur Pivot-Linie den Kontext.
-    { key: 'mk:r1', price: 2 * p - v.low, color: MARKEN_FARBE, style: 1, width: 1, axisLabel: false },
-    { key: 'mk:s1', price: 2 * p - v.high, color: MARKEN_FARBE, style: 1, width: 1, axisLabel: false },
-  ];
-}
-
-function positionsLinien(p: Position): PriceLineSpec[] {
-  const lv = posLevels(p);
-  const lines: PriceLineSpec[] = [
-    { key: 'pos:entry', price: lv.entry, color: POS_FARBEN.entry, style: 0, width: 2 },
-  ];
-  if (lv.stop !== null) lines.push({ key: 'pos:stop', price: lv.stop, color: POS_FARBEN.stop, style: 2, axisLabel: false });
-  if (lv.trail !== null) lines.push({ key: 'pos:trail', price: lv.trail, color: POS_FARBEN.trail, style: 1, axisLabel: false });
-  if (lv.target !== null) lines.push({ key: 'pos:target', price: lv.target, color: POS_FARBEN.target, style: 2, axisLabel: false });
-  return lines;
-}
-
-/**
- * Marke am Einstiegs-Bar — nur wenn der Einstieg IM Fenster liegt.
- *
- * Der Marker hängt (wie die News-Punkte) an der Kerzen-Serie und verschwindet
- * deshalb im Vektor-Look „Kerzen aus". Das ist gewollt: Dort tragen die
- * Einstiegs-Linie und der Beginn der Seit-Einstieg-Kurve dieselbe Aussage,
- * und ein Marker ohne Kerze hätte keinen Bezugspunkt.
- */
-function positionsMarker(times: Array<string | number>, sym?: string): ChartMarker | null {
-  const p = sym === undefined ? posImChart() : posFuerSymbol(sym);
-  if (!p) return null;
-  const anker = entryAnchor(times, p.openedAt);
-  // vorFenster: Der Einstieg liegt links außerhalb — ein Marker am ersten Bar
-  // würde einen Zeitpunkt behaupten, der nicht stimmt.
-  if (!anker || anker.vorFenster) return null;
-  const short = p.side === 'short';
-  return {
-    time: times[anker.index]!,
-    position: short ? 'aboveBar' : 'belowBar',
-    color: POS_FARBEN.entry,
-    shape: short ? 'arrowDown' : 'arrowUp',
-    // Ohne Preis im Text: Der steht schon auf der Preisskala, und zwei Zahlen
-    // für dieselbe Sache verdecken nur Kerzen (Owner 04.08.).
-    text: short ? 'Short' : t('sk.kauf'),
-  };
-}
-
-/** Kurslinie seit Einstieg, grün im Gewinn / rot im Verlust. */
-function positionsVerlauf(
-  times: Array<string | number>,
-  closes: number[],
-  sym?: string,
-): import('./chart.js').OverlayLine | null {
-  const p = sym === undefined ? posImChart() : posFuerSymbol(sym);
-  if (!p) return null;
-  const anker = entryAnchor(times, p.openedAt);
-  if (!anker || closes.length - anker.index < 2) return null;
-  const { pnl } = positionPnl(p, posKurs(p, closes[closes.length - 1]));
-  const punkte: Array<{ time: string | number; value: number }> = [];
-  for (let i = anker.index; i < closes.length; i++) punkte.push({ time: times[i]!, value: closes[i]! });
-  // Dünn (1 px): Die Kerzen zeigen den Verlauf, die Linie markiert nur die
-  // Strecke seit Einstieg — 2 px legten sich wie ein Balken über die Körper.
-  return { key: 'pos:seit', color: pnl >= 0 ? POS_FARBEN.gewinn : POS_FARBEN.verlust, width: 1, points: punkte };
-}
-
-/**
- * Preislinien + Chip der offenen Position (aus renderChart).
- *
- * Der Chip ist zweistufig (Owner 04.08.: „überlagert zu viel Info"): Zu sieht
- * man nur die drei Angaben, die man im Vorbeigehen braucht — Seite mit Stück
- * und das laufende Ergebnis. Ein Klick klappt Einstand, Haltedauer und die
- * Abstände zu Stop und Ziel auf. Gleiche Geste wie die OHLC-Zeile darüber,
- * gleicher Speicherort (Gerät-lokal).
- */
-function applyPosition(): void {
-  if (!st?.chart) return;
-  const p = posImChart();
-  const hud = $('posHud');
-  // Marken teilen sich den deklarativen setPriceLines-Kanal mit den
-  // Positions-Linien — EIN Aufruf trägt beide, sonst löscht der zweite den ersten.
-  const marken = markenLinien(st.shownDaily);
-  if (!p) {
-    st.chart.setPriceLines(marken);
-    hud.hidden = true;
-    return;
-  }
-  const lv = posLevels(p);
-  st.chart.setPriceLines([...positionsLinien(p), ...marken]);
-
-  const short = p.side === 'short';
-  const live = posKurs(p);
-  const { pnl, pct } = positionPnl(p, live);
-  const teile = [
-    `<b class="${short ? 'c-rd' : 'c-gn'}">${short ? 'SHORT' : 'LONG'} ${p.qty}</b>`,
-    `<b class="${pnlClass(pnl)}">${fmtPct(pct)} · ${money(pnl)}</b>`,
-  ];
-  if (st.posOpen) {
-    const tage = haltedauerTage(p.openedAt, Date.now());
-    teile.splice(1, 0, tage === 0 ? t('ap.heuteRein') : tage === 1 ? t('ap.seitEinemTag') : `${t('ap.seit')} ${tage} ${t('ap.tagen')}`);
-    teile.splice(2, 0, `${fmtNum(lv.entry)} → ${fmtNum(live)}`);
-    if (p.core === true) teile.push(`<span class="pos-tag">${t('ew.sockel')}</span>`);
-    if (lv.stop !== null) teile.push(`${t('eo.stop')} ${fmtPct(levelDistPct(lv.stop, live, 'stop', short))}`);
-    else if (lv.stopAtr) teile.push(`${t('eo.stop')} ${t('ap.adaptiv')}`);
-    if (lv.target !== null) teile.push(`${t('eo.ziel')} ${fmtPct(levelDistPct(lv.target, live, 'target', short))}`);
-    else if (lv.targetAtr) teile.push(`${t('eo.ziel')} ${t('ap.adaptiv')}`);
-  }
-  teile.push(`<span class="pos-fold">${st.posOpen ? '▾' : '▸'}</span>`);
-  hud.innerHTML = teile.join(' <span class="pos-sep">·</span> ');
-  hud.title = st.posOpen ? t('ap.einklappen') : t('ap.ausklappen');
-  hud.hidden = false;
-}
-
-/**
- * News-Overlay unterm Crosshair („den News bitte lesbar machen", Owner
- * 29.07.): Fährt/tippt man auf einen Tag mit News-Punkt, erscheinen dessen
- * Schlagzeilen als kleines Overlay — dieselbe Quelle wie die Punkte
- * (market/{sym}.news), kein Nachladen.
- *
- * Die Mechanik ist die bewährte aus der ersten News-Ära: Nur das Chart, das
- * das Overlay geöffnet hat, darf es schließen (Crosshair-SYNCS feuern auf den
- * Ziel-Charts Clear-Events — sonst löscht die Lock-Gruppe jeden Tooltip).
- * Auf Touch-Geräten verschwindet das Crosshair beim Loslassen sofort; das
- * Overlay bleibt dann 4 s stehen, damit man es lesen kann.
- */
-let evTipTimer: number | null = null;
-let evTipOwner: unknown = null;
-const COARSE_POINTER = window.matchMedia?.('(pointer: coarse)').matches ?? false;
-
-/**
- * Zeigt die Anzeige das Veto? NUR wenn der User es nicht abgeschaltet hat
- * (Optionen → „News-Veto"). Seine Engine setzt sonst gar nicht aus — ein
- * Pfeil, der ein Aussetzen behauptet, das nicht stattfindet, war der
- * Owner-Fund vom 29.07. („kann Veto nicht zurücknehmen!?").
- */
-const vetoAnzeige = (): boolean => st?.strategy.signals.newsVeto !== false;
-
-function showNewsTooltip(
-  date: string | null,
-  pos: { x: number; y: number } | null,
-  news: MarketDocData['news'],
-  owner: unknown,
-  /** Chart-Fenster des Aufrufers — Anker fürs ruhige Desktop-Docking. */
-  anker?: HTMLElement,
-): void {
-  const tip = $('evTip');
-  const day = st?.showNews && !st.cleanView
-    ? newsForDay(news, date, Math.floor(Date.now() / 1000), vetoAnzeige())
-    : null;
-  if (!day || !pos) {
-    if (owner !== evTipOwner) return; // Fremd-/Sync-Clear: Overlay bleibt
-    if (COARSE_POINTER && !tip.hidden) {
-      if (evTipTimer !== null) window.clearTimeout(evTipTimer);
-      evTipTimer = window.setTimeout(() => {
-        tip.hidden = true;
-        evTipTimer = null;
-      }, 4000);
-      return;
-    }
-    tip.hidden = true;
-    return;
-  }
-  evTipOwner = owner;
-  if (evTipTimer !== null) {
-    window.clearTimeout(evTipTimer);
-    evTipTimer = null;
-  }
-  const tone = day.sentiment > 0.12 ? 'c-gn' : day.sentiment < -0.12 ? 'c-rd' : 'c-t3';
-  tip.innerHTML = `
-    <div class="evtip-hd"><span class="mono"></span>
-      <span class="${tone}">${day.sentiment >= 0 ? '+' : ''}${day.sentiment.toFixed(2)}</span>
-      <span class="evtip-n">${day.items.length} ${t('nt.news')}</span></div>
-    ${day.veto ? `<div class="evtip-row" style="color:var(--yl,#d9a441)">⏸ ${t('nt.vetoAktiv')}</div>` : ''}
-    <div class="evtip-list"></div>`;
-  tip.querySelector('.mono')!.textContent = day.date;
-  const list = tip.querySelector('.evtip-list')!;
-  for (const t of day.items.slice(0, 4)) {
-    const row = document.createElement('div');
-    row.className = 'evtip-row';
-    row.textContent = `• ${t.title}`;
-    const src = document.createElement('span');
-    src.className = 'evtip-src';
-    src.textContent = ` — ${t.source}`;
-    row.appendChild(src);
-    list.appendChild(row);
-  }
-  // Portal an document.body (Owner-Bug 21.08.: „Position hängt an der linken
-  // Sidebar, rutscht unter die rechte"): Die Glass-Cards tragen backdrop-filter
-  // und sind damit Containing Block für position:fixed UND eigener Stacking
-  // Context. Solange die Bubble in der Chart-Karte hing, löste der Browser die
-  // Viewport-Koordinaten gegen die Karten-Box auf (Versatz = Sidebar-Breite)
-  // und sperrte z-index 200 ein (die später gemalte rechte Spalte lag drüber).
-  // Am body stimmen Bezugssystem und Stapel-Reihenfolge; nach einem Re-Mount
-  // zieht der nächste Aufruf den frischen Knoten um (unmount räumt den alten).
-  if (tip.parentElement !== document.body) document.body.appendChild(tip);
-  tip.hidden = false;
-  const w = tip.offsetWidth;
-  const h = tip.offsetHeight;
-  // Desktop (Owner-Feedback 06.08.: „Position auf großem Monitor total blöd"):
-  // Mit der Maus klebte das Overlay am Crosshair, hüpfte bei jeder Bewegung
-  // mit und lag genau über den Kerzen, die man gerade ansieht. Jetzt parkt es
-  // ruhig in der OBEREN Ecke des Chart-Fensters, die vom Crosshair WEG zeigt
-  // (Wechsel nur beim Überqueren der Fenstermitte). Rechts bleibt Platz für
-  // die Preisskala. Touch behält das bewährte Verhalten: Overlay am Finger,
-  // 4 s Lesezeit nach dem Loslassen.
-  if (!COARSE_POINTER && anker) {
-    const r = anker.getBoundingClientRect();
-    const linksParken = pos.x > (r.left + r.right) / 2;
-    const x = linksParken ? r.left + 12 : r.right - w - 78;
-    tip.style.left = `${Math.max(8, Math.min(x, window.innerWidth - w - 8))}px`;
-    tip.style.top = `${Math.max(8, Math.min(r.top + 10, window.innerHeight - h - 8))}px`;
-    return;
-  }
-  // Touch/Fallback: am Zeigepunkt — zusätzlich ins Chart-Fenster geklemmt,
-  // damit die Bubble am rechten Rand nicht über der Preisachse liegt
-  // (Owner-Screenshots 21.08., iPad ohne Sidebar).
-  const g = anker?.getBoundingClientRect();
-  const maxLinks = Math.min(g ? g.right - w - 4 : Infinity, window.innerWidth - w - 8);
-  const minLinks = g ? Math.max(g.left + 4, 8) : 8;
-  tip.style.left = `${Math.max(minLinks, Math.min(pos.x + 14, maxLinks))}px`;
-  tip.style.top = `${Math.max(8, Math.min(pos.y - h - 10, window.innerHeight - h - 8))}px`;
-}
-
-/**
- * Fokus-Netz der News-Bubble (Owner 21.08.: „werden recht lange angezeigt,
- * auch wenn sie nicht mehr im Fokus sind — bei Fokusverlust ausblenden"):
- * Die Touch-Lesezeit (4 s nach dem Loslassen) bleibt als OBERGRENZE, aber
- * jede Interaktion WOANDERS beendet die Bubble sofort — Tipp/Klick
- * außerhalb von Bubble und Charts, Seiten-Scroll, Fenster-/Tab-Wechsel.
- */
-function versteckeEvTipSofort(): void {
-  const tip = document.getElementById('evTip');
-  if (!tip || tip.hidden) return;
-  if (evTipTimer !== null) {
-    window.clearTimeout(evTipTimer);
-    evTipTimer = null;
-  }
-  tip.hidden = true;
-  evTipOwner = null;
-}
-
-function wireEvTipFokusNetz(): void {
-  document.addEventListener('pointerdown', (ev) => {
-    const ziel = ev.target as HTMLElement | null;
-    // In der Bubble selbst darf man lesen, ohne sie zu schließen.
-    if (ziel?.closest('#evTip')) return;
-    // Im Chart übernimmt das Crosshair (nächster Tag oder Clear) — als
-    // PUNKT-Treffer gegen die Chart-Rechtecke, nicht über den DOM-Pfad:
-    // über der Zeichenfläche liegen Overlay-Ebenen (HUD, Marken, Zeichnen-
-    // SVG), deren target NICHT im .tv-lightweight-charts-Teilbaum steckt.
-    const inChartFlaeche = [...document.querySelectorAll('.tv-lightweight-charts')].some((c) => {
-      const r = c.getBoundingClientRect();
-      return ev.clientX >= r.left && ev.clientX <= r.right && ev.clientY >= r.top && ev.clientY <= r.bottom;
-    });
-    if (inChartFlaeche) return;
-    versteckeEvTipSofort();
-  }, { signal: docListenerSignal() });
-  window.addEventListener('scroll', versteckeEvTipSofort, { passive: true, signal: docListenerSignal() });
-  window.addEventListener('blur', versteckeEvTipSofort, { signal: docListenerSignal() });
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') versteckeEvTipSofort();
-  }, { signal: docListenerSignal() });
-}
-
-/* ── Symbol-Steckbrief (Owner 16:5x: „welche Marken/welche Märkte, was
- *    verbirgt sich hinter dem Kürzel?") ─────────────────────────────────
- *
- * Ein kleines Portal-Kärtchen am Zeiger — Maus: kurzes Verweilen auf einer
- * Livebar-Kachel oder Signal-Zeile; Touch: langes Drücken. pointer-events:
- * none — reine Anzeige, kein zweites Bedienelement (nicht überladen). Das
- * Portal hängt an document.body, nie in einer Glass-Card (§6: backdrop-filter
- * macht die Card zum Containing Block für fixed). */
-let symTipEl: HTMLElement | null = null;
-let symTipTimer: number | null = null;
-let symTipLangdruck: number | null = null;
-let symTipStart: { x: number; y: number } | null = null;
-
-function symTip(): HTMLElement {
-  if (symTipEl) return symTipEl;
-  symTipEl = document.createElement('div');
-  symTipEl.id = 'symTip';
-  symTipEl.className = 'sym-tip';
-  symTipEl.hidden = true;
-  document.body.appendChild(symTipEl);
-  return symTipEl;
-}
-
-function versteckeSymbolTip(): void {
-  // Die Erklaer-Variante ist breiter und hoehenbegrenzt — die Klasse muss
-  // weg, sonst erbt der naechste Steckbrief ihr Layout.
-  symTipEl?.classList.remove('warum');
-  if (symTipTimer !== null) { window.clearTimeout(symTipTimer); symTipTimer = null; }
-  if (symTipLangdruck !== null) { window.clearTimeout(symTipLangdruck); symTipLangdruck = null; }
-  if (symTipEl) symTipEl.hidden = true;
-}
-
-function zeigeSymbolTip(sym: string, x: number, y: number): void {
-  const herkunft = symbolHerkunft(sym);
-  const text = steckbriefText(sym);
-  if (!herkunft && !text) return; // unbekanntes Symbol: lieber nichts als Leeres
-  const tip = symTip();
-  // Chips: Klasse immer, Gruppe nur wenn es eine gibt (frei eingegebene
-  // Symbole haben keine Katalog-Gruppe — dann bleibt der Chip weg statt leer).
-  const chips = herkunft
-    ? `<div class="sym-tip-chips"><span>${escText(herkunft.klassenLabel)}</span>`
-      + (herkunft.gruppe ? `<span>${escText(herkunft.gruppe)}</span>` : '')
-      + '</div>'
-    : '';
-  // Ehrlich statt leer (Owner 21:4x „RCON hat noch keine Symbol-Infos"):
-  // Für Symbole außerhalb des Katalogs sagt das Kärtchen genau das.
-  const koerper = text
-    ? `<div class="sym-tip-text">${escText(text)}</div>`
-    : herkunft?.ausserhalbKatalog === true
-      ? `<div class="sym-tip-text c-t3">${escText(t('steck.ohneEintrag'))}</div>`
-      : '';
-  tip.innerHTML =
-    `<div class="sym-tip-kopf">${symbolAvatar(sym, true)}<b>${escText(herkunft?.name ?? sym)}</b><span class="mono">${escText(sym)}</span></div>`
-    + chips + koerper;
-  tip.hidden = false;
-  schmueckeAvatare(); // echtes Logo statt Monogramm, sobald geladen
-  const b = tip.getBoundingClientRect();
-  tip.style.left = `${Math.min(Math.max(8, x - b.width / 2), window.innerWidth - b.width - 8)}px`;
-  tip.style.top = `${y + 14 + b.height > window.innerHeight ? Math.max(8, y - b.height - 12) : y + 14}px`;
-}
-
-/**
- * Das Erklaer-Kaertchen zur Signal-Zelle — in DASSELBE Portal wie der
- * Steckbrief (Owner-Wunsch 22.08.).
- *
- * Es rendert nur, was `signalErklaerung` aus dem Signal-Dokument nachrechnet.
- * Fehlt das Signal (Symbol nie gescannt), erscheint gar nichts statt einer
- * erfundenen Begruendung — dieselbe Regel wie beim Steckbrief.
- */
-function zeigeWarumTip(sym: string, x: number, y: number): void {
-  const daten = sigDaten.get(sym);
-  if (!daten?.sig) return;
-  const e = signalErklaerung(daten.sig, daten.ind);
-  const tip = symTip();
-  tip.classList.add('warum');
-  const punkte = e.bausteine
-    .map(
-      (b) =>
-        `<li><b>${escText(b.quelle)}</b>${b.wert ? ` ${escText(b.wert)}` : ''} — ${escText(b.stimme)}</li>`,
-    )
-    .join('');
-  tip.innerHTML =
-    `<div class="sym-tip-kopf"><b>${escText(e.kopf)}</b></div>`
-    + `<div class="sym-tip-text">${escText(e.zaehlung)}</div>`
-    + (punkte ? `<ul class="warum-liste">${punkte}</ul>` : '')
-    + e.fuss.map((f) => `<div class="sym-tip-text c-t3">${escText(f)}</div>`).join('');
-  tip.hidden = false;
-  const b = tip.getBoundingClientRect();
-  tip.style.left = `${Math.min(Math.max(8, x - b.width / 2), window.innerWidth - b.width - 8)}px`;
-  tip.style.top = `${y + 14 + b.height > window.innerHeight ? Math.max(8, y - b.height - 12) : y + 14}px`;
-}
-
-/** Kaertchen zeigen — Erklaerung oder Steckbrief, je nach Anker. */
-function zeigeTip(anker: { sym: string; warum?: boolean }, x: number, y: number): void {
-  if (anker.warum === true) zeigeWarumTip(anker.sym, x, y);
-  else zeigeSymbolTip(anker.sym, x, y);
-}
-
-/** Steckbrief-Anker unterm Zeiger — GENERISCH über das data-sym-Attribut
- *  (Owner 18:1x „überall wo symbole sind" + 21:2x „noch nicht alle!"):
- *  Jede Stelle, die ein Symbol rendert, trägt data-sym und ist damit
- *  automatisch Anker — Livebar, Signale, Markt-Übersicht, Historie,
- *  Positionen, Ranking, Chart-Köpfe (Haupt + Raster), Prognose-Labor,
- *  Trade-Journal, Abgleich, Stop-Dialog und alle Symbol-Suchlisten.
- *  Eine NEUE Symbol-Anzeige braucht nur das Attribut, keinen Selektor. */
-const SYM_TIP_ANKER = '[data-sym]';
-
-/**
- * Signal- und Indikatordaten der Auto-Signale-Karte, modulweit erreichbar.
- *
- * Die Zeilen-Map lebt in `wireWatchlist` und ist damit fuer den Tooltip
- * unerreichbar. Statt die Erklaerung in jede Zelle zu schreiben (Text in der
- * Zelle zerlegte die Sortierung, die `textContent` vergleicht), steht sie
- * hier — gefuellt an genau den beiden Stellen, an denen frische Werte
- * eintreffen.
- */
-const sigDaten = new Map<string, { ind: IndicatorRow | null; sig: SignalRow | null }>();
-
-/** Warum-Anker unterm Zeiger — die Signal-Zelle der Auto-Signale-Karte. */
-const WARUM_ANKER = '[data-warum]';
-function symTipAnker(ziel: Element | null): { sym: string; warum?: boolean } | null {
-  /* Vorrang fuer die Erklaerung (22.08.): Die Signal-Zelle liegt INNERHALB
-   * der Zeile, die schon `data-sym` traegt. Ohne diese Zeile gewaenne der
-   * Steckbrief, und der Owner-Wunsch waere unerreichbar — ein Kaertchen,
-   * das immer vom anderen verdeckt wird.
-   *
-   * Bewusst DASSELBE Element und dieselbe Geste: Zwei Kaertchen gleichzeitig
-   * sind damit strukturell unmoeglich, und das ganze Ausblende-Netz
-   * (Scroll, Fokus, Wischen, Tippen daneben) gilt geschenkt. */
-  const warumEl = ziel?.closest<HTMLElement>(WARUM_ANKER);
-  const warumSym = warumEl?.dataset.warum;
-  if (warumSym) return { sym: warumSym, warum: true };
-  const el = ziel?.closest<HTMLElement>(SYM_TIP_ANKER);
-  const sym = el?.dataset.sym;
-  // Der fokussierte Symbol-Sucher gehört dem Tippenden — kein Kärtchen über
-  // der aufklappenden Vorschlagsliste.
-  if (!sym || el === document.activeElement) return null;
-  return { sym };
-}
-
-function wireSymbolTip(): void {
-  // Maus: kurzes Verweilen zeigt, Verlassen versteckt.
-  document.addEventListener('pointerover', (ev) => {
-    if (ev.pointerType !== 'mouse') return;
-    const anker = symTipAnker(ev.target as Element | null);
-    if (!anker) return;
-    if (symTipTimer !== null) window.clearTimeout(symTipTimer);
-    const x = ev.clientX;
-    const y = ev.clientY;
-    symTipTimer = window.setTimeout(() => { symTipTimer = null; zeigeTip(anker, x, y); }, 320);
-  }, { signal: docListenerSignal() });
-  document.addEventListener('pointerout', (ev) => {
-    if (ev.pointerType !== 'mouse') return;
-    if (symTipAnker(ev.target as Element | null)) versteckeSymbolTip();
-  }, { signal: docListenerSignal() });
-  // Touch: langes Drücken zeigt; Loslassen, Wischen oder Tippen daneben versteckt.
-  document.addEventListener('pointerdown', (ev) => {
-    if (ev.pointerType === 'mouse') { if (!symTipAnker(ev.target as Element | null)) versteckeSymbolTip(); return; }
-    const anker = symTipAnker(ev.target as Element | null);
-    if (!anker) { versteckeSymbolTip(); return; }
-    symTipStart = { x: ev.clientX, y: ev.clientY };
-    const px = ev.clientX;
-    const py = ev.clientY;
-    symTipLangdruck = window.setTimeout(() => { symTipLangdruck = null; zeigeTip(anker, px, py); }, 450);
-  }, { signal: docListenerSignal() });
-  document.addEventListener('pointermove', (ev) => {
-    if (symTipLangdruck === null || symTipStart === null) return;
-    if (Math.hypot(ev.clientX - symTipStart.x, ev.clientY - symTipStart.y) > 10) {
-      window.clearTimeout(symTipLangdruck);
-      symTipLangdruck = null; // Wischen ist Scrollen, kein Nachschlagen
-    }
-  }, { signal: docListenerSignal() });
-  document.addEventListener('pointerup', () => {
-    if (symTipLangdruck !== null) { window.clearTimeout(symTipLangdruck); symTipLangdruck = null; }
-  }, { signal: docListenerSignal() });
-  // Fokus schlägt Hover: Der Klick-Anflug auf den Symbol-Sucher startet den
-  // 320-ms-Timer noch UNfokussiert — beim Fokus räumt focusin Timer + Kärtchen
-  // ab, sonst ploppt es über der Vorschlagsliste auf.
-  document.addEventListener('focusin', (ev) => {
-    if ((ev.target as Element | null)?.closest?.(SYM_TIP_ANKER)) versteckeSymbolTip();
-  }, { signal: docListenerSignal() });
-  window.addEventListener('scroll', versteckeSymbolTip, { passive: true, signal: docListenerSignal() });
-}
-
-/**
- * Prognose-Overlay + Badge anwenden — Tages-Prognose in der Tages-Ansicht,
- * Kurzfrist-Prognose (nächste Stunde, 5-min-Raster) in der Intraday-Ansicht.
- */
-function applyForecast(): void {
-  if (!st?.chart) return;
-  const intraday = st.intradayDays > 0;
-  const fc = st.forecast;
-  const ifc = st.forecastIntraday;
-  const info = $('fcInfo');
-  if (!st.showForecast || st.cleanView) {
-    st.chart.setForecast(null);
-    info.textContent = (intraday ? ifc : fc) && !st.cleanView ? t('px.layerAusgeblendet') : '';
-    return;
-  }
-  if (intraday) {
-    // Nur Punkte NACH dem letzten gezeigten Bar zeichnen (nach Session-Ende
-    // wäre eine alte Projektion mitten im Chart irreführend).
-    const lastBar = st.shownIntraday[st.shownIntraday.length - 1];
-    const pts = ifc && lastBar ? ifc.points.filter((p) => p.t > lastBar.time) : [];
-    if (!ifc || !lastBar || pts.length === 0) {
-      st.chart.setForecast(null);
-      info.textContent = '';
-      return;
-    }
-    st.chart.setForecast(
-      {
-        points: pts.map((p) => ({ time: p.t, value: p.value })),
-        band: ifc.band.filter((b) => b.t > lastBar.time).map((b) => ({ time: b.t, upper: b.upper, lower: b.lower })),
-      },
-      { time: lastBar.time, value: lastBar.close },
-    );
-    const dirI = ifc.predictedPct >= 0 ? '↑' : '↓';
-    const calI = ifc.calib ? `, ${t('af.bandKalibriert')} (n=${ifc.calib.n})` : ', Band = ±1σ';
-    info.textContent =
-      `${t('af.kurzfrist')} ${dirI} ${ifc.predictedPct >= 0 ? '+' : ''}${ifc.predictedPct.toFixed(2)} % ` +
-      `${t('af.naechsteStunde')} (Lookback ${ifc.lookback} Bars${calI})`;
-    return;
-  }
-  // Wochen-/Monatskerzen: Die 5-Tage-Prognose lebt UNTER der Kerzenauflösung
-  // — ihre Tages-Zukunftspunkte würden nur die Zeitachse verwässern.
-  if (st.dailyAgg > 0) {
-    st.chart.setForecast(null);
-    info.textContent = fc ? t('af.nurTagesSicht') : '';
-    return;
-  }
-  if (!fc || fc.points.length === 0) {
-    st.chart.setForecast(null);
-    info.textContent = '';
-    return;
-  }
-  // Anker = letzte GEZEIGTE Kerze (nicht st.bars: die Scan-Bars können hinter
-  // der Katalog-Historie zurückliegen — die Linie dockte dann mitten im Chart
-  // an). Und nur Punkte NACH dem Anker zeichnen — dieselbe Regel wie im
-  // Intraday-Zweig oben. Ein VERALTETER Forecast (Basis älter als die jüngste
-  // Kerze; Symbole außerhalb der Scan-Rotation, Owner 21.08. „Sektor-ETFs")
-  // machte die Anker-Serie sonst nicht-aufsteigend → LWC-Wurf → der Render-
-  // Abbruch ließ Overlays und Skala auf dem Vorgänger-Symbol stehen.
-  const last = st.shownDaily[st.shownDaily.length - 1];
-  const zukunft = last ? fc.points.filter((p) => p.time > last.date) : fc.points;
-  if (last && zukunft.length === 0) {
-    st.chart.setForecast(null);
-    info.textContent = t('af.veraltet');
-    return;
-  }
-  st.chart.setForecast(
-    { points: zukunft, band: last ? fc.band.filter((b) => b.time > last.date) : fc.band },
-    last ? { time: last.date, value: last.close } : undefined,
-  );
-  const dir = fc.predictedPct >= 0 ? '↑' : '↓';
-  const cal = fc.calib
-    ? `${t('af.bandKalibriert')} (n=${fc.calib.n}, MAE ${fc.calib.maePct.toFixed(2)} %)`
-    : t('af.bandSigma');
-  info.textContent =
-    `${t('chart.lblPrognose')} ${dir} ${fc.predictedPct >= 0 ? '+' : ''}${fc.predictedPct.toFixed(2)} % ` +
-    `${t('af.ueber')} ${zukunft.length} ${t('af.handelstage')} (Lookback ${fc.lookback}, ${cal})`;
-}
-
-/** Prognose-Labor: Kombi-Statistik (Tages- ODER Intraday-Pfad) rendern. */
-function renderFcLabStats(hostId: string, stats: ForecastStatsDoc | null): void {
-  const host = $(hostId);
-  const rows = Object.entries(stats?.combos ?? {})
-    .map(([key, c]) => {
-      // Schlüssel ist der Lookback. Altbestand im Format "w_lookback" fällt
-      // durch die Prüfung und wird nicht angezeigt — eine Zeile mit
-      // erfundener Zahl wäre schlimmer als eine fehlende.
-      const lb = Number(key);
-      return {
-        lb: Number.isFinite(lb) && lb > 0 ? lb : null,
-        n: c.n,
-        hit: c.n > 0 ? (c.hits / c.n) * 100 : 0,
-        mae: c.n > 0 ? c.maeSum / c.n : 0,
-      };
-    })
-    .filter((r): r is { lb: number; n: number; hit: number; mae: number } => r.lb !== null)
-    .sort((a, b) => b.hit - a.hit || a.mae - b.mae);
-  if (rows.length === 0) {
-    host.innerHTML =
-      `<div class="hint">${t('fl.nochKeine')}</div>`;
-    return;
-  }
-  const best = stats?.best;
-  host.innerHTML =
-    `<div class="fl-row fl-head"><span>Lookback</span><span>n</span><span>${t('fl.treffer')}</span><span>MAE</span></div>` +
-    rows
-      .map((r) => {
-        const isBest = best !== undefined && best.lookback === r.lb;
-        return (
-          `<div class="fl-row${isBest ? ' fl-best' : ''}"${isBest ? ` title="${t('fl.besterLookback')}"` : ''}>` +
-          `<span>${r.lb}</span><span>${r.n}</span>` +
-          `<span class="${r.hit >= 50 ? 'c-gn' : 'c-rd'}">${r.hit.toFixed(0)} %</span>` +
-          `<span>${r.mae.toFixed(2)} %</span></div>`
-        );
-      })
-      .join('');
-}
-
-/** Prognose-Labor: bewertete Prognosen (Vorhersage vs. Realität) des Chart-Symbols. */
-function renderFcLabRows(rows: EvaluatedForecastRow[]): void {
-  const host = $('flRows');
-  const done = rows.filter((r) => r.evaluated && r.evaluatedAt);
-  if (done.length === 0) {
-    host.innerHTML = `<div class="hint">${t('fl.nochKeineSymbol')}</div>`;
-    return;
-  }
-  host.innerHTML =
-    `<div class="fl-row fl-head"><span>${t('fl.basis')}</span><span>Lookback</span><span>${t('chart.lblPrognose')}</span><span>${t('fl.richtung')}</span><span>MAE</span></div>` +
-    done
-      .map((r) => {
-        const hit = r.dirHit === true;
-        return (
-          '<div class="fl-row">' +
-          `<span>${String(r.baseDate).slice(0, 10)}</span><span>${Number(r.lookback)}</span>` +
-          `<span>${r.predictedPct >= 0 ? '+' : ''}${Number(r.predictedPct).toFixed(2)} %</span>` +
-          `<span class="${hit ? 'c-gn' : 'c-rd'}">${hit ? '✓ getroffen' : '✗ daneben'}</span>` +
-          `<span>${Number(r.maePct ?? 0).toFixed(2)} %</span></div>`
-        );
-      })
-      .join('');
-}
-
-// Zeit-Domäne des letzten renderChart-Laufs (Intraday vs. Tages-Sicht) —
-// steuert das Räumen des Prognose-Overlays beim Moduswechsel.
-let lastRenderIntraday: boolean | null = null;
-
-// Schneller Symbolwechsel startet rebuildChart nebenläufig — die Epoche
-// sorgt dafür, dass nur der JÜNGSTE Aufbau gewinnt und Callbacks nie auf
-// einem bereits zerstörten Chart arbeiten („Object is disposed").
-let chartEpoch = 0;
-
-async function rebuildChart(): Promise<void> {
-  if (!st) return;
-  const epoch = ++chartEpoch;
-  st.chart?.destroy();
-  st.chart = null; // Snapshots während des Aufbaus laufen ins Leere statt auf ein totes Handle
-  const handle = await buildPriceChart($('chartArea'), st.currentSymbol);
-  if (!st || epoch !== chartEpoch) {
-    handle?.destroy();
-    return;
-  }
-  st.chart = handle;
-  st.chartFitPending = true;
-  if (st.intradayDays > 0) void loadIntradayView();
-  // Zeichenwerkzeuge: eigener Klick-Abonnent (subscribeClick trägt mehrere).
-  // Der Zeitanker kommt vom Crosshair — der Klick selbst liefert nur den Preis.
-  st.chart?.onCrosshairDate((date) => {
-    zeichnenTag = date;
-  });
-  st.chart?.onClick((price) => {
-    if (!st || !zeichnenTool || price === null) return;
-    if (zeichnenTool === 'hline') {
-      (alleZeichnungen()[st.currentSymbol] ??= []).push({ art: 'hline', preis: price });
-      speichereZeichnungen();
-      zeichnenTool = null;
-      syncDrawButtons();
-      renderZeichnungen();
-      return;
-    }
-    if (!zeichnenTag) return; // ohne Tages-Anker kein Punkt (z. B. Intraday)
-    const punkt: ZeichnungsPunkt = { date: zeichnenTag, preis: price };
-    if (!zeichnenStart) {
-      zeichnenStart = punkt;
-      renderZeichnungen();
-      return;
-    }
-    (alleZeichnungen()[st.currentSymbol] ??= []).push({ art: zeichnenTool, a: zeichnenStart, b: punkt });
-    speichereZeichnungen();
-    zeichnenStart = null;
-    zeichnenTool = null;
-    syncDrawButtons();
-    renderZeichnungen();
-  });
-  st.chart?.onClick((price) => {
-    if (!st?.predMode || price === null) return;
-    st.predMode = false;
-    $('predBtn').classList.remove('on');
-    openPredPop(price);
-  });
-  st.chart?.onVisibleRangeChange(() => drawPredictionArrow());
-  // „Jetzt ⇥"-Chip (User-Screenshot 26.07.): erscheint, sobald der jüngste
-  // Bar rechts AUSSERHALB des Fensters liegt — ein Klick springt animiert
-  // zurück in die Gegenwart (TradingView-Komfort; position:absolute im
-  // chartWrap, NICHT fixed — backdrop-filter-Falle, CLAUDE.md §6).
-  st.chart?.onVisibleRangeChange((range) => {
-    if (!st) return;
-    const len = st.intradayDays > 0 ? st.shownIntraday.length : st.shownDaily.length;
-    $('jumpNow').hidden = !(range && len > 0 && range.to < len - 1.5);
-  });
-  st.chart?.onCrosshairDate((date) => {
-    if (st?.mainLocked && st.chart) syncLockedCrosshair(st.chart, date);
-  });
-  // EIN konsolidierter Range-Sync (Unterpanels + Vergleich + Lock-Gruppe):
-  // genau EIN matchEcho pro Event — mehrere Handler würden sich den Ring-
-  // Eintrag gegenseitig wegkonsumieren. Nachbarn folgen auch Echos (sonst
-  // hängen sie, wenn Vergleich/Lock-Panel das Haupt-Chart treibt), aber nie
-  // zurück zum Verursacher — dessen Trägheits-Glide liefe sonst gegen die
-  // eigene, einen Frame alte Range (Smartphone-Kinetik 26.07.).
-  st.chart?.onVisibleRangeChange((range) => {
-    if (!range || !st?.chart) return;
-    const echo = matchEcho(st.chart, range);
-    const origin = echo ? echo.origin : st.chart;
-    pushRange(st.subCharts.rsi, range, origin);
-    pushRange(st.subCharts.macd, range, origin);
-    // Vergleichs-Chart: anderes Symbol, andere Historienlänge → zeitbasiert
-    pushZeitUebersetzt(st.chart2, st.chart, range, origin);
-    if (st.mainLocked) syncLockedRange(st.chart, range, origin);
-  });
-  // Auto-Auflösung + nahtlose Historie: sichtbare Spanne beobachten (debounced)
-  st.chart?.onVisibleRangeChange((range) => {
-    if (autoResTimer !== null) window.clearTimeout(autoResTimer);
-    // Vorausschauend nachladen (Owner 06.08.: „früher nachladen, nicht erst
-    // wenn man an den Rand kommt"): Schwelle = das Puffer-Soll von
-    // pufferBedarf (~3 Bildschirmbreiten) — die Kette in loadOlderDaily/
-    // loadOlderIntraday füllt dann in einem Zug bis zum Soll auf.
-    const nearLeftEdge = range !== null && range.from < pufferBedarf(range);
-    autoResTimer = window.setTimeout(() => {
-      autoResTimer = null;
-      maybeAutoSwitch();
-      // Links am Datenrand? Ältere Chunks nahtlos nachladen — Jahres-Chunks
-      // in der Tages-Sicht, 5m-Chunks in der Intraday-Sicht (Kontinuum 06.08.).
-      if (nearLeftEdge && st) {
-        if (st.intradayDays === 0 && (st.autoRes || st.range === 0)) void loadOlderDaily();
-        else if (st.intradayDays > 0) {
-          // 5m-Daten existieren erst seit Ende Juli (Yahoo liefert rückwirkend
-          // nur ~5 Handelstage; die Chunks wachsen seither täglich). Ist ihr
-          // Anfang erreicht UND zieht der User wirklich an der harten Kante,
-          // geht es nahtlos in Tageskerzen weiter — dort trägt die volle
-          // Historie (Owner-Fund 07.08.: „bei 1W oder 1T funktioniert es
-          // nicht, dass die vorhergehenden Zeiträume geladen werden").
-          if (st.intradayHistDone && range !== null && range.from < 4) void intradayZuDaily();
-          else void loadOlderIntraday();
-        }
-      }
-    }, 300);
-  });
-  st.chart?.setYMode(st.yMode);
-  // Eine Y-Achsen-Geste in auto/frei übernimmt die Kontrolle (→ fix, 07.08.):
-  // Zustand, Knopf und gemerkte Wahl ziehen mit, sonst löge die Oberfläche.
-  st.chart?.onYModeChange((m) => {
-    if (!st) return;
-    st.yMode = m;
-    localStorage.setItem('autotrd-chart-ymode', m);
-    malYModusKnopf?.();
-  });
-  // Beim Chart-Neuaufbau (Symbol-/Theme-Wechsel) Panels frisch mitziehen
-  for (const kind of ['rsi', 'macd'] as const) {
-    subEpochs[kind]++;
-    st.subCharts[kind]?.destroy();
-    st.subCharts[kind] = null;
-  }
-  void loadPredictionForSymbol();
-  st.chart?.onCrosshairDate((date, pos) => {
-    showNewsTooltip(date, pos, st?.news ?? null, 'main', $('chartArea'));
-    if (!crosshairSyncing && st?.chart2) {
-      crosshairSyncing = true;
-      st.chart2.setCrosshair(date);
-      crosshairSyncing = false;
-    }
-  });
-  // In-Chart-HUD (TV-Stil): OHLC des Bars unterm Crosshair, sonst letzter Bar
-  st.chart?.onCrosshairData((d) => renderOhlcHud(d));
-  // (Vergleichs-Chart folgt über den konsolidierten Sync-Handler oben)
-  renderChart();
-  applyMarkers();
-}
-
-/** Tooltip-Details zum Event-Tag unter dem Crosshair (M6b). */
-/**
- * Die Symbole, die angezeigt werden — dieselben, die die Engine handelt.
- *
- * Vor dem ersten Scan (frisches Projekt, Heartbeat noch leer) fällt die
- * Anzeige auf die Default-Liste zurück. Eine leere Livebar wäre kein
- * ehrlicherer Zustand, sondern nur ein ratloser.
- */
-function watchedSymbols(): string[] {
-  const w = st?.watched ?? [];
-  return w.length > 0 ? w : [...DEFAULT_STRATEGY.watchlist];
-}
-
-/**
- * Der Hinweistext unter „Beobachtet".
- *
- * Bis 28.07. stand hier eine feste Behauptung („Spitze des täglichen
- * Rankings über alle 166 Katalog-Symbole"), und darunter eine kurze Liste —
- * was der Owner zu Recht als Widerspruch las: „kann das tool nicht alles
- * immer parallel beobachten?" Konnte es damals nicht, und der Text verschwieg
- * das. Jetzt kommen beide Zahlen aus dem letzten Scan selbst: Kurse für den
- * ganzen offenen Katalog, tiefe Analyse für die Rangliste.
- */
-function renderWatchHint(): void {
-  const el = document.getElementById('wlHint');
-  if (!el || !st) return;
-  const tief = watchedSymbols().length;
-  el.textContent =
-    st.catalogQuotes > 0
-      ? `${st.catalogQuotes} ${t('wh.vonOffenen')} ${st.catalogOpen} ${t('wh.bekurstA')} ${tief} ${t('wh.bekurstB')}`
-      : `${tief} ${t('wh.tiefAnalysiert')}`;
-}
-
-function wireWatchlist(): void {
-  if (!st) return;
-  clearSubs(st.watchlistSubs);
-  const wl = watchedSymbols();
-
-  // Livebar
-  const bar = $('liveBar');
-  bar.innerHTML = '';
-  const priceEls = new Map<string, { pr: HTMLElement; ch: HTMLElement; item: HTMLElement }>();
-  for (const sym of wl) {
-    const item = document.createElement('div');
-    item.className = 'lb-item' + (sym === st.currentSymbol ? ' on' : '');
-    item.dataset.sym = sym; // Anker für den Symbol-Steckbrief (16:5x)
-    item.innerHTML = '<div class="lb-sym"></div><div class="lb-pr">--</div><div class="lb-ch"></div>';
-    const lbSym = item.querySelector('.lb-sym')!;
-    lbSym.innerHTML = symbolAvatar(sym, true);
-    lbSym.appendChild(document.createTextNode(sym));
-    item.addEventListener('click', () => selectSymbol(sym));
-    bar.appendChild(item);
-    priceEls.set(sym, {
-      pr: item.querySelector('.lb-pr')!,
-      ch: item.querySelector('.lb-ch')!,
-      item,
-    });
-  }
-
-  // Signal-Tabelle
-  const body = $('sigBody') as HTMLTableSectionElement;
-  body.innerHTML = '';
-  /* Alter Stand muss weg: Eine Watchlist-Aenderung laesst sonst Erklaerungen
-   * zu Symbolen stehen, die gar nicht mehr in der Karte sind. */
-  sigDaten.clear();
-  const rows = new Map<string, { ind: IndicatorRow | null; sig: SignalRow | null; tr: HTMLTableRowElement }>();
-  for (const sym of wl) {
-    const tr = document.createElement('tr');
-    tr.dataset.sym = sym; // Anker für den Symbol-Steckbrief (16:5x)
-    // data-th spiegelt die Kopfzeile: unter 480px stapelt das Karten-Layout
-    // die Zellen als Label:Wert-Paare und zieht die Labels aus dem Attribut.
-    tr.innerHTML = `<td class="mono" style="color:var(--t1);font-weight:700"></td>
-      <td data-th="RSI">--</td><td data-th="MACD">--</td><td data-th="BB %">--</td>
-      <td data-th="${t('tab.konfluenz')}">--</td><td data-th="Signal">--</td>`;
-    const sigSym = tr.querySelector('td')!;
-    sigSym.innerHTML = symbolAvatar(sym, true);
-    sigSym.appendChild(document.createTextNode(sym));
-    tr.style.cursor = 'pointer';
-    /* Der Zeilen-Klick waehlt das Symbol — die Signal-Zelle nicht (22.08.).
-     * Auf dem Handy ist der Longpress dort die einzige Geste; ohne diese
-     * Ausnahme schaltete jedes Nachlesen zusaetzlich das Haupt-Chart um. */
-    tr.addEventListener('click', (ev) => {
-      if ((ev.target as Element | null)?.closest?.(WARUM_ANKER)) return;
-      selectSymbol(sym);
-    });
-    body.appendChild(tr);
-    rows.set(sym, { ind: null, sig: null, tr });
-  }
-  const paintRow = (sym: string): void => {
-    const r = rows.get(sym);
-    if (!r) return;
-    const tds = r.tr.querySelectorAll('td');
-    tds[1]!.textContent = r.ind?.rsi != null ? r.ind.rsi.toFixed(1) : '--';
-    tds[2]!.textContent = r.ind?.macd ? r.ind.macd.line.toFixed(2) : '--';
-    tds[3]!.textContent = r.ind?.bollinger ? r.ind.bollinger.pctB.toFixed(0) : '--';
-    if (r.sig) {
-      tds[4]!.textContent = `${r.sig.buyVotes}▲ ${r.sig.sellVotes}▼ / ${r.sig.requiredConfluence}`;
-      const dir = r.sig.direction;
-      /* `data-warum` traegt das Symbol und macht die Zelle zum Anker der
-       * Erklaerung (22.08.). Das Attribut sitzt am SPAN, nicht am <td>:
-       * `sortiereSigZeilen` vergleicht `cells[idx].textContent`, und der
-       * Zellinhalt bleibt damit exakt „BUY"/„SELL"/„HOLD". */
-      versteckeSymbolTip(); // altes Kaertchen darf keine neue Zeile ueberleben
-      tds[5]!.innerHTML = `<span class="stag t-${dir}" data-warum="${sym}">${dir.toUpperCase()}</span>`;
-    }
-    // Aktive Sortierung hält Schritt mit frischen Scan-Werten (billig, ~12 Zeilen).
-    sortiereSigZeilen();
-  };
-
-  for (const sym of wl) {
-    st.watchlistSubs.push(
-      watchMarketDoc(sym, (d) => {
-        const e = priceEls.get(sym);
-        if (!e) return;
-        if (d?.quote) {
-          e.pr.textContent = fmtNum(d.quote.price);
-          e.ch.textContent = fmtPct(d.quote.changePct);
-          e.ch.className = `lb-ch ${pnlClass(d.quote.changePct)}`;
-        }
-      }),
-      watchLatestIndicators(sym, (ind) => {
-        const r = rows.get(sym);
-        if (!r) return;
-        r.ind = ind;
-        sigDaten.set(sym, { ind, sig: r.sig });
-        paintRow(sym);
-      }),
-      watchLatestSignal(sym, (sig) => {
-        const r = rows.get(sym);
-        if (!r) return;
-        r.sig = sig;
-        sigDaten.set(sym, { ind: r.ind, sig });
-        paintRow(sym);
-      }),
-    );
-  }
-
-  renderStrategyChips();
-  wireHistorie();
-  schmueckeAvatare();
-  sortiereSigZeilen(); // frisch gebaute Zeilen in die gemerkte Ordnung bringen
-}
-
-/* ── Spalten-Sortierung (Owner 21.08., 16:0x: „bei solchen Tabellen soll man
- *    nach Spalten-Titeln sortieren können … auf/abwärts je Klick") ─────────
- *
- * Sitzungszustand, bewusst nicht persistiert: Eine Sortierung ist ein
- * Arbeitsgriff, keine Einstellung. Auto-Signale sortieren die DOM-Zeilen
- * (die Werte leben in den Zellen und werden von paintRow in-place
- * aktualisiert); die Trade-Historie sortiert die DATEN vor dem Rendern —
- * ihre Zeit-Spalte („20.08., 15:39") wäre als Text lexikalisch falsch. */
-type SortRichtung = 'auf' | 'ab';
-const sortZustand: { sig: { idx: number; dir: SortRichtung } | null; jn: { idx: number; dir: SortRichtung } | null } =
-  { sig: null, jn: null };
-
-/** Platzhalter-Zellen („--", „—", leer) sortieren IMMER ans Ende. */
-const zelleLeer = (s: string): boolean => s === '' || s === '--' || s === '—';
-
-/** Führende Zahl eines Zellentexts („$-922.99" → −922.99, „0▲ 1▼ / 2" → 0);
- *  reiner Text (Ticker, HOLD/BUY/SELL) ⇒ null → Wort-Vergleich. */
-function zellZahl(text: string): number | null {
-  const m = /-?\d+(?:\.\d+)?/.exec(text.replace(/[$,%\s]/g, ''));
-  return m ? Number(m[0]) : null;
-}
-
-/** Auto-Signale: DOM-Zeilen nach der gewählten Spalte umsortieren. */
-function sortiereSigZeilen(): void {
-  const s = sortZustand.sig;
-  if (!s) return;
-  const body = $('sigBody') as HTMLTableSectionElement;
-  const dir = s.dir === 'auf' ? 1 : -1;
-  [...body.rows]
-    .filter((r) => r.cells.length > 1)
-    .map((r, i) => ({ r, i, text: r.cells[s.idx]?.textContent?.trim() ?? '' }))
-    .sort((a, b) => {
-      if (zelleLeer(a.text) && zelleLeer(b.text)) return a.i - b.i;
-      if (zelleLeer(a.text)) return 1;
-      if (zelleLeer(b.text)) return -1;
-      const za = zellZahl(a.text);
-      const zb = zellZahl(b.text);
-      if (za !== null && zb !== null) return (za - zb) * dir || a.i - b.i;
-      return a.text.localeCompare(b.text) * dir || a.i - b.i;
-    })
-    .forEach(({ r }) => body.appendChild(r));
-}
-
-/** Spalten-Köpfe einer Tabelle klickbar machen — Pfeil + aria-sort inklusive. */
-function wireSortKopf(bodyId: string, key: 'sig' | 'jn', anwenden: () => void): void {
-  const kopf = ($(bodyId).closest('table') as HTMLTableElement | null)?.tHead?.rows[0];
-  if (!kopf || kopf.dataset.wired === '1') return;
-  kopf.dataset.wired = '1';
-  [...kopf.cells].forEach((th, idx) => {
-    th.classList.add('sortierbar');
-    th.title = t('tab.sortierenTitel');
-    th.addEventListener('click', () => {
-      const alt = sortZustand[key];
-      sortZustand[key] = alt?.idx === idx ? { idx, dir: alt.dir === 'auf' ? 'ab' : 'auf' } : { idx, dir: 'auf' };
-      const neu = sortZustand[key]!;
-      [...kopf.cells].forEach((h, i) => {
-        h.classList.toggle('sort-auf', i === idx && neu.dir === 'auf');
-        h.classList.toggle('sort-ab', i === idx && neu.dir === 'ab');
-        if (i === idx) h.setAttribute('aria-sort', neu.dir === 'auf' ? 'ascending' : 'descending');
-        else h.removeAttribute('aria-sort');
-      });
-      anwenden();
-    });
-  });
-}
-
-/**
- * Historie-Bedienung: Nachladen und die zwei Anzeigefilter.
- *
- * Idempotent über ein Daten-Attribut — `wireWatchlist` läuft bei jeder
- * Änderung der beobachteten Symbole erneut, und ein zweiter Listener auf
- * demselben Knopf würde jede Seite doppelt laden.
- */
-function wireHistorie(): void {
-  wireSortKopf('sigBody', 'sig', sortiereSigZeilen);
-  wireSortKopf('jBody', 'jn', renderJournal);
-  const mehr = $('jMore');
-  if (mehr && mehr.dataset.wired !== '1') {
-    mehr.dataset.wired = '1';
-    mehr.addEventListener('click', () => void ladeAeltereTrades());
-  }
-  const auf = $('anOpen');
-  if (auf && auf.dataset.wired !== '1') {
-    auf.dataset.wired = '1';
-    auf.addEventListener('click', () => {
-      renderAnalytics(); // frisch rechnen, nicht den Stand vom letzten Öffnen zeigen
-      renderSeitenAuswahl();
-      renderSharePreview();
-      $('anModal').classList.add('show');
-    });
-  }
-  for (const id of ['jFilter', 'jSide']) {
-    const el = $(id);
-    if (!el || el.dataset.wired === '1') continue;
-    el.dataset.wired = '1';
-    el.addEventListener('input', renderJournal);
-  }
-}
-
-/* ── Vergleichs-Chart (M9 Chart-Stack) ──────────────────────────────── */
-
-// Schutz gegen Sync-Echos — frame-sicher (Smartphone-Kinetik 26.07.):
-// setVisibleRange stoppt in LWC JEDE laufende Trägheits-Animation (applyRange
-// → stopTimeScaleAnimation), und Range-Events feuern ASYNCHRON im nächsten
-// Frame. Ein synchroner Boolean lässt Echos deshalb durch: Haupt-Chart
-// gleitet → Sync schiebt die Range in Unterpanel/Vergleich → deren Echo
-// prallt einen Frame später zurück und würgt das Touch-/Maus-Momentum ab.
-// Stattdessen merkt sich jedes Ziel die zuletzt programmatisch gesetzten
-// Ranges (Ring); meldet es exakt so eine Range zurück, ist es ein Echo und
-// wird nicht weitergereicht — das Original-Chart gleitet ungestört weiter.
-// Jeder Ring-Eintrag trägt den VERURSACHER (origin) mit: Beim Weiterreichen
-// eines Echos wird nie zurück zum Verursacher gepusht — dessen Glide-Animation
-// bliebe sonst am eigenen, einen Frame alten Range-Stand hängen.
-interface RangeTarget {
-  setVisibleRange(r: { from: number; to: number }): void;
-}
-type AppliedRange = { from: number; to: number; origin: RangeTarget | null };
-const appliedRanges = new WeakMap<RangeTarget, AppliedRange[]>();
-
-function pushRange(
-  target: RangeTarget | null | undefined,
-  range: { from: number; to: number },
-  origin: RangeTarget | null = null,
-): void {
-  if (!target || target === origin) return;
-  const ring = appliedRanges.get(target) ?? [];
-  ring.push({ from: range.from, to: range.to, origin });
-  if (ring.length > 6) ring.shift();
-  appliedRanges.set(target, ring);
-  target.setVisibleRange(range);
-}
-
-/** Ist `range` das Echo eines eigenen pushRange? Liefert den Eintrag (mit
- *  Verursacher) und konsumiert ihn — sonst null. */
-function matchEcho(target: RangeTarget, range: { from: number; to: number }): AppliedRange | null {
-  const ring = appliedRanges.get(target);
-  if (!ring) return null;
-  const i = ring.findIndex((e) => Math.abs(e.from - range.from) < 1e-4 && Math.abs(e.to - range.to) < 1e-4);
-  if (i < 0) return null;
-  const hit = ring[i]!;
-  ring.splice(0, i + 1); // konsumieren — ältere Einträge sind damit erledigt
-  return hit;
-}
-
-/**
- * Katalog-Symbolauswahl (Owner 07.08.: „im Grid View bitte dieselbe
- * Symbol-Auswahl wie beim manuellen Trade") — hängt die vertraute
- * Suchen-Liste (Name ODER Symbol, Klick/Enter übernimmt) an ein beliebiges
- * Eingabefeld. `halter` braucht position:relative; die Liste nutzt dieselbe
- * .mt-list-Optik wie das Trade-Fenster.
- */
-function wireSymbolAuswahl(
-  inp: HTMLInputElement,
-  halter: HTMLElement,
-  onSelect: (sym: string) => void,
-): void {
-  const list = document.createElement('div');
-  list.className = 'mt-list';
-  list.hidden = true;
-  halter.appendChild(list);
-  const nimm = (sym: string): void => {
-    list.hidden = true;
-    inp.value = sym;
-    inp.dataset.sym = sym; // Anker für den Symbol-Steckbrief (21:2x)
-    onSelect(sym);
-  };
-  if (inp.value) inp.dataset.sym = inp.value; // Start-Symbol sofort ankerbar
-  const zeige = (filter: string): void => {
-    const f = filter.trim().toLowerCase();
-    const all = paletteSymbols();
-    const hits = (f
-      ? all.filter((s) => s.symbol.toLowerCase().includes(f) || s.name.toLowerCase().includes(f))
-      : all
-    ).slice(0, 12);
-    list.innerHTML = hits
-      .map((s) => `<button type="button" data-sym="${s.symbol}"><b class="mono">${s.symbol}</b> — ${s.name}</button>`)
-      .join('');
-    list.hidden = hits.length === 0;
-    list.querySelectorAll<HTMLButtonElement>('[data-sym]').forEach((b) =>
-      b.addEventListener('click', () => nimm(b.dataset['sym']!)),
-    );
-  };
-  inp.addEventListener('input', () => zeige(inp.value));
-  inp.addEventListener('focus', () => zeige(inp.value));
-  inp.addEventListener('keydown', (ev) => {
-    if ((ev as KeyboardEvent).key === 'Enter') {
-      const erster = list.hidden ? null : list.querySelector<HTMLButtonElement>('[data-sym]');
-      const getippt = inp.value.trim().toUpperCase();
-      if (erster) nimm(erster.dataset['sym']!);
-      else if (getippt) nimm(getippt);
-    }
-    if ((ev as KeyboardEvent).key === 'Escape') list.hidden = true;
-  });
-  // blur mit Nachlauf, damit der Klick auf einen Listeneintrag noch zieht
-  inp.addEventListener('blur', () => window.setTimeout(() => { list.hidden = true; }, 180));
-}
-
-/** Bar-Quelle eines Preis-Chart-Handles (Haupt, Raster-Panel oder Vergleich). */
-function handleQuelle(h: PriceChartHandle): Array<{ time: number } | { date: string }> | null {
-  if (!st) return null;
-  if (h === st.chart) return currentSource();
-  if (h === st.chart2P.chart) return panelSource(st.chart2P);
-  const p = st.gridPanels.find((x) => x.chart === h);
-  return p ? panelSource(p) : null;
-}
-
-/** Typischer Bar-Abstand einer Quelle (letzte zwei Bars; Fallback 1 Tag). */
-function typischerTakt(bars: ReadonlyArray<{ time: number } | { date: string }>): number {
-  const n = bars.length;
-  const d = n >= 2 ? barTimeMs(bars[n - 1]!) - barTimeMs(bars[n - 2]!) : 86_400_000;
-  return d > 0 ? d : 86_400_000;
-}
-
-/** Zeit (ms) an einem FRAKTIONALEN Bar-Index — über die Kanten extrapoliert. */
-function zeitBeiIndex(
-  bars: ReadonlyArray<{ time: number } | { date: string }>,
-  idx: number,
-): number {
-  const n = bars.length;
-  const takt = typischerTakt(bars);
-  if (idx <= 0) return barTimeMs(bars[0]!) + idx * takt;
-  if (idx >= n - 1) return barTimeMs(bars[n - 1]!) + (idx - (n - 1)) * takt;
-  const i = Math.floor(idx);
-  const t0 = barTimeMs(bars[i]!);
-  const t1 = barTimeMs(bars[i + 1]!);
-  return t0 + (idx - i) * (t1 - t0);
-}
-
-/** Fraktionaler Bar-Index zu einer Zeit — über die Kanten extrapoliert. */
-function indexBeiZeit(
-  bars: ReadonlyArray<{ time: number } | { date: string }>,
-  t: number,
-): number {
-  const n = bars.length;
-  const takt = typischerTakt(bars);
-  const first = barTimeMs(bars[0]!);
-  const last = barTimeMs(bars[n - 1]!);
-  if (t <= first) return (t - first) / takt;
-  if (t >= last) return n - 1 + (t - last) / takt;
-  let lo = 0;
-  let hi = n - 1;
-  while (hi - lo > 1) {
-    const m = (lo + hi) >> 1;
-    if (barTimeMs(bars[m]!) <= t) lo = m;
-    else hi = m;
-  }
-  const t0 = barTimeMs(bars[lo]!);
-  const t1 = barTimeMs(bars[hi]!);
-  return t1 > t0 ? lo + (t - t0) / (t1 - t0) : lo;
-}
-
-/**
- * Sichtfenster ZEITBASIERT von einer Bar-Quelle auf eine andere übersetzen
- * (Owner 07.08.: „Zoom, Skala exakt parallel und selbe Position"). Der rohe
- * Logik-Index verrutscht, sobald zwei Charts verschieden lange Historien
- * oder Auflösungen halten. Übersetzt wird STUFENLOS (fraktionale Indizes,
- * über die Datenkanten hinaus extrapoliert): Ein reines Panning bleibt so
- * auch im Ziel ein reines Panning — die erste Fassung schnappte an
- * Kerzenkanten und klemmte an der Datenkante des Ziels fest, wodurch aus
- * einem Pan oben ein Zoom+Pan unten wurde (Owner-Fund 07.08. nachts).
- */
-function uebersetzeFenster(
-  quelle: ReadonlyArray<{ time: number } | { date: string }>,
-  ziel: ReadonlyArray<{ time: number } | { date: string }>,
-  range: { from: number; to: number },
-): { from: number; to: number } | null {
-  if (quelle.length < 2 || ziel.length < 2 || quelle === ziel) return null;
-  return {
-    from: indexBeiZeit(ziel, zeitBeiIndex(quelle, range.from)),
-    to: indexBeiZeit(ziel, zeitBeiIndex(quelle, range.to)),
-  };
-}
-
-/** pushRange mit Zeit-Übersetzung zwischen zwei Preis-Charts. */
-function pushZeitUebersetzt(
-  target: PriceChartHandle | null | undefined,
-  from: PriceChartHandle,
-  range: { from: number; to: number },
-  origin: RangeTarget | null,
-): void {
-  if (!target || !st) return;
-  const q = handleQuelle(from);
-  const z = handleQuelle(target);
-  const u = q && z ? uebersetzeFenster(q, z, range) : null;
-  pushRange(target, u ?? range, origin);
-}
-
-// Nur ECHTE User-Gesten auf Unterpanel/Vergleich dürfen das Haupt-Chart
-// ziehen: Daten-Refits (setData/Fit nach Snapshot oder Mount) feuern
-// dieselben Range-Events und würden das Haupt-Chart sonst grundlos
-// zurückreißen (E2E-Fund 26.07. — frisch gemountetes MACD-Panel riss den
-// Haupt-Zoom auf sein Selbst-Fit-Fenster). 2,5 s decken Drag + Glide ab.
-const lastGesture = new WeakMap<HTMLElement, number>();
-
-function armGestureTracking(el: HTMLElement): void {
-  if (el.dataset['gestArmed'] === '1') return;
-  el.dataset['gestArmed'] = '1';
-  const mark = (): void => {
-    lastGesture.set(el, performance.now());
-  };
-  el.addEventListener('pointerdown', mark, true);
-  el.addEventListener('wheel', mark, { capture: true, passive: true });
-  el.addEventListener('touchstart', mark, { capture: true, passive: true });
-}
-
-function recentGesture(el: HTMLElement): boolean {
-  return performance.now() - (lastGesture.get(el) ?? Number.NEGATIVE_INFINITY) < 2500;
-}
-
-let crosshairSyncing = false;
-let chart2Epoch = 0;
-
-/** Vergleichs-Chart rendert über dieselbe Panel-Logik wie das Raster. */
-function renderChart2(): void {
-  if (!st?.chart2P.chart) return;
-  renderGridPanelBars(st.chart2P);
-}
-
-function wireChart2Ctx(): void {
-  if (!st) return;
-  clearSubs(st.chart2Subs);
-  if (st.wsHidden.has('chart2')) return; // ausgeblendet = keine Listener
-  const sym = st.chart2Symbol;
-  const p = st.chart2P;
-  p.sym = sym;
-  p.epoch++;
-  const epoch = p.epoch;
-  p.fitPending = true;
-  // Bars gehören zum Symbol: nicht geleert, würde das watchMarketDoc-Render
-  // das Fit-Token auf den Bars des Vorgänger-Symbols verbrauchen.
-  p.bars = [];
-  p.intradayBars = [];
-  st.chart2Bars = [];
-  ($('ch2Sym') as HTMLInputElement).value = sym;
-  st.chart2Subs.push(
-    watchMarketDoc(sym, (d) => {
-      $('ch2Px').textContent = d?.quote ? fmtNum(d.quote.price) : '--';
-      if (epoch !== p.epoch) return;
-      p.forecast = d?.forecast ?? null;
-      p.forecastIntraday = d?.forecastIntraday ?? null;
-      p.news = d?.news ?? null;
-      renderChart2();
-    }),
-    watchBars(sym, (bars) => {
-      if (!st || epoch !== p.epoch) return;
-      st.chart2Bars = bars;
-      p.bars = bars;
-      if (p.intradayDays > 0) void loadPanelIntraday(p);
-      else renderChart2();
-    }),
-  );
-}
-
-async function rebuildChart2(): Promise<void> {
-  if (!st) return;
-  const epoch = ++chart2Epoch;
-  st.chart2?.destroy();
-  st.chart2 = null;
-  st.chart2P.chart = null;
-  if (st.wsHidden.has('chart2')) return;
-  const handle = await buildPriceChart($('chart2Area'), st.chart2Symbol);
-  if (!st || epoch !== chart2Epoch) {
-    handle?.destroy();
-    return;
-  }
-  st.chart2 = handle;
-  st.chart2P.chart = handle;
-  st.chart2P.fitPending = true;
-  // OHLC-Kurszeile auch im Vergleichs-Chart (Grid-Gleichwertigkeit 26.07.)
-  const hud2 = document.createElement('div');
-  hud2.className = 'gp-hud mono';
-  hud2.title = t('gp.kurszeileToggle');
-  hud2.addEventListener('click', toggleOhlcAll);
-  $('chart2Area').appendChild(hud2);
-  st.chart2P.hudEl = hud2;
-  st.chart2?.onCrosshairData((d) => {
-    if (st) renderPanelHud(st.chart2P, d);
-  });
-  // Zeit-/Crosshair-Sync zum Haupt-Chart (beidseitig, frame-sicherer Echo-
-  // Schutz + Gesten-Gate: Daten-Refits des Vergleichs ziehen das Haupt-Chart nicht)
-  armGestureTracking($('chart2Area'));
-  st.chart2?.onVisibleRangeChange((range) => {
-    const h = st?.chart2;
-    if (!range || !st?.chart || !h) return;
-    if (st.chart2P.auto) schedulePanelAuto(st.chart2P); // Auto-Zeitrahmen wie in den Panels
-    if (matchEcho(h, range)) return;
-    if (!recentGesture($('chart2Area'))) return;
-    pushZeitUebersetzt(st.chart, h, range, h);
-  });
-  st.chart2?.onCrosshairDate((date, pos) => {
-    // News-Overlay auch im Vergleichs-Chart — mit den Schlagzeilen des
-    // VERGLEICHS-Symbols, nicht denen des Haupt-Charts
-    showNewsTooltip(date, pos, st?.chart2P.news ?? null, st?.chart2P ?? 'chart2', $('chart2Area'));
-    if (crosshairSyncing || !st?.chart) return;
-    crosshairSyncing = true;
-    st.chart.setCrosshair(date);
-    crosshairSyncing = false;
-  });
-  renderChart2();
-}
-
-/* ── Multi-Chart-Raster (Chart-Vision 24.07.): 1/2/4 Panels + Lock-Sync ── */
-
-const GRID_LS_KEY = 'autotrd-chart-grid';
-
-function saveGridPrefs(): void {
-  if (!st) return;
-  localStorage.setItem(
-    GRID_LS_KEY,
-    JSON.stringify({
-      mode: st.gridMode,
-      mainLocked: st.mainLocked,
-      panels: st.gridPanels.map((p) => ({ sym: p.sym, range: p.range, locked: p.locked, intradayDays: p.intradayDays, auto: p.auto })),
-    }),
-  );
-}
-
-function loadGridPrefs(): { mode: 1 | 2 | 4; mainLocked: boolean; panels: Array<{ sym: string; range: number; locked: boolean; intradayDays: number; auto: boolean }> } {
-  const fallback = { mode: 1 as const, mainLocked: false, panels: [] };
-  try {
-    const raw = localStorage.getItem(GRID_LS_KEY);
-    if (!raw) return fallback;
-    const p = JSON.parse(raw) as { mode?: number; mainLocked?: boolean; panels?: Array<{ sym?: string; range?: number; locked?: boolean; intradayDays?: number; auto?: boolean }> };
-    const mode = p.mode === 2 || p.mode === 4 ? p.mode : 1;
-    return {
-      mode,
-      mainLocked: p.mainLocked === true,
-      panels: (p.panels ?? []).slice(0, 3).map((x) => ({
-        sym: typeof x.sym === 'string' && x.sym ? x.sym : 'AAPL',
-        // Migration 07.08.: range>0 war ein hartes Daten-Slicing — die
-        // Klon-Panels zeigen die volle Historie, die Stufe ist nur noch Sicht.
-        range: 0,
-        locked: x.locked === true,
-        intradayDays: x.intradayDays === 1 || x.intradayDays === 5 ? x.intradayDays : 0,
-        // Migration 07.08.: Auto ist in den Klon-Panels immer an — ein
-        // gespeichertes false stammt aus der Zeit des Auto-Knopfs.
-        auto: true,
-      })),
-    };
-  } catch {
-    return fallback;
-  }
-}
-
-/** Alle gelockten Chart-Handles (Haupt-Chart nur, wenn selbst gelockt). */
-function lockedHandles(except: PriceChartHandle): PriceChartHandle[] {
-  if (!st) return [];
-  const out: PriceChartHandle[] = [];
-  if (st.mainLocked && st.chart) out.push(st.chart);
-  for (const p of st.gridPanels) if (p.locked && p.chart) out.push(p.chart);
-  return out.filter((h) => h !== except);
-}
-
-// Lock-Sync nutzt denselben frame-sicheren Echo-Guard wie der Chart-Stack:
-// pushRange markiert jede gesetzte Range, matchEcho stoppt den Rückprall.
-function syncLockedRange(
-  from: PriceChartHandle,
-  range: { from: number; to: number } | null,
-  origin: RangeTarget | null = from,
-): void {
-  if (!range) return;
-  // Zeitbasiert je Ziel (Owner 07.08.): gleiche Zeitspanne, gleiche Position —
-  // auch wenn Historienlänge oder Auflösung der Charts auseinanderliegen.
-  for (const h of lockedHandles(from)) pushZeitUebersetzt(h, from, range, origin);
-}
-
-function syncLockedCrosshair(from: PriceChartHandle, date: string | null): void {
-  if (crosshairSyncing) return;
-  crosshairSyncing = true;
-  for (const h of lockedHandles(from)) h.setCrosshair(date);
-  crosshairSyncing = false;
-}
-
-function renderGridPanelBars(p: GridPanel): void {
-  if (!p.chart) return;
-  const intraday = p.intradayDays > 0;
-  // Zeit-Domänen-Wechsel (ISO-Tage ↔ UNIX-Sekunden): Prognose-Overlay vor
-  // setBars räumen — gleiche Falle wie beim Haupt-Chart (E2E 25.07.).
-  if (p.lastRenderIntraday !== intraday) p.chart.setForecast(null);
-  p.lastRenderIntraday = intraday;
-
-  // Auflösungs-Badge im Panel-Kopf (Grid-Audit 07.08.) — Klon des resBadge
-  if (p.resEl) p.resEl.textContent = intraday ? '5m' : '1D';
-  const daily = p.range > 0 ? p.bars.slice(-p.range) : p.bars;
-  // Fit erst verbrauchen, wenn KERZEN da sind — sonst fittet das Panel auf
-  // den Prognose-Whitespace und bleibt nach dem Daten-Eintreffen dort
-  // hängen (User-Screenshot 26.07.: AAPL/TSLA zeigten nur Prognose-Linien).
-  const fit = p.fitPending && (intraday ? p.intradayBars.length : daily.length) > 0;
-  if (fit) p.fitPending = false;
-  const shown: Array<{ time: string | number; close: number }> = intraday
-    ? p.intradayBars.map((b) => ({ time: b.time, close: b.close }))
-    : daily.map((b) => ({ time: b.date, close: b.close }));
-  p.chart.setBars(intraday ? p.intradayBars : daily, { fit, timeVisible: intraday });
-
-  // Chart-Typ + Skala + Kombi syncen (TV-Parität): Raster folgt dem Haupt-Stil
-  if (st) {
-    p.chart.setChartType(st.chartTypeSel);
-    p.chart.setTypeCombine(st.typeCombine);
-    p.chart.setPriceScaleMode(st.scaleMode);
-  }
-  // ALLE aktiven Indikator-Overlays gelten auf ALLEN Charts — inkl. VWAP in
-  // der Intraday-Sicht (Grid-Parität, User-Wunsch 25.07. nachts).
-  const times = shown.map((b) => b.time);
-  const closes = shown.map((b) => b.close);
-  const lines = st?.cleanView ? [] : baseOverlayLines(times, closes);
-  if (intraday && st && !st.cleanView && st.chartLayers.has('vwap')) {
-    const pts = vwapSessions(p.intradayBars).flatMap((v, i) =>
-      v === null ? [] : [{ time: p.intradayBars[i]!.time, value: v }],
-    );
-    lines.push({ key: 'vwap', color: '#f2d16b', width: 2, points: pts });
-  }
-  // Offene Position auch im Raster (04.08.): Jedes Fenster zeigt dieselbe
-  // Wahrheit über SEIN Symbol — sonst hinge die Antwort davon ab, in welchem
-  // Kasten der Kurs gerade steht.
-  const pPos = posFuerSymbol(p.sym);
-  const pVerlauf = positionsVerlauf(times, closes, p.sym);
-  if (pVerlauf) lines.push(pVerlauf);
-  p.chart.setOverlays(lines);
-  p.chart.setPriceLines([...(pPos ? positionsLinien(pPos) : []), ...markenLinien(p.bars)]);
-  // News-Punkte in JEDEM Chart-Fenster — gleiche Quelle wie der Haupt-Chart
-  const pMarkers: ChartMarker[] =
-    st !== null && st.showNews && !st.cleanView
-      ? newsChartMarkers(p.news, times, Math.floor(Date.now() / 1000), vetoAnzeige())
-      : [];
-  const pEinstieg = positionsMarker(times, p.sym);
-  if (pEinstieg) pMarkers.push(pEinstieg);
-  p.lastMarkers = pMarkers.length; // E2E-Hook
-  p.chart.setMarkers(pMarkers);
-  // Layer syncen (User-Wunsch 25.07.): Fläche + „Kerzen aus" gelten auch im
-  // Raster. Farbton neutral — das Signal gehört zum Haupt-Symbol, nicht zum
-  // Panel-Symbol (falsche Grün/Rot-Aussage wäre schlimmer als neutral).
-  const wantArea = st !== null && !st.cleanView && st.chartLayers.has('area');
-  p.chart.setArea(
-    wantArea && shown.length > 0 ? shown.map((b) => ({ time: b.time, value: b.close })) : null,
-    AREA_TONES.hold,
-  );
-  p.chart.setCandlesVisible(!(st !== null && !st.cleanView && st.chartLayers.has('hideCandles') && wantArea));
-  // Prognose in JEDEM Chart (Prognose 2.0): Tages-Sicht = Tages-Prognose,
-  // Intraday-Sicht = Kurzfrist-Prognose — jeweils vom Panel-Symbol.
-  const lastB = shown[shown.length - 1];
-  const wantLayer = st !== null && st.showForecast && !st.cleanView;
-  if (intraday) {
-    const ifc = p.forecastIntraday;
-    const pts = wantLayer && ifc && lastB ? ifc.points.filter((x) => x.t > (lastB.time as number)) : [];
-    p.chart.setForecast(
-      pts.length > 0 && ifc
-        ? {
-            points: pts.map((x) => ({ time: x.t, value: x.value })),
-            band: ifc.band.filter((b) => b.t > (lastB!.time as number)).map((b) => ({ time: b.t, upper: b.upper, lower: b.lower })),
-          }
-        : null,
-      pts.length > 0 && lastB ? { time: lastB.time, value: lastB.close } : undefined,
-    );
-  } else {
-    const fc = p.forecast;
-    // Nur Punkte NACH der letzten gezeigten Kerze — ein veralteter Forecast
-    // (Symbol außerhalb der Scan-Rotation) warf sonst LWCs Zeitachsen-
-    // Assertion, exakt wie im Haupt-Chart (#191).
-    const zukunft = wantLayer && fc != null
-      ? (lastB ? fc.points.filter((x) => x.time > lastB.time) : fc.points)
-      : [];
-    p.chart.setForecast(
-      zukunft.length > 0 && fc
-        ? { points: zukunft, band: lastB ? fc.band.filter((b) => b.time > lastB.time) : fc.band }
-        : null,
-      zukunft.length > 0 && lastB ? { time: lastB.time, value: lastB.close } : undefined,
-    );
-  }
-  renderPanelHud(p, null); // Kurszeile auf den frischen letzten Bar
-}
-
-/** Alle Nebencharts (Raster-Panels + Vergleichs-Chart) neu rendern. */
-function renderAllPanels(): void {
-  if (!st) return;
-  for (const p of st.gridPanels) renderGridPanelBars(p);
-  if (st.chart2P.chart) renderGridPanelBars(st.chart2P);
-}
-
-/**
- * Zeitrahmen-Sync (User-Wunsch 25.07. nachts): Ein Wechsel oben im Haupt-
- * Chart schaltet ALLE Charts um — Raster-Panels + Vergleichs-Chart. Die
- * lokalen Picker bleiben für gezielte Abweichungen danach.
- */
-
-/** on-Klassen der Vergleichs-Zeitrahmen-Knöpfe an den State angleichen.
- *  (Die Raster-Panels tragen seit 07.08. Zoom-Fahrten ohne on-Zustand —
- *  wie der Haupt-Kopf: momentane Aktionen, der Zoom ist danach wieder frei.) */
-function syncPanelTfButtons(): void {
-  if (!st) return;
-  const p2 = st.chart2P;
-  document.querySelectorAll<HTMLElement>('#c2tf [data-c2r], #c2tf [data-c2i]').forEach((b) => {
-    const on = b.dataset['c2i'] !== undefined
-      ? Number(b.dataset['c2i']) === p2.intradayDays && p2.intradayDays > 0
-      : p2.intradayDays === 0 && Number(b.dataset['c2r']) === p2.range;
-    b.classList.toggle('on', on);
-  });
-  $('c2Auto').classList.toggle('on', p2.auto);
-}
-
-/**
- * Zoom-Fahrt eines Raster-Panels (Klon-Semantik, Owner 07.08.): dieselben
- * Stufen wie zoomAufTage am Haupt-Chart, auf die schlankere Panel-Mechanik
- * übersetzt — 1T/1W wechseln in die 5-Minuten-Sicht, 1M/1J/Max in die
- * Tages-Sicht mit passendem Fenster. Die immer aktive Panel-Auto-Auflösung
- * übernimmt danach wieder.
- */
-async function panelZoomAufTage(p: GridPanel, tage: number | null): Promise<void> {
-  if (tage !== null && tage <= 8) {
-    p.intradayDays = tage <= 1.6 ? 1 : 5;
-    p.fitPending = true;
-    await loadPanelIntraday(p);
-  } else {
-    p.intradayDays = 0;
-    // KEIN Daten-Slicing mehr (07.08.): range>0 kappte die Quelle hart —
-    // links davon konnte man weder pannen noch nachladen („der untere Grid
-    // lädt die Daten nicht richtig vor"). Die Stufe ist jetzt ein reines
-    // SICHTfenster über der vollen Historie, wie am Haupt-Chart.
-    p.range = 0;
-    if (tage === null) {
-      p.fitPending = true;
-      renderGridPanelBars(p);
-      void panelOlderDaily(p); // Max: ganze Historie — Kette wärmt weiter an
-    } else {
-      p.fitPending = false;
-      renderGridPanelBars(p);
-      const src = panelSource(p);
-      if (p.chart && src.length > 1) {
-        const abMs = barTimeMs(src[src.length - 1]!) - tage * 86_400_000;
-        let i0 = src.findIndex((b) => barTimeMs(b) >= abMs);
-        if (i0 < 0) i0 = 0;
-        p.chart.setVisibleRange({ from: i0 - 0.5, to: src.length + 2 });
-      }
-    }
-  }
-  saveGridPrefs();
-}
-
-/**
- * EIN Klick, ALLE Charts (Owner 07.08.: „alles synchronisiert umschalten"):
- * Haupt-Chart fährt über zoomAufTage (sanft, mit Ebenen-Wechsel), jedes
- * Raster-Panel und der Vergleichs-Chart über die Panel-Fahrt. Gilt für die
- * Zoom-Buttons ALLER Köpfe — Haupt-Toolbar, Haupt-Kopf im Raster und jeden
- * Panel-Kopf.
- */
-function alleChartsZoomAufTage(tage: number | null): void {
-  void zoomAufTage(tage);
-  if (!st) return;
-  for (const p of st.gridPanels) void panelZoomAufTage(p, tage);
-  if (st.chart2P.chart) void panelZoomAufTage(st.chart2P, tage);
-}
-
-/**
- * Ältere Tages-Jahres-Chunks eines Raster-Panels vorn anfügen (Klon-Parität
- * 07.08.: „der untere Grid lädt die Daten nicht richtig vor"). Dieselbe
- * Ketten-Mechanik wie loadOlderDaily am Haupt-Chart, nur panel-scoped —
- * greift beim eigenen Links-Scroll UND wenn der Lock-Sync das Fenster in
- * die Vergangenheit schiebt.
- */
-async function panelOlderDaily(p: GridPanel): Promise<void> {
-  if (p.histLoading || p.histDone || p.intradayDays > 0 || p.bars.length === 0) return;
-  p.histLoading = true;
-  const sym = p.sym;
-  try {
-    for (let schritt = 0; schritt < 8; schritt++) {
-      if (p.sym !== sym || p.intradayDays > 0) return;
-      const aeltester = p.bars[0]!.date;
-      const jahr = (p.histJahr ?? Number(aeltester.slice(0, 4))) - 1;
-      if (jahr < 1900) {
-        p.histDone = true;
-        return;
-      }
-      const chunk = await loadDailyChunk(sym, jahr);
-      if (p.sym !== sym || p.intradayDays > 0) return;
-      p.histJahr = jahr;
-      if (chunk.length === 0) {
-        // Leerjahr ist erst nach ZWEI Fehlversuchen der Datenanfang — einzelne
-        // Jahre können schlicht noch nicht backgefüllt sein (wie Haupt-Chart).
-        p.leerJahre = (p.leerJahre ?? 0) + 1;
-        if (p.leerJahre >= 2) {
-          p.histDone = true;
-          return;
-        }
-        continue;
-      }
-      p.leerJahre = 0;
-      const r = p.chart?.getVisibleRange();
-      const vorher = panelSource(p).length;
-      p.bars = [...chunk.filter((b) => b.date < aeltester), ...p.bars];
-      renderGridPanelBars(p);
-      // Position halten: das Delta in GEZEIGTEN Bars verschiebt das Fenster
-      const delta = panelSource(p).length - vorher;
-      if (r && p.chart && delta > 0) {
-        p.chart.setVisibleRange({ from: r.from + delta, to: r.to + delta });
-      }
-      const jetzt = p.chart?.getVisibleRange();
-      if (jetzt && jetzt.from >= 90) return; // Puffer steht
-    }
-  } catch {
-    /* nächster Scroll-Versuch */
-  } finally {
-    p.histLoading = false;
-  }
-}
-
-/** Intraday-Bars eines Panels laden (epoch-geschützt; Refresh via watchBars). */
-async function loadPanelIntraday(p: GridPanel): Promise<void> {
-  const epoch = p.epoch;
-  const sym = p.sym;
-  // Auch die STUFE festhalten (Audit 11.08., F7): Geprüft wurden epoch, sym
-  // und „überhaupt noch Intraday" — nicht der Wechsel ZWISCHEN zwei
-  // Intraday-Stufen. Klick 1T, dann 1W: Die langsamere 1T-Antwort kam nach
-  // dem Wechsel zurück und überschrieb die 1W-Daten — der Knopf zeigte 1W,
-  // der Chart einen Tag.
-  const stufe = p.intradayDays;
-  const chunks = await loadIntraday(sym, p.intradayDays);
-  if (epoch !== p.epoch || p.sym !== sym || p.intradayDays === 0 || p.intradayDays !== stufe) {
-    return;
-  }
-  p.intradayBars = chunks;
-  renderGridPanelBars(p);
-}
-
-/** Panel (neu) aufbauen: Bars-Watcher + Chart + Lock-Sync-Verdrahtung. */
-async function mountGridPanel(p: GridPanel, host: HTMLElement): Promise<void> {
-  const epoch = ++p.epoch;
-  clearSubs(p.subs);
-  p.chart?.destroy();
-  p.chart = null;
-  p.fitPending = true;
-  // Bars gehören zum Symbol: Der mergende watchBars-Callback unten behielte
-  // sonst Vorgänger-Bars mit älterem Datum — und der Fit (samt frischer
-  // Y-Skala) liefe über das falsche Preisniveau.
-  p.bars = [];
-  p.intradayBars = [];
-  // Lazy-Historie gehört zum Symbol — beim (Neu-)Mounten frisch anfangen
-  p.histJahr = null;
-  p.histDone = false;
-  p.histLoading = false;
-  p.leerJahre = 0;
-  p.subs.push(
-    watchBars(p.sym, (bars) => {
-      // MERGEND statt ersetzend (Grid-Audit 07.08.): Der Feed liefert ~1 Jahr
-      // und feuert bei jedem Scan — ein glattes Ersetzen würfe die per
-      // panelOlderDaily nachgeladene Mehrjahres-Historie alle 5 Minuten weg
-      // und die Ansicht spränge (dieselbe Falle wie beim Haupt-Chart).
-      const start = bars[0]?.date ?? '';
-      const alt = start ? p.bars.filter((b) => b.date < start) : [];
-      p.bars = [...alt, ...bars];
-      // Intraday-Sicht: frische Bars = frischer 5-min-Chunk nachladbar
-      if (p.intradayDays > 0) void loadPanelIntraday(p);
-      else renderGridPanelBars(p);
-    }),
-    watchMarketDoc(p.sym, (d) => {
-      if (epoch !== p.epoch) return;
-      p.forecast = d?.forecast ?? null;
-      p.forecastIntraday = d?.forecastIntraday ?? null;
-      p.news = d?.news ?? null;
-      renderGridPanelBars(p);
-    }),
-  );
-  const handle = await buildPriceChart(host, p.sym);
-  if (!st || epoch !== p.epoch || !st.gridPanels.includes(p)) {
-    handle?.destroy();
-    return;
-  }
-  p.chart = handle;
-  armGestureTracking(host);
-  // OHLC-Kurszeile im Fenster (Grid-Gleichwertigkeit 26.07.) — NACH
-  // buildPriceChart anhängen, das leert den Container. Klick = Accordion
-  // für ALLE Fenster gemeinsam.
-  const hud = document.createElement('div');
-  hud.className = 'gp-hud mono';
-  hud.title = t('gp.kurszeileToggle');
-  hud.addEventListener('click', toggleOhlcAll);
-  host.appendChild(hud);
-  p.hudEl = hud;
-  p.chart?.onCrosshairData((d) => renderPanelHud(p, d));
-  p.chart?.onVisibleRangeChange((range) => {
-    if (!range || !p.chart) return;
-    // Auto-Zeitrahmen: JEDE Sichtänderung zählt (auch Lock-Sync — ein
-    // gelocktes Panel folgt dann dem Zoom des treibenden Charts).
-    schedulePanelAuto(p);
-    // Lazy-Historie (Klon-Parität 07.08.): VOR dem Echo-Return, damit auch
-    // ein per Lock-Sync in die Vergangenheit geschobenes Fenster nachlädt.
-    if (p.intradayDays === 0 && range.from < 90) void panelOlderDaily(p);
-    // Echo eines Lock-Pushes? Nicht zurücksenden — sonst stirbt das
-    // Trägheits-Gleiten des treibenden Charts (Smartphone-Kinetik 26.07.).
-    // Gesten-Gate: Daten-Refits des Panels ziehen die Lock-Gruppe nicht.
-    if (matchEcho(p.chart, range)) return;
-    if (p.locked && recentGesture(host)) syncLockedRange(p.chart, range);
-  });
-  p.chart?.onCrosshairDate((date, pos) => {
-    // News-Overlay auch im Raster-Panel — mit den Schlagzeilen des
-    // PANEL-Symbols, nicht denen des Haupt-Charts
-    showNewsTooltip(date, pos, p.news, p, host);
-    if (p.locked && p.chart) syncLockedCrosshair(p.chart, date);
-  });
-  renderGridPanelBars(p);
-  if (p.intradayDays > 0) void loadPanelIntraday(p); // restaurierte Intraday-Sicht
-}
-
-function unmountGridPanel(p: GridPanel): void {
-  p.epoch++;
-  clearSubs(p.subs);
-  p.chart?.destroy();
-  p.chart = null;
-}
-
-/* Vollbild als Portal: die Glass-Cards tragen backdrop-filter und werden damit
-   zum Containing Block für position:fixed — das Element muss deshalb während
-   des Vollbilds an document.body hängen und danach exakt zurück. */
-const maxHomes = new Map<HTMLElement, Comment>();
-
-function enterMax(el: HTMLElement): void {
-  if (maxHomes.has(el)) return;
-  const mark = document.createComment('chart-max-home');
-  el.before(mark);
-  maxHomes.set(el, mark);
-  document.body.appendChild(el);
-  el.classList.add('chart-max');
-}
-
-function leaveMax(el: HTMLElement): void {
-  el.classList.remove('chart-max');
-  const mark = maxHomes.get(el);
-  if (mark) {
-    mark.replaceWith(el);
-    maxHomes.delete(el);
-  }
-}
-
-/** Vollbild fürs Haupt-Chart — maximiert den ganzen Scope inkl. Zeitrahmen,
- *  „Anzeige ▾"-Werkzeugen, Legende und Unterpanels (Feedback 25.07.). */
-function setMainMax(on: boolean): void {
-  const scope = $('chartMaxScope');
-  if (on) enterMax(scope);
-  else leaveMax(scope);
-  ($('maxExit') as HTMLButtonElement).hidden = !on;
-  $('maxMain').classList.toggle('on', on);
-  // Raster-Kopf-⛶ spiegelt den Zustand wie die Panel-⛶ (Titelleisten-Parität)
-  $('mhMax').classList.toggle('on', on);
-  $('mhMax').textContent = on ? '✕' : '⛶';
-  positionMainHud();
-  drawPredictionArrow();
-}
-
-/** Alle Vollbild-Zustände beenden (Esc, oder bevor ein anderer Chart maximiert). */
-function exitAllMax(): void {
-  setMainMax(false);
-  document.querySelectorAll('.gpanel.chart-max').forEach((el) => leaveMax(el as HTMLElement));
-  document.querySelectorAll('.gp-max.on').forEach((b) => {
-    b.classList.remove('on');
-    b.textContent = '⛶';
-  });
-}
-
-/** Raster-DOM an gridMode angleichen; Panels mounten/unmounten; persistieren. */
-function renderChartGrid(): void {
-  if (!st) return;
-  exitAllMax(); // maximierte Panels hängen am body — vor dem Neuaufbau zurückholen
-  const grid = $('chartGrid');
-  const want = st.gridMode - 1;
-  // Panel-Liste angleichen (Defaults aus der Watchlist, nie das Haupt-Symbol)
-  while (st.gridPanels.length > want) unmountGridPanel(st.gridPanels.pop()!);
-  while (st.gridPanels.length < want) {
-    const used = new Set([st.currentSymbol, ...st.gridPanels.map((p) => p.sym)]);
-    const sym =
-      watchedSymbols().find((s) => !used.has(s)) ??
-      ['AAPL', 'TSLA', '^NDX'].find((s) => !used.has(s)) ??
-      'AAPL';
-    // auto: true — Panels sind Klone des Haupt-Charts, und dort ist Auto
-    // seit 07.08. immer an (die Zoomstufe wählt die Auflösung von selbst).
-    // range: 0 — volle Historie, die Zoom-Stufe ist nur noch ein Sichtfenster.
-    st.gridPanels.push({ sym, range: 0, locked: false, chart: null, bars: [], subs: [], epoch: 0, fitPending: true, forecast: null, forecastIntraday: null, news: null, intradayDays: 0, intradayBars: [], auto: true });
-  }
-  $('chartRow').dataset['mode'] = String(st.gridMode);
-  ($('lockMain') as HTMLButtonElement).hidden = st.gridMode === 1;
-  // Kopf des Haupt-Fensters nur im Raster (Höhen-Parität mit den Panels)
-  $('mainHd').hidden = st.gridMode === 1;
-  ($('mainHdSym') as HTMLInputElement).value = st.currentSymbol;
-  ($('mainHdSym') as HTMLInputElement).dataset.sym = st.currentSymbol; // Anker für den Symbol-Steckbrief (18:1x)
-  $('lockMain').innerHTML = st.mainLocked ? ICONS.lock : ICONS.unlock;
-  $('lockMain').classList.toggle('on', st.mainLocked);
-  positionMainHud(); // Kopf sichtbar/versteckt → OHLC-Zeile ans Chart koppeln
-  document.querySelectorAll('.tf-btn[data-grid]').forEach((b) => {
-    b.classList.toggle('on', Number((b as HTMLElement).dataset['grid']) === st?.gridMode);
-  });
-
-  grid.innerHTML = '';
-  st.gridPanels.forEach((p, i) => {
-    const el = document.createElement('div');
-    el.className = 'gpanel';
-    el.innerHTML = `
-      <div class="gp-hd">
-        <input class="inp gp-sym" value="${p.sym}" title="${t('gp.symbolEnter')}" />
-        <span class="gp-tf">
-          <button class="tf-btn" data-pz="1" title="${t('gp.zoomTag')}">${t('tf.tag')}</button>
-          <button class="tf-btn" data-pz="7" title="${t('gp.zoomWoche')}">1W</button>
-          <button class="tf-btn" data-pz="30" title="${t('gp.zoomMonat')}">1M</button>
-          <button class="tf-btn" data-pz="365" title="${t('gp.zoomJahr')}">${t('tf.jahr')}</button>
-          <button class="tf-btn" data-pz="max" title="${t('gp.zoomMax')}">Max</button>
-        </span>
-        <span class="res-badge mono gp-res" title="${t('gp.aufloesung')}"></span>
-        <button class="tf-btn gp-max" title="${t('gp.vollbild')}">⛶</button>
-        <button class="tf-btn gp-lock${p.locked ? ' on' : ''}"
-          title="${t('gp.lockTitel')}">${p.locked ? ICONS.lock : ICONS.unlock}</button>
-      </div>
-      <div class="gp-chart" data-gp="${i}"></div>`;
-    const symInp = el.querySelector('.gp-sym') as HTMLInputElement;
-    // Katalog-Auswahl wie beim manuellen Trade (Owner 07.08.): Suchen nach
-    // Name ODER Symbol, Klick/Enter übernimmt — statt blindem Freitext.
-    wireSymbolAuswahl(symInp, el.querySelector('.gp-hd') as HTMLElement, (sym) => {
-      if (!sym || sym === p.sym) return;
-      p.sym = sym;
-      symInp.value = sym;
-      saveGridPrefs();
-      void mountGridPanel(p, el.querySelector('.gp-chart') as HTMLElement);
-    });
-    // Klon-Verdrahtung (Owner 07.08.: „die Grids sollen exakt
-    // synchronisierbare Klone des ersten Charts sein"): Der Panel-Kopf trägt
-    // dieselben Zoom-Fahrten wie der Haupt-Kopf, und JEDER Klick — egal auf
-    // welchem Kopf — schaltet ALLE Charts gemeinsam um. Auto ist immer an;
-    // gezielte Abweichung bleibt per Rad/Drag im einzelnen (ungelockten)
-    // Panel möglich, die Auto-Auflösung folgt dort von selbst.
-    el.querySelectorAll<HTMLButtonElement>('[data-pz]').forEach((b) =>
-      b.addEventListener('click', () => {
-        alleChartsZoomAufTage(b.dataset['pz'] === 'max' ? null : Number(b.dataset['pz']));
-      }),
-    );
-    const maxBtn = el.querySelector('.gp-max') as HTMLButtonElement;
-    maxBtn.addEventListener('click', () => {
-      const on = !el.classList.contains('chart-max');
-      exitAllMax();
-      if (on) {
-        enterMax(el);
-        maxBtn.classList.add('on');
-        maxBtn.textContent = '✕';
-      }
-    });
-    p.resEl = el.querySelector('.gp-res') as HTMLElement;
-    // Doppelklick = auf das letzte Jahr fahren (Grid-Audit 07.08.): Ein Fit
-    // auf die GESAMTE Lazy-Historie (mehrere Jahrzehnte) wäre nach dem
-    // range-Umbau eine Brillen-weg-Ansicht, kein Reset.
-    (el.querySelector('.gp-chart') as HTMLElement).addEventListener('dblclick', () => {
-      void panelZoomAufTage(p, 365);
-    });
-    const lockBtn = el.querySelector('.gp-lock') as HTMLButtonElement;
-    lockBtn.addEventListener('click', () => {
-      p.locked = !p.locked;
-      lockBtn.innerHTML = p.locked ? ICONS.lock : ICONS.unlock;
-      lockBtn.classList.toggle('on', p.locked);
-      saveGridPrefs();
-      // frisch gelockt → sofort auf den Stand der Gruppe ziehen
-      if (p.locked && p.chart) {
-        const other = lockedHandles(p.chart)[0];
-        const r = other?.getVisibleRange();
-        if (r) syncLockedRange(other!, r);
-      }
-    });
-    // Klick ins Panel = aktives Fenster → News-Kontext folgt (capture, damit
-    // auch Klicks auf die LWC-Canvas zählen; p.sym liest den Live-Stand)
-    grid.appendChild(el);
-    void mountGridPanel(p, el.querySelector('.gp-chart') as HTMLElement);
-  });
-  saveGridPrefs();
-}
-
-/* ── Hotkey-Order-Ticket (M9): Shift+B/S → trade-Callable ───────────── */
-
-function openOrderTicket(side: 'buy' | 'sell'): void {
-  if (!st) return;
-  st.orderSide = side;
-  const title = $('otTitle');
-  title.textContent = side === 'buy' ? t('ot.kaufenTitel') : t('ot.verkaufenTitel');
-  title.className = side === 'buy' ? 'c-gn' : 'c-rd';
-  ($('otSym') as HTMLInputElement).value = st.currentSymbol;
-  ($('otQty') as HTMLInputElement).value = '1';
-  $('otErr').hidden = true;
-  updateOrderPreview();
-  $('orderModal').classList.add('show');
-  const qty = $('otQty') as HTMLInputElement;
-  qty.focus();
-  qty.select();
-}
-
-/** Risiko-Vorschau + Kurs-Altersstempel (Kurs = zentraler Scan-Quote). */
-function updateOrderPreview(): void {
-  if (!st) return;
-  const sym = ($('otSym') as HTMLInputElement).value.trim().toUpperCase();
-  const qty = eingabeStueckzahl(($('otQty') as HTMLInputElement).value);
-  const risk = $('otRisk');
-  const age = $('otAge');
-  const q = sym === st.currentSymbol ? st.lastQuote : null;
-  if (!q) {
-    risk.textContent = t('op.keinKurs');
-    age.textContent = '';
-    return;
-  }
-  /* Schließt diese Order eine offene Position, gilt die eingetippte Menge
-   * NICHT (Audit-Befund 11.08.).
-   *
-   * Der Server schließt beim Verkauf einer Long-Position (und beim Eindecken
-   * eines Shorts) immer die GANZE Position — `planeMenge` gibt `pos.qty`
-   * zurück und ignoriert `req.qty`. Die Vorschau rechnete trotzdem mit dem
-   * Feldwert: Wer 100 Stück QQQ zu 250 hielt und Shift+S drückte, las
-   * „1 × 250,00 = 250,00 $ (0,3 % vom Cash)" und liquidierte mit dem
-   * Bestätigen 25.000 $. Die Zahl auf dem Bildschirm war um den Faktor 100
-   * falsch — genau bei der Entscheidung, die sie stützen soll. */
-  const offen = st.positions.find((p) => p.symbol === sym);
-  const schliesst =
-    offen !== undefined &&
-    (offen.side === 'short' ? st.orderSide === 'buy' : st.orderSide === 'sell');
-  const wirkMenge = schliesst ? offen.qty : qty;
-  const exposure = wirkMenge * q.price;
-  const cash = st.wallet?.paperBalance ?? null;
-  const pct = cash && cash > 0 ? ` (${((exposure / cash) * 100).toFixed(1)} % ${t('op.vomCash')})` : '';
-  const sl = st.strategy.engine.stopLossPct;
-  const slLevel = st.orderSide === 'buy' ? q.price * (1 - sl / 100) : q.price * (1 + sl / 100);
-  risk.textContent = schliesst
-    ? `${t('op.schliesstGanze')}: ${wirkMenge} × ${fmtNum(q.price)} = ` +
-      `$${exposure.toLocaleString('en-US', { maximumFractionDigits: 2 })}${pct} · ` +
-      t('op.mengeGiltNicht')
-    : `${qty} × ${fmtNum(q.price)} = $${exposure.toLocaleString('en-US', { maximumFractionDigits: 2 })}` +
-      `${pct} · ${t('op.stopLevel')} ~${fmtNum(slLevel)} (${sl} %)`;
-  const secs = Math.max(0, Math.round((Date.now() - Date.parse(q.updatedAt)) / 1000));
-  age.textContent = `${t('op.kurs')} ${secs < 90 ? `${secs} s` : `${Math.round(secs / 60)} min`} ${t('op.altScan')}`;
-  age.style.color = secs > 600 ? 'var(--rd)' : '';
-}
-
-async function submitOrderTicket(): Promise<void> {
-  if (!st) return;
-  const btn = $('otSubmit') as HTMLButtonElement;
-  /* Wiedereintritt abfangen (Audit-Befund 11.08.).
-   *
-   * Der Doppelklick-Schutz war allein `btn.disabled` — und ein deaktivierter
-   * Knopf feuert kein `click` mehr. Der ENTER-Pfad hängt aber am Eingabefeld,
-   * nicht am Knopf: Shift+B öffnet das Ticket mit dem Fokus in `#otQty`, und
-   * zweimal schnell Enter (oder gedrückt gehaltenes Enter mit Tastenwieder-
-   * holung) schickte zwei `callTrade`.
-   *
-   * Serverseitig ist ein Kauf mit ausdrücklicher Menge auf eine bestehende
-   * Long-Position ein NACHKAUF (`nQty = pos.qty + qty`). Aus den bestätigten
-   * 10 Stück wurden also 20; das Fenster schloss nach der ersten Antwort und
-   * verdeckte die zweite. */
-  if (btn.disabled) return;
-  const sym = ($('otSym') as HTMLInputElement).value.trim().toUpperCase();
-  const qty = eingabeStueckzahl(($('otQty') as HTMLInputElement).value);
-  const err = $('otErr');
-  err.hidden = true;
-  btn.disabled = true;
-  try {
-    await callTrade({ symbol: sym, side: st.orderSide, qty });
-    $('orderModal').classList.remove('show');
-  } catch (e) {
-    err.textContent = e instanceof Error && e.message ? serverText(e) : `${t('mtr.orderFehlgeschlagen')}.`;
-    err.hidden = false;
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-/** Globale Hotkeys (settings.hotkeys, M9) — nie beim Tippen in Feldern. */
-function onGlobalHotkey(e: KeyboardEvent): void {
-  if (!st) return;
-  const tag = (e.target as HTMLElement | null)?.tagName;
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-  if (matchesHotkey(e, st.hotkeys.buy ?? 'shift+b')) {
-    e.preventDefault();
-    openOrderTicket('buy');
-  } else if (matchesHotkey(e, st.hotkeys.sell ?? 'shift+s')) {
-    e.preventDefault();
-    openOrderTicket('sell');
-  }
-}
-
-/** Watchlist-/Tabellen-Klick: Symbol in die CHART-Gruppe publizieren (M9).
- *  Alle Panels derselben Gruppe (Default: auch News) folgen über den Bus. */
-function selectSymbol(sym: string): void {
-  if (!st) return;
-  publishSymbol(st.chartGroup, sym);
-}
-
-function markLivebar(sym: string): void {
-  document.querySelectorAll('.lb-item').forEach((el) => {
-    el.classList.toggle('on', el.querySelector('.lb-sym')?.textContent === sym);
-  });
-  const hd = document.getElementById('mainHdSym') as HTMLInputElement | null;
-  if (hd) {
-    hd.value = sym; // Kopf des Haupt-Fensters folgt dem Symbol
-    hd.dataset.sym = sym; // Anker für den Symbol-Steckbrief (18:1x)
-  }
-}
-
-/* ── Workspace: Sichtbarkeit, Presets, Persistenz (M9) ──────────────── */
-
-function applyPanels(): void {
-  if (!st) return;
-  document.querySelectorAll<HTMLElement>('[data-panel]').forEach((el) => {
-    el.style.display = st!.wsHidden.has(el.dataset.panel ?? '') ? 'none' : '';
-  });
-  // Vergleichs-Chart lebt nur, wenn sichtbar (keine unsichtbaren Listener)
-  wireChart2Ctx();
-  void rebuildChart2();
-}
-
-function applyPreset(id: string): void {
-  const preset = WS_PRESETS[id];
-  if (!st || !preset) return;
-  st.wsPreset = id;
-  st.wsHidden = new Set(preset.hidden);
-  applyPanels();
-  scheduleWsSave();
-}
-
-function togglePanel(id: string): void {
-  if (!st) return;
-  if (st.wsHidden.has(id)) st.wsHidden.delete(id);
-  else st.wsHidden.add(id);
-  st.wsPreset = 'custom';
-  applyPanels();
-  scheduleWsSave();
-}
-
-/* ── Taschenmesser Teil 3: Modul-Reihenfolge + Sidebar-Breiten ─────────── */
-
-/** Karten in beiden Sidebars nach wsOrder sortieren (fehlend = DOM-Index —
- *  stabil, weil sort() stabil ist und der Default die aktuelle Position ist).
- *  Vorher wandern Karten mit gespeicherter Spalte (wsCol) in ihre Sidebar —
- *  fehlender Eintrag lässt die Markup-Spalte gelten (abwärtskompatibel). */
-function applyPanelOrder(): void {
-  if (!st) return;
-  for (const [id, colId] of Object.entries(st.wsCol)) {
-    const card = document.querySelector<HTMLElement>(`.card[data-panel="${id}"]`);
-    const ziel = document.getElementById(colId);
-    const inSidebar = card?.parentElement?.id === 'leftCol' || card?.parentElement?.id === 'rightCol';
-    if (!card || !ziel || !inSidebar || card.parentElement === ziel) continue;
-    // appendChild statt insertBefore(.sb-rs): das Resize-Handle ist absolut
-    // positioniert und steht nach der Order-Sortierung am Spaltenanfang.
-    ziel.appendChild(card);
-  }
-  for (const colId of ['leftCol', 'rightCol', 'centerCol']) {
-    const col = document.getElementById(colId);
-    if (!col) continue;
-    // [data-panel]: In der Mittelspalte sortiert auch das Signal-Kachel-
-    // Grid mit (fehlende Order = DOM-Position, der Default bleibt exakt);
-    // die livebar trägt kein data-panel und bleibt immer oben.
-    const cards = [...col.querySelectorAll<HTMLElement>(':scope > [data-panel]')];
-    const pos = new Map(cards.map((c, i) => [c, i]));
-    cards
-      .sort(
-        (a, b) =>
-          (st!.wsOrder[a.dataset.panel ?? ''] ?? pos.get(a)!) -
-          (st!.wsOrder[b.dataset.panel ?? ''] ?? pos.get(b)!),
-      )
-      .forEach((c) => col.appendChild(c));
-  }
-}
-
-/** Reihenfolge UND Spalte aus dem DOM einfrieren (nach einem Drop) und speichern. */
-function commitPanelOrder(): void {
-  if (!st) return;
-  for (const colId of ['leftCol', 'rightCol', 'centerCol'] as const) {
-    document
-      .getElementById(colId)
-      ?.querySelectorAll<HTMLElement>(':scope > [data-panel]')
-      .forEach((c, i) => {
-        st!.wsOrder[c.dataset.panel ?? ''] = i;
-        // Die Spalte wird nur für Sidebar-Karten persistiert — Mittelspalten-
-        // Karten ziehen nie um, und der Lade-Pfad validiert auf die zwei Ids.
-        if (colId !== 'centerCol') st!.wsCol[c.dataset.panel ?? ''] = colId;
-      });
-  }
-  scheduleWsSave();
-}
-
-/** Ein Modul programmatisch verschieben (Palette/Test-Hook — derselbe Pfad
- *  wie der Drop: DOM umstellen, dann committen). */
-function movePanel(id: string, delta: number): void {
-  const card = document.querySelector<HTMLElement>(`.card[data-panel="${id}"]`);
-  const col = card?.parentElement;
-  if (!card || !col || !(col.id === 'leftCol' || col.id === 'rightCol')) return;
-  const cards = [...col.querySelectorAll<HTMLElement>(':scope > .card[data-panel]')];
-  const idx = cards.indexOf(card);
-  const target = cards[idx + delta];
-  if (!target) return;
-  if (delta > 0) target.after(card);
-  else target.before(card);
-  commitPanelOrder();
-}
-
-/**
- * Eigenes Pointer-Drag der Sidebar-Karten (Owner 21.08.: „an den Mauszeiger
- * oder Finger anheften, animiert an die neue Stelle gleiten"). Bewusst KEIN
- * HTML5-DnD mehr — das kann weder Touch noch einen eigenen Zeiger-Clone.
- *
- * Mechanik: Das Original bleibt als blasser Platzhalter im Fluss (es IST
- * der Drop-Slot), ein voller Karten-Clone folgt dem Zeiger mit leichtem
- * Kipp; beim Einsortieren gleiten die Nachbarn per FLIP an ihre neuen
- * Plätze. Karten dürfen zwischen leftCol und rightCol wechseln — der
- * Main-Content bleibt bewusst außen vor (Chart-Werkbank, kein Stapel).
- * Reduzierte Bewegung: kein Gleiten, harte Schnitte, Funktion identisch.
- */
-function startePanelDrag(card: HTMLElement, start: PointerEvent): void {
-  const quelle = card.parentElement;
-  if (!quelle || !(quelle.id === 'leftCol' || quelle.id === 'rightCol' || quelle.id === 'centerCol')) return;
-  const r0 = card.getBoundingClientRect();
-  const offY = start.clientY - r0.top;
-  // Kompakte Griff-Pille statt Karten-Klotz (Owner 12:35: große Module
-  // „nicht sauber am Finger"): Der Geist zeigt nur den Karten-KOPF, hängt
-  // mit dem Grip exakt unterm Zeiger und bleibt auch auf schwachen Geräten
-  // flüssig — kein 600-px-Glass-Body am Finger.
-  const pillenB = Math.min(r0.width, 340);
-  const gripVonRechts = r0.right - start.clientX;
-  const ankerX = Math.min(Math.max(pillenB - gripVonRechts, 24), pillenB - 12);
-  const offYc = Math.min(offY, 40);
-  let clone: HTMLElement | null = null;
-  let raf = 0;
-  let px = start.clientX;
-  let py = start.clientY;
-
-  // Mittelspalten-Karten sortieren NUR innerhalb ihrer Spalte; Sidebar-
-  // Karten wechseln wie gehabt zwischen links und rechts.
-  const spalten = (quelle.id === 'centerCol' ? ['centerCol'] : ['leftCol', 'rightCol'])
-    .map((cid) => document.getElementById(cid))
-    .filter((c): c is HTMLElement => !!c);
-
-  const messeAlle = (): Map<HTMLElement, DOMRect> => {
-    const m = new Map<HTMLElement, DOMRect>();
-    // [data-panel] statt .card[data-panel]: In der Mittelspalte sortiert das
-    // Signal-Kachel-Grid (sig-grid, kein Karten-Kopf) als Geschwister mit —
-    // es gleitet beim FLIP und behält einen festen Ordnungsplatz.
-    for (const col of spalten)
-      for (const c of col.querySelectorAll<HTMLElement>(':scope > [data-panel]'))
-        m.set(c, c.getBoundingClientRect());
-    return m;
-  };
-
-  // Der laufende FLIP-Versatz eines Nachbarn: Während er gleitet, ist sein
-  // getBoundingClientRect ein TRANSIENTER Zwischenstand. Die Einsortier-
-  // Entscheidung muss auf der LAYOUT-Position rechnen (Rect minus aktueller
-  // translate) — sonst kippt sie auf den Zwischenständen hin und her und
-  // die Liste zittert (Owner 12:35: „komische grafikbox, zittert").
-  const flipVersatz = (el: HTMLElement): { x: number; y: number } => {
-    const t = getComputedStyle(el).transform;
-    if (!t || t === 'none') return { x: 0, y: 0 };
-    const m = new DOMMatrixReadOnly(t);
-    return { x: m.m41, y: m.m42 };
-  };
-
-  // FLIP: alte Positionen als Transform rückwärts ansetzen und auf 0
-  // ausklingen lassen — die Nachbarn gleiten statt zu springen.
-  const gleiteNachbarn = (vorher: Map<HTMLElement, DOMRect>): void => {
-    if (reduzierteBewegung) return;
-    for (const [el, alt] of vorher) {
-      if (el === card) continue;
-      // Ziel der Animation ist die LAYOUT-Ruhe — läuft noch ein alter FLIP,
-      // enthielte das Rect dessen Rest-Translate und das Delta wäre falsch.
-      const neu = el.getBoundingClientRect();
-      const v = flipVersatz(el);
-      const dx = alt.left - (neu.left - v.x);
-      const dy = alt.top - (neu.top - v.y);
-      if (!dx && !dy) continue;
-      el.animate(
-        [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0, 0)' }],
-        { duration: 180, easing: 'ease-out' },
-      );
-    }
-  };
-
-  const sortiereEin = (): void => {
-    // Ziel-Spalte: erst der echte Punkt-Treffer (funktioniert auch am
-    // Smartphone, wo beide Spalten GESTAPELT dieselbe Breite haben und nur
-    // die Höhe sie trennt), sonst der horizontale Treffer (Desktop: Zeiger
-    // ober-/unterhalb einer Sidebar zählt noch zu ihr). Über dem
-    // Main-Content bleibt die Karte, wo sie ist.
-    const ziel =
-      spalten.find((c) => {
-        const r = c.getBoundingClientRect();
-        return px >= r.left && px <= r.right && py >= r.top && py <= r.bottom;
-      })
-      ?? spalten.find((c) => {
-        const r = c.getBoundingClientRect();
-        return px >= r.left && px <= r.right;
-      });
-    if (!ziel) return;
-    const geschwister = [...ziel.querySelectorAll<HTMLElement>(':scope > [data-panel]')]
-      .filter((c) => c !== card);
-    // Entscheidung im Fluss OHNE die gezogene Karte: Nachbarn, die unter ihr
-    // liegen, werden um ihre Höhe plus Spalten-Lücke nach oben gedacht.
-    // Ohne diese Korrektur ist die Wahl BISTABIL — jedes Umsortieren
-    // verschiebt die echten Mitten um die Kartenhöhe, derselbe Zeigerstand
-    // kippt zurück, und am Listenende flattert die Karte (Owner-Befund
-    // 21.08.: „unterste Position buggy").
-    const rKarte = card.getBoundingClientRect();
-    const luecke = Number.parseFloat(getComputedStyle(ziel).rowGap) || 0;
-    const next = geschwister.find((s) => {
-      const r = s.getBoundingClientRect();
-      // Layout-Position statt animiertem Zwischenstand (flipVersatz, s. o.).
-      const basisTop = r.top - flipVersatz(s).y;
-      const top = card.parentElement === ziel && basisTop > rKarte.top ? basisTop - rKarte.height - luecke : basisTop;
-      return py < top + r.height / 2;
-    });
-    // „Ans Ende" heißt appendChild — NICHT vor .sb-rs: Das Resize-Handle ist
-    // absolut positioniert, und nach applyPanelOrder (appendChild aller
-    // Karten) steht es am SPALTENANFANG; ein insertBefore davor sortierte
-    // die Karte nach ganz oben statt nach ganz unten.
-    const naechsteKarte = geschwister.find((s) => card.compareDocumentPosition(s) & Node.DOCUMENT_POSITION_FOLLOWING);
-    if (card.parentElement === ziel && naechsteKarte === next) return;
-    const vorher = messeAlle();
-    if (next) ziel.insertBefore(card, next);
-    else ziel.appendChild(card);
-    gleiteNachbarn(vorher);
-  };
-
-  const bewege = (): void => {
-    raf = 0;
-    if (!clone) return;
-    clone.style.transform = `translate(${px - ankerX}px, ${py - offYc}px) rotate(1.5deg)`;
-    // Autoscroll an den Bildschirmkanten (Stufe B): Ohne ihn ließe sich am
-    // Smartphone — und in langen Desktop-Spalten — nie ans Listenende
-    // ziehen. Geschwindigkeit wächst zur Kante hin; scrollt die Seite,
-    // rutschen die Karten-Rechtecke unterm stehenden Zeiger weiter durch
-    // sortiereEin nach (es misst immer frisch).
-    const RAND = 90;
-    if (py < RAND) window.scrollBy(0, -Math.ceil((RAND - py) * 0.35));
-    else if (py > window.innerHeight - RAND)
-      window.scrollBy(0, Math.ceil((py - (window.innerHeight - RAND)) * 0.35));
-    sortiereEin();
-    // Solange der Zeiger an der Kante steht, kommen keine pointermove-
-    // Events mehr — der Scroll muss sich selbst weitertreiben.
-    if (py < RAND || py > window.innerHeight - RAND) raf = requestAnimationFrame(bewege);
-  };
-
-  const erstelleClone = (): HTMLElement => {
-    const c = card.cloneNode(true) as HTMLElement;
-    // ID-Zwillinge wären Gift: Renderer schreiben live über getElementById —
-    // träfen sie den Clone, malte das Dashboard in den Geist am Zeiger.
-    c.removeAttribute('id');
-    c.querySelectorAll('[id]').forEach((e) => e.removeAttribute('id'));
-    c.classList.remove('dragging');
-    c.classList.add('panel-fliegt');
-    const body = c.querySelector<HTMLElement>('.cbody');
-    // Inline-display statt hidden-Attribut: die .cbody-Flex-Regel gewinnt
-    // gegen den [hidden]-UA-Stil — display:none am Element gewinnt sicher.
-    if (body) body.style.display = 'none';
-    c.style.width = `${pillenB}px`;
-    c.style.transform = `translate(${px - ankerX}px, ${py - offYc}px)`;
-    document.body.appendChild(c);
-    // „Herauslösen": die Pille poppt am Griffpunkt kurz auf.
-    if (!reduzierteBewegung) {
-      c.animate(
-        [{ transform: `${c.style.transform} scale(.9)` }, { transform: c.style.transform }],
-        { duration: 120, easing: 'ease-out' },
-      );
-    }
-    return c;
-  };
-
-  const onMove = (ev: PointerEvent): void => {
-    px = ev.clientX;
-    py = ev.clientY;
-    if (!clone) {
-      // Erst ab 5 px Bewegung wird es ein Drag — ein Klick bleibt ein Klick.
-      if (Math.hypot(px - start.clientX, py - start.clientY) < 5) return;
-      clone = erstelleClone();
-      card.classList.add('dragging');
-      // Kurzes haptisches „angehoben" am Finger — Geräte ohne Vibration
-      // (und Desktop-Mäuse) überspringen still.
-      if (start.pointerType !== 'mouse') navigator.vibrate?.(10);
-    }
-    if (!raf) raf = requestAnimationFrame(bewege);
-  };
-
-  const onUp = (): void => {
-    window.removeEventListener('pointermove', onMove);
-    window.removeEventListener('pointerup', onUp);
-    window.removeEventListener('pointercancel', onUp);
-    if (raf) cancelAnimationFrame(raf);
-    if (!clone) return; // nie bewegt — der Klick gehört dem Titelzeilen-Handler
-    card.classList.remove('dragging');
-    dragEndeUm = Date.now(); // Nachklick des Drags darf nicht klappen
-    // Der Clone gleitet auf den endgültigen Platz des Originals und löst
-    // sich auf; Sicherheitsnetz gegen stehende Animations-Uhren wie beim
-    // Akkordeon (Headless/gedrosselte Tabs).
-    const geist = clone;
-    clone = null;
-    const weg = (): void => geist.remove();
-    if (reduzierteBewegung) {
-      weg();
-    } else {
-      const rZiel = card.getBoundingClientRect();
-      const anim = geist.animate(
-        [
-          { transform: geist.style.transform, opacity: 0.92 },
-          { transform: `translate(${rZiel.right - pillenB}px, ${rZiel.top}px)`, opacity: 0.4 },
-        ],
-        { duration: 160, easing: 'ease-out' },
-      );
-      anim.onfinish = weg;
-      window.setTimeout(weg, 400);
-    }
-    commitPanelOrder();
-  };
-
-  window.addEventListener('pointermove', onMove);
-  window.addEventListener('pointerup', onUp);
-  window.addEventListener('pointercancel', onUp);
-}
-
-/**
- * Wann stehen die Spalten nebeneinander? Nur dann darf die gespeicherte
- * Breite gelten — sonst gehört sie dem CSS (`width: min(340px, 88vw)`).
- *
- * Muss WÖRTLICH zur Gegenseite in theme.css passen (dort steht die
- * ausführliche Begründung): Ein Telefon kann sich als Desktop ausgeben und
- * ~980 px melden; `pointer: fine` unterscheidet Maus von Finger und hält
- * das Dreispalten-Layout von Touch-Geräten fern.
- */
-const DESKTOP_SPALTEN = '(min-width: 901px) and (pointer: fine), (min-width: 1201px)';
-
-/** Sidebar-Breiten (Desktop): Resize-Handle an der Innenkante, Gerät-lokal. */
-function wireSidebarResize(): void {
-  const stored = ((): Record<string, number> => {
-    try {
-      return JSON.parse(localStorage.getItem('autotrd-sbw') ?? '{}') as Record<string, number>;
-    } catch {
-      return {};
-    }
-  })();
-  const desktop = window.matchMedia(DESKTOP_SPALTEN);
-  const spalten: HTMLElement[] = [];
-
-  /**
-   * Gespeicherte Breite anwenden — aber NUR im Desktop-Layout.
-   *
-   * `style.width` ist ein Inline-Style und schlägt damit jede CSS-Regel,
-   * auch die Drawer-Breite im Media-Query. Eine am Monitor gezogene Spalte
-   * (bis 560 px) landete deshalb unverändert auf dem Handy: Bei 390 px
-   * Viewport steht der rechts angedockte Drawer dann bei left = −80 px, also
-   * ragt sein linker Teil samt Textanfang aus dem Bildschirm.
-   *
-   * Auch bei Geräte-Drehung neu bewertet — sonst bliebe der Zustand hängen,
-   * in dem die Seite geladen wurde.
-   */
-  const anwenden = (): void => {
-    for (const col of spalten) {
-      const w = stored[col.id];
-      // 260-560 px (26.07.): unter 260 werden News-/KI-Texte zu Ein-Wort-
-      // Zeilen; großen Monitoren gönnen wir mehr Maximalbreite.
-      col.style.width = desktop.matches && w ? `${Math.min(560, Math.max(260, w))}px` : '';
-    }
-  };
-  desktop.addEventListener('change', anwenden);
-
-  for (const [colId, edge] of [
-    ['leftCol', 'right'],
-    ['rightCol', 'left'],
-  ] as const) {
-    const col = document.getElementById(colId);
-    if (!col) continue;
-    spalten.push(col);
-    const grip = document.createElement('div');
-    grip.className = `sb-rs sb-rs-${edge}`;
-    grip.title = t('gp.spaltenbreite');
-    col.appendChild(grip);
-    grip.addEventListener('dblclick', () => {
-      col.style.width = '';
-      delete stored[colId];
-      localStorage.setItem('autotrd-sbw', JSON.stringify(stored));
-    });
-    grip.addEventListener('pointerdown', (ev) => {
-      ev.preventDefault();
-      grip.setPointerCapture(ev.pointerId);
-      const startX = ev.clientX;
-      const startW = col.getBoundingClientRect().width;
-      const move = (m: PointerEvent): void => {
-        const dx = m.clientX - startX;
-        const w = Math.min(560, Math.max(260, edge === 'right' ? startW + dx : startW - dx));
-        col.style.width = `${w}px`;
-      };
-      const up = (): void => {
-        grip.removeEventListener('pointermove', move);
-        grip.removeEventListener('pointerup', up);
-        stored[colId] = Math.round(col.getBoundingClientRect().width);
-        localStorage.setItem('autotrd-sbw', JSON.stringify(stored));
-      };
-      grip.addEventListener('pointermove', move);
-      grip.addEventListener('pointerup', up);
-    });
-  }
-  anwenden();
-}
-
-/* ── Dashboard-Individualisierung Teil 1 (Taschenmesser-Vision 25.07.) ── */
-
-/**
- * Weiches Auf-/Zuklappen (Owner 21.08.: „richtig schick animieren"): Die
- * Animation ist reine Kosmetik OBENDRAUF — `hidden` bleibt die eine
- * Wahrheit über den Zustand, gesetzt beim Zuklappen erst am Ende der
- * Animation. Laufende Animationen werden bei schnellem Doppel-Toggle
- * gecancelt; wer weniger Bewegung wünscht (prefers-reduced-motion),
- * bekommt den harten Schnitt.
- */
-const reduzierteBewegung = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
-/** Die jeweils JÜNGSTE Klapp-Animation je Körper — nur sie darf ihr Sicherheitsnetz ziehen. */
-const aktuelleKlappAnim = new WeakMap<HTMLElement, Animation>();
-
-function setzeKlappzustand(body: HTMLElement, zu: boolean, animiert: boolean): void {
-  body.getAnimations().forEach((a) => a.cancel());
-  aktuelleKlappAnim.delete(body);
-  if (body.hidden === zu) {
-    // Schneller Doppel-Toggle: Die soeben gecancelte Zuklapp-Animation
-    // hinterließe sonst dauerhaft overflow:hidden (UI-Audit 21.08.).
-    body.style.overflow = '';
-    return;
-  }
-  if (!animiert || reduzierteBewegung || typeof body.animate !== 'function') {
-    body.hidden = zu;
-    return;
-  }
-  const lauf = { duration: 260, easing: 'cubic-bezier(.4,0,.2,1)' };
-  body.style.overflow = 'hidden';
-  let anim: Animation;
-  let abschliessen: () => void;
-  if (zu) {
-    anim = body.animate([{ height: `${body.scrollHeight}px`, opacity: 1 }, { height: '0px', opacity: 0 }], lauf);
-    abschliessen = () => {
-      body.hidden = true;
-      body.style.overflow = '';
-    };
-  } else {
-    body.hidden = false;
-    anim = body.animate([{ height: '0px', opacity: 0 }, { height: `${body.scrollHeight}px`, opacity: 1 }], lauf);
-    abschliessen = () => {
-      body.style.overflow = '';
-    };
-  }
-  anim.onfinish = abschliessen;
-  aktuelleKlappAnim.set(body, anim);
-  // Sicherheitsnetz: In gedrosselten Tabs (und im Headless-Prüfstand) steht
-  // die Animations-Uhr — onfinish bliebe aus und die Karte hinge zwischen
-  // den Zuständen. Der Timer zieht den Endzustand hart nach; hat inzwischen
-  // ein neuerer Toggle übernommen, gilt dessen Zustand und der Timer tut
-  // nichts.
-  window.setTimeout(() => {
-    if (aktuelleKlappAnim.get(body) !== anim) return;
-    aktuelleKlappAnim.delete(body);
-    anim.cancel();
-    abschliessen();
-  }, 420);
-}
-
-/** Eingeklappte Karten anwenden (nur der Körper zu — Gerät-lokal). */
-function applyCollapse(animiert = false): void {
-  if (!st) return;
-  document.querySelectorAll<HTMLElement>('.card[data-panel]').forEach((card) => {
-    const id = card.dataset.panel ?? '';
-    const body = card.querySelector<HTMLElement>(':scope > .cbody');
-    const btn = card.querySelector<HTMLElement>(':scope > .sect [data-col]');
-    const on = st!.collapsed.has(id);
-    if (body) setzeKlappzustand(body, on, animiert);
-    if (btn) {
-      // Die Richtung zeigt die CSS-Rotation über aria-expanded — ein
-      // Zeichen-Tausch (▸/▾) ließe sich nicht animieren.
-      btn.textContent = '▾';
-      btn.setAttribute('aria-expanded', String(!on));
-    }
-  });
-}
-
-/**
- * Auf-/Zuklappen einer Karte — mit Sidebar-Akkordeon (Owner 21.08.): Beim
- * AUFklappen in einer Sidebar-Spalte klappen die sichtbaren Geschwister
- * derselben Spalte zu (je Spalte nur eine offen — kurze Wege, wenig
- * Gleichzeitiges). Die Chart-Mittelspalte bleibt bewusst frei: Chart +
- * Positionen + Markt gleichzeitig zu sehen IST das Dashboard.
- */
-function klappUm(id: string, card: HTMLElement): void {
-  if (!st) return;
-  const aufklappen = st.collapsed.has(id);
-  if (aufklappen) st.collapsed.delete(id);
-  else st.collapsed.add(id);
-  const spalte = card.parentElement;
-  // Der Optionen-Schalter (Anzeige → Sidebar-Akkordeon) kann das
-  // Mitschließen der Nachbarn abstellen; fehlendes Feld bedeutet AN.
-  const akkordeon =
-    st.ui.akkordeon !== false && (spalte?.id === 'leftCol' || spalte?.id === 'rightCol');
-  if (aufklappen && akkordeon && spalte) {
-    for (const nachbar of spalte.querySelectorAll<HTMLElement>(':scope > .card[data-panel]')) {
-      const gid = nachbar.dataset.panel ?? '';
-      // Ausgeblendete Karten (wsHidden) spielen im Akkordeon nicht mit.
-      if (gid && gid !== id && !st.wsHidden.has(gid)) st.collapsed.add(gid);
-    }
-  }
-  localStorage.setItem('autotrd-collapsed', [...st.collapsed].join(','));
-  applyCollapse(true);
-}
-
-/**
- * Jede Modul-Karte bekommt ihren Kopf-Chrome. Ergonomie-Umbau (Owner
- * 21.08.: „Pfeil direkt neben dem Kreuz — dadurch wird oft versehentlich
- * geschlossen"): Der Klapp-Pfeil sitzt als eigener Knopf ganz LINKS vor dem
- * Titel, die GANZE Titelzeile klappt per Klick (Fitts: großes Toggle-Ziel),
- * und das destruktive ✕ bleibt klein und allein rechts. Echte
- * Bedienelemente im Kopf (Link-Chips, ⓘ, Checkboxen, Auswahlfelder) bleiben
- * vom Titel-Klick unberührt.
- */
-let dragEndeUm = 0;
-
-function wirePanelChrome(): void {
-  document.querySelectorAll<HTMLElement>('.card[data-panel]').forEach((card) => {
-    const sect = card.querySelector<HTMLElement>(':scope > .sect');
-    const body = card.querySelector<HTMLElement>(':scope > .cbody');
-    const id = card.dataset.panel ?? '';
-    if (!sect || !body || !id) return;
-    if (sect.querySelector(':scope > .sect-tools')) return; // idempotent — nie doppeltes Chrome
-    const fold = document.createElement('button');
-    fold.type = 'button';
-    fold.className = 'sect-btn sect-fold';
-    fold.dataset.col = '';
-    fold.title = 'Modul ein-/ausklappen';
-    fold.setAttribute('aria-label', 'Modul ein-/ausklappen');
-    fold.textContent = '▾';
-    sect.prepend(fold);
-    const box = document.createElement('span');
-    box.className = 'sect-tools';
-    const inSidebar = card.parentElement?.id === 'leftCol' || card.parentElement?.id === 'rightCol';
-    // Mittelspalte (Owner 21.08.: „oder wenigstens die Reihenfolge
-    // verändern"): auch dort ein Grip — sortiert wird NUR innerhalb der
-    // Spalte, der Umzug Main↔Sidebar bleibt bewusst aus (Chart-Werkbank).
-    const inMitte = card.parentElement?.id === 'centerCol';
-    box.innerHTML =
-      (inSidebar || inMitte
-        ? '<button type="button" class="sect-btn sect-grip" data-grip title="Modul verschieben (ziehen)">⠿</button>'
-        : '') +
-      `<button type="button" class="sect-btn" data-x title="${t('gp.modulAusblenden')}">✕</button>`;
-    sect.appendChild(box);
-    // Kopf in feste Flex-Ordnung bringen (Owner-Screenshot 21.08.: Grip und
-    // ✕ rutschten mobil in eine zweite Zeile, Badges standen mal vor, mal
-    // hinter dem ✕): [Pfeil][Titel+ⓘ+Chip][Meta-Badges][Werkzeuge]. Titel
-    // sind Text-Knoten samt ⓘ und Link-Chip; alles andere (Stand-, Markt-,
-    // Symbol-Badges, Schalter) wandert gesammelt in .sect-meta.
-    const titel = document.createElement('span');
-    titel.className = 'sect-titel';
-    const meta = document.createElement('span');
-    meta.className = 'sect-meta';
-    for (const kind of [...sect.childNodes]) {
-      if (kind === fold || kind === box) continue;
-      const istTitelTeil =
-        kind.nodeType === Node.TEXT_NODE ||
-        (kind instanceof HTMLElement && (kind.classList.contains('ibtn') || kind.classList.contains('lchip')));
-      (istTitelTeil ? titel : meta).appendChild(kind);
-    }
-    sect.insertBefore(titel, box);
-    if (meta.childNodes.length > 0) sect.insertBefore(meta, box);
-    sect.classList.add('sect-flex'); // Flex-Ordnung nur für Köpfe MIT Chrome
-
-    // Drag-Reorder: eigenes Pointer-Drag (startePanelDrag) statt HTML5-DnD —
-    // die Karte heftet als Clone am Zeiger und die Nachbarn gleiten (FLIP).
-    const grip = box.querySelector<HTMLElement>('[data-grip]');
-    if (grip) {
-      grip.addEventListener('pointerdown', (ev) => {
-        if (ev.pointerType === 'mouse' && ev.button !== 0) return;
-        ev.preventDefault(); // keine Text-Selektion, kein Scroll-Start am Grip
-        startePanelDrag(card, ev);
-      });
-    }
-    fold.addEventListener('click', (ev) => {
-      ev.stopPropagation(); // sonst klappt der Titelzeilen-Handler doppelt
-      klappUm(id, card);
-    });
-    // Die ganze Titelzeile klappt — außer auf echten Bedienelementen im
-    // Kopf (Link-Chips, ⓘ, Checkboxen, Auswahlfelder, Links).
-    sect.addEventListener('click', (ev) => {
-      const ziel = ev.target as HTMLElement;
-      if (ziel.closest('button, input, select, label, a, .ibtn, .lchip')) return;
-      if (Date.now() - dragEndeUm < 400) return;
-      klappUm(id, card);
-    });
-    box.querySelector('[data-x]')!.addEventListener('click', () => togglePanel(id));
-  });
-  applyCollapse();
-}
-
-/** Workspace debounced (2 s) nach users/{uid}/workspaces/default schreiben. */
-function scheduleWsSave(): void {
-  if (!st) return;
-  if (st.wsSaveTimer !== null) clearTimeout(st.wsSaveTimer);
-  st.wsSaveTimer = window.setTimeout(() => {
-    if (!st) return;
-    st.wsSaveTimer = null;
-    const data: WorkspaceDocData = {
-      preset: st.wsPreset,
-      // Vereinigung statt nur PANEL_TITLES: Auch Karten außerhalb der
-      // Registry (haltedauer, erkenntnisse, …) haben eine sortier- und
-      // verschiebbare Position — ohne sie hier verlöre jeder Drop an ihnen
-      // vorbei beim nächsten Laden eine Position (Owner-Befund 21.08.,
-      // „unterste Position buggy": performance rutschte nach dem Reload
-      // über die ungespeicherten Nachbarn zurück).
-      panels: Object.fromEntries(
-        [...new Set([...Object.keys(PANEL_TITLES), ...Object.keys(st.wsOrder), ...Object.keys(st.wsCol)])].map((id) => [
-          id,
-          {
-            hidden: st!.wsHidden.has(id),
-            ...(st!.wsOrder[id] !== undefined ? { order: st!.wsOrder[id] } : {}),
-            ...(st!.wsCol[id] !== undefined ? { col: st!.wsCol[id] } : {}),
-          },
-        ]),
-      ),
-      groups: { chart: st.chartGroup, chart2: st.chart2Group },
-      symbols: { A: groupSymbol('A'), B: groupSymbol('B'), C: groupSymbol('C') },
-      updatedAt: new Date().toISOString(),
-    };
-    saveWorkspace(st.uid, data).catch((e) => console.warn('saveWorkspace', e));
-  }, 2000);
-}
-
-/* ── Strategie-Formular ─────────────────────────────────────────────── */
-
-function fillForm(s: Strategy): void {
-  ($('sRsiLo') as HTMLInputElement).value = String(s.indicators.rsi.thresholdBuy);
-  ($('sRsiHi') as HTMLInputElement).value = String(s.indicators.rsi.thresholdSell);
-  ($('sPeriod') as HTMLSelectElement).value = s.signals.period;
-  renderEngineBadge(s.engine.running);
-  // Der Editor rendert aus derselben Quelle wie das Formular: Nach jedem
-  // Speichern kommt das User-Doc über den Listener zurück und die Chips
-  // zeigen den tatsächlich gespeicherten Stand — nie einen optimistischen.
-  renderWlEditor(s);
-}
+/* ── Engine-Karte: Schalter, Status, Kommandos ──────────────────────── */
 
 function renderEngineBadge(running: boolean): void {
   const b = $('engBadge');
   b.textContent = running ? t('nav.engineAn') : t('nav.engineAus');
   b.className = `badge ${running ? 'b-on' : 'b-off'}`;
-  // Owner-Feedback 28.07.: „start/stop müssen doch nicht immer beide angezeigt
-  // werden." Stimmt — von zwei Knöpfen ist immer genau einer sinnlos, und ein
-  // grüner „Start" neben einer laufenden Engine liest sich wie ein Hinweis,
-  // dass sie NICHT läuft. Sichtbar ist nur noch die mögliche Aktion; der
-  // Zustand steht ohnehin im Badge daneben.
+  // Von zwei Knöpfen ist immer genau einer sinnlos — sichtbar ist nur die
+  // mögliche Aktion; der Zustand steht ohnehin im Badge daneben.
   ($('engStart') as HTMLButtonElement).hidden = running;
   ($('engStop') as HTMLButtonElement).hidden = !running;
 }
 
+/** Klartext je Halt-Grund (`HaltReason` in src/core/types.ts) — die Kürzel sind der Vertrag zum Kern. */
+const HALT_TEXT: Record<string, string> = {
+  daily_loss: t('halt.dailyLoss'),
+  drawdown: t('halt.drawdown'),
+  manual: t('halt.manual'),
+  errors: t('halt.errors'),
+  reconcile: t('halt.reconcile'),
+};
+
+/** Drawdown in Prozent zum Peak — die Zahl, an der die Sperre hängt. */
+function drawdownPct(e: EngineMirror): number | null {
+  if (e.equity === null || e.peakEquity === null || !(e.peakEquity > 0)) return null;
+  return ((e.peakEquity - e.equity) / e.peakEquity) * 100;
+}
+
+/** Tagesergebnis in Prozent zur Tagesstart-Equity — die Zahl, an der die Notbremse hängt. */
+function tagesPct(e: EngineMirror): number | null {
+  if (e.equity === null || e.dayStartEquity === null || !(e.dayStartEquity > 0)) return null;
+  return ((e.equity - e.dayStartEquity) / e.dayStartEquity) * 100;
+}
+
+/** Status-Zeile: Beschriftung links, Wert rechts (mono). */
+function statusZeile(label: string, wert: string, farbe = ''): string {
+  return `<div class="eng-row"><span class="hint">${label}</span><span class="mono"${
+    farbe ? ` style="color:${farbe}"` : ''
+  }>${wert}</span></div>`;
+}
+
 /**
- * Freischaltungs-Hinweis in der Engine-Karte (Fund 01.08.: „Engine fängt bei
- * neuem Konto nicht an zu handeln"). Neue Konten stehen auf 'pending', und
- * der Scan überspringt sie STILL — das UI zeigte aber „Engine an". Ein
- * Schalter, der nichts bewirkt und es nicht sagt, ist eine Falle; deshalb
- * steht der Grund jetzt direkt unter dem Knopf.
+ * Der Spiegel des letzten Takts. Er ist Anzeige, nie Wahrheit — deshalb
+ * steht das Alter des letzten Takts immer dabei: Ein Stand von gestern
+ * sieht sonst aus wie ein Stand von jetzt.
  */
-/**
- * Den Nachrichten-Faden zeichnen (Owner 22.08.).
- *
- * Bewusst IMMER sichtbar, nicht nur solange ein Konto wartet: Die
- * Unterhaltung hoert nach der Freischaltung nicht auf, und ein Weg zum
- * Betreiber, der nach dem ersten Tag verschwindet, ist keiner.
- *
- * Leerer Faden heisst leere Liste und nicht "keine Nachrichten" -- der
- * Platzhalter im Eingabefeld sagt bereits, wozu das Feld da ist.
- */
+function renderEngineStatus(): void {
+  if (!st) return;
+  const box = $('engStatus');
+  const e = st.engine;
+  const running = st.strategy.engine.running === true;
+  if (!e) {
+    box.innerHTML = `<div class="hint">${running ? t('eng.keinTaktNoch') : t('eng.keinTakt')}</div>`;
+    return;
+  }
+  const zeilen: string[] = [];
+  zeilen.push(statusZeile(t('eng.modus'), e.mode === 'live' ? t('br.echtgeld') : t('br.papierhandel'), e.mode === 'live' ? 'var(--rd)' : ''));
+  const h = e.halt;
+  if (h?.halted) {
+    const grund = HALT_TEXT[h.reason ?? ''] ?? (h.reason ?? '?');
+    const bis = h.until ? ` · ${t('eng.bis')} ${escText(h.until)}` : '';
+    zeilen.push(statusZeile(t('eng.zustand'), `${t('eng.gesperrt')}: ${escText(grund)}${bis}`, 'var(--rd)'));
+    if (h.note) zeilen.push(`<div class="hint eng-note">${escText(h.note)}</div>`);
+  } else {
+    zeilen.push(statusZeile(t('eng.zustand'), t('eng.frei'), 'var(--gn)'));
+  }
+  // Der Kern kann Einstiege auch OHNE Halt sperren (Datenalter, PDT,
+  // Positionslimit, Abgleich) — Exits laufen weiter. Das steht hier
+  // deutlich, sonst sähe „frei" aus wie „handelt".
+  if (e.entryLock) {
+    zeilen.push(statusZeile(t('ew.einstiegeGesperrt'), escText(e.entryLock), 'var(--yl,#d9a441)'));
+  }
+  zeilen.push(statusZeile('Equity', money(e.equity)));
+  zeilen.push(statusZeile('Cash', money(e.cash)));
+  const tp = tagesPct(e);
+  zeilen.push(
+    statusZeile(
+      t('eng.tagesstart'),
+      `${money(e.dayStartEquity)}${tp === null ? '' : ` (${fmtPct(tp)})`}`,
+      tp === null ? '' : tp >= 0 ? 'var(--gn)' : 'var(--rd)',
+    ),
+  );
+  const dd = drawdownPct(e);
+  zeilen.push(
+    statusZeile(
+      t('eng.peak'),
+      `${money(e.peakEquity)}${dd === null ? '' : ` (${t('eng.drawdown')} ${dd.toFixed(2)} %)`}`,
+      dd !== null && dd > 0 ? 'var(--rd)' : '',
+    ),
+  );
+  zeilen.push(
+    statusZeile(
+      t('eng.dayTrades'),
+      `${e.dayTradeCount ?? '--'}${e.localDayTrades ? ` (+${e.localDayTrades})` : ''}${e.patternDayTrader ? ' · PDT' : ''}`,
+      e.patternDayTrader ? 'var(--yl,#d9a441)' : '',
+    ),
+  );
+  zeilen.push(statusZeile(t('eng.positionen'), e.positions.length > 0 ? escText(e.positions.join(', ')) : '—'));
+  if (e.pendingEntries.length + e.pendingExits.length > 0) {
+    zeilen.push(statusZeile(t('eng.offeneOrders'), escText([...e.pendingEntries, ...e.pendingExits].join(', '))));
+  }
+  if (e.deferred.length > 0) {
+    zeilen.push(statusZeile(t('eng.zurueckgestellt'), escText(e.deferred.join(', ')), 'var(--yl,#d9a441)'));
+  }
+  const alter = alterMin(e.lastTickAt);
+  zeilen.push(
+    statusZeile(
+      t('eng.letzterTakt'),
+      `${wann(e.lastTickAt)}${alter === null ? '' : ` (${t('eng.vor')} ${Math.round(alter)} min)`}`,
+      alter !== null && alter > 15 && running ? 'var(--yl,#d9a441)' : '',
+    ),
+  );
+  if (e.lastError) zeilen.push(statusZeile(t('eng.fehler'), escText(e.lastError), 'var(--rd)'));
+  if (e.consecutiveErrors > 0) zeilen.push(statusZeile(t('eng.fehlerFolge'), String(e.consecutiveErrors), 'var(--rd)'));
+  if (e.champion) {
+    zeilen.push(
+      statusZeile(
+        t('eng.champion'),
+        e.champion.symbols.length > 0
+          ? `${escText(e.champion.symbols.join(', '))} (${escText(e.champion.source)})`
+          : t('eng.keinChampion'),
+        e.champion.symbols.length > 0 ? '' : 'var(--yl,#d9a441)',
+      ),
+    );
+  }
+  for (const n of e.notes) zeilen.push(`<div class="hint eng-note">${escText(n)}</div>`);
+  if (e.commandAt) zeilen.push(`<div class="hint eng-note">${t('eng.kommandoWartet')} (${wann(e.commandAt)})</div>`);
+  box.innerHTML = zeilen.join('');
+}
+
+/** Knöpfe der Kommandos: nur das Mögliche ist klickbar; der Grund steht im title. */
+function renderEngineCommands(): void {
+  if (!st) return;
+  const h = st.engine?.halt ?? null;
+  const running = st.strategy.engine.running === true;
+  const halt = $('engHalt') as HTMLButtonElement;
+  const resume = $('engResume') as HTMLButtonElement;
+  const flatten = $('engFlatten') as HTMLButtonElement;
+  halt.disabled = !running || h?.halted === true;
+  halt.title = h?.halted ? t('cmd.bereitsGesperrt') : t('cmd.haltTitel');
+  resume.disabled = !running || h?.halted !== true || h.reason === 'daily_loss';
+  resume.title =
+    h?.halted !== true
+      ? t('cmd.keinHalt')
+      : h.reason === 'daily_loss'
+        ? t('cmd.tagesHaltEndet')
+        : t('cmd.resumeTitel');
+  flatten.disabled = !running;
+  flatten.title = t('cmd.flattenTitel');
+}
+
+/** Offene Kommando-Bestätigung (resume/flatten) — null, wenn keine. */
+let cmdOffen: EngineCommandAction | null = null;
+
+function zeigeCmdModal(action: 'resume' | 'flatten'): void {
+  if (!st) return;
+  cmdOffen = action;
+  const drawdown = action === 'resume' && st.engine?.halt?.reason === 'drawdown';
+  $('cmdTitle').textContent = action === 'resume' ? t('cmd.resumeFrage') : t('cmd.flattenFrage');
+  $('cmdText').textContent = action === 'resume' ? t('cmd.resumeText') : t('cmd.flattenText');
+  const ackRow = $('cmdAckRow');
+  ackRow.hidden = !drawdown;
+  ($('cmdAck') as HTMLInputElement).checked = false;
+  if (drawdown) {
+    const dd = st.engine ? drawdownPct(st.engine) : null;
+    $('cmdAckText').textContent = `${t('cmd.ackDrawdown')}${dd === null ? '' : ` (${dd.toFixed(2)} %)`}`;
+  }
+  ($('cmdReason') as HTMLInputElement).value = '';
+  $('cmdErr').hidden = true;
+  $('cmdGo').textContent = action === 'resume' ? t('eng.resume') : t('eng.flatten');
+  $('cmdModal').classList.add('show');
+}
+
+/** Kommando absetzen — die Antwort ist „hinterlegt", nicht „ausgeführt". */
+async function sendeKommando(action: EngineCommandAction, reason: string, ackDrawdown: boolean): Promise<void> {
+  const msg = $('engCmdMsg');
+  msg.textContent = t('cmd.sende');
+  try {
+    const r = await engineCommand({
+      action,
+      ...(reason ? { reason } : {}),
+      ...(ackDrawdown ? { ackDrawdown: true } : {}),
+    });
+    msg.textContent = `✓ ${t('cmd.hinterlegt')} (${wann(r.at)}) — ${t('cmd.wirktNaechsterTakt')}`;
+  } catch (e) {
+    msg.textContent = serverText(e);
+  }
+}
+
+/** Engine-Schalter — schreibt `settings.strategy.engine.running` über saveStrategy. */
+async function setEngineRunning(on: boolean): Promise<void> {
+  const msg = $('engMsg');
+  msg.hidden = false;
+  msg.textContent = t('mt.speichere');
+  try {
+    await saveStrategy({ engineRunning: on });
+    msg.textContent = on ? t('mt.engineFlagAn') : t('mt.engineFlagAus');
+  } catch (e) {
+    msg.textContent = serverText(e);
+  }
+}
+
+/* ── Faden zum Betreiber, Zugangs-Hinweis ───────────────────────────── */
+
 function renderFaden(nachrichten: readonly FadenNachricht[]): void {
   const box = document.getElementById('fadenListe');
   if (!box) return;
@@ -6682,13 +996,13 @@ function renderFaden(nachrichten: readonly FadenNachricht[]): void {
     const wer = document.createElement('span');
     wer.className = 'faden-wer';
     wer.textContent = n.von === 'admin' ? t('fd.vomBetreiber') : t('fd.vonDir');
-    const wann = document.createElement('span');
-    wann.className = 'faden-wann mono';
-    wann.textContent = n.at.slice(0, 16).replace('T', ' ');
+    const wannEl = document.createElement('span');
+    wannEl.className = 'faden-wann mono';
+    wannEl.textContent = n.at.slice(0, 16).replace('T', ' ');
     const text = document.createElement('div');
     // textContent, nicht innerHTML: Der Inhalt kommt von Menschen.
     text.textContent = n.text;
-    zeile.append(wer, wann, text);
+    zeile.append(wer, wannEl, text);
     box.append(zeile);
   }
   box.scrollTop = box.scrollHeight;
@@ -6701,15 +1015,14 @@ function ladeFaden(): void {
     .catch(() => undefined);
 }
 
+/** Freischaltungs-Hinweis: Ein Schalter, der nichts bewirkt, muss es sagen. */
 function renderAccessNote(): void {
   if (!st) return;
   const el = $('accessNote');
   if (st.accessLevel === 'pending') {
-    el.textContent =
-      t('acc.pendingA')
-      + t('acc.pendingB');
+    el.textContent = t('acc.pendingA') + t('acc.pendingB');
     el.hidden = false;
-  } else if (st.accessLevel === 'blocked') {
+  } else if (st.accessLevel === 'blocked' || st.accessLevel === 'archiviert') {
     el.textContent = t('acc.blocked');
     el.hidden = false;
   } else {
@@ -6717,48 +1030,7 @@ function renderAccessNote(): void {
   }
 }
 
-/* ── Betriebszustand: „Was die Engine gerade tut" (04.08.) ──────────────── */
-
-/**
- * Klartext für die Einstiegs-Zähler des Heartbeats.
- *
- * Die Reihenfolge ist die Rangfolge der Aussagekraft, nicht die des Codes:
- * Wer wissen will, warum nichts passiert, soll oben den wahrscheinlichsten
- * Grund finden. Ein Zähler auf 0 wird ausgeblendet — eine Liste aus lauter
- * Nullen liest niemand zweimal.
- */
-const GATE_TEXT: ReadonlyArray<[string, string]> = [
-  ['breaker_aktiv', t('gate.breakerAktiv')],
-  ['abgleich_drift', t('gate.abgleichDrift')],
-  ['klasse_aus', t('gate.klasseAus')],
-  ['regime_gegen_trend', t('gate.regimeGegenTrend')],
-  ['regime_stress', t('gate.regimeStress')],
-  ['filter_blockiert', t('gate.filterBlockiert')],
-  ['news_veto', t('gate.newsVeto')],
-  ['unter_kosten', t('gate.unterKosten')],
-  ['cluster_voll', t('gate.clusterVoll')],
-  ['nicht_handelbar', t('gate.nichtHandelbar')],
-  ['hebel_frei', t('gate.hebelFrei')],
-  /* Die drei stillen Bremsen (Kapital-Panel 21.08.): Sie standen als nackte
-   * continue-Zeilen im Scan und waren von „kein Signal" nicht zu
-   * unterscheiden. Jetzt stehen sie in derselben Liste wie alle anderen
-   * Ablehnungsgründe — und beantworten, welche Bremse wirklich klemmt. */
-  ['pos_limit', t('gate.posLimit')],
-  ['cooldown_aktiv', t('gate.cooldownAktiv')],
-  ['sockel_besitz', t('gate.sockelBesitz')],
-];
-
-const REGIME_TEXT: Record<string, { t: string; c: string }> = {
-  trend: { t: t('reg.trend'), c: 'var(--gn)' },
-  seitwaerts: { t: t('reg.seitwaerts'), c: 'var(--t3)' },
-  stress: { t: t('reg.stress'), c: 'var(--rd)' },
-};
-
-const KALENDER_TEXT: Record<string, string> = {
-  fomc: t('kal.fomc'),
-  nfp: t('kal.nfp'),
-  cpi: t('kal.cpi'),
-};
+/* ── „Warum handelt die Engine (nicht)?" ────────────────────────────── */
 
 function whyChip(text: string, farbe: string): HTMLElement {
   const el = document.createElement('span');
@@ -6768,222 +1040,301 @@ function whyChip(text: string, farbe: string): HTMLElement {
   return el;
 }
 
-/** Rendert den Betriebszustand aus meta/health + meta/positioning. */
+/** Ab wie vielen Minuten ohne Herzschlag der Takt als stehend gilt (er feuert jede Minute). */
+const HERZSCHLAG_MAX_MIN = 10;
+
+/**
+ * Antwort aus dem Nutzer-Spiegel und dem Plattform-Herzschlag. Die
+ * Reihenfolge ist die Rangfolge der Aussagekraft: Wer wissen will, warum
+ * nichts passiert, findet oben den wahrscheinlichsten Grund.
+ */
 function renderEngineWhy(): void {
   if (!st) return;
   const ampel = $('whyAmpel');
   const gate = $('whyGate');
   const extra = $('whyExtra');
-  const h = st.health;
-  if (!h) {
-    ampel.innerHTML = '';
-    gate.innerHTML = `<div class="hint">${t('ew.keineScanDaten')}</div>`;
-    extra.textContent = '';
-    return;
-  }
-
-  // Zeile 1: Marktzustand, anstehender Termin, Trades des letzten Scans.
   ampel.innerHTML = '';
-  /* Totmann-Urteil ZUERST und clientseitig gerechnet (Audit 13.08., K-4a):
-   * dieselbe pure Funktion wie healthz und der wachhund-Scheduler — nicht
-   * deren gespeichertes Ergebnis. Wenn der komplette Scheduler steht, wird
-   * `meta/health.alarm` nie geschrieben; ein Client, der nur das Feld
-   * anzeigte, bliebe dann grün. Der Client hat eine eigene Uhr — er braucht
-   * den Server nicht, um „der letzte Lauf ist 40 Minuten her" zu erkennen. */
-  const herz = bewerteHerzschlag({
-    jetztMs: Date.now(),
-    lastRunAt: h.lastRunAt ?? h.lastScanAt,
-    lastRunSkipped: h.lastRunSkipped,
-    symbolsOk: h.symbolsOk,
-    symbolsFailed: h.symbolsFailed,
-  });
-  if (!herz.ok) {
-    const chip = whyChip(`⚠ ${herz.text}`, 'var(--rd)');
-    chip.style.fontWeight = '700';
-    ampel.append(chip);
-  } else if (h.alarm?.aktiv) {
-    // Server-Alarm ohne frisches Client-Urteil: der Wächter sieht etwas,
-    // das der Client nicht sieht (z. B. Kursquelle) — anzeigen, nicht raten.
-    ampel.append(whyChip(`⚠ ${h.alarm.text ?? t('ew.waechterAlarm')}`, 'var(--rd)'));
-  }
-  const r = REGIME_TEXT[h.regime?.state ?? ''] ?? { t: t('ew.unbekannt'), c: 'var(--t3)' };
-  const vix = typeof h.regime?.vix === 'number' ? ` · VIX ${h.regime.vix.toFixed(1)}` : '';
-  const vol = typeof h.regime?.realizedVolPct === 'number' ? ` · Vol ${h.regime.realizedVolPct}%` : '';
-  ampel.append(whyChip(`${r.t}${vix}${vol}`, r.c));
-  if (h.kalender?.bevorstehend) {
-    const name = KALENDER_TEXT[h.kalender.bevorstehend] ?? h.kalender.bevorstehend;
-    ampel.append(whyChip(`${name} in ${h.kalender.stundenBis ?? '?'} h`, 'var(--yl,#d9a441)'));
-  }
-  if (h.kalender?.turnOfMonth) ampel.append(whyChip(t('ew.monatswende'), 'var(--t3)'));
-  if (typeof h.trades === 'number') {
-    ampel.append(
-      whyChip(`${h.trades} ${t('ew.tradesLetzterScan')}`, h.trades > 0 ? 'var(--gn)' : 'var(--t3)'),
-    );
-  }
-  /* Was die Engine WOLLTE (04.08.) — nicht nur, was sie durfte.
-   *
-   * Ohne diese Zahl beantwortet die Karte nur die halbe Frage. Ein Scan ohne
-   * Trades kann heißen „ruhiger Markt" (viel Halten) oder „die Engine wollte
-   * verkaufen, während der Markt steigt" — und nur im zweiten Fall liegt das
-   * Problem in der Signal-Logik, nicht in den Filtern.
-   *
-   * Der Chip färbt sich, wenn Verkaufssignale im Aufwärtstrend überwiegen:
-   * genau die Konstellation, in der die Regime-Ampel dauernd blockt. */
-  const sd = h.signalDirs;
-  if (sd) {
-    const buy = sd.buy ?? 0;
-    const sell = sd.sell ?? 0;
-    const hold = sd.hold ?? 0;
-    const gegenTrend = h.regime?.state === 'trend' && sell > buy;
-    const chip = whyChip(
-      `${t('ew.signale')}: ${buy}↑ ${sell}↓ ${hold}·`,
-      gegenTrend ? 'var(--rd)' : 'var(--t3)',
-    );
-    chip.title = gegenTrend
-      ? t('ew.mehrVerkauf') +
-        t('ew.ampelBlockt')
-      : t('ew.richtungen');
-    ampel.append(chip);
-  }
-  /* „Knapp verfehlt" (Kapital-Panel 21.08., Hebel 1) — die Zahl, die der
-   * Owner-Frage „warum nur 1–2 Positionen?" am nächsten kommt.
-   *
-   * Der Scan zählt seit dem 17.08. mit, wie viele Symbole die Konfluenz um
-   * GENAU EINE Stimme verfehlten (damals 13 von 13); die Trend-Solo-Regel
-   * war die Antwort darauf. Beides stand nur im Scan-Dokument. Nebeneinander
-   * gelesen sagen sie, ob die Regel wirkt — oder ob die Schwelle klemmt,
-   * während die Ampel selten grün ist. Der Chip erscheint nur, wenn es
-   * überhaupt Grenzfälle gab; eine Null wäre hier nur Rauschen. */
-  const knapp = h.knappVerfehlt ?? 0;
-  if (knapp > 0) {
-    const soloAn = h.trendSolo?.erzeugt ?? 0;
-    const chip = whyChip(
-      `${knapp} ${t('ew.knappVerfehlt')}${soloAn > 0 ? ` · ${soloAn} ${t('ew.trendSoloErzeugt')}` : ''}`,
-      soloAn > 0 ? 'var(--gn)' : 'var(--yl,#d9a441)',
-    );
-    chip.title = t('ew.knappTitel');
-    ampel.append(chip);
-  }
-  /* Nachbuchungs-Rückstand (Owner-Fund 21.08.: „5 Trades nicht
-   * registriert"). Bis dahin gab es diese Zahl nirgends — eine Heilung, die
-   * seit Tagen nichts mehr bucht, war von einer ohne Arbeit nicht zu
-   * unterscheiden. `steckt` ist die Nachricht: Diese Fills liegen real beim
-   * Broker, im Buch fehlen sie, und die Heilung kommt an sie nicht mehr
-   * heran. Der Chip ist rot, weil er Handlung verlangt (Depot-Übernahme),
-   * und er erscheint nur, wenn wirklich etwas feststeckt. */
-  /* Schatten der gemessenen Einfangquote (Hebel 1a, 22.08.).
-   *
-   * Der Fehler, den dieser Chip verhindert, ist derselbe, den er meldet:
-   * Die gemessene Quote stand seit dem 11.08. im Herzschlag und wirkte nie
-   * — weil sie niemand ansah. Eine zweite still mitlaufende Zahl wäre
-   * genau dieselbe Lücke noch einmal. Hier steht sie also, sobald sie
-   * etwas zu sagen hat.
-   *
-   * Gelb, nicht rot: Es ist nichts kaputt und nichts blockiert. Die Zahl
-   * beziffert nur, was ein Scharfschalten kosten würde. */
-  const quoteSchatten = h.entryGate?.quote_wuerde_blocken ?? 0;
-  if (quoteSchatten > 0) {
-    const chip = whyChip(
-      `${quoteSchatten} ${t('ew.quoteSchatten')}`,
-      'var(--yl,#d9a441)',
-    );
-    chip.title = t('ew.quoteTitel');
-    ampel.append(chip);
-  }
-  const steckt = h.nachbuchung?.steckt ?? 0;
-  if (steckt > 0) {
-    const chip = whyChip(`${steckt} ${t('ew.nachbuchungSteckt')}`, 'var(--rd)');
-    chip.title = t('ew.nachbuchungTitel');
-    ampel.append(chip);
-  }
-  /* Signal-Kanten-Chip (MI → 07.08.): Die Regime-Variante ist nach der
-   * vorregistrierten Regel EINGESTELLT (n=5187, Kante −0,29 %, roh −0,004 %
-   * gegen live −0,247 %/+0,021 % — sie schlug die gehandelte Logik nicht).
-   * Der Chip zeigt jetzt die verbliebene Messreihe: gehandelte Logik und
-   * ihre Kostenschwellen-Teilmenge, netto UND roh. */
-  const live = h.signalSchatten?.live;
-  if (live && live.n > 0) {
-    const chip = whyChip(t('ew.signalKante'), 'var(--t3)');
-    const kante = (
-      v?: {
-        n: number;
-        kantePct: number | null;
-        rohPct?: number | null;
-        alterMin?: number | null;
-      } | null,
-    ): string => {
-      if (!v || v.kantePct === null) return t('ew.keineDaten');
-      const netto = `${v.kantePct.toFixed(3)} % ${t('ew.jeSignal')} (${v.n})`;
-      const roh =
-        v.rohPct === null || v.rohPct === undefined ? netto : `${netto}, ${t('ew.roh')} ${v.rohPct.toFixed(3)} %`;
-      /* Der Horizont gehört an die Kante wie die Einheit an eine Zahl
-       * (17.08.): Bis zu diesem Tag stand hier eine Kante von −0,49 % ohne
-       * den Hinweis, dass sie über FÜNF MINUTEN gemessen war, während Krypto
-       * live 48 Stunden halten muss. Beides zusammen macht sofort sichtbar,
-       * ob eine negative Kante ein Befund oder ein Kategorienfehler ist. */
-      if (typeof v.alterMin !== 'number' || !(v.alterMin > 0)) return roh;
-      const fenster =
-        v.alterMin >= 1_440
-          ? `${(v.alterMin / 1_440).toFixed(1)} ${t('ew.tage')}`
-          : v.alterMin >= 60
-            ? `${(v.alterMin / 60).toFixed(1)} h`
-            : `${v.alterMin.toFixed(0)} min`;
-      return `${roh} — ${t('ew.fenster')} ${fenster}`;
-    };
-    chip.title =
-      `${t('ew.kanteTitelA')}\n`
-      + `${t('ew.gehandelteLogik')}: ${kante(live)}\n`
-      + `${t('ew.ueberKostenschwelle')} ${kante(h.signalSchatten?.['live_kosten'])}\n`
-      + `${t('ew.ueberHaltedauer')} ${kante(h.signalSchatten?.['live_halte'])}\n`
-      + `${t('ew.kanteTitelB')}\n`
-      + `${t('ew.kanteTitelC')}\n`
-      + `${t('ew.kanteTitelD')}\n`
-      + `${t('ew.kanteTitelE')}\n`
-      + `${t('ew.kanteTitelF')}\n`
-      + t('ew.kanteTitelG');
-    ampel.append(chip);
-  }
-
-  // Zeile 2: Warum Einstiege NICHT zustande kamen — nur was wirklich griff.
   gate.innerHTML = '';
-  const g = h.entryGate ?? {};
-  const zeilen = GATE_TEXT.filter(([k]) => (g[k] ?? 0) > 0);
-  if (zeilen.length === 0) {
-    const geprueft = g['geprueft'] ?? 0;
-    gate.innerHTML = `<div class="hint">${t('ew.nichtsAbgelehnt')}${
-      geprueft > 0 ? ` (${geprueft} ${t('ew.einstiegeGeprueft')})` : ''
-    }.</div>`;
+  const gruende: string[] = [];
+  const running = st.strategy.engine.running === true;
+  const e = st.engine;
+  const h = st.health;
+
+  // Zeile 1: Plattform — steht der Takt überhaupt?
+  const herz = alterMin(h?.lastRunAt);
+  if (!h) ampel.append(whyChip(t('ew.keineScanDaten'), 'var(--t3)'));
+  else if (herz === null || herz > HERZSCHLAG_MAX_MIN) {
+    ampel.append(whyChip(`⚠ ${t('ew.taktSteht')} ${herz === null ? '' : `${Math.round(herz)} min`}`, 'var(--rd)'));
+    gruende.push(t('ew.g.taktSteht'));
+  } else if (h.engine?.skipped === 'market_closed') {
+    ampel.append(whyChip(`${t('ew.marktZu')}${h.engine.nextOpen ? ` · ${t('ew.oeffnet')} ${wann(h.engine.nextOpen)}` : ''}`, 'var(--t3)'));
+    gruende.push(t('ew.g.marktZu'));
+  } else if (h.engine?.error) {
+    ampel.append(whyChip(`⚠ ${t('ew.plattformFehler')}`, 'var(--rd)'));
+    gruende.push(`${t('ew.g.plattformFehler')} ${h.engine.error}`);
   } else {
-    for (const [key, text] of zeilen) {
-      const z = document.createElement('div');
-      z.className = 'hint';
-      z.style.cssText = 'display:flex;gap:8px;align-items:baseline';
-      const n = document.createElement('span');
-      n.className = 'mono';
-      n.style.cssText = `min-width:2.5em;text-align:right;color:${
-        key === 'hebel_frei' ? 'var(--gn)' : 'inherit'
-      }`;
-      n.textContent = String(g[key]);
-      const t = document.createElement('span');
-      t.textContent = text;
-      z.append(n, t);
-      gate.append(z);
+    ampel.append(whyChip(`${t('ew.taktLaeuft')} · ${wann(h.lastRunAt)}`, 'var(--gn)'));
+  }
+  if (h?.alarm?.aktiv) ampel.append(whyChip(`⚠ ${h.alarm.text ?? t('ew.waechterAlarm')}`, 'var(--rd)'));
+
+  // Zeile 2: das eigene Konto.
+  if (!running) {
+    ampel.append(whyChip(t('nav.engineAus'), 'var(--rd)'));
+    gruende.push(t('ew.g.engineAus'));
+  }
+  if (st.accessLevel !== 'approved') {
+    ampel.append(whyChip(t('ew.keinZugang'), 'var(--yl,#d9a441)'));
+    gruende.push(st.accessLevel === 'pending' ? t('ew.g.pending') : t('ew.g.gesperrt'));
+  }
+  if (running && !e) {
+    gruende.push(t('ew.g.keinTakt'));
+  }
+  if (e) {
+    if (e.halt?.halted) {
+      const grund = HALT_TEXT[e.halt.reason ?? ''] ?? (e.halt.reason ?? '?');
+      ampel.append(whyChip(`${t('eng.gesperrt')}: ${grund}`, 'var(--rd)'));
+      gruende.push(
+        e.halt.reason === 'daily_loss'
+          ? t('ew.g.haltTag')
+          : e.halt.reason === 'drawdown'
+            ? t('ew.g.haltDrawdown')
+            : e.halt.reason === 'manual'
+              ? t('ew.g.haltManual')
+              : e.halt.reason === 'reconcile'
+                ? t('ew.g.haltReconcile')
+                : t('ew.g.haltErrors'),
+      );
+    }
+    if (e.entryLock) {
+      ampel.append(whyChip(`${t('ew.einstiegeGesperrt')}: ${e.entryLock}`, 'var(--yl,#d9a441)'));
+      gruende.push(`${t('ew.g.einstiegeGesperrt')} ${e.entryLock}`);
+    }
+    if (e.lastError) {
+      ampel.append(whyChip(`⚠ ${t('eng.fehler')}`, 'var(--rd)'));
+      gruende.push(`${t('ew.g.fehler')} ${e.lastError}`);
+    }
+    if (e.champion && e.champion.symbols.length === 0) {
+      ampel.append(whyChip(t('eng.keinChampion'), 'var(--yl,#d9a441)'));
+      gruende.push(t('ew.g.keinChampion'));
+    }
+    if (e.deferred.length > 0) {
+      ampel.append(whyChip(`${e.deferred.length} ${t('ew.zurueckgestellt')}`, 'var(--yl,#d9a441)'));
+      gruende.push(t('ew.g.zurueckgestellt'));
+    }
+    if (e.positions.length >= st.auto.maxPositions) {
+      ampel.append(whyChip(`${e.positions.length}/${st.auto.maxPositions} ${t('ew.positionenVoll')}`, 'var(--t3)'));
+      gruende.push(t('ew.g.posLimit'));
+    }
+    if (st.auto.riskPerTradePct <= 0) gruende.push(t('ew.g.risikoNull'));
+    // Notizen des Takts (Champion fehlt, Zeitrahmen weicht ab, …) — Klartext vom Kern, nicht übersetzt.
+    for (const n of e.notes) gruende.push(n);
+    if (e.patternDayTrader) gruende.push(t('ew.g.pdt'));
+    if (running && !e.halt?.halted && !e.lastError && gruende.length === 0) {
+      ampel.append(whyChip(t('ew.handeltFrei'), 'var(--gn)'));
     }
   }
+  if (gruende.length === 0) {
+    gate.innerHTML = `<div class="hint">${t('ew.nichtsBlockiert')}</div>`;
+  } else {
+    const ul = document.createElement('ul');
+    ul.className = 'warum-liste';
+    for (const g of gruende) {
+      const li = document.createElement('li');
+      li.textContent = g;
+      ul.append(li);
+    }
+    gate.append(ul);
+  }
 
-  // Zeile 3: Konten, Sockel und die seltenen Gelegenheiten.
+  // Zeile 3: Plattform-Zahlen des letzten Takts.
   const teile: string[] = [];
-  const k = h.konten;
-  if (k) teile.push(`${k['gehandelt'] ?? 0}/${k['laufend'] ?? 0} ${t('ew.kontenAktiv')}`);
-  if (typeof st.sockelKonten === 'number') teile.push(`${t('ew.sockel')}: ${st.sockelKonten} ${t('ew.konten')}`);
-  const auf = st.positioning?.auffaellig ?? {};
-  const squeeze = Object.entries(auf)
-    .filter(([, v]) => v?.state === 'short_squeeze_setup')
-    .map(([sym]) => sym);
-  if (squeeze.length > 0) teile.push(`${t('ew.squeezeSetup')}: ${squeeze.slice(0, 4).join(', ')}`);
-  const ueberfuellt = Object.values(auf).filter((v) => v?.state === 'longs_ueberfuellt').length;
-  if (ueberfuellt > 0) teile.push(`${ueberfuellt}× ${t('ew.ueberfuellteLongs')}`);
+  const pe = h?.engine;
+  if (pe) {
+    if (typeof pe.users === 'number') teile.push(`${pe.ok ?? 0}/${pe.users} ${t('ew.kontenOk')}`);
+    if (typeof pe.symbols === 'number') teile.push(`${pe.symbols} ${t('ew.symbole')}`);
+    if (typeof pe.champion === 'number') teile.push(`${pe.champion} ${t('ew.mitChampion')}`);
+    if (pe.fetchOk === false) teile.push(t('ew.barsFehlten'));
+    if (typeof pe.durationMs === 'number') teile.push(`${(pe.durationMs / 1000).toFixed(1)} s`);
+  }
   extra.textContent = teile.join(' · ');
+}
+
+/* ── Champion-Karte (meta/champion) ─────────────────────────────────── */
+
+function renderChampion(): void {
+  if (!st) return;
+  const c = st.champion;
+  const list = $('chList');
+  const stand = $('chStand');
+  const noTrade = $('chNoTrade');
+  if (!c) {
+    list.innerHTML = `<div class="hint">${t('ch.keiner')}</div>`;
+    stand.textContent = '';
+    noTrade.textContent = '';
+    return;
+  }
+  stand.textContent = c.updatedAt ? `${t('ch.stand')} ${wann(new Date(c.updatedAt).toISOString())}` : '';
+  const gewaehlt = st.autoSymbols === null ? null : new Set(st.autoSymbols);
+  const zeilen = Object.entries(c.symbols).sort(([a], [b]) => a.localeCompare(b));
+  if (zeilen.length === 0) {
+    list.innerHTML = `<div class="hint">${t('ch.leer')}</div>`;
+  } else {
+    const kopf = `<div class="ch-row fl-head"><span>Symbol</span><span>${t('ch.strategie')}</span><span>Score</span><span>${t('ch.trades')}</span><span>${t('ch.netto')}</span><span>${t('ch.folds')}</span></div>`;
+    list.innerHTML =
+      kopf
+      + zeilen
+        .map(([sym, e]) => {
+          const inaktiv = gewaehlt !== null && !gewaehlt.has(sym);
+          const netto = e.oos.netProfit;
+          const folds = e.oos.positiveFoldShare;
+          return `<div class="ch-row${inaktiv ? ' ch-aus' : ''}" title="${inaktiv ? t('ch.nichtGewaehlt') : ''}">
+            <span data-sym="${escText(sym)}"><b>${escText(sym)}</b></span>
+            <span>${escText(e.strategy)}${e.timeframe ? ` · ${e.timeframe}m` : ''}</span>
+            <span>${e.score === null ? '--' : e.score.toFixed(2)}</span>
+            <span>${e.oos.trades ?? '--'}</span>
+            <span class="${netto === null ? '' : pnlClass(netto)}">${netto === null ? '--' : money(netto)}</span>
+            <span>${folds === null ? '--' : `${Math.round(folds * 100)} %`}</span>
+          </div>`;
+        })
+        .join('');
+  }
+  const nt = Object.entries(c.noTrade).sort(([a], [b]) => a.localeCompare(b));
+  noTrade.innerHTML =
+    nt.length === 0
+      ? ''
+      : `<b>${t('ch.noTrade')}:</b> `
+        + nt.map(([sym, e]) => `<span title="${escText(e.reason)}">${escText(sym)}</span>`).join(', ')
+        + `<br>${t('ch.noTradeHint')}`;
+}
+
+/** Jüngsten Optimierer-Bericht laden und als vorformatierten Text zeigen. */
+async function openReport(): Promise<void> {
+  const msg = $('chMsg');
+  msg.textContent = t('ch.laedtBericht');
+  try {
+    const r = await loadOptimizeReport();
+    msg.textContent = '';
+    if (!r) {
+      msg.textContent = t('ch.keinBericht');
+      return;
+    }
+    $('reportTitle').textContent = `${t('ch.bericht')} ${r.date}`;
+    $('reportMeta').textContent = r.truncated ? t('ch.berichtGekuerzt') : '';
+    // textContent: Markdown als Text, kein Renderer — nichts aus dem Bericht wird als HTML gedeutet.
+    $('reportBody').textContent = r.markdown || t('ch.berichtLeer');
+    $('reportModal').classList.add('show');
+  } catch (e) {
+    msg.textContent = serverText(e);
+  }
+}
+
+
+/* ── Einstellungen des Auto-Traders (settings.auto) ────────────────── */
+
+/** Formular aus dem gespeicherten Stand füllen — nie aus einem optimistischen. */
+function fillAutoForm(): void {
+  if (!st) return;
+  const a = st.auto;
+  ($('asRisk') as HTMLInputElement).value = String(a.riskPerTradePct);
+  ($('asMaxPct') as HTMLInputElement).value = String(a.maxPositionPct);
+  ($('asMaxN') as HTMLInputElement).value = String(a.maxPositions);
+  ($('asDaily') as HTMLInputElement).value = String(a.maxDailyLossPct);
+  ($('asDd') as HTMLInputElement).value = String(a.maxDrawdownPct);
+  ($('asShort') as HTMLInputElement).checked = a.allowShort === true;
+  ($('asTelegram') as HTMLInputElement).checked = a.notifyTelegram === true;
+  renderSymbolPicker();
+  $('asMsg').textContent = '';
+  $('asErr').hidden = true;
+}
+
+/**
+ * Symbolauswahl als Teilmenge des Plattform-Universums. Gespeichert wird
+ * NUR eine echte Teilmenge; sind alle gewählt, fällt das Feld weg und der
+ * Takt handelt das ganze Universum — auch wenn es später wächst.
+ */
+function renderSymbolPicker(): void {
+  if (!st) return;
+  const box = $('asSymbols');
+  const gewaehlt = st.autoSymbols === null ? null : new Set(st.autoSymbols);
+  const champ = st.champion;
+  box.innerHTML = st.universe
+    .map((sym) => {
+      const an = gewaehlt === null || gewaehlt.has(sym);
+      const mitChampion = champ ? sym in champ.symbols : null;
+      const noTrade = champ ? sym in champ.noTrade : false;
+      const marke =
+        mitChampion === true
+          ? `<span class="stag t-buy" title="${t('as.hatChampion')}">✓</span>`
+          : noTrade
+            ? `<span class="stag t-hold" title="${escText(champ?.noTrade[sym]?.reason ?? '')}">${t('as.noTradeKurz')}</span>`
+            : '';
+      return `<label class="opt-chk as-sym" title="${escText(resolveName(sym))}">
+        <input type="checkbox" data-sym="${escText(sym)}" ${an ? 'checked' : ''} />
+        <span class="mono">${escText(sym)}</span> ${marke}
+      </label>`;
+    })
+    .join('');
+  box.querySelectorAll<HTMLInputElement>('input[data-sym]').forEach((cb) =>
+    cb.addEventListener('change', zaehleSymbole),
+  );
+  zaehleSymbole();
+}
+
+function gewaehlteSymbole(): string[] {
+  return [...$('asSymbols').querySelectorAll<HTMLInputElement>('input[data-sym]:checked')].map(
+    (cb) => cb.dataset['sym'] ?? '',
+  ).filter(Boolean);
+}
+
+function zaehleSymbole(): void {
+  if (!st) return;
+  const n = gewaehlteSymbole().length;
+  const el = $('asSymCount');
+  el.textContent = `${n}/${st.universe.length}`;
+  // Der Server deckelt die Auswahl — die Zahl warnt, bevor das Speichern scheitert.
+  el.style.color = n > AUTO_SYMBOLS_MAX ? 'var(--rd)' : '';
+  el.title = n > AUTO_SYMBOLS_MAX ? `${t('val.hoechstens').replace('{0}', t('as.symbole')).replace('{1}', String(AUTO_SYMBOLS_MAX))}` : '';
+}
+
+/** Die Maske als Einstellungs-Objekt — Zahlen roh, die Prüfung übernimmt validateAutoSettings. */
+function autoFormSettings(): AutoSettings {
+  const num = (id: string): number => Number(($(id) as HTMLInputElement).value);
+  const alle = gewaehlteSymbole();
+  const teilmenge = st && alle.length < st.universe.length;
+  return {
+    riskPerTradePct: num('asRisk'),
+    maxPositionPct: num('asMaxPct'),
+    maxPositions: num('asMaxN'),
+    maxDailyLossPct: num('asDaily'),
+    maxDrawdownPct: num('asDd'),
+    allowShort: ($('asShort') as HTMLInputElement).checked,
+    notifyTelegram: ($('asTelegram') as HTMLInputElement).checked,
+    ...(teilmenge ? { symbols: alle } : {}),
+  };
+}
+
+/** Speichern: erst lokal prüfen (Klartext sofort), dann serverseitig — der Server prüft erneut. */
+async function submitAuto(): Promise<void> {
+  if (!st) return;
+  const err = $('asErr');
+  const msg = $('asMsg');
+  err.hidden = true;
+  const auto = autoFormSettings();
+  const probe = validateAutoSettings(auto, st.universe);
+  if (!probe.ok) {
+    err.textContent = probe.fehler.map(valText).join(' · ');
+    err.hidden = false;
+    return;
+  }
+  msg.textContent = t('mt.speichere');
+  try {
+    await saveStrategy({ auto: probe.wert ?? auto });
+    msg.textContent = `✓ ${t('mt.gespeichert')}`;
+  } catch (e) {
+    err.textContent = serverText(e);
+    err.hidden = false;
+    msg.textContent = '';
+  }
 }
 
 /* ── Admin-Verwaltung (Owner 02.08.: „wie kann man andere User freischalten?") ── */
@@ -7002,27 +1353,8 @@ function renderAdminCard(): void {
   ($('adminCard') as HTMLElement).hidden = !st.admin;
 }
 
-/** Konten laden und als Zeilen mit Aktions-Knöpfen rendern. */
 /**
- * Ergebnis des letzten Admin-Abgleichs — überlebt den Neuaufbau der Liste.
- *
- * Owner-Fund 22.08.: „ich kann ihn als Admin nicht abgleichen und
- * entsperren." Der Abgleich lief korrekt und schrieb seinen Vermerk; nur
- * war seine Antwort nach ~200 ms weg. `admBtn` lädt nach jeder Aktion die
- * Liste neu, und `loadAdminList` beginnt mit `err.hidden = true` — genau
- * die Zeile, in die der Abgleich gerade sein Ergebnis geschrieben hatte.
- * Sichtbar blieb: derselbe rote Chip wie vorher. Also sah eine Messung,
- * die sauber lief, exakt aus wie ein Knopf ohne Funktion.
- *
- * Die Meldung gehört ohnehin an die ZEILE, nicht an eine gemeinsame
- * Fehlerzeile am Kartenrand: Sie handelt von genau einem Konto, und der
- * Grund („im Buch stehen 2 Positionen, die der Broker nicht hat") ist die
- * Information, mit der man entscheidet, was als Nächstes zu tun ist.
- */
-let letzterAbgleich: { uid: string; text: string; sperre: boolean } | null = null;
-
-/**
- * Den Faden eines fremden Kontos zeigen und beantworten (Owner 22.08.).
+ * Den Faden eines fremden Kontos zeigen und beantworten.
  *
  * Er wird UNTER die Kontozeile gehaengt, nicht in ein eigenes Fenster:
  * Wer gerade entscheidet, ob er freischaltet, will die Unterhaltung neben
@@ -7053,19 +1385,15 @@ async function zeigeFaden(uid: string, ziel: HTMLElement): Promise<void> {
     zeile.className = `faden-zeile faden-${n.von}`;
     const wer = document.createElement('span');
     wer.className = 'faden-wer';
-    /* In der ADMIN-Ansicht heisst der Kunde „Kunde", nicht „Du" — der
-     * Admin liest hier fremde Post. Im Browser sofort aufgefallen: Über
-     * der Kundennachricht stand „Du" (Befund 22.08.). Und „Betreiber"
-     * statt „Du" auch bei der eigenen Antwort: Bei mehreren Admins wäre
-     * „Du" schlicht unwahr. */
+    // In der ADMIN-Ansicht heisst der Kunde „Kunde", nicht „Du" — der Admin liest fremde Post.
     wer.textContent = n.von === 'admin' ? t('fd.vomBetreiber') : t('adm.vomKunden');
-    const wann = document.createElement('span');
-    wann.className = 'faden-wann mono';
-    wann.textContent = n.at.slice(0, 16).replace('T', ' ');
+    const wannEl = document.createElement('span');
+    wannEl.className = 'faden-wann mono';
+    wannEl.textContent = n.at.slice(0, 16).replace('T', ' ');
     const text = document.createElement('div');
     // textContent: Der Inhalt kommt von Menschen, nicht aus dem Code.
     text.textContent = n.text;
-    zeile.append(wer, wann, text);
+    zeile.append(wer, wannEl, text);
     box.append(zeile);
   }
 
@@ -7107,12 +1435,6 @@ async function zeigeFaden(uid: string, ziel: HTMLElement): Promise<void> {
 
 /* ── Admin-Liste, kompakte Fassung (Owner 22.08.) ──────────────────────────
  *
- * Der Befund war messbar, nicht Geschmack: Bei 26 Konten war die Karte
- * 4 443 px hoch (Desktop) bzw. 6 013 px (390 px) und trug 79 Knoepfe —
- * jeden einzelnen VOLLBREIT, weil `.btn { width: 100% }` gilt und `admBtn`
- * inline nur Polsterung und Schriftgroesse setzte. Bei 200 Konten waeren
- * das rund 30 000 px, also zweiunddreissig Bildschirme.
- *
  * Drei Dinge hat der Owner verlangt, und die Gliederung folgt genau ihnen:
  * uebersichtlich bei sehr vielen Nutzern, Anfragen oben, keine Knopfkolonne.
  */
@@ -7138,13 +1460,7 @@ function admEntwaffne(): void {
  *
  * Bewusst KEIN `confirm()`: Browser bieten nach wiederholten Dialogen
  * „weitere Dialoge unterdruecken" an, und danach liefert `confirm()`
- * dauerhaft `false`. SPERREN waere dann ein Knopf, der sichtbar nichts tut
- * — exakt die Fehlersignatur, wegen der `letzterAbgleich` ueberhaupt
- * existiert (Owner-Fund 22.08.: „ich kann ihn als Admin nicht abgleichen
- * und entsperren").
- *
- * Der armierte Text traegt die VOLLE E-Mail und darf umbrechen: Im Streifen
- * ist Platz dafuer, in der Zeile waere er es nicht.
+ * dauerhaft `false` — SPERREN waere dann ein Knopf, der sichtbar nichts tut.
  */
 function admArmBtn(
   ruhe: string,
@@ -7210,19 +1526,15 @@ function admPunktFarbe(row: AdminUserRow): string {
 /**
  * Eine Kontozeile bauen: zweizeiliges Raster plus Aufklapp-Streifen.
  *
- * ZWEIZEILIG und nicht mehrspaltig, weil die Karte rund 254 px breit ist
- * (`.col-l { width: 280px }` minus Polster; per Zieh-Griff 260–560 px).
- * Der DESKTOP ist damit der engere Fall, nicht die Handy-Schublade — und
- * eine Media-Query kann eine verstellbare Sidebar-Breite nicht sehen. Also
- * in jeder Breite gleich gebaut, statt an einer geratenen Grenze umzuklappen.
+ * ZWEIZEILIG und nicht mehrspaltig, weil die Karte rund 254 px breit ist.
+ * Der DESKTOP ist damit der engere Fall, nicht die Handy-Schublade.
  */
 function admZeile(row: AdminUserRow, inOffen: boolean): HTMLElement {
   const k = document.createElement('div');
   k.className = 'adm-k';
   k.dataset['uid'] = row.uid;
   k.dataset['mail'] = (row.email ?? row.uid).toLowerCase();
-  // Der Archiv-Filter unten liest das Attribut, nicht die Zeilen-Daten: Die
-  // Zeile wird beim Umstufen neu befuellt, das Attribut wandert mit.
+  // Der Archiv-Filter unten liest das Attribut, nicht die Zeilen-Daten.
   k.dataset['stufe'] = row.accessLevel;
 
   const z = document.createElement('div');
@@ -7246,10 +1558,6 @@ function admZeile(row: AdminUserRow, inOffen: boolean): HTMLElement {
   const z2 = document.createElement('div');
   z2.className = 'adm-z2';
   if (inOffen) {
-    /* „wartet seit" NUR bei einer Registrierung. Bei einer Abgleich-Sperre
-     * wartet niemand — das Buch ist gesperrt, und der Chip daneben sagt es
-     * bereits. Der Satz stand dort auch nur abgeschnitten („wartet seit
-     * 0…"), weil er sich den Platz mit Stufenwort und Chip teilen musste. */
     if (row.accessLevel === 'pending') {
       const seit = document.createElement('span');
       seit.className = 'adm-meta mono';
@@ -7257,16 +1565,8 @@ function admZeile(row: AdminUserRow, inOffen: boolean): HTMLElement {
       seit.title = row.requestedAt ?? '';
       z2.append(seit);
     }
-    /* Die Zugangsstufe als WORT — aber NUR bei den Sperr-Zeilen. Dieser
-     * Abschnitt mischt zwei Sorten: wartende Registrierungen und
-     * FREIGESCHALTETE Konten, deren Buch von der Messung gesperrt wurde.
-     * Ohne das Wort waere der Unterschied nur der 8-px-Punkt, und Farbe
-     * allein ist auf Touch keine Anzeige.
-     *
-     * Bei einer wartenden Registrierung steht die Stufe dagegen schon im
-     * Satz daneben („wartet seit 11 T"). Sie ein zweites Mal zu setzen hat
-     * im Bild genau das abgeschnitten, was man dort liest: Aus „wartet seit
-     * 11 T" wurde „wartet seit 1…". */
+    // Die Zugangsstufe als WORT — nur bei Sperr-Zeilen; bei einer wartenden
+    // Registrierung steht sie schon im Satz daneben.
     if (row.accessLevel !== 'pending') {
       const stufe = document.createElement('span');
       stufe.className = 'adm-meta';
@@ -7292,10 +1592,7 @@ function admZeile(row: AdminUserRow, inOffen: boolean): HTMLElement {
     z2.append(perf, meta);
   }
   /* Markenzone: kuerzt NIE. Der Sperr-Chip ist die eine Sache, die in dieser
-   * Liste niemals geschluckt werden darf — genau seine Unsichtbarkeit war
-   * der Owner-Befund vom 21.08. Der Risiko-Chip ist dagegen in den Streifen
-   * gewandert: Ein Vermerk, den JEDES neue Konto traegt, ist in einer
-   * Uebersicht Rauschen, das die eine rote Zeile versteckt. */
+   * Liste niemals geschluckt werden darf. */
   const mark = document.createElement('span');
   mark.className = 'adm-mark';
   if (row.abgleich?.sperre) {
@@ -7329,8 +1626,7 @@ function admZeile(row: AdminUserRow, inOffen: boolean): HTMLElement {
   /* ZWEI getrennte Bloecke, und das ist der Kern: `.adm-verw` wird beim
    * Neuzeichnen der Zeile ERNEUT gebaut, `.adm-faden` NIE angefasst. Damit
    * kann ein Verwaltungsklick einen offenen Faden oder einen halb getippten
-   * Antworttext nicht mehr fressen — #417 wird baulich unmoeglich statt per
-   * Merker verwaltet. */
+   * Antworttext nicht mehr fressen. */
   const verw = document.createElement('div');
   verw.className = 'adm-verw';
   const faden = document.createElement('div');
@@ -7357,7 +1653,7 @@ function admZeile(row: AdminUserRow, inOffen: boolean): HTMLElement {
   return k;
 }
 
-/** Der Inhalt des Verwaltungs-Streifens — alles, was heute als Chip-Gedraenge klebte. */
+/** Der Inhalt des Verwaltungs-Streifens. */
 function admFuelleVerw(verw: HTMLElement, row: AdminUserRow, fadenBlock: HTMLElement): void {
   verw.innerHTML = '';
   const zeile = (text: string, farbe?: string): void => {
@@ -7379,9 +1675,6 @@ function admFuelleVerw(verw: HTMLElement, row: AdminUserRow, fadenBlock: HTMLEle
       'var(--rd)',
     );
   }
-  if (letzterAbgleich?.uid === row.uid) {
-    zeile(letzterAbgleich.text, letzterAbgleich.sperre ? 'var(--rd)' : 'var(--gn)');
-  }
   // Das eigene Konto listet der Server mit, aendern lehnt er ab — dieselbe
   // Regel hier: keine Knoepfe, statt Knoepfe, die immer scheitern.
   if (row.uid === st?.uid) return;
@@ -7390,10 +1683,8 @@ function admFuelleVerw(verw: HTMLElement, row: AdminUserRow, fadenBlock: HTMLEle
   /* Einstufig, weil herstellend statt zerstoerend: Ein FREISCHALTEN gibt
    * Zugang zurueck. Das SPERREN daneben ist armiert. */
   if (row.accessLevel === 'archiviert') {
-    /* Einstufig, weil herstellend: Zurueckholen gibt Sichtbarkeit zurueck und
-     * nimmt nichts. Ziel ist bewusst 'pending' und nicht 'approved' — aus der
-     * Ablage kommt ein Konto in die Warteschlange zurueck, nicht in den
-     * Handel. */
+    /* Ziel ist bewusst 'pending' und nicht 'approved' — aus der Ablage kommt
+     * ein Konto in die Warteschlange zurueck, nicht in den Handel. */
     verw.append(
       admBtn(t('adm.zurueckholen'), async () => {
         await adminSetAccess(row.uid, 'pending');
@@ -7407,8 +1698,7 @@ function admFuelleVerw(verw: HTMLElement, row: AdminUserRow, fadenBlock: HTMLEle
     );
     /* Armiert, obwohl nichts vernichtet wird: Die Zeile verschwindet aus der
      * Liste, und eine Aktion, deren sichtbares Ergebnis „weg" ist, soll man
-     * nicht mit einem Rutscher ausloesen. Neutral statt rot — es ist eine
-     * Ablage, kein Schaden, und die Karte hat schon genug rote Knoepfe. */
+     * nicht mit einem Rutscher ausloesen. */
     verw.append(
       admArmBtn(
         t('adm.archivieren'),
@@ -7429,9 +1719,8 @@ function admFuelleVerw(verw: HTMLElement, row: AdminUserRow, fadenBlock: HTMLEle
       ),
     );
   }
-  /* Armiert, und ausdruecklich ROT statt neutral: Heute sieht die
-   * folgenreichste Aktion der Karte aus wie NACHRICHTEN — der Ernannte darf
-   * danach den Ernenner entlassen. */
+  /* Armiert, und ausdruecklich ROT statt neutral: Der Ernannte darf danach
+   * den Ernenner entlassen. */
   verw.append(
     admArmBtn(
       row.admin ? t('adm.adminEntziehen') : t('adm.zumAdmin'),
@@ -7441,12 +1730,8 @@ function admFuelleVerw(verw: HTMLElement, row: AdminUserRow, fadenBlock: HTMLEle
       nach,
     ),
   );
-  /* Endgültig löschen (Owner-Frage 24.08., DSGVO Art. 17) — eigener,
-   * expliziter Zweig statt in die accessLevel-if/else-Kette weiter oben
-   * gefaltet: Die kennt nur „archiviert" vs. „alles andere" und würfe
-   * pending in denselben Topf. Admin-Konten werden gar nicht erst
-   * angeboten (Server lehnt sie ohnehin ab — kein Knopf, der garantiert
-   * scheitert). */
+  /* Endgültig löschen (DSGVO Art. 17) — eigener Zweig: Admin-Konten werden
+   * gar nicht erst angeboten (Server lehnt sie ohnehin ab). */
   if ((row.accessLevel === 'archiviert' || row.accessLevel === 'blocked') && !row.admin) {
     verw.append(
       admLoeschKnopf(row.uid, async () => {
@@ -7454,43 +1739,8 @@ function admFuelleVerw(verw: HTMLElement, row: AdminUserRow, fadenBlock: HTMLEle
       }, nach),
     );
   }
-  if (row.abgleich) {
-    /* „Abgleichen" hebt keine Sperre auf, es MISST neu — ist die Drift weg,
-     * faellt die Sperre von selbst. Deshalb einstufig, aber nicht harmlos
-     * beschriftet: Die Messung kann ein Konto auch neu sperren. */
-    verw.append(
-      admBtn(t('adm.abgleichen'), async () => {
-        const erg = await adminAbgleich(row.uid);
-        letzterAbgleich = {
-          uid: row.uid,
-          sperre: erg.sperre,
-          text: !erg.geprueft
-            ? t('adm.abgleichKeinBroker')
-            : erg.sperre
-              ? `${t('adm.abgleichBleibt')} ${erg.grund ?? ''}`.trim()
-              : t('adm.abgleichGeloest'),
-        };
-      }, 'btn-n', row.uid),
-      admArmBtn(
-        t('adm.vormerken'),
-        `${t('adm.wirklichVormerken')} ${row.email ?? row.uid}`,
-        'btn-r',
-        async () => {
-          const erg = await adminUebernahmeVormerken(row.uid);
-          letzterAbgleich = {
-            uid: row.uid,
-            sperre: erg.vorgemerkt,
-            text: erg.vorgemerkt
-              ? t('adm.vormerkGesetzt')
-              : `${t('adm.vormerkNichtNoetig')} ${erg.abgleich.grund ?? ''}`.trim(),
-          };
-        },
-        nach,
-      ),
-    );
-  }
-  /* Eigener Knopf statt `admBtn`: Der laedt nach jeder Aktion die Liste neu
-   * — der eben aufgeklappte Faden waere sofort wieder weg (#417). */
+  /* Eigener Knopf statt `admBtn`: Der laedt nach jeder Aktion die Zeile neu
+   * — der eben aufgeklappte Faden waere sofort wieder weg. */
   const fadenBtn = document.createElement('button');
   fadenBtn.className = 'btn btn-n adm-akt';
   fadenBtn.textContent = t('adm.faden');
@@ -7560,12 +1810,9 @@ export function renderAdminRows(rows: AdminUserRow[]): void {
     regBox.append(admGruppe(name, teil.length));
     for (const r of teil) regBox.append(admZeile(r, false));
   }
-  /* Wehr gegen die stille Luecke, die der Pruefstand am 24.08. fand: Die
-   * Gruppen oben sind eine EXPLIZITE Liste. Eine Zeile mit einer Stufe, die
-   * dort fehlt, fiele durch alle Filter und wuerde gar nicht gezeichnet —
-   * die Kopfzeile zaehlte sie, die Liste zeigte sie nicht. Ein Konto waere
-   * unsichtbar, ohne archiviert oder geloescht zu sein. Deshalb faengt ein
-   * Rest-Eimer alles auf, was keine Gruppe hat. */
+  /* Rest-Eimer: Eine Zeile mit einer Stufe, die oben fehlt, fiele sonst
+   * durch alle Filter und wuerde gar nicht gezeichnet — ein Konto waere
+   * unsichtbar, ohne archiviert oder geloescht zu sein. */
   const bekannt = new Set(gruppen.map(([stufe]) => stufe));
   const rest = rows.filter((r) => !bekannt.has(r.accessLevel));
   if (rest.length > 0) {
@@ -7578,12 +1825,10 @@ export function renderAdminRows(rows: AdminUserRow[]): void {
   offenZahl.textContent = String(offen.length);
   offenZahl.style.color = offen.length > 0 ? 'var(--ac)' : 'var(--t3)';
   $('admStand').textContent = `${rows.length} ${t('adm.kontenStand')} · ${t('adm.geladen')} ${new Date().toLocaleTimeString(sprachWahl() === 'en' ? 'en-US' : 'de-DE', { hour: '2-digit', minute: '2-digit' })}`;
-  // Filter erst ab einer Groesse, die ihn braucht — bei acht Konten waere er
-  // Buerokratie.
+  // Filter erst ab einer Groesse, die ihn braucht — bei acht Konten waere er Buerokratie.
   const suche = $('admSuche') as HTMLInputElement;
   suche.hidden = rows.length <= 12;
   admFiltere();
-  admZeigeMeldung();
 }
 
 /** Filtertext anwenden — rein im Browser, ohne Serveraufruf. */
@@ -7596,37 +1841,15 @@ function admFiltere(): void {
     const istArchiv = k.dataset['stufe'] === 'archiviert';
     if (istArchiv) archiviert += 1;
     /* Archivierte sind standardmaessig weg — das ist der ganze Zweck der
-     * Stufe. Die Suche findet sie trotzdem: Wer eine Adresse eintippt, sucht
-     * genau dieses Konto und soll es nicht deshalb nicht finden, weil es
-     * abgelegt ist. */
+     * Stufe. Die Suche findet sie trotzdem. */
     const wegenArchiv = istArchiv && !archivAn && q.length === 0;
     k.hidden = wegenArchiv || (q.length > 0 && !(k.dataset['mail'] ?? '').includes(q));
   }
-  // Die Zahl macht die Ablage sichtbar, ohne sie aufzuklappen. Ohne sie waere
-  // ein archiviertes Konto von einem geloeschten nicht zu unterscheiden.
   const zahl = $('admArchivZahl');
   if (zahl) {
     zahl.textContent = archiviert > 0 ? `(${archiviert})` : '';
     (zahl.parentElement as HTMLElement | null)?.toggleAttribute('hidden', archiviert === 0);
   }
-}
-
-/**
- * Die Abgleich-Meldung ueber der Liste.
- *
- * Sie steht AUSSERHALB von #admList, und das ist keine Kosmetik: Im
- * Erfolgsfall verschwindet die Sperre, die Zeile verlaesst also den
- * Abschnitt OFFEN. Eine Meldung, die nur an der Zeile haengt, kann den
- * Erfolg baulich nicht anzeigen.
- */
-function admZeigeMeldung(): void {
-  const m = $('admMeldung');
-  const la = letzterAbgleich;
-  if (!la) { m.hidden = true; return; }
-  const wer = admZeilen.find((r) => r.uid === la.uid);
-  m.textContent = `${wer?.email ?? la.uid} — ${la.text}`;
-  m.style.color = la.sperre ? 'var(--rd)' : 'var(--gn)';
-  m.hidden = false;
 }
 
 async function loadAdminList(): Promise<void> {
@@ -7644,7 +1867,7 @@ async function loadAdminList(): Promise<void> {
   }
 }
 
-/** Zustand des Echtgeld-Not-Aus laden und Knopf/Anzeige setzen (M14). */
+/** Zustand des Echtgeld-Not-Aus laden und Knopf/Anzeige setzen. */
 async function ladeKillSwitch(): Promise<void> {
   const state = $('admKillState');
   const btn = $('admKillBtn') as HTMLButtonElement;
@@ -7665,22 +1888,12 @@ async function ladeKillSwitch(): Promise<void> {
 }
 
 /**
- * Genau EINE Zeile neu zeichnen, statt die ganze Liste (22.08.).
- *
- * ── Warum das die eigentliche Aenderung ist ───────────────────────────────
+ * Genau EINE Zeile neu zeichnen, statt die ganze Liste.
  *
  * `loadAdminList()` nach jeder Aktion war die Wurzel von fuenf Folgefehlern
- * gleichzeitig: Der Filtertext verlor seine Wirkung, die Scrollposition
- * sprang, ein offener Streifen schloss sich, der eben aufgeklappte
- * Nachrichten-Faden wurde gefressen (#417) — und jeder Klick kostete eine
- * volle Runde ueber alle Konten gegen dasselbe Tageslimit.
- *
- * Der naheliegende Weg waere, diesen Zustand zu VERWALTEN: Merker fuer
- * Filter, Scroll, offenen Streifen. Genau das leckt an jeder neuen Stelle
- * wieder. Also wird die Fehlerklasse geloescht statt gepflegt: Der Faden
- * (`.adm-faden`) wird nie angefasst, nur `.adm-z` und `.adm-verw` entstehen
- * neu. Wechselt die Zeile den Abschnitt, hilft nur der volle Aufbau — das
- * ist der seltene Fall, und dann ist die Umsortierung auch gewollt.
+ * gleichzeitig (Filter weg, Scroll springt, Streifen zu, Faden gefressen,
+ * volle Runde gegen das Tageslimit). Der Faden (`.adm-faden`) wird nie
+ * angefasst, nur `.adm-z` und `.adm-verw` entstehen neu.
  */
 async function admAktualisiereZeile(uid: string): Promise<void> {
   const rows = await adminListUsers();
@@ -7705,7 +1918,6 @@ async function admAktualisiereZeile(uid: string): Promise<void> {
   if (verw && faden) admFuelleVerw(verw, nachher, faden);
   k.classList.add('adm-puls');
   window.setTimeout(() => k.classList.remove('adm-puls'), 1400);
-  admZeigeMeldung();
 }
 
 /** Kleiner Aktions-Knopf: führt aus, frischt DIESE Zeile auf, zeigt Fehler ehrlich. */
@@ -7736,17 +1948,12 @@ function admBtn(
 }
 
 /**
- * Löschen-Knopf mit getipptem Bestätigungswort (24.08., DSGVO Art. 17).
+ * Löschen-Knopf mit getipptem Bestätigungswort (DSGVO Art. 17).
  *
- * KEIN `window.prompt()`/`confirm()`: `admArmBtn` weiter oben in dieser
- * Datei vermeidet `confirm()` aus genau diesem Grund — Browser bieten nach
- * wiederholten Dialogen „weitere unterdrücken" an, `confirm()`/`prompt()`
- * liefern danach dauerhaft false/null, und der Knopf wäre einer, der
- * sichtbar nichts tut, ohne dass der Grund erkennbar ist. Stattdessen ein
- * echtes Eingabefeld inline —
- * dasselbe Muster wie `rsWord`/`rsGo` beim Wallet-Reset in den
- * Einstellungen: Der Client-Guard ist Bequemlichkeit (Knopf bleibt
- * gesperrt, bis das Wort exakt dasteht), die Sicherung ist serverseitig.
+ * KEIN `window.prompt()`/`confirm()` — derselbe Grund wie bei admArmBtn.
+ * Stattdessen ein echtes Eingabefeld inline, dasselbe Muster wie
+ * `rsWord`/`rsGo` beim Wallet-Reset: Der Client-Guard ist Bequemlichkeit,
+ * die Sicherung ist serverseitig.
  */
 function admLoeschKnopf(uid: string, run: () => Promise<void>, nach: () => void): HTMLElement {
   const host = document.createElement('span');
@@ -7782,8 +1989,7 @@ function admLoeschKnopf(uid: string, run: () => Promise<void>, nach: () => void)
     const ab = document.createElement('button');
     ab.className = 'btn btn-n adm-akt';
     ab.textContent = t('adm.abbrechen');
-    // Klicks/Tasten im Feld dürfen die Zeile nicht auf-/zuklappen (dieselbe
-    // Absicherung wie bei admArmBtn/admBtn oben — ev.stopPropagation()).
+    // Klicks/Tasten im Feld dürfen die Zeile nicht auf-/zuklappen.
     for (const ev of ['click', 'keydown']) {
       input.addEventListener(ev, (e) => e.stopPropagation());
     }
@@ -7816,407 +2022,8 @@ function admLoeschKnopf(uid: string, run: () => Promise<void>, nach: () => void)
   return host;
 }
 
-function renderStrategyChips(): void {
-  if (!st) return;
-  const box = $('wlChips');
-  box.innerHTML = '';
-  for (const sym of watchedSymbols()) {
-    const chip = document.createElement('span');
-    chip.className = 'wl-chip';
-    chip.textContent = sym;
-    box.appendChild(chip);
-  }
-}
 
-/* ── Watchlist-Editor (Stufe 3b, Task 121) ────────────────────────────
- *
- * DEINE Auswahl, getrennt von „Beobachtet": Die Chips oben zeigen, was der
- * Scan gerade tief analysiert (Heartbeat); dieser Editor schreibt
- * `strategy.watchlist` — die Liste, die der Scan mit Vorrang beobachtet und
- * die seit #283 auch Nicht-Katalog-Symbole aus dem Alpaca-Universum tragen
- * darf. Jede Änderung speichert sofort über `submitStrategy`; Serverfehler
- * (Universum kennt das Symbol nicht, Watchlist voll) erscheinen in
- * #stratErr, dem Fehlerfeld der Karte. */
-
-function renderWlEditor(s: Strategy): void {
-  const box = document.getElementById('wlEdit');
-  const count = document.getElementById('wlCount');
-  if (!box || !count) return;
-  box.innerHTML = '';
-  for (const sym of s.watchlist) {
-    const chip = document.createElement('span');
-    chip.className = 'wl-chip';
-    chip.textContent = sym;
-    const x = document.createElement('span');
-    x.className = 'x';
-    x.textContent = '×';
-    x.title = `${sym} ${t('wl.entfernen')}`;
-    x.addEventListener('click', () => {
-      if (!st) return;
-      void submitStrategy(
-        { ...st.strategy, watchlist: st.strategy.watchlist.filter((w) => w !== sym) },
-        t('ws.watchlistGespeichert'),
-      );
-    });
-    chip.appendChild(x);
-    box.appendChild(chip);
-  }
-  count.textContent = `${s.watchlist.length}/${MAX_WATCHLIST}`;
-}
-
-function wlHinzufuegen(roh: string): void {
-  if (!st) return;
-  const sym = roh.trim().toUpperCase();
-  if (!sym) return;
-  const liste = st.strategy.watchlist;
-  const err = $('stratErr');
-  if (liste.includes(sym)) return; // schon drauf — kein Fehler, kein Write
-  if (liste.length >= MAX_WATCHLIST) {
-    err.textContent = `${t('wl.begrenztA')} ${MAX_WATCHLIST} ${t('wl.begrenztB')}`;
-    err.hidden = false;
-    return;
-  }
-  void submitStrategy({ ...st.strategy, watchlist: [...liste, sym] }, t('ws.watchlistGespeichert'));
-}
-
-function wireWlEditor(): void {
-  const inp = $('wlInput') as HTMLInputElement;
-  const list = $('wlSymList');
-  const renderList = (filter: string): void => {
-    const f = filter.trim().toLowerCase();
-    const all = paletteSymbols();
-    const hits = (f
-      ? all.filter((s) => s.symbol.toLowerCase().includes(f) || s.name.toLowerCase().includes(f))
-      : all
-    ).slice(0, 12);
-    list.innerHTML = hits
-      .map((s) => `<button type="button" data-sym="${s.symbol}"><b class="mono">${s.symbol}</b> — ${s.name}</button>`)
-      .join('');
-    list.hidden = hits.length === 0;
-    list.querySelectorAll<HTMLButtonElement>('[data-sym]').forEach((b) =>
-      b.addEventListener('click', () => {
-        wlHinzufuegen(b.dataset['sym']!);
-        (inp as HTMLInputElement).value = '';
-        list.hidden = true;
-      }),
-    );
-  };
-  inp.addEventListener('input', () => renderList(inp.value));
-  inp.addEventListener('focus', () => renderList(inp.value));
-  inp.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Enter') {
-      // Enter nimmt IMMER die getippte Eingabe — auch außerhalb des Katalogs
-      // (freie Symbole, #283). Wer einen Vorschlag will, klickt ihn an.
-      ev.preventDefault();
-      wlHinzufuegen(inp.value);
-      inp.value = '';
-      list.hidden = true;
-    }
-    if (ev.key === 'Escape') list.hidden = true;
-  });
-  document.addEventListener('click', (ev) => {
-    if (!(ev.target as HTMLElement).closest('#wlCombo')) list.hidden = true;
-  }, { signal: docListenerSignal() });
-}
-
-function formStrategy(): Strategy {
-  const s = st!.strategy;
-  // Risiko- und Takt-Werte kommen UNVERÄNDERT aus der gespeicherten
-  // Strategie — seit dem UI-Audit (Punkt 4) ist das Options-Modal ihr
-  // einziger Eingabeort. Diese Karte formt nur noch die Signale.
-  return {
-    ...s,
-    indicators: {
-      ...s.indicators,
-      rsi: {
-        ...s.indicators.rsi,
-        thresholdBuy: Number(($('sRsiLo') as HTMLInputElement).value) || 30,
-        thresholdSell: Number(($('sRsiHi') as HTMLInputElement).value) || 70,
-      },
-    },
-    signals: {
-      ...s.signals,
-      period: ($('sPeriod') as HTMLSelectElement).value || '3mo',
-    },
-  };
-}
-
-async function submitStrategy(next: Strategy, hint: string): Promise<void> {
-  const err = $('stratErr');
-  const problems = validateStrategy(next);
-  if (problems.length > 0) {
-    err.textContent = valText(problems[0]!);
-    err.hidden = false;
-    return;
-  }
-  err.hidden = true;
-  $('saveHint').textContent = t('st.speichere');
-  try {
-    await saveStrategy(next);
-    $('saveHint').textContent = hint;
-  } catch (e) {
-    // Server-Meldung durchreichen (z. B. „E-Mail zuerst bestätigen", Quota)
-    const msg = e instanceof Error && e.message ? serverText(e) : '';
-    err.textContent = msg || t('st.speichernFehlgeschlagen');
-    err.hidden = false;
-    $('saveHint').textContent = '';
-    console.warn('saveStrategy', e);
-  }
-}
-
-/* ── Markt-Übersicht + Detail-Sheet ─────────────────────────────────── */
-
-async function renderMarketTabs(): Promise<void> {
-  if (!st) return;
-  // Ehrlich scheitern statt dauerhaft „Lade Katalog…" (Audit 11.08., F8):
-  // Ein Fehler beim Katalog-Laden war eine unbehandelte Rejection, und der
-  // Platzhalter stand bis zum Neuladen der Seite.
-  if (!st.universe) {
-    try {
-      const geladen = await loadUniverse();
-      if (!st) return; // Abmeldung während der Abfrage
-      st.universe = geladen;
-    } catch (e) {
-      $('mktBody').innerHTML =
-        `<span class="c-t3">${t('mk.katalogNichtLadbar')}</span>`;
-      console.warn('renderMarketTabs', e);
-      return;
-    }
-  }
-  const tabs = $('mktTabs');
-  tabs.innerHTML = '';
-  if (!st.universe) {
-    $('mktBody').innerHTML = `<span class="c-t3">${t('mk.nichtGeseedet')}</span>`;
-    return;
-  }
-  // Marktgruppen-Filter: steht die aktive Klasse auf „versteckt", zur ersten
-  // sichtbaren wechseln, damit Tab-Leiste und Grid konsistent bleiben.
-  if (st.ui.marketGroups?.[st.marketClass] === false) {
-    const first = CLASS_ORDER.find((c) => st!.universe![c] && st!.ui.marketGroups?.[c] !== false);
-    if (first) st.marketClass = first;
-  }
-  for (const cls of CLASS_ORDER) {
-    if (!st.universe[cls]) continue;
-    if (st.ui.marketGroups?.[cls] === false) continue;
-    const b = document.createElement('button');
-    b.className = 'mtab' + (cls === st.marketClass ? ' on' : '');
-    b.textContent = CLASS_LABELS[cls] ?? cls;
-    b.addEventListener('click', () => {
-      st!.marketClass = cls;
-      tabs.querySelectorAll('.mtab').forEach((el) => el.classList.toggle('on', el === b));
-      void renderMarketGrid();
-    });
-    tabs.appendChild(b);
-  }
-  await renderMarketGrid();
-}
-
-async function renderMarketGrid(): Promise<void> {
-  if (!st?.universe) return;
-  // Die Klasse VOR dem await festhalten (Audit 11.08., F8): Wechselt der
-  // Nutzer während der Kurs-Abfrage den Tab, landete die Aktien-Antwort
-  // unter dem Krypto-Tab. Nach dem await entscheidet der Vergleich — der
-  // Lauf des NEUEN Tabs rendert, dieser hier tritt ab.
-  const klasse = st.marketClass;
-  const cls = st.universe[klasse];
-  const body = $('mktBody');
-  if (!cls) { body.innerHTML = ''; return; }
-  let quotes: Awaited<ReturnType<typeof loadMarketQuotes>>;
-  try {
-    quotes = await loadMarketQuotes();
-  } catch (e) {
-    // Ehrlich scheitern statt den alten Inhalt stehen zu lassen (F8).
-    body.innerHTML =
-      `<span class="c-t3">${t('mk.kurseNichtLadbar')}</span>`;
-    console.warn('renderMarketGrid', e);
-    return;
-  }
-  if (!st || st.marketClass !== klasse) return;
-  body.innerHTML = '';
-  for (const [group, entries] of Object.entries(cls.groups)) {
-    const g = document.createElement('div');
-    g.className = 'mkt-group';
-    g.innerHTML = `<div class="mkt-glbl"></div><div class="mkt-grid"></div>`;
-    g.querySelector('.mkt-glbl')!.textContent = group;
-    const grid = g.querySelector('.mkt-grid')!;
-    for (const { symbol, name } of entries) {
-      const q = quotes.get(symbol)?.quote;
-      const cell = document.createElement('div');
-      cell.className = 'mkt-cell';
-      cell.dataset.sym = symbol; // Anker für den Symbol-Steckbrief (18:1x)
-      cell.style.borderLeftColor = q ? (q.changePct >= 0 ? 'var(--gn)' : 'var(--rd)') : 'var(--bd)';
-      cell.innerHTML = `<div class="mkt-sym"></div><div class="mkt-cnm"></div>
-        <div class="mkt-pr">--</div><div class="mkt-ch"></div>`;
-      const symZeile = cell.querySelector('.mkt-sym')!;
-      symZeile.innerHTML = symbolAvatar(symbol, true);
-      symZeile.appendChild(document.createTextNode(symbol));
-      cell.querySelector('.mkt-cnm')!.textContent = name;
-      if (q) {
-        cell.querySelector('.mkt-pr')!.textContent = fmtNum(q.price);
-        const ch = cell.querySelector('.mkt-ch')!;
-        ch.textContent = fmtPct(q.changePct);
-        ch.className = `mkt-ch ${pnlClass(q.changePct)}`;
-      }
-      cell.addEventListener('click', () => openDetail(symbol, name, quotes.get(symbol) ?? null));
-      grid.appendChild(cell);
-    }
-    body.appendChild(g);
-  }
-  schmueckeAvatare();
-}
-
-function openDetail(symbol: string, name: string, data: MarketDocData | null): void {
-  if (!st) return;
-  // Longpress zeigte evtl. gerade das Steckbrief-Kärtchen — das Sheet
-  // übernimmt jetzt (es trägt dieselbe Zeile fest), nichts darf drüber hängen.
-  versteckeSymbolTip();
-  const sheet = $('detailSheet');
-  const q = data?.quote;
-  // Schlagzeilen aus der News-Lage des Scans (News-Rückkehr 29.07.) — reine
-  // Anzeige; dieselben Daten, auf denen das Einstiegs-Veto beruht.
-  const esc = (s: string): string => s.replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]!);
-  const alter = (pub: number): string => {
-    const min = Math.max(0, Math.round((Date.now() / 1000 - pub) / 60));
-    return min < 60 ? `vor ${min} min` : `vor ${Math.round(min / 60)} h`;
-  };
-  const newsHtml = (data?.news?.top ?? [])
-    .slice(0, 4)
-    .map((h) => {
-      const dot = h.sentiment > 0.12 ? 'var(--gn)' : h.sentiment < -0.12 ? 'var(--rd)' : 'var(--bd)';
-      const link = /^https?:\/\//.test(h.url) ? esc(h.url) : '#';
-      return `<a class="dnews-item" href="${link}" target="_blank" rel="noopener noreferrer">
-        <span class="dnews-dot" style="background:${dot}"></span>
-        <span class="dnews-t">${esc(h.title)}</span>
-        <span class="hint mono">${esc(h.source)} · ${alter(h.published)}</span></a>`;
-    })
-    .join('');
-  const veto = vetoAnzeige()
-    && data?.news?.hardEvent
-    && Date.now() / 1000 - data.news.hardEvent.published <= NEWS_VETO_WINDOW_SEC
-    ? `<div class="hint" style="color:var(--yl,#d9a441)">⏸ ${t('dt.vetoAktivA')} (${esc(data.news.hardEvent.type)}) ${t('dt.vetoAktivB')}</div>`
-    : '';
-  sheet.innerHTML = `
-    <button class="dclose" data-close="detail">✕</button>
-    <h3></h3>
-    <div class="dmeta"><span class="mono"></span><span>${CLASS_LABELS[data?.assetClass ?? ''] ?? ''}</span></div>
-    <div class="hint sym-steck"></div>
-    <div class="vbig ${q ? pnlClass(q.changePct) : 'c-t3'}">${q ? fmtNum(q.price) : '—'}</div>
-    <div class="smv ${q ? pnlClass(q.changePct) : 'c-t3'}">${q ? fmtPct(q.changePct) : t('dt.keineScanDaten')}</div>
-    <div class="dbtns">
-      ${q ? `<button class="dbtn pri" id="dOpenChart">${t('dt.imChartOeffnen')}</button>` : ''}
-    </div>
-    ${veto}
-    ${newsHtml ? `<div class="wl-sec" style="margin-top:10px">Schlagzeilen</div><div class="dnews">${newsHtml}</div>` : ''}`;
-  sheet.querySelector('h3')!.textContent = name;
-  sheet.querySelector('.dmeta .mono')!.textContent = symbol;
-  // Steckbrief (16:5x): dieselbe kuratierte Zeile wie im Hover-Kärtchen —
-  // im Modal ist Platz, hier steht sie immer.
-  const steck = sheet.querySelector('.sym-steck') as HTMLElement | null;
-  if (steck) {
-    const sText = steckbriefText(symbol);
-    steck.textContent = sText;
-    steck.hidden = sText === '';
-  }
-  $('detailModal').classList.add('show');
-  sheet.querySelector('#dOpenChart')?.addEventListener('click', () => {
-    closeModal('detail');
-    selectSymbol(symbol);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  });
-}
-
-const MODAL_IDS = {
-  detail: 'detailModal',
-  options: 'optModal',
-  analytics: 'anModal',
-  stop: 'stopModal',
-} as const;
-type ModalName = keyof typeof MODAL_IDS;
-
-function closeModal(which: ModalName): void {
-  $(MODAL_IDS[which]).classList.remove('show');
-}
-
-/**
- * Nach dem Engine-Stop fragen, was mit den offenen Positionen geschehen soll.
- *
- * ── Warum das ein Dialog ist und kein Hinweissatz ─────────────────────────
- *
- * Der Stop pausiert alles — auch Stop-Loss und Take-Profit. Das ist so
- * gewollt („das Depot genau im Status quo belassen"), hat aber eine
- * Kehrseite, die erst später wehtut: Ein gestopptes Konto mit offenen
- * Positionen ist ein ungeschütztes Konto. Ein Warnsatz verlagert die Arbeit
- * auf den Nutzer und darauf, dass er ihn im richtigen Moment liest. Dieser
- * Dialog erledigt sie an der Stelle, an der die Frage entsteht.
- *
- * Ohne offene Positionen erscheint er nicht — eine Rückfrage ohne Inhalt
- * lehrt nur, Dialoge wegzuklicken.
- */
-function zeigeStopDialog(): void {
-  if (!st || st.positions.length === 0) return;
-  const rows = $('stopRows');
-  $('stopOut').textContent = '';
-  rows.innerHTML = st.positions
-    .map((p) => {
-      const kurs = st?.posPrices.get(p.symbol) ?? null;
-      const short = p.side === 'short';
-      // Dieselbe Rechnung wie in Summe und Tabelle (F6). Ohne Kurs bleibt
-      // `pnl` null — hier steht dann „—" statt einer erfundenen Null.
-      const { pnl } = positionLage(p, kurs);
-      const farbe = pnl === null ? 'var(--t3)' : pnl >= 0 ? 'var(--gn)' : 'var(--rd)';
-      return `<label class="hint" style="display:flex;align-items:center;gap:8px;padding:4px 0">
-        <input type="checkbox" data-stopsym="${escText(p.symbol)}" checked />
-        <b style="min-width:64px" data-sym="${escText(p.symbol)}">${escText(p.symbol)}</b>
-        <span style="flex:1">${short ? 'Short ' : ''}${p.qty} × ${money(p.avgEntry)}</span>
-        <span class="mono" style="color:${farbe}">${
-          pnl === null ? '—' : `${pnl >= 0 ? '+' : ''}${money(pnl)}`
-        }</span>
-      </label>`;
-    })
-    .join('');
-  $(MODAL_IDS.stop).classList.add('show');
-}
-
-/**
- * Ausgewählte Positionen schließen.
- *
- * Nacheinander statt parallel: Jeder Verkauf ist eine eigene Transaktion auf
- * demselben Wallet-Dokument, und gleichzeitige Schreibvorgänge darauf würden
- * sich gegenseitig zum Wiederholen zwingen. Bei einer Handvoll Positionen
- * ist die Reihenfolge schneller als der Konflikt.
- *
- * Ein Fehlschlag stoppt die Reihe NICHT: Wenn ein Symbol nicht handelbar ist
- * (Markt zu), sollen die anderen trotzdem geschlossen werden. Was nicht ging,
- * steht am Ende namentlich da.
- */
-async function schliessePositionen(symbole: string[]): Promise<void> {
-  const out = $('stopOut');
-  const fehler: string[] = [];
-  let ok = 0;
-  for (const [i, sym] of symbole.entries()) {
-    out.innerHTML = `<div class="hint">${t('sc.schliesse')} ${i + 1}/${symbole.length} …</div>`;
-    const pos = st?.positions.find((p) => p.symbol === sym);
-    try {
-      // Long wird verkauft, Short wird eingedeckt — der Broker schließt in
-      // beiden Fällen die GANZE Position, eine Menge ist nicht nötig.
-      await callTrade({ symbol: sym, side: pos?.side === 'short' ? 'buy' : 'sell' });
-      ok += 1;
-    } catch (e) {
-      fehler.push(`${sym}: ${(e as Error).message}`);
-    }
-  }
-  out.innerHTML =
-    `<div class="hint">${ok} ${t('sc.vonGeschlossen')} ${symbole.length}.`
-    + (fehler.length > 0
-      ? `<br />${t('sc.nichtGeschlossen')} — ${escText(fehler.join(' · '))}`
-      : ` ${t('sc.depotFlach')}`)
-    + '</div>';
-}
-
-/* ── Portfolio (Wallet, Positionen, Trades) ─────────────────────────── */
-
-const money = (n: number | null | undefined): string =>
-  n === null || n === undefined ? '--' : '$' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/* ── Positionen & Kennzahlen (Wallet, Positionen, Kurse) ────────────── */
 
 /** Quote-Listener für Positions-Symbole nachführen (auf-/abbauen). */
 function syncPositionQuotes(): void {
@@ -8237,71 +2044,25 @@ function syncPositionQuotes(): void {
         if (!st) return;
         if (d?.quote) st.posPrices.set(sym, d.quote.price);
         renderPortfolio();
-        // Trailing-Linie und P&L-Chip leben vom Kurs — mitziehen, aber nur
-        // fürs gezeigte Symbol (sonst rendert jede fremde Quote das Chart neu)
-        if (sym === st.currentSymbol) applyPosition();
       }),
     );
   }
 }
 
-/**
- * Exit-Transparenz je Position (Owner-Queue 26.07.: „warum verkauft die
- * Engine (nicht)?"): Abstand des Kurses zu Stop/Trailing/Take in Prozent
- * plus der nächste Exit-Kandidat. Rechnet EXAKT wie die Engine: gespeicherte
- * Level haben Vorrang, sonst die heutigen (klassen-aufgelösten) Prozente;
- * bei Shorts alles gespiegelt. ATR-adaptive Stops zeigt der Client als
- * Modus an (die exakte Schwelle kennt nur der Server-Scan).
- *
- * Die Level kommen seit 04.08. aus `positionLevels` (shared) — derselben
- * Rechnung, die auch die Preislinien im Chart setzt. Zwei Rechnungen würden
- * driften, und dann widerspräche die Tabelle der Linie im Chart.
- */
-function exitOutlook(p: Position, live: number | undefined): string {
-  if (!st || live === undefined || !(live > 0) || !(p.avgEntry > 0)) return '';
-  const risk = resolveRisk(st.strategy.engine, classify(p.symbol));
-  const lv = positionLevels(p, risk);
-  const short = p.side === 'short';
-  const parts: string[] = [];
-  const candidates: Array<{ label: string; dist: number }> = [];
-  const fmt = (v: number): string => `${v.toFixed(1)} %`;
-
-  if (lv.stop !== null) {
-    const dist = levelDistPct(lv.stop, live, 'stop', short);
-    parts.push(dist <= 0 ? `<b class="c-rd">${t('eo.stop')}: ${t('eo.loestAus')}</b>` : `${t('eo.stop')} ${t('eo.inAbstand')} <b>${fmt(dist)}</b>`);
-    candidates.push({ label: t('eo.stop'), dist });
-  } else if (lv.stopAtr) {
-    parts.push(`${t('eo.stop')}: <b>${t('eo.atrAdaptiv')}</b>`);
+/** Stop, Ziel, Strategie und Haltedauer je Position — die Stops liegen beim Broker. */
+function positionsAusblick(p: PositionRow): string {
+  const teile: string[] = [];
+  if (p.stopLoss !== null && p.stopLoss !== undefined) teile.push(`${t('eo.stop')} <b>${fmtNum(p.stopLoss)}</b>`);
+  if (p.takeProfit !== null && p.takeProfit !== undefined) teile.push(`${t('eo.ziel')} <b>${fmtNum(p.takeProfit)}</b>`);
+  if (p.schutz?.orderId) teile.push(t('pos.schutzBeimBroker'));
+  else if (p.stopLoss !== null && p.stopLoss !== undefined) teile.push(t('pos.schutzOhneOrder'));
+  if (p.strategy) teile.push(escText(p.strategy));
+  const seit = Date.parse(p.openedAt);
+  if (Number.isFinite(seit)) {
+    const tage = (Date.now() - seit) / 86_400_000;
+    teile.push(`${t('pos.seit')} <b>${tage < 1 ? `${Math.round(tage * 24)} h` : `${tage.toFixed(1)} ${t('eo.tg')}`}</b>`);
   }
-
-  if (lv.trail !== null) {
-    const dist = levelDistPct(lv.trail, live, 'stop', short);
-    parts.push(dist <= 0 ? `<b class="c-rd">${t('eo.trailing')}: ${t('eo.loestAus')}</b>` : `${t('eo.trailing')} ${t('eo.inAbstand')} <b>${fmt(dist)}</b>`);
-    candidates.push({ label: t('eo.trailing'), dist });
-  } else if (lv.trailWartet) {
-    parts.push(`${t('eo.trailing')}: <span title="${t('eo.wartetTitel')}">${t('eo.wartetAufGewinn')}</span>`);
-  }
-
-  if (lv.target !== null) {
-    const dist = levelDistPct(lv.target, live, 'target', short);
-    parts.push(dist <= 0 ? `<b class="c-gn">${t('eo.ziel')}: ${t('eo.loestAus')}</b>` : `${t('eo.ziel')} ${t('eo.inAbstand')} <b>${fmt(dist)}</b>`);
-    candidates.push({ label: t('eo.ziel'), dist });
-  } else if (lv.targetAtr) {
-    parts.push(`${t('eo.ziel')}: <b>${t('eo.atrAdaptiv')}</b>`);
-  }
-
-  // Zeitgrenze läuft in Tagen, nicht in Prozent — sie konkurriert deshalb
-  // nicht um „nächster Exit", außer sie ist bereits erreicht.
-  const maxDays = risk.maxHoldDays ?? 0;
-  if (maxDays > 0 && Number.isFinite(Date.parse(p.openedAt))) {
-    const left = maxDays - (Date.now() - Date.parse(p.openedAt)) / 86_400_000;
-    parts.push(left <= 0 ? `<b>${t('eo.zeitgrenze')}</b>` : `${t('eo.zeitNoch')} <b>${left.toFixed(1)} ${t('eo.tg')}</b>`);
-    if (left <= 0) candidates.push({ label: t('eo.zeitgrenzeKurz'), dist: -1 });
-  }
-
-  const next = candidates.sort((a, b) => a.dist - b.dist)[0];
-  if (next) parts.push(`<span class="pos-next">→ ${t('eo.naechsterExit')}: ${next.label}</span>`);
-  return parts.join(' · ');
+  return teile.join(' · ');
 }
 
 function renderPortfolio(): void {
@@ -8309,14 +2070,9 @@ function renderPortfolio(): void {
   const cash = st.wallet?.paperBalance ?? null;
   let openPnl = 0;
   let posValue = 0;
-  /* Positionen ohne frischen Kurs (Audit-Befund 11.08., F6).
-   *
-   * Der Wert bleibt konservativ auf Einstand — eine Position aus der Equity
-   * zu streichen, weil ihr Kurs fehlt, wäre schlimmer. Aber ihr Ergebnis ist
-   * dann UNBEKANNT, nicht null, und genau das muss dranstehen: Sonst liest
-   * sich „P&L ±0,00" wie „hat sich nichts bewegt", während in Wahrheit
-   * niemand weiß, wo die Position steht. Der Owner-Screenshot vom 10.08.
-   * zeigte genau diese Lage — 128 von 132 Symbolen ohne Kurs. */
+  /* Positionen ohne frischen Kurs: Der Wert bleibt konservativ auf Einstand,
+   * aber ihr Ergebnis ist UNBEKANNT, nicht null — und genau das muss
+   * dranstehen. */
   let ohneKurs = 0;
   for (const p of st.positions) {
     const lage = positionLage(p, st.posPrices.get(p.symbol) ?? null);
@@ -8325,55 +2081,34 @@ function renderPortfolio(): void {
     else openPnl += lage.pnl;
   }
   // Gesamt-P&L = Equity − Kapitalbasis. NICHT die Summe der geladenen
-  // Trades: Die Handelshistorie lädt seitenweise nach, und eine „Gesamt"-
-  // Zahl, die mit jedem „Ältere laden" wächst, ist keine (Owner-Fund
-  // 29.07.). Equity − Basis enthält zudem ehrlich ALLES — auch Gebühren
-  // offener Käufe und Margin-Zinsen, die in keinem Trade-pnl stehen.
-  // Realisiert ergibt sich als Differenz zum offenen P&L.
+  // Trades: Die Historie lädt seitenweise nach, und eine „Gesamt"-Zahl, die
+  // mit jedem „Ältere laden" wächst, ist keine.
   const basis = st.wallet?.baseCapital ?? st.strategy.broker.initialCapital;
   const totalPnl = cash !== null ? cash + posValue - basis : null;
   const closedPnl = totalPnl !== null ? totalPnl - openPnl : null;
-  // Win-Rate bleibt eine Quote über die GELADENEN Abschlüsse (tiefere
-  // Historie = mehr Stichprobe) — als Quote verschiebt sie sich beim
-  // Nachladen nur, wenn sich die Vergangenheit anders schlug als die
-  // Gegenwart; das ist Information, kein Anzeigefehler.
   const closers = st.trades.filter((t) => t.pnl !== undefined && t.pnl !== null);
   const wins = closers.filter((t) => (t.pnl ?? 0) > 0).length;
   const winRate = closers.length > 0 ? Math.round((wins / closers.length) * 100) : null;
 
   $('vCash').textContent = money(cash);
-  /* Negatives Cash ist beim SHORT-Buch Buchungslogik, kein Verlust — und
-   * die nackte Zahl hat den Owner am 13.08. zweimal zu Recht irritiert.
-   * Hintergrund: Der Broker führt den Leerverkaufs-Erlös im Cash, unser
-   * Buch hält die Deckung im Positionswert; beim Abgleich gilt deshalb
-   * Buch-Cash = Broker-Cash − 2 × Σ Short-Einstände (adoptBroker/K-5,
-   * kontoAbgleich seit #277). Die Zahl bleibt stehen — die Equity daneben
-   * ist der echte, broker-identische Kontostand —, aber sie erklärt sich
-   * jetzt selbst und nennt die praktische Folge: Für neue Käufe ist das
-   * verfügbare Kapital höchstens max(0, Cash). Reine Anzeige, die
-   * Wallet-Arithmetik bleibt unberührt. */
+  /* Negatives Cash ist beim SHORT-Buch Buchungslogik, kein Verlust: Der
+   * Broker führt den Leerverkaufs-Erlös im Cash, unser Buch hält die Deckung
+   * im Positionswert. Die Zahl bleibt stehen, erklärt sich aber selbst. */
   const cashHint = document.getElementById('vCashHint');
   if (cashHint) {
     const negativ = cash !== null && cash < 0;
     cashHint.hidden = !negativ;
-    cashHint.textContent = negativ
-      ? `${t('pf.shortsBinden')} ${money(Math.max(0, cash))}.`
-      : '';
+    cashHint.textContent = negativ ? `${t('pf.shortsBinden')} ${money(Math.max(0, cash))}.` : '';
   }
   $('vEq').textContent = cash !== null ? money(cash + posValue) : '--';
   const pnlEl = $('vPnl');
   pnlEl.textContent = totalPnl === null ? '--' : (totalPnl >= 0 ? '+' : '') + money(totalPnl);
   pnlEl.className = `vbig ${pnlClass(totalPnl ?? 0)}`;
-  /* Maßstab der Gesamt-P&L (Owner-Frage 13.08.): Nach einem Depot-Schnitt
-   * (Übernahme/Reset) ist die Basis neu geankert — ein grünes „+2.245 $"
-   * neben einer roten Handels-Analyse ist dann KEIN Widerspruch, sondern
-   * zwei Zeiträume. Die Zeile sagt, ab wann die Zahl zählt; die Trades
-   * davor bleiben in der Handels-Analyse sichtbar. Nur Anzeige. */
+  /* Maßstab der Gesamt-P&L: Nach einem Depot-Schnitt ist die Basis neu
+   * geankert — die Zeile sagt, ab wann die Zahl zählt. */
   const basisHint = document.getElementById('vPnlBasis');
   if (basisHint) {
     const resetAt = st.wallet?.resetAt;
-    // `zeit`, nicht `t`: Der alte Name verschattete die Übersetzungsfunktion
-    // t() aus i18n — der Template-String darunter griffe sonst auf die Zahl.
     const zeit = resetAt ? Date.parse(resetAt) : NaN;
     const datum = Number.isFinite(zeit) ? new Date(zeit).toLocaleDateString('de-DE') : null;
     basisHint.hidden = !datum;
@@ -8385,10 +2120,6 @@ function renderPortfolio(): void {
   closedEl.textContent = closedPnl === null ? '--' : money(closedPnl);
   closedEl.className = `smv ${pnlClass(closedPnl ?? 0)}`;
   const unrealEl = $('vUnreal');
-  /* Fehlen Kurse, sagt die Zahl es (F6). Vorher stand hier eine glatte
-   * Summe, in der jede kurslose Position stillschweigend mit 0 zählte —
-   * dieselbe Anzeige wie bei „steht genau auf Einstand", nur dass niemand
-   * das wusste. */
   unrealEl.textContent = ohneKurs > 0 ? `${money(openPnl)} *` : money(openPnl);
   unrealEl.className = `smv ${pnlClass(openPnl)}`;
   unrealEl.title =
@@ -8408,50 +2139,27 @@ function renderPortfolio(): void {
   for (const p of st.positions) {
     const live = st.posPrices.get(p.symbol);
     const short = p.side === 'short';
-    // Dieselbe Rechnung wie in der Summe darüber und im Stop-Dialog — eine
-    // Funktion, damit die drei Anzeigen nicht auseinanderlaufen (F6).
+    // Dieselbe Rechnung wie in der Summe darüber — eine Funktion, damit die
+    // Anzeigen nicht auseinanderlaufen.
     const { pnl } = positionLage(p, live ?? null);
     const pct = live !== undefined && p.avgEntry > 0
       ? (short ? (1 - live / p.avgEntry) : (live / p.avgEntry - 1)) * 100
       : null;
     const tr = document.createElement('tr');
-    tr.dataset.sym = p.symbol; // Anker für den Symbol-Steckbrief (18:1x)
-    // data-th wie in der Signal-Tabelle: Labels fürs mobile Karten-Layout.
+    tr.dataset['sym'] = p.symbol;
+    // data-th: Labels fürs mobile Karten-Layout (theme.css, 480px-Block).
     tr.innerHTML = `<td style="color:var(--t1);font-weight:700"></td><td data-th="Qty">${p.qty}</td>
       <td data-th="${t('tab.eintritt')}">${fmtNum(p.avgEntry)}</td><td data-th="${t('tab.aktuell')}">${live !== undefined ? fmtNum(live) : '--'}</td>
       <td data-th="P&amp;L" class="${pnl !== null ? pnlClass(pnl) : ''}">${pnl !== null ? money(pnl) : '--'}</td>
       <td data-th="%" class="${pct !== null ? pnlClass(pct) : ''}">${pct !== null ? fmtPct(pct) : '--'}</td>
-      <td class="pos-act"><button class="hbtn" data-exit style="color:var(--rd)">${short ? 'Cover' : 'Exit'}</button></td>`;
+      <td class="pos-act"><span class="stag ${short ? 't-short' : 't-buy'}" title="${short ? t('pf.leerverkauf') : t('jn.long')}">${short ? 'SHORT' : 'LONG'}</span></td>`;
     const symTd = tr.querySelector('td')!;
     symTd.innerHTML = symbolAvatar(p.symbol);
     symTd.appendChild(document.createTextNode(p.symbol));
-    // Klick aufs Symbol holt die Position ins Haupt-Chart (04.08.) — dort
-    // zeigen Marke, Preislinien und die Kurve seit Einstieg den ganzen Verlauf
     symTd.className = 'pos-sym';
-    symTd.title = t('pf.imChart');
-    symTd.addEventListener('click', () => {
-      if (!st) return;
-      publishSymbol(st.chartGroup, p.symbol);
-      $('chartArea').scrollIntoView({ behavior: 'smooth', block: 'center' });
-    });
-    if (short) {
-      const tag = document.createElement('span');
-      tag.className = 'stag t-sell';
-      tag.style.marginLeft = '6px';
-      tag.textContent = 'SHORT';
-      tag.title = t('pf.leerverkauf');
-      symTd.appendChild(tag);
-    }
-    tr.querySelector('[data-exit]')!.addEventListener('click', () => {
-      // Short schließt per KAUF (Eindecken), Long per Verkauf — beides OHNE
-      // Menge, der Server schließt die ganze Position (Audit-Befund 11.08.,
-      // Begründung bei `positionSchliessen`).
-      void positionSchliessen(p.symbol, short ? 'buy' : 'sell');
-    });
+    symTd.title = resolveName(p.symbol);
     body.appendChild(tr);
-    // Exit-Transparenz (Owner-Queue): Abstände zu Stop/Trailing/Ziel + der
-    // nächste Kandidat — damit sichtbar ist, WARUM die Engine (nicht) verkauft
-    const outlook = exitOutlook(p, live);
+    const outlook = positionsAusblick(p);
     if (outlook) {
       const sub = document.createElement('tr');
       sub.className = 'pos-sub';
@@ -8462,20 +2170,11 @@ function renderPortfolio(): void {
 
   schmueckeAvatare();
   renderJournal();
-  // Nur nachziehen, wenn die Ansicht offen ist: Sechs Diagramme bei jedem
-  // Portfolio-Render neu zu bauen, kostet bei jedem eintreffenden Trade
-  // Rechenzeit für Markup, das niemand sieht.
-  if ($('anModal')?.classList.contains('show')) renderAnalytics();
 }
 
-/**
- * Identität eines Trades ohne Doc-ID.
- *
- * Die Datenschicht liefert nur Feldwerte, keine IDs. Zeitstempel plus Symbol
- * plus Seite plus Stück reicht: Zwei Trades desselben Symbols in derselben
- * Millisekunde mit identischer Menge gibt es nicht — der Broker schreibt sie
- * in einer Transaktion nacheinander.
- */
+/* ── Handelshistorie mit Paging ─────────────────────────────────────── */
+
+/** Identität eines Trades ohne Doc-ID: Zeitstempel + Symbol + Seite + Stück. */
 function tradeKey(t: TradeRow): string {
   return `${t.executedAt}|${t.symbol}|${t.side}|${t.qty}`;
 }
@@ -8483,15 +2182,9 @@ function tradeKey(t: TradeRow): string {
 /**
  * Eine ältere Seite anhängen (Knopf „Ältere laden").
  *
- * Zwei Lehren aus dem Owner-Fund vom 04.08. („warum kann man nicht mehr
- * weitere laden?"):
- *
- * 1. Ein Fehler darf hier nicht mehr stumm in der Konsole landen. Vorher sah
- *    ein abgelehnter Zugriff exakt so aus wie eine leere Historie — der Knopf
- *    sprang zurück und nichts geschah, ohne dass irgendwo stand, warum.
- * 2. Bringt eine Seite ausschließlich schon bekannte Zeilen, wird sofort
- *    weitergeblättert statt aufzugeben. Sonst bliebe der Knopf für immer
- *    an derselben Stelle stehen.
+ * Ein Fehler landet sichtbar am Knopf, nicht stumm in der Konsole; bringt
+ * eine Seite ausschließlich schon bekannte Zeilen, wird sofort
+ * weitergeblättert statt aufzugeben.
  */
 async function ladeAeltereTrades(): Promise<void> {
   if (!st || st.tradesLoading || st.tradesDone || !st.tradesCursor) return;
@@ -8517,10 +2210,8 @@ async function ladeAeltereTrades(): Promise<void> {
     if (st) st.tradesFehler = serverText(e);
     console.warn('Ältere Trades nicht ladbar:', e);
   } finally {
-    // Abmeldung während der Abfrage (Audit 11.08., F12): Das `return` im
-    // try läuft trotzdem durch dieses finally — und `st` ist dann null.
-    // Das frühere nackte `st.tradesLoading = false` war ein unbehandelter
-    // TypeError im Abmelde-Pfad.
+    // Abmeldung während der Abfrage: Das `return` im try läuft trotzdem
+    // durch dieses finally — und `st` ist dann null.
     if (st) {
       st.tradesLoading = false;
       renderPortfolio();
@@ -8529,38 +2220,15 @@ async function ladeAeltereTrades(): Promise<void> {
 }
 
 /**
- * Die Handelshistorie als Tabelle.
- *
- * Bis 28.07. stand hier ein hartes `.slice(0, 20)` — und darüber holte die
- * Abfrage ohnehin nur 40 Zeilen. Der Owner sah also nie mehr als die
- * letzten paar Trades, ohne dass irgendwo stand, dass da noch mehr ist.
- * Jetzt: Live-Kopf (50) plus nachgeladene Seiten, alles sichtbar, mit
- * Zähler und zwei Filtern.
- *
- * Gefiltert wird NUR die Anzeige, nie die Datenbasis der Auswertungen —
- * sonst würde die Analyse-Karte je nach Filterfeld andere Kennzahlen zeigen
- * als die Trades, aus denen sie stammt.
- */
-/**
- * Richtungs-Marke eines Trades (Owner 21:3x: „im Trade Verlauf sollen Shorts
- * und Longs besser markiert werden").
- *
- * BUY/SELL allein war zweideutig: Ein Leerverkauf ist ein SELL, sein
- * Eindecken ein BUY — in der alten Anzeige sah ein Short-Einstieg exakt aus
- * wie ein Long-Ausstieg. Der Broker schreibt die Richtung längst mit
- * (`short` am Leerverkauf, `cover` am Eindecken, functions/src/core/
- * broker.ts); hier wird sie nur endlich sichtbar. Vier Fälle, vier Marken:
+ * Richtungs-Marke eines Trades. BUY/SELL allein war zweideutig: Ein
+ * Leerverkauf ist ein SELL, sein Eindecken ein BUY. Vier Fälle, vier Marken:
  * Long-Kauf ▲, Long-Verkauf ▼, Short-Eröffnung ▼ (rot umrandet), Cover ▲.
- *
- * Der TEXT nennt nur die Seite (Long/Short), der PFEIL die Richtung —
- * „▼ Short auf" wurde in der schmalen Sidebar zu „▼ SHOR" abgeschnitten
- * (E2E-Fund). Die volle Erklärung steht im title/aria-label.
  */
 function tradeRichtung(zeile: { side: 'buy' | 'sell'; short?: boolean; cover?: boolean }): {
   klasse: string; pfeil: string; text: string; titel: string;
 } {
   // `zeile`, nicht `t`: Der Parametername würde die Übersetzungsfunktion
-  // t() verschatten (dieselbe Falle wie in renderMomentum).
+  // t() verschatten.
   if (zeile.short === true) {
     return { klasse: 't-short', pfeil: '▼', text: t('jn.short'), titel: t('jn.shortAufTitel') };
   }
@@ -8572,6 +2240,39 @@ function tradeRichtung(zeile: { side: 'buy' | 'sell'; short?: boolean; cover?: b
     : { klasse: 't-sell', pfeil: '▼', text: t('jn.long'), titel: t('jn.longZuTitel') };
 }
 
+type SortRichtung = 'auf' | 'ab';
+const sortZustand: { jn: { idx: number; dir: SortRichtung } | null } = { jn: null };
+
+/** Spalten-Sortierung per Titel-Klick, auf/ab im Wechsel — idempotent über data-wired. */
+function wireSortKopf(bodyId: string, anwenden: () => void): void {
+  const kopf = document.getElementById(bodyId)?.closest('table')?.querySelector<HTMLTableRowElement>('thead tr');
+  if (!kopf || kopf.dataset['wired'] === '1') return;
+  kopf.dataset['wired'] = '1';
+  const koepfe = [...kopf.querySelectorAll<HTMLTableCellElement>('th')];
+  koepfe.forEach((th, idx) => {
+    if (th.textContent?.trim() === '') return;
+    th.classList.add('sortierbar');
+    th.title = t('tab.sortierenTitel');
+    th.addEventListener('click', () => {
+      const alt = sortZustand.jn;
+      const neu: { idx: number; dir: SortRichtung } =
+        alt?.idx === idx ? { idx, dir: alt.dir === 'auf' ? 'ab' : 'auf' } : { idx, dir: 'auf' };
+      sortZustand.jn = neu;
+      koepfe.forEach((h, i) => {
+        h.classList.toggle('sort-auf', i === idx && neu.dir === 'auf');
+        h.classList.toggle('sort-ab', i === idx && neu.dir === 'ab');
+        if (i === idx) h.setAttribute('aria-sort', neu.dir === 'auf' ? 'ascending' : 'descending');
+        else h.removeAttribute('aria-sort');
+      });
+      anwenden();
+    });
+  });
+}
+
+/**
+ * Die Handelshistorie als Tabelle: Live-Kopf (50) plus nachgeladene Seiten,
+ * mit Zähler und zwei Filtern. Gefiltert wird NUR die Anzeige.
+ */
 function renderJournal(): void {
   if (!st) return;
   const jb = $('jBody') as HTMLTableSectionElement;
@@ -8583,8 +2284,8 @@ function renderJournal(): void {
     if (seite) return t.side === seite;
     return true;
   });
-  // Spalten-Sortierung (Owner 16:0x) — auf den DATEN, nicht den Zellen:
-  // „20.08., 15:39" wäre als Text lexikalisch falsch, executedAt (ISO) nicht.
+  // Spalten-Sortierung — auf den DATEN, nicht den Zellen: „20.08., 15:39"
+  // wäre als Text lexikalisch falsch, executedAt (ISO) nicht.
   const sj = sortZustand.jn;
   if (sj) {
     const dir = sj.dir === 'auf' ? 1 : -1;
@@ -8610,33 +2311,27 @@ function renderJournal(): void {
   }
 
   const zaehler = $('jCount');
-  if (zaehler) {
-    zaehler.textContent =
-      zeilen.length === st.trades.length
-        ? `${st.trades.length}${st.tradesDone ? '' : '+'}`
-        : `${zeilen.length} / ${st.trades.length}${st.tradesDone ? '' : '+'}`;
-  }
-  const mehr = $('jMore') as HTMLButtonElement | null;
-  if (mehr) {
-    // Nie ganz verschwinden lassen: Ein fehlender Knopf sieht aus wie ein
-    // Fehler, ein ausgegrauter erklärt sich selbst (Owner-Fund 04.08.).
-    mehr.hidden = false;
-    mehr.disabled = st.tradesLoading || st.tradesDone;
-    mehr.textContent = st.tradesFehler
-      ? t('jn.nachladenFehler')
-      : st.tradesLoading
-        ? t('jn.laedt')
-        : st.tradesDone
-          ? t('jn.alleGeladen')
-          : t('jn.aeltereLaden');
-    if (st.tradesFehler) {
-      mehr.disabled = false;
-      mehr.title = st.tradesFehler;
-    } else {
-      mehr.title = st.tradesDone
-        ? t('jn.vollstaendigTitel')
-        : t('jn.aeltereTitel');
-    }
+  zaehler.textContent =
+    zeilen.length === st.trades.length
+      ? `${st.trades.length}${st.tradesDone ? '' : '+'}`
+      : `${zeilen.length} / ${st.trades.length}${st.tradesDone ? '' : '+'}`;
+  const mehr = $('jMore') as HTMLButtonElement;
+  // Nie ganz verschwinden lassen: Ein fehlender Knopf sieht aus wie ein
+  // Fehler, ein ausgegrauter erklärt sich selbst.
+  mehr.hidden = false;
+  mehr.disabled = st.tradesLoading || st.tradesDone;
+  mehr.textContent = st.tradesFehler
+    ? t('jn.nachladenFehler')
+    : st.tradesLoading
+      ? t('jn.laedt')
+      : st.tradesDone
+        ? t('jn.alleGeladen')
+        : t('jn.aeltereLaden');
+  if (st.tradesFehler) {
+    mehr.disabled = false;
+    mehr.title = st.tradesFehler;
+  } else {
+    mehr.title = st.tradesDone ? t('jn.vollstaendigTitel') : t('jn.aeltereTitel');
   }
 
   jb.innerHTML = '';
@@ -8648,7 +2343,7 @@ function renderJournal(): void {
   }
   for (const t of zeilen) {
     const tr = document.createElement('tr');
-    tr.dataset.sym = t.symbol; // Anker für den Symbol-Steckbrief (18:1x)
+    tr.dataset['sym'] = t.symbol;
     const time = new Date(t.executedAt).toLocaleString('de-DE', {
       day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
     });
@@ -8657,336 +2352,58 @@ function renderJournal(): void {
       <td><span class="stag ${ri.klasse}" title="${escText(ri.titel)}" aria-label="${escText(ri.titel)}">${ri.pfeil} ${escText(ri.text)}</span></td>
       <td>${t.qty}</td><td>${fmtNum(t.price)}</td>
       <td class="${t.pnl !== undefined ? pnlClass(t.pnl) : ''}">${t.pnl !== undefined ? money(t.pnl) : '—'}</td>`;
-    tr.querySelectorAll('td')[1]!.textContent = t.symbol + (t.source === 'engine' ? ' · Auto' : '');
+    const symTd = tr.querySelectorAll('td')[1]!;
+    symTd.textContent = t.symbol;
+    // Ausstiegsgrund und Strategie als Tooltip — sie kommen vom Takt, nicht vom Nutzer.
+    if (t.exitReason || t.strategy) symTd.title = [t.strategy, t.exitReason].filter(Boolean).join(' · ');
     jb.appendChild(tr);
   }
 }
 
-/**
- * Handels-Analyse (Owner-Wunsch 28.07.).
- *
- * Sechs Ansichten auf DIESELBEN geladenen Trades — je mehr Seiten der Nutzer
- * nachlädt, desto tiefer reicht die Auswertung. Der Umfang steht deshalb im
- * Kopf der Karte: Eine Kennzahl aus 50 Trades sieht genauso aus wie eine aus
- * 5000, und ohne die Zahl daneben verwechselt man beides.
- *
- * Alle Aggregationen kommen aus `shared/src/tradeAnalytics.ts` (rein,
- * getestet), alles Gezeichnete aus `svgcharts.ts` (rein, kein DOM). Hier
- * steht nur die Verdrahtung.
- */
-/**
- * Zeitraum wechseln — und die Historie besorgen, die er braucht.
- *
- * Der Umschalter wäre eine Lüge ohne diesen Schritt: `st.trades` enthält nur
- * die geladenen Seiten (50 je Klick), und wer „90 Tage" wählt, während nur
- * vier geladen sind, bekäme eine Vier-Tage-Auswertung mit 90-Tage-Beschriftung.
- *
- * Deshalb wird nachgeladen, bis `historieReicht` zufrieden ist oder es nichts
- * mehr gibt. Der Deckel von zwölf Runden (= 600 Trades) ist eine Bremse gegen
- * ein Konto mit sehr langer Historie und einem Fehlgriff auf „Alles"; er wird
- * im Kopf der Karte offen benannt, statt still abzuschneiden.
- */
-async function waehleZeitraum(tage: Zeitraum): Promise<void> {
-  if (!st || st.anLaedt) return;
-  st.anZeitraum = tage;
-  st.anLaedt = true;
-  renderAnalytics();
-  try {
-    const uid = st.uid;
-    for (let runde = 0; runde < 12; runde++) {
-      if (!st || st.tradesDone || !st.tradesCursor) break;
-      if (historieReicht(st.trades, tage, new Date(), st.tradesDone)) break;
-      const seite = await loadMoreTrades(uid, st.tradesCursor);
-      if (!st) return; // Abmeldung während der Abfrage
-      const bekannt = new Set(st.trades.map(tradeKey));
-      st.trades = [...st.trades, ...seite.rows.filter((t) => !bekannt.has(tradeKey(t)))];
-      st.tradesCursor = seite.cursor ?? st.tradesCursor;
-      st.tradesDone = seite.done;
-    }
-  } catch (e) {
-    console.warn('Zeitraum-Historie nicht ladbar:', e);
-  } finally {
-    if (st) st.anLaedt = false;
-    renderAnalytics();
-    renderPortfolio();
-  }
+function wireHistorie(): void {
+  $('jFilter').addEventListener('input', renderJournal);
+  $('jSide').addEventListener('change', renderJournal);
+  $('jMore').addEventListener('click', () => void ladeAeltereTrades());
+  wireSortKopf('jBody', renderJournal);
 }
 
-/** Zeitraum-Chip-Beschriftung in der Oberfläche (EN-Tranche 4): „Alles/1J/NT"
- *  je Sprache. shared/zeitraumLabel bleibt bewusst deutsch — shared hat kein
- *  i18n, und die Chips sind der einzige sichtbare Verwender. */
+/* ── Performance: Equity-Kurve und Kennzahlen ───────────────────────── */
+
 function zeitraumLabelUi(tage: Zeitraum): string {
   if (tage === 0) return t('zr.alles');
   if (tage === 365) return t('zr.jahr');
   return `${tage}${t('zr.tagKuerzel')}`;
 }
 
-/** Die Chip-Leiste über der Auswertung. */
-function renderZeitraumChips(): void {
-  const leiste = $('anZeit');
-  if (!leiste || !st) return;
-  leiste.innerHTML = ZEITRAEUME.map(
-    (z) =>
-      `<button class="tf-btn${z === st!.anZeitraum ? ' on' : ''}" data-anz="${z}"` +
-      `${st!.anLaedt ? ' disabled' : ''}>${esc(zeitraumLabelUi(z))}</button>`,
-  ).join('');
-  for (const b of leiste.querySelectorAll<HTMLButtonElement>('[data-anz]')) {
-    b.addEventListener('click', () => {
-      void waehleZeitraum(Number(b.dataset['anz']) as Zeitraum);
-    });
-  }
-}
-
-function renderAnalytics(): void {
-  if (!st) return;
-  const box = $('anBody');
-  const scope = $('anScope');
-  if (!box) return;
-  renderZeitraumChips();
-
-  /* Ab hier rechnet ALLES auf dem gewählten Zeitraum — auch die Kennzahlen
-   * oben und die Teilen-Grafik. Zwei Bezugsräume auf einem Bildschirm wären
-   * schlimmer als ein zu kurzer: Man vergliche Zahlen, die nichts miteinander
-   * zu tun haben. */
-  const trades = imZeitraum(st.trades as HistoryTrade[], st.anZeitraum, new Date());
-  const summary = historySummary(trades);
-  if (summary.closed === 0) {
-    box.innerHTML = st.anLaedt
-      ? `<div class="hint">${t('an.ladeHistorie')}</div>`
-      : `<div class="hint">${t('an.keineImZeitraum')}${
-          st.anZeitraum === 0 ? '' : ` ${t('an.laengerWaehlen')}`
-        }</div>`;
-    if (scope) scope.textContent = '';
-    // Der Hinweis hat das Chart-Gerüst überschrieben — Instanzen aufgeben,
-    // sonst malen sie in abgehängte Knoten weiter.
-    void ladeAnalyseCharts().then((m) => m.entsorgeAnalyseCharts());
-    return;
-  }
-  if (scope) {
-    /* Der Kopf sagt, worauf die Zahlen beruhen. Genau die Angabe fehlte:
-     * „Trefferquote 30 %" aus vier Tagen sah aus wie eine aus vier Monaten.
-     * `(geladen)` bleibt für den Fall, dass der Deckel gegriffen hat — dann
-     * ist der Zeitraum gewählt, aber nicht vollständig belegt. */
-    const voll = st.tradesDone || historieReicht(st.trades, st.anZeitraum, new Date(), st.tradesDone);
-    scope.textContent =
-      `${summary.closed} ${t('an.geschlossen')} · ${zeitraumLabelUi(st.anZeitraum)}` +
-      `${st.anLaedt ? ` · ${t('an.laedt')}` : voll ? '' : ` (${t('an.geladen')})`}`;
-  }
-
-  const geschlossen = closedOnly(trades);
-  const stats = tradeStats(
-    geschlossen.map((t) => ({ symbol: t.symbol, pnl: t.pnl!, riskExit: t.riskExit ?? null })),
-  );
-  const st_ = streaks(trades);
-  const kpi = (label: string, wert: string, cls = ''): string =>
-    `<div class="an-kpi"><span class="lbl">${esc(label)}</span><b class="mono ${cls}">${esc(wert)}</b></div>`;
-
-  const kpiHtml = `
-      ${kpi(t('an.ergebnis'), money(summary.pnl), pnlClass(summary.pnl))}
-      ${kpi(t('an.trefferquote'), stats.winRatePct === null ? '—' : `${stats.winRatePct}%`)}
-      ${kpi(t('an.profitFaktor'), stats.profitFactor === null ? '—' : String(stats.profitFactor))}
-      ${kpi(t('an.oJeTrade'), stats.expectancy === null ? '—' : money(stats.expectancy),
-            pnlClass(stats.expectancy ?? 0))}
-      ${kpi(t('an.bester'), summary.bestTrade === null ? '—' : money(summary.bestTrade), 'c-gn')}
-      ${kpi(t('an.schlechtester'), summary.worstTrade === null ? '—' : money(summary.worstTrade), 'c-rd')}
-      ${kpi(t('an.verlustserie'), String(st_.longestLoss))}
-      ${kpi(t('an.laufendeSerie'), st_.current === 0 ? '—' : `${st_.current > 0 ? '+' : ''}${st_.current}`,
-            st_.current > 0 ? 'c-gn' : st_.current < 0 ? 'c-rd' : '')}`;
-
-  /* Das Chart-Gerüst wird EINMAL gebaut und danach stehen gelassen: Die
-   * ECharts-Instanzen hängen an den Host-Divs, und nur weil die Hosts beim
-   * Zeitraum-Umschalten überleben, MORPHEN die Werte weich ineinander (die
-   * pixpower-Machart) — ein innerHTML-Neuaufbau je Render würde stattdessen
-   * jedes Mal das Bild austauschen. KPIs werden separat aktualisiert. */
-  const sektion = (key: string, titel: string, hoehe: number): string =>
-    `<section><h4>${titel}</h4><div class="ec-host" id="anEc-${key}" style="height:${hoehe}px"></div></section>`;
-  if (!box.querySelector('.an-grid')) {
-    box.innerHTML = `
-    <div class="an-kpis"></div>
-    <div class="an-grid">
-      ${sektion('verlauf', `${t('an.kontoverlauf')} ${iBtn('anEquity')}`, 210)}
-      ${sektion('verteilung', `${t('an.verteilung')} ${iBtn('anHisto')}`, 190)}
-      ${sektion('exits', `${t('an.ausstiegsgruende')} ${iBtn('exits')}`, 225)}
-      ${sektion('symbole', t('an.jeSymbol'), 205)}
-      ${sektion('wochentage', t('an.nachWochentag'), 190)}
-      ${sektion('stunden', `${t('an.nachStunde')} ${iBtn('anStunde')}`, 190)}
-    </div>`;
-  }
-  const kpis = box.querySelector('.an-kpis');
-  if (kpis) kpis.innerHTML = kpiHtml;
-
-  const daten = analyseChartDaten(trades);
-  void ladeAnalyseCharts().then((m) => m.aktualisiereAnalyseCharts(daten));
-}
-
 /**
- * Diagramm-Daten des Analyse-Fensters — EINE Quelle für die UI-Charts und
- * das Analyse-Video. Zwei Bauwege würden irgendwann zwei Wahrheiten zeigen.
+ * Welche Kurve gezeichnet wird: die Tages-Snapshots (Depotwert inkl.
+ * offener Positionen), sobald es zwei gibt — sonst die REALISIERTE Kurve
+ * aus den Abschlüssen. Die Meta-Zeile nennt die Herkunft, denn eine
+ * realisierte Kurve steht still, während eine offene Position läuft.
  */
-function analyseChartDaten(trades: HistoryTrade[]): {
-  verlauf: number[];
-  histo: Array<{ from: number; to: number; n: number }>;
-  exits: Array<{ label: string; value: number }>;
-  symbole: Array<{ label: string; value: number }>;
-  wochentage: Array<{ label: string; value: number }>;
-  stunden: Array<{ label: string; value: number }>;
+function depotKurve(quelle: { snapshots: EquitySeriesPoint[]; trades: HistoryTrade[] }): {
+  serie: Array<{ date: string; equity: number }>;
+  hinweis: string;
 } {
-  const geschlossen = closedOnly(trades);
-  // Ausstiegsgründe: die Frage, ob Stop und Take überhaupt erreicht werden
-  // oder ob alles am Signal stirbt (MT1-Befund vom 27.07.).
-  const exits = exitBreakdown(
-    geschlossen.map((t) => ({ symbol: t.symbol, pnl: t.pnl!, riskExit: t.riskExit ?? null })),
-  );
+  if (quelle.snapshots.length >= 2) {
+    return {
+      serie: quelle.snapshots,
+      hinweis: `${quelle.snapshots.length} ${t('kv.tagesSnapshots')}`,
+    };
+  }
+  const basis = st?.wallet?.baseCapital ?? st?.strategy.broker.initialCapital ?? 0;
+  const geschlossen = closedOnly(quelle.trades);
+  const kurve = equityCurve(geschlossen, basis).map((s) => ({ date: s.at.slice(0, 10), equity: s.value }));
+  if (kurve.length === 0) return { serie: [], hinweis: t('kv.nochKeine') };
   return {
-    verlauf: equityCurve(trades).map((p) => p.value),
-    histo: pnlHistogram(trades),
-    exits: Object.entries(exits).map(([k, b]) => ({
-      label: `${EXIT_LABELS[k] ?? k} (${b.n})`,
-      value: b.pnl,
-    })),
-    symbole: bySymbol(trades)
-      .slice(0, 8)
-      .map((b) => ({ label: b.key, value: b.pnl })),
-    wochentage: byWeekday(trades).map((b) => ({ label: b.key, value: b.pnl })),
-    stunden: byHour(trades).map((b) => ({ label: b.key, value: b.pnl })),
+    serie: [{ date: kurve[0]!.date, equity: basis }, ...kurve],
+    hinweis: `${t('kv.ausAbschluessen1')} ${geschlossen.length} ${
+      geschlossen.length === 1 ? t('kv.abschluss') : t('kv.abschluesse')
+    } ${t('kv.ausAbschluessen2')}`,
   };
 }
 
-/**
- * ECharts erst laden, wenn die Analyse wirklich gebraucht wird: dynamic
- * import ⇒ eigener Chunk, das Hauptbundle wächst durch die Bibliothek nicht.
- */
-function ladeAnalyseCharts(): Promise<typeof import('./analyseCharts.js')> {
-  return import('./analyseCharts.js');
-}
-
-/** Ausstiegsgründe in Klartext — die Schlüssel kommen aus dem Broker. */
-const EXIT_LABELS: Record<string, string> = {
-  signal: 'Signal',
-  stop_loss: 'Stop-Loss',
-  take_profit: 'Take-Profit',
-  trailing_stop: 'Trailing-Stop',
-  trailing_stop_broker: 'Trailing-Stop (Broker)',
-  max_hold: t('an.haltedauer'),
-  emergency: t('an.notbremse'),
-  // Zwangs-Glattstellung der Tages-Notbremse (Audit 13.08., K-3). Das Wort
-  // kommt aus notbremsenExit — journalText erzählt es als „durch die
-  // Tages-Notbremse".
-  breaker: `${t('an.notbremse')} (${t('an.glattstellung')})`,
-  margin_call: 'Margin-Call',
-};
-
-/* ── Portfolio-Kennzahlen (M12): Stats-Doc + Equity-Sparkline ──────────────
-   Datenquelle ist ausschließlich der tägliche snapshotEquity-Lauf (Server) —
-   das UI aggregiert hier bewusst NICHTS selbst, damit Live-Ansicht und
-   Kennzahlen nie auseinanderlaufen. Sparkline als Inline-SVG (keine
-   Chart-Lib-Instanz für 120 Punkte, kein position:fixed in Glass-Cards). */
-/**
- * Welche Depot-Kurve die Oberfläche zeigt — EINE Wahl für ALLE Karten.
- *
- * ── Der Befund (Owner 12.08.: „warum noch keine Tageskurve!?!") ───────────
- *
- * #265 hat die Kurve aus den Abschlüssen gebaut, #266 sie in die
- * Teilen-Karte gehängt — und dort blieb sie. Die Performance-Karte, die
- * große Kurve mit Drawdown und der Depot-Verlauf lasen weiter ausschließlich
- * die Tages-Snapshots und meldeten „Noch zu wenige Snapshot-Tage", während
- * das Bild zum Teilen eine Kurve zeichnete. Zwei Antworten auf dieselbe
- * Frage, in derselben Ansicht untereinander.
- *
- * Deshalb steht die Wahl jetzt hier, an einer Stelle, und alle vier Karten
- * rufen sie auf. Die Erklärung wandert mit: Ohne sie sieht eine realisierte
- * Kurve aus wie der Depotwert — und ein Konto, dessen Snapshots ein Reset
- * gelöscht hat, sieht aus wie ein kaputtes System.
- */
-/* ── EN-Tranche 5 (21.08.): shared liefert Teile, die Oberfläche den Satz ──
- *
- * `kurvenErklaerung()` in shared baut denselben Satz auf Deutsch. Er bleibt
- * als Referenz-Formulierung stehen — der Golden-Test hält ihn fest, und der
- * Bild-Prüfstand der Depot-Grafik rendert ihn; die App zeigt seit dieser
- * Tranche die übersetzte Fassung. Die
- * Fallunterscheidung liegt weiterhin NUR in shared (`erklaerungsTeile`);
- * ginge sie hier auseinander, sagten deutsche und englische Fassung
- * Verschiedenes. */
-function kurvenText(e: Parameters<typeof erklaerungsTeile>[0]): string {
-  return erklaerungsTeile(e)
-    .map((teil) => {
-      switch (teil.code) {
-        case 'ausAbschluessen':
-          return `${t('kv.ausAbschluessen1')} ${teil.trades} ${
-            teil.trades === 1 ? t('kv.abschluss') : t('kv.abschluesse')
-          } ${t('kv.ausAbschluessen2')}`;
-        case 'nochKeineAbschluesse':
-          return t('kv.nochKeine');
-        case 'ohneZeitpunktOderErgebnis':
-          return `${teil.trades} ${
-            teil.trades === 1 ? t('kv.abschlussTraegt') : t('kv.abschluesseTragen')
-          } ${t('kv.ohneZeitpunkt')}`;
-        case 'keineSnapshots':
-          return `${t('kv.keineSnapshots1')}${reset(teil.resetAm)} ${t('kv.keineSnapshots2')} ${teil.uhrzeit}.`;
-        default:
-          return `${t('kv.einSnapshot1')}${reset(teil.resetAm)} ${t('kv.einSnapshot2')} ${teil.uhrzeit}).`;
-      }
-    })
-    .join(' ')
-    .trim();
-}
-
-function reset(am: string | undefined): string {
-  return am ? ` (${t('kv.reset')} ${am})` : '';
-}
-
-/** Fazit der Live-Reife in der Sprache des Nutzers — der gespeicherte
- *  deutsche Satz bleibt als Rückfallebene für alte Befunde. */
-function reifeFazit(r: {
-  bereit: boolean;
-  erfuellt: number;
-  gesamt: number;
-  offeneCodes?: string[];
-  fazit: string;
-}): string {
-  if (!r.offeneCodes) return r.fazit;
-  if (r.bereit) return t('lv.reifeBereit');
-  const offen = r.offeneCodes.map((c) => t(`lv.krit.${c}` as never)).join(', ');
-  return `${t('lv.reifeNochNicht')} (${r.erfuellt}/${r.gesamt}): ${offen}.`;
-}
-
-function depotKurve(
-  quelle?: {
-    snapshots: readonly EquitySeriesPoint[];
-    trades: readonly HistoryTrade[];
-  },
-  /** true ⇒ realisierte Trade-Kurve erzwingen (Snapshots decken das
-   *  Fenster nicht — Owner-Befund 14.08., siehe shareDatenBauen). */
-  erzwingeRealisiert = false,
-): KurvenWahl & { erklaerung: string; snapshots: number } {
-  // Ohne Argument der volle Stand (Dashboard-Karten), mit Argument der
-  // Zeitraum-Ausschnitt (Handels-Analyse und Teilen-Grafik folgen dem
-  // Umschalter Heute/7T/30T/…). Dieselbe Rechnung, andere Eingabe — nicht
-  // dieselbe Frage mit zwei Antworten.
-  const snapshots = quelle?.snapshots ?? st?.equitySeries ?? [];
-  const geschlossen = closedOnly((quelle?.trades ?? st?.trades ?? []) as HistoryTrade[]);
-  const wahl = waehleKurve(
-    snapshots,
-    geschlossen.map((t) => ({ at: t.executedAt, pnl: t.pnl ?? 0 })),
-    st?.wallet?.baseCapital ?? st?.strategy?.broker?.initialCapital ?? 0,
-    erzwingeRealisiert ? Number.POSITIVE_INFINITY : undefined,
-  );
-  return {
-    ...wahl,
-    snapshots: snapshots.length,
-    erklaerung: kurvenText({
-      herkunft: wahl.herkunft,
-      snapshots: snapshots.length,
-      trades: geschlossen.length,
-      resetAm: st?.wallet?.resetAt,
-    }),
-  };
-}
-
-/** Zeitraum-Chips der Performance-Kurve — dasselbe Muster wie die
- *  Handels-Analyse (`renderZeitraumChips`), nur ohne Nachladen: Die Kurve
- *  fenstert über bereits geladene Snapshots/Trades; welche Quelle zeichnet,
- *  sagt weiterhin die Meta-Zeile. */
+/** Zeitraum-Chips der Performance-Kurve — fenstern nur die gezeichnete Kurve. */
 function renderPfZeitChips(): void {
   const leiste = document.getElementById('pfZeit');
   if (!leiste || !st) return;
@@ -9007,38 +2424,13 @@ function renderPfStats(): void {
   if (!st) return;
   const s = st.pfStats;
   renderPfZeitChips();
-  /* Zeitfenster der KURVE (Owner-Thema „Performance mit Zeitachse"): Bei 0
-   * (Alles) exakt der bisherige Weg; sonst dieselbe Kurvenwahl über die
-   * gefensterten Quellen — Schnitt-Logik und Erklärung bleiben in
-   * depotKurve, hier wird nur die Eingabe beschnitten. Die Kennzahlen im
-   * Raster darunter bleiben bewusst die Server-Zahlen: Sharpe 30/90 und
-   * Max-Drawdown tragen ihren Bezugsraum im Namen, eine zweite, clientseitig
-   * gefensterte Fassung derselben Namen wäre zwei Wahrheiten. */
   const zr = st.pfZeitraum;
   const ab = zeitraumBeginn(zr, new Date());
-  const wahl = ab === null
-    ? depotKurve()
-    : depotKurve({
-        snapshots: (st.equitySeries ?? []).filter((p) => Date.parse(p.date) >= ab.getTime()),
-        trades: imZeitraum((st.trades ?? []) as HistoryTrade[], zr, new Date()),
-      });
+  const wahl = depotKurve({
+    snapshots: ab === null ? st.equitySeries : st.equitySeries.filter((p) => Date.parse(p.date) >= ab.getTime()),
+    trades: imZeitraum(st.trades as HistoryTrade[], zr, new Date()),
+  });
   const serie = wahl.serie;
-  /* ── Vergleichslinie „einfach halten" (Owner 18.08.) ───────────────────
-   *
-   * Nur auf der SNAPSHOT-Kurve. Die realisierte Trade-Kurve zeigt gebuchte
-   * Gewinne, der Index den Depotwert — beides in ein Bild zu legen wäre ein
-   * Vergleich zweier verschiedener Größen, und er fiele systematisch zu
-   * unseren Gunsten aus, weil offene Verluste dort noch nicht drinstehen.
-   * Genau dieser Unterschied war am 18.08. das Thema: „gestern waren wir
-   * noch knapp 4000 im Plus" — das war der Depotwert, gebucht wurde später
-   * weniger. */
-  const bench = wahl.herkunft === 'snapshots'
-    ? benchmarkKurve(
-        ab === null
-          ? (st.equitySeries ?? [])
-          : (st.equitySeries ?? []).filter((p) => Date.parse(p.date) >= ab.getTime()),
-      )
-    : null;
   const grid = $('pfGrid');
   const hint = $('pfHint');
   const spark = $('pfSpark') as unknown as SVGSVGElement;
@@ -9047,14 +2439,8 @@ function renderPfStats(): void {
   spark.innerHTML = '';
   if (serie.length >= 2) {
     const eq = serie.map((p) => p.equity);
-    /* Die Vergleichslinie teilt sich die Skala mit der Depot-Kurve — sonst
-     * wären zwei Linien mit verschiedenen Maßstäben übereinander, und der
-     * ABSTAND zwischen ihnen, also das einzig Interessante, wäre erfunden. */
-    const bw = (bench?.kurve ?? [])
-      .map((p) => p.bench)
-      .filter((v): v is number => v !== null);
-    const min = Math.min(...eq, ...bw);
-    const max = Math.max(...eq, ...bw);
+    const min = Math.min(...eq);
+    const max = Math.max(...eq);
     const span = max - min || 1;
     const pts = eq.map((v, i) => {
       const x = (i / (eq.length - 1)) * 100;
@@ -9063,28 +2449,8 @@ function renderPfStats(): void {
     });
     const up = eq[eq.length - 1]! >= eq[0]!;
     const color = up ? 'var(--gn)' : 'var(--rd)';
-    /* Gestrichelt und in der Neutralfarbe: Die Vergleichslinie ist der
-     * Maßstab, nicht das Ergebnis — sie darf die Depot-Kurve nicht
-     * optisch überstimmen. Lücken (Tage ohne Indexkurs) werden nicht
-     * überbrückt, sondern beginnen ein neues Segment. */
-    const benchSegmente: string[] = [];
-    let lauf: string[] = [];
-    for (const [i, p] of (bench?.kurve ?? []).entries()) {
-      if (p.bench === null) { if (lauf.length > 1) benchSegmente.push(lauf.join(' ')); lauf = []; continue; }
-      const n = bench!.kurve.length;
-      const x = n > 1 ? (i / (n - 1)) * 100 : 0;
-      lauf.push(`${x.toFixed(2)},${(24 - ((p.bench - min) / span) * 22).toFixed(2)}`);
-    }
-    if (lauf.length > 1) benchSegmente.push(lauf.join(' '));
     spark.innerHTML =
       `<polygon points="0,26 ${pts.join(' ')} 100,26" fill="${up ? 'var(--gn-soft, rgba(52,199,123,.18))' : 'var(--rd-soft, rgba(255,95,95,.18))'}"></polygon>` +
-      benchSegmente
-        .map(
-          (seg) =>
-            `<polyline points="${seg}" fill="none" stroke="var(--t3)" stroke-width="1.1"` +
-            ' stroke-dasharray="3 2" vector-effect="non-scaling-stroke"></polyline>',
-        )
-        .join('') +
       `<polyline points="${pts.join(' ')}" fill="none" stroke="${color}" stroke-width="1.4" vector-effect="non-scaling-stroke"></polyline>`;
     spark.removeAttribute('hidden');
   } else {
@@ -9092,27 +2458,12 @@ function renderPfStats(): void {
   }
   // Die Meta-Zeile nennt das gewählte Fenster — sonst sähe eine 7-Tage-Kurve
   // aus wie die ganze Historie eines jungen Kontos.
-  renderPfKurven(
-    serie,
-    (zr === 0 ? '' : `${zeitraumLabelUi(zr)} · `)
-      + wahl.hinweis
-      // Der Vergleich gehört an die Kurve, nicht in eine eigene Ecke: Wer
-      // die Linie sieht, soll die Zahl daneben lesen können.
-      + (bench && bench.vorsprungPct !== null ? ` · ${benchmarkSatz(bench)}` : ''),
-  );
-  renderDepotVerlauf();
+  renderPfKurven(serie, (zr === 0 ? '' : `${zeitraumLabelUi(zr)} · `) + wahl.hinweis);
 
   if (!s || s.equityDays === 0) {
     grid.hidden = true;
     hint.hidden = false;
-    // Statt des festen Markup-Satzes die Erklärung, die zum Konto passt: Der
-    // Unterschied zwischen „noch nie gehandelt" und „Reset hat die Serie
-    // geleert" ist genau die Frage, die hier gestellt wurde.
-    if (wahl.erklaerung) hint.textContent = wahl.erklaerung;
-    // Ohne Stats-Doc laufen die Sektions-Renderer nie — die Wrapper hier
-    // schließen, sonst blieben sie nach einem Reset im alten Zustand stehen.
-    for (const id of PF_SEKTIONEN) zeigePfSektion(id, false);
-    aktualisierePfLeer();
+    hint.textContent = wahl.serie.length >= 2 ? wahl.hinweis : t('pf.abSnapshot');
     return;
   }
   grid.hidden = false;
@@ -9122,8 +2473,7 @@ function renderPfStats(): void {
   hint.hidden = days >= 7;
   if (!hint.hidden) {
     hint.textContent =
-      `${t('ps.erst')} ${days} ${days === 1 ? t('ps.snapshotTag') : t('ps.snapshotTage')} ${t('ps.aussagekraeftiger')}`
-      + (wahl.erklaerung ? ` ${wahl.erklaerung}` : '');
+      `${t('ps.erst')} ${days} ${days === 1 ? t('ps.snapshotTag') : t('ps.snapshotTage')} ${t('ps.aussagekraeftiger')}`;
   }
   const num = (v: number | null | undefined, digits = 2, suffix = ''): string =>
     v === null || v === undefined ? '--' : `${v.toFixed(digits)}${suffix}`;
@@ -9137,29 +2487,16 @@ function renderPfStats(): void {
   const exp = $('pfExp');
   exp.textContent = s.expectancy === null ? '--' : money(s.expectancy);
   exp.className = `smv mono ${s.expectancy !== null ? pnlClass(s.expectancy) : ''}`;
-  renderExits(s);
-  renderCosts(s);
-  renderReibung(s);
-  renderKapital(s);
-  aktualisierePfLeer();
 }
 
 /**
- * Große Equity-Kurve + synchronisiertes Drawdown-Panel (M12).
+ * Große Equity-Kurve + synchronisiertes Drawdown-Panel.
  *
- * Beide Panels zeichnen DIESELBE Serie mit DERSELBEN X-Skala (ein Punkt je
- * Snapshot-Tag) — dadurch stehen Tal in der Kurve und Ausschlag im Drawdown
- * exakt untereinander, ohne Sync-Mechanik. Die Drawdown-KURVE ist eine reine
- * Ableitung der Serie (Abstand zum bisherigen Hochwasser); die KENNZAHL
- * maxDD kommt weiterhin ausschließlich vom Server (Stats-Doc) — das UI
- * rechnet keine konkurrierende Zahl, es malt dieselbe Serie zweimal.
- * Bewusst ID-freie Inline-SVGs wie die Sparkline: `<defs>`-Gradienten mit
- * fester ID kollidierten, sobald zwei Charts auf derselben Seite stehen.
+ * Beide Panels zeichnen DIESELBE Serie mit DERSELBEN X-Skala — Tal in der
+ * Kurve und Ausschlag im Drawdown stehen exakt untereinander. Die KENNZAHL
+ * maxDD kommt weiterhin ausschließlich vom Server (Stats-Doc).
  */
-function renderPfKurven(
-  serie: Array<{ date: string; equity: number }>,
-  herkunftHinweis = '',
-): void {
+function renderPfKurven(serie: Array<{ date: string; equity: number }>, herkunftHinweis = ''): void {
   const kurve = document.getElementById('pfCurve');
   const ddSvg = document.getElementById('pfDDCurve');
   const meta = document.getElementById('pfCurveMeta');
@@ -9167,8 +2504,7 @@ function renderPfKurven(
   if (serie.length < 2) {
     kurve.innerHTML = '';
     ddSvg.innerHTML = '';
-    // Warum, nicht nur dass — dieselbe Erklärung wie in der Karte darüber.
-    meta.textContent = depotKurve().erklaerung || t('ps.nochKeineKurve');
+    meta.textContent = herkunftHinweis || t('ps.nochKeineKurve');
     return;
   }
   const eq = serie.map((p) => p.equity);
@@ -9200,1650 +2536,170 @@ function renderPfKurven(
   const von = serie[0]!.date;
   const bis = serie[serie.length - 1]!.date;
   meta.textContent =
-    `${von} → ${bis} · Start ${money(eq[0]!)} · Ende ${money(eq[eq.length - 1]!)} ` +
-    `· Hoch ${money(max)} · Tief ${money(min)} · tiefster Drawdown ${tiefster.toFixed(2)} %` +
-    // Eine realisierte Kurve MUSS sich als solche zu erkennen geben: Sie steht
-    // still, während eine offene Position läuft — als Depotwert gelesen führt
-    // sie in die Irre.
+    `${von} → ${bis} · Start ${money(eq[0]!)} · ${t('ps.ende')} ${money(eq[eq.length - 1]!)} ` +
+    `· ${t('ps.hoch')} ${money(max)} · ${t('ps.tief')} ${money(min)} · Drawdown ${tiefster.toFixed(2)} %` +
     (herkunftHinweis ? ` · ${herkunftHinweis}` : '');
 }
 
-/* ── Teilbare Ergebnis-Grafik (Owner-Wunsch 10.08.) ───────────────────────
-   Der Bau der Karte steht in `shareCard` — hier nur die Browser-Seite:
-   Daten sammeln, SVG rastern, weitergeben. */
 
-/** Baut die Kennzahlen der Teilen-Grafik aus dem aktuellen Stand. */
-/**
- * Die Trades und die Equity-Serie, beide auf den gewählten Zeitraum
- * geschnitten (Owner 11.08.).
- *
- * Beide, nicht nur die Trades: Die Teilen-Grafik zeichnet die Equity-Kurve
- * und beschriftet sie mit ihrem ersten und letzten Datum. Bliebe sie
- * ungeschnitten, stünde über der Auswertung „90 Tage" und in der Grafik
- * darunter „2026-08-07 → 2026-08-11" — genau die Verwechslung, die der
- * Umschalter beenden soll.
- *
- * Die Equity-Serie trägt `date` als `YYYY-MM-DD`, die Trades `executedAt` als
- * vollen Zeitstempel; verglichen wird deshalb über `Date.parse`, nicht über
- * Zeichenketten.
- */
-function anZeitfenster(): { trades: HistoryTrade[]; equity: EquitySeriesPoint[] } {
-  const jetzt = new Date();
-  const trades = imZeitraum(st!.trades as HistoryTrade[], st!.anZeitraum, jetzt);
-  const equity = imZeitraum(
-    st!.equitySeries.map((p) => ({ ...p, executedAt: p.date })),
-    st!.anZeitraum,
-    jetzt,
-  ).map(({ date, equity: e }) => ({ date, equity: e }));
-  return { trades, equity };
-}
+/* ── Karten-Chrome: Auf-/Zuklappen mit Akkordeon in den Seitenspalten ─ */
 
-function shareDatenBauen(betraege: boolean): ShareDaten {
-  const fenster = anZeitfenster();
-  /* Kurve aus den TRADES, wenn zu wenige Snapshots vorliegen (Owner 12.08.).
-   *
-   * Die Karte zeigte „0,00 %", „noch kein Zeitraum" und „Noch zu wenige Tage
-   * für eine Kurve" — bei neun geschlossenen Trades, Profit-Faktor 0,12 und
-   * −191,06 $ je Trade. Die Kennzahlen daneben stimmten; nur die Kurve war
-   * leer, weil sie ausschliesslich aus den Tages-Snapshots kam
-   * (`snapshotEquity`, 23:15). Wer heute anfängt, hat abends einen Punkt —
-   * und ein Reset stellt denselben Zustand wieder her, obwohl das
-   * Handelsjournal voll ist.
-   *
-   * Jeder geschlossene Trade trägt beides, was eine Kurve braucht: Zeitpunkt
-   * und Ergebnis. `waehleKurve` nimmt die Snapshots, sobald es genug gibt,
-   * und springt sonst auf die realisierte Kurve ein — mit einem Hinweis,
-   * welche der beiden gezeigt wird. Eine Kurve ohne Angabe ihrer Bedeutung
-   * wäre eine Einladung zum Fehlschluss: Die realisierte steht still,
-   * während eine offene Position läuft.
-   *
-   * ── Und die Snapshots müssen das FENSTER decken (Owner 14.08.) ──────────
-   *
-   * Am Morgen nach dem Depot-Schnitt gab es genau ZWEI Snapshot-Tage
-   * (13.+14.08.) — `waehleKurve` sprang auf die Snapshot-Kurve um, obwohl
-   * die neun geschlossenen Trades des 30-Tage-Fensters alle VOR dem Schnitt
-   * liegen. Ergebnis: Kopfzeile „−0,04 % · 13.→14.08." über Kennzahlen aus
-   * 30 Tagen, eine gerade Linie ohne Trade-Bänder, WOMIT leer. Genau die
-   * zwei Bezugsräume auf einer Karte, vor denen dieser Kommentar warnt.
-   * Deshalb: Beginnen die Snapshots erst NACH dem ersten Abschluss des
-   * Fensters, zeigt die Karte die realisierte Kurve — sie deckt dieselben
-   * Trades wie die Kennzahlen darunter. */
-  const abschluesse = closedOnly(fenster.trades);
-  const ersterAbschlussTag = abschluesse.reduce<string | null>((min, t) => {
-    const tag = typeof t.executedAt === 'string' ? t.executedAt.slice(0, 10) : null;
-    return tag !== null && (min === null || tag < min) ? tag : min;
-  }, null);
-  const ersterSnapshotTag = fenster.equity.reduce<string | null>(
-    (min, p) => (min === null || p.date < min ? p.date : min),
-    null,
-  );
-  const snapshotsDeckenFenster =
-    ersterAbschlussTag === null
-    || (ersterSnapshotTag !== null && ersterSnapshotTag <= ersterAbschlussTag);
-  const wahl = depotKurve(
-    { snapshots: fenster.equity, trades: fenster.trades },
-    !snapshotsDeckenFenster,
-  );
-  const zerlegung = zerlegeDepot(wahl.serie, fenster.trades);
-  const letzte = zerlegung.equity[zerlegung.equity.length - 1] ?? 0;
-  const basis = zerlegung.basis || 1;
-  const geschlossen = closedOnly(fenster.trades);
-  const stats = tradeStats(
-    geschlossen.map((t) => ({ symbol: t.symbol, pnl: t.pnl!, riskExit: t.riskExit ?? null })),
-  );
+const reduzierteBewegung = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+/** Die jeweils JÜNGSTE Klapp-Animation je Körper — nur sie darf ihr Sicherheitsnetz ziehen. */
+const aktuelleKlappAnim = new WeakMap<HTMLElement, Animation>();
 
-  // Tiefster Drawdown über das Fenster — dieselbe Rechnung wie in der
-  // Portfolio-Karte, damit Bild und App nie verschiedene Zahlen zeigen.
-  let hoch = zerlegung.equity[0] ?? 0;
-  let maxDd: number | null = null;
-  for (const v of zerlegung.equity) {
-    hoch = Math.max(hoch, v);
-    if (hoch > 0) maxDd = Math.min(maxDd ?? 0, ((v - hoch) / hoch) * 100);
+function setzeKlappzustand(body: HTMLElement, zu: boolean, animiert: boolean): void {
+  body.getAnimations().forEach((a) => a.cancel());
+  aktuelleKlappAnim.delete(body);
+  if (body.hidden === zu) {
+    // Schneller Doppel-Toggle: Die soeben gecancelte Zuklapp-Animation
+    // hinterließe sonst dauerhaft overflow:hidden.
+    body.style.overflow = '';
+    return;
   }
-
-  const sortiert = [...zerlegung.baender]
-    .filter((b) => b.key !== '__rest__')
-    .sort((a, b) => b.summe - a.summe);
-  const alsAnteil = (b: (typeof sortiert)[number] | undefined): { label: string; pct: number } | null =>
-    b ? { label: b.label, pct: (b.summe / basis) * 100 } : null;
-
-  /* Realisierte Bilanz und Handelstage — die Karte braucht sie, wenn keine
-   * Kurve vorliegt: Ohne Kurve gibt es keine Bezugsgröße für eine Rendite,
-   * aber die Summe der Abschlüsse ist gemessen (Owner-Befund 12.08.). */
-  const tradeBilanz = geschlossen.reduce((sum, t) => sum + (t.pnl ?? 0), 0);
-  const handelstage = geschlossen
-    .map((t) => t.executedAt.slice(0, 10))
-    .filter((tg) => tg.length === 10)
-    .sort();
-
-  /* Offene Positionen für die Depot-Karte (Owner 21:14) — mit DERSELBEN
-   * Rechnung wie Positions-Tabelle, Summenzeile und Stop-Dialog
-   * (`positionLage`, F6): Ein geteiltes Bild, das andere Zahlen zeigt als
-   * die App daneben, wäre schlimmer als gar keins. Ohne Kurs bleibt beides
-   * null — die Karte schreibt dann „—" statt einer grünen Null. */
-  const offene = (st?.positions ?? []).map((p) => {
-    const live = st?.posPrices.get(p.symbol) ?? null;
-    const short = p.side === 'short';
-    const { pnl } = positionLage(p, live);
-    const pnlPct =
-      live !== null && p.avgEntry > 0
-        ? (short ? 1 - live / p.avgEntry : live / p.avgEntry - 1) * 100
-        : null;
-    return {
-      symbol: p.symbol,
-      short,
-      einstieg: p.avgEntry,
-      aktuell: live,
-      pnlPct,
-      pnl,
-      qty: p.qty,
+  if (!animiert || reduzierteBewegung || typeof body.animate !== 'function') {
+    body.hidden = zu;
+    return;
+  }
+  const lauf = { duration: 260, easing: 'cubic-bezier(.4,0,.2,1)' };
+  body.style.overflow = 'hidden';
+  let anim: Animation;
+  let abschliessen: () => void;
+  if (zu) {
+    anim = body.animate([{ height: `${body.scrollHeight}px`, opacity: 1 }, { height: '0px', opacity: 0 }], lauf);
+    abschliessen = () => {
+      body.hidden = true;
+      body.style.overflow = '';
     };
-  });
-
-  /* Kapital-Seite (Owner 22.08.: „cash, cashflow, aktive Positionen").
-   *
-   * Der Barbestand kommt aus dem Buch, der Positionswert aus denselben
-   * Live-Kursen wie die Zeilen darüber — zwei Quellen wären zwei Wahrheiten
-   * auf einer Karte.
-   *
-   * Der Cashflow entsteht aus den Trades des Fensters: Ein Verkauf bringt
-   * Geld zurück (`zu`), ein Kauf bindet welches (`ab`), und `realisiert`
-   * ist das Ergebnis, das dabei hängen blieb. Umschlag und Ertrag sind
-   * verschiedene Fragen; die Karte zeigt beide, weil viel Bewegung bei
-   * magerem Ergebnis genau das Bild ist, nach dem man sucht. */
-  const posWert = offene.reduce(
-    (sum, p) => sum + (p.aktuell !== null ? Math.abs(p.aktuell * p.qty) : 0),
-    0,
-  );
-  const flussProTag = new Map<string, { tag: string; zu: number; ab: number; realisiert: number }>();
-  for (const tr of fenster.trades) {
-    const tag = typeof tr.executedAt === 'string' ? tr.executedAt.slice(0, 10) : null;
-    if (tag === null) continue;
-    const wert = Math.abs((tr.price ?? 0) * (tr.qty ?? 0));
-    const eintrag = flussProTag.get(tag) ?? { tag, zu: 0, ab: 0, realisiert: 0 };
-    /* Verkauf holt Geld ins Konto, Kauf bindet welches — und beim Short
-     * stimmt das ebenfalls: Die Eröffnung IST ein Verkauf, das Eindecken
-     * ein Kauf. Deshalb reicht `side` hier; eine Sonderbehandlung wäre
-     * eine zweite Wahrheit über dieselbe Bewegung. */
-    if (tr.side === 'sell') eintrag.zu += wert;
-    else eintrag.ab += wert;
-    if (typeof tr.pnl === 'number' && Number.isFinite(tr.pnl)) eintrag.realisiert += tr.pnl;
-    flussProTag.set(tag, eintrag);
-  }
-  const cashflow = [...flussProTag.values()].sort((a, b) => a.tag.localeCompare(b.tag));
-
-  return {
-    zerlegung,
-    positionen: offene,
-    bar: st?.wallet?.paperBalance ?? null,
-    positionsWert: Math.round(posWert * 100) / 100,
-    cashflow,
-    investiertPct: st?.pfStats?.kapital?.investiertPct ?? null,
-    renditePct: ((letzte - zerlegung.basis) / basis) * 100,
-    ergebnis: letzte - zerlegung.basis,
-    tradeBilanz: Math.round(tradeBilanz * 100) / 100,
-    vonTag: handelstage[0],
-    bisTag: handelstage[handelstage.length - 1],
-    waehrung: st!.wallet?.currency ?? 'USD',
-    trefferquotePct: stats.winRatePct,
-    profitFaktor: stats.profitFactor,
-    trades: geschlossen.length,
-    maxDrawdownPct: maxDd,
-    bestes: alsAnteil(sortiert[0]),
-    schlechtestes: alsAnteil(sortiert.length > 1 ? sortiert[sortiert.length - 1] : undefined),
-    // Papier bleibt Papier: Das Siegel richtet sich nach dem Broker-Modus,
-    // nicht nach einer Einstellung im Teilen-Dialog.
-    echtgeld: st!.strategy?.broker?.mode === 'live',
-    betraege,
-  };
-}
-
-/** SVG → PNG über eine Canvas. Doppelte Auflösung, damit es scharf bleibt. */
-async function svgAlsPng(svg: string, kante: number, skala = 2): Promise<Blob> {
-  const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }));
-  try {
-    const bild = new Image();
-    await new Promise<void>((fertig, fehler) => {
-      bild.onload = () => fertig();
-      bild.onerror = () => fehler(new Error(t('sh.nichtGerastert')));
-      bild.src = url;
-    });
-    const leinwand = document.createElement('canvas');
-    leinwand.width = kante * skala;
-    leinwand.height = kante * skala;
-    const ctx = leinwand.getContext('2d');
-    if (!ctx) throw new Error(t('sh.canvasFehlt'));
-    ctx.drawImage(bild, 0, 0, leinwand.width, leinwand.height);
-    return await new Promise<Blob>((fertig, fehler) =>
-      leinwand.toBlob(
-        (b) => (b ? fertig(b) : fehler(new Error(t('sh.pngFehlgeschlagen')))),
-        'image/png',
-      ),
-    );
-  } finally {
-    URL.revokeObjectURL(url);
-  }
-}
-
-/* Die Story hält ihren Stand im Modul: Welche Karten es gerade gibt und
- * welche der Nutzer ansieht — geteilt wird IMMER die sichtbare. */
-let storyKarten: StoryKarte[] = [];
-let storyIdx = 0;
-
-/** Vorschau im Analyse-Fenster — man teilt nur, was man vorher gesehen hat. */
-/**
- * Die Seiten-Auswahl als Checkbox-Leiste (Owner 22.08.).
- *
- * Sie steuert ALLE drei Wege zugleich — Anzeige, Bild-Export, Video —, weil
- * es nur eine Liste gibt. Zwei getrennte Auswahlen wären der sichere Weg
- * dahin, dass jemand eine Seite abwählt und sie im Video trotzdem auftaucht.
- *
- * Eine Seite, die es auf einem Weg gar nicht gibt (Depot nur als Bild,
- * Zeitmuster nur im Video), trägt das im Titel — sonst hakt jemand sie an
- * und sucht sie danach vergeblich im anderen Format.
- */
-function renderSeitenAuswahl(): void {
-  const box = $('anSeiten');
-  if (!box) return;
-  const auswahl = leseSeitenAuswahl();
-  box.innerHTML = '';
-
-  const kopf = document.createElement('span');
-  kopf.className = 'hint';
-  kopf.textContent = t('sh.seitenTitel');
-  kopf.title = t('sh.seitenHilfe');
-  box.append(kopf);
-
-  for (const seite of SEITEN) {
-    const lab = document.createElement('label');
-    lab.className = 'an-share-opt';
-    const box2 = document.createElement('input');
-    box2.type = 'checkbox';
-    box2.checked = auswahl.includes(seite.id);
-    box2.addEventListener('change', () => {
-      const naechste = box2.checked
-        ? [...leseSeitenAuswahl(), seite.id]
-        : leseSeitenAuswahl().filter((x) => x !== seite.id);
-      schreibeSeitenAuswahl(naechste);
-      storyIdx = 0;
-      renderSeitenAuswahl();
-      renderSharePreview();
-    });
-    lab.append(box2, document.createTextNode(` ${t(seite.label)}`));
-    /* Nur-Bild/Nur-Video steht im Titel, nicht als Sternchen: Der Hinweis
-     * gehört zur Erklärung der Seite, nicht als Rätsel daneben. */
-    lab.title = t(seite.hilfe);
-    box.append(lab);
-  }
-
-  const alle = document.createElement('button');
-  alle.className = 'dbtn';
-  alle.textContent = auswahl.length === SEITEN.length ? t('sh.alleAus') : t('sh.alleAn');
-  alle.addEventListener('click', () => {
-    schreibeSeitenAuswahl(auswahl.length === SEITEN.length ? [] : ALLE_SEITEN);
-    storyIdx = 0;
-    renderSeitenAuswahl();
-    renderSharePreview();
-  });
-  box.append(alle);
-}
-
-function renderSharePreview(): void {
-  const box = $('anSharePreview');
-  if (!st || !box) return;
-  const betraege = ($('anShareBetraege') as HTMLInputElement | null)?.checked === true;
-  storyKarten = shareStory(shareDatenBauen(betraege), leseSeitenAuswahl());
-  if (storyIdx >= storyKarten.length) storyIdx = 0;
-  box.hidden = false;
-  /* Alles abgewählt ist ein gültiger Zustand, kein Absturz: Vorher hätte
-   * `storyKarten[0]!` hier geworfen und die ganze Karte mitgerissen. Der
-   * Hinweis sagt auch, wie man wieder herauskommt. */
-  if (storyKarten.length === 0) {
-    box.innerHTML = `<div class="hint">${esc(t('sh.keineSeiten'))}</div>`;
-    const navLeer = $('anStoryNav');
-    if (navLeer) navLeer.hidden = true;
-    /* Die Punkte MITLEEREN, nicht nur die Navigation verstecken: Sonst
-     * behauptet das Vorlesegerät weiter „Karte 1/5", während gar keine da
-     * ist — im Browser-Durchgang 22.08. genau so aufgefallen. */
-    const dotsLeer = $('anStoryDots');
-    if (dotsLeer) {
-      dotsLeer.textContent = '';
-      dotsLeer.setAttribute('aria-label', t('sh.keineSeiten'));
-    }
-    return;
-  }
-  /* NUR hier animiert (Owner 22.08.: „in der in-tool Anzeige bitte die
-   * dynamische Animation verwenden"). Der Bild-Export benutzt den
-   * unveränderten String aus `shareStory` — er kann die Bewegung gar nicht
-   * versehentlich mitnehmen, und eine Rasterung fängt deshalb nie einen
-   * Zwischenstand ein. */
-  box.innerHTML = animiereSvg(storyKarten[storyIdx]!.svg);
-  const nav = $('anStoryNav');
-  if (nav) nav.hidden = storyKarten.length < 2;
-  const dots = $('anStoryDots');
-  if (dots) {
-    dots.textContent = storyKarten.map((_, i) => (i === storyIdx ? '●' : '○')).join(' ');
-    dots.setAttribute('aria-label', `${t('sh.karte')} ${storyIdx + 1}/${storyKarten.length}`);
-  }
-}
-
-/** Eine Karte vor oder zurück — die Vorschau folgt. */
-function storyBlaettern(schritt: number): void {
-  if (storyKarten.length < 2) return;
-  storyIdx = (storyIdx + schritt + storyKarten.length) % storyKarten.length;
-  renderSharePreview();
-}
-
-/**
- * Teilen: erst das Systemblatt versuchen, sonst herunterladen.
- *
- * `navigator.share` mit Dateien gibt es nur in sicheren Kontexten und nicht
- * auf jedem Desktop-Browser. Der Fallback ist kein Notbehelf, sondern der
- * Normalfall am Rechner: Bild speichern, Text mit Link in die Zwischenablage.
- */
-async function teileDepotGrafik(): Promise<void> {
-  const status = $('anShareStatus');
-  const knopf = $('anShareBtn') as HTMLButtonElement | null;
-  if (!st || !status || !knopf) return;
-  knopf.disabled = true;
-  status.textContent = t('sh.wirdGebaut');
-  try {
-    const betraege = ($('anShareBetraege') as HTMLInputElement | null)?.checked === true;
-    const daten = shareDatenBauen(betraege);
-    /* Ohne belastbare Aussage kein Bild (Owner-Befund 12.08.).
-     *
-     * Eine Grafik mit Markenlogo und „offen nachgerechnet" im Fuß, die
-     * nichts zu sagen hat, ist kein leeres Formular — sie sieht aus wie ein
-     * Track-Record. Lieber gar kein Bild als eines, das nichts belegt. */
-    const aussage = kartenAussage({
-      kurventage: daten.zerlegung.tage.length,
-      renditePct: daten.renditePct,
-      ergebnis: daten.ergebnis,
-      trades: daten.trades,
-      tradeBilanz: daten.tradeBilanz,
-      vonTag: daten.vonTag,
-      bisTag: daten.bisTag,
-      betraege,
-      waehrung: daten.waehrung,
-    });
-    if (!aussage.teilbar) {
-      status.textContent = aussage.grund ?? t('sh.nichtsZuTeilen');
-      return;
-    }
-    // Geteilt wird die Karte, die in der Vorschau steht — nicht heimlich
-    // eine andere. Ohne Vorschau (Knopf direkt gedrückt) ist es die erste.
-    const karten = shareStory(daten, leseSeitenAuswahl());
-    const karte = karten[Math.min(storyIdx, karten.length - 1)]!;
-    const png = await svgAlsPng(karte.svg, KARTE);
-    const datei = new File([png], storyDateiname(karte.id, daten), { type: 'image/png' });
-    const text = shareText(daten);
-
-    if (navigator.canShare?.({ files: [datei] })) {
-      // Kein `url` neben `files`: die Kombi ist der bekannte Android-
-      // Stolperstein, und die Adresse steht ohnehin im Text (§ teileVideoDatei).
-      await navigator.share({ files: [datei], text });
-      status.textContent = t('sh.geteilt');
-      return;
-    }
-    const url = URL.createObjectURL(png);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = datei.name;
-    a.click();
-    URL.revokeObjectURL(url);
-    // Der Link steht ohnehin im Bild; in der Zwischenablage spart er das
-    // Abtippen. Schlägt das fehl (kein sicherer Kontext), ist das kein Grund
-    // für eine Fehlermeldung — das Bild ist da.
-    await navigator.clipboard?.writeText(`${text} https://autotrd.net`).catch(() => undefined);
-    status.textContent = t('sh.bildGespeichert');
-  } catch (e) {
-    // Ein abgebrochener Teilen-Dialog ist kein Fehler.
-    const name = e instanceof Error ? e.name : '';
-    status.textContent =
-      name === 'AbortError' ? '' : `${t('sh.fehlgeschlagen')}: ${serverText(e)}`;
-  } finally {
-    knopf.disabled = false;
-  }
-}
-
-/**
- * Alle Karten der Story auf einmal — für Karussell-Posts (Instagram & Co.
- * nehmen mehrere Bilder je Beitrag). Am Handy geht der ganze Satz in EIN
- * Systemblatt; am Rechner laden die PNGs nacheinander herunter.
- */
-async function teileAlleKarten(): Promise<void> {
-  const status = $('anShareStatus');
-  const knopf = $('anShareAlle') as HTMLButtonElement | null;
-  if (!st || !status || !knopf) return;
-  knopf.disabled = true;
-  status.textContent = t('sh.wirdGebaut');
-  try {
-    const betraege = ($('anShareBetraege') as HTMLInputElement | null)?.checked === true;
-    const daten = shareDatenBauen(betraege);
-    // Dasselbe Gate wie beim Einzelbild: ohne belastbare Aussage kein Satz.
-    const aussage = kartenAussage({
-      kurventage: daten.zerlegung.tage.length,
-      renditePct: daten.renditePct,
-      ergebnis: daten.ergebnis,
-      trades: daten.trades,
-      tradeBilanz: daten.tradeBilanz,
-      vonTag: daten.vonTag,
-      bisTag: daten.bisTag,
-      betraege,
-      waehrung: daten.waehrung,
-    });
-    if (!aussage.teilbar) {
-      status.textContent = aussage.grund ?? t('sh.nichtsZuTeilen');
-      return;
-    }
-    const dateien: File[] = [];
-    for (const karte of shareStory(daten, leseSeitenAuswahl())) {
-      const png = await svgAlsPng(karte.svg, KARTE);
-      dateien.push(new File([png], storyDateiname(karte.id, daten), { type: 'image/png' }));
-    }
-    if (navigator.canShare?.({ files: dateien })) {
-      // Kein `url` neben `files` — siehe teileVideoDatei.
-      await navigator.share({ files: dateien, text: shareText(daten) });
-      status.textContent = t('sh.geteilt');
-      return;
-    }
-    for (const datei of dateien) {
-      const url = URL.createObjectURL(datei);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = datei.name;
-      a.click();
-      URL.revokeObjectURL(url);
-      // Browser drosseln Klick-Downloads in schneller Folge — die Pause
-      // lässt jedem Bild seinen eigenen.
-      await new Promise((f) => setTimeout(f, 350));
-    }
-    status.textContent = t('sh.alleGespeichert');
-  } catch (e) {
-    const name = e instanceof Error ? e.name : '';
-    status.textContent =
-      name === 'AbortError' ? '' : `${t('sh.fehlgeschlagen')}: ${serverText(e)}`;
-  } finally {
-    knopf.disabled = false;
-  }
-}
-
-/* Das fertige Video wartet hier auf den ZWEITEN Klick. Warum zwei Schritte:
- * navigator.share verlangt eine frische Klick-Freigabe — nach ~12 s Aufnahme
- * ist sie abgelaufen, und der Teilen-Dialog scheitert mit „Permission
- * denied" (Owner-Befund 20.08.). Also: erstellen, ansehen, dann teilen. */
-let videoDatei: File | null = null;
-let videoUrl: string | null = null;
-let videoText = '';
-
-/** Fertiges Video in die Vorschau hängen — ein Weg für alle Video-Arten. */
-function zeigeVideoVorschau(datei: File, teilenText: string): void {
-  if (videoUrl) URL.revokeObjectURL(videoUrl);
-  videoDatei = datei;
-  videoUrl = URL.createObjectURL(datei);
-  videoText = teilenText;
-  const elem = $('anVideoElem') as HTMLVideoElement | null;
-  const box = $('anVideoBox');
-  if (elem && box) {
-    elem.src = videoUrl;
-    box.hidden = false;
-    // Systemblatt nur anbieten, wo es Video-Dateien wirklich annimmt.
-    ($('anVideoShare') as HTMLButtonElement).hidden =
-      navigator.canShare?.({ files: [datei] }) !== true;
-    const videoStatus = $('anVideoStatus');
-    if (videoStatus) videoStatus.textContent = '';
-    void elem.play().catch(() => undefined);
-  }
-}
-
-/** Schritt 1 — Video aufnehmen und als Vorschau zeigen. */
-async function erstelleStoryVideo(): Promise<void> {
-  const status = $('anShareStatus');
-  const knopf = $('anShareVideo') as HTMLButtonElement | null;
-  if (!st || !status || !knopf) return;
-  knopf.disabled = true;
-  try {
-    const betraege = ($('anShareBetraege') as HTMLInputElement | null)?.checked === true;
-    const daten = shareDatenBauen(betraege);
-    const aussage = kartenAussage({
-      kurventage: daten.zerlegung.tage.length,
-      renditePct: daten.renditePct,
-      ergebnis: daten.ergebnis,
-      trades: daten.trades,
-      tradeBilanz: daten.tradeBilanz,
-      vonTag: daten.vonTag,
-      bisTag: daten.bisTag,
-      betraege,
-      waehrung: daten.waehrung,
-    });
-    if (!aussage.teilbar) {
-      status.textContent = aussage.grund ?? t('sh.nichtsZuTeilen');
-      return;
-    }
-    /* Das Analyse-Video (Regie über die Schaubilder) — dynamisch geladen,
-     * weil es über analyseCharts die ECharts-Bibliothek zieht und die nicht
-     * ins Hauptbundle gehört. */
-    const { baueAnalyseVideo } = await import('./analyseVideo.js');
-    const zeitraumTrades = imZeitraum(st.trades as HistoryTrade[], st.anZeitraum, new Date());
-    const datei = await baueAnalyseVideo(
-      daten,
-      analyseChartDaten(zeitraumTrades),
-      (prozent) => {
-        status.textContent = `${t('sh.videoLaeuft')} … ${prozent} %`;
-      },
-      undefined,
-      leseSeitenAuswahl(),
-    );
-    zeigeVideoVorschau(datei, shareText(daten));
-    status.textContent = t('sh.videoFertig');
-  } catch (e) {
-    const name = e instanceof Error ? e.name : '';
-    status.textContent =
-      name === 'AbortError' ? '' : `${t('sh.fehlgeschlagen')}: ${serverText(e)}`;
-  } finally {
-    knopf.disabled = false;
-  }
-}
-
-/**
- * Das Maschinen-Video (V2, Owner 20.08.): Autotuning und Trading im
- * Mittelpunkt, KEINE Ergebniszahlen — deshalb läuft es nicht durchs
- * kartenAussage-Gate (das bewacht Zahlen-Behauptungen), sondern braucht
- * nur einen echten, abgeschlossenen Trade mit Kursdaten. Ehrlichkeit:
- * Einstieg/Ausstieg aus der Historie, Signal-Stimmen aus dem eingefrorenen
- * Journal — nichts wird rekonstruiert (siehe tradeStory.ts).
- */
-async function erstelleMaschinenVideo(): Promise<void> {
-  const status = $('anShareStatus');
-  const knopf = $('anShareTrade') as HTMLButtonElement | null;
-  if (!st || !status || !knopf) return;
-  knopf.disabled = true;
-  try {
-    const zeitraumTrades = imZeitraum(st.trades as HistoryTrade[], st.anZeitraum, new Date());
-    const paar = waehleTradeStory(zeitraumTrades, new Date());
-    if (!paar) {
-      status.textContent = t('ts.keinTrade');
-      return;
-    }
-    status.textContent = `${t('sh.videoLaeuft')} …`;
-    const eMs = Date.parse(paar.einstieg.executedAt);
-    const xMs = Date.parse(paar.exit.executedAt);
-    // Kurse: 5-Minuten-Bars des Trade-Fensters, sonst Tages-Bars (ältere
-    // oder mehrtägige Trades) — und wenn beides nichts hergibt, ehrlich
-    // absagen statt eine Kurve zu erfinden.
-    const vorTag = new Date(eMs - 86_400_000).toISOString().slice(0, 10);
-    let kurse: KursPunkt[] = [];
-    try {
-      const chunks = await loadIntradayChunks(paar.exit.symbol, vorTag, paar.exit.executedAt.slice(0, 10));
-      kurse = chunks.flatMap((c) => c.bars.map((b) => ({ at: b.time * 1000, c: b.close })));
-    } catch {
-      kurse = [];
-    }
-    let fenster = kursFenster(kurse, eMs, xMs);
-    if (fenster.length < 8) {
-      const jahre = new Set([new Date(eMs).getUTCFullYear(), new Date(xMs).getUTCFullYear()]);
-      const taeglich: KursPunkt[] = [];
-      for (const jahr of jahre) {
-        const bars = await loadDailyChunk(paar.exit.symbol, jahr).catch(() => []);
-        taeglich.push(...bars.map((b) => ({ at: Date.parse(`${b.date}T20:00:00Z`), c: b.close })));
-      }
-      const tagesFenster = kursFenster(taeglich, eMs - 6 * 86_400_000, xMs + 2 * 86_400_000);
-      if (tagesFenster.length > fenster.length) fenster = tagesFenster;
-    }
-    if (fenster.length < 2) {
-      status.textContent = t('ts.keineKurse');
-      return;
-    }
-    // Signal-Kontext aus dem eingefrorenen Journal — fehlertolerant: ohne
-    // Kontext erzählt die Szene den Einstieg ohne Stimmen-Chips.
-    const journal = await ladeJournalZuZeit(st.uid, paar.einstieg.executedAt).catch(() => null);
-    const kontext = storyKontext(journal?.signalContext, paar.einstieg.side);
-    const scannerSymbole = [
-      ...new Set([
-        ...(st.strategy?.watchlist ?? []),
-        ...st.trades.map((tr) => tr.symbol),
-      ]),
-    ];
-    const daten: TradeStoryDaten = {
-      symbol: paar.exit.symbol,
-      einstiegSeite: paar.einstieg.side,
-      einstiegAt: paar.einstieg.executedAt,
-      einstiegPreis: paar.einstieg.price,
-      exitAt: paar.exit.executedAt,
-      exitPreis: paar.exit.price,
-      riskExit: paar.exit.riskExit ?? null,
-      kontext,
-      kurse: fenster,
-      scannerSymbole,
-      echtgeld: st.strategy?.broker?.mode === 'live',
-    };
-    const { baueTradeStoryVideo } = await import('./tradeStoryVideo.js');
-    const datei = await baueTradeStoryVideo(daten, (prozent) => {
-      status.textContent = `${t('sh.videoLaeuft')} … ${prozent} %`;
-    });
-    zeigeVideoVorschau(datei, t('ts.teilenText'));
-    status.textContent = t('sh.videoFertig');
-  } catch (e) {
-    const name = e instanceof Error ? e.name : '';
-    status.textContent =
-      name === 'AbortError' ? '' : `${t('sh.fehlgeschlagen')}: ${serverText(e)}`;
-  } finally {
-    knopf.disabled = false;
-  }
-}
-
-/** Schritt 2 — Teilen mit FRISCHER Klick-Freigabe.
- *
- * Jede Antwort dieses Schritts wird SICHTBAR (#anVideoStatus, direkt am
- * Knopf): Der stumme AbortError-Zweig plus die Meldung oben im Kopf ergaben
- * am Handy „beim Drücken passiert gar nichts" (Owner-Befund 20.08.) — Android
- * wirft AbortError auch ohne Nutzer-Abbruch. Kein `url` neben `files`:
- * geprüft wird mit canShare exakt die Nutzlast, die auch geteilt wird, und
- * die Feld-Kombi url+files ist genau der bekannte Android-Stolperstein —
- * die Adresse steht ohnehin im Text. */
-async function teileVideoDatei(): Promise<void> {
-  const status = $('anVideoStatus');
-  const knopf = $('anVideoShare') as HTMLButtonElement | null;
-  if (!videoDatei || !status) return;
-  if (knopf) knopf.disabled = true;
-  try {
-    const nutzlast = { files: [videoDatei], text: videoText };
-    await navigator.share(navigator.canShare?.(nutzlast) === true ? nutzlast : { files: [videoDatei] });
-    status.textContent = t('sh.geteilt');
-  } catch (e) {
-    const name = e instanceof Error ? e.name : '';
-    console.warn('Video-Teilen fehlgeschlagen:', name, e);
-    status.textContent =
-      name === 'AbortError'
-        ? t('sh.abgebrochen')
-        : t('sh.teilenPlanB').replace('{0}', name || serverText(e));
-  } finally {
-    if (knopf) knopf.disabled = false;
-  }
-}
-
-/** Herunterladen — der Rechner-Weg (und der Plan B fürs Handy). */
-function speichereVideoDatei(): void {
-  const status = $('anVideoStatus');
-  if (!videoDatei || !videoUrl || !status) return;
-  const a = document.createElement('a');
-  a.href = videoUrl;
-  a.download = videoDatei.name;
-  a.click();
-  status.textContent = t('sh.videoGespeichert');
-}
-
-/**
- * Depot-Verlauf, zerlegt nach Trades (Owner-Wunsch 10.08.).
- *
- * Hier steht nur die Verdrahtung: Zerlegung in shared (`zerlegeDepot`),
- * Zeichnung in `depotChart` — beides ohne DOM und damit prüfbar. Diese
- * Funktion holt die Daten, hängt das Ergebnis ein und verbindet Maus und
- * Finger mit dem Tooltip.
- */
-function renderDepotVerlauf(): void {
-  if (!st) return;
-  const halter = $('dcChart');
-  const legende = $('dcLegende');
-  const meta = $('dcMeta');
-  if (!halter || !legende || !meta) return;
-
-  // Dieselbe Kurvenwahl wie Performance-Karte und Teilen-Grafik (Owner
-  // 12.08.): Vorher las diese Karte allein die Snapshots und meldete „zu
-  // wenige Tage", während das Teilen-Bild daneben eine Kurve zeichnete.
-  const wahl = depotKurve();
-  const z = zerlegeDepot(wahl.serie, st.trades as HistoryTrade[], { modus: st.dcModus });
-  const { svg, legende: legHtml } = depotChart(z);
-  halter.innerHTML =
-    svg || `<div class="hint">${escText(wahl.erklaerung || t('ps.nochKeineKurve'))}</div>`;
-  legende.innerHTML = legHtml;
-
-  const teile: string[] = [];
-  if (z.tage.length >= 2) teile.push(`${z.tage[0]} → ${z.tage[z.tage.length - 1]}`);
-  if (wahl.hinweis) teile.push(wahl.hinweis);
-  const drin = z.baender.reduce((n, b) => n + b.trades, 0);
-  teile.push(`${drin} ${drin === 1 ? 'Trade' : 'Trades'} ${t('dc.tradesImBild')}`);
-  // Ehrlich benennen, was NICHT im Bild ist — sonst wirkt die Zerlegung
-  // vollständig, obwohl ältere Trades längst in der Bezugslinie stecken.
-  if (z.ausserhalb.vorher > 0) teile.push(`${z.ausserhalb.vorher} ${t('dv.aelterAlsFenster')}`);
-  if (z.ausserhalb.nachher > 0) teile.push(`${z.ausserhalb.nachher} ${t('dv.nachSnapshot')}`);
-  if (!st.tradesDone) teile.push(t('dv.teilweiseGeladen'));
-  meta.textContent = teile.join(' · ');
-
-  wireDepotVerlauf(z);
-}
-
-/** Tooltip, Fadenkreuz und Legenden-Klick — nach jedem Neuzeichnen frisch. */
-function wireDepotVerlauf(z: ReturnType<typeof zerlegeDepot>): void {
-  const wrap = $('dcWrap');
-  const tip = $('dcTip');
-  const svg = wrap?.querySelector<SVGSVGElement>('.dc-svg');
-  if (!wrap || !tip || !svg) return;
-  const kreuz = svg.querySelector<SVGLineElement>('.dc-cross');
-
-  const zeigen = (ziel: Element): void => {
-    const i = Number((ziel as HTMLElement).dataset['i']);
-    if (!Number.isInteger(i)) return;
-    tip.innerHTML = depotTooltip(z, i);
-    tip.hidden = false;
-    const box = wrap.getBoundingClientRect();
-    const r = (ziel as SVGRectElement).getBoundingClientRect();
-    const x = r.left + r.width / 2 - box.left;
-    // Am rechten Rand nach links kippen, damit der Tooltip in der Karte
-    // bleibt — `position: absolute` schneidet sonst am Kartenrand ab.
-    const breite = tip.offsetWidth || 160;
-    tip.style.left = `${Math.max(0, Math.min(x - breite / 2, box.width - breite))}px`;
-    tip.style.top = '2px';
-    if (kreuz) {
-      const rel = Number((ziel as HTMLElement).getAttribute('x')) + Number((ziel as HTMLElement).getAttribute('width')) / 2;
-      kreuz.setAttribute('x1', String(rel));
-      kreuz.setAttribute('x2', String(rel));
-      kreuz.style.display = '';
-    }
-  };
-  const verstecken = (): void => {
-    tip.hidden = true;
-    if (kreuz) kreuz.style.display = 'none';
-  };
-
-  for (const hit of svg.querySelectorAll('.dc-hit')) {
-    hit.addEventListener('pointerenter', () => zeigen(hit));
-    // Touch: `pointerenter` feuert dort nur beim Tippen, `pointerdown` ist
-    // das verlässlichere Signal — sonst bleibt der Tooltip am Handy leer.
-    hit.addEventListener('pointerdown', () => zeigen(hit));
-  }
-  svg.addEventListener('pointerleave', verstecken);
-
-  // Legende: ein Klick blendet ein Band aus, damit man die anderen sieht.
-  // Bewusst nur optisch — die Zerlegung bleibt vollständig, sonst stimmte
-  // die Summen-Identität nicht mehr mit dem Bild überein.
-  for (const eintrag of $('dcLegende')?.querySelectorAll<HTMLElement>('.dc-leg') ?? []) {
-    eintrag.addEventListener('click', () => {
-      const key = eintrag.dataset['key'];
-      const aus = eintrag.classList.toggle('dc-aus');
-      svg
-        .querySelector<SVGPolygonElement>(`.dc-band[data-key="${CSS.escape(key ?? '')}"]`)
-        ?.classList.toggle('dc-blass', aus);
-    });
-  }
-}
-
-/**
- * Progressive Performance-Karte (Text-Diät Stufe 2): Eine Auswertungs-
- * Sektion ohne Daten wird KOMPLETT versteckt (Label + Inhalt), statt einen
- * „Noch keine …"-Absatz zu zeigen. Der eine Sammelsatz #pfLeer erscheint,
- * solange mindestens eine Sektion fehlt — bei einem frischen Konto ersetzt
- * er vier gestapelte Erklärabsätze durch eine Zeile.
- */
-const PF_SEKTIONEN = ['pfSekExits', 'pfSekKosten', 'pfSekReibung', 'pfSekKapital'] as const;
-
-function zeigePfSektion(id: (typeof PF_SEKTIONEN)[number], hat: boolean): void {
-  const sek = document.getElementById(id);
-  if (sek) sek.hidden = !hat;
-}
-
-/** Sammelsatz an-/abschalten: sichtbar, sobald irgendeine Sektion zu ist. */
-function aktualisierePfLeer(): void {
-  const leer = document.getElementById('pfLeer');
-  if (leer) leer.hidden = !PF_SEKTIONEN.some((id) => document.getElementById(id)?.hidden);
-}
-
-/** Klarnamen der Ausstiegsgründe — `signal` ist der Sammeltopf ohne Risiko-Exit. */
-const EXIT_LABEL: Record<string, string> = {
-  signal: 'Signal',
-  stop_loss: 'Stop-Loss',
-  take_profit: 'Take-Profit',
-  trailing_stop: 'Trailing-Stop',
-  trailing_stop_broker: 'Trailing-Stop (Broker)',
-  max_hold: 'Haltedauer',
-};
-
-/**
- * Ausstiegsgründe (MT1). Die Zeile beantwortet die Frage, die man sonst von
- * Hand zurückrechnen musste: Erreichen die Trades ihre Risiko-Marken
- * überhaupt? Steht fast alles unter „Signal", entscheidet nicht die
- * Risikosteuerung über das Ergebnis, sondern eine gekippte Indikator-Stimme.
- */
-function renderExits(s: PortfolioStatsDoc): void {
-  const box = $('pfExits');
-  const rows = Object.entries(s.exits ?? {}).sort((a, b) => b[1].n - a[1].n);
-  const total = rows.reduce((a, [, b]) => a + b.n, 0);
-  zeigePfSektion('pfSekExits', total > 0);
-  if (total === 0) {
-    box.innerHTML = '';
-    return;
-  }
-  box.innerHTML = rows
-    .map(([key, b]) => {
-      const anteil = Math.round((b.n / total) * 100);
-      // Unbekannte Schlüssel kommen aus der Datenbank — auf harmlose Zeichen
-      // beschränken, statt sie ungeprüft in HTML zu setzen.
-      const name = EXIT_LABEL[key] ?? key.replace(/[^\w-]/g, '');
-      return (
-        `<div class="fl-row"><span>${name}</span>` +
-        `<span class="mono">${b.n}× · ${anteil} %</span>` +
-        `<span class="mono ${pnlClass(b.pnl)}">${money(b.pnl)}</span></div>`
-      );
-    })
-    .join('');
-}
-
-/**
- * Kostenprofil (MT1). `edgeOverCost` ist die eine Zahl, auf die es ankommt:
- * Ø Gewinnbewegung geteilt durch die Roundtrip-Kosten. Unter 2 verdient
- * überwiegend der Broker — die Testkonten des Owners lagen bei 1,6 und 1,9.
- */
-function renderCosts(s: PortfolioStatsDoc): void {
-  const grid = $('pfCostGrid');
-  const hint = $('pfCostHint');
-  const c = s.costs;
-  zeigePfSektion('pfSekKosten', !!c && c.n > 0);
-  if (!c || c.n === 0) {
-    grid.hidden = true;
-    hint.textContent = '';
-    return;
-  }
-  grid.hidden = false;
-  const pct = (v: number | null): string => (v === null ? '--' : `${v.toFixed(2)} %`);
-  $('pfFees').textContent = money(c.fees);
-  $('pfFeeShare').textContent = c.feeSharePct === null ? '--' : `${c.feeSharePct.toFixed(0)} %`;
-  $('pfGrossWin').textContent = pct(c.avgWinGrossPct);
-  $('pfGrossLoss').textContent = pct(c.avgLossGrossPct);
-  $('pfRt').textContent = pct(c.roundTripPct);
-
-  const edge = $('pfEdge');
-  edge.textContent = c.edgeOverCost === null ? '--' : `${c.edgeOverCost.toFixed(2)}×`;
-  // Ampel bewusst streng: Bei Faktor 2 gehen immer noch 50 % jeder
-  // Gewinnbewegung an Gebühren und Slippage.
-  edge.className = `smv mono ${
-    c.edgeOverCost === null ? '' : c.edgeOverCost >= 3 ? 'c-gn' : c.edgeOverCost >= 2 ? '' : 'c-rd'
-  }`;
-  hint.textContent =
-    c.edgeOverCost === null
-      ? ''
-      : c.edgeOverCost < 2
-        ? `${t('pc.zuWenigLuftA')} ${c.edgeOverCost.toFixed(1)}${t('pc.zuWenigLuftB')}`
-        : `${t('pc.genugLuftA')} ${c.edgeOverCost.toFixed(1)}${t('pc.genugLuftB')}`;
-}
-
-/**
- * Ausführungs-Reibung (Task #144/#146): gemessene Basispunkte zwischen
- * Entscheidungskurs und Broker-Fill, je Klasse und Seite. Die Ampel am
- * Aktien-Einstieg IST die Entscheidungsregel für den Maker-Umbau:
- * unter 5 bp lohnt kein Limit-Umbau, 5–10 bp verdient eine
- * Schatten-Messung, darüber ist der Umbau fällig.
- */
-function renderReibung(s: PortfolioStatsDoc): void {
-  const box = $('pfReibung');
-  const r = s.reibung;
-  const klassen = r ? Object.keys(r).sort() : [];
-  zeigePfSektion('pfSekReibung', klassen.length > 0);
-  if (klassen.length === 0) {
-    box.innerHTML = '';
-    return;
-  }
-  const bp = (v: number): string => `${v.toFixed(1)} bp`;
-  box.innerHTML = klassen
-    .map((k) => {
-      const z = r![k]!;
-      const einTon =
-        k === 'stocks_us' && z.einstieg.n > 0
-          ? z.einstieg.avgBp > 10
-            ? 'c-rd'
-            : z.einstieg.avgBp >= 5
-              ? ''
-              : 'c-gn'
-          : '';
-      // Klassen-Schlüssel kommen aus der Datenbank — wie bei den
-      // Exit-Gründen auf harmlose Zeichen beschränken.
-      return (
-        `<div class="fl-row"><span>${k.replace(/[^\w-]/g, '')}</span>` +
-        `<span class="mono ${einTon}">${t('pf.reibungEinstieg')} ${z.einstieg.n}× · ${bp(z.einstieg.avgBp)}</span>` +
-        `<span class="mono">${t('pf.reibungAusstieg')} ${z.ausstieg.n}× · ${bp(z.ausstieg.avgBp)} · max ${bp(z.maxBp)}</span></div>`
-      );
-    })
-    .join('');
-}
-
-/**
- * Investitionsquote (Owner 20.08.: „das Ziel ist, Depot und Geld arbeiten
- * zu lassen — es geht nicht darum, alles als Bargeld liegen zu lassen").
- *
- * Die Karte macht sichtbar, wofür der Sockel-Nachschub (#345) gebaut wurde:
- * Ohne die Zahl wüsste niemand, ob das Bargeld wirklich schrumpft. Die
- * Ampel hängt am Bargeld-Anteil — über 50 % arbeitet weniger als die
- * Hälfte des Depots (rot), unter 25 % ist das Kapital im Einsatz (grün).
- * Dazwischen neutral: Ein bewusst geschlossener Marktfilter parkt den
- * Sockel in Cash, und das ist Schutz, kein Fehler — deshalb schreit die
- * Karte nicht bei jedem erhöhten Bargeld-Stand.
- */
-function renderKapital(s: PortfolioStatsDoc): void {
-  const box = $('pfKapital');
-  const k = s.kapital;
-  zeigePfSektion('pfSekKapital', !!k);
-  if (!k) {
-    box.innerHTML = '';
-    return;
-  }
-  const pct = (v: number): string => `${v.toFixed(1)} %`;
-  // NEGATIVES Cash sind Schulden (Margin) — das darf nie grün leuchten
-  // (Red-Team-Befund 3, 20.08.: „Kapital im Einsatz" auf Kredit ist kein
-  // Erfolg, sondern der teuerste Zustand der Karte).
-  const ton = k.cashPct < 0 || k.cashPct > 50 ? 'c-rd' : k.cashPct > 25 ? '' : 'c-gn';
-  box.innerHTML =
-    `<div class="fl-row"><span>${t('pf.kapitalInvestiert')}</span>` +
-    `<span class="mono">${pct(k.investiertPct)}</span>` +
-    `<span class="mono">${t('pf.kapitalSockel')} ${pct(k.sockelPct)} · ${t('pf.kapitalAktiv')} ${pct(k.aktivPct)}</span></div>` +
-    `<div class="fl-row"><span>${t('pf.kapitalBargeld')}</span>` +
-    `<span class="mono ${ton}">${pct(k.cashPct)}</span><span></span></div>`;
-}
-
-/**
- * Momentum-Ranking (Owner-Go 28.07.).
- *
- * Zwei Dinge müssen hier sichtbar sein, sonst ist die Karte Dekoration:
- * der Zustand des MARKTFILTERS (steht er zu, ist Flachbleiben die Strategie,
- * kein Fehler) und die Zahl der bewertbaren Symbole (sie wächst, während der
- * Katalog seine Historie nachholt — ein kleines Universum am Anfang ist
- * erwartetes Verhalten, kein Datenverlust).
- */
-function renderMomentum(m: MomentumDoc | null): void {
-  const box = $('moTop');
-  const filter = $('moFilter');
-  if (!m) {
-    filter.textContent = '';
-    box.innerHTML = `<div class="hint">${t('mo.erstesRanking')}</div>`;
-    return;
-  }
-  filter.textContent = m.marktOffen ? t('mo.marktOffen') : t('mo.marktZu');
-  filter.className = `tn-tag${m.marktOffen ? ' tn-ok' : ''}`;
-  $('moEq').textContent = money(m.equity);
-  $('moTrades').textContent = String(m.trades);
-  $('moRanked').textContent = `${m.ranked}/${m.universum}`;
-
-  const gehalten = new Set(m.gehalten ?? []);
-  const top = m.top ?? [];
-  box.innerHTML =
-    top.length === 0
-      ? `<div class="hint">${t('mo.keinMomentum')}</div>`
-      : top
-          // `eintrag`, nicht `t`: Der Parametername verschattete die
-          // Übersetzungsfunktion t() aus i18n.
-          .map((eintrag) => {
-            const drin = gehalten.has(eintrag.symbol);
-            return (
-              `<div class="fl-row" data-sym="${esc(eintrag.symbol)}"><span>${esc(eintrag.symbol)}</span>` +
-              `<span class="mono ${pnlClass(eintrag.score)}">${eintrag.score >= 0 ? '+' : ''}${eintrag.score.toFixed(1)} %</span>` +
-              `<span class="mono">${drin ? t('mo.gehalten') : '—'}</span></div>`
-            );
-          })
-          .join('');
-
-  const teile: string[] = [];
-  if (!m.marktOffen) {
-    teile.push(
-      t('mo.leitindexUnter'),
-    );
-  }
-  if (m.fehlendeHistorie > 0) {
-    teile.push(
-      `${m.fehlendeHistorie} ${t('mo.ohneHistorie')}`,
-    );
-  }
-  $('moHint').textContent = teile.join(' ');
-}
-
-/* ── Auto-Tuner: Flotte und Journal (MT5) ─────────────────────────────────── */
-
-/**
- * Fortschritt der Schatten-Flotte.
- *
- * Der Balken zeigt die Stichprobe gegen die Evidenzschwelle. Das ist die
- * ehrliche Antwort auf „warum ändert sich nichts?": Meist nicht, weil nichts
- * besser wäre, sondern weil noch keine Variante genug Trades für ein
- * belastbares Urteil hat.
- */
-/**
- * Was das KOLLEKTIV gelernt hat (Owner-Wunsch 28.07.).
- *
- * Bewusst mit sichtbarer Vertrauensangabe: Eine Zeile „Kauf-Pause 60 min —
- * 82 % übernommen" ohne die Zahl der beitragenden Konten daneben liest sich
- * wie eine Tatsache, obwohl sie aus drei Konten stammen kann. Wer sich
- * danach richtet, soll sehen, worauf sie steht.
- */
-function renderTuneGlobal(stats: GlobalAxisStats): void {
-  const box = $('tnGlobal');
-  if (!box) return;
-  const priors = buildPriors(stats);
-  if (priors.length === 0) {
-    const roh = Object.keys(stats).length;
-    box.innerHTML = `<div class="hint">${
-      roh === 0
-        ? t('tn.keineKollektiv')
-        : `${roh} ${t('tn.inBeobachtung')}`
-    }</div>`;
-    return;
-  }
-  box.innerHTML = priors
-    .slice(0, 6)
-    .map((p) => {
-      const s = stats[p.variantId];
-      const quote = Math.round(p.promoteRate * 100);
-      return (
-        `<div class="tn-fl"><span class="tn-nm">${esc(labelVariantId(p.variantId))}</span>` +
-        `<span class="tn-bar"><i style="width:${quote}%"></i></span>` +
-        `<span class="mono">${quote}% · ${s?.accounts ?? 0} Konten</span>` +
-        `<span class="mono ${pnlClass(p.meanEdge)}">${money(p.meanEdge)}</span></div>`
-      );
-    })
-    .join('');
-}
-
-function renderTuneFleet(rows: TuneFleetRow[]): void {
-  const box = $('tnFleet');
-  if (rows.length === 0) {
-    box.innerHTML = `<div class="hint">${t('tn.flotteStartet')}</div>`;
-    return;
-  }
-  const ziel = EVIDENCE_DEFAULTS.minTrades;
-  box.innerHTML = rows
-    .map((r) => {
-      const anteil = Math.min(100, Math.round((r.trades / ziel) * 100));
-      const offen = r.open > 0 ? ` · ${r.open} ${t('pf.offenZaehler')}` : '';
-      return (
-        `<div class="tn-fl"><span class="tn-nm">${esc(labelVariantId(r.id))}</span>` +
-        `<span class="tn-bar"><i style="width:${anteil}%"></i></span>` +
-        `<span class="mono">${r.trades}/${ziel}${offen}</span>` +
-        `<span class="mono ${pnlClass(r.pnl)}">${r.trades > 0 ? money(r.pnl) : '--'}</span></div>`
-      );
-    })
-    .join('');
-}
-
-/**
- * Das Änderungs-Journal (MT5).
- *
- * Bewusst mit Begründung UND Zahlen: Ein Automat, der am Depot dreht, muss
- * nachprüfbar sein. Die abgelehnten Prüfungen stehen gleichberechtigt drin —
- * ein Journal, das nur Erfolge zeigt, verschweigt gerade das Interessante.
- */
-function renderTuneLog(rows: TuneLogRow[]): void {
-  const box = $('tnLog');
-  if (rows.length === 0) {
-    box.innerHTML = `<div class="hint">${t('tn.keinePruefung')}</div>`;
-    return;
-  }
-  box.innerHTML = rows
-    .map((r) => {
-      const zeit = new Date(r.at).toLocaleString('de-DE', {
-        day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
-      });
-      const marke = r.promoted
-        ? `<span class="tn-tag tn-ok">${t('mt.uebernommen')}</span>`
-        : `<span class="tn-tag">${t('sk.abgelehnt')}</span>`;
-      // p-Wert und Stichproben immer mitzeigen: Ohne sie ist „abgelehnt" eine
-      // Behauptung, mit ihnen eine nachrechenbare Aussage.
-      const zahlen =
-        r.nCandidate > 0
-          ? `n=${r.nCandidate} vs. ${r.nIncumbent}` +
-            (r.p !== null ? ` · p=${r.p.toFixed(3)}` : '') +
-            ` · ${t('sk.vorsprung')} ${r.edge >= 0 ? '+' : ''}${r.edge.toFixed(2)}`
-          : t('tn.keineSchattenTrades');
-      return (
-        `<div class="tn-e"><div class="tn-h"><span class="tn-nm">${esc(r.change || labelVariantId(r.variantId))}</span>${marke}` +
-        `<span class="tn-t mono">${zeit}</span></div>` +
-        `<div class="tn-r">${esc(r.reason)}</div>` +
-        `<div class="tn-n mono">${zahlen}</div></div>`
-      );
-    })
-    .join('');
-}
-
-/**
- * Die Struktursuche-Karte (MO Teil 2).
- *
- * Dieselbe Journal-Disziplin wie beim Tuner: Abgelehnte Kandidaten stehen
- * gleichberechtigt neben Beförderungen, jede Zeile mit DSR gegen Latte und
- * beiden Fenstern — sonst wäre die wachsende statistische Hürde unsichtbar
- * und „seit Wochen keine Beförderung" nicht von „Suche tot" unterscheidbar.
- */
-function renderStruktur(d: StrukturDoc | null): void {
-  const gen = $('skGen');
-  const tries = $('skTries');
-  const since = $('skSince');
-  const log = $('skLog');
-  if (!gen || !tries || !since || !log) return;
-  if (!d) {
-    gen.textContent = '--';
-    tries.textContent = '--';
-    since.textContent = '--';
-    log.innerHTML = `<div class="hint">${t('sk.nochKeinLauf')}</div>`;
-    return;
-  }
-  gen.textContent = `G${d.generation ?? 0}`;
-  tries.textContent = String(d.nVersuche ?? 0);
-  since.textContent = d.amtierendSeit ? d.amtierendSeit.slice(0, 10) : '--';
-  // Blatt-Statistik: „feuerte 41× · 12× am Signal-Tag". Ein Blatt ohne
-  // Feuerungen ist toter Ballast, ein Dauerbrenner entscheidet nichts —
-  // beides sieht man nur mit BEIDEN Zahlen nebeneinander.
-  const bed = $('skBed');
-  if (bed) {
-    const zeilen = d.bedingungen?.zeilen ?? [];
-    bed.innerHTML =
-      zeilen.length === 0
-        ? `<div class="hint">${t('sk.kommtMitLauf')}</div>`
-        : zeilen
-            .map(
-              (z) =>
-                `<div class="tn-fl"><span class="tn-tag${z.seite === 'buy' ? ' tn-ok' : ''}">${z.seite === 'buy' ? t('sk.kauf') : t('sk.verkauf')}</span>` +
-                `<span class="tn-nm">${esc(z.label ?? '')}</span>` +
-                `<span class="mono">${z.gefeuert ?? 0}× · ${z.amSignalTag ?? 0}× ${t('sk.amSignalTag')}</span></div>`,
-            )
-            .join('');
-  }
-  const rows = [...(d.journal ?? [])].reverse().slice(0, 12);
-  if (rows.length === 0) {
-    log.innerHTML = `<div class="hint">${t('sk.journalLeer')}</div>`;
-    return;
-  }
-  log.innerHTML = rows
-    .map((r) => {
-      const zeit = new Date(r.at).toLocaleString('de-DE', {
-        day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
-      });
-      const marke =
-        r.art === 'start'
-          ? `<span class="tn-tag">${t('sk.startpunkt')}</span>`
-          : r.befoerdert
-            ? `<span class="tn-tag tn-ok">${t('sk.befoerdert')}</span>`
-            : `<span class="tn-tag">${t('sk.abgelehnt')}</span>`;
-      const fmt = (v: number | null | undefined): string =>
-        typeof v === 'number' ? v.toFixed(2) : '--';
-      const zahlen =
-        r.art === 'start'
-          ? `${t('sk.versuch')} ${r.nVersuche}`
-          : `${t('sk.vorsprung')} ${fmt(r.vorsprung)} · DSR ${fmt(r.dsr)} · ${t('sk.latte')} ${fmt(r.latte)}` +
-            ` · Test-Sharpe ${fmt(r.testSharpe)} · n=${r.nSuch}/${r.nTest} · ${t('sk.versuch')} ${r.nVersuche}`;
-      const gruende = r.gruende.length > 0 ? `<div class="tn-r">${esc(r.gruende.join(' · '))}</div>` : '';
-      return (
-        `<div class="tn-e"><div class="tn-h"><span class="tn-nm">${esc(r.beschreibung)}</span>${marke}` +
-        `<span class="tn-t mono">${zeit}</span></div>${gruende}` +
-        `<div class="tn-n mono">${zahlen}</div></div>`
-      );
-    })
-    .join('');
-}
-
-/**
- * Die Kurve über die Haltedauer (`meta/tagRueckblick`).
- *
- * Die Messung lag bis jetzt nur in Firestore und war nirgends zu sehen. Sie
- * beantwortet die Frage, an der die Profitabilität hängt — wie lange halten?
- * —, und sie soll ohne Nachfrage lesbar sein.
- *
- * Hier steht nur die Verdrahtung. Die Auswahl der besten Zeile und die
- * Belastbarkeits-Schwelle liegen geprüft in shared/tagRueckblick
- * (`haltedauerZeilen`, `besteHaltedauer`), das Markup in haltedauerCard —
- * aus dieser Karte kann eine echte Einstellungs-Änderung folgen, und ein
- * Spitzenreiter aus drei Beobachtungen sähe genauso aus wie ein belegter.
- */
-function renderHaltedauer(d: TagRueckblickDoc | null): void {
-  const box = $('hdTbl');
-  if (!box) return;
-  const stand = $('hdStand');
-  const fazit = $('hdFazit');
-  const meta = $('hdMeta');
-
-  const zeilen = haltedauerZeilen(d?.horizonte);
-  if (zeilen.length === 0) {
-    box.innerHTML = `<div class="hint">${t('hd.rueckschau')}</div>`;
-    if (stand) stand.textContent = '';
-    if (fazit) fazit.textContent = '';
-    if (meta) meta.textContent = '';
-    return;
-  }
-  const beste = besteHaltedauer(zeilen);
-  if (stand) {
-    // Kurzdatum im Badge — das ISO-Datum sprengte mobil die Kopfzeile
-    // (Owner-Screenshot 21.08.); das volle Datum bleibt im Tooltip.
-    stand.textContent = d?.at ? `Stand ${d.at.slice(8, 10)}.${d.at.slice(5, 7)}.` : '';
-    stand.title = d?.at ? d.at.slice(0, 10) : '';
-  }
-  box.innerHTML = haltedauerTabelle(zeilen, beste);
-  if (fazit) fazit.textContent = haltedauerFazit(beste);
-  if (meta) meta.textContent = haltedauerMeta(d ?? {});
-}
-
-/**
- * Erkenntnis-Chronik (Owner-Go 08.08.).
- *
- * Sortiert nach Gewicht statt nach Katalog-Reihenfolge: Was GILT, steht
- * oben — Widerlegtes darunter, Wartendes zuletzt. Wer die Karte öffnet, will
- * wissen, was das System für wahr hält, nicht was es noch nicht weiß.
- *
- * Die Belegzahlen stehen bewusst UNTER jedem Satz: Eine These ohne
- * nachrechenbare Grundlage ist eine Behauptung, und genau davon hat ein
- * Handelssystem schon genug.
- */
-function renderErkenntnisse(c: ErkenntnisChronik | null): void {
-  const box = $('erList');
-  const stand = $('erDate');
-  if (!box) return;
-  if (stand) {
-    stand.textContent = c?.date ? `Stand ${c.date.slice(8, 10)}.${c.date.slice(5, 7)}.` : '';
-    stand.title = c?.date ?? '';
-  }
-  const eintraege = Object.entries(c?.eintraege ?? {});
-  if (eintraege.length === 0) {
-    box.innerHTML =
-      `<div class="hint">${t('er.ersteChronik')}</div>`;
-    return;
-  }
-  const rang: Record<string, number> = { gilt: 0, gilt_nicht: 1, wartet_auf_daten: 2 };
-  const marke: Record<string, string> = {
-    gilt: '<span class="tn-tag tn-ok">gilt</span>',
-    gilt_nicht: '<span class="tn-tag">widerlegt</span>',
-    wartet_auf_daten: `<span class="tn-tag">${t('er.wartetAufDaten')}</span>`,
-  };
-  box.innerHTML = eintraege
-    .sort((a, b) => (rang[a[1].status] ?? 9) - (rang[b[1].status] ?? 9) || a[0].localeCompare(b[0]))
-    .map(([, e]) => {
-      const belege = Object.entries(e.beleg ?? {})
-        .map(([k, v]) => `${k} ${typeof v === 'number' ? String(Math.round(v * 100) / 100).replace('.', ',') : (v ?? '--')}`)
-        .join(' · ');
-      const seit = e.seitAt ? `${t('ap.seit')} ${e.seitAt.slice(0, 10)}` : '';
-      // Ein Wechsel ist die eigentliche Nachricht — ohne ihn wüsste man nie,
-      // dass eine frühere Annahme gekippt ist.
-      const letzter = e.historie?.[e.historie.length - 1];
-      const wechsel = letzter
-        ? `<div class="er-vor">${t('er.zuvor')} (${letzter.at.slice(0, 10)}): ${esc(letzter.these)}</div>`
-        : '';
-      // Status und Datum stehen ÜBER dem Satz, nicht daneben: In einer
-      // Flex-Zeile schrumpfen weder das Tag noch das nowrap-Datum, der Satz
-      // bekäme also nur den Rest — auf dem Handy gemessene 141 von 310 px.
-      return (
-        `<div class="er-e" data-status="${esc(e.status)}">` +
-        `<div class="er-meta">${marke[e.status] ?? ''}<span class="tn-t mono">${seit}</span></div>` +
-        `<div class="er-these">${esc(e.these)}</div>` +
-        (belege ? `<div class="er-beleg mono">${esc(belege)}</div>` : '') +
-        wechsel +
-        '</div>'
-      );
-    })
-    .join('');
-}
-
-/**
- * Der tägliche KI-Lagebericht.
- *
- * Bewusst UNTER der Chronik in derselben Karte: Der Bericht ist die Deutung,
- * die Chronik darüber die Faktenbasis. Getrennt platziert läse man die Deutung
- * ohne ihre Belege — genau die Ordnung, die hier vermieden werden soll.
- *
- * Der Zustand „noch kein Schlüssel hinterlegt" wird ausgeschrieben statt
- * verschwiegen: Ein Feature, das ohne Konfiguration still bleibt, sieht sonst
- * aus wie ein kaputtes.
- */
-/**
- * Warum heute kein Bericht dasteht — `null`, wenn einer dasteht.
- *
- * Bewusst über den Stand geführt statt über einzelne Sonderfälle: Das Doc
- * trägt auch die Fehlzustände ein, damit die Karte den GRUND nennt statt
- * „noch kein Bericht" zu zeigen. Ein Stand, den diese Liste nicht kennt,
- * landet im Default und wird wenigstens beim Namen genannt — er darf nicht
- * in den Erfolgspfad rutschen, wo er als leerer Bericht erschiene.
- */
-function abHinweis(d: KiBerichtDoc): { stand: string; text: string } | null {
-  switch (d.stand) {
-    case 'bericht':
-      return null;
-    case 'kein_schluessel':
-      return {
-        stand: t('ah.nichtEingerichtet'),
-        text: t('ah.keinSchluessel'),
-      };
-    case 'keine_chronik':
-      return {
-        stand: t('ah.wartetAufKennzahlen'),
-        text: t('ah.keineChronik'),
-      };
-    case 'fehler':
-      return {
-        stand: t('ah.fehlgeschlagen'),
-        text: `${t('ah.gescheitertA')} ${d.fehler ?? t('ah.unbekannterGrund')}. ${t('ah.gescheitertB')}`,
-      };
-    default:
-      return { stand: d.stand, text: t('ah.nochKeine') };
-  }
-}
-
-function renderAiBericht(d: KiBerichtDoc | null): void {
-  const text = $('abText');
-  const stand = $('abStand');
-  const meta = $('abMeta');
-  if (!text || !stand || !meta) return;
-  if (!d) {
-    stand.textContent = '';
-    text.textContent = t('ah.ersterBericht');
-    meta.textContent = '';
-    return;
-  }
-  const hinweis = abHinweis(d);
-  if (hinweis) {
-    stand.textContent = hinweis.stand;
-    text.textContent = hinweis.text;
-    meta.textContent = '';
-    return;
-  }
-  stand.textContent = d.date ?? '';
-  text.textContent = d.text ?? '';
-  meta.textContent = [
-    d.modell,
-    d.tokens ? `${d.tokens.ein}+${d.tokens.aus} Token` : null,
-    d.laeufeImMonat ? `${t('ah.lauf')} ${d.laeufeImMonat} ${t('ah.imMonat')}` : null,
-  ]
-    .filter(Boolean)
-    .join(' · ');
-}
-
-/* ── Trade-Journal (M12): Fakten vom Server, Bewertung vom User ──────────
- * (renderJournal ist historisch die Trade-HISTORIE — daher TradeJournal.) */
-
-function renderTradeJournal(rows: JournalRow[]): void {
-  const box = $('tjList');
-  if (!box) return;
-  if (rows.length === 0) {
-    box.innerHTML =
-      `<div class="hint">${t('tj.keineEintraege')}</div>`;
-    return;
-  }
-  box.innerHTML = rows
-    .map((r) => {
-      const zeit = new Date(r.at).toLocaleString('de-DE', {
-        day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
-      });
-      const marke =
-        r.art === 'exit'
-          ? `<span class="tn-tag${(r.pnl ?? 0) >= 0 ? ' tn-ok' : ''}">Exit ${money(r.pnl ?? 0)}</span>`
-          : '<span class="tn-tag">Entry</span>';
-      const sc = r.signalContext;
-      // Die These in Worten (Owner-Go 08.08.): dieselben eingefrorenen Fakten,
-      // nur lesbar. Der Satz steht ÜBER der Kennzahlen-Zeile — wer schnell
-      // reviewt, liest nur ihn; wer nachrechnen will, findet darunter alles.
-      const these = journalThese(r);
-      const kontext = [
-        sc?.typ,
-        r.riskExit,
-        sc?.votes
-          ? Object.entries(sc.votes)
-              .map(([k, v]) => `${k}:${v}`)
-              .join(' ')
-          : null,
-        typeof sc?.konfluenz === 'number'
-          ? `Konfluenz ${sc.konfluenz}${typeof sc.minKonfluenz === 'number' ? `/${sc.minKonfluenz}` : ''}`
-          : null,
-        sc?.regime ? `Regime ${sc.regime}` : null,
-      ]
-        .filter(Boolean)
-        .join(' · ');
-      const noten = ['A', 'B', 'C', 'D']
-        .map(
-          (g) =>
-            `<button class="lchip tj-g" data-id="${r.id}" data-g="${g}" title="Note ${g}"` +
-            `${r.review === g ? ' style="font-weight:700;border-color:var(--acc);color:var(--acc)"' : ''}>${g}</button>`,
-        )
-        .join('');
-      return (
-        `<div class="tn-e"><div class="tn-h"><span class="tn-nm" data-sym="${esc(r.symbol)}">${esc(r.symbol)} · ${
-          r.side === 'buy' ? t('sk.kauf') : t('sk.verkauf')
-        } · ${r.qty}</span>${marke}` +
-        `<span class="tn-t mono">${zeit}</span></div>` +
-        `<div class="tn-r">${esc(these)}</div>` +
-        (kontext ? `<div class="tn-n mono">${esc(kontext)}</div>` : '') +
-        `<div class="tn-h" style="margin-top:4px;gap:4px">${noten}` +
-        `<input class="inp tj-note" data-id="${r.id}" value="${esc(r.notes ?? '')}" placeholder="Notiz …" style="flex:1;min-width:80px"></div></div>`
-      );
-    })
-    .join('');
-}
-
-/** EIN delegierter Listener statt Listener je Zeile — die Liste wird bei
- *  jedem Snapshot neu gebaut, Einzel-Listener wären sofort verwaist. Der
- *  Snapshot nach dem Speichern malt die Note dann als aktiv. */
-function wireTradeJournal(uid: string): void {
-  const box = $('tjList');
-  if (!box) return;
-  box.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest<HTMLElement>('.tj-g');
-    if (!btn) return;
-    const { id, g } = btn.dataset;
-    if (id && g) void saveJournalReview(uid, id, { review: g }).catch(() => undefined);
-  });
-  box.addEventListener('change', (e) => {
-    const inp = e.target as HTMLInputElement;
-    if (!inp.classList.contains('tj-note')) return;
-    const id = inp.dataset.id;
-    if (id) void saveJournalReview(uid, id, { notes: inp.value.slice(0, 500) }).catch(() => undefined);
-  });
-}
-
-/**
- * Eine offene Position schließen — Long per Verkauf, Short per Eindecken.
- *
- * ── Der Audit-Befund vom 11.08. ───────────────────────────────────────────
- *
- * Der „Exit"-Knopf in der Positionstabelle rief `manualTrade`, und die reicht
- * bei `side === 'buy'` die Menge aus `#mQty` mit — dem Stückzahlfeld der
- * TRADE-KARTE, das mit dieser Position nichts zu tun hat. Für einen Long
- * (`sell`, ohne Menge) ging das gut, für einen Short (`buy`, mit Menge) nicht.
- *
- * Der Server rettet die Menge zwar (`planeMenge` gibt bei Schließungen
- * `pos.qty` zurück), aber die VALIDIERUNG läuft davor: `qty` muss eine ganze
- * Zahl zwischen 1 und 10.000 sein. Wer in der Trade-Karte „Max" für ein
- * günstiges Symbol geklickt hatte, hatte dort z. B. 25.000 stehen — der Klick
- * auf „Cover" wurde dann mit „qty muss eine ganze Zahl 1–10000 sein"
- * abgelehnt, und die Meldung landete in `#mtHint`, also in einer ANDEREN
- * Karte. Bei der Position selbst passierte sichtbar nichts; der Short blieb
- * offen, obwohl der Nutzer ihn geschlossen glaubte. Derselbe Klick auf einen
- * Long funktionierte.
- *
- * `schliessePositionen` (der Massen-Pfad) macht es seit jeher richtig: keine
- * Menge. Diese Funktion ist dieselbe Regel für den Einzelfall.
- */
-async function positionSchliessen(symbol: string, side: 'buy' | 'sell'): Promise<void> {
-  const hint = $('mtHint');
-  hint.textContent = t('mtr.sendeOrder');
-  try {
-    await callTrade({ symbol, side });
-    hint.textContent = `${t('mtr.positionGeschlossen')}: ${symbol} — ${t('mtr.inklGebuehren')}`;
-  } catch (e) {
-    hint.textContent = (e as { message?: string }).message ?? t('mtr.orderFehlgeschlagen');
-  }
-}
-
-async function manualTrade(symbol: string, side: 'buy' | 'sell'): Promise<void> {
-  const hint = $('mtHint');
-  hint.textContent = t('mtr.sendeOrder');
-  try {
-    const qty = eingabeStueckzahl(($('mQty') as HTMLInputElement).value);
-    await callTrade({ symbol, side, ...(side === 'buy' ? { qty } : {}) });
-    hint.textContent = `${side === 'buy' ? t('mtr.gekauft') : t('mtr.verkauft')}: ${symbol} — ${t('mtr.inklGebuehren')}`;
-  } catch (e) {
-    hint.textContent = (e as { message?: string }).message ?? t('mtr.orderFehlgeschlagen');
-  }
-}
-
-/* ── Trade-Fenster (Redesign, User-Wunsch 25.07.): Katalog-Picker,
-   Live-Summen inkl. Gebühren, Kaufkraft-Check, 2-Schritt-Bestätigung ── */
-
-const mtState: {
-  sym: string | null;
-  price: number | null;
-  subs: Unsubscribe[];
-  arm: { side: 'buy' | 'sell'; timer: number } | null;
-} = { sym: null, price: null, subs: [], arm: null };
-
-function mtDisarm(): void {
-  if (mtState.arm !== null) window.clearTimeout(mtState.arm.timer);
-  mtState.arm = null;
-  $('mtBuy').textContent = t('lay.kaufen');
-  $('mtSell').textContent = t('lay.verkaufen');
-}
-
-/** Summen + Kaufkraft live nachrechnen (gleiche Konditionen wie der Server). */
-function mtRecompute(): void {
-  const qty = eingabeStueckzahl(($('mQty') as HTMLInputElement).value);
-  const price = mtState.price;
-  const balance = st?.wallet?.paperBalance ?? null;
-  const fmt = (v: number): string => money(v);
-  if (price === null || price <= 0) {
-    for (const id of ['mtSub', 'mtFee', 'mtTotal', 'mtCash']) $(id).textContent = '--';
-    return;
-  }
-  const sub = qty * price;
-  const fee = sub * PAPER_FEE_RATE;
-  const total = sub + fee;
-  $('mtSub').textContent = fmt(sub);
-  $('mtFee').textContent = fmt(fee);
-  $('mtTotal').textContent = fmt(total);
-  const cashEl = $('mtCash');
-  if (balance === null) {
-    cashEl.textContent = '--';
   } else {
-    const after = balance - total;
-    cashEl.textContent = fmt(after);
-    cashEl.className = `mono ${after < 0 ? 'c-rd' : ''}`;
+    body.hidden = false;
+    anim = body.animate([{ height: '0px', opacity: 0 }, { height: `${body.scrollHeight}px`, opacity: 1 }], lauf);
+    abschliessen = () => {
+      body.style.overflow = '';
+    };
   }
+  anim.onfinish = abschliessen;
+  aktuelleKlappAnim.set(body, anim);
+  // Sicherheitsnetz: In gedrosselten Tabs steht die Animations-Uhr — onfinish
+  // bliebe aus und die Karte hinge zwischen den Zuständen. Der Timer zieht
+  // den Endzustand hart nach; hat inzwischen ein neuerer Toggle übernommen,
+  // gilt dessen Zustand und der Timer tut nichts.
+  window.setTimeout(() => {
+    if (aktuelleKlappAnim.get(body) !== anim) return;
+    aktuelleKlappAnim.delete(body);
+    anim.cancel();
+    abschliessen();
+  }, 420);
 }
 
-/** Symbol wählen: Live-Kurs, Tages-%, RSI/MACD/Signal des Symbols abonnieren. */
-function mtSelect(sym: string): void {
-  mtDisarm();
-  mtState.sym = sym;
-  mtState.price = null;
-  ($('mSym') as HTMLInputElement).value = sym;
-  ($('mSym') as HTMLInputElement).dataset.sym = sym; // Anker für den Steckbrief (21:4x)
-  $('mSymList').hidden = true;
-  $('mtInfo').hidden = false;
-  $('mtName').textContent = resolveName(sym);
-  // Steckbrief fest im Trade-Fenster (18:1x): Wer kauft, sieht, WAS er kauft —
-  // ohne Hover, damit es auch am Touch-Gerät immer da steht.
-  const mtSteck = $('mtSteck');
-  const mtSteckText = steckbriefText(sym);
-  mtSteck.textContent = mtSteckText;
-  mtSteck.style.display = mtSteckText ? '' : 'none';
-  clearSubs(mtState.subs);
-  mtState.subs.push(
-    watchMarketDoc(sym, (d) => {
-      const q = d?.quote;
-      mtState.price = q?.price ?? null;
-      $('mtPx').textContent = q ? fmtNum(q.price) : '--';
-      const chg = $('mtChg');
-      chg.textContent = q ? fmtPct(q.changePct) : '--';
-      chg.className = `smv mono ${q ? pnlClass(q.changePct) : ''}`;
-      mtRecompute();
-    }),
-    watchLatestIndicators(sym, (row) => {
-      $('mtRsi').textContent = row?.rsi != null ? row.rsi.toFixed(1) : '--';
-      const m = $('mtMacd');
-      if (row?.macd) {
-        const bull = row.macd.histogram > 0;
-        m.textContent = bull ? `↑ ${t('mtr.bullisch')}` : `↓ ${t('mtr.baerisch')}`;
-        m.className = `smv ${bull ? 'c-gn' : 'c-rd'}`;
-      } else {
-        m.textContent = '--';
-        m.className = 'smv';
-      }
-    }),
-    watchLatestSignal(sym, (sig) => {
-      const el = $('mtSig');
-      el.textContent = sig ? sig.direction.toUpperCase() : '--';
-      el.className = `smv ${sig?.direction === 'buy' ? 'c-gn' : sig?.direction === 'sell' ? 'c-rd' : 'c-t3'}`;
-    }),
-  );
-}
-
-function wireManualTrade(): void {
-  const inp = $('mSym') as HTMLInputElement;
-  const list = $('mSymList');
-  const renderList = (filter: string): void => {
-    const f = filter.trim().toLowerCase();
-    const all = paletteSymbols();
-    const hits = (f
-      ? all.filter((s) => s.symbol.toLowerCase().includes(f) || s.name.toLowerCase().includes(f))
-      : all
-    ).slice(0, 12);
-    list.innerHTML = hits
-      .map((s) => `<button type="button" data-sym="${s.symbol}"><b class="mono">${s.symbol}</b> — ${s.name}</button>`)
-      .join('');
-    list.hidden = hits.length === 0;
-    list.querySelectorAll<HTMLButtonElement>('[data-sym]').forEach((b) =>
-      b.addEventListener('click', () => mtSelect(b.dataset['sym']!)),
-    );
-  };
-  inp.addEventListener('input', () => renderList(inp.value));
-  inp.addEventListener('focus', () => renderList(inp.value));
-  inp.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Enter') {
-      const first = list.querySelector<HTMLButtonElement>('[data-sym]');
-      const typed = inp.value.trim().toUpperCase();
-      if (first && !list.hidden) mtSelect(first.dataset['sym']!);
-      else if (typed) mtSelect(typed);
+/** Eingeklappte Karten anwenden (nur der Körper zu — Gerät-lokal). */
+function applyCollapse(animiert = false): void {
+  if (!st) return;
+  document.querySelectorAll<HTMLElement>('.card[data-panel]').forEach((card) => {
+    const id = card.dataset['panel'] ?? '';
+    const body = card.querySelector<HTMLElement>(':scope > .cbody');
+    const btn = card.querySelector<HTMLElement>(':scope > .sect [data-col]');
+    const on = st!.collapsed.has(id);
+    if (body) setzeKlappzustand(body, on, animiert);
+    if (btn) {
+      // Die Richtung zeigt die CSS-Rotation über aria-expanded — ein
+      // Zeichen-Tausch (▸/▾) ließe sich nicht animieren.
+      btn.textContent = '▾';
+      btn.setAttribute('aria-expanded', String(!on));
     }
-    if (ev.key === 'Escape') list.hidden = true;
   });
-  document.addEventListener('click', (ev) => {
-    if (!(ev.target as HTMLElement).closest('.mt-combo')) list.hidden = true;
-  }, { signal: docListenerSignal() });
-  $('mQty').addEventListener('input', () => {
-    mtDisarm();
-    mtRecompute();
-  });
-  $('mtMax').addEventListener('click', () => {
-    const price = mtState.price;
-    const balance = st?.wallet?.paperBalance ?? 0;
-    if (price === null || price <= 0) return;
-    const max = Math.floor(balance / (price * (1 + PAPER_FEE_RATE)));
-    ($('mQty') as HTMLInputElement).value = String(Math.max(1, max));
-    mtDisarm();
-    mtRecompute();
-  });
-  const armOrRun = (side: 'buy' | 'sell'): void => {
-    const sym = mtState.sym ?? (inp.value || st?.currentSymbol || '').trim().toUpperCase();
-    if (!sym) return;
-    if (mtState.arm?.side === side) {
-      mtDisarm();
-      void manualTrade(sym, side);
-      return;
-    }
-    mtDisarm();
-    const qty = eingabeStueckzahl(($('mQty') as HTMLInputElement).value);
-    const total = mtState.price !== null ? money(qty * mtState.price * (1 + PAPER_FEE_RATE)) : '';
-    $(side === 'buy' ? 'mtBuy' : 'mtSell').textContent =
-      side === 'buy'
-        ? `✓ ${qty} × ${sym}${total ? ` ${t('mtr.fuer')} ${total}` : ''} — ${t('mtr.bestaetigen')}`
-        : `✓ ${t('mtr.positionVerkaufen')} ${sym} ${t('mtr.komplettVerkaufen')} — ${t('mtr.bestaetigen')}`;
-    // 6 s Bedenkzeit, dann entschärfen — verhindert versehentliche Doppelklicks
-    mtState.arm = { side, timer: window.setTimeout(mtDisarm, 6000) };
-  };
-  $('mtBuy').addEventListener('click', () => armOrRun('buy'));
-  $('mtSell').addEventListener('click', () => armOrRun('sell'));
-  if (st) mtSelect(st.currentSymbol); // Start: aktuelles Chart-Symbol vorwählen
 }
 
-/* ── Uhr ────────────────────────────────────────────────────────────── */
+/**
+ * Auf-/Zuklappen einer Karte — mit Sidebar-Akkordeon: Beim AUFklappen in
+ * einer Seitenspalte klappen die Geschwister derselben Spalte zu (je Spalte
+ * nur eine offen). Die Mittelspalte bleibt frei: Positionen, Gründe,
+ * Champion und Historie gleichzeitig zu sehen IST das Dashboard.
+ */
+function klappUm(id: string, card: HTMLElement): void {
+  if (!st) return;
+  const aufklappen = st.collapsed.has(id);
+  if (aufklappen) st.collapsed.delete(id);
+  else st.collapsed.add(id);
+  const spalte = card.parentElement;
+  const akkordeon = spalte?.id === 'leftCol' || spalte?.id === 'rightCol';
+  if (aufklappen && akkordeon && spalte) {
+    for (const nachbar of spalte.querySelectorAll<HTMLElement>(':scope > .card[data-panel]')) {
+      const gid = nachbar.dataset['panel'] ?? '';
+      if (gid && gid !== id) st.collapsed.add(gid);
+    }
+  }
+  localStorage.setItem('autotrd-collapsed', [...st.collapsed].join(','));
+  applyCollapse(true);
+}
 
-function updateClock(): void {
-  const et = new Date().toLocaleString('en-US', {
-    timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+/**
+ * Jede Modul-Karte bekommt ihren Kopf-Chrome: Der Klapp-Pfeil sitzt als
+ * eigener Knopf ganz LINKS vor dem Titel, die GANZE Titelzeile klappt per
+ * Klick. Echte Bedienelemente im Kopf (ⓘ, Badges, Auswahlfelder) bleiben
+ * vom Titel-Klick unberührt.
+ */
+function wirePanelChrome(): void {
+  document.querySelectorAll<HTMLElement>('.card[data-panel]').forEach((card) => {
+    const sect = card.querySelector<HTMLElement>(':scope > .sect');
+    const body = card.querySelector<HTMLElement>(':scope > .cbody');
+    const id = card.dataset['panel'] ?? '';
+    if (!sect || !body || !id) return;
+    if (sect.querySelector(':scope > .sect-fold')) return; // idempotent — nie doppeltes Chrome
+    const fold = document.createElement('button');
+    fold.type = 'button';
+    fold.className = 'sect-btn sect-fold';
+    fold.dataset['col'] = '';
+    fold.title = t('gp.modulKlappen');
+    fold.setAttribute('aria-label', t('gp.modulKlappen'));
+    fold.textContent = '▾';
+    sect.prepend(fold);
+    // Kopf in feste Flex-Ordnung bringen: [Pfeil][Titel+ⓘ][Meta-Badges].
+    const titel = document.createElement('span');
+    titel.className = 'sect-titel';
+    const meta = document.createElement('span');
+    meta.className = 'sect-meta';
+    for (const kind of [...sect.childNodes]) {
+      if (kind === fold) continue;
+      const istTitelTeil =
+        kind.nodeType === Node.TEXT_NODE ||
+        (kind instanceof HTMLElement && kind.classList.contains('ibtn'));
+      (istTitelTeil ? titel : meta).appendChild(kind);
+    }
+    sect.appendChild(titel);
+    if (meta.childNodes.length > 0) sect.appendChild(meta);
+    sect.classList.add('sect-flex');
+
+    fold.addEventListener('click', (ev) => {
+      ev.stopPropagation(); // sonst klappt der Titelzeilen-Handler doppelt
+      klappUm(id, card);
+    });
+    sect.addEventListener('click', (ev) => {
+      const ziel = ev.target as HTMLElement;
+      if (ziel.closest('button, input, select, label, a, .ibtn')) return;
+      klappUm(id, card);
+    });
   });
-  $('marketClock').textContent = et;
-  const [h, m] = et.split(':').map(Number);
-  const mins = (h ?? 0) * 60 + (m ?? 0);
-  for (const id of ['phPre', 'phMain', 'phAft']) $(id).classList.remove('active');
-  if (mins >= 570 && mins < 960) $('phMain').classList.add('active');
-  else if (mins >= 240 && mins < 570) $('phPre').classList.add('active');
-  else $('phAft').classList.add('active');
+  applyCollapse();
+}
+
+/* ── Optionen-Modal ─────────────────────────────────────────────────── */
+
+const MODAL_IDS = {
+  options: 'optModal',
+  report: 'reportModal',
+  cmd: 'cmdModal',
+} as const;
+type ModalName = keyof typeof MODAL_IDS;
+
+function closeModal(which: ModalName): void {
+  $(MODAL_IDS[which]).classList.remove('show');
+  if (which === 'cmd') cmdOffen = null;
+}
+
+function openOptions(): void {
+  if (!st) return;
+  $('optModal').classList.add('show');
 }
 
 /* ── Mount / Unmount ────────────────────────────────────────────────── */
@@ -10855,229 +2711,63 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     uid,
     email,
     strategy: DEFAULT_STRATEGY,
-    currentSymbol: DEFAULT_STRATEGY.watchlist[0] ?? 'QQQ',
-    universe: null,
-    marketClass: 'indices',
-    chart: null,
-    bars: [],
-    range: 66,
-    intradayDays: 0,
-    intradayBars: [],
-    histBars: [],
-    histOldest: 0,
-    histLoading: false,
-    histDone: false,
-    histEmptyStreak: 0,
-    // Immer an (Owner 07.08.: „Auto soll ja immer an sein") — der alte
-    // Geräte-Schalter ist Geschichte, die Buttons sind reine Zoom-Fahrten.
-    autoRes: true,
-    aggMinutes: 5,
-    dailyAgg: 0,
-    shownDaily: [],
-    shownIntraday: [],
-    intradayOldest: null,
-    intradayHistLoading: false,
-    intradayHistDone: false,
-    yMode: ((): import('./chart.js').YMode => {
-      const m = localStorage.getItem('autotrd-chart-ymode');
-      if (m === 'auto' || m === 'fix' || m === 'frei') return m;
-      // Migration vom alten An/Aus-Schalter: „aus" hieß manuell.
-      return localStorage.getItem('autotrd-chart-yauto') === '0' ? 'frei' : 'auto';
-    })(),
-    chartFitPending: true,
-    prediction: null,
-    predMode: false,
-    ui: { predArrow: false, cmpOverlay: true, chartGrid: true, subPanels: true },
-    collapsed: new Set((localStorage.getItem('autotrd-collapsed') ?? '').split(',').filter(Boolean)),
-    cleanView: localStorage.getItem('autotrd-chart-clean') === '1',
-    lastSignalDir: 'hold',
-    subCharts: { rsi: null, macd: null },
-    chartLayers: new Set((localStorage.getItem('autotrd-chart-layers') ?? '').split(',').filter(Boolean)),
-    gridMode: 1,
-    mainLocked: false,
-    gridPanels: [],
-    overlaySymbol: null,
-    overlayBars: [],
+    auto: { ...AUTO_DEFAULTS },
+    autoSymbols: null,
+    engine: null,
     wallet: null,
     positions: [],
     trades: [],
-    forecast: null,
-    forecastIntraday: null,
-    news: null,
-    accessLevel: 'approved',
-    admin: false,
-    health: null,
-    positioning: null,
-    sockelKonten: null,
-    chartGroup: 'A',
-    chart2Group: 'B',
-    chart2Symbol: DEFAULT_STRATEGY.watchlist[1] ?? 'QQQ',
-    chart2: null,
-    chart2Bars: [],
-    chart2Subs: [],
-    chart2P: {
-      sym: DEFAULT_STRATEGY.watchlist[1] ?? 'QQQ',
-      range: 66,
-      locked: false,
-      chart: null,
-      bars: [],
-      subs: [],
-      epoch: 0,
-      fitPending: true,
-      forecast: null,
-      forecastIntraday: null,
-      news: null,
-      intradayDays: 0,
-      intradayBars: [],
-      auto: false,
-    },
-    lastQuote: null,
-    orderSide: 'buy',
-    hotkeys: { ...HOTKEY_DEFAULTS },
-    wsPreset: 'ueberblick',
-    wsHidden: new Set(DEFAULT_HIDDEN),
-    wsOrder: {},
-    wsCol: {},
-    chartTypeSel: ((): ChartType => {
-      const t = (localStorage.getItem('autotrd-chart-style') ?? '').split('|')[0];
-      return ['candles', 'hollow', 'heikin', 'line', 'area', 'baseline', 'bars'].includes(t ?? '')
-        ? (t as ChartType)
-        : 'candles';
-    })(),
-    scaleMode: ((): 0 | 1 | 2 => {
-      const m = Number((localStorage.getItem('autotrd-chart-style') ?? '').split('|')[1]);
-      return m === 1 || m === 2 ? m : 0;
-    })(),
-    typeCombine: (localStorage.getItem('autotrd-chart-style') ?? '').split('|')[2] === '1',
-    hudOpen: (localStorage.getItem('autotrd-hud') ?? (window.innerWidth > 640 ? '1' : '0')) === '1',
-    ohlcOpen: (localStorage.getItem('autotrd-ohlc') ?? '1') === '1',
-    wsSaveTimer: null,
-    paletteDispose: null,
-    showForecast: true,
-    // News-Punkte an per Default — die Daten liegen ohnehin im market-Doc,
-    // der Toggle kostet also nichts; Abwahl bleibt gerätelokal gemerkt.
-    showNews: localStorage.getItem('autotrd-chart-news') !== '0',
-    showPos: localStorage.getItem('autotrd-chart-pos') !== '0',
-    posOpen: localStorage.getItem('autotrd-pos-open') === '1',
+    tradesCursor: null,
+    tradesDone: false,
+    tradesLoading: false,
+    tradesFehler: null,
     posPrices: new Map(),
+    positionSubs: new Map(),
     pfStats: null,
     equitySeries: [],
-    subs: [],
-    symbolSubs: [],
-    watchlistSubs: [],
-    watched: [],
-    tradesCursor: null,
-    // 30 Tage als Start: lang genug, dass die Kennzahlen etwas aussagen,
-    // kurz genug, dass die erste Seite meist reicht und nichts nachgeladen
-    // werden muss.
-    anZeitraum: 30,
-    // Kurve startet wie bisher mit „Alles" — Fenster ist Opt-in per Chip.
     pfZeitraum: 0,
-    anLaedt: false,
-    tradesFehler: null,
-    tradesDone: false,
-    dcModus: 'symbol',
-    tradesLoading: false,
-    catalogOpen: 0,
-    catalogQuotes: 0,
-    positionSubs: new Map(),
+    health: null,
+    champion: null,
+    universe: [...DEFAULT_UNIVERSE],
+    accessLevel: 'approved',
+    admin: false,
+    collapsed: new Set((localStorage.getItem('autotrd-collapsed') ?? '').split(',').filter(Boolean)),
+    subs: [],
     timers: [],
   };
-  seedSymbols({ A: st.currentSymbol, B: st.chart2Symbol, C: st.currentSymbol });
 
-  // Auto-Tuner-Schalter: schreibt genau das Feld, das `tuneAll` serverseitig
-  // prüft. Kein Callable nötig — es ist eine Einstellung, kein Geld-Vorgang.
-  $('tnOn').addEventListener('change', (e) => {
-    const box = e.target as HTMLInputElement;
-    void saveAutoTune(uid, box.checked).catch(() => {
-      box.checked = !box.checked; // Schreiben fehlgeschlagen → Anzeige ehrlich halten
-    });
-  });
-
-  // User-Doc: Strategie (Formular/Watchlist) + Wallet folgen Firestore
+  // User-Doc: Schalter, Einstellungen, Wallet und Engine-Spiegel folgen Firestore
   st.subs.push(
     watchUserDoc(uid, (u) => {
-      const { strategy, wallet, hotkeys, ui, autoTune, accessLevel, admin, breaker } = u;
       if (!st) return;
-      renderBreaker(breaker);
-      renderAbgleich(u.abgleich);
-      renderVormerkung(u.uebernahmeVorgemerkt);
-      st.accessLevel = accessLevel;
+      st.accessLevel = u.accessLevel;
       renderAccessNote();
-      st.admin = admin;
+      st.admin = u.admin;
       renderAdminCard();
-      st.strategy = strategy ?? DEFAULT_STRATEGY;
-      st.wallet = wallet;
-      ($('tnOn') as HTMLInputElement).checked = autoTune;
-      st.ui = {
-        predArrow: ui?.predArrow === true,
-        cmpOverlay: ui?.cmpOverlay !== false,
-        chartGrid: ui?.chartGrid !== false,
-        subPanels: ui?.subPanels !== false,
-        marketGroups: ui?.marketGroups ?? {},
-        // MU2: muss hier MITGEFÜHRT werden — saveUiPrefs schreibt settings.ui
-        // als GANZES Objekt; ein fehlendes Feld wäre beim nächsten Speichern
-        // gelöscht und die Tour käme bei jedem Login wieder.
-        tourGesehen: ui?.tourGesehen === true,
-        // Fehlend = AN: Bestandskonten behalten das Akkordeon-Verhalten.
-        akkordeon: ui?.akkordeon !== false,
-      };
-      applyUiPrefs();
-      pruefeTourAutostart();
-      const prevPalette = st.hotkeys.palette;
-      st.hotkeys = { ...HOTKEY_DEFAULTS, ...(hotkeys ?? {}) };
-      if (st.hotkeys.palette !== prevPalette && st.paletteDispose) {
-        st.paletteDispose();
-        st.paletteDispose = initPalette({
-          hotkey: st.hotkeys.palette ?? 'ctrl+k',
-          symbols: () => paletteSymbols(),
-          commands: () => paletteCommands(),
-          onSymbol: (sym) => {
-            if (st) publishSymbol(st.chartGroup, sym);
-          },
-        });
-      }
-      fillForm(st.strategy);
+      st.strategy = u.strategy ?? DEFAULT_STRATEGY;
+      // Ohne `settings.auto` gilt dieselbe Ableitung aus der alten Strategie
+      // wie im Takt — Anzeige und Handel sehen dieselben Zahlen.
+      st.auto = u.auto ? { ...AUTO_DEFAULTS, ...u.auto } : autoSettingsFromLegacy(u.strategy);
+      st.autoSymbols = Array.isArray(u.auto?.symbols) ? [...u.auto.symbols] : null;
+      st.wallet = u.wallet;
+      st.engine = u.engine;
+      renderEngineBadge(st.strategy.engine.running === true);
+      renderEngineStatus();
+      renderEngineCommands();
+      renderEngineWhy();
+      fillAutoForm();
+      renderChampion();
       renderPortfolio();
-      // Veto-Anzeige folgt signals.newsVeto SOFORT nach dem Speichern —
-      // sonst zeigt das Chart noch minutenlang einen Pfeil für ein
-      // Aussetzen, das der User gerade abgeschaltet hat (Fund 29.07.).
-      applyMarkers();
-      renderAllPanels();
-    }),
-    // Beobachtete Symbole: kommen vom Scan, nicht aus der Strategie. Ändert
-    // sich die Liste (neues Momentum-Ranking, neue Position), baut sich die
-    // Livebar neu auf — sonst zeigte das Dashboard eine Auswahl von gestern.
-    watchWatchedSymbols(({ symbols, catalogOpen, catalogQuotes }) => {
-      if (!st) return;
-      st.catalogOpen = catalogOpen;
-      st.catalogQuotes = catalogQuotes;
-      renderWatchHint();
-      const vorher = st.watched.join(',');
-      st.watched = symbols;
-      if (symbols.join(',') === vorher && $('liveBar').childElementCount > 0) return;
-      const sichtbar = watchedSymbols();
-      if (!sichtbar.includes(st.currentSymbol)) {
-        publishSymbol(st.chartGroup, sichtbar[0] ?? st.currentSymbol);
-      }
-      wireWatchlist();
-      renderStrategyChips();
+      renderPfStats();
     }),
     watchPositions(uid, (positions) => {
       if (!st) return;
       st.positions = positions;
       syncPositionQuotes();
       renderPortfolio();
-      // Eröffnet/geschlossen: Das Chart-Overlay folgt sofort, sonst zeigt es
-      // Linien einer Position, die es nicht mehr gibt (oder keine für eine neue)
-      applyPosition();
-      applyMarkers();
-      applyOverlays();
-      renderAllPanels(); // gilt in ALLEN Chart-Fenstern
     }),
     // Live-Kopf: die neuesten 50. Nachgeladene ältere Seiten bleiben erhalten
-    // und werden hinten angehängt — sonst würde jeder neue Trade (alle fünf
-    // Minuten einer) die ganze nachgeladene Historie wieder wegwerfen.
+    // und werden hinten angehängt.
     watchTrades(uid, (kopf, cursor) => {
       if (!st) return;
       const bekannt = new Set(kopf.map(tradeKey));
@@ -11088,305 +2778,49 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         st.tradesDone = kopf.length < TRADE_PAGE;
       }
       renderPortfolio();
-      renderDepotVerlauf();
+      renderPfStats();
     }),
     watchPortfolioStats(uid, (stats) => {
       if (!st) return;
       st.pfStats = stats;
       renderPfStats();
-      // Die Empfehlung hängt am selben Doc. Ohne das hier bliebe eine
-      // geöffnete Options-Ansicht auf dem Stand des Öffnens stehen — und
-      // zeigte nach dem Tageslauf die Zahlen von gestern.
-      renderKlassenRat();
     }),
     watchEquitySeries(uid, (points) => {
       if (!st) return;
       st.equitySeries = points;
       renderPfStats();
     }),
-    watchForecastStats((stats) => {
-      $('fcAcc').textContent =
-        stats?.dirAccuracy != null ? `${stats.dirAccuracy.toFixed(1)} %` : '--';
-      $('fcScored').textContent = String(stats?.scored ?? 0);
-      $('fcLb').textContent = stats?.best ? String(stats.best.lookback) : '--';
-      $('fcTuning').textContent = stats?.tuningActive
-        ? t('mt.tuningAktiv')
-        : t('mt.tuningSammelt');
-      renderFcLabStats('flCombos', stats);
-    }),
-    watchForecastStatsIntraday((stats) => renderFcLabStats('flCombosIntra', stats)),
-    watchMomentum((doc) => {
-      renderMomentum(doc);
-      // Die Sockel-Zahl gehört in die Betriebszustands-Karte: Sie beantwortet
-      // „läuft der ruhige Teil überhaupt?" — eine 0 dort bei gesetztem
-      // corePct hieße, dass der Rebalance-Takt noch nicht fällig war.
-      if (st) {
-        st.sockelKonten = (doc as { sockelKonten?: number } | null)?.sockelKonten ?? null;
-        renderEngineWhy();
-      }
-    }),
     watchHealth((doc) => {
       if (!st) return;
       st.health = doc;
       renderEngineWhy();
     }),
-    watchPositioning((doc) => {
+    watchEngineConfig((cfg) => {
       if (!st) return;
-      st.positioning = doc;
-      renderEngineWhy();
+      st.universe = cfg?.universe.symbols ?? [...DEFAULT_UNIVERSE];
+      renderSymbolPicker();
     }),
-    watchTuneFleet(uid, renderTuneFleet),
-    watchTuneLog(uid, renderTuneLog),
-    watchStruktur(uid, renderStruktur),
-    watchJournal(uid, renderTradeJournal),
-    watchErkenntnisse(renderErkenntnisse),
-    watchTagRueckblick(renderHaltedauer),
-    watchAiBericht(renderAiBericht),
-    watchTuneGlobal(renderTuneGlobal),
+    watchChampion((doc) => {
+      if (!st) return;
+      st.champion = doc;
+      renderChampion();
+      renderSymbolPicker();
+    }),
   );
-  wireTradeJournal(uid);
 
-  // Umschalter der Depot-Zerlegung. Einmal verdrahtet, nicht bei jedem
-  // Neuzeichnen — die Knöpfe stehen im festen Karten-Markup.
-  const setzeModus = (modus: 'symbol' | 'trade'): void => {
-    if (!st || st.dcModus === modus) return;
-    st.dcModus = modus;
-    $('dcMSym')?.setAttribute('aria-pressed', String(modus === 'symbol'));
-    $('dcMTrade')?.setAttribute('aria-pressed', String(modus === 'trade'));
-    renderDepotVerlauf();
-  };
-  $('dcMSym')?.addEventListener('click', () => setzeModus('symbol'));
-  $('dcMTrade')?.addEventListener('click', () => setzeModus('trade'));
+  // Herzschlag-Alter und „vor n min" altern auch ohne neue Daten.
+  st.timers.push(window.setInterval(() => {
+    renderEngineStatus();
+    renderEngineWhy();
+  }, 60_000));
 
-  // Galerie der Performance-Karte (Owner 21.08.): Kurve und Depot-Verlauf
-  // blättern auf einem Platz. Die Wahl bleibt Gerät-lokal — sie ist eine
-  // Sehgewohnheit, keine Einstellung.
-  const zeigePfAnsicht = (seite: 'kurve' | 'depot', animiert: boolean): void => {
-    const kurve = document.getElementById('pfSeiteKurve');
-    const depot = document.getElementById('pfSeiteDepot');
-    if (!kurve || !depot) return;
-    kurve.hidden = seite !== 'kurve';
-    depot.hidden = seite !== 'depot';
-    for (const b of document.querySelectorAll<HTMLButtonElement>('#pfAnsicht [data-pfa]'))
-      b.classList.toggle('on', b.dataset['pfa'] === seite);
-    localStorage.setItem('autotrd-pf-ansicht', seite);
-    if (animiert && !reduzierteBewegung) {
-      const ziel = seite === 'kurve' ? kurve : depot;
-      ziel.classList.remove('pf-rein');
-      void ziel.offsetWidth; // Reflow — sonst startet dieselbe Animation nicht erneut
-      ziel.classList.add('pf-rein');
-    }
-  };
-  for (const b of document.querySelectorAll<HTMLButtonElement>('#pfAnsicht [data-pfa]'))
-    b.addEventListener('click', () => zeigePfAnsicht(b.dataset['pfa'] === 'depot' ? 'depot' : 'kurve', true));
-  zeigePfAnsicht(localStorage.getItem('autotrd-pf-ansicht') === 'depot' ? 'depot' : 'kurve', false);
-
-  // Teilen-Grafik: Vorschau folgt dem Beträge-Schalter, damit man vor dem
-  // Teilen sieht, was das Bild preisgibt.
-  $('anShareBtn')?.addEventListener('click', () => void teileDepotGrafik());
-  $('anShareAlle')?.addEventListener('click', () => void teileAlleKarten());
-  $('anShareVideo')?.addEventListener('click', () => void erstelleStoryVideo());
-  $('anShareTrade')?.addEventListener('click', () => void erstelleMaschinenVideo());
-  $('anVideoShare')?.addEventListener('click', () => void teileVideoDatei());
-  $('anVideoSave')?.addEventListener('click', speichereVideoDatei);
   // Logo-Fallback der Symbol-Chips: kaputte Bilder weg, Monogramm bleibt.
   installiereLogoFallback();
-  $('anShareBetraege')?.addEventListener('change', renderSharePreview);
-  $('anStoryPrev')?.addEventListener('click', () => storyBlaettern(-1));
-  $('anStoryNext')?.addEventListener('click', () => storyBlaettern(1));
-  // Klick auf die Vorschau blättert ebenfalls — „klickbar" wörtlich genommen.
-  $('anSharePreview')?.addEventListener('click', () => storyBlaettern(1));
-
-  // Link-Bus (M9): Chart- und News-Kontext folgen ihrer jeweiligen Gruppe.
-  busSubscribe(CHART_KEY, st.chartGroup, (sym) => {
-    if (!st || st.currentSymbol === sym) return;
-    st.currentSymbol = sym;
-    markLivebar(sym);
-    void rebuildChart();
-    wireChartCtx();
-    scheduleWsSave();
-  });
-  // Gruppen-Wechsel: das Panel NIMMT sein Symbol MIT (die neue Gruppe
-  // adoptiert es) — so heißt „News auf B" wirklich „News bleibt stehen,
-  // während A weiterschaltet", statt zum alten B-Symbol zu springen.
-  busSubscribe(CHART2_KEY, st.chart2Group, (sym) => {
-    if (!st || st.chart2Symbol === sym) return;
-    st.chart2Symbol = sym;
-    wireChart2Ctx();
-    void rebuildChart2();
-    scheduleWsSave();
-  });
-  $('chipChart2').addEventListener('click', () => {
-    if (!st) return;
-    st.chart2Group = nextGroup(st.chart2Group);
-    seedSymbols({ [st.chart2Group]: st.chart2Symbol });
-    setGroup(CHART2_KEY, st.chart2Group);
-    paintChips();
-    scheduleWsSave();
-  });
-  $('chipChart').addEventListener('click', () => {
-    if (!st) return;
-    st.chartGroup = nextGroup(st.chartGroup);
-    seedSymbols({ [st.chartGroup]: st.currentSymbol });
-    setGroup(CHART_KEY, st.chartGroup);
-    paintChips();
-    scheduleWsSave();
-  });
-
-  wireWatchlist();
-  wireChartCtx();
-  wireChart2Ctx();
-  paintChips();
-  applyPanels();
-  void rebuildChart();
-  void renderMarketTabs();
-  updateClock();
-  st.timers.push(window.setInterval(updateClock, 1000));
-  // Kurz-Updates (Chart-Audit 2): aktives Symbol alle 45 s frisch vom Server
-  // (quoteNow schreibt in market/{sym}.quote — alle Clients sehen es sofort).
-  // Nur bei sichtbarem Tab; Quota deckelt serverseitig, Fehler sind still.
-  st.timers.push(
-    window.setInterval(() => {
-      if (!st || document.visibilityState !== 'visible') return;
-      callQuoteNow(st.currentSymbol).catch(() => undefined);
-    }, 45_000),
-  );
   mountLegalFooter(root);
 
-  // Gespeicherten Workspace anwenden (Preset, Panels, Gruppen, Symbole)
-  void loadWorkspace(uid).then((ws) => {
-    if (!st || !ws) return;
-    st.wsPreset = ws.preset ?? 'ueberblick';
-    st.wsHidden = new Set(
-      Object.keys(PANEL_TITLES).filter((id) => {
-        const cfg = ws.panels?.[id];
-        return cfg ? cfg.hidden === true : DEFAULT_HIDDEN.has(id);
-      }),
-    );
-    st.wsOrder = Object.fromEntries(
-      Object.entries(ws.panels ?? {})
-        .filter(([, cfg]) => typeof cfg?.order === 'number')
-        .map(([id, cfg]) => [id, cfg.order as number]),
-    );
-    // Spaltenwahl (Pointer-Drag): nur die zwei echten Sidebar-Ids gelten —
-    // alles andere aus dem Doc wird ignoriert, nie ins DOM übernommen.
-    st.wsCol = Object.fromEntries(
-      Object.entries(ws.panels ?? {})
-        .filter(([, cfg]) => cfg?.col === 'leftCol' || cfg?.col === 'rightCol')
-        .map(([id, cfg]) => [id, cfg.col as 'leftCol' | 'rightCol']),
-    );
-    applyPanels();
-    applyPanelOrder();
-    const g = (v: unknown): LinkGroup => (v === 'B' || v === 'C' ? v : 'A');
-    st.chartGroup = g(ws.groups?.chart);
-    st.chart2Group = ws.groups?.chart2 === 'A' || ws.groups?.chart2 === 'C' ? ws.groups.chart2 : 'B';
-    const symbols: Partial<Record<LinkGroup, string>> = {};
-    for (const grp of ['A', 'B', 'C'] as const) {
-      const sym = ws.symbols?.[grp];
-      if (typeof sym === 'string' && sym) symbols[grp] = sym;
-    }
-    seedSymbols(symbols);
-    setGroup(CHART_KEY, st.chartGroup);
-    setGroup(CHART2_KEY, st.chart2Group);
-    paintChips();
-  });
-
-  // Test-Hooks (E2E): Chart-Sync von außen mess- und triggerbar
-  (window as unknown as { __autotrdCharts?: unknown }).__autotrdCharts = {
-    mainRange: () => st?.chart?.getVisibleRange() ?? null,
-    secondRange: () => st?.chart2?.getVisibleRange() ?? null,
-    setMainRange: (r: { from: number; to: number }) => st?.chart?.setVisibleRange(r),
-    refreshMain: () => renderChart(),
-    mainOverlays: () => st?.chart?.overlayCount() ?? -1,
-    gridPanels: () => st?.gridPanels.length ?? -1,
-    gridPanelOverlays: (i: number) => st?.gridPanels[i]?.chart?.overlayCount() ?? -1,
-    panelAreaActive: (i: number) => st?.gridPanels[i]?.chart?.areaActive() ?? false,
-    panelForecastActive: (i: number) => st?.gridPanels[i]?.chart?.forecastActive() ?? false,
-    mainForecastActive: () => st?.chart?.forecastActive() ?? false,
-    mainTypeCombine: () => st?.chart?.typeCombineActive() ?? false,
-    panelTypeCombine: (i: number) => st?.gridPanels[i]?.chart?.typeCombineActive() ?? false,
-    panelMarkerCount: (i: number) => st?.gridPanels[i]?.lastMarkers ?? -1,
-    mainMarkerCount: () => st?.lastMainMarkers ?? -1,
-    panelCoords: (i: number, time: string | number, price: number) =>
-      st?.gridPanels[i]?.chart?.coords(time, price) ?? null,
-    panelLastClose: (i: number) => {
-      const b = st?.gridPanels[i]?.bars;
-      return b && b.length > 0 ? b[b.length - 1]!.close : null;
-    },
-    panelIntradayDays: (i: number) => st?.gridPanels[i]?.intradayDays ?? -1,
-    panelIntradayLen: (i: number) => st?.gridPanels[i]?.intradayBars.length ?? -1,
-    panelRangeVal: (i: number) => st?.gridPanels[i]?.range ?? -1,
-    chart2IntradayDays: () => st?.chart2P.intradayDays ?? -1,
-    chart2IntradayLen: () => st?.chart2P.intradayBars.length ?? -1,
-    chart2Sym: () => st?.chart2Symbol ?? '',
-    chart2Auto: () => st?.chart2P.auto ?? false,
-    panelAutoProbe: (i: number) => {
-      const p = st?.gridPanels[i];
-      if (!p) return null;
-      const r = p.chart?.getVisibleRange() ?? null;
-      const src = panelSource(p);
-      let days = -1;
-      if (r && src.length >= 2) {
-        let i0 = Math.max(0, Math.min(src.length - 1, Math.floor(r.from)));
-        const i1 = Math.max(0, Math.min(src.length - 1, Math.ceil(r.to)));
-        if (i1 > i0 || (i0 = Math.max(0, i1 - 1)) < i1) days = (barTimeMs(src[i1]!) - barTimeMs(src[i0]!)) / 86_400_000;
-      }
-      return { auto: p.auto, busy: p.autoBusy === true, intradayDays: p.intradayDays, srcLen: src.length, range: r, days };
-    },
-    panelAuto: (i: number) => st?.gridPanels[i]?.auto ?? false,
-    panelHudText: (i: number) => st?.gridPanels[i]?.hudEl?.textContent?.trim() ?? '',
-    chart2HudText: () => st?.chart2P.hudEl?.textContent?.trim() ?? '',
-    ohlcOpen: () => st?.ohlcOpen ?? false,
-    chart2ForecastActive: () => st?.chart2?.forecastActive() ?? false,
-    chart2Overlays: () => st?.chart2?.overlayCount() ?? -1,
-    mainChartType: () => st?.chart?.chartType() ?? 'candles',
-    panelChartType: (i: number) => st?.gridPanels[i]?.chart?.chartType() ?? 'candles',
-    panelRange: (i: number) => st?.gridPanels[i]?.chart?.getVisibleRange() ?? null,
-    setPanelRange: (i: number, r: { from: number; to: number }) => st?.gridPanels[i]?.chart?.setVisibleRange(r),
-    subRange: (k: 'rsi' | 'macd') => st?.subCharts[k]?.getVisibleRange() ?? null,
-    subAnchorLen: (k: 'rsi' | 'macd') => subAnchorLens[k],
-    subMounted: () => (st ? (st.subCharts.rsi ? 1 : 0) + (st.subCharts.macd ? 1 : 0) : -1),
-    areaActive: () => st?.chart?.areaActive() ?? false,
-    signalDir: () => st?.lastSignalDir ?? 'hold',
-    cleanActive: () => st?.cleanView ?? false,
-    // Intraday-Stufen positiv (5/15/60), Tages-Stufen ≤ 0 (0=1D, -7=1W, -30=1Mo)
-    autoLevel: () => (st?.autoRes ? (st.intradayDays > 0 ? st.aggMinutes : -st.dailyAgg) : -1),
-    resBadge: () => document.getElementById('resBadge')?.textContent ?? '',
-    dailyLen: () => (st?.shownDaily ?? []).length,
-    firstDailyDate: () => dailySource()[0]?.date ?? '',
-    mainCoords: (time: string | number, price: number) => st?.chart?.coords(time, price) ?? null,
-    lastClose: () => st?.bars[st.bars.length - 1]?.close ?? null,
-  };
-
-  // Hotkey-Order-Ticket (M9): Shift+B/S, Enter bestätigt, Esc schließt
-  document.addEventListener('keydown', onGlobalHotkey);
-  document.querySelectorAll('[data-order-close]').forEach((el) =>
-    el.addEventListener('click', () => $('orderModal').classList.remove('show')),
-  );
-  $('otSubmit').addEventListener('click', () => void submitOrderTicket());
-  for (const id of ['otSym', 'otQty']) {
-    $(id).addEventListener('input', updateOrderPreview);
-    $(id).addEventListener('keydown', (e) => {
-      if ((e as KeyboardEvent).key === 'Enter') void submitOrderTicket();
-    });
-  }
-
-  // Command-Palette (Ctrl+K, überschreibbar via settings.hotkeys.palette)
-  st.paletteDispose = initPalette({
-    hotkey: st.hotkeys.palette ?? 'ctrl+k',
-    symbols: () => paletteSymbols(),
-    commands: () => paletteCommands(),
-    onSymbol: (sym) => {
-      if (st) publishSymbol(st.chartGroup, sym);
-    },
-  });
-
-  // E-Mail-Verifikation (M7): ohne bestätigte Mail bleibt der Engine-Start
+  // E-Mail-Verifikation: ohne bestätigte Mail bleibt der Engine-Start
   // serverseitig gesperrt — die Box erklärt das und bietet beide Aktionen an.
   $('verifyBox').hidden = emailVerified();
-  /* Faden zum Betreiber (Owner 22.08.). Einmal beim Aufbau laden und nach
-   * jedem Senden neu -- ein Live-Abo waere fuer einen Faden, in den selten
-   * jemand schreibt, ein Dauer-Listener ohne Gegenwert. */
   ladeFaden();
   $('fadenSend').addEventListener('click', () => {
     const feld = $('fadenText') as HTMLTextAreaElement;
@@ -11412,7 +2846,6 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         knopf.disabled = false;
       });
   });
-
   $('verifySend').addEventListener('click', () => {
     sendVerification()
       .then(() => { $('verifyHint').textContent = t('mt.mailUnterwegs'); })
@@ -11425,40 +2858,55 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     });
   });
 
-  // Interaktionen
-  $('logoutBtn').addEventListener('click', () => void logout());
-  $('saveBtn').addEventListener('click', () => void submitStrategy(formStrategy(), `${t('mt.gespeichert')}.`));
-  $('engStart').addEventListener('click', () =>
-    void submitStrategy({ ...formStrategy(), engine: { ...formStrategy().engine, running: true } }, t('mt.engineFlagAn')));
-  // Stop: erst das Flag setzen, DANN fragen. Die Reihenfolge ist wichtig —
-  // der Dialog darf den Stop nicht aufhalten. Wer ihn wegklickt, hat
-  // trotzdem gestoppt.
-  $('engStop').addEventListener('click', () => {
-    void submitStrategy(
-      { ...formStrategy(), engine: { ...formStrategy().engine, running: false } },
-      t('mt.engineFlagAus'),
-    ).then(() => {
-      zeigeStopDialog();
-    });
-  });
-  $('stopKeep').addEventListener('click', () => closeModal('stop'));
-  $('stopAll').addEventListener('click', () => {
-    void schliessePositionen((st?.positions ?? []).map((p) => p.symbol));
-  });
-  $('stopSel').addEventListener('click', () => {
-    const gewaehlt = [...$('stopRows').querySelectorAll<HTMLInputElement>('input[data-stopsym]')]
-      .filter((c) => c.checked)
-      .map((c) => c.dataset.stopsym ?? '')
-      .filter(Boolean);
-    if (gewaehlt.length === 0) {
-      $('stopOut').innerHTML = `<div class="hint">${t('mt.nichtsAusgewaehlt')}</div>`;
+  // Engine-Schalter und Kommandos
+  $('engStart').addEventListener('click', () => void setEngineRunning(true));
+  $('engStop').addEventListener('click', () => void setEngineRunning(false));
+  $('engHalt').addEventListener('click', () => void sendeKommando('halt', '', false));
+  $('engResume').addEventListener('click', () => zeigeCmdModal('resume'));
+  $('engFlatten').addEventListener('click', () => zeigeCmdModal('flatten'));
+  $('cmdGo').addEventListener('click', () => {
+    if (!cmdOffen || !st) return;
+    const ackRow = $('cmdAckRow');
+    const ack = ($('cmdAck') as HTMLInputElement).checked;
+    if (!ackRow.hidden && !ack) {
+      $('cmdErr').textContent = t('cmd.ackFehlt');
+      $('cmdErr').hidden = false;
       return;
     }
-    void schliessePositionen(gewaehlt);
+    const action = cmdOffen;
+    const reason = ($('cmdReason') as HTMLInputElement).value.trim();
+    closeModal('cmd');
+    void sendeKommando(action, reason, !ackRow.hidden && ack);
   });
+
+  // Einstellungen des Auto-Traders
+  $('asSave').addEventListener('click', () => void submitAuto());
+  $('asAlle').addEventListener('click', () => {
+    $('asSymbols').querySelectorAll<HTMLInputElement>('input[data-sym]').forEach((cb) => { cb.checked = true; });
+    zaehleSymbole();
+  });
+  $('asKeine').addEventListener('click', () => {
+    $('asSymbols').querySelectorAll<HTMLInputElement>('input[data-sym]').forEach((cb) => { cb.checked = false; });
+    zaehleSymbole();
+  });
+  /* Das Formular speichert erst per Knopf. Wer etwas ändert und die Karte
+   * verlässt, verliert die Änderung STILL — deshalb sagt die Karte ab der
+   * ersten Änderung sichtbar, dass noch nichts gespeichert ist. */
+  for (const box of [$('asGrid'), $('asSymbols')]) {
+    box.addEventListener('input', () => {
+      const m = $('asMsg');
+      if (m.textContent !== t('mt.speichere')) m.textContent = `⚠ ${t('mt.nichtGespeichert')}`;
+    });
+  }
+
+  // Champion-Bericht
+  $('chReport').addEventListener('click', () => void openReport());
+
+  // Historie
+  wireHistorie();
+
+  // Admin
   $('admReload').addEventListener('click', () => void loadAdminList().then(ladeKillSwitch));
-  // Filtert rein im Browser ueber den geholten Stand — kein Serveraufruf je
-  // Tastendruck, und das Tageslimit der Admin-Callable bleibt unberuehrt.
   $('admSuche').addEventListener('input', admFiltere);
   $('admArchiv').addEventListener('change', admFiltere);
   $('admKillBtn').addEventListener('click', () => {
@@ -11477,20 +2925,17 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       })
       .finally(() => { btn.disabled = false; });
   });
-  // Delegiert statt einmalig gebunden (Owner-Screenshot 20.08.): Der
-  // Schließen-Knopf des Detail-Sheets entsteht bei JEDEM openDetail() neu
-  // über sheet.innerHTML — eine Init-Bindung verfehlt ihn für immer. Am
-  // Desktop fiel das nie auf, weil der statische Backdrop (der den Handler
-  // hatte) groß genug zum Klicken ist; am Smartphone füllt das Bottom-Sheet
-  // fast den ganzen Schirm, und der tote ✕ war der einzige Ausweg.
+
+  // Modals schließen — delegiert, damit auch dynamisch erzeugte ✕ treffen.
   document.addEventListener('click', (e) => {
     const ziel = (e.target as HTMLElement).closest<HTMLElement>('[data-close]');
     const name = ziel?.dataset['close'];
     if (name && name in MODAL_IDS) closeModal(name as ModalName);
   }, { signal: docListenerSignal() });
+
+  // Mobile Schubladen und Desktop-Spalten
   $('burgL').addEventListener('click', () => { $('leftCol').classList.toggle('show'); $('olv').classList.toggle('show'); });
   $('burgR').addEventListener('click', () => { $('rightCol').classList.toggle('show'); $('olv').classList.toggle('show'); });
-  // Desktop-Sidebars ein-/ausblendbar (Taschenmesser Teil 1) — persistiert
   const sbState = ((): { l?: boolean; r?: boolean } => {
     try {
       return JSON.parse(localStorage.getItem('autotrd-sidebars') ?? '{}') as { l?: boolean; r?: boolean };
@@ -11509,26 +2954,13 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   $('sideR').addEventListener('click', () => { sbState.r = sbState.r !== true; applySidebars(); });
   applySidebars();
   wirePanelChrome();
-  wireEvTipFokusNetz();
-  wireSymbolTip();
-  wireSidebarResize();
-  // Test-Hook (E2E): Reorder über denselben Pfad wie der Drop
-  (window as unknown as { __autotrdWs?: unknown }).__autotrdWs = {
-    move: (id: string, delta: number) => movePanel(id, delta),
-    order: (colId: string) =>
-      [...document.querySelectorAll<HTMLElement>(`#${colId} > .card[data-panel]`)].map((c) => c.dataset.panel),
-  };
   $('olv').addEventListener('click', () => {
     for (const id of ['leftCol', 'rightCol']) $(id).classList.remove('show');
     $('olv').classList.remove('show');
   });
-  wireManualTrade();
-  wireWlEditor();
-  /* Theme-Wahl (Owner 15.08.): Drei Zustände in Optionen → Anzeige statt
-   * Kopfleisten-Knopf. 'system' folgt prefers-color-scheme — auch LIVE,
-   * wenn das Gerät umschaltet (Abend-Automatik); Hell/Dunkel sind feste
-   * manuelle Wahlen. Charts zeichnen mit Theme-Farben und müssen nach
-   * jedem Wechsel neu gebaut werden. */
+
+  /* Theme-Wahl: Drei Zustände in Optionen → Anzeige. 'system' folgt
+   * prefers-color-scheme — auch LIVE, wenn das Gerät umschaltet. */
   const themeWahl = (): 'system' | 'light' | 'dark' => {
     const w = localStorage.getItem('autotrd-theme');
     return w === 'light' || w === 'dark' ? w : 'system';
@@ -11536,7 +2968,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   const systemDunkel = window.matchMedia?.('(prefers-color-scheme: dark)');
   const wendeThemeAn = (): void => {
     const wahl = themeWahl();
-    document.documentElement.dataset.theme =
+    document.documentElement.dataset['theme'] =
       wahl === 'system' ? (systemDunkel?.matches === false ? 'light' : 'dark') : wahl;
   };
   const ouTheme = $('ouTheme') as HTMLSelectElement;
@@ -11544,385 +2976,40 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   ouTheme.addEventListener('change', () => {
     localStorage.setItem('autotrd-theme', ouTheme.value);
     wendeThemeAn();
-    void rebuildChart();
   });
   systemDunkel?.addEventListener?.('change', () => {
     if (themeWahl() !== 'system') return;
     wendeThemeAn();
-    void rebuildChart();
   });
-  /* Sprachwahl (Task #139, Phase 0): Wahl speichern und die App neu laden.
-   * Ein Reload statt Soft-Re-Render, mit Absicht: Das Dashboard hält Charts,
-   * Listener und Workspace-Zustand — ein halb neu gerendertes UI wäre die
-   * fehleranfälligste aller Varianten. Der Reload ist der ehrliche Schnitt;
-   * wenn Phase 1 weit genug ist, kann ein sanfter Re-Render folgen. */
+  /* Sprachwahl: Wahl speichern und die App neu laden — der Reload ist der
+   * ehrliche Schnitt, ein halb neu gerendertes UI die fehleranfälligste Variante. */
   const ouLang = $('ouLang') as HTMLSelectElement;
   ouLang.value = sprachWahl();
   ouLang.addEventListener('change', () => {
     setzeSprache(ouLang.value === 'en' ? 'en' : 'de');
     location.reload();
   });
-  // Zoom-Buttons (Owner 07.08.: „Reihenfolge klein nach groß, Auto kann weg,
-  // nur die X-Zoomstufe per smoothem Übergang"): Ein Klick ist KEIN
-  // Modus-Wechsel mehr, sondern eine sanfte Fahrt des Sichtfensters auf die
-  // letzten N Tage. Die immer aktive Auto-Auflösung wählt die Kerzengröße
-  // zum neuen Fenster von selbst. Buttons sind momentane Aktionen — keine
-  // on-Markierung, denn der Zoom ist danach sofort wieder frei.
-  // Seit 07.08. fahren die Buttons ALLE Charts gemeinsam (Klon-Semantik):
-  // Haupt-Chart, Raster-Panels und Vergleichs-Chart schalten synchron um.
-  document.querySelectorAll<HTMLButtonElement>('.tf-btn[data-zoom]').forEach((b) =>
-    b.addEventListener('click', () => {
-      alleChartsZoomAufTage(b.dataset.zoom === 'max' ? null : Number(b.dataset.zoom));
-    }),
-  );
-  // Vergleichs-Chart: eigener Picker für gezielte Abweichungen
-  document.querySelectorAll<HTMLElement>('#c2tf [data-c2r], #c2tf [data-c2i]').forEach((b) =>
-    b.addEventListener('click', () => {
-      if (!st) return;
-      const p = st.chart2P;
-      p.auto = false; // manuelle Stufe pausiert Auto (wie überall)
-      p.intradayDays = b.dataset['c2i'] !== undefined ? Number(b.dataset['c2i']) : 0;
-      if (b.dataset['c2r'] !== undefined) p.range = Number(b.dataset['c2r']);
-      p.fitPending = true;
-      syncPanelTfButtons();
-      if (p.intradayDays > 0) void loadPanelIntraday(p);
-      else renderChart2();
-    }),
-  );
-  // Auto-Zeitrahmen des Vergleichs-Charts (Grid-Gleichwertigkeit 26.07.)
-  $('c2Auto').addEventListener('click', () => {
-    if (!st) return;
-    const p = st.chart2P;
-    p.auto = !p.auto;
-    $('c2Auto').classList.toggle('on', p.auto);
-    if (p.auto) void panelMaybeAutoSwitch(p);
-  });
-  // Vergleichs-Symbol frei wählbar (Owner-Feedback 26.07.: „die Vergleichs-
-  // Chart ist momentan immer gleich Grid-Chart 1") — unabhängig vom Raster;
-  // die Link-Gruppe (Chip B) kann es weiterhin gezielt mitziehen.
-  $('ch2Sym').addEventListener('keydown', (ev) => {
-    if ((ev as KeyboardEvent).key !== 'Enter') return;
-    const el = $('ch2Sym') as HTMLInputElement;
-    const sym = el.value.trim().toUpperCase();
-    if (!sym || !st || sym === st.chart2Symbol) return;
-    el.value = sym;
-    st.chart2Symbol = sym;
-    wireChart2Ctx();
-    void rebuildChart2();
-    scheduleWsSave();
-  });
-  // Timeline-Sprünge (User-Wunsch 25.07. nachts): animiert zu Anfang/Mitte/
-  // Ende — am linken Rand lädt die bestehende Nachlade-Logik automatisch weiter.
-  $('jumpStart').addEventListener('click', () => st?.chart?.scrollTo('start'));
-  $('jumpMid').addEventListener('click', () => st?.chart?.scrollTo('middle'));
-  $('jumpEnd').addEventListener('click', () => st?.chart?.scrollTo('end'));
-  $('jumpNow').addEventListener('click', () => st?.chart?.scrollTo('end'));
-  // Symbolfeld im Raster-Kopf des Haupt-Fensters — mit Katalog-Auswahl wie
-  // beim manuellen Trade (Owner 07.08.), identisch zu den Panel-Köpfen.
-  wireSymbolAuswahl($('mainHdSym') as HTMLInputElement, $('mainHd'), (sym) => {
-    if (!sym || !st || sym === st.currentSymbol) return;
-    selectSymbol(sym);
-  });
-  $('mhMax').addEventListener('click', () => {
-    const on = !$('chartMaxScope').classList.contains('chart-max');
-    exitAllMax();
-    if (on) setMainMax(true);
-  });
-  updateAutoUi();
-  // Y-Modus-Schalter (Owner-Idee 06.08.): auto → fix → frei → auto. „Fix"
-  // hält den Y-Zoom konstant und führt nur die Skalen-MITTE den sichtbaren
-  // Kerzen nach — Scrollen ohne Gummiband-Effekt.
-  const Y_LABEL: Record<import('./chart.js').YMode, [string, string]> = {
-    auto: [t('mt.yLabelAuto'), t('mt.ySkalaAuto')],
-    fix: [t('mt.yLabelFix'), t('mt.ySkalaFix')],
-    frei: [t('mt.yLabelFrei'), t('mt.ySkalaFrei')],
-  };
-  const paintYBtn = (): void => {
-    if (!st) return;
-    const [text, title] = Y_LABEL[st.yMode];
-    const b = $('yAutoBtn');
-    b.textContent = text;
-    b.title = title;
-    b.classList.toggle('on', st.yMode !== 'frei');
-  };
-  // Achsen-Gesten übernehmen den Modus (chart.ts, 07.08.) — der Knopf muss
-  // den Wechsel auch dann zeigen, wenn ihn niemand geklickt hat.
-  malYModusKnopf = paintYBtn;
-  $('yAutoBtn').addEventListener('click', () => {
-    if (!st) return;
-    st.yMode = st.yMode === 'auto' ? 'fix' : st.yMode === 'fix' ? 'frei' : 'auto';
-    paintYBtn();
-    localStorage.setItem('autotrd-chart-ymode', st.yMode);
-    st.chart?.setYMode(st.yMode);
-  });
-  paintYBtn();
-  // Indikator-Layer (SMA/EMA/BB) — Auswahl bleibt über localStorage erhalten
-  document.querySelectorAll<HTMLButtonElement>('.tf-btn[data-layer]').forEach((b) => {
-    const key = b.dataset.layer!;
-    b.classList.toggle('on', st?.chartLayers.has(key) ?? false);
-    b.addEventListener('click', () => {
-      if (!st) return;
-      if (st.chartLayers.has(key)) st.chartLayers.delete(key);
-      else st.chartLayers.add(key);
-      b.classList.toggle('on', st.chartLayers.has(key));
-      localStorage.setItem('autotrd-chart-layers', [...st.chartLayers].join(','));
-      applyOverlays();
-      applyPosition(); // Marken hängen am selben Preislinien-Kanal
-      updateSubPanels();
-      renderAllPanels();
-    });
-  });
-  // Dropdown-Menüs (TV-Stil, UI-Audit 25.07.): „Indikatoren ▾" + „Layer ▾"
-  // statt Chip-Wänden. Item-Klicks schließen NICHT (mehrere Toggles am Stück,
-  // wie TVs Indikator-Dialog) — zu geht's per Menü-Knopf, Außenklick oder Esc.
-  const menus: Array<[string, string]> = [
-    ['indBtn', 'menuInd'],
-    ['drawBtn', 'menuDraw'],
-    ['layBtn', 'menuLay'],
-  ];
-  // Zeichenwerkzeuge: Werkzeug wählen (Toggle), dann in den Chart klicken.
-  document.querySelectorAll<HTMLButtonElement>('[data-draw]').forEach((b) => {
-    b.addEventListener('click', () => {
-      const tool = b.dataset.draw as 'hline' | 'trend' | 'rect';
-      zeichnenTool = zeichnenTool === tool ? null : tool;
-      zeichnenStart = null;
-      syncDrawButtons();
-      renderZeichnungen();
-    });
-  });
-  $('drawClear').addEventListener('click', () => {
-    if (!st) return;
-    delete alleZeichnungen()[st.currentSymbol];
-    speichereZeichnungen();
-    zeichnenStart = null;
-    zeichnenTool = null;
-    syncDrawButtons();
-    renderZeichnungen();
-  });
-  // Esc bricht ein laufendes Zeichnen ab (vor den Menü-Esc-Handlern harmlos —
-  // beide dürfen feuern).
-  document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape' || (!zeichnenTool && !zeichnenStart)) return;
-    zeichnenTool = null;
-    zeichnenStart = null;
-    syncDrawButtons();
-    renderZeichnungen();
-  }, { signal: docListenerSignal() });
-  const closeMenus = (): void => {
-    // Null-sicher: die document-Listener unten überleben ein Re-Rendern der
-    // Kopfleiste, bei dem die Menü-Knoten kurzzeitig fehlen.
-    for (const [b, m] of menus) {
-      const menu = document.getElementById(m);
-      if (menu) menu.hidden = true;
-      document.getElementById(b)?.classList.remove('on');
-    }
-  };
-  // Viewport-Klemmung (Mobil-Bug 25.07.): Die Menüs sind rechtsbündig am
-  // Knopf verankert — bricht die Toolbar um (Handy), stünde das Menü links
-  // aus dem Bildschirm. Nach dem Öffnen messen und ggf. an die linke
-  // Viewport-Kante klemmen (position:fixed wäre wegen der backdrop-filter-
-  // Containing-Block-Falle tabu, CLAUDE.md §6).
-  const clampMenu = (m: string): void => {
-    const menu = $(m);
-    const anchor = menu.parentElement;
-    if (!anchor) return;
-    menu.style.left = '';
-    menu.style.right = '';
-    const r = menu.getBoundingClientRect();
-    if (r.left < 8) {
-      menu.style.right = 'auto';
-      menu.style.left = `${Math.round(8 - anchor.getBoundingClientRect().left)}px`;
-    }
-  };
-  for (const [b, m] of menus) {
-    $(b).addEventListener('click', () => {
-      const open = $(m).hidden !== false; // hidden kann auch 'until-found' sein
-      closeMenus();
-      $(m).hidden = !open;
-      $(b).classList.toggle('on', open);
-      if (open) clampMenu(m);
-    });
-  }
-  document.addEventListener('click', (ev) => {
-    if (!(ev.target as HTMLElement).closest('.tool-anchor')) closeMenus();
-  }, { signal: docListenerSignal() });
-  document.addEventListener('keydown', (ev) => {
-    if (ev.key === 'Escape') closeMenus();
-  }, { signal: docListenerSignal() });
 
-  // Chart-Typ + Preisskala (TV-Parität Teil 1): gelten synchron für den
-  // Haupt-Chart und alle Raster-Panels; Gerät-lokal gemerkt.
-  const applyChartStyle = (): void => {
-    if (!st) return;
-    const targets = [st.chart, st.chart2, ...st.gridPanels.map((p) => p.chart)];
-    for (const h of targets) {
-      h?.setChartType(st.chartTypeSel);
-      h?.setTypeCombine(st.typeCombine);
-      h?.setPriceScaleMode(st.scaleMode);
-    }
-    document.querySelectorAll<HTMLElement>('[data-ctype]').forEach((b) =>
-      b.classList.toggle('on', b.dataset['ctype'] === st!.chartTypeSel),
-    );
-    $('ctypeCombine').classList.toggle('on', st.typeCombine);
-    document.querySelectorAll<HTMLElement>('[data-scale]').forEach((b) =>
-      b.classList.toggle('on', Number(b.dataset['scale']) === st!.scaleMode),
-    );
-    localStorage.setItem('autotrd-chart-style', `${st.chartTypeSel}|${st.scaleMode}|${st.typeCombine ? 1 : 0}`);
-  };
-  document.querySelectorAll<HTMLElement>('[data-ctype]').forEach((b) =>
-    b.addEventListener('click', () => {
-      if (!st) return;
-      st.chartTypeSel = (b.dataset['ctype'] ?? 'candles') as ChartType;
-      applyChartStyle();
-    }),
-  );
-  $('ctypeCombine').addEventListener('click', () => {
-    if (!st) return;
-    st.typeCombine = !st.typeCombine;
-    applyChartStyle();
-  });
-  document.querySelectorAll<HTMLElement>('[data-scale]').forEach((b) =>
-    b.addEventListener('click', () => {
-      if (!st) return;
-      st.scaleMode = Number(b.dataset['scale']) as 0 | 1 | 2;
-      applyChartStyle();
-    }),
-  );
-  applyChartStyle();
-
-  // HUD-Legende einklappbar (Feedback 25.07. abends: „überlagert zu viel")
-  const applyHud = (): void => {
-    if (!st) return;
-    $('hudTgl').textContent = st.hudOpen ? '▾' : '▸';
-    $('hudTgl').classList.toggle('on', st.hudOpen);
-    localStorage.setItem('autotrd-hud', st.hudOpen ? '1' : '0');
-    applyOverlays(); // renderLegend respektiert hudOpen
-  };
-  $('hudTgl').addEventListener('click', () => {
-    if (!st) return;
-    st.hudOpen = !st.hudOpen;
-    applyHud();
-  });
-  applyHud();
-  // OHLC-Kurszeile als Accordion (Owner-Wunsch 26.07.): Klick auf die Zeile
-  // klappt sie in ALLEN Fenstern gleichzeitig (ein gerätelokaler Zustand)
-  $('ohlcRow').addEventListener('click', toggleOhlcAll);
-
-  // Vollbild je Chart (Feedback 25.07., wichtig für Smartphones): CSS-Overlay
-  // statt Fullscreen-API (läuft überall, auch iOS/PWA); Esc schließt.
-  $('maxMain').addEventListener('click', () => {
-    // chartMaxScope trägt die Vollbild-Klasse (nicht chartWrap) — der
-    // Toggle prüfte das falsche Element und konnte nie wieder schließen.
-    const on = !$('chartMaxScope').classList.contains('chart-max');
-    exitAllMax();
-    if (on) setMainMax(true);
-  });
-  $('maxExit').addEventListener('click', () => setMainMax(false));
-  // Clean-View: alles Optionale auf einmal weg (Auswahl bleibt gemerkt)
-  const applyClean = (): void => {
-    if (!st) return;
-    $('cleanBtn').classList.toggle('on', st.cleanView);
-    localStorage.setItem('autotrd-chart-clean', st.cleanView ? '1' : '0');
-    applyOverlays();
-    applyMarkers();
-    applyPosition(); // Trading-Marken hängen am Preislinien-Kanal
-    applyForecast();
-    updateSubPanels();
-    drawPredictionArrow();
-    renderAllPanels(); // Raster + Vergleichs-Chart folgen Clean/Layern
-  };
-  $('cleanBtn').addEventListener('click', () => {
-    if (!st) return;
-    st.cleanView = !st.cleanView;
-    applyClean();
-  });
-  if (st?.cleanView) applyClean();
-  // Doppelklick auf die Chart-Fläche = frischer Fit (X + Y), wie TradingView
-  $('chartArea').addEventListener('dblclick', () => {
-    if (!st) return;
-    st.chartFitPending = true;
-    renderChart();
-  });
-  // Prognose-Pfeil: Modus + Popover
-  $('predBtn').addEventListener('click', () => {
-    if (!st) return;
-    // Pfeil ist tagesbasiert — steht der Chart (z. B. durch die Auto-
-    // Auflösung) auf Intraday-Kerzen, erst auf Tageskerzen zurückholen
-    // statt stumm nichts zu tun (Bug-Meldung 25.07.).
-    if (st.intradayDays > 0) {
-      st.intradayDays = 0;
-      st.chartFitPending = true;
-      renderChart();
-    }
-    st.predMode = !st.predMode;
-    $('predBtn').classList.toggle('on', st.predMode);
-  });
-  $('ppClose').addEventListener('click', () => ($('predPop').hidden = true));
-  $('ppConfM').addEventListener('click', () => {
-    const v = Math.max(1, Number($('ppConfV').textContent) - 1);
-    $('ppConfV').textContent = String(v);
-  });
-  $('ppConfP').addEventListener('click', () => {
-    const v = Math.min(3, Number($('ppConfV').textContent) + 1);
-    $('ppConfV').textContent = String(v);
-  });
-  $('ppSave').addEventListener('click', () => {
-    if (!st) return;
-    const last = st.bars[st.bars.length - 1];
-    const targetPrice = Number(($('ppPrice') as HTMLInputElement).value);
-    const targetDate = ($('ppDate') as HTMLInputElement).value;
-    const confidence = Number($('ppConfV').textContent);
-    void callSavePrediction({
-      symbol: st.currentSymbol,
-      targetPrice,
-      targetDate,
-      confidence,
-      basePrice: last?.close ?? targetPrice,
-    })
-      .then(() => {
-        $('predPop').hidden = true;
-        return loadPredictionForSymbol();
-      })
-      .catch((e) => alert(`${t('chart.lblPrognose')}: ${(e as Error).message}`));
-  });
-  $('ppDel').addEventListener('click', () => {
-    if (!st) return;
-    void callSavePrediction({ symbol: st.currentSymbol, clear: true })
-      .then(() => {
-        $('predPop').hidden = true;
-        st!.prediction = null;
-        drawPredictionArrow();
-        applyOverlays();
-      })
-      .catch((e) => alert(`${t('chart.lblPrognose')}: ${(e as Error).message}`));
-  });
-
-  // Options-Modal (⚙): Element-Toggles sofort wirksam, Wallet-Basics via saveStrategy
+  // Options-Modal (⚙)
   $('optBtn').addEventListener('click', openOptions);
-  $('tourBtn').addEventListener('click', () => starteAppTour());
-  for (const [id, key] of [
-    ['ouPred', 'predArrow'],
-    ['ouCmp', 'cmpOverlay'],
-    ['ouGrid', 'chartGrid'],
-    ['ouSub', 'subPanels'],
-    ['ouAkk', 'akkordeon'],
-  ] as const) {
-    $(id).addEventListener('change', () => {
-      if (!st) return;
-      st.ui = { ...st.ui, [key]: ($(id) as HTMLInputElement).checked };
-      applyUiPrefs();
-      void saveUiPrefs(st.uid, st.ui).catch(() => undefined);
+  $('owTabs').addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest('.otab') as HTMLElement | null;
+    if (!btn) return;
+    const ziel = btn.dataset['otab'];
+    document.querySelectorAll('#owTabs .otab').forEach((b) => b.classList.toggle('active', b === btn));
+    document.querySelectorAll('#optModal [data-opane]').forEach((p) => {
+      (p as HTMLElement).hidden = (p as HTMLElement).dataset['opane'] !== ziel;
     });
-  }
+  });
   // Zwei Stufen: Der Knopf bleibt gesperrt, bis das Wort exakt dasteht.
-  // Das ist bewusst umständlich — ein unumkehrbarer Schritt soll sich auch
-  // so anfühlen. Serverseitig wird dasselbe Wort noch einmal geprüft; der
-  // Client-Guard ist Bequemlichkeit, keine Sicherung.
+  // Serverseitig wird dasselbe Wort noch einmal geprüft.
   $('rsWord').addEventListener('input', () => {
     ($('rsGo') as HTMLButtonElement).disabled =
       ($('rsWord') as HTMLInputElement).value.trim() !== RESET_CONFIRM_WORD;
   });
-  /* ── Echtgeld-Schalter (M14) ────────────────────────────────────────── */
+  $('logoutBtn').addEventListener('click', () => void logout());
+
+  /* ── Echtgeld-Schalter ─────────────────────────────────────────────── */
   const ladeLiveStatus = (): void => {
     void callLiveMode({ action: 'status' })
       .then((r) => {
@@ -11933,16 +3020,14 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         if (el) el.textContent = t('mt.zustandNichtAbrufbar');
       });
   };
-  $('optBtn')?.addEventListener('click', ladeLiveStatus);
+  $('optBtn').addEventListener('click', ladeLiveStatus);
 
-  $('lvGo')?.addEventListener('click', () => {
+  $('lvGo').addEventListener('click', () => {
     const btn = $('lvGo') as HTMLButtonElement;
     const wort = ($('lvWord') as HTMLInputElement).value.trim();
     btn.disabled = true;
     $('lvOut').innerHTML = `<div class="hint">${t('mt.bestaetigeAnmeldung')}</div>`;
-    // Reihenfolge wie beim Broker-Schlüssel: erst Anmeldung auffrischen,
-    // dann senden. Der Server prüft `auth_time`; ohne Auffrischen käme der
-    // Aufruf mit einem alten Zeitstempel an.
+    // Erst Anmeldung auffrischen, dann senden: Der Server prüft `auth_time`.
     void frischAnmelden(($('lvPw') as HTMLInputElement).value || undefined)
       .then(() => {
         $('lvOut').innerHTML = `<div class="hint">${t('mt.schalteScharf')}</div>`;
@@ -11955,7 +3040,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         renderLiveStatus(null, true);
       })
       .catch((e) => {
-        $('lvOut').innerHTML = `<div class="hint">${escText((e as Error).message)}</div>`;
+        $('lvOut').innerHTML = `<div class="hint">${escText(serverText(e))}</div>`;
       })
       .finally(() => {
         btn.disabled = false;
@@ -11964,7 +3049,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
 
   // Zurück auf Papier: sofort, ohne Bestätigung. Eine Sicherung, die das
   // ABSCHALTEN erschwert, ist keine Sicherung.
-  $('lvOff')?.addEventListener('click', () => {
+  $('lvOff').addEventListener('click', () => {
     const btn = $('lvOff') as HTMLButtonElement;
     btn.disabled = true;
     void callLiveMode({ live: false })
@@ -11973,7 +3058,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         ladeLiveStatus();
       })
       .catch((e) => {
-        $('lvOut').innerHTML = `<div class="hint">${escText((e as Error).message)}</div>`;
+        $('lvOut').innerHTML = `<div class="hint">${escText(serverText(e))}</div>`;
       })
       .finally(() => {
         btn.disabled = false;
@@ -11981,12 +3066,11 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
   });
 
   // Echtgeld-Feld ein-/ausblenden, sobald erkennbar ist, was eingegeben wird.
-  // Reine Anzeige — geprüft wird serverseitig noch einmal am Präfix.
-  $('bkKey')?.addEventListener('input', () => {
+  $('bkKey').addEventListener('input', () => {
     const ist = ($('bkKey') as HTMLInputElement).value.trim().toUpperCase().startsWith('AK');
     ($('bkLiveBox') as HTMLElement).hidden = !ist;
   });
-  $('bkSave')?.addEventListener('click', () => {
+  $('bkSave').addEventListener('click', () => {
     const btn = $('bkSave') as HTMLButtonElement;
     const key = ($('bkKey') as HTMLInputElement).value.trim();
     const sec = ($('bkSec') as HTMLInputElement).value.trim();
@@ -11996,13 +3080,8 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     }
     const istLive = key.toUpperCase().startsWith('AK');
     btn.disabled = true;
-    /* Bei Echtgeld ZUERST die Anmeldung auffrischen, dann senden.
-     *
-     * Die Reihenfolge ist nicht beliebig: Der Server prüft `auth_time` aus
-     * dem ID-Token. Ohne vorheriges Auffrischen käme der Aufruf mit dem
-     * alten Zeitstempel an und würde abgelehnt — mit einer Fehlermeldung,
-     * die wie ein Serverproblem aussieht, obwohl nur die Reihenfolge falsch
-     * war. */
+    // Bei Echtgeld ZUERST die Anmeldung auffrischen, dann senden — der
+    // Server prüft `auth_time` aus dem ID-Token.
     const vorbereitet = istLive
       ? (() => {
           $('bkOut').innerHTML = `<div class="hint">${t('mt.bestaetigeAnmeldung')}</div>`;
@@ -12016,8 +3095,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       })
       .then((r) => {
         // Eingaben SOFORT leeren: Der Schlüssel soll nach dem Absenden nicht
-        // weiter im Formular stehen — weder für den nächsten am Rechner noch
-        // für einen Screenshot.
+        // weiter im Formular stehen.
         ($('bkKey') as HTMLInputElement).value = '';
         ($('bkSec') as HTMLInputElement).value = '';
         ($('bkPw') as HTMLInputElement).value = '';
@@ -12028,63 +3106,37 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
           `${escText(r.meldung)}</div>`;
       })
       .catch((e) => {
-        $('bkOut').innerHTML = `<div class="hint">${escText((e as Error).message)}</div>`;
+        $('bkOut').innerHTML = `<div class="hint">${escText(serverText(e))}</div>`;
       })
       .finally(() => {
         btn.disabled = false;
       });
   });
-  $('bkAdopt')?.addEventListener('click', () => {
-    const btn = $('bkAdopt') as HTMLButtonElement;
-    btn.disabled = true;
-    $('bkOut').innerHTML = `<div class="hint">${t('mt.uebernehmeDepot')}</div>`;
-    void callAdoptBroker()
-      .then((r) => {
-        $('bkOut').innerHTML = `<div class="hint">✓ ${escText(r.meldung)}</div>`;
-      })
-      .catch((e) => {
-        $('bkOut').innerHTML = `<div class="hint">${escText((e as Error).message)}</div>`;
-      })
-      .finally(() => {
-        btn.disabled = false;
-      });
-  });
-  $('bkDel')?.addEventListener('click', () => {
+  $('bkDel').addEventListener('click', () => {
     const btn = $('bkDel') as HTMLButtonElement;
     btn.disabled = true;
     void callDisconnectBroker()
       .then((r) => {
-        // Ehrlicher Befund statt bloß „getrennt": Auf Papierkonten storniert
-        // der Server die eigenen offenen Orders (auch Schutz-Stops — das
-        // Depot hat danach KEINE automatische Absicherung mehr). Ein
-        // gefüllter Stop heißt: verkauft, aber noch nicht im Buch. Auf
-        // Echtgeld wird bewusst nichts storniert; und konnte der Sweep gar
-        // nicht laufen, muss der Nutzer im Alpaca-Dashboard selbst prüfen.
         const teile = [r.geloescht ? t('mt.verbindungGetrennt') : t('mt.nichtsVerbunden')];
         const o = r.orders;
         if (o && o.storniert + o.gefuellt > 0) {
           teile.push(t('mt.ordersStorniert').replace('{0}', String(o.storniert + o.gefuellt)));
         }
-        if (o && o.gefuellt > 0) {
-          teile.push(t('mt.ordersGefuellt').replace('{0}', String(o.gefuellt)));
-        }
-        if (
-          (o && (o.fehler > 0 || o.listeFehlgeschlagen || o.moeglicherweiseUnvollstaendig)) ||
-          r.sweepUnmoeglich
-        ) {
+        if (o && o.gefuellt > 0) teile.push(t('mt.ordersGefuellt').replace('{0}', String(o.gefuellt)));
+        if ((o && (o.fehler > 0 || o.listeFehlgeschlagen || o.moeglicherweiseUnvollstaendig)) || r.sweepUnmoeglich) {
           teile.push(t('mt.ordersRest'));
         }
         if (r.liveOrdersBleiben) teile.push(t('mt.ordersLiveBleiben'));
         $('bkOut').innerHTML = `<div class="hint">${teile.join(' ')}</div>`;
       })
       .catch((e) => {
-        $('bkOut').innerHTML = `<div class="hint">${escText((e as Error).message)}</div>`;
+        $('bkOut').innerHTML = `<div class="hint">${escText(serverText(e))}</div>`;
       })
       .finally(() => {
         btn.disabled = false;
       });
   });
-  $('bkGo')?.addEventListener('click', () => {
+  $('bkGo').addEventListener('click', () => {
     const btn = $('bkGo') as HTMLButtonElement;
     btn.disabled = true;
     $('bkOut').innerHTML = `<div class="hint">${t('mt.pruefeVerbindung')}</div>`;
@@ -12093,16 +3145,16 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         $('bkOut').innerHTML = renderBrokerStatus(r);
       })
       .catch((e) => {
-        $('bkOut').innerHTML = `<div class="hint">${escText((e as Error).message)}</div>`;
+        $('bkOut').innerHTML = `<div class="hint">${escText(serverText(e))}</div>`;
       })
       .finally(() => {
         btn.disabled = false;
       });
   });
-  // Steuer-Export: Jahresauswahl füllen (laufendes Jahr und die fünf davor —
-  // weiter zurück gibt es keine Historie, und die Liste bliebe unübersichtlich).
+
+  // Steuer-Export: Jahresauswahl füllen (laufendes Jahr und die fünf davor).
   const txYear = $('txYear') as HTMLSelectElement;
-  if (txYear && txYear.options.length === 0) {
+  if (txYear.options.length === 0) {
     const jetzt = new Date().getUTCFullYear();
     for (let j = jetzt; j >= jetzt - 5; j--) {
       const o = document.createElement('option');
@@ -12111,7 +3163,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       txYear.appendChild(o);
     }
   }
-  $('txGo')?.addEventListener('click', () => {
+  $('txGo').addEventListener('click', () => {
     const btn = $('txGo') as HTMLButtonElement;
     const jahr = Number(txYear.value);
     const echtgeld = ($('txReal') as HTMLInputElement).checked;
@@ -12129,15 +3181,14 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         }
       })
       .catch((e) => {
-        $('txOut').innerHTML = `<div class="hint">${escText((e as Error).message)}</div>`;
+        $('txOut').innerHTML = `<div class="hint">${escText(serverText(e))}</div>`;
       })
       .finally(() => {
         btn.disabled = false;
       });
   });
-  // Kurs-Nachtrag (06.08.): Der Knopf entsteht erst MIT dem Bericht (im
-  // fxLuecken-Hinweis) — deshalb Delegation auf dem Container statt eines
-  // Listeners auf einem Element, das es beim Verdrahten noch nicht gibt.
+  // Kurs-Nachtrag: Der Knopf entsteht erst MIT dem Bericht — deshalb
+  // Delegation auf dem Container.
   $('txOut').addEventListener('click', (e) => {
     const btn = (e.target as HTMLElement).closest('#txFx') as HTMLButtonElement | null;
     if (!btn) return;
@@ -12152,7 +3203,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       })
       .catch((err) => {
         btn.disabled = false;
-        btn.textContent = (err as Error).message;
+        btn.textContent = serverText(err);
       });
   });
   $('rsGo').addEventListener('click', () => {
@@ -12165,8 +3216,6 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
           .filter(([, v]) => v > 0)
           .map(([k, v]) => `${k}: ${v}`)
           .join(', ');
-        // Die Quelle mitschreiben: „100.000 $" ohne Herkunft laesst offen, ob
-        // der Broker gefragt wurde oder die Einstellung gegriffen hat.
         const quelle = r.kapitalQuelle === 'broker' ? ` (${t('mt.vomBroker')})` : '';
         $('rsMsg').textContent =
           `✓ ${t('mt.zurueckgesetzt')} (${n || t('mt.nichtsZuLoeschen')}) — ${t('mt.kontostand')} ${r.balance} $${quelle}`
@@ -12174,409 +3223,28 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
         ($('rsWord') as HTMLInputElement).value = '';
       })
       .catch((e) => {
-        $('rsMsg').textContent = (e as Error).message;
+        $('rsMsg').textContent = serverText(e);
         btn.disabled = false;
       });
   });
-  $('owSave').addEventListener('click', () => {
-    if (!st) return;
-    const strategy = optionsFormStrategy();
-    const problems = validateStrategy(strategy);
-    if (problems.length > 0) {
-      $('optMsg').textContent = valText(problems[0]!);
-      return;
-    }
-    $('optMsg').textContent = t('mt.speichere');
-    void saveStrategy(strategy)
-      .then(() => ($('optMsg').textContent = `✓ ${t('mt.gespeichert')}`))
-      .catch((e) => ($('optMsg').textContent = (e as Error).message));
-  });
-  /* UI-Audit 05.08.: Das Modal mischt drei Speicher-Semantiken — die
-   * Anzeige-Optionen oben speichern sofort, dieser Block erst per Knopf,
-   * Broker/Steuer unten haben eigene Knöpfe. Wer hier etwas ändert und das
-   * Modal schließt, verliert die Änderung STILL. Deshalb sagt das Modal ab
-   * der ersten Änderung sichtbar, dass noch nichts gespeichert ist. */
-  for (const box of [$('owGrid'), $('owClsRows')]) {
-    box.addEventListener('input', () => {
-      const m = $('optMsg');
-      if (m.textContent !== t('mt.speichere')) m.textContent = `⚠ ${t('mt.nichtGespeichert')}`;
-    });
-  }
-  $('owClsAuto').addEventListener('change', () => {
-    $('optMsg').textContent = `⚠ ${t('mt.nichtGespeichert')}`;
-    // Häkchen weg = die Automatik fasst nichts mehr an — eine stehen
-    // gebliebene Überschreib-Warnung wäre dann schlicht falsch.
-    if (!($('owClsAuto') as HTMLInputElement).checked) $('owClsMsg').textContent = '';
-  });
-  // Reiter des Options-Modals (UI-Audit Punkt 6): reine Sichtbarkeit,
-  // kein Zustand — beim nächsten Öffnen startet wieder „Trading".
-  $('owTabs').addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('.otab') as HTMLElement | null;
-    if (!btn) return;
-    const ziel = btn.dataset['otab'];
-    document
-      .querySelectorAll('#owTabs .otab')
-      .forEach((b) => b.classList.toggle('active', b === btn));
-    document.querySelectorAll('#optModal [data-opane]').forEach((p) => {
-      (p as HTMLElement).hidden = (p as HTMLElement).dataset['opane'] !== ziel;
-    });
-  });
 
-  // „Vorschlag übernehmen" (MG2): setzt die Regler auf die empfohlenen Werte
-  // und speichert. Bewusst der VOLLE Vorschlag, nicht der 0,25-Schritt des
-  // Auto-Reglers — wer von Hand klickt, hat die Zahlen gerade gelesen und
-  // trifft eine Entscheidung; die Annäherung schützt nur die Automatik davor,
-  // auf jede Momentaufnahme zu springen.
-  $('owClsApply').addEventListener('click', () => {
-    if (!st) return;
-    const rat = st.pfStats?.classAdvice;
-    if (!rat) return;
-    const gew = { ...klassenGewichteAusForm() };
-    for (const r of rat.raete) gew[r.klasse] = r.vorschlag;
-    const next: Strategy = {
-      ...st.strategy,
-      engine: { ...st.strategy.engine, classWeights: gew },
-    };
-    $('owClsMsg').textContent = t('mt.uebernehme');
-    void saveStrategy(next)
-      .then(() => {
-        st!.strategy = next;
-        renderKlassenRegler();
-        renderKlassenRat();
-        $('owClsMsg').textContent = `✓ ${rat.aenderungen} ${t('mt.gewichteUebernommen')}`;
-      })
-      .catch((e) => ($('owClsMsg').textContent = (e as Error).message));
-  });
-
-  $('bkrReset').addEventListener('click', () => {
-    $('bkrMsg').textContent = t('mt.loese');
-    void resetBreaker()
-      .then((r) => {
-        $('bkrMsg').textContent = r.warAusgeloest
-          ? t('mt.geloest')
-          : t('mt.warNichtAusgeloest');
-      })
-      .catch((e) => ($('bkrMsg').textContent = (e as Error).message));
-  });
-
-  $('owCheck').addEventListener('click', () => renderAdvice());
-  $('owApply').addEventListener('click', () => {
-    if (!st) return;
-    const gewaehlt = [...$('owAdvice').querySelectorAll<HTMLInputElement>('input[data-adv]:checked')]
-      .map((c) => c.dataset.adv ?? '');
-    if (gewaehlt.length === 0) return;
-    const next = applySuggestions(optionsFormStrategy(), gewaehlt);
-    const problems = validateStrategy(next);
-    if (problems.length > 0) {
-      $('advMsg').textContent = valText(problems[0]!);
-      return;
-    }
-    $('advMsg').textContent = t('mt.uebernehme');
-    void saveStrategy(next)
-      .then(() => {
-        st!.strategy = next;
-        openOptions(); // Formular auf die neuen Werte ziehen
-        renderAdvice(); // und erneut prüfen — die Liste muss sichtbar schrumpfen
-        $('advMsg').textContent = `✓ ${gewaehlt.length} ${t('mt.uebernommen')}`;
-      })
-      .catch((e) => ($('advMsg').textContent = (e as Error).message));
-  });
-
-  // Bewährte Einstellungen (MU3): erst Unterschiede zeigen, dann übernehmen.
-  $('bpPreview').addEventListener('click', () => {
-    if (!st || !bestPractice?.einstellungen) return;
-    const diff = vergleicheEinstellungen(st.strategy, bestPractice.einstellungen);
-    const box = $('bpDiff');
-    box.hidden = false;
-    if (diff.length === 0) {
-      box.innerHTML =
-        `<p class="hint">✓ ${t('mt.stimmtUeberein')}</p>`;
-      return;
-    }
-    box.innerHTML =
-      `<p class="hint" style="margin-top:6px">${t('mt.wasAendernBp')}</p>` +
-      diff
-        .map(
-          (d) =>
-            `<div class="hint" style="font-family:ui-monospace,monospace">${bpWert(d.pfad)}: ` +
-            `<b>${bpWert(d.eigen)}</b> → <b>${bpWert(d.bewaehrt)}</b></div>`,
-        )
-        .join('');
-    ($('bpAdopt') as HTMLButtonElement).hidden = false;
-  });
-  $('bpAdopt').addEventListener('click', () => {
-    if (!st || !bestPractice?.einstellungen) return;
-    const next = uebernehmeEinstellungen(st.strategy, bestPractice.einstellungen);
-    const problems = validateStrategy(next);
-    if (problems.length > 0) {
-      $('bpMsg').textContent = valText(problems[0]!);
-      return;
-    }
-    $('bpMsg').textContent = t('mt.uebernehme');
-    void saveStrategy(next)
-      .then(() => {
-        st!.strategy = next;
-        openOptions(); // Formular auf die übernommenen Werte ziehen
-        $('bpMsg').textContent = t('mt.uebernommenBp');
-      })
-      .catch((e) => ($('bpMsg').textContent = (e as Error).message));
-  });
-
-  // Loadouts (MU4): Karten-Klicks per Delegation — die Liste wird neu gebaut.
-  $('loGrid').addEventListener('click', (e) => {
-    const ziel = e.target as HTMLElement;
-    const del = ziel.closest('[data-lodel]') as HTMLElement | null;
-    if (del && st) {
-      const id = (del.dataset['lodel'] ?? '').slice(2);
-      void loescheLoadout(st.uid, id)
-        .then(() => {
-          eigeneLoadouts = eigeneLoadouts.filter((l) => l.id !== id);
-          renderLoadouts();
-          $('loMsg').textContent = t('mt.loadoutGeloescht');
-        })
-        .catch((err) => ($('loMsg').textContent = (err as Error).message));
-      return;
-    }
-    const btn = ziel.closest('[data-lo]') as HTMLElement | null;
-    if (!btn || !st) return;
-    const key = btn.dataset['lo'] ?? '';
-    // Alpha-Leech: der MU3-Snapshot als Loadout. Der Hebel wird auf den
-    // EIGENEN gesetzt — die Bewährten Einstellungen tragen bewusst keinen
-    // (Broker-Konfiguration bleibt beim Konto), also darf die Übernahme
-    // ihn auch nicht heimlich auf 1× zurückstellen.
-    const quelle =
-      key === 'bp'
-        ? bestPractice?.einstellungen
-          ? {
-              titel: 'Alpha-Leech (Community)',
-              einstellungen: bestPractice.einstellungen,
-              hebel: st.strategy.broker.leverage ?? 1,
-            }
-          : undefined
-        : key.startsWith('e:')
-          ? eigeneLoadouts.find((l) => l.id === key.slice(2))
-          : LOADOUTS.find((l) => l.id === key.slice(2));
-    if (!quelle) return;
-    loGewaehlt = {
-      titel: 'titel' in quelle ? quelle.titel : quelle.name,
-      einstellungen: quelle.einstellungen,
-      ...(quelle.hebel !== undefined ? { hebel: quelle.hebel } : {}),
-    };
-    const diff = vergleicheEinstellungen(st.strategy, quelle.einstellungen);
-    const eigenerHebel = st.strategy.broker.leverage ?? 1;
-    const neuerHebel = quelle.hebel ?? 1;
-    const zeilen = [
-      ...diff.map(
-        (d) =>
-          `<div class="hint" style="font-family:ui-monospace,monospace">${bpWert(d.pfad)}: ` +
-          `<b>${bpWert(d.eigen)}</b> → <b>${bpWert(d.bewaehrt)}</b></div>`,
-      ),
-      ...(eigenerHebel !== neuerHebel
-        ? [
-            `<div class="hint" style="font-family:ui-monospace,monospace">broker.leverage: ` +
-              `<b>${eigenerHebel}</b> → <b>${neuerHebel}</b></div>`,
-          ]
-        : []),
-    ];
-    const box = $('loDiff');
-    box.hidden = false;
-    box.innerHTML =
-      zeilen.length === 0
-        ? `<p class="hint">✓ ${t('mt.entsprichtBereits')}</p>`
-        : `<p class="hint" style="margin-top:6px">„${bpWert(loGewaehlt.titel)}" ${t('mt.wuerdeAendern')}</p>` +
-          zeilen.join('');
-    ($('loAdopt') as HTMLButtonElement).hidden = zeilen.length === 0;
-    $('loMsg').textContent = '';
-  });
-  $('loAdopt').addEventListener('click', () => {
-    if (!st || !loGewaehlt) return;
-    const next = wendeLoadoutAn(st.strategy, loGewaehlt);
-    const problems = validateStrategy(next);
-    if (problems.length > 0) {
-      $('loMsg').textContent = valText(problems[0]!);
-      return;
-    }
-    $('loMsg').textContent = t('mt.uebernehme');
-    const titel = loGewaehlt.titel;
-    void saveStrategy(next)
-      .then(() => {
-        st!.strategy = next;
-        openOptions(); // Formular auf die neuen Werte ziehen
-        $('loMsg').textContent = `✓ „${titel}" ${t('mt.loadoutUebernommen')}`;
-      })
-      .catch((e2) => ($('loMsg').textContent = (e2 as Error).message));
-  });
-  $('loSave').addEventListener('click', () => {
-    if (!st) return;
-    const name = ($('loName') as HTMLInputElement).value.trim();
-    if (name.length === 0) {
-      $('loMsg').textContent = t('mt.nameEingeben');
-      return;
-    }
-    // Gesichert wird der GESPEICHERTE Stand (st.strategy) — nicht das
-    // Formular: Ungespeicherte Reglerwerte gehören erst nach „Speichern"
-    // zur Wahrheit, und genau das sagt der Platzhalter-Text des Feldes.
-    const einstellungen = extrahiereEinstellungen(st.strategy);
-    if (!einstellungen) {
-      $('loMsg').textContent = t('mt.optionenUnvollstaendig');
-      return;
-    }
-    $('loMsg').textContent = t('mt.sichere');
-    void speichereLoadout(st.uid, name, einstellungen, st.strategy.broker.leverage ?? 1)
-      .then(() => {
-        ($('loName') as HTMLInputElement).value = '';
-        $('loMsg').textContent = `✓ „${name}" ${t('mt.gesichert')}.`;
-        ladeLoadouts();
-      })
-      .catch((e2) => ($('loMsg').textContent = (e2 as Error).message));
-  });
-
-  // Multi-Chart-Raster: Umschalter 1/2/4 + Lock fürs Haupt-Chart
-  document.querySelectorAll('.tf-btn[data-grid]').forEach((b) =>
-    b.addEventListener('click', () => {
-      if (!st) return;
-      const mode = Number((b as HTMLElement).dataset['grid']);
-      st.gridMode = mode === 2 || mode === 4 ? mode : 1;
-      renderChartGrid();
-    }),
-  );
-  $('lockMain').addEventListener('click', () => {
-    if (!st) return;
-    st.mainLocked = !st.mainLocked;
-    $('lockMain').innerHTML = st.mainLocked ? ICONS.lock : ICONS.unlock;
-    $('lockMain').classList.toggle('on', st.mainLocked);
-    saveGridPrefs();
-  });
-  // Gespeichertes Raster wiederherstellen (localStorage)
-  if (st) {
-    const prefs = loadGridPrefs();
-    st.gridMode = prefs.mode;
-    st.mainLocked = prefs.mainLocked;
-    st.gridPanels = prefs.panels.map((p) => ({ ...p, chart: null, bars: [], subs: [], epoch: 0, fitPending: true, forecast: null, forecastIntraday: null, news: null, intradayBars: [] }));
-    // (auto kommt aus prefs mit — loadGridPrefs liefert es garantiert)
-    renderChartGrid();
-  }
-
-  // Vergleichs-Overlay: Symbol eintippen + Enter (leer = entfernen)
-  $('cmpSym').addEventListener('keydown', (ev) => {
-    if ((ev as KeyboardEvent).key !== 'Enter' || !st) return;
-    const sym = ($('cmpSym') as HTMLInputElement).value.trim().toUpperCase();
-    if (!sym) {
-      st.overlaySymbol = null;
-      st.overlayBars = [];
-      applyOverlays();
-      return;
-    }
-    void loadBarsOnce(sym).then((bars) => {
-      if (!st) return;
-      st.overlaySymbol = sym;
-      st.overlayBars = bars;
-      applyOverlays();
-    });
-  });
-
-  $('lyFc').addEventListener('click', () => {
-    if (!st) return;
-    st.showForecast = !st.showForecast;
-    $('lyFc').classList.toggle('on', st.showForecast);
-    applyForecast();
-    renderAllPanels(); // Prognose-Layer gilt in ALLEN Charts
-    updateSubPanels(); // Zeitachsen-Anker der Unterpanels folgt dem Whitespace
-  });
-  $('lyNews').classList.toggle('on', st?.showNews ?? true);
-  $('lyNews').addEventListener('click', () => {
-    if (!st) return;
-    st.showNews = !st.showNews;
-    $('lyNews').classList.toggle('on', st.showNews);
-    localStorage.setItem('autotrd-chart-news', st.showNews ? '1' : '0');
-    applyMarkers();
-    renderAllPanels(); // News-Punkte gelten in ALLEN Charts
-  });
-  // Klick auf den Chip klappt die Details auf/zu (gleiche Geste wie OHLC)
-  $('posHud').addEventListener('click', () => {
-    if (!st) return;
-    st.posOpen = !st.posOpen;
-    localStorage.setItem('autotrd-pos-open', st.posOpen ? '1' : '0');
-    applyPosition();
-  });
-  $('lyPos').classList.toggle('on', st?.showPos ?? true);
-  $('lyPos').addEventListener('click', () => {
-    if (!st) return;
-    st.showPos = !st.showPos;
-    $('lyPos').classList.toggle('on', st.showPos);
-    localStorage.setItem('autotrd-chart-pos', st.showPos ? '1' : '0');
-    applyPosition();
-    applyMarkers();
-    applyOverlays();
-    renderAllPanels(); // Positions-Layer gilt in ALLEN Charts
-  });
-  wireChartHeightDrag();
   document.addEventListener('keydown', onEscape);
-}
-
-/**
- * Chart-Höhe per Zieh-Griff (User-Wunsch 26.07. „dynamisch skalierbar"):
- * EINE Variable --chart-h steuert Haupt-Chart UND alle Raster-Panels —
- * damit bleiben alle Fenster exakt gleich hoch (LWC folgt via autoSize).
- * Gerät-lokal persistiert; Doppelklick setzt auf den Responsive-Default zurück.
- */
-const CHART_H_KEY = 'autotrd-chart-h';
-
-function applyChartHeight(px: number | null): void {
-  if (px === null) document.documentElement.style.removeProperty('--chart-h');
-  else document.documentElement.style.setProperty('--chart-h', `${px}px`);
-}
-
-function wireChartHeightDrag(): void {
-  const stored = Number(localStorage.getItem(CHART_H_KEY));
-  if (stored >= 220) applyChartHeight(stored);
-  const grip = $('chartHDrag');
-  grip.addEventListener('pointerdown', (e) => {
-    e.preventDefault();
-    grip.classList.add('on');
-    grip.setPointerCapture(e.pointerId);
-    const startY = e.clientY;
-    const startH = $('chartArea').getBoundingClientRect().height;
-    const move = (ev: PointerEvent): void => {
-      const h = Math.max(220, Math.min(Math.round(window.innerHeight * 0.75), Math.round(startH + ev.clientY - startY)));
-      applyChartHeight(h);
-    };
-    const up = (): void => {
-      grip.classList.remove('on');
-      grip.removeEventListener('pointermove', move);
-      grip.removeEventListener('pointerup', up);
-      localStorage.setItem(CHART_H_KEY, String(Math.round($('chartArea').getBoundingClientRect().height)));
-    };
-    grip.addEventListener('pointermove', move);
-    grip.addEventListener('pointerup', up);
-  });
-  grip.addEventListener('dblclick', () => {
-    localStorage.removeItem(CHART_H_KEY);
-    applyChartHeight(null);
-  });
 }
 
 function onEscape(e: KeyboardEvent): void {
   if (e.key !== 'Escape') return;
-  closeModal('detail');
   closeModal('options');
-  exitAllMax();
-  document.getElementById('orderModal')?.classList.remove('show');
+  closeModal('report');
+  closeModal('cmd');
   for (const id of ['leftCol', 'rightCol']) document.getElementById(id)?.classList.remove('show');
   document.getElementById('olv')?.classList.remove('show');
 }
 
 /**
- * Abbruch-Signal je Dashboard-Lauf für die ANONYMEN document-Listener
- * (Audit 11.08., F11-Rest).
- *
- * `onEscape` und `onGlobalHotkey` sind benannte Funktionen und werden in
- * `unmountDashboard` per removeEventListener gelöst. Die anonymen Handler
- * (Combo-Listen zuklappen, Zeichnen-Esc, Toolbar-Menüs) konnte man so nicht
- * lösen — pro Login-Zyklus kam ein Satz dazu, und die alten schrieben nach
- * dem Abmelden in ein DOM, das es nicht mehr gibt. Mit `{ signal }` löst
- * ein einziges `abort()` sie alle; der nächste Mount bekommt ein frisches
- * Signal.
+ * Abbruch-Signal je Dashboard-Lauf für die ANONYMEN document-Listener:
+ * Ein einziges `abort()` löst sie alle; der nächste Mount bekommt ein
+ * frisches Signal. Ohne das sammelten sie sich je Login-Zyklus an und
+ * schrieben nach dem Abmelden in ein DOM, das es nicht mehr gibt.
  */
 let docListenerAbort: AbortController | null = null;
 function docListenerSignal(): AbortSignal {
@@ -12587,91 +3255,32 @@ function docListenerSignal(): AbortSignal {
 /**
  * Modulglobalen Zustand zurücksetzen — beim Abmelden und beim Nutzerwechsel.
  *
- * ── Audit-Befunde 11.08. (F9, F10, F11) ───────────────────────────────────
- *
- * `unmountDashboard` räumte gründlich auf — aber nur, was im `st`-Objekt
- * hing. Alles, was als Modulvariable neben `st` liegt, überlebte das
- * Abmelden und war beim nächsten Anmelden noch da. Drei Wirkungen, die im
- * Audit getrennt aufgefallen sind und dieselbe Ursache haben:
- *
- *  - **Listener-Leck (F11):** `mtState.subs` hält einen `onSnapshot` auf den
- *    Kurs des zuletzt gewählten Handels-Symbols. Nach dem Abmelden lief er
- *    weiter — samt Firestore-Verbindung und Kosten, und mit einem Callback,
- *    das in ein geleertes DOM schreibt.
- *  - **Scharfe Order überlebt (F11):** `mtState.arm` ist der Zwei-Klick-
- *    Schutz mit Zeitfenster. Sein `setTimeout` lief nach dem Abmelden weiter
- *    und griff beim Feuern auf Knöpfe zu, die es nicht mehr gibt.
- *  - **Fremde Daten beim Nutzerwechsel (F9):** `eigeneLoadouts` und
- *    `loGewaehlt` gehören dem angemeldeten Konto. Meldet sich auf demselben
- *    Gerät jemand anders an, sah er bis zum ersten Nachladen die Loadouts
- *    seines Vorgängers.
- *  - **Tour startet nie wieder (F10):** `tourAutostartGeprueft` bleibt
- *    `true`. Der zweite Nutzer auf demselben Gerät bekam die Einführung nie
- *    zu sehen — genau der Nutzer, der sie am nötigsten hätte.
- *
- * Die laufenden Timer (`autoResTimer`, `evTipTimer`) stehen aus demselben
- * Grund hier: Sie hängen an keinem `st` und feuern nach dem Abmelden in eine
- * Oberfläche, die es nicht mehr gibt.
+ * `unmountDashboard` räumt, was im `st`-Objekt hängt. Alles, was als
+ * Modulvariable daneben liegt, überlebte das Abmelden sonst: die Admin-Liste
+ * des Vorgängers (fremde Konten beim Nutzerwechsel), ein armierter
+ * Admin-Knopf samt Timer, eine offene Kommando-Bestätigung, die
+ * Tabellen-Sortierung und die anonymen document-Listener.
  */
 export function setzeModulZustandZurueck(): void {
-  // Anonyme document-Listener lösen (F11-Rest) — ein abort() für alle;
-  // der nächste Mount holt sich über docListenerSignal() ein frisches.
   docListenerAbort?.abort();
   docListenerAbort = null;
-  // Trade-Fenster: erst die Listener lösen, dann den Zustand leeren.
-  for (const u of mtState.subs) u();
-  mtState.subs.length = 0;
-  if (mtState.arm !== null) window.clearTimeout(mtState.arm.timer);
-  mtState.arm = null;
-  mtState.sym = null;
-  mtState.price = null;
-  // Nutzergebundene Daten — sie gehören dem Konto, nicht dem Gerät.
-  eigeneLoadouts = [];
-  loGewaehlt = null;
-  bestPractice = null;
-  zeichnungenCache = null;
-  tourAutostartGeprueft = false;
-  // Freilaufende Timer.
-  if (autoResTimer !== null) window.clearTimeout(autoResTimer);
-  autoResTimer = null;
-  if (evTipTimer !== null) window.clearTimeout(evTipTimer);
-  evTipTimer = null;
-  evTipOwner = null;
-  autoSwitching = false;
-  malYModusKnopf = null;
-  zeichnenTool = null;
-  zeichnenStart = null;
-  zeichnenTag = null;
-  lastRenderIntraday = null;
+  admEntwaffne();
+  admZeilen = [];
+  admOffenerStreifen = null;
+  cmdOffen = null;
+  sortZustand.jn = null;
 }
 
 export function unmountDashboard(): void {
   if (!st) return;
-  exitAllMax(); // Portal-Elemente vom body zurück, bevor die App-Wurzel geleert wird
-  // Die News-Bubble lebt als Portal am body (showNewsTooltip) — ohne dieses
-  // Aufräumen bliebe nach Logout/Login ein Zwilling mit derselben ID zurück.
-  document.getElementById('evTip')?.remove();
-  clearSubs(st.subs);
-  clearSubs(st.symbolSubs);
-  clearSubs(st.chart2Subs);
-  clearSubs(st.watchlistSubs);
+  for (const u of st.subs) u();
+  st.subs.length = 0;
   for (const u of st.positionSubs.values()) u();
+  st.positionSubs.clear();
   for (const t of st.timers) clearInterval(t);
-  if (st.wsSaveTimer !== null) clearTimeout(st.wsSaveTimer);
-  st.paletteDispose?.();
-  clearSubscribers();
-  for (const p of st.gridPanels) unmountGridPanel(p);
-  for (const kind of ['rsi', 'macd'] as const) {
-    subEpochs[kind]++;
-    st.subCharts[kind]?.destroy();
-  }
-  st.chart?.destroy();
-  st.chart2?.destroy();
   document.removeEventListener('keydown', onEscape);
-  document.removeEventListener('keydown', onGlobalHotkey);
   // Zuletzt, damit ein Fehler weiter oben den Modulzustand nicht halb
-  // zurückgesetzt hinterlässt — und weil `st = null` danach kommt: Was hier
-  // noch auf `st` zugreift, findet es vor.
+  // zurückgesetzt hinterlässt — und weil `st = null` danach kommt.
   setzeModulZustandZurueck();
   st = null;
 }

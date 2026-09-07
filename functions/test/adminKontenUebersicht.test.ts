@@ -56,6 +56,6 @@ describe('Admin-Konten-Übersicht (Quelltext-Wächter)', () => {
 
   it('der Frontend-Typ kennt beide Felder (sonst fällt der Anschluss still weg)', () => {
     expect(data).toContain('trades: number | null;');
-    expect(data).toContain('reife: { bereit: boolean; erfuellt: number; gesamt: number; fazit: string };');
+    expect(data).toContain('reife: { bereit: boolean; erfuellt: number; gesamt: number; fazit: string; offeneCodes?: string[] };');
   });
 });
