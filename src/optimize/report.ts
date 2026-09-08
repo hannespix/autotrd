@@ -30,6 +30,13 @@ export interface ReportMeta {
    */
   risk: RiskConfig;
   initialEquity: number;
+  /**
+   * Stichtag der Messung (YYYY-MM-DD), falls der Lauf mit `--as-of` gefahren
+   * wurde. Steht ganz oben, weil sonst zwei Berichte identisch aussehen, die
+   * verschiedene Zeitpunkte messen — und weil ein Leser wissen muss, dass
+   * dieser Lauf die letzten Monate NICHT gesehen hat.
+   */
+  asOf?: string;
 }
 
 /* ───────────────────────── Formatierung ───────────────────────── */
@@ -116,6 +123,7 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
   out.push(`# Optimierung ${isoDay(meta.generatedAt)}`);
   out.push('');
   out.push(`- Erzeugt: ${isoMinute(meta.generatedAt)}`);
+  if (meta.asOf) out.push(`- **Stichtag ${meta.asOf}** — der Lauf sieht nichts danach (Messung, kein Produktivlauf)`);
   out.push(`- Zeitrahmen: ${tf(meta.timeframe)} (${meta.assetClass})`);
   out.push(`- Datenbereich: ${meta.dataRange ? `${isoDay(meta.dataRange.start)} … ${isoDay(meta.dataRange.end)}` : 'keine Daten'}`);
   out.push(

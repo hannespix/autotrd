@@ -55,6 +55,9 @@ optimize:  --equity <usd>            (Zeitraum: optimizer.lookbackDays aus der C
 --allow-short  NUR fuer backtest und optimize: misst mit erlaubten Shorts, egal was
                risk.allowShort sagt. Das Kommando run lehnt die Option ab — was
                gehandelt wird, entscheidet die Config, nie die Kommandozeile.
+--as-of <tag>  NUR fuer universe, backtest und optimize: der Lauf tut so, als waere
+               YYYY-MM-DD heute; alles danach ist unsichtbar. Fuer mehrere getrennte
+               Holdout-Fenster aus verschiedenen Marktphasen.
 universe:  --out <pfad>              (Default: <home>/universe.json)
 fetch:     --days <n>
 halt:      --reason <text>
@@ -92,6 +95,7 @@ function parseCli(argv: string[]): Cli {
       universe: { type: 'string' },
       out: { type: 'string' },
       'allow-short': { type: 'boolean' },
+      'as-of': { type: 'string' },
     },
   });
   return { cmd: positionals[0] ?? 'help', values: values as Record<string, string | boolean | undefined> };
@@ -175,29 +179,47 @@ function parseParams(s: string | undefined): Partial<Params> {
  * schlimmer, weil dann jemand glaubt, sie habe gewirkt.
  */
 const SHORT_MESS_KOMMANDOS = new Set(['backtest', 'optimize']);
+/** `universe` gehört dazu: Zu einem Stichtag gehört auch das Universum VON DAMALS. */
+const ASOF_MESS_KOMMANDOS = new Set(['universe', 'backtest', 'optimize']);
+
+/** Mess-Schalter gelten nur, wo gemessen wird — sonst Abbruch statt stillem Ignorieren. */
+function nurMessen(cmd: string, erlaubt: ReadonlySet<string>, option: string): void {
+  if (erlaubt.has(cmd)) return;
+  throw new Error(
+    `${option} gilt nur für ${[...erlaubt].join(', ')}, nicht für \`${cmd}\`. ` +
+      'Was gehandelt wird, entscheidet die Config — nicht die Kommandozeile.',
+  );
+}
 
 export function applyAllowShort(app: App, cli: Cli): App {
   if (cli.values['allow-short'] !== true) return app;
-  if (!SHORT_MESS_KOMMANDOS.has(cli.cmd)) {
-    throw new Error(
-      `--allow-short gilt nur für ${[...SHORT_MESS_KOMMANDOS].join(' und ')}, nicht für \`${cli.cmd}\`. ` +
-        'Was gehandelt wird, entscheidet risk.allowShort in der Config — nicht die Kommandozeile.',
-    );
-  }
+  nurMessen(cli.cmd, SHORT_MESS_KOMMANDOS, '--allow-short');
   if (app.config.risk.allowShort) return app;
   logger.warn('--allow-short: Shorts für diese MESSUNG erlaubt (risk.allowShort in der Config bleibt unberührt).');
   return { ...app, config: { ...app.config, risk: { ...app.config.risk, allowShort: true } } };
 }
 
+/** Stichtag prüfen und normalisieren; wirft für Kommandos, die handeln. */
+export function asOfFrom(cli: Cli): string | undefined {
+  const roh = str(cli.values['as-of']);
+  if (roh === undefined) return undefined;
+  nurMessen(cli.cmd, ASOF_MESS_KOMMANDOS, '--as-of');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(roh)) throw new Error(`--as-of erwartet YYYY-MM-DD, bekommen: ${roh}`);
+  if (Number.isNaN(Date.parse(`${roh}T12:00:00Z`))) throw new Error(`--as-of ist kein gültiges Datum: ${roh}`);
+  return roh;
+}
+
 function appFrom(cli: Cli): App {
   // `universe` erzeugt die Auswahl gerade erst — es darf sie nicht schon anwenden.
   const auswahl = cli.cmd === 'universe' ? undefined : str(cli.values.universe);
+  const asOf = asOfFrom(cli);
   return bootstrap({
     config: str(cli.values.config) ?? 'config/config.yaml',
     env: str(cli.values.env) ?? '.env',
     home: str(cli.values.home),
     verbose: cli.values.verbose === true,
     universeFile: auswahl,
+    asOf,
   });
 }
 
@@ -306,7 +328,8 @@ async function cmdUniverse(app: App, cli: Cli): Promise<number> {
   }
   const client = requireClient(app);
   const regeln: UniverseRegeln = { ...UNIVERSE_REGELN, max: app.config.universe.maxSymbols };
-  const now = Date.now();
+  // Bei einer Stichtags-Messung wählt auch das Universum nur mit Daten bis dahin.
+  const now = app.asOf ?? Date.now();
   // Tagesbars sind billig (ein Abruf je Block, kein Minutenraster), deshalb darf der
   // Pool viel größer sein als das Universum. Fenster großzügig: 60 Handelstage
   // brauchen rund 84 Kalendertage.
@@ -499,6 +522,7 @@ async function cmdOptimize(app: App, cli: Cli): Promise<number> {
     home: app.home,
     initialEquity,
     log: (m) => logger.info(m),
+    ...(asOfFrom(cli) === undefined ? {} : { asOf: asOfFrom(cli)! }),
   });
   const rows: string[][] = [['Symbol', 'Entscheidung', 'Strategie', 'Score', 'OOS-Trades', 'OOS netto', 'Folds +']];
   for (const r of res.runs) {

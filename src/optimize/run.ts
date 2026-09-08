@@ -115,6 +115,8 @@ export interface OptimizeRunInput {
   /** Streuungsquelle des Deflated Sharpe; Vorgabe 'trial_sharpes' (siehe robustness.ts). */
   dsrVarSource?: DsrVarSource | undefined;
   now?: (() => Ms) | undefined;
+  /** Stichtag der Messung (YYYY-MM-DD) — nur für den Berichtskopf. */
+  asOf?: string | undefined;
   log?: ((msg: string) => void) | undefined;
 }
 
@@ -466,6 +468,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
     optimizer,
     risk: cfg.risk,
     initialEquity: input.initialEquity,
+    ...(input.asOf === undefined ? {} : { asOf: input.asOf }),
   });
   const reportPath = writeReport(paths.reports, `optimize-${dayKey(generatedAt)}.md`, text);
   log(`Bericht: ${reportPath}`);

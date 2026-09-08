@@ -44,6 +44,10 @@ on:
         options:
           - nein
           - ja
+      asOf:
+        description: 'Stichtag YYYY-MM-DD (leer = heute) — der Lauf sieht nichts danach'
+        required: false
+        default: ''
 
 concurrency:
   group: probe
@@ -101,6 +105,23 @@ jobs:
           printf 'ALPACA_API_KEY=%s\nALPACA_SECRET_KEY=%s\nALPACA_ALLOW_LIVE=0\n' "$ALPACA_API_KEY" "$ALPACA_SECRET_KEY" > "$RUNNER_TEMP/.env"
           chmod 600 "$RUNNER_TEMP/.env"
 
+      # Der Stichtag gilt für die MESSUNG (Universumswahl, Walk-Forward, Holdout).
+      # `fetch` lädt weiterhin alles — geschnitten wird beim LESEN (src/app.ts),
+      # damit keine Stelle den Schnitt vergessen kann.
+      - name: Stichtag prüfen
+        id: asof
+        env:
+          AS_OF: ${{ github.event.inputs.asOf }}
+        run: |
+          if [ -n "$AS_OF" ]; then
+            case "$AS_OF" in
+              [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+              *) echo "::error::asOf muss YYYY-MM-DD sein: '$AS_OF'"; exit 1 ;;
+            esac
+            echo "flag=--as-of $AS_OF" >> "$GITHUB_OUTPUT"
+            echo "Stichtag: $AS_OF"
+          fi
+
       - name: Bars nachladen
         run: node src/cli.ts fetch --config "$CONFIG" --env "$RUNNER_TEMP/.env" --home var-probe
 
@@ -124,7 +145,7 @@ jobs:
           # Nutzer handeln, entscheidet weiterhin allein die Plattform-Config.
           SHORT=""
           if [ "$ALLOW_SHORT" = "ja" ]; then SHORT="--allow-short"; fi
-          node src/cli.ts optimize --config "$CONFIG" --env "$RUNNER_TEMP/.env" --home var-probe $SHORT --equity 25000
+          node src/cli.ts optimize --config "$CONFIG" --env "$RUNNER_TEMP/.env" --home var-probe $SHORT ${{ steps.asof.outputs.flag }} --equity 25000
 
       - name: Bericht als Artefakt
         uses: actions/upload-artifact@v4
