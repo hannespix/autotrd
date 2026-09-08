@@ -33,6 +33,12 @@ thematisch). Bezeichner im Code Englisch, Kommentare Deutsch.
    Strategie-Funktion bekommt einen Präfix-Konsistenz-Test
    (`precompute(bars.prefix(i+1))[i] === precompute(bars)[i]`). Der Simulator
    reicht Strategien nur `bars.prefix(i+1)` — das bleibt so.
+   **Querschnittlich gilt dasselbe eine Ebene höher:** Eine Rangliste über den
+   Korb (`Strategy.crossScore`) darf nur aus geschlossenen Bars DESSELBEN
+   Zeitpunkts entstehen, und sie wird ausschließlich in `decide()` gebaut —
+   nie in der Strategie und nie im Aufrufer. Eine Rangliste ist die
+   verführerischste Lookahead-Stelle im Repo, weil jede einzelne Zeitreihe
+   dabei kausal aussieht; Wächter dafür stehen in `test/core/korb.test.ts`.
 3. **Echtgeld-Doppel-Guard.** Live nur, wenn `broker.mode: live` UND
    `ALPACA_ALLOW_LIVE=1` UND ein Live-Key (`AK…`). Fehlt eins ⇒ Paper. Ein
    Live-Key gegen Paper wird abgelehnt (`resolveMode`). Nie lockern.
@@ -112,7 +118,7 @@ Broker, ein Takt je Minute genügt für den 5-Minuten-Zeitrahmen.
 | `risk/` | Sizing, Tages-/Drawdown-Halt, PDT. |
 | `alpaca/` | Vertrag (`types.ts`), REST-Client (`rest.ts`), Streams (`stream.ts`), Symbol-Mapping. |
 | `data/` | Bars-Cache auf Platte, inkrementeller Backfill, Kalender. |
-| `strategy/` | Indikatoren (kausal) und Vorlagen: `trend_donchian`, `momentum_pullback`, `mean_reversion`, `orb_breakout`. |
+| `strategy/` | Indikatoren (kausal) und Vorlagen. Symbolweise: `trend_donchian`, `momentum_pullback`, `mean_reversion`, `orb_breakout`. Querschnittlich (fragt den KORB, nicht das Symbol): `cross_sectional_momentum` — die Rangliste baut `decide()`, nie die Strategie selbst. |
 | `backtest/` | Portfolio-Simulator (Fills am nächsten Open, Stop vor Ziel), Kosten, Metriken (Sharpe/Sortino/PSR/DSR). |
 | `universe/` | Nächtliche Wahl des Handelsuniversums — nach **Handelbarkeit**, nie nach dem Ergebnis der Strategie (Grenzen der Kennzahl im Modulkopf). |
 | `optimize/` | Walk-Forward, Robustheits-Gates, Champion/Challenger, Report. |
