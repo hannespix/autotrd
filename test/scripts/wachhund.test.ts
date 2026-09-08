@@ -3,10 +3,12 @@
  *
  * Zwei Dinge muss er können, und beide sind an einem Tag schon vorgekommen:
  *
- * 1. Merken, dass die Engine ein ANDERES Universum handelt, als der
- *    Optimierer gemessen hat. Ein Champion, der auf zehn Symbolen gefittet
- *    wurde, sagt nichts über dreißig — und umgekehrt handelt niemand ein
- *    Symbol, für das nie etwas gemessen wurde.
+ * 1. Merken, dass die Engine etwas handelt, das im Repo gar nicht als
+ *    Kandidat steht. Seit das Universum jede Nacht neu nach Liquidität
+ *    gewählt wird, ist Gleichheit mit `config/platform.yaml` kein Kriterium
+ *    mehr — wohl aber die Zugehörigkeit zum Pool, der sich nur per Commit
+ *    ändert. Ohne diese Prüfung könnte eine kaputte Auswahl die Plattform
+ *    auf beliebige Werte umstellen.
  * 2. Nichts ändern. Er schaut und berichtet; jede Änderung geht durch einen
  *    Pull Request, den ein Mensch anschaut.
  */
@@ -25,6 +27,9 @@ function eingabe(over: Record<string, unknown> = {}) {
     champion: { updatedAt: JETZT - 7 * 3600_000, symbols: { TSLA: {} }, noTrade: { SPY: {} } },
     engineConfig: { universe: { symbols: ['SPY', 'TSLA'] }, timeframe: 5 },
     repoSymbols: ['TSLA', 'SPY'],
+    repoPool: ['SPY', 'TSLA', 'NVDA', 'AAPL'],
+    repoBenchmark: 'SPY',
+    repoMaxSymbols: 3,
     repoTimeframe: 5,
     nutzer: [{ uid: 'a', engineAn: true, live: false }],
     herzschlagUrteil: { ok: true },
@@ -53,19 +58,56 @@ describe('Wächter', () => {
   });
 
   it('alter Champion: erst Warnung, dann Fehler', () => {
-    const warn = beurteile(eingabe({ champion: { updatedAt: JETZT - 5 * TAG, symbols: { TSLA: {} }, noTrade: {} } }));
+    const warn = beurteile(eingabe({ champion: { updatedAt: JETZT - 5 * TAG, symbols: { TSLA: {} }, noTrade: { SPY: {} } } }));
     expect(warn.ok, 'fünf Tage über ein Wochenende sind noch kein Ausfall').toBe(true);
     expect(warn.warnungen).toBeGreaterThan(0);
 
-    const fehler = beurteile(eingabe({ champion: { updatedAt: JETZT - (CHAMPION_FEHLER_TAGE + 1) * TAG, symbols: { TSLA: {} }, noTrade: {} } }));
+    const fehler = beurteile(eingabe({ champion: { updatedAt: JETZT - (CHAMPION_FEHLER_TAGE + 1) * TAG, symbols: { TSLA: {} }, noTrade: { SPY: {} } } }));
     expect(fehler.ok).toBe(false);
     expect(texte(fehler)).toContain('Optimierer läuft nicht');
   });
 
-  it('ABWEICHENDES UNIVERSUM ist ein Fehler — die Engine handelt sonst Ungemessenes', () => {
-    const u = beurteile(eingabe({ engineConfig: { universe: { symbols: ['SPY', 'TSLA', 'NVDA'] }, timeframe: 5 } }));
+  it('ein Symbol AUSSERHALB des Kandidatenpools ist ein Fehler — der Pool ändert sich nur per Commit', () => {
+    const u = beurteile(eingabe({ engineConfig: { universe: { symbols: ['SPY', 'TSLA', 'GME'] }, timeframe: 5 } }));
     expect(u.ok).toBe(false);
-    expect(texte(u)).toContain('Nur in der Engine: NVDA');
+    expect(texte(u)).toContain('außerhalb des Kandidatenpools: GME');
+  });
+
+  it('ein anderes Symbol AUS dem Pool ist in Ordnung — die Auswahl läuft nächtlich', () => {
+    const u = beurteile(eingabe({
+      engineConfig: { universe: { symbols: ['SPY', 'NVDA'] }, timeframe: 5 },
+      champion: { updatedAt: JETZT - 7 * 3600_000, symbols: { NVDA: {} }, noTrade: { SPY: {} } },
+    }));
+    expect(u.ok, texte(u)).toBe(true);
+  });
+
+  it('mehr Symbole als erlaubt ist ein Fehler — über 30 antwortet Alpaca mit 405', () => {
+    const u = beurteile(eingabe({ engineConfig: { universe: { symbols: ['SPY', 'TSLA', 'NVDA', 'AAPL'] }, timeframe: 5 } }));
+    expect(u.ok).toBe(false);
+    expect(texte(u)).toContain('erlaubt sind 3');
+  });
+
+  it('fehlender Benchmark im gehandelten Universum ist ein Fehler', () => {
+    const u = beurteile(eingabe({
+      engineConfig: { universe: { symbols: ['TSLA', 'NVDA'] }, timeframe: 5 },
+      champion: { updatedAt: JETZT - 7 * 3600_000, symbols: { TSLA: {} }, noTrade: { NVDA: {} } },
+    }));
+    expect(u.ok).toBe(false);
+    expect(texte(u)).toContain('Benchmark SPY fehlt');
+  });
+
+  /**
+   * Seit das Universum nächtlich wechselt, ist die Champion-Deckung die einzige
+   * verbliebene Brücke zwischen „gemessen" und „gehandelt". Klafft sie, lief der
+   * nächtliche Lauf halb durch — deshalb Fehler, nicht Warnung.
+   */
+  it('ein gehandeltes Symbol ohne Champion-Urteil ist ein FEHLER', () => {
+    const u = beurteile(eingabe({
+      engineConfig: { universe: { symbols: ['SPY', 'TSLA', 'AAPL'] }, timeframe: 5 },
+    }));
+    expect(u.ok).toBe(false);
+    expect(texte(u)).toContain('ohne Champion-Urteil');
+    expect(texte(u)).toContain('AAPL');
   });
 
   it('abweichender Zeitrahmen ist ein Fehler', () => {

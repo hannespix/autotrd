@@ -157,6 +157,182 @@ den Champion beim Start (und nach Beförderung beim nächsten Neustart).
 7. **Keine Netzwerkzugriffe in Tests**, keine Secrets im Repo, State nie im
    Repo (`var/`, `.env` in `.gitignore`).
 
+## 5a. Messbilanz 08.09.2026 — was gemessen wurde und was es heißt
+
+An einem Tag gemessen: **5 Strategien × 3 Zeitrahmen × 2 Short-Einstellungen**,
+immer derselbe Korb aus 30 liquiden US-Werten, immer dieselben Kosten, dasselbe
+Risiko, dieselben Gates. Ergebnis vorweg: **Nichts besteht die Gates UND
+überlebt den Holdout.** Die Plattform steht zu Recht auf KEIN HANDEL.
+
+### 1. Der Zeitrahmen löst die Kostenfrage (belastbar)
+
+| Zeitrahmen | bester Kandidat | Gebührenanteil |
+|---|---|---|
+| 5 min | `orb_breakout` | 65,5 % |
+| 60 min | `trend_donchian` | 43,4 % |
+| Tagesbars | `momentum_pullback` | **25,4 %** |
+
+Kosten fallen je Round-Trip an, nicht je Zeiteinheit — nur ein größerer
+erwarteter Zug je Trade hilft. Die 5-Minuten-Bar war für Aktien der falsche
+Takt. Die langsamste gemessene Variante (`cross_sectional_momentum` im
+Holdout) kommt auf **3,7 %**. Das Kostenproblem des Vorgängersystems ist
+damit strukturell lösbar.
+
+### 2. Shorts helfen nicht (gemessen, nicht vermutet)
+
+Der Strategie-Parameter `allowShort` war bis zum 08.09. **wirkungslos**, weil
+`risk.allowShort: false` in `core/logic.ts:307` jeden Short-Einstieg sperrt —
+der Optimierer durchsuchte eine tote Dimension, die halbe Suchfläche war
+Duplikat, die DSR-Trial-Zahl zu hoch. Behoben mit dem MESS-Schalter
+`--allow-short` (nur `backtest`/`optimize`; `run` lehnt ihn ab).
+
+Mit wirksamen Shorts: `trend_donchian` auf 60 min fällt von +3 864 auf +106,
+der Gebührenanteil steigt von 43,4 % auf 154,7 %; `mean_reversion` von +506
+auf −1 967. Und die Suche selbst wählt Shorts seltener, sobald sie
+Konsequenzen haben (8 von 24 statt 14 von 24). `risk.allowShort: false`
+bleibt richtig.
+
+### 3. Die Querschnitts-Strategie hat auch keine Kante
+
+`cross_sectional_momentum` fragt „ist NVDA stärker als die anderen 29?" statt
+„steigt NVDA?" — der Marktfaktor kürzt sich heraus. Auf Tagesbars: **OOS-Sharpe
+p. a. 0,00** über 554 Beobachtungen, 4 von 9 Gates. Auf Stundenbars: 5 von 9
+Gates, Gebührenanteil 162,8 %. Die Idee ist richtig gedacht; sie trägt auf
+diesem Korb nicht.
+
+### 4. KORREKTUR: Die „Umkehrung" ist EINE Marktperiode, nicht vier Belege
+
+Auffällig ist, dass der Sieger der Auswahl im Holdout regelmäßig verliert,
+während die Schlusslichter verdienen — auf Stundenbars zuletzt
+`trend_donchian` (8 von 9 Gates, bester OOS-Score) mit **−1 886** gegen
+`cross_sectional_momentum` (5 von 9 Gates) mit **+3 981**.
+
+Das sieht nach mehrfacher Bestätigung aus und ist keine. **Alle Läufe teilen
+denselben Holdout: 2026-03-08 … 2026-09-04.** Vier Strategien, zwei
+Zeitrahmen — aber EIN Marktzeitraum, viermal betrachtet. Was wie ein Gesetz
+aussieht, ist genauso gut ein einzelner Regimewechsel: Die letzten sechs
+Monate haben bestraft, was das Jahr davor belohnt hat.
+
+Daraus „dann nimm den Schlechtesten" abzuleiten wäre Data-Mining auf einer
+Beobachtung — genau der Fehler, gegen den dieses System gebaut ist. Es wird
+NICHT eingebaut.
+
+### 5. Gates und Holdout messen verschiedene Objekte
+
+Die Gates rechnen auf der Walk-Forward-Kette: 7 bis 9 Folds mit je EIGENEN
+Parametern. `finalParams` stammt dagegen aus der Suche auf dem LETZTEN
+IS-Fenster, und nur damit läuft der Holdout.
+
+Die Gate-Aussage lautet also „diese Strategie-FAMILIE hätte mit laufend neu
+gefitteten Parametern funktioniert", die Holdout-Aussage „dieser EINE
+Parametersatz funktioniert". Das ist übliches Walk-Forward-Verfahren, aber es
+heißt: Ein bestandenes Gate validiert nicht direkt die Parameter, die
+befördert werden. Sichtbar wird das am Gebührenanteil von
+`cross_sectional_momentum` auf 60 min — 162,8 % über die Kette, 5,4 % im
+Holdout: zwei verschiedene Handelsverhalten.
+
+### 6. Die Beweislast sinkt mit jeder Variante
+
+An diesem Tag sind 5 Strategien × 3 Zeitrahmen × 2 Short-Einstellungen
+gemessen worden. Der Deflated Sharpe deflationiert die PARAMETER-Trials
+(1 200–1 500 je Lauf) und sagt schon dort, dass die IS-Kennzahlen von Zufall
+nicht zu unterscheiden sind. Die Suche über Strategien, Zeitrahmen und
+Einstellungen zählt er **gar nicht mit**.
+
+Jede weitere Variante macht ein eventuelles „besteht alle Gates" also
+unglaubwürdiger, nicht glaubwürdiger. Wer hier weitersucht, muss die Zahl der
+Versuche mitzählen und den Holdout unangetastet lassen — sonst misst er nur
+noch sich selbst.
+
+### 7. Ohne Maßstab ist keine Holdout-Zahl lesbar
+
+Bis zum 08.09. abends nannte kein Bericht, was **Nichtstun** im selben Fenster
+gebracht hätte. +11.3 % Holdout-Rendite klingen großartig — gegen einen Korb,
+der im selben Halbjahr +12 % gemacht hat, sind sie eine teure Null. Ohne diese
+Gegenzahl misst der Bericht Marktbewegung und nennt sie Kante; das ist
+derselbe Fehler wie im Vorgängersystem, nur eine Ebene höher.
+
+Seitdem steht unter jeder Holdout-Tabelle ein Maßstab
+(`src/backtest/marktbezug.ts`): gleichgewichtet kaufen, halten, nichts tun —
+für den gehandelten Korb und für die Benchmark. Vergleichbar ist der
+**Sharpe**, nicht die Rendite: Er ist Ertrag je Risiko und damit unabhängig
+davon, wie oft eine Strategie im Markt stand. Eine selten investierte
+Strategie DARF weniger Rendite haben; sie muss den besseren Sharpe haben.
+
+Der Maßstab ist bewusst zu gut gerechnet (keine Kosten, durchgehend voll
+investiert) — die richtige Richtung für eine Latte, über die gesprungen
+werden soll. Er ist ausdrücklich **kein Gate**: Er entscheidet nichts,
+er macht nur lesbar, was entschieden wurde.
+
+### 8. Gemessen: Nichtstun war besser (vier Halbjahre, mit Maßstab)
+
+Vier lückenlose Halbjahre, jedes (Auswahl → Holdout)-Paar in sich sauber,
+je Fenster derselbe Maßstab. Rendite / Sharpe im Holdout:
+
+| Fenster | Korb kaufen und halten | SPY | beste Strategie | schlägt den Korb? |
+|---|---|---|---|---|
+| Sep 24 – Mär 25 | +8.53 % / 1.09 | +5.37 % / 0.88 | cross_sectional +11.24 % / 1.61 | 2 von 4 |
+| Mär – Sep 25 | +20.11 % / 1.57 | +15.41 % / 1.39 | cross_sectional +3.55 % / 2.20 | 2 von 4 |
+| Sep 25 – Mär 26 | +2.14 % / 0.35 | +3.65 % / 0.69 | momentum_pullback +1.58 % / 0.78 | 1 von 4 |
+| Mär – Sep 26 | +23.73 % / 2.57 | +15.92 % / 2.28 | trend_donchian +3.08 % / 2.40 | **keine** |
+
+Über die zwei Jahre aufgezinst: **Korb +64.7 %, SPY +46.1 %** gegen
+cross_sectional +17.4 %, momentum_pullback +10.0 %, mean_reversion +3.4 %,
+trend_donchian −0.1 %. Der Korb ist survivorship-verseucht (heutige Top-30
+rückwirkend angewandt); **SPY ist es nicht** — die ehrliche Zahl lautet also
++46 % fürs Nichtstun gegen +17 % für die beste der vier.
+
+Das Muster ist konsistent: Der Korb-Sharpe schwankt zwischen 0.35 und 2.57,
+und genau dann, wenn der Markt schwach ist, schlägt eine Strategie ihn; wenn
+er stark ist, keine. Das ist das Profil eines defensiven Systems — relativ
+gut in schlechten Phasen, absolut abgehängt in guten. Über einen Bullenzyklus
+verliert es. mean_reversion schlägt den Korb in **keinem** der vier Fenster.
+
+Der Auswahl-Rang sagt den Holdout-Rang weiterhin nicht vorher (Spearman
+−0.20 / −0.80 / +0.40 / −0.80, Mittel −0.35). Nie gewinnt dieselbe Strategie
+beides. Verführerisch ist dabei, dass die Auswahl mehrfach die spätere
+Siegerin auf den letzten Platz setzte — bei vier Fenstern × vier Strategien
+ist „dann nimm die Schlechteste" aber genau die Überanpassung, gegen die das
+ganze System gebaut ist. Hypothese, keine Regel.
+
+### 9. Die Lücke im Regelwerk: `beats_market`
+
+Keines der neun Gates fragte, ob die Strategie besser ist als Nichtstun.
+Deshalb konnte momentum_pullback am 08.09. zweimal mit **9/9** durchgehen und
+im folgenden Halbjahr +1.9 % liefern, während der Korb +23.7 % machte — eine
+Verfehlung um 21.8 Prozentpunkte, die kein Gate bemerkt hätte.
+
+Seitdem gibt es ein zehntes Gate. Es misst auf der **OOS-Kette**, nie am
+Holdout (der bleibt selektionsfrei), und vergleicht den **Sharpe**: Ertrag je
+eigener Schwankung, also unabhängig davon, wie oft die Strategie investiert
+war. Wer weniger Ertrag je Risiko liefert als stumpfes Halten, hat keine
+Kante, sondern Gebühren.
+
+Drei Festlegungen, jede gegen eine konkrete Falle:
+
+- **Gegen SPY, nicht gegen den Korb.** Der Korb ist die heutige Auswahl,
+  rückwirkend angewandt; seine Rendite enthält Survivorship und wäre eine
+  unfair hohe Latte. SPY war damals kaufbar.
+- **Die Latte gilt für DIESELBEN Fenster.** Der Amtsinhaber wird nur auf
+  Folds nach seinem Fit-Ende nachgerechnet und bekommt deshalb seine eigene
+  Latte — sonst verglichen wir eine Strategie auf Fenster X mit einem Markt
+  auf Fenster Y. Diese Gegenprobe fehlte zuerst und rutschte durch.
+- **Das Gate wird nie vakant.** Ohne konfigurierte Benchmark gilt die Kasse
+  (Latte 0), nicht „kein Urteil" — sonst schaffte man das Gate ab, indem man
+  eine Zeile aus der Config nimmt. Ein nicht berechenbarer Maßstab ist im
+  Bericht vom nicht konfigurierten unterscheidbar: das eine ist ein
+  Datenproblem, das andere eine Entscheidung.
+
+Das Gate kann eine Beförderung nur verhindern, nie auslösen — es ist damit in
+die falsche Richtung risikofrei.
+
+### Was das für den Betrieb heißt
+
+Kein Handel. Der nächtliche Optimierer läuft weiter und sucht mit nächtlich
+neu gewähltem Universum; findet er nichts, bleibt es dabei. Das ist ein
+zulässiges Ergebnis (§0.9), und es ist deutlich billiger als das
+Vorgängersystem, das nicht funktioniert, sondern nur viel gehandelt hat.
+
 ## 6. Was bewusst fehlt
 
 Keine Charts, keine News, kein Sentiment, keine KI-Erklärung, keine

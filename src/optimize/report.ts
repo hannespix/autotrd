@@ -6,12 +6,13 @@
  */
 import { renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { CostConfig, OptimizerConfig } from '../core/config.ts';
+import type { CostConfig, OptimizerConfig, RiskConfig } from '../core/config.ts';
 import { ensureDir } from '../core/journal.ts';
 import type { AssetClass, Metrics, Ms, Params, TimeframeMin } from '../core/types.ts';
 import { fitEndOf } from './promote.ts';
 import { gateOptions, type GateResult } from './robustness.ts';
-import type { SymbolRun } from './run.ts';
+import type { MarktBezug } from '../backtest/marktbezug.ts';
+import type { HoldoutMarkt, SymbolRun } from './run.ts';
 import type { TimeRange } from './walkForward.ts';
 
 export interface ReportMeta {
@@ -21,7 +22,22 @@ export interface ReportMeta {
   dataRange: TimeRange | null;
   costs: CostConfig;
   optimizer: OptimizerConfig;
+  /**
+   * Risiko-Sicht des Laufs. Steht im Bericht, weil zwei Läufe sonst identisch
+   * aussehen, obwohl sie Verschiedenes gemessen haben — `allowShort` ist der
+   * Fall, der das am 08.09.2026 gezeigt hat: Der Strategie-Parameter
+   * `allowShort` war in allen Läufen wirkungslos, weil `risk.allowShort`
+   * false stand, und dem Bericht sah man das nicht an.
+   */
+  risk: RiskConfig;
   initialEquity: number;
+  /**
+   * Stichtag der Messung (YYYY-MM-DD), falls der Lauf mit `--as-of` gefahren
+   * wurde. Steht ganz oben, weil sonst zwei Berichte identisch aussehen, die
+   * verschiedene Zeitpunkte messen — und weil ein Leser wissen muss, dass
+   * dieser Lauf die letzten Monate NICHT gesehen hat.
+   */
+  asOf?: string;
 }
 
 /* ───────────────────────── Formatierung ───────────────────────── */
@@ -108,6 +124,7 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
   out.push(`# Optimierung ${isoDay(meta.generatedAt)}`);
   out.push('');
   out.push(`- Erzeugt: ${isoMinute(meta.generatedAt)}`);
+  if (meta.asOf) out.push(`- **Stichtag ${meta.asOf}** — der Lauf sieht nichts danach (Messung, kein Produktivlauf)`);
   out.push(`- Zeitrahmen: ${tf(meta.timeframe)} (${meta.assetClass})`);
   out.push(`- Datenbereich: ${meta.dataRange ? `${isoDay(meta.dataRange.start)} … ${isoDay(meta.dataRange.end)}` : 'keine Daten'}`);
   out.push(
@@ -124,6 +141,12 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
       `kein Fold trägt mehr als ${Math.round(o.maxFoldNetShare * 100)} % des OOS-Nettos, ` +
       `Nachbarschafts-Plateau, PSR (OOS, sr0 = 0) ≥ ${go.minPsrOos}, DSR (IS, deflationiert um alle Trials) ≥ 0.95 ${go.dsrIsGate ? 'als Gate' : 'nur informativ (dsrIsGate=false)'}, ` +
       `Gebührenanteil ≤ 50 %; Beförderungsmarge ${Math.round(o.promotionMargin * 100)} %`,
+  );
+  const r = meta.risk;
+  out.push(
+    `- Risiko: ${r.riskPerTradePct} % je Trade, Positionsdeckel ${r.maxPositionPct} %, höchstens ${r.maxPositions} Positionen, ` +
+      `Brutto ≤ ${r.maxGrossExposurePct} %, Tagesverlust ${r.maxDailyLossPct} %, Drawdown ${r.maxDrawdownPct} %, ` +
+      `**Shorts ${r.allowShort ? 'ERLAUBT' : 'gesperrt'}**${r.allowShort ? '' : ' — der Strategie-Parameter `allowShort` bleibt damit wirkungslos'}`,
   );
   out.push(`- Startkapital je Fenster: ${meta.initialEquity}`);
   out.push('');
@@ -233,6 +256,8 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
         );
         out.push('');
         out.push(table(METRICS_HEADER, [metricsRow(s.wfa.holdout.metrics)]));
+        const markt = marktBlock(r.holdoutMarkt);
+        if (markt.length) out.push('', ...markt);
       } else {
         out.push('_Kein Holdout konfiguriert (optimizer.holdoutDays = 0)._');
       }
@@ -241,6 +266,31 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
   }
 
   return out.join('\n');
+}
+
+/**
+ * Maßstab unter dem Holdout: Was hätte Nichtstun gebracht? Eine
+ * Holdout-Rendite ohne diese Zeilen ist nicht lesbar — +11 % sind großartig
+ * gegen 0 % und mittelmäßig gegen +12 %.
+ */
+function marktBlock(m: HoldoutMarkt | null): string[] {
+  if (!m) return [];
+  const zeilen: string[][] = [];
+  // netReturnPct/maxDrawdownPct sind bereits Prozent (wie in `Metrics`) — pct()
+  // würde ein zweites Mal mit 100 multiplizieren.
+  const zeile = (name: string, b: MarktBezug): string[] => [name, `${signed(b.netReturnPct)} %`, `${num(b.maxDrawdownPct)} %`, num(b.sharpe)];
+  if (m.korb) zeilen.push(zeile(`Kaufen und Halten (${m.korb.symbole} Symbol${m.korb.symbole === 1 ? '' : 'e'}, gleichgewichtet)`, m.korb));
+  if (m.benchmark && m.benchmarkSymbol) zeilen.push(zeile(`${m.benchmarkSymbol} (Benchmark)`, m.benchmark));
+  if (!zeilen.length) return [];
+  return [
+    '_Maßstab im selben Fenster — kaufen und liegenlassen, ohne Kosten, durchgehend voll investiert._',
+    '',
+    table(['Referenz', 'Rendite', 'MaxDD', 'Sharpe'], zeilen),
+    '',
+    '_Vergleichbar ist der **Sharpe**: Ertrag je Risiko, unabhängig davon, wie oft die Strategie im Markt stand. ' +
+      'Eine selten investierte Strategie darf weniger Rendite haben — sie muss den besseren Sharpe haben. ' +
+      'Liegt der Maßstab vorn, war die Holdout-Rendite Markt, nicht Kante._',
+  ];
 }
 
 /** Bericht atomar schreiben; liefert den Pfad. */

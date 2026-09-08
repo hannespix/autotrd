@@ -1,0 +1,157 @@
+# Probe: dieselben 30 Aktien, aber auf TAGESBARS — NUR Erkundung, nie die
+# Plattform-Config.
+#
+# ── Warum es diese Datei gibt ─────────────────────────────────────────────
+#
+# Der Lauf vom 08.09.2026 hat alle vier Strategien über den 30er-Korb
+# durchfallen lassen. Interessant ist nicht DASS sie durchfielen, sondern
+# WORAN. Von den vieren hatten nur zwei überhaupt Bruttogewinn, und beide
+# starben an derselben Zeile:
+#
+#   orb_breakout    Gebühren fressen  65,5 % des Bruttogewinns  (Gate: ≤ 50 %)
+#   mean_reversion  Gebühren fressen 349,4 %
+#
+# Das ist wörtlich der Befund des Vorgängersystems — „der Handel funktioniert;
+# er wird zu Tode gehandelt", 3 049 $ Gebühren bei 1 456 $ brutto. Die Kosten
+# fallen je ROUND-TRIP an, nicht je Zeiteinheit: Wer 20 Minuten hält, zahlt
+# dasselbe wie wer drei Tage hält. Der einzige Hebel ist ein größerer
+# erwarteter Zug je Trade — also ein längerer Zeitrahmen.
+#
+# Und da klafft eine Lücke: Aktien wurden bisher AUSSCHLIESSLICH auf
+# 5-Minuten-Bars gemessen. Bei Krypto sind Stunden- und Tagesbars geprüft
+# worden (config/crypto-60.yaml, config/crypto-1440.yaml), bei Aktien nie.
+# Diese Datei schließt sie und geht den Hebel bis zum Anschlag.
+#
+# ── Was das technisch bedeutet ────────────────────────────────────────────
+#
+# Bei `timeframe: 1440` und `us_equity` überspringt `decide()` die
+# Sitzungstore (src/core/logic.ts: „nur Intraday-Zeitrahmen bei Aktien") —
+# Eröffnungs-, Schluss- und Flatten-Fenster haben keine Wirkung mehr. Die
+# `session`-Werte unten bleiben trotzdem exakt wie in config/platform.yaml
+# stehen, damit der Unterschied zur Produktion genau drei Dinge sind:
+# Zeitrahmen, Datenfenster, Strategieliste. Sonst nichts.
+#
+# Alle drei Strategien halten über Nacht (`holdsOvernight: true`), es gibt
+# also kein EOD-Flatten, das jeden Trade auf einen Tag stutzen würde.
+#
+# ── Was hier NICHT verändert wurde ────────────────────────────────────────
+#
+# Kein Gate ist gelockert: minOosTrades, minFoldPositiveShare, minPsrOos,
+# stressCostMultiplier, maxFoldNetShare und das feeShare-Gate stehen exakt
+# wie in config/platform.yaml. Wer die Latte senkt, um ein Ergebnis zu
+# bekommen, misst nichts mehr (CLAUDE.md §0.9). Wenn auch das hier
+# durchfällt, ist das ein Ergebnis und kein Anlass zum Nachhelfen.
+#
+# ── Wie das gefahren wird ─────────────────────────────────────────────────
+#
+# Über .github/workflows/probe.yml. Der Workflow hat weder Service-Account
+# noch Veröffentlichungs-Schritte — er kann Firestore nicht anfassen, auch
+# nicht versehentlich. Ergebnis ist ein Artefakt, das ein Mensch liest.
+
+broker:
+  mode: paper
+  feed: iex
+
+universe:
+  assetClass: us_equity
+  # Identisch zu config/platform.yaml — sonst vergliche man zwei Dinge auf
+  # einmal (Zeitrahmen UND Korb).
+  symbols:
+    [SPY, QQQ, IWM, DIA,
+     AAPL, MSFT, NVDA, AMZN, META, GOOGL, TSLA, AVGO, AMD, NFLX,
+     CRM, ORCL, ADBE, INTC, CSCO, QCOM,
+     JPM, BAC, WFC,
+     XOM, CVX,
+     JNJ, PFE, UNH,
+     WMT, DIS]
+  benchmark: SPY
+
+timeframe: 1440
+
+# Ohne Wirkung bei 1440 (siehe Kopf) — bewusst unverändert aus platform.yaml
+# übernommen, damit der Vergleich sauber bleibt.
+session:
+  noEntryFirstMin: 5
+  noEntryLastMin: 30
+  flattenBeforeCloseMin: 5
+
+risk:
+  riskPerTradePct: 0.5
+  maxPositionPct: 20
+  maxPositions: 4
+  maxGrossExposurePct: 100
+  maxDailyLossPct: 2
+  maxDrawdownPct: 10
+  allowShort: false
+  pdt:
+    # Tageshandel gibt es bei Tagesbars praktisch nicht (Einstieg und Ausstieg
+    # liegen an verschiedenen Tagen), das Gate greift also selten. Es bleibt
+    # trotzdem an — ein Stop, der am Einstiegstag zieht, IST ein Daytrade.
+    respect: true
+    minEquity: 25000
+    maxDayTrades: 3
+
+strategy:
+  id: trend_donchian
+  params: {}
+  allowWithoutChampion: false
+
+optimizer:
+  # orb_breakout fehlt: Die Strategie kennt nur Intraday-Zeitrahmen
+  # (INTRADAY_TIMEFRAMES in src/strategy/orbBreakout.ts) und braucht eine
+  # Eröffnungsspanne — auf einer Tagesbar gibt es keine.
+  #
+  # cross_sectional_momentum ist dabei, weil die drei anderen dieselbe Frage
+  # stellen („steigt das Symbol?") und daran am 08.09. gescheitert sind. Sie
+  # fragt stattdessen nach relativer Stärke im Korb; für einen Korb aus 30
+  # Werten ist das der Fall, für den sie gebaut ist.
+  strategies: [trend_donchian, momentum_pullback, mean_reversion, cross_sectional_momentum]
+  # Größeres Datenfenster statt niedrigerer Latte: 400 Tage wären bei
+  # Tagesbars nur ~275 Bars, die 60 OOS-Trades kämen dann nur durch ein
+  # gesenktes Gate zustande. Also andersherum — 1400 Kalendertage
+  # (≈ 965 Handelstage), IS 365, OOS 90 ⇒ rund 9 Folds.
+  lookbackDays: 1400
+  isDays: 365
+  oosDays: 90
+  stepDays: 90
+  embargoBars: 0
+  samples: 150
+  seed: 42
+  minOosTrades: 60
+  minFoldPositiveShare: 0.6
+  objective: sortino
+  stressCostMultiplier: 1.5
+  holdoutDays: 180        # proportional zum größeren Fenster
+  promotionMargin: 0.1
+  minPsrOos: 0.9
+  dsrIsGate: false
+  maxFoldNetShare: 0.5
+  pooled: true            # ein Urteil für den ganzen Korb — wie in platform.yaml
+
+costs:
+  slippageBps: 3
+  spreadBps: 2
+  secFeeRate: 0.0000278
+  finraTafPerShare: 0.000166
+  finraTafMax: 8.3
+  cryptoTakerPct: 0.25
+  shortBorrowAnnualPct: 1
+
+engine:
+  reconcileEverySec: 60
+  barGraceSec: 4
+  maxDataAgeSec: 180
+  maxConsecutiveErrors: 5
+  onOrphan: halt
+
+notify:
+  telegram: false
+
+status:
+  httpPort: 0
+
+# Eigener State-Ordner. Der Probe-Workflow setzt zwar `--home var-probe`,
+# aber wer die Datei von Hand fährt, hätte sonst `var/champion.json` des
+# Produktivlaufs überschrieben — den Champion, den die Plattform handelt.
+paths:
+  home: ./var-probe

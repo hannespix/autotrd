@@ -378,6 +378,24 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
     failed: result.failed.map((f) => ({ uid: uidKurz(f.uid) })),
     fetchOk: result.fetchOk,
     durationMs: Date.now() - started,
+    /*
+     * Felder, die es NUR in Sonderfällen gibt, hier ausdrücklich auf null.
+     *
+     * `writeHealth` schreibt mit `{ merge: true }`, und Firestore merged Maps
+     * TIEF: Ein Schlüssel, den der neue Schreibvorgang nicht nennt, bleibt
+     * stehen. Ohne diese Zeilen überlebte ein `skipped: 'market_closed'` von
+     * heute früh den ganzen Handelstag, während daneben ein frischer
+     * Herzschlag lief — das Dashboard meldete „Markt geschlossen", obwohl der
+     * Takt in derselben Sekunde 30 Symbole verarbeitete (08.09.2026, 17:25
+     * MESZ = 11:25 ET, Markt seit zwei Stunden offen). Dasselbe gälte für
+     * einen alten `error`: Die Karte zeigte den Fehler für immer.
+     *
+     * `plain()` ist ein JSON-Roundtrip, also überlebt `null` — nur
+     * `undefined` fiele weg. Die Reihenfolge zählt: `...extra` überschreibt.
+     */
+    skipped: null,
+    nextOpen: null,
+    error: null,
     ...extra,
   });
 
@@ -461,7 +479,9 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
     }
     try {
       const uc = buildUserConfig(global, snap.get('settings'));
-      const sperre = zugang.sperre;
+      // Eine veraltete Symbolauswahl sperrt Einstiege wie jede andere offene
+      // Kette — Exits, Abgleich und Schutz-Stops laufen weiter.
+      const sperre = zugang.sperre ?? uc.auswahlVeraltet ?? null;
       // Verriegelt (Echtgeld-Kette offen): keine Einstiege, und Fremdbestand wird nie adoptiert — ein
       // Schutz-Stop auf eine Handposition wäre eine Order auf einem verriegelten Konto.
       const config: Config = sperre ? { ...uc.config, engine: { ...uc.config.engine, onOrphan: 'halt' } } : uc.config;

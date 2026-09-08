@@ -36,9 +36,17 @@ const tmp = () => {
   return d;
 };
 
-function input(home: string, over: Partial<OptimizeRunInput> & { seed?: number; symbols?: string[]; strategies?: string[]; samples?: number } = {}): OptimizeRunInput {
+function input(
+  home: string,
+  over: Partial<OptimizeRunInput> & { seed?: number; symbols?: string[]; strategies?: string[]; samples?: number; benchmarkSymbol?: string } = {},
+): OptimizeRunInput {
   const symbols = over.symbols ?? ['AAA', 'BBB'];
-  const cfg = testConfig({ symbols, home, optimizer: { seed: over.seed ?? 7, ...(over.samples ? { samples: over.samples } : {}) } });
+  const cfg = testConfig({
+    symbols,
+    home,
+    optimizer: { seed: over.seed ?? 7, ...(over.samples ? { samples: over.samples } : {}) },
+    ...(over.benchmarkSymbol ? { benchmark: over.benchmarkSymbol } : {}),
+  });
   return {
     config: cfg,
     symbols,
@@ -126,11 +134,19 @@ describe('runOptimization (Ende-zu-Ende)', () => {
     expect(text).toContain('## BBB');
     expect(text).toContain('finalParams: `{"a":10');
     expect(text).toMatch(/\| noise \|[^\n]*✘/);
-    expect(text).toMatch(/\| edge \|[^\n]*✔ 9\/9/);
+    expect(text).toMatch(/\| edge \|[^\n]*✔ 10\/10/);
     expect(text).toContain('PSR (OOS): PSR ');
     expect(text).toContain('DSR (IS): DSR ');
     expect(text).toContain('(alle Folds)');
     expect(text).toContain('nur finale Suche');
+    // Maßstab unter dem Holdout. Ohne ihn liest ein Mensch Marktbewegung als
+    // Kante — die Zahl muss deshalb im Bericht ANKOMMEN, nicht nur berechnet
+    // werden. Sie entscheidet nichts und darf in keiner Gate-Tabelle stehen.
+    expect(text).toContain('Maßstab im selben Fenster');
+    expect(text).toContain('| Referenz | Rendite | MaxDD | Sharpe |');
+    expect(text).toMatch(/\| Kaufen und Halten \(\d+ Symbole?, gleichgewichtet\) \|/);
+    expect(out.runs[0]!.holdoutMarkt).not.toBeNull();
+    expect(out.runs[0]!.holdoutMarkt!.range).toEqual({ start: out.runs[0]!.results[0]!.wfa.holdout!.start, end: out.runs[0]!.results[0]!.wfa.holdout!.end });
   });
 
   it('Folgelauf am selben Tag: kein sauberes OOS nach fitEnd ⇒ Beförderungs-Score gilt, Kandidat schlägt die Marge nicht ⇒ keep', () => {
@@ -152,6 +168,31 @@ describe('runOptimization (Ende-zu-Ende)', () => {
     const text = readFileSync(second.reportPath, 'utf8');
     expect(text).toContain('Sauberes OOS nach Fit-Ende: 0 von 8 Folds');
     expect(text).toContain('Fit-Ende ');
+  });
+
+  it('die Markt-Latte des Amtsinhabers kommt aus SEINEN sauberen Folds, nicht aus allen', () => {
+    // Der Amtsinhaber wird nur auf Folds nach seinem Fit-Ende nachgerechnet.
+    // Nimmt die Latte trotzdem ALLE Folds, vergleicht man eine Strategie auf
+    // Fenster X mit einem Markt auf Fenster Y — ein Vergleich, der zufällig
+    // mal zu streng und mal zu lasch ist und in keinem Bericht auffiele.
+    const home = tmp();
+    const paths = homePaths(home);
+    const alle = foldPlanForBars(bars, testConfig().optimizer).folds;
+    // Fit-Ende mitten in der Kette: ein Teil der Folds ist sauber, der Rest nicht.
+    const schnitt = alle[Math.floor(alle.length / 2)]!.oosStart;
+    saveChampion(paths.champion, {
+      ...emptyChampionFile(1),
+      symbols: { AAA: staleEntry('dead', { a: 3, b: 1 }, { fitEnd: schnitt }) },
+    });
+    const out = runOptimization(
+      input(home, { symbols: ['AAA'], strategies: ['dead'], benchmarkSymbol: 'BENCH', benchmark: bars }),
+    );
+    const ev = out.runs[0]!.incumbentEval!;
+    expect(ev.cleanFolds).toBeGreaterThan(0);
+    expect(ev.cleanFolds).toBeLessThan(ev.totalFolds); // sonst prüft der Test nichts
+    const g = ev.gates.find((x) => x.name === 'beats_market')!;
+    expect(g.note).toContain(`über ${ev.cleanFolds} OOS-Fenster`);
+    expect(g.note).not.toContain(`über ${ev.totalFolds} OOS-Fenster`);
   });
 
   it('Incumbent-Params fließen NICHT mehr in die Kandidatensuche ein (Leck: gefittet auf Kandidaten-OOS)', () => {
@@ -196,7 +237,7 @@ describe('runOptimization (Ende-zu-Ende)', () => {
     expect(ev.totalFolds).toBe(8);
     expect(ev.cleanDays).toBe(240);
     expect(ev.pass).toBe(false);
-    expect(ev.gates.length).toBe(9);
+    expect(ev.gates.length).toBe(10);
     expect(ev.gates.find((g) => g.name === 'deflated_sharpe_is')!.note).toMatch(/nicht anwendbar/);
     expect(r.incumbentRescore).toBe(ev.score);
     expect(r.incumbentRescore!).toBeLessThanOrEqual(0);

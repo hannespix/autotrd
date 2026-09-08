@@ -113,5 +113,8 @@ notify:
 status:
   httpPort: 0
 
+# Eigener State-Ordner. Der Probe-Workflow setzt zwar `--home var-probe`,
+# aber wer die Datei von Hand fährt, hätte sonst `var/champion.json` des
+# Produktivlaufs überschrieben — den Champion, den die Plattform handelt.
 paths:
-  home: ./var
+  home: ./var-probe

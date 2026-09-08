@@ -6,13 +6,20 @@
  * `engine.barGraceSec` bleibt draußen: Der Takt zur vollen Minute braucht
  * eine größere Karenz als der Streaming-Prozess (Functions-Default 20 s,
  * Untergrenze im Takt-Leser `functions/src/engine/config.ts`).
+ *
+ * `universe.candidates`/`maxSymbols` bleiben ebenfalls draußen: Der Pool ist
+ * Sache der nächtlichen Auswahl, nicht der Engine. Er würde das Dokument
+ * aufblähen, das jeder Nutzer jede Minute liest, ohne dort je gebraucht zu
+ * werden — die Engine handelt, was in `symbols` steht.
  */
 export function engineConfigDocFrom(cfg, source = 'config/platform.yaml') {
   const { barGraceSec: _barGraceSec, ...engine } = cfg.engine;
+  const universe = { assetClass: cfg.universe.assetClass, symbols: cfg.universe.symbols };
+  if (cfg.universe.benchmark !== undefined) universe.benchmark = cfg.universe.benchmark;
   return {
     version: 1,
     broker: { mode: 'paper', feed: cfg.broker.feed },
-    universe: cfg.universe,
+    universe,
     timeframe: cfg.timeframe,
     session: cfg.session,
     costs: cfg.costs,

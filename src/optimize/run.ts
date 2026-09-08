@@ -14,6 +14,7 @@
  * mehr in die Kandidatensuche ein: Sie wurden auf Daten gefittet, die in den
  * OOS-Fenstern der Kandidaten liegen (Red-Team-Befund).
  */
+import { kaufenUndHalten, marktKette, type MarktBezug } from '../backtest/marktbezug.ts';
 import type { Config } from '../core/config.ts';
 import { Journal, homePaths } from '../core/journal.ts';
 import { errMsg } from '../core/log.ts';
@@ -56,6 +57,7 @@ import {
   walkForward,
   zeitachseVon,
   type BarsInput,
+  type Fold,
   type SimConfig,
   type SimulateFn,
   type TimeRange,
@@ -115,6 +117,8 @@ export interface OptimizeRunInput {
   /** Streuungsquelle des Deflated Sharpe; Vorgabe 'trial_sharpes' (siehe robustness.ts). */
   dsrVarSource?: DsrVarSource | undefined;
   now?: (() => Ms) | undefined;
+  /** Stichtag der Messung (YYYY-MM-DD) — nur für den Berichtskopf. */
+  asOf?: string | undefined;
   log?: ((msg: string) => void) | undefined;
 }
 
@@ -160,7 +164,22 @@ export interface SymbolRun {
   incumbent: ChampionEntry | null;
   incumbentRescore: number | null;
   incumbentEval: IncumbentEval | null;
+  /**
+   * Was Kaufen-und-Halten im Holdout-Fenster gebracht hätte. Ohne diese Zahl
+   * liest man Marktbewegung als Kante (siehe backtest/marktbezug.ts).
+   * null, wenn es keinen Holdout gibt oder das Fenster zu kurz ist.
+   */
+  holdoutMarkt: HoldoutMarkt | null;
   errors: string[];
+}
+
+export interface HoldoutMarkt {
+  range: TimeRange;
+  /** Der gehandelte Korb, gleichgewichtet. */
+  korb: MarktBezug | null;
+  /** Die konfigurierte Benchmark (z. B. SPY), falls vorhanden. */
+  benchmarkSymbol: string | null;
+  benchmark: MarktBezug | null;
 }
 
 export interface OptimizeRunOutput {
@@ -304,6 +323,27 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
     const results: StrategyRun[] = [];
 
     const bars = einheit.bars;
+    // Latte für das Gate `beats_market`: derselbe Maßstab über DIESELBEN
+    // OOS-Fenster, auf denen auch die Strategie bewertet wird. Der Amtsinhaber
+    // wird nur auf sauberen Folds nachgerechnet und braucht deshalb seine
+    // eigene Latte — sonst verglichen wir eine Strategie auf Fenster X mit
+    // einem Markt auf Fenster Y.
+    //
+    // Bewusst die BENCHMARK (SPY), nicht der Korb: Der Korb ist die heutige
+    // Auswahl, rückwirkend angewandt — seine Rendite enthält Survivorship und
+    // wäre eine unfair hohe Latte. Die Benchmark war damals kaufbar.
+    const marktLatteFuer = (folds: readonly Fold[]): { sharpe: number | null; quelle: string } | undefined => {
+      const bench = input.benchmark;
+      const benchSymbol = cfg.universe.benchmark;
+      if (!bench || !benchSymbol || folds.length === 0) return undefined;
+      const k = marktKette({
+        bars: new Map([[benchSymbol, bench]]),
+        ranges: folds.map((f) => ({ start: f.oosStart, end: f.oosEnd })),
+        assetClass: cfg.universe.assetClass,
+        periodsPerYear,
+      });
+      return k ? { sharpe: k.sharpe, quelle: `${benchSymbol} kaufen und halten über ${k.fenster} OOS-Fenster` } : undefined;
+    };
     const common = bars
       ? {
           symbol,
@@ -322,6 +362,15 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       const last = achse.t[achse.length - 1]! + 1;
       dataRange = dataRange ? { start: Math.min(dataRange.start, first), end: Math.max(dataRange.end, last) } : { start: first, end: last };
 
+      // Latte für das Gate `beats_market`: derselbe Maßstab über DIESELBEN
+      // OOS-Fenster wie die Strategien. Der Fold-Plan hängt nur an der
+      // Zeitachse, ist also für alle Strategien dieser Einheit derselbe —
+      // einmal rechnen genügt.
+      //
+      // Bewusst die BENCHMARK (SPY), nicht der Korb: Der Korb ist die heutige
+      // Auswahl, rückwirkend angewandt — seine Rendite enthält Survivorship
+      // und wäre eine unfair hohe Latte. Die Benchmark war damals kaufbar.
+
       for (const strategy of usable) {
         try {
           // Kein `include` des Amtsinhabers: seine Params stammen aus einem Fit-Fenster,
@@ -331,7 +380,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
           const neighborhood = neighborhoodTest({ ...common, strategy, wfa, optimizer });
           const dsr = deflatedSharpeIs({ wfa, metricsFns: deps.metricsFns, varSrSource: input.dsrVarSource });
           const psr = probabilisticSharpeOos({ wfa, metricsFns: deps.metricsFns });
-          const g = robustnessGates({ wfa, optimizer, stressOos: stress, neighborhood, dsr, psr, metricsFns: deps.metricsFns, periodsPerYear });
+          const g = robustnessGates({ wfa, optimizer, stressOos: stress, neighborhood, dsr, psr, metricsFns: deps.metricsFns, periodsPerYear, ...(((m) => (m ? { markt: m } : {}))(marktLatteFuer(wfa.folds.map((f) => f.fold)))) });
           results.push({ strategyId: strategy.id, wfa, gates: g.gates, pass: g.pass, score: wfa.oos.objectiveMedian, stress, neighborhood, dsr, psr });
           log(`${symbol} ${strategy.id}: Gates ${g.pass ? 'bestanden' : 'NICHT bestanden'} (${g.gates.filter((x) => !x.pass).map((x) => x.name).join(', ') || '–'})`);
         } catch (e) {
@@ -388,6 +437,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
               metricsFns: deps.metricsFns,
               periodsPerYear,
               incumbent: { cleanFolds: clean.length, totalFolds: plan.folds.length },
+              ...(((m) => (m ? { markt: m } : {}))(marktLatteFuer(clean))),
             });
             incumbentRescore = wfa.oos.objectiveMedian;
             incumbentPass = g.pass;
@@ -424,6 +474,25 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       fitEnd: r.wfa.finalWindow.end,
     });
 
+    // Marktbezug des Holdouts: EINMAL je Einheit, denn das Fenster hängt nur
+    // an den Daten, nicht an der Strategie. Er entscheidet nichts — er ist
+    // der Maßstab, an dem ein Leser erkennt, ob eine Holdout-Rendite Kante
+    // war oder nur Markt.
+    let holdoutMarkt: HoldoutMarkt | null = null;
+    const holdoutRange = results.find((r) => r.wfa.holdout !== null)?.wfa.holdout ?? null;
+    if (holdoutRange && bars) {
+      const range = { start: holdoutRange.start, end: holdoutRange.end };
+      const gemeinsam = { range, assetClass: cfg.universe.assetClass, periodsPerYear };
+      const bench = input.benchmark;
+      const benchSymbol = cfg.universe.benchmark ?? null;
+      holdoutMarkt = {
+        range,
+        korb: kaufenUndHalten({ ...gemeinsam, bars: korbVon(symbol, bars) }),
+        benchmarkSymbol: bench && benchSymbol ? benchSymbol : null,
+        benchmark: bench && benchSymbol ? kaufenUndHalten({ ...gemeinsam, bars: new Map([[benchSymbol, bench]]) }) : null,
+      };
+    }
+
     let decision: PromotionDecision;
     let candidate: ChampionEntry | null = null;
     if (!bars || (results.length === 0 && errors.length > 0)) {
@@ -452,7 +521,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
     const chosen = decision.action === 'promote' ? champion.symbols[ersteszSymbol]! : decision.action === 'keep' ? incumbent : null;
     journalDecision(journal, { symbol, decision, chosen, candidate, candidatePass: bestPassed !== null, incumbentRescore, incumbentPass, now: runAt });
     log(`${symbol}: ${decision.action} — ${decision.reason}`);
-    runs.push({ symbol, results, decision, chosen, incumbent, incumbentRescore, incumbentEval, errors });
+    runs.push({ symbol, results, decision, chosen, incumbent, incumbentRescore, incumbentEval, holdoutMarkt, errors });
   }
 
   saveChampion(paths.champion, champion);
@@ -464,7 +533,9 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
     dataRange,
     costs: cfg.costs,
     optimizer,
+    risk: cfg.risk,
     initialEquity: input.initialEquity,
+    ...(input.asOf === undefined ? {} : { asOf: input.asOf }),
   });
   const reportPath = writeReport(paths.reports, `optimize-${dayKey(generatedAt)}.md`, text);
   log(`Bericht: ${reportPath}`);

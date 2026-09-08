@@ -12,11 +12,12 @@ import { aggregate, BarSeries } from './core/bars.ts';
 import { homeDir, loadConfigFile, loadEnv, resolveMode, type Config, type Env } from './core/config.ts';
 import { ensureDir, homePaths, Journal, StateStore, type HomePaths } from './core/journal.ts';
 import { logger, registerSecret, setLogLevel } from './core/log.ts';
-import { dayKeyFor, sessionBounds, type Calendar } from './core/time.ts';
-import type { Bar, BarSeriesLike, Params, Strategy, TimeframeMin } from './core/types.ts';
+import { dayKeyFor, msFromET, parseDay, sessionBounds, type Calendar } from './core/time.ts';
+import type { Bar, BarSeriesLike, Ms, Params, Strategy, TimeframeMin } from './core/types.ts';
 import { loadCalendarFile } from './data/calendar.ts';
 import { BarStore, barStoreRoot } from './data/store.ts';
 import { loadChampion, type ChampionFile } from './optimize/promote.ts';
+import { ladeUniverseDatei, mitUniverse } from './universe/file.ts';
 import { getStrategy } from './strategy/index.ts';
 import { mergeParams } from './strategy/params.ts';
 
@@ -25,6 +26,17 @@ export interface AppOptions {
   env: string;
   home?: string | undefined;
   verbose?: boolean | undefined;
+  /**
+   * Pfad zur Auswahl aus `autotrd universe`. Gesetzt ⇒ sie ersetzt
+   * `universe.symbols`; fehlt die Datei, gilt die Config (erster Lauf).
+   * `'auto'` nimmt `<home>/universe.json`.
+   */
+  universeFile?: string | undefined;
+  /**
+   * Stichtag (YYYY-MM-DD) für eine MESSUNG: Der Lauf tut so, als wäre dieser
+   * Tag heute — alles danach ist unsichtbar. Siehe `App.asOf`.
+   */
+  asOf?: string | undefined;
 }
 
 export interface App {
@@ -41,6 +53,30 @@ export interface App {
   /** Nur mit Keys; sonst null (Backtest/Optimierung brauchen keinen Broker). */
   client: AlpacaClient | null;
   champion: ChampionFile | null;
+  /**
+   * Stichtag einer Messung, als Ende des genannten ET-Tags. Gesetzt ⇒ jede
+   * Bar-Serie endet dort (`seriesForTimeframe`), und die Universumswahl rechnet
+   * mit diesem Zeitpunkt statt mit `Date.now()`.
+   *
+   * Warum das eine EINZELNE Stelle ist: Der ganze Lauf hängt an den Bars —
+   * Walk-Forward-Fenster, Holdout und Datenbereich leiten sich aus der ersten
+   * und letzten Bar ab (`optimize/run.ts`). Wer hier kürzt, kürzt alles, und
+   * es kann keine Stelle geben, die den Schnitt vergisst.
+   *
+   * Wozu: Ein einziges Holdout-Fenster kann nicht zwischen Kante und
+   * Marktregime unterscheiden (docs/ARCHITEKTUR.md §5a). Mit mehreren
+   * Stichtagen entstehen mehrere vollständig getrennte
+   * (Auswahl → Holdout)-Paare aus verschiedenen Marktphasen — mit derselben
+   * Maschinerie und ohne Leckage. Nebenbei behebt es den Survivorship-Befund:
+   * Auch die Universumswahl sieht dann nur Daten bis zum Stichtag.
+   */
+  asOf?: Ms | undefined;
+}
+
+/** Stichtag als Ende des ET-Tags: Bars, die an diesem Tag geschlossen haben, zählen noch dazu. */
+export function asOfMs(day: string): Ms {
+  const { y, m, d } = parseDay(day);
+  return msFromET(y, m, d, 23, 59, 59);
 }
 
 export function bootstrap(opts: AppOptions): App {
@@ -49,11 +85,24 @@ export function bootstrap(opts: AppOptions): App {
   registerSecret(env.ALPACA_API_KEY);
   registerSecret(env.ALPACA_SECRET_KEY);
   registerSecret(env.TELEGRAM_BOT_TOKEN);
-  const config = loadConfigFile(opts.config);
-  const { mode, reasons } = resolveMode(config, env);
-  const home = opts.home ? resolve(opts.home) : homeDir(config, env);
+  const roh = loadConfigFile(opts.config);
+  const { mode, reasons } = resolveMode(roh, env);
+  const home = opts.home ? resolve(opts.home) : homeDir(roh, env);
   ensureDir(home);
   const paths = homePaths(home);
+  // Nächtliche Auswahl anwenden, falls verlangt. Fehlt sie, bleibt es beim
+  // committeten Universum — nie stillschweigend etwas anderes handeln.
+  let config = roh;
+  if (opts.universeFile) {
+    const pfad = opts.universeFile === 'auto' ? paths.universe : resolve(opts.universeFile);
+    const gewaehlt = ladeUniverseDatei(pfad, roh);
+    if (gewaehlt) {
+      config = mitUniverse(roh, gewaehlt);
+      logger.info(`Universum aus der Auswahl: ${gewaehlt.length} Symbole (${pfad})`);
+    } else {
+      logger.warn(`Keine Universums-Auswahl unter ${pfad} — es gilt das Universum aus der Config (${roh.universe.symbols.length} Symbole).`);
+    }
+  }
   const client =
     env.ALPACA_API_KEY && env.ALPACA_SECRET_KEY
       ? createAlpacaClient({
@@ -65,8 +114,11 @@ export function bootstrap(opts: AppOptions): App {
         })
       : null;
   const calendar = loadCalendarFile(paths.calendar) ?? undefined;
+  const asOf = opts.asOf === undefined ? undefined : asOfMs(opts.asOf);
+  if (asOf !== undefined) logger.warn(`Stichtag ${opts.asOf}: Der Lauf sieht keine Daten danach (Messung).`);
   return {
     config,
+    ...(asOf === undefined ? {} : { asOf }),
     env,
     mode,
     modeReasons: reasons,
@@ -104,6 +156,10 @@ export function baseTimeframe(tf: TimeframeMin): '1Min' | '1Day' {
 export function seriesForTimeframe(app: App, symbol: string, closedBefore?: number): BarSeries {
   const tf = app.config.timeframe;
   const assetClass = app.config.universe.assetClass;
+  // Der Stichtag ist die Standardgrenze; ein ausdrückliches `closedBefore`
+  // (Engine-Tick) hat Vorrang. Beide zusammen kommen nicht vor — `--as-of`
+  // wird für `run` abgelehnt.
+  const grenze = closedBefore ?? app.asOf;
   const raw = app.store.load(symbol, baseTimeframe(tf));
   if (tf === 1440) {
     const out: Bar[] = [];
@@ -111,14 +167,14 @@ export function seriesForTimeframe(app: App, symbol: string, closedBefore?: numb
       const day = dayKeyFor(b.t, assetClass);
       const bounds = sessionBounds(day, assetClass, app.calendar);
       if (!bounds) continue;
-      if (closedBefore !== undefined && bounds.close > closedBefore) continue;
+      if (grenze !== undefined && bounds.close > grenze) continue;
       const last = out[out.length - 1];
       if (last && last.t === bounds.open) out[out.length - 1] = { ...b, t: bounds.open };
       else out.push({ ...b, t: bounds.open });
     }
     return BarSeries.from(out);
   }
-  const agg = aggregate(raw, { tf, assetClass, calendar: app.calendar, closedBefore });
+  const agg = aggregate(raw, { tf, assetClass, calendar: app.calendar, closedBefore: grenze });
   return BarSeries.from(agg);
 }
 

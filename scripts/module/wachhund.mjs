@@ -18,8 +18,11 @@ export const CHAMPION_FEHLER_TAGE = 7;
  *   jetztMs: number,
  *   health: {lastRunAt?: string} | null,
  *   champion: {updatedAt?: number, symbols?: Record<string, unknown>, noTrade?: Record<string, unknown>} | null,
- *   engineConfig: {universe?: {symbols?: string[]}, timeframe?: number} | null,
+ *   engineConfig: {universe?: {symbols?: string[], benchmark?: string}, timeframe?: number} | null,
  *   repoSymbols: string[],
+ *   repoPool: string[],
+ *   repoBenchmark?: string,
+ *   repoMaxSymbols: number,
  *   repoTimeframe: number,
  *   nutzer: {uid: string, engineAn: boolean, live: boolean}[],
  *   herzschlagUrteil: {ok: boolean, text?: string},
@@ -47,23 +50,40 @@ export function beurteile(e) {
     if (gehandelt === 0) sage('warnung', 'Kein Symbol besteht die Gates — es wird nichts gehandelt. Das ist ein zulässiges Ergebnis, kein Fehler.');
   }
 
-  // ── Config-Drift: handelt die Engine, was der Optimierer gemessen hat?
-  const gemessen = [...e.repoSymbols].sort();
+  // ── Universum: Das Universum wechselt nächtlich (Auswahl nach Liquidität),
+  // deshalb ist Gleichheit mit der Config KEIN Kriterium mehr. Geprüft wird,
+  // dass die Engine nur Symbole handelt, die im Repo als Kandidaten stehen —
+  // der Pool ändert sich weiterhin nur per Commit. Alles andere wäre eine
+  // Hintertür, über die eine kaputte oder untergeschobene Auswahl die
+  // Plattform auf beliebige Werte umstellt.
+  const pool = new Set(e.repoPool && e.repoPool.length > 0 ? e.repoPool : e.repoSymbols);
   const gehandeltSyms = [...(e.engineConfig?.universe?.symbols ?? [])].sort();
+  const fremd = gehandeltSyms.filter((s) => !pool.has(s));
   if (gehandeltSyms.length === 0) {
     sage('fehler', 'meta/engineConfig hat kein Universum.');
-  } else if (JSON.stringify(gemessen) !== JSON.stringify(gehandeltSyms)) {
-    const nurEngine = gehandeltSyms.filter((s) => !gemessen.includes(s));
-    const nurRepo = gemessen.filter((s) => !gehandeltSyms.includes(s));
-    sage(
-      'fehler',
-      'Universum weicht ab — die Engine handelt etwas anderes, als der Optimierer gemessen hat. ' +
-        `Nur in der Engine: ${nurEngine.join(', ') || '—'}; nur im Repo: ${nurRepo.join(', ') || '—'}.`,
-    );
+  } else if (fremd.length > 0) {
+    sage('fehler', `Die Engine handelt Symbole außerhalb des Kandidatenpools: ${fremd.join(', ')}. Der Pool ändert sich nur per Commit.`);
+  } else if (gehandeltSyms.length > (e.repoMaxSymbols ?? 30)) {
+    sage('fehler', `Die Engine handelt ${gehandeltSyms.length} Symbole, erlaubt sind ${e.repoMaxSymbols ?? 30}.`);
+  } else if (e.repoBenchmark && !gehandeltSyms.includes(e.repoBenchmark)) {
+    sage('fehler', `Benchmark ${e.repoBenchmark} fehlt im gehandelten Universum — ohne ihn greift kein Marktfilter.`);
   } else if (e.engineConfig?.timeframe !== e.repoTimeframe) {
     sage('fehler', `Zeitrahmen weicht ab: Engine ${String(e.engineConfig?.timeframe)}, Repo ${e.repoTimeframe}.`);
   } else {
-    sage('ok', `Universum deckungsgleich (${gemessen.length} Symbole, ${e.repoTimeframe} min).`);
+    sage('ok', `Universum im Rahmen: ${gehandeltSyms.length} von ${pool.size} Kandidaten, ${e.repoTimeframe} min.`);
+  }
+
+  // ── Deckung: Hat der Champion zu jedem gehandelten Symbol ein Urteil?
+  // Sonst hat die Auswahl ein Symbol nachgeschoben, das der Optimierer nie
+  // gesehen hat — es würde nicht gehandelt, aber die Reihenfolge im
+  // nächtlichen Lauf wäre kaputt.
+  if (e.champion && gehandeltSyms.length > 0) {
+    const beurteilt = new Set([...Object.keys(e.champion.symbols ?? {}), ...Object.keys(e.champion.noTrade ?? {})]);
+    const ohne = gehandeltSyms.filter((s) => !beurteilt.has(s));
+    // Fehler, nicht Warnung: Das ist die einzige verbliebene Brücke zwischen
+    // „gemessen" und „gehandelt", seit das Universum nächtlich wechselt. Klafft
+    // sie, lief der nächtliche Lauf halb durch — und niemand sieht es sonst.
+    if (ohne.length > 0) sage('fehler', `Gehandeltes Symbol ohne Champion-Urteil — Optimierer und Universum passen nicht zusammen: ${ohne.join(', ')}.`);
   }
 
   // ── Nutzer

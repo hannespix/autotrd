@@ -33,6 +33,12 @@ thematisch). Bezeichner im Code Englisch, Kommentare Deutsch.
    Strategie-Funktion bekommt einen Präfix-Konsistenz-Test
    (`precompute(bars.prefix(i+1))[i] === precompute(bars)[i]`). Der Simulator
    reicht Strategien nur `bars.prefix(i+1)` — das bleibt so.
+   **Querschnittlich gilt dasselbe eine Ebene höher:** Eine Rangliste über den
+   Korb (`Strategy.crossScore`) darf nur aus geschlossenen Bars DESSELBEN
+   Zeitpunkts entstehen, und sie wird ausschließlich in `decide()` gebaut —
+   nie in der Strategie und nie im Aufrufer. Eine Rangliste ist die
+   verführerischste Lookahead-Stelle im Repo, weil jede einzelne Zeitreihe
+   dabei kausal aussieht; Wächter dafür stehen in `test/core/korb.test.ts`.
 3. **Echtgeld-Doppel-Guard.** Live nur, wenn `broker.mode: live` UND
    `ALPACA_ALLOW_LIVE=1` UND ein Live-Key (`AK…`). Fehlt eins ⇒ Paper. Ein
    Live-Key gegen Paper wird abgelehnt (`resolveMode`). Nie lockern.
@@ -61,7 +67,7 @@ thematisch). Bezeichner im Code Englisch, Kommentare Deutsch.
 | Programm | dieses Repo, `node src/cli.ts …` (Node ≥ 22.18, Type-Stripping) oder `dist/` nach `npm run build` |
 | Config | `config/config.yaml` (Vorlage: `config/config.example.yaml`), Schema in `src/core/config.ts` |
 | Secrets | `.env` (Vorlage `.env.example`) — nie committen |
-| State | `AUTOTRD_HOME` bzw. `paths.home` (Default `./var`): `state.json`, `journal.jsonl`, `champion.json`, `bars/`, `calendar.json`, `reports/`, Not-Aus-Datei `HALT` |
+| State | `AUTOTRD_HOME` bzw. `paths.home` (Default `./var`): `state.json`, `journal.jsonl`, `champion.json`, `universe.json`, `bars/`, `calendar.json`, `reports/`, Not-Aus-Datei `HALT` |
 
 Ein Prozess, ein Journal (append-only), ein State-Snapshot (atomar
 geschrieben).
@@ -112,13 +118,14 @@ Broker, ein Takt je Minute genügt für den 5-Minuten-Zeitrahmen.
 | `risk/` | Sizing, Tages-/Drawdown-Halt, PDT. |
 | `alpaca/` | Vertrag (`types.ts`), REST-Client (`rest.ts`), Streams (`stream.ts`), Symbol-Mapping. |
 | `data/` | Bars-Cache auf Platte, inkrementeller Backfill, Kalender. |
-| `strategy/` | Indikatoren (kausal) und Vorlagen: `trend_donchian`, `momentum_pullback`, `mean_reversion`, `orb_breakout`. |
-| `backtest/` | Portfolio-Simulator (Fills am nächsten Open, Stop vor Ziel), Kosten, Metriken (Sharpe/Sortino/PSR/DSR). |
-| `optimize/` | Walk-Forward, Robustheits-Gates, Champion/Challenger, Report. |
+| `strategy/` | Indikatoren (kausal) und Vorlagen. Symbolweise: `trend_donchian`, `momentum_pullback`, `mean_reversion`, `orb_breakout`. Querschnittlich (fragt den KORB, nicht das Symbol): `cross_sectional_momentum` — die Rangliste baut `decide()`, nie die Strategie selbst. |
+| `backtest/` | Portfolio-Simulator (Fills am nächsten Open, Stop vor Ziel), Kosten, Metriken (Sharpe/Sortino/PSR/DSR), Marktbezug (`marktbezug.ts`: kaufen und halten als Maßstab unter jedem Holdout — kein Gate, aber ohne ihn liest man Markt als Kante). |
+| `universe/` | Nächtliche Wahl des Handelsuniversums — nach **Handelbarkeit**, nie nach dem Ergebnis der Strategie (Grenzen der Kennzahl im Modulkopf). |
+| `optimize/` | Walk-Forward, Robustheits-Gates (darunter `beats_market`: schlägt die OOS-Kette den Sharpe von kaufen-und-halten? Gegen die Benchmark, nicht den Korb; ohne Benchmark gilt die Kasse — das Gate wird nie vakant), Champion/Challenger, Report. |
 | `engine/` | Buch, Order-Ausführung, Abgleich, Uhr, Schleife. |
 | `notify/`, `status/` | Telegram, Status-HTTP (nur 127.0.0.1). |
 | `readiness.ts` | Live-Reife aus dem Journal (≥ 200 Trades, ≥ 30 Tage, PF ≥ 1,2, feeShare ≤ 0,5, netto > 0). |
-| `cli.ts` | `doctor · fetch · backtest · optimize · run · status · flatten · halt · resume · readiness`. |
+| `cli.ts` | `doctor · universe · fetch · backtest · optimize · run · status · flatten · halt · resume · readiness`. |
 
 Plattform (`functions/src/`, `frontend/`, `shared/`):
 
@@ -155,6 +162,7 @@ Plattform (`functions/src/`, `frontend/`, `shared/`):
 ```bash
 npm run check                    # typecheck + lint + alle Tests
 node src/cli.ts doctor           # Keys, Modus, Konto, Uhr, Assets (braucht .env)
+node src/cli.ts universe         # Handelsuniversum nach Liquidität wählen
 node src/cli.ts fetch            # Bars + Kalender in den Cache
 node src/cli.ts backtest         # Champion/Default gegen den Cache
 node src/cli.ts optimize         # Walk-Forward ⇒ champion.json + Report

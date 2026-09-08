@@ -106,6 +106,25 @@ describe('Krypto-Probe-Workflow', () => {
     expect(optionen).not.toContain('config/platform.yaml');
   });
 
+  it('reicht den Short-Schalter nur an `optimize` durch, nie an etwas Handelndes', () => {
+    // `--allow-short` ist ein MESS-Schalter (src/cli.ts lehnt ihn für `run` ab).
+    // Hier wird zusätzlich festgehalten, dass der Workflow ihn nur dort setzt,
+    // wo gemessen wird — und dass er nicht versehentlich immer an ist.
+    const yml = wf();
+    const zeilen = yml.split('\n').filter((l) => l.includes('--allow-short') && !l.trimStart().startsWith('#'));
+    expect(zeilen.length, 'genau eine Stelle setzt den Schalter').toBe(1);
+    expect(zeilen[0]).toContain('SHORT="--allow-short"');
+    expect(yml, 'nur bei ausdrücklichem ja').toContain('if [ "$ALLOW_SHORT" = "ja" ]');
+    expect(yml, 'Default ist nein').toMatch(/allowShort:[\s\S]{0,200}default: 'nein'/);
+    const optimizeZeile = yml.split('\n').find((l) => l.includes('src/cli.ts optimize'))!;
+    expect(optimizeZeile).toContain('$SHORT');
+    for (const l of yml.split('\n')) {
+      if (l.includes('src/cli.ts run') || l.includes('src/cli.ts flatten')) {
+        expect(l, 'kein handelndes Kommando bekommt den Schalter').not.toContain('SHORT');
+      }
+    }
+  });
+
   it('bricht ab, falls doch jemand die Plattform-Config unterschiebt', () => {
     expect(wf()).toContain('config/platform.yaml)');
   });

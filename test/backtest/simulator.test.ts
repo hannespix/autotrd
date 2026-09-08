@@ -484,8 +484,11 @@ describe('PDT', () => {
 describe('Portfolio', () => {
   it('zwei Symbole, maxPositions=1 ⇒ zweiter Einstieg am selben Zeitpunkt blockiert; nie zwei offen', () => {
     const cfg1 = baseConfig({ risk: { maxPositions: 1 } });
-    // AAA will genau einmal (an Bar 1) einsteigen, BBB immer — beide wollen an Bar 1, nur eines darf.
-    const once = enterAt(1, { exitAt: 3 });
+    // Beide wollen ab Bar 1 immer einsteigen — nur eines darf. WELCHES, wird hier
+    // bewusst nicht geprüft: Die Reihenfolge rotiert mit der Bar-Zeit
+    // (`wettbewerbsOrdnung`), damit nicht dauerhaft dasselbe Symbol den letzten
+    // Platz bekommt. Geprüft wird die Invariante, um die es geht: nie zwei offen,
+    // und der Verlierer kommt erst dran, wenn der Gewinner draußen ist.
     const greedy = strategyOf({
       decide: (snap) => {
         if (snap.position) return snap.position.barsHeld >= 2 ? { kind: 'exit', reason: 'x' } : { kind: 'hold' };
@@ -494,18 +497,17 @@ describe('Portfolio', () => {
     });
     const res = simulate({
       bars: barsMap({ AAA: dayBars5(D1, flat(30, 100)), BBB: dayBars5(D1, flat(30, 50)) }),
-      strategyFor: (sym) => ({ strategy: sym === 'AAA' ? once : greedy, params: {} }),
+      strategyFor: () => ({ strategy: greedy, params: {} }),
       config: cfg1,
       initialEquity: 100_000,
     });
     expect(res.trades.length).toBeGreaterThanOrEqual(4);
-    expect(res.trades[0]!.symbol).toBe('AAA');
-    expect(res.trades.filter((t) => t.symbol === 'AAA')).toHaveLength(1);
-    // BBB kommt erst an dem Zeitpunkt zum Zug, an dem AAAs Exit gefüllt ist (Bar 4 ⇒ Fill Bar 5).
-    expect(res.trades[1]!.symbol).toBe('BBB');
-    expect(res.trades[1]!.entryTime).toBe(msFromET(2026, 9, 1, 9, 55));
-    expect(res.trades.some((t) => t.symbol === 'BBB')).toBe(true);
     const sorted = [...res.trades].sort(byTime);
+    // Genau ein Einstieg am frühesten Zeitpunkt — der andere wurde blockiert.
+    expect(sorted.filter((t) => t.entryTime === sorted[0]!.entryTime)).toHaveLength(1);
+    expect(sorted[0]!.entryTime).toBe(msFromET(2026, 9, 1, 9, 40));
+    // Beide kommen im Lauf des Tages dran, aber nacheinander.
+    expect(new Set(sorted.map((t) => t.symbol))).toEqual(new Set(['AAA', 'BBB']));
     for (let i = 1; i < sorted.length; i++) expect(sorted[i]!.entryTime).toBeGreaterThanOrEqual(sorted[i - 1]!.exitTime);
     expect(res.notes.some((n) => n.includes('Positionslimit'))).toBe(true);
   });
@@ -532,10 +534,12 @@ describe('Portfolio', () => {
       config: cfgX,
       initialEquity: 100_000,
     });
-    // AAA bekommt 20 % (200 Stück), BBB nur die restlichen 5 % (50 Stück).
+    // Wer zuerst drankommt, bekommt 20 % (200 Stück), der andere nur die restlichen
+    // 5 % (50 Stück). WER das ist, entscheidet `wettbewerbsOrdnung` aus der Bar-Zeit —
+    // geprüft wird das gemeinsame Budget, nicht die Reihenfolge.
     const open = res.notes.filter((n) => n.startsWith('Offen am Ende'));
-    expect(open.some((n) => n.includes('AAA long 200'))).toBe(true);
-    expect(open.some((n) => n.includes('BBB long 50'))).toBe(true);
+    const mengen = ['AAA', 'BBB'].map((sym) => open.find((n) => n.includes(`${sym} long`))?.match(new RegExp(`${sym} long (\\d+)`))?.[1]);
+    expect(mengen.filter(Boolean).sort(), `Notizen: ${open.join(' | ')}`).toEqual(['200', '50']);
   });
 });
 

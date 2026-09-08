@@ -209,7 +209,7 @@ describe('robustnessGates', () => {
   it('bestehen alle Gates, ist pass = true', () => {
     const r = robustnessGates(gateInput());
     expect(r.pass).toBe(true);
-    expect(r.gates.length).toBe(9);
+    expect(r.gates.length).toBe(10);
     expect(r.gates.map((g) => g.name)).toEqual([
       'oos_trades',
       'fold_positive_share',
@@ -220,8 +220,68 @@ describe('robustnessGates', () => {
       'probabilistic_sharpe_oos',
       'deflated_sharpe_is',
       'fee_share',
+      'beats_market',
     ]);
     for (const g of r.gates) expect(g.note.length).toBeGreaterThan(0);
+  });
+
+  /*
+   * beats_market — das Gate, das am 08.09.2026 gefehlt hat: momentum_pullback
+   * bestand alle neun anderen und verfehlte im folgenden Halbjahr den Korb um
+   * 21.8 Prozentpunkte (+1.9 % gegen +23.7 %). Keines der neun hatte gefragt,
+   * ob Nichtstun besser gewesen wäre.
+   */
+  describe('beats_market', () => {
+    /** OOS-Sharpe der Fixture, damit die Latte gezielt darüber/darunter liegt. */
+    const srDerFixture = (): number => {
+      const v = gate(robustnessGates(gateInput()), 'beats_market').value;
+      if (v === null) throw new Error('OOS-Sharpe der Fixture nicht berechenbar');
+      return v;
+    };
+
+    it('über der Latte ⇒ bestanden, Latte steht als Schwelle im Bericht', () => {
+      const latte = srDerFixture() - 0.5;
+      const g = gate(robustnessGates(gateInput({ markt: { sharpe: latte, quelle: 'SPY kaufen und halten über 5 OOS-Fenster' } })), 'beats_market');
+      expect(g.pass).toBe(true);
+      expect(g.threshold).toBeCloseTo(latte, 9);
+      expect(g.note).toContain('SPY kaufen und halten über 5 OOS-Fenster');
+    });
+
+    it('unter der Latte ⇒ durchgefallen, auch wenn alles andere stimmt', () => {
+      const r = robustnessGates(gateInput({ markt: { sharpe: srDerFixture() + 0.5, quelle: 'SPY kaufen und halten über 5 OOS-Fenster' } }));
+      expect(r.pass).toBe(false);
+      expect(failing(r)).toEqual(['beats_market']);
+      expect(gate(r, 'beats_market').note).toContain('kaufen und liegenlassen war besser');
+    });
+
+    it('genau auf der Latte reicht nicht — gleich gut ist nicht besser', () => {
+      const g = gate(robustnessGates(gateInput({ markt: { sharpe: srDerFixture(), quelle: 'SPY' } })), 'beats_market');
+      expect(g.pass).toBe(false);
+    });
+
+    it('ohne Maßstab gilt die Kasse (Latte 0) — das Gate wird nie vakant', () => {
+      // Sonst schaffte man es ab, indem man die Benchmark aus der Config nimmt.
+      const g = gate(robustnessGates(gateInput()), 'beats_market');
+      expect(g.threshold).toBe(0);
+      expect(g.note).toContain('kein Maßstab konfiguriert — Latte 0 (Kasse)');
+      expect(g.pass).toBe(true); // die Fixture hat positiven OOS-Sharpe
+    });
+
+    it('nicht berechenbarer Maßstab fällt auf die Kasse zurück — bleibt aber unterscheidbar vom Fall ohne Benchmark', () => {
+      const g = gate(robustnessGates(gateInput({ markt: { sharpe: null, quelle: 'SPY über 8 OOS-Fenster' } })), 'beats_market');
+      expect(g.threshold).toBe(0);
+      expect(g.pass).toBe(true);
+      // Ein Datenproblem darf im Bericht nicht wie eine Konfigurationsentscheidung aussehen.
+      expect(g.note).toContain('SPY über 8 OOS-Fenster, Sharpe nicht berechenbar');
+      expect(g.note).not.toContain('kein Maßstab konfiguriert');
+    });
+
+    it('nicht berechenbarer OOS-Sharpe gilt als durchgefallen, nie als bestanden', () => {
+      const stumpf = { ...fakeMetricsFns, sharpeRatio: () => null };
+      const g = gate(robustnessGates(gateInput({ metricsFns: stumpf })), 'beats_market');
+      expect(g.pass).toBe(false);
+      expect(g.note).toContain('gilt als durchgefallen');
+    });
   });
 
   it('(1) zu wenige OOS-Trades', () => {

@@ -230,6 +230,8 @@ export class Engine {
   private running = false;
   private startedAt: Ms | null = null;
   private lastTickAt: Ms | null = null;
+  /** Symbole, deren Glattstellung mangels Strategie schon im Journal steht — nicht je Takt neu melden. */
+  private readonly ohneFuehrungGemeldet = new Set<string>();
   private lastReconcileAt: Ms | null = null;
 
   constructor(deps: EngineDeps) {
@@ -576,6 +578,36 @@ export class Engine {
       }
 
       const exitsAllowed = this.exitsAllowed(now);
+
+      /*
+       * Regel 4, zu Ende gedacht: Was wir HALTEN, wird bewirtschaftet.
+       *
+       * `inputs` entsteht aus `universe.symbols` und braucht eine Strategie.
+       * Fällt beides weg — Symbol aus dem Universum gefallen (die nächtliche
+       * Auswahl kann das), Champion über Nacht auf `noTrade`, adoptierter
+       * Fremdbestand ohne Strategie —, bekam die offene Position bisher gar
+       * nichts mehr: keinen Signal-Exit, keinen Trailing-Nachzug, kein
+       * EOD-Flatten. Sie lag nur noch am Broker-Stop, zählte aber weiter gegen
+       * `maxPositions` und ins Exposure. Bei `holdsOvernight: false` wäre sie
+       * unbegrenzt über Nacht gehalten worden — die Intraday-Position, die
+       * niemand mehr schließt.
+       *
+       * Ohne Strategie gibt es keine gemessene Regel mehr, nach der die
+       * Position zu führen wäre. Sie weiterzuhalten hieße, etwas zu halten,
+       * das niemand mehr bewirtschaftet — genau der Fehler des
+       * Vorgängersystems. Also: schließen, beim nächsten möglichen Zeitpunkt.
+       * Der Exit geht durch denselben Pfad wie jeder andere (idempotente
+       * Kennung, Zurückstellung außerhalb der Sitzung).
+       */
+      const fuehrbar = new Set<string>();
+      for (const sym of this.cfg.universe.symbols) if (this.deps.strategyFor(sym)) fuehrbar.add(sym);
+      const ohneFuehrung: OrderIntent[] = [];
+      for (const sym of this.book.positions.keys()) {
+        if (fuehrbar.has(sym)) continue;
+        ohneFuehrung.push({ kind: 'exit', symbol: sym, reason: 'unmanaged', decidedAt: now });
+      }
+
+      const intents: OrderIntent[] = [];
       if (inputs.length > 0) {
         const today = this.clock.today(now);
         const ctx: LogicContext = {
@@ -613,8 +645,24 @@ export class Engine {
           // Feld heißt `note`, nicht `kind`: `kind` ist der Event-Typ des Journals und würde überschrieben.
           this.journal.append('decision', { symbol: n.symbol, note: n.kind, text: n.text, bar: newBars.get(n.symbol)?.t ?? null }, now);
         }
+        intents.push(...res.intents);
+      }
+
+      // Die Notbremse in `decide()` läuft über `ctx.positions` und kann dieselbe
+      // Position bereits glattstellen — dann nicht doppelt anfordern.
+      for (const it of ohneFuehrung) {
+        if (intents.some((x) => x.kind === 'exit' && x.symbol === it.symbol)) continue;
+        if (!this.ohneFuehrungGemeldet.has(it.symbol)) {
+          this.ohneFuehrungGemeldet.add(it.symbol);
+          this.journal.append('note', { symbol: it.symbol, text: 'Position ohne führende Strategie (nicht mehr im Universum oder Champion auf noTrade) — wird glattgestellt' }, now);
+          this.log.warn(`${it.symbol}: keine führende Strategie mehr — Position wird glattgestellt`);
+        }
+        intents.push(it);
+      }
+
+      if (intents.length > 0) {
         const dueNow: OrderIntent[] = [];
-        for (const it of res.intents) {
+        for (const it of intents) {
           this.journal.append('intent', { symbol: it.symbol, intent: it }, now);
           if (it.kind !== 'enter' && !exitsAllowed) {
             // Nach Schluss entschieden (letzte Tagesbar, Halt-Exit): Der Exit würde die Schutz-Stops stornieren und

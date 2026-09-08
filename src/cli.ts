@@ -3,6 +3,7 @@
  * autotrd — Kommandozeile des Auto-Traders.
  *
  *   doctor     Config, Keys, Modus, Konto, Uhr, Assets, Cache, Champion prüfen
+ *   universe   Handelsuniversum aus dem Kandidatenpool nach Liquidität wählen
  *   fetch      Kalender + Bars in den Cache laden (inkrementell)
  *   backtest   Champion/Default gegen den Cache simulieren
  *   optimize   Walk-Forward ⇒ champion.json + Report
@@ -23,7 +24,7 @@ import { ConfigError } from './core/config.ts';
 import { ensureDir, writeJsonAtomic } from './core/journal.ts';
 import { errMsg, logger } from './core/log.ts';
 import { DAY, addDays, dayKey, dayKeyFor, msFromET, parseDay, toET } from './core/time.ts';
-import type { Metrics, Params, Trade } from './core/types.ts';
+import type { Bar, Metrics, Params, Trade } from './core/types.ts';
 import { backfill } from './data/backfill.ts';
 import { ensureCalendar } from './data/calendar.ts';
 import { Engine } from './engine/engine.ts';
@@ -33,20 +34,31 @@ import { assessReadiness } from './readiness.ts';
 import { startStatusServer } from './status/http.ts';
 import { getStrategy, strategyIds } from './strategy/index.ts';
 import { mergeParams, validateParams } from './strategy/params.ts';
+import { ladeUniverseDatei, schreibeUniverseDatei } from './universe/file.ts';
+import { renderUniverseReport } from './universe/report.ts';
+import { UNIVERSE_REGELN, waehleUniverse, type UniverseRegeln } from './universe/select.ts';
 
 const USAGE = `autotrd <kommando> [optionen]
 
-Kommandos: doctor | fetch | backtest | optimize | run | status | flatten | halt | resume | readiness
+Kommandos: doctor | universe | fetch | backtest | optimize | run | status | flatten | halt | resume | readiness
 
 Gemeinsame Optionen:
   --config <pfad>    Config-Datei (Default: config/config.yaml)
   --env <pfad>       .env-Datei (Default: .env)
   --home <pfad>      State-Verzeichnis (Default: AUTOTRD_HOME bzw. paths.home)
   --verbose          Debug-Log
-  --json             Maschinenlesbare Ausgabe (status, readiness, backtest)
+  --json             Maschinenlesbare Ausgabe (status, readiness, backtest, universe)
+  --universe <pfad>  Auswahl des Kommandos universe anwenden ('auto' = <home>/universe.json)
 
 backtest:  --strategy <id> --params a=1,b=2 --days <n> --symbols A,B --from YYYY-MM-DD --to YYYY-MM-DD --stress <faktor> --equity <usd>
 optimize:  --equity <usd>            (Zeitraum: optimizer.lookbackDays aus der Config)
+--allow-short  NUR fuer backtest und optimize: misst mit erlaubten Shorts, egal was
+               risk.allowShort sagt. Das Kommando run lehnt die Option ab — was
+               gehandelt wird, entscheidet die Config, nie die Kommandozeile.
+--as-of <tag>  NUR fuer universe, backtest und optimize: der Lauf tut so, als waere
+               YYYY-MM-DD heute; alles danach ist unsichtbar. Fuer mehrere getrennte
+               Holdout-Fenster aus verschiedenen Marktphasen.
+universe:  --out <pfad>              (Default: <home>/universe.json)
 fetch:     --days <n>
 halt:      --reason <text>
 flatten:   --yes
@@ -80,6 +92,10 @@ function parseCli(argv: string[]): Cli {
       yes: { type: 'boolean' },
       'ack-drawdown': { type: 'boolean' },
       reason: { type: 'string' },
+      universe: { type: 'string' },
+      out: { type: 'string' },
+      'allow-short': { type: 'boolean' },
+      'as-of': { type: 'string' },
     },
   });
   return { cmd: positionals[0] ?? 'help', values: values as Record<string, string | boolean | undefined> };
@@ -147,12 +163,63 @@ function parseParams(s: string | undefined): Partial<Params> {
   return out;
 }
 
+/**
+ * `--allow-short` — ein MESS-Schalter, kein Handels-Schalter.
+ *
+ * Hintergrund (08.09.2026): `risk.allowShort: false` steht in der
+ * Plattform-Config und in jeder Erkundungs-Config, und `core/logic.ts` sperrt
+ * damit jeden Short-Einstieg. Der Strategie-Parameter `allowShort` war
+ * dadurch in ALLEN bisherigen Messungen wirkungslos — der Optimierer hat eine
+ * Dimension durchsucht, die nichts bewirkt. Um zu prüfen, ob Shorts die Kante
+ * ändern, muss man sie messen können, ohne die Produktions-Config zu ändern.
+ *
+ * Warum nur `backtest` und `optimize`: Was tatsächlich gehandelt wird, darf
+ * nie von einem Kommandozeilen-Schalter abhängen. `run` lehnt die Option
+ * deshalb ab, statt sie zu ignorieren — stillschweigend zu ignorieren wäre
+ * schlimmer, weil dann jemand glaubt, sie habe gewirkt.
+ */
+const SHORT_MESS_KOMMANDOS = new Set(['backtest', 'optimize']);
+/** `universe` gehört dazu: Zu einem Stichtag gehört auch das Universum VON DAMALS. */
+const ASOF_MESS_KOMMANDOS = new Set(['universe', 'backtest', 'optimize']);
+
+/** Mess-Schalter gelten nur, wo gemessen wird — sonst Abbruch statt stillem Ignorieren. */
+function nurMessen(cmd: string, erlaubt: ReadonlySet<string>, option: string): void {
+  if (erlaubt.has(cmd)) return;
+  throw new Error(
+    `${option} gilt nur für ${[...erlaubt].join(', ')}, nicht für \`${cmd}\`. ` +
+      'Was gehandelt wird, entscheidet die Config — nicht die Kommandozeile.',
+  );
+}
+
+export function applyAllowShort(app: App, cli: Cli): App {
+  if (cli.values['allow-short'] !== true) return app;
+  nurMessen(cli.cmd, SHORT_MESS_KOMMANDOS, '--allow-short');
+  if (app.config.risk.allowShort) return app;
+  logger.warn('--allow-short: Shorts für diese MESSUNG erlaubt (risk.allowShort in der Config bleibt unberührt).');
+  return { ...app, config: { ...app.config, risk: { ...app.config.risk, allowShort: true } } };
+}
+
+/** Stichtag prüfen und normalisieren; wirft für Kommandos, die handeln. */
+export function asOfFrom(cli: Cli): string | undefined {
+  const roh = str(cli.values['as-of']);
+  if (roh === undefined) return undefined;
+  nurMessen(cli.cmd, ASOF_MESS_KOMMANDOS, '--as-of');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(roh)) throw new Error(`--as-of erwartet YYYY-MM-DD, bekommen: ${roh}`);
+  if (Number.isNaN(Date.parse(`${roh}T12:00:00Z`))) throw new Error(`--as-of ist kein gültiges Datum: ${roh}`);
+  return roh;
+}
+
 function appFrom(cli: Cli): App {
+  // `universe` erzeugt die Auswahl gerade erst — es darf sie nicht schon anwenden.
+  const auswahl = cli.cmd === 'universe' ? undefined : str(cli.values.universe);
+  const asOf = asOfFrom(cli);
   return bootstrap({
     config: str(cli.values.config) ?? 'config/config.yaml',
     env: str(cli.values.env) ?? '.env',
     home: str(cli.values.home),
     verbose: cli.values.verbose === true,
+    universeFile: auswahl,
+    asOf,
   });
 }
 
@@ -243,6 +310,79 @@ async function cmdDoctor(app: App): Promise<number> {
   const r = assessReadiness(trades, Date.now());
   out(`Live-Reife: ${r.ready ? 'ERFÜLLT' : 'nicht erfüllt'} — ${r.summary}`);
   return hard > 0 ? 1 : 0;
+}
+
+/**
+ * Handelsuniversum wählen: Tagesbars für den Kandidatenpool laden, nach
+ * Median-Dollarumsatz ranken, die liquidesten `maxSymbols` behalten.
+ *
+ * Ausdrücklich NICHT nach Ertrag — siehe `src/universe/select.ts`. Das
+ * Ergebnis landet in `<home>/universe.json`; `fetch`, `optimize` und
+ * `scripts/sync-engine-config.mjs` wenden es mit `--universe` an.
+ */
+async function cmdUniverse(app: App, cli: Cli): Promise<number> {
+  const pool = app.config.universe.candidates;
+  if (!pool || pool.length === 0) {
+    out('Kein Kandidatenpool (`universe.candidates`) konfiguriert — das Universum aus der Config bleibt, wie es ist.');
+    return 0;
+  }
+  const client = requireClient(app);
+  const regeln: UniverseRegeln = { ...UNIVERSE_REGELN, max: app.config.universe.maxSymbols };
+  // Bei einer Stichtags-Messung wählt auch das Universum nur mit Daten bis dahin.
+  const now = app.asOf ?? Date.now();
+  // Tagesbars sind billig (ein Abruf je Block, kein Minutenraster), deshalb darf der
+  // Pool viel größer sein als das Universum. Fenster großzügig: 60 Handelstage
+  // brauchen rund 84 Kalendertage.
+  const from = now - (regeln.fensterTage * 2 + 10) * DAY;
+  const geladen = await backfill({ client, store: app.store, symbols: [...pool], tf: '1Day', from, to: now, feed: app.config.broker.feed, log: (m) => logger.debug(m) });
+  const kandidaten = new Map<string, Bar[]>();
+  for (const sym of pool) kandidaten.set(sym, geladen.get(sym) ?? app.store.load(sym, '1Day'));
+
+  // Bestand = was gerade gehandelt wird: die letzte Auswahl, sonst die Config.
+  // Eine unlesbare oder nicht mehr passende Altdatei darf den Lauf nicht töten —
+  // sie ist hier nur Hysterese-Gedächtnis, keine Handelsanweisung.
+  let vorher: string[] | null = null;
+  try {
+    vorher = ladeUniverseDatei(app.paths.universe, app.config);
+  } catch (e) {
+    logger.warn(`Vorige Auswahl unbrauchbar (${errMsg(e)}) — Bestand kommt aus der Config.`);
+  }
+  const bench = app.config.universe.benchmark;
+  const auswahl = waehleUniverse({
+    kandidaten,
+    pflicht: bench ? [bench] : [],
+    bestand: vorher ?? app.config.universe.symbols,
+    bestandIstAuswahl: vorher !== null,
+    regeln,
+    jetzt: now,
+  });
+
+  const ziel = str(cli.values.out) ?? app.paths.universe;
+  schreibeUniverseDatei(ziel, auswahl, regeln, bench, now);
+  // Dauerhafter Beleg, welcher Korb ab wann galt: `universe.json` und
+  // `meta/engineConfig` werden überschrieben, das Journal nie.
+  app.journal.append('universe', { symbols: auswahl.symbols, zugang: auswahl.zugang, abgang: auswahl.abgang, kandidaten: pool.length, regeln }, now);
+  const bericht = renderUniverseReport({ auswahl, regeln, benchmark: bench, kandidaten: pool.length, jetzt: now });
+  ensureDir(app.paths.reports);
+  const berichtPfad = join(app.paths.reports, `universe-${dayKey(now)}.md`);
+  writeFileSync(berichtPfad, bericht, 'utf8');
+
+  if (cli.values.json === true) {
+    out(JSON.stringify({ symbols: auswahl.symbols, zugang: auswahl.zugang, abgang: auswahl.abgang, datei: ziel, bericht: berichtPfad }, null, 2));
+    return 0;
+  }
+  const rows: string[][] = [['Rang', 'Symbol', 'Umsatz/Tag', 'Status', 'Grund']];
+  for (const b of auswahl.bewertung.slice(0, regeln.max + 10)) {
+    rows.push([String(b.rang ?? '—'), b.symbol, `${(b.dollarVolumen / 1e6).toFixed(1)} Mio.`, b.status, b.grund]);
+  }
+  table(rows);
+  out('');
+  out(`Gewählt: ${auswahl.symbols.length} von ${pool.length} Kandidaten`);
+  out(`Zugang:  ${auswahl.zugang.length ? auswahl.zugang.join(', ') : '—'}`);
+  out(`Abgang:  ${auswahl.abgang.length ? auswahl.abgang.join(', ') : '—'}`);
+  out(`Datei:   ${ziel}`);
+  out(`Bericht: ${berichtPfad}`);
+  return 0;
 }
 
 async function cmdFetch(app: App, cli: Cli): Promise<number> {
@@ -382,6 +522,7 @@ async function cmdOptimize(app: App, cli: Cli): Promise<number> {
     home: app.home,
     initialEquity,
     log: (m) => logger.info(m),
+    ...(asOfFrom(cli) === undefined ? {} : { asOf: asOfFrom(cli)! }),
   });
   const rows: string[][] = [['Symbol', 'Entscheidung', 'Strategie', 'Score', 'OOS-Trades', 'OOS netto', 'Folds +']];
   for (const r of res.runs) {
@@ -578,10 +719,12 @@ export async function main(argv: string[]): Promise<number> {
     out(`Strategien: ${strategyIds().join(', ')}`);
     return 0;
   }
-  const app = appFrom(cli);
+  const app = applyAllowShort(appFrom(cli), cli);
   switch (cli.cmd) {
     case 'doctor':
       return cmdDoctor(app);
+    case 'universe':
+      return cmdUniverse(app, cli);
     case 'fetch':
       return cmdFetch(app, cli);
     case 'backtest':

@@ -33,6 +33,7 @@ mit dem Wrapper aus ops/README.md):
 | Kommando | Absicht |
 |---|---|
 | `doctor` | Alles prüfen, was den Start scheitern lässt: Config gegen das Schema, Key-Präfix gegen den Modus (PK ↔ Paper, AK ↔ Live), aufgelöster Modus mit Gründen, Konto erreichbar/nicht blockiert, Uhr, Kalender, Assets handelbar, Cache vorhanden, Champion vorhanden. Erst wenn `doctor` grün ist, den Dienst starten. |
+| `universe` | Handelsuniversum aus `universe.candidates` wählen: Tagesbars für den ganzen Pool, Rang nach Median-Dollarumsatz über 60 Handelstage, die liquidesten `universe.maxSymbols` gewinnen. Schreibt `universe.json` und einen Bericht nach `reports/`. **Nie nach dem Ergebnis der Strategie** — Auswählen, wo es lief, und dann auf denselben Daten messen, ist Selektionsbias in Reinform. Grenzen der Kennzahl (Kursniveau im Dollarumsatz, kein Point-in-Time-Universum) stehen im Kopf von `src/universe/select.ts`. Ohne `candidates` tut das Kommando nichts. |
 | `fetch` | 1-Minuten-Bars (und Tagesbars) aller Symbole plus Benchmark inkrementell in den Cache laden; Broker-Kalender aktualisieren. `--days <n>` für die Tiefe. |
 | `backtest` | Champion oder `strategy.id`/`--strategy` mit `--params` über den Cache simulieren; Metriken und Trades ausgeben. `--stress <faktor>` multipliziert die Kosten, `--from/--to` grenzen ein. Ein Werkzeug zum Nachrechnen — **kein** Auswahlverfahren (dafür `optimize`). |
 | `optimize` | Walk-Forward nach VALIDIERUNG.md: Suche, Gates, Champion/Challenger. Schreibt den Bericht nach `reports/` und nur bei bestandener Beförderung ein neues `champion.json`. „Kein Champion" ist ein gültiges Ergebnis. |
@@ -51,8 +52,9 @@ mit dem Wrapper aus ops/README.md):
 | `journal.jsonl` | Append-only, eine JSON-Zeile je Ereignis — die Wahrheit über das, was die Engine getan hat. Wird nie umgeschrieben. |
 | `champion.json` | Aktive Strategie + Parameter aus `optimize`, mit OOS-Kennzahl und Zeitstempel der Beförderung. |
 | `bars/` | Cache der 1-Minuten-/Tagesbars je Symbol. |
+| `universe.json` | Ergebnis der letzten Auswahl: gewählte Symbole, Zugang/Abgang, Bewertung jedes Kandidaten. Wird mit `--universe <pfad>` auf `fetch`, `optimize` und `scripts/sync-engine-config.mjs` angewandt; sie ist zugleich der Bestand für die Hysterese der nächsten Wahl. |
 | `calendar.json` | Broker-Kalender (Handelstage, Öffnungs-/Schlusszeiten). |
-| `reports/` | Optimierer-Berichte (Markdown) je Lauf. |
+| `reports/` | Optimierer- und Universums-Berichte (Markdown) je Lauf. |
 | `HALT` | Existiert ⇒ keine neuen Einstiege. Inhalt: Grund und Zeit. |
 
 ## 4. State und Journal im Detail

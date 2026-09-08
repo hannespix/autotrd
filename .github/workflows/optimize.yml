@@ -1,8 +1,8 @@
 name: Optimierer (nächtlich)
 
-# Walk-Forward-Selbstoptimierung nach US-Börsenschluss: Bars nachladen,
-# Champion je Symbol bestimmen, Champion + Bericht nach Firestore
-# veröffentlichen. Läuft komplett im GitHub-Actions-Freikontingent —
+# Walk-Forward-Selbstoptimierung nach US-Börsenschluss: Universum nach
+# Liquidität wählen, Bars nachladen, Champion bestimmen, Champion + Bericht
+# nach Firestore veröffentlichen. Läuft komplett im GitHub-Actions-Freikontingent —
 # kein Server. Die Engine-Function liest den Champion aus `meta/champion`.
 #
 # 23:00 UTC deckt Sommer- (Schluss 20:00 UTC) und Winterzeit (21:00 UTC) ab.
@@ -38,10 +38,15 @@ jobs:
       - name: Abhängigkeiten installieren
         run: npm ci
 
+      # `var/universe.json` liegt mit im Cache: Es ist der Bestand für die
+      # Hysterese der nächsten Wahl. Fehlt es (erster Lauf, geänderte Config),
+      # gilt das Universum aus der Config als Bestand — kein Ausfall.
       - name: Bars-Cache wiederherstellen
         uses: actions/cache@v4
         with:
-          path: var/bars
+          path: |
+            var/bars
+            var/universe.json
           key: bars-${{ hashFiles('config/platform.yaml') }}-${{ github.run_id }}
           restore-keys: |
             bars-${{ hashFiles('config/platform.yaml') }}-
@@ -66,9 +71,17 @@ jobs:
           printf 'ALPACA_API_KEY=%s\nALPACA_SECRET_KEY=%s\nALPACA_ALLOW_LIVE=0\n' "$ALPACA_API_KEY" "$ALPACA_SECRET_KEY" > "$RUNNER_TEMP/.env"
           chmod 600 "$RUNNER_TEMP/.env"
 
+      # Zuerst das Universum: Tagesbars für den ganzen Kandidatenpool, Rang nach
+      # Median-Dollarumsatz, die liquidesten `maxSymbols` gewinnen. NIE nach
+      # Ertrag — siehe src/universe/select.ts. Alles danach rechnet mit dieser
+      # Auswahl (`--universe`), auch der Firestore-Sync.
+      - name: Handelsuniversum wählen
+        if: steps.keys.outputs.skip != '1'
+        run: node src/cli.ts universe --config config/platform.yaml --env "$RUNNER_TEMP/.env" --home var
+
       - name: Bars und Kalender nachladen
         if: steps.keys.outputs.skip != '1'
-        run: node src/cli.ts fetch --config config/platform.yaml --env "$RUNNER_TEMP/.env" --home var
+        run: node src/cli.ts fetch --config config/platform.yaml --env "$RUNNER_TEMP/.env" --home var --universe var/universe.json
 
       - name: Walk-Forward-Optimierung
         if: steps.keys.outputs.skip != '1'
@@ -84,7 +97,7 @@ jobs:
             echo "Hinweis: samples-Override ($SAMPLES_OVERRIDE) aus workflow_dispatch wird über die Config gesetzt."
             sed -i "s/^  samples: .*/  samples: $SAMPLES_OVERRIDE/" config/platform.yaml
           fi
-          node src/cli.ts optimize --config config/platform.yaml --env "$RUNNER_TEMP/.env" --home var --equity 25000
+          node src/cli.ts optimize --config config/platform.yaml --env "$RUNNER_TEMP/.env" --home var --universe var/universe.json --equity 25000
 
       - name: Bericht als Artefakt
         if: steps.keys.outputs.skip != '1'
@@ -93,24 +106,32 @@ jobs:
           name: optimize-report-${{ github.run_id }}
           path: |
             var/champion.json
+            var/universe.json
             var/reports/optimize-*.md
+            var/reports/universe-*.md
           retention-days: 90
 
       - name: Service-Account bereitstellen
         if: steps.keys.outputs.skip != '1' && env.FIREBASE_SERVICE_ACCOUNT != ''
         run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
 
-      - name: Plattform-Config nach Firestore
-        if: steps.keys.outputs.skip != '1' && env.FIREBASE_SERVICE_ACCOUNT != ''
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
-        run: node scripts/sync-engine-config.mjs --config config/platform.yaml
-
+      # Reihenfolge ist wichtig: erst das Urteil (WIE gehandelt wird), dann das
+      # Universum (WAS gehandelt wird). Scheitert der zweite Schritt, steht ein
+      # Champion bereit, der den alten Korb abdeckt — Symbole ohne Urteil werden
+      # wegen `allowWithoutChampion: false` einfach nicht gehandelt. Andersherum
+      # hätten die abgegangenen Symbole ihr Urteil verloren, während sie noch im
+      # gehandelten Universum stehen.
       - name: Champion und Bericht nach Firestore
         if: steps.keys.outputs.skip != '1' && env.FIREBASE_SERVICE_ACCOUNT != ''
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
         run: node scripts/publish-champion.mjs --home var
+
+      - name: Plattform-Config nach Firestore
+        if: steps.keys.outputs.skip != '1' && env.FIREBASE_SERVICE_ACCOUNT != ''
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+        run: node scripts/sync-engine-config.mjs --config config/platform.yaml --universe var/universe.json
 
       - name: Ohne Service-Account
         if: steps.keys.outputs.skip != '1' && env.FIREBASE_SERVICE_ACCOUNT == ''

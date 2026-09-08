@@ -1104,6 +1104,11 @@ function renderEngineWhy(): void {
                 ? t('ew.g.haltReconcile')
                 : t('ew.g.haltErrors'),
       );
+      // Die Notiz nennt das KONKRETE: welche Symbole der Fremdbestand betrifft,
+      // welcher Fehler die Sperre ausgelöst hat. Ohne sie steht dort nur, DASS
+      // etwas abweicht — und niemand kann die Ursache beheben. Eine Sperre soll
+      // über die Ursache enden, nie per Override (CLAUDE.md §0.5).
+      if (e.halt.note) gruende.push(e.halt.note);
     }
     if (e.entryLock) {
       ampel.append(whyChip(`${t('ew.einstiegeGesperrt')}: ${e.entryLock}`, 'var(--yl,#d9a441)'));

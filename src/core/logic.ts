@@ -7,7 +7,9 @@
  *
  * Reihenfolge je Zyklus:
  *   1. Konto-Sperren prüfen (Tagesverlust, Drawdown) → ggf. alles glatt.
- *   2. Je Symbol: Strategie befragen.
+ *   2. Je Symbol: Strategie befragen — in rotierender Reihenfolge, damit
+ *      niemand dauerhaft zuerst an die knappen Plätze kommt
+ *      (`wettbewerbsOrdnung`).
  *      - Position offen: Exit / Stop nachziehen / EOD-Flatten. Exits werden
  *        NIE gesperrt (Owner-Regel).
  *      - Keine Position: Einstieg nur durch alle Tore (Halt, Datenfrische,
@@ -20,6 +22,7 @@ import type {
   AssetClass,
   HaltState,
   IndicatorSet,
+  KorbRang,
   Ms,
   OrderIntent,
   Params,
@@ -103,6 +106,131 @@ export function grossExposure(positions: ReadonlyMap<string, PositionState>, pri
   return sum;
 }
 
+/**
+ * Reihenfolge, in der Symbole um die knappen Budgets konkurrieren
+ * (`maxPositions`, Brutto-Exposure, PDT-Reserve, Bargeld am Fill).
+ *
+ * Warum es diese Funktion überhaupt gibt: Wer im Zyklus zuerst drankommt,
+ * bekommt den letzten freien Platz. Ohne Regel entschied das die Reihenfolge,
+ * in der der Aufrufer seine Liste gebaut hat — im Backtest wie live die
+ * Reihenfolge aus `universe.symbols`. Bei 30 Symbolen auf 4 Plätzen ist das
+ * keine Kleinigkeit: Die ersten vier Einträge der Config (bei uns die vier
+ * Index-ETFs) hätten systematisch mehr Einstiege bekommen als der Rest, und
+ * ein umsortiertes Universum hätte das Ergebnis verändert, ohne dass sich
+ * eine Strategie geändert hat. Genau die Art stiller Freiheitsgrad, der
+ * hinterher wie eine Kante aussieht.
+ *
+ * Die Regel: Jedes Symbol bekommt je Bar einen Schlüssel aus (Symbol, Bucket),
+ * sortiert wird danach. Zwei Eigenschaften, die beide gebraucht werden und die
+ * eine einfache Rotation `bucket mod n` NICHT hat (Red-Team, 08.09.):
+ *
+ *  1. **Keine Resonanz.** Ein Handelstag hat bei 5 min genau 288 Buckets. Mit
+ *     `bucket mod n` rückt der Start an einer festen Tageszeit täglich um
+ *     `288 mod n` vor — bei n = 30 gäbe es zu jeder Uhrzeit nur 5 verschiedene
+ *     Startpunkte, 10 der 30 Symbole kämen um 10:00 ET NIE zuerst dran (unter
+ *     ihnen SPY und QQQ, also genau die, die vorher bevorzugt waren). Bei
+ *     n ∈ {12, 16, 18, 24} stünde die Reihenfolge zu einer festen Uhrzeit für
+ *     immer still. Der Mischer hat keine gemeinsamen Teiler mit irgendetwas.
+ *  2. **Unabhängig davon, WER im Zyklus dabei ist.** Der Schlüssel eines
+ *     Symbols hängt nur an ihm selbst und an der Bar-Zeit, nicht an der Anzahl
+ *     der Anwesenden. Sonst würde ein einziges fehlendes Symbol (live normal:
+ *     keine IEX-Bar im Bucket) die ganze Prioritätsreihenfolge gegenüber der
+ *     Messung permutieren — und zwar systematisch, weil die Ausfälle die
+ *     dünneren Werte treffen.
+ *
+ * Über viele Bars ist die Priorität damit gleichverteilt; innerhalb einer Bar
+ * ist sie allein aus den Daten reproduzierbar, im Backtest wie live.
+ *
+ * Exits berührt das nicht: Sie laufen für jedes Symbol dieses Zyklus,
+ * unabhängig von der Reihenfolge, und werden nie gesperrt.
+ */
+function fnv1a(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/** splitmix32-Finalisierer: streut benachbarte Zahlen über den ganzen Bereich. */
+function mische(x: number): number {
+  let z = x | 0;
+  z = (z ^ (z >>> 16)) >>> 0;
+  z = Math.imul(z, 0x21f0aaad) >>> 0;
+  z = (z ^ (z >>> 15)) >>> 0;
+  z = Math.imul(z, 0x735a2d97) >>> 0;
+  return (z ^ (z >>> 15)) >>> 0;
+}
+
+/**
+ * Korb-Rang je Symbol für Querschnitts-Strategien.
+ *
+ * Warum das hier steht und nicht im Aufrufer: `decide()` ist der EINE
+ * Entscheidungspfad. Würde der Backtest die Rangliste selbst bauen und die
+ * Engine auch, hätten wir zwei Ranglisten, die auseinanderlaufen können —
+ * und das wäre genau der Messfehler, gegen den der ganze Neubau gebaut ist.
+ *
+ * Zwei Regeln machen die Sache kausal und in beiden Welten gleich:
+ *
+ *  1. Es wird nur innerhalb einer STRATEGIE rangiert. Symbole mit anderer
+ *     Strategie haben eine andere Kennzahl; sie zu mischen wäre sinnlos.
+ *  2. Es rangieren nur Symbole, deren Entscheidungs-Bar zur JÜNGSTEN Bar des
+ *     Zyklus gehört. Live kann ein Symbol ohne Trade im Bucket eine ältere
+ *     letzte Bar haben — seine Kennzahl stammt dann von einem anderen
+ *     Zeitpunkt, und ein Vergleich damit wäre schlicht falsch. Solche Symbole
+ *     bekommen keinen Rang; ihre EXITS laufen unberührt weiter (Regel 4).
+ *
+ * `crossScore` sieht nur `snap.bars.prefix(i + 1)` — geschlossene Bars bis
+ * zur Entscheidungs-Bar. Zukunft kann hier also nicht hineingeraten.
+ */
+export function korbRaenge(inputs: readonly SymbolInput[]): Map<string, KorbRang> {
+  const out = new Map<string, KorbRang>();
+  let neueste = Number.NEGATIVE_INFINITY;
+  for (const inp of inputs) {
+    const t = inp.snap.bars.t[inp.snap.i];
+    if (t !== undefined && t > neueste) neueste = t;
+  }
+  const proStrategie = new Map<string, { symbol: string; score: number }[]>();
+  for (const inp of inputs) {
+    if (!inp.strategy.crossScore) continue;
+    if (inp.snap.bars.t[inp.snap.i] !== neueste) continue;
+    const score = inp.strategy.crossScore(inp.snap, inp.ind, inp.params);
+    if (score === null || !Number.isFinite(score)) continue;
+    const liste = proStrategie.get(inp.strategy.id) ?? [];
+    liste.push({ symbol: inp.snap.symbol, score });
+    proStrategie.set(inp.strategy.id, liste);
+  }
+  for (const liste of proStrategie.values()) {
+    // Absteigend nach Kennzahl; Gleichstand alphabetisch, damit der Lauf reproduzierbar bleibt.
+    liste.sort((a, b) => b.score - a.score || (a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0));
+    const of = liste.length;
+    for (let k = 0; k < of; k++) {
+      out.set(liste[k]!.symbol, { pct: of > 1 ? k / (of - 1) : 0, rank: k + 1, of });
+    }
+  }
+  return out;
+}
+
+export function wettbewerbsOrdnung(inputs: readonly SymbolInput[], timeframe: TimeframeMin): SymbolInput[] {
+  if (inputs.length < 2) return [...inputs];
+  // Bucket-Nummer der jüngsten Entscheidungs-Bar. Beide Welten entscheiden auf
+  // geschlossenen Bars desselben Rasters, also ergibt sich dieselbe Zahl.
+  let neueste = 0;
+  for (const inp of inputs) {
+    const t = inp.snap.bars.t[inp.snap.i] ?? 0;
+    if (t > neueste) neueste = t;
+  }
+  const bucket = mische(Math.floor(neueste / (timeframe * 60_000)));
+  const schluessel = new Map<string, number>();
+  for (const inp of inputs) schluessel.set(inp.snap.symbol, mische(fnv1a(inp.snap.symbol) ^ bucket));
+  return [...inputs].sort((a, b) => {
+    const d = schluessel.get(a.snap.symbol)! - schluessel.get(b.snap.symbol)!;
+    // Gleichstand (Hash-Kollision) alphabetisch — der Lauf muss reproduzierbar bleiben.
+    return d !== 0 ? d : a.snap.symbol < b.snap.symbol ? -1 : a.snap.symbol > b.snap.symbol ? 1 : 0;
+  });
+}
+
 export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): LogicResult {
   const intents: OrderIntent[] = [];
   const notes: LogicNote[] = [];
@@ -150,7 +278,17 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
   // Übernacht-Einstieg kann noch am selben Tag ausgestoppt werden (Red-Team-Befund).
   let plannedEntries = 0;
 
-  for (const inp of inputs) {
+  // Querschnitts-Strategien brauchen den Korb-Rang. Nur bauen, wenn wirklich
+  // eine Strategie im Zyklus danach fragt — sonst kostet es jede Bar Arbeit
+  // und Speicher für nichts.
+  const brauchtRang = inputs.some((inp) => inp.strategy.crossScore !== undefined);
+  const raenge = brauchtRang ? korbRaenge(inputs) : null;
+
+  // Um die knappen Plätze wird in rotierender Reihenfolge konkurriert, nicht in
+  // Config-Reihenfolge (siehe wettbewerbsOrdnung).
+  for (const roh of wettbewerbsOrdnung(inputs, ctx.timeframe)) {
+    const rang = raenge?.get(roh.snap.symbol);
+    const inp = rang === undefined ? roh : { ...roh, snap: { ...roh.snap, rank: rang } };
     const { snap, strategy, params, ind } = inp;
     const sym = snap.symbol;
     const pos = snap.position;
