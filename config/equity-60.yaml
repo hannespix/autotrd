@@ -1,0 +1,133 @@
+# Probe: dieselben 30 Aktien auf STUNDENBARS — NUR Erkundung, nie die
+# Plattform-Config.
+#
+# ── Warum es diese Datei gibt ─────────────────────────────────────────────
+#
+# Zwei Messungen liegen vor, und beide haben ein anderes Problem:
+#
+#   5 Minuten (08.09.)  Gebühren fressen 65,5 % bzw. 349,4 % des Bruttogewinns.
+#                       Zu viele Round-Trips, jeder mit vollen Kosten.
+#   Tagesbars (08.09.)  Gebühren nur noch 25,4 % — das Kostenproblem ist gelöst.
+#                       Dafür zu wenig Beweislast: 4 bis 61 Trades je Fold, 23
+#                       im Holdout. Bei so kleinen Stichproben kippt die
+#                       Rangfolge zwischen OOS und Holdout komplett um.
+#
+# Die Stundenbar sitzt genau dazwischen: rund 6,5 Bars je Handelstag statt 78
+# (5 min) oder 1 (Tag). Das ist die Konstellation, in der beides zugleich
+# möglich wäre — Kosten klein genug UND genug unabhängige Beobachtungen, um
+# eine Kante von Glück zu unterscheiden. Gemessen wurde sie für Aktien nie.
+#
+# ── Was hier NICHT verändert wurde ────────────────────────────────────────
+#
+# Kein Gate ist gelockert: minOosTrades, minFoldPositiveShare, minPsrOos,
+# stressCostMultiplier, maxFoldNetShare und das feeShare-Gate stehen exakt wie
+# in config/platform.yaml; ein Test hält das fest
+# (test/scripts/probeConfigs.test.ts). Verändert sind Zeitrahmen und
+# Datenfenster. Wer die Latte senkt, um ein Ergebnis zu bekommen, misst nichts
+# mehr (CLAUDE.md §0.9).
+#
+# Das Fenster ist so gewählt, dass ungefähr so viele Folds herauskommen wie
+# bei den anderen Proben (~7), nicht so, dass ein bestimmtes Ergebnis
+# herauskommt. 1100 Kalendertage ≈ 760 Handelstage ≈ 4900 Stundenbars je
+# Symbol; IS 250 / OOS 90 / Schritt 90, Holdout 180.
+#
+# ── Wie das gefahren wird ─────────────────────────────────────────────────
+#
+# Über .github/workflows/probe.yml — ohne Service-Account, ohne
+# Veröffentlichungs-Schritte. Der Lauf kann Firestore nicht anfassen.
+
+broker:
+  mode: paper
+  feed: iex
+
+universe:
+  assetClass: us_equity
+  # Identisch zu config/platform.yaml und config/equity-1440.yaml — sonst
+  # vergliche man zwei Dinge auf einmal.
+  symbols:
+    [SPY, QQQ, IWM, DIA,
+     AAPL, MSFT, NVDA, AMZN, META, GOOGL, TSLA, AVGO, AMD, NFLX,
+     CRM, ORCL, ADBE, INTC, CSCO, QCOM,
+     JPM, BAC, WFC,
+     XOM, CVX,
+     JNJ, PFE, UNH,
+     WMT, DIS]
+  benchmark: SPY
+
+timeframe: 60
+
+# Bei 60 Minuten greifen die Sitzungstore wieder (anders als bei 1440) —
+# unverändert aus platform.yaml, damit der Vergleich sauber bleibt.
+session:
+  noEntryFirstMin: 5
+  noEntryLastMin: 30
+  flattenBeforeCloseMin: 5
+
+risk:
+  riskPerTradePct: 0.5
+  maxPositionPct: 20
+  maxPositions: 4
+  maxGrossExposurePct: 100
+  maxDailyLossPct: 2
+  maxDrawdownPct: 10
+  allowShort: false
+  pdt:
+    respect: true
+    minEquity: 25000
+    maxDayTrades: 3
+
+strategy:
+  id: trend_donchian
+  params: {}
+  allowWithoutChampion: false
+
+optimizer:
+  # orb_breakout ist hier zulässig (Intraday-Zeitrahmen), aber eine
+  # Eröffnungsspanne von mindestens 30 Minuten auf einem 60-Minuten-Raster
+  # ergibt höchstens eine Bar Spanne — die Strategie hätte nichts zu messen.
+  strategies: [trend_donchian, momentum_pullback, mean_reversion]
+  lookbackDays: 1100
+  isDays: 250
+  oosDays: 90
+  stepDays: 90
+  embargoBars: 0
+  samples: 150
+  seed: 42
+  minOosTrades: 60
+  minFoldPositiveShare: 0.6
+  objective: sortino
+  stressCostMultiplier: 1.5
+  holdoutDays: 180
+  promotionMargin: 0.1
+  minPsrOos: 0.9
+  dsrIsGate: false
+  maxFoldNetShare: 0.5
+  pooled: true
+
+costs:
+  slippageBps: 3
+  spreadBps: 2
+  secFeeRate: 0.0000278
+  finraTafPerShare: 0.000166
+  finraTafMax: 8.3
+  cryptoTakerPct: 0.25
+  shortBorrowAnnualPct: 1
+
+engine:
+  reconcileEverySec: 60
+  barGraceSec: 4
+  maxDataAgeSec: 180
+  maxConsecutiveErrors: 5
+  onOrphan: halt
+
+notify:
+  telegram: false
+
+status:
+  httpPort: 0
+
+# Eigener State-Ordner. Der Probe-Workflow setzt zwar `--home var-probe`,
+# aber wer die Datei von Hand fährt, hätte sonst `var/champion.json` des
+# Produktivlaufs überschrieben — den Champion, den die Plattform handelt.
+paths:
+  home: ./var-probe
