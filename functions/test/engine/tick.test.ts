@@ -241,6 +241,49 @@ describe('Engine-Takt — voller Lauf', () => {
     expect(w.db.get(LEASE_PATH)).toMatchObject({ until: 0, holder: null });
   });
 
+  /**
+   * Der Fall vom 08.09.2026, 17:25 MESZ (11:25 ET, Markt seit zwei Stunden
+   * offen): Das Dashboard meldete „Markt geschlossen · öffnet 08.09., 15:30" —
+   * eine Öffnungszeit, die längst vorbei war — und zeigte daneben einen
+   * frischen Herzschlag mit 30 verarbeiteten Symbolen.
+   *
+   * Ursache: `writeHealth` schreibt mit `{ merge: true }`, und Firestore
+   * merged Maps TIEF. Der Normalpfad nannte `engine.skipped` gar nicht, also
+   * blieb das `market_closed` vom frühen Morgen den ganzen Handelstag stehen.
+   * `lastRunSkipped` auf oberster Ebene wurde korrekt genullt — nur das Feld,
+   * das die Karte tatsächlich liest, nicht.
+   *
+   * Der Fake merged genauso tief wie Firestore; der Fehler wäre also
+   * auffindbar gewesen. Es hat nur nie ein Test die Folge „erst zu, dann
+   * offen" geprüft.
+   */
+  it('Herzschlag: ein „Markt geschlossen" von früher überlebt den nächsten offenen Takt NICHT', async () => {
+    const w = world();
+    w.data.clock = { timestamp: T1, isOpen: false, nextOpen: OPEN1 + 24 * 60 * MIN, nextClose: CLOSE1 + 24 * 60 * MIN };
+    await w.run(T1);
+    const zu = w.db.get(HEALTH_PATH)!.engine as Record<string, unknown>;
+    expect(zu.skipped, 'Vorbedingung: der geschlossene Takt setzt das Feld').toBe('market_closed');
+    expect(zu.nextOpen).toBeTruthy();
+
+    // Eine Minute später ist der Markt offen — derselbe Takt, normaler Pfad.
+    w.data.clock = { timestamp: T1 + 60_000, isOpen: true, nextOpen: OPEN1 + 24 * 60 * MIN, nextClose: CLOSE1 };
+    const r = await w.run(T1 + 60_000);
+    expect(r.skipped, 'Vorbedingung: dieser Takt läuft normal durch').toBeNull();
+    const offen = w.db.get(HEALTH_PATH)!.engine as Record<string, unknown>;
+    expect(offen.skipped, 'sonst zeigt die Karte „Markt geschlossen", während der Takt handelt').toBeNull();
+    expect(offen.nextOpen, 'eine Öffnungszeit von heute früh ist keine Information mehr').toBeNull();
+    expect(offen.at, 'der Herzschlag selbst ist frisch').toBe(iso(T1 + 60_000));
+  });
+
+  /** Dasselbe für einen alten Fehler: Sonst stünde „Plattform-Fehler" für immer in der Karte. */
+  it('Herzschlag: ein alter engine.error überlebt den nächsten erfolgreichen Takt NICHT', async () => {
+    const w = world();
+    w.db.seed(HEALTH_PATH, { engine: { error: 'irgendein alter Fehler', at: iso(T1 - 60_000) } });
+    const r = await w.run(T1);
+    expect(r.skipped).toBeNull();
+    expect((w.db.get(HEALTH_PATH)!.engine as Record<string, unknown>).error).toBeNull();
+  });
+
   it('Marktzeit-Gate: Aktienmarkt zu ⇒ nur Herzschlag; ein Kommando-Marker lässt den Nutzer trotzdem laufen', async () => {
     const w = world();
     w.data.clock = { timestamp: T1, isOpen: false, nextOpen: OPEN1 + 24 * 60 * MIN, nextClose: CLOSE1 + 24 * 60 * MIN };
