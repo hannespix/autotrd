@@ -7,7 +7,9 @@
  *
  * Reihenfolge je Zyklus:
  *   1. Konto-Sperren prüfen (Tagesverlust, Drawdown) → ggf. alles glatt.
- *   2. Je Symbol: Strategie befragen.
+ *   2. Je Symbol: Strategie befragen — in rotierender Reihenfolge, damit
+ *      niemand dauerhaft zuerst an die knappen Plätze kommt
+ *      (`wettbewerbsOrdnung`).
  *      - Position offen: Exit / Stop nachziehen / EOD-Flatten. Exits werden
  *        NIE gesperrt (Owner-Regel).
  *      - Keine Position: Einstieg nur durch alle Tore (Halt, Datenfrische,
@@ -103,6 +105,43 @@ export function grossExposure(positions: ReadonlyMap<string, PositionState>, pri
   return sum;
 }
 
+/**
+ * Reihenfolge, in der Symbole um die knappen Budgets konkurrieren
+ * (`maxPositions`, Brutto-Exposure, PDT-Reserve, Bargeld am Fill).
+ *
+ * Warum es diese Funktion überhaupt gibt: Wer im Zyklus zuerst drankommt,
+ * bekommt den letzten freien Platz. Ohne Regel entschied das die Reihenfolge,
+ * in der der Aufrufer seine Liste gebaut hat — im Backtest wie live die
+ * Reihenfolge aus `universe.symbols`. Bei 30 Symbolen auf 4 Plätzen ist das
+ * keine Kleinigkeit: Die ersten vier Einträge der Config (bei uns die vier
+ * Index-ETFs) hätten systematisch mehr Einstiege bekommen als der Rest, und
+ * ein umsortiertes Universum hätte das Ergebnis verändert, ohne dass sich
+ * eine Strategie geändert hat. Genau die Art stiller Freiheitsgrad, der
+ * hinterher wie eine Kante aussieht.
+ *
+ * Die Regel: alphabetisch als kanonische Basis — die hängt nicht daran, wie
+ * das Universum gerade sortiert ist — und der Startpunkt rotiert mit der
+ * Bar-Zeit. Über viele Bars ist die Priorität gleichverteilt; innerhalb einer
+ * Bar ist sie allein aus den Daten reproduzierbar, im Backtest wie live.
+ *
+ * Exits berührt das nicht: Sie laufen für jedes Symbol dieses Zyklus,
+ * unabhängig von der Reihenfolge, und werden nie gesperrt.
+ */
+export function wettbewerbsOrdnung(inputs: readonly SymbolInput[], timeframe: TimeframeMin): SymbolInput[] {
+  if (inputs.length < 2) return [...inputs];
+  const sortiert = [...inputs].sort((a, b) => (a.snap.symbol < b.snap.symbol ? -1 : a.snap.symbol > b.snap.symbol ? 1 : 0));
+  // Bucket-Nummer der jüngsten Entscheidungs-Bar. Beide Welten entscheiden auf
+  // geschlossenen Bars desselben Rasters, also ergibt sich dieselbe Zahl.
+  let neueste = 0;
+  for (const inp of sortiert) {
+    const t = inp.snap.bars.t[inp.snap.i] ?? 0;
+    if (t > neueste) neueste = t;
+  }
+  const bucket = Math.floor(neueste / (timeframe * 60_000));
+  const start = ((bucket % sortiert.length) + sortiert.length) % sortiert.length;
+  return start === 0 ? sortiert : [...sortiert.slice(start), ...sortiert.slice(0, start)];
+}
+
 export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): LogicResult {
   const intents: OrderIntent[] = [];
   const notes: LogicNote[] = [];
@@ -150,7 +189,9 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
   // Übernacht-Einstieg kann noch am selben Tag ausgestoppt werden (Red-Team-Befund).
   let plannedEntries = 0;
 
-  for (const inp of inputs) {
+  // Um die knappen Plätze wird in rotierender Reihenfolge konkurriert, nicht in
+  // Config-Reihenfolge (siehe wettbewerbsOrdnung).
+  for (const inp of wettbewerbsOrdnung(inputs, ctx.timeframe)) {
     const { snap, strategy, params, ind } = inp;
     const sym = snap.symbol;
     const pos = snap.position;
