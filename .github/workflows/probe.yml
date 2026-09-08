@@ -36,6 +36,14 @@ on:
         description: 'Stichproben je Fold (leer = Config)'
         required: false
         default: ''
+      allowShort:
+        description: 'Shorts für diese MESSUNG erlauben (Config bleibt unberührt)'
+        required: false
+        default: 'nein'
+        type: choice
+        options:
+          - nein
+          - ja
 
 concurrency:
   group: probe
@@ -101,6 +109,8 @@ jobs:
           # Nie in den Shell-Text interpolieren (Secreview 2, G5): kommt als
           # Umgebungsvariable und muss eine ganze Zahl sein.
           SAMPLES_OVERRIDE: ${{ github.event.inputs.samples }}
+          # Nie in den Shell-Text interpolieren; der choice-Eingang lässt nur ja/nein zu.
+          ALLOW_SHORT: ${{ github.event.inputs.allowShort }}
         run: |
           if [ -n "$SAMPLES_OVERRIDE" ]; then
             case "$SAMPLES_OVERRIDE" in
@@ -109,7 +119,12 @@ jobs:
             echo "Hinweis: samples-Override ($SAMPLES_OVERRIDE) wird über die Config gesetzt."
             sed -i "s/^  samples: .*/  samples: $SAMPLES_OVERRIDE/" "$CONFIG"
           fi
-          node src/cli.ts optimize --config "$CONFIG" --env "$RUNNER_TEMP/.env" --home var-probe --equity 25000
+          # `--allow-short` ist ein MESS-Schalter: Er wirkt nur in optimize/backtest
+          # und lässt risk.allowShort in der Config unberührt (src/cli.ts). Was
+          # Nutzer handeln, entscheidet weiterhin allein die Plattform-Config.
+          SHORT=""
+          if [ "$ALLOW_SHORT" = "ja" ]; then SHORT="--allow-short"; fi
+          node src/cli.ts optimize --config "$CONFIG" --env "$RUNNER_TEMP/.env" --home var-probe $SHORT --equity 25000
 
       - name: Bericht als Artefakt
         uses: actions/upload-artifact@v4

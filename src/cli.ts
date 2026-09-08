@@ -52,6 +52,9 @@ Gemeinsame Optionen:
 
 backtest:  --strategy <id> --params a=1,b=2 --days <n> --symbols A,B --from YYYY-MM-DD --to YYYY-MM-DD --stress <faktor> --equity <usd>
 optimize:  --equity <usd>            (Zeitraum: optimizer.lookbackDays aus der Config)
+--allow-short  NUR fuer backtest und optimize: misst mit erlaubten Shorts, egal was
+               risk.allowShort sagt. Das Kommando run lehnt die Option ab — was
+               gehandelt wird, entscheidet die Config, nie die Kommandozeile.
 universe:  --out <pfad>              (Default: <home>/universe.json)
 fetch:     --days <n>
 halt:      --reason <text>
@@ -88,6 +91,7 @@ function parseCli(argv: string[]): Cli {
       reason: { type: 'string' },
       universe: { type: 'string' },
       out: { type: 'string' },
+      'allow-short': { type: 'boolean' },
     },
   });
   return { cmd: positionals[0] ?? 'help', values: values as Record<string, string | boolean | undefined> };
@@ -153,6 +157,36 @@ function parseParams(s: string | undefined): Partial<Params> {
     out[k.trim()] = n;
   }
   return out;
+}
+
+/**
+ * `--allow-short` — ein MESS-Schalter, kein Handels-Schalter.
+ *
+ * Hintergrund (08.09.2026): `risk.allowShort: false` steht in der
+ * Plattform-Config und in jeder Erkundungs-Config, und `core/logic.ts` sperrt
+ * damit jeden Short-Einstieg. Der Strategie-Parameter `allowShort` war
+ * dadurch in ALLEN bisherigen Messungen wirkungslos — der Optimierer hat eine
+ * Dimension durchsucht, die nichts bewirkt. Um zu prüfen, ob Shorts die Kante
+ * ändern, muss man sie messen können, ohne die Produktions-Config zu ändern.
+ *
+ * Warum nur `backtest` und `optimize`: Was tatsächlich gehandelt wird, darf
+ * nie von einem Kommandozeilen-Schalter abhängen. `run` lehnt die Option
+ * deshalb ab, statt sie zu ignorieren — stillschweigend zu ignorieren wäre
+ * schlimmer, weil dann jemand glaubt, sie habe gewirkt.
+ */
+const SHORT_MESS_KOMMANDOS = new Set(['backtest', 'optimize']);
+
+export function applyAllowShort(app: App, cli: Cli): App {
+  if (cli.values['allow-short'] !== true) return app;
+  if (!SHORT_MESS_KOMMANDOS.has(cli.cmd)) {
+    throw new Error(
+      `--allow-short gilt nur für ${[...SHORT_MESS_KOMMANDOS].join(' und ')}, nicht für \`${cli.cmd}\`. ` +
+        'Was gehandelt wird, entscheidet risk.allowShort in der Config — nicht die Kommandozeile.',
+    );
+  }
+  if (app.config.risk.allowShort) return app;
+  logger.warn('--allow-short: Shorts für diese MESSUNG erlaubt (risk.allowShort in der Config bleibt unberührt).');
+  return { ...app, config: { ...app.config, risk: { ...app.config.risk, allowShort: true } } };
 }
 
 function appFrom(cli: Cli): App {
@@ -661,7 +695,7 @@ export async function main(argv: string[]): Promise<number> {
     out(`Strategien: ${strategyIds().join(', ')}`);
     return 0;
   }
-  const app = appFrom(cli);
+  const app = applyAllowShort(appFrom(cli), cli);
   switch (cli.cmd) {
     case 'doctor':
       return cmdDoctor(app);

@@ -6,7 +6,7 @@
  */
 import { renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { CostConfig, OptimizerConfig } from '../core/config.ts';
+import type { CostConfig, OptimizerConfig, RiskConfig } from '../core/config.ts';
 import { ensureDir } from '../core/journal.ts';
 import type { AssetClass, Metrics, Ms, Params, TimeframeMin } from '../core/types.ts';
 import { fitEndOf } from './promote.ts';
@@ -21,6 +21,14 @@ export interface ReportMeta {
   dataRange: TimeRange | null;
   costs: CostConfig;
   optimizer: OptimizerConfig;
+  /**
+   * Risiko-Sicht des Laufs. Steht im Bericht, weil zwei Läufe sonst identisch
+   * aussehen, obwohl sie Verschiedenes gemessen haben — `allowShort` ist der
+   * Fall, der das am 08.09.2026 gezeigt hat: Der Strategie-Parameter
+   * `allowShort` war in allen Läufen wirkungslos, weil `risk.allowShort`
+   * false stand, und dem Bericht sah man das nicht an.
+   */
+  risk: RiskConfig;
   initialEquity: number;
 }
 
@@ -124,6 +132,12 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
       `kein Fold trägt mehr als ${Math.round(o.maxFoldNetShare * 100)} % des OOS-Nettos, ` +
       `Nachbarschafts-Plateau, PSR (OOS, sr0 = 0) ≥ ${go.minPsrOos}, DSR (IS, deflationiert um alle Trials) ≥ 0.95 ${go.dsrIsGate ? 'als Gate' : 'nur informativ (dsrIsGate=false)'}, ` +
       `Gebührenanteil ≤ 50 %; Beförderungsmarge ${Math.round(o.promotionMargin * 100)} %`,
+  );
+  const r = meta.risk;
+  out.push(
+    `- Risiko: ${r.riskPerTradePct} % je Trade, Positionsdeckel ${r.maxPositionPct} %, höchstens ${r.maxPositions} Positionen, ` +
+      `Brutto ≤ ${r.maxGrossExposurePct} %, Tagesverlust ${r.maxDailyLossPct} %, Drawdown ${r.maxDrawdownPct} %, ` +
+      `**Shorts ${r.allowShort ? 'ERLAUBT' : 'gesperrt'}**${r.allowShort ? '' : ' — der Strategie-Parameter `allowShort` bleibt damit wirkungslos'}`,
   );
   out.push(`- Startkapital je Fenster: ${meta.initialEquity}`);
   out.push('');

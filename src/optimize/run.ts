@@ -464,6 +464,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
     dataRange,
     costs: cfg.costs,
     optimizer,
+    risk: cfg.risk,
     initialEquity: input.initialEquity,
   });
   const reportPath = writeReport(paths.reports, `optimize-${dayKey(generatedAt)}.md`, text);
