@@ -81,3 +81,22 @@ describe('Kommandos folgen den Regeln des Kerns', () => {
     expect(fn).toContain("t('cmd.wirktNaechsterTakt')");
   });
 });
+
+/**
+ * Der Fall vom 08.09.2026: Das Dashboard meldete „Abgleich Buch ↔ Broker
+ * weicht ab" — und nannte nicht, WELCHE Symbole. Die Information lag längst
+ * da: `reconcile.ts` schreibt „Fremdbestand beim Broker: AAPL, TSLA — keine
+ * Einstiege bis geklärt" in `halt.note`, der Spiegel überträgt sie, der
+ * Frontend-Parser liest sie. Nur angezeigt wurde sie nie.
+ *
+ * Das ist mehr als ein Schönheitsfehler: Eine Sperre soll über die URSACHE
+ * enden (CLAUDE.md §0.5). Wer die Ursache nicht sehen kann, dem bleibt nur
+ * der Override — genau das, was die Regel verhindern will.
+ */
+describe('Halt-Notiz', () => {
+  it('wird angezeigt, nicht nur der Grund', () => {
+    const fn = dashboard.slice(dashboard.indexOf('function renderEngineWhy'));
+    const block = fn.slice(0, fn.indexOf('\n}'));
+    expect(block, 'halt.note erreicht die Begründungsliste nicht').toMatch(/e\.halt\.note.*gruende\.push\(e\.halt\.note\)/s);
+  });
+});
