@@ -119,11 +119,16 @@ jobs:
               *) echo "::error::asOf muss YYYY-MM-DD sein: '$AS_OF'"; exit 1 ;;
             esac
             echo "flag=--as-of $AS_OF" >> "$GITHUB_OUTPUT"
-            echo "Stichtag: $AS_OF"
+            # Ein früher Stichtag braucht ältere Bars: `lookbackDays` zählt ab dem
+            # STICHTAG rückwärts, `fetch` aber ab HEUTE. Ohne die Vertiefung hätte
+            # ein Lauf per 2025-03 nur die Hälfte seines Fensters — und damit halb
+            # so viele Folds, ohne dass es jemandem auffällt.
+            echo "days=--days 2600" >> "$GITHUB_OUTPUT"
+            echo "Stichtag: $AS_OF (Bars 2600 Tage zurück)"
           fi
 
       - name: Bars nachladen
-        run: node src/cli.ts fetch --config "$CONFIG" --env "$RUNNER_TEMP/.env" --home var-probe
+        run: node src/cli.ts fetch --config "$CONFIG" --env "$RUNNER_TEMP/.env" --home var-probe ${{ steps.asof.outputs.days }}
 
       - name: Walk-Forward-Optimierung
         env:
