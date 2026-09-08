@@ -318,10 +318,10 @@ export function fakeStrategy(
 }
 
 export function testConfig(
-  over: { symbols?: string[]; home?: string; optimizer?: Partial<Config['optimizer']>; timeframe?: TimeframeMin } = {},
+  over: { symbols?: string[]; home?: string; optimizer?: Partial<Config['optimizer']>; timeframe?: TimeframeMin; benchmark?: string } = {},
 ): Config {
   return parseConfig({
-    universe: { assetClass: 'crypto', symbols: over.symbols ?? ['AAA'] },
+    universe: { assetClass: 'crypto', symbols: over.symbols ?? ['AAA'], ...(over.benchmark ? { benchmark: over.benchmark } : {}) },
     timeframe: over.timeframe ?? 1440,
     optimizer: {
       strategies: ['edge', 'noise'],

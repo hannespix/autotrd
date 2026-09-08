@@ -264,6 +264,68 @@ investiert) — die richtige Richtung für eine Latte, über die gesprungen
 werden soll. Er ist ausdrücklich **kein Gate**: Er entscheidet nichts,
 er macht nur lesbar, was entschieden wurde.
 
+### 8. Gemessen: Nichtstun war besser (vier Halbjahre, mit Maßstab)
+
+Vier lückenlose Halbjahre, jedes (Auswahl → Holdout)-Paar in sich sauber,
+je Fenster derselbe Maßstab. Rendite / Sharpe im Holdout:
+
+| Fenster | Korb kaufen und halten | SPY | beste Strategie | schlägt den Korb? |
+|---|---|---|---|---|
+| Sep 24 – Mär 25 | +8.53 % / 1.09 | +5.37 % / 0.88 | cross_sectional +11.24 % / 1.61 | 2 von 4 |
+| Mär – Sep 25 | +20.11 % / 1.57 | +15.41 % / 1.39 | cross_sectional +3.55 % / 2.20 | 2 von 4 |
+| Sep 25 – Mär 26 | +2.14 % / 0.35 | +3.65 % / 0.69 | momentum_pullback +1.58 % / 0.78 | 1 von 4 |
+| Mär – Sep 26 | +23.73 % / 2.57 | +15.92 % / 2.28 | trend_donchian +3.08 % / 2.40 | **keine** |
+
+Über die zwei Jahre aufgezinst: **Korb +64.7 %, SPY +46.1 %** gegen
+cross_sectional +17.4 %, momentum_pullback +10.0 %, mean_reversion +3.4 %,
+trend_donchian −0.1 %. Der Korb ist survivorship-verseucht (heutige Top-30
+rückwirkend angewandt); **SPY ist es nicht** — die ehrliche Zahl lautet also
++46 % fürs Nichtstun gegen +17 % für die beste der vier.
+
+Das Muster ist konsistent: Der Korb-Sharpe schwankt zwischen 0.35 und 2.57,
+und genau dann, wenn der Markt schwach ist, schlägt eine Strategie ihn; wenn
+er stark ist, keine. Das ist das Profil eines defensiven Systems — relativ
+gut in schlechten Phasen, absolut abgehängt in guten. Über einen Bullenzyklus
+verliert es. mean_reversion schlägt den Korb in **keinem** der vier Fenster.
+
+Der Auswahl-Rang sagt den Holdout-Rang weiterhin nicht vorher (Spearman
+−0.20 / −0.80 / +0.40 / −0.80, Mittel −0.35). Nie gewinnt dieselbe Strategie
+beides. Verführerisch ist dabei, dass die Auswahl mehrfach die spätere
+Siegerin auf den letzten Platz setzte — bei vier Fenstern × vier Strategien
+ist „dann nimm die Schlechteste" aber genau die Überanpassung, gegen die das
+ganze System gebaut ist. Hypothese, keine Regel.
+
+### 9. Die Lücke im Regelwerk: `beats_market`
+
+Keines der neun Gates fragte, ob die Strategie besser ist als Nichtstun.
+Deshalb konnte momentum_pullback am 08.09. zweimal mit **9/9** durchgehen und
+im folgenden Halbjahr +1.9 % liefern, während der Korb +23.7 % machte — eine
+Verfehlung um 21.8 Prozentpunkte, die kein Gate bemerkt hätte.
+
+Seitdem gibt es ein zehntes Gate. Es misst auf der **OOS-Kette**, nie am
+Holdout (der bleibt selektionsfrei), und vergleicht den **Sharpe**: Ertrag je
+eigener Schwankung, also unabhängig davon, wie oft die Strategie investiert
+war. Wer weniger Ertrag je Risiko liefert als stumpfes Halten, hat keine
+Kante, sondern Gebühren.
+
+Drei Festlegungen, jede gegen eine konkrete Falle:
+
+- **Gegen SPY, nicht gegen den Korb.** Der Korb ist die heutige Auswahl,
+  rückwirkend angewandt; seine Rendite enthält Survivorship und wäre eine
+  unfair hohe Latte. SPY war damals kaufbar.
+- **Die Latte gilt für DIESELBEN Fenster.** Der Amtsinhaber wird nur auf
+  Folds nach seinem Fit-Ende nachgerechnet und bekommt deshalb seine eigene
+  Latte — sonst verglichen wir eine Strategie auf Fenster X mit einem Markt
+  auf Fenster Y. Diese Gegenprobe fehlte zuerst und rutschte durch.
+- **Das Gate wird nie vakant.** Ohne konfigurierte Benchmark gilt die Kasse
+  (Latte 0), nicht „kein Urteil" — sonst schaffte man das Gate ab, indem man
+  eine Zeile aus der Config nimmt. Ein nicht berechenbarer Maßstab ist im
+  Bericht vom nicht konfigurierten unterscheidbar: das eine ist ein
+  Datenproblem, das andere eine Entscheidung.
+
+Das Gate kann eine Beförderung nur verhindern, nie auslösen — es ist damit in
+die falsche Richtung risikofrei.
+
 ### Was das für den Betrieb heißt
 
 Kein Handel. Der nächtliche Optimierer läuft weiter und sucht mit nächtlich

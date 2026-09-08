@@ -49,7 +49,55 @@ export function kaufenUndHalten(args: {
   assetClass: AssetClass;
   periodsPerYear: number;
 }): MarktBezug | null {
-  const { bars, range, assetClass, periodsPerYear } = args;
+  const r = wertreihe(args.bars, args.range, args.assetClass);
+  if (!r) return null;
+  return {
+    symbole: r.symbole,
+    netReturnPct: (r.kurve[r.kurve.length - 1]! - 1) * 100,
+    maxDrawdownPct: maxDrawdownPct(r.kurve),
+    sharpe: sharpeRatio(r.renditen, args.periodsPerYear),
+    days: Math.max(1, Math.ceil((args.range.end - args.range.start) / DAY)),
+    punkte: r.punkte,
+  };
+}
+
+/**
+ * Der Maßstab über MEHRERE Fenster, aneinandergehängt — das Spiegelbild der
+ * OOS-Kette (`aggregateOos` in optimize/walkForward.ts). Jedes Fenster startet
+ * frisch gleichgewichtet, genau wie jeder Fold mit `initialEquity` startet;
+ * die Tagesrenditen werden in derselben Reihenfolge verkettet und EINMAL zu
+ * einem Sharpe verdichtet. Nur so vergleicht man dieselbe Größe: ein Mittel
+ * über Fenster-Sharpes wäre eine andere Zahl.
+ */
+export function marktKette(args: {
+  bars: ReadonlyMap<string, BarSeriesLike>;
+  ranges: readonly { start: Ms; end: Ms }[];
+  assetClass: AssetClass;
+  periodsPerYear: number;
+}): { sharpe: number | null; fenster: number; punkte: number } | null {
+  const renditen: number[] = [];
+  let fenster = 0;
+  let punkte = 0;
+  for (const range of args.ranges) {
+    const r = wertreihe(args.bars, range, args.assetClass);
+    if (!r) continue;
+    fenster++;
+    punkte += r.punkte;
+    for (const x of r.renditen) renditen.push(x);
+  }
+  if (fenster === 0 || renditen.length < 2) return null;
+  return { sharpe: sharpeRatio(renditen, args.periodsPerYear), fenster, punkte };
+}
+
+interface Wertreihe {
+  symbole: number;
+  /** Wertentwicklung, beginnend bei 1. */
+  kurve: number[];
+  renditen: number[];
+  punkte: number;
+}
+
+function wertreihe(bars: ReadonlyMap<string, BarSeriesLike>, range: { start: Ms; end: Ms }, assetClass: AssetClass): Wertreihe | null {
 
   // Tagesschluss je Symbol im Fenster (letzte Bar des Tages gewinnt) — so ist
   // die Renditereihe tageweise wie die des Simulators, auch bei Minutenbars.
@@ -103,13 +151,5 @@ export function kaufenUndHalten(args: {
     if (vor > 0) renditen.push(wert / vor - 1);
   }
 
-  const ende = kurve[kurve.length - 1]!;
-  return {
-    symbole: proSymbol.length,
-    netReturnPct: (ende - 1) * 100,
-    maxDrawdownPct: maxDrawdownPct(kurve),
-    sharpe: sharpeRatio(renditen, periodsPerYear),
-    days: Math.max(1, Math.ceil((range.end - range.start) / DAY)),
-    punkte: achse.length,
-  };
+  return { symbole: proSymbol.length, kurve, renditen, punkte: achse.length };
 }

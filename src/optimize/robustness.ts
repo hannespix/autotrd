@@ -275,6 +275,13 @@ export interface GateInput {
    * Trade-Schwelle gilt anteilig, der DSR ist ohne Suche nicht anwendbar.
    */
   incumbent?: { cleanFolds: number; totalFolds: number } | undefined;
+  /**
+   * Maßstab über DIESELBEN OOS-Fenster: Sharpe p. a. von kaufen und
+   * liegenlassen (`marktKette`). Fehlt er, gilt 0 als Latte — das Gate darf
+   * nie vakant werden, sonst schafft man es ab, indem man die Benchmark aus
+   * der Config nimmt.
+   */
+  markt?: { sharpe: number | null; quelle: string } | undefined;
 }
 
 export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResult[] } {
@@ -390,6 +397,39 @@ export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResul
     value: oos.feeShare,
     threshold: FEE_SHARE_MAX,
     note: oos.feeShare === null ? 'Gebührenanteil nicht berechenbar (kein Bruttogewinn) — kein Urteil' : `Gebühren fressen ${(oos.feeShare * 100).toFixed(1)} % des Bruttogewinns`,
+  });
+
+  // Schlägt die Strategie das Nichtstun? Am 08.09.2026 bestand
+  // momentum_pullback alle neun anderen Gates und verfehlte im folgenden
+  // Halbjahr den Korb um 21.8 Prozentpunkte (+1.9 % gegen +23.7 %). Kein
+  // einziges Gate hatte danach gefragt. Gemessen auf der OOS-KETTE, nie am
+  // Holdout — der bleibt selektionsfrei.
+  //
+  // Verglichen wird der Sharpe, nicht die Rendite: Er ist Ertrag je eigener
+  // Schwankung und bestraft eine selten investierte Strategie nicht dafür,
+  // dass sie meistens flach steht. Eine Strategie, die WENIGER Ertrag je
+  // Risiko liefert als stumpfes Halten, hat keine Kante — sie hat Gebühren.
+  const marktSr = a.markt?.sharpe ?? null;
+  const latte = marktSr ?? 0;
+  // Drei unterscheidbare Fälle — "Benchmark da, aber nicht rechenbar" darf im
+  // Bericht nicht wie "keine Benchmark konfiguriert" aussehen: Das erste ist
+  // ein Datenproblem, das zweite eine Konfigurationsentscheidung.
+  const quelle =
+    a.markt === undefined
+      ? 'kein Maßstab konfiguriert — Latte 0 (Kasse)'
+      : marktSr === null
+        ? `${a.markt.quelle}, Sharpe nicht berechenbar — Latte 0 (Kasse)`
+        : a.markt.quelle;
+  gates.push({
+    name: 'beats_market',
+    pass: srAnnual !== null && srAnnual > latte,
+    value: srAnnual,
+    threshold: latte,
+    note:
+      srAnnual === null
+        ? `OOS-Sharpe nicht berechenbar — gilt als durchgefallen (Latte ${latte.toFixed(2)}, ${quelle})`
+        : `OOS-Sharpe p. a. ${srAnnual.toFixed(2)} gegen ${latte.toFixed(2)} aus ${quelle}` +
+          (srAnnual > latte ? '' : ' — kaufen und liegenlassen war besser'),
   });
 
   return { pass: gates.every((g) => g.pass), gates };
