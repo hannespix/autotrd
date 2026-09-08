@@ -11,7 +11,8 @@ import { ensureDir } from '../core/journal.ts';
 import type { AssetClass, Metrics, Ms, Params, TimeframeMin } from '../core/types.ts';
 import { fitEndOf } from './promote.ts';
 import { gateOptions, type GateResult } from './robustness.ts';
-import type { SymbolRun } from './run.ts';
+import type { MarktBezug } from '../backtest/marktbezug.ts';
+import type { HoldoutMarkt, SymbolRun } from './run.ts';
 import type { TimeRange } from './walkForward.ts';
 
 export interface ReportMeta {
@@ -255,6 +256,8 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
         );
         out.push('');
         out.push(table(METRICS_HEADER, [metricsRow(s.wfa.holdout.metrics)]));
+        const markt = marktBlock(r.holdoutMarkt);
+        if (markt.length) out.push('', ...markt);
       } else {
         out.push('_Kein Holdout konfiguriert (optimizer.holdoutDays = 0)._');
       }
@@ -263,6 +266,31 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
   }
 
   return out.join('\n');
+}
+
+/**
+ * Maßstab unter dem Holdout: Was hätte Nichtstun gebracht? Eine
+ * Holdout-Rendite ohne diese Zeilen ist nicht lesbar — +11 % sind großartig
+ * gegen 0 % und mittelmäßig gegen +12 %.
+ */
+function marktBlock(m: HoldoutMarkt | null): string[] {
+  if (!m) return [];
+  const zeilen: string[][] = [];
+  // netReturnPct/maxDrawdownPct sind bereits Prozent (wie in `Metrics`) — pct()
+  // würde ein zweites Mal mit 100 multiplizieren.
+  const zeile = (name: string, b: MarktBezug): string[] => [name, `${signed(b.netReturnPct)} %`, `${num(b.maxDrawdownPct)} %`, num(b.sharpe)];
+  if (m.korb) zeilen.push(zeile(`Kaufen und Halten (${m.korb.symbole} Symbol${m.korb.symbole === 1 ? '' : 'e'}, gleichgewichtet)`, m.korb));
+  if (m.benchmark && m.benchmarkSymbol) zeilen.push(zeile(`${m.benchmarkSymbol} (Benchmark)`, m.benchmark));
+  if (!zeilen.length) return [];
+  return [
+    '_Maßstab im selben Fenster — kaufen und liegenlassen, ohne Kosten, durchgehend voll investiert._',
+    '',
+    table(['Referenz', 'Rendite', 'MaxDD', 'Sharpe'], zeilen),
+    '',
+    '_Vergleichbar ist der **Sharpe**: Ertrag je Risiko, unabhängig davon, wie oft die Strategie im Markt stand. ' +
+      'Eine selten investierte Strategie darf weniger Rendite haben — sie muss den besseren Sharpe haben. ' +
+      'Liegt der Maßstab vorn, war die Holdout-Rendite Markt, nicht Kante._',
+  ];
 }
 
 /** Bericht atomar schreiben; liefert den Pfad. */

@@ -244,6 +244,26 @@ unglaubwürdiger, nicht glaubwürdiger. Wer hier weitersucht, muss die Zahl der
 Versuche mitzählen und den Holdout unangetastet lassen — sonst misst er nur
 noch sich selbst.
 
+### 7. Ohne Maßstab ist keine Holdout-Zahl lesbar
+
+Bis zum 08.09. abends nannte kein Bericht, was **Nichtstun** im selben Fenster
+gebracht hätte. +11.3 % Holdout-Rendite klingen großartig — gegen einen Korb,
+der im selben Halbjahr +12 % gemacht hat, sind sie eine teure Null. Ohne diese
+Gegenzahl misst der Bericht Marktbewegung und nennt sie Kante; das ist
+derselbe Fehler wie im Vorgängersystem, nur eine Ebene höher.
+
+Seitdem steht unter jeder Holdout-Tabelle ein Maßstab
+(`src/backtest/marktbezug.ts`): gleichgewichtet kaufen, halten, nichts tun —
+für den gehandelten Korb und für die Benchmark. Vergleichbar ist der
+**Sharpe**, nicht die Rendite: Er ist Ertrag je Risiko und damit unabhängig
+davon, wie oft eine Strategie im Markt stand. Eine selten investierte
+Strategie DARF weniger Rendite haben; sie muss den besseren Sharpe haben.
+
+Der Maßstab ist bewusst zu gut gerechnet (keine Kosten, durchgehend voll
+investiert) — die richtige Richtung für eine Latte, über die gesprungen
+werden soll. Er ist ausdrücklich **kein Gate**: Er entscheidet nichts,
+er macht nur lesbar, was entschieden wurde.
+
 ### Was das für den Betrieb heißt
 
 Kein Handel. Der nächtliche Optimierer läuft weiter und sucht mit nächtlich

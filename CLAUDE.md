@@ -119,7 +119,7 @@ Broker, ein Takt je Minute genügt für den 5-Minuten-Zeitrahmen.
 | `alpaca/` | Vertrag (`types.ts`), REST-Client (`rest.ts`), Streams (`stream.ts`), Symbol-Mapping. |
 | `data/` | Bars-Cache auf Platte, inkrementeller Backfill, Kalender. |
 | `strategy/` | Indikatoren (kausal) und Vorlagen. Symbolweise: `trend_donchian`, `momentum_pullback`, `mean_reversion`, `orb_breakout`. Querschnittlich (fragt den KORB, nicht das Symbol): `cross_sectional_momentum` — die Rangliste baut `decide()`, nie die Strategie selbst. |
-| `backtest/` | Portfolio-Simulator (Fills am nächsten Open, Stop vor Ziel), Kosten, Metriken (Sharpe/Sortino/PSR/DSR). |
+| `backtest/` | Portfolio-Simulator (Fills am nächsten Open, Stop vor Ziel), Kosten, Metriken (Sharpe/Sortino/PSR/DSR), Marktbezug (`marktbezug.ts`: kaufen und halten als Maßstab unter jedem Holdout — kein Gate, aber ohne ihn liest man Markt als Kante). |
 | `universe/` | Nächtliche Wahl des Handelsuniversums — nach **Handelbarkeit**, nie nach dem Ergebnis der Strategie (Grenzen der Kennzahl im Modulkopf). |
 | `optimize/` | Walk-Forward, Robustheits-Gates, Champion/Challenger, Report. |
 | `engine/` | Buch, Order-Ausführung, Abgleich, Uhr, Schleife. |

@@ -14,6 +14,7 @@
  * mehr in die Kandidatensuche ein: Sie wurden auf Daten gefittet, die in den
  * OOS-Fenstern der Kandidaten liegen (Red-Team-Befund).
  */
+import { kaufenUndHalten, type MarktBezug } from '../backtest/marktbezug.ts';
 import type { Config } from '../core/config.ts';
 import { Journal, homePaths } from '../core/journal.ts';
 import { errMsg } from '../core/log.ts';
@@ -162,7 +163,22 @@ export interface SymbolRun {
   incumbent: ChampionEntry | null;
   incumbentRescore: number | null;
   incumbentEval: IncumbentEval | null;
+  /**
+   * Was Kaufen-und-Halten im Holdout-Fenster gebracht hätte. Ohne diese Zahl
+   * liest man Marktbewegung als Kante (siehe backtest/marktbezug.ts).
+   * null, wenn es keinen Holdout gibt oder das Fenster zu kurz ist.
+   */
+  holdoutMarkt: HoldoutMarkt | null;
   errors: string[];
+}
+
+export interface HoldoutMarkt {
+  range: TimeRange;
+  /** Der gehandelte Korb, gleichgewichtet. */
+  korb: MarktBezug | null;
+  /** Die konfigurierte Benchmark (z. B. SPY), falls vorhanden. */
+  benchmarkSymbol: string | null;
+  benchmark: MarktBezug | null;
 }
 
 export interface OptimizeRunOutput {
@@ -426,6 +442,25 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       fitEnd: r.wfa.finalWindow.end,
     });
 
+    // Marktbezug des Holdouts: EINMAL je Einheit, denn das Fenster hängt nur
+    // an den Daten, nicht an der Strategie. Er entscheidet nichts — er ist
+    // der Maßstab, an dem ein Leser erkennt, ob eine Holdout-Rendite Kante
+    // war oder nur Markt.
+    let holdoutMarkt: HoldoutMarkt | null = null;
+    const holdoutRange = results.find((r) => r.wfa.holdout !== null)?.wfa.holdout ?? null;
+    if (holdoutRange && bars) {
+      const range = { start: holdoutRange.start, end: holdoutRange.end };
+      const gemeinsam = { range, assetClass: cfg.universe.assetClass, periodsPerYear };
+      const bench = input.benchmark;
+      const benchSymbol = cfg.universe.benchmark ?? null;
+      holdoutMarkt = {
+        range,
+        korb: kaufenUndHalten({ ...gemeinsam, bars: korbVon(symbol, bars) }),
+        benchmarkSymbol: bench && benchSymbol ? benchSymbol : null,
+        benchmark: bench && benchSymbol ? kaufenUndHalten({ ...gemeinsam, bars: new Map([[benchSymbol, bench]]) }) : null,
+      };
+    }
+
     let decision: PromotionDecision;
     let candidate: ChampionEntry | null = null;
     if (!bars || (results.length === 0 && errors.length > 0)) {
@@ -454,7 +489,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
     const chosen = decision.action === 'promote' ? champion.symbols[ersteszSymbol]! : decision.action === 'keep' ? incumbent : null;
     journalDecision(journal, { symbol, decision, chosen, candidate, candidatePass: bestPassed !== null, incumbentRescore, incumbentPass, now: runAt });
     log(`${symbol}: ${decision.action} — ${decision.reason}`);
-    runs.push({ symbol, results, decision, chosen, incumbent, incumbentRescore, incumbentEval, errors });
+    runs.push({ symbol, results, decision, chosen, incumbent, incumbentRescore, incumbentEval, holdoutMarkt, errors });
   }
 
   saveChampion(paths.champion, champion);

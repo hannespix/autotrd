@@ -131,6 +131,14 @@ describe('runOptimization (Ende-zu-Ende)', () => {
     expect(text).toContain('DSR (IS): DSR ');
     expect(text).toContain('(alle Folds)');
     expect(text).toContain('nur finale Suche');
+    // Maßstab unter dem Holdout. Ohne ihn liest ein Mensch Marktbewegung als
+    // Kante — die Zahl muss deshalb im Bericht ANKOMMEN, nicht nur berechnet
+    // werden. Sie entscheidet nichts und darf in keiner Gate-Tabelle stehen.
+    expect(text).toContain('Maßstab im selben Fenster');
+    expect(text).toContain('| Referenz | Rendite | MaxDD | Sharpe |');
+    expect(text).toMatch(/\| Kaufen und Halten \(\d+ Symbole?, gleichgewichtet\) \|/);
+    expect(out.runs[0]!.holdoutMarkt).not.toBeNull();
+    expect(out.runs[0]!.holdoutMarkt!.range).toEqual({ start: out.runs[0]!.results[0]!.wfa.holdout!.start, end: out.runs[0]!.results[0]!.wfa.holdout!.end });
   });
 
   it('Folgelauf am selben Tag: kein sauberes OOS nach fitEnd ⇒ Beförderungs-Score gilt, Kandidat schlägt die Marge nicht ⇒ keep', () => {
