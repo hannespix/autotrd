@@ -65,4 +65,13 @@ describe('Umstieg: meta/engineConfig', () => {
     expect(doc.engine.barGraceSec).toBeUndefined();
     expect(doc.riskDefaults.maxDailyLossPct).toBe(2);
   });
+
+  it('trägt den Kandidatenpool NICHT — er wird nirgends gebraucht und jede Minute von jedem Nutzer gelesen', () => {
+    const cfg = parseConfig(parseYaml(readFileSync('config/platform.yaml', 'utf8')));
+    expect(cfg.universe.candidates?.length ?? 0, 'Vorbedingung: die Plattform-Config hat einen Pool').toBeGreaterThan(30);
+    const doc = engineConfigDocFrom(cfg);
+    expect(doc.universe.candidates).toBeUndefined();
+    expect(doc.universe.maxSymbols).toBeUndefined();
+    expect(Object.keys(doc.universe).sort()).toEqual(['assetClass', 'benchmark', 'symbols']);
+  });
 });

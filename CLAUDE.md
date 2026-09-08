@@ -61,7 +61,7 @@ thematisch). Bezeichner im Code Englisch, Kommentare Deutsch.
 | Programm | dieses Repo, `node src/cli.ts …` (Node ≥ 22.18, Type-Stripping) oder `dist/` nach `npm run build` |
 | Config | `config/config.yaml` (Vorlage: `config/config.example.yaml`), Schema in `src/core/config.ts` |
 | Secrets | `.env` (Vorlage `.env.example`) — nie committen |
-| State | `AUTOTRD_HOME` bzw. `paths.home` (Default `./var`): `state.json`, `journal.jsonl`, `champion.json`, `bars/`, `calendar.json`, `reports/`, Not-Aus-Datei `HALT` |
+| State | `AUTOTRD_HOME` bzw. `paths.home` (Default `./var`): `state.json`, `journal.jsonl`, `champion.json`, `universe.json`, `bars/`, `calendar.json`, `reports/`, Not-Aus-Datei `HALT` |
 
 Ein Prozess, ein Journal (append-only), ein State-Snapshot (atomar
 geschrieben).
@@ -114,11 +114,12 @@ Broker, ein Takt je Minute genügt für den 5-Minuten-Zeitrahmen.
 | `data/` | Bars-Cache auf Platte, inkrementeller Backfill, Kalender. |
 | `strategy/` | Indikatoren (kausal) und Vorlagen: `trend_donchian`, `momentum_pullback`, `mean_reversion`, `orb_breakout`. |
 | `backtest/` | Portfolio-Simulator (Fills am nächsten Open, Stop vor Ziel), Kosten, Metriken (Sharpe/Sortino/PSR/DSR). |
+| `universe/` | Nächtliche Wahl des Handelsuniversums — **nur nach Liquidität**, nie nach Ertrag. |
 | `optimize/` | Walk-Forward, Robustheits-Gates, Champion/Challenger, Report. |
 | `engine/` | Buch, Order-Ausführung, Abgleich, Uhr, Schleife. |
 | `notify/`, `status/` | Telegram, Status-HTTP (nur 127.0.0.1). |
 | `readiness.ts` | Live-Reife aus dem Journal (≥ 200 Trades, ≥ 30 Tage, PF ≥ 1,2, feeShare ≤ 0,5, netto > 0). |
-| `cli.ts` | `doctor · fetch · backtest · optimize · run · status · flatten · halt · resume · readiness`. |
+| `cli.ts` | `doctor · universe · fetch · backtest · optimize · run · status · flatten · halt · resume · readiness`. |
 
 Plattform (`functions/src/`, `frontend/`, `shared/`):
 
@@ -155,6 +156,7 @@ Plattform (`functions/src/`, `frontend/`, `shared/`):
 ```bash
 npm run check                    # typecheck + lint + alle Tests
 node src/cli.ts doctor           # Keys, Modus, Konto, Uhr, Assets (braucht .env)
+node src/cli.ts universe         # Handelsuniversum nach Liquidität wählen
 node src/cli.ts fetch            # Bars + Kalender in den Cache
 node src/cli.ts backtest         # Champion/Default gegen den Cache
 node src/cli.ts optimize         # Walk-Forward ⇒ champion.json + Report

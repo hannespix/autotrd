@@ -6,7 +6,7 @@ describe('Config je Nutzer', () => {
   it('ohne meta/engineConfig und ohne Settings: eingebaute Defaults, Schema-Defaults im Risiko', () => {
     const { config, source } = buildUserConfig(globalConfigRaw(undefined), undefined);
     expect(source).toBe('default');
-    expect(config.universe).toEqual({ assetClass: 'us_equity', symbols: [...DEFAULT_UNIVERSE], benchmark: 'SPY' });
+    expect(config.universe).toEqual({ assetClass: 'us_equity', symbols: [...DEFAULT_UNIVERSE], benchmark: 'SPY', maxSymbols: 30 });
     expect(config.timeframe).toBe(5);
     expect(config.broker.feed).toBe('iex');
     expect(config.engine.barGraceSec).toBe(20);

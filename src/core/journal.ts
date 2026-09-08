@@ -197,6 +197,8 @@ export interface HomePaths {
   calendar: string;
   reports: string;
   haltFlag: string;
+  /** Ergebnis der nächtlichen Universums-Auswahl (siehe src/universe/). */
+  universe: string;
 }
 
 export function homePaths(home: string): HomePaths {
@@ -209,5 +211,6 @@ export function homePaths(home: string): HomePaths {
     calendar: join(home, 'calendar.json'),
     reports: join(home, 'reports'),
     haltFlag: join(home, 'HALT'),
+    universe: join(home, 'universe.json'),
   };
 }

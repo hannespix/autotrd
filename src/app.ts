@@ -17,6 +17,7 @@ import type { Bar, BarSeriesLike, Params, Strategy, TimeframeMin } from './core/
 import { loadCalendarFile } from './data/calendar.ts';
 import { BarStore, barStoreRoot } from './data/store.ts';
 import { loadChampion, type ChampionFile } from './optimize/promote.ts';
+import { ladeUniverseDatei, mitUniverse } from './universe/file.ts';
 import { getStrategy } from './strategy/index.ts';
 import { mergeParams } from './strategy/params.ts';
 
@@ -25,6 +26,12 @@ export interface AppOptions {
   env: string;
   home?: string | undefined;
   verbose?: boolean | undefined;
+  /**
+   * Pfad zur Auswahl aus `autotrd universe`. Gesetzt ⇒ sie ersetzt
+   * `universe.symbols`; fehlt die Datei, gilt die Config (erster Lauf).
+   * `'auto'` nimmt `<home>/universe.json`.
+   */
+  universeFile?: string | undefined;
 }
 
 export interface App {
@@ -49,11 +56,24 @@ export function bootstrap(opts: AppOptions): App {
   registerSecret(env.ALPACA_API_KEY);
   registerSecret(env.ALPACA_SECRET_KEY);
   registerSecret(env.TELEGRAM_BOT_TOKEN);
-  const config = loadConfigFile(opts.config);
-  const { mode, reasons } = resolveMode(config, env);
-  const home = opts.home ? resolve(opts.home) : homeDir(config, env);
+  const roh = loadConfigFile(opts.config);
+  const { mode, reasons } = resolveMode(roh, env);
+  const home = opts.home ? resolve(opts.home) : homeDir(roh, env);
   ensureDir(home);
   const paths = homePaths(home);
+  // Nächtliche Auswahl anwenden, falls verlangt. Fehlt sie, bleibt es beim
+  // committeten Universum — nie stillschweigend etwas anderes handeln.
+  let config = roh;
+  if (opts.universeFile) {
+    const pfad = opts.universeFile === 'auto' ? paths.universe : resolve(opts.universeFile);
+    const gewaehlt = ladeUniverseDatei(pfad, roh);
+    if (gewaehlt) {
+      config = mitUniverse(roh, gewaehlt);
+      logger.info(`Universum aus der Auswahl: ${gewaehlt.length} Symbole (${pfad})`);
+    } else {
+      logger.warn(`Keine Universums-Auswahl unter ${pfad} — es gilt das Universum aus der Config (${roh.universe.symbols.length} Symbole).`);
+    }
+  }
   const client =
     env.ALPACA_API_KEY && env.ALPACA_SECRET_KEY
       ? createAlpacaClient({

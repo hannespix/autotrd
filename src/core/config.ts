@@ -16,6 +16,18 @@ import { normalizeUserSymbol } from '../alpaca/symbols.ts';
 
 const pct = (max: number) => z.number().min(0).max(max);
 
+/** Aufgelöstes Universum: kanonische Schreibweise, ohne Duplikate. */
+export interface ResolvedUniverse {
+  assetClass: 'us_equity' | 'crypto';
+  /** Was tatsächlich gehandelt wird. */
+  symbols: string[];
+  /** Obergrenze der nächtlichen Auswahl. */
+  maxSymbols: number;
+  benchmark?: string;
+  /** Pool der nächtlichen Auswahl; enthält immer mindestens `symbols`. */
+  candidates?: string[];
+}
+
 export const ConfigSchema = z.object({
   broker: z
     .object({
@@ -30,14 +42,27 @@ export const ConfigSchema = z.object({
       symbols: z.array(z.string().min(1)).min(1).max(50),
       /** Benchmark für Marktfilter (z. B. SPY). Wird mitgeladen, nie gehandelt. */
       benchmark: z.string().min(1).optional(),
+      /**
+       * Pool, aus dem die nächtliche Auswahl (`autotrd universe`) die
+       * `maxSymbols` liquidesten wählt. Leer ⇒ `symbols` bleibt fest.
+       * Der Pool wird von Hand gepflegt und nur mit Commit geändert — die
+       * Auswahl darin läuft automatisch, aber ausschließlich nach Liquidität.
+       */
+      candidates: z.array(z.string().min(1)).max(300).optional(),
+      /** Wie viele Symbole die Auswahl behält (IEX-Basis: höchstens 30 inkl. Benchmark). */
+      maxSymbols: z.number().int().min(1).max(30).default(30),
     })
     // Kanonische Alpaca-Schreibweise (BRK-B → BRK.B, btcusd → BTC/USD) und Duplikate raus —
     // sonst bucht ein Fill unter „BTC/USD", während die Entscheidung „BTCUSD" ohne Position sieht.
-    .transform((u) => {
-      const symbols = [...new Set(u.symbols.map((s) => normalizeUserSymbol(s, u.assetClass)))];
-      return u.benchmark === undefined
-        ? { assetClass: u.assetClass, symbols }
-        : { assetClass: u.assetClass, symbols, benchmark: normalizeUserSymbol(u.benchmark, u.assetClass) };
+    .transform((u): ResolvedUniverse => {
+      const norm = (s: string) => normalizeUserSymbol(s, u.assetClass);
+      const symbols = [...new Set(u.symbols.map(norm))];
+      const out: ResolvedUniverse = { assetClass: u.assetClass, symbols, maxSymbols: u.maxSymbols };
+      if (u.benchmark !== undefined) out.benchmark = norm(u.benchmark);
+      // Der Pool enthält immer mindestens das aktuelle Universum: Sonst könnte eine
+      // Auswahl Symbole verlieren, die die Config gerade handelt.
+      if (u.candidates !== undefined) out.candidates = [...new Set([...symbols, ...u.candidates.map(norm)])];
+      return out;
     }),
   /** Strategie-Zeitrahmen in Minuten (1440 = Tagesbars). */
   timeframe: z

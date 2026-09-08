@@ -31,7 +31,7 @@ WebSocket-Streams. Sie wird für keine der Vorlagen gebraucht, weil Exits
 | Trades | `users/{uid}/trades/{autoId}` | Ein- und Ausstiegs-Fill im bisherigen Schema (Steuer-Export, Historie), EZB-Kurs beim Schreiben eingefroren |
 | Spiegel | `users/{uid}/positions/{symbol}`, `users/{uid}.wallet`, `users/{uid}.engine`, `market/{symbol}.quote` | Was das Frontend liest |
 | Kommandos | `users/{uid}/private/engineCommands` | `halt` / `resume` (Drawdown nur mit `ackDrawdown`) / `flatten` (nur das eigene Buch), gesetzt vom Callable `engineCommand` (nur mit verbundenem Broker), verarbeitet im nächsten Takt, verfallen nach 24 h |
-| Config | `meta/engineConfig` (global) + `users/{uid}.settings.auto` (Risiko je Nutzer) | Quelle: `config/platform.yaml` über `scripts/sync-engine-config.mjs` |
+| Config | `meta/engineConfig` (global) + `users/{uid}.settings.auto` (Risiko je Nutzer) | Quelle: `config/platform.yaml` über `scripts/sync-engine-config.mjs`; `universe.symbols` kommt aus der nächtlichen Auswahl (§5a), der Kandidatenpool bleibt draußen |
 | Champion | `meta/champion`, Berichte `meta/optimizeReports/berichte/{date}` | Vom nächtlichen Optimierer (`.github/workflows/optimize.yml`) veröffentlicht |
 | Lease | `meta/engineLease` | Transaktion mit 90 s TTL — zwei Takte laufen nie gleichzeitig |
 | Wächter | `wachhund` (alle 10 min) | Schlägt Alarm, wenn `meta/health.lastRunAt` älter als 10 Minuten ist (`TAKT_TOT_MIN`) oder ein voller Takt keine Kurse bekam; Telegram/Nachricht wie bisher |
@@ -119,6 +119,47 @@ das war einer der Fehler des Vorgängers.
   State-Read, ein State-Write und ein Journal-Batch; außerhalb der Sitzung
   praktisch nichts. Marktdaten einmal je Takt mit dem Plattform-Key.
 
+## 5a. Wer gehandelt wird, entscheidet jede Nacht die Liquidität
+
+Der Optimierer-Workflow beginnt seit dem 08.09.2026 mit einem eigenen
+Schritt, `autotrd universe`:
+
+1. Tagesbars für den **Kandidatenpool** aus `config/platform.yaml`
+   (`universe.candidates`, derzeit 139 Werte quer über die Sektoren).
+2. Rang nach **Median-Dollarumsatz** über 60 Handelstage. Median, weil ein
+   einzelner Quartalszahlen-Tag ein sonst dünnes Symbol nicht hochtragen soll.
+3. Filter: mindestens 45 Bars im Fenster, Kurs ≥ 5 $, Umsatz ≥ 2 Mio. $/Tag,
+   letzte Bar höchstens 5 Tage alt (fängt Delisting und Dauer-Halt).
+4. Die liquidesten `universe.maxSymbols` (30, die harte Grenze des
+   IEX-Basisplans) gewinnen. Der Benchmark ist immer dabei; besteht er die
+   Prüfung nicht, bricht der Schritt ab, statt ohne Marktfilter zu messen.
+5. **Hysterese:** Wer schon dabei ist, behält den Platz bis Rang 35. Ohne das
+   tauschte der Korb jede Nacht zwei Werte auf Rauschen aus, und die gepoolte
+   Messung von gestern wäre mit der von heute nicht vergleichbar.
+
+**Niemals nach Ertrag.** Ein Universum nach vergangener Rendite
+zusammenzustellen und es anschließend auf denselben Daten zu messen ist
+Selektionsbias in Reinform — der Fehler, an dem das Vorgängersystem gestorben
+ist. `waehleUniverse` bekommt Bars und sonst nichts; sie sieht weder PnL noch
+Champion und könnte gar nicht nach Ertrag sortieren. Ein Test hält das fest
+(`test/universe/select.test.ts`).
+
+Den **Pool** ändert weiterhin nur ein Commit. Automatisch läuft die Wahl
+darin. Drei Stellen bewachen das:
+
+- `ladeUniverseDatei` lehnt jede Auswahl ab, die ein Symbol außerhalb des
+  Pools nennt, mehr als `maxSymbols` enthält oder den Benchmark vermissen
+  lässt — dann bleibt `meta/engineConfig` unverändert stehen.
+- Der Wächter (`wachhund.yml`) meldet als Fehler, wenn die Engine etwas
+  handelt, das im Repo nicht als Kandidat steht.
+- `test/scripts/plattformConfig.test.ts` verbietet gehebelte und inverse ETFs
+  im Pool: Sie stehen ganz oben in jeder Umsatzliste und würden eine Auswahl
+  nach Liquidität sofort dominieren, obwohl 3×-Produkte das ATR-Sizing
+  sprengen.
+
+Nachzulesen ist jede Nacht im Artefakt des Laufs: `var/reports/universe-*.md`
+listet **jeden** Kandidaten mit Rang, Umsatz und Grund — auch den abgelehnten.
+
 ## 6. Einrichtung (einmalig)
 
 1. Secrets im Functions-Projekt: `BROKER_MASTER_KEY` (32 Byte, base64; an
@@ -130,7 +171,9 @@ das war einer der Fehler des Vorgängers.
    `config/platform.yaml` (läuft auch im Optimierer-Workflow). `broker.feed`
    kommt mit (Optimierer und Engine messen denselben Feed);
    `engine.barGraceSec` nicht — der Takt hält mindestens 20 s Karenz, damit
-   ein Bucket erst mit vollständiger letzter Minutenbar schließt.
+   ein Bucket erst mit vollständiger letzter Minutenbar schließt. Im
+   nächtlichen Lauf kommt `--universe var/universe.json` dazu, damit die
+   Engine genau den Korb handelt, den der Optimierer gerade gemessen hat.
 3. Repository-Secrets für den Optimierer-Workflow: `ALPACA_API_KEY`,
    `ALPACA_SECRET_KEY`, `FIREBASE_SERVICE_ACCOUNT`.
 4. Deploy wie bisher (`deploy-functions.yml`); `check-scheduler.mjs` legt den

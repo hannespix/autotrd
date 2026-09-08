@@ -3,6 +3,7 @@
  * autotrd — Kommandozeile des Auto-Traders.
  *
  *   doctor     Config, Keys, Modus, Konto, Uhr, Assets, Cache, Champion prüfen
+ *   universe   Handelsuniversum aus dem Kandidatenpool nach Liquidität wählen
  *   fetch      Kalender + Bars in den Cache laden (inkrementell)
  *   backtest   Champion/Default gegen den Cache simulieren
  *   optimize   Walk-Forward ⇒ champion.json + Report
@@ -23,7 +24,7 @@ import { ConfigError } from './core/config.ts';
 import { ensureDir, writeJsonAtomic } from './core/journal.ts';
 import { errMsg, logger } from './core/log.ts';
 import { DAY, addDays, dayKey, dayKeyFor, msFromET, parseDay, toET } from './core/time.ts';
-import type { Metrics, Params, Trade } from './core/types.ts';
+import type { Bar, Metrics, Params, Trade } from './core/types.ts';
 import { backfill } from './data/backfill.ts';
 import { ensureCalendar } from './data/calendar.ts';
 import { Engine } from './engine/engine.ts';
@@ -33,20 +34,25 @@ import { assessReadiness } from './readiness.ts';
 import { startStatusServer } from './status/http.ts';
 import { getStrategy, strategyIds } from './strategy/index.ts';
 import { mergeParams, validateParams } from './strategy/params.ts';
+import { ladeUniverseDatei, schreibeUniverseDatei } from './universe/file.ts';
+import { renderUniverseReport } from './universe/report.ts';
+import { UNIVERSE_REGELN, waehleUniverse, type UniverseRegeln } from './universe/select.ts';
 
 const USAGE = `autotrd <kommando> [optionen]
 
-Kommandos: doctor | fetch | backtest | optimize | run | status | flatten | halt | resume | readiness
+Kommandos: doctor | universe | fetch | backtest | optimize | run | status | flatten | halt | resume | readiness
 
 Gemeinsame Optionen:
   --config <pfad>    Config-Datei (Default: config/config.yaml)
   --env <pfad>       .env-Datei (Default: .env)
   --home <pfad>      State-Verzeichnis (Default: AUTOTRD_HOME bzw. paths.home)
   --verbose          Debug-Log
-  --json             Maschinenlesbare Ausgabe (status, readiness, backtest)
+  --json             Maschinenlesbare Ausgabe (status, readiness, backtest, universe)
+  --universe <pfad>  Auswahl des Kommandos universe anwenden ('auto' = <home>/universe.json)
 
 backtest:  --strategy <id> --params a=1,b=2 --days <n> --symbols A,B --from YYYY-MM-DD --to YYYY-MM-DD --stress <faktor> --equity <usd>
 optimize:  --equity <usd>            (Zeitraum: optimizer.lookbackDays aus der Config)
+universe:  --out <pfad>              (Default: <home>/universe.json)
 fetch:     --days <n>
 halt:      --reason <text>
 flatten:   --yes
@@ -80,6 +86,8 @@ function parseCli(argv: string[]): Cli {
       yes: { type: 'boolean' },
       'ack-drawdown': { type: 'boolean' },
       reason: { type: 'string' },
+      universe: { type: 'string' },
+      out: { type: 'string' },
     },
   });
   return { cmd: positionals[0] ?? 'help', values: values as Record<string, string | boolean | undefined> };
@@ -148,11 +156,14 @@ function parseParams(s: string | undefined): Partial<Params> {
 }
 
 function appFrom(cli: Cli): App {
+  // `universe` erzeugt die Auswahl gerade erst — es darf sie nicht schon anwenden.
+  const auswahl = cli.cmd === 'universe' ? undefined : str(cli.values.universe);
   return bootstrap({
     config: str(cli.values.config) ?? 'config/config.yaml',
     env: str(cli.values.env) ?? '.env',
     home: str(cli.values.home),
     verbose: cli.values.verbose === true,
+    universeFile: auswahl,
   });
 }
 
@@ -243,6 +254,67 @@ async function cmdDoctor(app: App): Promise<number> {
   const r = assessReadiness(trades, Date.now());
   out(`Live-Reife: ${r.ready ? 'ERFÜLLT' : 'nicht erfüllt'} — ${r.summary}`);
   return hard > 0 ? 1 : 0;
+}
+
+/**
+ * Handelsuniversum wählen: Tagesbars für den Kandidatenpool laden, nach
+ * Median-Dollarumsatz ranken, die liquidesten `maxSymbols` behalten.
+ *
+ * Ausdrücklich NICHT nach Ertrag — siehe `src/universe/select.ts`. Das
+ * Ergebnis landet in `<home>/universe.json`; `fetch`, `optimize` und
+ * `scripts/sync-engine-config.mjs` wenden es mit `--universe` an.
+ */
+async function cmdUniverse(app: App, cli: Cli): Promise<number> {
+  const pool = app.config.universe.candidates;
+  if (!pool || pool.length === 0) {
+    out('Kein Kandidatenpool (`universe.candidates`) konfiguriert — das Universum aus der Config bleibt, wie es ist.');
+    return 0;
+  }
+  const client = requireClient(app);
+  const regeln: UniverseRegeln = { ...UNIVERSE_REGELN, max: app.config.universe.maxSymbols };
+  const now = Date.now();
+  // Tagesbars sind billig (ein Abruf je Block, kein Minutenraster), deshalb darf der
+  // Pool viel größer sein als das Universum. Fenster großzügig: 60 Handelstage
+  // brauchen rund 84 Kalendertage.
+  const from = now - (regeln.fensterTage * 2 + 10) * DAY;
+  const geladen = await backfill({ client, store: app.store, symbols: [...pool], tf: '1Day', from, to: now, feed: app.config.broker.feed, log: (m) => logger.debug(m) });
+  const kandidaten = new Map<string, Bar[]>();
+  for (const sym of pool) kandidaten.set(sym, geladen.get(sym) ?? app.store.load(sym, '1Day'));
+
+  // Bestand = was gerade gehandelt wird: die letzte Auswahl, sonst die Config.
+  const vorher = ladeUniverseDatei(app.paths.universe, app.config) ?? app.config.universe.symbols;
+  const bench = app.config.universe.benchmark;
+  const auswahl = waehleUniverse({
+    kandidaten,
+    pflicht: bench ? [bench] : [],
+    bestand: vorher,
+    regeln,
+    jetzt: now,
+  });
+
+  const ziel = str(cli.values.out) ?? app.paths.universe;
+  schreibeUniverseDatei(ziel, auswahl, regeln, bench, now);
+  const bericht = renderUniverseReport({ auswahl, regeln, benchmark: bench, kandidaten: pool.length, jetzt: now });
+  ensureDir(app.paths.reports);
+  const berichtPfad = join(app.paths.reports, `universe-${dayKey(now)}.md`);
+  writeFileSync(berichtPfad, bericht, 'utf8');
+
+  if (cli.values.json === true) {
+    out(JSON.stringify({ symbols: auswahl.symbols, zugang: auswahl.zugang, abgang: auswahl.abgang, datei: ziel, bericht: berichtPfad }, null, 2));
+    return 0;
+  }
+  const rows: string[][] = [['Rang', 'Symbol', 'Umsatz/Tag', 'Status', 'Grund']];
+  for (const b of auswahl.bewertung.slice(0, regeln.max + 10)) {
+    rows.push([String(b.rang ?? '—'), b.symbol, `${(b.dollarVolumen / 1e6).toFixed(1)} Mio.`, b.status, b.grund]);
+  }
+  table(rows);
+  out('');
+  out(`Gewählt: ${auswahl.symbols.length} von ${pool.length} Kandidaten`);
+  out(`Zugang:  ${auswahl.zugang.length ? auswahl.zugang.join(', ') : '—'}`);
+  out(`Abgang:  ${auswahl.abgang.length ? auswahl.abgang.join(', ') : '—'}`);
+  out(`Datei:   ${ziel}`);
+  out(`Bericht: ${berichtPfad}`);
+  return 0;
 }
 
 async function cmdFetch(app: App, cli: Cli): Promise<number> {
@@ -582,6 +654,8 @@ export async function main(argv: string[]): Promise<number> {
   switch (cli.cmd) {
     case 'doctor':
       return cmdDoctor(app);
+    case 'universe':
+      return cmdUniverse(app, cli);
     case 'fetch':
       return cmdFetch(app, cli);
     case 'backtest':
