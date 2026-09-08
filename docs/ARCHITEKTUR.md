@@ -157,6 +157,65 @@ den Champion beim Start (und nach Beförderung beim nächsten Neustart).
 7. **Keine Netzwerkzugriffe in Tests**, keine Secrets im Repo, State nie im
    Repo (`var/`, `.env` in `.gitignore`).
 
+## 5a. Messbefunde 08.09.2026 — drei Zeitrahmen, dieselbe Antwort
+
+Derselbe Korb aus 30 liquiden US-Werten, dieselben Kosten, dasselbe Risiko,
+dieselben Gates. Nur der Zeitrahmen ist verschieden. Jeweils der Kandidat mit
+dem besten OOS-Ergebnis:
+
+| Zeitrahmen | Bester Kandidat | Gates | Gebührenanteil | OOS-Netto | **Holdout (ungesehen)** |
+|---|---|---|---|---|---|
+| 5 min | `orb_breakout` | 3/9 | 65,5 % | +280 | −534 (55 Trades) |
+| 60 min | `trend_donchian` | **8/9** | 43,4 % | +3 864 | **−1 886 (185 Trades)** |
+| Tagesbars | `momentum_pullback` | **9/9** | 25,4 % | +3 109 | −572 (23 Trades) |
+
+Zwei Dinge stehen darin, und das zweite ist das wichtigere.
+
+**Erstens: Der Zeitrahmen löst die Kostenfrage.** Der Gebührenanteil fällt von
+65,5 % über 43,4 % auf 25,4 %. Das bestätigt die Rechnung — Kosten fallen je
+Round-Trip an, nicht je Zeiteinheit, also hilft nur ein größerer erwarteter Zug
+je Trade. Die 5-Minuten-Bar war für Aktien der falsche Takt.
+
+**Zweitens: Die Auswahl sagt den Holdout nicht vorher.** In zwei von drei
+Zeitrahmen kehrt sich die Rangfolge zwischen OOS und Holdout vollständig um:
+
+| Zeitrahmen | Rang 1 auf OOS → Holdout | Letzter auf OOS → Holdout |
+|---|---|---|
+| 60 min | `trend_donchian` +3 864 → **−1 886** | `mean_reversion` +506 → **+1 286** |
+| Tagesbars | `momentum_pullback` +3 109 → **−572** | `trend_donchian` −2 983 → **+2 816** |
+
+Das ist kein Pech an einer Stelle, sondern dreimal dasselbe Bild — und bei 185
+Holdout-Trades im Stundenfall auch keine Stichprobenfrage mehr. Die
+Walk-Forward-Auswahl hat auf diesem Korb mit diesen vier Vorlagen **keine
+Vorhersagekraft**. Den Bestplatzierten zu nehmen ist nicht besser als zu
+würfeln.
+
+**Die naheliegende Erklärung, und sie ist prüfbar:** Alle vier Vorlagen sind
+gerichtete Strategien auf 30 stark korrelierten Großwerten — und sie laufen
+alle NUR LONG. `risk.allowShort: false` steht in `config/platform.yaml` und in
+jeder Erkundungs-Config, und `src/core/logic.ts` sperrt damit jeden
+Short-Einstieg. Der Strategie-Parameter `allowShort` war in allen bisherigen
+Messungen also wirkungslos: Der Optimierer hat eine Dimension durchsucht, die
+nichts bewirkt, und die Trial-Zahl im Deflated Sharpe ist entsprechend zu hoch
+angesetzt.
+
+Long-only auf einem Korb, dessen Werte fast im Gleichschritt laufen, ist der
+Sache nach eine Wette auf den Markt mit Zusatzkosten. Ob ein Fold positiv ist,
+hängt dann vor allem daran, ob der Markt in diesem Fold gestiegen ist — und
+Marktregime halten nicht bis zum nächsten Fenster. Genau das würde die
+Umkehrung erzeugen.
+
+**Was daraus folgt:** Der nächste Hebel ist nicht ein weiterer Zeitrahmen und
+nicht mehr Parametersuche, sondern eine Kante, die vom Marktfaktor unabhängig
+ist — Shorts wirksam machen (Risikoentscheidung des Owners) und/oder eine
+querschnittliche Strategie, die den Korb RANGIERT (die stärksten long, die
+schwächsten short), statt jedes Symbol einzeln zu fragen, ob es steigt. Letzteres
+braucht eine Erweiterung des Strategie-Vertrags: `SymbolSnapshot` sieht heute
+genau ein Symbol.
+
+Bis dahin gilt weiter, was das Dashboard zeigt: kein Handel. Das ist das
+gemessene Ergebnis.
+
 ## 6. Was bewusst fehlt
 
 Keine Charts, keine News, kein Sentiment, keine KI-Erklärung, keine
