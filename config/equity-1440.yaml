@@ -100,7 +100,12 @@ optimizer:
   # orb_breakout fehlt: Die Strategie kennt nur Intraday-Zeitrahmen
   # (INTRADAY_TIMEFRAMES in src/strategy/orbBreakout.ts) und braucht eine
   # Eröffnungsspanne — auf einer Tagesbar gibt es keine.
-  strategies: [trend_donchian, momentum_pullback, mean_reversion]
+  #
+  # cross_sectional_momentum ist dabei, weil die drei anderen dieselbe Frage
+  # stellen („steigt das Symbol?") und daran am 08.09. gescheitert sind. Sie
+  # fragt stattdessen nach relativer Stärke im Korb; für einen Korb aus 30
+  # Werten ist das der Fall, für den sie gebaut ist.
+  strategies: [trend_donchian, momentum_pullback, mean_reversion, cross_sectional_momentum]
   # Größeres Datenfenster statt niedrigerer Latte: 400 Tage wären bei
   # Tagesbars nur ~275 Bars, die 60 OOS-Trades kämen dann nur durch ein
   # gesenktes Gate zustande. Also andersherum — 1400 Kalendertage

@@ -85,7 +85,7 @@ optimizer:
   # orb_breakout ist hier zulässig (Intraday-Zeitrahmen), aber eine
   # Eröffnungsspanne von mindestens 30 Minuten auf einem 60-Minuten-Raster
   # ergibt höchstens eine Bar Spanne — die Strategie hätte nichts zu messen.
-  strategies: [trend_donchian, momentum_pullback, mean_reversion]
+  strategies: [trend_donchian, momentum_pullback, mean_reversion, cross_sectional_momentum]
   lookbackDays: 1100
   isDays: 250
   oosDays: 90
