@@ -190,28 +190,58 @@ Walk-Forward-Auswahl hat auf diesem Korb mit diesen vier Vorlagen **keine
 Vorhersagekraft**. Den Bestplatzierten zu nehmen ist nicht besser als zu
 würfeln.
 
-**Die naheliegende Erklärung, und sie ist prüfbar:** Alle vier Vorlagen sind
-gerichtete Strategien auf 30 stark korrelierten Großwerten — und sie laufen
-alle NUR LONG. `risk.allowShort: false` steht in `config/platform.yaml` und in
-jeder Erkundungs-Config, und `src/core/logic.ts` sperrt damit jeden
-Short-Einstieg. Der Strategie-Parameter `allowShort` war in allen bisherigen
-Messungen also wirkungslos: Der Optimierer hat eine Dimension durchsucht, die
-nichts bewirkt, und die Trial-Zahl im Deflated Sharpe ist entsprechend zu hoch
-angesetzt.
+### Die Short-Hypothese — aufgestellt, geprüft, WIDERLEGT
 
-Long-only auf einem Korb, dessen Werte fast im Gleichschritt laufen, ist der
-Sache nach eine Wette auf den Markt mit Zusatzkosten. Ob ein Fold positiv ist,
-hängt dann vor allem daran, ob der Markt in diesem Fold gestiegen ist — und
-Marktregime halten nicht bis zum nächsten Fenster. Genau das würde die
-Umkehrung erzeugen.
+Die erste Erklärung lautete: Alle vier Vorlagen sind gerichtete Strategien auf
+30 stark korrelierten Großwerten, und sie laufen alle NUR LONG. Das ist der
+Sache nach eine Wette auf den Markt mit Zusatzkosten; ob ein Fold positiv ist,
+hinge dann vor allem am Marktregime, und Regime halten nicht bis zum nächsten
+Fenster — das würde die Umkehrung erzeugen.
 
-**Was daraus folgt:** Der nächste Hebel ist nicht ein weiterer Zeitrahmen und
-nicht mehr Parametersuche, sondern eine Kante, die vom Marktfaktor unabhängig
-ist — Shorts wirksam machen (Risikoentscheidung des Owners) und/oder eine
-querschnittliche Strategie, die den Korb RANGIERT (die stärksten long, die
-schwächsten short), statt jedes Symbol einzeln zu fragen, ob es steigt. Letzteres
-braucht eine Erweiterung des Strategie-Vertrags: `SymbolSnapshot` sieht heute
-genau ein Symbol.
+Ein Mangel steckte darin und ist bestätigt: `risk.allowShort: false` steht in
+`config/platform.yaml` und in jeder Erkundungs-Config, und
+`src/core/logic.ts:307` sperrt damit jeden Short-Einstieg. Der
+Strategie-Parameter `allowShort` war in allen Messungen bis zum 08.09.2026
+**wirkungslos** — der Optimierer hat eine Dimension durchsucht, die nichts
+bewirkt, die Hälfte jedes Suchgitters war ein Duplikat, und die Trial-Zahl im
+Deflated Sharpe war entsprechend zu hoch. Behoben mit dem MESS-Schalter
+`--allow-short` (nur `backtest`/`optimize`; `run` lehnt ihn ab).
+
+Die Erklärung selbst trägt aber nicht. Dieselben Configs, ein Schalter anders:
+
+| 60 min · `trend_donchian` | Long-only | Mit Shorts |
+|---|---|---|
+| OOS-Netto | +3 864 | **+106** |
+| Gebührenanteil | 43,4 % | **154,7 %** |
+| MaxDD | 7,13 % | 11,34 % |
+
+`mean_reversion` fällt dort von +506 auf −1 967. Auf Tagesbars bleibt der
+Sieger unverändert (`momentum_pullback`, 9/9 Gates, Holdout weiterhin −572,03),
+`trend_donchian` verliert seinen guten Holdout (+2 816 → +235).
+
+Am deutlichsten sagt es die Suche selbst. Gezählt, wie oft sie `allowShort: 1`
+wählt:
+
+| | Parameter wirkungslos | Parameter wirksam |
+|---|---|---|
+| 60 min | 14 von 24 | **8 von 24** |
+
+Sobald der Schalter Konsequenzen hat, greift die Suche seltener danach — und
+der finale Parametersatz wählt `allowShort: 0`. Leihgebühren plus zusätzliche
+Round-Trips ohne zusätzliche Kante.
+
+**Für den Betrieb heißt das:** `risk.allowShort: false` bleibt richtig, und ist
+jetzt gemessen statt vorsichtshalber gesetzt.
+
+**Was daraus folgt:** Shorts als solche sind nicht der Hebel — die Strategien
+nutzen sie nur falsch, weil sie jedes Symbol EINZELN fragen „steigt das?". Auf
+30 korrelierten Großwerten ist die Antwort fast immer dieselbe wie beim Index,
+in beide Richtungen. Der nächste Hebel ist deshalb eine querschnittliche
+Strategie: nicht „steigt NVDA?", sondern „ist NVDA stärker als die anderen 29?".
+Diese Frage ist unabhängig davon, ob der Markt insgesamt steigt. Sie braucht
+eine Erweiterung des Strategie-Vertrags — `SymbolSnapshot` sieht heute genau
+ein Symbol — und besonders sorgfältige Lookahead-Tests: Die Rangliste darf
+ausschließlich aus geschlossenen Bars stammen.
 
 Bis dahin gilt weiter, was das Dashboard zeigt: kein Handel. Das ist das
 gemessene Ergebnis.
