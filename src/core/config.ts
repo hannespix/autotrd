@@ -129,6 +129,21 @@ export const ConfigSchema = z.object({
       /** Deflated Sharpe (In-Sample) zusätzlich als hartes Gate (sonst nur im Bericht). */
       dsrIsGate: z.boolean().default(false),
       /**
+       * Höchstanteil des OOS-Nettos, den EIN einzelner Fold tragen darf.
+       *
+       * Die Lücke, die das schließt: Der TSLA-Champion vom 07.09. bestand
+       * alle acht Gates — 103 OOS-Trades, +958 $, 5 von 7 Folds positiv,
+       * PSR 0,95. Von den +958 $ stammten aber +919 $ aus EINEM Monat
+       * (96 %). Ohne diesen Fold blieben +39 $ über 91 Trades, also nichts.
+       * Der unberührte Holdout war entsprechend negativ (−232 $, PF 0,73).
+       *
+       * Kein Gate schaute darauf. `fold_positive_share` zählt Folds, nicht
+       * ihr Gewicht; PSR misst die Renditereihe, nicht ihre Verteilung über
+       * die Fenster. Ein Ergebnis, das an einem Monat hängt, ist aber keine
+       * Kante, sondern ein Ereignis.
+       */
+      maxFoldNetShare: z.number().min(0).max(1).default(0.5),
+      /**
        * Gepoolt bewerten: EIN Parametersatz je Strategie über das GANZE
        * Universum in einem Simulationslauf (ein Konto, ein Positionslimit),
        * statt je Symbol getrennt.
@@ -159,6 +174,7 @@ export const ConfigSchema = z.object({
       promotionMargin: 0.1,
       minPsrOos: 0.9,
       dsrIsGate: false,
+      maxFoldNetShare: 0.5,
       pooled: false,
     }),
   costs: z

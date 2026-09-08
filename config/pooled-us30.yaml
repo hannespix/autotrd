@@ -88,6 +88,7 @@ optimizer:
   promotionMargin: 0.1
   minPsrOos: 0.9
   dsrIsGate: false
+  maxFoldNetShare: 0.5   # ein einzelner Fold darf höchstens die Hälfte des OOS-Nettos tragen
   pooled: true           # DER Punkt dieser Datei
 
 costs:

@@ -1,0 +1,56 @@
+name: Wächter (nächtlich)
+
+# Schaut auf die laufende Plattform und BERICHTET — er ändert nichts.
+#
+# Warum er nichts ändert: Der teuerste Fehler dieses Projekts war nie ein
+# Bug, sondern falsch zu messen und es zu glauben. Ein Job, der nachts
+# unbeaufsichtigt am Handelspfad schraubt, produziert über Wochen
+# überzeugende Begründungen dafür, ein Gate zu lockern — genau die
+# Selektionsverzerrung, gegen die die Gates gebaut sind. Änderungen gehen
+# durch einen Pull Request, den ein Mensch anschaut.
+#
+# 06:00 UTC: nach dem Optimierer (23:00 UTC) und vor der US-Eröffnung.
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: wachhund
+  cancel-in-progress: true
+
+jobs:
+  wachhund:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+    steps:
+      # Fehlt der Service-Account, ist das keine Störung der Plattform,
+      # sondern eine fehlende Einrichtung — Warnung statt Rot.
+      - name: Guard — Service-Account vorhanden?
+        if: env.FIREBASE_SERVICE_ACCOUNT == ''
+        run: |
+          echo "::warning::FIREBASE_SERVICE_ACCOUNT fehlt — Wächter übersprungen."
+
+      - uses: actions/checkout@v5
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+      - uses: actions/setup-node@v5
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        with:
+          node-version: 22
+          cache: npm
+      - name: Abhängigkeiten installieren
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        run: npm ci
+
+      - name: Service-Account bereitstellen
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
+
+      - name: Nachsehen
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+        run: node scripts/wachhund.mjs --config config/platform.yaml

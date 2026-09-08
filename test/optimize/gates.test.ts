@@ -134,16 +134,87 @@ function gateInput(over: Partial<GateInput> = {}): GateInput {
 }
 
 const failing = (r: ReturnType<typeof robustnessGates>) => r.gates.filter((g) => !g.pass).map((g) => g.name);
+/**
+ * Gate über den NAMEN holen, nie über die Position: Ein neues Gate schob
+ * sonst elf Tests gleichzeitig auf die falsche Zeile, ohne dass an ihnen
+ * etwas falsch gewesen wäre.
+ */
+const gate = (r: ReturnType<typeof robustnessGates>, name: string) => {
+  const g = r.gates.find((x) => x.name === name);
+  if (!g) throw new Error(`Gate ${name} fehlt — vorhanden: ${r.gates.map((x) => x.name).join(', ')}`);
+  return g;
+};
 
 describe('robustnessGates', () => {
+  /**
+   * Der Fall, der das Gate nötig gemacht hat.
+   *
+   * TSLA am 07.09.2026: 103 OOS-Trades, +958,46 $, 5 von 7 Folds positiv,
+   * PSR 0,950, Gebührenanteil 32 % — alle acht damaligen Gates bestanden,
+   * befördert. Von den +958,46 $ stammten aber +919,34 $ aus Fold 7. Ohne
+   * ihn blieben +39,12 $ über 91 Trades. Der Holdout, der die Auswahl nie
+   * beeinflusst hat, war danach −232,43 $ bei PF 0,73.
+   *
+   * Kein damaliges Gate schaute darauf: `fold_positive_share` zählt Folds,
+   * nicht ihr Gewicht; PSR misst die Renditereihe, nicht ihre Verteilung
+   * über die Fenster.
+   */
+  it('(9) Konzentration: ein einzelner Fold trägt fast das ganze OOS-Netto (Fall TSLA)', () => {
+    const tslaFolds = [117.23, 102.97, -360.37, 76.18, 150.73, -47.62, 919.34];
+    const wfa = wfaFixture({ netProfit: 958.46, positiveFoldShare: 5 / 7, trades: 103 });
+    const mitNetto = {
+      ...wfa,
+      folds: wfa.folds.slice(0, 1).concat(),
+    } as typeof wfa;
+    // Folds mit den echten Netto-Werten nachbauen.
+    mitNetto.folds = tslaFolds.map((netto, k) => ({
+      fold: { index: k, isStart: k, isEnd: k + 1, oosStart: k + 1, oosEnd: k + 2 },
+      evaluated: 50,
+      best: {
+        params: { a: 5, b: 2 },
+        isMetrics: metrics(),
+        oosMetrics: metrics({ netProfit: netto }),
+        oosTrades: [],
+        isObjective: 1,
+        oosObjective: 1,
+        oosDailyReturns: strongReturns(30, k),
+      },
+    }));
+
+    const r = robustnessGates(gateInput({ wfa: mitNetto }));
+    const g = gate(r, 'fold_concentration');
+    expect(g.pass, 'ein Ergebnis aus einem einzigen Monat ist keine Kante').toBe(false);
+    expect(g.value).toBeCloseTo(919.34 / 958.46, 3);
+    expect(g.note).toContain('96 %');
+    expect(g.note).toContain('ohne ihn blieben 39.12');
+    expect(failing(r)).toContain('fold_concentration');
+  });
+
+  it('(9b) gleichmäßig verteilte Folds bestehen', () => {
+    const r = robustnessGates(gateInput());
+    const g = gate(r, 'fold_concentration');
+    expect(g.pass).toBe(true);
+    // Fünf gleich große Folds ⇒ jeder trägt ein Fünftel.
+    expect(g.value).toBeCloseTo(0.2, 6);
+  });
+
+  it('(9c) bei nicht positivem OOS-Netto urteilt das Gate nicht — dafür ist oos_net_profit da', () => {
+    const wfa = wfaFixture();
+    wfa.folds = wfa.folds.map((f) => ({ ...f, best: { ...f.best, oosMetrics: metrics({ netProfit: -50 }) } }));
+    const g = gate(robustnessGates(gateInput({ wfa })), 'fold_concentration');
+    expect(g.pass).toBe(true);
+    expect(g.note).toContain('nicht aussagekräftig');
+  });
+
   it('bestehen alle Gates, ist pass = true', () => {
     const r = robustnessGates(gateInput());
     expect(r.pass).toBe(true);
-    expect(r.gates.length).toBe(8);
+    expect(r.gates.length).toBe(9);
     expect(r.gates.map((g) => g.name)).toEqual([
       'oos_trades',
       'fold_positive_share',
       'oos_net_profit',
+      'fold_concentration',
       'stress_costs',
       'neighborhood_plateau',
       'probabilistic_sharpe_oos',
@@ -157,7 +228,7 @@ describe('robustnessGates', () => {
     const r = robustnessGates(gateInput({ wfa: wfaFixture({ trades: 59 }) }));
     expect(r.pass).toBe(false);
     expect(failing(r)).toEqual(['oos_trades']);
-    const g = r.gates[0]!;
+    const g = gate(r, 'oos_trades');
     expect(g.value).toBe(59);
     expect(g.threshold).toBe(60);
   });
@@ -176,7 +247,7 @@ describe('robustnessGates', () => {
   it('(4) Stress: bei verteuerten Kosten kippt das Netto', () => {
     const r = robustnessGates(gateInput({ stressOos: { netProfit: -5, objectiveMedian: -0.1 } }));
     expect(failing(r)).toEqual(['stress_costs']);
-    expect(r.gates[3]!.note).toContain('×1.5');
+    expect(gate(r, 'stress_costs').note).toContain('×1.5');
   });
 
   it('(5) Spitze statt Plateau: Nachbar-Median < 0,5 × Bestwert oder zu wenige positive Nachbarn', () => {
@@ -184,19 +255,19 @@ describe('robustnessGates', () => {
     expect(failing(robustnessGates(gateInput({ neighborhood: { medianObjective: 0.9, bestObjective: 1, positiveShare: 0.5 } })))).toEqual(['neighborhood_plateau']);
     expect(robustnessGates(gateInput({ neighborhood: { medianObjective: 0.5, bestObjective: 1, positiveShare: 0.6 } })).pass).toBe(true);
     const r = robustnessGates(gateInput({ neighborhood: { medianObjective: 0.3, bestObjective: 1, positiveShare: 1 } }));
-    expect(r.gates[4]!.threshold).toBe(0.5);
-    expect(r.gates[4]!.value).toBe(0.3);
+    expect(gate(r, 'neighborhood_plateau').threshold).toBe(0.5);
+    expect(gate(r, 'neighborhood_plateau').value).toBe(0.3);
   });
 
   it('(6) PSR (OOS) < 0,90 oder nicht berechenbar', () => {
     expect(failing(robustnessGates(gateInput({ psr: psrOf(0.899) })))).toEqual(['probabilistic_sharpe_oos']);
     const r = robustnessGates(gateInput({ psr: psrOf(null) }));
     expect(failing(r)).toEqual(['probabilistic_sharpe_oos']);
-    expect(r.gates[5]!.value).toBeNull();
-    expect(r.gates[5]!.threshold).toBe(0.9);
-    expect(r.gates[5]!.note).toMatch(/nicht berechenbar/);
+    expect(gate(r, 'probabilistic_sharpe_oos').value).toBeNull();
+    expect(gate(r, 'probabilistic_sharpe_oos').threshold).toBe(0.9);
+    expect(gate(r, 'probabilistic_sharpe_oos').note).toMatch(/nicht berechenbar/);
     expect(robustnessGates(gateInput({ psr: psrOf(0.9) })).pass).toBe(true);
-    expect(r.gates[5]!.note).toMatch(/Sharpe p\. a\./);
+    expect(gate(r, 'probabilistic_sharpe_oos').note).toMatch(/Sharpe p\. a\./);
   });
 
   it('(7) DSR (IS) blockiert NICHT, solange dsrIsGate=false — der Wert bleibt sichtbar', () => {
@@ -204,7 +275,7 @@ describe('robustnessGates', () => {
     const low = robustnessGates(gateInput({ dsr: dsrOf(0.1) }));
     expect(low.pass).toBe(true);
     expect(failing(low)).toEqual([]);
-    const g = low.gates[6]!;
+    const g = gate(low, 'deflated_sharpe_is');
     expect(g.name).toBe('deflated_sharpe_is');
     expect(g.value).toBe(0.1);
     expect(g.threshold).toBe(0.95);
@@ -212,9 +283,9 @@ describe('robustnessGates', () => {
     expect(g.note).toMatch(/würde als Gate durchfallen/);
     const nul = robustnessGates(gateInput({ dsr: dsrOf(null) }));
     expect(nul.pass).toBe(true);
-    expect(nul.gates[6]!.note).toMatch(/informativ/);
+    expect(gate(nul, 'deflated_sharpe_is').note).toMatch(/informativ/);
     const ok = robustnessGates(gateInput({ dsr: dsrOf(0.99) }));
-    expect(ok.gates[6]!.note).not.toMatch(/durchfallen/);
+    expect(gate(ok, 'deflated_sharpe_is').note).not.toMatch(/durchfallen/);
   });
 
   it('(7b) DSR (IS) < 0,95 oder nicht berechenbar blockiert mit dsrIsGate=true', () => {
@@ -223,9 +294,9 @@ describe('robustnessGates', () => {
     expect(failing(robustnessGates(gateInput({ optimizer: on, dsr: dsrOf(0.949) })))).toEqual(['deflated_sharpe_is']);
     const r = robustnessGates(gateInput({ optimizer: on, dsr: dsrOf(null) }));
     expect(failing(r)).toEqual(['deflated_sharpe_is']);
-    expect(r.gates[6]!.value).toBeNull();
-    expect(r.gates[6]!.note).toMatch(/nicht berechenbar/);
-    expect(r.gates[6]!.note).not.toMatch(/informativ/);
+    expect(gate(r, 'deflated_sharpe_is').value).toBeNull();
+    expect(gate(r, 'deflated_sharpe_is').note).toMatch(/nicht berechenbar/);
+    expect(gate(r, 'deflated_sharpe_is').note).not.toMatch(/informativ/);
     expect(robustnessGates(gateInput({ optimizer: on, dsr: dsrOf(0.95) })).pass).toBe(true);
   });
 
@@ -233,10 +304,10 @@ describe('robustnessGates', () => {
     const half = { cleanFolds: 4, totalFolds: 8 };
     const ok = robustnessGates(gateInput({ incumbent: half, wfa: wfaFixture({ trades: 30 }), dsr: dsrOf(0.1) }));
     expect(ok.pass).toBe(true);
-    expect(ok.gates[0]!.threshold).toBe(30);
-    expect(ok.gates[0]!.note).toMatch(/anteilig 30 von 60/);
-    expect(ok.gates[6]!.pass).toBe(true);
-    expect(ok.gates[6]!.note).toMatch(/nicht anwendbar/);
+    expect(gate(ok, 'oos_trades').threshold).toBe(30);
+    expect(gate(ok, 'oos_trades').note).toMatch(/anteilig 30 von 60/);
+    expect(gate(ok, 'deflated_sharpe_is').pass).toBe(true);
+    expect(gate(ok, 'deflated_sharpe_is').note).toMatch(/nicht anwendbar/);
     // auch mit dsrIsGate=true bleibt der DSR beim Amtsinhaber außen vor (keine Suche, keine Trials)
     expect(robustnessGates(gateInput({ optimizer: withGateFlags({ dsrIsGate: true }), incumbent: half, wfa: wfaFixture({ trades: 30 }), dsr: dsrOf(null) })).pass).toBe(true);
     const tooFew = robustnessGates(gateInput({ incumbent: half, wfa: wfaFixture({ trades: 29 }) }));
@@ -249,7 +320,7 @@ describe('robustnessGates', () => {
     const strict = withGateFlags({ minPsrOos: 0.99 });
     const r = robustnessGates(gateInput({ optimizer: strict, psr: psrOf(0.95) }));
     expect(failing(r)).toEqual(['probabilistic_sharpe_oos']);
-    expect(r.gates[5]!.threshold).toBe(0.99);
+    expect(gate(r, 'probabilistic_sharpe_oos').threshold).toBe(0.99);
     expect(robustnessGates(gateInput({ optimizer: withGateFlags({ minPsrOos: 0.5 }), psr: psrOf(0.6) })).pass).toBe(true);
   });
 
@@ -258,7 +329,7 @@ describe('robustnessGates', () => {
     expect(robustnessGates(gateInput({ wfa: wfaFixture({ feeShare: 0.5 }) })).pass).toBe(true);
     const r = robustnessGates(gateInput({ wfa: wfaFixture({ feeShare: null }) }));
     expect(r.pass).toBe(true);
-    expect(r.gates[7]!.note).toMatch(/kein Urteil/);
+    expect(gate(r, 'fee_share').note).toMatch(/kein Urteil/);
   });
 
   it('mehrere Verstöße werden alle gemeldet', () => {

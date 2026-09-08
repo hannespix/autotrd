@@ -121,6 +121,7 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
   const go = gateOptions(o);
   out.push(
     `- Gates: ≥ ${o.minOosTrades} OOS-Trades, ≥ ${Math.round(o.minFoldPositiveShare * 100)} % Folds positiv, OOS netto > 0 (auch bei Kosten ×${o.stressCostMultiplier}), ` +
+      `kein Fold trägt mehr als ${Math.round(o.maxFoldNetShare * 100)} % des OOS-Nettos, ` +
       `Nachbarschafts-Plateau, PSR (OOS, sr0 = 0) ≥ ${go.minPsrOos}, DSR (IS, deflationiert um alle Trials) ≥ 0.95 ${go.dsrIsGate ? 'als Gate' : 'nur informativ (dsrIsGate=false)'}, ` +
       `Gebührenanteil ≤ 50 %; Beförderungsmarge ${Math.round(o.promotionMargin * 100)} %`,
   );
