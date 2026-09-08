@@ -182,6 +182,28 @@ export interface SessionInfo {
   day: string;
 }
 
+/**
+ * Platz dieses Symbols im Korb an DIESER Bar — für querschnittliche
+ * Strategien („ist NVDA stärker als die anderen 29?" statt „steigt NVDA?").
+ *
+ * `pct` ist der Ranganteil in [0, 1]: 0 = stärkstes Symbol, 1 = schwächstes.
+ * Absolute Ränge wären in Backtest und Live nicht vergleichbar, weil live ein
+ * Symbol ohne Trade im Bucket fehlen kann — Rang 3 von 30 und Rang 3 von 28
+ * meinen dann Verschiedenes. Der Anteil bleibt vergleichbar.
+ *
+ * Gesetzt wird das ausschließlich in `decide()` (core/logic.ts), aus den
+ * geschlossenen Bars desselben Zyklus. Damit ist es in beiden Welten dieselbe
+ * Zahl und kann keine Zukunft enthalten.
+ */
+export interface KorbRang {
+  /** Ranganteil in [0, 1]; 0 = stärkstes Symbol des Korbs. */
+  pct: number;
+  /** 1-basierter Rang (1 = stärkstes). */
+  rank: number;
+  /** Wie viele Symbole in dieser Bar überhaupt rangiert werden konnten. */
+  of: number;
+}
+
 export interface SymbolSnapshot {
   symbol: string;
   /** Geschlossene Bars (älteste → neueste), Index i = gerade geschlossene Bar. */
@@ -191,6 +213,13 @@ export interface SymbolSnapshot {
   session: SessionInfo;
   /** Benchmark (z. B. SPY) für Marktfilter — geschlossene Bars bis inkl. `now`. */
   benchmark?: { bars: BarSeriesLike; i: number } | undefined;
+  /**
+   * Nur bei Querschnitts-Strategien gesetzt, und nur für Symbole, deren
+   * Entscheidungs-Bar zur JÜNGSTEN Bar des Zyklus gehört. Ein Symbol mit
+   * veralteter letzter Bar (live: kein Trade im Bucket) rangiert nicht mit —
+   * sonst verglichen wir Kennzahlen von verschiedenen Zeitpunkten.
+   */
+  rank?: KorbRang | undefined;
 }
 
 /** Vorberechnete Indikatoren einer Strategie (kausal — Präfix-Konsistenz ist Testpflicht). */
@@ -210,6 +239,17 @@ export interface Strategy {
   decide(snap: SymbolSnapshot, ind: IndicatorSet, p: Params): Decision;
   /** Hält die Strategie über Nacht? (Intraday-Strategien: false ⇒ EOD-Flatten.) */
   holdsOvernight: boolean;
+  /**
+   * Querschnitt: Kennzahl, nach der der Korb an dieser Bar rangiert wird
+   * (größer = stärker). `null` ⇒ dieses Symbol rangiert nicht mit (Aufwärmphase,
+   * fehlende Daten). Fehlt die Funktion ganz, ist die Strategie rein
+   * symbolweise — wie die vier Vorlagen.
+   *
+   * `decide()` ruft sie EINMAL je Bar für alle Symbole des Zyklus und schreibt
+   * das Ergebnis als `snap.rank` zurück. Sie sieht dieselben geschlossenen Bars
+   * wie `decide` und kann deshalb keine Zukunft enthalten.
+   */
+  crossScore?(snap: SymbolSnapshot, ind: IndicatorSet, p: Params): number | null;
 }
 
 /* ───────────────────────── Konto & Risiko-Zustand ───────────────────────── */
