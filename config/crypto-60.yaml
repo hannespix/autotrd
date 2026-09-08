@@ -28,7 +28,7 @@
 #
 # ── Wie das gefahren wird ─────────────────────────────────────────────────
 #
-# Über .github/workflows/krypto-probe.yml. Der Workflow schreibt NICHTS nach
+# Über .github/workflows/probe.yml. Der Workflow schreibt NICHTS nach
 # Firestore — kein meta/champion, kein meta/engineConfig. Ergebnis ist ein
 # Artefakt. Ein Krypto-Champion darf erst auf die Plattform, wenn er dieselbe
 # Walk-Forward-Prüfung bestanden hat UND das Konzentrations-Gate steht.
@@ -118,3 +118,9 @@ engine:
   maxDataAgeSec: 180
   maxConsecutiveErrors: 5
   onOrphan: halt
+
+# Eigener State-Ordner. Der Probe-Workflow setzt zwar `--home var-probe`,
+# aber wer die Datei von Hand fährt, hätte sonst `var/champion.json` des
+# Produktivlaufs überschrieben — den Champion, den die Plattform handelt.
+paths:
+  home: ./var-probe
