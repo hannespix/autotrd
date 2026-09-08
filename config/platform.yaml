@@ -10,6 +10,24 @@
 # Marktdaten sind nutzerunabhängig: ein Universum, ein Zeitrahmen, ein
 # Champion für alle. Nutzer können in ihren Einstellungen eine Teilmenge
 # der Symbole wählen, aber keine hinzufügen (IEX-Basis-Plan: max. 30).
+#
+# ── Warum 30 Symbole UND `optimizer.pooled: true` ─────────────────────────
+#
+# Beides gehört zusammen. Dreißig Symbole EINZELN zu bewerten wäre schlechter
+# als zehn: Je Symbol fragt der Optimierer „hat die Strategie eine Kante auf
+# TSLA?" — und „bestes Symbol aus dreißig" ist selbst eine Auswahl, die der
+# Deflated Sharpe nicht bestraft. Dreißig Symbole wären also dreißig
+# Lotterien statt zehn.
+#
+# Wie schnell das schiefgeht, zeigt der 07.09.: TSLA bestand je Symbol alle
+# Gates mit 103 OOS-Trades und +958 $ — dieselbe Strategie über den ganzen
+# Korb gerechnet machte −1 672 $ auf 344 Trades. Ein Symbol aus zehn, mit
+# Glück.
+#
+# Gepoolt lautet die Frage „hat die Strategie eine Kante auf diesem Korb?",
+# beantwortet mit 16 380 OOS-Bars statt 546 je Symbol. Der Preis: Die Probe
+# über genau diese 30 sagte für alle vier Strategien `stay_notrade`. Es wird
+# also zunächst NICHTS gehandelt — und das ist der Punkt, nicht der Fehler.
 
 broker:
   mode: paper          # Der Modus je Nutzer kommt aus dem Live-Schalter der Plattform, nicht von hier.
@@ -17,7 +35,19 @@ broker:
 
 universe:
   assetClass: us_equity
-  symbols: [SPY, QQQ, AAPL, MSFT, NVDA, AMZN, META, GOOGL, AMD, TSLA]
+  # Nach LIQUIDITÄT gewählt, nicht nach Ertrag: vier Index-ETFs und 26
+  # umsatzstarke Einzelwerte quer über die Sektoren. Ein Universum nach
+  # vergangener Rendite zusammenzustellen wäre Selektionsbias in Reinform.
+  # 30 ist die harte Grenze des Alpaca-IEX-Basisplans (darüber `405 symbol
+  # limit exceeded`) und zugleich AUTO_SYMBOLS_MAX je Nutzer.
+  symbols:
+    [SPY, QQQ, IWM, DIA,
+     AAPL, MSFT, NVDA, AMZN, META, GOOGL, TSLA, AVGO, AMD, NFLX,
+     CRM, ORCL, ADBE, INTC, CSCO, QCOM,
+     JPM, BAC, WFC,
+     XOM, CVX,
+     JNJ, PFE, UNH,
+     WMT, DIS]
   benchmark: SPY
 
 timeframe: 5
@@ -63,7 +93,7 @@ optimizer:
   minPsrOos: 0.9
   dsrIsGate: false
   maxFoldNetShare: 0.5   # ein einzelner Fold darf höchstens die Hälfte des OOS-Nettos tragen
-  pooled: false          # gepoolt statt je Symbol bewerten (siehe config.example.yaml)
+  pooled: true           # gehört zu den 30 Symbolen — siehe Kopf dieser Datei
 
 costs:
   slippageBps: 3
