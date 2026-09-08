@@ -36,9 +36,11 @@ describe('Config je Nutzer', () => {
     expect(config.universe.benchmark).toBe('SPY');
   });
 
-  it('settings.auto ohne Symbole ⇒ ganzes Universum; nur fremde Symbole ⇒ ConfigError', () => {
+  it('settings.auto ohne Symbole ⇒ ganzes Universum; nur fremde Symbole ⇒ Einstiegssperre statt Abbruch', () => {
     expect(buildUserConfig(globalConfigRaw(undefined), { auto: {} }).config.universe.symbols).toEqual([...DEFAULT_UNIVERSE]);
-    expect(() => buildUserConfig(globalConfigRaw(undefined), { auto: { symbols: ['XYZ'] } })).toThrow(ConfigError);
+    const fremd = buildUserConfig(globalConfigRaw(undefined), { auto: { symbols: ['XYZ'] } });
+    expect(fremd.auswahlVeraltet).toBeTruthy();
+    expect(fremd.config.universe.symbols).toEqual([...DEFAULT_UNIVERSE]);
   });
 
   it('settings.auto ungültig (maxPositions 0, riskPerTradePct 7) ⇒ ConfigError mit Feldpfad', () => {
@@ -68,5 +70,29 @@ describe('Config je Nutzer', () => {
     const { config } = buildUserConfig(global, { auto: { symbols: ['btcusd'] } });
     expect(config.universe.symbols).toEqual(['BTC/USD']);
     expect(config.universe.benchmark).toBeUndefined();
+  });
+});
+
+/**
+ * Seit das Universum nächtlich nach Liquidität gewählt wird, kann die
+ * gespeicherte Symbolauswahl eines Nutzers veralten. Vorher warf
+ * `buildUserConfig` dann einen `ConfigError` — und `tick.ts` schob den Nutzer
+ * nach `failed`, also lief der Takt für ihn GAR NICHT: keine Exits, kein
+ * Abgleich, keine Schutz-Stop-Prüfung. Wer nur TSLA gewählt hatte und TSLA
+ * fiel heraus, hielt seine Position ohne jede Bewirtschaftung.
+ */
+describe('veraltete Symbolauswahl', () => {
+  const global = globalConfigRaw({ universe: { assetClass: 'us_equity', symbols: ['SPY', 'AAPL'], benchmark: 'SPY' } });
+
+  it('schneidet die Auswahl auf das Universum, solange etwas übrig bleibt', () => {
+    const { config, auswahlVeraltet } = buildUserConfig(global, { auto: { symbols: ['AAPL', 'TSLA'] } });
+    expect(config.universe.symbols).toEqual(['AAPL']);
+    expect(auswahlVeraltet).toBeUndefined();
+  });
+
+  it('wirft NICHT, wenn gar nichts übrig bleibt — sonst stirbt der ganze Takt des Nutzers', () => {
+    const { config, auswahlVeraltet } = buildUserConfig(global, { auto: { symbols: ['TSLA', 'NVDA'] } });
+    expect(auswahlVeraltet, 'wird zur Einstiegssperre, nicht zum Abbruch').toContain('nicht mehr im Handelsuniversum');
+    expect(config.universe.symbols, 'Daten, Abgleich und Exits brauchen ein Universum').toEqual(['SPY', 'AAPL']);
   });
 });

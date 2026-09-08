@@ -36,11 +36,16 @@
 # `candidates`-Pool, Rang nach Median-Dollarumsatz, die besten `maxSymbols`
 # werden gehandelt (Details in `src/universe/select.ts`).
 #
-# NIE nach Ertrag. Ein Universum nach vergangener Rendite zusammenzustellen
-# und es anschließend auf denselben Daten zu messen ist Selektionsbias in
-# Reinform — genau der Fehler, an dem das Vorgängersystem gestorben ist. Die
-# Auswahlfunktion bekommt Bars, kein PnL; sie könnte gar nicht nach Ertrag
-# sortieren.
+# NIE nach dem Ergebnis der Strategie. Ein Universum danach zusammenzustellen,
+# wo es zufällig lief, und es dann auf denselben Daten zu messen ist
+# Selektionsbias in Reinform — der Fehler, an dem das Vorgängersystem gestorben
+# ist. Die Auswahlfunktion bekommt Bars und Regeln; ihr Eingang hat kein Feld
+# für PnL, Trades oder Champion.
+#
+# Zwei Einschränkungen stehen dazu in `src/universe/select.ts` und im Bericht:
+# Dollarumsatz enthält den Kurs (also vergangene Rendite), und die Auswahl von
+# heute wird im Walk-Forward rückwärts angewandt (Survivorship). Beides ist
+# benannt, nicht wegdefiniert.
 #
 # Den POOL ändert weiterhin nur ein Commit. Automatisch läuft die Wahl DARIN.
 # Was nicht hineingehört: gehebelte und inverse ETFs (3×-Produkte sprengen

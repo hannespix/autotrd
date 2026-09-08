@@ -15,7 +15,19 @@ import { UNIVERSE_REGELN, waehleUniverse, type UniverseRegeln } from '../../src/
 const TAG = 86_400_000;
 const JETZT = Date.UTC(2026, 8, 8, 12, 0, 0);
 
-const regeln: UniverseRegeln = { ...UNIVERSE_REGELN, max: 3, fensterTage: 10, minTage: 8, minPreis: 5, minDollarVolumen: 1_000_000, maxAlterTage: 5, haltePuffer: 1 };
+const regeln: UniverseRegeln = {
+  ...UNIVERSE_REGELN,
+  max: 3,
+  fensterTage: 10,
+  minTage: 8,
+  minPreis: 5,
+  minDollarVolumen: 1_000_000,
+  maxAlterTage: 5,
+  haltePuffer: 1,
+  // Die Notbremsen haben eigene Tests weiter unten; sonst störten sie hier jeden Aufbau.
+  minAnteil: 0,
+  maxAbgang: 99,
+};
 
 /** `n` Tagesbars, letzte bei `JETZT - alterTage`, mit Kurs `preis` und Umsatz `preis*vol`. */
 function bars(n: number, preis: number, vol: number, alterTage = 1, gewinnProTag = 0): Bar[] {
@@ -32,9 +44,7 @@ function korb(spec: Record<string, Bar[]>): Map<string, Bar[]> {
 }
 
 describe('waehleUniverse', () => {
-  it('rankt nach Median-Dollarumsatz, nicht nach Kursgewinn', () => {
-    // RAKETE hat den mit Abstand höchsten Ertrag (+400 %), aber den kleinsten Umsatz.
-    // Wenn sie ins Universum rutscht, wäre die Auswahl ertragsgetrieben — der Kardinalfehler.
+  it('rankt nach Dollarumsatz — kein PnL, keine Trades, kein Champion im Eingang', () => {
     const a = waehleUniverse({
       kandidaten: korb({
         DICK: bars(10, 100, 1_000_000),
@@ -44,11 +54,50 @@ describe('waehleUniverse', () => {
       }),
       pflicht: [],
       bestand: [],
+      bestandIstAuswahl: false,
       regeln,
       jetzt: JETZT,
     });
     expect(a.symbols).toEqual(['DICK', 'MITTEL', 'DUENN']);
-    expect(a.symbols, 'Ertrag darf die Auswahl nicht beeinflussen').not.toContain('RAKETE');
+  });
+
+  /**
+   * Ehrliche Grenze der Kennzahl, vom Red-Team belegt: Dollarumsatz ist
+   * Stückzahl × KURS, und der Kurs ist das Ergebnis vergangener Rendite. Bei
+   * gleicher Stückzahl gewinnt also der Wert, der gestiegen ist.
+   *
+   * Das bleibt so — Dollarumsatz ist das richtige Handelbarkeitsmaß, denn was
+   * zählt, sind bewegbare Dollar, nicht Stückzahlen. Der Test hält den Effekt
+   * fest, damit niemand später behauptet, die Auswahl sei renditeblind. Sie ist
+   * frei vom STRATEGIE-Ergebnis (kein PnL, keine Trades, kein Champion) — nicht
+   * frei vom Kursniveau.
+   */
+  it('ist NICHT renditeneutral: bei gleicher Stückzahl gewinnt der gestiegene Wert', () => {
+    // 600 000 Stück: flach bei 20 $ sind das 12 Mio. $/Tag (fällt durch), steigend
+    // von 20 auf 200 $ ist der Median-Kurs 110 $ und damit 66 Mio. $/Tag (kommt rein).
+    const stueck = 600_000;
+    const rest = { A: bars(10, 100, 600_000), B: bars(10, 100, 500_000), C: bars(10, 100, 400_000) };
+    // Startet bei 20 $, steigt auf 200 $ — Stückzahl konstant.
+    const gestiegen = waehleUniverse({
+      kandidaten: korb({ ...rest, STEIGER: bars(10, 20, stueck, 1, 20) }),
+      pflicht: [],
+      bestand: [],
+      bestandIstAuswahl: false,
+      regeln,
+      jetzt: JETZT,
+    });
+    const flach = waehleUniverse({ kandidaten: korb({ ...rest, STEIGER: bars(10, 20, stueck) }), pflicht: [], bestand: [], bestandIstAuswahl: false, regeln, jetzt: JETZT });
+    expect(gestiegen.symbols, 'so sieht der Effekt aus — dokumentiert, nicht wegbehauptet').toContain('STEIGER');
+    expect(flach.symbols, 'derselbe Wert ohne Kursgewinn fällt durch').not.toContain('STEIGER');
+  });
+
+  it('sieht kein Strategie-Ergebnis: der Eingang hat gar kein Feld dafür', () => {
+    const kandidaten = korb({ A: bars(10, 100, 600_000), B: bars(10, 100, 500_000), C: bars(10, 100, 400_000), D: bars(10, 100, 300_000) });
+    const args = { kandidaten, pflicht: [], bestand: [], bestandIstAuswahl: false, regeln, jetzt: JETZT };
+    expect(Object.keys(args).sort(), 'kein PnL, keine Trades, kein Champion').toEqual(
+      ['bestand', 'bestandIstAuswahl', 'jetzt', 'kandidaten', 'pflicht', 'regeln'],
+    );
+    expect(waehleUniverse(args).symbols).toEqual(waehleUniverse(args).symbols);
   });
 
   it('lässt einen einzelnen Umsatzausreißer ein dünnes Symbol nicht hochtragen (Median statt Mittelwert)', () => {
@@ -58,6 +107,7 @@ describe('waehleUniverse', () => {
       kandidaten: korb({ A: bars(10, 100, 600_000), B: bars(10, 100, 500_000), C: bars(10, 100, 400_000), SPITZE: spitze }),
       pflicht: [],
       bestand: [],
+      bestandIstAuswahl: false,
       regeln,
       jetzt: JETZT,
     });
@@ -75,6 +125,7 @@ describe('waehleUniverse', () => {
       }),
       pflicht: [],
       bestand: [],
+      bestandIstAuswahl: false,
       regeln,
       jetzt: JETZT,
     });
@@ -91,6 +142,7 @@ describe('waehleUniverse', () => {
       kandidaten: korb({ A: bars(10, 100, 900_000), B: bars(10, 100, 800_000), C: bars(10, 100, 700_000), SPY: bars(10, 100, 200_000) }),
       pflicht: ['SPY'],
       bestand: [],
+      bestandIstAuswahl: false,
       regeln,
       jetzt: JETZT,
     });
@@ -101,9 +153,9 @@ describe('waehleUniverse', () => {
 
   it('bricht ab, wenn der Benchmark die Prüfung nicht besteht — ohne ihn greift kein Marktfilter', () => {
     expect(() =>
-      waehleUniverse({ kandidaten: korb({ A: bars(10, 100, 900_000), SPY: bars(3, 100, 900_000) }), pflicht: ['SPY'], bestand: [], regeln, jetzt: JETZT }),
+      waehleUniverse({ kandidaten: korb({ A: bars(10, 100, 900_000), SPY: bars(3, 100, 900_000) }), pflicht: ['SPY'], bestand: [], bestandIstAuswahl: false, regeln, jetzt: JETZT }),
     ).toThrow(/Pflichtsymbol SPY/);
-    expect(() => waehleUniverse({ kandidaten: korb({ A: bars(10, 100, 900_000) }), pflicht: ['SPY'], bestand: [], regeln, jetzt: JETZT })).toThrow(
+    expect(() => waehleUniverse({ kandidaten: korb({ A: bars(10, 100, 900_000) }), pflicht: ['SPY'], bestand: [], bestandIstAuswahl: false, regeln, jetzt: JETZT })).toThrow(
       /nicht im Kandidatenpool/,
     );
   });
@@ -117,12 +169,12 @@ describe('waehleUniverse', () => {
       D: bars(10, 100, 600_000),
       E: bars(10, 100, 500_000),
     });
-    const drin = waehleUniverse({ kandidaten, pflicht: [], bestand: ['A', 'B', 'D'], regeln, jetzt: JETZT });
+    const drin = waehleUniverse({ kandidaten, pflicht: [], bestand: ['A', 'B', 'D'], bestandIstAuswahl: true, regeln, jetzt: JETZT });
     expect(drin.symbols, 'D auf Rang 4 bleibt, C auf Rang 3 muss warten').toEqual(['A', 'B', 'D']);
     expect(drin.zugang).toEqual([]);
     expect(drin.abgang).toEqual([]);
 
-    const raus = waehleUniverse({ kandidaten, pflicht: [], bestand: ['A', 'B', 'E'], regeln, jetzt: JETZT });
+    const raus = waehleUniverse({ kandidaten, pflicht: [], bestand: ['A', 'B', 'E'], bestandIstAuswahl: true, regeln, jetzt: JETZT });
     expect(raus.symbols, 'E auf Rang 5 liegt hinter dem Puffer').toEqual(['A', 'B', 'C']);
     expect(raus.zugang).toEqual(['C']);
     expect(raus.abgang).toEqual(['E']);
@@ -130,11 +182,12 @@ describe('waehleUniverse', () => {
 
   it('ist deterministisch: Gleichstand alphabetisch, Reihenfolge der Eingabe egal', () => {
     const spec = { ZZZ: bars(10, 100, 500_000), AAA: bars(10, 100, 500_000), MMM: bars(10, 100, 500_000), BBB: bars(10, 100, 500_000) };
-    const vor = waehleUniverse({ kandidaten: korb(spec), pflicht: [], bestand: [], regeln, jetzt: JETZT });
+    const vor = waehleUniverse({ kandidaten: korb(spec), pflicht: [], bestand: [], bestandIstAuswahl: false, regeln, jetzt: JETZT });
     const rueck = waehleUniverse({
       kandidaten: new Map([...Object.entries(spec)].reverse()),
       pflicht: [],
       bestand: [],
+      bestandIstAuswahl: false,
       regeln,
       jetzt: JETZT,
     });
@@ -143,7 +196,7 @@ describe('waehleUniverse', () => {
   });
 
   it('liefert weniger als max, wenn nicht genug Kandidaten bestehen — lieber klein als schlecht', () => {
-    const a = waehleUniverse({ kandidaten: korb({ A: bars(10, 100, 900_000), B: bars(10, 1, 900_000) }), pflicht: [], bestand: [], regeln, jetzt: JETZT });
+    const a = waehleUniverse({ kandidaten: korb({ A: bars(10, 100, 900_000), B: bars(10, 1, 900_000) }), pflicht: [], bestand: [], bestandIstAuswahl: false, regeln, jetzt: JETZT });
     expect(a.symbols).toEqual(['A']);
   });
 
@@ -152,10 +205,55 @@ describe('waehleUniverse', () => {
       kandidaten: korb({ NEU: bars(10, 100, 900_000), ALT: bars(10, 1, 900_000) }),
       pflicht: [],
       bestand: ['ALT'],
+      bestandIstAuswahl: true,
       regeln,
       jetzt: JETZT,
     });
     expect(a.zugang).toEqual(['NEU']);
     expect(a.abgang).toEqual(['ALT']);
+  });
+});
+
+/**
+ * Notbremsen gegen Datenausfall.
+ *
+ * `backfill` überspringt fehlgeschlagene Blöcke und macht weiter — ohne diese
+ * Prüfungen hätte ein Ausfall für 29 von 30 Werten anstandslos ein Universum
+ * `["SPY"]` veröffentlicht, und alle offenen Positionen hätten damit ihre
+ * führende Strategie verloren. Scheitert die Wahl, bleibt alles stehen.
+ */
+describe('waehleUniverse — Notbremsen', () => {
+  const scharf: UniverseRegeln = { ...regeln, minAnteil: 0.8, maxAbgang: 2 };
+  const zehn = () => korb(Object.fromEntries(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'].map((s, i) => [s, bars(10, 100, (10 - i) * 100_000)])));
+
+  it('bricht ab, wenn zu wenige Kandidaten Daten geliefert haben', () => {
+    const kaputt = korb({ A: bars(10, 100, 900_000), B: [], C: [], D: [] });
+    expect(() => waehleUniverse({ kandidaten: kaputt, pflicht: [], bestand: [], bestandIstAuswahl: false, regeln: scharf, jetzt: JETZT })).toThrow(
+      /Datenausfall, kein Liquiditätsurteil/,
+    );
+  });
+
+  it('nennt „keine Daten" als Grund, nicht „zu illiquide"', () => {
+    const a = waehleUniverse({
+      kandidaten: korb({ A: bars(10, 100, 900_000), B: bars(10, 100, 800_000), C: bars(10, 100, 700_000), TOT: [] }),
+      pflicht: [],
+      bestand: [],
+      bestandIstAuswahl: false,
+      regeln,
+      jetzt: JETZT,
+    });
+    expect(a.bewertung.find((b) => b.symbol === 'TOT')!.grund).toContain('Datenausfall');
+  });
+
+  it('bricht ab, wenn eine Nacht zu viele Symbole austauschen würde', () => {
+    expect(() =>
+      waehleUniverse({ kandidaten: zehn(), pflicht: [], bestand: ['H', 'I', 'J'], bestandIstAuswahl: true, regeln: scharf, jetzt: JETZT }),
+    ).toThrow(/3 Symbole auf einmal austauschen/);
+  });
+
+  it('lässt den ERSTEN Lauf gegen echte Daten die Config-Liste neu bestimmen', () => {
+    const a = waehleUniverse({ kandidaten: zehn(), pflicht: [], bestand: ['H', 'I', 'J'], bestandIstAuswahl: false, regeln: scharf, jetzt: JETZT });
+    expect(a.symbols).toEqual(['A', 'B', 'C']);
+    expect(a.abgang).toEqual(['H', 'I', 'J']);
   });
 });

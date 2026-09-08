@@ -25,6 +25,8 @@ export type JournalEventKind =
   | 'error'
   | 'notify'
   | 'champion'
+  /** Nächtliche Wahl des Handelsuniversums (`autotrd universe`) — welcher Korb ab wann gilt. */
+  | 'universe'
   | 'note';
 
 export interface JournalEvent {

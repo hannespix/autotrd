@@ -31,7 +31,7 @@ function datei(inhalt: unknown): string {
   writeFileSync(p, JSON.stringify(inhalt), 'utf8');
   return p;
 }
-const gueltig = (symbols: string[]) => ({ version: UNIVERSE_FILE_VERSION, updatedAt: 1, symbols, regeln: UNIVERSE_REGELN, zugang: [], abgang: [], bewertung: [] });
+const gueltig = (symbols: string[], updatedAt = Date.now()) => ({ version: UNIVERSE_FILE_VERSION, updatedAt, symbols, regeln: UNIVERSE_REGELN, zugang: [], abgang: [], bewertung: [] });
 
 describe('ladeUniverseDatei', () => {
   it('fehlende Datei ⇒ null (erster Lauf, kein Fehler)', () => {
@@ -52,6 +52,13 @@ describe('ladeUniverseDatei', () => {
 
   it('ohne Benchmark ⇒ Abbruch, sonst greift kein Marktfilter', () => {
     expect(() => ladeUniverseDatei(datei(gueltig(['AAPL', 'MSFT'])), cfg)).toThrow(/Benchmark SPY/);
+  });
+
+  it('eine alte Auswahl ⇒ Abbruch: sie beschreibt nicht mehr, was heute liquide ist', () => {
+    const alt = datei(gueltig(['SPY', 'AAPL'], Date.now() - 20 * 86_400_000));
+    expect(() => ladeUniverseDatei(alt, cfg)).toThrow(/Tage alt/);
+    // Ohne Datum ebenfalls — geraten wird nicht.
+    expect(() => ladeUniverseDatei(datei({ ...gueltig(['SPY']), updatedAt: 'gestern' }), cfg)).toThrow(/undatiert/);
   });
 
   it('doppelte Symbole ⇒ Abbruch', () => {
@@ -78,7 +85,7 @@ describe('schreibeUniverseDatei', () => {
   it('schreibt, was danach wieder geladen werden kann', () => {
     const p = join(dir, 'roundtrip.json');
     const auswahl = { symbols: ['SPY', 'AAPL'], bewertung: [], zugang: ['AAPL'], abgang: [] };
-    const doc = schreibeUniverseDatei(p, auswahl, UNIVERSE_REGELN, 'SPY', 1234);
+    const doc = schreibeUniverseDatei(p, auswahl, UNIVERSE_REGELN, 'SPY', Date.now());
     expect(doc.version).toBe(UNIVERSE_FILE_VERSION);
     expect(doc.benchmark).toBe('SPY');
     expect(ladeUniverseDatei(p, cfg)).toEqual(['SPY', 'AAPL']);

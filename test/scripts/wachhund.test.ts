@@ -58,11 +58,11 @@ describe('Wächter', () => {
   });
 
   it('alter Champion: erst Warnung, dann Fehler', () => {
-    const warn = beurteile(eingabe({ champion: { updatedAt: JETZT - 5 * TAG, symbols: { TSLA: {} }, noTrade: {} } }));
+    const warn = beurteile(eingabe({ champion: { updatedAt: JETZT - 5 * TAG, symbols: { TSLA: {} }, noTrade: { SPY: {} } } }));
     expect(warn.ok, 'fünf Tage über ein Wochenende sind noch kein Ausfall').toBe(true);
     expect(warn.warnungen).toBeGreaterThan(0);
 
-    const fehler = beurteile(eingabe({ champion: { updatedAt: JETZT - (CHAMPION_FEHLER_TAGE + 1) * TAG, symbols: { TSLA: {} }, noTrade: {} } }));
+    const fehler = beurteile(eingabe({ champion: { updatedAt: JETZT - (CHAMPION_FEHLER_TAGE + 1) * TAG, symbols: { TSLA: {} }, noTrade: { SPY: {} } } }));
     expect(fehler.ok).toBe(false);
     expect(texte(fehler)).toContain('Optimierer läuft nicht');
   });
@@ -96,9 +96,18 @@ describe('Wächter', () => {
     expect(texte(u)).toContain('Benchmark SPY fehlt');
   });
 
-  it('ein gehandeltes Symbol ohne Champion-Urteil ist eine Warnung', () => {
-    const u = beurteile(eingabe({ engineConfig: { universe: { symbols: ['SPY', 'TSLA', 'NVDA'] }, timeframe: 5 } }));
-    expect(texte(u)).toContain('Ohne Champion-Urteil (wird nicht gehandelt): NVDA');
+  /**
+   * Seit das Universum nächtlich wechselt, ist die Champion-Deckung die einzige
+   * verbliebene Brücke zwischen „gemessen" und „gehandelt". Klafft sie, lief der
+   * nächtliche Lauf halb durch — deshalb Fehler, nicht Warnung.
+   */
+  it('ein gehandeltes Symbol ohne Champion-Urteil ist ein FEHLER', () => {
+    const u = beurteile(eingabe({
+      engineConfig: { universe: { symbols: ['SPY', 'TSLA', 'AAPL'] }, timeframe: 5 },
+    }));
+    expect(u.ok).toBe(false);
+    expect(texte(u)).toContain('ohne Champion-Urteil');
+    expect(texte(u)).toContain('AAPL');
   });
 
   it('abweichender Zeitrahmen ist ein Fehler', () => {

@@ -20,6 +20,15 @@ import type { UniverseAuswahl, UniverseBewertung, UniverseRegeln } from './selec
 
 export const UNIVERSE_FILE_VERSION = 1;
 
+/**
+ * Höchstalter einer Auswahl. Ein Actions-Cache kann alt sein; eine Auswahl von
+ * vor Wochen beschreibt nicht mehr, was heute liquide ist. Lieber die Config
+ * handeln (die ist committet und angeschaut) als eine Auswahl, die niemand
+ * mehr gemessen hat. Über ein langes Wochenende plus Feiertage sind fünf Tage
+ * normal — vierzehn sind es nicht mehr.
+ */
+export const UNIVERSE_MAX_ALTER_MS = 14 * 86_400_000;
+
 export interface UniverseFile {
   version: number;
   updatedAt: Ms;
@@ -57,7 +66,7 @@ export function erlaubteSymbole(config: Config): Set<string> {
  * Wirft bei jeder Unstimmigkeit — eine halb verstandene Auswahl wird nicht
  * gehandelt.
  */
-export function ladeUniverseDatei(pfad: string, config: Config): string[] | null {
+export function ladeUniverseDatei(pfad: string, config: Config, jetzt = Date.now()): string[] | null {
   if (!existsSync(pfad)) return null;
   const roh = readJson<Partial<UniverseFile>>(pfad);
   if (roh === null) throw new Error(`Universum-Datei ${pfad} ist leer oder unlesbar.`);
@@ -77,6 +86,13 @@ export function ladeUniverseDatei(pfad: string, config: Config): string[] | null
   const fremd = symbols.filter((s) => !erlaubt.has(s));
   if (fremd.length > 0) {
     throw new Error(`Universum-Datei ${pfad} nennt Symbole außerhalb des Kandidatenpools: ${fremd.join(', ')}. Pool ändern heißt Commit, nicht Datei.`);
+  }
+  const alter = typeof roh.updatedAt === 'number' ? jetzt - roh.updatedAt : Number.POSITIVE_INFINITY;
+  if (alter > UNIVERSE_MAX_ALTER_MS) {
+    throw new Error(
+      `Universum-Datei ${pfad} ist ${Number.isFinite(alter) ? `${(alter / 86_400_000).toFixed(1)} Tage` : 'undatiert'} alt ` +
+        `(höchstens ${UNIVERSE_MAX_ALTER_MS / 86_400_000} Tage) — sie beschreibt nicht mehr, was heute liquide ist.`,
+    );
   }
   const bench = config.universe.benchmark;
   if (bench !== undefined && !symbols.includes(bench)) {

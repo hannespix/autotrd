@@ -13,7 +13,7 @@
  */
 import { normalizeUserSymbol } from '../../../src/alpaca/symbols.ts';
 import { autoSettingsFromLegacy } from '../../../shared/src/autoSettings.js';
-import { ConfigError, parseConfig, type Config } from '../../../src/core/config.ts';
+import { parseConfig, type Config } from '../../../src/core/config.ts';
 import { isRecord, plain } from './firestoreLike.js';
 
 export const DEFAULT_UNIVERSE: readonly string[] = ['SPY', 'QQQ', 'AAPL', 'MSFT', 'NVDA', 'AMZN', 'META', 'GOOGL', 'AMD', 'TSLA'];
@@ -109,19 +109,40 @@ export function userRiskFrom(settings: unknown): UserRiskPart {
 export interface UserConfig {
   config: Config;
   source: UserRiskSource;
+  /**
+   * Gesetzt, wenn die gespeicherte Symbolauswahl des Nutzers gar nicht mehr
+   * ins globale Universum passt. Der Takt macht daraus eine Einstiegssperre —
+   * NICHT einen Abbruch (siehe unten).
+   */
+  auswahlVeraltet?: string;
 }
 
-/** Globaler Teil + Nutzer-Teil ⇒ validierte Config. Wirft `ConfigError`. */
+/** Globaler Teil + Nutzer-Teil ⇒ validierte Config. Wirft bei ungültigem globalem Teil. */
 export function buildUserConfig(global: Record<string, unknown>, settings: unknown): UserConfig {
   const part = userRiskFrom(settings);
   const universe: Record<string, unknown> = isRecord(global.universe) ? { ...global.universe } : {};
+  let auswahlVeraltet: string | undefined;
   if (part.symbols) {
     const assetClass = universe.assetClass === 'crypto' ? 'crypto' : 'us_equity';
     const all = Array.isArray(universe.symbols) ? universe.symbols.filter((x): x is string => typeof x === 'string') : [];
     const allowed = new Set(all.map((x) => normalizeUserSymbol(x, assetClass)));
     const subset = [...new Set(part.symbols.map((x) => normalizeUserSymbol(x, assetClass)))].filter((x) => allowed.has(x));
-    if (subset.length === 0) throw new ConfigError('settings.auto.symbols enthält kein Symbol des globalen Universums (meta/engineConfig.universe.symbols)');
-    universe.symbols = subset;
+    if (subset.length === 0) {
+      // Früher ein `ConfigError` — und der warf den Nutzer aus dem GANZEN Takt:
+      // keine Exits, kein Abgleich, keine Schutz-Stop-Prüfung, kein Spiegel. Eine
+      // offene Position hätte niemand mehr bewirtschaftet.
+      //
+      // Seit das Universum nächtlich nach Liquidität gewählt wird, ist der Fall
+      // ein Normalfall, kein Konfigurationsfehler: Wer nur TSLA gewählt hat und
+      // TSLA fällt heraus, steht genau hier. Also: Universum wie global (damit
+      // Daten, Abgleich und Exits laufen), aber keine Einstiege, bis der Nutzer
+      // neu wählt.
+      auswahlVeraltet = 'gespeicherte Symbolauswahl ist nicht mehr im Handelsuniversum — bitte in den Einstellungen neu wählen';
+    } else {
+      universe.symbols = subset;
+    }
   }
-  return { config: parseConfig({ ...global, universe, risk: part.risk }), source: part.source };
+  const out: UserConfig = { config: parseConfig({ ...global, universe, risk: part.risk }), source: part.source };
+  if (auswahlVeraltet !== undefined) out.auswahlVeraltet = auswahlVeraltet;
+  return out;
 }

@@ -119,27 +119,66 @@ export function grossExposure(positions: ReadonlyMap<string, PositionState>, pri
  * eine Strategie geändert hat. Genau die Art stiller Freiheitsgrad, der
  * hinterher wie eine Kante aussieht.
  *
- * Die Regel: alphabetisch als kanonische Basis — die hängt nicht daran, wie
- * das Universum gerade sortiert ist — und der Startpunkt rotiert mit der
- * Bar-Zeit. Über viele Bars ist die Priorität gleichverteilt; innerhalb einer
- * Bar ist sie allein aus den Daten reproduzierbar, im Backtest wie live.
+ * Die Regel: Jedes Symbol bekommt je Bar einen Schlüssel aus (Symbol, Bucket),
+ * sortiert wird danach. Zwei Eigenschaften, die beide gebraucht werden und die
+ * eine einfache Rotation `bucket mod n` NICHT hat (Red-Team, 08.09.):
+ *
+ *  1. **Keine Resonanz.** Ein Handelstag hat bei 5 min genau 288 Buckets. Mit
+ *     `bucket mod n` rückt der Start an einer festen Tageszeit täglich um
+ *     `288 mod n` vor — bei n = 30 gäbe es zu jeder Uhrzeit nur 5 verschiedene
+ *     Startpunkte, 10 der 30 Symbole kämen um 10:00 ET NIE zuerst dran (unter
+ *     ihnen SPY und QQQ, also genau die, die vorher bevorzugt waren). Bei
+ *     n ∈ {12, 16, 18, 24} stünde die Reihenfolge zu einer festen Uhrzeit für
+ *     immer still. Der Mischer hat keine gemeinsamen Teiler mit irgendetwas.
+ *  2. **Unabhängig davon, WER im Zyklus dabei ist.** Der Schlüssel eines
+ *     Symbols hängt nur an ihm selbst und an der Bar-Zeit, nicht an der Anzahl
+ *     der Anwesenden. Sonst würde ein einziges fehlendes Symbol (live normal:
+ *     keine IEX-Bar im Bucket) die ganze Prioritätsreihenfolge gegenüber der
+ *     Messung permutieren — und zwar systematisch, weil die Ausfälle die
+ *     dünneren Werte treffen.
+ *
+ * Über viele Bars ist die Priorität damit gleichverteilt; innerhalb einer Bar
+ * ist sie allein aus den Daten reproduzierbar, im Backtest wie live.
  *
  * Exits berührt das nicht: Sie laufen für jedes Symbol dieses Zyklus,
  * unabhängig von der Reihenfolge, und werden nie gesperrt.
  */
+function fnv1a(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/** splitmix32-Finalisierer: streut benachbarte Zahlen über den ganzen Bereich. */
+function mische(x: number): number {
+  let z = x | 0;
+  z = (z ^ (z >>> 16)) >>> 0;
+  z = Math.imul(z, 0x21f0aaad) >>> 0;
+  z = (z ^ (z >>> 15)) >>> 0;
+  z = Math.imul(z, 0x735a2d97) >>> 0;
+  return (z ^ (z >>> 15)) >>> 0;
+}
+
 export function wettbewerbsOrdnung(inputs: readonly SymbolInput[], timeframe: TimeframeMin): SymbolInput[] {
   if (inputs.length < 2) return [...inputs];
-  const sortiert = [...inputs].sort((a, b) => (a.snap.symbol < b.snap.symbol ? -1 : a.snap.symbol > b.snap.symbol ? 1 : 0));
   // Bucket-Nummer der jüngsten Entscheidungs-Bar. Beide Welten entscheiden auf
   // geschlossenen Bars desselben Rasters, also ergibt sich dieselbe Zahl.
   let neueste = 0;
-  for (const inp of sortiert) {
+  for (const inp of inputs) {
     const t = inp.snap.bars.t[inp.snap.i] ?? 0;
     if (t > neueste) neueste = t;
   }
-  const bucket = Math.floor(neueste / (timeframe * 60_000));
-  const start = ((bucket % sortiert.length) + sortiert.length) % sortiert.length;
-  return start === 0 ? sortiert : [...sortiert.slice(start), ...sortiert.slice(0, start)];
+  const bucket = mische(Math.floor(neueste / (timeframe * 60_000)));
+  const schluessel = new Map<string, number>();
+  for (const inp of inputs) schluessel.set(inp.snap.symbol, mische(fnv1a(inp.snap.symbol) ^ bucket));
+  return [...inputs].sort((a, b) => {
+    const d = schluessel.get(a.snap.symbol)! - schluessel.get(b.snap.symbol)!;
+    // Gleichstand (Hash-Kollision) alphabetisch — der Lauf muss reproduzierbar bleiben.
+    return d !== 0 ? d : a.snap.symbol < b.snap.symbol ? -1 : a.snap.symbol > b.snap.symbol ? 1 : 0;
+  });
 }
 
 export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): LogicResult {

@@ -80,7 +80,10 @@ export function beurteile(e) {
   if (e.champion && gehandeltSyms.length > 0) {
     const beurteilt = new Set([...Object.keys(e.champion.symbols ?? {}), ...Object.keys(e.champion.noTrade ?? {})]);
     const ohne = gehandeltSyms.filter((s) => !beurteilt.has(s));
-    if (ohne.length > 0) sage('warnung', `Ohne Champion-Urteil (wird nicht gehandelt): ${ohne.join(', ')}.`);
+    // Fehler, nicht Warnung: Das ist die einzige verbliebene Brücke zwischen
+    // „gemessen" und „gehandelt", seit das Universum nächtlich wechselt. Klafft
+    // sie, lief der nächtliche Lauf halb durch — und niemand sieht es sonst.
+    if (ohne.length > 0) sage('fehler', `Gehandeltes Symbol ohne Champion-Urteil — Optimierer und Universum passen nicht zusammen: ${ohne.join(', ')}.`);
   }
 
   // ── Nutzer

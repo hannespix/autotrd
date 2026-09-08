@@ -102,20 +102,25 @@ describe('wettbewerbsOrdnung', () => {
   });
 
   it('verteilt die Priorität über die Bars gleichmäßig — kein Symbol gewinnt immer', () => {
+    const BARS = 600;
+    const fair = BARS / KORB.length;
     const siege = new Map<string, number>();
-    for (let b = 100; b < 100 + KORB.length; b++) {
-      for (const s of gewinner(b, 1)) siege.set(s, (siege.get(s) ?? 0) + 1);
+    for (let b = 100; b < 100 + BARS; b++) for (const s of gewinner(b, 1)) siege.set(s, (siege.get(s) ?? 0) + 1);
+    expect([...siege.keys()].sort(), 'jedes Symbol kommt vor').toEqual([...KORB].sort());
+    for (const [sym, n] of siege) {
+      expect(n, `${sym} gewinnt ${n} von ${BARS} (fair wären ${fair})`).toBeGreaterThan(fair / 2);
+      expect(n, `${sym} gewinnt ${n} von ${BARS} (fair wären ${fair})`).toBeLessThan(fair * 2);
     }
-    // Sechs Symbole, sechs Bars, ein Platz: Jeder ist genau einmal dran.
-    expect([...siege.keys()].sort()).toEqual([...KORB].sort());
-    expect([...siege.values()]).toEqual(KORB.map(() => 1));
   });
 
   it('bevorzugt nicht mehr den ersten Config-Eintrag (der Fehler, den es zu verhindern gilt)', () => {
-    // Vor der Regel hätte AAPL als erster Eintrag alle sechs Bars gewonnen.
+    // Vor der Regel gewann AAPL als erster Eintrag JEDE Bar — die Gegenprobe
+    // (Regel entfernt) liefert hier 600 von 600.
+    const BARS = 600;
     let aapl = 0;
-    for (let b = 100; b < 106; b++) if (gewinner(b, 1).includes('AAPL')) aapl++;
-    expect(aapl, 'AAPL gewinnt nicht jede Bar, nur weil es alphabetisch/konfiguratorisch vorn steht').toBe(1);
+    for (let b = 100; b < 100 + BARS; b++) if (gewinner(b, 1).includes('AAPL')) aapl++;
+    expect(aapl, 'AAPL gewinnt nicht jede Bar, nur weil es alphabetisch/konfiguratorisch vorn steht').toBeLessThan(BARS / 3);
+    expect(aapl, 'AAPL kommt aber sehr wohl regelmäßig dran').toBeGreaterThan(BARS / 12);
   });
 
   it('lässt Exits unberührt — sie konkurrieren um nichts', () => {
@@ -133,13 +138,63 @@ describe('wettbewerbsOrdnung', () => {
     }
   });
 
-  it('rotiert deterministisch: gleiche Bar, gleiche Reihenfolge', () => {
+  it('ist deterministisch: gleiche Bar, gleiche Reihenfolge; andere Bar, andere Reihenfolge', () => {
     const eins = wettbewerbsOrdnung(KORB.map((s) => input(s, 100, enterLong)), TF).map((i) => i.snap.symbol);
     const zwei = wettbewerbsOrdnung([...KORB].reverse().map((s) => input(s, 100, enterLong)), TF).map((i) => i.snap.symbol);
     expect(zwei).toEqual(eins);
-    // Nächste Bar: um genau einen Platz weitergedreht.
     const drei = wettbewerbsOrdnung(KORB.map((s) => input(s, 101, enterLong)), TF).map((i) => i.snap.symbol);
-    expect(drei).toEqual([...eins.slice(1), eins[0]!]);
+    expect(drei).not.toEqual(eins);
+  });
+
+  /**
+   * Der Fund, der die erste Fassung erledigt hat: Mit `start = bucket mod n`
+   * rückt der Startpunkt an einer FESTEN Tageszeit täglich um `288 mod n` vor
+   * (288 Buckets je Handelstag bei 5 min). Erreichbar sind nur die Vielfachen
+   * von ggT(288, n) — bei n = 30 also 5 von 30 Startpunkten, bei n ∈ {12, 16,
+   * 18, 24} genau einer, für immer. Signale hängen an der Tageszeit (Eröffnung,
+   * Schluss), also ist das keine Spitzfindigkeit.
+   */
+  it('hat zu fester Tageszeit keine Resonanz — auch bei n mit vielen Teilern von 288', () => {
+    const BUCKETS_JE_TAG = 288;
+    for (const n of [12, 16, 18, 24, 30]) {
+      const korb = Array.from({ length: n }, (_, i) => `S${String(i).padStart(2, '0')}`);
+      const ersteJeTag = new Set<string>();
+      for (let tag = 0; tag < 200; tag++) {
+        const b = 1_000_000 + tag * BUCKETS_JE_TAG; // immer dieselbe Uhrzeit
+        ersteJeTag.add(wettbewerbsOrdnung(korb.map((s) => input(s, b, enterLong)), TF)[0]!.snap.symbol);
+      }
+      expect(ersteJeTag.size, `n=${n}: nur ${ersteJeTag.size} verschiedene Erste an 200 Tagen zur selben Uhrzeit`).toBeGreaterThan(n / 2);
+    }
+  });
+
+  /**
+   * Live enthält der Zyklus nur Symbole mit NEUER geschlossener Bar. Fehlt eine
+   * IEX-Bar, ist die Menge kleiner als im Backtest. Hinge die Reihenfolge an der
+   * Anzahl, permutierte ein einziges fehlendes Symbol die ganze Prioritätsliste
+   * gegenüber der Messung — und zwar systematisch, weil Ausfälle die dünneren
+   * Werte treffen.
+   */
+  it('ändert die relative Reihenfolge nicht, wenn ein Symbol fehlt', () => {
+    const voll = wettbewerbsOrdnung(KORB.map((s) => input(s, 100, enterLong)), TF).map((i) => i.snap.symbol);
+    for (const fehlt of KORB) {
+      const rest = KORB.filter((s) => s !== fehlt);
+      const ohne = wettbewerbsOrdnung(rest.map((s) => input(s, 100, enterLong)), TF).map((i) => i.snap.symbol);
+      expect(ohne, `ohne ${fehlt}`).toEqual(voll.filter((s) => s !== fehlt));
+    }
+  });
+
+  /**
+   * Live haben die Symbole eines Takts nicht alle dieselbe letzte Bar-Zeit
+   * (verspätete IEX-Bars). Maßgeblich ist die JÜNGSTE — sonst hinge der Bucket
+   * daran, welches Symbol zufällig zuerst in der Liste steht.
+   */
+  it('nimmt die jüngste Bar-Zeit, nicht die des ersten Eintrags', () => {
+    const gemischt = [input('AAPL', 99, enterLong), input('DIA', 100, enterLong), input('IWM', 99, enterLong)];
+    const alleNeu = [input('AAPL', 100, enterLong), input('DIA', 100, enterLong), input('IWM', 100, enterLong)];
+    const reihe = (xs: SymbolInput[]) => wettbewerbsOrdnung(xs, TF).map((i) => i.snap.symbol);
+    expect(reihe(gemischt)).toEqual(reihe(alleNeu));
+    // Gegenprobe: Die Reihenfolge des Aufrufers ändert daran nichts.
+    expect(reihe([...gemischt].reverse())).toEqual(reihe(alleNeu));
   });
 
   it('lässt ein einzelnes Symbol unverändert', () => {

@@ -114,7 +114,7 @@ Broker, ein Takt je Minute genügt für den 5-Minuten-Zeitrahmen.
 | `data/` | Bars-Cache auf Platte, inkrementeller Backfill, Kalender. |
 | `strategy/` | Indikatoren (kausal) und Vorlagen: `trend_donchian`, `momentum_pullback`, `mean_reversion`, `orb_breakout`. |
 | `backtest/` | Portfolio-Simulator (Fills am nächsten Open, Stop vor Ziel), Kosten, Metriken (Sharpe/Sortino/PSR/DSR). |
-| `universe/` | Nächtliche Wahl des Handelsuniversums — **nur nach Liquidität**, nie nach Ertrag. |
+| `universe/` | Nächtliche Wahl des Handelsuniversums — nach **Handelbarkeit**, nie nach dem Ergebnis der Strategie (Grenzen der Kennzahl im Modulkopf). |
 | `optimize/` | Walk-Forward, Robustheits-Gates, Champion/Challenger, Report. |
 | `engine/` | Buch, Order-Ausführung, Abgleich, Uhr, Schleife. |
 | `notify/`, `status/` | Telegram, Status-HTTP (nur 127.0.0.1). |

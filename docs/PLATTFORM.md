@@ -137,12 +137,32 @@ Schritt, `autotrd universe`:
    tauschte der Korb jede Nacht zwei Werte auf Rauschen aus, und die gepoolte
    Messung von gestern wäre mit der von heute nicht vergleichbar.
 
-**Niemals nach Ertrag.** Ein Universum nach vergangener Rendite
-zusammenzustellen und es anschließend auf denselben Daten zu messen ist
-Selektionsbias in Reinform — der Fehler, an dem das Vorgängersystem gestorben
-ist. `waehleUniverse` bekommt Bars und sonst nichts; sie sieht weder PnL noch
-Champion und könnte gar nicht nach Ertrag sortieren. Ein Test hält das fest
-(`test/universe/select.test.ts`).
+**Niemals nach dem Ergebnis der Strategie.** Ein Universum danach
+zusammenzustellen, wo die Strategie funktioniert hat, und es anschließend auf
+denselben Daten zu messen ist Selektionsbias in Reinform — der Fehler, an dem
+das Vorgängersystem gestorben ist. `waehleUniverse` bekommt Bars und Regeln,
+sonst nichts: Ihr Eingang hat kein Feld für PnL, Trades oder Champion. Ein Test
+hält das fest (`test/universe/select.test.ts`).
+
+**Zwei Einschränkungen, die dazugehören** (Red-Team, 08.09.2026 — die erste
+Fassung dieses Abschnitts behauptete, die Auswahl „kenne keine Rendite", und
+das war falsch):
+
+1. *Dollarumsatz enthält den Kurs.* Umsatz ist Stückzahl × Kurs, und der Kurs
+   ist das kumulierte Ergebnis vergangener Rendite — bei gleicher Stückzahl
+   gewinnt der gestiegene Wert. `minPreis` und `maxAlterTage` wirken auf die
+   letzte Bar und werfen genau die Werte raus, die abgestürzt oder verschwunden
+   sind. Das bleibt so, weil ein Auto-Trader Dollar bewegt, keine Stückzahlen;
+   die Kennzahl renditeneutral zu machen hieße, Liquidität schlechter zu
+   messen, um eine Zahl schöner zu machen. Benannt statt wegdefiniert.
+2. *Kein Point-in-Time-Universum.* Die Auswahl beschreibt den Stand am Tag des
+   Laufs, der Walk-Forward wendet sie über `lookbackDays: 400` rückwärts an.
+   Bezüglich der KORB-ZUGEHÖRIGKEIT sind die OOS-Folds damit nicht
+   out-of-sample: Wer im Messzeitraum übernommen, delistet oder unter 5 $
+   gefallen ist, kommt gar nicht vor. Die OOS-Zahlen sind deshalb optimistisch.
+   Der saubere Weg wäre, je Fold mit den Daten bis Fold-Beginn neu zu wählen
+   (`waehleUniverse` nimmt `jetzt` schon als Parameter); bis das steht, sagt es
+   der Bericht in jedem Lauf.
 
 Den **Pool** ändert weiterhin nur ein Commit. Automatisch läuft die Wahl
 darin. Drei Stellen bewachen das:

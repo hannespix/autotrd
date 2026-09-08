@@ -461,7 +461,9 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
     }
     try {
       const uc = buildUserConfig(global, snap.get('settings'));
-      const sperre = zugang.sperre;
+      // Eine veraltete Symbolauswahl sperrt Einstiege wie jede andere offene
+      // Kette — Exits, Abgleich und Schutz-Stops laufen weiter.
+      const sperre = zugang.sperre ?? uc.auswahlVeraltet ?? null;
       // Verriegelt (Echtgeld-Kette offen): keine Einstiege, und Fremdbestand wird nie adoptiert — ein
       // Schutz-Stop auf eine Handposition wäre eine Order auf einem verriegelten Konto.
       const config: Config = sperre ? { ...uc.config, engine: { ...uc.config.engine, onOrphan: 'halt' } } : uc.config;

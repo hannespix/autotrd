@@ -115,17 +115,23 @@ jobs:
         if: steps.keys.outputs.skip != '1' && env.FIREBASE_SERVICE_ACCOUNT != ''
         run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
 
-      - name: Plattform-Config nach Firestore
-        if: steps.keys.outputs.skip != '1' && env.FIREBASE_SERVICE_ACCOUNT != ''
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
-        run: node scripts/sync-engine-config.mjs --config config/platform.yaml --universe var/universe.json
-
+      # Reihenfolge ist wichtig: erst das Urteil (WIE gehandelt wird), dann das
+      # Universum (WAS gehandelt wird). Scheitert der zweite Schritt, steht ein
+      # Champion bereit, der den alten Korb abdeckt — Symbole ohne Urteil werden
+      # wegen `allowWithoutChampion: false` einfach nicht gehandelt. Andersherum
+      # hätten die abgegangenen Symbole ihr Urteil verloren, während sie noch im
+      # gehandelten Universum stehen.
       - name: Champion und Bericht nach Firestore
         if: steps.keys.outputs.skip != '1' && env.FIREBASE_SERVICE_ACCOUNT != ''
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
         run: node scripts/publish-champion.mjs --home var
+
+      - name: Plattform-Config nach Firestore
+        if: steps.keys.outputs.skip != '1' && env.FIREBASE_SERVICE_ACCOUNT != ''
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+        run: node scripts/sync-engine-config.mjs --config config/platform.yaml --universe var/universe.json
 
       - name: Ohne Service-Account
         if: steps.keys.outputs.skip != '1' && env.FIREBASE_SERVICE_ACCOUNT == ''

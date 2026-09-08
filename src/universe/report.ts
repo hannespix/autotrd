@@ -31,11 +31,20 @@ export function renderUniverseReport(a: {
     `- Regel: Median-Dollarumsatz über ${regeln.fensterTage} Handelstage; mindestens ${regeln.minTage} Bars, ` +
       `Kurs ≥ ${regeln.minPreis} $, Umsatz ≥ ${geld(regeln.minDollarVolumen)} $/Tag, letzte Bar höchstens ${regeln.maxAlterTage} Tage alt`,
   );
-  L.push(`- Hysterese: Wer schon dabei ist, bleibt bis Rang ${regeln.max + regeln.haltePuffer} — sonst tauscht der Korb jede Nacht auf Rauschen`);
+  L.push(
+    `- Hysterese: Wer schon dabei ist, bleibt bis Rang ${regeln.max + regeln.haltePuffer} — sonst tauscht der Korb jede Nacht auf Rauschen. ` +
+      `Umgekehrt kommt ein Neuer erst herein, wenn ein Bestandswert hinter Rang ${regeln.max + regeln.haltePuffer} fällt`,
+  );
+  L.push(`- Notbremsen: mindestens ${Math.max(1, Math.ceil(regeln.max * regeln.minAnteil))} Symbole, höchstens ${regeln.maxAbgang} Abgänge je Nacht (sonst Abbruch, Universum bleibt stehen)`);
   L.push(`- Benchmark: ${a.benchmark ?? '—'}`);
   L.push('');
-  L.push('**Nach Liquidität gewählt, nie nach Ertrag.** Diese Auswahl kennt keine Rendite, keine Trades und keinen Champion —');
+  L.push('**Nach Handelbarkeit gewählt, nie nach dem Ergebnis der Strategie.** Die Auswahl sieht kein PnL, keine Trades und keinen Champion —');
   L.push('sonst wäre sie Selektionsbias mit Extraschritt: Symbole aussuchen, auf denen es zufällig lief, und sie dann auf denselben Daten messen.');
+  L.push('');
+  L.push('> Zwei ehrliche Einschränkungen. **(1)** Dollarumsatz ist Stückzahl × Kurs, enthält also das Kursniveau und damit vergangene Rendite;');
+  L.push('> bei gleicher Stückzahl gewinnt der gestiegene Wert. Das ist der Preis dafür, Liquidität in Dollar zu messen — und Dollar sind, was ein');
+  L.push('> Auto-Trader bewegt. **(2)** Diese Auswahl beschreibt HEUTE. Der Walk-Forward wendet sie rückwärts an, also sind die OOS-Zahlen');
+  L.push('> bezüglich der Korb-Zugehörigkeit nicht out-of-sample und damit optimistisch. Wer im Messzeitraum verschwunden ist, kommt nicht vor.');
   L.push('');
   L.push(`- Zugang: ${auswahl.zugang.length ? auswahl.zugang.join(', ') : '—'}`);
   L.push(`- Abgang: ${auswahl.abgang.length ? auswahl.abgang.join(', ') : '—'}`);

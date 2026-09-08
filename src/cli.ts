@@ -282,18 +282,29 @@ async function cmdUniverse(app: App, cli: Cli): Promise<number> {
   for (const sym of pool) kandidaten.set(sym, geladen.get(sym) ?? app.store.load(sym, '1Day'));
 
   // Bestand = was gerade gehandelt wird: die letzte Auswahl, sonst die Config.
-  const vorher = ladeUniverseDatei(app.paths.universe, app.config) ?? app.config.universe.symbols;
+  // Eine unlesbare oder nicht mehr passende Altdatei darf den Lauf nicht töten —
+  // sie ist hier nur Hysterese-Gedächtnis, keine Handelsanweisung.
+  let vorher: string[] | null = null;
+  try {
+    vorher = ladeUniverseDatei(app.paths.universe, app.config);
+  } catch (e) {
+    logger.warn(`Vorige Auswahl unbrauchbar (${errMsg(e)}) — Bestand kommt aus der Config.`);
+  }
   const bench = app.config.universe.benchmark;
   const auswahl = waehleUniverse({
     kandidaten,
     pflicht: bench ? [bench] : [],
-    bestand: vorher,
+    bestand: vorher ?? app.config.universe.symbols,
+    bestandIstAuswahl: vorher !== null,
     regeln,
     jetzt: now,
   });
 
   const ziel = str(cli.values.out) ?? app.paths.universe;
   schreibeUniverseDatei(ziel, auswahl, regeln, bench, now);
+  // Dauerhafter Beleg, welcher Korb ab wann galt: `universe.json` und
+  // `meta/engineConfig` werden überschrieben, das Journal nie.
+  app.journal.append('universe', { symbols: auswahl.symbols, zugang: auswahl.zugang, abgang: auswahl.abgang, kandidaten: pool.length, regeln }, now);
   const bericht = renderUniverseReport({ auswahl, regeln, benchmark: bench, kandidaten: pool.length, jetzt: now });
   ensureDir(app.paths.reports);
   const berichtPfad = join(app.paths.reports, `universe-${dayKey(now)}.md`);

@@ -534,10 +534,12 @@ describe('Portfolio', () => {
       config: cfgX,
       initialEquity: 100_000,
     });
-    // AAA bekommt 20 % (200 Stück), BBB nur die restlichen 5 % (50 Stück).
+    // Wer zuerst drankommt, bekommt 20 % (200 Stück), der andere nur die restlichen
+    // 5 % (50 Stück). WER das ist, entscheidet `wettbewerbsOrdnung` aus der Bar-Zeit —
+    // geprüft wird das gemeinsame Budget, nicht die Reihenfolge.
     const open = res.notes.filter((n) => n.startsWith('Offen am Ende'));
-    expect(open.some((n) => n.includes('AAA long 200'))).toBe(true);
-    expect(open.some((n) => n.includes('BBB long 50'))).toBe(true);
+    const mengen = ['AAA', 'BBB'].map((sym) => open.find((n) => n.includes(`${sym} long`))?.match(new RegExp(`${sym} long (\\d+)`))?.[1]);
+    expect(mengen.filter(Boolean).sort(), `Notizen: ${open.join(' | ')}`).toEqual(['200', '50']);
   });
 });
 

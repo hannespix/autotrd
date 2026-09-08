@@ -1,31 +1,62 @@
 /**
- * Nächtliche Wahl des Handelsuniversums — NUR nach Liquidität, nie nach Ertrag.
+ * Nächtliche Wahl des Handelsuniversums — nach Handelbarkeit, nie nach dem
+ * ERGEBNIS DER STRATEGIE.
  *
  * Warum diese Trennung die wichtigste Zeile in dieser Datei ist: Ein Universum
- * nach vergangener Rendite zusammenzustellen ist Selektionsbias in Reinform.
- * Man wählt die Symbole, auf denen die Strategie zufällig funktioniert hat, und
- * misst sie anschließend auf denselben Daten — das Ergebnis ist immer schön und
- * immer wertlos. Genau daran ist das Vorgängersystem gescheitert (30 Trades als
- * Beweis, Auswahl auf denselben Daten wiederholt).
+ * danach zusammenzustellen, wo die Strategie funktioniert hat, ist
+ * Selektionsbias in Reinform. Man wählt die Symbole aus, auf denen es zufällig
+ * lief, und misst sie anschließend auf denselben Daten — das Ergebnis ist immer
+ * schön und immer wertlos. Genau daran ist das Vorgängersystem gescheitert
+ * (30 Trades als Beweis, Auswahl auf denselben Daten wiederholt). Der Eingang
+ * dieser Funktion hat deshalb kein Feld für PnL, Trades oder Champion; sie
+ * bekommt Bars und Regeln, sonst nichts.
  *
- * Was hier stattdessen passiert: Aus einem von Hand gepflegten, breiten
- * Kandidatenpool werden die handelbarsten Werte gewählt — Median-Dollarumsatz
- * im rückblickenden Fenster, Mindestkurs, Mindestumsatz, Datenvollständigkeit,
- * keine toten Symbole. Rendite, Trades, Champion-Ergebnisse fließen NICHT ein;
- * diese Funktion sieht sie nicht einmal (ihr Eingang sind Bars, kein PnL).
+ * ── Was die Kennzahl NICHT ist (Red-Team, 08.09.2026) ────────────────────
  *
- * Warum Median statt Mittelwert: Ein einzelner Quartalszahlen-Tag mit dem
- * Zehnfachen des Umsatzes soll ein sonst dünnes Symbol nicht nach oben tragen.
+ * „Kennt keine Rendite" wäre gelogen, und die erste Fassung dieses Kommentars
+ * hat das behauptet. Median-Dollarumsatz ist Stückzahl × KURS, und der Kurs ist
+ * das kumulierte Ergebnis vergangener Rendite: Bei gleicher Stückzahl gewinnt
+ * der Wert, der gestiegen ist. `minPreis` und `maxAlterTage` wirken auf die
+ * LETZTE Bar und werfen damit genau die Werte raus, die im Messzeitraum
+ * abgestürzt oder verschwunden sind.
  *
- * Warum IEX-Volumen genügt, obwohl es nur einen Bruchteil des Gesamtumsatzes
- * ist: Wir handeln auf IEX-Daten. Was wir dort nicht sehen, können wir nicht
- * handeln — also ist die IEX-Liquidität das ehrlichere Maß für dieses System
+ * Das bleibt trotzdem so, aus einem Grund: Was ein Auto-Trader bewegen kann,
+ * sind Dollar, nicht Stückzahlen. Dollarumsatz ist das richtige
+ * Handelbarkeitsmaß; ihn durch einen Referenzkurs renditeneutral zu machen
+ * hieße, Liquidität schlechter zu messen, um eine Zahl schöner zu machen. Der
+ * Effekt ist stattdessen benannt, mit einem Test belegt
+ * (`test/universe/select.test.ts`) und im Bericht sichtbar — und er ist der
+ * kleine Bruder des Survivorship-Problems, das direkt darunter steht.
+ *
+ * ── Survivorship: die Auswahl ist von HEUTE, der Backtest von gestern ────
+ *
+ * Der Kandidatenpool ist von Hand geschrieben, und die Wahl misst die letzten
+ * `fensterTage`. Beides beschreibt den Stand am Tag des Laufs. Der
+ * Walk-Forward rechnet damit über `lookbackDays` zurück — bezüglich der
+ * ZUGEHÖRIGKEIT zum Korb sind die OOS-Folds also nicht out-of-sample. Wer im
+ * Messzeitraum übernommen, delistet oder unter `minPreis` gefallen ist, kommt
+ * gar nicht erst vor.
+ *
+ * Die Wahl selbst ist kausal (sie sieht nur Bars bis `jetzt`); der Bias
+ * entsteht erst dadurch, dass ihr Ergebnis rückwärts angewandt wird. Solange
+ * das so ist, sind die OOS-Zahlen optimistisch, und der Bericht sagt das.
+ *
+ * ── Handwerk ─────────────────────────────────────────────────────────────
+ *
+ * Median statt Mittelwert: Ein einzelner Quartalszahlen-Tag mit dem Zehnfachen
+ * des Umsatzes soll ein sonst dünnes Symbol nicht nach oben tragen.
+ *
+ * IEX-Volumen genügt, obwohl es nur einen Bruchteil des Gesamtumsatzes ist:
+ * Wir handeln auf IEX-Daten. Was wir dort nicht sehen, können wir nicht
+ * handeln — also ist die IEX-Liquidität für dieses System das ehrlichere Maß
  * als der konsolidierte Umsatz.
  *
  * Hysterese: Ein Symbol, das schon im Universum ist, behält seinen Platz,
  * solange es innerhalb von `haltePuffer` Rängen hinter der Grenze bleibt. Ohne
  * das tauschte der Korb jede Nacht zwei Werte auf Rauschen aus, und die
  * gepoolte Messung von gestern wäre mit der von heute nicht mehr vergleichbar.
+ * Kehrseite: Ein neues Symbol kommt erst herein, wenn ein Bestandswert hinter
+ * Rang `max + haltePuffer` fällt.
  */
 import type { Bar, Ms } from '../core/types.ts';
 
@@ -44,6 +75,10 @@ export interface UniverseRegeln {
   maxAlterTage: number;
   /** Wie viele Ränge hinter der Grenze ein Symbol des Bestands seinen Platz behält. */
   haltePuffer: number;
+  /** Anteil von `max`, den die Auswahl mindestens erreichen muss (sonst: Datenausfall, Abbruch). */
+  minAnteil: number;
+  /** Höchstzahl Abgänge gegenüber einer VORIGEN AUSWAHL je Lauf (sonst: Abbruch). */
+  maxAbgang: number;
 }
 
 export const UNIVERSE_REGELN: UniverseRegeln = {
@@ -54,9 +89,11 @@ export const UNIVERSE_REGELN: UniverseRegeln = {
   minDollarVolumen: 2_000_000,
   maxAlterTage: 5,
   haltePuffer: 5,
+  minAnteil: 0.8,
+  maxAbgang: 5,
 };
 
-export type UniverseStatus = 'pflicht' | 'bestand' | 'neu' | 'nachrueckend' | 'abgelehnt';
+export type UniverseStatus = 'pflicht' | 'bestand' | 'neu' | 'abgelehnt';
 
 export interface UniverseBewertung {
   symbol: string;
@@ -89,6 +126,12 @@ export interface UniverseArgs {
   pflicht: readonly string[];
   /** Das gestrige Universum (Hysterese); leer beim ersten Lauf. */
   bestand: readonly string[];
+  /**
+   * Stammt `bestand` aus einer VORIGEN AUSWAHL (statt aus der Config)? Nur dann
+   * greift `maxAbgang`: Der erste Lauf gegen echte Daten darf die von Hand
+   * geschriebene Liste komplett neu bestimmen — das ist ja der Zweck.
+   */
+  bestandIstAuswahl: boolean;
   regeln: UniverseRegeln;
   jetzt: Ms;
 }
@@ -126,7 +169,10 @@ function bewerte(symbol: string, bars: readonly Bar[], regeln: UniverseRegeln, j
   const dollarVolumen = median(fenster.map(dollarUmsatz));
   const f2 = (x: number) => x.toFixed(2);
   let ablehnung: string | null = null;
-  if (tage < regeln.minTage) ablehnung = `nur ${tage} Tagesbars im Fenster (mindestens ${regeln.minTage})`;
+  // „gar keine Daten" ist kein Liquiditätsurteil, sondern ein Datenproblem — der
+  // Text sagt das, und `waehleUniverse` zählt diese Fälle getrennt.
+  if (tage === 0) ablehnung = 'keine Tagesbars geliefert — Datenausfall, kein Liquiditätsurteil';
+  else if (tage < regeln.minTage) ablehnung = `nur ${tage} Tagesbars im Fenster (mindestens ${regeln.minTage})`;
   else if (!Number.isFinite(alterTage) || alterTage > regeln.maxAlterTage) {
     ablehnung = `letzte Bar ${Number.isFinite(alterTage) ? `${f2(alterTage)} Tage` : 'nie'} alt (höchstens ${regeln.maxAlterTage}) — Delisting oder Dauer-Halt`;
   } else if (letzterKurs < regeln.minPreis) ablehnung = `Kurs ${f2(letzterKurs)} unter ${regeln.minPreis} — der Spread wäre der ganze Trade`;
@@ -198,10 +244,33 @@ export function waehleUniverse(a: UniverseArgs): UniverseAuswahl {
     })
     .sort((x, y) => (x.rang ?? Number.MAX_SAFE_INTEGER) - (y.rang ?? Number.MAX_SAFE_INTEGER) || (x.symbol < y.symbol ? -1 : 1));
 
-  return {
-    symbols,
-    bewertung,
-    zugang: symbols.filter((s) => !bestand.has(s)),
-    abgang: [...bestand].filter((s) => !gewaehlt.has(s)).sort(),
-  };
+  const zugang = symbols.filter((s) => !bestand.has(s));
+  const abgang = [...bestand].filter((s) => !gewaehlt.has(s)).sort();
+
+  /*
+   * Zwei Notbremsen. `backfill` überspringt fehlgeschlagene Blöcke und macht
+   * weiter (ein Symbol ohne Daten darf die anderen nicht aufhalten) — ohne die
+   * folgenden Prüfungen würde ein Datenausfall für 29 von 30 Werten anstandslos
+   * ein Universum `["SPY"]` veröffentlichen, und die 29 offenen Positionen
+   * verlören ihre Strategie. Scheitert die Wahl hier, bricht der nächtliche
+   * Schritt ab; `meta/engineConfig` und `meta/champion` bleiben stehen, wie sie
+   * sind. Nichts zu ändern ist der sichere Ausgang.
+   */
+  const ohneDaten = roh.filter((r) => r.tage === 0).map((r) => r.symbol);
+  const mindestens = Math.max(1, Math.ceil(regeln.max * regeln.minAnteil));
+  if (symbols.length < mindestens) {
+    throw new Error(
+      `Auswahl liefert nur ${symbols.length} von mindestens ${mindestens} Symbolen (${roh.length} Kandidaten, ` +
+        `davon ${ohneDaten.length} ohne Daten${ohneDaten.length ? `: ${ohneDaten.slice(0, 10).join(', ')}${ohneDaten.length > 10 ? ' …' : ''}` : ''}) — ` +
+        'das ist ein Datenausfall, kein Liquiditätsurteil. Universum bleibt unverändert.',
+    );
+  }
+  if (a.bestandIstAuswahl && abgang.length > regeln.maxAbgang) {
+    throw new Error(
+      `Auswahl würde ${abgang.length} Symbole auf einmal austauschen (erlaubt: ${regeln.maxAbgang}): ${abgang.join(', ')}. ` +
+        'So viel Bewegung an einer Nacht ist ein Datenproblem, keine Liquiditätsverschiebung. Universum bleibt unverändert.',
+    );
+  }
+
+  return { symbols, bewertung, zugang, abgang };
 }

@@ -123,7 +123,9 @@ export type ExitReason =
   | 'kill_switch'
   | 'drawdown'
   | 'manual'
-  | 'reconcile';
+  | 'reconcile'
+  /** Position ohne führende Strategie (Symbol aus dem Universum gefallen oder Champion auf noTrade) — siehe engine.ts. */
+  | 'unmanaged';
 
 /** Abgeschlossener Trade (Backtest wie Live identisch aufgebaut). */
 export interface Trade {
