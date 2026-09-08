@@ -157,94 +157,99 @@ den Champion beim Start (und nach Beförderung beim nächsten Neustart).
 7. **Keine Netzwerkzugriffe in Tests**, keine Secrets im Repo, State nie im
    Repo (`var/`, `.env` in `.gitignore`).
 
-## 5a. Messbefunde 08.09.2026 — drei Zeitrahmen, dieselbe Antwort
+## 5a. Messbilanz 08.09.2026 — was gemessen wurde und was es heißt
 
-Derselbe Korb aus 30 liquiden US-Werten, dieselben Kosten, dasselbe Risiko,
-dieselben Gates. Nur der Zeitrahmen ist verschieden. Jeweils der Kandidat mit
-dem besten OOS-Ergebnis:
+An einem Tag gemessen: **5 Strategien × 3 Zeitrahmen × 2 Short-Einstellungen**,
+immer derselbe Korb aus 30 liquiden US-Werten, immer dieselben Kosten, dasselbe
+Risiko, dieselben Gates. Ergebnis vorweg: **Nichts besteht die Gates UND
+überlebt den Holdout.** Die Plattform steht zu Recht auf KEIN HANDEL.
 
-| Zeitrahmen | Bester Kandidat | Gates | Gebührenanteil | OOS-Netto | **Holdout (ungesehen)** |
-|---|---|---|---|---|---|
-| 5 min | `orb_breakout` | 3/9 | 65,5 % | +280 | −534 (55 Trades) |
-| 60 min | `trend_donchian` | **8/9** | 43,4 % | +3 864 | **−1 886 (185 Trades)** |
-| Tagesbars | `momentum_pullback` | **9/9** | 25,4 % | +3 109 | −572 (23 Trades) |
+### 1. Der Zeitrahmen löst die Kostenfrage (belastbar)
 
-Zwei Dinge stehen darin, und das zweite ist das wichtigere.
-
-**Erstens: Der Zeitrahmen löst die Kostenfrage.** Der Gebührenanteil fällt von
-65,5 % über 43,4 % auf 25,4 %. Das bestätigt die Rechnung — Kosten fallen je
-Round-Trip an, nicht je Zeiteinheit, also hilft nur ein größerer erwarteter Zug
-je Trade. Die 5-Minuten-Bar war für Aktien der falsche Takt.
-
-**Zweitens: Die Auswahl sagt den Holdout nicht vorher.** In zwei von drei
-Zeitrahmen kehrt sich die Rangfolge zwischen OOS und Holdout vollständig um:
-
-| Zeitrahmen | Rang 1 auf OOS → Holdout | Letzter auf OOS → Holdout |
+| Zeitrahmen | bester Kandidat | Gebührenanteil |
 |---|---|---|
-| 60 min | `trend_donchian` +3 864 → **−1 886** | `mean_reversion` +506 → **+1 286** |
-| Tagesbars | `momentum_pullback` +3 109 → **−572** | `trend_donchian` −2 983 → **+2 816** |
+| 5 min | `orb_breakout` | 65,5 % |
+| 60 min | `trend_donchian` | 43,4 % |
+| Tagesbars | `momentum_pullback` | **25,4 %** |
 
-Das ist kein Pech an einer Stelle, sondern dreimal dasselbe Bild — und bei 185
-Holdout-Trades im Stundenfall auch keine Stichprobenfrage mehr. Die
-Walk-Forward-Auswahl hat auf diesem Korb mit diesen vier Vorlagen **keine
-Vorhersagekraft**. Den Bestplatzierten zu nehmen ist nicht besser als zu
-würfeln.
+Kosten fallen je Round-Trip an, nicht je Zeiteinheit — nur ein größerer
+erwarteter Zug je Trade hilft. Die 5-Minuten-Bar war für Aktien der falsche
+Takt. Die langsamste gemessene Variante (`cross_sectional_momentum` im
+Holdout) kommt auf **3,7 %**. Das Kostenproblem des Vorgängersystems ist
+damit strukturell lösbar.
 
-### Die Short-Hypothese — aufgestellt, geprüft, WIDERLEGT
+### 2. Shorts helfen nicht (gemessen, nicht vermutet)
 
-Die erste Erklärung lautete: Alle vier Vorlagen sind gerichtete Strategien auf
-30 stark korrelierten Großwerten, und sie laufen alle NUR LONG. Das ist der
-Sache nach eine Wette auf den Markt mit Zusatzkosten; ob ein Fold positiv ist,
-hinge dann vor allem am Marktregime, und Regime halten nicht bis zum nächsten
-Fenster — das würde die Umkehrung erzeugen.
-
-Ein Mangel steckte darin und ist bestätigt: `risk.allowShort: false` steht in
-`config/platform.yaml` und in jeder Erkundungs-Config, und
-`src/core/logic.ts:307` sperrt damit jeden Short-Einstieg. Der
-Strategie-Parameter `allowShort` war in allen Messungen bis zum 08.09.2026
-**wirkungslos** — der Optimierer hat eine Dimension durchsucht, die nichts
-bewirkt, die Hälfte jedes Suchgitters war ein Duplikat, und die Trial-Zahl im
-Deflated Sharpe war entsprechend zu hoch. Behoben mit dem MESS-Schalter
+Der Strategie-Parameter `allowShort` war bis zum 08.09. **wirkungslos**, weil
+`risk.allowShort: false` in `core/logic.ts:307` jeden Short-Einstieg sperrt —
+der Optimierer durchsuchte eine tote Dimension, die halbe Suchfläche war
+Duplikat, die DSR-Trial-Zahl zu hoch. Behoben mit dem MESS-Schalter
 `--allow-short` (nur `backtest`/`optimize`; `run` lehnt ihn ab).
 
-Die Erklärung selbst trägt aber nicht. Dieselben Configs, ein Schalter anders:
+Mit wirksamen Shorts: `trend_donchian` auf 60 min fällt von +3 864 auf +106,
+der Gebührenanteil steigt von 43,4 % auf 154,7 %; `mean_reversion` von +506
+auf −1 967. Und die Suche selbst wählt Shorts seltener, sobald sie
+Konsequenzen haben (8 von 24 statt 14 von 24). `risk.allowShort: false`
+bleibt richtig.
 
-| 60 min · `trend_donchian` | Long-only | Mit Shorts |
-|---|---|---|
-| OOS-Netto | +3 864 | **+106** |
-| Gebührenanteil | 43,4 % | **154,7 %** |
-| MaxDD | 7,13 % | 11,34 % |
+### 3. Die Querschnitts-Strategie hat auch keine Kante
 
-`mean_reversion` fällt dort von +506 auf −1 967. Auf Tagesbars bleibt der
-Sieger unverändert (`momentum_pullback`, 9/9 Gates, Holdout weiterhin −572,03),
-`trend_donchian` verliert seinen guten Holdout (+2 816 → +235).
+`cross_sectional_momentum` fragt „ist NVDA stärker als die anderen 29?" statt
+„steigt NVDA?" — der Marktfaktor kürzt sich heraus. Auf Tagesbars: **OOS-Sharpe
+p. a. 0,00** über 554 Beobachtungen, 4 von 9 Gates. Auf Stundenbars: 5 von 9
+Gates, Gebührenanteil 162,8 %. Die Idee ist richtig gedacht; sie trägt auf
+diesem Korb nicht.
 
-Am deutlichsten sagt es die Suche selbst. Gezählt, wie oft sie `allowShort: 1`
-wählt:
+### 4. KORREKTUR: Die „Umkehrung" ist EINE Marktperiode, nicht vier Belege
 
-| | Parameter wirkungslos | Parameter wirksam |
-|---|---|---|
-| 60 min | 14 von 24 | **8 von 24** |
+Auffällig ist, dass der Sieger der Auswahl im Holdout regelmäßig verliert,
+während die Schlusslichter verdienen — auf Stundenbars zuletzt
+`trend_donchian` (8 von 9 Gates, bester OOS-Score) mit **−1 886** gegen
+`cross_sectional_momentum` (5 von 9 Gates) mit **+3 981**.
 
-Sobald der Schalter Konsequenzen hat, greift die Suche seltener danach — und
-der finale Parametersatz wählt `allowShort: 0`. Leihgebühren plus zusätzliche
-Round-Trips ohne zusätzliche Kante.
+Das sieht nach mehrfacher Bestätigung aus und ist keine. **Alle Läufe teilen
+denselben Holdout: 2026-03-08 … 2026-09-04.** Vier Strategien, zwei
+Zeitrahmen — aber EIN Marktzeitraum, viermal betrachtet. Was wie ein Gesetz
+aussieht, ist genauso gut ein einzelner Regimewechsel: Die letzten sechs
+Monate haben bestraft, was das Jahr davor belohnt hat.
 
-**Für den Betrieb heißt das:** `risk.allowShort: false` bleibt richtig, und ist
-jetzt gemessen statt vorsichtshalber gesetzt.
+Daraus „dann nimm den Schlechtesten" abzuleiten wäre Data-Mining auf einer
+Beobachtung — genau der Fehler, gegen den dieses System gebaut ist. Es wird
+NICHT eingebaut.
 
-**Was daraus folgt:** Shorts als solche sind nicht der Hebel — die Strategien
-nutzen sie nur falsch, weil sie jedes Symbol EINZELN fragen „steigt das?". Auf
-30 korrelierten Großwerten ist die Antwort fast immer dieselbe wie beim Index,
-in beide Richtungen. Der nächste Hebel ist deshalb eine querschnittliche
-Strategie: nicht „steigt NVDA?", sondern „ist NVDA stärker als die anderen 29?".
-Diese Frage ist unabhängig davon, ob der Markt insgesamt steigt. Sie braucht
-eine Erweiterung des Strategie-Vertrags — `SymbolSnapshot` sieht heute genau
-ein Symbol — und besonders sorgfältige Lookahead-Tests: Die Rangliste darf
-ausschließlich aus geschlossenen Bars stammen.
+### 5. Gates und Holdout messen verschiedene Objekte
 
-Bis dahin gilt weiter, was das Dashboard zeigt: kein Handel. Das ist das
-gemessene Ergebnis.
+Die Gates rechnen auf der Walk-Forward-Kette: 7 bis 9 Folds mit je EIGENEN
+Parametern. `finalParams` stammt dagegen aus der Suche auf dem LETZTEN
+IS-Fenster, und nur damit läuft der Holdout.
+
+Die Gate-Aussage lautet also „diese Strategie-FAMILIE hätte mit laufend neu
+gefitteten Parametern funktioniert", die Holdout-Aussage „dieser EINE
+Parametersatz funktioniert". Das ist übliches Walk-Forward-Verfahren, aber es
+heißt: Ein bestandenes Gate validiert nicht direkt die Parameter, die
+befördert werden. Sichtbar wird das am Gebührenanteil von
+`cross_sectional_momentum` auf 60 min — 162,8 % über die Kette, 5,4 % im
+Holdout: zwei verschiedene Handelsverhalten.
+
+### 6. Die Beweislast sinkt mit jeder Variante
+
+An diesem Tag sind 5 Strategien × 3 Zeitrahmen × 2 Short-Einstellungen
+gemessen worden. Der Deflated Sharpe deflationiert die PARAMETER-Trials
+(1 200–1 500 je Lauf) und sagt schon dort, dass die IS-Kennzahlen von Zufall
+nicht zu unterscheiden sind. Die Suche über Strategien, Zeitrahmen und
+Einstellungen zählt er **gar nicht mit**.
+
+Jede weitere Variante macht ein eventuelles „besteht alle Gates" also
+unglaubwürdiger, nicht glaubwürdiger. Wer hier weitersucht, muss die Zahl der
+Versuche mitzählen und den Holdout unangetastet lassen — sonst misst er nur
+noch sich selbst.
+
+### Was das für den Betrieb heißt
+
+Kein Handel. Der nächtliche Optimierer läuft weiter und sucht mit nächtlich
+neu gewähltem Universum; findet er nichts, bleibt es dabei. Das ist ein
+zulässiges Ergebnis (§0.9), und es ist deutlich billiger als das
+Vorgängersystem, das nicht funktioniert, sondern nur viel gehandelt hat.
 
 ## 6. Was bewusst fehlt
 
