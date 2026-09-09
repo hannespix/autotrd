@@ -137,15 +137,23 @@ optimizer:
   # Tagesbars nur ~275 Bars, die 60 OOS-Trades kämen dann nur durch ein
   # gesenktes Gate zustande. Also andersherum — 1400 Kalendertage
   # (≈ 965 Handelstage), IS 365, OOS 90 ⇒ rund 9 Folds.
-  # 2900 Tage ≈ 8 Jahre. 1400 reichten nur bis November 2022 — das Messfenster
-  # enthielt damit AUSSCHLIESSLICH einen Bullenmarkt (vier Halbjahre, alle
-  # positiv, Korb +64.7 %). Einem defensiven System dort vorzuwerfen, dass es
-  # den Markt nicht schlägt, ist wie einem Regenschirm vorzuwerfen, dass er bei
-  # Sonne nichts bringt. Mit 2900 liegen der Bärenmarkt 2022 und der
-  # Corona-Crash 2020 im Fenster — erst dort entscheidet sich, ob die niedrige
-  # Drawdown-Zahl (3.2 % gegen 11.3 % des Korbs) eine Kante ist oder nur
-  # geschenkte Untätigkeit.
-  lookbackDays: 2900
+  # 1400 reichten nur bis November 2022 — das Messfenster enthielt damit
+  # AUSSCHLIESSLICH einen Bullenmarkt (vier Halbjahre, alle positiv, Korb
+  # +64.7 %). Einem defensiven System dort vorzuwerfen, dass es den Markt nicht
+  # schlägt, ist wie einem Regenschirm vorzuwerfen, dass er bei Sonne nichts
+  # bringt. Ziel ist deshalb, den Bärenmarkt 2022 ins Fenster zu holen.
+  #
+  # 2900 Tage (bis 2018) wurden am 09.09. VERSUCHT und scheitern an den Daten,
+  # nicht an der Config: Der kostenlose IEX-Feed liefert für 2019 weniger als
+  # 97 Tagesbars im Jahr — ein volles Handelsjahr hat rund 252. Der Lauf brach
+  # ab, weil das Embargo (97 Bars bei cross_sectional_momentum) ein ganzes
+  # 365-Tage-Fenster verschluckte. Der Datenbereich begann zwar bei 2018-11-01,
+  # aber dazwischen ist kaum etwas.
+  #
+  # 2000 Tage reichen bis etwa März 2021 und damit über den ganzen Abschwung
+  # 2022 — die Hälfte, die zählt. Der Corona-Crash bleibt mit diesem Feed
+  # unerreichbar; das ist eine Grenze der Datenquelle, keine Einstellung.
+  lookbackDays: 2000
   isDays: 365
   oosDays: 90
   stepDays: 90
