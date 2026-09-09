@@ -81,10 +81,12 @@ steht in `src/strategy/`; die Gates gelten für alle gleich.
 - **Woran sie stirbt:** an Seitwärtsmärkten mit Fehlsignalen im
   Monatsfenster, an einem Universum, das rückblickend gewählt wurde (Prüfer
   #32), und an Rebalance-Kosten, die bei 4 Positionen aber klein sind.
-- **Messstand:** Probe #36 (V1): B1–B3 bestanden (Netto +14,2 %, Sharpe 0,49
-  gegen 0,63, MaxDD 9,7 % gegen 24,1 %), B4 verfehlt (Gebührenanteil 67 %
-  realisiert, 0,6 Trades je Monat). Prüfer: B3 auf dieser Kette nicht
-  verfehlbar, Kriterien ohne Code-Pfad. Nicht eingesetzt; V2.
+- **Messstand:** V1 (#36) verfehlte ihre Latte; V2 (#37–#39, Latte im Code,
+  9 ETFs, durchgehende Simulation, Korb liegenlassen als Maßstab) bestand
+  sie dreimal: Sharpe 0,79–1,01 gegen Korb 0,68–0,83, MaxDD je Einheit
+  Exposure 12,1–12,4 % gegen Latte 15,5–15,6 %, Netto +23,8 bis +30,8 %,
+  Kosten 2,4–3,3 %, 0,7–0,8 Trades je Monat, Haltedauer 68 Tage.
+  Freigegeben für die Basis-Stufe auf Paper-Konten (Vorregistrierung V2).
 
 ## Kasse — nicht handeln
 - **Zweck:** Das Ergebnis, wenn keine Taktik ihre Latte nimmt. Kostet 0 $.

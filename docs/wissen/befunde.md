@@ -20,10 +20,13 @@ Details in `docs/ARCHITEKTUR.md` §5a und in `docs/wissen/thesen.md`.
 | 08./09.09.2026 | Krypto 60 / 1440 | crypto-60, crypto-1440 | 2025-08 … 2026-09 / 2022-11 … 2026-09 | fest (BTC, ETH, SOL) | alle negativ bis 0,19 | — | kein Handel | T12 |
 | 08.09.2026 | 5-Minuten-Bars | pooled-us30 (5 Min) | — | Endkorb | Gebühren 271–2 438 % des Bruttogewinns | — | kein Handel; Plattform auf Tagesbars | §5a.10, T1 |
 | 09.09.2026 | 36 | basis-1440 (V1, Festkandidat) | 2021-03 … 2026-09 | fest (11 ETFs) | Basis V1 0,49 (B1–B3 ✔, B4 ✘: Gebührenanteil 67 % realisiert, 0,6 Trades/Monat) | 0,63 | nicht einsetzen; V2 nach Prüfer-Befund | V1, T5 |
+| 09.09.2026 | 37 | basis-1440-v2 (Basis-Latte im Code, durchgehend) | 2021-03 … 2026-09 | fest (9 ETFs) | Basis V2: Netto +23,8 %, Sharpe 0,79 (Korb 0,68), MaxDD/Exposure 12,1 % (Latte 15,5 %), Kosten 3,3 % | SPY 0,71 (Bericht) | **Basis-Latte bestanden** | V2 |
+| 09.09.2026 | 38 | basis-1440-v2, Stichtag 2026-08-25 | 2021-03 … 2026-08 | fest (9 ETFs) | Basis V2: +30,8 %, Sharpe 1,01 (Korb 0,83), MaxDD/Exposure 12,2 % (15,5 %), Kosten 2,4 % | SPY 0,82 | bestanden (Falsifikation 1) | V2 |
+| 09.09.2026 | 39 | basis-1440-v2, Stichtag 2026-08-10 | 2021-02 … 2026-08 | fest (9 ETFs) | Basis V2: +28,8 %, Sharpe 0,96 (Korb 0,79), MaxDD/Exposure 12,4 % (15,6 %), Kosten 2,6 % | SPY 0,86 | bestanden (Falsifikation 2) | V2 |
 
 ## Offen (vorregistriert)
 
 | Vorregistrierung | These | Lauf | Ergebnis |
 |---|---|---|---|
 | V1 Basis-Allokation (`vorregistrierung/2026-09-09-basis-allokation.md`) | T5 | Probe #36 | B1–B3 ✔, B4 ✘ — nicht einsetzen; Prüfer: B3 nicht verfehlbar, Kriterien ohne Code-Pfad ⇒ V2 |
-| V2 Basis-Allokation (`vorregistrierung/2026-09-09-basis-allokation-v2.md`) | T5 | Hauptlauf + zwei Falsifikationsläufe (−15/−30 Tage), ausstehend | — |
+| V2 Basis-Allokation (`vorregistrierung/2026-09-09-basis-allokation-v2.md`) | T5 | #37, #38 (−15 Tage), #39 (−30 Tage) | **bestanden, dreimal dasselbe Urteil** — Basis-Stufe darf gebaut und auf Paper aktiviert werden |
