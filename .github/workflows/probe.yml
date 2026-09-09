@@ -30,6 +30,7 @@ on:
           - config/pooled-us30.yaml
           - config/equity-60.yaml
           - config/equity-1440.yaml
+          - config/basis-1440.yaml
           - config/crypto-60.yaml
           - config/crypto-1440.yaml
       samples:

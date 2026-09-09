@@ -1,0 +1,99 @@
+# Basis-Allokation — Probe-Config (Vorregistrierung V1, 09.09.2026)
+#
+# Marktexposition mit Trendfilter auf Anlageklassen-ETFs als Standard statt
+# „nichts". Universum, Parameter und Annahmekriterien stehen VOR dem Lauf in
+# docs/wissen/vorregistrierung/2026-09-09-basis-allokation.md. Der Korb ist
+# fest (kein Kandidatenpool), die Parameter sind fest (Festkandidat); die
+# gesuchte Variante von regime_allocation läuft nur zum Vergleich mit.
+
+# Erlaubt der Probe ein anderes Sizing als die Plattform — nur, weil es VOR dem
+# Lauf festgeschrieben ist (test/scripts/probeConfigs.test.ts prüft das).
+vorregistrierung: docs/wissen/vorregistrierung/2026-09-09-basis-allokation.md
+
+broker:
+  mode: paper
+  feed: iex
+
+universe:
+  assetClass: us_equity
+  # Fabers GTAA-13-Klassen, eine ETF je Klasse, nur was im Plattform-Pool liegt.
+  symbols: [SPY, IWM, EFA, EEM, IEF, TLT, LQD, HYG, GLD, XLE, XLRE]
+  maxSymbols: 11
+  benchmark: SPY
+
+timeframe: 1440
+
+session:
+  noEntryFirstMin: 5
+  noEntryLastMin: 30
+  flattenBeforeCloseMin: 5
+
+risk:
+  # 20 % Stop ⇒ 4 % Risiko je Trade ist eine Position von 20 % der Equity.
+  riskPerTradePct: 4
+  maxPositionPct: 25
+  maxPositions: 4
+  maxGrossExposurePct: 100
+  maxDailyLossPct: 3
+  maxDrawdownPct: 20
+  allowShort: false
+  pdt:
+    respect: true
+    minEquity: 25000
+    maxDayTrades: 3
+
+strategy:
+  id: regime_allocation
+  params: {}
+  allowWithoutChampion: false
+
+optimizer:
+  strategies: [regime_allocation]   # gesuchte Variante — nur Vergleich
+  # Festkandidat: vorregistrierte Parameter, keine Suche, dieselben Gates.
+  fixedCandidates:
+    - strategy: regime_allocation
+      label: Basis V1
+      params: { lookback: 126, skip: 21, regimeLen: 150, topPct: 0.4, exitPct: 0.8, stopPct: 20 }
+  lookbackDays: 2000
+  isDays: 365
+  oosDays: 90
+  stepDays: 90
+  embargoBars: 0
+  samples: 150
+  seed: 42
+  minOosTrades: 60
+  minFoldPositiveShare: 0.6
+  objective: sortino
+  stressCostMultiplier: 1.5
+  holdoutDays: 180
+  promotionMargin: 0.1
+  minPsrOos: 0.9
+  dsrIsGate: false
+  maxFoldNetShare: 0.5
+  pooled: true            # ein Urteil für den ganzen Korb
+  foldMembership: fixed   # Korb fest, kein Kandidatenpool
+
+costs:
+  slippageBps: 3
+  spreadBps: 2
+  secFeeRate: 0.0000278
+  finraTafPerShare: 0.000166
+  finraTafMax: 8.3
+  cryptoTakerPct: 0.25
+  shortBorrowAnnualPct: 1
+
+engine:
+  reconcileEverySec: 60
+  barGraceSec: 4
+  maxDataAgeSec: 180
+  maxConsecutiveErrors: 5
+  onOrphan: halt
+
+notify:
+  telegram: false
+
+status:
+  httpPort: 0
+
+paths:
+  home: ./var-probe

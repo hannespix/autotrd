@@ -166,6 +166,18 @@ Plattform (`functions/src/`, `frontend/`, `shared/`):
   `core/time.ts`. Krypto rechnet in UTC-Tagen (`dayKeyFor`).
 - Preise an Alpaca: Stops VOM Kurs WEG runden, Limits ZUM Kurs HIN.
 
+## 4a. Wissensbibliothek (`docs/wissen/`)
+
+Owner-Anweisung 09.09.2026: eine wachsende Strategie- und Wissensbibliothek,
+aus der Taktiken, Käufe, Verkäufe und Haltedauern abgeleitet werden — aktiv,
+nicht hyperaktiv. `docs/wissen/README.md` nennt die Regeln: Jede Zahl
+verweist auf einen Lauf, jede These hat einen Status, neue Experimente
+(neue Familie, neues Universum, neue Latte) werden VOR dem Lauf in
+`docs/wissen/vorregistrierung/` festgeschrieben, Literatur trägt einen
+Vertrauensgrad. Jeder Messlauf bekommt eine Zeile in `docs/wissen/befunde.md`.
+Weichen Code und Bibliothek voneinander ab, gilt der Code, und die
+Bibliothek ist zu korrigieren.
+
 ## 5. Verifikation
 
 ```bash
