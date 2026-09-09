@@ -689,6 +689,83 @@ verschobenem Raster und anderem Seed. Überlebt 0,83 das nicht — und Lauf 31
 sagt, dass er es nicht tut —, ist auch die letzte Zahl über der Latte
 erklärt.
 
+### 16. Programm „Wissen & Aktivität" — Bibliothek, Basis-Allokation, zwei Latten
+
+Owner-Anweisung vom Nachmittag des 09.09.: alle erreichbare Literatur zu
+eigen machen, daraus eine wachsende Wissens- und Strategiebibliothek bilden
+und Taktiken, Käufe, Verkäufe und Haltedauern je Symbol ableiten — aktiv,
+nicht hyperaktiv, und von Anfang an aktiv. Der Tag davor hatte in vier
+Fenstern „kein Handel" ergeben (§15); der Owner nannte das Ergebnis den
+faulsten Trader der Welt, zu Recht als Produktbefund.
+
+**Die Bibliothek** (`docs/wissen/`) ist die Antwort auf die Theorie-Hälfte:
+25 Literatur-Karten mit Vertrauensgrad, 13 Thesen mit Status, Taktiken je
+Familie, ein Aktivitätsbudget, ein Befunde-Log und vier Regeln, von denen
+die dritte den Rest des Tages bestimmt hat: **Experimente werden vor dem
+Lauf vorregistriert.** Dazu die Festkandidaten im Optimierer
+(`optimizer.fixedCandidates`): vorregistrierte Parametersätze ohne Suche.
+
+**Basis V1** war die Praxis-Hälfte: eine Marktexposition mit Trendfilter
+auf elf Anlageklassen-ETFs (`regime_allocation`, feste Parameter) als
+Standard statt „nichts", mit vier Kriterien statt der zehn Alpha-Gates.
+Probe #36 bestand drei davon (+14,2 % netto, MaxDD 9,7 % gegen 24,1 % bei
+SPY, Sharpe 0,49 gegen 0,63) und verfehlte das Kostenkriterium — mit einem
+Maß, das für eine Monatsstrategie in 90-Tage-Folds nichts misst. Das
+Urteil blieb trotzdem „nicht einsetzen": Kriterien, die man nach dem Lauf
+umdeutet, sind keine.
+
+**Der Prüfer** (`docs/wissen/pruefungen/2026-09-09-redteam-basis-v1.md`,
+18 Befunde) zerlegte V1 an den richtigen Stellen: Die Kriterien hatten
+keinen Code-Pfad, am Ende hätte eine Hand entschieden (K1). Der
+Drawdown-Vergleich gegen SPY war bei höchstens 80 % Exposure nicht
+verfehlbar, die Sharpe-Marge lag unter der Streuung (K2). Die Familie war
+auf fast derselben Kette als beste von fünf gewählt worden (K3). Das
+gemessene Risiko handelt live niemand, und `readiness` ist für eine
+Monatsstrategie unerreichbar (K4). Dazu: Rang-Schwellen falsch gelesen,
+Preisbars ohne Ausschüttungen, Universum gegen die eigene Regel, §0.9 als
+Hintertür.
+
+**Basis V2** nahm jeden Punkt auf, vor dem Lauf und im Code: eine
+Gate-Gruppe `basis` (`optimizer.basis`) statt einer Hand; **eine
+durchgehende Simulation** über die OOS-Kette statt 90-Tage-Folds; der
+liegengelassene Korb als Maßstab und der Drawdown **je Einheit mittlerer
+Exposure**; ausschüttungsbereinigte Tagesbars (`broker.adjustment`,
+eigener Cache); neun ETFs streng nach Regel; Rang-Schwellen korrigiert;
+zwei Falsifikationsläufe mit verschobenem Stichtag als Teil der
+Registrierung; §0.9 sagt seither laut: zwei Latten, beide im Code, keine
+von Hand, keine dritte.
+
+**Ergebnis** (Läufe 37, 38, 39 — Stichtag heute, −15 und −30 Tage):
+
+| Lauf | Kette | Netto | MaxDD / Exposure | Latte | Sharpe | Latte | Kosten |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 37 | 2022-04 … 2026-03 | +23,8 % | 12,1 % | 15,5 % | 0,79 | 0,61 | 3,3 % |
+| 38 | 2022-03 … 2026-02 | +30,8 % | 12,2 % | 15,5 % | 1,01 | 0,75 | 2,4 % |
+| 39 | 2022-03 … 2026-02 | +28,8 % | 12,4 % | 15,6 % | 0,96 | 0,71 | 2,6 % |
+
+Dreimal dasselbe Urteil, alle vier Gates mit Abstand. Der Korb
+liegenlassen brachte +33 bis +42 % bei 21 % Drawdown, SPY +53 bis +69 %
+bei 22 %; die Basis 6,7 % Drawdown bei 55 % mittlerer Exposure, 0,7–0,8
+Trades je Monat, 68 Tage Haltedauer. In den Fenstern, in denen ein
+Trendfilter verlieren muss (Rally Januar 2023, Oktober-Dip 2023, April
+2025), lag sie hinten; im Bärenmarkt 2022 verdiente sie ihren Vorteil.
+
+**Lesart.** Das ist kein Alpha und behauptet keins: Die Basis tauscht
+Ertrag gegen Drawdown, in einer Periode, die Trendfiltern schmeichelt, mit
+einer Familie, deren Wahl selbst eine Auswahl war (K3), und mit einem
+Netto, das je nach Rasterlage um sieben Punkte schwankt (T4). Was sie hat:
+eine Latte im Code, die sie dreimal genommen hat, und einen Zweck, der zur
+Aufgabe passt — Marktexposition mit Sicherheitsnetz statt Kasse. Die
+nächste Messung ist der Vorwärtstest auf Paper-Konten (T9), nicht eine
+vierte Wiederholung dieser.
+
+**Konsequenz.** Die Basis-Stufe im Champion (Task #33): Champion-Symbole
+vor Basis vor `noTrade`; Position = 20 % der Equity je Symbol, unabhängig
+vom Risiko je Trade der Nutzer (K4); Nutzer-Schalter; Paper-Konten aktiv,
+Echtgeld weiter hinter Doppel-Guard und `readiness`. Offen beim Owner: eine
+Live-Reife-Regel für eine Monatsstrategie (Vorschlag: ≥ 90 Tage Paper,
+MaxDD ≤ 10 %, Netto ≥ 0 — statt 200 Trades).
+
 ### Was das für den Betrieb heißt
 
 Kein Handel. Der nächtliche Optimierer läuft weiter und sucht mit nächtlich

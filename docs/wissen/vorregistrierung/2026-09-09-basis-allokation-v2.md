@@ -112,7 +112,49 @@ und die Zahl der Tage ohne Rang.
    verschoben — das berührt nur die Ganzstück-Rundung. Bereinigte Reihen
    werden deshalb immer vollständig neu geladen, nie inkrementell.
 
-## Ergebnis
+## Ergebnis (eingetragen nach den drei Läufen, 09.09.2026 nachts)
 
-_Wird nach den drei Läufen eingetragen: Lauf-Nummern, Range, die vier
-Gates mit Zahlen in allen drei Läufen, Urteil, Konsequenz._
+Code `main` 9b8c6a6 (#472). Hauptlauf #37 (Lauf 34410397193), Falsifikation
+#38 (34410434390, Stichtag 2026-08-25) und #39 (34410575222, Stichtag
+2026-08-10). Ausschüttungsbereinigte Tagesbars, 9 ETFs, 2000 Tage.
+
+| Lauf | Kette | Netto | Stress ×1,5 | MaxDD / Exposure | Latte (0,75 × Korb) | Sharpe | Latte (0,9 × Korb) | Gebühren / Netto | Urteil |
+|---|---|---|---|---|---|---|---|---|---|
+| #37 heute | 2022-04-03 … 2026-03-13 | +23,8 % | +5 848 $ | 6,71 % / 55,6 % = 12,06 % | 15,48 % | 0,79 | 0,61 | 3,3 % | **bestanden** |
+| #38 −15 Tage | 2022-03-19 … 2026-02-26 | +30,8 % | +7 610 $ | 6,71 % / 54,8 % = 12,24 % | 15,55 % | 1,01 | 0,75 | 2,4 % | **bestanden** |
+| #39 −30 Tage | 2022-03-04 … 2026-02-12 | +28,8 % | +7 090 $ | 6,71 % / 53,9 % = 12,44 % | 15,61 % | 0,96 | 0,71 | 2,6 % | **bestanden** |
+
+Maßstab über dieselben Ranges: Korb liegenlassen +32,6 / +42,0 / +40,3 %,
+MaxDD 20,6–20,8 %, Sharpe 0,68 / 0,83 / 0,79. SPY (nur Bericht) +52,8 /
++64,4 / +69,3 %, MaxDD 21,3–22,1 %, Sharpe 0,71 / 0,82 / 0,86.
+
+Aktivität (Erwartung 1–4 Trades je Monat, Haltedauer ≥ 40 Tage, Exposure
+40–80 %): 35–37 Trades in vier Jahren = **0,7–0,8 je Monat**, mittlere
+Haltedauer 68 Handelstage, mittlere Exposure 54–56 %, 17 % der Tage ohne
+Position. Unter der Erwartung, wie in V1 — die Familie ist träge (T9).
+
+Fenster, in denen die Basis verlieren muss (Scheiben, Hauptlauf): Rally
+Jan. 2023 −733 $ gegen Korb +1 015 $ und SPY +1 451 $; Okt.-2023-Dip +773 $
+gegen +2 094 $ und +2 431 $; April 2025 +712 $ gegen +1 181 $ und +2 486 $.
+Sie liegt dort hinten, wie ein Trendfilter es muss. Im Bärenmarkt 2022
+(Scheiben 1–2): −224 $ und 0 $ gegen Korb −2 919 $ / −1 913 $ und SPY
+−4 048 $ / −1 233 $ — dort verdient sie ihren Drawdown-Vorteil, und genau
+das ist die trendfreundliche Periode aus Verzerrung 1.
+
+Holdouts (180 Tage, nur Bericht): #37 +8,7 % bei MaxDD 3,5 %, Sharpe 1,55
+(Korb 0,86, SPY 2,12); #38 +5,7 %, Sharpe 0,89 (Korb 0,46, SPY 1,67);
+#39 +4,8 %, Sharpe 0,78 (Korb 0,42, SPY 1,74). Vor dem Korb, hinter SPY.
+
+**Urteil nach den Entscheidungsregeln: bestanden, in allen drei Läufen
+dasselbe Urteil.** Die Basis-Stufe (Task #33) darf gebaut und für
+Paper-Konten aktiviert werden, mit Position = 20 % der Equity je Symbol
+(K4). Echtgeld bleibt hinter Doppel-Guard und `readiness`.
+
+**Was das nicht heißt.** Kein Alpha: Die Basis bringt in vier Jahren
+zwei Drittel der Korb-Rendite und weniger als die Hälfte der SPY-Rendite;
+sie kauft kleineren Drawdown mit Ertrag. Die Periode ist trendfreundlich
+(Verzerrung 1), das Netto schwankt zwischen +23,8 % und +30,8 % je nach
+Rasterlage (T4 bleibt sichtbar, das Urteil nicht), und eine Familie, die
+in Lauf 31 als beste von fünf gewählt wurde, trägt diese Wahl mit (K3).
+Der Vorwärtstest auf Paper ist die nächste Messung, nicht die Wiederholung
+dieser.
