@@ -31,7 +31,7 @@
 # stehen, damit der Unterschied zur Produktion genau drei Dinge sind:
 # Zeitrahmen, Datenfenster, Strategieliste. Sonst nichts.
 #
-# Alle drei Strategien halten über Nacht (`holdsOvernight: true`), es gibt
+# Alle fünf Strategien halten über Nacht (`holdsOvernight: true`), es gibt
 # also kein EOD-Flatten, das jeden Trade auf einen Tag stutzen würde.
 #
 # ── Was hier NICHT verändert wurde ────────────────────────────────────────

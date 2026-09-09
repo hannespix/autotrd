@@ -117,7 +117,7 @@ universe:
 #
 # Die Session-Tore (noEntryFirstMin/noEntryLastMin/flattenBeforeCloseMin)
 # bleiben stehen, greifen bei 1440 aber nicht: core/logic.ts überspringt sie
-# für Tagesbars, und alle vier Strategien halten über Nacht.
+# für Tagesbars, und alle fünf Strategien halten über Nacht.
 timeframe: 1440
 
 session:

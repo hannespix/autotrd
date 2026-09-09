@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { BarSeries } from '../../src/core/bars.ts';
 import { buildSessionInfo } from '../../src/core/session.ts';
 import { MIN, addDays, isTradingDay, msFromET } from '../../src/core/time.ts';
-import type { Bar, BarSeriesLike, Decision, Params, PositionState, Strategy, SymbolSnapshot, TimeframeMin } from '../../src/core/types.ts';
+import type { Bar, BarSeriesLike, Decision, Params, PositionState, Strategy, SymbolSnapshot, TimeframeMin, KorbRang } from '../../src/core/types.ts';
 import { STRATEGIES, getStrategy, resolveParams, strategyIds } from '../../src/strategy/index.ts';
 import { gridOf, validateParams } from '../../src/strategy/params.ts';
 
@@ -190,6 +190,8 @@ interface Variant {
   over: Partial<Params>;
   bars: BarSeries;
   tf: TimeframeMin;
+  /** Korb-Rang für Querschnitts-Strategien — ohne ihn steigen sie nie ein. */
+  rank?: KorbRang;
 }
 
 const variants: Variant[] = [
@@ -201,11 +203,25 @@ const variants: Variant[] = [
   { id: 'mean_reversion', over: { useZ: 1, allowShort: 1, rsiLen: 6 }, bars: randomDaily(300, 26), tf: 1440 },
   { id: 'orb_breakout', over: {}, bars: randomIntraday(5, 27), tf: 5 },
   { id: 'orb_breakout', over: { allowShort: 1, volMult: 1, stopMode: 1, trailMult: 1, rangeMin: 15, entryWindowMin: 240 }, bars: randomIntraday(5, 28), tf: 5 },
+  // Querschnitt: der Rang kommt live aus decide(); hier fest, damit Einstiege überhaupt möglich sind.
+  { id: 'cross_sectional_momentum', over: {}, bars: randomDaily(300, 29), tf: 1440, rank: { pct: 0, rank: 1, of: 10 } },
+  { id: 'regime_allocation', over: { lookback: 63, skip: 0, regimeLen: 50 }, bars: randomDaily(300, 30), tf: 1440, rank: { pct: 0, rank: 1, of: 10 } },
+  { id: 'regime_allocation', over: { lookback: 84, skip: 21, regimeLen: 100, exitPct: 0.4 }, bars: randomDaily(300, 31), tf: 1440, rank: { pct: 0, rank: 1, of: 10 } },
 ];
+
+describe('Präfix-Suite deckt jede registrierte Strategie', () => {
+  it('keine Familie ohne Lookahead-Wächter (§0.2)', () => {
+    expect([...new Set(variants.map((v) => v.id))].sort()).toEqual([...strategyIds()].sort());
+  });
+});
 
 describe.each(variants.map((v) => [`${v.id} ${JSON.stringify(v.over)}`, v] as const))('Präfix-Konsistenz: %s', (_label, v) => {
   const s = getStrategy(v.id);
   const p = withParams(s, v.over);
+  const snapV = (bars: BarSeries, i: number, pos: PositionState | null = null) => {
+    const sn = snapAt(bars, i, v.tf, pos);
+    return v.rank ? { ...sn, rank: v.rank } : sn;
+  };
   const n = v.bars.length;
   const probes = [0, 1, 2, 13, 14, 15, 20, 21, 22, 77, 78, 79, 99, 100, 101, 155, 156, 199, 200, 201, 250, n - 2, n - 1].filter((i) => i < n);
 
@@ -231,17 +247,18 @@ describe.each(variants.map((v) => [`${v.id} ${JSON.stringify(v.over)}`, v] as co
     for (let i = start; i < n; i++) {
       const pre = v.bars.prefix(i + 1);
       const indPre = s.precompute(pre, p);
-      const a = s.decide(snapAt(v.bars, i, v.tf), full, p);
-      const b = s.decide(snapAt(pre, i, v.tf), indPre, p);
+      const a = s.decide(snapV(v.bars, i), full, p);
+      const b = s.decide(snapV(pre, i), indPre, p);
       expect(b).toEqual(a);
+      if (s.crossScore) expect(s.crossScore(snapV(pre, i), indPre, p)).toEqual(s.crossScore(snapV(v.bars, i), full, p));
       if (a.kind === 'enter') entries++;
       // Synthetische Position: Einstieg vor fünf Bars, Hochwasser seither.
       const entry = v.bars.c[i - 5]!;
       let hw = entry;
       for (let k = i - 4; k <= i; k++) hw = Math.max(hw, v.bars.c[k]!);
       const pos = longPos({ entryPrice: entry, stop: entry * 0.97, initialStop: entry * 0.97, highWater: hw, barsHeld: 5 });
-      const c = s.decide(snapAt(v.bars, i, v.tf, pos), full, p);
-      const d = s.decide(snapAt(pre, i, v.tf, pos), indPre, p);
+      const c = s.decide(snapV(v.bars, i, pos), full, p);
+      const d = s.decide(snapV(pre, i, pos), indPre, p);
       expect(d).toEqual(c);
       expect(c.kind).not.toBe('enter');
     }
@@ -256,7 +273,7 @@ describe.each(variants.map((v) => [`${v.id} ${JSON.stringify(v.over)}`, v] as co
   it('jeder Einstieg hat einen Stop auf der Verlustseite und ein Ziel jenseits des Kurses', () => {
     const full = s.precompute(v.bars, p);
     for (let i = s.warmupBars(p) - 1; i < n; i++) {
-      const d = s.decide(snapAt(v.bars, i, v.tf), full, p);
+      const d = s.decide(snapV(v.bars, i), full, p);
       if (d.kind !== 'enter') continue;
       const close = v.bars.c[i]!;
       expect(Number.isFinite(d.stop)).toBe(true);

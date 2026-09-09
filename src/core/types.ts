@@ -87,14 +87,6 @@ export type Decision =
       stop: number;
       /** Optionales Kursziel (Bracket-Leg). */
       target?: number;
-      /**
-       * Zielanteil der Equity (0 < weight ≤ 1) — Allokations-Familien
-       * (regime_allocation). Ersetzt im Sizing das Risiko-Budget je Trade:
-       * Der Stop ist dann ein Katastrophen-Stop, keine Sizing-Grundlage.
-       * Positionsdeckel, Exposure-Budget und Bargeld gelten weiter. Ohne
-       * `weight` wird wie bisher über die Stop-Distanz bemessen.
-       */
-      weight?: number;
       reason: string;
     }
   | { kind: 'exit'; reason: string }

@@ -2,21 +2,24 @@
  * regime_allocation — was die Familie tut und vor allem, was sie NICHT tut.
  *
  * Geprüft wird durch `decide()` in core/logic.ts, wie live: Der Rang kommt
- * aus dem Kern, das Gewicht wird dort ins Sizing übersetzt. Ein Test, der die
- * Strategie direkt aufriefe, sähe nie, ob der Kern das Gewicht auch anwendet.
+ * aus dem Kern, die Stückzahl aus dem Risiko-Budget. Ein Test, der die
+ * Strategie direkt aufriefe, sähe nie, ob der Kern mitspielt. Zum Schluss
+ * läuft sie einmal durch den echten Simulator.
  */
 import { describe, expect, it } from 'vitest';
+import { simulate } from '../../src/backtest/simulator.ts';
 import { BarSeries } from '../../src/core/bars.ts';
 import { parseConfig } from '../../src/core/config.ts';
 import { decide, type LogicContext, type SymbolInput } from '../../src/core/logic.ts';
 import { msFromET } from '../../src/core/time.ts';
 import type { Bar, HaltState, PositionState, SessionInfo } from '../../src/core/types.ts';
 import { getStrategy, resolveParams } from '../../src/strategy/index.ts';
-import { VOL_LEN } from '../../src/strategy/regimeAllocation.ts';
+import { REBAL_TAGE, VOL_LEN } from '../../src/strategy/regimeAllocation.ts';
+import { baseConfig } from '../backtest/helpers.ts';
 
 const s = getStrategy('regime_allocation');
 const cfg = parseConfig({ universe: { symbols: ['AAA'] }, timeframe: 1440 });
-const params = resolveParams(s, { lookback: 126, skip: 0, regimeLen: 100, topPct: 0.2, exitPct: 0.6, targetVolPct: 10, stopPct: 20 });
+const params = resolveParams(s, { lookback: 63, skip: 0, regimeLen: 50, topPct: 0.2, exitPct: 0.6, stopPct: 20 });
 
 /** Handelstage (Mo–Fr) ab dem 2. Januar 2024, Bar-Beginn 09:30 ET. */
 function handelstage(n: number): number[] {
@@ -30,18 +33,17 @@ function handelstage(n: number): number[] {
   return out;
 }
 const TAGE = handelstage(400);
-/** Index der ersten Bar eines Monats, die nach `ab` liegt. */
+/** Index der ersten Bar eines Monats nach `ab`. */
 function erster(ab: number): number {
   for (let i = ab; i < TAGE.length; i++) {
-    const a = new Date(TAGE[i]!).getUTCMonth();
-    const b = new Date(TAGE[i - 1]!).getUTCMonth();
-    if (a !== b) return i;
+    if (new Date(TAGE[i]!).getUTCMonth() !== new Date(TAGE[i - 1]!).getUTCMonth()) return i;
   }
   throw new Error('kein Monatswechsel');
 }
-const WARMUP = 126 + 2;
-const REBAL = erster(WARMUP + 40); // ein Rebalance-Tag deutlich nach der Aufwärmphase
-const KEIN_REBAL = REBAL + 5; // fünf Handelstage später — kein Monatswechsel
+const WARMUP = s.warmupBars(params);
+const REBAL = erster(WARMUP + 40); // erster Tag eines Fensters, deutlich nach der Aufwärmphase
+const FENSTER_ENDE = REBAL + REBAL_TAGE - 1; // letzter Tag des Fensters
+const KEIN_REBAL = REBAL + REBAL_TAGE + 2; // außerhalb
 
 /** Serie über `n` Bars aus einer Kursfunktion je Index. */
 function serie(n: number, kurs: (k: number) => number): BarSeries {
@@ -52,7 +54,7 @@ function serie(n: number, kurs: (k: number) => number): BarSeries {
   }
   return BarSeries.from(bars);
 }
-/** Gleichmäßiger Anstieg um `gesamtPct` über die Serie, mit leichtem Zickzack (sonst ist die Volatilität null). */
+/** Gleichmäßiger Anstieg um `gesamtPct` über 300 Bars, mit Zickzack (sonst ist die Volatilität null). */
 const rampe = (gesamtPct: number, zickzack = 0.005) => (k: number) => 100 * (1 + (gesamtPct * k) / 300) * (1 + (k % 2 === 0 ? zickzack : -zickzack));
 
 const okSession: SessionInfo = { isRegularSession: true, minutesToClose: 200, minutesSinceOpen: 100, barsSinceOpen: 1, isLastBarOfDay: false, day: '2024-08-01' };
@@ -88,77 +90,134 @@ const einstiege = (r: ReturnType<typeof decide>) => r.intents.filter((i) => i.ki
 function position(symbol: string, entryPrice: number): PositionState {
   return { symbol, side: 'long', qty: 10, entryPrice, entryTime: 0, stop: entryPrice * 0.8, target: null, initialStop: entryPrice * 0.8, highWater: entryPrice, strategy: s.id, barsHeld: 20 } as PositionState;
 }
+/** Rampe bis `bis − 30`, dann 25 % Einbruch über 30 Bars — unter das Mittel, Momentum über 63 Bars noch positiv. */
+const bruch = (g: number, bis: number) => (k: number) => (k <= bis - 30 ? rampe(g)(k) : rampe(g)(bis - 30) * (1 - (0.25 * (k - (bis - 30))) / 30));
 
 describe('regime_allocation', () => {
-  it('kauft am Rebalance-Tag die relativ Stärksten — und nur die', () => {
+  it('kauft im Fenster die relativ Stärksten — und nur die', () => {
     expect(einstiege(decide(ctx(), korb(REBAL)))).toEqual(['S00', 'S01']);
   });
 
-  it('entscheidet zwischen zwei Rebalance-Tagen NICHTS — weder Einstieg …', () => {
+  it('das Fenster hat drei Tage: am dritten noch, am vierten nicht mehr', () => {
+    expect(einstiege(decide(ctx({ now: TAGE[FENSTER_ENDE]! + 86_400_000 }), korb(FENSTER_ENDE)))).toEqual(['S00', 'S01']);
+    expect(decide(ctx({ now: TAGE[FENSTER_ENDE + 1]! + 86_400_000 }), korb(FENSTER_ENDE + 1)).intents).toHaveLength(0);
+  });
+
+  it('außerhalb des Fensters entscheidet sie NICHTS — weder Einstieg …', () => {
     expect(decide(ctx({ now: TAGE[KEIN_REBAL]! + 86_400_000 }), korb(KEIN_REBAL)).intents).toHaveLength(0);
   });
 
   it('… noch Ausstieg, selbst wenn das Regime verloren ist (der Broker-Stop wacht)', () => {
-    // S00 bricht in den letzten 30 Bars um 25 % ein: unter das Mittel, Momentum über 126 Bars noch positiv.
-    const bruch = (k: number) => (k <= KEIN_REBAL - 30 ? rampe(0.6)(k) : rampe(0.6)(KEIN_REBAL - 30) * (1 - (0.25 * (k - (KEIN_REBAL - 30))) / 30));
-    const bars = serie(KEIN_REBAL + 1, bruch);
+    const bars = serie(KEIN_REBAL + 1, bruch(0.6, KEIN_REBAL));
     const pos = position('S00', bars.c[KEIN_REBAL - 30]!);
     const r = decide(ctx({ now: TAGE[KEIN_REBAL]! + 86_400_000, positions: new Map([['S00', pos]]) }), [input('S00', bars, pos), ...korb(KEIN_REBAL).slice(1)]);
     expect(r.intents.filter((i) => i.kind === 'exit')).toHaveLength(0);
   });
 
-  it('am Rebalance-Tag steigt sie aus, wenn das Regime verloren ist', () => {
-    const bruch = (k: number) => (k <= REBAL - 30 ? rampe(0.6)(k) : rampe(0.6)(REBAL - 30) * (1 - (0.25 * (k - (REBAL - 30))) / 30));
-    const bars = serie(REBAL + 1, bruch);
+  it('im Fenster steigt sie aus, wenn das Regime verloren ist', () => {
+    const bars = serie(REBAL + 1, bruch(0.6, REBAL));
     const pos = position('S00', bars.c[REBAL - 30]!);
     const r = decide(ctx({ positions: new Map([['S00', pos]]) }), [input('S00', bars, pos), ...korb(REBAL).slice(1)]);
     expect(r.intents.find((i) => i.kind === 'exit' && i.symbol === 'S00')).toBeDefined();
-    // Der Intent trägt die Kategorie; der Text der Strategie steht in der Notiz.
     expect(r.notes.some((n) => n.symbol === 'S00' && /Regime verloren/.test(n.text))).toBe(true);
   });
 
+  it('im Fenster steigt sie aus, wenn das eigene Momentum negativ ist — auch über dem Mittel', () => {
+    // 43 Bars 15 % abwärts, dann 20 Bars 8 % aufwärts: Close über SMA(50), aber unter dem Kurs von vor 63 Bars.
+    const start = REBAL - 63;
+    const kurs = (k: number) => (k <= start ? 100 : k <= REBAL - 20 ? 100 * (1 - (0.15 * (k - start)) / 43) : 85 * (1 + (0.08 * (k - (REBAL - 20))) / 20));
+    const bars = serie(REBAL + 1, kurs);
+    const ind = s.precompute(bars, params);
+    expect(ind.mom![REBAL]!).toBeLessThan(0);
+    expect(bars.c[REBAL]!).toBeGreaterThan(ind.sma![REBAL]!);
+    const pos = position('S00', 90);
+    const r = decide(ctx({ positions: new Map([['S00', pos]]) }), [input('S00', bars, pos), ...korb(REBAL).slice(1)]);
+    expect(r.notes.some((n) => n.symbol === 'S00' && /Momentum negativ/.test(n.text))).toBe(true);
+  });
+
+  it('im Fenster steigt sie aus, wenn die relative Stärke verloren ist', () => {
+    const k = korb(REBAL);
+    const schwach = k[9]!; // S09: Rang 10 von 10 ⇒ pct 1 > exitPct 0,6
+    const pos = position('S09', schwach.snap.bars.c[REBAL]!);
+    const r = decide(ctx({ positions: new Map([['S09', pos]]) }), [...k.slice(0, 9), { ...schwach, snap: { ...schwach.snap, position: pos } }]);
+    expect(r.notes.some((n) => n.symbol === 'S09' && /relative Stärke verloren/.test(n.text))).toBe(true);
+  });
+
   it('kauft NICHT unter dem Mittel, auch wenn das Symbol relativ das stärkste ist', () => {
-    // S00: stärkster Anstieg, aber die letzten 30 Bars 25 % Einbruch ⇒ Close < SMA(100); alle anderen schwächer.
-    const bruch = (k: number) => (k <= REBAL - 30 ? rampe(0.9)(k) : rampe(0.9)(REBAL - 30) * (1 - (0.25 * (k - (REBAL - 30))) / 30));
-    const r = decide(ctx(), [input('S00', serie(REBAL + 1, bruch)), ...korb(REBAL).slice(1)]);
+    const r = decide(ctx(), [input('S00', serie(REBAL + 1, bruch(0.9, REBAL))), ...korb(REBAL).slice(1)]);
     expect(einstiege(r)).not.toContain('S00');
   });
 
   it('kauft NICHT bei negativem eigenem Momentum — auch nicht den relativ Stärksten (Dual Momentum)', () => {
-    // Alle fallen; S00 fällt am wenigsten und liegt (per Konstruktion) über seinem Mittel? Nein: fallend ⇒ unter dem Mittel.
-    // Deshalb: alle fallen, aber S00 hat einen späten Hüpfer über das Mittel bei weiter negativem 126-Bar-Momentum.
-    const spaet = (k: number) => (k <= REBAL - 10 ? rampe(-0.3)(k) : rampe(-0.3)(REBAL - 10) * (1 + (0.12 * (k - (REBAL - 10))) / 10));
-    const andere = Array.from({ length: 9 }, (_, k) => input(`S${String(k + 1).padStart(2, '0')}`, serie(REBAL + 1, rampe(-0.4 - k * 0.05))));
-    const r = decide(ctx(), [input('S00', serie(REBAL + 1, spaet)), ...andere]);
-    expect(einstiege(r)).toEqual([]);
+    // S00 fällt 63 Bars lang steil (−19 %) und hüpft in den letzten 10 Bars um 12 % über sein Mittel:
+    // Momentum über 63 Bars bleibt negativ, Regime sagt ja — Dual Momentum sagt nein.
+    const spaet = (k: number) => (k <= REBAL - 10 ? rampe(-0.9)(k) : rampe(-0.9)(REBAL - 10) * (1 + (0.12 * (k - (REBAL - 10))) / 10));
+    const andere = Array.from({ length: 9 }, (_, k) => input(`S${String(k + 1).padStart(2, '0')}`, serie(REBAL + 1, rampe(-1.0 - k * 0.05))));
+    const ind0 = s.precompute(serie(REBAL + 1, spaet), params);
+    expect(ind0.mom![REBAL]!).toBeLessThan(0);
+    expect(spaet(REBAL)).toBeGreaterThan(ind0.sma![REBAL]!);
+    expect(einstiege(decide(ctx(), [input('S00', serie(REBAL + 1, spaet)), ...andere]))).toEqual([]);
   });
 
-  it('das Gewicht ist Zielvolatilität / realisierte Volatilität — und der Kern setzt es um', () => {
-    // Zickzack ±1 % um die Rampe ⇒ Tagesrenditen ≈ ±2 % ⇒ p. a. ≈ 32 % ⇒ Gewicht ≈ 10 / 32 ≈ 0,31.
-    // Die Rampe ist steiler als die der anderen, damit S00 trotz der Schwankung
-    // (die den crossScore teilt) an der Spitze des Korbs bleibt.
-    const r = decide(ctx({ risk: { ...cfg.risk, maxPositions: 50, maxPositionPct: 100 } }), korb(REBAL).map((x, k) => (k === 0 ? input('S00', serie(REBAL + 1, rampe(2.0, 0.01))) : x)));
+  it('rührt sich nicht, wenn der Korb zu klein für eine Rangaussage ist', () => {
+    expect(decide(ctx(), korb(REBAL, 7)).intents).toHaveLength(0);
+  });
+
+  it('die Rangkennzahl teilt durch die Schwankung: der ruhigere Wert schlägt den unruhigeren mit etwas mehr Rendite', () => {
+    // S00: 60 % Anstieg mit ±2 % Zickzack. S01: 58 % ruhig. Ohne Vol-Teilung gewänne S00.
+    // Gerader Lookback (84): So hebt sich der Zickzack an beiden Enden auf, und
+    // allein die Schwankung entscheidet — nicht die Parität der Endpunkte.
+    const p84 = resolveParams(s, { ...params, lookback: 84 });
+    const inp = (symbol: string, bars: BarSeries): SymbolInput => ({ snap: { symbol, bars, i: bars.length - 1, position: null, session: okSession }, strategy: s, params: p84, ind: s.precompute(bars, p84) });
+    const k = Array.from({ length: 10 }, (_, i) =>
+      i === 0 ? inp('S00', serie(REBAL + 1, rampe(0.6, 0.02))) : i === 1 ? inp('S01', serie(REBAL + 1, rampe(0.58))) : inp(`S${String(i).padStart(2, '0')}`, serie(REBAL + 1, rampe(0.4 - i * 0.03))),
+    );
+    expect(einstiege(decide(ctx({ risk: { ...cfg.risk, maxPositions: 1 } }), k))).toEqual(['S01']);
+  });
+
+  it('die Stückzahl folgt dem Risiko-Budget über die Stop-Distanz — wie bei jeder Vorlage', () => {
+    const r = decide(ctx({ risk: { ...cfg.risk, maxPositions: 50, maxPositionPct: 100 } }), korb(REBAL));
     const e = r.intents.find((i) => i.kind === 'enter' && i.symbol === 'S00');
-    expect(e).toBeDefined();
     if (e?.kind !== 'enter') throw new Error('kein Einstieg');
-    const anteil = (e.qty * e.refPrice) / 1_000_000;
-    expect(anteil).toBeGreaterThan(0.25);
-    expect(anteil).toBeLessThan(0.4);
-    // Katastrophen-Stop 20 % unter dem Einstand, kein Ziel.
+    const risiko = e.qty * (e.refPrice - e.stop);
+    const budget = (1_000_000 * cfg.risk.riskPerTradePct) / 100; // 0,5 % ⇒ 5 000 $
+    expect(risiko).toBeLessThanOrEqual(budget);
+    expect(risiko).toBeGreaterThan(budget - (e.refPrice - e.stop)); // höchstens ein Stück unter dem Budget
     expect(e.stop).toBeCloseTo(e.refPrice * 0.8, 6);
     expect(e.target).toBeNull();
   });
 
-  it('der Positionsdeckel gilt auch für das Gewicht', () => {
-    const r = decide(ctx({ risk: { ...cfg.risk, maxPositions: 50, maxPositionPct: 5 } }), korb(REBAL));
-    for (const e of r.intents) {
-      if (e.kind !== 'enter') continue;
-      expect((e.qty * e.refPrice) / 1_000_000).toBeLessThanOrEqual(0.05 + 1e-9);
-    }
+  it('nur Tagesbars; Warmup deckt Momentum, Mittel und Volatilität; Embargo passt ins IS-Fenster', () => {
+    expect(s.timeframes).toEqual([1440]);
+    expect(WARMUP).toBeGreaterThanOrEqual(Math.max(63, 50, VOL_LEN + 1));
+    // Größter Warmup des Gitters (126 + 21) plus 20 Embargo-Bars muss unter einem 365-Tage-IS-Fenster (~252 Bars) bleiben.
+    expect(s.warmupBars(resolveParams(s, { lookback: 126, skip: 21, regimeLen: 150 })) + 20).toBeLessThan(230);
   });
 
-  it('nur Tagesbars; Warmup deckt Momentum, Mittel und Volatilität', () => {
-    expect(s.timeframes).toEqual([1440]);
-    expect(s.warmupBars(params)).toBeGreaterThanOrEqual(Math.max(126, 100, VOL_LEN + 1));
+  it('durch den echten Simulator: Einstiege nur aus dem Fenster, Ausstiege nur aus dem Fenster oder über den Broker-Stop', () => {
+    // Zehn Rampen; S00 bricht ab Bar 220 um 35 % ein: Erst reißt der 20 %-Stop
+    // (zwischen zwei Fenstern erlaubt — nur er wacht dort), dann rückt am
+    // nächsten Fenster der Nächste nach. So gibt es geschlossene Trades.
+    const symbole = Array.from({ length: 10 }, (_, k) => `S${String(k).padStart(2, '0')}`);
+    const mitBruch = (g: number) => (k: number) => (k < 220 ? rampe(g, 0.004)(k) : rampe(g, 0.004)(219) * Math.max(0.55, 1 - (0.35 * (k - 219)) / 40));
+    const bars = new Map(symbole.map((sym, k) => [sym, serie(TAGE.length, k === 0 ? mitBruch(0.8) : rampe(0.8 - k * 0.06, 0.004))]));
+    const res = simulate({
+      bars,
+      strategyFor: () => ({ strategy: s, params }),
+      config: baseConfig({ timeframe: 1440, risk: { maxPositions: 4 } }),
+      initialEquity: 100_000,
+    });
+    expect(res.trades.length).toBeGreaterThan(0);
+    const rebal = s.precompute(bars.get('S01')!, params).rebal!;
+    const imFenster = (t: number) => {
+      const idx = TAGE.findIndex((x) => x >= t);
+      return idx > 0 && (rebal[idx - 1] === 1 || rebal[idx] === 1); // Entscheidung an einer Fenster-Bar, Fill am nächsten Open
+    };
+    for (const t of res.trades) {
+      expect(imFenster(t.entryTime), `Einstieg ${new Date(t.entryTime).toISOString()} außerhalb des Fensters`).toBe(true);
+      expect(t.exitReason === 'stop' || imFenster(t.exitTime), `Ausstieg ${t.symbol} ${t.exitReason} ${new Date(t.exitTime).toISOString()}`).toBe(true);
+    }
+    // S00 wird geschlossen — je nach Tempo des Einbruchs am Fenster (Regime) oder über den Stop; beides ist der Vertrag.
+    expect(res.trades.some((t) => t.symbol === 'S00')).toBe(true);
   });
 });

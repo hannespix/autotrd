@@ -514,29 +514,53 @@ der aus der Zukunft dieses Zeitpunkts stammt. Und `at(t)` liefert nie einen
 späteren Stand; gibt es keinen, scheitert der Lauf laut („nicht bewertbar").
 Der Bericht zeigt je Einheit die Stände mit Zugang und Abgang.
 
-### 14. Eine andere Familie: Allokation statt Signal
+### 14. Eine andere Familie — und was der Prüfer an ihr widerlegt hat
 
 Die vier Vorlagen fragen täglich und steigen mit engen Stops ein und aus.
 Die Momentum- und Trendfolge-Literatur sagt seit Jahrzehnten, dass die
 Kante — soweit es sie gibt — in der Ausführung liegt: selten entscheiden,
-das Risiko am Regime und an der Schwankung bemessen, Gewinner nicht mit
-Stops abschneiden. `regime_allocation` (`src/strategy/regimeAllocation.ts`)
-stellt deshalb drei Fragen, und nur an der ersten Bar eines Monats:
-relativ stark im Korb (12-1-Momentum je Einheit Schwankung, Rang aus
-`decide()`), über dem langen Mittel (Regime), eigenes Momentum positiv
-(Dual Momentum). Gewicht = Zielvolatilität / realisierte Volatilität,
-gedeckelt durch `maxPositionPct`; ein weiter Katastrophen-Stop liegt beim
-Broker, wird nie nachgezogen. Dazwischen entscheidet sie nichts.
+das Regime beachten, Gewinner nicht mit Stops abschneiden.
+`regime_allocation` (`src/strategy/regimeAllocation.ts`) stellt deshalb
+drei Fragen, nur in einem Fenster von drei Handelstagen zu Monatsbeginn:
+relativ stark im Korb (Momentum je Einheit Schwankung, Rang aus
+`decide()`), über dem gleitenden Mittel (Regime), eigenes Momentum positiv
+(Dual Momentum). Weiter Katastrophen-Stop beim Broker, nie nachgezogen, kein
+Ziel, kein Trailing. Dazwischen entscheidet sie nichts.
 
-Dafür kennt der Vertrag jetzt `Decision.weight`: Ein Zielanteil ersetzt im
-Sizing das Risiko-Budget je Trade (`risk/sizing.ts`, ein Pfad für Backtest
-und Engine); Deckel, Exposure und Bargeld gelten weiter. Ohne `weight`
-bleibt alles beim Alten.
+**Die erste Fassung war ein Allokator** mit Zielvolatilität, zehn Monaten
+Momentum und einem `weight`, das im Sizing das Risiko-Budget ersetzte. Der
+Prüfer (Red Team, 09.09.) hat sie widerlegt, und die Befunde gehören hierher,
+weil sie mehr über das System sagen als über die Familie:
 
-Was das nicht ist: kein Versprechen. Die Familie muss dieselben zehn Gates
-bestehen — auf dem Korb je Fold (§13) und in den vier Fenstern aus §12. Der
-Rebalance-Rhythmus und die Volatilitäts-Länge sind fest, damit die Suche
-sieben Achsen hat und nicht neun.
+1. **Nicht messbar.** Warmup 233 Bars + 20 = Embargo 253 verschluckte das
+   ganze IS-Fenster (365 Tage ≈ 252 Bars); der Walk-Forward warf vor dem
+   ersten Fold. Selbst mit Hand-Embargo: 10–12 OOS-Trades statt 60.
+2. **`weight` brach das Nutzerversprechen.** Es umging `riskPerTradePct`:
+   4 % der Equity je ausgestopptem Trade statt 0,5 %; bei `maxPositionPct
+   100` 20 %. Das Frontend verspricht wörtlich das Gegenteil.
+3. **80 % Exposure gegen die 2 %-Tagesnotbremse.** Ein gewöhnlicher
+   −2,5 %-Korbtag liquidiert das ganze Buch — Kasse bis zum nächsten Monat.
+
+**Daraus wurde:** kein Gewicht — die Stückzahl folgt dem Risiko-Budget über
+die Stop-Distanz wie bei jeder Vorlage (ein weiter Stop heißt eine kleine
+Position; die Sharpe, an der `beats_market` misst, ist skalenfrei);
+Horizonte von drei bis sechs Monaten (Warmup ≤ 149 Bars, das Embargo lässt
+vom IS-Fenster genug übrig); ein Rebalance-Fenster von drei Tagen statt
+eines Tages (ein blockierter Tag kostet keinen Monat). Die Gates bleiben
+unangetastet: Fällt sie an `oos_trades`, ist das ein gemessenes Nein.
+
+**Zwei Kernbefunde, die auch `cross_sectional_momentum` trafen:** Bei
+knappen Plätzen entschied der Hash, nicht der Rang (Rang 3–6 drin, 1 und 2
+draußen) — jetzt konkurrieren Symbole mit Korb-Rang nach Rang. Und die
+Präfix-Suite lief nur über die vier alten Vorlagen — jetzt über jede
+registrierte Strategie, `crossScore` eingeschlossen.
+
+**Bekannte Grenzen, nicht wegdefiniert:** Ein im Fenster frei werdender
+Platz ist erst am nächsten Fenstertag wieder besetzbar (das Positionslimit
+ist hart, §0.4). Die IS-Suche verlangt `minIsTrades`; erreicht eine langsame
+Familie das nicht, nimmt der Rückfall die Variante mit den meisten Trades —
+ein Zug zum Umschlag. Auf der Plattform handelt ein Nutzer eine Teilmenge des
+Korbs; unter `MIN_KORB` Symbolen rangiert nichts.
 
 ### Was das für den Betrieb heißt
 
