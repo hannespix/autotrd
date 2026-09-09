@@ -143,10 +143,12 @@ export const ConfigSchema = z.object({
        * `pass: true` und passendem Zeitrahmen, handelt die Engine dessen Korb
        * mit dessen Parametern und Allokations-Sizing (`positionPct`) — für
        * Symbole, die kein Alpha-Champion führt (core/basisTier.ts). Vorgabe an
-       * (Owner-Anweisung: von Anfang an aktiv); auf der Plattform setzt der
-       * Nutzer-Schalter `settings.auto.basis` dieses Feld je Nutzer. Aus heißt:
-       * Basis-Symbole ohne Alpha-Champion werden nicht gehandelt, eine offene
-       * Basis-Position wird als „ohne Führung" geschlossen (engine.ts).
+       * (Owner-Anweisung: von Anfang an aktiv); auf der Plattform gilt der
+       * globale Schalter (`meta/engineConfig`) UND der Nutzer-Schalter
+       * `settings.auto.basis` — beide müssen an sein. Aus heißt: keine NEUEN
+       * Basis-Einstiege; eine offene Basis-Position führt die Basis-Strategie
+       * zu Ende (eigene Exits, Broker-Stop bleibt; core/basisTier.ts,
+       * Prüfbefund M6/M8) — keine Zwangs-Liquidation.
        */
       basis: z.boolean().default(true),
     })
@@ -494,6 +496,22 @@ export function parseConfig(raw: unknown): Config {
       throw new ConfigError('optimizer.basisUniverse ohne Festkandidat mit tier: basis — ein Basis-Korb ohne Basis-Kandidat misst nichts.');
     }
     cfg.optimizer.basisUniverse = [...new Set(cfg.optimizer.basisUniverse.map((s) => normalizeUserSymbol(s, cfg.universe.assetClass)))];
+    // Der Korb der Basis gehört in den Kandidatenpool (Prüfbefund M11): Was der
+    // Block `basis` der Champion-Datei später als Korb nennt, muss aus dem Pool
+    // stammen, den nur ein Commit ändert — sonst schriebe der Optimierer das
+    // gehandelte Universum am Pool vorbei. `candidates` enthält immer
+    // `symbols`; ohne Pool (Config ohne `candidates`) ist der Korb eine eigene
+    // Einheit und wird nicht geprüft.
+    if (cfg.universe.candidates) {
+      const pool = new Set(cfg.universe.candidates);
+      const fremd = cfg.optimizer.basisUniverse.filter((s) => !pool.has(s));
+      if (fremd.length > 0) {
+        throw new ConfigError(
+          `optimizer.basisUniverse außerhalb des Kandidatenpools (universe.candidates ∪ universe.symbols): ${fremd.join(', ')} — ` +
+            'der Basis-Korb muss aus dem Pool stammen, den nur ein Commit ändert.',
+        );
+      }
+    }
   }
   // Tiefe Historie nur dort, wo sie billig ist. Intraday bleibt bei 2000 Tagen:
   // 4000 Tage × 78 Bars × 30 Symbole wären rund 9 Mio. Bars je Lauf — der

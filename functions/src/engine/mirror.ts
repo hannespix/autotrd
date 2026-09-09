@@ -20,17 +20,20 @@ import { BATCH_MAX, docIdFor, isoOf, plain, round2, type DocData, type Firestore
 
 /**
  * Stufe, die ein Symbol GERADE führt (`strategyFor`): champion, basis oder
- * config — für Positions- und Trade-Docs, damit das Frontend die Quelle
- * „Basis" zeigen kann. Die Wahl muss zur Strategie der Position passen; sonst
- * ist die Stufe unbekannt (Champion über Nacht gewechselt) und bleibt weg.
+ * config — Rückfall für Positions- und Trade-Docs, wenn die Position ihre
+ * Stufe nicht selbst trägt (`PositionState.stufe`, beim Fill festgehalten —
+ * Prüfbefund G14: bei der Zwangs-Liquidation gibt es keine Wahl mehr). Die
+ * Wahl muss zur Strategie der Position passen; sonst bleibt die Stufe weg.
  */
 export type StufeFn = (symbol: string, strategyId: string) => string | undefined;
 
 /** Positions-Doc im alten Schema plus Engine-Felder (additiv). */
 export function positionDocOf(p: PositionState, protectiveClientId: string | undefined, now: Ms, stufe?: string | undefined): DocData {
   const schutz = protectiveClientId !== undefined && p.stop !== null ? { orderId: protectiveClientId, stopPreis: p.stop, qty: p.qty } : null;
+  // Die persistierte Stufe der Position gewinnt; `stufe` (Wahl von heute) ist nur Rückfall (G14).
+  const st = p.stufe ?? stufe;
   return {
-    ...(stufe !== undefined ? { stufe } : {}),
+    ...(st !== undefined ? { stufe: st } : {}),
     symbol: p.symbol,
     qty: p.qty,
     avgEntry: p.entryPrice,

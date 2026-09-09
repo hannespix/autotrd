@@ -263,15 +263,29 @@ Plattform die **Basis-Allokation** (`meta/champion.basis`): Marktexposition
 mit Trendfilter auf Anlageklassen-ETFs, gemessen gegen die eigene Latte
 (Gate-Gruppe `basis`, `docs/wissen/vorregistrierung/2026-09-09-basis-allokation-v2.md`).
 Reihenfolge je Symbol: Alpha-Champion vor Basis vor `noTrade`
-(`src/core/basisTier.ts`). Die Basis handelt nur, wenn ihr Block `pass: true`
-trägt, der Zeitrahmen passt, das Symbol im Basis-Korb liegt und der
-Nutzer-Schalter `settings.auto.basis` an ist (Default an; nur ausdrückliches
-`false` schaltet ab — dann verlassen die Basis-Symbole das Universum des
-Nutzers, offene Basis-Positionen werden geschlossen). Position = `positionPct`
-der Equity je Symbol (Allokation, nicht Risiko je Trade); die Deckel
-`maxPositionPct`, `maxGrossExposurePct`, `maxPositions` und die Notbremsen des
-Nutzers gelten unverändert. Der nächtliche Optimierer misst die Basis auf
-ihrer eigenen Einheit (`optimizer.basisUniverse`) und schreibt den Block —
-bestanden oder nicht — mit `positionPct` und den gemessenen Symbolen.
-Echtgeld: unverändert Doppel-Guard und `readiness`; die Basis öffnet keinen
-neuen Live-Pfad.
+(`src/core/basisTier.ts`). Die Basis **eröffnet** nur, wenn ihr Block
+`pass: true` trägt, der Zeitrahmen passt, das Symbol im Basis-Korb (und im
+Kandidatenpool `universe.candidates`) liegt und BEIDE Schalter an sind: der
+globale `strategy.basis` in `meta/engineConfig` (aus `config/platform.yaml`)
+UND der Nutzer-Schalter `settings.auto.basis` (Default an; nur
+ausdrückliches `false` schaltet ab). Ein gefallenes `pass`, ein Schalter aus
+oder ein Block ohne Freigabe heißt seit dem Prüfbefund vom 09.09.2026 (M6/M8)
+**keine neuen Basis-Einstiege** — offene Basis-Positionen führt die
+Basis-Strategie nach ihren eigenen Regeln zu Ende (Regimebruch, Momentum,
+Rang; der Broker-Stop bleibt), der Korb bleibt dafür im Universum des
+Nutzers, solange darin etwas offen ist. Zwangs-Liquidation (`unmanaged`)
+gibt es nur für Symbole ohne jede Strategie (Block geräumt oder unlesbar,
+Zeitrahmen fremd). Ein unlesbarer Block (fremde `version`, kaputte
+`params`) schaltet nur die Basis ab, mit Notiz — der Alpha-Champion handelt
+weiter (M9). Position = `positionPct` der Equity je Symbol (Allokation, nicht
+Risiko je Trade); die Deckel `maxPositionPct` (die Journal-Notiz nennt den
+wirksamen Wert), `maxGrossExposurePct`, `maxPositions` und die Notbremsen des
+Nutzers gelten unverändert; Einstiege ohne Kursziel gehen als `oto` mit
+Stop-Bein (K3). Die Tages-Notbremse rechnet vom Vortagesschluss (Alpaca
+`last_equity`, K1) — wann sie im Takt greift, steht im Kopf von
+`src/engine/engine.ts`. Der nächtliche Optimierer misst die Basis auf ihrer
+eigenen Einheit (`optimizer.basisUniverse`, die im Kandidatenpool liegen
+muss — M11) und schreibt den Block — bestanden oder nicht — mit
+`positionPct` und den gemessenen Symbolen; der Wächter meldet Urteil, Korb
+und Position. Echtgeld: unverändert Doppel-Guard und `readiness`; die Basis
+öffnet keinen neuen Live-Pfad.

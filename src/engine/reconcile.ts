@@ -31,6 +31,8 @@ export const RECONCILE_GRACE_MS = 30_000;
 
 export interface ReconcileAccount {
   equity: number;
+  /** Alpaca `last_equity`: Schluss-Equity des Vortags — Basis der Tages-Notbremse (engine.ts, rollover). */
+  lastEquity: number;
   cash: number;
   daytradeCount: number;
   patternDayTrader: boolean;
@@ -90,6 +92,7 @@ export async function reconcile(a: ReconcileArgs): Promise<ReconcileResult> {
   const acc = await a.client.getAccount();
   const account: ReconcileAccount = {
     equity: acc.equity,
+    lastEquity: acc.lastEquity,
     cash: acc.cash,
     daytradeCount: acc.daytradeCount,
     patternDayTrader: acc.patternDayTrader,

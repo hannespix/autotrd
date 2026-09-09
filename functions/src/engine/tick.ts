@@ -46,7 +46,7 @@ import { isRecord, isoOf, plain, type DocData, type DocSnapLike, type FirestoreL
 import { FirestoreJournal, type FxFn } from './journal.js';
 import { mirrorError, mirrorPositions, mirrorQuotes, mirrorUser, type QuoteMark } from './mirror.js';
 import { SharedBarStoreView, cachedAsset, cachedCalendar, delegateClient, sharedStoreFor, withSharedData, type SharedServices } from './sharedData.js';
-import { FirestoreStateStore } from './state.js';
+import { engineStatePath, FirestoreStateStore } from './state.js';
 import { buildStrategyFor, championFromDoc, type StrategyMap } from './strategyFor.js';
 import { NoopDataStream, NoopTradeStream } from './streams.js';
 
@@ -415,7 +415,11 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
   let championNote: string | null = null;
   let champion = null;
   try {
-    champion = championFromDoc(champSnap.exists ? champSnap.data() : undefined);
+    // Ein unlesbarer Basis-Block nimmt den Champion NICHT mit (Prüfbefund M9): nur die Basis fällt aus, mit Notiz.
+    champion = championFromDoc(champSnap.exists ? champSnap.data() : undefined, (text) => {
+      championNote = text;
+      log.error(text);
+    });
   } catch (e) {
     championNote = errMsg(e);
     log.error(championNote);
@@ -488,14 +492,18 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
       // Eine veraltete Symbolauswahl sperrt Einstiege wie jede andere offene
       // Kette — Exits, Abgleich und Schutz-Stops laufen weiter.
       const sperre = zugang.sperre ?? uc.auswahlVeraltet ?? null;
-      // Der Korb der Basis-Stufe kommt als Block ins Universum dieser Engine (wenn der Champion-Block
-      // `basis` bestanden hat und der Nutzer-Schalter an ist) — die Engine führt nur ihr Universum.
-      const mitBasis = universeWithBasis(uc.config, champion);
+      // Was dieses Buch hält (Positionen, laufende Einstiege) — damit der Korb einer Basis OHNE Einstiegsrecht
+      // (pass gefallen, Schalter aus) im Universum bleibt, solange darin etwas offen ist: Die Basis-Strategie
+      // führt ihre Positionen zu Ende statt sie zu liquidieren (Prüfbefund M6/M8, core/basisTier.ts).
+      const held = await heldSymbols(db, uid);
+      // Der Korb der Basis-Stufe kommt als Block ins Universum dieser Engine — die Engine führt nur ihr Universum.
+      const mitBasis = universeWithBasis(uc.config, champion, held);
       // Verriegelt (Echtgeld-Kette offen): keine Einstiege, und Fremdbestand wird nie adoptiert — ein
       // Schutz-Stop auf eine Handposition wäre eine Order auf einem verriegelten Konto.
       const config: Config = sperre ? { ...mitBasis, engine: { ...mitBasis.engine, onOrphan: 'halt' } } : mitBasis;
-      const strategy = buildStrategyFor({ champion, config, getStrategy: deps.getStrategy, log: userLogger(log, uid) });
+      const strategy = buildStrategyFor({ champion, config, held, getStrategy: deps.getStrategy, log: userLogger(log, uid) });
       if (championNote) strategy.notes.unshift(championNote);
+      if (!uc.basisSchalter.global && champion?.basis) strategy.notes.push('Basis-Stufe plattformweit abgeschaltet (meta/engineConfig strategy.basis=false) — keine neuen Basis-Einstiege');
       if (sperre) strategy.notes.push(`Einstiege gesperrt: ${sperre} — Abgleich, Schutz-Stops und Exits laufen weiter`);
       prepared.push({ uid, snap, verbindung: zugang.verbindung, sperre, config, configSource: uc.source, strategy });
     } catch (e) {
@@ -610,6 +618,20 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
   return finish();
 }
 
+/**
+ * Symbole mit offener Position oder laufender Einstiegs-Order laut Engine-State des Nutzers — VOR dem
+ * Engine-Start gelesen, weil das Universum (und damit der geteilte Bars-Abruf) vorher feststehen muss. Ein
+ * Lesefehler wirft: Ohne diese Kenntnis fiele der Korb einer gesperrten Basis aus dem Universum und die
+ * Positionen würden als „ohne Führung" liquidiert — fail-closed ist hier der Abbruch des Nutzer-Takts.
+ */
+async function heldSymbols(db: FirestoreLike, uid: string): Promise<string[]> {
+  const snap = await db.doc(engineStatePath(uid)).get();
+  if (!snap.exists) return [];
+  const d = snap.data();
+  const keys = (v: unknown): string[] => (isRecord(v) ? Object.keys(v) : []);
+  return [...new Set([...keys(d?.positions), ...keys(d?.pendingEntries)])];
+}
+
 function buildShared(dataClient: AlpacaClient | null, store: BarStore, now: Ms): SharedServices {
   const noData = (): Promise<never> => Promise.reject(new Error('Kein Plattform-Datenkey (ALPACA_API_KEY/ALPACA_SECRET_KEY)'));
   let clockPromise: Promise<AlpacaClock> | null = null;
@@ -639,8 +661,9 @@ async function runUser(ctx: TickContext, p: UserPrep, guard: RunGuard): Promise<
   const started = Date.now();
   const log = userLogger(ctx.log, uid);
   const mode = p.verbindung.mode;
-  // Stufe eines Symbols (champion/basis/config) für Positions- und Trade-Docs — nur, wenn die Wahl von
-  // heute noch dieselbe Strategie ist wie die der Position; sonst unbekannt.
+  // Stufe eines Symbols (champion/basis/config) für Positions- und Trade-Docs, wenn die Position sie nicht
+  // selbst trägt (`stufe`, seit Prüfbefund G14 beim Fill festgehalten): nur, wenn die Wahl von heute noch
+  // dieselbe Strategie ist wie die der Position; sonst unbekannt.
   const stufeFor = (symbol: string, strategyId: string): string | undefined => {
     const c = p.strategy.fn(symbol);
     return c && c.strategy.id === strategyId ? c.source : undefined;

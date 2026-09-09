@@ -218,7 +218,9 @@ describe('Engine — Tagesrollover', () => {
     await sc.engine.idle();
     expect(sc.state()?.dayTrades[DAY1]).toBe(1);
     const calendarCalls = sc.fake.callsOf('getCalendar').length;
-    sc.fake.account.equity = 99_000;
+    // Tagesstart = Vortagesschluss (`last_equity`), nicht die Equity nach dem Gap (Prüfbefund K1, test/engine/tagesbremse.test.ts).
+    sc.fake.account.equity = 99_500;
+    sc.fake.account.lastEquity = 99_000;
     await sc.engine.reconcileNow(sc.now() + 60_000);
     // Samstag: kein Handelstag ⇒ Tag bleibt, keine Tagesstart-Equity.
     await sc.engine.tick(msFromET(2026, 9, 5, 10, 0));

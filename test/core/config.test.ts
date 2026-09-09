@@ -46,6 +46,22 @@ describe('parseConfig', () => {
   });
 });
 
+describe('parseConfig — Basis-Korb im Kandidatenpool (Prüfbefund M11)', () => {
+  const basis = { fixedCandidates: [{ strategy: 'regime_allocation', tier: 'basis' as const }] };
+
+  it('WÄCHTER: basisUniverse außerhalb von universe.candidates ∪ universe.symbols ist ein ConfigError, der die Fremden nennt', () => {
+    expect(() => parseConfig({ universe: { symbols: ['AAA'], candidates: ['SPY', 'IEF'] }, optimizer: { ...basis, basisUniverse: ['SPY', 'IEF', 'GLD', 'TLT'] } })).toThrow(
+      /basisUniverse außerhalb des Kandidatenpools.*GLD, TLT/,
+    );
+  });
+
+  it('im Pool (Kandidaten oder gehandelte Symbole, kanonisch) ⇒ gültig; ohne Pool ist der Korb eine eigene Einheit', () => {
+    const cfg = parseConfig({ universe: { symbols: ['AAA', 'brk-b'], candidates: ['SPY', 'IEF'] }, optimizer: { ...basis, basisUniverse: ['SPY', 'BRK.B', 'AAA'] } });
+    expect(cfg.optimizer.basisUniverse).toEqual(['SPY', 'BRK.B', 'AAA']);
+    expect(parseConfig({ universe: { symbols: ['AAA'] }, optimizer: { ...basis, basisUniverse: ['SPY', 'IEF'] } }).optimizer.basisUniverse).toEqual(['SPY', 'IEF']);
+  });
+});
+
 describe('resolveMode — Echtgeld-Doppel-Guard', () => {
   it('Default ist Paper', () => {
     expect(resolveMode(parseConfig(minimal), env()).mode).toBe('paper');

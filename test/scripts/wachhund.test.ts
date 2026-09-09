@@ -136,6 +136,72 @@ describe('Wächter', () => {
   });
 });
 
+/**
+ * Basis-Stufe (Prüfbefund M11): Der Korb des Blocks `basis` ist das gehandelte
+ * Universum der Basis und umgeht `engineConfig.universe.symbols`. Der Wächter
+ * prüft ihn gegen den Pool und den vorregistrierten Korb und meldet das Urteil.
+ */
+describe('Wächter — Basis-Stufe', () => {
+  const basis = (over: Record<string, unknown> = {}) => ({
+    version: 1,
+    strategy: 'regime_allocation',
+    label: 'Basis V2',
+    symbols: ['SPY', 'TSLA', 'NVDA', 'AAPL', 'XLF', 'XLE', 'GLD', 'TLT'],
+    pass: true,
+    positionPct: 20,
+    ...over,
+  });
+  const pool = ['SPY', 'TSLA', 'NVDA', 'AAPL', 'XLF', 'XLE', 'GLD', 'TLT', 'IEF'];
+  const mitBasis = (over: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) =>
+    eingabe({
+      repoPool: pool,
+      champion: { updatedAt: JETZT - 7 * 3600_000, symbols: { TSLA: {} }, noTrade: { SPY: {} }, basis: basis(over) },
+      repoBasisUniverse: basis().symbols,
+      ...extra,
+    });
+
+  it('meldet Urteil, Korb und Position der Basis', () => {
+    const u = beurteile(mitBasis());
+    expect(u.ok, texte(u)).toBe(true);
+    expect(texte(u)).toContain('Basis-Stufe „Basis V2": bestanden, 8 Symbole (SPY, TSLA, NVDA, AAPL, XLF, XLE, GLD, TLT), Position 20 %');
+    const nicht = beurteile(mitBasis({ pass: false }));
+    expect(nicht.ok).toBe(true);
+    expect(texte(nicht)).toContain('NICHT bestanden (keine neuen Einstiege)');
+  });
+
+  it('WÄCHTER: ein Korb-Symbol außerhalb des Kandidatenpools ist ein Fehler', () => {
+    const u = beurteile(mitBasis({ symbols: [...basis().symbols, 'GME'] }));
+    expect(u.ok).toBe(false);
+    expect(texte(u)).toContain('Korb-Symbole außerhalb des Kandidatenpools: GME');
+  });
+
+  it('WÄCHTER: ein Korb-Symbol, das nicht in optimizer.basisUniverse steht, ist ein Fehler; ein fehlendes eine Warnung', () => {
+    const fremd = beurteile(mitBasis({ symbols: [...basis().symbols, 'IEF'] }));
+    expect(fremd.ok).toBe(false);
+    expect(texte(fremd)).toContain('nicht in optimizer.basisUniverse stehen: IEF');
+    const fehlend = beurteile(mitBasis({ symbols: basis().symbols.slice(0, 8) }, { repoBasisUniverse: [...basis().symbols, 'IEF'] }));
+    expect(fehlend.ok, texte(fehlend)).toBe(true);
+    expect(texte(fehlend)).toContain('ohne Messung im Block (keine Bars?): IEF');
+  });
+
+  it('zu kleiner Korb (unter MIN_KORB) und unlesbare Version werden gemeldet; plattformweit aus steht im Bericht', () => {
+    const klein = beurteile(mitBasis({ symbols: basis().symbols.slice(0, 5) }, { repoBasisUniverse: basis().symbols.slice(0, 5) }));
+    expect(texte(klein)).toContain('Korb hat 5 Symbole, unter 8 rangiert nichts');
+    const version = beurteile(mitBasis({ version: 2 }));
+    expect(version.ok).toBe(false);
+    expect(texte(version)).toContain('Version 2 — unlesbar');
+    const aus = beurteile(mitBasis({}, { engineConfig: { universe: { symbols: ['SPY', 'TSLA'] }, timeframe: 5, strategy: { basis: false } } }));
+    expect(texte(aus)).toContain('plattformweit AUS');
+  });
+
+  it('kein Block, aber vorregistrierter Korb ⇒ Warnung (Messung fehlt); ohne beides kein Wort', () => {
+    const fehlt = beurteile(eingabe({ repoBasisUniverse: pool }));
+    expect(fehlt.ok).toBe(true);
+    expect(texte(fehlt)).toContain('die Messung fehlt noch');
+    expect(texte(beurteile(eingabe()))).not.toContain('Basis-Stufe');
+  });
+});
+
 describe('Wächter-Workflow', () => {
   const wf = (): string => readFileSync(new URL('../../.github/workflows/wachhund.yml', import.meta.url), 'utf8');
 

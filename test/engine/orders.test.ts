@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { AlpacaError, type AlpacaOrder } from '../../src/alpaca/types.ts';
+import { AlpacaError, type AlpacaOrder, type NewOrder } from '../../src/alpaca/types.ts';
 import { emptyState, Journal } from '../../src/core/journal.ts';
 import { MIN } from '../../src/core/time.ts';
 import type { AssetClass, OrderIntent, Trade } from '../../src/core/types.ts';
@@ -113,6 +113,59 @@ describe('OrderExecutor — Einstieg', () => {
     ]);
     const msft = s.fake.ordersFor('MSFT')[0]!;
     expect(msft.legs.map((l) => l.type)).toEqual(['stop']);
+  });
+
+  /**
+   * Prüfbefund K3 (09.09.2026): Alpaca verlangt für `bracket` BEIDE Beine; ein Bracket mit nur `stop_loss`
+   * wird mit 422 abgelehnt — die Basis-Stufe (regime_allocation, ohne Kursziel) hätte still nie gehandelt.
+   * Ohne Ziel geht der Einstieg als `oto` (genau ein Bein).
+   */
+  it('WÄCHTER (K3): Intent ohne Ziel ⇒ oto mit stop_loss und ohne take_profit; mit Ziel ⇒ bracket mit beiden Beinen', async () => {
+    const s = setup({ holdsOvernight: true });
+    await s.executor.execute([enter({ symbol: 'MSFT', target: null, stop: 80.004 }), enter()]);
+    const bodies = s.fake.callsOf('submitOrder').map((c) => c.args[0] as NewOrder);
+    const oto = bodies.find((b) => b.symbol === 'MSFT')!;
+    expect(oto).toMatchObject({ orderClass: 'oto', type: 'market', timeInForce: 'gtc', stopLoss: { stopPrice: 80 } });
+    expect(oto.takeProfit).toBeUndefined();
+    const bracket = bodies.find((b) => b.symbol === 'AAPL')!;
+    expect(bracket).toMatchObject({ orderClass: 'bracket', stopLoss: { stopPrice: 98.36 }, takeProfit: { limitPrice: 104.38 } });
+    // Der Broker (Fake mit Alpacas Regeln) hat beide angenommen; das oto-Bein ist der Schutz-Stop.
+    const msft = s.fake.ordersFor('MSFT')[0]!;
+    expect(msft.orderClass).toBe('oto');
+    expect(msft.legs.map((l) => [l.type, l.stopPrice])).toEqual([['stop', 80]]);
+    expect(s.journal.readAll().find((e) => e.kind === 'order_submitted' && e.symbol === 'MSFT')?.orderClass).toBe('oto');
+  });
+
+  it('K3: Fill einer oto-Order ⇒ Position mit Stop-Bein als Schutz-Stop; eigener Exit storniert das Bein zuerst (§0.7)', async () => {
+    const s = setup({ holdsOvernight: true });
+    await s.executor.execute([enter({ symbol: 'MSFT', target: null, stop: 80 })]);
+    const parent = s.fake.ordersFor('MSFT')[0]!;
+    await s.executor.handleTradeUpdate(s.fake.fill(parent.id, 100.4));
+    const pos = s.book.positions.get('MSFT')!;
+    expect(pos).toMatchObject({ qty: 199, stop: 80, target: null });
+    expect(s.book.protectiveOrders.get('MSFT')?.orderId).toBe(`${parent.id}-sl`);
+    // Neustart ohne Pending: die Kennung existiert, die Beine kommen per getOrder (nested) — auch für oto.
+    const s2 = setup({ fake: s.fake, holdsOvernight: true });
+    await s2.executor.execute([enter({ symbol: 'MSFT', target: null, stop: 80 })]);
+    expect(s2.book.protectiveOrders.get('MSFT')?.orderId).toBe(`${parent.id}-sl`);
+    // Eigener Exit: erst das Stop-Bein stornieren, dann die Marktorder.
+    const vorher = s.fake.calls.length;
+    await s.executor.execute([{ kind: 'exit', symbol: 'MSFT', reason: 'signal', decidedAt: T }]);
+    const danach = s.fake.calls.slice(vorher).map((c) => c.method);
+    expect(danach.indexOf('cancelOrder')).toBeGreaterThan(-1);
+    expect(danach.indexOf('cancelOrder')).toBeLessThan(danach.lastIndexOf('submitOrder'));
+    expect(s.fake.find(`${parent.id}-sl`)?.status).toBe('canceled');
+    expect(s.fake.ordersFor('MSFT').some((o) => o.type === 'market' && o.side === 'sell' && o.qty === 199)).toBe(true);
+  });
+
+  it('K3: der Fake lehnt wie Alpaca einen Bracket mit nur einem Bein ab (422) — damit dieser Test die Regel überhaupt sehen kann', async () => {
+    const s = setup();
+    await expect(
+      s.fake.submitOrder({ symbol: 'AAPL', side: 'buy', qty: 1, type: 'market', timeInForce: 'day', clientOrderId: 'x-1', orderClass: 'bracket', stopLoss: { stopPrice: 90 } }),
+    ).rejects.toThrow(/take_profit and stop_loss/);
+    await expect(
+      s.fake.submitOrder({ symbol: 'AAPL', side: 'buy', qty: 1, type: 'market', timeInForce: 'day', clientOrderId: 'x-2', orderClass: 'oto', stopLoss: { stopPrice: 90 }, takeProfit: { limitPrice: 110 } }),
+    ).rejects.toThrow(/exactly one/);
   });
 
   it('Teilfill: Position mit gefüllter Menge, Pending bleibt bis zur Vollständigkeit', async () => {

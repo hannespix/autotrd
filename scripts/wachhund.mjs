@@ -6,7 +6,8 @@
  *
  * Er SCHAUT und BERICHTET — er ändert nichts. Prüft: schlägt der Takt, ist
  * der Champion frisch, handelt die Engine dasselbe Universum, das der
- * Optimierer gemessen hat, wie viele Konten sind an, wie viele im Echtgeld.
+ * Optimierer gemessen hat, liegt der Korb der Basis-Stufe im Pool (und
+ * meldet ihr Urteil), wie viele Konten sind an, wie viele im Echtgeld.
  *
  * Das Urteil über einen toten Takt kommt aus `shared/src/wachhund.ts` —
  * dieselbe Funktion, die auch das Frontend nutzt. Zwei Meinungen darüber,
@@ -19,6 +20,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { parseConfig } from '../src/core/config.ts';
+import { MIN_KORB } from '../src/strategy/crossSectionalMomentum.ts';
 import { bewerteHerzschlag } from '../shared/src/wachhund.ts';
 import { alsMarkdown, beurteile } from './module/wachhund.mjs';
 
@@ -68,6 +70,9 @@ const urteil = beurteile({
   repoBenchmark: cfg.universe.benchmark,
   repoMaxSymbols: cfg.universe.maxSymbols,
   repoTimeframe: cfg.timeframe,
+  repoBasisUniverse: [...cfg.optimizer.basisUniverse],
+  repoBasisSchalter: cfg.strategy.basis,
+  minKorb: MIN_KORB,
   nutzer,
   herzschlagUrteil: bewerteHerzschlag({ lastRunAt: typeof health?.lastRunAt === 'string' ? health.lastRunAt : null, jetztMs }),
 });

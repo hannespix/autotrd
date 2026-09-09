@@ -75,6 +75,14 @@ export interface PositionState {
   barsHeld: number;
   /** ET-Handelstag des Einstiegs (YYYY-MM-DD) — für die PDT-Zählung. */
   entryDay: string;
+  /**
+   * Stufe der Wahl, die die Position eröffnet hat (`champion` · `basis` ·
+   * `config`) — beim Fill festgehalten, damit Positions- und Trade-Docs sie
+   * auch dann tragen, wenn die Wahl von heute eine andere ist oder fehlt
+   * (Zwangs-Liquidation, Prüfbefund G14). Additiv: ältere States haben das
+   * Feld nicht; der Simulator setzt es nie.
+   */
+  stufe?: string;
 }
 
 /** Was eine Strategie je geschlossener Bar sagen darf. */
@@ -149,6 +157,8 @@ export interface Trade {
   /** Ungünstigster/günstigster Kurs während der Haltezeit (für Exit-Statistik). */
   mae: number | null;
   mfe: number | null;
+  /** Stufe der Position (`PositionState.stufe`), falls bekannt — additiv. */
+  stufe?: string;
 }
 
 /* ───────────────────────── Strategie-Vertrag ───────────────────────── */

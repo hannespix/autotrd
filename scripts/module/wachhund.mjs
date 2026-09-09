@@ -17,13 +17,16 @@ export const CHAMPION_FEHLER_TAGE = 7;
  * @param {{
  *   jetztMs: number,
  *   health: {lastRunAt?: string} | null,
- *   champion: {updatedAt?: number, symbols?: Record<string, unknown>, noTrade?: Record<string, unknown>} | null,
- *   engineConfig: {universe?: {symbols?: string[], benchmark?: string}, timeframe?: number} | null,
+ *   champion: {updatedAt?: number, symbols?: Record<string, unknown>, noTrade?: Record<string, unknown>, basis?: unknown} | null,
+ *   engineConfig: {universe?: {symbols?: string[], benchmark?: string, candidates?: string[]}, timeframe?: number, strategy?: {basis?: boolean}} | null,
  *   repoSymbols: string[],
  *   repoPool: string[],
  *   repoBenchmark?: string,
  *   repoMaxSymbols: number,
  *   repoTimeframe: number,
+ *   repoBasisUniverse?: string[],
+ *   repoBasisSchalter?: boolean,
+ *   minKorb?: number,
  *   nutzer: {uid: string, engineAn: boolean, live: boolean}[],
  *   herzschlagUrteil: {ok: boolean, text?: string},
  * }} e
@@ -86,6 +89,13 @@ export function beurteile(e) {
     if (ohne.length > 0) sage('fehler', `Gehandeltes Symbol ohne Champion-Urteil — Optimierer und Universum passen nicht zusammen: ${ohne.join(', ')}.`);
   }
 
+  // ── Basis-Stufe (Prüfbefund M11): Der Korb des Blocks `basis` ist das
+  // gehandelte Universum der Basis — er umgeht `engineConfig.universe.symbols`.
+  // Deshalb hier gegen den Pool des Repos (der sich nur per Commit ändert) und
+  // gegen den vorregistrierten Korb; und der Bericht sagt, ob die Basis
+  // bestanden hat, welche Symbole sie handelt und mit welcher Position.
+  beurteileBasis(e, pool, sage);
+
   // ── Nutzer
   const an = e.nutzer.filter((n) => n.engineAn);
   const live = an.filter((n) => n.live);
@@ -94,6 +104,43 @@ export function beurteile(e) {
 
   const fehler = befunde.filter((b) => b.stufe === 'fehler');
   return { befunde, ok: fehler.length === 0, fehler: fehler.length, warnungen: befunde.filter((b) => b.stufe === 'warnung').length };
+}
+
+/** Untergrenze des Basis-Korbs, unter der die Rang-Strategie stillhält (src/strategy/crossSectionalMomentum.ts, MIN_KORB). */
+export const BASIS_MIN_KORB = 8;
+
+/**
+ * Basis-Block der Champion-Datei beurteilen. Kein Block ⇒ nur eine Zeile, wenn
+ * das Repo einen Korb vorregistriert hat (dann fehlt die Messung).
+ * @param {Parameters<typeof beurteile>[0]} e
+ * @param {Set<string>} pool
+ * @param {(stufe: 'fehler'|'warnung'|'ok', text: string) => void} sage
+ */
+function beurteileBasis(e, pool, sage) {
+  const b = e.champion && typeof e.champion.basis === 'object' && e.champion.basis !== null ? /** @type {Record<string, unknown>} */ (e.champion.basis) : null;
+  const repoKorb = e.repoBasisUniverse ?? [];
+  if (!b) {
+    if (repoKorb.length > 0) sage('warnung', `Basis-Stufe: Repo nennt einen Basis-Korb (${repoKorb.length} Symbole), meta/champion hat keinen Block basis — die Messung fehlt noch.`);
+    return;
+  }
+  const symbole = Array.isArray(b.symbols) ? b.symbols.filter((s) => typeof s === 'string') : [];
+  const pass = b.pass === true;
+  const pct = typeof b.positionPct === 'number' ? `${b.positionPct} %` : 'ohne positionPct';
+  const label = typeof b.label === 'string' ? b.label : String(b.strategy ?? '?');
+  const globalAus = e.engineConfig?.strategy?.basis === false || e.repoBasisSchalter === false;
+  const fremd = symbole.filter((s) => !pool.has(s));
+  if (b.version !== 1) sage('fehler', `Basis-Stufe: Block basis mit Version ${String(b.version)} — unlesbar, die Basis handelt nicht.`);
+  if (fremd.length > 0) sage('fehler', `Basis-Stufe: Korb-Symbole außerhalb des Kandidatenpools: ${fremd.join(', ')}. Der Pool ändert sich nur per Commit; der Takt verwirft sie.`);
+  if (repoKorb.length > 0) {
+    const nichtVorregistriert = symbole.filter((s) => !repoKorb.includes(s));
+    const fehlend = repoKorb.filter((s) => !symbole.includes(s));
+    if (nichtVorregistriert.length > 0) sage('fehler', `Basis-Stufe: Korb-Symbole, die nicht in optimizer.basisUniverse stehen: ${nichtVorregistriert.join(', ')}.`);
+    if (fehlend.length > 0) sage('warnung', `Basis-Stufe: vorregistrierte Korb-Symbole ohne Messung im Block (keine Bars?): ${fehlend.join(', ')}.`);
+  }
+  const min = e.minKorb ?? BASIS_MIN_KORB;
+  if (symbole.length < min) sage('warnung', `Basis-Stufe: Korb hat ${symbole.length} Symbole, unter ${min} rangiert nichts — die Basis hält still.`);
+  const schalter = globalAus ? ' — plattformweit AUS (keine neuen Einstiege)' : '';
+  sage('ok', `Basis-Stufe „${label}": ${pass ? 'bestanden' : 'NICHT bestanden (keine neuen Einstiege)'}, ${symbole.length} Symbole (${symbole.join(', ')}), Position ${pct}${schalter}.`);
 }
 
 /** Markdown für die Job-Zusammenfassung. */

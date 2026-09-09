@@ -63,6 +63,13 @@ export const TRADE_STREAM_URL: Record<'paper' | 'live', string> = {
 
 const BASE_BACKOFF_MS = 1_000;
 const DEFAULT_MAX_BACKOFF_MS = 30_000;
+
+/**
+ * Abonnement-Limit des IEX-Basis-Plans je Verbindung. Darüber antwortet der
+ * Datenstrom mit 405 „symbol limit exceeded" — es wird dann NICHTS
+ * abonniert, auch nicht die ersten 30. `app.ts` prüft vor dem Start dagegen.
+ */
+export const IEX_STREAM_SYMBOL_MAX = 30;
 const DEFAULT_TIMEOUT_MS = 15_000;
 const JITTER_MS = 500;
 const MAX_AUTH_FAILURES = 3;

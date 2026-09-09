@@ -96,11 +96,20 @@ function doc(basis: Partial<ChampionBasis> | null = {}, o: { alpha?: string[]; n
 const cfg = (over: Record<string, unknown> = {}) => parseConfig({ universe: { symbols: ['SPY', 'IEF', 'GLD', 'AAPL'] }, timeframe: 1440, ...over });
 
 describe('Basis-Stufe ⇒ strategyFor (Alpha → Basis → noTrade)', () => {
-  it('championFromDoc liest den Block basis additiv; fremde Basis-Version ⇒ Fehler', () => {
+  it('championFromDoc liest den Block basis additiv; fremde Basis-Version oder kaputte params ⇒ Block weg mit Warnung, der Champion bleibt (M9)', () => {
     const c = championFromDoc(doc())!;
     expect(c.basis).toMatchObject({ strategy: 'regime_allocation', pass: true, symbols: ['SPY', 'IEF', 'GLD'], positionPct: 20 });
     expect(championFromDoc(doc(null))!.basis).toBeUndefined();
-    expect(() => championFromDoc({ version: 1, symbols: {}, noTrade: {}, basis: { version: 2 } })).toThrow(/Basis-Version/);
+    const warnungen: string[] = [];
+    const fremd = championFromDoc({ version: 1, symbols: { AAPL: entry('trend_donchian') }, noTrade: {}, basis: { version: 2 } }, (t) => warnungen.push(t))!;
+    expect(fremd.basis).toBeUndefined();
+    expect(Object.keys(fremd.symbols)).toEqual(['AAPL']);
+    expect(warnungen.join('\n')).toMatch(/meta\/champion: Basis-Block unlesbar \(unbekannte Basis-Version 2\)/);
+    const kaputt = championFromDoc({ version: 1, symbols: {}, noTrade: {}, basis: { ...basisBlock(), params: null } }, (t) => warnungen.push(t))!;
+    expect(kaputt.basis).toBeUndefined();
+    expect(warnungen.at(-1)).toMatch(/params ist kein Objekt/);
+    // Eine fremde DOC-Version wirft weiterhin — die kann man nicht additiv übergehen.
+    expect(() => championFromDoc({ version: 2 })).toThrow(/Champion-Version/);
   });
 
   it('WÄCHTER: Alpha vor Basis vor noTrade — SPY bleibt beim Champion, IEF (noTrade) und GLD handelt die Basis mit Allokation, AAPL nichts', () => {
@@ -124,22 +133,42 @@ describe('Basis-Stufe ⇒ strategyFor (Alpha → Basis → noTrade)', () => {
     expect(m.notes.join('\n')).toMatch(/SPY führt der Alpha-Champion/);
   });
 
-  it('WÄCHTER: pass false ⇒ die Basis handelt nichts — IEF bleibt noTrade, GLD nichts; Notiz nennt die Latte', () => {
-    const m = buildStrategyFor({ champion: championFromDoc(doc({ pass: false })), config: cfg() });
-    expect(m.tradable).toEqual(['SPY']);
-    expect(m.basisSymbols).toEqual([]);
-    expect(m.fn('IEF')).toBeNull();
-    expect(m.fn('GLD')).toBeNull();
-    expect(m.notes.join('\n')).toMatch(/Latte nicht bestanden/);
+  it('WÄCHTER (M6): pass false ⇒ die Basis ERÖFFNET nichts (entriesAllowed false) — führt IEF (noTrade) und GLD aber weiter; Notiz nennt Latte und Bestand', () => {
+    const m = buildStrategyFor({ champion: championFromDoc(doc({ pass: false })), config: cfg(), held: ['GLD', 'AAPL'] });
+    expect(m.tradable).toEqual(['SPY', 'IEF', 'GLD']);
+    expect(m.basisSymbols).toEqual(['IEF', 'GLD']);
+    expect(m.fn('IEF')).toMatchObject({ source: 'basis', entriesAllowed: false, sizing: { mode: 'allocation', positionPct: 20 } });
+    expect(m.fn('IEF')?.entryLockReason).toMatch(/Latte nicht bestanden — keine neuen Einstiege/);
+    expect(m.fn('GLD')?.entriesAllowed).toBe(false);
+    expect(m.fn('SPY')?.entriesAllowed).toBeUndefined();
+    expect(m.notes.join('\n')).toMatch(/Latte nicht bestanden — keine neuen Einstiege; offene Basis-Positionen führt die Basis-Strategie zu Ende \(eigene Exits, Broker-Stop bleibt\): GLD/);
   });
 
-  it('Nutzer-Schalter aus (strategy.basis false) ⇒ keine Basis, Notiz „vom Nutzer abgeschaltet"; an ⇒ Basis', () => {
+  it('Schalter aus (strategy.basis false = global ∧ Nutzer) ⇒ Wahl ohne Einstiegsrecht, Notiz „Schalter aus"; an ⇒ Einstiegsrecht', () => {
     const aus = buildStrategyFor({ champion: championFromDoc(doc()), config: cfg({ strategy: { basis: false } }) });
-    expect(aus.basisSymbols).toEqual([]);
-    expect(aus.fn('GLD')).toBeNull();
-    expect(aus.notes.join('\n')).toMatch(/vom Nutzer abgeschaltet/);
+    expect(aus.basisSymbols).toEqual(['IEF', 'GLD']);
+    expect(aus.fn('GLD')).toMatchObject({ entriesAllowed: false, entryLockReason: expect.stringMatching(/Schalter aus \(strategy\.basis\)/) });
+    expect(aus.notes.join('\n')).toMatch(/Schalter aus \(strategy\.basis\) — keine neuen Einstiege/);
     const an = buildStrategyFor({ champion: championFromDoc(doc()), config: cfg({ strategy: { basis: true } }) });
     expect(an.basisSymbols).toEqual(['IEF', 'GLD']);
+    expect(an.fn('GLD')).toMatchObject({ entriesAllowed: true });
+  });
+
+  it('WÄCHTER (M11): Korb-Symbole außerhalb des Kandidatenpools der Config werden verworfen und genannt; ohne Pool eine Notiz', () => {
+    // Der Pool ist candidates ∪ symbols — IEF steht in keinem von beiden.
+    const mitPool = buildStrategyFor({ champion: championFromDoc(doc()), config: cfg({ universe: { symbols: ['SPY', 'GLD', 'AAPL'], candidates: ['SPY', 'GLD', 'TLT'] } }) });
+    expect(mitPool.basisSymbols).toEqual(['GLD']);
+    expect(mitPool.fn('IEF')).toBeNull();
+    expect(buildStrategyFor({ champion: championFromDoc(doc()), config: cfg({ universe: { symbols: ['SPY', 'IEF', 'GLD', 'AAPL'], candidates: ['TLT'] } }) }).basisSymbols).toEqual(['IEF', 'GLD']);
+    expect(mitPool.notes.join('\n')).toMatch(/außerhalb des Kandidatenpools verworfen: IEF/);
+    const ohnePool = buildStrategyFor({ champion: championFromDoc(doc()), config: cfg() });
+    expect(ohnePool.notes.join('\n')).toMatch(/Korb ungeprüft — meta\/engineConfig ohne Kandidatenpool/);
+  });
+
+  it('G15: die Basis-Notiz nennt den wirksamen Deckel des Nutzers (maxPositionPct 10 < positionPct 20)', () => {
+    const m = buildStrategyFor({ champion: championFromDoc(doc()), config: cfg({ risk: { maxPositionPct: 10 } }) });
+    expect(m.notes.join('\n')).toMatch(/Position 20 % der Equity je Symbol, durch risk\.maxPositionPct auf 10 % gedeckelt/);
+    expect(m.fn('GLD')?.sizing).toEqual({ mode: 'allocation', positionPct: 20 });
   });
 
   it('Zeitrahmen des Blocks ≠ Config ⇒ keine Basis, mit Notiz; Block ohne positionPct ⇒ keine Basis', () => {

@@ -251,8 +251,15 @@ export class FakeAlpaca implements AlpacaClient {
       if (o.clientOrderId === order.clientOrderId) throw new AlpacaError('client_order_id must be unique', 422, 40010001, false);
     }
     if (!(order.qty > 0)) throw new AlpacaError('qty must be > 0', 422, 42210000, false);
-    if (this.assetClass === 'us_equity' && order.orderClass === 'bracket' && !Number.isInteger(order.qty)) {
+    if (this.assetClass === 'us_equity' && (order.orderClass === 'bracket' || order.orderClass === 'oto') && !Number.isInteger(order.qty)) {
       throw new AlpacaError('bracket orders require whole shares', 422, 42210000, false);
+    }
+    // Wie Alpaca: `bracket` verlangt BEIDE Beine, `oto` genau EINES (Prüfbefund K3).
+    if (order.orderClass === 'bracket' && (!order.stopLoss || !order.takeProfit)) {
+      throw new AlpacaError('bracket orders require take_profit and stop_loss', 422, 42210000, false);
+    }
+    if (order.orderClass === 'oto' && Boolean(order.stopLoss) === Boolean(order.takeProfit)) {
+      throw new AlpacaError('oto orders require exactly one of take_profit or stop_loss', 422, 42210000, false);
     }
     const id = this.nextId();
     const now = this.now();
@@ -279,18 +286,20 @@ export class FakeAlpaca implements AlpacaClient {
     };
     this.orders.set(id, o);
     this.meta.set(id, { parentId: null, ocoId: null, pendingCancelPolls: 0 });
-    if (order.orderClass === 'bracket') {
-      if (!order.stopLoss) throw new AlpacaError('bracket orders require stop_loss', 422, 42210000, false);
+    if (order.orderClass === 'bracket' || order.orderClass === 'oto') {
       const legSide = order.side === 'buy' ? 'sell' : 'buy';
-      const sl = this.createLeg(o, {
-        side: legSide,
-        type: order.stopLoss.limitPrice !== undefined ? 'stop_limit' : 'stop',
-        stopPrice: order.stopLoss.stopPrice,
-        limitPrice: order.stopLoss.limitPrice ?? null,
-        suffix: 'sl',
-      });
-      if (order.takeProfit) {
-        const tp = this.createLeg(o, { side: legSide, type: 'limit', stopPrice: null, limitPrice: order.takeProfit.limitPrice, suffix: 'tp' });
+      const sl = order.stopLoss
+        ? this.createLeg(o, {
+            side: legSide,
+            type: order.stopLoss.limitPrice !== undefined ? 'stop_limit' : 'stop',
+            stopPrice: order.stopLoss.stopPrice,
+            limitPrice: order.stopLoss.limitPrice ?? null,
+            suffix: 'sl',
+            orderClass: order.orderClass,
+          })
+        : null;
+      const tp = order.takeProfit ? this.createLeg(o, { side: legSide, type: 'limit', stopPrice: null, limitPrice: order.takeProfit.limitPrice, suffix: 'tp', orderClass: order.orderClass }) : null;
+      if (sl && tp) {
         this.meta.get(sl.id)!.ocoId = tp.id;
         this.meta.get(tp.id)!.ocoId = sl.id;
       }
@@ -452,7 +461,10 @@ export class FakeAlpaca implements AlpacaClient {
     return { ...o, legs: this.children(o.id).map((c) => ({ ...c, legs: [] })) };
   }
 
-  private createLeg(parent: AlpacaOrder, a: { side: 'buy' | 'sell'; type: AlpacaOrder['type']; stopPrice: number | null; limitPrice: number | null; suffix: string }): AlpacaOrder {
+  private createLeg(
+    parent: AlpacaOrder,
+    a: { side: 'buy' | 'sell'; type: AlpacaOrder['type']; stopPrice: number | null; limitPrice: number | null; suffix: string; orderClass?: AlpacaOrder['orderClass'] },
+  ): AlpacaOrder {
     const id = `${parent.id}-${a.suffix}`;
     const leg: AlpacaOrder = {
       id,
@@ -461,7 +473,7 @@ export class FakeAlpaca implements AlpacaClient {
       side: a.side,
       type: a.type,
       timeInForce: parent.timeInForce,
-      orderClass: 'bracket',
+      orderClass: a.orderClass ?? 'bracket',
       qty: parent.qty,
       notional: null,
       filledQty: 0,

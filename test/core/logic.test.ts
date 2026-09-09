@@ -236,6 +236,69 @@ describe('Basis-Stufe in decide(): Allokations-Sizing, dieselben Bremsen', () =>
   });
 });
 
+describe('Einstiegsrecht der Wahl (Prüfbefund M6/M8): entriesAllowed false sperrt nur Einstiege', () => {
+  const alloc = { mode: 'allocation' as const, positionPct: 20 };
+  const weit: Decision = { kind: 'enter', side: 'long', stop: 80, reason: 'Basis' };
+
+  it('WÄCHTER: entriesAllowed false ⇒ kein Einstieg, Notiz mit Grund; true oder fehlend ⇒ Einstieg', () => {
+    const gesperrt = decide(ctx(), [input(weit, { sizing: alloc, entriesAllowed: false, entryLockReason: 'Latte nicht bestanden' })]);
+    expect(gesperrt.intents).toHaveLength(0);
+    expect(gesperrt.notes.some((n) => n.kind === 'blocked' && /Einstiege gesperrt: Latte nicht bestanden/.test(n.text))).toBe(true);
+    expect(decide(ctx(), [input(weit, { sizing: alloc, entriesAllowed: true })]).intents).toHaveLength(1);
+    expect(decide(ctx(), [input(weit, { sizing: alloc })]).intents).toHaveLength(1);
+  });
+
+  it('WÄCHTER: der gesperrte Kandidat belegt keinen Platz — der nächste Kandidat kommt an den Platz', () => {
+    const r = decide(ctx({ risk: { ...cfg.risk, maxPositions: 1 } }), [
+      input(weit, { sizing: alloc, entriesAllowed: false, entryLockReason: 'aus' }),
+      input(weit, { sizing: alloc }, { symbol: 'MSFT' }),
+    ]);
+    expect(r.intents.map((i) => i.symbol)).toEqual(['MSFT']);
+  });
+
+  it('WÄCHTER: Exits der eigenen Strategie laufen ohne Einstiegsrecht weiter — Signal-Exit, Stop-Nachzug, Notbremse', () => {
+    const pos = longPos();
+    const exit = decide(ctx({ positions: new Map([['AAPL', pos]]) }), [input({ kind: 'exit', reason: 'Regime verloren' }, { sizing: alloc, entriesAllowed: false }, { position: pos })]);
+    expect(exit.intents).toEqual([{ kind: 'exit', symbol: 'AAPL', reason: 'signal', decidedAt: 5_000_000 }]);
+    const stop = decide(ctx({ positions: new Map([['AAPL', pos]]) }), [input({ kind: 'move_stop', stop: 94, reason: 'enger' }, { entriesAllowed: false }, { position: pos })]);
+    expect(stop.intents).toMatchObject([{ kind: 'move_stop', symbol: 'AAPL', stop: 94 }]);
+    const acc = { equity: 8_000, cash: 8_000, dayStartEquity: 8_000, peakEquity: 10_000, dayTradeCount: 0, patternDayTrader: false };
+    const bremse = decide(ctx({ positions: new Map([['AAPL', pos]]), account: acc }), [input({ kind: 'hold' }, { entriesAllowed: false }, { position: pos })]);
+    expect(bremse.intents).toEqual([{ kind: 'exit', symbol: 'AAPL', reason: 'drawdown', decidedAt: 5_000_000 }]);
+  });
+});
+
+describe('Fremde Führung (Prüfbefund M4): eine andere Strategie führt die Position nicht', () => {
+  const fremd = (decision: Decision): Strategy => ({ ...stub(decision), id: 'andere' });
+
+  it('WÄCHTER: Position der Strategie A, Symbol führt jetzt B ⇒ kein Exit-Intent aus B-Signalen, kein Stop-Nachzug, Notiz', () => {
+    const pos = longPos(); // strategy 'stub'
+    const positions = new Map([['AAPL', pos]]);
+    const exit = decide(ctx({ positions }), [input({ kind: 'exit', reason: 'B sagt raus' }, { strategy: fremd({ kind: 'exit', reason: 'B sagt raus' }) }, { position: pos })]);
+    expect(exit.intents).toHaveLength(0);
+    expect(exit.notes.some((n) => n.kind === 'info' && /Position der Strategie stub — andere führt sie nicht/.test(n.text))).toBe(true);
+    const trailing = decide(ctx({ positions }), [input({ kind: 'move_stop', stop: 99, reason: 'ATR' }, { strategy: fremd({ kind: 'move_stop', stop: 99, reason: 'ATR' }) }, { position: pos })]);
+    expect(trailing.intents).toHaveLength(0);
+    // EOD-Flatten ist eine Regel der neuen Strategie — gilt für die fremde Position nicht.
+    const intraday = { ...fremd({ kind: 'hold' }), holdsOvernight: false };
+    const eod = decide(ctx({ positions }), [input({ kind: 'hold' }, { strategy: intraday }, { position: pos, session: { ...okSession, minutesToClose: 6 } })]);
+    expect(eod.intents).toHaveLength(0);
+  });
+
+  it('WÄCHTER: die Notbremse stellt auch fremd geführte Positionen glatt — Exits werden nie gesperrt', () => {
+    const pos = longPos();
+    const acc = { equity: 8_000, cash: 8_000, dayStartEquity: 8_000, peakEquity: 10_000, dayTradeCount: 0, patternDayTrader: false };
+    const r = decide(ctx({ positions: new Map([['AAPL', pos]]), account: acc }), [input({ kind: 'hold' }, { strategy: fremd({ kind: 'hold' }) }, { position: pos })]);
+    expect(r.intents).toEqual([{ kind: 'exit', symbol: 'AAPL', reason: 'drawdown', decidedAt: 5_000_000 }]);
+  });
+
+  it('dieselbe Strategie führt wie bisher: Exit-Signal ⇒ Exit', () => {
+    const pos = longPos();
+    const r = decide(ctx({ positions: new Map([['AAPL', pos]]) }), [input({ kind: 'exit', reason: 'x' }, {}, { position: pos })]);
+    expect(r.intents).toHaveLength(1);
+  });
+});
+
 describe('Offene Position', () => {
   it('Exit-Signal wird ausgeführt — auch im Halt', () => {
     const positions = new Map([['AAPL', longPos()]]);
@@ -303,6 +366,13 @@ describe('Konto-Sperren', () => {
 });
 
 describe('Positions-Hilfen', () => {
+  it('openPosition trägt die Stufe nur, wenn sie gegeben ist (additiv; der Simulator lässt sie weg)', () => {
+    const mit = openPosition({ symbol: 'AAPL', side: 'long', qty: 1, fillPrice: 100, fillTime: 1, stop: 90, target: null, strategy: 's', entryDay: 'd', stufe: 'basis' });
+    expect(mit.stufe).toBe('basis');
+    const ohne = openPosition({ symbol: 'AAPL', side: 'long', qty: 1, fillPrice: 100, fillTime: 1, stop: 90, target: null, strategy: 's', entryDay: 'd' });
+    expect('stufe' in ohne).toBe(false);
+  });
+
   it('advancePosition zählt Bars und führt das Hochwasser', () => {
     const p = advancePosition(advancePosition(longPos({ highWater: 95 }), 99), 97);
     expect(p.barsHeld).toBe(2);

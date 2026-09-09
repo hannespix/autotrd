@@ -23,7 +23,7 @@ import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { createDataStream, createTradeStream } from './alpaca/stream.ts';
-import { allSymbols, baseTimeframe, benchmarkSeries, bootstrap, engineConfig, fetchSymbols, requireClient, seriesForTimeframe, strategyChoice, strategyForFn, type App } from './app.ts';
+import { allSymbols, baseTimeframe, benchmarkSeries, bootstrap, engineConfig, fetchSymbols, heldSymbols, requireClient, seriesForTimeframe, strategyChoice, strategyForFn, streamLimitViolation, type App } from './app.ts';
 import { simulate } from './backtest/simulator.ts';
 import { ConfigError } from './core/config.ts';
 import { ensureDir, writeJsonAtomic } from './core/journal.ts';
@@ -248,9 +248,10 @@ async function cmdDoctor(app: App): Promise<number> {
     ['Kalender', app.calendar ? `${app.calendar.size} Handelstage gecacht` : 'nicht gecacht (Fallback-Kalender)'],
   ];
   table(rows);
-  const streamSymbols = allSymbols(app.config).length;
-  if (app.config.broker.feed === 'iex' && streamSymbols > 30) {
-    out(`  WARNUNG: ${streamSymbols} Symbole (inkl. Benchmark) — der IEX-Datenstrom des Basis-Plans erlaubt 30. Die Subscription würde mit 405 scheitern.`);
+  // Wie `run`: das Universum der Engine (mit Basis-Korb, sofern etwas offen ist oder die Basis handelt).
+  const streamLimit = streamLimitViolation(engineConfig(app, heldSymbols(app)));
+  if (streamLimit) {
+    out(`  WARNUNG: ${streamLimit} — \`run\` verweigert den Start.`);
     hard++;
   }
   out();
@@ -618,15 +619,24 @@ async function cmdOptimize(app: App, cli: Cli): Promise<number> {
 async function cmdRun(app: App): Promise<number> {
   const client = requireClient(app);
   const strategyFor = strategyForFn(app);
-  // Universum der Engine: die Config plus den Korb der Basis-Stufe (core/basisTier.ts),
-  // wenn die Champion-Datei einen bestandenen Block `basis` trägt und `strategy.basis` an ist.
-  const config = engineConfig(app);
+  // Universum der Engine: die Config plus den Korb der Basis-Stufe (core/basisTier.ts), wenn die
+  // Champion-Datei einen bestandenen Block `basis` trägt und `strategy.basis` an ist — oder wenn die Basis
+  // nur noch führt und laut state.json etwas im Korb offen ist (dann keine neuen Einstiege).
+  const config = engineConfig(app, heldSymbols(app));
   const traded = config.universe.symbols.filter((s) => strategyFor(s) !== null);
   if (!traded.length) {
     out('Kein Symbol handelbar: kein Champion (autotrd optimize) und strategy.allowWithoutChampion=false. Engine startet nicht.');
     return 1;
   }
+  // Prüfbefund M10: Über dem IEX-Abonnement-Limit käme der Datenstrom nie zustande, und die Engine sperrte
+  // STILL jeden Einstieg (Datenfrische) — Alpha wie Basis. Lieber gar nicht starten als leer laufen.
+  const streamLimit = streamLimitViolation(config);
+  if (streamLimit) {
+    out(`Engine startet nicht: ${streamLimit}`);
+    return 1;
+  }
   const basisSymbole = traded.filter((s) => strategyChoice(app, s)?.source === 'basis');
+  const basisGesperrt = basisSymbole.filter((s) => strategyChoice(app, s)?.entriesAllowed === false);
   const notify = createNotifier({ config: app.config, env: app.env });
   const dataStream = createDataStream({ keyId: app.env.ALPACA_API_KEY, secret: app.env.ALPACA_SECRET_KEY, feed: app.config.broker.feed, assetClass: app.config.universe.assetClass });
   const tradeStream = createTradeStream({ keyId: app.env.ALPACA_API_KEY, secret: app.env.ALPACA_SECRET_KEY, mode: app.mode });
@@ -646,6 +656,7 @@ async function cmdRun(app: App): Promise<number> {
   });
   out(`autotrd run · ${app.mode.toUpperCase()} · ${traded.join(', ')} · ${app.config.timeframe} min · Home ${app.home}`);
   if (basisSymbole.length) out(`Basis-Allokation (Block basis, Allokation ${app.champion?.basis?.positionPct ?? '?'} % je Symbol): ${basisSymbole.join(', ')}`);
+  if (basisGesperrt.length) out(`  Basis ohne Einstiegsrecht (${strategyChoice(app, basisGesperrt[0]!)?.entryLockReason ?? 'gesperrt'}): ${basisGesperrt.join(', ')} — Bestand wird zu Ende geführt`);
   if (app.mode === 'live') out('ECHTGELD — Doppel-Guard erfüllt (mode=live, ALPACA_ALLOW_LIVE=1, AK-Key).');
   for (const r of app.modeReasons) out(`  ${r}`);
   await engine.start();

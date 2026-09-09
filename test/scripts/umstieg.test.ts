@@ -68,12 +68,24 @@ describe('Umstieg: meta/engineConfig', () => {
     expect(doc.riskDefaults.maxDailyLossPct).toBe(2);
   });
 
-  it('trägt den Kandidatenpool NICHT — er wird nirgends gebraucht und jede Minute von jedem Nutzer gelesen', () => {
+  /**
+   * Seit Prüfbefund M11 geht der Kandidatenpool MIT: Der Takt prüft den Korb des
+   * Champion-Blocks `basis` dagegen — sonst schriebe `meta/champion.basis.symbols`
+   * das gehandelte Universum am Pool vorbei. `maxSymbols` bleibt Sache der Auswahl.
+   */
+  it('trägt den Kandidatenpool (für die Korb-Prüfung der Basis) und den globalen Basis-Schalter, aber kein maxSymbols', () => {
     const cfg = parseConfig(parseYaml(readFileSync('config/platform.yaml', 'utf8')));
     expect(cfg.universe.candidates?.length ?? 0, 'Vorbedingung: die Plattform-Config hat einen Pool').toBeGreaterThan(30);
     const doc = engineConfigDocFrom(cfg);
-    expect(doc.universe.candidates).toBeUndefined();
+    expect(doc.universe.candidates).toEqual(cfg.universe.candidates);
     expect(doc.universe.maxSymbols).toBeUndefined();
-    expect(Object.keys(doc.universe).sort()).toEqual(['assetClass', 'benchmark', 'symbols']);
+    expect(Object.keys(doc.universe).sort()).toEqual(['assetClass', 'benchmark', 'candidates', 'symbols']);
+    // Nur der Schalter — nicht allowWithoutChampion (das ließe jeden Nutzer ohne Champion handeln).
+    expect(doc.strategy).toEqual({ basis: cfg.strategy.basis });
+    const aus = engineConfigDocFrom({ ...cfg, strategy: { ...cfg.strategy, basis: false, allowWithoutChampion: true } });
+    expect(aus.strategy).toEqual({ basis: false });
+    // Ohne Pool in der Config fehlt das Feld im Doc.
+    const ohne = engineConfigDocFrom(parseConfig({ universe: { symbols: ['SPY'] } }));
+    expect(ohne.universe.candidates).toBeUndefined();
   });
 });

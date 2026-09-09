@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ConfigError } from '../../../src/core/config.ts';
-import { buildUserConfig, DEFAULT_UNIVERSE, globalConfigRaw, userRiskFrom } from '../../src/engine/config.ts';
+import { buildUserConfig, DEFAULT_UNIVERSE, globalBasisSchalter, globalConfigRaw, userRiskFrom } from '../../src/engine/config.ts';
 
 describe('Config je Nutzer', () => {
   it('ohne meta/engineConfig und ohne Settings: eingebaute Defaults, Schema-Defaults im Risiko', () => {
@@ -77,6 +77,25 @@ describe('Config je Nutzer', () => {
     // Der Schalter landet im strategy-Block, ohne die globalen Felder zu verlieren.
     const mitGlobal = buildUserConfig(globalConfigRaw({ strategy: { allowWithoutChampion: true } }), { auto: { basis: false } });
     expect(mitGlobal.config.strategy).toMatchObject({ allowWithoutChampion: true, basis: false });
+  });
+
+  it('WÄCHTER (M8): globaler Schalter ∧ Nutzer-Schalter — beide müssen an sein; der Nutzerteil überschreibt das Globale nicht mehr', () => {
+    const globalAus = globalConfigRaw({ strategy: { basis: false } });
+    const globalAn = globalConfigRaw({ strategy: { basis: true } });
+    const ohneFeld = globalConfigRaw({ strategy: { allowWithoutChampion: false } });
+    expect(buildUserConfig(globalAus, { auto: { basis: true } }).config.strategy.basis).toBe(false);
+    expect(buildUserConfig(globalAus, { auto: {} }).config.strategy.basis).toBe(false);
+    expect(buildUserConfig(globalAus, undefined).config.strategy.basis).toBe(false);
+    expect(buildUserConfig(globalAn, { auto: { basis: false } }).config.strategy.basis).toBe(false);
+    expect(buildUserConfig(globalAn, { auto: { basis: true } }).config.strategy.basis).toBe(true);
+    expect(buildUserConfig(ohneFeld, { auto: { basis: true } }).config.strategy.basis).toBe(true);
+    expect(buildUserConfig(globalAus, { auto: { basis: true } }).basisSchalter).toEqual({ global: false, nutzer: true });
+    expect(buildUserConfig(globalAn, { auto: { basis: false } }).basisSchalter).toEqual({ global: true, nutzer: false });
+    expect(globalBasisSchalter({})).toBe(true);
+    expect(globalBasisSchalter({ strategy: { basis: 'nein' } })).toBe(true); // nur ein echtes false schaltet ab
+    // Der Kandidatenpool des Docs kommt als universe.candidates in die Config (Korb-Prüfung der Basis, M11).
+    const mitPool = buildUserConfig(globalConfigRaw({ universe: { symbols: ['SPY'], candidates: ['SPY', 'IEF', 'brk-b'] } }), undefined);
+    expect(mitPool.config.universe.candidates).toEqual(['SPY', 'IEF', 'BRK.B']);
   });
 
   it('Krypto-Universum: Nutzer-Symbole werden auf die kanonische Schreibweise gebracht', () => {

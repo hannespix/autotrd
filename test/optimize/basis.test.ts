@@ -33,10 +33,10 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BarSeries } from '../../src/core/bars.ts';
 import { ConfigError, parseConfig, type OptimizerInput } from '../../src/core/config.ts';
-import { Journal, homePaths } from '../../src/core/journal.ts';
+import { Journal, homePaths, writeJsonAtomic } from '../../src/core/journal.ts';
 import { DAY } from '../../src/core/time.ts';
 import type { Bar, BarSeriesLike, EquityPoint, SimResult, Strategy, Trade } from '../../src/core/types.ts';
-import { emptyChampionFile, loadChampion, saveChampion } from '../../src/optimize/promote.ts';
+import { emptyChampionFile, loadChampion, parseChampionBasis, saveChampion } from '../../src/optimize/promote.ts';
 import { basisGates, type BasisGateInput } from '../../src/optimize/robustness.ts';
 import { nichtsGemessen, runOptimization, type OptimizeRunInput } from '../../src/optimize/run.ts';
 import { basisKennzahlen, basisScheiben, basisSimulation, foldPlanForBars, handelstageZwischen, type SimulateFn } from '../../src/optimize/walkForward.ts';
@@ -557,11 +557,41 @@ describe('(g) Champion-Datei: basis-Block geschrieben, gelesen, behalten, geräu
     expect(out.champion.noTrade).toEqual({});
   });
 
-  it('eine fremde Basis-Version wird nicht geraten', () => {
+  it('WÄCHTER (M9): eine fremde Basis-Version wird nicht geraten — und reißt die Datei NICHT mit: Block weg, Warnung, Alpha-Pfad lädt', () => {
     const home = tmp();
     const paths = homePaths(home);
-    saveChampion(paths.champion, { ...emptyChampionFile(1), basis: { version: 2 } as never });
-    expect(() => loadChampion(paths.champion)).toThrow(/unbekannte Basis-Version 2/);
+    saveChampion(paths.champion, { ...emptyChampionFile(1), noTrade: { AAA: { reason: 'alt', decidedAt: 1, bestScore: null } }, basis: { version: 2 } as never });
+    const warnungen: string[] = [];
+    const file = loadChampion(paths.champion, (t) => warnungen.push(t))!;
+    expect(file.basis).toBeUndefined();
+    expect(file.noTrade.AAA!.reason).toBe('alt');
+    expect(warnungen.join('\n')).toMatch(/Basis-Block unlesbar \(unbekannte Basis-Version 2\)/);
+    // Auch params ≠ Objekt oder eine fehlende Version: Block weg, Datei bleibt. Eine fremde DATEI-Version wirft weiterhin.
+    saveChampion(paths.champion, { ...emptyChampionFile(1), basis: { version: 1, strategy: 'x', params: null, symbols: ['A'], timeframe: 1440, pass: true } as never });
+    expect(loadChampion(paths.champion, () => undefined)!.basis).toBeUndefined();
+    saveChampion(paths.champion, { ...emptyChampionFile(1), basis: { strategy: 'x', params: {}, symbols: ['A'], timeframe: 1440, pass: true } as never });
+    expect(loadChampion(paths.champion, () => undefined)!.basis).toBeUndefined();
+    writeJsonAtomic(paths.champion, { version: 2 });
+    expect(() => loadChampion(paths.champion)).toThrow(/unbekannte Champion-Version 2/);
+  });
+
+  it('parseChampionBasis: vollständiger Block liest sich; Beiwerk (Label, Gates, Messzeit) wird ergänzt; Pflichtfelder streng', () => {
+    const ok = parseChampionBasis({ version: 1, strategy: 'regime_allocation', params: { lookback: 126 }, symbols: ['SPY', 'IEF'], timeframe: 1440, pass: false, positionPct: 20 });
+    expect(ok.ok && ok.basis).toMatchObject({ strategy: 'regime_allocation', params: { lookback: 126 }, symbols: ['SPY', 'IEF'], label: 'regime_allocation', gates: [], measuredAt: 0, pass: false, positionPct: 20 });
+    for (const kaputt of [
+      null,
+      [],
+      { version: 1, strategy: '', params: {}, symbols: [], timeframe: 1440, pass: true },
+      { version: 1, strategy: 'x', params: { a: 'zehn' }, symbols: [], timeframe: 1440, pass: true },
+      { version: 1, strategy: 'x', params: {}, symbols: 'SPY', timeframe: 1440, pass: true },
+      { version: 1, strategy: 'x', params: {}, symbols: [], timeframe: 7, pass: true },
+      { version: 1, strategy: 'x', params: {}, symbols: [], timeframe: 1440, pass: 'ja' },
+      { version: 1, strategy: 'x', params: {}, symbols: [], timeframe: 1440, pass: true, positionPct: '20' },
+    ]) {
+      const r = parseChampionBasis(kaputt);
+      expect(r.ok, JSON.stringify(kaputt)).toBe(false);
+      expect(!r.ok && r.error).toMatch(/Basis-Block unlesbar/);
+    }
   });
 });
 
@@ -641,7 +671,8 @@ describe('(i) optimizer.basisUniverse: eigene Einheit der Basis, Alpha-Einheit u
     const out = runOptimization(
       input(home, {
         symbols: ['AAA', 'BBB'],
-        candidates: ['CCC'],
+        // Der Basis-Korb muss im Pool stehen (Prüfbefund M11) — IEF und GLD sind deshalb Kandidaten.
+        candidates: ['CCC', 'IEF', 'GLD'],
         optimizer: { pooled: true, foldMembership: 'point_in_time', basisUniverse: ['IEF', 'GLD', 'AAA'], basis: { positionPct: 25 } },
         barsFor: (s) => serien[s] ?? zickzack,
         candidateBarsFor: (s) => serien[s] ?? null,

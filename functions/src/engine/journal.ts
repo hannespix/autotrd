@@ -54,7 +54,7 @@ export interface FirestoreJournalOptions {
   log?: typeof logger | undefined;
   /** Stempel `at` der Trade-Docs; Default `Timestamp.now()` des Admin-SDK (erst beim Schreiben geladen). */
   timestampNow?: (() => unknown) | undefined;
-  /** Stufe (champion/basis/config), die das Symbol dieses Trades führt — fürs Trade-Doc (`stufe`); undefined ⇒ Feld fehlt. */
+  /** Rückfall für die Stufe (champion/basis/config) eines Trades ohne eigene `stufe` — fürs Trade-Doc; undefined ⇒ Feld fehlt. */
   stufeFor?: ((symbol: string, strategyId: string) => string | undefined) | undefined;
 }
 
@@ -252,7 +252,8 @@ export class FirestoreJournal implements JournalLike {
         fxExit,
         at: await this.stamp(),
         orderId: typeof ev.orderId === 'string' ? ev.orderId : null,
-        stufe: this.stufeFor?.(t.symbol, t.strategy),
+        // Die Stufe trägt der Trade selbst (aus der Position, Prüfbefund G14); die Wahl von heute ist nur Rückfall.
+        stufe: t.stufe ?? this.stufeFor?.(t.symbol, t.strategy),
       });
       ops.push((b) => b.set(tradesCol.doc(tradeDocId(uid, t, 'entry')), docs.entry));
       ops.push((b) => b.set(tradesCol.doc(tradeDocId(uid, t, 'exit')), docs.exit));

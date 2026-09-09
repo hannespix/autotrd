@@ -12,8 +12,10 @@
  * Schritt ab — dann steht in Firestore weiter die letzte gültige Config, statt
  * dass die Plattform etwas Unverstandenes handelt.
  *
- * Es wird NUR der nutzerunabhängige Teil übertragen (universe, timeframe,
- * session, costs, engine ohne barGraceSec, broker.feed). Risiko und
+ * Es wird NUR der nutzerunabhängige Teil übertragen (universe samt
+ * Kandidatenpool, timeframe, session, costs, engine ohne barGraceSec,
+ * broker.feed/adjustment, der globale Basis-Schalter strategy.basis —
+ * Einzelheiten in scripts/module/engineConfig.mjs). Risiko und
  * Benachrichtigung sind je Nutzer und bleiben in dessen Einstellungen. Die Datei wird vorher mit dem
  * Schema des Kerns validiert — eine ungültige Config erreicht Firestore nie.
  */

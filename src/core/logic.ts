@@ -103,6 +103,17 @@ export interface SymbolInput {
    * Handel zwei Welten.
    */
   sizing?: SizingSpec | undefined;
+  /**
+   * Einstiegsrecht der Wahl: `false` ⇒ diese Strategie darf in diesem Symbol
+   * KEINE neue Position eröffnen, führt eine offene aber weiter (eigene
+   * Exits, Stop-Nachzug — Exits werden nie gesperrt, §0.4). So sperrt ein
+   * gefallenes `pass`, ein Schalter „aus" oder ein Block ohne Freigabe die
+   * Basis-Stufe nur nach vorn, statt alle Konten zu liquidieren (Prüfbefund
+   * M6/M8). Fehlt das Feld, sind Einstiege erlaubt; der Simulator setzt es nie.
+   */
+  entriesAllowed?: boolean | undefined;
+  /** Grund der Einstiegssperre (fürs Journal), wenn `entriesAllowed` false ist. */
+  entryLockReason?: string | undefined;
 }
 
 export interface LogicNote {
@@ -365,6 +376,22 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
       continue;
     }
 
+    // Fremde Führung (Prüfbefund M4, 09.09.2026): Die Position hat eine ANDERE
+    // Strategie eröffnet als die, die das Symbol heute führt (Alpha-Beförderung,
+    // Basis-Wechsel über Nacht). Die neue Strategie hat für diese Position keine
+    // gemessene Regel — ihr Signal-Exit, ihr Trailing und ihr EOD-Flatten wären
+    // fremde Regeln (der 20-%-Katastrophen-Stop würde zum ATR-Trailing: die
+    // Fehlerklasse „Trailing vom Einstand" aus CLAUDE.md §2). Also: halten,
+    // nichts nachziehen; der Broker-Stop bleibt, wie er liegt. Die Notbremsen
+    // oben laufen über `ctx.positions` und stellen auch diese Position glatt —
+    // Exits werden nie gesperrt. Neue Einstiege gibt es mit offener Position
+    // ohnehin nicht. Im Simulator kommt der Fall nicht vor (eine Strategie je
+    // Symbol und Lauf); live steht die Notiz dazu im Journal (engine.ts).
+    if (pos && pos.strategy !== strategy.id) {
+      notes.push({ symbol: sym, kind: 'info', text: `Position der Strategie ${pos.strategy} — ${strategy.id} führt sie nicht (kein Signal-Exit, kein Stop-Nachzug, Broker-Stop bleibt)` });
+      continue;
+    }
+
     const decision = strategy.decide(snap, ind, params);
 
     if (pos) {
@@ -413,6 +440,12 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
     }
     if (ctx.entryLock) {
       block(`Einstiege gesperrt: ${ctx.entryLock}`);
+      continue;
+    }
+    // Einstiegsrecht der Wahl (Basis ohne Freigabe: pass gefallen, Schalter aus):
+    // nur Einstiege — Exits liefen oben, unberührt.
+    if (inp.entriesAllowed === false) {
+      block(`Einstiege gesperrt: ${inp.entryLockReason ?? 'Wahl ohne Einstiegsrecht'}`);
       continue;
     }
     if (!ctx.dataFresh) {
@@ -562,6 +595,8 @@ export function openPosition(args: {
   target: number | null;
   strategy: string;
   entryDay: string;
+  /** Stufe der Wahl (champion/basis/config) — nur die Engine kennt sie; der Simulator lässt sie weg. */
+  stufe?: string | undefined;
 }): PositionState {
   return {
     symbol: args.symbol,
@@ -576,5 +611,6 @@ export function openPosition(args: {
     strategy: args.strategy,
     barsHeld: 0,
     entryDay: args.entryDay,
+    ...(args.stufe !== undefined ? { stufe: args.stufe } : {}),
   };
 }
