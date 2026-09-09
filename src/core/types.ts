@@ -75,6 +75,14 @@ export interface PositionState {
   barsHeld: number;
   /** ET-Handelstag des Einstiegs (YYYY-MM-DD) — für die PDT-Zählung. */
   entryDay: string;
+  /**
+   * Stufe der Wahl, die die Position eröffnet hat (`champion` · `basis` ·
+   * `config`) — beim Fill festgehalten, damit Positions- und Trade-Docs sie
+   * auch dann tragen, wenn die Wahl von heute eine andere ist oder fehlt
+   * (Zwangs-Liquidation, Prüfbefund G14). Additiv: ältere States haben das
+   * Feld nicht; der Simulator setzt es nie.
+   */
+  stufe?: string;
 }
 
 /** Was eine Strategie je geschlossener Bar sagen darf. */
@@ -149,6 +157,8 @@ export interface Trade {
   /** Ungünstigster/günstigster Kurs während der Haltezeit (für Exit-Statistik). */
   mae: number | null;
   mfe: number | null;
+  /** Stufe der Position (`PositionState.stufe`), falls bekannt — additiv. */
+  stufe?: string;
 }
 
 /* ───────────────────────── Strategie-Vertrag ───────────────────────── */
@@ -224,6 +234,29 @@ export interface SymbolSnapshot {
 
 /** Vorberechnete Indikatoren einer Strategie (kausal — Präfix-Konsistenz ist Testpflicht). */
 export type IndicatorSet = Record<string, Float64Array>;
+
+/**
+ * Sizing-Semantik einer Strategie-WAHL (nicht der Strategie selbst).
+ *
+ * Fehlt sie, gilt das Risiko-Budget je Trade: Stückzahl = Equity ×
+ * `riskPerTradePct` / Stop-Distanz (risk/sizing.ts). `allocation` ist die
+ * Semantik der Basis-Stufe (Prüfbefund K4, 09.09.2026): Die Position ist ein
+ * fester Anteil der Equity (`positionPct`), unabhängig vom Risiko je Trade
+ * des Nutzers — genau so wurde die Basis gemessen (Position 20 % = Risiko
+ * 4 % bei Stop 20 %). Der Stop bleibt der Katastrophen-Stop der Strategie und
+ * liegt wie immer beim Broker; die Deckel des Nutzers (`maxPositionPct`,
+ * `maxGrossExposurePct`, `maxPositions`, Bargeld) gelten weiter und können die
+ * Position nur verkleinern, nie vergrößern.
+ *
+ * Wer die Semantik setzt: der Champion-Block `basis` (`positionPct`), gelesen
+ * von `core/basisTier.ts` — nie eine Strategie über ein „Gewicht" (das war
+ * der widerlegte Weg der ersten regime_allocation-Fassung).
+ */
+export interface SizingSpec {
+  mode: 'allocation';
+  /** Zielgröße der Position in % der Equity (> 0). */
+  positionPct: number;
+}
 
 export interface Strategy {
   id: string;

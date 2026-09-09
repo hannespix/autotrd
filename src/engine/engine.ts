@@ -14,6 +14,37 @@
  * Alles, was Buch oder State anfasst (Tick, Abgleich, Trade-Updates),
  * läuft hintereinander durch eine Warteschlange: Ein Fill, der während
  * eines Ticks eintrifft, wird nach dem Tick verarbeitet — nie mittendrin.
+ *
+ * ── Wann die Tages-Notbremse greift (Prüfbefund K1, 09.09.2026) ──────────
+ *
+ * Die Bremse (`risk.maxDailyLossPct`, risk/limits.ts) misst
+ * `equity − dayStartEquity`. `dayStartEquity` ist seit K1 die SCHLUSS-Equity
+ * des Vortags — Alpacas `last_equity` (Rückfall: aktuelle Equity, wenn es
+ * fehlt) — gesetzt beim Tagesrollover UND beim ersten State. Vorher war es
+ * die Equity beim ersten Tick nach dem Gap: Auf der Plattform (erster Takt
+ * 09:30, dann `decide()` mit derselben Equity) maß die Bremse bei Tagesbars
+ * damit immer 0 % — ein Placebo. Der Simulator setzt die Tagesstart-Equity
+ * am Tageswechsel auf die Schluss-Equity des Vortags (simulator.ts); jetzt
+ * rechnen beide von derselben Marke.
+ *
+ * Geprüft wird die Bremse in `decide()`, also je GESCHLOSSENER Bar — bei
+ * Tagesbars einmal je Handelstag, nicht davor:
+ *   - Dauerprozess (`run`): erster Tick nach Schluss + Karenz (≈ 16:00:04
+ *     ET), Equity aus dem letzten Abgleich ≈ Schluss ⇒ Schluss-zu-Schluss
+ *     wie der Simulator; der Exit ist bis zur Eröffnung zurückgestellt und
+ *     füllt am nächsten Open — wie im Simulator.
+ *   - Plattform-Takt: Der Takt läuft nur bei offenem Markt; die Tagesbar
+ *     wird deshalb erst im ERSTEN Takt des Folgetags (≈ 09:30:20 ET)
+ *     entschieden, mit der Equity NACH dem Gap gegen den Vortagesschluss.
+ *     Das fängt den Übernacht-Gap (der Fall des Befunds) — den Verlauf
+ *     innerhalb des laufenden Handelstags sieht die Bremse dort erst mit der
+ *     nächsten Tagesbar, also am nächsten Morgen wieder gegen den Schluss.
+ *     Nur Nutzer mit zurückgestellter Arbeit oder Kommando werden auch nach
+ *     Schluss getaktet und entscheiden um 16:00 — für sie gilt exakt die
+ *     Simulator-Marke. Eine Prüfung je Takt (ohne neue Bar) wäre strenger
+ *     als gemessen und ist eine Owner-Entscheidung (siehe Bericht).
+ * Der Drawdown-Halt sieht dagegen den Peak je Tick (Intraday), der Simulator
+ * nur Schlusskurse — benannt in core/logic.ts.
  */
 import { existsSync, readFileSync, statSync as fsStatSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
@@ -25,7 +56,7 @@ import { errMsg, logger } from '../core/log.ts';
 import { decide, type AssetFacts, type LogicContext, type SymbolInput } from '../core/logic.ts';
 import { buildSessionInfo } from '../core/session.ts';
 import { DAY, HOUR, MIN, addDays, dayKeyFor, isTradingDay, prevTradingDay, sessionBounds, type Calendar } from '../core/time.ts';
-import type { AccountView, AssetClass, Bar, ExitReason, HaltState, IndicatorSet, Ms, OrderIntent, Params, PositionState, Strategy, TimeframeMin } from '../core/types.ts';
+import type { AccountView, AssetClass, Bar, ExitReason, HaltState, IndicatorSet, Ms, OrderIntent, Params, PositionState, SizingSpec, Strategy, TimeframeMin } from '../core/types.ts';
 import { resumeHalt } from '../risk/limits.ts';
 import { backfill } from '../data/backfill.ts';
 import { ensureCalendar } from '../data/calendar.ts';
@@ -48,7 +79,19 @@ export interface EngineDeps {
   client: AlpacaClient;
   dataStream: DataStream;
   tradeStream: TradeStream;
-  strategyFor: (symbol: string) => { strategy: Strategy; params: Params } | null;
+  /**
+   * Strategie je Symbol; `sizing` (Basis-Stufe: Allokation) und das Einstiegsrecht (`entriesAllowed`, Basis ohne
+   * Freigabe) gehen unverändert in `decide()` — wie im Simulator. `source` (champion/basis/config) wird beim Fill in
+   * der Position festgehalten (`stufe`).
+   */
+  strategyFor: (symbol: string) => {
+    strategy: Strategy;
+    params: Params;
+    sizing?: SizingSpec | undefined;
+    source?: string | undefined;
+    entriesAllowed?: boolean | undefined;
+    entryLockReason?: string | undefined;
+  } | null;
   benchmarkSymbol?: string | undefined;
   calendar?: Calendar | undefined;
   notify?: NotifyFn | undefined;
@@ -144,6 +187,8 @@ export interface EngineStatus {
 
 interface AccountInfo {
   equity: number;
+  /** Alpaca `last_equity` — Schluss-Equity des Vortags (0, wenn unbekannt). */
+  lastEquity: number;
   cash: number;
   dayTradeCount: number;
   patternDayTrader: boolean;
@@ -201,7 +246,7 @@ export class Engine {
   private book = new Book();
   private executor: OrderExecutor | null = null;
   private state: PersistedState | null = null;
-  private account: AccountInfo = { equity: 0, cash: 0, dayTradeCount: 0, patternDayTrader: false };
+  private account: AccountInfo = { equity: 0, lastEquity: 0, cash: 0, dayTradeCount: 0, patternDayTrader: false };
 
   /** Basis-Bars je Symbol (1Min bzw. 1Day) — Backfill + Stream. */
   private readonly base = new Map<string, Bar[]>();
@@ -232,6 +277,8 @@ export class Engine {
   private lastTickAt: Ms | null = null;
   /** Symbole, deren Glattstellung mangels Strategie schon im Journal steht — nicht je Takt neu melden. */
   private readonly ohneFuehrungGemeldet = new Set<string>();
+  /** Positionen (Symbol|Einstiegszeit), deren fremde Führung schon im Journal steht. */
+  private readonly fremdeFuehrungGemeldet = new Set<string>();
   private lastReconcileAt: Ms | null = null;
 
   constructor(deps: EngineDeps) {
@@ -263,7 +310,7 @@ export class Engine {
     const now = this.now();
     ensureDir(this.paths.home);
     const acc = await this.deps.client.getAccount();
-    this.account = { equity: acc.equity, cash: acc.cash, dayTradeCount: acc.daytradeCount, patternDayTrader: acc.patternDayTrader };
+    this.account = { equity: acc.equity, lastEquity: acc.lastEquity, cash: acc.cash, dayTradeCount: acc.daytradeCount, patternDayTrader: acc.patternDayTrader };
     const today = dayKeyFor(now, this.assetClass);
     const loaded = await this.stateStore.load();
     if (loaded && loaded.mode !== this.mode) throw new StateMismatchError('mode', loaded.mode, this.mode);
@@ -271,7 +318,8 @@ export class Engine {
     // würde dessen Positionen als „fehlt beim Broker" mit geschätztem Kurs ausbuchen (Phantom-Trades). Fail-closed;
     // der Functions-Takt fängt den Fehler und archiviert den State (Secreview 2, M9).
     if (loaded?.accountId && acc.id && loaded.accountId !== acc.id) throw new StateMismatchError('account', loaded.accountId, acc.id);
-    const base = loaded ?? emptyState(this.mode, today, acc.equity);
+    // Erster State: Tagesstart = Vortagesschluss (Kopfkommentar, K1), nicht die Equity nach dem Gap.
+    const base = loaded ?? emptyState(this.mode, today, this.dayStartMark());
     const st: PersistedState = { ...base, deferredIntents: (base as Partial<PersistedState>).deferredIntents ?? {} };
     if (acc.id) st.accountId = acc.id;
     // `consecutiveErrors` bleibt, wie er gespeichert wurde: Ein Neustart (oder der nächste Functions-Takt) ist
@@ -310,6 +358,11 @@ export class Engine {
       sleep: this.deps.sleep,
       calendar: this.calendar,
       strategyIdFor: (s) => this.deps.strategyFor(s)?.strategy.id,
+      // Stufe der Wahl nur, wenn sie zur Strategie der Position passt — sonst unbekannt (Prüfbefund G14).
+      stufeFor: (s, id) => {
+        const c = this.deps.strategyFor(s);
+        return c && c.strategy.id === id ? c.source : undefined;
+      },
       notify: this.deps.notify,
       log: this.log,
       costs: this.cfg.costs,
@@ -564,18 +617,34 @@ export class Engine {
         if (!choice) continue;
         const ind = this.indicators(sym, series, choice.strategy, choice.params);
         const bi = bench && bench.length ? bench.indexAtOrBefore(t) : -1;
+        const position = this.book.positions.get(sym) ?? null;
+        // Fremde Führung (Prüfbefund M4): Die Position hat eine andere Strategie eröffnet als die, die das Symbol
+        // heute führt. `decide()` hält sie ohne Signal-Exit und ohne Stop-Nachzug (core/logic.ts); hier nur die
+        // Notiz — einmal je Position, nicht je Bar.
+        if (position && position.strategy !== choice.strategy.id) {
+          const key = `${sym}|${position.entryTime}`;
+          if (!this.fremdeFuehrungGemeldet.has(key)) {
+            this.fremdeFuehrungGemeldet.add(key);
+            const text = `Position der Strategie ${position.strategy} — ${choice.strategy.id} führt das Symbol jetzt und diese Position nicht: kein Signal-Exit, kein Stop-Nachzug, Broker-Stop bleibt (Notbremsen und flatten gelten weiter)`;
+            this.journal.append('note', { symbol: sym, text, positionStrategy: position.strategy, strategy: choice.strategy.id }, now);
+            this.log.warn(`${sym}: ${text}`);
+          }
+        }
         inputs.push({
           snap: {
             symbol: sym,
             bars: series,
             i,
-            position: this.book.positions.get(sym) ?? null,
+            position,
             session: buildSessionInfo(series, i, this.tf, this.assetClass, this.calendar),
             benchmark: bench && bi >= 0 ? { bars: bench, i: bi } : undefined,
           },
           strategy: choice.strategy,
           params: choice.params,
           ind,
+          sizing: choice.sizing,
+          entriesAllowed: choice.entriesAllowed,
+          entryLockReason: choice.entryLockReason,
         });
       }
 
@@ -600,6 +669,16 @@ export class Engine {
        * Vorgängersystems. Also: schließen, beim nächsten möglichen Zeitpunkt.
        * Der Exit geht durch denselben Pfad wie jeder andere (idempotente
        * Kennung, Zurückstellung außerhalb der Sitzung).
+       *
+       * Was NICHT hierher fällt (seit Prüfbefund M4/M6, 09.09.2026): Eine
+       * Basis-Position, deren Block das Einstiegsrecht verloren hat (pass
+       * gefallen, Schalter aus) — sie hat weiterhin ihre Strategie
+       * (`strategyFor` liefert die Basis mit `entriesAllowed: false`) und
+       * läuft nach deren eigenen Exits aus. Und eine Position, die eine
+       * ANDERE Strategie eröffnet hat als die heutige — sie wird gehalten,
+       * nicht liquidiert (core/logic.ts). Liquidiert wird nur, was gar keine
+       * Strategie mehr hat: Block geräumt oder unlesbar, Symbol aus dem
+       * Universum, Champion auf noTrade.
        */
       const fuehrbar = new Set<string>();
       for (const sym of this.cfg.universe.symbols) if (this.deps.strategyFor(sym)) fuehrbar.add(sym);
@@ -800,6 +879,15 @@ export class Engine {
     return [...set];
   }
 
+  /**
+   * Marke des Tagesbeginns für die Tages-Notbremse: Alpacas `last_equity`
+   * (Schluss-Equity des Vortags, Kopfkommentar K1); fehlt sie oder ist sie
+   * ≤ 0 (neues Konto), die aktuelle Equity.
+   */
+  private dayStartMark(): number {
+    return this.account.lastEquity > 0 ? this.account.lastEquity : this.account.equity;
+  }
+
   private accountView(): AccountView {
     const st = this.st();
     return {
@@ -898,7 +986,11 @@ export class Engine {
     this.clock = new MarketClock({ assetClass: this.assetClass, calendar: this.calendar, client: this.deps.client, now: this.now });
   }
 
-  /** Neuer Handelstag ⇒ Tagesstart-Equity neu, alte Daytrade-Tage (> 7 Handelstage) vergessen, Kalender nachziehen. */
+  /**
+   * Neuer Handelstag ⇒ Tagesstart-Equity = Vortagesschluss (`last_equity`,
+   * Kopfkommentar K1), alte Daytrade-Tage (> 7 Handelstage) vergessen,
+   * Kalender nachziehen.
+   */
   private async rollover(now: Ms): Promise<void> {
     const st = this.st();
     const today = dayKeyFor(now, this.assetClass);
@@ -906,7 +998,8 @@ export class Engine {
     await this.refreshCalendar(today, now);
     if (!isTradingDay(today, this.assetClass, this.calendar)) return;
     st.day = today;
-    if (this.account.equity > 0) st.dayStartEquity = this.account.equity;
+    const mark = this.dayStartMark();
+    if (mark > 0) st.dayStartEquity = mark;
     this.flushStore(true, now);
     this.pruneCaches(now);
     let keep = today;
@@ -1153,7 +1246,13 @@ export class Engine {
       },
       ensureStops: () => executor.ensureProtectiveStops(),
     });
-    this.account = { equity: r.account.equity, cash: r.account.cash, dayTradeCount: r.account.daytradeCount, patternDayTrader: r.account.patternDayTrader };
+    this.account = {
+      equity: r.account.equity,
+      lastEquity: r.account.lastEquity,
+      cash: r.account.cash,
+      dayTradeCount: r.account.daytradeCount,
+      patternDayTrader: r.account.patternDayTrader,
+    };
     st.peakEquity = Math.max(st.peakEquity, r.account.equity);
     this.lastReconcileAt = now;
   }

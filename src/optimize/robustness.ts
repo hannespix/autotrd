@@ -454,8 +454,8 @@ export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResul
 /* ───────────────────────── Die Basis-Latte (Gate-Gruppe `basis`) ───────────────────────── */
 
 export interface BasisGateInput {
-  /** Schwellen aus `optimizer.basis`. */
-  basis: BasisConfig;
+  /** Schwellen aus `optimizer.basis` — `positionPct` ist Sizing, kein Gate, und wird hier nicht gebraucht. */
+  basis: Pick<BasisConfig, 'minDrawdownReduction' | 'minSharpeRatio' | 'maxCostShare'>;
   /** Kostenfaktor des Stress-Laufs (`optimizer.stressCostMultiplier`) — nur für die Notiz. */
   stressCostMultiplier: number;
   /** Aus der EINEN durchgehenden Simulation (`basisSimulation`). */

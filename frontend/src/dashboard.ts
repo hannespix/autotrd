@@ -86,7 +86,7 @@ import {
 import { emailVerified, frischAnmelden, logout, refreshUser, sendVerification } from './auth.js';
 import { esc } from './html.js';
 import { iBtn, initInfoTips } from './infotips.js';
-import { serverText, setzeSprache, sprachWahl, t, valText } from './i18n.js';
+import { serverText, setzeSprache, sprachWahl, t, uebersetze, valText } from './i18n.js';
 import { mountLegalFooter } from './legal.js';
 
 /* ── Karten-Registry ──────────────────────────────────────────────────── */
@@ -238,6 +238,9 @@ function layout(email: string): string {
           <label class="opt-check">
             <input type="checkbox" id="asTelegram" />
             <span>${t('as.telegram')} ${iBtn('telegram')}</span></label>
+          <label class="opt-check">
+            <input type="checkbox" id="asBasis" />
+            <span>${t('as.basis')} ${iBtn('basis')}</span></label>
         </div>
         <div class="wl-sec">${t('as.symbole')} ${iBtn('symbolauswahl')}</div>
         <div class="row" style="gap:6px;margin-bottom:4px">
@@ -298,6 +301,7 @@ function layout(email: string): string {
       </div><div class="cbody">
         <div id="chList" class="fl-tbl ch-tbl"><div class="hint">${t('ch.keiner')}</div></div>
         <div id="chNoTrade" class="hint"></div>
+        <div id="chBasis" class="hint"></div>
         <div class="row" style="align-items:center;gap:8px;margin-top:6px">
           <button class="btn btn-n" id="chReport">${t('ch.berichtOeffnen')}</button>
           <span class="hint" id="chMsg"></span>
@@ -912,6 +916,7 @@ function renderEngineStatus(): void {
         e.champion.symbols.length > 0 ? '' : 'var(--yl,#d9a441)',
       ),
     );
+    if (e.champion.basis.length > 0) zeilen.push(statusZeile(t('eng.basis'), escText(e.champion.basis.join(', '))));
   }
   for (const n of e.notes) zeilen.push(`<div class="hint eng-note">${escText(n)}</div>`);
   if (e.commandAt) zeilen.push(`<div class="hint eng-note">${t('eng.kommandoWartet')} (${wann(e.commandAt)})</div>`);
@@ -1182,6 +1187,7 @@ function renderChampion(): void {
     list.innerHTML = `<div class="hint">${t('ch.keiner')}</div>`;
     stand.textContent = '';
     noTrade.textContent = '';
+    $('chBasis').textContent = '';
     return;
   }
   stand.textContent = c.updatedAt ? `${t('ch.stand')} ${wann(new Date(c.updatedAt).toISOString())}` : '';
@@ -1216,6 +1222,27 @@ function renderChampion(): void {
       : `<b>${t('ch.noTrade')}:</b> `
         + nt.map(([sym, e]) => `<span title="${escText(e.reason)}">${escText(sym)}</span>`).join(', ')
         + `<br>${t('ch.noTradeHint')}`;
+  renderChampionBasis();
+}
+
+/** Die Basis-Stufe unter der Champion-Tabelle: bestanden oder nicht, Korb, Position je Symbol. */
+function renderChampionBasis(): void {
+  if (!st) return;
+  const el = $('chBasis');
+  const b = st.champion?.basis ?? null;
+  if (!b) {
+    el.innerHTML = st.champion ? `<b>${t('ch.basis')}:</b> ${t('ch.basisKeine')}` : '';
+    return;
+  }
+  const gerissen = b.gates.filter((g) => !g.pass).map((g) => g.name);
+  const urteil = b.pass
+    ? `<span class="stag t-buy">${t('ch.basisBestanden')}</span>`
+    : `<span class="stag t-sell" title="${escText(gerissen.join(', '))}">${t('ch.basisNichtBestanden')}</span>`;
+  const position = b.positionPct === null ? t('ch.basisOhnePosition') : `${t('ch.basisPosition')} ${b.positionPct} %`;
+  el.innerHTML =
+    `<b>${t('ch.basis')}:</b> ${escText(b.label)} (${escText(b.strategy)}${b.timeframe ? ` · ${b.timeframe}m` : ''}) ${urteil} · `
+    + `<span class="mono">${b.symbols.map(escText).join(', ')}</span> · ${escText(position)}`
+    + `<br>${t('ch.basisHint')}`;
 }
 
 /** Jüngsten Optimierer-Bericht laden und als vorformatierten Text zeigen. */
@@ -1253,6 +1280,8 @@ function fillAutoForm(): void {
   ($('asDd') as HTMLInputElement).value = String(a.maxDrawdownPct);
   ($('asShort') as HTMLInputElement).checked = a.allowShort === true;
   ($('asTelegram') as HTMLInputElement).checked = a.notifyTelegram === true;
+  // Fehlend heißt an (Voreinstellung) — nur ein gespeichertes false schaltet die Basis ab.
+  ($('asBasis') as HTMLInputElement).checked = a.basis !== false;
   renderSymbolPicker();
   $('asMsg').textContent = '';
   $('asErr').hidden = true;
@@ -1320,6 +1349,7 @@ function autoFormSettings(): AutoSettings {
     maxDrawdownPct: num('asDd'),
     allowShort: ($('asShort') as HTMLInputElement).checked,
     notifyTelegram: ($('asTelegram') as HTMLInputElement).checked,
+    basis: ($('asBasis') as HTMLInputElement).checked,
     ...(teilmenge ? { symbols: alle } : {}),
   };
 }
@@ -2068,6 +2098,8 @@ function positionsAusblick(p: PositionRow): string {
   if (p.schutz?.orderId) teile.push(t('pos.schutzBeimBroker'));
   else if (p.stopLoss !== null && p.stopLoss !== undefined) teile.push(t('pos.schutzOhneOrder'));
   if (p.strategy) teile.push(escText(p.strategy));
+  // Quelle „Basis": Der Takt stempelt die Stufe, die das Symbol führt (Champion-Block basis).
+  if (p.stufe === 'basis') teile.push(`<span class="stag t-hold" title="${t('ch.basis')}">${t('pos.basis')}</span>`);
   const seit = Date.parse(p.openedAt);
   if (Number.isFinite(seit)) {
     const tage = (Date.now() - seit) / 86_400_000;
@@ -2379,8 +2411,17 @@ function renderJournal(): void {
       <td class="${t.pnl !== undefined ? pnlClass(t.pnl) : ''}">${t.pnl !== undefined ? money(t.pnl) : '—'}</td>`;
     const symTd = tr.querySelectorAll('td')[1]!;
     symTd.textContent = t.symbol;
-    // Ausstiegsgrund und Strategie als Tooltip — sie kommen vom Takt, nicht vom Nutzer.
-    if (t.exitReason || t.strategy) symTd.title = [t.strategy, t.exitReason].filter(Boolean).join(' · ');
+    // Ausstiegsgrund, Strategie und Stufe als Tooltip — sie kommen vom Takt, nicht vom Nutzer.
+    if (t.exitReason || t.strategy || t.stufe === 'basis') {
+      symTd.title = [t.stufe === 'basis' ? uebersetze('ch.basis', sprachWahl()) : '', t.strategy, t.exitReason].filter(Boolean).join(' · ');
+    }
+    // Quelle „Basis" sichtbar am Symbol (Stufe aus dem Trade-Doc des Takts).
+    if (t.stufe === 'basis') {
+      const marke = document.createElement('span');
+      marke.className = 'stag t-hold';
+      marke.textContent = uebersetze('pos.basis', sprachWahl());
+      symTd.append(' ', marke);
+    }
     jb.appendChild(tr);
   }
 }

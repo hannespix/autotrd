@@ -15,6 +15,26 @@
  *      - Keine Position: Einstieg nur durch alle Tore (Halt, Datenfrische,
  *        Session, Short-Erlaubnis, Positionslimit, PDT, Stop-Plausibilität,
  *        Sizing).
+ *
+ * Die Basis-Stufe (Champion-Block `basis`, core/basisTier.ts) hat hier KEINE
+ * Sonderrechte. Ein Basis-Symbol ist ein `SymbolInput` wie jedes andere:
+ * Tages-Notbremse, Drawdown-Halt, Einstiegssperre von außen (`entryLock`),
+ * Datenalter, Positionslimit, Exposure-Budget, PDT und Bargeld sperren ihre
+ * Einstiege wie die des Alpha-Champions; Exits laufen wie überall nie
+ * gesperrt. Was sie unterscheidet, ist allein die Sizing-Semantik der Wahl
+ * (`sizing`, risk/sizing.ts) und die Rangbildung je Korb (`korbRaenge`).
+ *
+ * Benannt, nicht beschönigt (Prüfbefund M9, 09.09.2026): Der Simulator setzt
+ * den Equity-Peak je Simulations-Range neu und kennt kein `resume`; live
+ * steht der Peak über Wochen (`peakEquity` im State) und ein Drawdown-Halt
+ * endet nur über `resume` (§0.5). Ein Drawdown, der sich über mehrere
+ * Messfenster aufbaut, löst deshalb live aus, wo der Simulator schweigt —
+ * das gilt heute für den Alpha-Champion und seit der Basis-Stufe für die
+ * Basis genauso. Die durchgehende Basis-Simulation (ein Peak über die ganze
+ * OOS-Kette, optimize/walkForward.ts) verkleinert die Lücke, sie schließt
+ * sie nicht: `resume` gibt es dort nicht, live bleibt die Basis nach einem
+ * Drawdown-Halt in Kasse, bis der Nutzer es aufhebt. Kein Auto-Resume —
+ * das wäre ein Override, keine Ursache (§0.5).
  */
 import type { RiskConfig, SessionConfig } from './config.ts';
 import type {
@@ -27,6 +47,7 @@ import type {
   OrderIntent,
   Params,
   PositionState,
+  SizingSpec,
   Strategy,
   SymbolSnapshot,
   TimeframeMin,
@@ -75,6 +96,24 @@ export interface SymbolInput {
   strategy: Strategy;
   params: Params;
   ind: IndicatorSet;
+  /**
+   * Sizing-Semantik der Strategie-Wahl (Basis-Stufe: Allokation). Fehlt sie,
+   * gilt das Risiko-Budget je Trade. Sie kommt aus `strategyFor` — im
+   * Simulator wie in der Engine derselbe Wert, sonst wären Messung und
+   * Handel zwei Welten.
+   */
+  sizing?: SizingSpec | undefined;
+  /**
+   * Einstiegsrecht der Wahl: `false` ⇒ diese Strategie darf in diesem Symbol
+   * KEINE neue Position eröffnen, führt eine offene aber weiter (eigene
+   * Exits, Stop-Nachzug — Exits werden nie gesperrt, §0.4). So sperrt ein
+   * gefallenes `pass`, ein Schalter „aus" oder ein Block ohne Freigabe die
+   * Basis-Stufe nur nach vorn, statt alle Konten zu liquidieren (Prüfbefund
+   * M6/M8). Fehlt das Feld, sind Einstiege erlaubt; der Simulator setzt es nie.
+   */
+  entriesAllowed?: boolean | undefined;
+  /** Grund der Einstiegssperre (fürs Journal), wenn `entriesAllowed` false ist. */
+  entryLockReason?: string | undefined;
 }
 
 export interface LogicNote {
@@ -164,6 +203,24 @@ function mische(x: number): number {
 }
 
 /**
+ * Schlüssel des Korbs, in dem ein Symbol rangiert: Strategie, Parameter und
+ * Sizing-Semantik der Wahl — alles Daten des `SymbolInput`, nichts, was ein
+ * Aufrufer etikettieren könnte. Zwei Symbole rangieren nur dann gegeneinander,
+ * wenn dieselbe Strategie mit denselben Parametern und derselben Semantik sie
+ * führt: So bleibt der Korb der Basis-Stufe (Allokation, eigene Parameter) von
+ * einem Alpha-Korb derselben Strategie getrennt, und ein gepoolter Alpha-Korb
+ * (ein Parametersatz für alle) rangiert wie bisher als Ganzes.
+ */
+export function korbSchluessel(inp: Pick<SymbolInput, 'strategy' | 'params' | 'sizing'>): string {
+  const params = Object.keys(inp.params)
+    .sort()
+    .map((k) => `${k}=${inp.params[k]}`)
+    .join(',');
+  const sizing = inp.sizing ? `${inp.sizing.mode}:${inp.sizing.positionPct}` : 'risk';
+  return `${inp.strategy.id}|${params}|${sizing}`;
+}
+
+/**
  * Korb-Rang je Symbol für Querschnitts-Strategien.
  *
  * Warum das hier steht und nicht im Aufrufer: `decide()` ist der EINE
@@ -173,8 +230,16 @@ function mische(x: number): number {
  *
  * Zwei Regeln machen die Sache kausal und in beiden Welten gleich:
  *
- *  1. Es wird nur innerhalb einer STRATEGIE rangiert. Symbole mit anderer
- *     Strategie haben eine andere Kennzahl; sie zu mischen wäre sinnlos.
+ *  1. Es wird nur innerhalb eines KORBS rangiert (`korbSchluessel`: Strategie,
+ *     Parameter, Sizing-Semantik). Symbole mit anderer Strategie haben eine
+ *     andere Kennzahl; sie zu mischen wäre sinnlos. Und der Korb der
+ *     Basis-Stufe (z. B. neun Anlageklassen-ETFs mit Allokations-Sizing)
+ *     darf nie gegen einen Alpha-Korb derselben Strategie rangieren — gemessen
+ *     wurde er allein, also rangiert er allein. In der Messung ist der Korb
+ *     einer Einheit ohnehin ein Parametersatz; per Symbol gefittete
+ *     Querschnitts-Champions rangierten in ihrer Messung nur gegen sich selbst
+ *     (`of` 1, unter MIN_KORB) und konnten so nie Champion werden — der
+ *     Schlüssel macht live nur, was die Messung schon tat.
  *  2. Es rangieren nur Symbole, deren Entscheidungs-Bar zur JÜNGSTEN Bar des
  *     Zyklus gehört. Live kann ein Symbol ohne Trade im Bucket eine ältere
  *     letzte Bar haben — seine Kennzahl stammt dann von einem anderen
@@ -191,17 +256,18 @@ export function korbRaenge(inputs: readonly SymbolInput[]): Map<string, KorbRang
     const t = inp.snap.bars.t[inp.snap.i];
     if (t !== undefined && t > neueste) neueste = t;
   }
-  const proStrategie = new Map<string, { symbol: string; score: number }[]>();
+  const proKorb = new Map<string, { symbol: string; score: number }[]>();
   for (const inp of inputs) {
     if (!inp.strategy.crossScore) continue;
     if (inp.snap.bars.t[inp.snap.i] !== neueste) continue;
     const score = inp.strategy.crossScore(inp.snap, inp.ind, inp.params);
     if (score === null || !Number.isFinite(score)) continue;
-    const liste = proStrategie.get(inp.strategy.id) ?? [];
+    const key = korbSchluessel(inp);
+    const liste = proKorb.get(key) ?? [];
     liste.push({ symbol: inp.snap.symbol, score });
-    proStrategie.set(inp.strategy.id, liste);
+    proKorb.set(key, liste);
   }
-  for (const liste of proStrategie.values()) {
+  for (const liste of proKorb.values()) {
     // Absteigend nach Kennzahl; Gleichstand alphabetisch, damit der Lauf reproduzierbar bleibt.
     liste.sort((a, b) => b.score - a.score || (a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0));
     const of = liste.length;
@@ -310,6 +376,22 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
       continue;
     }
 
+    // Fremde Führung (Prüfbefund M4, 09.09.2026): Die Position hat eine ANDERE
+    // Strategie eröffnet als die, die das Symbol heute führt (Alpha-Beförderung,
+    // Basis-Wechsel über Nacht). Die neue Strategie hat für diese Position keine
+    // gemessene Regel — ihr Signal-Exit, ihr Trailing und ihr EOD-Flatten wären
+    // fremde Regeln (der 20-%-Katastrophen-Stop würde zum ATR-Trailing: die
+    // Fehlerklasse „Trailing vom Einstand" aus CLAUDE.md §2). Also: halten,
+    // nichts nachziehen; der Broker-Stop bleibt, wie er liegt. Die Notbremsen
+    // oben laufen über `ctx.positions` und stellen auch diese Position glatt —
+    // Exits werden nie gesperrt. Neue Einstiege gibt es mit offener Position
+    // ohnehin nicht. Im Simulator kommt der Fall nicht vor (eine Strategie je
+    // Symbol und Lauf); live steht die Notiz dazu im Journal (engine.ts).
+    if (pos && pos.strategy !== strategy.id) {
+      notes.push({ symbol: sym, kind: 'info', text: `Position der Strategie ${pos.strategy} — ${strategy.id} führt sie nicht (kein Signal-Exit, kein Stop-Nachzug, Broker-Stop bleibt)` });
+      continue;
+    }
+
     const decision = strategy.decide(snap, ind, params);
 
     if (pos) {
@@ -358,6 +440,12 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
     }
     if (ctx.entryLock) {
       block(`Einstiege gesperrt: ${ctx.entryLock}`);
+      continue;
+    }
+    // Einstiegsrecht der Wahl (Basis ohne Freigabe: pass gefallen, Schalter aus):
+    // nur Einstiege — Exits liefen oben, unberührt.
+    if (inp.entriesAllowed === false) {
+      block(`Einstiege gesperrt: ${inp.entryLockReason ?? 'Wahl ohne Einstiegsrecht'}`);
       continue;
     }
     if (!ctx.dataFresh) {
@@ -445,7 +533,8 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
       block(pdt.reason ?? 'PDT');
       continue;
     }
-    // Sizing
+    // Sizing — Risiko-Budget, oder die Allokations-Semantik der Wahl
+    // (Basis-Stufe); die Deckel des Nutzers gelten in beiden Fällen.
     const exposureBudget = (ctx.account.equity * ctx.risk.maxGrossExposurePct) / 100 - gross;
     const size = sizePosition({
       equity: ctx.account.equity,
@@ -457,6 +546,7 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
       maxPositionPct: ctx.risk.maxPositionPct,
       exposureBudget,
       qtyStep: qtyStepFor(ctx.assetClass),
+      sizing: inp.sizing,
     });
     if (size.qty <= 0) {
       block(`Sizing: ${size.reason}`);
@@ -505,6 +595,8 @@ export function openPosition(args: {
   target: number | null;
   strategy: string;
   entryDay: string;
+  /** Stufe der Wahl (champion/basis/config) — nur die Engine kennt sie; der Simulator lässt sie weg. */
+  stufe?: string | undefined;
 }): PositionState {
   return {
     symbol: args.symbol,
@@ -519,5 +611,6 @@ export function openPosition(args: {
     strategy: args.strategy,
     barsHeld: 0,
     entryDay: args.entryDay,
+    ...(args.stufe !== undefined ? { stufe: args.stufe } : {}),
   };
 }

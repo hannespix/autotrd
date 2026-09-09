@@ -123,7 +123,7 @@ describe('auto', () => {
   it('speichert die normalisierten Einstellungen unter settings.auto und gibt sie zurück', async () => {
     const { db, deps } = aufbau();
     const out = await speichern(deps, { auto: { ...AUTO, symbols: ['aapl', 'msft', 'AAPL'], fremd: 1 } });
-    const erwartet = { ...AUTO, notifyTelegram: false, symbols: ['AAPL', 'MSFT'] };
+    const erwartet = { ...AUTO, notifyTelegram: false, basis: true, symbols: ['AAPL', 'MSFT'] };
     expect(out).toEqual({ ok: true, auto: erwartet });
     const settings = db.get(`users/${UID}`)!.settings as Record<string, unknown>;
     expect(settings.auto).toEqual(erwartet);
@@ -174,13 +174,22 @@ describe('auto', () => {
     await speichern(deps, { auto: { ...AUTO, symbols: [] } });
     const auto = (db.get(`users/${UID}`)!.settings as Record<string, Record<string, unknown>>).auto!;
     expect(auto).not.toHaveProperty('symbols');
-    expect(auto).toEqual({ ...AUTO, notifyTelegram: false });
+    expect(auto).toEqual({ ...AUTO, notifyTelegram: false, basis: true });
+  });
+
+  it('Basis-Schalter: fehlend wird als AN gespeichert, false bleibt false; kein Boolean ⇒ abgelehnt', async () => {
+    const { db, deps } = aufbau();
+    await speichern(deps, { auto: { ...AUTO, basis: false } });
+    expect((db.get(`users/${UID}`)!.settings as Record<string, Record<string, unknown>>).auto!.basis).toBe(false);
+    await speichern(deps, { auto: AUTO });
+    expect((db.get(`users/${UID}`)!.settings as Record<string, Record<string, unknown>>).auto!.basis).toBe(true);
+    await expect(speichern(deps, { auto: { ...AUTO, basis: 'ja' } })).rejects.toMatchObject({ code: 'invalid-argument', message: 'val.boolean|basis' });
   });
 
   it('auto und engineRunning zusammen: ein Update, beide Pfade', async () => {
     const { db, deps } = aufbau();
     const out = await speichern(deps, { auto: AUTO, engineRunning: true });
-    expect(out).toEqual({ ok: true, auto: { ...AUTO, notifyTelegram: false }, engineRunning: true });
+    expect(out).toEqual({ ok: true, auto: { ...AUTO, notifyTelegram: false, basis: true }, engineRunning: true });
     expect(db.log).toEqual([`update users/${UID}`]);
     expect(db.get(`users/${UID}`)).toMatchObject({ settings: { auto: AUTO, strategy: { engine: { running: true, maxPositionPct: 10 } } } });
   });

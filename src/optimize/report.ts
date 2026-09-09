@@ -192,13 +192,17 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
   out.push(
     table(
       ['Symbol', 'Entscheidung', 'Handelt mit', 'Score', 'Grund'],
-      runs.map((r) => [
-        r.symbol,
-        r.decision.action,
-        r.chosen ? `${r.chosen.strategy}${r.chosen.fixed ? ' (fest)' : ''} ${paramsJson(r.chosen.params)}` : '— (kein Handel)',
-        r.chosen ? num(r.chosen.score, 3) : '–',
-        r.decision.reason,
-      ]),
+      runs.map((r) =>
+        r.art === 'basis'
+          ? [r.symbol, 'Basis-Einheit', r.basis ? `Block basis: ${r.basis.strategy} ${paramsJson(r.basis.params)} — ${r.basis.pass ? 'bestanden' : 'nicht bestanden'}` : '— (nicht gemessen)', '–', r.decision.reason]
+          : [
+              r.symbol,
+              r.decision.action,
+              r.chosen ? `${r.chosen.strategy}${r.chosen.fixed ? ' (fest)' : ''} ${paramsJson(r.chosen.params)}` : '— (kein Handel)',
+              r.chosen ? num(r.chosen.score, 3) : '–',
+              r.decision.reason,
+            ],
+      ),
     ),
   );
   out.push('');
@@ -218,7 +222,10 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
       for (const e of r.errors) out.push(`- ${e}`);
       out.push('');
     }
-    if (r.results.length === 0) {
+    if (r.art === 'basis') {
+      out.push('_Eigene Einheit der Basis-Allokation (optimizer.basisUniverse): keine Alpha-Kandidaten, keine Alpha-Entscheidung — `symbols`/`noTrade` der Champion-Datei bleiben unberührt._');
+      out.push('');
+    } else if (r.results.length === 0) {
       out.push('_Keine bewertbare Strategie._');
       out.push('');
     } else {
@@ -241,7 +248,7 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
       out.push('');
     }
 
-    out.push(`**Entscheidung: ${r.decision.action}** — ${r.decision.reason}`);
+    out.push(r.art === 'basis' ? `**Basis-Einheit** — ${r.decision.reason}` : `**Entscheidung: ${r.decision.action}** — ${r.decision.reason}`);
     if (r.incumbent) {
       out.push('');
       const ev = r.incumbentEval;
@@ -345,6 +352,13 @@ function basisAbschnitt(symbol: string, b: BasisRun, holdoutMarkt: HoldoutMarkt 
     `${b.strategy} „${b.label}" \`${paramsJson(b.params)}\` — EIN Simulationslauf ${isoDay(b.range.start)} … ${isoDay(b.range.end)} ` +
       `(OOS-Kette des Fold-Plans, ${k.days} Tage; Warmup aus der Historie davor, Positionen über Fold-Grenzen, ein Buch, ein Peak, kein IS-Fenster). ` +
       'Zweite Latte, nicht die zehn Alpha-Gates: Die Basis konkurriert nicht um den Alpha-Champion und steht als eigener Block `basis` in champion.json.',
+  );
+  out.push('');
+  out.push(
+    `Korb (${b.symbols.length} Symbol${b.symbols.length === 1 ? '' : 'e'}): ${b.symbols.join(', ')}. ` +
+      `Sizing: Allokation, Position ${b.positionPct} % der Equity je Symbol (optimizer.basis.positionPct) — ` +
+      'riskPerTradePct der Config ist für die Basis ohne Wirkung; Positionsdeckel, Exposure-Budget, Positionslimit und Bargeld gelten. ' +
+      'Genau diese Semantik handelt die Basis-Stufe der Engine (Block basis: positionPct).',
   );
   out.push('');
   out.push(`**Basis-Latte: ${b.pass ? 'bestanden' : `nicht bestanden (${b.gates.filter((g) => !g.pass).map((g) => g.name).join(', ')})`}**`);

@@ -101,6 +101,12 @@ strategy:
   # NICHT gehandelt (Kein Handel ist ein reguläres Ergebnis). true nur für
   # Paper-Erkundung.
   allowWithoutChampion: false
+  # Basis-Stufe handeln: Trägt champion.json einen Block `basis` mit bestandener
+  # Basis-Latte und passendem Zeitrahmen, handelt die Engine dessen Korb mit
+  # dessen Parametern und Allokations-Sizing (Position = positionPct der Equity
+  # je Symbol) — nur für Symbole ohne Alpha-Champion. Vorgabe an; auf der
+  # Plattform setzt der Nutzer-Schalter settings.auto.basis dieses Feld.
+  basis: true
 
 optimizer:
   # Strategien, die der Walk-Forward-Optimierer gegeneinander prüft.
@@ -200,6 +206,18 @@ optimizer:
     # basis_costs: Gebühren gesamt / |Netto| höchstens dieser Anteil.
     # basis_net_profit: Netto > 0, auch bei Kosten × stressCostMultiplier.
     maxCostShare: 0.1
+    # Sizing-Semantik der Basis (Prüfbefund K4): Position = dieser Anteil der
+    # Equity je Symbol — in der Messung UND in der Engine (Block `basis`,
+    # positionPct); riskPerTradePct ist für die Basis ohne Wirkung. 20 % sind
+    # die Vorregistrierung V2 (Risiko 4 % bei Stop 20 %).
+    positionPct: 20
+  # Eigener Korb der Basis-Allokation (leer = die Basis läuft auf der Einheit
+  # des Laufs, nur bei festem Korb). Gesetzt ⇒ eigene Einheit „Basis (n
+  # Symbole)" mit genau diesen Symbolen, fester Korb, eigene Bars-Ladung
+  # (`fetch` lädt sie mit); die Alpha-Einheiten behalten ihren Korb je Fold.
+  # Nur zusammen mit einem Festkandidaten tier: basis. Kein Tor.
+  #   basisUniverse: [SPY, IWM, EFA, EEM, IEF, TLT, LQD, GLD, XLRE]
+  basisUniverse: []
 
 costs:
   # Slippage je Seite in Basispunkten (Marktorder gegen den Spread).

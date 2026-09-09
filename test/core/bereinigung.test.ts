@@ -40,9 +40,10 @@ describe('broker.adjustment', () => {
   it('Plattform-Config und meta/engineConfig tragen dieselbe Bereinigung — sonst misst der Optimierer andere Bars, als die Engine handelt', () => {
     const cfg = yamlConfig('platform.yaml');
     const doc = engineConfigDocFrom(cfg) as { broker: { adjustment?: unknown } };
-    // Das Doc kennt den Schalter heute nicht ⇒ der Takt läuft raw. Wer platform.yaml
-    // umstellt, muss ihn zuerst in scripts/module/engineConfig.mjs mitgeben.
+    // Seit der Basis-Stufe trägt das Doc den Schalter (scripts/module/engineConfig.mjs);
+    // ein Doc ohne das Feld hieße raw — der Takt darf nie stumm auf andere Bars wechseln.
     const imDoc = doc.broker.adjustment ?? 'raw';
+    expect(doc.broker.adjustment).toBe(cfg.broker.adjustment);
     expect(imDoc, 'platform.yaml setzt eine Bereinigung, die meta/engineConfig nicht überträgt').toBe(cfg.broker.adjustment);
   });
 });

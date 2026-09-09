@@ -129,7 +129,8 @@ des Bruttogewinns, siehe docs/ARCHITEKTUR.md §5a.10).
 | `core/time.ts` | ET-Zeitlogik (DST via Intl), NYSE-Kalender-Fallback, Buckets. |
 | `core/bars.ts` | Kolumnare `BarSeries`, `aggregate()` aus Minutenbars, `anfangsStreuner()` (verirrte IEX-Einzelbars vor dem Datenbeginn — eine zog den Fold-Plan ins Leere). |
 | `core/session.ts` | Sitzungs-Sicht je geschlossener Bar (Minuten bis Schluss, letzte Bar). |
-| `core/logic.ts` | `decide()`: Tore, Sizing, Exits — für Backtest UND Live. |
+| `core/logic.ts` | `decide()`: Tore, Sizing, Exits — für Backtest UND Live. Zwei Sizing-Semantiken: Risiko-Budget je Trade (Alpha) und Allokation (Basis: Position = `positionPct` der Equity); Nutzer-Deckel gelten in beiden. |
+| `core/basisTier.ts` | Die Basis-Stufe: Alpha-Champion vor Basis vor `noTrade` — identisch für `app.ts` und die Plattform (`functions/src/engine/strategyFor.ts`). Basis nur bei `champion.basis.pass`, passendem Zeitrahmen, Symbol im Basis-Korb und Nutzer-Schalter `strategy.basis` (Default an). Übersteuert nie den Alpha-Champion. |
 | `core/journal.ts`, `core/log.ts` | Journal/State, Logging mit Schwärzung. |
 | `risk/` | Sizing, Tages-/Drawdown-Halt, PDT. |
 | `alpaca/` | Vertrag (`types.ts`), REST-Client (`rest.ts`), Streams (`stream.ts`), Symbol-Mapping. |

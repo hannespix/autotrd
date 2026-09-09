@@ -89,6 +89,7 @@ export function buildTrade(pos: PositionState, qty: number, exitPrice: number, e
     barsHeld: pos.barsHeld,
     mae: null,
     mfe: null,
+    ...(pos.stufe !== undefined ? { stufe: pos.stufe } : {}),
   };
 }
 

@@ -138,8 +138,21 @@ export const ConfigSchema = z.object({
       params: z.record(z.string(), z.number()).default({}),
       /** Ohne Champion nur handeln, wenn ausdrücklich erlaubt (Paper-Erkundung). */
       allowWithoutChampion: z.boolean().default(false),
+      /**
+       * Basis-Stufe handeln: Trägt die Champion-Datei einen Block `basis` mit
+       * `pass: true` und passendem Zeitrahmen, handelt die Engine dessen Korb
+       * mit dessen Parametern und Allokations-Sizing (`positionPct`) — für
+       * Symbole, die kein Alpha-Champion führt (core/basisTier.ts). Vorgabe an
+       * (Owner-Anweisung: von Anfang an aktiv); auf der Plattform gilt der
+       * globale Schalter (`meta/engineConfig`) UND der Nutzer-Schalter
+       * `settings.auto.basis` — beide müssen an sein. Aus heißt: keine NEUEN
+       * Basis-Einstiege; eine offene Basis-Position führt die Basis-Strategie
+       * zu Ende (eigene Exits, Broker-Stop bleibt; core/basisTier.ts,
+       * Prüfbefund M6/M8) — keine Zwangs-Liquidation.
+       */
+      basis: z.boolean().default(true),
     })
-    .default({ id: 'trend_donchian', params: {}, allowWithoutChampion: false }),
+    .default({ id: 'trend_donchian', params: {}, allowWithoutChampion: false, basis: true }),
   optimizer: z
     .object({
       strategies: z.array(z.string().min(1)).min(1).default(['trend_donchian', 'momentum_pullback', 'mean_reversion']),
@@ -278,8 +291,31 @@ export const ConfigSchema = z.object({
           minSharpeRatio: z.number().min(0).default(0.9),
           /** Gebühren gesamt / |Netto| höchstens dieser Anteil. */
           maxCostShare: z.number().min(0).default(0.1),
+          /**
+           * Sizing-Semantik der Basis (Prüfbefund K4): Position = dieser
+           * Anteil der Equity je Symbol (`SizingSpec` allocation), im
+           * Optimierer UND in der Engine — `riskPerTradePct` ist für die Basis
+           * ohne Wirkung. 20 % entsprechen der Vorregistrierung V2 (Risiko
+           * 4 % bei Stop 20 %); die Messung mit positionPct 20 liefert
+           * dieselben Stückzahlen wie 4 %/20 %-Stop (test/backtest/allokation).
+           * Der Wert steht im Block `basis` der Champion-Datei und gilt dort.
+           */
+          positionPct: z.number().gt(0).max(100).default(20),
         })
-        .default({ minDrawdownReduction: 0.25, minSharpeRatio: 0.9, maxCostShare: 0.1 }),
+        .default({ minDrawdownReduction: 0.25, minSharpeRatio: 0.9, maxCostShare: 0.1, positionPct: 20 }),
+      /**
+       * Eigener Korb der Basis-Allokation. Leer (Vorgabe): Der Basis-Kandidat
+       * wird auf der Einheit des Laufs gemessen — nur bei festem Korb. Gesetzt:
+       * Der Basis-Kandidat bekommt eine EIGENE Einheit „Basis (n Symbole)" mit
+       * genau diesen Symbolen, festem Korb (keine Zugehörigkeit je Fold),
+       * eigener Bars-Ladung (`fetchSymbols` lädt sie mit) und der Benchmark
+       * wie bisher; die Alpha-Einheiten bleiben unverändert und dürfen ihren
+       * Korb je Fold behalten. So misst die Plattform ihren Alpha-Korb mit
+       * Korb je Fold und die Basis auf ihrem vorregistrierten Korb — in einem
+       * Lauf. Der Block `basis` der Champion-Datei nennt diese Symbole.
+       * Kein Tor: Der Korb ist Teil der Vorregistrierung, nicht der Bewertung.
+       */
+      basisUniverse: z.array(z.string().min(1)).max(50).default([]),
     })
     .default({
       strategies: ['trend_donchian', 'momentum_pullback', 'mean_reversion'],
@@ -302,7 +338,8 @@ export const ConfigSchema = z.object({
       pooled: false,
       foldMembership: 'point_in_time',
       fixedCandidates: [],
-      basis: { minDrawdownReduction: 0.25, minSharpeRatio: 0.9, maxCostShare: 0.1 },
+      basis: { minDrawdownReduction: 0.25, minSharpeRatio: 0.9, maxCostShare: 0.1, positionPct: 20 },
+      basisUniverse: [],
     }),
   costs: z
     .object({
@@ -450,6 +487,31 @@ export function parseConfig(raw: unknown): Config {
       `optimizer.fixedCandidates: höchstens EIN Festkandidat mit tier: basis (gefunden ${basisKandidaten.length}) — ` +
         'eine zweite Variante ist eine neue Vorregistrierung, kein Vergleich im selben Lauf.',
     );
+  }
+  // Der eigene Basis-Korb: kanonische Schreibweise wie das Universum, ohne
+  // Duplikate — und nur mit Basis-Kandidat. Ein Korb ohne Kandidat misst
+  // nichts und stünde stumm in der Config; laut ist besser.
+  if (cfg.optimizer.basisUniverse.length > 0) {
+    if (basisKandidaten.length === 0) {
+      throw new ConfigError('optimizer.basisUniverse ohne Festkandidat mit tier: basis — ein Basis-Korb ohne Basis-Kandidat misst nichts.');
+    }
+    cfg.optimizer.basisUniverse = [...new Set(cfg.optimizer.basisUniverse.map((s) => normalizeUserSymbol(s, cfg.universe.assetClass)))];
+    // Der Korb der Basis gehört in den Kandidatenpool (Prüfbefund M11): Was der
+    // Block `basis` der Champion-Datei später als Korb nennt, muss aus dem Pool
+    // stammen, den nur ein Commit ändert — sonst schriebe der Optimierer das
+    // gehandelte Universum am Pool vorbei. `candidates` enthält immer
+    // `symbols`; ohne Pool (Config ohne `candidates`) ist der Korb eine eigene
+    // Einheit und wird nicht geprüft.
+    if (cfg.universe.candidates) {
+      const pool = new Set(cfg.universe.candidates);
+      const fremd = cfg.optimizer.basisUniverse.filter((s) => !pool.has(s));
+      if (fremd.length > 0) {
+        throw new ConfigError(
+          `optimizer.basisUniverse außerhalb des Kandidatenpools (universe.candidates ∪ universe.symbols): ${fremd.join(', ')} — ` +
+            'der Basis-Korb muss aus dem Pool stammen, den nur ein Commit ändert.',
+        );
+      }
+    }
   }
   // Tiefe Historie nur dort, wo sie billig ist. Intraday bleibt bei 2000 Tagen:
   // 4000 Tage × 78 Bars × 30 Symbole wären rund 9 Mio. Bars je Lauf — der

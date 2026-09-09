@@ -12,7 +12,8 @@
  */
 import type { Journal } from '../core/journal.ts';
 import { readJson, writeJsonAtomic } from '../core/journal.ts';
-import type { Ms, Params, TimeframeMin } from '../core/types.ts';
+import { logger } from '../core/log.ts';
+import { TIMEFRAMES, type Ms, type Params, type TimeframeMin } from '../core/types.ts';
 import type { GateResult } from './robustness.ts';
 import type { OosAggregate, TimeRange } from './walkForward.ts';
 
@@ -76,6 +77,15 @@ export interface ChampionBasis {
   pass: boolean;
   gates: GateResult[];
   measuredAt: Ms;
+  /**
+   * Sizing-Semantik, mit der gemessen wurde und mit der die Basis-Stufe
+   * handelt: Position = dieser Anteil der Equity je Symbol
+   * (`optimizer.basis.positionPct`, `SizingSpec` allocation). Fehlt das Feld
+   * (Block aus einem Lauf vor der Basis-Stufe), ist die Semantik unbekannt und
+   * der Block wird NICHT gehandelt (core/basisTier.ts) — bis ein Lauf ihn neu
+   * schreibt.
+   */
+  positionPct?: number;
   /** Commit der Config/Vorregistrierung, mit der gemessen wurde (falls der Aufrufer ihn kennt). */
   configCommit?: string;
 }
@@ -93,7 +103,57 @@ export function emptyChampionFile(now: Ms): ChampionFile {
   return { version: 1, updatedAt: now, symbols: {}, noTrade: {} };
 }
 
-export function loadChampion(path: string): ChampionFile | null {
+/**
+ * Den Block `basis` lesen, ohne zu raten — und ohne den Champion mitzureißen.
+ *
+ * Prüfbefund M9 (09.09.2026): Ein Block mit fremder oder fehlender `version`
+ * warf bisher die GANZE Datei bzw. das ganze Doc — im Takt handelte dann
+ * niemand mehr, im Dauerprozess starb jedes CLI-Kommando. Ein additiver
+ * Block darf nicht mehr Schaden anrichten können als sein Fehlen. Also:
+ * unlesbar ⇒ kein Block (die Basis handelt nicht), der Grund geht als Text
+ * an den Aufrufer; `symbols`/`noTrade` bleiben gültig. Geprüft wird, was die
+ * Engine braucht (Version, Strategie, Parameter als Zahlen, Korb, Zeitrahmen,
+ * Urteil); Beiwerk (Label, Gates, Messzeit) wird notfalls ergänzt.
+ */
+export function parseChampionBasis(raw: unknown): { ok: true; basis: ChampionBasis } | { ok: false; error: string } {
+  const fail = (error: string) => ({ ok: false as const, error: `Basis-Block unlesbar (${error}) — die Basis wird nicht gehandelt, der Alpha-Champion gilt weiter` });
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return fail('kein Objekt');
+  const o = raw as Record<string, unknown>;
+  if (o.version !== 1) return fail(`unbekannte Basis-Version ${String(o.version)}`);
+  if (typeof o.strategy !== 'string' || o.strategy.length === 0) return fail('strategy fehlt');
+  if (typeof o.params !== 'object' || o.params === null || Array.isArray(o.params)) return fail('params ist kein Objekt');
+  const params: Params = {};
+  for (const [k, v] of Object.entries(o.params as Record<string, unknown>)) {
+    if (typeof v !== 'number' || !Number.isFinite(v)) return fail(`params.${k} ist keine Zahl`);
+    params[k] = v;
+  }
+  if (!Array.isArray(o.symbols) || !o.symbols.every((x): x is string => typeof x === 'string')) return fail('symbols ist keine Symbolliste');
+  if (typeof o.timeframe !== 'number' || !(TIMEFRAMES as readonly number[]).includes(o.timeframe)) return fail(`timeframe ${String(o.timeframe)} unbekannt`);
+  if (typeof o.pass !== 'boolean') return fail('pass ist kein Wahrheitswert');
+  if (o.positionPct !== undefined && (typeof o.positionPct !== 'number' || !Number.isFinite(o.positionPct))) return fail('positionPct ist keine Zahl');
+  const basis: ChampionBasis = {
+    version: 1,
+    strategy: o.strategy,
+    params,
+    symbols: [...o.symbols],
+    label: typeof o.label === 'string' ? o.label : o.strategy,
+    timeframe: o.timeframe as TimeframeMin,
+    pass: o.pass,
+    gates: Array.isArray(o.gates) ? (o.gates as GateResult[]) : [],
+    measuredAt: typeof o.measuredAt === 'number' ? o.measuredAt : 0,
+    ...(o.positionPct !== undefined ? { positionPct: o.positionPct as number } : {}),
+    ...(typeof o.configCommit === 'string' ? { configCommit: o.configCommit } : {}),
+  };
+  return { ok: true, basis };
+}
+
+/**
+ * Champion-Datei laden. Fehlt sie ⇒ null; fremde DATEI-Version ⇒ Fehler (nie
+ * raten). Der Block `basis` ist additiv und darf die Datei nicht mitreißen
+ * (`parseChampionBasis`): unlesbar ⇒ ohne Block, `warn` bekommt den Grund
+ * (Default: Logger).
+ */
+export function loadChampion(path: string, warn: (text: string) => void = (t) => logger.warn(t)): ChampionFile | null {
   const raw = readJson<Partial<ChampionFile>>(path);
   if (raw === null) return null;
   if (raw.version !== 1) throw new Error(`${path}: unbekannte Champion-Version ${String(raw.version)} — Datei prüfen statt überschreiben`);
@@ -103,10 +163,10 @@ export function loadChampion(path: string): ChampionFile | null {
     symbols: raw.symbols ?? {},
     noTrade: raw.noTrade ?? {},
   };
-  // Additiv: alte Dateien haben keinen Block; ein Block mit fremder Version ist wie eine fremde Datei-Version.
   if (raw.basis !== undefined && raw.basis !== null) {
-    if (raw.basis.version !== 1) throw new Error(`${path}: unbekannte Basis-Version ${String(raw.basis.version)} — Datei prüfen statt überschreiben`);
-    file.basis = raw.basis;
+    const b = parseChampionBasis(raw.basis);
+    if (b.ok) file.basis = b.basis;
+    else warn(`${path}: ${b.error}`);
   }
   return file;
 }

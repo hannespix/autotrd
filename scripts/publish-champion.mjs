@@ -4,7 +4,9 @@
  *
  *   node scripts/publish-champion.mjs --home var [--dry-run]
  *
- * Schreibt `meta/champion` (die champion.json, unverändert) und den
+ * Schreibt `meta/champion` (die champion.json, unverändert — samt dem Block
+ * `basis` der Basis-Allokation, falls der Lauf ihn geschrieben hat; additiv,
+ * Leser ohne Block bleiben unverändert) und den
  * Markdown des jüngsten Berichts nach `meta/optimizeReports/berichte/<YYYY-MM-DD>`
  * (Pfad aus shared/src/berichte.ts — `meta/optimizeReports` ist ein Dokument,
  * die Berichte liegen in seiner Unter-Collection).
@@ -52,9 +54,15 @@ const reportText = latestReport ? readFileSync(join(reportsDir, latestReport), '
 // Die Zielpfade gehören in die Ausgabe: Der erste Lauf nach dem Umstieg
 // scheiterte an einem Pfad mit ungerader Segmentzahl, und der Trockenlauf
 // hätte das nie gezeigt, weil er vor Firestore aufhört.
+const basis = champion.basis && typeof champion.basis === 'object' ? champion.basis : null;
 const summary = {
   symbols: Object.keys(champion.symbols),
   noTrade: Object.keys(champion.noTrade ?? {}),
+  // Die Basis-Stufe gehört in die Ausgabe: Ohne diese Zeile sähe man im Lauf nicht, ob ein
+  // bestandener Block mitgeht — und die Engine handelt ihn, sobald er in meta/champion steht.
+  basis: basis
+    ? { label: basis.label, strategy: basis.strategy, pass: basis.pass === true, symbols: basis.symbols ?? [], positionPct: basis.positionPct ?? null }
+    : null,
   updatedAt: champion.updatedAt,
   reportDate,
   reportBytes: reportText.length,
@@ -90,4 +98,9 @@ const batch = db.batch();
 batch.set(db.doc(CHAMPION_PFAD), { ...champion, publishedAt: Timestamp.now() });
 if (latestReport) batch.set(db.doc(berichtPfad(reportDate)), reportDoc);
 await batch.commit();
-console.log(`Veröffentlicht: meta/champion (${summary.symbols.length} Symbole, ${summary.noTrade.length} noTrade)` + (latestReport ? `, ${berichtPfad(reportDate)}` : ''));
+console.log(
+  `Veröffentlicht: meta/champion (${summary.symbols.length} Symbole, ${summary.noTrade.length} noTrade` +
+    (basis ? `, Basis „${basis.label}" ${basis.pass === true ? 'bestanden' : 'nicht bestanden'}` : ', keine Basis') +
+    ')' +
+    (latestReport ? `, ${berichtPfad(reportDate)}` : ''),
+);

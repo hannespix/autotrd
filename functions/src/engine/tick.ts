@@ -29,6 +29,7 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import type { AlpacaClient, AlpacaClock } from '../../../src/alpaca/types.ts';
+import { universeWithBasis } from '../../../src/core/basisTier.ts';
 import { parseConfig, type Config } from '../../../src/core/config.ts';
 import { errMsg, logger } from '../../../src/core/log.ts';
 import { DAY, MIN, addDays, dayKeyFor, nextTradingDay, sessionBounds, type Calendar } from '../../../src/core/time.ts';
@@ -45,7 +46,7 @@ import { isRecord, isoOf, plain, type DocData, type DocSnapLike, type FirestoreL
 import { FirestoreJournal, type FxFn } from './journal.js';
 import { mirrorError, mirrorPositions, mirrorQuotes, mirrorUser, type QuoteMark } from './mirror.js';
 import { SharedBarStoreView, cachedAsset, cachedCalendar, delegateClient, sharedStoreFor, withSharedData, type SharedServices } from './sharedData.js';
-import { FirestoreStateStore } from './state.js';
+import { engineStatePath, FirestoreStateStore } from './state.js';
 import { buildStrategyFor, championFromDoc, type StrategyMap } from './strategyFor.js';
 import { NoopDataStream, NoopTradeStream } from './streams.js';
 
@@ -414,16 +415,21 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
   let championNote: string | null = null;
   let champion = null;
   try {
-    champion = championFromDoc(champSnap.exists ? champSnap.data() : undefined);
+    // Ein unlesbarer Basis-Block nimmt den Champion NICHT mit (Prüfbefund M9): nur die Basis fällt aus, mit Notiz.
+    champion = championFromDoc(champSnap.exists ? champSnap.data() : undefined, (text) => {
+      championNote = text;
+      log.error(text);
+    });
   } catch (e) {
     championNote = errMsg(e);
     log.error(championNote);
   }
   const assetClass = base.universe.assetClass;
   const feed = base.broker.feed;
-  // Bereinigung der Tagesbars — derselbe Schalter wie beim Optimierer (`broker.adjustment`). Das Doc
-  // `meta/engineConfig` trägt ihn heute nicht (scripts/module/engineConfig.mjs) ⇒ Default raw, die
-  // Plattform ändert sich nicht. Trägt es ihn einmal, folgt der Takt: eigene Cache-Wurzel, bereinigter Abruf.
+  // Bereinigung der Tagesbars — derselbe Schalter wie beim Optimierer (`broker.adjustment`), seit der
+  // Basis-Stufe im Doc `meta/engineConfig` (scripts/module/engineConfig.mjs; Prüfbefund M7 gilt live).
+  // Der Takt folgt ihm: eigene Cache-Wurzel je Bereinigung, bereinigter Abruf; ein Doc ohne das Feld
+  // bleibt roh — rohe und bereinigte Tagesbars mischen sich nie (functions/test/engine/bereinigung).
   const adjustment = base.broker.adjustment;
   const tf = base.timeframe;
   const baseTf: BaseTimeframe = tf === 1440 ? '1Day' : '1Min';
@@ -486,11 +492,18 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
       // Eine veraltete Symbolauswahl sperrt Einstiege wie jede andere offene
       // Kette — Exits, Abgleich und Schutz-Stops laufen weiter.
       const sperre = zugang.sperre ?? uc.auswahlVeraltet ?? null;
+      // Was dieses Buch hält (Positionen, laufende Einstiege) — damit der Korb einer Basis OHNE Einstiegsrecht
+      // (pass gefallen, Schalter aus) im Universum bleibt, solange darin etwas offen ist: Die Basis-Strategie
+      // führt ihre Positionen zu Ende statt sie zu liquidieren (Prüfbefund M6/M8, core/basisTier.ts).
+      const held = await heldSymbols(db, uid);
+      // Der Korb der Basis-Stufe kommt als Block ins Universum dieser Engine — die Engine führt nur ihr Universum.
+      const mitBasis = universeWithBasis(uc.config, champion, held);
       // Verriegelt (Echtgeld-Kette offen): keine Einstiege, und Fremdbestand wird nie adoptiert — ein
       // Schutz-Stop auf eine Handposition wäre eine Order auf einem verriegelten Konto.
-      const config: Config = sperre ? { ...uc.config, engine: { ...uc.config.engine, onOrphan: 'halt' } } : uc.config;
-      const strategy = buildStrategyFor({ champion, config, getStrategy: deps.getStrategy, log: userLogger(log, uid) });
+      const config: Config = sperre ? { ...mitBasis, engine: { ...mitBasis.engine, onOrphan: 'halt' } } : mitBasis;
+      const strategy = buildStrategyFor({ champion, config, held, getStrategy: deps.getStrategy, log: userLogger(log, uid) });
       if (championNote) strategy.notes.unshift(championNote);
+      if (!uc.basisSchalter.global && champion?.basis) strategy.notes.push('Basis-Stufe plattformweit abgeschaltet (meta/engineConfig strategy.basis=false) — keine neuen Basis-Einstiege');
       if (sperre) strategy.notes.push(`Einstiege gesperrt: ${sperre} — Abgleich, Schutz-Stops und Exits laufen weiter`);
       prepared.push({ uid, snap, verbindung: zugang.verbindung, sperre, config, configSource: uc.source, strategy });
     } catch (e) {
@@ -605,6 +618,20 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
   return finish();
 }
 
+/**
+ * Symbole mit offener Position oder laufender Einstiegs-Order laut Engine-State des Nutzers — VOR dem
+ * Engine-Start gelesen, weil das Universum (und damit der geteilte Bars-Abruf) vorher feststehen muss. Ein
+ * Lesefehler wirft: Ohne diese Kenntnis fiele der Korb einer gesperrten Basis aus dem Universum und die
+ * Positionen würden als „ohne Führung" liquidiert — fail-closed ist hier der Abbruch des Nutzer-Takts.
+ */
+async function heldSymbols(db: FirestoreLike, uid: string): Promise<string[]> {
+  const snap = await db.doc(engineStatePath(uid)).get();
+  if (!snap.exists) return [];
+  const d = snap.data();
+  const keys = (v: unknown): string[] => (isRecord(v) ? Object.keys(v) : []);
+  return [...new Set([...keys(d?.positions), ...keys(d?.pendingEntries)])];
+}
+
 function buildShared(dataClient: AlpacaClient | null, store: BarStore, now: Ms): SharedServices {
   const noData = (): Promise<never> => Promise.reject(new Error('Kein Plattform-Datenkey (ALPACA_API_KEY/ALPACA_SECRET_KEY)'));
   let clockPromise: Promise<AlpacaClock> | null = null;
@@ -634,7 +661,14 @@ async function runUser(ctx: TickContext, p: UserPrep, guard: RunGuard): Promise<
   const started = Date.now();
   const log = userLogger(ctx.log, uid);
   const mode = p.verbindung.mode;
-  const journal = new FirestoreJournal({ db, mode, assetClass: ctx.assetClass, fx: deps.fx, log, timestampNow: deps.timestampNow });
+  // Stufe eines Symbols (champion/basis/config) für Positions- und Trade-Docs, wenn die Position sie nicht
+  // selbst trägt (`stufe`, seit Prüfbefund G14 beim Fill festgehalten): nur, wenn die Wahl von heute noch
+  // dieselbe Strategie ist wie die der Position; sonst unbekannt.
+  const stufeFor = (symbol: string, strategyId: string): string | undefined => {
+    const c = p.strategy.fn(symbol);
+    return c && c.strategy.id === strategyId ? c.source : undefined;
+  };
+  const journal = new FirestoreJournal({ db, mode, assetClass: ctx.assetClass, fx: deps.fx, log, timestampNow: deps.timestampNow, stufeFor });
   const stateStore = new FirestoreStateStore(db, uid, { journal, guard });
   let engine: Engine | null = null;
   let error: string | null = null;
@@ -717,8 +751,17 @@ async function runUser(ctx: TickContext, p: UserPrep, guard: RunGuard): Promise<
       // Aufgegebener Lauf: nichts mehr spiegeln — der Takt hat den Nutzer längst als gescheitert gemeldet.
     } else if (error === null && engine) {
       const status = engine.status();
-      await mirrorPositions(db, uid, status, now);
-      await mirrorUser(db, uid, { mode, status, now, lastError: null, champion: { source: p.strategy.source, symbols: p.strategy.tradable }, commandsSeen, configSource: p.configSource, notes: p.strategy.notes });
+      await mirrorPositions(db, uid, status, now, stufeFor);
+      await mirrorUser(db, uid, {
+        mode,
+        status,
+        now,
+        lastError: null,
+        champion: { source: p.strategy.source, symbols: p.strategy.tradable, basis: p.strategy.basisSymbols },
+        commandsSeen,
+        configSource: p.configSource,
+        notes: p.strategy.notes,
+      });
     } else {
       await mirrorError(db, uid, error ?? 'unbekannt', now);
     }

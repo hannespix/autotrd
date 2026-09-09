@@ -56,6 +56,12 @@ export interface OrderExecutorArgs {
   calendar?: Calendar | undefined;
   /** Strategie-ID für Positionen, deren Intent nach einem Neustart fehlt. */
   strategyIdFor?: ((symbol: string) => string | undefined) | undefined;
+  /**
+   * Stufe der Wahl (champion/basis/config), die ein Symbol mit DIESER Strategie führt — wird beim Einstiegs-Fill
+   * in der Position festgehalten (`PositionState.stufe`), damit Trade-Docs sie auch nach einem Wechsel oder bei
+   * der Zwangs-Liquidation tragen (Prüfbefund G14). undefined ⇒ Feld bleibt weg.
+   */
+  stufeFor?: ((symbol: string, strategyId: string) => string | undefined) | undefined;
   notify?: NotifyFn | undefined;
   log?: typeof logger | undefined;
   /**
@@ -183,6 +189,7 @@ export class OrderExecutor {
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly calendar: Calendar | undefined;
   private readonly strategyIdFor: (symbol: string) => string | undefined;
+  private readonly stufeFor: (symbol: string, strategyId: string) => string | undefined;
   private readonly notify: NotifyFn | null;
   private readonly log: typeof logger;
   private readonly costs: CostConfig | null;
@@ -201,6 +208,7 @@ export class OrderExecutor {
     this.sleep = a.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.calendar = a.calendar;
     this.strategyIdFor = a.strategyIdFor ?? (() => undefined);
+    this.stufeFor = a.stufeFor ?? (() => undefined);
     this.notify = a.notify ?? null;
     this.log = a.log ?? logger;
     this.costs = a.costs ?? null;
@@ -320,6 +328,15 @@ export class OrderExecutor {
     return r(true, `Einstieg gesendet (${order.orderClass ?? 'simple'})`, { orderId: submitted.id, clientId });
   }
 
+  /**
+   * Einstiegs-Order für Aktien: Marktorder mit Stop-Bein beim Broker (§0.4).
+   * Mit Ziel `bracket` (Alpaca verlangt dafür BEIDE Beine, take_profit UND
+   * stop_loss); ohne Ziel `oto` (one-triggers-other: genau EIN abhängiges
+   * Bein). Ein `bracket` mit nur einem Bein lehnt Alpaca mit 422 ab — die
+   * Basis-Stufe (regime_allocation, ohne Kursziel) hätte dann still nie
+   * gehandelt (Prüfbefund K3, 09.09.2026). Beide Klassen kommen mit
+   * `nested=true` als Beine zurück; der Abgleich behandelt sie gleich.
+   */
   private buildEntryOrder(intent: EnterIntent, clientId: string, holdsOvernight: boolean): NewOrder {
     const side = intent.side === 'long' ? 'buy' : 'sell';
     if (this.assetClass === 'crypto') {
@@ -333,7 +350,7 @@ export class OrderExecutor {
       type: 'market',
       timeInForce: holdsOvernight ? 'gtc' : 'day',
       clientOrderId: clientId,
-      orderClass: 'bracket',
+      orderClass: intent.target !== null ? 'bracket' : 'oto',
       stopLoss: { stopPrice: intent.stop },
     };
     if (intent.target !== null) order.takeProfit = { limitPrice: intent.target };
@@ -357,9 +374,9 @@ export class OrderExecutor {
     return { ...base, note: `Order zur Kennung bereits ${order.status} — kein zweiter Versuch im selben Bucket` };
   }
 
-  /** `by_client_order_id` liefert bei Alpaca keine Beine — für Bracket-Orders per ID (nested) nachladen. */
+  /** `by_client_order_id` liefert bei Alpaca keine Beine — für Bracket-/OTO-Orders per ID (nested) nachladen. */
   private async withLegs(o: AlpacaOrder): Promise<AlpacaOrder> {
-    if (o.orderClass !== 'bracket' || o.legs.length > 0) return o;
+    if ((o.orderClass !== 'bracket' && o.orderClass !== 'oto') || o.legs.length > 0) return o;
     return (await this.client.getOrder(o.id)) ?? o;
   }
 
@@ -409,10 +426,11 @@ export class OrderExecutor {
       const target = intent?.target ?? targetLeg?.limitPrice ?? null;
       const strategy = intent?.strategy ?? this.strategyIdFor(sym) ?? 'unknown';
       const entryDay = dayKeyFor(fillTime, this.assetClass);
+      const stufe = this.stufeFor(sym, strategy);
       const pos: PositionState =
         stop === null
-          ? { ...openPosition({ symbol: sym, side, qty: filled, fillPrice: avg, fillTime, stop: 0, target, strategy, entryDay }), stop: null, initialStop: null }
-          : openPosition({ symbol: sym, side, qty: filled, fillPrice: avg, fillTime, stop, target, strategy, entryDay });
+          ? { ...openPosition({ symbol: sym, side, qty: filled, fillPrice: avg, fillTime, stop: 0, target, strategy, entryDay, stufe }), stop: null, initialStop: null }
+          : openPosition({ symbol: sym, side, qty: filled, fillPrice: avg, fillTime, stop, target, strategy, entryDay, stufe });
       this.book.open(pos);
       this.journal.append(
         'fill',

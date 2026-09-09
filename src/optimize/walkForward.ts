@@ -21,6 +21,7 @@ import type {
   Ms,
   Params,
   SimResult,
+  SizingSpec,
   Strategy,
   TimeframeMin,
   Trade,
@@ -47,7 +48,7 @@ export interface SimConfig {
 export interface SimInput {
   bars: ReadonlyMap<string, BarSeriesLike>;
   benchmark?: BarSeriesLike;
-  strategyFor: (symbol: string) => { strategy: Strategy; params: Params } | null;
+  strategyFor: (symbol: string) => { strategy: Strategy; params: Params; sizing?: SizingSpec | undefined } | null;
   config: SimConfig;
   initialEquity: number;
   /** Entscheidungen nur in [start, end); alles davor ist Warmup. */
@@ -314,6 +315,12 @@ export interface WindowSimArgs {
   membership?: Membership | undefined;
   /** Zeitpunkt, zu dem der Korb dieses Fensters gewählt wurde — der OOS-Beginn des Folds. */
   membershipAt?: Ms | undefined;
+  /**
+   * Sizing-Semantik der Wahl (Basis-Stufe: Allokation mit `positionPct`).
+   * Geht unverändert an `decide()` — die Messung rechnet mit derselben
+   * Stückzahl wie die Engine; ohne Angabe gilt das Risiko-Budget.
+   */
+  sizing?: SizingSpec | undefined;
 }
 
 /**
@@ -325,7 +332,7 @@ export function simulateWindow(a: WindowSimArgs): SimResult {
   const korb = korbZum(korbVon(a.symbol, a.bars), a.membership, a.membershipAt);
   const input: SimInput = {
     bars: korb,
-    strategyFor: (s) => (korb.has(s) ? { strategy: a.strategy, params: a.params } : null),
+    strategyFor: (s) => (korb.has(s) ? { strategy: a.strategy, params: a.params, ...(a.sizing ? { sizing: a.sizing } : {}) } : null),
     config: a.config,
     initialEquity: a.initialEquity,
     range: { start: a.range.start, end: a.range.end },

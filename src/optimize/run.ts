@@ -37,7 +37,7 @@ import { universeRegelnFuer } from '../universe/select.ts';
 import { korbJeFold, type KorbStand } from './korbJeFold.ts';
 import type { Calendar } from '../core/time.ts';
 import { DAY, dayKey } from '../core/time.ts';
-import type { Bar, BarSeriesLike, Metrics, Ms, Params, Strategy } from '../core/types.ts';
+import type { Bar, BarSeriesLike, Metrics, Ms, Params, SizingSpec, Strategy } from '../core/types.ts';
 import {
   applyDecision,
   decidePromotion,
@@ -84,6 +84,7 @@ import {
   zeitachseVon,
   type BarsInput,
   type BasisKennzahlen,
+  type BasisSimArgs,
   type Fold,
   type SimConfig,
   type SimulateFn,
@@ -300,6 +301,13 @@ export interface SymbolRun {
    * nicht um den Alpha-Champion und wird nie `chosen`.
    */
   basis?: BasisRun;
+  /**
+   * `basis`: die eigene Einheit der Basis-Allokation (`optimizer.basisUniverse`)
+   * — nur die Basis-Messung, keine Alpha-Entscheidung (`decision` ist dann ein
+   * Platzhalter, `symbols`/`noTrade` der Champion-Datei unberührt). Fehlt das
+   * Feld: eine Alpha-Einheit wie bisher.
+   */
+  art?: 'basis';
   errors: string[];
 }
 
@@ -316,6 +324,10 @@ export interface BasisRun {
   label: string;
   strategy: string;
   params: Params;
+  /** Sizing-Semantik der Messung: Position = dieser Anteil der Equity je Symbol (`optimizer.basis.positionPct`). */
+  positionPct: number;
+  /** Der gemessene Korb — die Symbole MIT Bars in der Simulation; genau diese trägt der Block `basis`. */
+  symbols: string[];
   /** Die Gate-Gruppe `basis` (vier Gates, alle müssen bestehen). */
   gates: GateResult[];
   pass: boolean;
@@ -394,6 +406,13 @@ export function nichtsGemessen(runs: readonly SymbolRun[]): boolean {
  * Positionslimit, Brutto-Exposure und Notbremsen, also so, wie es live läuft.
  */
 interface Einheit {
+  /**
+   * `alpha`: ein Symbol oder der gepoolte Korb — Alpha-Kandidaten, Amtsinhaber,
+   * Beförderung. `basis`: der eigene Korb der Basis-Allokation
+   * (`optimizer.basisUniverse`) — nur die Basis-Messung, keine
+   * Alpha-Entscheidung, `symbols`/`noTrade` der Champion-Datei unberührt.
+   */
+  art: 'alpha' | 'basis';
   /** Anzeige- und Journalschlüssel. */
   key: string;
   /** Symbole, auf die die Entscheidung angewandt wird. */
@@ -411,6 +430,11 @@ interface Einheit {
 /** Anzeigename eines Korbs — taucht im Bericht und im Journal auf. */
 export function korbName(anzahl: number): string {
   return `Korb (${anzahl} Symbole)`;
+}
+
+/** Anzeigename der eigenen Basis-Einheit (`optimizer.basisUniverse`). */
+export function basisName(anzahl: number): string {
+  return `Basis (${anzahl} Symbole)`;
 }
 
 /** Erste Position mit t >= ms. */
@@ -518,12 +542,19 @@ function einheitenVon(input: OptimizeRunInput, pooled: boolean, log: (m: string)
     }
   }
 
+  // Der eigene Korb der Basis-Allokation (`optimizer.basisUniverse`): eine
+  // eigene Einheit im SELBEN Messfenster wie der Lauf, fester Korb, keine
+  // Zugehörigkeit je Fold. Leer ⇒ keine Einheit; die Basis läuft dann (wie
+  // bisher) auf der Einheit des Laufs, sofern deren Korb fest ist.
+  const basis = basisEinheitVon(input, fensterStart, log);
+
   if (!pooled) {
-    return input.symbols.map((symbol) => {
+    const alpha: Einheit[] = input.symbols.map((symbol) => {
       const g = geladen.find((x) => x.symbol === symbol);
       const eigener = fehler.filter((f) => f.startsWith(`${symbol}: `)).map((f) => `Bars: ${f.slice(symbol.length + 2)}`);
-      return { key: symbol, symbols: [symbol], bars: g ? g.bars : null, errors: eigener, kandidaten: null, kandidatenFehlend: [], korbHinweis, korbFehler: null };
+      return { art: 'alpha', key: symbol, symbols: [symbol], bars: g ? g.bars : null, errors: eigener, kandidaten: null, kandidatenFehlend: [], korbHinweis, korbFehler: null };
     });
+    return basis ? [...alpha, basis] : alpha;
   }
 
   // Gepoolt: eine Einheit. Symbole ohne Bars fallen aus dem Korb, bleiben
@@ -533,20 +564,72 @@ function einheitenVon(input: OptimizeRunInput, pooled: boolean, log: (m: string)
   // Mit Korb je Fold simuliert jedes Fenster auf SEINEM Stand — die Serien
   // aller Kandidaten liegen deshalb bereit, die Membership wählt je Fenster.
   const alle = kandidaten ? new Map([...korb, ...kandidaten]) : korb;
-  return [
-    {
-      key: korbName(korb.size),
-      symbols: [...input.symbols],
-      // Ohne gehandelte Symbole mit Bars gibt es nichts zu messen — auch nicht
-      // auf Kandidaten allein (Prüfbefund 3.2).
-      bars: korb.size > 0 ? alle : null,
-      errors: fehler.length > 0 ? [`ohne Bars, nicht im Korb: ${fehler.join('; ')}`] : [],
-      kandidaten: kandidaten && kandidaten.size > 0 ? kandidaten : null,
-      kandidatenFehlend,
-      korbHinweis,
-      korbFehler,
-    },
-  ];
+  const gepoolt: Einheit = {
+    art: 'alpha',
+    key: korbName(korb.size),
+    symbols: [...input.symbols],
+    // Ohne gehandelte Symbole mit Bars gibt es nichts zu messen — auch nicht
+    // auf Kandidaten allein (Prüfbefund 3.2).
+    bars: korb.size > 0 ? alle : null,
+    errors: fehler.length > 0 ? [`ohne Bars, nicht im Korb: ${fehler.join('; ')}`] : [],
+    kandidaten: kandidaten && kandidaten.size > 0 ? kandidaten : null,
+    kandidatenFehlend,
+    korbHinweis,
+    korbFehler,
+  };
+  return basis ? [gepoolt, basis] : [gepoolt];
+}
+
+/**
+ * Die eigene Einheit der Basis-Allokation: genau die Symbole aus
+ * `optimizer.basisUniverse`, geladen über dieselbe `barsFor`, geschnitten auf
+ * das Messfenster des Laufs (`fensterStart`; ohne Alpha-Bars das eigene
+ * Fenster ab dem Ende der Basis-Bars). Kein Kandidatenpool, keine Membership —
+ * die Basis kennt keinen Korb je Fold. Symbole ohne Bars fehlen im Korb und
+ * stehen als Fehler im Bericht; ohne ein einziges Symbol mit Bars ist die
+ * Einheit nicht messbar (`bars: null`), und der alte Block bleibt stehen.
+ */
+function basisEinheitVon(input: OptimizeRunInput, fensterStart: Ms | null, log: (m: string) => void): Einheit | null {
+  const symbols = input.config.optimizer.basisUniverse;
+  if (symbols.length === 0) return null;
+  const geladen = new Map<string, BarSeriesLike>();
+  const fehler: string[] = [];
+  for (const symbol of symbols) {
+    try {
+      const b = input.barsFor(symbol);
+      if (b.length === 0) throw new Error('keine Bars');
+      geladen.set(symbol, b);
+    } catch (e) {
+      fehler.push(`${symbol}: ${errMsg(e)}`);
+      log(`Basis ${symbol}: ${errMsg(e)}`);
+    }
+  }
+  let start = fensterStart;
+  if (start === null && geladen.size > 0) {
+    const ende = [...geladen.values()].reduce((m, b) => Math.max(m, b.t[b.length - 1]! + 1), Number.NEGATIVE_INFINITY);
+    start = ende - input.config.optimizer.lookbackDays * DAY;
+  }
+  const korb = new Map<string, BarSeriesLike>();
+  for (const [symbol, b] of geladen) {
+    const im = start === null ? b : imFenster(b, start);
+    if (im.length === 0) {
+      fehler.push(`${symbol}: keine Bars im Messfenster`);
+      log(`Basis ${symbol}: keine Bars im Messfenster`);
+      continue;
+    }
+    korb.set(symbol, im);
+  }
+  return {
+    art: 'basis',
+    key: basisName(symbols.length),
+    symbols: [...symbols],
+    bars: korb.size > 0 ? korb : null,
+    errors: fehler.length > 0 ? [`ohne Bars, nicht im Korb: ${fehler.join('; ')}`] : [],
+    kandidaten: null,
+    kandidatenFehlend: [],
+    korbHinweis: 'Basis-Einheit: fester Korb aus optimizer.basisUniverse (kein Korb je Fold — die Basis kennt keinen)',
+    korbFehler: null,
+  };
 }
 
 /**
@@ -568,6 +651,71 @@ function amtsinhaberVon(champion: ChampionFile, einheit: Einheit): ChampionEntry
   }
   return erster;
 }
+
+/**
+ * Die Basis-Messung einer Einheit: EINE durchgehende Simulation über die
+ * OOS-Kette mit der Allokations-Semantik der Basis (`optimizer.basis.positionPct`
+ * — `riskPerTradePct` der Config ist dafür ohne Wirkung), Stress-Lauf, Holdout;
+ * Maßstab Korb liegenlassen (Gates) und Benchmark (Bericht); Gate-Gruppe `basis`.
+ * Gemeinsam für die Basis auf der Einheit des Laufs und die eigene Basis-Einheit.
+ */
+function messeBasis(a: {
+  common: Omit<WindowSimArgsBasis, 'strategy' | 'params' | 'sizing'>;
+  bars: BarsInput;
+  strategy: Strategy;
+  params: Params;
+  label: string;
+  cfg: Config;
+  deps: OptimizeDeps;
+  marktSymbol: string | null;
+  benchmark: BarSeriesLike | undefined;
+  initialEquity: number;
+  periodsPerYear: number;
+}): BasisRun {
+  const { cfg, deps, marktSymbol, periodsPerYear } = a;
+  const optimizer = cfg.optimizer;
+  const positionPct = optimizer.basis.positionPct;
+  const sizing: SizingSpec = { mode: 'allocation', positionPct };
+  const sim = basisSimulation({ ...a.common, strategy: a.strategy, params: a.params, sizing, optimizer, sharpeRatio: deps.metricsFns.sharpeRatio, periodsPerYear });
+  const korbBars = korbVon(a.common.symbol, a.bars);
+  const gemeinsam = { range: sim.range, assetClass: cfg.universe.assetClass };
+  const korb = kaufenUndHalten({ ...gemeinsam, bars: korbBars, periodsPerYear });
+  const korbKurve = kaufenUndHaltenKurve({ ...gemeinsam, bars: korbBars });
+  const bench = a.benchmark;
+  const spyBars = bench && marktSymbol !== null ? new Map([[marktSymbol, bench]]) : null;
+  const spy = spyBars ? kaufenUndHalten({ ...gemeinsam, bars: spyBars, periodsPerYear }) : null;
+  const spyKurve = spyBars ? kaufenUndHaltenKurve({ ...gemeinsam, bars: spyBars }) : null;
+  // Scheiben-Netto des Maßstabs: Startkapital in die Kurve investiert, dieselbe Kurve in die Folds geschnitten.
+  const scheibe = (k: MarktKurve | null, f: Fold): number | null =>
+    k === null ? null : a.initialEquity * (kurvenstandVor(k, f.oosEnd) - kurvenstandVor(k, f.oosStart));
+  const scheiben = sim.scheiben.map((sc) => ({ fold: sc.fold, basis: sc.netProfit, korb: scheibe(korbKurve, sc.fold), spy: scheibe(spyKurve, sc.fold) }));
+  const g = basisGates({
+    basis: optimizer.basis,
+    stressCostMultiplier: optimizer.stressCostMultiplier,
+    kennzahlen: sim.kennzahlen,
+    korb: korb ? { sharpe: korb.sharpe, maxDrawdownPct: korb.maxDrawdownPct } : null,
+  });
+  return {
+    label: a.label,
+    strategy: a.strategy.id,
+    params: a.params,
+    positionPct,
+    symbols: [...korbBars.keys()],
+    gates: g.gates,
+    pass: g.pass,
+    kennzahlen: sim.kennzahlen,
+    range: sim.range,
+    stressCostMultiplier: sim.stressCostMultiplier,
+    korb,
+    ...(marktSymbol !== null ? { spy: { symbol: marktSymbol, bezug: spy } } : {}),
+    scheiben,
+    positiveScheibenShare: scheiben.length ? scheiben.filter((x) => x.basis > 0).length / scheiben.length : 0,
+    holdout: sim.holdout,
+  };
+}
+
+/** Die Simulations-Argumente einer Einheit, wie `common` sie in `runOptimization` baut. */
+type WindowSimArgsBasis = Omit<BasisSimArgs, 'optimizer' | 'sharpeRatio' | 'periodsPerYear'>;
 
 function resolveDeps(input: OptimizeRunInput): OptimizeDeps {
   const missing: string[] = [];
@@ -635,11 +783,18 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
   const runs: SymbolRun[] = [];
   let dataRange: TimeRange | null = null;
   const einheiten = einheitenVon(input, optimizer.pooled, log);
+  // Mit eigenem Basis-Korb läuft die Basis NUR auf ihrer eigenen Einheit — die
+  // Alpha-Einheiten messen sie dann nicht (sonst gäbe es zwei Blöcke, und die
+  // Alpha-Einheit dürfte ihren Korb je Fold nicht mehr haben).
+  const basisEigeneEinheit = einheiten.some((e) => e.art === 'basis');
 
   for (const einheit of einheiten) {
     const symbol = einheit.key;
     const runAt = now();
-    const incumbent = amtsinhaberVon(champion, einheit);
+    const istBasisEinheit = einheit.art === 'basis';
+    // Die Basis-Einheit hat keinen Amtsinhaber: Ihre Symbole können Alpha-
+    // Champions tragen (SPY etwa), aber die stehen nicht zur Debatte.
+    const incumbent = istBasisEinheit ? null : amtsinhaberVon(champion, einheit);
     const errors: string[] = [...einheit.errors];
     const results: StrategyRun[] = [];
 
@@ -758,7 +913,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       };
       const gatesLog = (name: string, r: StrategyRun) => log(`${symbol} ${name}: Gates ${r.pass ? 'bestanden' : 'NICHT bestanden'} (${r.gates.filter((x) => !x.pass).map((x) => x.name).join(', ') || '–'})`);
 
-      for (const strategy of messbar ? usable : []) {
+      for (const strategy of messbar && !istBasisEinheit ? usable : []) {
         try {
           // Kein `include` des Amtsinhabers: seine Params stammen aus einem Fit-Fenster,
           // das in den OOS-Fenstern der Kandidaten liegt — Defaults bleiben drin (walkForward).
@@ -776,7 +931,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       // Parameter sind vorregistriert), mit dem Korb je Fold und dem Holdout
       // wie jeder gesuchte Kandidat — dann durch dieselbe Kette. Ungültige
       // Parameter sind ein Fehler-Eintrag dieser Einheit, kein Absturz.
-      for (const fk of messbar ? festAlpha : []) {
+      for (const fk of messbar && !istBasisEinheit ? festAlpha : []) {
         const name = festName(fk);
         try {
           const params = festParams({ strategy: fk.strategy, params: fk.config.params, allowShort: cfg.risk.allowShort, log: (m) => log(`${symbol} ${name}: ${m}`) });
@@ -795,51 +950,20 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       // Die Basis-Allokation: EINE durchgehende Simulation über die OOS-Kette,
       // Maßstab der liegengelassene Korb über dieselbe Range, Gate-Gruppe
       // `basis`. Sie kommt nicht in `results` — sie konkurriert um nichts.
-      if (basisKandidat && messbar) {
+      // Mit eigenem Basis-Korb (`optimizer.basisUniverse`) läuft sie nur auf
+      // ihrer eigenen Einheit; sonst auf der Einheit des Laufs (fester Korb).
+      if (basisKandidat && messbar && (istBasisEinheit || !basisEigeneEinheit)) {
         const name = festName(basisKandidat);
         try {
-          if (einheiten.length > 1) {
-            throw new Error('Basis nur auf EINER Einheit (gepoolter Korb oder ein Symbol) — ungepoolt mit mehreren Symbolen gäbe es mehrere Basen für einen Block');
+          if (!istBasisEinheit && einheiten.length > 1) {
+            throw new Error('Basis nur auf EINER Einheit (gepoolter Korb oder ein Symbol) — ungepoolt mit mehreren Symbolen gäbe es mehrere Basen für einen Block; optimizer.basisUniverse gibt der Basis einen eigenen Korb');
           }
           if (common.membership) {
-            throw new Error('Basis nur auf festem Korb: Korb je Fold ist für die durchgehende Simulation nicht zulässig — optimizer.foldMembership: fixed setzen oder den Kandidatenpool weglassen');
+            throw new Error('Basis nur auf festem Korb: Korb je Fold ist für die durchgehende Simulation nicht zulässig — optimizer.foldMembership: fixed setzen, den Kandidatenpool weglassen oder der Basis mit optimizer.basisUniverse einen eigenen Korb geben');
           }
           const params = festParams({ strategy: basisKandidat.strategy, params: basisKandidat.config.params, allowShort: cfg.risk.allowShort, log: (m) => log(`${symbol} ${name}: ${m}`) });
-          const sim = basisSimulation({ ...common, strategy: basisKandidat.strategy, params, optimizer, sharpeRatio: deps.metricsFns.sharpeRatio, periodsPerYear });
-          const korbBars = korbVon(symbol, bars);
-          const gemeinsam = { range: sim.range, assetClass: cfg.universe.assetClass };
-          const korb = kaufenUndHalten({ ...gemeinsam, bars: korbBars, periodsPerYear });
-          const korbKurve = kaufenUndHaltenKurve({ ...gemeinsam, bars: korbBars });
-          const bench = input.benchmark;
-          const spyBars = bench && marktSymbol !== null ? new Map([[marktSymbol, bench]]) : null;
-          const spy = spyBars ? kaufenUndHalten({ ...gemeinsam, bars: spyBars, periodsPerYear }) : null;
-          const spyKurve = spyBars ? kaufenUndHaltenKurve({ ...gemeinsam, bars: spyBars }) : null;
-          // Scheiben-Netto des Maßstabs: Startkapital in die Kurve investiert, dieselbe Kurve in die Folds geschnitten.
-          const scheibe = (k: MarktKurve | null, f: Fold): number | null =>
-            k === null ? null : input.initialEquity * (kurvenstandVor(k, f.oosEnd) - kurvenstandVor(k, f.oosStart));
-          const scheiben = sim.scheiben.map((sc) => ({ fold: sc.fold, basis: sc.netProfit, korb: scheibe(korbKurve, sc.fold), spy: scheibe(spyKurve, sc.fold) }));
-          const g = basisGates({
-            basis: optimizer.basis,
-            stressCostMultiplier: optimizer.stressCostMultiplier,
-            kennzahlen: sim.kennzahlen,
-            korb: korb ? { sharpe: korb.sharpe, maxDrawdownPct: korb.maxDrawdownPct } : null,
-          });
-          basisRun = {
-            label: basisKandidat.label,
-            strategy: basisKandidat.strategy.id,
-            params,
-            gates: g.gates,
-            pass: g.pass,
-            kennzahlen: sim.kennzahlen,
-            range: sim.range,
-            stressCostMultiplier: sim.stressCostMultiplier,
-            korb,
-            ...(marktSymbol !== null ? { spy: { symbol: marktSymbol, bezug: spy } } : {}),
-            scheiben,
-            positiveScheibenShare: scheiben.length ? scheiben.filter((x) => x.basis > 0).length / scheiben.length : 0,
-            holdout: sim.holdout,
-          };
-          log(`${symbol} ${name}: Basis-Latte ${g.pass ? 'bestanden' : 'NICHT bestanden'} (${g.gates.filter((x) => !x.pass).map((x) => x.name).join(', ') || '–'})`);
+          basisRun = messeBasis({ common, bars, strategy: basisKandidat.strategy, params, label: basisKandidat.label, cfg, deps, marktSymbol, benchmark: input.benchmark, initialEquity: input.initialEquity, periodsPerYear });
+          log(`${symbol} ${name}: Basis-Latte ${basisRun.pass ? 'bestanden' : 'NICHT bestanden'} (${basisRun.gates.filter((x) => !x.pass).map((x) => x.name).join(', ') || '–'})`);
         } catch (e) {
           const msg = errMsg(e).replace(/:\s*\n\s*/g, ': ').replace(/\s*\n\s*/g, '; ');
           errors.push(`${name}: ${msg}`);
@@ -962,7 +1086,17 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
 
     let decision: PromotionDecision;
     let candidate: ChampionEntry | null = null;
-    if (!bars || (results.length === 0 && errors.length > 0)) {
+    if (istBasisEinheit) {
+      // Keine Alpha-Entscheidung: Die Basis-Einheit schreibt nur den Block
+      // `basis` (unten). `symbols`/`noTrade` bleiben, wie die Alpha-Einheiten
+      // sie hinterlassen — ein Basis-Symbol mit Alpha-Champion behält ihn.
+      decision = {
+        action: 'stay_notrade',
+        reason: basisRun
+          ? `Basis-Einheit: keine Alpha-Entscheidung — Urteil im Block basis (${basisRun.pass ? 'bestanden' : 'nicht bestanden'})`
+          : `Basis-Einheit: nicht gemessen${errors.length ? ` — ${errors.join('; ')}` : ''}`,
+      };
+    } else if (!bars || (results.length === 0 && errors.length > 0)) {
       // Nichts messbar (Datenpanne, zu wenig Historie): kein Beleg für oder
       // gegen den Champion — Zustand unverändert lassen, Fehler in den Bericht.
       decision = { action: incumbent ? 'keep' : 'stay_notrade', reason: `nicht bewertbar: ${errors.join('; ')}` };
@@ -981,12 +1115,16 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
     // Gepoolt gilt EINE Entscheidung für den ganzen Korb: derselbe Eintrag
     // wird für jedes Symbol geschrieben. Damit bleibt das Champion-Format je
     // Symbol — Engine, Frontend und Plattform brauchen keine Zeile Änderung.
-    for (const sym of einheit.symbols) {
-      champion = applyDecision({ file: champion, symbol: sym, decision, candidate, bestScore: bestAny ? bestAny.score : null, now: runAt });
+    // Die Basis-Einheit fasst `symbols`/`noTrade` nie an.
+    let chosen: ChampionEntry | null = null;
+    if (!istBasisEinheit) {
+      for (const sym of einheit.symbols) {
+        champion = applyDecision({ file: champion, symbol: sym, decision, candidate, bestScore: bestAny ? bestAny.score : null, now: runAt });
+      }
+      const ersteszSymbol = einheit.symbols[0]!;
+      chosen = decision.action === 'promote' ? champion.symbols[ersteszSymbol]! : decision.action === 'keep' ? incumbent : null;
+      journalDecision(journal, { symbol, decision, chosen, candidate, candidatePass: bestPassed !== null, incumbentRescore, incumbentPass, now: runAt });
     }
-    const ersteszSymbol = einheit.symbols[0]!;
-    const chosen = decision.action === 'promote' ? champion.symbols[ersteszSymbol]! : decision.action === 'keep' ? incumbent : null;
-    journalDecision(journal, { symbol, decision, chosen, candidate, candidatePass: bestPassed !== null, incumbentRescore, incumbentPass, now: runAt });
     log(`${symbol}: ${decision.action} — ${decision.reason}`);
 
     // Basis-Block: geschrieben, wenn gemessen — bestanden oder nicht; `pass`
@@ -998,12 +1136,16 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
         version: 1,
         strategy: basisRun.strategy,
         params: basisRun.params,
-        symbols: [...einheit.symbols],
+        // Der GEMESSENE Korb (Symbole mit Bars) — ein Symbol ohne Bars war nicht
+        // in der Simulation und darf nicht als Basis-Symbol gehandelt werden.
+        symbols: [...basisRun.symbols],
         label: basisRun.label,
         timeframe: cfg.timeframe,
         pass: basisRun.pass,
         gates: basisRun.gates,
         measuredAt: runAt,
+        // Die Sizing-Semantik der Messung — genau die, mit der die Engine handelt.
+        positionPct: basisRun.positionPct,
         ...(input.configCommit === undefined ? {} : { configCommit: input.configCommit }),
       };
       champion = mitBasis(champion, block, runAt);
@@ -1022,6 +1164,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       korb: korbProtokoll,
       korbHinweis: einheit.korbHinweis,
       ...(basisRun ? { basis: basisRun } : {}),
+      ...(istBasisEinheit ? { art: 'basis' as const } : {}),
       errors,
     });
   }

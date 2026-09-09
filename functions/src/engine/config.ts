@@ -7,8 +7,13 @@
  * halb verstandenen Config; ein ungültiger Nutzer-Teil überspringt den
  * Nutzer mit Fehler.
  *
- * Global sind: Universum, Zeitrahmen, Feed, Sitzungsfenster, Kosten,
- * Optimierer, Engine-Feinheiten, Fallback-Strategie. Je Nutzer: `risk`.
+ * Global sind: Universum (samt Kandidatenpool), Zeitrahmen, Feed,
+ * Sitzungsfenster, Kosten, Optimierer, Engine-Feinheiten, Fallback-Strategie
+ * und der GLOBALE Schalter der Basis-Stufe (`strategy.basis`). Je Nutzer:
+ * `risk` und der Nutzer-Schalter der Basis (`settings.auto.basis`). Beide
+ * Schalter werden UND-verknüpft (`strategy.basis` der Nutzer-Config ist nur
+ * an, wenn global UND Nutzer an sind — Prüfbefund M8: vorher überschrieb der
+ * Nutzerteil das Globale, ein plattformweites „aus" bewirkte nichts).
  * `notify`/`paths` haben im Takt keine Bedeutung und werden verworfen.
  */
 import { normalizeUserSymbol } from '../../../src/alpaca/symbols.ts';
@@ -71,6 +76,8 @@ export interface UserRiskPart {
   risk: Record<string, unknown>;
   /** Gewünschte Teilmenge des Universums (roh, unnormalisiert); null = ganzes Universum. */
   symbols: string[] | null;
+  /** Basis-Stufe handeln (`settings.auto.basis`); fehlend, Alt-Schema oder Default ⇒ an. */
+  basis: boolean;
   source: UserRiskSource;
 }
 
@@ -94,16 +101,17 @@ export function userRiskFrom(settings: unknown): UserRiskPart {
     for (const k of AUTO_FIELDS) if (auto[k] !== undefined) risk[k] = auto[k];
     if (auto.allowShort !== undefined) risk.allowShort = auto.allowShort;
     const symbols = Array.isArray(auto.symbols) ? auto.symbols.filter((x): x is string => typeof x === 'string') : null;
-    return { risk, symbols, source: 'auto' };
+    // Nur ein ausdrückliches `false` schaltet die Basis ab — wie `validateAutoSettings` es speichert.
+    return { risk, symbols, basis: auto.basis !== false, source: 'auto' };
   }
   if (isRecord(s.strategy)) {
     const auto = autoSettingsFromLegacy(s.strategy);
     const risk: Record<string, unknown> = {};
     for (const k of AUTO_FIELDS) risk[k] = auto[k];
     risk.allowShort = auto.allowShort;
-    return { risk, symbols: null, source: 'legacy' };
+    return { risk, symbols: null, basis: auto.basis !== false, source: 'legacy' };
   }
-  return { risk: {}, symbols: null, source: 'default' };
+  return { risk: {}, symbols: null, basis: true, source: 'default' };
 }
 
 export interface UserConfig {
@@ -115,6 +123,13 @@ export interface UserConfig {
    * NICHT einen Abbruch (siehe unten).
    */
   auswahlVeraltet?: string;
+  /** Die beiden Schalter der Basis-Stufe — `config.strategy.basis` ist ihr UND. */
+  basisSchalter: { global: boolean; nutzer: boolean };
+}
+
+/** Globaler Schalter der Basis-Stufe aus dem Doc: nur ein ausdrückliches `false` schaltet ab. */
+export function globalBasisSchalter(global: Record<string, unknown>): boolean {
+  return !(isRecord(global.strategy) && global.strategy.basis === false);
 }
 
 /** Globaler Teil + Nutzer-Teil ⇒ validierte Config. Wirft bei ungültigem globalem Teil. */
@@ -142,7 +157,12 @@ export function buildUserConfig(global: Record<string, unknown>, settings: unkno
       universe.symbols = subset;
     }
   }
-  const out: UserConfig = { config: parseConfig({ ...global, universe, risk: part.risk }), source: part.source };
+  // Der Schalter der Basis-Stufe: global (meta/engineConfig, `strategy.basis`) UND je Nutzer
+  // (settings.auto.basis) — beide müssen an sein. Er wohnt im `strategy`-Block des Kerns, derselben
+  // Stelle, die `strategyChoice` im Dauerprozess liest.
+  const basisSchalter = { global: globalBasisSchalter(global), nutzer: part.basis };
+  const strategy: Record<string, unknown> = { ...(isRecord(global.strategy) ? global.strategy : {}), basis: basisSchalter.global && basisSchalter.nutzer };
+  const out: UserConfig = { config: parseConfig({ ...global, universe, risk: part.risk, strategy }), source: part.source, basisSchalter };
   if (auswahlVeraltet !== undefined) out.auswahlVeraltet = auswahlVeraltet;
   return out;
 }

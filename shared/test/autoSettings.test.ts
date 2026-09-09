@@ -56,8 +56,15 @@ describe('validateAutoSettings — gültige Eingaben', () => {
   it('notifyTelegram fehlend ⇒ false; unbekannte Schlüssel werden nicht übernommen', () => {
     const p = validateAutoSettings({ ...gueltig, hebel: 3, watchlist: ['QQQ'] });
     expect(p.ok).toBe(true);
-    expect(p.wert).toEqual({ ...gueltig, notifyTelegram: false });
+    expect(p.wert).toEqual({ ...gueltig, notifyTelegram: false, basis: true });
     expect(Object.keys(p.wert ?? {})).not.toContain('hebel');
+  });
+
+  it('basis fehlend ⇒ AN (Voreinstellung), false bleibt false, true bleibt true — immer ausdrücklich gespeichert', () => {
+    expect(validateAutoSettings(gueltig).wert?.basis).toBe(true);
+    expect(validateAutoSettings({ ...gueltig, basis: false }).wert?.basis).toBe(false);
+    expect(validateAutoSettings({ ...gueltig, basis: true }).wert?.basis).toBe(true);
+    expect(AUTO_DEFAULTS.basis).toBe(true);
   });
 });
 
@@ -100,9 +107,11 @@ describe('validateAutoSettings — die Seite, auf der Geld verloren geht', () =>
     expect(validateAutoSettings({ ...gueltig, maxPositions: 2.5 }).fehler).toEqual(['val.ganzzahl|maxPositions']);
   });
 
-  it('allowShort ist Pflicht, notifyTelegram optional — beide nur als Boolean', () => {
+  it('allowShort ist Pflicht, notifyTelegram und basis optional — alle nur als Boolean', () => {
     expect(validateAutoSettings({ ...gueltig, allowShort: 'true' }).fehler).toEqual(['val.boolean|allowShort']);
     expect(validateAutoSettings({ ...gueltig, notifyTelegram: 1 }).fehler).toEqual(['val.boolean|notifyTelegram']);
+    expect(validateAutoSettings({ ...gueltig, basis: 'an' }).fehler).toEqual(['val.boolean|basis']);
+    expect(validateAutoSettings({ ...gueltig, basis: 0 }).fehler).toEqual(['val.boolean|basis']);
     const ohne = { ...gueltig } as Record<string, unknown>;
     delete ohne.allowShort;
     expect(validateAutoSettings(ohne).fehler).toEqual(['val.boolean|allowShort']);
@@ -175,6 +184,7 @@ describe('autoSettingsFromLegacy — dieselbe Ableitung wie der Engine-Takt', ()
       maxDrawdownPct: 10,
       allowShort: true,
       notifyTelegram: false,
+      basis: true,
     });
     expect(auto.symbols).toBeUndefined();
   });

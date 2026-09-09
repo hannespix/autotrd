@@ -127,6 +127,43 @@ describe('korbRaenge', () => {
     expect(r.get('B1'), 'eigene Gruppe, also allein und damit stärkstes').toEqual({ pct: 0, rank: 1, of: 1 });
   });
 
+  /**
+   * Der Korb der Basis-Stufe darf nie gegen einen Alpha-Korb derselben
+   * Strategie rangieren: Gemessen wurde er allein (neun ETFs), live stünden
+   * ohne diesen Schlüssel 30 Alpha-Symbole daneben — und jeder Rang der Basis
+   * wäre eine andere Zahl als in der Messung.
+   */
+  it('rangiert je Korb getrennt: gleiche Strategie, aber Allokations-Sizing (Basis) ⇒ eigener Korb', () => {
+    const basis = { mode: 'allocation' as const, positionPct: 20 };
+    const r = korbRaenge([
+      input('ALPHA1', serie([1, 1, 30]), 2),
+      input('ALPHA2', serie([1, 1, 20]), 2),
+      { ...input('BASIS1', serie([1, 1, 25]), 2), sizing: basis },
+      { ...input('BASIS2', serie([1, 1, 5]), 2), sizing: basis },
+    ]);
+    expect(r.get('ALPHA1')).toEqual({ pct: 0, rank: 1, of: 2 });
+    expect(r.get('ALPHA2')).toEqual({ pct: 1, rank: 2, of: 2 });
+    expect(r.get('BASIS1'), 'stärkstes seines eigenen Korbs, nicht Rang 2 von 4').toEqual({ pct: 0, rank: 1, of: 2 });
+    expect(r.get('BASIS2')).toEqual({ pct: 1, rank: 2, of: 2 });
+  });
+
+  it('rangiert je Korb getrennt: gleiche Strategie, andere Parameter ⇒ eigener Korb (wie in der Messung je Einheit)', () => {
+    const r = korbRaenge([
+      { ...input('P1A', serie([1, 1, 30]), 2), params: { lookback: 126 } },
+      { ...input('P1B', serie([1, 1, 10]), 2), params: { lookback: 126 } },
+      { ...input('P2', serie([1, 1, 20]), 2), params: { lookback: 63 } },
+    ]);
+    expect(r.get('P1A')).toEqual({ pct: 0, rank: 1, of: 2 });
+    expect(r.get('P1B')).toEqual({ pct: 1, rank: 2, of: 2 });
+    expect(r.get('P2')).toEqual({ pct: 0, rank: 1, of: 1 });
+    // Gleiche Parameter in anderer Schlüsselreihenfolge sind derselbe Korb.
+    const gleich = korbRaenge([
+      { ...input('X', serie([1, 1, 30]), 2), params: { a: 1, b: 2 } },
+      { ...input('Y', serie([1, 1, 10]), 2), params: { b: 2, a: 1 } },
+    ]);
+    expect(gleich.get('Y')).toEqual({ pct: 1, rank: 2, of: 2 });
+  });
+
   it('gibt Strategien ohne Querschnitt keinen Rang', () => {
     const r = korbRaenge([input('X', serie([1, 1, 30]), 2, einzeln), input('Y', serie([1, 1, 10]), 2, einzeln)]);
     expect(r.size).toBe(0);

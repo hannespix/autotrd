@@ -7,7 +7,9 @@
  * stehen global in `meta/engineConfig`. Hier steht nur, was ein Nutzer
  * anders haben darf als der nächste: Risiko-Budget je Trade, Positions-
  * deckel, Positionsanzahl, Tages-Notbremse, Drawdown-Sperre, Shorts, optional
- * eine Teilmenge der Plattform-Symbole und der Telegram-Schalter.
+ * eine Teilmenge der Plattform-Symbole, der Telegram-Schalter und der
+ * Schalter der Basis-Stufe (`basis`: Basis-Allokation aus dem Champion-Block
+ * `basis` handeln — an oder aus, ihr Risiko stellt der Nutzer nicht ein).
  *
  * Geschrieben wird `settings.auto` AUSSCHLIESSLICH über das Callable
  * `saveStrategy` (geprüft mit `validateAutoSettings`); der Engine-Takt
@@ -26,7 +28,7 @@
  *   val.zahl|<feld>                         fehlt oder keine endliche Zahl
  *   val.bereich|<feld>|<min>|<max>          außerhalb der Hülle (inklusive)
  *   val.ganzzahl|<feld>                     keine ganze Zahl (maxPositions)
- *   val.boolean|<feld>                      kein Wahrheitswert
+ *   val.boolean|<feld>                      kein Wahrheitswert (allowShort, notifyTelegram, basis)
  *   val.symbole|symbols                     keine Liste gültiger Ticker
  *   val.hoechstens|symbols|<n>              mehr als AUTO_SYMBOLS_MAX Symbole
  *   val.unbekannteSymbole|symbols|<liste>   nicht im übergebenen Universum
@@ -52,9 +54,19 @@ export interface AutoSettings {
   symbols?: string[];
   /** Telegram-Benachrichtigungen über den Plattform-Bot. */
   notifyTelegram?: boolean;
+  /**
+   * Basis-Stufe handeln: den Korb des Champion-Blocks `basis` (Basis-
+   * Allokation, bestandene Basis-Latte) mit dessen Parametern und
+   * Allokations-Sizing (Position = `positionPct` der Equity je Symbol,
+   * unabhängig von `riskPerTradePct`), für Symbole ohne Alpha-Champion.
+   * Fehlend = AN (Owner-Anweisung 09.09.2026: von Anfang an aktiv; Echtgeld
+   * bleibt ohnehin hinter Doppel-Guard und Live-Reife). Der Takt liest das
+   * Feld als `strategy.basis` der Nutzer-Config.
+   */
+  basis?: boolean;
 }
 
-/** Voreinstellungen — identisch mit den Schema-Defaults des Kerns (`risk`). */
+/** Voreinstellungen — identisch mit den Schema-Defaults des Kerns (`risk`, `strategy.basis`). */
 export const AUTO_DEFAULTS: Readonly<AutoSettings> = {
   riskPerTradePct: 0.5,
   maxPositionPct: 20,
@@ -63,6 +75,7 @@ export const AUTO_DEFAULTS: Readonly<AutoSettings> = {
   maxDrawdownPct: 10,
   allowShort: false,
   notifyTelegram: false,
+  basis: true,
 };
 
 export type AutoZahlFeld =
@@ -176,6 +189,9 @@ export function validateAutoSettings(a: unknown, universe?: readonly string[]): 
   if (a.notifyTelegram !== undefined && typeof a.notifyTelegram !== 'boolean') {
     fehler.push('val.boolean|notifyTelegram');
   }
+  // Optional, damit ein Client von vor der Basis-Stufe weiter speichern kann;
+  // fehlend heißt AN (Voreinstellung), und gespeichert wird es immer ausdrücklich.
+  if (a.basis !== undefined && typeof a.basis !== 'boolean') fehler.push('val.boolean|basis');
 
   let symbols: string[] | undefined;
   if (a.symbols !== undefined) {
@@ -209,6 +225,7 @@ export function validateAutoSettings(a: unknown, universe?: readonly string[]): 
     maxDrawdownPct: zahlen.maxDrawdownPct as number,
     allowShort: a.allowShort as boolean,
     notifyTelegram: a.notifyTelegram === true,
+    basis: a.basis !== false,
   };
   if (symbols) wert.symbols = symbols;
   return { ok: true, wert, fehler: [] };
@@ -230,7 +247,8 @@ const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.m
  * hieß „aus" und heißt hier dasselbe (der Kern prüft `> 0`). Für die
  * Drawdown-Sperre gab es kein Alt-Feld ⇒ Voreinstellung. Shorts kommen aus
  * `signals.allowShort`, Symbole gibt es nicht (ganzes Universum): Die alte
- * Watchlist meinte Katalog-Symbole eines anderen Datenpfads.
+ * Watchlist meinte Katalog-Symbole eines anderen Datenpfads. Die Basis-Stufe
+ * kannte das alte Schema nicht ⇒ Voreinstellung (an).
  */
 export function autoSettingsFromLegacy(strategy: unknown): AutoSettings {
   const s = isRecord(strategy) ? strategy : {};

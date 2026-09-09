@@ -54,6 +54,8 @@ export interface FirestoreJournalOptions {
   log?: typeof logger | undefined;
   /** Stempel `at` der Trade-Docs; Default `Timestamp.now()` des Admin-SDK (erst beim Schreiben geladen). */
   timestampNow?: (() => unknown) | undefined;
+  /** Rückfall für die Stufe (champion/basis/config) eines Trades ohne eigene `stufe` — fürs Trade-Doc; undefined ⇒ Feld fehlt. */
+  stufeFor?: ((symbol: string, strategyId: string) => string | undefined) | undefined;
 }
 
 /** Takt-Rauschen bleibt draußen; alles andere wird geschrieben. */
@@ -113,6 +115,8 @@ export interface TradeDocOptions {
   /** `Timestamp.now()` — wird NICHT durch die JSON-Rundreise geschickt. */
   at: unknown;
   orderId: string | null;
+  /** Stufe, die das Symbol führte (champion/basis/config) — additiv, fehlt bei unbekannter Stufe. */
+  stufe?: string | undefined;
 }
 
 /** Ein abgeschlossener Engine-Trade als zwei Fills im alten Schema (Einstieg, Ausstieg). */
@@ -127,6 +131,7 @@ export function tradeDocsFor(trade: Trade, o: TradeDocOptions): { entry: DocData
     strategy: trade.strategy,
     preisQuelle: 'broker' as const,
     engineMode: o.mode,
+    ...(o.stufe !== undefined ? { stufe: o.stufe } : {}),
   };
   const entry: DocData = {
     ...base,
@@ -173,6 +178,7 @@ export class FirestoreJournal implements JournalLike {
   private readonly fx: FxFn;
   private readonly log: typeof logger;
   private readonly timestampNow: (() => unknown) | undefined;
+  private readonly stufeFor: FirestoreJournalOptions['stufeFor'];
   private readonly buffer: JournalEvent[] = [];
 
   constructor(o: FirestoreJournalOptions) {
@@ -182,6 +188,7 @@ export class FirestoreJournal implements JournalLike {
     this.fx = o.fx;
     this.log = o.log ?? logger;
     this.timestampNow = o.timestampNow;
+    this.stufeFor = o.stufeFor;
   }
 
   append(kind: JournalEventKind, data: Record<string, unknown> = {}, ts: Ms = Date.now()): void {
@@ -245,6 +252,8 @@ export class FirestoreJournal implements JournalLike {
         fxExit,
         at: await this.stamp(),
         orderId: typeof ev.orderId === 'string' ? ev.orderId : null,
+        // Die Stufe trägt der Trade selbst (aus der Position, Prüfbefund G14); die Wahl von heute ist nur Rückfall.
+        stufe: t.stufe ?? this.stufeFor?.(t.symbol, t.strategy),
       });
       ops.push((b) => b.set(tradesCol.doc(tradeDocId(uid, t, 'entry')), docs.entry));
       ops.push((b) => b.set(tradesCol.doc(tradeDocId(uid, t, 'exit')), docs.exit));

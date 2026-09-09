@@ -41,6 +41,22 @@ function status(over: Partial<EngineStatus> = {}): EngineStatus {
   };
 }
 
+describe('Spiegel — Stufe der Position (G14)', () => {
+  it('die Position trägt ihre Stufe selbst; die Wahl von heute ist nur Rückfall', () => {
+    expect(positionDocOf(pos({ stufe: 'basis' }), undefined, NOW)).toMatchObject({ stufe: 'basis' });
+    expect(positionDocOf(pos({ stufe: 'basis' }), undefined, NOW, 'champion')).toMatchObject({ stufe: 'basis' });
+    expect(positionDocOf(pos(), undefined, NOW, 'champion')).toMatchObject({ stufe: 'champion' });
+    expect('stufe' in positionDocOf(pos(), undefined, NOW)).toBe(false);
+  });
+
+  it('mirrorPositions: persistierte Stufe schlägt stufeFor — auch wenn die Wahl fehlt (Zwangs-Liquidation)', async () => {
+    const db = new FakeFirestore();
+    await mirrorPositions(db, 'u1', status({ positions: [pos({ stufe: 'basis' }), pos({ symbol: 'MSFT' })] }), NOW, () => undefined);
+    expect(db.get('users/u1/positions/AAPL')).toMatchObject({ stufe: 'basis' });
+    expect(db.get('users/u1/positions/MSFT')?.stufe).toBeUndefined();
+  });
+});
+
 describe('Spiegel — Positionen', () => {
   it('schreibt das Buch im alten Schema, löscht geschlossene Docs, bildet BTC/USD auf BTC-USD ab', async () => {
     const db = new FakeFirestore();

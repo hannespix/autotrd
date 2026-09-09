@@ -178,6 +178,17 @@ describe('FirestoreJournal — flush', () => {
     expect(String(doc.error)).toContain('«geschwärzt»');
   });
 
+  it('G14: die Stufe des Trades (aus der Position) landet im Trade-Doc — ohne Wahl von heute', async () => {
+    const db = new FakeFirestore();
+    const j = new FirestoreJournal({ db, mode: 'paper', assetClass: 'us_equity', fx: async () => ({}), timestampNow: () => 't' });
+    j.append('trade_closed', { trade: trade({ stufe: 'basis', exitReason: 'unmanaged' }) }, T0);
+    j.append('trade_closed', { trade: trade({ symbol: 'MSFT' }) }, T0);
+    await j.flush('u1');
+    const docs = db.list('users/u1/trades').map((d) => d.data);
+    expect(docs.filter((d) => d.symbol === 'AAPL').every((d) => d.stufe === 'basis')).toBe(true);
+    expect(docs.filter((d) => d.symbol === 'MSFT').every((d) => d.stufe === undefined)).toBe(true);
+  });
+
   it('tradeDocsFor: geschätzter Kurs (Abgleich) wird als Modellpreis gekennzeichnet', () => {
     const { exit } = tradeDocsFor(trade({ exitReason: 'reconcile' }), { mode: 'live', assetClass: 'us_equity', partial: false, estimated: true, fxEntry: null, fxExit: null, at: 't', orderId: null });
     expect(exit).toMatchObject({ preisQuelle: 'modell', kursGeschaetzt: true, paper: false, at: 't' });
