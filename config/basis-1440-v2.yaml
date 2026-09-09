@@ -1,0 +1,107 @@
+# Basis-Allokation V2 — Probe-Config (Vorregistrierung V2, 09.09.2026)
+#
+# Antwort auf den Prüfer-Befund zu V1 (docs/wissen/pruefungen/…): Die Latte
+# rechnet der Code (optimizer.basis, Gate-Gruppe „basis"), gemessen mit EINER
+# durchgehenden Simulation über die OOS-Kette, Maßstab ist der liegengelassene
+# Korb, die Tagesbars sind ausschüttungsbereinigt, das Universum folgt der
+# GTAA-Regel ohne Ausnahmen (9 ETFs). Alles Weitere steht in
+# docs/wissen/vorregistrierung/2026-09-09-basis-allokation-v2.md.
+
+# Erlaubt der Probe ein anderes Sizing und andere Bars als die Plattform — nur,
+# weil beides VOR dem Lauf festgeschrieben ist (test/scripts/probeConfigs.test.ts).
+vorregistrierung: docs/wissen/vorregistrierung/2026-09-09-basis-allokation-v2.md
+
+broker:
+  mode: paper
+  feed: iex
+  adjustment: all        # Ausschüttungen in den Tagesbars (Prüfbefund M7); eigener Cache
+
+universe:
+  assetClass: us_equity
+  # GTAA-13-Klassen mit ETF im Plattform-Pool, eine je Klasse, keine Ausnahmen (Prüfbefund M10).
+  symbols: [SPY, IWM, EFA, EEM, IEF, TLT, LQD, GLD, XLRE]
+  maxSymbols: 9
+  benchmark: SPY
+
+timeframe: 1440
+
+session:
+  noEntryFirstMin: 5
+  noEntryLastMin: 30
+  flattenBeforeCloseMin: 5
+
+risk:
+  # 20 % Stop ⇒ 4 % Risiko je Trade ist eine Position von 20 % der Equity (Prüfbefund K4:
+  # genau diese Semantik muss die Basis-Stufe der Plattform tragen, sonst wird nichts aktiviert).
+  riskPerTradePct: 4
+  maxPositionPct: 25
+  maxPositions: 4
+  maxGrossExposurePct: 100
+  maxDailyLossPct: 5
+  maxDrawdownPct: 30
+  allowShort: false
+  pdt:
+    respect: true
+    minEquity: 25000
+    maxDayTrades: 3
+
+strategy:
+  id: regime_allocation
+  params: {}
+  allowWithoutChampion: false
+
+optimizer:
+  strategies: [regime_allocation]   # Schema verlangt eine; ihr Ergebnis ist ohne Bedeutung (Prüfbefund M12)
+  fixedCandidates:
+    - strategy: regime_allocation
+      label: Basis V2
+      tier: basis
+      # topPct 0,4 ⇒ vier Berechtigte von neun, exitPct 0,6 ⇒ Austritt ab Rang 6 (Prüfbefund M5)
+      params: { lookback: 126, skip: 21, regimeLen: 150, topPct: 0.4, exitPct: 0.6, stopPct: 20 }
+  basis:
+    minDrawdownReduction: 0.25   # MaxDD je Einheit Exposure ≤ 0,75 × MaxDD Korb liegenlassen
+    minSharpeRatio: 0.9          # Sharpe ≥ 0,9 × Sharpe Korb liegenlassen
+    maxCostShare: 0.10           # Gebühren / |Netto| ≤ 10 %
+  lookbackDays: 2000
+  isDays: 365
+  oosDays: 90
+  stepDays: 90
+  embargoBars: 0
+  samples: 150
+  seed: 42
+  minOosTrades: 60
+  minFoldPositiveShare: 0.6
+  objective: sortino
+  stressCostMultiplier: 1.5
+  holdoutDays: 180
+  promotionMargin: 0.1
+  minPsrOos: 0.9
+  dsrIsGate: false
+  maxFoldNetShare: 0.5
+  pooled: true
+  foldMembership: fixed   # Korb fest — die Basis kennt keinen Korb je Fold
+
+costs:
+  slippageBps: 3
+  spreadBps: 2
+  secFeeRate: 0.0000278
+  finraTafPerShare: 0.000166
+  finraTafMax: 8.3
+  cryptoTakerPct: 0.25
+  shortBorrowAnnualPct: 1
+
+engine:
+  reconcileEverySec: 60
+  barGraceSec: 4
+  maxDataAgeSec: 180
+  maxConsecutiveErrors: 5
+  onOrphan: halt
+
+notify:
+  telegram: false
+
+status:
+  httpPort: 0
+
+paths:
+  home: ./var-probe
