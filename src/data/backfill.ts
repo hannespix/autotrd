@@ -79,6 +79,31 @@ export function backfillStart(store: BarStore, symbol: string, tf: BaseTimeframe
 }
 
 /**
+ * Die fehlende Spanne VOR dem Cache — null, wenn keine fehlt.
+ *
+ * `backfillStart` schaut nur auf die LETZTE Bar und läuft von dort vorwärts.
+ * Damit konnte ein einmal gefüllter Cache nie nach hinten wachsen: Wer
+ * `optimizer.lookbackDays` erhöhte oder den Zeitrahmen wechselte, bekam
+ * stillschweigend weiter nur die alte Tiefe.
+ *
+ * Gekostet hat das am 09.09.2026 einen Produktivlauf: Die Plattform ging auf
+ * Tagesbars, im Cache lagen aber nur die ~130 Tage, die die Universumswahl
+ * für ihr Umsatzfenster lädt. `fetch` holte NICHTS nach (0 Sekunden), der
+ * Optimierer fand 127 statt der nötigen 815 Tage und meldete für jede
+ * Strategie „nicht bewertbar" — bei grünem Workflow und geschriebenem
+ * Champion. Ein Loch, das sich als Erfolg meldet.
+ */
+export function backfillRueckstand(store: BarStore, symbol: string, tf: BaseTimeframe, from: Ms): { start: Ms; end: Ms } | null {
+  const first = store.firstTime(symbol, tf);
+  // Ohne Bars holt der Vorwärtslauf ohnehin alles ab `from`.
+  if (first === null) return null;
+  if (from >= first) return null;
+  // Ende auf der ersten bekannten Bar (nicht davor): Der Broker liefert den
+  // Rand doppelt, `upsert` dedupliziert — eine fehlende Bar wäre schlimmer.
+  return { start: from, end: first };
+}
+
+/**
  * Lücken in Minutenbars: mehr als eine fehlende Minute zwischen zwei
  * aufeinanderfolgenden Bars desselben Handelstags innerhalb der regulären
  * Sitzung. Die Zeit vor der ersten und nach der letzten Bar eines Tages
@@ -118,12 +143,46 @@ export async function backfill(a: BackfillArgs): Promise<Map<string, Bar[]>> {
   const iso = (ms: Ms) => new Date(ms).toISOString();
   // Symbole mit gleicher Startzeit teilen sich eine Anfrage.
   const byStart = new Map<Ms, string[]>();
+  // Spannen VOR dem Cache, je Symbol; ohne sie wüchse der Cache nur vorwärts.
+  const rueckstaende = new Map<string, string[]>();
+  const spanneVon = new Map<string, { start: Ms; end: Ms }>();
   for (const sym of symbols) {
     const start = a.exact ? a.from : backfillStart(a.store, sym, a.tf, a.from);
-    if (start > a.to) continue;
-    const list = byStart.get(start) ?? [];
-    list.push(sym);
-    byStart.set(start, list);
+    if (start <= a.to) {
+      const list = byStart.get(start) ?? [];
+      list.push(sym);
+      byStart.set(start, list);
+    }
+    if (!a.exact) {
+      const rueck = backfillRueckstand(a.store, sym, a.tf, a.from);
+      if (rueck) {
+        const key = `${rueck.start}:${rueck.end}`;
+        const list = rueckstaende.get(key) ?? [];
+        list.push(sym);
+        rueckstaende.set(key, list);
+        spanneVon.set(key, rueck);
+      }
+    }
+  }
+  for (const [key, syms] of rueckstaende) {
+    const spanne = spanneVon.get(key)!;
+    const windows = a.tf === '1Min' ? splitSpan(spanne.start, spanne.end, BACKFILL_MAX_SPAN_MS) : [spanne];
+    for (const group of chunk(syms, BACKFILL_MAX_SYMBOLS)) {
+      for (const w of windows) {
+        try {
+          const res = await a.client.getBars({ symbols: group, timeframe: a.tf, start: w.start, end: w.end, feed: a.feed });
+          let n = 0;
+          for (const [sym, bars] of res) {
+            if (!group.includes(sym) || bars.length === 0) continue;
+            a.store.upsert(sym, a.tf, bars);
+            n += bars.length;
+          }
+          log(`Backfill ${a.tf} (Rückstand): ${group.length} Symbole, ${iso(w.start)} → ${iso(w.end)}: ${n} Bars`);
+        } catch (e) {
+          log(`Backfill-Rückstand fehlgeschlagen (${group.join(',')} ${iso(w.start)} → ${iso(w.end)}): ${errMsg(e)}`);
+        }
+      }
+    }
   }
   for (const [start, syms] of byStart) {
     const windows = a.tf === '1Min' ? splitSpan(start, a.to, BACKFILL_MAX_SPAN_MS) : [{ start, end: a.to }];

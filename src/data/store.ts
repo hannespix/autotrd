@@ -166,6 +166,16 @@ export class BarStore {
     return bars.length ? bars[bars.length - 1]!.t : null;
   }
 
+  /**
+   * Zeit der ERSTEN Bar; null ohne Bars. Gegenstück zu `lastTime` — der
+   * Backfill braucht beide Enden, sonst kann ein Cache nur vorwärts wachsen
+   * und eine erhöhte `lookbackDays` bliebe wirkungslos (Befund 09.09.2026).
+   */
+  firstTime(symbol: string, tf: BaseTimeframe): Ms | null {
+    const bars = this.current(symbol, tf);
+    return bars.length ? bars[0]!.t : null;
+  }
+
   /** Bars mit t < olderThan entfernen (hält Dateien endlich). */
   prune(symbol: string, tf: BaseTimeframe, olderThan: Ms): void {
     const bars = this.current(symbol, tf);

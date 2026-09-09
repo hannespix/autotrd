@@ -26,11 +26,20 @@ describe('backfill', () => {
     s.upsert('AAPL', '1Min', [bar(T0), bar(T0 + MIN)]);
     fake.bars.set('AAPL', [bar(T0 - MIN, 1), bar(T0), bar(T0 + MIN), bar(T0 + 2 * MIN, 5), bar(T0 + 3 * MIN, 6)]);
     const res = await backfill({ client: fake, store: s, symbols: ['AAPL'], tf: '1Min', from: T0 - DAY, to: T0 + 3 * MIN, feed: 'iex' });
-    expect(fake.barRequests).toHaveLength(1);
-    expect(fake.barRequests[0]?.start).toBe(T0 + MIN + 1);
-    expect(fake.barRequests[0]?.end).toBe(T0 + 3 * MIN);
-    expect(fake.barRequests[0]?.feed).toBe('iex');
-    expect(res.get('AAPL')?.map((b) => b.c)).toEqual([100, 100, 5, 6]);
+    // ZWEI Anfragen: der Rückstand vor dem Cache (from … erste Bar) und der
+    // inkrementelle Teil dahinter. Die erste fehlte bis zum 09.09.2026 — ein
+    // gefüllter Cache konnte deshalb nie nach hinten wachsen.
+    expect(fake.barRequests).toHaveLength(2);
+    const rueck = fake.barRequests[0];
+    expect(rueck?.start).toBe(T0 - DAY);
+    expect(rueck?.end).toBe(T0);
+    const vor = fake.barRequests[1];
+    expect(vor?.start).toBe(T0 + MIN + 1);
+    expect(vor?.end).toBe(T0 + 3 * MIN);
+    expect(vor?.feed).toBe('iex');
+    // Die Bar VOR dem Cache ist jetzt dabei (c = 1) — genau die, die der
+    // reine Vorwärtslauf nie geholt hätte.
+    expect(res.get('AAPL')?.map((b) => b.c)).toEqual([1, 100, 100, 5, 6]);
     expect(s.lastTime('AAPL', '1Min')).toBe(T0 + 3 * MIN);
   });
 
@@ -103,6 +112,42 @@ describe('backfill', () => {
     expect(findGaps(bars, open + 4 * MIN, nextOpen + DAY, 'us_equity')).toEqual([]);
   });
 
+  /*
+   * Der Fall, der am 09.09.2026 einen Produktivlauf gekostet hat: Die
+   * Plattform ging von 5-Minuten- auf Tagesbars. Im Cache lagen nur die ~130
+   * Tage Tagesbars, die die Universumswahl für ihr Umsatzfenster lädt.
+   * `fetch` verlangte 1400 Tage — und holte NICHTS nach, weil der Backfill
+   * nur ab der letzten Bar vorwärts lief. Der Optimierer fand 127 statt der
+   * nötigen 815 Tage und meldete für jede Strategie „nicht bewertbar", bei
+   * grünem Workflow. Ein Loch, das sich als Erfolg meldet.
+   */
+  it('ein tieferes `from` wächst den Cache nach HINTEN — sonst bliebe lookbackDays wirkungslos', async () => {
+    const s = store();
+    const fake = new FakeAlpaca();
+    // Cache: nur die jüngsten drei Tage (wie nach der Universumswahl).
+    s.upsert('AAPL', '1Day', [bar(T0 - 2 * DAY), bar(T0 - DAY), bar(T0)]);
+    // Broker hat zehn Tage.
+    fake.bars.set('AAPL', Array.from({ length: 10 }, (_, i) => bar(T0 - (9 - i) * DAY, 50 + i)));
+    const res = await backfill({ client: fake, store: s, symbols: ['AAPL'], tf: '1Day', from: T0 - 9 * DAY, to: T0, feed: 'iex' });
+    const rueck = fake.barRequests.find((r) => r.start === T0 - 9 * DAY);
+    expect(rueck, 'keine Rückstands-Anfrage gestellt').toBeDefined();
+    expect(rueck?.end).toBe(T0 - 2 * DAY); // bis zur ersten bekannten Bar
+    // Entscheidend ist nicht die Anfrage, sondern das Ergebnis: Der Cache
+    // reicht jetzt wirklich bis `from` zurück.
+    expect(s.firstTime('AAPL', '1Day')).toBe(T0 - 9 * DAY);
+    expect(res.get('AAPL')).toHaveLength(10);
+  });
+
+  it('reicht der Cache schon weit genug zurück, wird KEINE Rückstands-Anfrage gestellt', async () => {
+    const s = store();
+    const fake = new FakeAlpaca();
+    s.upsert('AAPL', '1Day', [bar(T0 - 5 * DAY), bar(T0)]);
+    fake.bars.set('AAPL', [bar(T0)]);
+    await backfill({ client: fake, store: s, symbols: ['AAPL'], tf: '1Day', from: T0 - 3 * DAY, to: T0, feed: 'iex' });
+    // `from` liegt INNERHALB des Caches — ein Abruf davor wäre reine Last.
+    expect(fake.barRequests.every((r) => r.start >= T0 - 3 * DAY)).toBe(true);
+  });
+
   it('überspringt Symbole ohne Nachladebedarf und macht bei Fehlern je Block weiter', async () => {
     const s = store();
     const fake = new FakeAlpaca();
@@ -111,10 +156,16 @@ describe('backfill', () => {
     fake.throwOn('getBars', new AlpacaError('boom', 500, null, true), 1);
     const logs: string[] = [];
     const res = await backfill({ client: fake, store: s, symbols: ['AAPL', 'MSFT'], tf: '1Min', from: T0 - 2 * MIN, to: T0, feed: 'iex', log: (m) => logs.push(m) });
-    // AAPL: lastTime = to ⇒ start > to ⇒ keine Anfrage. MSFT: erste Anfrage scheitert ⇒ geloggt, Ergebnis leer, kein Wurf.
-    expect(fake.callsOf('getBars').map((c) => (c.args[0] as { symbols: string[] }).symbols)).toEqual([['MSFT']]);
+    // AAPL: lastTime = to ⇒ vorwärts nichts mehr, aber `from` liegt VOR der
+    // ersten Bar ⇒ Rückstands-Anfrage. MSFT: hat gar keine Bars ⇒ der
+    // Vorwärtslauf holt alles; seine erste Anfrage scheitert ⇒ geloggt,
+    // Ergebnis leer, kein Wurf.
+    expect(fake.callsOf('getBars').map((c) => (c.args[0] as { symbols: string[] }).symbols)).toEqual([['AAPL'], ['MSFT']]);
+    // Der eingebaute Fehler trifft die erste Anfrage — das ist jetzt AAPLs
+    // Rückstand. Entscheidend bleibt: Ein gescheiterter Block hält die
+    // anderen nicht auf, MSFT bekommt seine Bar trotzdem.
     expect(logs.some((l) => l.includes('fehlgeschlagen'))).toBe(true);
     expect(res.get('AAPL')).toHaveLength(1);
-    expect(res.get('MSFT')).toEqual([]);
+    expect(res.get('MSFT')?.map((b) => b.c)).toEqual([7]);
   });
 });
