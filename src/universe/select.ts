@@ -94,6 +94,11 @@ export const UNIVERSE_REGELN: UniverseRegeln = {
   maxAbgang: 5,
 };
 
+/** Die Regeln des Betriebs für `maxSymbols` Plätze — ein Ort für CLI und Optimierer (ein Pfad). */
+export function universeRegelnFuer(maxSymbols: number): UniverseRegeln {
+  return { ...UNIVERSE_REGELN, max: maxSymbols };
+}
+
 export type UniverseStatus = 'pflicht' | 'bestand' | 'neu' | 'abgelehnt';
 
 export interface UniverseBewertung {

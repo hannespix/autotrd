@@ -163,6 +163,13 @@ optimizer:
   dsrIsGate: false
   maxFoldNetShare: 0.5   # ein einzelner Fold darf höchstens die Hälfte des OOS-Nettos tragen
   pooled: true           # gehört zu den 30 Symbolen — siehe Kopf dieser Datei
+  # Korb je Fold (Vorgabe point_in_time): Für jeden Fold wird der Korb zu
+  # dessen OOS-Beginn aus `universe.candidates` gewählt — mit Daten bis dahin,
+  # Hysterese Fold für Fold, dieselbe Auswahl wie nachts. IS-Suche und OOS
+  # laufen auf diesem Korb, der Maßstab folgt mit. `fixed` wäre der Korb von
+  # heute rückwärts — das kippte am 09.09. ein Urteil (0,71 / −0,18 / 0,04 je
+  # Endkorb). `fetch` lädt dafür den ganzen Pool in voller Tiefe.
+  foldMembership: point_in_time
 
 costs:
   slippageBps: 3

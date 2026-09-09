@@ -23,7 +23,7 @@ import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { createDataStream, createTradeStream } from './alpaca/stream.ts';
-import { allSymbols, baseTimeframe, benchmarkSeries, bootstrap, requireClient, seriesForTimeframe, strategyChoice, strategyForFn, type App } from './app.ts';
+import { allSymbols, baseTimeframe, benchmarkSeries, bootstrap, fetchSymbols, requireClient, seriesForTimeframe, strategyChoice, strategyForFn, type App } from './app.ts';
 import { simulate } from './backtest/simulator.ts';
 import { ConfigError } from './core/config.ts';
 import { ensureDir, writeJsonAtomic } from './core/journal.ts';
@@ -41,7 +41,7 @@ import { getStrategy, strategyIds } from './strategy/index.ts';
 import { mergeParams, validateParams } from './strategy/params.ts';
 import { ladeUniverseDatei, schreibeUniverseDatei } from './universe/file.ts';
 import { renderUniverseReport } from './universe/report.ts';
-import { UNIVERSE_REGELN, waehleUniverse, type UniverseRegeln } from './universe/select.ts';
+import { universeRegelnFuer, waehleUniverse } from './universe/select.ts';
 
 const USAGE = `autotrd <kommando> [optionen]
 
@@ -334,7 +334,7 @@ async function cmdUniverse(app: App, cli: Cli): Promise<number> {
     return 0;
   }
   const client = requireClient(app);
-  const regeln: UniverseRegeln = { ...UNIVERSE_REGELN, max: app.config.universe.maxSymbols };
+  const regeln = universeRegelnFuer(app.config.universe.maxSymbols);
   // Bei einer Stichtags-Messung wählt auch das Universum nur mit Daten bis dahin.
   const now = app.asOf ?? Date.now();
   // Tagesbars sind billig (ein Abruf je Block, kein Minutenraster), deshalb darf der
@@ -404,7 +404,8 @@ async function cmdFetch(app: App, cli: Cli): Promise<number> {
   const calendar = await ensureCalendar(client, app.paths.calendar, addDays(today, -days - 10), addDays(today, 40), now);
   out(`Kalender: ${calendar.size} Handelstage`);
   const tf = baseTimeframe(app.config.timeframe);
-  const symbols = allSymbols(app.config);
+  // Mit Korb je Fold auch der Kandidatenpool — in voller Tiefe (app.ts).
+  const symbols = fetchSymbols(app.config);
   const from = now - days * DAY;
   const result = await backfill({ client, store: app.store, symbols, tf, from, to: now, feed: app.config.broker.feed, log: (m) => logger.info(m) });
   const rows: string[][] = [['Symbol', 'Bars', 'Erste', 'Letzte']];
@@ -528,6 +529,15 @@ async function cmdOptimize(app: App, cli: Cli): Promise<number> {
     symbols,
     strategies: app.config.optimizer.strategies,
     barsFor,
+    // Kandidaten ohne Bars sind nicht wählbar, kein Fehler (Korb je Fold).
+    candidateBarsFor: (symbol) => {
+      try {
+        const b = barsFor(symbol);
+        return b.length ? b : null;
+      } catch {
+        return null;
+      }
+    },
     benchmark: benchmarkSeries(app),
     calendar: app.calendar,
     home: app.home,

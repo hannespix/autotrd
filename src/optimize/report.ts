@@ -170,6 +170,7 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
   for (const r of runs) {
     out.push(`## ${r.symbol}`);
     out.push('');
+    out.push(...korbBlock(r));
     if (r.errors.length) {
       out.push('Fehler:');
       for (const e of r.errors) out.push(`- ${e}`);
@@ -273,6 +274,26 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
  * Holdout-Rendite ohne diese Zeilen ist nicht lesbar — +11 % sind großartig
  * gegen 0 % und mittelmäßig gegen +12 %.
  */
+function korbBlock(r: SymbolRun): string[] {
+  if (r.korb) {
+    const zeilen = r.korb.staende.map((st, i) => [
+      isoDay(st.at),
+      String(st.symbols.length),
+      i === 0 ? '_erster Stand_' : st.zugang.length ? st.zugang.join(', ') : '—',
+      i === 0 ? '—' : st.abgang.length ? st.abgang.join(', ') : '—',
+    ]);
+    return [
+      `**Korb je Fold** — Punkt-in-Zeit: zu Beginn jedes OOS-Fensters aus ${r.korb.kandidaten} Kandidaten gewählt, mit Daten bis dahin, ` +
+        'Hysterese Stand für Stand. IS-Suche und OOS eines Folds laufen auf dessen Korb; der Holdout auf dem Korb zu seinem Beginn.',
+      '',
+      table(['Stichtag', 'Korb', 'Zugang', 'Abgang'], zeilen),
+      '',
+    ];
+  }
+  if (r.korbHinweis) return [`_Korb über das ganze Fenster fest: ${r.korbHinweis}._`, ''];
+  return [];
+}
+
 function marktBlock(m: HoldoutMarkt | null): string[] {
   if (!m) return [];
   const zeilen: string[][] = [];

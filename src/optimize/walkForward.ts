@@ -167,6 +167,24 @@ export interface Zeitachse {
  */
 export type BarsInput = BarSeriesLike | ReadonlyMap<string, BarSeriesLike>;
 
+/**
+ * Korb-Zugehörigkeit je Fenster: Welche Symbole gehören zum Zeitpunkt `at`
+ * zum Korb? Gebaut in optimize/korbJeFold.ts aus dem Kandidatenpool mit
+ * Daten bis `at` — nie danach. `at` ist der OOS-Beginn des Folds, AUCH für
+ * dessen IS-Suche: So sucht nachts der Optimierer die Parameter des
+ * heutigen Korbs auf dem letzten Jahr. Nichts hier ruft die Zukunft.
+ */
+export type Membership = (at: Ms) => ReadonlySet<string>;
+
+/** Korb auf die Mitglieder zum Zeitpunkt `at` einschränken; ohne Membership der ganze Korb. */
+export function korbZum(korb: ReadonlyMap<string, BarSeriesLike>, membership: Membership | undefined, at: Ms | undefined): ReadonlyMap<string, BarSeriesLike> {
+  if (!membership || at === undefined) return korb;
+  const drin = membership(at);
+  const out = new Map<string, BarSeriesLike>();
+  for (const [sym, b] of korb) if (drin.has(sym)) out.set(sym, b);
+  return out;
+}
+
 /** Ein Symbol oder ein Korb ⇒ intern IMMER ein Korb (ein Pfad, keine Kopie). */
 export function korbVon(symbol: string, bars: BarsInput): ReadonlyMap<string, BarSeriesLike> {
   return bars instanceof Map ? bars : new Map([[symbol, bars as BarSeriesLike]]);
@@ -277,6 +295,10 @@ export interface WindowSimArgs {
   simulate: SimulateFn;
   range: TimeRange;
   costMultiplier?: number | undefined;
+  /** Korb je Fenster (siehe `Membership`); ohne: der ganze Korb. */
+  membership?: Membership | undefined;
+  /** Zeitpunkt, zu dem der Korb dieses Fensters gewählt wurde — der OOS-Beginn des Folds. */
+  membershipAt?: Ms | undefined;
 }
 
 /**
@@ -285,7 +307,7 @@ export interface WindowSimArgs {
  * Positionslimit und die Notbremsen; das ist der Sinn der Sache.
  */
 export function simulateWindow(a: WindowSimArgs): SimResult {
-  const korb = korbVon(a.symbol, a.bars);
+  const korb = korbZum(korbVon(a.symbol, a.bars), a.membership, a.membershipAt);
   const input: SimInput = {
     bars: korb,
     strategyFor: (s) => (korb.has(s) ? { strategy: a.strategy, params: a.params } : null),
@@ -445,6 +467,8 @@ export interface WalkForwardArgs {
   rng: () => number;
   /** Immer mitbewertete Parametersätze (z. B. amtierender Champion). */
   include?: readonly Params[] | undefined;
+  /** Korb je Fold (siehe `Membership`); ohne: der ganze Korb über alle Folds. */
+  membership?: Membership | undefined;
   log?: ((msg: string) => void) | undefined;
 }
 
@@ -462,7 +486,8 @@ export function minIsTrades(optimizer: OptimizerConfig): number {
   return Math.max(10, Math.floor(optimizer.minOosTrades / 4));
 }
 
-function searchWindow(a: WalkForwardArgs, achse: Zeitachse, window: TimeRange, include: readonly Params[], embargoAtEnd: boolean): WindowSearch {
+/** `membershipAt`: der Korb, auf dem gesucht wird — der OOS-Beginn des Folds, nicht der IS-Beginn (siehe `Membership`). */
+function searchWindow(a: WalkForwardArgs, achse: Zeitachse, window: TimeRange, include: readonly Params[], embargoAtEnd: boolean, membershipAt: Ms | undefined): WindowSearch {
   const { strategy, optimizer } = a;
   const seeds: Params[] = [strategy.defaults, ...include].map((p) => ({ ...strategy.defaults, ...p }));
   const candidates = sampleParams(strategy.paramSpace, optimizer.samples, a.rng, seeds).map((p) => ({ ...strategy.defaults, ...p }));
@@ -473,7 +498,7 @@ function searchWindow(a: WalkForwardArgs, achse: Zeitachse, window: TimeRange, i
   const trialSharpes: number[] = [];
   for (const params of candidates) {
     const range = candidateRange(achse, window, strategy, params, optimizer, embargoAtEnd);
-    const result = simulateWindow({ ...a, params, range });
+    const result = simulateWindow({ ...a, params, range, membershipAt });
     const objective = objectiveValue(optimizer.objective, result.metrics);
     const sr = perPeriodSharpe(result.dailyReturns);
     if (sr !== null) trialSharpes.push(sr);
@@ -505,9 +530,10 @@ export function walkForward(a: WalkForwardArgs): WfaResult {
   const pieces: OosPiece[] = [];
 
   for (const fold of plan.folds) {
-    const is = searchWindow(a, achse, { start: fold.isStart, end: fold.isEnd }, include, true);
+    // Ein Korb je Fold, gewählt zum OOS-Beginn — für Suche UND Bewertung.
+    const is = searchWindow(a, achse, { start: fold.isStart, end: fold.isEnd }, include, true, fold.oosStart);
     trials += is.evaluated;
-    const oos = simulateWindow({ ...a, params: is.params, range: { start: fold.oosStart, end: fold.oosEnd } });
+    const oos = simulateWindow({ ...a, params: is.params, range: { start: fold.oosStart, end: fold.oosEnd }, membershipAt: fold.oosStart });
     const oosObjective = objectiveValue(optimizer.objective, oos.metrics);
     foldResults.push({
       fold,
@@ -535,12 +561,13 @@ export function walkForward(a: WalkForwardArgs): WfaResult {
   const last = plan.folds[plan.folds.length - 1]!;
   const finalWindow = { start: last.isStart, end: last.oosEnd, embargoAtEnd: plan.holdout !== null };
   const finalInclude = [...include, ...foldResults.map((f) => f.best.params)];
-  const fin = searchWindow(a, achse, finalWindow, finalInclude, finalWindow.embargoAtEnd);
+  // Finale Parameter gehören dem Korb am Ende des letzten Folds — dem, der danach gehandelt wird.
+  const fin = searchWindow(a, achse, finalWindow, finalInclude, finalWindow.embargoAtEnd, finalWindow.end);
   trials += fin.evaluated;
 
   let holdout: WfaResult['holdout'] = null;
   if (plan.holdout) {
-    const h = simulateWindow({ ...a, params: fin.params, range: plan.holdout });
+    const h = simulateWindow({ ...a, params: fin.params, range: plan.holdout, membershipAt: plan.holdout.start });
     holdout = { start: plan.holdout.start, end: plan.holdout.end, metrics: h.metrics };
   }
 
@@ -576,7 +603,7 @@ export function walkForward(a: WalkForwardArgs): WfaResult {
 export function oosScoreOnFolds(
   a: Omit<WindowSimArgs, 'range' | 'costMultiplier'> & { folds: readonly Fold[]; objective: ObjectiveId },
 ): OosAggregate {
-  const pieces = a.folds.map((f) => pieceOf(simulateWindow({ ...a, range: { start: f.oosStart, end: f.oosEnd } })));
+  const pieces = a.folds.map((f) => pieceOf(simulateWindow({ ...a, range: { start: f.oosStart, end: f.oosEnd }, membershipAt: f.oosStart })));
   return aggregateOos(pieces, a.objective, a.initialEquity);
 }
 
@@ -597,8 +624,8 @@ export function fixedParamsWfa(
   const achse = zeitachseVon(korbVon(a.symbol, a.bars));
   for (const fold of a.folds) {
     const isRange = candidateRange(achse, { start: fold.isStart, end: fold.isEnd }, strategy, params, optimizer, true);
-    const is = simulateWindow({ ...a, range: isRange });
-    const oos = simulateWindow({ ...a, range: { start: fold.oosStart, end: fold.oosEnd } });
+    const is = simulateWindow({ ...a, range: isRange, membershipAt: fold.oosStart });
+    const oos = simulateWindow({ ...a, range: { start: fold.oosStart, end: fold.oosEnd }, membershipAt: fold.oosStart });
     foldResults.push({
       fold,
       evaluated: 0,
@@ -616,7 +643,7 @@ export function fixedParamsWfa(
   }
   const last = a.folds[a.folds.length - 1]!;
   const finalWindow = { start: last.isStart, end: last.oosEnd, embargoAtEnd: a.holdout !== null };
-  const fin = simulateWindow({ ...a, range: candidateRange(achse, finalWindow, strategy, params, optimizer, finalWindow.embargoAtEnd) });
+  const fin = simulateWindow({ ...a, range: candidateRange(achse, finalWindow, strategy, params, optimizer, finalWindow.embargoAtEnd), membershipAt: finalWindow.end });
   return {
     strategyId: strategy.id,
     symbol: a.symbol,

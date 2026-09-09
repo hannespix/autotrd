@@ -89,6 +89,7 @@ export function stressTest(
       params: f.best.params,
       range: { start: f.fold.oosStart, end: f.fold.oosEnd },
       costMultiplier: a.costMultiplier,
+      membershipAt: f.fold.oosStart,
     });
     objectives.push(objectiveValue(a.objective, r.metrics));
     netProfit += r.metrics.netProfit;
@@ -127,7 +128,7 @@ export function neighborhoodTest(
   const achse = zeitachseVon(korbVon(a.symbol, a.bars));
   for (const params of nb) {
     const range = candidateRange(achse, wfa.finalWindow, strategy, params, optimizer, wfa.finalWindow.embargoAtEnd);
-    const r = simulateWindow({ ...a, params, range });
+    const r = simulateWindow({ ...a, params, range, membershipAt: wfa.finalWindow.end });
     objectives.push(objectiveValue(optimizer.objective, r.metrics));
     if (r.metrics.netProfit > 0) positive++;
   }

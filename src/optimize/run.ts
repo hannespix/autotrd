@@ -19,6 +19,8 @@ import { BarSeries } from '../core/bars.ts';
 import type { Config } from '../core/config.ts';
 import { Journal, homePaths } from '../core/journal.ts';
 import { errMsg } from '../core/log.ts';
+import { universeRegelnFuer } from '../universe/select.ts';
+import { korbJeFold, type KorbStand } from './korbJeFold.ts';
 import type { Calendar } from '../core/time.ts';
 import { DAY, dayKey } from '../core/time.ts';
 import type { Bar, BarSeriesLike, Ms, Strategy } from '../core/types.ts';
@@ -55,6 +57,8 @@ import {
   fixedParamsWfa,
   foldPlanForBars,
   korbVon,
+  korbZum,
+  type Membership,
   walkForward,
   zeitachseVon,
   type BarsInput,
@@ -105,6 +109,12 @@ export interface OptimizeRunInput {
   strategies: string[];
   /** Bars im Strategie-Zeitrahmen (config.timeframe). */
   barsFor: (symbol: string) => BarSeriesLike;
+  /**
+   * Bars eines Kandidaten aus `universe.candidates` (null = keine) — für den
+   * Korb je Fold (`optimizer.foldMembership`). Ein Kandidat ohne Bars ist
+   * nicht wählbar, kein Fehler.
+   */
+  candidateBarsFor?: ((symbol: string) => BarSeriesLike | null) | undefined;
   benchmark?: BarSeriesLike | undefined;
   calendar?: Calendar | undefined;
   /** State-Verzeichnis (champion.json, reports/, journal.jsonl). */
@@ -171,7 +181,16 @@ export interface SymbolRun {
    * null, wenn es keinen Holdout gibt oder das Fenster zu kurz ist.
    */
   holdoutMarkt: HoldoutMarkt | null;
+  /** Korb je Fold — die Stände, mit denen gemessen wurde; null, wenn der Korb fest war (siehe `korbHinweis`). */
+  korb: KorbProtokoll | null;
+  /** Warum der Korb fest war (Schalter, ungepoolt, kein Pool) — oder null. */
+  korbHinweis: string | null;
   errors: string[];
+}
+
+export interface KorbProtokoll {
+  kandidaten: number;
+  staende: readonly KorbStand[];
 }
 
 export interface HoldoutMarkt {
@@ -229,6 +248,9 @@ interface Einheit {
   symbols: string[];
   bars: BarsInput | null;
   errors: string[];
+  /** Bars des Kandidatenpools im Messfenster — nur gepoolt mit Korb je Fold. */
+  kandidaten: ReadonlyMap<string, BarSeriesLike> | null;
+  korbHinweis: string | null;
 }
 
 /** Anzeigename eines Korbs — taucht im Bericht und im Journal auf. */
@@ -270,9 +292,10 @@ function einheitenVon(input: OptimizeRunInput, pooled: boolean, log: (m: string)
   // diesen Schnitt hinge die Fold-Zahl davon ab, wer zuletzt wie tief geladen
   // hat, und der nächtliche Lauf würde Jahr für Jahr stumm länger. Anker ist
   // das Datenende, nicht die Wanduhr: Mit Stichtag enden die Daten dort.
+  let fensterStart: Ms | null = null;
   if (geladen.length > 0) {
     const ende = geladen.reduce((m, g) => Math.max(m, g.bars.t[g.bars.length - 1]! + 1), Number.NEGATIVE_INFINITY);
-    const fensterStart = ende - input.config.optimizer.lookbackDays * DAY;
+    fensterStart = ende - input.config.optimizer.lookbackDays * DAY;
     for (let i = geladen.length - 1; i >= 0; i--) {
       const g = geladen[i]!;
       g.bars = imFenster(g.bars, fensterStart);
@@ -284,11 +307,45 @@ function einheitenVon(input: OptimizeRunInput, pooled: boolean, log: (m: string)
     }
   }
 
+  // Korb je Fold braucht die Bars des ganzen Kandidatenpools — im selben
+  // Messfenster wie der Korb. Fehlt der Pool, ist der Lauf ungepoolt oder
+  // steht der Schalter auf `fixed`, bleibt der Korb der Config fest, und der
+  // Bericht sagt, warum.
+  let kandidaten: Map<string, BarSeriesLike> | null = null;
+  let korbHinweis: string | null = null;
+  const pool = input.config.universe.candidates;
+  if (input.config.optimizer.foldMembership === 'fixed') {
+    korbHinweis = 'foldMembership: fixed — der Korb der Config gilt über das ganze Fenster (Auswahl von heute, rückwärts angewandt)';
+  } else if (!pooled) {
+    korbHinweis = 'ungepoolt — Korb je Fold gibt es nur für den gepoolten Korb';
+  } else if (!pool || pool.length === 0 || !input.candidateBarsFor) {
+    korbHinweis = 'kein Kandidatenpool (universe.candidates) — der Korb der Config gilt über das ganze Fenster';
+  } else {
+    kandidaten = new Map();
+    let fehlend = 0;
+    for (const sym of pool) {
+      let b: BarSeriesLike | null;
+      try {
+        b = input.candidateBarsFor(sym);
+      } catch {
+        b = null;
+      }
+      if (!b || b.length === 0) {
+        fehlend++;
+        continue;
+      }
+      const im = fensterStart === null ? b : imFenster(b, fensterStart);
+      if (im.length > 0) kandidaten.set(sym, im);
+      else fehlend++;
+    }
+    if (fehlend > 0) log(`Kandidatenpool: ${fehlend} von ${pool.length} ohne Bars im Messfenster — nicht wählbar`);
+  }
+
   if (!pooled) {
     return input.symbols.map((symbol) => {
       const g = geladen.find((x) => x.symbol === symbol);
       const eigener = fehler.filter((f) => f.startsWith(`${symbol}: `)).map((f) => `Bars: ${f.slice(symbol.length + 2)}`);
-      return { key: symbol, symbols: [symbol], bars: g ? g.bars : null, errors: eigener };
+      return { key: symbol, symbols: [symbol], bars: g ? g.bars : null, errors: eigener, kandidaten: null, korbHinweis };
     });
   }
 
@@ -296,12 +353,17 @@ function einheitenVon(input: OptimizeRunInput, pooled: boolean, log: (m: string)
   // aber in `symbols` — sonst behielten sie stumm einen alten Champion,
   // obwohl über sie gerade nichts gemessen wurde.
   const korb = new Map(geladen.map((g) => [g.symbol, g.bars]));
+  // Mit Korb je Fold simuliert jedes Fenster auf SEINEM Stand — die Serien
+  // aller Kandidaten liegen deshalb bereit, die Membership wählt je Fenster.
+  const alle = kandidaten ? new Map([...korb, ...kandidaten]) : korb;
   return [
     {
       key: korbName(korb.size),
       symbols: [...input.symbols],
-      bars: korb.size > 0 ? korb : null,
+      bars: alle.size > 0 ? alle : null,
       errors: fehler.length > 0 ? [`ohne Bars, nicht im Korb: ${fehler.join('; ')}`] : [],
+      kandidaten: kandidaten && kandidaten.size > 0 ? kandidaten : null,
+      korbHinweis,
     },
   ];
 }
@@ -414,14 +476,42 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
           initialEquity: input.initialEquity,
           calendar: input.calendar,
           simulate: deps.simulate,
+          membership: undefined as Membership | undefined,
         }
       : null;
+    let korbProtokoll: KorbProtokoll | null = null;
+    let messbar = true;
 
     if (bars && common) {
       const achse = zeitachseVon(korbVon(symbol, bars));
       const first = achse.t[0]!;
       const last = achse.t[achse.length - 1]! + 1;
       dataRange = dataRange ? { start: Math.min(dataRange.start, first), end: Math.max(dataRange.end, last) } : { start: first, end: last };
+
+      // Korb je Fold: EINMAL je Einheit gewählt (die Stände hängen nur an den
+      // Daten und am Fold-Plan, nicht an der Strategie) und dann von jedem
+      // Fenster über `membershipAt` abgerufen. Scheitert die Wahl, ist nichts
+      // messbar — kein stiller Rückfall auf den Endkorb.
+      if (einheit.kandidaten) {
+        try {
+          const plan = foldPlanForBars(achse, optimizer);
+          const letzter = plan.folds[plan.folds.length - 1]!;
+          const zeiten = [...plan.folds.map((f) => f.oosStart), letzter.oosEnd, ...(plan.holdout ? [plan.holdout.start] : [])];
+          const k = korbJeFold({
+            kandidaten: einheit.kandidaten,
+            zeiten,
+            regeln: universeRegelnFuer(cfg.universe.maxSymbols),
+            pflicht: cfg.universe.benchmark ? [cfg.universe.benchmark] : [],
+          });
+          common.membership = k.at;
+          korbProtokoll = { kandidaten: k.kandidaten, staende: k.staende };
+          log(`${symbol}: Korb je Fold — ${k.staende.length} Stände aus ${k.kandidaten} Kandidaten`);
+        } catch (e) {
+          messbar = false;
+          errors.push(`Korb je Fold: ${errMsg(e)}`);
+          log(`${symbol}: Korb je Fold — Fehler: ${errMsg(e)}`);
+        }
+      }
 
       // Latte für das Gate `beats_market`: derselbe Maßstab über DIESELBEN
       // OOS-Fenster wie die Strategien. Der Fold-Plan hängt nur an der
@@ -432,7 +522,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       // Auswahl, rückwirkend angewandt — seine Rendite enthält Survivorship
       // und wäre eine unfair hohe Latte. Die Benchmark war damals kaufbar.
 
-      for (const strategy of usable) {
+      for (const strategy of messbar ? usable : []) {
         try {
           // Kein `include` des Amtsinhabers: seine Params stammen aus einem Fit-Fenster,
           // das in den OOS-Fenstern der Kandidaten liegt — Defaults bleiben drin (walkForward).
@@ -461,7 +551,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
     let incumbentRescore: number | null = null;
     let incumbentPass: boolean | null = null;
     let incumbentEval: IncumbentEval | null = null;
-    if (incumbent && bars && common) {
+    if (incumbent && bars && common && messbar) {
       try {
         const strat = deps.getStrategy(incumbent.strategy);
         if (incumbent.timeframe !== cfg.timeframe || !strat.timeframes.includes(cfg.timeframe)) {
@@ -548,7 +638,8 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       const benchSymbol = cfg.universe.benchmark ?? null;
       holdoutMarkt = {
         range,
-        korb: kaufenUndHalten({ ...gemeinsam, bars: korbVon(symbol, bars) }),
+        // Der Korb zum Holdout-Beginn — nicht der Endkorb: Der Maßstab folgt der Zugehörigkeit.
+        korb: kaufenUndHalten({ ...gemeinsam, bars: korbZum(korbVon(symbol, bars), common?.membership, range.start) }),
         benchmarkSymbol: bench && benchSymbol ? benchSymbol : null,
         benchmark: bench && benchSymbol ? kaufenUndHalten({ ...gemeinsam, bars: new Map([[benchSymbol, bench]]) }) : null,
       };
@@ -582,7 +673,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
     const chosen = decision.action === 'promote' ? champion.symbols[ersteszSymbol]! : decision.action === 'keep' ? incumbent : null;
     journalDecision(journal, { symbol, decision, chosen, candidate, candidatePass: bestPassed !== null, incumbentRescore, incumbentPass, now: runAt });
     log(`${symbol}: ${decision.action} — ${decision.reason}`);
-    runs.push({ symbol, results, decision, chosen, incumbent, incumbentRescore, incumbentEval, holdoutMarkt, errors });
+    runs.push({ symbol, results, decision, chosen, incumbent, incumbentRescore, incumbentEval, holdoutMarkt, korb: korbProtokoll, korbHinweis: einheit.korbHinweis, errors });
   }
 
   saveChampion(paths.champion, champion);

@@ -472,6 +472,37 @@ Stückzahl statt Dollarumsatz. Das ist ein Eingriff in den Messkern und
 braucht die Freigabe des Owners; es ist auch keine Kante, nur eine
 strengere Messung.
 
+### 13. Korb-Zugehörigkeit je Fold
+
+Die Konsequenz aus §12: Der Korb, mit dem ein Fold gemessen wird, wird
+**zu dessen OOS-Beginn** gewählt — aus dem Kandidatenpool, mit Daten bis
+dahin, mit derselben `waehleUniverse` wie nachts und mit Hysterese Stand für
+Stand (`optimize/korbJeFold.ts`). IS-Suche und OOS des Folds laufen auf
+diesem Korb. Das ist bewusst der Live-Prozess: Der nächtliche Lauf sucht die
+Parameter des *heutigen* Korbs auf dem letzten Jahr; genau das stellt jeder
+Fold nach. Der Holdout läuft auf dem Korb zu seinem Beginn, die finalen
+Parameter auf dem Korb am Ende des letzten Folds, und der Maßstab „Korb
+liegenlassen" folgt der Zugehörigkeit.
+
+Drei Entscheidungen, die man hinterfragen darf:
+
+- **Dollarumsatz bleibt das Kriterium.** Er enthält den Kurs, also
+  vergangene Rendite — aber punkt-in-zeit gewählt ist „groß per t" eine
+  kaufbare Korbdefinition und die des Betriebs. Der Fehler war die
+  Rückwärts-Anwendung des Endkorbs, nicht das Kriterium. Stückzahl hätte
+  Ford über Microsoft gestellt.
+- **Innerhalb eines Folds ist der Korb eingefroren** (`oosDays`); nachts
+  würde er täglich nachgeführt. Das ist konservativ: Was im Fold illiquide
+  wird, bleibt; was liquide wird, kommt erst zum nächsten Stand.
+- **Die Turnover-Notbremse gilt hier nicht.** Sie schützt den nächtlichen
+  Betrieb vor Datenpannen (fünf Wechsel über Nacht); zwischen zwei Ständen
+  liegen 90 Tage, ein Umbau ist dann Markt.
+
+Der erste Stand kennt keinen Bestand — schon gar nicht den Korb der Config,
+der aus der Zukunft dieses Zeitpunkts stammt. Und `at(t)` liefert nie einen
+späteren Stand; gibt es keinen, scheitert der Lauf laut („nicht bewertbar").
+Der Bericht zeigt je Einheit die Stände mit Zugang und Abgang.
+
 ### Was das für den Betrieb heißt
 
 Kein Handel. Der nächtliche Optimierer läuft weiter und sucht mit nächtlich

@@ -81,6 +81,8 @@ export interface SimCall {
   params: Params;
   range: { start: number; end: number } | null;
   costMultiplier: number;
+  /** Der Korb dieses Aufrufs — die Schlüssel von `input.bars` (Korb-je-Fold-Spion). */
+  symbols: string[];
 }
 
 /**
@@ -105,7 +107,7 @@ export function makeFakeSimulate(options: FakeSimOptions | ((strategyId: string)
       const o = typeof options === 'function' ? options(sp.strategy.id) : options;
       const barsPerTrade = o.barsPerTrade ?? 1;
       const barsPerDay = o.barsPerDay ?? 1;
-      calls.push({ strategyId: sp.strategy.id, params: { ...sp.params }, range: input.range ? { ...input.range } : null, costMultiplier: cm });
+      calls.push({ strategyId: sp.strategy.id, params: { ...sp.params }, range: input.range ? { ...input.range } : null, costMultiplier: cm, symbols: [...input.bars.keys()] });
       const edge = o.edge(sp.params);
       const pkey = o.noiseKey === 'params' ? `${sp.strategy.id}|${paramKey(sp.params)}` : '';
       const salt = o.salt ?? '';
@@ -318,10 +320,24 @@ export function fakeStrategy(
 }
 
 export function testConfig(
-  over: { symbols?: string[]; home?: string; optimizer?: Partial<Config['optimizer']>; timeframe?: TimeframeMin; benchmark?: string } = {},
+  over: {
+    symbols?: string[];
+    home?: string;
+    optimizer?: Partial<Config['optimizer']>;
+    timeframe?: TimeframeMin;
+    benchmark?: string;
+    candidates?: string[];
+    maxSymbols?: number;
+  } = {},
 ): Config {
   return parseConfig({
-    universe: { assetClass: 'crypto', symbols: over.symbols ?? ['AAA'], ...(over.benchmark ? { benchmark: over.benchmark } : {}) },
+    universe: {
+      assetClass: 'crypto',
+      symbols: over.symbols ?? ['AAA'],
+      ...(over.benchmark ? { benchmark: over.benchmark } : {}),
+      ...(over.candidates ? { candidates: over.candidates } : {}),
+      ...(over.maxSymbols ? { maxSymbols: over.maxSymbols } : {}),
+    },
     timeframe: over.timeframe ?? 1440,
     optimizer: {
       strategies: ['edge', 'noise'],
