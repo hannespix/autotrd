@@ -286,3 +286,31 @@ describe('fixedParamsWfa (Amtsinhaber ohne Suche)', () => {
     expect(() => fixedParamsWfa({ symbol: 'AAA', strategy, params: { a: 1, b: 1 }, bars, config: simConfigOf(cfg), initialEquity: 10_000, simulate, folds: [], optimizer: cfg.optimizer, holdout: null })).toThrow(/keine Folds/);
   });
 });
+
+describe('tote Achse allowShort in der Suche', () => {
+  const cfg = testConfig();
+  const basis = fakeStrategy('edge');
+  const mitShort = fakeStrategy('short', {
+    space: [...basis.paramSpace, { name: 'allowShort', min: 0, max: 1, step: 1, kind: 'int' }],
+    defaults: { ...basis.defaults, allowShort: 0 },
+  });
+  const bars = dailyBars(400);
+
+  it('WÄCHTER: bei gesperrtem Short wird allowShort nie gezogen — jeder Kandidat trägt 0', () => {
+    const simulate = makeFakeSimulate(REWARD_PROFILE);
+    const gesperrt = simConfigOf(cfg);
+    expect(gesperrt.risk.allowShort).toBe(false);
+    // Ein Seed aus einem älteren Champion mit allowShort 1 wird auf 0 genagelt.
+    walkForward({ symbol: 'AAA', strategy: mitShort, bars, config: gesperrt, optimizer: cfg.optimizer, initialEquity: 10_000, simulate, rng: mulberry32(1), include: [{ ...basis.defaults, allowShort: 1 }] });
+    expect(simulate.calls.length).toBeGreaterThan(0);
+    for (const c of simulate.calls) expect(c.params.allowShort).toBe(0);
+  });
+
+  it('mit erlaubtem Short ist die Achse echt und wird gezogen', () => {
+    const simulate = makeFakeSimulate(REWARD_PROFILE);
+    const basisCfg = simConfigOf(cfg);
+    const erlaubt = { ...basisCfg, risk: { ...basisCfg.risk, allowShort: true } };
+    walkForward({ symbol: 'AAA', strategy: mitShort, bars, config: erlaubt, optimizer: cfg.optimizer, initialEquity: 10_000, simulate, rng: mulberry32(1) });
+    expect(simulate.calls.some((c) => c.params.allowShort === 1)).toBe(true);
+  });
+});

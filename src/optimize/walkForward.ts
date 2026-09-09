@@ -26,7 +26,7 @@ import type {
   Trade,
 } from '../core/types.ts';
 import { mean, median, objectiveValue, perPeriodSharpe, type ObjectiveId } from './objective.ts';
-import { sampleParams } from './search.ts';
+import { sampleParams, wirksamerSuchraum } from './search.ts';
 
 /* ───────────────────────── Injektionspunkt Simulator ───────────────────────── */
 
@@ -504,8 +504,10 @@ export function minIsTrades(optimizer: OptimizerConfig): number {
 /** `membershipAt`: der Korb, auf dem gesucht wird — der OOS-Beginn des Folds, nicht der IS-Beginn (siehe `Membership`). */
 function searchWindow(a: WalkForwardArgs, achse: Zeitachse, window: TimeRange, include: readonly Params[], embargoAtEnd: boolean, membershipAt: Ms | undefined): WindowSearch {
   const { strategy, optimizer } = a;
-  const seeds: Params[] = [strategy.defaults, ...include].map((p) => ({ ...strategy.defaults, ...p }));
-  const candidates = sampleParams(strategy.paramSpace, optimizer.samples, a.rng, seeds).map((p) => ({ ...strategy.defaults, ...p }));
+  // Bei gesperrtem Short ist `allowShort` keine Achse (tot in decide(), §5a.15).
+  const raum = wirksamerSuchraum(strategy.paramSpace, a.config.risk.allowShort);
+  const seeds: Params[] = [strategy.defaults, ...include].map((p) => ({ ...strategy.defaults, ...p, ...raum.pinned }));
+  const candidates = sampleParams(raum.space, optimizer.samples, a.rng, seeds).map((p) => ({ ...strategy.defaults, ...p, ...raum.pinned }));
   const floor = minIsTrades(optimizer);
 
   let best: WindowSearch | null = null;

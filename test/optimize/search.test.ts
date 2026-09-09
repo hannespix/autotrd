@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ParamSpec, Params } from '../../src/core/types.ts';
-import { axisValues, gridSize, mulberry32, neighbors, paramKey, sampleParams, snapToGrid } from '../../src/optimize/search.ts';
+import { axisValues, gridSize, mulberry32, neighbors, paramKey, sampleParams, snapToGrid, wirksamerSuchraum } from '../../src/optimize/search.ts';
 import { SPACE_AB } from './fakes.ts';
 
 const onGrid = (p: Params, space: readonly ParamSpec[]): boolean =>
@@ -124,5 +124,27 @@ describe('neighbors', () => {
   it('Einpunkt-Achsen und fehlende Achsen haben keine Nachbarn', () => {
     expect(neighbors({ x: 1 }, [{ name: 'x', min: 1, max: 1, step: 1 }])).toEqual([]);
     expect(neighbors({}, SPACE_AB)).toEqual([]);
+  });
+});
+
+describe('wirksamerSuchraum — allowShort ist bei gesperrtem Short eine tote Achse', () => {
+  const mitShort: ParamSpec[] = [...SPACE_AB, { name: 'allowShort', min: 0, max: 1, step: 1, kind: 'int' }];
+
+  it('nimmt die Achse heraus und nagelt den Wert auf 0', () => {
+    const r = wirksamerSuchraum(mitShort, false);
+    expect(r.space.map((s) => s.name)).toEqual(['a', 'b']);
+    expect(r.pinned).toEqual({ allowShort: 0 });
+  });
+
+  it('lässt den Raum unberührt, wenn Shorts erlaubt sind', () => {
+    const r = wirksamerSuchraum(mitShort, true);
+    expect(r.space).toBe(mitShort);
+    expect(r.pinned).toEqual({});
+  });
+
+  it('ohne die Achse ändert sich nichts — auch nicht bei gesperrtem Short', () => {
+    const r = wirksamerSuchraum(SPACE_AB, false);
+    expect(r.space).toBe(SPACE_AB);
+    expect(r.pinned).toEqual({});
   });
 });
