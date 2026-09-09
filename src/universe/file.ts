@@ -87,7 +87,22 @@ export function ladeUniverseDatei(pfad: string, config: Config, jetzt = Date.now
   if (fremd.length > 0) {
     throw new Error(`Universum-Datei ${pfad} nennt Symbole außerhalb des Kandidatenpools: ${fremd.join(', ')}. Pool ändern heißt Commit, nicht Datei.`);
   }
+  // `jetzt` ist die Uhr des LAUFS: die Wanduhr, oder bei einer Stichtags-
+  // Messung der Stichtag. Eine Auswahl vom Stichtag ist dann null Tage alt —
+  // nicht 186 (so scheiterte am 09.09. die erste Stichtags-Probe mit
+  // Universumswahl).
   const alter = typeof roh.updatedAt === 'number' ? jetzt - roh.updatedAt : Number.POSITIVE_INFINITY;
+  // Die Gegenrichtung ist Lookahead: Eine Auswahl, die JÜNGER ist als die Uhr
+  // des Laufs, hat Daten gesehen, die der Lauf nicht sehen darf — eine heute
+  // gewählte Liste in einer Messung „Stand März" misst vor allem, wer bis
+  // heute groß geblieben ist. Eine Minute Toleranz für zwei Schritte auf
+  // derselben Wanduhr.
+  if (alter < -60_000) {
+    throw new Error(
+      `Universum-Datei ${pfad} ist ${(-alter / 86_400_000).toFixed(1)} Tage JÜNGER als die Uhr dieses Laufs — ` +
+        `bei einer Stichtags-Messung hat sie Daten gesehen, die der Lauf nicht sehen darf.`,
+    );
+  }
   if (alter > UNIVERSE_MAX_ALTER_MS) {
     throw new Error(
       `Universum-Datei ${pfad} ist ${Number.isFinite(alter) ? `${(alter / 86_400_000).toFixed(1)} Tage` : 'undatiert'} alt ` +

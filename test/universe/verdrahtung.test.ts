@@ -13,7 +13,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { bootstrap } from '../../src/app.ts';
+import { asOfMs, bootstrap } from '../../src/app.ts';
 import { UNIVERSE_FILE_VERSION } from '../../src/universe/file.ts';
 
 const dir = mkdtempSync(join(tmpdir(), 'autotrd-verdrahtung-'));
@@ -84,5 +84,33 @@ describe('bootstrap({ universeFile })', () => {
     writeFileSync(app0.paths.universe, JSON.stringify({ version: UNIVERSE_FILE_VERSION, updatedAt: Date.now(), symbols: AUSWAHL, benchmark: 'SPY' }), 'utf8');
     const app = bootstrap({ ...opts, home, universeFile: 'auto' });
     expect(app.config.universe.symbols).toEqual(AUSWAHL);
+  });
+});
+
+describe('bootstrap({ universeFile, asOf }): die Auswahl altert mit der Uhr des Laufs', () => {
+  // Probe-Lauf 34329754296 (09.09.2026): `universe --as-of 2026-03-06` datierte
+  // die Auswahl korrekt auf den Stichtag; `fetch --universe … --as-of 2026-03-06`
+  // maß ihr Alter dann gegen die Wanduhr — 186,1 Tage — und brach ab. Der
+  // Stichtag wurde erst NACH dem Laden der Auswahl berechnet.
+  const opts = { config: 'config/platform.yaml', env: join(dir, 'keine.env'), home: join(dir, 'home-asof') };
+  const STICHTAG = '2026-03-06';
+  const stempel = (updatedAt: number, name: string): string => {
+    const p = join(dir, name);
+    writeFileSync(p, JSON.stringify({ version: UNIVERSE_FILE_VERSION, updatedAt, symbols: AUSWAHL, benchmark: 'SPY', zugang: [], abgang: [], bewertung: [] }), 'utf8');
+    return p;
+  };
+
+  it('eine Auswahl VOM Stichtag lädt im Stichtags-Lauf — der Fall, der am 09.09. abbrach', () => {
+    const app = bootstrap({ ...opts, asOf: STICHTAG, universeFile: stempel(asOfMs(STICHTAG), 'vom-stichtag.json') });
+    expect(app.asOf).toBe(asOfMs(STICHTAG));
+    expect(app.config.universe.symbols).toEqual(AUSWAHL);
+  });
+
+  it('dieselbe Auswahl OHNE Stichtag ist zu alt — die Wanduhr gilt weiterhin', () => {
+    expect(() => bootstrap({ ...opts, universeFile: stempel(asOfMs(STICHTAG), 'vom-stichtag-heute.json') })).toThrow(/Tage alt/);
+  });
+
+  it('eine Auswahl von HEUTE im Stichtags-Lauf ist Lookahead ⇒ Abbruch', () => {
+    expect(() => bootstrap({ ...opts, asOf: STICHTAG, universeFile: stempel(Date.now(), 'von-heute.json') })).toThrow(/JÜNGER als die Uhr dieses Laufs/);
   });
 });

@@ -348,7 +348,7 @@ async function cmdUniverse(app: App, cli: Cli): Promise<number> {
   // sie ist hier nur Hysterese-Gedächtnis, keine Handelsanweisung.
   let vorher: string[] | null = null;
   try {
-    vorher = ladeUniverseDatei(app.paths.universe, app.config);
+    vorher = ladeUniverseDatei(app.paths.universe, app.config, now);
   } catch (e) {
     logger.warn(`Vorige Auswahl unbrauchbar (${errMsg(e)}) — Bestand kommt aus der Config.`);
   }
