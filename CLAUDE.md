@@ -130,7 +130,7 @@ des Bruttogewinns, siehe docs/ARCHITEKTUR.md §5a.10).
 | `backtest/` | Portfolio-Simulator (Fills am nächsten Open, Stop vor Ziel), Kosten, Metriken (Sharpe/Sortino/PSR/DSR), Marktbezug (`marktbezug.ts`: kaufen und halten als Maßstab unter jedem Holdout — kein Gate, aber ohne ihn liest man Markt als Kante). |
 | `universe/` | Nächtliche Wahl des Handelsuniversums — nach **Handelbarkeit**, nie nach dem Ergebnis der Strategie (Grenzen der Kennzahl im Modulkopf). |
 | `optimize/korbJeFold.ts` | Korb je Fold: Punkt-in-Zeit-Stände aus dem Kandidatenpool (dieselbe `waehleUniverse` wie nachts, Hysterese Stand für Stand); IS-Suche und OOS eines Folds laufen auf dem Korb zu dessen OOS-Beginn, der Maßstab folgt mit. Schalter `optimizer.foldMembership`. |
-| `optimize/` | Walk-Forward, Robustheits-Gates (darunter `beats_market`: schlägt die OOS-Kette den Sharpe von kaufen-und-halten? Gegen die Benchmark, nicht den Korb; ohne Benchmark gilt die Kasse — das Gate wird nie vakant), Champion/Challenger, Report. |
+| `optimize/` | Walk-Forward, Robustheits-Gates (darunter `beats_market`: schlägt die OOS-Kette den Sharpe von kaufen-und-halten? Gegen die Benchmark, nicht den Korb; ohne Benchmark gilt die Kasse — das Gate wird nie vakant), Champion/Challenger, Report. **Festkandidaten** (`optimizer.fixedCandidates`): vorregistrierte Parametersätze ohne Suche über alle Folds durch dieselben Gates, DSR laut „nicht anwendbar", keine Sonderbehandlung; je Kandidat eine Maßstab-Zeile (OOS-Sharpe, MaxDD, Trades je Monat gegen SPY über dieselben OOS-Fenster). |
 | `engine/` | Buch, Order-Ausführung, Abgleich, Uhr, Schleife. |
 | `notify/`, `status/` | Telegram, Status-HTTP (nur 127.0.0.1). |
 | `readiness.ts` | Live-Reife aus dem Journal (≥ 200 Trades, ≥ 30 Tage, PF ≥ 1,2, feeShare ≤ 0,5, netto > 0). |
@@ -165,6 +165,18 @@ Plattform (`functions/src/`, `frontend/`, `shared/`):
 - Zeit ist immer Epoch-ms (UTC). `Bar.t` ist der Bucket-BEGINN. ET nur in
   `core/time.ts`. Krypto rechnet in UTC-Tagen (`dayKeyFor`).
 - Preise an Alpaca: Stops VOM Kurs WEG runden, Limits ZUM Kurs HIN.
+
+## 4a. Wissensbibliothek (`docs/wissen/`)
+
+Owner-Anweisung 09.09.2026: eine wachsende Strategie- und Wissensbibliothek,
+aus der Taktiken, Käufe, Verkäufe und Haltedauern abgeleitet werden — aktiv,
+nicht hyperaktiv. `docs/wissen/README.md` nennt die Regeln: Jede Zahl
+verweist auf einen Lauf, jede These hat einen Status, neue Experimente
+(neue Familie, neues Universum, neue Latte) werden VOR dem Lauf in
+`docs/wissen/vorregistrierung/` festgeschrieben, Literatur trägt einen
+Vertrauensgrad. Jeder Messlauf bekommt eine Zeile in `docs/wissen/befunde.md`.
+Weichen Code und Bibliothek voneinander ab, gilt der Code, und die
+Bibliothek ist zu korrigieren.
 
 ## 5. Verifikation
 

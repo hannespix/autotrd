@@ -279,6 +279,14 @@ export interface GateInput {
    */
   incumbent?: { cleanFolds: number; totalFolds: number } | undefined;
   /**
+   * Festkandidat (`optimizer.fixedCandidates`): feste Parameter ohne Suche.
+   * Wie beim Amtsinhaber ist der DSR nicht anwendbar — es gab keine Trials,
+   * um die man deflationieren könnte. Alles andere gilt in voller Schärfe:
+   * alle Folds und die VOLLE Trade-Schwelle (anders als beim Amtsinhaber,
+   * der nur sein sauberes OOS hat).
+   */
+  fixed?: boolean | undefined;
+  /**
    * Maßstab über DIESELBEN OOS-Fenster: Sharpe p. a. von kaufen und
    * liegenlassen (`marktKette`). Fehlt er, gilt 0 als Latte — das Gate darf
    * nie vakant werden, sonst schafft man es ab, indem man die Benchmark aus
@@ -380,13 +388,18 @@ export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResul
   // Deshalb blockiert er nur auf ausdrücklichen Wunsch — der Wert bleibt sichtbar.
   const dsrOk = a.dsr.dsr !== null && a.dsr.dsr >= DSR_THRESHOLD;
   const dsrNote = a.dsr.dsr === null ? `DSR nicht berechenbar (${a.dsr.note})` : a.dsr.note;
+  // Ohne Suche gibt es nichts zu deflationieren: Amtsinhaber und Festkandidat
+  // tragen feste Parameter. Das Gate sagt „nicht anwendbar" — laut, statt
+  // einen DSR mit nTrials = 1 (das ist nur der PSR der IS-Zahl) als
+  // bestanden zu verkaufen.
+  const ohneSuche = inc ? 'Amtsinhaber' : a.fixed ? 'Festkandidat' : null;
   gates.push({
     name: 'deflated_sharpe_is',
-    pass: inc || !dsrIsGate ? true : dsrOk,
+    pass: ohneSuche !== null || !dsrIsGate ? true : dsrOk,
     value: a.dsr.dsr,
     threshold: DSR_THRESHOLD,
-    note: inc
-      ? 'nicht anwendbar (Amtsinhaber: feste Parameter, keine Suche, keine Trials)'
+    note: ohneSuche !== null
+      ? `nicht anwendbar (${ohneSuche}: feste Parameter, keine Suche, keine Trials)`
       : dsrIsGate
         ? dsrOk
           ? dsrNote

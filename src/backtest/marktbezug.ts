@@ -61,21 +61,39 @@ export function kaufenUndHalten(args: {
   };
 }
 
+export interface MarktKette {
+  sharpe: number | null;
+  /**
+   * MaxDD der VERKETTETEN Wertreihe in % — gemessen wie `aggregateOos` den
+   * MaxDD der OOS-Kette misst: Ein Verlust im ersten Fenster zählt in den
+   * folgenden weiter. Ein Höchstwert je Fenster wäre eine andere, kleinere Zahl.
+   */
+  maxDrawdownPct: number;
+  /** Rendite der Kette in % (Produkt der Fenster-Renditen). */
+  netReturnPct: number;
+  fenster: number;
+  punkte: number;
+}
+
 /**
  * Der Maßstab über MEHRERE Fenster, aneinandergehängt — das Spiegelbild der
  * OOS-Kette (`aggregateOos` in optimize/walkForward.ts). Jedes Fenster startet
  * frisch gleichgewichtet, genau wie jeder Fold mit `initialEquity` startet;
  * die Tagesrenditen werden in derselben Reihenfolge verkettet und EINMAL zu
  * einem Sharpe verdichtet. Nur so vergleicht man dieselbe Größe: ein Mittel
- * über Fenster-Sharpes wäre eine andere Zahl.
+ * über Fenster-Sharpes wäre eine andere Zahl. Der Drawdown entsteht auf der
+ * verketteten Wertreihe derselben Renditen.
  */
 export function marktKette(args: {
   bars: ReadonlyMap<string, BarSeriesLike>;
   ranges: readonly { start: Ms; end: Ms }[];
   assetClass: AssetClass;
   periodsPerYear: number;
-}): { sharpe: number | null; fenster: number; punkte: number } | null {
+}): MarktKette | null {
   const renditen: number[] = [];
+  // Jedes Fenster beginnt bei 1 und wird an den Endstand des vorigen gehängt.
+  const kette: number[] = [1];
+  let stand = 1;
   let fenster = 0;
   let punkte = 0;
   for (const range of args.ranges) {
@@ -84,9 +102,12 @@ export function marktKette(args: {
     fenster++;
     punkte += r.punkte;
     for (const x of r.renditen) renditen.push(x);
+    // kurve[0] ist immer 1 — der Endstand des vorigen Fensters steht schon in der Kette.
+    for (let i = 1; i < r.kurve.length; i++) kette.push(stand * r.kurve[i]!);
+    stand *= r.kurve[r.kurve.length - 1]!;
   }
   if (fenster === 0 || renditen.length < 2) return null;
-  return { sharpe: sharpeRatio(renditen, args.periodsPerYear), fenster, punkte };
+  return { sharpe: sharpeRatio(renditen, args.periodsPerYear), maxDrawdownPct: maxDrawdownPct(kette), netReturnPct: (stand - 1) * 100, fenster, punkte };
 }
 
 interface Wertreihe {

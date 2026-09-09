@@ -682,3 +682,24 @@ export function fixedParamsWfa(
     embargoBars: embargoBarsFor(strategy, params, optimizer),
   };
 }
+
+/**
+ * WFA eines FESTKANDIDATEN (`optimizer.fixedCandidates`): feste Parameter
+ * über ALLE Folds des Plans — es gibt kein Fit-Ende, die Parameter sind
+ * vorregistriert — und dazu der Holdout als reiner Bericht, wie bei
+ * `walkForward`. Der Korb je Fold kommt über `membership` wie bei jedem
+ * gesuchten Kandidaten. Ein Parametersatz ist ein Trial: `trials` = 1, damit
+ * der Champion-Eintrag ehrlich zählt, was bewertet wurde; zu deflationieren
+ * gibt es trotzdem nichts (robustness.ts, `fixed`).
+ */
+export function fixedCandidateWfa(a: Omit<WindowSimArgs, 'range' | 'costMultiplier'> & { optimizer: OptimizerConfig }): WfaResult {
+  const achse = zeitachseVon(korbVon(a.symbol, a.bars));
+  const plan = foldPlanForBars(achse, a.optimizer);
+  const base = fixedParamsWfa({ ...a, folds: plan.folds, holdout: plan.holdout });
+  let holdout: WfaResult['holdout'] = null;
+  if (plan.holdout) {
+    const h = simulateWindow({ ...a, range: plan.holdout, membershipAt: plan.holdout.start });
+    holdout = { start: plan.holdout.start, end: plan.holdout.end, metrics: h.metrics };
+  }
+  return { ...base, trials: 1, finalEvaluated: 1, holdout };
+}
