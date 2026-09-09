@@ -43,9 +43,10 @@
 # für PnL, Trades oder Champion.
 #
 # Zwei Einschränkungen stehen dazu in `src/universe/select.ts` und im Bericht:
-# Dollarumsatz enthält den Kurs (also vergangene Rendite), und die Auswahl von
-# heute wird im Walk-Forward rückwärts angewandt (Survivorship). Beides ist
-# benannt, nicht wegdefiniert.
+# Dollarumsatz enthält den Kurs (also vergangene Rendite), und der Pool ist
+# von heute — der Optimierer wählt daraus je Fold punkt-in-zeit
+# (foldMembership), aber wer im Messzeitraum verschwand, ist nicht im Pool.
+# Beides ist benannt, nicht wegdefiniert.
 #
 # Den POOL ändert weiterhin nur ein Commit. Automatisch läuft die Wahl DARIN.
 # Was nicht hineingehört: gehebelte und inverse ETFs (3×-Produkte sprengen
@@ -116,7 +117,7 @@ universe:
 #
 # Die Session-Tore (noEntryFirstMin/noEntryLastMin/flattenBeforeCloseMin)
 # bleiben stehen, greifen bei 1440 aber nicht: core/logic.ts überspringt sie
-# für Tagesbars, und alle vier Strategien halten über Nacht.
+# für Tagesbars, und alle fünf Strategien halten über Nacht.
 timeframe: 1440
 
 session:
@@ -143,7 +144,7 @@ strategy:
   allowWithoutChampion: false   # Ohne Champion handelt niemand — der Optimierer entscheidet.
 
 optimizer:
-  strategies: [trend_donchian, momentum_pullback, mean_reversion, cross_sectional_momentum]
+  strategies: [trend_donchian, momentum_pullback, mean_reversion, cross_sectional_momentum, regime_allocation]
   # Fenster wie in config/equity-1440.yaml, das vier Halbjahre lang gemessen
   # hat — sonst vergliche man Plattform und Erkundung nie miteinander.
   lookbackDays: 1400
@@ -163,6 +164,13 @@ optimizer:
   dsrIsGate: false
   maxFoldNetShare: 0.5   # ein einzelner Fold darf höchstens die Hälfte des OOS-Nettos tragen
   pooled: true           # gehört zu den 30 Symbolen — siehe Kopf dieser Datei
+  # Korb je Fold (Vorgabe point_in_time): Für jeden Fold wird der Korb zu
+  # dessen OOS-Beginn aus `universe.candidates` gewählt — mit Daten bis dahin,
+  # Hysterese Fold für Fold, dieselbe Auswahl wie nachts. IS-Suche und OOS
+  # laufen auf diesem Korb, der Maßstab folgt mit. `fixed` wäre der Korb von
+  # heute rückwärts — das kippte am 09.09. ein Urteil (0,71 / −0,18 / 0,04 je
+  # Endkorb). `fetch` lädt dafür den ganzen Pool in voller Tiefe.
+  foldMembership: point_in_time
 
 costs:
   slippageBps: 3

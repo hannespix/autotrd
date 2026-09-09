@@ -31,7 +31,7 @@
 # stehen, damit der Unterschied zur Produktion genau drei Dinge sind:
 # Zeitrahmen, Datenfenster, Strategieliste. Sonst nichts.
 #
-# Alle drei Strategien halten über Nacht (`holdsOvernight: true`), es gibt
+# Alle fünf Strategien halten über Nacht (`holdsOvernight: true`), es gibt
 # also kein EOD-Flatten, das jeden Trade auf einen Tag stutzen würde.
 #
 # ── Was hier NICHT verändert wurde ────────────────────────────────────────
@@ -132,7 +132,7 @@ optimizer:
   # stellen („steigt das Symbol?") und daran am 08.09. gescheitert sind. Sie
   # fragt stattdessen nach relativer Stärke im Korb; für einen Korb aus 30
   # Werten ist das der Fall, für den sie gebaut ist.
-  strategies: [trend_donchian, momentum_pullback, mean_reversion, cross_sectional_momentum]
+  strategies: [trend_donchian, momentum_pullback, mean_reversion, cross_sectional_momentum, regime_allocation]
   # Größeres Datenfenster statt niedrigerer Latte: 400 Tage wären bei
   # Tagesbars nur ~275 Bars, die 60 OOS-Trades kämen dann nur durch ein
   # gesenktes Gate zustande. Also andersherum — 1400 Kalendertage
@@ -178,6 +178,13 @@ optimizer:
   dsrIsGate: false
   maxFoldNetShare: 0.5
   pooled: true            # ein Urteil für den ganzen Korb — wie in platform.yaml
+  # Korb je Fold (Vorgabe point_in_time): Für jeden Fold wird der Korb zu
+  # dessen OOS-Beginn aus `universe.candidates` gewählt — mit Daten bis dahin,
+  # Hysterese Fold für Fold, dieselbe Auswahl wie nachts. IS-Suche und OOS
+  # laufen auf diesem Korb, der Maßstab folgt mit. `fixed` wäre der Korb von
+  # heute rückwärts — das kippte am 09.09. ein Urteil (0,71 / −0,18 / 0,04 je
+  # Endkorb). `fetch` lädt dafür den ganzen Pool in voller Tiefe.
+  foldMembership: point_in_time
 
 costs:
   slippageBps: 3

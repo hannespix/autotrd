@@ -285,8 +285,20 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
   const raenge = brauchtRang ? korbRaenge(inputs) : null;
 
   // Um die knappen Plätze wird in rotierender Reihenfolge konkurriert, nicht in
-  // Config-Reihenfolge (siehe wettbewerbsOrdnung).
-  for (const roh of wettbewerbsOrdnung(inputs, ctx.timeframe)) {
+  // Config-Reihenfolge (siehe wettbewerbsOrdnung) — mit einer Ausnahme: Wer
+  // einen Korb-Rang hat, konkurriert nach RANG, der Stärkste zuerst. Sonst
+  // entschiede der Hash, wer von sechs Kandidaten die vier Plätze bekommt
+  // (Prüfbefund 09.09.: Rang 3–6 drin, 1 und 2 draußen). Stabil sortiert:
+  // unter Gleichrangigen und ohne Rang bleibt die rotierende Ordnung.
+  const rotierend = wettbewerbsOrdnung(inputs, ctx.timeframe);
+  const geordnet = raenge
+    ? [...rotierend].sort((a, b) => {
+        const ra = raenge.get(a.snap.symbol)?.rank ?? Number.POSITIVE_INFINITY;
+        const rb = raenge.get(b.snap.symbol)?.rank ?? Number.POSITIVE_INFINITY;
+        return ra === rb ? 0 : ra - rb;
+      })
+    : rotierend;
+  for (const roh of geordnet) {
     const rang = raenge?.get(roh.snap.symbol);
     const inp = rang === undefined ? roh : { ...roh, snap: { ...roh.snap, rank: rang } };
     const { snap, strategy, params, ind } = inp;

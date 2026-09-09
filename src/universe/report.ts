@@ -43,8 +43,8 @@ export function renderUniverseReport(a: {
   L.push('');
   L.push('> Zwei ehrliche Einschränkungen. **(1)** Dollarumsatz ist Stückzahl × Kurs, enthält also das Kursniveau und damit vergangene Rendite;');
   L.push('> bei gleicher Stückzahl gewinnt der gestiegene Wert. Das ist der Preis dafür, Liquidität in Dollar zu messen — und Dollar sind, was ein');
-  L.push('> Auto-Trader bewegt. **(2)** Diese Auswahl beschreibt HEUTE. Der Walk-Forward wendet sie rückwärts an, also sind die OOS-Zahlen');
-  L.push('> bezüglich der Korb-Zugehörigkeit nicht out-of-sample und damit optimistisch. Wer im Messzeitraum verschwunden ist, kommt nicht vor.');
+  L.push('> Auto-Trader bewegt. **(2)** Diese Auswahl beschreibt HEUTE und gilt dem Betrieb. Der Optimierer wählt je Fold punkt-in-zeit aus');
+  L.push('> demselben Pool (§5a.13); der Pool selbst ist von heute — wer im Messzeitraum verschwunden ist, kommt nicht vor.');
   L.push('');
   L.push(`- Zugang: ${auswahl.zugang.length ? auswahl.zugang.join(', ') : '—'}`);
   L.push(`- Abgang: ${auswahl.abgang.length ? auswahl.abgang.join(', ') : '—'}`);

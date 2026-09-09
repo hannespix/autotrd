@@ -39,6 +39,12 @@ thematisch). Bezeichner im Code Englisch, Kommentare Deutsch.
    nie in der Strategie und nie im Aufrufer. Eine Rangliste ist die
    verführerischste Lookahead-Stelle im Repo, weil jede einzelne Zeitreihe
    dabei kausal aussieht; Wächter dafür stehen in `test/core/korb.test.ts`.
+   **Die zweite ist die Korb-Zugehörigkeit:** Der Korb eines Folds wird zu
+   dessen OOS-Beginn gewählt (`optimize/korbJeFold.ts`), nicht der Endkorb
+   rückwärts — am 09.09.2026 hing daran ein Urteil (0,71 / −0,18 / 0,04 je
+   Endkorb). Was bleibt: Der Kandidatenpool ist von heute; wer im
+   Messzeitraum verschwand, ist nicht darin (§5a.13 — bekannt, in Richtung
+   optimistisch). Wächter: `test/optimize/korbJeFold.test.ts`.
 3. **Echtgeld-Doppel-Guard.** Live nur, wenn `broker.mode: live` UND
    `ALPACA_ALLOW_LIVE=1` UND ein Live-Key (`AK…`). Fehlt eins ⇒ Paper. Ein
    Live-Key gegen Paper wird abgelehnt (`resolveMode`). Nie lockern.
@@ -120,9 +126,10 @@ des Bruttogewinns, siehe docs/ARCHITEKTUR.md §5a.10).
 | `risk/` | Sizing, Tages-/Drawdown-Halt, PDT. |
 | `alpaca/` | Vertrag (`types.ts`), REST-Client (`rest.ts`), Streams (`stream.ts`), Symbol-Mapping. |
 | `data/` | Bars-Cache auf Platte, inkrementeller Backfill, Kalender. |
-| `strategy/` | Indikatoren (kausal) und Vorlagen. Symbolweise: `trend_donchian`, `momentum_pullback`, `mean_reversion`, `orb_breakout`. Querschnittlich (fragt den KORB, nicht das Symbol): `cross_sectional_momentum` — die Rangliste baut `decide()`, nie die Strategie selbst. |
+| `strategy/` | Indikatoren (kausal) und Vorlagen. Symbolweise: `trend_donchian`, `momentum_pullback`, `mean_reversion`, `orb_breakout`. Querschnittlich (fragt den KORB, nicht das Symbol): `cross_sectional_momentum` — die Rangliste baut `decide()`, nie die Strategie selbst. Monatsrhythmus (`regime_allocation`): Regime + relative und absolute Stärke in einem Fenster von drei Tagen je Monat, Sizing wie alle über das Risiko-Budget je Trade, weiter Katastrophen-Stop beim Broker, kein Trailing. Bei knappen Plätzen konkurrieren Symbole mit Korb-Rang nach Rang (`decide()`). |
 | `backtest/` | Portfolio-Simulator (Fills am nächsten Open, Stop vor Ziel), Kosten, Metriken (Sharpe/Sortino/PSR/DSR), Marktbezug (`marktbezug.ts`: kaufen und halten als Maßstab unter jedem Holdout — kein Gate, aber ohne ihn liest man Markt als Kante). |
 | `universe/` | Nächtliche Wahl des Handelsuniversums — nach **Handelbarkeit**, nie nach dem Ergebnis der Strategie (Grenzen der Kennzahl im Modulkopf). |
+| `optimize/korbJeFold.ts` | Korb je Fold: Punkt-in-Zeit-Stände aus dem Kandidatenpool (dieselbe `waehleUniverse` wie nachts, Hysterese Stand für Stand); IS-Suche und OOS eines Folds laufen auf dem Korb zu dessen OOS-Beginn, der Maßstab folgt mit. Schalter `optimizer.foldMembership`. |
 | `optimize/` | Walk-Forward, Robustheits-Gates (darunter `beats_market`: schlägt die OOS-Kette den Sharpe von kaufen-und-halten? Gegen die Benchmark, nicht den Korb; ohne Benchmark gilt die Kasse — das Gate wird nie vakant), Champion/Challenger, Report. |
 | `engine/` | Buch, Order-Ausführung, Abgleich, Uhr, Schleife. |
 | `notify/`, `status/` | Telegram, Status-HTTP (nur 127.0.0.1). |

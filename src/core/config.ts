@@ -189,6 +189,25 @@ export const ConfigSchema = z.object({
        * ist selbst eine Auswahl, die heute niemand deflationiert.
        */
       pooled: z.boolean().default(false),
+      /**
+       * Korb-Zugehörigkeit je Fold.
+       *
+       * `point_in_time`: Für jeden Fold wird der Korb zu dessen OOS-Beginn aus
+       * `universe.candidates` gewählt — mit Daten bis dahin, Hysterese Fold
+       * für Fold, wie nachts Nacht für Nacht (dieselbe `waehleUniverse`).
+       * IS-Suche und OOS des Folds laufen auf diesem Korb; das ist genau der
+       * Live-Prozess: Der nächtliche Lauf sucht die Parameter des HEUTIGEN
+       * Korbs auf dem letzten Jahr. Der Maßstab (Korb liegenlassen) folgt mit.
+       *
+       * `fixed`: der Korb der Config über das ganze Fenster — die Auswahl von
+       * heute, rückwärts angewandt. Am 09.09.2026 kippte genau das ein Urteil:
+       * dieselbe Strategie über dieselben Jahre bei 0,71 / −0,18 / 0,04, je
+       * nachdem, welcher Endkorb rückwärts galt.
+       *
+       * Ohne Kandidatenpool oder ungepoolt wirkt der Schalter nicht; der
+       * Bericht sagt es dann.
+       */
+      foldMembership: z.enum(['point_in_time', 'fixed']).default('point_in_time'),
     })
     .default({
       strategies: ['trend_donchian', 'momentum_pullback', 'mean_reversion'],
@@ -209,6 +228,7 @@ export const ConfigSchema = z.object({
       dsrIsGate: false,
       maxFoldNetShare: 0.5,
       pooled: false,
+      foldMembership: 'point_in_time',
     }),
   costs: z
     .object({

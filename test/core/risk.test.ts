@@ -39,6 +39,7 @@ describe('sizePosition', () => {
     expect(sizePosition({ ...base, price: 0 }).reason).toMatch(/Kurs/);
     expect(sizePosition({ ...base, equity: 0 }).reason).toMatch(/Equity/);
   });
+
 });
 
 describe('checkHalt', () => {

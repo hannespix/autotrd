@@ -234,6 +234,21 @@ export function allSymbols(config: Config): string[] {
   return [...set];
 }
 
+/**
+ * Was `fetch` lädt: Universum und Benchmark — und den Kandidatenpool, wenn
+ * der Optimierer den Korb je Fold wählt (dann braucht jeder Kandidat die
+ * ganze Tiefe, nicht nur die 130 Tage der nächtlichen Auswahl).
+ */
+export function fetchSymbols(config: Config): string[] {
+  const set = new Set(allSymbols(config));
+  // Nur auf Tagesbars: Die Auswahl rechnet auf Tagesbars wie nachts; 139
+  // Kandidaten als Minutenbars über Jahre wären weder nötig noch bezahlbar.
+  if (config.optimizer.pooled && config.optimizer.foldMembership === 'point_in_time' && config.timeframe === 1440) {
+    for (const s of config.universe.candidates ?? []) set.add(s);
+  }
+  return [...set];
+}
+
 export function benchmarkSeries(app: App, closedBefore?: number): BarSeriesLike | undefined {
   const b = app.config.universe.benchmark;
   if (!b) return undefined;

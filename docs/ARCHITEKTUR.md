@@ -310,9 +310,9 @@ Kante, sondern Gebühren.
 
 Drei Festlegungen, jede gegen eine konkrete Falle:
 
-- **Gegen SPY, nicht gegen den Korb.** Der Korb ist die heutige Auswahl,
-  rückwirkend angewandt; seine Rendite enthält Survivorship und wäre eine
-  unfair hohe Latte. SPY war damals kaufbar.
+- **Gegen SPY, nicht gegen den Korb.** Der Korb wechselt je Fold (§13) und
+  stammt aus einem Pool, der von heute ist — wer unterwegs verschwand, ist
+  nicht darin. SPY ist eine Serie, die damals kaufbar war.
 - **Die Latte gilt für DIESELBEN Fenster.** Der Amtsinhaber wird nur auf
   Folds nach seinem Fit-Ende nachgerechnet und bekommt deshalb seine eigene
   Latte — sonst verglichen wir eine Strategie auf Fenster X mit einem Markt
@@ -465,12 +465,102 @@ allen: **Ein grüner Lauf beweist nur, dass der Prozess endete.** Was er
 gemessen hat, muss man nachlesen — Datenbereich, Fold-Zahl, den Kurs im
 Universums-Bericht.
 
-**Offen, nicht versprochen.** Die Korb-Zugehörigkeit ist innerhalb eines
-Fensters weiterhin nicht out-of-sample. Wer das schließen will, wählt den
-Korb je Fold neu — mit Daten bis zum Fold-Beginn — und misst nach
-Stückzahl statt Dollarumsatz. Das ist ein Eingriff in den Messkern und
-braucht die Freigabe des Owners; es ist auch keine Kante, nur eine
-strengere Messung.
+**Umgesetzt in §13:** die Korb-Zugehörigkeit je Fold.
+
+### 13. Korb-Zugehörigkeit je Fold
+
+Die Konsequenz aus §12: Der Korb, mit dem ein Fold gemessen wird, wird
+**zu dessen OOS-Beginn** gewählt — aus dem Kandidatenpool, mit Daten bis
+dahin, mit derselben `waehleUniverse` wie nachts und mit Hysterese Stand für
+Stand (`optimize/korbJeFold.ts`). IS-Suche und OOS des Folds laufen auf
+diesem Korb. Für die Folds ist das bewusst der Live-Prozess: Der nächtliche
+Lauf sucht die Parameter des *heutigen* Korbs auf dem letzten Jahr; genau das
+stellt jeder Fold nach. Der Holdout läuft auf dem Korb zu seinem Beginn, der
+Maßstab „Korb liegenlassen" folgt der Zugehörigkeit.
+
+**Die finalen Parameter — der Lieferwert — entstehen auf dem letzten Stand
+vor dem Holdout**, also `holdoutDays` vor heute (Plattform: 180 Tage). Der
+heute gehandelte Korb kann davon abweichen; der Bericht zeigt Zugang und
+Abgang seit diesem Stand. Das ist der Preis des Holdouts, kein Versehen:
+Wer die finalen Parameter auf dem heutigen Korb bis heute suchte, hätte
+keinen unberührten Holdout mehr.
+
+Drei Entscheidungen, die man hinterfragen darf:
+
+- **Dollarumsatz bleibt das Kriterium.** Er enthält den Kurs, also
+  vergangene Rendite — aber punkt-in-zeit gewählt ist „groß per t" eine
+  kaufbare Korbdefinition und die des Betriebs. Der Fehler war die
+  Rückwärts-Anwendung des Endkorbs, nicht das Kriterium. Stückzahl hätte
+  Ford über Microsoft gestellt.
+- **Innerhalb eines Folds ist der Korb eingefroren** (`oosDays`); nachts
+  würde er täglich nachgeführt. Das ist konservativ: Was im Fold illiquide
+  wird, bleibt; was liquide wird, kommt erst zum nächsten Stand.
+- **Die Turnover-Notbremse gilt hier nicht.** Sie schützt den nächtlichen
+  Betrieb vor Datenpannen (fünf Wechsel über Nacht); zwischen zwei Ständen
+  liegen `oosDays` (Plattform: 90 Tage), ein Umbau ist dann Markt.
+
+**Was bleibt — und benannt gehört.** Der Kandidatenpool ist von Hand aus
+2026 geschrieben. Die Punkt-in-Zeit-Wahl kann nur daraus wählen; SIVB, FRC
+oder CS, die im März 2023 zu den umsatzstärksten Werten gehörten, wären
+gewählt worden und kommen in keinem Stand vor. Der Korb je Fold heilt die
+Rückwärts-Anwendung des Endkorbs — nicht die Zugehörigkeit zum Pool. Dieser
+Rest ist bekannt, wirkt in Richtung optimistisch und ist ohne historische
+Index-Konstituenten nicht zu beheben. Ebenfalls nicht modelliert: Live
+schließt die Engine die Position eines abgegangenen Symbols zwangsweise;
+in der Messung beginnt jeder Fold frisch.
+
+Der erste Stand kennt keinen Bestand — schon gar nicht den Korb der Config,
+der aus der Zukunft dieses Zeitpunkts stammt. Und `at(t)` liefert nie einen
+späteren Stand; gibt es keinen, scheitert der Lauf laut („nicht bewertbar").
+Der Bericht zeigt je Einheit die Stände mit Zugang und Abgang.
+
+### 14. Eine andere Familie — und was der Prüfer an ihr widerlegt hat
+
+Die vier Vorlagen fragen täglich und steigen mit engen Stops ein und aus.
+Die Momentum- und Trendfolge-Literatur sagt seit Jahrzehnten, dass die
+Kante — soweit es sie gibt — in der Ausführung liegt: selten entscheiden,
+das Regime beachten, Gewinner nicht mit Stops abschneiden.
+`regime_allocation` (`src/strategy/regimeAllocation.ts`) stellt deshalb
+drei Fragen, nur in einem Fenster von drei Handelstagen zu Monatsbeginn:
+relativ stark im Korb (Momentum je Einheit Schwankung, Rang aus
+`decide()`), über dem gleitenden Mittel (Regime), eigenes Momentum positiv
+(Dual Momentum). Weiter Katastrophen-Stop beim Broker, nie nachgezogen, kein
+Ziel, kein Trailing. Dazwischen entscheidet sie nichts.
+
+**Die erste Fassung war ein Allokator** mit Zielvolatilität, zehn Monaten
+Momentum und einem `weight`, das im Sizing das Risiko-Budget ersetzte. Der
+Prüfer (Red Team, 09.09.) hat sie widerlegt, und die Befunde gehören hierher,
+weil sie mehr über das System sagen als über die Familie:
+
+1. **Nicht messbar.** Warmup 233 Bars + 20 = Embargo 253 verschluckte das
+   ganze IS-Fenster (365 Tage ≈ 252 Bars); der Walk-Forward warf vor dem
+   ersten Fold. Selbst mit Hand-Embargo: 10–12 OOS-Trades statt 60.
+2. **`weight` brach das Nutzerversprechen.** Es umging `riskPerTradePct`:
+   4 % der Equity je ausgestopptem Trade statt 0,5 %; bei `maxPositionPct
+   100` 20 %. Das Frontend verspricht wörtlich das Gegenteil.
+3. **80 % Exposure gegen die 2 %-Tagesnotbremse.** Ein gewöhnlicher
+   −2,5 %-Korbtag liquidiert das ganze Buch — Kasse bis zum nächsten Monat.
+
+**Daraus wurde:** kein Gewicht — die Stückzahl folgt dem Risiko-Budget über
+die Stop-Distanz wie bei jeder Vorlage (ein weiter Stop heißt eine kleine
+Position; die Sharpe, an der `beats_market` misst, ist skalenfrei);
+Horizonte von drei bis sechs Monaten (Warmup ≤ 149 Bars, das Embargo lässt
+vom IS-Fenster genug übrig); ein Rebalance-Fenster von drei Tagen statt
+eines Tages (ein blockierter Tag kostet keinen Monat). Die Gates bleiben
+unangetastet: Fällt sie an `oos_trades`, ist das ein gemessenes Nein.
+
+**Zwei Kernbefunde, die auch `cross_sectional_momentum` trafen:** Bei
+knappen Plätzen entschied der Hash, nicht der Rang (Rang 3–6 drin, 1 und 2
+draußen) — jetzt konkurrieren Symbole mit Korb-Rang nach Rang. Und die
+Präfix-Suite lief nur über die vier alten Vorlagen — jetzt über jede
+registrierte Strategie, `crossScore` eingeschlossen.
+
+**Bekannte Grenzen, nicht wegdefiniert:** Ein im Fenster frei werdender
+Platz ist erst am nächsten Fenstertag wieder besetzbar (das Positionslimit
+ist hart, §0.4). Die IS-Suche verlangt `minIsTrades`; erreicht eine langsame
+Familie das nicht, nimmt der Rückfall die Variante mit den meisten Trades —
+ein Zug zum Umschlag. Auf der Plattform handelt ein Nutzer eine Teilmenge des
+Korbs; unter `MIN_KORB` Symbolen rangiert nichts.
 
 ### Was das für den Betrieb heißt
 

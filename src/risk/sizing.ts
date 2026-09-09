@@ -38,6 +38,9 @@ export function sizePosition(inp: SizeInput): SizeResult {
   if (!(riskPerUnit > 0)) return { qty: 0, riskPerUnit, notional: 0, reason: 'Stop liegt nicht auf der Verlustseite' };
   if (!(inp.equity > 0)) return { qty: 0, riskPerUnit, notional: 0, reason: 'Equity ≤ 0' };
 
+  // Kein Weg am Risiko-Budget vorbei — auch nicht für Allokations-Familien:
+  // Ein „Zielgewicht", das riskPct ersetzte, hieße 4 % der Equity je
+  // ausgestopptem Trade statt der versprochenen 0,5 % (Prüfbefund, 09.09.).
   const byRisk = (inp.equity * inp.riskPct) / 100 / riskPerUnit;
   const byCap = (inp.equity * inp.maxPositionPct) / 100 / inp.price;
   const byExposure = Math.max(0, inp.exposureBudget) / inp.price;

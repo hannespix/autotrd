@@ -29,6 +29,13 @@ export interface ChampionEntry {
   dataRange: TimeRange;
   /** Ende des Fensters, aus dem `params` stammen — OOS davor ist für den Re-Score tabu. Fehlt es (alte Datei): decidedAt. */
   fitEnd?: Ms;
+  /**
+   * Mit welcher Korb-Zugehörigkeit der Score gemessen wurde (§5a.13). Fehlt
+   * es (alte Datei): `fixed` — die Auswahl von heute, rückwärts angewandt. Ein
+   * Champion aus dem einen Regime ist mit einem Kandidaten aus dem anderen
+   * nicht vergleichbar und tritt ab, bis einer neu besteht (Prüfbefund 4.2).
+   */
+  foldMembership?: 'point_in_time' | 'fixed';
 }
 
 /** Fit-Ende eines Champions; alte Dateien ohne Feld: Beförderungszeitpunkt (konservativ). */
@@ -192,6 +199,11 @@ export function applyDecision(a: {
       noTrade[a.symbol] = note;
       break;
     case 'stay_notrade':
+      // Ein alter Eintrag darf nicht stehen bleiben: „kein Handel" gilt für das
+      // Symbol, auch wenn es früher Teil eines geprüften Korbs war. Nach einem
+      // Korbwechsel ist das der Normalfall — sonst handelte es weiter mit
+      // einem Champion, den kein Lauf mehr nachgerechnet hat (Prüfbefund 4.1).
+      delete symbols[a.symbol];
       noTrade[a.symbol] = note;
       break;
   }

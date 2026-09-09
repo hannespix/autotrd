@@ -38,9 +38,11 @@
  * gar nicht erst vor.
  *
  * Die Wahl selbst ist kausal — sie SCHNEIDET die Bars bei `jetzt`, statt es
- * vom Aufrufer vorauszusetzen (siehe `bewerte`) —; der Bias entsteht erst
- * dadurch, dass ihr Ergebnis rückwärts angewandt wird. Solange das so ist,
- * sind die OOS-Zahlen optimistisch, und der Bericht sagt das.
+ * vom Aufrufer vorauszusetzen (siehe `bewerte`). Der Optimierer wendet sie
+ * deshalb je Fold punkt-in-zeit an (`optimize/korbJeFold.ts`, §5a.13) —
+ * damit ist die Rückwärts-Anwendung des Endkorbs Geschichte. Was bleibt, ist
+ * der Pool selbst: von Hand aus heute geschrieben; wer im Messzeitraum
+ * verschwand, ist nicht darin. Der Bericht sagt beides.
  *
  * ── Handwerk ─────────────────────────────────────────────────────────────
  *
@@ -93,6 +95,11 @@ export const UNIVERSE_REGELN: UniverseRegeln = {
   minAnteil: 0.8,
   maxAbgang: 5,
 };
+
+/** Die Regeln des Betriebs für `maxSymbols` Plätze — ein Ort für CLI und Optimierer (ein Pfad). */
+export function universeRegelnFuer(maxSymbols: number): UniverseRegeln {
+  return { ...UNIVERSE_REGELN, max: maxSymbols };
+}
 
 export type UniverseStatus = 'pflicht' | 'bestand' | 'neu' | 'abgelehnt';
 

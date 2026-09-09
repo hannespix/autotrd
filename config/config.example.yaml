@@ -148,6 +148,12 @@ optimizer:
   # Zugleich fällt ein ungezählter Freiheitsgrad weg: „bestes Symbol aus
   # dreißig" ist selbst eine Auswahl, die sonst niemand deflationiert.
   pooled: false
+  # Korb je Fold: point_in_time wählt den Korb jedes Folds zu dessen OOS-Beginn
+  # aus universe.candidates (Daten bis dahin, Hysterese Stand für Stand — wie
+  # nachts); fixed misst den Korb der Config über das ganze Fenster (Auswahl
+  # von heute, rückwärts angewandt). Ohne Kandidatenpool oder ungepoolt ohne
+  # Wirkung. Mit point_in_time lädt `fetch` den ganzen Pool in voller Tiefe.
+  foldMembership: point_in_time
 
 costs:
   # Slippage je Seite in Basispunkten (Marktorder gegen den Spread).

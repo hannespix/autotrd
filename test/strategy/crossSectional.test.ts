@@ -172,3 +172,23 @@ describe('cross_sectional_momentum', () => {
     expect(s.timeframes).toContain(5);
   });
 });
+
+describe('knappe Plätze: der Rang entscheidet, nicht der Hash', () => {
+  // Prüfbefund 09.09.: Bei sechs Kandidaten auf vier Plätze kamen Rang 3–6
+  // herein, 1 und 2 nicht — die rotierende Ordnung kannte den Rang nicht.
+  // topPct 0,35 ⇒ pct = k/9 ≤ 0,35 ⇒ vier Kandidaten (ZEBRA, QUARK, MOLCH, ADLER) auf zwei Plätze.
+  const weit = resolveParams(s, { lookback: 20, skip: 0, topPct: 0.35, exitPct: 0.8, volAdjust: 0, atrLen: 7, atrMult: 2.5, trailMult: 0 });
+  const inputWeit = (symbol: string, bars: BarSeries): SymbolInput => ({
+    snap: { symbol, bars, i: bars.length - 1, position: null, session: okSession },
+    strategy: s,
+    params: weit,
+    ind: s.precompute(bars, weit),
+  });
+  // Namen so gewählt, dass die Hash-Ordnung NICHT der Stärke folgt.
+  const namen = ['ZEBRA', 'QUARK', 'MOLCH', 'ADLER', 'FUCHS', 'IGEL', 'KRAKE', 'NATTER', 'OTTER', 'WAL'];
+
+  it('bei zwei Plätzen und vier Kandidaten kaufen die beiden Stärksten', () => {
+    const k = namen.map((name, i) => inputWeit(name, rampe(0.5 - i * 0.1)));
+    expect(einstiege(decide(ctx({ risk: { ...cfg.risk, maxPositions: 2 } }), k))).toEqual(['QUARK', 'ZEBRA']);
+  });
+});
