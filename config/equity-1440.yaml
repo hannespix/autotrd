@@ -144,15 +144,23 @@ optimizer:
   # bringt. Ziel ist deshalb, den Bärenmarkt 2022 ins Fenster zu holen.
   #
   # 2900 Tage (bis 2018) wurden am 09.09. VERSUCHT und scheitern an den Daten,
-  # nicht an der Config: Der kostenlose IEX-Feed liefert für 2019 weniger als
-  # 97 Tagesbars im Jahr — ein volles Handelsjahr hat rund 252. Der Lauf brach
-  # ab, weil das Embargo (97 Bars bei cross_sectional_momentum) ein ganzes
-  # 365-Tage-Fenster verschluckte. Der Datenbereich begann zwar bei 2018-11-01,
-  # aber dazwischen ist kaum etwas.
+  # nicht an der Config. Der Backfill holte 43 492 Bars — vollständig; aber die
+  # IEX-Historie dieses Kontos BEGINNT am 27.07.2020, und zwar für alle 29
+  # Symbole auf denselben Tag genau. Einzig SPY trägt eine verirrte Bar vom
+  # 2018-11-01 (1538 statt 1537), und genau die setzte den gemeldeten
+  # Datenbereich auf „2018-11-01 … 2026-09-08".
   #
-  # 2000 Tage reichen bis etwa März 2021 und damit über den ganzen Abschwung
-  # 2022 — die Hälfte, die zählt. Der Corona-Crash bleibt mit diesem Feed
-  # unerreichbar; das ist eine Grenze der Datenquelle, keine Einstellung.
+  # Deshalb lag im ersten Fold-Fenster 2019-01-13 … 2020-01-13 NULL, und der
+  # Lauf brach ab, weil das Embargo (schon 97 Bars bei
+  # cross_sectional_momentum) das ganze Fenster verschluckte. Lehre: Ein
+  # Datenbereich nennt erste und letzte Bar — nicht, ob dazwischen etwas liegt.
+  # Eine einzige Ausreißer-Bar genügt, um ihn glaubwürdig aussehen zu lassen.
+  #
+  # Nutzbar sind damit höchstens rund 2230 Tage. 2000 lassen Luft und reichen
+  # bis etwa März 2021 — über den ganzen Abschwung 2022, die Hälfte, die zählt.
+  # Der Corona-Crash (Februar/März 2020) liegt VOR dem Datenbeginn und ist mit
+  # diesem Feed unerreichbar. Das ist eine Grenze der Datenquelle, keine
+  # Einstellung, und wird deshalb hier benannt statt weggerechnet.
   lookbackDays: 2000
   isDays: 365
   oosDays: 90

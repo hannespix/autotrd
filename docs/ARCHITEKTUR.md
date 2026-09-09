@@ -370,6 +370,35 @@ verdeckt hätte. Mit `beats_market` und der Tagesbar-Bilanz aus §5a.8 ist die
 erwartete Folge weiterhin KEIN HANDEL — jetzt aber aus einem Grund, der etwas
 über die Strategien sagt statt über die Gebührenordnung.
 
+### 11. Wie tief wir überhaupt messen können
+
+Der Versuch, acht Jahre zu messen, scheiterte am 09.09. nicht an der Config,
+sondern an der Datenquelle — und das Protokoll sagt es genau:
+
+```
+SPY     1538   2018-11-01 … 2026-09-08
+NVDA    1537   2020-07-27 … 2026-09-08
+…alle 29 übrigen: 2020-07-27
+```
+
+Der Backfill holte 43 492 Bars, vollständig. Aber die **IEX-Historie dieses
+Kontos beginnt am 27.07.2020**, für alle Symbole auf denselben Tag genau.
+Einzig SPY trägt eine verirrte Bar vom 2018-11-01 — und genau die setzte den
+gemeldeten Datenbereich auf „2018-11-01 … 2026-09-08".
+
+Der Lauf brach ab, weil im ersten Fold-Fenster 2019-01-13 … 2020-01-13 **null**
+Bars lagen und das Embargo es vollständig verschluckte.
+
+**Die Lehre ist allgemein:** Ein Datenbereich nennt die erste und die letzte
+Bar — nicht, ob dazwischen etwas liegt. Eine einzige Ausreißer-Bar genügt, um
+ihn glaubwürdig aussehen zu lassen. Ich hatte den Bereich zuerst als Beleg
+gelesen, dass die Tiefe angekommen sei.
+
+Daraus folgt die harte Grenze: **höchstens rund 2230 Tage** messbar. Die
+Erkundung steht auf 2000 — bis etwa März 2021, über den gesamten Abschwung
+2022. Der Corona-Crash liegt VOR dem Datenbeginn und ist mit diesem Feed
+unerreichbar. Wer ihn braucht, braucht den bezahlten SIP-Feed.
+
 ### Was das für den Betrieb heißt
 
 Kein Handel. Der nächtliche Optimierer läuft weiter und sucht mit nächtlich
