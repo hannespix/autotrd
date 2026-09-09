@@ -6,13 +6,23 @@
  * unterscheiden sich, und wer sie mischt, misst etwas anderes, als er
  * handelt. Der Aufrufer bildet den Wurzelpfad mit `barStoreRoot()`.
  *
+ * Dasselbe gilt für die Bereinigung der Tagesbars (`broker.adjustment`):
+ * Bereinigte Tagesbars liegen in einer eigenen Wurzel
+ * (`<feed>-adj-<bereinigung>/`), rohe wie bisher unter `<feed>/` — der
+ * Default `raw` lässt bestehende Caches unverändert weiterlaufen. Ein Store
+ * kennt seine Bereinigung (`adjustment`), und der Backfill weigert sich,
+ * eine andere hineinzuschreiben: Bereinigte und rohe Tagesbars teilen sich
+ * nie eine Datei. Minutenbars sind in jeder Wurzel roh (der REST-Client
+ * fordert sie nie bereinigt an).
+ *
  * Der Store hält je Datei einen In-Memory-Stand; Schreiben ist atomar
  * (writeJsonAtomic), damit ein Absturz nie eine halbe Datei hinterlässt.
  * Eine kaputte Datei tötet nichts: Sie wird als leer behandelt (Warnung),
  * der Backfill lädt sie neu.
  */
 import { existsSync, readdirSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
+import type { BarAdjustment } from '../alpaca/types.ts';
 import { readJson, writeJsonAtomic } from '../core/journal.ts';
 import { errMsg, logger } from '../core/log.ts';
 import type { Bar, Ms } from '../core/types.ts';
@@ -34,9 +44,24 @@ export interface BarFile {
   v: number[];
 }
 
-/** Wurzel des Caches für (Assetklasse, Feed) unterhalb des bars-Verzeichnisses. */
-export function barStoreRoot(barsDir: string, assetClass: string, feed: string): string {
-  return join(barsDir, assetClass, feed);
+/**
+ * Wurzel des Caches für (Assetklasse, Feed, Bereinigung) unterhalb des
+ * bars-Verzeichnisses. `raw` (Default) ergibt den bisherigen Pfad
+ * `<assetClass>/<feed>` — bestehende Caches bleiben gültig; jede andere
+ * Bereinigung bekommt die Geschwister-Wurzel `<assetClass>/<feed>-adj-<wert>`.
+ * Bei Krypto sendet der Client keine Bereinigung; eine Krypto-Config mit
+ * `all` bekäme nur eine eigene (inhaltsgleiche) Wurzel.
+ */
+export function barStoreRoot(barsDir: string, assetClass: string, feed: string, adjustment: BarAdjustment = 'raw'): string {
+  return join(barsDir, assetClass, adjustment === 'raw' ? feed : `${feed}-adj-${adjustment}`);
+}
+
+const ADJUSTED_ROOT = /-adj-(split|dividend|all)$/;
+
+/** Bereinigung, die eine Wurzel aus `barStoreRoot()` im Namen trägt; null für rohe (und fremde) Wurzeln. */
+export function adjustmentInRoot(root: string): Exclude<BarAdjustment, 'raw'> | null {
+  const m = ADJUSTED_ROOT.exec(basename(root));
+  return m ? (m[1] as Exclude<BarAdjustment, 'raw'>) : null;
 }
 
 /** Dateiname: Symbol mit `/` → `-` (BTC/USD → BTC-USD), Punkt bleibt (BRK.B). */
@@ -104,10 +129,24 @@ function isBarFile(x: unknown): x is BarFile {
 
 export class BarStore {
   readonly root: string;
+  /**
+   * Bereinigung der Tagesbars in dieser Wurzel. Fehlt sie im Konstruktor,
+   * gilt, was die Wurzel im Namen trägt (`barStoreRoot`), sonst `raw`. Der
+   * Backfill prüft dagegen, damit nie rohe Tagesbars in einen bereinigten
+   * Cache geraten (oder umgekehrt).
+   */
+  readonly adjustment: BarAdjustment;
   private readonly cache = new Map<string, Bar[]>();
 
-  constructor(root: string) {
+  constructor(root: string, adjustment?: BarAdjustment) {
+    const imPfad = adjustmentInRoot(root);
+    // Wächter: Eine `-adj-`-Wurzel als etwas anderes zu öffnen, hieße rohe und bereinigte
+    // Tagesbars in einer Datei — lieber sofort scheitern als still falsch messen.
+    if (adjustment !== undefined && imPfad !== null && imPfad !== adjustment) {
+      throw new Error(`BarStore: Wurzel ${root} ist als '${imPfad}' bereinigt, geöffnet als '${adjustment}' — bereinigte und rohe Tagesbars dürfen sich nie mischen.`);
+    }
     this.root = root;
+    this.adjustment = adjustment ?? imPfad ?? 'raw';
   }
 
   pathFor(symbol: string, tf: BaseTimeframe): string {

@@ -22,7 +22,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BarSeries } from '../../src/core/bars.ts';
-import { parseConfig, type Config, type FixedCandidateConfig } from '../../src/core/config.ts';
+import { parseConfig, type Config, type FixedCandidateInput } from '../../src/core/config.ts';
 import { homePaths } from '../../src/core/journal.ts';
 import { DAY } from '../../src/core/time.ts';
 import type { Bar, Strategy } from '../../src/core/types.ts';
@@ -66,7 +66,7 @@ const tmp = () => {
 
 function input(
   home: string,
-  over: Partial<OptimizeRunInput> & { fixed?: FixedCandidateConfig[]; symbols?: string[]; strategies?: string[]; optimizer?: Partial<Config['optimizer']> } = {},
+  over: Partial<OptimizeRunInput> & { fixed?: FixedCandidateInput[]; symbols?: string[]; strategies?: string[]; optimizer?: Partial<Config['optimizer']> } = {},
 ): OptimizeRunInput {
   const symbols = over.symbols ?? ['AAA'];
   const { fixed, optimizer, ...rest } = over;
@@ -100,9 +100,10 @@ describe('Config: optimizer.fixedCandidates', () => {
       universe: { symbols: ['AAA'] },
       optimizer: { fixedCandidates: [{ strategy: 'edge' }, { strategy: 'edge', params: { a: 3 }, label: 'Drei' }] },
     });
+    // `tier` fällt auf alpha zurück — die Alpha-Liste, kein Sonderweg (Basis: test/optimize/basis.test.ts).
     expect(cfg.optimizer.fixedCandidates).toEqual([
-      { strategy: 'edge', params: {} },
-      { strategy: 'edge', params: { a: 3 }, label: 'Drei' },
+      { strategy: 'edge', params: {}, tier: 'alpha' },
+      { strategy: 'edge', params: { a: 3 }, label: 'Drei', tier: 'alpha' },
     ]);
   });
 
@@ -214,7 +215,7 @@ describe('Festkandidat im Lauf', () => {
 
   it('ein beförderter Festkandidat ist beim Folgelauf der Amtsinhaber — bewertet wie jeder andere', () => {
     const home = tmp();
-    const fixed: FixedCandidateConfig[] = [{ strategy: 'edge', params: { a: 10, b: 2 }, label: 'Zehn' }];
+    const fixed: FixedCandidateInput[] = [{ strategy: 'edge', params: { a: 10, b: 2 }, label: 'Zehn' }];
     runOptimization(input(home, { strategies: ['noise'], fixed }));
     const second = runOptimization(input(home, { strategies: ['noise'], fixed, now: () => NOW + 1 }));
     const r = second.runs[0]!;

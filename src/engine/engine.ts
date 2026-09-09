@@ -57,7 +57,7 @@ export interface EngineDeps {
   log?: typeof logger | undefined;
   /** Injizierbar für Tests (Warteschleifen des Executors). */
   sleep?: ((ms: number) => Promise<void>) | undefined;
-  /** Bars-Cache; Default: `<home>/bars/<assetClass>/<feed>` (siehe data/store.ts). */
+  /** Bars-Cache; Default: `<home>/bars/<assetClass>/<feed>[-adj-<bereinigung>]` (siehe data/store.ts). */
   store?: BarStore | undefined;
   /** Injizierbar für Tests: Prüfung der HALT-Datei (jeder Fehler außer ENOENT ⇒ Halt, fail-closed). */
   statSync?: ((path: string) => unknown) | undefined;
@@ -244,7 +244,9 @@ export class Engine {
     this.paths = homePaths(deps.home);
     this.journal = deps.journal ?? new Journal(this.paths.journal);
     this.stateStore = deps.stateStore ?? new StateStore(this.paths.state);
-    this.store = deps.store ?? new BarStore(barStoreRoot(this.paths.bars, this.assetClass, deps.config.broker.feed));
+    this.store =
+      deps.store ??
+      new BarStore(barStoreRoot(this.paths.bars, this.assetClass, deps.config.broker.feed, deps.config.broker.adjustment), deps.config.broker.adjustment);
     this.log = deps.log ?? logger;
     this.now = deps.now ?? (() => Date.now());
     this.timers = deps.timers ?? defaultTimers;
@@ -955,6 +957,8 @@ export class Engine {
       from,
       to,
       feed: this.cfg.broker.feed,
+      // Bereinigung der Tagesbars wie in fetch/optimize — sonst lägen im bereinigten Cache rohe Bars.
+      adjustment: this.cfg.broker.adjustment,
       assetClass: this.assetClass,
       calendar: this.calendar,
       exact,

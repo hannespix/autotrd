@@ -26,3 +26,4 @@ Details in `docs/ARCHITEKTUR.md` §5a und in `docs/wissen/thesen.md`.
 | Vorregistrierung | These | Lauf | Ergebnis |
 |---|---|---|---|
 | V1 Basis-Allokation (`vorregistrierung/2026-09-09-basis-allokation.md`) | T5 | Probe #36 | B1–B3 ✔, B4 ✘ — nicht einsetzen; Prüfer: B3 nicht verfehlbar, Kriterien ohne Code-Pfad ⇒ V2 |
+| V2 Basis-Allokation (`vorregistrierung/2026-09-09-basis-allokation-v2.md`) | T5 | Hauptlauf + zwei Falsifikationsläufe (−15/−30 Tage), ausstehend | — |

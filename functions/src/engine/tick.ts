@@ -421,6 +421,10 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
   }
   const assetClass = base.universe.assetClass;
   const feed = base.broker.feed;
+  // Bereinigung der Tagesbars — derselbe Schalter wie beim Optimierer (`broker.adjustment`). Das Doc
+  // `meta/engineConfig` trägt ihn heute nicht (scripts/module/engineConfig.mjs) ⇒ Default raw, die
+  // Plattform ändert sich nicht. Trägt es ihn einmal, folgt der Takt: eigene Cache-Wurzel, bereinigter Abruf.
+  const adjustment = base.broker.adjustment;
   const tf = base.timeframe;
   const baseTf: BaseTimeframe = tf === 1440 ? '1Day' : '1Min';
 
@@ -436,7 +440,7 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
   }
   const dataClient = deps.dataClientFor({ feed, assetClass });
   if (!dataClient) log.error('Kein Plattform-Datenkey (ALPACA_API_KEY/ALPACA_SECRET_KEY) — keine Bars, keine Einstiege');
-  const store = sharedStoreFor(barStoreRoot(join(tmpRoot, 'shared', 'bars'), assetClass, feed));
+  const store = sharedStoreFor(barStoreRoot(join(tmpRoot, 'shared', 'bars'), assetClass, feed, adjustment), adjustment);
   const shared = buildShared(dataClient, store, now);
   let clock: AlpacaClock | null = null;
   if (dataClient) {
@@ -532,7 +536,7 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
       },
     });
     try {
-      await backfill({ client: probing, store, symbols: [...symbols], tf: baseTf, from: now - windowMs, to: now, feed, assetClass, calendar, log: (m) => log.info(m) });
+      await backfill({ client: probing, store, symbols: [...symbols], tf: baseTf, from: now - windowMs, to: now, feed, adjustment, assetClass, calendar, log: (m) => log.info(m) });
     } catch (e) {
       probe.errors++;
       log.error('Bars-Abruf fehlgeschlagen', { error: errMsg(e) });

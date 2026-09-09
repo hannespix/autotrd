@@ -39,7 +39,7 @@ function getPath(obj: unknown, path: string): unknown {
 describe('config/config.example.yaml', () => {
   it('lädt fehlerfrei mit parseConfig und trägt die vorgesehenen Startwerte', () => {
     const cfg = parseConfig(raw);
-    expect(cfg.broker).toEqual({ mode: 'paper', feed: 'iex' });
+    expect(cfg.broker).toEqual({ mode: 'paper', feed: 'iex', adjustment: 'raw' });
     expect(cfg.universe.assetClass).toBe('us_equity');
     expect(cfg.universe.symbols).toEqual(['SPY', 'QQQ', 'AAPL', 'MSFT', 'NVDA', 'AMZN', 'META', 'GOOGL', 'AMD', 'TSLA']);
     expect(cfg.universe.benchmark).toBe('SPY');

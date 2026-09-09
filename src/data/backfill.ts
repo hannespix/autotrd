@@ -15,8 +15,15 @@
  * bleiben zu Recht leer (Marker im Cache, siehe BarStore.gapMarks).
  * `exact: true` lädt genau [from, to] — für den Nachlauf nach einem
  * Stream-Reconnect (ab letzter Nachricht − 2 min).
+ *
+ * Bereinigte Tagesbars (`adjustment` ≠ raw, nur `1Day`) gehen einen eigenen
+ * Weg — nie inkrementell (siehe `backfillAdjustedDaily`). Die Bereinigung
+ * kommt aus der Config über den Aufrufer; fehlt sie, gilt die des Stores.
+ * Beides zusammen muss passen, sonst bricht der Backfill ab: Rohe und
+ * bereinigte Tagesbars dürfen sich nie eine Datei teilen. Minutenbars
+ * werden in jedem Fall roh angefordert (der Client erzwingt das ebenfalls).
  */
-import type { AlpacaClient } from '../alpaca/types.ts';
+import type { AlpacaClient, BarAdjustment, BarsRequest } from '../alpaca/types.ts';
 import { errMsg } from '../core/log.ts';
 import { DAY, MIN, dayKeyFor, sessionBounds, type Calendar, type SessionBounds } from '../core/time.ts';
 import type { AssetClass, Bar, Ms } from '../core/types.ts';
@@ -42,6 +49,12 @@ export interface BackfillArgs {
   maxGapRanges?: number | undefined;
   /** Genau [from, to] laden statt ab der letzten Bar (Stream-Reconnect). */
   exact?: boolean | undefined;
+  /**
+   * Bereinigung der Tagesbars (`broker.adjustment`); fehlt sie, gilt die des
+   * Stores. Muss zum Store passen (`store.adjustment`) — sonst Abbruch.
+   * Wirkt nur bei `1Day`; Minutenbars bleiben roh.
+   */
+  adjustment?: BarAdjustment | undefined;
 }
 
 export interface GapRange {
@@ -137,10 +150,101 @@ export function findGaps(bars: readonly Bar[], from: Ms, to: Ms, assetClass: Ass
 
 export const gapKey = (g: GapRange): string => `${g.start}-${g.end}`;
 
+/** Welche Bereinigung dieser Backfill fährt — die des Aufrufers, sonst die des Stores; ein Widerspruch wirft. */
+export function backfillAdjustment(a: Pick<BackfillArgs, 'store' | 'adjustment'>): BarAdjustment {
+  const wanted = a.adjustment ?? a.store.adjustment;
+  if (wanted !== a.store.adjustment) {
+    throw new Error(
+      `Backfill: Bereinigung '${wanted}' passt nicht zum Bars-Cache '${a.store.adjustment}' (${a.store.root}) — ` +
+        'bereinigte und rohe Tagesbars dürfen sich nie mischen (barStoreRoot mit derselben Bereinigung bilden).',
+    );
+  }
+  return wanted;
+}
+
+/**
+ * Bereinigte Tagesbars: den GANZEN Bestand neu laden und die Datei ersetzen —
+ * nie inkrementell.
+ *
+ * Warum: Bereinigte Kurse sind relativ zum Abrufdatum. Jede Ausschüttung und
+ * jeder Split NACH dem Abruf skaliert alle Bars davor. Ein Cache, der nur die
+ * neuen Bars anhängt, hielte die alte Historie auf altem Stand und die neuen
+ * Bars auf neuem — genau die Stufe, die die Bereinigung wegräumen soll, nur
+ * an die Nahtstelle des Caches verschoben, und mit jeder Ausschüttung eine
+ * mehr. Nach einem Jahr TLT wären das rund 3 % im Momentum, unsichtbar.
+ *
+ * Tagesbars sind billig (ein Abruf je 50 Symbole, 10 000 Bars je Seite), also
+ * kommt alles neu: mindestens [from, to], und darüber hinaus alles, was der
+ * Cache schon hatte — sonst schrumpfte ein tiefer Cache bei einem kürzeren
+ * Abruf (`universe` lädt 130 Tage, `fetch` 1400) oder behielte einen Rand
+ * auf altem Stand. Ein fehlgeschlagener Block lässt den alten Stand der
+ * Symbole stehen (Meldung), statt ihn zu löschen; ein Symbol ohne Bars bleibt
+ * ebenfalls, wie es war.
+ *
+ * Mit Stichtag (`to` in der Vergangenheit) ist die Reihe trotzdem auf HEUTE
+ * bereinigt: Alle Bars bis zum Stichtag tragen denselben Faktor der Ereignisse
+ * danach — Renditen und Ränge bleiben gleich, nur das Kursniveau ist um diesen
+ * Faktor verschoben (Sizing, Mindestkurs). Geschnitten wird beim Lesen
+ * (`src/app.ts`), nicht hier.
+ */
+async function backfillAdjustedDaily(a: BackfillArgs, adjustment: BarAdjustment, symbols: readonly string[], log: (msg: string) => void): Promise<void> {
+  const iso = (ms: Ms) => new Date(ms).toISOString();
+  // Symbole mit gleichem Fenster teilen sich eine Anfrage.
+  const byWindow = new Map<string, { start: Ms; end: Ms; symbols: string[] }>();
+  for (const sym of symbols) {
+    const first = a.store.firstTime(sym, '1Day');
+    const last = a.store.lastTime(sym, '1Day');
+    const start = first === null ? a.from : Math.min(a.from, first);
+    const end = last === null ? a.to : Math.max(a.to, last);
+    if (start > end) continue;
+    const key = `${start}:${end}`;
+    const w = byWindow.get(key) ?? { start, end, symbols: [] };
+    w.symbols.push(sym);
+    byWindow.set(key, w);
+  }
+  for (const w of byWindow.values()) {
+    for (const group of chunk(w.symbols, BACKFILL_MAX_SYMBOLS)) {
+      try {
+        const res = await a.client.getBars({ symbols: group, timeframe: '1Day', start: w.start, end: w.end, feed: a.feed, adjustment });
+        let n = 0;
+        let leer = 0;
+        for (const sym of group) {
+          const bars = res.get(sym) ?? [];
+          if (bars.length === 0) {
+            leer++;
+            continue;
+          }
+          // Ersetzen, nicht einarbeiten: Die Datei trägt danach EINEN Bereinigungsstand.
+          a.store.save(sym, '1Day', bars);
+          n += bars.length;
+        }
+        log(`Backfill 1Day (${adjustment}, vollständig): ${group.length} Symbole, ${iso(w.start)} → ${iso(w.end)}: ${n} Bars${leer ? `, ${leer} ohne Bars (Stand bleibt)` : ''}`);
+      } catch (e) {
+        log(`Backfill-Block (${adjustment}) fehlgeschlagen (${group.join(',')} ${iso(w.start)} → ${iso(w.end)}): ${errMsg(e)} — alter Stand bleibt`);
+      }
+    }
+  }
+}
+
 export async function backfill(a: BackfillArgs): Promise<Map<string, Bar[]>> {
   const log = a.log ?? (() => undefined);
   const symbols = [...new Set(a.symbols)];
   const iso = (ms: Ms) => new Date(ms).toISOString();
+  const adjustment = backfillAdjustment(a);
+  const collect = (): Map<string, Bar[]> => {
+    const out = new Map<string, Bar[]>();
+    for (const sym of symbols) out.set(sym, a.store.load(sym, a.tf).filter((b) => b.t >= a.from));
+    return out;
+  };
+  if (a.tf === '1Day' && adjustment !== 'raw') {
+    await backfillAdjustedDaily(a, adjustment, symbols, log);
+    return collect();
+  }
+  // Die Bereinigung geht nur mit Tagesbars auf die Reise; Minutenbars bleiben roh.
+  const request = (syms: string[], start: Ms, end: Ms): BarsRequest =>
+    a.tf === '1Day'
+      ? { symbols: syms, timeframe: a.tf, start, end, feed: a.feed, adjustment }
+      : { symbols: syms, timeframe: a.tf, start, end, feed: a.feed };
   // Symbole mit gleicher Startzeit teilen sich eine Anfrage.
   const byStart = new Map<Ms, string[]>();
   // Spannen VOR dem Cache, je Symbol; ohne sie wüchse der Cache nur vorwärts.
@@ -170,7 +274,7 @@ export async function backfill(a: BackfillArgs): Promise<Map<string, Bar[]>> {
     for (const group of chunk(syms, BACKFILL_MAX_SYMBOLS)) {
       for (const w of windows) {
         try {
-          const res = await a.client.getBars({ symbols: group, timeframe: a.tf, start: w.start, end: w.end, feed: a.feed });
+          const res = await a.client.getBars(request(group, w.start, w.end));
           let n = 0;
           for (const [sym, bars] of res) {
             if (!group.includes(sym) || bars.length === 0) continue;
@@ -189,7 +293,7 @@ export async function backfill(a: BackfillArgs): Promise<Map<string, Bar[]>> {
     for (const group of chunk(syms, BACKFILL_MAX_SYMBOLS)) {
       for (const w of windows) {
         try {
-          const res = await a.client.getBars({ symbols: group, timeframe: a.tf, start: w.start, end: w.end, feed: a.feed });
+          const res = await a.client.getBars(request(group, w.start, w.end));
           let n = 0;
           for (const [sym, bars] of res) {
             if (!group.includes(sym) || bars.length === 0) continue;
@@ -218,7 +322,7 @@ export async function backfill(a: BackfillArgs): Promise<Map<string, Bar[]>> {
         if (budget <= 0) break;
         budget--;
         try {
-          const res = await a.client.getBars({ symbols: [sym], timeframe: a.tf, start: g.start, end: g.end, feed: a.feed });
+          const res = await a.client.getBars(request([sym], g.start, g.end));
           const bars = res.get(sym) ?? [];
           if (bars.length > 0) a.store.upsert(sym, a.tf, bars);
           done.push(gapKey(g));
@@ -231,7 +335,5 @@ export async function backfill(a: BackfillArgs): Promise<Map<string, Bar[]>> {
     }
   }
 
-  const out = new Map<string, Bar[]>();
-  for (const sym of symbols) out.set(sym, a.store.load(sym, a.tf).filter((b) => b.t >= a.from));
-  return out;
+  return collect();
 }

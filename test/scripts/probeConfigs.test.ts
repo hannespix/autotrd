@@ -50,6 +50,8 @@ const TORE = [
   'dsrIsGate',
   'promotionMargin',
   'objective',
+  // Die zweite Latte (Basis-Allokation): auch ihre Schwellen entscheiden über Bestehen.
+  'basis',
 ] as const;
 
 const proben = readdirSync(new URL('.', dir)).filter((f) => f.endsWith('.yaml') && f !== 'platform.yaml' && f !== 'config.example.yaml');

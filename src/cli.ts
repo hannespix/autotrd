@@ -240,6 +240,7 @@ async function cmdDoctor(app: App): Promise<number> {
     ['Modus', app.mode + (app.modeReasons.length ? ` (${app.modeReasons.join(' ')})` : '')],
     ['Key-Präfix', app.env.ALPACA_API_KEY ? app.env.ALPACA_API_KEY.slice(0, 2) + '…' : 'KEIN KEY'],
     ['Feed', app.config.broker.feed],
+    ['Bereinigung (Tagesbars)', bereinigungZeile(app)],
     ['Assetklasse / Zeitrahmen', `${app.config.universe.assetClass} / ${app.config.timeframe} min`],
     ['Symbole', app.config.universe.symbols.join(', ')],
     ['Benchmark', app.config.universe.benchmark ?? '—'],
@@ -320,6 +321,17 @@ async function cmdDoctor(app: App): Promise<number> {
 }
 
 /**
+ * Eine Zeile für `doctor` und `fetch`: was die Bereinigung der Tagesbars
+ * (`broker.adjustment`) tut — und was nicht.
+ */
+function bereinigungZeile(app: App): string {
+  const adj = app.config.broker.adjustment;
+  if (adj === 'raw') return 'raw — Preisbars ohne Ausschüttungen und Splits (Default)';
+  const krypto = app.config.universe.assetClass === 'crypto' ? '; bei Krypto ohne Wirkung' : '';
+  return `${adj} — Tagesbars bereinigt, Minutenbars und Ausführung roh; eigener Cache ${app.store.root}${krypto}`;
+}
+
+/**
  * Handelsuniversum wählen: Tagesbars für den Kandidatenpool laden, nach
  * Median-Dollarumsatz ranken, die liquidesten `maxSymbols` behalten.
  *
@@ -341,7 +353,18 @@ async function cmdUniverse(app: App, cli: Cli): Promise<number> {
   // Pool viel größer sein als das Universum. Fenster großzügig: 60 Handelstage
   // brauchen rund 84 Kalendertage.
   const from = now - (regeln.fensterTage * 2 + 10) * DAY;
-  const geladen = await backfill({ client, store: app.store, symbols: [...pool], tf: '1Day', from, to: now, feed: app.config.broker.feed, log: (m) => logger.debug(m) });
+  // Dieselbe Bereinigung wie `fetch`: Beide schreiben in dieselben 1Day-Dateien.
+  const geladen = await backfill({
+    client,
+    store: app.store,
+    symbols: [...pool],
+    tf: '1Day',
+    from,
+    to: now,
+    feed: app.config.broker.feed,
+    adjustment: app.config.broker.adjustment,
+    log: (m) => logger.debug(m),
+  });
   const kandidaten = new Map<string, Bar[]>();
   for (const sym of pool) kandidaten.set(sym, geladen.get(sym) ?? app.store.load(sym, '1Day'));
 
@@ -404,10 +427,21 @@ async function cmdFetch(app: App, cli: Cli): Promise<number> {
   const calendar = await ensureCalendar(client, app.paths.calendar, addDays(today, -days - 10), addDays(today, 40), now);
   out(`Kalender: ${calendar.size} Handelstage`);
   const tf = baseTimeframe(app.config.timeframe);
+  out(`Bereinigung: ${bereinigungZeile(app)}`);
   // Mit Korb je Fold auch der Kandidatenpool — in voller Tiefe (app.ts).
   const symbols = fetchSymbols(app.config);
   const from = now - days * DAY;
-  const result = await backfill({ client, store: app.store, symbols, tf, from, to: now, feed: app.config.broker.feed, log: (m) => logger.info(m) });
+  const result = await backfill({
+    client,
+    store: app.store,
+    symbols,
+    tf,
+    from,
+    to: now,
+    feed: app.config.broker.feed,
+    adjustment: app.config.broker.adjustment,
+    log: (m) => logger.info(m),
+  });
   const rows: string[][] = [['Symbol', 'Bars', 'Erste', 'Letzte']];
   for (const s of symbols) {
     const bars = result.get(s) ?? [];
@@ -530,6 +564,8 @@ async function cmdOptimize(app: App, cli: Cli): Promise<number> {
     strategies: app.config.optimizer.strategies,
     barsFor,
     // Kandidaten ohne Bars sind nicht wählbar, kein Fehler (Korb je Fold).
+    // Commit der Config = Beleg der Vorregistrierung (docs/wissen); in Actions gesetzt, lokal nicht.
+    ...(process.env.GITHUB_SHA ? { configCommit: process.env.GITHUB_SHA } : {}),
     candidateBarsFor: (symbol) => {
       try {
         const b = barsFor(symbol);

@@ -11,7 +11,7 @@
  * genau die Situation, in der ein Optimierer Rauschen für Kante hält.
  */
 import { BarSeries } from '../../src/core/bars.ts';
-import { parseConfig, type Config } from '../../src/core/config.ts';
+import { parseConfig, type Config, type OptimizerInput } from '../../src/core/config.ts';
 import { DAY } from '../../src/core/time.ts';
 import type { EquityPoint, Metrics, Params, ParamSpec, SimResult, Strategy, TimeframeMin, Trade } from '../../src/core/types.ts';
 import type { MetricsFns } from '../../src/optimize/robustness.ts';
@@ -62,6 +62,12 @@ export interface FakeSimOptions {
   barsPerDay?: number;
   /** Salz, damit zwei Fakes verschiedenes Rauschen sehen. */
   salt?: string;
+  /**
+   * Brutto-Exposure (Anteil 0–1), die jeder Punkt der Equity-Kurve trägt —
+   * wie `EquityPoint.exposure` des echten Simulators. Ohne Angabe fehlt das
+   * Feld, und die Basis-Latte sagt „nicht bewertbar" (fail-closed).
+   */
+  exposure?: number;
 }
 
 /** Zufallsrenditen als Kante: Erwartungswert 0, Kosten > 0 — darf nie befördert werden. */
@@ -118,7 +124,7 @@ export function makeFakeSimulate(options: FakeSimOptions | ((strategyId: string)
         const t = bars.t[i]!;
         if (t < start) continue;
         if (t >= end) break;
-        if (equity.length === 0) equity.push({ t, equity: eq });
+        if (equity.length === 0) equity.push(o.exposure === undefined ? { t, equity: eq } : { t, equity: eq, exposure: o.exposure });
         sinceTrade++;
         barsInDay++;
         if (sinceTrade >= barsPerTrade) {
@@ -147,7 +153,7 @@ export function makeFakeSimulate(options: FakeSimOptions | ((strategyId: string)
             mfe: null,
           });
           eq += net;
-          equity.push({ t: t + 1, equity: eq });
+          equity.push(o.exposure === undefined ? { t: t + 1, equity: eq } : { t: t + 1, equity: eq, exposure: o.exposure });
         }
         if (barsInDay >= barsPerDay) {
           dailyReturns.push(eq / dayStart - 1);
@@ -323,7 +329,8 @@ export function testConfig(
   over: {
     symbols?: string[];
     home?: string;
-    optimizer?: Partial<Config['optimizer']>;
+    /** Rohform (vor den Defaults) — Festkandidaten dürfen `tier`/`params` weglassen wie eine YAML-Datei. */
+    optimizer?: Partial<OptimizerInput>;
     timeframe?: TimeframeMin;
     benchmark?: string;
     candidates?: string[];

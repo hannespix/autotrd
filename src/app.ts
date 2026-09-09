@@ -131,9 +131,10 @@ export function bootstrap(opts: AppOptions): App {
     paths,
     journal: new Journal(paths.journal),
     state: new StateStore(paths.state),
-    // Derselbe Wurzelpfad wie in der Engine (bars/<assetClass>/<feed>/) — sonst
-    // lesen fetch/backtest und die Engine verschiedene Caches.
-    store: new BarStore(barStoreRoot(paths.bars, config.universe.assetClass, config.broker.feed)),
+    // Derselbe Wurzelpfad wie in der Engine (bars/<assetClass>/<feed>[-adj-<bereinigung>]/) —
+    // sonst lesen fetch/backtest und die Engine verschiedene Caches. Der Store kennt seine
+    // Bereinigung; der Backfill prüft dagegen (data/store.ts, data/backfill.ts).
+    store: new BarStore(barStoreRoot(paths.bars, config.universe.assetClass, config.broker.feed, config.broker.adjustment), config.broker.adjustment),
     calendar,
     client,
     champion: loadChampion(paths.champion),
