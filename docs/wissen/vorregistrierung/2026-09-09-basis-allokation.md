@@ -105,7 +105,41 @@ Alpha-Gates; die gesuchte Variante.
 6. **Fold-Raster:** T4 gilt auch hier; ein Festkandidat hat aber keine
    Parametersuche je Fold — die Rasterabhängigkeit ist kleiner, nicht null.
 
-## Ergebnis
+## Ergebnis (eingetragen nach dem Lauf, 09.09.2026 abends)
 
-_Wird nach dem Lauf eingetragen: Lauf-Nummer, Datenbereich, B1–B4 mit
-Zahlen, Urteil, Konsequenz._
+Probe #36, Lauf 34407093077, `main` 1095e3b. Datenbereich 2021-03-22 …
+2026-09-09 (2000 Tage ab heute — nicht ab 2020-07, wie oben vermutet),
+16 Folds, OOS-Kette 2022-04 … 2026-03, Holdout 2026-03-13 … 2026-09-09.
+
+| # | Kriterium | Gemessen | Urteil |
+|---|---|---|---|
+| B1 | Netto > 0, auch bei Kosten ×1,5 | +3 431 $ (+14,2 %); Stress +3 300 $ | ✔ |
+| B2 | OOS-Sharpe ≥ 0,75 × SPY-Sharpe | 0,485 gegen 0,75 × 0,635 = 0,476 | ✔ knapp |
+| B3 | MaxDD der Kette ≤ MaxDD SPY über dieselben Fenster | 9,7 % gegen 24,1 % | ✔ deutlich |
+| B4 | Gebührenanteil ≤ 25 % und 1–8 Trades je Monat | 67,3 % und 0,6 Trades je Monat | ✘ beides |
+
+Nebenzahlen: 11 von 16 Folds positiv, bester Fold trägt 33 %, PSR 0,83,
+Nachbarschaft 100 % positiv. Die zehn Alpha-Gates reißt sie an vier Stellen
+(oos_trades 28, PSR, fee_share, beats_market 0,49 gegen 0,63). Holdout:
++8,7 %, MaxDD 3,4 %, Sharpe 1,48 aus 3 Trades — Korb liegenlassen 0,91,
+SPY 2,03 (+14,0 %, MaxDD 5,8 %): In einem starken Halbjahr bleibt der
+Trendfilter hinter dem Index, wie D3 es vorhersagt.
+
+**Urteil nach den Entscheidungsregeln: nicht einsetzen.** B4 ist verfehlt,
+in beiden Teilen. Die Regeln oben sahen für „zu wenige Trades" einen
+Bericht vor, für den Gebührenanteil nichts — eine Lücke der
+Vorregistrierung, keine Lizenz, sie nachträglich zu füllen. V1 steht als
+verfehlt im Protokoll.
+
+**Was der Lauf über die Messung sagt (für V2, nicht für V1):** Der
+Gebührenanteil ist Gebühren geteilt durch den Bruttogewinn der
+GESCHLOSSENEN Trades (`backtest/metrics.ts`). Eine Allokation, die Monate
+hält, schließt in 90-Tage-Folds kaum Trades; sieben Folds enden mit
+0 Trades und trotzdem mit Netto zwischen −320 $ und +1 130 $ — das ist
+unrealisierter Gewinn offener Positionen am Fold-Ende. Realisiert werden
+vor allem Verlierer (Stops, Regimebrüche), der Nenner wird klein, der
+Anteil groß. Für eine Alpha-Familie mit Tagen Haltedauer ist das Maß
+richtig; für die Basis misst es den Umschlag nicht. Der Prüfer-Befund
+(`../pruefungen/2026-09-09-redteam-basis-v1.md`) geht weiter: B3 war auf
+dieser Kette strukturell nicht verfehlbar, B2 ein Münzwurf, und B1–B4
+hatten keinen Code-Pfad. V2 wird davon ausgehen.

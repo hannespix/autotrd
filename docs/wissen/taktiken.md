@@ -81,7 +81,10 @@ steht in `src/strategy/`; die Gates gelten für alle gleich.
 - **Woran sie stirbt:** an Seitwärtsmärkten mit Fehlsignalen im
   Monatsfenster, an einem Universum, das rückblickend gewählt wurde (Prüfer
   #32), und an Rebalance-Kosten, die bei 4 Positionen aber klein sind.
-- **Messstand:** offen, Probe #36.
+- **Messstand:** Probe #36 (V1): B1–B3 bestanden (Netto +14,2 %, Sharpe 0,49
+  gegen 0,63, MaxDD 9,7 % gegen 24,1 %), B4 verfehlt (Gebührenanteil 67 %
+  realisiert, 0,6 Trades je Monat). Prüfer: B3 auf dieser Kette nicht
+  verfehlbar, Kriterien ohne Code-Pfad. Nicht eingesetzt; V2.
 
 ## Kasse — nicht handeln
 - **Zweck:** Das Ergebnis, wenn keine Taktik ihre Latte nimmt. Kostet 0 $.

@@ -19,9 +19,10 @@ Details in `docs/ARCHITEKTUR.md` §5a und in `docs/wissen/thesen.md`.
 | 09.09.2026 | Nacht (07:53 UTC) | platform.yaml | — | je Fold | mp (Score 2,119) fällt durch | — | 0 Symbole, 30 noTrade veröffentlicht | Wachhund 11:09: Takt schlägt |
 | 08./09.09.2026 | Krypto 60 / 1440 | crypto-60, crypto-1440 | 2025-08 … 2026-09 / 2022-11 … 2026-09 | fest (BTC, ETH, SOL) | alle negativ bis 0,19 | — | kein Handel | T12 |
 | 08.09.2026 | 5-Minuten-Bars | pooled-us30 (5 Min) | — | Endkorb | Gebühren 271–2 438 % des Bruttogewinns | — | kein Handel; Plattform auf Tagesbars | §5a.10, T1 |
+| 09.09.2026 | 36 | basis-1440 (V1, Festkandidat) | 2021-03 … 2026-09 | fest (11 ETFs) | Basis V1 0,49 (B1–B3 ✔, B4 ✘: Gebührenanteil 67 % realisiert, 0,6 Trades/Monat) | 0,63 | nicht einsetzen; V2 nach Prüfer-Befund | V1, T5 |
 
 ## Offen (vorregistriert)
 
 | Vorregistrierung | These | Lauf | Ergebnis |
 |---|---|---|---|
-| V1 Basis-Allokation (`vorregistrierung/2026-09-09-basis-allokation.md`) | T5 | Probe #36 (ausstehend) | — |
+| V1 Basis-Allokation (`vorregistrierung/2026-09-09-basis-allokation.md`) | T5 | Probe #36 | B1–B3 ✔, B4 ✘ — nicht einsetzen; Prüfer: B3 nicht verfehlbar, Kriterien ohne Code-Pfad ⇒ V2 |
