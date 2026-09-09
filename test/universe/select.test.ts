@@ -257,3 +257,48 @@ describe('waehleUniverse — Notbremsen', () => {
     expect(a.abgang).toEqual(['H', 'I', 'J']);
   });
 });
+
+describe('waehleUniverse ist kausal — sie schneidet bei jetzt, statt es vorauszusetzen', () => {
+  // Drei Stichtags-Proben am 09.09.2026 (Läufe #24, #25, #26) wählten „per
+  // September 2025" denselben Korb wie heute, SPY zu 766 $: Der Cache reichte
+  // Bars bis heute herein, `slice(-fensterTage)` nahm die letzten davon, und
+  // eine Bar aus der Zukunft war laut `Math.max(0, …)` null Tage alt.
+  const zukunft = (preis: number, vol: number) => bars(10, preis, vol, -30); // 10 Bars, die 30 Tage NACH jetzt enden
+
+  it('Bars nach jetzt zählen weder für Umsatz noch für Kurs noch für das Alter', () => {
+    // A: bis jetzt billig und dünn, danach teuer und liquide. B: bis jetzt solide.
+    const kandidaten = korb({
+      A: [...bars(10, 10, 150_000), ...zukunft(1000, 500_000)],
+      B: bars(10, 100, 50_000),
+    });
+    const a = waehleUniverse({ kandidaten, pflicht: [], bestand: [], bestandIstAuswahl: false, regeln, jetzt: JETZT });
+    const bewA = a.bewertung.find((b) => b.symbol === 'A')!;
+    const bewB = a.bewertung.find((b) => b.symbol === 'B')!;
+    expect(bewA.dollarVolumen).toBe(1_500_000); // 10 × 150 000, nicht 1000 × 500 000
+    expect(bewB.dollarVolumen).toBe(5_000_000);
+    expect(a.symbols).toEqual(['B', 'A']); // B liegt vorn — mit den Zukunfts-Bars läge A vorn
+  });
+
+  it('ein Symbol, das nur Bars nach jetzt hat, hat KEINE Daten — es ist nicht null Tage alt', () => {
+    const a = waehleUniverse({
+      kandidaten: korb({ Z: zukunft(100, 100_000), B: bars(10, 100, 50_000) }),
+      pflicht: [],
+      bestand: [],
+      bestandIstAuswahl: false,
+      regeln,
+      jetzt: JETZT,
+    });
+    expect(a.symbols).toEqual(['B']);
+    expect(a.bewertung.find((b) => b.symbol === 'Z')!.grund).toMatch(/keine Tagesbars/);
+  });
+
+  it('die Bar des Stichtags selbst gehört dazu (Bucket-Beginn ≤ Ende des Tages)', () => {
+    // Letzte Bar beginnt genau bei JETZT: dazu. Eine, die eine Stunde später beginnt: nicht.
+    const genau = bars(10, 100, 50_000, 0);
+    const spaeter = genau.map((b) => ({ ...b, t: b.t + 3_600_000 }));
+    const mit = waehleUniverse({ kandidaten: korb({ A: genau }), pflicht: [], bestand: [], bestandIstAuswahl: false, regeln, jetzt: JETZT });
+    const ohne = waehleUniverse({ kandidaten: korb({ A: spaeter }), pflicht: [], bestand: [], bestandIstAuswahl: false, regeln, jetzt: JETZT });
+    expect(mit.bewertung.find((b) => b.symbol === 'A')!.tage).toBe(10);
+    expect(ohne.bewertung.find((b) => b.symbol === 'A')!.tage).toBe(9);
+  });
+});

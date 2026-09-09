@@ -37,9 +37,10 @@
  * Messzeitraum übernommen, delistet oder unter `minPreis` gefallen ist, kommt
  * gar nicht erst vor.
  *
- * Die Wahl selbst ist kausal (sie sieht nur Bars bis `jetzt`); der Bias
- * entsteht erst dadurch, dass ihr Ergebnis rückwärts angewandt wird. Solange
- * das so ist, sind die OOS-Zahlen optimistisch, und der Bericht sagt das.
+ * Die Wahl selbst ist kausal — sie SCHNEIDET die Bars bei `jetzt`, statt es
+ * vom Aufrufer vorauszusetzen (siehe `bewerte`) —; der Bias entsteht erst
+ * dadurch, dass ihr Ergebnis rückwärts angewandt wird. Solange das so ist,
+ * sind die OOS-Zahlen optimistisch, und der Bericht sagt das.
  *
  * ── Handwerk ─────────────────────────────────────────────────────────────
  *
@@ -161,7 +162,16 @@ interface Roh {
 }
 
 function bewerte(symbol: string, bars: readonly Bar[], regeln: UniverseRegeln, jetzt: Ms): Roh {
-  const fenster = bars.slice(-regeln.fensterTage);
+  // Kausal DURCHGESETZT, nicht vorausgesetzt: Der Aufrufer reicht die ganze
+  // Serie aus dem Cache — bei einer Stichtags-Messung also auch Bars NACH dem
+  // Stichtag. Ohne diesen Schnitt nahm `slice(-fensterTage)` die letzten Bars
+  // von HEUTE, und `Math.max(0, …)` machte aus einer Bar aus der Zukunft eine
+  // null Tage alte. Drei Stichtags-Proben am 09.09. wählten so denselben Korb
+  // wie heute — SPY zu 766 $ „per September 2025". `Bar.t` ist der
+  // Bucket-Beginn; ein Stichtag ist das Ende seines Tages, also gehört die
+  // Bar des Stichtags dazu.
+  const sichtbar = bars.filter((b) => b.t <= jetzt);
+  const fenster = sichtbar.slice(-regeln.fensterTage);
   const letzte = fenster[fenster.length - 1];
   const tage = fenster.length;
   const letzterKurs = letzte?.c ?? 0;
