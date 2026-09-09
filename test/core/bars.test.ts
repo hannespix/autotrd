@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BarSeries, aggregate, filterRegularSession, normalizeBars } from '../../src/core/bars.ts';
-import { msFromET, sessionBounds } from '../../src/core/time.ts';
+import { BarSeries, aggregate, anfangsStreuner, filterRegularSession, normalizeBars } from '../../src/core/bars.ts';
+import { DAY, HOUR, msFromET, sessionBounds } from '../../src/core/time.ts';
 import type { Bar } from '../../src/core/types.ts';
 
 const et = (hh: number, mm: number, d = 4) => msFromET(2026, 9, d, hh, mm);
@@ -113,5 +113,52 @@ describe('Hilfen', () => {
     const out = normalizeBars([mk(3, 1), mk(1, 2), mk(3, 9), mk(2, 3)]);
     expect(out.map((b) => b.t)).toEqual([1, 2, 3]);
     expect(out[2]!.o).toBe(9);
+  });
+});
+
+describe('anfangsStreuner — verirrte Einzelbars vor dem Datenbeginn', () => {
+  /** Tagesbars ab dem 27.07.2020 (IEX-Datenbeginn), Handelstage vereinfacht als Kalendertage. */
+  const beginn = msFromET(2020, 7, 27, 9, 30);
+  const dicht = (n: number) => Array.from({ length: n }, (_, i) => beginn + i * DAY);
+
+  it('eine Einzelbar 259 Tage vor dem dichten Anfang ist ein Streuner (SO 2019-11-11)', () => {
+    expect(anfangsStreuner([beginn - 259 * DAY, ...dicht(300)])).toBe(1);
+  });
+
+  it('mehrere einzelne Streuner nacheinander (SPY 2018-11-01 und Freunde)', () => {
+    expect(anfangsStreuner([beginn - 634 * DAY, beginn - 510 * DAY, beginn - 259 * DAY, ...dicht(300)])).toBe(3);
+  });
+
+  it('eine dichte Reihe bleibt unberührt — auch über das lange Wochenende und die Woche nach 9/11', () => {
+    const t = [beginn, beginn + 4 * DAY, beginn + 5 * DAY, beginn + 12 * DAY - 5 * DAY, beginn + 13 * DAY, beginn + 20 * DAY];
+    expect(anfangsStreuner(t)).toBe(0);
+    expect(anfangsStreuner(dicht(3))).toBe(0);
+    expect(anfangsStreuner(dicht(1))).toBe(0);
+    expect(anfangsStreuner([])).toBe(0);
+  });
+
+  it('ein kurzer Vorlauf (drei dichte Bars) vor einer langen Lücke ist ebenfalls Streuner', () => {
+    const vorlauf = [beginn - 300 * DAY, beginn - 299 * DAY, beginn - 298 * DAY];
+    expect(anfangsStreuner([...vorlauf, ...dicht(300)])).toBe(3);
+  });
+
+  it('GRENZE: ein längerer dichter Block vor einer Lücke ist Datenlage, kein Streuner', () => {
+    const block = Array.from({ length: 6 }, (_, i) => beginn - 300 * DAY + i * DAY);
+    expect(anfangsStreuner([...block, ...dicht(300)])).toBe(0);
+  });
+
+  it('von lauter Einzelbars bleibt die letzte', () => {
+    expect(anfangsStreuner([beginn - 400 * DAY, beginn - 200 * DAY, beginn])).toBe(2);
+  });
+
+  it('Minutenbars über Nacht und über das Wochenende sind dicht', () => {
+    const fr = msFromET(2026, 9, 4, 15, 59);
+    const t = [fr - 1 * 60_000, fr, fr + 65 * HOUR + 31 * 60_000, fr + 65 * HOUR + 32 * 60_000];
+    expect(anfangsStreuner(t)).toBe(0);
+  });
+
+  it('die Schwelle ist die Lücke, nicht die Zahl der Bars: elf Tage sind zu viel, zehn nicht', () => {
+    expect(anfangsStreuner([beginn - 11 * DAY, ...dicht(20)])).toBe(1);
+    expect(anfangsStreuner([beginn - 10 * DAY, ...dicht(20)])).toBe(0);
   });
 });

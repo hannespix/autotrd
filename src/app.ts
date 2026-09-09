@@ -8,7 +8,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createAlpacaClient } from './alpaca/rest.ts';
 import type { AlpacaClient } from './alpaca/types.ts';
-import { aggregate, BarSeries } from './core/bars.ts';
+import { aggregate, anfangsStreuner, BarSeries } from './core/bars.ts';
 import { homeDir, loadConfigFile, loadEnv, resolveMode, type Config, type Env } from './core/config.ts';
 import { ensureDir, homePaths, Journal, StateStore, type HomePaths } from './core/journal.ts';
 import { logger, registerSecret, setLogLevel } from './core/log.ts';
@@ -177,10 +177,24 @@ export function seriesForTimeframe(app: App, symbol: string, closedBefore?: numb
       if (last && last.t === bounds.open) out[out.length - 1] = { ...b, t: bounds.open };
       else out.push({ ...b, t: bounds.open });
     }
-    return BarSeries.from(out);
+    return ohneStreuner(symbol, BarSeries.from(out));
   }
   const agg = aggregate(raw, { tf, assetClass, calendar: app.calendar, closedBefore: grenze });
-  return BarSeries.from(agg);
+  return ohneStreuner(symbol, BarSeries.from(agg));
+}
+
+/**
+ * Verirrte Einzelbars am Anfang verwerfen (IEX: SPY 2018-11-01, SO
+ * 2019-11-11 — Regel in `anfangsStreuner`). Der Cache behält sie: Der
+ * Backfill misst seinen Rückstand an der Rohreihe. Nur wer rechnet, sieht
+ * sie nicht — Backtest, Optimierer, Universumswahl und Maßstab gleichermaßen.
+ */
+function ohneStreuner(symbol: string, serie: BarSeries): BarSeries {
+  const n = anfangsStreuner(serie.t);
+  if (n === 0) return serie;
+  const tag = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+  logger.info(`${symbol}: ${n} Streuner-Bar(s) am Anfang verworfen (${tag(serie.t[0]!)} … ${tag(serie.t[n - 1]!)}) — Daten dicht ab ${tag(serie.t[n]!)}`);
+  return serie.slice(n);
 }
 
 export interface StrategyChoice {

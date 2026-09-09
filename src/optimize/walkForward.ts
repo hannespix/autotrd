@@ -11,6 +11,7 @@
  */
 import type { CostConfig, OptimizerConfig, RiskConfig, SessionConfig } from '../core/config.ts';
 import type { Calendar } from '../core/time.ts';
+import { anfangsStreuner } from '../core/bars.ts';
 import { DAY } from '../core/time.ts';
 import type {
   AssetClass,
@@ -203,11 +204,21 @@ export function korbVon(symbol: string, bars: BarsInput): ReadonlyMap<string, Ba
 export function zeitachseVon(korb: ReadonlyMap<string, BarSeriesLike>): Zeitachse {
   const serien = [...korb.values()].filter((b) => b.length > 0);
   if (serien.length === 0) throw new Error('Keine Bars — Walk-Forward unmöglich');
-  if (serien.length === 1) return serien[0]!;
-  const alle = new Set<number>();
-  for (const b of serien) for (let i = 0; i < b.length; i++) alle.add(b.t[i]!);
-  const t = Float64Array.from([...alle].sort((x, y) => x - y));
-  return { length: t.length, t };
+  let achse: Zeitachse;
+  if (serien.length === 1) achse = serien[0]!;
+  else {
+    const alle = new Set<number>();
+    for (const b of serien) for (let i = 0; i < b.length; i++) alle.add(b.t[i]!);
+    const t = Float64Array.from([...alle].sort((x, y) => x - y));
+    achse = { length: t.length, t };
+  }
+  // Verirrte Einzelbars lange vor dem Datenbeginn (IEX: SO 2019-11-11) dürfen
+  // den Fold-Plan nicht nach hinten ziehen — ein Fold in der Leere kostet die
+  // ganze Messung (Stichtag 2025-03-07, 09.09.2026). `seriesForTimeframe`
+  // verwirft sie beim Laden; hier gilt dieselbe Regel für jede Achse, die
+  // anders entsteht.
+  const streuner = anfangsStreuner(achse.t);
+  return streuner === 0 ? achse : { length: achse.length - streuner, t: achse.t.subarray(streuner) };
 }
 
 export function dataRangeOf(bars: Zeitachse): TimeRange {
