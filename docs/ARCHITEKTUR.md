@@ -326,6 +326,34 @@ Drei Festlegungen, jede gegen eine konkrete Falle:
 Das Gate kann eine Beförderung nur verhindern, nie auslösen — es ist damit in
 die falsche Richtung risikofrei.
 
+### 10. Die Plattform maß im aussichtslosesten Zeitrahmen
+
+Der nächtliche Produktivlauf lief auf **5-Minuten-Bars**. Der erste Lauf mit
+dem neuen Gate (09.09., Run 34297873726) zeigte, was das kostet:
+
+| Strategie | Gebührenanteil am Bruttogewinn |
+|---|---|
+| trend_donchian | **2 437,9 %** |
+| orb_breakout | **271,2 %** |
+| momentum_pullback, mean_reversion | nicht berechenbar — es gab keinen Bruttogewinn |
+
+Dort kann kein Kandidat gewinnen, egal wie gut sein Signal ist. Auf Tagesbars
+liegt derselbe Anteil bei 1,5–5,5 %. Wir haben also jede Nacht 43 Minuten
+Rechenzeit auf den einen Zeitrahmen verwendet, in dem die Reibung jede Kante
+verdeckt, während die Erkundungen längst zeigten, dass langsamer die
+Kostenfrage löst (§5a.1).
+
+Seit dem 09.09. steht `config/platform.yaml` deshalb auf `timeframe: 1440`,
+mit den Fenstern der bewährten Erkundung (365/90/90/180 statt 120/30/30/60 —
+bei einer Bar je Tag statt 78 braucht ein Fold Jahre, nicht Monate).
+`orb_breakout` fällt aus der Liste, weil es ausdrücklich nur Intraday kann;
+`cross_sectional_momentum` kommt dazu.
+
+**Das ist keine Kante.** Es räumt nur das Hindernis weg, das jede Kante
+verdeckt hätte. Mit `beats_market` und der Tagesbar-Bilanz aus §5a.8 ist die
+erwartete Folge weiterhin KEIN HANDEL — jetzt aber aus einem Grund, der etwas
+über die Strategien sagt statt über die Gebührenordnung.
+
 ### Was das für den Betrieb heißt
 
 Kein Handel. Der nächtliche Optimierer läuft weiter und sucht mit nächtlich

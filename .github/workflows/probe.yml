@@ -123,12 +123,21 @@ jobs:
             # STICHTAG rückwärts, `fetch` aber ab HEUTE. Ohne die Vertiefung hätte
             # ein Lauf per 2025-03 nur die Hälfte seines Fensters — und damit halb
             # so viele Folds, ohne dass es jemandem auffällt.
-            echo "days=--days 2600" >> "$GITHUB_OUTPUT"
-            echo "Stichtag: $AS_OF (Bars 2600 Tage zurück)"
+            echo "days=--days 3600" >> "$GITHUB_OUTPUT"
+            echo "Stichtag: $AS_OF (Bars 3600 Tage zurück)"
           fi
 
+      # Punkt-in-Zeit-Universum: Ohne diesen Schritt handelt eine Messung über
+      # acht Jahre die HEUTE liquidesten 30 Werte rückwirkend — also genau die
+      # Firmen, von denen wir inzwischen wissen, dass sie groß geblieben sind.
+      # Je tiefer das Fenster, desto teurer wird dieser Bias; mit `--as-of`
+      # wählt die Auswahl nur aus Daten bis zum Stichtag. Ohne Kandidatenpool
+      # in der Config sagt das Kommando das und lässt die Config-Liste stehen.
+      - name: Handelsuniversum wählen (Stichtag gilt auch hier)
+        run: node src/cli.ts universe --config "$CONFIG" --env "$RUNNER_TEMP/.env" --home var-probe ${{ steps.asof.outputs.flag }}
+
       - name: Bars nachladen
-        run: node src/cli.ts fetch --config "$CONFIG" --env "$RUNNER_TEMP/.env" --home var-probe ${{ steps.asof.outputs.days }}
+        run: node src/cli.ts fetch --config "$CONFIG" --env "$RUNNER_TEMP/.env" --home var-probe --universe var-probe/universe.json ${{ steps.asof.outputs.days }}
 
       - name: Walk-Forward-Optimierung
         env:
@@ -150,7 +159,7 @@ jobs:
           # Nutzer handeln, entscheidet weiterhin allein die Plattform-Config.
           SHORT=""
           if [ "$ALLOW_SHORT" = "ja" ]; then SHORT="--allow-short"; fi
-          node src/cli.ts optimize --config "$CONFIG" --env "$RUNNER_TEMP/.env" --home var-probe $SHORT ${{ steps.asof.outputs.flag }} --equity 25000
+          node src/cli.ts optimize --config "$CONFIG" --env "$RUNNER_TEMP/.env" --home var-probe --universe var-probe/universe.json $SHORT ${{ steps.asof.outputs.flag }} --equity 25000
 
       - name: Bericht als Artefakt
         uses: actions/upload-artifact@v4
@@ -158,7 +167,9 @@ jobs:
           name: probe-${{ github.run_id }}
           path: |
             var-probe/champion.json
+            var-probe/universe.json
             var-probe/reports/optimize-*.md
+            var-probe/reports/universe-*.md
           retention-days: 90
 
       - name: Ergebnis in der Zusammenfassung
