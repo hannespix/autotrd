@@ -13,7 +13,7 @@
  */
 import type { OptimizerConfig } from '../core/config.ts';
 import { median, objectiveValue, sampleVariance, type ObjectiveId } from './objective.ts';
-import { neighbors } from './search.ts';
+import { neighbors, wirksamerSuchraum } from './search.ts';
 import { candidateRange, korbVon, simulateWindow, zeitachseVon, type WfaResult, type WindowSimArgs } from './walkForward.ts';
 
 /* ───────────────────────── Injektionspunkt Statistik ───────────────────────── */
@@ -117,7 +117,9 @@ export function neighborhoodTest(
 ): NeighborhoodResult {
   const { wfa, strategy, optimizer } = a;
   const bestObjective = objectiveValue(optimizer.objective, wfa.finalIsMetrics);
-  const nb = neighbors(wfa.finalParams, strategy.paramSpace);
+  // Dieselbe Regel wie in der Suche: Bei gesperrtem Short ist `allowShort`
+  // keine Achse — ihr Nachbar hätte exakt den Bestwert und zählte als Plateau.
+  const nb = neighbors(wfa.finalParams, wirksamerSuchraum(strategy.paramSpace, a.config.risk.allowShort).space);
   if (nb.length === 0) {
     // Ein Raum ohne Achsen kann per Parameterwahl nicht überangepasst werden.
     return { medianObjective: bestObjective, bestObjective, positiveShare: 1, evaluated: 0 };

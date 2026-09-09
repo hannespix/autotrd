@@ -673,9 +673,11 @@ das Gate `neighborhood_plateau` ist es eine Schmeichelei: Der ±1-Nachbar
 entlang der toten Achse hat exakt den Bestwert und zählt als Plateau. Klein,
 in Richtung optimistisch, und keiner der Befunde oben hängt daran: mr in
 Lauf 32 stand bei 93 % positiven Nachbarn und einem Nachbar-Median von 2,61
-gegen eine Schwelle von 1,59 — ein Nachbar weniger kippt das nicht. Folgt
-als eigener Commit: Ist der Short gesperrt, gehört die Achse nicht in den
-Suchraum.
+gegen eine Schwelle von 1,59 — ein Nachbar weniger kippt das nicht.
+Behoben (`wirksamerSuchraum` in `optimize/search.ts`): Ist der Short
+gesperrt, fällt die Achse aus Suche und Nachbarschaft heraus, und der Wert
+steht auf 0 — auch für Seeds aus einem älteren Champion. Wächter in
+`test/optimize/gates.test.ts` und `walkForward.test.ts`, beide erst rot.
 
 **Stand nach zwei Messreihen.** Sechs Strategie-Familien, vier Fenster, zwei
 Korb-Regime, zehn Gates: Ein einziger voller Treffer (mr, Lauf 32), der an

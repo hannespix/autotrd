@@ -173,3 +173,24 @@ export function neighbors(p: Params, space: readonly ParamSpec[]): Params[] {
   }
   return out;
 }
+
+/* ───────────────────────── Tote Achse ───────────────────────── */
+
+/** Strategie-Parameter, der nur wirkt, wenn `risk.allowShort` Shorts überhaupt zulässt. */
+export const DEAD_AXIS_WHEN_LONG_ONLY = 'allowShort';
+
+/**
+ * Der wirksame Suchraum. Ist der Short gesperrt (`risk.allowShort: false`),
+ * blockt `decide()` jeden Short-Einstieg — ein Strategie-Parameter
+ * `allowShort` täte dann nichts, würde aber gezogen: Trials verschwendet,
+ * und der ±1-Nachbar entlang der toten Achse hätte exakt den Bestwert und
+ * zählte im Gate `neighborhood_plateau` als Plateau (§5a.15). Die Achse
+ * fällt weg, der Wert wird auf 0 festgenagelt — auch für Seeds aus einem
+ * älteren Champion, die noch eine 1 tragen.
+ */
+export function wirksamerSuchraum(space: readonly ParamSpec[], allowShort: boolean): { space: readonly ParamSpec[]; pinned: Params } {
+  if (allowShort) return { space, pinned: {} };
+  const ohne = space.filter((s) => s.name !== DEAD_AXIS_WHEN_LONG_ONLY);
+  if (ohne.length === space.length) return { space, pinned: {} };
+  return { space: ohne, pinned: { [DEAD_AXIS_WHEN_LONG_ONLY]: 0 } };
+}

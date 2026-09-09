@@ -556,6 +556,30 @@ describe('stressTest & neighborhoodTest (mit Fake-Simulator)', () => {
     expect(n.medianObjective).toBeLessThan(n.bestObjective);
   });
 
+  it('WÄCHTER: die tote Achse allowShort zählt bei gesperrtem Short nicht als Nachbar', () => {
+    // §5a.15: Der ±1-Nachbar entlang einer Achse, die decide() ohnehin
+    // sperrt, hat exakt den Bestwert — und schmeichelte dem Plateau.
+    const mitShort = fakeStrategy('short', {
+      space: [...strategy.paramSpace, { name: 'allowShort', min: 0, max: 1, step: 1, kind: 'int' }],
+      defaults: { ...strategy.defaults, allowShort: 0 },
+    });
+    const gesperrt = simConfigOf(cfg);
+    expect(gesperrt.risk.allowShort).toBe(false);
+    const simulate = makeFakeSimulate(REWARD_PROFILE);
+    const wfa = walkForward({ ...common, strategy: mitShort, config: gesperrt, optimizer: cfg.optimizer, simulate, rng: mulberry32(1) });
+    simulate.calls.length = 0;
+    const n = neighborhoodTest({ ...common, strategy: mitShort, config: gesperrt, simulate, wfa, optimizer: cfg.optimizer });
+    const ohneAchse = neighbors(wfa.finalParams, strategy.paramSpace);
+    expect(n.evaluated).toBe(ohneAchse.length);
+    for (const c of simulate.calls) expect(c.params.allowShort).toBe(0);
+
+    // Mit erlaubtem Short ist die Achse echt und hat genau einen Nachbarn mehr.
+    const erlaubt = { ...gesperrt, risk: { ...gesperrt.risk, allowShort: true } };
+    const wfa2 = walkForward({ ...common, strategy: mitShort, config: erlaubt, optimizer: cfg.optimizer, simulate, rng: mulberry32(1) });
+    const n2 = neighborhoodTest({ ...common, strategy: mitShort, config: erlaubt, simulate, wfa: wfa2, optimizer: cfg.optimizer });
+    expect(n2.evaluated).toBe(neighbors(wfa2.finalParams, strategy.paramSpace).length + 1);
+  });
+
   it('ein Raum ohne Nachbarn gilt als Plateau', () => {
     const single = fakeStrategy('one', { space: [{ name: 'a', min: 1, max: 1, step: 1, kind: 'int' }], defaults: { a: 1 } });
     const simulate = makeFakeSimulate(REWARD_PROFILE);
