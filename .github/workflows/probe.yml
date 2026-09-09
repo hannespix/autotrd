@@ -118,13 +118,14 @@ jobs:
               [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
               *) echo "::error::asOf muss YYYY-MM-DD sein: '$AS_OF'"; exit 1 ;;
             esac
+            # Ein Lauf hat EINE Uhr. Der Stichtag geht an JEDES Kommando des
+            # Laufs — universe, fetch, optimize. Bis zum 09.09. fehlte er bei
+            # `fetch`: Das lud Bars ab HEUTE (mit --days 3600 als Ausgleich) und
+            # maß das Alter der Stichtags-Auswahl gegen die Wanduhr — 186 Tage,
+            # Abbruch (Läufe 21–23). Mit dem Stichtag zählt `fetch` wie
+            # `optimize` vom Stichtag rückwärts; ein Ausgleich ist nicht nötig.
             echo "flag=--as-of $AS_OF" >> "$GITHUB_OUTPUT"
-            # Ein früher Stichtag braucht ältere Bars: `lookbackDays` zählt ab dem
-            # STICHTAG rückwärts, `fetch` aber ab HEUTE. Ohne die Vertiefung hätte
-            # ein Lauf per 2025-03 nur die Hälfte seines Fensters — und damit halb
-            # so viele Folds, ohne dass es jemandem auffällt.
-            echo "days=--days 3600" >> "$GITHUB_OUTPUT"
-            echo "Stichtag: $AS_OF (Bars 3600 Tage zurück)"
+            echo "Stichtag: $AS_OF"
           fi
 
       # Punkt-in-Zeit-Universum: Ohne diesen Schritt handelt eine Messung über
@@ -137,7 +138,7 @@ jobs:
         run: node src/cli.ts universe --config "$CONFIG" --env "$RUNNER_TEMP/.env" --home var-probe ${{ steps.asof.outputs.flag }}
 
       - name: Bars nachladen
-        run: node src/cli.ts fetch --config "$CONFIG" --env "$RUNNER_TEMP/.env" --home var-probe --universe var-probe/universe.json ${{ steps.asof.outputs.days }}
+        run: node src/cli.ts fetch --config "$CONFIG" --env "$RUNNER_TEMP/.env" --home var-probe --universe var-probe/universe.json ${{ steps.asof.outputs.flag }}
 
       - name: Walk-Forward-Optimierung
         env:

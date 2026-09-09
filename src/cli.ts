@@ -185,7 +185,9 @@ function parseParams(s: string | undefined): Partial<Params> {
  */
 const SHORT_MESS_KOMMANDOS = new Set(['backtest', 'optimize']);
 /** `universe` gehört dazu: Zu einem Stichtag gehört auch das Universum VON DAMALS. */
-const ASOF_MESS_KOMMANDOS = new Set(['universe', 'backtest', 'optimize']);
+// `fetch` gehört dazu: Es lädt die Auswahl (`--universe`) und datiert sie gegen
+// seine Uhr. Ohne Stichtag war das am 09.09. die Wanduhr — 186 Tage, Abbruch.
+const ASOF_MESS_KOMMANDOS = new Set(['universe', 'fetch', 'backtest', 'optimize']);
 
 /** Mess-Schalter gelten nur, wo gemessen wird — sonst Abbruch statt stillem Ignorieren. */
 function nurMessen(cmd: string, erlaubt: ReadonlySet<string>, option: string): void {
@@ -393,7 +395,11 @@ async function cmdUniverse(app: App, cli: Cli): Promise<number> {
 async function cmdFetch(app: App, cli: Cli): Promise<number> {
   const client = requireClient(app);
   const days = num(cli.values.days, app.config.optimizer.lookbackDays);
-  const now = Date.now();
+  // Ein Lauf hat EINE Uhr: mit Stichtag ist es der Stichtag. Bars danach
+  // braucht dieser Lauf nicht — er darf sie nicht sehen —, und `days` zählt
+  // wie in `optimize` vom Stichtag rückwärts. Die Auswahl (`--universe`)
+  // wurde in bootstrap() gegen dieselbe Uhr datiert.
+  const now = app.asOf ?? Date.now();
   const today = dayKeyFor(now, app.config.universe.assetClass);
   const calendar = await ensureCalendar(client, app.paths.calendar, addDays(today, -days - 10), addDays(today, 40), now);
   out(`Kalender: ${calendar.size} Handelstage`);
