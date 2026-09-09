@@ -154,6 +154,15 @@ optimizer:
   # von heute, rückwärts angewandt). Ohne Kandidatenpool oder ungepoolt ohne
   # Wirkung. Mit point_in_time lädt `fetch` den ganzen Pool in voller Tiefe.
   foldMembership: point_in_time
+  # Festkandidaten: vorregistrierte Parametersätze, die OHNE Suche durch
+  # dieselben Folds, denselben Holdout und dieselben Gates laufen wie die
+  # gesuchten Strategien und regulär um die Beförderung konkurrieren. Je
+  # Eintrag `strategy`, `params` (Abweichungen von den Defaults, müssen im
+  # paramSpace der Strategie liegen) und optional `label` (Name im Bericht):
+  #   - { strategy: regime_allocation, params: { lookback: 120 }, label: Owner-Satz }
+  # Ohne Suche gibt es keine Trials — der Deflated Sharpe ist bei ihnen
+  # „nicht anwendbar" (wie beim Amtsinhaber); alles andere gilt voll.
+  fixedCandidates: []
 
 costs:
   # Slippage je Seite in Basispunkten (Marktorder gegen den Spread).

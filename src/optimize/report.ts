@@ -12,7 +12,7 @@ import type { AssetClass, Metrics, Ms, Params, TimeframeMin } from '../core/type
 import { fitEndOf } from './promote.ts';
 import { gateOptions, type GateResult } from './robustness.ts';
 import type { MarktBezug } from '../backtest/marktbezug.ts';
-import type { HoldoutMarkt, SymbolRun } from './run.ts';
+import type { HoldoutMarkt, Massstab, StrategyRun, SymbolRun } from './run.ts';
 import type { TimeRange } from './walkForward.ts';
 
 export interface ReportMeta {
@@ -114,6 +114,27 @@ function gatesSummary(gates: readonly GateResult[]): string {
   return failed.length === 0 ? `✔ ${passed}/${gates.length}` : `✘ ${passed}/${gates.length} (${failed.join(', ')})`;
 }
 
+/** Ein Festkandidat heißt im Bericht `<strategy> · fest: <label>` — in der Tabelle wie in der Überschrift. */
+function kandidatName(s: StrategyRun): string {
+  return s.fixed && s.label !== null ? `${s.strategyId} · fest: ${s.label}` : s.strategyId;
+}
+
+/**
+ * Maßstab je Kandidat, direkt unter den Gates: dieselben OOS-Fenster, die
+ * Strategie neben kaufen-und-halten der Benchmark. Ohne Benchmark gilt die
+ * Kasse — so wie `beats_market` es handhabt.
+ */
+function massstabZeile(m: Massstab): string {
+  const strategie = `Strategie Sharpe p. a. ${num(m.oosSharpe)}, MaxDD ${num(m.oosMaxDD)} %, Trades je Monat ${num(m.tradesPerMonth, 1)}`;
+  const markt =
+    m.marktSymbol === null
+      ? 'ohne Benchmark: Kasse (Latte 0)'
+      : m.marktSharpe === null && m.marktMaxDD === null
+        ? `${m.marktSymbol} kaufen-und-halten nicht berechenbar — Latte 0 (Kasse)`
+        : `${m.marktSymbol} kaufen-und-halten Sharpe ${num(m.marktSharpe)}, MaxDD ${num(m.marktMaxDD)} %`;
+  return `Über dieselben OOS-Fenster: ${strategie} · ${markt}`;
+}
+
 /* ───────────────────────── Bericht ───────────────────────── */
 
 export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): string {
@@ -135,6 +156,12 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
     `- Suche: ${o.samples} Samples je Fold, Seed ${o.seed}, Objective \`${o.objective}\`, IS ${o.isDays} / OOS ${o.oosDays} / Schritt ${o.stepDays} Tage, ` +
       `Holdout ${o.holdoutDays} Tage, Embargo ${o.embargoBars > 0 ? `${o.embargoBars} Bars` : 'automatisch (Warmup + 20 Bars)'}`,
   );
+  if (o.fixedCandidates.length > 0) {
+    out.push(
+      `- Festkandidaten (vorregistriert, ohne Suche, dieselben Folds und Gates): ` +
+        o.fixedCandidates.map((fc) => `${fc.strategy} ${paramsJson(fc.params)}${fc.label === undefined ? '' : ` „${fc.label}"`}`).join('; '),
+    );
+  }
   const go = gateOptions(o);
   out.push(
     `- Gates: ≥ ${o.minOosTrades} OOS-Trades, ≥ ${Math.round(o.minFoldPositiveShare * 100)} % Folds positiv, OOS netto > 0 (auch bei Kosten ×${o.stressCostMultiplier}), ` +
@@ -159,7 +186,7 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
       runs.map((r) => [
         r.symbol,
         r.decision.action,
-        r.chosen ? `${r.chosen.strategy} ${paramsJson(r.chosen.params)}` : '— (kein Handel)',
+        r.chosen ? `${r.chosen.strategy}${r.chosen.fixed ? ' (fest)' : ''} ${paramsJson(r.chosen.params)}` : '— (kein Handel)',
         r.chosen ? num(r.chosen.score, 3) : '–',
         r.decision.reason,
       ]),
@@ -184,7 +211,7 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
         table(
           ['Strategie', 'OOS-Objective (Median)', 'Folds +', 'Trades', 'Netto', 'Rendite', 'MaxDD', 'Gebührenanteil', 'Gates'],
           r.results.map((s) => [
-            s.strategyId,
+            kandidatName(s),
             num(s.score, 3),
             `${Math.round(s.wfa.oos.positiveFoldShare * s.wfa.folds.length)}/${s.wfa.folds.length}`,
             String(s.wfa.oos.trades),
@@ -204,7 +231,7 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
       out.push('');
       const ev = r.incumbentEval;
       out.push(
-        `Amtierender Champion: ${r.incumbent.strategy} ${paramsJson(r.incumbent.params)} (Score bei Beförderung ${num(r.incumbent.score, 3)}, ` +
+        `Amtierender Champion: ${r.incumbent.strategy}${r.incumbent.fixed ? ' (fest)' : ''} ${paramsJson(r.incumbent.params)} (Score bei Beförderung ${num(r.incumbent.score, 3)}, ` +
           `Fit-Ende ${isoDay(fitEndOf(r.incumbent))}, Re-Score ${num(r.incumbentRescore, 3)})`,
       );
       if (ev) {
@@ -222,17 +249,26 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
     out.push('');
 
     for (const s of r.results) {
-      out.push(`### ${r.symbol} · ${s.strategyId}`);
+      out.push(`### ${r.symbol} · ${kandidatName(s)}`);
       out.push('');
-      out.push(`finalParams: \`${paramsJson(s.wfa.finalParams)}\` (Suche auf ${isoDay(s.wfa.finalWindow.start)} … ${isoDay(s.wfa.finalWindow.end)}, ${s.wfa.trials} Trials, Embargo ${s.wfa.embargoBars} Bars)`);
+      const fenster = `${isoDay(s.wfa.finalWindow.start)} … ${isoDay(s.wfa.finalWindow.end)}`;
+      out.push(
+        s.fixed
+          ? `finalParams: \`${paramsJson(s.wfa.finalParams)}\` (Festkandidat — vorregistriert, keine Suche; Nachbarschaft auf ${fenster}, Embargo ${s.wfa.embargoBars} Bars)`
+          : `finalParams: \`${paramsJson(s.wfa.finalParams)}\` (Suche auf ${fenster}, ${s.wfa.trials} Trials, Embargo ${s.wfa.embargoBars} Bars)`,
+      );
       out.push('');
       out.push(gatesTable(s.gates));
+      out.push('');
+      // Der Maßstab gehört direkt unter die Gates: derselbe Sharpe wie in
+      // `beats_market`, daneben MaxDD und Handelsfrequenz — und der Markt.
+      out.push(massstabZeile(s.massstab));
       out.push('');
       // Die Rohwerte beider Sharpe-Gates gehören sichtbar in den Bericht: Ein
       // Gate, das nur "0.000" sagt, lässt sich nicht hinterfragen.
       out.push(`PSR (OOS): ${s.psr.note}`);
       out.push('');
-      out.push(`DSR (IS): ${s.dsr.note}`);
+      out.push(`DSR (IS): ${s.fixed ? 'nicht anwendbar (feste Parameter, keine Suche) — ' : ''}${s.dsr.note}`);
       out.push('');
       out.push(
         table(

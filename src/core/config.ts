@@ -208,6 +208,26 @@ export const ConfigSchema = z.object({
        * Bericht sagt es dann.
        */
       foldMembership: z.enum(['point_in_time', 'fixed']).default('point_in_time'),
+      /**
+       * Festkandidaten: vorregistrierte Parametersätze, die OHNE Suche durch
+       * dieselben Folds (Korb je Fold), denselben Holdout und dieselben Gates
+       * laufen wie die gesuchten Strategien und in derselben Liste um die
+       * Beförderung konkurrieren — kein Sonderweg nach oben. `params` sind
+       * Abweichungen von den Strategie-Defaults und müssen im `paramSpace`
+       * liegen (sonst ein Fehler-Eintrag der Einheit, kein Absturz); `label`
+       * ist der Name im Bericht. Ohne Suche gibt es keine Trials: Der
+       * Deflated Sharpe ist bei ihnen „nicht anwendbar" (wie beim
+       * Amtsinhaber), alle anderen Gates gelten in voller Schärfe.
+       */
+      fixedCandidates: z
+        .array(
+          z.object({
+            strategy: z.string().min(1),
+            params: z.record(z.string(), z.number()).default({}),
+            label: z.string().min(1).optional(),
+          }),
+        )
+        .default([]),
     })
     .default({
       strategies: ['trend_donchian', 'momentum_pullback', 'mean_reversion'],
@@ -229,6 +249,7 @@ export const ConfigSchema = z.object({
       maxFoldNetShare: 0.5,
       pooled: false,
       foldMembership: 'point_in_time',
+      fixedCandidates: [],
     }),
   costs: z
     .object({
@@ -293,6 +314,8 @@ export type RiskConfig = Config['risk'];
 export type SessionConfig = Config['session'];
 export type CostConfig = Config['costs'];
 export type OptimizerConfig = Config['optimizer'];
+/** Ein Festkandidat aus `optimizer.fixedCandidates`. */
+export type FixedCandidateConfig = OptimizerConfig['fixedCandidates'][number];
 
 /* ───────────────────────── Umgebung ───────────────────────── */
 

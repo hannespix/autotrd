@@ -36,6 +36,12 @@ export interface ChampionEntry {
    * nicht vergleichbar und tritt ab, bis einer neu besteht (Prüfbefund 4.2).
    */
   foldMembership?: 'point_in_time' | 'fixed';
+  /**
+   * Aus einem Festkandidaten befördert (`optimizer.fixedCandidates`): Die
+   * Parameter wurden vorregistriert, nicht gesucht — `trials` ist 1. Fehlt
+   * das Feld (alte Datei oder gesuchte Strategie): gesucht.
+   */
+  fixed?: true;
 }
 
 /** Fit-Ende eines Champions; alte Dateien ohne Feld: Beförderungszeitpunkt (konservativ). */

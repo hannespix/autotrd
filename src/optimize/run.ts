@@ -13,17 +13,24 @@
  * (`fitEnd`) — und durch dieselben Gates. Seine Parameter fließen auch nicht
  * mehr in die Kandidatensuche ein: Sie wurden auf Daten gefittet, die in den
  * OOS-Fenstern der Kandidaten liegen (Red-Team-Befund).
+ *
+ * Festkandidaten (`optimizer.fixedCandidates`) sind vorregistrierte
+ * Parametersätze ohne Suche: dieselben Folds, derselbe Korb je Fold, derselbe
+ * Holdout, dieselbe Kette aus Stress, Nachbarschaft, PSR und Gates, dieselbe
+ * Kandidatenliste. Ohne Trials gibt es nichts zu deflationieren — der DSR ist
+ * bei ihnen wie beim Amtsinhaber „nicht anwendbar"; sonst kein Sonderweg.
  */
 import { kaufenUndHalten, marktKette, type MarktBezug } from '../backtest/marktbezug.ts';
 import { BarSeries } from '../core/bars.ts';
-import type { Config } from '../core/config.ts';
+import type { Config, FixedCandidateConfig } from '../core/config.ts';
 import { Journal, homePaths } from '../core/journal.ts';
 import { errMsg } from '../core/log.ts';
+import { validateParams } from '../strategy/params.ts';
 import { universeRegelnFuer } from '../universe/select.ts';
 import { korbJeFold, type KorbStand } from './korbJeFold.ts';
 import type { Calendar } from '../core/time.ts';
 import { DAY, dayKey } from '../core/time.ts';
-import type { Bar, BarSeriesLike, Ms, Strategy } from '../core/types.ts';
+import type { Bar, BarSeriesLike, Ms, Params, Strategy } from '../core/types.ts';
 import {
   applyDecision,
   decidePromotion,
@@ -51,9 +58,10 @@ import {
   type PsrResult,
   type StressResult,
 } from './robustness.ts';
-import { mulberry32 } from './search.ts';
+import { mulberry32, wirksamerSuchraum } from './search.ts';
 import {
   MIN_FOLDS,
+  fixedCandidateWfa,
   fixedParamsWfa,
   foldPlanForBars,
   korbVon,
@@ -135,6 +143,14 @@ export interface OptimizeRunInput {
 
 export interface StrategyRun {
   strategyId: string;
+  /**
+   * Festkandidat (`optimizer.fixedCandidates`): vorregistrierte Parameter,
+   * keine Suche — dieselben Folds, derselbe Korb je Fold, dieselben Gates,
+   * dieselbe Liste. Kein Sonderweg nach oben.
+   */
+  fixed: boolean;
+  /** Name des Festkandidaten im Bericht (`label`, sonst die registrierten Parameter); null bei gesuchten Strategien. */
+  label: string | null;
   wfa: WfaResult;
   gates: GateResult[];
   pass: boolean;
@@ -146,6 +162,84 @@ export interface StrategyRun {
   dsr: DsrResult;
   /** Probabilistic Sharpe der OOS-Kette. */
   psr: PsrResult;
+  /** Maßstab über dieselben OOS-Fenster — für Bericht und Maschine, kein Gate. */
+  massstab: Massstab;
+}
+
+/**
+ * Maßstab je Kandidat über DIESELBEN OOS-Fenster, auf denen er bewertet
+ * wurde: die Strategie neben kaufen-und-halten der Benchmark. Er entscheidet
+ * nichts (das tut `beats_market` mit dem Sharpe), aber ohne ihn liest man
+ * einen Sharpe von 0,8 als Kante, wo der Markt 1,2 gemacht hat.
+ */
+export interface Massstab {
+  /** Sharpe p. a. der verketteten OOS-Tagesrenditen — dieselbe Zahl wie der Wert des Gates `beats_market`. */
+  oosSharpe: number | null;
+  /** MaxDD der verketteten OOS-Equity in % (`OosAggregate.maxDrawdownPct`). */
+  oosMaxDD: number;
+  /** OOS-Trades je Monat: Trades / (OOS-Kalendertage / 30,44); null ohne OOS-Tage. */
+  tradesPerMonth: number | null;
+  /** Kalendertage aller OOS-Fenster zusammen. */
+  oosDays: number;
+  /** Benchmark des Maßstabs; null ohne Benchmark — dann gilt die Kasse (Latte 0), wie in `beats_market`. */
+  marktSymbol: string | null;
+  /** Sharpe p. a. von kaufen-und-halten der Benchmark, verkettet über dieselben Fenster; null ohne Benchmark oder nicht berechenbar. */
+  marktSharpe: number | null;
+  /** MaxDD derselben verketteten Wertreihe in %; null ohne Benchmark oder ohne Kurse in den Fenstern. */
+  marktMaxDD: number | null;
+}
+
+/** Mittlere Monatslänge in Kalendertagen (365,25 / 12). */
+export const TAGE_JE_MONAT = 30.44;
+
+/** Latte für `beats_market` samt MaxDD für den Maßstab — aus `marktKette` über die OOS-Fenster. */
+export interface MarktLatte {
+  sharpe: number | null;
+  maxDrawdownPct: number | null;
+  quelle: string;
+}
+
+export function massstabFuer(a: {
+  wfa: WfaResult;
+  metricsFns: MetricsFns;
+  periodsPerYear: number;
+  marktSymbol: string | null;
+  markt: MarktLatte | undefined;
+}): Massstab {
+  const oosDays = a.wfa.folds.reduce((s, f) => s + (f.fold.oosEnd - f.fold.oosStart) / DAY, 0);
+  return {
+    oosSharpe: a.metricsFns.sharpeRatio(a.wfa.oos.dailyReturns, a.periodsPerYear),
+    oosMaxDD: a.wfa.oos.maxDrawdownPct,
+    tradesPerMonth: oosDays > 0 ? a.wfa.oos.trades / (oosDays / TAGE_JE_MONAT) : null,
+    oosDays,
+    marktSymbol: a.marktSymbol,
+    marktSharpe: a.markt?.sharpe ?? null,
+    marktMaxDD: a.markt?.maxDrawdownPct ?? null,
+  };
+}
+
+/** Name eines Festkandidaten im Bericht: `label` der Config, sonst die registrierten Parameter (keine: „Defaults"). */
+export function festLabel(fc: FixedCandidateConfig): string {
+  if (fc.label !== undefined) return fc.label;
+  return Object.keys(fc.params).length === 0 ? 'Defaults' : JSON.stringify(fc.params);
+}
+
+/**
+ * Effektive Parameter eines Festkandidaten: Defaults ← registrierte Werte,
+ * geprüft wie `strategy.params` der Config (im Raum, auf dem Gitter, keine
+ * fremden Schlüssel) — ein Tippfehler darf nicht stumm mit dem Default
+ * laufen. Bei gesperrtem Short ist `allowShort` keine Achse (§5a.15): Sie
+ * wird wie in der Suche auf 0 genagelt, und der Lauf sagt es, wenn das einen
+ * registrierten Wert ändert.
+ */
+export function festParams(a: { strategy: Strategy; params: Params; allowShort: boolean; log?: ((msg: string) => void) | undefined }): Params {
+  const registriert: Params = { ...a.strategy.defaults, ...a.params };
+  validateParams(a.strategy.paramSpace, registriert);
+  const raum = wirksamerSuchraum(a.strategy.paramSpace, a.allowShort);
+  for (const [k, v] of Object.entries(raum.pinned)) {
+    if (a.params[k] !== undefined && a.params[k] !== v) a.log?.(`${k}=${a.params[k]} registriert, aber bei gesperrtem Short keine Achse — auf ${v} genagelt (§5a.15)`);
+  }
+  return { ...registriert, ...raum.pinned };
 }
 
 /** Re-Score des amtierenden Champions auf sauberem OOS (Folds nach fitEnd). */
@@ -467,6 +561,15 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
   for (const s of strategies) {
     if (!usable.includes(s)) log(`${s.id}: Zeitrahmen ${cfg.timeframe} nicht unterstützt — übersprungen`);
   }
+  // Festkandidaten: dieselbe Regel für die Strategie-ID (unbekannt ⇒ laut,
+  // fremder Zeitrahmen ⇒ übersprungen). Ihre Parameter prüft jede Einheit
+  // beim Bewerten — ungültig ist dort ein Fehler-Eintrag, kein Absturz.
+  const festKandidaten = optimizer.fixedCandidates.map((fc) => ({ config: fc, strategy: deps.getStrategy(fc.strategy), label: festLabel(fc) }));
+  const festName = (fk: { strategy: Strategy; label: string }) => `${fk.strategy.id} · fest: ${fk.label}`;
+  const festUsable = festKandidaten.filter((fk) => fk.strategy.timeframes.includes(cfg.timeframe));
+  for (const fk of festKandidaten) {
+    if (!festUsable.includes(fk)) log(`${festName(fk)}: Zeitrahmen ${cfg.timeframe} nicht unterstützt — übersprungen`);
+  }
 
   let champion = loadChampion(paths.champion) ?? emptyChampionFile(now());
   const runs: SymbolRun[] = [];
@@ -490,17 +593,20 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
     // Bewusst die BENCHMARK (SPY), nicht der Korb: Der Korb wechselt je Fold
     // (§5a.13) und stammt aus einem Pool, der von heute ist — wer unterwegs
     // verschwand, ist nicht darin. SPY ist eine Serie, die damals kaufbar war.
-    const marktLatteFuer = (folds: readonly Fold[]): { sharpe: number | null; quelle: string } | undefined => {
+    const marktSymbol = input.benchmark && cfg.universe.benchmark ? cfg.universe.benchmark : null;
+    const marktLatteFuer = (folds: readonly Fold[]): MarktLatte | undefined => {
       const bench = input.benchmark;
-      const benchSymbol = cfg.universe.benchmark;
-      if (!bench || !benchSymbol || folds.length === 0) return undefined;
+      if (!bench || marktSymbol === null || folds.length === 0) return undefined;
       const k = marktKette({
-        bars: new Map([[benchSymbol, bench]]),
+        bars: new Map([[marktSymbol, bench]]),
         ranges: folds.map((f) => ({ start: f.oosStart, end: f.oosEnd })),
         assetClass: cfg.universe.assetClass,
         periodsPerYear,
       });
-      return k ? { sharpe: k.sharpe, quelle: `${benchSymbol} kaufen und halten über ${k.fenster} OOS-Fenster` } : undefined;
+      // Benchmark da, aber ohne Kurse in den Fenstern: ein Datenproblem, das
+      // im Bericht nicht wie „keine Benchmark konfiguriert" aussehen darf.
+      if (!k) return { sharpe: null, maxDrawdownPct: null, quelle: `${marktSymbol} kaufen und halten: keine Kurse in den OOS-Fenstern` };
+      return { sharpe: k.sharpe, maxDrawdownPct: k.maxDrawdownPct, quelle: `${marktSymbol} kaufen und halten über ${k.fenster} OOS-Fenster` };
     };
     const common = bars
       ? {
@@ -575,21 +681,53 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       //
       // Bewusst die BENCHMARK (SPY), nicht der Korb — siehe marktLatteFuer.
 
+      // EINE Kette für jeden Kandidaten, gesucht oder fest: Stress,
+      // Nachbarschaft, DSR (IS), PSR (OOS), Gates, Maßstab. Ein Festkandidat
+      // KANN so keinen Sonderweg haben — er unterscheidet sich nur darin, wie
+      // sein WfaResult entstand.
+      const bewerte = (strategy: Strategy, wfa: WfaResult, fest: { label: string } | null): StrategyRun => {
+        const stress = stressTest({ ...common, strategy, wfa, costMultiplier: optimizer.stressCostMultiplier, objective: optimizer.objective });
+        const neighborhood = neighborhoodTest({ ...common, strategy, wfa, optimizer });
+        const dsr = deflatedSharpeIs({ wfa, metricsFns: deps.metricsFns, varSrSource: input.dsrVarSource });
+        const psr = probabilisticSharpeOos({ wfa, metricsFns: deps.metricsFns });
+        const markt = marktLatteFuer(wfa.folds.map((f) => f.fold));
+        const g = robustnessGates({ wfa, optimizer, stressOos: stress, neighborhood, dsr, psr, metricsFns: deps.metricsFns, periodsPerYear, fixed: fest !== null, ...(markt ? { markt } : {}) });
+        const massstab = massstabFuer({ wfa, metricsFns: deps.metricsFns, periodsPerYear, marktSymbol, markt });
+        return { strategyId: strategy.id, fixed: fest !== null, label: fest?.label ?? null, wfa, gates: g.gates, pass: g.pass, score: wfa.oos.objectiveMedian, stress, neighborhood, dsr, psr, massstab };
+      };
+      const gatesLog = (name: string, r: StrategyRun) => log(`${symbol} ${name}: Gates ${r.pass ? 'bestanden' : 'NICHT bestanden'} (${r.gates.filter((x) => !x.pass).map((x) => x.name).join(', ') || '–'})`);
+
       for (const strategy of messbar ? usable : []) {
         try {
           // Kein `include` des Amtsinhabers: seine Params stammen aus einem Fit-Fenster,
           // das in den OOS-Fenstern der Kandidaten liegt — Defaults bleiben drin (walkForward).
           const wfa = walkForward({ ...common, strategy, optimizer, rng, log });
-          const stress = stressTest({ ...common, strategy, wfa, costMultiplier: optimizer.stressCostMultiplier, objective: optimizer.objective });
-          const neighborhood = neighborhoodTest({ ...common, strategy, wfa, optimizer });
-          const dsr = deflatedSharpeIs({ wfa, metricsFns: deps.metricsFns, varSrSource: input.dsrVarSource });
-          const psr = probabilisticSharpeOos({ wfa, metricsFns: deps.metricsFns });
-          const g = robustnessGates({ wfa, optimizer, stressOos: stress, neighborhood, dsr, psr, metricsFns: deps.metricsFns, periodsPerYear, ...(((m) => (m ? { markt: m } : {}))(marktLatteFuer(wfa.folds.map((f) => f.fold)))) });
-          results.push({ strategyId: strategy.id, wfa, gates: g.gates, pass: g.pass, score: wfa.oos.objectiveMedian, stress, neighborhood, dsr, psr });
-          log(`${symbol} ${strategy.id}: Gates ${g.pass ? 'bestanden' : 'NICHT bestanden'} (${g.gates.filter((x) => !x.pass).map((x) => x.name).join(', ') || '–'})`);
+          const r = bewerte(strategy, wfa, null);
+          results.push(r);
+          gatesLog(strategy.id, r);
         } catch (e) {
           errors.push(`${strategy.id}: ${errMsg(e)}`);
           log(`${symbol} ${strategy.id}: Fehler — ${errMsg(e)}`);
+        }
+      }
+
+      // Festkandidaten: über ALLE Folds des Plans (es gibt kein Fit-Ende, die
+      // Parameter sind vorregistriert), mit dem Korb je Fold und dem Holdout
+      // wie jeder gesuchte Kandidat — dann durch dieselbe Kette. Ungültige
+      // Parameter sind ein Fehler-Eintrag dieser Einheit, kein Absturz.
+      for (const fk of messbar ? festUsable : []) {
+        const name = festName(fk);
+        try {
+          const params = festParams({ strategy: fk.strategy, params: fk.config.params, allowShort: cfg.risk.allowShort, log: (m) => log(`${symbol} ${name}: ${m}`) });
+          const wfa = fixedCandidateWfa({ ...common, strategy: fk.strategy, params, optimizer });
+          const r = bewerte(fk.strategy, wfa, { label: fk.label });
+          results.push(r);
+          gatesLog(name, r);
+        } catch (e) {
+          // validateParams meldet mehrzeilig — im Bericht ist ein Eintrag eine Zeile.
+          const msg = errMsg(e).replace(/:\s*\n\s*/g, ': ').replace(/\s*\n\s*/g, '; ');
+          errors.push(`${name}: ${msg}`);
+          log(`${symbol} ${name}: Fehler — ${msg}`);
         }
       }
     }
@@ -682,6 +820,8 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       // Ende des Fensters, aus dem finalParams stammen: OOS davor ist für spätere Re-Scores tabu.
       fitEnd: r.wfa.finalWindow.end,
       foldMembership: korbModus,
+      // Ein Festkandidat bleibt als solcher erkennbar: vorregistriert, nicht gesucht.
+      ...(r.fixed ? { fixed: true as const } : {}),
     });
 
     // Marktbezug des Holdouts: EINMAL je Einheit, denn das Fenster hängt nur
