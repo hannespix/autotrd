@@ -30,3 +30,4 @@ Details in `docs/ARCHITEKTUR.md` §5a und in `docs/wissen/thesen.md`.
 |---|---|---|---|
 | V1 Basis-Allokation (`vorregistrierung/2026-09-09-basis-allokation.md`) | T5 | Probe #36 | B1–B3 ✔, B4 ✘ — nicht einsetzen; Prüfer: B3 nicht verfehlbar, Kriterien ohne Code-Pfad ⇒ V2 |
 | V2 Basis-Allokation (`vorregistrierung/2026-09-09-basis-allokation-v2.md`) | T5 | #37, #38 (−15 Tage), #39 (−30 Tage) | **bestanden, dreimal dasselbe Urteil** — Basis-Stufe darf gebaut und auf Paper aktiviert werden |
+| V3 Basis-Allokation unter dem Regelwerk der Plattform (`vorregistrierung/2026-09-09-basis-allokation-v3.md`) | T5 | Hauptlauf + zwei Falsifikationsläufe, nach den Fixes zur Basis-Stufe | — |
