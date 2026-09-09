@@ -288,14 +288,27 @@ export function nextTradingDay(day: string, assetClass: AssetClass, calendar?: C
   throw new Error(`Kein Handelstag in 30 Tagen nach ${day}`);
 }
 
-/** Vorheriger Handelstag VOR `day`. */
-export function prevTradingDay(day: string, assetClass: AssetClass, calendar?: Calendar): string {
+/**
+ * Vorheriger Handelstag VOR `day` — oder null, wenn es in 30 Tagen keinen
+ * gibt. Mit Kalender heißt das meist: Der Kalender beginnt hier. Wer ein
+ * Fenster „fünf Handelstage zurück" baut, macht es dann kürzer, statt
+ * abzubrechen (Lauf 27 am 09.09.2026: Die erste Bar lag auf dem ersten
+ * Kalendertag, und der Simulator warf für alle vier Strategien).
+ */
+export function prevTradingDayOrNull(day: string, assetClass: AssetClass, calendar?: Calendar): string | null {
   let cur = addDays(day, -1);
   for (let i = 0; i < 30; i++) {
     if (isTradingDay(cur, assetClass, calendar)) return cur;
     cur = addDays(cur, -1);
   }
-  throw new Error(`Kein Handelstag in 30 Tagen vor ${day}`);
+  return null;
+}
+
+/** Vorheriger Handelstag VOR `day`; wirft, wenn es keinen gibt. */
+export function prevTradingDay(day: string, assetClass: AssetClass, calendar?: Calendar): string {
+  const prev = prevTradingDayOrNull(day, assetClass, calendar);
+  if (prev === null) throw new Error(`Kein Handelstag in 30 Tagen vor ${day}`);
+  return prev;
 }
 
 /* ───────────────────────── Buckets ───────────────────────── */

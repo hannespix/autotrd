@@ -675,3 +675,31 @@ describe('Datenende', () => {
     expect(res.metrics.exposurePct).toBe(0);
   });
 });
+
+describe('PDT-Fenster am Anfang des Kalenders', () => {
+  // Lauf 27 (09.09.2026): Der Kalender begann am selben Tag wie die erste
+  // Bar; der Rückwärtsgang um vier Handelstage fand keinen, und alle vier
+  // Strategien brachen ab. Das Fenster ist dann kürzer — nie länger.
+  const tage = ['2026-09-01', '2026-09-02', '2026-09-03', '2026-09-04', '2026-09-08'];
+  const davor = ['2026-08-25', '2026-08-26', '2026-08-27', '2026-08-28', '2026-08-31'];
+  // Nach hinten reicht der Kalender immer weiter als die Bars (ensureCalendar:
+  // +40 Tage ab der Uhr des Laufs) — der Simulator schaut vom letzten Tag
+  // nach vorn. Hier geht es um den ANFANG.
+  const danach = ['2026-09-09', '2026-09-10'];
+  const kal = (days: string[]) => new Map([...days, ...danach].map((d) => [d, { date: d, open: '09:30', close: '16:00' }]));
+  const scalper = strategyOf({
+    holdsOvernight: false,
+    decide: (snap) => {
+      if (snap.position) return snap.position.barsHeld >= 1 ? { kind: 'exit', reason: 'quick' } : { kind: 'hold' };
+      return snap.i % 4 === 0 ? { kind: 'enter', side: 'long', stop: snap.bars.c[snap.i]! - 1, reason: 'go' } : { kind: 'hold' };
+    },
+  });
+  const bars = barsMap({ AAA: tage.flatMap((d) => dayBars5(d, flat(12, 100))) });
+
+  it('ein Kalender, der mit der ersten Bar beginnt, bricht nicht ab und zählt gleich', () => {
+    const knapp = run({ bars, strategy: scalper, initialEquity: 10_000, calendar: kal(tage) });
+    const weit = run({ bars, strategy: scalper, initialEquity: 10_000, calendar: kal([...davor, ...tage]) });
+    expect(knapp.trades.length).toBe(weit.trades.length);
+    expect(knapp.notes.some((n) => n.includes('PDT'))).toBe(true);
+  });
+});
