@@ -399,6 +399,79 @@ Erkundung steht auf 2000 — bis etwa März 2021, über den gesamten Abschwung
 2022. Der Corona-Crash liegt VOR dem Datenbeginn und ist mit diesem Feed
 unerreichbar. Wer ihn braucht, braucht den bezahlten SIP-Feed.
 
+### 12. Vier Fenster, ein Bild — und ein Ausreißer, der keiner ist
+
+Am 09.09. wurden vier Fenster gemessen (`config/equity-1440.yaml`: 2000 Tage,
+30 Symbole nach Liquidität, Long-only, Tagesbars, gepoolt): einmal heute und
+dreimal mit Stichtag — jeder Stichtags-Lauf mit seinem eigenen
+Punkt-in-Zeit-Korb, sichtbar am SPY-Kurs des Universums-Berichts (766 → 672
+→ 647 → 576 $).
+
+**OOS-Kette** — Sharpe p. a. je Strategie; Latte = SPY kaufen-und-halten
+über dieselben OOS-Fenster (Gate `beats_market`):
+
+| Fenster (Stichtag) | Folds | csm | mr | mp | td | Latte SPY | Urteil |
+|---|---:|---:|---:|---:|---:|---:|---|
+| heute, 2026-09-08 (Lauf 20) | 16 | 0,53 | 0,00 | 0,21 | −0,61 | 0,64 | kein Handel |
+| 2026-03-06 (Lauf 28) | 16 | **0,71 ✔ 10/10** | 0,48 | 0,24 | −0,36 | 0,63 | promote (nur Probe) |
+| 2025-09-05 (Lauf 29) | 14 | −0,18 | −0,10 | −0,38 | −0,02 | 0,46 | kein Handel |
+| 2025-03-07 (Lauf 30) | 12 | 0,04 | −0,77 | 0,23 | −0,03 | 0,48 | kein Handel |
+
+**Holdout** (180 Tage, nur Bericht) — beste Strategie gegen den Maßstab,
+verglichen über den Sharpe:
+
+| Holdout | beste Strategie | Korb liegenlassen | SPY |
+|---|---|---|---|
+| 2026-03 … 2026-09 | td 1,74 (+2,7 %) | 2,13 (+34,9 %) | 2,25 (+15,7 %) |
+| 2025-09 … 2026-03 | mr 1,52 (+2,0 %) | 1,47 (+12,9 %) | 0,69 (+3,7 %) |
+| 2025-03 … 2025-09 | mp 3,20 (+6,0 %) | 1,73 (+21,2 %) | 1,39 (+15,4 %) |
+| 2024-09 … 2025-03 | mp 1,02 (+1,4 %) | 1,05 (+8,7 %) | 0,88 (+5,4 %) |
+
+**Lesart.** In den Holdouts liegt „die beste Strategie" dreimal vor SPY
+und zweimal vor dem Korb — aber es ist jedes Mal eine andere (td, mr, mp,
+mp), und „die beste im Nachhinein" ist selbst eine Auswahl. Die Kette, die
+das Gate misst, fällt in drei von vier Fenstern für alle vier Strategien
+durch. Im Bärenmarkt 2022 verloren alle vier, in jedem Fenster, das ihn
+enthält: Long-only-Regeln kaufen dort Ausbrüche, die scheitern. Die
+Holdout-Renditen von 1–6 % stehen gegen Markt-Renditen von 5–35 % — ein
+hoher Sharpe auf einer flachen Linie.
+
+**Der Ausreißer.** Lauf 28 ist die erste Beförderung überhaupt: alle zehn
+Gates, mit 0,71 gegen 0,63 knapp und mit PSR 0,916 gegen 0,90 knapp. Er
+zählt nicht, aus drei Gründen. (1) Derselbe Stichtag mit dem heutigen Korb
+(Lauf 24, vor der Korrektur der Auswahl) ergab 0,50 ✘ — zwölf getauschte
+Symbole kippen das Urteil; mit den Körben von September und März 2025
+(Läufe 29, 30) liegt csm über denselben Jahren bei −0,18 und 0,04. Das
+Urteil hängt am Korb, nicht an der Strategie. (2) Der Korb ist am ENDE des
+Fensters gewählt und rückwärts angewandt; er enthält MU, LLY, SLV, GLD —
+Werte mit gewaltigem Lauf bis 2026. Dollarumsatz enthält den Kurs und damit
+vergangene Rendite (universe/select.ts); eine Momentum-Strategie auf einem
+Korb, der nach „wer heute groß ist" gewählt wurde, ist strukturell
+geschmeichelt. (3) Die Deflated Sharpe lag bei 0,24: Die IS-Zahl ist vom
+Besten aus 2 550 Zufallsversuchen nicht zu unterscheiden. Ein Treffer aus
+acht Konfigurationen an einem Tag ist, was Mehrfachtesten produziert.
+
+**Was der Tag außerdem gelehrt hat** — fünf Messfehler, jeder in einem
+grünen Workflow unsichtbar, alle behoben (#461–#464): Ein Lauf ohne eine
+einzige bewertbare Einheit meldete „success" (jetzt Rückgabecode 3, Bericht
+überlebt unter `always()`). Die Stichtags-Auswahl wurde gegen die Wanduhr
+datiert (186 Tage alt) — und `fetch` bekam den Stichtag gar nicht. Die
+Auswahl selbst schnitt nicht bei `jetzt`: Drei „Punkt-in-Zeit"-Läufe
+wählten den heutigen Korb, SPY zu 766 $ „per September 2025". Der
+Optimierer maß alles, was im Cache lag, statt `lookbackDays` — die
+Fold-Zahl hing davon ab, wer zuletzt wie tief geladen hatte. Und am ersten
+Kalendertag warf der PDT-Rückwärtsgang. Die allgemeine Lehre steht über
+allen: **Ein grüner Lauf beweist nur, dass der Prozess endete.** Was er
+gemessen hat, muss man nachlesen — Datenbereich, Fold-Zahl, den Kurs im
+Universums-Bericht.
+
+**Offen, nicht versprochen.** Die Korb-Zugehörigkeit ist innerhalb eines
+Fensters weiterhin nicht out-of-sample. Wer das schließen will, wählt den
+Korb je Fold neu — mit Daten bis zum Fold-Beginn — und misst nach
+Stückzahl statt Dollarumsatz. Das ist ein Eingriff in den Messkern und
+braucht die Freigabe des Owners; es ist auch keine Kante, nur eine
+strengere Messung.
+
 ### Was das für den Betrieb heißt
 
 Kein Handel. Der nächtliche Optimierer läuft weiter und sucht mit nächtlich
