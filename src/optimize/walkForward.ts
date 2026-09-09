@@ -178,7 +178,11 @@ export type Membership = (at: Ms) => ReadonlySet<string>;
 
 /** Korb auf die Mitglieder zum Zeitpunkt `at` einschränken; ohne Membership der ganze Korb. */
 export function korbZum(korb: ReadonlyMap<string, BarSeriesLike>, membership: Membership | undefined, at: Ms | undefined): ReadonlyMap<string, BarSeriesLike> {
-  if (!membership || at === undefined) return korb;
+  if (!membership) return korb;
+  // Mit Korb je Fold MUSS jedes Fenster seinen Stand nennen. Stumm den
+  // ganzen Korb zu nehmen hieße: die Vereinigung aller Kandidaten simulieren
+  // — ohne Fehler, ohne Spur (Prüfbefund 1.3).
+  if (at === undefined) throw new Error('korbZum: Korb je Fold ohne Zeitpunkt — jedes Fenster muss seinen Stand nennen (membershipAt)');
   const drin = membership(at);
   const out = new Map<string, BarSeriesLike>();
   for (const [sym, b] of korb) if (drin.has(sym)) out.set(sym, b);
@@ -561,7 +565,10 @@ export function walkForward(a: WalkForwardArgs): WfaResult {
   const last = plan.folds[plan.folds.length - 1]!;
   const finalWindow = { start: last.isStart, end: last.oosEnd, embargoAtEnd: plan.holdout !== null };
   const finalInclude = [...include, ...foldResults.map((f) => f.best.params)];
-  // Finale Parameter gehören dem Korb am Ende des letzten Folds — dem, der danach gehandelt wird.
+  // Finale Parameter gehören dem LETZTEN STAND vor dem Holdout (Ende des
+  // letzten Folds). Der heute gehandelte Korb kann davon abweichen — mit
+  // Holdout liegt dieser Stand `holdoutDays` zurück; der Bericht zeigt die
+  // Differenz (Prüfbefund 2.1).
   const fin = searchWindow(a, achse, finalWindow, finalInclude, finalWindow.embargoAtEnd, finalWindow.end);
   trials += fin.evaluated;
 

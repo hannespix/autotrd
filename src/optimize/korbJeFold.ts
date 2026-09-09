@@ -77,7 +77,13 @@ export function korbJeFold(a: {
   const staende: KorbStand[] = [];
   let bestand: string[] = [];
   for (const at of zeiten) {
-    const auswahl = waehleUniverse({ kandidaten: bars, pflicht: a.pflicht, bestand, bestandIstAuswahl: staende.length > 0, regeln, jetzt: at });
+    let auswahl;
+    try {
+      auswahl = waehleUniverse({ kandidaten: bars, pflicht: a.pflicht, bestand, bestandIstAuswahl: staende.length > 0, regeln, jetzt: at });
+    } catch (e) {
+      // Welcher Stand, nicht nur warum — ein Lauf mit 16 Ständen braucht die Stelle.
+      throw new Error(`Stand ${new Date(at).toISOString().slice(0, 10)}: ${e instanceof Error ? e.message : String(e)}`, { cause: e });
+    }
     staende.push({ at, symbols: auswahl.symbols, zugang: auswahl.zugang, abgang: auswahl.abgang });
     bestand = auswahl.symbols;
   }

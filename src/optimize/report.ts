@@ -282,11 +282,19 @@ function korbBlock(r: SymbolRun): string[] {
       i === 0 ? '_erster Stand_' : st.zugang.length ? st.zugang.join(', ') : '—',
       i === 0 ? '—' : st.abgang.length ? st.abgang.join(', ') : '—',
     ]);
+    const fehlend = r.korb.fehlend.length ? ` (${r.korb.fehlend.length} ohne Bars im Messfenster, nicht wählbar: ${r.korb.fehlend.join(', ')})` : '';
+    const heute =
+      r.korb.heuteZugang.length || r.korb.heuteAbgang.length
+        ? `**Heute gehandelt wird ein anderer Korb** als der des letzten Standes (auf dem die finalen Parameter gesucht wurden): Zugang ${r.korb.heuteZugang.length ? r.korb.heuteZugang.join(', ') : '—'}, Abgang ${r.korb.heuteAbgang.length ? r.korb.heuteAbgang.join(', ') : '—'}.`
+        : '_Der heute gehandelte Korb entspricht dem letzten Stand._';
     return [
-      `**Korb je Fold** — Punkt-in-Zeit: zu Beginn jedes OOS-Fensters aus ${r.korb.kandidaten} Kandidaten gewählt, mit Daten bis dahin, ` +
-        'Hysterese Stand für Stand. IS-Suche und OOS eines Folds laufen auf dessen Korb; der Holdout auf dem Korb zu seinem Beginn.',
+      `**Korb je Fold** — Punkt-in-Zeit: zu Beginn jedes OOS-Fensters aus ${r.korb.kandidaten} Kandidaten gewählt${fehlend}, mit Daten bis dahin, ` +
+        'Hysterese Stand für Stand. IS-Suche und OOS eines Folds laufen auf dessen Korb; der Holdout auf dem Korb zu seinem Beginn. ' +
+        'Der Pool selbst ist von heute — wer im Messzeitraum verschwunden ist, kommt nicht vor (§5a.13).',
       '',
       table(['Stichtag', 'Korb', 'Zugang', 'Abgang'], zeilen),
+      '',
+      heute,
       '',
     ];
   }

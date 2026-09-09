@@ -40,9 +40,11 @@ thematisch). Bezeichner im Code Englisch, Kommentare Deutsch.
    verführerischste Lookahead-Stelle im Repo, weil jede einzelne Zeitreihe
    dabei kausal aussieht; Wächter dafür stehen in `test/core/korb.test.ts`.
    **Die zweite ist die Korb-Zugehörigkeit:** Der Korb eines Folds wird zu
-   dessen OOS-Beginn gewählt (`optimize/korbJeFold.ts`), nie der Endkorb
+   dessen OOS-Beginn gewählt (`optimize/korbJeFold.ts`), nicht der Endkorb
    rückwärts — am 09.09.2026 hing daran ein Urteil (0,71 / −0,18 / 0,04 je
-   Endkorb). Wächter: `test/optimize/korbJeFold.test.ts`.
+   Endkorb). Was bleibt: Der Kandidatenpool ist von heute; wer im
+   Messzeitraum verschwand, ist nicht darin (§5a.13 — bekannt, in Richtung
+   optimistisch). Wächter: `test/optimize/korbJeFold.test.ts`.
 3. **Echtgeld-Doppel-Guard.** Live nur, wenn `broker.mode: live` UND
    `ALPACA_ALLOW_LIVE=1` UND ein Live-Key (`AK…`). Fehlt eins ⇒ Paper. Ein
    Live-Key gegen Paper wird abgelehnt (`resolveMode`). Nie lockern.

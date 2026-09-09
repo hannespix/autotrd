@@ -241,7 +241,9 @@ export function allSymbols(config: Config): string[] {
  */
 export function fetchSymbols(config: Config): string[] {
   const set = new Set(allSymbols(config));
-  if (config.optimizer.pooled && config.optimizer.foldMembership === 'point_in_time') {
+  // Nur auf Tagesbars: Die Auswahl rechnet auf Tagesbars wie nachts; 139
+  // Kandidaten als Minutenbars über Jahre wären weder nötig noch bezahlbar.
+  if (config.optimizer.pooled && config.optimizer.foldMembership === 'point_in_time' && config.timeframe === 1440) {
     for (const s of config.universe.candidates ?? []) set.add(s);
   }
   return [...set];

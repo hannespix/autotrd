@@ -43,9 +43,10 @@
 # für PnL, Trades oder Champion.
 #
 # Zwei Einschränkungen stehen dazu in `src/universe/select.ts` und im Bericht:
-# Dollarumsatz enthält den Kurs (also vergangene Rendite), und die Auswahl von
-# heute wird im Walk-Forward rückwärts angewandt (Survivorship). Beides ist
-# benannt, nicht wegdefiniert.
+# Dollarumsatz enthält den Kurs (also vergangene Rendite), und der Pool ist
+# von heute — der Optimierer wählt daraus je Fold punkt-in-zeit
+# (foldMembership), aber wer im Messzeitraum verschwand, ist nicht im Pool.
+# Beides ist benannt, nicht wegdefiniert.
 #
 # Den POOL ändert weiterhin nur ein Commit. Automatisch läuft die Wahl DARIN.
 # Was nicht hineingehört: gehebelte und inverse ETFs (3×-Produkte sprengen

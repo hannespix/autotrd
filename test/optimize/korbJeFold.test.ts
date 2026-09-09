@@ -30,7 +30,7 @@ import { homePaths } from '../../src/core/journal.ts';
 import { korbJeFold } from '../../src/optimize/korbJeFold.ts';
 import { emptyChampionFile, saveChampion, type ChampionEntry } from '../../src/optimize/promote.ts';
 import { runOptimization, type OptimizeRunInput } from '../../src/optimize/run.ts';
-import { foldPlanForBars } from '../../src/optimize/walkForward.ts';
+import { foldPlanForBars, korbZum } from '../../src/optimize/walkForward.ts';
 import { universeRegelnFuer } from '../../src/universe/select.ts';
 import { NOISE_PROFILE, REWARD_PROFILE, T0, dailyBars, fakeMetricsFns, fakeStrategy, makeFakeSimulate, testConfig, type FakeSimOptions } from './fakes.ts';
 
@@ -108,7 +108,7 @@ describe('Korb je Fold im Lauf', () => {
   // Korbwechsel 45 Tage vor dem OOS-Beginn von Fold 5: DROP verliert den
   // Umsatz, LATE2 gewinnt ihn. Per Median über 60 Bars kippt beides genau
   // zwischen Fold 4 (15 neue Bars) und Fold 5 (46 neue Bars).
-  const cfgPit = testConfig({ symbols: ['AAA', 'BBB'], candidates: ['DROP', 'LATE2'], maxSymbols: 3, optimizer: { pooled: true } });
+  const cfgPit = testConfig({ symbols: ['AAA', 'BBB'], candidates: ['DROP', 'LATE2', 'FILL'], maxSymbols: 3, optimizer: { pooled: true } });
   const plan = foldPlanForBars(dailyBars(400), cfgPit.optimizer);
   const fold5 = plan.folds[4]!;
   const tSwitch = fold5.oosStart - 45 * DAY;
@@ -118,6 +118,9 @@ describe('Korb je Fold im Lauf', () => {
     ['BBB', serie([[400, 100, 50_000]])],
     ['DROP', serie([[bis, 100, 100_000], [400 - bis, 100, 1]])],
     ['LATE2', serie([[bis, 100, 1], [400 - bis, 100, 200_000]])],
+    // Immer liquide, aber Rang 4: rückt nur nach, wenn ein Platz frei bleibt —
+    // so kann EIN fehlender Kandidat die Mindestgröße nicht reißen.
+    ['FILL', serie([[400, 100, 30_000]])],
   ]);
   const barsFor = (s: string) => {
     const b = serien.get(s);
@@ -125,19 +128,25 @@ describe('Korb je Fold im Lauf', () => {
     return b;
   };
 
-  function lauf(over: { fixed?: boolean; ohnePool?: boolean; vorher?: (home: string) => void } = {}) {
+  function lauf(over: { fixed?: boolean; ohnePool?: boolean; vorher?: (home: string) => void; ohneKandidatenBars?: boolean; fehlend?: string[]; timeframe?: 5 | 1440 } = {}) {
     const home = tmp();
     over.vorher?.(home);
     const cfg = over.ohnePool
       ? testConfig({ symbols: ['AAA', 'BBB'], optimizer: { pooled: true } })
-      : testConfig({ symbols: ['AAA', 'BBB'], candidates: ['DROP', 'LATE2'], maxSymbols: 3, optimizer: { pooled: true, ...(over.fixed ? { foldMembership: 'fixed' as const } : {}) } });
+      : testConfig({
+          symbols: ['AAA', 'BBB'],
+          candidates: ['DROP', 'LATE2', 'FILL'],
+          maxSymbols: 3,
+          ...(over.timeframe ? { timeframe: over.timeframe } : {}),
+          optimizer: { pooled: true, ...(over.fixed ? { foldMembership: 'fixed' as const } : {}) },
+        });
     const simulate = makeFakeSimulate((id) => profiles[id] ?? NOISE_PROFILE);
     const input: OptimizeRunInput = {
       config: cfg,
       symbols: ['AAA', 'BBB'],
       strategies: ['edge'],
       barsFor,
-      candidateBarsFor: (s) => serien.get(s) ?? null,
+      candidateBarsFor: (s) => (over.ohneKandidatenBars || over.fehlend?.includes(s) ? null : (serien.get(s) ?? null)),
       home,
       initialEquity: 10_000,
       simulate,
@@ -178,6 +187,52 @@ describe('Korb je Fold im Lauf', () => {
       expect(c.symbols).toContain('LATE2');
       expect(c.symbols).not.toContain('DROP');
     }
+    // Die finale Suche des Kandidaten — der Lieferwert — läuft auf dem letzten
+    // Stand (Ende des letzten Folds), nicht auf der Vereinigung (Prüfbefund 7.1).
+    const letzter = plan.folds.at(-1)!;
+    const final = calls.filter((c) => c.range!.start === letzter.isStart && c.range!.end > letzter.oosStart);
+    expect(final.length).toBeGreaterThan(0);
+    for (const c of final) expect(setOf(c.symbols)).toEqual(stand(letzter.oosEnd));
+  });
+
+  it('korbZum ohne Zeitpunkt wirft — stumm die Vereinigung zu nehmen wäre der Lookahead ohne Spur', () => {
+    const korb = new Map([['AAA', serien.get('AAA')!]]);
+    expect(() => korbZum(korb, () => new Set(['AAA']), undefined)).toThrow(/Zeitpunkt/);
+    expect(korbZum(korb, undefined, undefined).size).toBe(1);
+  });
+
+  it('Pool konfiguriert, aber kein Kandidat mit Bars ⇒ NICHT bewertbar — kein stiller Rückfall auf den Korb der Config', () => {
+    const { out, calls } = lauf({ ohneKandidatenBars: true });
+    const r = out.runs[0]!;
+    expect(r.errors.some((e) => /keiner von 5 Kandidaten/.test(e))).toBe(true);
+    expect(r.results).toEqual([]);
+    expect(r.decision.reason).toMatch(/nicht bewertbar/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('fehlt EIN Kandidat, steht er im Protokoll und im Bericht — und in keinem Stand', () => {
+    const { out } = lauf({ fehlend: ['LATE2'] });
+    const r = out.runs[0]!;
+    expect(r.korb?.fehlend).toEqual(['LATE2']);
+    for (const st of r.korb!.staende) expect(st.symbols).not.toContain('LATE2');
+    expect(readFileSync(out.reportPath, 'utf8')).toMatch(/nicht wählbar: LATE2/);
+  });
+
+  it('Korb je Fold nur auf Tagesbars: auf Minutenbars bleibt der Korb fest, mit Begründung', () => {
+    const { out, calls } = lauf({ timeframe: 5 });
+    expect(out.runs[0]!.korb).toBeNull();
+    expect(out.runs[0]!.korbHinweis).toMatch(/Tagesbars/);
+    for (const c of calls) expect(setOf(c.symbols)).toEqual(['AAA', 'BBB']);
+  });
+
+  it('der Bericht nennt, wie sich der heutige Korb vom letzten Stand unterscheidet', () => {
+    const { out } = lauf();
+    const r = out.runs[0]!;
+    expect(r.korb?.heuteZugang).toEqual([]);
+    expect(r.korb?.heuteAbgang).toEqual(['LATE2']);
+    const text = readFileSync(out.reportPath, 'utf8');
+    expect(text).toMatch(/Heute gehandelt wird ein anderer Korb/);
+    expect(text).toMatch(/Abgang LATE2/);
   });
 
   it('Stress je Fold, Nachbarschaft und Holdout laufen auf ihrem Stand', () => {
@@ -212,6 +267,7 @@ describe('Korb je Fold im Lauf', () => {
       trials: 1,
       dataRange: { start: 0, end: 1 },
       fitEnd,
+      foldMembership: 'point_in_time',
     };
     const { out, calls } = lauf({
       vorher: (home) => saveChampion(homePaths(home).champion, { ...emptyChampionFile(1), symbols: { AAA: eintrag, BBB: eintrag } }),
@@ -232,6 +288,32 @@ describe('Korb je Fold im Lauf', () => {
     const final = amt.filter((c) => c.range!.start === letzter.isStart && c.range!.end > letzter.oosStart);
     expect(final.length).toBeGreaterThan(0);
     for (const c of final) expect(setOf(c.symbols)).toEqual(stand(letzter.oosEnd));
+  });
+
+  it('ein Champion aus dem festen Korb ist kein Maßstab für einen Punkt-in-Zeit-Kandidaten: er tritt ab', () => {
+    // Alter Eintrag ohne foldMembership (= fixed) mit unerreichbarem Score:
+    // Mit Marge könnte kein Kandidat je gewinnen. Er ist nicht vergleichbar ⇒
+    // der bestehende Kandidat wird befördert, der neue Eintrag trägt das Regime.
+    const alt: ChampionEntry = {
+      strategy: 'edge',
+      params: { a: 999, b: 1 },
+      timeframe: 1440,
+      score: 1_000_000,
+      oos: { objectiveMedian: 1_000_000, objectiveMean: 1, positiveFoldShare: 1, trades: 100, netProfit: 1, netReturnPct: 1, maxDrawdownPct: 1, dailyReturns: [], profitFactor: null, feeShare: null },
+      gates: [],
+      decidedAt: 1,
+      trials: 1,
+      dataRange: { start: 0, end: 1 },
+      fitEnd: plan.folds[1]!.oosEnd,
+    };
+    const { out } = lauf({
+      vorher: (home) => saveChampion(homePaths(home).champion, { ...emptyChampionFile(1), symbols: { AAA: alt, BBB: alt } }),
+    });
+    const r = out.runs[0]!;
+    expect(r.errors.some((e) => /gemessen mit Korb fixed, jetzt point_in_time/.test(e))).toBe(true);
+    expect(r.incumbentEval).toBeNull();
+    expect(r.decision.action).toBe('promote');
+    expect(out.champion.symbols.AAA?.foldMembership).toBe('point_in_time');
   });
 
   it('der Bericht zeigt die Stände mit Zugang und Abgang', () => {
@@ -276,5 +358,7 @@ describe('Config und fetch', () => {
     expect(fetchSymbols(ungepoolt)).not.toContain('CCC');
     const fest = testConfig({ symbols: ['AAA'], candidates: ['CCC'], optimizer: { pooled: true, foldMembership: 'fixed' } });
     expect(fetchSymbols(fest)).not.toContain('CCC');
+    const intraday = testConfig({ symbols: ['AAA'], candidates: ['CCC'], timeframe: 5, optimizer: { pooled: true } });
+    expect(fetchSymbols(intraday)).not.toContain('CCC');
   });
 });

@@ -79,6 +79,23 @@ function staleEntry(strategy: string, params: Record<string, number>, extra: Par
   };
 }
 
+describe('Korbwechsel: kein Champion lebt still weiter', () => {
+  // Gepoolt, Champion nur für AAA (BBB kam später dazu) ⇒ kein vergleichbarer
+  // Amtsinhaber. Fällt der Kandidat durch, lautet das Urteil „kein Handel" —
+  // und der alte Eintrag darf nicht stehen bleiben, sonst handelte AAA weiter
+  // mit einem Champion, den kein Lauf mehr nachgerechnet hat (Prüfbefund 4.1).
+  it('stay_notrade räumt den alten Eintrag', () => {
+    const home = tmp();
+    const paths = homePaths(home);
+    saveChampion(paths.champion, { ...emptyChampionFile(1), symbols: { AAA: staleEntry('edge', { a: 1, b: 1 }, { decidedAt: 1 }) } });
+    const cfg = testConfig({ symbols: ['AAA', 'BBB'], home, optimizer: { seed: 7, pooled: true } });
+    const out = runOptimization(input(home, { symbols: ['AAA', 'BBB'], strategies: ['noise'], config: cfg }));
+    expect(out.runs[0]!.decision.action).toBe('stay_notrade');
+    expect(out.champion.symbols.AAA).toBeUndefined();
+    expect(Object.keys(out.champion.noTrade).sort()).toEqual(['AAA', 'BBB']);
+  });
+});
+
 describe('runOptimization (Ende-zu-Ende)', () => {
   it('befördert die Strategie mit echter Kante, schreibt Champion (mit fitEnd), Journal und Bericht', () => {
     const home = tmp();

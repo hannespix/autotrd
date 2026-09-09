@@ -190,7 +190,13 @@ export interface SymbolRun {
 
 export interface KorbProtokoll {
   kandidaten: number;
+  /** Kandidaten des Pools ohne Bars im Messfenster — frühe Stände wählten aus einem dünneren Pool. */
+  fehlend: readonly string[];
   staende: readonly KorbStand[];
+  /** Heute gehandelter Korb gegenüber dem letzten Stand (dem der finalen Parameter): was heute dazukam … */
+  heuteZugang: readonly string[];
+  /** … und was seitdem abging. Mit Holdout liegt der letzte Stand `holdoutDays` zurück. */
+  heuteAbgang: readonly string[];
 }
 
 export interface HoldoutMarkt {
@@ -250,7 +256,10 @@ interface Einheit {
   errors: string[];
   /** Bars des Kandidatenpools im Messfenster — nur gepoolt mit Korb je Fold. */
   kandidaten: ReadonlyMap<string, BarSeriesLike> | null;
+  kandidatenFehlend: readonly string[];
   korbHinweis: string | null;
+  /** Korb je Fold versprochen, aber nicht wählbar — kein stiller Rückfall, nicht bewertbar. */
+  korbFehler: string | null;
 }
 
 /** Anzeigename eines Korbs — taucht im Bericht und im Journal auf. */
@@ -258,18 +267,25 @@ export function korbName(anzahl: number): string {
   return `Korb (${anzahl} Symbole)`;
 }
 
-/** Die Bars ab `start` (inkl.) — eine Kopie, keine Sicht. */
-function imFenster(bars: BarSeriesLike, start: Ms): BarSeriesLike {
+/** Erste Position mit t >= ms. */
+function abIndex(bars: BarSeriesLike, ms: Ms): number {
   let lo = 0;
   let hi = bars.length;
   while (lo < hi) {
     const mid = (lo + hi) >> 1;
-    if (bars.t[mid]! < start) lo = mid + 1;
+    if (bars.t[mid]! < ms) lo = mid + 1;
     else hi = mid;
   }
-  if (lo === 0) return bars;
+  return lo;
+}
+
+/** Die Bars in [start, ende) — eine Kopie, keine Sicht. Ohne `ende` bis zum Schluss. */
+function imFenster(bars: BarSeriesLike, start: Ms, ende?: Ms): BarSeriesLike {
+  const lo = abIndex(bars, start);
+  const hi = ende === undefined ? bars.length : abIndex(bars, ende);
+  if (lo === 0 && hi === bars.length) return bars;
   const out: Bar[] = [];
-  for (let i = lo; i < bars.length; i++) out.push(bars.at(i));
+  for (let i = lo; i < hi; i++) out.push(bars.at(i));
   return BarSeries.from(out);
 }
 
@@ -293,8 +309,10 @@ function einheitenVon(input: OptimizeRunInput, pooled: boolean, log: (m: string)
   // hat, und der nächtliche Lauf würde Jahr für Jahr stumm länger. Anker ist
   // das Datenende, nicht die Wanduhr: Mit Stichtag enden die Daten dort.
   let fensterStart: Ms | null = null;
+  let fensterEnde: Ms | null = null;
   if (geladen.length > 0) {
     const ende = geladen.reduce((m, g) => Math.max(m, g.bars.t[g.bars.length - 1]! + 1), Number.NEGATIVE_INFINITY);
+    fensterEnde = ende;
     fensterStart = ende - input.config.optimizer.lookbackDays * DAY;
     for (let i = geladen.length - 1; i >= 0; i--) {
       const g = geladen[i]!;
@@ -313,6 +331,8 @@ function einheitenVon(input: OptimizeRunInput, pooled: boolean, log: (m: string)
   // Bericht sagt, warum.
   let kandidaten: Map<string, BarSeriesLike> | null = null;
   let korbHinweis: string | null = null;
+  let korbFehler: string | null = null;
+  const kandidatenFehlend: string[] = [];
   const pool = input.config.universe.candidates;
   if (input.config.optimizer.foldMembership === 'fixed') {
     korbHinweis = 'foldMembership: fixed — der Korb der Config gilt über das ganze Fenster (Auswahl von heute, rückwärts angewandt)';
@@ -320,9 +340,12 @@ function einheitenVon(input: OptimizeRunInput, pooled: boolean, log: (m: string)
     korbHinweis = 'ungepoolt — Korb je Fold gibt es nur für den gepoolten Korb';
   } else if (!pool || pool.length === 0 || !input.candidateBarsFor) {
     korbHinweis = 'kein Kandidatenpool (universe.candidates) — der Korb der Config gilt über das ganze Fenster';
+  } else if (input.config.timeframe !== 1440) {
+    // Die Auswahl rechnet auf Tagesbars wie nachts (Median-Dollarumsatz je
+    // Tag). Auf Minutenbars wäre es ein anderes Kriterium (Prüfbefund 2.2).
+    korbHinweis = `Korb je Fold nur auf Tagesbars (Zeitrahmen ${input.config.timeframe}) — der Korb der Config gilt über das ganze Fenster`;
   } else {
     kandidaten = new Map();
-    let fehlend = 0;
     for (const sym of pool) {
       let b: BarSeriesLike | null;
       try {
@@ -330,22 +353,30 @@ function einheitenVon(input: OptimizeRunInput, pooled: boolean, log: (m: string)
       } catch {
         b = null;
       }
-      if (!b || b.length === 0) {
-        fehlend++;
+      // Im selben Fenster wie der gehandelte Korb — und nicht darüber hinaus:
+      // Ein Kandidat mit einer jüngeren Bar dürfe sonst die Zeitachse und damit
+      // jeden Fold verschieben (Prüfbefund 3.1).
+      const im = b && b.length > 0 && fensterStart !== null && fensterEnde !== null ? imFenster(b, fensterStart, fensterEnde) : b;
+      if (!im || im.length === 0) {
+        kandidatenFehlend.push(sym);
         continue;
       }
-      const im = fensterStart === null ? b : imFenster(b, fensterStart);
-      if (im.length > 0) kandidaten.set(sym, im);
-      else fehlend++;
+      kandidaten.set(sym, im);
     }
-    if (fehlend > 0) log(`Kandidatenpool: ${fehlend} von ${pool.length} ohne Bars im Messfenster — nicht wählbar`);
+    if (kandidatenFehlend.length > 0) log(`Kandidatenpool: ${kandidatenFehlend.length} von ${pool.length} ohne Bars im Messfenster — nicht wählbar: ${kandidatenFehlend.join(', ')}`);
+    if (kandidaten.size === 0) {
+      // KEIN stiller Rückfall auf den Korb der Config: Ein Lauf, der den Korb
+      // je Fold verspricht und ihn nicht wählen kann, misst nichts (Prüfbefund 6.1).
+      korbFehler = `Korb je Fold: keiner von ${pool.length} Kandidaten hat Bars im Messfenster — \`fetch\` mit Kandidatenpool laufen lassen (fetchSymbols) oder foldMembership: fixed setzen`;
+      kandidaten = null;
+    }
   }
 
   if (!pooled) {
     return input.symbols.map((symbol) => {
       const g = geladen.find((x) => x.symbol === symbol);
       const eigener = fehler.filter((f) => f.startsWith(`${symbol}: `)).map((f) => `Bars: ${f.slice(symbol.length + 2)}`);
-      return { key: symbol, symbols: [symbol], bars: g ? g.bars : null, errors: eigener, kandidaten: null, korbHinweis };
+      return { key: symbol, symbols: [symbol], bars: g ? g.bars : null, errors: eigener, kandidaten: null, kandidatenFehlend: [], korbHinweis, korbFehler: null };
     });
   }
 
@@ -360,10 +391,14 @@ function einheitenVon(input: OptimizeRunInput, pooled: boolean, log: (m: string)
     {
       key: korbName(korb.size),
       symbols: [...input.symbols],
-      bars: alle.size > 0 ? alle : null,
+      // Ohne gehandelte Symbole mit Bars gibt es nichts zu messen — auch nicht
+      // auf Kandidaten allein (Prüfbefund 3.2).
+      bars: korb.size > 0 ? alle : null,
       errors: fehler.length > 0 ? [`ohne Bars, nicht im Korb: ${fehler.join('; ')}`] : [],
       kandidaten: kandidaten && kandidaten.size > 0 ? kandidaten : null,
+      kandidatenFehlend,
       korbHinweis,
+      korbFehler,
     },
   ];
 }
@@ -452,9 +487,9 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
     // eigene Latte — sonst verglichen wir eine Strategie auf Fenster X mit
     // einem Markt auf Fenster Y.
     //
-    // Bewusst die BENCHMARK (SPY), nicht der Korb: Der Korb ist die heutige
-    // Auswahl, rückwirkend angewandt — seine Rendite enthält Survivorship und
-    // wäre eine unfair hohe Latte. Die Benchmark war damals kaufbar.
+    // Bewusst die BENCHMARK (SPY), nicht der Korb: Der Korb wechselt je Fold
+    // (§5a.13) und stammt aus einem Pool, der von heute ist — wer unterwegs
+    // verschwand, ist nicht darin. SPY ist eine Serie, die damals kaufbar war.
     const marktLatteFuer = (folds: readonly Fold[]): { sharpe: number | null; quelle: string } | undefined => {
       const bench = input.benchmark;
       const benchSymbol = cfg.universe.benchmark;
@@ -481,6 +516,13 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       : null;
     let korbProtokoll: KorbProtokoll | null = null;
     let messbar = true;
+    // Das Regime dieser Messung — steht auf jedem neuen Champion-Eintrag.
+    const korbModus: 'point_in_time' | 'fixed' = einheit.kandidaten ? 'point_in_time' : 'fixed';
+    // Ein Amtsinhaber aus einem anderen Zeitrahmen oder Korb-Regime ist kein
+    // Maßstab: Er tritt ab (stay_notrade räumt seinen Eintrag), statt einem
+    // Kandidaten eine Marge auf einen Score abzuverlangen, der anders
+    // entstanden ist (Prüfbefund 4.2).
+    let incumbentVergleichbar = true;
 
     if (bars && common) {
       const achse = zeitachseVon(korbVon(symbol, bars));
@@ -492,6 +534,11 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       // Daten und am Fold-Plan, nicht an der Strategie) und dann von jedem
       // Fenster über `membershipAt` abgerufen. Scheitert die Wahl, ist nichts
       // messbar — kein stiller Rückfall auf den Endkorb.
+      if (einheit.korbFehler) {
+        messbar = false;
+        errors.push(einheit.korbFehler);
+        log(`${symbol}: ${einheit.korbFehler}`);
+      }
       if (einheit.kandidaten) {
         try {
           const plan = foldPlanForBars(achse, optimizer);
@@ -504,7 +551,15 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
             pflicht: cfg.universe.benchmark ? [cfg.universe.benchmark] : [],
           });
           common.membership = k.at;
-          korbProtokoll = { kandidaten: k.kandidaten, staende: k.staende };
+          const letzterStand = new Set(k.staende[k.staende.length - 1]!.symbols);
+          const heute = new Set(einheit.symbols);
+          korbProtokoll = {
+            kandidaten: k.kandidaten,
+            fehlend: einheit.kandidatenFehlend,
+            staende: k.staende,
+            heuteZugang: einheit.symbols.filter((x) => !letzterStand.has(x)).sort(),
+            heuteAbgang: [...letzterStand].filter((x) => !heute.has(x)).sort(),
+          };
           log(`${symbol}: Korb je Fold — ${k.staende.length} Stände aus ${k.kandidaten} Kandidaten`);
         } catch (e) {
           messbar = false;
@@ -518,9 +573,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       // Zeitachse, ist also für alle Strategien dieser Einheit derselbe —
       // einmal rechnen genügt.
       //
-      // Bewusst die BENCHMARK (SPY), nicht der Korb: Der Korb ist die heutige
-      // Auswahl, rückwirkend angewandt — seine Rendite enthält Survivorship
-      // und wäre eine unfair hohe Latte. Die Benchmark war damals kaufbar.
+      // Bewusst die BENCHMARK (SPY), nicht der Korb — siehe marktLatteFuer.
 
       for (const strategy of messbar ? usable : []) {
         try {
@@ -554,8 +607,13 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
     if (incumbent && bars && common && messbar) {
       try {
         const strat = deps.getStrategy(incumbent.strategy);
+        const incumbentModus = incumbent.foldMembership ?? 'fixed';
         if (incumbent.timeframe !== cfg.timeframe || !strat.timeframes.includes(cfg.timeframe)) {
-          errors.push(`Champion ${incumbent.strategy}: Zeitrahmen ${incumbent.timeframe} ≠ ${cfg.timeframe} — nicht vergleichbar`);
+          incumbentVergleichbar = false;
+          errors.push(`Champion ${incumbent.strategy}: Zeitrahmen ${incumbent.timeframe} ≠ ${cfg.timeframe} — nicht vergleichbar, tritt ab`);
+        } else if (incumbentModus !== korbModus) {
+          incumbentVergleichbar = false;
+          errors.push(`Champion ${incumbent.strategy}: gemessen mit Korb ${incumbentModus}, jetzt ${korbModus} — nicht vergleichbar, tritt ab`);
         } else {
           const plan = foldPlanForBars(zeitachseVon(korbVon(symbol, bars)), optimizer);
           const fitEnd = fitEndOf(incumbent);
@@ -623,6 +681,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       dataRange: r.wfa.dataRange,
       // Ende des Fensters, aus dem finalParams stammen: OOS davor ist für spätere Re-Scores tabu.
       fitEnd: r.wfa.finalWindow.end,
+      foldMembership: korbModus,
     });
 
     // Marktbezug des Holdouts: EINMAL je Einheit, denn das Fenster hängt nur
@@ -655,7 +714,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       const pick = bestPassed ?? bestAny;
       candidate = pick ? toEntry(pick) : null;
       decision = decidePromotion({
-        incumbent,
+        incumbent: incumbentVergleichbar ? incumbent : null,
         incumbentRescore,
         incumbentPass,
         candidate: candidate ? { entry: candidate, pass: bestPassed !== null } : null,
