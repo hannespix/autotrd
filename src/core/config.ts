@@ -127,7 +127,15 @@ export const ConfigSchema = z.object({
     .object({
       strategies: z.array(z.string().min(1)).min(1).default(['trend_donchian', 'momentum_pullback', 'mean_reversion']),
       /** Historie in Kalendertagen, die geladen/bewertet wird. */
-      lookbackDays: z.number().int().min(30).max(2000).default(400),
+      /**
+       * Obergrenze 4000 (≈ 11 Jahre) — die harte Grenze steht darunter in
+       * `parseConfig` und hängt am ZEITRAHMEN: Tagesbars sind billig (30
+       * Symbole × 11 Jahre ≈ 83 000 Bars), 5-Minuten-Bars nicht (dieselbe
+       * Tiefe wären ~9 Mio. Bars). Die alte pauschale 2000 verbot deshalb
+       * beides gleichzeitig und stand einer Messung im Weg, die einen
+       * Bärenmarkt ins Fenster holen soll.
+       */
+      lookbackDays: z.number().int().min(30).max(4000).default(400),
       /** In-Sample-Fenster (Kalendertage). */
       isDays: z.number().int().min(20).default(120),
       /** Out-of-Sample-Fenster (Kalendertage). */
@@ -331,8 +339,20 @@ export function parseConfig(raw: unknown): Config {
     // (Red-Team: bei step 10 / oos 30 wären Trades und PSR-n um ×2,75 aufgeblasen).
     throw new ConfigError('optimizer.stepDays muss gleich optimizer.oosDays sein (lückenlose, überlappungsfreie OOS-Kette).');
   }
+  // Tiefe Historie nur dort, wo sie billig ist. Intraday bleibt bei 2000 Tagen:
+  // 4000 Tage × 78 Bars × 30 Symbole wären rund 9 Mio. Bars je Lauf — der
+  // Optimierer liefe ins Speicherlimit, und zwar erst nach dem Datenladen.
+  if (cfg.timeframe !== 1440 && cfg.optimizer.lookbackDays > INTRADAY_LOOKBACK_MAX) {
+    throw new ConfigError(
+      `optimizer.lookbackDays ${cfg.optimizer.lookbackDays} ist für Zeitrahmen ${cfg.timeframe} min zu tief ` +
+        `(höchstens ${INTRADAY_LOOKBACK_MAX}). So viel Intraday-Historie sprengt den Speicher; für tiefe Messungen Tagesbars nehmen.`,
+    );
+  }
   return cfg;
 }
+
+/** Tiefste Historie, die ein Intraday-Zeitrahmen laden darf (Kalendertage). */
+export const INTRADAY_LOOKBACK_MAX = 2000;
 
 export function loadConfigFile(path: string): Config {
   const abs = resolve(path);

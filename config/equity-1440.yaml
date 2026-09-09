@@ -64,6 +64,33 @@ universe:
      XOM, CVX,
      JNJ, PFE, UNH,
      WMT, DIS]
+  maxSymbols: 30
+  # Der Pool, aus dem jede Nacht nach Liquidität gewählt wird. Breit über die
+  # Sektoren, damit die Wahl etwas zu wählen hat; ohne Hebel-, Inverse- und
+  # Einzelaktien-ETFs. Reihenfolge hier ist bedeutungslos — es zählt der
+  # gemessene Umsatz, nicht der Platz in der Liste.
+  candidates:
+    # Breite Index- und Sektor-ETFs
+    [SPY, QQQ, IWM, DIA, XLF, XLE, XLK, XLV, XLI, XLY, XLP, XLU, XLB, XLRE, XLC,
+     SMH, SOXX, EEM, EFA, GLD, SLV, TLT, HYG, LQD, IEF,
+     # Technologie und Halbleiter
+     AAPL, MSFT, NVDA, AMZN, META, GOOGL, GOOG, TSLA, AVGO, AMD, NFLX,
+     CRM, ORCL, ADBE, INTC, CSCO, QCOM, TXN, MU, AMAT, LRCX, KLAC, ADI, MRVL,
+     ANET, NOW, IBM, INTU, PANW, CRWD, DDOG, SNOW, UBER, ABNB, PYPL, SPOT, DELL,
+     # Finanzen
+     JPM, BAC, WFC, GS, MS, C, SCHW, BLK, AXP, V, MA, COF, USB, PNC, BRK.B,
+     # Energie
+     XOM, CVX, COP, SLB, EOG, PSX, MPC, OXY, VLO,
+     # Gesundheit
+     JNJ, PFE, UNH, ABBV, MRK, LLY, TMO, ABT, BMY, AMGN, GILD, CVS, MDT, ISRG, VRTX, REGN,
+     # Konsum
+     WMT, DIS, HD, MCD, NKE, SBUX, COST, TGT, LOW, PG, KO, PEP, PM, MO, MDLZ, CL,
+     # Industrie und Transport
+     BA, CAT, DE, GE, HON, LMT, RTX, UPS, UNP, MMM, FDX,
+     # Kommunikation und Versorger
+     T, VZ, TMUS, CMCSA, CHTR, NEE, DUK, SO,
+     # Fahrzeuge
+     F, GM]
   benchmark: SPY
 
 timeframe: 1440
@@ -110,7 +137,15 @@ optimizer:
   # Tagesbars nur ~275 Bars, die 60 OOS-Trades kämen dann nur durch ein
   # gesenktes Gate zustande. Also andersherum — 1400 Kalendertage
   # (≈ 965 Handelstage), IS 365, OOS 90 ⇒ rund 9 Folds.
-  lookbackDays: 1400
+  # 2900 Tage ≈ 8 Jahre. 1400 reichten nur bis November 2022 — das Messfenster
+  # enthielt damit AUSSCHLIESSLICH einen Bullenmarkt (vier Halbjahre, alle
+  # positiv, Korb +64.7 %). Einem defensiven System dort vorzuwerfen, dass es
+  # den Markt nicht schlägt, ist wie einem Regenschirm vorzuwerfen, dass er bei
+  # Sonne nichts bringt. Mit 2900 liegen der Bärenmarkt 2022 und der
+  # Corona-Crash 2020 im Fenster — erst dort entscheidet sich, ob die niedrige
+  # Drawdown-Zahl (3.2 % gegen 11.3 % des Korbs) eine Kante ist oder nur
+  # geschenkte Untätigkeit.
+  lookbackDays: 2900
   isDays: 365
   oosDays: 90
   stepDays: 90

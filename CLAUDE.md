@@ -86,7 +86,9 @@ geschrieben).
 
 Beide Betriebsarten rufen dieselbe Engine (`src/engine/engine.ts`) und
 dieselbe `decide()`. Die Plattform hat keine Streams: Stops liegen beim
-Broker, ein Takt je Minute genügt für den 5-Minuten-Zeitrahmen.
+Broker, ein Takt je Minute genügt für den Zeitrahmen der Plattform (seit
+09.09.2026 Tagesbars — auf 5-Minuten-Bars frassen die Gebühren 271–2438 %
+des Bruttogewinns, siehe docs/ARCHITEKTUR.md §5a.10).
 
 ## 2. Was das Vorgängersystem gelehrt hat (und wie es hier gelöst ist)
 
