@@ -39,6 +39,36 @@ describe('sizePosition', () => {
     expect(sizePosition({ ...base, price: 0 }).reason).toMatch(/Kurs/);
     expect(sizePosition({ ...base, equity: 0 }).reason).toMatch(/Equity/);
   });
+
+  describe('Zielgewicht (Allokations-Familien)', () => {
+    // Weiter Katastrophen-Stop (20 %): über die Stop-Distanz wären das 2,5 Stück —
+    // das Gewicht bemisst stattdessen den Anteil an der Equity.
+    const weit = { ...base, stop: 80, maxPositionPct: 100 };
+
+    it('bemisst den Anteil an der Equity statt der Stop-Distanz', () => {
+      expect(sizePosition(weit).qty).toBe(2); // Risiko-Budget: 50 $ / 20 $
+      expect(sizePosition({ ...weit, weight: 0.3 }).qty).toBe(30); // 3 000 $ / 100 $
+    });
+
+    it('Deckel, Exposure und Bargeld gelten weiter', () => {
+      expect(sizePosition({ ...weit, weight: 0.3, maxPositionPct: 20 }).qty).toBe(20);
+      expect(sizePosition({ ...weit, weight: 0.3, exposureBudget: 1_050 }).qty).toBe(10);
+      expect(sizePosition({ ...weit, weight: 0.3, cash: 550 }).qty).toBe(5);
+      expect(sizePosition({ ...weit, weight: 0.3, price: 5_000, maxPositionPct: 100 }).reason).toMatch(/Zielgewicht/);
+    });
+
+    it('ein Gewicht außerhalb (0, 1] ist ein Fehler, keine Position', () => {
+      for (const w of [0, -0.1, 1.5, Number.NaN]) {
+        const r = sizePosition({ ...weit, weight: w });
+        expect(r.qty, String(w)).toBe(0);
+        expect(r.reason, String(w)).toMatch(/Gewicht/);
+      }
+    });
+
+    it('der Stop bleibt Pflicht und muss auf der Verlustseite liegen', () => {
+      expect(sizePosition({ ...weit, weight: 0.3, stop: 101 }).reason).toMatch(/Stop/);
+    });
+  });
 });
 
 describe('checkHalt', () => {

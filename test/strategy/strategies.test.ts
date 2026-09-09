@@ -119,7 +119,7 @@ const ramp = (n: number, start: number, step: number): number[] => Array.from({ 
 
 describe('Register', () => {
   it('kennt die Vorlagen mit eindeutigen IDs', () => {
-    expect(strategyIds()).toEqual(['trend_donchian', 'momentum_pullback', 'mean_reversion', 'orb_breakout', 'cross_sectional_momentum']);
+    expect(strategyIds()).toEqual(['trend_donchian', 'momentum_pullback', 'mean_reversion', 'orb_breakout', 'cross_sectional_momentum', 'regime_allocation']);
     expect(new Set(strategyIds()).size).toBe(STRATEGIES.length);
     expect(getStrategy('mean_reversion').id).toBe('mean_reversion');
   });

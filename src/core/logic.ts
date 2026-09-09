@@ -445,6 +445,8 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
       maxPositionPct: ctx.risk.maxPositionPct,
       exposureBudget,
       qtyStep: qtyStepFor(ctx.assetClass),
+      // Allokations-Familien: Zielanteil statt Stop-Distanz (ein Pfad, beide Welten).
+      weight: decision.weight,
     });
     if (size.qty <= 0) {
       block(`Sizing: ${size.reason}`);

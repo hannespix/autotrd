@@ -143,7 +143,7 @@ strategy:
   allowWithoutChampion: false   # Ohne Champion handelt niemand — der Optimierer entscheidet.
 
 optimizer:
-  strategies: [trend_donchian, momentum_pullback, mean_reversion, cross_sectional_momentum]
+  strategies: [trend_donchian, momentum_pullback, mean_reversion, cross_sectional_momentum, regime_allocation]
   # Fenster wie in config/equity-1440.yaml, das vier Halbjahre lang gemessen
   # hat — sonst vergliche man Plattform und Erkundung nie miteinander.
   lookbackDays: 1400

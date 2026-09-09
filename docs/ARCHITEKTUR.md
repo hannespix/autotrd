@@ -503,6 +503,30 @@ der aus der Zukunft dieses Zeitpunkts stammt. Und `at(t)` liefert nie einen
 späteren Stand; gibt es keinen, scheitert der Lauf laut („nicht bewertbar").
 Der Bericht zeigt je Einheit die Stände mit Zugang und Abgang.
 
+### 14. Eine andere Familie: Allokation statt Signal
+
+Die vier Vorlagen fragen täglich und steigen mit engen Stops ein und aus.
+Die Momentum- und Trendfolge-Literatur sagt seit Jahrzehnten, dass die
+Kante — soweit es sie gibt — in der Ausführung liegt: selten entscheiden,
+das Risiko am Regime und an der Schwankung bemessen, Gewinner nicht mit
+Stops abschneiden. `regime_allocation` (`src/strategy/regimeAllocation.ts`)
+stellt deshalb drei Fragen, und nur an der ersten Bar eines Monats:
+relativ stark im Korb (12-1-Momentum je Einheit Schwankung, Rang aus
+`decide()`), über dem langen Mittel (Regime), eigenes Momentum positiv
+(Dual Momentum). Gewicht = Zielvolatilität / realisierte Volatilität,
+gedeckelt durch `maxPositionPct`; ein weiter Katastrophen-Stop liegt beim
+Broker, wird nie nachgezogen. Dazwischen entscheidet sie nichts.
+
+Dafür kennt der Vertrag jetzt `Decision.weight`: Ein Zielanteil ersetzt im
+Sizing das Risiko-Budget je Trade (`risk/sizing.ts`, ein Pfad für Backtest
+und Engine); Deckel, Exposure und Bargeld gelten weiter. Ohne `weight`
+bleibt alles beim Alten.
+
+Was das nicht ist: kein Versprechen. Die Familie muss dieselben zehn Gates
+bestehen — auf dem Korb je Fold (§13) und in den vier Fenstern aus §12. Der
+Rebalance-Rhythmus und die Volatilitäts-Länge sind fest, damit die Suche
+sieben Achsen hat und nicht neun.
+
 ### Was das für den Betrieb heißt
 
 Kein Handel. Der nächtliche Optimierer läuft weiter und sucht mit nächtlich

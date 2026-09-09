@@ -22,6 +22,11 @@ export interface SizeInput {
   exposureBudget: number;
   /** Stückelung: 1 für Aktien (Brackets brauchen ganze Stücke), z. B. 0.0001 für Krypto. */
   qtyStep: number;
+  /**
+   * Zielanteil der Equity (0 < weight ≤ 1) statt Risiko-Budget — Allokations-
+   * Familien. Deckel, Exposure und Bargeld gelten unverändert.
+   */
+  weight?: number | undefined;
 }
 
 export interface SizeResult {
@@ -37,8 +42,13 @@ export function sizePosition(inp: SizeInput): SizeResult {
   if (!(inp.price > 0)) return { qty: 0, riskPerUnit: 0, notional: 0, reason: 'Kurs ungültig' };
   if (!(riskPerUnit > 0)) return { qty: 0, riskPerUnit, notional: 0, reason: 'Stop liegt nicht auf der Verlustseite' };
   if (!(inp.equity > 0)) return { qty: 0, riskPerUnit, notional: 0, reason: 'Equity ≤ 0' };
+  if (inp.weight !== undefined && !(inp.weight > 0 && inp.weight <= 1)) {
+    return { qty: 0, riskPerUnit, notional: 0, reason: `Gewicht ${String(inp.weight)} nicht in (0, 1]` };
+  }
 
-  const byRisk = (inp.equity * inp.riskPct) / 100 / riskPerUnit;
+  // Mit Zielgewicht bemisst der Anteil, nicht die Stop-Distanz — der Stop
+  // bleibt Pflicht und liegt beim Broker, ist aber ein Katastrophen-Stop.
+  const byRisk = inp.weight !== undefined ? (inp.equity * inp.weight) / inp.price : (inp.equity * inp.riskPct) / 100 / riskPerUnit;
   const byCap = (inp.equity * inp.maxPositionPct) / 100 / inp.price;
   const byExposure = Math.max(0, inp.exposureBudget) / inp.price;
   const byCash = inp.side === 'long' ? Math.max(0, inp.cash) / inp.price : Number.POSITIVE_INFINITY;
@@ -48,7 +58,7 @@ export function sizePosition(inp: SizeInput): SizeResult {
   const rounded = Number(qty.toFixed(8));
   if (rounded <= 0) {
     const limiter =
-      raw === byRisk ? 'Risiko-Budget' : raw === byCap ? 'Positionsdeckel' : raw === byExposure ? 'Exposure-Budget' : 'Bargeld';
+      raw === byRisk ? (inp.weight !== undefined ? 'Zielgewicht' : 'Risiko-Budget') : raw === byCap ? 'Positionsdeckel' : raw === byExposure ? 'Exposure-Budget' : 'Bargeld';
     return { qty: 0, riskPerUnit, notional: 0, reason: `Stückzahl < ${step} (${limiter})` };
   }
   return { qty: rounded, riskPerUnit, notional: rounded * inp.price, reason: null };

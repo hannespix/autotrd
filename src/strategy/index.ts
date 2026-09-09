@@ -10,8 +10,9 @@ import { strategy as momentumPullback } from './momentumPullback.ts';
 import { strategy as meanReversion } from './meanReversion.ts';
 import { strategy as orbBreakout } from './orbBreakout.ts';
 import { strategy as crossSectionalMomentum } from './crossSectionalMomentum.ts';
+import { strategy as regimeAllocation } from './regimeAllocation.ts';
 
-export const STRATEGIES: readonly Strategy[] = Object.freeze([trendDonchian, momentumPullback, meanReversion, orbBreakout, crossSectionalMomentum]);
+export const STRATEGIES: readonly Strategy[] = Object.freeze([trendDonchian, momentumPullback, meanReversion, orbBreakout, crossSectionalMomentum, regimeAllocation]);
 
 export function strategyIds(): string[] {
   return STRATEGIES.map((s) => s.id);
