@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Journal, homePaths } from '../../src/core/journal.ts';
+import { DAY } from '../../src/core/time.ts';
 import type { Strategy } from '../../src/core/types.ts';
 import { loadChampion, saveChampion, emptyChampionFile, type ChampionEntry } from '../../src/optimize/promote.ts';
 import { runOptimization, type OptimizeRunInput } from '../../src/optimize/run.ts';
@@ -322,5 +323,29 @@ describe('runOptimization (Ende-zu-Ende)', () => {
     const c = runOptimization(input(tmp(), { seed: 12 }));
     // anderer Seed ⇒ andere Stichprobe für das Rauschen (die Kante gewinnt trotzdem)
     expect(c.runs[0]!.chosen!.strategy).toBe('edge');
+  });
+});
+
+describe('das Messfenster ist lookbackDays — nicht alles, was auf der Platte liegt', () => {
+  // Der Cache wächst mit jedem tieferen Lauf. Ohne den Schnitt hinge die
+  // Fold-Zahl davon ab, wer zuletzt wie tief geladen hat; der nächtliche Lauf
+  // würde Jahr für Jahr stumm länger, und ein Stichtags-Lauf begann am
+  // ersten Kalendertag (Lauf 27, 09.09.2026).
+  it('schneidet ältere Bars ab und zählt Folds nur im Fenster', () => {
+    const kurz = runOptimization(input(tmp(), { symbols: ['AAA'], barsFor: () => dailyBars(400) }));
+    const lang = runOptimization(input(tmp(), { symbols: ['AAA'], barsFor: () => dailyBars(600) }));
+    const rk = kurz.runs[0]!.results[0]!.wfa;
+    const rl = lang.runs[0]!.results[0]!.wfa;
+    const fenster = testConfig().optimizer.lookbackDays * DAY;
+    expect(rl.dataRange.end - rl.dataRange.start).toBeLessThanOrEqual(fenster);
+    expect(rl.dataRange.start).toBeGreaterThanOrEqual(rl.dataRange.end - fenster);
+    expect(rl.folds.length).toBe(rk.folds.length);
+  });
+
+  it('der Anker ist das Datenende: mit Stichtag enden die Daten dort, nicht an der Wanduhr', () => {
+    // Bars enden 2025-02-04, `now` liegt 2026-09 — das Fenster hängt an den Bars.
+    const out = runOptimization(input(tmp(), { symbols: ['AAA'], barsFor: () => dailyBars(600) }));
+    const r = out.runs[0]!.results[0]!.wfa;
+    expect(r.dataRange.end).toBe(dailyBars(600).t[599]! + 1);
   });
 });
