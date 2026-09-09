@@ -44,7 +44,7 @@ import {
   dayKeyFor,
   nextTradingDay,
   parseDay,
-  prevTradingDay,
+  prevTradingDayOrNull,
   sessionBounds,
   type Calendar,
   type SessionBounds,
@@ -448,8 +448,15 @@ export function simulate(input: SimInput): SimResult {
       }
       simDay = day;
       // PDT-Fenster: fünf Handelstage bis heute (inkl.), Älteres verfällt.
+      // Am Anfang des Kalenders gibt es keine fünf: Dann reicht das Fenster
+      // bis zum ersten Kalendertag — kürzer, nie länger. Genau wie live in
+      // risk/pdt.ts (ein Pfad).
       let windowStart = day;
-      for (let k = 0; k < 4; k++) windowStart = prevTradingDay(windowStart, assetClass, calendar);
+      for (let k = 0; k < 4; k++) {
+        const prev = prevTradingDayOrNull(windowStart, assetClass, calendar);
+        if (prev === null) break;
+        windowStart = prev;
+      }
       dayTradeCount = 0;
       for (const [d, n] of dayTrades) {
         if (d < windowStart) dayTrades.delete(d);

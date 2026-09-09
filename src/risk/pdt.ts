@@ -9,7 +9,7 @@
  * mehrere Einstiege in einem Zyklus plant.
  */
 import type { AssetClass, Trade } from '../core/types.ts';
-import { dayKey, prevTradingDay, type Calendar } from '../core/time.ts';
+import { dayKey, prevTradingDayOrNull, type Calendar } from '../core/time.ts';
 
 export interface PdtInput {
   respect: boolean;
@@ -63,7 +63,12 @@ export function pdtCheck(inp: PdtInput): PdtVerdict {
 /** Daytrades (Ein- und Ausstieg am selben ET-Tag) in den letzten fünf Handelstagen bis `today` (inkl.). */
 export function countDayTrades(trades: readonly Trade[], today: string, assetClass: AssetClass, calendar?: Calendar): number {
   let start = today;
-  for (let i = 0; i < 4; i++) start = prevTradingDay(start, assetClass, calendar);
+  // Am Kalenderanfang kürzer statt Abbruch — wie im Simulator (ein Pfad).
+  for (let i = 0; i < 4; i++) {
+    const prev = prevTradingDayOrNull(start, assetClass, calendar);
+    if (prev === null) break;
+    start = prev;
+  }
   let n = 0;
   for (const t of trades) {
     const d1 = dayKey(t.entryTime);

@@ -15,12 +15,13 @@
  * OOS-Fenstern der Kandidaten liegen (Red-Team-Befund).
  */
 import { kaufenUndHalten, marktKette, type MarktBezug } from '../backtest/marktbezug.ts';
+import { BarSeries } from '../core/bars.ts';
 import type { Config } from '../core/config.ts';
 import { Journal, homePaths } from '../core/journal.ts';
 import { errMsg } from '../core/log.ts';
 import type { Calendar } from '../core/time.ts';
 import { DAY, dayKey } from '../core/time.ts';
-import type { BarSeriesLike, Ms, Strategy } from '../core/types.ts';
+import type { Bar, BarSeriesLike, Ms, Strategy } from '../core/types.ts';
 import {
   applyDecision,
   decidePromotion,
@@ -235,6 +236,21 @@ export function korbName(anzahl: number): string {
   return `Korb (${anzahl} Symbole)`;
 }
 
+/** Die Bars ab `start` (inkl.) — eine Kopie, keine Sicht. */
+function imFenster(bars: BarSeriesLike, start: Ms): BarSeriesLike {
+  let lo = 0;
+  let hi = bars.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (bars.t[mid]! < start) lo = mid + 1;
+    else hi = mid;
+  }
+  if (lo === 0) return bars;
+  const out: Bar[] = [];
+  for (let i = lo; i < bars.length; i++) out.push(bars.at(i));
+  return BarSeries.from(out);
+}
+
 function einheitenVon(input: OptimizeRunInput, pooled: boolean, log: (m: string) => void): Einheit[] {
   const geladen: { symbol: string; bars: BarSeriesLike }[] = [];
   const fehler: string[] = [];
@@ -246,6 +262,25 @@ function einheitenVon(input: OptimizeRunInput, pooled: boolean, log: (m: string)
     } catch (e) {
       fehler.push(`${symbol}: ${errMsg(e)}`);
       log(`${symbol}: ${errMsg(e)}`);
+    }
+  }
+
+  // Das Messfenster ist `lookbackDays` bis zum Ende der Daten — nicht „alles,
+  // was auf der Platte liegt". Der Cache wächst mit jedem tieferen Lauf; ohne
+  // diesen Schnitt hinge die Fold-Zahl davon ab, wer zuletzt wie tief geladen
+  // hat, und der nächtliche Lauf würde Jahr für Jahr stumm länger. Anker ist
+  // das Datenende, nicht die Wanduhr: Mit Stichtag enden die Daten dort.
+  if (geladen.length > 0) {
+    const ende = geladen.reduce((m, g) => Math.max(m, g.bars.t[g.bars.length - 1]! + 1), Number.NEGATIVE_INFINITY);
+    const fensterStart = ende - input.config.optimizer.lookbackDays * DAY;
+    for (let i = geladen.length - 1; i >= 0; i--) {
+      const g = geladen[i]!;
+      g.bars = imFenster(g.bars, fensterStart);
+      if (g.bars.length === 0) {
+        fehler.push(`${g.symbol}: keine Bars im Messfenster`);
+        log(`${g.symbol}: keine Bars im Messfenster (${input.config.optimizer.lookbackDays} Tage bis ${new Date(ende).toISOString().slice(0, 10)})`);
+        geladen.splice(i, 1);
+      }
     }
   }
 
