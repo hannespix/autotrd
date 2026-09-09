@@ -162,9 +162,13 @@ jobs:
           node src/cli.ts optimize --config "$CONFIG" --env "$RUNNER_TEMP/.env" --home var-probe --universe var-probe/universe.json $SHORT ${{ steps.asof.outputs.flag }} --equity 25000
 
       - name: Bericht als Artefakt
+        # `always()`: Gerade der Lauf, der NICHTS gemessen hat (Rückgabecode 3),
+        # ist der, dessen Bericht man lesen muss. Ohne dies verschwände er.
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: probe-${{ github.run_id }}
+          if-no-files-found: warn
           path: |
             var-probe/champion.json
             var-probe/universe.json

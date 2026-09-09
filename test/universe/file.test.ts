@@ -102,3 +102,29 @@ describe('mitUniverse', () => {
     expect(cfg.universe.symbols, 'die Ausgangs-Config bleibt unangetastet').toEqual(['SPY', 'AAPL']);
   });
 });
+
+describe('die Uhr des Laufs: Stichtag statt Wanduhr', () => {
+  const TAG = 86_400_000;
+  // Ein Stichtag vor einem halben Jahr — wie in der ersten Stichtags-Probe
+  // mit Universumswahl am 09.09.2026 (Stichtag 2026-03-06, 186 Tage).
+  const stichtag = Date.now() - 186 * TAG;
+
+  it('eine Auswahl VOM Stichtag ist im Stichtags-Lauf null Tage alt — nicht 186', () => {
+    const vomStichtag = datei(gueltig(['SPY', 'AAPL'], stichtag));
+    // Gegen die Wanduhr uralt …
+    expect(() => ladeUniverseDatei(vomStichtag, cfg)).toThrow(/186\.\d Tage alt/);
+    // … gegen die Uhr des Laufs genau richtig.
+    expect(ladeUniverseDatei(vomStichtag, cfg, stichtag)).toEqual(['SPY', 'AAPL']);
+  });
+
+  it('eine Auswahl von HEUTE in einem Stichtags-Lauf ist Lookahead ⇒ Abbruch', () => {
+    // Wer heute wählt und rückwärts misst, misst, wer groß GEBLIEBEN ist.
+    const vonHeute = datei(gueltig(['SPY', 'AAPL'], Date.now()));
+    expect(() => ladeUniverseDatei(vonHeute, cfg, stichtag)).toThrow(/JÜNGER als die Uhr dieses Laufs/);
+  });
+
+  it('zwei Schritte auf derselben Wanduhr dürfen sich um Sekunden unterscheiden', () => {
+    const ebenGeschrieben = datei(gueltig(['SPY', 'AAPL'], Date.now() + 5_000));
+    expect(ladeUniverseDatei(ebenGeschrieben, cfg)).toEqual(['SPY', 'AAPL']);
+  });
+});

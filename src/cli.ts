@@ -13,6 +13,11 @@
  *   halt       HALT-Datei setzen (keine Einstiege, Exits laufen weiter)
  *   resume     HALT-Datei entfernen; Drawdown-Halt nur mit --ack-drawdown
  *   readiness  Live-Reife aus dem Journal
+ *
+ * Rückgabecodes: 0 = in Ordnung, 1 = Abbruch/Vorbedingung verletzt,
+ * 2 = unbekannter Befehl, 3 = `optimize` hat NICHTS gemessen (siehe
+ * `nichtsGemessen`). „Kein Handel" ist Code 0 — das ist ein Urteil, kein
+ * Fehler.
  */
 import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -29,7 +34,7 @@ import { backfill } from './data/backfill.ts';
 import { ensureCalendar } from './data/calendar.ts';
 import { Engine } from './engine/engine.ts';
 import { createNotifier } from './notify/index.ts';
-import { loadDefaultDeps, runOptimization } from './optimize/run.ts';
+import { loadDefaultDeps, nichtsGemessen, runOptimization } from './optimize/run.ts';
 import { assessReadiness } from './readiness.ts';
 import { startStatusServer } from './status/http.ts';
 import { getStrategy, strategyIds } from './strategy/index.ts';
@@ -343,7 +348,7 @@ async function cmdUniverse(app: App, cli: Cli): Promise<number> {
   // sie ist hier nur Hysterese-Gedächtnis, keine Handelsanweisung.
   let vorher: string[] | null = null;
   try {
-    vorher = ladeUniverseDatei(app.paths.universe, app.config);
+    vorher = ladeUniverseDatei(app.paths.universe, app.config, now);
   } catch (e) {
     logger.warn(`Vorige Auswahl unbrauchbar (${errMsg(e)}) — Bestand kommt aus der Config.`);
   }
@@ -541,6 +546,19 @@ async function cmdOptimize(app: App, cli: Cli): Promise<number> {
   out();
   out(`Champion: ${app.paths.champion} · Report: ${res.reportPath}`);
   app.journal.append('champion', { symbols: Object.keys(res.champion.symbols), noTrade: Object.keys(res.champion.noTrade), report: res.reportPath });
+
+  // Bericht und Journal stehen — ERST DANN der Fehlercode. Wer einen Lauf
+  // untersucht, der nichts gemessen hat, braucht genau diesen Bericht; er
+  // darf nicht daran scheitern, dass der Prozess vorher aussteigt.
+  //
+  // „Kein Handel" bleibt grün (CLAUDE.md §0.9). Rot wird nur, was gar nicht
+  // erst zu einem Urteil gekommen ist.
+  if (nichtsGemessen(res.runs)) {
+    out();
+    out(`NICHT BEWERTBAR: keine der ${res.runs.length} Einheiten lieferte ein Ergebnis — es liegt kein Urteil vor, weder für noch gegen den Champion. Der Champion bleibt unverändert.`);
+    for (const r of res.runs) for (const e of r.errors) out(`  ${r.symbol}: ${e}`);
+    return 3;
+  }
   return 0;
 }
 

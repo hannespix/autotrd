@@ -90,12 +90,19 @@ export function bootstrap(opts: AppOptions): App {
   const home = opts.home ? resolve(opts.home) : homeDir(roh, env);
   ensureDir(home);
   const paths = homePaths(home);
+  // Ein Lauf hat EINE Uhr. Mit Stichtag ist es der Stichtag — für die Bars,
+  // für die Universumswahl und für die Frage, wie alt eine Auswahl ist.
+  // Deshalb steht der Stichtag VOR dem Laden der Auswahl: Am 09.09. schlug
+  // eine Stichtags-Messung fehl, weil die (korrekt auf den Stichtag
+  // datierte) Auswahl gegen die Wanduhr 186 Tage alt war.
+  const asOf = opts.asOf === undefined ? undefined : asOfMs(opts.asOf);
+  if (asOf !== undefined) logger.warn(`Stichtag ${opts.asOf}: Der Lauf sieht keine Daten danach (Messung).`);
   // Nächtliche Auswahl anwenden, falls verlangt. Fehlt sie, bleibt es beim
   // committeten Universum — nie stillschweigend etwas anderes handeln.
   let config = roh;
   if (opts.universeFile) {
     const pfad = opts.universeFile === 'auto' ? paths.universe : resolve(opts.universeFile);
-    const gewaehlt = ladeUniverseDatei(pfad, roh);
+    const gewaehlt = ladeUniverseDatei(pfad, roh, asOf ?? Date.now());
     if (gewaehlt) {
       config = mitUniverse(roh, gewaehlt);
       logger.info(`Universum aus der Auswahl: ${gewaehlt.length} Symbole (${pfad})`);
@@ -114,8 +121,6 @@ export function bootstrap(opts: AppOptions): App {
         })
       : null;
   const calendar = loadCalendarFile(paths.calendar) ?? undefined;
-  const asOf = opts.asOf === undefined ? undefined : asOfMs(opts.asOf);
-  if (asOf !== undefined) logger.warn(`Stichtag ${opts.asOf}: Der Lauf sieht keine Daten danach (Messung).`);
   return {
     config,
     ...(asOf === undefined ? {} : { asOf }),
