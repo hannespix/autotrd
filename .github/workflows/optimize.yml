@@ -100,10 +100,15 @@ jobs:
           node src/cli.ts optimize --config config/platform.yaml --env "$RUNNER_TEMP/.env" --home var --universe var/universe.json --equity 25000
 
       - name: Bericht als Artefakt
-        if: steps.keys.outputs.skip != '1'
+        # `always()`: Gerade der Lauf, der NICHTS gemessen hat (Rückgabecode 3),
+        # ist der, dessen Bericht man lesen muss. Die Veröffentlichungs-Schritte
+        # darunter tragen dieses `always()` bewusst NICHT — aus einem Lauf ohne
+        # Messung darf nichts nach Firestore.
+        if: always() && steps.keys.outputs.skip != '1'
         uses: actions/upload-artifact@v4
         with:
           name: optimize-report-${{ github.run_id }}
+          if-no-files-found: warn
           path: |
             var/champion.json
             var/universe.json

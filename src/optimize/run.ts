@@ -188,6 +188,32 @@ export interface OptimizeRunOutput {
   reportPath: string;
 }
 
+/**
+ * Hat der Lauf überhaupt etwas gemessen?
+ *
+ * Der Unterschied, auf den alles ankommt:
+ *
+ * - **„Keine Strategie hat die Gates bestanden"** ist ein ZULÄSSIGES Ergebnis
+ *   (CLAUDE.md §0.9). Dort wurde gemessen, und das Urteil lautet: nicht
+ *   handeln. Ein solcher Lauf ist ein Erfolg und bleibt grün.
+ * - **„Nicht bewertbar"** heißt, dass die MESSUNG selbst ausgefallen ist —
+ *   zu wenig Historie, Datenpanne, leerer Cache. Es liegt kein Urteil vor,
+ *   weder für noch gegen den Champion.
+ *
+ * Am 09.09. meldeten zwei Läufe „success", nachdem sie in 25 bzw. 31 Sekunden
+ * nichts gemessen hatten: Der Backfill konnte nicht nach hinten wachsen und
+ * fand 127 statt 815 bzw. 2900 Tage. Ein Loch, das sich als Erfolg meldet, ist
+ * schlimmer als ein Fehler — man sucht nicht danach. Deshalb ist die Frage
+ * hier eine eigene Funktion und der Aufrufer beendet sich mit einem Fehlercode.
+ *
+ * Geprüft wird `results`, nicht der Text der Entscheidung: Eine Einheit ohne
+ * einen einzigen Strategie-Lauf hat nichts gemessen, ganz gleich, wie die
+ * Begründung formuliert ist.
+ */
+export function nichtsGemessen(runs: readonly SymbolRun[]): boolean {
+  return runs.length > 0 && runs.every((r) => r.results.length === 0);
+}
+
 /* ───────────────────────── Einheiten: ein Symbol oder der Korb ───────────────────────── */
 
 /**
