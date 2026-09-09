@@ -15,10 +15,11 @@
  *  2. Der Schalter erreicht ein Kommando, das HANDELT. Was gehandelt wird,
  *     entscheidet die Config — nie die Kommandozeile.
  */
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
+import { parse as parseYaml } from 'yaml';
 import { asOfFrom } from '../../src/cli.ts';
 import { asOfMs, bootstrap, seriesForTimeframe, type App } from '../../src/app.ts';
 import { BarStore, barStoreRoot } from '../../src/data/store.ts';
@@ -51,7 +52,7 @@ function seed(home: string): void {
 
 describe('asOfFrom (Guard)', () => {
   it('gilt für die Mess-Kommandos', () => {
-    for (const cmd of ['universe', 'backtest', 'optimize']) expect(asOfFrom(cli(cmd, '2026-03-01')), cmd).toBe('2026-03-01');
+    for (const cmd of ['universe', 'fetch', 'backtest', 'optimize']) expect(asOfFrom(cli(cmd, '2026-03-01')), cmd).toBe('2026-03-01');
   });
 
   it('LEHNT AB für run — was gehandelt wird, entscheidet nie die Kommandozeile', () => {
@@ -59,7 +60,7 @@ describe('asOfFrom (Guard)', () => {
   });
 
   it('lehnt für jedes andere Kommando ab, statt still zu ignorieren', () => {
-    for (const cmd of ['doctor', 'fetch', 'status', 'flatten', 'halt', 'resume', 'readiness']) {
+    for (const cmd of ['doctor', 'status', 'flatten', 'halt', 'resume', 'readiness']) {
       expect(() => asOfFrom(cli(cmd, '2026-03-01')), cmd).toThrow(/gilt nur für/);
     }
   });
@@ -106,5 +107,44 @@ describe('Stichtag SCHNEIDET die Daten', () => {
     const ms = asOfMs('2026-09-03');
     expect(ms).toBeGreaterThan(msFromET(2026, 9, 3, 16, 0));
     expect(ms).toBeLessThan(msFromET(2026, 9, 4, 0, 0));
+  });
+});
+
+describe('probe.yml: der Stichtag erreicht JEDES Kommando des Laufs', () => {
+  // Läufe 34329754296, 34330619329, 34330659625 (09.09.): `universe` und
+  // `optimize` bekamen den Stichtag, `fetch` nicht. Es lud die korrekt auf
+  // den Stichtag datierte Auswahl mit der Wanduhr — 186 Tage alt — und brach
+  // ab. Der Code-Fix in bootstrap() war da und half nicht, weil der Workflow
+  // ihn nie erreichte: Ein Lauf hat EINE Uhr, und jedes Kommando muss sie
+  // bekommen.
+  const wf = parseYaml(readFileSync('.github/workflows/probe.yml', 'utf8')) as { jobs: { probe: { steps: { name?: string; run?: string }[] } } };
+  const cliSchritte = wf.jobs.probe.steps.filter((st) => (st.run ?? '').includes('src/cli.ts'));
+  const kommando = (run: string): string => /src\/cli\.ts (\w+)/.exec(run)![1]!;
+
+  it('die drei Kommandos sind universe, fetch, optimize — in dieser Reihenfolge', () => {
+    expect(cliSchritte.map((st) => kommando(st.run!))).toEqual(['universe', 'fetch', 'optimize']);
+  });
+
+  it.each(['universe', 'fetch', 'optimize'])('`%s` trägt ${{ steps.asof.outputs.flag }}', (cmd) => {
+    const st = cliSchritte.find((x) => kommando(x.run!) === cmd)!;
+    expect(st.run).toContain('${{ steps.asof.outputs.flag }}');
+  });
+
+  it('kein Kommando gleicht den fehlenden Stichtag mit eigener Tiefe aus', () => {
+    for (const st of cliSchritte) {
+      expect(st.run, kommando(st.run!)).not.toMatch(/--days/);
+      expect(st.run, kommando(st.run!)).not.toMatch(/outputs\.days/);
+    }
+  });
+});
+
+describe('fetch: rechnet mit der Uhr des Laufs', () => {
+  const src = readFileSync('src/cli.ts', 'utf8');
+  const start = src.indexOf('async function cmdFetch(');
+  const body = src.slice(start, src.indexOf('\nasync function ', start + 1));
+
+  it('nimmt app.asOf, wo es gesetzt ist, und sonst die Wanduhr — genau einmal', () => {
+    expect(body).toMatch(/const now = app\.asOf \?\? Date\.now\(\);/);
+    expect(body.match(/Date\.now\(\)/g)).toHaveLength(1);
   });
 });
