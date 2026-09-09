@@ -148,3 +148,27 @@ describe('fetch: rechnet mit der Uhr des Laufs', () => {
     expect(body.match(/Date\.now\(\)/g)).toHaveLength(1);
   });
 });
+
+describe('Streuner am Anfang (seriesForTimeframe)', () => {
+  const home = join(dir, 'streuner');
+  seed(home);
+
+  it('verwirft eine verirrte Einzelbar lange vor dem Datenbeginn — der Cache behält sie', () => {
+    const a = app(undefined, home);
+    const store = new BarStore(barStoreRoot(a.paths.bars, 'us_equity', 'iex'));
+    const streuner: Bar = { t: msFromET(2019, 11, 11, 9, 30), o: 50, h: 51, l: 49, c: 50, v: 7 };
+    store.upsert('SPY', '1Day', [streuner]);
+    expect(store.firstTime('SPY', '1Day')).toBe(streuner.t);
+    const serie = seriesForTimeframe(a, 'SPY');
+    expect(serie.length).toBe(5);
+    expect(serie.t[0]).toBe(msFromET(2026, 9, 1, 9, 30));
+    // Der Rückstand des Backfills rechnet weiter mit der Rohreihe.
+    expect(store.firstTime('SPY', '1Day')).toBe(streuner.t);
+  });
+
+  it('lässt eine dichte Reihe unberührt', () => {
+    const serie = seriesForTimeframe(app(undefined, home), 'NVDA');
+    expect(serie.length).toBe(5);
+    expect(serie.t[0]).toBe(msFromET(2026, 9, 1, 9, 30));
+  });
+});

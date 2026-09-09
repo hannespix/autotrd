@@ -119,7 +119,7 @@ des Bruttogewinns, siehe docs/ARCHITEKTUR.md §5a.10).
 | `core/types.ts` | Alle geteilten Typen (Bar, Strategy, Decision, OrderIntent, Trade, Metrics). |
 | `core/config.ts` | zod-Schema, `.env`-Parser, `resolveMode` (Doppel-Guard). |
 | `core/time.ts` | ET-Zeitlogik (DST via Intl), NYSE-Kalender-Fallback, Buckets. |
-| `core/bars.ts` | Kolumnare `BarSeries`, `aggregate()` aus Minutenbars. |
+| `core/bars.ts` | Kolumnare `BarSeries`, `aggregate()` aus Minutenbars, `anfangsStreuner()` (verirrte IEX-Einzelbars vor dem Datenbeginn — eine zog den Fold-Plan ins Leere). |
 | `core/session.ts` | Sitzungs-Sicht je geschlossener Bar (Minuten bis Schluss, letzte Bar). |
 | `core/logic.ts` | `decide()`: Tore, Sizing, Exits — für Backtest UND Live. |
 | `core/journal.ts`, `core/log.ts` | Journal/State, Logging mit Schwärzung. |

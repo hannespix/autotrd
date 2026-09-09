@@ -16,7 +16,9 @@
  */
 import { describe, expect, it } from 'vitest';
 import { mulberry32 } from '../../src/optimize/search.ts';
-import { korbVon, simulateWindow, walkForward, zeitachseVon } from '../../src/optimize/walkForward.ts';
+import { foldPlanForBars, korbVon, simulateWindow, walkForward, zeitachseVon } from '../../src/optimize/walkForward.ts';
+import { BarSeries } from '../../src/core/bars.ts';
+import { DAY } from '../../src/core/time.ts';
 import type { SimInput } from '../../src/optimize/walkForward.ts';
 import type { SimResult } from '../../src/core/types.ts';
 import { REWARD_PROFILE, dailyBars, fakeStrategy, makeFakeSimulate, simConfigOf, testConfig } from './fakes.ts';
@@ -65,6 +67,33 @@ describe('zeitachseVon', () => {
 
   it('ohne Bars gibt es keinen Walk-Forward', () => {
     expect(() => zeitachseVon(new Map())).toThrow(/Keine Bars/);
+  });
+
+  /** Eine Reihe mit einer verirrten Einzelbar `tage` Tage vor ihrem dichten Anfang (IEX: SO 2019-11-11). */
+  function mitStreuner(dicht: BarSeries, tage: number): BarSeries {
+    return BarSeries.from([{ t: dicht.t[0]! - tage * DAY, o: 100, h: 101, l: 99, c: 100, v: 1 }, ...dicht.toBars()]);
+  }
+
+  it('WÄCHTER: eine verirrte Einzelbar eines Kandidaten zieht die Achse nicht nach hinten (Stichtag 2025-03-07)', () => {
+    // Am 09.09.2026 zog SOs Bar vom 2019-11-11 die Achse acht Monate vor den
+    // Datenbeginn; der Fold-Planer legte einen Fold hinein, dessen IS-Fenster
+    // das Embargo verschluckte — die ganze Messung fiel aus.
+    const dicht = dailyBars(400);
+    const achse = zeitachseVon(new Map([['SPY', dicht], ['SO', mitStreuner(dicht, 259)]]));
+    expect(achse.t[0]).toBe(dicht.t[0]);
+    expect(achse.length).toBe(dicht.length);
+    // Derselbe Fold-Plan wie ohne den Streuner — sonst gäbe es einen Fold ohne Bars im IS-Fenster.
+    const ohne = foldPlanForBars(zeitachseVon(korbVon('SPY', dicht)), cfg.optimizer);
+    const mit = foldPlanForBars(achse, cfg.optimizer);
+    expect(mit.folds.length).toBe(ohne.folds.length);
+    expect(mit.folds[0]!.isStart).toBe(ohne.folds[0]!.isStart);
+  });
+
+  it('auch die Achse eines Einzelsymbols beginnt dicht', () => {
+    const dicht = dailyBars(60);
+    const achse = zeitachseVon(korbVon('SO', mitStreuner(dicht, 259)));
+    expect(achse.t[0]).toBe(dicht.t[0]);
+    expect(achse.length).toBe(dicht.length);
   });
 });
 

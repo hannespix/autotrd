@@ -8,7 +8,7 @@
  * Engine sehen würde.
  */
 import type { AssetClass, Bar, BarSeriesLike, Ms, TimeframeMin } from './types.ts';
-import { bucketStart, dayKeyFor, sessionBounds, type Calendar, type SessionBounds } from './time.ts';
+import { DAY, bucketStart, dayKeyFor, sessionBounds, type Calendar, type SessionBounds } from './time.ts';
 
 export class BarSeries implements BarSeriesLike {
   readonly length: number;
@@ -215,4 +215,54 @@ export function normalizeBars(bars: readonly Bar[]): Bar[] {
     else out.push(b);
   }
   return out;
+}
+
+/* ───────────────────────── Streuner am Anfang ───────────────────────── */
+
+/**
+ * Größte Lücke, die eine Reihe am Anfang noch als „dicht" durchgehen lässt:
+ * zehn Kalendertage. Kein Handelskalender kennt eine längere Pause zwischen
+ * zwei Sitzungen (nach 9/11 waren es sieben Tage); Minutenbars pausieren
+ * höchstens über ein verlängertes Wochenende.
+ */
+export const STREUNER_MAX_LUECKE: Ms = 10 * DAY;
+/** So viele Lücken in Folge müssen dicht sein, damit die Reihe dort beginnt. */
+export const STREUNER_DICHT = 5;
+
+/**
+ * Wie viele Bars am ANFANG einer Reihe Streuner sind — verirrte Einzelbars
+ * lange vor dem eigentlichen Datenbeginn.
+ *
+ * Alpacas IEX-Tageshistorie beginnt am 27.07.2020, trägt aber für manche
+ * Symbole eine einzelne Bar Monate oder Jahre davor (SPY 2018-11-01, SO
+ * 2019-11-11). Eine solche Bar ist kein Anfang: Sie zieht die vereinigte
+ * Zeitachse eines Korbs nach hinten, der Fold-Planer legt einen Fold hinein,
+ * dessen IS-Fenster fast leer ist, und das Embargo verschluckt es — die
+ * ganze Messung fällt aus (Stichtag 2025-03-07, 09.09.2026).
+ *
+ * Regel: Die Reihe beginnt bei der ersten Bar, ab der die nächsten `dicht`
+ * Lücken (oder alle verbleibenden, wenn es weniger sind) höchstens
+ * `maxLuecke` groß sind. Die letzte Bar erfüllt das immer — von einer Reihe
+ * aus lauter Einzelbars bleibt also eine, und die ist für jeden Aufrufer
+ * genauso unbrauchbar wie alle zusammen.
+ *
+ * Grenze der Regel: Ein Block von mehr als `dicht` dichten Bars vor einer
+ * langen Lücke gilt als echter Anfang. Das ist dann Datenlage, kein
+ * Streuner — und der Fold-Planer meldet sie mit seiner Embargo-Prüfung.
+ */
+export function anfangsStreuner(t: ArrayLike<number>, maxLuecke: Ms = STREUNER_MAX_LUECKE, dicht = STREUNER_DICHT): number {
+  const n = t.length;
+  for (let i = 0; i < n; i++) {
+    let ok = true;
+    for (let k = 0; k < dicht; k++) {
+      const j = i + k;
+      if (j + 1 >= n) break;
+      if (t[j + 1]! - t[j]! > maxLuecke) {
+        ok = false;
+        break;
+      }
+    }
+    if (ok) return i;
+  }
+  return 0;
 }

@@ -399,6 +399,26 @@ Erkundung steht auf 2000 — bis etwa März 2021, über den gesamten Abschwung
 2022. Der Corona-Crash liegt VOR dem Datenbeginn und ist mit diesem Feed
 unerreichbar. Wer ihn braucht, braucht den bezahlten SIP-Feed.
 
+**Nachtrag 09.09. (Stichtag 2025-03-07, zweiter Zyklus):** Dieselbe Sorte Bar
+hat den ersten Lauf mit Korb je Fold umgebracht — diesmal SO mit einer
+Einzelbar vom 2019-11-11 im Kandidatenpool. Das Messfenster (2000 Tage vor
+dem Stichtag) begann am 2019-09-16, also VOR dem Datenbeginn; die verirrte
+Bar lag darin, zog die vereinigte Zeitachse acht Monate nach hinten, und der
+Fold-Planer legte einen Fold hinein, dessen IS-Fenster (2019-12-29 …
+2020-12-28) nur 105 Bars hatte. Das Embargo (222 Bars) verschluckte es, für
+alle fünf Strategien, Exit-Code 3. Der Lauf mit demselben Stichtag im ersten
+Zyklus (§12) hatte nur Glück: Sein Fenster war noch der ganze Cache, und der
+begann 2020-07-27.
+
+Seither gilt die Regel `anfangsStreuner` (`core/bars.ts`): Eine Reihe beginnt
+bei der ersten Bar, ab der fünf Lücken in Folge höchstens zehn Kalendertage
+groß sind; alles davor ist Streuner und wird beim Laden verworfen
+(`seriesForTimeframe`), und die Zeitachse des Fold-Planers wendet dieselbe
+Regel noch einmal an. Der Cache behält die Rohbars, der Backfill misst seinen
+Rückstand weiter an ihnen. Grenze der Regel: Mehr als fünf dichte Bars vor
+einer langen Lücke gelten als echter Anfang — das ist dann Datenlage, und der
+Planer meldet sie wie bisher.
+
 ### 12. Vier Fenster, ein Bild — und ein Ausreißer, der keiner ist
 
 Am 09.09. wurden vier Fenster gemessen (`config/equity-1440.yaml`: 2000 Tage,
