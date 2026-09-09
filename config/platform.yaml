@@ -102,8 +102,10 @@ universe:
 # Gebühren 271 % bis 2438 % des Bruttogewinns — kein Kandidat kann dort
 # gewinnen, egal wie gut das Signal ist, und der nächtliche Lauf verbrannte
 # 43 Minuten auf dem aussichtslosesten Zeitrahmen, den wir haben. Auf
-# Tagesbars liegt derselbe Anteil bei 1,5–5,5 %. Das ist keine Kante, es
-# räumt nur das Hindernis weg, das jede Kante verdeckt hätte.
+# Tagesbars liegt derselbe Anteil bei 23–71 % (gemessen 09.09., dieselbe
+# Größe: die OOS-Kette). Das ist Faktor zehn besser, aber nicht gelöst — 71 %
+# reissen `fee_share` weiterhin. Es räumt das Hindernis weg, das jede Kante
+# verdeckt hätte; es ersetzt keine.
 #
 # Folgen im Rest dieser Datei: Die Fenster unten wachsen mit (365/90/90/180
 # statt 120/30/30/60 — bei einer Bar je Tag statt 78 braucht ein Fold Jahre,

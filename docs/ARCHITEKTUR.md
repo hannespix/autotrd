@@ -337,11 +337,27 @@ dem neuen Gate (09.09., Run 34297873726) zeigte, was das kostet:
 | orb_breakout | **271,2 %** |
 | momentum_pullback, mean_reversion | nicht berechenbar — es gab keinen Bruttogewinn |
 
-Dort kann kein Kandidat gewinnen, egal wie gut sein Signal ist. Auf Tagesbars
-liegt derselbe Anteil bei 1,5–5,5 %. Wir haben also jede Nacht 43 Minuten
-Rechenzeit auf den einen Zeitrahmen verwendet, in dem die Reibung jede Kante
-verdeckt, während die Erkundungen längst zeigten, dass langsamer die
-Kostenfrage löst (§5a.1).
+Dort kann kein Kandidat gewinnen, egal wie gut sein Signal ist. Wir haben also
+jede Nacht 43 Minuten Rechenzeit auf den einen Zeitrahmen verwendet, in dem die
+Reibung jede Kante verdeckt, während die Erkundungen längst zeigten, dass
+langsamer die Kostenfrage entschärft (§5a.1).
+
+**Korrektur (09.09., nach dem ersten Tagesbar-Produktivlauf).** Hier stand
+zuerst „auf Tagesbars liegt derselbe Anteil bei 1,5–5,5 %". Das war falsch und
+zu günstig: Verglichen wurde der Anteil der 5-Minuten-**OOS-Kette** mit dem der
+Tagesbar-**Holdouts** — zwei verschiedene Größen. Der Holdout handelt EINEN
+Parametersatz auf wenigen Trades, die OOS-Kette neun. Richtig ist:
+
+| Zeitrahmen | Gebührenanteil der OOS-Kette |
+|---|---|
+| 5 min | 271 % – 2 438 % |
+| Tagesbars | 23 % – 71 % |
+
+Der Gewinn ist real und groß — etwa Faktor zehn. Aber er löst die Kostenfrage
+NICHT: Im Lauf vom 09.09. riss `cross_sectional_momentum` das Gate `fee_share`
+mit 71 %, und 38 % bis 41 % bei den anderen sind kein Komfort, sondern eine
+Latte knapp unter der Schwelle. Wer hier weiter will, muss die Handelsfrequenz
+senken, nicht nur den Zeitrahmen dehnen.
 
 Seit dem 09.09. steht `config/platform.yaml` deshalb auf `timeframe: 1440`,
 mit den Fenstern der bewährten Erkundung (365/90/90/180 statt 120/30/30/60 —
@@ -353,6 +369,35 @@ bei einer Bar je Tag statt 78 braucht ein Fold Jahre, nicht Monate).
 verdeckt hätte. Mit `beats_market` und der Tagesbar-Bilanz aus §5a.8 ist die
 erwartete Folge weiterhin KEIN HANDEL — jetzt aber aus einem Grund, der etwas
 über die Strategien sagt statt über die Gebührenordnung.
+
+### 11. Wie tief wir überhaupt messen können
+
+Der Versuch, acht Jahre zu messen, scheiterte am 09.09. nicht an der Config,
+sondern an der Datenquelle — und das Protokoll sagt es genau:
+
+```
+SPY     1538   2018-11-01 … 2026-09-08
+NVDA    1537   2020-07-27 … 2026-09-08
+…alle 29 übrigen: 2020-07-27
+```
+
+Der Backfill holte 43 492 Bars, vollständig. Aber die **IEX-Historie dieses
+Kontos beginnt am 27.07.2020**, für alle Symbole auf denselben Tag genau.
+Einzig SPY trägt eine verirrte Bar vom 2018-11-01 — und genau die setzte den
+gemeldeten Datenbereich auf „2018-11-01 … 2026-09-08".
+
+Der Lauf brach ab, weil im ersten Fold-Fenster 2019-01-13 … 2020-01-13 **null**
+Bars lagen und das Embargo es vollständig verschluckte.
+
+**Die Lehre ist allgemein:** Ein Datenbereich nennt die erste und die letzte
+Bar — nicht, ob dazwischen etwas liegt. Eine einzige Ausreißer-Bar genügt, um
+ihn glaubwürdig aussehen zu lassen. Ich hatte den Bereich zuerst als Beleg
+gelesen, dass die Tiefe angekommen sei.
+
+Daraus folgt die harte Grenze: **höchstens rund 2230 Tage** messbar. Die
+Erkundung steht auf 2000 — bis etwa März 2021, über den gesamten Abschwung
+2022. Der Corona-Crash liegt VOR dem Datenbeginn und ist mit diesem Feed
+unerreichbar. Wer ihn braucht, braucht den bezahlten SIP-Feed.
 
 ### Was das für den Betrieb heißt
 
