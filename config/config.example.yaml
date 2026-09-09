@@ -19,6 +19,18 @@ broker:
   # (alle Börsen, kostenpflichtiges Alpaca-Datenabo). Immer derselbe Feed
   # für Messung und Handel — sonst misst man etwas anderes, als man handelt.
   feed: iex
+  # Bereinigung der TAGESBARS (Alpaca adjustment): raw | split | dividend | all.
+  # raw (Default) sind Preisbars, wie sie gehandelt wurden — ohne Ausschüttungen
+  # und Splits. `all` rechnet beides heraus: richtig für Signale auf Anleihe-
+  # und Dividenden-ETFs (TLT, IEF, LQD, HYG), denen roh 3–6 % Rendite im Jahr
+  # fehlen und die im Momentum-Vergleich mit Aktien-ETFs zu schwach aussehen.
+  # Wirkt nur auf Tagesbars (timeframe 1440 und die Universumswahl);
+  # Minutenbars bleiben roh, die Ausführung läuft ohnehin zu echten Kursen.
+  # Jede Bereinigung hat ihren eigenen Bars-Cache
+  # (bars/<assetClass>/<feed>-adj-<wert>/); bereinigte Tagesbars werden bei
+  # jedem fetch vollständig neu geladen, weil Alpaca sie relativ zum
+  # Abrufdatum bereinigt.
+  adjustment: raw
 
 universe:
   # us_equity | crypto. Krypto handelt 24/7 in UTC-Tagen, kein Short.
@@ -162,7 +174,32 @@ optimizer:
   #   - { strategy: regime_allocation, params: { lookback: 120 }, label: Owner-Satz }
   # Ohne Suche gibt es keine Trials — der Deflated Sharpe ist bei ihnen
   # „nicht anwendbar" (wie beim Amtsinhaber); alles andere gilt voll.
+  # `tier` (alpha | basis, Vorgabe alpha): `basis` ist die Basis-Allokation —
+  # Marktexposition mit Trendfilter als Standard statt „nichts". Sie wird in
+  # EINER durchgehenden Simulation über die ganze OOS-Kette gemessen
+  # (Positionen über Fold-Grenzen, kein IS-Fenster) und an der Basis-Latte
+  # unten geprüft, nie an den zehn Alpha-Gates; sie wird nie Alpha-Champion,
+  # sondern steht als eigener Block `basis` in champion.json. Höchstens ein
+  # Basis-Kandidat je Config, nur auf festem Korb (foldMembership: fixed
+  # oder kein Kandidatenpool):
+  #   - { strategy: regime_allocation, params: { lookback: 126 }, label: Basis V2, tier: basis }
   fixedCandidates: []
+  # Basis-Latte: Gate-Gruppe `basis` für Festkandidaten mit tier: basis, alle
+  # vier Gates müssen bestehen. Maßstab ist Kaufen-und-Halten des Korbs,
+  # gleichgewichtet, ohne Kosten, über dieselbe Range; SPY nur im Bericht.
+  # Das ist die ausführbare Form der Vorregistrierung — nach dem Lauf
+  # geänderte Schwellen sind eine neue Version, keine Korrektur.
+  basis:
+    # basis_drawdown: MaxDD je Einheit mittlerer Exposure ≤ (1 − Anteil) ×
+    # MaxDD des Korbs. Je Einheit Exposure, weil eine Basis, die halb in
+    # Kasse steht, sonst automatisch den halben Drawdown hätte (Prüfbefund K2).
+    minDrawdownReduction: 0.25
+    # basis_sharpe: Sharpe p. a. ≥ Faktor × Sharpe des Korbs (Korb ≤ 0 ⇒
+    # Basis > 0 genügt).
+    minSharpeRatio: 0.9
+    # basis_costs: Gebühren gesamt / |Netto| höchstens dieser Anteil.
+    # basis_net_profit: Netto > 0, auch bei Kosten × stressCostMultiplier.
+    maxCostShare: 0.1
 
 costs:
   # Slippage je Seite in Basispunkten (Marktorder gegen den Spread).

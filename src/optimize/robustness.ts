@@ -11,10 +11,10 @@
  *   Zahl um die Zahl der Trials und ihre Streuung (Bailey/López de Prado).
  *   DSR auf OOS wäre doppelt konservativ und nicht lehrbuchgemäß.
  */
-import type { OptimizerConfig } from '../core/config.ts';
+import type { BasisConfig, OptimizerConfig } from '../core/config.ts';
 import { median, objectiveValue, sampleVariance, type ObjectiveId } from './objective.ts';
 import { neighbors, wirksamerSuchraum } from './search.ts';
-import { candidateRange, korbVon, simulateWindow, zeitachseVon, type WfaResult, type WindowSimArgs } from './walkForward.ts';
+import { candidateRange, korbVon, simulateWindow, zeitachseVon, type BasisKennzahlen, type WfaResult, type WindowSimArgs } from './walkForward.ts';
 
 /* ───────────────────────── Injektionspunkt Statistik ───────────────────────── */
 
@@ -446,6 +446,99 @@ export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResul
         ? `OOS-Sharpe nicht berechenbar — gilt als durchgefallen (Latte ${latte.toFixed(2)}, ${quelle})`
         : `OOS-Sharpe p. a. ${srAnnual.toFixed(2)} gegen ${latte.toFixed(2)} aus ${quelle}` +
           (srAnnual > latte ? '' : ' — kaufen und liegenlassen war besser'),
+  });
+
+  return { pass: gates.every((g) => g.pass), gates };
+}
+
+/* ───────────────────────── Die Basis-Latte (Gate-Gruppe `basis`) ───────────────────────── */
+
+export interface BasisGateInput {
+  /** Schwellen aus `optimizer.basis`. */
+  basis: BasisConfig;
+  /** Kostenfaktor des Stress-Laufs (`optimizer.stressCostMultiplier`) — nur für die Notiz. */
+  stressCostMultiplier: number;
+  /** Aus der EINEN durchgehenden Simulation (`basisSimulation`). */
+  kennzahlen: Pick<BasisKennzahlen, 'netProfit' | 'stressNetProfit' | 'sharpe' | 'maxDrawdownPct' | 'avgExposure' | 'exposureNormMaxDD' | 'fees'>;
+  /**
+   * Der Maßstab: Kaufen-und-Halten des Korbs, gleichgewichtet, ohne Kosten,
+   * über DIESELBE Range. null = nicht berechenbar — dann fallen Drawdown- und
+   * Sharpe-Gate; die Latte wird nie vakant, indem man den Maßstab weglässt.
+   */
+  korb: { sharpe: number | null; maxDrawdownPct: number } | null;
+}
+
+/**
+ * Die zweite Latte, ganz im Code (Prüfbefund K1/M15): vier Gates, alle
+ * müssen bestehen, kein Trade-Minimum — Aktivität wird berichtet, nicht
+ * bewertet. Sie misst etwas anderes als die zehn Alpha-Gates: nicht „gibt es
+ * eine Kante gegen SPY", sondern „ist Marktexposition mit Trendfilter
+ * besser als den Korb liegenzulassen — je Einheit Exposure, nach Kosten".
+ */
+export function basisGates(a: BasisGateInput): { pass: boolean; gates: GateResult[] } {
+  const { basis, kennzahlen: k, korb } = a;
+  const gates: GateResult[] = [];
+
+  // Netto > 0 UND bei Stress > 0 — ein Standard, der Geld verliert, ist schlechter als Kasse.
+  gates.push({
+    name: 'basis_net_profit',
+    pass: k.netProfit > 0 && k.stressNetProfit > 0,
+    value: k.netProfit,
+    threshold: 0,
+    note: `Netto ${k.netProfit.toFixed(2)}, bei Kosten ×${a.stressCostMultiplier}: ${k.stressNetProfit.toFixed(2)} (beide > 0 nötig)`,
+  });
+
+  // Drawdown je Einheit Exposure gegen den liegengelassenen Korb (Prüfbefund
+  // K2): Eine Basis, die die halbe Zeit in Kasse steht, hat automatisch den
+  // halben rohen Drawdown — der Vergleich muss die Exposure herausrechnen,
+  // sonst misst er Kasse, nicht Regel. Ohne Exposure gibt es kein Urteil.
+  const ddLatte = korb === null ? null : (1 - basis.minDrawdownReduction) * korb.maxDrawdownPct;
+  const ddWert = k.exposureNormMaxDD;
+  gates.push({
+    name: 'basis_drawdown',
+    pass: ddLatte !== null && ddWert !== null && ddWert <= ddLatte,
+    value: ddWert,
+    threshold: ddLatte,
+    note:
+      korb === null
+        ? 'Korb liegenlassen nicht berechenbar — nicht bewertbar, gilt als durchgefallen'
+        : ddWert === null
+          ? `nicht bewertbar (mittlere Exposure ${k.avgExposure === null ? 'unbekannt' : '0'}) — gilt als durchgefallen; roher MaxDD ${k.maxDrawdownPct.toFixed(2)} %, Korb ${korb.maxDrawdownPct.toFixed(2)} %`
+          : `MaxDD ${k.maxDrawdownPct.toFixed(2)} % / mittlere Exposure ${(k.avgExposure! * 100).toFixed(1)} % = ${ddWert.toFixed(2)} % ` +
+            `gegen (1 − ${basis.minDrawdownReduction}) × Korb ${korb.maxDrawdownPct.toFixed(2)} % = ${ddLatte!.toFixed(2)} %`,
+  });
+
+  // Ertrag je Risiko: mindestens der Anteil des Korb-Sharpe; ein Korb ohne
+  // positiven Sharpe setzt keine Latte — dann muss die Basis nur selbst positiv sein.
+  const korbSr = korb?.sharpe ?? null;
+  const srLatte = korb === null ? null : korbSr !== null && korbSr > 0 ? basis.minSharpeRatio * korbSr : 0;
+  const sr = k.sharpe;
+  gates.push({
+    name: 'basis_sharpe',
+    pass: korb !== null && sr !== null && (korbSr !== null && korbSr > 0 ? sr >= srLatte! : sr > 0),
+    value: sr,
+    threshold: srLatte,
+    note:
+      korb === null
+        ? 'Korb liegenlassen nicht berechenbar — nicht bewertbar, gilt als durchgefallen'
+        : sr === null
+          ? 'Sharpe der Basis nicht berechenbar (Varianz 0?) — gilt als durchgefallen'
+          : korbSr !== null && korbSr > 0
+            ? `Sharpe p. a. ${sr.toFixed(2)} gegen ${basis.minSharpeRatio} × Korb ${korbSr.toFixed(2)} = ${srLatte!.toFixed(2)}`
+            : `Korb-Sharpe ${korbSr === null ? 'nicht berechenbar' : korbSr.toFixed(2)} ≤ 0 setzt keine Latte — Basis-Sharpe ${sr.toFixed(2)} muss > 0 sein`,
+  });
+
+  // Gebühren gesamt gegen den Betrag des Nettos. Netto 0 ⇒ Anteil unendlich ⇒ nicht bestanden.
+  const costShare = k.netProfit !== 0 ? k.fees / Math.abs(k.netProfit) : null;
+  gates.push({
+    name: 'basis_costs',
+    pass: costShare !== null && costShare <= basis.maxCostShare,
+    value: costShare,
+    threshold: basis.maxCostShare,
+    note:
+      costShare === null
+        ? `Netto 0 — Gebührenanteil nicht definiert, gilt als durchgefallen (Gebühren ${k.fees.toFixed(2)})`
+        : `Gebühren ${k.fees.toFixed(2)} / |Netto| ${Math.abs(k.netProfit).toFixed(2)} = ${(costShare * 100).toFixed(1)} %`,
   });
 
   return { pass: gates.every((g) => g.pass), gates };

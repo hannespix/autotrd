@@ -73,7 +73,11 @@ jobs:
         run: npm ci
 
       # Eigener Cache-Schlüssel: Krypto-Bars dürfen den Aktien-Cache von
-      # optimize.yml nicht überschreiben und umgekehrt.
+      # optimize.yml nicht überschreiben und umgekehrt. Der Schlüssel hasht die
+      # ganze Config — ein Wechsel von `broker.adjustment` (Bereinigung der
+      # Tagesbars) ändert ihn also mit; und bereinigte Bars liegen ohnehin in
+      # einer eigenen Wurzel (bars/<assetClass>/<feed>-adj-<wert>/,
+      # src/data/store.ts), ein alter Cache kann nie als bereinigt gelesen werden.
       - name: Bars-Cache wiederherstellen
         uses: actions/cache@v4
         with:

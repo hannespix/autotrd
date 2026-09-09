@@ -5,7 +5,7 @@
  * eine wertlose Kante gut aussehen und wird dabei nie geprüft.
  */
 import { describe, expect, it } from 'vitest';
-import { kaufenUndHalten } from '../../src/backtest/marktbezug.ts';
+import { kaufenUndHalten, kaufenUndHaltenKurve, kurvenstandVor } from '../../src/backtest/marktbezug.ts';
 import { BarSeries } from '../../src/core/bars.ts';
 import { msFromET, parseDay } from '../../src/core/time.ts';
 import type { Bar, BarSeriesLike } from '../../src/core/types.ts';
@@ -112,5 +112,37 @@ describe('kaufenUndHalten', () => {
     const spanne = s.t[1]! - s.t[0]!;
     const r = kaufenUndHalten({ bars, range: { start: s.t[0]!, end: s.t[1]! + spanne }, ...BASIS });
     expect(r!.days).toBe(2);
+  });
+});
+
+describe('kaufenUndHaltenKurve / kurvenstandVor: dieselbe Kurve, in Fenster geschnitten', () => {
+  const BASIS_ARGS = { assetClass: 'us_equity' as const };
+
+  it('Kurve beginnt bei 1, je Handelstag ein Punkt mit der Zeit seiner letzten Bar; Stand vor einem Zeitpunkt ist der letzte Punkt davor', () => {
+    const bars = korb({ AAA: [100, 110, 120, 130] });
+    const s = bars.get('AAA')!;
+    const k = kaufenUndHaltenKurve({ bars, range: WEIT, ...BASIS_ARGS })!;
+    expect(k.symbole).toBe(1);
+    expect([...k.kurve]).toEqual([1, 1.1, 1.2, 1.3]);
+    expect([...k.zeiten]).toEqual([s.t[0], s.t[1], s.t[2], s.t[3]]);
+    expect(kurvenstandVor(k, s.t[0]!)).toBe(1); // vor dem ersten Punkt: der Einstand
+    expect(kurvenstandVor(k, s.t[2]!)).toBe(1.1);
+    expect(kurvenstandVor(k, s.t[3]! + 1)).toBe(1.3);
+  });
+
+  it('Scheiben summieren sich zur Rendite der ganzen Range — dieselbe Kurve wie kaufenUndHalten, nicht je Fenster neu gewichtet', () => {
+    const bars = korb({ AAA: [100, 110, 120, 130, 90, 95], BBB: [50, 50, 60, 40, 40, 44] });
+    const s = bars.get('AAA')!;
+    const k = kaufenUndHaltenKurve({ bars, range: WEIT, ...BASIS_ARGS })!;
+    const ganz = kaufenUndHalten({ bars, range: WEIT, ...BASIS_ARGS, periodsPerYear: 252 })!;
+    const grenzen = [0, s.t[2]!, s.t[4]!, Number.MAX_SAFE_INTEGER];
+    let summe = 0;
+    for (let i = 0; i + 1 < grenzen.length; i++) summe += kurvenstandVor(k, grenzen[i + 1]!) - kurvenstandVor(k, grenzen[i]!);
+    expect(summe).toBeCloseTo(ganz.netReturnPct / 100, 12);
+    expect(k.kurve[k.kurve.length - 1]! - 1).toBeCloseTo(ganz.netReturnPct / 100, 12);
+  });
+
+  it('ohne zwei Handelstage im Fenster: null — wie kaufenUndHalten', () => {
+    expect(kaufenUndHaltenKurve({ bars: korb({ AAA: [100] }), range: WEIT, ...BASIS_ARGS })).toBeNull();
   });
 });

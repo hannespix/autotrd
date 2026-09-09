@@ -302,6 +302,13 @@ export interface Metrics {
 export interface EquityPoint {
   t: Ms;
   equity: number;
+  /**
+   * Brutto-Exposure an dieser Bar als Anteil der Equity (Σ |Stück × Schluss| /
+   * Equity; 0 = Kasse, 1 = voll investiert, > 1 nur mit Hebel). Der Simulator
+   * setzt es je Bar der Range; Fakes dürfen es weglassen — wer es braucht
+   * (Basis-Latte), sagt dann „nicht bewertbar", nie „bestanden".
+   */
+  exposure?: number;
 }
 
 export interface SimResult {

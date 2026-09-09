@@ -301,14 +301,21 @@ export function simulate(input: SimInput): SimResult {
     return n;
   };
 
+  // Brutto-Marktwert der offenen Positionen (Σ |Stück × letzter Schluss|) —
+  // Zähler der Exposure je Bar; Long und Short zählen beide positiv.
+  let grossValue = 0;
   const markEquity = (): void => {
     let mv = 0;
+    let gross = 0;
     for (const s of syms) {
       const p = s.pos;
       if (!p) continue;
-      mv += p.side === 'long' ? p.qty * s.lastClose : -p.qty * s.lastClose;
+      const value = p.qty * s.lastClose;
+      mv += p.side === 'long' ? value : -value;
+      gross += Math.abs(value);
     }
     equity = cash + mv;
+    grossValue = gross;
   };
 
   const updateExcursion = (s: SymState, l: number, h: number): void => {
@@ -570,7 +577,11 @@ export function simulate(input: SimInput): SimResult {
         s.pendingStop = it.stop;
       }
     }
-    equityCurve.push({ t, equity });
+    // Exposure zum Schluss dieser Bar: was JETZT im Buch steht (Fills und
+    // Exits dieser Bar eingerechnet, die eben entschiedenen Intents noch
+    // nicht — sie füllen erst am nächsten Open). Bei Equity ≤ 0 ist das Konto
+    // tot; 0 statt eines negativen oder unendlichen Anteils.
+    equityCurve.push({ t, equity, exposure: equity > 0 ? grossValue / equity : 0 });
     dayCloseEquity = equity;
     dayHadPoints = true;
   }

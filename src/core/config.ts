@@ -13,6 +13,7 @@ import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import { TIMEFRAMES, type TimeframeMin } from './types.ts';
 import { normalizeUserSymbol } from '../alpaca/symbols.ts';
+import { BAR_ADJUSTMENTS } from '../alpaca/types.ts';
 
 const pct = (max: number) => z.number().min(0).max(max);
 
@@ -34,8 +35,24 @@ export const ConfigSchema = z.object({
       mode: z.enum(['paper', 'live']).default('paper'),
       /** Datenfeed für Backtest UND Live — immer derselbe, sonst misst man etwas anderes als man handelt. */
       feed: z.enum(['iex', 'sip']).default('iex'),
+      /**
+       * Bereinigung der TAGESBARS (Alpaca `adjustment`). `raw` bleibt der
+       * Default: Preisbars, wie sie gehandelt wurden — ohne Ausschüttungen
+       * und Splits. `all` rechnet beides heraus. Für Signale auf Anleihe- und
+       * Dividenden-ETFs (TLT, IEF, LQD, HYG) ist das die richtige Reihe:
+       * Roh fehlen ihnen 3–6 % Rendite im Jahr, und im Momentum-Vergleich
+       * mit Aktien-ETFs fallen sie systematisch zu schwach aus; auch die
+       * Benchmark SPY liegt roh zu niedrig (Red-Team 09.09.2026, M7).
+       *
+       * Was der Schalter NICHT tut: Minutenbars bleiben immer roh (aus ihnen
+       * aggregiert die Engine die Bars für die Ausführung, und die läuft zu
+       * echten Kursen), Streams sind unberührt. Je Bereinigung gibt es einen
+       * eigenen Bars-Cache (`data/store.ts`, `barStoreRoot`), damit sich
+       * bereinigte und rohe Tagesbars nie mischen.
+       */
+      adjustment: z.enum(BAR_ADJUSTMENTS).default('raw'),
     })
-    .default({ mode: 'paper', feed: 'iex' }),
+    .default({ mode: 'paper', feed: 'iex', adjustment: 'raw' }),
   universe: z
     .object({
       assetClass: z.enum(['us_equity', 'crypto']).default('us_equity'),
@@ -218,6 +235,17 @@ export const ConfigSchema = z.object({
        * ist der Name im Bericht. Ohne Suche gibt es keine Trials: Der
        * Deflated Sharpe ist bei ihnen „nicht anwendbar" (wie beim
        * Amtsinhaber), alle anderen Gates gelten in voller Schärfe.
+       *
+       * `tier` trennt zwei Latten, beide im Code (Prüfbefund K1/M15,
+       * 09.09.2026): `alpha` (Vorgabe) ist das Obige. `basis` ist die
+       * Basis-Allokation — Marktexposition mit Trendfilter als Standard
+       * statt „nichts": EINE durchgehende Simulation über die ganze
+       * OOS-Kette (Positionen über Fold-Grenzen, ein Buch, ein Peak, kein
+       * IS-Fenster), gemessen an der Gate-Gruppe `basis` gegen den
+       * liegengelassenen Korb (`optimizer.basis`). Ein Basis-Kandidat läuft
+       * NICHT durch die zehn Alpha-Gates und wird nie Alpha-Champion; sein
+       * Ergebnis steht als eigener Block `basis` in der Champion-Datei.
+       * Höchstens ein Basis-Kandidat je Config, nur auf festem Korb.
        */
       fixedCandidates: z
         .array(
@@ -225,9 +253,33 @@ export const ConfigSchema = z.object({
             strategy: z.string().min(1),
             params: z.record(z.string(), z.number()).default({}),
             label: z.string().min(1).optional(),
+            tier: z.enum(['alpha', 'basis']).default('alpha'),
           }),
         )
         .default([]),
+      /**
+       * Basis-Latte: die Gate-Gruppe `basis` für Festkandidaten mit
+       * `tier: basis` (robustness.ts, `basisGates`). Das ist die ausführbare
+       * Form der Vorregistrierung — Schwellen, die nach dem Lauf geändert
+       * werden, sind eine neue Version, keine Korrektur. Der Maßstab ist
+       * Kaufen-und-Halten des Korbs, gleichgewichtet, ohne Kosten, über
+       * DIESELBE Range wie die durchgehende Simulation; SPY nur im Bericht.
+       *
+       * Warum je Einheit Exposure (Prüfbefund K2): Eine Basis, die die
+       * halbe Zeit in Kasse steht, hat automatisch den halben Drawdown —
+       * ein roher MaxDD-Vergleich misst dann Exposure, nicht Regel. Netto
+       * bei Kosten × `stressCostMultiplier` gehört zum Netto-Gate.
+       */
+      basis: z
+        .object({
+          /** MaxDD / mittlere Exposure ≤ (1 − dieser Anteil) × MaxDD des Korbs liegenlassen. */
+          minDrawdownReduction: z.number().min(0).max(1).default(0.25),
+          /** Sharpe p. a. ≥ dieser Faktor × Sharpe des Korbs liegenlassen (Korb ≤ 0 ⇒ Basis > 0 genügt). */
+          minSharpeRatio: z.number().min(0).default(0.9),
+          /** Gebühren gesamt / |Netto| höchstens dieser Anteil. */
+          maxCostShare: z.number().min(0).default(0.1),
+        })
+        .default({ minDrawdownReduction: 0.25, minSharpeRatio: 0.9, maxCostShare: 0.1 }),
     })
     .default({
       strategies: ['trend_donchian', 'momentum_pullback', 'mean_reversion'],
@@ -250,6 +302,7 @@ export const ConfigSchema = z.object({
       pooled: false,
       foldMembership: 'point_in_time',
       fixedCandidates: [],
+      basis: { minDrawdownReduction: 0.25, minSharpeRatio: 0.9, maxCostShare: 0.1 },
     }),
   costs: z
     .object({
@@ -316,6 +369,12 @@ export type CostConfig = Config['costs'];
 export type OptimizerConfig = Config['optimizer'];
 /** Ein Festkandidat aus `optimizer.fixedCandidates`. */
 export type FixedCandidateConfig = OptimizerConfig['fixedCandidates'][number];
+/** Schwellen der Basis-Latte (`optimizer.basis`). */
+export type BasisConfig = OptimizerConfig['basis'];
+/** Rohform VOR den Defaults — was eine YAML-Datei oder ein Test hinschreibt. */
+export type ConfigInput = z.input<typeof ConfigSchema>;
+export type OptimizerInput = NonNullable<ConfigInput['optimizer']>;
+export type FixedCandidateInput = NonNullable<OptimizerInput['fixedCandidates']>[number];
 
 /* ───────────────────────── Umgebung ───────────────────────── */
 
@@ -381,6 +440,16 @@ export function parseConfig(raw: unknown): Config {
     // Größer ⇒ Lücken in der OOS-Kette; kleiner ⇒ dieselben OOS-Tage zählen mehrfach
     // (Red-Team: bei step 10 / oos 30 wären Trades und PSR-n um ×2,75 aufgeblasen).
     throw new ConfigError('optimizer.stepDays muss gleich optimizer.oosDays sein (lückenlose, überlappungsfreie OOS-Kette).');
+  }
+  // EIN Basis-Block in der Champion-Datei, EIN Basis-Kandidat je Config: Zwei
+  // Basis-Kandidaten hießen „die bessere von zweien" — das wäre eine Suche
+  // durch die Hintertür, die die Vorregistrierung gerade ausschließt.
+  const basisKandidaten = cfg.optimizer.fixedCandidates.filter((fc) => fc.tier === 'basis');
+  if (basisKandidaten.length > 1) {
+    throw new ConfigError(
+      `optimizer.fixedCandidates: höchstens EIN Festkandidat mit tier: basis (gefunden ${basisKandidaten.length}) — ` +
+        'eine zweite Variante ist eine neue Vorregistrierung, kein Vergleich im selben Lauf.',
+    );
   }
   // Tiefe Historie nur dort, wo sie billig ist. Intraday bleibt bei 2000 Tagen:
   // 4000 Tage × 78 Bars × 30 Symbole wären rund 9 Mio. Bars je Lauf — der

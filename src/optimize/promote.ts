@@ -55,11 +55,38 @@ export interface NoTradeEntry {
   bestScore: number | null;
 }
 
+/**
+ * Die Basis-Stufe der Champion-Datei: das Ergebnis der Basis-Latte
+ * (`basisGates`, Gate-Gruppe `basis`) für den Festkandidaten mit
+ * `tier: basis`. Sie konkurriert NICHT mit `symbols` — sie ist keine
+ * Alpha-Behauptung, sondern „Marktexposition mit Trendfilter statt nichts".
+ * `pass` entscheidet, ob eine spätere Engine-Stufe sie benutzen darf; die
+ * Messung schreibt den Block bei bestanden UND nicht bestanden, damit der
+ * Befund nachlesbar bleibt. Fehlt der Basis-Kandidat in der Config, räumt
+ * der nächste Lauf den Block (kein veralteter Befund überlebt).
+ */
+export interface ChampionBasis {
+  version: 1;
+  strategy: string;
+  params: Params;
+  /** Der Korb, auf dem gemessen wurde — fest, kein Korb je Fold. */
+  symbols: string[];
+  label: string;
+  timeframe: TimeframeMin;
+  pass: boolean;
+  gates: GateResult[];
+  measuredAt: Ms;
+  /** Commit der Config/Vorregistrierung, mit der gemessen wurde (falls der Aufrufer ihn kennt). */
+  configCommit?: string;
+}
+
 export interface ChampionFile {
   version: 1;
   updatedAt: Ms;
   symbols: Record<string, ChampionEntry>;
   noTrade: Record<string, NoTradeEntry>;
+  /** Basis-Stufe (siehe `ChampionBasis`); fehlt in alten Dateien und ohne Basis-Kandidat. */
+  basis?: ChampionBasis;
 }
 
 export function emptyChampionFile(now: Ms): ChampionFile {
@@ -70,12 +97,24 @@ export function loadChampion(path: string): ChampionFile | null {
   const raw = readJson<Partial<ChampionFile>>(path);
   if (raw === null) return null;
   if (raw.version !== 1) throw new Error(`${path}: unbekannte Champion-Version ${String(raw.version)} — Datei prüfen statt überschreiben`);
-  return {
+  const file: ChampionFile = {
     version: 1,
     updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : 0,
     symbols: raw.symbols ?? {},
     noTrade: raw.noTrade ?? {},
   };
+  // Additiv: alte Dateien haben keinen Block; ein Block mit fremder Version ist wie eine fremde Datei-Version.
+  if (raw.basis !== undefined && raw.basis !== null) {
+    if (raw.basis.version !== 1) throw new Error(`${path}: unbekannte Basis-Version ${String(raw.basis.version)} — Datei prüfen statt überschreiben`);
+    file.basis = raw.basis;
+  }
+  return file;
+}
+
+/** Basis-Block setzen (gemessen) oder räumen (kein Basis-Kandidat mehr) — neues Objekt, `symbols`/`noTrade` unberührt. */
+export function mitBasis(file: ChampionFile, basis: ChampionBasis | null, now: Ms): ChampionFile {
+  const { basis: _alt, ...rest } = file;
+  return basis ? { ...rest, updatedAt: now, basis } : { ...rest, updatedAt: now };
 }
 
 export function saveChampion(path: string, file: ChampionFile): void {
@@ -213,7 +252,10 @@ export function applyDecision(a: {
       noTrade[a.symbol] = note;
       break;
   }
-  return { version: 1, updatedAt: a.now, symbols, noTrade };
+  // Der Basis-Block gehört nicht zur Alpha-Entscheidung: Er bleibt, wie er ist —
+  // auch bei stay_notrade und demote. Geräumt wird er nur, wenn die Config
+  // keinen Basis-Kandidaten mehr hat (`mitBasis`).
+  return { version: 1, updatedAt: a.now, symbols, noTrade, ...(a.file.basis ? { basis: a.file.basis } : {}) };
 }
 
 /** Journal-Eintrag 'champion' — die Wahrheit darüber, wer wann warum handeln durfte. */
@@ -244,6 +286,27 @@ export function journalDecision(
       candidatePass: a.candidatePass,
       incumbentRescore: finiteOrNull(a.incumbentRescore),
       incumbentPass: a.incumbentPass ?? null,
+    },
+    a.now,
+  );
+}
+
+/** Journal-Eintrag 'champion' für die Basis-Stufe: gemessen (mit Urteil) oder geräumt. */
+export function journalBasis(
+  journal: Journal,
+  a: { symbol: string; basis: ChampionBasis | null; reason: string; now: Ms },
+): void {
+  journal.append(
+    'champion',
+    {
+      symbol: a.symbol,
+      action: a.basis ? 'basis_measured' : 'basis_removed',
+      reason: a.reason,
+      strategy: a.basis?.strategy ?? null,
+      params: a.basis?.params ?? null,
+      label: a.basis?.label ?? null,
+      basisPass: a.basis?.pass ?? null,
+      basisFailed: a.basis ? a.basis.gates.filter((g) => !g.pass).map((g) => g.name) : null,
     },
     a.now,
   );

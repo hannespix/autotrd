@@ -10,7 +10,7 @@
  * erste Nutzer eine noch nicht geheilte Lücke als „geprüft", und der
  * geteilte Abruf holte sie nie nach.
  */
-import type { AlpacaAsset, AlpacaClient, AlpacaClock, BarsRequest, LatestQuote } from '../../../src/alpaca/types.ts';
+import type { AlpacaAsset, AlpacaClient, AlpacaClock, BarAdjustment, BarsRequest, LatestQuote } from '../../../src/alpaca/types.ts';
 import { HOUR, type CalendarDay } from '../../../src/core/time.ts';
 import type { Bar, Ms } from '../../../src/core/types.ts';
 import { BarStore, type BaseTimeframe } from '../../../src/data/store.ts';
@@ -19,7 +19,9 @@ export class SharedBarStoreView extends BarStore {
   private readonly shared: BarStore;
 
   constructor(shared: BarStore) {
-    super(shared.root);
+    // Dieselbe Wurzel UND dieselbe Bereinigung: Der Backfill der Nutzer-Engine prüft die Bereinigung
+    // gegen den Store, und die Sicht darf sich nicht anders ausgeben als der geteilte Cache.
+    super(shared.root, shared.adjustment);
     this.shared = shared;
   }
 
@@ -29,6 +31,10 @@ export class SharedBarStoreView extends BarStore {
 
   override lastTime(symbol: string, tf: BaseTimeframe): Ms | null {
     return this.shared.lastTime(symbol, tf);
+  }
+
+  override firstTime(symbol: string, tf: BaseTimeframe): Ms | null {
+    return this.shared.firstTime(symbol, tf);
   }
 
   override gapMarks(symbol: string, tf: BaseTimeframe): Set<string> {
@@ -126,11 +132,14 @@ export function withSharedData(user: AlpacaClient, shared: SharedServices): Alpa
 
 const stores = new Map<string, BarStore>();
 
-/** Ein `BarStore` je Wurzel — hält die Bars zwischen Takten im Speicher (warme Instanz). */
-export function sharedStoreFor(root: string): BarStore {
+/**
+ * Ein `BarStore` je Wurzel — hält die Bars zwischen Takten im Speicher (warme Instanz). Die Wurzel
+ * trägt die Bereinigung bereits im Pfad (`barStoreRoot`); der Store bekommt sie zusätzlich als Wert.
+ */
+export function sharedStoreFor(root: string, adjustment: BarAdjustment = 'raw'): BarStore {
   let s = stores.get(root);
   if (!s) {
-    s = new BarStore(root);
+    s = new BarStore(root, adjustment);
     stores.set(root, s);
   }
   return s;

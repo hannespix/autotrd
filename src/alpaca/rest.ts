@@ -575,7 +575,10 @@ export function createAlpacaClient(opts: AlpacaClientOptions): AlpacaClient {
           page_token: pageToken,
         };
         if (!isCrypto) {
-          params.adjustment = req.adjustment ?? 'raw';
+          // Bereinigung NUR für Tagesbars (`broker.adjustment`, Default raw). Minutenbars werden hier
+          // immer roh angefordert, egal was in der Anfrage steht: Aus ihnen aggregiert die Engine die
+          // Bars für die Ausführung, und die läuft zu echten Kursen. Krypto kennt keine Bereinigung.
+          params.adjustment = req.timeframe === '1Day' ? (req.adjustment ?? 'raw') : 'raw';
           params.feed = req.feed ?? feed;
         }
         const res = await getJson(data(path, params));

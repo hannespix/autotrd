@@ -12,7 +12,7 @@
 import type { CostConfig, OptimizerConfig, RiskConfig, SessionConfig } from '../core/config.ts';
 import type { Calendar } from '../core/time.ts';
 import { anfangsStreuner } from '../core/bars.ts';
-import { DAY } from '../core/time.ts';
+import { DAY, dayKeyFor } from '../core/time.ts';
 import type {
   AssetClass,
   BarSeriesLike,
@@ -702,4 +702,239 @@ export function fixedCandidateWfa(a: Omit<WindowSimArgs, 'range' | 'costMultipli
     holdout = { start: plan.holdout.start, end: plan.holdout.end, metrics: h.metrics };
   }
   return { ...base, trials: 1, finalEvaluated: 1, holdout };
+}
+
+/* ───────────────────────── Basis: EINE durchgehende Simulation ───────────────────────── */
+
+/** Mittlere Monatslänge in Kalendertagen (365,25 / 12) — Nenner für „Trades je Monat". */
+export const TAGE_JE_MONAT = 30.44;
+
+export interface BasisScheibe {
+  fold: Fold;
+  /**
+   * Netto der Basis in dieser Scheibe: Equity vor dem Scheibenende minus
+   * Equity vor dem Scheibenbeginn, aus der EINEN Kurve — die Scheiben
+   * summieren sich zum Netto der Range. Nur Bericht, kein Gate.
+   */
+  netProfit: number;
+}
+
+export interface BasisKennzahlen {
+  netProfit: number;
+  /** Netto desselben Laufs bei Kosten × `stressCostMultiplier` (zweiter Lauf). */
+  stressNetProfit: number;
+  netReturnPct: number;
+  /** Sharpe p. a. der Tagesrenditen der Range — dieselbe Funktion wie beim Maßstab. */
+  sharpe: number | null;
+  /** Roher MaxDD der einen Equity-Kurve in %, Peak über die ganze Range (kein Reset je Fold). */
+  maxDrawdownPct: number;
+  /** Mittlere Brutto-Exposure (Anteil 0–1) über die Bars der Range; null, wenn der Simulator keine liefert. */
+  avgExposure: number | null;
+  /** MaxDD / mittlere Exposure in %; null bei Exposure 0 oder unbekannt — „nicht bewertbar", nie bestanden. */
+  exposureNormMaxDD: number | null;
+  /** Gebühren aller geschlossenen Trades (Slippage, Spread, Gebühren, Leihe), absolut. */
+  fees: number;
+  trades: number;
+  /** Geschlossene Trades je 30,44 Kalendertage der Range. */
+  tradesPerMonth: number;
+  /** Mittlere Haltedauer geschlossener Trades in Handelstagen der Zeitachse; null ohne Trades. */
+  avgHoldingDays: number | null;
+  /** Anteil der Handelstage der Range ohne Position (0–1); null ohne Exposure-Angabe. */
+  flatDaysShare: number | null;
+  /** Kalendertage der Range. */
+  days: number;
+  /** Am Ende der Range offene Positionen — unrealisiert in der Equity, nicht in den Trades, ohne Exit-Kosten. */
+  openAtEnd: number;
+}
+
+export interface BasisSimArgs extends Omit<WindowSimArgs, 'range' | 'costMultiplier' | 'membershipAt'> {
+  optimizer: OptimizerConfig;
+  /** Sharpe des Laufs — injiziert wie der Simulator, damit Basis und Maßstab dieselbe Zahl rechnen. */
+  sharpeRatio: (returns: readonly number[], periodsPerYear: number) => number | null;
+  periodsPerYear: number;
+}
+
+export interface BasisSimulation {
+  strategyId: string;
+  symbol: string;
+  timeframe: TimeframeMin;
+  params: Params;
+  /** OOS-Beginn des ersten Folds … OOS-Ende des letzten: die eine Range. */
+  range: TimeRange;
+  /** Die Fold-Scheiben des Plans — nur zum Schneiden der Kurve für den Bericht. */
+  folds: Fold[];
+  /** Der eine Lauf zu Normalkosten. */
+  result: SimResult;
+  stressCostMultiplier: number;
+  kennzahlen: BasisKennzahlen;
+  scheiben: BasisScheibe[];
+  /** Eigene Simulation ab Holdout-Beginn (Warmup aus der Historie) — nur Bericht. */
+  holdout: (TimeRange & { metrics: Metrics }) | null;
+  dataRange: TimeRange;
+}
+
+/**
+ * Die Basis-Allokation wird NICHT in 90-Tage-Folds gemessen (Prüfbefund M6:
+ * offene Positionen am Fold-Ende zählten nicht als Trades, Exit-Kosten
+ * fehlten, jedes Fenster begann mit leerem Buch und neuem Peak — für eine
+ * Monatsstrategie das falsche Messgerät). Stattdessen EIN Simulationslauf über
+ * die gesamte OOS-Kette des Fold-Plans: Der Simulator bekommt die Serie ab
+ * Datenbeginn (Warmup aus der Historie, Indikatoren kausal) und entscheidet
+ * ab dem OOS-Beginn des ersten Folds bis zum OOS-Ende des letzten; Positionen
+ * laufen über Fold-Grenzen, ein Buch, ein Peak, Halt-Regeln wie live. Es gibt
+ * keine IS-Suche und deshalb kein IS-Embargo. Ein zweiter Lauf mit Kosten ×
+ * `stressCostMultiplier` liefert das Stress-Netto; der Holdout läuft wie
+ * bisher als eigene Simulation ab seinem Beginn.
+ *
+ * Nur auf festem Korb: Ein Korb je Fold hätte in einer durchgehenden
+ * Simulation keinen Zeitpunkt, zu dem er gilt — deshalb ein Fehler, kein
+ * stiller Rückfall auf irgendeinen Stand.
+ */
+export function basisSimulation(a: BasisSimArgs): BasisSimulation {
+  if (a.membership) {
+    throw new Error(
+      'Basis nur auf festem Korb: Korb je Fold (membership) ist für die durchgehende Simulation nicht zulässig — ' +
+        'optimizer.foldMembership: fixed setzen oder den Kandidatenpool weglassen',
+    );
+  }
+  const { strategy, optimizer, params } = a;
+  const korb = korbVon(a.symbol, a.bars);
+  const achse = zeitachseVon(korb);
+  const plan = foldPlanForBars(achse, optimizer);
+  const first = plan.folds[0]!;
+  const last = plan.folds[plan.folds.length - 1]!;
+  const range: TimeRange = { start: first.oosStart, end: last.oosEnd };
+  const result = simulateWindow({ ...a, range });
+  const stress = simulateWindow({ ...a, range, costMultiplier: optimizer.stressCostMultiplier });
+  let holdout: BasisSimulation['holdout'] = null;
+  if (plan.holdout) {
+    const h = simulateWindow({ ...a, range: plan.holdout });
+    holdout = { start: plan.holdout.start, end: plan.holdout.end, metrics: h.metrics };
+  }
+  return {
+    strategyId: strategy.id,
+    symbol: a.symbol,
+    timeframe: a.config.timeframe,
+    params,
+    range,
+    folds: plan.folds,
+    result,
+    stressCostMultiplier: optimizer.stressCostMultiplier,
+    kennzahlen: basisKennzahlen({
+      result,
+      stressNetProfit: stress.metrics.netProfit,
+      range,
+      achse,
+      assetClass: a.config.assetClass,
+      sharpeRatio: a.sharpeRatio,
+      periodsPerYear: a.periodsPerYear,
+    }),
+    scheiben: basisScheiben(result.equity, plan.folds, a.initialEquity),
+    holdout,
+    dataRange: dataRangeOf(achse),
+  };
+}
+
+/** Equity unmittelbar VOR `at` (Kurve zeitlich sortiert): der letzte Punkt mit t < at, sonst das Startkapital. */
+function equityVor(equity: readonly EquityPoint[], at: Ms, initialEquity: number): number {
+  let stand = initialEquity;
+  for (const p of equity) {
+    if (p.t >= at) break;
+    stand = p.equity;
+  }
+  return stand;
+}
+
+/**
+ * Die eine Equity-Kurve in die Fold-Scheiben geschnitten. Jede Scheibe ist
+ * Equity vor ihrem Ende minus Equity vor ihrem Beginn; vor der ersten gilt das
+ * Startkapital, die letzte reicht bis zum Ende der Kurve (der Simulator setzt
+ * keinen Punkt auf oder nach dem Range-Ende; ein Fake darf das). Disjunkte,
+ * lückenlose Folds ⇒ die Summe ist das Netto der Range — per Bauart.
+ */
+export function basisScheiben(equity: readonly EquityPoint[], folds: readonly Fold[], initialEquity: number): BasisScheibe[] {
+  // Stabil nach Zeit sortiert: Bei gleicher Zeit gewinnt der spätere Punkt (Korb-Fake: Symbol für Symbol).
+  const kurve = [...equity].sort((a, b) => a.t - b.t);
+  return folds.map((fold, i) => ({
+    fold,
+    netProfit: equityVor(kurve, i === folds.length - 1 ? Number.POSITIVE_INFINITY : fold.oosEnd, initialEquity) - equityVor(kurve, fold.oosStart, initialEquity),
+  }));
+}
+
+/**
+ * Kennzahlen des einen Laufs. Exposure und Tage ohne Position stammen aus der
+ * Equity-Kurve (`EquityPoint.exposure` je Bar); liefert der Simulator sie
+ * nicht, bleiben sie null — und das Drawdown-Gate sagt „nicht bewertbar".
+ */
+export function basisKennzahlen(a: {
+  result: SimResult;
+  stressNetProfit: number;
+  range: TimeRange;
+  achse: Zeitachse;
+  assetClass: AssetClass;
+  sharpeRatio: BasisSimArgs['sharpeRatio'];
+  periodsPerYear: number;
+}): BasisKennzahlen {
+  const { result, achse, assetClass } = a;
+  const m = result.metrics;
+  const days = Math.max(1, Math.ceil((a.range.end - a.range.start) / DAY));
+
+  // Mittlere Brutto-Exposure über die Bars der Range und Handelstage ohne Position.
+  let avgExposure: number | null = null;
+  let flatDaysShare: number | null = null;
+  if (result.equity.length > 0 && result.equity.every((p) => p.exposure !== undefined)) {
+    let summe = 0;
+    const tage = new Map<string, boolean>();
+    for (const p of result.equity) {
+      const e = p.exposure!;
+      summe += e;
+      const k = dayKeyFor(p.t, assetClass);
+      tage.set(k, (tage.get(k) ?? true) && e === 0);
+    }
+    avgExposure = summe / result.equity.length;
+    let flach = 0;
+    for (const istFlach of tage.values()) if (istFlach) flach++;
+    flatDaysShare = flach / tage.size;
+  }
+
+  let fees = 0;
+  let haltedauer = 0;
+  for (const t of result.trades) {
+    fees += t.fees;
+    haltedauer += handelstageZwischen(achse, t.entryTime, t.exitTime, assetClass);
+  }
+  const trades = result.trades.length;
+
+  return {
+    netProfit: m.netProfit,
+    stressNetProfit: a.stressNetProfit,
+    netReturnPct: m.netReturnPct,
+    sharpe: a.sharpeRatio(result.dailyReturns, a.periodsPerYear),
+    maxDrawdownPct: m.maxDrawdownPct,
+    avgExposure,
+    exposureNormMaxDD: avgExposure !== null && avgExposure > 0 ? m.maxDrawdownPct / avgExposure : null,
+    fees,
+    trades,
+    tradesPerMonth: trades / (days / TAGE_JE_MONAT),
+    avgHoldingDays: trades > 0 ? haltedauer / trades : null,
+    flatDaysShare,
+    days,
+    openAtEnd: result.notes.filter((n) => n.startsWith('Offen am Ende')).length,
+  };
+}
+
+/**
+ * Handelstage zwischen Ein- und Ausstieg: Zahl der verschiedenen Handelstage
+ * der Zeitachse in [entry, exit] minus eins — bei Tagesbars genau `barsHeld`
+ * (Einstieg und Stop in derselben Bar ⇒ 0), bei Intraday-Bars die Kalender-
+ * Handelstage der Haltezeit.
+ */
+export function handelstageZwischen(achse: Zeitachse, entry: Ms, exit: Ms, assetClass: AssetClass): number {
+  const tage = new Set<string>();
+  for (let i = lowerBound(achse.t, entry); i < achse.length; i++) {
+    const t = achse.t[i]!;
+    if (t > exit) break;
+    tage.add(dayKeyFor(t, assetClass));
+  }
+  return Math.max(0, tage.size - 1);
 }

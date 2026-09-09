@@ -74,7 +74,9 @@ OOS 90), Holdout 180 Tage wie bisher (Bericht).
 Berichtet, kein Kriterium: SPY-Sharpe und -MaxDD über dieselbe Range;
 Scheiben-Tabelle (Basis, Korb, SPY je 90 Tage) mit den drei Fenstern, in
 denen die Basis verlieren muss; Holdout mit Maßstab; Trades je Monat,
-Haltedauer, Exposure, Tage ohne Position; PSR gegen den Korb-Sharpe.
+Haltedauer, Exposure, Tage ohne Position. Nicht im Bericht dieser Version
+(vor dem Lauf gestrichen, weil nicht gebaut): PSR gegen den Korb-Sharpe
+und die Zahl der Tage ohne Rang.
 
 ## Entscheidungsregeln
 
@@ -94,7 +96,8 @@ Haltedauer, Exposure, Tage ohne Position; PSR gegen den Korb-Sharpe.
    2024/25 — trendfreundlich für diese Klassen. Die Falsifikationsläufe
    ändern daran wenig (gleiche Jahre); nur der Vorwärtstest ändert es.
 2. Neun ETFs bei `MIN_KORB 8`: Fehlt an einem Tag eine Reihe, gibt es
-   keinen Rang. Der Bericht nennt die Zahl der Tage ohne Rang.
+   keinen Rang. Die Zahl solcher Tage wird in dieser Version nicht
+   berichtet; ein Hinweis darauf sind Tage ohne Position.
 3. Fillkurs = nächste Eröffnung, IEX-Tagesbars; Ganzstück-Rundung bei
    25 000 $ Startkapital (M14) kostet SPY-Positionen bis zu 4 % der
    Sollgröße — gegen die Basis, nicht für sie.
@@ -103,6 +106,11 @@ Haltedauer, Exposure, Tage ohne Position; PSR gegen den Korb-Sharpe.
    kein Urteil über sie.
 5. Die gleichgewichtete Latte hat keine Kosten und wird nie rebalanciert;
    sie ist ein Maßstab, kein handelbares Produkt.
+6. Bereinigte Tagesbars sind auf den Abrufzeitpunkt bereinigt (Alpaca
+   rechnet relativ zu heute). Mit `--as-of` sind Renditen und Ränge
+   unverändert, das Kursniveau ist um die Ausschüttungen nach dem Stichtag
+   verschoben — das berührt nur die Ganzstück-Rundung. Bereinigte Reihen
+   werden deshalb immer vollständig neu geladen, nie inkrementell.
 
 ## Ergebnis
 

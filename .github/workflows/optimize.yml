@@ -41,6 +41,10 @@ jobs:
       # `var/universe.json` liegt mit im Cache: Es ist der Bestand für die
       # Hysterese der nächsten Wahl. Fehlt es (erster Lauf, geänderte Config),
       # gilt das Universum aus der Config als Bestand — kein Ausfall.
+      # Der Schlüssel hasht die Config: Ein Wechsel von `broker.adjustment`
+      # (Bereinigung der Tagesbars) ändert ihn mit, und bereinigte Bars liegen
+      # ohnehin in einer eigenen Wurzel (bars/<assetClass>/<feed>-adj-<wert>/,
+      # src/data/store.ts) — ein alter Cache kann nie als bereinigt gelesen werden.
       - name: Bars-Cache wiederherstellen
         uses: actions/cache@v4
         with:

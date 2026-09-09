@@ -61,6 +61,14 @@ thematisch). Bezeichner im Code Englisch, Kommentare Deutsch.
 8. **Keys nie im Log.** `registerSecret()` beim Start, alles durch `redact()`.
 9. **„Wir sollten nicht handeln" ist ein zulässiges Ergebnis.** Der Optimierer
    schreibt Symbole ohne bestandene Gates nach `noTrade`. Niemand „hilft nach".
+   **Zwei Latten, beide im Code, keine von Hand** (seit 09.09.2026): die zehn
+   Alpha-Gates für Kandidaten, die den Markt schlagen sollen, und die
+   Gate-Gruppe `basis` (`optimizer.basis`, durchgehende Simulation, Maßstab
+   ist der liegengelassene Korb) für die Basis-Allokation, die Marktexposition
+   mit Trendfilter liefern soll. Kein Owner-Pfad ersetzt ein Kriterium; eine
+   Basis, die ihre Latte nicht nimmt, wird nicht aktiviert. Jede Latte steht
+   VOR dem Lauf in `docs/wissen/vorregistrierung/`, der Champion trägt den
+   Commit der Config. Eine dritte Latte gibt es nicht.
 10. **Verifizieren, nicht glauben.** `npm run check` (typecheck + lint + test)
     vor jedem Commit; ein neuer Wächter wird einmal absichtlich gebrochen.
 

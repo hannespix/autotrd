@@ -110,12 +110,49 @@ export function marktKette(args: {
   return { sharpe: sharpeRatio(renditen, args.periodsPerYear), maxDrawdownPct: maxDrawdownPct(kette), netReturnPct: (stand - 1) * 100, fenster, punkte };
 }
 
+export interface MarktKurve {
+  symbole: number;
+  /** Wertentwicklung, beginnend bei 1 am ersten Handelstag des Fensters. */
+  kurve: readonly number[];
+  /** Je Punkt die Zeit der letzten Bar seines Handelstags (Bucket-Beginn, ms) — zum Schneiden in Fenster. */
+  zeiten: readonly number[];
+}
+
+/**
+ * Die Wertreihe von kaufen-und-halten selbst — für alles, was `kaufenUndHalten`
+ * nur verdichtet zurückgibt: Scheiben der Basis-Latte (Netto je Fold-Fenster
+ * aus EINER Kurve, damit die Summe der Scheiben die Rendite der Range ist),
+ * nicht Fenster für Fenster neu gewichtet wie `marktKette`. Gleiche Regeln
+ * (Gewicht nur mit Kurs am ersten Tag, Lücken halten den letzten Stand).
+ */
+export function kaufenUndHaltenKurve(args: { bars: ReadonlyMap<string, BarSeriesLike>; range: { start: Ms; end: Ms }; assetClass: AssetClass }): MarktKurve | null {
+  const r = wertreihe(args.bars, args.range, args.assetClass);
+  if (!r) return null;
+  return { symbole: r.symbole, kurve: r.kurve, zeiten: r.zeiten };
+}
+
+/**
+ * Wert der Kurve unmittelbar VOR `at`: der letzte Punkt mit Zeit < at; vor
+ * dem ersten Punkt gilt 1 (der Einstand). So schneidet man dieselbe Kurve in
+ * disjunkte Fenster, deren Ergebnisse sich zur Gesamtrendite summieren.
+ */
+export function kurvenstandVor(k: MarktKurve, at: Ms): number {
+  let stand = 1;
+  for (let i = 0; i < k.zeiten.length; i++) {
+    if (k.zeiten[i]! >= at) break;
+    stand = k.kurve[i]!;
+  }
+  return stand;
+}
+
 interface Wertreihe {
   symbole: number;
   /** Wertentwicklung, beginnend bei 1. */
   kurve: number[];
   renditen: number[];
   punkte: number;
+  /** Je Punkt der Kurve die Zeit der letzten Bar dieses Handelstags (Bucket-Beginn, ms). */
+  zeiten: number[];
 }
 
 function wertreihe(bars: ReadonlyMap<string, BarSeriesLike>, range: { start: Ms; end: Ms }, assetClass: AssetClass): Wertreihe | null {
@@ -123,7 +160,9 @@ function wertreihe(bars: ReadonlyMap<string, BarSeriesLike>, range: { start: Ms;
   // Tagesschluss je Symbol im Fenster (letzte Bar des Tages gewinnt) — so ist
   // die Renditereihe tageweise wie die des Simulators, auch bei Minutenbars.
   const proSymbol: { basis: number; kurse: Map<string, number> }[] = [];
-  const tage = new Set<string>();
+  // Je Handelstag die Zeit seiner letzten Bar — damit ein Punkt der Kurve
+  // einem Zeitfenster [start, end) zugeordnet werden kann (Scheiben).
+  const tage = new Map<string, number>();
   let ersterTag: string | null = null;
   const roh = new Map<string, Map<string, number>>();
   for (const [sym, s] of bars) {
@@ -134,12 +173,12 @@ function wertreihe(bars: ReadonlyMap<string, BarSeriesLike>, range: { start: Ms;
       if (t >= range.end) break;
       const k = dayKeyFor(t, assetClass);
       m.set(k, s.c[i]!);
-      tage.add(k);
+      tage.set(k, Math.max(tage.get(k) ?? Number.NEGATIVE_INFINITY, t));
       if (ersterTag === null || k < ersterTag) ersterTag = k;
     }
     if (m.size) roh.set(sym, m);
   }
-  const achse = [...tage].sort();
+  const achse = [...tage.keys()].sort();
   if (achse.length < 2 || ersterTag === null) return null;
 
   // Nur Symbole mit Kurs am ERSTEN Tag: ein später startendes Symbol bekäme
@@ -172,5 +211,5 @@ function wertreihe(bars: ReadonlyMap<string, BarSeriesLike>, range: { start: Ms;
     if (vor > 0) renditen.push(wert / vor - 1);
   }
 
-  return { symbole: proSymbol.length, kurve, renditen, punkte: achse.length };
+  return { symbole: proSymbol.length, kurve, renditen, punkte: achse.length, zeiten: achse.map((k) => tage.get(k)!) };
 }

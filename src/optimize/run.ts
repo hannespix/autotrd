@@ -19,8 +19,15 @@
  * Holdout, dieselbe Kette aus Stress, Nachbarschaft, PSR und Gates, dieselbe
  * Kandidatenliste. Ohne Trials gibt es nichts zu deflationieren — der DSR ist
  * bei ihnen wie beim Amtsinhaber „nicht anwendbar"; sonst kein Sonderweg.
+ *
+ * Die zweite Latte: Ein Festkandidat mit `tier: basis` (Basis-Allokation)
+ * läuft NICHT in dieser Liste. Er wird in EINER durchgehenden Simulation über
+ * die OOS-Kette gemessen (`basisSimulation`), gegen den liegengelassenen Korb
+ * über dieselbe Range (`basisGates`), und sein Befund steht als eigener Block
+ * `basis` in der Champion-Datei — bestanden oder nicht, nie als Alpha-Champion
+ * (Prüfbefund K1/K2/M6, 09.09.2026).
  */
-import { kaufenUndHalten, marktKette, type MarktBezug } from '../backtest/marktbezug.ts';
+import { kaufenUndHalten, kaufenUndHaltenKurve, kurvenstandVor, marktKette, type MarktBezug, type MarktKurve } from '../backtest/marktbezug.ts';
 import { BarSeries } from '../core/bars.ts';
 import type { Config, FixedCandidateConfig } from '../core/config.ts';
 import { Journal, homePaths } from '../core/journal.ts';
@@ -30,21 +37,25 @@ import { universeRegelnFuer } from '../universe/select.ts';
 import { korbJeFold, type KorbStand } from './korbJeFold.ts';
 import type { Calendar } from '../core/time.ts';
 import { DAY, dayKey } from '../core/time.ts';
-import type { Bar, BarSeriesLike, Ms, Params, Strategy } from '../core/types.ts';
+import type { Bar, BarSeriesLike, Metrics, Ms, Params, Strategy } from '../core/types.ts';
 import {
   applyDecision,
   decidePromotion,
   emptyChampionFile,
   fitEndOf,
+  journalBasis,
   journalDecision,
   loadChampion,
+  mitBasis,
   saveChampion,
+  type ChampionBasis,
   type ChampionEntry,
   type ChampionFile,
   type PromotionDecision,
 } from './promote.ts';
 import { renderReport, writeReport } from './report.ts';
 import {
+  basisGates,
   deflatedSharpeIs,
   neighborhoodTest,
   probabilisticSharpeOos,
@@ -61,6 +72,8 @@ import {
 import { mulberry32, wirksamerSuchraum } from './search.ts';
 import {
   MIN_FOLDS,
+  TAGE_JE_MONAT,
+  basisSimulation,
   fixedCandidateWfa,
   fixedParamsWfa,
   foldPlanForBars,
@@ -70,12 +83,15 @@ import {
   walkForward,
   zeitachseVon,
   type BarsInput,
+  type BasisKennzahlen,
   type Fold,
   type SimConfig,
   type SimulateFn,
   type TimeRange,
   type WfaResult,
 } from './walkForward.ts';
+
+export { TAGE_JE_MONAT };
 
 /* ───────────────────────── Abhängigkeiten ───────────────────────── */
 
@@ -138,6 +154,8 @@ export interface OptimizeRunInput {
   now?: (() => Ms) | undefined;
   /** Stichtag der Messung (YYYY-MM-DD) — nur für den Berichtskopf. */
   asOf?: string | undefined;
+  /** Commit der Config/Vorregistrierung — wird in den Basis-Block der Champion-Datei geschrieben, falls bekannt. */
+  configCommit?: string | undefined;
   log?: ((msg: string) => void) | undefined;
 }
 
@@ -189,9 +207,6 @@ export interface Massstab {
   marktMaxDD: number | null;
 }
 
-/** Mittlere Monatslänge in Kalendertagen (365,25 / 12). */
-export const TAGE_JE_MONAT = 30.44;
-
 /** Latte für `beats_market` samt MaxDD für den Maßstab — aus `marktKette` über die OOS-Fenster. */
 export interface MarktLatte {
   sharpe: number | null;
@@ -219,7 +234,7 @@ export function massstabFuer(a: {
 }
 
 /** Name eines Festkandidaten im Bericht: `label` der Config, sonst die registrierten Parameter (keine: „Defaults"). */
-export function festLabel(fc: FixedCandidateConfig): string {
+export function festLabel(fc: Pick<FixedCandidateConfig, 'strategy' | 'params' | 'label'>): string {
   if (fc.label !== undefined) return fc.label;
   return Object.keys(fc.params).length === 0 ? 'Defaults' : JSON.stringify(fc.params);
 }
@@ -279,7 +294,44 @@ export interface SymbolRun {
   korb: KorbProtokoll | null;
   /** Warum der Korb fest war (Schalter, ungepoolt, kein Pool) — oder null. */
   korbHinweis: string | null;
+  /**
+   * Die Basis-Allokation dieser Einheit (Festkandidat mit `tier: basis`),
+   * falls konfiguriert UND gemessen. Sie steht nicht in `results`, konkurriert
+   * nicht um den Alpha-Champion und wird nie `chosen`.
+   */
+  basis?: BasisRun;
   errors: string[];
+}
+
+/** Ein Fold-Fenster der durchgehenden Basis-Simulation, nur Bericht: Netto der Basis neben Korb und Benchmark. */
+export interface BasisScheibeRun {
+  fold: Fold;
+  basis: number;
+  /** Netto von Startkapital in den Korb liegenlassen, aus EINER Kurve über die Range geschnitten; null ohne Kurse. */
+  korb: number | null;
+  spy: number | null;
+}
+
+export interface BasisRun {
+  label: string;
+  strategy: string;
+  params: Params;
+  /** Die Gate-Gruppe `basis` (vier Gates, alle müssen bestehen). */
+  gates: GateResult[];
+  pass: boolean;
+  kennzahlen: BasisKennzahlen;
+  /** Die eine Range: OOS-Beginn des ersten Folds … OOS-Ende des letzten. */
+  range: TimeRange;
+  stressCostMultiplier: number;
+  /** Maßstab: der Korb liegenlassen, gleichgewichtet, ohne Kosten, über dieselbe Range. null = keine Kurse. */
+  korb: MarktBezug | null;
+  /** Zweite Referenz, nur Bericht: die Benchmark (z. B. SPY) über dieselbe Range. */
+  spy?: { symbol: string; bezug: MarktBezug | null };
+  scheiben: BasisScheibeRun[];
+  /** Anteil der Fold-Scheiben mit positivem Basis-Netto (0–1) — nur Bericht. */
+  positiveScheibenShare: number;
+  /** Eigene Simulation ab Holdout-Beginn — nur Bericht. */
+  holdout: (TimeRange & { metrics: Metrics }) | null;
 }
 
 export interface KorbProtokoll {
@@ -331,7 +383,7 @@ export interface OptimizeRunOutput {
  * Begründung formuliert ist.
  */
 export function nichtsGemessen(runs: readonly SymbolRun[]): boolean {
-  return runs.length > 0 && runs.every((r) => r.results.length === 0);
+  return runs.length > 0 && runs.every((r) => r.results.length === 0 && r.basis === undefined);
 }
 
 /* ───────────────────────── Einheiten: ein Symbol oder der Korb ───────────────────────── */
@@ -565,11 +617,19 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
   // fremder Zeitrahmen ⇒ übersprungen). Ihre Parameter prüft jede Einheit
   // beim Bewerten — ungültig ist dort ein Fehler-Eintrag, kein Absturz.
   const festKandidaten = optimizer.fixedCandidates.map((fc) => ({ config: fc, strategy: deps.getStrategy(fc.strategy), label: festLabel(fc) }));
-  const festName = (fk: { strategy: Strategy; label: string }) => `${fk.strategy.id} · fest: ${fk.label}`;
+  const festName = (fk: { config: FixedCandidateConfig; strategy: Strategy; label: string }) =>
+    `${fk.strategy.id} · ${fk.config.tier === 'basis' ? 'Basis' : 'fest'}: ${fk.label}`;
   const festUsable = festKandidaten.filter((fk) => fk.strategy.timeframes.includes(cfg.timeframe));
   for (const fk of festKandidaten) {
     if (!festUsable.includes(fk)) log(`${festName(fk)}: Zeitrahmen ${cfg.timeframe} nicht unterstützt — übersprungen`);
   }
+  // Zwei Latten, beide im Code: `alpha` läuft in derselben Liste wie die
+  // gesuchten Strategien; `basis` ist die zweite Latte (durchgehende
+  // Simulation, Gate-Gruppe `basis`, eigener Block in der Champion-Datei) und
+  // taucht in dieser Liste NIE auf. parseConfig lässt höchstens einen zu.
+  const festAlpha = festUsable.filter((fk) => fk.config.tier !== 'basis');
+  const basisKandidat = festUsable.find((fk) => fk.config.tier === 'basis') ?? null;
+  const basisKonfiguriert = optimizer.fixedCandidates.some((fc) => fc.tier === 'basis');
 
   let champion = loadChampion(paths.champion) ?? emptyChampionFile(now());
   const runs: SymbolRun[] = [];
@@ -621,6 +681,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
         }
       : null;
     let korbProtokoll: KorbProtokoll | null = null;
+    let basisRun: BasisRun | null = null;
     let messbar = true;
     // Das Regime dieser Messung — steht auf jedem neuen Champion-Eintrag.
     const korbModus: 'point_in_time' | 'fixed' = einheit.kandidaten ? 'point_in_time' : 'fixed';
@@ -715,7 +776,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       // Parameter sind vorregistriert), mit dem Korb je Fold und dem Holdout
       // wie jeder gesuchte Kandidat — dann durch dieselbe Kette. Ungültige
       // Parameter sind ein Fehler-Eintrag dieser Einheit, kein Absturz.
-      for (const fk of messbar ? festUsable : []) {
+      for (const fk of messbar ? festAlpha : []) {
         const name = festName(fk);
         try {
           const params = festParams({ strategy: fk.strategy, params: fk.config.params, allowShort: cfg.risk.allowShort, log: (m) => log(`${symbol} ${name}: ${m}`) });
@@ -725,6 +786,61 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
           gatesLog(name, r);
         } catch (e) {
           // validateParams meldet mehrzeilig — im Bericht ist ein Eintrag eine Zeile.
+          const msg = errMsg(e).replace(/:\s*\n\s*/g, ': ').replace(/\s*\n\s*/g, '; ');
+          errors.push(`${name}: ${msg}`);
+          log(`${symbol} ${name}: Fehler — ${msg}`);
+        }
+      }
+
+      // Die Basis-Allokation: EINE durchgehende Simulation über die OOS-Kette,
+      // Maßstab der liegengelassene Korb über dieselbe Range, Gate-Gruppe
+      // `basis`. Sie kommt nicht in `results` — sie konkurriert um nichts.
+      if (basisKandidat && messbar) {
+        const name = festName(basisKandidat);
+        try {
+          if (einheiten.length > 1) {
+            throw new Error('Basis nur auf EINER Einheit (gepoolter Korb oder ein Symbol) — ungepoolt mit mehreren Symbolen gäbe es mehrere Basen für einen Block');
+          }
+          if (common.membership) {
+            throw new Error('Basis nur auf festem Korb: Korb je Fold ist für die durchgehende Simulation nicht zulässig — optimizer.foldMembership: fixed setzen oder den Kandidatenpool weglassen');
+          }
+          const params = festParams({ strategy: basisKandidat.strategy, params: basisKandidat.config.params, allowShort: cfg.risk.allowShort, log: (m) => log(`${symbol} ${name}: ${m}`) });
+          const sim = basisSimulation({ ...common, strategy: basisKandidat.strategy, params, optimizer, sharpeRatio: deps.metricsFns.sharpeRatio, periodsPerYear });
+          const korbBars = korbVon(symbol, bars);
+          const gemeinsam = { range: sim.range, assetClass: cfg.universe.assetClass };
+          const korb = kaufenUndHalten({ ...gemeinsam, bars: korbBars, periodsPerYear });
+          const korbKurve = kaufenUndHaltenKurve({ ...gemeinsam, bars: korbBars });
+          const bench = input.benchmark;
+          const spyBars = bench && marktSymbol !== null ? new Map([[marktSymbol, bench]]) : null;
+          const spy = spyBars ? kaufenUndHalten({ ...gemeinsam, bars: spyBars, periodsPerYear }) : null;
+          const spyKurve = spyBars ? kaufenUndHaltenKurve({ ...gemeinsam, bars: spyBars }) : null;
+          // Scheiben-Netto des Maßstabs: Startkapital in die Kurve investiert, dieselbe Kurve in die Folds geschnitten.
+          const scheibe = (k: MarktKurve | null, f: Fold): number | null =>
+            k === null ? null : input.initialEquity * (kurvenstandVor(k, f.oosEnd) - kurvenstandVor(k, f.oosStart));
+          const scheiben = sim.scheiben.map((sc) => ({ fold: sc.fold, basis: sc.netProfit, korb: scheibe(korbKurve, sc.fold), spy: scheibe(spyKurve, sc.fold) }));
+          const g = basisGates({
+            basis: optimizer.basis,
+            stressCostMultiplier: optimizer.stressCostMultiplier,
+            kennzahlen: sim.kennzahlen,
+            korb: korb ? { sharpe: korb.sharpe, maxDrawdownPct: korb.maxDrawdownPct } : null,
+          });
+          basisRun = {
+            label: basisKandidat.label,
+            strategy: basisKandidat.strategy.id,
+            params,
+            gates: g.gates,
+            pass: g.pass,
+            kennzahlen: sim.kennzahlen,
+            range: sim.range,
+            stressCostMultiplier: sim.stressCostMultiplier,
+            korb,
+            ...(marktSymbol !== null ? { spy: { symbol: marktSymbol, bezug: spy } } : {}),
+            scheiben,
+            positiveScheibenShare: scheiben.length ? scheiben.filter((x) => x.basis > 0).length / scheiben.length : 0,
+            holdout: sim.holdout,
+          };
+          log(`${symbol} ${name}: Basis-Latte ${g.pass ? 'bestanden' : 'NICHT bestanden'} (${g.gates.filter((x) => !x.pass).map((x) => x.name).join(', ') || '–'})`);
+        } catch (e) {
           const msg = errMsg(e).replace(/:\s*\n\s*/g, ': ').replace(/\s*\n\s*/g, '; ');
           errors.push(`${name}: ${msg}`);
           log(`${symbol} ${name}: Fehler — ${msg}`);
@@ -829,7 +945,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
     // der Maßstab, an dem ein Leser erkennt, ob eine Holdout-Rendite Kante
     // war oder nur Markt.
     let holdoutMarkt: HoldoutMarkt | null = null;
-    const holdoutRange = results.find((r) => r.wfa.holdout !== null)?.wfa.holdout ?? null;
+    const holdoutRange = results.find((r) => r.wfa.holdout !== null)?.wfa.holdout ?? basisRun?.holdout ?? null;
     if (holdoutRange && bars) {
       const range = { start: holdoutRange.start, end: holdoutRange.end };
       const gemeinsam = { range, assetClass: cfg.universe.assetClass, periodsPerYear };
@@ -872,7 +988,50 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
     const chosen = decision.action === 'promote' ? champion.symbols[ersteszSymbol]! : decision.action === 'keep' ? incumbent : null;
     journalDecision(journal, { symbol, decision, chosen, candidate, candidatePass: bestPassed !== null, incumbentRescore, incumbentPass, now: runAt });
     log(`${symbol}: ${decision.action} — ${decision.reason}`);
-    runs.push({ symbol, results, decision, chosen, incumbent, incumbentRescore, incumbentEval, holdoutMarkt, korb: korbProtokoll, korbHinweis: einheit.korbHinweis, errors });
+
+    // Basis-Block: geschrieben, wenn gemessen — bestanden oder nicht; `pass`
+    // entscheidet, was eine spätere Engine-Stufe damit tun darf. Nicht
+    // messbar (Fehler oben) ⇒ der alte Block bleibt, wie beim Alpha-Champion
+    // ohne Beleg; der Bericht trägt den Fehler.
+    if (basisRun) {
+      const block: ChampionBasis = {
+        version: 1,
+        strategy: basisRun.strategy,
+        params: basisRun.params,
+        symbols: [...einheit.symbols],
+        label: basisRun.label,
+        timeframe: cfg.timeframe,
+        pass: basisRun.pass,
+        gates: basisRun.gates,
+        measuredAt: runAt,
+        ...(input.configCommit === undefined ? {} : { configCommit: input.configCommit }),
+      };
+      champion = mitBasis(champion, block, runAt);
+      const gerissen = basisRun.gates.filter((x) => !x.pass).map((x) => x.name);
+      journalBasis(journal, { symbol, basis: block, reason: basisRun.pass ? 'Basis-Latte bestanden' : `Basis-Latte nicht bestanden: ${gerissen.join(', ')}`, now: runAt });
+    }
+    runs.push({
+      symbol,
+      results,
+      decision,
+      chosen,
+      incumbent,
+      incumbentRescore,
+      incumbentEval,
+      holdoutMarkt,
+      korb: korbProtokoll,
+      korbHinweis: einheit.korbHinweis,
+      ...(basisRun ? { basis: basisRun } : {}),
+      errors,
+    });
+  }
+
+  // Kein Basis-Kandidat mehr in der Config ⇒ kein veralteter Block überlebt.
+  if (!basisKonfiguriert && champion.basis) {
+    const alt = champion.basis;
+    champion = mitBasis(champion, null, now());
+    journalBasis(journal, { symbol: alt.symbols.join(','), basis: null, reason: `kein Festkandidat mit tier: basis mehr in der Config — Block „${alt.label}" geräumt`, now: now() });
+    log(`Basis „${alt.label}" aus der Champion-Datei geräumt: kein Basis-Kandidat mehr in der Config`);
   }
 
   saveChampion(paths.champion, champion);

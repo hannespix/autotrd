@@ -191,6 +191,15 @@ export interface LatestQuote {
   t: Ms;
 }
 
+/**
+ * Bereinigung der Bars (Alpaca `adjustment`): `raw` = Kurse, wie sie
+ * gehandelt wurden; `split` = Aktiensplits herausgerechnet; `dividend` =
+ * Ausschüttungen herausgerechnet; `all` = beides. Der Client sendet sie nur
+ * für Tagesbars (`rest.ts`); Minutenbars bleiben roh.
+ */
+export const BAR_ADJUSTMENTS = ['raw', 'split', 'dividend', 'all'] as const;
+export type BarAdjustment = (typeof BAR_ADJUSTMENTS)[number];
+
 export interface BarsRequest {
   symbols: string[];
   timeframe: '1Min' | '1Day';
@@ -199,7 +208,8 @@ export interface BarsRequest {
   feed?: 'iex' | 'sip';
   /** Seitengröße (max. 10000). */
   pageLimit?: number;
-  adjustment?: 'raw' | 'split' | 'dividend' | 'all';
+  /** Nur für `1Day` wirksam; Default `raw`. Bei `1Min` wird immer roh geladen, egal was hier steht. */
+  adjustment?: BarAdjustment;
 }
 
 /** Fehler der Alpaca-API — Nachricht ist bereits geschwärzt. */

@@ -12,7 +12,7 @@ import type { AssetClass, Metrics, Ms, Params, TimeframeMin } from '../core/type
 import { fitEndOf } from './promote.ts';
 import { gateOptions, type GateResult } from './robustness.ts';
 import type { MarktBezug } from '../backtest/marktbezug.ts';
-import type { HoldoutMarkt, Massstab, StrategyRun, SymbolRun } from './run.ts';
+import type { BasisRun, HoldoutMarkt, Massstab, StrategyRun, SymbolRun } from './run.ts';
 import type { TimeRange } from './walkForward.ts';
 
 export interface ReportMeta {
@@ -156,10 +156,19 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
     `- Suche: ${o.samples} Samples je Fold, Seed ${o.seed}, Objective \`${o.objective}\`, IS ${o.isDays} / OOS ${o.oosDays} / Schritt ${o.stepDays} Tage, ` +
       `Holdout ${o.holdoutDays} Tage, Embargo ${o.embargoBars > 0 ? `${o.embargoBars} Bars` : 'automatisch (Warmup + 20 Bars)'}`,
   );
-  if (o.fixedCandidates.length > 0) {
+  const festAlpha = o.fixedCandidates.filter((fc) => fc.tier !== 'basis');
+  const festBasis = o.fixedCandidates.filter((fc) => fc.tier === 'basis');
+  const festText = (fc: OptimizerConfig['fixedCandidates'][number]) => `${fc.strategy} ${paramsJson(fc.params)}${fc.label === undefined ? '' : ` „${fc.label}"`}`;
+  if (festAlpha.length > 0) {
+    out.push(`- Festkandidaten (vorregistriert, ohne Suche, dieselben Folds und Gates): ` + festAlpha.map(festText).join('; '));
+  }
+  if (festBasis.length > 0) {
+    const b = o.basis;
     out.push(
-      `- Festkandidaten (vorregistriert, ohne Suche, dieselben Folds und Gates): ` +
-        o.fixedCandidates.map((fc) => `${fc.strategy} ${paramsJson(fc.params)}${fc.label === undefined ? '' : ` „${fc.label}"`}`).join('; '),
+      `- Basis-Allokation (Festkandidat tier: basis, EINE durchgehende Simulation über die OOS-Kette, nie Alpha-Champion): ` +
+        festBasis.map(festText).join('; ') +
+        ` — Basis-Latte: Netto > 0 (auch bei Kosten ×${o.stressCostMultiplier}), MaxDD je Einheit Exposure ≤ ${Math.round((1 - b.minDrawdownReduction) * 100)} % des Korbs liegenlassen, ` +
+        `Sharpe ≥ ${b.minSharpeRatio} × Korb, Gebühren ≤ ${Math.round(b.maxCostShare * 100)} % von |Netto|`,
     );
   }
   const go = gateOptions(o);
@@ -193,6 +202,12 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
     ),
   );
   out.push('');
+  // Die zweite Latte hat ihre eigene Zeile — sie steht nicht in der Tabelle,
+  // weil sie um nichts konkurriert, und sie fehlt nie stumm.
+  if (festBasis.length > 0) {
+    for (const r of runs) out.push(basisZusammenfassung(r, festBasis[0]!));
+    out.push('');
+  }
 
   for (const r of runs) {
     out.push(`## ${r.symbol}`);
@@ -300,9 +315,98 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
       }
       out.push('');
     }
+
+    if (r.basis) out.push(...basisAbschnitt(r.symbol, r.basis, r.holdoutMarkt, meta));
   }
 
   return out.join('\n');
+}
+
+/* ───────────────────────── Basis-Allokation ───────────────────────── */
+
+function basisZusammenfassung(r: SymbolRun, fc: OptimizerConfig['fixedCandidates'][number]): string {
+  const label = fc.label ?? (Object.keys(fc.params).length === 0 ? 'Defaults' : paramsJson(fc.params));
+  if (!r.basis) return `Basis ${r.symbol}: ${label} — nicht gemessen (siehe Fehler unter ${r.symbol})`;
+  const gerissen = r.basis.gates.filter((g) => !g.pass).map((g) => g.name);
+  return `Basis ${r.symbol}: ${r.basis.label} — ${r.basis.pass ? 'bestanden' : `nicht bestanden (${gerissen.join(', ')})`}`;
+}
+
+/**
+ * Der Abschnitt der zweiten Latte: Gate-Gruppe, Kennzahlen inklusive
+ * Aktivität, der Maßstab (Korb liegenlassen UND SPY über dieselbe Range),
+ * die Fold-Scheiben aus der einen Kurve und der Holdout mit Maßstab.
+ */
+function basisAbschnitt(symbol: string, b: BasisRun, holdoutMarkt: HoldoutMarkt | null, meta: ReportMeta): string[] {
+  const k = b.kennzahlen;
+  const out: string[] = [];
+  out.push(`### ${symbol} · Basis-Allokation (Festkandidat, durchgehende Simulation)`);
+  out.push('');
+  out.push(
+    `${b.strategy} „${b.label}" \`${paramsJson(b.params)}\` — EIN Simulationslauf ${isoDay(b.range.start)} … ${isoDay(b.range.end)} ` +
+      `(OOS-Kette des Fold-Plans, ${k.days} Tage; Warmup aus der Historie davor, Positionen über Fold-Grenzen, ein Buch, ein Peak, kein IS-Fenster). ` +
+      'Zweite Latte, nicht die zehn Alpha-Gates: Die Basis konkurriert nicht um den Alpha-Champion und steht als eigener Block `basis` in champion.json.',
+  );
+  out.push('');
+  out.push(`**Basis-Latte: ${b.pass ? 'bestanden' : `nicht bestanden (${b.gates.filter((g) => !g.pass).map((g) => g.name).join(', ')})`}**`);
+  out.push('');
+  out.push(gatesTable(b.gates));
+  out.push('');
+  out.push(
+    `Kennzahlen: Netto ${signed(k.netProfit)} (${signed(k.netReturnPct)} %), bei Kosten ×${b.stressCostMultiplier} ${signed(k.stressNetProfit)}; ` +
+      `Sharpe p. a. ${num(k.sharpe)}; MaxDD ${num(k.maxDrawdownPct)} %, mittlere Exposure ${pct(k.avgExposure)}, MaxDD je Einheit Exposure ${k.exposureNormMaxDD === null ? 'nicht bewertbar' : `${num(k.exposureNormMaxDD)} %`}; ` +
+      `Gebühren ${num(k.fees)} absolut; ${k.trades} Trades (${num(k.tradesPerMonth, 1)} je Monat), mittlere Haltedauer ${k.avgHoldingDays === null ? '–' : `${num(k.avgHoldingDays, 1)} Handelstage`}, ` +
+      `Tage ohne Position ${pct(k.flatDaysShare)}, offen am Ende ${k.openAtEnd}.`,
+  );
+  out.push('');
+  const zeile = (name: string, rendite: number, dd: number, sharpe: number | null, ddExp: string): string[] => [name, `${signed(rendite)} %`, `${num(dd)} %`, num(sharpe), ddExp];
+  const zeilen: string[][] = [zeile('Basis', k.netReturnPct, k.maxDrawdownPct, k.sharpe, k.exposureNormMaxDD === null ? '–' : `${num(k.exposureNormMaxDD)} %`)];
+  zeilen.push(
+    b.korb
+      ? zeile(`Korb liegenlassen (${b.korb.symbole} Symbol${b.korb.symbole === 1 ? '' : 'e'}, gleichgewichtet, ohne Kosten) — der Maßstab`, b.korb.netReturnPct, b.korb.maxDrawdownPct, b.korb.sharpe, `${num(b.korb.maxDrawdownPct)} %`)
+      : ['Korb liegenlassen — keine Kurse in der Range (Latte nicht berechenbar ⇒ Gates gerissen)', '–', '–', '–', '–'],
+  );
+  if (b.spy) {
+    zeilen.push(
+      b.spy.bezug
+        ? zeile(`${b.spy.symbol} kaufen-und-halten (nur Bericht)`, b.spy.bezug.netReturnPct, b.spy.bezug.maxDrawdownPct, b.spy.bezug.sharpe, `${num(b.spy.bezug.maxDrawdownPct)} %`)
+        : [`${b.spy.symbol} kaufen-und-halten (nur Bericht) — keine Kurse in der Range`, '–', '–', '–', '–'],
+    );
+  }
+  out.push('_Maßstab über DIESELBE Range — der Korb liegenlassen entscheidet (Gates), SPY ist nur Bericht._');
+  out.push('');
+  out.push(table(['Referenz', 'Rendite', 'MaxDD', 'Sharpe', 'MaxDD je Einheit Exposure'], zeilen));
+  out.push('');
+  out.push(
+    `_Fold-Scheiben aus der EINEN Kurve — nur Bericht, kein Gate: ${Math.round(b.positiveScheibenShare * b.scheiben.length)} von ${b.scheiben.length} Scheiben netto positiv ` +
+      `(${pct(b.positiveScheibenShare, 0)}); Korb und ${b.spy ? b.spy.symbol : 'Benchmark'} als Netto von ${meta.initialEquity} liegenlassen, dieselbe Kurve geschnitten._`,
+  );
+  out.push('');
+  out.push(
+    table(
+      ['Fold-Scheibe', 'Netto Basis', 'Netto Korb', `Netto ${b.spy ? b.spy.symbol : 'Benchmark'}`],
+      b.scheiben.map((sc) => [
+        `${sc.fold.index + 1}: ${isoDay(sc.fold.oosStart)} … ${isoDay(sc.fold.oosEnd)}`,
+        signed(sc.basis),
+        sc.korb === null ? '–' : signed(sc.korb),
+        sc.spy === null ? '–' : signed(sc.spy),
+      ]),
+    ),
+  );
+  out.push('');
+  if (b.holdout) {
+    out.push(
+      `**Holdout ${isoDay(b.holdout.start)} … ${isoDay(b.holdout.end)} — nur Bericht, nicht Latte.** ` +
+        'Eigene Simulation ab Holdout-Beginn mit Warmup aus der Historie; diese Zahlen haben die Gates nicht beeinflusst.',
+    );
+    out.push('');
+    out.push(table(METRICS_HEADER, [metricsRow(b.holdout.metrics)]));
+    const markt = marktBlock(holdoutMarkt);
+    if (markt.length) out.push('', ...markt);
+  } else {
+    out.push('_Kein Holdout konfiguriert (optimizer.holdoutDays = 0)._');
+  }
+  out.push('');
+  return out;
 }
 
 /**
