@@ -42,7 +42,7 @@ thematisch). Bezeichner im Code Englisch, Kommentare Deutsch.
    **Die zweite ist die Korb-Zugehörigkeit:** Der Korb eines Folds wird zu
    dessen OOS-Beginn gewählt (`optimize/korbJeFold.ts`), nicht der Endkorb
    rückwärts — am 09.09.2026 hing daran ein Urteil (0,71 / −0,18 / 0,04 je
-   Endkorb). Was bleibt: Der Kandidatenpool ist von heute; wer im
+   Endkorb; mit Korb je Fold 0,58 ✘, §5a.15). Was bleibt: Der Kandidatenpool ist von heute; wer im
    Messzeitraum verschwand, ist nicht darin (§5a.13 — bekannt, in Richtung
    optimistisch). Wächter: `test/optimize/korbJeFold.test.ts`.
 3. **Echtgeld-Doppel-Guard.** Live nur, wenn `broker.mode: live` UND

@@ -582,6 +582,111 @@ Familie das nicht, nimmt der Rückfall die Variante mit den meisten Trades —
 ein Zug zum Umschlag. Auf der Plattform handelt ein Nutzer eine Teilmenge des
 Korbs; unter `MIN_KORB` Symbolen rangiert nichts.
 
+### 15. Zweite Messreihe: Korb je Fold, fünf Strategien, vier Fenster
+
+Nach §13 (Korb je Fold) und §14 (`regime_allocation`) wurden dieselben vier
+Fenster am 09.09. neu gemessen — gleiche Config (`equity-1440.yaml`: 2000
+Tage, 30 Symbole, Long-only, Tagesbars, gepoolt), aber der Korb jedes Folds
+zu dessen OOS-Beginn aus 139 Kandidaten gewählt, und fünf statt vier
+Strategien. Läufe 31, 32, 33 und 35 (Lauf 34 fiel der Streuner-Bar aus §11
+zum Opfer).
+
+**OOS-Kette** — Sharpe p. a. je Strategie; Latte = SPY kaufen-und-halten
+über dieselben OOS-Fenster (Gate `beats_market`):
+
+| Fenster (Stichtag) | Folds | Stände | csm | mr | mp | td | regime | Latte SPY | Urteil |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| heute, 2026-09-08 (Lauf 31) | 16 | 17 | 0,02 | −0,20 | −0,24 | −0,06 | 0,61 | 0,64 | kein Handel |
+| 2026-03-06 (Lauf 32) | 16 | 17 | 0,58 | **0,83 ✔ 10/10** | 0,48 | −0,09 | 0,38 | 0,63 | promote (nur Probe) |
+| 2025-09-05 (Lauf 33) | 14 | 15 | 0,24 | 0,49 (8/10) | −0,30 | −0,26 | 0,16 | 0,46 | kein Handel |
+| 2025-03-07 (Lauf 35) | 12 | 13 | −0,09 | −0,02 | 0,39 | 0,05 | −0,31 | 0,48 | kein Handel |
+
+**Holdout** (180 Tage, nur Bericht) — beste Strategie gegen den Maßstab,
+verglichen über den Sharpe:
+
+| Holdout | beste Strategie | Korb liegenlassen | SPY |
+|---|---|---|---|
+| 2026-03 … 2026-09 | regime 1,77 (+7,6 %, 12 Trades) | 1,99 (+24,0 %) | 2,25 (+15,7 %) |
+| 2025-09 … 2026-03 | mr 2,99 (+1,5 %, 12 Trades) | 0,36 (+2,2 %) | 0,69 (+3,7 %) |
+| 2025-03 … 2025-09 | mr 2,34 (+1,8 %, 9 Trades) | 1,62 (+20,0 %) | 1,39 (+15,4 %) |
+| 2024-09 … 2025-03 | mp 1,13 (+2,6 %, 27 Trades) | 0,45 (+3,2 %) | 0,88 (+5,4 %) |
+
+**Was der Korb je Fold verändert hat** — erste Reihe (Endkorb rückwärts,
+§12) → zweite Reihe, OOS-Sharpe:
+
+| Fenster | csm | mr | mp | td |
+|---|---|---|---|---|
+| heute | 0,53 → 0,02 | 0,00 → −0,20 | 0,21 → −0,24 | −0,61 → −0,06 |
+| 2026-03 | **0,71 ✔ → 0,58 ✘** | 0,48 → **0,83 ✔** | 0,24 → 0,48 | −0,36 → −0,09 |
+| 2025-09 | −0,18 → 0,24 | −0,10 → 0,49 | −0,38 → −0,30 | −0,02 → −0,26 |
+| 2025-03 | 0,04 → −0,09 | −0,77 → −0,02 | 0,23 → 0,39 | −0,03 → 0,05 |
+
+**Lesart.**
+
+1. *Die Beförderung aus §12 war der Korb.* Mit dem Korb zu jedem
+   OOS-Beginn fällt csm im Fenster 2026-03 von 0,71 ✔ auf 0,58 ✘ — die
+   Survivorship, die §12 (2) vorhergesagt hatte, jetzt gemessen. Heute
+   fällt csm von 0,53 auf 0,02. Was bleibt, bewegt sich in jedem Fenster um
+   ±0,3 allein durch den Korb.
+
+2. *Der neue Treffer ist mean_reversion — und er hält einer Verschiebung um
+   sechs Tage nicht stand.* Im Fenster 2026-03 besteht mr alle zehn Gates
+   (0,83 gegen 0,63; +9,1 %, MaxDD 4,1 %, Gebührenanteil 26,6 %); 2025-09
+   8/10 (0,49 gegen 0,46, reißt Fold-Konzentration und PSR); heute −0,20;
+   2025-03 −0,02 mit 4 von 12 positiven Folds und 86 % Gebührenanteil. Die
+   Fenster heute und 2026-03 überlappen sich in 14 Quartalen (2022-04 …
+   2025-09); ihre Fold-Raster liegen sechs Tage auseinander. Dieselben 14
+   Quartale ergeben für mr in Lauf 32 **+2 086 $** und in Lauf 31 **−200 $**;
+   die Vorzeichen stimmen in 10 von 14 Folds überein, die Beträge in keinem.
+   Was sich zwischen den Läufen unterscheidet: das Raster (sechs Tage), die
+   Korb-Kette (anderer erster Stand, dann Hysterese) und vor allem die je
+   Fold gewählten Parameter — rsiLen 2 bis 6, Überverkauft 5 bis 25,
+   Haltedauer 3 bis 15 Bars, mit und ohne z-Score, in jedem Fold anders.
+   Die Kette ist nicht EINE Strategie, die out-of-sample geprüft wird,
+   sondern sechzehn, jede auf ein Jahr gefittet. Ein Ergebnis, das an der
+   Ausrichtung des Rasters hängt, ist Rauschen mit Vorzeichen.
+
+3. *regime_allocation zeigt keine Kante.* 0,61 / 0,38 / 0,16 / −0,31 gegen
+   0,64 / 0,63 / 0,46 / 0,48 — nie über der Latte, in drei von vier Fenstern
+   unter 60 OOS-Trades (52, 68, 56, 51), im Fenster 2025-03 mit −3,5 % über
+   die Kette. Die Trade-Zahl ist Bauart (Monatsrhythmus, 12–16 Folds). Die
+   Gates werden dafür nicht weiter (§0.9): Wenige Trades machen ein Urteil
+   unsicherer, nicht sicherer. Der Holdout heute (1,77, +7,6 % aus 12
+   Trades) ist ein Halbjahr. Was der Prüfer in §14 nicht widerlegen konnte,
+   hat die Messung erledigt — die Familie ist auf diesen Daten nicht besser
+   als die Signal-Strategien.
+
+4. *Die Holdouts lesen sich wie in §12.* Die im Nachhinein beste Strategie
+   schlägt SPY dreimal von viermal im Sharpe — es ist jedes Mal eine andere
+   (regime, mr, mr, mp), und ihre Renditen von 1,5–7,6 % stehen gegen
+   3,7–15,7 % beim Markt. Im Halbjahr 2025-09 … 2026-03 liegt sogar der
+   Korb (0,36) hinter SPY (0,69): Der Korb vom September 2025 hat das
+   Halbjahr danach schlechter überstanden als der Index. Auch der Korb ist
+   ein Wettbewerber, kein Maßstab.
+
+**Nebenbefund — eine tote Achse im Suchraum.** `mean_reversion`,
+`momentum_pullback`, `trend_donchian` und `orb_breakout` führen `allowShort`
+als Parameter (0/1). Mit `risk.allowShort: false` sperrt `decide()` jeden
+Short — der Parameter tut nichts, wird aber gezogen: In den Fold-Tabellen
+steht er in jeder zweiten Zeile auf 1. Für die Suche kostet das Trials, für
+das Gate `neighborhood_plateau` ist es eine Schmeichelei: Der ±1-Nachbar
+entlang der toten Achse hat exakt den Bestwert und zählt als Plateau. Klein,
+in Richtung optimistisch, und keiner der Befunde oben hängt daran: mr in
+Lauf 32 stand bei 93 % positiven Nachbarn und einem Nachbar-Median von 2,61
+gegen eine Schwelle von 1,59 — ein Nachbar weniger kippt das nicht. Folgt
+als eigener Commit: Ist der Short gesperrt, gehört die Achse nicht in den
+Suchraum.
+
+**Stand nach zwei Messreihen.** Sechs Strategie-Familien, vier Fenster, zwei
+Korb-Regime, zehn Gates: Ein einziger voller Treffer (mr, Lauf 32), der an
+der Ausrichtung des Rasters hängt. Das Urteil „kein Handel" steht für alle
+Fenster — die Plattform handelt weiter nichts, und das ist das Ergebnis, kein
+Ausfall. Der nächste sinnvolle Schritt ist kein neuer Kandidat, sondern die
+Falsifikation des einen Treffers dort, wo er steht: derselbe Lauf 32 mit
+verschobenem Raster und anderem Seed. Überlebt 0,83 das nicht — und Lauf 31
+sagt, dass er es nicht tut —, ist auch die letzte Zahl über der Latte
+erklärt.
+
 ### Was das für den Betrieb heißt
 
 Kein Handel. Der nächtliche Optimierer läuft weiter und sucht mit nächtlich
