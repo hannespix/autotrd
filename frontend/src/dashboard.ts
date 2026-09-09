@@ -355,6 +355,12 @@ function layout(email: string): string {
           <div><label class="lbl">${t('pf.profitFaktor')} ${iBtn('profitFactor')}</label><div id="pfPF" class="smv mono">--</div></div>
           <div><label class="lbl">${t('pf.erwartungTrade')} ${iBtn('expectancy')}</label><div id="pfExp" class="smv mono">--</div></div>
         </div>
+        <!-- Maßstab der TRADE-Kennzahlen. Ohne ihn stehen „Profit-Faktor 1.56"
+             und „Gesamt P&L −297,47 $" unbeschriftet nebeneinander und lesen
+             sich als Widerspruch: Die eine Zahl zählt jeden Abschluss der
+             Kontohistorie, die andere zählt das Konto erst ab der
+             Kapitalbasis. renderPfStats füllt. -->
+        <p class="hint" id="pfBasis" hidden style="margin:6px 0 0"></p>
         <div class="hint" id="pfHint">${t('pf.abSnapshot')}</div>
       </div></div>
     </div>
@@ -2091,9 +2097,19 @@ function renderPortfolio(): void {
   const basis = st.wallet?.baseCapital ?? st.strategy.broker.initialCapital;
   const totalPnl = cash !== null ? cash + posValue - basis : null;
   const closedPnl = totalPnl !== null ? totalPnl - openPnl : null;
+  // Trefferquote gehört zur SELBEN Familie wie Gesamt-P&L: eine Zahl über
+  // ALLE Abschlüsse. Aus `st.trades` gerechnet wäre sie die Quote der
+  // geladenen SEITE und spränge bei jedem „Ältere laden" — genau der Fehler,
+  // vor dem der Kommentar drei Zeilen weiter oben warnt, eine Zeile später
+  // dann doch gemacht (Befund 08.09.: 55 % neben −297,47 $).
+  // `users/{uid}/stats/main` hält sie serverseitig über alle Trades; das
+  // Dashboard lädt das Dokument ohnehin schon für die Kennzahlen darunter.
+  // Die Seite bleibt nur der Notnagel, wenn es fehlt — und sagt das dann.
   const closers = st.trades.filter((t) => t.pnl !== undefined && t.pnl !== null);
   const wins = closers.filter((t) => (t.pnl ?? 0) > 0).length;
-  const winRate = closers.length > 0 ? Math.round((wins / closers.length) * 100) : null;
+  const wrVollstaendig = st.pfStats?.winRatePct ?? null;
+  const winRate = wrVollstaendig ?? (closers.length > 0 ? Math.round((wins / closers.length) * 100) : null);
+  const wrNurSeite = wrVollstaendig === null && winRate !== null;
 
   $('vCash').textContent = money(cash);
   /* Negatives Cash ist beim SHORT-Buch Buchungslogik, kein Verlust: Der
@@ -2131,7 +2147,11 @@ function renderPortfolio(): void {
     ohneKurs > 0
       ? `${t('pf.ohneKursA')} ${ohneKurs} ${t('pf.ohneKursB')} ${st.positions.length} ${t('pf.ohneKursC')}`
       : '';
-  $('vWR').textContent = winRate === null ? '--%' : `${winRate}%`;
+  const wrEl = $('vWR');
+  // Der Notnagel wird als solcher gekennzeichnet: Eine Quote aus der
+  // geladenen Seite darf nicht wie eine Gesamtquote aussehen.
+  wrEl.textContent = winRate === null ? '--%' : `${Math.round(winRate)}%${wrNurSeite ? ' *' : ''}`;
+  wrEl.title = wrNurSeite ? `${t('pf.wrNurSeiteA')} ${closers.length} ${t('pf.wrNurSeiteB')}` : '';
 
   // Positionen-Tabelle
   $('pCount').textContent =
@@ -2492,6 +2512,28 @@ function renderPfStats(): void {
   const exp = $('pfExp');
   exp.textContent = s.expectancy === null ? '--' : money(s.expectancy);
   exp.className = `smv mono ${s.expectancy !== null ? pnlClass(s.expectancy) : ''}`;
+
+  /* Maßstab der Trade-Kennzahlen (Befund 08.09.): Ein Nutzer sah
+   * „Profit-Faktor 1.56 · Erwartung +20,63 $" direkt neben „Gesamt P&L
+   * −297,47 $" und hielt das für einen Widerspruch. Beides stimmt, misst
+   * aber Verschiedenes — Trefferquote, Profit-Faktor und Erwartung zählen
+   * JEDEN Abschluss der Kontohistorie, Gesamt P&L zählt das Konto erst ab
+   * der Kapitalbasis. Nach einem Depot-Schnitt klafft das zwangsläufig
+   * auseinander, und genau dann muss es dranstehen: Gesamt P&L trägt seinen
+   * Maßstab seit dem 13.08., diese drei trugen keinen. */
+  const pfBasis = document.getElementById('pfBasis');
+  if (pfBasis) {
+    const n = typeof s.trades === 'number' ? s.trades : 0;
+    const schnitt = st.wallet?.resetAt;
+    const zeit = schnitt ? Date.parse(schnitt) : NaN;
+    const datum = Number.isFinite(zeit) ? new Date(zeit).toLocaleDateString('de-DE') : null;
+    pfBasis.hidden = n === 0;
+    pfBasis.textContent =
+      n === 0
+        ? ''
+        : `${t('pf.ueberAlleA')} ${n} ${n === 1 ? t('pf.abschluss1') : t('pf.abschlussN')}` +
+          (datum ? ` ${t('pf.auchVorSchnitt')} ${datum}${t('pf.auchVorSchnittB')}` : '.');
+  }
 }
 
 /**
@@ -2788,6 +2830,10 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     watchPortfolioStats(uid, (stats) => {
       if (!st) return;
       st.pfStats = stats;
+      // Auch das Portfolio: Die Trefferquote im Kopf stammt jetzt aus diesem
+      // Dokument und bliebe sonst auf dem Notnagel aus der geladenen Seite
+      // stehen, bis irgendetwas anderes ein Neuzeichnen auslöst.
+      renderPortfolio();
       renderPfStats();
     }),
     watchEquitySeries(uid, (points) => {
