@@ -225,6 +225,29 @@ export interface SymbolSnapshot {
 /** Vorberechnete Indikatoren einer Strategie (kausal — Präfix-Konsistenz ist Testpflicht). */
 export type IndicatorSet = Record<string, Float64Array>;
 
+/**
+ * Sizing-Semantik einer Strategie-WAHL (nicht der Strategie selbst).
+ *
+ * Fehlt sie, gilt das Risiko-Budget je Trade: Stückzahl = Equity ×
+ * `riskPerTradePct` / Stop-Distanz (risk/sizing.ts). `allocation` ist die
+ * Semantik der Basis-Stufe (Prüfbefund K4, 09.09.2026): Die Position ist ein
+ * fester Anteil der Equity (`positionPct`), unabhängig vom Risiko je Trade
+ * des Nutzers — genau so wurde die Basis gemessen (Position 20 % = Risiko
+ * 4 % bei Stop 20 %). Der Stop bleibt der Katastrophen-Stop der Strategie und
+ * liegt wie immer beim Broker; die Deckel des Nutzers (`maxPositionPct`,
+ * `maxGrossExposurePct`, `maxPositions`, Bargeld) gelten weiter und können die
+ * Position nur verkleinern, nie vergrößern.
+ *
+ * Wer die Semantik setzt: der Champion-Block `basis` (`positionPct`), gelesen
+ * von `core/basisTier.ts` — nie eine Strategie über ein „Gewicht" (das war
+ * der widerlegte Weg der ersten regime_allocation-Fassung).
+ */
+export interface SizingSpec {
+  mode: 'allocation';
+  /** Zielgröße der Position in % der Equity (> 0). */
+  positionPct: number;
+}
+
 export interface Strategy {
   id: string;
   /** Unterstützte Zeitrahmen. */

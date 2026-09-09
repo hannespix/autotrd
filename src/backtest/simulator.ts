@@ -62,6 +62,7 @@ import type {
   PositionState,
   SessionInfo,
   SimResult,
+  SizingSpec,
   Strategy,
   SymbolSnapshot,
   TimeframeMin,
@@ -82,8 +83,8 @@ export interface SimInput {
   /** Je Symbol Bars im Strategie-Zeitrahmen (bereits aggregiert, nur Sitzung). */
   bars: ReadonlyMap<string, BarSeriesLike>;
   benchmark?: BarSeriesLike | undefined;
-  /** null ⇒ Symbol nicht handeln. */
-  strategyFor: (symbol: string) => { strategy: Strategy; params: Params } | null;
+  /** null ⇒ Symbol nicht handeln. `sizing` (Basis-Stufe: Allokation) geht unverändert in `decide()` — wie in der Engine. */
+  strategyFor: (symbol: string) => { strategy: Strategy; params: Params; sizing?: SizingSpec | undefined } | null;
   config: SimConfig;
   initialEquity: number;
   /** Entscheidungen/Fills nur für Bars mit t in [start, end); Bars davor sind Warmup, Bars danach werden ignoriert. */
@@ -106,6 +107,7 @@ interface SymState {
   series: BarSeriesLike;
   strategy: Strategy;
   params: Params;
+  sizing: SizingSpec | undefined;
   ind: IndicatorSet;
   /** Index der nächsten noch nicht verarbeiteten Bar. */
   cursor: number;
@@ -238,6 +240,7 @@ export function simulate(input: SimInput): SimResult {
       series,
       strategy: sp.strategy,
       params: sp.params,
+      sizing: sp.sizing,
       ind: sp.strategy.precompute(series, sp.params),
       cursor: 0,
       pendingEnter: null,
@@ -535,7 +538,7 @@ export function simulate(input: SimInput): SimResult {
       const i = s.cursor - 1;
       const session = sessionInfoIncremental({ t, day, barsSinceOpen: s.barsSinceOpen, tf, assetClass, bounds });
       const snap: SymbolSnapshot = { symbol: s.symbol, bars: s.series.prefix(i + 1), i, position: s.pos, session, benchmark: benchSnap };
-      inputs.push({ snap, strategy: s.strategy, params: s.params, ind: s.ind });
+      inputs.push({ snap, strategy: s.strategy, params: s.params, ind: s.ind, sizing: s.sizing });
     }
     const today = dayKeyFor(now, assetClass);
     const ctx: LogicContext = {

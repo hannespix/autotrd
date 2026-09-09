@@ -72,6 +72,10 @@ export const INFO_DE: Record<string, Tip> = {
     t: 'Shorten (Leerverkäufe)',
     d: 'Erlaubt den Strategien, auf FALLENDE Kurse zu setzen: Ein Short-Signal eröffnet einen Leerverkauf (der Broker leiht die Stücke), das Eindecken schließt ihn. Gewinn = Einstand minus Rückkaufkurs. Wichtig: Beim Shorten sind Verluste theoretisch unbegrenzt (der Kurs kann beliebig steigen) — deshalb ist das bewusst ein Opt-in. Stop (über dem Einstand) und Ziel liegen gespiegelt als Bracket-Order beim Broker; die Notbremsen gelten unverändert.',
   },
+  basis: {
+    t: 'Basis-Allokation',
+    d: 'Marktexposition mit Trendfilter als Standard statt „nichts": Ein monatlicher Regime-und-Stärke-Filter über wenige Anlageklassen-ETFs (der Korb steht im Champion-Block „Basis"), mit weitem Katastrophen-Stop beim Broker. Sie handelt nur Symbole, für die es keinen Alpha-Champion gibt, und nur, wenn sie ihre eigene Latte bestanden hat (Netto nach Kosten, Drawdown je Einheit Exposure, Ertrag je Risiko, Gebührenanteil — gegen den liegengelassenen Korb, nicht gegen den Markt). WAS SIE NICHT IST: kein Alpha und kein Versprechen; sie kauft kleineren Drawdown mit Ertrag. SIZING: Jede Position ist ein FESTER Anteil der Equity (steht im Champion-Block), unabhängig vom „Risiko je Trade" — genau so wurde sie gemessen; Positionsdeckel, Positionsanzahl und Notbremsen gelten unverändert. Aus heißt: Diese Symbole werden nicht gehandelt, offene Basis-Positionen werden geschlossen.',
+  },
   telegram: {
     t: 'Telegram-Benachrichtigungen',
     d: 'Die Engine meldet über den Plattform-Bot, was sie getan hat: Einstiege, Ausstiege, ausgelöste Notbremsen, Halt und Resume, Fehler. Nur Ereignisse, nie Kurse — ein Bot, der jede Minute schreibt, wird stummgeschaltet und ist dann bei der einen Meldung, die zählt, nicht mehr da. Die Zuordnung deines Telegram-Kontos richtet der Betreiber ein.',
@@ -174,6 +178,10 @@ export const INFO_EN: Record<string, Partial<Tip>> = {
   allowShort: {
     t: 'Shorting (short sales)',
     d: 'Allows the strategies to bet on FALLING prices: a short signal opens a short sale (the broker lends the shares), covering closes it. Profit = entry minus repurchase price. Important: when shorting, losses are theoretically unlimited (the price can rise arbitrarily) — which is why this is deliberately opt-in. Stop (above the entry) and target sit mirrored as a bracket order at the broker; the brakes apply unchanged.',
+  },
+  basis: {
+    t: 'Base allocation',
+    d: 'Market exposure with a trend filter as the default instead of “nothing”: a monthly regime-and-strength filter over a few asset-class ETFs (the basket is in the champion block “base”), with a wide catastrophe stop at the broker. It trades only symbols without an alpha champion, and only if it passed its own bar (net after costs, drawdown per unit of exposure, return per risk, fee share — against the basket held passively, not against the market). WHAT IT IS NOT: not alpha and not a promise; it buys a smaller drawdown with return. SIZING: every position is a FIXED share of equity (stated in the champion block), independent of “risk per trade” — exactly as measured; position cap, position count and brakes apply unchanged. Off means: these symbols are not traded and open base positions are closed.',
   },
   telegram: {
     t: 'Telegram notifications',

@@ -40,6 +40,56 @@ describe('sizePosition', () => {
     expect(sizePosition({ ...base, equity: 0 }).reason).toMatch(/Equity/);
   });
 
+  /* ── Allokations-Sizing der Basis-Stufe (Prüfbefund K4) ── */
+
+  describe('sizing: allocation (Basis-Stufe)', () => {
+    const alloc = { ...base, stop: 80, maxPositionPct: 100, sizing: { mode: 'allocation' as const, positionPct: 20 } };
+
+    it('Zielstückzahl = floor(Equity × positionPct / Kurs) — unabhängig vom Risiko je Trade und von der Stop-Distanz', () => {
+      // 10 000 × 20 % / 100 = 20 Stück; riskPct 0,5 % ergäbe 50 $ / 20 $ = 2 Stück.
+      expect(sizePosition(alloc).qty).toBe(20);
+      expect(sizePosition({ ...alloc, riskPct: 5 }).qty).toBe(20);
+      expect(sizePosition({ ...alloc, riskPct: 0 }).qty).toBe(20);
+      expect(sizePosition({ ...alloc, stop: 99 }).qty).toBe(20);
+      expect(sizePosition({ ...alloc, price: 33, stop: 26 }).qty).toBe(60); // 2 000 / 33 = 60,6 ⇒ 60
+      expect(sizePosition(alloc).notional).toBe(2_000);
+    });
+
+    it('WÄCHTER: Identität — Risiko 4 % bei Stop 20 % ist Allokation 20 %', () => {
+      const messung = sizePosition({ ...base, stop: 80, riskPct: 4, maxPositionPct: 25 });
+      const handel = sizePosition({ ...base, stop: 80, riskPct: 0.5, maxPositionPct: 25, sizing: { mode: 'allocation', positionPct: 20 } });
+      expect(handel.qty).toBe(messung.qty);
+      expect(handel.qty).toBe(20);
+      for (const price of [7, 33, 250, 612.5]) {
+        expect(sizePosition({ ...base, price, stop: price * 0.8, riskPct: 4, maxPositionPct: 25 }).qty).toBe(
+          sizePosition({ ...base, price, stop: price * 0.8, riskPct: 0.5, maxPositionPct: 25, sizing: { mode: 'allocation', positionPct: 20 } }).qty,
+        );
+      }
+    });
+
+    it('WÄCHTER: die Deckel des Nutzers verkleinern nur — maxPositionPct, Exposure-Budget, Bargeld', () => {
+      expect(sizePosition({ ...alloc, maxPositionPct: 10 }).qty).toBe(10);
+      expect(sizePosition({ ...alloc, maxPositionPct: 50 }).qty).toBe(20); // ein weiterer Deckel vergrößert nichts
+      expect(sizePosition({ ...alloc, exposureBudget: 1_250 }).qty).toBe(12);
+      expect(sizePosition({ ...alloc, cash: 550 }).qty).toBe(5);
+      const r = sizePosition({ ...alloc, maxPositionPct: 0.5 });
+      expect(r.qty).toBe(0);
+      expect(r.reason).toMatch(/Positionsdeckel/);
+    });
+
+    it('der Stop bleibt Pflicht: ohne Stop auf der Verlustseite keine Stückzahl — auch in der Allokation', () => {
+      const r = sizePosition({ ...alloc, stop: 100 });
+      expect(r.qty).toBe(0);
+      expect(r.reason).toMatch(/Verlustseite/);
+      expect(sizePosition({ ...alloc, side: 'short', stop: 120, cash: 0 }).qty).toBe(20);
+    });
+
+    it('meldet den Begrenzer „Allokation", wenn der Anteil unter eine Stückelung fällt', () => {
+      const r = sizePosition({ ...alloc, price: 5_000 });
+      expect(r.qty).toBe(0);
+      expect(r.reason).toMatch(/Allokation/);
+    });
+  });
 });
 
 describe('checkHalt', () => {

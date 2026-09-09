@@ -255,3 +255,23 @@ sie in der neuen Karte gespeichert werden.
 **Rückweg:** Merge zurückdrehen, `main` neu deployen. Der Neubau legt nur
 zusätzliche Dokumente an (`private/engineState`, Journal, Trades im alten
 Schema, `positionsArchiv`); die Daten des Altsystems bleiben unverändert.
+
+## Basis-Stufe (seit 09.09.2026)
+
+Neben dem Alpha-Champion (`meta/champion.symbols`, zehn Gates) kennt die
+Plattform die **Basis-Allokation** (`meta/champion.basis`): Marktexposition
+mit Trendfilter auf Anlageklassen-ETFs, gemessen gegen die eigene Latte
+(Gate-Gruppe `basis`, `docs/wissen/vorregistrierung/2026-09-09-basis-allokation-v2.md`).
+Reihenfolge je Symbol: Alpha-Champion vor Basis vor `noTrade`
+(`src/core/basisTier.ts`). Die Basis handelt nur, wenn ihr Block `pass: true`
+trägt, der Zeitrahmen passt, das Symbol im Basis-Korb liegt und der
+Nutzer-Schalter `settings.auto.basis` an ist (Default an; nur ausdrückliches
+`false` schaltet ab — dann verlassen die Basis-Symbole das Universum des
+Nutzers, offene Basis-Positionen werden geschlossen). Position = `positionPct`
+der Equity je Symbol (Allokation, nicht Risiko je Trade); die Deckel
+`maxPositionPct`, `maxGrossExposurePct`, `maxPositions` und die Notbremsen des
+Nutzers gelten unverändert. Der nächtliche Optimierer misst die Basis auf
+ihrer eigenen Einheit (`optimizer.basisUniverse`) und schreibt den Block —
+bestanden oder nicht — mit `positionPct` und den gemessenen Symbolen.
+Echtgeld: unverändert Doppel-Guard und `readiness`; die Basis öffnet keinen
+neuen Live-Pfad.

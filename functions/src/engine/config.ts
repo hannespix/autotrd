@@ -8,7 +8,8 @@
  * Nutzer mit Fehler.
  *
  * Global sind: Universum, Zeitrahmen, Feed, Sitzungsfenster, Kosten,
- * Optimierer, Engine-Feinheiten, Fallback-Strategie. Je Nutzer: `risk`.
+ * Optimierer, Engine-Feinheiten, Fallback-Strategie. Je Nutzer: `risk` und
+ * der Schalter der Basis-Stufe (`settings.auto.basis` ⇒ `strategy.basis`).
  * `notify`/`paths` haben im Takt keine Bedeutung und werden verworfen.
  */
 import { normalizeUserSymbol } from '../../../src/alpaca/symbols.ts';
@@ -71,6 +72,8 @@ export interface UserRiskPart {
   risk: Record<string, unknown>;
   /** Gewünschte Teilmenge des Universums (roh, unnormalisiert); null = ganzes Universum. */
   symbols: string[] | null;
+  /** Basis-Stufe handeln (`settings.auto.basis`); fehlend, Alt-Schema oder Default ⇒ an. */
+  basis: boolean;
   source: UserRiskSource;
 }
 
@@ -94,16 +97,17 @@ export function userRiskFrom(settings: unknown): UserRiskPart {
     for (const k of AUTO_FIELDS) if (auto[k] !== undefined) risk[k] = auto[k];
     if (auto.allowShort !== undefined) risk.allowShort = auto.allowShort;
     const symbols = Array.isArray(auto.symbols) ? auto.symbols.filter((x): x is string => typeof x === 'string') : null;
-    return { risk, symbols, source: 'auto' };
+    // Nur ein ausdrückliches `false` schaltet die Basis ab — wie `validateAutoSettings` es speichert.
+    return { risk, symbols, basis: auto.basis !== false, source: 'auto' };
   }
   if (isRecord(s.strategy)) {
     const auto = autoSettingsFromLegacy(s.strategy);
     const risk: Record<string, unknown> = {};
     for (const k of AUTO_FIELDS) risk[k] = auto[k];
     risk.allowShort = auto.allowShort;
-    return { risk, symbols: null, source: 'legacy' };
+    return { risk, symbols: null, basis: auto.basis !== false, source: 'legacy' };
   }
-  return { risk: {}, symbols: null, source: 'default' };
+  return { risk: {}, symbols: null, basis: true, source: 'default' };
 }
 
 export interface UserConfig {
@@ -142,7 +146,10 @@ export function buildUserConfig(global: Record<string, unknown>, settings: unkno
       universe.symbols = subset;
     }
   }
-  const out: UserConfig = { config: parseConfig({ ...global, universe, risk: part.risk }), source: part.source };
+  // Der Schalter der Basis-Stufe ist je Nutzer, wohnt aber im `strategy`-Block
+  // des Kerns — dieselbe Stelle, die `strategyChoice` im Dauerprozess liest.
+  const strategy: Record<string, unknown> = { ...(isRecord(global.strategy) ? global.strategy : {}), basis: part.basis };
+  const out: UserConfig = { config: parseConfig({ ...global, universe, risk: part.risk, strategy }), source: part.source };
   if (auswahlVeraltet !== undefined) out.auswahlVeraltet = auswahlVeraltet;
   return out;
 }

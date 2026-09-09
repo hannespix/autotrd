@@ -57,10 +57,12 @@ describe('Umstieg: Planung', () => {
 });
 
 describe('Umstieg: meta/engineConfig', () => {
-  it('trägt broker.feed und universe, aber keine barGraceSec (Takt-Karenz bleibt dem Takt)', () => {
+  it('trägt broker.feed, broker.adjustment und universe, aber keine barGraceSec (Takt-Karenz bleibt dem Takt)', () => {
     const cfg = parseConfig(parseYaml(readFileSync('config/platform.yaml', 'utf8')));
     const doc = engineConfigDocFrom(cfg);
-    expect(doc.broker).toEqual({ mode: 'paper', feed: 'iex' });
+    // `adjustment` geht mit (Prüfbefund M7 gilt live): Der Takt bildet daraus seine Cache-Wurzel.
+    expect(doc.broker).toEqual({ mode: 'paper', feed: 'iex', adjustment: cfg.broker.adjustment });
+    expect(engineConfigDocFrom({ ...cfg, broker: { ...cfg.broker, adjustment: 'all' } }).broker).toEqual({ mode: 'paper', feed: 'iex', adjustment: 'all' });
     expect(doc.universe.symbols.length).toBeGreaterThan(0);
     expect(doc.engine.barGraceSec).toBeUndefined();
     expect(doc.riskDefaults.maxDailyLossPct).toBe(2);

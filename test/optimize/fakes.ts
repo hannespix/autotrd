@@ -13,7 +13,7 @@
 import { BarSeries } from '../../src/core/bars.ts';
 import { parseConfig, type Config, type OptimizerInput } from '../../src/core/config.ts';
 import { DAY } from '../../src/core/time.ts';
-import type { EquityPoint, Metrics, Params, ParamSpec, SimResult, Strategy, TimeframeMin, Trade } from '../../src/core/types.ts';
+import type { EquityPoint, Metrics, Params, ParamSpec, SimResult, SizingSpec, Strategy, TimeframeMin, Trade } from '../../src/core/types.ts';
 import type { MetricsFns } from '../../src/optimize/robustness.ts';
 import { paramKey } from '../../src/optimize/search.ts';
 import type { SimConfig, SimInput, SimulateFn } from '../../src/optimize/walkForward.ts';
@@ -89,6 +89,8 @@ export interface SimCall {
   costMultiplier: number;
   /** Der Korb dieses Aufrufs — die Schlüssel von `input.bars` (Korb-je-Fold-Spion). */
   symbols: string[];
+  /** Sizing-Semantik der Wahl, wie `strategyFor` sie liefert (Basis: Allokation) — Spion für die Messung. */
+  sizing: SizingSpec | undefined;
 }
 
 /**
@@ -113,7 +115,7 @@ export function makeFakeSimulate(options: FakeSimOptions | ((strategyId: string)
       const o = typeof options === 'function' ? options(sp.strategy.id) : options;
       const barsPerTrade = o.barsPerTrade ?? 1;
       const barsPerDay = o.barsPerDay ?? 1;
-      calls.push({ strategyId: sp.strategy.id, params: { ...sp.params }, range: input.range ? { ...input.range } : null, costMultiplier: cm, symbols: [...input.bars.keys()] });
+      calls.push({ strategyId: sp.strategy.id, params: { ...sp.params }, range: input.range ? { ...input.range } : null, costMultiplier: cm, symbols: [...input.bars.keys()], sizing: sp.sizing });
       const edge = o.edge(sp.params);
       const pkey = o.noiseKey === 'params' ? `${sp.strategy.id}|${paramKey(sp.params)}` : '';
       const salt = o.salt ?? '';

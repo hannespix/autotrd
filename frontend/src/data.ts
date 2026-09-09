@@ -318,7 +318,8 @@ export interface EngineMirror {
   entryLock: string | null;
   lastTickAt: string | null;
   lastError: string | null;
-  champion: { source: string; symbols: string[] } | null;
+  /** `basis`: Symbole, die die Basis-Stufe führt (leer vor der Basis-Stufe). */
+  champion: { source: string; symbols: string[]; basis: string[] } | null;
   /** Strategie-Notizen des Takts (Champion fehlt, Zeitrahmen weicht ab, Sperre). */
   notes: string[];
   configSource: string | null;
@@ -341,7 +342,7 @@ function leseHalt(roh: unknown): EngineHalt | null {
 export function leseEngine(roh: unknown): EngineMirror | null {
   if (!istObjekt(roh)) return null;
   const champ = istObjekt(roh.champion)
-    ? { source: textOderNull(roh.champion.source) ?? '', symbols: textListe(roh.champion.symbols) }
+    ? { source: textOderNull(roh.champion.source) ?? '', symbols: textListe(roh.champion.symbols), basis: textListe(roh.champion.basis) }
     : null;
   return {
     mode: roh.mode === 'live' ? 'live' : roh.mode === 'paper' ? 'paper' : null,
@@ -409,6 +410,8 @@ export interface PositionRow extends Position {
   barsHeld?: number;
   entryDay?: string;
   quelle?: string;
+  /** Stufe, die das Symbol führt: champion, basis oder config (Takt-Spiegel; fehlt bei Altbestand). */
+  stufe?: string;
   updatedAt?: string;
 }
 
@@ -454,6 +457,8 @@ export interface TradeRow {
   rMultiple?: number;
   holdingDays?: number;
   fee?: number;
+  /** Stufe, die das Symbol führte: champion, basis oder config (fehlt bei Altbestand). */
+  stufe?: string;
 }
 
 /** Seitengröße der Historie. */
@@ -651,11 +656,47 @@ export interface NoTradeDoc {
   bestScore: number | null;
 }
 
+/** Die Basis-Stufe (`meta/champion.basis`, Format `ChampionBasis` aus src/optimize/promote.ts) — additiv. */
+export interface ChampionBasisDoc {
+  strategy: string;
+  label: string;
+  pass: boolean;
+  symbols: string[];
+  timeframe: number | null;
+  /** Position in % der Equity je Symbol; null = Block aus einem Lauf vor der Basis-Stufe (wird nicht gehandelt). */
+  positionPct: number | null;
+  measuredAt: number | null;
+  gates: Array<{ name: string; pass: boolean; note: string }>;
+}
+
 export interface ChampionDoc {
   version: number | null;
   updatedAt: number | null;
   symbols: Record<string, ChampionEntryDoc>;
   noTrade: Record<string, NoTradeDoc>;
+  /** Basis-Allokation; null, wenn der Champion keinen Block trägt. */
+  basis: ChampionBasisDoc | null;
+}
+
+function leseChampionBasis(roh: unknown): ChampionBasisDoc | null {
+  if (!istObjekt(roh) || typeof roh.strategy !== 'string') return null;
+  const gates = Array.isArray(roh.gates)
+    ? roh.gates.flatMap((g: unknown) =>
+        istObjekt(g) && typeof g.name === 'string'
+          ? [{ name: g.name, pass: g.pass === true, note: textOderNull(g.note) ?? '' }]
+          : [],
+      )
+    : [];
+  return {
+    strategy: roh.strategy,
+    label: textOderNull(roh.label) ?? roh.strategy,
+    pass: roh.pass === true,
+    symbols: textListe(roh.symbols),
+    timeframe: zahlOderNull(roh.timeframe),
+    positionPct: zahlOderNull(roh.positionPct),
+    measuredAt: zahlOderNull(roh.measuredAt),
+    gates,
+  };
 }
 
 function leseChampionEntry(roh: unknown): ChampionEntryDoc | null {
@@ -713,6 +754,7 @@ export function leseChampion(roh: unknown): ChampionDoc | null {
     updatedAt: zahlOderNull(roh.updatedAt),
     symbols,
     noTrade,
+    basis: leseChampionBasis(roh.basis),
   };
 }
 

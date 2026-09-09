@@ -23,7 +23,7 @@ import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { createDataStream, createTradeStream } from './alpaca/stream.ts';
-import { allSymbols, baseTimeframe, benchmarkSeries, bootstrap, fetchSymbols, requireClient, seriesForTimeframe, strategyChoice, strategyForFn, type App } from './app.ts';
+import { allSymbols, baseTimeframe, benchmarkSeries, bootstrap, engineConfig, fetchSymbols, requireClient, seriesForTimeframe, strategyChoice, strategyForFn, type App } from './app.ts';
 import { simulate } from './backtest/simulator.ts';
 import { ConfigError } from './core/config.ts';
 import { ensureDir, writeJsonAtomic } from './core/journal.ts';
@@ -467,7 +467,8 @@ function rangeFromArgs(cli: Cli, lastBarMs: number, defaultDays: number): { star
 }
 
 async function cmdBacktest(app: App, cli: Cli): Promise<number> {
-  const symbols = (str(cli.values.symbols)?.split(',').map((s) => s.trim()).filter(Boolean)) ?? app.config.universe.symbols;
+  // Dasselbe Universum wie `run`: mit dem Korb der Basis-Stufe, wenn sie handelbar ist.
+  const symbols = (str(cli.values.symbols)?.split(',').map((s) => s.trim()).filter(Boolean)) ?? engineConfig(app).universe.symbols;
   const strategyId = str(cli.values.strategy);
   const overrides = parseParams(str(cli.values.params));
   const bars = new Map<string, ReturnType<typeof seriesForTimeframe>>();
@@ -617,29 +618,34 @@ async function cmdOptimize(app: App, cli: Cli): Promise<number> {
 async function cmdRun(app: App): Promise<number> {
   const client = requireClient(app);
   const strategyFor = strategyForFn(app);
-  const traded = app.config.universe.symbols.filter((s) => strategyFor(s) !== null);
+  // Universum der Engine: die Config plus den Korb der Basis-Stufe (core/basisTier.ts),
+  // wenn die Champion-Datei einen bestandenen Block `basis` trägt und `strategy.basis` an ist.
+  const config = engineConfig(app);
+  const traded = config.universe.symbols.filter((s) => strategyFor(s) !== null);
   if (!traded.length) {
     out('Kein Symbol handelbar: kein Champion (autotrd optimize) und strategy.allowWithoutChampion=false. Engine startet nicht.');
     return 1;
   }
+  const basisSymbole = traded.filter((s) => strategyChoice(app, s)?.source === 'basis');
   const notify = createNotifier({ config: app.config, env: app.env });
   const dataStream = createDataStream({ keyId: app.env.ALPACA_API_KEY, secret: app.env.ALPACA_SECRET_KEY, feed: app.config.broker.feed, assetClass: app.config.universe.assetClass });
   const tradeStream = createTradeStream({ keyId: app.env.ALPACA_API_KEY, secret: app.env.ALPACA_SECRET_KEY, mode: app.mode });
   const engine = new Engine({
-    config: app.config,
+    config,
     mode: app.mode,
     home: app.home,
     client,
     dataStream,
     tradeStream,
     strategyFor,
-    benchmarkSymbol: app.config.universe.benchmark,
+    benchmarkSymbol: config.universe.benchmark,
     calendar: app.calendar,
     notify,
     // Derselbe Bars-Cache wie fetch/backtest/optimize.
     store: app.store,
   });
   out(`autotrd run · ${app.mode.toUpperCase()} · ${traded.join(', ')} · ${app.config.timeframe} min · Home ${app.home}`);
+  if (basisSymbole.length) out(`Basis-Allokation (Block basis, Allokation ${app.champion?.basis?.positionPct ?? '?'} % je Symbol): ${basisSymbole.join(', ')}`);
   if (app.mode === 'live') out('ECHTGELD — Doppel-Guard erfüllt (mode=live, ALPACA_ALLOW_LIVE=1, AK-Key).');
   for (const r of app.modeReasons) out(`  ${r}`);
   await engine.start();

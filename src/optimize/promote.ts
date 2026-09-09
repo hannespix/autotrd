@@ -76,6 +76,15 @@ export interface ChampionBasis {
   pass: boolean;
   gates: GateResult[];
   measuredAt: Ms;
+  /**
+   * Sizing-Semantik, mit der gemessen wurde und mit der die Basis-Stufe
+   * handelt: Position = dieser Anteil der Equity je Symbol
+   * (`optimizer.basis.positionPct`, `SizingSpec` allocation). Fehlt das Feld
+   * (Block aus einem Lauf vor der Basis-Stufe), ist die Semantik unbekannt und
+   * der Block wird NICHT gehandelt (core/basisTier.ts) — bis ein Lauf ihn neu
+   * schreibt.
+   */
+  positionPct?: number;
   /** Commit der Config/Vorregistrierung, mit der gemessen wurde (falls der Aufrufer ihn kennt). */
   configCommit?: string;
 }

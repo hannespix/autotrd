@@ -65,6 +65,20 @@ describe('Config je Nutzer', () => {
     expect(config.risk.allowShort).toBe(false);
   });
 
+  it('Basis-Schalter: settings.auto.basis false ⇒ strategy.basis false; fehlend, true, Alt-Schema und Default ⇒ an', () => {
+    const global = globalConfigRaw(undefined);
+    expect(buildUserConfig(global, { auto: { basis: false } }).config.strategy.basis).toBe(false);
+    expect(buildUserConfig(global, { auto: { basis: true } }).config.strategy.basis).toBe(true);
+    expect(buildUserConfig(global, { auto: {} }).config.strategy.basis).toBe(true);
+    expect(buildUserConfig(global, { strategy: { engine: {}, signals: {} } }).config.strategy.basis).toBe(true);
+    expect(buildUserConfig(global, undefined).config.strategy.basis).toBe(true);
+    expect(userRiskFrom({ auto: { basis: false } }).basis).toBe(false);
+    expect(userRiskFrom({ auto: { basis: 'ja' } }).basis).toBe(true); // nur ein echtes false schaltet ab
+    // Der Schalter landet im strategy-Block, ohne die globalen Felder zu verlieren.
+    const mitGlobal = buildUserConfig(globalConfigRaw({ strategy: { allowWithoutChampion: true } }), { auto: { basis: false } });
+    expect(mitGlobal.config.strategy).toMatchObject({ allowWithoutChampion: true, basis: false });
+  });
+
   it('Krypto-Universum: Nutzer-Symbole werden auf die kanonische Schreibweise gebracht', () => {
     const global = globalConfigRaw({ universe: { assetClass: 'crypto', symbols: ['BTC/USD', 'ETH/USD'] } });
     const { config } = buildUserConfig(global, { auto: { symbols: ['btcusd'] } });

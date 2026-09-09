@@ -92,7 +92,8 @@ describe('Engine-Spiegel lesen (users/{uid}.engine)', () => {
       notes: ['AAPL: kein Champion'], configSource: 'auto', commandAt: null,
     });
     expect(e!.mode).toBe('live');
-    expect(e!.champion).toEqual({ source: 'champion', symbols: ['SPY', 'QQQ'] });
+    // `basis` fehlt im Spiegel von vor der Basis-Stufe ⇒ leere Liste, nie undefined.
+    expect(e!.champion).toEqual({ source: 'champion', symbols: ['SPY', 'QQQ'], basis: [] });
     expect(e!.deferred).toEqual(['QQQ']);
     expect(e!.notes).toEqual(['AAPL: kein Champion']);
     expect(e!.entryLock).toBeNull();

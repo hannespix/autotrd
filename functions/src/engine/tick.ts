@@ -29,6 +29,7 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import type { AlpacaClient, AlpacaClock } from '../../../src/alpaca/types.ts';
+import { universeWithBasis } from '../../../src/core/basisTier.ts';
 import { parseConfig, type Config } from '../../../src/core/config.ts';
 import { errMsg, logger } from '../../../src/core/log.ts';
 import { DAY, MIN, addDays, dayKeyFor, nextTradingDay, sessionBounds, type Calendar } from '../../../src/core/time.ts';
@@ -421,9 +422,10 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
   }
   const assetClass = base.universe.assetClass;
   const feed = base.broker.feed;
-  // Bereinigung der Tagesbars — derselbe Schalter wie beim Optimierer (`broker.adjustment`). Das Doc
-  // `meta/engineConfig` trägt ihn heute nicht (scripts/module/engineConfig.mjs) ⇒ Default raw, die
-  // Plattform ändert sich nicht. Trägt es ihn einmal, folgt der Takt: eigene Cache-Wurzel, bereinigter Abruf.
+  // Bereinigung der Tagesbars — derselbe Schalter wie beim Optimierer (`broker.adjustment`), seit der
+  // Basis-Stufe im Doc `meta/engineConfig` (scripts/module/engineConfig.mjs; Prüfbefund M7 gilt live).
+  // Der Takt folgt ihm: eigene Cache-Wurzel je Bereinigung, bereinigter Abruf; ein Doc ohne das Feld
+  // bleibt roh — rohe und bereinigte Tagesbars mischen sich nie (functions/test/engine/bereinigung).
   const adjustment = base.broker.adjustment;
   const tf = base.timeframe;
   const baseTf: BaseTimeframe = tf === 1440 ? '1Day' : '1Min';
@@ -486,9 +488,12 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
       // Eine veraltete Symbolauswahl sperrt Einstiege wie jede andere offene
       // Kette — Exits, Abgleich und Schutz-Stops laufen weiter.
       const sperre = zugang.sperre ?? uc.auswahlVeraltet ?? null;
+      // Der Korb der Basis-Stufe kommt als Block ins Universum dieser Engine (wenn der Champion-Block
+      // `basis` bestanden hat und der Nutzer-Schalter an ist) — die Engine führt nur ihr Universum.
+      const mitBasis = universeWithBasis(uc.config, champion);
       // Verriegelt (Echtgeld-Kette offen): keine Einstiege, und Fremdbestand wird nie adoptiert — ein
       // Schutz-Stop auf eine Handposition wäre eine Order auf einem verriegelten Konto.
-      const config: Config = sperre ? { ...uc.config, engine: { ...uc.config.engine, onOrphan: 'halt' } } : uc.config;
+      const config: Config = sperre ? { ...mitBasis, engine: { ...mitBasis.engine, onOrphan: 'halt' } } : mitBasis;
       const strategy = buildStrategyFor({ champion, config, getStrategy: deps.getStrategy, log: userLogger(log, uid) });
       if (championNote) strategy.notes.unshift(championNote);
       if (sperre) strategy.notes.push(`Einstiege gesperrt: ${sperre} — Abgleich, Schutz-Stops und Exits laufen weiter`);
@@ -634,7 +639,13 @@ async function runUser(ctx: TickContext, p: UserPrep, guard: RunGuard): Promise<
   const started = Date.now();
   const log = userLogger(ctx.log, uid);
   const mode = p.verbindung.mode;
-  const journal = new FirestoreJournal({ db, mode, assetClass: ctx.assetClass, fx: deps.fx, log, timestampNow: deps.timestampNow });
+  // Stufe eines Symbols (champion/basis/config) für Positions- und Trade-Docs — nur, wenn die Wahl von
+  // heute noch dieselbe Strategie ist wie die der Position; sonst unbekannt.
+  const stufeFor = (symbol: string, strategyId: string): string | undefined => {
+    const c = p.strategy.fn(symbol);
+    return c && c.strategy.id === strategyId ? c.source : undefined;
+  };
+  const journal = new FirestoreJournal({ db, mode, assetClass: ctx.assetClass, fx: deps.fx, log, timestampNow: deps.timestampNow, stufeFor });
   const stateStore = new FirestoreStateStore(db, uid, { journal, guard });
   let engine: Engine | null = null;
   let error: string | null = null;
@@ -717,8 +728,17 @@ async function runUser(ctx: TickContext, p: UserPrep, guard: RunGuard): Promise<
       // Aufgegebener Lauf: nichts mehr spiegeln — der Takt hat den Nutzer längst als gescheitert gemeldet.
     } else if (error === null && engine) {
       const status = engine.status();
-      await mirrorPositions(db, uid, status, now);
-      await mirrorUser(db, uid, { mode, status, now, lastError: null, champion: { source: p.strategy.source, symbols: p.strategy.tradable }, commandsSeen, configSource: p.configSource, notes: p.strategy.notes });
+      await mirrorPositions(db, uid, status, now, stufeFor);
+      await mirrorUser(db, uid, {
+        mode,
+        status,
+        now,
+        lastError: null,
+        champion: { source: p.strategy.source, symbols: p.strategy.tradable, basis: p.strategy.basisSymbols },
+        commandsSeen,
+        configSource: p.configSource,
+        notes: p.strategy.notes,
+      });
     } else {
       await mirrorError(db, uid, error ?? 'unbekannt', now);
     }

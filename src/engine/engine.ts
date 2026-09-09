@@ -25,7 +25,7 @@ import { errMsg, logger } from '../core/log.ts';
 import { decide, type AssetFacts, type LogicContext, type SymbolInput } from '../core/logic.ts';
 import { buildSessionInfo } from '../core/session.ts';
 import { DAY, HOUR, MIN, addDays, dayKeyFor, isTradingDay, prevTradingDay, sessionBounds, type Calendar } from '../core/time.ts';
-import type { AccountView, AssetClass, Bar, ExitReason, HaltState, IndicatorSet, Ms, OrderIntent, Params, PositionState, Strategy, TimeframeMin } from '../core/types.ts';
+import type { AccountView, AssetClass, Bar, ExitReason, HaltState, IndicatorSet, Ms, OrderIntent, Params, PositionState, SizingSpec, Strategy, TimeframeMin } from '../core/types.ts';
 import { resumeHalt } from '../risk/limits.ts';
 import { backfill } from '../data/backfill.ts';
 import { ensureCalendar } from '../data/calendar.ts';
@@ -48,7 +48,8 @@ export interface EngineDeps {
   client: AlpacaClient;
   dataStream: DataStream;
   tradeStream: TradeStream;
-  strategyFor: (symbol: string) => { strategy: Strategy; params: Params } | null;
+  /** Strategie je Symbol; `sizing` (Basis-Stufe: Allokation) geht unverändert in `decide()` — wie im Simulator. */
+  strategyFor: (symbol: string) => { strategy: Strategy; params: Params; sizing?: SizingSpec | undefined } | null;
   benchmarkSymbol?: string | undefined;
   calendar?: Calendar | undefined;
   notify?: NotifyFn | undefined;
@@ -576,6 +577,7 @@ export class Engine {
           strategy: choice.strategy,
           params: choice.params,
           ind,
+          sizing: choice.sizing,
         });
       }
 

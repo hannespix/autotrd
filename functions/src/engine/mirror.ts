@@ -18,10 +18,19 @@ import type { Ms, PositionState } from '../../../src/core/types.ts';
 import type { EngineStatus } from '../../../src/engine/engine.ts';
 import { BATCH_MAX, docIdFor, isoOf, plain, round2, type DocData, type FirestoreLike } from './firestoreLike.js';
 
+/**
+ * Stufe, die ein Symbol GERADE führt (`strategyFor`): champion, basis oder
+ * config — für Positions- und Trade-Docs, damit das Frontend die Quelle
+ * „Basis" zeigen kann. Die Wahl muss zur Strategie der Position passen; sonst
+ * ist die Stufe unbekannt (Champion über Nacht gewechselt) und bleibt weg.
+ */
+export type StufeFn = (symbol: string, strategyId: string) => string | undefined;
+
 /** Positions-Doc im alten Schema plus Engine-Felder (additiv). */
-export function positionDocOf(p: PositionState, protectiveClientId: string | undefined, now: Ms): DocData {
+export function positionDocOf(p: PositionState, protectiveClientId: string | undefined, now: Ms, stufe?: string | undefined): DocData {
   const schutz = protectiveClientId !== undefined && p.stop !== null ? { orderId: protectiveClientId, stopPreis: p.stop, qty: p.qty } : null;
   return {
+    ...(stufe !== undefined ? { stufe } : {}),
     symbol: p.symbol,
     qty: p.qty,
     avgEntry: p.entryPrice,
@@ -41,11 +50,11 @@ export function positionDocOf(p: PositionState, protectiveClientId: string | und
   };
 }
 
-export async function mirrorPositions(db: FirestoreLike, uid: string, status: EngineStatus, now: Ms): Promise<{ written: number; deleted: number }> {
+export async function mirrorPositions(db: FirestoreLike, uid: string, status: EngineStatus, now: Ms, stufeFor?: StufeFn | undefined): Promise<{ written: number; deleted: number }> {
   const col = db.collection(`users/${uid}/positions`);
   const existing = await col.get();
   const want = new Map<string, DocData>();
-  for (const p of status.positions) want.set(docIdFor(p.symbol), positionDocOf(p, status.protectiveOrders[p.symbol], now));
+  for (const p of status.positions) want.set(docIdFor(p.symbol), positionDocOf(p, status.protectiveOrders[p.symbol], now, stufeFor?.(p.symbol, p.strategy)));
   const batch = db.batch();
   let written = 0;
   let deleted = 0;
@@ -67,7 +76,8 @@ export interface UserMirror {
   status: EngineStatus;
   now: Ms;
   lastError: string | null;
-  champion: { source: string; symbols: string[] };
+  /** `basis`: Symbole, die die Basis-Stufe führt (Teilmenge von `symbols`); fehlt vor der Basis-Stufe. */
+  champion: { source: string; symbols: string[]; basis?: string[] | undefined };
   /** Kommando-Doc wurde in diesem Takt geprüft ⇒ `engine.commandAt` zurücksetzen. */
   commandsSeen: boolean;
   configSource?: string | undefined;
@@ -97,7 +107,7 @@ export function engineFieldOf(m: UserMirror): DocData {
     entryLock: s.entryLock,
     lastTickAt: isoOf(m.now),
     lastError: m.lastError,
-    champion: { source: m.champion.source, symbols: m.champion.symbols },
+    champion: { source: m.champion.source, symbols: m.champion.symbols, ...(m.champion.basis !== undefined ? { basis: m.champion.basis } : {}) },
     notes: [...(m.notes ?? [])],
     ...(m.configSource !== undefined ? { configSource: m.configSource } : {}),
     ...(m.commandsSeen ? { commandAt: null } : {}),

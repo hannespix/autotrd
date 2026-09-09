@@ -9,11 +9,12 @@ import { resolve } from 'node:path';
 import { createAlpacaClient } from './alpaca/rest.ts';
 import type { AlpacaClient } from './alpaca/types.ts';
 import { aggregate, anfangsStreuner, BarSeries } from './core/bars.ts';
+import { basisChoiceFor, basisStatus, universeWithBasis } from './core/basisTier.ts';
 import { homeDir, loadConfigFile, loadEnv, resolveMode, type Config, type Env } from './core/config.ts';
 import { ensureDir, homePaths, Journal, StateStore, type HomePaths } from './core/journal.ts';
 import { logger, registerSecret, setLogLevel } from './core/log.ts';
 import { dayKeyFor, msFromET, parseDay, sessionBounds, type Calendar } from './core/time.ts';
-import type { Bar, BarSeriesLike, Ms, Params, Strategy, TimeframeMin } from './core/types.ts';
+import type { Bar, BarSeriesLike, Ms, Params, SizingSpec, Strategy, TimeframeMin } from './core/types.ts';
 import { loadCalendarFile } from './data/calendar.ts';
 import { BarStore, barStoreRoot } from './data/store.ts';
 import { loadChampion, type ChampionFile } from './optimize/promote.ts';
@@ -201,13 +202,18 @@ function ohneStreuner(symbol: string, serie: BarSeries): BarSeries {
 export interface StrategyChoice {
   strategy: Strategy;
   params: Params;
-  source: 'champion' | 'config';
+  /** Alpha-Champion, Basis-Stufe (Block `basis`) oder Config-Strategie (`allowWithoutChampion`). */
+  source: 'champion' | 'basis' | 'config';
+  /** Sizing-Semantik der Wahl — nur die Basis-Stufe setzt sie (Allokation, `positionPct`). */
+  sizing?: SizingSpec | undefined;
 }
 
 /**
- * Welche Strategie handelt ein Symbol? Champion (aus `optimize`) hat
- * Vorrang; `noTrade` bedeutet null; ohne Champion greift die Config nur,
- * wenn `strategy.allowWithoutChampion` gesetzt ist.
+ * Welche Strategie handelt ein Symbol? Dieselbe Reihenfolge wie
+ * `buildStrategyFor` auf der Plattform (gemeinsamer Kern core/basisTier.ts):
+ * Alpha-Champion (aus `optimize`) → Basis-Stufe (Block `basis`, bestanden,
+ * Zeitrahmen passt, Symbol im Korb, `strategy.basis` an) → `noTrade` bedeutet
+ * null; ohne Champion greift die Config nur mit `strategy.allowWithoutChampion`.
  */
 export function strategyChoice(app: App, symbol: string): StrategyChoice | null {
   const champ = app.champion;
@@ -225,6 +231,13 @@ export function strategyChoice(app: App, symbol: string): StrategyChoice | null 
       const strategy = getStrategy(entry.strategy);
       return { strategy, params: mergeParams(strategy.defaults, entry.params), source: 'champion' };
     }
+    // Basis vor noTrade: Ein Symbol ohne Alpha-Champion, das im bestandenen
+    // Basis-Korb steht, handelt die Basis — mit deren Parametern und Sizing.
+    const basis = basisChoiceFor({ status: basisStatus({ champion: champ, timeframe: app.config.timeframe, enabled: app.config.strategy.basis }), symbol, alphaLeads: false });
+    if (basis) {
+      const strategy = getStrategy(basis.strategyId);
+      return { strategy, params: mergeParams(strategy.defaults, basis.params), source: 'basis', sizing: basis.sizing };
+    }
     if (champ.noTrade[symbol]) return null;
   }
   if (!app.config.strategy.allowWithoutChampion) return null;
@@ -233,13 +246,23 @@ export function strategyChoice(app: App, symbol: string): StrategyChoice | null 
   return { strategy, params: mergeParams(strategy.defaults, app.config.strategy.params), source: 'config' };
 }
 
-export function strategyForFn(app: App): (symbol: string) => { strategy: Strategy; params: Params } | null {
+export function strategyForFn(app: App): (symbol: string) => { strategy: Strategy; params: Params; sizing?: SizingSpec | undefined } | null {
   const cache = new Map<string, StrategyChoice | null>();
   return (symbol) => {
     if (!cache.has(symbol)) cache.set(symbol, strategyChoice(app, symbol));
     const c = cache.get(symbol) ?? null;
-    return c ? { strategy: c.strategy, params: c.params } : null;
+    return c ? { strategy: c.strategy, params: c.params, ...(c.sizing ? { sizing: c.sizing } : {}) } : null;
   };
+}
+
+/**
+ * Die Config, mit der die ENGINE läuft (`run`, `backtest`): das Universum um
+ * den Korb der Basis-Stufe erweitert, wenn die Basis handelbar ist — die
+ * Engine führt nur Symbole ihres Universums (core/basisTier.ts). Für den
+ * Optimierer gilt das nicht: Dort ist der Basis-Korb eine eigene Einheit.
+ */
+export function engineConfig(app: App): Config {
+  return universeWithBasis(app.config, app.champion);
 }
 
 /** Alle Symbole inkl. Benchmark (die Benchmark wird geladen, nie gehandelt). */
@@ -261,6 +284,8 @@ export function fetchSymbols(config: Config): string[] {
   if (config.optimizer.pooled && config.optimizer.foldMembership === 'point_in_time' && config.timeframe === 1440) {
     for (const s of config.universe.candidates ?? []) set.add(s);
   }
+  // Der eigene Korb der Basis-Allokation: eigene Einheit, eigene Bars-Ladung.
+  for (const s of config.optimizer.basisUniverse) set.add(s);
   return [...set];
 }
 

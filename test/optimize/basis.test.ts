@@ -22,6 +22,10 @@
  *  (g) Champion-Datei: `basis`-Block geschrieben, gelesen, bei stay_notrade
  *      behalten, ohne Basis-Kandidat geräumt; alte Datei ohne Block lädt.
  *  (h) Korb je Fold ⇒ klarer Fehler, keine Basis.
+ *  (i) Eigener Basis-Korb (`optimizer.basisUniverse`): eigene Einheit „Basis
+ *      (n Symbole)" mit genau diesen Symbolen, fester Korb, Allokations-
+ *      Sizing in der Messung; der Block nennt Symbole und positionPct; die
+ *      Alpha-Einheit behält ihren Korb je Fold und ihre Entscheidung.
  */
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -108,10 +112,10 @@ describe('(a) Schema: tier und optimizer.basis', () => {
   it('tier fällt auf alpha zurück; optimizer.basis trägt die vorregistrierten Schwellen', () => {
     const cfg = parseConfig({ universe: { symbols: ['AAA'] }, optimizer: { fixedCandidates: [{ strategy: 'edge' }, { strategy: 'edge', tier: 'basis', label: 'B' }] } });
     expect(cfg.optimizer.fixedCandidates.map((fc) => fc.tier)).toEqual(['alpha', 'basis']);
-    expect(cfg.optimizer.basis).toEqual({ minDrawdownReduction: 0.25, minSharpeRatio: 0.9, maxCostShare: 0.1 });
-    expect(testConfig().optimizer.basis).toEqual({ minDrawdownReduction: 0.25, minSharpeRatio: 0.9, maxCostShare: 0.1 });
+    expect(cfg.optimizer.basis).toEqual({ minDrawdownReduction: 0.25, minSharpeRatio: 0.9, maxCostShare: 0.1, positionPct: 20 });
+    expect(testConfig().optimizer.basis).toEqual({ minDrawdownReduction: 0.25, minSharpeRatio: 0.9, maxCostShare: 0.1, positionPct: 20 });
     const eigene = parseConfig({ universe: { symbols: ['AAA'] }, optimizer: { basis: { minDrawdownReduction: 0.5 } } });
-    expect(eigene.optimizer.basis).toEqual({ minDrawdownReduction: 0.5, minSharpeRatio: 0.9, maxCostShare: 0.1 });
+    expect(eigene.optimizer.basis).toEqual({ minDrawdownReduction: 0.5, minSharpeRatio: 0.9, maxCostShare: 0.1, positionPct: 20 });
   });
 
   it('unbekannte Stufe und Schwellen außerhalb [0, 1] sind Config-Fehler', () => {
@@ -599,7 +603,9 @@ describe('(h) Korb je Fold ⇒ Fehler, keine Basis', () => {
     const r = out.runs[0]!;
     expect(r.korb).not.toBeNull(); // Korb je Fold ist aktiv
     expect(r.basis).toBeUndefined();
-    expect(r.errors).toContain('basisS · Basis: Basis V2: Basis nur auf festem Korb: Korb je Fold ist für die durchgehende Simulation nicht zulässig — optimizer.foldMembership: fixed setzen oder den Kandidatenpool weglassen');
+    expect(r.errors).toContain(
+      'basisS · Basis: Basis V2: Basis nur auf festem Korb: Korb je Fold ist für die durchgehende Simulation nicht zulässig — optimizer.foldMembership: fixed setzen, den Kandidatenpool weglassen oder der Basis mit optimizer.basisUniverse einen eigenen Korb geben',
+    );
     expect(sim.calls.some((c) => c.strategyId === 'basisS')).toBe(false);
     expect(out.champion.basis).toBeUndefined();
   });
@@ -614,6 +620,111 @@ describe('(h) Korb je Fold ⇒ Fehler, keine Basis', () => {
     expect(r.errors).toEqual([]);
     expect(r.basis!.korb!.symbole).toBe(2);
     expect(out.champion.basis!.symbols).toEqual(['AAA', 'BBB']);
+  });
+});
+
+/* ───────────────────────── (i) Eigener Basis-Korb ───────────────────────── */
+
+describe('(i) optimizer.basisUniverse: eigene Einheit der Basis, Alpha-Einheit unberührt', () => {
+  it('Schema: kanonische Schreibweise, ohne Dubletten; ohne Basis-Kandidat ein Config-Fehler; kein Tor', () => {
+    const cfg = parseConfig({ universe: { symbols: ['AAA'] }, optimizer: { fixedCandidates: [BASIS], basisUniverse: ['spy', 'ief', 'SPY', 'brk-b'] } });
+    expect(cfg.optimizer.basisUniverse).toEqual(['SPY', 'IEF', 'BRK.B']);
+    expect(parseConfig({ universe: { symbols: ['AAA'] } }).optimizer.basisUniverse).toEqual([]);
+    expect(() => parseConfig({ universe: { symbols: ['AAA'] }, optimizer: { basisUniverse: ['SPY'] } })).toThrow(/basisUniverse ohne Festkandidat/);
+    expect(() => parseConfig({ universe: { symbols: ['AAA'] }, optimizer: { basis: { positionPct: 0 } } })).toThrow(/positionPct/);
+  });
+
+  it('eigene Einheit „Basis (n Symbole)": genau diese Symbole, Block mit Symbolen und positionPct, Allokations-Sizing im Simulator', () => {
+    const home = tmp();
+    const sim = makeFakeSimulate((id) => profiles[id] ?? NOISE_PROFILE);
+    const serien: Record<string, BarSeriesLike> = { AAA: liquide, BBB: liquide, CCC: liquide, IEF: zickzack, GLD: zickzack };
+    const out = runOptimization(
+      input(home, {
+        symbols: ['AAA', 'BBB'],
+        candidates: ['CCC'],
+        optimizer: { pooled: true, foldMembership: 'point_in_time', basisUniverse: ['IEF', 'GLD', 'AAA'], basis: { positionPct: 25 } },
+        barsFor: (s) => serien[s] ?? zickzack,
+        candidateBarsFor: (s) => serien[s] ?? null,
+        simulate: sim,
+      }),
+    );
+    expect(out.runs.map((r) => r.symbol)).toEqual(['Korb (2 Symbole)', 'Basis (3 Symbole)']);
+    const alpha = out.runs[0]!;
+    const basis = out.runs[1]!;
+    // Alpha-Einheit: Korb je Fold aktiv, keine Basis, keine Fehler — die Membership stört die Basis nicht.
+    expect(alpha.korb).not.toBeNull();
+    expect(alpha.basis).toBeUndefined();
+    expect(alpha.errors).toEqual([]);
+    expect(alpha.art).toBeUndefined();
+    // Basis-Einheit: gemessen auf genau dem eigenen Korb, fester Korb, keine Alpha-Kandidaten, keine Entscheidung.
+    expect(basis.art).toBe('basis');
+    expect(basis.results).toEqual([]);
+    expect(basis.errors).toEqual([]);
+    expect(basis.incumbent).toBeNull();
+    expect(basis.chosen).toBeNull();
+    expect(basis.korb).toBeNull();
+    expect(basis.korbHinweis).toMatch(/optimizer\.basisUniverse/);
+    expect(basis.basis!.symbols).toEqual(['IEF', 'GLD', 'AAA']);
+    expect(basis.basis!.positionPct).toBe(25);
+    expect(basis.basis!.korb!.symbole).toBe(3);
+    const calls = sim.calls.filter((c) => c.strategyId === 'basisS');
+    // Der Fake protokolliert je Symbol und Lauf: drei Läufe (Kette, Stress, Holdout) × drei Symbole.
+    expect(calls.length).toBe(9);
+    expect(new Set(calls.map((c) => `${c.range?.start}|${c.range?.end}|${c.costMultiplier}`)).size).toBe(3);
+    for (const c of calls) {
+      expect(c.symbols.sort()).toEqual(['AAA', 'GLD', 'IEF']);
+      expect(c.sizing).toEqual({ mode: 'allocation', positionPct: 25 });
+    }
+    // Die Alpha-Simulationen laufen ohne Sizing-Semantik (Risiko-Budget) — nichts ist übergeschwappt.
+    expect(sim.calls.filter((c) => c.strategyId !== 'basisS').every((c) => c.sizing === undefined)).toBe(true);
+    // Champion-Datei: Block mit den Basis-Symbolen und positionPct; symbols/noTrade nur aus der Alpha-Einheit.
+    expect(out.champion.basis).toMatchObject({ symbols: ['IEF', 'GLD', 'AAA'], positionPct: 25, pass: true });
+    expect(Object.keys(out.champion.noTrade).sort()).toEqual(['AAA', 'BBB']);
+    expect(out.champion.symbols).toEqual({});
+    // Journal: eine Alpha-Entscheidung, eine Basis-Messung — keine Entscheidung für die Basis-Einheit.
+    const events = new Journal(homePaths(home).journal).readAll().filter((ev) => ev.kind === 'champion');
+    expect(events.map((ev) => [ev.symbol, ev.action])).toEqual([
+      ['Korb (2 Symbole)', 'stay_notrade'],
+      ['Basis (3 Symbole)', 'basis_measured'],
+    ]);
+    const text = readFileSync(out.reportPath, 'utf8');
+    expect(text).toContain('| Basis (3 Symbole) | Basis-Einheit |');
+    expect(text).toContain('Sizing: Allokation, Position 25 % der Equity je Symbol');
+    expect(text).toContain('Korb (3 Symbole): IEF, GLD, AAA');
+  });
+
+  it('WÄCHTER: ein Alpha-Champion eines Basis-Symbols bleibt stehen — die Basis-Einheit fasst symbols/noTrade nie an', () => {
+    const home = tmp();
+    const out = runOptimization(input(home, { symbols: ['AAA'], strategies: ['edge'], optimizer: { basisUniverse: ['AAA', 'BBB'] }, barsFor: () => zickzack }));
+    expect(out.runs.map((r) => r.symbol)).toEqual(['AAA', 'Basis (2 Symbole)']);
+    expect(out.runs[0]!.decision.action).toBe('promote');
+    expect(out.champion.symbols.AAA?.strategy).toBe('edge');
+    expect(out.champion.noTrade).toEqual({});
+    expect(out.champion.basis!.symbols).toEqual(['AAA', 'BBB']);
+    expect(out.runs[1]!.decision.reason).toMatch(/keine Alpha-Entscheidung/);
+  });
+
+  it('ohne basisUniverse läuft die Basis wie bisher auf der Einheit des Laufs — mit dem Sizing der Config', () => {
+    const home = tmp();
+    const sim = makeFakeSimulate((id) => profiles[id] ?? NOISE_PROFILE);
+    const out = runOptimization(input(home, { simulate: sim }));
+    expect(out.runs.map((r) => r.symbol)).toEqual(['AAA']);
+    expect(out.champion.basis).toMatchObject({ symbols: ['AAA'], positionPct: 20 });
+    expect(sim.calls.filter((c) => c.strategyId === 'basisS').every((c) => c.sizing?.positionPct === 20)).toBe(true);
+  });
+
+  it('Basis-Symbol ohne Bars: fehlt im gemessenen Korb und im Block; ganz ohne Bars ist die Einheit nicht messbar, der alte Block bleibt', () => {
+    const home = tmp();
+    const serien: Record<string, BarSeriesLike> = { AAA: zickzack, IEF: zickzack };
+    const out = runOptimization(input(home, { optimizer: { basisUniverse: ['IEF', 'LEER'] }, barsFor: (s) => serien[s] ?? BarSeries.from([]) }));
+    const basis = out.runs[1]!;
+    expect(basis.errors.join(' ')).toMatch(/LEER: keine Bars/);
+    expect(basis.basis!.symbols).toEqual(['IEF']);
+    expect(out.champion.basis!.symbols).toEqual(['IEF']);
+    const zweiter = runOptimization(input(home, { optimizer: { basisUniverse: ['LEER'] }, barsFor: (s) => serien[s] ?? BarSeries.from([]), now: () => NOW + 1 }));
+    expect(zweiter.runs[1]!.basis).toBeUndefined();
+    expect(zweiter.runs[1]!.decision.reason).toMatch(/nicht gemessen/);
+    expect(zweiter.champion.basis).toMatchObject({ symbols: ['IEF'], measuredAt: NOW });
   });
 });
 

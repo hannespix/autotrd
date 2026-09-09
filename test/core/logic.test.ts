@@ -188,6 +188,54 @@ describe('Einstieg', () => {
   });
 });
 
+describe('Basis-Stufe in decide(): Allokations-Sizing, dieselben Bremsen', () => {
+  const alloc = { mode: 'allocation' as const, positionPct: 20 };
+  const weit: Decision = { kind: 'enter', side: 'long', stop: 80, reason: 'Basis' };
+
+  it('sizing: allocation ⇒ Stückzahl = floor(Equity × positionPct / Kurs); der Stop der Strategie bleibt unverändert', () => {
+    const r = decide(ctx({ risk: { ...cfg.risk, maxPositionPct: 100 } }), [input(weit, { sizing: alloc })]);
+    expect(r.intents).toHaveLength(1);
+    // 10 000 × 20 % / 100 = 20 Stück; das Risiko-Budget (0,5 % = 50 $ / 20 $) ergäbe 2.
+    expect(r.intents[0]).toMatchObject({ kind: 'enter', qty: 20, stop: 80, target: null, strategy: 'stub' });
+    const ohne = decide(ctx({ risk: { ...cfg.risk, maxPositionPct: 100 } }), [input(weit)]);
+    expect(ohne.intents[0]).toMatchObject({ kind: 'enter', qty: 2 });
+  });
+
+  it('WÄCHTER: maxPositionPct des Nutzers deckelt die Allokation (10 % ⇒ 10 Stück), vergrößert sie nie', () => {
+    const r = decide(ctx({ risk: { ...cfg.risk, maxPositionPct: 10 } }), [input(weit, { sizing: alloc })]);
+    expect(r.intents[0]).toMatchObject({ kind: 'enter', qty: 10 });
+    const r2 = decide(ctx({ risk: { ...cfg.risk, maxPositionPct: 50 } }), [input(weit, { sizing: alloc })]);
+    expect(r2.intents[0]).toMatchObject({ kind: 'enter', qty: 20 });
+  });
+
+  it('WÄCHTER: Exposure-Budget und Positionslimit gelten für die Basis wie für alle', () => {
+    const budget = decide(ctx({ risk: { ...cfg.risk, maxPositionPct: 100, maxGrossExposurePct: 10 } }), [input(weit, { sizing: alloc })]);
+    expect(budget.intents[0]).toMatchObject({ kind: 'enter', qty: 10 });
+    const voll = decide(ctx({ risk: { ...cfg.risk, maxPositions: 1 }, positions: new Map([['MSFT', longPos({ symbol: 'MSFT' })]]) }), [input(weit, { sizing: alloc })]);
+    expect(voll.intents).toHaveLength(0);
+    expect(voll.notes.some((n) => /Positionslimit/.test(n.text))).toBe(true);
+  });
+
+  it.each([
+    ['Tages-Halt', { halt: { ...noHalt, halted: true, reason: 'daily_loss' as const, until: '2026-09-08' } }, /Halt aktiv/],
+    ['Drawdown-Halt', { halt: { ...noHalt, halted: true, reason: 'drawdown' as const } }, /Halt aktiv/],
+    ['Einstiegssperre von außen (Echtgeld-Kette)', { entryLock: 'Kill-Switch aktiv' }, /Einstiege gesperrt/],
+    ['Daten nicht frisch', { dataFresh: false }, /frisch/],
+  ])('WÄCHTER: %s sperrt Einstiege der Basis wie die des Champions — keine Sonderrechte', (_name, over, re) => {
+    const r = decide(ctx(over as Partial<LogicContext>), [input(weit, { sizing: alloc })]);
+    expect(r.intents).toHaveLength(0);
+    expect(r.notes.some((n) => n.kind === 'blocked' && re.test(n.text))).toBe(true);
+  });
+
+  it('Notbremse (Drawdown) stellt auch Basis-Positionen glatt — Exits nie gesperrt', () => {
+    const positions = new Map([['AAPL', longPos()]]);
+    const acc = { equity: 8_000, cash: 8_000, dayStartEquity: 8_000, peakEquity: 10_000, dayTradeCount: 0, patternDayTrader: false };
+    const r = decide(ctx({ positions, account: acc }), [input({ kind: 'hold' }, { sizing: alloc }, { position: positions.get('AAPL')! })]);
+    expect(r.halt.reason).toBe('drawdown');
+    expect(r.intents).toEqual([{ kind: 'exit', symbol: 'AAPL', reason: 'drawdown', decidedAt: 5_000_000 }]);
+  });
+});
+
 describe('Offene Position', () => {
   it('Exit-Signal wird ausgeführt — auch im Halt', () => {
     const positions = new Map([['AAPL', longPos()]]);
