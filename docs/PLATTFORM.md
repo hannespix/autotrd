@@ -33,10 +33,11 @@ WebSocket-Streams. Sie wird für keine der Vorlagen gebraucht, weil Exits
 | Kommandos | `users/{uid}/private/engineCommands` | `halt` / `resume` (Drawdown nur mit `ackDrawdown`) / `flatten` (nur das eigene Buch), gesetzt vom Callable `engineCommand` (nur mit verbundenem Broker), verarbeitet im nächsten Takt, verfallen nach 24 h |
 | Config | `meta/engineConfig` (global) + `users/{uid}.settings.auto` (Risiko je Nutzer) | Quelle: `config/platform.yaml` über `scripts/sync-engine-config.mjs`; `universe.symbols` kommt aus der nächtlichen Auswahl (§5a), der Kandidatenpool bleibt draußen |
 | Champion | `meta/champion`, Berichte `meta/optimizeReports/berichte/{date}` | Vom nächtlichen Optimierer (`.github/workflows/optimize.yml`) veröffentlicht |
+| Symbolprofil | `meta/symbolProfile` (ein Dokument) | Vom selben Workflow ZULETZT geschrieben (`scripts/publish-profile.mjs`, hinter Champion und Config, hängt am Champion-Schritt): je Symbol Klasse, Trend, Rang im Plattform-Korb, Vol, Momentum, Stop, Liquidität, Taktik der Engine mit Grund, Bewertung. Anzeige, kein Handel; `championUpdatedAt` sagt, zu welchem Champion es gehört (`src/profile/symbolprofile.ts`, `docs/wissen/symbolprofile.md`) |
 | Lease | `meta/engineLease` | Transaktion mit 90 s TTL — zwei Takte laufen nie gleichzeitig |
 | Wächter | `wachhund` (alle 10 min) | Schlägt Alarm, wenn `meta/health.lastRunAt` älter als 10 Minuten ist (`TAKT_TOT_MIN`) oder ein voller Takt keine Kurse bekam; Telegram/Nachricht wie bisher |
 | Health | `meta/health` | `lastRunAt`, `lastRunSkipped`, `engine.{users, ok, failed, durationMs}` — Nutzer nur als kurzer Hash, keine Fehlertexte; `healthz`, `wachhund` und `check-scheduler` lesen es |
-| Öffentlich lesbar | `meta/champion`, `meta/engineConfig`, `meta/health`, `meta/optimizeReports/berichte/*` | Alles andere unter `meta/` (Lease, Depot-Bindungen) ist Serversache (Rules-Allowlist) |
+| Öffentlich lesbar | `meta/champion`, `meta/engineConfig`, `meta/health`, `meta/symbolProfile`, `meta/optimizeReports/berichte/*` | Alles andere unter `meta/` (Lease, Depot-Bindungen) ist Serversache (Rules-Allowlist) |
 
 ## 3. Ablauf eines Takts
 

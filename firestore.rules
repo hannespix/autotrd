@@ -15,8 +15,10 @@ service cloud.firestore {
     // (Frontend, Landing Page, Scheduler-Wächter lesen meta/health ohne
     // Anmeldung). Alles andere unter meta/ ist Serversache: `brokerBindungen`
     // trägt uids je Depot, `engineLease` den Takt-Halter (Secreview 2, M3).
+    // `symbolProfile` (scripts/publish-profile.mjs) ist wie `champion`
+    // plattformweit dieselbe Marktdaten-Sicht ohne Konto- oder Nutzerdaten.
     match /meta/{doc} {
-      allow read: if doc in ['champion', 'engineConfig', 'health'];
+      allow read: if doc in ['champion', 'engineConfig', 'health', 'symbolProfile'];
       allow write: if false;
     }
     // Berichte liegen in der Unter-Collection `berichte` des Dokuments

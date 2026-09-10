@@ -115,6 +115,7 @@ jobs:
           if-no-files-found: warn
           path: |
             var/champion.json
+            var/profile.json
             var/universe.json
             var/reports/optimize-*.md
             var/reports/universe-*.md
@@ -131,6 +132,7 @@ jobs:
       # hätten die abgegangenen Symbole ihr Urteil verloren, während sie noch im
       # gehandelten Universum stehen.
       - name: Champion und Bericht nach Firestore
+        id: champion
         if: steps.keys.outputs.skip != '1' && env.FIREBASE_SERVICE_ACCOUNT != ''
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
@@ -141,6 +143,29 @@ jobs:
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
         run: node scripts/sync-engine-config.mjs --config config/platform.yaml --universe var/universe.json
+
+      # Das Symbolprofil ZULETZT: Es erklärt je Symbol, was die Engine mit dem
+      # gerade veröffentlichten Champion tut (Taktik, Trend, Rang, Stop,
+      # Liquidität). `optimize` schreibt var/profile.json am Ende des Laufs;
+      # hier geht es als EIN Dokument nach meta/symbolProfile. Anzeige, kein
+      # Handel — deshalb hinter Champion und Config und mit continue-on-error:
+      # Ein Fehler hier darf weder das Urteil noch das Universum aufhalten.
+      # Es hängt am CHAMPION, nicht an der Config: Scheitert der Config-Sync,
+      # steht trotzdem ein neuer Champion — und das Profil gehört zu ihm, nicht
+      # zu dem der Vornacht (`always()` + `steps.champion.outcome`). Scheitert
+      # es selbst, bleibt das alte Profil neben dem neuen Champion stehen; das
+      # Frontend erkennt das an `championUpdatedAt`, und die Annotation hier
+      # sagt es dem, der den Lauf liest.
+      - name: Symbolprofil nach Firestore
+        if: always() && steps.keys.outputs.skip != '1' && env.FIREBASE_SERVICE_ACCOUNT != '' && steps.champion.outcome == 'success'
+        continue-on-error: true
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+        run: |
+          node scripts/publish-profile.mjs --home var || {
+            echo "::warning::Symbolprofil nicht veröffentlicht — meta/symbolProfile bleibt auf dem Stand der Vornacht neben dem neuen Champion (siehe Log dieses Schritts)."
+            exit 1
+          }
 
       - name: Ohne Service-Account
         if: steps.keys.outputs.skip != '1' && env.FIREBASE_SERVICE_ACCOUNT == ''

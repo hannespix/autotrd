@@ -1784,4 +1784,13 @@ select.inp option { background: var(--card-solid); color: var(--t1); }
 .ch-row span { text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ch-row span:first-child, .ch-row span:nth-child(2) { text-align: left; }
 .ch-row.ch-aus { opacity: .5; }
+/* Symbolprofil unter der Champion-Tabelle: je Symbol eine kompakte Karte
+   (Kopfzeile mit Taktik, Kennzahlen-Zeile, Grund) statt einer breiten
+   Tabelle — neun Felder passen so auch auf ein Telefon. */
+.pr-kopfzeile { margin-top: 10px; font-weight: 600; color: var(--t2); font-size: 11px; }
+.pr-tbl { max-height: 320px; overflow-y: auto; margin: 4px 0 6px; font-size: 11px; }
+.pr-row { padding: 4px 6px; border-bottom: 1px solid var(--hair); }
+.pr-row .pr-kopf { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.pr-row .pr-werte { font-variant-numeric: tabular-nums; }
+.pr-row.ch-aus { opacity: .5; }
 .report-pre { white-space: pre-wrap; word-break: break-word; font-size: 11px; line-height: 1.45; color: var(--t2); max-height: 70vh; overflow: auto; padding: 8px 10px; border: 1px solid var(--hair); border-radius: 8px; background: var(--sd); }

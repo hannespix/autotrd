@@ -11,7 +11,7 @@
  *   users/{uid}/trades          zwei Fills je abgeschlossenem Trade
  *   users/{uid}/equity, stats   Tages-Snapshots und Kennzahlen (snapshotEquity)
  *   market/{sym}.quote          letzter Close je Takt
- *   meta/health, engineConfig, champion, optimizeReports/berichte/{date}
+ *   meta/health, engineConfig, champion, symbolProfile, optimizeReports/berichte/{date}
  */
 
 import {
@@ -766,6 +766,156 @@ export function watchChampion(cb: (doc: ChampionDoc | null) => void): Unsubscrib
         emit(snap.exists() ? leseChampion(snap.data()) : null),
       ),
     (p) => cb(p as ChampionDoc | null),
+  );
+}
+
+/* ── meta/symbolProfile: das nächtliche Symbolprofil (src/profile/symbolprofile.ts) ── */
+
+/**
+ * Ein Symbol des Profils — nur, was die Anzeige braucht. Die Codes des Kerns
+ * (`keine`, `gesperrt`, `auf`/`ab`) werden hier auf Anzeige-Codes gebracht;
+ * `grund`, `haltedauer.quelle` und die Klassentexte sind Klartext des Kerns.
+ */
+export interface SymbolProfilEintragDoc {
+  symbol: string;
+  klasse: { klasse: string; cluster: string; sektor: string | null; benchmark: boolean };
+  stand: { t: number | null; close: number | null; bars: number };
+  /** Volatilität in % p. a. (regime_allocation rvol); null in der Aufwärmphase. */
+  volatilitaetPct: number | null;
+  trend: { richtung: 'up' | 'down' | null; seitBars: number | null };
+  momentumPct: number | null;
+  /** Rang im Korb der PLATTFORM; `symbole` = die Korbmitglieder nach Rang. Ein Nutzer mit Teilauswahl hat in seiner Engine einen anderen Alpha-Korb. */
+  rang: { rank: number; of: number; symbole: string[] } | null;
+  stopPct: number | null;
+  /** `tage` 0 ⇒ keine Daten; `dollarVolumenTag` ist dann 0, nicht null — die Anzeige liest `tage`. */
+  liquiditaet: { dollarVolumenTag: number | null; tage: number; handelbar: boolean; grund: string | null };
+  taktik: {
+    quelle: 'champion' | 'basis' | 'config' | 'none';
+    strategie: string | null;
+    einstiege: 'allowed' | 'locked' | null;
+    grund: string;
+    imEngineUniversum: boolean;
+  };
+  haltedauer: { medianHandelstage: number | null; quelle: string };
+  /** Messzeitpunkt des Urteils aus dem Champion — nicht der Lauf des Profils (der steht im Kopf). */
+  bewertung: { configCommit: string | null; measuredAt: number | null };
+}
+
+export interface SymbolProfilDoc {
+  version: number | null;
+  /** Fremde Version: nichts gelesen, `profile` leer — die Anzeige sagt das, statt „noch kein Profil". */
+  versionUnbekannt: boolean;
+  generatedAt: number | null;
+  /** Datenschnitt des Profils (Epoch-ms). */
+  now: number | null;
+  /** Stichtag einer Messung (`optimize --as-of`); auf der Plattform null. */
+  asOf: number | null;
+  /** `updatedAt` des Champions, zu dem das Profil gehört — weicht es vom aktuellen Champion ab, ist das Profil veraltet. */
+  championUpdatedAt: number | null;
+  lauf: { nummer: number | null; configCommit: string | null };
+  profile: SymbolProfilEintragDoc[];
+}
+
+function leseSymbolProfilEintrag(roh: unknown): SymbolProfilEintragDoc | null {
+  if (!istObjekt(roh) || typeof roh.symbol !== 'string' || roh.symbol.length === 0) return null;
+  const klasse = istObjekt(roh.klasse) ? roh.klasse : {};
+  const stand = istObjekt(roh.stand) ? roh.stand : {};
+  const vol = istObjekt(roh.volatilitaet) ? roh.volatilitaet : {};
+  const trend = istObjekt(roh.trend) ? roh.trend : {};
+  const mom = istObjekt(roh.momentum) ? roh.momentum : {};
+  const rang = istObjekt(roh.rang) ? roh.rang : null;
+  const stop = istObjekt(roh.stop) ? roh.stop : {};
+  const liq = istObjekt(roh.liquiditaet) ? roh.liquiditaet : {};
+  const taktik = istObjekt(roh.taktik) ? roh.taktik : {};
+  const halte = istObjekt(roh.haltedauer) ? roh.haltedauer : {};
+  const bew = istObjekt(roh.bewertung) ? roh.bewertung : {};
+  const quelle = taktik.quelle === 'champion' || taktik.quelle === 'basis' || taktik.quelle === 'config' ? taktik.quelle : 'none';
+  const rank = rang ? zahlOderNull(rang.rank) : null;
+  const of = rang ? zahlOderNull(rang.of) : null;
+  const symbole = rang && Array.isArray(rang.symbole) ? rang.symbole.filter((s: unknown): s is string => typeof s === 'string') : [];
+  return {
+    symbol: roh.symbol,
+    klasse: {
+      klasse: textOderNull(klasse.klasse) ?? '',
+      cluster: textOderNull(klasse.cluster) ?? '',
+      sektor: textOderNull(klasse.sektor),
+      benchmark: klasse.benchmark === true,
+    },
+    stand: { t: zahlOderNull(stand.t), close: zahlOderNull(stand.close), bars: zahlOderNull(stand.bars) ?? 0 },
+    volatilitaetPct: zahlOderNull(vol.pct),
+    trend: { richtung: trend.richtung === 'auf' ? 'up' : trend.richtung === 'ab' ? 'down' : null, seitBars: zahlOderNull(trend.seitBars) },
+    momentumPct: zahlOderNull(mom.pct),
+    rang: rank !== null && of !== null ? { rank, of, symbole } : null,
+    stopPct: zahlOderNull(stop.pct),
+    liquiditaet: { dollarVolumenTag: zahlOderNull(liq.dollarVolumenTag), tage: zahlOderNull(liq.tage) ?? 0, handelbar: liq.handelbar === true, grund: textOderNull(liq.grund) },
+    taktik: {
+      quelle,
+      strategie: textOderNull(taktik.strategie),
+      einstiege: taktik.einstiege === 'erlaubt' ? 'allowed' : taktik.einstiege === 'gesperrt' ? 'locked' : null,
+      grund: textOderNull(taktik.grund) ?? '',
+      imEngineUniversum: taktik.imEngineUniversum !== false,
+    },
+    haltedauer: { medianHandelstage: zahlOderNull(halte.medianHandelstage), quelle: textOderNull(halte.quelle) ?? '' },
+    bewertung: { configCommit: textOderNull(bew.configCommit), measuredAt: zahlOderNull(bew.measuredAt) },
+  };
+}
+
+/**
+ * `meta/symbolProfile` in eine Form bringen, auf die sich die Anzeige verlassen
+ * kann. Fremde Version ⇒ `versionUnbekannt` mit leerer Liste (kein null: null
+ * hieße „noch kein Profil", und das wäre die falsche Auskunft).
+ */
+export function leseSymbolProfil(roh: unknown): SymbolProfilDoc | null {
+  if (!istObjekt(roh)) return null;
+  const lauf = istObjekt(roh.lauf) ? roh.lauf : {};
+  const kopf = {
+    version: zahlOderNull(roh.version),
+    generatedAt: zahlOderNull(roh.generatedAt),
+    now: zahlOderNull(roh.now),
+    asOf: zahlOderNull(roh.asOf),
+    championUpdatedAt: zahlOderNull(roh.championUpdatedAt),
+    lauf: { nummer: zahlOderNull(lauf.nummer), configCommit: textOderNull(lauf.configCommit) },
+  };
+  if (roh.version !== 1) return { ...kopf, versionUnbekannt: true, profile: [] };
+  const profile = Array.isArray(roh.profile) ? roh.profile.flatMap((e: unknown) => leseSymbolProfilEintrag(e) ?? []) : [];
+  profile.sort((a, b) => a.symbol.localeCompare(b.symbol));
+  return { ...kopf, versionUnbekannt: false, profile };
+}
+
+/**
+ * Anzeige-Entscheidung je Profilzeile — rein, ohne DOM, testbar
+ * (frontend/test/symbolProfil.test.ts). `gewaehlt` ist die Symbolauswahl des
+ * Nutzers (`settings.auto.symbols`), null = ganzes Universum.
+ *  - Ausgegraut wird nur eine ALPHA-Zeile (champion/config), die der Nutzer
+ *    nicht gewählt hat. Die Basis kommt für jeden Nutzer als Block
+ *    (`universeWithBasis`); ihre Zeilen bleiben aktiv.
+ *  - `plattformKorb`: Der Rang einer Alpha-Zeile gilt für den Korb der
+ *    Plattform. Ein Nutzer mit Teilauswahl hat in seiner Engine einen anderen
+ *    Korb und andere Ränge — also wird beschriftet, nicht verschwiegen.
+ *  - `umsatz`: null ohne Daten (`tage` 0), sonst die Kennzahl.
+ */
+export function profilAnzeige(e: SymbolProfilEintragDoc, gewaehlt: ReadonlySet<string> | null): { inaktiv: boolean; plattformKorb: boolean; umsatz: number | null } {
+  const alpha = e.taktik.quelle === 'champion' || e.taktik.quelle === 'config';
+  return {
+    inaktiv: alpha && gewaehlt !== null && !gewaehlt.has(e.symbol),
+    plattformKorb: alpha && e.rang !== null && gewaehlt !== null,
+    umsatz: e.liquiditaet.tage > 0 ? e.liquiditaet.dollarVolumenTag : null,
+  };
+}
+
+/** Gehört das Profil zu einem anderen Champion als dem, der gerade gilt? Ohne Zeitstempel auf einer Seite: kein Urteil (false). */
+export function profilVeraltet(p: Pick<SymbolProfilDoc, 'championUpdatedAt'>, championUpdatedAt: number | null): boolean {
+  return p.championUpdatedAt !== null && championUpdatedAt !== null && p.championUpdatedAt !== championUpdatedAt;
+}
+
+export function watchSymbolProfil(cb: (doc: SymbolProfilDoc | null) => void): Unsubscribe {
+  return muxWatch(
+    'symbolProfile',
+    (emit) =>
+      onSnapshot(doc(db(), 'meta', 'symbolProfile'), (snap) =>
+        emit(snap.exists() ? leseSymbolProfil(snap.data()) : null),
+      ),
+    (p) => cb(p as SymbolProfilDoc | null),
   );
 }
 

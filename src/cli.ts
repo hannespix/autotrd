@@ -13,6 +13,7 @@
  *   halt       HALT-Datei setzen (keine Einstiege, Exits laufen weiter)
  *   resume     HALT-Datei entfernen; Drawdown-Halt nur mit --ack-drawdown
  *   readiness  Live-Reife aus dem Journal
+ *   profile    Symbolprofil (Klasse, Trend, Rang, Vol, Stop, Taktik, Haltedauer) ⇒ profile.json — Anzeige, kein Handel
  *
  * Rückgabecodes: 0 = in Ordnung, 1 = Abbruch/Vorbedingung verletzt,
  * 2 = unbekannter Befehl, 3 = `optimize` hat NICHTS gemessen (siehe
@@ -29,13 +30,14 @@ import { ConfigError } from './core/config.ts';
 import { ensureDir, writeJsonAtomic } from './core/journal.ts';
 import { errMsg, logger } from './core/log.ts';
 import { DAY, addDays, dayKey, dayKeyFor, msFromET, parseDay, toET } from './core/time.ts';
-import type { Bar, Metrics, Params, Trade } from './core/types.ts';
+import type { Bar, Metrics, Ms, Params, Trade } from './core/types.ts';
 import { backfill } from './data/backfill.ts';
 import { ensureCalendar } from './data/calendar.ts';
 import { Engine } from './engine/engine.ts';
 import { createNotifier } from './notify/index.ts';
 import { loadDefaultDeps, nichtsGemessen, runOptimization } from './optimize/run.ts';
 import { assessReadiness } from './readiness.ts';
+import { buildSymbolProfiles, PROFILE_FILE, profilTabelle, type ProfilLauf, type SymbolProfileFile } from './profile/symbolprofile.ts';
 import { startStatusServer } from './status/http.ts';
 import { getStrategy, strategyIds } from './strategy/index.ts';
 import { mergeParams, validateParams } from './strategy/params.ts';
@@ -45,14 +47,14 @@ import { universeRegelnFuer, waehleUniverse } from './universe/select.ts';
 
 const USAGE = `autotrd <kommando> [optionen]
 
-Kommandos: doctor | universe | fetch | backtest | optimize | run | status | flatten | halt | resume | readiness
+Kommandos: doctor | universe | fetch | backtest | optimize | run | status | flatten | halt | resume | readiness | profile
 
 Gemeinsame Optionen:
   --config <pfad>    Config-Datei (Default: config/config.yaml)
   --env <pfad>       .env-Datei (Default: .env)
   --home <pfad>      State-Verzeichnis (Default: AUTOTRD_HOME bzw. paths.home)
   --verbose          Debug-Log
-  --json             Maschinenlesbare Ausgabe (status, readiness, backtest, universe)
+  --json             Maschinenlesbare Ausgabe (status, readiness, backtest, universe, profile)
   --universe <pfad>  Auswahl des Kommandos universe anwenden ('auto' = <home>/universe.json)
 
 backtest:  --strategy <id> --params a=1,b=2 --days <n> --symbols A,B --from YYYY-MM-DD --to YYYY-MM-DD --stress <faktor> --equity <usd>
@@ -60,7 +62,7 @@ optimize:  --equity <usd>            (Zeitraum: optimizer.lookbackDays aus der C
 --allow-short  NUR fuer backtest und optimize: misst mit erlaubten Shorts, egal was
                risk.allowShort sagt. Das Kommando run lehnt die Option ab — was
                gehandelt wird, entscheidet die Config, nie die Kommandozeile.
---as-of <tag>  NUR fuer universe, backtest und optimize: der Lauf tut so, als waere
+--as-of <tag>  NUR fuer universe, fetch, backtest und optimize: der Lauf tut so, als waere
                YYYY-MM-DD heute; alles danach ist unsichtbar. Fuer mehrere getrennte
                Holdout-Fenster aus verschiedenen Marktphasen.
 universe:  --out <pfad>              (Default: <home>/universe.json)
@@ -68,6 +70,7 @@ fetch:     --days <n>
 halt:      --reason <text>
 flatten:   --yes
 resume:    --ack-drawdown            (Drawdown-Halt bewusst aufheben; Peak = aktuelle Equity)
+profile:   Symbolprofil aus geschlossenen Tagesbars ⇒ <home>/profile.json (optimize schreibt es am Ende mit)
 `;
 
 interface Cli {
@@ -601,6 +604,20 @@ async function cmdOptimize(app: App, cli: Cli): Promise<number> {
   out(`Champion: ${app.paths.champion} · Report: ${res.reportPath}`);
   app.journal.append('champion', { symbols: Object.keys(res.champion.symbols), noTrade: Object.keys(res.champion.noTrade), report: res.reportPath });
 
+  // Symbolprofil NACH dem Champion, mit dem Champion dieses Laufs: Die Nacht
+  // veröffentlicht es hinter champion.json (scripts/publish-profile.mjs). Es
+  // ist Anzeige — sein Scheitern darf den Lauf nicht rot färben, bleibt aber
+  // laut im Log und in der Ausgabe. Der Datenschnitt ist der Stichtag, wenn
+  // der Lauf einen hat: Ein Profil von heute neben einem Champion vom Stichtag
+  // wäre genau die Vermischung, die `--as-of` sonst überall verhindert.
+  try {
+    const profil = schreibeProfil({ ...app, champion: res.champion }, app.asOf ?? Date.now());
+    out(`Profil: ${profil.path} (${profil.file.profile.length} Symbole${app.asOf === undefined ? '' : `, Stichtag ${dayKey(app.asOf)}`})`);
+  } catch (e) {
+    logger.error('Symbolprofil nicht geschrieben', { error: errMsg(e) });
+    out(`Profil NICHT geschrieben: ${errMsg(e)}`);
+  }
+
   // Bericht und Journal stehen — ERST DANN der Fehlercode. Wer einen Lauf
   // untersucht, der nichts gemessen hat, braucht genau diesen Bericht; er
   // darf nicht daran scheitern, dass der Prozess vorher aussteigt.
@@ -797,6 +814,76 @@ function cmdReadiness(app: App, cli: Cli): number {
   return r.ready ? 0 : 1;
 }
 
+/* ───────────────────────── Symbolprofil ───────────────────────── */
+
+/** Der Lauf, der das Profil schreibt: GitHub-Actions-Umgebung, lokal null. */
+export function laufAusUmgebung(env: NodeJS.ProcessEnv = process.env): ProfilLauf {
+  const n = env.GITHUB_RUN_NUMBER ? Number(env.GITHUB_RUN_NUMBER) : Number.NaN;
+  return {
+    nummer: Number.isInteger(n) ? n : null,
+    id: env.GITHUB_RUN_ID ? env.GITHUB_RUN_ID : null,
+    configCommit: env.GITHUB_SHA ? env.GITHUB_SHA : null,
+  };
+}
+
+/**
+ * Tagesbars eines Symbols, geschlossen bis `now`: bei Tagesbar-Configs die
+ * Serie des Strategie-Zeitrahmens (wie Backtest und Optimierer), sonst der
+ * 1Day-Cache (den `universe` lädt) — das Profil rechnet immer auf Tagesbars.
+ */
+function tagesSerie(app: App, symbol: string, now: Ms): ReturnType<typeof seriesForTimeframe> {
+  const a = app.config.timeframe === 1440 ? app : { ...app, config: { ...app.config, timeframe: 1440 as const } };
+  return seriesForTimeframe(a, symbol, now);
+}
+
+/**
+ * Das Profil aus der App: Wahl der Engine (`strategyForFn` — dieselbe Funktion,
+ * die `run` der Engine gibt), Universum der Engine, Bars-Cache. Kein Netz.
+ * Das Universum ist das der PLATTFORM (Config ∪ Basis-Korb, wenn geführt) —
+ * ohne das lokale Buch (`heldSymbols`): Was dieser Rechner gerade hält, gehört
+ * nicht in ein Profil, das für alle gilt und veröffentlicht wird.
+ */
+export function profilFuerApp(app: App, now: Ms): SymbolProfileFile {
+  return buildSymbolProfiles({
+    config: app.config,
+    champion: app.champion,
+    choiceFor: strategyForFn(app),
+    barsFor: (sym) => tagesSerie(app, sym, now),
+    tagesbarsFor: (sym) => app.store.load(sym, '1Day'),
+    engineUniverse: engineConfig(app, []).universe.symbols,
+    calendar: app.calendar,
+    now,
+    asOf: app.asOf,
+    lauf: laufAusUmgebung(),
+  });
+}
+
+/** Profil bauen und atomar nach `<home>/profile.json` schreiben. */
+export function schreibeProfil(app: App, now: Ms): { path: string; file: SymbolProfileFile } {
+  const file = profilFuerApp(app, now);
+  const path = join(app.home, PROFILE_FILE);
+  writeJsonAtomic(path, file);
+  return { path, file };
+}
+
+function cmdProfile(app: App, cli: Cli): number {
+  const { path, file } = schreibeProfil(app, Date.now());
+  if (cli.values.json === true) {
+    out(JSON.stringify(file, null, 2));
+    return 0;
+  }
+  out(
+    `autotrd profile · ${file.profile.length} Symbole · Datenschnitt ${fmtTs(file.now)}` +
+      `${file.asOf === null ? '' : ` (Stichtag ${dayKey(file.asOf)})`}${file.lauf.nummer === null ? '' : ` · Lauf #${file.lauf.nummer}`} · Kennzahlen: ${file.params.quelle}`,
+  );
+  out();
+  table(profilTabelle(file));
+  out();
+  out(`Datei: ${path}`);
+  out('Das Profil ist Anzeige und Erklärung — handeln tut nur decide() mit Champion oder Basis.');
+  return 0;
+}
+
 /* ───────────────────────── main ───────────────────────── */
 
 export async function main(argv: string[]): Promise<number> {
@@ -830,6 +917,8 @@ export async function main(argv: string[]): Promise<number> {
       return cmdResume(app, cli);
     case 'readiness':
       return cmdReadiness(app, cli);
+    case 'profile':
+      return cmdProfile(app, cli);
     default:
       out(`Unbekanntes Kommando: ${cli.cmd}`);
       out(USAGE);
