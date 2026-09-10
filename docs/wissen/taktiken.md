@@ -86,7 +86,10 @@ steht in `src/strategy/`; die Gates gelten für alle gleich.
   sie dreimal: Sharpe 0,79–1,01 gegen Korb 0,68–0,83, MaxDD je Einheit
   Exposure 12,1–12,4 % gegen Latte 15,5–15,6 %, Netto +23,8 bis +30,8 %,
   Kosten 2,4–3,3 %, 0,7–0,8 Trades je Monat, Haltedauer 68 Tage.
-  Freigegeben für die Basis-Stufe auf Paper-Konten (Vorregistrierung V2).
+  V3 (#40, Regelwerk der Plattform, Tagesbremse 2 %): nicht bestanden —
+  Sharpe 0,48, MaxDD je Einheit Exposure 15,95 % gegen 15,48 %. Die Stufe
+  ist gebaut und schlafend; Aktivierung nur nach Owner-Entscheidung zu
+  Bremsen je Stufe und V4.
 
 ## Kasse — nicht handeln
 - **Zweck:** Das Ergebnis, wenn keine Taktik ihre Latte nimmt. Kostet 0 $.
