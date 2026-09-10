@@ -99,8 +99,11 @@ verpasst. Die Bremse **verschlechtert** den Drawdown je Einheit Exposure
 auslässt.
 
 **Urteil nach den Entscheidungsregeln: nicht bestanden ⇒ keine
-Aktivierung.** Der Falsifikationslauf −15 Tage (#41) lief mit, der Lauf
-−30 Tage wurde nicht mehr gestartet — das Urteil steht mit dem Hauptlauf.
+Aktivierung.** Der Falsifikationslauf −15 Tage (#41, Lauf 34418990490,
+Datenbereich 2021-03-05 … 2026-08-25) bestätigt es: Netto +18,2 %, Sharpe
+0,69 gegen 0,75, Drawdown je Einheit Exposure 16,16 % gegen 15,55 %,
+Kosten 4,4 % — dieselben zwei Gates verfehlt. Der Lauf −30 Tage wurde nicht
+mehr gestartet; das Urteil steht mit dem Hauptlauf.
 
 **Was das heißt.** Die Basis hat sich nicht geändert; das Regelwerk, das
 die Nutzer tragen, passt nicht zu ihr. Eine Tagesbremse, die bei −2 % das

@@ -24,6 +24,7 @@ Details in `docs/ARCHITEKTUR.md` §5a und in `docs/wissen/thesen.md`.
 | 09.09.2026 | 38 | basis-1440-v2, Stichtag 2026-08-25 | 2021-03 … 2026-08 | fest (9 ETFs) | Basis V2: +30,8 %, Sharpe 1,01 (Korb 0,83), MaxDD/Exposure 12,2 % (15,5 %), Kosten 2,4 % | SPY 0,82 | bestanden (Falsifikation 1) | V2 |
 | 09.09.2026 | 39 | basis-1440-v2, Stichtag 2026-08-10 | 2021-02 … 2026-08 | fest (9 ETFs) | Basis V2: +28,8 %, Sharpe 0,96 (Korb 0,79), MaxDD/Exposure 12,4 % (15,6 %), Kosten 2,6 % | SPY 0,86 | bestanden (Falsifikation 2) | V2 |
 | 10.09.2026 | 40 | basis-1440-v3 (= platform.yaml + Basis; Bremsen 2 %/10 %) | 2021-03 … 2026-09 | Alpha je Fold + Basis fest (9 ETFs) | Basis: +12,5 %, Sharpe 0,48 (Korb 0,68), MaxDD/Exposure 15,95 % (Latte 15,48 %), Kosten 7,2 %; Alpha td 1,195 fällt durch | SPY 0,71 | **Basis nicht bestanden** — Tagesbremse 2 % stellt in Aug. 2024 und Apr. 2025 glatt | V3 |
+| 10.09.2026 | 41 | basis-1440-v3, Stichtag 2026-08-25 | 2021-03 … 2026-08 | Alpha je Fold + Basis fest (9 ETFs) | Basis: +18,2 %, Sharpe 0,69 (Korb 0,83), MaxDD/Exposure 16,16 % (Latte 15,55 %), Kosten 4,4 % | — | nicht bestanden (Falsifikation 1, dasselbe Urteil) | V3 |
 
 ## Offen (vorregistriert)
 
