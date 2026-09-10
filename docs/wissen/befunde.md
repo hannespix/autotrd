@@ -23,6 +23,7 @@ Details in `docs/ARCHITEKTUR.md` §5a und in `docs/wissen/thesen.md`.
 | 09.09.2026 | 37 | basis-1440-v2 (Basis-Latte im Code, durchgehend) | 2021-03 … 2026-09 | fest (9 ETFs) | Basis V2: Netto +23,8 %, Sharpe 0,79 (Korb 0,68), MaxDD/Exposure 12,1 % (Latte 15,5 %), Kosten 3,3 % | SPY 0,71 (Bericht) | **Basis-Latte bestanden** | V2 |
 | 09.09.2026 | 38 | basis-1440-v2, Stichtag 2026-08-25 | 2021-03 … 2026-08 | fest (9 ETFs) | Basis V2: +30,8 %, Sharpe 1,01 (Korb 0,83), MaxDD/Exposure 12,2 % (15,5 %), Kosten 2,4 % | SPY 0,82 | bestanden (Falsifikation 1) | V2 |
 | 09.09.2026 | 39 | basis-1440-v2, Stichtag 2026-08-10 | 2021-02 … 2026-08 | fest (9 ETFs) | Basis V2: +28,8 %, Sharpe 0,96 (Korb 0,79), MaxDD/Exposure 12,4 % (15,6 %), Kosten 2,6 % | SPY 0,86 | bestanden (Falsifikation 2) | V2 |
+| 10.09.2026 | 40 | basis-1440-v3 (= platform.yaml + Basis; Bremsen 2 %/10 %) | 2021-03 … 2026-09 | Alpha je Fold + Basis fest (9 ETFs) | Basis: +12,5 %, Sharpe 0,48 (Korb 0,68), MaxDD/Exposure 15,95 % (Latte 15,48 %), Kosten 7,2 %; Alpha td 1,195 fällt durch | SPY 0,71 | **Basis nicht bestanden** — Tagesbremse 2 % stellt in Aug. 2024 und Apr. 2025 glatt | V3 |
 
 ## Offen (vorregistriert)
 
@@ -30,4 +31,4 @@ Details in `docs/ARCHITEKTUR.md` §5a und in `docs/wissen/thesen.md`.
 |---|---|---|---|
 | V1 Basis-Allokation (`vorregistrierung/2026-09-09-basis-allokation.md`) | T5 | Probe #36 | B1–B3 ✔, B4 ✘ — nicht einsetzen; Prüfer: B3 nicht verfehlbar, Kriterien ohne Code-Pfad ⇒ V2 |
 | V2 Basis-Allokation (`vorregistrierung/2026-09-09-basis-allokation-v2.md`) | T5 | #37, #38 (−15 Tage), #39 (−30 Tage) | **bestanden, dreimal dasselbe Urteil** — Basis-Stufe darf gebaut und auf Paper aktiviert werden |
-| V3 Basis-Allokation unter dem Regelwerk der Plattform (`vorregistrierung/2026-09-09-basis-allokation-v3.md`) | T5 | Hauptlauf + zwei Falsifikationsläufe, nach den Fixes zur Basis-Stufe | — |
+| V3 Basis-Allokation unter dem Regelwerk der Plattform (`vorregistrierung/2026-09-09-basis-allokation-v3.md`) | T5 | Hauptlauf #40 (Falsifikation #41 mitgelaufen, −30 nicht gestartet) | **nicht bestanden** (basis_drawdown 15,95 % gegen 15,48 %, basis_sharpe 0,48 gegen 0,61) — Ursache Tagesbremse 2 %; keine Aktivierung; Owner-Entscheidung zum Regelwerk |

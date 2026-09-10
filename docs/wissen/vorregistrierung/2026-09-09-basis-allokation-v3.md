@@ -70,6 +70,45 @@ Horizonte, Latte ohne Kosten, Bereinigung auf heute), dazu:
    Alpha-Champion, die Basis hat alle vier. Ändert sich das, ist die
    Messung nicht mehr die Realität (Stufe-Befund 5) — dann V4.
 
-## Ergebnis
+## Ergebnis (eingetragen nach dem Hauptlauf, 10.09.2026 kurz nach Mitternacht)
 
-_Wird nach den drei Läufen eingetragen._
+Hauptlauf #40 (Lauf 34418975177) auf `main` 5acd696 mit
+`config/basis-1440-v3.yaml`: Datenbereich 2021-03-22 … 2026-09-09, Kette
+2022-04-03 … 2026-03-13 — dieselbe Kette wie V2-Hauptlauf #37, dieselben
+Bars, dieselbe Strategie, dasselbe Sizing (20 % je Position). Einziger
+wirksamer Unterschied: die Notbremsen der Plattform, **Tagesverlust 2 %
+statt 5 %** (der Drawdown-Halt 10 % wurde nie erreicht, MaxDD 8,3 %).
+
+| Gate | V2 (#37, Bremsen 5 %/30 %) | V3 (#40, Bremsen 2 %/10 %) | Latte | Urteil V3 |
+|---|---|---|---|---|
+| basis_net_profit | +5 953 $ (Stress +5 848) | +3 123 $ (Stress +2 956) | > 0 | ✔ |
+| basis_drawdown | 6,71 % / 55,6 % = 12,06 % | 8,27 % / 51,9 % = **15,95 %** | 15,48 % | ✘ knapp |
+| basis_sharpe | 0,79 | **0,48** | 0,61 | ✘ |
+| basis_costs | 3,3 % | 7,2 % | ≤ 10 % | ✔ |
+
+Netto +12,5 % statt +23,8 %, 43 statt 37 Trades, Haltedauer 59 statt 68
+Tage. Die 90-Tage-Scheiben sind bis Scheibe 9 (Juni 2024) auf den Cent
+identisch mit V2; danach: Scheibe 10 (Juni–Sept. 2024, Volatilitätsspitze
+Anfang August) +203 $ statt +1 044 $, Scheibe 13 (März–Juni 2025,
+Zollcrash) **−750 $ statt +712 $**, Scheibe 14 +1 167 $ statt +1 401 $. Das
+ist die Signatur der Tagesbremse: Ein Buchtag unter −2 % stellt alles
+glatt (`risk/limits.ts`: „alles glatt, Halt bis nächster Tag"), der
+Wiedereinstieg kommt erst im nächsten Monatsfenster, die Erholung wird
+verpasst. Die Bremse **verschlechtert** den Drawdown je Einheit Exposure
+(15,95 % gegen 12,06 %), weil sie Verluste festschreibt und Erholungen
+auslässt.
+
+**Urteil nach den Entscheidungsregeln: nicht bestanden ⇒ keine
+Aktivierung.** Der Falsifikationslauf −15 Tage (#41) lief mit, der Lauf
+−30 Tage wurde nicht mehr gestartet — das Urteil steht mit dem Hauptlauf.
+
+**Was das heißt.** Die Basis hat sich nicht geändert; das Regelwerk, das
+die Nutzer tragen, passt nicht zu ihr. Eine Tagesbremse, die bei −2 % das
+ganze Buch glattstellt, ist für Intraday-Signale auf 5-Minuten-Bars
+gedacht (CLAUDE.md §2), nicht für eine Monatsallokation mit 55 % Exposure.
+Das ist eine Owner-Entscheidung, keine Messfrage: (a) Regelwerk behalten
+⇒ die Basis ist auf dieser Plattform nicht einsetzbar; (b) Bremsen je
+Stufe (für die Basis: Tagesverlust sperrt nur Einstiege, oder Schwelle
+5 %; Drawdown-Halt mit `resume` zum nächsten Fenster) ⇒ Code-Pfad je Stufe
+plus V4-Vorregistrierung plus neue Prüfer-Runde. Nichts davon wird ohne
+Entscheidung gebaut.

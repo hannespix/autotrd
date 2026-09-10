@@ -766,6 +766,24 @@ Echtgeld weiter hinter Doppel-Guard und `readiness`. Offen beim Owner: eine
 Live-Reife-Regel für eine Monatsstrategie (Vorschlag: ≥ 90 Tage Paper,
 MaxDD ≤ 10 %, Netto ≥ 0 — statt 200 Trades).
 
+**Nachtrag 10.09., kurz nach Mitternacht — V3 und die Tagesbremse.** Der
+Prüfer der Basis-Stufe (17 Befunde, `docs/wissen/pruefungen/…-basis-stufe.md`)
+fand unter anderem, dass V2 mit **drei Regelwerken** bestand: gemessen mit
+Notbremsen 5 %/30 %, nachts würde die Plattform mit 2 %/10 % messen,
+gehandelt wird je Nutzer. Dazu eine tote Tagesbremse im Takt (Marke nach
+dem Gap statt Vortagesschluss), Einstiege ohne Ziel als Bracket mit einem
+Bein (Alpaca lehnt ab), und pass-Flips, die alle Konten liquidiert
+hätten. Alles behoben (#474), die Stufe ist gebaut und **schlafend**.
+V3 maß die Basis dann mit genau der Config, mit der sie aktiviert würde —
+und sie fiel: Sharpe 0,48 gegen 0,61, Drawdown je Einheit Exposure 15,95 %
+gegen 15,48 %. Die Scheiben sind bis Juni 2024 auf den Cent gleich wie in
+V2; danach stellt die Tagesbremse 2 % im August 2024 und im April 2025
+das Buch glatt, der Wiedereinstieg kommt erst im nächsten Monatsfenster,
+die Erholung fehlt. Die Bremse, die schützen soll, verschlechtert den
+Drawdown je Einheit Exposure. Keine Aktivierung. Die Entscheidung, ob
+Bremsen je Stufe gelten dürfen, liegt beim Owner (Aufgabe #36/#37); erst
+danach V4 mit neuer Prüfer-Runde.
+
 ### Was das für den Betrieb heißt
 
 Kein Handel. Der nächtliche Optimierer läuft weiter und sucht mit nächtlich
