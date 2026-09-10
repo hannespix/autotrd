@@ -100,7 +100,9 @@ describe('autotrd profile', () => {
     const file = JSON.parse(readFileSync(pfad, 'utf8')) as SymbolProfileFile;
     expect(file.version).toBe(1);
     expect(typeof file.generatedAt).toBe('number');
-    expect(file.lauf).toEqual({ nummer: null, id: null, configCommit: null });
+    // Der Lauf kommt aus der Umgebung: lokal null, in GitHub Actions die echte Lauf-Nummer
+    // (dort ist GITHUB_RUN_NUMBER gesetzt — der erste CI-Lauf dieses Tests fiel genau daran).
+    expect(file.lauf).toEqual(laufAusUmgebung(process.env));
     expect(file.profile.map((p) => p.symbol)).toEqual(['AAA', 'BBB', 'GLD', 'SPY', 'TLT']);
     // Die Wahl der Engine: Basis-Korb führt, noTrade nicht.
     expect(file.profile.find((p) => p.symbol === 'GLD')!.taktik).toMatchObject({ quelle: 'basis', einstiege: 'erlaubt', imEngineUniversum: true });
