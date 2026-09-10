@@ -142,8 +142,9 @@ des Bruttogewinns, siehe docs/ARCHITEKTUR.md §5a.10).
 | `optimize/` | Walk-Forward, Robustheits-Gates (darunter `beats_market`: schlägt die OOS-Kette den Sharpe von kaufen-und-halten? Gegen die Benchmark, nicht den Korb; ohne Benchmark gilt die Kasse — das Gate wird nie vakant), Champion/Challenger, Report. **Festkandidaten** (`optimizer.fixedCandidates`): vorregistrierte Parametersätze ohne Suche über alle Folds durch dieselben Gates, DSR laut „nicht anwendbar", keine Sonderbehandlung; je Kandidat eine Maßstab-Zeile (OOS-Sharpe, MaxDD, Trades je Monat gegen SPY über dieselben OOS-Fenster). |
 | `engine/` | Buch, Order-Ausführung, Abgleich, Uhr, Schleife. |
 | `notify/`, `status/` | Telegram, Status-HTTP (nur 127.0.0.1). |
+| `profile/symbolprofile.ts` | Symbolprofil je Nacht (Anzeige und Erklärung, kein Handel; `docs/wissen/symbolprofile.md`): je Symbol Klasse, Trend, Rang, Vol, Momentum, Stop, Liquidität, die Taktik der Engine (wörtlich `strategyForFn`/`buildStrategyFor`, keine zweite Ableitung), Haltedauer nur gemessen. Rechnet nichts nach, was es importieren kann (`korbRaenge`, `bewerte`, `precompute`). Rang = Korb der PLATTFORM mit Mitgliedern; Schnitt am Sitzungsschluss. Eigener Prozess `profile.json`, Plattform `meta/symbolProfile`. Wird von der Engine nie importiert. |
 | `readiness.ts` | Live-Reife aus dem Journal (≥ 200 Trades, ≥ 30 Tage, PF ≥ 1,2, feeShare ≤ 0,5, netto > 0). |
-| `cli.ts` | `doctor · universe · fetch · backtest · optimize · run · status · flatten · halt · resume · readiness`. |
+| `cli.ts` | `doctor · universe · fetch · backtest · optimize · run · status · flatten · halt · resume · readiness · profile` (`optimize` schreibt das Profil am Ende mit, mit dem Stichtag des Laufs). |
 
 Plattform (`functions/src/`, `frontend/`, `shared/`):
 

@@ -36,6 +36,7 @@ zum Handeln, Absichern und Messen nötig ist.
 | Walk-Forward-Optimierung je Symbol × Strategie, Robustheits-Gates, Champion-Datei | `autotrd optimize` |
 | Handeln: Streaming-Bars → Entscheidung → Bracket-Order (Stop + Ziel beim Broker) → Abgleich | `autotrd run` |
 | Prüfen, überwachen, stoppen | `autotrd doctor`, `status`, `halt`, `resume`, `flatten`, `readiness` |
+| Erklären, was die Engine je Symbol tut und warum (Klasse, Trend, Rang, Vol, Stop, Taktik, Haltedauer) — Anzeige, kein Handel | `autotrd profile` (läuft am Ende von `optimize` mit) |
 
 Die Strategie-Vorlagen: `trend_donchian` (Ausbruch + ATR-Trailing),
 `momentum_pullback` (Trend + RSI-Rücksetzer), `mean_reversion` (RSI/z-Score
@@ -57,6 +58,7 @@ node src/cli.ts doctor                 # Keys, Modus, Konto, Uhr, Assets, Cache
 node src/cli.ts fetch                  # Kalender + Bars (optimizer.lookbackDays)
 node src/cli.ts optimize               # ⇒ var/champion.json + var/reports/optimize-*.md
 node src/cli.ts backtest               # Champion gegen den Cache
+node src/cli.ts profile                # ⇒ var/profile.json — Symbolprofil (Anzeige, kein Handel)
 node src/cli.ts run                    # Engine (Paper)
 ```
 

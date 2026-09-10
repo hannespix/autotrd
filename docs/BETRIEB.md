@@ -43,6 +43,7 @@ mit dem Wrapper aus ops/README.md):
 | `halt` | HALT-Datei setzen (`--reason <text>` als Notiz): keine neuen Einstiege; Exits, Stops, EOD-Flatten und die Notbremsen laufen weiter. |
 | `resume` | HALT-Datei entfernen. Einen Drawdown-Halt hebt nur `--ack-drawdown` auf: Die CLI setzt dazu einen RESUME-Marker im State-Verzeichnis, den die Engine beim nächsten Tick bzw. Start verarbeitet — Peak = aktuelle Equity, Journal-Eintrag `resume`. Tages-Halts enden von selbst und lassen sich nicht vorzeitig aufheben. |
 | `readiness` | Live-Reife aus dem Journal (VALIDIERUNG.md §8): fünf Kriterien, Ergebnis ERREICHT / NICHT ERREICHT, `--json` für Skripte. |
+| `profile` | Symbolprofil aus geschlossenen Tagesbars (`docs/wissen/symbolprofile.md`): je Symbol des Universums (Alpha-Korb ∪ Basis-Korb ∪ Benchmark) Anlageklasse, Trend, Rang im Korb, Volatilität, Momentum, Stop-Distanz, Liquidität, zugewiesene Taktik mit Quelle und Grund, erwartete Haltedauer (nur gemessen, sonst „unbekannt") und letzte Bewertung. Schreibt `profile.json`; `optimize` schreibt es am Ende jedes Laufs mit. **Anzeige und Erklärung — handeln tut nur `decide()` mit Champion oder Basis.** `--json` für Skripte. |
 
 ## 3. Wo was liegt (`AUTOTRD_HOME`, Default `./var`)
 
@@ -55,6 +56,7 @@ mit dem Wrapper aus ops/README.md):
 | `universe.json` | Ergebnis der letzten Auswahl: gewählte Symbole, Zugang/Abgang, Bewertung jedes Kandidaten. Wird mit `--universe <pfad>` auf `fetch`, `optimize` und `scripts/sync-engine-config.mjs` angewandt; sie ist zugleich der Bestand für die Hysterese der nächsten Wahl. |
 | `calendar.json` | Broker-Kalender (Handelstage, Öffnungs-/Schlusszeiten). |
 | `reports/` | Optimierer- und Universums-Berichte (Markdown) je Lauf. |
+| `profile.json` | Symbolprofil (`profile`, am Ende von `optimize`): Version 1, `generatedAt`, `now` (Datenschnitt), `lauf`, je Symbol Kennzahlen mit Quelle. Wird auf der Plattform als `meta/symbolProfile` veröffentlicht (`scripts/publish-profile.mjs`). |
 | `HALT` | Existiert ⇒ keine neuen Einstiege. Inhalt: Grund und Zeit. |
 
 ## 4. State und Journal im Detail

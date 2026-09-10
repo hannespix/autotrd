@@ -60,6 +60,9 @@ import {
   saveStrategy,
   TRADE_PAGE,
   watchChampion,
+  profilAnzeige,
+  profilVeraltet,
+  watchSymbolProfil,
   watchEngineConfig,
   watchEquitySeries,
   watchHealth,
@@ -71,6 +74,8 @@ import {
   type AdminUserRow,
   type BrokerStatusResult,
   type ChampionDoc,
+  type SymbolProfilDoc,
+  type SymbolProfilEintragDoc,
   type EngineCommandAction,
   type EngineMirror,
   type EquitySeriesPoint,
@@ -150,6 +155,8 @@ interface DashState {
   pfZeitraum: Zeitraum;
   health: HealthDoc | null;
   champion: ChampionDoc | null;
+  /** Nächtliches Symbolprofil (meta/symbolProfile) — Anzeige, kein Handel. */
+  profil: SymbolProfilDoc | null;
   /** Plattform-Universum (meta/engineConfig), Fallback: eingebaute Liste. */
   universe: string[];
   accessLevel: 'pending' | 'approved' | 'blocked' | 'archiviert';
@@ -302,6 +309,11 @@ function layout(email: string): string {
         <div id="chList" class="fl-tbl ch-tbl"><div class="hint">${t('ch.keiner')}</div></div>
         <div id="chNoTrade" class="hint"></div>
         <div id="chBasis" class="hint"></div>
+        <div class="pr-kopfzeile">${t('pr.titel')} ${iBtn('symbolProfil')}
+          <span id="prStand" class="tn-tag" style="float:right"></span>
+        </div>
+        <div id="prList" class="pr-tbl"><div class="hint">${t('pr.keins')}</div></div>
+        <div id="prHint" class="hint"></div>
         <div class="row" style="align-items:center;gap:8px;margin-top:6px">
           <button class="btn btn-n" id="chReport">${t('ch.berichtOeffnen')}</button>
           <span class="hint" id="chMsg"></span>
@@ -1223,6 +1235,7 @@ function renderChampion(): void {
         + nt.map(([sym, e]) => `<span title="${escText(e.reason)}">${escText(sym)}</span>`).join(', ')
         + `<br>${t('ch.noTradeHint')}`;
   renderChampionBasis();
+  renderSymbolProfil();
 }
 
 /** Die Basis-Stufe unter der Champion-Tabelle: bestanden oder nicht, Korb, Position je Symbol. */
@@ -1243,6 +1256,92 @@ function renderChampionBasis(): void {
     `<b>${t('ch.basis')}:</b> ${escText(b.label)} (${escText(b.strategy)}${b.timeframe ? ` · ${b.timeframe}m` : ''}) ${urteil} · `
     + `<span class="mono">${b.symbols.map(escText).join(', ')}</span> · ${escText(position)}`
     + `<br>${t('ch.basisHint')}`;
+}
+
+/* ── Symbolprofil (meta/symbolProfile) ─────────────────────────────── */
+
+const pct1 = (n: number | null): string => (n === null ? '--' : `${n.toFixed(1)} %`);
+
+/**
+ * Eine Zeile je Symbol: Kopf (Symbol, Klasse, Taktik mit Quelle), Kennzahlen
+ * (Trend seit n Tagen, Rang, Vol, Momentum, Stop, Umsatz, Haltedauer,
+ * Bewertung) und der Grund des Kerns als Klartext. Alles kommt aus
+ * `meta/symbolProfile`; hier wird nichts gerechnet.
+ */
+/** Datum mit Jahr — für Messzeitpunkte, die Monate oder Jahre zurückliegen können. */
+function wannTag(ms: number | null): string {
+  if (ms === null || !Number.isFinite(ms)) return '--';
+  return new Date(ms).toLocaleDateString(sprachWahl() === 'en' ? 'en-GB' : 'de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+/**
+ * Eine Zeile je Symbol: Kopf (Symbol, Klasse, Taktik mit Quelle), Kennzahlen
+ * (Trend seit n Tagesbars, Rang mit Korb, Vol, Momentum, Stop, Umsatz,
+ * Haltedauer, Bewertung) und der Grund des Kerns als Klartext. Alles kommt
+ * aus `meta/symbolProfile`; hier wird nichts gerechnet. Was je Nutzer
+ * abweicht (Ausgrauen, Plattform-Korb, fehlende Daten) entscheidet
+ * `profilAnzeige` in data.ts — rein und getestet.
+ */
+function profilZeile(e: SymbolProfilEintragDoc, gewaehlt: Set<string> | null): string {
+  const az = profilAnzeige(e, gewaehlt);
+  const q = e.taktik.quelle;
+  const quelleText = q === 'champion' ? t('pr.quelleChampion') : q === 'basis' ? t('pr.quelleBasis') : q === 'config' ? t('pr.quelleConfig') : '';
+  const taktik =
+    q === 'none'
+      ? `<span class="stag">${t('pr.keineTaktik')}</span>`
+      : `<span class="stag ${e.taktik.einstiege === 'locked' ? 't-sell' : 't-buy'}">${escText(quelleText)}: ${escText(e.taktik.strategie ?? '')}</span>`
+        + (q === 'basis' ? ` <span class="stag" title="${t('pr.basisBlockTitel')}">${t('pr.basisBlock')}</span>` : '')
+        + (e.taktik.einstiege === 'locked' ? ` <span class="stag">${t('pr.gesperrt')}</span>` : '')
+        + (e.taktik.imEngineUniversum ? '' : ` <span class="stag">${t('pr.nichtImUniversum')}</span>`);
+  const klasse = escText(e.klasse.klasse) + (e.klasse.sektor ? ` · ${escText(e.klasse.sektor)}` : '');
+  const trend =
+    e.trend.richtung === null
+      ? `${t('pr.trend')} --`
+      : `${e.trend.richtung === 'up' ? t('pr.trendAuf') : t('pr.trendAb')}${e.trend.seitBars !== null ? ` ${t('pr.seit')} ${e.trend.seitBars} ${t('pr.seitEinheit')}` : ''}`;
+  const rang = e.rang
+    ? `<span title="${escText(`${t('pr.korbTitel')}: ${e.rang.symbole.join(', ')}`)}">${t('pr.rang')} ${e.rang.rank}/${e.rang.of}${az.plattformKorb ? ` ${t('pr.plattformKorb')}` : ''}</span>`
+    : `${t('pr.rang')} --`;
+  const umsatz =
+    az.umsatz === null
+      ? `${t('pr.umsatz')} --`
+      : `${t('pr.umsatz')} ${(az.umsatz / 1e6).toFixed(1)}M${e.liquiditaet.handelbar ? '' : ` (${t('pr.nichtHandelbar')})`}`;
+  const halte = e.haltedauer.medianHandelstage === null ? t('pr.unbekannt') : `${e.haltedauer.medianHandelstage} ${t('pr.handelstage')}`;
+  return `<div class="pr-row${az.inaktiv ? ' ch-aus' : ''}"${az.inaktiv ? ` title="${t('ch.nichtGewaehlt')}"` : ''}>
+    <div class="pr-kopf"><span data-sym="${escText(e.symbol)}"><b>${escText(e.symbol)}</b></span> <span class="hint">${klasse}</span> ${taktik}</div>
+    <div class="pr-werte hint">${trend} · ${rang} · ${t('pr.vol')} ${pct1(e.volatilitaetPct)} · ${t('pr.momentum')} ${pct1(e.momentumPct)} · ${t('pr.stop')} ${pct1(e.stopPct)} · ${umsatz} · ${t('pr.haltedauer')}: ${escText(halte)} · ${t('pr.bewertung')}: ${escText(wannTag(e.bewertung.measuredAt))}</div>
+    <div class="hint">${escText(e.taktik.grund)}</div>
+  </div>`;
+}
+
+function renderSymbolProfil(): void {
+  if (!st) return;
+  const p = st.profil;
+  const list = $('prList');
+  const stand = $('prStand');
+  const hint = $('prHint');
+  if (!p) {
+    list.innerHTML = `<div class="hint">${t('pr.keins')}</div>`;
+    stand.textContent = '';
+    hint.textContent = '';
+    return;
+  }
+  if (p.versionUnbekannt) {
+    list.innerHTML = `<div class="hint">${t('pr.versionUnbekannt')} ${escText(String(p.version ?? '?'))}</div>`;
+    stand.textContent = '';
+    hint.textContent = '';
+    return;
+  }
+  // Kopf: Datenschnitt (bei einer Messung der Stichtag), Lauf — und der
+  // Warnhinweis, wenn das Profil zu einem anderen Champion gehört als dem,
+  // der gerade gilt (Profil-Schritt der Nacht gescheitert oder übersprungen).
+  const standText = p.now
+    ? `${t('pr.datenschnitt')} ${wannTag(p.now)}${p.asOf !== null ? ` · ${t('pr.stichtag')} ${wannTag(p.asOf)}` : ''}${p.lauf.nummer !== null ? ` · ${t('pr.lauf')} #${p.lauf.nummer}` : ''}`
+    : '';
+  const veraltet = profilVeraltet(p, st.champion?.updatedAt ?? null);
+  stand.innerHTML = escText(standText) + (veraltet ? ` <span class="stag t-sell">${t('pr.veraltet1')} ${escText(wannTag(p.championUpdatedAt))} ${t('pr.veraltet2')} ${escText(wannTag(st.champion?.updatedAt ?? null))}</span>` : '');
+  const gewaehlt = st.autoSymbols === null ? null : new Set(st.autoSymbols);
+  list.innerHTML = p.profile.length === 0 ? `<div class="hint">${t('pr.keins')}</div>` : p.profile.map((e) => profilZeile(e, gewaehlt)).join('');
+  hint.textContent = t('pr.hint');
 }
 
 /** Jüngsten Optimierer-Bericht laden und als vorformatierten Text zeigen. */
@@ -2816,6 +2915,7 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
     pfZeitraum: 0,
     health: null,
     champion: null,
+    profil: null,
     universe: [...DEFAULT_UNIVERSE],
     accessLevel: 'approved',
     admin: false,
@@ -2897,6 +2997,13 @@ export function mountDashboard(root: HTMLElement, uid: string, email: string): v
       st.champion = doc;
       renderChampion();
       renderSymbolPicker();
+      // Der Warnhinweis „Profil veraltet" hängt am Champion — bei jedem neuen Champion neu urteilen.
+      renderSymbolProfil();
+    }),
+    watchSymbolProfil((doc) => {
+      if (!st) return;
+      st.profil = doc;
+      renderSymbolProfil();
     }),
   );
 

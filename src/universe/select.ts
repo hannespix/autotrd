@@ -159,16 +159,25 @@ function dollarUmsatz(b: Bar): number {
   return px * b.v;
 }
 
-interface Roh {
+/** Rohbewertung EINES Symbols — die Kennzahl der nächtlichen Wahl, noch ohne Rang. */
+export interface UniverseRoh {
   symbol: string;
+  /** Median-Dollarumsatz je Tag im Fenster (`regeln.fensterTage` Bars); 0, wenn nicht berechenbar. */
   dollarVolumen: number;
   tage: number;
   letzterKurs: number;
   alterTage: number;
+  /** Warum das Symbol durch einen Filter fällt — null, wenn es besteht. */
   ablehnung: string | null;
 }
 
-function bewerte(symbol: string, bars: readonly Bar[], regeln: UniverseRegeln, jetzt: Ms): Roh {
+/**
+ * Handelbarkeit eines Symbols aus seinen Tagesbars — dieselbe Funktion, mit
+ * der `waehleUniverse` nachts rangiert. Exportiert, damit das Symbolprofil
+ * (`src/profile/symbolprofile.ts`) die Liquidität mit derselben Rechnung
+ * zeigt, statt sie zu kopieren. Kausal: nur Bars mit `t <= jetzt`.
+ */
+export function bewerte(symbol: string, bars: readonly Bar[], regeln: UniverseRegeln, jetzt: Ms): UniverseRoh {
   // Kausal DURCHGESETZT, nicht vorausgesetzt: Der Aufrufer reicht die ganze
   // Serie aus dem Cache — bei einer Stichtags-Messung also auch Bars NACH dem
   // Stichtag. Ohne diesen Schnitt nahm `slice(-fensterTage)` die letzten Bars
