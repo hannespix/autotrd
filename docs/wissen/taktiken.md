@@ -91,6 +91,90 @@ steht in `src/strategy/`; die Gates gelten für alle gleich.
   ist gebaut und schlafend; Aktivierung nur nach Owner-Entscheidung zu
   Bremsen je Stufe und V4.
 
+## vigilant_allocation — Rang nach 13612W, Rotation in den Geldmarkt
+- **Zweck:** Die erste Familie, die im fallenden Markt einen ORT hat.
+  Momentum über vier Horizonte (12·r21 + 4·r63 + 2·r126 + r252, D8) auf
+  einem gemischten Korb aus Risiko- und defensiven Papieren INKLUSIVE
+  Geldmarkt-Surrogat (BIL). Fällt der Aktienteil, stehen die defensiven
+  Papiere oben und sind die einzigen mit positivem Momentum — die Rotation
+  fällt aus der Rangliste heraus.
+- **Eintritt:** im Rebalance-Fenster (drei Handelstage je Monat, dieselbe
+  Funktion wie `regime_allocation`), Rang ≤ `topN` UND eigenes 13612W > 0.
+  Rangliste baut `decide()` (§0.2).
+- **Austritt:** im Fenster bei negativem 13612W oder Rang > `exitRank`; dazu
+  weiter Katastrophen-Stop beim Broker (20 %), nie nachgezogen, kein Ziel.
+- **Haltedauer:** Monate (erwartet 40–90 Handelstage).
+  **Aktivität:** niedrig — erwartet 0,7–1,5 Trades je Monat.
+- **Kosten:** unempfindlich (wenige Entscheidungen, kein Trailing).
+- **Warum nicht `regime_allocation` mit anderem Korb:** Deren Rangkennzahl
+  ist `mom / rvol`. Ein Geldmarktpapier schwankt um 0,3 % p. a. und stünde
+  damit IMMER auf Rang 1 — auch im Bullenmarkt. 13612W ist nicht
+  volatilitätsnormiert und hat dieses Problem nicht. Wächter:
+  `test/strategy/vigilantAllocation.test.ts`.
+- **Was fehlt:** der Kanarienvogel. Kellers Wächterkorb verlangt den Blick
+  auf fremde Zeitreihen; der Strategie-Vertrag gibt ihn nicht her. Die
+  minimale Erweiterung (Breite im Korb-Rang) steht in der Vorregistrierung.
+- **Woran sie stirbt:** an der Trade-Zahl unter dem Gate (60) — Bauart, wie
+  bei `regime_allocation`; an einem Nullzinsumfeld, in dem der Geldmarkt
+  nichts trägt; und daran, dass ihre Durchschnittskorrelation zu
+  Aktien-Long-Familien hoch bleibt (niedrig ist sie nur dort, wo es zählt).
+- **Messstand:** vorregistriert 12.09.2026 (T16), Config
+  `config/vigilant-1440.yaml`. **Nichts gemessen.**
+
+## index_reversal — Rücksetzer im Index, nicht in der Aktie
+- **Zweck:** Der Aktivitäts-Sleeve. Kurzfristige Umkehr (E1) auf breiten
+  Index-ETFs, wo ein Rücksetzer Liquiditätsnachfrage ist und keine
+  Gewinnwarnung.
+- **Eintritt:** `Close > SMA(200)` UND `RSI(2) < 10`. Der Trendfilter ist der
+  Grund, warum die Sache überlebt.
+- **Austritt:** was zuerst kommt — `RSI(2) > 70`, erster Schluss über dem
+  Vortageshoch, Zeitstopp nach 5 Bars (Pflicht). Weiter ATR-Stop (4×), nie
+  nachgezogen, kein Ziel (T8/F1).
+- **Haltedauer:** Median 3 Handelstage (1–5).
+  **Aktivität:** hoch — erwartet 2–5 Trades je Monat auf vier ETFs.
+- **Kosten:** sehr empfindlich. Rund 10 bp je Round-Trip gegen einen
+  erwarteten Bruttogewinn von 0,3–0,5 % je Trade; `fee_share` ist das
+  bindende Gate, nicht die Trefferquote.
+- **Besonderheit:** `crossScore` = −RSI. Bei knappen Plätzen gewinnt der
+  tiefste Rücksetzer. Nebenwirkung: In gemischten Zyklen sortiert
+  `core/logic.ts` rangierte Symbole vor unrangierte.
+- **Woran sie stirbt:** an den Kosten; daran, dass der Effekt nach 2010
+  nachgelassen hat (E2, Vertrauen niedrig); an starken Trends ohne
+  Rücksetzer; und an Bärenmärkten, in denen der Trendfilter sie aus dem
+  Markt hält — leere Quartale zählen bei `fold_positive_share` nicht als
+  positiv.
+- **Messstand:** vorregistriert 12.09.2026 (T17), Config
+  `config/sleeves-1440.yaml`. **Nichts gemessen.**
+
+## turn_of_month — der Monatswechsel
+- **Zweck:** Marktrendite in rund einem Fünftel der Tage, aus Lohn-, Sparplan-
+  und Pensionsflüssen zum Monatsende (H1–H3). Die orthogonalste Familie im
+  Repo: Ihr Einstieg fragt keinen Kurs, sondern den Kalender — sie kann mit
+  Trendfolge nicht korrelieren, weil sie nicht weiß, ob ein Trend besteht.
+- **Eintritt:** Entscheidung am Schluss des Handelstags, auf den noch genau
+  ein Handelstag des Monats folgt (Fill am Open des letzten). Genau EIN
+  Einstieg je Symbol und Monat, kein Nachkauf.
+- **Austritt:** Entscheidung am Schluss des dritten Handelstags des neuen
+  Monats; Zeitstopp 8 Bars als Sicherheitsnetz. Weiter ATR-Stop (4×), kein
+  Ziel, kein Trailing, kein Trendfilter (die Quellen finden den Effekt ohne
+  einen).
+- **Haltedauer:** 4 Handelstage, praktisch ohne Streuung.
+  **Aktivität:** 4 Trades je Monat auf vier ETFs.
+- **Kosten:** moderat; vier Round-Trips je Monat bei ~11 % Positionsgröße.
+- **Die Stelle, an der sie falsch wird:** der Kalender. Handelstage kommen
+  aus dem NYSE-Kalender (`core/time.ts`), nie aus der Bar-Zählung — Bars zu
+  zählen wäre Lookahead. Wächter mit Neujahr, Karfreitag, vorgezogenem
+  4. Juli, Monatsende am Wochenende und Zeitumstellung:
+  `test/strategy/turnOfMonth.test.ts`.
+- **Woran sie stirbt:** an H4 (Kalendereffekte überleben eine
+  Mehrfachtest-Korrektur schlecht) und an C7 (Zerfall nach
+  Veröffentlichung); an der Ausführungslücke (wir besitzen open-zu-open,
+  gemessen wird in der Literatur Schluss-zu-Schluss, und ein großer Teil der
+  Rendite fällt über Nacht an, B3); und daran, dass die Stop-Distanz die
+  Positionsgröße klein hält — erwartet 0,9–1,7 % im Jahr.
+- **Messstand:** vorregistriert 12.09.2026 (T18), Config
+  `config/sleeves-1440.yaml`. **Nichts gemessen.**
+
 ## Kasse — nicht handeln
 - **Zweck:** Das Ergebnis, wenn keine Taktik ihre Latte nimmt. Kostet 0 $.
 - **Messstand:** in den vier Holdouts 2024–2026 hätte kaufen-und-liegenlassen

@@ -11,8 +11,30 @@ import { strategy as meanReversion } from './meanReversion.ts';
 import { strategy as orbBreakout } from './orbBreakout.ts';
 import { strategy as crossSectionalMomentum } from './crossSectionalMomentum.ts';
 import { strategy as regimeAllocation } from './regimeAllocation.ts';
+import { strategy as vigilantAllocation } from './vigilantAllocation.ts';
+import { strategy as indexReversal } from './indexReversal.ts';
+import { strategy as turnOfMonth } from './turnOfMonth.ts';
 
-export const STRATEGIES: readonly Strategy[] = Object.freeze([trendDonchian, momentumPullback, meanReversion, orbBreakout, crossSectionalMomentum, regimeAllocation]);
+/**
+ * Registriert heißt NICHT gehandelt: Was hier steht, ist messbar. Gehandelt
+ * wird ausschließlich, was der Champion nennt (`strategy.allowWithoutChampion:
+ * false`), und gemessen wird, was eine Config in `optimizer.strategies` oder
+ * `optimizer.fixedCandidates` aufführt. Die drei Sleeves vom 12.09.2026
+ * (`vigilant_allocation`, `index_reversal`, `turn_of_month`) stehen deshalb
+ * hier, aber in keiner Produktions-Config — ihre Probe-Configs sind
+ * `config/vigilant-1440.yaml` und `config/sleeves-1440.yaml`.
+ */
+export const STRATEGIES: readonly Strategy[] = Object.freeze([
+  trendDonchian,
+  momentumPullback,
+  meanReversion,
+  orbBreakout,
+  crossSectionalMomentum,
+  regimeAllocation,
+  vigilantAllocation,
+  indexReversal,
+  turnOfMonth,
+]);
 
 export function strategyIds(): string[] {
   return STRATEGIES.map((s) => s.id);

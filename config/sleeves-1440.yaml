@@ -1,0 +1,138 @@
+# Probe-Config: zwei Sleeves auf breiten Index-ETFs (Sleeve 2 und 3).
+#
+# Vorregistrierung: docs/wissen/vorregistrierung/2026-09-12-drei-sleeves.md
+# (VOR diesem Lauf committet — dort stehen Mechanismus, Quelle, exakte
+# Parameter, erwartete Trades und die Erwartungen, an denen beide scheitern
+# können). Gemessen werden AUSSCHLIESSLICH die beiden Festkandidaten:
+#
+#   index_reversal  — kurzfristige Umkehr im Aufwärtstrend (E1/E2, Connors)
+#   turn_of_month   — der Monatswechsel (H1–H3, Ariel/Lakonishok/McConnell)
+#
+# ── Warum ein FESTES Universum und nicht der 30er-Korb ────────────────────
+#
+# Lauf #43 (vorregistrierung/2026-09-12-kurzlaeufer-im-pool.md): Der nach
+# Median-Dollarumsatz gewählte 30er-Korb ist bauartbedingt eine maximal
+# korrelierte Megacap-Aktienwette; BIL landete auf Rang 138 von 141. Für
+# diese beiden Sleeves wäre der Korb aber auch inhaltlich falsch: Die Umkehr
+# ist auf INDIZES belegt, nicht auf Einzelaktien — ein Index hat keine
+# Gewinnwarnung, in die man hineinkauft. Deshalb vier breite Index-ETFs,
+# gewählt nach ihrer ROLLE (breiter Markt, Nasdaq, Nebenwerte, Blue Chips),
+# nicht nach einem Ergebnis. `universe.candidates` fehlt bewusst: Ohne Pool
+# gibt es keine nächtliche Auswahl, das Universum bleibt genau diese Liste.
+#
+# Bekannt und benannt: Alle vier ETFs gab es über den ganzen Messzeitraum,
+# und ich weiß das, während ich sie wähle. Die Verzerrung ist klein (es gibt
+# keine ausgefallenen Kandidaten dieser Rolle), aber sie ist nicht null.
+#
+# ── Warum `strategies` nur einen Platzhalter enthält ──────────────────────
+#
+# Das Schema verlangt mindestens eine GESUCHTE Strategie. `orb_breakout` kann
+# ausdrücklich nur Intraday (INTRADAY_TIMEFRAMES), und run.ts überspringt sie
+# bei timeframe 1440 mit einer Zeile im Log. So misst dieser Lauf wirklich nur
+# die vorregistrierten Parametersätze — keine Suche, kein Gitter, keine
+# Trials. Wer die GESUCHTE Variante eines Sleeves sehen will, schreibt sie
+# hier hinein; das ist dann ein eigener Lauf mit eigener Zeile in befunde.md.
+
+vorregistrierung: docs/wissen/vorregistrierung/2026-09-12-drei-sleeves.md
+
+broker:
+  mode: paper
+  feed: iex
+  # Ausschüttungsbereinigte Tagesbars: SPY/QQQ/IWM/DIA schütten quartalsweise
+  # aus. Roh fehlt dem 200-Tage-Trendfilter die Dividendenrendite, und ein
+  # Ex-Tag im Haltefenster sähe wie ein Kursverlust aus (Red-Team M7).
+  adjustment: all
+
+universe:
+  assetClass: us_equity
+  symbols: [SPY, QQQ, IWM, DIA]
+  benchmark: SPY
+  maxSymbols: 4
+
+timeframe: 1440
+
+session:
+  noEntryFirstMin: 5
+  noEntryLastMin: 30
+  flattenBeforeCloseMin: 5
+
+# Regelwerk der Plattform, Zeichen für Zeichen — was scharf schaltet, muss so
+# gemessen sein (Lehre aus Basis V3: gemessen mit 5 %/30 %, gehandelt mit
+# 2 %/10 % war dasselbe Sleeve mit anderem Ergebnis).
+risk:
+  riskPerTradePct: 0.5
+  maxPositionPct: 20
+  maxPositions: 4
+  maxGrossExposurePct: 100
+  maxDailyLossPct: 2
+  maxDrawdownPct: 10
+  allowShort: false
+  pdt:
+    respect: true
+    minEquity: 25000
+    maxDayTrades: 3
+
+strategy:
+  id: trend_donchian
+  params: {}
+  allowWithoutChampion: false
+
+optimizer:
+  strategies: [orb_breakout]   # Platzhalter, siehe Kopf — wird bei 1440 übersprungen
+  lookbackDays: 2900           # ~8 Jahre: Crash 2020 UND Bärenmarkt 2022 in der OOS-Kette
+  isDays: 365
+  oosDays: 90
+  stepDays: 90
+  embargoBars: 0               # automatisch = Warmup + 20; bei Festkandidaten nur Bericht
+  samples: 150
+  seed: 42
+  minOosTrades: 60
+  minFoldPositiveShare: 0.6
+  objective: sortino
+  stressCostMultiplier: 1.5
+  holdoutDays: 180
+  promotionMargin: 0.1
+  minPsrOos: 0.9
+  dsrIsGate: false
+  maxFoldNetShare: 0.5
+  pooled: true                 # EIN Konto über die vier ETFs — mit Positionslimit und Notbremsen wie live
+  foldMembership: fixed        # Der Korb IST die Vorregistrierung; es gibt keinen Pool, aus dem zu wählen wäre
+  fixedCandidates:
+    # Sleeve 2 — Parameter aus Connors/Alvarez (RSI(2) < 10, Trendfilter
+    # SMA(200)) plus Zeitstopp 5 Bars und weiter ATR-Stop (T8/F1).
+    - strategy: index_reversal
+      label: Sleeve 2 — index_reversal V1
+      tier: alpha
+      params: {trendLen: 200, rsiLen: 2, rsiEntry: 10, rsiExit: 70, exitOnPrevHigh: 1, maxHoldBars: 5, atrMult: 4}
+    # Sleeve 3 — Fenster aus Lakonishok & Smidt / McConnell & Xu: Einstiegs-
+    # Entscheidung am vorletzten Handelstag, Ausstieg am dritten des neuen
+    # Monats.
+    - strategy: turn_of_month
+      label: Sleeve 3 — turn_of_month V1
+      tier: alpha
+      params: {entryOffset: 1, exitTradingDay: 3, atrMult: 4, maxHoldBars: 8}
+
+costs:
+  slippageBps: 3
+  spreadBps: 2
+  secFeeRate: 0.0000278
+  finraTafPerShare: 0.000166
+  finraTafMax: 8.3
+  cryptoTakerPct: 0.25
+  shortBorrowAnnualPct: 1
+
+engine:
+  reconcileEverySec: 60
+  barGraceSec: 4
+  maxDataAgeSec: 180
+  maxConsecutiveErrors: 5
+  onOrphan: halt
+
+notify:
+  telegram: false
+
+status:
+  httpPort: 0
+
+paths:
+  home: ./var-sleeves

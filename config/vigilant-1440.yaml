@@ -1,0 +1,153 @@
+# Probe-Config: Sleeve 1 — vigilant_allocation auf Anlageklassen-ETFs mit
+# Geldmarkt-Pol.
+#
+# Vorregistrierung: docs/wissen/vorregistrierung/2026-09-12-drei-sleeves.md
+# (VOR diesem Lauf committet). Gemessen wird AUSSCHLIESSLICH der eine
+# Festkandidat; `strategies` enthält nur den Platzhalter `orb_breakout`, den
+# run.ts bei timeframe 1440 überspringt (das Schema verlangt mindestens einen
+# Eintrag). Keine Suche, kein Gitter, keine Trials.
+#
+# ── Warum dieser Korb, Papier für Papier ─────────────────────────────────
+#
+# Lauf #42/#43: Alle fünf bestehenden Familien sind long-only auf Aktien und
+# verlieren im fallenden Markt gleichzeitig; `momentum_pullback` besteht acht
+# von zehn Gates und fällt an `fold_positive_share` (9 von 18 Quartalen) —
+# nicht an seinen Signalen, sondern daran, dass es im liquiditätsgewählten
+# 30er-Korb keinen Ort gibt, an dem man im Bärenmarkt stehen kann (BIL: Rang
+# 138 von 141 nach Dollarumsatz, wird nie gewählt). Ein Fold ohne Trades hat
+# Netto 0 und zählt NICHT als positiv: Aussitzen hilft dem Gate nicht, im
+# Geldmarkt liegen und den Zins verdienen schon.
+#
+# Deshalb ein festes, zweckgewähltes Universum — nach ROLLE besetzt, nicht
+# nach Ergebnis:
+#
+#   SPY   breiter US-Markt          offensiv
+#   QQQ   US-Technologie            offensiv
+#   EFA   Industrieländer ex USA    offensiv
+#   EEM   Schwellenländer           offensiv (bei Keller zugleich Kanarienvogel)
+#   IEF   Staatsanleihen 7–10 J.    defensiv, Duration
+#   TLT   Staatsanleihen 20+ J.     defensiv, viel Duration
+#   LQD   Unternehmensanleihen      defensiv, Kreditrisiko (bei Keller Kanarienvogel)
+#   GLD   Gold                      defensiv, real
+#   BIL   T-Bills 1–3 Monate        GELDMARKT — der einzige Pol, der 2022 trug
+#
+# Ohne BIL ist dieser Sleeve im Bärenmarkt in Kasse, und Kasse verdient
+# nichts. IEF, TLT und LQD fielen 2022 zweistellig, GLD lag flach; das kurze
+# Ende war das Einzige mit klar positivem Ertrag. SHY (1–3 Jahre) ist die
+# vorregistrierte Alternative für eine V2 — sie trägt Duration und verlor
+# 2022 leicht; gemessen wird jetzt BIL.
+#
+# `universe.candidates` fehlt bewusst: Ohne Pool gibt es keine nächtliche
+# Auswahl nach Dollarumsatz, und genau die würde jedes defensive Papier
+# wieder hinauswerfen (Lauf #43). BIL und SHY stehen trotzdem im Pool der
+# Produktion — nur so werden ihre Bars überhaupt geladen.
+#
+# Bekannt und benannt: Dass Kurzläufer 2022 verdient haben, weiß ich, während
+# ich den Korb besetze. Der Mechanismus ist nicht an 2022 gebunden (ein
+# Geldmarktpapier trägt in jedem Zinsumfeld den kurzen Zins, und im
+# Nullzinsumfeld 2020/21 trägt es nichts — das gehört zum Befund), aber die
+# Wahl ist nicht frei von Rückschau.
+#
+# ── Warum isDays 550 und nicht 365 ───────────────────────────────────────
+#
+# Der Zwölf-Monats-Horizont des 13612W macht den Warmup 255 Bars. Das
+# automatische Embargo ist Warmup + 20 = 275 Bars; ein IS-Fenster von 365
+# Kalendertagen hat nur ~252 Bars, und `candidateRange` wirft dann
+# ausdrücklich („Embargo verschluckt das gesamte Fenster") — derselbe Befund,
+# an dem die erste regime_allocation-Fassung scheiterte. 550 Kalendertage
+# sind ~379 Bars. Das verschiebt den Beginn der OOS-Kette, nicht ihre Regeln.
+
+vorregistrierung: docs/wissen/vorregistrierung/2026-09-12-drei-sleeves.md
+
+broker:
+  mode: paper
+  feed: iex
+  # PFLICHT für diesen Sleeve: BIL schüttet monatlich aus. Roh ist seine Kurve
+  # ein Sägezahn um einen flachen Mittelwert — das 13612W wäre dann etwa null
+  # statt positiv, und die defensive Seite fiele still aus (Red-Team M7).
+  adjustment: all
+
+universe:
+  assetClass: us_equity
+  symbols: [SPY, QQQ, EFA, EEM, IEF, TLT, LQD, GLD, BIL]
+  benchmark: SPY
+  maxSymbols: 9
+
+timeframe: 1440
+
+session:
+  noEntryFirstMin: 5
+  noEntryLastMin: 30
+  flattenBeforeCloseMin: 5
+
+# Regelwerk der Plattform, Zeichen für Zeichen (Lehre aus Basis V3).
+risk:
+  riskPerTradePct: 0.5
+  maxPositionPct: 20
+  maxPositions: 4
+  maxGrossExposurePct: 100
+  maxDailyLossPct: 2
+  maxDrawdownPct: 10
+  allowShort: false
+  pdt:
+    respect: true
+    minEquity: 25000
+    maxDayTrades: 3
+
+strategy:
+  id: trend_donchian
+  params: {}
+  allowWithoutChampion: false
+
+optimizer:
+  strategies: [orb_breakout]   # Platzhalter, siehe Kopf — wird bei 1440 übersprungen
+  lookbackDays: 2900
+  isDays: 550                  # ~379 Bars: muss über dem Embargo von 275 Bars liegen, siehe Kopf
+  oosDays: 90
+  stepDays: 90
+  embargoBars: 0
+  samples: 150
+  seed: 42
+  minOosTrades: 60
+  minFoldPositiveShare: 0.6
+  objective: sortino
+  stressCostMultiplier: 1.5
+  holdoutDays: 180
+  promotionMargin: 0.1
+  minPsrOos: 0.9
+  dsrIsGate: false
+  maxFoldNetShare: 0.5
+  pooled: true                 # EIN Konto über die neun ETFs, mit Positionslimit und Notbremsen wie live
+  foldMembership: fixed        # Der Korb IST die Vorregistrierung
+  fixedCandidates:
+    # Sleeve 1 — 13612W (Keller & Keuning), Rang im gemischten Korb, absolute
+    # Schwelle, weiter Katastrophen-Stop. topN 2 von 9, Ausstieg ab Rang 5.
+    - strategy: vigilant_allocation
+      label: Sleeve 1 — vigilant_allocation V1
+      tier: alpha
+      params: {topN: 2, exitRank: 4, stopPct: 20}
+
+costs:
+  slippageBps: 3
+  spreadBps: 2
+  secFeeRate: 0.0000278
+  finraTafPerShare: 0.000166
+  finraTafMax: 8.3
+  cryptoTakerPct: 0.25
+  shortBorrowAnnualPct: 1
+
+engine:
+  reconcileEverySec: 60
+  barGraceSec: 4
+  maxDataAgeSec: 180
+  maxConsecutiveErrors: 5
+  onOrphan: halt
+
+notify:
+  telegram: false
+
+status:
+  httpPort: 0
+
+paths:
+  home: ./var-vigilant
