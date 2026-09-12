@@ -6,15 +6,27 @@
  * Strategie, die live nie lief).
  *
  * Reihenfolge je Zyklus:
+ *   0. Faktor des Volatilitätsziels rechnen (`risk.volTarget`,
+ *      risk/volziel.ts) — einmal je Zyklus, hier und nirgends sonst.
  *   1. Konto-Sperren prüfen (Tagesverlust, Drawdown) → ggf. alles glatt.
+ *   1b. Bremsen je Stufe (`risk.tiers`) → ggf. die Positionen DIESER Stufe
+ *      glatt und ihre Einstiege gesperrt; die andere Stufe läuft weiter.
  *   2. Je Symbol: Strategie befragen — in rotierender Reihenfolge, damit
  *      niemand dauerhaft zuerst an die knappen Plätze kommt
  *      (`wettbewerbsOrdnung`).
  *      - Position offen: Exit / Stop nachziehen / EOD-Flatten. Exits werden
  *        NIE gesperrt (Owner-Regel).
- *      - Keine Position: Einstieg nur durch alle Tore (Halt, Datenfrische,
- *        Session, Short-Erlaubnis, Positionslimit, PDT, Stop-Plausibilität,
- *        Sizing).
+ *      - Keine Position: Einstieg nur durch alle Tore (Halt, Stufen-Bremse,
+ *        Datenfrische, Session, Short-Erlaubnis, Positionslimit, PDT,
+ *        Stop-Plausibilität, Sizing) — auch der Wiederaufbau einer
+ *        Zielallokation (`risk.wiederaufbau`) geht durch genau diese Tore.
+ *
+ * Drei Stellschrauben sind seit 12.09.2026 dabei, alle drei per Vorgabe AUS
+ * bzw. leer, damit kein bestehendes Messergebnis still verschoben wird:
+ * `risk.volTarget` (Größe der Positionen), `risk.tiers` (Latte der Bremsen
+ * je Stufe), `risk.wiederaufbau` (Wiedereinstieg nach Zwangs-Glattstellung).
+ * Ihr gemeinsamer Nenner: Sie ändern, WIE VIEL und WANN gehandelt wird —
+ * nie, WAS als Kante gilt. Kein Gate wird dadurch leichter (§0.9).
  *
  * Die Basis-Stufe (Champion-Block `basis`, core/basisTier.ts) hat hier KEINE
  * Sonderrechte. Ein Basis-Symbol ist ein `SymbolInput` wie jedes andere:
@@ -129,7 +141,7 @@ export interface LogicContext {
  * hätte. GRENZE, nicht wegdefiniert: Für eine Familie, deren Stop aus der
  * Schwankung kommt (ATR), wäre die Distanz von gestern eine Näherung — solche
  * Familien haben keine Allokations-Semantik, und der Wiederaufbau gilt nur
- * für diese (siehe `wiederaufbauZiel`).
+ * für diese (siehe `merkeWiederaufbau` in `decide()`).
  */
 export interface WiederaufbauZiel {
   side: Side;
@@ -502,7 +514,19 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
   const ausgeloest: Stufe[] = [];
   const schonExit = new Set<string>();
   if (stufenBremsenAktiv(ctx.risk)) {
+    /*
+     * Geprüft werden nur Stufen, die in diesem Zyklus VORKOMMEN (Position oder
+     * Wahl) — plus solche, die schon eine Sperre tragen (damit sie enden kann).
+     * Sonst stünde in jedem Journal ein Halt für eine Stufe, die gar nichts
+     * hält und nichts kaufen will; eine Sperre ohne Gegenstand ist keine
+     * Information, sondern Rauschen, und Rauschen liest niemand.
+     */
+    const anwesend = new Set<Stufe>();
+    for (const p of ctx.positions.values()) anwesend.add(stufeVonPosition(p));
+    for (const inp of inputs) anwesend.add(stufeOf(inp.stufe));
+    for (const [stufe, h] of Object.entries(stufenHalt)) if (h.halted) anwesend.add(stufeOf(stufe));
     for (const stufe of STUFEN) {
+      if (!anwesend.has(stufe)) continue;
       const vorher = stufenHalt[stufe] ?? { halted: false, reason: null, since: null, until: null, note: null };
       const hs = checkHalt({
         account: ctx.account,
@@ -639,12 +663,57 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
     }
 
     // ── Keine Position ──
-    if (decision.kind !== 'enter') continue;
+    /*
+     * Wiederaufbau einer Zielallokation (risk.wiederaufbau, §5a.16):
+     *
+     * Eine Notbremse hat dieses Symbol glattgestellt, die Zielallokation will
+     * es aber weiter halten. Ohne Wiederaufbau käme der Wiedereinstieg erst im
+     * nächsten ENTSCHEIDUNGSFENSTER der Strategie — bei `regime_allocation`
+     * drei Tage je Monat, also im Regelfall einen Monat später (gemessen: V3,
+     * August 2024 und April 2025; die Erholung fehlt, und der Drawdown je
+     * Einheit Exposure wird dadurch schlechter, nicht besser).
+     *
+     * Was hier passiert und was nicht: Der Wiederaufbau erzeugt einen
+     * Einstieg, der durch ALLE Tore unten läuft (Halt, Stufen-Bremse,
+     * Einstiegsrecht, Datenfrische, Session, Positionslimit, PDT,
+     * Stop-Plausibilität, Sizing) — er hebt keine Sperre auf und ist kein
+     * Override (§0.5). Er entsteht nur, wenn die Strategie in diesem Zyklus
+     * NICHT aussteigen will.
+     *
+     * GRENZE, benannt: Außerhalb ihres Fensters sagt die Familie gar nichts —
+     * ihr Schweigen ist kein Ja. Deshalb verfällt ein Ziel nach
+     * `maxAlterTage` (Vorgabe 5), und deshalb ist der Schalter aus, bis ein
+     * vorregistrierter Lauf ihn misst.
+     */
+    const ziel = zielFuer(inp);
+    if (ziel && decision.kind === 'exit') {
+      ziele.delete(sym);
+      notes.push({ symbol: sym, kind: 'info', text: 'Wiederaufbau verworfen — die Strategie will diese Allokation nicht mehr' });
+      continue;
+    }
+    let einstieg: { side: Side; stop: number; target?: number | undefined; reason: string } | null = null;
+    if (decision.kind === 'enter') {
+      einstieg = { side: decision.side, stop: decision.stop, target: decision.target, reason: decision.reason };
+    } else if (ziel) {
+      const dist = ziel.stopDistPct / 100;
+      einstieg = {
+        side: ziel.side,
+        stop: ziel.side === 'long' ? price * (1 - dist) : price * (1 + dist),
+        reason: `Wiederaufbau der Zielallokation (${ziel.grund}, Stop ${ziel.stopDistPct.toFixed(1)} % wie beim Einstand)`,
+      };
+    }
+    if (!einstieg) continue;
 
     const block = (text: string) => notes.push({ symbol: sym, kind: 'blocked', text });
 
     if (halt.halted) {
       block(`Halt aktiv (${halt.reason})`);
+      continue;
+    }
+    const stufe = stufeOf(inp.stufe);
+    const stufenSperre = gesperrt.get(stufe);
+    if (stufenSperre) {
+      block(`Stufe ${stufe} gesperrt (${stufenSperre.reason})`);
       continue;
     }
     if (ctx.entryLock) {
@@ -670,7 +739,7 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
       block('Asset nicht handelbar');
       continue;
     }
-    if (decision.side === 'short') {
+    if (einstieg.side === 'short') {
       if (!ctx.risk.allowShort) {
         block('Short nicht erlaubt (risk.allowShort=false)');
         continue;
@@ -712,19 +781,19 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
     }
     // Stop-Plausibilität
     const minDist = (ctx.minStopDistancePct ?? DEFAULT_MIN_STOP_DISTANCE_PCT) / 100;
-    const stop = decision.stop;
+    const stop = einstieg.stop;
     const stopOk =
       Number.isFinite(stop) &&
       stop > 0 &&
-      (decision.side === 'long' ? stop < price * (1 - minDist) : stop > price * (1 + minDist));
+      (einstieg.side === 'long' ? stop < price * (1 - minDist) : stop > price * (1 + minDist));
     if (!stopOk) {
       block(`Stop unplausibel (${stop} bei Kurs ${price})`);
       continue;
     }
     let target: number | null = null;
-    if (decision.target !== undefined && Number.isFinite(decision.target) && decision.target > 0) {
-      const targetOk = decision.side === 'long' ? decision.target > price : decision.target < price;
-      target = targetOk ? decision.target : null;
+    if (einstieg.target !== undefined && Number.isFinite(einstieg.target) && einstieg.target > 0) {
+      const targetOk = einstieg.side === 'long' ? einstieg.target > price : einstieg.target < price;
+      target = targetOk ? einstieg.target : null;
     }
     // PDT
     const pdt = pdtCheck({
@@ -750,12 +819,13 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
       cash: ctx.account.cash,
       price,
       stop,
-      side: decision.side,
+      side: einstieg.side,
       riskPct: ctx.risk.riskPerTradePct,
       maxPositionPct: ctx.risk.maxPositionPct,
       exposureBudget,
       qtyStep: qtyStepFor(ctx.assetClass),
       sizing: inp.sizing,
+      volFaktor,
     });
     if (size.qty <= 0) {
       block(`Sizing: ${size.reason}`);
@@ -765,26 +835,26 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
     intents.push({
       kind: 'enter',
       symbol: sym,
-      side: decision.side,
+      side: einstieg.side,
       qty: size.qty,
       stop,
       target,
       refPrice: price,
-      reason: decision.reason,
+      reason: einstieg.reason,
       strategy: strategy.id,
       decidedAt: ctx.now,
     });
     notes.push({
       symbol: sym,
       kind: 'decision',
-      text: `Enter ${decision.side} ${size.qty} @~${price} stop ${stop}${target ? ` ziel ${target}` : ''}: ${decision.reason}`,
+      text: `Enter ${einstieg.side} ${size.qty} @~${price} stop ${stop}${target ? ` ziel ${target}` : ''}: ${einstieg.reason}`,
     });
     openCount++;
     gross += size.notional;
     plannedEntries++;
   }
 
-  return { intents, notes, halt, haltTriggered: false };
+  return fertig(halt, false, stufenHalt, ausgeloest);
 }
 
 /** Position nach einer geschlossenen Bar fortschreiben (Haltedauer, Hochwasser). Identisch in Backtest und Live. */

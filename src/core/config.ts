@@ -143,11 +143,12 @@ export const ConfigSchema = z.object({
         .refine((v) => v.maxFaktor >= v.minFaktor, { message: 'risk.volTarget.maxFaktor muss ≥ minFaktor sein' }),
       /**
        * Notbremsen je STUFE (`alpha` = Alpha-Champion, `basis` = Basis-Stufe,
-       * core/basisTier.ts). Fehlt ein Wert, gilt der globale daneben — und
-       * fehlt der ganze Block, verhält sich alles wie bisher (ein Konto, eine
-       * Bremse). Die Werte einer Stufe entscheiden nur über die Positionen
-       * und Einstiege DIESER Stufe; Positionen ohne Stufe (Fallback-Strategie,
-       * adoptierter Bestand) bleiben beim globalen Wert.
+       * core/basisTier.ts). `null` heißt „der globale Wert daneben gilt", und
+       * das ist die Vorgabe für jeden der vier Werte: Ohne ausdrückliche Zahl
+       * verhält sich alles wie bisher (ein Konto, eine Bremse). Die Werte
+       * einer Stufe entscheiden nur über die Positionen und Einstiege DIESER
+       * Stufe; Positionen ohne Stufe (Fallback-Strategie, adoptierter
+       * Bestand) bleiben immer beim globalen Wert.
        *
        * Warum es das gibt (§5a.16, V3): Die Tagesbremse 2 % stellt ein voll
        * investiertes ETF-Depot an einem gewöhnlichen Minus-Tag glatt; bei
@@ -163,13 +164,13 @@ export const ConfigSchema = z.object({
       tiers: z
         .object({
           alpha: z
-            .object({ maxDailyLossPct: pct(50).optional(), maxDrawdownPct: pct(90).optional() })
-            .optional(),
+            .object({ maxDailyLossPct: pct(50).nullable().default(null), maxDrawdownPct: pct(90).nullable().default(null) })
+            .default({ maxDailyLossPct: null, maxDrawdownPct: null }),
           basis: z
-            .object({ maxDailyLossPct: pct(50).optional(), maxDrawdownPct: pct(90).optional() })
-            .optional(),
+            .object({ maxDailyLossPct: pct(50).nullable().default(null), maxDrawdownPct: pct(90).nullable().default(null) })
+            .default({ maxDailyLossPct: null, maxDrawdownPct: null }),
         })
-        .optional(),
+        .default({ alpha: { maxDailyLossPct: null, maxDrawdownPct: null }, basis: { maxDailyLossPct: null, maxDrawdownPct: null } }),
       /**
        * Wiederaufbau einer Zielallokation nach einer Zwangs-Glattstellung
        * (core/logic.ts). Nur für Wahlen mit Allokations-Sizing (Basis-Stufe):
@@ -208,6 +209,7 @@ export const ConfigSchema = z.object({
       // zod v4 reicht einen Default UNGEPRÜFT durch: Was hier fehlt, fehlt zur
       // Laufzeit, obwohl der Typ es verspricht. Also jeden Unterblock nennen.
       volTarget: { enabled: false, zielVolPct: 10, halbwertszeitTage: 20, minFaktor: 0.25, maxFaktor: 2, minBeobachtungen: 60 },
+      tiers: { alpha: { maxDailyLossPct: null, maxDrawdownPct: null }, basis: { maxDailyLossPct: null, maxDrawdownPct: null } },
       wiederaufbau: { enabled: false, maxAlterTage: 5 },
       pdt: { respect: true, minEquity: 25_000, maxDayTrades: 3 },
     }),

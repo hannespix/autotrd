@@ -54,7 +54,8 @@ export function stufenBremsenAktiv(risk: RiskConfig): boolean {
   const t = risk.tiers;
   if (!t) return false;
   for (const s of [t.alpha, t.basis]) {
-    if (s && (s.maxDailyLossPct !== undefined || s.maxDrawdownPct !== undefined)) return true;
+    // `null` (Vorgabe) heißt „globaler Wert" — das ist KEINE Stufen-Latte.
+    if (s && (typeof s.maxDailyLossPct === 'number' || typeof s.maxDrawdownPct === 'number')) return true;
   }
   return false;
 }
@@ -66,6 +67,7 @@ export function grenzenFuer(risk: RiskConfig, stufe: Stufe): StufenGrenzen {
     maxDailyLossPct: t?.maxDailyLossPct ?? risk.maxDailyLossPct,
     maxDrawdownPct: t?.maxDrawdownPct ?? risk.maxDrawdownPct,
   };
+  // `??` fängt null UND undefined: Beides heißt „der globale Wert gilt".
 }
 
 /**

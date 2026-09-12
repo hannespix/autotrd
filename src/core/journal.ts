@@ -8,7 +8,23 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { ExitReason, HaltState, Ms, PositionState, Trade } from './types.ts';
+import type { WiederaufbauZiel } from './logic.ts';
 import { redact } from './log.ts';
+
+/**
+ * Länge der Equity-Historie im State (Handelstage). Zwei Jahre reichen für
+ * jede sinnvolle Halbwertszeit des Vola-Ziels und halten den State klein —
+ * ein State, der unbegrenzt wächst, wird irgendwann zum Schreibproblem
+ * (Firestore-Doc-Grenze 1 MiB).
+ */
+export const EQUITY_HISTORIE_MAX = 500;
+
+/** Eine Tagesmarke anhängen und die Reihe deckeln — idempotent im Format, additiv im State. */
+export function equityHistorieAnhaengen(reihe: readonly number[] | undefined, equity: number): number[] {
+  const out = [...(reihe ?? [])];
+  if (Number.isFinite(equity) && equity > 0) out.push(equity);
+  return out.length > EQUITY_HISTORIE_MAX ? out.slice(out.length - EQUITY_HISTORIE_MAX) : out;
+}
 
 export type JournalEventKind =
   | 'start'
@@ -148,6 +164,34 @@ export interface EngineState {
   bookedExitQty?: Record<string, Record<string, number>>;
   /** Alpaca-Konto-ID, zu der dieser State gehört (additiv; fehlt in älteren States). Fremdes Konto ⇒ fail-closed. */
   accountId?: string;
+  /**
+   * Schluss-Equity je Handelstag, ÄLTESTE zuerst, gedeckelt auf
+   * `EQUITY_HISTORIE_MAX` (additiv, fehlt in älteren States).
+   *
+   * Wozu: Eingabe des Volatilitätsziels (`risk.volTarget`, risk/volziel.ts).
+   * Der Simulator hat seine Equity-Kurve, die Engine hatte bisher nur den
+   * aktuellen Stand — ohne diese Reihe rechneten beide Welten verschiedene
+   * Faktoren, und genau das wäre der Messfehler, gegen den dieser Neubau
+   * gebaut ist. Die Marke ist DIESELBE wie im Simulator: die Schluss-Equity
+   * des Handelstags (`dayCloseEquity`), fortgeschrieben beim Tagesrollover
+   * aus Alpacas `last_equity`. Die Renditen bildet `tagesRenditen()`.
+   *
+   * Migration: fehlt die Reihe, beginnt sie leer — das Vola-Ziel meldet dann
+   * „Aufwärmphase" und lässt den Faktor bei 1,0. Geraten wird nichts.
+   */
+  equityHistory?: number[];
+  /**
+   * Halt-Zustand je Stufe (`alpha` · `basis` · `other`) für die Bremsen je
+   * Stufe (`risk.tiers`, core/logic.ts). Additiv; ohne `tiers` bleibt das
+   * Feld leer und alles verhält sich wie bisher.
+   */
+  stufenHalt?: Record<string, HaltState>;
+  /**
+   * Zielallokationen, die eine Notbremse glattgestellt hat und die die Engine
+   * am nächsten erlaubten Tag wieder aufbauen darf (`risk.wiederaufbau`,
+   * core/logic.ts). Additiv; leer, solange der Schalter aus ist.
+   */
+  wiederaufbau?: Record<string, WiederaufbauZiel>;
   consecutiveErrors: number;
   /** Lokal gezählte Daytrades (ET-Tag → Anzahl), Ergänzung zur Broker-Zahl. */
   dayTrades: Record<string, number>;
