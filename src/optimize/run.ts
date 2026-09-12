@@ -27,6 +27,16 @@
  * `basis` in der Champion-Datei — bestanden oder nicht, nie als Alpha-Champion
  * (Prüfbefund K1/K2/M6, 09.09.2026).
  */
+import { aktivitaet, renditeketteVon, type Aktivitaet, type Renditereihe } from '../backtest/aktivitaet.ts';
+import {
+  exitAnatomie,
+  exkursionAuswertung,
+  medianHaltedauer,
+  stopNachlauf,
+  type ExitAnatomie,
+  type ExkursionAuswertung,
+  type NachlaufErgebnis,
+} from '../backtest/anatomie.ts';
 import { kaufenUndHalten, kaufenUndHaltenKurve, kurvenstandVor, marktKette, type MarktBezug, type MarktKurve } from '../backtest/marktbezug.ts';
 import { BarSeries } from '../core/bars.ts';
 import type { Config, FixedCandidateConfig } from '../core/config.ts';
@@ -37,7 +47,7 @@ import { universeRegelnFuer } from '../universe/select.ts';
 import { korbJeFold, type KorbStand } from './korbJeFold.ts';
 import type { Calendar } from '../core/time.ts';
 import { DAY, dayKey } from '../core/time.ts';
-import type { Bar, BarSeriesLike, Metrics, Ms, Params, SizingSpec, Strategy } from '../core/types.ts';
+import type { AssetClass, Bar, BarSeriesLike, Metrics, Ms, Params, SimResult, SizingSpec, Strategy } from '../core/types.ts';
 import {
   applyDecision,
   decidePromotion,
@@ -74,6 +84,7 @@ import {
   MIN_FOLDS,
   TAGE_JE_MONAT,
   basisSimulation,
+  simulateWindow,
   fixedCandidateWfa,
   fixedParamsWfa,
   foldPlanForBars,
@@ -183,6 +194,87 @@ export interface StrategyRun {
   psr: PsrResult;
   /** Maßstab über dieselben OOS-Fenster — für Bericht und Maschine, kein Gate. */
   massstab: Massstab;
+  /**
+   * Auswertung der OOS-Kette: Exit-Anatomie, MFE/MAE, Aktivität,
+   * Tagesrenditen. REINE MESSUNG — kein Gate liest sie, keine Beförderung
+   * hängt daran. null, wenn der Auswertungslauf nicht möglich war.
+   */
+  auswertung: KandidatAuswertung | null;
+}
+
+/**
+ * Was der Bericht über das INNENLEBEN eines Kandidaten sagt: wo das Geld
+ * gewonnen und verloren wird (Exit-Anatomie), ob Stop und Ziel richtig saßen
+ * (MFE/MAE), wie aktiv er wirklich war — und die datierte Renditereihe, aus
+ * der die Korrelationsmatrix entsteht.
+ *
+ * Herkunft der Zahlen, damit niemand zwei Quellen vermutet:
+ * - Trades: die OOS-Trades des Walk-Forward selbst (`wfa.folds[].best.oosTrades`).
+ * - Equity/Exposure/Tagesrenditen: ein AUSWERTUNGSLAUF — dieselben Fenster,
+ *   dieselben Parameter, derselbe Simulator, nur noch einmal ausgeführt, weil
+ *   `WfaResult` die Equity-Kurven nicht aufhebt. `konsistent` vergleicht
+ *   diesen Lauf Fold für Fold mit dem Walk-Forward; weicht er ab, sind die
+ *   Zahlen nicht belastbar und der Bericht sagt es (statt still zu lügen).
+ */
+export interface KandidatAuswertung {
+  anatomie: ExitAnatomie;
+  exkursion: ExkursionAuswertung;
+  nachlauf: NachlaufErgebnis;
+  aktivitaet: Aktivitaet;
+  /** Tagesrenditen der OOS-Kette mit Datum — Eingang der Korrelationsmatrix. */
+  renditen: Renditereihe;
+  /** Kalendertage aller OOS-Fenster zusammen. */
+  oosDays: number;
+  /** Stimmt der Auswertungslauf Fold für Fold mit dem Walk-Forward überein? */
+  konsistent: boolean;
+  /** Abweichung im Klartext, sonst null. */
+  hinweis: string | null;
+}
+
+/**
+ * Auswertung aus dem Walk-Forward und den Läufen des Auswertungspasses.
+ * `teile` muss dieselbe Reihenfolge wie `wfa.folds` haben.
+ */
+export function auswertungFuer(a: {
+  wfa: WfaResult;
+  teile: readonly SimResult[];
+  korb: ReadonlyMap<string, BarSeriesLike>;
+  initialEquity: number;
+  assetClass: AssetClass;
+}): KandidatAuswertung {
+  const trades = a.wfa.folds.flatMap((f) => f.best.oosTrades);
+  const equity = a.teile.flatMap((t) => t.equity);
+  const abweichungen: string[] = [];
+  for (let i = 0; i < a.wfa.folds.length; i++) {
+    const soll = a.wfa.folds[i]!.best.oosMetrics;
+    const ist = a.teile[i]?.metrics;
+    if (!ist) {
+      abweichungen.push(`Fold ${i + 1}: kein Auswertungslauf`);
+      continue;
+    }
+    if (ist.trades !== soll.trades || Math.abs(ist.netProfit - soll.netProfit) > 1e-6) {
+      abweichungen.push(`Fold ${i + 1}: ${ist.trades} statt ${soll.trades} Trades, netto ${ist.netProfit.toFixed(2)} statt ${soll.netProfit.toFixed(2)}`);
+    }
+  }
+  const letzterFold = a.wfa.folds[a.wfa.folds.length - 1];
+  const oosDays = a.wfa.folds.reduce((sum, f) => sum + (f.fold.oosEnd - f.fold.oosStart) / DAY, 0);
+  return {
+    anatomie: exitAnatomie(trades),
+    exkursion: exkursionAuswertung(trades),
+    // Horizont = Median-Haltedauer der Taktik: Was sie selbst als Zeitskala
+    // benutzt. `bis` endet mit der OOS-Kette — der Nachlauf sieht den Holdout nicht.
+    nachlauf: stopNachlauf({
+      trades,
+      bars: a.korb,
+      horizont: medianHaltedauer(trades),
+      ...(letzterFold ? { bis: letzterFold.fold.oosEnd } : {}),
+    }),
+    aktivitaet: aktivitaet({ trades, equity, assetClass: a.assetClass }),
+    renditen: renditeketteVon({ fenster: a.teile, initialEquity: a.initialEquity, assetClass: a.assetClass }),
+    oosDays,
+    konsistent: abweichungen.length === 0,
+    hinweis: abweichungen.length === 0 ? null : abweichungen.join('; '),
+  };
 }
 
 /**
@@ -909,7 +1001,21 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
         const markt = marktLatteFuer(wfa.folds.map((f) => f.fold));
         const g = robustnessGates({ wfa, optimizer, stressOos: stress, neighborhood, dsr, psr, metricsFns: deps.metricsFns, periodsPerYear, fixed: fest !== null, ...(markt ? { markt } : {}) });
         const massstab = massstabFuer({ wfa, metricsFns: deps.metricsFns, periodsPerYear, marktSymbol, markt });
-        return { strategyId: strategy.id, fixed: fest !== null, label: fest?.label ?? null, wfa, gates: g.gates, pass: g.pass, score: wfa.oos.objectiveMedian, stress, neighborhood, dsr, psr, massstab };
+        // Auswertungslauf: dieselben OOS-Fenster, dieselben Parameter, derselbe
+        // Simulator — nur noch einmal, weil der Walk-Forward die Equity-Kurven
+        // nicht aufhebt. Er entscheidet nichts; scheitert er, fehlt im Bericht
+        // die Anatomie und sonst nichts.
+        let auswertung: KandidatAuswertung | null = null;
+        try {
+          const teile = wfa.folds.map((f) =>
+            simulateWindow({ ...common, strategy, params: f.best.params, range: { start: f.fold.oosStart, end: f.fold.oosEnd }, membershipAt: f.fold.oosStart }),
+          );
+          auswertung = auswertungFuer({ wfa, teile, korb: korbVon(symbol, bars), initialEquity: input.initialEquity, assetClass: cfg.universe.assetClass });
+          if (!auswertung.konsistent) log(`${symbol} ${strategy.id}: Auswertungslauf weicht vom Walk-Forward ab — ${auswertung.hinweis ?? ''}`);
+        } catch (e) {
+          errors.push(`${strategy.id}: Auswertung (Exit-Anatomie/Aktivität) fehlgeschlagen — ${errMsg(e)}`);
+        }
+        return { strategyId: strategy.id, fixed: fest !== null, label: fest?.label ?? null, wfa, gates: g.gates, pass: g.pass, score: wfa.oos.objectiveMedian, stress, neighborhood, dsr, psr, massstab, auswertung };
       };
       const gatesLog = (name: string, r: StrategyRun) => log(`${symbol} ${name}: Gates ${r.pass ? 'bestanden' : 'NICHT bestanden'} (${r.gates.filter((x) => !x.pass).map((x) => x.name).join(', ') || '–'})`);
 

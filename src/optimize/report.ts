@@ -11,8 +11,10 @@ import { ensureDir } from '../core/journal.ts';
 import type { AssetClass, Metrics, Ms, Params, TimeframeMin } from '../core/types.ts';
 import { fitEndOf } from './promote.ts';
 import { gateOptions, type GateResult } from './robustness.ts';
+import { korrelationsmatrix, type Korrelationsmatrix } from '../backtest/aktivitaet.ts';
+import type { ExitKategorie, Quartile } from '../backtest/anatomie.ts';
 import type { MarktBezug } from '../backtest/marktbezug.ts';
-import type { BasisRun, HoldoutMarkt, Massstab, StrategyRun, SymbolRun } from './run.ts';
+import type { BasisRun, HoldoutMarkt, KandidatAuswertung, Massstab, StrategyRun, SymbolRun } from './run.ts';
 import type { TimeRange } from './walkForward.ts';
 
 export interface ReportMeta {
@@ -115,7 +117,7 @@ function gatesSummary(gates: readonly GateResult[]): string {
 }
 
 /** Ein Festkandidat heißt im Bericht `<strategy> · fest: <label>` — in der Tabelle wie in der Überschrift. */
-function kandidatName(s: StrategyRun): string {
+export function kandidatName(s: StrategyRun): string {
   return s.fixed && s.label !== null ? `${s.strategyId} · fest: ${s.label}` : s.strategyId;
 }
 
@@ -133,6 +135,254 @@ function massstabZeile(m: Massstab): string {
         ? `${m.marktSymbol} kaufen-und-halten nicht berechenbar — Latte 0 (Kasse)`
         : `${m.marktSymbol} kaufen-und-halten Sharpe ${num(m.marktSharpe)}, MaxDD ${num(m.marktMaxDD)} %`;
   return `Über dieselben OOS-Fenster: ${strategie} · ${markt}`;
+}
+
+/* ───────────────────────── Auswertung: wo das Geld hingeht ───────────────────────── */
+
+/** Deutsche Namen der Ausstiegsgründe — ein Bericht um 7 Uhr morgens liest keine Schlüssel. */
+const EXIT_NAMEN: Record<ExitKategorie, string> = {
+  target: 'Ziel (Limit)',
+  trailing: 'Trailing-Stop (nachgezogene Marke)',
+  stop: 'Stop (Erstmarke)',
+  signal: 'Signal (Strategie sagt raus)',
+  eod: 'Tagesschluss (EOD-Flatten)',
+  time: 'Zeit (Haltedauer abgelaufen)',
+  drawdown: 'Notbremse Drawdown',
+  kill_switch: 'Notbremse Tagesverlust / Kill-Switch',
+  manual: 'manuell',
+  reconcile: 'Abgleich mit dem Broker',
+  unmanaged: 'ohne führende Strategie',
+};
+
+/** Quartils-Zeile: min · Q1 · Median · Q3 · max · n. */
+function quartilZeile(name: string, q: Quartile | null, einheit: string, digits = 2): string[] {
+  if (!q) return [name, einheit, '–', '–', '–', '–', '–', '0'];
+  return [name, einheit, num(q.min, digits), num(q.q1, digits), num(q.median, digits), num(q.q3, digits), num(q.max, digits), String(q.n)];
+}
+
+/**
+ * Exit-Anatomie: je Ausstiegsgrund Anzahl, Netto, Trefferquote, Haltedauer,
+ * Beitrag. Die Tabelle, an der man sieht, ob ein Stop zu eng oder ein Ziel zu
+ * nah sitzt — und die einzige Stelle im Bericht, die sagt, WO das Geld
+ * hingeht statt nur WIE VIEL.
+ */
+function anatomieBlock(a: KandidatAuswertung): string[] {
+  const an = a.anatomie;
+  const out: string[] = [];
+  out.push(
+    `**Exit-Anatomie** — welcher Ausstiegsgrund verdient, welcher verliert? Eine Zeile je Grund über die ganze OOS-Kette ` +
+      `(${an.trades} Trades, Netto ${signed(an.netto)} $).`,
+  );
+  out.push('');
+  if (an.trades === 0) {
+    out.push('_Keine abgeschlossenen Trades in der OOS-Kette._');
+    out.push('');
+    return out;
+  }
+  out.push(
+    table(
+      ['Ausstiegsgrund', 'Trades', 'Anteil', 'Netto Σ ($)', 'Ø je Trade ($)', 'Median ($)', 'Trefferquote', 'Ø Bars', 'Median Bars', 'Beitrag'],
+      an.zeilen.map((z) => [
+        EXIT_NAMEN[z.kategorie],
+        String(z.anzahl),
+        pct(z.anteil, 0),
+        signed(z.nettoSumme),
+        signed(z.nettoMittel),
+        signed(z.nettoMedian),
+        pct(z.trefferquote, 0),
+        num(z.barsMittel, 1),
+        num(z.barsMedian, 1),
+        z.nettoBeitrag === null ? '–' : `${signed(z.nettoBeitrag * 100, 0)} %`,
+      ]),
+    ),
+  );
+  out.push('');
+  out.push(
+    '_Einheiten: „Netto Σ/Ø/Median" in USD nach allen Kosten; „Anteil" = Trades dieses Grundes an allen Trades; ' +
+      '„Trefferquote" = Anteil dieser Trades mit Netto > 0; „Bars" sind Bars des Zeitrahmens (bei Tagesbars: Handelstage); ' +
+      '„Beitrag" = Netto dieses Grundes am insgesamt BEWEGTEN Netto (Σ der Beträge aller Gründe), mit Vorzeichen — ' +
+      'die Beträge der Spalte ergeben zusammen 100 %._',
+  );
+  out.push('');
+  out.push(
+    '_So liest man sie: Trägt **Stop (Erstmarke)** den größten negativen Beitrag, kostet die Schutzmarke mehr, als sie schützt — ' +
+      'entweder sitzt sie im Rauschen (dann sagt die MAE-Tabelle darunter, wie weit der Kurs typischerweise gegen die Position läuft) ' +
+      'oder die Einstiege taugen nicht; welches von beiden, entscheidet der Nachlauf. ' +
+      'Trägt **Ziel (Limit)** fast den ganzen Gewinn bei kurzer Haltedauer, lebt die Taktik von wenigen Treffern — dann ist die Frage, ' +
+      'wie viel Buchgewinn das Ziel liegen lässt (Spalte „mitgenommener Anteil"). ' +
+      'Schneiden **Signal**, **Tagesschluss** oder **Zeit** bei hoher Trefferquote und kurzer Haltedauer ab, während die Gewinner unter ' +
+      '„Ziel" viel länger laufen, ist das die Fehlerklasse des Vorgängersystems: Signal-Exits schnitten die Gewinner ab, ' +
+      'Take-Profit-Exits gewannen 26 von 26 Fällen (CLAUDE.md §2). ' +
+      '**Trailing-Stop** mit negativem Beitrag UND kurzer Haltedauer ist der zweite Altfall: eine Marke, die zu früh nachgezogen wird._',
+  );
+  if (an.stopOhneHerkunft > 0) {
+    out.push('');
+    out.push(
+      `_${an.stopOhneHerkunft} Stop-Ausstiege ohne überlieferte Marken-Herkunft (\`stopTrailed\` fehlt) stehen unter „Stop (Erstmarke)" — ` +
+        'unbekannt wird nicht zu Trailing geraten._',
+    );
+  }
+  out.push('');
+  return out;
+}
+
+/**
+ * MFE/MAE: Saßen Stop und Ziel richtig? Beide Richtungen gehören in den
+ * Bericht — der abgeschnittene Gewinn UND der Verlust, den der Stop verhindert
+ * hat. Ein Stop, der „zu eng" aussieht, ist manchmal der Grund, dass es
+ * überhaupt noch Kapital gibt.
+ */
+function exkursionBlock(a: KandidatAuswertung): string[] {
+  const e = a.exkursion;
+  const out: string[] = [];
+  out.push(
+    '**Saßen Stop und Ziel richtig?** — größter Buchgewinn (MFE) und größter Buchverlust (MAE) je Trade, in % vom Einstandskurs, ' +
+      'gemessen ausschließlich WÄHREND der Haltezeit.',
+  );
+  out.push('');
+  if (e.gemessen === 0) {
+    out.push(`_Keine Trades mit MFE/MAE (${e.ohneDaten} ohne Kursextreme) — die Kursextreme führt der Simulator mit, ein Fake oder das Live-Buch nicht._`);
+    out.push('');
+    return out;
+  }
+  out.push(
+    table(
+      ['Kennzahl', 'Einheit', 'Min', 'Q1', 'Median', 'Q3', 'Max', 'n'],
+      [
+        quartilZeile('Gewinner: mitgenommener Anteil des Buchgewinns', e.gewinner.mitnahme, 'Faktor (1 = am Hoch raus)'),
+        quartilZeile('Gewinner: MFE', e.gewinner.mfePct, '% vom Einstand'),
+        quartilZeile('Gewinner: Netto', e.gewinner.nettoPct, '% vom Einstand'),
+        quartilZeile('Verlierer: MAE', e.verlierer.maePct, '% vom Einstand'),
+        quartilZeile('Verlierer: MFE', e.verlierer.mfePct, '% vom Einstand'),
+        quartilZeile('Alle: MFE', e.alle.mfePct, '% vom Einstand'),
+        quartilZeile('Alle: MAE', e.alle.maePct, '% vom Einstand'),
+      ],
+    ),
+  );
+  out.push('');
+  out.push(
+    `_${e.gemessen} Trades gemessen, ${e.ohneDaten} ohne Kursextreme (gehen in keine Zahl ein). ` +
+      'MFE ist der beste, MAE der schlechteste Kurs während der Haltezeit, jeweils in % vom Einstand; MFE ≥ 0, MAE ≤ 0. ' +
+      '„Mitgenommener Anteil" = Netto in % vom Einstand geteilt durch MFE: 1,0 heißt am Hoch ausgestiegen, 0,3 heißt, ' +
+      'dass zwei Drittel des erreichten Buchgewinns liegen blieben — dann liegt das Ziel zu nah oder das Trailing zieht zu früh._',
+  );
+  out.push('');
+  out.push(
+    `_Die Kehrseite: ${e.verlierer.anzahl} Verlierer, davon ${e.verlierer.warWeiterImPlus} zwischenzeitlich WEITER im Plus, als sie am Ende im Minus schlossen. ` +
+      'Die Verlierer-MAE sagt, wie weit der Kurs gegen die Position lief, bevor Schluss war — sie ist die Zahl, gegen die man eine Stop-Weite prüft. ' +
+      'Nur sie allein genügt nicht: Ein weiterer Stop hätte die kleinen Verluste in große verwandelt, und keine Statistik zeigt Kapital, das es nicht mehr gibt._',
+  );
+  out.push('');
+  return out;
+}
+
+/**
+ * Der Nachlauf steht als eigener Absatz — er hängt NICHT an MFE/MAE, sondern
+ * an den Bars nach dem Ausstieg, und muss auch dann erscheinen, wenn keine
+ * Kursextreme überliefert sind.
+ */
+function nachlaufZeile(a: KandidatAuswertung): string[] {
+  const n = a.nachlauf;
+  if (n.verlierer === 0) return ['_Nachlauf nach Stop-Ausstiegen: kein ausgestoppter Verlierer in der OOS-Kette._', ''];
+  const quote = n.geprueft > 0 ? pct(n.erholt / n.geprueft, 0) : '–';
+  return [
+    `_Nachlauf nach Stop-Ausstiegen (Was-wäre-wenn, ${n.horizont} Bars nach dem Ausstieg, Blick endet mit der OOS-Kette — kein Holdout): ` +
+      `von ${n.verlierer} ausgestoppten Verlierern waren ${n.geprueft} prüfbar (${n.ohneDaten} ohne Folgebars); ` +
+      `${n.erholt} davon (${quote}) erreichten im Horizont wieder den Einstandskurs. ` +
+      'Das ist eine OBERGRENZE: gerechnet wird brutto gegen den Einstand, ohne Kosten und ohne die Frage, ob das Konto den Weg dorthin ausgehalten hätte. ' +
+      'Eine hohe Quote heißt, dass der Stop Gewinner abschneidet; eine niedrige, dass er genau das tut, wofür er da ist. ' +
+      'Die Zahl entscheidet nichts — sie ist nie Teil eines Gates und darf es nicht werden (sie sieht Bars nach dem Ausstieg)._',
+    '',
+  ];
+}
+
+/** Aktivität: „aktiv, nicht hyperaktiv" in Zahlen (docs/wissen/aktivitaet.md). */
+function aktivitaetBlock(a: KandidatAuswertung, m: Massstab): string[] {
+  const k = a.aktivitaet;
+  const out: string[] = [];
+  out.push('**Aktivität über die OOS-Kette** — wie oft, wie lange und mit wie viel Kapital war der Kandidat überhaupt im Markt?');
+  out.push('');
+  const pause =
+    k.laengstePause === null
+      ? '–'
+      : `${k.laengstePause}${k.pauseVon && k.pauseBis ? ` (${k.pauseVon} … ${k.pauseBis})` : ''}`;
+  out.push(
+    table(
+      ['Kennzahl', 'Wert', 'Einheit / Definition'],
+      [
+        ['Trades', String(k.trades), 'abgeschlossene Round-Trips über alle Symbole der OOS-Kette'],
+        ['Trades je Monat', num(m.tradesPerMonth, 1), `Round-Trips je 30,44 Kalendertage (${num(m.oosDays, 0)} OOS-Kalendertage) — dieselbe Zahl wie in der Maßstab-Zeile`],
+        ['Zeit im Markt', k.zeitImMarkt === null ? '–' : pct(k.zeitImMarkt, 0), `Anteil der Handelstage mit mindestens einer offenen Position (Quelle: ${k.zeitImMarktQuelle ?? 'nicht bewertbar'})`],
+        ['Gleichzeitige Positionen', k.mittlerePositionen === null ? '–' : num(k.mittlerePositionen, 2), 'Mittel über die Bars der OOS-Fenster (Positionen, die am Fensterende offen blieben, fehlen)'],
+        ['Gebundenes Kapital', k.mittlereExposurePct === null ? 'nicht bewertbar' : `${num(k.mittlereExposurePct, 1)} %`, 'Mittel der Brutto-Exposure je Bar (Σ |Stück × Schluss| / Equity)'],
+        ['Längste Phase ohne Einstieg', pause, 'Handelstage der OOS-Fenster ohne einen einzigen neuen Einstieg (Ränder eingerechnet)'],
+        ['Gemessene Handelstage', String(k.handelstage), 'Handelstage mit Bars in den OOS-Fenstern'],
+      ],
+    ),
+  );
+  out.push('');
+  out.push(
+    '_Zielband aus docs/wissen/aktivitaet.md: 2–10 Trades je Monat und Konto, Median-Haltedauer ≥ 10 Handelstage. ' +
+      'Unter etwa einem Trade je Monat entsteht kein Journal, aus dem `readiness` je etwas lernen könnte; darüber frisst der Umschlag die Kante. ' +
+      'Die längste Phase ohne Einstieg ist die Zahl, die man im Betrieb spürt — sie sagt, wie lange das Konto stillstehen kann, ohne dass etwas kaputt ist._',
+  );
+  if (!a.konsistent) {
+    out.push('');
+    out.push(`⚠ _Der Auswertungslauf weicht vom Walk-Forward ab: ${a.hinweis ?? ''} — die Zahlen dieses Abschnitts sind nicht belastbar._`);
+  }
+  out.push('');
+  return out;
+}
+
+/**
+ * Korrelationsmatrix der Tagesrenditen aller gemessenen Kandidaten. Ohne sie
+ * ist jede Ensemble-Entscheidung geraten: Zwei Taktiken mit Sharpe 0,6 und
+ * Korrelation 0,9 sind eine Taktik.
+ */
+function korrelationsAbschnitt(runs: readonly SymbolRun[]): string[] {
+  const reihen: { name: string; reihe: KandidatAuswertung['renditen'] }[] = [];
+  for (const r of runs) {
+    for (const s of r.results) {
+      if (s.auswertung && s.auswertung.renditen.tage.length > 0) reihen.push({ name: `${r.symbol} · ${kandidatName(s)}`, reihe: s.auswertung.renditen });
+    }
+  }
+  const out: string[] = ['## Korrelationsmatrix der Tagesrenditen', ''];
+  if (reihen.length < 2) {
+    out.push(`_Weniger als zwei gemessene Kandidaten mit Renditereihe (${reihen.length}) — keine Matrix._`);
+    out.push('');
+    return out;
+  }
+  const k: Korrelationsmatrix = korrelationsmatrix(reihen);
+  out.push(
+    'Frage: Lohnt ein Ensemble aus mehreren dieser Taktiken? Das entscheidet die Korrelation ihrer Tagesrenditen — nichts sonst. ' +
+      'Zwei Kandidaten mit gleichem Sharpe und Korrelation 0,9 sind ein Kandidat; bei 0,1 sind sie ein deutlich besseres Portfolio.',
+  );
+  out.push('');
+  const kuerzel = k.namen.map((_, i) => `K${i + 1}`);
+  out.push(table(['Kürzel', 'Kandidat'], k.namen.map((n, i) => [kuerzel[i]!, n])));
+  out.push('');
+  out.push(
+    table(
+      ['', ...kuerzel],
+      k.namen.map((_, i) => [kuerzel[i]!, ...k.werte[i]!.map((v) => (v === null ? '–' : num(v, 2)))]),
+    ),
+  );
+  out.push('');
+  out.push(
+    `**Durchschnittskorrelation: ${k.durchschnitt === null ? '–' : num(k.durchschnitt, 2)}** ` +
+      `(Mittel über alle berechenbaren Paare oberhalb der Diagonalen${k.zuWenigeTage > 0 ? `; ${k.zuWenigeTage} Paare mit weniger als ${k.mindestTage} gemeinsamen Tagen bleiben „–"` : ''}).`,
+  );
+  out.push('');
+  out.push(
+    '_Einheit: Pearson-Korrelation in [−1, +1] auf den TAGESRENDITEN der OOS-Kette. ' +
+      'Zwei Regeln, ohne die die Zahl falsch gelesen wird: (1) Verglichen wird je Paar nur auf den GEMEINSAMEN Handelstagen — ' +
+      'ein Tag, den ein Kandidat gar nicht gemessen hat, ist kein Datenpunkt und wird weggelassen, nicht mit 0 gefüllt. ' +
+      '(2) Ein gemessener Tag OHNE Position hat die Rendite 0, und die zählt mit: nicht investiert heißt kein Ertrag. ' +
+      'Das ist ausdrücklich KEINE bedingte Korrelation „wenn beide investiert sind" — gerade die Tage, an denen der eine steht und der andere läuft, ' +
+      `sind der Grund, warum ein Ensemble glätten würde. Gemeinsame Tage je Paar: ${k.minGemeinsameTage ?? '–'} bis ${k.maxGemeinsameTage ?? '–'}._`,
+  );
+  out.push('');
+  return out;
 }
 
 /* ───────────────────────── Bericht ───────────────────────── */
@@ -292,6 +542,17 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
       out.push('');
       out.push(`DSR (IS): ${s.fixed ? 'nicht anwendbar (feste Parameter, keine Suche) — ' : ''}${s.dsr.note}`);
       out.push('');
+      // Wo das Geld hingeht: Exit-Anatomie, MFE/MAE, Aktivität. Reine Messung —
+      // kein Gate liest eine dieser Zahlen (siehe backtest/anatomie.ts).
+      if (s.auswertung) {
+        out.push(...anatomieBlock(s.auswertung));
+        out.push(...exkursionBlock(s.auswertung));
+        out.push(...nachlaufZeile(s.auswertung));
+        out.push(...aktivitaetBlock(s.auswertung, s.massstab));
+      } else {
+        out.push('_Keine Auswertung (Exit-Anatomie, MFE/MAE, Aktivität) für diesen Kandidaten — siehe Fehlerliste des Symbols._');
+        out.push('');
+      }
       out.push(
         table(
           ['Fold', 'IS', 'OOS', 'Params', 'IS-Objective', 'OOS-Objective', 'OOS-Trades', 'OOS-Netto'],
@@ -325,6 +586,8 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
 
     if (r.basis) out.push(...basisAbschnitt(r.symbol, r.basis, r.holdoutMarkt, meta));
   }
+
+  out.push(...korrelationsAbschnitt(runs));
 
   return out.join('\n');
 }

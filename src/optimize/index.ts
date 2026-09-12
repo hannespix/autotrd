@@ -91,6 +91,7 @@ export { renderReport, writeReport, isoDay, num, type ReportMeta } from './repor
 export {
   runOptimization,
   loadDefaultDeps,
+  auswertungFuer,
   massstabFuer,
   festLabel,
   festParams,
@@ -99,6 +100,7 @@ export {
   type OptimizeRunInput,
   type OptimizeRunOutput,
   type IncumbentEval,
+  type KandidatAuswertung,
   type Massstab,
   type MarktLatte,
   type StrategyRun,
