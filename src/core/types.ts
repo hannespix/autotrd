@@ -157,6 +157,17 @@ export interface Trade {
   /** Ungünstigster/günstigster Kurs während der Haltezeit (für Exit-Statistik). */
   mae: number | null;
   mfe: number | null;
+  /**
+   * Lag am Ausstieg eine NACHGEZOGENE Stop-Marke statt der ersten? Trennt im
+   * Bericht den Katastrophen-Stop vom Trailing-Stop — genau die Unterscheidung,
+   * die im Vorgängersystem fehlte, als ein falsch gerechnetes Trailing bei
+   * −3 % statt −25 % verkaufte (CLAUDE.md §2).
+   *
+   * REINE AUSWERTUNGSGRÖSSE: nie gelesen von `decide()`, von keiner Order und
+   * keinem Gate. Additiv — Trades des Live-Buchs und ältere Journale tragen
+   * das Feld nicht; „fehlt" heißt „Herkunft unbekannt", nicht „Erststop".
+   */
+  stopTrailed?: boolean;
   /** Stufe der Position (`PositionState.stufe`), falls bekannt — additiv. */
   stufe?: string;
 }

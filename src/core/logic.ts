@@ -47,14 +47,17 @@ import type {
   OrderIntent,
   Params,
   PositionState,
+  Side,
   SizingSpec,
   Strategy,
   SymbolSnapshot,
   TimeframeMin,
 } from './types.ts';
-import { checkHalt } from '../risk/limits.ts';
+import { DAY } from './time.ts';
+import { checkHalt, grenzenFuer, kontoGrenzen, STUFEN, stufeOf, stufenBremsenAktiv, type Stufe } from '../risk/limits.ts';
 import { pdtCheck } from '../risk/pdt.ts';
 import { sizePosition } from '../risk/sizing.ts';
+import { volSkalierung, type VolZielResult } from '../risk/volziel.ts';
 
 export interface AssetFacts {
   tradable: boolean;
@@ -89,6 +92,55 @@ export interface LogicContext {
    * Exits, Stop-Nachzüge und Glattstellungen laufen weiter — Exits werden nie gesperrt.
    */
   entryLock?: string | null | undefined;
+  /**
+   * Tagesrenditen der EIGENEN Equity-Kurve (Anteile, jüngste zuletzt) — Eingabe
+   * des Volatilitätsziels (`risk.volTarget`, risk/volziel.ts). Gerechnet wird der
+   * Faktor HIER, in `decide()`, nicht im Aufrufer: Sonst rechneten Simulator und
+   * Engine ihn zweimal und könnten auseinanderlaufen — genau der Messfehler,
+   * gegen den dieser Entscheidungspfad gebaut ist. Der Aufrufer liefert nur die
+   * Reihe, und beide Welten bilden sie gleich (Simulator: `dailyReturns`;
+   * Engine: `tagesRenditen(state.equityHistory)`).
+   */
+  equityReturns?: readonly number[] | undefined;
+  /**
+   * Persistierte Halt-Zustände je Stufe (`alpha` · `basis` · `other`), wenn
+   * `risk.tiers` Latten je Stufe setzt. Fehlt das Feld, beginnt jede Stufe ohne
+   * Sperre. `decide()` gibt den fortgeschriebenen Stand zurück; Simulator und
+   * Engine speichern ihn wie den Konto-Halt.
+   */
+  stufenHalt?: Readonly<Record<string, HaltState>> | undefined;
+  /**
+   * Offene Wiederaufbau-Ziele je Symbol (`risk.wiederaufbau`): Positionen, die
+   * eine Notbremse glattgestellt hat und die die Zielallokation weiter halten
+   * will. `decide()` gibt den fortgeschriebenen Stand zurück.
+   */
+  wiederaufbau?: Readonly<Record<string, WiederaufbauZiel>> | undefined;
+}
+
+/**
+ * Eine Position, die die Zielallokation halten WILL, die aber eine Notbremse
+ * glattgestellt hat.
+ *
+ * Warum die Stop-DISTANZ und nicht die Marke: Der Wiederaufbau kauft zu einem
+ * neuen Kurs; ein alter Stop-Preis wäre eine andere Regel als die gemessene.
+ * Die Distanz ist bei den Familien mit Zielallokation ein fester Prozentsatz
+ * des Einstands (`regime_allocation`: `stopPct`), der Wiederaufbau bekommt
+ * also genau den Stop, den die Strategie an diesem Tag auch selbst gesetzt
+ * hätte. GRENZE, nicht wegdefiniert: Für eine Familie, deren Stop aus der
+ * Schwankung kommt (ATR), wäre die Distanz von gestern eine Näherung — solche
+ * Familien haben keine Allokations-Semantik, und der Wiederaufbau gilt nur
+ * für diese (siehe `wiederaufbauZiel`).
+ */
+export interface WiederaufbauZiel {
+  side: Side;
+  /** Stop-Distanz in % vom Einstand der glattgestellten Position (> 0, < 100). */
+  stopDistPct: number;
+  /** Strategie, die die Position führte — wechselt sie, verfällt das Ziel. */
+  strategy: string;
+  /** Wann glattgestellt (Epoch-ms) — Grundlage des Verfalls. */
+  since: Ms;
+  /** Warum glattgestellt (fürs Journal). */
+  grund: string;
 }
 
 export interface SymbolInput {
@@ -114,6 +166,13 @@ export interface SymbolInput {
   entriesAllowed?: boolean | undefined;
   /** Grund der Einstiegssperre (fürs Journal), wenn `entriesAllowed` false ist. */
   entryLockReason?: string | undefined;
+  /**
+   * Stufe der Wahl (`champion` · `basis` · `config`) — dieselbe Quelle, die
+   * beim Fill in der Position festgehalten wird (`PositionState.stufe`).
+   * Sie entscheidet, welche Latte der Notbremse für dieses Symbol gilt
+   * (`risk.tiers`, risk/limits.ts). Fehlt sie, gelten die globalen Werte.
+   */
+  stufe?: string | undefined;
 }
 
 export interface LogicNote {
@@ -128,6 +187,18 @@ export interface LogicResult {
   halt: HaltState;
   /** true, wenn in diesem Zyklus eine Sperre neu ausgelöst wurde. */
   haltTriggered: boolean;
+  /**
+   * Ergebnis des Volatilitätsziels dieses Zyklus (null = aus). Der Faktor
+   * verändert jede Positionsgröße — er gehört ins Journal und in den Bericht,
+   * nicht in eine unsichtbare Ecke.
+   */
+  volZiel?: VolZielResult | null;
+  /** Fortgeschriebene Halt-Zustände je Stufe (nur belegt, wenn `risk.tiers` Latten setzt). */
+  stufenHalt?: Record<string, HaltState>;
+  /** Stufen, deren Bremse in DIESEM Zyklus neu ausgelöst hat (fürs Journal/Notify). */
+  stufenHaltTriggered?: Stufe[];
+  /** Fortgeschriebene Wiederaufbau-Ziele (siehe `WiederaufbauZiel`). */
+  wiederaufbau?: Record<string, WiederaufbauZiel>;
 }
 
 export const DEFAULT_MIN_STOP_DISTANCE_PCT = 0.05;
@@ -300,8 +371,87 @@ export function wettbewerbsOrdnung(inputs: readonly SymbolInput[], timeframe: Ti
 export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): LogicResult {
   const intents: OrderIntent[] = [];
   const notes: LogicNote[] = [];
+  const bySym = new Map<string, SymbolInput>();
+  for (const inp of inputs) bySym.set(inp.snap.symbol, inp);
 
-  // 1. Konto-Sperren
+  /*
+   * Volatilitätsziel: EIN Aufruf je Zyklus, hier und nirgends sonst. Der
+   * Faktor skaliert das Sizing-Budget beider Semantiken; die Deckel des
+   * Nutzers bleiben darüber (risk/sizing.ts). Aus ⇒ Faktor 1,0, also exakt
+   * das Verhalten ohne dieses Feld.
+   */
+  const vt = ctx.risk.volTarget;
+  const volZiel: VolZielResult | null = vt?.enabled
+    ? volSkalierung({
+        renditen: ctx.equityReturns ?? [],
+        zielVolPct: vt.zielVolPct,
+        halbwertszeitTage: vt.halbwertszeitTage,
+        minFaktor: vt.minFaktor,
+        maxFaktor: vt.maxFaktor,
+        minBeobachtungen: vt.minBeobachtungen,
+        tageJeJahr: ctx.assetClass === 'crypto' ? 365 : 252,
+      })
+    : null;
+  const volFaktor = volZiel?.faktor ?? 1;
+
+  /* ── Wiederaufbau-Ziele (risk.wiederaufbau) ──────────────────────────── */
+  const wiederCfg = ctx.risk.wiederaufbau;
+  const ziele = new Map<string, WiederaufbauZiel>(Object.entries(ctx.wiederaufbau ?? {}));
+  /** Stufe einer Position: die beim Fill festgehaltene gewinnt, die Wahl von heute ist nur Rückfall (Prüfbefund G14). */
+  const stufeVonPosition = (p: PositionState): Stufe => {
+    if (p.stufe !== undefined) return stufeOf(p.stufe);
+    const inp = bySym.get(p.symbol);
+    return stufeOf(inp && inp.strategy.id === p.strategy ? inp.stufe : undefined);
+  };
+  /**
+   * Eine zwangsweise glattgestellte Position merken — aber nur, wenn sie eine
+   * ZIELALLOKATION war (Allokations-Sizing) und die Wahl von heute dieselbe
+   * Strategie führt. Für Signal-Strategien mit Risiko-Budget gibt es keine
+   * Zielallokation: Ein „Wiederaufbau" wäre dort ein erfundenes Signal.
+   */
+  const merkeWiederaufbau = (p: PositionState, grund: string): void => {
+    if (!wiederCfg?.enabled) return;
+    const inp = bySym.get(p.symbol);
+    if (!inp || inp.sizing?.mode !== 'allocation' || inp.strategy.id !== p.strategy) return;
+    const marke = p.initialStop ?? p.stop;
+    if (marke === null || !Number.isFinite(marke) || !(p.entryPrice > 0)) return;
+    const dist = (Math.abs(p.entryPrice - marke) / p.entryPrice) * 100;
+    if (!(dist > 0) || dist >= 100) return;
+    ziele.set(p.symbol, { side: p.side, stopDistPct: dist, strategy: p.strategy, since: ctx.now, grund });
+  };
+  /** Gültiges Ziel für dieses Symbol — oder null (und dann verfallen). */
+  const zielFuer = (inp: SymbolInput): WiederaufbauZiel | null => {
+    if (!wiederCfg?.enabled) return null;
+    const sym = inp.snap.symbol;
+    const z = ziele.get(sym);
+    if (!z) return null;
+    if (inp.sizing?.mode !== 'allocation' || inp.strategy.id !== z.strategy) {
+      ziele.delete(sym);
+      return null;
+    }
+    if (ctx.now - z.since > wiederCfg.maxAlterTage * DAY) {
+      ziele.delete(sym);
+      notes.push({ symbol: sym, kind: 'info', text: `Wiederaufbau-Ziel verfallen (älter als ${wiederCfg.maxAlterTage} Tage)` });
+      return null;
+    }
+    return z;
+  };
+
+  const fertig = (halt: HaltState, haltTriggered: boolean, stufenHalt: Record<string, HaltState>, ausgeloest: Stufe[]): LogicResult => ({
+    intents,
+    notes,
+    halt,
+    haltTriggered,
+    volZiel,
+    stufenHalt,
+    stufenHaltTriggered: ausgeloest,
+    wiederaufbau: Object.fromEntries(ziele),
+  });
+
+  // 1. Konto-Sperren. Latte ist die LOCKERSTE aller Stufen (risk/limits.ts):
+  // Ohne `risk.tiers` sind das die globalen Werte, also alles wie bisher; mit
+  // Stufen-Latten steht das ganze Konto erst still, wenn selbst die duldsamste
+  // Stufe aufgegeben hätte — vorher greift deren eigene Bremse (Schritt 1b).
   const hc = checkHalt({
     account: ctx.account,
     halt: ctx.halt,
@@ -309,16 +459,19 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
     now: ctx.now,
     today: ctx.today,
     nextDay: ctx.nextTradingDay,
+    grenzen: kontoGrenzen(ctx.risk),
   });
   const halt = hc.halt;
+  const stufenHalt: Record<string, HaltState> = { ...(ctx.stufenHalt ?? {}) };
   if (hc.lifted) notes.push({ symbol: '*', kind: 'halt', text: halt.note ?? 'Halt geendet' });
   if (hc.triggered) {
     notes.push({ symbol: '*', kind: 'halt', text: halt.note ?? 'Halt ausgelöst' });
     const reason = halt.reason === 'drawdown' ? 'drawdown' : 'kill_switch';
     for (const p of ctx.positions.values()) {
       intents.push({ kind: 'exit', symbol: p.symbol, reason, decidedAt: ctx.now });
+      merkeWiederaufbau(p, `Konto-Notbremse (${halt.reason})`);
     }
-    return { intents, notes, halt, haltTriggered: true };
+    return fertig(halt, true, stufenHalt, []);
   }
   // Notbremse steht (Tagesverlust/Drawdown) und das Buch ist nicht leer: Der Glattstellungs-Exit wird in
   // JEDEM Zyklus erneut angefordert, bis alles zu ist — der Executor ist idempotent (positionsstabile
@@ -328,9 +481,58 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
     const reason = halt.reason === 'drawdown' ? 'drawdown' : 'kill_switch';
     for (const p of ctx.positions.values()) {
       intents.push({ kind: 'exit', symbol: p.symbol, reason, decidedAt: ctx.now });
+      merkeWiederaufbau(p, `Konto-Notbremse (${halt.reason})`);
     }
     notes.push({ symbol: '*', kind: 'halt', text: `Notbremse aktiv (${halt.reason}) — offene Positionen werden glattgestellt` });
-    return { intents, notes, halt, haltTriggered: false };
+    return fertig(halt, false, stufenHalt, []);
+  }
+
+  /*
+   * 1b. Bremsen je Stufe (`risk.tiers`, seit 12.09.2026). Jede Stufe trägt
+   * ihren eigenen, persistierten Halt-Zustand mit derselben Lebensdauer wie
+   * der des Kontos: Ein Tages-Halt endet am nächsten Handelstag von selbst,
+   * ein Drawdown-Halt nur über `resume` (§0.5 — kein Schalter „Sperre aus").
+   *
+   * Wirkung: Glattstellen der Positionen DIESER Stufe und Sperre ihrer
+   * Einstiege. Exits aller anderen Stufen laufen unberührt weiter, und eine
+   * gesperrte Stufe verliert nur das Recht zu KAUFEN — nie das zu verkaufen
+   * (§0.4).
+   */
+  const gesperrt = new Map<Stufe, HaltState>();
+  const ausgeloest: Stufe[] = [];
+  const schonExit = new Set<string>();
+  if (stufenBremsenAktiv(ctx.risk)) {
+    for (const stufe of STUFEN) {
+      const vorher = stufenHalt[stufe] ?? { halted: false, reason: null, since: null, until: null, note: null };
+      const hs = checkHalt({
+        account: ctx.account,
+        halt: vorher,
+        risk: ctx.risk,
+        now: ctx.now,
+        today: ctx.today,
+        nextDay: ctx.nextTradingDay,
+        grenzen: grenzenFuer(ctx.risk, stufe),
+      });
+      stufenHalt[stufe] = hs.halt;
+      if (hs.lifted) notes.push({ symbol: '*', kind: 'halt', text: `Stufe ${stufe}: ${hs.halt.note ?? 'Halt geendet'}` });
+      if (hs.triggered) {
+        ausgeloest.push(stufe);
+        notes.push({ symbol: '*', kind: 'halt', text: `Stufe ${stufe}: ${hs.halt.note ?? 'Halt ausgelöst'}` });
+      }
+      if (!hs.halt.halted) continue;
+      gesperrt.set(stufe, hs.halt);
+      if (hs.halt.reason !== 'daily_loss' && hs.halt.reason !== 'drawdown') continue;
+      const reason = hs.halt.reason === 'drawdown' ? 'drawdown' : 'kill_switch';
+      for (const p of ctx.positions.values()) {
+        if (stufeVonPosition(p) !== stufe || schonExit.has(p.symbol)) continue;
+        intents.push({ kind: 'exit', symbol: p.symbol, reason, decidedAt: ctx.now });
+        schonExit.add(p.symbol);
+        merkeWiederaufbau(p, `Stufen-Bremse ${stufe} (${hs.halt.reason})`);
+      }
+    }
+    if (schonExit.size > 0) {
+      notes.push({ symbol: '*', kind: 'halt', text: `Stufen-Bremse aktiv — glattgestellt: ${[...schonExit].join(', ')}` });
+    }
   }
 
   // Preise der Entscheidungs-Bars für Exposure
@@ -375,6 +577,13 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
     if (snap.i + 1 < strategy.warmupBars(params)) {
       continue;
     }
+
+    // Die Stufen-Bremse stellt dieses Symbol in diesem Zyklus schon glatt — kein
+    // zweiter Exit, kein Stop-Nachzug, kein Einstieg daneben.
+    if (schonExit.has(sym)) continue;
+
+    // Position wieder da (oder nie weg): Das Wiederaufbau-Ziel ist erledigt.
+    if (pos) ziele.delete(sym);
 
     // Fremde Führung (Prüfbefund M4, 09.09.2026): Die Position hat eine ANDERE
     // Strategie eröffnet als die, die das Symbol heute führt (Alpha-Beförderung,
