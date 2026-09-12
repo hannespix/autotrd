@@ -119,6 +119,35 @@ prinzipiell nicht erfüllen. **Es fehlt eine Renditequelle, die verdient,
 wenn Aktien fallen** — und ein Weg, mehrere solche Quellen gemeinsam zu
 messen. Genau das sind Ursache 3 und 4.
 
+### Nachtrag Lauf #43: Die Ursache liegt eine Ebene tiefer als der Pool
+
+Erste Vermutung: Im Pool fehlt die defensive Seite. Gegenprobe mit BIL und
+SHY im Pool (`config/diagnose-kurzlaeufer.yaml`, vorregistriert): **Jede
+Ergebniszahl blieb byteweise identisch.** Die beiden wurden nie gewählt.
+
+Die nächtliche Auswahl rangiert nach Median-Dollarumsatz. Dort steht BIL auf
+Rang 138 von 141 (18,7 Mio. $/Tag), SHY auf 141 (7,9 Mio. $), IEF auf 128,
+GLD auf 56, TLT knapp verpasst auf 32 — gegen SPY mit 1,09 Mrd. $ und NVDA
+mit 834,9 Mio. $ je Tag.
+
+**Ein nach Dollarumsatz rangierter 30er-Korb ist zwangsläufig eine Auswahl
+der meistgehandelten US-Aktien.** Er kann bauartbedingt kein defensives
+Papier enthalten, egal was im Pool steht. Und damit kann keine Strategie auf
+diesem Korb `fold_positive_share ≥ 0,6` über ein Fenster mit Bärenmarkt
+bestehen: In einem Bärenquartal fällt alles darin zugleich.
+
+Das ist die vollständige Antwort auf „warum handelt es nicht". Nicht die
+Gates, nicht das Signal, nicht die Parameter — die **Bühne**. Der einzige
+Anleihe-ETF, der es in die ersten 30 schafft, ist LQD auf Rang 11, also
+Kreditrisiko, das im Crash mit Aktien fällt.
+
+Die Konsequenz ist NICHT, an der Auswahlregel zu drehen (ein reservierter
+Platz „für etwas Defensives" wäre die Rückkehr zur Auswahl nach Ergebnis),
+sondern: Renditequellen, die im fallenden Markt verdienen, brauchen ein
+festes, zweckgewähltes Universum — wie `optimizer.basisUniverse` es schon
+tut. Der liquiditätsgewählte Korb bleibt die Bühne für Aktienstrategien,
+und daneben stehen Sleeves mit eigenem Universum, gemeinsam gemessen.
+
 ## Ursache 2 — Das System fährt mit angezogener Handbremse
 
 `risk.riskPerTradePct: 0,5` bei höchstens 4 Positionen. Ergebnis:
