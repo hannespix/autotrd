@@ -1,0 +1,232 @@
+# Diagnose: DASSELBE Regelwerk wie die Plattform, nur ein längeres Messfenster.
+#
+# Warum dieser Lauf (12.09.2026, Owner: „seit dem Umbau wurde überhaupt nichts
+# gehandelt"): Der nächtliche Optimierer misst mit `lookbackDays: 1400` — das
+# erste OOS-Fenster beginnt am 2023-12-24, die Daten ab 2022-11-10. Das ist
+# exakt der Tiefpunkt des Bärenmarkts 2022; gemessen wird danach nur
+# Aufschwung. Die Latte `beats_market` stand deshalb in Lauf #9 bei einem
+# SPY-Sharpe von 1.17, während dieselbe Latte in ALLEN anderen gemessenen
+# Fenstern bei 0.46–0.64 lag (docs/wissen/befunde.md). cross_sectional_momentum
+# lieferte Sharpe 0.90 bei 7.20 % MaxDD gegen 19.85 % des Marktes — und fiel
+# durch, weil die Latte eine Ausnahmeperiode war.
+#
+# §5a.10 zog aus genau diesem Befund schon die Konsequenz und stellte die
+# ERKUNDUNG auf 2900 Tage um („sonst misst man vor allem Bullenmarkt").
+# `config/platform.yaml` blieb bei 1400 — die Erkenntnis wurde in der Probe
+# umgesetzt und im Betrieb vergessen. Dieser Lauf prüft, ob das der Grund für
+# „kein Handel" ist.
+#
+# NICHT verändert: alle zehn Tore, Kosten, Risiko, Universum, Strategien.
+# Nur `optimizer.lookbackDays` (1400 ⇒ 2900) und `paths.home`. Es ist damit
+# keine neue Latte und kein neues Experiment, sondern derselbe Maßstab über
+# einen vollen Marktzyklus — deshalb ohne Vorregistrierung (der
+# probeConfigs-Test verlangt sie nur bei abweichendem Risiko).
+#
+# Erzeugt aus config/platform.yaml; Unterschiede stehen am Ende dieser Datei.
+
+# Plattform-Config des Auto-Traders — EINE Quelle für alle Nutzer.
+#
+# Der nächtliche Optimierer (GitHub Actions, .github/workflows/optimize.yml)
+# rechnet mit genau dieser Datei; `scripts/sync-engine-config.mjs` schreibt
+# ihren globalen Teil nach Firestore `meta/engineConfig`, von wo die
+# Engine-Function (engineTick) ihn je Minute liest. Nutzerabhängig ist NUR
+# `risk` (Risiko je Trade, Deckel, Notbremsen, Shorts) und `notify` — die
+# Werte hier sind die Defaults für Nutzer ohne eigene Einstellung.
+#
+# Marktdaten sind nutzerunabhängig: ein Universum, ein Zeitrahmen, ein
+# Champion für alle. Nutzer können in ihren Einstellungen eine Teilmenge
+# der Symbole wählen, aber keine hinzufügen (IEX-Basis-Plan: max. 30).
+#
+# ── Warum 30 Symbole UND `optimizer.pooled: true` ─────────────────────────
+#
+# Beides gehört zusammen. Dreißig Symbole EINZELN zu bewerten wäre schlechter
+# als zehn: Je Symbol fragt der Optimierer „hat die Strategie eine Kante auf
+# TSLA?" — und „bestes Symbol aus dreißig" ist selbst eine Auswahl, die der
+# Deflated Sharpe nicht bestraft. Dreißig Symbole wären also dreißig
+# Lotterien statt zehn.
+#
+# Wie schnell das schiefgeht, zeigt der 07.09.: TSLA bestand je Symbol alle
+# Gates mit 103 OOS-Trades und +958 $ — dieselbe Strategie über den ganzen
+# Korb gerechnet machte −1 672 $ auf 344 Trades. Ein Symbol aus zehn, mit
+# Glück.
+#
+# Gepoolt lautet die Frage „hat die Strategie eine Kante auf diesem Korb?",
+# beantwortet mit 16 380 OOS-Bars statt 546 je Symbol. Der Preis: Die Probe
+# über genau diese 30 sagte für alle vier Strategien `stay_notrade`. Es wird
+# also zunächst NICHTS gehandelt — und das ist der Punkt, nicht der Fehler.
+#
+# ── Wer die 30 sind, entscheidet jede Nacht die Liquidität ────────────────
+#
+# `symbols` ist nur noch der Startwert und der Rückfall. Der nächtliche Lauf
+# ruft vor dem Optimierer `autotrd universe` auf: Tagesbars für den ganzen
+# `candidates`-Pool, Rang nach Median-Dollarumsatz, die besten `maxSymbols`
+# werden gehandelt (Details in `src/universe/select.ts`).
+#
+# NIE nach dem Ergebnis der Strategie. Ein Universum danach zusammenzustellen,
+# wo es zufällig lief, und es dann auf denselben Daten zu messen ist
+# Selektionsbias in Reinform — der Fehler, an dem das Vorgängersystem gestorben
+# ist. Die Auswahlfunktion bekommt Bars und Regeln; ihr Eingang hat kein Feld
+# für PnL, Trades oder Champion.
+#
+# Zwei Einschränkungen stehen dazu in `src/universe/select.ts` und im Bericht:
+# Dollarumsatz enthält den Kurs (also vergangene Rendite), und der Pool ist
+# von heute — der Optimierer wählt daraus je Fold punkt-in-zeit
+# (foldMembership), aber wer im Messzeitraum verschwand, ist nicht im Pool.
+# Beides ist benannt, nicht wegdefiniert.
+#
+# Den POOL ändert weiterhin nur ein Commit. Automatisch läuft die Wahl DARIN.
+# Was nicht hineingehört: gehebelte und inverse ETFs (3×-Produkte sprengen
+# das ATR-Sizing), Einzelaktien-ETFs, frische IPOs ohne Historie.
+
+broker:
+  mode: paper          # Der Modus je Nutzer kommt aus dem Live-Schalter der Plattform, nicht von hier.
+  feed: iex            # Datenfeed für Optimierer UND Engine — identisch, sonst misst man etwas anderes als man handelt.
+
+universe:
+  assetClass: us_equity
+  # Startwert und Rückfall, falls die nächtliche Auswahl nicht gelaufen ist.
+  # Im Normalbetrieb überschreibt `var/universe.json` diese Liste.
+  symbols:
+    [SPY, QQQ, IWM, DIA,
+     AAPL, MSFT, NVDA, AMZN, META, GOOGL, TSLA, AVGO, AMD, NFLX,
+     CRM, ORCL, ADBE, INTC, CSCO, QCOM,
+     JPM, BAC, WFC,
+     XOM, CVX,
+     JNJ, PFE, UNH,
+     WMT, DIS]
+  benchmark: SPY
+  # 30 ist die harte Grenze des Alpaca-IEX-Basisplans (darüber `405 symbol
+  # limit exceeded`) und zugleich AUTO_SYMBOLS_MAX je Nutzer.
+  maxSymbols: 30
+  # Der Pool, aus dem jede Nacht nach Liquidität gewählt wird. Breit über die
+  # Sektoren, damit die Wahl etwas zu wählen hat; ohne Hebel-, Inverse- und
+  # Einzelaktien-ETFs. Reihenfolge hier ist bedeutungslos — es zählt der
+  # gemessene Umsatz, nicht der Platz in der Liste.
+  candidates:
+    # Breite Index- und Sektor-ETFs
+    [SPY, QQQ, IWM, DIA, XLF, XLE, XLK, XLV, XLI, XLY, XLP, XLU, XLB, XLRE, XLC,
+     SMH, SOXX, EEM, EFA, GLD, SLV, TLT, HYG, LQD, IEF,
+     # Technologie und Halbleiter
+     AAPL, MSFT, NVDA, AMZN, META, GOOGL, GOOG, TSLA, AVGO, AMD, NFLX,
+     CRM, ORCL, ADBE, INTC, CSCO, QCOM, TXN, MU, AMAT, LRCX, KLAC, ADI, MRVL,
+     ANET, NOW, IBM, INTU, PANW, CRWD, DDOG, SNOW, UBER, ABNB, PYPL, SPOT, DELL,
+     # Finanzen
+     JPM, BAC, WFC, GS, MS, C, SCHW, BLK, AXP, V, MA, COF, USB, PNC, BRK.B,
+     # Energie
+     XOM, CVX, COP, SLB, EOG, PSX, MPC, OXY, VLO,
+     # Gesundheit
+     JNJ, PFE, UNH, ABBV, MRK, LLY, TMO, ABT, BMY, AMGN, GILD, CVS, MDT, ISRG, VRTX, REGN,
+     # Konsum
+     WMT, DIS, HD, MCD, NKE, SBUX, COST, TGT, LOW, PG, KO, PEP, PM, MO, MDLZ, CL,
+     # Industrie und Transport
+     BA, CAT, DE, GE, HON, LMT, RTX, UPS, UNP, MMM, FDX,
+     # Kommunikation und Versorger
+     T, VZ, TMUS, CMCSA, CHTR, NEE, DUK, SO,
+     # Fahrzeuge
+     F, GM]
+
+# Tagesbars. Gemessen am 08./09.09.2026: Auf 5-Minuten-Bars frassen die
+# Gebühren 271 % bis 2438 % des Bruttogewinns — kein Kandidat kann dort
+# gewinnen, egal wie gut das Signal ist, und der nächtliche Lauf verbrannte
+# 43 Minuten auf dem aussichtslosesten Zeitrahmen, den wir haben. Auf
+# Tagesbars liegt derselbe Anteil bei 23–71 % (gemessen 09.09., dieselbe
+# Größe: die OOS-Kette). Das ist Faktor zehn besser, aber nicht gelöst — 71 %
+# reissen `fee_share` weiterhin. Es räumt das Hindernis weg, das jede Kante
+# verdeckt hätte; es ersetzt keine.
+#
+# Folgen im Rest dieser Datei: Die Fenster unten wachsen mit (365/90/90/180
+# statt 120/30/30/60 — bei einer Bar je Tag statt 78 braucht ein Fold Jahre,
+# nicht Monate), und `orb_breakout` fällt aus der Liste, weil es
+# ausdrücklich nur Intraday kann (INTRADAY_TIMEFRAMES). Dafür kommt
+# `cross_sectional_momentum` dazu, das den Korb rangiert statt jedes Symbol
+# einzeln zu fragen.
+#
+# Die Session-Tore (noEntryFirstMin/noEntryLastMin/flattenBeforeCloseMin)
+# bleiben stehen, greifen bei 1440 aber nicht: core/logic.ts überspringt sie
+# für Tagesbars, und alle fünf Strategien halten über Nacht.
+timeframe: 1440
+
+session:
+  noEntryFirstMin: 5
+  noEntryLastMin: 30
+  flattenBeforeCloseMin: 5
+
+risk:
+  riskPerTradePct: 0.5
+  maxPositionPct: 20
+  maxPositions: 4
+  maxGrossExposurePct: 100
+  maxDailyLossPct: 2
+  maxDrawdownPct: 10
+  allowShort: false
+  pdt:
+    respect: true
+    minEquity: 25000
+    maxDayTrades: 3
+
+strategy:
+  id: trend_donchian
+  params: {}
+  allowWithoutChampion: false   # Ohne Champion handelt niemand — der Optimierer entscheidet.
+
+optimizer:
+  strategies: [trend_donchian, momentum_pullback, mean_reversion, cross_sectional_momentum, regime_allocation]
+  # Fenster wie in config/equity-1440.yaml, das vier Halbjahre lang gemessen
+  # hat — sonst vergliche man Plattform und Erkundung nie miteinander.
+  lookbackDays: 2900
+  isDays: 365
+  oosDays: 90
+  stepDays: 90
+  embargoBars: 0
+  samples: 150
+  seed: 42
+  minOosTrades: 60
+  minFoldPositiveShare: 0.6
+  objective: sortino
+  stressCostMultiplier: 1.5
+  holdoutDays: 180
+  promotionMargin: 0.1
+  minPsrOos: 0.9
+  dsrIsGate: false
+  maxFoldNetShare: 0.5   # ein einzelner Fold darf höchstens die Hälfte des OOS-Nettos tragen
+  pooled: true           # gehört zu den 30 Symbolen — siehe Kopf dieser Datei
+  # Korb je Fold (Vorgabe point_in_time): Für jeden Fold wird der Korb zu
+  # dessen OOS-Beginn aus `universe.candidates` gewählt — mit Daten bis dahin,
+  # Hysterese Fold für Fold, dieselbe Auswahl wie nachts. IS-Suche und OOS
+  # laufen auf diesem Korb, der Maßstab folgt mit. `fixed` wäre der Korb von
+  # heute rückwärts — das kippte am 09.09. ein Urteil (0,71 / −0,18 / 0,04 je
+  # Endkorb). `fetch` lädt dafür den ganzen Pool in voller Tiefe.
+  foldMembership: point_in_time
+
+costs:
+  slippageBps: 3
+  spreadBps: 2
+  secFeeRate: 0.0000278
+  finraTafPerShare: 0.000166
+  finraTafMax: 8.3
+  cryptoTakerPct: 0.25
+  shortBorrowAnnualPct: 1
+
+engine:
+  reconcileEverySec: 60
+  barGraceSec: 4
+  maxDataAgeSec: 180
+  maxConsecutiveErrors: 5
+  onOrphan: halt
+
+notify:
+  telegram: false
+
+status:
+  httpPort: 0
+
+paths:
+  home: ./var-probe
+
+# ── Unterschied zu config/platform.yaml ──────────────────────────────────────
+#   optimizer.lookbackDays:  1400 ⇒ 2900   (Messfenster reicht in den
+#                                           Bärenmarkt 2022 hinein; die
+#                                           IEX-Tageshistorie beginnt
+#                                           2020-07-27, mehr geht nicht)
+#   paths.home:              ./var ⇒ ./var-probe
+# Alles andere ist Zeichen für Zeichen die Produktion.
