@@ -35,6 +35,8 @@ on:
           - config/basis-1440-v3.yaml
           - config/diagnose-fenster.yaml
           - config/diagnose-kurzlaeufer.yaml
+          - config/vigilant-1440.yaml
+          - config/sleeves-1440.yaml
           - config/crypto-60.yaml
           - config/crypto-1440.yaml
       samples:
