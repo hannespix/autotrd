@@ -147,7 +147,24 @@ optimizer:
   strategies: [trend_donchian, momentum_pullback, mean_reversion, cross_sectional_momentum, regime_allocation]
   # Fenster wie in config/equity-1440.yaml, das vier Halbjahre lang gemessen
   # hat — sonst vergliche man Plattform und Erkundung nie miteinander.
-  lookbackDays: 1400
+  # 2900 Tage, nicht 1400 (12.09.2026, Lauf #42). Mit 1400 begannen die Daten
+  # am 2022-11-10 — dem Tiefpunkt des Bärenmarkts 2022; danach messe der Lauf
+  # fast nur Aufschwung. Das hat nicht bloß die Latte des Gates `beats_market`
+  # auf einen SPY-Sharpe von 1.17 gehoben (in allen anderen gemessenen Fenstern
+  # 0.46–0.63), es hat den FALSCHEN KANDIDATEN ausgewählt:
+  #
+  #   Fenster 1400 Tage (9 Folds):   csm  Sharpe  0.90 (bester), mp −0.32 (schlechtester)
+  #   Fenster 2900 Tage (18 Folds):  mp   Sharpe  0.64 (bester), csm 0.24 (vierter)
+  #
+  # Die Rangfolge selbst war ein Artefakt des Fensters. Wäre je ein Champion aus
+  # dem kurzen Fenster befördert worden, wäre es der Kandidat gewesen, der über
+  # einen vollen Zyklus zusammenbricht. 2900 Tage sind zugleich alles, was da
+  # ist (die IEX-Tageshistorie beginnt am 2020-07-27) und enthalten den
+  # Bärenmarkt 2022 mit 25.68 % Marktdrawdown — 18 statt 9 Folds, 1111 statt 555
+  # OOS-Tage. Die Messung wird dadurch strenger, nicht milder: Drei der fünf
+  # Familien fallen über den vollen Zyklus auf ein negatives Objective.
+  # Analyse: docs/wissen/analysen/2026-09-12-warum-nichts-gehandelt-wird.md
+  lookbackDays: 2900
   isDays: 365
   oosDays: 90
   stepDays: 90

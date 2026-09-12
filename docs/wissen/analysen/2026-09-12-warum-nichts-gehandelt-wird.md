@@ -62,6 +62,63 @@ Ein kurzes Fenster erzeugt dabei **vier** Symptome aus einer Ursache:
 Gegenprobe: `config/diagnose-fenster.yaml` — Zeichen für Zeichen die
 Produktion, nur `lookbackDays: 2900`. Lauf #42 vom 12.09.2026.
 
+### Ergebnis von Lauf #42 — die Vermutung war in ihrer Hauptaussage FALSCH
+
+Die Vermutung lautete: Das kurze Fenster setzt die Latte zu hoch, und über
+einen vollen Zyklus besteht `cross_sectional_momentum`. Das ist widerlegt.
+Über 18 Folds (2020-07-27 … 2026-09-11, 1111 OOS-Tage, SPY-MaxDD 25,68 %)
+bricht csm von Sharpe 0,90 auf **0,24** ein. Das Bullenfenster hat den
+Kandidaten nicht benachteiligt, es hat ihn **geschmeichelt**.
+
+Herausgekommen ist etwas Wichtigeres: **Das Fenster hat die Rangfolge
+umgedreht.**
+
+| Strategie | 1400 Tage (9 Folds) | 2900 Tage (18 Folds) | MaxDD lang | Netto lang |
+|---|---|---|---|---|
+| momentum_pullback | −0,32 (schlechtester) | **0,64 (bester)** | 6,67 % | +12,05 % |
+| cross_sectional_momentum | **0,90 (bester)** | 0,24 | 12,15 % | +5,97 % |
+| mean_reversion | 0,75 | 0,20 | 3,28 % | +2,04 % |
+| regime_allocation | 0,07 | negativ | 6,19 % | −0,26 % |
+| trend_donchian | 0,16 | negativ | 13,02 % | −7,38 % |
+| _SPY_ | _1,17_ | _0,61_ | _25,68 %_ | — |
+
+Wäre je ein Champion aus dem kurzen Fenster befördert worden, wäre es genau
+der Kandidat gewesen, der über einen vollen Zyklus zusammenbricht. Das ist
+der eigentliche Schaden: nicht eine zu hohe Latte, sondern eine **falsche
+Auswahl**. `config/platform.yaml` steht seit dem 12.09.2026 auf 2900 Tagen.
+
+### Was jetzt am nächsten dran ist — und warum es trotzdem nicht handelt
+
+`momentum_pullback` besteht über den vollen Zyklus **acht von zehn Gates**,
+darunter die beiden, an denen bisher alles scheiterte:
+
+- `beats_market` ✔ — Sharpe 0,64 gegen 0,61 des Marktes, bei 6,67 % eigenem
+  Drawdown gegen 25,68 % des Marktes. Ein Viertel des Marktrisikos bei
+  leicht besserem Ertrag je Risikoeinheit.
+- `probabilistic_sharpe_oos` ✔ — 0,910 über 1111 Beobachtungen.
+- dazu `oos_trades` (572), `oos_net_profit` (+3012), `stress_costs`
+  (+2194 bei Kosten ×1,5), `neighborhood_plateau`, `fee_share` (35,1 %).
+
+Es fällt an genau zwei Gates, und beide fragen dasselbe: **Beständigkeit.**
+
+- `fold_positive_share` 0,500 gegen 0,600 — 9 von 18 Quartalen positiv.
+- `fold_concentration` 0,647 gegen 0,500 — ein Quartal trägt 65 % des Nettos.
+
+Die Fold-Tabelle sagt, woher das kommt: Die Folds 1 bis 5 (Oktober 2021 bis
+Dezember 2022, der Bärenmarkt) sind ausnahmslos negativ oder leer; danach
+verdient die Strategie alles zurück. **Das ist kein Zufall und kein
+Parameterproblem — es ist die Bauart.** `risk.allowShort: false`, und alle
+fünf Familien sind long-only auf Aktien. In einem fallenden Markt verlieren
+sie alle gleichzeitig. Ein Gate, das 60 % positive Quartale verlangt, ist für
+eine reine Long-Aktien-Wette über ein Fenster mit Bärenmarkt strukturell
+unerreichbar.
+
+Damit ist die Lage klar beschrieben: Die Gates sind richtig, das Fenster ist
+jetzt richtig, und der Kandidatenkreis kann die Anforderung der Gates
+prinzipiell nicht erfüllen. **Es fehlt eine Renditequelle, die verdient,
+wenn Aktien fallen** — und ein Weg, mehrere solche Quellen gemeinsam zu
+messen. Genau das sind Ursache 3 und 4.
+
 ## Ursache 2 — Das System fährt mit angezogener Handbremse
 
 `risk.riskPerTradePct: 0,5` bei höchstens 4 Positionen. Ergebnis:

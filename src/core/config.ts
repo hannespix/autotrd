@@ -112,6 +112,82 @@ export const ConfigSchema = z.object({
       /** Drawdown-Sperre vom Equity-Hoch: Halt bis manuelles `resume`. */
       maxDrawdownPct: pct(90).default(10),
       allowShort: z.boolean().default(false),
+      /**
+       * Volatilitätsziel für das PORTFOLIO (risk/volziel.ts): Der Faktor
+       * skaliert das Sizing-BUDGET beider Semantiken (Risiko je Trade und
+       * Allokation) mit Ziel-Vola / realisierter Vola der eigenen
+       * Equity-Kurve. Die Deckel (`maxPositionPct`, `maxGrossExposurePct`,
+       * `maxPositions`, Bargeld) bleiben harte Obergrenzen — der Faktor
+       * hebelt keinen davon aus.
+       *
+       * `enabled: false` ist Vorgabe und heißt: Faktor 1,0, also exakt das
+       * Verhalten ohne dieses Feld. Das ist Absicht — eine Änderung am
+       * Sizing darf kein bestehendes Messergebnis still verschieben; wer sie
+       * einschaltet, registriert das vorher (§4a) und misst neu.
+       */
+      volTarget: z
+        .object({
+          enabled: z.boolean().default(false),
+          /** Zielschwankung des Depots in % p. a. */
+          zielVolPct: z.number().min(0.1).max(100).default(10),
+          /** Halbwertszeit der EWMA-Gewichte in Handelstagen. */
+          halbwertszeitTage: z.number().int().min(1).max(500).default(20),
+          /** Untere Grenze des Faktors. */
+          minFaktor: z.number().min(0).max(10).default(0.25),
+          /** Obere Grenze des Faktors — auch bei Vola 0 wird nie mehr skaliert. */
+          maxFaktor: z.number().min(0).max(10).default(2),
+          /** Darunter gilt Faktor 1,0 („Aufwärmphase") — geraten wird nicht. */
+          minBeobachtungen: z.number().int().min(1).max(2000).default(60),
+        })
+        .default({ enabled: false, zielVolPct: 10, halbwertszeitTage: 20, minFaktor: 0.25, maxFaktor: 2, minBeobachtungen: 60 })
+        .refine((v) => v.maxFaktor >= v.minFaktor, { message: 'risk.volTarget.maxFaktor muss ≥ minFaktor sein' }),
+      /**
+       * Notbremsen je STUFE (`alpha` = Alpha-Champion, `basis` = Basis-Stufe,
+       * core/basisTier.ts). Fehlt ein Wert, gilt der globale daneben — und
+       * fehlt der ganze Block, verhält sich alles wie bisher (ein Konto, eine
+       * Bremse). Die Werte einer Stufe entscheiden nur über die Positionen
+       * und Einstiege DIESER Stufe; Positionen ohne Stufe (Fallback-Strategie,
+       * adoptierter Bestand) bleiben beim globalen Wert.
+       *
+       * Warum es das gibt (§5a.16, V3): Die Tagesbremse 2 % stellt ein voll
+       * investiertes ETF-Depot an einem gewöhnlichen Minus-Tag glatt; bei
+       * einer Monatsstrategie kostet ein solcher Tag einen Monat
+       * Marktabwesenheit, und der Drawdown je Einheit Exposure wird dadurch
+       * SCHLECHTER (15,95 % gegen 12,06 %). Eine Bremse, die im gemessenen
+       * Normalfall auslöst, ist keine Sicherung.
+       *
+       * Was das NICHT ist: ein Weg, die Bremse global zu lockern. Jede Stufe
+       * trägt ihre eigene, vorher festgelegte Zahl, und die Konto-Bremse
+       * bleibt als letzter Halt darüber (risk/limits.ts, `kontoGrenzen`).
+       */
+      tiers: z
+        .object({
+          alpha: z
+            .object({ maxDailyLossPct: pct(50).optional(), maxDrawdownPct: pct(90).optional() })
+            .optional(),
+          basis: z
+            .object({ maxDailyLossPct: pct(50).optional(), maxDrawdownPct: pct(90).optional() })
+            .optional(),
+        })
+        .optional(),
+      /**
+       * Wiederaufbau einer Zielallokation nach einer Zwangs-Glattstellung
+       * (core/logic.ts). Nur für Wahlen mit Allokations-Sizing (Basis-Stufe):
+       * Wird ihr Buch von einer Notbremse glattgestellt, darf das Symbol am
+       * nächsten erlaubten Tag wieder aufgebaut werden, statt bis zum
+       * nächsten Entscheidungsfenster der Strategie zu warten (bei
+       * `regime_allocation` ein Monat, §5a.16).
+       *
+       * Vorgabe aus: Das ändert Entscheidungen und gehört vor dem Lauf
+       * registriert (§4a), nicht still in eine laufende Messung.
+       */
+      wiederaufbau: z
+        .object({
+          enabled: z.boolean().default(false),
+          /** Nach so vielen Kalendertagen verfällt ein Wiederaufbau-Ziel ungenutzt. */
+          maxAlterTage: z.number().int().min(1).max(60).default(5),
+        })
+        .default({ enabled: false, maxAlterTage: 5 }),
       pdt: z
         .object({
           /** Pattern-Day-Trader-Regel respektieren (unter minEquity max. maxDayTrades in 5 Handelstagen). */
@@ -129,6 +205,10 @@ export const ConfigSchema = z.object({
       maxDailyLossPct: 2,
       maxDrawdownPct: 10,
       allowShort: false,
+      // zod v4 reicht einen Default UNGEPRÜFT durch: Was hier fehlt, fehlt zur
+      // Laufzeit, obwohl der Typ es verspricht. Also jeden Unterblock nennen.
+      volTarget: { enabled: false, zielVolPct: 10, halbwertszeitTage: 20, minFaktor: 0.25, maxFaktor: 2, minBeobachtungen: 60 },
+      wiederaufbau: { enabled: false, maxAlterTage: 5 },
       pdt: { respect: true, minEquity: 25_000, maxDayTrades: 3 },
     }),
   strategy: z

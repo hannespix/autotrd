@@ -230,3 +230,8 @@ paths:
 #                                           2020-07-27, mehr geht nicht)
 #   paths.home:              ./var ⇒ ./var-probe
 # Alles andere ist Zeichen für Zeichen die Produktion.
+#
+# NACHTRAG 12.09.2026, nach Lauf #42: Das Ergebnis hat die Produktion
+# überzeugt — `config/platform.yaml` steht seitdem selbst auf 2900 Tagen.
+# Diese Datei unterscheidet sich seither NUR noch in `paths.home` und bleibt
+# als benannte Config des Laufs #42 stehen (docs/wissen/befunde.md).
