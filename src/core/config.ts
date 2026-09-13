@@ -274,6 +274,29 @@ export const ConfigSchema = z.object({
       /** Deflated Sharpe (In-Sample) zusätzlich als hartes Gate (sonst nur im Bericht). */
       dsrIsGate: z.boolean().default(false),
       /**
+       * Symbol, dessen Tagesrendite als RISIKOLOSER ZINS gilt — ein
+       * Geldmarktpapier (z. B. `BIL`, 1–3 Monate T-Bills). Gesetzt, rechnen
+       * `probabilistic_sharpe_oos` und `beats_market` auf Überschussrenditen
+       * (r − r_f derselben Tage), auf BEIDEN Seiten oder auf keiner.
+       *
+       * Warum es das gibt (Befund B2 vom 12.09.2026,
+       * `docs/wissen/vorregistrierung/2026-09-13-sharpe-gegen-zins.md`): Ein
+       * Sharpe gegen null ist Ertrag über NULL je Schwankung. Solange nur
+       * Aktien im Korb sind, ist das für alle gleich falsch. Mit einem
+       * Geldmarktpapier im Korb — BIL trägt bei `adjustment: all` genau den
+       * kurzen Zins und schwankt fast nicht — **wird Bargeld als Kante
+       * verbucht**. Das kippt, sobald das Volatilitätsziel einen solchen
+       * Sleeve hochskaliert.
+       *
+       * Vorgabe `null` = wie bisher, sr0 = 0. Bewusst so: Eine stille
+       * Umstellung verschöbe alle bisherigen Messergebnisse, ohne dass ein
+       * Bericht es sagt. Fehlt die Reihe (Symbol nicht geladen, zu viele
+       * Lücken), fällt die Rechnung auf null zurück — und die Notiz des
+       * Gates sagt es laut. Das Symbol muss mitgeladen werden; es gehört
+       * dafür in `universe.candidates`/`universe.symbols`.
+       */
+      riskFreeSymbol: z.string().min(1).nullable().default(null),
+      /**
        * Höchstanteil des OOS-Nettos, den EIN einzelner Fold tragen darf.
        *
        * Die Lücke, die das schließt: Der TSLA-Champion vom 07.09. bestand
@@ -398,6 +421,60 @@ export const ConfigSchema = z.object({
        * Kein Tor: Der Korb ist Teil der Vorregistrierung, nicht der Bewertung.
        */
       basisUniverse: z.array(z.string().min(1)).max(50).default([]),
+      /**
+       * Ensembles: mehrere Sleeves als EINE Einheit, gemessen in EINER
+       * Portfolio-Simulation über dieselben Folds, mit denselben Kosten,
+       * demselben Stress und durch dieselben zehn Alpha-Gates
+       * (`optimize/ensemble.ts`, Vorregistrierung
+       * `docs/wissen/vorregistrierung/2026-09-12-ensemble.md`).
+       *
+       * Warum es das gibt: Der Optimierer messe jede Familie EINZELN und
+       * verwerfe jede EINZELN. `momentum_pullback` hat Trades und Ertrag,
+       * aber keine Beständigkeit (`fold_positive_share` 0,500,
+       * `fold_concentration` 0,647); `vigilant_allocation` hat Beständigkeit,
+       * aber 27 statt 60 Trades. Genau die zwei Mängel, die diese Gates
+       * messen, bessert Diversifikation mechanisch — wenn die Quellen
+       * wirklich unabhängig sind. Sind sie es nicht, besteht das Ensemble
+       * nicht, und das ist die richtige Antwort.
+       *
+       * KEINE dritte Latte (§0.9): Ein Ensemble ist ein KANDIDAT für die
+       * bestehende Alpha-Latte. Kein Gate, keine Schwelle wird dafür
+       * angefasst, und es gibt keine Suche — Zusammensetzung, Parameter und
+       * Gewichtsregel stehen vor dem Lauf fest. Die Gewichtsregel ist eine
+       * REGEL, kein Parameter: `equal` oder `inverse_vol` (Anteil ∝ 1/σ über
+       * ein Fenster von 60 Handelstagen; die 60 sind vorregistriert und
+       * stehen als Konstante im Code, nicht hier).
+       */
+      ensembles: z
+        .array(
+          z.object({
+            /** Name im Bericht und im Journal — je Config eindeutig. */
+            label: z.string().min(1),
+            /** `equal`: jeder Sleeve derselbe Anteil. `inverse_vol`: Anteil ∝ 1/σ der eigenen Renditen (Fenster 60 Handelstage, fest). */
+            weighting: z.enum(['equal', 'inverse_vol']).default('equal'),
+            sleeves: z
+              .array(
+                z.object({
+                  strategy: z.string().min(1),
+                  /** Vorregistrierte Abweichungen von den Strategie-Defaults; müssen im `paramSpace` liegen. */
+                  params: z.record(z.string(), z.number()).default({}),
+                  label: z.string().min(1).optional(),
+                  /**
+                   * `korb`: der liquiditätsgewählte Korb je Fold der Einheit
+                   * (Punkt-in-Zeit, wie jeder Aktien-Kandidat). `fixed`: genau
+                   * die Symbole aus `symbols` — die Bühne, die ein defensiver
+                   * Sleeve braucht, weil der nach Dollarumsatz rangierte Korb
+                   * bauartbedingt kein defensives Papier enthält (Lauf #43).
+                   */
+                  universe: z.enum(['korb', 'fixed']).default('korb'),
+                  symbols: z.array(z.string().min(1)).max(50).default([]),
+                }),
+              )
+              .min(2),
+          }),
+        )
+        .max(8)
+        .default([]),
     })
     .default({
       strategies: ['trend_donchian', 'momentum_pullback', 'mean_reversion'],
@@ -416,12 +493,14 @@ export const ConfigSchema = z.object({
       promotionMargin: 0.1,
       minPsrOos: 0.9,
       dsrIsGate: false,
+      riskFreeSymbol: null,
       maxFoldNetShare: 0.5,
       pooled: false,
       foldMembership: 'point_in_time',
       fixedCandidates: [],
       basis: { minDrawdownReduction: 0.25, minSharpeRatio: 0.9, maxCostShare: 0.1, positionPct: 20 },
       basisUniverse: [],
+      ensembles: [],
     }),
   costs: z
     .object({
@@ -490,6 +569,10 @@ export type OptimizerConfig = Config['optimizer'];
 export type FixedCandidateConfig = OptimizerConfig['fixedCandidates'][number];
 /** Schwellen der Basis-Latte (`optimizer.basis`). */
 export type BasisConfig = OptimizerConfig['basis'];
+/** Eine Ensemble-Einheit (`optimizer.ensembles`) — mehrere Sleeves, EINE Simulation, dieselben zehn Gates. */
+export type EnsembleConfig = OptimizerConfig['ensembles'][number];
+/** Ein Sleeve einer Ensemble-Einheit. */
+export type SleeveConfig = EnsembleConfig['sleeves'][number];
 /** Rohform VOR den Defaults — was eine YAML-Datei oder ein Test hinschreibt. */
 export type ConfigInput = z.input<typeof ConfigSchema>;
 export type OptimizerInput = NonNullable<ConfigInput['optimizer']>;
@@ -592,6 +675,87 @@ export function parseConfig(raw: unknown): Config {
           `optimizer.basisUniverse außerhalb des Kandidatenpools (universe.candidates ∪ universe.symbols): ${fremd.join(', ')} — ` +
             'der Basis-Korb muss aus dem Pool stammen, den nur ein Commit ändert.',
         );
+      }
+    }
+  }
+  // Der Geldmarkt der Zinsrechnung muss geladen werden können: `fetch` lädt
+  // nur, was im Pool steht (app.ts, `fetchSymbols`). Ein Symbol, dessen Bars
+  // nie ankommen, fällt zur Laufzeit auf „ohne Zins" zurück — laut, aber erst
+  // nach dem Lauf. Hier ist es billiger.
+  if (cfg.optimizer.riskFreeSymbol !== null) {
+    cfg.optimizer.riskFreeSymbol = normalizeUserSymbol(cfg.optimizer.riskFreeSymbol, cfg.universe.assetClass);
+    if (cfg.universe.candidates && !cfg.universe.candidates.includes(cfg.optimizer.riskFreeSymbol)) {
+      throw new ConfigError(
+        `optimizer.riskFreeSymbol ${cfg.optimizer.riskFreeSymbol} steht nicht im Kandidatenpool (universe.candidates ∪ universe.symbols) — ` +
+          'ohne Bars gibt es keine Zinsreihe, und die Gates rechneten still weiter gegen null.',
+      );
+    }
+  }
+  // Ensembles: Die Zusammensetzung IST die Vorregistrierung, also muss sie
+  // eindeutig sein. Jede Regel hier schließt eine stille Mehrdeutigkeit aus,
+  // die hinterher wie ein Messergebnis aussähe.
+  const ensembleLabels = new Set<string>();
+  for (const e of cfg.optimizer.ensembles) {
+    if (ensembleLabels.has(e.label)) {
+      throw new ConfigError(`optimizer.ensembles: das Label „${e.label}" kommt zweimal vor — Ensembles werden im Bericht und im Journal über ihr Label geführt.`);
+    }
+    ensembleLabels.add(e.label);
+    // Eine Strategie je Ensemble höchstens einmal: `korbSchluessel` (core/logic.ts)
+    // trennt die Sleeves zwar schon über die Parameter, aber die Zurechnung von
+    // Trades und Netto im Bericht läuft über die Strategie-ID — zweimal dieselbe
+    // ID hieße, zwei Sleeves nicht mehr auseinanderhalten zu können.
+    const ids = e.sleeves.map((s) => s.strategy);
+    const doppelt = ids.filter((id, i) => ids.indexOf(id) !== i);
+    if (doppelt.length > 0) {
+      throw new ConfigError(
+        `optimizer.ensembles „${e.label}": die Strategie ${[...new Set(doppelt)].join(', ')} steht mehrfach in den Sleeves — ` +
+          'Beitrag und Trades je Sleeve werden über die Strategie-ID zugerechnet und wären dann nicht trennbar.',
+      );
+    }
+    // Höchstens EIN Sleeve auf dem liquiditätsgewählten Korb: Zwei würden sich
+    // um dieselben Symbole streiten, und ein Symbol kann in einer Simulation
+    // nur EINE Strategie tragen (`SimInput.strategyFor`).
+    const aufKorb = e.sleeves.filter((s) => s.universe === 'korb');
+    if (aufKorb.length > 1) {
+      throw new ConfigError(
+        `optimizer.ensembles „${e.label}": ${aufKorb.length} Sleeves auf dem Korb (universe: korb) — ` +
+          'ein Symbol kann in einer Simulation nur eine Strategie tragen; höchstens ein Sleeve darf den Korb bekommen.',
+      );
+    }
+    const belegt = new Map<string, string>();
+    for (const s of e.sleeves) {
+      if (s.universe === 'korb') {
+        if (s.symbols.length > 0) {
+          throw new ConfigError(`optimizer.ensembles „${e.label}" · ${s.strategy}: universe: korb UND symbols gesetzt — der Korb je Fold kommt aus universe.candidates, nicht aus einer Liste.`);
+        }
+        continue;
+      }
+      if (s.symbols.length === 0) {
+        throw new ConfigError(`optimizer.ensembles „${e.label}" · ${s.strategy}: universe: fixed ohne symbols — ein Sleeve ohne Universum misst nichts.`);
+      }
+      s.symbols = [...new Set(s.symbols.map((x) => normalizeUserSymbol(x, cfg.universe.assetClass)))];
+      for (const sym of s.symbols) {
+        const anderer = belegt.get(sym);
+        if (anderer !== undefined) {
+          throw new ConfigError(
+            `optimizer.ensembles „${e.label}": ${sym} steht bei ${anderer} UND bei ${s.strategy} — ` +
+              'ein Symbol gehört genau einem Sleeve; wer es zweimal nennt, misst nicht, was er zu messen glaubt.',
+          );
+        }
+        belegt.set(sym, s.strategy);
+      }
+      // Dieselbe Regel wie für `basisUniverse` (Prüfbefund M11): Was gehandelt
+      // wird, stammt aus dem Pool, den nur ein Commit ändert — und `fetch` lädt
+      // nur, was im Pool steht.
+      if (cfg.universe.candidates) {
+        const pool = new Set(cfg.universe.candidates);
+        const fremd = s.symbols.filter((x) => !pool.has(x));
+        if (fremd.length > 0) {
+          throw new ConfigError(
+            `optimizer.ensembles „${e.label}" · ${s.strategy}: ${fremd.join(', ')} steht nicht im Kandidatenpool ` +
+              '(universe.candidates ∪ universe.symbols) — der Sleeve-Korb muss aus dem Pool stammen, den nur ein Commit ändert, sonst lädt `fetch` seine Bars nicht.',
+          );
+        }
       }
     }
   }
