@@ -23,7 +23,7 @@ import { describe, expect, it } from 'vitest';
 import { ALPHA_STUFE, BASIS_STUFE, grenzenFuer, stufeOf } from '../../src/risk/limits.ts';
 import type { RiskConfig } from '../../src/core/config.ts';
 import { ConfigSchema } from '../../src/core/config.ts';
-import { simulateWindow } from '../../src/optimize/walkForward.ts';
+import { simulateKorbWindow, simulateWindow } from '../../src/optimize/walkForward.ts';
 import { OHNE_BREMSEN } from '../../src/core/types.ts';
 import { msFromET } from '../../src/core/time.ts';
 import { barsMap, baseConfig, strategyOf } from '../backtest/helpers.ts';
@@ -104,24 +104,68 @@ describe('simulateWindow reicht die Stufe an den Simulator durch', () => {
         return { trades: [], equity: [], dailyReturns: [], metrics: {} as never, finalEquity: 10_000, notes: [], bremsen: OHNE_BREMSEN };
       },
     });
-    // Gemessen am 13.09.2026 (#58): Mit `other` und einer Basis-Bremse von 5 %
-    // rechnete die KONTO-Bremse mit der lockersten Stufe (kontoGrenzen), und
-    // das Alpha lief plötzlich gegen 5 % statt 2 % — trend_donchian sprang
-    // von 5 auf 6 Gates, ohne dass sich an ihm etwas geändert hätte.
+    // KORREKTUR (Prüferbefund M1): Die erste Begründung hier war falsch.
+    // `other` IST geschützt — `grenzenFuer(risk,'other')` liefert die
+    // globalen Werte, und `test/core/stufenbremse.test.ts` prüft genau das.
+    // Die Vorgabe muss trotzdem `alpha` sein: Namensgleichheit mit
+    // `stufeOf('champion')`, und eine künftige eigene `tiers.alpha`-Latte
+    // wäre als `other` wirkungslos — ohne Fehlermeldung.
     expect(gesehen).toBe('alpha');
     expect(gesehen).toBe(ALPHA_STUFE);
   });
 
-  it('WÄCHTER: `alpha` behält bei gesetzter Basis-Bremse seine eigene Latte — `other` nicht', () => {
+  it('WÄCHTER: eine eigene `tiers.alpha`-Latte wirkt NUR mit der Stufe `alpha` — als `other` bliebe sie stumm', () => {
     const risk = riskMitStufen();
-    // Die Basis ist auf 5 %/30 % gelockert. Das Alpha trägt null/null und
-    // erbt damit die globalen 2 %/10 % — aber NUR, wenn seine Positionen die
-    // Stufe `alpha` tragen. Als `other` bekäme es dieselben Zahlen, verlöre
-    // aber jede Möglichkeit, je eine eigene Latte zu bekommen.
+    // Ohne eigene Alpha-Latte sind `alpha` und `other` gleichwertig: beide
+    // erben die globalen 2 %/10 %. Der Unterschied entsteht erst, wenn das
+    // Alpha eine eigene Latte bekommt — und dann ist er scharf.
     expect(grenzenFuer(risk, ALPHA_STUFE)).toEqual({ maxDailyLossPct: 2, maxDrawdownPct: 10 });
     const mitAlphaLatte: RiskConfig = { ...risk, tiers: { ...risk.tiers, alpha: { maxDailyLossPct: 1, maxDrawdownPct: 4 } } };
     expect(grenzenFuer(mitAlphaLatte, ALPHA_STUFE)).toEqual({ maxDailyLossPct: 1, maxDrawdownPct: 4 });
     // Dieselbe Config, Stufe `other`: die Latte des Alpha bleibt wirkungslos.
     expect(grenzenFuer(mitAlphaLatte, 'other')).toEqual({ maxDailyLossPct: 2, maxDrawdownPct: 10 });
+  });
+});
+
+/*
+ * Prüferbefund M3 (13.09.2026): Der Ensemble-Pfad hatte dasselbe Loch wie
+ * `simulateWindow`, 55 Zeilen darunter — `Wahl` kannte kein `stufe`, und
+ * `simulateKorbWindow` reichte die Wahl unverändert durch. Derselbe
+ * Parametersatz mass über `simulateWindow` als `alpha` und über das Ensemble
+ * als `other`: zwei Latten für eine Frage, latent bis jemand `risk.tiers`
+ * setzt. `config/ensemble-1440.yaml` und `config/sleeves-1440.yaml` sind
+ * aktive Configs.
+ */
+describe('simulateKorbWindow reicht die Stufe durch (Ensemble-Pfad)', () => {
+  const wahl = (stufe?: string) => ({
+    strategy: strategyOf({ id: 'x', timeframes: [1440], decide: () => ({ kind: 'hold' }) }),
+    params: {},
+    ...(stufe ? { stufe } : {}),
+  });
+  const einBar = barsMap({ AAA: [{ t: msFromET(2024, 1, 2, 9, 30), o: 100, h: 100, l: 100, c: 100, v: 1_000 }] });
+  const fangen = (wahlFuer: (s: string) => ReturnType<typeof wahl> | null): string | undefined => {
+    let gesehen: string | undefined;
+    simulateKorbWindow({
+      symbol: 'Ensemble',
+      bars: einBar,
+      korb: einBar,
+      wahlFuer,
+      config: baseConfig({ timeframe: 1440 }),
+      initialEquity: 10_000,
+      range: { start: 0, end: Number.MAX_SAFE_INTEGER },
+      simulate: (input) => {
+        gesehen = input.strategyFor('AAA')?.stufe;
+        return { trades: [], equity: [], dailyReturns: [], metrics: {} as never, finalEquity: 10_000, notes: [], bremsen: OHNE_BREMSEN };
+      },
+    });
+    return gesehen;
+  };
+
+  it('WÄCHTER: ohne Stufe in der Wahl gilt `alpha` — wie in simulateWindow, nicht `other`', () => {
+    expect(fangen(() => wahl())).toBe('alpha');
+  });
+
+  it('eine ausdrückliche Stufe der Wahl gewinnt', () => {
+    expect(fangen(() => wahl('basis'))).toBe('basis');
   });
 });

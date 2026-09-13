@@ -387,7 +387,7 @@ export function simulateWindow(a: WindowSimArgs): SimResult {
 }
 
 /** Die Wahl je Symbol, wie `SimInput.strategyFor` sie liefert — Strategie, Parameter, Sizing-Semantik. */
-export type Wahl = { strategy: Strategy; params: Params; sizing?: SizingSpec | undefined };
+export type Wahl = { strategy: Strategy; params: Params; sizing?: SizingSpec | undefined; stufe?: string | undefined };
 
 export interface KorbSimArgs {
   /** Anzeigename der Einheit (Korb/Ensemble) — geht nur in Meldungen. */
@@ -429,7 +429,15 @@ export interface KorbSimArgs {
 export function simulateKorbWindow(a: KorbSimArgs): SimResult {
   const input: SimInput = {
     bars: a.korb,
-    strategyFor: (s) => (a.korb.has(s) ? a.wahlFuer(s) : null),
+    // Dieselbe Vorgabe wie in `simulateWindow`: Ein Ensemble-Sleeve ist ein
+    // Alpha-Kandidat. Ohne sie liefe er als `other`, während derselbe
+    // Parametersatz über `simulateWindow` als `alpha` misst — zwei Latten für
+    // eine Frage (Prüfbefund M3). Eine ausdrückliche Stufe der Wahl gewinnt.
+    strategyFor: (s) => {
+      if (!a.korb.has(s)) return null;
+      const w = a.wahlFuer(s);
+      return w === null ? null : { ...w, stufe: w.stufe ?? ALPHA_STUFE };
+    },
     config: a.config,
     initialEquity: a.initialEquity,
     range: { start: a.range.start, end: a.range.end },

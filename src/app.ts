@@ -212,12 +212,26 @@ export interface StrategyChoice {
   entryLockReason?: string | undefined;
 }
 
-/** Was die Engine je Symbol bekommt (`EngineDeps.strategyFor`). */
+/**
+ * Was die Engine je Symbol bekommt (`EngineDeps.strategyFor`) — und, mit
+ * demselben Objekt, der Simulator (`SimInput.strategyFor`).
+ *
+ * `source` und `stufe` tragen DENSELBEN Wert und stehen beide da, weil zwei
+ * Leser zwei Namen benutzen: Die Engine bildet `stufe: choice.source`
+ * (engine/engine.ts), der Simulator liest `sp.stufe` (backtest/simulator.ts).
+ * Fehlte `stufe`, liefe jede Position des CLI-Backtests als `other`, während
+ * dieselbe Wahl in der Engine ihre richtige Stufe trägt — zwei
+ * Entscheidungspfade für dieselbe Frage (§0.1). Gemessen am 13.09.2026:
+ * 3 877 $ Unterschied im selben Lauf, allein durch den Feldnamen. TypeScript
+ * hätte es nie gemeldet, weil `stufe` optional ist.
+ */
 export type EngineStrategyChoice = {
   strategy: Strategy;
   params: Params;
   sizing?: SizingSpec | undefined;
   source?: string | undefined;
+  /** Stufe der Notbremsen (`risk.tiers`) — immer gleich `source`. */
+  stufe?: string | undefined;
   entriesAllowed?: boolean | undefined;
   entryLockReason?: string | undefined;
 };
@@ -287,7 +301,8 @@ export function strategyForFn(app: App): (symbol: string) => EngineStrategyChoic
     if (!cache.has(symbol)) cache.set(symbol, strategyChoice(app, symbol));
     const c = cache.get(symbol) ?? null;
     if (!c) return null;
-    const out: EngineStrategyChoice = { strategy: c.strategy, params: c.params, source: c.source };
+    // `stufe` MUSS mit: Der Simulator liest sie unter diesem Namen (K1).
+    const out: EngineStrategyChoice = { strategy: c.strategy, params: c.params, source: c.source, stufe: c.source };
     if (c.sizing) out.sizing = c.sizing;
     if (c.entriesAllowed !== undefined) out.entriesAllowed = c.entriesAllowed;
     if (c.entryLockReason !== undefined) out.entryLockReason = c.entryLockReason;
