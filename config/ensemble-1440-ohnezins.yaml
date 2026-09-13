@@ -1,0 +1,242 @@
+# GEGENPROBE zu config/ensemble-1440.yaml: identisch, nur OHNE Zinsrechnung.
+#
+# Warum (13.09.2026, Lauf #46): In #46 haben sich zwei Dinge gleichzeitig
+# geändert — der Sharpe wird seither gegen den risikolosen Zins gerechnet
+# (`riskFreeSymbol: BIL`), UND der Fold-Plan ist ein anderer (`isDays: 550`
+# statt 365, weil vigilant_allocation 275 Bars Embargo braucht). Damit lässt
+# sich der Einbruch von momentum_pullback (Sharpe 0,64 in Lauf #42 auf −0,91
+# in #46) NICHT zuordnen: Zins oder Fenster?
+#
+# Diese Config hält alles fest und schaltet nur den Zins ab. Die Differenz zu
+# #46 ist dann sauber die Wirkung der Zinsrechnung; die Differenz zu #42
+# bleibt die Wirkung des Fold-Plans.
+#
+# Einziger Unterschied zu config/ensemble-1440.yaml: `riskFreeSymbol: null`.
+
+# Probe-Config: die Ensemble-Einheit E1 („Aktien plus Defensive").
+#
+# Vorregistrierung: docs/wissen/vorregistrierung/2026-09-12-ensemble.md
+# (VOR jeder Korrelationsmessung committet — dort stehen Zusammensetzung,
+# Gewichtsregeln, die sechs gezählten Versuche und die Erwartungen, an denen
+# das Ensemble scheitern kann). Dazu
+# docs/wissen/vorregistrierung/2026-09-12-drei-sleeves.md für die Parameter
+# jedes Sleeves.
+#
+# ── Was hier gemessen wird ────────────────────────────────────────────────
+#
+# EINE Einheit aus zwei Sleeves in EINER Portfolio-Simulation — ein Konto,
+# ein Positionslimit, eine Notbremse — über dieselben Folds, mit denselben
+# Kosten, demselben Stress ×1,5 und durch DIESELBEN zehn Alpha-Gates:
+#
+#   momentum_pullback    auf dem liquiditätsgewählten 30er-Korb je Fold
+#                        (Lauf #42: 8/10 Gates, Sharpe 0,64 gegen SPY 0,61,
+#                        fällt an fold_positive_share und fold_concentration)
+#   vigilant_allocation  auf 9 ETFs mit Geldmarkt-Pol
+#                        (Lauf #44: 9/10 Gates, einziger Kandidat, der
+#                        fold_positive_share nimmt, fällt an oos_trades 27/60)
+#
+# Der eine hat Ertrag ohne Beständigkeit, der andere Beständigkeit ohne
+# Trades. Diversifikation bessert genau diese zwei Mängel — wenn die Quellen
+# unabhängig sind. Sind sie es nicht, besteht die Einheit nicht, und das ist
+# die richtige Antwort. **Kein Gate, keine Schwelle wird dafür angefasst;
+# eine dritte Latte gibt es nicht (§0.9).**
+#
+# ── Warum in dieser Datei nur E1 steht und nicht E2/E3 ────────────────────
+#
+# Die Vorregistrierung nennt drei Zusammensetzungen. E2 legt
+# `index_reversal` auf SPY/QQQ/IWM/DIA, E3 zusätzlich `turn_of_month` auf
+# DIESELBEN vier ETFs — und `vigilant_allocation` führt SPY und QQQ bereits.
+#
+# In EINER Simulation trägt ein Symbol genau EINE Strategie
+# (`SimInput.strategyFor`), und live trägt es genau EINE Position mit EINEM
+# Stop und EINER positionsstabilen Client-ID (§0.6; zwei Zeitgeber auf
+# demselben Symbol waren im Vorgängersystem ein echter Short ohne Stop, §2).
+# E2 und E3 sind damit mit dem heutigen Kern NICHT als eine Einheit
+# messbar — `parseConfig` weist überlappende Sleeve-Universen ausdrücklich
+# ab, statt einem Sleeve stumm die Symbole des anderen wegzunehmen.
+#
+# Das ist ein BEFUND, keine Auslassung, und er gehört in den Bericht statt
+# in eine stille Lösung. Wer E2/E3 messen will, braucht entweder disjunkte
+# Universen (dann ist es eine neue Vorregistrierung, weil die Bühne eine
+# andere ist) oder mehrere Positionen je Symbol im Kern (dann sind Stop,
+# Exit und Idempotenz je Position zu klären — eine Owner-Entscheidung).
+#
+# Die Gewichtsregel steht auf `equal`. Die zweite vorregistrierte Regel
+# (`inverse_vol`, Fenster 60 Handelstage) ist derselbe Lauf mit einem
+# geänderten Wort — beide zusammen sind zwei der sechs gezählten Versuche.
+#
+# ── Warum isDays 550 und nicht 365 ───────────────────────────────────────
+#
+# Das Embargo der EINHEIT ist das Maximum über die Sleeves: Der Zwölf-Monats-
+# Horizont des 13612W macht `vigilant_allocation` 255 Bars Warmup, das
+# automatische Embargo also 275 Bars. Ein IS-Fenster von 365 Kalendertagen
+# hat ~252 Bars und wird davon GANZ verschluckt — das scheitert laut
+# (`ensembleEmbargoEnde`), es misst nicht still ein leeres Fenster. 550
+# Kalendertage sind ~379 Bars. Dieselbe Zahl steht aus demselben Grund in
+# `config/vigilant-1440.yaml`.
+#
+# ── Unterschied zur Produktion (config/platform.yaml) ────────────────────
+#
+#   broker.adjustment:    raw ⇒ all   (BIL schüttet monatlich aus; roh ist
+#                                      seine Kurve ein Sägezahn und das
+#                                      13612W etwa null statt positiv —
+#                                      Red-Team M7)
+#   universe.candidates:  + BIL       (ohne Geldmarkt-Pol gibt es den
+#                                      defensiven Sleeve nicht; `fetch` lädt
+#                                      nur, was im Pool steht)
+#   optimizer.isDays:     365 ⇒ 550   (Embargo der Einheit, siehe oben)
+#   optimizer.ensembles:  die Einheit E1
+#   paths.home:           ./var ⇒ ./var-ensemble
+#
+# Tore, Kosten und Risiko sind Zeichen für Zeichen die Produktion — die
+# Lehre aus Basis V3, wo dasselbe Sleeve unter zwei Regelwerken zwei
+# Ergebnisse hatte.
+
+broker:
+  mode: paper
+  feed: iex
+  adjustment: all
+
+universe:
+  assetClass: us_equity
+  symbols:
+    [SPY, QQQ, IWM, DIA,
+     AAPL, MSFT, NVDA, AMZN, META, GOOGL, TSLA, AVGO, AMD, NFLX,
+     CRM, ORCL, ADBE, INTC, CSCO, QCOM,
+     JPM, BAC, WFC,
+     XOM, CVX,
+     JNJ, PFE, UNH,
+     WMT, DIS]
+  benchmark: SPY
+  maxSymbols: 30
+  # Derselbe Pool wie die Produktion, plus BIL. Die Auswahl je Fold rangiert
+  # weiter nach Median-Dollarumsatz und wird BIL deshalb nie wählen (Rang 138
+  # von 141, Lauf #43) — der defensive Sleeve bekommt es über sein eigenes,
+  # vorregistriertes Universum, nicht über eine gebogene Auswahlregel.
+  candidates:
+    # Breite Index- und Sektor-ETFs
+    [SPY, QQQ, IWM, DIA, XLF, XLE, XLK, XLV, XLI, XLY, XLP, XLU, XLB, XLRE, XLC,
+     SMH, SOXX, EEM, EFA, GLD, SLV, TLT, HYG, LQD, IEF,
+     # Geldmarkt-Pol des defensiven Sleeves
+     BIL,
+     # Technologie und Halbleiter
+     AAPL, MSFT, NVDA, AMZN, META, GOOGL, GOOG, TSLA, AVGO, AMD, NFLX,
+     CRM, ORCL, ADBE, INTC, CSCO, QCOM, TXN, MU, AMAT, LRCX, KLAC, ADI, MRVL,
+     ANET, NOW, IBM, INTU, PANW, CRWD, DDOG, SNOW, UBER, ABNB, PYPL, SPOT, DELL,
+     # Finanzen
+     JPM, BAC, WFC, GS, MS, C, SCHW, BLK, AXP, V, MA, COF, USB, PNC, BRK.B,
+     # Energie
+     XOM, CVX, COP, SLB, EOG, PSX, MPC, OXY, VLO,
+     # Gesundheit
+     JNJ, PFE, UNH, ABBV, MRK, LLY, TMO, ABT, BMY, AMGN, GILD, CVS, MDT, ISRG, VRTX, REGN,
+     # Konsum
+     WMT, DIS, HD, MCD, NKE, SBUX, COST, TGT, LOW, PG, KO, PEP, PM, MO, MDLZ, CL,
+     # Industrie und Transport
+     BA, CAT, DE, GE, HON, LMT, RTX, UPS, UNP, MMM, FDX,
+     # Kommunikation und Versorger
+     T, VZ, TMUS, CMCSA, CHTR, NEE, DUK, SO,
+     # Fahrzeuge
+     F, GM]
+
+timeframe: 1440
+
+session:
+  noEntryFirstMin: 5
+  noEntryLastMin: 30
+  flattenBeforeCloseMin: 5
+
+# Zeichen für Zeichen das Regelwerk der Plattform.
+risk:
+  riskPerTradePct: 0.5
+  maxPositionPct: 20
+  maxPositions: 4
+  maxGrossExposurePct: 100
+  maxDailyLossPct: 2
+  maxDrawdownPct: 10
+  allowShort: false
+  pdt:
+    respect: true
+    minEquity: 25000
+    maxDayTrades: 3
+
+strategy:
+  id: trend_donchian
+  params: {}
+  allowWithoutChampion: false
+
+optimizer:
+  # Die gesuchten Familien laufen mit — die Einheit soll gegen sie und gegen
+  # SPY lesbar sein, nicht allein im Raum stehen.
+  strategies: [trend_donchian, momentum_pullback, mean_reversion, cross_sectional_momentum, regime_allocation]
+  lookbackDays: 2900
+  isDays: 550                  # Embargo der Einheit = 275 Bars (vigilant_allocation), siehe Kopf
+  oosDays: 90
+  stepDays: 90
+  embargoBars: 0
+  samples: 150
+  seed: 42
+  minOosTrades: 60
+  minFoldPositiveShare: 0.6
+  objective: sortino
+  stressCostMultiplier: 1.5
+  holdoutDays: 180
+  promotionMargin: 0.1
+  minPsrOos: 0.9
+  dsrIsGate: false
+  # Der risikolose Zins kommt aus BIL (1–3 Monate T-Bills, adjustment: all —
+  # roh ist seine Kurve ein Sägezahn). `probabilistic_sharpe_oos` und
+  # `beats_market` rechnen damit auf ÜBERSCHUSSrenditen, auf BEIDEN Seiten
+  # oder auf keiner. Für dieses Ensemble ist das nicht optional: Der defensive
+  # Sleeve HÄLT BIL, und gegen einen Zins von null gemessen wäre sein Ertrag
+  # je Schwankung geschenkt — Bargeld als Kante (Befund B2,
+  # docs/wissen/vorregistrierung/2026-09-13-sharpe-gegen-zins.md).
+  riskFreeSymbol: null
+  maxFoldNetShare: 0.5
+  pooled: true
+  foldMembership: point_in_time
+  ensembles:
+    - label: E1 Aktien plus Defensive
+      # `equal` ist Versuch 1 von 6; `inverse_vol` (Fenster 60 Handelstage,
+      # vorregistriert und im Code konstant) ist Versuch 2 — derselbe Lauf mit
+      # einem geänderten Wort. Beide werden gezählt, auch wenn nur einer
+      # besteht.
+      weighting: equal
+      sleeves:
+        - strategy: momentum_pullback
+          label: Aktien (Korb je Fold)
+          universe: korb
+          # Parameter der Erstmessung aus Lauf #42 — keine Suche, kein Gitter.
+          params: {}
+        - strategy: vigilant_allocation
+          label: Defensive (13612W, Geldmarkt-Pol)
+          universe: fixed
+          # Korb nach ROLLE besetzt, nicht nach Ergebnis (drei-sleeves.md).
+          # SPY und QQQ stehen auch im 30er-Korb — sie gehören hier dem
+          # defensiven Sleeve, und der Bericht nennt sie als „entzogen".
+          symbols: [SPY, QQQ, EFA, EEM, IEF, TLT, LQD, GLD, BIL]
+          params: {topN: 2, exitRank: 4, stopPct: 20}
+
+costs:
+  slippageBps: 3
+  spreadBps: 2
+  secFeeRate: 0.0000278
+  finraTafPerShare: 0.000166
+  finraTafMax: 8.3
+  cryptoTakerPct: 0.25
+  shortBorrowAnnualPct: 1
+
+engine:
+  reconcileEverySec: 60
+  barGraceSec: 4
+  maxDataAgeSec: 180
+  maxConsecutiveErrors: 5
+  onOrphan: halt
+
+notify:
+  telegram: false
+
+status:
+  httpPort: 0
+
+paths:
+  home: ./var-ensemble
