@@ -43,6 +43,7 @@ mit dem Wrapper aus ops/README.md):
 | `halt` | HALT-Datei setzen (`--reason <text>` als Notiz): keine neuen Einstiege; Exits, Stops, EOD-Flatten und die Notbremsen laufen weiter. |
 | `resume` | HALT-Datei entfernen. Einen Drawdown-Halt hebt nur `--ack-drawdown` auf: Die CLI setzt dazu einen RESUME-Marker im State-Verzeichnis, den die Engine beim nächsten Tick bzw. Start verarbeitet — Peak = aktuelle Equity, Journal-Eintrag `resume`. Tages-Halts enden von selbst und lassen sich nicht vorzeitig aufheben. |
 | `readiness` | Live-Reife aus dem Journal (VALIDIERUNG.md §8): fünf Kriterien, Ergebnis ERREICHT / NICHT ERREICHT, `--json` für Skripte. |
+| `rauchtest` | **Nur Papiergeld.** Eine einzige winzige Bracket-Order durch die ganze Kette: Vorbedingungen, Einstieg, Idempotenz, Fill, Beine beim Broker, Abgleich, Ausstieg (Storno vor eigenem Exit), Aufräumen — mit Urteil je Schritt und Rückgabecode ≠ 0, sobald etwas scheitert. `--symbol <sym>` (Default SPY), `--qty <n>` (Default 1), `--timeout <sek>` (Default 60), `--json`. Kein Beleg für eine Kante und kein Beitrag zur Live-Reife (§10). |
 | `profile` | Symbolprofil aus geschlossenen Tagesbars (`docs/wissen/symbolprofile.md`): je Symbol des Universums (Alpha-Korb ∪ Basis-Korb ∪ Benchmark) Anlageklasse, Trend, Rang im Korb, Volatilität, Momentum, Stop-Distanz, Liquidität, zugewiesene Taktik mit Quelle und Grund, erwartete Haltedauer (nur gemessen, sonst „unbekannt") und letzte Bewertung. Schreibt `profile.json`; `optimize` schreibt es am Ende jedes Laufs mit. **Anzeige und Erklärung — handeln tut nur `decide()` mit Champion oder Basis.** `--json` für Skripte. |
 
 ## 3. Wo was liegt (`AUTOTRD_HOME`, Default `./var`)
@@ -188,3 +189,67 @@ weil der Start reconciliert.
 | `Status-Endpunkt konnte nicht starten … EADDRINUSE` | Port `status.httpPort` belegt (zweite Instanz?). Die Engine läuft weiter, nur `/status` fehlt. `ss -ltnp | grep 8787`. |
 | Bars schließen zur falschen Minute, EOD-Flatten zu früh/spät | Systemuhr driftet. NTP aktivieren. Frühschluss-Tage (13:00) kennt die Engine nur mit Broker-Kalender (`fetch`) oder über den eingebauten NYSE-Fallback. |
 | Order abgelehnt: `insufficient qty`, `wash trade`, `qty must be integer` | Bruchstücke bei Aktien (Bracket braucht ganze Stücke — Sizing rundet ab), Gegenorder im selben Symbol, oder Konto zu klein für den Stop-Abstand (`Sizing: Stückzahl < 1`). Meist ist die Position für das Risiko-Budget zu klein — kein Bug, ein Größenproblem. |
+
+## 10. Rauchtest des Orderpfads
+
+Seit dem Umbau im September 2026 hat dieses System **keinen einzigen Trade
+ausgeführt**: Kein Kandidat besteht die Gates, also handelt die Engine nicht
+— ein zulässiges Ergebnis (CLAUDE.md §0.9). Der Preis dafür ist, dass der
+Orderpfad unerprobt ist. Ohne Rauchtest wäre der erste echte Trade zugleich
+der erste Test von Bracket-Order, Schutz-Stop beim Broker, Fill-Erkennung,
+Idempotenz, Abgleich, Storno-vor-Exit und 422-Behandlung. Genau das soll er
+nicht sein.
+
+```bash
+autotrd rauchtest --symbol SPY --qty 1            # Markt muss offen sein
+autotrd rauchtest --json                          # maschinenlesbar
+```
+
+**Acht Schritte, jeder mit eigenem Urteil im Protokoll:**
+
+| # | Schritt | Was geprüft wird |
+|---|---|---|
+| 1 | Vorbedingungen | Paper (dreifach), Markt offen und noch ≥ 15 Minuten bis zum Schluss (sonst Abbruch — **kein Warten**; ein Ausstieg, der erst am nächsten Morgen füllt, ließe die Position über Nacht stehen), Konto erreichbar und nicht gesperrt, Symbol handelbar, Bargeld reicht, PDT-Gate frei, **kein fremder Bestand und keine offene Order im Symbol**. |
+| 2 | Einstieg | EINE Bracket-Order (Markt + Stop-Bein + Ziel-Bein, GTC) über `qty` Stück. Kennung wie im Betrieb (`entryClientId`), am Broker mit Präfix `rauchtest-`. |
+| 3 | Idempotenz | Dieselbe Einheit ein zweites Mal — im laufenden Prozess und nach simuliertem Neustart (frisches Buch). `getOrderByClientId` findet die Order, es entsteht **keine zweite**. |
+| 4 | Fill | Warten mit Zeitlimit, Fill-Preis und Menge ins Protokoll. |
+| 5 | Beine | Stop **und** Ziel liegen tatsächlich beim Broker, mit Preis und Rundungsrichtung (Stops vom Kurs weg, Limits zum Kurs hin). |
+| 6 | Abgleich | Derselbe `reconcile()` wie in der Engine (mit erzwungenem `onOrphan: halt`, ohne `ensureStops`): Buch und Broker müssen sich einig sein. |
+| 7 | Ausstieg | Storno der Beine, dann eigener Exit mit positionsstabiler Kennung. Ein Storno-422 führt zum **Nachsehen**, nie zum Nachverkauf — das Protokoll sagt, ob der Fall eintrat. |
+| 8 | Aufräumen | Es wird **nachgesehen**, nicht angenommen: keine Position, keine offene Order dieses Laufs. Läuft auch nach einem Fehler (Exits werden nie gesperrt). |
+
+**Echtgeld ist dreifach gesperrt.** Das Kommando startet nur, wenn der
+aufgelöste Modus `paper` ist, `resolveMode` frisch ausgewertet ebenfalls,
+`broker.mode` auf `paper` steht, `ALPACA_ALLOW_LIVE` **nicht** 1 ist und der
+Key kein Live-Key (`AK…`) ist — ein Konto, das nur noch eine
+Umgebungsvariable von Echtgeld entfernt ist, ist kein Ort für einen Test.
+`rauchtest()` prüft Modus, Client-Modus und `broker.mode` ein zweites Mal,
+und `RauchtestClient.submitOrder` wirft, wenn der Client nicht auf Paper
+steht. Dort sind auch `cancelAllOrders`, `closePosition` und
+`closeAllPositions` gesperrt: Sie würden fremden Bestand im selben Konto
+anfassen.
+
+**Nichts davon zählt als Beleg.** Der Lauf schreibt nach
+`<home>/rauchtest/`: `journal.jsonl` und ein Protokoll
+`rauchtest-<zeit>.md`. State, Champion und Journal der Produktion bleiben
+unberührt. Im Journal steht der Trade als `note` mit
+`rauchtestKind: "trade_closed"` — `Journal.trades()` liest nur `trade_closed`,
+also kann `autotrd readiness` einen Rauchtest-Trade selbst dann nicht zählen,
+wenn jemand die Journale aneinanderhängt.
+
+**Wenn der Prozess mittendrin stirbt:** Die Position bleibt mit ihrem
+GTC-Stop-Bein beim Broker stehen (deshalb GTC und nicht DAY). `autotrd
+status` zeigt sie unter den Broker-Positionen; im Alpaca-Dashboard sind
+Order und Beine am Präfix `rauchtest-` zu erkennen. Schließen von Hand oder
+mit `autotrd flatten --yes` (das räumt allerdings das **ganze** Konto).
+
+**Von Hand, nie automatisch:** `.github/workflows/rauchtest.yml` hat nur
+`workflow_dispatch`, keinen Zeitplan. Der Workflow lehnt einen Live-Key ab,
+setzt `ALPACA_ALLOW_LIVE=0`, läuft nur gegen `config/config.example.yaml`
+(`broker.mode: paper`), begrenzt `qty` auf 1–5 und lädt Protokoll und
+Journal als Artefakt hoch. Er veröffentlicht nichts — kein Firestore, kein
+Champion.
+
+Ein roter Lauf heißt nicht zwingend „Fehler im Orderpfad": Auch „Markt
+geschlossen" und „Konto nicht erreichbar" enden mit Rückgabecode 1, bevor
+irgendeine Order entsteht. Das Protokoll nennt den Fall.

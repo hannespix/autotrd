@@ -40,3 +40,5 @@ venv/
 .idea/
 .vscode/
 *.swp
+var-probe/
+var-rauchtest/
