@@ -302,3 +302,118 @@ describe('waehleUniverse ist kausal — sie schneidet bei jetzt, statt es voraus
     expect(ohne.bewertung.find((b) => b.symbol === 'A')!.tage).toBe(9);
   });
 });
+
+/**
+ * Reservierte Plätze (`universe.reserve`).
+ *
+ * Warum es sie gibt: Lauf #49 hat gezeigt, dass die Liquiditätsordnung den
+ * Korb zu einer einzigen Long-only-Aktienwette macht — Kredit-ETFs schaffen
+ * es hinein (LQD Rang 12, HYG Rang 21), lange Treasuries und Gold nicht
+ * (TLT Rang 32 bei einem Schnitt bei 30, GLD Rang 56). Ein Korb, in dem
+ * jedes Papier dieselbe Wette ist, kann `fold_positive_share` über ein
+ * Fenster mit Bärenmarkt nicht bestehen, egal welche Strategie ihn handelt.
+ *
+ * Was hier NICHT geprüft wird, weil es nicht existieren darf: dass die
+ * Auswahl weiß, welches Papier „defensiv" ist. Sie weiß es nicht. Sie
+ * bekommt eine Symbolmenge und eine Zahl, und besetzt die Plätze mit
+ * derselben Umsatzregel wie alles andere. Vorregistriert in
+ * `docs/wissen/vorregistrierung/2026-09-13-korb-breite.md`.
+ */
+describe('waehleUniverse mit reservierten Plätzen', () => {
+  const vier = () =>
+    korb({
+      A: bars(10, 100, 1_000_000),
+      B: bars(10, 100, 900_000),
+      C: bars(10, 100, 800_000),
+      // Die Gruppe ist DÜNNER als die drei oben — ohne Reserve käme sie nie herein.
+      DEF1: bars(10, 100, 200_000),
+      DEF2: bars(10, 100, 100_000),
+      DEF3: bars(10, 100, 50_000),
+    });
+
+  it('ohne Reserve bleibt alles wie vorher — die Vorgabe ändert nichts', () => {
+    const a = waehleUniverse({ kandidaten: vier(), pflicht: [], bestand: [], bestandIstAuswahl: false, regeln, jetzt: JETZT });
+    expect(a.symbols).toEqual(['A', 'B', 'C']);
+  });
+
+  it('WÄCHTER: der reservierte Platz geht an das UMSATZSTÄRKSTE Mitglied der Gruppe, nicht an das erste der Liste', () => {
+    const a = waehleUniverse({
+      kandidaten: vier(),
+      pflicht: [],
+      bestand: [],
+      bestandIstAuswahl: false,
+      // Reihenfolge in der Liste absichtlich umgekehrt zur Umsatzordnung.
+      regeln: { ...regeln, reserve: [{ name: 'diversifizierer', symbols: ['DEF3', 'DEF2', 'DEF1'], plaetze: 1 }] },
+      jetzt: JETZT,
+    });
+    // DEF1 ist das liquideste der Gruppe — es bekommt den Platz, und der
+    // schwächste der drei dicken Werte (C) muss weichen.
+    expect(a.symbols).toEqual(['A', 'B', 'DEF1']);
+    expect(a.bewertung.find((b) => b.symbol === 'DEF1')!.status).toBe('reserviert');
+    expect(a.bewertung.find((b) => b.symbol === 'DEF1')!.grund).toContain('diversifizierer');
+  });
+
+  it('WÄCHTER: die Reserve schlägt den BESTAND — sonst reserviert sie nichts', () => {
+    // Genau der Zustand, den die Reserve auflösen soll: Der Korb ist voll mit
+    // Bestandswerten. Ohne Vorrang vor der Hysterese käme die Gruppe nie
+    // herein, und zwar Nacht für Nacht nicht.
+    const a = waehleUniverse({
+      kandidaten: vier(),
+      pflicht: [],
+      bestand: ['A', 'B', 'C'],
+      bestandIstAuswahl: true,
+      regeln: { ...regeln, reserve: [{ name: 'diversifizierer', symbols: ['DEF1', 'DEF2'], plaetze: 1 }] },
+      jetzt: JETZT,
+    });
+    expect(a.symbols).toContain('DEF1');
+    expect(a.symbols).toHaveLength(3);
+  });
+
+  it('WÄCHTER: ein Mitglied, das die Filter nicht besteht, bekommt keinen Platz — Reservieren macht nichts handelbar', () => {
+    const a = waehleUniverse({
+      kandidaten: korb({
+        A: bars(10, 100, 1_000_000),
+        B: bars(10, 100, 900_000),
+        C: bars(10, 100, 800_000),
+        // Unter minDollarVolumen (1 Mio.) UND unter minPreis — doppelt raus.
+        TOT: bars(10, 2, 1_000),
+      }),
+      pflicht: [],
+      bestand: [],
+      bestandIstAuswahl: false,
+      regeln: { ...regeln, reserve: [{ name: 'diversifizierer', symbols: ['TOT'], plaetze: 1 }] },
+      jetzt: JETZT,
+    });
+    expect(a.symbols).toEqual(['A', 'B', 'C']);
+    expect(a.bewertung.find((b) => b.symbol === 'TOT')!.status).toBe('abgelehnt');
+  });
+
+  it('ein Mitglied, das schon Pflicht ist, füllt seinen Platz mit — die Gruppe wird nicht doppelt bedient', () => {
+    const a = waehleUniverse({
+      kandidaten: vier(),
+      pflicht: ['DEF1'],
+      bestand: [],
+      bestandIstAuswahl: false,
+      regeln: { ...regeln, reserve: [{ name: 'diversifizierer', symbols: ['DEF1', 'DEF2'], plaetze: 1 }] },
+      jetzt: JETZT,
+    });
+    // DEF1 ist als Pflicht drin und belegt den einen reservierten Platz.
+    // DEF2 kommt NICHT zusätzlich herein — sonst hätte die Gruppe zwei.
+    // (`symbols` ist nach Umsatz sortiert, nicht nach Auswahlschritt: DEF1 ist
+    // das dünnste der drei und steht deshalb hinten, obwohl es Pflicht ist.)
+    expect(a.symbols).toEqual(['A', 'B', 'DEF1']);
+    expect(a.symbols).not.toContain('DEF2');
+  });
+
+  it('zwei Plätze gehen an die zwei umsatzstärksten Mitglieder', () => {
+    const a = waehleUniverse({
+      kandidaten: vier(),
+      pflicht: [],
+      bestand: [],
+      bestandIstAuswahl: false,
+      regeln: { ...regeln, reserve: [{ name: 'diversifizierer', symbols: ['DEF1', 'DEF2', 'DEF3'], plaetze: 2 }] },
+      jetzt: JETZT,
+    });
+    expect(a.symbols).toEqual(['A', 'DEF1', 'DEF2']);
+  });
+});

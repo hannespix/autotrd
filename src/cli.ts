@@ -357,7 +357,7 @@ async function cmdUniverse(app: App, cli: Cli): Promise<number> {
     return 0;
   }
   const client = requireClient(app);
-  const regeln = universeRegelnFuer(app.config.universe.maxSymbols);
+  const regeln = universeRegelnFuer(app.config.universe.maxSymbols, app.config.universe.reserve);
   // Bei einer Stichtags-Messung wählt auch das Universum nur mit Daten bis dahin.
   const now = app.asOf ?? Date.now();
   // Tagesbars sind billig (ein Abruf je Block, kein Minutenraster), deshalb darf der

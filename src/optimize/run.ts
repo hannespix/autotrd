@@ -1287,7 +1287,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
           const k = korbJeFold({
             kandidaten: einheit.kandidaten,
             zeiten,
-            regeln: universeRegelnFuer(cfg.universe.maxSymbols),
+            regeln: universeRegelnFuer(cfg.universe.maxSymbols, cfg.universe.reserve),
             pflicht: cfg.universe.benchmark ? [cfg.universe.benchmark] : [],
           });
           common.membership = k.at;
