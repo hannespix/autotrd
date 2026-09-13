@@ -1,6 +1,12 @@
 # Vorregistrierung: Basis-Allokation V4 — Notbremsen je Stufe
 
 **Datum:** 13.09.2026 · **These:** T5 (Fortsetzung) · **Status vor dem Lauf:** offen
+**Status nach den Läufen #54 und #55:** **nicht bestanden.** Erwartungen 2 und 3
+widerlegt. Weder Notbremsen je Stufe noch der Positionsdeckel erklären den
+Einbruch gegenüber V2 — V5 ist im Basis-Block zeichengleich mit V4. Die
+V3-Ursachenanalyse ist damit widerlegt und die Owner-Frage vom 10.09.
+gegenstandslos, solange die Ursache offen ist. Auswertung:
+`analysen/2026-09-13-basis-v4-v5-ursache-nicht-die-bremse.md`.
 **Folgt auf:** `2026-09-09-basis-allokation-v3.md` (nicht bestanden, #40/#41)
 
 ## Was V3 ergeben hat und warum das hier steht
