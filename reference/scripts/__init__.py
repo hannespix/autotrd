@@ -1,1 +1,0 @@
-"""Daytrading scripts helper modules."""

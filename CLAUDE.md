@@ -16,11 +16,11 @@ thematisch). Bezeichner im Code Englisch, Kommentare Deutsch.
 > alten Plattform bleiben; ihre Signal-Engine (Scan, Prognose, News, KI,
 > Charts) ist entfernt.
 >
-> **Altbestand ohne Funktion:** `reference/`, `supabase/`, `rules-test/`,
-> `ARCHITECTURE.md`, `MILESTONES.md`, `vitest.rules.config.ts` liegen noch im
-> Baum und werden von keinem Werkzeug geprüft. Die Löschung ist ein einzelner
-> Commit, der die ausdrückliche Freigabe des Owners braucht. Die Erkenntnisse
-> aus dem Vorgänger stehen in `docs/ARCHITEKTUR.md` und hier in §2.
+> **Altbestand gelöscht** (Owner-Freigabe 13.09.2026): `reference/`,
+> `supabase/`, `rules-test/`, `ARCHITECTURE.md`, `MILESTONES.md` und
+> `vitest.rules.config.ts` sind aus dem Baum entfernt. Die Erkenntnisse aus
+> dem Vorgänger stehen in `docs/ARCHITEKTUR.md` und hier in §2 — dort und
+> nirgends sonst.
 
 ---
 

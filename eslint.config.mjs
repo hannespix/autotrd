@@ -1,7 +1,6 @@
 // ESLint Flat Config für den Handelskern (src/ + test/) und die Betriebs-Skripte.
 // Die Workspaces functions/, frontend/ und shared/ werden über ihre eigenen
-// tsconfigs geprüft (npm run typecheck --workspace …); der Altbestand ohne
-// Funktion (reference/, supabase/, rules-test/) bleibt bis zur Löschung im Baum.
+// tsconfigs geprüft (npm run typecheck --workspace …).
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
@@ -13,15 +12,11 @@ export default tseslint.config(
       '**/lib/**',
       '**/var/**',
       '**/*.d.ts',
-      // eigene Workspaces (eigene tsconfig/Prüfung) und Altbestand
+      // eigene Workspaces (eigene tsconfig/Prüfung)
       'frontend/**',
       'functions/**',
       'shared/**',
-      'reference/**',
-      'rules-test/**',
       'scripts-ci/**',
-      'supabase/**',
-      'vitest.rules.config.ts',
     ],
   },
   js.configs.recommended,
