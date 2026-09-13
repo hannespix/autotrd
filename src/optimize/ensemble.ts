@@ -522,6 +522,8 @@ export interface EnsembleMessArgs {
   calendar?: Calendar | undefined;
   simulate: SimulateFn;
   assetClass: AssetClass;
+  /** Bars des Parksymbols — GETRENNT vom Korb (siehe `WindowSimArgs.parkBars`). */
+  parkBars?: BarSeriesLike | undefined;
   log?: ((msg: string) => void) | undefined;
 }
 
@@ -549,6 +551,8 @@ export function messeEnsemble(a: EnsembleMessArgs): EnsembleMessung {
     initialEquity: a.initialEquity,
     calendar: a.calendar,
     simulate: a.simulate,
+    // Am Korb vorbei: Die Parkbars gehören in kein `bars`/`korb` dieser Messung.
+    parkBars: a.parkBars,
   };
 
   /* ── 1. Solo-Läufe: die eigenen Renditen jedes Sleeves ── */

@@ -95,8 +95,23 @@ export function buildStrategyFor(a: {
   let alphaSymbole = 0;
   let basisSymbole = 0;
   let configSymbole = 0;
+  // Das Parksymbol der Treasury ist INFRASTRUKTUR: Der Takt lädt seine Bars
+  // (engine/sharedData.ts), aber keine Strategie darf es führen. Sonst lägen
+  // zwei Positionen mit zwei Herkünften in einem Symbol — zwei Besitzer einer
+  // Menge, zwei Exit-Regeln, und §0.6 hätte keine logische Einheit mehr.
+  // `parseConfig` weist den Fall schon ab (Parksymbol im Handelsuniversum);
+  // diese Zeile ist die Sicherung für den Weg dahin, auf dem Universum und
+  // Parksymbol aus ZWEI Dokumenten kommen (`meta/engineConfig` global,
+  // `users/{uid}.settings.auto` je Nutzer) und über Nacht auseinanderlaufen
+  // können. Sie kostet nichts und schließt die teuerste Lücke.
+  const parkSymbol = a.config.risk.cashParking?.symbol ?? null;
   for (const symbol of a.config.universe.symbols) {
     let choice: StrategyChoice | null = null;
+    if (symbol === parkSymbol) {
+      notes.push(`${symbol}: Parksymbol der Treasury (risk.cashParking) — Infrastruktur, wird von keiner Strategie gehandelt`);
+      map.set(symbol, null);
+      continue;
+    }
     const entry = a.champion?.symbols[symbol];
     const basisWahl = basisChoiceFor({ status: basis, symbol, alphaLeads: entry !== undefined });
     if (entry) {

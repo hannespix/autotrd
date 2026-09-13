@@ -163,6 +163,20 @@ export interface OptimizeRunInput {
    */
   candidateBarsFor?: ((symbol: string) => BarSeriesLike | null) | undefined;
   benchmark?: BarSeriesLike | undefined;
+  /**
+   * Bars des Parksymbols (`risk.cashParking.symbol`) — GETRENNT vom Korb.
+   *
+   * Sie werden NIE nach `bars`/`korb` gemischt: Aus dem Korb entstehen
+   * Zeitachse, Fold-Plan, Korb je Fold, Rangliste, `strategyFor` und der
+   * Maßstab; eine verirrte Bar hat den Fold-Plan schon einmal ins Leere
+   * gezogen (core/bars.ts, `anfangsStreuner`). Sie reisen ausschließlich in
+   * diesem Feld bis `SimInput.parkBars` durch.
+   *
+   * Fehlt das Feld bei eingeschaltetem Parken, parkt der Simulator NICHT und
+   * sagt es in seinen Notizen — der Lauf misst dann nichts (src/app.ts,
+   * `parkSeries`, füllt es für die CLI).
+   */
+  parkBars?: BarSeriesLike | undefined;
   calendar?: Calendar | undefined;
   /** State-Verzeichnis (champion.json, reports/, journal.jsonl). */
   home: string;
@@ -1044,7 +1058,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       riskFree = riskFreeFromBars({ symbol: rfSymbol, bars: b, assetClass: cfg.universe.assetClass });
       if (riskFree === null) riskFreeFehler = `Zinsreihe ${rfSymbol}: weniger als zwei Handelstage — alle Sharpe-Gates rechnen gegen null`;
     } catch (e) {
-      riskFreeFehler = `Zinsreihe ${rfSymbol}: keine Bars (${errMsg(e)}) — alle Sharpe-Gates rechnen gegen null; das Symbol gehört in universe.candidates, damit \`fetch\` es lädt`;
+      riskFreeFehler = `Zinsreihe ${rfSymbol}: keine Bars (${errMsg(e)}) — alle Sharpe-Gates rechnen gegen null; \`fetch\` lädt das Zinssymbol als Infrastruktur (src/app.ts, \`fetchSymbols\`), also fehlt hier der Bars-Cache`;
     }
     log(riskFree ? `Zinsreihe ${rfSymbol}: ${riskFree.perDay.size} Handelstage` : (riskFreeFehler ?? ''));
   }
@@ -1148,6 +1162,9 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
           calendar: input.calendar,
           simulate: deps.simulate,
           membership: undefined as Membership | undefined,
+          // Treasury: am Korb VORBEI. `bars` bleibt der Korb dieser Einheit —
+          // Zeitachse, Fold-Plan und Rangliste entstehen daraus.
+          parkBars: input.parkBars,
         }
       : null;
     let korbProtokoll: KorbProtokoll | null = null;
@@ -1335,6 +1352,8 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
             calendar: input.calendar,
             simulate: deps.simulate,
             assetClass: cfg.universe.assetClass,
+            // Am Korb vorbei — `alle` (Korb ∪ Sleeve-Symbole) bleibt unberührt.
+            parkBars: input.parkBars,
             log,
           });
           const wfa = messung.wfa;

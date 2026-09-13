@@ -231,6 +231,16 @@ export type EngineStrategyChoice = {
  * Config nur mit `strategy.allowWithoutChampion`.
  */
 export function strategyChoice(app: App, symbol: string): StrategyChoice | null {
+  // Das Parksymbol der Treasury ist INFRASTRUKTUR und für keine Strategie
+  // erreichbar (risk/parken.ts, Ausschließlichkeit). `parseConfig` weist es
+  // im Handelsuniversum schon ab — aber `engineConfig` erweitert das Universum
+  // NACH der Prüfung um den Korb der Basis-Stufe (aus champion.json, einer
+  // zweiten Quelle). Diese Zeile schließt genau diesen Weg; dieselbe Sicherung
+  // steht in `buildStrategyFor` der Plattform.
+  if (app.config.risk.cashParking.symbol === symbol) {
+    logger.warn('Parksymbol der Treasury — Infrastruktur, wird von keiner Strategie gehandelt', { symbol });
+    return null;
+  }
   const champ = app.champion;
   if (champ) {
     const entry = champ.symbols[symbol];
@@ -337,6 +347,52 @@ export function streamLimitViolation(config: Config): string | null {
 }
 
 /**
+ * INFRASTRUKTURSYMBOLE: geladen wie ein Korbmitglied, aber für keine
+ * Strategie erreichbar — sie stehen in keiner Liste, aus der `strategyFor`
+ * ein Symbol nimmt.
+ *
+ *  - `risk.cashParking.symbol` (Treasury, risk/parken.ts): Ohne seine Bars
+ *    gibt es keinen Kurs, ohne Kurs keine Umschichtung — der Simulator sagt
+ *    das laut und parkt nicht, der Lauf misst dann NICHTS. Es kommt auch bei
+ *    `enabled: false` mit: Ein abgeschaltetes Parken muss seine Position noch
+ *    bewerten können, um sie zu räumen (Rückzug, core/logic.ts).
+ *  - `optimizer.riskFreeSymbol`: die Zinsreihe der Sharpe-Gates. Bis zum
+ *    13.09.2026 musste sie im Kandidatenpool stehen, damit `fetch` sie lud —
+ *    und weil das Parksymbol dort gerade NICHT stehen darf, konnten beide nie
+ *    dasselbe Papier sein. Seit sie eigens geladen wird, dürfen sie es
+ *    (Vorgabe BIL), und dann gibt es zwischen Zins und geparkter Kasse keinen
+ *    Spread aus Laufzeit und Kostenquote.
+ *
+ * Bewusst NICHT in `allSymbols`: Das ist das Handelsuniversum (plus
+ * Benchmark) und speist Abonnement-Limit (`streamLimitViolation`) und
+ * `doctor`. Das Parksymbol fällt beim Limit als erstes weg (engine.ts,
+ * `streamSymbols`) — eine Treasury-Funktion, die dem Handelsbuch den
+ * Datenstrom nimmt, wäre die teuerste Form von „blockiert nie einen
+ * Einstieg".
+ */
+export function infrastrukturSymbole(config: Config): string[] {
+  const set = new Set<string>();
+  if (config.risk.cashParking.symbol !== null) set.add(config.risk.cashParking.symbol);
+  if (config.optimizer.riskFreeSymbol !== null) set.add(config.optimizer.riskFreeSymbol);
+  return [...set];
+}
+
+/**
+ * Infrastruktursymbole, deren Bars dieser Lauf wirklich BRAUCHT — für die
+ * Vorab-Prüfung von `optimize`. Ein eingeschaltetes Parken ohne Bars misst
+ * nichts, eine gesetzte Zinsreihe ohne Bars lässt alle Sharpe-Gates still
+ * gegen null rechnen. Ein konfiguriertes, aber abgeschaltetes Parksymbol
+ * gehört nicht dazu: Es wird geladen, aber nicht gebraucht.
+ */
+export function benoetigteInfrastruktur(config: Config): string[] {
+  const set = new Set<string>();
+  const park = config.risk.cashParking;
+  if (park.enabled && park.symbol !== null) set.add(park.symbol);
+  if (config.optimizer.riskFreeSymbol !== null) set.add(config.optimizer.riskFreeSymbol);
+  return [...set];
+}
+
+/**
  * Was `fetch` lädt: Universum und Benchmark — und den Kandidatenpool, wenn
  * der Optimierer den Korb je Fold wählt (dann braucht jeder Kandidat die
  * ganze Tiefe, nicht nur die 130 Tage der nächtlichen Auswahl).
@@ -350,6 +406,8 @@ export function fetchSymbols(config: Config): string[] {
   }
   // Der eigene Korb der Basis-Allokation: eigene Einheit, eigene Bars-Ladung.
   for (const s of config.optimizer.basisUniverse) set.add(s);
+  // Park- und Zinssymbol: geladen, nie gehandelt (siehe `infrastrukturSymbole`).
+  for (const s of infrastrukturSymbole(config)) set.add(s);
   return [...set];
 }
 
@@ -357,6 +415,21 @@ export function benchmarkSeries(app: App, closedBefore?: number): BarSeriesLike 
   const b = app.config.universe.benchmark;
   if (!b) return undefined;
   const s = seriesForTimeframe(app, b, closedBefore);
+  return s.length ? s : undefined;
+}
+
+/**
+ * Bars des Parksymbols für eine MESSUNG — sie gehen als `SimInput.parkBars`
+ * am Korb VORBEI in den Simulator, nie in `SimInput.bars`. Aus den Korb-Bars
+ * entstehen Zeitachse, Fold-Plan, Rangliste und Maßstab; eine verirrte Bar
+ * hat den Fold-Plan schon einmal ins Leere gezogen (core/bars.ts,
+ * `anfangsStreuner`). Das Parksymbol ist kein Korbmitglied und soll diese
+ * Tür nicht öffnen.
+ */
+export function parkSeries(app: App, closedBefore?: number): BarSeriesLike | undefined {
+  const sym = app.config.risk.cashParking.symbol;
+  if (sym === null) return undefined;
+  const s = seriesForTimeframe(app, sym, closedBefore);
   return s.length ? s : undefined;
 }
 

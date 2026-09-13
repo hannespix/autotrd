@@ -1064,8 +1064,10 @@ export class Engine {
    * Handelsbuch den Datenstrom nimmt, wäre die teuerste Form von „blockiert
    * nie einen Einstieg". Der Parkkurs kommt dann aus dem REST-Backfill —
    * ungenauer, aber folgenlos: Ein Geldmarktpapier bewegt sich am Tag um
-   * wenige Basispunkte. GRENZE: `src/app.ts` (`streamLimitViolation`,
-   * `fetchSymbols`) kennt das Parksymbol noch nicht — siehe Bericht.
+   * wenige Basispunkte. `fetchSymbols` (src/app.ts) lädt das Parksymbol seit
+   * 13.09.2026 als Infrastruktur mit; `streamLimitViolation` zählt es
+   * ABSICHTLICH nicht mit — das Limit gehört dem Handelsbuch, und genau
+   * deshalb fällt das Parksymbol hier als erstes aus dem Abonnement.
    */
   private streamSymbols(): string[] {
     const alle = this.allSymbols();

@@ -337,6 +337,8 @@ export function testConfig(
     benchmark?: string;
     candidates?: string[];
     maxSymbols?: number;
+    /** Rohform des Risiko-Blocks (z. B. `cashParking`) — geht durch `parseConfig`, also durch alle Prüfungen. */
+    risk?: Record<string, unknown>;
   } = {},
 ): Config {
   return parseConfig({
@@ -347,6 +349,7 @@ export function testConfig(
       ...(over.candidates ? { candidates: over.candidates } : {}),
       ...(over.maxSymbols ? { maxSymbols: over.maxSymbols } : {}),
     },
+    ...(over.risk ? { risk: over.risk } : {}),
     timeframe: over.timeframe ?? 1440,
     optimizer: {
       strategies: ['edge', 'noise'],

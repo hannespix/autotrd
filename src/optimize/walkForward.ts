@@ -56,6 +56,8 @@ export interface SimInput {
   range?: { start: Ms; end: Ms };
   calendar?: Calendar;
   costMultiplier?: number;
+  /** Bars des Parksymbols — GETRENNT vom Korb (siehe `WindowSimArgs.parkBars`). */
+  parkBars?: BarSeriesLike;
 }
 
 export type SimulateFn = (input: SimInput) => SimResult;
@@ -322,6 +324,17 @@ export interface WindowSimArgs {
    * Stückzahl wie die Engine; ohne Angabe gilt das Risiko-Budget.
    */
   sizing?: SizingSpec | undefined;
+  /**
+   * Bars des Parksymbols (`risk.cashParking.symbol`) — GETRENNT vom Korb und
+   * am Korb VORBEI in den Simulator.
+   *
+   * Warum getrennt: Aus `bars` entstehen Zeitachse, Fold-Plan, Korb je Fold,
+   * Rangliste, `strategyFor` und der Maßstab. Läge das Parksymbol darin,
+   * geriete es in alles davon — eine einzige verirrte Bar hat den Fold-Plan
+   * schon einmal ins Leere gezogen (core/bars.ts, `anfangsStreuner`). Das
+   * Parksymbol ist kein Korbmitglied; es reist ausschließlich in diesem Feld.
+   */
+  parkBars?: BarSeriesLike | undefined;
 }
 
 /**
@@ -341,6 +354,7 @@ export function simulateWindow(a: WindowSimArgs): SimResult {
   if (a.benchmark) input.benchmark = a.benchmark;
   if (a.calendar) input.calendar = a.calendar;
   if (a.costMultiplier !== undefined && a.costMultiplier !== 1) input.costMultiplier = a.costMultiplier;
+  if (a.parkBars) input.parkBars = a.parkBars;
   return a.simulate(input);
 }
 
@@ -368,6 +382,8 @@ export interface KorbSimArgs {
   korb: ReadonlyMap<string, BarSeriesLike>;
   /** Wahl je Symbol; `null` ⇒ dieses Symbol handelt in diesem Fenster nicht. */
   wahlFuer: (symbol: string) => Wahl | null;
+  /** Bars des Parksymbols — GETRENNT vom Korb (siehe `WindowSimArgs.parkBars`). */
+  parkBars?: BarSeriesLike | undefined;
 }
 
 /**
@@ -393,6 +409,7 @@ export function simulateKorbWindow(a: KorbSimArgs): SimResult {
   if (a.benchmark) input.benchmark = a.benchmark;
   if (a.calendar) input.calendar = a.calendar;
   if (a.costMultiplier !== undefined && a.costMultiplier !== 1) input.costMultiplier = a.costMultiplier;
+  if (a.parkBars) input.parkBars = a.parkBars;
   return a.simulate(input);
 }
 

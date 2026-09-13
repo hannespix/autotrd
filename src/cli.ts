@@ -25,7 +25,7 @@ import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { createDataStream, createTradeStream } from './alpaca/stream.ts';
-import { allSymbols, baseTimeframe, benchmarkSeries, bootstrap, engineConfig, fetchSymbols, heldSymbols, requireClient, seriesForTimeframe, strategyChoice, strategyForFn, streamLimitViolation, type App } from './app.ts';
+import { allSymbols, baseTimeframe, benchmarkSeries, benoetigteInfrastruktur, bootstrap, engineConfig, fetchSymbols, heldSymbols, parkSeries, requireClient, seriesForTimeframe, strategyChoice, strategyForFn, streamLimitViolation, type App } from './app.ts';
 import { simulate } from './backtest/simulator.ts';
 import { ConfigError, resolveMode } from './core/config.ts';
 import { ensureDir, Journal, writeJsonAtomic } from './core/journal.ts';
@@ -512,6 +512,8 @@ async function cmdBacktest(app: App, cli: Cli): Promise<number> {
     range,
     calendar: app.calendar,
     costMultiplier: num(cli.values.stress, 1),
+    // Treasury am Korb VORBEI: `bars` bleibt das Handelsuniversum (app.ts, `parkSeries`).
+    parkBars: parkSeries(app),
   });
   const traded = symbols.filter((s) => strategyFor(s) !== null);
   if (cli.values.json) {
@@ -551,6 +553,16 @@ async function cmdOptimize(app: App, cli: Cli): Promise<number> {
       return 1;
     }
   }
+  // Infrastruktursymbole, die dieser Lauf BRAUCHT (Parksymbol bei
+  // eingeschaltetem Parken, Zinssymbol). Ohne ihre Bars misst der Lauf still
+  // etwas anderes, als er zu messen vorgibt: nicht geparkt bzw. Sharpe gegen
+  // null. Lieber hier abbrechen als hinterher einen Bericht deuten.
+  for (const s of benoetigteInfrastruktur(app.config)) {
+    if (!app.store.load(s, baseTimeframe(app.config.timeframe)).length) {
+      out(`Keine Bars für das Infrastruktursymbol ${s} im Cache (Parksymbol/Zinsreihe) — zuerst \`autotrd fetch\`.`);
+      return 1;
+    }
+  }
   let initialEquity = num(cli.values.equity, 25_000);
   if (app.client && str(cli.values.equity) === undefined) {
     try {
@@ -587,6 +599,10 @@ async function cmdOptimize(app: App, cli: Cli): Promise<number> {
       }
     },
     benchmark: benchmarkSeries(app),
+    // Bars des Parksymbols — am Korb VORBEI (`SimInput.parkBars`), nie in
+    // `barsFor`/`candidateBarsFor` gemischt: Aus dem Korb entstehen Zeitachse,
+    // Fold-Plan, Rangliste und Maßstab.
+    parkBars: parkSeries(app),
     calendar: app.calendar,
     home: app.home,
     initialEquity,

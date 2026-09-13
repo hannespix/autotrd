@@ -1,0 +1,229 @@
+# Probe-Config: brachliegende Kasse in den Geldmarkt (Lauf 1 von 2)
+#
+# Vorregistrierung: docs/wissen/vorregistrierung/2026-09-13-kasse-in-den-geldmarkt.md
+# (VOR dem Lauf committet — dort stehen die sechs nicht verhandelbaren
+# Eigenschaften der Treasury-Funktion und die fünf Erwartungen, an denen sie
+# scheitern kann, darunter Erwartung 5: Kein Kandidat darf allein durch das
+# Parken plötzlich alle zehn Gates bestehen.)
+vorregistrierung: docs/wissen/vorregistrierung/2026-09-13-kasse-in-den-geldmarkt.md
+#
+# ── Wogegen die Differenz zu lesen ist ────────────────────────────────────
+#
+# **Gegen Lauf #46** (`config/ensemble-1440.yaml`, derselbe Fold-Plan,
+# dieselben Kosten, dieselben zehn Gates, `riskFreeSymbol: BIL`). Alles, was
+# hier anders ist, steht unten unter „Was gegenüber #46 anders ist" — es sind
+# genau zwei Dinge, und nur eines davon wirkt auf die Zahlen.
+#
+# ── Was die Differenz WIRKLICH enthält (Warnung des bauenden Agenten) ─────
+#
+# Die Differenz ist **nicht** eine reine Buchungsdifferenz. Sie ist
+#
+#     Parken  PLUS  eine kleine Sizing-Rückkopplung.
+#
+# Warum: Kauf und Verkauf des Parkpapiers kosten Spread, Slippage und
+# Gebühren, und der Zinsertrag des Papiers landet in der Equity. Die Equity
+# ist aber die Bemessungsgrundlage des Sizings (Risiko je Trade = Prozent der
+# EQUITY, Positionsdeckel = Prozent der Equity). Eine um x Prozent andere
+# Equity ergibt eine um x Prozent andere Stückzahl — und damit einen anderen
+# Trade, nicht denselben Trade mit anderer Kasse. Die Trades dieses Laufs
+# sind deshalb nicht bitgleich mit denen aus #46; die Abweichung ist klein,
+# aber sie ist da und sie ist echt. Wer „Δ = Wirkung des Parkens" schreibt,
+# schreibt genau genommen „Δ = Parken + Rückkopplung über die Equity".
+#
+# ── Was gegenüber #46 anders ist ──────────────────────────────────────────
+#
+#   risk.cashParking:     AUS ⇒ AN mit BIL, Band 5 Pp, Puffer 2 %
+#                         (die gemessene Änderung)
+#   universe.candidates:  − BIL                (siehe unten)
+#   optimizer.ensembles:  E1 entfällt          (siehe unten)
+#   paths.home:           ./var-ensemble ⇒ ./var-parken
+#
+# `broker.adjustment: all` steht schon in #46 und bleibt — es ist für diesen
+# Lauf nicht optional: In ROHEN Bars trägt der Kurs eines monatlich
+# ausschüttenden Geldmarkt-ETF den Zins NICHT, das Parken kostete dann
+# Gebühren und brächte nichts (src/risk/parken.ts, „Grenzen").
+#
+# ── Warum BIL aus dem Pool muss, und warum E1 damit entfällt ──────────────
+#
+# Das Parksymbol gehört der Treasury ALLEIN. Führte eine Strategie dasselbe
+# Symbol, lägen zwei Positionen mit zwei Herkünften darin — zwei Besitzer
+# einer Menge, zwei Exit-Regeln, und §0.6 (Idempotenz an der logischen
+# Einheit) hätte keine Einheit mehr. `parseConfig` weist das ab.
+#
+# Seine Bars braucht der Lauf trotzdem: Seit dem 13.09.2026 lädt `fetch` das
+# Park- UND das Zinssymbol als INFRASTRUKTUR (src/app.ts, `fetchSymbols`) —
+# geladen wie ein Korbmitglied, aber in keiner Liste, aus der eine Strategie
+# ein Symbol bekommt. Erst dadurch dürfen Park- und Zinssymbol dasselbe
+# Papier sein.
+#
+# Der Korb je Fold ist davon unberührt: BIL stand in der Liquiditätsrangliste
+# auf Platz 138 von 141 (Lauf #43) und wurde nie gewählt.
+#
+# E1 („Aktien plus Defensive") dagegen HÄLT BIL — als Geldmarkt-Pol des
+# defensiven Sleeves `vigilant_allocation`, so vorregistriert
+# (docs/wissen/vorregistrierung/2026-09-12-ensemble.md). Parken in BIL und E1
+# schließen einander deshalb aus. Die Zusammensetzung von E1 ist
+# vorregistriert und wird für diese Messung NICHT gebogen — also fällt E1 aus
+# diesem Lauf heraus, statt still verfälscht mitzulaufen. Der Vergleich mit
+# #46 gilt vollständig für die fünf gesuchten Familien und SPY; für E1 gibt
+# es in diesem Lauf keine Zahl. Das ist ein Befund, keine Auslassung.
+#
+# ── Was NICHT angefasst ist ───────────────────────────────────────────────
+#
+# Kein Gate, keine Schwelle, keine Kostenzeile, kein Fold-Plan
+# (`isDays: 550` bleibt, obwohl das Embargo von `vigilant_allocation` nicht
+# mehr gebraucht wird — ein anderer Fold-Plan machte den Vergleich mit #46
+# unmöglich). Das Volatilitätsziel bleibt aus; es ist Lauf 2.
+
+broker:
+  mode: paper
+  feed: iex
+  adjustment: all
+
+universe:
+  assetClass: us_equity
+  symbols:
+    [SPY, QQQ, IWM, DIA,
+     AAPL, MSFT, NVDA, AMZN, META, GOOGL, TSLA, AVGO, AMD, NFLX,
+     CRM, ORCL, ADBE, INTC, CSCO, QCOM,
+     JPM, BAC, WFC,
+     XOM, CVX,
+     JNJ, PFE, UNH,
+     WMT, DIS]
+  benchmark: SPY
+  maxSymbols: 30
+  # Derselbe Pool wie in #46, OHNE BIL (siehe Kopf). Der Korb je Fold ist
+  # davon unberührt: Die Auswahl rangiert nach Median-Dollarumsatz, und BIL
+  # stand dort auf Rang 138 von 141 (Lauf #43) — es wurde nie gewählt. Der
+  # Pool zählt jetzt 139 statt 140 Kandidaten; die 30 gewählten sind Stand
+  # für Stand dieselben.
+  candidates:
+    # Breite Index- und Sektor-ETFs
+    [SPY, QQQ, IWM, DIA, XLF, XLE, XLK, XLV, XLI, XLY, XLP, XLU, XLB, XLRE, XLC,
+     SMH, SOXX, EEM, EFA, GLD, SLV, TLT, HYG, LQD, IEF,
+     # KEIN BIL: Es ist in diesem Lauf Park- UND Zinssymbol, also
+     # Infrastruktur — `fetch` lädt es eigens, keine Strategie erreicht es
+     # (Kopf, Abschnitt „Was gegenüber #46 anders ist").
+     # Technologie und Halbleiter
+     AAPL, MSFT, NVDA, AMZN, META, GOOGL, GOOG, TSLA, AVGO, AMD, NFLX,
+     CRM, ORCL, ADBE, INTC, CSCO, QCOM, TXN, MU, AMAT, LRCX, KLAC, ADI, MRVL,
+     ANET, NOW, IBM, INTU, PANW, CRWD, DDOG, SNOW, UBER, ABNB, PYPL, SPOT, DELL,
+     # Finanzen
+     JPM, BAC, WFC, GS, MS, C, SCHW, BLK, AXP, V, MA, COF, USB, PNC, BRK.B,
+     # Energie
+     XOM, CVX, COP, SLB, EOG, PSX, MPC, OXY, VLO,
+     # Gesundheit
+     JNJ, PFE, UNH, ABBV, MRK, LLY, TMO, ABT, BMY, AMGN, GILD, CVS, MDT, ISRG, VRTX, REGN,
+     # Konsum
+     WMT, DIS, HD, MCD, NKE, SBUX, COST, TGT, LOW, PG, KO, PEP, PM, MO, MDLZ, CL,
+     # Industrie und Transport
+     BA, CAT, DE, GE, HON, LMT, RTX, UPS, UNP, MMM, FDX,
+     # Kommunikation und Versorger
+     T, VZ, TMUS, CMCSA, CHTR, NEE, DUK, SO,
+     # Fahrzeuge
+     F, GM]
+
+timeframe: 1440
+
+session:
+  noEntryFirstMin: 5
+  noEntryLastMin: 30
+  flattenBeforeCloseMin: 5
+
+# Zeichen für Zeichen das Regelwerk der Plattform — bis auf `cashParking`,
+# die EINE vorregistrierte Abweichung dieses Laufs.
+risk:
+  riskPerTradePct: 0.5
+  maxPositionPct: 20
+  maxPositions: 4
+  maxGrossExposurePct: 100
+  maxDailyLossPct: 2
+  maxDrawdownPct: 10
+  allowShort: false
+  # DIE Änderung, die gemessen wird (src/risk/parken.ts): Kapital, das keine
+  # Strategie braucht, liegt nicht unverzinst auf dem Konto, sondern in BIL.
+  # Band und Puffer sind die Vorgaben der Vorregistrierung (5 Pp / 2 %) — sie
+  # sind KEIN gesuchter Parameter und werden in diesem Lauf nicht variiert.
+  cashParking:
+    enabled: true
+    symbol: BIL
+    bandPct: 5
+    bufferPct: 2
+  pdt:
+    respect: true
+    minEquity: 25000
+    maxDayTrades: 3
+  # Das Volatilitätsziel bleibt AUS. Die Vorregistrierung verlangt zwei
+  # getrennte Läufe (Messplan): erst Parken allein, dann Parken plus
+  # Volatilitätsziel. Zwei Änderungen zugleich zu messen war der Fehler in
+  # Lauf #46; er wird nicht wiederholt.
+
+strategy:
+  id: trend_donchian
+  params: {}
+  allowWithoutChampion: false
+
+optimizer:
+  # Dieselben fünf Familien wie in #46 — sie SIND der Vergleich: Die Differenz
+  # je Familie ist die Wirkung des Parkens (plus der Sizing-Rückkopplung,
+  # siehe Kopf).
+  strategies: [trend_donchian, momentum_pullback, mean_reversion, cross_sectional_momentum, regime_allocation]
+  lookbackDays: 2900
+  isDays: 550                  # unverändert aus #46 — ein anderer Fold-Plan machte den Vergleich unmöglich
+  oosDays: 90
+  stepDays: 90
+  embargoBars: 0
+  samples: 150
+  seed: 42
+  minOosTrades: 60
+  minFoldPositiveShare: 0.6
+  objective: sortino
+  stressCostMultiplier: 1.5
+  holdoutDays: 180
+  promotionMargin: 0.1
+  minPsrOos: 0.9
+  dsrIsGate: false
+  # Der risikolose Zins kommt aus BIL — DEMSELBEN Papier, in dem die Kasse
+  # liegt. Genau das war vor dem 13.09.2026 unmöglich (das Zinssymbol musste
+  # im Kandidatenpool stehen, das Parksymbol durfte es nicht); seit beide als
+  # Infrastruktur geladen werden, geht es. Der Gewinn: Zwischen dem Zins, gegen
+  # den gemessen wird, und dem Papier, in dem die Kasse liegt, gibt es keinen
+  # Spread aus Laufzeit und Kostenquote. `probabilistic_sharpe_oos` und
+  # `beats_market` rechnen damit auf ÜBERSCHUSSrenditen, auf BEIDEN Seiten
+  # oder auf keiner (Befund B2,
+  # docs/wissen/vorregistrierung/2026-09-13-sharpe-gegen-zins.md).
+  riskFreeSymbol: BIL
+  maxFoldNetShare: 0.5
+  pooled: true
+  foldMembership: point_in_time
+  # KEIN Ensemble in diesem Lauf. Die Einheit E1 hält BIL als Geldmarkt-Pol
+  # ihres defensiven Sleeves (`vigilant_allocation`) — und das Parksymbol
+  # gehört der Treasury allein (§0.6, Doppelführung). Beides zugleich ist
+  # nicht messbar, und die Zusammensetzung von E1 ist vorregistriert und
+  # wird für diese Messung nicht gebogen. E1 fehlt deshalb im Vergleich mit
+  # #46; die fünf gesuchten Familien und SPY sind vollständig vergleichbar.
+
+costs:
+  slippageBps: 3
+  spreadBps: 2
+  secFeeRate: 0.0000278
+  finraTafPerShare: 0.000166
+  finraTafMax: 8.3
+  cryptoTakerPct: 0.25
+  shortBorrowAnnualPct: 1
+
+engine:
+  reconcileEverySec: 60
+  barGraceSec: 4
+  maxDataAgeSec: 180
+  maxConsecutiveErrors: 5
+  onOrphan: halt
+
+notify:
+  telegram: false
+
+status:
+  httpPort: 0
+
+paths:
+  home: ./var-parken

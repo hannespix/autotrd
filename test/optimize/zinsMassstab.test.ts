@@ -26,6 +26,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { fetchSymbols } from '../../src/app.ts';
 import { marktKette } from '../../src/backtest/marktbezug.ts';
 import { alignRiskFree, excessReturns, riskFreeFromBars, sharpeRatio } from '../../src/backtest/metrics.ts';
 import { BarSeries } from '../../src/core/bars.ts';
@@ -296,18 +297,52 @@ describe('Rückfall auf null ist laut', () => {
     expect(readFileSync(lauf({ riskFreeSymbol: 'RF' }).reportPath, 'utf8')).toMatch(/Risikoloser Zins: Tagesrendite von \*\*RF\*\*/);
   });
 
-  it('die Config weist ein Geldmarkt-Symbol ab, das der Pool nie lädt', () => {
-    expect(() =>
-      parseConfig({
-        universe: { assetClass: 'us_equity', symbols: ['SPY'], candidates: ['SPY', 'QQQ'] },
-        optimizer: { strategies: ['momentum_pullback'], riskFreeSymbol: 'BIL' },
-      }),
-    ).toThrow(ConfigError);
-    // Im Pool: geht durch, und die Schreibweise wird kanonisiert.
-    const cfg = parseConfig({
+  /*
+   * Bis zum 13.09.2026 MUSSTE das Zinssymbol im Kandidatenpool stehen, weil
+   * `fetch` sonst seine Bars nicht lud. Das machte die Vorgabe der
+   * Vorregistrierung „Kasse in den Geldmarkt" unmöglich: Das Parksymbol darf
+   * NICHT im Pool stehen (Doppelführung), das Zinssymbol MUSSTE — also konnten
+   * beide nie dasselbe Papier sein, und die Differenz ihrer Laufzeit und
+   * Kostenquote wäre in die Überschussrendite gelaufen. Seit beide als
+   * INFRASTRUKTUR geladen werden (`fetchSymbols`), fällt die Pflicht weg.
+   */
+  it('das Zinssymbol braucht den Pool nicht mehr — es wird als Infrastruktur geladen', () => {
+    const draussen = parseConfig({
+      universe: { assetClass: 'us_equity', symbols: ['SPY'], candidates: ['SPY', 'QQQ'] },
+      optimizer: { strategies: ['momentum_pullback'], riskFreeSymbol: 'bil' },
+    });
+    expect(draussen.optimizer.riskFreeSymbol).toBe('BIL');
+    expect(fetchSymbols(draussen)).toContain('BIL');
+    // Im Pool bleibt es erlaubt: Ein Geldmarktpapier IM Korb, gegen dessen Zins
+    // gemessen wird, ist genau der Fall, für den `riskFreeSymbol` gebaut wurde
+    // (Befund B2; config/ensemble-1440.yaml hält BIL im defensiven Sleeve).
+    const drin = parseConfig({
       universe: { assetClass: 'us_equity', symbols: ['SPY'], candidates: ['SPY', 'BIL'] },
       optimizer: { strategies: ['momentum_pullback'], riskFreeSymbol: 'bil' },
     });
-    expect(cfg.optimizer.riskFreeSymbol).toBe('BIL');
+    expect(drin.optimizer.riskFreeSymbol).toBe('BIL');
+  });
+
+  it('Park- und Zinssymbol dürfen DASSELBE Papier sein — dann gibt es zwischen ihnen keinen Spread', () => {
+    const cfg = parseConfig({
+      universe: { assetClass: 'us_equity', symbols: ['SPY'], candidates: ['SPY', 'QQQ'] },
+      optimizer: { strategies: ['momentum_pullback'], riskFreeSymbol: 'BIL' },
+      risk: { cashParking: { enabled: true, symbol: 'BIL' } },
+    });
+    expect(cfg.optimizer.riskFreeSymbol).toBe(cfg.risk.cashParking.symbol);
+    // EIN Symbol, EINE Bars-Ladung: Der Zins, gegen den gemessen wird, ist
+    // exakt die Rendite des Papiers, in dem die Kasse liegt.
+    expect(fetchSymbols(cfg).filter((s) => s === 'BIL')).toEqual(['BIL']);
+    // Und es ist für keine Strategie erreichbar: weder Universum noch Pool.
+    expect(cfg.universe.symbols).not.toContain('BIL');
+    expect(cfg.universe.candidates).not.toContain('BIL');
+    // Dasselbe Papier IM Pool wäre die Doppelführung — und wird abgewiesen.
+    expect(() =>
+      parseConfig({
+        universe: { assetClass: 'us_equity', symbols: ['SPY'], candidates: ['SPY', 'BIL'] },
+        optimizer: { strategies: ['momentum_pullback'], riskFreeSymbol: 'BIL' },
+        risk: { cashParking: { enabled: true, symbol: 'BIL' } },
+      }),
+    ).toThrow(ConfigError);
   });
 });

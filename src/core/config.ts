@@ -337,8 +337,16 @@ export const ConfigSchema = z.object({
        * Umstellung verschöbe alle bisherigen Messergebnisse, ohne dass ein
        * Bericht es sagt. Fehlt die Reihe (Symbol nicht geladen, zu viele
        * Lücken), fällt die Rechnung auf null zurück — und die Notiz des
-       * Gates sagt es laut. Das Symbol muss mitgeladen werden; es gehört
-       * dafür in `universe.candidates`/`universe.symbols`.
+       * Gates sagt es laut.
+       *
+       * Das Symbol wird als INFRASTRUKTUR geladen (`fetchSymbols` in
+       * src/app.ts) — seit 13.09.2026 muss es dafür NICHT mehr im
+       * Kandidatenpool stehen. Damit darf es dasselbe Papier sein wie
+       * `risk.cashParking.symbol`, das umgekehrt nicht im Pool stehen DARF
+       * (Doppelführung). Sind beide gleich, gibt es zwischen Zins und
+       * geparkter Kasse keinen Spread — Laufzeit und Kostenquote sind
+       * dieselben. Im Pool stehen darf es weiterhin: Ein Geldmarktpapier im
+       * Korb ist genau der Fall, für den diese Zeile gebaut wurde.
        */
       riskFreeSymbol: z.string().min(1).nullable().default(null),
       /**
@@ -676,6 +684,58 @@ export class ConfigError extends Error {
   override name = 'ConfigError';
 }
 
+/**
+ * Ausschließlichkeit des Parksymbols (risk/parken.ts): Es gehört der Treasury
+ * ALLEIN. Führte eine Strategie dasselbe Symbol, lägen zwei Positionen mit
+ * zwei Herkünften in einem Symbol — zwei Besitzer einer Menge, zwei
+ * Exit-Regeln, und §0.6 (Idempotenz an der logischen Einheit) hätte keine
+ * Einheit mehr. Zur Laufzeit fängt `decide()` den Fall (Rückzug, letzte
+ * Verteidigungslinie), aber der Regelfall gehört beim Start abgelehnt: laut
+ * ist billiger als still.
+ *
+ * Geprüft wird gegen JEDE Liste, aus der eine Strategie ein Symbol bekommt —
+ * nicht nur gegen `universe.symbols`/`universe.candidates`: Auch der eigene
+ * Korb der Basis-Allokation (`optimizer.basisUniverse`) und die
+ * vorregistrierten Sleeve-Universen eines Ensembles (`optimizer.ensembles`)
+ * werden gehandelt. Ein Geldmarkt-Pol im Sleeve hieße genau die
+ * Doppelführung, die dieser Absatz verhindert (config/ensemble-1440.yaml
+ * hält BIL im defensiven Sleeve — deshalb kann BIL DORT nicht geparkt
+ * werden, und deshalb gibt es config/parken-1440.yaml ohne Ensemble).
+ *
+ * Das ZINSSYMBOL (`optimizer.riskFreeSymbol`) steht bewusst nicht unter
+ * dieser Regel: Es erzeugt keine Position, sondern nur eine Renditereihe,
+ * also gibt es nichts, was zwei Besitzer haben könnte. Es DARF gehandelt
+ * werden (genau der Fall, für den es gebaut wurde: ein Geldmarktpapier im
+ * Korb, gegen dessen Zins gemessen wird — Befund B2), und es darf seit
+ * 13.09.2026 auch außerhalb des Pools stehen, weil `fetchSymbols` es eigens
+ * lädt. Ist es DASSELBE Symbol wie das Parksymbol, gilt für beide die Regel
+ * hier — ein Symbol, eine Rolle.
+ */
+function pruefeParksymbol(cfg: Config): void {
+  const park = cfg.risk.cashParking.symbol;
+  if (park === null) return;
+  const rolle = cfg.optimizer.riskFreeSymbol === park ? 'Park- und Zinssymbol' : 'Parksymbol';
+  const fundorte: string[] = [];
+  if (cfg.universe.symbols.includes(park)) fundorte.push('universe.symbols');
+  if (cfg.universe.candidates?.includes(park)) fundorte.push('universe.candidates');
+  if (cfg.optimizer.basisUniverse.includes(park)) fundorte.push('optimizer.basisUniverse');
+  for (const e of cfg.optimizer.ensembles) {
+    for (const s of e.sleeves) {
+      if (s.symbols.includes(park)) fundorte.push(`optimizer.ensembles „${e.label}" · ${s.strategy}`);
+    }
+  }
+  if (fundorte.length > 0) {
+    throw new ConfigError(
+      `risk.cashParking.symbol ${park} (${rolle}) steht im Handelsuniversum: ${fundorte.join(', ')} — ` +
+        'das Parksymbol ist Infrastruktur und darf keine Strategie führen, sonst gäbe es zwei Positionen mit zwei Herkünften in einem Symbol. ' +
+        'Seine Bars lädt `fetch` eigens (src/app.ts, `fetchSymbols`); es gehört in KEINE dieser Listen.',
+    );
+  }
+  if (cfg.universe.benchmark === park) {
+    throw new ConfigError(`risk.cashParking.symbol ${park} ist zugleich universe.benchmark — der Maßstab wird nicht gehandelt, das Parksymbol schon.`);
+  }
+}
+
 export function parseConfig(raw: unknown): Config {
   const res = ConfigSchema.safeParse(raw ?? {});
   if (!res.success) {
@@ -723,37 +783,23 @@ export function parseConfig(raw: unknown): Config {
       }
     }
   }
-  // Der Geldmarkt der Zinsrechnung muss geladen werden können: `fetch` lädt
-  // nur, was im Pool steht (app.ts, `fetchSymbols`). Ein Symbol, dessen Bars
-  // nie ankommen, fällt zur Laufzeit auf „ohne Zins" zurück — laut, aber erst
-  // nach dem Lauf. Hier ist es billiger.
+  // Zins- und Parksymbol sind INFRASTRUKTUR: `fetchSymbols` (app.ts) lädt sie
+  // eigens, neben Universum, Benchmark und Kandidatenpool. Hier wird nur die
+  // Schreibweise vereinheitlicht; geprüft wird am Ende (`pruefeParksymbol`),
+  // wenn auch Basis-Korb und Sleeves normiert sind.
+  //
+  // Bis zum 13.09.2026 MUSSTE `optimizer.riskFreeSymbol` im Kandidatenpool
+  // stehen, weil `fetch` sonst seine Bars nicht lud. Zusammen mit der
+  // Ausschließlichkeit des Parksymbols (das NICHT im Pool stehen darf) hieß
+  // das: Zins- und Parksymbol konnten nie dasselbe Papier sein, und die
+  // Differenz ihrer Laufzeit und Kostenquote wäre in die Überschussrendite
+  // gelaufen. Seit die Bars eigens geladen werden, dürfen sie gleich sein
+  // (Vorgabe BIL) — und dann gibt es zwischen ihnen keinen Spread.
   if (cfg.optimizer.riskFreeSymbol !== null) {
     cfg.optimizer.riskFreeSymbol = normalizeUserSymbol(cfg.optimizer.riskFreeSymbol, cfg.universe.assetClass);
-    if (cfg.universe.candidates && !cfg.universe.candidates.includes(cfg.optimizer.riskFreeSymbol)) {
-      throw new ConfigError(
-        `optimizer.riskFreeSymbol ${cfg.optimizer.riskFreeSymbol} steht nicht im Kandidatenpool (universe.candidates ∪ universe.symbols) — ` +
-          'ohne Bars gibt es keine Zinsreihe, und die Gates rechneten still weiter gegen null.',
-      );
-    }
   }
-  // Das Parksymbol gehört der Treasury allein (risk/parken.ts): Führte eine
-  // Strategie dasselbe Symbol, lägen zwei Positionen mit zwei Herkünften in
-  // einem Symbol — zwei Besitzer einer Menge, und §0.6 hätte keine logische
-  // Einheit mehr. Zur Laufzeit fängt `decide()` den Fall (Rückzug), aber der
-  // Regelfall gehört beim Start abgelehnt: laut ist billiger als still.
   if (cfg.risk.cashParking.symbol !== null) {
-    const park = normalizeUserSymbol(cfg.risk.cashParking.symbol, cfg.universe.assetClass);
-    cfg.risk.cashParking.symbol = park;
-    const handel = new Set([...cfg.universe.symbols, ...(cfg.universe.candidates ?? [])]);
-    if (handel.has(park)) {
-      throw new ConfigError(
-        `risk.cashParking.symbol ${park} steht im Handelsuniversum (universe.symbols ∪ universe.candidates) — ` +
-          'das Parksymbol darf keine Strategie führen, sonst gäbe es zwei Positionen mit zwei Herkünften in einem Symbol.',
-      );
-    }
-    if (cfg.universe.benchmark === park) {
-      throw new ConfigError(`risk.cashParking.symbol ${park} ist zugleich universe.benchmark — der Maßstab wird nicht gehandelt, das Parksymbol schon.`);
-    }
+    cfg.risk.cashParking.symbol = normalizeUserSymbol(cfg.risk.cashParking.symbol, cfg.universe.assetClass);
   }
   // Ensembles: Die Zusammensetzung IST die Vorregistrierung, also muss sie
   // eindeutig sein. Jede Regel hier schließt eine stille Mehrdeutigkeit aus,
@@ -823,6 +869,7 @@ export function parseConfig(raw: unknown): Config {
       }
     }
   }
+  pruefeParksymbol(cfg);
   // Tiefe Historie nur dort, wo sie billig ist. Intraday bleibt bei 2000 Tagen:
   // 4000 Tage × 78 Bars × 30 Symbole wären rund 9 Mio. Bars je Lauf — der
   // Optimierer liefe ins Speicherlimit, und zwar erst nach dem Datenladen.

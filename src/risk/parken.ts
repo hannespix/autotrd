@@ -58,9 +58,21 @@
  * (Idempotenz an der logischen Einheit) hätte keine Einheit mehr.
  *
  * Gesichert wird das auf drei Ebenen:
- *  - **Config**: `risk.cashParking.symbol` darf nicht im Handelsuniversum
- *    (`universe.symbols` ∪ `universe.candidates`) stehen — sonst Startfehler
- *    (core/config.ts). Das fängt den Regelfall, nicht den Wechsel über Nacht.
+ *  - **Config**: `risk.cashParking.symbol` darf in KEINER Liste stehen, aus
+ *    der eine Strategie ein Symbol bekommt — `universe.symbols`,
+ *    `universe.candidates`, `optimizer.basisUniverse` und die Sleeve-Universen
+ *    der Ensembles (`pruefeParksymbol` in core/config.ts); sonst Startfehler.
+ *    Seine Bars lädt `fetch` trotzdem, als INFRASTRUKTUR neben Universum und
+ *    Kandidatenpool (src/app.ts, `fetchSymbols`) — zusammen mit
+ *    `optimizer.riskFreeSymbol`, das seit 13.09.2026 ebenfalls nicht mehr im
+ *    Pool stehen muss. Erst dadurch dürfen Park- und Zinssymbol dasselbe
+ *    Papier sein (Vorgabe BIL), und dann gibt es zwischen dem Zins, gegen den
+ *    gemessen wird, und dem Papier, in dem die Kasse liegt, keinen Spread.
+ *    Das fängt den Regelfall, nicht den Wechsel über Nacht: Dafür geben
+ *    `strategyChoice` (src/app.ts) und `buildStrategyFor`
+ *    (functions/src/engine/strategyFor.ts) für das Parksymbol immer null —
+ *    das Universum wächst NACH `parseConfig` noch um den Basis-Korb aus der
+ *    Champion-Datei (`universeWithBasis`).
  *  - **Laufzeit (maßgeblich)**: Taucht das Parksymbol in einem Zyklus mit
  *    einer Strategie auf, parkt die Treasury NICHT und räumt ihre Position
  *    (Rückzug). Sie blockiert dabei nichts: Solange die Parkposition offen
@@ -103,6 +115,17 @@
  *  - **Takt.** Geparkt wird im Zyklus von `decide()`, also wenn mindestens ein
  *    gehandeltes Symbol eine neue geschlossene Bar hat. An einem Tag ohne
  *    jede Bar des Universums schichtet die Treasury nicht um.
+ *  - **Abgleich.** Fehlt die Parkposition beim Broker (jemand verkauft von
+ *    Hand), bucht `engine/reconcile.ts` sie wie jede fehlende Buch-Position
+ *    aus — als `reconcile`-Trade mit `strategy: 'cash_parking'`. Das ist der
+ *    EINZIGE Pfad, auf dem eine Parkmenge doch als Trade auftaucht und damit
+ *    in `feeShare`, Profitfaktor und Live-Reife zählt. Benannt, nicht
+ *    behoben: Ein Abgleich, der eine Position stillschweigend vergisst, wäre
+ *    schlimmer als ein Trade zu viel.
+ *  - **Messung.** Die Differenz zwischen einem Lauf mit und ohne Parken ist
+ *    NICHT nur die Buchung: Kosten und Zinsertrag ändern die Equity, und die
+ *    Equity ist die Bemessungsgrundlage des Sizings — die Trades sind also
+ *    nicht bitgleich. Die Rückkopplung ist klein, aber sie ist echt.
  */
 /**
  * Was die Treasury in einem Zyklus tut. `pflicht` heißt: Dieser Verkauf
