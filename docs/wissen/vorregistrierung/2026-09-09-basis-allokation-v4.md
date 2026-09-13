@@ -109,3 +109,77 @@ darf dabei nicht herauskommen.
 - Die Wahl zwischen „Schwelle 5 %" und „Tagesverlust sperrt nur Einstiege"
   (die zweite Variante aus V3) ist **nicht** gemessen. Wer sie messen will,
   registriert sie vorher und zählt sie als zweiten Versuch.
+
+
+---
+
+## Ergebnis V4 (Lauf #54) — und der Nachtrag zu V5, VOR seinem Lauf
+
+**V4 hat die Latte nicht genommen, und wichtiger: die Ursachenanalyse aus V3
+ist widerlegt.**
+
+| Gate | V2 (#37) | V3 (#40) | **V4 (#54)** | Latte V4 |
+|---|---|---|---:|---|
+| `basis_net_profit` | +5 953 $ | +3 123 $ | **+3 298 $** | > 0 ✔ |
+| `basis_drawdown` | 12,06 % | 15,95 % | **15,99 %** | 14,29 % ✘ |
+| `basis_sharpe` | 0,79 | 0,48 | **0,51** | 0,65 ✘ |
+| `basis_costs` | 3,3 % | 7,2 % | **6,9 %** | ≤ 10 % ✔ |
+
+Die beiden Scheiben, die die V3-Auswertung namentlich als Beweis der
+Tagesbremse führte:
+
+| Scheibe | V2 | V3 | **V4 (Bremsen wie V2)** |
+|---|---|---|---|
+| 10 (Juni–Sept. 2024) | +1 044 $ | +203 $ | **+251,96 $** |
+| 13 (März–Juni 2025, Zollcrash) | +712 $ | −750 $ | **−807,63 $** |
+
+**V4 reproduziert V3, nicht V2** — obwohl die Bremsen der Basis auf den
+V2-Werten stehen (5 % / 30 %). Erwartungen 2 und 3 sind widerlegt.
+
+### Warum die V3-Zuordnung falsch war
+
+V3 schloss aus „die Scheiben 1–9 sind auf den Cent identisch mit V2, danach
+laufen sie auseinander" auf die Tagesbremse. Der Schluss ist ungültig: Er
+zeigt nur, dass *irgendein* Unterschied erstmals im August 2024 biss. Ein
+Blick in die Configs zeigt, dass V2 und V3 sich in weit mehr unterscheiden
+als in den Bremsen:
+
+| | V2 | V3 / V4 |
+|---|---|---|
+| `riskPerTradePct` | 4 | 0,5 |
+| `maxPositionPct` | **25** | **20** |
+| Sizing-Semantik der Basis | Risiko-Budget (4 % / 20 % Stop = 20 %) | Allokation (`optimizer.basis.positionPct: 20`) |
+| `maxDailyLossPct` / `maxDrawdownPct` | 5 / 30 | 2 / 10 |
+| `universe.symbols` / `maxSymbols` | die 9 Basis-ETFs / 9 | die 30 Aktien / 30 |
+| `foldMembership` | fixed | point_in_time |
+| `optimizer.strategies` | nur `regime_allocation` | alle fünf |
+
+Das ist der eigentliche Befund dieses Laufs, und er ist unangenehm: **Die
+Entscheidung, die seit dem 10.09. beim Owner liegt („Bremsen je Stufe, ja
+oder nein?"), stand auf einer falschen Prämisse.** Weder (a) noch (b) hätte
+die Basis über ihre Latte gebracht.
+
+### V5: die nächste Isolierung
+
+Der einzige verbliebene Unterschied, der die Basis **mechanisch** treffen
+kann, ist der Positionsdeckel. Die Basis zielt auf 20 % je Position; steht
+`maxPositionPct` exakt auf 20, bindet der Deckel die Zielallokation
+permanent, steht er auf 25 (wie in V2), hat sie Luft. Universum,
+`foldMembership` und `optimizer.strategies` betreffen das Alpha, nicht die
+Basis (sie handelt `optimizer.basisUniverse` in einer eigenen durchgehenden
+Simulation). `riskPerTradePct` ist bei Allokations-Sizing ohne Wirkung.
+
+Config: `config/basis-1440-v5.yaml` — **genau eine** Änderung gegenüber V4:
+`maxPositionPct` von 20 auf 25.
+
+| Ausgang | Lesart |
+|---|---|
+| V5 kehrt auf die V2-Zahlen zurück (Scheibe 10 ≈ +1 044, Scheibe 13 ≈ +712, `basis_drawdown` ≈ 12 %) | Der Positionsdeckel war die Ursache. Dann ist die offene Owner-Frage nicht „Bremsen je Stufe", sondern „darf die Basis-Stufe einen Positionsdeckel über ihrer Zielallokation haben?" — eine andere Frage mit anderer Risikowirkung. |
+| V5 bleibt bei den V4-Zahlen | Auch der Deckel ist es nicht. Dann liegt der Unterschied in der Sizing-SEMANTIK selbst (Risiko-Budget gegen Allokation), und die beiden sind trotz gleicher Zielgröße nicht dasselbe — das wäre ein Befund über `decide()`, kein Regelwerksthema. |
+
+**Versuchszählung (§4a): Das ist der vierte gemessene Regelsatz für dieselbe
+Basis** — V2, V3, V4, V5. Wer ein Ergebnis dieser Reihe liest, liest es mit
+vier Freiheitsgraden im Rücken. Ein bestandener V5-Lauf ist deshalb
+ausdrücklich **kein** Aktivierungsgrund, sondern eine Ursachenklärung; jede
+Aktivierung braucht danach Falsifikationen mit `--as-of` und die
+Entscheidung des Owners zur dann richtigen Frage.
