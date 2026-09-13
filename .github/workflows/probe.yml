@@ -42,6 +42,7 @@ on:
           - config/parken-1440.yaml
           - config/parken-volziel-1440.yaml
           - config/korb-breite-1440.yaml
+          - config/korb-breite-placebo-1440.yaml
           - config/crypto-60.yaml
           - config/crypto-1440.yaml
       samples:

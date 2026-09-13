@@ -125,3 +125,60 @@ Config: `config/korb-breite-1440.yaml` — Zeichen für Zeichen
 Fold-Plan, dieselben Kosten, dieselben zehn Gates, dasselbe Parken, dasselbe
 Zinssymbol. Die Differenz zu #49 ist damit die Wirkung der reservierten
 Plätze — plus der üblichen Rückkopplung über die Equity.
+
+
+---
+
+## Nachtrag 13.09.2026 — Gegenprobe (Placebo), VOR ihrem Lauf geschrieben
+
+Lauf #52 ist gefahren. Erwartung 1 hat gehalten (TLT und GLD bekamen die
+Plätze), **Erwartung 2 und 3 sind widerlegt**, und die Widerlegung dreht das
+Ergebnis um:
+
+| Kandidat | Art | Gates #49 | Gates #52 |
+|---|---|---:|---:|
+| `cross_sectional_momentum` | Korb | 6/10 | 6/10 |
+| `regime_allocation` | Korb | 6/10 | **5/10** |
+| `mean_reversion` | symbolweise | 4/10 | **7/10** |
+| `trend_donchian` | symbolweise | 5/10 | 5/10 |
+| `momentum_pullback` | symbolweise | 5/10 | 5/10 |
+
+Die KORB-Kandidaten, für die Erwartung 2 den Effekt vorhersagte, haben sich
+nicht verbessert. Verbessert hat sich eine SYMBOLWEISE Familie — die, für die
+Erwartung 3 „ändert sich wenig" sagte.
+
+Erwartung 3 war schlecht gedacht, nicht der Mechanismus rätselhaft: Eine
+symbolweise Familie handelt, was IM Korb liegt. Kommen zwei Symbole hinein,
+ändert sich, was sie halten kann. Der Korb tauschte genau zwei Papiere
+(Zugang TLT, GLD; Abgang LLY, XLV), 28 blieben.
+
+**Damit steht eine Frage offen, die der Lauf nicht beantworten kann:** Wirkt
+die ASSETKLASSE — oder wirkt bloß, dass irgendwelche zwei Symbole getauscht
+wurden? Ein Mean-Reversion-Modell auf zwei frischen Zeitreihen kann auch
+schlicht zwei neue Gelegenheiten gefunden haben.
+
+### Die Gegenprobe
+
+Dieselbe Mechanik, dieselbe Zahl Plätze, dieselbe Verdrängung — nur sind die
+Einsteiger AKTIEN statt Diversifizierer:
+
+| Gruppe | Symbole | Plätze | Ränge (#52) |
+|---|---|---:|---|
+| `platzhalter` | DELL, V, NOW, CSCO | 2 | 31, 34, 35, 36 |
+
+Alle vier stehen knapp außerhalb des Schnitts, wie TLT (32). Die zwei
+liquidesten (DELL, V) bekommen die Plätze. Config:
+`config/korb-breite-placebo-1440.yaml`.
+
+### Vorhersage, bevor der Lauf startet
+
+| Ausgang | Lesart |
+|---|---|
+| `mean_reversion` legt ähnlich zu (≥ 2 Gates mehr als in #49, oder `fold_positive_share` ≥ 0,6) | **T21 widerlegt.** Es wirkt nicht die Streuung, sondern die Erneuerung des Korbs. Dann ist der Befund aus #52 ein Zufallsfund auf zwei Zeitreihen und die reservierten Plätze sind keine Verbesserung, sondern eine Lotterie. |
+| `mean_reversion` bleibt nahe seinen 4/10 aus #49 | T21 übersteht diese Prüfung. Mehr nicht: Bestanden ist damit nichts, denn `beats_market` fällt in #52 klar durch (0,26 gegen 0,44) und `fold_concentration` steht bei 0,745 — **74 % des Überschusses stammen aus EINEM Fold**; ohne ihn bleiben von 339,08 noch 86,50 über fünfeinhalb Jahre. |
+
+**Unabhängig vom Ausgang wird nichts befördert.** `mean_reversion` besteht in
+#52 sieben von zehn Gates und verliert trotzdem gegen kaufen-und-liegenlassen.
+Ein Kandidat, dessen Geld aus einem Quartal kommt und der den Markt nicht
+schlägt, ist kein Champion — das ist genau der Fall, für den
+`fold_concentration` und `beats_market` gebaut wurden.

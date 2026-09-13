@@ -1,0 +1,235 @@
+# Probe-Config: GEGENPROBE (Placebo) zu Lauf #52 — dieselbe Mechanik, Aktien
+#
+# Vorregistrierung: docs/wissen/vorregistrierung/2026-09-13-korb-breite.md
+# (VOR dem Lauf committet — dort stehen die Gruppe, die Zahl der Plätze, die
+# fünf Erwartungen und die Hindsight-Falle, die ich nicht wegdefinieren kann.)
+vorregistrierung: docs/wissen/vorregistrierung/2026-09-13-korb-breite.md
+#
+# ── Wogegen die Differenz zu lesen ist ────────────────────────────────────
+#
+# **Gegen Lauf #49** (`config/parken-1440.yaml`). Diese Datei ist Zeichen für
+# Zeichen dieselbe Config, mit genau zwei Unterschieden:
+#
+#   universe.reserve:  leer ⇒ zwei Plätze für [TLT, IEF, GLD, SLV]
+#   paths.home:        ./var-parken ⇒ ./var-korb-breite
+#
+# ── Der Befund, der das auslöst ───────────────────────────────────────────
+#
+# Kein Kandidat besteht `fold_positive_share ≥ 0,6` über ein Fenster mit
+# Bärenmarkt. Das ist Bauart, nicht Zufall: Alle fünf Familien handeln
+# DENSELBEN Korb, und der Korb ist eine einzige Long-only-Aktienwette. Fällt
+# der Markt, fällt jede Familie mit — es gibt nichts, worin sie ausweichen
+# könnte.
+#
+# Die Ränge aus Lauf #49 zeigen, warum:
+#
+#   LQD  Rang  12  Investment-Grade-Kredit   IM KORB
+#   HYG  Rang  21  High-Yield-Kredit          IM KORB
+#   TLT  Rang  32  lange Treasuries           draussen — um ZWEI Ränge
+#   GLD  Rang  56  Gold                       draussen
+#   SLV  Rang 121  Silber                     draussen
+#   IEF  Rang 128  mittlere Treasuries        draussen
+#
+# Der Korb enthält also zwei defensive Papiere — aber die falschen. Kredit
+# fällt im Aktien-Crash MIT den Aktien (es ist Unternehmensrisiko in anderer
+# Verpackung); Duration und Gold tun das nicht verlässlich. Der Korb hat den
+# Anschein von Streuung ohne ihre Substanz.
+#
+# ── Warum das KEINE Auswahl nach dem Ergebnis ist ─────────────────────────
+#
+# Die Gruppe ist nach ASSETKLASSE definiert: Es sind alle Papiere des
+# bestehenden Kandidatenpools, die weder Aktien noch Unternehmenskredit sind
+# — die vollständige Restmenge, keine Auswahl daraus. Kein Symbol kommt
+# hinzu. Die zwei Plätze werden mit DERSELBEN Kennzahl besetzt wie alle
+# anderen (Median-Dollarumsatz), nur innerhalb der Gruppe, und je Fold neu
+# (Punkt-in-Zeit, wie der übrige Korb). `waehleUniverse` sieht weiterhin kein
+# PnL, keine Trades, keinen Champion.
+#
+# Keine Strategie erfährt, dass ein Symbol „defensiv" ist. Sie sehen einen
+# Korb wie immer. Ob eine von ihnen im Bärenmarkt dorthin ausweicht,
+# entscheidet ihre eigene Logik — und genau das wird gemessen.
+#
+# ── Die Falle, die bleibt ─────────────────────────────────────────────────
+#
+# Dass „Anleihen und Gold streuen" überhaupt meine Erwartung ist, stammt aus
+# der Vergangenheit dieser Papiere. 2022 haben Aktien und lange Treasuries
+# GEMEINSAM verloren; das Gegenbeispiel liegt im Messfenster. Scheitert die
+# Erwartung daran, ist das ein Befund und keine Panne.
+#
+# ── Was NICHT angefasst ist ───────────────────────────────────────────────
+#
+# Kein Gate, keine Schwelle, keine Kostenzeile, kein Fold-Plan, kein
+# Parameter des Parkens, kein Symbol des Pools. Das Volatilitätsziel bleibt
+# aus (Läufe #50/#51: in diesem Walk-Forward nicht messbar).
+
+broker:
+  mode: paper
+  feed: iex
+  adjustment: all
+
+universe:
+  assetClass: us_equity
+  symbols:
+    [SPY, QQQ, IWM, DIA,
+     AAPL, MSFT, NVDA, AMZN, META, GOOGL, TSLA, AVGO, AMD, NFLX,
+     CRM, ORCL, ADBE, INTC, CSCO, QCOM,
+     JPM, BAC, WFC,
+     XOM, CVX,
+     JNJ, PFE, UNH,
+     WMT, DIS]
+  benchmark: SPY
+  maxSymbols: 30
+  # DIE gemessene Änderung (src/universe/select.ts): zwei der 30 Plätze für
+  # die Assetklassen-Restmenge des Pools. Die Zahl 2 ist vorregistriert und
+  # wird in diesem Lauf NICHT variiert; wer sie später variiert, zählt die
+  # Versuche. BIL fehlt bewusst: Es ist hier Park- UND Zinssymbol, also
+  # Infrastruktur, und gehört der Treasury allein (§0.6).
+  # Die GEGENPROBE zu Lauf #52: dieselbe Mechanik, dieselbe Zahl Plätze,
+  # dieselbe Verdrängung — nur sind die Einsteiger Aktien. Alle vier stehen
+  # knapp ausserhalb des Schnitts (Ränge 31, 34, 35, 36), wie TLT auf 32; die
+  # zwei liquidesten (DELL, V) bekommen die Plätze.
+  #
+  # Die Frage, die nur diese Config beantworten kann: Wirkt in #52 die
+  # ASSETKLASSE — oder wirkt bloss, dass irgendwelche zwei Symbole getauscht
+  # wurden? Legt mean_reversion hier ähnlich zu wie in #52, ist T21 widerlegt
+  # und die reservierten Plätze sind eine Lotterie, keine Verbesserung.
+  # Vorhersage steht im Nachtrag der Vorregistrierung, VOR diesem Lauf.
+  reserve:
+    - name: platzhalter
+      symbols: [DELL, V, NOW, CSCO]
+      plaetze: 2
+  # Derselbe Pool wie in #46, OHNE BIL (siehe Kopf). Der Korb je Fold ist
+  # davon unberührt: Die Auswahl rangiert nach Median-Dollarumsatz, und BIL
+  # stand dort auf Rang 138 von 141 (Lauf #43) — es wurde nie gewählt. Der
+  # Pool zählt jetzt 139 statt 140 Kandidaten; die 30 gewählten sind Stand
+  # für Stand dieselben.
+  candidates:
+    # Breite Index- und Sektor-ETFs
+    [SPY, QQQ, IWM, DIA, XLF, XLE, XLK, XLV, XLI, XLY, XLP, XLU, XLB, XLRE, XLC,
+     SMH, SOXX, EEM, EFA, GLD, SLV, TLT, HYG, LQD, IEF,
+     # KEIN BIL: Es ist in diesem Lauf Park- UND Zinssymbol, also
+     # Infrastruktur — `fetch` lädt es eigens, keine Strategie erreicht es
+     # (Kopf, Abschnitt „Was gegenüber #46 anders ist").
+     # Technologie und Halbleiter
+     AAPL, MSFT, NVDA, AMZN, META, GOOGL, GOOG, TSLA, AVGO, AMD, NFLX,
+     CRM, ORCL, ADBE, INTC, CSCO, QCOM, TXN, MU, AMAT, LRCX, KLAC, ADI, MRVL,
+     ANET, NOW, IBM, INTU, PANW, CRWD, DDOG, SNOW, UBER, ABNB, PYPL, SPOT, DELL,
+     # Finanzen
+     JPM, BAC, WFC, GS, MS, C, SCHW, BLK, AXP, V, MA, COF, USB, PNC, BRK.B,
+     # Energie
+     XOM, CVX, COP, SLB, EOG, PSX, MPC, OXY, VLO,
+     # Gesundheit
+     JNJ, PFE, UNH, ABBV, MRK, LLY, TMO, ABT, BMY, AMGN, GILD, CVS, MDT, ISRG, VRTX, REGN,
+     # Konsum
+     WMT, DIS, HD, MCD, NKE, SBUX, COST, TGT, LOW, PG, KO, PEP, PM, MO, MDLZ, CL,
+     # Industrie und Transport
+     BA, CAT, DE, GE, HON, LMT, RTX, UPS, UNP, MMM, FDX,
+     # Kommunikation und Versorger
+     T, VZ, TMUS, CMCSA, CHTR, NEE, DUK, SO,
+     # Fahrzeuge
+     F, GM]
+
+timeframe: 1440
+
+session:
+  noEntryFirstMin: 5
+  noEntryLastMin: 30
+  flattenBeforeCloseMin: 5
+
+# Zeichen für Zeichen das Regelwerk der Plattform — bis auf `cashParking`,
+# die EINE vorregistrierte Abweichung dieses Laufs.
+risk:
+  riskPerTradePct: 0.5
+  maxPositionPct: 20
+  maxPositions: 4
+  maxGrossExposurePct: 100
+  maxDailyLossPct: 2
+  maxDrawdownPct: 10
+  allowShort: false
+  # DIE Änderung, die gemessen wird (src/risk/parken.ts): Kapital, das keine
+  # Strategie braucht, liegt nicht unverzinst auf dem Konto, sondern in BIL.
+  # Band und Puffer sind die Vorgaben der Vorregistrierung (5 Pp / 2 %) — sie
+  # sind KEIN gesuchter Parameter und werden in diesem Lauf nicht variiert.
+  cashParking:
+    enabled: true
+    symbol: BIL
+    bandPct: 5
+    bufferPct: 2
+  pdt:
+    respect: true
+    minEquity: 25000
+    maxDayTrades: 3
+  # Das Volatilitätsziel bleibt AUS. Die Vorregistrierung verlangt zwei
+  # getrennte Läufe (Messplan): erst Parken allein, dann Parken plus
+  # Volatilitätsziel. Zwei Änderungen zugleich zu messen war der Fehler in
+  # Lauf #46; er wird nicht wiederholt.
+
+strategy:
+  id: trend_donchian
+  params: {}
+  allowWithoutChampion: false
+
+optimizer:
+  # Dieselben fünf Familien wie in #46 — sie SIND der Vergleich: Die Differenz
+  # je Familie ist die Wirkung des Parkens (plus der Sizing-Rückkopplung,
+  # siehe Kopf).
+  strategies: [trend_donchian, momentum_pullback, mean_reversion, cross_sectional_momentum, regime_allocation]
+  lookbackDays: 2900
+  isDays: 550                  # unverändert aus #46 — ein anderer Fold-Plan machte den Vergleich unmöglich
+  oosDays: 90
+  stepDays: 90
+  embargoBars: 0
+  samples: 150
+  seed: 42
+  minOosTrades: 60
+  minFoldPositiveShare: 0.6
+  objective: sortino
+  stressCostMultiplier: 1.5
+  holdoutDays: 180
+  promotionMargin: 0.1
+  minPsrOos: 0.9
+  dsrIsGate: false
+  # Der risikolose Zins kommt aus BIL — DEMSELBEN Papier, in dem die Kasse
+  # liegt. Genau das war vor dem 13.09.2026 unmöglich (das Zinssymbol musste
+  # im Kandidatenpool stehen, das Parksymbol durfte es nicht); seit beide als
+  # Infrastruktur geladen werden, geht es. Der Gewinn: Zwischen dem Zins, gegen
+  # den gemessen wird, und dem Papier, in dem die Kasse liegt, gibt es keinen
+  # Spread aus Laufzeit und Kostenquote. `probabilistic_sharpe_oos` und
+  # `beats_market` rechnen damit auf ÜBERSCHUSSrenditen, auf BEIDEN Seiten
+  # oder auf keiner (Befund B2,
+  # docs/wissen/vorregistrierung/2026-09-13-sharpe-gegen-zins.md).
+  riskFreeSymbol: BIL
+  maxFoldNetShare: 0.5
+  pooled: true
+  foldMembership: point_in_time
+  # KEIN Ensemble in diesem Lauf. Die Einheit E1 hält BIL als Geldmarkt-Pol
+  # ihres defensiven Sleeves (`vigilant_allocation`) — und das Parksymbol
+  # gehört der Treasury allein (§0.6, Doppelführung). Beides zugleich ist
+  # nicht messbar, und die Zusammensetzung von E1 ist vorregistriert und
+  # wird für diese Messung nicht gebogen. E1 fehlt deshalb im Vergleich mit
+  # #46; die fünf gesuchten Familien und SPY sind vollständig vergleichbar.
+
+costs:
+  slippageBps: 3
+  spreadBps: 2
+  secFeeRate: 0.0000278
+  finraTafPerShare: 0.000166
+  finraTafMax: 8.3
+  cryptoTakerPct: 0.25
+  shortBorrowAnnualPct: 1
+
+engine:
+  reconcileEverySec: 60
+  barGraceSec: 4
+  maxDataAgeSec: 180
+  maxConsecutiveErrors: 5
+  onOrphan: halt
+
+notify:
+  telegram: false
+
+status:
+  httpPort: 0
+
+paths:
+  home: ./var-korb-placebo
