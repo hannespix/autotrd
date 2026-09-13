@@ -402,7 +402,9 @@ export function simulate(input: SimInput): SimResult {
   let bremsenErste: Ms | null = null;
   let bremsenLetzte: Ms | null = null;
   let kontoHaltVorher = false;
+  let kontoGrundVorher: string | null = null;
   const stufeHaltVorher = new Map<string, boolean>();
+  const stufeGrundVorher = new Map<string, string | null>();
   let volFaktorMin = Number.POSITIVE_INFINITY;
   let volFaktorMax = Number.NEGATIVE_INFINITY;
   let volFaktorLetzt: VolZielResult | null = null;
@@ -822,11 +824,22 @@ export function simulate(input: SimInput): SimResult {
         bremsenErste ??= now;
         bremsenLetzte = now;
       };
-      if (halt.halted && !kontoHaltVorher) flanke('konto', halt.reason);
+      // Gezählt wird auch ein GRUNDWECHSEL im stehenden Halt. `checkHalt`
+      // eskaliert ausdrücklich zu einem strengeren Grund (risk/limits.ts) —
+      // typisch: Die Tagesbremse feuert zuerst, Tage später reisst derselbe
+      // Halt zusätzlich den Drawdown. Zählte man nur die erste Flanke, endete
+      // ein Lauf tot in einem Drawdown-Halt, und der Bericht meldete allein
+      // die Tagesbremse. Der Drawdown ist gerade der, der ohne `resume` nie
+      // endet; ihn zu verschweigen wäre dieselbe fehlende Zahl, gegen die
+      // diese Bilanz gebaut ist (Prüfbefund K2).
+      if (halt.halted && (!kontoHaltVorher || kontoGrundVorher !== halt.reason)) flanke('konto', halt.reason);
       kontoHaltVorher = halt.halted;
+      kontoGrundVorher = halt.halted ? halt.reason : null;
       for (const [stufe, h] of Object.entries(stufenHalt)) {
-        if (h.halted && !(stufeHaltVorher.get(stufe) ?? false)) flanke(stufe, h.reason);
+        const vorherHalt = stufeHaltVorher.get(stufe) ?? false;
+        if (h.halted && (!vorherHalt || (stufeGrundVorher.get(stufe) ?? null) !== h.reason)) flanke(stufe, h.reason);
         stufeHaltVorher.set(stufe, h.halted);
+        stufeGrundVorher.set(stufe, h.halted ? h.reason : null);
       }
     }
     if (res.wiederaufbau) wiederaufbau = res.wiederaufbau;

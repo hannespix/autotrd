@@ -77,21 +77,37 @@ unveränderte Bremsen." Es tut es nicht:
 
 Die Ursache ist **die Config, nicht der Fix**: `momentum_pullback` ist in #58
 (nur Basis-Fix) und #59 (auch Alpha-Fix) identisch und weicht in beiden von
-#56 ab. Sobald `risk.tiers` überhaupt gesetzt ist, rechnet die Konto-Bremse
-mit der lockersten aller Stufen — der Drawdown-Halt des Kontos steht damit
-bei 30 % statt 10 %, auch für das Alpha.
+#56 ab.
 
-Das ist so gebaut und so dokumentiert (`kontoGrenzen`: „erst wenn selbst die
-duldsamste Stufe aufgegeben hätte, steht das ganze Konto still"). Es heißt
-aber:
+> ### ⚠ Korrektur (Prüferbefund M1, 13.09.2026 abends)
+>
+> Die erste Fassung dieses Abschnitts erklärte die Verschiebung damit, dass
+> `kontoGrenzen` den Drawdown-Halt auf 30 % stellt und `other` „keine eigene
+> Stufenlatte" habe. **Das ist falsch.** `STUFEN` enthält `other`, `logic.ts`
+> nimmt es in die Prüfung auf, und `grenzenFuer(risk, 'other')` liefert die
+> globalen Werte — `other` ist geschützt, nur eben immer global. Ein
+> bestehender Wächter sagt es seit Tagen:
+> `test/core/stufenbremse.test.ts` — „eine Position OHNE Stufe hängt an der
+> globalen Latte, nicht an der lockeren".
+>
+> Der Prüfer hat drei Welten (ohne `tiers` · mit Stufe `other` · mit Stufe
+> `alpha`) **ziffernidentisch** gemessen — 1 Trade, −11 474,00, MaxDD
+> 11,47 % — nur das Etikett der Bremse unterschied sich.
+>
+> **Damit ist die Alpha-Verschiebung ungeklärt**, und die Owner-Frage
+> darunter stand auf einer falschen Diagnose. Verdacht des Prüfers: nicht die
+> Latte, sondern der PFAD — die Konto-Bremse kehrt früh aus `decide()` zurück
+> (`logic.ts`), die Stufen-Bremse durchläuft die Symbolschleife mit
+> `schonExit`. Das ist zu messen, bevor jemand entscheidet.
+>
+> Es ist dieselbe Fehlerklasse, die weiter unten unter „Die Lehre" steht —
+> diesmal von mir, im selben Text.
 
-> **Eine Bremse für die Basis ist für das Alpha nicht nebenwirkungsfrei.**
-
-Bei `trend_donchian` verschiebt sie ein Gate (`fold_positive_share`) von rot
-auf grün. Kein Kandidat besteht dadurch alle zehn, und `beats_market` fällt
-weiter bei allen fünf — aber ein Regelwerk, das die Latte eines Kandidaten
-bewegt, ohne dass jemand seine Latte angefasst hat, ist eine
-Owner-Entscheidung und keine Messfrage.
+Was bleibt: `trend_donchian` verschiebt ein Gate (`fold_positive_share`) von
+rot auf grün, wenn `risk.tiers` gesetzt ist. Kein Kandidat besteht dadurch
+alle zehn, und `beats_market` fällt weiter bei allen fünf. Dass sich ein
+Kandidat bewegt, ohne dass jemand seine Latte angefasst hat, bleibt ein
+Befund — nur die Erklärung dafür fehlt noch.
 
 ## Was daraus folgt — und was ausdrücklich nicht
 
@@ -113,12 +129,25 @@ Vor einer Aktivierung steht damit:
    | 2026-08-25 | +7 705,84 | 12,24 % | 15,55 % | **1,01** | 0,75 | #38: 1,01 / 12,2 % |
    | 2026-08-10 | +7 186,30 | 12,44 % | 15,61 % | **0,96** | 0,71 | #39: 0,96 / 12,4 % |
 
-   Zeichengenau dieselben Zahlen wie V2 unter dem alten Regelwerk. Dreimal
-   dasselbe Urteil, in keinem Lauf eine Bremsen-Auslösung.
-2. Eine Entscheidung des Owners zur Nebenwirkung: Soll eine Basis-Bremse die
-   Konto-Bremse des Alpha lockern dürfen? Wenn nein, braucht `tiers.alpha`
-   eine ausdrückliche eigene Latte (2 %/10 %), damit sich für das Alpha
-   nachweisbar nichts ändert.
+   Zeichengenau dieselben Zahlen wie V2 unter dem alten Regelwerk, in keinem
+   Lauf eine Bremsen-Auslösung.
+
+   **Einschränkung (Prüferbefund M4):** Das sind KEINE unabhängigen Belege.
+   Alle Folds sind an `selectionEnd = dataEnd − holdout` verankert und wachsen
+   rückwärts (`walkForward.ts`, `buildFolds`); ein Stichtag 15 oder 30 Tage
+   früher verschiebt die ganze Kette, die Überlappung mit #59 liegt deutlich
+   über 90 %. „Zeichengenau dieselben Zahlen" ist bei praktisch denselben
+   Daten das ERWARTETE Ergebnis und belegt Determinismus, nicht Robustheit.
+   „Dreimal dasselbe Urteil" suggeriert drei Belege, wo einer steht.
+2. **Die Ursache der Alpha-Verschiebung finden** (siehe Korrektur oben). Die
+   ursprünglich hier formulierte Owner-Frage („darf eine Basis-Bremse die
+   Konto-Bremse des Alpha lockern?") ist gegenstandslos, solange die Diagnose
+   nicht steht. Sie zu stellen, bevor sie beantwortbar ist, wäre dasselbe
+   Raten in einer anderen Runde.
+3. **`risk.tiers.basis` gehört in `config/platform.yaml`** (Prüferbefund M2).
+   Die bestandene Latte gilt für ein VORGESCHLAGENES Regelwerk; die Produktion
+   setzt keine `tiers` und hat damit weiter 2 %/10 % — der einzige Lauf unter
+   dem echten Regelwerk der Plattform war V3, und der ist gescheitert.
 3. Eine Prüfer-Runde über beide Fixes.
 
 **Versuchszählung (§4a):** V2, V3, V4 — drei Regelsätze, und V4 in drei

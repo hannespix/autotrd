@@ -47,14 +47,25 @@ export const BASIS_STUFE: Stufe = 'basis';
 /**
  * Die Stufe des Alpha-Champions. Im Optimierer ist JEDER gesuchte Kandidat
  * ein Alpha-Kandidat — in der Engine wird aus der Quelle `champion` ebenfalls
- * `alpha` (`stufeOf`). Ohne diese Vorgabe fiele der Optimierer auf `other`
- * zurück, und `other` erbt die globalen Werte: Sobald irgendeine Stufe eine
- * eigene Bremse trägt, rechnet die KONTO-Bremse mit der lockersten
- * (`kontoGrenzen`) — das Alpha verlöre still seinen eigenen Schutz, obwohl
- * niemand seine Latte angefasst hat. Gemessen am 13.09.2026 (#58): Mit einer
- * Basis-Bremse von 5 % wanderten `trend_donchian` von 5 auf 6 Gates und
- * `momentum_pullback` von 496 auf 457 Trades, ohne dass sich an ihnen etwas
- * geändert hätte.
+ * `alpha` (`stufeOf`).
+ *
+ * KORREKTUR (Prüferbefund M1, 13.09.2026): Die erste Fassung dieses
+ * Kommentars behauptete, `other` bekomme „keine eigene Stufenlatte" und
+ * verliere deshalb seinen Schutz. Das ist FALSCH, und ein bestehender
+ * Wächter widerlegt es: `test/core/stufenbremse.test.ts` („eine Position
+ * OHNE Stufe hängt an der globalen Latte, nicht an der lockeren").
+ * `STUFEN` enthält `other`, `logic.ts` nimmt es in die Prüfung auf, und
+ * `grenzenFuer(risk, 'other')` liefert die globalen Werte — `other` ist
+ * geschützt, nur eben immer global.
+ *
+ * Der Grund, warum die Vorgabe trotzdem `alpha` sein MUSS, ist ein anderer:
+ * Namensgleichheit mit `stufeOf('champion')`, und eine künftige eigene
+ * `tiers.alpha`-Latte wäre als `other` wirkungslos — ohne Fehlermeldung.
+ *
+ * Ebenfalls korrigiert: Die beobachtete Verschiebung des Alpha zwischen den
+ * Läufen #56 und #58/#59 ist damit NICHT erklärt. Der Prüfer hat drei Welten
+ * (ohne `tiers`, mit `other`, mit `alpha`) ziffernidentisch gemessen; nur das
+ * Etikett der Bremse unterschied sich. Die Ursache ist offen.
  */
 export const ALPHA_STUFE: Stufe = 'alpha';
 

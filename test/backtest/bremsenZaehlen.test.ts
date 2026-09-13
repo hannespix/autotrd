@@ -122,3 +122,62 @@ describe('Stufe der Wahl erreicht die Notbremse', () => {
     // Schwelle unter einem anderen Namen.
   });
 });
+
+describe('Prüferbefund K2 — ein Grundwechsel im stehenden Halt zählt', () => {
+  /*
+   * `checkHalt` eskaliert ausdrücklich zu einem STRENGEREN Grund, während ein
+   * Halt schon steht (risk/limits.ts). Typisch: Die Tagesbremse feuert zuerst
+   * und wiederholt, und irgendwann reisst derselbe Verlauf zusätzlich den
+   * Drawdown.
+   *
+   * Zählte man nur die Flanke „nicht gehalten ⇒ gehalten", endete ein Lauf
+   * tot in einem Drawdown-Halt — und der Bericht meldete allein die
+   * Tagesbremse. Der Drawdown ist gerade der, der ohne `resume` nie endet.
+   * Ihn zu verschweigen wäre dieselbe fehlende Zahl, gegen die diese Bilanz
+   * überhaupt gebaut ist. Der Prüfer hat es am 13.09.2026 belegt.
+   */
+
+  /** Sanfter Sturz (−3 %/Tag) und Wiedereinstieg, sobald der Halt endet. */
+  function sanfterSturz(n: number): BarSeries {
+    const bars: Bar[] = [];
+    const d = new Date(Date.UTC(2024, 0, 2));
+    let k = 0;
+    let kurs = 100;
+    while (bars.length < n) {
+      const wd = d.getUTCDay();
+      if (wd !== 0 && wd !== 6) {
+        if (k >= 5) kurs *= 0.97;
+        bars.push({ t: msFromET(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate(), 9, 30), o: kurs, h: kurs, l: kurs, c: kurs, v: 100_000 });
+        k++;
+      }
+      d.setUTCDate(d.getUTCDate() + 1);
+    }
+    return BarSeries.from(bars);
+  }
+
+  const immerWiederRein = strategyOf({
+    id: 'wiederrein',
+    holdsOvernight: true,
+    warmup: 1,
+    timeframes: [1440],
+    decide: (snap) => (snap.position === null && snap.i >= 2 ? { kind: 'enter', side: 'long', stop: snap.bars.c[snap.i]! * 0.9, reason: 'test' } : { kind: 'hold' }),
+  });
+
+  it('WÄCHTER: die Tagesbremse feuert mehrfach UND der Drawdown steht in derselben Bilanz', () => {
+    // Tagesbremse 1 % greift bei −1,5 %/Tag sofort und wiederholt; der
+    // Drawdown von 8 % wird erst später gerissen — genau die Eskalation.
+    const r = simulate({
+      bars: new Map<string, BarSeriesLike>([['AAA', sanfterSturz(80)]]),
+      strategyFor: () => ({ strategy: immerWiederRein, params: {} }),
+      config: baseConfig({ timeframe: 1440, risk: { maxPositionPct: 100, maxDailyLossPct: 1, maxDrawdownPct: 8, riskPerTradePct: 5 } }),
+      initialEquity: 100_000,
+    });
+    const schluessel = Object.keys(r.bremsen.ausloesungen);
+    expect(schluessel).toContain('konto:daily_loss');
+    // DIE Zeile: ohne den Grundwechsel-Zähler fehlt dieser Schlüssel, und der
+    // Bericht behauptet, nur die Tagesbremse habe je ausgelöst.
+    expect(schluessel).toContain('konto:drawdown');
+    expect(r.bremsen.ausloesungen['konto:daily_loss']!).toBeGreaterThan(1);
+    expect(r.bremsen.ausloesungen['konto:drawdown']).toBe(1);
+  });
+});

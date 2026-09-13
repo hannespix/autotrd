@@ -89,6 +89,33 @@ describe('strategyChoice: Alpha → Basis → noTrade', () => {
     expect(strategyForFn(a)('AAA')).not.toHaveProperty('sizing');
   });
 
+  it('WÄCHTER (Prüferbefund K1): `strategyForFn` liefert `stufe` — der Simulator liest NUR diesen Namen', () => {
+    /*
+     * Der Fehler, den der Prüfer am 13.09.2026 gefunden hat: Die Wahl trug
+     * `source`, der Simulator liest `sp.stufe` (backtest/simulator.ts), und
+     * `cmdBacktest` gibt `strategyForFn(app)` direkt an `simulate()`. Jede
+     * Position des CLI-Backtests lief damit als `other`, während dieselbe
+     * Wahl in der Engine ihre richtige Stufe trägt (engine.ts bildet
+     * `stufe: choice.source`). Zwei Entscheidungspfade für dieselbe Frage
+     * (§0.1) — und zwar in dem Befehl, den CLAUDE.md §5 als Verifikation
+     * nennt. Der Prüfer hat 3 877 $ Unterschied im selben Lauf gemessen.
+     *
+     * TypeScript meldet so etwas nie: `stufe` ist optional, und der
+     * Excess-Property-Check greift nur bei Objektliteralen.
+     */
+    const a = app({ champion: champion(block(), { alpha: ['AAA'], noTrade: ['BBB'] }) });
+    const fn = strategyForFn(a);
+    for (const symbol of ['AAA', 'BBB', 'CCC']) {
+      const wahl = fn(symbol);
+      expect(wahl).not.toBe(null);
+      // Beide Namen, derselbe Wert: die Engine liest `source`, der Simulator `stufe`.
+      expect(wahl!.stufe).toBe(wahl!.source);
+      expect(wahl!.stufe).toBeDefined();
+    }
+    expect(fn('AAA')!.stufe).toBe('champion');
+    expect(fn('BBB')!.stufe).toBe('basis');
+  });
+
   it('WÄCHTER (M6): pass false ⇒ die Basis ERÖFFNET nichts (entriesAllowed false, Grund), führt aber — noTrade-Symbole des Korbs eingeschlossen; unbekannte Symbole nichts', () => {
     const a = app({ champion: champion(block({ pass: false }), { noTrade: ['BBB'] }) });
     const bbb = strategyChoice(a, 'BBB')!;
