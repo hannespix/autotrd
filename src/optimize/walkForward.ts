@@ -28,6 +28,7 @@ import type {
   TimeframeMin,
   Trade,
 } from '../core/types.ts';
+import { ALPHA_STUFE } from '../risk/limits.ts';
 import { mean, median, objectiveValue, perPeriodSharpe, type ObjectiveId } from './objective.ts';
 import { sampleParams, wirksamerSuchraum } from './search.ts';
 
@@ -340,9 +341,15 @@ export interface WindowSimArgs {
    * erst durch die Notbremsen-Bilanz: V3 meldet `konto:daily_loss 3×`, V4
    * `other:daily_loss 3×` — dieselben drei Tage, dieselbe Schwelle.
    *
-   * Ohne Angabe bleibt es bei `other`; ohne gesetzte `risk.tiers` ist das
-   * folgenlos, weil `grenzenFuer` dann für JEDE Stufe die globalen Werte
-   * liefert.
+   * Ohne Angabe gilt `alpha` — im Optimierer ist jeder gesuchte Kandidat ein
+   * Alpha-Kandidat, und in der Engine wird aus der Quelle `champion` dieselbe
+   * Stufe. `other` wäre hier falsch und nicht bloss unbestimmt: Sobald
+   * irgendeine Stufe eine eigene Bremse trägt, rechnet die KONTO-Bremse mit
+   * der lockersten (`kontoGrenzen`), und eine Position in `other` hätte dann
+   * gar keinen eigenen Schutz mehr.
+   *
+   * Ohne gesetzte `risk.tiers` ist das alles folgenlos: `grenzenFuer` liefert
+   * dann für JEDE Stufe die globalen Werte.
    */
   stufe?: string | undefined;
   /**
@@ -367,7 +374,7 @@ export function simulateWindow(a: WindowSimArgs): SimResult {
   const korb = korbZum(korbVon(a.symbol, a.bars), a.membership, a.membershipAt);
   const input: SimInput = {
     bars: korb,
-    strategyFor: (s) => (korb.has(s) ? { strategy: a.strategy, params: a.params, ...(a.sizing ? { sizing: a.sizing } : {}), ...(a.stufe ? { stufe: a.stufe } : {}) } : null),
+    strategyFor: (s) => (korb.has(s) ? { strategy: a.strategy, params: a.params, ...(a.sizing ? { sizing: a.sizing } : {}), stufe: a.stufe ?? ALPHA_STUFE } : null),
     config: a.config,
     initialEquity: a.initialEquity,
     range: { start: a.range.start, end: a.range.end },

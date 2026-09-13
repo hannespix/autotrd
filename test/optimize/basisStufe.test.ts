@@ -20,7 +20,7 @@
  * falschen Schluss gezogen, die Tagesbremse sei nicht die Ursache.
  */
 import { describe, expect, it } from 'vitest';
-import { BASIS_STUFE, grenzenFuer, stufeOf } from '../../src/risk/limits.ts';
+import { ALPHA_STUFE, BASIS_STUFE, grenzenFuer, stufeOf } from '../../src/risk/limits.ts';
 import type { RiskConfig } from '../../src/core/config.ts';
 import { ConfigSchema } from '../../src/core/config.ts';
 import { simulateWindow } from '../../src/optimize/walkForward.ts';
@@ -89,7 +89,7 @@ describe('simulateWindow reicht die Stufe an den Simulator durch', () => {
     expect(gesehen).toBe('basis');
   });
 
-  it('ohne Angabe bleibt die Stufe offen — der Simulator setzt dann `other`', () => {
+  it('WÄCHTER: ohne Angabe gilt `alpha` — `other` verlöre bei gesetzten tiers jeden eigenen Schutz', () => {
     let gesehen: string | undefined | null = 'nie gesetzt';
     simulateWindow({
       symbol: 'AAA',
@@ -104,6 +104,24 @@ describe('simulateWindow reicht die Stufe an den Simulator durch', () => {
         return { trades: [], equity: [], dailyReturns: [], metrics: {} as never, finalEquity: 10_000, notes: [], bremsen: OHNE_BREMSEN };
       },
     });
-    expect(gesehen).toBe(undefined);
+    // Gemessen am 13.09.2026 (#58): Mit `other` und einer Basis-Bremse von 5 %
+    // rechnete die KONTO-Bremse mit der lockersten Stufe (kontoGrenzen), und
+    // das Alpha lief plötzlich gegen 5 % statt 2 % — trend_donchian sprang
+    // von 5 auf 6 Gates, ohne dass sich an ihm etwas geändert hätte.
+    expect(gesehen).toBe('alpha');
+    expect(gesehen).toBe(ALPHA_STUFE);
+  });
+
+  it('WÄCHTER: `alpha` behält bei gesetzter Basis-Bremse seine eigene Latte — `other` nicht', () => {
+    const risk = riskMitStufen();
+    // Die Basis ist auf 5 %/30 % gelockert. Das Alpha trägt null/null und
+    // erbt damit die globalen 2 %/10 % — aber NUR, wenn seine Positionen die
+    // Stufe `alpha` tragen. Als `other` bekäme es dieselben Zahlen, verlöre
+    // aber jede Möglichkeit, je eine eigene Latte zu bekommen.
+    expect(grenzenFuer(risk, ALPHA_STUFE)).toEqual({ maxDailyLossPct: 2, maxDrawdownPct: 10 });
+    const mitAlphaLatte: RiskConfig = { ...risk, tiers: { ...risk.tiers, alpha: { maxDailyLossPct: 1, maxDrawdownPct: 4 } } };
+    expect(grenzenFuer(mitAlphaLatte, ALPHA_STUFE)).toEqual({ maxDailyLossPct: 1, maxDrawdownPct: 4 });
+    // Dieselbe Config, Stufe `other`: die Latte des Alpha bleibt wirkungslos.
+    expect(grenzenFuer(mitAlphaLatte, 'other')).toEqual({ maxDailyLossPct: 2, maxDrawdownPct: 10 });
   });
 });

@@ -44,6 +44,20 @@ export const STUFEN: readonly Stufe[] = ['alpha', 'basis', 'other'];
  */
 export const BASIS_STUFE: Stufe = 'basis';
 
+/**
+ * Die Stufe des Alpha-Champions. Im Optimierer ist JEDER gesuchte Kandidat
+ * ein Alpha-Kandidat — in der Engine wird aus der Quelle `champion` ebenfalls
+ * `alpha` (`stufeOf`). Ohne diese Vorgabe fiele der Optimierer auf `other`
+ * zurück, und `other` erbt die globalen Werte: Sobald irgendeine Stufe eine
+ * eigene Bremse trägt, rechnet die KONTO-Bremse mit der lockersten
+ * (`kontoGrenzen`) — das Alpha verlöre still seinen eigenen Schutz, obwohl
+ * niemand seine Latte angefasst hat. Gemessen am 13.09.2026 (#58): Mit einer
+ * Basis-Bremse von 5 % wanderten `trend_donchian` von 5 auf 6 Gates und
+ * `momentum_pullback` von 496 auf 457 Trades, ohne dass sich an ihnen etwas
+ * geändert hätte.
+ */
+export const ALPHA_STUFE: Stufe = 'alpha';
+
 /** Die beiden Latten einer Stufe (bzw. des Kontos). */
 export interface StufenGrenzen {
   maxDailyLossPct: number;
