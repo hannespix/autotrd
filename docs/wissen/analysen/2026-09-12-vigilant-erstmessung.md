@@ -107,3 +107,52 @@ Messung festgeschrieben.
 4. Meine Vorregistrierung bekommt eine Lehre: Schranken in Prozent sind
    wertlos ohne eine Bindung des Investitionsgrads. Künftige Erwartungen
    nennen beides.
+
+---
+
+# Nachtrag: Sleeves 2 und 3 (Lauf #45, 12.09.2026)
+
+18 Folds, 2020-07-27 … 2026-09, vier Index-ETFs, feste Parameter, keine Suche.
+SPY über dieselben Fenster: Sharpe 0,68 bei 24,83 % MaxDD.
+
+| Sleeve | Sharpe | Netto | Trades | Trades/Mon | MaxDD | Gebührenanteil | Gates |
+|---|---|---|---|---|---|---|---|
+| `index_reversal` | 0,37 | +582,70 (+2,31 %) | 146 | 2,7 | 2,69 % | 27,3 % | 5/10 |
+| `turn_of_month` | −0,07 | **−191,88 (−0,87 %)** | 173 | 3,3 | 4,36 % | **244,0 %** | 3/10 |
+
+**T18 (Monatswechsel) ist widerlegt, und zwar deutlich.** Der Effekt verliert
+nach Kosten: Die Gebühren fressen das **2,4-fache** des Bruttogewinns. Das ist
+die Krankheit des Vorgängersystems im Kleinen — „der Handel funktioniert; er
+wird zu Tode gehandelt" (§2). 173 Trades für eine Kante, die kleiner ist als
+der Spread.
+
+Die Literaturkarte trug die Gegenrede bereits vor der Messung: Sullivan,
+Timmermann und White (2001) zeigen, dass Kalendereffekte die
+Mehrfachtest-Korrektur schlecht überleben. Genau so ist es gekommen. Der
+Vertrauensgrad war richtig gesetzt; die Vorhersage war trotzdem falsch, und
+das zählt.
+
+**T17 (Index-Umkehr) ist widerlegt.** Positiv, aber mit Sharpe 0,37 weit
+unter dem Markt (0,68) — also keine Kante, sondern eine teurere Art, Markt zu
+kaufen. Sie fällt unter anderem am Nachbarschafts-Plateau, was heißt: Das
+Ergebnis hängt am gewählten Parametersatz und nicht an einer Region.
+
+## Zwischenstand nach drei vorregistrierten Sleeves
+
+| These | Sleeve | Status |
+|---|---|---|
+| T16 | `vigilant_allocation` | **widerlegt** (Bärenmarkt-Erwartung verfehlt), aber 9/10 Gates |
+| T17 | `index_reversal` | **widerlegt** |
+| T18 | `turn_of_month` | **widerlegt** |
+
+Drei von drei Vorhersagen falsch. Das ist kein Misserfolg der Methode — es
+ist die Methode: Jede gemessene Verbesserung gilt als Einbildung, bis sie
+out-of-sample nach Kosten überlebt (§6). Drei Ideen aus der Literatur haben
+das nicht überlebt.
+
+Was bleibt, ist ein Baustein: `vigilant_allocation` ist der einzige Kandidat
+im ganzen Repo, der `fold_positive_share` nimmt, und der einzige mit geringer
+Korrelation zu den Aktienfamilien. Ob daraus zusammen mit
+`momentum_pullback` eine Einheit wird, die alle zehn Gates nimmt, entscheidet
+die Ensemble-Messung — deren Zusammensetzung vor all diesen Zahlen
+festgeschrieben wurde.
