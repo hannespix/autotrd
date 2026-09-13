@@ -378,9 +378,28 @@ export function simulate(input: SimInput): SimResult {
   let stufenHalt: Record<string, HaltState> = {};
   let wiederaufbau: Record<string, WiederaufbauZiel> = {};
   let parkStand: ParkStand = { tag: null };
+  // Vola-Ziel: nicht nur Spanne, sondern VERTEILUNG. Min/Max allein können
+  // den Fall nicht von seinem Gegenteil trennen, der die Messung wertlos
+  // macht: Klebt der Faktor an `maxFaktor`, ist das kein Volatilitätsziel
+  // mehr, sondern ein konstanter Hebel — und der Lauf misst dann nicht, was
+  // auf dem Etikett steht. Genau daran muss er scheitern können
+  // (docs/wissen/vorregistrierung/2026-09-13-volatilitaetsziel.md, Abbruch-
+  // kriterium). Reine Diagnose: Keine dieser Zahlen fließt in eine
+  // Entscheidung zurück.
+  // Grenzen aus DERSELBEN Config, mit der `decide()` rechnet — nie
+  // nachgebildete Zahlen, sonst zählte die Diagnose etwas anderes als das,
+  // was geklemmt wurde.
+  const volMinFaktor = risk.volTarget.minFaktor;
+  const volMaxFaktor = risk.volTarget.maxFaktor;
+  const volMinBeob = risk.volTarget.minBeobachtungen;
   let volFaktorMin = Number.POSITIVE_INFINITY;
   let volFaktorMax = Number.NEGATIVE_INFINITY;
   let volFaktorLetzt: VolZielResult | null = null;
+  let volZyklen = 0;
+  let volSumme = 0;
+  let volAmDeckel = 0;
+  let volAmBoden = 0;
+  let volAufwaermen = 0;
   const positions = new Map<string, PositionState>();
   const pendingEntries = new Set<string>();
   const trades: Trade[] = [];
@@ -794,6 +813,14 @@ export function simulate(input: SimInput): SimResult {
       volFaktorMin = Math.min(volFaktorMin, res.volZiel.faktor);
       volFaktorMax = Math.max(volFaktorMax, res.volZiel.faktor);
       volFaktorLetzt = res.volZiel;
+      volZyklen += 1;
+      volSumme += res.volZiel.faktor;
+      // Aufwärmphase zuerst: Dort ist der Faktor 1,0, weil noch nicht
+      // geschätzt wurde — das ist weder Deckel noch Boden, und es als
+      // „atmender Faktor" zu zählen wäre geschmeichelt.
+      if (res.volZiel.beobachtungen < volMinBeob) volAufwaermen += 1;
+      else if (res.volZiel.faktor >= volMaxFaktor - 1e-9) volAmDeckel += 1;
+      else if (res.volZiel.faktor <= volMinFaktor + 1e-9) volAmBoden += 1;
     }
     for (const n of res.notes) {
       if (n.kind === 'blocked') {
@@ -859,10 +886,13 @@ export function simulate(input: SimInput): SimResult {
         (park.verworfen > 0 ? `, ${park.verworfen} Order(s) mangels Bargeld/Bestand verworfen` : ''),
     );
   }
-  if (volFaktorLetzt) {
+  if (volFaktorLetzt && volZyklen > 0) {
+    const anteil = (x: number): string => `${((x / volZyklen) * 100).toFixed(1)} %`;
     notes.push(
-      `Vola-Ziel: Faktor ${volFaktorMin.toFixed(2)}–${volFaktorMax.toFixed(2)} über den Lauf, zuletzt ${volFaktorLetzt.faktor.toFixed(2)} ` +
-        `(realisiert ${volFaktorLetzt.realisiertVolPct.toFixed(2)} % p. a.)`,
+      `Vola-Ziel: Faktor ${volFaktorMin.toFixed(2)}–${volFaktorMax.toFixed(2)} über den Lauf, Mittel ${(volSumme / volZyklen).toFixed(2)}, ` +
+        `zuletzt ${volFaktorLetzt.faktor.toFixed(2)} (realisiert ${volFaktorLetzt.realisiertVolPct.toFixed(2)} % p. a.); ` +
+        `Verteilung über ${volZyklen} Zyklen: ${anteil(volAmDeckel)} am Deckel ${volMaxFaktor}, ${anteil(volAmBoden)} am Boden ${volMinFaktor}, ` +
+        `${anteil(volAufwaermen)} Aufwärmphase, ${anteil(volZyklen - volAmDeckel - volAmBoden - volAufwaermen)} frei`,
     );
   }
 
