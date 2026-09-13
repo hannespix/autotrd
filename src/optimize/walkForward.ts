@@ -18,6 +18,7 @@ import type {
   AssetClass,
   BarSeriesLike,
   EquityPoint,
+  HaltBilanz,
   Metrics,
   Ms,
   Params,
@@ -907,6 +908,14 @@ export interface BasisKennzahlen {
   days: number;
   /** Am Ende der Range offene Positionen — unrealisiert in der Equity, nicht in den Trades, ohne Exit-Kosten. */
   openAtEnd: number;
+  /**
+   * Notbremsen DIESES Laufs. Die Basis-Stufe läuft als EINE durchgehende
+   * Simulation, hier ist die Bilanz also vollständig und keine Untergrenze.
+   * Sie steht hier, weil die V3-Auswertung den Einbruch der Basis einer
+   * Tagesbremse zuschrieb, ohne dass irgendein Bericht sagte, ob je eine
+   * ausgelöst hat (#54/#55 haben die Zuordnung widerlegt).
+   */
+  bremsen: HaltBilanz;
 }
 
 export interface BasisSimArgs extends Omit<WindowSimArgs, 'range' | 'costMultiplier' | 'membershipAt'> {
@@ -1136,6 +1145,7 @@ export function basisKennzahlen(a: {
     flatDaysShare,
     days,
     openAtEnd: result.notes.filter((n) => n.startsWith('Offen am Ende')).length,
+    bremsen: result.bremsen,
   };
 }
 

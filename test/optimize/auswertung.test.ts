@@ -19,6 +19,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { BarSeriesLike, SimResult, Strategy, Trade } from '../../src/core/types.ts';
+import { OHNE_BREMSEN } from '../../src/core/types.ts';
 import { auswertungFuer, runOptimization, type OptimizeRunInput, type StrategyRun, type SymbolRun } from '../../src/optimize/run.ts';
 import { foldPlanForBars, zeitachseVon } from '../../src/optimize/walkForward.ts';
 import { NOISE_PROFILE, REWARD_PROFILE, dailyBars, fakeMetricsFns, fakeStrategy, makeFakeSimulate, testConfig, type FakeSimOptions } from './fakes.ts';
@@ -177,7 +178,7 @@ describe('auswertungFuer: Abweichung des Auswertungslaufs wird laut, nicht still
       days: 0,
     },
     finalEquity: 10_000,
-    notes: [],
+    notes: [], bremsen: OHNE_BREMSEN,
   });
 
   it('falsche Trade-Zahl je Fold ⇒ konsistent false, Hinweis nennt den Fold', () => {

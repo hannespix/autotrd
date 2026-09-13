@@ -14,6 +14,7 @@ import { BarSeries } from '../../src/core/bars.ts';
 import { parseConfig, type Config, type OptimizerInput } from '../../src/core/config.ts';
 import { DAY } from '../../src/core/time.ts';
 import type { EquityPoint, Metrics, Params, ParamSpec, SimResult, SizingSpec, Strategy, TimeframeMin, Trade } from '../../src/core/types.ts';
+import { OHNE_BREMSEN } from '../../src/core/types.ts';
 import type { MetricsFns } from '../../src/optimize/robustness.ts';
 import { paramKey } from '../../src/optimize/search.ts';
 import type { SimConfig, SimInput, SimulateFn } from '../../src/optimize/walkForward.ts';
@@ -169,7 +170,7 @@ export function makeFakeSimulate(options: FakeSimOptions | ((strategyId: string)
         days++;
       }
     }
-    return { trades, equity, dailyReturns, metrics: metricsOf(trades, equity, dailyReturns, input.initialEquity, days), finalEquity: eq, notes: [] };
+    return { trades, equity, dailyReturns, metrics: metricsOf(trades, equity, dailyReturns, input.initialEquity, days), finalEquity: eq, notes: [], bremsen: OHNE_BREMSEN };
   };
   return Object.assign(fn, { calls });
 }

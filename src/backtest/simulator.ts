@@ -102,6 +102,7 @@ import type {
   SizingSpec,
   Strategy,
   SymbolSnapshot,
+  HaltBilanz,
   TimeframeMin,
   Trade,
   VolZielVerteilung,
@@ -393,6 +394,15 @@ export function simulate(input: SimInput): SimResult {
   const volMinFaktor = risk.volTarget.minFaktor;
   const volMaxFaktor = risk.volTarget.maxFaktor;
   const volMinBeob = risk.volTarget.minBeobachtungen;
+  // Notbremsen-Bilanz (core/types.ts, HaltBilanz): gezählt werden FLANKEN,
+  // nicht Zyklen — ein Halt, der zehn Tage steht, ist EINE Auslösung. Die
+  // Notiz oben ist gedeckelt und erreicht den Optimierer-Bericht ohnehin nie;
+  // diese Zahlen wandern strukturiert mit. Reine Diagnose.
+  const bremsenZaehler = new Map<string, number>();
+  let bremsenErste: Ms | null = null;
+  let bremsenLetzte: Ms | null = null;
+  let kontoHaltVorher = false;
+  const stufeHaltVorher = new Map<string, boolean>();
   let volFaktorMin = Number.POSITIVE_INFINITY;
   let volFaktorMax = Number.NEGATIVE_INFINITY;
   let volFaktorLetzt: VolZielResult | null = null;
@@ -805,6 +815,20 @@ export function simulate(input: SimInput): SimResult {
     const res = decide(ctx, inputs);
     halt = res.halt;
     if (res.stufenHalt) stufenHalt = res.stufenHalt;
+    {
+      const flanke = (wer: string, grund: string | null): void => {
+        const k = `${wer}:${grund ?? 'unbekannt'}`;
+        bremsenZaehler.set(k, (bremsenZaehler.get(k) ?? 0) + 1);
+        bremsenErste ??= now;
+        bremsenLetzte = now;
+      };
+      if (halt.halted && !kontoHaltVorher) flanke('konto', halt.reason);
+      kontoHaltVorher = halt.halted;
+      for (const [stufe, h] of Object.entries(stufenHalt)) {
+        if (h.halted && !(stufeHaltVorher.get(stufe) ?? false)) flanke(stufe, h.reason);
+        stufeHaltVorher.set(stufe, h.halted);
+      }
+    }
     if (res.wiederaufbau) wiederaufbau = res.wiederaufbau;
     if (res.parkStand) parkStand = res.parkStand;
     // Die Park-Order füllt am Open der nächsten Bar des Parksymbols — wie
@@ -928,5 +952,10 @@ export function simulate(input: SimInput): SimResult {
           maxFaktor: volMaxFaktor,
         }
       : null;
-  return { trades, equity: equityCurve, dailyReturns, metrics, finalEquity: equity, notes, ...(volZiel ? { volZiel } : {}) };
+  const bremsen: HaltBilanz = {
+    ausloesungen: Object.fromEntries(bremsenZaehler),
+    erste: bremsenErste,
+    letzte: bremsenLetzte,
+  };
+  return { trades, equity: equityCurve, dailyReturns, metrics, finalEquity: equity, notes, bremsen, ...(volZiel ? { volZiel } : {}) };
 }
