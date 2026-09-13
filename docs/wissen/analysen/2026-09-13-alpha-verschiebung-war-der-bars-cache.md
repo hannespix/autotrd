@@ -30,21 +30,37 @@ Der Fold-Plan ist am Datenende verankert (`selectionEnd = dataEnd − holdout`,
 Befund M4) — die Fold-Fenster sind in beiden Läufen ZEICHENGLEICH. Was sich
 unterscheidet, ist das, was VOR dem frühesten Fold liegt: sein Warmup.
 
-Und genau dort fängt der Unterschied an. Die gewählten Parameter je Fold von
-`momentum_pullback`:
+Und genau dort fängt der Unterschied an. Fold für Fold bei
+`momentum_pullback` — und die Grenze sitzt auf der Bar genau dort, wo sie
+sitzen muss:
 
-| Fold | IS-Fenster | #56 | #59 |
+| Fold | IS-Fenster | Warmup reicht zurück bis | Unterschied #56 gegen #59 |
 |---|---|---|---|
-| 1 | 2021-04-05 … 2022-04-05 | `rsiEntry 30, exitOnRsi 1, rrMult 0, trailMult 4` | `rsiEntry 40, exitOnRsi 0, rrMult 3.5, trailMult 2` |
-| 2–9 | — | gleich | gleich |
-| 10 | 2023-06-24 … 2024-06-23 | `fast 20, rsiLen 2, atrMult 1.5, trailMult 1` | `fast 25, rsiLen 6, atrMult 3, trailMult 5` |
-| 11–16 | — | gleich | gleich |
+| 1 | ab 2021-04-05 | ~2020-06-16 | **andere Parameter** (`rsiEntry 30/40`, `exitOnRsi 1/0`, `rrMult 0/3.5`, `trailMult 4/2`) |
+| 2 | ab 2021-07-04 | ~2020-09-14 | gleiche Parameter, aber **IS-Objective 1,876 gegen 1,490** |
+| 3 | ab 2021-10-02 | ~2020-12-13 | gleiche Parameter, **IS-Objective 3,018 gegen 2,951** |
+| 4 | ab 2021-12-31 | ~2021-03-13 | gleiche Parameter, **IS-Objective 0,002 gegen 0,669** |
+| 5–9 | ab 2022-03-31 | ~2021-06-11 und später | **zeichengleich** |
+| 10 | ab 2023-06-24 | weit im Datenbereich | **andere Parameter** (`fast 20/25`, `rsiLen 2/6`, `atrMult 1,5/3`) |
+| 11–16 | — | — | **zeichengleich** |
 
-Fold 1 ist der, dem zwei Warmup-Bars fehlen. Fold 10 liegt zweieinhalb Jahre
-später — dorthin wandert es über die **Hysterese des Punkt-in-Zeit-Korbs**
-(`optimize/korbJeFold.ts` wählt Stand für Stand, jeder Stand aus dem
-vorigen). Eine Kette, die am Datenbeginn anfängt, trägt einen Unterschied am
-Datenbeginn bis ans Ende.
+`warmupBars` ist für diese Parameter **202 Bars**. Die Folds 1 bis 4 sind
+genau die, deren Warmup-Fenster VOR dem Datenbeginn endet — sie bekommen in
+den beiden Läufen verschieden viele Bars und messen deshalb verschieden.
+Ab Fold 5 liegt das ganze Warmup im Datenbereich, und ab dort ist der Bericht
+zeichengleich. Die Grenze liegt nicht ungefähr richtig, sie liegt exakt
+richtig.
+
+Fold 10 fällt aus dieser Reihe: Sein Warmup liegt längst im Datenbereich.
+Dorthin wandert der Unterschied über die **Hysterese des
+Punkt-in-Zeit-Korbs** (`optimize/korbJeFold.ts` wählt Stand für Stand, jeder
+Stand aus dem vorigen). Eine Kette, die am Datenbeginn anfängt, trägt einen
+Unterschied am Datenbeginn bis ans Ende.
+
+Bemerkenswert an den Folds 2 bis 4: Dort gewinnt **derselbe** Parametersatz,
+nur mit einer anderen IS-Kennzahl. Ein Unterschied in den Daten muss also
+nicht sofort das Urteil kippen — er wartet, bis zwei Kandidaten nah genug
+beieinanderliegen. Das macht ihn schwerer zu bemerken, nicht harmloser.
 
 Ergebnis: 496 statt 457 OOS-Trades, `beats_market` 0,46 statt 0,25 — und bei
 `trend_donchian` `fold_positive_share` von rot auf grün.
