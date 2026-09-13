@@ -122,6 +122,39 @@ export type OrderIntent =
   | { kind: 'exit'; symbol: string; reason: ExitReason; decidedAt: Ms }
   | { kind: 'move_stop'; symbol: string; stop: number; reason: string; decidedAt: Ms };
 
+/**
+ * Eine Umschichtung der Treasury-Funktion „Geldmarkt-Parken" (risk/parken.ts):
+ * brachliegende Kasse in ein kurzlaufendes Staatspapier und zurück.
+ *
+ * Bewusst KEIN `OrderIntent`: Das hier ist kein Handelssignal. Es hat keinen
+ * Stop, kein Ziel, keine Strategie und wird nie zu einem `Trade` — es belegt
+ * keinen Positionsplatz und kein Exposure-Budget. Entschieden wird es
+ * ausschließlich in `decide()` (core/logic.ts), ausgeführt im Simulator wie
+ * in der Engine über denselben Plan.
+ */
+export interface ParkIntent {
+  symbol: string;
+  side: 'buy' | 'sell';
+  /** Stückzahl > 0. */
+  qty: number;
+  /** Referenzkurs (Close der Entscheidungs-Bar) — für Kosten und Plausibilität. */
+  refPrice: number;
+  reason: string;
+  /** Freikauf für einen Einstieg: kennt weder Band noch Tagesgrenze. */
+  pflicht: boolean;
+  decidedAt: Ms;
+}
+
+/**
+ * Fortgeschriebener Stand der Treasury (Band: höchstens eine diskretionäre
+ * Umschichtung je Handelstag). Additiv; fehlt er, hat heute noch keine
+ * stattgefunden.
+ */
+export interface ParkStand {
+  /** ET-Handelstag der letzten Umschichtung (YYYY-MM-DD) bzw. null. */
+  tag: string | null;
+}
+
 export type ExitReason =
   | 'stop'
   | 'target'

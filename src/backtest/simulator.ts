@@ -35,6 +35,19 @@
  * Gap-Open darf das Konto nicht ins Minus hebeln — Long-Fills werden gegen
  * das Bargeld am Fill nachgesizet (0 Stück ⇒ kein Fill, Notiz).
  *
+ * Geldmarkt-Parken (`risk.cashParking`, risk/parken.ts): Entschieden wird es
+ * in `decide()` wie alles andere — hier wird nur gefüllt, und zwar zu
+ * denselben Konventionen wie jeder Fill (Open der Folgebar, volle Kosten aus
+ * costs.ts, kein Market-on-Close). Zwei Eigenschaften stehen im Code:
+ * Ein VERKAUF des Parkpapiers füllt VOR den Einstiegen derselben Bar (er
+ * finanziert sie — deshalb kann das Parken keinen Einstieg blockieren), ein
+ * KAUF danach (er bekommt nur, was übrig bleibt). Und ein Park-Fill erzeugt
+ * nie einen `Trade`: Trades tragen `oos_trades`, `feeShare`, Profitfaktor
+ * und Trefferquote, also Gates — eine Treasury-Umschichtung gehört dort
+ * nicht hinein. Ihre Kosten treffen die Equity-Kurve trotzdem in voller Höhe
+ * (nichts geschenkt); der Parkwert zählt zur Equity, aber NIE ins
+ * Brutto-Exposure (`EquityPoint.exposure`).
+ *
  * AUSWERTUNGSGRÖSSEN (MFE/MAE, `stopTrailed`): Der Simulator führt je
  * offener Position den besten und den schlechtesten Kurs der Haltezeit mit
  * (`updateExcursion`) und hält am Ausstieg fest, ob die Stop-Marke
@@ -47,7 +60,17 @@
  * Ergebnis, ist die Messung falsch.
  */
 import type { CostConfig, RiskConfig, SessionConfig } from '../core/config.ts';
-import { advancePosition, decide, openPosition, qtyStepFor, type LogicContext, type SymbolInput, type WiederaufbauZiel } from '../core/logic.ts';
+import {
+  advancePosition,
+  decide,
+  offeneStrategiePositionen,
+  openPosition,
+  qtyStepFor,
+  type LogicContext,
+  type SymbolInput,
+  type WiederaufbauZiel,
+} from '../core/logic.ts';
+import { PARK_STRATEGY_ID, PARK_STUFE } from '../risk/parken.ts';
 import type { VolZielResult } from '../risk/volziel.ts';
 import {
   DAY,
@@ -70,6 +93,8 @@ import type {
   IndicatorSet,
   Ms,
   OrderIntent,
+  ParkIntent,
+  ParkStand,
   Params,
   PositionState,
   SessionInfo,
@@ -104,6 +129,20 @@ export interface SimInput {
   calendar?: Calendar | undefined;
   /** Stressfaktor auf alle Kosten (1 = normal). */
   costMultiplier?: number | undefined;
+  /**
+   * Bars des Parksymbols (`risk.cashParking.symbol`) — GETRENNT vom Korb.
+   *
+   * Warum getrennt: Das Parksymbol ist kein Korbmitglied. Läge es in `bars`,
+   * geriete es in alles, was aus dem Korb gebildet wird — Zeitachse und
+   * Fold-Plan, Rangliste, Maßstab, `strategyFor`. Eine einzige verirrte Bar
+   * hat den Fold-Plan schon einmal ins Leere gezogen (core/bars.ts,
+   * `anfangsStreuner`); das Parksymbol soll diese Tür nicht öffnen.
+   *
+   * Rückfall `bars.get(symbol)`: Wer es doch in den Korb legt, bekommt das
+   * Parken trotzdem — außer eine Strategie führt das Symbol, dann tritt die
+   * Treasury zurück (Doppelführung, risk/parken.ts).
+   */
+  parkBars?: BarSeriesLike | undefined;
   /**
    * Kursextreme je Trade mitschreiben (MFE/MAE) — Vorgabe an. Aus bleiben
    * `Trade.mae`/`Trade.mfe` null; alles andere MUSS identisch sein. Der
@@ -152,6 +191,27 @@ interface SymState {
 }
 
 /**
+ * Laufzeitzustand der Treasury (`risk.cashParking`): eine Bar-Serie, eine
+ * Position, eine offene Order. Bewusst KEIN `SymState` — die Treasury hat
+ * keine Strategie, keine Indikatoren, keinen Stop und keine Trades.
+ */
+interface ParkState {
+  symbol: string;
+  series: BarSeriesLike;
+  /** Index der nächsten noch nicht verarbeiteten Bar. */
+  cursor: number;
+  /** Offene Order (füllt am Open der nächsten Bar des Parksymbols). */
+  pending: ParkIntent | null;
+  pos: PositionState | null;
+  lastClose: number;
+  lastT: Ms;
+  /** Bericht: Umschichtungen und deren Kosten (Erwartung 4 der Vorregistrierung). */
+  umschichtungen: number;
+  kosten: number;
+  verworfen: number;
+}
+
+/**
  * Sitzungs-Sicht wie `buildSessionInfo(series.prefix(i+1), i, …)`, aber O(1):
  * `barsSinceOpen` wird inkrementell mitgezählt statt je Bar rückwärts über
  * den Tag zu laufen (bei 1-min-Bars 390 dayKey-Aufrufe je Entscheidung).
@@ -184,15 +244,16 @@ export function sessionInfoIncremental(args: {
 }
 
 /** Vereinigung aller Bar-Zeitpunkte, sortiert und ohne Duplikate. */
-function mergedTimes(syms: readonly SymState[]): Float64Array {
-  if (syms.length === 1) return syms[0]!.series.t;
+function mergedTimes(syms: readonly SymState[], park: ParkState | null): Float64Array {
+  const reihen = park ? [...syms.map((s) => s.series), park.series] : syms.map((s) => s.series);
+  if (reihen.length === 1) return reihen[0]!.t;
   let total = 0;
-  for (const s of syms) total += s.series.length;
+  for (const s of reihen) total += s.length;
   const all = new Float64Array(total);
   let k = 0;
-  for (const s of syms) {
-    all.set(s.series.t, k);
-    k += s.series.length;
+  for (const s of reihen) {
+    all.set(s.t, k);
+    k += s.length;
   }
   all.sort();
   const out = new Float64Array(total);
@@ -281,7 +342,28 @@ export function simulate(input: SimInput): SimResult {
   }
   const bySymbol = new Map<string, SymState>();
   for (const s of syms) bySymbol.set(s.symbol, s);
-  const times = mergedTimes(syms);
+
+  /* ── Treasury einrichten (risk.cashParking) ──
+   * Ohne Bars des Parksymbols wird NICHT geparkt, und das steht laut in den
+   * Notizen: Ein stilles „hat halt nicht gegriffen" wäre die schlechteste
+   * Variante. Die Bars muss der Aufrufer mitliefern (der Optimierer lädt sie
+   * über den Kandidatenpool).
+   */
+  const parkCfg = risk.cashParking;
+  let park: ParkState | null = null;
+  if (parkCfg?.enabled && parkCfg.symbol !== null) {
+    const serie = input.parkBars ?? input.bars.get(parkCfg.symbol);
+    if (!serie || serie.length === 0) {
+      notes.push(`Geldmarkt-Parken konfiguriert (${parkCfg.symbol}), aber ohne Bars — NICHT geparkt`);
+    } else if (bySymbol.has(parkCfg.symbol)) {
+      // Doppelführung: Eine Strategie handelt das Parksymbol. `decide()` hält
+      // die Treasury dann heraus; hier wird es einmal laut gesagt.
+      notes.push(`Geldmarkt-Parken ausgesetzt: ${parkCfg.symbol} wird von einer Strategie gehandelt (Doppelführung)`);
+    } else {
+      park = { symbol: parkCfg.symbol, series: serie, cursor: 0, pending: null, pos: null, lastClose: Number.NaN, lastT: 0, umschichtungen: 0, kosten: 0, verworfen: 0 };
+    }
+  }
+  const times = mergedTimes(syms, park);
   const bench = input.benchmark ?? null;
   let benchIdx = -1;
 
@@ -295,6 +377,7 @@ export function simulate(input: SimInput): SimResult {
   // Engine über die Zyklen trägt (Stufen-Bremsen, Wiederaufbau-Ziele).
   let stufenHalt: Record<string, HaltState> = {};
   let wiederaufbau: Record<string, WiederaufbauZiel> = {};
+  let parkStand: ParkStand = { tag: null };
   let volFaktorMin = Number.POSITIVE_INFINITY;
   let volFaktorMax = Number.NEGATIVE_INFINITY;
   let volFaktorLetzt: VolZielResult | null = null;
@@ -347,6 +430,11 @@ export function simulate(input: SimInput): SimResult {
       mv += p.side === 'long' ? value : -value;
       gross += Math.abs(value);
     }
+    // Die Parkposition zählt zur EQUITY (sie ist Vermögen und trägt den Zins),
+    // aber NIE ins Brutto-Exposure: Sonst stünde das Konto in der Kennzahl
+    // fast immer „voll investiert", und die Basis-Latte (exposureNormMaxDD)
+    // läse Kasse als Marktrisiko (Eigenschaft 2 der Vorregistrierung).
+    if (park?.pos && !Number.isNaN(park.lastClose)) mv += park.pos.qty * park.lastClose;
     equity = cash + mv;
     grossValue = gross;
   };
@@ -414,6 +502,64 @@ export function simulate(input: SimInput): SimResult {
     s.mfe = Number.NaN;
   };
 
+  /**
+   * Park-Order am Open füllen — volle Marktorder-Kosten, aber KEIN `Trade`
+   * (siehe Kopf). Ein Kauf wird auf das Bargeld am Fill heruntergesizet wie
+   * jeder Long-Einstieg; ein Verkauf nie über den Bestand hinaus.
+   */
+  const fillPark = (p: ParkState, price: number, time: Ms): void => {
+    const intent = p.pending;
+    if (!intent || !(price > 0)) return;
+    p.pending = null;
+    const gehalten = p.pos?.qty ?? 0;
+    const step = qtyStepFor(assetClass);
+    let qty = intent.qty;
+    if (intent.side === 'sell') {
+      qty = Math.min(qty, gehalten);
+    } else {
+      const unitOutlay = price + fillCosts({ side: 'buy', qty: 1, price, assetClass, costs, multiplier: mult }).total;
+      const affordable = Number((Math.floor(cash / unitOutlay / step) * step).toFixed(8));
+      qty = Math.min(qty, Math.max(0, affordable));
+    }
+    if (!(qty > 0)) {
+      p.verworfen++;
+      return;
+    }
+    const cost = fillCosts({ side: intent.side, qty, price, assetClass, costs, multiplier: mult }).total;
+    p.kosten += cost;
+    p.umschichtungen++;
+    if (intent.side === 'buy') {
+      cash -= qty * price + cost;
+      const alt = p.pos;
+      const neueQty = Number(((alt?.qty ?? 0) + qty).toFixed(8));
+      const einstand = alt ? (alt.qty * alt.entryPrice + qty * price) / neueQty : price;
+      // Kein `openPosition`: Das ist keine Strategie-Position. Vor allem kein
+      // Stop und kein Ziel (Eigenschaft 3) — ein Katastrophen-Stop auf einem
+      // Geldmarktpapier wäre sinnlos und im Crash schädlich.
+      p.pos = {
+        symbol: p.symbol,
+        side: 'long',
+        qty: neueQty,
+        entryPrice: einstand,
+        entryTime: alt?.entryTime ?? time,
+        stop: null,
+        target: null,
+        initialStop: null,
+        highWater: einstand,
+        strategy: PARK_STRATEGY_ID,
+        barsHeld: alt?.barsHeld ?? 0,
+        entryDay: dayKeyFor(alt?.entryTime ?? time, assetClass),
+        stufe: PARK_STUFE,
+      };
+    } else {
+      cash += qty * price - cost;
+      const rest = Number((gehalten - qty).toFixed(8));
+      p.pos = rest > 0 && p.pos ? { ...p.pos, qty: rest } : null;
+    }
+    if (p.pos) positions.set(p.symbol, p.pos);
+    else positions.delete(p.symbol);
+  };
+
   /** Position schließen und Trade buchen. `market` = Marktorder (mit Slippage), sonst Limit (nur Gebühren). */
   const closeTrade = (s: SymState, exitPrice: number, exitTime: Ms, reason: ExitReason, market: boolean): void => {
     const p = s.pos!;
@@ -472,6 +618,11 @@ export function simulate(input: SimInput): SimResult {
     for (const s of syms) {
       if (s.cursor < s.series.length && s.series.t[s.cursor] === t) here.push(s);
     }
+    // Bar des Parksymbols an diesem Zeitpunkt (Index, noch nicht verbraucht):
+    // Ihr Open füllt die offene Park-Order — Verkauf VOR, Kauf NACH den
+    // Einstiegen dieser Bar (siehe Kopf).
+    const parkIdx = park && park.cursor < park.series.length && park.series.t[park.cursor] === t ? park.cursor : -1;
+    const parkOpen = park && parkIdx >= 0 ? park.series.o[parkIdx]! : Number.NaN;
     const day = dayKeyFor(t, assetClass);
     const bounds = assetClass === 'crypto' ? null : boundsOf(day);
     // `now` ist das Bucket-Ende: Die Bar ist geschlossen, die Engine entscheidet danach.
@@ -516,6 +667,10 @@ export function simulate(input: SimInput): SimResult {
         else if (d <= day) dayTradeCount += n;
       }
     }
+
+    /* 2a. Park-VERKAUF füllt zuerst: Er finanziert die Einstiege dieser Bar
+     * (Eigenschaft 1 — das Parken blockiert nie einen Einstieg). */
+    if (active && park && parkIdx >= 0 && park.pending?.side === 'sell') fillPark(park, parkOpen, t);
 
     /* 2. Fills am Open dieser Bar, 3. Stop/Ziel intrabar, advance */
     for (const s of here) {
@@ -569,6 +724,14 @@ export function simulate(input: SimInput): SimResult {
       s.barsSinceOpen = day === s.prevDay ? s.barsSinceOpen + 1 : 1;
       s.prevDay = day;
     }
+    /* 2b. Park-KAUF füllt zuletzt: Er bekommt nur, was die Strategien übrig
+     * lassen — nie umgekehrt. Danach Kurs und Cursor des Parksymbols. */
+    if (park && parkIdx >= 0) {
+      if (active && park.pending?.side === 'buy') fillPark(park, parkOpen, t);
+      park.lastClose = park.series.c[parkIdx]!;
+      park.lastT = t;
+      park.cursor = parkIdx + 1;
+    }
     if (bench) {
       while (benchIdx + 1 < bench.length && bench.t[benchIdx + 1]! <= t) benchIdx++;
     }
@@ -577,7 +740,8 @@ export function simulate(input: SimInput): SimResult {
     if (!active) continue;
 
     inRangeCount++;
-    if (positions.size > 0) exposedCount++;
+    // Exposure-Quote: Die Parkposition ist Kasse, keine Marktzeit (Eigenschaft 2).
+    if (offeneStrategiePositionen(positions) > 0) exposedCount++;
     if (Number.isNaN(firstT)) firstT = t;
     lastNow = now;
 
@@ -612,11 +776,20 @@ export function simulate(input: SimInput): SimResult {
       equityReturns: dailyReturns,
       stufenHalt,
       wiederaufbau,
+      // Treasury (risk/parken.ts): Kurs der jüngsten geschlossenen Bar des
+      // Parksymbols — dieselbe Quelle wie live. Entschieden wird in decide().
+      ...(park && !Number.isNaN(park.lastClose) ? { parkQuote: { symbol: park.symbol, price: park.lastClose, t: park.lastT } } : {}),
+      parkStand,
+      parkPending: park?.pending !== null && park?.pending !== undefined,
     };
     const res = decide(ctx, inputs);
     halt = res.halt;
     if (res.stufenHalt) stufenHalt = res.stufenHalt;
     if (res.wiederaufbau) wiederaufbau = res.wiederaufbau;
+    if (res.parkStand) parkStand = res.parkStand;
+    // Die Park-Order füllt am Open der nächsten Bar des Parksymbols — wie
+    // jeder andere Fill, kein Sonderweg (§0.1).
+    if (res.park && park && res.park.symbol === park.symbol) park.pending = res.park;
     if (res.volZiel) {
       volFaktorMin = Math.min(volFaktorMin, res.volZiel.faktor);
       volFaktorMax = Math.max(volFaktorMax, res.volZiel.faktor);
@@ -673,6 +846,18 @@ export function simulate(input: SimInput): SimResult {
   if (halt.halted) notes.push(`Halt am Ende aktiv (${halt.reason}): ${halt.note ?? ''}`);
   for (const [stufe, h] of Object.entries(stufenHalt)) {
     if (h.halted) notes.push(`Halt der Stufe ${stufe} am Ende aktiv (${h.reason}): ${h.note ?? ''}`);
+  }
+  if (park) {
+    // Die Kosten des Parkens gehören SICHTBAR in den Bericht (Erwartung 4 der
+    // Vorregistrierung: unter 5 % des Bruttogewinns). Sie stecken in der
+    // Equity-Kurve, aber nicht in `Metrics.feeShare` — dort zählen nur
+    // Trades, und eine Treasury-Umschichtung ist keiner.
+    const wert = park.pos ? park.pos.qty * park.lastClose : 0;
+    notes.push(
+      `Geldmarkt-Parken (${park.symbol}): ${park.umschichtungen} Umschichtung(en), Kosten ${park.kosten.toFixed(2)} $ (nicht in feeShare), ` +
+        `am Ende ${park.pos ? `${park.pos.qty} Stück ≈ ${wert.toFixed(2)} $` : 'nichts geparkt'}` +
+        (park.verworfen > 0 ? `, ${park.verworfen} Order(s) mangels Bargeld/Bestand verworfen` : ''),
+    );
   }
   if (volFaktorLetzt) {
     notes.push(

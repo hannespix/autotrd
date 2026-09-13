@@ -189,6 +189,50 @@ export const ConfigSchema = z.object({
           maxAlterTage: z.number().int().min(1).max(60).default(5),
         })
         .default({ enabled: false, maxAlterTage: 5 }),
+      /**
+       * Geldmarkt-Parken (Treasury, risk/parken.ts): Kapital, das keine
+       * Strategie braucht, liegt in einem kurzlaufenden Staatspapier statt
+       * unverzinst auf dem Konto. Keine Handelsidee — kein Signal, kein
+       * Kursziel, keine Kante; sie entfernt eine Verzerrung der Messung
+       * (Läufe #46/#47: ΔSharpe ≈ −r_f/σ trifft gering investierte
+       * Kandidaten achtmal härter als den voll investierten Maßstab).
+       *
+       * `enabled: false` ist Vorgabe: Ohne Config und ohne Parkposition
+       * ändert sich bitgleich nichts. Wer sie einschaltet, registriert das
+       * vorher (§4a) und misst neu.
+       *
+       * Das Parksymbol gehört der Treasury ALLEIN — es darf nicht im
+       * Handelsuniversum stehen (Prüfung unten in `finalize`), sonst gäbe es
+       * zwei Positionen mit zwei Herkünften in einem Symbol.
+       *
+       * Bereinigung: In rohen Tagesbars (`broker.adjustment: 'raw'`, Vorgabe)
+       * trägt der Kurs eines ausschüttenden Geldmarkt-ETFs den Zins NICHT.
+       * Gemessen wird das Parken nur mit `adjustment: 'all'`.
+       */
+      cashParking: z
+        .object({
+          enabled: z.boolean().default(false),
+          /** Parksymbol (z. B. BIL); null ⇒ aus. Darf keine Strategie führen. */
+          symbol: z.string().min(1).nullable().default(null),
+          /**
+           * Band: erst ab dieser Abweichung (in Prozentpunkten der Equity)
+           * von der Zielquote wird umgeschichtet, und höchstens einmal je
+           * Handelstag. Ein Umschichten bei jeder kleinen Abweichung wäre
+           * genau die Krankheit des Vorgängersystems (CLAUDE.md §2).
+           */
+          bandPct: pct(100).default(5),
+          /**
+           * Bargeld, das ungeparkt bleibt (in % der Equity): Es deckt
+           * Gebühren und den Einstieg am nächsten Morgen, ohne dass dafür
+           * erst verkauft werden muss. Der Freikauf funktioniert auch ohne
+           * Puffer — er spart nur Umschichtungen und damit Kosten.
+           */
+          bufferPct: pct(100).default(2),
+        })
+        .default({ enabled: false, symbol: null, bandPct: 5, bufferPct: 2 })
+        .refine((v) => !v.enabled || (v.symbol !== null && v.symbol.trim().length > 0), {
+          message: 'risk.cashParking.enabled: true ohne risk.cashParking.symbol — ohne Parksymbol gibt es nichts zu parken.',
+        }),
       pdt: z
         .object({
           /** Pattern-Day-Trader-Regel respektieren (unter minEquity max. maxDayTrades in 5 Handelstagen). */
@@ -211,6 +255,7 @@ export const ConfigSchema = z.object({
       volTarget: { enabled: false, zielVolPct: 10, halbwertszeitTage: 20, minFaktor: 0.25, maxFaktor: 2, minBeobachtungen: 60 },
       tiers: { alpha: { maxDailyLossPct: null, maxDrawdownPct: null }, basis: { maxDailyLossPct: null, maxDrawdownPct: null } },
       wiederaufbau: { enabled: false, maxAlterTage: 5 },
+      cashParking: { enabled: false, symbol: null, bandPct: 5, bufferPct: 2 },
       pdt: { respect: true, minEquity: 25_000, maxDayTrades: 3 },
     }),
   strategy: z
@@ -689,6 +734,25 @@ export function parseConfig(raw: unknown): Config {
         `optimizer.riskFreeSymbol ${cfg.optimizer.riskFreeSymbol} steht nicht im Kandidatenpool (universe.candidates ∪ universe.symbols) — ` +
           'ohne Bars gibt es keine Zinsreihe, und die Gates rechneten still weiter gegen null.',
       );
+    }
+  }
+  // Das Parksymbol gehört der Treasury allein (risk/parken.ts): Führte eine
+  // Strategie dasselbe Symbol, lägen zwei Positionen mit zwei Herkünften in
+  // einem Symbol — zwei Besitzer einer Menge, und §0.6 hätte keine logische
+  // Einheit mehr. Zur Laufzeit fängt `decide()` den Fall (Rückzug), aber der
+  // Regelfall gehört beim Start abgelehnt: laut ist billiger als still.
+  if (cfg.risk.cashParking.symbol !== null) {
+    const park = normalizeUserSymbol(cfg.risk.cashParking.symbol, cfg.universe.assetClass);
+    cfg.risk.cashParking.symbol = park;
+    const handel = new Set([...cfg.universe.symbols, ...(cfg.universe.candidates ?? [])]);
+    if (handel.has(park)) {
+      throw new ConfigError(
+        `risk.cashParking.symbol ${park} steht im Handelsuniversum (universe.symbols ∪ universe.candidates) — ` +
+          'das Parksymbol darf keine Strategie führen, sonst gäbe es zwei Positionen mit zwei Herkünften in einem Symbol.',
+      );
+    }
+    if (cfg.universe.benchmark === park) {
+      throw new ConfigError(`risk.cashParking.symbol ${park} ist zugleich universe.benchmark — der Maßstab wird nicht gehandelt, das Parksymbol schon.`);
     }
   }
   // Ensembles: Die Zusammensetzung IST die Vorregistrierung, also muss sie

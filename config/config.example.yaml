@@ -128,6 +128,34 @@ risk:
     # Nach so vielen Kalendertagen verfällt ein ungenutztes Ziel: Das
     # Schweigen einer Monatsstrategie ist kein Ja.
     maxAlterTage: 5
+  # Geldmarkt-Parken (Treasury, src/risk/parken.ts): Kapital, das keine
+  # Strategie braucht, liegt in einem kurzlaufenden Staatspapier statt
+  # unverzinst auf dem Konto. KEINE Handelsidee — kein Signal, kein Kursziel,
+  # keine Kante. Sie entfernt die Verzerrung aus den Läufen #46/#47
+  # (ΔSharpe ≈ −r_f/σ trifft gering investierte Kandidaten achtmal härter als
+  # den voll investierten Maßstab), sie erzeugt keine.
+  #
+  # Die Parkposition belegt keinen Positionsplatz, zählt nicht ins
+  # Exposure-Budget, hat keinen Stop und wird von keiner Notbremse
+  # glattgestellt. Braucht eine Strategie Kapital, wird zuerst Geldmarkt
+  # verkauft — das Parken blockiert nie einen Einstieg.
+  cashParking:
+    # Vorgabe AUS: Ohne diesen Schalter (und ohne Parkposition) ändert sich
+    # bitgleich nichts. Einschalten heißt vorregistrieren und neu messen.
+    enabled: false
+    # Parksymbol, z. B. BIL. Es gehört der Treasury ALLEIN: Es darf weder in
+    # universe.symbols noch in universe.candidates stehen (sonst gäbe es zwei
+    # Positionen mit zwei Herkünften in einem Symbol) — der Start bricht sonst ab.
+    # WICHTIG: Ein ausschüttender Geldmarkt-ETF trägt den Zins nur in
+    # BEREINIGTEN Bars. Gemessen wird das Parken nur mit broker.adjustment: all.
+    symbol: null
+    # Band: erst ab dieser Abweichung (Prozentpunkte der Equity) von der
+    # Zielquote wird umgeschichtet, und höchstens einmal je Handelstag.
+    # Tägliches Umschichten wäre die Krankheit des Vorgängersystems.
+    bandPct: 5
+    # Bargeld, das ungeparkt bleibt (% der Equity): deckt Gebühren und den
+    # Einstieg am nächsten Morgen, ohne dass dafür verkauft werden muss.
+    bufferPct: 2
   pdt:
     # Pattern-Day-Trader-Regel respektieren: Unter minEquity höchstens
     # maxDayTrades Daytrades in fünf Handelstagen — der vierte sperrt das Konto.

@@ -48,6 +48,7 @@
  */
 import { existsSync, readFileSync, statSync as fsStatSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
+import { IEX_STREAM_SYMBOL_MAX } from '../alpaca/stream.ts';
 import { isOpenStatus, type AlpacaClient, type DataStream, type StreamStatus, type TradeStream, type TradeUpdate } from '../alpaca/types.ts';
 import type { Config } from '../core/config.ts';
 import { aggregate, BarSeries, normalizeBars } from '../core/bars.ts';
@@ -65,9 +66,10 @@ import {
 } from '../core/journal.ts';
 import { errMsg, logger } from '../core/log.ts';
 import { decide, type AssetFacts, type LogicContext, type SymbolInput } from '../core/logic.ts';
+import { istParkPosition } from '../risk/parken.ts';
 import { buildSessionInfo } from '../core/session.ts';
 import { DAY, HOUR, MIN, addDays, dayKeyFor, isTradingDay, prevTradingDay, sessionBounds, type Calendar } from '../core/time.ts';
-import type { AccountView, AssetClass, Bar, ExitReason, HaltState, IndicatorSet, Ms, OrderIntent, Params, PositionState, SizingSpec, Strategy, TimeframeMin } from '../core/types.ts';
+import type { AccountView, AssetClass, Bar, ExitReason, HaltState, IndicatorSet, Ms, OrderIntent, ParkStand, Params, PositionState, SizingSpec, Strategy, TimeframeMin } from '../core/types.ts';
 import { resumeHalt } from '../risk/limits.ts';
 import { tagesRenditen, type VolZielResult } from '../risk/volziel.ts';
 import { backfill } from '../data/backfill.ts';
@@ -76,7 +78,7 @@ import { BarStore, barStoreRoot, mergeBars, type BaseTimeframe } from '../data/s
 import { Book } from './book.ts';
 import { MarketClock, type ClockSnapshot } from './clock.ts';
 import { parseClientId } from './ids.ts';
-import { OrderExecutor, type NotifyFn } from './orders.ts';
+import { OrderExecutor, type NotifyFn, type ParkOrderRef } from './orders.ts';
 import { reconcile } from './reconcile.ts';
 
 export interface EngineTimers {
@@ -158,8 +160,19 @@ export class StateMismatchError extends Error {
   }
 }
 
-/** state.json trägt zusätzlich zurückgestellte Exits/Stop-Nachzüge (Symbol → Intent) — überlebt Neustarts. */
-export type PersistedState = EngineState & { deferredIntents: Record<string, OrderIntent> };
+/**
+ * state.json trägt zusätzlich zurückgestellte Exits/Stop-Nachzüge (Symbol →
+ * Intent) und den Stand der Treasury — beides überlebt Neustarts und, auf der
+ * Plattform, den einzelnen Takt.
+ *
+ * `park` ist additiv: `tag` ist der ET-Handelstag der letzten Umschichtung
+ * (Band: höchstens eine je Tag), `order` eine noch offene Park-Order. Ohne
+ * Geldmarkt-Parken bleibt das Feld weg.
+ */
+export type PersistedState = EngineState & {
+  deferredIntents: Record<string, OrderIntent>;
+  park?: { tag: string | null; order: ParkOrderRef | null };
+};
 
 /** Pfad der RESUME-Datei: Inhalt = Notiz; hebt einen stehenden Halt (drawdown/manual/errors/reconcile) auf. */
 export function resumeFlagPath(home: string): string {
@@ -340,7 +353,11 @@ export class Engine {
     if (loaded?.accountId && acc.id && loaded.accountId !== acc.id) throw new StateMismatchError('account', loaded.accountId, acc.id);
     // Erster State: Tagesstart = Vortagesschluss (Kopfkommentar, K1), nicht die Equity nach dem Gap.
     const base = loaded ?? emptyState(this.mode, today, this.dayStartMark());
-    const st: PersistedState = { ...base, deferredIntents: (base as Partial<PersistedState>).deferredIntents ?? {} };
+    const st: PersistedState = {
+      ...base,
+      deferredIntents: (base as Partial<PersistedState>).deferredIntents ?? {},
+      ...((base as Partial<PersistedState>).park ? { park: (base as Partial<PersistedState>).park! } : {}),
+    };
     if (acc.id) st.accountId = acc.id;
     // `consecutiveErrors` bleibt, wie er gespeichert wurde: Ein Neustart (oder der nächste Functions-Takt) ist
     // kein Beweis, dass der Fehler weg ist — erst ein fehlerfreier Tick setzt den Zähler zurück (Secreview 2, M4).
@@ -386,6 +403,10 @@ export class Engine {
       notify: this.deps.notify,
       log: this.log,
       costs: this.cfg.costs,
+      // Treasury: Das Parksymbol gehört ihr allein — der Executor erkennt seine
+      // Orders und Fills daran und bucht sie nie über den Trade-Pfad.
+      parkSymbol: this.parkSymbol(),
+      parkOrder: st.park?.order ?? null,
     });
 
     await this.backfillAll(now);
@@ -422,7 +443,7 @@ export class Engine {
     });
     try {
       await this.deps.dataStream.connect();
-      await this.deps.dataStream.subscribeBars(this.allSymbols());
+      await this.deps.dataStream.subscribeBars(this.streamSymbols());
     } catch (e) {
       this.log.error('DataStream: Verbindung fehlgeschlagen — Reconnect läuft, Einstiege bleiben bis dahin gesperrt (Datenfrische)', { error: errMsg(e) });
     }
@@ -510,6 +531,11 @@ export class Engine {
       const now = this.now();
       if (this.exitsAllowed(now)) {
         const executor = this.requireExecutor();
+        // Eine offene Park-Order wird storniert (sie bindet Kapital bzw. wäre
+        // nach der Glattstellung falsch dimensioniert); die Parkposition
+        // selbst bleibt stehen — sie ist Kasse, kein Marktrisiko (orders.ts,
+        // `prepareFlatten`).
+        if (await executor.cancelParkOrder()) this.log.info('flatten: offene Park-Order storniert');
         const cancelled = await executor.cancelOwnEntryOrders();
         const intents = executor.prepareFlatten(reason, cancelled);
         await this.saveState(); // vorgemerkt: Zeitbudget/Absturz mitten in der Sequenz verliert keine Position
@@ -641,6 +667,9 @@ export class Engine {
       this.ingestStreamBars();
       await this.backfillAfterReconnect(now);
       st.peakEquity = Math.max(st.peakEquity, this.account.equity);
+      // Stand einer offenen Park-Order buchen, BEVOR entschieden wird: Solange
+      // eine läuft, plant die Treasury keine zweite (`parkPending`).
+      await executor.syncParkOrder();
       // Zuerst, was seit Sitzungsschluss wartet — mit derselben Idempotenz wie jeder andere Intent.
       let failures = await this.runDeferred(now);
 
@@ -694,6 +723,19 @@ export class Engine {
         });
       }
 
+      // Kurs des Parksymbols aus derselben Aggregation wie jedes andere Symbol
+      // (geschlossene Bars, Karenz) — das Parksymbol wird nur bewertet, nie
+      // von einer Strategie befragt.
+      const parkSym = this.parkSymbol();
+      let parkQuote: { symbol: string; price: number; t: Ms } | undefined;
+      if (parkSym !== null) {
+        const serie = this.closedSeries(parkSym, closedBefore);
+        if (serie.length > 0) {
+          const pi = serie.length - 1;
+          parkQuote = { symbol: parkSym, price: serie.c[pi]!, t: serie.t[pi]! };
+        }
+      }
+
       const exitsAllowed = this.exitsAllowed(now);
 
       /*
@@ -729,8 +771,13 @@ export class Engine {
       const fuehrbar = new Set<string>();
       for (const sym of this.cfg.universe.symbols) if (this.deps.strategyFor(sym)) fuehrbar.add(sym);
       const ohneFuehrung: OrderIntent[] = [];
-      for (const sym of this.book.positions.keys()) {
+      for (const [sym, pos] of this.book.positions) {
         if (fuehrbar.has(sym)) continue;
+        // Die Parkposition der Treasury hat absichtlich keine Strategie: Sie
+        // wird nicht bewirtschaftet und darf hier nicht als „unmanaged"
+        // liquidiert werden — das erzeugte einen Trade und verschöbe Gates.
+        // Abgebaut wird sie ausschließlich über den Rückzug in `decide()`.
+        if (istParkPosition(pos)) continue;
         ohneFuehrung.push({ kind: 'exit', symbol: sym, reason: 'unmanaged', decidedAt: now });
       }
 
@@ -760,6 +807,12 @@ export class Engine {
           equityReturns: tagesRenditen(st.equityHistory ?? []),
           stufenHalt: st.stufenHalt,
           wiederaufbau: st.wiederaufbau,
+          // Treasury (risk/parken.ts): Kurs der jüngsten geschlossenen Bar des
+          // Parksymbols — dieselbe Quelle wie im Simulator. Fehlt sie, parkt
+          // `decide()` nicht und sagt das in einer Notiz.
+          ...(parkQuote ? { parkQuote } : {}),
+          ...(st.park ? { parkStand: { tag: st.park.tag } } : {}),
+          parkPending: executor.parkOrderRef() !== null,
         };
         const res = decide(ctx, inputs);
         const before = st.halt;
@@ -805,6 +858,22 @@ export class Engine {
           this.journal.append('decision', { symbol: n.symbol, note: n.kind, text: n.text, bar: newBars.get(n.symbol)?.t ?? null }, now);
         }
         intents.push(...res.intents);
+        /*
+         * Treasury: Die Umschichtung ist KEIN `OrderIntent` und läuft deshalb
+         * nicht über `executor.execute` — sie hat keinen Stop, kein Ziel, keine
+         * Strategie und wird nie ein Trade. Sie wird auch nicht außerhalb der
+         * Sitzung zurückgestellt: Eine `day`-Marktorder liegt bis zur nächsten
+         * Eröffnung beim Broker, genau wie ein Einstieg (kein Schutz-Stop, der
+         * dabei abgeräumt würde).
+         */
+        const stand = res.parkStand ?? { tag: st.park?.tag ?? null };
+        if (res.park) {
+          this.journal.append('intent', { symbol: res.park.symbol, purpose: 'park', intent: res.park }, now);
+          const pr = await executor.park(res.park);
+          if (!pr.ok) failures++;
+          this.log.info(`Parken ${res.park.side} ${res.park.symbol}: ${pr.note}`, { ok: pr.ok, orderId: pr.orderId ?? null });
+        }
+        this.merkeParkStand(stand);
       }
 
       // Die Notbremse in `decide()` läuft über `ctx.positions` und kann dieselbe
@@ -848,6 +917,7 @@ export class Engine {
         st.lastBarAt[sym] = bar.t;
       }
       this.book.advanceAll(closes);
+      this.merkeParkStand(st.park ? { tag: st.park.tag } : { tag: null });
       if (exitsAllowed) for (const r of await executor.retryPendingExits()) if (!r.ok) failures++;
       this.flushStore(false, now);
       if (failures > 0) throw new Error(`${failures} Order-Ausführung(en) fehlgeschlagen`);
@@ -859,6 +929,19 @@ export class Engine {
   }
 
   /* ───────────────────────── Bausteine ───────────────────────── */
+
+  /**
+   * Stand der Treasury in den State schreiben (Tag der letzten Umschichtung,
+   * offene Park-Order). Additiv: Ohne Parken und ohne Parkposition bleibt das
+   * Feld weg — ein State, der zwei leere Objekte trägt, obwohl der Schalter
+   * aus ist, wäre Rauschen.
+   */
+  private merkeParkStand(stand: ParkStand): void {
+    const st = this.st();
+    const order = this.executor?.parkOrderRef() ?? null;
+    if (stand.tag === null && order === null && st.park === undefined) return;
+    st.park = { tag: stand.tag, order };
+  }
 
   private st(): PersistedState {
     if (!this.state) throw new Error('Engine nicht gestartet');
@@ -962,7 +1045,66 @@ export class Engine {
   private allSymbols(): string[] {
     const set = new Set(this.cfg.universe.symbols);
     if (this.deps.benchmarkSymbol) set.add(this.deps.benchmarkSymbol);
+    // Das Parksymbol wird nicht gehandelt, aber gebraucht: ohne seine Bars
+    // kein Kurs, ohne Kurs keine Umschichtung (risk/parken.ts). Es kommen
+    // BEIDE hinzu — das konfigurierte und das einer offenen Parkposition:
+    // Nach einem Symbolwechsel muss das alte Papier bewertet werden können,
+    // sonst ließe es sich nie abbauen.
+    for (const s of this.parkSymbols()) set.add(s);
     return [...set];
+  }
+
+  /**
+   * Was der Datenstrom abonniert. Das Parksymbol kommt zuletzt — und fällt als
+   * ERSTES weg, wenn das Abonnement-Limit des IEX-Stroms sonst reißt.
+   *
+   * Warum das wichtig ist: Über dem Limit antwortet Alpaca mit 405, der Strom
+   * kommt nie zustande, die Daten altern und die Engine sperrt JEDEN Einstieg
+   * (Datenfrische, Prüfbefund M10). Eine Treasury-Funktion, die dem
+   * Handelsbuch den Datenstrom nimmt, wäre die teuerste Form von „blockiert
+   * nie einen Einstieg". Der Parkkurs kommt dann aus dem REST-Backfill —
+   * ungenauer, aber folgenlos: Ein Geldmarktpapier bewegt sich am Tag um
+   * wenige Basispunkte. GRENZE: `src/app.ts` (`streamLimitViolation`,
+   * `fetchSymbols`) kennt das Parksymbol noch nicht — siehe Bericht.
+   */
+  private streamSymbols(): string[] {
+    const alle = this.allSymbols();
+    const park = new Set(this.parkSymbols());
+    if (park.size === 0 || this.cfg.broker.feed !== 'iex' || alle.length <= IEX_STREAM_SYMBOL_MAX) return alle;
+    const ohne = alle.filter((s) => !park.has(s));
+    this.log.warn('Parksymbol nicht abonniert — das Abonnement-Limit des IEX-Stroms gilt dem Handelsbuch', { park: [...park], symbole: alle.length, limit: IEX_STREAM_SYMBOL_MAX });
+    this.journal.append(
+      'note',
+      { symbol: [...park][0]!, text: `Parksymbol nicht im Datenstrom (${alle.length} > ${IEX_STREAM_SYMBOL_MAX}) — Kurs aus dem Backfill; das Handelsbuch behält den Strom` },
+      this.now(),
+    );
+    return ohne;
+  }
+
+  /** Parksymbole dieser Engine: das einer offenen Parkposition UND das konfigurierte. */
+  private parkSymbols(): string[] {
+    const out: string[] = [];
+    const gehalten = this.gehaltenesParkSymbol();
+    if (gehalten !== null) out.push(gehalten);
+    const cfg = this.cfg.risk.cashParking?.symbol ?? null;
+    if (cfg !== null && cfg !== gehalten) out.push(cfg);
+    return out;
+  }
+
+  /** Symbol einer offenen Parkposition (die Treasury erkennt sie an ihrer Kennung). */
+  private gehaltenesParkSymbol(): string | null {
+    for (const p of this.book.positions.values()) if (istParkPosition(p)) return p.symbol;
+    return null;
+  }
+
+  /**
+   * Symbol, dessen Kurs `decide()` für die Treasury braucht: das GEHALTENE vor
+   * dem konfigurierten — genau die Reihenfolge, die `decide()` selbst benutzt
+   * (core/logic.ts). Nach einem Symbolwechsel wird so zuerst das alte Papier
+   * geräumt und erst danach das neue gekauft.
+   */
+  private parkSymbol(): string | null {
+    return this.gehaltenesParkSymbol() ?? this.cfg.risk.cashParking?.symbol ?? null;
   }
 
   /**

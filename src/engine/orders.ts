@@ -28,13 +28,15 @@ import { errMsg, logger } from '../core/log.ts';
 import { regulatoryFees } from '../backtest/costs.ts';
 import { openPosition } from '../core/logic.ts';
 import { DAY, dayKeyFor, type Calendar } from '../core/time.ts';
-import type { AssetClass, ExitReason, Ms, OrderIntent, PositionState, Side, TimeframeMin } from '../core/types.ts';
+import type { AssetClass, ExitReason, Ms, OrderIntent, ParkIntent, PositionState, Side, TimeframeMin } from '../core/types.ts';
+import { PARK_STRATEGY_ID, PARK_STUFE } from '../risk/parken.ts';
 import type { Book, EnterIntent, ExitIntent, MoveStopIntent, PendingExit } from './book.ts';
 import { decisionBucketStart, entryClientId, exitClientId, parseClientId, stopClientId } from './ids.ts';
 
 export interface ExecResult {
   symbol: string;
-  kind: OrderIntent['kind'];
+  /** `park`: Umschichtung der Treasury (risk/parken.ts) — kein Handelssignal, nie ein Trade. */
+  kind: OrderIntent['kind'] | 'park';
   ok: boolean;
   orderId?: string;
   clientId?: string;
@@ -42,6 +44,22 @@ export interface ExecResult {
 }
 
 export type NotifyFn = (level: 'info' | 'warn' | 'error', text: string) => Promise<void>;
+
+/**
+ * Offene Order der Treasury. Sie liegt NICHT in `Book.pendingEntries`: Eine
+ * Park-Order ist kein Einstieg — sie darf weder storniert werden, wenn
+ * Einstiege gesperrt sind (ein Verkauf finanziert einen Einstieg), noch über
+ * `applyEntryFill` zu einer Position mit Schutz-Stop werden.
+ */
+export interface ParkOrderRef {
+  clientId: string;
+  orderId: string | null;
+  side: 'buy' | 'sell';
+  qty: number;
+  /** Bereits gebuchte Füllmenge — macht Teilfills über Ticks und Neustarts idempotent. */
+  booked: number;
+  submittedAt: Ms;
+}
 
 export interface OrderExecutorArgs {
   client: AlpacaClient;
@@ -64,6 +82,19 @@ export interface OrderExecutorArgs {
   stufeFor?: ((symbol: string, strategyId: string) => string | undefined) | undefined;
   notify?: NotifyFn | undefined;
   log?: typeof logger | undefined;
+  /**
+   * Parksymbol der Treasury (`risk.cashParking.symbol`), auch wenn das Parken
+   * gerade AUS ist — der Executor muss eine bestehende Parkposition weiter
+   * erkennen, um sie abzubauen statt sie als Strategie-Position zu behandeln.
+   *
+   * Erkannt wird am SYMBOL, nicht an der Order-Kennung: Das Parksymbol gehört
+   * der Treasury allein (risk/parken.ts), also ist JEDE Order und jeder Fill
+   * darin ihrer — und nie ein Trade, nie eine Position mit Schutz-Stop, nie
+   * Teil einer Glattstellung.
+   */
+  parkSymbol?: string | null | undefined;
+  /** Offene Park-Order aus dem State (überlebt Neustart und Functions-Takt). */
+  parkOrder?: ParkOrderRef | null | undefined;
   /**
    * Kostenmodell für `Trade.fees` (Secreview 2, M10): Alpaca-Aktien sind kommissionsfrei, aber Verkäufe
    * tragen SEC-Gebühr und FINRA TAF, Krypto zahlt Taker-Gebühr auf beiden Seiten — dieselbe Rechnung wie
@@ -193,6 +224,9 @@ export class OrderExecutor {
   private readonly notify: NotifyFn | null;
   private readonly log: typeof logger;
   private readonly costs: CostConfig | null;
+  private readonly parkSymbol: string | null;
+  /** Offene Park-Order (persistiert im State, siehe `parkOrderRef`). */
+  private parkOrder: ParkOrderRef | null;
   /** Symbole, deren Position zu ist und deren Rest-Orders (Ziel-/Stop-Bein) noch abzuräumen sind. */
   private readonly cleanupQueue = new Set<string>();
 
@@ -212,6 +246,23 @@ export class OrderExecutor {
     this.notify = a.notify ?? null;
     this.log = a.log ?? logger;
     this.costs = a.costs ?? null;
+    this.parkSymbol = a.parkSymbol ?? null;
+    this.parkOrder = a.parkOrder ?? null;
+  }
+
+  /** Gehört dieses Symbol der Treasury? Dann nie Trade, nie Schutz-Stop, nie Glattstellung. */
+  private istPark(symbol: string): boolean {
+    return this.parkSymbol !== null && symbol === this.parkSymbol;
+  }
+
+  /** Symbole des Strategie-Buchs (ohne Parksymbol). */
+  private strategieSymbole(): string[] {
+    return [...this.book.positions.keys()].filter((s) => !this.istPark(s));
+  }
+
+  /** Offene Park-Order für den State (null = keine). */
+  parkOrderRef(): ParkOrderRef | null {
+    return this.parkOrder;
   }
 
   /** Regulatorische Gebühren beider Seiten eines (Teil-)Trades nach Kostenmodell; 0 ohne Modell. */
@@ -872,7 +923,10 @@ export class OrderExecutor {
    */
   async ensureProtectiveStops(): Promise<string[]> {
     const fixed: string[] = [];
-    const symbols = [...this.book.positions.keys()].filter((s) => !this.book.pendingEntries.has(s));
+    // Die Parkposition bekommt NIE einen Schutz-Stop (Eigenschaft 3): Ein
+    // Katastrophen-Stop auf einem Geldmarktpapier wäre sinnlos und im Crash
+    // schädlich — er verkaufte die Kasse im schlechtesten Moment.
+    const symbols = this.strategieSymbole().filter((s) => !this.book.pendingEntries.has(s));
     if (symbols.length === 0) return fixed;
     const broker = new Map((await this.client.listPositions()).map((p) => [p.symbol, p]));
     const open = flattenOrders(await this.client.listOrders({ status: 'open', symbols, nested: true }));
@@ -954,7 +1008,22 @@ export class OrderExecutor {
    */
   prepareFlatten(reason: ExitReason, cancelledEntries: readonly string[] = []): ExitIntent[] {
     const now = this.now();
-    const intents: ExitIntent[] = [...this.book.positions.keys()].map((symbol) => ({ kind: 'exit', symbol, reason, decidedAt: now }));
+    // ENTSCHEIDUNG (Vorregistrierung, Punkt „flatten"): Die Parkposition
+    // bleibt STEHEN. `flatten` beendet Marktrisiko; ein Geldmarktpapier mit
+    // Duration unter drei Monaten trägt keins, es ist Kasse in anderer Form.
+    // Sie zu verkaufen und im nächsten Takt wieder zu kaufen wäre genau die
+    // Hyperaktivität, gegen die das Band gebaut ist. Wer sie los sein will,
+    // schaltet `risk.cashParking.enabled` aus — dann räumt die Treasury sie
+    // im nächsten Zyklus selbst (Rückzug, risk/parken.ts).
+    const park = this.parkSymbol !== null && this.book.positions.has(this.parkSymbol) ? this.parkSymbol : null;
+    if (park !== null) {
+      this.journal.append(
+        'note',
+        { symbol: park, text: `flatten (${reason}): Parkposition bleibt stehen (Kasse im Geldmarkt, kein Marktrisiko) — risk.cashParking.enabled: false räumt sie` },
+        now,
+      );
+    }
+    const intents: ExitIntent[] = this.strategieSymbole().map((symbol) => ({ kind: 'exit', symbol, reason, decidedAt: now }));
     for (const it of intents) {
       const pos = this.book.positions.get(it.symbol)!;
       const prev = this.book.pendingExits.get(it.symbol);
@@ -972,6 +1041,182 @@ export class OrderExecutor {
     }
     this.journal.append('note', { text: `flatten (${reason}): eigene Einstiege storniert, Buch-Positionen vorgemerkt und werden geschlossen`, cancelledEntries: [...cancelledEntries], positions: intents.map((i) => i.symbol) }, now);
     return intents;
+  }
+
+
+  /* ── Treasury: Geldmarkt-Parken (risk/parken.ts) ── */
+
+  /**
+   * Eine Umschichtung der Treasury ausführen: schlichte Marktorder, kein
+   * Bracket, kein Stop-Bein, kein Ziel (Eigenschaft 3 der Vorregistrierung).
+   *
+   * Idempotenz wie überall an der LOGISCHEN Einheit (§0.6): Die Kennung
+   * kommt aus (Modus, Parksymbol, Bucket der Entscheidung, Seite) — Kauf über
+   * `entryClientId`, Verkauf über `exitClientId`, also verschiedene Kennungen
+   * für verschiedene Seiten desselben Buckets. Vor dem Senden wird nachgesehen;
+   * existiert die Order, wird sie übernommen statt erneut geschickt.
+   *
+   * `day` als Gültigkeit: Eine Park-Order, die heute nicht füllt, soll morgen
+   * neu entschieden und nicht über Nacht in einem anderen Markt ausgeführt
+   * werden. (Krypto handelt durch, dort `gtc`.)
+   */
+  async park(intent: ParkIntent): Promise<ExecResult> {
+    const sym = intent.symbol;
+    const r = (ok: boolean, note: string, ids?: { orderId?: string | null; clientId?: string }): ExecResult => {
+      const res: ExecResult = { symbol: sym, kind: 'park', ok, note };
+      if (ids?.orderId) res.orderId = ids.orderId;
+      if (ids?.clientId) res.clientId = ids.clientId;
+      return res;
+    };
+    if (!this.istPark(sym)) return r(false, `Parken: ${sym} ist nicht das Parksymbol dieser Engine`);
+    if (this.parkOrder) return r(true, 'Park-Order bereits offen — keine zweite');
+    const qty = roundQtyFor(intent.qty, this.assetClass);
+    if (!(qty > 0)) return r(true, `Parken: Stückzahl nach Rundung 0 (${intent.qty})`);
+    if (intent.side === 'sell') {
+      const held = this.book.positions.get(sym)?.qty ?? 0;
+      if (!(held > 0)) return r(true, 'Parken: nichts zu verkaufen');
+    }
+
+    const anchor = decisionBucketStart(intent.decidedAt, this.timeframe, this.assetClass, this.calendar);
+    const clientId = intent.side === 'buy' ? entryClientId(this.mode, sym, anchor) : exitClientId(this.mode, sym, anchor);
+    const existing = await this.client.getOrderByClientId(clientId);
+    if (existing) {
+      this.parkOrder = { clientId, orderId: existing.id, side: intent.side, qty, booked: 0, submittedAt: existing.submittedAt ?? this.now() };
+      await this.syncParkOrder();
+      return r(true, `Park-Order zur Kennung existiert bereits (${existing.status}) — nicht erneut gesendet`, { orderId: existing.id, clientId });
+    }
+    const order: NewOrder = {
+      symbol: sym,
+      side: intent.side,
+      qty,
+      type: 'market',
+      timeInForce: this.assetClass === 'crypto' ? 'gtc' : 'day',
+      clientOrderId: clientId,
+    };
+    const submittedAt = this.now();
+    // Vor dem Senden merken: Der Fill kann über den Stream ankommen, bevor der POST zurück ist.
+    this.parkOrder = { clientId, orderId: null, side: intent.side, qty, booked: 0, submittedAt };
+    let submitted: AlpacaOrder;
+    try {
+      submitted = await this.client.submitOrder(order);
+    } catch (e) {
+      if (isDuplicateError(e)) {
+        const again = await this.client.getOrderByClientId(clientId);
+        if (again) {
+          this.parkOrder = { clientId, orderId: again.id, side: intent.side, qty, booked: 0, submittedAt };
+          await this.syncParkOrder();
+          return r(true, `Park-Order existierte bereits (${again.status})`, { orderId: again.id, clientId });
+        }
+      }
+      this.parkOrder = null;
+      throw e;
+    }
+    this.parkOrder.orderId = submitted.id;
+    this.journal.append(
+      'order_submitted',
+      { purpose: 'park', symbol: sym, clientId, orderId: submitted.id, side: order.side, qty: order.qty, type: order.type, tif: order.timeInForce, refPrice: intent.refPrice, reason: intent.reason, pflicht: intent.pflicht },
+      submittedAt,
+    );
+    this.log.info(`Geldmarkt ${order.side} ${sym} ${order.qty}`, { clientId, orderId: submitted.id, reason: intent.reason });
+    if (submitted.filledQty > 0) this.applyParkFill(submitted, submittedAt);
+    if (!isOpenStatus(submitted.status)) this.parkOrder = null;
+    return r(true, `Park-Order gesendet (${intent.reason})`, { orderId: submitted.id, clientId });
+  }
+
+  /**
+   * Stand der offenen Park-Order nachsehen und Fills buchen. Wird je Tick
+   * aufgerufen, BEVOR `decide()` läuft: Solange eine Order offen ist, plant
+   * die Treasury keine zweite (`LogicContext.parkPending`).
+   */
+  async syncParkOrder(): Promise<void> {
+    const ref = this.parkOrder;
+    if (!ref) return;
+    const now = this.now();
+    const o = ref.orderId ? await this.client.getOrder(ref.orderId) : await this.client.getOrderByClientId(ref.clientId);
+    if (!o) {
+      if (now - ref.submittedAt > OrderExecutor.PENDING_ENTRY_TTL_MS) {
+        this.parkOrder = null;
+        this.journal.append('order_update', { purpose: 'park', symbol: this.parkSymbol, clientId: ref.clientId, event: 'vanished', note: 'Park-Order beim Broker unbekannt — vergessen' }, now);
+      }
+      return;
+    }
+    ref.orderId = o.id;
+    if (o.filledQty > 0) this.applyParkFill(o, now);
+    if (!isOpenStatus(o.status)) {
+      this.parkOrder = null;
+      if (o.status !== 'filled') {
+        this.journal.append('order_update', { purpose: 'park', symbol: o.symbol, orderId: o.id, clientId: o.clientOrderId, event: o.status, filledQty: o.filledQty }, now);
+      }
+    }
+  }
+
+  /** Offene Park-Order stornieren (flatten, Abbau). Gibt true zurück, wenn ein Storno angefordert wurde. */
+  async cancelParkOrder(): Promise<boolean> {
+    const ref = this.parkOrder;
+    if (!ref?.orderId) return false;
+    const o = await this.client.getOrder(ref.orderId);
+    if (!o || !isOpenStatus(o.status)) {
+      await this.syncParkOrder();
+      return false;
+    }
+    try {
+      await this.client.cancelOrder(o.id);
+      this.journal.append('order_update', { purpose: 'park', symbol: o.symbol, orderId: o.id, clientId: o.clientOrderId, event: 'cancel_requested', note: 'Park-Order storniert' }, this.now());
+      return true;
+    } catch (e) {
+      if (!is422(e)) throw e;
+      await this.syncParkOrder();
+      return false;
+    }
+  }
+
+  /**
+   * Fill einer Park-Order buchen — idempotent über die kumulierte Füllmenge,
+   * und ausdrücklich OHNE Trade: Trades tragen `oos_trades`, `feeShare`,
+   * Profitfaktor und die Live-Reife; eine Treasury-Umschichtung gehört dort
+   * nicht hinein (sie ist Kasse, die die Form wechselt). Ihre Kosten stecken
+   * live im Fill-Kurs.
+   */
+  applyParkFill(order: AlpacaOrder, ts: Ms): void {
+    const ref = this.parkOrder;
+    const sym = order.symbol;
+    if (!this.istPark(sym)) return;
+    const neu = Number(((order.filledQty ?? 0) - (ref?.clientId === order.clientOrderId || ref?.orderId === order.id ? ref.booked : 0)).toFixed(8));
+    if (!(neu > 0)) return;
+    const price = order.filledAvgPrice ?? 0;
+    if (!(price > 0)) return;
+    if (ref && (ref.clientId === order.clientOrderId || ref.orderId === order.id)) ref.booked = order.filledQty;
+    const alt = this.book.positions.get(sym) ?? null;
+    if (order.side === 'buy') {
+      const qty = Number(((alt?.qty ?? 0) + neu).toFixed(8));
+      const einstand = alt ? (alt.qty * alt.entryPrice + neu * price) / qty : price;
+      // Keine Strategie-Position: kein Stop, kein Ziel, keine Stufe mit Latte.
+      this.book.positions.set(sym, {
+        symbol: sym,
+        side: 'long',
+        qty,
+        entryPrice: einstand,
+        entryTime: alt?.entryTime ?? ts,
+        stop: null,
+        target: null,
+        initialStop: null,
+        highWater: einstand,
+        strategy: PARK_STRATEGY_ID,
+        barsHeld: alt?.barsHeld ?? 0,
+        entryDay: dayKeyFor(alt?.entryTime ?? ts, this.assetClass),
+        stufe: PARK_STUFE,
+      });
+    } else {
+      const rest = Number(((alt?.qty ?? 0) - neu).toFixed(8));
+      if (alt && rest > 1e-9) this.book.positions.set(sym, { ...alt, qty: rest });
+      else this.book.positions.delete(sym);
+    }
+    this.journal.append(
+      'fill',
+      { purpose: 'park', symbol: sym, orderId: order.id, clientId: order.clientOrderId, side: order.side, qty: neu, price, cumQty: order.filledQty, status: order.status, note: 'Geldmarkt-Parken — kein Trade' },
+      ts,
+    );
+    this.log.info(`Geldmarkt-Fill ${order.side} ${sym} ${neu} @ ${price}`, { orderId: order.id });
   }
 
   /* ── REST-Fallback zu trade_updates ── */
@@ -1005,8 +1250,10 @@ export class OrderExecutor {
         }
       }
     }
-    // (b) Exit-Fills aller Positionen (Beine, eigene Exits, Flatten)
-    await this.syncExitFillsFor([...this.book.positions.keys()]);
+    // (b) Exit-Fills aller Positionen (Beine, eigene Exits, Flatten) — ohne das
+    // Parksymbol: Dessen Verkäufe bucht `applyParkFill`, nie der Trade-Pfad.
+    await this.syncExitFillsFor(this.strategieSymbole());
+    await this.syncParkOrder();
     // (c) Eigene Exit-Orders: tote Orders für den Wiederholversuch freigeben
     for (const [sym, pe] of [...this.book.pendingExits]) {
       if (!this.book.positions.has(sym)) {
@@ -1100,6 +1347,19 @@ export class OrderExecutor {
   async handleTradeUpdate(u: TradeUpdate): Promise<void> {
     const o = u.order;
     const sym = o.symbol;
+    // Treasury zuerst: Im Parksymbol gibt es nur Park-Orders (es gehört ihr
+    // allein). Ohne diesen Zweig liefe ein Park-Kauf als „entry-artig" durch
+    // `applyEntryFill` (Position mit Schutz-Stop) und ein Park-Verkauf als
+    // Exit durch `applyExitFill` (ein Trade, der Gates verschiebt).
+    if (this.istPark(sym)) {
+      const laut = u.event === 'fill' || u.event === 'partial_fill' || u.event === 'canceled' || u.event === 'expired' || u.event === 'rejected';
+      if (laut) {
+        this.journal.append('order_update', { purpose: 'park', symbol: sym, event: u.event, orderId: o.id, clientId: o.clientOrderId, side: o.side, status: o.status, filledQty: o.filledQty }, u.timestamp);
+      }
+      if (o.filledQty > 0) this.applyParkFill(o, u.timestamp);
+      if (!isOpenStatus(o.status) && (this.parkOrder?.orderId === o.id || this.parkOrder?.clientId === o.clientOrderId)) this.parkOrder = null;
+      return;
+    }
     const pos = this.book.positions.get(sym);
     const pe = this.book.pendingEntries.get(sym);
     const own = parseClientId(o.clientOrderId);
