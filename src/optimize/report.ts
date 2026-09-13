@@ -14,7 +14,7 @@ import { gateOptions, type GateResult } from './robustness.ts';
 import { korrelationsmatrix, type Korrelationsmatrix } from '../backtest/aktivitaet.ts';
 import type { ExitKategorie, Quartile } from '../backtest/anatomie.ts';
 import type { MarktBezug } from '../backtest/marktbezug.ts';
-import type { BasisRun, HoldoutMarkt, KandidatAuswertung, Massstab, StrategyRun, SymbolRun } from './run.ts';
+import type { BasisRun, EnsembleRun, HoldoutMarkt, KandidatAuswertung, Massstab, StrategyRun, SymbolRun } from './run.ts';
 import type { TimeRange } from './walkForward.ts';
 
 export interface ReportMeta {
@@ -125,6 +125,12 @@ export function kandidatName(s: StrategyRun): string {
  * Maßstab je Kandidat, direkt unter den Gates: dieselben OOS-Fenster, die
  * Strategie neben kaufen-und-halten der Benchmark. Ohne Benchmark gilt die
  * Kasse — so wie `beats_market` es handhabt.
+ *
+ * Beide Sharpe-Werte kommen aus DEM GATE (`Massstab.oosSharpe` =
+ * `beats_market.value`, `marktSharpe` = seine Schwelle), und die Zeile sagt,
+ * gegen welchen Satz gerechnet wurde. Zwei verschieden gerechnete
+ * Sharpe-Werte nebeneinander im selben Bericht wären der schlimmste Fall:
+ * Wer den einen liest, glaubt den anderen zu verstehen.
  */
 function massstabZeile(m: Massstab): string {
   const strategie = `Strategie Sharpe p. a. ${num(m.oosSharpe)}, MaxDD ${num(m.oosMaxDD)} %, Trades je Monat ${num(m.tradesPerMonth, 1)}`;
@@ -134,7 +140,7 @@ function massstabZeile(m: Massstab): string {
       : m.marktSharpe === null && m.marktMaxDD === null
         ? `${m.marktSymbol} kaufen-und-halten nicht berechenbar — Latte 0 (Kasse)`
         : `${m.marktSymbol} kaufen-und-halten Sharpe ${num(m.marktSharpe)}, MaxDD ${num(m.marktMaxDD)} %`;
-  return `Über dieselben OOS-Fenster: ${strategie} · ${markt}`;
+  return `Über dieselben OOS-Fenster: ${strategie} · ${markt} · ${m.zins}`;
 }
 
 /* ───────────────────────── Auswertung: wo das Geld hingeht ───────────────────────── */
@@ -421,6 +427,21 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
         `Sharpe ≥ ${b.minSharpeRatio} × Korb, Gebühren ≤ ${Math.round(b.maxCostShare * 100)} % von |Netto|`,
     );
   }
+  if (o.ensembles.length > 0) {
+    out.push(
+      `- Ensembles (mehrere Sleeves als EINE Einheit, EINE Simulation, DIESELBEN zehn Alpha-Gates — keine dritte Latte): ` +
+        o.ensembles
+          .map((e) => `„${e.label}" (${e.weighting === 'equal' ? 'gleichgewichtet' : 'inverse Vola, Fenster 60 Handelstage'}): ${e.sleeves.map((sl) => sl.strategy).join(' + ')}`)
+          .join('; '),
+    );
+  }
+  out.push(
+    o.riskFreeSymbol === null
+      ? '- Risikoloser Zins: **keiner konfiguriert** (`optimizer.riskFreeSymbol: null`) — `probabilistic_sharpe_oos` und `beats_market` rechnen Ertrag über NULL je Schwankung. ' +
+          'Mit einem Geldmarktpapier im Korb wird dabei Bargeld als Kante verbucht (Befund B2, 12.09.2026).'
+      : `- Risikoloser Zins: Tagesrendite von **${o.riskFreeSymbol}** — \`probabilistic_sharpe_oos\` und \`beats_market\` rechnen auf Überschussrenditen (r − r_f derselben Tage), ` +
+        'auf BEIDEN Seiten oder auf keiner. Jede Gate-Notiz sagt, was tatsächlich gerechnet wurde.',
+  );
   const go = gateOptions(o);
   out.push(
     `- Gates: ≥ ${o.minOosTrades} OOS-Trades, ≥ ${Math.round(o.minFoldPositiveShare * 100)} % Folds positiv, OOS netto > 0 (auch bei Kosten ×${o.stressCostMultiplier}), ` +
@@ -460,6 +481,22 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
   // weil sie um nichts konkurriert, und sie fehlt nie stumm.
   if (festBasis.length > 0) {
     for (const r of runs) out.push(basisZusammenfassung(r, festBasis[0]!));
+    out.push('');
+  }
+  // Ensembles stehen ebenfalls außerhalb der Tabelle: Sie konkurrieren um
+  // nichts und werden in diesem Lauf nie befördert.
+  const ensembleLaeufe = runs.flatMap((r) => (r.ensembles ?? []).map((e) => ({ symbol: r.symbol, e })));
+  if (ensembleLaeufe.length > 0) {
+    for (const { symbol, e } of ensembleLaeufe) {
+      const gerissen = e.gates.filter((g) => !g.pass).map((g) => g.name);
+      out.push(
+        `Ensemble ${symbol} · „${e.label}" (${e.regel === 'equal' ? 'gleichgewichtet' : 'inverse Vola'}): ` +
+          `${e.pass ? '**alle zehn Alpha-Gates bestanden**' : `nicht bestanden (${gerissen.join(', ')})`} — ` +
+          `${e.messung.wfa.oos.trades} OOS-Trades, netto ${signed(e.messung.wfa.oos.netProfit)}, Folds positiv ` +
+          `${Math.round(e.messung.wfa.oos.positiveFoldShare * e.messung.wfa.folds.length)}/${e.messung.wfa.folds.length}. ` +
+          'Auch bestanden heißt NICHT befördert: siehe Versuchszählung im eigenen Abschnitt.',
+      );
+    }
     out.push('');
   }
 
@@ -584,12 +621,231 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
       out.push('');
     }
 
+    for (const e of r.ensembles ?? []) out.push(...ensembleAbschnitt(r.symbol, e, r.holdoutMarkt, meta));
     if (r.basis) out.push(...basisAbschnitt(r.symbol, r.basis, r.holdoutMarkt, meta));
   }
 
   out.push(...korrelationsAbschnitt(runs));
 
   return out.join('\n');
+}
+
+/* ───────────────────────── Ensemble ───────────────────────── */
+
+/**
+ * Der Abschnitt einer Ensemble-Einheit.
+ *
+ * Er muss drei Fragen beantworten, sonst ist er wertlos: Hält die Einheit die
+ * zehn Gates? WIRKT die Diversifikation, oder trägt ein Sleeve alles? Und wie
+ * viele Einheiten wurden auf denselben Daten probiert? Die dritte Frage ist
+ * die wichtigste — wer sechs Dinge probiert und eines bestanden sieht, liest
+ * sonst einen Einzelbeweis, wo eine Auswahl steht.
+ */
+function ensembleAbschnitt(symbol: string, e: EnsembleRun, holdoutMarkt: HoldoutMarkt | null, meta: ReportMeta): string[] {
+  const m = e.messung;
+  const w = m.wfa;
+  const out: string[] = [];
+  out.push(`### ${symbol} · Ensemble „${e.label}" (${e.regel === 'equal' ? 'gleichgewichtet' : 'inverse Vola, 60 Handelstage'})`);
+  out.push('');
+  out.push(
+    `${m.plan.sleeves.length} Sleeves in EINER Portfolio-Simulation über dieselben ${w.folds.length} Folds wie jeder andere Kandidat — ` +
+      `ein Konto, ein Positionslimit, eine Notbremse; dieselben Kosten, derselbe Stress ×${meta.optimizer.stressCostMultiplier}, ` +
+      `Embargo ${w.embargoBars} Bars (Maximum über die Sleeves, Warmup der Einheit ${m.plan.warmupBars} Bars). ` +
+      '**Dieselben zehn Alpha-Gates, unverändert** — ein Ensemble ist ein Kandidat für die bestehende Latte, keine dritte Latte (§0.9). ' +
+      'Keine Suche: Die Parameter jedes Sleeves sind vorregistriert, der Deflated Sharpe ist deshalb „nicht anwendbar".',
+  );
+  out.push('');
+  out.push(`**Versuchszählung: ${e.versuche}**`);
+  out.push('');
+  out.push(`**Gates: ${e.pass ? 'bestanden' : `nicht bestanden (${e.gates.filter((g) => !g.pass).map((g) => g.name).join(', ')})`}**`);
+  out.push('');
+  out.push(gatesTable(e.gates));
+  out.push('');
+  out.push(massstabZeile(e.massstab));
+  out.push('');
+  out.push(`PSR (OOS): ${e.psr.note}`);
+  out.push('');
+  out.push(`DSR (IS): nicht anwendbar (vorregistrierte Parameter je Sleeve, keine Suche) — ${e.dsr.note}`);
+  out.push('');
+
+  /* ── Zusammensetzung ── */
+  out.push('**Zusammensetzung** — wer trägt was, und mit welchem Anteil?');
+  out.push('');
+  out.push(
+    table(
+      ['Sleeve', 'Strategie', 'Parameter', 'Universum', 'Gewicht ⌀', 'Plätze Soll ⌀', 'Plätze Ist', 'Trades', 'Netto', 'Anteil am Netto', 'Gebühren'],
+      m.beitraege.map((b) => {
+        const sl = m.plan.sleeves[b.index]!;
+        return [
+          b.label,
+          b.strategy,
+          paramsJson(sl.params),
+          sl.universe === 'korb' ? 'Korb je Fold' : `fest (${sl.symbols.length}): ${sl.symbols.join(', ')}`,
+          pct(b.mittleresGewicht, 1),
+          num(b.mittlerePlaetze, 2),
+          String(b.plaetzeIst),
+          String(b.trades),
+          signed(b.netProfit),
+          b.anteilAmNetto === null ? '–' : pct(b.anteilAmNetto, 1),
+          num(b.fees),
+        ];
+      }),
+    ),
+  );
+  out.push('');
+  out.push(
+    '_„Gewicht ⌀" ist die REGEL im Mittel über alle Fenster, „Plätze Soll ⌀" ihre Umrechnung in ein Positionslimit je Sleeve ' +
+      '(jeder Sleeve mindestens einer, Rest nach größtem Anspruch, Summe = `risk.maxPositions`). ' +
+      '„Plätze Ist" ist die größte Zahl GLEICHZEITIG offener Positionen, die dieser Sleeve im gemeinsamen Lauf wirklich hatte. ' +
+      '**Soll und Ist können auseinanderfallen, und der Bericht behauptet nicht das Gegenteil:** `decide()` (core/logic.ts) kennt heute nur ein ' +
+      'globales `maxPositions` — das Soll ist ein Plan, noch keine Schranke. Liegt ein Ist deutlich über seinem Soll, während ein anderer ' +
+      'Sleeve unter seinem bleibt, hat dieser Sleeve dem anderen die Plätze genommen (Prüfbefund M5 der Basis-Prüfung: wer einen Korb-Rang ' +
+      'hat, konkurriert vor den Ranglosen). Dann ist die gemessene Einheit nicht die geplante._',
+  );
+  out.push('');
+  if (m.fehlend.length > 0) {
+    out.push(`_Vorregistrierte Sleeve-Symbole ohne Bars im Messfenster (fehlen im Sleeve): ${m.fehlend.join(', ')}._`);
+    out.push('');
+  }
+  if (m.entzogen.length > 0) {
+    out.push(
+      `_**Der Korb-Sleeve läuft auf einem kleineren Korb als allein.** Im letzten gemessenen Fenster führten feste Sleeves ${m.entzogen.length} Symbole, ` +
+        `die auch im Punkt-in-Zeit-Korb standen: ${m.entzogen.join(', ')}. In EINER Simulation trägt ein Symbol genau EINE Strategie — live genauso, ` +
+        'eine Position mit einem Stop (§0.6). Die Zahlen dieses Sleeves sind deshalb NICHT die seiner Einzelmessung, und ein Vergleich „Ensemble gegen Sleeve allein" ' +
+        'vergleicht auch zwei Körbe._',
+    );
+    out.push('');
+  }
+
+  /* ── Korrelation: wirkt die Diversifikation? ── */
+  out.push('**Korrelationsmatrix der Sleeve-Renditen** — die eine Zahl, an der hängt, ob ein Ensemble überhaupt etwas bringt.');
+  out.push('');
+  const k = m.korrelation;
+  const kuerzel = k.namen.map((_, i) => `S${i + 1}`);
+  out.push(table(['Kürzel', 'Sleeve'], k.namen.map((n, i) => [kuerzel[i]!, n])));
+  out.push('');
+  out.push(
+    table(
+      ['', ...kuerzel],
+      k.namen.map((_, i) => [kuerzel[i]!, ...k.werte[i]!.map((v) => (v === null ? '–' : num(v, 2)))]),
+    ),
+  );
+  out.push('');
+  out.push(
+    `**Durchschnittskorrelation: ${k.durchschnitt === null ? '–' : num(k.durchschnitt, 2)}** ` +
+      `(Mittel über alle berechenbaren Paare oberhalb der Diagonalen; gemeinsame Tage je Paar ${k.minGemeinsameTage ?? '–'} bis ${k.maxGemeinsameTage ?? '–'}` +
+      `${k.zuWenigeTage > 0 ? `; ${k.zuWenigeTage} Paare unter ${k.mindestTage} Tagen bleiben „–"` : ''}).`,
+  );
+  out.push('');
+  out.push(
+    '_Quelle der Reihen: je Sleeve ein SOLO-Lauf über dieselben Fenster — dieselben Kosten, dasselbe Konto, nur ohne die anderen Sleeves; ' +
+      'eingeschränkt auf die Handelstage der OOS-Kette. Aus dem gemeinsamen Lauf lässt sich keine Sleeve-Rendite herausrechnen (eine Equity-Kurve, ein Konto), ' +
+      'und eine Korrelation aus zugerechneten Trades wäre keine Renditekorrelation. Ein gemessener Tag OHNE Position hat die Rendite 0, und die zählt — ' +
+      'gerade die Tage, an denen der eine steht und der andere läuft, sind der Grund, warum ein Ensemble glätten würde. ' +
+      'Dieselben Solo-Reihen tragen die Gewichtsregel `inverse_vol`._',
+  );
+  out.push('');
+
+  /* ── Wer trägt welchen Fold? ── */
+  out.push('**Je Fold: wer hat ihn getragen?** Ein Ensemble, dessen Folds alle von demselben Sleeve getragen werden, ist kein Ensemble.');
+  out.push('');
+  out.push(
+    table(
+      ['Fold', 'OOS', 'Netto gesamt', ...m.plan.sleeves.map((sl) => `Netto ${sl.label}`), 'Träger'],
+      m.foldTraeger.map((ft, i) => {
+        const gesamt = w.folds[i]?.best.oosMetrics.netProfit ?? 0;
+        return [
+          String(ft.fold.index + 1),
+          `${isoDay(ft.fold.oosStart)} … ${isoDay(ft.fold.oosEnd)}`,
+          signed(gesamt),
+          ...ft.netto.map((n, j) => `${signed(n)} (${ft.trades[j]})`),
+          ft.traeger === null ? '— (kein Trade)' : m.plan.sleeves[ft.traeger]!.label,
+        ];
+      }),
+    ),
+  );
+  out.push('');
+  const getragen = new Map<string, number>();
+  for (const ft of m.foldTraeger) {
+    if (ft.traeger === null) continue;
+    const name = m.plan.sleeves[ft.traeger]!.label;
+    getragen.set(name, (getragen.get(name) ?? 0) + 1);
+  }
+  out.push(
+    `_Träger = größter Netto-Beitrag im Fenster; Klammern = Trades des Sleeves. Verteilung: ${[...getragen.entries()].map(([n, c]) => `${n} ${c}×`).join(', ') || '—'} ` +
+      `über ${m.foldTraeger.length} Folds. Die Zurechnung läuft über Trade.strategy — deshalb darf eine Strategie je Ensemble nur einmal vorkommen (parseConfig)._`,
+  );
+  out.push('');
+
+  /* ── Die Gewichtsregel, Fenster für Fenster ── */
+  const oosStaende = m.staende.filter((st) => st.fenster.endsWith('OOS'));
+  if (oosStaende.length > 0) {
+    out.push('**Die Gewichtsregel, Fenster für Fenster** (nur die OOS-Fenster; IS, finales Fenster und Holdout laufen nach derselben Regel).');
+    out.push('');
+    out.push(
+      table(
+        ['Fenster', 'gültig ab', ...m.plan.sleeves.map((sl) => `${sl.label}: Gewicht / Plätze`), 'Grund'],
+        oosStaende.map((st) => [
+          st.fenster,
+          st.tag,
+          ...st.gewichte.map((g, j) => `${pct(g, 1)} / ${st.plaetze[j]}`),
+          st.aufwaermphase ? 'Aufwärmphase ⇒ gleichgewichtet' : st.grund,
+        ]),
+      ),
+    );
+    out.push('');
+    out.push(
+      '_Kausal: Die Gewichte eines Fensters entstehen aus Handelstagen VOR seinem ersten Tag — nie aus dem Fenster selbst. ' +
+        'Das Vola-Fenster ist auf 60 Handelstage vorregistriert und steht als Konstante im Code (`VOLA_FENSTER`), nicht in der Config: ' +
+        'Ein Fenster, an dem man drehen kann, ist ein Parameter, und ein Parameter in einer Gewichtsregel ist Gewichtsoptimierung. ' +
+        'Fehlt einem Sleeve die Streuung, gilt für ALLE gleichgewichtet — eine geratene Streuung wäre schlimmer als keine._',
+    );
+    out.push('');
+  }
+
+  /* ── Innenleben und Aktivität ── */
+  if (e.auswertung) {
+    out.push(...anatomieBlock(e.auswertung));
+    out.push(...exkursionBlock(e.auswertung));
+    out.push(...aktivitaetBlock(e.auswertung, e.massstab));
+  }
+
+  out.push(
+    table(
+      ['Fold', 'IS', 'OOS', 'IS-Objective', 'OOS-Objective', 'OOS-Trades', 'OOS-Netto'],
+      w.folds.map((f) => [
+        String(f.fold.index + 1),
+        `${isoDay(f.fold.isStart)} … ${isoDay(f.fold.isEnd)}`,
+        `${isoDay(f.fold.oosStart)} … ${isoDay(f.fold.oosEnd)}`,
+        num(f.best.isObjective, 3),
+        num(f.best.oosObjective, 3),
+        String(f.best.oosMetrics.trades),
+        signed(f.best.oosMetrics.netProfit),
+      ]),
+    ),
+  );
+  out.push('');
+  if (w.holdout) {
+    out.push(
+      `**Holdout ${isoDay(w.holdout.start)} … ${isoDay(w.holdout.end)} — nur Bericht, nicht Auswahl.** ` +
+        'Diese Zahlen haben nichts ausgewählt und dürfen es auch rückwirkend nicht.',
+    );
+    out.push('');
+    out.push(table(METRICS_HEADER, [metricsRow(w.holdout.metrics)]));
+    const markt = marktBlock(holdoutMarkt);
+    if (markt.length) out.push('', ...markt);
+  } else {
+    out.push('_Kein Holdout konfiguriert (optimizer.holdoutDays = 0)._');
+  }
+  out.push('');
+  out.push(
+    '_Diese Einheit wird in diesem Lauf NICHT befördert, auch wenn alle zehn Gates halten. Zwei Gründe, beide vor dem Lauf festgeschrieben: ' +
+      '(1) Die Vorregistrierung verlangt dasselbe Urteil auf mindestens zwei weiteren Stichtagen (`--as-of`), bevor etwas Champion wird — ' +
+      'bei sechs vorregistrierten Einheiten auf denselben Daten ist ein einzelnes Bestehen kein Beleg. ' +
+      '(2) Das Champion-Format trägt eine Strategie und einen Parametersatz je Symbol; ein Ensemble trägt mehrere._',
+  );
+  out.push('');
+  return out;
 }
 
 /* ───────────────────────── Basis-Allokation ───────────────────────── */

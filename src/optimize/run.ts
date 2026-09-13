@@ -38,15 +38,24 @@ import {
   type NachlaufErgebnis,
 } from '../backtest/anatomie.ts';
 import { kaufenUndHalten, kaufenUndHaltenKurve, kurvenstandVor, marktKette, type MarktBezug, type MarktKurve } from '../backtest/marktbezug.ts';
+import { RISK_FREE_MAX_GAP, alignRiskFree, riskFreeFromBars, type RiskFreeSeries } from '../backtest/metrics.ts';
 import { BarSeries } from '../core/bars.ts';
 import type { Config, FixedCandidateConfig } from '../core/config.ts';
 import { Journal, homePaths } from '../core/journal.ts';
 import { errMsg } from '../core/log.ts';
 import { validateParams } from '../strategy/params.ts';
 import { universeRegelnFuer } from '../universe/select.ts';
+import {
+  ensemblePlan,
+  messeEnsemble,
+  versuche,
+  type EnsembleMessung,
+  type EnsemblePlan,
+  type Gewichtsregel,
+} from './ensemble.ts';
 import { korbJeFold, type KorbStand } from './korbJeFold.ts';
 import type { Calendar } from '../core/time.ts';
-import { DAY, dayKey } from '../core/time.ts';
+import { DAY, dayKey, dayKeyFor } from '../core/time.ts';
 import type { AssetClass, Bar, BarSeriesLike, Metrics, Ms, Params, SimResult, SizingSpec, Strategy } from '../core/types.ts';
 import {
   applyDecision,
@@ -55,6 +64,7 @@ import {
   fitEndOf,
   journalBasis,
   journalDecision,
+  journalEnsemble,
   loadChampion,
   mitBasis,
   saveChampion,
@@ -74,6 +84,7 @@ import {
   type DsrResult,
   type DsrVarSource,
   type GateResult,
+  type GateRiskFree,
   type MetricsFns,
   type NeighborhoodResult,
   type PsrResult,
@@ -286,6 +297,13 @@ export function auswertungFuer(a: {
 export interface Massstab {
   /** Sharpe p. a. der verketteten OOS-Tagesrenditen — dieselbe Zahl wie der Wert des Gates `beats_market`. */
   oosSharpe: number | null;
+  /**
+   * Wurde gegen den risikolosen Zins gerechnet (Überschussrenditen) oder
+   * gegen null? Der Maßstab ÜBERNIMMT die Zahlen aus dem Gate `beats_market`
+   * und rechnet sie nicht selbst nach — zwei verschieden gerechnete
+   * Sharpe-Werte nebeneinander im selben Bericht wären der schlimmste Fall.
+   */
+  zins: string;
   /** MaxDD der verketteten OOS-Equity in % (`OosAggregate.maxDrawdownPct`). */
   oosMaxDD: number;
   /** OOS-Trades je Monat: Trades / (OOS-Kalendertage / 30,44); null ohne OOS-Tage. */
@@ -305,6 +323,44 @@ export interface MarktLatte {
   sharpe: number | null;
   maxDrawdownPct: number | null;
   quelle: string;
+  /**
+   * Die VERKETTETEN Tagesrenditen desselben Maßstabs und ihre Tagesachse.
+   *
+   * Warum nicht nur der Sharpe: Ein fertiger Sharpe lässt sich nicht
+   * nachträglich auf Überschussrenditen umrechnen — die Reihe schon. Ohne sie
+   * rechnet `beats_market` beide Seiten gegen null, und zwar ausdrücklich
+   * BEIDE: Eine Rechnung, in der die Strategie den Zins abgezogen bekommt und
+   * die Latte nicht, wäre schlimmer als die alte (Vorregistrierung
+   * 2026-09-13-sharpe-gegen-zins, §2.5).
+   */
+  dailyReturns?: readonly number[] | undefined;
+  dayKeys?: readonly string[] | undefined;
+}
+
+/**
+ * Die verkettete Renditereihe des Maßstabs MIT Tagesachse — dieselbe Kette,
+ * die `marktKette` zu einem Sharpe verdichtet, nur unverdichtet.
+ *
+ * Sie entsteht aus derselben Quelle (`kaufenUndHaltenKurve` ⇒ `wertreihe`)
+ * und nach derselben Regel: Jedes Fenster beginnt frisch gleichgewichtet, die
+ * Tagesrenditen werden in derselben Reihenfolge aneinandergehängt. Deshalb
+ * ist ihr Sharpe zeichengleich der von `marktKette` — Wächter dafür in
+ * `test/optimize/zinsMassstab.test.ts`.
+ */
+export function marktReihe(a: { bars: ReadonlyMap<string, BarSeriesLike>; ranges: readonly TimeRange[]; assetClass: AssetClass }): { dailyReturns: number[]; dayKeys: string[] } | null {
+  const dailyReturns: number[] = [];
+  const dayKeys: string[] = [];
+  for (const range of a.ranges) {
+    const k = kaufenUndHaltenKurve({ bars: a.bars, range, assetClass: a.assetClass });
+    if (!k) continue;
+    for (let i = 1; i < k.kurve.length; i++) {
+      const vor = k.kurve[i - 1]!;
+      if (!(vor > 0)) continue;
+      dailyReturns.push(k.kurve[i]! / vor - 1);
+      dayKeys.push(dayKeyFor(k.zeiten[i]!, a.assetClass));
+    }
+  }
+  return dailyReturns.length >= 2 ? { dailyReturns, dayKeys } : null;
 }
 
 export function massstabFuer(a: {
@@ -313,15 +369,28 @@ export function massstabFuer(a: {
   periodsPerYear: number;
   marktSymbol: string | null;
   markt: MarktLatte | undefined;
+  /**
+   * Das Gate `beats_market` desselben Kandidaten. Seine Zahlen SIND der
+   * Maßstab: Wert = OOS-Sharpe, Schwelle = Latte, und beide sind entweder
+   * beide gegen den Zins gerechnet oder beide gegen null. Fehlt es (alte
+   * Aufrufer, Tests), rechnet der Maßstab wie bisher roh — und sagt es.
+   */
+  beatsMarket?: GateResult | undefined;
 }): Massstab {
   const oosDays = a.wfa.folds.reduce((s, f) => s + (f.fold.oosEnd - f.fold.oosStart) / DAY, 0);
+  const g = a.beatsMarket;
+  // „Zins: …" steht am Ende jeder Notiz von `beats_market` (robustness.ts).
+  const zins = g ? (g.note.match(/Zins: .*$/)?.[0] ?? 'Zins: unbekannt') : 'Zins: ohne Gate-Notiz — roh gerechnet';
   return {
-    oosSharpe: a.metricsFns.sharpeRatio(a.wfa.oos.dailyReturns, a.periodsPerYear),
+    oosSharpe: g ? g.value : a.metricsFns.sharpeRatio(a.wfa.oos.dailyReturns, a.periodsPerYear),
+    zins,
     oosMaxDD: a.wfa.oos.maxDrawdownPct,
     tradesPerMonth: oosDays > 0 ? a.wfa.oos.trades / (oosDays / TAGE_JE_MONAT) : null,
     oosDays,
     marktSymbol: a.marktSymbol,
-    marktSharpe: a.markt?.sharpe ?? null,
+    // Die Latte des Gates, nicht der roh gerechnete Markt-Sharpe: Sonst stünden
+    // im selben Bericht zwei verschieden gerechnete Zahlen nebeneinander.
+    marktSharpe: a.markt === undefined ? null : a.markt.sharpe === null ? null : g ? g.threshold : a.markt.sharpe,
     marktMaxDD: a.markt?.maxDrawdownPct ?? null,
   };
 }
@@ -394,6 +463,14 @@ export interface SymbolRun {
    */
   basis?: BasisRun;
   /**
+   * Die Ensemble-Einheiten dieses Laufs (`optimizer.ensembles`): mehrere
+   * Sleeves, EINE Simulation, dieselben zehn Gates. Sie stehen NICHT in
+   * `results` und werden nie `chosen` — bestanden heißt laut Vorregistrierung
+   * erst „auf zwei weiteren Stichtagen wiederholt", und das Champion-Format
+   * trägt heute genau eine Strategie je Symbol (siehe Bericht).
+   */
+  ensembles?: EnsembleRun[];
+  /**
    * `basis`: die eigene Einheit der Basis-Allokation (`optimizer.basisUniverse`)
    * — nur die Basis-Messung, keine Alpha-Entscheidung (`decision` ist dann ein
    * Platzhalter, `symbols`/`noTrade` der Champion-Datei unberührt). Fehlt das
@@ -436,6 +513,35 @@ export interface BasisRun {
   positiveScheibenShare: number;
   /** Eigene Simulation ab Holdout-Beginn — nur Bericht. */
   holdout: (TimeRange & { metrics: Metrics }) | null;
+}
+
+/**
+ * Eine gemessene Ensemble-Einheit: dieselbe Kette wie jeder Kandidat (Stress,
+ * Nachbarschaft, DSR, PSR, Gates, Maßstab) — nur dass die Einheit aus mehreren
+ * Sleeves besteht.
+ *
+ * Sie konkurriert um NICHTS: kein Eintrag in `results`, keine Beförderung,
+ * kein Block in der Champion-Datei. Das ist keine Nachsicht, sondern die
+ * Vorregistrierung (Punkt 4: „Bestehen ist nicht genug") und eine
+ * Format-Grenze — `ChampionEntry` trägt eine Strategie und einen
+ * Parametersatz je Symbol, ein Ensemble trägt mehrere.
+ */
+export interface EnsembleRun {
+  label: string;
+  regel: Gewichtsregel;
+  plan: EnsemblePlan;
+  messung: EnsembleMessung;
+  /** Die zehn Alpha-Gates, unverändert (`robustnessGates`, `fixed: true`). */
+  gates: GateResult[];
+  pass: boolean;
+  /** = wfa.oos.objectiveMedian — nur Bericht, nichts hängt daran. */
+  score: number;
+  dsr: DsrResult;
+  psr: PsrResult;
+  massstab: Massstab;
+  auswertung: KandidatAuswertung | null;
+  /** Die Versuchszählung im Klartext (ensemble.ts, `versuche`). */
+  versuche: string;
 }
 
 export interface KorbProtokoll {
@@ -487,7 +593,7 @@ export interface OptimizeRunOutput {
  * Begründung formuliert ist.
  */
 export function nichtsGemessen(runs: readonly SymbolRun[]): boolean {
-  return runs.length > 0 && runs.every((r) => r.results.length === 0 && r.basis === undefined);
+  return runs.length > 0 && runs.every((r) => r.results.length === 0 && r.basis === undefined && (r.ensembles === undefined || r.ensembles.length === 0));
 }
 
 /* ───────────────────────── Einheiten: ein Symbol oder der Korb ───────────────────────── */
@@ -517,6 +623,17 @@ interface Einheit {
   korbHinweis: string | null;
   /** Korb je Fold versprochen, aber nicht wählbar — kein stiller Rückfall, nicht bewertbar. */
   korbFehler: string | null;
+  /**
+   * Bars der vorregistrierten Sleeve-Symbole der Ensembles
+   * (`optimizer.ensembles[].sleeves[].symbols`), im selben Messfenster.
+   *
+   * BEWUSST getrennt von `bars`: Ein defensives Papier, das in den Korb der
+   * Alpha-Einheit rutschte, würde deren Messung verschieben — bei festem Korb
+   * sogar stumm, weil ohne Membership jedes Symbol des Korbs mitläuft. Die
+   * Ensemble-Messung führt beide Mengen selbst zusammen (ensemble.ts,
+   * `korbZuordnung`), die Alpha-Kandidaten sehen diese Serien nie.
+   */
+  ensembleBars: ReadonlyMap<string, BarSeriesLike> | null;
 }
 
 /** Anzeigename eines Korbs — taucht im Bericht und im Journal auf. */
@@ -640,11 +757,15 @@ function einheitenVon(input: OptimizeRunInput, pooled: boolean, log: (m: string)
   // bisher) auf der Einheit des Laufs, sofern deren Korb fest ist.
   const basis = basisEinheitVon(input, fensterStart, log);
 
+  // Die vorregistrierten Symbole der Ensemble-Sleeves — im selben Messfenster
+  // und in einer EIGENEN Map (siehe `Einheit.ensembleBars`).
+  const ensembleBars = ensembleBarsVon(input, fensterStart, fensterEnde, log);
+
   if (!pooled) {
     const alpha: Einheit[] = input.symbols.map((symbol) => {
       const g = geladen.find((x) => x.symbol === symbol);
       const eigener = fehler.filter((f) => f.startsWith(`${symbol}: `)).map((f) => `Bars: ${f.slice(symbol.length + 2)}`);
-      return { art: 'alpha', key: symbol, symbols: [symbol], bars: g ? g.bars : null, errors: eigener, kandidaten: null, kandidatenFehlend: [], korbHinweis, korbFehler: null };
+      return { art: 'alpha', key: symbol, symbols: [symbol], bars: g ? g.bars : null, errors: eigener, kandidaten: null, kandidatenFehlend: [], korbHinweis, korbFehler: null, ensembleBars };
     });
     return basis ? [...alpha, basis] : alpha;
   }
@@ -668,6 +789,7 @@ function einheitenVon(input: OptimizeRunInput, pooled: boolean, log: (m: string)
     kandidatenFehlend,
     korbHinweis,
     korbFehler,
+    ensembleBars,
   };
   return basis ? [gepoolt, basis] : [gepoolt];
 }
@@ -721,7 +843,40 @@ function basisEinheitVon(input: OptimizeRunInput, fensterStart: Ms | null, log: 
     kandidatenFehlend: [],
     korbHinweis: 'Basis-Einheit: fester Korb aus optimizer.basisUniverse (kein Korb je Fold — die Basis kennt keinen)',
     korbFehler: null,
+    ensembleBars: null,
   };
+}
+
+/**
+ * Bars der vorregistrierten Sleeve-Symbole aller Ensembles, geladen über
+ * dieselbe `barsFor` und geschnitten auf das Messfenster des Laufs.
+ *
+ * Warum eine eigene Ladung: Ein fester Sleeve (`universe: fixed`) steht nach
+ * `parseConfig` im Kandidatenpool, damit `fetch` seine Bars holt — aber im
+ * Korb der Alpha-Einheit steht er deshalb noch lange nicht, und er soll dort
+ * auch nicht stehen. Ein Symbol ohne Bars ist kein Fehler des Laufs: Es fehlt
+ * dann im Sleeve, und die Messung sagt es (`EnsembleMessung.fehlend`).
+ */
+function ensembleBarsVon(input: OptimizeRunInput, fensterStart: Ms | null, fensterEnde: Ms | null, log: (m: string) => void): ReadonlyMap<string, BarSeriesLike> | null {
+  const symbols = new Set<string>();
+  for (const e of input.config.optimizer.ensembles) for (const s of e.sleeves) for (const sym of s.symbols) symbols.add(sym);
+  if (symbols.size === 0) return null;
+  const out = new Map<string, BarSeriesLike>();
+  for (const symbol of symbols) {
+    let b: BarSeriesLike | null;
+    try {
+      b = input.barsFor(symbol);
+    } catch {
+      b = null;
+    }
+    const im = b && b.length > 0 && fensterStart !== null && fensterEnde !== null ? imFenster(b, fensterStart, fensterEnde) : b;
+    if (!im || im.length === 0) {
+      log(`Ensemble-Sleeve ${symbol}: keine Bars im Messfenster — fehlt im Sleeve`);
+      continue;
+    }
+    out.set(symbol, im);
+  }
+  return out;
 }
 
 /**
@@ -871,6 +1026,29 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
   const basisKandidat = festUsable.find((fk) => fk.config.tier === 'basis') ?? null;
   const basisKonfiguriert = optimizer.fixedCandidates.some((fc) => fc.tier === 'basis');
 
+  /*
+   * Der risikolose Zins des Laufs (`optimizer.riskFreeSymbol`, Vorgabe null).
+   *
+   * Er kommt aus den Daten, die ohnehin im Cache liegen: Die Tagesrendite
+   * eines Geldmarkt-ETF IST der kurze Zins dieses Tages. Ohne Symbol ändert
+   * sich nichts — jede Gate-Notiz sagt dann wörtlich, dass gegen null
+   * gerechnet wurde (Vorregistrierung 2026-09-13-sharpe-gegen-zins §2.3/2.4).
+   * Ein stiller Rückfall wäre genau der Fehler, den die Zinsrechnung behebt.
+   */
+  const rfSymbol = optimizer.riskFreeSymbol;
+  let riskFree: RiskFreeSeries | null = null;
+  let riskFreeFehler: string | null = null;
+  if (rfSymbol !== null) {
+    try {
+      const b = input.barsFor(rfSymbol);
+      riskFree = riskFreeFromBars({ symbol: rfSymbol, bars: b, assetClass: cfg.universe.assetClass });
+      if (riskFree === null) riskFreeFehler = `Zinsreihe ${rfSymbol}: weniger als zwei Handelstage — alle Sharpe-Gates rechnen gegen null`;
+    } catch (e) {
+      riskFreeFehler = `Zinsreihe ${rfSymbol}: keine Bars (${errMsg(e)}) — alle Sharpe-Gates rechnen gegen null; das Symbol gehört in universe.candidates, damit \`fetch\` es lädt`;
+    }
+    log(riskFree ? `Zinsreihe ${rfSymbol}: ${riskFree.perDay.size} Handelstage` : (riskFreeFehler ?? ''));
+  }
+
   let champion = loadChampion(paths.champion) ?? emptyChampionFile(now());
   const runs: SymbolRun[] = [];
   let dataRange: TimeRange | null = null;
@@ -879,6 +1057,9 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
   // Alpha-Einheiten messen sie dann nicht (sonst gäbe es zwei Blöcke, und die
   // Alpha-Einheit dürfte ihren Korb je Fold nicht mehr haben).
   const basisEigeneEinheit = einheiten.some((e) => e.art === 'basis');
+  // Ensembles laufen auf genau EINER Alpha-Einheit (siehe unten) — die Zahl
+  // steht hier, weil sie für alle Einheiten dieselbe ist.
+  const alphaEinheiten = einheiten.filter((e) => e.art === 'alpha').length;
 
   for (const einheit of einheiten) {
     const symbol = einheit.key;
@@ -888,6 +1069,9 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
     // Champions tragen (SPY etwa), aber die stehen nicht zur Debatte.
     const incumbent = istBasisEinheit ? null : amtsinhaberVon(champion, einheit);
     const errors: string[] = [...einheit.errors];
+    // Eine Zinsreihe, die nicht geladen werden konnte, steht im Bericht JEDER
+    // Einheit — sonst liest man Sharpe-Zahlen gegen null, ohne es zu merken.
+    if (riskFreeFehler !== null) errors.push(riskFreeFehler);
     const results: StrategyRun[] = [];
 
     const bars = einheit.bars;
@@ -913,8 +1097,47 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       // Benchmark da, aber ohne Kurse in den Fenstern: ein Datenproblem, das
       // im Bericht nicht wie „keine Benchmark konfiguriert" aussehen darf.
       if (!k) return { sharpe: null, maxDrawdownPct: null, quelle: `${marktSymbol} kaufen und halten: keine Kurse in den OOS-Fenstern` };
-      return { sharpe: k.sharpe, maxDrawdownPct: k.maxDrawdownPct, quelle: `${marktSymbol} kaufen und halten über ${k.fenster} OOS-Fenster` };
+      // Dieselbe Kette unverdichtet — nur damit lässt sich die Latte auf
+      // Überschussrenditen umrechnen (siehe `marktReihe`).
+      const reihe = marktReihe({ bars: new Map([[marktSymbol, bench]]), ranges: folds.map((f) => ({ start: f.oosStart, end: f.oosEnd })), assetClass: cfg.universe.assetClass });
+      return {
+        sharpe: k.sharpe,
+        maxDrawdownPct: k.maxDrawdownPct,
+        quelle: `${marktSymbol} kaufen und halten über ${k.fenster} OOS-Fenster`,
+        ...(reihe ? { dailyReturns: reihe.dailyReturns, dayKeys: reihe.dayKeys } : {}),
+      };
     };
+    /**
+     * Der Zins für die Gates EINES Kandidaten: taggenau auf SEINE OOS-Kette
+     * und auf die Kette des Maßstabs gelegt.
+     *
+     * Beide Seiten oder keine (Vorregistrierung §2.5) — die Entscheidung
+     * darüber trifft `robustnessGates` selbst; hier wird nur geliefert, was
+     * es dafür braucht. Scheitert die Ausrichtung (keine Tagesachse, mehr als
+     * 2 % Lücken), kommt eine LEERE Satzreihe zurück: Die Gates lehnen sie
+     * dann wegen der Länge ab und sagen das wörtlich in ihrer Notiz, statt
+     * still auf null zurückzufallen.
+     */
+    const zinsFuer = (wfa: WfaResult, markt: MarktLatte | undefined, name: string): GateRiskFree | undefined => {
+      if (riskFree === null) return undefined;
+      const achse = wfa.oos.dayKeys ?? [];
+      const s = achse.length === wfa.oos.dailyReturns.length && achse.length > 0 ? alignRiskFree(achse, riskFree) : null;
+      if (!s) {
+        const grund =
+          achse.length !== wfa.oos.dailyReturns.length
+            ? `OOS-Kette ohne Tagesachse (${wfa.oos.dailyReturns.length} Renditen, ${achse.length} Tage)`
+            : `Deckung unter ${Math.round((1 - RISK_FREE_MAX_GAP) * 100)} % der Tage`;
+        const msg = `Zinsreihe ${riskFree.symbol} nicht auf ${name} ausrichtbar (${grund}) — die Sharpe-Gates rechnen gegen null`;
+        // Je Einheit einmal: Bei zwölf Kandidaten stünde derselbe Satz sonst
+        // zwölfmal im Bericht und niemand liest ihn noch.
+        if (!errors.includes(msg)) errors.push(msg);
+        log(`${symbol}: ${msg}`);
+        return { strategie: [], quelle: msg };
+      }
+      const m = markt?.dayKeys && markt.dayKeys.length === (markt.dailyReturns?.length ?? -1) ? alignRiskFree(markt.dayKeys, riskFree) : null;
+      return { strategie: s.rates, ...(m ? { markt: m.rates } : {}), quelle: s.quelle };
+    };
+
     const common = bars
       ? {
           symbol,
@@ -929,6 +1152,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       : null;
     let korbProtokoll: KorbProtokoll | null = null;
     let basisRun: BasisRun | null = null;
+    const ensembleLaeufe: EnsembleRun[] = [];
     let messbar = true;
     // Das Regime dieser Messung — steht auf jedem neuen Champion-Eintrag.
     const korbModus: 'point_in_time' | 'fixed' = einheit.kandidaten ? 'point_in_time' : 'fixed';
@@ -997,10 +1221,25 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
         const stress = stressTest({ ...common, strategy, wfa, costMultiplier: optimizer.stressCostMultiplier, objective: optimizer.objective });
         const neighborhood = neighborhoodTest({ ...common, strategy, wfa, optimizer });
         const dsr = deflatedSharpeIs({ wfa, metricsFns: deps.metricsFns, varSrSource: input.dsrVarSource });
-        const psr = probabilisticSharpeOos({ wfa, metricsFns: deps.metricsFns });
         const markt = marktLatteFuer(wfa.folds.map((f) => f.fold));
-        const g = robustnessGates({ wfa, optimizer, stressOos: stress, neighborhood, dsr, psr, metricsFns: deps.metricsFns, periodsPerYear, fixed: fest !== null, ...(markt ? { markt } : {}) });
-        const massstab = massstabFuer({ wfa, metricsFns: deps.metricsFns, periodsPerYear, marktSymbol, markt });
+        // DIESELBE Zinsreihe an beide Stellen: `robustnessGates` verwirft den
+        // Zins sonst selbst, weil der PSR ohne ihn gerechnet wurde.
+        const zins = zinsFuer(wfa, markt, `${strategy.id}${fest ? ` · ${fest.label}` : ''}`);
+        const psr = probabilisticSharpeOos({ wfa, metricsFns: deps.metricsFns, ...(zins ? { riskFree: zins } : {}) });
+        const g = robustnessGates({
+          wfa,
+          optimizer,
+          stressOos: stress,
+          neighborhood,
+          dsr,
+          psr,
+          metricsFns: deps.metricsFns,
+          periodsPerYear,
+          fixed: fest !== null,
+          ...(markt ? { markt } : {}),
+          ...(zins ? { riskFree: zins } : {}),
+        });
+        const massstab = massstabFuer({ wfa, metricsFns: deps.metricsFns, periodsPerYear, marktSymbol, markt, beatsMarket: g.gates.find((x) => x.name === 'beats_market') });
         // Auswertungslauf: dieselben OOS-Fenster, dieselben Parameter, derselbe
         // Simulator — nur noch einmal, weil der Walk-Forward die Equity-Kurven
         // nicht aufhebt. Er entscheidet nichts; scheitert er, fehlt im Bericht
@@ -1047,6 +1286,112 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
           gatesLog(name, r);
         } catch (e) {
           // validateParams meldet mehrzeilig — im Bericht ist ein Eintrag eine Zeile.
+          const msg = errMsg(e).replace(/:\s*\n\s*/g, ': ').replace(/\s*\n\s*/g, '; ');
+          errors.push(`${name}: ${msg}`);
+          log(`${symbol} ${name}: Fehler — ${msg}`);
+        }
+      }
+
+      // Ensembles: mehrere Sleeves als EINE Einheit, EINE Simulation, dieselben
+      // zehn Gates (`optimize/ensemble.ts`). Sie kommen NICHT in `results` —
+      // ein Ensemble konkurriert in diesem Lauf um nichts (Vorregistrierung
+      // Punkt 4: dreimal dasselbe Urteil auf getrennten Fenstern, erst dann
+      // zählt es), und `ChampionEntry` trägt ohnehin nur EINE Strategie je
+      // Symbol. Gemessen wird auf genau EINER Alpha-Einheit: ungepoolt mit
+      // mehreren Symbolen gäbe es dieselbe Einheit mehrfach, und das wäre eine
+      // Mehrfachmessung, die niemand zählt.
+      for (const ec of messbar && !istBasisEinheit ? optimizer.ensembles : []) {
+        const name = `Ensemble „${ec.label}"`;
+        try {
+          if (alphaEinheiten > 1) {
+            throw new Error(
+              'Ensemble nur auf EINER Alpha-Einheit (gepoolter Korb oder ein einzelnes Symbol) — ' +
+                'ungepoolt mit mehreren Symbolen liefe dieselbe Einheit je Symbol noch einmal; optimizer.pooled: true setzen',
+            );
+          }
+          const plan = ensemblePlan({
+            ensemble: ec,
+            getStrategy: deps.getStrategy,
+            paramsFor: (strategy, params) => festParams({ strategy, params, allowShort: cfg.risk.allowShort, log: (m) => log(`${symbol} ${name}: ${m}`) }),
+            timeframe: cfg.timeframe,
+            optimizer,
+          });
+          const fp = foldPlanForBars(achse, optimizer);
+          // Korb der Einheit UND die vorregistrierten Sleeve-Symbole — die
+          // Zuordnung je Fenster besorgt `korbZuordnung` (ensemble.ts).
+          const alle = new Map<string, BarSeriesLike>(korbVon(symbol, bars));
+          if (einheit.ensembleBars) for (const [sym, b] of einheit.ensembleBars) if (!alle.has(sym)) alle.set(sym, b);
+          const messung = messeEnsemble({
+            plan,
+            bars: alle,
+            achse,
+            folds: fp.folds,
+            holdout: fp.holdout,
+            membership: common.membership,
+            config: simConfig,
+            optimizer,
+            initialEquity: input.initialEquity,
+            benchmark: input.benchmark,
+            calendar: input.calendar,
+            simulate: deps.simulate,
+            assetClass: cfg.universe.assetClass,
+            log,
+          });
+          const wfa = messung.wfa;
+          const dsr = deflatedSharpeIs({ wfa, metricsFns: deps.metricsFns, varSrSource: input.dsrVarSource });
+          const markt = marktLatteFuer(fp.folds);
+          const zins = zinsFuer(wfa, markt, name);
+          const psr = probabilisticSharpeOos({ wfa, metricsFns: deps.metricsFns, ...(zins ? { riskFree: zins } : {}) });
+          // Dieselbe Funktion, dieselben Schwellen, `fixed: true` wie bei jedem
+          // vorregistrierten Parametersatz. Kein Gate, keine Sonderbehandlung.
+          const g = robustnessGates({
+            wfa,
+            optimizer,
+            stressOos: messung.stress,
+            neighborhood: messung.nachbarschaft,
+            dsr,
+            psr,
+            metricsFns: deps.metricsFns,
+            periodsPerYear,
+            fixed: true,
+            ...(markt ? { markt } : {}),
+            ...(zins ? { riskFree: zins } : {}),
+          });
+          let auswertung: KandidatAuswertung | null = null;
+          try {
+            auswertung = auswertungFuer({ wfa, teile: messung.oosTeile, korb: alle, initialEquity: input.initialEquity, assetClass: cfg.universe.assetClass });
+          } catch (e) {
+            errors.push(`${name}: Auswertung (Exit-Anatomie/Aktivität) fehlgeschlagen — ${errMsg(e)}`);
+          }
+          const lauf: EnsembleRun = {
+            label: ec.label,
+            regel: plan.regel,
+            plan,
+            messung,
+            gates: g.gates,
+            pass: g.pass,
+            score: wfa.oos.objectiveMedian,
+            dsr,
+            psr,
+            massstab: massstabFuer({ wfa, metricsFns: deps.metricsFns, periodsPerYear, marktSymbol, markt, beatsMarket: g.gates.find((x) => x.name === 'beats_market') }),
+            auswertung,
+            versuche: versuche({ ensembles: optimizer.ensembles.length }),
+          };
+          ensembleLaeufe.push(lauf);
+          log(`${symbol} ${name}: Gates ${lauf.pass ? 'bestanden' : 'NICHT bestanden'} (${lauf.gates.filter((x) => !x.pass).map((x) => x.name).join(', ') || '–'})`);
+          journalEnsemble(journal, {
+            symbol,
+            label: ec.label,
+            regel: plan.regel,
+            sleeves: plan.sleeves.map((sl) => ({ strategy: sl.strategy.id, params: sl.params })),
+            pass: lauf.pass,
+            failed: lauf.gates.filter((x) => !x.pass).map((x) => x.name),
+            reason: lauf.pass
+              ? 'Alpha-Gates bestanden — Beförderung erst nach Wiederholung auf zwei früheren Stichtagen (Vorregistrierung)'
+              : `Alpha-Gates nicht bestanden: ${lauf.gates.filter((x) => !x.pass).map((x) => x.name).join(', ')}`,
+            now: runAt,
+          });
+        } catch (e) {
           const msg = errMsg(e).replace(/:\s*\n\s*/g, ': ').replace(/\s*\n\s*/g, '; ');
           errors.push(`${name}: ${msg}`);
           log(`${symbol} ${name}: Fehler — ${msg}`);
@@ -1119,7 +1464,9 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
             const stress = stressTest({ ...common, strategy: strat, wfa, costMultiplier: optimizer.stressCostMultiplier, objective: optimizer.objective });
             const neighborhood = neighborhoodTest({ ...common, strategy: strat, wfa, optimizer });
             const dsr = deflatedSharpeIs({ wfa, metricsFns: deps.metricsFns, varSrSource: input.dsrVarSource });
-            const psr = probabilisticSharpeOos({ wfa, metricsFns: deps.metricsFns });
+            const marktInc = marktLatteFuer(clean);
+            const zinsInc = zinsFuer(wfa, marktInc, `Champion ${incumbent.strategy}`);
+            const psr = probabilisticSharpeOos({ wfa, metricsFns: deps.metricsFns, ...(zinsInc ? { riskFree: zinsInc } : {}) });
             const g = robustnessGates({
               wfa,
               optimizer,
@@ -1130,7 +1477,8 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
               metricsFns: deps.metricsFns,
               periodsPerYear,
               incumbent: { cleanFolds: clean.length, totalFolds: plan.folds.length },
-              ...(((m) => (m ? { markt: m } : {}))(marktLatteFuer(clean))),
+              ...(marktInc ? { markt: marktInc } : {}),
+              ...(zinsInc ? { riskFree: zinsInc } : {}),
             });
             incumbentRescore = wfa.oos.objectiveMedian;
             incumbentPass = g.pass;
@@ -1269,6 +1617,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       holdoutMarkt,
       korb: korbProtokoll,
       korbHinweis: einheit.korbHinweis,
+      ...(ensembleLaeufe.length ? { ensembles: ensembleLaeufe } : {}),
       ...(basisRun ? { basis: basisRun } : {}),
       ...(istBasisEinheit ? { art: 'basis' as const } : {}),
       errors,

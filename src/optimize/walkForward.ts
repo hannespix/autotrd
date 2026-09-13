@@ -12,6 +12,7 @@
 import type { CostConfig, OptimizerConfig, RiskConfig, SessionConfig } from '../core/config.ts';
 import type { Calendar } from '../core/time.ts';
 import { anfangsStreuner } from '../core/bars.ts';
+import { tagesachse } from '../backtest/metrics.ts';
 import { DAY, dayKeyFor } from '../core/time.ts';
 import type {
   AssetClass,
@@ -343,6 +344,70 @@ export function simulateWindow(a: WindowSimArgs): SimResult {
   return a.simulate(input);
 }
 
+/** Die Wahl je Symbol, wie `SimInput.strategyFor` sie liefert — Strategie, Parameter, Sizing-Semantik. */
+export type Wahl = { strategy: Strategy; params: Params; sizing?: SizingSpec | undefined };
+
+export interface KorbSimArgs {
+  /** Anzeigename der Einheit (Korb/Ensemble) — geht nur in Meldungen. */
+  symbol: string;
+  bars: BarsInput;
+  benchmark?: BarSeriesLike | undefined;
+  config: SimConfig;
+  initialEquity: number;
+  calendar?: Calendar | undefined;
+  simulate: SimulateFn;
+  range: TimeRange;
+  costMultiplier?: number | undefined;
+  /**
+   * Der Korb dieses Fensters — fertig gewählt, nicht gefiltert. Wer eine
+   * Zugehörigkeit je Fold braucht, ruft `korbZum` selbst: Ein Ensemble mischt
+   * einen Korb je Fold (Aktien-Sleeve) mit vorregistrierten festen Listen
+   * (defensiver Sleeve), und ein einziger Membership-Filter über beide wäre
+   * falsch — er würde die feste Liste stumm leeren.
+   */
+  korb: ReadonlyMap<string, BarSeriesLike>;
+  /** Wahl je Symbol; `null` ⇒ dieses Symbol handelt in diesem Fenster nicht. */
+  wahlFuer: (symbol: string) => Wahl | null;
+}
+
+/**
+ * EIN Simulationslauf über einen Korb mit HETEROGENER Wahl: je Symbol eine
+ * eigene Strategie, eigene Parameter, eigene Sizing-Semantik — ein Konto, ein
+ * Positionslimit, eine Notbremse.
+ *
+ * Das ist derselbe Pfad wie `simulateWindow`, nur ohne die Annahme „ein
+ * Parametersatz für den ganzen Korb". Der Simulator kann das seit jeher
+ * (`SimInput.strategyFor` fragt je Symbol); gebraucht wird es von der
+ * Ensemble-Einheit (optimize/ensemble.ts). `decide()` trennt die Körbe dabei
+ * selbst über `korbSchluessel` — Sleeves rangieren getrennt, ohne dass hier
+ * irgendetwas sortiert würde (CLAUDE.md §0.2: die Rangliste baut `decide()`).
+ */
+export function simulateKorbWindow(a: KorbSimArgs): SimResult {
+  const input: SimInput = {
+    bars: a.korb,
+    strategyFor: (s) => (a.korb.has(s) ? a.wahlFuer(s) : null),
+    config: a.config,
+    initialEquity: a.initialEquity,
+    range: { start: a.range.start, end: a.range.end },
+  };
+  if (a.benchmark) input.benchmark = a.benchmark;
+  if (a.calendar) input.calendar = a.calendar;
+  if (a.costMultiplier !== undefined && a.costMultiplier !== 1) input.costMultiplier = a.costMultiplier;
+  return a.simulate(input);
+}
+
+/**
+ * `SimResult` → `OosPiece` (die Sicht, aus der `aggregateOos` die OOS-Kette
+ * baut). Mit `assetClass` kommt die TAGESACHSE mit — je Tagesrendite genau
+ * ein Tagesschlüssel. Ohne sie bleibt das Feld leer, und alles, was eine
+ * Zinsreihe ausrichten will, scheitert danach laut an der Länge statt still
+ * um einen Tag zu verrutschen.
+ */
+export function oosPieceOf(r: SimResult, assetClass?: AssetClass): OosPiece {
+  const basis = { metrics: r.metrics, trades: r.trades, dailyReturns: r.dailyReturns, equity: r.equity, finalEquity: r.finalEquity };
+  return assetClass === undefined ? basis : { ...basis, dayKeys: tagesachse(r.equity, assetClass) };
+}
+
 /* ───────────────────────── OOS-Aggregation ───────────────────────── */
 
 export interface OosPiece {
@@ -351,6 +416,14 @@ export interface OosPiece {
   dailyReturns: readonly number[];
   equity: readonly EquityPoint[];
   finalEquity: number;
+  /**
+   * Tagesschlüssel je Tagesrendite (`tagesachse`) — gleiche Länge wie
+   * `dailyReturns`. Nur damit lässt sich eine Zinsreihe TAGGENAU auf die
+   * OOS-Kette legen; fehlt sie, hat die Kette keine Achse und jede
+   * Zinsrechnung darüber fällt laut auf „ohne Zins" zurück
+   * (Vorregistrierung 2026-09-13-sharpe-gegen-zins).
+   */
+  dayKeys?: readonly string[] | undefined;
 }
 
 export interface OosAggregate {
@@ -362,6 +435,18 @@ export interface OosAggregate {
   netReturnPct: number;
   maxDrawdownPct: number;
   dailyReturns: number[];
+  /**
+   * Tagesschlüssel der verketteten OOS-Renditen — gleiche Länge wie
+   * `dailyReturns`. LEER, sobald auch nur ein Fenster keine Achse mitbringt:
+   * Eine halbe Achse wäre schlimmer als keine, weil sich die Zinsreihe dann
+   * um genau die fehlenden Tage verschöbe.
+   *
+   * Optional, damit von Hand gebaute `OosAggregate` (Tests, Champion-Einträge
+   * aus älteren Läufen) gültig bleiben. `aggregateOos` setzt sie IMMER; wer
+   * sie nicht hat, bekommt keine Zinsrechnung — und erfährt das in der Notiz
+   * des Gates, nicht in einer stillen Verschiebung.
+   */
+  dayKeys?: string[] | undefined;
   profitFactor: number | null;
   feeShare: number | null;
 }
@@ -380,6 +465,8 @@ export function aggregateOos(pieces: readonly OosPiece[], objective: ObjectiveId
   let peak = 1;
   let maxDd = 0;
   const dailyReturns: number[] = [];
+  const dayKeys: string[] = [];
+  let achseVollstaendig = true;
   let wins = 0;
   let losses = 0;
   let fees = 0;
@@ -402,6 +489,10 @@ export function aggregateOos(pieces: readonly OosPiece[], objective: ObjectiveId
     }
     touch(scale);
     for (const r of p.dailyReturns) dailyReturns.push(r);
+    // Die Achse muss Fenster für Fenster genau so lang sein wie die Renditen;
+    // ein einziges Fenster ohne Achse macht die ganze Kette unbrauchbar.
+    if (p.dayKeys === undefined || p.dayKeys.length !== p.dailyReturns.length) achseVollstaendig = false;
+    else for (const k of p.dayKeys) dayKeys.push(k);
     for (const t of p.trades) {
       if (t.netPnl > 0) wins += t.netPnl;
       else losses += -t.netPnl;
@@ -419,14 +510,15 @@ export function aggregateOos(pieces: readonly OosPiece[], objective: ObjectiveId
     netReturnPct: (scale - 1) * 100,
     maxDrawdownPct: maxDd * 100,
     dailyReturns,
+    dayKeys: achseVollstaendig ? dayKeys : [],
     profitFactor: losses > 0 ? wins / losses : null,
     // Gebührenanteil am Bruttogewinn — nur sinnvoll, wenn brutto etwas verdient wurde.
     feeShare: gross > 0 ? fees / gross : null,
   };
 }
 
-function pieceOf(r: SimResult): OosPiece {
-  return { metrics: r.metrics, trades: r.trades, dailyReturns: r.dailyReturns, equity: r.equity, finalEquity: r.finalEquity };
+function pieceOf(r: SimResult, assetClass: AssetClass): OosPiece {
+  return oosPieceOf(r, assetClass);
 }
 
 /* ───────────────────────── Suche in einem Fenster ───────────────────────── */
@@ -572,7 +664,7 @@ export function walkForward(a: WalkForwardArgs): WfaResult {
         oosDailyReturns: oos.dailyReturns,
       },
     });
-    pieces.push(pieceOf(oos));
+    pieces.push(pieceOf(oos, a.config.assetClass));
     log(
       `${a.symbol} ${strategy.id} Fold ${fold.index + 1}/${plan.folds.length}: ${is.evaluated} Kandidaten, ` +
         `IS ${is.objective.toFixed(3)} → OOS ${oosObjective.toFixed(3)} (${oos.metrics.trades} Trades, netto ${oos.metrics.netProfit.toFixed(2)})`,
@@ -630,7 +722,7 @@ export function walkForward(a: WalkForwardArgs): WfaResult {
 export function oosScoreOnFolds(
   a: Omit<WindowSimArgs, 'range' | 'costMultiplier'> & { folds: readonly Fold[]; objective: ObjectiveId },
 ): OosAggregate {
-  const pieces = a.folds.map((f) => pieceOf(simulateWindow({ ...a, range: { start: f.oosStart, end: f.oosEnd }, membershipAt: f.oosStart })));
+  const pieces = a.folds.map((f) => pieceOf(simulateWindow({ ...a, range: { start: f.oosStart, end: f.oosEnd }, membershipAt: f.oosStart }), a.config.assetClass));
   return aggregateOos(pieces, a.objective, a.initialEquity);
 }
 
@@ -666,7 +758,7 @@ export function fixedParamsWfa(
         oosDailyReturns: oos.dailyReturns,
       },
     });
-    pieces.push(pieceOf(oos));
+    pieces.push(pieceOf(oos, a.config.assetClass));
   }
   const last = a.folds[a.folds.length - 1]!;
   const finalWindow = { start: last.isStart, end: last.oosEnd, embargoAtEnd: a.holdout !== null };

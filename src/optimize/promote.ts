@@ -351,6 +351,46 @@ export function journalDecision(
   );
 }
 
+/**
+ * Journal-Eintrag 'champion' für eine gemessene Ensemble-Einheit.
+ *
+ * Ein Ensemble wird in diesem Lauf NIE befördert (Vorregistrierung
+ * `2026-09-12-ensemble.md` Punkt 4: dreimal dasselbe Urteil auf getrennten
+ * Fenstern, und `ChampionEntry` trägt ohnehin nur eine Strategie je Symbol).
+ * Der Eintrag ist deshalb ein reiner MESSBEFUND — er sagt, was gemessen
+ * wurde, mit welcher Zusammensetzung und welcher Gewichtsregel, und ob die
+ * zehn Alpha-Gates hielten. Ohne ihn stünde ein bestandenes Ensemble nur im
+ * Bericht, und Berichte werden überschrieben.
+ */
+export function journalEnsemble(
+  journal: Journal,
+  a: {
+    symbol: string;
+    label: string;
+    regel: string;
+    sleeves: readonly { strategy: string; params: Params }[];
+    pass: boolean;
+    failed: readonly string[];
+    reason: string;
+    now: Ms;
+  },
+): void {
+  journal.append(
+    'champion',
+    {
+      symbol: a.symbol,
+      action: 'ensemble_measured',
+      reason: a.reason,
+      label: a.label,
+      weighting: a.regel,
+      sleeves: a.sleeves.map((s) => ({ strategy: s.strategy, params: s.params })),
+      ensemblePass: a.pass,
+      ensembleFailed: [...a.failed],
+    },
+    a.now,
+  );
+}
+
 /** Journal-Eintrag 'champion' für die Basis-Stufe: gemessen (mit Urteil) oder geräumt. */
 export function journalBasis(
   journal: Journal,
