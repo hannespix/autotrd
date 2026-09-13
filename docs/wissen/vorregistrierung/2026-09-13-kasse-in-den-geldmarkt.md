@@ -70,13 +70,39 @@ Stress ×1,5 bleiben unangetastet.
 
 ## Messplan (zwei getrennte Läufe, damit zuordenbar bleibt, was wirkt)
 
-1. **Nur Parken**, Volatilitätsziel aus. Differenz zu Lauf #46 ist sauber die
-   Wirkung des Parkens.
+1. **Nur Parken**, Volatilitätsziel aus. Config: `config/parken-1440.yaml`
+   (Kopie von `config/ensemble-1440.yaml`, dem Lauf #46). Differenz zu Lauf
+   #46 ist die Wirkung des Parkens.
 2. **Parken plus Volatilitätsziel.** Differenz zu Lauf 1 ist sauber die
    Wirkung des Volatilitätsziels.
 
 Zwei Änderungen gleichzeitig zu messen war der Fehler in Lauf #46; er wird
 nicht wiederholt.
+
+### Nachtrag 13.09.2026 (Verdrahtung), damit der Bericht nicht mehr behauptet, als er misst
+
+Drei Dinge, die beim Verdrahten sichtbar wurden und vor dem Lauf hier stehen
+müssen:
+
+1. **Die Differenz ist nicht rein.** Sie ist *Parken plus eine kleine
+   Sizing-Rückkopplung*: Kosten und Zinsertrag des Parkens ändern die Equity,
+   und die Equity ist die Bemessungsgrundlage des Sizings (Risiko je Trade und
+   Positionsdeckel sind Prozent der Equity). Die Trades sind also nicht
+   bitgleich mit denen aus #46 — die Abweichung ist klein, aber echt. Wer
+   „Δ = Wirkung des Parkens" schreibt, meint genau genommen
+   „Δ = Parken + Rückkopplung über die Equity".
+2. **Park- und Zinssymbol sind dasselbe Papier (BIL).** Möglich wurde das
+   erst dadurch, dass beide als Infrastruktur geladen werden
+   (`src/app.ts`, `fetchSymbols`) statt über den Kandidatenpool. Damit gibt es
+   zwischen dem Zins, gegen den gemessen wird, und dem Papier, in dem die
+   Kasse liegt, keinen Spread aus Laufzeit und Kostenquote — die Verzerrung,
+   die ein zweites Papier eingeschleppt hätte, entfällt.
+3. **Die Ensemble-Einheit E1 ist in Lauf 1 nicht messbar.** Ihr defensiver
+   Sleeve (`vigilant_allocation`) HÄLT BIL als Geldmarkt-Pol; das Parksymbol
+   gehört der Treasury allein (§0.6). Beides zugleich ginge nur, indem man die
+   vorregistrierte Zusammensetzung von E1 ändert — das wird nicht getan. Der
+   Vergleich mit #46 gilt deshalb für die fünf gesuchten Familien und SPY; für
+   E1 gibt es in diesem Lauf keine Zahl.
 
 ## Bekannte Schwächen
 

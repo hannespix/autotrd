@@ -11,6 +11,7 @@
  * geteilte Abruf holte sie nie nach.
  */
 import type { AlpacaAsset, AlpacaClient, AlpacaClock, BarAdjustment, BarsRequest, LatestQuote } from '../../../src/alpaca/types.ts';
+import type { Config } from '../../../src/core/config.ts';
 import { HOUR, type CalendarDay } from '../../../src/core/time.ts';
 import type { Bar, Ms } from '../../../src/core/types.ts';
 import { BarStore, type BaseTimeframe } from '../../../src/data/store.ts';
@@ -60,6 +61,29 @@ export class SharedBarStoreView extends BarStore {
   override cleanupTemp(): number {
     return 0;
   }
+}
+
+/**
+ * INFRASTRUKTURSYMBOLE eines Nutzers: geladen wie ein Handelssymbol, aber für
+ * keine Strategie erreichbar (`strategyFor` gibt für sie null, engine/strategyFor.ts).
+ *
+ * Heute genau eines: das Parksymbol der Treasury (`risk.cashParking.symbol`,
+ * global aus `meta/engineConfig` — `GLOBAL_RISK_FELDER`). Ohne seine Bars im
+ * geteilten Cache hat die Engine keinen Kurs des Parkpapiers; ohne Kurs
+ * schichtet `decide()` nicht um UND kann eine offene Parkposition nicht
+ * bewerten. Deshalb kommt es auch bei `enabled: false` mit: Ein abgeschaltetes
+ * Parken muss seinen Bestand noch räumen können (Rückzug, core/logic.ts).
+ *
+ * Das Zinssymbol (`optimizer.riskFreeSymbol`) steht hier NICHT: Es wird nur
+ * im Optimierer-Workflow gebraucht, nie im Takt.
+ *
+ * Die Engine je Nutzer zählt dieselben Symbole selbst noch einmal auf
+ * (`Engine.allSymbols`); diese Funktion ist die Seite des TAKTS, der die Bars
+ * einmal für alle Nutzer holt.
+ */
+export function infrastrukturSymbole(config: Config): string[] {
+  const park = config.risk.cashParking?.symbol ?? null;
+  return park === null ? [] : [park];
 }
 
 /** Bars aus dem Cache im Format von `getBars` (Zeitfenster inklusiv). */

@@ -111,6 +111,51 @@ afterEach(() => {
   for (const w of worlds.splice(0)) rmSync(w.tmpRoot, { recursive: true, force: true });
 });
 
+describe('Engine-Takt — Infrastruktur des Geldmarkt-Parkens', () => {
+  /*
+   * Das Parksymbol wird NIE gehandelt, aber gebraucht: ohne seine Bars kein
+   * Kurs, ohne Kurs keine Umschichtung — und eine offene Parkposition ließe
+   * sich nicht einmal bewerten, also nie abbauen. Der Takt holt sie EINMAL
+   * für alle Nutzer (engine/sharedData.ts, `infrastrukturSymbole`).
+   */
+  it('lädt die Bars des Parksymbols mit, ohne es ins Handelsuniversum zu nehmen', async () => {
+    const w = world();
+    w.db.seed('meta/engineConfig', {
+      universe: { symbols: ['AAPL'], benchmark: 'SPY' },
+      timeframe: 5,
+      engine: { barGraceSec: 4, maxConsecutiveErrors: 3 },
+      risk: { cashParking: { enabled: true, symbol: 'BIL', bandPct: 5, bufferPct: 2 } },
+    });
+    w.data.bars.set('BIL', minuteBars(OPEN1, TEN_CLOSES));
+    const r = await w.run(T1);
+    expect(r.failed).toEqual([]);
+    // AAPL, SPY — und BIL als Infrastruktur.
+    expect(r.symbolsOk).toBe(3);
+    const angefragt = new Set(w.data.callsOf('getBars').flatMap((c) => (c.args[0] as { symbols: string[] }).symbols));
+    expect(angefragt.has('BIL')).toBe(true);
+    // Gehandelt wird es trotzdem nicht: Es steht in keinem Universum, bekommt
+    // keine Strategie (engine/strategyFor.ts) und taucht nicht als handelbares
+    // Symbol im Spiegel auf.
+    expect(w.db.get('users/u1')?.engine).toMatchObject({ champion: { symbols: ['AAPL'] } });
+    // Was der Broker in BIL sieht, ist ausschließlich die Treasury: eine
+    // schmucklose Marktorder — kein Bracket, kein Stop, kein Ziel (Eigenschaft 3).
+    for (const o of w.trading.ordersFor('BIL')) {
+      expect(o.orderClass ?? 'simple').toBe('simple');
+      expect(o.legs ?? []).toHaveLength(0);
+      expect(o.type).toBe('market');
+    }
+  });
+
+  it('ohne Parksymbol ändert sich bitgleich nichts', async () => {
+    const w = world();
+    w.data.bars.set('BIL', minuteBars(OPEN1, TEN_CLOSES));
+    const r = await w.run(T1);
+    expect(r.symbolsOk).toBe(2);
+    const angefragt = new Set(w.data.callsOf('getBars').flatMap((c) => (c.args[0] as { symbols: string[] }).symbols));
+    expect(angefragt.has('BIL')).toBe(false);
+  });
+});
+
 describe('Engine-Takt — voller Lauf', () => {
   it('erster Takt: Bracket-Order beim Broker, State-Doc, Spiegel, Herzschlag ok; zweiter Takt ohne neue Bar sendet nichts', async () => {
     const w = world();

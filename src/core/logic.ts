@@ -20,6 +20,15 @@
  *        Datenfrische, Session, Short-Erlaubnis, Positionslimit, PDT,
  *        Stop-Plausibilität, Sizing) — auch der Wiederaufbau einer
  *        Zielallokation (`risk.wiederaufbau`) geht durch genau diese Tore.
+ *   3. ZULETZT die Treasury (`risk.cashParking`, risk/parken.ts): Was keine
+ *      Strategie braucht, geht in den Geldmarkt. Sie entscheidet nach allen
+ *      Strategien und bekommt nur, was übrig bleibt — nie umgekehrt. Ihre
+ *      Parkposition zählt weder gegen `maxPositions` noch ins
+ *      Exposure-Budget, trägt keinen Stop und wird von keiner Notbremse
+ *      glattgestellt; sie ist Kasse in anderer Form, kein Marktrisiko. Ihr
+ *      Wert steht im Sizing neben dem Bargeld, und was ein Einstieg davon
+ *      braucht, verkauft sie im selben Zyklus (Freikauf) — deshalb kann sie
+ *      keinen Einstieg blockieren.
  *
  * Drei Stellschrauben sind seit 12.09.2026 dabei, alle drei per Vorgabe AUS
  * bzw. leer, damit kein bestehendes Messergebnis still verschoben wird:
@@ -57,6 +66,8 @@ import type {
   KorbRang,
   Ms,
   OrderIntent,
+  ParkIntent,
+  ParkStand,
   Params,
   PositionState,
   Side,
@@ -67,6 +78,7 @@ import type {
 } from './types.ts';
 import { DAY } from './time.ts';
 import { checkHalt, grenzenFuer, kontoGrenzen, STUFEN, stufeOf, stufenBremsenAktiv, type Stufe } from '../risk/limits.ts';
+import { istParkPosition, planeParken, planeRueckzug } from '../risk/parken.ts';
 import { pdtCheck } from '../risk/pdt.ts';
 import { sizePosition } from '../risk/sizing.ts';
 import { volSkalierung, type VolZielResult } from '../risk/volziel.ts';
@@ -127,6 +139,22 @@ export interface LogicContext {
    * will. `decide()` gibt den fortgeschriebenen Stand zurück.
    */
   wiederaufbau?: Readonly<Record<string, WiederaufbauZiel>> | undefined;
+  /**
+   * Kurs des Parksymbols (`risk.cashParking`, risk/parken.ts) aus der
+   * JÜNGSTEN geschlossenen Bar, die der Aufrufer für dieses Symbol hat —
+   * im Simulator wie in der Engine dieselbe Quelle. Fehlt die Angabe (kein
+   * Parken, keine Bars), parkt `decide()` nicht und sagt das in einer Notiz.
+   */
+  parkQuote?: { symbol: string; price: number; t: Ms } | undefined;
+  /** Stand der Treasury (letzte Umschichtung); `decide()` gibt ihn fortgeschrieben zurück. */
+  parkStand?: ParkStand | undefined;
+  /**
+   * Läuft schon eine Park-Order? Dann wird keine zweite geplant — dieselbe
+   * Regel wie `pendingEntries` für Einstiege (§0.6: eine Order je logischer
+   * Einheit). Der Freikauf ist davon nicht ausgenommen: Eine zweite Order,
+   * während die erste noch offen ist, verkaufte womöglich doppelt.
+   */
+  parkPending?: boolean | undefined;
 }
 
 /**
@@ -211,6 +239,14 @@ export interface LogicResult {
   stufenHaltTriggered?: Stufe[];
   /** Fortgeschriebene Wiederaufbau-Ziele (siehe `WiederaufbauZiel`). */
   wiederaufbau?: Record<string, WiederaufbauZiel>;
+  /**
+   * Umschichtung der Treasury in diesem Zyklus (null = nichts zu tun).
+   * Bewusst KEIN `OrderIntent`: Das ist kein Handelssignal, es wird nie zu
+   * einem Trade und belegt weder Positionsplatz noch Exposure-Budget.
+   */
+  park?: ParkIntent | null;
+  /** Fortgeschriebener Stand der Treasury (Tag der letzten Umschichtung). */
+  parkStand?: ParkStand;
 }
 
 export const DEFAULT_MIN_STOP_DISTANCE_PCT = 0.05;
@@ -219,9 +255,27 @@ export function qtyStepFor(assetClass: AssetClass): number {
   return assetClass === 'crypto' ? 0.0001 : 1;
 }
 
+/**
+ * Brutto-Exposure des STRATEGIE-Buchs. Die Parkposition der Treasury
+ * (risk/parken.ts) zählt hier NICHT mit: Sie ist Kasse in anderer Form, und
+ * gegen das Exposure-Budget gerechnet sperrte sich ein geparktes Konto seine
+ * eigenen Einstiege aus (Eigenschaft 2 der Vorregistrierung). Derselbe Grund
+ * gilt für die Exposure-Kennzahl der Equity-Kurve (backtest/simulator.ts).
+ */
+/**
+ * Positionen des STRATEGIE-Buchs (ohne die Parkposition der Treasury) —
+ * die Zahl, die gegen `risk.maxPositions` zählt.
+ */
+export function offeneStrategiePositionen(positions: ReadonlyMap<string, PositionState>): number {
+  let n = 0;
+  for (const p of positions.values()) if (!istParkPosition(p)) n++;
+  return n;
+}
+
 export function grossExposure(positions: ReadonlyMap<string, PositionState>, priceOf: (symbol: string) => number | undefined): number {
   let sum = 0;
   for (const p of positions.values()) {
+    if (istParkPosition(p)) continue;
     const px = priceOf(p.symbol) ?? p.entryPrice;
     sum += p.qty * px;
   }
@@ -406,6 +460,39 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
     : null;
   const volFaktor = volZiel?.faktor ?? 1;
 
+  /* ── Treasury: Geldmarkt-Parken (risk.cashParking, risk/parken.ts) ────
+   *
+   * Die Parkposition ist die EINZIGE Position, die der Treasury gehört: Sie
+   * trägt `PARK_STRATEGY_ID`. Eine fremde Position im selben Symbol (eine
+   * Strategie hat es einmal gehandelt) wird nie angefasst — sonst hätte eine
+   * Menge zwei Besitzer.
+   *
+   * Der Wert der Parkposition ist für das Sizing BARGELD: Er steht unten in
+   * `sizePosition` neben `ctx.account.cash`, und was ein Einstieg davon
+   * braucht, verkauft der Freikauf im selben Zyklus (Eigenschaft 1 — das
+   * Parken blockiert nie einen Einstieg). Ohne brauchbaren Kurs zählt der
+   * Wert NICHT als Bargeld: Was wir nicht verkaufen können, dürfen wir auch
+   * nicht einplanen.
+   */
+  const parkCfg = ctx.risk.cashParking;
+  let parkPos: PositionState | null = null;
+  for (const p of ctx.positions.values()) {
+    if (istParkPosition(p)) {
+      parkPos = p;
+      break;
+    }
+  }
+  const parkAktiv = parkCfg?.enabled === true && parkCfg.symbol !== null;
+  // Symbol dieses Zyklus: das gehaltene (Rückzug/Verkauf) vor dem konfigurierten.
+  const parkSymbol = parkPos?.symbol ?? (parkAktiv ? parkCfg!.symbol : null);
+  const parkQuote = ctx.parkQuote && parkSymbol !== null && ctx.parkQuote.symbol === parkSymbol ? ctx.parkQuote : null;
+  const parkKurs = parkQuote !== null && Number.isFinite(parkQuote.price) && parkQuote.price > 0 ? parkQuote.price : 0;
+  const parkQty = parkPos?.qty ?? 0;
+  /** Wert der Parkposition, soweit er wirklich zu Bargeld gemacht werden kann. */
+  const parkBar = parkKurs > 0 ? parkQty * parkKurs : 0;
+  /** Bargeld, das die in diesem Zyklus beschlossenen Einstiege am Fill brauchen. */
+  let reserviert = 0;
+
   /* ── Wiederaufbau-Ziele (risk.wiederaufbau) ──────────────────────────── */
   const wiederCfg = ctx.risk.wiederaufbau;
   const ziele = new Map<string, WiederaufbauZiel>(Object.entries(ctx.wiederaufbau ?? {}));
@@ -449,16 +536,93 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
     return z;
   };
 
-  const fertig = (halt: HaltState, haltTriggered: boolean, stufenHalt: Record<string, HaltState>, ausgeloest: Stufe[]): LogicResult => ({
-    intents,
-    notes,
-    halt,
-    haltTriggered,
-    volZiel,
-    stufenHalt,
-    stufenHaltTriggered: ausgeloest,
-    wiederaufbau: Object.fromEntries(ziele),
-  });
+  /**
+   * Die Treasury entscheidet ZULETZT — sie bekommt, was die Strategien
+   * übrig lassen, nie umgekehrt (Eigenschaft 1). Sie läuft auf JEDEM
+   * Rückweg aus `decide()`, auch dem der Notbremse: Dort schichtet sie nicht
+   * um (`halt.halted` sperrt das Umschichten), aber ein Rückzug muss auch
+   * dann laufen — er ist ein Abbau, und Abbau wird nie gesperrt (§0.4).
+   */
+  const planeTreasury = (halt: HaltState): { intent: ParkIntent | null; stand: ParkStand } => {
+    const vorher: ParkStand = { tag: ctx.parkStand?.tag ?? null };
+    // Ohne Config und ohne Parkposition passiert hier nichts — bitgleich wie vorher.
+    if (!parkAktiv && parkQty <= 0) return { intent: null, stand: vorher };
+    if (parkSymbol === null) return { intent: null, stand: vorher };
+
+    const fremd = ctx.positions.get(parkSymbol);
+    if (fremd !== undefined && !istParkPosition(fremd)) {
+      // Eine Strategie hält das Parksymbol: Diese Menge gehört ihr, nicht uns.
+      notes.push({ symbol: parkSymbol, kind: 'info', text: `Geldmarkt-Parken ausgesetzt: Position der Strategie ${fremd.strategy} im Parksymbol` });
+      return { intent: null, stand: vorher };
+    }
+    if (ctx.parkPending === true) {
+      notes.push({ symbol: parkSymbol, kind: 'info', text: 'Geldmarkt-Parken: Order bereits offen — keine zweite' });
+      return { intent: null, stand: vorher };
+    }
+    if (parkKurs <= 0) {
+      if (parkAktiv || parkQty > 0) notes.push({ symbol: parkSymbol, kind: 'info', text: 'Geldmarkt-Parken: kein brauchbarer Kurs des Parksymbols — nichts umgeschichtet' });
+      return { intent: null, stand: vorher };
+    }
+
+    // Rückzug: Parken aus, Symbol gewechselt, oder eine Strategie führt das
+    // Parksymbol in diesem Zyklus (Doppelführung — siehe risk/parken.ts).
+    const fuehrtStrategie = bySym.has(parkSymbol);
+    const rueckzugGrund = !parkAktiv
+      ? 'risk.cashParking aus'
+      : parkCfg!.symbol !== parkSymbol
+        ? `Parksymbol gewechselt (${parkSymbol} → ${parkCfg!.symbol})`
+        : fuehrtStrategie
+          ? `${bySym.get(parkSymbol)!.strategy.id} führt das Parksymbol — die Treasury weicht aus`
+          : null;
+    const plan =
+      rueckzugGrund !== null
+        ? planeRueckzug(parkQty, rueckzugGrund)
+        : planeParken({
+            equity: ctx.account.equity,
+            cash: ctx.account.cash,
+            price: parkKurs,
+            qty: parkQty,
+            reserviert,
+            bandPct: parkCfg!.bandPct,
+            bufferPct: parkCfg!.bufferPct,
+            qtyStep: qtyStepFor(ctx.assetClass),
+            // Im Halt steht die Treasury still: kein neues Kapital binden, aber
+            // auch keine Kasse für nichts verbrennen. Einmal je Handelstag,
+            // und nur mit frischen Daten.
+            umschichten: !halt.halted && ctx.dataFresh && vorher.tag !== ctx.today,
+            // Kaufen zusätzlich nur ohne Einstiegssperre und über der
+            // PDT-Schwelle: Ein Kauf heute könnte sonst mit dem Freikauf von
+            // heute einen Daytrade ergeben und einem echten Trade den Platz
+            // nehmen (risk/pdt.ts).
+            kaufErlaubt: !ctx.entryLock && !(ctx.risk.pdt.respect && ctx.assetClass !== 'crypto' && ctx.account.equity < ctx.risk.pdt.minEquity),
+          });
+    if (plan.kind === 'none' || !(plan.qty > 0)) {
+      if (plan.kind !== 'none') notes.push({ symbol: parkSymbol, kind: 'info', text: `Geldmarkt-Parken: ${plan.grund}` });
+      return { intent: null, stand: vorher };
+    }
+    if (plan.kind === 'sell' && plan.qty > parkQty) return { intent: null, stand: vorher };
+    notes.push({ symbol: parkSymbol, kind: 'decision', text: `Geldmarkt ${plan.kind === 'buy' ? 'kaufen' : 'verkaufen'} ${plan.qty} @~${parkKurs}: ${plan.grund}` });
+    return {
+      intent: { symbol: parkSymbol, side: plan.kind, qty: plan.qty, refPrice: parkKurs, reason: plan.grund, pflicht: plan.pflicht, decidedAt: ctx.now },
+      stand: { tag: ctx.today },
+    };
+  };
+
+  const fertig = (halt: HaltState, haltTriggered: boolean, stufenHalt: Record<string, HaltState>, ausgeloest: Stufe[]): LogicResult => {
+    const treasury = planeTreasury(halt);
+    return {
+      intents,
+      notes,
+      halt,
+      haltTriggered,
+      volZiel,
+      stufenHalt,
+      stufenHaltTriggered: ausgeloest,
+      wiederaufbau: Object.fromEntries(ziele),
+      park: treasury.intent,
+      parkStand: treasury.stand,
+    };
+  };
 
   // 1. Konto-Sperren. Latte ist die LOCKERSTE aller Stufen (risk/limits.ts):
   // Ohne `risk.tiers` sind das die globalen Werte, also alles wie bisher; mit
@@ -480,6 +644,10 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
     notes.push({ symbol: '*', kind: 'halt', text: halt.note ?? 'Halt ausgelöst' });
     const reason = halt.reason === 'drawdown' ? 'drawdown' : 'kill_switch';
     for (const p of ctx.positions.values()) {
+      // Die Parkposition ist kein Marktrisiko: Die Notbremse stellt das
+      // STRATEGIE-Buch glatt, nicht die Kasse. Ein Zwangsverkauf des
+      // Geldmarktpapiers kostete nur den Spread und schützte nichts.
+      if (istParkPosition(p)) continue;
       intents.push({ kind: 'exit', symbol: p.symbol, reason, decidedAt: ctx.now });
       merkeWiederaufbau(p, `Konto-Notbremse (${halt.reason})`);
     }
@@ -489,9 +657,10 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
   // JEDEM Zyklus erneut angefordert, bis alles zu ist — der Executor ist idempotent (positionsstabile
   // Kennung). Sonst bliebe eine Position nach einem im Auslöse-Zyklus gescheiterten Exit einfach offen
   // (Secreview 2, K2: im Functions-Takt gibt es keinen Wiederholversuch über den Takt hinaus).
-  if (halt.halted && (halt.reason === 'daily_loss' || halt.reason === 'drawdown') && ctx.positions.size > 0) {
+  if (halt.halted && (halt.reason === 'daily_loss' || halt.reason === 'drawdown') && offeneStrategiePositionen(ctx.positions) > 0) {
     const reason = halt.reason === 'drawdown' ? 'drawdown' : 'kill_switch';
     for (const p of ctx.positions.values()) {
+      if (istParkPosition(p)) continue;
       intents.push({ kind: 'exit', symbol: p.symbol, reason, decidedAt: ctx.now });
       merkeWiederaufbau(p, `Konto-Notbremse (${halt.reason})`);
     }
@@ -522,7 +691,9 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
      * Information, sondern Rauschen, und Rauschen liest niemand.
      */
     const anwesend = new Set<Stufe>();
-    for (const p of ctx.positions.values()) anwesend.add(stufeVonPosition(p));
+    // Die Parkposition trägt keine Stufe: Sie soll keine Stufen-Bremse
+    // „anwesend" machen und wird von keiner glattgestellt.
+    for (const p of ctx.positions.values()) if (!istParkPosition(p)) anwesend.add(stufeVonPosition(p));
     for (const inp of inputs) anwesend.add(stufeOf(inp.stufe));
     for (const [stufe, h] of Object.entries(stufenHalt)) if (h.halted) anwesend.add(stufeOf(stufe));
     for (const stufe of STUFEN) {
@@ -548,7 +719,7 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
       if (hs.halt.reason !== 'daily_loss' && hs.halt.reason !== 'drawdown') continue;
       const reason = hs.halt.reason === 'drawdown' ? 'drawdown' : 'kill_switch';
       for (const p of ctx.positions.values()) {
-        if (stufeVonPosition(p) !== stufe || schonExit.has(p.symbol)) continue;
+        if (istParkPosition(p) || stufeVonPosition(p) !== stufe || schonExit.has(p.symbol)) continue;
         intents.push({ kind: 'exit', symbol: p.symbol, reason, decidedAt: ctx.now });
         schonExit.add(p.symbol);
         merkeWiederaufbau(p, `Stufen-Bremse ${stufe} (${hs.halt.reason})`);
@@ -565,7 +736,9 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
   let gross = grossExposure(ctx.positions, (s) => lastClose.get(s));
   // Offene Einstiegs-Orders belegen Exposure-Budget, sobald sie füllen — mitzählen.
   if (ctx.pendingNotional) for (const n of ctx.pendingNotional.values()) gross += n;
-  let openCount = ctx.positions.size + ctx.pendingEntries.size;
+  // Die Parkposition belegt KEINEN Positionsplatz (Eigenschaft 2): Ein voll
+  // geparktes Konto sperrte sich sonst mit seiner eigenen Kasse aus.
+  let openCount = offeneStrategiePositionen(ctx.positions) + ctx.pendingEntries.size;
   // Unter der PDT-Schwelle zählt jeder geplante Einstieg gegen die Reserve — auch ein
   // Übernacht-Einstieg kann noch am selben Tag ausgestoppt werden (Red-Team-Befund).
   let plannedEntries = 0;
@@ -816,7 +989,11 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
     const exposureBudget = (ctx.account.equity * ctx.risk.maxGrossExposurePct) / 100 - gross;
     const size = sizePosition({
       equity: ctx.account.equity,
-      cash: ctx.account.cash,
+      // Geparkte Kasse IST Kasse (Eigenschaft 1): Was hier eingeplant wird,
+      // verkauft der Freikauf unten im selben Zyklus, und im Simulator wie
+      // live füllt dieser Verkauf vor dem Einstieg. Ohne brauchbaren Kurs ist
+      // `parkBar` 0 — dann zählt nur echtes Bargeld.
+      cash: ctx.account.cash + parkBar,
       price,
       stop,
       side: einstieg.side,
@@ -852,6 +1029,10 @@ export function decide(ctx: LogicContext, inputs: readonly SymbolInput[]): Logic
     openCount++;
     gross += size.notional;
     plannedEntries++;
+    // Was dieser Einstieg am Fill kostet, merkt sich die Treasury: Reicht das
+    // Bargeld nicht, verkauft sie so viel Geldmarkt, wie fehlt (Eigenschaft 1).
+    // Ein Short bringt Bargeld und wird deshalb nicht reserviert.
+    if (einstieg.side === 'long') reserviert += size.notional;
   }
 
   return fertig(halt, false, stufenHalt, ausgeloest);

@@ -17,8 +17,45 @@
  * Ohne Zinsreihe bleibt es „null" — und jede betroffene Notiz sagt, welches
  * von beiden gerechnet wurde. Ein stiller Rückfall wäre der Fehler, den die
  * Zinsrechnung behebt, noch einmal.
+ *
+ * ── EIN Maßstab für ALLE Gates (13.09.2026, zweite Änderung) ─────────────
+ *
+ * Vorregistrierung `2026-09-13-gates-auf-ueberschuss.md`. Die Zinsrechnung
+ * blieb zunächst auf die zwei Sharpe-Gates beschränkt; seit die Treasury
+ * brachliegende Kasse in den Geldmarkt legt, war das ein Messfehler: Das
+ * KONTO verdient den kurzen Zins, auch wenn die Strategie nichts tut. In
+ * Lauf #48 zählten bei `mean_reversion` drei Quartale OHNE EINEN TRADE als
+ * positive Folds (+95,93 / +134,31 / +227,50 $), `fold_positive_share` stand
+ * bei 16 von 16 — während `probabilistic_sharpe_oos` und `beats_market`, die
+ * schon auf Überschuss rechneten, bei jedem Kandidaten durchfielen.
+ *
+ * Seitdem gilt: **Jede Gate-Kennzahl misst den Überschuss über dem Zins.**
+ * Die Geld-Kennzahlen (`fold_positive_share`, `oos_net_profit`,
+ * `fold_concentration`, `stress_costs`, der Anteil positiver Nachbarn und
+ * die Basis-Gruppe) entstehen aus derselben Reihe `r − r_f`, aus der Sharpe
+ * und PSR schon rechnen — nur aufgezinst statt gemittelt
+ * (`ueberschussKennzahlen`). Ohne Zinsreihe bleibt alles roh wie bisher, und
+ * jede betroffene Notiz sagt, was gerechnet wurde.
+ *
+ * Drei Größen bleiben ausdrücklich ROH, jede mit Grund:
+ *  - `maxDrawdownPct` (und damit `exposureNormMaxDD`): Ein Drawdown ist eine
+ *    Kapitalfrage — „wie viel vom Konto war weg" —, und genau die messen die
+ *    Notbremsen live. Eine Überschuss-Kurve fällt in jeder flachen Phase,
+ *    obwohl das Konto unverändert dasteht; das wäre das Spiegelbild des
+ *    behobenen Fehlers. Sein Maßstab (Korb liegenlassen) ist ebenfalls eine
+ *    rohe Kursgröße — beide Seiten roh ist konsistent, eine Seite wäre die
+ *    verbotene Mischung.
+ *  - `objectiveValue` (Score, OOS-Median, Nachbar-Median): das SUCHkriterium,
+ *    kein Gate. Gegen dieses Artefakt ist es ohnehin immun — ein Fenster mit
+ *    `trades === 0` liefert −∞.
+ *  - `deflated_sharpe_is`: deflationiert eine AUSWAHL gegen Auswahlrauschen;
+ *    so festgelegt in der Vorregistrierung vom 13.09.2026.
+ *
+ * `oos_trades` und `fee_share` sind vom Parken per Bauart unberührt: Sie
+ * zählen TRADES, und eine Treasury-Umschichtung ist keiner (risk/parken.ts).
  */
-import { excessReturns } from '../backtest/metrics.ts';
+import { ROHES_NETTO_NOTE, excessReturns, riskFreeFuerLauf, ueberschussKennzahlen, type RiskFreeSeries } from '../backtest/metrics.ts';
+import type { AssetClass, EquityPoint } from '../core/types.ts';
 import type { BasisConfig, OptimizerConfig } from '../core/config.ts';
 import { median, objectiveValue, sampleVariance, type ObjectiveId } from './objective.ts';
 import { neighbors, wirksamerSuchraum } from './search.ts';
@@ -78,6 +115,46 @@ export interface GateRiskFree {
 /** Ohne konfigurierten Geldmarkt: der Satz, der in jeder betroffenen Notiz steht. */
 export const OHNE_ZINS_NOTE = 'kein Geldmarkt-Symbol konfiguriert — gegen null gerechnet';
 
+/* ───────────────────────── Überschuss-Netto eines Fensters ───────────────────────── */
+
+/**
+ * Wie weit das aufgezinste rohe Netto von der Kennzahl des Fensters abweichen
+ * darf, bevor die Ausrichtung als falsch gilt (Anteil des Startkapitals).
+ * Gleitkomma über einige hundert Multiplikationen liegt bei ~1e-13 relativ —
+ * 1e-6 ist großzügig und fängt trotzdem jede echte Verschiebung.
+ */
+export const UEBERSCHUSS_TOLERANZ = 1e-6;
+
+/**
+ * Überschuss-Netto EINES simulierten Fensters, taggenau gegen die Zinsreihe.
+ *
+ * Die Tagesachse kommt aus der Equity-Kurve desselben Laufs (`tagesachse`) —
+ * je Tagesrendite genau ein Tagesschlüssel. Passt das nicht, oder deckt die
+ * Zinsreihe zu wenige Tage, gibt es einen FEHLER und keine Zahl: Ein um einen
+ * Tag verrutschter Zins wäre ein neuer, subtilerer Messfehler als der
+ * behobene, und er sähe in jeder Kennzahl plausibel aus.
+ *
+ * Zusätzlich wird die Ausrichtung gegen die Kennzahl des Simulators geprüft,
+ * nicht geglaubt: `E₀ · (Π(1+r) − 1)` MUSS `metrics.netProfit` treffen. Tut
+ * es das nicht, gehört die Renditereihe nicht zu diesem Fenster.
+ */
+export function ueberschussNettoVon(a: {
+  result: { dailyReturns: readonly number[]; equity: readonly EquityPoint[]; metrics: { netProfit: number } };
+  riskFree: RiskFreeSeries;
+  assetClass: AssetClass;
+  initialEquity: number;
+}): { netProfit: number; quelle: string } | { fehler: string } {
+  const { result, initialEquity } = a;
+  const al = riskFreeFuerLauf({ dailyReturns: result.dailyReturns, equity: result.equity, riskFree: a.riskFree, assetClass: a.assetClass });
+  if ('fehler' in al) return al;
+  const u = ueberschussKennzahlen({ returns: result.dailyReturns, riskFree: al.rates, initialEquity });
+  const toleranz = UEBERSCHUSS_TOLERANZ * Math.max(1, Math.abs(initialEquity));
+  if (Math.abs(u.rohNetProfit - result.metrics.netProfit) > toleranz) {
+    return { fehler: `Renditereihe passt nicht zum Netto des Fensters (aufgezinst ${u.rohNetProfit.toFixed(2)}, gemessen ${result.metrics.netProfit.toFixed(2)})` };
+  }
+  return { netProfit: u.netProfit, quelle: al.quelle };
+}
+
 /* ───────────────────────── Schwellen (fest, nicht konfigurierbar) ───────────────────────── */
 
 /** Nachbarschaft: Median der ±1-Nachbarn muss mindestens diesen Anteil des Bestwerts halten. */
@@ -108,23 +185,49 @@ export const DSR_VAR_SR_FALLBACK = 0.01;
 /* ───────────────────────── Stress: Kosten × Faktor ───────────────────────── */
 
 export interface StressResult {
+  /** Rohes Netto der Stress-Kette — Bericht; das Gate liest `ueberschussNetProfit`, wenn es eins gibt. */
   netProfit: number;
+  /**
+   * Überschuss-Netto derselben Kette (Σ je Fold, gegen den Zins gerechnet);
+   * null ohne Zinsreihe oder wenn die Ausrichtung scheiterte. DAS ist der
+   * Wert des Gates `stress_costs`, sobald er da ist: Sonst bestünde eine
+   * Strategie das Gate mit dem Zinsertrag auf brachliegender Kasse — bei
+   * ×1,5-Kosten sogar besonders leicht, weil sie dafür nichts handeln muss.
+   */
+  ueberschussNetProfit: number | null;
   objectiveMedian: number;
   trades: number;
   costMultiplier: number;
+  /** Wörtlich für die Notiz des Gates: Zinsquelle oder Grund, warum roh gerechnet wurde. */
+  zins: string;
 }
 
 /**
  * Die OOS-Kette der WFA noch einmal mit verteuerten Kosten: Je Fold die dort
  * gewählten Parameter auf demselben OOS-Fenster. Was nur bei Idealkosten
  * verdient, verdient live nichts.
+ *
+ * Mit `riskFree` wird je Fold zusätzlich das ÜBERSCHUSS-Netto gerechnet —
+ * aus der Equity-Kurve DIESES Stress-Laufs, nicht aus der des Normallaufs:
+ * Die Kosten ändern die Kurve, und eine fremde Achse wäre genau die Sorte
+ * plausibel aussehender Falschzahl, gegen die diese Änderung gebaut ist.
+ * Scheitert die Ausrichtung auch nur eines Folds, gibt es KEINE
+ * Überschusszahl (statt einer halben Kette), und der Grund steht in `zins`.
  */
 export function stressTest(
-  a: Omit<WindowSimArgs, 'range' | 'params' | 'costMultiplier'> & { wfa: WfaResult; costMultiplier: number; objective: ObjectiveId },
+  a: Omit<WindowSimArgs, 'range' | 'params' | 'costMultiplier'> & {
+    wfa: WfaResult;
+    costMultiplier: number;
+    objective: ObjectiveId;
+    /** Zinsreihe des Laufs (`optimizer.riskFreeSymbol`); ohne sie bleibt das Gate roh wie bisher. */
+    riskFree?: RiskFreeSeries | undefined;
+  },
 ): StressResult {
   const objectives: number[] = [];
   let netProfit = 0;
   let trades = 0;
+  let ueberschuss: number | null = a.riskFree ? 0 : null;
+  let zins = a.riskFree ? `Maßstab: Überschuss über ${a.riskFree.symbol}` : ROHES_NETTO_NOTE;
   for (const f of a.wfa.folds) {
     const r = simulateWindow({
       ...a,
@@ -136,8 +239,15 @@ export function stressTest(
     objectives.push(objectiveValue(a.objective, r.metrics));
     netProfit += r.metrics.netProfit;
     trades += r.metrics.trades;
+    if (a.riskFree && ueberschuss !== null) {
+      const u = ueberschussNettoVon({ result: r, riskFree: a.riskFree, assetClass: a.config.assetClass, initialEquity: a.initialEquity });
+      if ('fehler' in u) {
+        ueberschuss = null;
+        zins = `Maßstab: rohes Netto — Zins nicht auf den Stress-Lauf ausrichtbar (Fold ${f.fold.index + 1}: ${u.fehler})`;
+      } else ueberschuss += u.netProfit;
+    }
   }
-  return { netProfit, objectiveMedian: median(objectives), trades, costMultiplier: a.costMultiplier };
+  return { netProfit, ueberschussNetProfit: ueberschuss, objectiveMedian: median(objectives), trades, costMultiplier: a.costMultiplier, zins };
 }
 
 /* ───────────────────────── Nachbarschaft: Plateau statt Spitze ───────────────────────── */
@@ -145,38 +255,69 @@ export function stressTest(
 export interface NeighborhoodResult {
   medianObjective: number;
   bestObjective: number;
+  /** Anteil Nachbarn mit positivem Netto — mit Zinsreihe: mit positivem ÜBERSCHUSS-Netto. */
   positiveShare: number;
   evaluated: number;
+  /** true, wenn `positiveShare` auf Überschuss-Netto zählt. */
+  ueberschuss: boolean;
+  /** Wörtlich für die Notiz des Gates. */
+  zins: string;
 }
 
 /**
  * Alle ±1-Gitternachbarn der finalParams auf dem finalen Suchfenster (mit
  * derselben Embargo-Regel). Ein Optimum, das beim kleinsten Schritt
  * einbricht, ist eine Spitze im Rauschen, kein Plateau.
+ *
+ * Der Anteil positiver Nachbarn zählt mit `riskFree` das ÜBERSCHUSS-Netto:
+ * Ein Nachbar, der gar nicht handelt, hat mit geparkter Kasse ein positives
+ * rohes Netto und zählte sonst als Beleg für ein Plateau — das Plateau wäre
+ * dann der Zins. Der Median des Objectives bleibt roh: Er ist das
+ * Suchkriterium (kein Gate) und liefert für `trades === 0` ohnehin −∞.
  */
 export function neighborhoodTest(
-  a: Omit<WindowSimArgs, 'range' | 'params' | 'costMultiplier'> & { wfa: WfaResult; optimizer: OptimizerConfig },
+  a: Omit<WindowSimArgs, 'range' | 'params' | 'costMultiplier'> & {
+    wfa: WfaResult;
+    optimizer: OptimizerConfig;
+    /** Zinsreihe des Laufs; ohne sie zählt der Anteil wie bisher rohes Netto. */
+    riskFree?: RiskFreeSeries | undefined;
+  },
 ): NeighborhoodResult {
   const { wfa, strategy, optimizer } = a;
   const bestObjective = objectiveValue(optimizer.objective, wfa.finalIsMetrics);
+  let mitZins = a.riskFree !== undefined;
+  let zins = a.riskFree ? `Maßstab: Überschuss über ${a.riskFree.symbol}` : ROHES_NETTO_NOTE;
   // Dieselbe Regel wie in der Suche: Bei gesperrtem Short ist `allowShort`
   // keine Achse — ihr Nachbar hätte exakt den Bestwert und zählte als Plateau.
   const nb = neighbors(wfa.finalParams, wirksamerSuchraum(strategy.paramSpace, a.config.risk.allowShort).space);
   if (nb.length === 0) {
     // Ein Raum ohne Achsen kann per Parameterwahl nicht überangepasst werden.
-    return { medianObjective: bestObjective, bestObjective, positiveShare: 1, evaluated: 0 };
+    return { medianObjective: bestObjective, bestObjective, positiveShare: 1, evaluated: 0, ueberschuss: mitZins, zins };
   }
   const objectives: number[] = [];
-  let positive = 0;
+  // BEIDE Reihen werden mitgeführt, damit ein Rückfall mitten in der Schleife
+  // keine halb umgestellte Zählung hinterlässt (die ersten Nachbarn
+  // Überschuss, die späteren roh) — am Ende zählt genau eine von beiden.
+  const roh: number[] = [];
+  const ueber: number[] = [];
   // Embargo misst in Bars — bei einem Korb auf der vereinigten Zeitachse.
   const achse = zeitachseVon(korbVon(a.symbol, a.bars));
   for (const params of nb) {
     const range = candidateRange(achse, wfa.finalWindow, strategy, params, optimizer, wfa.finalWindow.embargoAtEnd);
     const r = simulateWindow({ ...a, params, range, membershipAt: wfa.finalWindow.end });
     objectives.push(objectiveValue(optimizer.objective, r.metrics));
-    if (r.metrics.netProfit > 0) positive++;
+    roh.push(r.metrics.netProfit);
+    if (a.riskFree && mitZins) {
+      const u = ueberschussNettoVon({ result: r, riskFree: a.riskFree, assetClass: a.config.assetClass, initialEquity: a.initialEquity });
+      if ('fehler' in u) {
+        mitZins = false;
+        zins = `Maßstab: rohes Netto — Zins nicht auf die Nachbarschaft ausrichtbar (${u.fehler})`;
+      } else ueber.push(u.netProfit);
+    }
   }
-  return { medianObjective: median(objectives), bestObjective, positiveShare: positive / nb.length, evaluated: nb.length };
+  const gezaehlt = mitZins ? ueber : roh;
+  const positive = gezaehlt.filter((x) => x > 0).length;
+  return { medianObjective: median(objectives), bestObjective, positiveShare: positive / nb.length, evaluated: nb.length, ueberschuss: mitZins, zins };
 }
 
 /* ───────────────────────── Deflated Sharpe (In-Sample) ───────────────────────── */
@@ -326,13 +467,79 @@ export function probabilisticSharpeOos(a: { wfa: WfaResult; metricsFns: MetricsF
   return { psr, sr, n, skew, kurt, ueberschuss: mitZins, note: psr === null ? `PSR nicht berechenbar — ${detail}` : `PSR ${psr.toFixed(3)}; ${detail}` };
 }
 
+/* ───────────────────────── Überschuss der OOS-Kette (je Fold) ───────────────────────── */
+
+export interface UeberschussKette {
+  /** Überschuss-Netto je Fold, in der Reihenfolge von `wfa.folds`. */
+  folds: number[];
+  /** Σ über alle Folds — der Wert des Gates `oos_net_profit`. */
+  netProfit: number;
+  /** Anteil Folds mit Überschuss-Netto > 0 — der Wert des Gates `fold_positive_share`. */
+  positiveShare: number;
+}
+
+/**
+ * Die OOS-Kette Fold für Fold im Überschuss.
+ *
+ * Die Zinsreihe kommt bereits auf die GANZE Kette ausgerichtet an
+ * (`GateRiskFree.strategie`); geschnitten wird sie hier nach den Längen der
+ * Fold-Renditen. Das ist zulässig, WEIL `wfa.oos.dailyReturns` per Bauart die
+ * Verkettung genau dieser Reihen ist (`aggregateOos`) — und weil es das ist,
+ * wird es geprüft und nicht geglaubt: Längen, Werte und das aufgezinste rohe
+ * Netto je Fold gegen `oosMetrics.netProfit`. Stimmt eine Probe nicht, gibt
+ * es KEINE Überschusszahl; die Gates rechnen dann roh und sagen den Grund.
+ *
+ * Jeder Fold startet mit `initialEquity` — dieselbe Konvention wie
+ * `OosAggregate.netProfit` (Summe der Fold-Nettos, kein Zinseszins über die
+ * Kette). Nur so bleiben Wert und Schwelle des Gates vergleichbar.
+ */
+export function ueberschussKette(a: { wfa: WfaResult; riskFree: readonly number[]; initialEquity: number }): UeberschussKette | { fehler: string } {
+  const folds = a.wfa.folds;
+  const kette = a.wfa.oos.dailyReturns;
+  const laengen = folds.map((f) => f.best.oosDailyReturns.length);
+  const summe = laengen.reduce((s, x) => s + x, 0);
+  if (summe !== kette.length) return { fehler: `Fold-Renditen ergeben nicht die OOS-Kette (${summe} aus ${folds.length} Folds, Kette ${kette.length})` };
+  if (a.riskFree.length !== kette.length) return { fehler: `Zinsreihe nicht auf die OOS-Kette ausgerichtet (${kette.length} Renditen, ${a.riskFree.length} Sätze)` };
+  const toleranz = UEBERSCHUSS_TOLERANZ * Math.max(1, Math.abs(a.initialEquity));
+  const out: number[] = [];
+  let off = 0;
+  for (let i = 0; i < folds.length; i++) {
+    const f = folds[i]!;
+    const r = f.best.oosDailyReturns;
+    for (let k = 0; k < r.length; k++) {
+      if (kette[off + k] !== r[k]) return { fehler: `Fold ${i + 1} liegt nicht an Position ${off} der OOS-Kette — Zinsreihe wäre verschoben` };
+    }
+    const u = ueberschussKennzahlen({ returns: r, riskFree: a.riskFree.slice(off, off + r.length), initialEquity: a.initialEquity });
+    if (Math.abs(u.rohNetProfit - f.best.oosMetrics.netProfit) > toleranz) {
+      return { fehler: `Fold ${i + 1}: Renditereihe passt nicht zum Netto (aufgezinst ${u.rohNetProfit.toFixed(2)}, gemessen ${f.best.oosMetrics.netProfit.toFixed(2)})` };
+    }
+    out.push(u.netProfit);
+    off += r.length;
+  }
+  return {
+    folds: out,
+    netProfit: out.reduce((s, x) => s + x, 0),
+    positiveShare: out.length ? out.filter((x) => x > 0).length / out.length : 0,
+  };
+}
+
 /* ───────────────────────── Die Gates ───────────────────────── */
 
 export interface GateInput {
   wfa: WfaResult;
   optimizer: OptimizerConfig;
-  stressOos: { netProfit: number; objectiveMedian: number };
-  neighborhood: { medianObjective: number; bestObjective: number; positiveShare: number };
+  /**
+   * Stress-Lauf (`stressTest`). `ueberschussNetProfit` ist der Wert des Gates,
+   * sobald es ihn gibt; ohne bleibt `netProfit` wie bisher.
+   */
+  stressOos: { netProfit: number; objectiveMedian: number; ueberschussNetProfit?: number | null | undefined; zins?: string | undefined };
+  neighborhood: { medianObjective: number; bestObjective: number; positiveShare: number; ueberschuss?: boolean | undefined; zins?: string | undefined };
+  /**
+   * Startkapital je Fenster — nötig, um die Überschussreihe in Geld
+   * auszudrücken (`ueberschussKette`). Fehlt es, bleiben die Geld-Gates roh
+   * und sagen das; ein geratenes Startkapital gäbe es hier nicht.
+   */
+  initialEquity?: number | undefined;
   /** Deflated Sharpe der selektierten IS-Zahl (deflatedSharpeIs). */
   dsr: DsrResult;
   /** Probabilistic Sharpe der OOS-Kette (probabilisticSharpeOos). */
@@ -425,10 +632,39 @@ function zinsEntscheidung(a: GateInput): ZinsEntscheidung {
   return { strategie: rf.strategie, markt: rf.markt, note: `Zins: ${rf.quelle}` };
 }
 
+/**
+ * Der Maßstab der GELD-Gates: Überschuss über dem Zins, wenn die Reihe
+ * taggenau auf die OOS-Kette passt — sonst rohes Netto, laut gesagt.
+ *
+ * Die Bedingung ist absichtlich schwächer als `zinsEntscheidung`: Dort geht
+ * es um zwei Sharpe-Werte, die denselben Maßstab tragen müssen (Strategie
+ * gegen Markt). Die Geld-Gates vergleichen gegen die Zahl NULL, und null ist
+ * im Überschuss dieselbe Null wie roh — ein Maßstab, der nicht verrutschen
+ * kann. Eine fehlende Marktreihe darf deshalb nicht dazu führen, dass
+ * `oos_net_profit` wieder Zinsertrag als Gewinn zählt.
+ */
+function geldMassstab(a: GateInput): { kette: UeberschussKette | null; note: string } {
+  const rf = a.riskFree;
+  if (rf === undefined) return { kette: null, note: ROHES_NETTO_NOTE };
+  if (a.initialEquity === undefined || !Number.isFinite(a.initialEquity) || a.initialEquity <= 0) {
+    return { kette: null, note: 'Maßstab: rohes Netto — kein Startkapital übergeben, Überschuss in Geld nicht ausdrückbar' };
+  }
+  const k = ueberschussKette({ wfa: a.wfa, riskFree: rf.strategie, initialEquity: a.initialEquity });
+  if ('fehler' in k) return { kette: null, note: `Maßstab: rohes Netto — ${k.fehler}` };
+  return { kette: k, note: `Maßstab: Überschuss über den Zins (${rf.quelle})` };
+}
+
 export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResult[] } {
   const { wfa, optimizer } = a;
   const oos = wfa.oos;
   const gates: GateResult[] = [];
+
+  // Ein Maßstab für alle Geld-Gates, EINMAL entschieden (Vorregistrierung
+  // 2026-09-13-gates-auf-ueberschuss). Ohne ihn zählte der Zinsertrag auf
+  // brachliegender Kasse als Leistung der Strategie: In Lauf #48 galten drei
+  // Quartale OHNE EINEN TRADE als positive Folds.
+  const geld = geldMassstab(a);
+  const ue = geld.kette;
 
   const inc = a.incumbent;
   const minTrades = inc ? Math.max(1, Math.ceil((optimizer.minOosTrades * inc.cleanFolds) / Math.max(1, inc.totalFolds))) : optimizer.minOosTrades;
@@ -442,27 +678,43 @@ export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResul
       : `${oos.trades} OOS-Trades über ${wfa.folds.length} Folds`,
   });
 
+  // Ein Quartal ohne einen einzigen Trade ist KEIN positiver Fold — seit die
+  // Kasse im Geldmarkt liegt, hat es trotzdem ein positives rohes Netto.
+  const foldShare = ue ? ue.positiveShare : oos.positiveFoldShare;
   gates.push({
     name: 'fold_positive_share',
-    pass: oos.positiveFoldShare >= optimizer.minFoldPositiveShare,
-    value: oos.positiveFoldShare,
+    pass: foldShare >= optimizer.minFoldPositiveShare,
+    value: foldShare,
     threshold: optimizer.minFoldPositiveShare,
-    note: `${Math.round(oos.positiveFoldShare * wfa.folds.length)} von ${wfa.folds.length} Folds netto positiv`,
+    note:
+      `${Math.round(foldShare * wfa.folds.length)} von ${wfa.folds.length} Folds ${ue ? 'im Überschuss' : 'netto'} positiv` +
+      (ue ? ` (roh wären es ${Math.round(oos.positiveFoldShare * wfa.folds.length)})` : '') +
+      `; ${geld.note}`,
   });
 
+  const oosNetto = ue ? ue.netProfit : oos.netProfit;
   gates.push({
     name: 'oos_net_profit',
-    pass: oos.netProfit > 0,
-    value: oos.netProfit,
+    pass: oosNetto > 0,
+    value: oosNetto,
     threshold: 0,
-    note: `OOS netto ${oos.netProfit.toFixed(2)} (${oos.netReturnPct.toFixed(2)} %), MaxDD ${oos.maxDrawdownPct.toFixed(2)} %`,
+    note:
+      `OOS ${ue ? 'Überschuss' : 'netto'} ${oosNetto.toFixed(2)}` +
+      (ue ? ` (roh ${oos.netProfit.toFixed(2)}, ${oos.netReturnPct.toFixed(2)} %)` : ` (${oos.netReturnPct.toFixed(2)} %)`) +
+      // Der Drawdown bleibt ROH — eine Kapitalgröße, wie die Notbremsen live
+      // sie messen; im Überschuss fiele die Kurve auch in jeder flachen Phase.
+      `, MaxDD ${oos.maxDrawdownPct.toFixed(2)} % (roh, Kapitalsicht)` +
+      `; ${geld.note}`,
   });
 
   // Konzentration: Trägt EIN Fold das ganze Ergebnis? Ein Gewinn, der an
   // einem einzelnen Fenster hängt, ist ein Ereignis und keine Kante — und
   // genau so ist der TSLA-Champion vom 07.09. durch alle Gates gekommen
   // (96 % des Nettos aus einem Monat, Holdout danach negativ).
-  const foldNetto = wfa.folds.map((f) => f.best.oosMetrics.netProfit);
+  // Im Überschuss gerechnet: Der Zinsabzug trifft den Zähler EINMAL und den
+  // Nenner so oft, wie es Folds gibt — die Konzentration steigt also, und ein
+  // Ergebnis, das an einem Fenster hängt, wird sichtbarer statt unsichtbarer.
+  const foldNetto = ue ? ue.folds : wfa.folds.map((f) => f.best.oosMetrics.netProfit);
   const summeNetto = foldNetto.reduce((sum, x) => sum + x, 0);
   const groesster = foldNetto.length > 0 ? Math.max(...foldNetto) : 0;
   // Nur bei positivem Gesamtergebnis aussagekräftig; ist es das nicht,
@@ -474,19 +726,27 @@ export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResul
     value: konzentration,
     threshold: optimizer.maxFoldNetShare,
     note:
-      summeNetto <= 0
-        ? 'OOS-Netto nicht positiv — Konzentration nicht aussagekräftig (siehe oos_net_profit)'
-        : `bester Fold trägt ${(konzentration * 100).toFixed(0)} % des OOS-Nettos ` +
+      (summeNetto <= 0
+        ? `OOS-${ue ? 'Überschuss' : 'Netto'} nicht positiv — Konzentration nicht aussagekräftig (siehe oos_net_profit)`
+        : `bester Fold trägt ${(konzentration * 100).toFixed(0)} % des OOS-${ue ? 'Überschusses' : 'Nettos'} ` +
           `(${groesster.toFixed(2)} von ${summeNetto.toFixed(2)} über ${foldNetto.length} Folds); ` +
-          `ohne ihn blieben ${(summeNetto - groesster).toFixed(2)}`,
+          `ohne ihn blieben ${(summeNetto - groesster).toFixed(2)}`) + `; ${geld.note}`,
   });
 
+  // Der Stress-Lauf bringt seinen eigenen Überschuss mit (`stressTest`): Seine
+  // Equity-Kurve ist eine andere als die des Normallaufs, also muss auch der
+  // Zins auf SEINER Achse liegen.
+  const stressUe = a.stressOos.ueberschussNetProfit;
+  const stressWert = stressUe !== null && stressUe !== undefined ? stressUe : a.stressOos.netProfit;
   gates.push({
     name: 'stress_costs',
-    pass: a.stressOos.netProfit > 0,
-    value: a.stressOos.netProfit,
+    pass: stressWert > 0,
+    value: stressWert,
     threshold: 0,
-    note: `OOS netto bei Kosten ×${optimizer.stressCostMultiplier}: ${a.stressOos.netProfit.toFixed(2)}, Objective-Median ${fmt(a.stressOos.objectiveMedian)}`,
+    note:
+      `OOS ${stressUe !== null && stressUe !== undefined ? 'Überschuss' : 'netto'} bei Kosten ×${optimizer.stressCostMultiplier}: ${stressWert.toFixed(2)}` +
+      (stressUe !== null && stressUe !== undefined ? ` (roh ${a.stressOos.netProfit.toFixed(2)})` : '') +
+      `, Objective-Median ${fmt(a.stressOos.objectiveMedian)}; ${a.stressOos.zins ?? ROHES_NETTO_NOTE}`,
   });
 
   const nbThreshold = NEIGHBOR_MEDIAN_RATIO * a.neighborhood.bestObjective;
@@ -499,7 +759,10 @@ export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResul
     threshold: nbThreshold,
     note:
       `Nachbar-Median ${fmt(a.neighborhood.medianObjective)} vs. Bestwert ${fmt(a.neighborhood.bestObjective)} (≥ ${NEIGHBOR_MEDIAN_RATIO}×: ${nbMedianOk ? 'ja' : 'nein'}); ` +
-      `${(a.neighborhood.positiveShare * 100).toFixed(0)} % der Nachbarn positiv (≥ ${NEIGHBOR_POSITIVE_SHARE * 100} %: ${nbShareOk ? 'ja' : 'nein'})`,
+      `${(a.neighborhood.positiveShare * 100).toFixed(0)} % der Nachbarn ${a.neighborhood.ueberschuss ? 'im Überschuss ' : ''}positiv (≥ ${NEIGHBOR_POSITIVE_SHARE * 100} %: ${nbShareOk ? 'ja' : 'nein'}); ` +
+      // Der Median des Objectives bleibt roh: Suchkriterium, kein Gate — und
+      // für `trades === 0` liefert es ohnehin −∞ (objective.ts).
+      `${a.neighborhood.zins ?? ROHES_NETTO_NOTE} (Anteil positiver Nachbarn; der Objective-Median bleibt roh)`,
   });
 
   const { minPsrOos, dsrIsGate } = gateOptions(optimizer);
@@ -543,12 +806,19 @@ export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResul
         : `informativ (dsrIsGate=false): ${dsrNote}${dsrOk ? '' : ' — würde als Gate durchfallen'}`,
   });
 
+  // Zins-unempfindlich per Bauart: Zähler und Nenner entstehen beide aus
+  // TRADES (`Trade.fees` / `Trade.grossPnl`), und eine Treasury-Umschichtung
+  // ist kein Trade (risk/parken.ts). Weder Parkkosten noch Zinsertrag stecken
+  // hier drin — deshalb bleibt dieses Gate roh und ändert sich um exakt 0.
   gates.push({
     name: 'fee_share',
     pass: oos.feeShare === null || oos.feeShare <= FEE_SHARE_MAX,
     value: oos.feeShare,
     threshold: FEE_SHARE_MAX,
-    note: oos.feeShare === null ? 'Gebührenanteil nicht berechenbar (kein Bruttogewinn) — kein Urteil' : `Gebühren fressen ${(oos.feeShare * 100).toFixed(1)} % des Bruttogewinns`,
+    note:
+      oos.feeShare === null
+        ? 'Gebührenanteil nicht berechenbar (kein Bruttogewinn) — kein Urteil'
+        : `Gebühren fressen ${(oos.feeShare * 100).toFixed(1)} % des Bruttogewinns (aus Trades, zinsfrei)`,
   });
 
   // Schlägt die Strategie das Nichtstun? Am 08.09.2026 bestand
@@ -603,14 +873,26 @@ export interface BasisGateInput {
   basis: Pick<BasisConfig, 'minDrawdownReduction' | 'minSharpeRatio' | 'maxCostShare'>;
   /** Kostenfaktor des Stress-Laufs (`optimizer.stressCostMultiplier`) — nur für die Notiz. */
   stressCostMultiplier: number;
-  /** Aus der EINEN durchgehenden Simulation (`basisSimulation`). */
-  kennzahlen: Pick<BasisKennzahlen, 'netProfit' | 'stressNetProfit' | 'sharpe' | 'maxDrawdownPct' | 'avgExposure' | 'exposureNormMaxDD' | 'fees'>;
+  /**
+   * Aus der EINEN durchgehenden Simulation (`basisSimulation`). Die
+   * `ueberschuss*`-Felder sind optional, damit von Hand gebaute Eingaben
+   * (Tests, ältere Aufrufer) gültig bleiben — fehlen sie, rechnet die
+   * Gate-Gruppe roh wie vor dem 13.09.2026 und sagt es in ihren Notizen.
+   */
+  kennzahlen: Pick<BasisKennzahlen, 'netProfit' | 'stressNetProfit' | 'sharpe' | 'maxDrawdownPct' | 'avgExposure' | 'exposureNormMaxDD' | 'fees'> &
+    Partial<Pick<BasisKennzahlen, 'ueberschussNetProfit' | 'ueberschussStressNetProfit' | 'ueberschussSharpe' | 'zins'>>;
   /**
    * Der Maßstab: Kaufen-und-Halten des Korbs, gleichgewichtet, ohne Kosten,
    * über DIESELBE Range. null = nicht berechenbar — dann fallen Drawdown- und
    * Sharpe-Gate; die Latte wird nie vakant, indem man den Maßstab weglässt.
+   *
+   * `ueberschussSharpe` ist derselbe Maßstab auf Überschussrenditen. Er MUSS
+   * da sein, wenn die Basis im Überschuss gerechnet wird — sonst verglichen
+   * wir eine Überschuss-Strategie mit einem rohen Markt, und das wäre
+   * schlimmer als beide roh (§2.5 der Zins-Vorregistrierung). `basisGates`
+   * fällt in diesem Fall für BEIDE Seiten auf roh zurück.
    */
-  korb: { sharpe: number | null; maxDrawdownPct: number } | null;
+  korb: { sharpe: number | null; maxDrawdownPct: number; ueberschussSharpe?: number | null | undefined } | null;
 }
 
 /**
@@ -624,19 +906,42 @@ export function basisGates(a: BasisGateInput): { pass: boolean; gates: GateResul
   const { basis, kennzahlen: k, korb } = a;
   const gates: GateResult[] = [];
 
+  /*
+   * EIN Maßstab für die ganze Gruppe (Vorregistrierung
+   * 2026-09-13-gates-auf-ueberschuss): Geld und Sharpe im Überschuss über dem
+   * Zins — aber nur, wenn BEIDE Hälften des Netto-Gates und BEIDE Seiten des
+   * Sharpe-Vergleichs im Überschuss vorliegen. Sonst rechnet die ganze Gruppe
+   * roh, damit im selben Block nie zwei Maßstäbe nebeneinanderstehen.
+   * `basis_drawdown` bleibt in jedem Fall roh (siehe Modulkopf).
+   */
+  const geldUe = k.ueberschussNetProfit !== null && k.ueberschussNetProfit !== undefined && k.ueberschussStressNetProfit !== null && k.ueberschussStressNetProfit !== undefined;
+  const netProfit = geldUe ? k.ueberschussNetProfit! : k.netProfit;
+  const stressNetProfit = geldUe ? k.ueberschussStressNetProfit! : k.stressNetProfit;
+  const geldNote = geldUe ? (k.zins ?? 'Maßstab: Überschuss über den Zins') : ROHES_NETTO_NOTE;
+
   // Netto > 0 UND bei Stress > 0 — ein Standard, der Geld verliert, ist schlechter als Kasse.
   gates.push({
     name: 'basis_net_profit',
-    pass: k.netProfit > 0 && k.stressNetProfit > 0,
-    value: k.netProfit,
+    pass: netProfit > 0 && stressNetProfit > 0,
+    value: netProfit,
     threshold: 0,
-    note: `Netto ${k.netProfit.toFixed(2)}, bei Kosten ×${a.stressCostMultiplier}: ${k.stressNetProfit.toFixed(2)} (beide > 0 nötig)`,
+    note:
+      `${geldUe ? 'Überschuss' : 'Netto'} ${netProfit.toFixed(2)}, bei Kosten ×${a.stressCostMultiplier}: ${stressNetProfit.toFixed(2)} (beide > 0 nötig)` +
+      (geldUe ? ` — roh ${k.netProfit.toFixed(2)} / ${k.stressNetProfit.toFixed(2)}` : '') +
+      `; ${geldNote}`,
   });
 
   // Drawdown je Einheit Exposure gegen den liegengelassenen Korb (Prüfbefund
   // K2): Eine Basis, die die halbe Zeit in Kasse steht, hat automatisch den
   // halben rohen Drawdown — der Vergleich muss die Exposure herausrechnen,
   // sonst misst er Kasse, nicht Regel. Ohne Exposure gibt es kein Urteil.
+  //
+  // BEIDE Seiten bleiben ROH, auch wenn alles andere im Überschuss rechnet
+  // (Modulkopf, §4 der Vorregistrierung): Ein Drawdown ist die Frage „wie
+  // viel vom Konto war weg", und genau die messen die Notbremsen live. Der
+  // Maßstab daneben ist eine rohe Kursgröße — eine Seite umzustellen wäre die
+  // verbotene Mischung. Folge für den Leser: Diese Zahl ist NICHT mit den
+  // Überschuss-Zahlen desselben Blocks verrechenbar.
   const ddLatte = korb === null ? null : (1 - basis.minDrawdownReduction) * korb.maxDrawdownPct;
   const ddWert = k.exposureNormMaxDD;
   gates.push({
@@ -650,14 +955,21 @@ export function basisGates(a: BasisGateInput): { pass: boolean; gates: GateResul
         : ddWert === null
           ? `nicht bewertbar (mittlere Exposure ${k.avgExposure === null ? 'unbekannt' : '0'}) — gilt als durchgefallen; roher MaxDD ${k.maxDrawdownPct.toFixed(2)} %, Korb ${korb.maxDrawdownPct.toFixed(2)} %`
           : `MaxDD ${k.maxDrawdownPct.toFixed(2)} % / mittlere Exposure ${(k.avgExposure! * 100).toFixed(1)} % = ${ddWert.toFixed(2)} % ` +
-            `gegen (1 − ${basis.minDrawdownReduction}) × Korb ${korb.maxDrawdownPct.toFixed(2)} % = ${ddLatte!.toFixed(2)} %`,
+            `gegen (1 − ${basis.minDrawdownReduction}) × Korb ${korb.maxDrawdownPct.toFixed(2)} % = ${ddLatte!.toFixed(2)} % ` +
+            '(beide Seiten ROH, Kapitalsicht — nicht mit den Überschuss-Zahlen verrechenbar)',
   });
 
   // Ertrag je Risiko: mindestens der Anteil des Korb-Sharpe; ein Korb ohne
   // positiven Sharpe setzt keine Latte — dann muss die Basis nur selbst positiv sein.
-  const korbSr = korb?.sharpe ?? null;
+  //
+  // BEIDE Seiten oder keine: Der Zins wird der Basis nur dann abgezogen, wenn
+  // er auch dem liegengelassenen Korb abgezogen wurde. Eine Überschuss-Basis
+  // gegen einen rohen Korb wäre eine geschenkte Latte.
+  const sharpeUe = k.ueberschussSharpe !== null && k.ueberschussSharpe !== undefined && korb !== null && korb.ueberschussSharpe !== null && korb.ueberschussSharpe !== undefined;
+  const korbSr = korb === null ? null : sharpeUe ? korb.ueberschussSharpe! : korb.sharpe;
+  const sr = sharpeUe ? k.ueberschussSharpe! : k.sharpe;
   const srLatte = korb === null ? null : korbSr !== null && korbSr > 0 ? basis.minSharpeRatio * korbSr : 0;
-  const sr = k.sharpe;
+  const srNote = sharpeUe ? ' (beide Seiten Überschuss)' : korb === null ? '' : ' (beide Seiten roh)';
   gates.push({
     name: 'basis_sharpe',
     pass: korb !== null && sr !== null && (korbSr !== null && korbSr > 0 ? sr >= srLatte! : sr > 0),
@@ -669,12 +981,15 @@ export function basisGates(a: BasisGateInput): { pass: boolean; gates: GateResul
         : sr === null
           ? 'Sharpe der Basis nicht berechenbar (Varianz 0?) — gilt als durchgefallen'
           : korbSr !== null && korbSr > 0
-            ? `Sharpe p. a. ${sr.toFixed(2)} gegen ${basis.minSharpeRatio} × Korb ${korbSr.toFixed(2)} = ${srLatte!.toFixed(2)}`
-            : `Korb-Sharpe ${korbSr === null ? 'nicht berechenbar' : korbSr.toFixed(2)} ≤ 0 setzt keine Latte — Basis-Sharpe ${sr.toFixed(2)} muss > 0 sein`,
+            ? `Sharpe p. a. ${sr.toFixed(2)} gegen ${basis.minSharpeRatio} × Korb ${korbSr.toFixed(2)} = ${srLatte!.toFixed(2)}${srNote}`
+            : `Korb-Sharpe ${korbSr === null ? 'nicht berechenbar' : korbSr.toFixed(2)} ≤ 0 setzt keine Latte — Basis-Sharpe ${sr.toFixed(2)} muss > 0 sein${srNote}`,
   });
 
-  // Gebühren gesamt gegen den Betrag des Nettos. Netto 0 ⇒ Anteil unendlich ⇒ nicht bestanden.
-  const costShare = k.netProfit !== 0 ? k.fees / Math.abs(k.netProfit) : null;
+  // Gebühren gesamt gegen den Betrag des Nettos. Netto 0 ⇒ Anteil unendlich ⇒
+  // nicht bestanden. Der Nenner ist der ÜBERSCHUSS: Ein Konto, dessen Netto
+  // überwiegend Zinsertrag ist, hätte sonst einen geschmeichelt kleinen
+  // Gebührenanteil — die Gebühren sind aber real und der Zins nicht verdient.
+  const costShare = netProfit !== 0 ? k.fees / Math.abs(netProfit) : null;
   gates.push({
     name: 'basis_costs',
     pass: costShare !== null && costShare <= basis.maxCostShare,
@@ -682,8 +997,8 @@ export function basisGates(a: BasisGateInput): { pass: boolean; gates: GateResul
     threshold: basis.maxCostShare,
     note:
       costShare === null
-        ? `Netto 0 — Gebührenanteil nicht definiert, gilt als durchgefallen (Gebühren ${k.fees.toFixed(2)})`
-        : `Gebühren ${k.fees.toFixed(2)} / |Netto| ${Math.abs(k.netProfit).toFixed(2)} = ${(costShare * 100).toFixed(1)} %`,
+        ? `${geldUe ? 'Überschuss' : 'Netto'} 0 — Gebührenanteil nicht definiert, gilt als durchgefallen (Gebühren ${k.fees.toFixed(2)})`
+        : `Gebühren ${k.fees.toFixed(2)} / |${geldUe ? 'Überschuss' : 'Netto'}| ${Math.abs(netProfit).toFixed(2)} = ${(costShare * 100).toFixed(1)} %; ${geldNote}`,
   });
 
   return { pass: gates.every((g) => g.pass), gates };

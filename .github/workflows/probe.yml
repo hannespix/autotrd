@@ -39,6 +39,7 @@ on:
           - config/sleeves-1440.yaml
           - config/ensemble-1440.yaml
           - config/ensemble-1440-ohnezins.yaml
+          - config/parken-1440.yaml
           - config/crypto-60.yaml
           - config/crypto-1440.yaml
       samples:

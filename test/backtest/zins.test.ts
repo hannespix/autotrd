@@ -18,8 +18,10 @@ import {
   excessReturns,
   probabilisticSharpeOfReturns,
   riskFreeFromBars,
+  riskFreeFuerLauf,
   sharpeRatio,
   tagesachse,
+  ueberschussKennzahlen,
 } from '../../src/backtest/metrics.ts';
 
 const DAY = 86_400_000;
@@ -182,5 +184,71 @@ describe('Bargeld ist keine Kante (Befund B2)', () => {
     // Der Abschlag der kassenlastigen Reihe ist ein Vielfaches davon —
     // deshalb geht die Änderung für sie in die STRENGERE Richtung.
     expect(sharpeRatio(nurGeldmarkt, 252)! - sharpeRatio(nurGeldmarkt, 252, zinsReihe)!).toBeGreaterThan(10 * (ohneZins - mitZins));
+  });
+});
+
+/* ───────────────────────── Geld im Überschuss ───────────────────────── */
+
+/**
+ * Zweite Änderung vom 13.09.2026 (Vorregistrierung
+ * `2026-09-13-gates-auf-ueberschuss.md`): Nicht nur der Sharpe, auch das
+ * NETTO der Gates rechnet gegen den Zins. Diese Rechnung ist die Grundlage
+ * dafür, dass ein Quartal ohne einen Trade kein positiver Fold mehr ist.
+ */
+describe('ueberschussKennzahlen: Geld statt Ertrag je Schwankung', () => {
+  const E0 = 100_000;
+  const RF = 0.04 / 252;
+
+  it('ein Konto, das genau den Zins verdient, hat den Überschuss 0 — nicht „ein bisschen Gewinn"', () => {
+    const renditen = Array.from({ length: 62 }, () => RF);
+    const u = ueberschussKennzahlen({ returns: renditen, riskFree: renditen, initialEquity: E0 });
+    expect(u.netProfit).toBeCloseTo(0, 9);
+    expect(u.netReturnPct).toBeCloseTo(0, 9);
+    // … während das ROHE Netto rund 986 $ zeigt: genau die Zahl, die ein Gate
+    // auf rohem Netto als Leistung der Strategie verbucht hätte.
+    expect(u.rohNetProfit).toBeGreaterThan(900);
+    expect(u.rohNetProfit).toBeLessThan(1000);
+  });
+
+  it('ein Konto UNTER dem Zins hat einen negativen Überschuss (Lauf #48, Fold 2: +95,93 roh)', () => {
+    const r = Math.pow(1 + 95.93 / E0, 1 / 62) - 1;
+    const u = ueberschussKennzahlen({ returns: Array.from({ length: 62 }, () => r), riskFree: Array.from({ length: 62 }, () => RF), initialEquity: E0 });
+    expect(u.rohNetProfit).toBeCloseTo(95.93, 6);
+    expect(u.netProfit).toBeLessThan(0);
+  });
+
+  it('ein Fenster ohne Renditen hat den Überschuss 0, kein NaN', () => {
+    const u = ueberschussKennzahlen({ returns: [], riskFree: [], initialEquity: E0 });
+    expect(u.netProfit).toBe(0);
+    expect(u.n).toBe(0);
+  });
+
+  it('Längenversatz wirft — ein um einen Tag verrutschter Zins sähe in jeder Geldzahl plausibel aus', () => {
+    expect(() => ueberschussKennzahlen({ returns: [0.01, 0.01], riskFree: [RF], initialEquity: E0 })).toThrow(/nicht ausgerichtet/);
+  });
+});
+
+describe('riskFreeFuerLauf: Sätze auf der Achse des Laufs selbst', () => {
+  const rf = riskFreeFromBars({ symbol: 'BIL', bars: geldmarktBars([0.0002, 0.0001, 0.0003]), assetClass: 'us_equity' })!;
+
+  it('richtet auf der Equity-Kurve DIESES Laufs aus — je Tagesrendite ein Tag', () => {
+    const equity = [1, 2, 3].map((i) => ({ t: T0 + i * DAY, equity: 100 }));
+    const al = riskFreeFuerLauf({ dailyReturns: [0.01, 0.02, 0.03], equity, riskFree: rf, assetClass: 'us_equity' });
+    if ('fehler' in al) throw new Error(al.fehler);
+    expect(al.rates.length).toBe(3);
+    for (const [i, soll] of [0.0002, 0.0001, 0.0003].entries()) expect(al.rates[i]!).toBeCloseTo(soll, 12);
+    expect(al.quelle).toContain('3 von 3 belegt');
+  });
+
+  it('Achse und Renditen verschieden lang ⇒ Fehlertext statt Zahl', () => {
+    const equity = [1, 2].map((i) => ({ t: T0 + i * DAY, equity: 100 }));
+    const al = riskFreeFuerLauf({ dailyReturns: [0.01, 0.02, 0.03], equity, riskFree: rf, assetClass: 'us_equity' });
+    expect('fehler' in al && al.fehler).toContain('ohne Tagesachse');
+  });
+
+  it('zu viele Tage ohne Satz ⇒ Fehlertext, kein stiller Rückfall auf 0 %', () => {
+    const equity = Array.from({ length: 60 }, (_, i) => ({ t: T0 + (i + 1) * DAY, equity: 100 }));
+    const al = riskFreeFuerLauf({ dailyReturns: new Array(60).fill(0.01), equity, riskFree: rf, assetClass: 'us_equity' });
+    expect('fehler' in al && al.fehler).toContain('deckt unter 98 %');
   });
 });

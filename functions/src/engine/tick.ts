@@ -45,7 +45,7 @@ import { buildUserConfig, globalConfigRaw, type UserRiskSource } from './config.
 import { isRecord, isoOf, plain, type DocData, type DocSnapLike, type FirestoreLike, type WriteGuard } from './firestoreLike.js';
 import { FirestoreJournal, type FxFn } from './journal.js';
 import { mirrorError, mirrorPositions, mirrorQuotes, mirrorUser, type QuoteMark } from './mirror.js';
-import { SharedBarStoreView, cachedAsset, cachedCalendar, delegateClient, sharedStoreFor, withSharedData, type SharedServices } from './sharedData.js';
+import { SharedBarStoreView, cachedAsset, cachedCalendar, delegateClient, infrastrukturSymbole, sharedStoreFor, withSharedData, type SharedServices } from './sharedData.js';
 import { engineStatePath, FirestoreStateStore } from './state.js';
 import { buildStrategyFor, championFromDoc, type StrategyMap } from './strategyFor.js';
 import { NoopDataStream, NoopTradeStream } from './streams.js';
@@ -524,6 +524,12 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
       if (c) maxWarm = Math.max(maxWarm, c.strategy.warmupBars(c.params));
     }
     if (p.config.universe.benchmark) symbols.add(p.config.universe.benchmark);
+    // Infrastruktur (Parksymbol der Treasury): geladen, nie gehandelt. Ohne
+    // seine Bars im geteilten Cache hat die Engine keinen Kurs des
+    // Parkpapiers — `decide()` schichtet dann nicht um und kann eine offene
+    // Parkposition nicht bewerten. Es geht in kein `universe.symbols` und
+    // bekommt keine Strategie (engine/strategyFor.ts).
+    for (const s of infrastrukturSymbole(p.config)) symbols.add(s);
   }
   const windowMs = warmupWindowMs(maxWarm || 50, tf, assetClass) + 3 * DAY;
   const today = dayKeyFor(now, assetClass);

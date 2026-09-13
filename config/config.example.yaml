@@ -128,6 +128,38 @@ risk:
     # Nach so vielen Kalendertagen verfällt ein ungenutztes Ziel: Das
     # Schweigen einer Monatsstrategie ist kein Ja.
     maxAlterTage: 5
+  # Geldmarkt-Parken (Treasury, src/risk/parken.ts): Kapital, das keine
+  # Strategie braucht, liegt in einem kurzlaufenden Staatspapier statt
+  # unverzinst auf dem Konto. KEINE Handelsidee — kein Signal, kein Kursziel,
+  # keine Kante. Sie entfernt die Verzerrung aus den Läufen #46/#47
+  # (ΔSharpe ≈ −r_f/σ trifft gering investierte Kandidaten achtmal härter als
+  # den voll investierten Maßstab), sie erzeugt keine.
+  #
+  # Die Parkposition belegt keinen Positionsplatz, zählt nicht ins
+  # Exposure-Budget, hat keinen Stop und wird von keiner Notbremse
+  # glattgestellt. Braucht eine Strategie Kapital, wird zuerst Geldmarkt
+  # verkauft — das Parken blockiert nie einen Einstieg.
+  cashParking:
+    # Vorgabe AUS: Ohne diesen Schalter (und ohne Parkposition) ändert sich
+    # bitgleich nichts. Einschalten heißt vorregistrieren und neu messen.
+    enabled: false
+    # Parksymbol, z. B. BIL. Es gehört der Treasury ALLEIN: Es darf in KEINER
+    # Liste stehen, aus der eine Strategie ein Symbol bekommt — universe.symbols,
+    # universe.candidates, optimizer.basisUniverse, Sleeve-Universen eines
+    # Ensembles (sonst gäbe es zwei Positionen mit zwei Herkünften in einem
+    # Symbol); der Start bricht sonst ab. Seine Bars lädt `fetch` trotzdem, als
+    # INFRASTRUKTUR (src/app.ts, `fetchSymbols`) — deshalb darf es dasselbe
+    # Papier sein wie optimizer.riskFreeSymbol.
+    # WICHTIG: Ein ausschüttender Geldmarkt-ETF trägt den Zins nur in
+    # BEREINIGTEN Bars. Gemessen wird das Parken nur mit broker.adjustment: all.
+    symbol: null
+    # Band: erst ab dieser Abweichung (Prozentpunkte der Equity) von der
+    # Zielquote wird umgeschichtet, und höchstens einmal je Handelstag.
+    # Tägliches Umschichten wäre die Krankheit des Vorgängersystems.
+    bandPct: 5
+    # Bargeld, das ungeparkt bleibt (% der Equity): deckt Gebühren und den
+    # Einstieg am nächsten Morgen, ohne dass dafür verkauft werden muss.
+    bufferPct: 2
   pdt:
     # Pattern-Day-Trader-Regel respektieren: Unter minEquity höchstens
     # maxDayTrades Daytrades in fünf Handelstagen — der vierte sperrt das Konto.
@@ -204,8 +236,13 @@ optimizer:
   # betroffene Notiz sagt das laut. Warum es das gibt: Ein Sharpe gegen null
   # ist Ertrag über NULL je Schwankung; mit einem Geldmarktpapier im Korb wird
   # damit Bargeld als Kante verbucht (Befund B2 vom 12.09.2026,
-  # docs/wissen/vorregistrierung/2026-09-13-sharpe-gegen-zins.md). Das Symbol
-  # muss mitgeladen werden (universe.candidates/symbols).
+  # docs/wissen/vorregistrierung/2026-09-13-sharpe-gegen-zins.md).
+  # `fetch` lädt das Symbol als INFRASTRUKTUR mit (src/app.ts), auch wenn es
+  # nicht im Kandidatenpool steht — seit 13.09.2026. Deshalb darf es dasselbe
+  # Papier sein wie risk.cashParking.symbol (das umgekehrt NICHT im Pool
+  # stehen darf); dann gibt es zwischen Zins und geparkter Kasse keinen
+  # Spread. Im Pool stehen darf es weiterhin: Ein Geldmarktpapier IM Korb ist
+  # genau der Fall, für den diese Zeile gebaut wurde.
   riskFreeSymbol: null
   # Höchstanteil des OOS-Nettos, den EIN einzelner Fold tragen darf.
   # Die Lücke, die das schließt: Der TSLA-Champion vom 07.09. bestand alle

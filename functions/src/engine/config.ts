@@ -46,18 +46,25 @@ export const NUR_JE_NUTZER: readonly string[] = ['risk', 'notify', 'paths'];
  * gepflegt über `config/platform.yaml`).
  *
  * Warum es diese Ausnahme gibt: `risk` gehört dem Nutzer — Risiko je Trade,
- * Positionsdeckel, Notbremsen. Diese drei Blöcke gehören ihm NICHT: Sie sind
+ * Positionsdeckel, Notbremsen. Diese vier Blöcke gehören ihm NICHT: Sie sind
  * gemessene Systemgrößen wie der Champion (Volatilitätsziel, Latten der
- * Bremsen je Stufe, Wiederaufbau nach Zwangs-Glattstellung), und sie müssen
- * zu dem Lauf passen, der sie gemessen hat. Ohne diese Zeile fielen sie im
- * Takt still auf die Schema-Vorgaben zurück — der Schalter im YAML wäre
- * wirkungslos, und niemand hätte es gemerkt (dieselbe Fehlerklasse wie die
- * tote Tagesbremse und die tote Short-Achse, docs/ARCHITEKTUR.md §5a.15/16).
+ * Bremsen je Stufe, Wiederaufbau nach Zwangs-Glattstellung, Geldmarkt-Parken),
+ * und sie müssen zu dem Lauf passen, der sie gemessen hat. Ohne diese Zeile
+ * fielen sie im Takt still auf die Schema-Vorgaben zurück — der Schalter im
+ * YAML wäre wirkungslos, und niemand hätte es gemerkt (dieselbe Fehlerklasse
+ * wie die tote Tagesbremse und die tote Short-Achse, docs/ARCHITEKTUR.md
+ * §5a.15/16).
+ *
+ * `cashParking` gehört hier hin und NICHT zum Nutzer: Das Parksymbol ist
+ * Infrastruktur der Plattform — der Takt lädt seine Bars EINMAL für alle
+ * (engine/sharedData.ts, `infrastrukturSymbole`), und es darf in keinem
+ * Handelsuniversum stehen. Ein Parksymbol je Nutzer wäre ein Symbol, dessen
+ * Bars niemand geladen hat.
  *
  * Ein Nutzer stellt sie nicht ein; wollte man das, brauchte es `settings.auto`,
  * `saveStrategy` und `shared/src/autoSettings.ts` — bewusst nicht getan.
  */
-export const GLOBAL_RISK_FELDER: readonly string[] = ['volTarget', 'tiers', 'wiederaufbau'];
+export const GLOBAL_RISK_FELDER: readonly string[] = ['volTarget', 'tiers', 'wiederaufbau', 'cashParking'];
 
 /** Untergrenze der Bar-Karenz im Takt (s) — siehe DEFAULT_GLOBAL_CONFIG. */
 export const TICK_BAR_GRACE_MIN_SEC = (DEFAULT_GLOBAL_CONFIG.engine as { barGraceSec: number }).barGraceSec;
