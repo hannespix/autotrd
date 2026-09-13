@@ -12,7 +12,7 @@
 import type { CostConfig, OptimizerConfig, RiskConfig, SessionConfig } from '../core/config.ts';
 import type { Calendar } from '../core/time.ts';
 import { anfangsStreuner } from '../core/bars.ts';
-import { tagesachse } from '../backtest/metrics.ts';
+import { ROHES_NETTO_NOTE, excessReturns, riskFreeFuerLauf, tagesachse, ueberschussKennzahlen, type RiskFreeSeries } from '../backtest/metrics.ts';
 import { DAY, dayKeyFor } from '../core/time.ts';
 import type {
   AssetClass,
@@ -443,13 +443,35 @@ export interface OosPiece {
   dayKeys?: readonly string[] | undefined;
 }
 
+/**
+ * Die OOS-Kette in Zahlen — **alle Geldgrößen hier sind ROH** (Konto-Sicht,
+ * genau das, was der Simulator gemessen hat).
+ *
+ * Seit dem 13.09.2026 ist das NICHT mehr der Maßstab der Gates: Sobald eine
+ * Zinsreihe vorliegt, rechnen `fold_positive_share`, `oos_net_profit`,
+ * `fold_concentration` und `stress_costs` auf dem ÜBERSCHUSS über dem Zins
+ * (`robustness.ts`, `ueberschussKette`) — sonst zählte der Zinsertrag auf
+ * brachliegender Kasse als Leistung der Strategie, und ein Quartal ohne
+ * einen einzigen Trade wäre ein positiver Fold (Lauf #48, Vorregistrierung
+ * `docs/wissen/vorregistrierung/2026-09-13-gates-auf-ueberschuss.md`).
+ *
+ * Die Umrechnung sitzt bewusst dort und nicht hier: Der Zins wird erst im
+ * Gate entschieden (eine Reihe für Strategie UND Maßstab, oder keine), und
+ * diese Struktur bleibt die unverfälschte Messung, die in den
+ * Champion-Eintrag geht. Wer eine Zahl von hier neben eine Gate-Zahl stellt,
+ * vergleicht Konto-Netto mit Überschuss.
+ */
 export interface OosAggregate {
+  /** Zielfunktion je Fold — ROH und absichtlich so: Suchkriterium, kein Gate (0 Trades ⇒ −∞). */
   objectiveMedian: number;
   objectiveMean: number;
+  /** ROH: Anteil Folds mit `metrics.netProfit > 0`. Das Gate zählt den Überschuss. */
   positiveFoldShare: number;
   trades: number;
+  /** ROH: Summe der Fold-Nettos (jeder Fold startet mit `initialEquity`). */
   netProfit: number;
   netReturnPct: number;
+  /** ROH — und bleibt es auch im Gate: Kapitalgröße, wie die Notbremsen sie live messen. */
   maxDrawdownPct: number;
   dailyReturns: number[];
   /**
@@ -464,6 +486,12 @@ export interface OosAggregate {
    * des Gates, nicht in einer stillen Verschiebung.
    */
   dayKeys?: string[] | undefined;
+  /**
+   * Profitfaktor und Gebührenanteil aus TRADES (`Trade.netPnl`, `.fees`,
+   * `.grossPnl`) — zinsfrei per Bauart: Eine Treasury-Umschichtung ist kein
+   * Trade (risk/parken.ts), also steckt weder Parkkosten noch Zinsertrag
+   * darin. Diese beiden Zahlen ändern sich durch das Parken um exakt 0.
+   */
   profitFactor: number | null;
   feeShare: number | null;
 }
@@ -472,6 +500,12 @@ export interface OosAggregate {
  * OOS-Folds zu einer Kette verbinden. Jeder Fold startete mit initialEquity;
  * die Kette multipliziert die Fold-Renditen, der Drawdown wird über die
  * verkettete Equity gemessen (ein Fold-Verlust am Anfang zählt also weiter).
+ *
+ * `dailyReturns` ist per Bauart die Verkettung von `p.dailyReturns` in
+ * Fold-Reihenfolge — und damit dieselbe Reihe wie
+ * `wfa.folds[i].best.oosDailyReturns`. Genau darauf stützt sich
+ * `ueberschussKette` (robustness.ts), wenn sie die Zinsreihe Fold für Fold
+ * schneidet; sie prüft die Invariante trotzdem, statt sie zu glauben.
  */
 export function aggregateOos(pieces: readonly OosPiece[], objective: ObjectiveId, initialEquity: number): OosAggregate {
   const objectives = pieces.map((p) => objectiveValue(objective, p.metrics));
@@ -840,6 +874,18 @@ export interface BasisKennzahlen {
   /** Netto desselben Laufs bei Kosten × `stressCostMultiplier` (zweiter Lauf). */
   stressNetProfit: number;
   netReturnPct: number;
+  /**
+   * Dieselben drei Zahlen im ÜBERSCHUSS über dem risikolosen Zins — das sind
+   * die Werte der Gates `basis_net_profit`, `basis_costs` und `basis_sharpe`,
+   * sobald es sie gibt (Vorregistrierung 2026-09-13-gates-auf-ueberschuss).
+   * null ohne Zinsreihe oder wenn die Ausrichtung scheiterte; die Gates
+   * rechnen dann roh wie bisher und sagen es in ihrer Notiz.
+   */
+  ueberschussNetProfit: number | null;
+  ueberschussStressNetProfit: number | null;
+  ueberschussSharpe: number | null;
+  /** Wörtlich für die Notizen der Basis-Gates: Zinsquelle oder Grund, warum roh gerechnet wurde. */
+  zins: string;
   /** Sharpe p. a. der Tagesrenditen der Range — dieselbe Funktion wie beim Maßstab. */
   sharpe: number | null;
   /** Roher MaxDD der einen Equity-Kurve in %, Peak über die ganze Range (kein Reset je Fold). */
@@ -868,6 +914,13 @@ export interface BasisSimArgs extends Omit<WindowSimArgs, 'range' | 'costMultipl
   /** Sharpe des Laufs — injiziert wie der Simulator, damit Basis und Maßstab dieselbe Zahl rechnen. */
   sharpeRatio: (returns: readonly number[], periodsPerYear: number) => number | null;
   periodsPerYear: number;
+  /**
+   * Zinsreihe des Laufs (`optimizer.riskFreeSymbol`). Mit ihr rechnen
+   * `basis_net_profit`, `basis_costs` und `basis_sharpe` auf ÜBERSCHUSS;
+   * ohne bleibt alles roh wie bisher. Der Maßstab (Korb liegenlassen) muss
+   * derselben Rechnung folgen — das besorgt `messeBasis` (optimize/run.ts).
+   */
+  riskFree?: RiskFreeSeries | undefined;
 }
 
 export interface BasisSimulation {
@@ -939,11 +992,14 @@ export function basisSimulation(a: BasisSimArgs): BasisSimulation {
     kennzahlen: basisKennzahlen({
       result,
       stressNetProfit: stress.metrics.netProfit,
+      stress,
       range,
       achse,
       assetClass: a.config.assetClass,
       sharpeRatio: a.sharpeRatio,
       periodsPerYear: a.periodsPerYear,
+      initialEquity: a.initialEquity,
+      ...(a.riskFree ? { riskFree: a.riskFree } : {}),
     }),
     scheiben: basisScheiben(result.equity, plan.folds, a.initialEquity),
     holdout,
@@ -985,15 +1041,55 @@ export function basisScheiben(equity: readonly EquityPoint[], folds: readonly Fo
 export function basisKennzahlen(a: {
   result: SimResult;
   stressNetProfit: number;
+  /** Der Stress-Lauf selbst — nur für den Überschuss nötig (er hat eine eigene Equity-Kurve). */
+  stress?: SimResult | undefined;
   range: TimeRange;
   achse: Zeitachse;
   assetClass: AssetClass;
   sharpeRatio: BasisSimArgs['sharpeRatio'];
   periodsPerYear: number;
+  /** Startkapital des Laufs; ohne Angabe aus `finalEquity − netProfit` (die Identität von `computeMetrics`). */
+  initialEquity?: number | undefined;
+  /** Zinsreihe; ohne sie bleiben die Überschuss-Felder null und die Gates rechnen roh. */
+  riskFree?: RiskFreeSeries | undefined;
 }): BasisKennzahlen {
   const { result, achse, assetClass } = a;
   const m = result.metrics;
   const days = Math.max(1, Math.ceil((a.range.end - a.range.start) / DAY));
+  const initialEquity = a.initialEquity ?? result.finalEquity - m.netProfit;
+
+  /*
+   * Überschuss der durchgehenden Simulation: Netto, Stress-Netto und Sharpe
+   * auf derselben Reihe r − r_f. Der Zinsertrag auf brachliegender Kasse ist
+   * keine Leistung der Basis — ohne diesen Abzug bestünde `basis_net_profit`
+   * auch eine Basis, die überhaupt nicht handelt. Der MaxDD bleibt ROH: Er
+   * ist eine Kapitalgröße, sein Maßstab (Korb liegenlassen) ebenfalls, und
+   * eine Überschuss-Kurve fiele auch in jeder flachen Phase.
+   */
+  let ueNet: number | null = null;
+  let ueStress: number | null = null;
+  let ueSharpe: number | null = null;
+  let zins = a.riskFree ? `Maßstab: Überschuss über ${a.riskFree.symbol}` : ROHES_NETTO_NOTE;
+  if (a.riskFree) {
+    const al = riskFreeFuerLauf({ dailyReturns: result.dailyReturns, equity: result.equity, riskFree: a.riskFree, assetClass });
+    if ('fehler' in al) zins = `Maßstab: rohes Netto — ${al.fehler}`;
+    else {
+      ueNet = ueberschussKennzahlen({ returns: result.dailyReturns, riskFree: al.rates, initialEquity }).netProfit;
+      ueSharpe = a.sharpeRatio(excessReturns(result.dailyReturns, al.rates), a.periodsPerYear);
+      zins = `Maßstab: Überschuss über ${al.quelle}`;
+      if (a.stress) {
+        const als = riskFreeFuerLauf({ dailyReturns: a.stress.dailyReturns, equity: a.stress.equity, riskFree: a.riskFree, assetClass });
+        if ('fehler' in als) zins = `Maßstab: rohes Netto — Stress-Lauf ${als.fehler}`;
+        else ueStress = ueberschussKennzahlen({ returns: a.stress.dailyReturns, riskFree: als.rates, initialEquity }).netProfit;
+      }
+      // Halb umgestellt wäre schlimmer als gar nicht: Ohne Stress-Überschuss
+      // hat `basis_net_profit` keine zwei vergleichbaren Hälften.
+      if (ueStress === null) {
+        ueNet = null;
+        ueSharpe = null;
+      }
+    }
+  }
 
   // Mittlere Brutto-Exposure über die Bars der Range und Handelstage ohne Position.
   let avgExposure: number | null = null;
@@ -1025,6 +1121,10 @@ export function basisKennzahlen(a: {
     netProfit: m.netProfit,
     stressNetProfit: a.stressNetProfit,
     netReturnPct: m.netReturnPct,
+    ueberschussNetProfit: ueNet,
+    ueberschussStressNetProfit: ueStress,
+    ueberschussSharpe: ueSharpe,
+    zins,
     sharpe: a.sharpeRatio(result.dailyReturns, a.periodsPerYear),
     maxDrawdownPct: m.maxDrawdownPct,
     avgExposure,

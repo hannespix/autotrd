@@ -16,6 +16,14 @@
  * ist Ertrag über dem RISIKOLOSEN ZINS je Schwankung, nicht Ertrag über null.
  * Ohne Zinsreihe rechnet alles hier weiter gegen null — aber nur, weil der
  * Aufrufer keine übergibt, und er muss das laut sagen.
+ *
+ * Dritte Konvention, noch am selben Tag (Vorregistrierung
+ * `2026-09-13-gates-auf-ueberschuss.md`): Dieselbe Überschussreihe trägt auch
+ * die GELD-Kennzahlen der Gates — `ueberschussKennzahlen`. Ein Gate auf rohem
+ * Netto beantwortet „hat das Konto verdient?", nicht „hat die Strategie
+ * verdient?"; seit die Kasse im Geldmarkt liegt, ist das nicht dasselbe.
+ * `computeMetrics` bleibt davon unberührt: Es ist die ROHE Wahrheit des
+ * Simulators, und der Überschuss entsteht darüber, nie darin.
  */
 import { dayKeyFor } from '../core/time.ts';
 import type { AssetClass, BarSeriesLike, EquityPoint, Metrics, Ms, Trade } from '../core/types.ts';
@@ -158,6 +166,14 @@ export interface RiskFreeSeries {
 export const RISK_FREE_MAX_GAP = 0.02;
 
 /**
+ * Steht wörtlich in jeder GELD-Notiz eines Gates, das ohne Zinsreihe
+ * gerechnet hat. Ein Rückfall auf rohes Netto ist erlaubt (ohne Zinsreihe
+ * gibt es nichts anderes) — aber nie stumm: Mit geparkter Kasse zählt rohes
+ * Netto den Zinsertrag als Leistung der Strategie.
+ */
+export const ROHES_NETTO_NOTE = 'Maßstab: ROHES Netto (keine Zinsreihe) — Zinsertrag auf brachliegender Kasse zählt als Gewinn';
+
+/**
  * Zinsreihe aus den Bars des Geldmarkt-Symbols: je Handelstag der letzte
  * Schluss, daraus Schluss-zu-Schluss-Renditen.
  *
@@ -225,6 +241,31 @@ export function alignRiskFree(dayKeys: readonly string[], rf: RiskFreeSeries): R
 }
 
 /**
+ * Sätze für die Tagesrenditen EINES Simulationslaufs — Tagesachse aus seiner
+ * eigenen Equity-Kurve, dann taggenau ausgerichtet.
+ *
+ * Ein Fehlertext statt null, weil jeder Aufrufer ihn wörtlich in eine
+ * Gate-Notiz schreibt: Wer ohne Zins rechnet, sagt warum. Ein Lauf ohne
+ * Renditen bekommt eine leere, gültige Ausrichtung (Länge 0) — das ist kein
+ * Fehler, sondern ein Fenster ohne Bars.
+ */
+export function riskFreeFuerLauf(a: {
+  dailyReturns: readonly number[];
+  equity: readonly { t: Ms }[];
+  riskFree: RiskFreeSeries;
+  assetClass: AssetClass;
+}): RiskFreeAlignment | { fehler: string } {
+  const achse = tagesachse(a.equity, a.assetClass);
+  if (achse.length !== a.dailyReturns.length) {
+    return { fehler: `Fenster ohne Tagesachse (${a.dailyReturns.length} Renditen, ${achse.length} Tage)` };
+  }
+  if (achse.length === 0) return { rates: [], covered: 0, missing: 0, quelle: `${a.riskFree.symbol} (Fenster ohne Renditen)` };
+  const al = alignRiskFree(achse, a.riskFree);
+  if (!al) return { fehler: `Zinsreihe ${a.riskFree.symbol} deckt unter ${Math.round((1 - RISK_FREE_MAX_GAP) * 100)} % der Tage` };
+  return al;
+}
+
+/**
  * Tagesachse einer Equity-Kurve: je Handelstag EIN Schlüssel, in
  * Reihenfolge. Gegenstück zu `SimResult.dailyReturns`, das je Handelstag mit
  * Punkten genau eine Rendite hat — nur so ist eine Zinsreihe taggenau
@@ -257,6 +298,50 @@ export function excessReturns(returns: readonly number[], riskFree: readonly num
   const out: number[] = new Array(returns.length);
   for (let i = 0; i < returns.length; i++) out[i] = returns[i]! - riskFree[i]!;
   return out;
+}
+
+/**
+ * Geld-Kennzahlen einer ÜBERSCHUSS-Kurve: `E₀ · Π(1 + r_i − r_f,i)`.
+ *
+ * Warum es das gibt (Vorregistrierung
+ * `docs/wissen/vorregistrierung/2026-09-13-gates-auf-ueberschuss.md`): Seit
+ * die Treasury brachliegende Kasse in den Geldmarkt legt, verdient das KONTO
+ * den kurzen Zins, auch wenn die Strategie keinen einzigen Trade macht. Ein
+ * Gate, das auf dem ROHEN Netto rechnet, hält das für Leistung — in Lauf #48
+ * zählten drei Quartale ohne einen Trade als positive Folds (+95,93 $,
+ * +134,31 $, +227,50 $). Hier entsteht die Zahl, die diese Frage richtig
+ * stellt: „Was blieb ÜBER dem, was ein Geldmarktpapier ohnehin abgeworfen
+ * hätte?"
+ *
+ * Dieselbe Reihe `r − r_f`, aus der Sharpe und PSR schon rechnen — nur
+ * aufgezinst statt gemittelt. Ein Fenster ohne Rendite (keine Bars) hat den
+ * Überschuss 0, kein NaN; `rohNetProfit` kommt mit, damit der Aufrufer die
+ * Ausrichtung gegen die Kennzahl des Simulators prüfen kann, statt sie zu
+ * glauben. Wirft bei Längenversatz (`excessReturns`).
+ */
+export interface UeberschussKennzahlen {
+  /** Überschuss-Netto in Geld: `E₀ · (Π(1 + r − r_f) − 1)`. */
+  netProfit: number;
+  /** Derselbe Betrag in % des Startkapitals. */
+  netReturnPct: number;
+  /**
+   * Rohes Netto DERSELBEN Reihe: `E₀ · (Π(1 + r) − 1)`. Muss die
+   * `Metrics.netProfit` des Fensters treffen — tut es das nicht, ist die
+   * Renditereihe nicht die des Fensters, und der Überschuss wäre eine
+   * plausibel aussehende Falschzahl.
+   */
+  rohNetProfit: number;
+  /** Zahl der bewerteten Perioden. */
+  n: number;
+}
+
+export function ueberschussKennzahlen(a: { returns: readonly number[]; riskFree: readonly number[]; initialEquity: number }): UeberschussKennzahlen {
+  const ex = excessReturns(a.returns, a.riskFree);
+  let f = 1;
+  for (const r of ex) f *= 1 + r;
+  let roh = 1;
+  for (const r of a.returns) roh *= 1 + r;
+  return { netProfit: a.initialEquity * (f - 1), netReturnPct: (f - 1) * 100, rohNetProfit: a.initialEquity * (roh - 1), n: ex.length };
 }
 
 /* ───────────────────────── Kennzahlen ───────────────────────── */

@@ -38,7 +38,7 @@ import {
   type NachlaufErgebnis,
 } from '../backtest/anatomie.ts';
 import { kaufenUndHalten, kaufenUndHaltenKurve, kurvenstandVor, marktKette, type MarktBezug, type MarktKurve } from '../backtest/marktbezug.ts';
-import { RISK_FREE_MAX_GAP, alignRiskFree, riskFreeFromBars, type RiskFreeSeries } from '../backtest/metrics.ts';
+import { RISK_FREE_MAX_GAP, alignRiskFree, excessReturns, riskFreeFromBars, type RiskFreeSeries } from '../backtest/metrics.ts';
 import { BarSeries } from '../core/bars.ts';
 import type { Config, FixedCandidateConfig } from '../core/config.ts';
 import { Journal, homePaths } from '../core/journal.ts';
@@ -932,16 +932,44 @@ function messeBasis(a: {
   benchmark: BarSeriesLike | undefined;
   initialEquity: number;
   periodsPerYear: number;
+  /** Zinsreihe des Laufs — Basis UND Maßstab rechnen damit auf Überschuss, oder beide roh. */
+  riskFree?: RiskFreeSeries | undefined;
 }): BasisRun {
   const { cfg, deps, marktSymbol, periodsPerYear } = a;
   const optimizer = cfg.optimizer;
   const positionPct = optimizer.basis.positionPct;
   const sizing: SizingSpec = { mode: 'allocation', positionPct };
-  const sim = basisSimulation({ ...a.common, strategy: a.strategy, params: a.params, sizing, optimizer, sharpeRatio: deps.metricsFns.sharpeRatio, periodsPerYear });
+  const sim = basisSimulation({
+    ...a.common,
+    strategy: a.strategy,
+    params: a.params,
+    sizing,
+    optimizer,
+    sharpeRatio: deps.metricsFns.sharpeRatio,
+    periodsPerYear,
+    ...(a.riskFree ? { riskFree: a.riskFree } : {}),
+  });
   const korbBars = korbVon(a.common.symbol, a.bars);
   const gemeinsam = { range: sim.range, assetClass: cfg.universe.assetClass };
   const korb = kaufenUndHalten({ ...gemeinsam, bars: korbBars, periodsPerYear });
   const korbKurve = kaufenUndHaltenKurve({ ...gemeinsam, bars: korbBars });
+  /*
+   * Der Maßstab muss mitziehen: Wird der Basis der Zins abgezogen, dann auch
+   * dem liegengelassenen Korb — sonst stünde eine Überschuss-Strategie gegen
+   * einen rohen Markt, und die Latte wäre geschenkt (§2.5 der
+   * Zins-Vorregistrierung). Gerechnet wird er aus DERSELBEN Kurve, aus der
+   * `kaufenUndHalten` seinen rohen Sharpe zieht — nie aus dem fertigen Wert
+   * korrigiert. Scheitert die Ausrichtung, bleibt er null, und `basisGates`
+   * fällt für BEIDE Seiten auf roh zurück.
+   */
+  const korbUeberschussSharpe = ((): number | null => {
+    if (!a.riskFree || !korbKurve) return null;
+    const reihe = marktReihe({ bars: korbBars, ranges: [sim.range], assetClass: cfg.universe.assetClass });
+    if (!reihe) return null;
+    const al = alignRiskFree(reihe.dayKeys, a.riskFree);
+    if (!al || al.rates.length !== reihe.dailyReturns.length) return null;
+    return deps.metricsFns.sharpeRatio(excessReturns(reihe.dailyReturns, al.rates), periodsPerYear);
+  })();
   const bench = a.benchmark;
   const spyBars = bench && marktSymbol !== null ? new Map([[marktSymbol, bench]]) : null;
   const spy = spyBars ? kaufenUndHalten({ ...gemeinsam, bars: spyBars, periodsPerYear }) : null;
@@ -954,7 +982,7 @@ function messeBasis(a: {
     basis: optimizer.basis,
     stressCostMultiplier: optimizer.stressCostMultiplier,
     kennzahlen: sim.kennzahlen,
-    korb: korb ? { sharpe: korb.sharpe, maxDrawdownPct: korb.maxDrawdownPct } : null,
+    korb: korb ? { sharpe: korb.sharpe, maxDrawdownPct: korb.maxDrawdownPct, ueberschussSharpe: korbUeberschussSharpe } : null,
   });
   return {
     label: a.label,
@@ -1061,6 +1089,29 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       riskFreeFehler = `Zinsreihe ${rfSymbol}: keine Bars (${errMsg(e)}) — alle Sharpe-Gates rechnen gegen null; \`fetch\` lädt das Zinssymbol als Infrastruktur (src/app.ts, \`fetchSymbols\`), also fehlt hier der Bars-Cache`;
     }
     log(riskFree ? `Zinsreihe ${rfSymbol}: ${riskFree.perDay.size} Handelstage` : (riskFreeFehler ?? ''));
+  }
+
+  /*
+   * Der gefährlichste Zustand überhaupt: Das Parken ist AN, also schreibt der
+   * Simulator dem Konto den Geldmarktzins gut — und ohne Zinsreihe zieht ihn
+   * keine einzige Gate-Kennzahl wieder ab. Dann bestünde ein Kandidat, der
+   * NIE handelt, `fold_positive_share`, `oos_net_profit` und `stress_costs`
+   * allein aus dem Zins. Genau so sind in Lauf #48 drei Quartale ohne einen
+   * Trade als positive Folds durchgegangen.
+   *
+   * Dieser Lauf scheitert deshalb LAUT, statt still falsch zu rechnen
+   * (Vorregistrierung 2026-09-13-gates-auf-ueberschuss §2.2). Das Parken
+   * abzuschalten oder eine Zinsreihe zu konfigurieren sind beides
+   * Config-Entscheidungen — geraten wird hier nichts.
+   */
+  if (cfg.risk.cashParking.enabled && riskFree === null) {
+    const grund = rfSymbol === null ? '`optimizer.riskFreeSymbol` ist nicht gesetzt' : (riskFreeFehler ?? `Zinsreihe ${rfSymbol} nicht ladbar`);
+    throw new Error(
+      `Geldmarkt-Parken ist an (risk.cashParking.symbol ${cfg.risk.cashParking.symbol}), aber es gibt keine Zinsreihe: ${grund}. ` +
+        'Der Simulator schreibt dem Konto dann den Zins gut, und keine Gate-Kennzahl zieht ihn ab — ein Kandidat ohne einen einzigen Trade ' +
+        'bestünde die Geld-Gates allein aus Zinsertrag. Entweder `optimizer.riskFreeSymbol` setzen (Vorgabe: dasselbe Papier wie ' +
+        '`risk.cashParking.symbol`, damit kein Spread dazwischenliegt) oder `risk.cashParking.enabled: false`.',
+    );
   }
 
   let champion = loadChampion(paths.champion) ?? emptyChampionFile(now());
@@ -1235,8 +1286,18 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       // KANN so keinen Sonderweg haben — er unterscheidet sich nur darin, wie
       // sein WfaResult entstand.
       const bewerte = (strategy: Strategy, wfa: WfaResult, fest: { label: string } | null): StrategyRun => {
-        const stress = stressTest({ ...common, strategy, wfa, costMultiplier: optimizer.stressCostMultiplier, objective: optimizer.objective });
-        const neighborhood = neighborhoodTest({ ...common, strategy, wfa, optimizer });
+        // Stress und Nachbarschaft simulieren EIGENE Fenster — sie bekommen
+        // deshalb die Zinsreihe selbst und richten sie auf ihrer eigenen
+        // Equity-Kurve aus, nie auf der fremden Achse der OOS-Kette.
+        const stress = stressTest({
+          ...common,
+          strategy,
+          wfa,
+          costMultiplier: optimizer.stressCostMultiplier,
+          objective: optimizer.objective,
+          ...(riskFree ? { riskFree } : {}),
+        });
+        const neighborhood = neighborhoodTest({ ...common, strategy, wfa, optimizer, ...(riskFree ? { riskFree } : {}) });
         const dsr = deflatedSharpeIs({ wfa, metricsFns: deps.metricsFns, varSrSource: input.dsrVarSource });
         const markt = marktLatteFuer(wfa.folds.map((f) => f.fold));
         // DIESELBE Zinsreihe an beide Stellen: `robustnessGates` verwirft den
@@ -1252,6 +1313,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
           psr,
           metricsFns: deps.metricsFns,
           periodsPerYear,
+          initialEquity: input.initialEquity,
           fixed: fest !== null,
           ...(markt ? { markt } : {}),
           ...(zins ? { riskFree: zins } : {}),
@@ -1354,6 +1416,9 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
             assetClass: cfg.universe.assetClass,
             // Am Korb vorbei — `alle` (Korb ∪ Sleeve-Symbole) bleibt unberührt.
             parkBars: input.parkBars,
+            // Stress und Nachbarschaft der Einheit rechnen damit auf Überschuss,
+            // genau wie bei jedem einzelnen Kandidaten.
+            ...(riskFree ? { riskFree } : {}),
             log,
           });
           const wfa = messung.wfa;
@@ -1372,6 +1437,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
             psr,
             metricsFns: deps.metricsFns,
             periodsPerYear,
+            initialEquity: input.initialEquity,
             fixed: true,
             ...(markt ? { markt } : {}),
             ...(zins ? { riskFree: zins } : {}),
@@ -1432,7 +1498,20 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
             throw new Error('Basis nur auf festem Korb: Korb je Fold ist für die durchgehende Simulation nicht zulässig — optimizer.foldMembership: fixed setzen, den Kandidatenpool weglassen oder der Basis mit optimizer.basisUniverse einen eigenen Korb geben');
           }
           const params = festParams({ strategy: basisKandidat.strategy, params: basisKandidat.config.params, allowShort: cfg.risk.allowShort, log: (m) => log(`${symbol} ${name}: ${m}`) });
-          basisRun = messeBasis({ common, bars, strategy: basisKandidat.strategy, params, label: basisKandidat.label, cfg, deps, marktSymbol, benchmark: input.benchmark, initialEquity: input.initialEquity, periodsPerYear });
+          basisRun = messeBasis({
+            common,
+            bars,
+            strategy: basisKandidat.strategy,
+            params,
+            label: basisKandidat.label,
+            cfg,
+            deps,
+            marktSymbol,
+            benchmark: input.benchmark,
+            initialEquity: input.initialEquity,
+            periodsPerYear,
+            ...(riskFree ? { riskFree } : {}),
+          });
           log(`${symbol} ${name}: Basis-Latte ${basisRun.pass ? 'bestanden' : 'NICHT bestanden'} (${basisRun.gates.filter((x) => !x.pass).map((x) => x.name).join(', ') || '–'})`);
         } catch (e) {
           const msg = errMsg(e).replace(/:\s*\n\s*/g, ': ').replace(/\s*\n\s*/g, '; ');
@@ -1480,8 +1559,15 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
             };
           } else {
             const wfa = fixedParamsWfa({ ...common, strategy: strat, params: incumbent.params, folds: clean, optimizer, holdout: plan.holdout });
-            const stress = stressTest({ ...common, strategy: strat, wfa, costMultiplier: optimizer.stressCostMultiplier, objective: optimizer.objective });
-            const neighborhood = neighborhoodTest({ ...common, strategy: strat, wfa, optimizer });
+            const stress = stressTest({
+              ...common,
+              strategy: strat,
+              wfa,
+              costMultiplier: optimizer.stressCostMultiplier,
+              objective: optimizer.objective,
+              ...(riskFree ? { riskFree } : {}),
+            });
+            const neighborhood = neighborhoodTest({ ...common, strategy: strat, wfa, optimizer, ...(riskFree ? { riskFree } : {}) });
             const dsr = deflatedSharpeIs({ wfa, metricsFns: deps.metricsFns, varSrSource: input.dsrVarSource });
             const marktInc = marktLatteFuer(clean);
             const zinsInc = zinsFuer(wfa, marktInc, `Champion ${incumbent.strategy}`);
@@ -1495,6 +1581,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
               psr,
               metricsFns: deps.metricsFns,
               periodsPerYear,
+              initialEquity: input.initialEquity,
               incumbent: { cleanFolds: clean.length, totalFolds: plan.folds.length },
               ...(marktInc ? { markt: marktInc } : {}),
               ...(zinsInc ? { riskFree: zinsInc } : {}),

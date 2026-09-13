@@ -237,6 +237,89 @@ describe('(c) Scheiben aus der einen Kurve summieren sich zum Kettennetto', () =
   });
 });
 
+/* ───────────────────────── (c2) Basis-Gates auf Überschuss ───────────────────────── */
+
+/**
+ * Dieselbe Umstellung wie bei den Alpha-Gates (Vorregistrierung
+ * `docs/wissen/vorregistrierung/2026-09-13-gates-auf-ueberschuss.md`): Eine
+ * Basis, die nur den Geldmarktzins einsammelt, hat nichts geleistet — und
+ * `basis_net_profit` darf das nicht für Gewinn halten. Der Maßstab zieht
+ * mit: Ist die Basis Überschuss, ist der Korb es auch, sonst beide roh.
+ */
+describe('(c2) Die Basis-Latte misst den Überschuss über dem Zins', () => {
+  const roh: BasisGateInput = {
+    basis: { minDrawdownReduction: 0.25, minSharpeRatio: 0.9, maxCostShare: 0.1 },
+    stressCostMultiplier: 1.5,
+    kennzahlen: { netProfit: 1_000, stressNetProfit: 900, sharpe: 1.0, maxDrawdownPct: 8, avgExposure: 0.8, exposureNormMaxDD: 10, fees: 50 },
+    korb: { sharpe: 1.0, maxDrawdownPct: 20 },
+  };
+
+  it('rohes Netto aus Zinsertrag besteht; im Überschuss fällt dasselbe Konto durch', () => {
+    const ohne = basisGates(roh);
+    expect(gateOf(ohne.gates, 'basis_net_profit').pass).toBe(true);
+    expect(gateOf(ohne.gates, 'basis_net_profit').note).toContain('ROHES Netto');
+
+    const mit = basisGates({
+      ...roh,
+      kennzahlen: { ...roh.kennzahlen, ueberschussNetProfit: -200, ueberschussStressNetProfit: -300, ueberschussSharpe: -0.4, zins: 'Maßstab: Überschuss über BIL' },
+      korb: { ...roh.korb!, ueberschussSharpe: 0.8 },
+    });
+    const g = gateOf(mit.gates, 'basis_net_profit');
+    expect(g.value).toBe(-200);
+    expect(g.pass).toBe(false);
+    expect(g.note).toContain('roh 1000.00 / 900.00');
+    expect(g.note).toContain('Überschuss über BIL');
+  });
+
+  it('basis_costs misst gegen den ÜBERSCHUSS — ein Netto aus Zins schmeichelt dem Gebührenanteil', () => {
+    const mit = basisGates({
+      ...roh,
+      kennzahlen: { ...roh.kennzahlen, ueberschussNetProfit: 200, ueberschussStressNetProfit: 100, ueberschussSharpe: 0.9, zins: 'Maßstab: Überschuss über BIL' },
+      korb: { ...roh.korb!, ueberschussSharpe: 0.8 },
+    });
+    // 50 / 1000 = 5 % (grün) gegen 50 / 200 = 25 % (rot bei Schwelle 10 %).
+    expect(gateOf(basisGates(roh).gates, 'basis_costs').value).toBeCloseTo(0.05, 12);
+    expect(gateOf(mit.gates, 'basis_costs').value).toBeCloseTo(0.25, 12);
+    expect(gateOf(mit.gates, 'basis_costs').pass).toBe(false);
+  });
+
+  it('basis_sharpe: BEIDE Seiten Überschuss — oder BEIDE roh, nie gemischt', () => {
+    const beide = basisGates({
+      ...roh,
+      kennzahlen: { ...roh.kennzahlen, ueberschussNetProfit: 200, ueberschussStressNetProfit: 100, ueberschussSharpe: 0.7, zins: 'Maßstab: Überschuss über BIL' },
+      korb: { ...roh.korb!, ueberschussSharpe: 0.6 },
+    });
+    const g = gateOf(beide.gates, 'basis_sharpe');
+    expect(g.value).toBe(0.7);
+    expect(g.threshold!).toBeCloseTo(0.9 * 0.6, 12);
+    expect(g.note).toContain('beide Seiten Überschuss');
+
+    // Ohne Überschuss-Sharpe des Korbs fällt AUCH die Basis auf roh zurück —
+    // eine Überschuss-Strategie gegen einen rohen Markt wäre eine geschenkte Latte.
+    const halb = basisGates({
+      ...roh,
+      kennzahlen: { ...roh.kennzahlen, ueberschussNetProfit: 200, ueberschussStressNetProfit: 100, ueberschussSharpe: 0.7, zins: 'Maßstab: Überschuss über BIL' },
+      korb: { sharpe: 1.0, maxDrawdownPct: 20 },
+    });
+    const h = gateOf(halb.gates, 'basis_sharpe');
+    expect(h.value).toBe(1.0);
+    expect(h.threshold!).toBeCloseTo(0.9, 12);
+    expect(h.note).toContain('beide Seiten roh');
+  });
+
+  it('basis_drawdown bleibt ROH und sagt es — Kapitalsicht, nicht mit dem Überschuss verrechenbar', () => {
+    const mit = basisGates({
+      ...roh,
+      kennzahlen: { ...roh.kennzahlen, ueberschussNetProfit: 200, ueberschussStressNetProfit: 100, ueberschussSharpe: 0.9, zins: 'Maßstab: Überschuss über BIL' },
+      korb: { ...roh.korb!, ueberschussSharpe: 0.8 },
+    });
+    const g = gateOf(mit.gates, 'basis_drawdown');
+    expect(g.value).toBe(roh.kennzahlen.exposureNormMaxDD);
+    expect(g.threshold).toBe(gateOf(basisGates(roh).gates, 'basis_drawdown').threshold);
+    expect(g.note).toContain('beide Seiten ROH');
+  });
+});
+
 /* ───────────────────────── (d) Gates rot und grün ───────────────────────── */
 
 describe('(d) basisGates: jedes Gate einmal rot, einmal grün', () => {

@@ -442,6 +442,19 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
       : `- Risikoloser Zins: Tagesrendite von **${o.riskFreeSymbol}** — \`probabilistic_sharpe_oos\` und \`beats_market\` rechnen auf Überschussrenditen (r − r_f derselben Tage), ` +
         'auf BEIDEN Seiten oder auf keiner. Jede Gate-Notiz sagt, was tatsächlich gerechnet wurde.',
   );
+  // Der Maßstab ALLER Gate-Kennzahlen — eine Zeile, damit niemand eine
+  // Überschuss-Zahl für ein Konto-Netto hält (Vorregistrierung
+  // `docs/wissen/vorregistrierung/2026-09-13-gates-auf-ueberschuss.md`).
+  out.push(
+    o.riskFreeSymbol === null
+      ? '- **Maßstab der Gate-Kennzahlen: ROHES Netto.** Ohne Zinsreihe zählt jeder Zinsertrag auf brachliegender Kasse als Gewinn der Strategie — ' +
+          'mit eingeschaltetem `risk.cashParking` scheitert ein Lauf deshalb, statt still falsch zu rechnen.'
+      : `- **Maßstab der Gate-Kennzahlen: ÜBERSCHUSS über ${o.riskFreeSymbol}.** \`fold_positive_share\`, \`oos_net_profit\`, \`fold_concentration\`, \`stress_costs\`, ` +
+        'der Anteil positiver Nachbarn in `neighborhood_plateau` und die Gruppe `basis` rechnen Netto als `E₀ · (Π(1 + r − r_f) − 1)` — ein Quartal ohne einen Trade ' +
+        'ist damit KEIN positiver Fold. Roh bleiben bewusst: **MaxDD** (und `basis_drawdown`) als Kapitalgröße, wie die Notbremsen sie live messen und wie sein Maßstab ' +
+        'sie rechnet, sowie die Zielfunktion (`objective`, Suchkriterium — für 0 Trades ohnehin −∞) und `deflated_sharpe_is`. `oos_trades` und `fee_share` sind ' +
+        'zinsfrei per Bauart: Sie zählen Trades, und eine Treasury-Umschichtung ist keiner. **Drawdown-Zahlen sind deshalb nicht mit Überschuss-Zahlen verrechenbar.**',
+  );
   const go = gateOptions(o);
   out.push(
     `- Gates: ≥ ${o.minOosTrades} OOS-Trades, ≥ ${Math.round(o.minFoldPositiveShare * 100)} % Folds positiv, OOS netto > 0 (auch bei Kosten ×${o.stressCostMultiplier}), ` +
@@ -889,6 +902,16 @@ function basisAbschnitt(symbol: string, b: BasisRun, holdoutMarkt: HoldoutMarkt 
       `Sharpe p. a. ${num(k.sharpe)}; MaxDD ${num(k.maxDrawdownPct)} %, mittlere Exposure ${pct(k.avgExposure)}, MaxDD je Einheit Exposure ${k.exposureNormMaxDD === null ? 'nicht bewertbar' : `${num(k.exposureNormMaxDD)} %`}; ` +
       `Gebühren ${num(k.fees)} absolut; ${k.trades} Trades (${num(k.tradesPerMonth, 1)} je Monat), mittlere Haltedauer ${k.avgHoldingDays === null ? '–' : `${num(k.avgHoldingDays, 1)} Handelstage`}, ` +
       `Tage ohne Position ${pct(k.flatDaysShare)}, offen am Ende ${k.openAtEnd}.`,
+  );
+  out.push('');
+  // Welche Zahlen die GATES gelesen haben — die Kennzahlenzeile darüber ist
+  // die rohe Sicht, und die beiden dürfen nicht verwechselt werden.
+  out.push(
+    k.ueberschussNetProfit === null || k.ueberschussNetProfit === undefined
+      ? `_Maßstab der Gates dieses Blocks: **rohes Netto**. ${k.zins ?? ''}_`
+      : `_Maßstab der Gates dieses Blocks: **Überschuss über dem Zins** — Netto ${signed(k.ueberschussNetProfit)} statt roh ${signed(k.netProfit)}, ` +
+        `bei Kosten ×${b.stressCostMultiplier} ${signed(k.ueberschussStressNetProfit ?? 0)}, Sharpe p. a. ${num(k.ueberschussSharpe)} statt roh ${num(k.sharpe)}. ` +
+        `MaxDD und MaxDD je Einheit Exposure bleiben ROH (Kapitalsicht, wie der Maßstab daneben) und sind mit den Überschuss-Zahlen nicht verrechenbar. ${k.zins ?? ''}_`,
   );
   out.push('');
   const zeile = (name: string, rendite: number, dd: number, sharpe: number | null, ddExp: string): string[] => [name, `${signed(rendite)} %`, `${num(dd)} %`, num(sharpe), ddExp];

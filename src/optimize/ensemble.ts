@@ -77,13 +77,14 @@
  * Bericht — es sind eine Gruppe je `SymbolInput` und ein Zähler je Gruppe.
  */
 import { korrelationsmatrix, tagesrenditen, type Korrelationsmatrix, type Renditereihe } from '../backtest/aktivitaet.ts';
+import { ROHES_NETTO_NOTE, type RiskFreeSeries } from '../backtest/metrics.ts';
 import type { EnsembleConfig } from '../core/config.ts';
 import type { OptimizerConfig } from '../core/config.ts';
 import { dayKeyFor } from '../core/time.ts';
 import type { AssetClass, BarSeriesLike, Ms, Params, SimResult, Strategy, TimeframeMin, Trade } from '../core/types.ts';
 import type { Calendar } from '../core/time.ts';
 import { mean, median, objectiveValue } from './objective.ts';
-import type { NeighborhoodResult, StressResult } from './robustness.ts';
+import { ueberschussNettoVon, type NeighborhoodResult, type StressResult } from './robustness.ts';
 import { neighbors, wirksamerSuchraum } from './search.ts';
 import {
   aggregateOos,
@@ -524,6 +525,12 @@ export interface EnsembleMessArgs {
   assetClass: AssetClass;
   /** Bars des Parksymbols — GETRENNT vom Korb (siehe `WindowSimArgs.parkBars`). */
   parkBars?: BarSeriesLike | undefined;
+  /**
+   * Zinsreihe des Laufs (`optimizer.riskFreeSymbol`). Stress und Nachbarschaft
+   * simulieren eigene Fenster und richten den Zins auf IHRER Equity-Kurve aus;
+   * ohne sie rechnen beide roh wie vor dem 13.09.2026 und sagen es.
+   */
+  riskFree?: RiskFreeSeries | undefined;
   log?: ((msg: string) => void) | undefined;
 }
 
@@ -675,20 +682,34 @@ export function messeEnsemble(a: EnsembleMessArgs): EnsembleMessung {
   };
 
   /* ── 4. Stress: dieselben OOS-Fenster, Kosten × Faktor ── */
+  // Mit Zinsreihe zählt auch hier der ÜBERSCHUSS (robustness.ts, `stressTest`):
+  // Sonst bestünde `stress_costs` ausgerechnet eine Einheit, die bei teureren
+  // Kosten gar nicht mehr handelt und nur noch den Geldmarktzins einsammelt.
   const stressObjectives: number[] = [];
   let stressNetto = 0;
   let stressTrades = 0;
+  let stressUeberschuss: number | null = a.riskFree ? 0 : null;
+  let stressZins = a.riskFree ? `Maßstab: Überschuss über ${a.riskFree.symbol}` : ROHES_NETTO_NOTE;
   for (const fold of folds) {
     const r = laufe({ start: fold.oosStart, end: fold.oosEnd }, fold.oosStart, optimizer.stressCostMultiplier);
     stressObjectives.push(objectiveValue(optimizer.objective, r.res.metrics));
     stressNetto += r.res.metrics.netProfit;
     stressTrades += r.res.metrics.trades;
+    if (a.riskFree && stressUeberschuss !== null) {
+      const u = ueberschussNettoVon({ result: r.res, riskFree: a.riskFree, assetClass: a.assetClass, initialEquity: a.initialEquity });
+      if ('fehler' in u) {
+        stressUeberschuss = null;
+        stressZins = `Maßstab: rohes Netto — Zins nicht auf den Stress-Lauf ausrichtbar (Fold ${fold.index + 1}: ${u.fehler})`;
+      } else stressUeberschuss += u.netProfit;
+    }
   }
   const stress: StressResult = {
     netProfit: stressNetto,
+    ueberschussNetProfit: stressUeberschuss,
     objectiveMedian: median(stressObjectives),
     trades: stressTrades,
     costMultiplier: optimizer.stressCostMultiplier,
+    zins: stressZins,
   };
 
   /* ── 5. Nachbarschaft: ±1 je Achse je Sleeve ── */
@@ -703,6 +724,8 @@ export function messeEnsemble(a: EnsembleMessArgs): EnsembleMessung {
     optimizer,
     allowShort: a.config.risk.allowShort,
     bestObjective: objectiveValue(optimizer.objective, fin.res.metrics),
+    assetClass: a.assetClass,
+    ...(a.riskFree ? { riskFree: a.riskFree } : {}),
   });
 
   /* ── 6. Beitrag je Sleeve und Korrelation ── */
@@ -805,9 +828,17 @@ function ensembleNachbarschaft(a: {
   optimizer: OptimizerConfig;
   allowShort: boolean;
   bestObjective: number;
+  assetClass: AssetClass;
+  /** Zinsreihe; mit ihr zählt der Anteil positiver Nachbarn das ÜBERSCHUSS-Netto (robustness.ts, `neighborhoodTest`). */
+  riskFree?: RiskFreeSeries | undefined;
 }): NeighborhoodResult {
   const objectives: number[] = [];
-  let positive = 0;
+  // Beide Reihen mitführen, damit ein Rückfall mitten in der Schleife keine
+  // halb umgestellte Zählung hinterlässt (siehe `neighborhoodTest`).
+  const roh: number[] = [];
+  const ueber: number[] = [];
+  let mitZins = a.riskFree !== undefined;
+  let zins = a.riskFree ? `Maßstab: Überschuss über ${a.riskFree.symbol}` : ROHES_NETTO_NOTE;
   let evaluated = 0;
   for (const s of a.plan.sleeves) {
     const raum = wirksamerSuchraum(s.strategy.paramSpace, a.allowShort);
@@ -819,12 +850,20 @@ function ensembleNachbarschaft(a: {
       const z = korbZuordnung({ plan: variante, alle: a.bars, membership: a.membership, at: a.at });
       const r = simulateKorbWindow({ ...a.gemeinsam, range: a.fenster, korb: z.korb, wahlFuer: wahlFuerZuordnung(variante, z.sleeveVon) });
       objectives.push(objectiveValue(a.optimizer.objective, r.metrics));
-      if (r.metrics.netProfit > 0) positive++;
+      roh.push(r.metrics.netProfit);
+      if (a.riskFree && mitZins) {
+        const u = ueberschussNettoVon({ result: r, riskFree: a.riskFree, assetClass: a.assetClass, initialEquity: a.gemeinsam.initialEquity });
+        if ('fehler' in u) {
+          mitZins = false;
+          zins = `Maßstab: rohes Netto — Zins nicht auf die Nachbarschaft ausrichtbar (${u.fehler})`;
+        } else ueber.push(u.netProfit);
+      }
       evaluated++;
     }
   }
-  if (evaluated === 0) return { medianObjective: a.bestObjective, bestObjective: a.bestObjective, positiveShare: 1, evaluated: 0 };
-  return { medianObjective: median(objectives), bestObjective: a.bestObjective, positiveShare: positive / evaluated, evaluated };
+  if (evaluated === 0) return { medianObjective: a.bestObjective, bestObjective: a.bestObjective, positiveShare: 1, evaluated: 0, ueberschuss: mitZins, zins };
+  const positive = (mitZins ? ueber : roh).filter((x) => x > 0).length;
+  return { medianObjective: median(objectives), bestObjective: a.bestObjective, positiveShare: positive / evaluated, evaluated, ueberschuss: mitZins, zins };
 }
 
 /* ───────────────────────── Versuchszählung ───────────────────────── */

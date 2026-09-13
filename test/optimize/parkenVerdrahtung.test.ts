@@ -74,7 +74,7 @@ describe('Parkbars im Optimierer', () => {
   const strategien: Record<string, Strategy> = { edge: fakeStrategy('edge'), defensiv: fakeStrategy('defensiv') };
 
   /** Ein Lauf mit Ensemble — der Pfad mit den MEISTEN Simulationsaufrufen (Solo, IS, OOS, Stress, Nachbarschaft, Holdout). */
-  function lauf(over: { park?: BarSeries | undefined; parken?: boolean } = {}) {
+  function lauf(over: { park?: BarSeries | undefined; parken?: boolean; zins?: boolean } = {}) {
     const home = tmp();
     const symbols = ['AAA', 'BBB'];
     const cfg = testConfig({
@@ -88,6 +88,12 @@ describe('Parkbars im Optimierer', () => {
         stepDays: 30,
         holdoutDays: 30,
         pooled: true,
+        // Parken AN verlangt eine Zinsreihe, sonst scheitert der Lauf laut
+        // (run.ts; Vorregistrierung 2026-09-13-gates-auf-ueberschuss §2.2):
+        // Ohne sie zöge keine Gate-Kennzahl den Zinsertrag wieder ab, den der
+        // Simulator dem Konto gutschreibt. Park- und Zinssymbol dürfen seit
+        // dem 13.09.2026 dasselbe Papier sein — genau dafür ist es hier eins.
+        ...(over.parken === false || over.zins === false ? {} : { riskFreeSymbol: PARK }),
         ensembles: [
           {
             label: 'E1',
@@ -148,6 +154,39 @@ describe('Parkbars im Optimierer', () => {
   it('ohne Parkbars bleibt das Feld leer — der Simulator sagt dann laut, dass er NICHT geparkt hat', () => {
     const { eingaben } = lauf();
     for (const input of eingaben) expect(input.parkBars).toBeUndefined();
+  });
+
+  /*
+   * Der gefährlichste Zustand überhaupt (Vorregistrierung
+   * `docs/wissen/vorregistrierung/2026-09-13-gates-auf-ueberschuss.md` §2.2):
+   * Das Parken schreibt dem Konto den Geldmarktzins gut, und ohne Zinsreihe
+   * zieht ihn keine einzige Gate-Kennzahl wieder ab. Ein Kandidat, der NIE
+   * handelt, bestünde dann `fold_positive_share`, `oos_net_profit` und
+   * `stress_costs` allein aus Zinsertrag — genau so sind in Lauf #48 drei
+   * Quartale ohne einen Trade als positive Folds durchgegangen.
+   */
+  it('WÄCHTER: Parken AN und Zinsreihe FEHLT ⇒ der Lauf scheitert laut, statt still falsch zu rechnen', () => {
+    expect(() => lauf({ park: parkBars(450), zins: false })).toThrow(/Geldmarkt-Parken ist an .* aber es gibt keine Zinsreihe/s);
+    // Die Meldung nennt beide Auswege — geraten wird nichts.
+    expect(() => lauf({ park: parkBars(450), zins: false })).toThrow(/optimizer\.riskFreeSymbol` setzen/);
+    expect(() => lauf({ park: parkBars(450), zins: false })).toThrow(/risk\.cashParking\.enabled: false/);
+  });
+
+  it('ohne Parken bleibt eine fehlende Zinsreihe eine Notiz, kein Abbruch', () => {
+    expect(() => lauf({ parken: false, zins: false })).not.toThrow();
+  });
+
+  it('mit Parken UND Zinsreihe rechnen auch Stress und Nachbarschaft auf Überschuss', () => {
+    const { out } = lauf({ park: parkBars(450) });
+    const gates = out.runs.flatMap((r) => r.results.flatMap((x) => x.gates));
+    expect(gates.length).toBeGreaterThan(0);
+    const notiz = (name: string) => gates.filter((g) => g.name === name).map((g) => g.note);
+    for (const name of ['fold_positive_share', 'oos_net_profit', 'fold_concentration', 'stress_costs', 'neighborhood_plateau']) {
+      for (const n of notiz(name)) {
+        expect(n, `${name}: ${n}`).toContain('Überschuss');
+        expect(n, `${name}: ${n}`).toContain(PARK);
+      }
+    }
   });
 });
 

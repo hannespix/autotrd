@@ -9,9 +9,19 @@
  *    gegen null geschenkt bekam — und nur diese zwei?
  * 3. Werden BEIDE Seiten von `beats_market` gleich gerechnet, und wird der
  *    Zins laut verworfen, sobald das nicht geht?
+ *
+ * Arbeitsteilung seit dem 13.09.2026 (zweite Änderung, Vorregistrierung
+ * `2026-09-13-gates-auf-ueberschuss.md`): Diese Datei prüft die beiden
+ * SHARPE-Gates. Die GELD-Gates (`fold_positive_share`, `oos_net_profit`,
+ * `fold_concentration`, `stress_costs`) rechnen seither ebenfalls auf
+ * Überschuss — ihre Wächter stehen in `gatesUeberschuss.test.ts`. Die Läufe
+ * hier übergeben bewusst KEIN Startkapital: Ohne es lässt sich der Überschuss
+ * nicht in Geld ausdrücken, die Geld-Gates bleiben roh, und der Unterschied
+ * bleibt genau auf die zwei Sharpe-Gates isoliert.
  */
 import { describe, expect, it } from 'vitest';
 import type { Metrics } from '../../src/core/types.ts';
+import { ROHES_NETTO_NOTE } from '../../src/backtest/metrics.ts';
 import { OHNE_ZINS_NOTE, probabilisticSharpeOos, robustnessGates, type DsrResult, type GateInput, type GateRiskFree } from '../../src/optimize/robustness.ts';
 import type { WfaResult } from '../../src/optimize/walkForward.ts';
 import { fakeMetricsFns, testConfig } from './fakes.ts';
@@ -168,6 +178,13 @@ describe('Vorgabe: ohne Geldmarkt-Symbol ändert sich nichts', () => {
     expect(ohne.gate('probabilistic_sharpe_oos').note).toContain(OHNE_ZINS_NOTE);
     expect(ohne.psr.ueberschuss).toBe(false);
   });
+
+  it('auch die GELD-Gates sagen laut, mit welchem Maßstab sie gerechnet haben', () => {
+    const ohne = lauf();
+    for (const name of ['fold_positive_share', 'oos_net_profit', 'fold_concentration', 'stress_costs']) {
+      expect(ohne.gate(name).note, name).toContain(ROHES_NETTO_NOTE);
+    }
+  });
 });
 
 describe('Mit Zinsreihe: Bargeld ist keine Kante mehr', () => {
@@ -187,6 +204,11 @@ describe('Mit Zinsreihe: Bargeld ist keine Kante mehr', () => {
     expect(latte).toBeCloseTo(0.25, 2);
     expect(latte).toBeLessThan(0.5);
     expect(mit.gate('beats_market').note).toContain('(Überschuss)');
+  });
+
+  it('ohne Startkapital bleiben die Geld-Gates roh — und nennen genau diesen Grund', () => {
+    const mit = lauf({ riskFree: riskFree() });
+    expect(mit.gate('oos_net_profit').note).toContain('kein Startkapital übergeben');
   });
 
   it('die Notizen nennen Satz und Herkunft wörtlich', () => {
