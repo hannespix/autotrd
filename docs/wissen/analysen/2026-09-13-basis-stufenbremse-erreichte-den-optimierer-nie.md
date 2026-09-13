@@ -105,7 +105,16 @@ Owner-Entscheidung und keine Messfrage.
 Dazu kommt jetzt die Nebenwirkung auf das Alpha, die vorher niemand kannte.
 Vor einer Aktivierung steht damit:
 
-1. Zwei Falsifikationen mit `--as-of` (−15 und −30 Tage), wie V2 sie bestand.
+1. ~~Zwei Falsifikationen mit `--as-of` (−15 und −30 Tage), wie V2 sie
+   bestand.~~ **Erledigt am 13.09.2026 (#60, #61) — beide bestanden:**
+
+   | Stichtag | Netto | Drawdown/Exposure | Latte | Sharpe | Latte | V2 |
+   |---|---:|---:|---:|---:|---:|---|
+   | 2026-08-25 | +7 705,84 | 12,24 % | 15,55 % | **1,01** | 0,75 | #38: 1,01 / 12,2 % |
+   | 2026-08-10 | +7 186,30 | 12,44 % | 15,61 % | **0,96** | 0,71 | #39: 0,96 / 12,4 % |
+
+   Zeichengenau dieselben Zahlen wie V2 unter dem alten Regelwerk. Dreimal
+   dasselbe Urteil, in keinem Lauf eine Bremsen-Auslösung.
 2. Eine Entscheidung des Owners zur Nebenwirkung: Soll eine Basis-Bremse die
    Konto-Bremse des Alpha lockern dürfen? Wenn nein, braucht `tiers.alpha`
    eine ausdrückliche eigene Latte (2 %/10 %), damit sich für das Alpha
