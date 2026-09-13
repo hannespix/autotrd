@@ -8,7 +8,7 @@ import { renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { CostConfig, OptimizerConfig, RiskConfig } from '../core/config.ts';
 import { ensureDir } from '../core/journal.ts';
-import type { AssetClass, Metrics, Ms, Params, TimeframeMin } from '../core/types.ts';
+import type { AssetClass, HaltBilanz, Metrics, Ms, Params, TimeframeMin } from '../core/types.ts';
 import { fitEndOf } from './promote.ts';
 import { gateOptions, type GateResult } from './robustness.ts';
 import { korrelationsmatrix, type Korrelationsmatrix } from '../backtest/aktivitaet.ts';
@@ -164,6 +164,38 @@ const EXIT_NAMEN: Record<ExitKategorie, string> = {
 function quartilZeile(name: string, q: Quartile | null, einheit: string, digits = 2): string[] {
   if (!q) return [name, einheit, '–', '–', '–', '–', '–', '0'];
   return [name, einheit, num(q.min, digits), num(q.q1, digits), num(q.median, digits), num(q.q3, digits), num(q.max, digits), String(q.n)];
+}
+
+/**
+ * Haben die Notbremsen überhaupt je ausgelöst — und wann?
+ *
+ * Warum diese Zeile existiert: Die V3-Auswertung der Basis-Stufe schrieb
+ * deren Einbruch der Tagesbremse von 2 % zu, gestützt allein darauf, dass die
+ * Fold-Scheiben ab einem Zeitpunkt auseinanderliefen. Drei Läufe später stand
+ * fest, dass keine Bremse die Ursache war (#54 mit gelockerten Stufen-Bremsen,
+ * #55 zusätzlich mit gelockertem Deckel — beide reproduzierten V3). Die
+ * falsche Zuordnung konnte drei Tage stehen und eine Owner-Entscheidung
+ * blockieren, weil **kein Bericht sagte, ob je eine ausgelöst hat**.
+ *
+ * Ein Divergenzpunkt in der Zeit identifiziert keine Ursache. Diese Zeile
+ * liefert die Zahl, die er nicht liefert. Kein Gate liest sie.
+ */
+function bremsenZeile(b: HaltBilanz): string[] {
+  const eintraege = Object.entries(b.ausloesungen).filter(([, n]) => n > 0);
+  if (eintraege.length === 0) {
+    return ['**Notbremsen** — keine einzige Auslösung über die ganze OOS-Kette. Wer einen Einbruch einer Bremse zuschreiben will, muss es anderswo belegen.', ''];
+  }
+  const liste = eintraege
+    .sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1))
+    .map(([k, n]) => `${k} ${n}×`)
+    .join(', ');
+  const wann = b.erste !== null && b.letzte !== null ? ` Erste ${isoDay(b.erste)}, letzte ${isoDay(b.letzte)}.` : '';
+  return [
+    `**Notbremsen** — ${liste} (gezählt werden Auslösungen, nicht Tage im Halt; Schlüssel ist \`<konto|stufe>:<grund>\`).${wann}`,
+    '',
+    '_Jeder Fold beginnt das Konto neu, deshalb ist die Summe eine Untergrenze für einen durchgehenden Lauf. Kein Gate liest diese Zahl — sie sagt nur, ob eine Bremse überhaupt im Spiel war._',
+    '',
+  ];
 }
 
 /**
@@ -633,6 +665,7 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
         out.push(...nachlaufZeile(s.auswertung));
         out.push(...aktivitaetBlock(s.auswertung, s.massstab));
         out.push(...volZielZeile(s.auswertung));
+        out.push(...bremsenZeile(s.auswertung.bremsen));
       } else {
         out.push('_Keine Auswertung (Exit-Anatomie, MFE/MAE, Aktivität) für diesen Kandidaten — siehe Fehlerliste des Symbols._');
         out.push('');
@@ -937,6 +970,8 @@ function basisAbschnitt(symbol: string, b: BasisRun, holdoutMarkt: HoldoutMarkt 
       `Gebühren ${num(k.fees)} absolut; ${k.trades} Trades (${num(k.tradesPerMonth, 1)} je Monat), mittlere Haltedauer ${k.avgHoldingDays === null ? '–' : `${num(k.avgHoldingDays, 1)} Handelstage`}, ` +
       `Tage ohne Position ${pct(k.flatDaysShare)}, offen am Ende ${k.openAtEnd}.`,
   );
+  out.push('');
+  out.push(...bremsenZeile(k.bremsen));
   out.push('');
   // Welche Zahlen die GATES gelesen haben — die Kennzahlenzeile darüber ist
   // die rohe Sicht, und die beiden dürfen nicht verwechselt werden.

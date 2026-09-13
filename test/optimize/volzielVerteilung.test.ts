@@ -15,6 +15,7 @@
 import { describe, expect, it } from 'vitest';
 import { volZielUeberFolds } from '../../src/optimize/run.ts';
 import type { SimResult, VolZielVerteilung } from '../../src/core/types.ts';
+import { OHNE_BREMSEN } from '../../src/core/types.ts';
 
 const leer = (): Omit<SimResult, 'volZiel'> => ({
   trades: [],
@@ -22,7 +23,7 @@ const leer = (): Omit<SimResult, 'volZiel'> => ({
   dailyReturns: [],
   metrics: {} as SimResult['metrics'],
   finalEquity: 0,
-  notes: [],
+  notes: [], bremsen: OHNE_BREMSEN,
 });
 
 function fold(v: Partial<VolZielVerteilung>): SimResult {

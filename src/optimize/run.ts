@@ -56,7 +56,7 @@ import {
 import { korbJeFold, type KorbStand } from './korbJeFold.ts';
 import type { Calendar } from '../core/time.ts';
 import { DAY, dayKey, dayKeyFor } from '../core/time.ts';
-import type { AssetClass, Bar, BarSeriesLike, Metrics, Ms, Params, SimResult, SizingSpec, Strategy, VolZielVerteilung } from '../core/types.ts';
+import type { AssetClass, Bar, BarSeriesLike, HaltBilanz, Metrics, Ms, Params, SimResult, SizingSpec, Strategy, VolZielVerteilung } from '../core/types.ts';
 import {
   applyDecision,
   decidePromotion,
@@ -73,6 +73,7 @@ import {
   type ChampionFile,
   type PromotionDecision,
 } from './promote.ts';
+import { BASIS_STUFE } from '../risk/limits.ts';
 import { renderReport, writeReport } from './report.ts';
 import {
   basisGates,
@@ -262,6 +263,33 @@ export interface KandidatAuswertung {
    * Volatilitätsziels (docs/wissen/vorregistrierung/2026-09-13-volatilitaetsziel.md).
    */
   volZiel: VolZielVerteilung | null;
+  /**
+   * Notbremsen der OOS-Kette, über die Folds addiert. IMMER gesetzt — eine
+   * leere Bilanz ist die Aussage „keine einzige Bremse hat ausgelöst", und
+   * genau die hat im Bericht der Basis-Stufe drei Tage lang gefehlt.
+   */
+  bremsen: HaltBilanz;
+}
+
+/**
+ * Auslösungen über die Folds addieren, Zeitpunkte als Extrema.
+ *
+ * Dass die Folds das Konto je Fold neu beginnen, macht die Summe zu einer
+ * Untergrenze für einen durchgehenden Lauf: Ein Drawdown-Halt, der über eine
+ * Foldgrenze hinweg bestanden hätte, wird hier zweimal gezählt oder gar
+ * nicht — er beginnt mit jedem Fold neu. Für die Frage „hat überhaupt je
+ * eine ausgelöst?" genügt das; für eine Statistik über Halt-DAUERN nicht.
+ */
+export function bremsenUeberFolds(teile: readonly SimResult[]): HaltBilanz {
+  const summe: Record<string, number> = {};
+  let erste: number | null = null;
+  let letzte: number | null = null;
+  for (const t of teile) {
+    for (const [k, n] of Object.entries(t.bremsen.ausloesungen)) summe[k] = (summe[k] ?? 0) + n;
+    if (t.bremsen.erste !== null) erste = erste === null ? t.bremsen.erste : Math.min(erste, t.bremsen.erste);
+    if (t.bremsen.letzte !== null) letzte = letzte === null ? t.bremsen.letzte : Math.max(letzte, t.bremsen.letzte);
+  }
+  return { ausloesungen: summe, erste, letzte };
 }
 
 /**
@@ -333,6 +361,7 @@ export function auswertungFuer(a: {
     konsistent: abweichungen.length === 0,
     hinweis: abweichungen.length === 0 ? null : abweichungen.join('; '),
     volZiel: volZielUeberFolds(a.teile),
+    bremsen: bremsenUeberFolds(a.teile),
   };
 }
 
@@ -978,6 +1007,10 @@ function messeBasis(a: {
     strategy: a.strategy,
     params: a.params,
     sizing,
+    // Die Basis-Simulation trägt die Stufe `basis` — sonst liefen ihre
+    // Positionen als `other` und `risk.tiers.basis` erreichte sie nie
+    // (WindowSimArgs.stufe; der Fehler hat Lauf #54 wertlos gemacht).
+    stufe: BASIS_STUFE,
     optimizer,
     sharpeRatio: deps.metricsFns.sharpeRatio,
     periodsPerYear,

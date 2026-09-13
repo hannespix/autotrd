@@ -36,6 +36,7 @@ import { ConfigError, parseConfig, type OptimizerInput } from '../../src/core/co
 import { Journal, homePaths, writeJsonAtomic } from '../../src/core/journal.ts';
 import { DAY } from '../../src/core/time.ts';
 import type { Bar, BarSeriesLike, EquityPoint, SimResult, Strategy, Trade } from '../../src/core/types.ts';
+import { OHNE_BREMSEN } from '../../src/core/types.ts';
 import { emptyChampionFile, loadChampion, parseChampionBasis, saveChampion } from '../../src/optimize/promote.ts';
 import { basisGates, type BasisGateInput } from '../../src/optimize/robustness.ts';
 import { nichtsGemessen, runOptimization, type OptimizeRunInput } from '../../src/optimize/run.ts';
@@ -422,7 +423,7 @@ describe('(e) WÄCHTER K2: halb in Kasse ⇒ kleiner roher MaxDD, aber je Einhei
         dailyReturns: [0.1, -0.1, 0.06, 0.14],
         metrics: { netProfit: 2_000, netReturnPct: 20, cagrPct: null, sharpe: 1, sortino: 1, maxDrawdownPct: 10, profitFactor: null, winRatePct: null, expectancy: null, avgR: null, trades: 0, exposurePct: 100, feeShare: null, days: 5 },
         finalEquity: 12_000,
-        notes: [],
+        notes: [], bremsen: OHNE_BREMSEN,
       };
     };
     const args = { stressNetProfit: 1_900, range: { start: T0, end: T0 + 5 * DAY }, achse, assetClass: 'crypto' as const, sharpeRatio: fakeMetricsFns.sharpeRatio, periodsPerYear: 365 };
@@ -437,6 +438,32 @@ describe('(e) WÄCHTER K2: halb in Kasse ⇒ kleiner roher MaxDD, aber je Einhei
     expect(ohne.avgExposure).toBeNull();
     expect(ohne.exposureNormMaxDD).toBeNull();
     expect(ohne.flatDaysShare).toBeNull();
+  });
+
+  it('WÄCHTER: die Basis-Simulation trägt die Stufe `basis` — sonst greifen ihre eigenen Notbremsen nie', () => {
+    /*
+     * Der Fehler, den dieser Wächter fängt, hat Lauf #54 wertlos gemacht:
+     * `run.ts` setzte keine Stufe, jede Position lief als `other`, und
+     * `grenzenFuer(risk, 'other')` liefert die GLOBALEN Werte —
+     * `risk.tiers.basis` erreichte die Messung nie. Die Engine wendete
+     * Stufen-Bremsen an, der Optimierer nicht: zwei Entscheidungspfade (§0.1).
+     *
+     * Sichtbar wurde es an der Notbremsen-Bilanz des Berichts:
+     *   V3 (ohne tiers)        konto:daily_loss 3×   erste 2024-08-05
+     *   V4 (tiers.basis 5/30)  other:daily_loss 3×   erste 2024-08-05
+     * Dieselben drei Tage, dieselbe Schwelle — die gelockerte Bremse war nie
+     * im Spiel, und ich habe daraus zunächst den falschen Schluss gezogen.
+     */
+    const closes = Array.from({ length: 400 }, () => 100);
+    const korb = BarSeries.from(closes.map((c, i) => tag(i, c)));
+    const stufen = new Set<string | undefined>();
+    const fake: SimulateFn = (inp) => {
+      for (const sym of inp.bars.keys()) stufen.add(inp.strategyFor(sym)?.stufe);
+      return { trades: [], equity: [], dailyReturns: [], metrics: { netProfit: 0, netReturnPct: 0, cagrPct: null, sharpe: null, sortino: null, maxDrawdownPct: 0, profitFactor: null, winRatePct: null, expectancy: null, avgR: null, trades: 0, exposurePct: 0, feeShare: null, days: 1 }, finalEquity: inp.initialEquity, notes: [], bremsen: OHNE_BREMSEN };
+    };
+    runOptimization(input(tmp(), { bars: korb, strategies: [], simulate: fake }));
+    expect(stufen.size).toBeGreaterThan(0);
+    expect([...stufen]).toEqual(['basis']);
   });
 
   it('Ende-zu-Ende: dieselbe Kurve, einmal mit Exposure 0,5, einmal mit 1,0 — nur die volle besteht basis_drawdown', () => {
@@ -469,7 +496,7 @@ describe('(e) WÄCHTER K2: halb in Kasse ⇒ kleiner roher MaxDD, aber je Einhei
         dailyReturns,
         metrics: { netProfit: fin - inp.initialEquity, netReturnPct: (fin / inp.initialEquity - 1) * 100, cagrPct: null, sharpe: 1, sortino: 1, maxDrawdownPct: 10, profitFactor: null, winRatePct: null, expectancy: null, avgR: null, trades: trades.length, exposurePct: 100, feeShare: null, days: i },
         finalEquity: fin,
-        notes: [],
+        notes: [], bremsen: OHNE_BREMSEN,
       };
     };
     const lauf = (exposure: number) => {
@@ -858,7 +885,7 @@ describe('handelstageZwischen: Handelstage der Zeitachse zwischen Ein- und Ausst
     const trade = (entry: number, exit: number): Trade => ({ symbol: 'AAA', side: 'long', qty: 1, entryTime: T0 + entry * DAY, entryPrice: 100, exitTime: T0 + exit * DAY, exitPrice: 100, grossPnl: 0, fees: 1, netPnl: -1, rMultiple: null, exitReason: 'signal', strategy: 's', barsHeld: exit - entry, mae: null, mfe: null });
     const equity: EquityPoint[] = Array.from({ length: 10 }, (_, i) => ({ t: T0 + i * DAY, equity: 10_000, exposure: i >= 2 && i < 6 ? 0.5 : 0 }));
     const k = basisKennzahlen({
-      result: { trades: [trade(2, 6), trade(7, 9)], equity, dailyReturns: [], metrics: { netProfit: -2, netReturnPct: 0, cagrPct: null, sharpe: null, sortino: null, maxDrawdownPct: 0, profitFactor: null, winRatePct: null, expectancy: null, avgR: null, trades: 2, exposurePct: 0, feeShare: null, days: 10 }, finalEquity: 9_998, notes: ['Offen am Ende: AAA long 1 @ 100 (unrealisiert 0.00, ohne Exit-Kosten)'] },
+      result: { trades: [trade(2, 6), trade(7, 9)], equity, dailyReturns: [], metrics: { netProfit: -2, netReturnPct: 0, cagrPct: null, sharpe: null, sortino: null, maxDrawdownPct: 0, profitFactor: null, winRatePct: null, expectancy: null, avgR: null, trades: 2, exposurePct: 0, feeShare: null, days: 10 }, finalEquity: 9_998, notes: ['Offen am Ende: AAA long 1 @ 100 (unrealisiert 0.00, ohne Exit-Kosten)'], bremsen: OHNE_BREMSEN },
       stressNetProfit: -3,
       range: { start: T0, end: T0 + 10 * DAY },
       achse,

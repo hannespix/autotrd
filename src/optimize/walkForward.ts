@@ -18,6 +18,7 @@ import type {
   AssetClass,
   BarSeriesLike,
   EquityPoint,
+  HaltBilanz,
   Metrics,
   Ms,
   Params,
@@ -27,6 +28,7 @@ import type {
   TimeframeMin,
   Trade,
 } from '../core/types.ts';
+import { ALPHA_STUFE } from '../risk/limits.ts';
 import { mean, median, objectiveValue, perPeriodSharpe, type ObjectiveId } from './objective.ts';
 import { sampleParams, wirksamerSuchraum } from './search.ts';
 
@@ -49,7 +51,7 @@ export interface SimConfig {
 export interface SimInput {
   bars: ReadonlyMap<string, BarSeriesLike>;
   benchmark?: BarSeriesLike;
-  strategyFor: (symbol: string) => { strategy: Strategy; params: Params; sizing?: SizingSpec | undefined } | null;
+  strategyFor: (symbol: string) => { strategy: Strategy; params: Params; sizing?: SizingSpec | undefined; stufe?: string | undefined } | null;
   config: SimConfig;
   initialEquity: number;
   /** Entscheidungen nur in [start, end); alles davor ist Warmup. */
@@ -325,6 +327,32 @@ export interface WindowSimArgs {
    */
   sizing?: SizingSpec | undefined;
   /**
+   * Stufe der Wahl (`alpha` · `basis` · sonst `other`) — die Latte der
+   * Notbremsen (`risk.tiers`, risk/limits.ts, `grenzenFuer`).
+   *
+   * Warum das hier stehen MUSS: Ohne dieses Feld landete jede Position des
+   * Optimierers in der Stufe `other`, und `grenzenFuer` gibt dort die
+   * GLOBALEN Werte zurück. `risk.tiers.basis` erreichte die Messung damit
+   * nie — die Engine wendete Stufen-Bremsen an, der Optimierer nicht. Das
+   * sind zwei Entscheidungspfade (§0.1), und sie haben einen ganzen
+   * Messlauf wertlos gemacht: V4 (#54) setzte die Bremse der Basis-Stufe auf
+   * 5 %/30 % und reproduzierte trotzdem V3, weil die Positionen `other`
+   * trugen und weiter gegen die globalen 2 %/10 % liefen. Sichtbar wurde es
+   * erst durch die Notbremsen-Bilanz: V3 meldet `konto:daily_loss 3×`, V4
+   * `other:daily_loss 3×` — dieselben drei Tage, dieselbe Schwelle.
+   *
+   * Ohne Angabe gilt `alpha` — im Optimierer ist jeder gesuchte Kandidat ein
+   * Alpha-Kandidat, und in der Engine wird aus der Quelle `champion` dieselbe
+   * Stufe. `other` wäre hier falsch und nicht bloss unbestimmt: Sobald
+   * irgendeine Stufe eine eigene Bremse trägt, rechnet die KONTO-Bremse mit
+   * der lockersten (`kontoGrenzen`), und eine Position in `other` hätte dann
+   * gar keinen eigenen Schutz mehr.
+   *
+   * Ohne gesetzte `risk.tiers` ist das alles folgenlos: `grenzenFuer` liefert
+   * dann für JEDE Stufe die globalen Werte.
+   */
+  stufe?: string | undefined;
+  /**
    * Bars des Parksymbols (`risk.cashParking.symbol`) — GETRENNT vom Korb und
    * am Korb VORBEI in den Simulator.
    *
@@ -346,7 +374,7 @@ export function simulateWindow(a: WindowSimArgs): SimResult {
   const korb = korbZum(korbVon(a.symbol, a.bars), a.membership, a.membershipAt);
   const input: SimInput = {
     bars: korb,
-    strategyFor: (s) => (korb.has(s) ? { strategy: a.strategy, params: a.params, ...(a.sizing ? { sizing: a.sizing } : {}) } : null),
+    strategyFor: (s) => (korb.has(s) ? { strategy: a.strategy, params: a.params, ...(a.sizing ? { sizing: a.sizing } : {}), stufe: a.stufe ?? ALPHA_STUFE } : null),
     config: a.config,
     initialEquity: a.initialEquity,
     range: { start: a.range.start, end: a.range.end },
@@ -907,6 +935,14 @@ export interface BasisKennzahlen {
   days: number;
   /** Am Ende der Range offene Positionen — unrealisiert in der Equity, nicht in den Trades, ohne Exit-Kosten. */
   openAtEnd: number;
+  /**
+   * Notbremsen DIESES Laufs. Die Basis-Stufe läuft als EINE durchgehende
+   * Simulation, hier ist die Bilanz also vollständig und keine Untergrenze.
+   * Sie steht hier, weil die V3-Auswertung den Einbruch der Basis einer
+   * Tagesbremse zuschrieb, ohne dass irgendein Bericht sagte, ob je eine
+   * ausgelöst hat (#54/#55 haben die Zuordnung widerlegt).
+   */
+  bremsen: HaltBilanz;
 }
 
 export interface BasisSimArgs extends Omit<WindowSimArgs, 'range' | 'costMultiplier' | 'membershipAt'> {
@@ -1136,6 +1172,7 @@ export function basisKennzahlen(a: {
     flatDaysShare,
     days,
     openAtEnd: result.notes.filter((n) => n.startsWith('Offen am Ende')).length,
+    bremsen: result.bremsen,
   };
 }
 

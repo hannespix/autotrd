@@ -415,6 +415,37 @@ export interface VolZielVerteilung {
   maxFaktor: number;
 }
 
+/**
+ * Bilanz der Notbremsen eines Laufs — WANN und WIE OFT eine ausgelöst hat.
+ *
+ * Warum es das gibt: Die V3-Auswertung der Basis-Stufe schrieb deren Einbruch
+ * der Tagesbremse von 2 % zu. Drei Läufe später stand fest, dass keine Bremse
+ * die Ursache war (#54 mit gelockerten Stufen-Bremsen, #55 zusätzlich mit
+ * gelockertem Deckel — beide reproduzierten V3). Der Grund, warum die falsche
+ * Zuordnung drei Tage lang stehen konnte und eine Owner-Entscheidung
+ * blockierte: **Ob überhaupt je eine Bremse ausgelöst hat, stand in keinem
+ * Bericht.** Ein Divergenzpunkt in der Zeit sah aus wie ein Beweis.
+ *
+ * Gezählt werden FLANKEN (nicht gehalten ⇒ gehalten), je Auslöser getrennt:
+ * `konto` für die Konto-Notbremse, sonst der Name der Stufe. Reine Diagnose —
+ * kein Gate liest diese Zahlen, und keine fließt in eine Entscheidung zurück.
+ */
+export interface HaltBilanz {
+  /** Auslösungen je `<konto|stufe>:<grund>`; leer heißt: keine einzige. */
+  ausloesungen: Record<string, number>;
+  /** Zeitpunkt der ersten und der letzten Auslösung (Epoch-ms), null ohne. */
+  erste: number | null;
+  letzte: number | null;
+}
+
+/**
+ * Bilanz ohne eine einzige Auslösung — für Fakes und für Läufe, die keine
+ * Bremse gesehen haben. Bewusst eine Konstante statt eines optionalen Feldes:
+ * „keine Bremse hat ausgelöst" ist genau die Auskunft, die im Bericht der
+ * Basis-Stufe drei Tage lang gefehlt hat. Sie darf nicht fehlen dürfen.
+ */
+export const OHNE_BREMSEN: HaltBilanz = Object.freeze({ ausloesungen: Object.freeze({}) as Record<string, number>, erste: null, letzte: null });
+
 export interface SimResult {
   trades: Trade[];
   equity: EquityPoint[];
@@ -426,4 +457,6 @@ export interface SimResult {
   notes: string[];
   /** Nur gesetzt, wenn `risk.volTarget.enabled` — sonst gab es keinen Faktor. */
   volZiel?: VolZielVerteilung;
+  /** Bilanz der Notbremsen — IMMER gesetzt, auch (und gerade) wenn keine ausgelöst hat. */
+  bremsen: HaltBilanz;
 }

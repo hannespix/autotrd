@@ -5,6 +5,24 @@
 und **#37** (V2) · **Vorregistrierung:**
 `vorregistrierung/2026-09-09-basis-allokation-v4.md` samt Nachtrag
 
+
+> ## ⚠ ÜBERHOLT — diese Analyse ist falsch (13.09.2026, abends)
+>
+> Ihr Kernsatz („die Tagesbremse war nicht die Ursache") stimmt nicht. V4 hat
+> die Bremse nie gelockert: `WindowSimArgs` reichte keine Stufe durch, die
+> Positionen der Basis liefen als `other`, und `grenzenFuer(risk, 'other')`
+> gibt die GLOBALEN Werte zurück. `risk.tiers.basis` erreichte die Simulation
+> nie — der Lauf hat nicht die Bremse widerlegt, sondern nur bewiesen, dass er
+> sie nicht angefasst hat.
+>
+> Mit einer Bremse, die greift (#59), besteht die Basis-Stufe alle vier Gates.
+> Die ursprüngliche V3-Ursachenanalyse war richtig.
+>
+> Was hier bleibt: Der Positionsdeckel ist wirklich nicht die Ursache (#55 ist
+> zeichengleich mit #54), und die Lehre über Divergenzpunkte gilt weiter — sie
+> gilt nur eben auch für diesen Text. Richtigstellung:
+> `2026-09-13-basis-stufenbremse-erreichte-den-optimierer-nie.md`.
+
 ## Kurz
 
 Die Entscheidung, die seit dem 10.09.2026 beim Owner liegt — „Regelwerk
