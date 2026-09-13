@@ -30,7 +30,7 @@ import { simulate } from './backtest/simulator.ts';
 import { ConfigError, resolveMode } from './core/config.ts';
 import { ensureDir, Journal, writeJsonAtomic } from './core/journal.ts';
 import { errMsg, logger, redact } from './core/log.ts';
-import { DAY, addDays, dayKey, dayKeyFor, msFromET, parseDay, toET } from './core/time.ts';
+import { DAY, addDays, datenAnker, dayKey, dayKeyFor, msFromET, parseDay, toET } from './core/time.ts';
 import type { Bar, Metrics, Ms, Params, Trade } from './core/types.ts';
 import { backfill } from './data/backfill.ts';
 import { ensureCalendar } from './data/calendar.ts';
@@ -441,7 +441,34 @@ async function cmdFetch(app: App, cli: Cli): Promise<number> {
   out(`Bereinigung: ${bereinigungZeile(app)}`);
   // Mit Korb je Fold auch der Kandidatenpool — in voller Tiefe (app.ts).
   const symbols = fetchSymbols(app.config);
-  const from = now - days * DAY;
+  /*
+   * Anker des Fensters: das DATENENDE, nicht die Wanduhr — derselbe Anker,
+   * den `runOptimization` benutzt (optimize/run.ts, „Das Messfenster ist
+   * lookbackDays bis zum Ende der Daten").
+   *
+   * Vorher stand hier `now - days * DAY`. An einem Tag ohne Handel klafft
+   * zwischen der Wanduhr und der letzten Bar die MARKTLÜCKE, und `fetch`
+   * holte um genau diese Lücke zu wenig — am Sonntag, 13.09.2026, zwei Tage:
+   *
+   *   fetch will ab    2021-03-23   (Anker Wanduhr)
+   *   optimize will ab 2021-03-21   (Anker Datenende)
+   *
+   * Der Schnitt im Optimierer ist richtig, aber er kann keine Bars
+   * herbeizaubern, die nie geholt wurden. Ein Lauf mit FRISCHEM Cache war
+   * damit am Anfang zu kurz, ein Lauf mit altem Cache nicht — denn
+   * `backfillAdjustedDaily` fragt ab `min(from, first)` und behält den
+   * frühesten Beginn, den es je gesehen hat. Dieselbe Config maß also ein
+   * anderes Fenster, je nachdem ob der Cache warm war. Genau daran ist der
+   * Vergleich #56 gegen #59 gescheitert
+   * (docs/wissen/analysen/2026-09-13-alpha-verschiebung-war-der-bars-cache.md).
+   *
+   * `letzterHandelstag` kommt aus dem Kalender, der oben ohnehin geladen
+   * wurde. Findet sich keiner (leerer Kalender, Krypto), bleibt es bei der
+   * Wanduhr — dann ist nichts schlechter als vorher.
+   */
+  const anker = datenAnker(today, app.config.universe.assetClass, calendar);
+  const from = dayToMs(anker) - days * DAY;
+  out(`Fenster: ${days} Tage ab ${new Date(from).toISOString().slice(0, 10)} (Anker: letzter Handelstag ${anker})`);
   const result = await backfill({
     client,
     store: app.store,
