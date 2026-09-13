@@ -85,6 +85,22 @@ jobs:
       - name: Abhängigkeiten installieren
         run: npm ci
 
+      # Doppelter Boden: Der choice-Eingang lässt ohnehin nur Erkundungs-
+      # Dateien zu — aber wenn jemand später eine Option ergänzt, darf hier
+      # NIE die Plattform-Config laufen. Ihre Symbole und ihr Champion sind
+      # das, was Nutzer tatsächlich handeln.
+      - name: Guard — niemals die Plattform-Config
+        run: |
+          if [ ! -f "$CONFIG" ]; then
+            echo "::error::Config nicht gefunden: $CONFIG"; exit 1
+          fi
+          case "$CONFIG" in
+            config/platform.yaml)
+              echo "::error::$CONFIG ist die Plattform-Config — dieser Workflow ist nur für Erkundungen."
+              exit 1 ;;
+          esac
+          echo "Config: $CONFIG"
+
       # Cache-Schlüssel NUR aus dem, was die Bars bestimmt: Assetklasse, Feed,
       # Bereinigung (scripts/bars-cache-key.mjs). Krypto-Bars können den
       # Aktien-Cache damit weiterhin nicht überschreiben, bereinigte nicht die
@@ -109,22 +125,6 @@ jobs:
           key: probe-bars-${{ steps.barskey.outputs.key }}-${{ github.run_id }}
           restore-keys: |
             probe-bars-${{ steps.barskey.outputs.key }}-
-
-      # Doppelter Boden: Der choice-Eingang lässt ohnehin nur Erkundungs-
-      # Dateien zu — aber wenn jemand später eine Option ergänzt, darf hier
-      # NIE die Plattform-Config laufen. Ihre Symbole und ihr Champion sind
-      # das, was Nutzer tatsächlich handeln.
-      - name: Guard — niemals die Plattform-Config
-        run: |
-          if [ ! -f "$CONFIG" ]; then
-            echo "::error::Config nicht gefunden: $CONFIG"; exit 1
-          fi
-          case "$CONFIG" in
-            config/platform.yaml)
-              echo "::error::$CONFIG ist die Plattform-Config — dieser Workflow ist nur für Erkundungen."
-              exit 1 ;;
-          esac
-          echo "Config: $CONFIG"
 
       - name: Keys prüfen
         run: |
