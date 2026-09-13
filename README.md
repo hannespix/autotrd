@@ -22,10 +22,10 @@ zum Handeln, Absichern und Messen nötig ist.
 > bisherige Plattform bleibt unverändert auf `main`. Hier sind `functions/`,
 > `frontend/` und `shared/` auf den neuen Kern umgebaut (Login, Key-Tresor,
 > Nutzerverwaltung und Deploy-Pipelines bleiben); die alte Signal-Engine mit
-> Scan, Prognose, News und KI ist entfernt. Reste ohne Funktion (`reference/`,
-> `supabase/`, `rules-test/`, `ARCHITECTURE.md`, `MILESTONES.md`) werden nach
-> Freigabe des Owners in einem eigenen Commit gelöscht. Was aus dem Vorgänger
-> gelernt wurde, steht in `docs/ARCHITEKTUR.md`.
+> Scan, Prognose, News und KI ist entfernt; die Reste ohne Funktion
+> (`reference/`, `supabase/`, `rules-test/`, `ARCHITECTURE.md`,
+> `MILESTONES.md`) sind mit Freigabe des Owners am 13.09.2026 gelöscht. Was
+> aus dem Vorgänger gelernt wurde, steht in `docs/ARCHITEKTUR.md`.
 
 ## Was es tut
 
