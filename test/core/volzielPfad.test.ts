@@ -203,6 +203,25 @@ describe('Vola-Ziel im echten Simulator (die Verdrahtung, nicht nur der Typ)', (
     expect(stueck(offenMit!) / stueck(offenOhne!)).toBeLessThan(2.1);
   });
 
+  it('WÄCHTER (e): die Notiz nennt die VERTEILUNG — ein Faktor am Deckel ist Hebel, kein Vola-Ziel', () => {
+    // Warum dieser Wächter: Min/Max allein können den Fall „der Faktor atmet"
+    // nicht von „der Faktor klebt am Deckel" trennen — und nur der zweite Fall
+    // macht die Messung wertlos, weil sie dann konstanten Hebel misst statt
+    // eines Volatilitätsziels. Der Lauf muss daran scheitern KÖNNEN
+    // (docs/wissen/vorregistrierung/2026-09-13-volatilitaetsziel.md).
+    const note = lauf({ volTarget: volAn().volTarget }).notes.find((n) => n.startsWith('Vola-Ziel'))!;
+    expect(note).toMatch(/Verteilung über \d+ Zyklen/);
+    const anteil = (was: string): number => Number(new RegExp(`([\\d.]+) % ${was}`).exec(note)![1]);
+    // Diese Welt ist genau der prozyklische Grenzfall aus dem Modulkopf: flache
+    // Kasse vor dem Einstieg ⇒ nach der Aufwärmphase steht der Faktor am Deckel.
+    expect(anteil('Aufwärmphase')).toBeGreaterThan(0);
+    expect(anteil('am Deckel 2')).toBeGreaterThan(0);
+    // Die vier Anteile sind eine Zerlegung: sie decken die Zyklen vollständig ab.
+    const summe = anteil('Aufwärmphase') + anteil('am Deckel 2') + anteil('am Boden 0.25') + anteil('frei');
+    expect(summe).toBeGreaterThan(99.5);
+    expect(summe).toBeLessThan(100.5);
+  });
+
   it('der Deckel des Nutzers bleibt auch im Simulator über dem Faktor', () => {
     const gedeckelt = lauf({ volTarget: volAn().volTarget, maxPositionPct: 5 });
     const offen = gedeckelt.notes.find((n) => n.startsWith('Offen am Ende'))!;

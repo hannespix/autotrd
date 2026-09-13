@@ -56,7 +56,7 @@ import {
 import { korbJeFold, type KorbStand } from './korbJeFold.ts';
 import type { Calendar } from '../core/time.ts';
 import { DAY, dayKey, dayKeyFor } from '../core/time.ts';
-import type { AssetClass, Bar, BarSeriesLike, Metrics, Ms, Params, SimResult, SizingSpec, Strategy } from '../core/types.ts';
+import type { AssetClass, Bar, BarSeriesLike, Metrics, Ms, Params, SimResult, SizingSpec, Strategy, VolZielVerteilung } from '../core/types.ts';
 import {
   applyDecision,
   decidePromotion,
@@ -254,6 +254,39 @@ export interface KandidatAuswertung {
   konsistent: boolean;
   /** Abweichung im Klartext, sonst null. */
   hinweis: string | null;
+  /**
+   * Verteilung des Vola-Ziel-Faktors, addiert über die Folds der OOS-Kette —
+   * null, wenn `risk.volTarget` aus ist. Reine Diagnose, aber die einzige
+   * Zahl, an der das Abbruchkriterium der Vorregistrierung entscheidbar ist:
+   * Klebt der Faktor am Deckel, misst der Lauf konstanten Hebel statt eines
+   * Volatilitätsziels (docs/wissen/vorregistrierung/2026-09-13-volatilitaetsziel.md).
+   */
+  volZiel: VolZielVerteilung | null;
+}
+
+/**
+ * Vier Zähler und eine Summe über die Folds addieren; Spanne als Extremum.
+ * Die Folds sind disjunkte Zeitabschnitte derselben Kette — ihre Zyklen
+ * addieren sich deshalb ohne Doppelzählung. Läufe ohne Vola-Ziel tragen
+ * nichts bei; trägt kein Fold etwas bei, gibt es keine Verteilung.
+ */
+export function volZielUeberFolds(teile: readonly SimResult[]): VolZielVerteilung | null {
+  let erste: VolZielVerteilung | null = null;
+  const summe = { zyklen: 0, summe: 0, min: Number.POSITIVE_INFINITY, max: Number.NEGATIVE_INFINITY, aufwaermen: 0, amDeckel: 0, amBoden: 0 };
+  for (const t of teile) {
+    const v = t.volZiel;
+    if (!v) continue;
+    erste ??= v;
+    summe.zyklen += v.zyklen;
+    summe.summe += v.summe;
+    summe.min = Math.min(summe.min, v.min);
+    summe.max = Math.max(summe.max, v.max);
+    summe.aufwaermen += v.aufwaermen;
+    summe.amDeckel += v.amDeckel;
+    summe.amBoden += v.amBoden;
+  }
+  if (!erste || summe.zyklen === 0) return null;
+  return { ...summe, minFaktor: erste.minFaktor, maxFaktor: erste.maxFaktor };
 }
 
 /**
@@ -299,6 +332,7 @@ export function auswertungFuer(a: {
     oosDays,
     konsistent: abweichungen.length === 0,
     hinweis: abweichungen.length === 0 ? null : abweichungen.join('; '),
+    volZiel: volZielUeberFolds(a.teile),
   };
 }
 

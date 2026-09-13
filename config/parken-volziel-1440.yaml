@@ -1,0 +1,211 @@
+# Probe-Config: Parken PLUS Volatilitätsziel (Lauf 2 von 2)
+#
+# Vorregistrierung: docs/wissen/vorregistrierung/2026-09-13-volatilitaetsziel.md
+# (VOR dem Lauf committet — dort stehen der feste Parametersatz, die fünf
+# Erwartungen und das ABBRUCHKRITERIUM, an dem dieser Lauf scheitern kann.)
+vorregistrierung: docs/wissen/vorregistrierung/2026-09-13-volatilitaetsziel.md
+#
+# ── Wogegen die Differenz zu lesen ist ────────────────────────────────────
+#
+# **Gegen Lauf #49** (`config/parken-1440.yaml`). Diese Datei ist Zeichen für
+# Zeichen dieselbe Config, mit genau zwei Unterschieden:
+#
+#   risk.volTarget:  AUS ⇒ AN mit den Schema-Vorgaben (die gemessene Änderung)
+#   paths.home:      ./var-parken ⇒ ./var-parken-volziel
+#
+# Der Messplan des Parkens verlangt genau das: erst Parken allein (#49), dann
+# Parken plus Volatilitätsziel. Zwei Änderungen gleichzeitig zu messen war der
+# Fehler in Lauf #46 und wird nicht wiederholt.
+#
+# ── Was die Differenz WIRKLICH enthält ────────────────────────────────────
+#
+# Nicht nur das Vola-Ziel, sondern
+#
+#     Vola-Ziel  PLUS  eine Rückkopplung über die Equity.
+#
+# Der Faktor ändert Stückzahlen, Stückzahlen ändern Kosten, Kosten ändern die
+# Equity — und die Equity ist die Bemessungsgrundlage des Sizings. Dieselbe
+# Warnung wie in #49, aus demselben Grund.
+#
+# ── Wie dieser Lauf scheitern kann ────────────────────────────────────────
+#
+# Klebt der Faktor bei mehr als 80 % der Zyklen außerhalb der Aufwärmphase am
+# Deckel (`maxFaktor: 2`), ist er kein Volatilitätsziel, sondern ein
+# konstanter Hebel. Das Ergebnis gilt dann als NICHT AUSWERTBAR — nicht als
+# positiv und nicht als negativ — und das Vola-Ziel wird für dieses System als
+# nicht anwendbar vermerkt. Die Vorregistrierung sagt vorher, dass genau das
+# eintreten wird; die Zahl dazu kommt aus der Verteilungs-Notiz des
+# Simulators (`Vola-Ziel: … Verteilung über N Zyklen: … am Deckel …`).
+#
+# ── Was NICHT angefasst ist ───────────────────────────────────────────────
+#
+# Kein Gate, keine Schwelle, keine Kostenzeile, kein Fold-Plan, kein Symbol,
+# kein Parameter des Parkens. Der Parametersatz des Vola-Ziels ist NICHT
+# gesucht: Es sind die Vorgaben des Config-Schemas, die vor allen Messungen
+# dieses Projekts festgelegt wurden.
+
+broker:
+  mode: paper
+  feed: iex
+  adjustment: all
+
+universe:
+  assetClass: us_equity
+  symbols:
+    [SPY, QQQ, IWM, DIA,
+     AAPL, MSFT, NVDA, AMZN, META, GOOGL, TSLA, AVGO, AMD, NFLX,
+     CRM, ORCL, ADBE, INTC, CSCO, QCOM,
+     JPM, BAC, WFC,
+     XOM, CVX,
+     JNJ, PFE, UNH,
+     WMT, DIS]
+  benchmark: SPY
+  maxSymbols: 30
+  # Derselbe Pool wie in #46, OHNE BIL (siehe Kopf). Der Korb je Fold ist
+  # davon unberührt: Die Auswahl rangiert nach Median-Dollarumsatz, und BIL
+  # stand dort auf Rang 138 von 141 (Lauf #43) — es wurde nie gewählt. Der
+  # Pool zählt jetzt 139 statt 140 Kandidaten; die 30 gewählten sind Stand
+  # für Stand dieselben.
+  candidates:
+    # Breite Index- und Sektor-ETFs
+    [SPY, QQQ, IWM, DIA, XLF, XLE, XLK, XLV, XLI, XLY, XLP, XLU, XLB, XLRE, XLC,
+     SMH, SOXX, EEM, EFA, GLD, SLV, TLT, HYG, LQD, IEF,
+     # KEIN BIL: Es ist in diesem Lauf Park- UND Zinssymbol, also
+     # Infrastruktur — `fetch` lädt es eigens, keine Strategie erreicht es
+     # (Kopf, Abschnitt „Was gegenüber #46 anders ist").
+     # Technologie und Halbleiter
+     AAPL, MSFT, NVDA, AMZN, META, GOOGL, GOOG, TSLA, AVGO, AMD, NFLX,
+     CRM, ORCL, ADBE, INTC, CSCO, QCOM, TXN, MU, AMAT, LRCX, KLAC, ADI, MRVL,
+     ANET, NOW, IBM, INTU, PANW, CRWD, DDOG, SNOW, UBER, ABNB, PYPL, SPOT, DELL,
+     # Finanzen
+     JPM, BAC, WFC, GS, MS, C, SCHW, BLK, AXP, V, MA, COF, USB, PNC, BRK.B,
+     # Energie
+     XOM, CVX, COP, SLB, EOG, PSX, MPC, OXY, VLO,
+     # Gesundheit
+     JNJ, PFE, UNH, ABBV, MRK, LLY, TMO, ABT, BMY, AMGN, GILD, CVS, MDT, ISRG, VRTX, REGN,
+     # Konsum
+     WMT, DIS, HD, MCD, NKE, SBUX, COST, TGT, LOW, PG, KO, PEP, PM, MO, MDLZ, CL,
+     # Industrie und Transport
+     BA, CAT, DE, GE, HON, LMT, RTX, UPS, UNP, MMM, FDX,
+     # Kommunikation und Versorger
+     T, VZ, TMUS, CMCSA, CHTR, NEE, DUK, SO,
+     # Fahrzeuge
+     F, GM]
+
+timeframe: 1440
+
+session:
+  noEntryFirstMin: 5
+  noEntryLastMin: 30
+  flattenBeforeCloseMin: 5
+
+# Zeichen für Zeichen das Regelwerk der Plattform — bis auf `cashParking`,
+# die EINE vorregistrierte Abweichung dieses Laufs.
+risk:
+  riskPerTradePct: 0.5
+  maxPositionPct: 20
+  maxPositions: 4
+  maxGrossExposurePct: 100
+  maxDailyLossPct: 2
+  maxDrawdownPct: 10
+  allowShort: false
+  # DIE Änderung, die gemessen wird (src/risk/parken.ts): Kapital, das keine
+  # Strategie braucht, liegt nicht unverzinst auf dem Konto, sondern in BIL.
+  # Band und Puffer sind die Vorgaben der Vorregistrierung (5 Pp / 2 %) — sie
+  # sind KEIN gesuchter Parameter und werden in diesem Lauf nicht variiert.
+  cashParking:
+    enabled: true
+    symbol: BIL
+    bandPct: 5
+    bufferPct: 2
+  pdt:
+    respect: true
+    minEquity: 25000
+    maxDayTrades: 3
+  # DIE zweite gemessene Änderung (risk/volziel.ts): Der Faktor skaliert das
+  # Sizing-BUDGET mit Ziel-Vola / realisierter Vola der EIGENEN Equity-Kurve.
+  # Alle fünf Werte sind die Vorgaben des Config-Schemas, unverändert — der
+  # einzige Anker, der vor allen Messungen dieses Projekts festgelegt wurde
+  # und deshalb nicht an sie angepasst sein kann. Es wird kein Wert gesucht
+  # und keiner variiert.
+  #
+  # Die Deckel darüber (maxPositionPct 20, maxGrossExposurePct 100,
+  # maxPositions 4, Bargeld) bleiben harte Obergrenzen: Der Faktor wirkt auf
+  # das Budget, nie auf eine Obergrenze (risk/sizing.ts).
+  volTarget:
+    enabled: true
+    zielVolPct: 10
+    halbwertszeitTage: 20
+    minFaktor: 0.25
+    maxFaktor: 2
+    minBeobachtungen: 60
+
+strategy:
+  id: trend_donchian
+  params: {}
+  allowWithoutChampion: false
+
+optimizer:
+  # Dieselben fünf Familien wie in #46 — sie SIND der Vergleich: Die Differenz
+  # je Familie ist die Wirkung des Parkens (plus der Sizing-Rückkopplung,
+  # siehe Kopf).
+  strategies: [trend_donchian, momentum_pullback, mean_reversion, cross_sectional_momentum, regime_allocation]
+  lookbackDays: 2900
+  isDays: 550                  # unverändert aus #46 — ein anderer Fold-Plan machte den Vergleich unmöglich
+  oosDays: 90
+  stepDays: 90
+  embargoBars: 0
+  samples: 150
+  seed: 42
+  minOosTrades: 60
+  minFoldPositiveShare: 0.6
+  objective: sortino
+  stressCostMultiplier: 1.5
+  holdoutDays: 180
+  promotionMargin: 0.1
+  minPsrOos: 0.9
+  dsrIsGate: false
+  # Der risikolose Zins kommt aus BIL — DEMSELBEN Papier, in dem die Kasse
+  # liegt. Genau das war vor dem 13.09.2026 unmöglich (das Zinssymbol musste
+  # im Kandidatenpool stehen, das Parksymbol durfte es nicht); seit beide als
+  # Infrastruktur geladen werden, geht es. Der Gewinn: Zwischen dem Zins, gegen
+  # den gemessen wird, und dem Papier, in dem die Kasse liegt, gibt es keinen
+  # Spread aus Laufzeit und Kostenquote. `probabilistic_sharpe_oos` und
+  # `beats_market` rechnen damit auf ÜBERSCHUSSrenditen, auf BEIDEN Seiten
+  # oder auf keiner (Befund B2,
+  # docs/wissen/vorregistrierung/2026-09-13-sharpe-gegen-zins.md).
+  riskFreeSymbol: BIL
+  maxFoldNetShare: 0.5
+  pooled: true
+  foldMembership: point_in_time
+  # KEIN Ensemble in diesem Lauf. Die Einheit E1 hält BIL als Geldmarkt-Pol
+  # ihres defensiven Sleeves (`vigilant_allocation`) — und das Parksymbol
+  # gehört der Treasury allein (§0.6, Doppelführung). Beides zugleich ist
+  # nicht messbar, und die Zusammensetzung von E1 ist vorregistriert und
+  # wird für diese Messung nicht gebogen. E1 fehlt deshalb im Vergleich mit
+  # #46; die fünf gesuchten Familien und SPY sind vollständig vergleichbar.
+
+costs:
+  slippageBps: 3
+  spreadBps: 2
+  secFeeRate: 0.0000278
+  finraTafPerShare: 0.000166
+  finraTafMax: 8.3
+  cryptoTakerPct: 0.25
+  shortBorrowAnnualPct: 1
+
+engine:
+  reconcileEverySec: 60
+  barGraceSec: 4
+  maxDataAgeSec: 180
+  maxConsecutiveErrors: 5
+  onOrphan: halt
+
+notify:
+  telegram: false
+
+status:
+  httpPort: 0
+
+paths:
+  home: ./var-parken-volziel
