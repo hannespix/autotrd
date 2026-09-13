@@ -298,6 +298,39 @@ gar keine Zahl.
   `regime_allocation` und `cross_sectional_momentum`.
 - Vertrauen: hoch.
 
+### D8. Vigilant und Defensive Asset Allocation (13612W und Kanarienvogel)
+- **Befund:** Eine Monatsallokation über wenige Anlageklassen-ETFs, rangiert
+  nach einem Momentum aus vier Horizonten (1, 3, 6, 12 Monate mit den
+  Gewichten 12, 4, 2, 1 — „13612W"), hält laut den Autoren die Aktienrendite
+  bei deutlich kleinerem Drawdown. Der eigentliche Beitrag ist der
+  **Kanarienvogel**: Ein kleiner Wächterkorb (in DAA: Schwellenländer-Aktien
+  und Unternehmensanleihen) entscheidet, ob offensiv oder defensiv
+  investiert wird — nicht die gehaltenen Papiere selbst. Defensiv heißt
+  NICHT Kasse, sondern das stärkste kurzlaufende Anleihe- bzw.
+  Geldmarktpapier.
+- Quelle: Keller & Keuning 2017, „Breadth Momentum and Vigilant Asset
+  Allocation (VAA)"; Keller & Keuning 2018, „Breadth Momentum and the Canary
+  Universe (DAA)". Beide SSRN-Arbeitspapiere, nicht begutachtet;
+  Rückrechnungen ab 1925 (simulierte Indexreihen) bzw. ab 1970.
+- Kosten/Umsatz: monatliche Entscheidung, wenige Positionen — niedriger
+  Umschlag, nach C8 tragfähig. Die Autoren rechnen Kosten mit; der
+  Bärenmarkt-Beitrag hängt am Ertrag des defensiven Pols.
+- Was danach kam: In der Praktiker-Community vielfach nachgerechnet, mit
+  merklich schwächeren Ergebnissen out-of-sample nach 2018. Der
+  Kanarienvogel-Trick ist nach Kellers eigener Darstellung aus mehreren
+  Varianten ausgewählt — also selbst ein Mehrfachtest (C2, C5).
+- **Bedeutung für Autotrd:** Familie `vigilant_allocation` (Vorregistrierung
+  12.09.2026). Übernommen sind Kennzahl, Horizonte, Gewichte, der
+  Monatsrhythmus und der defensive Pol INKLUSIVE Geldmarkt-Surrogat (BIL) —
+  ohne ihn ist die defensive Seite 2022 mitgefallen (Lauf #42/#43). NICHT
+  übernommen ist der Kanarienvogel: Er braucht den Blick auf fremde
+  Zeitreihen, den der Strategie-Vertrag nicht hergibt (§0.2). Entscheidend
+  für die Übernahme war, dass 13612W NICHT volatilitätsnormiert ist —
+  `regime_allocation` (mom/rvol, D5) kann einen Geldmarkt-Pol nicht
+  rangieren, weil dessen Volatilität nahe null liegt.
+- Vertrauen: **niedrig-mittel** (Arbeitspapiere, Rückrechnung, Auswahl aus
+  Varianten); die Bausteine D1, D2, D4 sind hoch.
+
 ## E. Kurzfristige Umkehr
 
 ### E1. Ein-Monats-Umkehr
@@ -313,6 +346,33 @@ gar keine Zahl.
   Praktikerversion (Connors & Alvarez, Buch, Vertrauen niedrig). Unser
   Befund: ein Treffer, der am Fold-Raster hängt (§5a.15).
 - Vertrauen: hoch (Effekt), niedrig (Handelbarkeit für uns).
+
+### E2. RSI(2) — die Praktikerversion der kurzfristigen Umkehr
+- **Befund:** Kauf eines breiten Index-ETF, wenn ein 2-Perioden-RSI unter
+  eine tiefe Schwelle (5 oder 10) fällt UND der Kurs über seinem
+  200-Tage-Durchschnitt liegt; Verkauf bei erholtem RSI oder beim ersten
+  Schluss über dem Vortageshoch. Die Autoren berichten hohe Trefferquoten
+  über etwa 1995–2007.
+- Quelle: Connors & Alvarez 2008, „Short Term Trading Strategies That Work"
+  (Buch). Keine Korrektur für Mehrfachtesten, keine Out-of-Sample-Phase,
+  Schwellen und Längen offenkundig an denselben Daten gewählt.
+- Kosten/Umsatz: hoch — Haltedauern von zwei bis fünf Tagen. Bei 10 bp je
+  Round-Trip und einem Bruttogewinn von wenigen Zehntelprozent je Trade ist
+  der Gebührenanteil die entscheidende Größe, nicht die Trefferquote.
+- Was danach kam: Der Effekt hat nach 2010 nachgelassen (kleinere
+  Rücksetzer, mehr Teilnehmer), und in starken Aufwärtsjahren ohne
+  Rücksetzer liefert die Regel kaum Signale. In Bärenmärkten hält der
+  200-Tage-Filter sie aus dem Markt — was Verluste verhindert, aber auch
+  leere Quartale erzeugt (und ein leeres Quartal zählt bei
+  `fold_positive_share` nicht als positiv).
+- **Bedeutung für Autotrd:** Familie `index_reversal` (Vorregistrierung
+  12.09.2026), bewusst nur auf BREITEN Index-ETFs: Der belegte Teil (E1) ist
+  ein Liquiditäts- und Mikrostruktureffekt; bei Einzelaktien greift eine
+  Umkehr-Regel in Nachrichten hinein. Die Parameter sind eingefroren, nicht
+  gesucht — sonst wiederholten wir genau den Fehler, den dieses Buch
+  vorführt.
+- Vertrauen: **niedrig** (Praktikerbuch, stark datengetrieben). Der
+  darunterliegende Effekt E1 ist hoch.
 
 ## F. Stops und Ausführung
 
@@ -354,3 +414,59 @@ gar keine Zahl.
   die Gates. Wochen-Momentum wäre die einzige literaturnahe Taktik; bei
   25 bp je Seite ist der Umschlag der Gegner. Nicht aktiv.
 - Vertrauen: hoch (Effekt), hoch (unsere Messung).
+
+## H. Kalendereffekte
+
+### H1. Der Monatswechsel-Effekt
+- **Befund:** Die positive Rendite des US-Aktienmarkts konzentriert sich auf
+  die erste Hälfte des Kalendermonats; in der zweiten Hälfte ist die
+  Durchschnittsrendite nahe null oder negativ.
+- Quelle: Ariel 1987, „A Monthly Effect in Stock Returns", Journal of
+  Financial Economics. Stichprobe: US-Indizes 1963–1981.
+- **Bedeutung für Autotrd:** Der Ursprung des Fensters, das
+  `turn_of_month` handelt.
+- Vertrauen: mittel-hoch (begutachtet, oft zitiert; Stichprobe endet 1981).
+
+### H2. Neunzig Jahre Dow — vier Tage um den Monatswechsel
+- **Befund:** Über etwa 90 Jahre Dow Jones fällt ein auffällig großer Teil
+  der Gesamtrendite auf die letzten Handelstage eines Monats und die ersten
+  des nächsten; die Autoren nennen ein Fenster von rund vier Tagen und
+  finden es über Teilperioden stabil.
+- Quelle: Lakonishok & Smidt 1988, „Are Seasonal Anomalies Real? A
+  Ninety-Year Perspective", Review of Financial Studies.
+- **Bedeutung für Autotrd:** Die Fensterlänge (letzter Handelstag plus die
+  ersten drei) stammt von hier, nicht aus unseren Daten.
+- Vertrauen: hoch (begutachtet, lange Stichprobe, ausdrücklich gegen Data
+  Snooping argumentiert).
+
+### H3. Der Monatswechsel trägt die ganze Überrendite
+- **Befund:** Im untersuchten Zeitraum entstand praktisch die gesamte
+  Überrendite des US-Marktes gegenüber dem Geldmarkt im Fenster von −1 bis
+  +3 Handelstagen um den Monatswechsel; außerhalb war die Überrendite etwa
+  null. Der Effekt findet sich auch international.
+- Quelle: McConnell & Xu 2008, „Equity Returns at the Turn of the Month",
+  Financial Analysts Journal. US-Daten 1926–2005, dazu 34 Länder.
+- Plausibler Mechanismus: Lohn-, Sparplan- und Pensionsflüsse zum
+  Monatsende, die mechanisch investiert werden — ein Flussargument, keine
+  Kursformation.
+- **Bedeutung für Autotrd:** `turn_of_month`. Wichtig für die Erwartung:
+  Der Effekt ist eine MARKTrendite in wenigen Tagen, keine Alpha-Quelle. Er
+  liefert Beständigkeit und niedrige Korrelation, nicht Höhe.
+- Vertrauen: mittel-hoch (Fachzeitschrift zweiter Reihe, lange Stichprobe,
+  international bestätigt).
+
+### H4. Die Gefahren des Data Mining am Beispiel der Kalendereffekte
+- **Befund:** Prüft man Kalenderregeln (Wochentag, Monat, Monatswechsel,
+  Feiertage) mit einer Korrektur für Mehrfachtesten über das ganze Universum
+  möglicher Kalenderregeln, verschwindet die Signifikanz weitgehend. Die
+  Autoren ziehen daraus, dass Kalendereffekte ein Lehrbeispiel für Data
+  Snooping sind.
+- Quelle: Sullivan, Timmermann & White 2001, „Dangers of data mining: The
+  case of calendar effects in stock returns", Journal of Econometrics
+  (dieselbe Methodik wie C2).
+- **Bedeutung für Autotrd:** Die Gegenrede zu H1–H3 und der Grund, warum
+  `turn_of_month` mit FESTEN Parametern als Festkandidat läuft (ein Versuch,
+  gezählt) und nicht als gesuchte Familie. Wer das Fenster optimiert,
+  landet genau in dieser Arbeit. Der Vertrauensgrad von `turn_of_month`
+  bleibt deshalb mittel, obwohl H2/H3 hoch sind.
+- Vertrauen: hoch.

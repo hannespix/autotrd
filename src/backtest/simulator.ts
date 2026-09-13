@@ -34,9 +34,21 @@
  * Bargeld: Das Sizing lief gegen das Bargeld zum Entscheidungs-Close; ein
  * Gap-Open darf das Konto nicht ins Minus hebeln — Long-Fills werden gegen
  * das Bargeld am Fill nachgesizet (0 Stück ⇒ kein Fill, Notiz).
+ *
+ * AUSWERTUNGSGRÖSSEN (MFE/MAE, `stopTrailed`): Der Simulator führt je
+ * offener Position den besten und den schlechtesten Kurs der Haltezeit mit
+ * (`updateExcursion`) und hält am Ausstieg fest, ob die Stop-Marke
+ * nachgezogen war. Beides wandert AUSSCHLIESSLICH in den fertigen `Trade` —
+ * nie in `PositionState`, nie in einen `SymbolSnapshot`, nie in `decide()`.
+ * Eine Entscheidung kann sie physisch nicht sehen. Der Schalter
+ * `SimInput.excursions` schaltet die Mitschrift ab; dann müssen Trades
+ * (außer `mae`/`mfe`) und Equity-Kurve ZEICHENGLEICH bleiben — der Wächter
+ * dafür ist test/backtest/anatomie.test.ts. Verändert die Messung das
+ * Ergebnis, ist die Messung falsch.
  */
 import type { CostConfig, RiskConfig, SessionConfig } from '../core/config.ts';
-import { advancePosition, decide, openPosition, qtyStepFor, type LogicContext, type SymbolInput } from '../core/logic.ts';
+import { advancePosition, decide, openPosition, qtyStepFor, type LogicContext, type SymbolInput, type WiederaufbauZiel } from '../core/logic.ts';
+import type { VolZielResult } from '../risk/volziel.ts';
 import {
   DAY,
   MIN,
@@ -84,7 +96,7 @@ export interface SimInput {
   bars: ReadonlyMap<string, BarSeriesLike>;
   benchmark?: BarSeriesLike | undefined;
   /** null ⇒ Symbol nicht handeln. `sizing` (Basis-Stufe: Allokation) geht unverändert in `decide()` — wie in der Engine. */
-  strategyFor: (symbol: string) => { strategy: Strategy; params: Params; sizing?: SizingSpec | undefined } | null;
+  strategyFor: (symbol: string) => { strategy: Strategy; params: Params; sizing?: SizingSpec | undefined; stufe?: string | undefined } | null;
   config: SimConfig;
   initialEquity: number;
   /** Entscheidungen/Fills nur für Bars mit t in [start, end); Bars davor sind Warmup, Bars danach werden ignoriert. */
@@ -92,6 +104,13 @@ export interface SimInput {
   calendar?: Calendar | undefined;
   /** Stressfaktor auf alle Kosten (1 = normal). */
   costMultiplier?: number | undefined;
+  /**
+   * Kursextreme je Trade mitschreiben (MFE/MAE) — Vorgabe an. Aus bleiben
+   * `Trade.mae`/`Trade.mfe` null; alles andere MUSS identisch sein. Der
+   * Schalter existiert nur, damit genau das prüfbar ist (siehe Kopf); im
+   * Betrieb setzt ihn niemand.
+   */
+  excursions?: boolean | undefined;
 }
 
 type EnterIntent = Extract<OrderIntent, { kind: 'enter' }>;
@@ -108,6 +127,8 @@ interface SymState {
   strategy: Strategy;
   params: Params;
   sizing: SizingSpec | undefined;
+  /** Stufe der Wahl (`champion` · `basis` · `config`) — Latte der Notbremse (`risk.tiers`); wie in der Engine. */
+  stufe: string | undefined;
   ind: IndicatorSet;
   /** Index der nächsten noch nicht verarbeiteten Bar. */
   cursor: number;
@@ -222,6 +243,7 @@ export function simulate(input: SimInput): SimResult {
   const { config, initialEquity, calendar, range } = input;
   const { assetClass, timeframe: tf, risk, session: sessionCfg, costs } = config;
   const mult = input.costMultiplier ?? 1;
+  const trackExcursions = input.excursions ?? true;
   const notes: string[] = [];
   let haltNotes = 0;
   // Halt-Notizen sind gedeckelt (ein Halt je Tag über Jahre wäre Rauschen); die Bilanz am Ende nie.
@@ -241,6 +263,7 @@ export function simulate(input: SimInput): SimResult {
       strategy: sp.strategy,
       params: sp.params,
       sizing: sp.sizing,
+      stufe: sp.stufe,
       ind: sp.strategy.precompute(series, sp.params),
       cursor: 0,
       pendingEnter: null,
@@ -268,6 +291,13 @@ export function simulate(input: SimInput): SimResult {
   let peakEquity = initialEquity;
   let dayStartEquity = initialEquity;
   let halt: HaltState = NO_HALT;
+  // Zustände, die `decide()` fortschreibt und die der Simulator genau wie die
+  // Engine über die Zyklen trägt (Stufen-Bremsen, Wiederaufbau-Ziele).
+  let stufenHalt: Record<string, HaltState> = {};
+  let wiederaufbau: Record<string, WiederaufbauZiel> = {};
+  let volFaktorMin = Number.POSITIVE_INFINITY;
+  let volFaktorMax = Number.NEGATIVE_INFINITY;
+  let volFaktorLetzt: VolZielResult | null = null;
   const positions = new Map<string, PositionState>();
   const pendingEntries = new Set<string>();
   const trades: Trade[] = [];
@@ -321,7 +351,16 @@ export function simulate(input: SimInput): SimResult {
     grossValue = gross;
   };
 
+  /**
+   * Kursextreme der Haltezeit fortschreiben — NUR aus Bars, die der Simulator
+   * an diesem Zeitpunkt schon gesehen hat. Schreibend, nie lesend: Kein
+   * Zweig dieser Funktion beeinflusst eine Entscheidung, einen Fill oder die
+   * Equity. Der Ausstiegs-Bar wird mit seinem Fill-Kurs übergeben (l = h =
+   * Fill), weil die Haltezeit am Fill endet — Hoch und Tief danach gehören
+   * nicht mehr zur Position.
+   */
   const updateExcursion = (s: SymState, l: number, h: number): void => {
+    if (!trackExcursions) return;
     const p = s.pos!;
     if (p.side === 'long') {
       s.mae = Number.isNaN(s.mae) ? l : Math.min(s.mae, l);
@@ -366,6 +405,7 @@ export function simulate(input: SimInput): SimResult {
       target: intent.target,
       strategy: intent.strategy,
       entryDay: dayKeyFor(time, assetClass),
+      stufe: s.stufe,
     });
     positions.set(s.symbol, s.pos);
     s.entryCost = cost;
@@ -403,6 +443,9 @@ export function simulate(input: SimInput): SimResult {
       barsHeld: p.barsHeld,
       mae: Number.isNaN(s.mae) ? null : s.mae,
       mfe: Number.isNaN(s.mfe) ? null : s.mfe,
+      // Lag am Ausstieg eine nachgezogene Marke? Nur Statistik (Trailing vs.
+      // Katastrophen-Stop) — der Wert wird nirgends gelesen, der nicht Bericht ist.
+      stopTrailed: p.initialStop !== null && p.stop !== null && p.stop !== p.initialStop,
     });
     // Daytrade = Round-Trip am selben Handelstag (so zählt Alpaca, so gilt PDT).
     const exitDay = dayKeyFor(exitTime, assetClass);
@@ -492,7 +535,14 @@ export function simulate(input: SimInput): SimResult {
         if (s.pendingExit) {
           const ex = s.pendingExit;
           s.pendingExit = null;
-          if (s.pos) closeTrade(s, o, t, ex.reason, true);
+          if (s.pos) {
+            // Der Fill-Kurs gehört noch zur Haltezeit: Ein Gap-Open IST oft
+            // der schlechteste Kurs der Position — ohne ihn unterschätzt der
+            // MAE genau die Ausstiege, die weh tun. Hoch/Tief der Bar NACH
+            // dem Open zählen nicht mehr, die Position ist dann schon zu.
+            updateExcursion(s, o, o);
+            closeTrade(s, o, t, ex.reason, true);
+          }
         }
         if (s.pendingEnter) {
           const en = s.pendingEnter;
@@ -538,7 +588,7 @@ export function simulate(input: SimInput): SimResult {
       const i = s.cursor - 1;
       const session = sessionInfoIncremental({ t, day, barsSinceOpen: s.barsSinceOpen, tf, assetClass, bounds });
       const snap: SymbolSnapshot = { symbol: s.symbol, bars: s.series.prefix(i + 1), i, position: s.pos, session, benchmark: benchSnap };
-      inputs.push({ snap, strategy: s.strategy, params: s.params, ind: s.ind, sizing: s.sizing });
+      inputs.push({ snap, strategy: s.strategy, params: s.params, ind: s.ind, sizing: s.sizing, stufe: s.stufe });
     }
     const today = dayKeyFor(now, assetClass);
     const ctx: LogicContext = {
@@ -556,9 +606,22 @@ export function simulate(input: SimInput): SimResult {
       dataFresh: true,
       localDayTrades: dayTradeCount,
       assetFacts: ALL_TRADABLE,
+      // Vola-Ziel (risk/volziel.ts): dieselbe Reihe wie live — abgeschlossene
+      // Tagesrenditen der eigenen Equity-Kurve, jüngste zuletzt. Der Faktor
+      // entsteht in `decide()`, nicht hier; der Simulator rechnet ihn nie selbst.
+      equityReturns: dailyReturns,
+      stufenHalt,
+      wiederaufbau,
     };
     const res = decide(ctx, inputs);
     halt = res.halt;
+    if (res.stufenHalt) stufenHalt = res.stufenHalt;
+    if (res.wiederaufbau) wiederaufbau = res.wiederaufbau;
+    if (res.volZiel) {
+      volFaktorMin = Math.min(volFaktorMin, res.volZiel.faktor);
+      volFaktorMax = Math.max(volFaktorMax, res.volZiel.faktor);
+      volFaktorLetzt = res.volZiel;
+    }
     for (const n of res.notes) {
       if (n.kind === 'blocked') {
         const k = blockKey(n.text);
@@ -608,6 +671,15 @@ export function simulate(input: SimInput): SimResult {
   }
   if (haltNotes > MAX_NOTES) notes.push(`… ${haltNotes - MAX_NOTES} weitere Halt-Notizen unterdrückt`);
   if (halt.halted) notes.push(`Halt am Ende aktiv (${halt.reason}): ${halt.note ?? ''}`);
+  for (const [stufe, h] of Object.entries(stufenHalt)) {
+    if (h.halted) notes.push(`Halt der Stufe ${stufe} am Ende aktiv (${h.reason}): ${h.note ?? ''}`);
+  }
+  if (volFaktorLetzt) {
+    notes.push(
+      `Vola-Ziel: Faktor ${volFaktorMin.toFixed(2)}–${volFaktorMax.toFixed(2)} über den Lauf, zuletzt ${volFaktorLetzt.faktor.toFixed(2)} ` +
+        `(realisiert ${volFaktorLetzt.realisiertVolPct.toFixed(2)} % p. a.)`,
+    );
+  }
 
   let days = 0;
   if (range) days = Math.max(1, Math.ceil((range.end - range.start) / DAY));

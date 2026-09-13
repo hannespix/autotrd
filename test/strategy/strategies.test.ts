@@ -119,7 +119,17 @@ const ramp = (n: number, start: number, step: number): number[] => Array.from({ 
 
 describe('Register', () => {
   it('kennt die Vorlagen mit eindeutigen IDs', () => {
-    expect(strategyIds()).toEqual(['trend_donchian', 'momentum_pullback', 'mean_reversion', 'orb_breakout', 'cross_sectional_momentum', 'regime_allocation']);
+    expect(strategyIds()).toEqual([
+      'trend_donchian',
+      'momentum_pullback',
+      'mean_reversion',
+      'orb_breakout',
+      'cross_sectional_momentum',
+      'regime_allocation',
+      'vigilant_allocation',
+      'index_reversal',
+      'turn_of_month',
+    ]);
     expect(new Set(strategyIds()).size).toBe(STRATEGIES.length);
     expect(getStrategy('mean_reversion').id).toBe('mean_reversion');
   });
@@ -207,6 +217,15 @@ const variants: Variant[] = [
   { id: 'cross_sectional_momentum', over: {}, bars: randomDaily(300, 29), tf: 1440, rank: { pct: 0, rank: 1, of: 10 } },
   { id: 'regime_allocation', over: { lookback: 63, skip: 0, regimeLen: 50 }, bars: randomDaily(300, 30), tf: 1440, rank: { pct: 0, rank: 1, of: 10 } },
   { id: 'regime_allocation', over: { lookback: 84, skip: 21, regimeLen: 100, exitPct: 0.4 }, bars: randomDaily(300, 31), tf: 1440, rank: { pct: 0, rank: 1, of: 10 } },
+  // Die drei Sleeves vom 12.09.2026. vigilant_allocation braucht 255 Bars
+  // Aufwärmphase (Zwölf-Monats-Horizont) — mit 300 Bars bliebe zu wenig
+  // Entscheidungsraum, um überhaupt einen Einstieg zu sehen.
+  { id: 'vigilant_allocation', over: {}, bars: randomDaily(500, 32), tf: 1440, rank: { pct: 0, rank: 1, of: 10 } },
+  { id: 'vigilant_allocation', over: { topN: 4, exitRank: 6, stopPct: 10 }, bars: randomDaily(500, 33), tf: 1440, rank: { pct: 0, rank: 1, of: 10 } },
+  { id: 'index_reversal', over: {}, bars: randomDaily(400, 34), tf: 1440 },
+  { id: 'index_reversal', over: { rsiLen: 4, rsiEntry: 25, rsiExit: 60, exitOnPrevHigh: 0, maxHoldBars: 3, atrMult: 2, trendLen: 100 }, bars: randomDaily(400, 35), tf: 1440 },
+  { id: 'turn_of_month', over: {}, bars: randomDaily(300, 36), tf: 1440 },
+  { id: 'turn_of_month', over: { entryOffset: 0, exitTradingDay: 1, maxHoldBars: 5, atrMult: 6 }, bars: randomDaily(300, 37), tf: 1440 },
 ];
 
 describe('Präfix-Suite deckt jede registrierte Strategie', () => {

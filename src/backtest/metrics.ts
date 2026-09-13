@@ -10,8 +10,15 @@
  *
  * Konvention: `sr` in PSR/DSR ist der Sharpe JE PERIODE (nicht
  * annualisiert); `n` die Anzahl Perioden. Kurtosis ist ROH (Normal = 3).
+ *
+ * Zweite Konvention seit 13.09.2026 (Vorregistrierung
+ * `docs/wissen/vorregistrierung/2026-09-13-sharpe-gegen-zins.md`): Der Sharpe
+ * ist Ertrag über dem RISIKOLOSEN ZINS je Schwankung, nicht Ertrag über null.
+ * Ohne Zinsreihe rechnet alles hier weiter gegen null — aber nur, weil der
+ * Aufrufer keine übergibt, und er muss das laut sagen.
  */
-import type { EquityPoint, Metrics, Trade } from '../core/types.ts';
+import { dayKeyFor } from '../core/time.ts';
+import type { AssetClass, BarSeriesLike, EquityPoint, Metrics, Ms, Trade } from '../core/types.ts';
 
 /* ───────────────────────── Momente ───────────────────────── */
 
@@ -127,14 +134,146 @@ export function normalInv(p: number): number {
   return x;
 }
 
+/* ───────────────────────── Risikoloser Zins ───────────────────────── */
+
+/**
+ * Der kurze Zins kommt aus den Daten, die ohnehin im Cache liegen: Die
+ * Tagesrendite eines Geldmarkt-ETF (BIL: 1–3 Monate T-Bills) IST der
+ * risikolose Satz dieses Tages — bei `broker.adjustment: all` samt
+ * Ausschüttungen. Keine externe Zinsreihe, keine neue Abhängigkeit.
+ *
+ * Warum das gebraucht wird (Befund B2, 12.09.2026): Gegen einen risikolosen
+ * Zins von null gemessen hat reines Halten von Bargeld einen hohen Ertrag je
+ * Schwankung — Bargeld wird als Kante verbucht. Mit einem Geldmarktpapier im
+ * Korb ist das kein akademisches Problem mehr.
+ */
+export interface RiskFreeSeries {
+  /** Symbol des Geldmarktpapiers — steht wörtlich in der Notiz des Gates. */
+  symbol: string;
+  /** Tagesschlüssel → risikolose Rendite DIESES Tages (Schluss/Vortagsschluss − 1). */
+  perDay: ReadonlyMap<string, number>;
+}
+
+/** Höchstanteil Tage ohne Satz, bis zu dem eine Ausrichtung noch gilt (darüber: kein Zins, laut gesagt). */
+export const RISK_FREE_MAX_GAP = 0.02;
+
+/**
+ * Zinsreihe aus den Bars des Geldmarkt-Symbols: je Handelstag der letzte
+ * Schluss, daraus Schluss-zu-Schluss-Renditen.
+ *
+ * Bewusst über die GANZE Reihe, nicht über ein Fenster: Der erste Tag eines
+ * Fensters braucht den Schluss des Vortags, der außerhalb liegt. Wer erst
+ * schneidet und dann Renditen bildet, verliert je Fenster einen Tag — und
+ * genau daraus entsteht der Versatz um einen Tag, der schlimmer wäre als der
+ * behobene Fehler. null, wenn weniger als zwei Handelstage vorliegen.
+ */
+export function riskFreeFromBars(args: { symbol: string; bars: BarSeriesLike; assetClass: AssetClass }): RiskFreeSeries | null {
+  const schluss = new Map<string, number>();
+  for (let i = 0; i < args.bars.length; i++) {
+    const c = args.bars.c[i]!;
+    if (!(c > 0)) continue;
+    schluss.set(dayKeyFor(args.bars.t[i]!, args.assetClass), c);
+  }
+  const tage = [...schluss.keys()].sort();
+  if (tage.length < 2) return null;
+  const perDay = new Map<string, number>();
+  for (let d = 1; d < tage.length; d++) {
+    const vor = schluss.get(tage[d - 1]!)!;
+    perDay.set(tage[d]!, schluss.get(tage[d]!)! / vor - 1);
+  }
+  return { symbol: args.symbol, perDay };
+}
+
+export interface RiskFreeAlignment {
+  /** Sätze in der Reihenfolge der Tagesachse — GLEICHE LÄNGE wie sie. */
+  rates: number[];
+  /** Tage mit echtem Satz. */
+  covered: number;
+  /** Tage ohne Satz (als 0 gerechnet, immer in der Notiz genannt). */
+  missing: number;
+  /** Wörtlich für die Notiz eines Gates: „BIL über dieselben Tage (987 von 987 belegt)". */
+  quelle: string;
+}
+
+/**
+ * Sätze auf die Tagesachse der zu bewertenden Renditen legen — gleiche Tage,
+ * gleiche Länge. Fehlende Tage zählen als 0 und stehen in der Quelle; ab
+ * `RISK_FREE_MAX_GAP` Lücken gibt es null, und der Aufrufer rechnet gegen
+ * null WEITER, sagt es aber laut.
+ */
+export function alignRiskFree(dayKeys: readonly string[], rf: RiskFreeSeries): RiskFreeAlignment | null {
+  const n = dayKeys.length;
+  if (n === 0) return null;
+  const rates: number[] = new Array(n);
+  let covered = 0;
+  for (let i = 0; i < n; i++) {
+    const r = rf.perDay.get(dayKeys[i]!);
+    if (r === undefined) {
+      rates[i] = 0;
+    } else {
+      rates[i] = r;
+      covered++;
+    }
+  }
+  const missing = n - covered;
+  if (missing / n > RISK_FREE_MAX_GAP) return null;
+  const quelle =
+    missing === 0
+      ? `${rf.symbol} über dieselben Tage (${covered} von ${n} belegt)`
+      : `${rf.symbol} über dieselben Tage (${covered} von ${n} belegt, ${missing} Tage ohne Satz als 0 gerechnet)`;
+  return { rates, covered, missing, quelle };
+}
+
+/**
+ * Tagesachse einer Equity-Kurve: je Handelstag EIN Schlüssel, in
+ * Reihenfolge. Gegenstück zu `SimResult.dailyReturns`, das je Handelstag mit
+ * Punkten genau eine Rendite hat — nur so ist eine Zinsreihe taggenau
+ * ausrichtbar. Länge prüfen bleibt Pflicht des Aufrufers.
+ */
+export function tagesachse(equity: readonly { t: Ms }[], assetClass: AssetClass): string[] {
+  const out: string[] = [];
+  let letzter = '';
+  for (const p of equity) {
+    const k = dayKeyFor(p.t, assetClass);
+    if (k !== letzter) {
+      out.push(k);
+      letzter = k;
+    }
+  }
+  return out;
+}
+
+/**
+ * Überschussrenditen r − r_f DERSELBEN Periode.
+ *
+ * Wirft bei Längenversatz, statt still um einen Tag zu verrutschen: Ein
+ * verrutschter Zins wäre ein neuer, subtilerer Messfehler als der, den die
+ * Zinsrechnung behebt — und er sähe in jeder Kennzahl plausibel aus.
+ */
+export function excessReturns(returns: readonly number[], riskFree: readonly number[]): number[] {
+  if (returns.length !== riskFree.length) {
+    throw new Error(`Zinsreihe nicht ausgerichtet: ${returns.length} Renditen, ${riskFree.length} Sätze`);
+  }
+  const out: number[] = new Array(returns.length);
+  for (let i = 0; i < returns.length; i++) out[i] = returns[i]! - riskFree[i]!;
+  return out;
+}
+
 /* ───────────────────────── Kennzahlen ───────────────────────── */
 
-/** Annualisierter Sharpe (Mittel/σ·√Perioden); null bei < 2 Werten oder σ = 0. */
-export function sharpeRatio(returns: readonly number[], periodsPerYear: number): number | null {
-  if (returns.length < 2) return null;
-  const sd = sampleStd(returns);
+/**
+ * Annualisierter Sharpe (Mittel/σ·√Perioden); null bei < 2 Werten oder σ = 0.
+ *
+ * Mit `riskFree` (Sätze je Periode, taggenau ausgerichtet) rechnet er auf
+ * ÜBERSCHUSSrenditen — Lehrbuch-Sharpe. Ohne bleibt es der Ertrag über null;
+ * wer das tut, sagt es in seiner Notiz.
+ */
+export function sharpeRatio(returns: readonly number[], periodsPerYear: number, riskFree?: readonly number[] | undefined): number | null {
+  const r = riskFree === undefined ? returns : excessReturns(returns, riskFree);
+  if (r.length < 2) return null;
+  const sd = sampleStd(r);
   if (!(sd > 0)) return null;
-  return (mean(returns) / sd) * Math.sqrt(periodsPerYear);
+  return (mean(r) / sd) * Math.sqrt(periodsPerYear);
 }
 
 /** Annualisierter Sortino: Mittel / Downside-Deviation gegen 0 (√(Σ min(r,0)²/n)); null bei < 2 Werten oder ohne Verluste. */
@@ -173,6 +312,43 @@ export function probabilisticSharpe(args: { sr: number; n: number; skew: number;
   // Mathematisch kann der Ausdruck bei extremer Schiefe ≤ 0 werden — dann ist die Aussage „unendlich sicher".
   const denom = Math.sqrt(Math.max(1e-12, variance));
   return normalCdf(((args.sr - sr0) * Math.sqrt(dof)) / denom);
+}
+
+/** Ergebnis von `probabilisticSharpeOfReturns` — die Zahl und alles, woraus sie entstand. */
+export interface PsrOfReturns {
+  psr: number;
+  /** Sharpe JE PERIODE der bewerteten Reihe (mit `riskFree`: der Überschussreihe). */
+  sr: number;
+  skew: number;
+  kurt: number;
+  n: number;
+  /** true, wenn gegen den Zins gerechnet wurde. */
+  ueberschuss: boolean;
+}
+
+/**
+ * PSR direkt aus einer Renditereihe — und mit `riskFree` aus den
+ * ÜBERSCHUSSrenditen r − r_f derselben Tage.
+ *
+ * Der Unterschied ist die ganze Aussage: `sr0 = 0` auf ROHEN Renditen heißt
+ * „der wahre Sharpe über NULL ist positiv" (ein Geldmarktpapier besteht das
+ * mühelos); dieselbe Schwelle auf ÜBERSCHUSSrenditen heißt „der wahre Sharpe
+ * ÜBER DEM ZINS ist positiv" — das ist die Frage, die ein Gate stellen soll.
+ * Schiefe und Kurtosis stammen aus derselben Reihe wie der Sharpe, nie aus
+ * einer anderen. null bei < 2 Werten oder σ = 0; wirft bei Längenversatz.
+ */
+export function probabilisticSharpeOfReturns(args: {
+  returns: readonly number[];
+  riskFree?: readonly number[] | undefined;
+  sr0?: number | undefined;
+}): PsrOfReturns | null {
+  const r = args.riskFree === undefined ? [...args.returns] : excessReturns(args.returns, args.riskFree);
+  const sr = sharpeRatio(r, 1);
+  if (sr === null || !Number.isFinite(sr)) return null;
+  const skew = skewness(r);
+  const kurt = kurtosis(r);
+  const psr = probabilisticSharpe({ sr, n: r.length, skew, kurt, sr0: args.sr0 });
+  return { psr, sr, skew, kurt, n: r.length, ueberschuss: args.riskFree !== undefined };
 }
 
 export const EULER_MASCHERONI = 0.5772156649015329;

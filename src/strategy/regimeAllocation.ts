@@ -132,8 +132,12 @@ function realisierteVol(close: BarSeriesLike['c']): Float64Array {
  * 1 an den ersten REBAL_TAGE Bars eines Kalendermonats (ET), sonst 0. Kausal:
  * sieht nur t[i] und t[i−1]. Vor dem ersten beobachteten Monatswechsel
  * rebalanciert nichts — dort gibt es keine Geschichte für ein Urteil.
+ *
+ * Exportiert, weil `vigilant_allocation` denselben Monatsrhythmus hat: ZWEI
+ * Implementierungen desselben Fensters wären zwei Stellen, an denen eine
+ * Monatskante schiefgehen kann, und nur eine davon hätte einen Wächter.
  */
-function rebalanceFenster(t: BarSeriesLike['t']): Float64Array {
+export function rebalanceFenster(t: BarSeriesLike['t']): Float64Array {
   const out = new Float64Array(t.length);
   let seit = Number.POSITIVE_INFINITY;
   for (let i = 1; i < t.length; i++) {

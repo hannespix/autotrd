@@ -1,0 +1,165 @@
+name: Rauchtest Orderpfad (Papiergeld, von Hand)
+
+# Prüft die Kette, die im Betrieb noch nie gelaufen ist: Bracket-Order,
+# Schutz-Stop beim Broker, Fill-Erkennung, positionsstabile Kennungen,
+# Idempotenz, Abgleich, Storno vor eigenem Exit, 422-Behandlung, Aufräumen.
+# Seit dem Umbau hat die Engine null Trades ausgeführt — der erste echte
+# Trade wäre sonst der erste Test dieser Kette.
+#
+# ── Was hier NIE passieren darf ───────────────────────────────────────────
+#
+# 1. Echtgeld. Der Workflow setzt `ALPACA_ALLOW_LIVE=0`, lehnt einen
+#    Live-Key (AK…) ab und läuft nur gegen eine Paper-Config. Das Kommando
+#    selbst prüft es ein zweites Mal (`resolveMode`, `broker.mode`,
+#    Key-Präfix) und der Broker-Client ein drittes Mal.
+# 2. Automatik. Es gibt hier KEIN `schedule` und keinen `workflow_call`.
+#    Ein Rauchtest läuft, weil ein Mensch ihn startet — sonst nie.
+# 3. Veröffentlichen. Kein Service-Account, kein Firestore, kein Champion.
+#    Der Lauf schreibt ausschließlich nach `var-rauchtest/` und lädt das
+#    Protokoll als Artefakt hoch.
+#
+# Das Ergebnis ist KEIN Beleg für eine Kante und zählt nicht zur Live-Reife:
+# Die Trades stehen im Journal als `note` mit `rauchtestKind: "trade_closed"`
+# und werden von `src/readiness.ts` nie gezählt.
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: 'Symbol (sehr liquide, us_equity)'
+        required: true
+        default: 'SPY'
+        type: choice
+        options:
+          - SPY
+          - QQQ
+          - IWM
+          - DIA
+      qty:
+        description: 'Stückzahl (1–5, klein halten)'
+        required: true
+        default: '1'
+      timeout:
+        description: 'Zeitlimit je Warteschritt in Sekunden'
+        required: false
+        default: '60'
+
+concurrency:
+  group: rauchtest
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  rauchtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+      ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+      # Nie in den Shell-Text interpolieren (Secreview 2, G5) — und jede
+      # Eingabe wird unten geprüft, bevor sie an ein Kommando geht.
+      SYMBOL: ${{ github.event.inputs.symbol }}
+      QTY: ${{ github.event.inputs.qty }}
+      TIMEOUT: ${{ github.event.inputs.timeout }}
+      # Die einzige Config, die dieser Workflow anfassen darf: die
+      # Beispiel-Config steht auf `broker.mode: paper` und handelt nichts,
+      # was Nutzer betrifft. config/platform.yaml hat hier nichts zu suchen.
+      CONFIG: config/config.example.yaml
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Abhängigkeiten installieren
+        run: npm ci
+
+      - name: Keys prüfen (und niemals ausgeben)
+        run: |
+          if [ -z "$ALPACA_API_KEY" ] || [ -z "$ALPACA_SECRET_KEY" ]; then
+            echo "::error::ALPACA_API_KEY / ALPACA_SECRET_KEY fehlen als Repository-Secrets."
+            exit 1
+          fi
+          # Erste Echtgeld-Sperre: Ein Live-Key kommt hier nicht durch.
+          case "$ALPACA_API_KEY" in
+            AK*) echo "::error::Der hinterlegte Key ist ein Live-Key (AK…). Der Rauchtest läuft ausschließlich mit einem Paper-Key (PK…)."; exit 1 ;;
+            PK*) echo "Paper-Key erkannt." ;;
+            *)   echo "::error::Unbekanntes Key-Präfix — erwartet wird ein Paper-Key (PK…)."; exit 1 ;;
+          esac
+          printf 'ALPACA_API_KEY=%s\nALPACA_SECRET_KEY=%s\nALPACA_ALLOW_LIVE=0\n' "$ALPACA_API_KEY" "$ALPACA_SECRET_KEY" > "$RUNNER_TEMP/.env"
+          chmod 600 "$RUNNER_TEMP/.env"
+
+      - name: Eingaben und Config prüfen
+        run: |
+          case "$CONFIG" in
+            config/config.example.yaml) ;;
+            *) echo "::error::$CONFIG ist nicht die Paper-Beispiel-Config — dieser Workflow läuft nur gegen sie."; exit 1 ;;
+          esac
+          if ! grep -Eq '^[[:space:]]*mode:[[:space:]]*paper([[:space:]]|$)' "$CONFIG"; then
+            echo "::error::$CONFIG steht nicht auf broker.mode paper."
+            exit 1
+          fi
+          case "$QTY" in
+            ''|*[!0-9]*) echo "::error::qty muss eine ganze Zahl sein: '$QTY'"; exit 1 ;;
+          esac
+          if [ "$QTY" -lt 1 ] || [ "$QTY" -gt 5 ]; then
+            echo "::error::qty muss zwischen 1 und 5 liegen (ein Rauchtest bleibt winzig): '$QTY'"; exit 1
+          fi
+          case "$TIMEOUT" in
+            ''|*[!0-9]*) echo "::error::timeout muss eine ganze Zahl (Sekunden) sein: '$TIMEOUT'"; exit 1 ;;
+          esac
+          case "$SYMBOL" in
+            SPY|QQQ|IWM|DIA) ;;
+            *) echo "::error::Symbol nicht erlaubt: '$SYMBOL'"; exit 1 ;;
+          esac
+          echo "Rauchtest: $SYMBOL × $QTY, Zeitlimit ${TIMEOUT}s, Config $CONFIG"
+
+      - name: Rauchtest ausführen
+        id: lauf
+        run: |
+          set -o pipefail
+          mkdir -p var-rauchtest
+          node src/cli.ts rauchtest \
+            --config "$CONFIG" \
+            --env "$RUNNER_TEMP/.env" \
+            --home var-rauchtest \
+            --symbol "$SYMBOL" \
+            --qty "$QTY" \
+            --timeout "$TIMEOUT" 2>&1 | tee var-rauchtest/konsole.txt
+
+      - name: Protokoll als Artefakt
+        # `always()`: Gerade der gescheiterte Lauf ist der, dessen Protokoll
+        # man lesen muss — und der, nach dem jemand im Alpaca-Dashboard
+        # nachsehen sollte, ob wirklich nichts offen geblieben ist.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rauchtest-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            var-rauchtest/konsole.txt
+            var-rauchtest/rauchtest/rauchtest-*.md
+            var-rauchtest/rauchtest/journal.jsonl
+          retention-days: 90
+
+      - name: Ergebnis in der Zusammenfassung
+        if: always()
+        run: |
+          {
+            echo "## Rauchtest Orderpfad — $SYMBOL × $QTY (Papiergeld)"
+            echo
+            if [ "${{ steps.lauf.outcome }}" != "success" ]; then
+              echo "> Ein roter Lauf heisst **nicht** zwingend Fehler im Orderpfad: Auch"
+              echo "> Markt geschlossen oder Konto nicht erreichbar brechen mit Code 1 ab,"
+              echo "> bevor irgendeine Order entsteht. Das Protokoll sagt, welcher Fall es war."
+              echo
+            fi
+            PROTOKOLL="$(ls -1t var-rauchtest/rauchtest/rauchtest-*.md 2>/dev/null | head -n 1 || true)"
+            if [ -n "$PROTOKOLL" ]; then
+              cat "$PROTOKOLL"
+            else
+              echo '_Kein Protokoll — der Lauf ist vor dem Rauchtest abgebrochen (siehe Konsole im Artefakt)._'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

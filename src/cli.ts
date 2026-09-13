@@ -13,6 +13,7 @@
  *   halt       HALT-Datei setzen (keine Einstiege, Exits laufen weiter)
  *   resume     HALT-Datei entfernen; Drawdown-Halt nur mit --ack-drawdown
  *   readiness  Live-Reife aus dem Journal
+ *   rauchtest  Orderpfad im Papiergeld prüfen: EINE winzige Order durch die ganze Kette
  *   profile    Symbolprofil (Klasse, Trend, Rang, Vol, Stop, Taktik, Haltedauer) ⇒ profile.json — Anzeige, kein Handel
  *
  * Rückgabecodes: 0 = in Ordnung, 1 = Abbruch/Vorbedingung verletzt,
@@ -26,14 +27,15 @@ import { parseArgs } from 'node:util';
 import { createDataStream, createTradeStream } from './alpaca/stream.ts';
 import { allSymbols, baseTimeframe, benchmarkSeries, bootstrap, engineConfig, fetchSymbols, heldSymbols, requireClient, seriesForTimeframe, strategyChoice, strategyForFn, streamLimitViolation, type App } from './app.ts';
 import { simulate } from './backtest/simulator.ts';
-import { ConfigError } from './core/config.ts';
-import { ensureDir, writeJsonAtomic } from './core/journal.ts';
-import { errMsg, logger } from './core/log.ts';
+import { ConfigError, resolveMode } from './core/config.ts';
+import { ensureDir, Journal, writeJsonAtomic } from './core/journal.ts';
+import { errMsg, logger, redact } from './core/log.ts';
 import { DAY, addDays, dayKey, dayKeyFor, msFromET, parseDay, toET } from './core/time.ts';
 import type { Bar, Metrics, Ms, Params, Trade } from './core/types.ts';
 import { backfill } from './data/backfill.ts';
 import { ensureCalendar } from './data/calendar.ts';
 import { Engine } from './engine/engine.ts';
+import { rauchtest, zusammenfassung } from './engine/rauchtest.ts';
 import { createNotifier } from './notify/index.ts';
 import { loadDefaultDeps, nichtsGemessen, runOptimization } from './optimize/run.ts';
 import { assessReadiness } from './readiness.ts';
@@ -47,7 +49,7 @@ import { universeRegelnFuer, waehleUniverse } from './universe/select.ts';
 
 const USAGE = `autotrd <kommando> [optionen]
 
-Kommandos: doctor | universe | fetch | backtest | optimize | run | status | flatten | halt | resume | readiness | profile
+Kommandos: doctor | universe | fetch | backtest | optimize | run | status | flatten | halt | resume | readiness | rauchtest | profile
 
 Gemeinsame Optionen:
   --config <pfad>    Config-Datei (Default: config/config.yaml)
@@ -70,6 +72,8 @@ fetch:     --days <n>
 halt:      --reason <text>
 flatten:   --yes
 resume:    --ack-drawdown            (Drawdown-Halt bewusst aufheben; Peak = aktuelle Equity)
+rauchtest: --symbol <sym> --qty <n> --timeout <sek>   NUR Papiergeld: eine winzige Bracket-Order
+           durch Einstieg, Idempotenz, Fill, Beine, Abgleich, Ausstieg und Aufraeumen.
 profile:   Symbolprofil aus geschlossenen Tagesbars ⇒ <home>/profile.json (optimize schreibt es am Ende mit)
 `;
 
@@ -104,6 +108,9 @@ function parseCli(argv: string[]): Cli {
       out: { type: 'string' },
       'allow-short': { type: 'boolean' },
       'as-of': { type: 'string' },
+      symbol: { type: 'string' },
+      qty: { type: 'string' },
+      timeout: { type: 'string' },
     },
   });
   return { cmd: positionals[0] ?? 'help', values: values as Record<string, string | boolean | undefined> };
@@ -814,6 +821,63 @@ function cmdReadiness(app: App, cli: Cli): number {
   return r.ready ? 0 : 1;
 }
 
+/* ───────────────────────── Rauchtest ───────────────────────── */
+
+/**
+ * Rauchtest des Orderpfads (`src/engine/rauchtest.ts`, docs/BETRIEB.md §10).
+ *
+ * Hier steht die erste von drei Echtgeld-Sperren, und sie ist absichtlich
+ * strenger als der Doppel-Guard: Der Rauchtest startet nur, wenn NICHTS auf
+ * Echtgeld deutet — `resolveMode` ergibt frisch ausgewertet `paper`,
+ * `broker.mode` ist `paper`, `ALPACA_ALLOW_LIVE` ist nicht 1 und der Key ist
+ * kein Live-Key (AK…). Ein Konto, das nur noch eine Umgebungsvariable von
+ * Echtgeld entfernt ist, ist kein Ort für einen Test. Die zweite Sperre
+ * steht in `rauchtest()`, die dritte in `RauchtestClient.submitOrder`.
+ *
+ * Eigener Ordner `<home>/rauchtest/`: eigenes Journal, eigenes Protokoll.
+ * State, Champion und Journal der Produktion bleiben unberührt — und die
+ * Trades dieses Laufs stehen dort als `note`, nie als `trade_closed`, damit
+ * `readiness` sie auch nach einem Zusammenkopieren nicht zählen kann.
+ */
+async function cmdRauchtest(app: App, cli: Cli): Promise<number> {
+  const symbol = (str(cli.values.symbol) ?? 'SPY').toUpperCase();
+  const qty = num(cli.values.qty, 1);
+  const timeoutMs = Math.max(1_000, num(cli.values.timeout, 60) * 1_000);
+  const frisch = resolveMode(app.config, app.env);
+  const sperren: string[] = [];
+  if (app.mode !== 'paper') sperren.push(`aufgelöster Modus ist ${app.mode}`);
+  if (frisch.mode !== 'paper') sperren.push(`resolveMode ergibt ${frisch.mode}`);
+  if (app.config.broker.mode !== 'paper') sperren.push(`broker.mode ist ${app.config.broker.mode}`);
+  if (app.env.ALPACA_ALLOW_LIVE === '1') sperren.push('ALPACA_ALLOW_LIVE ist 1');
+  if (app.env.ALPACA_API_KEY.startsWith('AK')) sperren.push('der Key ist ein Live-Key (AK…)');
+  if (sperren.length > 0) {
+    out('Rauchtest NICHT gestartet — er läuft ausschließlich im Papiergeld.');
+    for (const s of sperren) out(`  ✘ ${s}`);
+    out('Es wurde keine Order gesendet.');
+    return 1;
+  }
+  const client = requireClient(app);
+  const home = join(app.home, 'rauchtest');
+  ensureDir(home);
+  const journal = new Journal(join(home, 'journal.jsonl'));
+  out(`autotrd rauchtest · PAPER · ${symbol} × ${qty} · Home ${home}`);
+  const erg = await rauchtest({ client, config: app.config, mode: app.mode, symbol, qty, journal, calendar: app.calendar, timeoutMs });
+  const pfad = join(home, `rauchtest-${new Date().toISOString().replace(/[:.]/g, '-')}.md`);
+  // §0.8: Alles, was das Protokoll verlässt — Datei, Konsole, JSON — geht durch
+  // `redact()`. Das Journal schwärzt selbst; Protokoll und JSON tun es hier.
+  writeFileSync(pfad, redact(erg.protokoll) + '\n');
+  if (cli.values.json === true) {
+    out(redact(JSON.stringify(erg, null, 2)));
+    return erg.ok ? 0 : 1;
+  }
+  out();
+  out(redact(erg.protokoll));
+  out();
+  out(`Protokoll: ${pfad}`);
+  out(zusammenfassung(erg));
+  return erg.ok ? 0 : 1;
+}
+
 /* ───────────────────────── Symbolprofil ───────────────────────── */
 
 /** Der Lauf, der das Profil schreibt: GitHub-Actions-Umgebung, lokal null. */
@@ -917,6 +981,8 @@ export async function main(argv: string[]): Promise<number> {
       return cmdResume(app, cli);
     case 'readiness':
       return cmdReadiness(app, cli);
+    case 'rauchtest':
+      return cmdRauchtest(app, cli);
     case 'profile':
       return cmdProfile(app, cli);
     default:

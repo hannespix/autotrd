@@ -10,7 +10,15 @@
  * - DSR auf IN-SAMPLE (finales Suchfenster): deflationiert die SELEKTIERTE
  *   Zahl um die Zahl der Trials und ihre Streuung (Bailey/López de Prado).
  *   DSR auf OOS wäre doppelt konservativ und nicht lehrbuchgemäß.
+ *
+ * `sr0 = 0` heißt seit dem 13.09.2026 „null ÜBERSCHUSS über dem risikolosen
+ * Zins", sobald eine Zinsreihe übergeben wird (`GateRiskFree`,
+ * Vorregistrierung `docs/wissen/vorregistrierung/2026-09-13-sharpe-gegen-zins.md`).
+ * Ohne Zinsreihe bleibt es „null" — und jede betroffene Notiz sagt, welches
+ * von beiden gerechnet wurde. Ein stiller Rückfall wäre der Fehler, den die
+ * Zinsrechnung behebt, noch einmal.
  */
+import { excessReturns } from '../backtest/metrics.ts';
 import type { BasisConfig, OptimizerConfig } from '../core/config.ts';
 import { median, objectiveValue, sampleVariance, type ObjectiveId } from './objective.ts';
 import { neighbors, wirksamerSuchraum } from './search.ts';
@@ -18,7 +26,15 @@ import { candidateRange, korbVon, simulateWindow, zeitachseVon, type BasisKennza
 
 /* ───────────────────────── Injektionspunkt Statistik ───────────────────────── */
 
-/** Spiegel der vereinbarten Funktionen aus src/backtest/metrics.ts. */
+/**
+ * Spiegel der vereinbarten Funktionen aus src/backtest/metrics.ts.
+ *
+ * Bewusst OHNE den `riskFree`-Parameter von `sharpeRatio`: Die Überschuss-
+ * reihe wird hier gebildet (`excessReturns`) und fertig hineingereicht. Eine
+ * injizierte Implementierung, die einen dritten Parameter ignoriert, würde
+ * sonst still gegen null rechnen, während die Notiz „Überschuss" behauptet —
+ * genau die Sorte stiller Rückfall, gegen die diese Änderung gebaut ist.
+ */
 export interface MetricsFns {
   sharpeRatio: (returns: readonly number[], periodsPerYear: number) => number | null;
   skewness: (x: readonly number[]) => number;
@@ -35,6 +51,32 @@ export interface GateResult {
   threshold: number | null;
   note: string;
 }
+
+/* ───────────────────────── Risikoloser Zins für die Gates ───────────────────────── */
+
+/**
+ * Der risikolose Satz, AUSGERICHTET auf die jeweilige Renditereihe — nicht
+ * die Reihe selbst, sondern ihr Spiegelbild Tag für Tag. Gebaut wird sie in
+ * `src/backtest/metrics.ts` (`riskFreeFromBars` + `alignRiskFree` auf der
+ * `tagesachse` der Equity-Kurve); hier kommt sie fertig an, damit dieses
+ * Modul keine Bars kennen muss.
+ *
+ * Die Längen werden geprüft, nicht geglaubt: Passt eine nicht, rechnen BEIDE
+ * Seiten ohne Zins, und die Notiz sagt warum. Eine Rechnung, in der die
+ * Strategie den Zins abgezogen bekommt und der Markt nicht (oder umgekehrt),
+ * wäre schlimmer als die alte Rechnung gegen null.
+ */
+export interface GateRiskFree {
+  /** Sätze je Periode, ausgerichtet auf `wfa.oos.dailyReturns` — gleiche Tage, gleiche Länge. */
+  strategie: readonly number[];
+  /** Sätze je Periode, ausgerichtet auf `markt.dailyReturns`. Fehlt sie, während es eine Markt-Latte gibt, rechnen beide Seiten ohne Zins. */
+  markt?: readonly number[] | undefined;
+  /** Woher der Satz kommt, wörtlich für die Notiz: „BIL über dieselben Tage (987 von 987 belegt)". */
+  quelle: string;
+}
+
+/** Ohne konfigurierten Geldmarkt: der Satz, der in jeder betroffenen Notiz steht. */
+export const OHNE_ZINS_NOTE = 'kein Geldmarkt-Symbol konfiguriert — gegen null gerechnet';
 
 /* ───────────────────────── Schwellen (fest, nicht konfigurierbar) ───────────────────────── */
 
@@ -233,30 +275,55 @@ export function deflatedSharpeIs(a: { wfa: WfaResult; metricsFns: MetricsFns; va
 
 export interface PsrResult {
   psr: number | null;
-  /** Per-Perioden-Sharpe der verketteten OOS-Tagesrenditen. */
+  /** Per-Perioden-Sharpe der verketteten OOS-Tagesrenditen (mit Zins: der ÜBERSCHUSSreihe). */
   sr: number | null;
   /** Anzahl OOS-Tagesrenditen. */
   n: number;
   skew: number | null;
   kurt: number | null;
   note: string;
+  /**
+   * true, wenn gegen den risikolosen Zins gerechnet wurde. Optional, damit
+   * Aufrufer ohne Zinsreihe unverändert gültig bleiben — `robustnessGates`
+   * liest es und VERWIRFT den Zins auch für `beats_market`, wenn der PSR ohne
+   * ihn gerechnet wurde. Zwei Gates desselben Berichts mit verschiedenen
+   * Maßstäben wären schlimmer als beide ohne.
+   */
+  ueberschuss?: boolean | undefined;
 }
 
-/** PSR der OOS-Kette mit sr0 = 0: Wahrscheinlichkeit, dass der wahre OOS-Sharpe positiv ist. */
-export function probabilisticSharpeOos(a: { wfa: WfaResult; metricsFns: MetricsFns }): PsrResult {
+/**
+ * PSR der OOS-Kette mit sr0 = 0: Wahrscheinlichkeit, dass der wahre OOS-Sharpe
+ * positiv ist — mit `riskFree`, dass er ÜBER DEM ZINS positiv ist. Sharpe,
+ * Schiefe und Kurtosis stammen dann alle drei aus der Überschussreihe, nie
+ * gemischt.
+ */
+export function probabilisticSharpeOos(a: { wfa: WfaResult; metricsFns: MetricsFns; riskFree?: GateRiskFree | undefined }): PsrResult {
   const { wfa, metricsFns } = a;
-  const returns = wfa.oos.dailyReturns;
-  const n = returns.length;
-  const base = { psr: null, sr: null, n, skew: null, kurt: null };
-  if (n < DSR_MIN_RETURNS) return { ...base, note: `zu wenige OOS-Tagesrenditen (${n} < ${DSR_MIN_RETURNS})` };
+  const roh = wfa.oos.dailyReturns;
+  const n = roh.length;
+  // Die Länge entscheidet, nicht die Absicht: Eine Zinsreihe, die nicht auf
+  // dieselben Tage passt, wird verworfen — und das steht in der Notiz.
+  const mitZins = a.riskFree !== undefined && a.riskFree.strategie.length === n;
+  const zins =
+    a.riskFree === undefined
+      ? `Zins: ${OHNE_ZINS_NOTE}`
+      : mitZins
+        ? `Zins: ${a.riskFree.quelle}`
+        : `Zins: Reihe nicht auf die OOS-Kette ausgerichtet (${n} Renditen, ${a.riskFree.strategie.length} Sätze) — gegen null gerechnet`;
+  const returns = mitZins ? excessReturns(roh, a.riskFree!.strategie) : roh;
+  const base = { psr: null, sr: null, n, skew: null, kurt: null, ueberschuss: mitZins };
+  if (n < DSR_MIN_RETURNS) return { ...base, note: `zu wenige OOS-Tagesrenditen (${n} < ${DSR_MIN_RETURNS}); ${zins}` };
   const sr = metricsFns.sharpeRatio(returns, 1);
-  if (sr === null || !Number.isFinite(sr)) return { ...base, note: 'Sharpe der OOS-Renditen nicht berechenbar (Varianz 0?)' };
+  if (sr === null || !Number.isFinite(sr)) return { ...base, note: `Sharpe der OOS-Renditen nicht berechenbar (Varianz 0?); ${zins}` };
   const skew = metricsFns.skewness(returns);
   const kurt = metricsFns.kurtosis(returns);
   const raw = metricsFns.probabilisticSharpe({ sr, n, skew, kurt });
   const psr = Number.isFinite(raw) ? raw : null;
-  const detail = `OOS-SR/Periode ${sr.toFixed(3)}, n=${n}, Schiefe ${skew.toFixed(2)}, Kurtosis ${kurt.toFixed(2)}, sr0=0`;
-  return { psr, sr, n, skew, kurt, note: psr === null ? `PSR nicht berechenbar — ${detail}` : `PSR ${psr.toFixed(3)}; ${detail}` };
+  const detail =
+    `OOS-SR/Periode ${sr.toFixed(3)}${mitZins ? ' (Überschuss)' : ''}, n=${n}, Schiefe ${skew.toFixed(2)}, Kurtosis ${kurt.toFixed(2)}, ` +
+    `sr0=0${mitZins ? ' über dem Zins' : ''}; ${zins}`;
+  return { psr, sr, n, skew, kurt, ueberschuss: mitZins, note: psr === null ? `PSR nicht berechenbar — ${detail}` : `PSR ${psr.toFixed(3)}; ${detail}` };
 }
 
 /* ───────────────────────── Die Gates ───────────────────────── */
@@ -291,8 +358,71 @@ export interface GateInput {
    * liegenlassen (`marktKette`). Fehlt er, gilt 0 als Latte — das Gate darf
    * nie vakant werden, sonst schafft man es ab, indem man die Benchmark aus
    * der Config nimmt.
+   *
+   * `dailyReturns` sind die VERKETTETEN Tagesrenditen desselben Maßstabs. Sie
+   * werden nur für die Zinsrechnung gebraucht: Ein Sharpe lässt sich nicht
+   * nachträglich auf Überschuss umrechnen, die Reihe schon. Ohne sie rechnet
+   * `beats_market` beide Seiten ohne Zins.
    */
-  markt?: { sharpe: number | null; quelle: string } | undefined;
+  markt?: { sharpe: number | null; quelle: string; dailyReturns?: readonly number[] | undefined } | undefined;
+  /**
+   * Risikoloser Satz für `probabilistic_sharpe_oos` und `beats_market`.
+   * Fehlt er, rechnen beide Gates wie bisher gegen null — und sagen es.
+   */
+  riskFree?: GateRiskFree | undefined;
+}
+
+/** Entscheidung über den Zins: entweder BEIDE Seiten mit, oder BEIDE ohne — nie gemischt. */
+interface ZinsEntscheidung {
+  /** Sätze für die OOS-Kette; null = ohne Zins rechnen. */
+  strategie: readonly number[] | null;
+  /** Sätze für die Marktkette; null = die Latte braucht keinen (oder es gibt keinen). */
+  markt: readonly number[] | null;
+  /** Wörtlich für die Notizen der betroffenen Gates. */
+  note: string;
+}
+
+/**
+ * Der Zins gilt nur, wenn er auf ALLEN benötigten Seiten taggenau passt.
+ * Jede Ablehnung nennt ihren Grund — ein stiller Rückfall auf null wäre
+ * genau der Fehler, den die Zinsrechnung behebt (Befund B2).
+ */
+function zinsEntscheidung(a: GateInput): ZinsEntscheidung {
+  const rf = a.riskFree;
+  if (rf === undefined) return { strategie: null, markt: null, note: `Zins: ${OHNE_ZINS_NOTE}` };
+  const nOos = a.wfa.oos.dailyReturns.length;
+  if (rf.strategie.length !== nOos) {
+    return {
+      strategie: null,
+      markt: null,
+      note: `Zins: Reihe nicht auf die OOS-Kette ausgerichtet (${nOos} Renditen, ${rf.strategie.length} Sätze) — beide Seiten gegen null gerechnet`,
+    };
+  }
+  // Der PSR wurde vom selben Aufrufer vorher gerechnet. Hatte er keinen Zins,
+  // stünden im selben Bericht zwei Gates mit verschiedenen Maßstäben.
+  if (a.psr.ueberschuss !== true) {
+    return {
+      strategie: null,
+      markt: null,
+      note: 'Zins: PSR wurde ohne Zins gerechnet — gemischte Rechnung abgelehnt, beide Seiten gegen null gerechnet',
+    };
+  }
+  // Eine Latte, die es gar nicht gibt (keine Benchmark oder keine Kurse), ist
+  // die Kasse — und Kasse hat im Überschuss per Definition den Sharpe 0. Die
+  // Marktseite braucht dann keine Sätze.
+  const brauchtMarkt = a.markt !== undefined && a.markt.sharpe !== null;
+  if (!brauchtMarkt) return { strategie: rf.strategie, markt: null, note: `Zins: ${rf.quelle}` };
+  const mr = a.markt!.dailyReturns;
+  if (mr === undefined || rf.markt === undefined || rf.markt.length !== mr.length) {
+    const grund =
+      mr === undefined
+        ? 'Markt-Renditen fehlen'
+        : rf.markt === undefined
+          ? 'keine Sätze für die Marktkette'
+          : `Sätze der Marktkette nicht ausgerichtet (${mr.length} Renditen, ${rf.markt.length} Sätze)`;
+    return { strategie: null, markt: null, note: `Zins: ${grund} — beide Seiten gegen null gerechnet (gemischt wäre schlimmer)` };
+  }
+  return { strategie: rf.strategie, markt: rf.markt, note: `Zins: ${rf.quelle}` };
 }
 
 export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResult[] } {
@@ -373,8 +503,14 @@ export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResul
   });
 
   const { minPsrOos, dsrIsGate } = gateOptions(optimizer);
-  const srAnnual = a.metricsFns.sharpeRatio(oos.dailyReturns, a.periodsPerYear ?? 252);
-  const srNote = srAnnual === null ? 'Sharpe p. a. nicht berechenbar' : `OOS-Sharpe p. a. ${srAnnual.toFixed(2)}`;
+  // Ertrag über dem ZINS je Schwankung, nicht Ertrag über null: Ohne diesen
+  // Abzug ist Bargeld eine Kante (Befund B2, 12.09.2026). Die Entscheidung
+  // gilt für beide betroffenen Gates gemeinsam.
+  const zins = zinsEntscheidung(a);
+  const oosBewertet = zins.strategie === null ? oos.dailyReturns : excessReturns(oos.dailyReturns, zins.strategie);
+  const srAnnual = a.metricsFns.sharpeRatio(oosBewertet, a.periodsPerYear ?? 252);
+  const srNote =
+    srAnnual === null ? 'Sharpe p. a. nicht berechenbar' : `OOS-Sharpe p. a. ${srAnnual.toFixed(2)}${zins.strategie ? ' (Überschuss)' : ''}`;
   gates.push({
     name: 'probabilistic_sharpe_oos',
     pass: a.psr.psr !== null && a.psr.psr >= minPsrOos,
@@ -425,27 +561,36 @@ export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResul
   // Schwankung und bestraft eine selten investierte Strategie nicht dafür,
   // dass sie meistens flach steht. Eine Strategie, die WENIGER Ertrag je
   // Risiko liefert als stumpfes Halten, hat keine Kante — sie hat Gebühren.
-  const marktSr = a.markt?.sharpe ?? null;
+  //
+  // Beide Seiten tragen denselben Maßstab: Wird der Zins abgezogen, dann von
+  // der Strategie UND vom Markt. Eine gemischte Rechnung wäre schlimmer als
+  // die alte gegen null — deshalb entscheidet `zinsEntscheidung` einmal für
+  // beide, und die Latte wird aus der Marktreihe NEU gerechnet, nie aus dem
+  // fertigen Sharpe korrigiert.
+  const marktSr =
+    zins.markt !== null && a.markt?.dailyReturns !== undefined
+      ? a.metricsFns.sharpeRatio(excessReturns(a.markt.dailyReturns, zins.markt), a.periodsPerYear ?? 252)
+      : (a.markt?.sharpe ?? null);
   const latte = marktSr ?? 0;
   // Drei unterscheidbare Fälle — "Benchmark da, aber nicht rechenbar" darf im
   // Bericht nicht wie "keine Benchmark konfiguriert" aussehen: Das erste ist
   // ein Datenproblem, das zweite eine Konfigurationsentscheidung.
   const quelle =
     a.markt === undefined
-      ? 'kein Maßstab konfiguriert — Latte 0 (Kasse)'
+      ? 'kein Maßstab konfiguriert — Latte 0 (Kasse' + (zins.strategie ? ', im Überschuss per Definition 0' : '') + ')'
       : marktSr === null
         ? `${a.markt.quelle}, Sharpe nicht berechenbar — Latte 0 (Kasse)`
-        : a.markt.quelle;
+        : a.markt.quelle + (zins.markt ? ' (Überschuss)' : '');
   gates.push({
     name: 'beats_market',
     pass: srAnnual !== null && srAnnual > latte,
     value: srAnnual,
     threshold: latte,
     note:
-      srAnnual === null
+      (srAnnual === null
         ? `OOS-Sharpe nicht berechenbar — gilt als durchgefallen (Latte ${latte.toFixed(2)}, ${quelle})`
         : `OOS-Sharpe p. a. ${srAnnual.toFixed(2)} gegen ${latte.toFixed(2)} aus ${quelle}` +
-          (srAnnual > latte ? '' : ' — kaufen und liegenlassen war besser'),
+          (srAnnual > latte ? '' : ' — kaufen und liegenlassen war besser')) + `; ${zins.note}`,
   });
 
   return { pass: gates.every((g) => g.pass), gates };

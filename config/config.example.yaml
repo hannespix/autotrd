@@ -81,6 +81,53 @@ risk:
   maxDrawdownPct: 10
   # Leerverkäufe erlauben? Nur Aktien; Krypto kennt bei Alpaca kein Short.
   allowShort: false
+  # Volatilitätsziel für das GESAMTDEPOT (src/risk/volziel.ts): Ein Faktor
+  # skaliert das Sizing-Budget mit Ziel-Vola / realisierter Vola der eigenen
+  # Equity-Kurve — ruhiges Depot ⇒ größere Positionen, unruhiges ⇒ kleinere.
+  # Die Deckel darunter (maxPositionPct, maxGrossExposurePct, maxPositions,
+  # Bargeld) bleiben harte Obergrenzen; der Faktor hebelt keinen davon aus.
+  volTarget:
+    # Vorgabe AUS: Faktor 1,0, also genau das Verhalten ohne dieses Feld.
+    # Einschalten heißt neu messen (Vorregistrierung, docs/wissen/README.md).
+    enabled: false
+    # Zielschwankung des Depots in % p. a. (10 % ≈ halb so unruhig wie SPY).
+    zielVolPct: 10
+    # Halbwertszeit der EWMA-Gewichte in Handelstagen: Wie schnell die
+    # Schätzung Vergangenes vergisst.
+    halbwertszeitTage: 20
+    # Untere und obere Grenze des Faktors. Auch bei völlig flacher Kurve
+    # (nie investiert) wird nie über maxFaktor skaliert.
+    minFaktor: 0.25
+    maxFaktor: 2 # mehr als das Doppelte der Budgetgröße gibt es nie
+    # Darunter gilt Faktor 1,0 („Aufwärmphase") — geschätzt wird erst, wenn
+    # es etwas zu schätzen gibt.
+    minBeobachtungen: 60
+  # Notbremsen je STUFE: alpha = Alpha-Champion, basis = Basis-Allokation
+  # (src/core/basisTier.ts). null heißt „der globale Wert oben gilt" — das ist
+  # die Vorgabe, und damit verhält sich alles wie mit einer einzigen Bremse.
+  # Eine Zahl gilt nur für die Positionen und Einstiege DIESER Stufe; die
+  # Konto-Bremse bleibt als letzter Halt darüber (die lockerste aller Latten).
+  # Hintergrund: Die Tagesbremse 2 % stellt ein voll investiertes ETF-Depot an
+  # einem gewöhnlichen Minus-Tag glatt und verschlechtert damit genau den
+  # Drawdown, den sie schützen soll (docs/ARCHITEKTUR.md §5a.16).
+  tiers:
+    alpha:
+      maxDailyLossPct: null # null ⇒ risk.maxDailyLossPct gilt
+      maxDrawdownPct: null # null ⇒ risk.maxDrawdownPct gilt
+    basis:
+      maxDailyLossPct: null # null ⇒ risk.maxDailyLossPct gilt
+      maxDrawdownPct: null # null ⇒ risk.maxDrawdownPct gilt
+  # Wiederaufbau einer Zielallokation nach einer Zwangs-Glattstellung
+  # (nur Allokations-Sizing, also die Basis-Stufe): Hat eine Notbremse das
+  # Buch geräumt, darf das Symbol am nächsten erlaubten Tag wieder aufgebaut
+  # werden, statt bis zum nächsten Entscheidungsfenster der Strategie zu
+  # warten (bei regime_allocation ein Monat).
+  wiederaufbau:
+    # Vorgabe AUS — das ändert Entscheidungen und gehört vorregistriert.
+    enabled: false
+    # Nach so vielen Kalendertagen verfällt ein ungenutztes Ziel: Das
+    # Schweigen einer Monatsstrategie ist kein Ja.
+    maxAlterTage: 5
   pdt:
     # Pattern-Day-Trader-Regel respektieren: Unter minEquity höchstens
     # maxDayTrades Daytrades in fünf Handelstagen — der vierte sperrt das Konto.
@@ -150,6 +197,16 @@ optimizer:
   # hartes Gate (true) oder nur im Bericht (false). Die OOS-Kette ist bereits
   # selektionsfrei; DSR bestraft breite Gitter mit toten Regionen doppelt.
   dsrIsGate: false
+  # Symbol, dessen Tagesrendite als RISIKOLOSER ZINS gilt (Geldmarkt, z. B.
+  # BIL = 1–3 Monate T-Bills). Gesetzt, rechnen `probabilistic_sharpe_oos` und
+  # `beats_market` auf Überschussrenditen (r − r_f derselben Tage) — auf BEIDEN
+  # Seiten oder auf keiner. Leer (null) = wie bisher gegen null, und jede
+  # betroffene Notiz sagt das laut. Warum es das gibt: Ein Sharpe gegen null
+  # ist Ertrag über NULL je Schwankung; mit einem Geldmarktpapier im Korb wird
+  # damit Bargeld als Kante verbucht (Befund B2 vom 12.09.2026,
+  # docs/wissen/vorregistrierung/2026-09-13-sharpe-gegen-zins.md). Das Symbol
+  # muss mitgeladen werden (universe.candidates/symbols).
+  riskFreeSymbol: null
   # Höchstanteil des OOS-Nettos, den EIN einzelner Fold tragen darf.
   # Die Lücke, die das schließt: Der TSLA-Champion vom 07.09. bestand alle
   # acht Gates — 103 OOS-Trades, +958 $, 5 von 7 Folds positiv, PSR 0,95.
@@ -218,6 +275,32 @@ optimizer:
   # Nur zusammen mit einem Festkandidaten tier: basis. Kein Tor.
   #   basisUniverse: [SPY, IWM, EFA, EEM, IEF, TLT, LQD, GLD, XLRE]
   basisUniverse: []
+  # Ensembles: mehrere Sleeves als EINE Einheit, gemessen in EINER
+  # Portfolio-Simulation über dieselben Folds, mit denselben Kosten und durch
+  # DIESELBEN zehn Alpha-Gates. Keine dritte Latte, keine Suche: Je Sleeve
+  # `strategy`, vorregistrierte `params` und ein Universum — entweder der
+  # liquiditätsgewählte Korb je Fold (`universe: korb`, höchstens ein Sleeve)
+  # oder eine feste Symbolliste (`universe: fixed`, `symbols`). Ein Symbol
+  # gehört genau EINEM Sleeve; überlappende Listen werden abgewiesen, weil ein
+  # Symbol in einer Simulation nur eine Strategie tragen kann. `weighting` ist
+  # eine REGEL, kein Parameter: `equal` (gleicher Kapitalanteil) oder
+  # `inverse_vol` (Anteil ∝ 1/σ der eigenen Renditen über 60 Handelstage; die
+  # 60 stehen als Konstante im Code, nicht hier). Warum es das gibt: Der
+  # Optimierer misst jede Familie einzeln und verwirft jede einzeln — eine
+  # Kombination konnte er bisher nicht ausdrücken
+  # (docs/wissen/vorregistrierung/2026-09-12-ensemble.md).
+  #   ensembles:
+  #     - label: E1 Aktien plus Defensive
+  #       weighting: equal
+  #       sleeves:
+  #         - strategy: momentum_pullback
+  #           universe: korb
+  #           params: {}
+  #         - strategy: vigilant_allocation
+  #           universe: fixed
+  #           symbols: [SPY, QQQ, EFA, EEM, IEF, TLT, LQD, GLD, BIL]
+  #           params: {topN: 2, exitRank: 4, stopPct: 20}
+  ensembles: []
 
 costs:
   # Slippage je Seite in Basispunkten (Marktorder gegen den Spread).

@@ -26,6 +26,13 @@
  * Exposure-Budget und Bargeld können die Position nur verkleinern, nie
  * vergrößern. Und ohne Stop auf der Verlustseite gibt es in keinem Modus
  * eine Stückzahl — der Katastrophen-Stop bleibt Pflicht.
+ *
+ * Der Faktor des Volatilitätsziels (`volFaktor`, risk/volziel.ts) wirkt auf
+ * das BUDGET beider Semantiken — und ausdrücklich nicht auf die Deckel: Ein
+ * Faktor 2,0 verdoppelt das Budget, aber `maxPositionPct`, Exposure-Budget
+ * und Bargeld schneiden danach wie immer. Das ist die Stelle, an der ein
+ * Skalierungsfehler das Konto sprengen könnte, deshalb steht sie hier und
+ * nicht verteilt im Aufrufer (Wächter in test/risk/sizing.test.ts).
  */
 import type { Side, SizingSpec } from '../core/types.ts';
 
@@ -45,6 +52,12 @@ export interface SizeInput {
   qtyStep: number;
   /** Sizing-Semantik der Strategie-Wahl; fehlt sie, gilt das Risiko-Budget (`riskPct`). */
   sizing?: SizingSpec | undefined;
+  /**
+   * Faktor des Volatilitätsziels auf das Budget (1 = aus, risk/volziel.ts).
+   * Gerechnet wird er in `decide()` — EINMAL je Zyklus, für beide Welten.
+   * Nicht-finite oder negative Werte gelten als 1 (fail-neutral).
+   */
+  volFaktor?: number | undefined;
 }
 
 export interface SizeResult {
@@ -65,7 +78,8 @@ export function sizePosition(inp: SizeInput): SizeResult {
   // ausdrücklicher Semantik der Wahl (Basis-Stufe), ein fester Anteil der
   // Equity. Beides ist EIN Pfad für Simulator und Engine.
   const allocation = inp.sizing?.mode === 'allocation';
-  const byBudget = allocation ? (inp.equity * inp.sizing!.positionPct) / 100 / inp.price : (inp.equity * inp.riskPct) / 100 / riskPerUnit;
+  const vf = typeof inp.volFaktor === 'number' && Number.isFinite(inp.volFaktor) && inp.volFaktor >= 0 ? inp.volFaktor : 1;
+  const byBudget = allocation ? (inp.equity * inp.sizing!.positionPct * vf) / 100 / inp.price : (inp.equity * inp.riskPct * vf) / 100 / riskPerUnit;
   const byCap = (inp.equity * inp.maxPositionPct) / 100 / inp.price;
   const byExposure = Math.max(0, inp.exposureBudget) / inp.price;
   const byCash = inp.side === 'long' ? Math.max(0, inp.cash) / inp.price : Number.POSITIVE_INFINITY;

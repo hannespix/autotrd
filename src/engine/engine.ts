@@ -51,13 +51,25 @@ import { join } from 'node:path';
 import { isOpenStatus, type AlpacaClient, type DataStream, type StreamStatus, type TradeStream, type TradeUpdate } from '../alpaca/types.ts';
 import type { Config } from '../core/config.ts';
 import { aggregate, BarSeries, normalizeBars } from '../core/bars.ts';
-import { emptyState, ensureDir, homePaths, Journal, StateStore, type EngineState, type HomePaths, type JournalLike, type StateStoreLike } from '../core/journal.ts';
+import {
+  emptyState,
+  ensureDir,
+  equityHistorieAnhaengen,
+  homePaths,
+  Journal,
+  StateStore,
+  type EngineState,
+  type HomePaths,
+  type JournalLike,
+  type StateStoreLike,
+} from '../core/journal.ts';
 import { errMsg, logger } from '../core/log.ts';
 import { decide, type AssetFacts, type LogicContext, type SymbolInput } from '../core/logic.ts';
 import { buildSessionInfo } from '../core/session.ts';
 import { DAY, HOUR, MIN, addDays, dayKeyFor, isTradingDay, prevTradingDay, sessionBounds, type Calendar } from '../core/time.ts';
 import type { AccountView, AssetClass, Bar, ExitReason, HaltState, IndicatorSet, Ms, OrderIntent, Params, PositionState, SizingSpec, Strategy, TimeframeMin } from '../core/types.ts';
 import { resumeHalt } from '../risk/limits.ts';
+import { tagesRenditen, type VolZielResult } from '../risk/volziel.ts';
 import { backfill } from '../data/backfill.ts';
 import { ensureCalendar } from '../data/calendar.ts';
 import { BarStore, barStoreRoot, mergeBars, type BaseTimeframe } from '../data/store.ts';
@@ -176,6 +188,10 @@ export interface EngineStatus {
   streamStatus: { data: StreamStatus | null; trade: StreamStatus | null; dataLastMessageAt: Ms | null; tradeLastMessageAt: Ms | null };
   clock: ClockSnapshot | null;
   consecutiveErrors: number;
+  /** Halt-Zustand je Stufe (`risk.tiers`) — leer, solange keine Stufen-Latten konfiguriert sind. */
+  stufenHalt: Record<string, HaltState>;
+  /** Ergebnis des Vola-Ziels im letzten Zyklus (null = aus oder noch kein Zyklus). */
+  volZiel: VolZielResult | null;
   /** Grund der Einstiegs-Sperre von außen (Functions-Takt: Echtgeld-Kette), sonst null. */
   entryLock: string | null;
   startedAt: Ms | null;
@@ -279,6 +295,10 @@ export class Engine {
   private readonly ohneFuehrungGemeldet = new Set<string>();
   /** Positionen (Symbol|Einstiegszeit), deren fremde Führung schon im Journal steht. */
   private readonly fremdeFuehrungGemeldet = new Set<string>();
+  /** Zuletzt ins Journal geschriebener Faktor des Vola-Ziels (auf 2 Nachkommastellen) — gegen Wiederholungen. */
+  private volFaktorGemeldet: string | null = null;
+  /** Letztes Ergebnis des Vola-Ziels (nur Anzeige/Status; null = aus). */
+  private volZiel: VolZielResult | null = null;
   private lastReconcileAt: Ms | null = null;
 
   constructor(deps: EngineDeps) {
@@ -516,9 +536,30 @@ export class Engine {
       const r = resumeHalt(st.halt, this.accountView(), now, note);
       st.halt = r.halt;
       st.peakEquity = r.account.peakEquity;
-      this.journal.append('resume', { note: r.halt.note }, now);
+      const stufen = this.resumeStufen(now, note);
+      this.journal.append('resume', { note: r.halt.note, ...(stufen.length ? { stufen } : {}) }, now);
       await this.saveState();
     });
+  }
+
+  /**
+   * Drawdown-Sperren der Stufen mit aufheben (`risk.tiers`, core/logic.ts).
+   *
+   * Warum das hier stehen MUSS: Eine Stufen-Bremse mit Grund `drawdown` endet
+   * wie die des Kontos nur über ein bewusstes `resume` (§0.5). Ohne diese
+   * Zeile bliebe eine Stufe nach einem aufgehobenen Konto-Halt für immer
+   * gesperrt — eine Sperre ohne Ursache und ohne Ausweg. Tages-Halts werden
+   * NICHT angefasst: Sie enden am nächsten Handelstag von selbst.
+   */
+  private resumeStufen(now: Ms, note: string): string[] {
+    const st = this.st();
+    const raus: string[] = [];
+    for (const [stufe, halt] of Object.entries(st.stufenHalt ?? {})) {
+      if (!halt.halted || halt.reason === 'daily_loss') continue;
+      st.stufenHalt = { ...(st.stufenHalt ?? {}), [stufe]: { halted: false, reason: null, since: null, until: null, note: `resume ${new Date(now).toISOString()}: ${note}` } };
+      raus.push(stufe);
+    }
+    return raus;
   }
 
   /**
@@ -567,6 +608,8 @@ export class Engine {
       },
       clock: this.clock.snapshot(),
       consecutiveErrors: st?.consecutiveErrors ?? 0,
+      stufenHalt: { ...(st?.stufenHalt ?? {}) },
+      volZiel: this.volZiel,
       entryLock: this.deps.entryLock?.() ?? null,
       startedAt: this.startedAt,
       uptimeMs: this.startedAt === null ? 0 : now - this.startedAt,
@@ -645,6 +688,9 @@ export class Engine {
           sizing: choice.sizing,
           entriesAllowed: choice.entriesAllowed,
           entryLockReason: choice.entryLockReason,
+          // Stufe der Wahl (champion/basis/config) — sie entscheidet, welche Latte
+          // der Notbremse für dieses Symbol gilt (`risk.tiers`, risk/limits.ts).
+          stufe: choice.source,
         });
       }
 
@@ -709,10 +755,42 @@ export class Engine {
           localDayTrades: this.localDayTrades(today),
           assetFacts: (s) => this.assets.get(s),
           entryLock: this.deps.entryLock?.() ?? null,
+          // Vola-Ziel: Die Engine liefert nur die Reihe, gerechnet wird der Faktor in
+          // `decide()` — einmal, für beide Welten (core/logic.ts).
+          equityReturns: tagesRenditen(st.equityHistory ?? []),
+          stufenHalt: st.stufenHalt,
+          wiederaufbau: st.wiederaufbau,
         };
         const res = decide(ctx, inputs);
         const before = st.halt;
         st.halt = res.halt;
+        // Nur schreiben, wenn es etwas zu schreiben gibt (oder schon etwas steht):
+        // Sonst trüge jeder State — und jedes Firestore-Doc — zwei leere Objekte,
+        // obwohl die Schalter aus sind. Additiv heißt auch: unsichtbar, solange aus.
+        if (res.stufenHalt && (Object.keys(res.stufenHalt).length > 0 || st.stufenHalt)) st.stufenHalt = res.stufenHalt;
+        if (res.wiederaufbau && (Object.keys(res.wiederaufbau).length > 0 || st.wiederaufbau)) st.wiederaufbau = res.wiederaufbau;
+        // Der Faktor des Vola-Ziels verdoppelt oder halbiert Positionsgrößen — er darf
+        // nicht unsichtbar sein. Ins Journal, sobald er sich messbar ändert (2 Nachkommastellen),
+        // nicht je Bar: sonst wäre das Journal voll davon und niemand liest es mehr.
+        if (res.volZiel) {
+          const key = res.volZiel.faktor.toFixed(2);
+          if (key !== this.volFaktorGemeldet) {
+            this.volFaktorGemeldet = key;
+            this.journal.append(
+              'note',
+              { text: `Vola-Ziel: ${res.volZiel.grund}`, volFaktor: res.volZiel.faktor, realisiertVolPct: res.volZiel.realisiertVolPct, beobachtungen: res.volZiel.beobachtungen },
+              now,
+            );
+            this.log.info(`Vola-Ziel: ${res.volZiel.grund}`);
+          }
+        }
+        this.volZiel = res.volZiel ?? null;
+        for (const stufe of res.stufenHaltTriggered ?? []) {
+          const h = res.stufenHalt?.[stufe];
+          this.journal.append('halt', { stufe, reason: h?.reason ?? null, note: h?.note ?? null, equity: this.account.equity }, now);
+          this.log.error(`Halt der Stufe ${stufe}: ${h?.note ?? h?.reason ?? ''}`);
+          await this.say('error', `Halt (${stufe}): ${h?.note ?? h?.reason ?? ''}`);
+        }
         if (res.haltTriggered) {
           this.journal.append('halt', { reason: res.halt.reason, note: res.halt.note, equity: this.account.equity }, now);
           this.log.error(`Halt ausgelöst: ${res.halt.note ?? res.halt.reason ?? ''}`);
@@ -825,12 +903,20 @@ export class Engine {
       return;
     }
     const st = this.st();
-    if (st.halt.halted && st.halt.reason !== 'daily_loss') {
-      const r = resumeHalt(st.halt, this.accountView(), now, `RESUME-Datei: ${note}`);
-      st.halt = r.halt;
-      st.peakEquity = r.account.peakEquity;
-      this.journal.append('resume', { note: r.halt.note, peakEquity: st.peakEquity }, now);
-      this.log.warn('Halt per RESUME-Datei aufgehoben', { note, peakEquity: st.peakEquity });
+    const kontoOffen = st.halt.halted && st.halt.reason !== 'daily_loss';
+    // Auch eine Stufen-Sperre (drawdown) braucht einen Ausweg — sie steht sonst
+    // für immer, während der Konto-Halt längst weg ist (§0.5: über die Ursache,
+    // nicht per Override; `resume` IST die Ursache-Aufhebung).
+    const stufenOffen = Object.values(st.stufenHalt ?? {}).some((h) => h.halted && h.reason !== 'daily_loss');
+    if (kontoOffen || stufenOffen) {
+      const r = kontoOffen ? resumeHalt(st.halt, this.accountView(), now, `RESUME-Datei: ${note}`) : null;
+      if (r) {
+        st.halt = r.halt;
+        st.peakEquity = r.account.peakEquity;
+      }
+      const stufen = this.resumeStufen(now, `RESUME-Datei: ${note}`);
+      this.journal.append('resume', { note: r?.halt.note ?? `RESUME-Datei: ${note}`, peakEquity: st.peakEquity, ...(stufen.length ? { stufen } : {}) }, now);
+      this.log.warn('Halt per RESUME-Datei aufgehoben', { note, peakEquity: st.peakEquity, stufen });
     } else {
       const text = st.halt.halted ? 'RESUME ignoriert: Tages-Halt endet von selbst am nächsten Handelstag' : 'RESUME ohne aktiven Halt — nichts aufzuheben';
       this.journal.append('note', { text, resume: note }, now);
@@ -1000,6 +1086,21 @@ export class Engine {
     st.day = today;
     const mark = this.dayStartMark();
     if (mark > 0) st.dayStartEquity = mark;
+    /*
+     * Equity-Historie für das Vola-Ziel (risk/volziel.ts): EINE Marke je
+     * Handelstag, und zwar dieselbe, mit der der Simulator seine Tagesrendite
+     * bildet — die SCHLUSS-Equity des Vortags (`last_equity`). Der Rollover
+     * läuft genau einmal je neuem Handelstag, die Reihe kann also nicht
+     * doppeln; ohne brauchbare Marke wird nichts angehängt (lieber eine
+     * Beobachtung weniger als eine erfundene).
+     *
+     * Bekannter Unterschied zum Simulator, klein und benannt: Dessen erste
+     * Rendite misst gegen die Start-Equity, die Engine kennt die Marke vor
+     * ihrem ersten Handelstag nicht — die Reihe beginnt einen Tag später. Nach
+     * der Aufwärmphase (Vorgabe 60 Beobachtungen) trägt die älteste
+     * Beobachtung unter einem halben Prozent der Gewichtssumme.
+     */
+    if (mark > 0) st.equityHistory = equityHistorieAnhaengen(st.equityHistory, mark);
     this.flushStore(true, now);
     this.pruneCaches(now);
     let keep = today;
@@ -1009,7 +1110,7 @@ export class Engine {
     } catch (e) {
       this.log.warn('Daytrade-Fenster nicht bereinigt', { error: errMsg(e) });
     }
-    this.journal.append('note', { text: 'Tagesrollover', day: today, dayStartEquity: st.dayStartEquity }, now);
+    this.journal.append('note', { text: 'Tagesrollover', day: today, dayStartEquity: st.dayStartEquity, equityMarken: st.equityHistory?.length ?? 0 }, now);
     this.log.info('Neuer Handelstag', { day: today, dayStartEquity: st.dayStartEquity });
   }
 

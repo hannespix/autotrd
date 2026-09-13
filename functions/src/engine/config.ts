@@ -38,8 +38,26 @@ export const DEFAULT_GLOBAL_CONFIG: Record<string, unknown> = {
   engine: { barGraceSec: 20 },
 };
 
-/** Felder, die nie aus dem globalen Doc kommen. */
+/** Felder, die nie aus dem globalen Doc kommen (Ausnahme: `GLOBAL_RISK_FELDER` innerhalb von `risk`). */
 export const NUR_JE_NUTZER: readonly string[] = ['risk', 'notify', 'paths'];
+
+/**
+ * Unterfelder von `risk`, die trotzdem GLOBAL bleiben (`meta/engineConfig`,
+ * gepflegt über `config/platform.yaml`).
+ *
+ * Warum es diese Ausnahme gibt: `risk` gehört dem Nutzer — Risiko je Trade,
+ * Positionsdeckel, Notbremsen. Diese drei Blöcke gehören ihm NICHT: Sie sind
+ * gemessene Systemgrößen wie der Champion (Volatilitätsziel, Latten der
+ * Bremsen je Stufe, Wiederaufbau nach Zwangs-Glattstellung), und sie müssen
+ * zu dem Lauf passen, der sie gemessen hat. Ohne diese Zeile fielen sie im
+ * Takt still auf die Schema-Vorgaben zurück — der Schalter im YAML wäre
+ * wirkungslos, und niemand hätte es gemerkt (dieselbe Fehlerklasse wie die
+ * tote Tagesbremse und die tote Short-Achse, docs/ARCHITEKTUR.md §5a.15/16).
+ *
+ * Ein Nutzer stellt sie nicht ein; wollte man das, brauchte es `settings.auto`,
+ * `saveStrategy` und `shared/src/autoSettings.ts` — bewusst nicht getan.
+ */
+export const GLOBAL_RISK_FELDER: readonly string[] = ['volTarget', 'tiers', 'wiederaufbau'];
 
 /** Untergrenze der Bar-Karenz im Takt (s) — siehe DEFAULT_GLOBAL_CONFIG. */
 export const TICK_BAR_GRACE_MIN_SEC = (DEFAULT_GLOBAL_CONFIG.engine as { barGraceSec: number }).barGraceSec;
@@ -67,6 +85,24 @@ export function globalConfigRaw(doc: Record<string, unknown> | undefined): Recor
   const grace = typeof engine.barGraceSec === 'number' ? engine.barGraceSec : TICK_BAR_GRACE_MIN_SEC;
   engine.barGraceSec = Math.max(grace, TICK_BAR_GRACE_MIN_SEC);
   out.engine = engine;
+  /*
+   * `risk` ist Nutzersache — bis auf die gemessenen Systemblöcke
+   * (GLOBAL_RISK_FELDER). Die reisen mit dem globalen Teil weiter; enthält das
+   * Doc keinen davon, bleibt `risk` wie bisher unbesetzt.
+   *
+   * Zwei Namen, ein Block: `scripts/module/engineConfig.mjs` schreibt den
+   * Risiko-Teil der Plattform-Config als `riskDefaults` (Defaults für Nutzer
+   * ohne eigene Einstellung), ältere und von Hand gepflegte Dokumente tragen
+   * `risk`. Wer nur einen der beiden liest, hat einen Schalter, der im YAML
+   * steht und nichts tut — dieselbe Fehlerklasse wie die tote Tagesbremse
+   * (§5a.16). Also beide, `risk` gewinnt.
+   */
+  const rohRisk = isRecord(doc.risk) ? doc.risk : isRecord(doc.riskDefaults) ? doc.riskDefaults : null;
+  if (rohRisk) {
+    const globalRisk: Record<string, unknown> = {};
+    for (const k of GLOBAL_RISK_FELDER) if (rohRisk[k] !== undefined) globalRisk[k] = plain(rohRisk[k]);
+    if (Object.keys(globalRisk).length > 0) out.risk = globalRisk;
+  }
   return out;
 }
 
@@ -162,7 +198,14 @@ export function buildUserConfig(global: Record<string, unknown>, settings: unkno
   // Stelle, die `strategyChoice` im Dauerprozess liest.
   const basisSchalter = { global: globalBasisSchalter(global), nutzer: part.basis };
   const strategy: Record<string, unknown> = { ...(isRecord(global.strategy) ? global.strategy : {}), basis: basisSchalter.global && basisSchalter.nutzer };
-  const out: UserConfig = { config: parseConfig({ ...global, universe, risk: part.risk, strategy }), source: part.source, basisSchalter };
+  // Risiko des Nutzers + die global gemessenen Blöcke (GLOBAL_RISK_FELDER, von
+  // `globalConfigRaw` durchgelassen). Reihenfolge ist Absicht: Der Nutzer kann sie
+  // nicht überschreiben, denn er schickt sie gar nicht erst mit (`userRiskFrom`
+  // nimmt nur die bekannten Felder aus `settings.auto`).
+  const risk: Record<string, unknown> = { ...part.risk };
+  const globalRisk = isRecord(global.risk) ? global.risk : {};
+  for (const k of GLOBAL_RISK_FELDER) if (globalRisk[k] !== undefined) risk[k] = plain(globalRisk[k]);
+  const out: UserConfig = { config: parseConfig({ ...global, universe, risk, strategy }), source: part.source, basisSchalter };
   if (auswahlVeraltet !== undefined) out.auswahlVeraltet = auswahlVeraltet;
   return out;
 }

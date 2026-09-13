@@ -120,7 +120,7 @@ describe('Maßstab je Kandidat im Lauf', () => {
     const text = readFileSync(out.reportPath, 'utf8');
     const z = zeilen(text);
     expect(z.length).toBe(3);
-    for (const l of z) expect(l).toMatch(/, MaxDD [\d.]+ %, Trades je Monat 30\.4 · ohne Benchmark: Kasse \(Latte 0\)$/);
+    for (const l of z) expect(l).toMatch(/, MaxDD [\d.]+ %, Trades je Monat 30\.4 · ohne Benchmark: Kasse \(Latte 0\) · Zins: /);
     // Direkt unter der Gates-Tabelle, vor der PSR-Zeile.
     const i = text.indexOf(z[0]!);
     expect(text.slice(0, i)).toMatch(/\| beats_market \|[^\n]*\n\n$/);
@@ -147,7 +147,11 @@ describe('Maßstab je Kandidat im Lauf', () => {
     }
     const z = zeilen(readFileSync(out.reportPath, 'utf8'));
     expect(z.length).toBe(3);
-    for (const l of z) expect(l).toMatch(/ · BENCH kaufen-und-halten Sharpe -?[\d.]+, MaxDD [\d.]+ %$/);
+    // Die Zeile endet seit dem 13.09.2026 mit der ZINSQUELLE: Ohne sie stünden
+    // zwei verschieden gerechnete Sharpe-Werte nebeneinander, ohne dass es
+    // dem Bericht anzusehen wäre.
+    for (const l of z) expect(l).toMatch(/ · BENCH kaufen-und-halten Sharpe -?[\d.]+, MaxDD [\d.]+ % · Zins: /);
+    for (const l of z) expect(l).toMatch(/Zins: kein Geldmarkt-Symbol konfiguriert — gegen null gerechnet$/);
   });
 
   it('Benchmark konfiguriert, aber ohne Kurse in den OOS-Fenstern ⇒ „nicht berechenbar" — nicht „ohne Benchmark"', () => {
@@ -166,6 +170,6 @@ describe('Maßstab je Kandidat im Lauf', () => {
     }
     const z = zeilen(readFileSync(out.reportPath, 'utf8'));
     expect(z.length).toBe(3);
-    for (const l of z) expect(l).toMatch(/ · BENCH kaufen-und-halten nicht berechenbar — Latte 0 \(Kasse\)$/);
+    for (const l of z) expect(l).toMatch(/ · BENCH kaufen-und-halten nicht berechenbar — Latte 0 \(Kasse\) · Zins: /);
   });
 });
