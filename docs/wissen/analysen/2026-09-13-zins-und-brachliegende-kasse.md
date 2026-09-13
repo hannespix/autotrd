@@ -81,3 +81,79 @@ Bis sie fällt, ist jede Sharpe-Zahl dieses Repos für gering investierte
 Strategien nach unten verzerrt, und für sie alle in gleicher Richtung. Die
 Rangfolge unter ihnen bleibt aussagekräftig, der Vergleich mit dem Markt
 nicht.
+
+---
+
+# Nachtrag: Das Parken hat vier Gates still umdefiniert (Läufe #48 und #49)
+
+## Was in #48 passierte
+
+Mit Parken sahen alle Kandidaten dramatisch besser aus; `mean_reversion`
+stand bei 16 von 16 positiven Folds und +16,47 %. Der Beweis, dass das ein
+Artefakt war, stand in seiner eigenen Fold-Tabelle:
+
+| Fold | OOS-Trades | OOS-Netto |
+|---|---:|---:|
+| 2 | **0** | +95,93 |
+| 11 | **0** | +134,31 |
+| 13 | **0** | +227,50 |
+
+Drei Quartale ohne einen einzigen Trade zählten als Erfolg. Das Gate
+`fold_positive_share` fragte „hat die Strategie verdient?" und beantwortete
+„hat das Konto verdient?" — und das Konto verdient den Geldmarktzins,
+unabhängig von jeder Strategie.
+
+Das Muster war der Beleg: Die zwei Gates, die schon Überschuss rechneten
+(`probabilistic_sharpe_oos`, `beats_market`), lehnten weiter jeden Kandidaten
+ab. Die Gates auf rohem Netto bestanden plötzlich. **Wir hatten uns den
+Fehler, den wir am Vormittag behoben hatten, am Nachmittag durch die
+Hintertür zurückgeholt.**
+
+## Die Konsequenz
+
+Seit #49 misst **jede** Geld-Kennzahl den Überschuss über dem Zins:
+`fold_positive_share`, `oos_net_profit`, `fold_concentration`,
+`stress_costs`, der Anteil positiver Nachbarn, dazu die drei Basis-Gates.
+Geprüft und festgehalten: `oos_trades`, `fee_share` und der Profitfaktor
+ändern sich um exakt null — sie entstehen aus Trades, und eine
+Treasury-Umschichtung erzeugt keinen Trade. Der Drawdown bleibt bewusst roh,
+weil die Notbremsen live Kapital messen und ein Gate nicht etwas anderes
+messen darf als die Bremse, die es absichert.
+
+Die vorab verankerte Vorhersage lautete: **Kein Kandidat besteht danach mehr
+Gates als vorher.** Sie hat für alle fünf gehalten:
+
+| Kandidat | rote Gates #48 | rote Gates #49 |
+|---|---:|---:|
+| `trend_donchian` | 4 | 5 |
+| `momentum_pullback` | 2 | 5 |
+| `mean_reversion` | 2 | 6 |
+| `cross_sectional_momentum` | 3 | 4 |
+| `regime_allocation` | 2 | 4 |
+
+## Der ehrlichste Stand: `regime_allocation`, 6 von 10
+
+| Gate | | Wert | Schwelle |
+|---|---|---|---|
+| `beats_market` | **✔** | **Überschuss-Sharpe 0,51** | 0,44 |
+| `fold_positive_share` | ✔ | 0,750 (12 von 16 im Überschuss; roh wären es 14) | 0,600 |
+| `oos_net_profit` | ✔ | Überschuss +808,64 (roh +4854,67) | > 0 |
+| `stress_costs` | ✔ | Überschuss +583,39 bei Kosten ×1,5 | > 0 |
+| `fee_share` | ✔ | nicht berechenbar | 0,500 |
+| `deflated_sharpe_is` | ✔ | informativ | — |
+| `oos_trades` | ✘ | 41 | 60 |
+| `fold_concentration` | ✘ | 0,551 | 0,500 |
+| `probabilistic_sharpe_oos` | ✘ | 0,844 | 0,900 |
+| `neighborhood_plateau` | ✘ | **0 % der Nachbarn im Überschuss positiv** | 60 % |
+
+**Zum ersten Mal schlägt ein Kandidat den Markt je Risikoeinheit nach
+Kosten UND nach Abzug des risikolosen Zinses.** Das ist ein echtes Signal.
+
+**Und im selben Atemzug die stärkste Warnung, die das Repo je ausgegeben
+hat:** `neighborhood_plateau` steht bei **null Prozent**. Kein einziger
+benachbarte Parametersatz liefert einen positiven Überschuss. Die Kante hängt
+nicht an einer Region, sondern an genau diesem einen Punkt im Gitter — die
+Lehrbuch-Signatur von Überanpassung. Vor der Umstellung sah das Gate grün
+aus, weil die Nachbarn den Zins verdienten.
+
+Genau dafür ist das Gate gebaut, und genau deshalb wird nichts befördert.
