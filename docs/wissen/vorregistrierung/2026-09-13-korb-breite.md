@@ -1,6 +1,13 @@
 # Vorregistrierung: Reservierte Plätze für Diversifizierer im Korb
 
 **Datum:** 13.09.2026 · **These:** T21 (neu) · **Status vor dem Lauf:** offen
+**Status nach den Läufen:** Erwartung 1 bestätigt, **2 und 3 widerlegt**,
+4 und 5 nicht ausgelöst. Die Gegenprobe (#53) hält: `mean_reversion` steigt
+mit Diversifizierern auf 7/10 und fällt mit Aktien auf 3/10 — es wirkt die
+Assetklasse, nicht die Erneuerung des Korbs. **Nicht befördert**
+(`beats_market` 0,26 gegen 0,44, `fold_concentration` 0,745, PSR 0,696).
+`universe.reserve` bleibt aus. Auswertung:
+`analysen/2026-09-13-korb-breite-und-placebo.md`.
 **Folgt aus:** `analysen/2026-09-12-warum-nichts-gehandelt-wird.md` (Ursache 3
 und 4) und Lauf #43 (`vorregistrierung/2026-09-12-kurzlaeufer-im-pool.md`).
 
