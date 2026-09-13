@@ -1,6 +1,11 @@
 # Vorregistrierung: Volatilitätsziel auf das Portfolio (Lauf 2 von 2)
 
 **Datum:** 13.09.2026 · **These:** T20 (neu) · **Status vor dem Lauf:** offen
+**Status nach dem Lauf:** **nicht auswertbar** (Abbruchkriterium gegriffen) —
+Läufe #50 und #51, Auswertung in
+`analysen/2026-09-13-volatilitaetsziel-nicht-messbar.md`. Erwartungen 1–4
+widerlegt, Erwartung 5 bestätigt, aber irreführend: Die eigentliche Ursache
+ist die Aufwärmphase, nicht der Deckel. `risk.volTarget` bleibt aus.
 **Gehört zu:** `2026-09-13-kasse-in-den-geldmarkt.md`, Messplan Schritt 2
 („Parken plus Volatilitätsziel. Differenz zu Lauf 1 ist sauber die Wirkung
 des Volatilitätsziels.")
