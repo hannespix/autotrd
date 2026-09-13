@@ -85,19 +85,30 @@ jobs:
       - name: Abhängigkeiten installieren
         run: npm ci
 
-      # Eigener Cache-Schlüssel: Krypto-Bars dürfen den Aktien-Cache von
-      # optimize.yml nicht überschreiben und umgekehrt. Der Schlüssel hasht die
-      # ganze Config — ein Wechsel von `broker.adjustment` (Bereinigung der
-      # Tagesbars) ändert ihn also mit; und bereinigte Bars liegen ohnehin in
-      # einer eigenen Wurzel (bars/<assetClass>/<feed>-adj-<wert>/,
-      # src/data/store.ts), ein alter Cache kann nie als bereinigt gelesen werden.
+      # Cache-Schlüssel NUR aus dem, was die Bars bestimmt: Assetklasse, Feed,
+      # Bereinigung (scripts/bars-cache-key.mjs). Krypto-Bars können den
+      # Aktien-Cache damit weiterhin nicht überschreiben, bereinigte nicht die
+      # rohen — aber zwei Configs, die sich nur in einer Risiko-Zahl
+      # unterscheiden, teilen ihn jetzt.
+      #
+      # Vorher hashte der Schlüssel die GANZE Config-Datei. Damit bekam jede
+      # Config ihren eigenen Eimer, der Backfill füllte sie verschieden, und
+      # zwei Läufe, die „eine Änderung" messen sollten, sahen verschiedene
+      # Daten: #56 startete bei 2021-03-22, #59 bei 2021-03-24. Zwei Tage
+      # Warmup für den frühesten Fold — daher die „Alpha-Verschiebung", die
+      # ich erst der Stufen-Bremse zugeschrieben hatte
+      # (docs/wissen/analysen/2026-09-13-alpha-verschiebung-war-der-bars-cache.md).
+      - name: Bars-Cache-Schlüssel bestimmen
+        id: barskey
+        run: echo "key=$(node scripts/bars-cache-key.mjs "$CONFIG")" >> "$GITHUB_OUTPUT"
+
       - name: Bars-Cache wiederherstellen
         uses: actions/cache@v4
         with:
           path: var-probe/bars
-          key: probe-bars-${{ hashFiles(github.event.inputs.config) }}-${{ github.run_id }}
+          key: probe-bars-${{ steps.barskey.outputs.key }}-${{ github.run_id }}
           restore-keys: |
-            probe-bars-${{ hashFiles(github.event.inputs.config) }}-
+            probe-bars-${{ steps.barskey.outputs.key }}-
 
       # Doppelter Boden: Der choice-Eingang lässt ohnehin nur Erkundungs-
       # Dateien zu — aber wenn jemand später eine Option ergänzt, darf hier

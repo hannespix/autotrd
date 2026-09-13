@@ -39,21 +39,32 @@ jobs:
         run: npm ci
 
       # `var/universe.json` liegt mit im Cache: Es ist der Bestand für die
-      # Hysterese der nächsten Wahl. Fehlt es (erster Lauf, geänderte Config),
-      # gilt das Universum aus der Config als Bestand — kein Ausfall.
-      # Der Schlüssel hasht die Config: Ein Wechsel von `broker.adjustment`
-      # (Bereinigung der Tagesbars) ändert ihn mit, und bereinigte Bars liegen
-      # ohnehin in einer eigenen Wurzel (bars/<assetClass>/<feed>-adj-<wert>/,
-      # src/data/store.ts) — ein alter Cache kann nie als bereinigt gelesen werden.
+      # Hysterese der nächsten Wahl. Fehlt es (erster Lauf), gilt das Universum
+      # aus der Config als Bestand — kein Ausfall, aber die Hysterese fängt von
+      # vorn an, und der Champion kann sich dadurch bewegen.
+      #
+      # Genau deshalb hasht der Schlüssel die Config NICHT mehr, sondern nur
+      # das, was die Bars bestimmt (scripts/bars-cache-key.mjs). Vorher warf
+      # jede Änderung an `platform.yaml` — auch eine reine Risiko-Zahl — Bars
+      # UND Bestand weg; der nächste nächtliche Champion hätte sich dann aus
+      # einem Grund bewegt, der mit der Änderung nichts zu tun hat. Bereinigte
+      # Bars liegen weiter in einer eigenen Wurzel
+      # (bars/<assetClass>/<feed>-adj-<wert>/, src/data/store.ts) und ein
+      # Wechsel von `broker.adjustment` ändert den Schlüssel weiterhin mit.
+      # Der Befund dahinter: docs/wissen/analysen/2026-09-13-alpha-verschiebung-war-der-bars-cache.md
+      - name: Bars-Cache-Schlüssel bestimmen
+        id: barskey
+        run: echo "key=$(node scripts/bars-cache-key.mjs config/platform.yaml)" >> "$GITHUB_OUTPUT"
+
       - name: Bars-Cache wiederherstellen
         uses: actions/cache@v4
         with:
           path: |
             var/bars
             var/universe.json
-          key: bars-${{ hashFiles('config/platform.yaml') }}-${{ github.run_id }}
+          key: bars-${{ steps.barskey.outputs.key }}-${{ github.run_id }}
           restore-keys: |
-            bars-${{ hashFiles('config/platform.yaml') }}-
+            bars-${{ steps.barskey.outputs.key }}-
 
       # Die Alpaca-Keys sind hier REPOSITORY-Secrets — das Altsystem brauchte sie
       # nur als Functions-Secrets (universumSync), also sind sie neu anzulegen.

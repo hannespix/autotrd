@@ -100,14 +100,35 @@ Die Ursache ist **die Config, nicht der Fix**: `momentum_pullback` ist in #58
 > (`logic.ts`), die Stufen-Bremse durchläuft die Symbolschleife mit
 > `schonExit`. Das ist zu messen, bevor jemand entscheidet.
 >
+> ### ⚠⚠ Nachtrag (13.09.2026 nachts): gemessen — die Ursache ist KEINE von beiden
+>
+> Der Pfad-Verdacht ist widerlegt (120 synthetische Szenarien, drei
+> Strategien, variierte Crash-Zeitpunkte und Latten: kein einziges
+> Gegenbeispiel — ohne `tiers` und mit `tiers.basis 5/30` messen
+> ziffernidentisch). Die Ursache liegt nicht im Handelskern:
+>
+> **Die beiden Läufe haben nie dieselben Daten gesehen.** #56 lief ab
+> 2021-03-22, #58/#59 ab 2021-03-24 — der Cache-Schlüssel der Workflows
+> hashte die ganze Config-Datei, also bekam jede Config ihren eigenen
+> Bars-Cache. Zwei Warmup-Bars weniger im frühesten Fold, andere gewählte
+> Parameter dort, und über die Hysterese des Punkt-in-Zeit-Korbs bis in
+> Fold 10. `momentum_pullback` — der Kandidat, der sich am stärksten bewegt
+> — hat in KEINEM der beiden Läufe je eine Bremse ausgelöst.
+>
+> Vollständig: `2026-09-13-alpha-verschiebung-war-der-bars-cache.md`.
+> Was das für die Aussagen dieses Dokuments bedeutet, steht dort unter
+> „Was das zurücknimmt" — kurz: **Erwartung 4 ist weder bestätigt noch
+> widerlegt**, und die Höhe der Basis-Verbesserung braucht eine Neumessung
+> auf gemeinsamem Cache. Dass die Bremse abgestellt wurde, bleibt belegt.
+>
 > Es ist dieselbe Fehlerklasse, die weiter unten unter „Die Lehre" steht —
 > diesmal von mir, im selben Text.
 
-Was bleibt: `trend_donchian` verschiebt ein Gate (`fold_positive_share`) von
-rot auf grün, wenn `risk.tiers` gesetzt ist. Kein Kandidat besteht dadurch
-alle zehn, und `beats_market` fällt weiter bei allen fünf. Dass sich ein
-Kandidat bewegt, ohne dass jemand seine Latte angefasst hat, bleibt ein
-Befund — nur die Erklärung dafür fehlt noch.
+~~Was bleibt: `trend_donchian` verschiebt ein Gate (`fold_positive_share`) von
+rot auf grün, wenn `risk.tiers` gesetzt ist.~~ **Falsch — `risk.tiers` hat
+damit nichts zu tun** (siehe Nachtrag oben): Der Kandidat bewegt sich, weil
+die beiden Läufe verschiedene Daten gesehen haben. Was unverändert gilt: Kein
+Kandidat besteht alle zehn Gates, und `beats_market` fällt bei allen fünf.
 
 ## Was daraus folgt — und was ausdrücklich nicht
 
@@ -139,11 +160,13 @@ Vor einer Aktivierung steht damit:
    über 90 %. „Zeichengenau dieselben Zahlen" ist bei praktisch denselben
    Daten das ERWARTETE Ergebnis und belegt Determinismus, nicht Robustheit.
    „Dreimal dasselbe Urteil" suggeriert drei Belege, wo einer steht.
-2. **Die Ursache der Alpha-Verschiebung finden** (siehe Korrektur oben). Die
-   ursprünglich hier formulierte Owner-Frage („darf eine Basis-Bremse die
-   Konto-Bremse des Alpha lockern?") ist gegenstandslos, solange die Diagnose
-   nicht steht. Sie zu stellen, bevor sie beantwortbar ist, wäre dasselbe
-   Raten in einer anderen Runde.
+2. ~~**Die Ursache der Alpha-Verschiebung finden.**~~ **Erledigt
+   (13.09.2026 nachts): Es war der Bars-Cache, nicht die Bremse.** Die
+   Owner-Frage („darf eine Basis-Bremse die Konto-Bremse des Alpha
+   lockern?") ist damit endgültig gegenstandslos — es gibt keine gemessene
+   Nebenwirkung auf das Alpha. An ihre Stelle tritt eine Pflicht, keine
+   Frage: **V3 und V4 neu messen, jetzt auf gemeinsamem Cache**, damit das
+   Urteil über die Basis auf einem Vergleich mit EINER Änderung steht.
 3. **`risk.tiers.basis` gehört in `config/platform.yaml`** (Prüferbefund M2).
    Die bestandene Latte gilt für ein VORGESCHLAGENES Regelwerk; die Produktion
    setzt keine `tiers` und hat damit weiter 2 %/10 % — der einzige Lauf unter
