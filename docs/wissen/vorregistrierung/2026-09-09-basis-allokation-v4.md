@@ -1,7 +1,13 @@
 # Vorregistrierung: Basis-Allokation V4 — Notbremsen je Stufe
 
 **Datum:** 13.09.2026 · **These:** T5 (Fortsetzung) · **Status vor dem Lauf:** offen
-**Status nach den Läufen #54 und #55:** **nicht bestanden.** Erwartungen 2 und 3
+**Status nach dem Stufen-Fix (Lauf #59):** **BESTANDEN** — alle vier Gates
+(Netto +6 137,45 · Drawdown je Exposure 11,24 % gegen 14,29 % · Sharpe 0,81
+gegen 0,65 · Kosten 3,3 %). Erwartung 4 ist widerlegt: Eine Basis-Bremse
+lockert über `kontoGrenzen` die Konto-Bremse des Alpha. **Trotzdem keine
+Aktivierung** — siehe `analysen/2026-09-13-basis-stufenbremse-erreichte-den-optimierer-nie.md`.
+
+**Status nach den Läufen #54 und #55 (überholt, siehe oben):** nicht bestanden. Erwartungen 2 und 3
 widerlegt. Weder Notbremsen je Stufe noch der Positionsdeckel erklären den
 Einbruch gegenüber V2 — V5 ist im Basis-Block zeichengleich mit V4. Die
 V3-Ursachenanalyse ist damit widerlegt und die Owner-Frage vom 10.09.
