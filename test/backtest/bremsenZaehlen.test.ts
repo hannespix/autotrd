@@ -47,15 +47,23 @@ const kaufeUndHalte = strategyOf({
   decide: (snap) => (snap.position === null && snap.i === 2 ? { kind: 'enter', side: 'long', stop: snap.bars.c[snap.i]! * 0.9, reason: 'test' } : { kind: 'hold' }),
 });
 
-function lauf(over: NonNullable<Parameters<typeof baseConfig>[0]>['risk']): ReturnType<typeof simulate> {
+function lauf(over: NonNullable<Parameters<typeof baseConfig>[0]>['risk'], stufe?: string): ReturnType<typeof simulate> {
   const bars: ReadonlyMap<string, BarSeriesLike> = new Map([['AAA', tagesBars(40, 5)]]);
   return simulate({
     bars,
-    strategyFor: () => ({ strategy: kaufeUndHalte, params: {} }),
+    strategyFor: () => ({ strategy: kaufeUndHalte, params: {}, ...(stufe ? { stufe } : {}) }),
     config: baseConfig({ timeframe: 1440, risk: { maxPositionPct: 100, ...over } }),
     initialEquity: 100_000,
   });
 }
+
+/** Globale Bremse eng, Stufe `basis` locker — die Stufe entscheidet. */
+const engGlobalLockereBasis = {
+  maxDrawdownPct: 2,
+  maxDailyLossPct: 90,
+  riskPerTradePct: 5,
+  tiers: { alpha: { maxDailyLossPct: null, maxDrawdownPct: null }, basis: { maxDailyLossPct: null, maxDrawdownPct: 80 } },
+} as const;
 
 describe('Notbremsen-Bilanz des Simulators', () => {
   it('WÄCHTER: ein Drawdown-Halt, der über viele Zyklen steht, zählt GENAU EINMAL', () => {
@@ -86,5 +94,31 @@ describe('Notbremsen-Bilanz des Simulators', () => {
     const ende = r.equity[r.equity.length - 1]!.t;
     expect(erste).toBeGreaterThanOrEqual(anfang);
     expect(erste).toBeLessThanOrEqual(ende);
+  });
+});
+
+describe('Stufe der Wahl erreicht die Notbremse', () => {
+  /*
+   * DER Wächter für den Fehler, der Lauf #54 wertlos gemacht hat:
+   * `WindowSimArgs` reichte keine Stufe durch, jede Position des Optimierers
+   * lief als `other`, und `grenzenFuer(risk, 'other')` liefert die GLOBALEN
+   * Werte. `risk.tiers.basis` erreichte die Messung nie — sichtbar erst an
+   * der Notbremsen-Bilanz (V3 `konto:daily_loss`, V4 `other:daily_loss`,
+   * dieselben drei Tage).
+   */
+  it('WÄCHTER: mit Stufe `basis` gilt die Latte der Stufe — die Bremse löst NICHT aus', () => {
+    const r = lauf(engGlobalLockereBasis, 'basis');
+    // Drawdown-Latte der Stufe ist 80 %, die globale 2 %. Trägt die Position
+    // die Stufe, passiert nichts.
+    expect(Object.keys(r.bremsen.ausloesungen)).toEqual([]);
+  });
+
+  it('WÄCHTER: OHNE Stufe fällt dieselbe Welt auf `other` zurück — und `other` erbt die globalen 2 %', () => {
+    const r = lauf(engGlobalLockereBasis);
+    const schluessel = Object.keys(r.bremsen.ausloesungen);
+    expect(schluessel).toContain('other:drawdown');
+    expect(schluessel).not.toContain('basis:drawdown');
+    // Das ist der stille Rückfall: kein Fehler, keine Warnung — nur die alte
+    // Schwelle unter einem anderen Namen.
   });
 });

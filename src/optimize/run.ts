@@ -73,6 +73,7 @@ import {
   type ChampionFile,
   type PromotionDecision,
 } from './promote.ts';
+import { BASIS_STUFE } from '../risk/limits.ts';
 import { renderReport, writeReport } from './report.ts';
 import {
   basisGates,
@@ -1006,6 +1007,10 @@ function messeBasis(a: {
     strategy: a.strategy,
     params: a.params,
     sizing,
+    // Die Basis-Simulation trägt die Stufe `basis` — sonst liefen ihre
+    // Positionen als `other` und `risk.tiers.basis` erreichte sie nie
+    // (WindowSimArgs.stufe; der Fehler hat Lauf #54 wertlos gemacht).
+    stufe: BASIS_STUFE,
     optimizer,
     sharpeRatio: deps.metricsFns.sharpeRatio,
     periodsPerYear,

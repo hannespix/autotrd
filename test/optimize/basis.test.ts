@@ -440,6 +440,32 @@ describe('(e) WÄCHTER K2: halb in Kasse ⇒ kleiner roher MaxDD, aber je Einhei
     expect(ohne.flatDaysShare).toBeNull();
   });
 
+  it('WÄCHTER: die Basis-Simulation trägt die Stufe `basis` — sonst greifen ihre eigenen Notbremsen nie', () => {
+    /*
+     * Der Fehler, den dieser Wächter fängt, hat Lauf #54 wertlos gemacht:
+     * `run.ts` setzte keine Stufe, jede Position lief als `other`, und
+     * `grenzenFuer(risk, 'other')` liefert die GLOBALEN Werte —
+     * `risk.tiers.basis` erreichte die Messung nie. Die Engine wendete
+     * Stufen-Bremsen an, der Optimierer nicht: zwei Entscheidungspfade (§0.1).
+     *
+     * Sichtbar wurde es an der Notbremsen-Bilanz des Berichts:
+     *   V3 (ohne tiers)        konto:daily_loss 3×   erste 2024-08-05
+     *   V4 (tiers.basis 5/30)  other:daily_loss 3×   erste 2024-08-05
+     * Dieselben drei Tage, dieselbe Schwelle — die gelockerte Bremse war nie
+     * im Spiel, und ich habe daraus zunächst den falschen Schluss gezogen.
+     */
+    const closes = Array.from({ length: 400 }, () => 100);
+    const korb = BarSeries.from(closes.map((c, i) => tag(i, c)));
+    const stufen = new Set<string | undefined>();
+    const fake: SimulateFn = (inp) => {
+      for (const sym of inp.bars.keys()) stufen.add(inp.strategyFor(sym)?.stufe);
+      return { trades: [], equity: [], dailyReturns: [], metrics: { netProfit: 0, netReturnPct: 0, cagrPct: null, sharpe: null, sortino: null, maxDrawdownPct: 0, profitFactor: null, winRatePct: null, expectancy: null, avgR: null, trades: 0, exposurePct: 0, feeShare: null, days: 1 }, finalEquity: inp.initialEquity, notes: [], bremsen: OHNE_BREMSEN };
+    };
+    runOptimization(input(tmp(), { bars: korb, strategies: [], simulate: fake }));
+    expect(stufen.size).toBeGreaterThan(0);
+    expect([...stufen]).toEqual(['basis']);
+  });
+
   it('Ende-zu-Ende: dieselbe Kurve, einmal mit Exposure 0,5, einmal mit 1,0 — nur die volle besteht basis_drawdown', () => {
     // Korb: 100 → 125 → 95 ⇒ MaxDD 24 %, Latte 18 %.
     const closes = Array.from({ length: 400 }, (_, i) => (i < 200 ? 100 : i < 300 ? 125 : 95));

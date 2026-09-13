@@ -33,6 +33,17 @@ export type Stufe = 'alpha' | 'basis' | 'other';
 
 export const STUFEN: readonly Stufe[] = ['alpha', 'basis', 'other'];
 
+/**
+ * Die Stufe der Basis-Allokation, als Konstante statt als Zeichenkette.
+ *
+ * Warum: Ein Tippfehler in einem Literal wird hier nicht zum Fehler, sondern
+ * zu `other` — und `grenzenFuer` gibt für `other` stillschweigend die
+ * GLOBALEN Werte zurück. Genau so hat `risk.tiers.basis` die Messung des
+ * Optimierers nie erreicht und Lauf #54 wertlos gemacht. Wer die Stufe der
+ * Basis meint, nimmt diese Konstante.
+ */
+export const BASIS_STUFE: Stufe = 'basis';
+
 /** Die beiden Latten einer Stufe (bzw. des Kontos). */
 export interface StufenGrenzen {
   maxDailyLossPct: number;
