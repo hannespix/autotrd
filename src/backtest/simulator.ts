@@ -104,6 +104,7 @@ import type {
   SymbolSnapshot,
   TimeframeMin,
   Trade,
+  VolZielVerteilung,
 } from '../core/types.ts';
 import { borrowCost, fillCosts, regulatoryFees, type FillSide } from './costs.ts';
 import { computeMetrics } from './metrics.ts';
@@ -909,5 +910,23 @@ export function simulate(input: SimInput): SimResult {
     days,
     exposurePct,
   });
-  return { trades, equity: equityCurve, dailyReturns, metrics, finalEquity: equity, notes };
+  // Die Verteilung wandert STRUKTURIERT mit hinaus, nicht nur als Notiz:
+  // Der Optimierer summiert sie über die Folds der OOS-Kette, und erst dort
+  // ist das Abbruchkriterium der Vorregistrierung entscheidbar. Eine Notiz je
+  // Fold liesse sich nicht addieren.
+  const volZiel: VolZielVerteilung | null =
+    volZyklen > 0
+      ? {
+          zyklen: volZyklen,
+          summe: volSumme,
+          min: volFaktorMin,
+          max: volFaktorMax,
+          aufwaermen: volAufwaermen,
+          amDeckel: volAmDeckel,
+          amBoden: volAmBoden,
+          minFaktor: volMinFaktor,
+          maxFaktor: volMaxFaktor,
+        }
+      : null;
+  return { trades, equity: equityCurve, dailyReturns, metrics, finalEquity: equity, notes, ...(volZiel ? { volZiel } : {}) };
 }

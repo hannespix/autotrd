@@ -388,6 +388,33 @@ export interface EquityPoint {
   exposure?: number;
 }
 
+/**
+ * Verteilung des Vola-Ziel-Faktors über die Zyklen eines Laufs — reine
+ * DIAGNOSE, nie eine Eingabe einer Entscheidung.
+ *
+ * Wozu: Spanne und letzter Wert können den Fall „der Faktor atmet" nicht von
+ * „der Faktor klebt am Deckel" trennen, und nur der zweite macht eine Messung
+ * wertlos — dann ist das Vola-Ziel in Wahrheit ein konstanter Hebel von
+ * `maxFaktor` (docs/wissen/vorregistrierung/2026-09-13-volatilitaetsziel.md,
+ * Abbruchkriterium). Die vier Zähler sind eine ZERLEGUNG: Aufwärmphase,
+ * Deckel, Boden und frei ergeben zusammen `zyklen`.
+ */
+export interface VolZielVerteilung {
+  /** Zyklen mit einem Faktor (Läufe ohne Vola-Ziel liefern gar keine Verteilung). */
+  zyklen: number;
+  /** Summe der Faktoren — der Mittelwert entsteht erst beim Aggregieren über Folds. */
+  summe: number;
+  min: number;
+  max: number;
+  /** Zyklen in der Aufwärmphase (zu wenige Beobachtungen ⇒ Faktor 1,0, weder Deckel noch Boden). */
+  aufwaermen: number;
+  amDeckel: number;
+  amBoden: number;
+  /** Die Grenzen, gegen die gezählt wurde — damit der Leser nicht raten muss. */
+  minFaktor: number;
+  maxFaktor: number;
+}
+
 export interface SimResult {
   trades: Trade[];
   equity: EquityPoint[];
@@ -397,4 +424,6 @@ export interface SimResult {
   /** Letzter Kontozustand (für Kettung von Fenstern). */
   finalEquity: number;
   notes: string[];
+  /** Nur gesetzt, wenn `risk.volTarget.enabled` — sonst gab es keinen Faktor. */
+  volZiel?: VolZielVerteilung;
 }

@@ -167,6 +167,39 @@ function quartilZeile(name: string, q: Quartile | null, einheit: string, digits 
 }
 
 /**
+ * Verteilung des Vola-Ziel-Faktors über die OOS-Kette — die Zeile, an der das
+ * Abbruchkriterium der Vorregistrierung entscheidbar ist.
+ *
+ * Warum sie hier steht und nicht als Simulator-Notiz: Die Notizen einzelner
+ * Fold-Läufe erreichen diesen Bericht nicht, und Anteile aus 16 Folds lassen
+ * sich nicht aus 16 Sätzen addieren. Ohne diese Zeile konnte Lauf #50 sein
+ * eigenes Abbruchkriterium nicht prüfen (`analysen/2026-09-13-volatilitaetsziel.md`).
+ *
+ * Die Zeile entscheidet NICHTS — kein Gate liest sie. Sie sagt dem Leser nur,
+ * ob er ein Volatilitätsziel vor sich hat oder einen konstanten Hebel.
+ */
+function volZielZeile(v: KandidatAuswertung): string[] {
+  const d = v.volZiel;
+  if (!d || d.zyklen === 0) return [];
+  const frei = d.zyklen - d.aufwaermen - d.amDeckel - d.amBoden;
+  // Der Anteil zählt OHNE Aufwärmphase: Dort steht der Faktor auf 1,0, weil
+  // noch nicht geschätzt wurde — ihn als „atmet nicht" zu zählen wäre ebenso
+  // falsch wie als „atmet".
+  const gemessen = d.zyklen - d.aufwaermen;
+  const deckelAnteil = gemessen > 0 ? d.amDeckel / gemessen : 0;
+  const p = (x: number, n: number): string => `${n > 0 ? ((x / n) * 100).toFixed(1) : '0.0'} %`;
+  return [
+    `**Vola-Ziel** — atmet der Faktor, oder ist er ein konstanter Hebel? Faktor ${num(d.min)}–${num(d.max)}, Mittel ${num(d.summe / d.zyklen)} über ${d.zyklen} Zyklen der OOS-Kette. ` +
+      `Verteilung: ${p(d.amDeckel, d.zyklen)} am Deckel ${d.maxFaktor}, ${p(d.amBoden, d.zyklen)} am Boden ${d.minFaktor}, ${p(d.aufwaermen, d.zyklen)} Aufwärmphase, ${p(frei, d.zyklen)} frei. ` +
+      `**Ohne Aufwärmphase: ${p(d.amDeckel, gemessen)} am Deckel** ` +
+      `(${deckelAnteil > 0.8 ? '**über 80 % — der Lauf misst konstanten Hebel, kein Volatilitätsziel; nach der Vorregistrierung ist sein Ergebnis NICHT AUSWERTBAR**' : 'unter 80 % — der Faktor atmet'}).`,
+    '',
+    '_Kein Gate liest diese Zeile. Sie steht hier, weil eine Skalierung, die immer denselben Wert hat, kein Volatilitätsziel ist, sondern Hebel unter anderem Namen — und weil man das an Spanne und letztem Wert allein nicht sieht (docs/wissen/vorregistrierung/2026-09-13-volatilitaetsziel.md)._',
+    '',
+  ];
+}
+
+/**
  * Exit-Anatomie: je Ausstiegsgrund Anzahl, Netto, Trefferquote, Haltedauer,
  * Beitrag. Die Tabelle, an der man sieht, ob ein Stop zu eng oder ein Ziel zu
  * nah sitzt — und die einzige Stelle im Bericht, die sagt, WO das Geld
@@ -599,6 +632,7 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
         out.push(...exkursionBlock(s.auswertung));
         out.push(...nachlaufZeile(s.auswertung));
         out.push(...aktivitaetBlock(s.auswertung, s.massstab));
+        out.push(...volZielZeile(s.auswertung));
       } else {
         out.push('_Keine Auswertung (Exit-Anatomie, MFE/MAE, Aktivität) für diesen Kandidaten — siehe Fehlerliste des Symbols._');
         out.push('');
