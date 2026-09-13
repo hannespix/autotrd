@@ -82,6 +82,36 @@ export interface UniverseRegeln {
   minAnteil: number;
   /** Höchstzahl Abgänge gegenüber einer VORIGEN AUSWAHL je Lauf (sonst: Abbruch). */
   maxAbgang: number;
+  /**
+   * Reservierte Plätze je Gruppe (leer = aus, und dann ändert sich nichts).
+   *
+   * Wozu: Der Korb wird nach Dollarumsatz gewählt und bei `max` geschnitten.
+   * Das ist als HANDELBARKEITSMASS richtig, hat aber eine Nebenwirkung, die
+   * Lauf #49 sichtbar gemacht hat: Kredit-ETFs schaffen es hinein (LQD Rang
+   * 12, HYG Rang 21), lange Treasuries und Gold nicht (TLT Rang 32 bei einem
+   * Schnitt bei 30, GLD Rang 56). Der Korb hat damit den Anschein von
+   * Streuung ohne ihre Substanz — Kredit fällt im Aktien-Crash MIT den
+   * Aktien. Ein Korb, in dem jedes Papier dieselbe Wette ist, kann
+   * `fold_positive_share` über ein Fenster mit Bärenmarkt nicht bestehen,
+   * egal welche Strategie ihn handelt.
+   *
+   * Was das NICHT ist: eine Auswahl nach dem ERGEBNIS. Die Gruppe ist nach
+   * Assetklasse definiert, ihre Plätze werden mit DERSELBEN Kennzahl besetzt
+   * wie alle anderen — nur innerhalb der Gruppe statt über alle. Diese
+   * Funktion sieht weiterhin kein PnL, keine Trades, keinen Champion.
+   * Vorregistriert in `docs/wissen/vorregistrierung/2026-09-13-korb-breite.md`.
+   */
+  reserve: readonly ReserveGruppe[];
+}
+
+/** Eine Gruppe mit reservierten Plätzen im Korb. */
+export interface ReserveGruppe {
+  /** Name für Bericht und Begründung (z. B. `diversifizierer`). */
+  name: string;
+  /** Die Mitglieder — eine Assetklassen-Menge, keine Auswahl nach Ergebnis. */
+  symbols: readonly string[];
+  /** Wie viele Plätze von `max` diese Gruppe bekommt. */
+  plaetze: number;
 }
 
 export const UNIVERSE_REGELN: UniverseRegeln = {
@@ -94,14 +124,20 @@ export const UNIVERSE_REGELN: UniverseRegeln = {
   haltePuffer: 5,
   minAnteil: 0.8,
   maxAbgang: 5,
+  // Leer ist die Vorgabe: Ohne ausdrückliche Config wählt die Nacht wie bisher.
+  reserve: [],
 };
 
-/** Die Regeln des Betriebs für `maxSymbols` Plätze — ein Ort für CLI und Optimierer (ein Pfad). */
-export function universeRegelnFuer(maxSymbols: number): UniverseRegeln {
-  return { ...UNIVERSE_REGELN, max: maxSymbols };
+/**
+ * Die Regeln des Betriebs für `maxSymbols` Plätze — ein Ort für CLI und
+ * Optimierer (ein Pfad). `reserve` kommt aus der Config; ohne Angabe gilt
+ * die Vorgabe „keine reservierten Plätze", also das Verhalten von vorher.
+ */
+export function universeRegelnFuer(maxSymbols: number, reserve: readonly ReserveGruppe[] = []): UniverseRegeln {
+  return { ...UNIVERSE_REGELN, max: maxSymbols, reserve };
 }
 
-export type UniverseStatus = 'pflicht' | 'bestand' | 'neu' | 'abgelehnt';
+export type UniverseStatus = 'pflicht' | 'reserviert' | 'bestand' | 'neu' | 'abgelehnt';
 
 export interface UniverseBewertung {
   symbol: string;
@@ -244,10 +280,31 @@ export function waehleUniverse(a: UniverseArgs): UniverseAuswahl {
 
   // 1. Pflicht (Benchmark) — hat den Marktfilter im Rücken, geht immer mit.
   for (const r of bestanden) if (pflicht.has(r.symbol)) nimm(r.symbol, 'pflicht');
-  // 2. Bestand innerhalb des Halte-Puffers — Hysterese gegen nächtliches Umschichten auf Rauschen.
+  // 2. Reservierte Plätze — VOR dem Bestand, sonst wären sie nicht reserviert:
+  // Ein voller Korb aus Bestandswerten liesse der Gruppe nichts übrig, und
+  // genau der Zustand ist der, den die Reserve auflösen soll. Besetzt wird mit
+  // DERSELBEN Kennzahl und in DERSELBEN Ordnung wie alles andere (`bestanden`
+  // ist bereits nach Dollarumsatz sortiert, Gleichstand alphabetisch) — nur
+  // innerhalb der Gruppe. Wer die Filter nicht besteht, steht nicht in
+  // `bestanden` und bekommt auch keinen reservierten Platz: Ein Papier, das
+  // als unhandelbar gilt, wird durch eine Reservierung nicht handelbar.
+  for (const gruppe of regeln.reserve) {
+    const mitglieder = new Set(gruppe.symbols);
+    let vergeben = 0;
+    for (const r of bestanden) {
+      if (vergeben >= gruppe.plaetze) break;
+      if (!mitglieder.has(r.symbol)) continue;
+      // Ein Mitglied, das schon drin ist (Benchmark), füllt seinen Platz mit:
+      // Die Gruppe IST dann vertreten, und ihr einen zweiten Platz dafür zu
+      // geben hiesse, sie doppelt zu bedienen.
+      if (!gewaehlt.has(r.symbol)) nimm(r.symbol, 'reserviert');
+      if (gewaehlt.has(r.symbol)) vergeben++;
+    }
+  }
+  // 3. Bestand innerhalb des Halte-Puffers — Hysterese gegen nächtliches Umschichten auf Rauschen.
   const halteGrenze = regeln.max + regeln.haltePuffer;
   for (const r of bestanden) if (bestand.has(r.symbol) && rangVon.get(r.symbol)! <= halteGrenze) nimm(r.symbol, 'bestand');
-  // 3. Auffüllen nach Rang.
+  // 4. Auffüllen nach Rang.
   for (const r of bestanden) nimm(r.symbol, bestand.has(r.symbol) ? 'bestand' : 'neu');
 
   const symbols = bestanden.filter((r) => gewaehlt.has(r.symbol)).map((r) => r.symbol);
@@ -263,9 +320,11 @@ export function waehleUniverse(a: UniverseArgs): UniverseAuswahl {
             ? `Rang ${rang} — außerhalb der ersten ${regeln.max}`
             : st === 'pflicht'
               ? 'Benchmark — immer dabei'
-              : st === 'bestand' && rang! > regeln.max
-                ? `Rang ${rang} — Platz behalten (Halte-Puffer bis ${halteGrenze})`
-                : `Rang ${rang}`;
+              : st === 'reserviert'
+                ? `Rang ${rang} — reservierter Platz der Gruppe ${regeln.reserve.find((g) => g.symbols.includes(r.symbol))?.name ?? '?'}`
+                : st === 'bestand' && rang! > regeln.max
+                  ? `Rang ${rang} — Platz behalten (Halte-Puffer bis ${halteGrenze})`
+                  : `Rang ${rang}`;
       return { symbol: r.symbol, dollarVolumen: r.dollarVolumen, tage: r.tage, letzterKurs: r.letzterKurs, alterTage: r.alterTage, rang, status: st, grund };
     })
     .sort((x, y) => (x.rang ?? Number.MAX_SAFE_INTEGER) - (y.rang ?? Number.MAX_SAFE_INTEGER) || (x.symbol < y.symbol ? -1 : 1));

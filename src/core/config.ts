@@ -12,6 +12,7 @@ import { resolve } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import { TIMEFRAMES, type TimeframeMin } from './types.ts';
+import type { ReserveGruppe } from '../universe/select.ts';
 import { normalizeUserSymbol } from '../alpaca/symbols.ts';
 import { BAR_ADJUSTMENTS } from '../alpaca/types.ts';
 
@@ -27,6 +28,8 @@ export interface ResolvedUniverse {
   benchmark?: string;
   /** Pool der nächtlichen Auswahl; enthält immer mindestens `symbols`. */
   candidates?: string[];
+  /** Reservierte Plätze je Gruppe (leer = aus). Siehe `universe/select.ts`. */
+  reserve: ReserveGruppe[];
 }
 
 export const ConfigSchema = z.object({
@@ -68,17 +71,61 @@ export const ConfigSchema = z.object({
       candidates: z.array(z.string().min(1)).max(300).optional(),
       /** Wie viele Symbole die Auswahl behält (IEX-Basis: höchstens 30 inkl. Benchmark). */
       maxSymbols: z.number().int().min(1).max(30).default(30),
+      /**
+       * Reservierte Plätze im Korb je Gruppe — leer ist die Vorgabe, und dann
+       * ändert sich nichts. Die Plätze werden mit DERSELBEN Liquiditätsregel
+       * besetzt wie alle anderen, nur innerhalb der Gruppe; die Gruppe selbst
+       * ist nach Assetklasse zu definieren, nie nach dem Ergebnis einer
+       * Strategie (`src/universe/select.ts`, Modulkopf).
+       *
+       * Vorregistrierung: `docs/wissen/vorregistrierung/2026-09-13-korb-breite.md`.
+       */
+      reserve: z
+        .array(
+          z.object({
+            name: z.string().min(1).max(40),
+            symbols: z.array(z.string().min(1)).min(1).max(50),
+            plaetze: z.number().int().min(1).max(30),
+          }),
+        )
+        .max(5)
+        .default([]),
     })
     // Kanonische Alpaca-Schreibweise (BRK-B → BRK.B, btcusd → BTC/USD) und Duplikate raus —
     // sonst bucht ein Fill unter „BTC/USD", während die Entscheidung „BTCUSD" ohne Position sieht.
     .transform((u): ResolvedUniverse => {
       const norm = (s: string) => normalizeUserSymbol(s, u.assetClass);
       const symbols = [...new Set(u.symbols.map(norm))];
-      const out: ResolvedUniverse = { assetClass: u.assetClass, symbols, maxSymbols: u.maxSymbols };
+      const out: ResolvedUniverse = {
+        assetClass: u.assetClass,
+        symbols,
+        maxSymbols: u.maxSymbols,
+        // Dieselbe Normierung wie für jedes andere Symbol: Eine Gruppe, die
+        // `BRK-B` sagt, während der Korb `BRK.B` führt, hätte einen
+        // reservierten Platz, den nie jemand besetzen kann.
+        reserve: u.reserve.map((g) => ({ name: g.name, symbols: [...new Set(g.symbols.map(norm))], plaetze: g.plaetze })),
+      };
       if (u.benchmark !== undefined) out.benchmark = norm(u.benchmark);
       // Der Pool enthält immer mindestens das aktuelle Universum: Sonst könnte eine
       // Auswahl Symbole verlieren, die die Config gerade handelt.
       if (u.candidates !== undefined) out.candidates = [...new Set([...symbols, ...u.candidates.map(norm)])];
+      // Ein reserviertes Symbol, das im Pool fehlt, bekäme nie Bars und damit
+      // nie einen Rang — der Platz bliebe still leer. Lieber laut ablehnen als
+      // eine Reserve, die nichts reserviert.
+      const pool = new Set(out.candidates ?? symbols);
+      for (const g of out.reserve) {
+        for (const sym of g.symbols) {
+          if (!pool.has(sym)) {
+            throw new Error(
+              `universe.reserve: ${sym} (Gruppe ${g.name}) steht nicht im Kandidatenpool — ohne Bars bekommt es keinen Rang und der reservierte Platz bliebe leer.`,
+            );
+          }
+        }
+      }
+      const plaetze = out.reserve.reduce((n, g) => n + g.plaetze, 0);
+      if (plaetze >= u.maxSymbols) {
+        throw new Error(`universe.reserve: ${plaetze} reservierte Plätze bei maxSymbols ${u.maxSymbols} — für die Liquiditätsauswahl bliebe nichts übrig.`);
+      }
       return out;
     }),
   /** Strategie-Zeitrahmen in Minuten (1440 = Tagesbars). */

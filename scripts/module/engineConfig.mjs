@@ -8,6 +8,12 @@
  * Untergrenze im Takt-Leser `functions/src/engine/config.ts`).
  *
  * `universe.maxSymbols` bleibt draußen: Sache der nächtlichen Auswahl.
+ * `universe.reserve` (reservierte Plätze je Gruppe) ebenso, und aus demselben
+ * Grund: Es ist eine AUSWAHLREGEL, und die Auswahl läuft im Workflow gegen
+ * `config/platform.yaml` (`optimize.yml` ⇒ `autotrd universe`). Der Takt
+ * wählt nie selbst; er bekommt das ERGEBNIS als `universe.symbols`. Stünde
+ * die Regel zusätzlich im Doc, gäbe es zwei Orte, an denen sie steht, und
+ * einer davon wirkte nie — das ist die stille Sorte Fehler.
  * `universe.candidates` (der Kandidatenpool) geht seit Prüfbefund M11 MIT:
  * Der Takt prüft den Korb des Champion-Blocks `basis` dagegen und verwirft
  * Symbole außerhalb des Pools (core/basisTier.ts) — sonst schriebe, wer
