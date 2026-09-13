@@ -56,6 +56,27 @@ export function barStoreRoot(barsDir: string, assetClass: string, feed: string, 
   return join(barsDir, assetClass, adjustment === 'raw' ? feed : `${feed}-adj-${adjustment}`);
 }
 
+/**
+ * Schlüssel des Bars-Caches: GENAU die drei Größen, die `barStoreRoot`
+ * trennt — Assetklasse, Feed, Bereinigung. Nicht mehr und nicht weniger.
+ *
+ * Warum das hier steht und nicht im Workflow (Befund 13.09.2026): `probe.yml`
+ * und `optimize.yml` hashten die ganze Config-Datei als Cache-Schlüssel.
+ * Damit bekam jede Config ihren eigenen Bars-Cache — auch zwei, die sich nur
+ * in einer Risiko-Zahl unterscheiden. Der Backfill ist inkrementell und der
+ * IEX-Feed franst am Anfang aus, also füllten sich die Eimer verschieden:
+ * Lauf #56 sah Daten ab 2021-03-22, Lauf #59 ab 2021-03-24. Zwei Warmup-Bars
+ * Unterschied im frühesten Fold haben dort eine andere IS-Wahl erzeugt und
+ * über die Korb-Hysterese bis in Fold 10 gewirkt. Zwei Läufe, die „eine
+ * Änderung" messen sollten, haben nie dieselben Daten gesehen.
+ *
+ * Wer die Wurzel oben ändert, ändert diese Funktion mit; der Wächter, der
+ * beides gegeneinander hält, steht in `test/scripts/barsCacheKey.test.ts`.
+ */
+export function barsCacheKey(cfg: { universe: { assetClass: string }; broker: { feed: string; adjustment: BarAdjustment } }): string {
+  return `${cfg.universe.assetClass}-${cfg.broker.feed}-${cfg.broker.adjustment}`;
+}
+
 const ADJUSTED_ROOT = /-adj-(split|dividend|all)$/;
 
 /** Bereinigung, die eine Wurzel aus `barStoreRoot()` im Namen trägt; null für rohe (und fremde) Wurzeln. */
