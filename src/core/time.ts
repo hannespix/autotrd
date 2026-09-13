@@ -311,6 +311,29 @@ export function prevTradingDay(day: string, assetClass: AssetClass, calendar?: C
   return prev;
 }
 
+/**
+ * Anker eines Datenfensters: der letzte Handelstag BIS EINSCHLIESSLICH `day`.
+ *
+ * Wozu: `fetch` und `optimize` müssen ihr Fenster am SELBEN Punkt aufhängen.
+ * Der Optimierer nimmt das Datenende (`optimize/run.ts`, „Das Messfenster ist
+ * lookbackDays bis zum Ende der Daten"); `fetch` nahm bis zum 13.09.2026 die
+ * Wanduhr. An einem Tag ohne Handel klafft dazwischen die Marktlücke, und
+ * `fetch` holte um genau diese Lücke zu wenig — am Sonntag zwei Tage, nach
+ * einem Feiertagswochenende bis zu vier. Der Schnitt im Optimierer ist
+ * richtig, aber er kann keine Bars herbeizaubern, die nie geholt wurden.
+ *
+ * Die Richtung ist mit Absicht unsymmetrisch: Der Anker darf nie ZU SPÄT
+ * liegen (dann fehlen Bars am Anfang und die Messung wird stumm kürzer),
+ * zu früh ist harmlos (der Optimierer schneidet). Deshalb zählt der Beginn
+ * des Handelstags, nicht sein Schluss.
+ *
+ * Ohne Kalender und bei Krypto handelt jeder Tag — dann ist der Anker `day`.
+ */
+export function datenAnker(day: string, assetClass: AssetClass, calendar?: Calendar): string {
+  if (isTradingDay(day, assetClass, calendar)) return day;
+  return prevTradingDayOrNull(day, assetClass, calendar) ?? day;
+}
+
 /* ───────────────────────── Buckets ───────────────────────── */
 
 /**

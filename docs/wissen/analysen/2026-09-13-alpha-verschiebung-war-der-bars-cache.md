@@ -12,9 +12,10 @@ habe ich gemessen und **widerlegt**. Die Ursache liegt nicht im Handelskern,
 sondern im Messstand:
 
 > `probe.yml` und `optimize.yml` hashten die GANZE Config-Datei als
-> Cache-Schlüssel. Jede Config bekam damit ihren eigenen Bars-Cache. Der
-> Backfill ist inkrementell, der IEX-Feed franst am Anfang aus — also füllten
-> sich die Eimer verschieden.
+> Cache-Schlüssel. Jede Config bekam damit ihren eigenen Bars-Cache — und
+> weil ein frisch angelegter Eimer am ANFANG systematisch zu kurz ist
+> (siehe „Der zweite Fehler" unten), sahen ein alter und ein neuer Eimer
+> verschiedene Daten.
 
 | Lauf | Config | Datenbereich |
 |---|---|---|
@@ -91,6 +92,52 @@ durchläuft die Symbolschleife mit `schonExit` — aber in einem Buch, das nur
 EINE Stufe hält, stellen beide Wege dieselben Positionen glatt und sperren
 dieselben Einstiege. Der Unterschied ist sichtbar nur bei gemischten Stufen,
 und im Optimierer wird jede Stufe für sich simuliert.
+
+## Der zweite Fehler — und er ist der eigentliche
+
+Meine erste Fassung schrieb, „der IEX-Feed franst am Anfang aus". Das war
+geraten. Nachgerechnet ist es exakt, und es liegt im Code:
+
+**`fetch` und `optimize` ankern ihr Fenster verschieden.**
+
+| | Anker | ab wann |
+|---|---|---|
+| `cmdFetch` (`cli.ts`) | `now`, die WANDUHR | `now − lookbackDays` |
+| `runOptimization` (`run.ts` §762) | das DATENENDE | `letzteBar + 1 − lookbackDays` |
+
+Am Sonntag, 13.09.2026, war die letzte Bar Freitag, der 11.09.:
+
+```
+fetch will ab    2021-03-23   (Anker Wanduhr)
+optimize will ab 2021-03-21   (Anker Datenende)
+Lücke            2 Tage       — genau die Marktlücke
+```
+
+Der Schnitt in `run.ts` ist richtig und sein Kommentar nennt den Grund
+(„ohne diesen Schnitt hinge die Fold-Zahl davon ab, wer zuletzt wie tief
+geladen hat"). Nur kann er keine Bars herbeizaubern, die `fetch` nie geholt
+hat. **Ein Lauf mit frischem Cache ist am Anfang um genau die Marktlücke zu
+kurz** — zwei Tage am Wochenende, bis zu vier nach einem Feiertagswochenende.
+
+Ein ALTER Eimer verdeckt das: `backfillAdjustedDaily` fragt ab
+`min(from, first)`, behält also den frühesten Beginn, den er je gesehen hat.
+Deshalb war #56 (alter V3-Eimer) vollständig und #59 (frischer V4-Eimer)
+zwei Tage kurz — und deshalb passt die Rechnung auf den Tag:
+
+| Lauf | Eimer | erste Bar | erwartet |
+|---|---|---|---|
+| #56 | alt, aus einem früheren Lauf | 2021-03-22 | Fenster ab 2021-03-21 ⇒ Montag 2021-03-22 ✔ |
+| #59 | frisch am 13.09. | 2021-03-24 | `fetch` ab 2021-03-23 ⇒ 2021-03-24 ✔ |
+
+Die Kette ist damit vollständig: **(1)** `fetch` ankert falsch ⇒ frischer
+Cache ist am Anfang zu kurz. **(2)** `min(from, first)` ⇒ ein alter Cache
+verdeckt es. **(3)** Der Schlüssel je Config-Datei ⇒ V3 bekam einen alten,
+V4 einen frischen Eimer.
+
+Behoben ist hier (3). **(1) bleibt offen** und ist der schwerere Befund:
+Dieselbe Config, zweimal gefahren, misst ein anderes Fenster — je nachdem,
+ob der Cache warm war. Das trifft auch `optimize.yml`, also den nächtlichen
+Champion.
 
 ## Der Fehler im Messstand
 
