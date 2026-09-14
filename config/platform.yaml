@@ -143,6 +143,33 @@ strategy:
   params: {}
   allowWithoutChampion: false   # Ohne Champion handelt niemand — der Optimierer entscheidet.
 
+  # Papier-Erprobung EIN (Owner-Entscheidung 14.09.2026, CLAUDE.md §0.9,
+  # src/core/erprobung.ts). Der GLOBALE Schalter; je Nutzer gilt zusätzlich
+  # settings.auto.erprobung, beide werden UND-verknüpft.
+  #
+  # Warum: Seit dem Neubau besteht kein Kandidat die zehn Gates, also handelt
+  # die Plattform nichts — und ohne Trades entsteht nie ein Journal, aus dem
+  # `readiness` je etwas lernen könnte. Die Erprobung durchbricht genau diese
+  # Sackgasse, auf Papier.
+  #
+  # WAS DAS NICHT LOCKERT: Kein Gate, keine Schwelle, keine Beförderung. Der
+  # Kandidat bleibt durchgefallen und steht weiter in `noTrade`; `champion.symbols`
+  # bleibt leer. Echtgeld erreicht die Stufe nie (aufgelöster Modus), und ihre
+  # Trades zählen weder in `readiness` noch in `stats/main` — die
+  # Echtgeld-Freigabe bleibt unberührt.
+  #
+  # WAS ZU ERWARTEN IST, ohne Beschönigung (Lauf 34889637521, 18 Folds,
+  # 2020-07-27 … 2026-09-14): Gehandelt wird `momentum_pullback`, bester
+  # Kandidat mit Score 0.120 — 516 Trades (≈ 29 je Monat über den 30er-Korb),
+  # netto +814,55 $ auf 25 000 $ über 4,5 Jahre und ein GEBÜHRENANTEIL VON
+  # 219,2 %. Die Gebühren fressen mehr als den doppelten Bruttogewinn. Das ist
+  # wörtlich die Krankheit des Vorgängersystems (§2: „Der Handel funktioniert;
+  # er wird zu Tode gehandelt"), und deshalb fällt der Kandidat durch.
+  #
+  # Es sind also viele Trades bei ungefähr null zu erwarten, nicht Gewinn. Der
+  # Zweck ist das Journal, nicht das Ergebnis.
+  erprobung: true
+
 optimizer:
   strategies: [trend_donchian, momentum_pullback, mean_reversion, cross_sectional_momentum, regime_allocation]
   # Fenster wie in config/equity-1440.yaml, das vier Halbjahre lang gemessen
