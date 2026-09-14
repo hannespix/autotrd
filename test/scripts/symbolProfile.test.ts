@@ -90,8 +90,9 @@ describe('scripts/module/symbolProfile.mjs', () => {
     // Champion. Eine Aufzählung, die an zwei Stellen steht, läuft
     // auseinander; dieser Wächter hält sie zusammen.
     const quellen: TaktikQuelle[] = ['champion', 'basis', 'erprobung', 'config', 'keine'];
+    const muster = profil.profile[0]!;
     for (const q of quellen) {
-      const eintrag = { ...(profil.profile[0] as Record<string, unknown>), taktik: { ...(profil.profile[0] as { taktik: object }).taktik, quelle: q } };
+      const eintrag = { ...muster, taktik: { ...muster.taktik, quelle: q } };
       expect(pruefeProfil({ ...profil, profile: [eintrag] }), `Quelle ${q} wird abgelehnt`).toBeNull();
     }
   });
