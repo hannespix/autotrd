@@ -76,6 +76,10 @@ export const INFO_DE: Record<string, Tip> = {
     t: 'Basis-Allokation',
     d: 'Marktexposition mit Trendfilter als Standard statt „nichts": Ein monatlicher Regime-und-Stärke-Filter über wenige Anlageklassen-ETFs (der Korb steht im Champion-Block „Basis"), mit weitem Katastrophen-Stop beim Broker. Sie handelt nur Symbole, für die es keinen Alpha-Champion gibt, und nur, wenn sie ihre eigene Latte bestanden hat (Netto nach Kosten, Drawdown je Einheit Exposure, Ertrag je Risiko, Gebührenanteil — gegen den liegengelassenen Korb, nicht gegen den Markt). WAS SIE NICHT IST: kein Alpha und kein Versprechen; sie kauft kleineren Drawdown mit Ertrag. SIZING: Jede Position ist ein FESTER Anteil der Equity (steht im Champion-Block), unabhängig vom „Risiko je Trade" — genau so wurde sie gemessen; Positionsdeckel, Positionsanzahl und Notbremsen gelten unverändert. Aus heißt: Diese Symbole werden nicht gehandelt, offene Basis-Positionen werden geschlossen.',
   },
+  erprobung: {
+    t: 'Papier-Erprobung',
+    d: 'Handelt auf einem PAPIER-Konto den besten gemessenen Kandidaten eines Symbols — auch wenn er die Gütekriterien NICHT bestanden hat. Warum es das gibt: Solange nichts besteht, handelt die Plattform nichts, und dann entsteht auch nie ein Journal, aus dem sich Betriebserfahrung ablesen liesse. WAS DAS NICHT IST: keine gelockerte Latte und keine Beförderung — der Kandidat bleibt durchgefallen und steht weiter auf „kein Handel". Es ist eine Erhebung, kein Urteil. WAS DABEI SICHER IST: Ein Echtgeld-Konto erreicht die Erprobung NIE; sie bleibt ausserdem ganz aus, solange irgendein bestandener Champion oder die Basis-Stufe handelt (geteilte Plätze, geteilte Notbremse); und ihre Trades zählen NICHT für die Live-Reife — weder dafür noch dagegen. ERWARTUNG: Ein Kandidat, der durchgefallen ist, verliert wahrscheinlich auch hier. Das ist Papiergeld und der Zweck der Übung. Aus heisst: Diese Symbole werden nicht gehandelt, offene Erprobungs-Positionen werden geschlossen.',
+  },
   telegram: {
     t: 'Telegram-Benachrichtigungen',
     d: 'Die Engine meldet über den Plattform-Bot, was sie getan hat: Einstiege, Ausstiege, ausgelöste Notbremsen, Halt und Resume, Fehler. Nur Ereignisse, nie Kurse — ein Bot, der jede Minute schreibt, wird stummgeschaltet und ist dann bei der einen Meldung, die zählt, nicht mehr da. Die Zuordnung deines Telegram-Kontos richtet der Betreiber ein.',
@@ -186,6 +190,10 @@ export const INFO_EN: Record<string, Partial<Tip>> = {
   basis: {
     t: 'Base allocation',
     d: 'Market exposure with a trend filter as the default instead of “nothing”: a monthly regime-and-strength filter over a few asset-class ETFs (the basket is in the champion block “base”), with a wide catastrophe stop at the broker. It trades only symbols without an alpha champion, and only if it passed its own bar (net after costs, drawdown per unit of exposure, return per risk, fee share — against the basket held passively, not against the market). WHAT IT IS NOT: not alpha and not a promise; it buys a smaller drawdown with return. SIZING: every position is a FIXED share of equity (stated in the champion block), independent of “risk per trade” — exactly as measured; position cap, position count and brakes apply unchanged. Off means: these symbols are not traded and open base positions are closed.',
+  },
+  erprobung: {
+    t: 'Paper trial',
+    d: 'On a PAPER account, trades a symbol\u2019s best measured candidate \u2014 even when it did NOT pass the quality gates. Why it exists: while nothing passes, the platform trades nothing, and then no journal ever accumulates from which operating experience could be read. WHAT IT IS NOT: not a loosened bar and not a promotion \u2014 the candidate stays failed and remains marked \u201cdo not trade\u201d. It is a measurement, not a verdict. WHAT IS GUARANTEED: a real-money account NEVER reaches the trial; it also stays off entirely while any passed champion or the base tier is trading (shared slots, shared brake); and its trades do NOT count towards live readiness \u2014 neither for nor against. EXPECTATION: a candidate that failed will probably lose here too. That is paper money and the point of the exercise. Off means: these symbols are not traded and open trial positions are closed.',
   },
   telegram: {
     t: 'Telegram notifications',

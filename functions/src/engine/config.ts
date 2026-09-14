@@ -121,6 +121,7 @@ export interface UserRiskPart {
   symbols: string[] | null;
   /** Basis-Stufe handeln (`settings.auto.basis`); fehlend, Alt-Schema oder Default ⇒ an. */
   basis: boolean;
+  erprobung: boolean;
   source: UserRiskSource;
 }
 
@@ -145,16 +146,16 @@ export function userRiskFrom(settings: unknown): UserRiskPart {
     if (auto.allowShort !== undefined) risk.allowShort = auto.allowShort;
     const symbols = Array.isArray(auto.symbols) ? auto.symbols.filter((x): x is string => typeof x === 'string') : null;
     // Nur ein ausdrückliches `false` schaltet die Basis ab — wie `validateAutoSettings` es speichert.
-    return { risk, symbols, basis: auto.basis !== false, source: 'auto' };
+    return { risk, symbols, basis: auto.basis !== false, erprobung: auto.erprobung !== false, source: 'auto' };
   }
   if (isRecord(s.strategy)) {
     const auto = autoSettingsFromLegacy(s.strategy);
     const risk: Record<string, unknown> = {};
     for (const k of AUTO_FIELDS) risk[k] = auto[k];
     risk.allowShort = auto.allowShort;
-    return { risk, symbols: null, basis: auto.basis !== false, source: 'legacy' };
+    return { risk, symbols: null, basis: auto.basis !== false, erprobung: auto.erprobung !== false, source: 'legacy' };
   }
-  return { risk: {}, symbols: null, basis: true, source: 'default' };
+  return { risk: {}, symbols: null, basis: true, erprobung: true, source: 'default' };
 }
 
 export interface UserConfig {
@@ -168,6 +169,8 @@ export interface UserConfig {
   auswahlVeraltet?: string;
   /** Die beiden Schalter der Basis-Stufe — `config.strategy.basis` ist ihr UND. */
   basisSchalter: { global: boolean; nutzer: boolean };
+  /** Die beiden Schalter der Papier-Erprobung — `config.strategy.erprobung` ist ihr UND. */
+  erprobungSchalter: { global: boolean; nutzer: boolean };
 }
 
 /** Globaler Schalter der Basis-Stufe aus dem Doc: nur ein ausdrückliches `false` schaltet ab. */
@@ -204,7 +207,15 @@ export function buildUserConfig(global: Record<string, unknown>, settings: unkno
   // (settings.auto.basis) — beide müssen an sein. Er wohnt im `strategy`-Block des Kerns, derselben
   // Stelle, die `strategyChoice` im Dauerprozess liest.
   const basisSchalter = { global: globalBasisSchalter(global), nutzer: part.basis };
-  const strategy: Record<string, unknown> = { ...(isRecord(global.strategy) ? global.strategy : {}), basis: basisSchalter.global && basisSchalter.nutzer };
+  // Papier-Erprobung: global UND Nutzer, wie die Basis. Der globale Schalter
+  // fehlt in alten `meta/engineConfig`-Dokumenten — dann gilt AUS, nicht an.
+  const globalErprobung = isRecord(global.strategy) && global.strategy.erprobung === true;
+  const erprobungSchalter = { global: globalErprobung, nutzer: part.erprobung };
+  const strategy: Record<string, unknown> = {
+    ...(isRecord(global.strategy) ? global.strategy : {}),
+    basis: basisSchalter.global && basisSchalter.nutzer,
+    erprobung: erprobungSchalter.global && erprobungSchalter.nutzer,
+  };
   // Risiko des Nutzers + die global gemessenen Blöcke (GLOBAL_RISK_FELDER, von
   // `globalConfigRaw` durchgelassen). Reihenfolge ist Absicht: Der Nutzer kann sie
   // nicht überschreiben, denn er schickt sie gar nicht erst mit (`userRiskFrom`
@@ -212,7 +223,7 @@ export function buildUserConfig(global: Record<string, unknown>, settings: unkno
   const risk: Record<string, unknown> = { ...part.risk };
   const globalRisk = isRecord(global.risk) ? global.risk : {};
   for (const k of GLOBAL_RISK_FELDER) if (globalRisk[k] !== undefined) risk[k] = plain(globalRisk[k]);
-  const out: UserConfig = { config: parseConfig({ ...global, universe, risk, strategy }), source: part.source, basisSchalter };
+  const out: UserConfig = { config: parseConfig({ ...global, universe, risk, strategy }), source: part.source, basisSchalter, erprobungSchalter };
   if (auswahlVeraltet !== undefined) out.auswahlVeraltet = auswahlVeraltet;
   return out;
 }

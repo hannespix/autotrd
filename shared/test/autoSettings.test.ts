@@ -56,7 +56,7 @@ describe('validateAutoSettings — gültige Eingaben', () => {
   it('notifyTelegram fehlend ⇒ false; unbekannte Schlüssel werden nicht übernommen', () => {
     const p = validateAutoSettings({ ...gueltig, hebel: 3, watchlist: ['QQQ'] });
     expect(p.ok).toBe(true);
-    expect(p.wert).toEqual({ ...gueltig, notifyTelegram: false, basis: true });
+    expect(p.wert).toEqual({ ...gueltig, notifyTelegram: false, basis: true, erprobung: true });
     expect(Object.keys(p.wert ?? {})).not.toContain('hebel');
   });
 
@@ -105,6 +105,14 @@ describe('validateAutoSettings — die Seite, auf der Geld verloren geht', () =>
 
   it('maxPositions muss ganzzahlig sein — nie still runden', () => {
     expect(validateAutoSettings({ ...gueltig, maxPositions: 2.5 }).fehler).toEqual(['val.ganzzahl|maxPositions']);
+  });
+
+  it('erprobung fehlend ⇒ AN (aber der GLOBALE Schalter steht auf aus; beide werden UND-verknüpft)', () => {
+    expect(validateAutoSettings(gueltig).wert?.erprobung).toBe(true);
+    expect(validateAutoSettings({ ...gueltig, erprobung: false }).wert?.erprobung).toBe(false);
+    expect(AUTO_DEFAULTS.erprobung).toBe(true);
+    // Das Feld ist zum ABWÄHLEN da, nicht zum Einschalten.
+    expect(validateAutoSettings({ ...gueltig, erprobung: 'an' }).fehler).toEqual(['val.boolean|erprobung']);
   });
 
   it('allowShort ist Pflicht, notifyTelegram und basis optional — alle nur als Boolean', () => {
@@ -185,6 +193,7 @@ describe('autoSettingsFromLegacy — dieselbe Ableitung wie der Engine-Takt', ()
       allowShort: true,
       notifyTelegram: false,
       basis: true,
+      erprobung: true,
     });
     expect(auto.symbols).toBeUndefined();
   });
