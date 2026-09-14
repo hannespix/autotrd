@@ -1463,6 +1463,39 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
             optimizer,
           });
           const fp = foldPlanForBars(achse, optimizer);
+          /*
+           * DISJUNKTE UNIVERSEN (vorregistriert 14.09.2026,
+           * vorregistrierung/2026-09-14-ensemble-disjunkte-universen.md).
+           *
+           * Vorher nahm `korbZuordnung` den fertigen Punkt-in-Zeit-Korb und
+           * STRICH daraus jedes Symbol, das ein fester Sleeve schon belegt.
+           * Der Korb-Sleeve verlor dadurch Plätze — bei E1 sechs von dreissig
+           * (EFA, GLD, LQD, QQQ, SPY, TLT) —, kam auf 71 statt 496 Trades und
+           * trug 188 % Gebührenanteil.
+           *
+           * Jetzt kommen die belegten Symbole aus dem KANDIDATENPOOL raus,
+           * BEVOR gewählt wird. Dieselbe Auswahlregel, dieselbe Hysterese, nur
+           * auf einem kleineren Pool: Der Korb-Sleeve füllt wieder alle Plätze
+           * und wählt ANDERE Symbole, statt welche zu verlieren.
+           *
+           * Nur fürs Ensemble. Die Einzelkandidaten behalten die `membership`
+           * des vollen Pools — sonst verschöbe ein Lauf zwei Dinge auf einmal.
+           */
+          let ensembleMembership = common.membership;
+          const belegtVomSleeve = new Set<string>();
+          for (const sl of plan.sleeves) if (sl.universe === 'fixed') for (const sym of sl.symbols) belegtVomSleeve.add(sym);
+          if (einheit.kandidaten && belegtVomSleeve.size > 0) {
+            const frei = new Map<string, BarSeriesLike>();
+            for (const [sym, b] of einheit.kandidaten) if (!belegtVomSleeve.has(sym)) frei.set(sym, b);
+            const letzterFold = fp.folds[fp.folds.length - 1]!;
+            const zeitenE = [...fp.folds.map((f) => f.oosStart), letzterFold.oosEnd, ...(fp.holdout ? [fp.holdout.start] : [])];
+            // Die Benchmark ist Pflichtmitglied — aber nur, wenn sie nicht
+            // ohnehin einem Sleeve gehört (bei E1 gehört SPY der Defensive).
+            const pflichtE = cfg.universe.benchmark && !belegtVomSleeve.has(cfg.universe.benchmark) ? [cfg.universe.benchmark] : [];
+            const kE = korbJeFold({ kandidaten: frei, zeiten: zeitenE, regeln: universeRegelnFuer(cfg.universe.maxSymbols, cfg.universe.reserve), pflicht: pflichtE });
+            ensembleMembership = kE.at;
+            log(`${symbol} ${name}: disjunkte Universen — ${belegtVomSleeve.size} Symbole den Sleeves zugeteilt, Korb wählt aus ${frei.size} statt ${einheit.kandidaten.size} Kandidaten`);
+          }
           // Korb der Einheit UND die vorregistrierten Sleeve-Symbole — die
           // Zuordnung je Fenster besorgt `korbZuordnung` (ensemble.ts).
           const alle = new Map<string, BarSeriesLike>(korbVon(symbol, bars));
@@ -1473,7 +1506,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
             achse,
             folds: fp.folds,
             holdout: fp.holdout,
-            membership: common.membership,
+            membership: ensembleMembership,
             config: simConfig,
             optimizer,
             initialEquity: input.initialEquity,

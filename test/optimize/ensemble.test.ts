@@ -56,7 +56,7 @@ import { nichtsGemessen, runOptimization } from '../../src/optimize/run.ts';
 import { deflatedSharpeIs, probabilisticSharpeOos, robustnessGates } from '../../src/optimize/robustness.ts';
 import { foldPlanForBars, zeitachseVon } from '../../src/optimize/walkForward.ts';
 import type { Renditereihe } from '../../src/backtest/aktivitaet.ts';
-import { REWARD_PROFILE, dailyBars, fakeMetricsFns, fakeStrategy, makeFakeSimulate, simConfigOf, testConfig, type FakeSimOptions } from './fakes.ts';
+import { REWARD_PROFILE, T0, dailyBars, fakeMetricsFns, fakeStrategy, makeFakeSimulate, simConfigOf, testConfig, type FakeSimOptions } from './fakes.ts';
 
 /* ───────────────────────── Hilfen ───────────────────────── */
 
@@ -680,6 +680,18 @@ describe('messeEnsemble', () => {
 
 /* ───────────────────────── 8. Im Lauf: gemessen, aber nie befördert ───────────────────────── */
 
+/**
+ * Tagesbars, die die Liquiditätsregeln der Universumswahl BESTEHEN:
+ * `dailyBars` liefert 100 $ × 1000 Stück = 100 000 $/Tag und fällt damit
+ * unter die Mindestschwelle von 2 Mio. $ — alle Kandidaten würden abgelehnt,
+ * und der Fall prüfte nichts.
+ */
+function liquideBars(tage: number, stueck = 100_000): BarSeries {
+  const bars = [];
+  for (let i = 0; i < tage; i++) bars.push({ t: T0 + i * DAY, o: 100, h: 101, l: 99, c: 100, v: stueck });
+  return BarSeries.from(bars);
+}
+
 describe('runOptimization mit Ensembles', () => {
   const strategien: Record<string, Strategy> = { edge: fakeStrategy('edge'), defensiv: fakeStrategy('defensiv') };
   const dirs: string[] = [];
@@ -693,13 +705,19 @@ describe('runOptimization mit Ensembles', () => {
   };
   const NOW = Date.UTC(2026, 8, 13, 12, 0, 0);
 
-  function lauf(over: { pooled?: boolean; symbols?: string[]; ensembles?: unknown[] } = {}) {
+  function lauf(over: { pooled?: boolean; symbols?: string[]; ensembles?: unknown[]; candidates?: string[]; maxSymbols?: number; foldMembership?: 'fixed' | 'point_in_time' } = {}) {
     const home = tmp();
     const symbols = over.symbols ?? ['AAA', 'BBB'];
     const cfg = testConfig({
       symbols,
       home,
+      ...(over.candidates ? { candidates: over.candidates } : {}),
+      ...(over.maxSymbols !== undefined ? { maxSymbols: over.maxSymbols } : {}),
+      // Korb je Fold rechnet auf TAGESBARS wie nachts (run.ts) — ohne das
+      // bleibt der Kandidatenpool ungenutzt und der Fall prüft nichts.
+      ...(over.candidates ? { timeframe: 1440 as const } : {}),
       optimizer: {
+        ...(over.foldMembership ? { foldMembership: over.foldMembership } : {}),
         lookbackDays: 400,
         isDays: 120,
         oosDays: 30,
@@ -723,6 +741,7 @@ describe('runOptimization mit Ensembles', () => {
       symbols,
       strategies: ['edge'],
       barsFor: () => dailyBars(400),
+      ...(over.candidates ? { candidateBarsFor: (sym: string) => liquideBars(400, sym.startsWith('DEF') ? 500_000 : 100_000) } : {}),
       home,
       initialEquity: 25_000,
       simulate: makeFakeSimulate(() => REWARD_PROFILE),
@@ -744,6 +763,57 @@ describe('runOptimization mit Ensembles', () => {
     expect(run.results.map((r) => r.strategyId)).not.toContain('ensemble');
     const champion = loadChampion(homePaths(home).champion)!;
     for (const eintrag of Object.values(champion.symbols)) expect(eintrag.strategy).not.toBe('ensemble');
+  });
+
+  it('disjunkte Universen: der Korb-Sleeve verliert keine Plätze, er wählt andere', () => {
+    /*
+     * E1 im echten Lauf (#67): Der defensive Sleeve belegte sechs der
+     * dreissig Korb-Symbole, und der Korb-Sleeve VERLOR sie — 71 statt 496
+     * Trades, 188 % Gebührenanteil.
+     *
+     * Vorregistriert am 14.09.2026: Die belegten Symbole kommen aus dem
+     * KANDIDATENPOOL raus, bevor gewählt wird. Der Korb-Sleeve füllt dann
+     * wieder alle Plätze und wählt ANDERE Symbole.
+     *
+     * Der Wächter sitzt an `runOptimization`, nicht an `korbZuordnung`: Die
+     * Änderung steckt im Aufrufer, der die `membership` baut. Ein Test auf
+     * der inneren Funktion hätte sie nicht gesehen — dieselbe Lehre wie bei
+     * der Stufen-Durchreichung am 13.09.
+     */
+    // DEF1/DEF2 sind mit Absicht die LIQUIDESTEN Kandidaten: Ohne den Fix
+    // wählt der Korb sie zwangsläufig und verliert sie dann an den festen
+    // Sleeve. Mit gleichen Bars entstünde die Kollision gar nicht, und der
+    // Bruchversuch liefe grün — genau das ist mir hier zuerst passiert.
+    const { out } = lauf({
+      symbols: ['AAA', 'BBB', 'CCC', 'DEF1', 'DEF2'],
+      candidates: ['AAA', 'BBB', 'CCC', 'DDD', 'EEE', 'DEF1', 'DEF2'],
+      maxSymbols: 3,
+      foldMembership: 'point_in_time',
+      ensembles: [
+        {
+          label: 'E-disjunkt',
+          weighting: 'equal',
+          sleeves: [
+            { strategy: 'edge', universe: 'korb', label: 'Aktien' },
+            { strategy: 'defensiv', universe: 'fixed', symbols: ['DEF1', 'DEF2'], label: 'Defensive' },
+          ],
+        },
+      ],
+    });
+    const e = out.runs[0]!.ensembles![0]!;
+
+    // 1. Kein Symbol wird dem Korb-Sleeve mehr entzogen.
+    expect(e.messung.entzogen, `entzogen: ${e.messung.entzogen.join(', ')}`).toEqual([]);
+
+    // 2. Und er führt wirklich die volle Korbgrösse — nicht weniger.
+    const imKorb = e.messung.zuordnung.filter((z) => z.sleeve === 'Aktien').map((z) => z.symbol);
+    expect(imKorb.length, `Korb-Sleeve führt ${imKorb.join(', ')}`).toBe(3);
+
+    // 3. Die Sleeve-Symbole gehören der Defensive, nicht dem Korb.
+    for (const sym of ['DEF1', 'DEF2']) {
+      expect(e.messung.zuordnung.find((z) => z.symbol === sym)?.sleeve).toBe('Defensive');
+      expect(imKorb).not.toContain(sym);
+    }
   });
 
   it('ein Lauf, der NUR ein Ensemble messen konnte, hat trotzdem gemessen', () => {
