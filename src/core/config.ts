@@ -325,8 +325,21 @@ export const ConfigSchema = z.object({
        * Prüfbefund M6/M8) — keine Zwangs-Liquidation.
        */
       basis: z.boolean().default(true),
+      /**
+       * Papier-Erprobung (`src/core/erprobung.ts`, Owner-Entscheidung
+       * 14.09.2026): Handelt ein PAPIER-Konto den besten gemessenen
+       * Kandidaten eines Symbols auch dann, wenn er die Gates NICHT bestanden
+       * hat? Vorgabe AUS — wer nichts tut, ändert nichts.
+       *
+       * Der Schalter allein genügt nie: Die Erprobung greift ausschließlich,
+       * wenn der AUFGELÖSTE Broker-Modus `paper` ist (`resolveMode`). Auf
+       * einem Live-Konto ist sie unerreichbar, egal was hier steht — und die
+       * Trades daraus zählen nicht für `readiness`. Ein durchgefallener
+       * Kandidat darf keinen Weg zu Echtgeld bahnen.
+       */
+      erprobung: z.boolean().default(false),
     })
-    .default({ id: 'trend_donchian', params: {}, allowWithoutChampion: false, basis: true }),
+    .default({ id: 'trend_donchian', params: {}, allowWithoutChampion: false, basis: true, erprobung: false }),
   optimizer: z
     .object({
       strategies: z.array(z.string().min(1)).min(1).default(['trend_donchian', 'momentum_pullback', 'mean_reversion']),

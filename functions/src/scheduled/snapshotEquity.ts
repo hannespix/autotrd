@@ -16,6 +16,7 @@
  */
 
 import { FieldPath, getFirestore } from 'firebase-admin/firestore';
+import { istErprobung } from '../../../src/core/erprobung.ts';
 import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
@@ -379,6 +380,21 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
           });
         }
         if (typeof pnl === 'number' && Number.isFinite(pnl) && symbol) {
+          /* Papier-Erprobung fliegt HIER raus, und das ist die wichtigste
+           * Zeile dieser Datei.
+           *
+           * `stats/main` (trades, profitFactor, costs) ist die Grundlage von
+           * `reifeFuerKonto` (core/liveGate.ts) — und die entscheidet, ob ein
+           * Konto Echtgeld handeln darf. Die Erprobung handelt KANDIDATEN,
+           * DIE DIE GATES NICHT BESTANDEN HABEN (core/erprobung.ts). Zählte
+           * sie hier mit, hätte ein durchgefallener Kandidat genau den Weg zu
+           * Echtgeld, den die Erprobung nicht haben darf: Papier-Trades ⇒
+           * Reife ⇒ Freigabe.
+           *
+           * Weder dafür noch dagegen: Diese Trades gehören schlicht nicht in
+           * diese Rechnung. Dieselbe Regel wie in src/readiness.ts, damit
+           * beide Betriebsarten dieselbe Frage gleich beantworten (§0.1). */
+          if (istErprobung({ stufe: t.get('stufe') as string | undefined })) continue;
           // qty × price ist der Positionswert beim Schließen. Die Gebühr
           // kommt seit dem 13.08. bevorzugt ECHT aus dem fee-Feld (steht
           // seit 04.08. an jedem Trade); entryPrice liefert die

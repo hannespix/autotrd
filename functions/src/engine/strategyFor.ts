@@ -17,10 +17,11 @@
  * die `decide()` unverändert bekommt.
  */
 import { basisChoiceFor, basisFuehrungOf, basisStatus } from '../../../src/core/basisTier.ts';
+import { erprobungChoiceFor, erprobungSperre } from '../../../src/core/erprobung.ts';
 import type { Config } from '../../../src/core/config.ts';
 import { errMsg, logger } from '../../../src/core/log.ts';
 import type { Params, SizingSpec, Strategy } from '../../../src/core/types.ts';
-import { parseChampionBasis, type ChampionFile } from '../../../src/optimize/promote.ts';
+import { parseChampionBasis, parseErprobung, type ChampionFile } from '../../../src/optimize/promote.ts';
 import { getStrategy as registryStrategy, mergeParams } from '../../../src/strategy/index.ts';
 import { isRecord } from './firestoreLike.js';
 
@@ -43,10 +44,15 @@ export function championFromDoc(data: Record<string, unknown> | undefined, warn:
     if (b.ok) file.basis = b.basis;
     else warn(`meta/champion: ${b.error}`);
   }
+  if (data.erprobung !== undefined && data.erprobung !== null) {
+    const e = parseErprobung(data.erprobung);
+    if (Object.keys(e.entries).length) file.erprobung = e.entries;
+    if (e.verworfen.length) warn(`meta/champion: Erprobungs-Einträge unlesbar und verworfen: ${e.verworfen.join(', ')} — diese Symbole handeln auch auf Papier nicht`);
+  }
   return file;
 }
 
-export type StrategySource = 'champion' | 'basis' | 'config';
+export type StrategySource = 'champion' | 'basis' | 'erprobung' | 'config';
 export type StrategyChoice = {
   strategy: Strategy;
   params: Params;
@@ -73,6 +79,14 @@ export interface StrategyMap {
 export function buildStrategyFor(a: {
   champion: ChampionFile | null;
   config: Config;
+  /**
+   * Der AUFGELÖSTE Broker-Modus dieses Nutzers (`resolveBrokerMode`,
+   * `verbindung.mode`) — NICHT der Wunsch aus einer Config. Er entscheidet
+   * allein über die Papier-Erprobung (`src/core/erprobung.ts`). Fehlt er,
+   * gilt die Erprobung als gesperrt: Wer den Modus nicht kennt, darf einen
+   * durchgefallenen Kandidaten erst recht nicht handeln lassen.
+   */
+  mode?: string | undefined;
   /** Symbole mit offener Position/laufendem Einstieg (Buch) — die Basis führt sie auch ohne Einstiegsrecht. */
   held?: readonly string[] | undefined;
   /** Injizierbar für Tests (Skript-Strategie); Default: Register in src/strategy. */
@@ -94,7 +108,14 @@ export function buildStrategyFor(a: {
   const fuehrung = basisFuehrungOf(basis);
   let alphaSymbole = 0;
   let basisSymbole = 0;
+  let erprobungSymbole = 0;
   let configSymbole = 0;
+  const erprobungArgs = { champion: a.champion, timeframe: tf, enabled: a.config.strategy.erprobung, mode: a.mode };
+  const erprobungWahl = (symbol: string) => erprobungChoiceFor({ ...erprobungArgs, symbol, alphaLeads: false, basisLeads: false });
+  // Ein Block, der da ist, aber nicht greift, gehört ins Journal — sonst
+  // rätselt jemand, warum auf Papier nichts passiert.
+  const erpSperre = erprobungSperre(erprobungArgs);
+  if (a.champion?.erprobung && Object.keys(a.champion.erprobung).length > 0 && erpSperre !== null) notes.push(`${erpSperre} — die durchgefallenen Kandidaten werden nicht gehandelt`);
   // Das Parksymbol der Treasury ist INFRASTRUKTUR: Der Takt lädt seine Bars
   // (engine/sharedData.ts), aber keine Strategie darf es führen. Sonst lägen
   // zwei Positionen mit zwei Herkünften in einem Symbol — zwei Besitzer einer
@@ -136,6 +157,18 @@ export function buildStrategyFor(a: {
       } catch (e) {
         notes.push(`${symbol}: Basis-Strategie nicht ladbar (${errMsg(e)}) — nicht gehandelt`);
       }
+    } else if (erprobungWahl(symbol)) {
+      // Papier-Erprobung: schwächste Behauptung im Haus, deshalb NACH Champion
+      // und Basis und nur auf Papier (core/erprobung.ts).
+      const erp = erprobungWahl(symbol)!;
+      try {
+        const strategy = get(erp.strategyId);
+        choice = { strategy, params: mergeParams(strategy.defaults, erp.params), source: 'erprobung' };
+        erprobungSymbole++;
+        notes.push(erp.note);
+      } catch (e) {
+        notes.push(`${symbol}: Erprobungs-Strategie nicht ladbar (${errMsg(e)}) — nicht gehandelt`);
+      }
     } else if (a.champion?.noTrade[symbol]) {
       // bewusst kein Handel — der Optimierer hat entschieden
     } else if (a.config.strategy.allowWithoutChampion) {
@@ -175,6 +208,6 @@ export function buildStrategyFor(a: {
   for (const n of notes) log.warn(n);
   const tradable = [...map].filter(([, c]) => c !== null).map(([s]) => s);
   const basisSymbols = [...map].filter(([, c]) => c?.source === 'basis').map(([s]) => s);
-  const source: StrategyMap['source'] = alphaSymbole > 0 ? 'champion' : basisSymbole > 0 ? 'basis' : configSymbole > 0 ? 'config' : 'none';
+  const source: StrategyMap['source'] = alphaSymbole > 0 ? 'champion' : basisSymbole > 0 ? 'basis' : erprobungSymbole > 0 ? 'erprobung' : configSymbole > 0 ? 'config' : 'none';
   return { fn: (symbol) => map.get(symbol) ?? null, source, tradable, basisSymbols, notes };
 }

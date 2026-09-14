@@ -17,6 +17,7 @@
  * Kein Lookahead: Trades, deren Exit nach `now` liegt, werden nicht
  * bewertet (sie sind nicht realisiert) und als `ignored` gezählt.
  */
+import { istErprobung } from './core/erprobung.ts';
 import { DAY, dayKey, parseDay } from './core/time.ts';
 import type { Ms, Trade } from './core/types.ts';
 
@@ -63,6 +64,15 @@ export interface ReadinessReport {
   ignored: number;
   /** Bewertete Trades. */
   evaluated: number;
+  /**
+   * Trades der PAPIER-ERPROBUNG, die ausgeschlossen wurden (`core/erprobung.ts`).
+   *
+   * Sie stammen von Kandidaten, die die Gates NICHT bestanden haben. Sie in
+   * die Live-Reife zu zählen hiesse, einem durchgefallenen Kandidaten einen
+   * Weg zu Echtgeld zu bahnen — genau den Weg, den die Erprobung nicht haben
+   * darf. Die Zahl steht hier, damit der Ausschluss sichtbar ist statt still.
+   */
+  erprobung: number;
 }
 
 function isUsable(t: Trade | undefined, now: Ms): t is Trade {
@@ -114,10 +124,20 @@ function fmt(v: number | null): string {
 export function assessReadiness(trades: readonly Trade[], now: Ms, thresholds: Partial<ReadinessThresholds> = {}): ReadinessReport {
   const th: ReadinessThresholds = { ...DEFAULT_READINESS_THRESHOLDS, ...thresholds };
   const usable: Trade[] = [];
+  let erprobung = 0;
   for (const t of trades as readonly (Trade | undefined)[]) {
-    if (isUsable(t, now)) usable.push(t);
+    if (!isUsable(t, now)) continue;
+    // Papier-Erprobung fliegt VOR jeder Kennzahl raus — nicht als „ignored"
+    // (das sind kaputte Trades), sondern als eigener, benannter Ausschluss.
+    // Ein durchgefallener Kandidat darf die Live-Reife weder verbessern noch
+    // verschlechtern; er gehört schlicht nicht in diese Rechnung.
+    if (istErprobung(t)) {
+      erprobung++;
+      continue;
+    }
+    usable.push(t);
   }
-  const ignored = trades.length - usable.length;
+  const ignored = trades.length - usable.length - erprobung;
 
   let grossWins = 0; // Σ grossPnl > 0
   let netWins = 0; // Σ netPnl > 0
@@ -191,11 +211,16 @@ export function assessReadiness(trades: readonly Trade[], now: Ms, thresholds: P
   const lines: string[] = [
     `Live-Reife: ${ready ? 'ERREICHT' : 'NICHT ERREICHT'} (${passed}/${checks.length} Kriterien) — Stand ${dayKey(now)}, ${usable.length} Trades bewertet${
       ignored > 0 ? `, ${ignored} ignoriert` : ''
-    }`,
+    }${erprobung > 0 ? `, ${erprobung} aus der Papier-Erprobung AUSGESCHLOSSEN` : ''}`,
   ];
+  if (erprobung > 0) {
+    lines.push(
+      `  ℹ ${erprobung} Trades stammen aus der Papier-Erprobung (durchgefallene Kandidaten, core/erprobung.ts) und zählen für die Live-Reife NICHT — weder dafür noch dagegen.`,
+    );
+  }
   for (const c of checks) lines.push(`  ${c.pass ? '✔' : '✘'} ${c.label}: ${fmt(c.value)}`);
   lines.push(`  ℹ Max. Drawdown der kumulierten Netto-PnL: ${fmt(maxDrawdown)}`);
   if (!ready) lines.push('  Echtgeld bleibt gesperrt: broker.mode=live NICHT setzen, bis alle Kriterien erfüllt sind.');
 
-  return { ready, checks, summary: lines.join('\n'), maxDrawdown, ignored, evaluated: usable.length };
+  return { ready, checks, summary: lines.join('\n'), maxDrawdown, ignored, evaluated: usable.length, erprobung };
 }

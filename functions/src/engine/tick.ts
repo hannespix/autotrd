@@ -501,7 +501,9 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
       // Verriegelt (Echtgeld-Kette offen): keine Einstiege, und Fremdbestand wird nie adoptiert — ein
       // Schutz-Stop auf eine Handposition wäre eine Order auf einem verriegelten Konto.
       const config: Config = sperre ? { ...mitBasis, engine: { ...mitBasis.engine, onOrphan: 'halt' } } : mitBasis;
-      const strategy = buildStrategyFor({ champion, config, held, getStrategy: deps.getStrategy, log: userLogger(log, uid) });
+      // `zugang.verbindung.mode` ist der AUFGELÖSTE Modus (resolveBrokerMode, liveGate.ts) —
+      // die einzige Sicherung, die die Papier-Erprobung von Echtgeld fernhält.
+      const strategy = buildStrategyFor({ champion, config, held, mode: zugang.verbindung.mode, getStrategy: deps.getStrategy, log: userLogger(log, uid) });
       if (championNote) strategy.notes.unshift(championNote);
       if (!uc.basisSchalter.global && champion?.basis) strategy.notes.push('Basis-Stufe plattformweit abgeschaltet (meta/engineConfig strategy.basis=false) — keine neuen Basis-Einstiege');
       if (sperre) strategy.notes.push(`Einstiege gesperrt: ${sperre} — Abgleich, Schutz-Stops und Exits laufen weiter`);

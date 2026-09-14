@@ -69,6 +69,18 @@ thematisch). Bezeichner im Code Englisch, Kommentare Deutsch.
    Basis, die ihre Latte nicht nimmt, wird nicht aktiviert. Jede Latte steht
    VOR dem Lauf in `docs/wissen/vorregistrierung/`, der Champion trägt den
    Commit der Config. Eine dritte Latte gibt es nicht.
+   **Papier-Erprobung** (Owner-Entscheidung 14.09.2026, `src/core/erprobung.ts`):
+   Auf einem PAPIER-Konto darf die Engine den besten gemessenen Kandidaten
+   handeln, auch wenn er die Gates NICHT bestanden hat — damit überhaupt ein
+   Journal entsteht, solange nichts besteht. Das ist **keine dritte Latte**:
+   Es wird nichts entschieden, nichts befördert, keine Schwelle angefasst;
+   der Kandidat bleibt durchgefallen und steht weiter in `noTrade`. Drei
+   Sperren, alle im Code und alle mit Wächter: (a) nur bei AUFGELÖSTEM Modus
+   `paper` — ein Live-Konto erreicht die Stufe nie; (b) Schalter
+   `strategy.erprobung`, Vorgabe aus; (c) ihre Trades zählen NICHT für die
+   Live-Reife — weder in `readiness` noch in `stats/main`, aus dem
+   `liveGate` die Echtgeld-Freigabe ableitet. Ohne (c) hätte ein
+   durchgefallener Kandidat über Papier-Trades einen Weg zu Echtgeld.
 10. **Verifizieren, nicht glauben.** `npm run check` (typecheck + lint + test)
     vor jedem Commit; ein neuer Wächter wird einmal absichtlich gebrochen.
 
@@ -130,6 +142,7 @@ des Bruttogewinns, siehe docs/ARCHITEKTUR.md §5a.10).
 | `core/bars.ts` | Kolumnare `BarSeries`, `aggregate()` aus Minutenbars, `anfangsStreuner()` (verirrte IEX-Einzelbars vor dem Datenbeginn — eine zog den Fold-Plan ins Leere). |
 | `core/session.ts` | Sitzungs-Sicht je geschlossener Bar (Minuten bis Schluss, letzte Bar). |
 | `core/logic.ts` | `decide()`: Tore, Sizing, Exits — für Backtest UND Live. Zwei Sizing-Semantiken: Risiko-Budget je Trade (Alpha) und Allokation (Basis: Position = `positionPct` der Equity); Nutzer-Deckel gelten in beiden. |
+| `core/erprobung.ts` | Papier-Erprobung (§0.9): Welcher DURCHGEFALLENE Kandidat darf auf einem Papier-Konto handeln? Drei Sperren — aufgelöster Modus `paper`, Schalter `strategy.erprobung` (Vorgabe aus), kein Weg in die Live-Reife. Identisch für `app.ts` und die Plattform. |
 | `core/basisTier.ts` | Die Basis-Stufe: Alpha-Champion vor Basis vor `noTrade` — identisch für `app.ts` und die Plattform (`functions/src/engine/strategyFor.ts`). Basis nur bei `champion.basis.pass`, passendem Zeitrahmen, Symbol im Basis-Korb und Nutzer-Schalter `strategy.basis` (Default an). Übersteuert nie den Alpha-Champion. |
 | `core/journal.ts`, `core/log.ts` | Journal/State, Logging mit Schwärzung. |
 | `risk/` | Sizing, Tages-/Drawdown-Halt, PDT. |
@@ -219,7 +232,9 @@ ist das **Engine-Red-Team** (siehe §6).
   Kosten überlebt. Der Kritiker darf „nicht handeln" nie wegloben.
 - **Echtgeld erst nach Live-Reife** („bis man sicher nur noch Gewinn
   schreibt, dann erst den Schalter umlegen"). `readiness` misst das aus dem
-  Journal des Paper-Betriebs.
+  Journal des Paper-Betriebs — **ohne die Trades der Papier-Erprobung**
+  (§0.9): Sie stammen von durchgefallenen Kandidaten und zählen weder dafür
+  noch dagegen. Sonst wäre die Erprobung ein stiller Pfad zu Echtgeld.
 
 ## 7. Git
 

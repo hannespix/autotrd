@@ -90,6 +90,28 @@ export interface ChampionBasis {
   configCommit?: string;
 }
 
+/**
+ * Ein DURCHGEFALLENER Kandidat, den ein Papier-Konto trotzdem handeln darf
+ * (Owner-Entscheidung 14.09.2026, `src/core/erprobung.ts`).
+ *
+ * Er ist keine Beförderung und wird nie eine: Das Symbol bleibt in
+ * `noTrade`, kein Gate wird gelockert, und Echtgeld sieht diesen Block nie.
+ * Der Block existiert, damit überhaupt ein Journal entsteht, solange nichts
+ * die Gates nimmt — `failed` nennt beim Namen, woran es lag, damit niemand
+ * den Eintrag später für einen Champion hält.
+ */
+export interface ErprobungEntry {
+  version: 1;
+  strategy: string;
+  params: Params;
+  timeframe: TimeframeMin;
+  /** OOS-Objective-Median des Kandidaten; null, wenn nicht endlich (0 Trades). */
+  score: number | null;
+  /** Namen der gefallenen Gates — der Grund, warum das hier keine Beförderung ist. */
+  failed: string[];
+  decidedAt: Ms;
+}
+
 export interface ChampionFile {
   version: 1;
   updatedAt: Ms;
@@ -97,6 +119,51 @@ export interface ChampionFile {
   noTrade: Record<string, NoTradeEntry>;
   /** Basis-Stufe (siehe `ChampionBasis`); fehlt in alten Dateien und ohne Basis-Kandidat. */
   basis?: ChampionBasis;
+  /** Papier-Erprobung je Symbol (siehe `ErprobungEntry`); fehlt in alten Dateien. */
+  erprobung?: Record<string, ErprobungEntry>;
+}
+
+/**
+ * Den Block `erprobung` lesen, ohne die Datei mitzureißen — dieselbe Regel
+ * wie bei `basis` (Prüfbefund M9): Ein additiver Block darf nicht mehr
+ * Schaden anrichten können als sein Fehlen. Unlesbare EINZELEINTRÄGE fallen
+ * weg, der Rest bleibt; ist gar nichts lesbar, gibt es den Block nicht.
+ */
+export function parseErprobung(raw: unknown): { entries: Record<string, ErprobungEntry>; verworfen: string[] } {
+  const entries: Record<string, ErprobungEntry> = {};
+  const verworfen: string[] = [];
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { entries, verworfen };
+  for (const [symbol, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v !== 'object' || v === null || Array.isArray(v)) {
+      verworfen.push(symbol);
+      continue;
+    }
+    const o = v as Record<string, unknown>;
+    const params = o.params;
+    const ok =
+      o.version === 1 &&
+      typeof o.strategy === 'string' &&
+      o.strategy.length > 0 &&
+      typeof o.timeframe === 'number' &&
+      typeof params === 'object' &&
+      params !== null &&
+      !Array.isArray(params) &&
+      Object.values(params as Record<string, unknown>).every((x) => typeof x === 'number' && Number.isFinite(x));
+    if (!ok) {
+      verworfen.push(symbol);
+      continue;
+    }
+    entries[symbol] = {
+      version: 1,
+      strategy: o.strategy as string,
+      params: params as Params,
+      timeframe: o.timeframe as TimeframeMin,
+      score: finiteOrNull(typeof o.score === 'number' ? o.score : null),
+      failed: Array.isArray(o.failed) ? o.failed.filter((x): x is string => typeof x === 'string') : [],
+      decidedAt: typeof o.decidedAt === 'number' ? o.decidedAt : 0,
+    };
+  }
+  return { entries, verworfen };
 }
 
 export function emptyChampionFile(now: Ms): ChampionFile {
@@ -167,6 +234,11 @@ export function loadChampion(path: string, warn: (text: string) => void = (t) =>
     const b = parseChampionBasis(raw.basis);
     if (b.ok) file.basis = b.basis;
     else warn(`${path}: ${b.error}`);
+  }
+  if (raw.erprobung !== undefined && raw.erprobung !== null) {
+    const e = parseErprobung(raw.erprobung);
+    if (Object.keys(e.entries).length) file.erprobung = e.entries;
+    if (e.verworfen.length) warn(`${path}: Erprobungs-Einträge unlesbar und verworfen: ${e.verworfen.join(', ')} — diese Symbole handeln auch auf Papier nicht`);
   }
   return file;
 }
@@ -290,7 +362,26 @@ export function applyDecision(a: {
 }): ChampionFile {
   const symbols = { ...a.file.symbols };
   const noTrade = { ...a.file.noTrade };
+  const erprobung = { ...(a.file.erprobung ?? {}) };
   const note: NoTradeEntry = { reason: a.decision.reason, decidedAt: a.now, bestScore: finiteOrNull(a.bestScore) };
+  // Der Erprobungs-Eintrag des Symbols wird bei JEDER Entscheidung neu gesetzt
+  // oder geräumt. Ein stehengebliebener Eintrag wäre schlimmer als keiner: Ein
+  // Papier-Konto handelte sonst Parameter, die kein Lauf mehr nachgerechnet hat
+  // — derselbe Fehler, gegen den `stay_notrade` unten `symbols` räumt
+  // (Prüfbefund 4.1).
+  delete erprobung[a.symbol];
+  const alsErprobung = (): void => {
+    if (!a.candidate) return;
+    erprobung[a.symbol] = {
+      version: 1,
+      strategy: a.candidate.strategy,
+      params: a.candidate.params,
+      timeframe: a.candidate.timeframe,
+      score: finiteOrNull(a.candidate.score),
+      failed: (a.candidate.gates ?? []).filter((g) => !g.pass).map((g) => g.name),
+      decidedAt: a.now,
+    };
+  };
   switch (a.decision.action) {
     case 'promote':
       if (!a.candidate) throw new Error(`promote ohne Kandidat für ${a.symbol}`);
@@ -302,6 +393,7 @@ export function applyDecision(a: {
     case 'demote_to_notrade':
       delete symbols[a.symbol];
       noTrade[a.symbol] = note;
+      alsErprobung();
       break;
     case 'stay_notrade':
       // Ein alter Eintrag darf nicht stehen bleiben: „kein Handel" gilt für das
@@ -310,12 +402,13 @@ export function applyDecision(a: {
       // einem Champion, den kein Lauf mehr nachgerechnet hat (Prüfbefund 4.1).
       delete symbols[a.symbol];
       noTrade[a.symbol] = note;
+      alsErprobung();
       break;
   }
   // Der Basis-Block gehört nicht zur Alpha-Entscheidung: Er bleibt, wie er ist —
   // auch bei stay_notrade und demote. Geräumt wird er nur, wenn die Config
   // keinen Basis-Kandidaten mehr hat (`mitBasis`).
-  return { version: 1, updatedAt: a.now, symbols, noTrade, ...(a.file.basis ? { basis: a.file.basis } : {}) };
+  return { version: 1, updatedAt: a.now, symbols, noTrade, ...(a.file.basis ? { basis: a.file.basis } : {}), ...(Object.keys(erprobung).length ? { erprobung } : {}) };
 }
 
 /** Journal-Eintrag 'champion' — die Wahrheit darüber, wer wann warum handeln durfte. */

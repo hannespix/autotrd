@@ -58,6 +58,7 @@ const basis = champion.basis && typeof champion.basis === 'object' ? champion.ba
 const summary = {
   symbols: Object.keys(champion.symbols),
   noTrade: Object.keys(champion.noTrade ?? {}),
+  erprobung: Object.keys(champion.erprobung ?? {}),
   // Die Basis-Stufe gehört in die Ausgabe: Ohne diese Zeile sähe man im Lauf nicht, ob ein
   // bestandener Block mitgeht — und die Engine handelt ihn, sobald er in meta/champion steht.
   basis: basis
@@ -100,6 +101,7 @@ if (latestReport) batch.set(db.doc(berichtPfad(reportDate)), reportDoc);
 await batch.commit();
 console.log(
   `Veröffentlicht: meta/champion (${summary.symbols.length} Symbole, ${summary.noTrade.length} noTrade` +
+    (summary.erprobung.length ? `, ${summary.erprobung.length} Papier-Erprobung (durchgefallen, nur Papier)` : '') +
     (basis ? `, Basis „${basis.label}" ${basis.pass === true ? 'bestanden' : 'nicht bestanden'}` : ', keine Basis') +
     ')' +
     (latestReport ? `, ${berichtPfad(reportDate)}` : ''),
