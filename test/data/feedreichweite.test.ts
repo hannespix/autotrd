@@ -19,7 +19,12 @@ import type { BarsRequest } from '../../src/alpaca/types.ts';
 const TAG = 86_400_000;
 
 /** Bars ab `abJahr`, eine je Tag — je Feed ein anderer Anfang. */
-function doppel(a: { abJahr: Partial<Record<string, number>>; wirft?: Partial<Record<string, string>> }) {
+function doppel(a: {
+  abJahr: Partial<Record<string, number>>;
+  wirft?: Partial<Record<string, string>>;
+  /** Feeds, die HISTORIE liefern, aber AKTUELLE Bars mit 403 ablehnen — der reale Alpaca-Fall. */
+  gegenwartVerboten?: readonly string[];
+}) {
   const gefragt: BarsRequest[] = [];
   return {
     gefragt,
@@ -28,6 +33,11 @@ function doppel(a: { abJahr: Partial<Record<string, number>>; wirft?: Partial<Re
       const feed = req.feed ?? 'iex';
       const fehler = a.wirft?.[feed];
       if (fehler !== undefined) throw new Error(fehler);
+      // Gegenwartsprobe erkennen: Fenster endet ungefähr jetzt.
+      const istGegenwart = (req.end ?? 0) > Date.UTC(2023, 0, 1);
+      if (istGegenwart && a.gegenwartVerboten?.includes(feed)) {
+        throw new Error('Alpaca-Fehler 403: subscription does not permit querying recent SIP data');
+      }
       const ab = a.abJahr[feed];
       const out = new Map<string, Bar[]>();
       const bars: Bar[] = [];
@@ -90,6 +100,32 @@ describe('Feed-Reichweite', () => {
     const d = doppel({ abJahr: { iex: 2016 } });
     const b = await sondiereFeed({ client: d, symbol: 'SPY', feed: 'iex', adjustment: 'all', jahre: [2016] });
     expect(b.proben[0]!.bars, 'Fenster zu kurz — ein Feiertagsblock würde als „keine Daten" gelesen').toBeGreaterThan(20);
+  });
+
+  it('sondiert auch die GEGENWART — Historie allein entscheidet nichts (§0.1)', async () => {
+    const d = doppel({ abJahr: { iex: 2021, sip: 2016 } });
+    const [, sip] = await feedReichweite({ client: d, symbol: 'SPY', adjustment: 'all' });
+    expect(sip?.aktuell, 'ohne Gegenwartsprobe weiss niemand, ob der Feed betriebstauglich ist').not.toBeNull();
+    expect(sip?.aktuell?.fehler).toBeUndefined();
+    expect(sip?.aktuell?.bars ?? 0).toBeGreaterThan(0);
+  });
+
+  it('Historie JA, Gegenwart NEIN — der reale Alpaca-Fall wird als solcher gemeldet', async () => {
+    const d = doppel({ abJahr: { iex: 2021, sip: 2016 }, gegenwartVerboten: ['sip'] });
+    const [iex, sip] = await feedReichweite({ client: d, symbol: 'SPY', adjustment: 'all' });
+    // Die Historie bleibt gültig — die Gegenwartsprobe darf sie nicht entwerten.
+    expect(sip?.erreichbar, 'ein Gegenwarts-403 ist kein Grund, den Feed als unerreichbar zu führen').toBe(true);
+    expect(sip?.abJahr).toBe(2016);
+    expect(sip?.aktuell?.fehler, 'das Verbot muss als Fehler dastehen, nicht als 0 Bars').toContain('403');
+    expect(sip?.aktuell?.bars, '0 Bars und „verboten" sind verschiedene Auskünfte').toBeUndefined();
+    expect(iex?.aktuell?.fehler).toBeUndefined();
+  });
+
+  it('doctor unterscheidet „reicht weiter" von „betriebstauglich"', async () => {
+    const { readFileSync } = await import('node:fs');
+    const code = readFileSync(new URL('../../src/cli.ts', import.meta.url), 'utf8');
+    expect(code, 'doctor liest die Gegenwartsprobe nicht aus').toContain('.aktuell');
+    expect(code, 'doctor warnt nicht, wenn nur die Historie weiter reicht').toContain('KEINE aktuellen Bars');
   });
 
   it('doctor ruft die Sondierung wirklich auf', async () => {
