@@ -39,6 +39,9 @@ export type Feed = (typeof FEEDS)[number];
  */
 export const SONDIERUNGSJAHRE = [2016, 2018, 2020, 2021, 2022] as const;
 
+/** Fenster der Gegenwartsprobe: zehn Tage decken auch ein langes Wochenende samt Feiertag ab. */
+export const AKTUELL_FENSTER_MS = 10 * 86_400_000;
+
 export interface JahrProbe {
   jahr: number;
   bars: number;
@@ -53,6 +56,18 @@ export interface FeedBefund {
   /** Frühestes SONDIERTES Jahr mit Bars — Untergrenze, nicht der Datenbeginn. */
   abJahr: number | null;
   proben: JahrProbe[];
+  /**
+   * Die Frage, an der alles hängt (§0.1): Liefert der Feed auch AKTUELLE Bars?
+   *
+   * Historie und Gegenwart sind bei Alpaca getrennt freigeschaltet. Ein Feed,
+   * der 2016 hergibt, aber die letzten Tage mit 403 ablehnt, taugt für einen
+   * Backtest und NICHT für den Betrieb — und ein Backtest auf Daten, die die
+   * Engine nie sieht, ist genau der Fehler des Vorgängersystems (§2:
+   * „Backtest maß Tagesbars/Long-Flat, live lief Intraday/Short").
+   *
+   * `null` heisst: nicht sondiert.
+   */
+  aktuell: { bars: number; fehler?: undefined } | { bars?: undefined; fehler: string } | null;
 }
 
 /** 1. Januar eines Jahres als Epoch-ms (UTC) — der Sondierungsfenster-Beginn. */
@@ -82,6 +97,8 @@ export async function sondiereFeed(a: {
   feed: Feed;
   adjustment: BarAdjustment;
   jahre?: readonly number[];
+  /** Referenzzeit für die Gegenwartsprobe; Vorgabe `Date.now()`. */
+  jetzt?: Ms;
 }): Promise<FeedBefund> {
   const jahre = [...(a.jahre ?? SONDIERUNGSJAHRE)].sort((x, y) => x - y);
   const proben: JahrProbe[] = [];
@@ -98,12 +115,31 @@ export async function sondiereFeed(a: {
       });
       bars = res.get(a.symbol)?.length ?? 0;
     } catch (e) {
-      return { feed: a.feed, erreichbar: false, fehler: e instanceof Error ? e.message : String(e), abJahr: null, proben };
+      return { feed: a.feed, erreichbar: false, fehler: e instanceof Error ? e.message : String(e), abJahr: null, proben, aktuell: null };
     }
     proben.push({ jahr, bars });
   }
   const treffer = proben.find((p) => p.bars > 0);
-  return { feed: a.feed, erreichbar: true, abJahr: treffer?.jahr ?? null, proben };
+
+  // Gegenwartsprobe: die letzten zehn Tage. Ein eigener try — sie darf die
+  // Historien-Sondierung nicht entwerten, und ihr Fehler ist die Auskunft.
+  let aktuell: FeedBefund['aktuell'];
+  const jetzt = a.jetzt ?? Date.now();
+  try {
+    const res = await a.client.getBars({
+      symbols: [a.symbol],
+      timeframe: '1Day',
+      start: jetzt - AKTUELL_FENSTER_MS,
+      end: jetzt,
+      feed: a.feed,
+      adjustment: a.adjustment,
+    });
+    aktuell = { bars: res.get(a.symbol)?.length ?? 0 };
+  } catch (e) {
+    aktuell = { fehler: e instanceof Error ? e.message : String(e) };
+  }
+
+  return { feed: a.feed, erreichbar: true, abJahr: treffer?.jahr ?? null, proben, aktuell };
 }
 
 /** Alle Feeds nacheinander — nacheinander, damit ein Abo-Fehler nicht als Lastproblem ankommt. */
@@ -113,10 +149,11 @@ export async function feedReichweite(a: {
   adjustment: BarAdjustment;
   feeds?: readonly Feed[];
   jahre?: readonly number[];
+  jetzt?: Ms;
 }): Promise<FeedBefund[]> {
   const out: FeedBefund[] = [];
   for (const feed of a.feeds ?? FEEDS) {
-    out.push(await sondiereFeed({ client: a.client, symbol: a.symbol, feed, adjustment: a.adjustment, ...(a.jahre ? { jahre: a.jahre } : {}) }));
+    out.push(await sondiereFeed({ client: a.client, symbol: a.symbol, feed, adjustment: a.adjustment, ...(a.jahre ? { jahre: a.jahre } : {}), ...(a.jetzt !== undefined ? { jetzt: a.jetzt } : {}) }));
   }
   return out;
 }

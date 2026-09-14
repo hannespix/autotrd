@@ -318,19 +318,31 @@ async function cmdDoctor(app: App): Promise<number> {
         out('  kein Symbol zum Sondieren');
       } else {
         const befunde = await feedReichweite({ client: app.client, symbol: probeSymbol, adjustment: app.config.broker.adjustment });
-        const rowsF: string[][] = [['Feed', 'erreichbar', `${probeSymbol} ab (sondiert)`, 'Proben (Jahr:Bars)']];
+        const rowsF: string[][] = [['Feed', 'erreichbar', `${probeSymbol} ab (sondiert)`, 'Proben (Jahr:Bars)', 'letzte 10 Tage']];
         for (const b of befunde) {
           rowsF.push([
             b.feed + (b.feed === app.config.broker.feed ? ' (aktiv)' : ''),
             b.erreichbar ? 'ja' : `nein — ${b.fehler ?? 'unbekannt'}`,
             b.abJahr === null ? (b.erreichbar ? 'in keinem sondierten Jahr' : '—') : `≤ ${b.abJahr}`,
             b.proben.map((p) => `${p.jahr}:${p.bars}`).join(' '),
+            b.aktuell === null ? '—' : b.aktuell.fehler !== undefined ? `NEIN — ${b.aktuell.fehler}` : `${b.aktuell.bars} Bars`,
           ]);
         }
         table(rowsF);
         const aktiv = befunde.find((b) => b.feed === app.config.broker.feed);
         const weiter = befunde.find((b) => b.erreichbar && b.abJahr !== null && aktiv?.abJahr != null && b.abJahr < aktiv.abJahr);
-        if (weiter) out(`  Hinweis: \`${weiter.feed}\` reicht weiter zurück als der aktive Feed \`${app.config.broker.feed}\` — mehr Historie heisst mehr Folds.`);
+        if (weiter) {
+          // Historie allein entscheidet nichts: Ein Feed, der die Gegenwart
+          // verweigert, taugt nur für den Backtest — und ein Backtest auf
+          // Daten, die die Engine nie sieht, ist §0.1 verletzt.
+          const gegenwart = weiter.aktuell !== null && weiter.aktuell.fehler === undefined && weiter.aktuell.bars > 0;
+          out(`  Hinweis: \`${weiter.feed}\` reicht weiter zurück als der aktive Feed \`${app.config.broker.feed}\` — mehr Historie heisst mehr Folds.`);
+          out(
+            gegenwart
+              ? `  \`${weiter.feed}\` liefert auch AKTUELLE Bars — Backtest und Betrieb könnten denselben Feed sehen (§0.1).`
+              : `  ABER \`${weiter.feed}\` liefert KEINE aktuellen Bars. Nur Historie umzustellen hiesse, auf Daten zu messen, die die Engine nie sieht (§0.1) — genau der Fehler des Vorgängersystems.`,
+          );
+        }
       }
       out();
       out('Assets:');
