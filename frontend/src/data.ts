@@ -790,7 +790,7 @@ export interface SymbolProfilEintragDoc {
   /** `tage` 0 ⇒ keine Daten; `dollarVolumenTag` ist dann 0, nicht null — die Anzeige liest `tage`. */
   liquiditaet: { dollarVolumenTag: number | null; tage: number; handelbar: boolean; grund: string | null };
   taktik: {
-    quelle: 'champion' | 'basis' | 'config' | 'none';
+    quelle: 'champion' | 'basis' | 'erprobung' | 'config' | 'none';
     strategie: string | null;
     einstiege: 'allowed' | 'locked' | null;
     grund: string;
@@ -829,7 +829,7 @@ function leseSymbolProfilEintrag(roh: unknown): SymbolProfilEintragDoc | null {
   const taktik = istObjekt(roh.taktik) ? roh.taktik : {};
   const halte = istObjekt(roh.haltedauer) ? roh.haltedauer : {};
   const bew = istObjekt(roh.bewertung) ? roh.bewertung : {};
-  const quelle = taktik.quelle === 'champion' || taktik.quelle === 'basis' || taktik.quelle === 'config' ? taktik.quelle : 'none';
+  const quelle = taktik.quelle === 'champion' || taktik.quelle === 'basis' || taktik.quelle === 'erprobung' || taktik.quelle === 'config' ? taktik.quelle : 'none';
   const rank = rang ? zahlOderNull(rang.rank) : null;
   const of = rang ? zahlOderNull(rang.of) : null;
   const symbole = rang && Array.isArray(rang.symbole) ? rang.symbole.filter((s: unknown): s is string => typeof s === 'string') : [];
