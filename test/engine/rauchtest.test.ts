@@ -242,6 +242,46 @@ describe('Rauchtest — die ganze Kette im Papiergeld', () => {
     expect(Number(beine?.details['zielBeimBroker'])).toBeLessThanOrEqual(Number(beine?.details['zielRoh']));
   });
 
+  it('Beine kommen SPÄT — der Schritt wartet, statt sie für fehlend zu halten', async () => {
+    /*
+     * Der erste echte Rauchtest (14.09.2026, Paper, SPY × 1) meldete
+     * `stopBeinId: null, zielBeinId: null` — 211 ms nach dem Fill. Drei
+     * Sekunden später ließen sich dieselben Beine beim Ausstieg normal
+     * stornieren: Alpaca legt die Kinder einer Bracket-Order erst NACH dem
+     * Fill an, und asynchron.
+     *
+     * Der Test darüber hat das nie gesehen, weil `FakeAlpaca` die Beine
+     * sofort liefert — die Attrappe war entgegenkommender als die
+     * Wirklichkeit. Dieser Fall macht sie unhöflich: Die ersten drei
+     * Abfragen zeigen keine Beine.
+     */
+    const { fake, args } = bau();
+    const echt = fake.listOrders.bind(fake);
+    let nachFill = 0;
+    (fake as unknown as { listOrders: typeof fake.listOrders }).listOrders = async (q) => {
+      const orders = await echt(q);
+      // Vor dem Fill gibt es ohnehin keine Beine — erst danach verzögern,
+      // genau wie Alpaca es tut. Und nur die verschachtelten Abfragen zählen:
+      // Das sind die, mit denen der Beine-Schritt wirklich nachsieht
+      // (`eigeneOffene`), nicht die Order-Synchronisierung nebenher.
+      if (!fake.positions.has('SPY') || q.nested !== true) return orders;
+      // Sechs Abfragen lang keine Beine: Die Order-Synchronisierung in
+      // Schritt 4 verbraucht schon ein paar davon, der Beine-Schritt muss
+      // danach noch mehrfach nachfragen müssen — sonst prüft der Fall nichts
+      // (die Zusicherung `beineRunden > 1` unten nagelt genau das fest).
+      nachFill += 1;
+      return nachFill <= 6 ? orders.map((o) => ({ ...o, legs: [] })) : orders;
+    };
+
+    const e = await rauchtest(args);
+    const beine = schritt(e, 'beine');
+    expect(beine?.ok, `Beine nach ${String(beine?.details['beineRunden'])} Runden: ${beine?.text ?? ''}`).toBe(true);
+    // Es MUSS mehr als eine Runde gebraucht haben — sonst prüft der Fall nichts.
+    expect(Number(beine?.details['beineRunden'])).toBeGreaterThan(1);
+    expect(beine?.details['stopBeimBroker']).toBe(628.3);
+    expect(beine?.details['zielBeimBroker']).toBe(694.43);
+  });
+
   it('Idempotenz: die zweite Anforderung fragt getOrderByClientId und erzeugt keine zweite Order', async () => {
     const { fake, args } = bau();
     const e = await rauchtest(args);
