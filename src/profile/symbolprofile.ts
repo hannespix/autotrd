@@ -164,7 +164,7 @@ export interface ProfilLauf {
   configCommit: string | null;
 }
 
-export type TaktikQuelle = 'champion' | 'basis' | 'config' | 'keine';
+export type TaktikQuelle = 'champion' | 'basis' | 'erprobung' | 'config' | 'keine';
 
 export interface SymbolProfil {
   symbol: string;
@@ -337,7 +337,11 @@ function trendSeit(close: ArrayLike<number>, sma: ArrayLike<number>, i: number):
 
 function taktikQuelle(choice: ProfilWahl | null): TaktikQuelle {
   if (!choice) return 'keine';
-  return choice.source === 'champion' || choice.source === 'basis' || choice.source === 'config' ? choice.source : 'keine';
+  // 'erprobung' MUSS hier stehen: Ohne sie fiele ein Symbol der
+  // Papier-Erprobung auf 'keine' zurueck, und das Profil behauptete, es gebe
+  // keine Taktik, waehrend die Engine es handelt. Das Profil zeigt woertlich
+  // die Wahl der Engine (§3), nicht eine zweite Ableitung.
+  return choice.source === 'champion' || choice.source === 'basis' || choice.source === 'erprobung' || choice.source === 'config' ? choice.source : 'keine';
 }
 
 const f2 = (x: number): string => x.toFixed(2);
@@ -562,7 +566,9 @@ export function gemesseneHaltedauer(quelle: TaktikQuelle): SymbolProfil['halteda
     quelle:
       quelle === 'basis'
         ? 'unbekannt — der Basis-Block trägt keine gemessene Haltedauer (BasisKennzahlen.avgHoldingDays steht nur im Bericht); nichts wird geschätzt'
-        : 'unbekannt — der Champion-Eintrag (oos) trägt keine gemessene Haltedauer; nichts wird geschätzt',
+        : quelle === 'erprobung'
+          ? 'unbekannt — Papier-Erprobung: der Kandidat ist DURCHGEFALLEN, sein Block trägt keine gemessene Haltedauer; nichts wird geschätzt'
+          : 'unbekannt — der Champion-Eintrag (oos) trägt keine gemessene Haltedauer; nichts wird geschätzt',
   };
 }
 

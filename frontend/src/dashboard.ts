@@ -1285,7 +1285,11 @@ function wannTag(ms: number | null): string {
 function profilZeile(e: SymbolProfilEintragDoc, gewaehlt: Set<string> | null): string {
   const az = profilAnzeige(e, gewaehlt);
   const q = e.taktik.quelle;
-  const quelleText = q === 'champion' ? t('pr.quelleChampion') : q === 'basis' ? t('pr.quelleBasis') : q === 'config' ? t('pr.quelleConfig') : '';
+  // Die Erprobung muss als solche zu sehen sein: Wer im Dashboard einen
+  // Handel sieht, soll nicht glauben, dahinter stehe ein bestandener
+  // Kandidat (core/erprobung.ts, §0.9).
+  const quelleText =
+    q === 'champion' ? t('pr.quelleChampion') : q === 'basis' ? t('pr.quelleBasis') : q === 'erprobung' ? t('pr.quelleErprobung') : q === 'config' ? t('pr.quelleConfig') : '';
   const taktik =
     q === 'none'
       ? `<span class="stag">${t('pr.keineTaktik')}</span>`

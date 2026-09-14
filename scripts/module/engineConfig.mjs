@@ -48,8 +48,15 @@ export function engineConfigDocFrom(cfg, source = 'config/platform.yaml') {
     engine,
     /** Defaults für Nutzer ohne eigene Risiko-Einstellung. */
     riskDefaults: cfg.risk,
-    /** Globaler Schalter der Basis-Stufe (∧ Nutzer-Schalter im Takt). */
-    strategy: { basis: cfg.strategy.basis },
+    /**
+     * Globale Schalter: Basis-Stufe (∧ Nutzer-Schalter im Takt) und
+     * Papier-Erprobung. `erprobung` MUSS hier mit — sonst setzt `parseConfig`
+     * im Takt stillschweigend den zod-Default `false`, und ein von Hand in
+     * `meta/engineConfig` gesetzter Wert verschwindet beim nächsten Sync
+     * (`set()` ohne merge). Die Plattform-Hälfte der Stufe wäre damit tot,
+     * ohne dass es jemand merkt (Prüfbefund M4).
+     */
+    strategy: { basis: cfg.strategy.basis, erprobung: cfg.strategy.erprobung },
     optimizer: { strategies: cfg.optimizer.strategies, lookbackDays: cfg.optimizer.lookbackDays },
     source,
   };

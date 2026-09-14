@@ -187,6 +187,17 @@ strategy:
   # Plattform setzt der Nutzer-Schalter settings.auto.basis dieses Feld.
   basis: true
 
+  # Papier-Erprobung (src/core/erprobung.ts, Owner-Entscheidung 14.09.2026):
+  # Handelt ein PAPIER-Konto den besten gemessenen Kandidaten eines Symbols
+  # auch dann, wenn er die zehn Gates NICHT bestanden hat? Vorgabe AUS.
+  #
+  # Der Schalter allein genügt nie: Die Erprobung greift ausschliesslich bei
+  # AUFGELÖSTEM Modus `paper` (resolveMode) — ein Live-Konto erreicht sie
+  # nicht, egal was hier steht. Ihre Trades zählen ausserdem NICHT für die
+  # Live-Reife (readiness), weder dafür noch dagegen. Ein durchgefallener
+  # Kandidat darf keinen Weg zu Echtgeld bahnen.
+  erprobung: false
+
 optimizer:
   # Strategien, die der Walk-Forward-Optimierer gegeneinander prüft.
   strategies:

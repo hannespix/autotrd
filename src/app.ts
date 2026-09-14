@@ -10,6 +10,7 @@ import { createAlpacaClient } from './alpaca/rest.ts';
 import type { AlpacaClient } from './alpaca/types.ts';
 import { aggregate, anfangsStreuner, BarSeries } from './core/bars.ts';
 import { basisChoiceFor, basisStatus, universeWithBasis } from './core/basisTier.ts';
+import { ERPROBUNG_QUELLE, erprobungChoiceFor } from './core/erprobung.ts';
 import { IEX_STREAM_SYMBOL_MAX } from './alpaca/stream.ts';
 import { homeDir, loadConfigFile, loadEnv, resolveMode, type Config, type Env } from './core/config.ts';
 import { ensureDir, homePaths, Journal, StateStore, type HomePaths } from './core/journal.ts';
@@ -204,7 +205,7 @@ export interface StrategyChoice {
   strategy: Strategy;
   params: Params;
   /** Alpha-Champion, Basis-Stufe (Block `basis`) oder Config-Strategie (`allowWithoutChampion`). */
-  source: 'champion' | 'basis' | 'config';
+  source: 'champion' | 'basis' | 'erprobung' | 'config';
   /** Sizing-Semantik der Wahl — nur die Basis-Stufe setzt sie (Allokation, `positionPct`). */
   sizing?: SizingSpec | undefined;
   /** false ⇒ keine neuen Einstiege (Basis ohne Einstiegsrecht: pass gefallen, Schalter aus); Bestand wird geführt. */
@@ -286,6 +287,32 @@ export function strategyChoice(app: App, symbol: string): StrategyChoice | null 
       const choice: StrategyChoice = { strategy, params: mergeParams(strategy.defaults, basis.params), source: 'basis', sizing: basis.sizing, entriesAllowed: basis.entriesAllowed };
       if (basis.entryLockReason !== undefined) choice.entryLockReason = basis.entryLockReason;
       return choice;
+    }
+    // Papier-Erprobung VOR noTrade, aber NACH Champion und Basis: Sie ist die
+    // schwächste Behauptung im Haus (der Kandidat ist durchgefallen) und darf
+    // nie etwas übersteuern. `app.mode` ist der AUFGELÖSTE Modus aus
+    // resolveMode — nicht der Wunsch der Config.
+    const erp = erprobungChoiceFor({
+      champion: champ,
+      timeframe: app.config.timeframe,
+      enabled: app.config.strategy.erprobung,
+      mode: app.mode,
+      // Ausschließlichkeit (Prüfbefund K1): Sobald irgendein Symbol ein
+      // Alpha-Champion führt oder die Basis Einstiegsrecht hat, bleibt die
+      // Erprobung ganz aus — Plätze, Equity, PDT und die Konto-Notbremse sind
+      // geteilt und stufenblind.
+      alphaAktiv: Object.keys(champ.symbols).length > 0,
+      basisAktiv: status.tradable,
+      // Adoption löscht die Herkunft (K2).
+      adoptiert: app.config.engine.onOrphan === 'adopt',
+      symbol,
+      alphaLeads: false,
+      basisLeads: false,
+    });
+    if (erp) {
+      const strategy = getStrategy(erp.strategyId);
+      logger.warn(erp.note);
+      return { strategy, params: mergeParams(strategy.defaults, erp.params), source: ERPROBUNG_QUELLE };
     }
     if (champ.noTrade[symbol]) return null;
   }
