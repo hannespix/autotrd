@@ -34,6 +34,7 @@ import { DAY, addDays, datenAnker, dayKey, dayKeyFor, msFromET, parseDay, toET }
 import type { Bar, Metrics, Ms, Params, Trade } from './core/types.ts';
 import { backfill } from './data/backfill.ts';
 import { ensureCalendar } from './data/calendar.ts';
+import { feedReichweite } from './data/feedreichweite.ts';
 import { Engine } from './engine/engine.ts';
 import { rauchtest, zusammenfassung } from './engine/rauchtest.ts';
 import { createNotifier } from './notify/index.ts';
@@ -303,6 +304,33 @@ async function cmdDoctor(app: App): Promise<number> {
       if (acc.tradingBlocked || acc.accountBlocked) hard++;
       if (acc.equity < app.config.risk.pdt.minEquity && app.config.risk.pdt.respect) {
         out(`  Hinweis: Equity unter ${app.config.risk.pdt.minEquity} $ — PDT-Regel greift (max. ${app.config.risk.pdt.maxDayTrades} Daytrades je 5 Handelstage).`);
+      }
+      out();
+      // Warum das hier steht: Jede Messung dieses Projekts beginnt bei
+      // 2020-07-27, weil dort die bereinigten IEX-Tagesbars anfangen. Die
+      // Fold-Kette hängt am Datenende und wächst rückwärts — der Datenanfang
+      // begrenzt also die Zahl der Folds und damit, was `probabilistic_sharpe_oos`
+      // überhaupt erreichen kann. Bevor jemand daraus einen Strategie-Befund
+      // macht, soll dastehen, ob der Feed die Grenze ist.
+      out('Feed-Reichweite (Tagesbars, Sondierung je Jahr — Untergrenze, nicht der Datenbeginn):');
+      const probeSymbol = app.config.universe.benchmark ?? allSymbols(app.config)[0];
+      if (!probeSymbol) {
+        out('  kein Symbol zum Sondieren');
+      } else {
+        const befunde = await feedReichweite({ client: app.client, symbol: probeSymbol, adjustment: app.config.broker.adjustment });
+        const rowsF: string[][] = [['Feed', 'erreichbar', `${probeSymbol} ab (sondiert)`, 'Proben (Jahr:Bars)']];
+        for (const b of befunde) {
+          rowsF.push([
+            b.feed + (b.feed === app.config.broker.feed ? ' (aktiv)' : ''),
+            b.erreichbar ? 'ja' : `nein — ${b.fehler ?? 'unbekannt'}`,
+            b.abJahr === null ? (b.erreichbar ? 'in keinem sondierten Jahr' : '—') : `≤ ${b.abJahr}`,
+            b.proben.map((p) => `${p.jahr}:${p.bars}`).join(' '),
+          ]);
+        }
+        table(rowsF);
+        const aktiv = befunde.find((b) => b.feed === app.config.broker.feed);
+        const weiter = befunde.find((b) => b.erreichbar && b.abJahr !== null && aktiv?.abJahr != null && b.abJahr < aktiv.abJahr);
+        if (weiter) out(`  Hinweis: \`${weiter.feed}\` reicht weiter zurück als der aktive Feed \`${app.config.broker.feed}\` — mehr Historie heisst mehr Folds.`);
       }
       out();
       out('Assets:');
