@@ -27,7 +27,18 @@ function champion(erprobung: Record<string, ErprobungEntry> = { AAA: EINTRAG }):
   return { version: 1, updatedAt: 1, symbols: {}, noTrade: { AAA: { reason: 'durchgefallen', decidedAt: 1, bestScore: -0.2 } }, erprobung };
 }
 
-const BASIS = { champion: champion(), timeframe: 1440 as const, enabled: true, mode: 'paper' as string | undefined, symbol: 'AAA', alphaLeads: false, basisLeads: false };
+const BASIS = {
+  champion: champion(),
+  timeframe: 1440 as const,
+  enabled: true,
+  mode: 'paper' as string | undefined,
+  alphaAktiv: false,
+  basisAktiv: false,
+  adoptiert: false,
+  symbol: 'AAA',
+  alphaLeads: false,
+  basisLeads: false,
+};
 
 describe('Papier-Erprobung — die Sperren', () => {
   it('greift auf Papier mit Schalter an', () => {
@@ -43,11 +54,11 @@ describe('Papier-Erprobung — die Sperren', () => {
       const c = erprobungChoiceFor({ ...BASIS, mode });
       expect(c, `Modus ${String(mode)} darf die Erprobung nicht bekommen`).toBeNull();
     }
-    expect(erprobungSperre({ champion: champion(), timeframe: 1440, enabled: true, mode: 'live' })).toContain('ausschließlich für Papier');
+    expect(erprobungSperre({ champion: champion(), timeframe: 1440, enabled: true, mode: 'live', alphaAktiv: false, basisAktiv: false, adoptiert: false })).toContain('ausschließlich für Papier');
   });
 
   it('der Modus wird VOR dem Schalter geprüft — die Sperre darf nie hinter einer anderen verschwinden', () => {
-    const sperre = erprobungSperre({ champion: champion(), timeframe: 1440, enabled: false, mode: 'live' });
+    const sperre = erprobungSperre({ champion: champion(), timeframe: 1440, enabled: false, mode: 'live', alphaAktiv: false, basisAktiv: false, adoptiert: false });
     expect(sperre, 'bei live muss der Modus der genannte Grund sein, nicht der Schalter').toContain('Modus');
   });
 
@@ -58,6 +69,37 @@ describe('Papier-Erprobung — die Sperren', () => {
   it('Champion und Basis übersteuert sie nie', () => {
     expect(erprobungChoiceFor({ ...BASIS, alphaLeads: true })).toBeNull();
     expect(erprobungChoiceFor({ ...BASIS, basisLeads: true })).toBeNull();
+  });
+
+  it('K1: handelt IRGENDEIN Alpha-Champion, bleibt die Erprobung ganz aus', () => {
+    // Plätze (risk.maxPositions), Equity, PDT und die KONTO-Notbremse sind
+    // geteilt und stufenblind. Schlimmer: korbRaenge vergibt Ränge nur an
+    // Symbole mit crossScore, ranglose sortieren ans Ende — ein
+    // durchgefallener Querschnitts-Kandidat käme VOR einem Champion dran.
+    expect(erprobungChoiceFor({ ...BASIS, alphaAktiv: true })).toBeNull();
+    const sperre = erprobungSperre({ ...BASIS, alphaAktiv: true });
+    expect(sperre).toContain('Alpha-Champion');
+  });
+
+  it('K1: hat die Basis Einstiegsrecht, bleibt die Erprobung ganz aus', () => {
+    expect(erprobungChoiceFor({ ...BASIS, basisAktiv: true })).toBeNull();
+    expect(erprobungSperre({ ...BASIS, basisAktiv: true })).toContain('Basis-Stufe');
+  });
+
+  it('K2: bei onOrphan=adopt bleibt die Erprobung aus — Adoption löscht die Herkunft', () => {
+    expect(erprobungChoiceFor({ ...BASIS, adoptiert: true })).toBeNull();
+    expect(erprobungSperre({ ...BASIS, adoptiert: true })).toContain('onOrphan');
+  });
+
+  it('die Echtgeld-nahen Sperren stehen VOR dem Schalter — sonst stünde der falsche Grund im Journal', () => {
+    for (const [feld, wort] of [
+      ['alphaAktiv', 'Alpha-Champion'],
+      ['basisAktiv', 'Basis-Stufe'],
+      ['adoptiert', 'onOrphan'],
+    ] as const) {
+      const sperre = erprobungSperre({ ...BASIS, enabled: false, [feld]: true });
+      expect(sperre, `${feld} muss der genannte Grund sein, nicht der Schalter`).toContain(wort);
+    }
   });
 
   it('fremder Zeitrahmen ⇒ nichts (die Parameter wurden für einen anderen gemessen)', () => {

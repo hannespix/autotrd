@@ -189,3 +189,70 @@ describe('Basis-Stufe ⇒ strategyFor (Alpha → Basis → noTrade)', () => {
     expect(ohne.notes.some((n) => /Basis/.test(n))).toBe(false);
   });
 });
+
+/**
+ * Papier-Erprobung auf der Plattform — FUNKTIONALE Wächter.
+ *
+ * Prüfbefund G7 (14.09.2026): Die ersten Wächter dieser Stufe waren
+ * Textsuchen in Quelldateien. Sie hätten K1 (geteilte Plätze und
+ * Notbremse) und K2 (Adoption löscht die Herkunft) nie gesehen. Hier läuft
+ * `buildStrategyFor` wirklich.
+ */
+describe('Papier-Erprobung ⇒ buildStrategyFor', () => {
+  const erp = { version: 1 as const, strategy: 'mean_reversion', params: {}, timeframe: 5 as const, score: -1, failed: ['beats_market'], decidedAt: 1 };
+  const doc = (over: Record<string, unknown> = {}) => ({
+    version: 1,
+    updatedAt: 1,
+    symbols: {},
+    noTrade: { AAPL: { reason: 'durchgefallen', decidedAt: 1, bestScore: -1 } },
+    erprobung: { AAPL: erp },
+    ...over,
+  });
+  const cfg = (over: Record<string, unknown> = {}) => parseConfig({ universe: { symbols: ['AAPL'] }, timeframe: 5, strategy: { erprobung: true }, ...over });
+
+  it('handelt den durchgefallenen Kandidaten auf Papier', () => {
+    const m = buildStrategyFor({ champion: championFromDoc(doc())!, config: cfg(), mode: 'paper' });
+    expect(m.source).toBe('erprobung');
+    expect(m.tradable).toEqual(['AAPL']);
+    expect(m.fn('AAPL')!.strategy.id).toBe('mean_reversion');
+    expect(m.notes.join(' ')).toContain('DURCHGEFALLEN');
+  });
+
+  it('LIVE nicht — und der Grund steht im Journal', () => {
+    const m = buildStrategyFor({ champion: championFromDoc(doc())!, config: cfg(), mode: 'live' });
+    expect(m.tradable).toEqual([]);
+    expect(m.fn('AAPL')).toBeNull();
+    expect(m.notes.join(' ')).toContain('ausschließlich für Papier');
+  });
+
+  it('ohne Modus nicht — wer den Modus nicht kennt, gibt nichts frei', () => {
+    const m = buildStrategyFor({ champion: championFromDoc(doc())!, config: cfg() });
+    expect(m.tradable).toEqual([]);
+  });
+
+  it('Schalter aus ⇒ nicht', () => {
+    const m = buildStrategyFor({ champion: championFromDoc(doc())!, config: parseConfig({ universe: { symbols: ['AAPL'] }, timeframe: 5 }), mode: 'paper' });
+    expect(m.tradable).toEqual([]);
+  });
+
+  it('K1: sobald ein Alpha-Champion irgendwo handelt, bleibt sie ganz aus', () => {
+    const champion = championFromDoc(doc({ symbols: { MSFT: entry('trend_donchian', 5) } }))!;
+    const m = buildStrategyFor({ champion, config: parseConfig({ universe: { symbols: ['AAPL', 'MSFT'] }, timeframe: 5, strategy: { erprobung: true } }), mode: 'paper' });
+    expect(m.fn('AAPL'), 'geteilte Plätze und geteilte Notbremse — die Erprobung darf hier nicht laufen').toBeNull();
+    expect(m.fn('MSFT')!.source).toBe('champion');
+    expect(m.notes.join(' ')).toContain('Alpha-Champion');
+  });
+
+  it('K2: bei onOrphan=adopt bleibt sie aus', () => {
+    const m = buildStrategyFor({ champion: championFromDoc(doc())!, config: cfg({ engine: { onOrphan: 'adopt' } }), mode: 'paper' });
+    expect(m.fn('AAPL')).toBeNull();
+    expect(m.notes.join(' ')).toContain('onOrphan');
+  });
+
+  it('unlesbare Einträge fallen weg, statt das Dokument mitzureissen (M9)', () => {
+    const warnungen: string[] = [];
+    const c = championFromDoc({ ...doc(), erprobung: { AAPL: erp, KAPUTT: { version: 2 } } }, (t) => warnungen.push(t))!;
+    expect(Object.keys(c.erprobung ?? {})).toEqual(['AAPL']);
+    expect(warnungen.join(' ')).toContain('KAPUTT');
+  });
+});

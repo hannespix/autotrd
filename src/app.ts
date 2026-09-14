@@ -297,6 +297,14 @@ export function strategyChoice(app: App, symbol: string): StrategyChoice | null 
       timeframe: app.config.timeframe,
       enabled: app.config.strategy.erprobung,
       mode: app.mode,
+      // Ausschließlichkeit (Prüfbefund K1): Sobald irgendein Symbol ein
+      // Alpha-Champion führt oder die Basis Einstiegsrecht hat, bleibt die
+      // Erprobung ganz aus — Plätze, Equity, PDT und die Konto-Notbremse sind
+      // geteilt und stufenblind.
+      alphaAktiv: Object.keys(champ.symbols).length > 0,
+      basisAktiv: status.tradable,
+      // Adoption löscht die Herkunft (K2).
+      adoptiert: app.config.engine.onOrphan === 'adopt',
       symbol,
       alphaLeads: false,
       basisLeads: false,

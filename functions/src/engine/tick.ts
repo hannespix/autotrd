@@ -501,8 +501,12 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
       // Verriegelt (Echtgeld-Kette offen): keine Einstiege, und Fremdbestand wird nie adoptiert — ein
       // Schutz-Stop auf eine Handposition wäre eine Order auf einem verriegelten Konto.
       const config: Config = sperre ? { ...mitBasis, engine: { ...mitBasis.engine, onOrphan: 'halt' } } : mitBasis;
-      // `zugang.verbindung.mode` ist der AUFGELÖSTE Modus (resolveBrokerMode, liveGate.ts) —
-      // die einzige Sicherung, die die Papier-Erprobung von Echtgeld fernhält.
+      // `zugang.verbindung.mode` stammt aus users/{uid}/private/broker.mode und
+      // damit aus dem SCHLÜSSEL-PRÄFIX, das connectBroker geprüft hat (PK… ⇒
+      // paper, AK… ⇒ live). Es ist NICHT resolveBrokerMode, und das ist Absicht
+      // (Prüfbefund M3): resolveBrokerMode liefert für ein Live-Konto OHNE
+      // Reife ausdrücklich 'paper' — wer hier darauf umstellt, schaltet die
+      // Papier-Erprobung auf einem Konto mit Echtgeld-Schlüssel frei.
       const strategy = buildStrategyFor({ champion, config, held, mode: zugang.verbindung.mode, getStrategy: deps.getStrategy, log: userLogger(log, uid) });
       if (championNote) strategy.notes.unshift(championNote);
       if (!uc.basisSchalter.global && champion?.basis) strategy.notes.push('Basis-Stufe plattformweit abgeschaltet (meta/engineConfig strategy.basis=false) — keine neuen Basis-Einstiege');

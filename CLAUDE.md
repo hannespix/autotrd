@@ -74,13 +74,20 @@ thematisch). Bezeichner im Code Englisch, Kommentare Deutsch.
    handeln, auch wenn er die Gates NICHT bestanden hat — damit überhaupt ein
    Journal entsteht, solange nichts besteht. Das ist **keine dritte Latte**:
    Es wird nichts entschieden, nichts befördert, keine Schwelle angefasst;
-   der Kandidat bleibt durchgefallen und steht weiter in `noTrade`. Drei
-   Sperren, alle im Code und alle mit Wächter: (a) nur bei AUFGELÖSTEM Modus
-   `paper` — ein Live-Konto erreicht die Stufe nie; (b) Schalter
-   `strategy.erprobung`, Vorgabe aus; (c) ihre Trades zählen NICHT für die
-   Live-Reife — weder in `readiness` noch in `stats/main`, aus dem
-   `liveGate` die Echtgeld-Freigabe ableitet. Ohne (c) hätte ein
-   durchgefallener Kandidat über Papier-Trades einen Weg zu Echtgeld.
+   der Kandidat bleibt durchgefallen und steht weiter in `noTrade`. FÜNF
+   Sperren, alle im Code und alle mit Wächter: (a) nur bei aufgelöstem Modus
+   `paper` — ein Live-Konto erreicht die Stufe nie; (b) **nur, wenn sonst
+   nichts handelt** — führt irgendein Symbol ein Alpha-Champion oder hat die
+   Basis Einstiegsrecht, bleibt sie ganz aus; (c) nicht bei
+   `engine.onOrphan: 'adopt'` — Adoption löscht die Herkunft einer Position;
+   (d) Schalter `strategy.erprobung`, Vorgabe aus; (e) ihre Trades zählen
+   NICHT für die Live-Reife — weder in `readiness` noch in `stats/main`, aus
+   dem `liveGate` die Echtgeld-Freigabe ableitet.
+   **(b) und (c) kamen vom Prüfer** (`docs/wissen/pruefungen/2026-09-14-red-team-papier-erprobung.md`):
+   Plätze, Rangordnung, Equity, PDT und die KONTO-Notbremse sind geteilt und
+   stufenblind — Erprobungs-Verluste hätten über die Notbremse
+   Champion-Positionen zwangsweise geschlossen, und DEREN Verluste zählen.
+   Ein Ausschluss je Trade ist kein Ausschluss je Wirkung.
 10. **Verifizieren, nicht glauben.** `npm run check` (typecheck + lint + test)
     vor jedem Commit; ein neuer Wächter wird einmal absichtlich gebrochen.
 

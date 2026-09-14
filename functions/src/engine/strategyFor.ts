@@ -110,7 +110,18 @@ export function buildStrategyFor(a: {
   let basisSymbole = 0;
   let erprobungSymbole = 0;
   let configSymbole = 0;
-  const erprobungArgs = { champion: a.champion, timeframe: tf, enabled: a.config.strategy.erprobung, mode: a.mode };
+  // Ausschließlichkeit (Prüfbefund K1) und Adoptionssperre (K2) — dieselben
+  // Bedingungen wie in src/app.ts, damit beide Betriebsarten dieselbe Frage
+  // gleich beantworten (§0.1).
+  const erprobungArgs = {
+    champion: a.champion,
+    timeframe: tf,
+    enabled: a.config.strategy.erprobung,
+    mode: a.mode,
+    alphaAktiv: Object.keys(a.champion?.symbols ?? {}).length > 0,
+    basisAktiv: basis.tradable,
+    adoptiert: a.config.engine.onOrphan === 'adopt',
+  };
   const erprobungWahl = (symbol: string) => erprobungChoiceFor({ ...erprobungArgs, symbol, alphaLeads: false, basisLeads: false });
   // Ein Block, der da ist, aber nicht greift, gehört ins Journal — sonst
   // rätselt jemand, warum auf Papier nichts passiert.
@@ -157,9 +168,9 @@ export function buildStrategyFor(a: {
       } catch (e) {
         notes.push(`${symbol}: Basis-Strategie nicht ladbar (${errMsg(e)}) — nicht gehandelt`);
       }
-    } else if (erprobungWahl(symbol)) {
+    } else if (erprobungWahl(symbol) !== null) {
       // Papier-Erprobung: schwächste Behauptung im Haus, deshalb NACH Champion
-      // und Basis und nur auf Papier (core/erprobung.ts).
+      // und Basis, nur auf Papier und nur, wenn sonst nichts handelt.
       const erp = erprobungWahl(symbol)!;
       try {
         const strategy = get(erp.strategyId);
