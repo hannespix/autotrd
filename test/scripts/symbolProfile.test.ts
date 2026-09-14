@@ -16,7 +16,7 @@ import { BarSeries } from '../../src/core/bars.ts';
 import { parseConfig } from '../../src/core/config.ts';
 import { msFromET } from '../../src/core/time.ts';
 import type { Bar } from '../../src/core/types.ts';
-import { buildSymbolProfiles, type ProfilWahl, type SymbolProfileFile } from '../../src/profile/symbolprofile.ts';
+import { buildSymbolProfiles, type ProfilWahl, type SymbolProfileFile, type TaktikQuelle } from '../../src/profile/symbolprofile.ts';
 import { getStrategy } from '../../src/strategy/index.ts';
 // @ts-expect-error — .mjs ohne Typen
 import { MAX_PROFIL_BYTES, profilBytes, profilDokument, profilZusammenfassung, pruefeProfil, SYMBOL_PROFILE_PFAD, veroeffentlicheProfil } from '../../scripts/module/symbolProfile.mjs';
@@ -81,6 +81,20 @@ describe('scripts/module/symbolProfile.mjs', () => {
     expect(pruefeProfil({ ...profil, profile: [profil.profile[0], profil.profile[0]] })).toMatch(/doppelte Symbole/);
     expect(pruefeProfil(profil)).toBeNull();
     expect(() => profilDokument({ ...profil, version: 2 }, null)).toThrow(/nicht veröffentlicht/);
+  });
+
+  it('kennt JEDE Quelle, die der Kern vergeben kann — die Liste im .mjs ist eine zweite Aufzählung', () => {
+    // Am 14.09.2026 ist genau das passiert: Der Kern lernte die Quelle
+    // 'erprobung', die Prüfung im Skript nicht — und das GANZE Symbolprofil
+    // fiel durch und blieb auf dem Stand der Vornacht, neben einem neuen
+    // Champion. Eine Aufzählung, die an zwei Stellen steht, läuft
+    // auseinander; dieser Wächter hält sie zusammen.
+    const quellen: TaktikQuelle[] = ['champion', 'basis', 'erprobung', 'config', 'keine'];
+    const muster = profil.profile[0]!;
+    for (const q of quellen) {
+      const eintrag = { ...muster, taktik: { ...muster.taktik, quelle: q } };
+      expect(pruefeProfil({ ...profil, profile: [eintrag] }), `Quelle ${q} wird abgelehnt`).toBeNull();
+    }
   });
 
   it('Übergröße wird abgelehnt statt still gekürzt', () => {

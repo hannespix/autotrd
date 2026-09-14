@@ -40,7 +40,11 @@ export function pruefeProfil(roh) {
     if (typeof x.symbol !== 'string' || x.symbol.length === 0) return `profile[${i}] ohne symbol`;
     if (typeof x.taktik !== 'object' || x.taktik === null) return `profile[${i}] (${x.symbol}) ohne taktik`;
     const q = /** @type {Record<string, unknown>} */ (x.taktik).quelle;
-    if (q !== 'champion' && q !== 'basis' && q !== 'config' && q !== 'keine') return `profile[${i}] (${x.symbol}): taktik.quelle ${String(q)} unbekannt`;
+    // 'erprobung' MUSS hier stehen (14.09.2026): Die Liste ist eine zweite
+    // Aufzählung von TaktikQuelle (src/profile/symbolprofile.ts). Ohne sie
+    // fällt das GANZE Symbolprofil durch die Prüfung und bleibt auf dem Stand
+    // der Vornacht — neben einem neuen Champion. Genau das ist passiert.
+    if (q !== 'champion' && q !== 'basis' && q !== 'erprobung' && q !== 'config' && q !== 'keine') return `profile[${i}] (${x.symbol}): taktik.quelle ${String(q)} unbekannt`;
   }
   const doppelt = p.profile.map((e) => /** @type {{symbol: string}} */ (e).symbol).filter((s, i, all) => all.indexOf(s) !== i);
   if (doppelt.length > 0) return `doppelte Symbole: ${[...new Set(doppelt)].join(', ')}`;
