@@ -242,6 +242,81 @@ describe('Rauchtest — die ganze Kette im Papiergeld', () => {
     expect(Number(beine?.details['zielBeimBroker'])).toBeLessThanOrEqual(Number(beine?.details['zielRoh']));
   });
 
+  it('Gefüllte Eltern-Order fällt aus der offenen Liste — die Beine werden trotzdem gefunden', async () => {
+    /*
+     * Der ZWEITE echte Rauchtest (14.09.2026) wartete volle 40 Runden und
+     * fand trotzdem `null`/`null`. Geduld war nicht die Antwort — meine
+     * erste Diagnose war falsch.
+     *
+     * Der Grund: `listOrders({ status: 'open', nested: true })` filtert die
+     * OBERSTE Ebene. Nach dem Fill ist die Eltern-Order `filled`, fällt aus
+     * der Antwort und nimmt die unter ihr verschachtelten Beine mit. Die
+     * Abfrage kann sie danach strukturell nicht mehr sehen.
+     *
+     * `FakeAlpaca` ist hier grosszügiger als Alpaca: Es liefert einen
+     * gefüllten Elternteil, sobald irgendein Kind offen ist. Genau deshalb
+     * sah der Wächter das nie. Dieser Fall zwingt der Attrappe das echte
+     * Verhalten auf.
+     */
+    const { fake, args } = bau();
+    const echt = fake.listOrders.bind(fake);
+    (fake as unknown as { listOrders: typeof fake.listOrders }).listOrders = async (q) => {
+      const orders = await echt(q);
+      if (q.status !== 'open') return orders;
+      // Wie Alpaca: Was oben nicht offen ist, kommt nicht zurück.
+      return orders.filter((o) => o.status === 'new' || o.status === 'accepted' || o.status === 'partially_filled');
+    };
+
+    const e = await rauchtest(args);
+    const beine = schritt(e, 'beine');
+    expect(beine?.ok, `${beine?.text ?? ''} (Quelle: ${String(beine?.details['beineQuelle'])})`).toBe(true);
+    // Der Beleg, dass dieser Fall wirklich den neuen Weg geht:
+    expect(beine?.details['beineQuelle']).toBe('Eltern-Order (getOrder)');
+    expect(beine?.details['stopBeimBroker']).toBe(628.3);
+    expect(beine?.details['zielBeimBroker']).toBe(694.43);
+  });
+
+  it('Beine kommen SPÄT — der Schritt wartet, statt sie für fehlend zu halten', async () => {
+    /*
+     * Der erste echte Rauchtest (14.09.2026, Paper, SPY × 1) meldete
+     * `stopBeinId: null, zielBeinId: null` — 211 ms nach dem Fill. Drei
+     * Sekunden später ließen sich dieselben Beine beim Ausstieg normal
+     * stornieren: Alpaca legt die Kinder einer Bracket-Order erst NACH dem
+     * Fill an, und asynchron.
+     *
+     * Der Test darüber hat das nie gesehen, weil `FakeAlpaca` die Beine
+     * sofort liefert — die Attrappe war entgegenkommender als die
+     * Wirklichkeit. Dieser Fall macht sie unhöflich: Die ersten drei
+     * Abfragen zeigen keine Beine.
+     */
+    const { fake, args } = bau();
+    const echtListe = fake.listOrders.bind(fake);
+    const echtOrder = fake.getOrder.bind(fake);
+    let nachFill = 0;
+    // BEIDE Wege verzögern: Der Beine-Schritt fragt die Eltern-Order direkt
+    // (`getOrder`) UND die offene Liste. Nur einen zu verzögern prüft nichts —
+    // genau das ist mir beim ersten Entwurf dieses Falls passiert.
+    (fake as unknown as { listOrders: typeof fake.listOrders }).listOrders = async (q) => {
+      const orders = await echtListe(q);
+      if (!fake.positions.has('SPY') || q.nested !== true) return orders;
+      nachFill += 1;
+      return nachFill <= 6 ? orders.map((o) => ({ ...o, legs: [] })) : orders;
+    };
+    (fake as unknown as { getOrder: typeof fake.getOrder }).getOrder = async (id) => {
+      const o = await echtOrder(id);
+      if (o === null || !fake.positions.has('SPY')) return o;
+      return nachFill <= 6 ? { ...o, legs: [] } : o;
+    };
+
+    const e = await rauchtest(args);
+    const beine = schritt(e, 'beine');
+    expect(beine?.ok, `Beine nach ${String(beine?.details['beineRunden'])} Runden: ${beine?.text ?? ''}`).toBe(true);
+    // Es MUSS mehr als eine Runde gebraucht haben — sonst prüft der Fall nichts.
+    expect(Number(beine?.details['beineRunden'])).toBeGreaterThan(1);
+    expect(beine?.details['stopBeimBroker']).toBe(628.3);
+    expect(beine?.details['zielBeimBroker']).toBe(694.43);
+  });
+
   it('Idempotenz: die zweite Anforderung fragt getOrderByClientId und erzeugt keine zweite Order', async () => {
     const { fake, args } = bau();
     const e = await rauchtest(args);

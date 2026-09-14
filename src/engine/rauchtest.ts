@@ -659,10 +659,66 @@ export async function rauchtest(a: RauchtestArgs): Promise<RauchtestErgebnis> {
       return;
     }
 
-    // 5. Beine: Stop UND Ziel liegen beim Broker, mit der Rundung aus §4.
-    const offen = await eigeneOffene();
-    const stopBein = offen.find((o) => (o.type === 'stop' || o.type === 'stop_limit') && o.side === 'sell') ?? null;
-    const zielBein = offen.find((o) => o.type === 'limit' && o.side === 'sell') ?? null;
+    /*
+     * 5. Beine: Stop UND Ziel liegen beim Broker, mit der Rundung aus §4.
+     *
+     * GEDULD, und warum (erster Rauchtest im Paper-Konto, 14.09.2026):
+     * Alpaca legt die Kinder-Beine einer Bracket-Order erst an, NACHDEM der
+     * Elternteil gefüllt ist — und zwar asynchron. Dieser Schritt fragte
+     * 211 ms nach dem Fill und fand `null`/`null`; drei Sekunden später
+     * ließen sich dieselben Beine beim Ausstieg normal stornieren. Der
+     * Schritt war der EINZIGE der ganzen Kette ohne Warten.
+     *
+     * Er bekommt jetzt dieselbe Geduld wie alle anderen. Die Prüfung selbst
+     * bleibt Zeichen für Zeichen so scharf wie vorher: Sind die Beine nach
+     * `runden` Runden nicht da, ist der Schritt ROT — und das wäre dann eine
+     * Position ohne Stop beim Broker, also der Fall, gegen den §0.4 steht.
+     */
+    /*
+     * WO die Beine zu finden sind — der zweite Anlauf, und diesmal der
+     * richtige. Mein erster Fix gab diesem Schritt nur Geduld; der Lauf
+     * danach wartete volle 40 Runden (60 s) und fand trotzdem nichts.
+     * Geduld war also nicht die Antwort.
+     *
+     * Der Grund: `eigeneOffene()` fragt `listOrders({ status: 'open',
+     * nested: true })`. Alpaca filtert dabei die OBERSTE Ebene — und die
+     * Eltern-Order ist nach dem Fill `filled`, nicht `open`. Sie fällt aus
+     * der Antwort heraus, und mit ihr die unter ihr verschachtelten Beine.
+     * Nach dem Fill kann diese Abfrage die Beine einer Bracket-Order
+     * strukturell nicht sehen.
+     *
+     * Also direkt bei der Eltern-Order nachfragen (`getOrder`), die wir aus
+     * dem Einstiegsschritt kennen — und die offene Liste zusätzlich
+     * behalten, falls ein Broker die Beine als eigenständige Orders führt.
+     * Der Check wird dadurch nur mächtiger, nie nachsichtiger.
+     */
+    const beinKandidaten = async (): Promise<AlpacaOrder[]> => {
+      const aus: AlpacaOrder[] = [];
+      const eltern = beimBroker ? await a.client.getOrder(beimBroker.id) : null;
+      if (eltern) aus.push(...eltern.legs);
+      aus.push(...(await eigeneOffene()));
+      const offen = aus.filter((o) => o.symbol === symbol && isOpenStatus(o.status));
+      // Damit das Aufräumen sie kennt, auch wenn sie nur über die Eltern kamen.
+      for (const o of offen) eigeneOrderIds.add(o.id);
+      return offen;
+    };
+
+    let stopBein: AlpacaOrder | null = null;
+    let zielBein: AlpacaOrder | null = null;
+    let beineRunden = 0;
+    let beineQuelle = 'keine';
+    for (let i = 0; i < runden; i++) {
+      beineRunden = i + 1;
+      const offen = await beinKandidaten();
+      stopBein = offen.find((o) => (o.type === 'stop' || o.type === 'stop_limit') && o.side === 'sell') ?? null;
+      zielBein = offen.find((o) => o.type === 'limit' && o.side === 'sell') ?? null;
+      if (stopBein !== null && zielBein !== null) {
+        const ausListe = (await eigeneOffene()).some((o) => o.id === stopBein?.id);
+        beineQuelle = ausListe ? 'offene Liste' : 'Eltern-Order (getOrder)';
+        break;
+      }
+      await sleep(pollMs);
+    }
     const stopPreis = stopBein?.stopPrice ?? null;
     const zielPreis = zielBein?.limitPrice ?? null;
     const einstand = pos!.entryPrice;
@@ -694,6 +750,8 @@ export async function rauchtest(a: RauchtestArgs): Promise<RauchtestErgebnis> {
         zielBeimBroker: zielPreis,
         einstand,
         schutzStopImBuch: book.protectiveOrders.get(symbol)?.orderId ?? null,
+        beineRunden,
+        beineQuelle,
       },
     );
 
