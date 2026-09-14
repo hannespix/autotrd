@@ -248,6 +248,9 @@ function layout(email: string): string {
           <label class="opt-check">
             <input type="checkbox" id="asBasis" />
             <span>${t('as.basis')} ${iBtn('basis')}</span></label>
+          <label class="opt-check">
+            <input type="checkbox" id="asErprobung" />
+            <span>${t('as.erprobung')} ${iBtn('erprobung')}</span></label>
         </div>
         <div class="wl-sec">${t('as.symbole')} ${iBtn('symbolauswahl')}</div>
         <div class="row" style="gap:6px;margin-bottom:4px">
@@ -1385,6 +1388,7 @@ function fillAutoForm(): void {
   ($('asTelegram') as HTMLInputElement).checked = a.notifyTelegram === true;
   // Fehlend heißt an (Voreinstellung) — nur ein gespeichertes false schaltet die Basis ab.
   ($('asBasis') as HTMLInputElement).checked = a.basis !== false;
+  ($('asErprobung') as HTMLInputElement).checked = a.erprobung !== false;
   renderSymbolPicker();
   $('asMsg').textContent = '';
   $('asErr').hidden = true;
@@ -1453,6 +1457,7 @@ function autoFormSettings(): AutoSettings {
     allowShort: ($('asShort') as HTMLInputElement).checked,
     notifyTelegram: ($('asTelegram') as HTMLInputElement).checked,
     basis: ($('asBasis') as HTMLInputElement).checked,
+    erprobung: ($('asErprobung') as HTMLInputElement).checked,
     ...(teilmenge ? { symbols: alle } : {}),
   };
 }

@@ -28,7 +28,7 @@
  *   val.zahl|<feld>                         fehlt oder keine endliche Zahl
  *   val.bereich|<feld>|<min>|<max>          außerhalb der Hülle (inklusive)
  *   val.ganzzahl|<feld>                     keine ganze Zahl (maxPositions)
- *   val.boolean|<feld>                      kein Wahrheitswert (allowShort, notifyTelegram, basis)
+ *   val.boolean|<feld>                      kein Wahrheitswert (allowShort, notifyTelegram, basis, erprobung)
  *   val.symbole|symbols                     keine Liste gültiger Ticker
  *   val.hoechstens|symbols|<n>              mehr als AUTO_SYMBOLS_MAX Symbole
  *   val.unbekannteSymbole|symbols|<liste>   nicht im übergebenen Universum
@@ -64,6 +64,21 @@ export interface AutoSettings {
    * Feld als `strategy.basis` der Nutzer-Config.
    */
   basis?: boolean;
+  /**
+   * Papier-Erprobung mitmachen: Auf einem PAPIER-Konto den besten gemessenen
+   * Kandidaten handeln, auch wenn er die Gates NICHT bestanden hat
+   * (`src/core/erprobung.ts`, CLAUDE.md §0.9).
+   *
+   * Fehlend = AN, aber das heisst wenig: Der globale Schalter
+   * (`meta/engineConfig` `strategy.erprobung`) steht auf AUS, und beide
+   * werden UND-verknüpft. Dieses Feld existiert, damit ein Nutzer ABWÄHLEN
+   * kann, wenn die Plattform die Stufe je einschaltet — nicht, damit er sie
+   * einschaltet.
+   *
+   * Ein Live-Konto erreicht die Stufe ohnehin nie, und ihre Trades zählen
+   * nicht für die Live-Reife.
+   */
+  erprobung?: boolean;
 }
 
 /** Voreinstellungen — identisch mit den Schema-Defaults des Kerns (`risk`, `strategy.basis`). */
@@ -76,6 +91,7 @@ export const AUTO_DEFAULTS: Readonly<AutoSettings> = {
   allowShort: false,
   notifyTelegram: false,
   basis: true,
+  erprobung: true,
 };
 
 export type AutoZahlFeld =
@@ -192,6 +208,7 @@ export function validateAutoSettings(a: unknown, universe?: readonly string[]): 
   // Optional, damit ein Client von vor der Basis-Stufe weiter speichern kann;
   // fehlend heißt AN (Voreinstellung), und gespeichert wird es immer ausdrücklich.
   if (a.basis !== undefined && typeof a.basis !== 'boolean') fehler.push('val.boolean|basis');
+  if (a.erprobung !== undefined && typeof a.erprobung !== 'boolean') fehler.push('val.boolean|erprobung');
 
   let symbols: string[] | undefined;
   if (a.symbols !== undefined) {
@@ -226,6 +243,7 @@ export function validateAutoSettings(a: unknown, universe?: readonly string[]): 
     allowShort: a.allowShort as boolean,
     notifyTelegram: a.notifyTelegram === true,
     basis: a.basis !== false,
+    erprobung: a.erprobung !== false,
   };
   if (symbols) wert.symbols = symbols;
   return { ok: true, wert, fehler: [] };
