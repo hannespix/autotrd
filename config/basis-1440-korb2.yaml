@@ -1,0 +1,138 @@
+# Basis-Allokation, zweiter Korb — Probe-Config
+#
+# = config/basis-1440-v4.yaml mit genau ZWEI Unterschieden: `optimizer.
+# basisUniverse` trägt neun ANDERE Fonds, und `paths.home` zeigt woandershin.
+# Parameter des Festkandidaten, Gate-Schwellen, Bremsen, Kosten, Fold-Plan
+# und der ALPHA-Korb sind unberührt.
+#
+# ── Was gemessen wird ─────────────────────────────────────────────────────
+#
+# Die Basis hat ihre Latte auf genau einem Zeitfenster UND genau einem Korb
+# genommen. Zeitliche Unabhängigkeit ist mit dem IEX-Feed arithmetisch
+# unmöglich (docs/wissen/analysen/2026-09-13-unabhaengige-falsifikation-
+# unmoeglich.md: Daten erst ab 2020-07-27, für drei Folds ohne Überlappung
+# fehlen 18 Tage). Bleibt die andere Achse: Hängt das Ergebnis an den neun
+# konkreten Fonds?
+#
+# DIESE PROBE ERSETZT M4 NICHT. Sie misst dieselbe Marktgeschichte. Ein
+# Bestehen ist ein Beleg gegen Instrument-Zufall und KEIN Beleg für
+# zeitliche Robustheit.
+#
+# ── Die Regel, nach der Korb 2 besetzt ist ────────────────────────────────
+#
+# Dieselben neun GTAA-Klassen wie V2. Je Klasse das grösste US-ETF, das einen
+# ANDEREN Index abbildet als das des ersten Korbs; findet sich keines, der
+# nächstgrösste Fonds derselben Klasse, ausgewiesen als Beinahe-Klon.
+#
+#   US Large      SPY  (S&P 500)        -> VTI   (CRSP US Total Market)
+#   US Small      IWM  (Russell 2000)   -> IJR   (S&P SmallCap 600)
+#   Industrield.  EFA  (MSCI EAFE)      -> VEA   (FTSE Developed ex-US)
+#   Schwellenld.  EEM  (MSCI EM)        -> VWO   (FTSE EM, ohne Korea)
+#   Treasuries m. IEF  (ICE 7-10 J.)    -> GOVT  (ICE breit)
+#   Treasuries l. TLT  (ICE 20+ J.)     -> VGLT  (Bloomberg Long)
+#   IG-Kredit     LQD  (iBoxx Liquid)   -> VCIT  (Bloomberg 5-10 J.)
+#   Gold          GLD  (Goldpreis)      -> IAU   (Goldpreis) BEINAHE-KLON
+#   Immobilien    XLRE (S&P RE Select)  -> VNQ   (MSCI US REIT)
+#
+# Neun gegen neun, mit Absicht: `topPct 0.4` und `exitPct 0.6` rechnen über
+# (rank-1)/(of-1) und ergeben nur bei NEUN Mitgliedern wieder genau vier
+# Berechtigte und Austritt ab Rang 6. Mit acht wären es drei — dann wäre die
+# Breite der Strategie mitverändert und der Lauf nicht auswertbar. Eine
+# Änderung, nicht zwei.
+#
+# Gold trägt zur Unabhängigkeit dieser Probe NICHTS bei (dieselbe Ware, nur
+# ein anderer Fonds). Eine von neun Klassen ist damit blind; das ist der
+# Preis dafür, die Geometrie gleich zu lassen, und er steht hier.
+#
+# ── Bekannte Nebenwirkung auf das ALPHA, vor dem Lauf benannt ─────────────
+#
+# Die neun müssen in `universe.candidates`, sonst lehnt core/config.ts den
+# Basis-Korb ab („muss aus dem Pool stammen, den nur ein Commit ändert") —
+# ein Wächter gegen handverlesene Körbe, und er hat recht.
+#
+# Folge: Der Kandidatenpool wächst um neun sehr liquide ETFs, und mehrere
+# davon (VTI, VEA, VWO) liegen weit über der Kappungsgrenze des 30er-Korbs
+# (Rang 30 lag zuletzt bei 107 Mio. $ Median-Tagesumsatz). Der ALPHA-Korb
+# dieses Laufs wird sich also verschieben.
+#
+# Für die BASIS ist das gleichgültig: Sie ist eine eigene Simulation über
+# `basisUniverse`, und ihr Maßstab ist derselbe Korb liegengelassen — der
+# Alpha-Korb geht in keine ihrer Zahlen ein.
+#
+# Für das ALPHA ist es nicht gleichgültig: Der Alpha-Teil dieses Berichts ist
+# NICHT mit #63 vergleichbar und wird nicht zitiert. Wer ihn doch vergleicht,
+# vergleicht zwei Änderungen — der Fehler, der am 13.09. dreimal Zeit
+# gekostet hat.
+
+vorregistrierung: docs/wissen/vorregistrierung/2026-09-14-basis-zweiter-korb.md
+broker: {mode: paper, feed: iex, adjustment: all}
+universe:
+  assetClass: us_equity
+  symbols: [SPY, QQQ, IWM, DIA, AAPL, MSFT, NVDA, AMZN, META, GOOGL, TSLA, AVGO, AMD, NFLX, CRM, ORCL, ADBE, INTC, CSCO, QCOM,
+    JPM, BAC, WFC, XOM, CVX, JNJ, PFE, UNH, WMT, DIS]
+  benchmark: SPY
+  maxSymbols: 30
+  candidates: [SPY, QQQ, IWM, DIA, XLF, XLE, XLK, XLV, XLI, XLY, XLP, XLU, XLB, XLRE, XLC, SMH, SOXX, EEM, EFA, GLD, SLV,
+    TLT, HYG, LQD, IEF, AAPL, MSFT, NVDA, AMZN, META, GOOGL, GOOG, TSLA, AVGO, AMD, NFLX, CRM, ORCL, ADBE, INTC, CSCO, QCOM,
+    TXN, MU, AMAT, LRCX, KLAC, ADI, MRVL, ANET, NOW, IBM, INTU, PANW, CRWD, DDOG, SNOW, UBER, ABNB, PYPL, SPOT, DELL, JPM,
+    BAC, WFC, GS, MS, C, SCHW, BLK, AXP, V, MA, COF, USB, PNC, BRK.B, XOM, CVX, COP, SLB, EOG, PSX, MPC, OXY, VLO, JNJ, PFE,
+    UNH, ABBV, MRK, LLY, TMO, ABT, BMY, AMGN, GILD, CVS, MDT, ISRG, VRTX, REGN, WMT, DIS, HD, MCD, NKE, SBUX, COST, TGT, LOW,
+    PG, KO, PEP, PM, MO, MDLZ, CL, BA, CAT, DE, GE, HON, LMT, RTX, UPS, UNP, MMM, FDX, T, VZ, TMUS, CMCSA, CHTR, NEE, DUK,
+    SO, F, GM,
+    # Korb 2 der Basis (siehe Kopf). Sie stehen im Pool, weil der Wächter in
+    # core/config.ts das verlangt: kein handverlesener Basis-Korb.
+    VTI, IJR, VEA, VWO, GOVT, VGLT, VCIT, IAU, VNQ]
+timeframe: 1440
+session: {noEntryFirstMin: 5, noEntryLastMin: 30, flattenBeforeCloseMin: 5}
+risk:
+  riskPerTradePct: 0.5
+  maxPositionPct: 20
+  maxPositions: 4
+  maxGrossExposurePct: 100
+  maxDailyLossPct: 2
+  maxDrawdownPct: 10
+  allowShort: false
+  # DIE gemessene Änderung (src/risk/limits.ts, `grenzenFuer`). Begründung,
+  # Herkunft der Zahlen und die Grenze der Aussage stehen im Kopf.
+  tiers:
+    alpha: {maxDailyLossPct: null, maxDrawdownPct: null}
+    basis: {maxDailyLossPct: 5, maxDrawdownPct: 30}
+  pdt: {respect: true, minEquity: 25000, maxDayTrades: 3}
+strategy:
+  id: trend_donchian
+  params: {}
+  allowWithoutChampion: false
+optimizer:
+  strategies: [trend_donchian, momentum_pullback, mean_reversion, cross_sectional_momentum, regime_allocation]
+  lookbackDays: 2000
+  isDays: 365
+  oosDays: 90
+  stepDays: 90
+  embargoBars: 0
+  samples: 150
+  seed: 42
+  minOosTrades: 60
+  minFoldPositiveShare: 0.6
+  objective: sortino
+  stressCostMultiplier: 1.5
+  holdoutDays: 180
+  promotionMargin: 0.1
+  minPsrOos: 0.9
+  dsrIsGate: false
+  maxFoldNetShare: 0.5
+  pooled: true
+  foldMembership: point_in_time
+  fixedCandidates:
+  - strategy: regime_allocation
+    label: Basis V2
+    tier: basis
+    params: {lookback: 126, skip: 21, regimeLen: 150, topPct: 0.4, exitPct: 0.6, stopPct: 20}
+  basis: {minDrawdownReduction: 0.25, minSharpeRatio: 0.9, maxCostShare: 0.1, positionPct: 20}
+  # DIE gemessene Änderung. Regel und Begründung stehen im Kopf.
+  basisUniverse: [VTI, IJR, VEA, VWO, GOVT, VGLT, VCIT, IAU, VNQ]
+costs: {slippageBps: 3, spreadBps: 2, secFeeRate: 2.78e-05, finraTafPerShare: 0.000166, finraTafMax: 8.3, cryptoTakerPct: 0.25,
+  shortBorrowAnnualPct: 1}
+engine: {reconcileEverySec: 60, barGraceSec: 4, maxDataAgeSec: 180, maxConsecutiveErrors: 5, onOrphan: halt}
+notify: {telegram: false}
+status: {httpPort: 0}
+paths: {home: ./var-basis-korb2}

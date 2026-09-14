@@ -35,6 +35,7 @@ on:
           - config/basis-1440-v3.yaml
           - config/basis-1440-v4.yaml
           - config/basis-1440-v5.yaml
+          - config/basis-1440-korb2.yaml
           - config/diagnose-fenster.yaml
           - config/diagnose-kurzlaeufer.yaml
           - config/vigilant-1440.yaml
