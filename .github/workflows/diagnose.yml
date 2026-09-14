@@ -1,0 +1,75 @@
+name: Diagnose (doctor, nur lesen)
+
+# `node src/cli.ts doctor` mit den hinterlegten Keys — NUR LESEN.
+#
+# ── Was dieser Workflow darf und was nicht ────────────────────────────────
+#
+# `doctor` fragt Konto, Uhr, Assets und seit dem 14.09.2026 die
+# FEED-REICHWEITE ab. Er sendet keine Order, schreibt nichts nach Firestore
+# und veröffentlicht keinen Champion. Dafür gibt es rauchtest.yml
+# (Paper-Order) und optimize.yml (Veröffentlichung) — beide mit eigenen
+# Sperren.
+#
+# ── Warum es ihn gibt ─────────────────────────────────────────────────────
+#
+# Jede Messung dieses Projekts beginnt bei 2020-07-27, weil dort die
+# bereinigten Tagesbars des IEX-Feeds anfangen. Die Fold-Kette hängt am
+# Datenende und wächst rückwärts: Der Datenanfang begrenzt die Zahl der
+# Folds und damit, was `probabilistic_sharpe_oos` erreichen kann. Dieselbe
+# Abo-Stufe deckelt über IEX_STREAM_SYMBOL_MAX auch den Korb auf 30.
+# Ob das Abo die Grenze ist, gehört gemessen und nicht vermutet.
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: diagnose
+  cancel-in-progress: false
+
+jobs:
+  doctor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ALPACA_API_KEY: ${{ secrets.ALPACA_API_KEY }}
+      ALPACA_SECRET_KEY: ${{ secrets.ALPACA_SECRET_KEY }}
+      # Die Beispiel-Config steht auf paper und handelt nichts, was Nutzer
+      # betrifft. config/platform.yaml hat hier nichts zu suchen.
+      CONFIG: config/config.example.yaml
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Abhängigkeiten installieren
+        run: npm ci
+
+      - name: Keys prüfen (und niemals ausgeben)
+        run: |
+          if [ -z "$ALPACA_API_KEY" ] || [ -z "$ALPACA_SECRET_KEY" ]; then
+            echo "::error::ALPACA_API_KEY / ALPACA_SECRET_KEY fehlen als Repository-Secrets."
+            exit 1
+          fi
+          # Echtgeld-Sperre wie im Rauchtest: Ein Live-Key kommt hier nicht durch.
+          case "$ALPACA_API_KEY" in
+            AK*) echo "::error::Der hinterlegte Key ist ein Live-Key (AK…). Diese Diagnose läuft ausschließlich mit einem Paper-Key (PK…)."; exit 1 ;;
+            PK*) echo "Paper-Key erkannt." ;;
+            *)   echo "::error::Unbekanntes Key-Präfix — erwartet wird ein Paper-Key (PK…)."; exit 1 ;;
+          esac
+          printf 'ALPACA_API_KEY=%s\nALPACA_SECRET_KEY=%s\nALPACA_ALLOW_LIVE=0\n' "$ALPACA_API_KEY" "$ALPACA_SECRET_KEY" > "$RUNNER_TEMP/.env"
+          chmod 600 "$RUNNER_TEMP/.env"
+
+      - name: Config prüfen
+        run: |
+          case "$CONFIG" in
+            config/config.example.yaml) ;;
+            *) echo "::error::$CONFIG ist nicht die Paper-Beispiel-Config — dieser Workflow läuft nur gegen sie."; exit 1 ;;
+          esac
+          if ! grep -Eq '^[[:space:]]*mode:[[:space:]]*paper([[:space:]]|$)' "$CONFIG"; then
+            echo "::error::$CONFIG steht nicht auf broker.mode: paper."
+            exit 1
+          fi
+
+      - name: doctor
+        run: node src/cli.ts doctor --config "$CONFIG" --env "$RUNNER_TEMP/.env" --home var-diagnose
