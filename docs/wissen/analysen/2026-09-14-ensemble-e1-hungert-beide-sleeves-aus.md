@@ -1,5 +1,41 @@
 # Ensemble E1: die Korrelation hielt, die Umsetzung hat beide Sleeves ausgehungert
 
+> ## ⚠⚠ Nachtrag 14.09.2026 — der Titel dieses Dokuments ist falsch
+>
+> **Zwei der drei hier genannten Engpässe sind widerlegt, einer davon mit
+> Zahlen aus genau dem Bericht, den dieses Dokument auswertet.** Belege in
+> `2026-09-14-ensemble-e2-symbolentzug-war-nicht-die-ursache.md` (Proben #69
+> Kontrolle und #70 Messung, beide `--as-of 2026-09-11`).
+>
+> 1. **Engpass 1 (Symbolentzug) — widerlegt.** Vollständig beseitigt
+>    (disjunkte Universen, `entzogen` leer, Korb wieder 30 statt 24 Symbole):
+>    der Aktien-Sleeve geht von 71 auf **77** Trades. Das Netto verschiebt
+>    sich um 0,37 Standardfehler, also gar nicht.
+> 2. **Engpass 2 (Kapitalhalbierung ⇒ Gebührenanteil 188 %) — widerlegt.**
+>    In derselben Berichtstabelle steht `momentum_pullback` solo mit voller
+>    Kasse, vollem Korb und allen vier Plätzen bei **254,4 %**
+>    Gebührenanteil. Bei voller Kasse ist der Anteil höher, nicht
+>    niedriger.
+> 3. **Der Vergleichsmaßstab war falsch.** Die Zeile
+>    „allein +2 240,51 · 496 Trades · 8/10 Gates“ ist aus #42/#43 nicht
+>    reproduzierbar (dort 572 Trades, +3 012,24) und stammt vor allem aus
+>    einer Kette mit **18** Folds. Sobald ein Ensemble konfiguriert ist,
+>    setzt `vigilant_allocation` den Warmup auf 255 Bars (Embargo 275); die
+>    Kette hat dann **16** Folds. Ich habe zwei Zahlen verglichen, die nie
+>    denselben Zeitraum gesehen haben. Die defensive Zeile (#44: 27 Trades,
+>    +432,08, 9/10) stimmt dagegen.
+>
+> Was bleibt: die gemessene Korrelation von 0,39, die Gate-Zahlen von E1
+> selbst, und dass E1 nicht bestanden hat. Was fällt: die Erklärung, das
+> Ensemble habe seine Sleeves ausgehungert. Auf der Kette, die das Ensemble
+> wirklich läuft, ist der Aktien-Sleeve solo bereits ein Kandidat mit 4 von
+> 10 Gates, Sharpe −0,91 und 254 % Gebührenanteil. Das Ensemble erbt eine
+> verlierende Strategie — es hungert keine gute aus.
+>
+> Der Text unterhalb bleibt unverändert stehen, damit der Fehler nachlesbar
+> ist statt verschwunden (§4a).
+
+
 **Lauf:** #67 (`config/ensemble-1440.yaml`, E1 gleichgewichtet) ·
 **Vorregistrierung:** `2026-09-12-ensemble.md` · **Versuch 1 von 6**
 

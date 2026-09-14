@@ -81,3 +81,70 @@ Anlauf an derselben Stelle, kein Nachbessern an den Zahlen.
 **Versuchszählung (§4a):** EIN Versuch, gezählt — und zwar als
 Ensemble-Versuch. E1 gleichgewichtet war Versuch 1 von 6; dies ist Versuch 2.
 Die Vorregistrierung vom 12.09. bleibt in Kraft: höchstens sechs.
+
+---
+
+## Nachtrag 14.09.2026, 16:50 — Stichtag statt Wanduhr (vor der Auswertung)
+
+Der erste Lauf auf dem Branch (Probe #68) hat **beide Abbruchkriterien 1
+und 2 ausgelöst**, und zwar aus demselben Grund: Es ist Montag, die Börse
+ist offen, das Datenende wanderte von 2026-09-11 (E1, Probe #67) auf
+2026-09-14. Die Fold-Kette hängt am Datenende, also verschob sich mit ihr
+alles — auch der Alpha-Teil. Der Lauf ist **nach meinen eigenen Kriterien
+nicht auswertbar**. Ich habe seine Gate-Zahlen nicht angesehen.
+
+Das ist derselbe Mechanismus wie heute früh beim Bars-Cache
+(`analysen/2026-09-13-alpha-verschiebung-war-der-bars-cache.md`): Zwei
+Läufe, die „eine Änderung" messen sollen, sahen verschiedene Daten.
+
+**Konsequenz — und sie ist strenger als der erste Plan.** Statt den
+Referenzlauf einfach heute nachzufahren, wird der Stichtag gepinnt.
+Beide Läufe bekommen `asOf = 2026-09-11`, das Datenende von E1:
+
+| Lauf | Ref | asOf | Rolle |
+|---|---|---|---|
+| A | `main` (alter Code, kein `ensembleMembership`) | 2026-09-11 | **Kontrolle** |
+| B | Branch (disjunkte Universen) | 2026-09-11 | Messung |
+
+`main` trägt die Bars-Cache-Bereinigung bereits (`scripts/bars-cache-key.mjs`),
+der einzige Unterschied zwischen A und B ist die Änderung selbst
+(`git diff main..HEAD` = `run.ts`, Test, diese Datei).
+
+**Neues Abbruchkriterium 4, vor dem Lauf:** Lauf A muss E1 (Probe #67)
+reproduzieren — gleicher Datenbereich, gleiche Ensemble-Zahlen, gleiche
+`entzogen`-Liste (EFA, GLD, LQD, QQQ, SPY, TLT). Tut er das nicht, bewegt
+sich noch etwas anderes im Apparat, und **keine** der Erwartungen 1–5 wird
+ausgewertet, bevor das geklärt ist. Der Kontrolllauf ist der eigentliche
+Zweck dieses Nachtrags: Er prüft nicht die Änderung, er prüft die Messung.
+
+Abbruchkriterium 2 („Datenbereich weicht ab") bleibt in Kraft und wird
+jetzt am Stichtag durchgesetzt statt an der Hoffnung, dass niemand über
+Mitternacht misst.
+
+**Versuchszählung unverändert:** Probe #68 zählt nicht — sie hat nichts
+gemessen. Es bleibt bei Versuch 2 von 6.
+
+---
+
+## Ergebnis (14.09.2026) — Proben #69 (Kontrolle) und #70 (Messung)
+
+Auswertung: `analysen/2026-09-14-ensemble-e2-symbolentzug-war-nicht-die-ursache.md`
+
+Alle vier Abbruchkriterien klar; der Kontrolllauf reproduziert E1 Zeile für
+Zeile (eine Abweichung, und das ist die Stichtags-Zeile selbst).
+
+| # | Erwartung | Ergebnis |
+|---|---|---|
+| 1 | `entzogen` leer, Korb wieder voll | **bestätigt** (leer, 30/30, aus 131 Kandidaten) |
+| 2 | Aktien-Sleeve deutlich über 71 Trades | **widerlegt** — 77 |
+| 3 | Gebührenanteil unter 100 % | **nicht auswertbar** — Gate vakant (kein Bruttogewinn) |
+| 4 | Alpha ziffernidentisch | **bestätigt** — 575/575 Zeilen |
+| 5 | Mehr Gates als E1 | **formal 4 statt 3, sachlich nein** (der Zugewinn ist das vakante Gate) |
+
+**Der Symbolentzug war nicht der Engpass.** Die Folge tritt ein, die hier
+vorher festgeschrieben wurde: kein zweiter Anlauf an derselben Stelle, kein
+Nachbessern. E3–E6 bleiben ungefahren; 2 von 6 Versuchen verbraucht.
+
+Die Code-Änderung bleibt — aus Korrektheit der gemessenen Einheit
+(`maxSymbols: 30` soll 30 heißen), nicht wegen des Ergebnisses. Dieselbe
+Begründung stünde hier bei umgekehrtem Vorzeichen.
