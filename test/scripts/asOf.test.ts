@@ -38,7 +38,7 @@ function app(asOf?: string, home = join(dir, asOf ?? 'ohne')): App {
 /** Tagesbars an fünf aufeinanderfolgenden Handelstagen im Cache ablegen. */
 function seed(home: string): void {
   const a = app(undefined, home);
-  const store = new BarStore(barStoreRoot(a.paths.bars, 'us_equity', 'iex'));
+  const store = new BarStore(barStoreRoot(a.paths.bars, a.config.universe.assetClass, a.config.broker.feed, a.config.broker.adjustment));
   const tage: Array<[number, number, number]> = [
     [2026, 9, 1],
     [2026, 9, 2],
@@ -155,7 +155,7 @@ describe('Streuner am Anfang (seriesForTimeframe)', () => {
 
   it('verwirft eine verirrte Einzelbar lange vor dem Datenbeginn — der Cache behält sie', () => {
     const a = app(undefined, home);
-    const store = new BarStore(barStoreRoot(a.paths.bars, 'us_equity', 'iex'));
+    const store = new BarStore(barStoreRoot(a.paths.bars, a.config.universe.assetClass, a.config.broker.feed, a.config.broker.adjustment));
     const streuner: Bar = { t: msFromET(2019, 11, 11, 9, 30), o: 50, h: 51, l: 49, c: 50, v: 7 };
     store.upsert('SPY', '1Day', [streuner]);
     expect(store.firstTime('SPY', '1Day')).toBe(streuner.t);

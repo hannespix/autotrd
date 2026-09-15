@@ -55,6 +55,21 @@
 broker:
   mode: paper          # Der Modus je Nutzer kommt aus dem Live-Schalter der Plattform, nicht von hier.
   feed: iex            # Datenfeed für Optimierer UND Engine — identisch, sonst misst man etwas anderes als man handelt.
+  # Bereinigte TAGESBARS (Owner-Entscheidung 15.09.2026). Sie sind die
+  # Bedingung dafür, dass Zinsmaßstab und Parken unten überhaupt etwas tun:
+  # In ROHEN Bars trägt der Kurs eines monatlich ausschüttenden Geldmarkt-ETF
+  # den Zins NICHT (config/parken-1440.yaml, Kopf). Mit `raw` wäre die
+  # Zinsreihe aus BIL ungefähr null — die Gates blieben faktisch „gegen null
+  # gerechnet", und das Parken kostete Gebühren ohne Ertrag. Beides sähe aus,
+  # als hätte man etwas geändert.
+  #
+  # Für die AUSFÜHRUNG ist das folgenlos: Minutenbars werden immer roh geladen
+  # (src/alpaca/rest.ts) — gehandelt wird zu echten Kursen. Bereinigt sind nur
+  # die Tagesbars, aus denen Signale und Messung entstehen. Jede Probe, die
+  # Parken oder Zinsmaßstab misst, steht seit jeher auf `all` (parken-1440,
+  # korb-breite-*, ensemble-*) — die Plattform war der Ausreisser. Die
+  # übrigen Proben ziehen mit dieser Änderung nach.
+  adjustment: all
 
 universe:
   assetClass: us_equity
@@ -133,6 +148,31 @@ risk:
   maxDailyLossPct: 2
   maxDrawdownPct: 10
   allowShort: false
+  # Geldmarkt-Parken (Owner-Entscheidung 15.09.2026, gemessen als Lauf #49).
+  # Brachliegende Kasse liegt in kurzen T-Bills statt auf 0 %. Das ist eine
+  # ÖKONOMISCHE Änderung, kein Messtrick: Im Konto jedes Papier-Nutzers
+  # entsteht eine echte BIL-Position.
+  #
+  # Warum es das braucht: Die gemessenen Kandidaten binden nur 7–26 % ihrer
+  # Equity. Ohne Parken verdient das Konto auf 80–90 % seines Kapitals nichts,
+  # während der Zinsmaßstab unten den vollen Zins abzieht — jeder Kandidat
+  # wäre um rund den Zinssatz schlechter, ohne dass sich an der Wirklichkeit
+  # etwas ändert. Wer gegen den Zins gemessen wird, soll den Zins auch
+  # verdienen können.
+  #
+  # Das Artefakt aus Lauf #48 (Parken AN, Gates noch auf ROHEM Netto: drei
+  # Quartale mit NULL Trades zählten als positive Folds) ist durch
+  # `optimizer.riskFreeSymbol` unten behoben — Parken in BIL liefert dann
+  # exakt den Zins, also 0 Überschuss.
+  #
+  # BIL steht mit Absicht NICHT in `universe.candidates`: Das Parksymbol
+  # gehört der Treasury allein, sonst lägen zwei Positionen mit zwei
+  # Herkünften darin (§0.6). Seine Bars lädt der Takt eigens.
+  cashParking:
+    enabled: true
+    symbol: BIL
+    bandPct: 5
+    bufferPct: 2
   pdt:
     respect: true
     minEquity: 25000
@@ -206,6 +246,20 @@ optimizer:
   promotionMargin: 0.1
   minPsrOos: 0.9
   dsrIsGate: false
+  # Zinsmaßstab (Owner-Entscheidung 15.09.2026). Alle Geld-Gates rechnen auf
+  # dem ÜBERSCHUSS über den kurzen Zins statt über null. Das ändert keinen
+  # Handel und keine Order — es macht die Gates STRENGER (§0.9 erlaubt
+  # strenger ausdrücklich, lockerer nie).
+  #
+  # Der Befund, der das auslöst: Bis heute trug JEDE Gate-Notiz der Plattform
+  # „kein Geldmarkt-Symbol konfiguriert — gegen null gerechnet", während jede
+  # Erkundung gegen BIL mass. Die Plattform entschied ihren Champion damit auf
+  # einem milderen Maßstab als die Läufe, mit denen geforscht wird
+  # (docs/wissen/analysen/2026-09-15-die-plattform-misst-gegen-null.md).
+  #
+  # Dasselbe Papier wie das Parksymbol — dann gibt es zwischen Verdienen und
+  # Messen keinen Spread (src/core/config.ts).
+  riskFreeSymbol: BIL
   maxFoldNetShare: 0.5   # ein einzelner Fold darf höchstens die Hälfte des OOS-Nettos tragen
   pooled: true           # gehört zu den 30 Symbolen — siehe Kopf dieser Datei
   # Korb je Fold (Vorgabe point_in_time): Für jeden Fold wird der Korb zu

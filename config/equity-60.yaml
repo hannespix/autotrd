@@ -39,6 +39,12 @@
 broker:
   mode: paper
   feed: iex
+  # Bereinigte Tagesbars wie die Produktion (config/platform.yaml,
+  # 15.09.2026). Ohne sie trägt der Kurs von BIL seine monatliche
+  # Ausschüttung nicht: Zinsmaßstab und Parken wären ungefähr null und
+  # kosteten nur Gebühren (src/risk/parken.ts, „Grenzen"). Minutenbars bleiben
+  # roh — gehandelt wird zu echten Kursen.
+  adjustment: all
 
 universe:
   assetClass: us_equity
@@ -71,6 +77,17 @@ risk:
   maxDailyLossPct: 2
   maxDrawdownPct: 10
   allowShort: false
+  # Geldmarkt-Parken wie die Produktion (config/platform.yaml, seit
+  # 15.09.2026). Eine Probe misst nur dann etwas über die Plattform, wenn auch
+  # bei ihr die brachliegende Kasse im Geldmarkt liegt: Der Zinsmaßstab unten
+  # zieht den kurzen Zins ab, also muss das Konto ihn auch verdienen können.
+  # Beides gehört zusammen — eines allein verschiebt die Messung
+  # (test/scripts/probeConfigs.test.ts).
+  cashParking:
+    enabled: true
+    symbol: BIL
+    bandPct: 5
+    bufferPct: 2
   pdt:
     respect: true
     minEquity: 25000
@@ -101,6 +118,12 @@ optimizer:
   promotionMargin: 0.1
   minPsrOos: 0.9
   dsrIsGate: false
+  # Zinsmaßstab wie die Produktion (config/platform.yaml, 15.09.2026): Die
+  # Geld-Gates rechnen auf dem ÜBERSCHUSS über den kurzen Zins, nicht über
+  # null. Eine Probe, die gegen null misst, während die Plattform gegen BIL
+  # misst, urteilt milder als das, was sie beurteilen soll
+  # (docs/wissen/analysen/2026-09-15-die-plattform-misst-gegen-null.md).
+  riskFreeSymbol: BIL
   maxFoldNetShare: 0.5
   pooled: true
 
