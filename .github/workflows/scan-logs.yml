@@ -16,6 +16,12 @@ on:
       service:
         description: Cloud-Run-Dienst (kleingeschriebener Function-Name)
         default: 'enginetick'
+      contains:
+        description: >-
+          Nur Meldungen mit diesem Text (leer = alle). Ohne ihn kommen die 50
+          JÜNGSTEN Einträge — eine Meldung, die je Takt oft auftritt,
+          verdrängt dann alles andere.
+        default: ''
 
 jobs:
   logs:
@@ -43,4 +49,12 @@ jobs:
         if: env.FIREBASE_SERVICE_ACCOUNT != ''
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
-        run: node scripts-ci/fetch-scan-logs.mjs "${{ inputs.minutes }}" "${{ inputs.severity }}" "${{ inputs.service }}"
+          IN_MINUTES: ${{ inputs.minutes }}
+          IN_SEVERITY: ${{ inputs.severity }}
+          IN_SERVICE: ${{ inputs.service }}
+          IN_CONTAINS: ${{ inputs.contains }}
+        # Die Eingaben gehen über die Umgebung, NICHT per ${{ }} in die
+        # Kommandozeile: Ein Workflow-Eingang ist Text aus Menschenhand, und
+        # eingesetzter Text in einer Shell-Zeile ist genau der Fehler, den
+        # optimize.yml schon einmal hatte (Prüfbefund G5).
+        run: node scripts-ci/fetch-scan-logs.mjs "$IN_MINUTES" "$IN_SEVERITY" "$IN_SERVICE" "$IN_CONTAINS"

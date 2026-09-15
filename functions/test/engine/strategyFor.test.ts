@@ -218,6 +218,52 @@ describe('Papier-Erprobung ⇒ buildStrategyFor', () => {
     expect(m.notes.join(' ')).toContain('DURCHGEFALLEN');
   });
 
+  /*
+   * Die Notiz wächst NICHT mit dem Korb.
+   *
+   * Am 15.09.2026 im Betrieb aufgefallen: Der Takt baut diese Zuordnung jede
+   * Minute neu auf und schreibt jede Notiz als WARNUNG. Bei 30 Symbolen und
+   * zwei Konten waren das rund 86 000 Warnzeilen am Tag; in Cloud Logging
+   * stand nichts anderes mehr, und die Diagnose (die 50 jüngsten Einträge)
+   * sah nur noch diese eine Meldung. Eine Warnung, die immer da ist, warnt
+   * nicht mehr.
+   *
+   * Deshalb die harte Grenze: EINE Zeile je Kandidat, nicht je Symbol — und
+   * der Inhalt bleibt vollständig (Strategie, Gates, alle Symbole).
+   */
+  it('WÄCHTER: eine Notiz je Kandidat, nicht je Symbol — auch bei 30 Symbolen', () => {
+    const syms = ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'META', 'GOOGL', 'TSLA', 'AVGO', 'AMD', 'NFLX', 'CRM', 'ORCL', 'ADBE', 'INTC', 'CSCO', 'QCOM', 'JPM', 'BAC', 'WFC', 'XOM', 'CVX', 'JNJ', 'PFE', 'UNH', 'WMT', 'DIS', 'SPY', 'QQQ', 'IWM', 'DIA'];
+    const m = buildStrategyFor({
+      champion: championFromDoc({ ...doc(), noTrade: Object.fromEntries(syms.map((s) => [s, { reason: 'durchgefallen', decidedAt: 1, bestScore: -1 }])), erprobung: Object.fromEntries(syms.map((s) => [s, erp])) })!,
+      config: cfg({ universe: { symbols: syms, maxSymbols: 30 } }),
+      mode: 'paper',
+    });
+    expect(m.tradable.length).toBe(syms.length);
+    const erprobungsNotizen = m.notes.filter((n) => n.includes('Papier-Erprobung'));
+    expect(erprobungsNotizen.length, `eine Zeile je Kandidat erwartet, bekommen: ${erprobungsNotizen.length}`).toBe(1);
+    // Vollständig bleibt sie trotzdem: Kandidat, Gates und JEDES Symbol.
+    expect(erprobungsNotizen[0]).toContain('mean_reversion');
+    expect(erprobungsNotizen[0]).toContain('beats_market');
+    for (const s of syms) expect(erprobungsNotizen[0], `${s} fehlt in der Sammelnotiz`).toContain(s);
+  });
+
+  it('zwei verschiedene Kandidaten ⇒ zwei Zeilen, nicht eine gemischte', () => {
+    const anders = { ...erp, strategy: 'trend_donchian', failed: ['oos_trades'] };
+    const m = buildStrategyFor({
+      champion: championFromDoc({
+        ...doc(),
+        noTrade: { AAPL: { reason: 'x', decidedAt: 1, bestScore: -1 }, MSFT: { reason: 'x', decidedAt: 1, bestScore: -1 } },
+        erprobung: { AAPL: erp, MSFT: anders },
+      })!,
+      config: cfg({ universe: { symbols: ['AAPL', 'MSFT'] } }),
+      mode: 'paper',
+    });
+    const n = m.notes.filter((x) => x.includes('Papier-Erprobung'));
+    expect(n.length).toBe(2);
+    expect(n.join(' ')).toContain('oos_trades');
+    expect(n.join(' ')).toContain('beats_market');
+  });
+
   it('LIVE nicht — und der Grund steht im Journal', () => {
     const m = buildStrategyFor({ champion: championFromDoc(doc())!, config: cfg(), mode: 'live' });
     expect(m.tradable).toEqual([]);

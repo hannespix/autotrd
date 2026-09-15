@@ -17,7 +17,8 @@
  * die `decide()` unverändert bekommt.
  */
 import { basisChoiceFor, basisFuehrungOf, basisStatus } from '../../../src/core/basisTier.ts';
-import { erprobungChoiceFor, erprobungSperre } from '../../../src/core/erprobung.ts';
+import { erprobungChoiceFor, erprobungSammelNotiz, erprobungSperre } from '../../../src/core/erprobung.ts';
+import type { ErprobungChoice } from '../../../src/core/erprobung.ts';
 import type { Config } from '../../../src/core/config.ts';
 import { errMsg, logger } from '../../../src/core/log.ts';
 import type { Params, SizingSpec, Strategy } from '../../../src/core/types.ts';
@@ -98,6 +99,7 @@ export function buildStrategyFor(a: {
   const tf = a.config.timeframe;
   const map = new Map<string, StrategyChoice | null>();
   const notes: string[] = [];
+  const erprobungWahlen: ErprobungChoice[] = [];
   const basis = basisStatus({
     champion: a.champion,
     timeframe: tf,
@@ -176,7 +178,10 @@ export function buildStrategyFor(a: {
         const strategy = get(erp.strategyId);
         choice = { strategy, params: mergeParams(strategy.defaults, erp.params), source: 'erprobung' };
         erprobungSymbole++;
-        notes.push(erp.note);
+        // NICHT je Symbol notieren: Der Takt baut diese Zuordnung jede Minute
+        // neu auf und schreibt jede Notiz als Warnung. Gesammelt wird unten
+        // (`erprobungSammelNotiz`) — der Grund steht dort.
+        erprobungWahlen.push(erp);
       } catch (e) {
         notes.push(`${symbol}: Erprobungs-Strategie nicht ladbar (${errMsg(e)}) — nicht gehandelt`);
       }
@@ -216,6 +221,7 @@ export function buildStrategyFor(a: {
   } else if (!basis.tradable && basis.reason !== null) {
     notes.push(basis.reason);
   }
+  notes.push(...erprobungSammelNotiz(erprobungWahlen));
   for (const n of notes) log.warn(n);
   const tradable = [...map].filter(([, c]) => c !== null).map(([s]) => s);
   const basisSymbols = [...map].filter(([, c]) => c?.source === 'basis').map(([s]) => s);
