@@ -84,9 +84,12 @@ import type { ChampionFile, ErprobungEntry } from '../optimize/promote.ts';
 export const ERPROBUNG_QUELLE = 'erprobung';
 
 export interface ErprobungChoice {
+  symbol: string;
   strategyId: string;
   params: Params;
-  /** Text fürs Journal: welcher Kandidat, welche Gates gefallen sind. */
+  /** Gefallene Gates aus dem Champion-Block — Fakten, nicht Prosa (für `erprobungSammelNotiz`). */
+  failed: readonly string[];
+  /** Text fürs Journal, wenn EIN Symbol gemeint ist: welcher Kandidat, welche Gates gefallen sind. */
   note: string;
 }
 
@@ -135,11 +138,43 @@ export function erprobungChoiceFor(a: ErprobungArgs & { symbol: string; alphaLea
   const entry: ErprobungEntry | undefined = a.champion?.erprobung?.[a.symbol];
   if (!entry) return null;
   if (entry.timeframe !== a.timeframe) return null;
-  const gefallen = entry.failed.length ? entry.failed.join(', ') : 'keine Gate-Namen im Block';
   const note =
-    `Papier-Erprobung ${a.symbol}: ${entry.strategy} — DURCHGEFALLEN (${gefallen}), wird nur auf Papier gehandelt, ` +
+    `Papier-Erprobung ${a.symbol}: ${entry.strategy} — DURCHGEFALLEN (${gateListe(entry.failed)}), wird nur auf Papier gehandelt, ` +
     `zählt nicht für die Live-Reife (readiness)`;
-  return { strategyId: entry.strategy, params: entry.params, note };
+  return { symbol: a.symbol, strategyId: entry.strategy, params: entry.params, failed: entry.failed, note };
+}
+
+const gateListe = (failed: readonly string[]): string => (failed.length ? failed.join(', ') : 'keine Gate-Namen im Block');
+
+/**
+ * EINE Notiz für ALLE Symbole der Erprobung — statt einer je Symbol.
+ *
+ * Der Grund ist betrieblich und wurde am 15.09.2026 im laufenden Betrieb
+ * sichtbar: Der Plattform-Takt baut seine Strategie-Zuordnung JEDE MINUTE neu
+ * auf und schreibt jede Notiz als WARNUNG. Bei 30 Symbolen und zwei Konten
+ * waren das rund 86 000 Warnzeilen am Tag — sie verdrängten in Cloud Logging
+ * alles andere, und die Diagnose (`scripts-ci/fetch-scan-logs.mjs` holt die 50
+ * jüngsten Einträge) sah nur noch diese eine Meldung. Eine Warnung, die immer
+ * da ist, warnt nicht mehr; sie versteckt die, auf die es ankommt.
+ *
+ * Der Inhalt bleibt vollständig: Kandidat, gefallene Gates und die Symbole
+ * stehen weiter drin, nur eben einmal. Gruppiert wird nach Strategie und
+ * Gate-Liste — verschiedene Kandidaten bekommen verschiedene Zeilen.
+ */
+export function erprobungSammelNotiz(wahlen: readonly ErprobungChoice[]): string[] {
+  const gruppen = new Map<string, { strategyId: string; gates: string; symbole: string[] }>();
+  for (const w of wahlen) {
+    const gates = gateListe(w.failed);
+    const key = `${w.strategyId}|${gates}`;
+    const g = gruppen.get(key) ?? { strategyId: w.strategyId, gates, symbole: [] };
+    g.symbole.push(w.symbol);
+    gruppen.set(key, g);
+  }
+  return [...gruppen.values()].map(
+    (g) =>
+      `Papier-Erprobung: ${g.symbole.length} Symbol(e) — ${g.strategyId}, DURCHGEFALLEN (${g.gates}), ` +
+      `nur auf Papier, zählt nicht für die Live-Reife (readiness): ${g.symbole.join(', ')}`,
+  );
 }
 
 /**

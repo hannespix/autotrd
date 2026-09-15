@@ -3,7 +3,15 @@
  * Diagnose-Brücke, wenn ein Direkt-Invoke 500 liefert und niemand die
  * GCP-Konsole offen hat.
  *
- *   node scripts-ci/fetch-scan-logs.mjs [minuten] [severity] [dienst]
+ *   node scripts-ci/fetch-scan-logs.mjs [minuten] [severity] [dienst] [text]
+ *
+ * `text` (optional) grenzt auf Meldungen ein, die diesen Text enthalten —
+ * ohne ihn liefert Cloud Logging die 50 JÜNGSTEN Einträge, und eine Meldung,
+ * die je Symbol und Takt einmal kommt, verdrängt alles andere. Genau das ist
+ * am 15.09.2026 passiert: Die Frage „hat die Engine seit der Eröffnung eine
+ * Order gestellt?" war nicht beantwortbar, weil 50 von 50 Einträgen aus
+ * derselben Minute stammten. Der Text geht als Teilstring-Filter auf
+ * `jsonPayload.message` (Cloud-Logging-Operator `:`).
  *
  * Default: 30 Minuten, severity>=WARNING, Dienst `enginetick` (der
  * Engine-Takt — Firebase leitet den Dienstnamen kleingeschrieben aus dem
@@ -18,6 +26,18 @@ import { gfetch, mintAccessToken, projectFromFirebaserc, readServiceAccount } fr
 const minutes = Number(process.argv[2] ?? 30);
 const severity = process.argv[3] ?? 'WARNING';
 const service = process.argv[4] ?? 'enginetick';
+const contains = (process.argv[5] ?? '').trim();
+
+/*
+ * Der Text landet in einem Cloud-Logging-Filter. Er kommt aus einem
+ * workflow_dispatch-Eingang, also aus Menschenhand — und ein Filter ist eine
+ * Sprache. Statt zu escapen wird ein enger Zeichensatz erzwungen: Was nicht
+ * hineinpasst, bricht den Lauf, statt still etwas anderes zu suchen.
+ */
+if (contains && !/^[A-Za-z0-9 _.,:()/+\-]{1,120}$/.test(contains)) {
+  console.error(`Suchtext „${contains}" enthält Zeichen, die im Log-Filter nichts zu suchen haben (erlaubt: Buchstaben, Ziffern, Leerzeichen, _.,:()/+-, max. 120).`);
+  process.exit(1);
+}
 
 const sa = readServiceAccount();
 const project = projectFromFirebaserc();
@@ -29,6 +49,7 @@ const filter = [
   `resource.labels.service_name="${service}"`,
   `timestamp>="${since}"`,
   `severity>=${severity}`,
+  ...(contains ? [`jsonPayload.message:"${contains}"`] : []),
 ].join(' AND ');
 
 const data = await gfetch('https://logging.googleapis.com/v2/entries:list', {
@@ -44,7 +65,7 @@ const data = await gfetch('https://logging.googleapis.com/v2/entries:list', {
 
 const entries = (data.entries ?? []).reverse();
 if (entries.length === 0) {
-  console.log(`Keine ${service}-Logs in den letzten ${minutes} min (severity>=${severity}).`);
+  console.log(`Keine ${service}-Logs in den letzten ${minutes} min (severity>=${severity}${contains ? `, Text „${contains}"` : ''}).`);
   process.exit(0);
 }
 for (const e of entries) {
