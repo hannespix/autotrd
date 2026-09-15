@@ -43,6 +43,7 @@ import {
   type SymbolProfileFile,
 } from '../../src/profile/symbolprofile.ts';
 import { atr } from '../../src/strategy/indicators.ts';
+import { einstiegsSicht } from '../../src/profile/symbolprofile.ts';
 import { strategy as regimeAllocation } from '../../src/strategy/regimeAllocation.ts';
 import { bewerte, universeRegelnFuer } from '../../src/universe/select.ts';
 
@@ -513,5 +514,123 @@ describe('Kennzahlen mit Quelle', () => {
     const tages = champion(block(), { alpha: [] });
     tages.symbols.AAA = alphaEntry({ strategy: 'trend_donchian', params: { atrLen: 14, atrMult: 2 } });
     expect(je(profil(app({ champion: tages })), 'AAA').stop.pct).toBeGreaterThan(0);
+  });
+});
+
+/* ───────────────── Einstiegs-Sicht: gefragt, nicht nachgebaut ───────────────── */
+
+/**
+ * Warum es diese Wächter gibt (15.09.2026).
+ *
+ * Die Plattform handelte zwei Tage lang nichts, und das Profil konnte nicht
+ * sagen, warum: Es beschrieb den Zustand jedes Symbols — Trend, Vol, Momentum,
+ * Stop — aber nirgends stand, ob daraus heute ein Einstieg folgt. Ein stiller
+ * Tag war von einem kaputten nicht zu unterscheiden.
+ *
+ * `einstieg` schließt die Lücke. Die eine Gefahr dabei ist, die Einstiegsregel
+ * für den Bericht NACHZUBAUEN: Dann gäbe es zwei Wahrheiten, und die zweite
+ * stünde im Bericht. Der erste Test unten nagelt deshalb fest, dass das Urteil
+ * WÖRTLICH aus `decide()` kommt — eine Attrappe, deren Indikatoren nichts
+ * hergeben, deren `decide()` aber „einstieg" sagt, muss im Profil als
+ * Einstieg erscheinen.
+ */
+describe('Einstiegs-Sicht', () => {
+  const leereReihe = new Float64Array([1, 2, 3]);
+  /** Attrappe: `decide()` sagt, was hier hineingereicht wird — unabhängig von jeder Zahl. */
+  function attrappe(antwort: ReturnType<Strategy['decide']>, sah?: { benchmark?: boolean }): ProfilWahl {
+    return {
+      strategy: {
+        id: 'attrappe',
+        timeframes: [1440],
+        paramSpace: [],
+        defaults: {},
+        holdsOvernight: true,
+        warmupBars: () => 1,
+        precompute: () => ({ irgendwas: leereReihe }),
+        decide: (snap) => {
+          if (sah) sah.benchmark = snap.benchmark !== undefined;
+          return antwort;
+        },
+      },
+      params: {},
+      source: 'champion',
+    };
+  }
+
+  const bars3 = serie(3, () => 100);
+
+  it('WÄCHTER: das Urteil kommt wörtlich aus decide() — keine zweite Einstiegsregel', () => {
+    const wahl = attrappe({ kind: 'enter', side: 'long', stop: 91.5, target: 108.25, reason: 'weil die Attrappe es sagt' });
+    const sicht = einstiegsSicht({ symbol: 'ZZZ', bars: bars3, choice: wahl, ind: { irgendwas: leereReihe }, tf: 1440, assetClass: 'us_equity' });
+    expect(sicht.signal).toBe('einstieg');
+    expect(sicht.grund).toBe('weil die Attrappe es sagt');
+    expect(sicht.seite).toBe('long');
+    expect(sicht.stop).toBe(91.5);
+    expect(sicht.ziel).toBe(108.25);
+    // Die Indikatoren erklären nur — sie entscheiden nichts.
+    expect(sicht.indikatoren).toEqual({ irgendwas: 3 });
+  });
+
+  it('übersetzt jede Decision-Art, ohne eine davon zu deuten', () => {
+    const f = (d: ReturnType<Strategy['decide']>) => einstiegsSicht({ symbol: 'ZZZ', bars: bars3, choice: attrappe(d), ind: { irgendwas: leereReihe }, tf: 1440, assetClass: 'us_equity' });
+    expect(f({ kind: 'hold' }).signal).toBe('halten');
+    expect(f({ kind: 'hold' }).grund).toBeNull();
+    expect(f({ kind: 'exit', reason: 'Trendbruch' })).toMatchObject({ signal: 'exit', grund: 'Trendbruch' });
+    expect(f({ kind: 'move_stop', stop: 42, reason: 'Trailing' })).toMatchObject({ signal: 'stop-nachziehen', grund: 'Trailing', stop: 42 });
+  });
+
+  it('WÄCHTER: der Benchmark wird mitgereicht — ohne ihn sähe das Profil MEHR Einstiege als die Engine nimmt', () => {
+    // `benchmarkAllows(undefined, …)` gibt true zurück (strategy/indicators.ts).
+    // Eine Strategie mit useBenchmarkFilter: 1 wäre hier also grundlos
+    // freigeschaltet — ein Fehler in die schmeichelnde Richtung.
+    const sah: { benchmark?: boolean } = {};
+    const wahl = attrappe({ kind: 'hold' }, sah);
+    einstiegsSicht({ symbol: 'ZZZ', bars: bars3, choice: wahl, ind: { irgendwas: leereReihe }, tf: 1440, assetClass: 'us_equity', benchmark: { bars: bars3, i: 2 } });
+    expect(sah.benchmark, 'decide() bekam keinen Benchmark').toBe(true);
+  });
+
+  it('WÄCHTER: der Korb-Rang wird mitgereicht — sonst urteilt eine Querschnitts-Strategie anders als die Engine', () => {
+    /*
+     * Beim ersten Entwurf fehlte er, und der Rang-Wächter darüber fiel sofort
+     * auf die Nase. `cross_sectional_momentum` entscheidet AN `snap.rank`, ob
+     * es einsteigt; ohne Rang hätte diese Zeile für den ganzen Querschnitts-
+     * Korb etwas anderes behauptet als die Engine tut — und wieder in die
+     * schmeichelnde Richtung.
+     */
+    const gesehen: { rank?: number | undefined } = {};
+    const wahl: ProfilWahl = {
+      strategy: { ...attrappe({ kind: 'hold' }).strategy, decide: (snap) => { gesehen.rank = snap.rank?.rank; return { kind: 'hold' }; } },
+      params: {},
+      source: 'champion',
+    };
+    einstiegsSicht({ symbol: 'ZZZ', bars: bars3, choice: wahl, ind: { irgendwas: leereReihe }, tf: 1440, assetClass: 'us_equity', rang: { rank: 3, of: 9, pct: 0.33 } });
+    expect(gesehen.rank, 'decide() bekam keinen Rang').toBe(3);
+  });
+
+  it('sagt laut, wenn es nichts zu fragen gibt — statt still „halten" zu behaupten', () => {
+    const ohneWahl = einstiegsSicht({ symbol: 'ZZZ', bars: bars3, choice: null, ind: null, tf: 1440, assetClass: 'us_equity' });
+    expect(ohneWahl.signal).toBeNull();
+    expect(ohneWahl.quelle).toMatch(/keine Taktik/);
+    const intraday = einstiegsSicht({ symbol: 'ZZZ', bars: bars3, choice: attrappe({ kind: 'hold' }), ind: { irgendwas: leereReihe }, tf: 5, assetClass: 'us_equity' });
+    expect(intraday.signal, 'auf Intraday-Bars sieht das Profil nicht dieselben Bars wie die Engine').toBeNull();
+    expect(intraday.quelle).toMatch(/Tagesbars/);
+    const ohneInd = einstiegsSicht({ symbol: 'ZZZ', bars: bars3, choice: attrappe({ kind: 'hold' }), ind: null, tf: 1440, assetClass: 'us_equity' });
+    expect(ohneInd.signal).toBeNull();
+    expect(ohneInd.quelle).toMatch(/Aufwärmphase|keine Bars/);
+  });
+
+  it('steht im Profil und in der Tabelle — mit der echten Strategie, nicht nur der Attrappe', () => {
+    const a = app({ champion: champion(null, { alpha: ALPHA }) });
+    const file = profil(a);
+    const p = je(file, 'AAA');
+    // Die echte Wahl kommt aus `strategyForFn` — dieselbe Funktion wie in der Engine.
+    expect(p.taktik.quelle).toBe('champion');
+    expect(p.einstieg.signal, 'ohne Urteil wäre die Zeile wertlos').not.toBeNull();
+    expect(p.einstieg.quelle).toContain('decide()');
+    expect(p.einstieg.indikatoren, 'Indikatoren erklären das Urteil').not.toBeNull();
+    const kopf = profilTabelle(file)[0]!;
+    expect(kopf).toContain('Signal');
+    const zeile = profilTabelle(file).find((r) => r[0] === 'AAA')!;
+    expect(zeile[kopf.indexOf('Signal')]).not.toBe('');
   });
 });
