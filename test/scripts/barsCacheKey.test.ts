@@ -36,7 +36,7 @@ describe('Bars-Cache-Schlüssel', () => {
   it('trennt genau dann, wenn auch die Wurzel auf der Platte trennt', () => {
     // Der eigentliche Vertrag: gleicher Schlüssel ⇔ gleiche Wurzel. Ändert
     // jemand `barStoreRoot`, ohne den Schlüssel mitzuziehen, fällt es hier auf.
-    const configs = ['platform.yaml', 'basis-1440-v3.yaml', 'basis-1440-v4.yaml', 'basis-1440-v5.yaml', 'crypto-1440.yaml', 'equity-1440.yaml'];
+    const configs = ['platform.yaml', 'basis-1440.yaml', 'basis-1440-v3.yaml', 'basis-1440-v4.yaml', 'basis-1440-v5.yaml', 'crypto-1440.yaml', 'equity-1440.yaml'];
     const paare = configs.map((n) => {
       const c = laden(n);
       return { n, schluessel: barsCacheKey(c), wurzel: barStoreRoot('bars', c.universe.assetClass, c.broker.feed, c.broker.adjustment) };
@@ -110,8 +110,11 @@ describe('Bars-Cache-Schlüssel', () => {
 
   it('trennt Krypto von Aktien und bereinigte von rohen Bars', () => {
     expect(key('crypto-1440.yaml')).not.toBe(key('equity-1440.yaml'));
-    // platform.yaml rechnet roh, die Basis-Proben bereinigt („all").
-    expect(key('platform.yaml')).not.toBe(key('basis-1440-v4.yaml'));
+    // Seit dem 15.09.2026 rechnet platform.yaml bereinigt („all") — ohne die
+    // Ausschüttung im Kurs trüge BIL den Zins nicht, und Parken wie
+    // Zinsmaßstab wären ungefähr null (src/risk/parken.ts). Roh geblieben ist
+    // basis-1440.yaml, die erste Basis-Probe von vor diesem Befund.
+    expect(key('platform.yaml')).not.toBe(key('basis-1440.yaml'));
   });
 
   it('das Kommando der Workflows sagt dasselbe wie die Funktion', () => {

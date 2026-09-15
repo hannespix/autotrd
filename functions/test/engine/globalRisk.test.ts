@@ -21,6 +21,10 @@ import { describe, expect, it } from 'vitest';
 import { buildUserConfig, GLOBAL_RISK_FELDER, globalConfigRaw } from '../../src/engine/config.ts';
 
 const doc = {
+  // Bereinigte Tagesbars: Parken auf rohen Bars weist `pruefeParkBereinigung`
+  // (src/core/config.ts) ab — ein Geldmarktpapier trägt seinen Zins als
+  // Ausschüttung, und die steht nur in bereinigten Bars.
+  broker: { adjustment: 'all' },
   risk: {
     // Nutzersache — muss verworfen werden:
     maxPositions: 99,
@@ -63,7 +67,7 @@ describe('globale Risiko-Blöcke im Takt', () => {
   it('WÄCHTER: dieselben Blöcke kommen auch aus `riskDefaults` durch — so schreibt der Sync sie', () => {
     // scripts/module/engineConfig.mjs schreibt `riskDefaults: cfg.risk`. Läse der Takt
     // nur `risk`, stünde der Schalter in config/platform.yaml und täte nichts.
-    const global = globalConfigRaw({ riskDefaults: { ...doc.risk } });
+    const global = globalConfigRaw({ broker: doc.broker, riskDefaults: { ...doc.risk } });
     const { config } = buildUserConfig(global, undefined);
     expect(config.risk.volTarget).toEqual(doc.risk.volTarget);
     expect(config.risk.tiers.basis.maxDailyLossPct).toBe(8);

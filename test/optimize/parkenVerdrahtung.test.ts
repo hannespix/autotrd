@@ -193,6 +193,9 @@ describe('Parkbars im Optimierer', () => {
 describe('Infrastruktursymbole: geladen, nie gehandelt', () => {
   it('`fetch` lädt Park- UND Zinssymbol, ohne dass eines im Pool steht', () => {
     const cfg = parseConfig({
+      // Bereinigt, sonst weist `pruefeParkBereinigung` das Parken ab: In rohen
+      // Bars trägt ein Geldmarktpapier seine Ausschüttung nicht.
+      broker: { adjustment: 'all' },
       universe: { symbols: ['AAA'], benchmark: 'SPY', candidates: ['AAA', 'CCC'] },
       timeframe: 1440,
       risk: { cashParking: { enabled: true, symbol: PARK } },
@@ -210,6 +213,7 @@ describe('Infrastruktursymbole: geladen, nie gehandelt', () => {
 
   it('Park- und Zinssymbol dürfen DASSELBE Papier sein — ein Symbol, eine Ladung, kein Spread', () => {
     const cfg = parseConfig({
+      broker: { adjustment: 'all' },
       universe: { symbols: ['AAA'], benchmark: 'SPY' },
       timeframe: 1440,
       risk: { cashParking: { enabled: true, symbol: PARK } },
@@ -270,7 +274,7 @@ describe('Infrastruktursymbole: geladen, nie gehandelt', () => {
     // Ohne Kandidatenpool wird der Basis-Korb NICHT gegen den Pool geprüft
     // (core/basisTier.ts) — genau der Weg, auf dem ein fremdes Symbol ins
     // Universum kommt, ohne je durch `parseConfig` gegangen zu sein.
-    writeFileSync(cfgPfad, `universe:\n  symbols: [AAA]\ntimeframe: 1440\nrisk:\n  cashParking:\n    enabled: true\n    symbol: ${PARK}\n`, 'utf8');
+    writeFileSync(cfgPfad, `broker:\n  adjustment: all\nuniverse:\n  symbols: [AAA]\ntimeframe: 1440\nrisk:\n  cashParking:\n    enabled: true\n    symbol: ${PARK}\n`, 'utf8');
     // Champion aus einer ANDEREN Quelle (champion.json): Sein Basis-Korb nennt
     // das Parksymbol. `engineConfig` erweitert das Universum darum — NACH
     // `parseConfig`, das den Fall sonst abgewiesen hätte.

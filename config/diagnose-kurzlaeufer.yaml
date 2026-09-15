@@ -3,6 +3,14 @@
 # Vorregistrierung: docs/wissen/vorregistrierung/2026-09-12-kurzlaeufer-im-pool.md
 # (VOR diesem Lauf committet — dort stehen die Erwartungen, an denen die These
 # scheitern kann).
+vorregistrierung: docs/wissen/vorregistrierung/2026-09-12-kurzlaeufer-im-pool.md
+#
+# Die vorregistrierte Abweichung im Risiko (15.09.2026): KEIN Geldmarkt-Parken,
+# obwohl die Produktion seit heute in BIL parkt. Das ist kein Versäumnis,
+# sondern die Frage dieser Probe: Hier ist BIL ein KANDIDAT, den eine Strategie
+# führen darf. Das Parksymbol gehört der Treasury allein (§0.6, `pruefeParksymbol`
+# in src/core/config.ts) — beides zugleich gäbe es nicht, und die Treasury würde
+# genau das messen, was hier gemessen werden soll.
 #
 # Befund aus Lauf #42: Im Kandidatenpool der Produktion gibt es kein einziges
 # Papier, das 2022 verdient hat. IEF, TLT, LQD und HYG fielen alle, GLD war

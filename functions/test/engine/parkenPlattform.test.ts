@@ -50,7 +50,7 @@ const basisBlock = (symbols: string[]) => ({
 
 describe('Geldmarkt-Parken auf der Plattform', () => {
   it('der Takt lädt das Parksymbol als Infrastruktur — auch bei enabled: false (Rückzug braucht den Kurs)', () => {
-    const an = parseConfig({ universe: { symbols: ['SPY', 'IEF'] }, timeframe: 1440, risk: { cashParking: { enabled: true, symbol: PARK } } });
+    const an = parseConfig({ broker: { adjustment: 'all' }, universe: { symbols: ['SPY', 'IEF'] }, timeframe: 1440, risk: { cashParking: { enabled: true, symbol: PARK } } });
     expect(infrastrukturSymbole(an)).toEqual([PARK]);
     const aus = parseConfig({ universe: { symbols: ['SPY'] }, timeframe: 1440, risk: { cashParking: { enabled: false, symbol: PARK } } });
     expect(infrastrukturSymbole(aus)).toEqual([PARK]);
@@ -60,6 +60,7 @@ describe('Geldmarkt-Parken auf der Plattform', () => {
 
   it('der globale Schalter erreicht die Nutzer-Config — sonst wäre `platform.yaml` an dieser Stelle tot', () => {
     const global = globalConfigRaw({
+      broker: { adjustment: 'all' },
       universe: { symbols: ['SPY', 'IEF'] },
       timeframe: 1440,
       risk: { cashParking: { enabled: true, symbol: PARK, bandPct: 5, bufferPct: 2 }, maxPositions: 99 },
@@ -74,7 +75,7 @@ describe('Geldmarkt-Parken auf der Plattform', () => {
     // Ohne Kandidatenpool prüft `basisStatus` den Korb nicht (core/basisTier.ts):
     // genau der Weg, auf dem ein Symbol ins Universum kommt, ohne je durch
     // `parseConfig` gegangen zu sein.
-    const config = parseConfig({ universe: { symbols: ['SPY'] }, timeframe: 1440, risk: { cashParking: { enabled: true, symbol: PARK } } });
+    const config = parseConfig({ broker: { adjustment: 'all' }, universe: { symbols: ['SPY'] }, timeframe: 1440, risk: { cashParking: { enabled: true, symbol: PARK } } });
     const champion: ChampionFile = championFromDoc({ version: 1, updatedAt: 1, symbols: {}, noTrade: {}, basis: basisBlock(['SPY', PARK]) })!;
     const mitBasis = universeWithBasis(config, champion);
     expect(mitBasis.universe.symbols).toContain(PARK);

@@ -21,6 +21,14 @@
 # das Ensemble scheitern kann). Dazu
 # docs/wissen/vorregistrierung/2026-09-12-drei-sleeves.md für die Parameter
 # jedes Sleeves.
+vorregistrierung: docs/wissen/vorregistrierung/2026-09-12-ensemble.md
+#
+# Die vorregistrierte Abweichung im Risiko (Nachtrag 15.09.2026 in derselben
+# Datei): KEIN `risk.cashParking`, obwohl die Produktion seit heute in BIL
+# parkt. Baulich unvermeidbar — der defensive Sleeve HÄLT BIL selbst, und das
+# Parksymbol gehört der Treasury allein (§0.6, `pruefeParksymbol` in
+# src/core/config.ts). Hier ist die defensive Seite Strategie, nicht Treasury;
+# genau das misst E1.
 #
 # ── Was hier gemessen wird ────────────────────────────────────────────────
 #

@@ -70,6 +70,19 @@ risk:
   # Alpaca bietet Krypto nur als Spot. Die Engine blockt Shorts ohnehin
   # ("Krypto: kein Short bei Alpaca", src/core/logic.ts) — hier explizit.
   allowShort: false
+  # Geldmarkt-Parken wie die Produktion (config/platform.yaml, seit
+  # 15.09.2026) — hier allerdings WIRKUNGSLOS: BIL ist ein Aktien-ETF und hat
+  # auf dem Krypto-Endpunkt (/v1beta3/crypto/us) keine Bars. Die Treasury
+  # parkt deshalb nichts, und der Simulator sagt das laut in den Notizen
+  # („ohne Bars — NICHT geparkt", src/backtest/simulator.ts). Der Block steht
+  # trotzdem hier, damit diese Probe nicht still von einer Risiko-Änderung der
+  # Plattform abdriftet (test/scripts/probeConfigs.test.ts). Ein Geldmarkt in
+  # einer Krypto-Messung wäre ein anderes Papier und eine eigene Frage.
+  cashParking:
+    enabled: true
+    symbol: BIL
+    bandPct: 5
+    bufferPct: 2
   pdt:
     # Krypto ist kein Wertpapier; das Gate greift laut src/risk/pdt.ts nicht.
     # Die Einstellung bleibt trotzdem stehen, damit die Datei vollständig ist.

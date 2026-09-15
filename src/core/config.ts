@@ -796,6 +796,35 @@ function pruefeParksymbol(cfg: Config): void {
   }
 }
 
+/**
+ * Parken auf ROHEN Tagesbars ist ein stiller Verlust — deshalb ein Startfehler.
+ *
+ * Ein Geldmarktpapier verdient seinen Zins als AUSSCHÜTTUNG, nicht als
+ * Kursanstieg. In rohen Bars (`broker.adjustment: 'raw'`, die Vorgabe) steht
+ * der Ertrag also nirgends: Die Parkposition kostet Spread, Slippage und
+ * Gebühren und bringt exakt nichts. `src/risk/parken.ts` sagt das seit dem
+ * ersten Tag unter „Grenzen" („Gemessen werden darf es nur mit
+ * `broker.adjustment: 'all'`") — nur hat es niemand geprüft, und genau so
+ * stand es am 15.09.2026 fast in der Plattform-Config: Parken und Zinsmaßstab
+ * eingeschaltet, `adjustment` bei der Vorgabe `raw` gelassen. Der Lauf hätte
+ * wie eine Änderung ausgesehen und wäre ein teurer Leerlauf gewesen.
+ *
+ * Nur für `us_equity`: Bei Krypto lädt Alpaca über einen eigenen Endpunkt,
+ * `adjustment` hat dort keine Bedeutung, und ein Aktien-ETF als Parksymbol hat
+ * ohnehin keine Bars (der Simulator sagt das laut).
+ */
+function pruefeParkBereinigung(cfg: Config): void {
+  if (!cfg.risk.cashParking.enabled) return;
+  if (cfg.universe.assetClass !== 'us_equity') return;
+  if (cfg.broker.adjustment === 'all') return;
+  throw new ConfigError(
+    `risk.cashParking.enabled: true mit broker.adjustment: '${cfg.broker.adjustment}' — ` +
+      'ein Geldmarktpapier trägt seinen Zins als Ausschüttung, und die steht nur in BEREINIGTEN Tagesbars. ' +
+      'Roh gerechnet kostet das Parken Gebühren und bringt nichts (src/risk/parken.ts, „Grenzen"). ' +
+      "Entweder `broker.adjustment: all` setzen oder das Parken abschalten.",
+  );
+}
+
 export function parseConfig(raw: unknown): Config {
   const res = ConfigSchema.safeParse(raw ?? {});
   if (!res.success) {
@@ -930,6 +959,7 @@ export function parseConfig(raw: unknown): Config {
     }
   }
   pruefeParksymbol(cfg);
+  pruefeParkBereinigung(cfg);
   // Tiefe Historie nur dort, wo sie billig ist. Intraday bleibt bei 2000 Tagen:
   // 4000 Tage × 78 Bars × 30 Symbole wären rund 9 Mio. Bars je Lauf — der
   // Optimierer liefe ins Speicherlimit, und zwar erst nach dem Datenladen.
