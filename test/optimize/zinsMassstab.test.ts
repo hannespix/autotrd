@@ -325,6 +325,9 @@ describe('Rückfall auf null ist laut', () => {
 
   it('Park- und Zinssymbol dürfen DASSELBE Papier sein — dann gibt es zwischen ihnen keinen Spread', () => {
     const cfg = parseConfig({
+      // Bereinigt: In rohen Bars trüge BIL weder den Zins noch den Ertrag des
+      // Parkens (`pruefeParkBereinigung`, src/core/config.ts).
+      broker: { adjustment: 'all' },
       universe: { assetClass: 'us_equity', symbols: ['SPY'], candidates: ['SPY', 'QQQ'] },
       optimizer: { strategies: ['momentum_pullback'], riskFreeSymbol: 'BIL' },
       risk: { cashParking: { enabled: true, symbol: 'BIL' } },
@@ -339,6 +342,7 @@ describe('Rückfall auf null ist laut', () => {
     // Dasselbe Papier IM Pool wäre die Doppelführung — und wird abgewiesen.
     expect(() =>
       parseConfig({
+        broker: { adjustment: 'all' },
         universe: { assetClass: 'us_equity', symbols: ['SPY'], candidates: ['SPY', 'BIL'] },
         optimizer: { strategies: ['momentum_pullback'], riskFreeSymbol: 'BIL' },
         risk: { cashParking: { enabled: true, symbol: 'BIL' } },

@@ -121,6 +121,7 @@ describe('Engine-Takt — Infrastruktur des Geldmarkt-Parkens', () => {
   it('lädt die Bars des Parksymbols mit, ohne es ins Handelsuniversum zu nehmen', async () => {
     const w = world();
     w.db.seed('meta/engineConfig', {
+      broker: { adjustment: 'all' }, // Parken verlangt bereinigte Tagesbars (`pruefeParkBereinigung`).
       universe: { symbols: ['AAPL'], benchmark: 'SPY' },
       timeframe: 5,
       engine: { barGraceSec: 4, maxConsecutiveErrors: 3 },

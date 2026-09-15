@@ -25,7 +25,7 @@ const PARK = 'BIL';
 const DAY_A = '2026-09-01';
 
 function cfgMit(over: Record<string, unknown> = {}): Config {
-  return parseConfig({ universe: { symbols: ['AAPL'] }, risk: { cashParking: { enabled: true, symbol: PARK }, ...over } });
+  return parseConfig({ broker: { adjustment: 'all' }, universe: { symbols: ['AAPL'] }, risk: { cashParking: { enabled: true, symbol: PARK }, ...over } });
 }
 
 function stub(decision: Decision, id = 'stub'): Strategy {
@@ -106,6 +106,33 @@ describe('Eigenschaft 6 — per Vorgabe aus', () => {
     expect(() => parseConfig({ universe: { symbols: ['AAPL', PARK] }, risk: { cashParking: { enabled: true, symbol: PARK } } })).toThrow(/Parksymbol/);
     expect(() => parseConfig({ universe: { symbols: ['AAPL'], candidates: [PARK] }, risk: { cashParking: { enabled: true, symbol: PARK } } })).toThrow(/Parksymbol/);
     expect(() => parseConfig({ universe: { symbols: ['AAPL'] }, risk: { cashParking: { enabled: true } } })).toThrow(/ohne risk.cashParking.symbol/);
+  });
+
+  /*
+   * Parken auf ROHEN Tagesbars: der stille Leerlauf.
+   *
+   * Ein Geldmarktpapier verdient seinen Zins als AUSSCHÜTTUNG. In rohen Bars
+   * steht davon nichts im Kurs — die Parkposition kostet dann Spread,
+   * Slippage und Gebühren und bringt exakt null. `src/risk/parken.ts` sagt
+   * das seit dem ersten Tag unter „Grenzen"; geprüft hat es bis zum
+   * 15.09.2026 niemand, und an diesem Tag stand genau diese Kombination fast
+   * in config/platform.yaml: Parken und Zinsmaßstab eingeschaltet,
+   * `broker.adjustment` bei der Vorgabe `raw` gelassen. Der Lauf hätte wie
+   * eine Änderung ausgesehen und wäre ein bezahlter Leerlauf gewesen.
+   */
+  it('Parken auf ROHEN Tagesbars weist die Config ab — sonst zahlt man Gebühren für nichts', () => {
+    const roh = (adjustment: string) => ({ broker: { adjustment }, universe: { symbols: ['AAPL'] }, risk: { cashParking: { enabled: true, symbol: PARK } } });
+    expect(() => parseConfig(roh('raw'))).toThrow(/Ausschüttung/);
+    // Auch `split` reicht nicht: Es korrigiert Aktiensplits, keine Ausschüttung.
+    expect(() => parseConfig(roh('split'))).toThrow(/Ausschüttung/);
+    expect(() => parseConfig(roh('dividend'))).toThrow(/Ausschüttung/);
+    // Bereinigt geht durch.
+    expect(parseConfig(roh('all')).risk.cashParking.symbol).toBe(PARK);
+    // Ausgeschaltet ist die Bereinigung gleichgültig — es wird ja nichts geparkt.
+    expect(parseConfig({ broker: { adjustment: 'raw' }, universe: { symbols: ['AAPL'] } }).risk.cashParking.enabled).toBe(false);
+    // Krypto ist ausgenommen: eigener Endpunkt, `adjustment` ohne Bedeutung,
+    // und ein Aktien-ETF hat dort ohnehin keine Bars (der Simulator sagt es laut).
+    expect(parseConfig({ broker: { adjustment: 'raw' }, universe: { assetClass: 'crypto', symbols: ['BTC/USD'] }, risk: { cashParking: { enabled: true, symbol: PARK } } }).risk.cashParking.enabled).toBe(true);
   });
 });
 
@@ -288,7 +315,7 @@ describe('Eigenschaft 4 — ein Entscheidungspfad', () => {
   const parkBars = (n: number, p: number): Bar[] => dayBars5(DAY_A, flat(n, p) as Ohlc[]);
 
   function simCfg(over: Record<string, unknown> = {}) {
-    const c = parseConfig({ universe: { symbols: ['AAA'] }, risk: { cashParking: { enabled: true, symbol: PARK, ...over } } });
+    const c = parseConfig({ broker: { adjustment: 'all' }, universe: { symbols: ['AAA'] }, risk: { cashParking: { enabled: true, symbol: PARK, ...over } } });
     return { ...baseConfig(), risk: c.risk };
   }
 

@@ -17,7 +17,8 @@ const PARK = 'BIL';
 const T_TICK1 = OPEN1 + 10 * MIN + 5_000;
 /** Der Park-Stand liegt im erweiterten State (engine.ts, `PersistedState`). */
 const parkStand = (sc: Scenario) => (sc.state() as PersistedState | null)?.park;
-const parkConfig = (over: Record<string, unknown> = {}) => testConfig({ risk: { cashParking: { enabled: true, symbol: PARK, bandPct: 5, bufferPct: 2 }, ...over } });
+/** Parken verlangt bereinigte Tagesbars — roh trägt der Kurs die Ausschüttung nicht (`pruefeParkBereinigung`, src/core/config.ts). */
+const parkConfig = (over: Record<string, unknown> = {}) => testConfig({ broker: { adjustment: 'all' }, risk: { cashParking: { enabled: true, symbol: PARK, bandPct: 5, bufferPct: 2 }, ...over } });
 
 /** Szenario mit Parksymbol: AAPL wird gehandelt, BIL gehört der Treasury (keine Strategie). */
 async function parkSzenario(o: { config?: ReturnType<typeof testConfig>; enterAt?: number } = {}): Promise<Scenario> {
@@ -211,7 +212,7 @@ describe('Das Parken nimmt dem Handelsbuch nie den Datenstrom', () => {
     // still gesperrt (Prüfbefund M10). Also fällt die Treasury hinten runter.
     const viele = Array.from({ length: 30 }, (_, i) => `SYM${String(i).padStart(2, '0')}`);
     const sc = await startScenario({
-      config: testConfig({ universe: { symbols: viele }, risk: { cashParking: { enabled: true, symbol: PARK } } }),
+      config: testConfig({ broker: { adjustment: 'all' }, universe: { symbols: viele }, risk: { cashParking: { enabled: true, symbol: PARK } } }),
       defaultStrategy: scriptedStrategy({}),
       strategies: { [PARK]: null },
     });
