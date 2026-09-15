@@ -61,7 +61,7 @@ import type { Config } from '../core/config.ts';
 import { korbRaenge, korbSchluessel, type SymbolInput } from '../core/logic.ts';
 import { buildSessionInfo } from '../core/session.ts';
 import { DAY, dayKey, dayKeyFor, sessionBounds, type Calendar } from '../core/time.ts';
-import type { AssetClass, Bar, BarSeriesLike, IndicatorSet, Ms, Params, SizingSpec, Strategy, TimeframeMin } from '../core/types.ts';
+import type { AssetClass, Bar, BarSeriesLike, IndicatorSet, KorbRang, Ms, Params, Side, SizingSpec, Strategy, TimeframeMin } from '../core/types.ts';
 import type { ChampionFile } from '../optimize/promote.ts';
 import { indAt } from '../strategy/indicators.ts';
 import { mergeParams } from '../strategy/params.ts';
@@ -217,6 +217,28 @@ export interface SymbolProfil {
     /** Steht das Symbol im Universum der Engine (Config ∪ Basis-Korb, wenn geführt)? Sonst führt sie es nicht — auch mit Wahl. */
     imEngineUniversum: boolean;
   };
+  /**
+   * Was die zugewiesene Strategie an der LETZTEN GESCHLOSSENEN Bar sagt.
+   *
+   * Die Frage, die dieses Profil bis zum 15.09.2026 nicht beantworten konnte:
+   * „Es wird nicht gehandelt — liegt das an der Engine oder gibt es schlicht
+   * kein Signal?" Alles andere hier beschreibt den ZUSTAND eines Symbols;
+   * nichts sagte, ob daraus heute ein Einstieg folgt. Ohne diese Zeile bleibt
+   * ein stiller Tag ununterscheidbar von einem kaputten.
+   *
+   * `signal` ist WÖRTLICH `Decision.kind` aus `strategy.decide()` — dieselbe
+   * Funktion, die auch die Engine fragt (§0.1). Hier wird keine Einstiegsregel
+   * nachgebaut; täte man es, hätte man zwei Wahrheiten und die falsche im
+   * Bericht. `indikatoren` sind die Werte aus `strategy.precompute()` an
+   * derselben Bar — reine Erklärung, sie entscheiden nichts.
+   *
+   * Grenze, benannt statt wegdefiniert: Das ist das Urteil der STRATEGIE, nicht
+   * der Engine. Ob daraus eine Order wird, hängt zusätzlich an Konto, Plätzen,
+   * PDT und Notbremsen (`core/logic.ts`) — dafür steht `taktik.einstiege`.
+   * `signal: 'einstieg'` bei `einstiege: 'gesperrt'` heißt: Es gäbe ein
+   * Signal, die Engine darf nur nicht.
+   */
+  einstieg: EinstiegsSicht;
   /** Erwartete Haltedauer in Handelstagen — NUR aus gemessenen Kennzahlen des Champions; heute trägt er keine ⇒ null, „unbekannt". */
   haltedauer: { medianHandelstage: number | null; quelle: string };
   /**
@@ -226,6 +248,21 @@ export interface SymbolProfil {
    * sonst läse man die Lauf-Nummer von heute neben einem Urteil vom Vorjahr.
    */
   bewertung: { configCommit: string | null; measuredAt: Ms | null; quelle: string };
+}
+
+/** Urteil der zugewiesenen Strategie an der letzten geschlossenen Bar (siehe `SymbolProfil.einstieg`). */
+export interface EinstiegsSicht {
+  /** Wörtlich `Decision.kind`; null ohne Taktik, ohne Bars oder auf einem Intraday-Zeitrahmen. */
+  signal: 'einstieg' | 'exit' | 'stop-nachziehen' | 'halten' | null;
+  /** Der Grund, den `decide()` selbst nennt — nur bei einstieg/exit/stop-nachziehen. */
+  grund: string | null;
+  /** Bei einem Einstiegssignal: Seite und Schutzmarke, die `decide()` mitgibt. */
+  seite: Side | null;
+  stop: number | null;
+  ziel: number | null;
+  /** Indikatorwerte der WAHL an dieser Bar — nur Erklärung, nie Grundlage des Urteils. */
+  indikatoren: Record<string, number> | null;
+  quelle: string;
 }
 
 export interface SymbolProfileFile {
@@ -416,6 +453,83 @@ export function stopDistanz(choice: ProfilWahl | null, ind: IndicatorSet | null,
 
 /* ───────────────────────── Profil ───────────────────────── */
 
+/**
+ * Das Urteil der Strategie an der letzten geschlossenen Bar — gefragt, nicht nachgebaut.
+ *
+ * `decide()` ist dieselbe Funktion, die auch die Engine ruft (§0.1). Würde
+ * hier die Einstiegsregel nachgebildet, gäbe es zwei Wahrheiten, und die
+ * zweite stünde im Bericht: genau der Fehler, gegen den der ganze Neubau
+ * gebaut ist. Deshalb wird der Decision-Typ nur ÜBERSETZT, nie ausgewertet.
+ *
+ * Der Benchmark MUSS mit: `benchmarkAllows` gibt ohne ihn `true` zurück
+ * (strategy/indicators.ts). Eine Strategie mit `useBenchmarkFilter: 1` sähe
+ * hier also mehr Einstiege als die Engine wirklich nimmt — ein Fehler in die
+ * schmeichelnde Richtung, und das ist die teuerste.
+ */
+export function einstiegsSicht(a: {
+  symbol: string;
+  bars: BarSeriesLike;
+  choice: ProfilWahl | null;
+  ind: IndicatorSet | null;
+  tf: TimeframeMin;
+  assetClass: AssetClass;
+  calendar?: Calendar | undefined;
+  benchmark?: { bars: BarSeriesLike; i: number } | undefined;
+  /**
+   * Der Korb-Rang dieses Symbols — derselbe, den `decide()` an `snap.rank`
+   * reicht. Er MUSS mit: `cross_sectional_momentum` entscheidet daran, ob es
+   * einsteigt. Ohne ihn urteilte diese Zeile anders als die Engine, und zwar
+   * wieder in die schmeichelnde Richtung.
+   */
+  rang?: KorbRang | undefined;
+}): EinstiegsSicht {
+  const leer = (quelle: string): EinstiegsSicht => ({ signal: null, grund: null, seite: null, stop: null, ziel: null, indikatoren: null, quelle });
+  if (a.tf !== 1440) return leer('nur auf Tagesbars — auf einem Intraday-Zeitrahmen sieht das Profil nicht dieselben Bars wie die Engine');
+  if (!a.choice) return leer('keine Taktik — es gibt nichts zu fragen');
+  if (!a.ind || a.bars.length === 0) return leer('keine Indikatoren (Aufwärmphase oder keine Bars)');
+  const i = a.bars.length - 1;
+  const d = a.choice.strategy.decide(
+    {
+      symbol: a.symbol,
+      bars: a.bars,
+      i,
+      position: null,
+      session: buildSessionInfo(a.bars, i, a.tf, a.assetClass, a.calendar),
+      ...(a.benchmark ? { benchmark: a.benchmark } : {}),
+      ...(a.rang ? { rank: a.rang } : {}),
+    },
+    a.ind,
+    a.choice.params,
+  );
+  const werte: Record<string, number> = {};
+  for (const [name, reihe] of Object.entries(a.ind)) {
+    const v = reihe[i];
+    if (v !== undefined && Number.isFinite(v)) werte[name] = v;
+  }
+  const quelle = `${a.choice.strategy.id}.decide() an der letzten geschlossenen Bar; Indikatoren aus derselben precompute()`;
+  const basis = { indikatoren: werte, quelle };
+  if (d.kind === 'enter') return { signal: 'einstieg', grund: d.reason, seite: d.side, stop: d.stop, ziel: d.target ?? null, ...basis };
+  if (d.kind === 'exit') return { signal: 'exit', grund: d.reason, seite: null, stop: null, ziel: null, ...basis };
+  if (d.kind === 'move_stop') return { signal: 'stop-nachziehen', grund: d.reason, seite: null, stop: d.stop, ziel: null, ...basis };
+  return { signal: 'halten', grund: null, seite: null, stop: null, ziel: null, ...basis };
+}
+
+/** Index der jüngsten Benchmark-Bar, die nicht nach `t` liegt; -1, wenn keine. */
+function benchIndexBis(bench: BarSeriesLike | null, t: number): number {
+  if (!bench || bench.length === 0) return -1;
+  let lo = 0;
+  let hi = bench.length - 1;
+  let out = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (bench.t[mid]! <= t) {
+      out = mid;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  return out;
+}
+
 export function buildSymbolProfiles(a: SymbolProfileArgs): SymbolProfileFile {
   const { config, champion, now } = a;
   const tf = config.timeframe;
@@ -456,6 +570,10 @@ export function buildSymbolProfiles(a: SymbolProfileArgs): SymbolProfileFile {
       });
     }
   }
+  // Benchmark EINMAL: `einstiegsSicht` braucht ihn, sonst sähe eine Strategie
+  // mit `useBenchmarkFilter: 1` mehr Einstiege als die Engine nimmt.
+  const benchBars = benchmark ? geschlossenBis(a.barsFor(benchmark), now, assetClass, a.calendar) : null;
+
   const raenge = korbRaenge(inputs);
   // Die Mitglieder je Korb nach Rang — derselbe Schlüssel wie in `korbRaenge`
   // (Strategie, Parameter, Sizing-Semantik), damit jeder Rang sagt, gegen wen
@@ -515,6 +633,17 @@ export function buildSymbolProfiles(a: SymbolProfileArgs): SymbolProfileFile {
       trend: { richtung: trend.richtung, seitBars: trend.seitBars, sma: Number.isFinite(sma) ? sma : null, regimeLen: pp.params.regimeLen!, quelle: `regime_allocation.precompute().sma über regimeLen Bars — ${pp.quelle}` },
       momentum: { pct: Number.isFinite(mom) ? mom * 100 : null, lookback: pp.params.lookback!, skip: pp.params.skip!, quelle: `regime_allocation.precompute().mom × 100 — ${pp.quelle}` },
       rang: rang ? { rank: rang.rank, of: rang.of, pct: rang.pct, korb: quelle, symbole: [...(korbVon.get(sym) ?? [])] } : null,
+      einstieg: einstiegsSicht({
+        symbol: sym,
+        bars,
+        choice,
+        ind: s.ind,
+        tf,
+        assetClass,
+        calendar: a.calendar,
+        ...(rang ? { rang } : {}),
+        ...(benchBars && n > 0 ? { benchmark: { bars: benchBars, i: benchIndexBis(benchBars, bars.t[i]!) } } : {}),
+      }),
       stop: stopDistanz(choice, s.ind, close, i, tagesbars),
       liquiditaet: {
         dollarVolumenTag: liq.dollarVolumen,
@@ -578,7 +707,7 @@ const fmtPct = (x: number | null, digits = 1): string => (x === null ? '—' : `
 
 /** Tabellenzeilen für die CLI — Kopfzeile zuerst. */
 export function profilTabelle(file: SymbolProfileFile): string[][] {
-  const rows: string[][] = [['Symbol', 'Klasse', 'Taktik', 'Einstiege', 'Trend', 'Rang', 'Vol p.a.', 'Mom.', 'Stop', 'Umsatz/Tag', 'Haltedauer', 'Bewertung']];
+  const rows: string[][] = [['Symbol', 'Klasse', 'Taktik', 'Einstiege', 'Signal', 'Trend', 'Rang', 'Vol p.a.', 'Mom.', 'Stop', 'Umsatz/Tag', 'Haltedauer', 'Bewertung']];
   for (const p of file.profile) {
     const trend = p.trend.richtung === null ? '—' : `${p.trend.richtung === 'auf' ? '↑' : '↓'} seit ${p.trend.seitBars} Bars`;
     const rang = p.rang ? `${p.rang.rank}/${p.rang.of}` : '—';
@@ -590,6 +719,7 @@ export function profilTabelle(file: SymbolProfileFile): string[][] {
       p.klasse.klasse + (p.klasse.sektor ? ` (${p.klasse.sektor})` : ''),
       p.taktik.quelle === 'keine' ? 'keine' : `${p.taktik.quelle}: ${p.taktik.strategie}`,
       p.taktik.einstiege ?? '—',
+      p.einstieg.signal === null ? '—' : p.einstieg.signal === 'einstieg' ? `EINSTIEG ${p.einstieg.seite ?? ''}`.trim() : p.einstieg.signal,
       trend,
       rang,
       fmtPct(p.volatilitaet.pct),
