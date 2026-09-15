@@ -122,6 +122,36 @@ describe('Wächter', () => {
     expect(texte(u)).toContain('zulässiges Ergebnis');
   });
 
+  it('Papier-Erprobung an: der Wächter sagt NICHT mehr „es wird nichts gehandelt"', () => {
+    // Der Fall vom 15.09.2026: champion.symbols leer, aber 30 Erprobungs-
+    // Einträge und der globale Schalter an. Der alte Text behauptete „es wird
+    // nichts gehandelt", WÄHREND Papier-Konten handelten. Ein Wächter, der die
+    // Lage falsch beschreibt, ist schlechter als keiner.
+    const u = beurteile(
+      eingabe({
+        champion: { updatedAt: JETZT - 3600_000, symbols: {}, noTrade: { SPY: {}, TSLA: {} }, erprobung: { SPY: {}, TSLA: {} } },
+        engineConfig: { ...(eingabe().engineConfig as Record<string, unknown>), strategy: { basis: true, erprobung: true } },
+      }),
+    );
+    const t = texte(u);
+    expect(t, 'die Erprobung muss benannt werden').toContain('PAPIER-ERPROBUNG');
+    expect(t).toContain('DURCHGEFALLENEN');
+    expect(t, 'die alte Behauptung darf nicht mehr dastehen').not.toContain('es wird nichts gehandelt. Das ist ein zulässiges Ergebnis');
+    expect(u.ok, 'die Erprobung ist kein Fehlerzustand').toBe(true);
+  });
+
+  it('Erprobungs-Einträge vorhanden, Schalter AUS ⇒ es wird wirklich nichts gehandelt', () => {
+    const u = beurteile(
+      eingabe({
+        champion: { updatedAt: JETZT - 3600_000, symbols: {}, noTrade: { SPY: {} }, erprobung: { SPY: {} } },
+        engineConfig: { ...(eingabe().engineConfig as Record<string, unknown>), strategy: { basis: true, erprobung: false } },
+      }),
+    );
+    const t = texte(u);
+    expect(t).toContain('der Schalter ist AUS');
+    expect(t).not.toContain('PAPIER-ERPROBUNG handelt');
+  });
+
   it('Echtgeld-Konten werden ausdrücklich genannt', () => {
     const u = beurteile(eingabe({ nutzer: [{ uid: 'x1', engineAn: true, live: true }, { uid: 'x2', engineAn: true, live: false }] }));
     expect(texte(u)).toContain('ECHTGELD');

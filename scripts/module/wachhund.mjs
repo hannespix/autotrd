@@ -17,8 +17,8 @@ export const CHAMPION_FEHLER_TAGE = 7;
  * @param {{
  *   jetztMs: number,
  *   health: {lastRunAt?: string} | null,
- *   champion: {updatedAt?: number, symbols?: Record<string, unknown>, noTrade?: Record<string, unknown>, basis?: unknown} | null,
- *   engineConfig: {universe?: {symbols?: string[], benchmark?: string, candidates?: string[]}, timeframe?: number, strategy?: {basis?: boolean}} | null,
+ *   champion: {updatedAt?: number, symbols?: Record<string, unknown>, noTrade?: Record<string, unknown>, basis?: unknown, erprobung?: Record<string, unknown>} | null,
+ *   engineConfig: {universe?: {symbols?: string[], benchmark?: string, candidates?: string[]}, timeframe?: number, strategy?: {basis?: boolean, erprobung?: boolean}} | null,
  *   repoSymbols: string[],
  *   repoPool: string[],
  *   repoBenchmark?: string,
@@ -50,7 +50,22 @@ export function beurteile(e) {
     if (tage > CHAMPION_FEHLER_TAGE) sage('fehler', `Champion ist ${tage.toFixed(1)} Tage alt — der Optimierer läuft nicht.`);
     else if (tage > CHAMPION_WARN_TAGE) sage('warnung', `Champion ist ${tage.toFixed(1)} Tage alt.`);
     else sage('ok', `Champion ${tage.toFixed(1)} Tage alt: ${gehandelt} Symbol(e) handeln, ${nicht} auf noTrade.`);
-    if (gehandelt === 0) sage('warnung', 'Kein Symbol besteht die Gates — es wird nichts gehandelt. Das ist ein zulässiges Ergebnis, kein Fehler.');
+    // Papier-Erprobung (§0.9): Ohne diese Unterscheidung meldete der Wächter
+    // „es wird nichts gehandelt", WÄHREND Papier-Konten handeln. Ein Wächter,
+    // der die Lage falsch beschreibt, ist schlechter als keiner — er erzeugt
+    // Vertrauen in eine Aussage, die nicht stimmt.
+    const erprobung = Object.keys(e.champion.erprobung ?? {}).length;
+    const erprobungAn = Boolean(e.engineConfig?.strategy?.erprobung);
+    if (gehandelt === 0 && erprobung > 0 && erprobungAn) {
+      sage(
+        'warnung',
+        `Kein Symbol besteht die Gates. Die PAPIER-ERPROBUNG handelt ${erprobung} Symbol(e) mit DURCHGEFALLENEN Kandidaten — nur auf Papier, und ihre Trades zählen nicht für die Live-Reife (§0.9).`,
+      );
+    } else if (gehandelt === 0 && erprobung > 0) {
+      sage('warnung', `Kein Symbol besteht die Gates — es wird nichts gehandelt. ${erprobung} Erprobungs-Eintrag/Einträge liegen bereit, der Schalter ist AUS.`);
+    } else if (gehandelt === 0) {
+      sage('warnung', 'Kein Symbol besteht die Gates — es wird nichts gehandelt. Das ist ein zulässiges Ergebnis, kein Fehler.');
+    }
   }
 
   // ── Universum: Das Universum wechselt nächtlich (Auswahl nach Liquidität),
