@@ -27,6 +27,13 @@ on:
       stunden:
         description: 'Zeitfenster in Stunden (1–720)'
         default: '24'
+      limit:
+        # Gelesen werden die JÜNGSTEN Ereignisse (scripts/warum.mjs: orderBy
+        # desc). Reicht das Limit nicht bis zum Anfang des Zeitfensters, sagt
+        # der Bericht das ausdrücklich — dann hier erhöhen. Nötig, solange im
+        # Journal noch altes Takt-Rauschen liegt (PR #510).
+        description: 'Höchstzahl gelesener Ereignisse je Nutzer'
+        default: '400'
 
 concurrency:
   group: warum
@@ -65,8 +72,9 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
           IN_SYMBOL: ${{ inputs.symbol }}
           IN_STUNDEN: ${{ inputs.stunden }}
+          IN_LIMIT: ${{ inputs.limit }}
         # Eingaben über die Umgebung, nicht per ${{ }} in die Kommandozeile —
         # dieselbe Klasse, die optimize.yml schon einmal hatte (Prüfbefund G5).
         run: |
-          node scripts/warum.mjs --symbol "$IN_SYMBOL" --stunden "$IN_STUNDEN" | tee "$RUNNER_TEMP/warum.md"
+          node scripts/warum.mjs --symbol "$IN_SYMBOL" --stunden "$IN_STUNDEN" --limit "$IN_LIMIT" | tee "$RUNNER_TEMP/warum.md"
           cat "$RUNNER_TEMP/warum.md" >> "$GITHUB_STEP_SUMMARY"
