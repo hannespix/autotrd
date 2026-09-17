@@ -60,6 +60,26 @@ describe('Journal-Leser: warum wurde nicht gehandelt', () => {
     for (const k of ['decision', 'intent', 'order', 'fill', 'trade', 'halt']) expect(ERKLAEREND, k).toContain(k);
   });
 
+  it('WÄCHTER: ein gekürztes Fenster wird gemeldet — sonst liest sich die Kürzung wie ein Befund', () => {
+    /*
+     * Der erste Lauf (17.09.2026) fragte mit `orderBy asc` und filterte das
+     * Symbol danach in JS. Das Journal war voll mit einer Notiz je Minute,
+     * also kamen die ÄLTESTEN 400 Ereignisse zurück, BAC war nicht darunter,
+     * und der Bericht meldete „kein Eintrag" — über ein Symbol, das er nie
+     * gesehen hatte. Die Abfrage liest jetzt jüngste-zuerst; wo das Limit
+     * trotzdem greift, MUSS es dastehen.
+     */
+    const md = alsMarkdown([{ uid: 'u1', events: [], gekuerzt: { limit: 400, abIso: '2026-09-16T17:58:03.000Z' } }], { symbol: 'BAC', stunden: 48 });
+    expect(md).toContain('Fenster gekürzt');
+    expect(md).toContain('400');
+    expect(md, 'der Leser muss sagen, bis wohin er überhaupt geschaut hat').toContain('2026-09-16T17:58:03.000Z');
+    expect(md, 'ohne diesen Satz wiederholt sich der Fehlalarm').toMatch(/nur .nicht in diesem Ausschnitt/);
+  });
+
+  it('ohne Kürzung steht die Warnung NICHT da — sonst wird sie zum Hintergrundrauschen', () => {
+    expect(alsMarkdown([{ uid: 'u1', events: [] }], { symbol: 'BAC', stunden: 48 })).not.toContain('Fenster gekürzt');
+  });
+
   it('kürzt lange Symbollisten, ohne die Zahl zu verschweigen', () => {
     const viele = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'].map((s) => ev({ kind: 'decision', note: 'blocked', text: 'x', symbol: s }));
     const md = alsMarkdown([{ uid: 'u1', events: viele }], { stunden: 1 });

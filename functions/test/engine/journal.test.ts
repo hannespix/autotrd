@@ -58,6 +58,26 @@ describe('FirestoreJournal — Filter', () => {
     expect(keepEvent(ev('note'))).toBe(true);
     expect(keepEvent(ev('trade_closed'))).toBe(true);
   });
+  it('WÄCHTER: was die Engine in `start()` schreibt, ist hier eine Notiz JE MINUTE — und bleibt draußen', () => {
+    /*
+     * Am 17.09.2026 stand „Parksymbol nicht im Datenstrom" rund 1 400-mal je
+     * Nutzer und Tag im Journal: Ein Takt baut eine Engine, startet sie und
+     * hält sie an (tick.ts), und die Notiz entsteht in `start()`. `start`
+     * und `stop` waren schon gefiltert, eine `note` aus derselben Phase nicht.
+     *
+     * Der Schaden war nicht der Preis der Schreibvorgänge, sondern die
+     * Verdrängung: Der Journal-Leser sah nur noch diese Zeile, und
+     * „kein Eintrag für BAC" las sich wie ein Befund.
+     *
+     * Die Marke ist ein FELD, kein Wortlaut — sonst holt die nächste
+     * Umformulierung das Rauschen stillschweigend zurück.
+     */
+    expect(keepEvent(ev('note', { beiStart: true, text: 'Parksymbol nicht im Datenstrom (31 > 30)' }))).toBe(false);
+    expect(keepEvent(ev('note', { text: 'Parksymbol nicht im Datenstrom (31 > 30)' })), 'ohne Marke gilt der Wortlaut NICHT als Rauschen — erkannt wird das Feld').toBe(true);
+    expect(keepEvent(ev('note', { beiStart: false, text: 'Tagesrollover' }))).toBe(true);
+    // Keine Aufweichung über einen wahrheitsähnlichen Wert: nur echtes `true` filtert.
+    expect(keepEvent(ev('note', { beiStart: 1, text: 'Tagesrollover' }))).toBe(true);
+  });
   it('riskExit nur bei Stop, Tages-Notbremse und Drawdown', () => {
     expect(riskExitOf('stop')).toBe('stop_loss');
     expect(riskExitOf('kill_switch')).toBe('daily_loss');
