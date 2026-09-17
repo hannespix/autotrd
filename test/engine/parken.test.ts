@@ -219,7 +219,23 @@ describe('Das Parken nimmt dem Handelsbuch nie den Datenstrom', () => {
     expect(sc.data.subscribed).toHaveLength(30);
     expect(sc.data.subscribed).not.toContain(PARK);
     expect(sc.data.subscribed).toContain('SYM00');
-    expect(sc.events('note').some((e) => String(e.text).includes('nicht im Datenstrom'))).toBe(true);
+    const notiz = sc.events('note').find((e) => String(e.text).includes('nicht im Datenstrom'));
+    expect(notiz).toBeDefined();
+    /*
+     * WÄCHTER (17.09.2026): Diese Notiz entsteht in `start()`. Im eigenen
+     * Prozess ist das einmal je Neustart — auf der Plattform ist ein Start
+     * ein TAKT, also jede Minute je Nutzer. Ohne die Marke `beiStart` stand
+     * sie dort rund 1 400-mal am Tag im Journal und verdrängte im Fenster
+     * des Journal-Lesers jede echte Entscheidung: „kein Eintrag für BAC"
+     * las sich wie ein Befund und war eine Verdrängung.
+     *
+     * Erkannt wird sie drüben (`keepEvent`, functions/src/engine/journal.ts)
+     * an DIESEM FELD, nicht am Wortlaut. Beide Hälften stehen in
+     * verschiedenen Bäumen — genau so sind am 14.09. schon einmal zwei
+     * Listen derselben Frage auseinandergelaufen (PR #500). Fällt die Marke
+     * hier weg, muss dieser Test fallen und nicht die Produktion.
+     */
+    expect(notiz!.beiStart, 'ohne diese Marke wirft `keepEvent` die Notiz nicht weg — und die Plattform schreibt sie je Minute').toBe(true);
   });
 
   it('unterhalb des Limits wird das Parksymbol abonniert', async () => {

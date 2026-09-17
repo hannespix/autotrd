@@ -52,13 +52,31 @@ for (const u of users.docs) {
   // und eine Seite voll „kein Eintrag" verdeckt den einen Nutzer, um den es geht.
   const auto = u.data()?.settings?.auto;
   if (auto && auto.enabled === false) continue;
-  const snap = await db.collection(`users/${u.id}/journal`).where('ts', '>=', seit).orderBy('ts', 'asc').limit(limit).get();
-  const events = snap.docs
-    .map((d) => d.data())
+  /*
+   * JÜNGSTE ZUERST — und erst danach umdrehen.
+   *
+   * Beim ersten Lauf am 17.09.2026 stand hier `asc`. Reißt das Fenster das
+   * Limit, liefert `asc` die ÄLTESTEN Ereignisse; das Symbol wird danach in
+   * JS herausgefiltert, findet nichts, und der Bericht meldet „kein Eintrag".
+   * Damals war das Journal voll mit einer Notiz je Minute — der Leser sagte
+   * über BAC „nichts entschieden", obwohl er BAC nie gesehen hatte. Ein
+   * Werkzeug gegen den Fehlalarm, das selbst einen erzeugt.
+   *
+   * `desc` kehrt die Kürzung um: Weggeschnitten wird, was alt ist, nicht das,
+   * wonach gefragt wurde. Ein Firestore-`where` auf `symbol` bräuchte einen
+   * zusammengesetzten Index — deshalb bleibt der Filter in JS, und die
+   * Kürzung wird stattdessen GEMELDET (unten, `gekuerzt`).
+   */
+  const snap = await db.collection(`users/${u.id}/journal`).where('ts', '>=', seit).orderBy('ts', 'desc').limit(limit).get();
+  const alle = snap.docs.map((d) => d.data()).reverse();
+  const events = alle
     .filter((ev) => ERKLAEREND.includes(String(ev?.kind)))
     .filter((ev) => !symbolRoh || String(ev?.symbol ?? '') === symbolRoh);
   if (snap.empty && events.length === 0 && users.docs.length > 3) continue;
-  nutzer.push({ uid: u.id, events });
+  // Volles Limit ⇒ das Fenster reichte nicht bis `seit` zurück. Das MUSS im
+  // Bericht stehen: Sonst liest sich eine Kürzung wieder wie ein Befund.
+  const gekuerzt = snap.size >= limit ? { limit, abIso: new Date(Number(alle[0]?.ts ?? Date.now())).toISOString() } : null;
+  nutzer.push({ uid: u.id, events, ...(gekuerzt ? { gekuerzt } : {}) });
 }
 
 console.log(alsMarkdown(nutzer, { ...(symbolRoh ? { symbol: symbolRoh } : {}), stunden }));

@@ -60,7 +60,7 @@ export function gruende(events) {
 
 /**
  * Der Bericht. `symbol` ist optional — ohne ihn die ganze Engine.
- * @param {{uid: string, events: ReadonlyArray<Record<string, unknown>>}[]} nutzer
+ * @param {{uid: string, events: ReadonlyArray<Record<string, unknown>>, gekuerzt?: {limit: number, abIso: string} | undefined}[]} nutzer
  * @param {{symbol?: string | undefined, stunden: number}} o
  */
 export function alsMarkdown(nutzer, o) {
@@ -72,6 +72,16 @@ export function alsMarkdown(nutzer, o) {
   }
   for (const n of nutzer) {
     out.push(`### Nutzer ${n.uid}`, '');
+    if (n.gekuerzt) {
+      // Eine Kürzung sieht aus wie ein Befund und ist keiner — dieselbe
+      // Verwechslung wie „kein Eintrag". Also steht sie da, VOR dem Ergebnis.
+      out.push(
+        `> ⚠️ **Fenster gekürzt.** Das Limit von ${n.gekuerzt.limit} Ereignissen war voll; gelesen wurden nur die JÜNGSTEN, ` +
+          `zurück bis ${n.gekuerzt.abIso}. Älteres in diesem Zeitraum wurde nicht angesehen — „kein Eintrag" unten heißt hier ` +
+          'nur „nicht in diesem Ausschnitt". Mit `--limit` vergrößern.',
+        '',
+      );
+    }
     if (n.events.length === 0) {
       // Die wichtigste Zeile des ganzen Werkzeugs: Kein Eintrag heißt NICHT
       // „alles in Ordnung", sondern „die Engine hat dieses Symbol in diesem

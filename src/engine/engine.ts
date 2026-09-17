@@ -1077,7 +1077,21 @@ export class Engine {
     this.log.warn('Parksymbol nicht abonniert — das Abonnement-Limit des IEX-Stroms gilt dem Handelsbuch', { park: [...park], symbole: alle.length, limit: IEX_STREAM_SYMBOL_MAX });
     this.journal.append(
       'note',
-      { symbol: [...park][0]!, text: `Parksymbol nicht im Datenstrom (${alle.length} > ${IEX_STREAM_SYMBOL_MAX}) — Kurs aus dem Backfill; das Handelsbuch behält den Strom` },
+      {
+        symbol: [...park][0]!,
+        text: `Parksymbol nicht im Datenstrom (${alle.length} > ${IEX_STREAM_SYMBOL_MAX}) — Kurs aus dem Backfill; das Handelsbuch behält den Strom`,
+        // Diese Notiz entsteht in `start()`, also EINMAL JE ENGINE-START. Im
+        // Dauerprozess ist das einmal je Neustart; auf der Plattform ist ein
+        // Start ein TAKT, also jede Minute je Nutzer (tick.ts: `new Engine`,
+        // `start()`, `stop()`). Ohne Marke stand sie dort rund 1 400-mal am
+        // Tag im Journal und hat am 17.09.2026 die BAC-Diagnose verdeckt:
+        // Das Fenster des Journal-Lesers war voll davon, und „kein Eintrag"
+        // hieß in Wahrheit „vom Rauschen verdrängt".
+        // `keepEvent` (functions/src/engine/journal.ts) wirft alles mit
+        // dieser Marke weg — über ein FELD, nicht über den Wortlaut, damit
+        // eine Umformulierung das Rauschen nicht stillschweigend zurückholt.
+        beiStart: true,
+      },
       this.now(),
     );
     return ohne;

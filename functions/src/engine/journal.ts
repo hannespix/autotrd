@@ -61,6 +61,26 @@ export interface FirestoreJournalOptions {
 /** Takt-Rauschen bleibt draußen; alles andere wird geschrieben. */
 export function keepEvent(ev: JournalEvent): boolean {
   if (ev.kind === 'start' || ev.kind === 'stop') return false;
+  /*
+   * Alles, was die Engine in `start()` schreibt, ist auf der Plattform eine
+   * Notiz JE MINUTE: Ein Takt baut eine Engine, startet sie und hält sie
+   * wieder an (tick.ts). `start`/`stop` selbst stehen schon oben — aber eine
+   * `note` aus derselben Phase rutschte durch und stand am 17.09.2026 rund
+   * 1 400-mal je Nutzer und Tag im Journal („Parksymbol nicht im Datenstrom").
+   *
+   * Der Schaden war nicht nur der Preis der Schreibvorgänge: Das Rauschen
+   * verdrängte im Fenster des Journal-Lesers jede echte Entscheidung, und
+   * „kein Eintrag für BAC" las sich wie ein Befund, war aber eine Verdrängung.
+   * Genau die Verwechslung, gegen die der Leser gebaut ist.
+   *
+   * Die Marke ist ein FELD (`beiStart`), kein Wortlaut: Ein umformulierter
+   * Text darf das Rauschen nicht stillschweigend zurückbringen.
+   *
+   * Im eigenen Prozess bleibt die Notiz stehen — dort ist ein Start ein
+   * Neustart, die Aussage selten und wahr. Auf der Plattform ist sie
+   * ÜBERDIES falsch: Es gibt dort gar keinen Datenstrom (NoopDataStream).
+   */
+  if (ev.beiStart === true) return false;
   if (ev.kind === 'reconcile' && ev.action === 'summary') return false;
   if (ev.kind === 'decision' && ev.note === 'blocked' && typeof ev.text === 'string' && ev.text.startsWith('Halt aktiv')) return false;
   return true;
