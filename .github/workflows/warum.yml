@@ -1,0 +1,72 @@
+name: Warum (Journal lesen, nur lesen)
+
+# „Warum hat die Engine dieses Symbol nicht gehandelt?"
+#
+# ── Warum es diesen Workflow gibt ─────────────────────────────────────────
+#
+# Am 16.09.2026 sagte das Symbolprofil für BAC einen Einstieg voraus, die
+# Engine stellte keinen — und vier Suchen in Cloud Logging fanden nichts.
+# Der Grund war nicht, dass nichts passiert war: Die Blockier-Gründe aus
+# `decide()` gehen als `decision`-Ereignisse ins Firestore-Journal je Nutzer
+# (`users/{uid}/journal`, functions/src/engine/journal.ts), nicht ins Log.
+# „Kein Treffer" las sich wie „alles ruhig" und hieß „an der falschen Stelle
+# gesucht".
+#
+# scan-logs.yml zeigt, was die Engine GESAGT hat; dieser Workflow zeigt, was
+# sie ENTSCHIEDEN hat. Zusammen mit der Signal-Spalte des Symbolprofils
+# (was die Strategie WILL) ist die Kette damit lückenlos.
+#
+# Liest ausschließlich. Kein Champion, keine Config, keine Order.
+
+on:
+  workflow_dispatch:
+    inputs:
+      symbol:
+        description: 'Symbol (leer = alle)'
+        default: ''
+      stunden:
+        description: 'Zeitfenster in Stunden (1–720)'
+        default: '24'
+
+concurrency:
+  group: warum
+  cancel-in-progress: true
+
+jobs:
+  warum:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+    steps:
+      - name: Guard — Service-Account vorhanden?
+        if: env.FIREBASE_SERVICE_ACCOUNT == ''
+        run: |
+          echo "::warning::FIREBASE_SERVICE_ACCOUNT fehlt — kein Blick ins Journal."
+
+      - uses: actions/checkout@v5
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+      - uses: actions/setup-node@v5
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        with:
+          node-version: 22
+          cache: npm
+      - name: Abhängigkeiten installieren
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        run: npm ci
+
+      - name: Service-Account bereitstellen
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
+
+      - name: Nachsehen
+        if: env.FIREBASE_SERVICE_ACCOUNT != ''
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+          IN_SYMBOL: ${{ inputs.symbol }}
+          IN_STUNDEN: ${{ inputs.stunden }}
+        # Eingaben über die Umgebung, nicht per ${{ }} in die Kommandozeile —
+        # dieselbe Klasse, die optimize.yml schon einmal hatte (Prüfbefund G5).
+        run: |
+          node scripts/warum.mjs --symbol "$IN_SYMBOL" --stunden "$IN_STUNDEN" | tee "$RUNNER_TEMP/warum.md"
+          cat "$RUNNER_TEMP/warum.md" >> "$GITHUB_STEP_SUMMARY"
