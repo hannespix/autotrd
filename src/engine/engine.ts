@@ -678,15 +678,32 @@ export class Engine {
       const bench = benchSym ? this.closedSeries(benchSym, closedBefore) : null;
       const inputs: SymbolInput[] = [];
       const newBars = new Map<string, Bar>();
+      // Die drei STILLEN Ausstiege dieser Schleife mitzählen (17.09.2026).
+      // Das Journal sagte bisher, WARUM ein Symbol nicht gehandelt wurde —
+      // aber nie, DASS es angesehen wurde. Drei Fälle schreiben nichts:
+      // keine Bars, keine neue Bar, keine Taktik; und ein `decide()`, das
+      // „halten" sagt, schweigt ebenfalls. „Kein Eintrag" war damit von
+      // „nicht bewertet" nicht zu unterscheiden — genau die Verwechslung, an
+      // der die BAC-Diagnose zwei Tage hing.
+      const ohneBars: string[] = [];
+      const ohneTaktik: string[] = [];
       for (const sym of this.cfg.universe.symbols) {
         const series = this.closedSeries(sym, closedBefore);
-        if (series.length === 0) continue;
+        if (series.length === 0) {
+          ohneBars.push(sym);
+          continue;
+        }
         const i = series.length - 1;
         const t = series.t[i]!;
         if (t <= (st.lastBarAt[sym] ?? Number.NEGATIVE_INFINITY)) continue;
         newBars.set(sym, series.at(i));
         const choice = this.deps.strategyFor(sym);
-        if (!choice) continue;
+        if (!choice) {
+          // Bar verbraucht, nie bewertet: `lastBarAt` wird unten für ALLES in
+          // `newBars` gesetzt. Vorher war das spurlos.
+          ohneTaktik.push(sym);
+          continue;
+        }
         const ind = this.indicators(sym, series, choice.strategy, choice.params);
         const bi = bench && bench.length ? bench.indexAtOrBefore(t) : -1;
         const position = this.book.positions.get(sym) ?? null;
@@ -782,6 +799,12 @@ export class Engine {
       }
 
       const intents: OrderIntent[] = [];
+      // Für die Bewertungszeile unten. Sie muss AUSSERHALB dieses `if`
+      // stehen: Wären alle Symbole ohne Bars oder ohne Taktik, käme
+      // `decide()` nie dran — und die Zeile schwiege ausgerechnet im
+      // schlimmsten Fall. Genau das war mein erster Entwurf.
+      let einstiegsWunsch: string[] = [];
+      let gesperrt = 0;
       if (inputs.length > 0) {
         const today = this.clock.today(now);
         const ctx: LogicContext = {
@@ -815,6 +838,8 @@ export class Engine {
           parkPending: executor.parkOrderRef() !== null,
         };
         const res = decide(ctx, inputs);
+        einstiegsWunsch = res.intents.filter((i) => i.kind === 'enter').map((i) => i.symbol);
+        gesperrt = res.notes.filter((n) => n.kind === 'blocked').length;
         const before = st.halt;
         st.halt = res.halt;
         // Nur schreiben, wenn es etwas zu schreiben gibt (oder schon etwas steht):
@@ -876,6 +901,48 @@ export class Engine {
         this.merkeParkStand(stand);
       }
 
+        /*
+         * Die Bewertungszeile: EINE Zeile je Bar-Stapel, nicht je Takt.
+         *
+         * Sie wird nur geschrieben, wenn es neue geschlossene Bars gab — auf
+         * Tagesbars also einmal je Handelstag, sobald der Korb ankommt. Damit
+         * ist sie bauartbedingt kein Takt-Rauschen (PR #510): Kein neuer
+         * Stapel, keine Zeile.
+         *
+         * Wozu: „kein Eintrag" im Journal hieß bisher entweder „bewertet und
+         * nichts gewollt" ODER „gar nicht bewertet" — und beides sah gleich
+         * aus. Diese Zeile trennt sie. `ohneBars` und `ohneTaktik` sind die
+         * beiden Fälle, in denen ein Symbol stillschweigend durchfällt;
+         * `ohneTaktik` ist der unangenehmere, weil die Bar dabei VERBRAUCHT
+         * wird (`lastBarAt` unten gilt für alles in `newBars`).
+         */
+        if (newBars.size > 0) {
+          const kurz = (xs: readonly string[]) => (xs.length > 6 ? `${xs.slice(0, 6).join(', ')} … (${xs.length})` : xs.join(', '));
+          const teile = [
+            `${this.cfg.universe.symbols.length} im Korb`,
+            `${newBars.size} mit neuer Bar`,
+            `${inputs.length} bewertet`,
+            `${einstiegsWunsch.length} Einstiegswunsch${einstiegsWunsch.length > 0 ? ` (${kurz(einstiegsWunsch)})` : ''}`,
+            `${gesperrt} gesperrt`,
+          ];
+          if (ohneBars.length > 0) teile.push(`${ohneBars.length} ohne Bars (${kurz(ohneBars)})`);
+          if (ohneTaktik.length > 0) teile.push(`${ohneTaktik.length} OHNE TAKTIK, Bar verbraucht (${kurz(ohneTaktik)})`);
+          this.journal.append(
+            'decision',
+            {
+              note: 'bewertung',
+              text: teile.join(' · '),
+              symbole: this.cfg.universe.symbols.length,
+              neueBar: newBars.size,
+              bewertet: inputs.length,
+              einstiegsWunsch: einstiegsWunsch.length,
+              gesperrt,
+              ohneBars,
+              ohneTaktik,
+            },
+            now,
+          );
+        }
       // Die Notbremse in `decide()` läuft über `ctx.positions` und kann dieselbe
       // Position bereits glattstellen — dann nicht doppelt anfordern.
       for (const it of ohneFuehrung) {

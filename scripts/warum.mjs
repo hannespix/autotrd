@@ -33,6 +33,13 @@ if (!Number.isFinite(stunden) || stunden <= 0 || stunden > 24 * 30) {
   console.error('--stunden muss zwischen 1 und 720 liegen.');
   process.exit(1);
 }
+// `--limit` kommt seit PR #510 aus einer Workflow-Eingabe und wird deshalb
+// geprüft wie die anderen: NaN würde als `.limit(NaN)` in die Abfrage wandern,
+// und eine offene Obergrenze liest im Zweifel eine ganze Sammlung leer.
+if (!Number.isInteger(limit) || limit <= 0 || limit > 20_000) {
+  console.error('--limit muss eine ganze Zahl zwischen 1 und 20000 sein.');
+  process.exit(1);
+}
 if (!process.env.GOOGLE_APPLICATION_CREDENTIALS && !process.env.FIREBASE_CONFIG) {
   console.error('GOOGLE_APPLICATION_CREDENTIALS fehlt — ohne Service-Account kein Blick auf Firestore.');
   process.exit(1);
