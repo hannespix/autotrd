@@ -54,7 +54,7 @@ describe('Rauchtest-Workflow', () => {
 
   it('veröffentlicht nichts (kein Service-Account, kein Champion, kein Firestore)', () => {
     expect(wirksam).not.toMatch(/google-github-actions\/auth/);
-    expect(wirksam).not.toMatch(/publish-champion|publish-profile|sync-engine-config/);
+    expect(wirksam).not.toMatch(/publish-champion|fetch-champion|publish-profile|sync-engine-config/);
     expect(wirksam).not.toMatch(/firebase|firestore/i);
   });
 

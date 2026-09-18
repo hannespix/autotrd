@@ -4,9 +4,10 @@
  *
  *   node scripts/publish-champion.mjs --home var [--dry-run]
  *
- * Schreibt `meta/champion` (die champion.json, unverändert — samt dem Block
- * `basis` der Basis-Allokation, falls der Lauf ihn geschrieben hat; additiv,
- * Leser ohne Block bleiben unverändert) und den
+ * Schreibt `meta/champion` (die champion.json OHNE die OOS-Ketten je Eintrag,
+ * siehe scripts/module/championDoc.mjs — samt dem Block `basis` der
+ * Basis-Allokation, falls der Lauf ihn geschrieben hat; additiv, Leser ohne
+ * Block bleiben unverändert) und den
  * Markdown des jüngsten Berichts nach `meta/optimizeReports/berichte/<YYYY-MM-DD>`
  * (Pfad aus shared/src/berichte.ts — `meta/optimizeReports` ist ein Dokument,
  * die Berichte liegen in seiner Unter-Collection).
@@ -19,6 +20,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { berichtPfad } from '../shared/src/berichte.ts';
+import { INDEX_WERTE_MAX, fuerFirestore, pruefeDokument } from './module/championDoc.mjs';
 
 const CHAMPION_PFAD = 'meta/champion';
 
@@ -95,8 +97,20 @@ const reportDoc = {
   publishedAt: Timestamp.now(),
 };
 
+// Ohne die OOS-Ketten je Eintrag (scripts/module/championDoc.mjs): Lauf #18
+// (18.09.2026) starb an Firestores Index-Limit, weil 30 beförderte Einträge
+// je ~2 200 Array-Elemente trugen. Gezählt wird VOR dem Batch — sonst steht
+// wieder nachts um eins ein Champion bereit, den niemand veröffentlichen kann.
+const doc = fuerFirestore(champion);
+const pruefung = pruefeDokument(doc);
+if (!pruefung.ok) {
+  console.error(pruefung.grund);
+  process.exit(1);
+}
+console.log(`meta/champion: ${pruefung.werte} indizierbare Werte (Obergrenze ${INDEX_WERTE_MAX}; Firestore-Limit 40 000 Index-Einträge; ohne OOS-Ketten)`);
+
 const batch = db.batch();
-batch.set(db.doc(CHAMPION_PFAD), { ...champion, publishedAt: Timestamp.now() });
+batch.set(db.doc(CHAMPION_PFAD), { ...doc, publishedAt: Timestamp.now() });
 if (latestReport) batch.set(db.doc(berichtPfad(reportDate)), reportDoc);
 await batch.commit();
 console.log(
