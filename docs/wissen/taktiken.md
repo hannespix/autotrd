@@ -195,8 +195,12 @@ steht in `src/strategy/`; die Gates gelten für alle gleich.
   Bullenmarkt der Markt mit Filter ist; und an der Geometrie: lookback ≤ 126,
   weil das Embargo (Warmup + 20) das IS-Fenster frisst — ein echtes
   Zwölf-Monats-Momentum ist so nicht messbar.
-- **Messstand:** vorregistriert 18.09.2026 (T23), Config
-  `config/tsmom-1440.yaml`. Kein Lauf.
+- **Messstand:** Lauf #71 (18.09.2026): **nicht bestanden, 6/10 Gates
+  rot, T23 widerlegt.** 111 Trades, geschlossene Trades −2 766 $, Überschuss
+  −506 $ (das rohe Plus war BIL-Zins); Totband-Ausstieg nach im Median
+  5 Bars statt Monaten, 96 % Zeit im Markt, alle Bärenfolds negativ.
+  Registriert, in keiner Produktions-Config, kein zweiter Anlauf ohne neue
+  Vorregistrierung.
 
 ## Kasse — nicht handeln
 - **Zweck:** Das Ergebnis, wenn keine Taktik ihre Latte nimmt. Kostet 0 $.
