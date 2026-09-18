@@ -1,0 +1,290 @@
+# Probe: Zeitreihen-Momentum je Symbol mit Totband (`time_series_momentum`)
+# — NUR Erkundung, nie die Plattform-Config.
+#
+# Vorregistrierung: docs/wissen/vorregistrierung/2026-09-18-zeitreihen-momentum.md
+# (VOR diesem Lauf committet — dort stehen Mechanismus, Quellen, Gitter, die
+# sieben Erwartungen und die Abbruchkriterien).
+#
+# Diese Datei ist config/platform.yaml Zeichen für Zeichen — Universum
+# (nächtliche Auswahl aus demselben Pool), Risiko, Kosten, Tore, Zinsmaßstab
+# BIL, Parken, bereinigte Bars, Fold-Geometrie — mit GENAU drei Unterschieden:
+#
+#   1. optimizer.strategies: [time_series_momentum]   (nur die neue Familie)
+#   2. paths.home                                     (eigener State-Ordner)
+#   3. vorregistrierung:                              (dieser Verweis)
+#
+# Warum kein Unterschied mehr: Basis V3 hat gezeigt, dass dasselbe Sleeve
+# unter zwei Regelwerken zwei Ergebnisse hat. Was später scharf geschaltet
+# werden könnte, muss so gemessen sein, wie es liefe.
+#
+# Warum die Familie NICHT einfach in platform.yaml steht: Dort würde sie
+# nächtlich mitgemessen und könnte Champion werden — die einzige
+# Beförderungsstraße —, und die Erprobung könnte sie wählen. Beides erst
+# nach dieser Messung und nach einem Prüfer (Vorregistrierung, „Was danach
+# kommt").
+#
+# Bekannte Grenze (siehe Vorregistrierung): lookback ≤ 126, weil das Embargo
+# (Warmup + 20) vom Ende des 252-Bar-IS-Fensters abgeschnitten wird. Ein
+# Zwölf-Monats-Momentum ist mit dieser Geometrie nicht messbar; embargoBars
+# wird ABSICHTLICH nicht gesetzt, um das zu umgehen.
+
+vorregistrierung: docs/wissen/vorregistrierung/2026-09-18-zeitreihen-momentum.md
+
+broker:
+  mode: paper          # Der Modus je Nutzer kommt aus dem Live-Schalter der Plattform, nicht von hier.
+  feed: iex            # Datenfeed für Optimierer UND Engine — identisch, sonst misst man etwas anderes als man handelt.
+  # Bereinigte TAGESBARS (Owner-Entscheidung 15.09.2026). Sie sind die
+  # Bedingung dafür, dass Zinsmaßstab und Parken unten überhaupt etwas tun:
+  # In ROHEN Bars trägt der Kurs eines monatlich ausschüttenden Geldmarkt-ETF
+  # den Zins NICHT (config/parken-1440.yaml, Kopf). Mit `raw` wäre die
+  # Zinsreihe aus BIL ungefähr null — die Gates blieben faktisch „gegen null
+  # gerechnet", und das Parken kostete Gebühren ohne Ertrag. Beides sähe aus,
+  # als hätte man etwas geändert.
+  #
+  # Für die AUSFÜHRUNG ist das folgenlos: Minutenbars werden immer roh geladen
+  # (src/alpaca/rest.ts) — gehandelt wird zu echten Kursen. Bereinigt sind nur
+  # die Tagesbars, aus denen Signale und Messung entstehen. Jede Probe, die
+  # Parken oder Zinsmaßstab misst, steht seit jeher auf `all` (parken-1440,
+  # korb-breite-*, ensemble-*) — die Plattform war der Ausreisser. Die
+  # übrigen Proben ziehen mit dieser Änderung nach.
+  adjustment: all
+
+universe:
+  assetClass: us_equity
+  # Startwert und Rückfall, falls die nächtliche Auswahl nicht gelaufen ist.
+  # Im Normalbetrieb überschreibt `var/universe.json` diese Liste.
+  symbols:
+    [SPY, QQQ, IWM, DIA,
+     AAPL, MSFT, NVDA, AMZN, META, GOOGL, TSLA, AVGO, AMD, NFLX,
+     CRM, ORCL, ADBE, INTC, CSCO, QCOM,
+     JPM, BAC, WFC,
+     XOM, CVX,
+     JNJ, PFE, UNH,
+     WMT, DIS]
+  benchmark: SPY
+  # 30 ist die harte Grenze des Alpaca-IEX-Basisplans (darüber `405 symbol
+  # limit exceeded`) und zugleich AUTO_SYMBOLS_MAX je Nutzer.
+  maxSymbols: 30
+  # Der Pool, aus dem jede Nacht nach Liquidität gewählt wird. Breit über die
+  # Sektoren, damit die Wahl etwas zu wählen hat; ohne Hebel-, Inverse- und
+  # Einzelaktien-ETFs. Reihenfolge hier ist bedeutungslos — es zählt der
+  # gemessene Umsatz, nicht der Platz in der Liste.
+  candidates:
+    # Breite Index- und Sektor-ETFs
+    [SPY, QQQ, IWM, DIA, XLF, XLE, XLK, XLV, XLI, XLY, XLP, XLU, XLB, XLRE, XLC,
+     SMH, SOXX, EEM, EFA, GLD, SLV, TLT, HYG, LQD, IEF,
+     # Technologie und Halbleiter
+     AAPL, MSFT, NVDA, AMZN, META, GOOGL, GOOG, TSLA, AVGO, AMD, NFLX,
+     CRM, ORCL, ADBE, INTC, CSCO, QCOM, TXN, MU, AMAT, LRCX, KLAC, ADI, MRVL,
+     ANET, NOW, IBM, INTU, PANW, CRWD, DDOG, SNOW, UBER, ABNB, PYPL, SPOT, DELL,
+     # Finanzen
+     JPM, BAC, WFC, GS, MS, C, SCHW, BLK, AXP, V, MA, COF, USB, PNC, BRK.B,
+     # Energie
+     XOM, CVX, COP, SLB, EOG, PSX, MPC, OXY, VLO,
+     # Gesundheit
+     JNJ, PFE, UNH, ABBV, MRK, LLY, TMO, ABT, BMY, AMGN, GILD, CVS, MDT, ISRG, VRTX, REGN,
+     # Konsum
+     WMT, DIS, HD, MCD, NKE, SBUX, COST, TGT, LOW, PG, KO, PEP, PM, MO, MDLZ, CL,
+     # Industrie und Transport
+     BA, CAT, DE, GE, HON, LMT, RTX, UPS, UNP, MMM, FDX,
+     # Kommunikation und Versorger
+     T, VZ, TMUS, CMCSA, CHTR, NEE, DUK, SO,
+     # Fahrzeuge
+     F, GM]
+
+# Tagesbars. Gemessen am 08./09.09.2026: Auf 5-Minuten-Bars frassen die
+# Gebühren 271 % bis 2438 % des Bruttogewinns — kein Kandidat kann dort
+# gewinnen, egal wie gut das Signal ist, und der nächtliche Lauf verbrannte
+# 43 Minuten auf dem aussichtslosesten Zeitrahmen, den wir haben. Auf
+# Tagesbars liegt derselbe Anteil bei 23–71 % (gemessen 09.09., dieselbe
+# Größe: die OOS-Kette). Das ist Faktor zehn besser, aber nicht gelöst — 71 %
+# reissen `fee_share` weiterhin. Es räumt das Hindernis weg, das jede Kante
+# verdeckt hätte; es ersetzt keine.
+#
+# Folgen im Rest dieser Datei: Die Fenster unten wachsen mit (365/90/90/180
+# statt 120/30/30/60 — bei einer Bar je Tag statt 78 braucht ein Fold Jahre,
+# nicht Monate), und `orb_breakout` fällt aus der Liste, weil es
+# ausdrücklich nur Intraday kann (INTRADAY_TIMEFRAMES). Dafür kommt
+# `cross_sectional_momentum` dazu, das den Korb rangiert statt jedes Symbol
+# einzeln zu fragen.
+#
+# Die Session-Tore (noEntryFirstMin/noEntryLastMin/flattenBeforeCloseMin)
+# bleiben stehen, greifen bei 1440 aber nicht: core/logic.ts überspringt sie
+# für Tagesbars, und alle fünf Strategien halten über Nacht.
+timeframe: 1440
+
+session:
+  noEntryFirstMin: 5
+  noEntryLastMin: 30
+  flattenBeforeCloseMin: 5
+
+risk:
+  riskPerTradePct: 0.5
+  maxPositionPct: 20
+  maxPositions: 4
+  maxGrossExposurePct: 100
+  maxDailyLossPct: 2
+  maxDrawdownPct: 10
+  allowShort: false
+  # Geldmarkt-Parken (Owner-Entscheidung 15.09.2026, gemessen als Lauf #49).
+  # Brachliegende Kasse liegt in kurzen T-Bills statt auf 0 %. Das ist eine
+  # ÖKONOMISCHE Änderung, kein Messtrick: Im Konto jedes Papier-Nutzers
+  # entsteht eine echte BIL-Position.
+  #
+  # Warum es das braucht: Die gemessenen Kandidaten binden nur 7–26 % ihrer
+  # Equity. Ohne Parken verdient das Konto auf 80–90 % seines Kapitals nichts,
+  # während der Zinsmaßstab unten den vollen Zins abzieht — jeder Kandidat
+  # wäre um rund den Zinssatz schlechter, ohne dass sich an der Wirklichkeit
+  # etwas ändert. Wer gegen den Zins gemessen wird, soll den Zins auch
+  # verdienen können.
+  #
+  # Das Artefakt aus Lauf #48 (Parken AN, Gates noch auf ROHEM Netto: drei
+  # Quartale mit NULL Trades zählten als positive Folds) ist durch
+  # `optimizer.riskFreeSymbol` unten behoben — Parken in BIL liefert dann
+  # exakt den Zins, also 0 Überschuss.
+  #
+  # BIL steht mit Absicht NICHT in `universe.candidates`: Das Parksymbol
+  # gehört der Treasury allein, sonst lägen zwei Positionen mit zwei
+  # Herkünften darin (§0.6). Seine Bars lädt der Takt eigens.
+  cashParking:
+    enabled: true
+    symbol: BIL
+    bandPct: 5
+    bufferPct: 2
+  pdt:
+    respect: true
+    minEquity: 25000
+    maxDayTrades: 3
+
+strategy:
+  id: trend_donchian
+  params: {}
+  allowWithoutChampion: false   # Ohne Champion handelt niemand — der Optimierer entscheidet.
+
+  # Papier-Erprobung EIN (Owner-Entscheidung 14.09.2026, CLAUDE.md §0.9,
+  # src/core/erprobung.ts). Der GLOBALE Schalter; je Nutzer gilt zusätzlich
+  # settings.auto.erprobung, beide werden UND-verknüpft.
+  #
+  # Warum: Seit dem Neubau besteht kein Kandidat die zehn Gates, also handelt
+  # die Plattform nichts — und ohne Trades entsteht nie ein Journal, aus dem
+  # `readiness` je etwas lernen könnte. Die Erprobung durchbricht genau diese
+  # Sackgasse, auf Papier.
+  #
+  # WAS DAS NICHT LOCKERT: Kein Gate, keine Schwelle, keine Beförderung. Der
+  # Kandidat bleibt durchgefallen und steht weiter in `noTrade`; `champion.symbols`
+  # bleibt leer. Echtgeld erreicht die Stufe nie (aufgelöster Modus), und ihre
+  # Trades zählen weder in `readiness` noch in `stats/main` — die
+  # Echtgeld-Freigabe bleibt unberührt.
+  #
+  # WAS ZU ERWARTEN IST, ohne Beschönigung (Lauf 34889637521, 18 Folds,
+  # 2020-07-27 … 2026-09-14): Gehandelt wird `momentum_pullback`, bester
+  # Kandidat mit Score 0.120 — 516 Trades (≈ 29 je Monat über den 30er-Korb),
+  # netto +814,55 $ auf 25 000 $ über 4,5 Jahre und ein GEBÜHRENANTEIL VON
+  # 219,2 %. Die Gebühren fressen mehr als den doppelten Bruttogewinn. Das ist
+  # wörtlich die Krankheit des Vorgängersystems (§2: „Der Handel funktioniert;
+  # er wird zu Tode gehandelt"), und deshalb fällt der Kandidat durch.
+  #
+  # Es sind also viele Trades bei ungefähr null zu erwarten, nicht Gewinn. Der
+  # Zweck ist das Journal, nicht das Ergebnis.
+  erprobung: true
+
+optimizer:
+  strategies: [time_series_momentum]   # nur die neue Familie — siehe Kopf dieser Datei
+  # Fenster wie in config/equity-1440.yaml, das vier Halbjahre lang gemessen
+  # hat — sonst vergliche man Plattform und Erkundung nie miteinander.
+  # 2900 Tage, nicht 1400 (12.09.2026, Lauf #42). Mit 1400 begannen die Daten
+  # am 2022-11-10 — dem Tiefpunkt des Bärenmarkts 2022; danach messe der Lauf
+  # fast nur Aufschwung. Das hat nicht bloß die Latte des Gates `beats_market`
+  # auf einen SPY-Sharpe von 1.17 gehoben (in allen anderen gemessenen Fenstern
+  # 0.46–0.63), es hat den FALSCHEN KANDIDATEN ausgewählt:
+  #
+  #   Fenster 1400 Tage (9 Folds):   csm  Sharpe  0.90 (bester), mp −0.32 (schlechtester)
+  #   Fenster 2900 Tage (18 Folds):  mp   Sharpe  0.64 (bester), csm 0.24 (vierter)
+  #
+  # Die Rangfolge selbst war ein Artefakt des Fensters. Wäre je ein Champion aus
+  # dem kurzen Fenster befördert worden, wäre es der Kandidat gewesen, der über
+  # einen vollen Zyklus zusammenbricht. 2900 Tage sind zugleich alles, was da
+  # ist (die IEX-Tageshistorie beginnt am 2020-07-27) und enthalten den
+  # Bärenmarkt 2022 mit 25.68 % Marktdrawdown — 18 statt 9 Folds, 1111 statt 555
+  # OOS-Tage. Die Messung wird dadurch strenger, nicht milder: Drei der fünf
+  # Familien fallen über den vollen Zyklus auf ein negatives Objective.
+  # Analyse: docs/wissen/analysen/2026-09-12-warum-nichts-gehandelt-wird.md
+  lookbackDays: 2900
+  isDays: 365
+  oosDays: 90
+  stepDays: 90
+  embargoBars: 0
+  samples: 150
+  seed: 42
+  minOosTrades: 60
+  minFoldPositiveShare: 0.6
+  objective: sortino
+  stressCostMultiplier: 1.5
+  holdoutDays: 180
+  promotionMargin: 0.1
+  minPsrOos: 0.9
+  dsrIsGate: false
+  # Untergrenze der Handelsaktivität für die PAPIER-ERPROBUNG (Owner-Entscheidung
+  # 18.09.2026, docs/wissen/vorregistrierung/2026-09-18-erprobung-nach-handelsaktivitaet.md).
+  #
+  # Der Befund: Seit Lauf #17 lief `regime_allocation` auf Papier — 76 Trades
+  # über 1 620 OOS-Tage, 1,4 je Monat über den ganzen Korb, ein Einstieg alle
+  # drei Wochen. Die Bewertungszeile im Journal (PR #511) zeigte es täglich:
+  # „30 bewertet · 0 Einstiegswunsch". Die Erprobung existiert, „damit
+  # überhaupt ein Journal entsteht" (§0.9); der Score ist blind dafür.
+  #
+  # Ab jetzt läuft der Score-beste unter denen, die ≥ 4 geschlossene OOS-Trades
+  # je Monat haben (Maßstab-Zeile). Erreicht das keiner: der Score-beste, und
+  # der Block sagt es. Kein Gate, keine Schwelle, keine Beförderung —
+  # `symbols` bleibt leer, `noTrade` bleibt voll, die fünf Sperren gelten.
+  # Warum 4 und nicht 1: docs/wissen/aktivitaet.md nennt 2–10 als Band; mit 4
+  # ist ein Einstieg in zehn Handelstagen zu ~85 % zu sehen, mit 1,4 zu ~50 %.
+  erprobungMinTradesPerMonth: 4
+  # Zinsmaßstab (Owner-Entscheidung 15.09.2026). Alle Geld-Gates rechnen auf
+  # dem ÜBERSCHUSS über den kurzen Zins statt über null. Das ändert keinen
+  # Handel und keine Order — es macht die Gates STRENGER (§0.9 erlaubt
+  # strenger ausdrücklich, lockerer nie).
+  #
+  # Der Befund, der das auslöst: Bis heute trug JEDE Gate-Notiz der Plattform
+  # „kein Geldmarkt-Symbol konfiguriert — gegen null gerechnet", während jede
+  # Erkundung gegen BIL mass. Die Plattform entschied ihren Champion damit auf
+  # einem milderen Maßstab als die Läufe, mit denen geforscht wird
+  # (docs/wissen/analysen/2026-09-15-die-plattform-misst-gegen-null.md).
+  #
+  # Dasselbe Papier wie das Parksymbol — dann gibt es zwischen Verdienen und
+  # Messen keinen Spread (src/core/config.ts).
+  riskFreeSymbol: BIL
+  maxFoldNetShare: 0.5   # ein einzelner Fold darf höchstens die Hälfte des OOS-Nettos tragen
+  pooled: true           # gehört zu den 30 Symbolen — siehe Kopf dieser Datei
+  # Korb je Fold (Vorgabe point_in_time): Für jeden Fold wird der Korb zu
+  # dessen OOS-Beginn aus `universe.candidates` gewählt — mit Daten bis dahin,
+  # Hysterese Fold für Fold, dieselbe Auswahl wie nachts. IS-Suche und OOS
+  # laufen auf diesem Korb, der Maßstab folgt mit. `fixed` wäre der Korb von
+  # heute rückwärts — das kippte am 09.09. ein Urteil (0,71 / −0,18 / 0,04 je
+  # Endkorb). `fetch` lädt dafür den ganzen Pool in voller Tiefe.
+  foldMembership: point_in_time
+
+costs:
+  slippageBps: 3
+  spreadBps: 2
+  secFeeRate: 0.0000278
+  finraTafPerShare: 0.000166
+  finraTafMax: 8.3
+  cryptoTakerPct: 0.25
+  shortBorrowAnnualPct: 1
+
+engine:
+  reconcileEverySec: 60
+  barGraceSec: 4
+  maxDataAgeSec: 180
+  maxConsecutiveErrors: 5
+  onOrphan: halt
+
+notify:
+  telegram: false
+
+status:
+  httpPort: 0
+
+paths:
+  home: ./var-probe/tsmom-1440   # nie der Ordner der Produktion (./var)

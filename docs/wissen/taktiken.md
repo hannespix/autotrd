@@ -175,6 +175,29 @@ steht in `src/strategy/`; die Gates gelten für alle gleich.
 - **Messstand:** vorregistriert 12.09.2026 (T18), Config
   `config/sleeves-1440.yaml`. **Nichts gemessen.**
 
+## time_series_momentum — Zeitreihen-Momentum je Symbol, Totband am Ausstieg
+- **Zweck:** die eigene Vergangenheit sagt die eigene Zukunft (D2, hoch):
+  Momentum über 3–6 Monate (jüngster Monat ausgelassen, D7) je Symbol,
+  ohne Rang — und ein Ausstieg, der eine Bewegung LAUFEN lässt. Gebaut, weil
+  alle Familien Bewegungen von 1,5–2,5 % über 2–3 Tage holen und
+  `fee_share` nur über einen größeren Bruttogewinn je Trade sinkt.
+- **Eintritt:** Momentum > 0 UND Close > SMA(regimeLen). Täglich bewertet.
+- **Austritt:** NUR Momentum < −exitBandPct (Totband). Kein Regime-Exit,
+  kein Trailing, kein Ziel, kein Zeitstopp. Katastrophen-Stop 10–30 % beim
+  Broker, nie nachgezogen.
+- **Haltedauer:** Wochen bis Monate (erwartet ≥ 20 Handelstage).
+  **Aktivität:** erwartet 3–8 Trades je Monat auf 30 Symbolen — gemessen
+  ist NICHTS.
+- **Kosten:** unempfindlich per Bauart, wenn die Erwartung hält
+  (`fee_share` ≤ 0,25 erwartet).
+- **Woran sie stirbt:** an der Breite — D2 belegt die Kante über
+  unkorrelierte Märkte, nicht in 30 US-Aktien; an `beats_market`, weil sie im
+  Bullenmarkt der Markt mit Filter ist; und an der Geometrie: lookback ≤ 126,
+  weil das Embargo (Warmup + 20) das IS-Fenster frisst — ein echtes
+  Zwölf-Monats-Momentum ist so nicht messbar.
+- **Messstand:** vorregistriert 18.09.2026 (T23), Config
+  `config/tsmom-1440.yaml`. Kein Lauf.
+
 ## Kasse — nicht handeln
 - **Zweck:** Das Ergebnis, wenn keine Taktik ihre Latte nimmt. Kostet 0 $.
 - **Messstand:** in den vier Holdouts 2024–2026 hätte kaufen-und-liegenlassen
