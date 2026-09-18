@@ -18,7 +18,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { kaufenUndHalten, marktKette } from '../../src/backtest/marktbezug.ts';
+import { marktKetteAufAchse, kaufenUndHalten, marktKette } from '../../src/backtest/marktbezug.ts';
 import { BarSeries } from '../../src/core/bars.ts';
 import { DAY } from '../../src/core/time.ts';
 import type { Bar, BarSeriesLike, Strategy } from '../../src/core/types.ts';
@@ -136,13 +136,18 @@ describe('Maßstab je Kandidat im Lauf', () => {
       expect(m.marktSymbol).toBe('BENCH');
       expect(m.marktSharpe).not.toBeNull();
       expect(m.marktSharpe).toBe(gate(s, 'beats_market').threshold);
-      const k = marktKette({
-        bars: new Map([['BENCH', zickzack]]),
-        ranges: s.wfa.folds.map((f) => ({ start: f.fold.oosStart, end: f.fold.oosEnd })),
-        assetClass: 'crypto',
-        periodsPerYear: 365,
-      })!;
+      // Durchgehende Kette (Vorgabe): der Maßstab auf der Tagesachse der Kette; je Fold: je Fenster.
+      const k =
+        s.wfa.kette.modus === 'continuous'
+          ? marktKetteAufAchse({ bars: new Map([['BENCH', zickzack]]), dayKeys: s.wfa.oos.dayKeys!, assetClass: 'crypto', periodsPerYear: 365 })!
+          : marktKette({
+              bars: new Map([['BENCH', zickzack]]),
+              ranges: s.wfa.folds.map((f) => ({ start: f.fold.oosStart, end: f.fold.oosEnd })),
+              assetClass: 'crypto',
+              periodsPerYear: 365,
+            })!;
       expect(m.marktMaxDD).toBe(k.maxDrawdownPct);
+      expect(m.marktSharpe).toBeCloseTo(k.sharpe!, 12);
       expect(m.marktMaxDD!).toBeGreaterThan(0);
     }
     const z = zeilen(readFileSync(out.reportPath, 'utf8'));
@@ -165,7 +170,7 @@ describe('Maßstab je Kandidat im Lauf', () => {
       expect(s.massstab.marktMaxDD).toBeNull();
       const g = gate(s, 'beats_market');
       expect(g.threshold).toBe(0);
-      expect(g.note).toContain('BENCH kaufen und halten: keine Kurse in den OOS-Fenstern, Sharpe nicht berechenbar — Latte 0 (Kasse)');
+      expect(g.note).toMatch(/BENCH kaufen und halten: (keine Kurse in den OOS-Fenstern|kein Kurs am ersten Tag der OOS-Kette), Sharpe nicht berechenbar — Latte 0 \(Kasse\)/);
       expect(g.note).not.toContain('kein Maßstab konfiguriert');
     }
     const z = zeilen(readFileSync(out.reportPath, 'utf8'));

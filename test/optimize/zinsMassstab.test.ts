@@ -27,7 +27,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { fetchSymbols } from '../../src/app.ts';
-import { marktKette } from '../../src/backtest/marktbezug.ts';
+import { marktKetteAufAchse, marktKette } from '../../src/backtest/marktbezug.ts';
 import { alignRiskFree, excessReturns, riskFreeFromBars, sharpeRatio } from '../../src/backtest/metrics.ts';
 import { BarSeries } from '../../src/core/bars.ts';
 import { ConfigError, parseConfig } from '../../src/core/config.ts';
@@ -193,11 +193,17 @@ describe('marktReihe', () => {
     const out = lauf({ riskFreeSymbol: 'RF', rfBars });
     const rf = riskFreeFromBars({ symbol: 'RF', bars: rfBars, assetClass: 'crypto' })!;
     for (const s of out.runs[0]!.results) {
-      const m = marktReihe({
-        bars: new Map<string, BarSeriesLike>([['BENCH', zickzack]]),
-        ranges: s.wfa.folds.map((f) => ({ start: f.fold.oosStart, end: f.fold.oosEnd })),
-        assetClass: 'crypto',
-      })!;
+      // Durchgehende Kette: der Maßstab auf GENAU der Tagesachse der Kette
+      // (Nachtrag 2026-09-18-nachtrag-massstab-auf-der-kette); je Fold: je Fenster frisch gekauft.
+      const m =
+        s.wfa.kette.modus === 'continuous'
+          ? marktKetteAufAchse({ bars: new Map<string, BarSeriesLike>([['BENCH', zickzack]]), dayKeys: s.wfa.oos.dayKeys!, assetClass: 'crypto', periodsPerYear: 365 })!
+          : marktReihe({
+              bars: new Map<string, BarSeriesLike>([['BENCH', zickzack]]),
+              ranges: s.wfa.folds.map((f) => ({ start: f.fold.oosStart, end: f.fold.oosEnd })),
+              assetClass: 'crypto',
+            })!;
+      expect(m.dayKeys).toEqual(s.wfa.oos.dayKeys);
       const rates = m.dayKeys.map((k) => rf.perDay.get(k) ?? 0);
       const erwartet = fakeMetricsFns.sharpeRatio(excessReturns(m.dailyReturns, rates), 365);
       expect(gate(s, 'beats_market').threshold).toBeCloseTo(erwartet!, 12);

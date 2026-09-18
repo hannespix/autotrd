@@ -110,6 +110,78 @@ export function marktKette(args: {
   return { sharpe: sharpeRatio(renditen, args.periodsPerYear), maxDrawdownPct: maxDrawdownPct(kette), netReturnPct: (stand - 1) * 100, fenster, punkte };
 }
 
+/**
+ * Der Maßstab auf der TAGESACHSE der Strategie-Kette (Nachtrag
+ * `docs/wissen/vorregistrierung/2026-09-18-nachtrag-massstab-auf-der-kette.md`,
+ * Prüfbefund M2): Seit die OOS-Kette EINE durchgehende Simulation ist, hat
+ * die Strategie an jedem Fold-Übergang eine echte Tagesrendite — ein Maßstab,
+ * der jedes Fenster frisch kauft (`marktKette`), kennt diese Tage nicht, und
+ * zwei Sharpe-Werte über verschiedene Tagesmengen stünden in einem Gate.
+ *
+ * Hier: genau die Handelstage `dayKeys` (aufsteigend, die Achse der Kette),
+ * Kauf zum Schluss des ERSTEN Tages — Tag 1 ist Kasse mit Rendite 0, wie die
+ * Strategie an ihrem ersten aktiven Tag (entschieden am Schluss, gefüllt am
+ * nächsten Open) —, danach nichts. Fehlt einem Symbol ein Tag der Achse, gilt
+ * sein letzter Kurs (Rendite 0 an diesem Tag); nur Symbole mit Kurs am ersten
+ * Tag zählen (dieselbe Survivorship-Regel wie `wertreihe`). Die Renditereihe
+ * hat die LÄNGE der Achse, ihre `dayKeys` SIND die Achse.
+ */
+export interface MarktAchsenKette {
+  sharpe: number | null;
+  maxDrawdownPct: number;
+  netReturnPct: number;
+  symbole: number;
+  dailyReturns: number[];
+  dayKeys: string[];
+}
+
+export function marktKetteAufAchse(args: { bars: ReadonlyMap<string, BarSeriesLike>; dayKeys: readonly string[]; assetClass: AssetClass; periodsPerYear: number }): MarktAchsenKette | null {
+  const achse = args.dayKeys;
+  if (achse.length < 2) return null;
+  const ersterTag = achse[0]!;
+  const letzterTag = achse[achse.length - 1]!;
+  const proSymbol: { basis: number; kurse: Map<string, number> }[] = [];
+  for (const s of args.bars.values()) {
+    const m = new Map<string, number>();
+    for (let i = 0; i < s.length; i++) {
+      const k = dayKeyFor(s.t[i]!, args.assetClass);
+      if (k < ersterTag) continue;
+      if (k > letzterTag) break;
+      m.set(k, s.c[i]!); // letzte Bar des Tages gewinnt
+    }
+    const basis = m.get(ersterTag);
+    if (basis === undefined || !(basis > 0)) continue;
+    proSymbol.push({ basis, kurse: m });
+  }
+  if (!proSymbol.length) return null;
+
+  const stand = proSymbol.map(() => 1);
+  const kurve: number[] = [1];
+  const dailyReturns: number[] = [0]; // Tag 1: Kasse, Kauf zum Schluss
+  for (let d = 1; d < achse.length; d++) {
+    const k = achse[d]!;
+    let summe = 0;
+    for (let j = 0; j < proSymbol.length; j++) {
+      const e = proSymbol[j]!;
+      const p = e.kurse.get(k);
+      if (p !== undefined && p > 0) stand[j] = p / e.basis;
+      summe += stand[j]!;
+    }
+    const wert = summe / proSymbol.length;
+    const vor = kurve[kurve.length - 1]!;
+    kurve.push(wert);
+    dailyReturns.push(vor > 0 ? wert / vor - 1 : 0);
+  }
+  return {
+    sharpe: sharpeRatio(dailyReturns, args.periodsPerYear),
+    maxDrawdownPct: maxDrawdownPct(kurve),
+    netReturnPct: (kurve[kurve.length - 1]! - 1) * 100,
+    symbole: proSymbol.length,
+    dailyReturns,
+    dayKeys: [...achse],
+  };
+}
+
 export interface MarktKurve {
   symbole: number;
   /** Wertentwicklung, beginnend bei 1 am ersten Handelstag des Fensters. */

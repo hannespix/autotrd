@@ -218,8 +218,18 @@ describe('runOptimization (Ende-zu-Ende)', () => {
     expect(ev.cleanFolds).toBeGreaterThan(0);
     expect(ev.cleanFolds).toBeLessThan(ev.totalFolds); // sonst prüft der Test nichts
     const g = ev.gates.find((x) => x.name === 'beats_market')!;
-    expect(g.note).toContain(`über ${ev.cleanFolds} OOS-Fenster`);
-    expect(g.note).not.toContain(`über ${ev.totalFolds} OOS-Fenster`);
+    // Durchgehende Kette: der Maßstab läuft auf der Tagesachse der Amtsinhaber-
+    // Kette — die besteht nur aus seinen sauberen Folds, also weniger Handelstage
+    // als die ganze Kette. Je Fold: „über n OOS-Fenster" mit n = saubere Folds.
+    const tage = /über die OOS-Kette \((\d+) Handelstage, durchgehend\)/.exec(g.note);
+    if (tage) {
+      const alleTage = out.runs[0]!.results[0]!.wfa.oos.dayKeys!.length;
+      expect(Number(tage[1])).toBeGreaterThan(0);
+      expect(Number(tage[1])).toBeLessThan(alleTage);
+    } else {
+      expect(g.note).toContain(`über ${ev.cleanFolds} OOS-Fenster`);
+      expect(g.note).not.toContain(`über ${ev.totalFolds} OOS-Fenster`);
+    }
   });
 
   it('Incumbent-Params fließen NICHT mehr in die Kandidatensuche ein (Leck: gefittet auf Kandidaten-OOS)', () => {

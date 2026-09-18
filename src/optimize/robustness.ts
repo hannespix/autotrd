@@ -582,7 +582,7 @@ export interface GateInput {
    * nachträglich auf Überschuss umrechnen, die Reihe schon. Ohne sie rechnet
    * `beats_market` beide Seiten ohne Zins.
    */
-  markt?: { sharpe: number | null; quelle: string; dailyReturns?: readonly number[] | undefined } | undefined;
+  markt?: { sharpe: number | null; quelle: string; dailyReturns?: readonly number[] | undefined; dayKeys?: readonly string[] | undefined } | undefined;
   /**
    * Risikoloser Satz für `probabilistic_sharpe_oos` und `beats_market`.
    * Fehlt er, rechnen beide Gates wie bisher gegen null — und sagen es.
@@ -665,6 +665,33 @@ function geldMassstab(a: GateInput): { kette: UeberschussKette | null; note: str
   return { kette: k, note: `Maßstab: Überschuss über den Zins (${rf.quelle})` };
 }
 
+/**
+ * Nur `continuous`: Tagesachse des Maßstabs gegen die der Kette — gleiche
+ * Länge, gleiche Schlüssel. null = passt (oder kein Maßstab mit Reihe).
+ */
+function massstabAchsenFehler(a: GateInput): string | null {
+  if (a.wfa.kette.modus !== 'continuous') return null;
+  const m = a.markt;
+  if (m === undefined || m.sharpe === null || m.dailyReturns === undefined) return null;
+  const kette = a.wfa.oos.dayKeys ?? [];
+  const markt = m.dayKeys ?? [];
+  if (kette.length === 0) return `Kette ohne Tagesachse (${a.wfa.oos.dailyReturns.length} Renditen)`;
+  if (markt.length !== kette.length || m.dailyReturns.length !== kette.length) {
+    return `${markt.length} Markt-Tage (${m.dailyReturns.length} Renditen) gegen ${kette.length} Ketten-Tage`;
+  }
+  for (let i = 0; i < kette.length; i++) {
+    if (markt[i] !== kette[i]) return `Tag ${i + 1}: Markt ${markt[i]}, Kette ${kette[i]}`;
+  }
+  return null;
+}
+
+/** Trades ohne führende Strategie (Korbrotation in der durchgehenden Kette) — sie zählen mit, der Leser soll es sehen. */
+function unmanagedNotiz(wfa: WfaResult): string {
+  let n = 0;
+  for (const f of wfa.folds) for (const t of f.best.oosTrades) if (t.exitReason === 'unmanaged') n++;
+  return n > 0 ? `, davon ${n} ohne führende Strategie geschlossen (Korbrotation, \`unmanaged\`)` : '';
+}
+
 export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResult[] } {
   const { wfa, optimizer } = a;
   const oos = wfa.oos;
@@ -684,9 +711,10 @@ export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResul
     pass: oos.trades >= minTrades,
     value: oos.trades,
     threshold: minTrades,
-    note: inc
-      ? `${oos.trades} OOS-Trades über ${inc.cleanFolds} saubere von ${inc.totalFolds} Folds (Schwelle anteilig ${minTrades} von ${optimizer.minOosTrades})`
-      : `${oos.trades} OOS-Trades über ${wfa.folds.length} Folds`,
+    note:
+      (inc
+        ? `${oos.trades} OOS-Trades über ${inc.cleanFolds} saubere von ${inc.totalFolds} Folds (Schwelle anteilig ${minTrades} von ${optimizer.minOosTrades})`
+        : `${oos.trades} OOS-Trades über ${wfa.folds.length} Folds`) + unmanagedNotiz(wfa),
   });
 
   // Ein Quartal ohne einen einzigen Trade ist KEIN positiver Fold — seit die
@@ -871,16 +899,23 @@ export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResul
       : marktSr === null
         ? `${a.markt.quelle}, Sharpe nicht berechenbar — Latte 0 (Kasse)`
         : a.markt.quelle + (zins.markt ? ' (Überschuss)' : '');
+  // Durchgehende Kette: Der Maßstab muss auf DERSELBEN Tagesachse stehen
+  // (Nachtrag 2026-09-18-nachtrag-massstab-auf-der-kette, Prüfbefund M2) —
+  // sonst stünden zwei Sharpe-Werte über verschiedene Tagesmengen in einem
+  // Gate. Weicht sie ab, ist die Latte nicht berechenbar: durchgefallen, laut.
+  const achsenFehler = massstabAchsenFehler(a);
   gates.push({
     name: 'beats_market',
-    pass: srAnnual !== null && srAnnual > latte,
+    pass: achsenFehler === null && srAnnual !== null && srAnnual > latte,
     value: srAnnual,
     threshold: latte,
     note:
-      (srAnnual === null
-        ? `OOS-Sharpe nicht berechenbar — gilt als durchgefallen (Latte ${latte.toFixed(2)}, ${quelle})`
-        : `OOS-Sharpe p. a. ${srAnnual.toFixed(2)} gegen ${latte.toFixed(2)} aus ${quelle}` +
-          (srAnnual > latte ? '' : ' — kaufen und liegenlassen war besser')) + `; ${zins.note}`,
+      (achsenFehler !== null
+        ? `Maßstab nicht auf die OOS-Kette ausgerichtet (${achsenFehler}) — gilt als durchgefallen (${quelle})`
+        : srAnnual === null
+          ? `OOS-Sharpe nicht berechenbar — gilt als durchgefallen (Latte ${latte.toFixed(2)}, ${quelle})`
+          : `OOS-Sharpe p. a. ${srAnnual.toFixed(2)} gegen ${latte.toFixed(2)} aus ${quelle}` +
+            (srAnnual > latte ? '' : ' — kaufen und liegenlassen war besser')) + `; ${zins.note}`,
   });
 
   return { pass: gates.every((g) => g.pass), gates };
