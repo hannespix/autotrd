@@ -63,7 +63,9 @@ export function indexWerte(x) {
  * @param {Record<string, unknown>} champion
  */
 export function fuerFirestore(champion) {
-  const out = structuredClone(champion);
+  // Tiefe Kopie über JSON: champion.json IST JSON, und `structuredClone` kennt
+  // die Lint-Umgebung der Skripte nicht (no-undef).
+  const out = JSON.parse(JSON.stringify(champion));
   for (const block of ['symbols']) {
     const eintraege = out[block];
     if (!istObjekt(eintraege)) continue;
