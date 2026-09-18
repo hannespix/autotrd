@@ -151,3 +151,35 @@ Raster-Schnitt, gilt der alte Champion-Stand weiter (kein Lauf, keine
 Entscheidung — wie bei jeder Datenpanne). Die Regel wird nicht gelockert;
 was gelockert werden müsste, braucht eine neue Vorregistrierung und den
 Owner.
+
+## Ergebnis des ersten Laufs (#21, 18.09.2026 08:26 UTC, `main` = `a924849`) — nach dem Lauf geschrieben
+
+| # | Erwartung | Ergebnis |
+|---|---|---|
+| 1 | Laufzeit < 60 min | **✔** 18,6 min gesamt, Walk-Forward-Schritt 18,0 min (vorher ≈ 6,5) |
+| 2 | Keine Familie 3/3 | **✔** alle fünf Familien 0/3 — td, mp, mr, csm, regime |
+| 3 | csm fällt in der Nachprüfung (R4) ⇒ `demote_to_notrade` | **✔** „Altbestand aus Regel 1 — Nachprüfung unter Regel 2 NICHT bestanden"; csm-Familie mit frischer Suche 0/3 (Raster −0: PSR 0,742, `fee_share` 144,9 %, `beats_market` 0,31 < 0,46; −1: PSR, `beats_market`; −2: dazu `fold_concentration`, `fee_share`). `symbols` leer, 30 `noTrade`, veröffentlicht (752 indizierbare Werte). |
+| 4 | Erprobung übernimmt **csm** auf Papier | **✘ im Kandidaten, ✔ im Mechanismus.** Score-bester ≥ 4 Trades je Monat ist `mean_reversion` (3,979; 7,5 je Monat), nicht csm: Mit den neuen Losen (K2, PR #518) fiel csm von 3,358 auf 2,091, `mean_reversion` stieg von 2,884 auf 3,979. Die Papier-Konten handeln weiter — nur einen anderen Durchgefallenen. |
+| 5 | Raster −1 des Laufs N+1 reproduziert Raster −0 des Laufs N | erst ab Lauf #22 messbar |
+
+**Nebenbefund A — die feste Parametrisierung besteht, die Familie nicht.** Die
+nächtliche Prüfung (R3) mit csms FESTEN Parametern
+`{100,2,0.1,0.6,0,7,3.5,1}` über alle 18 Folds nahm alle zehn Gates auf
+allen drei Rastern (Score 3,570 / 4,158 / 3,990; 494 / 507 / 502 Trades;
+roh +8 259 / +9 791 / +9 486 $; Zähler 0/3). Die frische Suche derselben
+Familie nahm sie auf keinem. R4 verlangt — wie vorregistriert — die Familie,
+nicht den Parametersatz: Ein Altbestand muss dieselbe Latte nehmen, die ihn
+heute befördern würde. Was daraus folgt, steht in `befunde.md` (Weg über
+einen Festkandidaten NACH K4, nicht vorher).
+
+**Nebenbefund B — K4 live gesehen.** Die csm-Kette der frischen Suche zeigt
+roh +5 568 $, im Überschuss +1 505 $ — und die Exit-Anatomie derselben Kette
+**−178,47 $** über 394 geschlossene Trades. Der Überschuss besteht aus
+Buchgewinnen offener Positionen an Fold-Enden (Prüfbefund K4), nicht aus
+Handel. `fee_share` 144,9 % ist die Folge (K5): Nenner ≈ 396 $.
+
+**Nebenbefund C — der Erprobungs-Kandidat verliert unter Stress.**
+`mean_reversion` Raster −0: `fold_concentration` 166 % (ohne den besten Fold
+−299 $), `stress_costs` −167 $, DSR 0,000. Er handelt auf Papier (7,5 je
+Monat); die Erwartung aus §0.9 gilt: Ein Durchgefallener verliert
+wahrscheinlich auch dort.
