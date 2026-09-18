@@ -129,6 +129,7 @@ describe('Register', () => {
       'vigilant_allocation',
       'index_reversal',
       'turn_of_month',
+      'time_series_momentum',
     ]);
     expect(new Set(strategyIds()).size).toBe(STRATEGIES.length);
     expect(getStrategy('mean_reversion').id).toBe('mean_reversion');
@@ -226,6 +227,10 @@ const variants: Variant[] = [
   { id: 'index_reversal', over: { rsiLen: 4, rsiEntry: 25, rsiExit: 60, exitOnPrevHigh: 0, maxHoldBars: 3, atrMult: 2, trendLen: 100 }, bars: randomDaily(400, 35), tf: 1440 },
   { id: 'turn_of_month', over: {}, bars: randomDaily(300, 36), tf: 1440 },
   { id: 'turn_of_month', over: { entryOffset: 0, exitTradingDay: 1, maxHoldBars: 5, atrMult: 6 }, bars: randomDaily(300, 37), tf: 1440 },
+  // Zeitreihen-Momentum (18.09.2026): Warmup bis 149 Bars — 400 Bars lassen
+  // genug Entscheidungsraum, damit der Test nicht leer läuft.
+  { id: 'time_series_momentum', over: {}, bars: randomDaily(400, 38), tf: 1440 },
+  { id: 'time_series_momentum', over: { lookback: 63, skip: 0, regimeLen: 50, exitBandPct: 0, stopPct: 10 }, bars: randomDaily(300, 39), tf: 1440 },
 ];
 
 describe('Präfix-Suite deckt jede registrierte Strategie', () => {

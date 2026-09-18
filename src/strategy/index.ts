@@ -14,6 +14,7 @@ import { strategy as regimeAllocation } from './regimeAllocation.ts';
 import { strategy as vigilantAllocation } from './vigilantAllocation.ts';
 import { strategy as indexReversal } from './indexReversal.ts';
 import { strategy as turnOfMonth } from './turnOfMonth.ts';
+import { strategy as timeSeriesMomentum } from './timeSeriesMomentum.ts';
 
 /**
  * Registriert heißt NICHT gehandelt: Was hier steht, ist messbar. Gehandelt
@@ -34,6 +35,7 @@ export const STRATEGIES: readonly Strategy[] = Object.freeze([
   vigilantAllocation,
   indexReversal,
   turnOfMonth,
+  timeSeriesMomentum,
 ]);
 
 export function strategyIds(): string[] {

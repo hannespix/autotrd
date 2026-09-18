@@ -99,8 +99,14 @@ function warmupBars(p: Params): number {
   return Math.max(req(p, 'lookback') + req(p, 'skip'), req(p, 'regimeLen'), VOL_LEN + 1) + 2;
 }
 
-/** Rendite über `lookback` Bars, endend `skip` Bars vor der aktuellen. */
-function momentum(close: BarSeriesLike['c'], lookback: number, skip: number): Float64Array {
+/**
+ * Rendite über `lookback` Bars, endend `skip` Bars vor der aktuellen.
+ *
+ * Exportiert (18.09.2026), weil `time_series_momentum` dasselbe Fenster
+ * misst: Zwei Implementierungen derselben Rendite wären zwei Stellen, an
+ * denen ein Index-Versatz schiefgehen kann — wie bei `rebalanceFenster`.
+ */
+export function momentum(close: BarSeriesLike['c'], lookback: number, skip: number): Float64Array {
   const out = nanArray(close.length);
   for (let i = lookback + skip; i < close.length; i++) {
     const jetzt = close[i - skip];
