@@ -104,7 +104,9 @@ Embargo und unangetastetem Holdout, Kosten inklusive Stress ×1,5, Gates
 Sharpe ≥ 0,9 auf der OOS-Kette, Gebührenanteil ≤ 0,5; Deflated Sharpe
 informativ) — **auf drei Rastern** (Anker −0/−1/−2 Handelstage, Regel 2
 seit 18.09.2026), Champion/Challenger mit Marge, Amtsinhaber jede Nacht mit
-festen Parametern geprüft. Backtest und Live rechnen über
+festen Parametern geprüft. Die OOS-Kette ist EINE durchgehende Simulation
+(Parameter- und Korbwechsel an den Fold-Grenzen, Positionen laufen weiter —
+kein Buchgewinn an Fold-Enden). Backtest und Live rechnen über
 `src/core/logic.ts` — dieselbe Funktion.
 
 ## Repo-Layout

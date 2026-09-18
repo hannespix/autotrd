@@ -77,6 +77,23 @@ Kosten kippt, lebt von der Kostenannahme, nicht von der Kante.
   OOS — das OOS sieht die Suche nicht.
 - **Finale Parameter** entstehen aus einer Suche auf dem letzten Fenster;
   ihr OOS-Beleg ist die Fold-Kette davor, nicht ihr eigenes Fenster.
+- **Die OOS-Kette ist EINE Simulation** (`optimizer.oosChain: continuous`,
+  seit 18.09.2026; Vorregistrierung
+  `docs/wissen/vorregistrierung/2026-09-18-durchgehende-oos-kette.md`): ein
+  Buch, ein Peak, von `oosStart` des ersten bis `oosEnd` des letzten Folds.
+  An der OOS-Grenze jedes Folds wechseln die Parameter auf dessen Fold-Besten
+  und der Korb auf seinen Stand (Fahrplan `ParameterWechsel` im Simulator);
+  Positionen laufen weiter, ein Symbol ohne führende Strategie wird
+  `unmanaged` geschlossen — wie die Plattform nachts. Das Ergebnis wird an
+  den Fold-Grenzen in Scheiben geschnitten und je Scheibe auf das
+  Startkapital normiert (Trades nach Ausstiegszeit, Zuordnung erschöpfend);
+  so rechnen alle Gates, `aggregateOos` und `ueberschussKette` wie zuvor,
+  und der Stress-Lauf ist ein zweiter durchgehender Lauf bei Kosten ×1,5.
+  Bis dahin war jeder Fold ein eigener Lauf mit leerem Buch, und am
+  Fold-Ende offene Positionen zählten zum Schluss bewertet als Ergebnis,
+  ohne je ein Trade zu werden (Prüfbefund K4: ≈ 2 600 $ von 3 388 $
+  Überschuss der csm-Kette in #18). `per_fold` gibt es nur noch für
+  Vergleichsläufe; der Bericht nennt den Modus in der Kopfzeile.
 
 ## 4. Zielfunktion
 
