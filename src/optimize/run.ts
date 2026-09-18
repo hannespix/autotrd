@@ -92,7 +92,7 @@ import {
   type PsrResult,
   type StressResult,
 } from './robustness.ts';
-import { mulberry32, wirksamerSuchraum } from './search.ts';
+import { wirksamerSuchraum } from './search.ts';
 import {
   MIN_FOLDS,
   TAGE_JE_MONAT,
@@ -1101,8 +1101,10 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
   const log = input.log ?? (() => undefined);
   const paths = homePaths(input.home);
   const journal = new Journal(input.journalPath ?? paths.journal);
-  // Ein Generator für den ganzen Lauf: gleiche Config + gleicher Seed ⇒ identisches Ergebnis.
-  const rng = mulberry32(optimizer.seed);
+  // Kein Generator für den ganzen Lauf mehr: walkForward leitet je Strategie
+  // und Fenster einen eigenen aus `optimizer.seed` ab (search.ts `rngFuer`) —
+  // gleiche Config + gleicher Seed ⇒ identisches Ergebnis gilt damit je
+  // KANDIDAT, nicht nur für den Lauf als Ganzes (Prüfbefund K2, 18.09.2026).
   const simConfig: SimConfig = {
     risk: cfg.risk,
     session: cfg.session,
@@ -1409,7 +1411,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
         try {
           // Kein `include` des Amtsinhabers: seine Params stammen aus einem Fit-Fenster,
           // das in den OOS-Fenstern der Kandidaten liegt — Defaults bleiben drin (walkForward).
-          const wfa = walkForward({ ...common, strategy, optimizer, rng, log });
+          const wfa = walkForward({ ...common, strategy, optimizer, log });
           const r = bewerte(strategy, wfa, null);
           results.push(r);
           gatesLog(strategy.id, r);

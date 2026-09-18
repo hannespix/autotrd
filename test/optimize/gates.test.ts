@@ -514,7 +514,7 @@ describe('stressTest & neighborhoodTest (mit Fake-Simulator)', () => {
   const common = { symbol: 'AAA', strategy, bars, config: simConfigOf(cfg), initialEquity: 10_000 };
 
   function wfaOf(simulate: ReturnType<typeof makeFakeSimulate>) {
-    return walkForward({ ...common, optimizer: cfg.optimizer, simulate, rng: mulberry32(1) });
+    return walkForward({ ...common, optimizer: cfg.optimizer, simulate });
   }
 
   it('Stress simuliert die OOS-Kette mit dem Kostenfaktor — Netto sinkt, bleibt bei echter Kante positiv', () => {
@@ -573,7 +573,7 @@ describe('stressTest & neighborhoodTest (mit Fake-Simulator)', () => {
     const gesperrt = simConfigOf(cfg);
     expect(gesperrt.risk.allowShort).toBe(false);
     const simulate = makeFakeSimulate(REWARD_PROFILE);
-    const wfa = walkForward({ ...common, strategy: mitShort, config: gesperrt, optimizer: cfg.optimizer, simulate, rng: mulberry32(1) });
+    const wfa = walkForward({ ...common, strategy: mitShort, config: gesperrt, optimizer: cfg.optimizer, simulate });
     simulate.calls.length = 0;
     const n = neighborhoodTest({ ...common, strategy: mitShort, config: gesperrt, simulate, wfa, optimizer: cfg.optimizer });
     const ohneAchse = neighbors(wfa.finalParams, strategy.paramSpace);
@@ -582,7 +582,7 @@ describe('stressTest & neighborhoodTest (mit Fake-Simulator)', () => {
 
     // Mit erlaubtem Short ist die Achse echt und hat genau einen Nachbarn mehr.
     const erlaubt = { ...gesperrt, risk: { ...gesperrt.risk, allowShort: true } };
-    const wfa2 = walkForward({ ...common, strategy: mitShort, config: erlaubt, optimizer: cfg.optimizer, simulate, rng: mulberry32(1) });
+    const wfa2 = walkForward({ ...common, strategy: mitShort, config: erlaubt, optimizer: cfg.optimizer, simulate });
     const n2 = neighborhoodTest({ ...common, strategy: mitShort, config: erlaubt, simulate, wfa: wfa2, optimizer: cfg.optimizer });
     expect(n2.evaluated).toBe(neighbors(wfa2.finalParams, strategy.paramSpace).length + 1);
   });
@@ -590,7 +590,7 @@ describe('stressTest & neighborhoodTest (mit Fake-Simulator)', () => {
   it('ein Raum ohne Nachbarn gilt als Plateau', () => {
     const single = fakeStrategy('one', { space: [{ name: 'a', min: 1, max: 1, step: 1, kind: 'int' }], defaults: { a: 1 } });
     const simulate = makeFakeSimulate(REWARD_PROFILE);
-    const wfa = walkForward({ ...common, strategy: single, optimizer: cfg.optimizer, simulate, rng: mulberry32(1) });
+    const wfa = walkForward({ ...common, strategy: single, optimizer: cfg.optimizer, simulate });
     const n = neighborhoodTest({ ...common, simulate, strategy: single, wfa, optimizer: cfg.optimizer });
     expect(n.evaluated).toBe(0);
     expect(n.positiveShare).toBe(1);

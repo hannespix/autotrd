@@ -10,6 +10,32 @@ import type { Params, ParamSpec } from '../core/types.ts';
 
 /** Ein Generator im Repo: der seedbare mulberry32 des Backtesters. */
 export { mulberry32 } from '../backtest/synthetic.ts';
+import { mulberry32 as generator } from '../backtest/synthetic.ts';
+
+/**
+ * Seed für GENAU EINE Suche: Lauf-Seed ⊕ Strategie ⊕ Fenster (FNV-1a über den
+ * Text). Welche Gitterpunkte eine Strategie in einem Fenster sieht, hängt
+ * damit nur an diesen drei Dingen — nie daran, was im Lauf davor gezogen
+ * wurde. Bis zum 18.09.2026 gab es EINEN Generator für den ganzen Lauf, und
+ * `sampleParams` zieht, bis die Stichprobe voll ist (Seeds zählen mit): Ob
+ * eine Strategie in einem Fold zufällig ihre Defaults als Besten hatte,
+ * verschob den Generator um einen Zug — und alle 2 850 Kandidaten der nächsten
+ * Strategie waren andere Gitterpunkte (Prüfbefund K2, Lauf #17 → #18).
+ */
+export function seedFuer(seed: number, ...teile: readonly (string | number)[]): number {
+  const text = [seed, ...teile].join('|');
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+/** Ein frischer Generator für eine Suche — siehe `seedFuer`. */
+export function rngFuer(seed: number, ...teile: readonly (string | number)[]): () => number {
+  return generator(seedFuer(seed, ...teile));
+}
 
 /* ───────────────────────── Gitter ───────────────────────── */
 

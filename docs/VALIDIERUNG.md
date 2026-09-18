@@ -67,7 +67,13 @@ Kosten kippt, lebt von der Kostenannahme, nicht von der Kante.
   ausgesehen.
 - **Suche** je Fold: `samples` = 150 Zufallsstichproben aus dem
   Parameterraum der Strategie (`paramSpace`, Gitter mit `step`), mit
-  `seed` = 42 reproduzierbar. Keine Gradienten, kein Nachziehen auf dem
+  `seed` = 42 reproduzierbar — **je Strategie und Fenster** aus dem Seed
+  abgeleitet (`rngFuer`, seit 18.09.2026): Welche Gitterpunkte eine
+  Strategie sieht, hängt nicht davon ab, was im Lauf davor gezogen wurde.
+  Bis dahin teilten sich alle Suchen einen Generator, und ein Zufallszug
+  mehr oder weniger in einer Strategie gab der nächsten ein ganz anderes
+  Los (Prüfbefund K2: #17 → #18 hatte `cross_sectional_momentum` 0 von 18
+  gleiche Fold-Kandidaten). Keine Gradienten, kein Nachziehen auf dem
   OOS — das OOS sieht die Suche nicht.
 - **Finale Parameter** entstehen aus einer Suche auf dem letzten Fenster;
   ihr OOS-Beleg ist die Fold-Kette davor, nicht ihr eigenes Fenster.

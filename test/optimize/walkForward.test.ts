@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { median, objectiveValue } from '../../src/optimize/objective.ts';
-import { mulberry32 } from '../../src/optimize/search.ts';
 import { aggregateOos, fixedParamsWfa, foldPlanForBars, lowerBound, oosScoreOnFolds, walkForward, type OosPiece } from '../../src/optimize/walkForward.ts';
 import { REWARD_PROFILE, dailyBars, fakeStrategy, makeFakeSimulate, simConfigOf, testConfig } from './fakes.ts';
 
@@ -15,10 +14,10 @@ function runWfa(seed = 1) {
     strategy,
     bars,
     config: simConfigOf(cfg),
-    optimizer: cfg.optimizer,
+    // Der Seed fließt über die Config: walkForward leitet je Strategie und Fenster einen Generator daraus ab.
+    optimizer: { ...cfg.optimizer, seed },
     initialEquity: 10_000,
     simulate,
-    rng: mulberry32(seed),
   });
   return { wfa, simulate };
 }
@@ -130,7 +129,6 @@ describe('walkForward', () => {
       optimizer: cfg.optimizer,
       initialEquity: 10_000,
       simulate,
-      rng: mulberry32(1),
     });
     for (const f of w.folds) expect(f.best.params).toEqual(strategy.defaults);
     expect(w.finalParams).toEqual(strategy.defaults);
@@ -149,7 +147,6 @@ describe('walkForward', () => {
       optimizer: small.optimizer,
       initialEquity: 10_000,
       simulate,
-      rng: mulberry32(1),
       include: [{ a: 9, b: 4 }],
     });
     const first = simulate.calls.slice(0, 4).map((c) => c.params);
@@ -167,7 +164,6 @@ describe('walkForward', () => {
         optimizer: cfg.optimizer,
         initialEquity: 10_000,
         simulate: makeFakeSimulate(REWARD_PROFILE),
-        rng: mulberry32(1),
       }),
     ).toThrow(/mindestens 3 Folds/);
   });
@@ -311,7 +307,7 @@ describe('tote Achse allowShort in der Suche', () => {
     const gesperrt = simConfigOf(cfg);
     expect(gesperrt.risk.allowShort).toBe(false);
     // Ein Seed aus einem älteren Champion mit allowShort 1 wird auf 0 genagelt.
-    walkForward({ symbol: 'AAA', strategy: mitShort, bars, config: gesperrt, optimizer: cfg.optimizer, initialEquity: 10_000, simulate, rng: mulberry32(1), include: [{ ...basis.defaults, allowShort: 1 }] });
+    walkForward({ symbol: 'AAA', strategy: mitShort, bars, config: gesperrt, optimizer: cfg.optimizer, initialEquity: 10_000, simulate, include: [{ ...basis.defaults, allowShort: 1 }] });
     expect(simulate.calls.length).toBeGreaterThan(0);
     for (const c of simulate.calls) expect(c.params.allowShort).toBe(0);
   });
@@ -320,7 +316,7 @@ describe('tote Achse allowShort in der Suche', () => {
     const simulate = makeFakeSimulate(REWARD_PROFILE);
     const basisCfg = simConfigOf(cfg);
     const erlaubt = { ...basisCfg, risk: { ...basisCfg.risk, allowShort: true } };
-    walkForward({ symbol: 'AAA', strategy: mitShort, bars, config: erlaubt, optimizer: cfg.optimizer, initialEquity: 10_000, simulate, rng: mulberry32(1) });
+    walkForward({ symbol: 'AAA', strategy: mitShort, bars, config: erlaubt, optimizer: cfg.optimizer, initialEquity: 10_000, simulate });
     expect(simulate.calls.some((c) => c.params.allowShort === 1)).toBe(true);
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ParamSpec, Params } from '../../src/core/types.ts';
-import { axisValues, gridSize, mulberry32, neighbors, paramKey, sampleParams, snapToGrid, wirksamerSuchraum } from '../../src/optimize/search.ts';
+import { axisValues, gridSize, mulberry32, neighbors, paramKey, rngFuer, sampleParams, seedFuer, snapToGrid, wirksamerSuchraum } from '../../src/optimize/search.ts';
 import { SPACE_AB } from './fakes.ts';
 
 const onGrid = (p: Params, space: readonly ParamSpec[]): boolean =>
@@ -146,5 +146,41 @@ describe('wirksamerSuchraum — allowShort ist bei gesperrtem Short eine tote Ac
     const r = wirksamerSuchraum(SPACE_AB, false);
     expect(r.space).toBe(SPACE_AB);
     expect(r.pinned).toEqual({});
+  });
+});
+
+describe('seedFuer / rngFuer — ein Generator je Strategie und Fenster (Prüfbefund K2)', () => {
+  it('ist deterministisch und hängt an Seed, Strategie und Fenster', () => {
+    expect(seedFuer(42, 'csm', 'fold:3')).toBe(seedFuer(42, 'csm', 'fold:3'));
+    expect(seedFuer(42, 'csm', 'fold:3')).not.toBe(seedFuer(43, 'csm', 'fold:3'));
+    expect(seedFuer(42, 'csm', 'fold:3')).not.toBe(seedFuer(42, 'td', 'fold:3'));
+    expect(seedFuer(42, 'csm', 'fold:3')).not.toBe(seedFuer(42, 'csm', 'fold:4'));
+    expect(seedFuer(42, 'csm', 'final')).not.toBe(seedFuer(42, 'csm', 'fold:0'));
+    // 32-Bit ohne Vorzeichen — was mulberry32 erwartet
+    for (const s of [seedFuer(0), seedFuer(42, 'x'), seedFuer(2 ** 31, 'y', 'z')]) expect(Number.isInteger(s) && s >= 0 && s < 2 ** 32).toBe(true);
+  });
+
+  it('zwei Generatoren derselben Kennung liefern denselben Strom — und der Strom einer Kennung ist von jedem anderen unberührt', () => {
+    const a = rngFuer(7, 'ziel', 'fold:1');
+    const b = rngFuer(7, 'ziel', 'fold:1');
+    const fremd = rngFuer(7, 'andere', 'final');
+    for (let i = 0; i < 1000; i++) fremd(); // beliebig viele Züge anderswo
+    const c = rngFuer(7, 'ziel', 'fold:1');
+    const strom = Array.from({ length: 20 }, () => a());
+    expect(Array.from({ length: 20 }, () => b())).toEqual(strom);
+    expect(Array.from({ length: 20 }, () => c())).toEqual(strom);
+    expect(Array.from({ length: 20 }, () => fremd())).not.toEqual(strom);
+  });
+
+  it('die Kandidaten einer Suche sind ein Präfix-stabiler Strom: ein Seed mehr verdrängt hinten, nie vorne', () => {
+    const space: ParamSpec[] = [...SPACE_AB, { name: 'c', min: 0, max: 9, step: 1, kind: 'int', doc: 'x' }];
+    const ohne = sampleParams(space, 30, rngFuer(1, 's', 'final'), [{ a: 5, b: 2, c: 0 }]).map((p) => paramKey(p));
+    const mit = sampleParams(space, 30, rngFuer(1, 's', 'final'), [{ a: 5, b: 2, c: 0 }, { a: 9, b: 4, c: 9 }]).map((p) => paramKey(p));
+    // gleicher Strom ⇒ dieselben Zufallspunkte in derselben Reihenfolge, der zusätzliche Seed nimmt nur den letzten Platz
+    const zufallOhne = ohne.slice(1);
+    const zufallMit = mit.slice(2);
+    expect(zufallMit).toEqual(zufallOhne.filter((k) => k !== paramKey({ a: 9, b: 4, c: 9 })).slice(0, zufallMit.length));
+    expect(mit.length).toBe(30);
+    expect(ohne.length).toBe(30);
   });
 });
