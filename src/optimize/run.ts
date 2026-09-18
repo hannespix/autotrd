@@ -54,26 +54,11 @@ import {
   type Gewichtsregel,
 } from './ensemble.ts';
 import { korbJeFold, type KorbStand } from './korbJeFold.ts';
+import { rasterEnde, rasterKennung, schneideKorb, schneideSerie } from './raster.ts';
 import type { Calendar } from '../core/time.ts';
 import { DAY, dayKey, dayKeyFor } from '../core/time.ts';
 import type { AssetClass, Bar, BarSeriesLike, HaltBilanz, Metrics, Ms, Params, SimResult, SizingSpec, Strategy, VolZielVerteilung } from '../core/types.ts';
-import {
-  applyDecision,
-  decidePromotion,
-  emptyChampionFile,
-  fitEndOf,
-  journalBasis,
-  journalDecision,
-  journalEnsemble,
-  loadChampion,
-  mitBasis,
-  saveChampion,
-  type ChampionBasis,
-  type ChampionEntry,
-  type ChampionFile,
-  type PromotionDecision,
-  waehleErprobung,
-} from './promote.ts';
+import { applyDecision, decidePromotion, emptyChampionFile, finiteOrNull, fitEndOf, journalBasis, journalDecision, journalEnsemble, loadChampion, mitBasis, saveChampion, type ChampionBasis, type ChampionEntry, type ChampionFile, type PromotionDecision, waehleErprobung, REGEL_AKTUELL, type AmtsinhaberPruefung, type RasterUrteil } from './promote.ts';
 import { BASIS_STUFE } from '../risk/limits.ts';
 import { renderReport, writeReport } from './report.ts';
 import {
@@ -105,6 +90,7 @@ import {
   korbZum,
   type Membership,
   walkForward,
+  type WindowSimArgs,
   zeitachseVon,
   type BarsInput,
   type BasisKennzahlen,
@@ -209,9 +195,18 @@ export interface StrategyRun {
   /** Name des Festkandidaten im Bericht (`label`, sonst die registrierten Parameter); null bei gesuchten Strategien. */
   label: string | null;
   wfa: WfaResult;
+  /** Gates auf Raster 0 (dem jüngsten Stand) — der Bericht zeigt sie im Detail. */
   gates: GateResult[];
+  /** Gates auf Raster 0 bestanden. Für die Beförderung zählt `rasterPass`. */
   pass: boolean;
-  /** = wfa.oos.objectiveMedian */
+  /**
+   * Regel 2: das Urteil JEDES Rasters, Raster 0 zuerst. Ein Kandidat besteht
+   * (`rasterPass`) nur, wenn jedes Raster alle zehn Gates nimmt — dieselbe
+   * Latte, k-mal angewandt (`optimizer.promotionGrids`).
+   */
+  raster: RasterUrteil[];
+  rasterPass: boolean;
+  /** = wfa.oos.objectiveMedian (Raster 0) */
   score: number;
   stress: StressResult;
   neighborhood: NeighborhoodResult;
@@ -525,6 +520,20 @@ export interface SymbolRun {
   incumbentRescore: number | null;
   incumbentEval: IncumbentEval | null;
   /**
+   * Regel 2, R3: die nächtliche Prüfung des Amtsinhabers mit festen Parametern
+   * über alle Folds jedes Rasters — Stand NACH dieser Nacht (Zähler
+   * fortgeschrieben). null ohne vergleichbaren Amtsinhaber oder ohne Messung.
+   */
+  incumbentNacht: AmtsinhaberPruefung | null;
+  /**
+   * Regel 2, R4: Der Amtsinhaber ist Altbestand (Regel 1) und wurde in diesem
+   * Lauf nachgeprüft — hat seine Familie alle Gates auf allen Rastern
+   * genommen? null, wenn er schon unter Regel 2 steht oder nicht vergleichbar ist.
+   */
+  altbestand: { nachpruefungBestanden: boolean; raster: number } | null;
+  /** Zahl der Raster dieses Laufs (`optimizer.promotionGrids`). */
+  rasterAnzahl: number;
+  /**
    * Was Kaufen-und-Halten im Holdout-Fenster gebracht hätte. Ohne diese Zahl
    * liest man Marktbewegung als Kante (siehe backtest/marktbezug.ts).
    * null, wenn es keinen Holdout gibt oder das Fenster zu kurz ist.
@@ -681,6 +690,21 @@ export function nichtsGemessen(runs: readonly SymbolRun[]): boolean {
  * Universum in EINEM Simulationslauf mit EINEM Konto — inklusive
  * Positionslimit, Brutto-Exposure und Notbremsen, also so, wie es live läuft.
  */
+/**
+ * Ein Raster der Einheit (Regel 2, `optimize/raster.ts`): dieselbe Einheit,
+ * um `anker` Handelstage am Ende gekürzt — mit eigenem Korb je Fold, eigener
+ * Benchmark, eigenem Parkpapier und eigener Latte. `common` und `bars` sind
+ * null, wenn das Raster nicht gebaut werden konnte (`fehler`); ein solches
+ * Raster gilt für jeden Kandidaten als gerissen, nie als bestanden.
+ */
+interface RasterKontext {
+  anker: number;
+  bars: BarsInput | null;
+  common: (Omit<WindowSimArgs, 'strategy' | 'params' | 'range' | 'costMultiplier'> & { parkBars: BarSeriesLike | undefined }) | null;
+  marktLatteFuer: (folds: readonly Fold[]) => MarktLatte | undefined;
+  fehler: string | null;
+}
+
 interface Einheit {
   /**
    * `alpha`: ein Symbol oder der gepoolte Korb — Alpha-Kandidaten, Amtsinhaber,
@@ -1220,8 +1244,10 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
     // (§5a.13) und stammt aus einem Pool, der von heute ist — wer unterwegs
     // verschwand, ist nicht darin. SPY ist eine Serie, die damals kaufbar war.
     const marktSymbol = input.benchmark && cfg.universe.benchmark ? cfg.universe.benchmark : null;
-    const marktLatteFuer = (folds: readonly Fold[]): MarktLatte | undefined => {
-      const bench = input.benchmark;
+    // Als Fabrik über die Benchmark-SERIE: Jedes Raster (Regel 2) bringt seine
+    // eigene, am selben Tag geschnittene Benchmark mit — die Latte eines
+    // Rasters darf keinen Tag sehen, den seine Strategien nicht sehen.
+    const marktLatteMit = (bench: BarSeriesLike | undefined) => (folds: readonly Fold[]): MarktLatte | undefined => {
       if (!bench || marktSymbol === null || folds.length === 0) return undefined;
       const k = marktKette({
         bars: new Map([[marktSymbol, bench]]),
@@ -1242,6 +1268,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
         ...(reihe ? { dailyReturns: reihe.dailyReturns, dayKeys: reihe.dayKeys } : {}),
       };
     };
+    const marktLatteFuer = marktLatteMit(input.benchmark);
     /**
      * Der Zins für die Gates EINES Kandidaten: taggenau auf SEINE OOS-Kette
      * und auf die Kette des Maßstabs gelegt.
@@ -1289,6 +1316,11 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
         }
       : null;
     let korbProtokoll: KorbProtokoll | null = null;
+    // Regel 2, R3: die nächtliche Prüfung des Amtsinhabers — gebaut im
+    // bars-Block (sie braucht `bewerte` und die Raster), aufgerufen im
+    // Amtsinhaber-Block unten, sobald der Amtsinhaber als vergleichbar gilt.
+    let nachtpruefungFn: ((strat: Strategy) => AmtsinhaberPruefung) | null = null;
+    let incumbentNacht: AmtsinhaberPruefung | null = null;
     let basisRun: BasisRun | null = null;
     const ensembleLaeufe: EnsembleRun[] = [];
     let messbar = true;
@@ -1351,25 +1383,70 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       //
       // Bewusst die BENCHMARK (SPY), nicht der Korb — siehe marktLatteFuer.
 
+      // Regel 2 (Vorregistrierung 2026-09-18-befoerderung-auf-drei-rastern.md):
+      // die Raster dieser Einheit. Raster 0 ist der Lauf, wie er bisher war;
+      // Raster j ist dieselbe Einheit um j Handelstage gekürzt — Korb,
+      // Kandidatenpool (Korb je Fold neu gewählt), Benchmark und Parkpapier am
+      // selben Tag geschnitten. Ein Raster, das nicht gebaut werden kann, gilt
+      // als gerissen: Ein Kandidat besteht dann nicht, statt still auf
+      // weniger Rastern zu bestehen.
+      const rasterKontexte: RasterKontext[] = [{ anker: 0, bars, common, marktLatteFuer, fehler: null }];
+      for (let anker = 1; anker < optimizer.promotionGrids; anker++) {
+        try {
+          const ende = rasterEnde(achse, anker);
+          const barsJ: BarsInput = bars instanceof Map ? schneideKorb(bars as ReadonlyMap<string, BarSeriesLike>, ende) : schneideSerie(bars as BarSeriesLike, ende);
+          const commonJ: NonNullable<RasterKontext['common']> = {
+            ...common,
+            bars: barsJ,
+            benchmark: input.benchmark ? schneideSerie(input.benchmark, ende) : undefined,
+            parkBars: input.parkBars ? schneideSerie(input.parkBars, ende) : undefined,
+            membership: undefined,
+          };
+          if (einheit.kandidaten) {
+            const planJ = foldPlanForBars(zeitachseVon(korbVon(symbol, barsJ)), optimizer);
+            const letzterJ = planJ.folds[planJ.folds.length - 1]!;
+            const zeitenJ = [...planJ.folds.map((f) => f.oosStart), letzterJ.oosEnd, ...(planJ.holdout ? [planJ.holdout.start] : [])];
+            const kJ = korbJeFold({
+              kandidaten: schneideKorb(einheit.kandidaten, ende),
+              zeiten: zeitenJ,
+              regeln: universeRegelnFuer(cfg.universe.maxSymbols, cfg.universe.reserve),
+              pflicht: cfg.universe.benchmark ? [cfg.universe.benchmark] : [],
+            });
+            commonJ.membership = kJ.at;
+          }
+          rasterKontexte.push({ anker, bars: barsJ, common: commonJ, marktLatteFuer: marktLatteMit(commonJ.benchmark), fehler: null });
+        } catch (e) {
+          const msg = `Raster ${rasterKennung(anker)}: nicht messbar — ${errMsg(e)}`;
+          errors.push(msg);
+          log(`${symbol}: ${msg}`);
+          rasterKontexte.push({ anker, bars: null, common: null, marktLatteFuer: () => undefined, fehler: errMsg(e) });
+        }
+      }
+      const kontext0 = rasterKontexte[0]!;
+
       // EINE Kette für jeden Kandidaten, gesucht oder fest: Stress,
       // Nachbarschaft, DSR (IS), PSR (OOS), Gates, Maßstab. Ein Festkandidat
       // KANN so keinen Sonderweg haben — er unterscheidet sich nur darin, wie
-      // sein WfaResult entstand.
-      const bewerte = (strategy: Strategy, wfa: WfaResult, fest: { label: string } | null): StrategyRun => {
+      // sein WfaResult entstand. `kx` ist das Raster, auf dem gerechnet wird
+      // (Regel 2) — dieselbe Funktion für jedes; nur die Auswertung (Anatomie,
+      // Aktivität) gibt es einmal, auf Raster 0.
+      const bewerte = (strategy: Strategy, wfa: WfaResult, fest: { label: string } | null, kx: RasterKontext = kontext0, mitAuswertung = true): StrategyRun => {
+        const cx = kx.common;
+        if (!cx || !kx.bars) throw new Error(`Raster ${rasterKennung(kx.anker)} nicht messbar (${kx.fehler ?? 'ohne Bars'})`);
         // Stress und Nachbarschaft simulieren EIGENE Fenster — sie bekommen
         // deshalb die Zinsreihe selbst und richten sie auf ihrer eigenen
         // Equity-Kurve aus, nie auf der fremden Achse der OOS-Kette.
         const stress = stressTest({
-          ...common,
+          ...cx,
           strategy,
           wfa,
           costMultiplier: optimizer.stressCostMultiplier,
           objective: optimizer.objective,
           ...(riskFree ? { riskFree } : {}),
         });
-        const neighborhood = neighborhoodTest({ ...common, strategy, wfa, optimizer, ...(riskFree ? { riskFree } : {}) });
+        const neighborhood = neighborhoodTest({ ...cx, strategy, wfa, optimizer, ...(riskFree ? { riskFree } : {}) });
         const dsr = deflatedSharpeIs({ wfa, metricsFns: deps.metricsFns, varSrSource: input.dsrVarSource });
-        const markt = marktLatteFuer(wfa.folds.map((f) => f.fold));
+        const markt = kx.marktLatteFuer(wfa.folds.map((f) => f.fold));
         // DIESELBE Zinsreihe an beide Stellen: `robustnessGates` verwirft den
         // Zins sonst selbst, weil der PSR ohne ihn gerechnet wurde.
         const zins = zinsFuer(wfa, markt, `${strategy.id}${fest ? ` · ${fest.label}` : ''}`);
@@ -1394,25 +1471,81 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
         // nicht aufhebt. Er entscheidet nichts; scheitert er, fehlt im Bericht
         // die Anatomie und sonst nichts.
         let auswertung: KandidatAuswertung | null = null;
-        try {
-          const teile = wfa.folds.map((f) =>
-            simulateWindow({ ...common, strategy, params: f.best.params, range: { start: f.fold.oosStart, end: f.fold.oosEnd }, membershipAt: f.fold.oosStart }),
-          );
-          auswertung = auswertungFuer({ wfa, teile, korb: korbVon(symbol, bars), initialEquity: input.initialEquity, assetClass: cfg.universe.assetClass });
-          if (!auswertung.konsistent) log(`${symbol} ${strategy.id}: Auswertungslauf weicht vom Walk-Forward ab — ${auswertung.hinweis ?? ''}`);
-        } catch (e) {
-          errors.push(`${strategy.id}: Auswertung (Exit-Anatomie/Aktivität) fehlgeschlagen — ${errMsg(e)}`);
+        if (mitAuswertung) {
+          try {
+            const teile = wfa.folds.map((f) =>
+              simulateWindow({ ...cx, strategy, params: f.best.params, range: { start: f.fold.oosStart, end: f.fold.oosEnd }, membershipAt: f.fold.oosStart }),
+            );
+            auswertung = auswertungFuer({ wfa, teile, korb: korbVon(symbol, kx.bars), initialEquity: input.initialEquity, assetClass: cfg.universe.assetClass });
+            if (!auswertung.konsistent) log(`${symbol} ${strategy.id}: Auswertungslauf weicht vom Walk-Forward ab — ${auswertung.hinweis ?? ''}`);
+          } catch (e) {
+            errors.push(`${strategy.id}: Auswertung (Exit-Anatomie/Aktivität) fehlgeschlagen — ${errMsg(e)}`);
+          }
         }
-        return { strategyId: strategy.id, fixed: fest !== null, label: fest?.label ?? null, wfa, gates: g.gates, pass: g.pass, score: wfa.oos.objectiveMedian, stress, neighborhood, dsr, psr, massstab, auswertung };
+        const eigenes: RasterUrteil = { anker: kx.anker, pass: g.pass, failed: g.gates.filter((x) => !x.pass).map((x) => x.name), score: finiteOrNull(wfa.oos.objectiveMedian), trades: wfa.oos.trades, netProfit: wfa.oos.netProfit };
+        return { strategyId: strategy.id, fixed: fest !== null, label: fest?.label ?? null, wfa, gates: g.gates, pass: g.pass, raster: [eigenes], rasterPass: g.pass, score: wfa.oos.objectiveMedian, stress, neighborhood, dsr, psr, massstab, auswertung };
       };
-      const gatesLog = (name: string, r: StrategyRun) => log(`${symbol} ${name}: Gates ${r.pass ? 'bestanden' : 'NICHT bestanden'} (${r.gates.filter((x) => !x.pass).map((x) => x.name).join(', ') || '–'})`);
+      /**
+       * Regel 2: derselbe Kandidat auf den Rastern 1 … k−1. `wfaAuf` liefert
+       * je Raster das WfaResult (Suche oder feste Parameter) — dieselbe
+       * Rechnung wie auf Raster 0, nur ohne Auswertung. Ein Raster, das
+       * scheitert oder nicht gebaut wurde, ist gerissen, mit Grund.
+       */
+      const weitereRaster = (name: string, strategy: Strategy, fest: { label: string } | null, wfaAuf: (kx: RasterKontext) => WfaResult): RasterUrteil[] =>
+        rasterKontexte.slice(1).map((kx): RasterUrteil => {
+          const gerissen = (grund: string): RasterUrteil => ({ anker: kx.anker, pass: false, failed: [grund], score: null, trades: 0, netProfit: 0 });
+          if (!kx.common || !kx.bars) return gerissen('raster_nicht_messbar');
+          try {
+            const u = bewerte(strategy, wfaAuf(kx), fest, kx, false).raster[0]!;
+            log(`${symbol} ${name} Raster ${rasterKennung(kx.anker)}: Gates ${u.pass ? 'bestanden' : 'NICHT bestanden'} (${u.failed.join(', ') || '–'}), Score ${u.score === null ? '–' : u.score.toFixed(3)}, ${u.trades} Trades, netto ${u.netProfit.toFixed(2)}`);
+            return u;
+          } catch (e) {
+            errors.push(`${name} Raster ${rasterKennung(kx.anker)}: ${errMsg(e)}`);
+            log(`${symbol} ${name} Raster ${rasterKennung(kx.anker)}: Fehler — ${errMsg(e)}`);
+            return gerissen('raster_fehler');
+          }
+        });
+      const mitRastern = (r: StrategyRun, weitere: RasterUrteil[]): StrategyRun => {
+        r.raster = [...r.raster, ...weitere];
+        r.rasterPass = r.raster.every((u) => u.pass);
+        return r;
+      };
+      const gatesLog = (name: string, r: StrategyRun) =>
+        log(
+          `${symbol} ${name}: Gates ${r.pass ? 'bestanden' : 'NICHT bestanden'} (${r.gates.filter((x) => !x.pass).map((x) => x.name).join(', ') || '–'})` +
+            (rasterKontexte.length > 1 ? ` · Raster ${r.raster.filter((u) => u.pass).length}/${r.raster.length} ${r.rasterPass ? 'bestanden' : 'NICHT bestanden'}` : ''),
+        );
+
+      // Regel 2, R3: der Amtsinhaber mit FESTEN Parametern über ALLE Folds
+      // jedes Rasters, dieselben zehn Gates (wie ein Festkandidat, DSR nicht
+      // anwendbar). Der letzte Fold enthält sein Fit-Fenster — die Prüfung ist
+      // dort nicht sauber, aber strenger als „ungeprüft", und sie ist die
+      // einzige vor sauberem OOS. Der Zähler kommt aus dem Eintrag und geht
+      // fortgeschrieben zurück (applyDecision, `pruefung`).
+      nachtpruefungFn = (strat: Strategy): AmtsinhaberPruefung => {
+        const params = incumbent!.params;
+        const raster = rasterKontexte.map((kx): RasterUrteil => {
+          const gerissen = (grund: string): RasterUrteil => ({ anker: kx.anker, pass: false, failed: [grund], score: null, trades: 0, netProfit: 0 });
+          if (!kx.common || !kx.bars) return gerissen('raster_nicht_messbar');
+          try {
+            const planJ = foldPlanForBars(zeitachseVon(korbVon(symbol, kx.bars)), optimizer);
+            const w = fixedParamsWfa({ ...kx.common, strategy: strat, params, folds: planJ.folds, optimizer, holdout: planJ.holdout });
+            return bewerte(strat, w, { label: 'Amtsinhaber' }, kx, false).raster[0]!;
+          } catch (e) {
+            errors.push(`Champion ${strat.id} Raster ${rasterKennung(kx.anker)}: Nachtprüfung fehlgeschlagen — ${errMsg(e)}`);
+            return gerissen('raster_fehler');
+          }
+        });
+        const bestanden = raster.every((u) => u.pass);
+        return { gerisseneNaechte: bestanden ? 0 : (incumbent!.pruefung?.gerisseneNaechte ?? 0) + 1, zuletzt: runAt, bestanden, raster };
+      };
 
       for (const strategy of messbar && !istBasisEinheit ? usable : []) {
         try {
           // Kein `include` des Amtsinhabers: seine Params stammen aus einem Fit-Fenster,
           // das in den OOS-Fenstern der Kandidaten liegt — Defaults bleiben drin (walkForward).
           const wfa = walkForward({ ...common, strategy, optimizer, log });
-          const r = bewerte(strategy, wfa, null);
+          const r = mitRastern(bewerte(strategy, wfa, null), weitereRaster(strategy.id, strategy, null, (kx) => walkForward({ ...kx.common!, strategy, optimizer })));
           results.push(r);
           gatesLog(strategy.id, r);
         } catch (e) {
@@ -1430,7 +1563,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
         try {
           const params = festParams({ strategy: fk.strategy, params: fk.config.params, allowShort: cfg.risk.allowShort, log: (m) => log(`${symbol} ${name}: ${m}`) });
           const wfa = fixedCandidateWfa({ ...common, strategy: fk.strategy, params, optimizer });
-          const r = bewerte(fk.strategy, wfa, { label: fk.label });
+          const r = mitRastern(bewerte(fk.strategy, wfa, { label: fk.label }), weitereRaster(name, fk.strategy, { label: fk.label }, (kx) => fixedCandidateWfa({ ...kx.common!, strategy: fk.strategy, params, optimizer })));
           results.push(r);
           gatesLog(name, r);
         } catch (e) {
@@ -1625,7 +1758,8 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
     }
 
     results.sort(byScoreDesc);
-    const bestPassed = results.find((r) => r.pass) ?? null;
+    // Regel 2: bestanden heißt alle Gates auf ALLEN Rastern.
+    const bestPassed = results.find((r) => r.rasterPass) ?? null;
     const bestAny = results[0] ?? null;
 
     // Amtierenden Champion NUR auf sauberem OOS (Folds nach fitEnd) und durch dieselben
@@ -1704,10 +1838,31 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
             };
           }
           log(`${symbol} Champion ${incumbent.strategy}: ${incumbentEval.note}`);
+          // Regel 2, R3 — jede Nacht, unabhängig vom sauberen OOS.
+          if (nachtpruefungFn) {
+            incumbentNacht = nachtpruefungFn(strat);
+            log(
+              `${symbol} Champion ${incumbent.strategy}: Nachtprüfung (feste Parameter, alle Folds, ${incumbentNacht.raster.length} Raster) ` +
+                `${incumbentNacht.bestanden ? 'bestanden' : 'GERISSEN'} — ${incumbentNacht.raster.map((u) => `${rasterKennung(u.anker)}: ${u.pass ? 'ok' : u.failed.join('/')}`).join(', ')}; ` +
+                `Zähler ${incumbentNacht.gerisseneNaechte}/${optimizer.incumbentFailNights}`,
+            );
+          }
         }
       } catch (e) {
         errors.push(`Champion ${incumbent.strategy}: Re-Score fehlgeschlagen — ${errMsg(e)}`);
       }
+    }
+
+    // Regel 2, R4: Altbestand (unter Regel 1 befördert) wird EINMAL durch
+    // dieselbe Prüfung geschickt wie ein Kandidat — seine Familie muss heute
+    // alle Gates auf allen Rastern nehmen. Ohne Messung (keine Bars, nicht
+    // messbar) gibt es kein Urteil, also auch keine Absetzung.
+    const altbestand =
+      incumbent && incumbentVergleichbar && bars && messbar && (incumbent.regel ?? 1) < REGEL_AKTUELL
+        ? { nachpruefungBestanden: results.some((r) => r.strategyId === incumbent.strategy && !r.fixed && r.rasterPass), raster: optimizer.promotionGrids }
+        : null;
+    if (altbestand) {
+      log(`${symbol} Champion ${incumbent!.strategy}: Altbestand aus Regel ${incumbent!.regel ?? 1} — Nachprüfung unter Regel ${REGEL_AKTUELL} ${altbestand.nachpruefungBestanden ? 'bestanden' : 'NICHT bestanden'}`);
     }
 
     const toEntry = (r: StrategyRun): ChampionEntry => ({
@@ -1725,6 +1880,9 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       foldMembership: korbModus,
       // Ein Festkandidat bleibt als solcher erkennbar: vorregistriert, nicht gesucht.
       ...(r.fixed ? { fixed: true as const } : {}),
+      // Regel 2: unter welcher Regel und auf welchen Rastern der Eintrag entstand.
+      regel: REGEL_AKTUELL,
+      raster: r.raster,
     });
 
     // Marktbezug des Holdouts: EINMAL je Einheit, denn das Fenster hängt nur
@@ -1772,6 +1930,8 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
         incumbentPass,
         candidate: candidate ? { entry: candidate, pass: bestPassed !== null } : null,
         margin: optimizer.promotionMargin,
+        ...(incumbentNacht ? { incumbentNaechte: { gerissen: incumbentNacht.gerisseneNaechte, schwelle: optimizer.incumbentFailNights } } : {}),
+        ...(altbestand ? { altbestand } : {}),
       });
     }
 
@@ -1790,7 +1950,17 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
     let chosen: ChampionEntry | null = null;
     if (!istBasisEinheit) {
       for (const sym of einheit.symbols) {
-        champion = applyDecision({ file: champion, symbol: sym, decision, candidate, bestScore: bestAny ? bestAny.score : null, now: runAt, ...(erprobung ? { erprobung } : {}) });
+        champion = applyDecision({
+          file: champion,
+          symbol: sym,
+          decision,
+          candidate,
+          bestScore: bestAny ? bestAny.score : null,
+          now: runAt,
+          ...(erprobung ? { erprobung } : {}),
+          ...(incumbentNacht ? { pruefung: incumbentNacht } : {}),
+          ...(altbestand?.nachpruefungBestanden ? { regelBestaetigt: true } : {}),
+        });
       }
       const ersteszSymbol = einheit.symbols[0]!;
       chosen = decision.action === 'promote' ? champion.symbols[ersteszSymbol]! : decision.action === 'keep' ? incumbent : null;
@@ -1805,6 +1975,12 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
         incumbentPass,
         now: runAt,
         ...(laeuftAufPapier ? { erprobung: { strategy: laeuftAufPapier.entry.strategy, tradesPerMonth: laeuftAufPapier.tradesPerMonth, auswahl: laeuftAufPapier.auswahl } } : {}),
+        raster: {
+          anzahl: optimizer.promotionGrids,
+          candidateBestanden: bestPassed ? bestPassed.raster.filter((u) => u.pass).length : bestAny ? bestAny.raster.filter((u) => u.pass).length : null,
+          incumbentNacht: incumbentNacht?.bestanden ?? null,
+          incumbentNaechte: incumbentNacht?.gerisseneNaechte ?? null,
+        },
       });
       if (laeuftAufPapier) log(`${symbol}: Papier-Erprobung — ${laeuftAufPapier.entry.strategy}: ${laeuftAufPapier.auswahl}`);
     }
@@ -1843,6 +2019,9 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       incumbent,
       incumbentRescore,
       incumbentEval,
+      incumbentNacht,
+      altbestand,
+      rasterAnzahl: optimizer.promotionGrids,
       holdoutMarkt,
       korb: korbProtokoll,
       korbHinweis: einheit.korbHinweis,

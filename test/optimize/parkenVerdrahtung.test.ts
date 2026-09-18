@@ -88,6 +88,10 @@ describe('Parkbars im Optimierer', () => {
         stepDays: 30,
         holdoutDays: 30,
         pooled: true,
+        // Ein Raster: Diese Spione prüfen, dass DIESELBE Parkserie jeden Lauf
+        // erreicht. Auf den Rastern −1/−2 (Regel 2) ist sie absichtlich am
+        // Rasterende geschnitten — das prüft raster.test.ts.
+        promotionGrids: 1,
         // Parken AN verlangt eine Zinsreihe, sonst scheitert der Lauf laut
         // (run.ts; Vorregistrierung 2026-09-13-gates-auf-ueberschuss §2.2):
         // Ohne sie zöge keine Gate-Kennzahl den Zinsertrag wieder ab, den der

@@ -17,6 +17,41 @@ import { TIMEFRAMES, type Ms, type Params, type TimeframeMin } from '../core/typ
 import type { GateResult } from './robustness.ts';
 import type { OosAggregate, TimeRange } from './walkForward.ts';
 
+/**
+ * Urteil EINES Rasters (Regel 2): `anker` Handelstage vom Datenende, das
+ * Gate-Ergebnis mit den gerissenen Gates, dazu Score, Trades und Netto der
+ * OOS-Kette dieses Rasters — für den Bericht, nicht für die Entscheidung
+ * (die liest nur `pass`).
+ */
+export interface RasterUrteil {
+  anker: number;
+  pass: boolean;
+  failed: string[];
+  score: number | null;
+  trades: number;
+  netProfit: number;
+}
+
+/**
+ * Die nächtliche Prüfung des Amtsinhabers (Regel 2, R3): feste Parameter über
+ * alle Folds jedes Rasters, dieselben zehn Gates. `gerisseneNaechte` zählt
+ * aufeinanderfolgende gerissene Nächte; eine bestandene setzt auf 0 zurück.
+ */
+export interface AmtsinhaberPruefung {
+  gerisseneNaechte: number;
+  zuletzt: Ms;
+  bestanden: boolean;
+  raster: RasterUrteil[];
+}
+
+/**
+ * Die Beförderungsregel, unter der ein Eintrag entstand. 1: eine Nacht mit
+ * allen Gates genügte (bis 18.09.2026). 2: alle Gates auf `promotionGrids`
+ * Rastern, Amtsinhaber nächtlich geprüft. Ein Eintrag ohne Feld ist Regel 1
+ * (Altbestand) und wird im ersten Lauf unter Regel 2 nachgeprüft (R4).
+ */
+export const REGEL_AKTUELL = 2;
+
 export interface ChampionEntry {
   strategy: string;
   params: Params;
@@ -43,6 +78,12 @@ export interface ChampionEntry {
    * das Feld (alte Datei oder gesuchte Strategie): gesucht.
    */
   fixed?: true;
+  /** Beförderungsregel (siehe `REGEL_AKTUELL`); fehlt: Regel 1, Altbestand. */
+  regel?: number;
+  /** Die Raster der Beförderung (Regel 2) — alle bestanden, sonst gäbe es den Eintrag nicht. */
+  raster?: RasterUrteil[];
+  /** Stand der nächtlichen Prüfung (Regel 2, R3); fehlt bis zur ersten Nacht nach der Beförderung. */
+  pruefung?: AmtsinhaberPruefung;
 }
 
 /** Fit-Ende eines Champions; alte Dateien ohne Feld: Beförderungszeitpunkt (konservativ). */
@@ -362,6 +403,19 @@ export interface PromotionInput {
   candidate: { entry: ChampionEntry; pass: boolean } | null;
   /** Kandidat muss den Incumbent um diesen Faktor schlagen (0.1 = 10 %). */
   margin: number;
+  /**
+   * Regel 2, R3: Zähler gerissener Nächte des Amtsinhabers NACH der heutigen
+   * Prüfung und die Schwelle (`optimizer.incumbentFailNights`). Erreicht der
+   * Zähler die Schwelle, ist der Amtsinhaber abgesetzt — ein bestehender
+   * Kandidat übernimmt ohne Marge, sonst „kein Handel".
+   */
+  incumbentNaechte?: { gerissen: number; schwelle: number } | undefined;
+  /**
+   * Regel 2, R4: Der Amtsinhaber ist Altbestand (unter Regel 1 befördert).
+   * Hat seine Familie heute alle Gates auf allen Rastern genommen? Wenn
+   * nicht, ist er abgesetzt — einmalige Nachprüfung, kein Bestandsschutz.
+   */
+  altbestand?: { nachpruefungBestanden: boolean; raster: number } | undefined;
 }
 
 const f3 = (x: number | null): string => (x === null ? '–' : x === -Infinity ? '−∞' : x === Infinity ? '∞' : x.toFixed(3));
@@ -380,14 +434,31 @@ export function decidePromotion(a: PromotionInput): PromotionDecision {
   const { incumbent, incumbentRescore, incumbentPass, candidate, margin } = a;
   const cand = candidate && candidate.pass ? candidate.entry : null;
 
+  // Drei Wege, auf denen ein Amtsinhaber abgesetzt ist — in dieser Reihenfolge
+  // benannt, jeder für sich hinreichend. Ein abgesetzter Amtsinhaber ist kein
+  // Maßstab mehr: Ein bestehender Kandidat übernimmt ohne Marge, sonst gilt
+  // „kein Handel".
+  const abgesetzt = (): string | null => {
+    if (!incumbent) return null;
+    if (incumbentPass === false) return `reißt die Gates auf sauberem OOS (Score ${f3(incumbentRescore)})`;
+    if (a.altbestand && !a.altbestand.nachpruefungBestanden) {
+      return `ist Altbestand aus Regel 1 und fällt in der Nachprüfung unter Regel 2 durch (seine Familie nimmt nicht alle Gates auf ${a.altbestand.raster} Rastern)`;
+    }
+    if (a.incumbentNaechte && a.incumbentNaechte.gerissen >= a.incumbentNaechte.schwelle) {
+      return `reißt die Gates in ${a.incumbentNaechte.gerissen} aufeinanderfolgenden Nächten (feste Parameter, alle Raster; Schwelle ${a.incumbentNaechte.schwelle})`;
+    }
+    return null;
+  };
+
   if (cand) {
     if (!incumbent) {
       return { action: 'promote', reason: `erste Beförderung: ${cand.strategy} besteht alle Gates (Score ${f3(cand.score)})` };
     }
-    if (incumbentPass === false) {
+    const weg = abgesetzt();
+    if (weg !== null) {
       return {
         action: 'promote',
-        reason: `Incumbent ${incumbent.strategy} reißt die Gates auf sauberem OOS (Score ${f3(incumbentRescore)}); Kandidat ${cand.strategy} besteht sie (Score ${f3(cand.score)})`,
+        reason: `Incumbent ${incumbent.strategy} ${weg}; Kandidat ${cand.strategy} besteht sie (Score ${f3(cand.score)})`,
       };
     }
     const rescore = incumbentRescore;
@@ -416,8 +487,9 @@ export function decidePromotion(a: PromotionInput): PromotionDecision {
 
   const why = candidate ? `bester Kandidat ${candidate.entry.strategy} (Score ${f3(candidate.entry.score)}) fällt durch die Gates` : 'kein bewertbarer Kandidat';
   if (incumbent) {
-    if (incumbentPass === false) {
-      return { action: 'demote_to_notrade', reason: `${why}; Incumbent ${incumbent.strategy} reißt die Gates auf sauberem OOS (Score ${f3(incumbentRescore)}) — kein Handel` };
+    const weg = abgesetzt();
+    if (weg !== null) {
+      return { action: 'demote_to_notrade', reason: `${why}; Incumbent ${incumbent.strategy} ${weg} — kein Handel` };
     }
     if (incumbentRescore !== null && incumbentRescore > 0) {
       const how = incumbentPass === true ? 'besteht die Gates auf sauberem OOS' : 'ungeprüft (zu wenig sauberes OOS), Beförderungs-Score gilt weiter';
@@ -452,6 +524,15 @@ export function applyDecision(a: {
    * alte Regel: der Kandidat der Beförderungsfrage.
    */
   erprobung?: { entry: ChampionEntry; tradesPerMonth: number | null; auswahl: string } | undefined;
+  /**
+   * Regel 2, R3: der heutige Stand der nächtlichen Prüfung des Amtsinhabers —
+   * wird bei `keep` an seinen Eintrag geschrieben, damit der Zähler die Nacht
+   * überlebt (champion.json ⇄ meta/champion). Bei `promote` beginnt der neue
+   * Eintrag ohne Zähler.
+   */
+  pruefung?: AmtsinhaberPruefung | undefined;
+  /** Regel 2, R4: Altbestand hat die Nachprüfung bestanden — der Eintrag trägt ab jetzt `regel: REGEL_AKTUELL`. */
+  regelBestaetigt?: boolean | undefined;
 }): ChampionFile {
   const symbols = { ...a.file.symbols };
   const noTrade = { ...a.file.noTrade };
@@ -478,13 +559,24 @@ export function applyDecision(a: {
     };
   };
   switch (a.decision.action) {
-    case 'promote':
+    case 'promote': {
       if (!a.candidate) throw new Error(`promote ohne Kandidat für ${a.symbol}`);
-      symbols[a.symbol] = { ...a.candidate, score: finiteOrNull(a.candidate.score) ?? 0, decidedAt: a.now };
+      // Ein neuer Eintrag trägt die Regel, unter der er entstand, und keinen
+      // Zähler aus einem früheren Leben — `pruefung` eines Vorgängers bleibt
+      // nicht an der Stelle kleben.
+      const { pruefung: _alt, ...frisch } = a.candidate;
+      void _alt;
+      symbols[a.symbol] = { ...frisch, regel: REGEL_AKTUELL, score: finiteOrNull(a.candidate.score) ?? 0, decidedAt: a.now };
       delete noTrade[a.symbol];
       break;
-    case 'keep':
+    }
+    case 'keep': {
+      const e = symbols[a.symbol];
+      if (e && (a.pruefung || a.regelBestaetigt)) {
+        symbols[a.symbol] = { ...e, ...(a.pruefung ? { pruefung: a.pruefung } : {}), ...(a.regelBestaetigt ? { regel: REGEL_AKTUELL } : {}) };
+      }
       break;
+    }
     case 'demote_to_notrade':
       delete symbols[a.symbol];
       noTrade[a.symbol] = note;
@@ -520,6 +612,8 @@ export function journalDecision(
     now: Ms;
     /** Wer auf Papier läuft und warum (`waehleErprobung`); fehlt, wenn nichts auf Papier läuft. */
     erprobung?: { strategy: string; tradesPerMonth: number | null; auswahl: string } | undefined;
+    /** Regel 2: Raster des Laufs, bestandene Raster des Kandidaten, Stand der Amtsinhaber-Prüfung. */
+    raster?: { anzahl: number; candidateBestanden: number | null; incumbentNacht: boolean | null; incumbentNaechte: number | null } | undefined;
   },
 ): void {
   journal.append(
@@ -538,6 +632,10 @@ export function journalDecision(
       incumbentPass: a.incumbentPass ?? null,
       erprobungStrategy: a.erprobung?.strategy ?? null,
       erprobungTradesPerMonth: a.erprobung ? finiteOrNull(a.erprobung.tradesPerMonth) : null,
+      rasterAnzahl: a.raster?.anzahl ?? null,
+      candidateRaster: a.raster?.candidateBestanden ?? null,
+      incumbentNacht: a.raster?.incumbentNacht ?? null,
+      incumbentNaechte: a.raster?.incumbentNaechte ?? null,
       erprobungAuswahl: a.erprobung?.auswahl ?? null,
     },
     a.now,

@@ -104,10 +104,26 @@ gelistet und **nicht** befördert — egal wie gut die anderen Zahlen sind.
 
 - `champion.json` (im State-Verzeichnis) hält Strategie, Parameter, den
   OOS-Objective-Median zum Zeitpunkt der Beförderung und den Zeitstempel.
+- **Regel 2 (seit 18.09.2026):** „alle Gates bestehen" heißt alle zehn Gates
+  auf `promotionGrids` = 3 Rastern — derselbe Lauf, die Daten um 0, 1 und 2
+  Handelstage am Ende gekürzt, Fold-Plan, Korb je Fold und Latte je Raster
+  neu (`src/optimize/raster.ts`). Der erste Champion bestand in drei Nächten
+  6/10, 5/10 und 10/10 und wurde mit der einen Nacht befördert; die drei
+  Raster eines Laufs sind diese drei Nächte, ohne den Freiheitsgrad „welche
+  zählt". Score und Parameter kommen von Raster −0. Vorregistriert in
+  `docs/wissen/vorregistrierung/2026-09-18-befoerderung-auf-drei-rastern.md`.
 - Ein Kandidat ersetzt den Champion nur, wenn er alle Gates besteht **und**
   sein Objective-Median den des Champions um `promotionMargin` (10 %)
   übertrifft. Ohne Marge tauscht man Rauschen gegen Rauschen und handelt
   jede Nacht etwas anderes.
+- **Der Amtsinhaber wird jede Nacht geprüft** (Regel 2, R3): feste Parameter
+  über alle Folds jedes Rasters, dieselben zehn Gates (DSR nicht anwendbar).
+  Reißt er in `incumbentFailNights` = 3 aufeinanderfolgenden Nächten Gates,
+  wird er abgesetzt (`demote_to_notrade`; ein bestehender Kandidat übernimmt
+  ohne Marge). Der Zähler steht im Champion-Eintrag (`pruefung`). Ein
+  Amtsinhaber aus Regel 1 (Eintrag ohne `regel: 2`) wird im ersten Lauf
+  unter Regel 2 einmalig nachgeprüft: Seine Familie muss 3/3 nehmen, sonst
+  tritt er sofort ab.
 - Der amtierende Champion wird bei jedem Lauf **neu bewertet** (gleiche
   Daten, gleiche Gates). Reißt er ein Gate, verliert er den Status — dann
   gibt es keinen Champion.

@@ -104,6 +104,15 @@ describe('Champion-Dokument für Firestore', () => {
     expect(p.ok ? '' : p.grund).toMatch(/indizierbare Werte/);
   });
 
+  it('Regel-2-Felder je Eintrag (regel, raster, pruefung) gehen unverändert mit — die Engine der nächsten Nacht liest den Zähler daraus', () => {
+    const e = { ...eintrag(3), regel: 2, raster: [{ anker: 0, pass: true, failed: [], score: 3.3, trades: 424, netProfit: 7476 }, { anker: 1, pass: true, failed: [], score: 3.1, trades: 420, netProfit: 7000 }], pruefung: { gerisseneNaechte: 2, zuletzt: 1789700000000, bestanden: false, raster: [{ anker: 0, pass: false, failed: ['probabilistic_sharpe_oos'], score: 1.2, trades: 400, netProfit: 100 }] } };
+    const doc = fuerFirestore({ ...champion(), symbols: { SPY: e } });
+    expect(doc.symbols.SPY.regel).toBe(2);
+    expect(doc.symbols.SPY.raster).toEqual(e.raster);
+    expect(doc.symbols.SPY.pruefung).toEqual(e.pruefung);
+    expect(pruefeDokument(doc).ok).toBe(true);
+  });
+
   it('noTrade, erprobung und basis gehen unverändert mit', () => {
     const roh = { ...champion(), symbols: {}, noTrade: { AAA: { reason: 'r', decidedAt: 1, bestScore: 0.1 } }, erprobung: { AAA: { version: 1, strategy: 's', params: { a: 1 }, timeframe: 1440, score: 1, failed: ['x'], decidedAt: 1, tradesPerMonth: 6.6, auswahl: 'w' } }, basis: { strategy: 'b', label: 'L', pass: false, symbols: ['A'], gates: [] } };
     const doc = fuerFirestore(roh);

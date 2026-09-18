@@ -121,9 +121,9 @@ describe('Maßstab je Kandidat im Lauf', () => {
     const z = zeilen(text);
     expect(z.length).toBe(3);
     for (const l of z) expect(l).toMatch(/, MaxDD [\d.]+ %, Trades je Monat 30\.4 · ohne Benchmark: Kasse \(Latte 0\) · Zins: /);
-    // Direkt unter der Gates-Tabelle, vor der PSR-Zeile.
+    // Direkt unter der Gates-Tabelle (und der Raster-Tabelle der Regel 2), vor der PSR-Zeile.
     const i = text.indexOf(z[0]!);
-    expect(text.slice(0, i)).toMatch(/\| beats_market \|[^\n]*\n\n$/);
+    expect(text.slice(0, i)).toMatch(/\| beats_market \|[^\n]*\n\nRaster \(Regel 2\): [^\n]*\n\n\| Raster \|[^\n]*\n\|[^\n]*\n(\| −\d [^\n]*\n)+\n$/);
     expect(text.slice(i)).toMatch(/^[^\n]*\n\nPSR \(OOS\): /);
   });
 

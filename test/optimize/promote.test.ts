@@ -3,20 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Journal } from '../../src/core/journal.ts';
-import {
-  applyDecision,
-  decidePromotion,
-  emptyChampionFile,
-  finiteOrNull,
-  fitEndOf,
-  journalDecision,
-  loadChampion,
-  parseErprobung,
-  saveChampion,
-  waehleErprobung,
-  type ChampionEntry,
-  type PromotionInput,
-} from '../../src/optimize/promote.ts';
+import { applyDecision, decidePromotion, emptyChampionFile, finiteOrNull, fitEndOf, journalDecision, loadChampion, parseErprobung, saveChampion, waehleErprobung, type ChampionEntry, type PromotionInput, REGEL_AKTUELL } from '../../src/optimize/promote.ts';
 
 function entry(strategy: string, score: number, extra: Partial<ChampionEntry> = {}): ChampionEntry {
   return {
@@ -239,7 +226,8 @@ describe('applyDecision & Champion-Datei', () => {
     const file = { ...emptyChampionFile(0), noTrade: { AAA: { reason: 'x', decidedAt: 0, bestScore: null } } };
     const cand = entry('new', 1.5, { fitEnd: 77 });
     const out = applyDecision({ file, symbol: 'AAA', decision: { action: 'promote', reason: 'r' }, candidate: cand, bestScore: 1.5, now: 42 });
-    expect(out.symbols.AAA).toEqual({ ...cand, decidedAt: 42 });
+    // Ein neuer Eintrag trägt die Regel, unter der er entstand (Regel 2 seit 18.09.2026).
+    expect(out.symbols.AAA).toEqual({ ...cand, regel: REGEL_AKTUELL, decidedAt: 42 });
     expect(out.symbols.AAA!.fitEnd).toBe(77);
     expect(out.noTrade.AAA).toBeUndefined();
     expect(out.updatedAt).toBe(42);

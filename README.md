@@ -102,8 +102,10 @@ Einrichtung, Ablauf und Betriebsregeln: `docs/PLATTFORM.md`.
 Embargo und unangetastetem Holdout, Kosten inklusive Stress ×1,5, Gates
 (Mindest-Trades, Fold-Anteil, Stress, Nachbarschafts-Plateau, Probabilistic
 Sharpe ≥ 0,9 auf der OOS-Kette, Gebührenanteil ≤ 0,5; Deflated Sharpe
-informativ), Champion/Challenger mit Marge. Backtest und
-Live rechnen über `src/core/logic.ts` — dieselbe Funktion.
+informativ) — **auf drei Rastern** (Anker −0/−1/−2 Handelstage, Regel 2
+seit 18.09.2026), Champion/Challenger mit Marge, Amtsinhaber jede Nacht mit
+festen Parametern geprüft. Backtest und Live rechnen über
+`src/core/logic.ts` — dieselbe Funktion.
 
 ## Repo-Layout
 

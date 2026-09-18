@@ -374,6 +374,21 @@ export const ConfigSchema = z.object({
       holdoutDays: z.number().int().min(0).default(60),
       /** Champion nur ersetzen, wenn Kandidat um diesen Faktor besser ist. */
       promotionMargin: z.number().min(0).default(0.1),
+      /**
+       * Raster der Beförderung (Regel 2, Owner-Entscheidung 18.09.2026,
+       * `docs/wissen/vorregistrierung/2026-09-18-befoerderung-auf-drei-rastern.md`):
+       * Ein Kandidat besteht nur, wenn er auf so vielen Rastern — Anker −0 …
+       * −(k−1) Handelstage, im selben Lauf — alle zehn Gates nimmt. Dieselbe
+       * Latte, k-mal angewandt. 1 ist die alte Regel und existiert nur für
+       * Rauchtests; die Plattform setzt 3.
+       */
+      promotionGrids: z.number().int().min(1).max(5).default(3),
+      /**
+       * Amtsinhaber: jede Nacht mit festen Parametern über alle Folds jedes
+       * Rasters geprüft; nach so vielen aufeinanderfolgenden gerissenen
+       * Nächten abgesetzt (Regel 2, R3).
+       */
+      incumbentFailNights: z.number().int().min(1).max(10).default(3),
       /** PSR der verketteten OOS-Tagesrenditen (gegen SR 0) muss diesen Wert erreichen. */
       minPsrOos: z.number().min(0).max(1).default(0.9),
       /** Deflated Sharpe (In-Sample) zusätzlich als hartes Gate (sonst nur im Bericht). */
@@ -626,6 +641,8 @@ export const ConfigSchema = z.object({
       stressCostMultiplier: 1.5,
       holdoutDays: 60,
       promotionMargin: 0.1,
+      promotionGrids: 3,
+      incumbentFailNights: 3,
       minPsrOos: 0.9,
       dsrIsGate: false,
       riskFreeSymbol: null,
