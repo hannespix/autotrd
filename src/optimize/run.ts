@@ -57,7 +57,8 @@ import { korbJeFold, type KorbStand } from './korbJeFold.ts';
 import { rasterEnde, rasterKennung, schneideKorb, schneideSerie } from './raster.ts';
 import type { Calendar } from '../core/time.ts';
 import { DAY, dayKey, dayKeyFor } from '../core/time.ts';
-import type { AssetClass, Bar, BarSeriesLike, HaltBilanz, Metrics, Ms, Params, SimResult, SizingSpec, Strategy, VolZielVerteilung } from '../core/types.ts';
+import type {
+  Trade, AssetClass, Bar, BarSeriesLike, HaltBilanz, Metrics, Ms, Params, SimResult, SizingSpec, Strategy, VolZielVerteilung } from '../core/types.ts';
 import { applyDecision, decidePromotion, emptyChampionFile, finiteOrNull, fitEndOf, journalBasis, journalDecision, journalEnsemble, loadChampion, mitBasis, saveChampion, type ChampionBasis, type ChampionEntry, type ChampionFile, type PromotionDecision, waehleErprobung, REGEL_AKTUELL, type AmtsinhaberPruefung, type RasterUrteil } from './promote.ts';
 import { BASIS_STUFE } from '../risk/limits.ts';
 import { renderReport, writeReport } from './report.ts';
@@ -253,6 +254,8 @@ export interface KandidatAuswertung {
    * zur durchgehenden Simulation).
    */
   offenAnFoldEnden: OffenAnFoldEnden;
+  /** Prüfbefund M9: Hängt die Kette an einem Titel? Σ Netto je Symbol, die drei größten mit Anteil. Kein Gate. */
+  konzentration: SymbolKonzentration;
   /** Tagesrenditen der OOS-Kette mit Datum — Eingang der Korrelationsmatrix. */
   renditen: Renditereihe;
   /** Kalendertage aller OOS-Fenster zusammen. */
@@ -355,6 +358,30 @@ export function volZielUeberFolds(teile: readonly SimResult[]): VolZielVerteilun
   return { ...summe, minFaktor: erste.minFaktor, maxFaktor: erste.maxFaktor };
 }
 
+export interface SymbolKonzentration {
+  /** Symbole des Korbs (Vereinigung über die Stände). */
+  symbole: number;
+  /** Symbole mit mindestens einem abgeschlossenen Trade. */
+  mitTrades: number;
+  /** Σ Netto aller Trades (Beträge je Fold ab E₀). */
+  gesamt: number;
+  /** Die drei Symbole mit dem größten Netto; `anteil` am Σ Netto, null bei Σ ≤ 0. */
+  top: { symbol: string; netto: number; anteil: number | null }[];
+}
+
+/** Σ Netto je Symbol über die OOS-Kette — die Zahl hinter dem Verdacht „die Kette sind drei NVDA-Quartale" (Prüfbefund M9). */
+export function symbolKonzentration(trades: readonly Trade[], symbole: number): SymbolKonzentration {
+  const je = new Map<string, number>();
+  for (const t of trades) je.set(t.symbol, (je.get(t.symbol) ?? 0) + t.netPnl);
+  let gesamt = 0;
+  for (const x of je.values()) gesamt += x;
+  const top = [...je.entries()]
+    .sort((x, y) => y[1] - x[1])
+    .slice(0, 3)
+    .map(([symbol, netto]) => ({ symbol, netto, anteil: gesamt > 0 ? netto / gesamt : null }));
+  return { symbole, mitTrades: je.size, gesamt, top };
+}
+
 /**
  * Auswertung aus dem Walk-Forward und den Läufen des Auswertungspasses.
  * `teile` muss dieselbe Reihenfolge wie `wfa.folds` haben.
@@ -395,6 +422,7 @@ export function auswertungFuer(a: {
     }),
     aktivitaet: aktivitaet({ trades, equity, assetClass: a.assetClass }),
     offenAnFoldEnden: offenAnFoldEnden(a.teile, a.wfa.kette.modus, Number.isFinite(a.wfa.oos.netReturnPct) ? (a.initialEquity * a.wfa.oos.netReturnPct) / 100 : null),
+    konzentration: symbolKonzentration(trades, a.korb.size),
     renditen: renditeketteVon({ fenster: a.teile, initialEquity: a.initialEquity, assetClass: a.assetClass }),
     oosDays,
     konsistent: abweichungen.length === 0,
@@ -432,6 +460,53 @@ export interface Massstab {
   marktSharpe: number | null;
   /** MaxDD derselben verketteten Wertreihe in %; null ohne Benchmark oder ohne Kurse in den Fenstern. */
   marktMaxDD: number | null;
+  /**
+   * Zweite Latte, nur Bericht (Prüfbefund M6): der Korb je Fold LIEGENGELASSEN
+   * — gleichgewichtet zu Beginn, an jeder Fold-Grenze auf den neuen Stand
+   * umgeschichtet. Sagt, ob die Strategie ihren eigenen Korb schlägt oder nur
+   * dessen Momentum-Tilt erbt. Kein Gate.
+   */
+  korbSharpe: number | null;
+  korbMaxDD: number | null;
+  korbQuelle: string;
+}
+
+/** Der liegengelassene Korb als Reihe — Eingang der zweiten Maßstab-Zeile. */
+export interface KorbLatte {
+  sharpe: number | null;
+  maxDrawdownPct: number;
+  dailyReturns: readonly number[];
+  dayKeys: readonly string[];
+  symbole: number;
+  quelle: string;
+}
+
+/**
+ * Der Korb je Fold liegengelassen (Prüfbefund M6, nur Bericht): unter
+ * `continuous` auf der Tagesachse der Kette mit Umschichtung auf den Stand
+ * jedes Folds; je Fold wie der SPY-Maßstab je Fenster frisch gekauft.
+ */
+export function korbLatteFuer(a: {
+  korb: ReadonlyMap<string, BarSeriesLike>;
+  membership: Membership | undefined;
+  folds: readonly Fold[];
+  achse: readonly string[] | undefined;
+  assetClass: AssetClass;
+  periodsPerYear: number;
+}): KorbLatte | undefined {
+  if (a.folds.length === 0 || a.korb.size === 0) return undefined;
+  const ranges = a.folds.map((f) => ({ start: f.oosStart, end: f.oosEnd }));
+  if (a.achse && a.achse.length > 0) {
+    const staende = a.folds.map((f) => ({ ab: dayKeyFor(f.oosStart, a.assetClass), symbols: new Set(korbZum(a.korb, a.membership, f.oosStart).keys()) }));
+    const k = marktKetteAufAchse({ bars: a.korb, dayKeys: a.achse, assetClass: a.assetClass, periodsPerYear: a.periodsPerYear, staende });
+    if (!k) return undefined;
+    return { sharpe: k.sharpe, maxDrawdownPct: k.maxDrawdownPct, dailyReturns: k.dailyReturns, dayKeys: k.dayKeys, symbole: k.symbole, quelle: `Korb je Fold liegenlassen (${k.symbole} Symbole, ${a.folds.length} Stände, durchgehend)` };
+  }
+  const barsFuer = (r: TimeRange) => korbZum(a.korb, a.membership, r.start);
+  const k = marktKette({ bars: a.korb, ranges, assetClass: a.assetClass, periodsPerYear: a.periodsPerYear, barsFuer });
+  const reihe = marktReihe({ bars: a.korb, ranges, assetClass: a.assetClass, barsFuer });
+  if (!k || !reihe) return undefined;
+  return { sharpe: k.sharpe, maxDrawdownPct: k.maxDrawdownPct, dailyReturns: reihe.dailyReturns, dayKeys: reihe.dayKeys, symbole: a.korb.size, quelle: `Korb je Fold liegenlassen (${a.korb.size} Symbole, je Fenster)` };
 }
 
 /** Latte für `beats_market` samt MaxDD für den Maßstab — aus `marktKette` über die OOS-Fenster. */
@@ -463,11 +538,11 @@ export interface MarktLatte {
  * ist ihr Sharpe zeichengleich der von `marktKette` — Wächter dafür in
  * `test/optimize/zinsMassstab.test.ts`.
  */
-export function marktReihe(a: { bars: ReadonlyMap<string, BarSeriesLike>; ranges: readonly TimeRange[]; assetClass: AssetClass }): { dailyReturns: number[]; dayKeys: string[] } | null {
+export function marktReihe(a: { bars: ReadonlyMap<string, BarSeriesLike>; ranges: readonly TimeRange[]; assetClass: AssetClass; barsFuer?: ((range: TimeRange) => ReadonlyMap<string, BarSeriesLike>) | undefined }): { dailyReturns: number[]; dayKeys: string[] } | null {
   const dailyReturns: number[] = [];
   const dayKeys: string[] = [];
   for (const range of a.ranges) {
-    const k = kaufenUndHaltenKurve({ bars: a.bars, range, assetClass: a.assetClass });
+    const k = kaufenUndHaltenKurve({ bars: a.barsFuer ? a.barsFuer(range) : a.bars, range, assetClass: a.assetClass });
     if (!k) continue;
     for (let i = 1; i < k.kurve.length; i++) {
       const vor = k.kurve[i - 1]!;
@@ -499,12 +574,24 @@ export function massstabFuer(a: {
    * Aufrufer, Tests), rechnet der Maßstab wie bisher roh — und sagt es.
    */
   beatsMarket?: GateResult | undefined;
+  /** Der liegengelassene Korb (`korbLatteFuer`); fehlt er, sagt die Zeile es. */
+  korb?: KorbLatte | undefined;
+  /** Zinssätze auf der Tagesachse des Korbs — nur wenn das Gate selbst im Überschuss rechnet. */
+  zinsKorb?: readonly number[] | undefined;
 }): Massstab {
   const oosDays = a.wfa.folds.reduce((s, f) => s + (f.fold.oosEnd - f.fold.oosStart) / DAY, 0);
   const g = a.beatsMarket;
   // „Zins: …" steht am Ende jeder Notiz von `beats_market` (robustness.ts).
   const zins = g ? (g.note.match(/Zins: .*$/)?.[0] ?? 'Zins: unbekannt') : 'Zins: ohne Gate-Notiz — roh gerechnet';
+  // Der Korb rechnet auf demselben Maßstab wie Strategie und Latte: Überschuss
+  // nur, wenn das Gate im Überschuss rechnet UND die Sätze auf seine Achse passen.
+  const gateUeberschuss = g !== undefined && /\(Überschuss\)/.test(g.note);
+  const korbZins = a.korb && gateUeberschuss && a.zinsKorb && a.zinsKorb.length === a.korb.dailyReturns.length ? a.zinsKorb : null;
+  const korbSharpe = a.korb ? (korbZins ? a.metricsFns.sharpeRatio(excessReturns(a.korb.dailyReturns, korbZins), a.periodsPerYear) : a.korb.sharpe) : null;
   return {
+    korbSharpe,
+    korbMaxDD: a.korb?.maxDrawdownPct ?? null,
+    korbQuelle: a.korb ? `${a.korb.quelle}${korbZins ? ', Überschuss' : gateUeberschuss ? ', roh — Zins nicht auf die Korbachse ausrichtbar' : ', roh'}` : 'Korb liegenlassen nicht berechenbar',
     oosSharpe: g ? g.value : a.metricsFns.sharpeRatio(a.wfa.oos.dailyReturns, a.periodsPerYear),
     zins,
     oosMaxDD: a.wfa.oos.maxDrawdownPct,
@@ -1533,7 +1620,10 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
           ...(markt ? { markt } : {}),
           ...(zins ? { riskFree: zins } : {}),
         });
-        const massstab = massstabFuer({ wfa, metricsFns: deps.metricsFns, periodsPerYear, marktSymbol, markt, beatsMarket: g.gates.find((x) => x.name === 'beats_market') });
+        // Zweite Maßstab-Zeile (Prüfbefund M6): der Korb je Fold liegengelassen — nur Bericht.
+        const korbLatte = korbLatteFuer({ korb: korbVon(symbol, kx.bars), membership: cx.membership, folds: wfa.folds.map((f) => f.fold), achse: massstabAchse(wfa), assetClass: cfg.universe.assetClass, periodsPerYear });
+        const zinsKorb = korbLatte && riskFree !== null ? (alignRiskFree(korbLatte.dayKeys, riskFree)?.rates ?? undefined) : undefined;
+        const massstab = massstabFuer({ wfa, metricsFns: deps.metricsFns, periodsPerYear, marktSymbol, markt, beatsMarket: g.gates.find((x) => x.name === 'beats_market'), korb: korbLatte, zinsKorb });
         // Auswertungslauf: dieselben OOS-Fenster, dieselben Parameter, derselbe
         // Simulator — nur noch einmal, weil der Walk-Forward die Equity-Kurven
         // nicht aufhebt. Er entscheidet nichts; scheitert er, fehlt im Bericht

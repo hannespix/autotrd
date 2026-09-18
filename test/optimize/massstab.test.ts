@@ -120,7 +120,14 @@ describe('Maßstab je Kandidat im Lauf', () => {
     const text = readFileSync(out.reportPath, 'utf8');
     const z = zeilen(text);
     expect(z.length).toBe(3);
-    for (const l of z) expect(l).toMatch(/, MaxDD [\d.]+ %, Trades je Monat 30\.4 · ohne Benchmark: Kasse \(Latte 0\) · Zins: /);
+    // Seit Prüfbefund M6 steht zwischen Strategie und Latte der liegengelassene Korb (zweite Latte, nur Bericht).
+    // Die Kurse des Fakes sind flach (100): der liegengelassene Korb hat Varianz 0 ⇒ Sharpe „–", MaxDD 0.
+    for (const l of z) expect(l).toMatch(/, MaxDD [\d.]+ %, Trades je Monat 30\.4 · Korb je Fold liegenlassen \(1 Symbole, \d+ Stände, durchgehend\), roh: Sharpe (?:–|-?[\d.]+), MaxDD [\d.]+ % · ohne Benchmark: Kasse \(Latte 0\) · Zins: /);
+    for (const s of r.results) {
+      expect(s.massstab.korbSharpe).toBeNull();
+      expect(s.massstab.korbMaxDD).toBe(0);
+      expect(s.massstab.korbQuelle).toContain('durchgehend), roh');
+    }
     // Direkt unter der Gates-Tabelle (und der Raster-Tabelle der Regel 2), vor der PSR-Zeile.
     const i = text.indexOf(z[0]!);
     expect(text.slice(0, i)).toMatch(/\| beats_market \|[^\n]*\n\nRaster \(Regel 2\): [^\n]*\n\n\| Raster \|[^\n]*\n\|[^\n]*\n(\| −\d [^\n]*\n)+\n$/);
@@ -148,6 +155,14 @@ describe('Maßstab je Kandidat im Lauf', () => {
             })!;
       expect(m.marktMaxDD).toBe(k.maxDrawdownPct);
       expect(m.marktSharpe).toBeCloseTo(k.sharpe!, 12);
+      // Der liegengelassene Korb (ein Symbol AAA mit flachen Kursen, gleiche Achse): Sharpe null, MaxDD 0 — roh, denn ohne Zins.
+      if (s.wfa.kette.modus === 'continuous') {
+        const kk = marktKetteAufAchse({ bars: new Map([['AAA', bars]]), dayKeys: s.wfa.oos.dayKeys!, assetClass: 'crypto', periodsPerYear: 365 })!;
+        expect(kk.dayKeys).toEqual(s.wfa.oos.dayKeys);
+        expect(m.korbSharpe).toBe(kk.sharpe);
+        expect(m.korbMaxDD).toBeCloseTo(kk.maxDrawdownPct, 12);
+        expect(m.korbQuelle).toContain('durchgehend), roh');
+      }
       expect(m.marktMaxDD!).toBeGreaterThan(0);
     }
     const z = zeilen(readFileSync(out.reportPath, 'utf8'));

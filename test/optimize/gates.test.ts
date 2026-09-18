@@ -527,6 +527,18 @@ describe('beats_market unter continuous: der Maßstab muss auf der Tagesachse de
     expect(gate.threshold).toBeCloseTo(0.1, 12);
   });
 
+  it('WÄCHTER (Prüfbefund M6): die Notiz nennt P(SR > Latte) — derselbe PSR mit sr0 = Latte je Periode, informativ', () => {
+    // Latte 5 p. a. (sr0 = 5/√252 = 0,315 je Periode) gegen sr 0,5 je Periode aus psrOf(0.99) (n 150, Schiefe 0, Kurtosis 3):
+    // nah genug, dass P(SR > Latte) deutlich unter 1 liegt — gegen null wäre der PSR gesättigt.
+    const { gate } = gateMit({ sharpe: 5, quelle: 'BENCH über die OOS-Kette', dailyReturns: reihe(150), dayKeys: tage(150) });
+    const erwartet = fakeMetricsFns.probabilisticSharpe({ sr: 0.5, n: 150, skew: 0, kurt: 3, sr0: gate.threshold! / Math.sqrt(252) });
+    const m = /P\(SR > Latte\) ([\d.]+) \(PSR mit sr0 = Latte je Periode, informativ, kein Gate\)/.exec(gate.note);
+    expect(m).not.toBeNull();
+    expect(Number(m![1])).toBeCloseTo(erwartet, 3);
+    // Gegen null wäre es eine andere Zahl — die Latte wirkt.
+    expect(Math.abs(erwartet - fakeMetricsFns.probabilisticSharpe({ sr: 0.5, n: 150, skew: 0, kurt: 3 }))).toBeGreaterThan(1e-6);
+  });
+
   it('WÄCHTER: andere Länge oder andere Tage ⇒ nicht berechenbar, durchgefallen, laut', () => {
     const kurz = gateMit({ sharpe: 0.1, quelle: 'BENCH', dailyReturns: reihe(149), dayKeys: tage(149) });
     expect(kurz.gate.pass).toBe(false);

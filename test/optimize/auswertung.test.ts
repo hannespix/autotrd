@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { BarSeriesLike, SimResult, Strategy, Trade } from '../../src/core/types.ts';
 import { OHNE_BREMSEN } from '../../src/core/types.ts';
-import { auswertungFuer, offenAnFoldEnden, runOptimization, type OptimizeRunInput, type StrategyRun, type SymbolRun } from '../../src/optimize/run.ts';
+import { symbolKonzentration, auswertungFuer, offenAnFoldEnden, runOptimization, type OptimizeRunInput, type StrategyRun, type SymbolRun } from '../../src/optimize/run.ts';
 import { foldPlanForBars, zeitachseVon } from '../../src/optimize/walkForward.ts';
 import { NOISE_PROFILE, REWARD_PROFILE, dailyBars, fakeMetricsFns, fakeStrategy, makeFakeSimulate, testConfig, type FakeSimOptions } from './fakes.ts';
 
@@ -299,6 +299,50 @@ describe('Bericht: die drei Blöcke und die Korrelationsmatrix', () => {
     const text = readFileSync(out.reportPath, 'utf8');
     expect(text).toContain('## Korrelationsmatrix der Tagesrenditen');
     expect(text).toContain('keine Matrix');
+  });
+});
+
+describe('Symbol-Konzentration (Prüfbefund M9): hängt die Kette an einem Titel?', () => {
+  const trade = (symbol: string, netPnl: number): Trade => ({ symbol, side: 'long', qty: 1, entryTime: 0, entryPrice: 100, exitTime: 1, exitPrice: 100 + netPnl, grossPnl: netPnl, fees: 0, netPnl, rMultiple: null, exitReason: 'signal', strategy: 'edge', barsHeld: 1, mae: null, mfe: null });
+
+  it('Σ Netto je Symbol, die drei größten mit Anteil am Σ; Anteile nur bei Σ > 0', () => {
+    const k = symbolKonzentration([trade('NVDA', 700), trade('NVDA', 400), trade('AVGO', 300), trade('META', -100), trade('XOM', 100)], 30);
+    expect(k.symbole).toBe(30);
+    expect(k.mitTrades).toBe(4);
+    expect(k.gesamt).toBe(1400);
+    expect(k.top.map((t) => t.symbol)).toEqual(['NVDA', 'AVGO', 'XOM']);
+    expect(k.top[0]!.netto).toBe(1100);
+    expect(k.top[0]!.anteil).toBeCloseTo(1100 / 1400, 12);
+    const verlust = symbolKonzentration([trade('A', -5), trade('B', 3)], 2);
+    expect(verlust.gesamt).toBe(-2);
+    expect(verlust.top[0]!.anteil).toBeNull();
+    expect(symbolKonzentration([], 3).top).toEqual([]);
+  });
+
+  it('der Bericht druckt die Zeile unter der Aktivität — beim Einzelsymbol-Fake: 1 von 1 Symbolen, 100 % des Σ Netto', () => {
+    const home = mkdtempSync(join(tmpdir(), 'autotrd-m9-'));
+    try {
+      const out = runOptimization({
+        config: testConfig({ symbols: ['AAA'], home, optimizer: { seed: 7, promotionGrids: 1 } }),
+        symbols: ['AAA'],
+        strategies: ['edge'],
+        barsFor: () => bars,
+        home,
+        initialEquity: 10_000,
+        simulate: makeFakeSimulate(() => REWARD_PROFILE),
+        metricsFns: fakeMetricsFns,
+        getStrategy,
+        now: () => NOW,
+      });
+      const k = out.runs[0]!.results[0]!.auswertung!.konzentration;
+      expect(k.mitTrades).toBe(1);
+      expect(k.symbole).toBe(1);
+      expect(k.top[0]!.anteil).toBeCloseTo(1, 12);
+      const text = readFileSync(out.reportPath, 'utf8');
+      expect(text).toContain(`**Symbol-Konzentration (Prüfbefund M9):** AAA +${k.top[0]!.netto.toFixed(2)} $ (100 % des Σ Netto) — 1 von 1 Symbolen mit Trades`);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });
 
