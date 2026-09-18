@@ -320,7 +320,8 @@ describe('Offen an Fold-Enden (Prüfbefund K4): was die Kette als Gewinn zählt,
 
   it('addiert Positionen und unrealisierten Gewinn über die Folds; Fenster ohne offene Position zählen nicht als Fenster', () => {
     const o = offenAnFoldEnden([fenster([pos('AAA', 55.5), pos('BBB', -10)]), fenster([]), fenster([pos('AAA', 20)])]);
-    expect(o).toEqual({ fenster: 2, fensterGesamt: 3, positionen: 3, unrealisiert: 65.5, bekannt: true });
+    expect(o).toEqual({ fenster: 2, fensterGesamt: 3, positionen: 3, unrealisiert: 65.5, bekannt: true, modus: 'per_fold' });
+    expect(offenAnFoldEnden([fenster([]), fenster([pos('AAA', 1)])], 'continuous').modus).toBe('continuous');
   });
 
   it('WÄCHTER: ein Fenster ohne die Zahl macht die Summe unbekannt — nie eine stille Null', () => {
@@ -330,28 +331,33 @@ describe('Offen an Fold-Enden (Prüfbefund K4): was die Kette als Gewinn zählt,
     expect(offenAnFoldEnden([]).bekannt).toBe(true);
   });
 
-  it('der Bericht druckt die Zeile neben dem Netto der geschlossenen Trades — und „nicht gemessen", wenn der Lauf sie nicht liefert', () => {
-    const inp = (simulate: OptimizeRunInput['simulate']): OptimizeRunInput => ({
-      config: testConfig({ symbols: ['AAA'], home, optimizer: { seed: 7, promotionGrids: 1 } }),
-      symbols: ['AAA'],
-      strategies: ['edge'],
-      barsFor: () => bars,
-      home,
-      initialEquity: 10_000,
-      simulate,
-      metricsFns: fakeMetricsFns,
-      getStrategy,
-      now: () => NOW,
-    });
+  const inp = (simulate: OptimizeRunInput['simulate'], oosChain: 'continuous' | 'per_fold'): OptimizeRunInput => ({
+    config: testConfig({ symbols: ['AAA'], home, optimizer: { seed: 7, promotionGrids: 1, oosChain } }),
+    symbols: ['AAA'],
+    strategies: ['edge'],
+    barsFor: () => bars,
+    home,
+    initialEquity: 10_000,
+    simulate,
+    metricsFns: fakeMetricsFns,
+    getStrategy,
+    now: () => NOW,
+  });
+  /** Derselbe Fake, aber jeder Lauf meldet eine offene Position mit +12,50 $. */
+  const mitOffenFake = (): OptimizeRunInput['simulate'] => {
+    const basis = makeFakeSimulate(() => REWARD_PROFILE);
+    return (input) => ({ ...basis(input), offenAmEnde: [pos('AAA', 12.5)] });
+  };
+
+  it('je Fold (per_fold): der Bericht druckt die Zeile neben dem Netto der geschlossenen Trades — und „nicht gemessen", wenn der Lauf sie nicht liefert', () => {
     // Der Fake liefert die Zahl nicht ⇒ „nicht gemessen".
-    const ohne = runOptimization(inp(makeFakeSimulate(() => REWARD_PROFILE)));
+    const ohne = runOptimization(inp(makeFakeSimulate(() => REWARD_PROFILE), 'per_fold'));
     expect(ohne.runs[0]!.results[0]!.auswertung!.offenAnFoldEnden.bekannt).toBe(false);
     expect(readFileSync(ohne.reportPath, 'utf8')).toContain('Offen an Fold-Enden (K4): nicht gemessen');
-    // Derselbe Fake, aber jedes Fenster meldet eine offene Position mit +12,50 $ ⇒ die Kette addiert sie.
-    const basis = makeFakeSimulate(() => REWARD_PROFILE);
-    const mitOffen: OptimizeRunInput['simulate'] = (input) => ({ ...basis(input), offenAmEnde: [pos('AAA', 12.5)] });
-    const mit = runOptimization(inp(mitOffen));
+    // Jedes der acht Fenster meldet eine offene Position ⇒ die Kette addiert sie.
+    const mit = runOptimization(inp(mitOffenFake(), 'per_fold'));
     const o = mit.runs[0]!.results[0]!.auswertung!.offenAnFoldEnden;
+    expect(o.modus).toBe('per_fold');
     expect(o.bekannt).toBe(true);
     expect(o.fensterGesamt).toBe(8);
     expect(o.positionen).toBe(8);
@@ -359,5 +365,25 @@ describe('Offen an Fold-Enden (Prüfbefund K4): was die Kette als Gewinn zählt,
     const text = readFileSync(mit.reportPath, 'utf8');
     expect(text).toContain('**Offen an Fold-Enden (Prüfbefund K4):** 8 Positionen in 8 von 8 OOS-Fenstern, Σ unrealisiert +100.00 $');
     expect(text).toMatch(/Offen an Fold-Enden[^\n]*\n\n\*\*Exit-Anatomie\*\*/);
+  });
+
+  it('durchgehende Kette (continuous): nur das Kettenende trägt Buchgewinn — EIN Lauf, eine Position, +12,50 $; unbekannt bleibt unbekannt', () => {
+    const ohne = runOptimization(inp(makeFakeSimulate(() => REWARD_PROFILE), 'continuous'));
+    expect(ohne.runs[0]!.results[0]!.wfa.kette.modus).toBe('continuous');
+    expect(ohne.runs[0]!.results[0]!.auswertung!.offenAnFoldEnden.bekannt).toBe(false);
+    expect(readFileSync(ohne.reportPath, 'utf8')).toContain('Offen an Fold-Enden (K4): nicht gemessen');
+    const mit = runOptimization(inp(mitOffenFake(), 'continuous'));
+    const o = mit.runs[0]!.results[0]!.auswertung!.offenAnFoldEnden;
+    expect(o.modus).toBe('continuous');
+    expect(o.bekannt).toBe(true);
+    expect(o.fensterGesamt).toBe(8);
+    // Der eine Lauf meldet EINE Position — sie hängt an der letzten Scheibe, nicht an jedem Fold-Ende.
+    expect(o.fenster).toBe(1);
+    expect(o.positionen).toBe(1);
+    expect(o.unrealisiert).toBeCloseTo(12.5, 9);
+    const text = readFileSync(mit.reportPath, 'utf8');
+    expect(text).toContain('**Offen am Kettenende (Prüfbefund K4):** 1 Position, Σ unrealisiert +12.50 $');
+    expect(text).not.toContain('von 8 OOS-Fenstern');
+    expect(text).toMatch(/Offen am Kettenende[^\n]*\n\n\*\*Exit-Anatomie\*\*/);
   });
 });

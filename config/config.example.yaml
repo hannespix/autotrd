@@ -241,6 +241,10 @@ optimizer:
   promotionGrids: 3
   # Nach so vielen gerissenen Nächten in Folge tritt der Amtsinhaber ab.
   incumbentFailNights: 3
+  # OOS-Kette als EINE durchgehende Simulation (continuous, Vorgabe) oder je
+  # Fold mit leerem Buch (per_fold — nur für Vergleichsläufe; offene Positionen
+  # an Fold-Enden zählen dort als Gewinn, ohne je ein Trade zu werden).
+  oosChain: continuous
   # Probabilistic Sharpe Ratio der verketteten Out-of-Sample-Tagesrenditen
   # (gegen Sharpe 0): Wahrscheinlichkeit, dass die OOS-Kante echt ist.
   minPsrOos: 0.9

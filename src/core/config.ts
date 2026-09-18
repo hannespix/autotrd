@@ -389,6 +389,16 @@ export const ConfigSchema = z.object({
        * Nächten abgesetzt (Regel 2, R3).
        */
       incumbentFailNights: z.number().int().min(1).max(10).default(3),
+      /**
+       * Wie die OOS-Kette bewertet wird (Vorregistrierung
+       * `docs/wissen/vorregistrierung/2026-09-18-durchgehende-oos-kette.md`):
+       * `continuous` = EINE Simulation über die ganze Kette, Parameter- und
+       * Korbwechsel an den Fold-Grenzen, Positionen laufen weiter (Vorgabe,
+       * Plattform); `per_fold` = die Rechnung bis 18.09.2026, jeder Fold mit
+       * leerem Buch und Buchgewinnen am Fold-Ende (Prüfbefund K4) — nur für
+       * Vergleichsläufe und Rauchtests.
+       */
+      oosChain: z.enum(['continuous', 'per_fold']).default('continuous'),
       /** PSR der verketteten OOS-Tagesrenditen (gegen SR 0) muss diesen Wert erreichen. */
       minPsrOos: z.number().min(0).max(1).default(0.9),
       /** Deflated Sharpe (In-Sample) zusätzlich als hartes Gate (sonst nur im Bericht). */
@@ -643,6 +653,7 @@ export const ConfigSchema = z.object({
       promotionMargin: 0.1,
       promotionGrids: 3,
       incumbentFailNights: 3,
+      oosChain: 'continuous',
       minPsrOos: 0.9,
       dsrIsGate: false,
       riskFreeSymbol: null,

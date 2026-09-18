@@ -471,6 +471,20 @@ export interface OffenePosition {
   unrealisiert: number;
 }
 
+/**
+ * Ein Eintrag im Fahrplan der Parameter eines Symbols
+ * (`docs/wissen/vorregistrierung/2026-09-18-durchgehende-oos-kette.md`):
+ * ab `ab` gelten `params`; `null` heißt, das Symbol hat ab hier keine
+ * führende Strategie mehr — kein neuer Einstieg, eine offene Position wird
+ * am nächsten Open als `unmanaged` geschlossen, wie die Engine es bei einem
+ * Symbol ohne Champion tut. So läuft die OOS-Kette als EINE Simulation mit
+ * Parameter- und Korbwechsel an den Fold-Grenzen.
+ */
+export interface ParameterWechsel {
+  ab: Ms;
+  params: Params | null;
+}
+
 export interface SimResult {
   trades: Trade[];
   equity: EquityPoint[];

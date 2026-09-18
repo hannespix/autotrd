@@ -141,6 +141,7 @@ function wfaAus(specs: readonly FoldSpec[]): WfaResult {
     holdout: null,
     dataRange: { start: 0, end: 10 },
     embargoBars: 0,
+    kette: { modus: 'per_fold' },
   };
 }
 

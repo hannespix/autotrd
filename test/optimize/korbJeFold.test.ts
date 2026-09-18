@@ -241,12 +241,18 @@ describe('Korb je Fold im Lauf', () => {
   it('Stress je Fold, Nachbarschaft und Holdout laufen auf ihrem Stand', () => {
     const { out, calls } = lauf();
     const r = out.runs[0]!;
-    // Der Fake protokolliert je Symbol einen Aufruf — je Fold also so viele wie der Korb groß ist.
+    // Der Fake protokolliert je Symbol einen Aufruf. Stress läuft als EINE
+    // durchgehende Kette über die Vereinigung aller Stände; der Stand je Fold
+    // steht im Fahrplan des Symbols (`params: null` = in diesem Fold nicht im Korb).
     const stress = calls.filter((c) => c.costMultiplier !== 1);
-    expect(new Set(stress.map((c) => c.range!.start)).size).toBe(plan.folds.length);
+    expect(setOf(stress.map((c) => c.symbol))).toEqual(['AAA', 'BBB', 'DROP', 'LATE2']);
     for (const c of stress) {
-      const f = plan.folds.find((x) => x.oosStart === c.range!.start)!;
-      expect(setOf(c.symbols)).toEqual(f.index >= 4 ? ['AAA', 'BBB', 'LATE2'] : ['AAA', 'BBB', 'DROP']);
+      expect(c.range).toEqual({ start: plan.folds[0]!.oosStart, end: plan.folds.at(-1)!.oosEnd });
+      expect(c.wechsel!.map((w) => w.ab)).toEqual(plan.folds.map((f) => f.oosStart));
+    }
+    for (const f of plan.folds) {
+      const imKorb = setOf(stress.filter((c) => c.wechsel![f.index]!.params !== null).map((c) => c.symbol));
+      expect(imKorb, `Stress-Fahrplan Fold ${f.index + 1}`).toEqual(f.index >= 4 ? ['AAA', 'BBB', 'LATE2'] : ['AAA', 'BBB', 'DROP']);
     }
     const holdout = calls.filter((c) => c.range?.start === plan.holdout!.start && c.range.end === plan.holdout!.end);
     expect(holdout.length).toBeGreaterThan(0);

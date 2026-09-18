@@ -666,6 +666,10 @@ export function messeEnsemble(a: EnsembleMessArgs): EnsembleMessung {
     timeframe: a.config.timeframe,
     folds: foldResults,
     oos,
+    // Eigene Messung je Fold (Sleeves mit eigener Korbzuordnung) — von der
+    // durchgehenden OOS-Kette ausdrücklich ausgenommen (Vorregistrierung
+    // 2026-09-18-durchgehende-oos-kette, §3): Ein Ensemble konkurriert um nichts.
+    kette: { modus: 'per_fold' },
     finalParams: {},
     finalIsMetrics: fin.res.metrics,
     finalWindow,
