@@ -254,9 +254,25 @@ function volZielZeile(v: KandidatAuswertung): string[] {
  * nah sitzt — und die einzige Stelle im Bericht, die sagt, WO das Geld
  * hingeht statt nur WIE VIEL.
  */
+/**
+ * K4 in einer Zeile: Was die OOS-Kette als Gewinn zählt, ohne dass es je ein
+ * Trade wurde. Direkt neben dem Netto der geschlossenen Trades — die beiden
+ * Zahlen erklären zusammen die Lücke zum Kettenergebnis. Kein Gate liest sie.
+ */
+function offenAnFoldEndenZeile(o: KandidatAuswertung['offenAnFoldEnden'], nettoTrades: number): string {
+  if (!o.bekannt) return `_Offen an Fold-Enden (K4): nicht gemessen — der Simulationslauf liefert die Zahl nicht._`;
+  return (
+    `**Offen an Fold-Enden (Prüfbefund K4):** ${o.positionen} Position${o.positionen === 1 ? '' : 'en'} in ${o.fenster} von ${o.fensterGesamt} OOS-Fenstern, ` +
+    `Σ unrealisiert ${signed(o.unrealisiert)} $ (zum letzten Schluss, ohne Exit-Kosten). Die OOS-Kette zählt das als Ergebnis; ein Trade wurde es nie — ` +
+    `neben ${signed(nettoTrades)} $ aus geschlossenen Trades. Kein Gate liest diese Zahl; sie sagt, wie viel vom Kettenergebnis Buchgewinn ist.`
+  );
+}
+
 function anatomieBlock(a: KandidatAuswertung): string[] {
   const an = a.anatomie;
   const out: string[] = [];
+  out.push(offenAnFoldEndenZeile(a.offenAnFoldEnden, an.netto));
+  out.push('');
   out.push(
     `**Exit-Anatomie** — welcher Ausstiegsgrund verdient, welcher verliert? Eine Zeile je Grund über die ganze OOS-Kette ` +
       `(${an.trades} Trades, Netto ${signed(an.netto)} $).`,

@@ -233,12 +233,22 @@ describe('EOD-Flatten', () => {
     expect(res.trades[0]!.exitTime).toBe(msFromET(y, m, d, 15, 55));
     expect(res.trades[0]!.entryTime).toBe(msFromET(y, m, d, 9, 35));
     expect(res.notes.some((n) => n.startsWith('Offen am Ende'))).toBe(false);
+    // K4: das Feld ist IMMER gesetzt — leer heißt „keine", fehlend hieße „unbekannt".
+    expect(res.offenAmEnde).toEqual([]);
   });
 
   it('holdsOvernight=true: Position bleibt über Nacht, Haltedauer läuft weiter', () => {
     const res = run({ bars: barsMap({ AAA: bars }), strategy: alwaysLong(true) });
     expect(res.trades).toHaveLength(0);
     expect(res.notes.some((n) => n.startsWith('Offen am Ende: AAA long'))).toBe(true);
+    // K4: dieselbe Position strukturiert — addierbar über die Folds der OOS-Kette.
+    expect(res.offenAmEnde).toHaveLength(1);
+    const o = res.offenAmEnde![0]!;
+    expect(o.symbol).toBe('AAA');
+    expect(o.side).toBe('long');
+    expect(o.qty).toBeGreaterThan(0);
+    expect(o.unrealisiert).toBeCloseTo((o.lastClose - o.entryPrice) * o.qty, 9);
+    expect(res.notes.find((n) => n.startsWith('Offen am Ende: AAA long'))).toContain(`unrealisiert ${o.unrealisiert.toFixed(2)}`);
     // Exposure: ab Bar 1 (Fill) bis zum Ende ⇒ 155 von 156 Zeitpunkten
     expect(res.metrics.exposurePct).toBeCloseTo((155 / 156) * 100, 9);
   });

@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { BarSeriesLike, SimResult, Strategy, Trade } from '../../src/core/types.ts';
 import { OHNE_BREMSEN } from '../../src/core/types.ts';
-import { auswertungFuer, runOptimization, type OptimizeRunInput, type StrategyRun, type SymbolRun } from '../../src/optimize/run.ts';
+import { auswertungFuer, offenAnFoldEnden, runOptimization, type OptimizeRunInput, type StrategyRun, type SymbolRun } from '../../src/optimize/run.ts';
 import { foldPlanForBars, zeitachseVon } from '../../src/optimize/walkForward.ts';
 import { NOISE_PROFILE, REWARD_PROFILE, dailyBars, fakeMetricsFns, fakeStrategy, makeFakeSimulate, testConfig, type FakeSimOptions } from './fakes.ts';
 
@@ -299,5 +299,65 @@ describe('Bericht: die drei Blöcke und die Korrelationsmatrix', () => {
     const text = readFileSync(out.reportPath, 'utf8');
     expect(text).toContain('## Korrelationsmatrix der Tagesrenditen');
     expect(text).toContain('keine Matrix');
+  });
+});
+
+describe('Offen an Fold-Enden (Prüfbefund K4): was die Kette als Gewinn zählt, ohne dass es je ein Trade wurde', () => {
+  const home = mkdtempSync(join(tmpdir(), 'autotrd-k4-'));
+  afterEach(() => rmSync(home, { recursive: true, force: true }));
+
+  const fenster = (offen: SimResult['offenAmEnde']): SimResult => ({
+    trades: [] as Trade[],
+    equity: [],
+    dailyReturns: [],
+    metrics: { netProfit: 0, netReturnPct: 0, cagrPct: null, sharpe: null, sortino: null, maxDrawdownPct: 0, profitFactor: null, winRatePct: null, expectancy: null, avgR: null, trades: 0, exposurePct: 0, feeShare: null, days: 0 },
+    finalEquity: 10_000,
+    notes: [],
+    bremsen: OHNE_BREMSEN,
+    ...(offen === undefined ? {} : { offenAmEnde: offen }),
+  });
+  const pos = (symbol: string, unrealisiert: number): NonNullable<SimResult['offenAmEnde']>[number] => ({ symbol, side: 'long', qty: 1, entryPrice: 100, lastClose: 100 + unrealisiert, unrealisiert });
+
+  it('addiert Positionen und unrealisierten Gewinn über die Folds; Fenster ohne offene Position zählen nicht als Fenster', () => {
+    const o = offenAnFoldEnden([fenster([pos('AAA', 55.5), pos('BBB', -10)]), fenster([]), fenster([pos('AAA', 20)])]);
+    expect(o).toEqual({ fenster: 2, fensterGesamt: 3, positionen: 3, unrealisiert: 65.5, bekannt: true });
+  });
+
+  it('WÄCHTER: ein Fenster ohne die Zahl macht die Summe unbekannt — nie eine stille Null', () => {
+    const o = offenAnFoldEnden([fenster([pos('AAA', 55.5)]), fenster(undefined)]);
+    expect(o.bekannt).toBe(false);
+    expect(o.unrealisiert).toBe(55.5); // was bekannt ist, bleibt sichtbar
+    expect(offenAnFoldEnden([]).bekannt).toBe(true);
+  });
+
+  it('der Bericht druckt die Zeile neben dem Netto der geschlossenen Trades — und „nicht gemessen", wenn der Lauf sie nicht liefert', () => {
+    const inp = (simulate: OptimizeRunInput['simulate']): OptimizeRunInput => ({
+      config: testConfig({ symbols: ['AAA'], home, optimizer: { seed: 7, promotionGrids: 1 } }),
+      symbols: ['AAA'],
+      strategies: ['edge'],
+      barsFor: () => bars,
+      home,
+      initialEquity: 10_000,
+      simulate,
+      metricsFns: fakeMetricsFns,
+      getStrategy,
+      now: () => NOW,
+    });
+    // Der Fake liefert die Zahl nicht ⇒ „nicht gemessen".
+    const ohne = runOptimization(inp(makeFakeSimulate(() => REWARD_PROFILE)));
+    expect(ohne.runs[0]!.results[0]!.auswertung!.offenAnFoldEnden.bekannt).toBe(false);
+    expect(readFileSync(ohne.reportPath, 'utf8')).toContain('Offen an Fold-Enden (K4): nicht gemessen');
+    // Derselbe Fake, aber jedes Fenster meldet eine offene Position mit +12,50 $ ⇒ die Kette addiert sie.
+    const basis = makeFakeSimulate(() => REWARD_PROFILE);
+    const mitOffen: OptimizeRunInput['simulate'] = (input) => ({ ...basis(input), offenAmEnde: [pos('AAA', 12.5)] });
+    const mit = runOptimization(inp(mitOffen));
+    const o = mit.runs[0]!.results[0]!.auswertung!.offenAnFoldEnden;
+    expect(o.bekannt).toBe(true);
+    expect(o.fensterGesamt).toBe(8);
+    expect(o.positionen).toBe(8);
+    expect(o.unrealisiert).toBeCloseTo(100, 9);
+    const text = readFileSync(mit.reportPath, 'utf8');
+    expect(text).toContain('**Offen an Fold-Enden (Prüfbefund K4):** 8 Positionen in 8 von 8 OOS-Fenstern, Σ unrealisiert +100.00 $');
+    expect(text).toMatch(/Offen an Fold-Enden[^\n]*\n\n\*\*Exit-Anatomie\*\*/);
   });
 });
