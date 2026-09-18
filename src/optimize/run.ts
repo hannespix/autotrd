@@ -243,6 +243,15 @@ export interface KandidatAuswertung {
   exkursion: ExkursionAuswertung;
   nachlauf: NachlaufErgebnis;
   aktivitaet: Aktivitaet;
+  /**
+   * Prüfbefund K4: Positionen, die an Fold-Enden offen blieben — von der
+   * OOS-Kette zum Schluss bewertet, ohne Exit-Kosten, nie ein Trade. Über
+   * die Folds addiert. `bekannt` false, wenn ein Fenster die Zahl nicht
+   * liefert (Fake, alter Simulator) — dann steht im Bericht „nicht gemessen",
+   * nie eine Null. Kein Gate liest sie (noch nicht — siehe Vorregistrierung
+   * zur durchgehenden Simulation).
+   */
+  offenAnFoldEnden: OffenAnFoldEnden;
   /** Tagesrenditen der OOS-Kette mit Datum — Eingang der Korrelationsmatrix. */
   renditen: Renditereihe;
   /** Kalendertage aller OOS-Fenster zusammen. */
@@ -265,6 +274,34 @@ export interface KandidatAuswertung {
    * genau die hat im Bericht der Basis-Stufe drei Tage lang gefehlt.
    */
   bremsen: HaltBilanz;
+}
+
+/** Summe der an Fold-Enden offenen Positionen (K4), siehe `KandidatAuswertung.offenAnFoldEnden`. */
+export interface OffenAnFoldEnden {
+  /** Fenster mit mindestens einer offenen Position. */
+  fenster: number;
+  fensterGesamt: number;
+  positionen: number;
+  /** Σ unrealisiert (ohne Exit-Kosten) — der Teil des Kettenergebnisses, der nie ein Trade wurde. */
+  unrealisiert: number;
+  bekannt: boolean;
+}
+
+export function offenAnFoldEnden(teile: readonly SimResult[]): OffenAnFoldEnden {
+  let fenster = 0;
+  let positionen = 0;
+  let unrealisiert = 0;
+  let bekannt = true;
+  for (const t of teile) {
+    if (!t.offenAmEnde) {
+      bekannt = false;
+      continue;
+    }
+    if (t.offenAmEnde.length > 0) fenster++;
+    positionen += t.offenAmEnde.length;
+    for (const p of t.offenAmEnde) unrealisiert += p.unrealisiert;
+  }
+  return { fenster, fensterGesamt: teile.length, positionen, unrealisiert, bekannt };
 }
 
 /**
@@ -352,6 +389,7 @@ export function auswertungFuer(a: {
       ...(letzterFold ? { bis: letzterFold.fold.oosEnd } : {}),
     }),
     aktivitaet: aktivitaet({ trades, equity, assetClass: a.assetClass }),
+    offenAnFoldEnden: offenAnFoldEnden(a.teile),
     renditen: renditeketteVon({ fenster: a.teile, initialEquity: a.initialEquity, assetClass: a.assetClass }),
     oosDays,
     konsistent: abweichungen.length === 0,

@@ -452,6 +452,25 @@ export interface HaltBilanz {
  */
 export const OHNE_BREMSEN: HaltBilanz = Object.freeze({ ausloesungen: Object.freeze({}) as Record<string, number>, erste: null, letzte: null });
 
+/**
+ * Eine Position, die am Ende eines Simulationsfensters offen blieb — in der
+ * Equity-Kurve zum letzten Schluss bewertet, ohne Exit-Kosten, nie ein Trade.
+ * Prüfbefund K4 (18.09.2026): In der csm-Kette von Lauf #18 stammten rund
+ * 2 600 $ von 3 388 $ Überschuss aus solchen Positionen an 18 Fold-Enden;
+ * in #21 zeigte dieselbe Kette roh +5 568 $ bei −178 $ aus geschlossenen
+ * Trades. Als Zahl je Fenster addierbar, als Notiz nicht.
+ */
+export interface OffenePosition {
+  symbol: string;
+  side: 'long' | 'short';
+  qty: number;
+  entryPrice: number;
+  /** Letzter Schluss des Fensters — der Kurs, zu dem die Equity sie bewertet. */
+  lastClose: number;
+  /** (lastClose − entryPrice) × qty für long, umgekehrt für short; ohne Exit-Kosten. */
+  unrealisiert: number;
+}
+
 export interface SimResult {
   trades: Trade[];
   equity: EquityPoint[];
@@ -461,6 +480,12 @@ export interface SimResult {
   /** Letzter Kontozustand (für Kettung von Fenstern). */
   finalEquity: number;
   notes: string[];
+  /**
+   * Positionen, die am Fensterende offen blieben (siehe `OffenePosition`).
+   * Der Simulator setzt das Feld IMMER (leer = keine); fehlt es (Fake, alter
+   * Aufrufer), ist die Zahl unbekannt — der Bericht sagt dann „nicht gemessen".
+   */
+  offenAmEnde?: OffenePosition[];
   /** Nur gesetzt, wenn `risk.volTarget.enabled` — sonst gab es keinen Faktor. */
   volZiel?: VolZielVerteilung;
   /** Bilanz der Notbremsen — IMMER gesetzt, auch (und gerade) wenn keine ausgelöst hat. */

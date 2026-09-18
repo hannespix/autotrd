@@ -84,29 +84,7 @@ import {
   type Calendar,
   type SessionBounds,
 } from '../core/time.ts';
-import type {
-  AssetClass,
-  BarSeriesLike,
-  EquityPoint,
-  ExitReason,
-  HaltState,
-  IndicatorSet,
-  Ms,
-  OrderIntent,
-  ParkIntent,
-  ParkStand,
-  Params,
-  PositionState,
-  SessionInfo,
-  SimResult,
-  SizingSpec,
-  Strategy,
-  SymbolSnapshot,
-  HaltBilanz,
-  TimeframeMin,
-  Trade,
-  VolZielVerteilung,
-} from '../core/types.ts';
+import type { AssetClass, BarSeriesLike, EquityPoint, ExitReason, HaltState, IndicatorSet, Ms, OrderIntent, ParkIntent, ParkStand, Params, PositionState, SessionInfo, SimResult, SizingSpec, Strategy, SymbolSnapshot, HaltBilanz, TimeframeMin, Trade, VolZielVerteilung, OffenePosition } from '../core/types.ts';
 import { borrowCost, fillCosts, regulatoryFees, type FillSide } from './costs.ts';
 import { computeMetrics } from './metrics.ts';
 
@@ -892,6 +870,9 @@ export function simulate(input: SimInput): SimResult {
 
   /* ── Abschluss ── */
   if (dayHadPoints) dailyReturns.push(dayCloseEquity / lastDayEquity - 1);
+  // Offene Positionen am Ende: als Notiz für den Leser UND strukturiert für
+  // den Optimierer, der sie über die Folds der OOS-Kette addiert (K4).
+  const offenAmEnde: OffenePosition[] = [];
   for (const s of syms) {
     if (s.pendingEnter) notes.push(`Einstieg ${s.symbol} ohne Folgebar verworfen (Datenende)`);
     if (s.pendingExit) notes.push(`Exit ${s.symbol} (${s.pendingExit.reason}) ohne Folgebar — Position bleibt offen (Datenende)`);
@@ -899,6 +880,7 @@ export function simulate(input: SimInput): SimResult {
       const p = s.pos;
       const unreal = (p.side === 'long' ? s.lastClose - p.entryPrice : p.entryPrice - s.lastClose) * p.qty;
       notes.push(`Offen am Ende: ${p.symbol} ${p.side} ${p.qty} @ ${p.entryPrice} (unrealisiert ${unreal.toFixed(2)}, ohne Exit-Kosten)`);
+      offenAmEnde.push({ symbol: p.symbol, side: p.side, qty: p.qty, entryPrice: p.entryPrice, lastClose: s.lastClose, unrealisiert: unreal });
     }
   }
   for (const [sym, n] of cashRejected) notes.push(`Bargeld reicht am Fill nicht: ${sym} ×${n} (kein Fill)`);
@@ -970,5 +952,5 @@ export function simulate(input: SimInput): SimResult {
     erste: bremsenErste,
     letzte: bremsenLetzte,
   };
-  return { trades, equity: equityCurve, dailyReturns, metrics, finalEquity: equity, notes, bremsen, ...(volZiel ? { volZiel } : {}) };
+  return { trades, equity: equityCurve, dailyReturns, metrics, finalEquity: equity, notes, bremsen, offenAmEnde, ...(volZiel ? { volZiel } : {}) };
 }
