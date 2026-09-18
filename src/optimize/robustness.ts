@@ -55,11 +55,11 @@
  * zählen TRADES, und eine Treasury-Umschichtung ist keiner (risk/parken.ts).
  */
 import { ROHES_NETTO_NOTE, excessReturns, riskFreeFuerLauf, ueberschussKennzahlen, type RiskFreeSeries } from '../backtest/metrics.ts';
-import type { AssetClass, EquityPoint } from '../core/types.ts';
+import type { AssetClass, EquityPoint, SimResult } from '../core/types.ts';
 import type { BasisConfig, OptimizerConfig } from '../core/config.ts';
 import { median, objectiveValue, sampleVariance, type ObjectiveId } from './objective.ts';
 import { neighbors, wirksamerSuchraum } from './search.ts';
-import { candidateRange, korbVon, simulateWindow, zeitachseVon, type BasisKennzahlen, type WfaResult, type WindowSimArgs } from './walkForward.ts';
+import { candidateRange, durchgehendeKette, korbVon, simulateWindow, zeitachseVon, type BasisKennzahlen, type WfaResult, type WindowSimArgs } from './walkForward.ts';
 
 /* ───────────────────────── Injektionspunkt Statistik ───────────────────────── */
 
@@ -228,14 +228,25 @@ export function stressTest(
   let trades = 0;
   let ueberschuss: number | null = a.riskFree ? 0 : null;
   let zins = a.riskFree ? `Maßstab: Überschuss über ${a.riskFree.symbol}` : ROHES_NETTO_NOTE;
-  for (const f of a.wfa.folds) {
-    const r = simulateWindow({
-      ...a,
-      params: f.best.params,
-      range: { start: f.fold.oosStart, end: f.fold.oosEnd },
-      costMultiplier: a.costMultiplier,
-      membershipAt: f.fold.oosStart,
-    });
+  // Dieselbe Rechnung wie die Kette selbst: durchgehend EIN Lauf bei Kosten
+  // ×Faktor, in Fold-Scheiben geschnitten (Vorregistrierung 2026-09-18-
+  // durchgehende-oos-kette) — sonst verglichen wir eine durchgehende Kette
+  // mit einem Stress aus 18 leeren Büchern.
+  const laeufe: SimResult[] =
+    a.wfa.kette.modus === 'continuous'
+      ? durchgehendeKette({ ...a, costMultiplier: a.costMultiplier, folds: a.wfa.folds.map((f) => ({ fold: f.fold, params: f.best.params })) }).scheiben
+      : a.wfa.folds.map((f) =>
+          simulateWindow({
+            ...a,
+            params: f.best.params,
+            range: { start: f.fold.oosStart, end: f.fold.oosEnd },
+            costMultiplier: a.costMultiplier,
+            membershipAt: f.fold.oosStart,
+          }),
+        );
+  for (let i = 0; i < a.wfa.folds.length; i++) {
+    const f = a.wfa.folds[i]!;
+    const r = laeufe[i]!;
     objectives.push(objectiveValue(a.objective, r.metrics));
     netProfit += r.metrics.netProfit;
     trades += r.metrics.trades;

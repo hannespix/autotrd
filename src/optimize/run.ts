@@ -79,6 +79,7 @@ import {
 } from './robustness.ts';
 import { wirksamerSuchraum } from './search.ts';
 import {
+  type OosChain,
   MIN_FOLDS,
   TAGE_JE_MONAT,
   basisSimulation,
@@ -285,9 +286,11 @@ export interface OffenAnFoldEnden {
   /** Σ unrealisiert (ohne Exit-Kosten) — der Teil des Kettenergebnisses, der nie ein Trade wurde. */
   unrealisiert: number;
   bekannt: boolean;
+  /** `continuous`: die Zahl gilt nur am Ende der Kette — an den Fold-Grenzen wird nichts geschlossen. */
+  modus: OosChain;
 }
 
-export function offenAnFoldEnden(teile: readonly SimResult[]): OffenAnFoldEnden {
+export function offenAnFoldEnden(teile: readonly SimResult[], modus: OosChain = 'per_fold'): OffenAnFoldEnden {
   let fenster = 0;
   let positionen = 0;
   let unrealisiert = 0;
@@ -301,7 +304,7 @@ export function offenAnFoldEnden(teile: readonly SimResult[]): OffenAnFoldEnden 
     positionen += t.offenAmEnde.length;
     for (const p of t.offenAmEnde) unrealisiert += p.unrealisiert;
   }
-  return { fenster, fensterGesamt: teile.length, positionen, unrealisiert, bekannt };
+  return { fenster, fensterGesamt: teile.length, positionen, unrealisiert, bekannt, modus };
 }
 
 /**
@@ -389,7 +392,7 @@ export function auswertungFuer(a: {
       ...(letzterFold ? { bis: letzterFold.fold.oosEnd } : {}),
     }),
     aktivitaet: aktivitaet({ trades, equity, assetClass: a.assetClass }),
-    offenAnFoldEnden: offenAnFoldEnden(a.teile),
+    offenAnFoldEnden: offenAnFoldEnden(a.teile, a.wfa.kette.modus),
     renditen: renditeketteVon({ fenster: a.teile, initialEquity: a.initialEquity, assetClass: a.assetClass }),
     oosDays,
     konsistent: abweichungen.length === 0,
@@ -1511,9 +1514,13 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
         let auswertung: KandidatAuswertung | null = null;
         if (mitAuswertung) {
           try {
-            const teile = wfa.folds.map((f) =>
-              simulateWindow({ ...cx, strategy, params: f.best.params, range: { start: f.fold.oosStart, end: f.fold.oosEnd }, membershipAt: f.fold.oosStart }),
-            );
+            // Durchgehende Kette: die Scheiben des einen Laufs SIND der
+            // Auswertungslauf — keine zweite Simulation, keine zweite Wahrheit.
+            const teile =
+              wfa.kette.scheiben ??
+              wfa.folds.map((f) =>
+                simulateWindow({ ...cx, strategy, params: f.best.params, range: { start: f.fold.oosStart, end: f.fold.oosEnd }, membershipAt: f.fold.oosStart }),
+              );
             auswertung = auswertungFuer({ wfa, teile, korb: korbVon(symbol, kx.bars), initialEquity: input.initialEquity, assetClass: cfg.universe.assetClass });
             if (!auswertung.konsistent) log(`${symbol} ${strategy.id}: Auswertungslauf weicht vom Walk-Forward ab — ${auswertung.hinweis ?? ''}`);
           } catch (e) {

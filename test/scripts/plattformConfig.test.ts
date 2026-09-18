@@ -61,6 +61,13 @@ describe('config/platform.yaml', () => {
     expect(cfg.optimizer.incumbentFailNights, wo).toBe(3);
   });
 
+  it('WÄCHTER: die OOS-Kette ist EINE durchgehende Simulation (Prüfbefund K4) — kein Buchgewinn an Fold-Enden', () => {
+    // Bis #21 war jeder Fold ein eigener Lauf mit leerem Buch; offene Positionen
+    // am Fold-Ende zählten zum Schluss bewertet als Ergebnis (csm: ≈ 2 600 $ von
+    // 3 388 $ Überschuss). `per_fold` existiert nur noch für Rauchtests.
+    expect(cfg.optimizer.oosChain, 'docs/wissen/vorregistrierung/2026-09-18-durchgehende-oos-kette.md').toBe('continuous');
+  });
+
   it('bleibt im Rahmen, den Alpaca und die Nutzer-Einstellungen hergeben', () => {
     // IEX-Basis erlaubt 30 Stream-Abonnements; der Benchmark zählt mit.
     const abos = new Set(cfg.universe.symbols);

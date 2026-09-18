@@ -84,7 +84,7 @@ import {
   type Calendar,
   type SessionBounds,
 } from '../core/time.ts';
-import type { AssetClass, BarSeriesLike, EquityPoint, ExitReason, HaltState, IndicatorSet, Ms, OrderIntent, ParkIntent, ParkStand, Params, PositionState, SessionInfo, SimResult, SizingSpec, Strategy, SymbolSnapshot, HaltBilanz, TimeframeMin, Trade, VolZielVerteilung, OffenePosition } from '../core/types.ts';
+import type { AssetClass, BarSeriesLike, EquityPoint, ExitReason, HaltState, IndicatorSet, Ms, OrderIntent, ParkIntent, ParkStand, Params, PositionState, SessionInfo, SimResult, SizingSpec, Strategy, SymbolSnapshot, HaltBilanz, TimeframeMin, Trade, VolZielVerteilung, OffenePosition, ParameterWechsel } from '../core/types.ts';
 import { borrowCost, fillCosts, regulatoryFees, type FillSide } from './costs.ts';
 import { computeMetrics } from './metrics.ts';
 
@@ -101,7 +101,7 @@ export interface SimInput {
   bars: ReadonlyMap<string, BarSeriesLike>;
   benchmark?: BarSeriesLike | undefined;
   /** null ⇒ Symbol nicht handeln. `sizing` (Basis-Stufe: Allokation) geht unverändert in `decide()` — wie in der Engine. */
-  strategyFor: (symbol: string) => { strategy: Strategy; params: Params; sizing?: SizingSpec | undefined; stufe?: string | undefined } | null;
+  strategyFor: (symbol: string) => { strategy: Strategy; params: Params; sizing?: SizingSpec | undefined; stufe?: string | undefined; wechsel?: readonly ParameterWechsel[] | undefined } | null;
   config: SimConfig;
   initialEquity: number;
   /** Entscheidungen/Fills nur für Bars mit t in [start, end); Bars davor sind Warmup, Bars danach werden ignoriert. */
@@ -149,6 +149,17 @@ interface SymState {
   /** Stufe der Wahl (`champion` · `basis` · `config`) — Latte der Notbremse (`risk.tiers`); wie in der Engine. */
   stufe: string | undefined;
   ind: IndicatorSet;
+  /**
+   * Fahrplan der Parameter (`ParameterWechsel`, nach `ab` sortiert) und der
+   * Index des nächsten noch nicht angewandten Eintrags. Ohne Fahrplan leer —
+   * dann verhält sich der Simulator bitgleich wie ohne das Feld.
+   */
+  fahrplan: readonly ParameterWechsel[];
+  fahrplanIdx: number;
+  /** Indikatoren je Parametersatz, damit ein Wechsel zurück nicht neu rechnet. */
+  indJe: Map<string, IndicatorSet>;
+  /** Keine führende Strategie mehr (Fahrplan `params: null`): kein Einstieg, offene Position ⇒ `unmanaged`. */
+  gesperrt: boolean;
   /** Index der nächsten noch nicht verarbeiteten Bar. */
   cursor: number;
   pendingEnter: EnterIntent | null;
@@ -280,6 +291,14 @@ function blockKey(text: string): string {
   return colon >= 0 ? head.slice(0, colon) : head;
 }
 
+/** Schlüssel eines Parametersatzes für den Indikator-Cache — Reihenfolge der Felder ist egal. */
+function paramsSchluessel(p: Params): string {
+  return Object.keys(p)
+    .sort()
+    .map((k) => `${k}=${String(p[k])}`)
+    .join('|');
+}
+
 export function simulate(input: SimInput): SimResult {
   const { config, initialEquity, calendar, range } = input;
   const { assetClass, timeframe: tf, risk, session: sessionCfg, costs } = config;
@@ -298,6 +317,8 @@ export function simulate(input: SimInput): SimResult {
     if (series.length === 0) continue;
     const sp = input.strategyFor(symbol);
     if (!sp) continue;
+    const fahrplan = sp.wechsel ? [...sp.wechsel].sort((a, b) => a.ab - b.ab) : [];
+    const ind = sp.strategy.precompute(series, sp.params);
     syms.push({
       symbol,
       series,
@@ -305,7 +326,11 @@ export function simulate(input: SimInput): SimResult {
       params: sp.params,
       sizing: sp.sizing,
       stufe: sp.stufe,
-      ind: sp.strategy.precompute(series, sp.params),
+      ind,
+      fahrplan,
+      fahrplanIdx: 0,
+      indJe: new Map([[paramsSchluessel(sp.params), ind]]),
+      gesperrt: false,
       cursor: 0,
       pendingEnter: null,
       pendingExit: null,
@@ -626,6 +651,24 @@ export function simulate(input: SimInput): SimResult {
 
     here.length = 0;
     for (const s of syms) {
+      // Fahrplan: Ab `ab` gelten neue Parameter (Indikatoren des neuen Satzes,
+      // kausal auf derselben Serie) oder keine mehr (`null` ⇒ gesperrt). Zeit-
+      // gesteuert für alle Symbole, auch ohne Bar an diesem Zeitpunkt.
+      while (s.fahrplanIdx < s.fahrplan.length && s.fahrplan[s.fahrplanIdx]!.ab <= t) {
+        const w = s.fahrplan[s.fahrplanIdx++]!;
+        if (w.params === null) s.gesperrt = true;
+        else {
+          s.gesperrt = false;
+          s.params = w.params;
+          const k = paramsSchluessel(w.params);
+          let ind = s.indJe.get(k);
+          if (!ind) {
+            ind = s.strategy.precompute(s.series, w.params);
+            s.indJe.set(k, ind);
+          }
+          s.ind = ind;
+        }
+      }
       if (s.cursor < s.series.length && s.series.t[s.cursor] === t) here.push(s);
     }
     // Bar des Parksymbols an diesem Zeitpunkt (Index, noch nicht verbraucht):
@@ -759,6 +802,17 @@ export function simulate(input: SimInput): SimResult {
     const benchSnap = bench && benchIdx >= 0 ? { bars: bench.prefix(benchIdx + 1), i: benchIdx } : undefined;
     const inputs: SymbolInput[] = [];
     for (const s of here) {
+      if (s.gesperrt) {
+        // Ohne führende Strategie: wie die Engine (engine.ts, `ohneFuehrung`) —
+        // kein Einstieg, offene Position am nächsten Open schließen. Nicht in
+        // die Portfolio-Entscheidung, aber weiter im Buch (Equity, Plätze).
+        if (s.pendingEnter) {
+          s.pendingEnter = null;
+          pendingEntries.delete(s.symbol);
+        }
+        if (s.pos && !s.pendingExit) s.pendingExit = { kind: 'exit', symbol: s.symbol, reason: 'unmanaged', decidedAt: now };
+        continue;
+      }
       const i = s.cursor - 1;
       const session = sessionInfoIncremental({ t, day, barsSinceOpen: s.barsSinceOpen, tf, assetClass, bounds });
       const snap: SymbolSnapshot = { symbol: s.symbol, bars: s.series.prefix(i + 1), i, position: s.pos, session, benchmark: benchSnap };

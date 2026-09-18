@@ -253,6 +253,11 @@ optimizer:
   # geprüft und nach drei gerissenen Nächten in Folge abgesetzt. Nie senken.
   promotionGrids: 3
   incumbentFailNights: 3
+  # Die OOS-Kette als EINE durchgehende Simulation (Prüfbefund K4, vorregistriert
+  # in docs/wissen/vorregistrierung/2026-09-18-durchgehende-oos-kette.md): ein
+  # Buch, Parameter- und Korbwechsel an den Fold-Grenzen, Positionen laufen
+  # weiter. `per_fold` (Buchgewinne an 18 Fold-Enden) gibt es nur für Vergleiche.
+  oosChain: continuous
   minPsrOos: 0.9
   dsrIsGate: false
   # Untergrenze der Handelsaktivität für die PAPIER-ERPROBUNG (Owner-Entscheidung

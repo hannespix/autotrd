@@ -250,8 +250,10 @@ describe('oosScoreOnFolds', () => {
     });
     expect(simulate.calls.length).toBe(8);
     expect(simulate.calls.map((c) => c.range)).toEqual(folds.map((f) => ({ start: f.oosStart, end: f.oosEnd })));
-    // dieselben Params wie die WFA-Folds (a = 10, gemeinsames Rauschen) ⇒ identischer OOS-Median
-    expect(agg.objectiveMedian).toBe(runWfa().wfa.oos.objectiveMedian);
+    // dieselben Params wie die WFA-Folds (a = 10, gemeinsames Rauschen) ⇒ derselbe OOS-Median.
+    // Die WFA misst die durchgehende Kette (Scheiben auf E₀ normiert, Kennzahlen des Kerns),
+    // die Fold-Bewertung je Fold mit dem Fake — gleich bis auf Gleitkomma.
+    expect(agg.objectiveMedian).toBeCloseTo(runWfa().wfa.oos.objectiveMedian, 9);
   });
 });
 
@@ -286,9 +288,9 @@ describe('fixedParamsWfa (Amtsinhaber ohne Suche)', () => {
     const oosCalls = simulate.calls.filter((c) => clean.some((f) => c.range!.start === f.oosStart && c.range!.end === f.oosEnd));
     expect(oosCalls.length).toBe(3);
     for (const c of simulate.calls) expect(c.range!.start).toBeGreaterThanOrEqual(clean[0]!.isStart);
-    // gleicher OOS-Median wie die reine Fold-Bewertung
+    // gleicher OOS-Median wie die reine Fold-Bewertung (Kette auf E₀ normiert ⇒ bis auf Gleitkomma)
     const agg = oosScoreOnFolds({ symbol: 'AAA', strategy, params: { a: 10, b: 0 }, bars, config: simConfigOf(cfg), initialEquity: 10_000, simulate, folds: clean, objective: 'sortino' });
-    expect(w.oos.objectiveMedian).toBe(agg.objectiveMedian);
+    expect(w.oos.objectiveMedian).toBeCloseTo(agg.objectiveMedian, 9);
     expect(() => fixedParamsWfa({ symbol: 'AAA', strategy, params: { a: 1, b: 1 }, bars, config: simConfigOf(cfg), initialEquity: 10_000, simulate, folds: [], optimizer: cfg.optimizer, holdout: null })).toThrow(/keine Folds/);
   });
 });

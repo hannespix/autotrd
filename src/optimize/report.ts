@@ -261,6 +261,17 @@ function volZielZeile(v: KandidatAuswertung): string[] {
  */
 function offenAnFoldEndenZeile(o: KandidatAuswertung['offenAnFoldEnden'], nettoTrades: number): string {
   if (!o.bekannt) return `_Offen an Fold-Enden (K4): nicht gemessen — der Simulationslauf liefert die Zahl nicht._`;
+  if (o.modus === 'continuous') {
+    // EIN Lauf: Positionen laufen über die Fold-Grenzen; Buchgewinn gibt es nur am Kettenende.
+    const kopf =
+      o.positionen === 0
+        ? `**Offen am Kettenende (Prüfbefund K4):** keine Position`
+        : `**Offen am Kettenende (Prüfbefund K4):** ${o.positionen} Position${o.positionen === 1 ? '' : 'en'}, Σ unrealisiert ${signed(o.unrealisiert)} $ (zum letzten Schluss, ohne Exit-Kosten)`;
+    return (
+      `${kopf}. Die OOS-Kette ist EIN Lauf: An den Fold-Grenzen wird nichts geschlossen und nichts bewertet, Positionen laufen in den nächsten Fold hinein; ` +
+      `nur am Ende der Kette bleibt Buchgewinn stehen — neben ${signed(nettoTrades)} $ aus geschlossenen Trades. Kein Gate liest diese Zahl.`
+    );
+  }
   return (
     `**Offen an Fold-Enden (Prüfbefund K4):** ${o.positionen} Position${o.positionen === 1 ? '' : 'en'} in ${o.fenster} von ${o.fensterGesamt} OOS-Fenstern, ` +
     `Σ unrealisiert ${signed(o.unrealisiert)} $ (zum letzten Schluss, ohne Exit-Kosten). Die OOS-Kette zählt das als Ergebnis; ein Trade wurde es nie — ` +
@@ -563,6 +574,12 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
   // Regel 2 (18.09.2026): dieselbe Latte auf k Rastern — die eine Zeile, an
   // der ein Leser erkennt, dass „Gates bestanden" allein noch keinen Champion
   // macht (Prüfbefund K1: 6/10, 5/10, 10/10 in drei Nächten).
+  out.push(
+    o.oosChain === 'continuous'
+      ? '- **OOS-Kette: EINE durchgehende Simulation** — ein Buch, ein Peak; Parameter und Korb wechseln an der OOS-Grenze jedes Folds, Positionen laufen weiter, ein Symbol ohne führende Strategie wird `unmanaged` geschlossen (wie die Plattform nachts). ' +
+          'Die Fold-Scheiben sind auf das Startkapital normiert; Trades stehen in Dollar des einen Buchs (Vorregistrierung 2026-09-18-durchgehende-oos-kette).'
+      : '- **OOS-Kette: je Fold ein eigener Lauf mit leerem Buch** (`oosChain: per_fold` — die Rechnung bis 18.09.2026, nur für Vergleichsläufe). Positionen, die am Fold-Ende offen sind, zählen zum Schluss als Ergebnis, ohne je ein Trade zu werden (Prüfbefund K4).',
+  );
   out.push(
     o.promotionGrids > 1
       ? `- **Beförderung (Regel 2): alle zehn Gates auf ${o.promotionGrids} Rastern** (Anker −0 … −${o.promotionGrids - 1} Handelstage, im selben Lauf; Score und Parameter von Raster −0). ` +

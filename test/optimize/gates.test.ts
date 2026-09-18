@@ -94,6 +94,7 @@ function wfaFixture(over: Partial<WfaResult['oos']> = {}, foldReturns?: number[]
     holdout: null,
     dataRange: { start: 0, end: 10 },
     embargoBars: 25,
+    kette: { modus: 'per_fold' },
     ...extra,
   };
 }
@@ -522,13 +523,33 @@ describe('stressTest & neighborhoodTest (mit Fake-Simulator)', () => {
     const wfa = wfaOf(simulate);
     simulate.calls.length = 0;
     const s = stressTest({ ...common, simulate, wfa, costMultiplier: 1.5, objective: 'sortino' });
-    expect(simulate.calls.length).toBe(8);
-    for (const c of simulate.calls) expect(c.costMultiplier).toBe(1.5);
-    expect(simulate.calls.map((c) => c.range)).toEqual(wfa.folds.map((f) => ({ start: f.fold.oosStart, end: f.fold.oosEnd })));
+    // Durchgehende Kette (Default seit 18.09.2026): EIN Lauf über die ganze
+    // OOS-Kette mit dem Kostenfaktor, der Fahrplan trägt je Fold dessen Beste.
+    expect(wfa.kette.modus).toBe('continuous');
+    expect(simulate.calls.length).toBe(1);
+    const c = simulate.calls[0]!;
+    expect(c.costMultiplier).toBe(1.5);
+    expect(c.range).toEqual({ start: wfa.folds[0]!.fold.oosStart, end: wfa.folds.at(-1)!.fold.oosEnd });
+    expect(c.wechsel).toEqual(wfa.folds.map((f) => ({ ab: f.fold.oosStart, params: f.best.params })));
     expect(s.netProfit).toBeLessThan(wfa.oos.netProfit);
     expect(s.netProfit).toBeGreaterThan(0);
     expect(s.trades).toBe(240);
     expect(s.costMultiplier).toBe(1.5);
+  });
+
+  it('per_fold: Stress läuft je Fold ein eigenes Fenster mit leerem Buch (der Weg bis 18.09.2026)', () => {
+    const simulate = makeFakeSimulate(REWARD_PROFILE);
+    const wfa = walkForward({ ...common, optimizer: { ...cfg.optimizer, oosChain: 'per_fold' }, simulate });
+    simulate.calls.length = 0;
+    const s = stressTest({ ...common, simulate, wfa, costMultiplier: 1.5, objective: 'sortino' });
+    expect(simulate.calls.length).toBe(8);
+    for (const c of simulate.calls) {
+      expect(c.costMultiplier).toBe(1.5);
+      expect(c.wechsel).toBeUndefined();
+    }
+    expect(simulate.calls.map((c) => c.range)).toEqual(wfa.folds.map((f) => ({ start: f.fold.oosStart, end: f.fold.oosEnd })));
+    expect(s.netProfit).toBeLessThan(wfa.oos.netProfit);
+    expect(s.trades).toBe(240);
   });
 
   it('Stress mit ruinösem Faktor kippt das Netto', () => {

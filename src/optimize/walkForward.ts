@@ -12,7 +12,7 @@
 import type { CostConfig, OptimizerConfig, RiskConfig, SessionConfig } from '../core/config.ts';
 import type { Calendar } from '../core/time.ts';
 import { anfangsStreuner } from '../core/bars.ts';
-import { ROHES_NETTO_NOTE, excessReturns, riskFreeFuerLauf, tagesachse, ueberschussKennzahlen, type RiskFreeSeries } from '../backtest/metrics.ts';
+import { ROHES_NETTO_NOTE, computeMetrics, excessReturns, riskFreeFuerLauf, tagesachse, ueberschussKennzahlen, type RiskFreeSeries } from '../backtest/metrics.ts';
 import { DAY, dayKeyFor } from '../core/time.ts';
 import type {
   AssetClass,
@@ -27,7 +27,9 @@ import type {
   Strategy,
   TimeframeMin,
   Trade,
+  ParameterWechsel,
 } from '../core/types.ts';
+import { OHNE_BREMSEN } from '../core/types.ts';
 import { ALPHA_STUFE } from '../risk/limits.ts';
 import { mean, median, objectiveValue, perPeriodSharpe, type ObjectiveId } from './objective.ts';
 import { rngFuer, sampleParams, wirksamerSuchraum } from './search.ts';
@@ -51,7 +53,13 @@ export interface SimConfig {
 export interface SimInput {
   bars: ReadonlyMap<string, BarSeriesLike>;
   benchmark?: BarSeriesLike;
-  strategyFor: (symbol: string) => { strategy: Strategy; params: Params; sizing?: SizingSpec | undefined; stufe?: string | undefined } | null;
+  /**
+   * Wahl je Symbol. `wechsel` ist der Fahrplan der durchgehenden OOS-Kette:
+   * ab `ab` gelten die Parameter des Eintrags, `null` sperrt das Symbol
+   * (Korbaustritt ⇒ `unmanaged`-Exit, kein Einstieg). Ohne Fahrplan gelten
+   * `params` für den ganzen Lauf — bitgleich zum Verhalten vor dem 18.09.2026.
+   */
+  strategyFor: (symbol: string) => { strategy: Strategy; params: Params; sizing?: SizingSpec | undefined; stufe?: string | undefined; wechsel?: readonly ParameterWechsel[] | undefined } | null;
   config: SimConfig;
   initialEquity: number;
   /** Entscheidungen nur in [start, end); alles davor ist Warmup. */
@@ -613,6 +621,160 @@ function pieceOf(r: SimResult, assetClass: AssetClass): OosPiece {
   return oosPieceOf(r, assetClass);
 }
 
+/* ───────────────────────── Die OOS-Kette als EINE Simulation ───────────────────────── */
+
+/**
+ * EIN Lauf über die OOS-Kette (Vorregistrierung
+ * `docs/wissen/vorregistrierung/2026-09-18-durchgehende-oos-kette.md`):
+ * ein Buch, ein Peak, von `oosStart` des ersten bis `oosEnd` des letzten
+ * Folds. An der OOS-Grenze jedes Folds wechseln die Parameter auf dessen
+ * Fold-Besten und der Korb auf seinen Stand (Korb je Fold); ein Symbol, das
+ * den Korb verlässt, wird `unmanaged` geschlossen — wie die Plattform nachts.
+ *
+ * Das Ergebnis wird an den Fold-Grenzen in Scheiben geschnitten und je
+ * Scheibe auf E₀ normiert (Equity × E₀ / E_Start der Scheibe): So bleiben
+ * `aggregateOos` (Produkt der Scheibenfaktoren = Gesamtfaktor) und die
+ * Invariante von `ueberschussKette` (aufgezinst = Netto je Fold) gültig, und
+ * jedes Gate rechnet wie bisher. Die Trades bleiben in echten Dollar des
+ * einen Buchs — sie sind die Wahrheit über das, was gehandelt wurde; die
+ * Equity-Scheiben sind die Rechengröße der Kette.
+ *
+ * Bis zum 18.09.2026 war jeder Fold ein eigener Lauf: leeres Buch, und am
+ * Fold-Ende offene Positionen zum Schluss bewertet, ohne je ein Trade zu
+ * werden (Prüfbefund K4: ≈ 2 600 $ von 3 388 $ Überschuss der csm-Kette).
+ */
+export function durchgehendeKette(
+  a: Omit<WindowSimArgs, 'range' | 'params'> & { folds: readonly { fold: Fold; params: Params }[] },
+): { gesamt: SimResult; scheiben: SimResult[] } {
+  if (a.folds.length === 0) throw new Error('durchgehendeKette: keine Folds');
+  const korb = korbVon(a.symbol, a.bars);
+  const first = a.folds[0]!.fold;
+  const last = a.folds[a.folds.length - 1]!.fold;
+  const range: TimeRange = { start: first.oosStart, end: last.oosEnd };
+
+  // Korbstand je Fold; ohne Membership der ganze Korb in jedem Fold.
+  const staende = a.folds.map((f) => new Set(korbZum(korb, a.membership, f.fold.oosStart).keys()));
+  const union = new Set<string>();
+  for (const st of staende) for (const s of st) union.add(s);
+  const bars = new Map<string, BarSeriesLike>();
+  for (const [sym, serie] of korb) if (union.has(sym)) bars.set(sym, serie);
+
+  // Fahrplan je Symbol: an jeder OOS-Grenze die Parameter des Folds, oder
+  // `null`, wenn das Symbol in diesem Fold nicht zum Korb gehört.
+  const fahrplanFuer = (sym: string): ParameterWechsel[] =>
+    a.folds.map((f, i) => ({ ab: f.fold.oosStart, params: staende[i]!.has(sym) ? f.params : null }));
+  const params0 = a.folds[0]!.params;
+  const input: SimInput = {
+    bars,
+    strategyFor: (s) =>
+      bars.has(s) ? { strategy: a.strategy, params: params0, ...(a.sizing ? { sizing: a.sizing } : {}), stufe: a.stufe ?? ALPHA_STUFE, wechsel: fahrplanFuer(s) } : null,
+    config: a.config,
+    initialEquity: a.initialEquity,
+    range,
+  };
+  if (a.benchmark) input.benchmark = a.benchmark;
+  if (a.calendar) input.calendar = a.calendar;
+  if (a.costMultiplier !== undefined && a.costMultiplier !== 1) input.costMultiplier = a.costMultiplier;
+  if (a.parkBars) input.parkBars = a.parkBars;
+  const gesamt = a.simulate(input);
+  return { gesamt, scheiben: kettenScheiben(gesamt, a.folds.map((f) => f.fold), a.initialEquity, a.config.assetClass) };
+}
+
+/**
+ * Den einen Lauf in Fold-Scheiben schneiden und jede auf E₀ normieren.
+ *
+ * Tagesrenditen tragen kein Datum; ihre Achse sind die Handelstage der
+ * Equity-Kurve (`tagesachse`, dieselbe Zuordnung wie `oosPieceOf`). Ein Tag
+ * gehört zu dem Fold, in dessen [oosStart, oosEnd) seine erste Bar liegt.
+ * Trades gehören zum Fold ihrer Ausstiegszeit — dort steht ihr Ergebnis in
+ * der Equity. Notizen, Bremsen, Vola-Ziel und die am Ende offenen Positionen
+ * hängen an der letzten Scheibe (Bremsen: an der ersten — sie werden über die
+ * Scheiben addiert und dürfen nicht doppelt zählen).
+ */
+export function kettenScheiben(gesamt: SimResult, folds: readonly Fold[], initialEquity: number, assetClass: AssetClass): SimResult[] {
+  const kurve = [...gesamt.equity].sort((x, y) => x.t - y.t);
+  const tage = tagesachse(kurve, assetClass);
+  if (tage.length !== gesamt.dailyReturns.length) {
+    throw new Error(`durchgehende Kette: ${gesamt.dailyReturns.length} Tagesrenditen, aber ${tage.length} Handelstage in der Equity-Kurve — die Renditen lassen sich nicht auf die Folds verteilen`);
+  }
+  // Erste Bar je Handelstag ⇒ Fold des Tages.
+  const tagBeginn = new Map<string, Ms>();
+  for (const p of kurve) {
+    const k = dayKeyFor(p.t, assetClass);
+    if (!tagBeginn.has(k)) tagBeginn.set(k, p.t);
+  }
+  // Erschöpfend: der letzte Fold, dessen OOS-Beginn erreicht ist — nichts
+  // fällt zwischen zwei Folds oder hinter den letzten (Σ Scheiben = Kette).
+  const foldVon = (t: Ms): number => {
+    let i = 0;
+    for (let k = 1; k < folds.length; k++) if (t >= folds[k]!.oosStart) i = k;
+    return i;
+  };
+  const periodsPerYear = assetClass === 'crypto' ? 365 : 252;
+  const out: SimResult[] = [];
+  let eStart = initialEquity;
+  for (let i = 0; i < folds.length; i++) {
+    const fold = folds[i]!;
+    const roh = kurve.filter((p) => foldVon(p.t) === i);
+    const scale = eStart > 0 ? initialEquity / eStart : 1;
+    const equity = roh.map((p) => (p.exposure === undefined ? { t: p.t, equity: p.equity * scale } : { t: p.t, equity: p.equity * scale, exposure: p.exposure }));
+    const dailyReturns: number[] = [];
+    for (let d = 0; d < tage.length; d++) {
+      if (foldVon(tagBeginn.get(tage[d]!)!) === i) dailyReturns.push(gesamt.dailyReturns[d]!);
+    }
+    const trades = gesamt.trades.filter((t) => foldVon(t.exitTime) === i);
+    const eEnd = roh.length ? roh[roh.length - 1]!.equity : eStart;
+    const exposed = roh.filter((p) => (p.exposure ?? 0) > 0).length;
+    const metrics = computeMetrics({
+      trades,
+      equity,
+      dailyReturns,
+      initialEquity,
+      periodsPerYear,
+      days: Math.max(1, Math.round((fold.oosEnd - fold.oosStart) / DAY)),
+      exposurePct: roh.length ? (exposed / roh.length) * 100 : 0,
+    });
+    const letzte = i === folds.length - 1;
+    out.push({
+      trades,
+      equity,
+      dailyReturns,
+      metrics,
+      finalEquity: eEnd * scale,
+      notes: letzte ? gesamt.notes : [],
+      bremsen: i === 0 ? gesamt.bremsen : OHNE_BREMSEN,
+      // Nur, wenn der Lauf die Zahl kennt — sonst bleibt sie unbekannt (K4: nie eine stille Null).
+      ...(gesamt.offenAmEnde ? { offenAmEnde: letzte ? gesamt.offenAmEnde : [] } : {}),
+      ...(letzte && gesamt.volZiel ? { volZiel: gesamt.volZiel } : {}),
+    });
+    eStart = eEnd;
+  }
+  return out;
+}
+
+/**
+ * Die Bewertung der OOS-Kette nach `optimizer.oosChain`: `continuous` ersetzt
+ * die OOS-Seite jedes Fold-Ergebnisses (`oosMetrics`, `oosTrades`,
+ * `oosDailyReturns`, `oosObjective`) und die Stücke der Aggregation durch die
+ * Scheiben des einen Laufs — IS-Suche und Fold-Beste bleiben. `per_fold`
+ * lässt alles, wie es ist.
+ */
+function kettenBewertung(
+  a: Omit<WindowSimArgs, 'range' | 'params'> & { optimizer: OptimizerConfig },
+  foldResults: WfaFoldResult[],
+  pieces: OosPiece[],
+): OosKette {
+  if (a.optimizer.oosChain !== 'continuous') return { modus: 'per_fold' };
+  const k = durchgehendeKette({ ...a, folds: foldResults.map((f) => ({ fold: f.fold, params: f.best.params })) });
+  for (let i = 0; i < foldResults.length; i++) {
+    const f = foldResults[i]!;
+    const s = k.scheiben[i]!;
+    f.best = { ...f.best, oosMetrics: s.metrics, oosTrades: s.trades, oosObjective: objectiveValue(a.optimizer.objective, s.metrics), oosDailyReturns: s.dailyReturns };
+    pieces[i] = pieceOf(s, a.config.assetClass);
+  }
+  return { modus: 'continuous', scheiben: k.scheiben, gesamt: k.gesamt };
+}
+
 /* ───────────────────────── Suche in einem Fenster ───────────────────────── */
 
 export interface WfaCandidate {
@@ -656,6 +818,24 @@ export interface WfaResult {
   dataRange: TimeRange;
   /** Sperrzone in Bars für die Default-Parameter (Bericht). */
   embargoBars: number;
+  /**
+   * Wie die OOS-Kette entstand (`optimizer.oosChain`). `continuous`: EIN Lauf
+   * über die ganze Kette, in Fold-Scheiben geschnitten und je Scheibe auf E₀
+   * normiert — `folds[i].best.oos*` und `oos` stammen daraus; `scheiben` sind
+   * die Fold-Ausschnitte in der Form eines Fold-Laufs (Auswertung,
+   * Exit-Anatomie). `per_fold`: jeder Fold ein eigener Lauf mit leerem Buch
+   * (bis 18.09.2026). Nicht persistiert — champion.json trägt nur `oos`.
+   */
+  kette: OosKette;
+}
+
+export type OosChain = 'continuous' | 'per_fold';
+
+export interface OosKette {
+  modus: OosChain;
+  /** Nur `continuous`: die Fold-Scheiben des einen Laufs (normiert) und der ganze Lauf. */
+  scheiben?: SimResult[] | undefined;
+  gesamt?: SimResult | undefined;
 }
 
 export interface WalkForwardArgs {
@@ -767,6 +947,11 @@ export function walkForward(a: WalkForwardArgs): WfaResult {
     );
   }
 
+  // Die OOS-Kette als EINE Simulation (Vorregistrierung 2026-09-18-durchgehende-
+  // oos-kette): Die Fold-Suche bleibt, die Bewertung der Kette kommt aus einem
+  // Lauf mit Parameter- und Korbwechsel an den Fold-Grenzen.
+  const kette = kettenBewertung({ ...a, strategy, optimizer }, foldResults, pieces);
+
   // Finale Suche auf dem letzten bekannten Fenster (IS + OOS des letzten Folds).
   // Ein Embargo am Ende nur, wenn ein Holdout folgt — sonst würde es ohne
   // Nutzen die jüngsten Bars aus der Live-Parametrisierung streichen.
@@ -808,6 +993,7 @@ export function walkForward(a: WalkForwardArgs): WfaResult {
     holdout,
     dataRange,
     embargoBars: embargoBarsFor(strategy, strategy.defaults, optimizer),
+    kette,
   };
 }
 
@@ -856,6 +1042,7 @@ export function fixedParamsWfa(
     });
     pieces.push(pieceOf(oos, a.config.assetClass));
   }
+  const kette = kettenBewertung({ ...a, strategy, optimizer }, foldResults, pieces);
   const last = a.folds[a.folds.length - 1]!;
   const finalWindow = { start: last.isStart, end: last.oosEnd, embargoAtEnd: a.holdout !== null };
   const fin = simulateWindow({ ...a, range: candidateRange(achse, finalWindow, strategy, params, optimizer, finalWindow.embargoAtEnd), membershipAt: finalWindow.end });
@@ -865,6 +1052,7 @@ export function fixedParamsWfa(
     timeframe: a.config.timeframe,
     folds: foldResults,
     oos: aggregateOos(pieces, optimizer.objective, a.initialEquity),
+    kette,
     finalParams: params,
     finalIsMetrics: fin.metrics,
     finalWindow,

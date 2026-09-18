@@ -12,8 +12,8 @@
  */
 import { BarSeries } from '../../src/core/bars.ts';
 import { parseConfig, type Config, type OptimizerInput } from '../../src/core/config.ts';
-import { DAY } from '../../src/core/time.ts';
-import type { EquityPoint, Metrics, Params, ParamSpec, SimResult, SizingSpec, Strategy, TimeframeMin, Trade } from '../../src/core/types.ts';
+import { DAY, dayKeyFor } from '../../src/core/time.ts';
+import type { AssetClass, BarSeriesLike, EquityPoint, Metrics, ParameterWechsel, Params, ParamSpec, SimResult, SizingSpec, Strategy, TimeframeMin, Trade } from '../../src/core/types.ts';
 import { OHNE_BREMSEN } from '../../src/core/types.ts';
 import type { MetricsFns } from '../../src/optimize/robustness.ts';
 import { paramKey } from '../../src/optimize/search.ts';
@@ -60,7 +60,6 @@ export interface FakeSimOptions {
   /** Kosten je Trade als Anteil der Equity (skaliert mit costMultiplier). */
   costPerTrade: number;
   barsPerTrade?: number;
-  barsPerDay?: number;
   /** Salz, damit zwei Fakes verschiedenes Rauschen sehen. */
   salt?: string;
   /**
@@ -85,6 +84,8 @@ export const DEAD_PROFILE: FakeSimOptions = { edge: () => -0.004, noise: 0.03, n
 
 export interface SimCall {
   strategyId: string;
+  /** Das Symbol, für das `strategyFor` gefragt wurde — ein Aufruf je Symbol. */
+  symbol: string;
   params: Params;
   range: { start: number; end: number } | null;
   costMultiplier: number;
@@ -92,11 +93,40 @@ export interface SimCall {
   symbols: string[];
   /** Sizing-Semantik der Wahl, wie `strategyFor` sie liefert (Basis: Allokation) — Spion für die Messung. */
   sizing: SizingSpec | undefined;
+  /**
+   * Fahrplan dieses Symbols, wie `strategyFor` ihn liefert — nur in der
+   * durchgehenden OOS-Kette gesetzt (Spion: Korb je Fold IN der Kette, ein
+   * Eintrag je Fold, `params: null` = in diesem Fold nicht im Korb).
+   */
+  wechsel: readonly ParameterWechsel[] | undefined;
+}
+
+/** Lauf eines Symbols im Fake: Wahl, Optionen und Zähler auf der gemeinsamen Zeitachse. */
+interface SymLauf {
+  symbol: string;
+  bars: BarSeriesLike;
+  strategyId: string;
+  o: FakeSimOptions;
+  fahrplan: readonly ParameterWechsel[];
+  fahrplanIdx: number;
+  params: Params | null;
+  sinceTrade: number;
+  /** Nächster Bar-Index dieses Symbols (die Serien sind sortiert). */
+  i: number;
 }
 
 /**
  * Fake-Simulator; `options` darf je Strategie-ID verschieden sein. `calls`
  * protokolliert jeden Aufruf (Range-Spion für Lookahead-Prüfungen).
+ *
+ * Form wie der echte Simulator, soweit die Kette sie braucht: EINE Zeitachse
+ * über alle Symbole (Vereinigung der Bar-Zeiten), je Zeitpunkt ein Punkt der
+ * Equity-Kurve, je Handelstag (`dayKeyFor`) genau eine Tagesrendite, Trades
+ * mit Ausstiegszeit = Bar-Zeit. Nur so kann `kettenScheiben` den einen Lauf
+ * an den Fold-Grenzen schneiden; ein Fake mit Renditen je Symbol oder
+ * Ausstieg bei `t + 1` verlor je Fold einen Trade an den Nachbarn (18.09.2026).
+ * Das Ergebnis je Trade ist proportional zur Equity (Kante + Rauschen je Bar),
+ * die Reihenfolge der Symbole ändert das Endergebnis nicht.
  */
 export function makeFakeSimulate(options: FakeSimOptions | ((strategyId: string) => FakeSimOptions)): SimulateFn & { calls: SimCall[] } {
   const calls: SimCall[] = [];
@@ -110,72 +140,85 @@ export function makeFakeSimulate(options: FakeSimOptions | ((strategyId: string)
     const end = input.range?.end ?? Infinity;
     let days = 0;
 
+    const laeufe: SymLauf[] = [];
     for (const [symbol, bars] of input.bars) {
       const sp = input.strategyFor(symbol);
       if (!sp) continue;
       const o = typeof options === 'function' ? options(sp.strategy.id) : options;
-      const barsPerTrade = o.barsPerTrade ?? 1;
-      const barsPerDay = o.barsPerDay ?? 1;
-      calls.push({ strategyId: sp.strategy.id, params: { ...sp.params }, range: input.range ? { ...input.range } : null, costMultiplier: cm, symbols: [...input.bars.keys()], sizing: sp.sizing });
-      const edge = o.edge(sp.params);
-      const pkey = o.noiseKey === 'params' ? `${sp.strategy.id}|${paramKey(sp.params)}` : '';
-      const salt = o.salt ?? '';
-      let dayStart = eq;
-      let barsInDay = 0;
-      let sinceTrade = 0;
-      for (let i = 0; i < bars.length; i++) {
-        const t = bars.t[i]!;
-        if (t < start) continue;
-        if (t >= end) break;
-        if (equity.length === 0) equity.push(o.exposure === undefined ? { t, equity: eq } : { t, equity: eq, exposure: o.exposure });
-        sinceTrade++;
-        barsInDay++;
-        if (sinceTrade >= barsPerTrade) {
-          sinceTrade = 0;
-          const u = hashUnit(`${salt}|${symbol}|${t}|${pkey}`) * 2 - 1;
+      calls.push({ strategyId: sp.strategy.id, symbol, params: { ...sp.params }, range: input.range ? { ...input.range } : null, costMultiplier: cm, symbols: [...input.bars.keys()], sizing: sp.sizing, wechsel: sp.wechsel });
+      // Fahrplan wie im echten Simulator: ab `ab` gelten die Parameter des
+      // Eintrags, `null` heißt kein Handel (die durchgehende OOS-Kette).
+      const fahrplan = sp.wechsel ? [...sp.wechsel].sort((a, b) => a.ab - b.ab) : [];
+      laeufe.push({ symbol, bars, strategyId: sp.strategy.id, o, fahrplan, fahrplanIdx: 0, params: sp.params, sinceTrade: 0, i: 0 });
+    }
+    const exposure = laeufe[0]?.o.exposure;
+    const times = [...new Set(laeufe.flatMap((l) => Array.from(l.bars.t)))].sort((a, b) => a - b);
+    let dayStart = eq;
+    let tag = '';
+    for (const t of times) {
+      // Fahrplan zeitgesteuert für alle Symbole, auch ohne Bar an diesem Zeitpunkt.
+      for (const l of laeufe) {
+        while (l.fahrplanIdx < l.fahrplan.length && l.fahrplan[l.fahrplanIdx]!.ab <= t) l.params = l.fahrplan[l.fahrplanIdx++]!.params;
+        while (l.i < l.bars.length && l.bars.t[l.i]! < t) l.i++;
+      }
+      if (t < start) continue;
+      if (t >= end) break;
+      const k = dayKeyFor(t, input.config.assetClass);
+      if (tag !== '' && k !== tag) {
+        dailyReturns.push(eq / dayStart - 1);
+        dayStart = eq;
+        days++;
+      }
+      tag = k;
+      for (const l of laeufe) {
+        if (l.i >= l.bars.length || l.bars.t[l.i] !== t) continue;
+        const o = l.o;
+        l.sinceTrade++;
+        if (l.sinceTrade >= (o.barsPerTrade ?? 1) && l.params !== null) {
+          l.sinceTrade = 0;
+          const params = l.params;
+          const edge = o.edge(params);
+          const pkey = o.noiseKey === 'params' ? `${l.strategyId}|${paramKey(params)}` : '';
+          const u = hashUnit(`${o.salt ?? ''}|${l.symbol}|${t}|${pkey}`) * 2 - 1;
           const gross = eq * (edge + o.noise * u);
           const fees = eq * o.costPerTrade * cm;
           const net = gross - fees;
-          const px = bars.c[i]!;
+          const px = l.bars.c[l.i]!;
           trades.push({
-            symbol,
+            symbol: l.symbol,
             side: 'long',
             qty: 1,
             entryTime: t,
             entryPrice: px,
-            exitTime: t + 1,
+            exitTime: t,
             exitPrice: px + net,
             grossPnl: gross,
             fees,
             netPnl: net,
             rMultiple: null,
             exitReason: 'signal',
-            strategy: sp.strategy.id,
+            strategy: l.strategyId,
             barsHeld: 1,
             mae: null,
             mfe: null,
           });
           eq += net;
-          equity.push(o.exposure === undefined ? { t: t + 1, equity: eq } : { t: t + 1, equity: eq, exposure: o.exposure });
-        }
-        if (barsInDay >= barsPerDay) {
-          dailyReturns.push(eq / dayStart - 1);
-          dayStart = eq;
-          barsInDay = 0;
-          days++;
         }
       }
-      if (barsInDay > 0) {
-        dailyReturns.push(eq / dayStart - 1);
-        days++;
-      }
+      equity.push(exposure === undefined ? { t, equity: eq } : { t, equity: eq, exposure });
     }
-    return { trades, equity, dailyReturns, metrics: metricsOf(trades, equity, dailyReturns, input.initialEquity, days), finalEquity: eq, notes: [], bremsen: OHNE_BREMSEN };
+    if (tag !== '') {
+      dailyReturns.push(eq / dayStart - 1);
+      days++;
+    }
+    return { trades, equity, dailyReturns, metrics: metricsOf(trades, equity, dailyReturns, input.initialEquity, days, input.config.assetClass), finalEquity: eq, notes: [], bremsen: OHNE_BREMSEN };
   };
   return Object.assign(fn, { calls });
 }
 
-function metricsOf(trades: Trade[], equity: EquityPoint[], dailyReturns: number[], initial: number, days: number): Metrics {
+function metricsOf(trades: Trade[], equity: EquityPoint[], dailyReturns: number[], initial: number, days: number, assetClass: AssetClass): Metrics {
+  // Annualisierung wie der Kern (backtest/simulator.ts): 365 Perioden bei Krypto, sonst 252.
+  const periodsPerYear = assetClass === 'crypto' ? 365 : 252;
   const final = equity.length ? equity[equity.length - 1]!.equity : initial;
   let peak = initial;
   let maxDd = 0;
@@ -212,8 +255,8 @@ function metricsOf(trades: Trade[], equity: EquityPoint[], dailyReturns: number[
     cagrPct: null,
     // exakt wie backtest/metrics.ts: annualisiert, null bei < 2 Werten, σ = 0 bzw. ohne Verlusttag —
     // der Rückfall für Fenster ohne Verlusttag lebt in der Produktion (objective.ts), nicht im Fake
-    sharpe: n > 1 && std > 0 ? (mu / std) * Math.sqrt(252) : null,
-    sortino: n > 1 && downside > 0 ? (mu / downside) * Math.sqrt(252) : null,
+    sharpe: n > 1 && std > 0 ? (mu / std) * Math.sqrt(periodsPerYear) : null,
+    sortino: n > 1 && downside > 0 ? (mu / downside) * Math.sqrt(periodsPerYear) : null,
     maxDrawdownPct: maxDd * 100,
     profitFactor: losses > 0 ? wins / losses : null,
     winRatePct: trades.length ? (winCount / trades.length) * 100 : null,
