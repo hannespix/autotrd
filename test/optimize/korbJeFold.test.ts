@@ -334,6 +334,12 @@ describe('Korb je Fold im Lauf', () => {
     expect(zeile).toBeDefined();
     expect(zeile).toContain('LATE2');
     expect(zeile).toContain('DROP');
+    // Prüfbefund M8: die Mitglieder je Stand stehen im Bericht — ab Fold 5 AAA, BBB, LATE2; davor AAA, BBB, DROP.
+    expect(text).toContain('Mitglieder je Stand (Prüfbefund M8):');
+    const mitglieder = text.split('\n').filter((l) => l.startsWith(`| ${tag} | `));
+    expect(mitglieder.some((l) => l.includes('| AAA, BBB, LATE2 |'))).toBe(true);
+    const erster = new Date(plan.folds[0]!.oosStart).toISOString().slice(0, 10);
+    expect(text.split('\n').some((l) => l.startsWith(`| ${erster} | AAA, BBB, DROP |`))).toBe(true);
   });
 
   it('`fixed`: der Korb der Config über das ganze Fenster — und der Bericht sagt es', () => {

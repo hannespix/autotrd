@@ -157,7 +157,16 @@ function massstabZeile(m: Massstab): string {
       : m.marktSharpe === null && m.marktMaxDD === null
         ? `${m.marktSymbol} kaufen-und-halten nicht berechenbar — Latte 0 (Kasse)`
         : `${m.marktSymbol} kaufen-und-halten Sharpe ${num(m.marktSharpe)}, MaxDD ${num(m.marktMaxDD)} %`;
-  return `Über dieselben OOS-Fenster: ${strategie} · ${markt} · ${m.zins}`;
+  const korb = m.korbSharpe === null && m.korbMaxDD === null ? m.korbQuelle : `${m.korbQuelle}: Sharpe ${num(m.korbSharpe)}, MaxDD ${num(m.korbMaxDD)} %`;
+  return `Über dieselben OOS-Fenster: ${strategie} · ${korb} · ${markt} · ${m.zins}`;
+}
+
+/** Prüfbefund M9: Hängt die Kette an einem Titel? Nur Bericht. */
+function konzentrationZeile(k: KandidatAuswertung['konzentration']): string {
+  if (k.top.length === 0) return '**Symbol-Konzentration (Prüfbefund M9):** keine abgeschlossenen Trades.';
+  const teile = k.top.map((t) => `${t.symbol} ${signed(t.netto)} $${t.anteil === null ? '' : ` (${pct(t.anteil, 0)} des Σ Netto)`}`).join(', ');
+  const basis = k.gesamt > 0 ? '' : ' Anteile nicht berechenbar — Σ Netto der Trades ≤ 0.';
+  return `**Symbol-Konzentration (Prüfbefund M9):** ${teile} — ${k.mitTrades} von ${k.symbole} Symbolen mit Trades, Σ Netto ${signed(k.gesamt)} $ (Beträge je Fold ab E₀).${basis} Kein Gate liest diese Zahl; sie sagt, ob die Kette an einem Titel hängt.`;
 }
 
 /* ───────────────────────── Auswertung: wo das Geld hingeht ───────────────────────── */
@@ -442,6 +451,8 @@ function aktivitaetBlock(a: KandidatAuswertung, m: Massstab): string[] {
       'Unter etwa einem Trade je Monat entsteht kein Journal, aus dem `readiness` je etwas lernen könnte; darüber frisst der Umschlag die Kante. ' +
       'Die längste Phase ohne Einstieg ist die Zahl, die man im Betrieb spürt — sie sagt, wie lange das Konto stillstehen kann, ohne dass etwas kaputt ist._',
   );
+  out.push('');
+  out.push(konzentrationZeile(a.konzentration));
   if (!a.konsistent) {
     out.push('');
     out.push(`⚠ _Der Auswertungslauf weicht vom Walk-Forward ab: ${a.hinweis ?? ''} — die Zahlen dieses Abschnitts sind nicht belastbar._`);
@@ -1139,6 +1150,15 @@ function korbBlock(r: SymbolRun): string[] {
         'Der Pool selbst ist von heute — wer im Messzeitraum verschwunden ist, kommt nicht vor (§5a.13).',
       '',
       table(['Stichtag', 'Korb', 'Zugang', 'Abgang'], zeilen),
+      '',
+      // Prüfbefund M8: Ohne die Mitglieder ist die Fortpflanzung eines Rangs
+      // (`pct = k/(of − 1)`) nicht nachlesbar — jedes Mitglied verschiebt alle.
+      'Mitglieder je Stand (Prüfbefund M8):',
+      '',
+      table(
+        ['Stichtag', 'Mitglieder'],
+        r.korb.staende.map((st) => [isoDay(st.at), [...st.symbols].sort().join(', ')]),
+      ),
       '',
       heute,
       '',

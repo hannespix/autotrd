@@ -904,6 +904,13 @@ export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResul
   // sonst stünden zwei Sharpe-Werte über verschiedene Tagesmengen in einem
   // Gate. Weicht sie ab, ist die Latte nicht berechenbar: durchgefallen, laut.
   const achsenFehler = massstabAchsenFehler(a);
+  // Prüfbefund M6: derselbe PSR, ein Parameter mehr — wie sicher liegt der
+  // Sharpe ÜBER der Latte (sr0 = Latte je Periode)? Informativ, kein Gate.
+  const pLatte =
+    a.psr.sr !== null && a.psr.skew !== null && a.psr.kurt !== null && Number.isFinite(latte)
+      ? a.metricsFns.probabilisticSharpe({ sr: a.psr.sr, n: a.psr.n, skew: a.psr.skew, kurt: a.psr.kurt, sr0: latte / Math.sqrt(a.periodsPerYear ?? 252) })
+      : null;
+  const pLatteText = pLatte === null || !Number.isFinite(pLatte) ? '' : `; P(SR > Latte) ${pLatte.toFixed(3)} (PSR mit sr0 = Latte je Periode, informativ, kein Gate)`;
   gates.push({
     name: 'beats_market',
     pass: achsenFehler === null && srAnnual !== null && srAnnual > latte,
@@ -915,7 +922,8 @@ export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResul
         : srAnnual === null
           ? `OOS-Sharpe nicht berechenbar — gilt als durchgefallen (Latte ${latte.toFixed(2)}, ${quelle})`
           : `OOS-Sharpe p. a. ${srAnnual.toFixed(2)} gegen ${latte.toFixed(2)} aus ${quelle}` +
-            (srAnnual > latte ? '' : ' — kaufen und liegenlassen war besser')) + `; ${zins.note}`,
+            (srAnnual > latte ? '' : ' — kaufen und liegenlassen war besser') +
+            pLatteText) + `; ${zins.note}`,
   });
 
   return { pass: gates.every((g) => g.pass), gates };

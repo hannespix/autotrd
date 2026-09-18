@@ -89,6 +89,8 @@ export function marktKette(args: {
   ranges: readonly { start: Ms; end: Ms }[];
   assetClass: AssetClass;
   periodsPerYear: number;
+  /** Bars je Fenster (Korb je Fold liegenlassen, Prüfbefund M6); ohne: `bars` für jedes Fenster. */
+  barsFuer?: ((range: { start: Ms; end: Ms }) => ReadonlyMap<string, BarSeriesLike>) | undefined;
 }): MarktKette | null {
   const renditen: number[] = [];
   // Jedes Fenster beginnt bei 1 und wird an den Endstand des vorigen gehängt.
@@ -97,7 +99,7 @@ export function marktKette(args: {
   let fenster = 0;
   let punkte = 0;
   for (const range of args.ranges) {
-    const r = wertreihe(args.bars, range, args.assetClass);
+    const r = wertreihe(args.barsFuer ? args.barsFuer(range) : args.bars, range, args.assetClass);
     if (!r) continue;
     fenster++;
     punkte += r.punkte;
@@ -135,48 +137,90 @@ export interface MarktAchsenKette {
   dayKeys: string[];
 }
 
-export function marktKetteAufAchse(args: { bars: ReadonlyMap<string, BarSeriesLike>; dayKeys: readonly string[]; assetClass: AssetClass; periodsPerYear: number }): MarktAchsenKette | null {
+export function marktKetteAufAchse(args: {
+  bars: ReadonlyMap<string, BarSeriesLike>;
+  dayKeys: readonly string[];
+  assetClass: AssetClass;
+  periodsPerYear: number;
+  /**
+   * Korb je Fold liegenlassen (Prüfbefund M6): ab dem ersten Achsentag ≥ `ab`
+   * (Tagesschlüssel) wird zum Schluss dieses Tages gleichgewichtet auf die
+   * Mitglieder des Standes umgeschichtet — der Wert läuft weiter, nur die
+   * Gewichte werden neu gesetzt. Ohne Stände: alle `bars` am ersten Tag.
+   */
+  staende?: readonly { ab: string; symbols: ReadonlySet<string> }[] | undefined;
+}): MarktAchsenKette | null {
   const achse = args.dayKeys;
   if (achse.length < 2) return null;
   const ersterTag = achse[0]!;
   const letzterTag = achse[achse.length - 1]!;
-  const proSymbol: { basis: number; kurse: Map<string, number> }[] = [];
-  for (const s of args.bars.values()) {
+  // Tagesschluss je Symbol auf der Achse (letzte Bar des Tages gewinnt), mit
+  // Vortrag des letzten Kurses an Tagen ohne Bar.
+  const kurse = new Map<string, Map<string, number>>();
+  for (const [sym, s] of args.bars) {
     const m = new Map<string, number>();
     for (let i = 0; i < s.length; i++) {
       const k = dayKeyFor(s.t[i]!, args.assetClass);
       if (k < ersterTag) continue;
       if (k > letzterTag) break;
-      m.set(k, s.c[i]!); // letzte Bar des Tages gewinnt
+      m.set(k, s.c[i]!);
     }
-    const basis = m.get(ersterTag);
-    if (basis === undefined || !(basis > 0)) continue;
-    proSymbol.push({ basis, kurse: m });
+    if (m.size) kurse.set(sym, m);
   }
-  if (!proSymbol.length) return null;
-
-  const stand = proSymbol.map(() => 1);
-  const kurve: number[] = [1];
-  const dailyReturns: number[] = [0]; // Tag 1: Kasse, Kauf zum Schluss
-  for (let d = 1; d < achse.length; d++) {
+  const letzter = new Map<string, number>();
+  const preisAn = (sym: string, k: string): number | undefined => {
+    const p = kurse.get(sym)?.get(k);
+    if (p !== undefined && p > 0) letzter.set(sym, p);
+    return letzter.get(sym);
+  };
+  const staende = args.staende ? [...args.staende].sort((a, b) => (a.ab < b.ab ? -1 : a.ab > b.ab ? 1 : 0)) : null;
+  let standIdx = 0;
+  const gehalten = new Set<string>();
+  // Stückzahlen je Symbol (Wert = Σ Stück × Kurs); vor dem ersten Kauf Kasse 1.
+  let units = new Map<string, number>();
+  let wert = 1;
+  const kurve: number[] = [];
+  const dailyReturns: number[] = [];
+  for (let d = 0; d < achse.length; d++) {
     const k = achse[d]!;
-    let summe = 0;
-    for (let j = 0; j < proSymbol.length; j++) {
-      const e = proSymbol[j]!;
-      const p = e.kurse.get(k);
-      if (p !== undefined && p > 0) stand[j] = p / e.basis;
-      summe += stand[j]!;
+    // Kurse des Tages (Vortrag) für alles, was je gehandelt werden könnte.
+    for (const sym of kurse.keys()) preisAn(sym, k);
+    if (d > 0) {
+      let summe = 0;
+      for (const [sym, u] of units) summe += u * (letzter.get(sym) ?? 0);
+      const neu = units.size ? summe : wert;
+      dailyReturns.push(wert > 0 ? neu / wert - 1 : 0);
+      wert = neu;
+    } else {
+      dailyReturns.push(0); // Tag 1: Kasse, Kauf zum Schluss
     }
-    const wert = summe / proSymbol.length;
-    const vor = kurve[kurve.length - 1]!;
     kurve.push(wert);
-    dailyReturns.push(vor > 0 ? wert / vor - 1 : 0);
+    // Umschichten zum Schluss dieses Tages: erster Kauf (Tag 1) oder neuer Stand.
+    let mitglieder: ReadonlySet<string> | null = null;
+    if (staende) {
+      while (standIdx < staende.length && staende[standIdx]!.ab <= k) {
+        mitglieder = staende[standIdx]!.symbols;
+        standIdx++;
+      }
+      if (d === 0 && mitglieder === null && staende.length > 0) mitglieder = staende[0]!.symbols; // erster Stand liegt vor der Achse
+    } else if (d === 0) {
+      mitglieder = new Set(kurse.keys());
+    }
+    if (mitglieder !== null) {
+      const kaufbar = [...mitglieder].filter((sym) => (letzter.get(sym) ?? 0) > 0);
+      if (kaufbar.length) {
+        const je = wert / kaufbar.length;
+        units = new Map(kaufbar.map((sym) => [sym, je / letzter.get(sym)!]));
+        for (const sym of kaufbar) gehalten.add(sym);
+      }
+    }
   }
+  if (gehalten.size === 0) return null;
   return {
     sharpe: sharpeRatio(dailyReturns, args.periodsPerYear),
     maxDrawdownPct: maxDrawdownPct(kurve),
     netReturnPct: (kurve[kurve.length - 1]! - 1) * 100,
-    symbole: proSymbol.length,
+    symbole: gehalten.size,
     dailyReturns,
     dayKeys: [...achse],
   };
