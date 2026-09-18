@@ -74,6 +74,7 @@ describe('Krypto-Probe-Workflow', () => {
       'FIREBASE_SERVICE_ACCOUNT',
       'GOOGLE_APPLICATION_CREDENTIALS',
       'publish-champion',
+      'fetch-champion',
       'sync-engine-config',
       'firebase-tools',
     ]) {

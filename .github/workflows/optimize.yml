@@ -98,6 +98,24 @@ jobs:
         if: steps.keys.outputs.skip != '1'
         run: node src/cli.ts fetch --config config/platform.yaml --env "$RUNNER_TEMP/.env" --home var --universe var/universe.json
 
+      - name: Service-Account bereitstellen
+        if: steps.keys.outputs.skip != '1' && env.FIREBASE_SERVICE_ACCOUNT != ''
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
+
+      # Den AMTSINHABER holen, bevor gemessen wird (18.09.2026). Der Cache oben
+      # hält nur Bars und Universum — nie var/champion.json. Ohne diesen
+      # Schritt fand der Optimierer jede Nacht keinen Amtsinhaber, entschied
+      # von vorn („erste Beförderung"), und die Keep/Demote-Logik von
+      # promote.ts (Marge, Re-Score nur auf sauberem OOS nach fitEnd) griff
+      # auf der Plattform nie. Quelle ist meta/champion — das, was die Engine
+      # handelt —, nicht ein Cache, der verfallen kann. Ohne Service-Account:
+      # kein Amtsinhaber, wie bisher; dann wird aber auch nichts veröffentlicht.
+      - name: Amtsinhaber aus Firestore holen
+        if: steps.keys.outputs.skip != '1' && env.FIREBASE_SERVICE_ACCOUNT != ''
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+        run: node scripts/fetch-champion.mjs --home var
+
       - name: Walk-Forward-Optimierung
         if: steps.keys.outputs.skip != '1'
         env:
@@ -131,10 +149,6 @@ jobs:
             var/reports/optimize-*.md
             var/reports/universe-*.md
           retention-days: 90
-
-      - name: Service-Account bereitstellen
-        if: steps.keys.outputs.skip != '1' && env.FIREBASE_SERVICE_ACCOUNT != ''
-        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
 
       # Reihenfolge ist wichtig: erst das Urteil (WIE gehandelt wird), dann das
       # Universum (WAS gehandelt wird). Scheitert der zweite Schritt, steht ein
