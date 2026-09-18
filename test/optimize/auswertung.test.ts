@@ -54,7 +54,9 @@ describe('Auswertung je Kandidat', () => {
     const p = profiles(over.exposure);
     const symbols = over.symbols ?? ['AAA'];
     return {
-      config: testConfig({ symbols, home, optimizer: { seed: 7, fixedCandidates: [{ strategy: 'edge', params: { a: 10, b: 2 }, label: 'Zehn' }] } }),
+      // promotionGrids 1: Dieser Spion zählt Simulationsfenster; die Raster −1/−2
+      // (Regel 2, eigene Wächter in raster.test.ts) hätten eigene Fenster.
+      config: testConfig({ symbols, home, optimizer: { seed: 7, promotionGrids: 1, fixedCandidates: [{ strategy: 'edge', params: { a: 10, b: 2 }, label: 'Zehn' }] } }),
       symbols,
       strategies: ['edge', 'noise'],
       barsFor: over.barsFor ?? (() => bars),

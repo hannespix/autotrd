@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Journal, homePaths } from '../../src/core/journal.ts';
 import { DAY } from '../../src/core/time.ts';
 import type { Strategy } from '../../src/core/types.ts';
-import { loadChampion, saveChampion, emptyChampionFile, type ChampionEntry } from '../../src/optimize/promote.ts';
+import { loadChampion, saveChampion, emptyChampionFile, type ChampionEntry, REGEL_AKTUELL } from '../../src/optimize/promote.ts';
 import { runOptimization, type OptimizeRunInput } from '../../src/optimize/run.ts';
 import { paramKey } from '../../src/optimize/search.ts';
 import { foldPlanForBars } from '../../src/optimize/walkForward.ts';
@@ -181,8 +181,17 @@ describe('runOptimization (Ende-zu-Ende)', () => {
       expect(r.decision.action).toBe('keep');
       expect(r.decision.reason).toMatch(/Marge nicht erreicht/);
       expect(r.chosen).toEqual(r.incumbent);
+      // Regel 2, R3: die Nacht wurde geprüft — edge hält seine Gates mit festen Parametern auf allen Rastern.
+      expect(r.incumbentNacht).not.toBeNull();
+      expect(r.incumbentNacht!.bestanden).toBe(true);
+      expect(r.incumbentNacht!.gerisseneNaechte).toBe(0);
+      expect(r.incumbentNacht!.raster.map((u) => u.anker)).toEqual([0, 1, 2]);
+      expect(r.altbestand).toBeNull(); // unter Regel 2 befördert, keine Nachprüfung
     }
-    expect(second.champion.symbols).toEqual(first.champion.symbols);
+    // Bis auf den Prüfstand der Nacht (`pruefung`) ist der Eintrag derselbe.
+    const ohnePruefung = (s: typeof first.champion.symbols) => Object.fromEntries(Object.entries(s).map(([k, e]) => { const { pruefung: _p, ...rest } = e; void _p; return [k, rest]; }));
+    expect(ohnePruefung(second.champion.symbols)).toEqual(ohnePruefung(first.champion.symbols));
+    for (const e of Object.values(second.champion.symbols)) expect(e.pruefung?.gerisseneNaechte).toBe(0);
     const text = readFileSync(second.reportPath, 'utf8');
     expect(text).toContain('Sauberes OOS nach Fit-Ende: 0 von 8 Folds');
     expect(text).toContain('Fit-Ende ');
@@ -292,13 +301,14 @@ describe('runOptimization (Ende-zu-Ende)', () => {
     expect(text).toContain('Gates gerissen');
   });
 
-  it('ein Champion mit zu wenig sauberem OOS wird NICHT degradiert — auch wenn seine Params heute nichts taugen', () => {
+  it('ein Champion mit zu wenig sauberem OOS wird nach EINER gerissenen Nacht NICHT degradiert — auch wenn seine Params heute nichts taugen', () => {
     const home = tmp();
     const paths = homePaths(home);
     const plan = foldPlanForBars(bars, testConfig().optimizer);
-    // fitEnd nach dem 6. Fold ⇒ nur 2 saubere Folds (< 3)
+    // fitEnd nach dem 6. Fold ⇒ nur 2 saubere Folds (< 3). `regel: 2`: kein
+    // Altbestand — sonst wäre er nach R4 sofort nachgeprüft (eigener Test).
     const fitEnd = plan.folds[5]!.oosEnd;
-    saveChampion(paths.champion, { ...emptyChampionFile(1), symbols: { AAA: staleEntry('dead', { a: 3, b: 1 }, { fitEnd, score: 0.7 }) } });
+    saveChampion(paths.champion, { ...emptyChampionFile(1), symbols: { AAA: staleEntry('dead', { a: 3, b: 1 }, { fitEnd, score: 0.7, regel: REGEL_AKTUELL }) } });
     const out = runOptimization(input(home, { symbols: ['AAA'], strategies: ['dead'] }));
     const r = out.runs[0]!;
     expect(r.incumbentEval!.cleanFolds).toBe(2);
@@ -307,6 +317,10 @@ describe('runOptimization (Ende-zu-Ende)', () => {
     expect(r.decision.action).toBe('keep');
     expect(r.decision.reason).toMatch(/ungeprüft/);
     expect(out.champion.symbols.AAA).toBeDefined();
+    // Regel 2, R3: die Nacht ist gerissen und gezählt — Zähler 1 von 3, noch keine Absetzung.
+    expect(r.incumbentNacht!.bestanden).toBe(false);
+    expect(r.incumbentNacht!.gerisseneNaechte).toBe(1);
+    expect(out.champion.symbols.AAA!.pruefung!.gerisseneNaechte).toBe(1);
   });
 
   it('ein Kandidat mit Kante ersetzt einen Champion, der die Gates auf sauberem OOS reißt', () => {

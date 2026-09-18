@@ -9,7 +9,8 @@ import { join } from 'node:path';
 import type { CostConfig, OptimizerConfig, RiskConfig } from '../core/config.ts';
 import { ensureDir } from '../core/journal.ts';
 import type { AssetClass, HaltBilanz, Metrics, Ms, Params, TimeframeMin } from '../core/types.ts';
-import { fitEndOf } from './promote.ts';
+import { fitEndOf, type RasterUrteil } from './promote.ts';
+import { rasterKennung } from './raster.ts';
 import { gateOptions, type GateResult } from './robustness.ts';
 import { korrelationsmatrix, type Korrelationsmatrix } from '../backtest/aktivitaet.ts';
 import type { ExitKategorie, Quartile } from '../backtest/anatomie.ts';
@@ -107,6 +108,22 @@ function gatesTable(gates: readonly GateResult[]): string {
   return table(
     ['Gate', 'Ergebnis', 'Wert', 'Schwelle', 'Notiz'],
     gates.map((g) => [g.name, g.pass ? '✔' : '✘', num(g.value, 3), num(g.threshold, 3), g.note]),
+  );
+}
+
+/** „3/3" oder „1/3 (−1: psr; −2: beats_market)" — die gerissenen Gates je Raster, damit die Tabelle den Bruch zeigt. */
+function rasterSummary(raster: readonly RasterUrteil[]): string {
+  if (raster.length <= 1) return '–';
+  const ok = raster.filter((u) => u.pass).length;
+  const gerissen = raster.filter((u) => !u.pass).map((u) => `${rasterKennung(u.anker)}: ${u.failed.join(', ')}`);
+  return `${ok}/${raster.length}${gerissen.length ? ` (${gerissen.join('; ')})` : ''}`;
+}
+
+/** Ein Raster je Zeile: Anker, Urteil, gerissene Gates, Score, Trades, Netto. */
+function rasterTabelle(raster: readonly RasterUrteil[]): string {
+  return table(
+    ['Raster', 'Gates', 'gerissen', 'Score', 'OOS-Trades', 'OOS-Netto'],
+    raster.map((u) => [rasterKennung(u.anker), u.pass ? '✔' : '✘', u.failed.join(', ') || '–', num(u.score, 3), String(u.trades), signed(u.netProfit)]),
   );
 }
 
@@ -527,6 +544,15 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
       `Nachbarschafts-Plateau, PSR (OOS, sr0 = 0) ≥ ${go.minPsrOos}, DSR (IS, deflationiert um alle Trials) ≥ 0.95 ${go.dsrIsGate ? 'als Gate' : 'nur informativ (dsrIsGate=false)'}, ` +
       `Gebührenanteil ≤ 50 %; Beförderungsmarge ${Math.round(o.promotionMargin * 100)} %`,
   );
+  // Regel 2 (18.09.2026): dieselbe Latte auf k Rastern — die eine Zeile, an
+  // der ein Leser erkennt, dass „Gates bestanden" allein noch keinen Champion
+  // macht (Prüfbefund K1: 6/10, 5/10, 10/10 in drei Nächten).
+  out.push(
+    o.promotionGrids > 1
+      ? `- **Beförderung (Regel 2): alle zehn Gates auf ${o.promotionGrids} Rastern** (Anker −0 … −${o.promotionGrids - 1} Handelstage, im selben Lauf; Score und Parameter von Raster −0). ` +
+          `Der Amtsinhaber wird jede Nacht mit festen Parametern über alle Folds derselben Raster geprüft und nach ${o.incumbentFailNights} gerissenen Nächten in Folge abgesetzt.`
+      : '- **Beförderung: ein Raster (promotionGrids: 1 — die alte Regel, nur für Rauchtests).** Eine Nacht mit allen Gates genügt; die Plattform setzt 3.',
+  );
   const r = meta.risk;
   out.push(
     `- Risiko: ${r.riskPerTradePct} % je Trade, Positionsdeckel ${r.maxPositionPct} %, höchstens ${r.maxPositions} Positionen, ` +
@@ -596,7 +622,7 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
     } else {
       out.push(
         table(
-          ['Strategie', 'OOS-Objective (Median)', 'Folds +', 'Trades', 'Netto', 'Rendite', 'MaxDD', 'Gebührenanteil', 'Gates'],
+          ['Strategie', 'OOS-Objective (Median)', 'Folds +', 'Trades', 'Netto', 'Rendite', 'MaxDD', 'Gebührenanteil', 'Gates (Raster −0)', 'Raster'],
           r.results.map((s) => [
             kandidatName(s),
             num(s.score, 3),
@@ -607,6 +633,7 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
             `${num(s.wfa.oos.maxDrawdownPct)} %`,
             pct(s.wfa.oos.feeShare),
             gatesSummary(s.gates),
+            rasterSummary(s.raster),
           ]),
         ),
       );
@@ -632,6 +659,20 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
           out.push(gatesTable(ev.gates));
         }
       }
+      if (r.incumbentNacht) {
+        const n = r.incumbentNacht;
+        out.push('');
+        out.push(
+          `Nächtliche Prüfung (Regel 2, feste Parameter über alle Folds, ${n.raster.length} Raster; der letzte Fold enthält das Fit-Fenster): ` +
+            `**${n.bestanden ? 'bestanden' : 'gerissen'}** — Zähler gerissener Nächte in Folge: **${n.gerisseneNaechte}**` +
+            (r.altbestand ? `. Altbestand aus Regel 1 — Nachprüfung unter Regel 2 ${r.altbestand.nachpruefungBestanden ? 'bestanden' : '**nicht bestanden**'} (Familie auf ${r.altbestand.raster} Rastern)` : ''),
+        );
+        out.push('');
+        out.push(rasterTabelle(n.raster));
+      } else if (r.altbestand) {
+        out.push('');
+        out.push(`Altbestand aus Regel 1 — Nachprüfung unter Regel 2 ${r.altbestand.nachpruefungBestanden ? 'bestanden' : '**nicht bestanden**'} (Familie auf ${r.altbestand.raster} Rastern).`);
+      }
     }
     out.push('');
 
@@ -647,6 +688,12 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
       out.push('');
       out.push(gatesTable(s.gates));
       out.push('');
+      if (s.raster.length > 1) {
+        out.push(`Raster (Regel 2): ${s.rasterPass ? '**alle bestanden**' : `**${s.raster.filter((u) => u.pass).length} von ${s.raster.length} bestanden — kein Champion**`}`);
+        out.push('');
+        out.push(rasterTabelle(s.raster));
+        out.push('');
+      }
       // Der Maßstab gehört direkt unter die Gates: derselbe Sharpe wie in
       // `beats_market`, daneben MaxDD und Handelsfrequenz — und der Markt.
       out.push(massstabZeile(s.massstab));

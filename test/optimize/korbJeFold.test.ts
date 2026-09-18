@@ -131,14 +131,17 @@ describe('Korb je Fold im Lauf', () => {
   function lauf(over: { fixed?: boolean; ohnePool?: boolean; vorher?: (home: string) => void; ohneKandidatenBars?: boolean; fehlend?: string[]; timeframe?: 5 | 1440 } = {}) {
     const home = tmp();
     over.vorher?.(home);
+    // promotionGrids 1: Diese Spione zählen Simulationsfenster je Stand; die
+    // Raster −1/−2 (Regel 2) wählen ihren Korb je Fold eigens — das prüft
+    // raster.test.ts, hier hätten sie eigene Fenster.
     const cfg = over.ohnePool
-      ? testConfig({ symbols: ['AAA', 'BBB'], optimizer: { pooled: true } })
+      ? testConfig({ symbols: ['AAA', 'BBB'], optimizer: { pooled: true, promotionGrids: 1 } })
       : testConfig({
           symbols: ['AAA', 'BBB'],
           candidates: ['DROP', 'LATE2', 'FILL'],
           maxSymbols: 3,
           ...(over.timeframe ? { timeframe: over.timeframe } : {}),
-          optimizer: { pooled: true, ...(over.fixed ? { foldMembership: 'fixed' as const } : {}) },
+          optimizer: { pooled: true, promotionGrids: 1, ...(over.fixed ? { foldMembership: 'fixed' as const } : {}) },
         });
     const simulate = makeFakeSimulate((id) => profiles[id] ?? NOISE_PROFILE);
     const input: OptimizeRunInput = {

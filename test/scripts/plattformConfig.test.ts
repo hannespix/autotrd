@@ -48,6 +48,19 @@ describe('config/platform.yaml', () => {
     expect(cfg.optimizer.minPsrOos).toBe(0.9);
   });
 
+  it('WÄCHTER: Beförderung auf drei Rastern, Absetzung nach drei Nächten — Regel 2 steht und ist vorregistriert', () => {
+    /*
+     * Owner-Entscheidung 18.09.2026 (Prüfbefund K1/M7): Dieselbe csm-Kette
+     * bestand in drei Nächten 6/10, 5/10, 10/10 — und die eine Nacht wurde
+     * Champion. Fiele einer der Schlüssel still aus der Config, gälte der
+     * Schema-Default (ebenfalls 3) — aber wer ihn auf 1 setzte, hätte die alte
+     * Regel zurück, ohne dass ein Test es merkt. Deshalb stehen beide hier.
+     */
+    const wo = 'docs/wissen/vorregistrierung/2026-09-18-befoerderung-auf-drei-rastern.md';
+    expect(cfg.optimizer.promotionGrids, wo).toBe(3);
+    expect(cfg.optimizer.incumbentFailNights, wo).toBe(3);
+  });
+
   it('bleibt im Rahmen, den Alpaca und die Nutzer-Einstellungen hergeben', () => {
     // IEX-Basis erlaubt 30 Stream-Abonnements; der Benchmark zählt mit.
     const abos = new Set(cfg.universe.symbols);

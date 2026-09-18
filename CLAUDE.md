@@ -69,6 +69,23 @@ thematisch). Bezeichner im Code Englisch, Kommentare Deutsch.
    Basis, die ihre Latte nicht nimmt, wird nicht aktiviert. Jede Latte steht
    VOR dem Lauf in `docs/wissen/vorregistrierung/`, der Champion trägt den
    Commit der Config. Eine dritte Latte gibt es nicht.
+   **Regel 2 — dieselbe Latte auf drei Rastern** (Owner-Entscheidung
+   18.09.2026, `docs/wissen/vorregistrierung/2026-09-18-befoerderung-auf-drei-rastern.md`,
+   `src/optimize/raster.ts`): Ein Kandidat besteht nur, wenn er auf
+   `optimizer.promotionGrids` = 3 Rastern (Anker −0/−1/−2 Handelstage, im
+   selben Lauf, Korb je Fold und Latte je Raster neu) ALLE zehn Gates nimmt —
+   der erste Champion (csm, #18) bestand in drei Nächten 6/10, 5/10, 10/10
+   und wurde mit der einen Nacht befördert (Prüfbericht
+   `pruefungen/2026-09-18-red-team-erster-champion.md`). Der Amtsinhaber wird
+   jede Nacht mit festen Parametern über alle Folds derselben Raster geprüft
+   und nach `optimizer.incumbentFailNights` = 3 gerissenen Nächten in Folge
+   abgesetzt (Zähler `pruefung.gerisseneNaechte` im Eintrag, überlebt via
+   `meta/champion`); Altbestand aus Regel 1 (Eintrag ohne `regel: 2`) wird
+   im ersten Lauf einmalig nachgeprüft — kein Bestandsschutz. `promotionGrids:
+   1` ist die alte Regel und existiert nur für Rauchtests; die Plattform
+   setzt nie unter 3. Keine Schwelle ändert sich; die Erprobung (§0.9 unten)
+   nimmt weiter den Score-besten Durchgefallenen — „durchgefallen" heißt seit
+   dem „nicht 3/3".
    **Papier-Erprobung** (Owner-Entscheidung 14.09.2026, `src/core/erprobung.ts`):
    Auf einem PAPIER-Konto darf die Engine den besten gemessenen Kandidaten
    handeln, auch wenn er die Gates NICHT bestanden hat — damit überhaupt ein
@@ -159,6 +176,7 @@ des Bruttogewinns, siehe docs/ARCHITEKTUR.md §5a.10).
 | `backtest/` | Portfolio-Simulator (Fills am nächsten Open, Stop vor Ziel), Kosten, Metriken (Sharpe/Sortino/PSR/DSR), Marktbezug (`marktbezug.ts`: kaufen und halten als Maßstab unter jedem Holdout — kein Gate, aber ohne ihn liest man Markt als Kante). |
 | `universe/` | Nächtliche Wahl des Handelsuniversums — nach **Handelbarkeit**, nie nach dem Ergebnis der Strategie (Grenzen der Kennzahl im Modulkopf). |
 | `optimize/korbJeFold.ts` | Korb je Fold: Punkt-in-Zeit-Stände aus dem Kandidatenpool (dieselbe `waehleUniverse` wie nachts, Hysterese Stand für Stand); IS-Suche und OOS eines Folds laufen auf dem Korb zu dessen OOS-Beginn, der Maßstab folgt mit. Schalter `optimizer.foldMembership`. |
+| `optimize/raster.ts` | Regel 2 (§0.9): der Schnitt eines Rasters — Korb, Kandidatenpool, Benchmark und Parkpapier um `anker` Handelstage gekürzt. Was darauf gemessen wird, rechnet `run.ts` mit denselben Funktionen wie auf Raster 0 (`bewerte`, Korb je Fold, Latte); Generator je Strategie und Fenster (`search.ts` `rngFuer`), damit Raster −1 heute die Lose von Raster −0 gestern zieht. Wächter `test/optimize/raster.test.ts`. |
 | `optimize/` | Walk-Forward, Robustheits-Gates (darunter `beats_market`: schlägt die OOS-Kette den Sharpe von kaufen-und-halten? Gegen die Benchmark, nicht den Korb; ohne Benchmark gilt die Kasse — das Gate wird nie vakant), Champion/Challenger, Report. **Festkandidaten** (`optimizer.fixedCandidates`): vorregistrierte Parametersätze ohne Suche über alle Folds durch dieselben Gates, DSR laut „nicht anwendbar", keine Sonderbehandlung; je Kandidat eine Maßstab-Zeile (OOS-Sharpe, MaxDD, Trades je Monat gegen SPY über dieselben OOS-Fenster). |
 | `engine/` | Buch, Order-Ausführung, Abgleich, Uhr, Schleife. |
 | `notify/`, `status/` | Telegram, Status-HTTP (nur 127.0.0.1). |
