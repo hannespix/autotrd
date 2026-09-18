@@ -509,6 +509,39 @@ describe('deflatedSharpeIs', () => {
   });
 });
 
+describe('beats_market unter continuous: der Maßstab muss auf der Tagesachse der Kette stehen (Nachtrag 2026-09-18, Prüfbefund M2)', () => {
+  const tage = (n: number, ab = 0) => Array.from({ length: n }, (_, i) => `2024-01-${String(ab + i + 1).padStart(2, '0')}`);
+  function gateMit(markt: NonNullable<Parameters<typeof robustnessGates>[0]['markt']>, modus: 'continuous' | 'per_fold' = 'continuous') {
+    const wfa = wfaFixture({}, undefined, { kette: { modus } });
+    const n = wfa.oos.dailyReturns.length;
+    wfa.oos = { ...wfa.oos, dayKeys: tage(n) };
+    const g = robustnessGates({ wfa, optimizer: cfg.optimizer, stressOos: { netProfit: 1, objectiveMedian: 1 }, neighborhood: { medianObjective: 1, bestObjective: 1, positiveShare: 1 }, dsr: dsrOf(0.99), psr: psrOf(0.99), metricsFns: fakeMetricsFns, markt });
+    return { n, gate: g.gates.find((x) => x.name === 'beats_market')! };
+  }
+  const reihe = (n: number) => Array.from({ length: n }, () => 0.0001);
+
+  it('gleiche Achse ⇒ die Latte ist der Sharpe der Marktreihe', () => {
+    const { n, gate } = gateMit({ sharpe: 0.1, quelle: 'BENCH über die OOS-Kette', dailyReturns: reihe(150), dayKeys: tage(150) });
+    expect(n).toBe(150);
+    expect(gate.note).not.toContain('nicht auf die OOS-Kette ausgerichtet');
+    expect(gate.threshold).toBeCloseTo(0.1, 12);
+  });
+
+  it('WÄCHTER: andere Länge oder andere Tage ⇒ nicht berechenbar, durchgefallen, laut', () => {
+    const kurz = gateMit({ sharpe: 0.1, quelle: 'BENCH', dailyReturns: reihe(149), dayKeys: tage(149) });
+    expect(kurz.gate.pass).toBe(false);
+    expect(kurz.gate.note).toContain('Maßstab nicht auf die OOS-Kette ausgerichtet (149 Markt-Tage (149 Renditen) gegen 150 Ketten-Tage)');
+    const verschoben = gateMit({ sharpe: 0.1, quelle: 'BENCH', dailyReturns: reihe(150), dayKeys: tage(150, 1) });
+    expect(verschoben.gate.pass).toBe(false);
+    expect(verschoben.gate.note).toMatch(/Tag 1: Markt 2024-01-02, Kette 2024-01-01/);
+  });
+
+  it('per_fold prüft die Achse nicht (der Maßstab ist dort je Fenster, absichtlich kürzer)', () => {
+    const { gate } = gateMit({ sharpe: 0.1, quelle: 'BENCH', dailyReturns: reihe(140), dayKeys: tage(140) }, 'per_fold');
+    expect(gate.note).not.toContain('nicht auf die OOS-Kette ausgerichtet');
+  });
+});
+
 describe('stressTest & neighborhoodTest (mit Fake-Simulator)', () => {
   const bars = dailyBars(400);
   const strategy = fakeStrategy('edge');

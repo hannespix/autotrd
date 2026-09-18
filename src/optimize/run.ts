@@ -37,7 +37,7 @@ import {
   type ExkursionAuswertung,
   type NachlaufErgebnis,
 } from '../backtest/anatomie.ts';
-import { kaufenUndHalten, kaufenUndHaltenKurve, kurvenstandVor, marktKette, type MarktBezug, type MarktKurve } from '../backtest/marktbezug.ts';
+import { kaufenUndHalten, kaufenUndHaltenKurve, kurvenstandVor, marktKette, marktKetteAufAchse, type MarktBezug, type MarktKurve } from '../backtest/marktbezug.ts';
 import { RISK_FREE_MAX_GAP, alignRiskFree, excessReturns, riskFreeFromBars, type RiskFreeSeries } from '../backtest/metrics.ts';
 import { BarSeries } from '../core/bars.ts';
 import type { Config, FixedCandidateConfig } from '../core/config.ts';
@@ -288,9 +288,11 @@ export interface OffenAnFoldEnden {
   bekannt: boolean;
   /** `continuous`: die Zahl gilt nur am Ende der Kette — an den Fold-Grenzen wird nichts geschlossen. */
   modus: OosChain;
+  /** Ergebnis der GANZEN Kette in $: E₀ × Rendite der Kette (aufgezinst) — neben den Fold-Summen, die jeden Fold ab E₀ zählen. */
+  ketteGesamt: number | null;
 }
 
-export function offenAnFoldEnden(teile: readonly SimResult[], modus: OosChain = 'per_fold'): OffenAnFoldEnden {
+export function offenAnFoldEnden(teile: readonly SimResult[], modus: OosChain = 'per_fold', ketteGesamt: number | null = null): OffenAnFoldEnden {
   let fenster = 0;
   let positionen = 0;
   let unrealisiert = 0;
@@ -304,7 +306,7 @@ export function offenAnFoldEnden(teile: readonly SimResult[], modus: OosChain = 
     positionen += t.offenAmEnde.length;
     for (const p of t.offenAmEnde) unrealisiert += p.unrealisiert;
   }
-  return { fenster, fensterGesamt: teile.length, positionen, unrealisiert, bekannt, modus };
+  return { fenster, fensterGesamt: teile.length, positionen, unrealisiert, bekannt, modus, ketteGesamt };
 }
 
 /**
@@ -392,7 +394,7 @@ export function auswertungFuer(a: {
       ...(letzterFold ? { bis: letzterFold.fold.oosEnd } : {}),
     }),
     aktivitaet: aktivitaet({ trades, equity, assetClass: a.assetClass }),
-    offenAnFoldEnden: offenAnFoldEnden(a.teile, a.wfa.kette.modus),
+    offenAnFoldEnden: offenAnFoldEnden(a.teile, a.wfa.kette.modus, Number.isFinite(a.wfa.oos.netReturnPct) ? (a.initialEquity * a.wfa.oos.netReturnPct) / 100 : null),
     renditen: renditeketteVon({ fenster: a.teile, initialEquity: a.initialEquity, assetClass: a.assetClass }),
     oosDays,
     konsistent: abweichungen.length === 0,
@@ -475,6 +477,13 @@ export function marktReihe(a: { bars: ReadonlyMap<string, BarSeriesLike>; ranges
     }
   }
   return dailyReturns.length >= 2 ? { dailyReturns, dayKeys } : null;
+}
+
+/** Tagesachse der durchgehenden Kette für den Maßstab — nur `continuous`, nur mit vollständiger Achse. */
+function massstabAchse(wfa: WfaResult): readonly string[] | undefined {
+  if (wfa.kette.modus !== 'continuous') return undefined;
+  const achse = wfa.oos.dayKeys ?? [];
+  return achse.length > 0 && achse.length === wfa.oos.dailyReturns.length ? achse : undefined;
 }
 
 export function massstabFuer(a: {
@@ -742,7 +751,7 @@ interface RasterKontext {
   anker: number;
   bars: BarsInput | null;
   common: (Omit<WindowSimArgs, 'strategy' | 'params' | 'range' | 'costMultiplier'> & { parkBars: BarSeriesLike | undefined }) | null;
-  marktLatteFuer: (folds: readonly Fold[]) => MarktLatte | undefined;
+  marktLatteFuer: (folds: readonly Fold[], achse?: readonly string[] | undefined) => MarktLatte | undefined;
   fehler: string | null;
 }
 
@@ -1288,8 +1297,26 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
     // Als Fabrik über die Benchmark-SERIE: Jedes Raster (Regel 2) bringt seine
     // eigene, am selben Tag geschnittene Benchmark mit — die Latte eines
     // Rasters darf keinen Tag sehen, den seine Strategien nicht sehen.
-    const marktLatteMit = (bench: BarSeriesLike | undefined) => (folds: readonly Fold[]): MarktLatte | undefined => {
+    /**
+     * Die Latte für `beats_market` samt Reihe. Mit `achse` (die Tagesachse
+     * der durchgehenden Strategie-Kette, `wfa.oos.dayKeys`) wird der Maßstab
+     * auf GENAU diesen Tagen gerechnet (`marktKetteAufAchse`, Nachtrag
+     * 2026-09-18-nachtrag-massstab-auf-der-kette, Prüfbefund M2); ohne Achse
+     * (per_fold) je Fenster frisch gekauft — das Spiegelbild der alten Kette.
+     */
+    const marktLatteMit = (bench: BarSeriesLike | undefined) => (folds: readonly Fold[], achse?: readonly string[] | undefined): MarktLatte | undefined => {
       if (!bench || marktSymbol === null || folds.length === 0) return undefined;
+      if (achse && achse.length > 0) {
+        const ak = marktKetteAufAchse({ bars: new Map([[marktSymbol, bench]]), dayKeys: achse, assetClass: cfg.universe.assetClass, periodsPerYear });
+        if (!ak) return { sharpe: null, maxDrawdownPct: null, quelle: `${marktSymbol} kaufen und halten: kein Kurs am ersten Tag der OOS-Kette` };
+        return {
+          sharpe: ak.sharpe,
+          maxDrawdownPct: ak.maxDrawdownPct,
+          quelle: `${marktSymbol} kaufen und halten über die OOS-Kette (${ak.dayKeys.length} Handelstage, durchgehend)`,
+          dailyReturns: ak.dailyReturns,
+          dayKeys: ak.dayKeys,
+        };
+      }
       const k = marktKette({
         bars: new Map([[marktSymbol, bench]]),
         ranges: folds.map((f) => ({ start: f.oosStart, end: f.oosEnd })),
@@ -1487,7 +1514,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
         });
         const neighborhood = neighborhoodTest({ ...cx, strategy, wfa, optimizer, ...(riskFree ? { riskFree } : {}) });
         const dsr = deflatedSharpeIs({ wfa, metricsFns: deps.metricsFns, varSrSource: input.dsrVarSource });
-        const markt = kx.marktLatteFuer(wfa.folds.map((f) => f.fold));
+        const markt = kx.marktLatteFuer(wfa.folds.map((f) => f.fold), massstabAchse(wfa));
         // DIESELBE Zinsreihe an beide Stellen: `robustnessGates` verwirft den
         // Zins sonst selbst, weil der PSR ohne ihn gerechnet wurde.
         const zins = zinsFuer(wfa, markt, `${strategy.id}${fest ? ` · ${fest.label}` : ''}`);
@@ -1704,7 +1731,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
           });
           const wfa = messung.wfa;
           const dsr = deflatedSharpeIs({ wfa, metricsFns: deps.metricsFns, varSrSource: input.dsrVarSource });
-          const markt = marktLatteFuer(fp.folds);
+          const markt = marktLatteFuer(fp.folds, massstabAchse(wfa));
           const zins = zinsFuer(wfa, markt, name);
           const psr = probabilisticSharpeOos({ wfa, metricsFns: deps.metricsFns, ...(zins ? { riskFree: zins } : {}) });
           // Dieselbe Funktion, dieselben Schwellen, `fixed: true` wie bei jedem
@@ -1851,7 +1878,7 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
             });
             const neighborhood = neighborhoodTest({ ...common, strategy: strat, wfa, optimizer, ...(riskFree ? { riskFree } : {}) });
             const dsr = deflatedSharpeIs({ wfa, metricsFns: deps.metricsFns, varSrSource: input.dsrVarSource });
-            const marktInc = marktLatteFuer(clean);
+            const marktInc = marktLatteFuer(clean, massstabAchse(wfa));
             const zinsInc = zinsFuer(wfa, marktInc, `Champion ${incumbent.strategy}`);
             const psr = probabilisticSharpeOos({ wfa, metricsFns: deps.metricsFns, ...(zinsInc ? { riskFree: zinsInc } : {}) });
             const g = robustnessGates({

@@ -691,6 +691,11 @@ export function durchgehendeKette(
  * hängen an der letzten Scheibe (Bremsen: an der ersten — sie werden über die
  * Scheiben addiert und dürfen nicht doppelt zählen).
  */
+/** Ein Trade mit auf E₀ skalierten Geldbeträgen; bei Faktor 1 das Original (bitgleich). */
+function skaliert(t: Trade, scale: number): Trade {
+  return scale === 1 ? t : { ...t, grossPnl: t.grossPnl * scale, fees: t.fees * scale, netPnl: t.netPnl * scale };
+}
+
 export function kettenScheiben(gesamt: SimResult, folds: readonly Fold[], initialEquity: number, assetClass: AssetClass): SimResult[] {
   const kurve = [...gesamt.equity].sort((x, y) => x.t - y.t);
   const tage = tagesachse(kurve, assetClass);
@@ -722,7 +727,11 @@ export function kettenScheiben(gesamt: SimResult, folds: readonly Fold[], initia
     for (let d = 0; d < tage.length; d++) {
       if (foldVon(tagBeginn.get(tage[d]!)!) === i) dailyReturns.push(gesamt.dailyReturns[d]!);
     }
-    const trades = gesamt.trades.filter((t) => foldVon(t.exitTime) === i);
+    // Beträge der Scheibe auf E₀ wie die Equity (Nachtrag 2026-09-18-nachtrag-
+    // massstab-auf-der-kette, Prüfbefund G5): Sonst wären Fold-Netto und
+    // `fee_share` verschieden gewichtet — je nachdem, in welcher Reihenfolge
+    // die Folds kamen. Stückzahlen und Kurse bleiben, was gehandelt wurde.
+    const trades = gesamt.trades.filter((t) => foldVon(t.exitTime) === i).map((t) => skaliert(t, scale));
     const eEnd = roh.length ? roh[roh.length - 1]!.equity : eStart;
     const exposed = roh.filter((p) => (p.exposure ?? 0) > 0).length;
     const metrics = computeMetrics({
@@ -744,7 +753,7 @@ export function kettenScheiben(gesamt: SimResult, folds: readonly Fold[], initia
       notes: letzte ? gesamt.notes : [],
       bremsen: i === 0 ? gesamt.bremsen : OHNE_BREMSEN,
       // Nur, wenn der Lauf die Zahl kennt — sonst bleibt sie unbekannt (K4: nie eine stille Null).
-      ...(gesamt.offenAmEnde ? { offenAmEnde: letzte ? gesamt.offenAmEnde : [] } : {}),
+      ...(gesamt.offenAmEnde ? { offenAmEnde: letzte ? gesamt.offenAmEnde.map((p) => (scale === 1 ? p : { ...p, unrealisiert: p.unrealisiert * scale })) : [] } : {}),
       ...(letzte && gesamt.volZiel ? { volZiel: gesamt.volZiel } : {}),
     });
     eStart = eEnd;

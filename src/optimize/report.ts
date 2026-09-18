@@ -267,9 +267,10 @@ function offenAnFoldEndenZeile(o: KandidatAuswertung['offenAnFoldEnden'], nettoT
       o.positionen === 0
         ? `**Offen am Kettenende (Prüfbefund K4):** keine Position`
         : `**Offen am Kettenende (Prüfbefund K4):** ${o.positionen} Position${o.positionen === 1 ? '' : 'en'}, Σ unrealisiert ${signed(o.unrealisiert)} $ (zum letzten Schluss, ohne Exit-Kosten)`;
+    const gesamt = o.ketteGesamt === null ? '' : ` Die ganze Kette: ${signed(o.ketteGesamt)} $ (E₀ × Rendite, aufgezinst); Fold-Summen und Beträge je Fold zählen jeden Fold ab E₀.`;
     return (
       `${kopf}. Die OOS-Kette ist EIN Lauf: An den Fold-Grenzen wird nichts geschlossen und nichts bewertet, Positionen laufen in den nächsten Fold hinein; ` +
-      `nur am Ende der Kette bleibt Buchgewinn stehen — neben ${signed(nettoTrades)} $ aus geschlossenen Trades. Kein Gate liest diese Zahl.`
+      `nur am Ende der Kette bleibt Buchgewinn stehen — neben ${signed(nettoTrades)} $ aus geschlossenen Trades (Beträge je Fold auf E₀ normiert).${gesamt} Kein Gate liest diese Zahl.`
     );
   }
   return (
@@ -428,7 +429,7 @@ function aktivitaetBlock(a: KandidatAuswertung, m: Massstab): string[] {
         ['Trades', String(k.trades), 'abgeschlossene Round-Trips über alle Symbole der OOS-Kette'],
         ['Trades je Monat', num(m.tradesPerMonth, 1), `Round-Trips je 30,44 Kalendertage (${num(m.oosDays, 0)} OOS-Kalendertage) — dieselbe Zahl wie in der Maßstab-Zeile`],
         ['Zeit im Markt', k.zeitImMarkt === null ? '–' : pct(k.zeitImMarkt, 0), `Anteil der Handelstage mit mindestens einer offenen Position (Quelle: ${k.zeitImMarktQuelle ?? 'nicht bewertbar'})`],
-        ['Gleichzeitige Positionen', k.mittlerePositionen === null ? '–' : num(k.mittlerePositionen, 2), 'Mittel über die Bars der OOS-Fenster (Positionen, die am Fensterende offen blieben, fehlen)'],
+        ['Gleichzeitige Positionen', k.mittlerePositionen === null ? '–' : num(k.mittlerePositionen, 2), a.offenAnFoldEnden.modus === 'continuous' ? 'Mittel über die Bars der OOS-Kette (nur am Kettenende offene Positionen fehlen)' : 'Mittel über die Bars der OOS-Fenster (Positionen, die am Fensterende offen blieben, fehlen)'],
         ['Gebundenes Kapital', k.mittlereExposurePct === null ? 'nicht bewertbar' : `${num(k.mittlereExposurePct, 1)} %`, 'Mittel der Brutto-Exposure je Bar (Σ |Stück × Schluss| / Equity)'],
         ['Längste Phase ohne Einstieg', pause, 'Handelstage der OOS-Fenster ohne einen einzigen neuen Einstieg (Ränder eingerechnet)'],
         ['Gemessene Handelstage', String(k.handelstage), 'Handelstage mit Bars in den OOS-Fenstern'],
@@ -752,7 +753,7 @@ export function renderReport(runs: readonly SymbolRun[], meta: ReportMeta): stri
       }
       out.push(
         table(
-          ['Fold', 'IS', 'OOS', 'Params', 'IS-Objective', 'OOS-Objective', 'OOS-Trades', 'OOS-Netto'],
+          ['Fold', 'IS', 'OOS', 'Params', 'IS-Objective', 'OOS-Objective', s.wfa.kette.modus === 'continuous' ? 'OOS-Trades (Exit im Fold)' : 'OOS-Trades', 'OOS-Netto'],
           s.wfa.folds.map((f) => [
             String(f.fold.index + 1),
             `${isoDay(f.fold.isStart)} … ${isoDay(f.fold.isEnd)}`,
@@ -972,7 +973,7 @@ function ensembleAbschnitt(symbol: string, e: EnsembleRun, holdoutMarkt: Holdout
 
   out.push(
     table(
-      ['Fold', 'IS', 'OOS', 'IS-Objective', 'OOS-Objective', 'OOS-Trades', 'OOS-Netto'],
+      ['Fold', 'IS', 'OOS', 'IS-Objective', 'OOS-Objective', w.kette.modus === 'continuous' ? 'OOS-Trades (Exit im Fold)' : 'OOS-Trades', 'OOS-Netto'],
       w.folds.map((f) => [
         String(f.fold.index + 1),
         `${isoDay(f.fold.isStart)} … ${isoDay(f.fold.isEnd)}`,

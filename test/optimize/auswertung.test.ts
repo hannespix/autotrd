@@ -320,7 +320,8 @@ describe('Offen an Fold-Enden (Prüfbefund K4): was die Kette als Gewinn zählt,
 
   it('addiert Positionen und unrealisierten Gewinn über die Folds; Fenster ohne offene Position zählen nicht als Fenster', () => {
     const o = offenAnFoldEnden([fenster([pos('AAA', 55.5), pos('BBB', -10)]), fenster([]), fenster([pos('AAA', 20)])]);
-    expect(o).toEqual({ fenster: 2, fensterGesamt: 3, positionen: 3, unrealisiert: 65.5, bekannt: true, modus: 'per_fold' });
+    expect(o).toEqual({ fenster: 2, fensterGesamt: 3, positionen: 3, unrealisiert: 65.5, bekannt: true, modus: 'per_fold', ketteGesamt: null });
+    expect(offenAnFoldEnden([fenster([])], 'continuous', 1234.5).ketteGesamt).toBe(1234.5);
     expect(offenAnFoldEnden([fenster([]), fenster([pos('AAA', 1)])], 'continuous').modus).toBe('continuous');
   });
 
@@ -380,9 +381,17 @@ describe('Offen an Fold-Enden (Prüfbefund K4): was die Kette als Gewinn zählt,
     // Der eine Lauf meldet EINE Position — sie hängt an der letzten Scheibe, nicht an jedem Fold-Ende.
     expect(o.fenster).toBe(1);
     expect(o.positionen).toBe(1);
-    expect(o.unrealisiert).toBeCloseTo(12.5, 9);
+    // Die Position hängt an der letzten Scheibe und trägt deren Faktor E₀/E_Start:
+    // Die Kette hat gewonnen ⇒ der Faktor liegt unter 1 (Nachtrag: Beträge je Fold ab E₀).
+    expect(o.unrealisiert).toBeGreaterThan(0);
+    expect(o.unrealisiert).toBeLessThan(12.5);
     const text = readFileSync(mit.reportPath, 'utf8');
-    expect(text).toContain('**Offen am Kettenende (Prüfbefund K4):** 1 Position, Σ unrealisiert +12.50 $');
+    expect(text).toContain(`**Offen am Kettenende (Prüfbefund K4):** 1 Position, Σ unrealisiert +${o.unrealisiert.toFixed(2)} $`);
+    expect(text).toContain('(Beträge je Fold auf E₀ normiert)');
+    // Die ganze Kette = E₀ × Rendite (aufgezinst) — steht neben den Fold-Summen.
+    const wfa = mit.runs[0]!.results[0]!.wfa;
+    expect(o.ketteGesamt).toBeCloseTo((10_000 * wfa.oos.netReturnPct) / 100, 6);
+    expect(text).toContain(`Die ganze Kette: +${o.ketteGesamt!.toFixed(2)} $ (E₀ × Rendite, aufgezinst)`);
     expect(text).not.toContain('von 8 OOS-Fenstern');
     expect(text).toMatch(/Offen am Kettenende[^\n]*\n\n\*\*Exit-Anatomie\*\*/);
   });

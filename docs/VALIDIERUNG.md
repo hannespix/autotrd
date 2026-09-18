@@ -94,6 +94,16 @@ Kosten kippt, lebt von der Kostenannahme, nicht von der Kante.
   ohne je ein Trade zu werden (Prüfbefund K4: ≈ 2 600 $ von 3 388 $
   Überschuss der csm-Kette in #18). `per_fold` gibt es nur noch für
   Vergleichsläufe; der Bericht nennt den Modus in der Kopfzeile.
+  **Nachtrag (18.09.2026, Prüfbefunde M2/G5,
+  `docs/wissen/vorregistrierung/2026-09-18-nachtrag-massstab-auf-der-kette.md`):**
+  Der Maßstab für `beats_market` (SPY kaufen und halten) wird unter
+  `continuous` auf GENAU der Tagesachse der Kette gerechnet (Tag 1 Kasse,
+  danach nichts; gleiche Länge, gleiche Tage, gleiche Zinsreihe — weicht die
+  Achse ab, gilt das Gate als nicht berechenbar und durchgefallen), und die
+  Geldbeträge der Scheiben (Trades, offene Positionen am Kettenende) tragen
+  denselben Faktor E₀/E_Start wie die Equity: Fold-Netto, Exit-Anatomie und
+  `fee_share` sind EINE Rechnung „jeder Fold ab E₀", unabhängig davon, in
+  welcher Reihenfolge die Folds kamen.
 
 ## 4. Zielfunktion
 

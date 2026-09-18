@@ -140,7 +140,11 @@ describe('Durchgehende OOS-Kette mit dem echten Simulator', () => {
     expect(einzeln0.offenAmEnde).toHaveLength(1);
     expect(s0.offenAmEnde).toEqual([]);
     // Der überspannende Trade steht in Scheibe 2 — im Fold-Lauf 2 mit leerem Buch gibt es ihn nicht.
-    expect(s1.trades).toEqual([k.gesamt.trades[1]]);
+    expect(s1.trades).toHaveLength(1);
+    expect([s1.trades[0]!.entryTime, s1.trades[0]!.exitTime]).toEqual([k.gesamt.trades[1]!.entryTime, k.gesamt.trades[1]!.exitTime]);
+    // Betrag mit E₀/E_Start der zweiten Scheibe skaliert (Nachtrag G5): E_Start = Endstand der ersten (Faktor 1 dort).
+    expect(s1.trades[0]!.netPnl).toBeCloseTo((k.gesamt.trades[1]!.netPnl * E0) / s0.finalEquity, 9);
+    expect(s0.finalEquity).not.toBeCloseTo(E0, 3);
     const einzeln1 = simulateWindow({ symbol: 'AAA', strategy: einmal, params, bars: serieS, config: cfg, initialEquity: E0, simulate, range: { start: f1.oosStart, end: f1.oosEnd } });
     expect(einzeln1.trades).toEqual([]);
     // Danach flat: keine Trades, Rendite 0, jede Scheibe bei E₀.
