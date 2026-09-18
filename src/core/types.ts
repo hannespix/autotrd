@@ -371,6 +371,12 @@ export interface Metrics {
   avgR: number | null;
   trades: number;
   exposurePct: number;
+  /**
+   * Σ Gebühren / Σ Brutto-Ergebnis ALLER Trades (Gewinner und Verlierer, vor
+   * Gebühren) — eine Definition für Fenster, OOS-Kette, Live-Reife und
+   * Plattform. Null, wenn die Trades zusammen brutto nichts verdient haben;
+   * ein Gate liest null als „durchgefallen", nie als „kein Urteil".
+   */
   feeShare: number | null;
   /** Kalendertage des Zeitraums. */
   days: number;

@@ -146,7 +146,8 @@ describe('computeMetrics', () => {
     expect(m.winRatePct).toBeCloseTo((2 / 3) * 100, 9);
     expect(m.expectancy).toBeCloseTo(80 / 3, 9);
     expect(m.avgR).toBeCloseTo(0.5, 9);
-    expect(m.feeShare).toBeCloseTo(20 / 145, 9);
+    // Σ brutto ALLER Trades: 110 − 45 + 35 = 100 (nicht 145, die Gewinner allein)
+    expect(m.feeShare).toBeCloseTo(20 / 100, 9);
     expect(m.exposurePct).toBe(40);
     expect(m.days).toBe(365);
     // Drawdown beginnt beim Startkapital: 10100 → 10050 = 0,495 %
@@ -167,5 +168,15 @@ describe('computeMetrics', () => {
     const m = computeMetrics({ trades: [trade(10, 12, 2)], equity: [], dailyReturns: [], initialEquity: 1000, periodsPerYear: 252, days: 1, exposurePct: 0 });
     expect(m.profitFactor).toBeNull();
     expect(m.feeShare).toBeCloseTo(2 / 12, 12);
+  });
+  it('Gewinner vorhanden, aber Σ brutto ≤ 0 ⇒ feeShare null (die Vakanz von E2 #70 / tsmom #71)', () => {
+    // Zwei Gewinner (brutto +12, +8), ein Verlierer (brutto −25): zusammen −5.
+    // Durch die Gewinner allein wäre das 6/20 = 0,3 und sähe wie ein Kandidat
+    // mit Kante aus — der Vorgänger (3 049 $ auf 1 456 $ brutto) wäre so
+    // durchgekommen.
+    const trades = [trade(10, 12, 2), trade(6, 8, 2), trade(-27, -25, 2)];
+    const m = computeMetrics({ trades, equity: [], dailyReturns: [], initialEquity: 1000, periodsPerYear: 252, days: 1, exposurePct: 0 });
+    expect(m.feeShare).toBeNull();
+    expect(m.profitFactor).toBeCloseTo(16 / 27, 12);
   });
 });

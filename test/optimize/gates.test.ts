@@ -384,12 +384,19 @@ describe('robustnessGates', () => {
     expect(robustnessGates(gateInput({ optimizer: withGateFlags({ minPsrOos: 0.5 }), psr: psrOf(0.6) })).pass).toBe(true);
   });
 
-  it('(8) Gebühren fressen mehr als die Hälfte — nicht berechenbar ist kein Urteil', () => {
+  it('(8) Gebühren fressen mehr als die Hälfte — und nicht berechenbar gilt als durchgefallen', () => {
     expect(failing(robustnessGates(gateInput({ wfa: wfaFixture({ feeShare: 0.51 }) })))).toEqual(['fee_share']);
     expect(robustnessGates(gateInput({ wfa: wfaFixture({ feeShare: 0.5 }) })).pass).toBe(true);
+    // Vakant (Σ brutto aller Trades ≤ 0) war bis 18.09.2026 „kein Urteil" und
+    // damit bestanden — E2 #70 und tsmom #71 trugen so ein ✔ ohne Zahl. Wie
+    // PSR und beats_market: nicht berechenbar ⇒ nicht bestanden, mit Grund.
     const r = robustnessGates(gateInput({ wfa: wfaFixture({ feeShare: null }) }));
-    expect(r.pass).toBe(true);
-    expect(gate(r, 'fee_share').note).toMatch(/kein Urteil/);
+    expect(r.pass).toBe(false);
+    expect(failing(r)).toEqual(['fee_share']);
+    expect(gate(r, 'fee_share').value).toBeNull();
+    expect(gate(r, 'fee_share').note).toMatch(/keinen Bruttogewinn/);
+    expect(gate(r, 'fee_share').note).toMatch(/durchgefallen/);
+    expect(gate(r, 'fee_share').note).not.toMatch(/kein Urteil/);
   });
 
   it('mehrere Verstöße werden alle gemeldet', () => {

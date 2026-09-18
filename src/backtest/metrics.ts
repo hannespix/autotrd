@@ -481,13 +481,13 @@ export function computeMetrics(args: {
   let sumLoss = 0;
   let sumNet = 0;
   let sumFees = 0;
-  let sumGrossPos = 0;
+  let sumGross = 0;
   let sumR = 0;
   let nR = 0;
   for (const t of trades) {
     sumNet += t.netPnl;
     sumFees += t.fees;
-    if (t.grossPnl > 0) sumGrossPos += t.grossPnl;
+    sumGross += t.grossPnl;
     if (t.netPnl > 0) {
       wins++;
       sumWin += t.netPnl;
@@ -513,7 +513,15 @@ export function computeMetrics(args: {
     avgR: nR > 0 ? sumR / nR : null,
     trades: n,
     exposurePct,
-    feeShare: sumGrossPos > 0 ? sumFees / sumGrossPos : null,
+    // Gebührenanteil = Σ Gebühren / Σ Brutto-Ergebnis ALLER Trades — die eine
+    // Definition (aggregateOos, readiness, Plattform-liveGate), festgelegt
+    // vom Prüfer am 09.09.2026 (Befund 4) und am 18.09. nachgezogen: Bis
+    // dahin teilte dieses Fenster durch die Bruttogewinne der GEWINNER allein,
+    // und das hätte den Vorgänger (3 049 $ Gebühren auf 1 456 $ brutto, §2)
+    // mit ~30 % durchgewinkt. Null heißt: Die Trades haben zusammen brutto
+    // nichts verdient — dann gibt es keinen Gewinn, den Gebühren fressen
+    // könnten, und das Gate `fee_share` gilt als durchgefallen.
+    feeShare: sumGross > 0 ? sumFees / sumGross : null,
     days,
   };
 }
