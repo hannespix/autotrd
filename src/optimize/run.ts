@@ -72,6 +72,7 @@ import {
   type ChampionEntry,
   type ChampionFile,
   type PromotionDecision,
+  waehleErprobung,
 } from './promote.ts';
 import { BASIS_STUFE } from '../risk/limits.ts';
 import { renderReport, writeReport } from './report.ts';
@@ -1772,6 +1773,14 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
       });
     }
 
+    // Wer läuft auf Papier? Seit 18.09.2026 nicht zwingend der Score-beste,
+    // sondern der Score-beste über der Untergrenze der Handelsaktivität
+    // (`optimizer.erprobungMinTradesPerMonth`, Vorgabe 0 = alte Regel).
+    // Entschieden wird hier NICHTS über Beförderung: `decision`, `symbols`,
+    // `noTrade` kommen von oben und bleiben, wie sie sind.
+    const erprobungWahl = !istBasisEinheit && bars && results.length > 0 ? waehleErprobung(results.map((r) => ({ run: r, strategyId: r.strategyId, score: r.score, tradesPerMonth: r.massstab.tradesPerMonth })), optimizer.erprobungMinTradesPerMonth) : null;
+    const erprobung = erprobungWahl?.wahl ? { entry: toEntry(erprobungWahl.wahl.run), tradesPerMonth: erprobungWahl.wahl.tradesPerMonth, auswahl: erprobungWahl.auswahl } : undefined;
+
     // Gepoolt gilt EINE Entscheidung für den ganzen Korb: derselbe Eintrag
     // wird für jedes Symbol geschrieben. Damit bleibt das Champion-Format je
     // Symbol — Engine, Frontend und Plattform brauchen keine Zeile Änderung.
@@ -1779,11 +1788,23 @@ export function runOptimization(input: OptimizeRunInput): OptimizeRunOutput {
     let chosen: ChampionEntry | null = null;
     if (!istBasisEinheit) {
       for (const sym of einheit.symbols) {
-        champion = applyDecision({ file: champion, symbol: sym, decision, candidate, bestScore: bestAny ? bestAny.score : null, now: runAt });
+        champion = applyDecision({ file: champion, symbol: sym, decision, candidate, bestScore: bestAny ? bestAny.score : null, now: runAt, ...(erprobung ? { erprobung } : {}) });
       }
       const ersteszSymbol = einheit.symbols[0]!;
       chosen = decision.action === 'promote' ? champion.symbols[ersteszSymbol]! : decision.action === 'keep' ? incumbent : null;
-      journalDecision(journal, { symbol, decision, chosen, candidate, candidatePass: bestPassed !== null, incumbentRescore, incumbentPass, now: runAt });
+      const laeuftAufPapier = (decision.action === 'stay_notrade' || decision.action === 'demote_to_notrade') && erprobung ? erprobung : undefined;
+      journalDecision(journal, {
+        symbol,
+        decision,
+        chosen,
+        candidate,
+        candidatePass: bestPassed !== null,
+        incumbentRescore,
+        incumbentPass,
+        now: runAt,
+        ...(laeuftAufPapier ? { erprobung: { strategy: laeuftAufPapier.entry.strategy, tradesPerMonth: laeuftAufPapier.tradesPerMonth, auswahl: laeuftAufPapier.auswahl } } : {}),
+      });
+      if (laeuftAufPapier) log(`${symbol}: Papier-Erprobung — ${laeuftAufPapier.entry.strategy}: ${laeuftAufPapier.auswahl}`);
     }
     log(`${symbol}: ${decision.action} — ${decision.reason}`);
 

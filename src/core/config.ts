@@ -457,6 +457,28 @@ export const ConfigSchema = z.object({
        */
       foldMembership: z.enum(['point_in_time', 'fixed']).default('point_in_time'),
       /**
+       * Untergrenze der Handelsaktivität für die PAPIER-ERPROBUNG
+       * (Owner-Entscheidung 18.09.2026,
+       * docs/wissen/vorregistrierung/2026-09-18-erprobung-nach-handelsaktivitaet.md).
+       *
+       * Unter den DURCHGEFALLENEN Kandidaten wählt die Erprobung den
+       * Score-besten, der mindestens so viele geschlossene OOS-Trades je
+       * 30,44 Kalendertage der OOS-Kette hat (die Zahl der Maßstab-Zeile).
+       * Erreicht sie keiner, gilt der Score-beste — und der Block sagt das.
+       *
+       * Warum: Die Erprobung existiert, „damit überhaupt ein Journal
+       * entsteht" (§0.9). Lauf #17 wählte `regime_allocation` mit 76 Trades
+       * über 1 620 OOS-Tage — 1,4 je Monat über den ganzen Korb, ein
+       * Einstieg alle drei Wochen. Der Score ist blind dafür, ob ein
+       * Kandidat je handelt.
+       *
+       * Was das NICHT ist: kein Gate, keine Schwelle, keine Beförderung.
+       * `symbols`, `noTrade` und die Entscheidung bleiben unberührt; die
+       * fünf Sperren der Erprobung gelten unverändert. Vorgabe 0 = heutiges
+       * Verhalten (nur der Score zählt); die Plattform setzt 4.
+       */
+      erprobungMinTradesPerMonth: z.number().min(0).max(1000).default(0),
+      /**
        * Festkandidaten: vorregistrierte Parametersätze, die OHNE Suche durch
        * dieselben Folds (Korb je Fold), denselben Holdout und dieselben Gates
        * laufen wie die gesuchten Strategien und in derselben Liste um die
@@ -610,6 +632,7 @@ export const ConfigSchema = z.object({
       maxFoldNetShare: 0.5,
       pooled: false,
       foldMembership: 'point_in_time',
+      erprobungMinTradesPerMonth: 0,
       fixedCandidates: [],
       basis: { minDrawdownReduction: 0.25, minSharpeRatio: 0.9, maxCostShare: 0.1, positionPct: 20 },
       basisUniverse: [],
