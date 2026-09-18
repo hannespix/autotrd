@@ -30,10 +30,13 @@ function mk(o: Partial<Trade> = {}): Trade {
 }
 
 /**
- * 200 Trades exakt an allen Schwellen: 120 Gewinner (brutto +20, Kosten 8,
- * netto +12) und 80 Verlierer (brutto −12, Kosten 3, netto −15).
- *   Profit-Faktor = 1440 / 1200 = 1.2 · Gebührenanteil = 1200 / 2400 = 0.5
- *   Netto = +240 · Spanne erster Einstieg → letzter Ausstieg = 30 Kalendertage
+ * 200 Trades exakt an allen Schwellen: 120 Gewinner (brutto +40, Kosten 4,
+ * netto +36) und 80 Verlierer (brutto −42, Kosten 3, netto −45).
+ *   Profit-Faktor = 4320 / 3600 = 1.2
+ *   Gebührenanteil = 720 / (4800 − 3360) = 720 / 1440 = 0.5 — Nenner ist das
+ *   Brutto-Ergebnis ALLER Trades (seit 18.09.2026; die Gewinner allein
+ *   ergäben 720 / 4800 = 0.15)
+ *   Netto = +720 · Spanne erster Einstieg → letzter Ausstieg = 30 Kalendertage
  */
 function atThreshold(): Trade[] {
   const out: Trade[] = [];
@@ -44,9 +47,9 @@ function atThreshold(): Trade[] {
       mk({
         entryTime: entry,
         exitTime: i === 199 ? T0 + 30 * DAY : entry + HOUR,
-        grossPnl: win ? 20 : -12,
-        fees: win ? 8 : 3,
-        netPnl: win ? 12 : -15,
+        grossPnl: win ? 40 : -42,
+        fees: win ? 4 : 3,
+        netPnl: win ? 36 : -45,
       }),
     );
   }
@@ -87,7 +90,7 @@ describe('assessReadiness', () => {
     expect(check(r, 'days').value).toBe(30);
     expect(check(r, 'profitFactor').value).toBeCloseTo(1.2, 12);
     expect(check(r, 'feeShare').value).toBe(0.5);
-    expect(check(r, 'netProfit').value).toBe(240);
+    expect(check(r, 'netProfit').value).toBe(720);
     expect(r.checks.map((c) => c.threshold)).toEqual([200, 30, 1.2, 0.5, 0]);
     expect(r.summary).toContain('ERREICHT (5/5');
     expect(r.summary).not.toContain('NICHT ERREICHT');
@@ -102,13 +105,27 @@ describe('assessReadiness', () => {
     expect(check(r, 'trades').value).toBe(199);
   });
 
-  it('Gebührenanteil unter der Schwelle scheitert wie beim Vorgänger (feeShare 0.57)', () => {
-    const trades = atThreshold().map((t) => (t.grossPnl > 0 ? { ...t, fees: 9.4, netPnl: 10.6 } : t));
+  it('Gebührenanteil über der Schwelle scheitert wie beim Vorgänger (feeShare 0.65) — und nur er', () => {
+    // Gewinner brutto +45 bei Kosten 9: netto unverändert +36, also PF und
+    // Netto wie an der Schwelle — nur die Gebühren fressen jetzt 65 %.
+    const trades = atThreshold().map((t) => (t.grossPnl > 0 ? { ...t, grossPnl: 45, fees: 9 } : t));
     const r = assessReadiness(trades, NOW);
     const fs = check(r, 'feeShare');
-    expect(fs.value).toBeCloseTo((120 * 9.4 + 80 * 3) / 2400, 12);
+    expect(fs.value).toBeCloseTo((120 * 9 + 80 * 3) / (120 * 45 - 80 * 42), 12);
     expect(fs.pass).toBe(false);
+    expect(r.checks.filter((c) => !c.pass).map((c) => c.name)).toEqual(['feeShare']);
     expect(r.ready).toBe(false);
+  });
+
+  it('Gewinner vorhanden, Σ brutto ≤ 0 ⇒ Gebührenanteil null und fällt durch (die Gewinner allein zeigten 0.25)', () => {
+    const trades = [
+      mk({ grossPnl: 8, fees: 1, netPnl: 7 }),
+      mk({ grossPnl: 4, fees: 1, netPnl: 3 }),
+      mk({ grossPnl: -20, fees: 1, netPnl: -21 }),
+    ];
+    const r = assessReadiness(trades, NOW, { minTrades: 1, minDays: 0 });
+    expect(check(r, 'feeShare').value).toBeNull();
+    expect(check(r, 'feeShare').pass).toBe(false);
   });
 
   it('Netto genau 0 ⇒ fällt durch (strikt größer)', () => {
@@ -118,7 +135,7 @@ describe('assessReadiness', () => {
     expect(check(r, 'netProfit').pass).toBe(false);
   });
 
-  it('ohne Brutto-Gewinne ist der Gebührenanteil null und fällt durch', () => {
+  it('ohne Bruttogewinn ist der Gebührenanteil null und fällt durch', () => {
     const trades = [mk({ grossPnl: -1, fees: 1, netPnl: -2 }), mk({ grossPnl: 0, fees: 1, netPnl: -1 })];
     const r = assessReadiness(trades, NOW, { minTrades: 1, minDays: 0 });
     expect(check(r, 'feeShare').value).toBeNull();

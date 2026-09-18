@@ -599,7 +599,12 @@ export function aggregateOos(pieces: readonly OosPiece[], objective: ObjectiveId
     dailyReturns,
     dayKeys: achseVollstaendig ? dayKeys : [],
     profitFactor: losses > 0 ? wins / losses : null,
-    // Gebührenanteil am Bruttogewinn — nur sinnvoll, wenn brutto etwas verdient wurde.
+    // Σ Gebühren / Σ Brutto-Ergebnis ALLER Trades — dieselbe Definition wie
+    // `computeMetrics` je Fenster und `readiness` (seit 18.09.2026 eine).
+    // Null heißt „die Trades haben zusammen brutto nichts verdient" — auch
+    // mit Dutzenden Gewinnern, wenn die Verlierer mehr abgeben (E2 #70,
+    // tsmom #71: 34 Gewinner, Σ brutto < 0). Das ist kein Messfehler,
+    // sondern das Urteil; `fee_share` liest es als durchgefallen.
     feeShare: gross > 0 ? fees / gross : null,
   };
 }

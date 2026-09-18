@@ -139,7 +139,7 @@ export function assessReadiness(trades: readonly Trade[], now: Ms, thresholds: P
   }
   const ignored = trades.length - usable.length - erprobung;
 
-  let grossWins = 0; // Σ grossPnl > 0
+  let gross = 0; // Σ grossPnl ALLER Trades — dieselbe Definition wie computeMetrics und aggregateOos
   let netWins = 0; // Σ netPnl > 0
   let netLosses = 0; // Σ |netPnl < 0|
   let fees = 0;
@@ -147,7 +147,7 @@ export function assessReadiness(trades: readonly Trade[], now: Ms, thresholds: P
   let firstEntry = Number.POSITIVE_INFINITY;
   let lastExit = Number.NEGATIVE_INFINITY;
   for (const t of usable) {
-    if (t.grossPnl > 0) grossWins += t.grossPnl;
+    gross += t.grossPnl;
     if (t.netPnl > 0) netWins += t.netPnl;
     else if (t.netPnl < 0) netLosses += -t.netPnl;
     fees += t.fees;
@@ -161,7 +161,11 @@ export function assessReadiness(trades: readonly Trade[], now: Ms, thresholds: P
   if (netLosses > 0) profitFactor = netWins / netLosses;
   else if (netWins > 0) profitFactor = Number.POSITIVE_INFINITY;
   else profitFactor = null;
-  const feeShare = grossWins > 0 ? fees / grossWins : null;
+  // Bis 18.09.2026 teilte diese Zahl durch die Bruttogewinne der GEWINNER
+  // allein und war damit milder als das Optimierer-Gate und die Plattform
+  // (functions/src/core/liveGate.ts): Ein Journal, in dem Gebühren 90 % der
+  // Kante fressen, hätte hier ~10 % gezeigt. Strenger ist erlaubt, milder nie.
+  const feeShare = gross > 0 ? fees / gross : null;
 
   const checks: ReadinessCheck[] = [
     {
@@ -190,7 +194,7 @@ export function assessReadiness(trades: readonly Trade[], now: Ms, thresholds: P
       // Live stehen in `fees` nur explizite Gebühren (SEC/TAF, Krypto-Taker); Slippage und Spread stecken im
       // Fill-Kurs und damit schon in brutto/netto. Der Simulator bucht Slippage getrennt — die Zahl ist
       // deshalb nicht 1:1 mit dem Optimierer-Gate vergleichbar; Profit-Faktor und Netto tragen die Kosten.
-      label: `Gebührenanteil (Σ explizite Gebühren SEC/TAF bzw. Krypto-Taker / Σ Brutto-Gewinne; Slippage steckt im Kurs) ≤ ${th.maxFeeShare}`,
+      label: `Gebührenanteil (Σ explizite Gebühren SEC/TAF bzw. Krypto-Taker / Σ Brutto-Ergebnis aller Trades; Slippage steckt im Kurs) ≤ ${th.maxFeeShare}`,
       pass: feeShare !== null && feeShare <= th.maxFeeShare,
       value: feeShare,
       threshold: th.maxFeeShare,

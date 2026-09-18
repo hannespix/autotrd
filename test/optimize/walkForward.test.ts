@@ -216,7 +216,17 @@ describe('aggregateOos', () => {
       ({ symbol: 'A', side: 'long', qty: 1, entryTime: 0, entryPrice: 1, exitTime: 1, exitPrice: 1, grossPnl: netPnl + fees, fees, netPnl, rMultiple: null, exitReason: 'signal', strategy: 's', barsHeld: 1, mae: null, mfe: null }) as const;
     const agg = aggregateOos([piece(1, [1000], [t(30, 2), t(-10, 2), t(20, 2)])], 'sortino', 1000);
     expect(agg.profitFactor).toBeCloseTo(50 / 10, 9);
+    // Σ brutto ALLER Trades: 32 − 8 + 22 = 46 — nicht 54, die Gewinner allein
     expect(agg.feeShare).toBeCloseTo(6 / 46, 9);
+  });
+
+  it('Gewinner vorhanden, Σ brutto ≤ 0 ⇒ feeShare null — das ist die Vakanz von E2 #70 und tsmom #71, kein Messfehler', () => {
+    const t = (netPnl: number, fees: number) =>
+      ({ symbol: 'A', side: 'long', qty: 1, entryTime: 0, entryPrice: 1, exitTime: 1, exitPrice: 1, grossPnl: netPnl + fees, fees, netPnl, rMultiple: null, exitReason: 'signal', strategy: 's', barsHeld: 1, mae: null, mfe: null }) as const;
+    // zwei Gewinner (brutto +32, +22), ein Verlierer (brutto −60): zusammen −6
+    const agg = aggregateOos([piece(1, [1000], [t(30, 2), t(20, 2), t(-62, 2)])], 'sortino', 1000);
+    expect(agg.feeShare).toBeNull();
+    expect(agg.profitFactor).toBeCloseTo(50 / 62, 9);
   });
 
   it('leere Liste ⇒ schlechtester Wert, keine Division durch null', () => {

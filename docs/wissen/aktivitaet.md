@@ -10,7 +10,7 @@ davon eine Taktik ausgeben darf, und wo das erzwungen und gemessen wird.
 | Trades je Monat | abgeschlossene Round-Trips je 30,44 Tage über alle Symbole | 2 bis 10 |
 | Umschlag je Quartal | gehandeltes Volumen / mittlere Equity | ≤ 150 % |
 | Median-Haltedauer | Median der Haltedauer abgeschlossener Trades | ≥ 10 Handelstage |
-| Gebührenanteil | Gebühren / Bruttogewinn (Gate `fee_share`) | ≤ 50 % (Gate), ≤ 25 % (Basis) |
+| Gebührenanteil | Σ Gebühren / Σ Brutto-Ergebnis ALLER Trades (Gewinner und Verlierer, vor Gebühren) — eine Definition für Fenster, OOS-Kette (Gate `fee_share`), Live-Reife und Plattform (seit 18.09.2026). Ohne Bruttogewinn (Σ ≤ 0): nicht berechenbar ⇒ das Gate fällt, nie „kein Urteil" | ≤ 50 % (Gate), ≤ 25 % (Basis) |
 | Positionen | gleichzeitig offene Positionen | ≤ `risk.maxPositions` (4) |
 
 Zum Maßstab: Das Vorgängersystem machte 525 Trades in zwei Tagen — über

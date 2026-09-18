@@ -89,7 +89,7 @@ Glücks-Fenster kann den Median nicht tragen; eine leere Liste ist −∞.
 | Nachbarschafts-Plateau | ±1 Gitterschritt in jeder Parameterachse: Median der Nachbarn ≥ 50 % des Bestwerts **und** ≥ 60 % der Nachbarn netto positiv | Ein Optimum, das beim kleinsten Schritt einbricht, ist eine Spitze im Rauschen |
 | Probabilistic Sharpe Ratio (OOS) | ≥ `minPsrOos` (0,90) | Wahrscheinlichkeit, dass der Sharpe der verketteten OOS-Tagesrenditen echt > 0 ist (Bailey / López de Prado 2012, mit Schiefe/Kurtosis und n = OOS-Tage). Die OOS-Kette ist selektionsfrei — das ist die ehrliche Zahl der Prozedur |
 | Deflated Sharpe Ratio (IS) | informativ; als Gate ≥ 0,95 nur mit `dsrIsGate: true` | Deflation des In-Sample-Sharpe der finalen Parameter gegen die Zahl der Versuche (`trials`) und die Streuung der Trial-Sharpes. Steht immer im Bericht. Als hartes Gate bestraft es breite Gitter mit toten Regionen doppelt (die OOS-Kette hat die Auswahl schon bezahlt) — im Smoke fiel eine Strategie mit PSR-OOS 1,00 und 10/10 positiven Folds allein daran durch |
-| Gebührenanteil | Σ Kosten / Σ Brutto-Gewinne ≤ 0,5 | Der Vorgänger lag bei 0,57 — brutto positiv, netto negativ |
+| Gebührenanteil | Σ Kosten / Σ Brutto-Ergebnis ALLER Trades ≤ 0,5; ohne Bruttogewinn (Σ ≤ 0) nicht berechenbar ⇒ fällt durch (seit 18.09.2026, vorher „kein Urteil" = bestanden) | Der Vorgänger: 3 049 $ Gebühren auf 1 456 $ Brutto-Ergebnis = 2,09 — brutto positiv, netto negativ. Durch die Gewinner allein gerechnet läge er bei ~0,3 und bestünde — deshalb der Nenner über ALLE Trades |
 
 Ein Kandidat, der ein Gate reißt, wird im Bericht mit dem gerissenen Gate
 gelistet und **nicht** befördert — egal wie gut die anderen Zahlen sind.
@@ -154,7 +154,7 @@ Schalter umlegen." `autotrd readiness` prüft das Paper-Journal
 | Abgeschlossene Trades | ≥ 200 |
 | Kalendertage erster Einstieg → letzter Ausstieg | ≥ 30 |
 | Profit-Faktor (Σ Netto-Gewinne / Σ Netto-Verluste) | ≥ 1,2 |
-| Gebührenanteil (Σ explizite Gebühren / Σ Brutto-Gewinne) | ≤ 0,5 (ohne Brutto-Gewinne: nicht berechenbar ⇒ fällt durch). Live sind das SEC/TAF bzw. Krypto-Taker nach Kostenmodell; Slippage und Spread stecken im Fill-Kurs und damit in Profit-Faktor und Netto — die Zahl ist kleiner als im Simulator, der Slippage getrennt bucht |
+| Gebührenanteil (Σ explizite Gebühren / Σ Brutto-Ergebnis aller Trades — dieselbe Definition wie das Gate `fee_share`, seit 18.09.2026) | ≤ 0,5 (ohne Bruttogewinn: nicht berechenbar ⇒ fällt durch). Live sind das SEC/TAF bzw. Krypto-Taker nach Kostenmodell; Slippage und Spread stecken im Fill-Kurs und damit in Profit-Faktor und Netto — die Zahl ist kleiner als im Simulator, der Slippage getrennt bucht |
 | Netto-Ergebnis | > 0 |
 
 Zusätzlich informativ: der größte Rückgang der kumulierten Netto-PnL. Erst

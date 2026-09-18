@@ -810,15 +810,24 @@ export function robustnessGates(a: GateInput): { pass: boolean; gates: GateResul
   // TRADES (`Trade.fees` / `Trade.grossPnl`), und eine Treasury-Umschichtung
   // ist kein Trade (risk/parken.ts). Weder Parkkosten noch Zinsertrag stecken
   // hier drin — deshalb bleibt dieses Gate roh und ändert sich um exakt 0.
+  //
+  // Vakant heißt durchgefallen (seit 18.09.2026). `null` steht für „die
+  // Trades haben zusammen brutto nichts verdient" (Σ grossPnl ≤ 0, E2 #70 und
+  // tsmom #71 mit je Dutzenden Gewinnern) — bis dahin galt das als
+  // bestanden („kein Urteil"). Kippen konnte das nie eine Entscheidung: Ohne
+  // Bruttogewinn ist das Netto negativ, und `oos_net_profit` fällt (Parken
+  // ohne Zinsreihe lehnt run.ts ab, also zählt dort der Überschuss). Aber ein
+  // Gate, das sein Urteil einem anderen überlässt, ist keins — PSR und
+  // `beats_market` halten es genauso: nicht berechenbar ⇒ nicht bestanden.
   gates.push({
     name: 'fee_share',
-    pass: oos.feeShare === null || oos.feeShare <= FEE_SHARE_MAX,
+    pass: oos.feeShare !== null && oos.feeShare <= FEE_SHARE_MAX,
     value: oos.feeShare,
     threshold: FEE_SHARE_MAX,
     note:
       oos.feeShare === null
-        ? 'Gebührenanteil nicht berechenbar (kein Bruttogewinn) — kein Urteil'
-        : `Gebühren fressen ${(oos.feeShare * 100).toFixed(1)} % des Bruttogewinns (aus Trades, zinsfrei)`,
+        ? 'Gebührenanteil nicht berechenbar — die Trades haben zusammen keinen Bruttogewinn (Σ brutto ≤ 0) — gilt als durchgefallen'
+        : `Gebühren fressen ${(oos.feeShare * 100).toFixed(1)} % des Bruttogewinns (Σ brutto aller Trades; zinsfrei)`,
   });
 
   // Schlägt die Strategie das Nichtstun? Am 08.09.2026 bestand
