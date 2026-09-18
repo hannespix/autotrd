@@ -30,7 +30,7 @@ import type {
 } from '../core/types.ts';
 import { ALPHA_STUFE } from '../risk/limits.ts';
 import { mean, median, objectiveValue, perPeriodSharpe, type ObjectiveId } from './objective.ts';
-import { sampleParams, wirksamerSuchraum } from './search.ts';
+import { rngFuer, sampleParams, wirksamerSuchraum } from './search.ts';
 
 /* ───────────────────────── Injektionspunkt Simulator ───────────────────────── */
 
@@ -670,7 +670,6 @@ export interface WalkForwardArgs {
   initialEquity: number;
   calendar?: Calendar | undefined;
   simulate: SimulateFn;
-  rng: () => number;
   /** Immer mitbewertete Parametersätze (z. B. amtierender Champion). */
   include?: readonly Params[] | undefined;
   /** Korb je Fold (siehe `Membership`); ohne: der ganze Korb über alle Folds. */
@@ -692,13 +691,18 @@ export function minIsTrades(optimizer: OptimizerConfig): number {
   return Math.max(10, Math.floor(optimizer.minOosTrades / 4));
 }
 
-/** `membershipAt`: der Korb, auf dem gesucht wird — der OOS-Beginn des Folds, nicht der IS-Beginn (siehe `Membership`). */
-function searchWindow(a: WalkForwardArgs, achse: Zeitachse, window: TimeRange, include: readonly Params[], embargoAtEnd: boolean, membershipAt: Ms | undefined): WindowSearch {
+/**
+ * `membershipAt`: der Korb, auf dem gesucht wird — der OOS-Beginn des Folds, nicht der IS-Beginn (siehe `Membership`).
+ * `fenster`: Kennung der Suche (`fold:3`, `final`) — sie bestimmt mit Seed und Strategie den Zufallsgenerator
+ * DIESER Suche (`rngFuer`), damit die Kandidaten nicht davon abhängen, was im Lauf davor gezogen wurde (K2).
+ */
+function searchWindow(a: WalkForwardArgs, achse: Zeitachse, window: TimeRange, include: readonly Params[], embargoAtEnd: boolean, membershipAt: Ms | undefined, fenster: string): WindowSearch {
   const { strategy, optimizer } = a;
   // Bei gesperrtem Short ist `allowShort` keine Achse (tot in decide(), §5a.15).
   const raum = wirksamerSuchraum(strategy.paramSpace, a.config.risk.allowShort);
   const seeds: Params[] = [strategy.defaults, ...include].map((p) => ({ ...strategy.defaults, ...p, ...raum.pinned }));
-  const candidates = sampleParams(raum.space, optimizer.samples, a.rng, seeds).map((p) => ({ ...strategy.defaults, ...p, ...raum.pinned }));
+  const rng = rngFuer(optimizer.seed, strategy.id, fenster);
+  const candidates = sampleParams(raum.space, optimizer.samples, rng, seeds).map((p) => ({ ...strategy.defaults, ...p, ...raum.pinned }));
   const floor = minIsTrades(optimizer);
 
   let best: WindowSearch | null = null;
@@ -739,7 +743,7 @@ export function walkForward(a: WalkForwardArgs): WfaResult {
 
   for (const fold of plan.folds) {
     // Ein Korb je Fold, gewählt zum OOS-Beginn — für Suche UND Bewertung.
-    const is = searchWindow(a, achse, { start: fold.isStart, end: fold.isEnd }, include, true, fold.oosStart);
+    const is = searchWindow(a, achse, { start: fold.isStart, end: fold.isEnd }, include, true, fold.oosStart, `fold:${fold.index}`);
     trials += is.evaluated;
     const oos = simulateWindow({ ...a, params: is.params, range: { start: fold.oosStart, end: fold.oosEnd }, membershipAt: fold.oosStart });
     const oosObjective = objectiveValue(optimizer.objective, oos.metrics);
@@ -773,7 +777,7 @@ export function walkForward(a: WalkForwardArgs): WfaResult {
   // letzten Folds). Der heute gehandelte Korb kann davon abweichen — mit
   // Holdout liegt dieser Stand `holdoutDays` zurück; der Bericht zeigt die
   // Differenz (Prüfbefund 2.1).
-  const fin = searchWindow(a, achse, finalWindow, finalInclude, finalWindow.embargoAtEnd, finalWindow.end);
+  const fin = searchWindow(a, achse, finalWindow, finalInclude, finalWindow.embargoAtEnd, finalWindow.end, 'final');
   trials += fin.evaluated;
 
   let holdout: WfaResult['holdout'] = null;

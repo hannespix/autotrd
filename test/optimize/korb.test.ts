@@ -15,7 +15,6 @@
  * Diese Tests halten die Verdrahtung fest, nicht das Ergebnis.
  */
 import { describe, expect, it } from 'vitest';
-import { mulberry32 } from '../../src/optimize/search.ts';
 import { foldPlanForBars, korbVon, simulateWindow, walkForward, zeitachseVon } from '../../src/optimize/walkForward.ts';
 import { BarSeries } from '../../src/core/bars.ts';
 import { DAY } from '../../src/core/time.ts';
@@ -169,13 +168,13 @@ describe('walkForward über einen Korb', () => {
     const einzeln = walkForward({
       symbol: 'AAA', strategy, bars,
       config: simConfigOf(cfg), optimizer: cfg.optimizer,
-      initialEquity: 10_000, simulate: makeFakeSimulate(REWARD_PROFILE), rng: mulberry32(1),
+      initialEquity: 10_000, simulate: makeFakeSimulate(REWARD_PROFILE),
     });
     const gepoolt = walkForward({
       symbol: 'korb', strategy,
       bars: new Map([['AAA', bars], ['BBB', dailyBars(400)]]),
       config: simConfigOf(cfg), optimizer: cfg.optimizer,
-      initialEquity: 10_000, simulate: makeFakeSimulate(REWARD_PROFILE), rng: mulberry32(1),
+      initialEquity: 10_000, simulate: makeFakeSimulate(REWARD_PROFILE),
     });
     // Deckungsgleiche Achsen ⇒ identischer Fold-Plan. Wäre das nicht so,
     // wären gepoolte und einzelne Ergebnisse nicht vergleichbar.

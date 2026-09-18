@@ -8,7 +8,6 @@ import { describe, expect, it } from 'vitest';
 import { parseConfig } from '../../src/core/config.ts';
 import { DAY } from '../../src/core/time.ts';
 import { buildFolds, walkForward } from '../../src/optimize/walkForward.ts';
-import { mulberry32 } from '../../src/optimize/search.ts';
 import { REWARD_PROFILE, dailyBars, fakeStrategy, makeFakeSimulate, simConfigOf, testConfig } from '../optimize/fakes.ts';
 
 describe('RED-TEAM OOS-Überlappung (Regression)', () => {
@@ -32,7 +31,6 @@ describe('RED-TEAM OOS-Überlappung (Regression)', () => {
       optimizer: cfg.optimizer,
       initialEquity: 10_000,
       simulate: makeFakeSimulate(REWARD_PROFILE),
-      rng: mulberry32(1),
     });
     const uniqueDays = new Set<number>();
     for (const f of wfa.folds) for (let t = f.fold.oosStart; t < f.fold.oosEnd; t += DAY) uniqueDays.add(t);
