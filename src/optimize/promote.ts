@@ -110,6 +110,90 @@ export interface ErprobungEntry {
   /** Namen der gefallenen Gates — der Grund, warum das hier keine Beförderung ist. */
   failed: string[];
   decidedAt: Ms;
+  /**
+   * Geschlossene OOS-Trades je 30,44 Kalendertage der OOS-Kette — die Zahl
+   * der Maßstab-Zeile. Additiv (18.09.2026); fehlt in älteren Blöcken.
+   * null: keine OOS-Tage oder nicht ermittelbar.
+   */
+  tradesPerMonth?: number | null;
+  /**
+   * Warum GENAU dieser Kandidat (`waehleErprobung`): Score-bester, oder
+   * Score-bester über der Untergrenze der Handelsaktivität mit den
+   * übersprungenen Kandidaten, oder Rückfall, weil keiner sie erreicht.
+   * Additiv; ohne das Feld galt allein der Score.
+   */
+  auswahl?: string;
+}
+
+/* ───────────────────────── Erprobung: Wahl ───────────────────────── */
+
+/** Was die Wahl je Kandidat braucht — strukturell, damit sie ohne den ganzen `StrategyRun` prüfbar ist. */
+export interface ErprobungKandidatSicht {
+  strategyId: string;
+  /** OOS-Objective-Median; −∞ bei 0 Trades. */
+  score: number;
+  /** Trades je Monat der OOS-Kette (Maßstab-Zeile); null ⇒ erreicht nie eine Untergrenze. */
+  tradesPerMonth: number | null;
+}
+
+export interface ErprobungWahl<T extends ErprobungKandidatSicht> {
+  wahl: T | null;
+  /** Für Journal, Champion-Block und Log: warum dieser. */
+  auswahl: string;
+  /** Kandidaten, die die Untergrenze reißen — der Bericht nennt sie. */
+  unterGrenze: T[];
+}
+
+const f1 = (x: number | null): string => (x === null ? '–' : x.toFixed(1));
+
+/**
+ * Wer läuft auf Papier? (Owner-Entscheidung 18.09.2026,
+ * docs/wissen/vorregistrierung/2026-09-18-erprobung-nach-handelsaktivitaet.md)
+ *
+ * Bis dahin: der Score-beste. Der Score ist aber blind dafür, ob ein
+ * Kandidat je handelt — Lauf #17 wählte `regime_allocation` mit 1,4 Trades
+ * je Monat über den ganzen Korb, und die Erprobung, die es gibt, „damit
+ * überhaupt ein Journal entsteht" (§0.9), erzeugte keines.
+ *
+ * Jetzt: der Score-beste UNTER DENEN, die `minTradesPerMonth` erreichen.
+ * Erreicht sie keiner, der Score-beste — und `auswahl` sagt das. Mit
+ * `minTradesPerMonth` 0 ist die Wahl die alte.
+ *
+ * Was hier NICHT entschieden wird: Beförderung, Gates, `symbols`, `noTrade`.
+ * Die Funktion sortiert selbst (Score absteigend, dann Name), damit sie
+ * nicht von der Reihenfolge des Aufrufers abhängt.
+ */
+export function waehleErprobung<T extends ErprobungKandidatSicht>(kandidaten: readonly T[], minTradesPerMonth: number): ErprobungWahl<T> {
+  const sortiert = [...kandidaten].sort((a, b) => {
+    if (a.score !== b.score) return a.score > b.score ? -1 : 1;
+    return a.strategyId < b.strategyId ? -1 : a.strategyId > b.strategyId ? 1 : 0;
+  });
+  const beste = sortiert[0] ?? null;
+  if (beste === null) return { wahl: null, auswahl: 'kein Kandidat', unterGrenze: [] };
+  if (!(minTradesPerMonth > 0)) {
+    return { wahl: beste, auswahl: `Score-bester (${f3(beste.score)}); keine Untergrenze der Handelsaktivität`, unterGrenze: [] };
+  }
+  const erreicht = (k: T): boolean => k.tradesPerMonth !== null && k.tradesPerMonth >= minTradesPerMonth;
+  const unterGrenze = sortiert.filter((k) => !erreicht(k));
+  const wahl = sortiert.find(erreicht) ?? null;
+  const nennen = (xs: readonly T[]): string => xs.map((k) => `${k.strategyId} (${f1(k.tradesPerMonth)})`).join(', ');
+  if (wahl === null) {
+    return {
+      wahl: beste,
+      auswahl:
+        `kein Kandidat erreicht ≥ ${minTradesPerMonth} Trades je Monat — Rückfall auf den Score-besten ${beste.strategyId} ` +
+        `(Score ${f3(beste.score)}, ${f1(beste.tradesPerMonth)} je Monat); unter der Grenze: ${nennen(unterGrenze)}`,
+      unterGrenze,
+    };
+  }
+  const uebersprungen = sortiert.slice(0, sortiert.indexOf(wahl)).filter((k) => !erreicht(k));
+  return {
+    wahl,
+    auswahl:
+      `Score-bester unter ≥ ${minTradesPerMonth} Trades je Monat: ${wahl.strategyId} (Score ${f3(wahl.score)}, ${f1(wahl.tradesPerMonth)} je Monat)` +
+      (uebersprungen.length ? `; übersprungen trotz höherem Score: ${nennen(uebersprungen)}` : ''),
+    unterGrenze,
+  };
 }
 
 export interface ChampionFile {
@@ -161,6 +245,9 @@ export function parseErprobung(raw: unknown): { entries: Record<string, Erprobun
       score: finiteOrNull(typeof o.score === 'number' ? o.score : null),
       failed: Array.isArray(o.failed) ? o.failed.filter((x): x is string => typeof x === 'string') : [],
       decidedAt: typeof o.decidedAt === 'number' ? o.decidedAt : 0,
+      // Additiv (18.09.2026): fehlt beides, war es ein Block der alten Regel — dann bleibt es weg.
+      ...(typeof o.tradesPerMonth === 'number' || o.tradesPerMonth === null ? { tradesPerMonth: finiteOrNull(o.tradesPerMonth as number | null) } : {}),
+      ...(typeof o.auswahl === 'string' ? { auswahl: o.auswahl } : {}),
     };
   }
   return { entries, verworfen };
@@ -359,6 +446,12 @@ export function applyDecision(a: {
   candidate: ChampionEntry | null;
   bestScore: number | null;
   now: Ms;
+  /**
+   * Wer auf Papier läuft (`waehleErprobung`) — seit 18.09.2026 nicht mehr
+   * zwingend `candidate`. Fehlt das Feld (alte Aufrufer, Tests), gilt die
+   * alte Regel: der Kandidat der Beförderungsfrage.
+   */
+  erprobung?: { entry: ChampionEntry; tradesPerMonth: number | null; auswahl: string } | undefined;
 }): ChampionFile {
   const symbols = { ...a.file.symbols };
   const noTrade = { ...a.file.noTrade };
@@ -371,15 +464,17 @@ export function applyDecision(a: {
   // (Prüfbefund 4.1).
   delete erprobung[a.symbol];
   const alsErprobung = (): void => {
-    if (!a.candidate) return;
+    const e = a.erprobung ? a.erprobung.entry : a.candidate;
+    if (!e) return;
     erprobung[a.symbol] = {
       version: 1,
-      strategy: a.candidate.strategy,
-      params: a.candidate.params,
-      timeframe: a.candidate.timeframe,
-      score: finiteOrNull(a.candidate.score),
-      failed: (a.candidate.gates ?? []).filter((g) => !g.pass).map((g) => g.name),
+      strategy: e.strategy,
+      params: e.params,
+      timeframe: e.timeframe,
+      score: finiteOrNull(e.score),
+      failed: (e.gates ?? []).filter((g) => !g.pass).map((g) => g.name),
       decidedAt: a.now,
+      ...(a.erprobung ? { tradesPerMonth: finiteOrNull(a.erprobung.tradesPerMonth), auswahl: a.erprobung.auswahl } : {}),
     };
   };
   switch (a.decision.action) {
@@ -423,6 +518,8 @@ export function journalDecision(
     incumbentRescore: number | null;
     incumbentPass?: boolean | null | undefined;
     now: Ms;
+    /** Wer auf Papier läuft und warum (`waehleErprobung`); fehlt, wenn nichts auf Papier läuft. */
+    erprobung?: { strategy: string; tradesPerMonth: number | null; auswahl: string } | undefined;
   },
 ): void {
   journal.append(
@@ -439,6 +536,9 @@ export function journalDecision(
       candidatePass: a.candidatePass,
       incumbentRescore: finiteOrNull(a.incumbentRescore),
       incumbentPass: a.incumbentPass ?? null,
+      erprobungStrategy: a.erprobung?.strategy ?? null,
+      erprobungTradesPerMonth: a.erprobung ? finiteOrNull(a.erprobung.tradesPerMonth) : null,
+      erprobungAuswahl: a.erprobung?.auswahl ?? null,
     },
     a.now,
   );

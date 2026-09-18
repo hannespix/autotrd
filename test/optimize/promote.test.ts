@@ -11,7 +11,9 @@ import {
   fitEndOf,
   journalDecision,
   loadChampion,
+  parseErprobung,
   saveChampion,
+  waehleErprobung,
   type ChampionEntry,
   type PromotionInput,
 } from '../../src/optimize/promote.ts';
@@ -116,6 +118,102 @@ describe('decidePromotion', () => {
   it('ein durchgefallener Kandidat wird nie befördert — auch mit hohem Score', () => {
     const d = decide({ incumbent: null, incumbentRescore: null, incumbentPass: null, candidate: { entry: entry('new', 99), pass: false }, margin: 0 });
     expect(d.action).not.toBe('promote');
+  });
+});
+
+describe('waehleErprobung — wer läuft auf Papier (Owner-Entscheidung 18.09.2026)', () => {
+  /*
+   * Lauf #17: Der Score-beste war `regime_allocation` mit 1,4 Trades je
+   * Monat über den ganzen Korb. Die Erprobung, die es gibt, „damit überhaupt
+   * ein Journal entsteht" (§0.9), erzeugte keines. Diese Zahlen sind die
+   * echten aus dem Lauf (Trades ÷ 53,2 OOS-Monate).
+   */
+  const lauf17 = [
+    { strategyId: 'regime_allocation', score: 3.214, tradesPerMonth: 1.4 },
+    { strategyId: 'mean_reversion', score: 2.724, tradesPerMonth: 6.6 },
+    { strategyId: 'cross_sectional_momentum', score: 1.813, tradesPerMonth: 9.5 },
+    { strategyId: 'momentum_pullback', score: 1.008, tradesPerMonth: 10.2 },
+    { strategyId: 'trend_donchian', score: 0.43, tradesPerMonth: 7.5 },
+  ];
+
+  it('ohne Untergrenze (0) gilt die alte Regel: der Score-beste', () => {
+    const w = waehleErprobung(lauf17, 0);
+    expect(w.wahl?.strategyId).toBe('regime_allocation');
+    expect(w.unterGrenze).toEqual([]);
+    expect(w.auswahl).toContain('keine Untergrenze');
+  });
+
+  it('WÄCHTER: mit Untergrenze 4 wird der Score-beste übersprungen, wenn er sie reißt — und der nächste genommen', () => {
+    const w = waehleErprobung(lauf17, 4);
+    expect(w.wahl?.strategyId, 'Lauf #17 hätte mean_reversion wählen müssen').toBe('mean_reversion');
+    expect(w.unterGrenze.map((k) => k.strategyId)).toEqual(['regime_allocation']);
+    // Der Block muss sagen, wer trotz höherem Score übersprungen wurde — sonst
+    // hält ein Leser den Eintrag für den Score-besten.
+    expect(w.auswahl).toContain('übersprungen trotz höherem Score: regime_allocation (1.4)');
+    expect(w.auswahl).toContain('mean_reversion');
+  });
+
+  it('erreicht keiner die Untergrenze, fällt die Wahl auf den Score-besten — und sagt es', () => {
+    const w = waehleErprobung(lauf17, 50);
+    expect(w.wahl?.strategyId).toBe('regime_allocation');
+    expect(w.unterGrenze).toHaveLength(5);
+    expect(w.auswahl, 'ein stiller Rückfall sähe aus wie eine Wahl nach Aktivität').toMatch(/kein Kandidat erreicht ≥ 50/);
+  });
+
+  it('ohne OOS-Tage (tradesPerMonth null) erreicht ein Kandidat nie eine Untergrenze — auch nicht mit hohem Score', () => {
+    const w = waehleErprobung([{ strategyId: 'x', score: 9, tradesPerMonth: null }, { strategyId: 'y', score: 1, tradesPerMonth: 5 }], 4);
+    expect(w.wahl?.strategyId).toBe('y');
+  });
+
+  it('sortiert selbst (Score absteigend, dann Name) — die Reihenfolge des Aufrufers spielt keine Rolle', () => {
+    const rueckwaerts = [...lauf17].reverse();
+    expect(waehleErprobung(rueckwaerts, 4).wahl?.strategyId).toBe('mean_reversion');
+    expect(waehleErprobung(rueckwaerts, 0).wahl?.strategyId).toBe('regime_allocation');
+    // Gleicher Score: der Name entscheidet, deterministisch.
+    const gleich = [{ strategyId: 'b', score: 1, tradesPerMonth: 5 }, { strategyId: 'a', score: 1, tradesPerMonth: 5 }];
+    expect(waehleErprobung(gleich, 0).wahl?.strategyId).toBe('a');
+  });
+
+  it('leer ⇒ keine Wahl', () => {
+    expect(waehleErprobung([], 4).wahl).toBeNull();
+  });
+
+  it('WÄCHTER: applyDecision schreibt den GEWÄHLTEN Kandidaten in den Block — samt tradesPerMonth und auswahl — und fasst symbols/noTrade nicht an', () => {
+    const scoreBester = entry('regime_allocation', 3.214, { gates: [{ name: 'beats_market', pass: false, value: 0, threshold: 1, note: '' }] });
+    const gewaehlt = entry('mean_reversion', 2.724, { gates: [{ name: 'fold_concentration', pass: false, value: 0, threshold: 1, note: '' }] });
+    const out = applyDecision({
+      file: emptyChampionFile(0),
+      symbol: 'AAA',
+      decision: { action: 'stay_notrade', reason: 'fällt durch' },
+      candidate: scoreBester,
+      bestScore: 3.214,
+      now: 5,
+      erprobung: { entry: gewaehlt, tradesPerMonth: 6.6, auswahl: 'Score-bester unter ≥ 4 Trades je Monat: mean_reversion' },
+    });
+    expect(out.erprobung?.AAA).toMatchObject({ strategy: 'mean_reversion', tradesPerMonth: 6.6, failed: ['fold_concentration'] });
+    expect(out.erprobung?.AAA?.auswahl).toContain('mean_reversion');
+    // Die Beförderungsfrage bleibt, wie sie war: kein Champion, noTrade mit dem Score-BESTEN als bestScore.
+    expect(out.symbols).toEqual({});
+    expect(out.noTrade.AAA).toEqual({ reason: 'fällt durch', decidedAt: 5, bestScore: 3.214 });
+  });
+
+  it('ohne `erprobung` gilt die alte Regel: der Kandidat der Beförderungsfrage läuft auf Papier (alte Aufrufer)', () => {
+    const cand = entry('regime_allocation', 3.214);
+    const out = applyDecision({ file: emptyChampionFile(0), symbol: 'AAA', decision: { action: 'stay_notrade', reason: 'r' }, candidate: cand, bestScore: 3.214, now: 5 });
+    expect(out.erprobung?.AAA?.strategy).toBe('regime_allocation');
+    expect(out.erprobung?.AAA?.tradesPerMonth).toBeUndefined();
+    expect(out.erprobung?.AAA?.auswahl).toBeUndefined();
+  });
+
+  it('parseErprobung reicht die neuen Felder durch und toleriert ihr Fehlen (alte Blöcke)', () => {
+    const neu = parseErprobung({ AAA: { version: 1, strategy: 's', params: { a: 1 }, timeframe: 1440, score: 1, failed: [], decidedAt: 1, tradesPerMonth: 6.6, auswahl: 'weil' } });
+    expect(neu.entries.AAA).toMatchObject({ tradesPerMonth: 6.6, auswahl: 'weil' });
+    const alt = parseErprobung({ AAA: { version: 1, strategy: 's', params: { a: 1 }, timeframe: 1440, score: 1, failed: [], decidedAt: 1 } });
+    expect(alt.entries.AAA).toBeDefined();
+    expect('tradesPerMonth' in alt.entries.AAA!).toBe(false);
+    // null (keine OOS-Tage) bleibt null, kein Wegfall.
+    const nul = parseErprobung({ AAA: { version: 1, strategy: 's', params: { a: 1 }, timeframe: 1440, score: 1, failed: [], decidedAt: 1, tradesPerMonth: null } });
+    expect(nul.entries.AAA?.tradesPerMonth).toBeNull();
   });
 });
 

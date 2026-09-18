@@ -246,6 +246,22 @@ optimizer:
   promotionMargin: 0.1
   minPsrOos: 0.9
   dsrIsGate: false
+  # Untergrenze der Handelsaktivität für die PAPIER-ERPROBUNG (Owner-Entscheidung
+  # 18.09.2026, docs/wissen/vorregistrierung/2026-09-18-erprobung-nach-handelsaktivitaet.md).
+  #
+  # Der Befund: Seit Lauf #17 lief `regime_allocation` auf Papier — 76 Trades
+  # über 1 620 OOS-Tage, 1,4 je Monat über den ganzen Korb, ein Einstieg alle
+  # drei Wochen. Die Bewertungszeile im Journal (PR #511) zeigte es täglich:
+  # „30 bewertet · 0 Einstiegswunsch". Die Erprobung existiert, „damit
+  # überhaupt ein Journal entsteht" (§0.9); der Score ist blind dafür.
+  #
+  # Ab jetzt läuft der Score-beste unter denen, die ≥ 4 geschlossene OOS-Trades
+  # je Monat haben (Maßstab-Zeile). Erreicht das keiner: der Score-beste, und
+  # der Block sagt es. Kein Gate, keine Schwelle, keine Beförderung —
+  # `symbols` bleibt leer, `noTrade` bleibt voll, die fünf Sperren gelten.
+  # Warum 4 und nicht 1: docs/wissen/aktivitaet.md nennt 2–10 als Band; mit 4
+  # ist ein Einstieg in zehn Handelstagen zu ~85 % zu sehen, mit 1,4 zu ~50 %.
+  erprobungMinTradesPerMonth: 4
   # Zinsmaßstab (Owner-Entscheidung 15.09.2026). Alle Geld-Gates rechnen auf
   # dem ÜBERSCHUSS über den kurzen Zins statt über null. Das ändert keinen
   # Handel und keine Order — es macht die Gates STRENGER (§0.9 erlaubt

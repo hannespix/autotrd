@@ -34,6 +34,20 @@ describe('config/platform.yaml', () => {
     }
   });
 
+  it('WÄCHTER: die Papier-Erprobung wählt nach Handelsaktivität — die Untergrenze steht und ist vorregistriert', () => {
+    /*
+     * Owner-Entscheidung 18.09.2026. Ohne die Untergrenze lief `regime_allocation`
+     * auf Papier: 1,4 Trades je Monat über den ganzen Korb, und die Erprobung,
+     * die es gibt, „damit überhaupt ein Journal entsteht", erzeugte keines.
+     * Fällt der Schlüssel still aus der Config, ist die alte Regel wieder da,
+     * ohne dass ein Test es merkt — deshalb steht er hier.
+     */
+    expect(cfg.optimizer.erprobungMinTradesPerMonth, 'docs/wissen/vorregistrierung/2026-09-18-erprobung-nach-handelsaktivitaet.md').toBe(4);
+    // Und sie ist keine Latte: Sie darf keinen der Alpha-Gate-Schwellen berühren.
+    expect(cfg.optimizer.minOosTrades).toBe(60);
+    expect(cfg.optimizer.minPsrOos).toBe(0.9);
+  });
+
   it('bleibt im Rahmen, den Alpaca und die Nutzer-Einstellungen hergeben', () => {
     // IEX-Basis erlaubt 30 Stream-Abonnements; der Benchmark zählt mit.
     const abos = new Set(cfg.universe.symbols);

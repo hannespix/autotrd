@@ -277,6 +277,12 @@ optimizer:
   # von heute, rückwärts angewandt). Ohne Kandidatenpool oder ungepoolt ohne
   # Wirkung. Mit point_in_time lädt `fetch` den ganzen Pool in voller Tiefe.
   foldMembership: point_in_time
+  # Papier-Erprobung: Untergrenze der Handelsaktivität (geschlossene OOS-Trades je
+  # Monat der OOS-Kette). 0 = nur der Score entscheidet, wer auf Papier läuft.
+  # Die Plattform setzt 4 (Owner-Entscheidung 18.09.2026,
+  # docs/wissen/vorregistrierung/2026-09-18-erprobung-nach-handelsaktivitaet.md).
+  # Kein Gate, keine Beförderung — nur die Wahl des DURCHGEFALLENEN Kandidaten.
+  erprobungMinTradesPerMonth: 0
   # Festkandidaten: vorregistrierte Parametersätze, die OHNE Suche durch
   # dieselben Folds, denselben Holdout und dieselben Gates laufen wie die
   # gesuchten Strategien und regulär um die Beförderung konkurrieren. Je

@@ -243,6 +243,28 @@ describe('runOptimization (Ende-zu-Ende)', () => {
     }
   });
 
+  it('WÄCHTER (Naht run.ts ⇄ promote.ts): die Wahl der Papier-Erprobung kommt im Champion-Block UND im Journal an', () => {
+    /*
+     * `waehleErprobung` und `applyDecision` sind einzeln geprüft (promote.test.ts).
+     * Was dort nicht sichtbar ist: ob run.ts das Ergebnis überhaupt DURCHREICHT
+     * — die Spreads `...(erprobung ? { erprobung } : {})` und die Journal-Felder.
+     * Fällt eines still weg, gilt wieder die alte Regel, und kein Einzeltest
+     * merkt es (PR #500: zwei Hälften derselben Frage liefen auseinander).
+     */
+    expect(testConfig().optimizer.erprobungMinTradesPerMonth, 'Vorgabe 0 = alte Regel; nur platform.yaml setzt 4').toBe(0);
+    const home = tmp();
+    const out = runOptimization(input(home, { seed: 3, symbols: ['AAA'], strategies: ['noise'] }));
+    expect(out.runs[0]!.decision.action).toBe('stay_notrade');
+    const block = out.champion.erprobung?.AAA;
+    expect(block?.strategy).toBe('noise');
+    expect(block?.auswahl, 'ohne `auswahl` kam die Wahl nicht aus waehleErprobung, sondern aus der alten Regel').toMatch(/Score-bester/);
+    expect(block && 'tradesPerMonth' in block, 'die Aktivität muss im Block stehen — sonst ist die Untergrenze später nicht nachvollziehbar').toBe(true);
+    const events = new Journal(homePaths(home).journal).readAll();
+    const champ = events.find((e) => e.kind === 'champion' && e.symbol === 'AAA');
+    expect(champ?.erprobungStrategy).toBe('noise');
+    expect(typeof champ?.erprobungAuswahl).toBe('string');
+  });
+
   it('ein Champion ohne Kante wird auf sauberem OOS durch die Gates geprüft und degradiert', () => {
     const home = tmp();
     const paths = homePaths(home);
