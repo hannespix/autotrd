@@ -89,7 +89,13 @@ wären größer als die Abschätzung.
 
 ## 6. Ergebnis — Lauf #23 (19.09.2026 00:22 UTC, `main` 040a6da, Daten bis 2026-09-18)
 
-**Nachgetragen am 19.09.2026, NACH dem Lauf.** Der Zeitplan (`0 23 * * 1-5` UTC) erzeugte über eine Stunde lang keinen Lauf; um 00:04 UTC von Hand gestartet. Inhaltlich ist das folgenlos: Der Markt schloss um 20:00 UTC, die Daten reichen bis Freitag, und **Raster −1 dieses Laufs ist datengleich mit Raster −0 von #22**.
+**Nachgetragen am 19.09.2026, NACH dem Lauf.** Um 00:04 UTC von Hand gestartet, weil der Zeitplan (`0 23 * * 1-5` UTC) noch keinen Lauf erzeugt hatte. Inhaltlich folgenlos: Der Markt schloss um 20:00 UTC, die Daten reichen bis Freitag, und **Raster −1 dieses Laufs ist datengleich mit Raster −0 von #22**.
+
+> **Korrektur, 19.09.2026 00:45 UTC.** Der Satz oben stand ursprünglich als „der Zeitplan erzeugte über eine Stunde keinen Lauf" da und legte nahe, der Zeitplan sei ausgefallen. Das ist falsch. Nachgezählt über alle neun Zeitplan-Läufe von optimize.yml (08.09.–18.09.): **keine einzige Werktagsnacht fehlt — 9 von 9.** GitHub startet sie nur gleichbleibend spät, **112 bis 136 Minuten nach 23:00 UTC (Mittel 124 min)**, also gegen 00:52–01:16 UTC. Um 00:04 UTC war gar nichts überfällig; der Lauf war schlicht noch nicht dran. Der Handstart war voreilig, nicht die Rettung eines ausgefallenen Zeitplans.
+>
+> Der einzige Fehlschlag der Reihe ist der Lauf vom 18.09. 01:08 UTC (`cab6914`): `INDEX_ENTRIES_COUNT_LIMIT_EXCEEDED` auf `/meta/champion` — der bereits bekannte Fehler, am selben Morgen mit `de7f3b7` (#515, 07:08 UTC) behoben; `cab6914` trug den Fix noch nicht. Kein offener Punkt.
+>
+> **Betriebsregel daraus:** vor 01:20 UTC nicht von Hand starten. Wer früher drückt, misst nicht etwa eine Lücke, sondern erzeugt einen zweiten Lauf derselben Nacht.
 
 ### Erwartungen
 
