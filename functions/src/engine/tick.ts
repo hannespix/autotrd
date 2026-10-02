@@ -44,7 +44,7 @@ import { applyCommands, claimCommands } from './commands.js';
 import { buildUserConfig, globalConfigRaw, type UserRiskSource } from './config.js';
 import { isRecord, isoOf, plain, type DocData, type DocSnapLike, type FirestoreLike, type WriteGuard } from './firestoreLike.js';
 import { FirestoreJournal, type FxFn } from './journal.js';
-import { mirrorError, mirrorPositions, mirrorQuotes, mirrorUser, type QuoteMark } from './mirror.js';
+import { mirrorError, mirrorPositions, mirrorQuotes, mirrorSkipped, mirrorUser, type QuoteMark } from './mirror.js';
 import { SharedBarStoreView, cachedAsset, cachedCalendar, delegateClient, infrastrukturSymbole, sharedStoreFor, withSharedData, type SharedServices } from './sharedData.js';
 import { engineStatePath, FirestoreStateStore } from './state.js';
 import { buildStrategyFor, championFromDoc, type StrategyMap } from './strategyFor.js';
@@ -223,6 +223,23 @@ export function fallbackClock(now: Ms): AlpacaClock {
     nextOpen: isOpen ? (sessionBounds(nextTradingDay(day, 'us_equity'), 'us_equity')?.open ?? now + DAY) : (next?.open ?? now + DAY),
     nextClose: isOpen ? today.close : (next?.close ?? now + DAY),
   };
+}
+
+/**
+ * Einen ausgelassenen Nutzer im Spiegel vermerken — nur bei Änderung.
+ *
+ * Der Takt läuft je Minute; ein Schreibzugriff je ausgelassenem Konto und Minute
+ * wäre Last ohne Nutzen (Takt-Rauschen, Befund 17.09.2026). Steht der Grund schon
+ * da und ist kein Fehler offen, passiert nichts.
+ */
+async function markSkipped(db: FirestoreLike, snap: DocSnapLike, reason: string, now: Ms, log: typeof logger): Promise<void> {
+  const e = snap.get('engine') as { skipped?: unknown; lastError?: unknown } | undefined;
+  if (e?.skipped === reason && (e?.lastError ?? null) === null) return;
+  try {
+    await mirrorSkipped(db, snap.id, reason, now);
+  } catch (err) {
+    log.warn('Übersprung nicht spiegelbar', { error: errMsg(err) });
+  }
 }
 
 /** Kommandos eines Nutzers ohne Broker verwerfen (Transaktion) und den Grund spiegeln. */
@@ -438,10 +455,16 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
   const usersSnap = await db.collection('users').where('settings.strategy.engine.running', '==', true).get();
   let candidates: DocSnapLike[] = [];
   for (const u of usersSnap.docs) {
-    if (!mayTrade(u.data())) result.skippedUsers.push({ uid: u.id, reason: 'zugang' });
+    if (!mayTrade(u.data())) {
+      result.skippedUsers.push({ uid: u.id, reason: 'zugang' });
+      await markSkipped(db, u, 'zugang', now, log);
+    }
     // Laufender Konto-Reset (`resetWallet` setzt den Marker, er verfällt von selbst): keine Orders, keine
     // Trade-Docs hinter dem Archiv-Schnitt, kein Überschreiben des frisch gesetzten Saldos (Secreview 2, G2).
-    else if (resetLaeuft(u.get('risk.resetLaeuftSeit'), new Date(now))) result.skippedUsers.push({ uid: u.id, reason: 'reset_laeuft' });
+    else if (resetLaeuft(u.get('risk.resetLaeuftSeit'), new Date(now))) {
+      result.skippedUsers.push({ uid: u.id, reason: 'reset_laeuft' });
+      await markSkipped(db, u, 'reset_laeuft', now, log);
+    }
     else candidates.push(u);
   }
   const dataClient = deps.dataClientFor({ feed, assetClass });
@@ -482,6 +505,8 @@ async function runLocked(deps: TickDeps, db: FirestoreLike, now: Ms, log: typeof
     }
     if (!zugang) {
       result.skippedUsers.push({ uid, reason: 'kein_broker' });
+      // Vor dem Verwerfen: Der Hinweis „Kommando verworfen" von unten soll stehen bleiben.
+      await markSkipped(db, snap, 'kein_broker', now, log);
       // Ein liegengebliebenes Kommando ohne Broker würde den Nutzer nächtlich in die Lauf-Liste heben und
       // beim späteren Verbinden feuern (Secreview 2, G3) — verwerfen und dem Nutzer sagen, warum.
       await discardCommandsWithoutBroker(db, snap, now, log);

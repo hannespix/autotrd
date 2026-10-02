@@ -171,6 +171,19 @@ export async function speichereEinstellungen(deps: SpeicherDeps, uid: string, da
   const update: Record<string, unknown> = {};
   if (auto !== undefined) update['settings.auto'] = auto;
   if (running !== undefined) update['settings.strategy.engine.running'] = running;
+  // Einschalten ist eine bewusste Entscheidung — und räumt den Stand von DAVOR ab.
+  // Sonst bliebe ein alter `engine.lastError` als rotes „letzter Takt abgebrochen"
+  // stehen, bis zufällig ein Takt dieses Konto erreicht; wen der Takt überspringt
+  // (kein Broker), der sah ihn nie wieder verschwinden. Genau so hingen die Nutzer
+  // nach dem Umstieg vom 07.09.2026 fest. Einen ECHTEN Fehler setzt der nächste
+  // Takt sofort neu — hier geht nichts verloren.
+  // Nur abräumen, wenn es überhaupt einen Stand GIBT. Ein Punktpfad auf ein Doc
+  // ohne `engine`-Map legt sie an — mit zwei Feldern und ohne `lastTickAt`, also
+  // genau den Phantom-Spiegel, den dieser Fix beseitigt (Prüfer-Befund 02.10.).
+  if (running === true && isRecord((vorher.data() as Record<string, unknown> | undefined)?.engine)) {
+    update['engine.lastError'] = null;
+    update['engine.skipped'] = null;
+  }
   await ref.update(update);
 
   const out: SpeicherErgebnis = { ok: true };

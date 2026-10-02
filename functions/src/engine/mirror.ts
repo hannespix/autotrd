@@ -110,6 +110,9 @@ export function engineFieldOf(m: UserMirror): DocData {
     entryLock: s.entryLock,
     lastTickAt: isoOf(m.now),
     lastError: m.lastError,
+    // Ein gelaufener Takt hat nichts ausgelassen — der Grund von vorhin muss weg,
+    // sonst behauptet die Karte eine Sperre, die es nicht mehr gibt.
+    skipped: null,
     champion: { source: m.champion.source, symbols: m.champion.symbols, ...(m.champion.basis !== undefined ? { basis: m.champion.basis } : {}) },
     notes: [...(m.notes ?? [])],
     ...(m.configSource !== undefined ? { configSource: m.configSource } : {}),
@@ -130,7 +133,24 @@ export async function mirrorUser(db: FirestoreLike, uid: string, m: UserMirror):
 
 /** Nach einem gescheiterten Nutzer-Takt: nur den Fehler spiegeln, kein Positions-Diff. */
 export async function mirrorError(db: FirestoreLike, uid: string, error: string, now: Ms): Promise<void> {
-  await db.doc(`users/${uid}`).set(plain({ engine: { running: true, lastError: error, lastTickAt: isoOf(now) } }), { merge: true });
+  await db.doc(`users/${uid}`).set(plain({ engine: { running: true, lastError: error, lastTickAt: isoOf(now), skipped: null } }), { merge: true });
+}
+
+/**
+ * Der Takt hat dieses Konto AUSGELASSEN (kein Broker, kein Zugang, laufender
+ * Reset) — und sagt das jetzt, statt stumm weiterzugehen.
+ *
+ * Vorher schrieb kein übersprungener Nutzer je in den Spiegel. Wer eingeschaltet
+ * hatte, aber ausgelassen wurde, sah deshalb ewig den Stand von davor — nach dem
+ * Umstieg vom 07.09.2026 den Hinweistext, den das Umstiegs-Skript in `lastError`
+ * abgelegt hatte, ohne jede Angabe, WAS fehlt. Genau dort hingen die Nutzer fest.
+ *
+ * `lastError` wird dabei geleert: Ein Übersprung ist kein abgebrochener Takt.
+ * Der Aufrufer schreibt nur bei Änderung (tick.ts), sonst stünde hier je Minute
+ * ein Schreibzugriff je ausgelassenem Konto.
+ */
+export async function mirrorSkipped(db: FirestoreLike, uid: string, reason: string, now: Ms): Promise<void> {
+  await db.doc(`users/${uid}`).set(plain({ engine: { running: true, skipped: reason, lastTickAt: isoOf(now), lastError: null } }), { merge: true });
 }
 
 export interface QuoteMark {

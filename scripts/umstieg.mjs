@@ -119,9 +119,17 @@ const flush = async () => {
   inBatch = 0;
 };
 for (const uid of plan.ausschalten) {
+  // NUR der Schalter. Der Hinweis gehoerte frueher nach `engine.lastError` —
+  // das ist das Feld des TAKT-SPIEGELS (functions/src/engine/mirror.ts), und
+  // genau daran hingen die Nutzer fest: Die Oberfläche hielt das Doc fuer einen
+  // echten Stand, malte ein gruenes „frei — Einstiege erlaubt" fuer ein Konto,
+  // das nie getaktet wurde, verschluckte dadurch den Hinweis „noch kein Takt
+  // gelaufen … ohne verbundenen Broker" — und nichts loeschte den roten Text
+  // wieder, weil ein uebersprungener Nutzer nie gespiegelt wird.
+  // Dass die Engine aus ist, zeigt die Oberfläche ohnehin selbst (`ew.g.engineAus`).
+  // Ein Wartungsskript schreibt nie in Felder, die einem Laufzeit-Modul gehoeren.
   batch.update(db.doc(`users/${uid}`), {
     'settings.strategy.engine.running': false,
-    'engine.lastError': `Umstieg ${nowIso.slice(0, 10)}: Engine ausgeschaltet — bitte Einstellungen prüfen und bewusst einschalten`,
   });
   if (++inBatch >= 400) await flush();
 }

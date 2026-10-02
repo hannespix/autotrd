@@ -141,12 +141,14 @@ describe('Spiegel — User-Doc', () => {
     expect(f.mode).toBe('live');
   });
 
-  it('mirrorError setzt nur lastError/lastTickAt, Positions-Docs bleiben', async () => {
+  it('mirrorError setzt nur lastError/lastTickAt/skipped, Positions-Docs bleiben', async () => {
     const db = new FakeFirestore();
     db.seed('users/u1', { engine: { equity: 5 } });
     db.seed('users/u1/positions/AAPL', { symbol: 'AAPL' });
     await mirrorError(db, 'u1', 'Broker 500', NOW);
-    expect(db.get('users/u1')?.engine).toEqual({ equity: 5, running: true, lastError: 'Broker 500', lastTickAt: new Date(NOW).toISOString() });
+    // `skipped: null` seit 02.10.: Ein gescheiterter Takt IST gelaufen — ein alter
+    // Übersprung-Grund daneben behauptete sonst zwei Zustände gleichzeitig.
+    expect(db.get('users/u1')?.engine).toEqual({ equity: 5, running: true, lastError: 'Broker 500', lastTickAt: new Date(NOW).toISOString(), skipped: null });
     expect(db.get('users/u1/positions/AAPL')).toBeDefined();
   });
 });
