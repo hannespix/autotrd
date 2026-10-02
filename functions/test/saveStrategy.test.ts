@@ -117,6 +117,40 @@ describe('engineRunning', () => {
     // Der Punktpfad legt die fehlenden Zwischen-Maps an.
     expect(db.get(`users/${UID}`)).toEqual({ settings: { strategy: { engine: { running: true } } } });
   });
+
+  /*
+   * Einschalten räumt den Stand von DAVOR ab — aber legt keinen an.
+   *
+   * Befund 02.10.2026: Nach dem Umstieg stand in `engine.lastError` ein
+   * Hinweistext, den nur ein tatsächlich gelaufener Takt wieder löschte. Wen der
+   * Takt überspringt (kein Broker), der sah ihn nie verschwinden: einschalten,
+   * und es blieb beim selben roten „letzter Takt abgebrochen".
+   *
+   * Die Gegenrichtung ist genauso wichtig und war im ersten Anlauf falsch
+   * (Prüfer-Befund): Ein Punktpfad auf ein Doc OHNE `engine`-Map legt sie an —
+   * mit zwei Feldern und ohne `lastTickAt`, also genau den Phantom-Spiegel, den
+   * `taktErreichteKonto` im Frontend aussortieren muss.
+   */
+  it('Einschalten löscht einen vorhandenen alten Stand', async () => {
+    const { db, deps } = aufbau();
+    db.seed(`users/${UID}`, { settings: {}, engine: { lastError: 'Umstieg 2026-09-07: Engine ausgeschaltet — bitte Einstellungen prüfen und bewusst einschalten', skipped: 'kein_broker' } });
+    await expect(speichern(deps, { engineRunning: true })).resolves.toEqual({ ok: true, engineRunning: true });
+    expect(db.get(`users/${UID}`)?.engine).toEqual({ lastError: null, skipped: null });
+  });
+
+  it('Einschalten legt KEINEN Spiegel an, wo keiner war', async () => {
+    const { db, deps } = aufbau();
+    db.seed(`users/${UID}`, { settings: {} });
+    await speichern(deps, { engineRunning: true });
+    expect(db.get(`users/${UID}`)?.engine).toBeUndefined();
+  });
+
+  it('AUSschalten lässt einen echten Fehler stehen — er bleibt lesbar', async () => {
+    const { db, deps } = aufbau();
+    db.seed(`users/${UID}`, { settings: {}, engine: { lastError: 'Broker 500', lastTickAt: '2026-10-02T14:00:00.000Z' } });
+    await speichern(deps, { engineRunning: false });
+    expect(db.get(`users/${UID}`)?.engine).toMatchObject({ lastError: 'Broker 500' });
+  });
 });
 
 describe('auto', () => {

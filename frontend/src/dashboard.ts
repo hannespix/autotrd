@@ -71,6 +71,7 @@ import {
   watchPositions,
   watchTrades,
   watchUserDoc,
+  taktErreichteKonto,
   type AdminUserRow,
   type BrokerStatusResult,
   type ChampionDoc,
@@ -829,6 +830,17 @@ const HALT_TEXT: Record<string, string> = {
   reconcile: t('halt.reconcile'),
 };
 
+/**
+ * Warum der Takt ein Konto AUSGELASSEN hat — Klartext je Grund aus
+ * `functions/src/engine/tick.ts` (`result.skippedUsers`). Jeder Grund nennt
+ * die Abhilfe, sonst steht dort nur, DASS nichts passiert.
+ */
+const SKIP_TEXT: Record<string, string> = {
+  kein_broker: t('skip.keinBroker'),
+  zugang: t('skip.zugang'),
+  reset_laeuft: t('skip.resetLaeuft'),
+};
+
 /** Drawdown in Prozent zum Peak — die Zahl, an der die Sperre hängt. */
 function drawdownPct(e: EngineMirror): number | null {
   if (e.equity === null || e.peakEquity === null || !(e.peakEquity > 0)) return null;
@@ -858,7 +870,11 @@ function renderEngineStatus(): void {
   const box = $('engStatus');
   const e = st.engine;
   const running = st.strategy.engine.running === true;
-  if (!e) {
+  // `lastTickAt` fehlt ⇒ der Takt hat dieses Konto nie erreicht; was im Feld
+  // `engine` steht, stammt dann von einem Fremdschreiber (Umstieg 07.09.2026)
+  // und ist KEIN Stand. Es als Stand zu malen, ergab ein grünes „frei" für ein
+  // Konto, das nichts tat — und verschluckte den Hinweis, was fehlt.
+  if (!taktErreichteKonto(e)) {
     box.innerHTML = `<div class="hint">${running ? t('eng.keinTaktNoch') : t('eng.keinTakt')}</div>`;
     return;
   }
@@ -1112,10 +1128,15 @@ function renderEngineWhy(): void {
     ampel.append(whyChip(t('ew.keinZugang'), 'var(--yl,#d9a441)'));
     gruende.push(st.accessLevel === 'pending' ? t('ew.g.pending') : t('ew.g.gesperrt'));
   }
-  if (running && !e) {
+  if (running && !taktErreichteKonto(e)) {
     gruende.push(t('ew.g.keinTakt'));
   }
-  if (e) {
+  if (taktErreichteKonto(e)) {
+    // Der Takt hat das Konto gesehen und AUSGELASSEN — er sagt jetzt, warum.
+    if (e.skipped) {
+      ampel.append(whyChip(`⚠ ${t('ew.ausgelassen')}`, 'var(--rd)'));
+      gruende.push(SKIP_TEXT[e.skipped] ?? `${t('ew.g.ausgelassen')} ${e.skipped}`);
+    }
     if (e.halt?.halted) {
       const grund = HALT_TEXT[e.halt.reason ?? ''] ?? (e.halt.reason ?? '?');
       ampel.append(whyChip(`${t('eng.gesperrt')}: ${grund}`, 'var(--rd)'));

@@ -318,6 +318,8 @@ export interface EngineMirror {
   entryLock: string | null;
   lastTickAt: string | null;
   lastError: string | null;
+  /** Warum der Takt dieses Konto ausgelassen hat (`kein_broker`, `zugang`, `reset_laeuft`) — null = nicht ausgelassen. */
+  skipped: string | null;
   /** `basis`: Symbole, die die Basis-Stufe führt (leer vor der Basis-Stufe). */
   champion: { source: string; symbols: string[]; basis: string[] } | null;
   /** Strategie-Notizen des Takts (Champion fehlt, Zeitrahmen weicht ab, Sperre). */
@@ -363,11 +365,33 @@ export function leseEngine(roh: unknown): EngineMirror | null {
     entryLock: textOderNull(roh.entryLock),
     lastTickAt: textOderNull(roh.lastTickAt),
     lastError: textOderNull(roh.lastError),
+    skipped: textOderNull(roh.skipped),
     champion: champ,
     notes: textListe(roh.notes),
     configSource: textOderNull(roh.configSource),
     commandAt: textOderNull(roh.commandAt),
   };
+}
+
+/**
+ * Hat der Takt dieses Konto je erreicht?
+ *
+ * `engineFieldOf()` und `mirrorError()` (functions/src/engine/mirror.ts)
+ * setzen `lastTickAt` bei JEDEM Spiegel-Schreiben. Ein `engine`-Feld OHNE
+ * diesen Zeitstempel stammt also nicht vom Takt, sondern von einem
+ * Fremdschreiber — das Umstiegs-Skript vom 07.09.2026 legte dort einen
+ * Hinweistext in `lastError` ab.
+ *
+ * Ohne diese Prüfung hielt `leseEngine` jedes Objekt für einen echten
+ * Spiegel: Die Karte malte für ein nie getaktetes Konto ein grünes
+ * „frei — Einstiege erlaubt" samt „Papierhandel" (beides nur, weil die
+ * Felder fehlten) und verschluckte zugleich den EINZIGEN Hinweis, der die
+ * Ursache nennt — „noch kein Takt gelaufen … ohne verbundenen Broker
+ * überspringt der Takt es". Genau daran hingen die Nutzer seit dem Umstieg
+ * fest (Wächter: frontend/test/spiegelPhantom.test.ts).
+ */
+export function taktErreichteKonto(e: EngineMirror | null): e is EngineMirror {
+  return e !== null && e.lastTickAt !== null;
 }
 
 export interface UserDocData {
