@@ -1,14 +1,12 @@
 /**
  * universumLeser — die Mitglieder-Sicht auf das gespeicherte Alpaca-Universum.
  *
- * Der alte tägliche Sync legte ab, welche Papiere der Broker wirklich handelt
+ * `universumSync` legt täglich ab, welche Papiere der Broker wirklich handelt
  * (`meta/alpacaUniversum/bloecke/{i}`, in UNSERER Schreibweise, OTC bereits
- * ausgefiltert). Der Sync ist mit dem Rückbau der Handelsplattform gegangen;
- * dieses Modul liest den LETZTEN gespeicherten Stand — für die eine Frage,
- * die die Watchlist-Prüfung (`saveStrategy`) noch stellt (Stufe 3, Task 121):
+ * ausgefiltert). Dieses Modul ist der LESER dazu — die eine Frage, die
+ * Handeingabe, Watchlist-Prüfung und Scan gemeinsam haben (Stufe 3, Task 121):
  * Ist dieses Symbol ein echtes, handelbares Papier, auch wenn es nicht im
- * handverlesenen Katalog steht? Ohne neuen Schreiber altert der Stand; ein
- * Delisting fällt dann erst beim Broker auf.
+ * handverlesenen Katalog steht?
  *
  * ── Warum ein Cache mit Verfall ───────────────────────────────────────────
  *

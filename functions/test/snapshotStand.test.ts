@@ -21,7 +21,7 @@ describe('Quelltext: snapshotEquity liest aus EINEM Stand', () => {
 
   it('die Schleife holt Saldo und Positionen über leseKontostand', () => {
     const text = readFileSync(pfad, 'utf8');
-    expect(text).toContain('const stand = await leseKontostand(db, userDoc.ref, roh);');
+    expect(text).toContain('const stand = await leseKontostand(db, userDoc.ref, roh - zins);');
   });
 
   it('und liest die Positionen nicht mehr getrennt daneben', () => {
@@ -29,13 +29,13 @@ describe('Quelltext: snapshotEquity liest aus EINEM Stand', () => {
     expect(text).not.toContain("await userDoc.ref.collection('positions').get()");
   });
 
-  it('es gibt keine Zinsbuchung mehr, die den Saldo verschieben könnte', () => {
-    /* Bis zum Rückbau buchte der Lauf Margin-Zinsen auf das eigene Buch und
-     * musste den Saldo dann genau EINMAL um sie korrigieren. Das Buch mit
-     * Hebel ist weg — ein `- zins` darf hier nicht wieder auftauchen. */
+  it('der Zins wird nur EINMAL abgezogen', () => {
+    /* Die naheliegende Folgefalle: Der frisch gelesene Saldo enthält die eben
+     * gebuchten Zinsen schon. Ein `- zins` darauf zöge sie ein zweites Mal
+     * ab — jeden Tag, unbemerkt, und direkt in die Equity-Kurve. */
     const text = readFileSync(pfad, 'utf8');
-    expect(text).not.toMatch(/- zins\b/);
-    expect(text).not.toContain('accrueMarginInterest');
+    expect((text.match(/- zins/g) ?? []).length).toBe(1);
+    expect(text).not.toContain('const balance = roh - zins;');
   });
 
   it('der Lesevorgang ist read-only — der Snapshot darf nichts sperren', () => {

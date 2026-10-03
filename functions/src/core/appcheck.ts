@@ -23,14 +23,10 @@ export const APPCHECK_ENFORCE = process.env.APPCHECK_ENFORCE === '1';
 export const CALLABLE_OPTS: { enforceAppCheck: boolean; invoker: 'public'; secrets: string[] } = {
   enforceAppCheck: APPCHECK_ENFORCE,
   invoker: 'public',
-  /**
-   * Hauptschlüssel des Key-Tresors an JEDES Callable binden (Secreview 2, M2):
-   * Ohne ihn speicherte `connectBroker` Papier-Schlüssel im Klartext, und
-   * `brokerStatus`/`setLiveMode`/`resetWallet`/`engineCommand` konnten ein
-   * `v1:`-Chiffrat nicht lesen — während der Takt (mit Secret) dieselben
-   * Docs entschlüsselte. Das Secret muss VOR dem Deploy existieren
-   * (`firebase functions:secrets:set BROKER_MASTER_KEY`, docs/SETUP.md).
-   */
+  /* Rückbau 03.10.: `keyVault.ts` liest `BROKER_MASTER_KEY` seit jeher, das
+   * Secret gab es am 29.08. aber noch nicht — Schlüssel lagen im Klartext.
+   * Seit 07.09. existiert es, und Verbindungen danach sind `v1:`-verschlüsselt.
+   * Ohne Bindung gälte jedes solche Konto still als „ohne Broker". */
   secrets: ['BROKER_MASTER_KEY'],
 };
 

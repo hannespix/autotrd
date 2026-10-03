@@ -12,7 +12,7 @@
  * leere Dashboards meldete.
  *
  * Für ein System, das unbeaufsichtigt Positionen hält, ist das der
- * gefährlichste Ausfalltyp überhaupt: Mit dem Takt sterben Trailing-Stops,
+ * gefährlichste Ausfalltyp überhaupt: Mit dem Scan sterben ATR-Stops,
  * Take-Profit, Trailing-Nachzug und die Notbremsen-Prüfung — und niemand
  * ruft an.
  *
@@ -29,9 +29,8 @@
  *      unabhängig davon, ob Wächter-Function und Log-Alert existieren.
  *
  * Als Herzschlag dient `lastRunAt`, nicht `lastScanAt`: `lastRunAt` wird bei
- * JEDEM Takt gestempelt, auch wenn er wegen geschlossener Märkte oder
- * gehaltener Lease früh aussteigt (Skip-Pfad). `lastScanAt` gibt es nur bei
- * vollen Läufen — ein
+ * JEDEM Lauf gestempelt, auch wenn der Scan wegen geschlossener Märkte früh
+ * aussteigt (Skip-Pfad). `lastScanAt` gibt es nur bei vollen Läufen — ein
  * Wochenende ohne Krypto in den Watchlists würde sonst Fehlalarme werfen.
  */
 
@@ -60,27 +59,21 @@ export interface HerzschlagUrteil {
 }
 
 /**
- * Ab wann der Engine-Takt als „steht" gilt.
+ * Ab wann der Scan als „steht" gilt.
  *
- * Der Takt ist EINE Minute (`engineTick`), und er stempelt den Herzschlag auch
- * dann, wenn er wegen geschlossener Märkte oder gehaltener Lease früh aussteigt
- * — ein frischer `lastRunAt` heißt also wirklich „die Function lebt". Zehn
- * Minuten sind neun verpasste Läufe: Ein Deploy-Fenster oder ein langsamer Lauf
- * reißt die Schwelle nicht, ein echter Ausfall schon. Tiefer zu gehen bringt
- * nichts, weil der Wächter selbst nur alle zehn Minuten läuft.
- *
- * (Vorher 20 Minuten für den 5-Minuten-Scan des Vorgängers.)
+ * Der Takt ist 5 Minuten; 20 Minuten sind vier verpasste Läufe. Ein einzelner
+ * langsamer Lauf (Timeout 180 s) oder ein Deploy-Fenster reißt die Schwelle
+ * nicht — vier ausgefallene Läufe in Folge tun es nie aus Versehen.
  */
-export const TAKT_TOT_MIN = 10;
+export const SCAN_TOT_MIN = 20;
 
 /**
  * Ab wie vielen Komplett-Fehlschlägen die Kursquelle als gestört gilt.
  *
- * Ein einzelnes kaputtes Symbol ist Alltag (Delisting, Schreibweise). Wenn aber
- * ein voller Takt NULL Kurse und mindestens fünf Fehler liefert, ist nicht das
- * Symbol krank, sondern die Quelle: abgelaufener Datenkey, Alpaca-Störung,
- * gesperrter Feed. Dann entscheidet niemand mehr — Einstiege fallen aus, und
- * Trailing-Stops werden nicht mehr nachgezogen.
+ * Ein einzelnes kaputtes Symbol ist Alltag (Delisting, Tippfehler in der
+ * Watchlist). Wenn aber ein voller Lauf NULL Kurse und mindestens fünf
+ * Fehler liefert, ist nicht das Symbol krank, sondern die Quelle — das
+ * Yahoo-Bann-Szenario, in dem kein einziger Paper-Stop mehr auslösen kann.
  */
 export const KURSQUELLE_MIN_FEHLER = 5;
 
@@ -90,29 +83,25 @@ export function bewerteHerzschlag(e: HerzschlagEingabe): HerzschlagUrteil {
     return {
       ok: false,
       grund: 'kein_heartbeat',
-      text: 'Noch nie ein Takt-Heartbeat — Scheduler-Job prüfen (existiert engineTick im Cloud Scheduler?).',
+      text: 'Noch nie ein Scan-Heartbeat — Scheduler-Job prüfen (existiert scanMarket im Cloud Scheduler?).',
     };
   }
 
   const minutenAlt = Math.round((e.jetztMs - ms) / 60_000);
-  if (minutenAlt > TAKT_TOT_MIN) {
+  if (minutenAlt > SCAN_TOT_MIN) {
     return {
       ok: false,
-      // Der Code bleibt `scan_steht`: Er steht in `meta/health.alarm` und wird
-      // dort verglichen — ein neuer Wert hieße für einen laufenden Alarm „neue
-      // Ursache" und löste eine zweite Benachrichtigung aus.
       grund: 'scan_steht',
       minutenAlt,
       text:
-        `Kein Engine-Takt seit ${minutenAlt} Minuten (Takt: 1 Minute) — Trailing, `
-        + 'Signal-Exits und Notbremse werden nicht mehr geprüft; Schutz-Stops liegen '
-        + 'beim Broker und greifen weiter. Scheduler/Deploy kontrollieren.',
+        `Kein Scan-Lauf seit ${minutenAlt} Minuten (Takt: 5) — Stops, Trailing und `
+        + 'Notbremse werden nicht mehr geprüft. Scheduler/Deploy kontrollieren.',
     };
   }
 
-  // Kursquelle: nur bewerten, wenn der letzte Takt ein VOLLER war. Nach
-  // einem Skip-Takt (Markt zu, Lease gehalten) stammen symbolsOk/symbolsFailed
-  // noch vom vorletzten — auf alten Zahlen zu alarmieren wäre ein Fehlalarm.
+  // Kursquelle: nur bewerten, wenn der letzte Lauf ein VOLLER war. Nach
+  // einem Skip-Lauf stammen symbolsOk/symbolsFailed noch vom vorletzten
+  // Lauf — auf alten Zahlen zu alarmieren wäre ein Fehlalarm mit Ansage.
   if (
     e.lastRunSkipped == null
     && e.symbolsOk === 0
@@ -123,9 +112,8 @@ export function bewerteHerzschlag(e: HerzschlagEingabe): HerzschlagUrteil {
       grund: 'kursquelle_gestoert',
       minutenAlt,
       text:
-        `Der letzte Takt lief, aber 0 von ${e.symbolsFailed} Symbolen lieferten Kurse — `
-        + 'Kursquelle gestört (Datenkey, Alpaca-Störung?). Ohne Kurse entscheidet '
-        + 'die Engine nicht: keine Einstiege, kein Trailing.',
+        `Der letzte Scan lief, aber 0 von ${e.symbolsFailed} Symbolen lieferten Kurse — `
+        + 'Kursquelle gestört (Yahoo-Bann?). Ohne Kurse löst kein Software-Stop aus.',
     };
   }
 

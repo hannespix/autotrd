@@ -33,11 +33,7 @@ import {
 import { ensureSelfInvoker, invokeScanNow, readHeartbeat } from './invoke-scan.mjs';
 
 const REGION = 'us-central1';
-/* Herzschlag-Job: Der Force-Run und die Eskalationsleiter unten prüfen den
- * Heartbeat `meta/health` gegen DIESEN Job bzw. Dienst — den Engine-Takt
- * (`engineTick`, je Minute). Der alte Marktscan (`scanMarket`) ist mit dem
- * Rückbau der Handelsplattform gelöscht. */
-const JOB_ID = 'firebase-schedule-engineTick-us-central1';
+const JOB_ID = 'firebase-schedule-scanMarket-us-central1';
 
 /**
  * Die Zeitpläne — Spiegel der `onSchedule`-Deklarationen in functions/src/.
@@ -48,16 +44,18 @@ const JOB_ID = 'firebase-schedule-engineTick-us-central1';
  * Deploy — diese Tabelle ist die Absicherung, nicht die Quelle der Wahrheit.
  */
 const SCHEDULES = [
-  // Marktscan, Risiko-Puls, Prognose-Bewertung, Auto-Tuner, Momentum-Ranking,
-  // Struktursuche und KI-Lagebericht sind mit dem Rückbau der alten
-  // Handelsplattform entfallen.
-  // Der Engine-Takt (Alpaca-Auto-Trader, functions/src/scheduled/engineTick.ts)
-  // läuft MINÜTLICH: Bucket-Schluss, Abgleich, Exits — Einstiege außerhalb der
-  // Sitzung sperrt die Engine selbst; ein verpasster Takt ist in 60 s wieder da.
-  { fn: 'engineTick', service: 'enginetick', cron: '* * * * *', was: 'Engine-Takt' },
+  { fn: 'scanMarket', service: 'scanmarket', cron: '*/5 * * * *', was: 'Marktscan' },
+  // Der Ausstiegs-Wächter läuft MINÜTLICH: Ein Stop-Loss, der fünf Minuten
+  // zu spät auslöst, kostet Geld — ein Einstieg fünf Minuten später fast
+  // nichts (Owner-Wunsch 28.07., Begründung in riskPulse.ts).
+  { fn: 'riskPulse', service: 'riskpulse', cron: '* * * * *', was: 'Risiko-Puls' },
+  { fn: 'evalForecasts', service: 'evalforecasts', cron: '30 16 * * 1-5', was: 'Prognose-Bewertung' },
   { fn: 'snapshotEquity', service: 'snapshotequity', cron: '15 17 * * *', was: 'Equity-Snapshot' },
-  // Der Totmann-Wächter (wachhund.ts) — bewertet den Heartbeat alle 10 min.
-  { fn: 'wachhund', service: 'wachhund', cron: '*/10 * * * *', was: 'Wachhund' },
+  { fn: 'autoTune', service: 'autotune', cron: '45 17 * * *', was: 'Auto-Tuner' },
+  { fn: 'momentumRun', service: 'momentumrun', cron: '0 18 * * *', was: 'Momentum-Ranking' },
+  { fn: 'strukturSuche', service: 'struktursuche', cron: '10 18 * * *', was: 'Struktursuche' },
+  // Nach allen Tages-Läufen: Der Bericht kommentiert den FERTIGEN Tagesstand.
+  { fn: 'kiBericht', service: 'kibericht', cron: '25 18 * * *', was: 'KI-Lagebericht' },
 ];
 
 const TZ = 'America/New_York';
@@ -123,7 +121,7 @@ if (schedulerOk) {
     console.log(`::warning::Service-URL nicht abrufbar (${err.message}) — Zeitplan-Anlage übersprungen.`);
     return null;
   });
-  job = jobs.find((j) => j.name.endsWith(`/${JOB_ID}`) || j.name.includes('engineTick')) ?? null;
+  job = jobs.find((j) => j.name.endsWith(`/${JOB_ID}`) || j.name.includes('scanMarket')) ?? null;
 
   for (const s of SCHEDULES) {
     const id = jobId(s.fn);
@@ -142,13 +140,13 @@ if (schedulerOk) {
       stehen.push(s.was);
       continue;
     }
-    if (s.service === 'enginetick' && !url) {
+    if (s.service === 'scanmarket' && !url) {
       console.log(`::warning::${s.was} (${id}): ohne Service-URL nicht anlegbar — übersprungen.`);
       continue;
     }
     try {
       const zielUrl =
-        s.service === 'enginetick'
+        s.service === 'scanmarket'
           ? url
           : await ensureSelfInvoker({ sa, token, project, service: s.service });
       const neu = await gfetch(base, {
@@ -167,7 +165,7 @@ if (schedulerOk) {
       });
       console.log(`✓ ${s.was} (${id}): angelegt, state=${neu.state}, schedule="${s.cron}" ${TZ}`);
       stehen.push(s.was);
-      if (s.service === 'enginetick') {
+      if (s.service === 'scanmarket') {
         job = neu;
         freshlyCreated = true;
       }
@@ -177,7 +175,7 @@ if (schedulerOk) {
   }
 
   if (!job) {
-    console.error('✗ Kein engineTick-Job vorhanden und Anlage fehlgeschlagen — eskaliere auf Direkt-Invoke.');
+    console.error('✗ Kein scanMarket-Job vorhanden und Anlage fehlgeschlagen — eskaliere auf Direkt-Invoke.');
   }
 }
 
@@ -190,7 +188,7 @@ if (schedulerOk) {
  * mit Exit 1, obwohl der Scan nachweislich lief. */
 try {
   if (schedulerOk && job) {
-    console.log('Force-Run engineTick …');
+    console.log('Force-Run scanMarket …');
     await gfetch(`https://cloudscheduler.googleapis.com/v1/${job.name}:run`, {
       token,
       method: 'POST',
@@ -233,7 +231,7 @@ try {
 }
 
 if (!heartbeat) {
-  console.log('Eskalation: Direkt-Invoke des enginetick-Services …');
+  console.log('Eskalation: Direkt-Invoke des scanmarket-Services …');
   const ok = await invokeScanNow().catch((err) => {
     console.log(`::warning::Direkt-Invoke fehlgeschlagen — ${err.message}`);
     return false;
@@ -259,5 +257,5 @@ if (heartbeat) {
 }
 
 console.error('✗ meta/health existiert trotz aller Eskalationsstufen NICHT.');
-console.error('  → Die Function selbst schlägt fehl; Cloud-Logging des enginetick-Services prüfen.');
+console.error('  → Die Function selbst schlägt fehl; Cloud-Logging des scanmarket-Services prüfen.');
 process.exit(1);

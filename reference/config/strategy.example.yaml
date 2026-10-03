@@ -1,0 +1,30 @@
+broker:
+  initial_capital: 25000
+  mode: paper
+  paper_trading: true
+  provider: paper
+engine:
+  check_interval_min: 5
+  max_position_pct: 10
+  stop_loss_pct: 2
+  take_profit_pct: 4
+indicators:
+  bollinger:
+    bb_breakout_pct: 95
+    enabled: true
+  macd:
+    crossover_buy: true
+    enabled: true
+  rsi:
+    enabled: true
+    threshold_buy: 30
+    threshold_sell: 70
+    window: 14
+signals:
+  min_confluence: 2
+  period: 3mo
+watchlist:
+- QQQ
+- AAPL
+- TSLA
+- NDX

@@ -1,8 +1,7 @@
 name: Scan-Logs (Diagnose)
 
-# Manuell auslösbarer Log-Abruf: holt die jüngsten Logs des Engine-Takts
-# (Dienst `enginetick`, per Input änderbar) aus Cloud Logging ins Job-Log —
-# für Fehlersuche ohne GCP-Konsole (SETUP.md §J).
+# Manuell auslösbarer Log-Abruf: holt die jüngsten scanmarket-Logs aus Cloud
+# Logging ins Job-Log — für Fehlersuche ohne GCP-Konsole (SETUP.md §J).
 
 on:
   workflow_dispatch:
@@ -13,15 +12,6 @@ on:
       severity:
         description: Mindest-Severity (DEFAULT/INFO/WARNING/ERROR)
         default: 'DEFAULT'
-      service:
-        description: Cloud-Run-Dienst (kleingeschriebener Function-Name)
-        default: 'enginetick'
-      contains:
-        description: >-
-          Nur Meldungen mit diesem Text (leer = alle). Ohne ihn kommen die 50
-          JÜNGSTEN Einträge — eine Meldung, die je Takt oft auftritt,
-          verdrängt dann alles andere.
-        default: ''
 
 jobs:
   logs:
@@ -45,16 +35,8 @@ jobs:
         run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
 
       # Dependency-frei (gcp-lite) — kein npm ci nötig, Ergebnis in Sekunden.
-      - name: Function-Logs holen
+      - name: scanmarket-Logs holen
         if: env.FIREBASE_SERVICE_ACCOUNT != ''
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
-          IN_MINUTES: ${{ inputs.minutes }}
-          IN_SEVERITY: ${{ inputs.severity }}
-          IN_SERVICE: ${{ inputs.service }}
-          IN_CONTAINS: ${{ inputs.contains }}
-        # Die Eingaben gehen über die Umgebung, NICHT per ${{ }} in die
-        # Kommandozeile: Ein Workflow-Eingang ist Text aus Menschenhand, und
-        # eingesetzter Text in einer Shell-Zeile ist genau der Fehler, den
-        # optimize.yml schon einmal hatte (Prüfbefund G5).
-        run: node scripts-ci/fetch-scan-logs.mjs "$IN_MINUTES" "$IN_SEVERITY" "$IN_SERVICE" "$IN_CONTAINS"
+        run: node scripts-ci/fetch-scan-logs.mjs "${{ inputs.minutes }}" "${{ inputs.severity }}"

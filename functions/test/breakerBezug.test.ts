@@ -3,9 +3,9 @@
  * gelesen.
  *
  * Die reine Logik prüft `shared/test/bezugAlter.test.ts`. Hier steht, dass
- * das Breaker-Gate (Konto-Tore) das Datum auch liefert — sonst bliebe das
- * Feld genau das, was es vorher war: mitgeschrieben und ungenutzt, nur
- * diesmal mit einer Funktion daneben, die niemand füttert.
+ * beide Handelspfade das Datum auch liefern — sonst bliebe das Feld genau
+ * das, was es vorher war: mitgeschrieben und ungenutzt, nur diesmal mit einer
+ * Funktion daneben, die niemand füttert.
  */
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
@@ -20,12 +20,13 @@ const breakerAufruf = (text: string): string => {
   return text.slice(ab, text.indexOf('\n      },', ab));
 };
 
-describe('Das Breaker-Gate liefert das Alter der Bezugsgröße', () => {
-  // Seit dem 13.08. steht das Breaker-Gate zentral in core/kontoTore.ts —
-  // EIN pruefeBreaker-Aufruf statt Kopien, die auseinanderlaufen; seit dem
-  // Rückbau der Handelsplattform ist es das einzige.
+describe('Beide Handelspfade liefern das Alter der Bezugsgröße', () => {
+  // Seit dem 13.08. steht das Breaker-Gate der Handeingabe (und des
+  // Momentum-Laufs) zentral in core/kontoTore.ts — EIN pruefeBreaker-Aufruf
+  // für alle Pfade außerhalb des Scans, statt Kopien, die auseinanderlaufen.
   for (const [name, pfad] of [
-    ['Konto-Tore', ['core', 'kontoTore.ts']],
+    ['Scan', ['scheduled', 'scanMarket.ts']],
+    ['Konto-Tore (Handeingabe + Momentum)', ['core', 'kontoTore.ts']],
   ] as const) {
     it(`${name}: reicht vortagEquityAm durch`, () => {
       expect(breakerAufruf(quelle(...pfad))).toContain("risk.vortagEquityAm");
@@ -39,11 +40,14 @@ describe('Das Breaker-Gate liefert das Alter der Bezugsgröße', () => {
     });
   }
 
-  it('die Handelstag-Funktion wohnt bei den Toren — keine zweite Ableitung', () => {
+  it('beide benutzen DIESELBE Handelstag-Funktion', () => {
     // Zwei Ableitungen wären zwei Gelegenheiten, sie verschieden zu machen —
     // und dann behauptete der eine Pfad ein anderes Alter als der andere.
-    const tore = quelle('core', 'kontoTore.ts');
-    expect(tore).toContain('export function handelstagET(');
-    expect(tore).not.toContain("from '../scheduled/");
+    expect(quelle('core', 'kontoTore.ts')).toContain(
+      "from '../scheduled/scanMarket.js'",
+    );
+    // Und die Handeingabe hängt wirklich an den Toren — sonst wäre die
+    // zentrale Stelle nur eine weitere Funktion, die niemand ruft.
+    expect(quelle('callable', 'trade.ts')).toContain("from '../core/kontoTore.js'");
   });
 });
