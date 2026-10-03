@@ -10,7 +10,7 @@
  * und Secrets werden nie ausgegeben.
  */
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { initializeApp } from 'firebase-admin/app';
 import { FieldPath, getFirestore, Timestamp } from 'firebase-admin/firestore';
 
@@ -19,6 +19,11 @@ const sa = JSON.parse(readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS, '
 initializeApp({ projectId: sa.project_id });
 const db = getFirestore();
 
+/** Optionale Steuerdateien in `ops/`: eine Zeile je Kurz-Hash. */
+const opsListe = (name) => {
+  const url = new URL(`../../ops/${name}`, import.meta.url);
+  return existsSync(url) ? readFileSync(url, 'utf8').split(/\s+/).filter(Boolean) : [];
+};
 const pseudo = (uid) => createHash('sha256').update(uid).digest('hex').slice(0, 8);
 const r2 = (x) => (typeof x === 'number' && Number.isFinite(x) ? Math.round(x * 100) / 100 : x);
 
@@ -221,9 +226,11 @@ async function wiederherstellen(schreiben) {
     return Array.isArray(roh) ? roh : [];
   };
   let fehler = 0;
+  const ziel = opsListe('rueckbau-ziel.txt');
 
   for (const u of (await db.collection('users').get()).docs) {
     const uid = u.id;
+    if (ziel.length && !ziel.includes(pseudo(uid))) continue;
     const z = [];
     const brokerDoc = await db.doc(`users/${uid}/private/broker`).get();
     const pos = await db.collection(`users/${uid}/positions`).get();
@@ -349,7 +356,11 @@ async function wiederherstellen(schreiben) {
 /** Engines wieder einschalten — genau die Liste aus `admin/rueckbau`. */
 async function einschalten() {
   const { isStrategy } = await import('../lib/shared/src/index.js');
-  const liste = (await db.doc('admin/rueckbau').get()).get('engineAnVorRueckbau') ?? [];
+  const nochAus = opsListe('rueckbau-noch-aus.txt');
+  const liste = ((await db.doc('admin/rueckbau').get()).get('engineAnVorRueckbau') ?? []).filter(
+    (uid) => !nochAus.includes(pseudo(uid)),
+  );
+  console.log(`bleibt vorerst aus: ${nochAus.join(' ') || '-'}`);
   const b = db.batch();
   for (const uid of liste) {
     const u = await db.doc(`users/${uid}`).get();
@@ -386,7 +397,34 @@ async function ordersDiagnose() {
   }
 }
 
-if (modus === 'orders-diagnose') {
+/** BIL (Geldmarkt-Parkplatz der neuen Engine) über das normale Trade-Callable
+ *  verkaufen — dieselben Tore, dasselbe Routing wie ein Klick in der Oberfläche. */
+async function bilVerkaufen() {
+  await tresorLaden();
+  const ziel = opsListe('rueckbau-ziel.txt');
+  if (ziel.length !== 1) throw new Error('rueckbau-ziel.txt muss genau ein Konto nennen');
+  const { trade } = await import('../lib/functions/src/callable/trade.js');
+  for (const u of (await db.collection('users').get()).docs) {
+    if (pseudo(u.id) !== ziel[0]) continue;
+    const pos = await db.doc(`users/${u.id}/positions/BIL`).get();
+    const quote = (await db.doc('market/BIL').get()).get('quote');
+    console.log(`BIL im Buch: qty=${pos.get('qty') ?? '-'} broker=${pos.get('broker') ?? '-'} · Kurs ${quote?.price ?? '-'} von ${quote?.updatedAt ?? '-'}`);
+    if (!pos.exists) throw new Error('BIL steht nicht im Buch — erst die Übernahme');
+    const erg = await trade.run({
+      data: { symbol: 'BIL', side: 'sell' },
+      auth: { uid: u.id, token: {} },
+      rawRequest: {},
+      acceptsStreaming: false,
+    });
+    const t = erg?.trade ?? {};
+    // Nicht ausgeführt wirft das Callable (HttpsError) — hier kommt nur Erfolg an.
+    console.log(`Verkauf: ok=${erg?.ok} qty=${t.qty ?? '-'} price=${t.price ?? '-'} pnl=${r2(t.pnl)}`);
+  }
+}
+
+if (modus === 'bil-verkaufen') {
+  await bilVerkaufen();
+} else if (modus === 'orders-diagnose') {
   await ordersDiagnose();
 } else if (modus === 'inventur') {
   await inventur();
