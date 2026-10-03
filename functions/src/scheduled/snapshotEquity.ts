@@ -16,7 +16,6 @@
  */
 
 import { FieldPath, getFirestore } from 'firebase-admin/firestore';
-import { istErprobung } from '../../../src/core/erprobung.ts';
 import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
@@ -62,16 +61,16 @@ import {
   type SchattenKlasse,
 } from '../../../shared/src/index.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
+import { accrueMarginInterest } from '../core/broker.js';
+import { getQuickQuote } from '../core/marketData.js';
 
 /**
  * Vergleichsindex der Benchmark-Linie (Owner 18.08.).
  *
  * Der S&P 500 und nicht ein handelbarer ETF: Es geht um den MARKT als
- * Maßstab, nicht um ein Produkt mit eigener Kostenquote. Gelesen wird der
- * gespeicherte Kurs aus `market/{sym}.quote` — derselbe Weg wie für die
- * Positionen; ein eigener Kursabruf nach außen findet hier nicht mehr
- * statt (der alte Yahoo-Marktdatenpfad ist mit der Handelsplattform
- * gegangen). Fehlt das Dokument, hat die Linie an dem Tag eine Lücke.
+ * Maßstab, nicht um ein Produkt mit eigener Kostenquote. Denselben Index
+ * liest die Regime-Ampel im Scan — zwei Maßstäbe für „der Markt" wären
+ * zwei Wahrheiten.
  */
 const BENCH_SYMBOL = '^GSPC';
 
@@ -96,7 +95,7 @@ export interface Kontostand {
  * ── Was vorher passierte ──────────────────────────────────────────────────
  *
  * Der Saldo kam aus dem Konten-Query vom Beginn des Laufs, die Positionen aus
- * einem frischen Lesevorgang. Dazwischen liegen alle
+ * einem frischen Lesevorgang. Dazwischen liegen die Zinsbuchung und alle
  * vorher abgearbeiteten Konten — und Krypto handelt rund um die Uhr, der
  * 17:15-Lauf ist also kein ruhiger Moment. Fiel ein Kauf in dieses Fenster,
  * zählte das Geld doppelt: das Cash aus dem alten Stand UND die frisch
@@ -111,8 +110,8 @@ export interface Kontostand {
  * zusätzliche Read je Konto fällt EINMAL am Tag an.
  *
  * `rueckfall` greift nur, wenn das Wallet-Feld beim frischen Lesen fehlt
- * oder unbrauchbar ist — dann ist der alte Stand immer noch besser als gar
- * kein Snapshot.
+ * oder unbrauchbar ist — dann ist der alte Stand (abzüglich der eben
+ * gebuchten Zinsen) immer noch besser als gar kein Snapshot.
  */
 export async function leseKontostand(
   db: FirebaseFirestore.Firestore,
@@ -125,6 +124,9 @@ export async function leseKontostand(
       const p = await tx.get(ref.collection('positions'));
       const frisch = u.get('wallet.paperBalance') as unknown;
       return {
+        // Der frische Saldo enthält die eben gebuchten Zinsen bereits — hier
+        // NICHT noch einmal abziehen. Nur der Rückfall bringt seinen Abzug
+        // selbst mit.
         balance: typeof frisch === 'number' && Number.isFinite(frisch) ? frisch : rueckfall,
         positionen: p.docs.map((d) => ({ id: d.id, pos: d.data() as Position })),
       };
@@ -136,6 +138,8 @@ export async function leseKontostand(
 export interface SnapshotResult {
   users: number;
   snapped: number;
+  /** Summe der heute gebuchten Margin-Zinsen über alle Konten. */
+  marginInterest: number;
 }
 
 /** Snapshot + Kennzahlen für alle User; Fehler je User isoliert (ein kaputtes Konto stoppt nicht den Rest). */
@@ -230,11 +234,15 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
    * gefährden: Ein fehlender Tag unterbricht die Vergleichslinie sichtbar,
    * eine erfundene Zahl würde sie unsichtbar verfälschen. */
   let benchClose: number | null = null;
-  const benchKurs = await lastPrice(BENCH_SYMBOL);
-  if (benchKurs !== null && benchKurs > 0) benchClose = Math.round(benchKurs * 100) / 100;
-  else logger.warn('Vergleichsindex nicht lesbar — Benchmark-Linie hat heute eine Lücke');
+  try {
+    const q = await getQuickQuote(BENCH_SYMBOL);
+    if (q.price > 0) benchClose = Math.round(q.price * 100) / 100;
+  } catch (err) {
+    logger.warn('Vergleichsindex nicht lesbar — Benchmark-Linie hat heute eine Lücke', err);
+  }
 
   let snapped = 0;
+  let zinsSumme = 0;
   // Untergrenze des rollierenden Exit-Fensters (Task 115) — EINMAL je Lauf,
   // damit alle Konten und das Aggregat dasselbe Fenster meinen.
   const fensterSeit = new Date(now.getTime() - EXIT_FENSTER_TAGE * 24 * 60 * 60 * 1000).toISOString();
@@ -249,18 +257,24 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
       const roh = userDoc.get('wallet.paperBalance') as number | undefined;
       if (typeof roh !== 'number' || !Number.isFinite(roh)) continue; // kein Wallet → kein Snapshot
 
-      /* Margin-Zinsen bucht hier niemand mehr: Das eigene Buch mit Hebel ist
-       * mit der alten Plattform gegangen; Kreditkosten rechnet der Broker
-       * selbst ab und sie stehen in dessen Equity. */
+      // Margin-Zinsen VOR dem Snapshot buchen (Hebel, 28.07.): Sonst zeigte
+      // die Equity-Kurve einen Tag lang ein Konto, das seine Kreditkosten
+      // noch nicht getragen hat — genau die Schönfärberei, die margin.ts
+      // ausschließen soll. Idempotent je Tag, ein Rerun bucht nichts.
+      const zins = await accrueMarginInterest(userDoc.id, date).catch(() => 0);
+      if (zins > 0) {
+        zinsSumme += zins;
+        logger.info(`Margin-Zinsen ${userDoc.id}: ${zins.toFixed(2)} $`);
+      }
 
       /* Saldo UND Positionen aus EINEM Stand (Audit-Befund 11.08.).
        *
        * Vorher kam der Saldo aus dem Konten-Query vom Beginn des Laufs und
-       * die Positionen aus einem frischen Lesevorgang. Dazwischen liegen
-       * alle vorher abgearbeiteten Konten — und Krypto handelt rund um die
-       * Uhr, der 17:15-Lauf ist also kein ruhiger Moment. Fiel ein Kauf in
-       * dieses Fenster, zählte das Geld doppelt: das Cash aus dem alten
-       * Stand UND die frisch gekaufte Position.
+       * die Positionen aus einem frischen Lesevorgang. Dazwischen liegen die
+       * Zinsbuchung und alle vorher abgearbeiteten Konten — und Krypto
+       * handelt rund um die Uhr, der 17:15-Lauf ist also kein ruhiger
+       * Moment. Fiel ein Kauf in dieses Fenster, zählte das Geld doppelt:
+       * das Cash aus dem alten Stand UND die frisch gekaufte Position.
        *
        * Das ist keine Kosmetik. Dieselbe Zahl wird gleich unten als
        * `risk.vortagEquity` zur Bezugsgröße der Notbremse — eine zu hohe
@@ -269,10 +283,9 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
        *
        * Read-only-Transaktion: Sie garantiert genau das, was hier fehlte —
        * einen gemeinsamen Lesezeitpunkt — ohne Sperren zu nehmen. Der
-       * zusätzliche Read je Konto fällt EINMAL am Tag an. `roh` ist nur der
-       * Rückfall, falls das Wallet-Feld beim frischen Lesen fehlt.
+       * zusätzliche Read je Konto fällt EINMAL am Tag an.
        */
-      const stand = await leseKontostand(db, userDoc.ref, roh);
+      const stand = await leseKontostand(db, userDoc.ref, roh - zins);
       const balance = stand.balance;
 
       let positionsValue = 0;
@@ -380,21 +393,6 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
           });
         }
         if (typeof pnl === 'number' && Number.isFinite(pnl) && symbol) {
-          /* Papier-Erprobung fliegt HIER raus, und das ist die wichtigste
-           * Zeile dieser Datei.
-           *
-           * `stats/main` (trades, profitFactor, costs) ist die Grundlage von
-           * `reifeFuerKonto` (core/liveGate.ts) — und die entscheidet, ob ein
-           * Konto Echtgeld handeln darf. Die Erprobung handelt KANDIDATEN,
-           * DIE DIE GATES NICHT BESTANDEN HABEN (core/erprobung.ts). Zählte
-           * sie hier mit, hätte ein durchgefallener Kandidat genau den Weg zu
-           * Echtgeld, den die Erprobung nicht haben darf: Papier-Trades ⇒
-           * Reife ⇒ Freigabe.
-           *
-           * Weder dafür noch dagegen: Diese Trades gehören schlicht nicht in
-           * diese Rechnung. Dieselbe Regel wie in src/readiness.ts, damit
-           * beide Betriebsarten dieselbe Frage gleich beantworten (§0.1). */
-          if (istErprobung({ stufe: t.get('stufe') as string | undefined })) continue;
           // qty × price ist der Positionswert beim Schließen. Die Gebühr
           // kommt seit dem 13.08. bevorzugt ECHT aus dem fee-Feld (steht
           // seit 04.08. an jedem Trade); entryPrice liefert die
@@ -654,6 +652,7 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
         date,
         users: users.size,
         snapped,
+        marginInterest: Math.round(zinsSumme * 100) / 100,
       },
       trading: {
         ...health,
@@ -753,7 +752,7 @@ export async function snapshotAll(now = new Date()): Promise<SnapshotResult> {
   }
 
   logger.info(`snapshotEquity: ${snapped}/${users.size} User gesnapshottet (${date})`);
-  return { users: users.size, snapped };
+  return { users: users.size, snapped, marginInterest: Math.round(zinsSumme * 100) / 100 };
 }
 
 /** Täglich 17:15 ET (nach US-Schluss); 7 Tage — Krypto bewegt Equity auch am Wochenende. */

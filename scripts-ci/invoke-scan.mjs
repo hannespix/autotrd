@@ -1,16 +1,12 @@
 /**
- * Direkt-Invoke eines geplanten Laufs — der Cloud-Scheduler-unabhängige Weg,
- * eine Function auszulösen. Funktioniert mit den Rollen, die der Deploy-SA
- * sicher hat (Cloud Run Admin + Service Account User).
- *
- * `SERVICE` ist der Engine-Takt (`enginetick`, functions/src/scheduled/
- * engineTick.ts); der alte Marktscan (`scanmarket`) ist mit dem Rückbau der
- * Handelsplattform gelöscht.
+ * Direkt-Invoke des scanMarket-Laufs — der Cloud-Scheduler-unabhängige Weg,
+ * einen Scan auszulösen. Funktioniert mit den Rollen, die der Deploy-SA
+ * sicher hat (Cloud Run Admin + Service Account User):
  *
  *   1. Heartbeat meta/health lesen (öffentlich). Mit --if-stale N wird nur
  *      weitergemacht, wenn der letzte Lauf älter als N Minuten ist (Watchdog-
- *      Modus: kein Doppel-Takt, wenn der echte Scheduler längst läuft).
- *   2. enginetick-Cloud-Run-Service holen, dem SA selbst roles/run.invoker
+ *      Modus: kein Doppel-Scan, wenn der echte Scheduler längst läuft).
+ *   2. scanmarket-Cloud-Run-Service holen, dem SA selbst roles/run.invoker
  *      geben (idempotent) und den Service mit ID-Token per POST aufrufen.
  *   3. Heartbeat erneut prüfen — erst der beweist den erfolgreichen Lauf.
  *
@@ -34,13 +30,13 @@ import {
 } from './gcp-lite.mjs';
 
 const REGION = 'us-central1';
-const SERVICE = 'enginetick';
+const SERVICE = 'scanmarket';
 
 /**
  * Cloud-Run-Dienstnamen sind kleingeschrieben — Firebase leitet sie aus dem
  * Export-Namen ab. `snapshotEquity` heißt als Dienst also `snapshotequity`.
  */
-export const DAILY_SERVICES = ['snapshotequity'];
+export const DAILY_SERVICES = ['snapshotequity', 'evalforecasts'];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -146,7 +142,7 @@ export async function invokeService(service, { timeoutMs = 540_000, logBody = fa
   return false;
 }
 
-/** Stößt genau einen Lauf des Herzschlag-Dienstes an; liefert true, wenn danach ein Heartbeat existiert. */
+/** Stößt genau einen Scan an; liefert true, wenn danach ein Heartbeat existiert. */
 export async function invokeScanNow({ waitSec = 25 } = {}) {
   await invokeService(SERVICE);
   await sleep(waitSec * 1000);

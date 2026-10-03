@@ -66,8 +66,10 @@ describe('Quelltext-Pins — Einbau und Palette', () => {
   const dashboard = lese('../src/dashboard.ts');
   const css = lese('../src/theme.css');
 
-  it('die Positionsliste trägt das Monogramm', () => {
-    expect(dashboard.match(/symbolAvatar\(/g)?.length ?? 0).toBeGreaterThanOrEqual(1);
+  it('die drei Kern-Listen tragen das Monogramm (Livebar, Signale, Positionen)', () => {
+    expect(dashboard.match(/symbolAvatar\(/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
+    expect(dashboard).toContain('lbSym.innerHTML = symbolAvatar(sym, true)');
+    expect(dashboard).toContain('sigSym.innerHTML = symbolAvatar(sym, true)');
     expect(dashboard).toContain('symTd.innerHTML = symbolAvatar(p.symbol)');
   });
 
@@ -83,8 +85,9 @@ describe('Quelltext-Pins — Einbau und Palette', () => {
   });
 
   it('das Lager schmückt nach JEDEM Listen-Render — ein Abruf je Symbol', () => {
-    // Der Portfolio-Renderer ruft den Schmück-Pass als echten Aufruf.
-    expect(dashboard.match(/^\s*schmueckeAvatare\(\);/gm)?.length ?? 0).toBeGreaterThanOrEqual(1);
+    // Alle drei Render-Wege (Watchlist, Portfolio, Markt-Übersicht) rufen
+    // den Schmück-Pass als echten Aufruf.
+    expect(dashboard.match(/^\s*schmueckeAvatare\(\);/gm)?.length ?? 0).toBeGreaterThanOrEqual(3);
     const avatar = lese('../src/symbolAvatar.ts');
     expect(avatar).toContain('logoLager');
     expect(avatar).toContain('URL.createObjectURL');
@@ -116,6 +119,8 @@ describe('Quelltext-Pins — Einbau und Palette', () => {
         expect.fail(`Hover-Transform außerhalb des (hover: hover)-Blocks: ${zeile.trim()}`);
       }
     }
+    // Die Markt-Übersicht trägt die Logo-Chips in der Symbol-Zeile.
+    expect(dashboard).toContain('symZeile.innerHTML = symbolAvatar(symbol, true)');
   });
 
   it('die Chip-Palette meidet Gewinn-Grün und Verlust-Rot', () => {

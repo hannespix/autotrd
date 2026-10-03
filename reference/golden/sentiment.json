@@ -1,0 +1,155 @@
+{
+ "cases": [
+  {
+   "text": "Apple beats earnings, stock surges to record high on strong iPhone growth",
+   "sentiment": 1.0,
+   "label": "bullish",
+   "magnitude": 1.0,
+   "event_types": [
+    "earnings"
+   ],
+   "hits": [
+    "+beats",
+    "+surges",
+    "+record",
+    "+strong",
+    "+growth"
+   ]
+  },
+  {
+   "text": "Tesla plunges after analyst downgrade and demand warning",
+   "sentiment": -1.0,
+   "label": "bearish",
+   "magnitude": 1.0,
+   "event_types": [
+    "analyst",
+    "guidance"
+   ],
+   "hits": [
+    "-plunges",
+    "-downgrade",
+    "-warning"
+   ]
+  },
+  {
+   "text": "Nvidia announces $50B buyback; shares jump in after-hours",
+   "sentiment": 1.0,
+   "label": "bullish",
+   "magnitude": 0.667,
+   "event_types": [
+    "capital"
+   ],
+   "hits": [
+    "+buyback",
+    "+jump"
+   ]
+  },
+  {
+   "text": "SEC opens probe into company accounting; lawsuit filed",
+   "sentiment": -1.0,
+   "label": "bearish",
+   "magnitude": 0.667,
+   "event_types": [
+    "legal"
+   ],
+   "hits": [
+    "-probe",
+    "-lawsuit"
+   ]
+  },
+  {
+   "text": "Company hits all-time high after FDA approval and raised guidance",
+   "sentiment": 1.0,
+   "label": "bullish",
+   "magnitude": 1.0,
+   "event_types": [
+    "guidance",
+    "regulatory"
+   ],
+   "hits": [
+    "+approval",
+    "+raised",
+    "+all-time high"
+   ]
+  },
+  {
+   "text": "Layoffs, bankruptcy fears and a broad selloff drag the sector down",
+   "sentiment": -1.0,
+   "label": "bearish",
+   "magnitude": 1.0,
+   "event_types": [],
+   "hits": [
+    "-layoffs",
+    "-bankruptcy",
+    "-fears",
+    "-selloff"
+   ]
+  },
+  {
+   "text": "Quarterly results in line, CEO steps down; dividend unchanged",
+   "sentiment": 1.0,
+   "label": "bullish",
+   "magnitude": 0.167,
+   "event_types": [
+    "earnings",
+    "leadership",
+    "capital"
+   ],
+   "hits": [
+    "+dividend"
+   ]
+  },
+  {
+   "text": "Fed rate decision and CPI inflation data loom over markets",
+   "sentiment": 0.0,
+   "label": "neutral",
+   "magnitude": 0.0,
+   "event_types": [
+    "macro"
+   ],
+   "hits": []
+  },
+  {
+   "text": "Nothing notable here",
+   "sentiment": 0.0,
+   "label": "neutral",
+   "magnitude": 0.0,
+   "event_types": [],
+   "hits": []
+  },
+  {
+   "text": "",
+   "sentiment": 0.0,
+   "label": "neutral",
+   "magnitude": 0.0,
+   "event_types": [],
+   "hits": []
+  }
+ ],
+ "aggregate": {
+  "overall": -0.359,
+  "label": "bearish",
+  "n": 3,
+  "bullish": 1,
+  "bearish": 2,
+  "neutral": 0,
+  "top_events": [
+   {
+    "type": "earnings",
+    "count": 1
+   },
+   {
+    "type": "analyst",
+    "count": 1
+   },
+   {
+    "type": "guidance",
+    "count": 1
+   },
+   {
+    "type": "legal",
+    "count": 1
+   }
+  ]
+ }
+}

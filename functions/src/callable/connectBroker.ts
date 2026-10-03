@@ -1,15 +1,24 @@
 /**
- * connectBroker — eigenes Alpaca-Konto verbinden und wieder trennen.
+ * connectBroker — eigenes Alpaca-Papierkonto verbinden und wieder trennen.
  *
  * Owner-Wunsch 04.08.: „ich würde den Schalter auch gerne scharf schalten
  * können und einen Account wirklich verbinden können."
  *
- * ── Echtgeld-Schlüssel: unter welchen Bedingungen ─────────────────────────
+ * ── Echtgeld-Schlüssel: warum erst jetzt, und unter welchen Bedingungen ───
  *
  * Alpaca-Schlüssel tragen ihre Art im Präfix: `PK…` Papierkonto, `AK…`
- * Echtgeld. Mit `core/keyVault.ts` liegt das Geheimnis verschlüsselt
- * (AES-256-GCM, Hauptschlüssel im Secret Manager). Echtgeld-Schlüssel dürfen
- * herein — unter DREI Bedingungen:
+ * Echtgeld. Bis zum 05.08. nahm dieses Callable ausschließlich `PK…` an,
+ * mit der Begründung, Echtgeld-Schlüssel gehörten in die Server-Umgebung.
+ *
+ * Diese Begründung war ungenau. Das Problem war nie die App als Eingabeweg
+ * — es war die ABLAGE: Die Schlüssel lagen im Klartext in Firestore. Ein
+ * Datenbank-Export, ein kompromittiertes Dienstkonto oder ein Blick in die
+ * Konsole hätte gereicht. Für ein Papierkonto hinnehmbar, für echtes Geld
+ * nicht.
+ *
+ * Mit `core/keyVault.ts` liegt das Geheimnis verschlüsselt (AES-256-GCM,
+ * Hauptschlüssel im Secret Manager). Damit fällt der Grund weg, und
+ * Echtgeld-Schlüssel dürfen herein — unter DREI Bedingungen:
  *
  *   1. Die verschlüsselte Ablage ist einsatzbereit (`vaultBereit()`).
  *      Ohne Hauptschlüssel bleibt es bei `PK…` — lieber abgelehnt als im
@@ -20,18 +29,17 @@
  *      einmal angemeldet wurde, reicht damit nicht.
  *   3. Der Handel bleibt trotzdem VERRIEGELT. Ein hinterlegter
  *      Echtgeld-Schlüssel schaltet nichts scharf: Orders verlangen
- *      weiterhin `broker.mode: live` UND `ALPACA_ALLOW_LIVE=1` UND einen
- *      ausgeschalteten Kill-Switch UND eine bestandene Live-Reife — die
- *      Kette in `core/brokerZugang.ts`. Was der Schlüssel ermöglicht, ist
- *      der lesende Blick aufs echte Depot — „startklar, aber nicht scharf".
+ *      weiterhin `broker.mode: live` UND `ALPACA_ALLOW_LIVE=1` UND eine
+ *      bestandene Live-Reife. Was er ermöglicht, ist der lesende Abgleich
+ *      des echten Depots — „startklar, aber nicht scharf".
  *
  * ── Warum die Schlüssel sofort geprüft werden ─────────────────────────────
+ * ── Warum die Schlüssel sofort geprüft werden ─────────────────────────────
  *
- * Ein Probe-Call gegen `/v2/account` (neuer Client, `src/alpaca/rest.ts`)
- * beweist dreierlei auf einmal: Die Schlüssel sind gültig, sie gehören zum
- * Endpunkt ihrer Art, und das Konto ist handelbar. Ohne diese Probe fiele
- * ein Tippfehler erst beim ersten Takt der Engine auf — also genau dann,
- * wenn niemand hinsieht.
+ * Ein Probe-Call gegen `/v2/account` beweist dreierlei auf einmal: Die
+ * Schlüssel sind gültig, sie gehören zum Papier-Endpunkt, und das Konto ist
+ * handelbar. Ohne diese Probe fiele ein Tippfehler erst beim ersten Trade
+ * auf — also genau dann, wenn niemand hinsieht.
  *
  * ── Ablage ────────────────────────────────────────────────────────────────
  *
@@ -40,47 +48,24 @@
  * Functions liest dort. Der Schlüssel wird NIE an einen Client
  * zurückgegeben — auch nicht an den, der ihn gerade gesetzt hat. Was
  * zurückkommt, ist der Kontostatus und eine maskierte Kennung.
- *
- * ── Trennen ohne Order-Sweep (Rückbau der Handelsplattform) ───────────────
- *
- * Bis zum Rückbau stornierte das Trennen die eigenen GTC-Schutz-Stops beim
- * Broker, weil das alte Buch sie nach dem Trennen nicht mehr erreicht hätte.
- * Der neue Kern hält seine Stops selbst: Sie liegen als Bracket-Bein bzw.
- * GTC-Stop BEIM BROKER und schützen die Position auch dann, wenn die App
- * den Schlüssel nicht mehr hat (CLAUDE.md §0.4: Exits werden nie gesperrt).
- * Deshalb wird hier nichts mehr storniert — ein Storno GÄBE Risiko frei,
- * er nähme keins. Wer sein Depot aufräumen will, tut das im
- * Alpaca-Dashboard.
  */
 
 import { getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { logger } from 'firebase-functions/v2';
-import { bindungsMeldung } from '../../../shared/src/index.js';
-import { createAlpacaClient } from '../../../src/alpaca/rest.js';
+import {
+  alpacaKonto,
+  schluesselArt,
+  type AlpacaSchluessel,
+} from '../core/alpacaBroker.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { accessDeniedReason, accessLevelOfSnap, mayTradeSnap } from '../core/access.js';
-import { bindeDepot, loeseDepot } from '../core/brokerBindung.js';
-import { schluesselArt, vergissVerbindung, type AlpacaSchluessel } from '../core/brokerZugang.js';
-import { FirestoreStateStore } from '../engine/state.js';
-
-/**
- * Engine-State beim Verbinden/Trennen ablösen (Secreview 2, M9): Das Buch gehört zum bisherigen Konto.
- * Träfe es auf ein anderes Konto, buchte der Abgleich dessen Positionen als „fehlt beim Broker" mit
- * geschätztem Kurs aus (Phantom-Trades), und ein Moduswechsel (PK ⇒ AK) ließe jeden Takt am State
- * scheitern. Archiv statt Löschen: `users/{uid}/private/archiv/engineStates/{iso}`.
- */
-async function engineStateAbloesen(uid: string, reason: string): Promise<void> {
-  try {
-    const archived = await new FirestoreStateStore(getFirestore(), uid).archive(Date.now(), reason);
-    if (archived) logger.info(`connectBroker ${uid}: Engine-State archiviert (${reason})`);
-  } catch (e) {
-    // Nicht fatal für das Verbinden: Der Takt erkennt ein fremdes Konto am `accountId` im State und archiviert selbst.
-    logger.warn(`connectBroker ${uid}: Engine-State nicht archiviert — der Takt holt es nach`, e);
-  }
-}
+import { consumeQuota } from '../core/broker.js';
+import { brokerVerbindungLesend, vergissVerbindung } from '../core/orderRouting.js';
+import { raeumeEigeneOrders } from '../core/orderRaeumung.js';
 import { vaultBereit, verschluessle } from '../core/keyVault.js';
-import { consumeQuota } from '../core/quota.js';
+import { bindeDepot, loeseDepot } from '../core/brokerBindung.js';
+import { bindungsMeldung } from '../../../shared/src/index.js';
 
 /** Verbinden ist ein seltener Vorgang — zehn Versuche am Tag sind reichlich. */
 const DAILY_CONNECT_LIMIT = 10;
@@ -114,7 +99,7 @@ export interface ConnectResult {
   /** Liegt das Geheimnis verschlüsselt? Bei Echtgeld immer `true`. */
   verschluesselt: boolean;
   kontoStatus: string;
-  /** Barbestand des verbundenen Kontos. */
+  /** Barbestand des verbundenen Papierkontos. */
   cash: number;
   equity: number;
   meldung: string;
@@ -132,19 +117,6 @@ export function maskiere(keyId: string): string {
   return `${k.slice(0, 4)}…${k.slice(-4)}`;
 }
 
-/**
- * Trägt der Schlüssel ein bekanntes Alpaca-Präfix?
- *
- * `schluesselArt` aus `brokerZugang` kennt nur zwei Antworten (alles außer
- * `AK…` ist Papier) — für die ABLAGE richtig, für die EINGABE zu großzügig:
- * Ein Tippfehler in der Kennung soll hier abgelehnt werden, nicht als
- * Papierschlüssel zum Probe-Call laufen.
- */
-export function hatAlpacaPraefix(keyId: string): boolean {
-  const k = keyId.trim();
-  return k.startsWith('PK') || k.startsWith('AK');
-}
-
 export async function verbindeBroker(
   uid: string,
   schluessel: AlpacaSchluessel,
@@ -152,13 +124,13 @@ export async function verbindeBroker(
   authTimeS?: number,
   jetztS: number = Math.floor(Date.now() / 1000),
 ): Promise<ConnectResult> {
-  const keyId = schluessel.keyId.trim();
-  const secret = schluessel.secret.trim();
-  if (!hatAlpacaPraefix(keyId)) {
-    throw new HttpsError('invalid-argument', 'srv.keinGueltigerSchluessel');
+  const art = schluesselArt(schluessel.keyId);
+  if (art !== 'paper' && art !== 'live') {
+    throw new HttpsError(
+      'invalid-argument',
+      'srv.keinGueltigerSchluessel',
+    );
   }
-  // Dieselbe Ableitung wie beim späteren Lesen (`brokerZugang.schluesselArt`).
-  const art = schluesselArt(keyId);
   if (art === 'live') {
     // Bedingung 1: verschlüsselte Ablage. Ohne Hauptschlüssel landete der
     // Echtgeld-Schlüssel im Klartext — dann lieber gar nicht annehmen.
@@ -187,53 +159,57 @@ export async function verbindeBroker(
       );
     }
   }
-  if (secret.length < 20) {
+  if (schluessel.secret.trim().length < 20) {
     throw new HttpsError('invalid-argument', 'srv.geheimerSchluesselZuKurz');
   }
 
   /* Probe-Call VOR dem Speichern: Ein Schlüsselpaar, das nicht funktioniert,
    * hat in der Datenbank nichts zu suchen — sonst steht dort eine Verbindung,
-   * die es nicht gibt, und der Fehler fällt erst beim ersten Takt auf.
+   * die es nicht gibt, und der Fehler fällt erst beim ersten Trade auf.
    *
    * Der Endpunkt folgt der Schlüsselart, weil ein `AK…` am Papier-Endpunkt
    * ohnehin abgelehnt würde. Das ist ein LESENDER Aufruf (`/v2/account`) und
    * die einzige Stelle hier, die einen Echtgeld-Endpunkt berührt. Über
-   * ORDERS entscheidet das nicht — das tut die Guard-Kette in
-   * `brokerZugang.ts`. Der Client registriert beide Schlüssel zur
-   * Schwärzung, bevor er irgendetwas loggt oder wirft. */
+   * ORDERS entscheidet das nicht — das tut `resolveBrokerMode` mit seinen
+   * drei unveränderten Guards. */
   let konto;
   try {
-    konto = await createAlpacaClient({
-      mode: art,
-      keyId,
-      secret,
-      feed: 'iex',
-      assetClass: 'us_equity',
-    }).getAccount();
+    konto = await alpacaKonto(art, schluessel);
   } catch (e) {
-    // Die Meldung ist bereits von Schlüsseln gesäubert (`redact` im Client).
+    // Die Meldung ist bereits von Schlüsseln gesäubert (AlpacaFehler).
     throw new HttpsError('failed-precondition', `srv.verbindungFehlgeschlagen|${(e as Error).message}`);
   }
   if (konto.accountBlocked || konto.tradingBlocked) {
-    throw new HttpsError('failed-precondition', `srv.kontoGesperrtAlpaca|${konto.status}`);
+    throw new HttpsError(
+      'failed-precondition',
+      `srv.kontoGesperrtAlpaca|${konto.status}`,
+    );
   }
 
   /* ── Ein Depot, ein Konto (Owner-Befund 12.08.) ─────────────────────────
    *
    * Zwei autotrd-Konten hatten dasselbe Alpaca-Paper-Depot hinterlegt. Der
-   * Broker führt EINE Position je Symbol; zwei Engines auf demselben Depot
-   * schließen sich gegenseitig die Positionen — samt Stop. Gebunden wird
-   * über die KONTO-ID, nicht über den Schlüssel: Zu einem Alpaca-Konto
-   * lassen sich mehrere Schlüsselpaare erzeugen, ein Riegel auf
-   * Schlüsselebene wäre mit zwei Klicks zu umgehen. Die Bindung geschieht
-   * in einer Transaktion, damit zwei gleichzeitige Verbinden-Aufrufe sich
-   * nicht gegenseitig überholen. */
+   * Broker fuehrt EINE Position je Symbol und addiert alle Kaeufe; jedes
+   * Buch kannte nur seinen Anteil. Sichtbar wurde es an Positionen, die
+   * bis auf die sechste Nachkommastelle uebereinstimmten, waehrend andere
+   * beim Broker um ein Vielfaches groesser waren — und an 84 598 $
+   * Cash-Differenz.
+   *
+   * Das ist nicht nur eine falsche Anzeige: Positionslimit, Korrelations-
+   * Deckel und Kapitaldecke rechnen alle auf dem eigenen Buch und sind
+   * damit wirkungslos. Schlimmer noch kann ein Verkauf des einen Kontos
+   * die Position des anderen schliessen — samt Stop.
+   *
+   * Gebunden wird ueber die KONTO-ID, nicht ueber den Schluessel: Zu einem
+   * Alpaca-Konto lassen sich mehrere Schluesselpaare erzeugen, ein Riegel
+   * auf Schluesselebene waere mit zwei Klicks zu umgehen. Die Bindung
+   * geschieht in einer Transaktion, damit zwei gleichzeitige Verbinden-
+   * Aufrufe sich nicht gegenseitig ueberholen. */
   const bindung = await bindeDepot(konto.id, art, uid);
   if (!bindung.ok) {
     logger.warn(`connectBroker ${uid}: Depot bereits gebunden seit ${bindung.seit}`);
     throw new HttpsError('failed-precondition', bindungsMeldung(bindung.seit));
   }
-  await engineStateAbloesen(uid, `Broker verbunden (${art}, Konto ${konto.id})`);
 
   await getFirestore()
     .collection('users')
@@ -247,11 +223,13 @@ export async function verbindeBroker(
         // der Schlüsselart, denn ein `AK…` funktioniert nur am
         // Echtgeld-Endpunkt. Über den HANDEL entscheidet es nicht.
         mode: art,
-        keyId,
+        keyId: schluessel.keyId.trim(),
         // Verschlüsselt, sobald ein Hauptschlüssel da ist. Papierkonten auf
         // einem Server ohne Vault bleiben im Klartext — festgehalten in
         // `verschluesselt`, damit die Migration weiß, was noch offen ist.
-        secretKey: vaultBereit() ? verschluessle(secret) : secret,
+        secretKey: vaultBereit()
+          ? verschluessle(schluessel.secret.trim())
+          : schluessel.secret.trim(),
         verschluesselt: vaultBereit(),
         accountId: konto.id,
         connectedAt: new Date().toISOString(),
@@ -263,11 +241,11 @@ export async function verbindeBroker(
   // Nur die Kennung ins Log, nie das Geheimnis — und auch die maskiert.
   logger.info(
     `connectBroker ${uid}: ${art === 'live' ? 'Echtgeldkonto' : 'Papierkonto'} ` +
-      `${maskiere(keyId)} verbunden (verschlüsselt: ${String(vaultBereit())})`,
+      `${maskiere(schluessel.keyId)} verbunden (verschlüsselt: ${String(vaultBereit())})`,
   );
   return {
     ok: true,
-    maskiert: maskiere(keyId),
+    maskiert: maskiere(schluessel.keyId),
     art,
     verschluesselt: vaultBereit(),
     kontoStatus: konto.status,
@@ -279,17 +257,30 @@ export async function verbindeBroker(
           'verschlüsselt; er wird nie wieder angezeigt und verlässt den Server nicht. ' +
           'GEHANDELT WIRD NICHT: Orders verlangen zusätzlich den Live-Modus in den ' +
           'Einstellungen, die Server-Freigabe ALPACA_ALLOW_LIVE und eine bestandene ' +
-          'Live-Reife. Bis dahin siehst du dein echtes Depot nur in der Broker-Karte.'
-        : `Papierkonto verbunden (${konto.status}). Die Engine handelt ab dem nächsten ` +
-          'Takt auf diesem Konto; Stops und Ziele liegen als Orders beim Broker. ' +
-          'Der Bestand beim Broker ist der Bestand — es gibt kein zweites Buch.',
+          'Live-Reife. Bis dahin siehst du dein echtes Depot nur im Abgleich.'
+        : `Papierkonto verbunden (${konto.status}). Ab dem nächsten Scan gehen neue ` +
+          'Orders an dieses Konto; das eigene Buch bleibt das führende Journal und ' +
+          'wird bei jedem Scan gegen das Depot abgeglichen. Bestehende Positionen ' +
+          'aus dem eigenen Buch bleiben dort — der Broker kennt sie nicht.',
   };
 }
 
-/** Antwort des Trennens. Ein Order-Sweep findet nicht mehr statt (Modulkopf). */
+/** Antwort des Trennens. Genau EINER der drei Zustände:
+ *  `orders` (Papier: Sweep lief, ehrlicher Befund) · `liveOrdersBleiben`
+ *  (Echtgeld: bewusst nichts storniert) · `sweepUnmoeglich` (Verbindung war
+ *  nicht mehr lesbar — Waisen bleiben garantiert stehen). */
 export interface TrennErgebnis {
   ok: true;
   geloescht: boolean;
+  orders?: {
+    storniert: number;
+    gefuellt: number;
+    fehler: number;
+    listeFehlgeschlagen: boolean;
+    moeglicherweiseUnvollstaendig: boolean;
+  };
+  liveOrdersBleiben?: true;
+  sweepUnmoeglich?: true;
 }
 
 /** Verbindung lösen — das Schlüsselpaar wird gelöscht, nicht nur deaktiviert. */
@@ -298,12 +289,38 @@ export async function trenneBroker(uid: string): Promise<TrennErgebnis> {
   const ref = db.collection('users').doc(uid).collection(BROKER_DOC).doc(BROKER_ID);
   const vorher = await ref.get();
   if (!vorher.exists) return { ok: true, geloescht: false };
+  /* Schlüssel JETZT in die Hand nehmen — nach dem Löschen gibt es sie nicht
+   * mehr, und der Order-Sweep unten braucht sie noch. Die LESENDE Variante
+   * ist bewusst gewählt: Ein Storno ist zwar ein Schreibvorgang beim Broker,
+   * aber einer, der Risiko NIMMT statt eingeht — er muss auch laufen, wenn
+   * Echtgeld verriegelt ist (`brokerVerbindung()` gäbe dann `null`), sonst
+   * blieben genau die Live-Orders stehen, die danach niemand mehr erreicht. */
+  const verbindung = await brokerVerbindungLesend(uid);
+  /* Schutz-Order-Kennungen aus dem Buch einsammeln, BEVOR irgendetwas
+   * gelöscht wird: Sie fangen im Sweep auch Orders, deren
+   * clientOrderId-Präfix bei Überlänge gekappt wurde (`clientOrderId()`
+   * kappt den uid-Teil, nie den Schwanz). */
+  const posSnap = await db
+    .collection('users')
+    .doc(uid)
+    .collection('positions')
+    .get()
+    .catch(() => null);
+  const schutzOrderIds = new Map<string, string>(); // orderId → Positions-Doc
+  for (const d of posSnap?.docs ?? []) {
+    const oid = d.get('schutz.orderId') as unknown;
+    if (typeof oid === 'string' && oid) schutzOrderIds.set(oid, d.id);
+  }
   // Löschen statt eines `aktiv: false`-Flags: Ein Schlüssel, der nicht mehr
-  // gebraucht wird, soll auch nicht mehr da sein. Das Trennen muss IMMER
-  // möglich sein — auch für ein gesperrtes Konto und auch, wenn Alpaca gerade
-  // nicht antwortet; deshalb hängt hier kein Außen-Call dran.
+  // gebraucht wird, soll auch nicht mehr da sein.
+  //
+  // Und ZUERST löschen, dann stornieren: Das Trennen darf nie daran
+  // scheitern, dass Alpaca nicht antwortet — sonst könnte ein Konto mit
+  // widerrufenen Schlüsseln seine Schlüssel nie mehr entfernen (das Trennen
+  // muss IMMER möglich sein, siehe Gate-Kommentar unten). Der Sweep ist
+  // Best-Effort mit den Schlüsseln aus der Hand; sein Befund geht ehrlich
+  // in die Antwort.
   await ref.delete();
-  await engineStateAbloesen(uid, 'Broker getrennt');
   /* Depot-Bindung mit lösen — sonst bliebe das Depot für immer belegt und
    * niemand könnte es je wieder verbinden, auch dieser Nutzer nicht.
    *
@@ -315,20 +332,104 @@ export async function trenneBroker(uid: string): Promise<TrennErgebnis> {
     (vorher.get('mode') as string | undefined) ?? 'paper',
     uid,
   );
-  /* Cache dieser Instanz sofort verwerfen.
+  /* Cache dieser Instanz sofort verwerfen (M13).
    *
-   * Wirkt NUR lokal: `connectBroker` und der Engine-Takt laufen in getrennten
+   * Wirkt NUR lokal: `connectBroker` und `scanMarket` laufen in getrennten
    * Function-Instanzen mit eigenem Speicher. Der Aufruf ist trotzdem richtig
    * — er nimmt mit, was er mitnehmen kann. Die eigentliche Absicherung ist
-   * der kurze TTL in `brokerZugang`: Spätestens nach einer Minute liest jede
-   * Instanz neu. */
+   * der kurze TTL: Spätestens nach einer Minute liest jede Instanz neu. */
   vergissVerbindung(uid);
-  logger.info(`connectBroker ${uid}: Verbindung getrennt — offene Orders bleiben beim Broker stehen`);
-  return { ok: true, geloescht: true };
+  /* GTC-Waisen abräumen (24.08.): Ohne diesen Sweep arbeiten Schutz-Stops
+   * nach dem Trennen unbeaufsichtigt weiter, reservieren die Stücke gegen
+   * jeden manuellen Verkauf und blockieren die Exits eines Nachfolge-Kontos
+   * auf demselben Depot — und weil die Schlüssel oben gelöscht sind, könnte
+   * sie danach nie wieder jemand stornieren. Nur EIGENE Orders (uid-Präfix
+   * bzw. `schutz.orderId` aus dem Buch); was ein Mensch direkt in der
+   * Alpaca-Oberfläche gestellt hat, bleibt stehen. */
+  let orders: TrennErgebnis['orders'];
+  let liveOrdersBleiben: true | undefined;
+  if (verbindung) {
+    const befund = await raeumeEigeneOrders(
+      verbindung.mode,
+      verbindung.schluessel,
+      uid,
+      new Set(schutzOrderIds.keys()),
+    );
+    if (befund.liveUebersprungen) {
+      /* Echtgeld: bewusst NICHTS storniert (Sperre in `raeumeEigeneOrders`,
+       * Begründung im Modulkopf dort). Die Antwort sagt es dem Nutzer —
+       * er räumt sein Live-Depot selbst im Alpaca-Dashboard auf. */
+      liveOrdersBleiben = true;
+      logger.info(`connectBroker ${uid}: Verbindung getrennt (Live — Orders bleiben stehen)`);
+    } else {
+      orders = {
+        storniert: befund.storniert,
+        gefuellt: befund.gefuellt,
+        fehler: befund.fehler,
+        listeFehlgeschlagen: befund.listeFehlgeschlagen,
+        moeglicherweiseUnvollstaendig: befund.moeglicherweiseUnvollstaendig,
+      };
+      /* Tote `schutz`-Verweise aus dem Buch nehmen — nur dort, wo die Order
+       * nachweislich nicht mehr offen ist, und nur, wenn dort NOCH GENAU
+       * DIESE Order steht: Ein parallel laufender Scan (60-s-Verbindungs-
+       * Cache anderer Instanzen) kann nach dem Storno über `pflegeSchutz`
+       * einen NEUEN Stop eingetragen haben — dessen lebende Kennung zu
+       * löschen hieße, den späteren Exit an der Reservierung scheitern zu
+       * lassen. Deshalb Transaktion mit Vergleich statt blindem Update; und
+       * `update()`, nicht `set(merge)`: Eine parallel gelöschte Position
+       * darf nicht als Geister-Dokument wiederauferstehen. */
+      const ergebnisse = await Promise.allSettled(
+        befund.erledigteOrderIds
+          .filter((oid) => schutzOrderIds.has(oid))
+          .map((oid) =>
+            db.runTransaction(async (tx) => {
+              const pRef = db
+                .collection('users')
+                .doc(uid)
+                .collection('positions')
+                .doc(schutzOrderIds.get(oid) as string);
+              const snap = await tx.get(pRef);
+              if (!snap.exists) return;
+              if ((snap.get('schutz.orderId') as unknown) === oid) {
+                tx.update(pRef, { schutz: null });
+              }
+            }),
+          ),
+      );
+      const putzFehler = ergebnisse.filter((r) => r.status === 'rejected').length;
+      if (putzFehler > 0) {
+        logger.warn(
+          `connectBroker ${uid}: ${putzFehler} schutz-Verweis(e) nicht bereinigt — tote orderId bleibt im Buch`,
+        );
+      }
+      logger.info(
+        `connectBroker ${uid}: Verbindung getrennt — Orders: ${befund.storniert} storniert, `
+          + `${befund.gefuellt} gefüllt, ${befund.fehler} Fehler`
+          + (befund.listeFehlgeschlagen ? ', Liste nicht abrufbar' : '')
+          + (befund.moeglicherweiseUnvollstaendig ? ', evtl. unvollständig (500er-Limit)' : ''),
+      );
+    }
+  } else {
+    logger.info(`connectBroker ${uid}: Verbindung getrennt (kein Order-Sweep — nicht lesbar)`);
+  }
+  return {
+    ok: true,
+    geloescht: true,
+    ...(orders ? { orders } : {}),
+    ...(liveOrdersBleiben ? { liveOrdersBleiben } : {}),
+    // Verbindung nicht lesbar heißt: garantiert kein Sweep — die UI muss
+    // auf mögliche Waisen hinweisen, gerade weil hier sonst nichts käme.
+    ...(!verbindung ? { sweepUnmoeglich: true as const } : {}),
+  };
 }
 
 export const connectBroker = onCall(
-  CALLABLE_OPTS,
+  /* 120 s statt der 60-s-Voreinstellung: Der Order-Sweep beim Trennen läuft
+   * NACH dem Schlüssel-Löschen — stürbe die Function im Sweep, bekäme der
+   * Nutzer einen Fehler, obwohl getrennt wurde, und das Buch bliebe
+   * ungeputzt. Die Frist in `raeumeEigeneOrders` (90 s) liegt bewusst
+   * darunter, damit immer die ehrliche Antwort gewinnt, nie der Timeout. */
+  { ...CALLABLE_OPTS, timeoutSeconds: 120 },
   async (request): Promise<ConnectResult | TrennErgebnis> => {
     const uid = request.auth?.uid;
     if (!uid) throw new HttpsError('unauthenticated', 'srv.anmeldungErforderlich');
