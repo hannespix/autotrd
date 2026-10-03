@@ -312,6 +312,23 @@ async function wiederherstellen(schreiben) {
       }
     }
 
+    /* Trades der neuen Engine (Marke `engineMode`, schreibt der Altcode nie)
+     * würden die alte Reife-, Tuner- und Klassen-Statistik füttern. Laut
+     * Bestandsaufnahme gibt es keine — der Schritt ist der Wächter dafür. */
+    const engineTrades = await db.collection(`users/${uid}/trades`).where('engineMode', 'in', ['paper', 'live']).get();
+    if (engineTrades.size) {
+      z.push(`Engine-Trades → tradesArchive: ${engineTrades.size}`);
+      if (schreiben) {
+        const b3 = db.batch();
+        for (const t of engineTrades.docs) {
+          if (t.get('engineMode') === 'live') continue; // Echtgeld-Belege nie anfassen
+          b3.set(db.doc(`users/${uid}/tradesArchive/${t.id}`), { ...t.data(), archivedAt: new Date().toISOString() });
+          b3.delete(t.ref);
+        }
+        await b3.commit();
+      }
+    }
+
     // Equity-Reihe seit dem Umstieg: nur ansehen, Entscheidung nach der Probe.
     const eq = await db.collection(`users/${uid}/equity`).where(FieldPath.documentId(), '>=', '2026-09-01').get();
     if (eq.size) {
