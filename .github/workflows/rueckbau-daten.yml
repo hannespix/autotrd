@@ -34,6 +34,8 @@ jobs:
       - name: Rückbau-Schritt ausführen
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+        # Strukturierte Logger-Zeilen der Functions tragen uids — das Log ist öffentlich.
         run: |
+          set -o pipefail
           echo "Modus: $(cat ops/rueckbau-modus.txt)"
-          node functions/scripts/rueckbau.mjs
+          node functions/scripts/rueckbau.mjs 2>&1 | { grep -v '"severity"' || true; }

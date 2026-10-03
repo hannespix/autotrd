@@ -363,7 +363,32 @@ async function einschalten() {
   await db.doc('admin/rueckbau').set({ eingeschaltetAm: new Date().toISOString() }, { merge: true });
 }
 
-if (modus === 'inventur') {
+/** Nur lesen: offene Orders eines Kontos mit Status, Klasse und Uhr. */
+async function ordersDiagnose() {
+  await tresorLaden();
+  const ziel = readFileSync(new URL('../../ops/rueckbau-ziel.txt', import.meta.url), 'utf8').trim();
+  const { brokerVerbindungLesend } = await import('../lib/functions/src/core/orderRouting.js');
+  const { alpacaFetch } = await import('../lib/functions/src/core/alpacaBroker.js');
+  for (const u of (await db.collection('users').get()).docs) {
+    if (pseudo(u.id) !== ziel) continue;
+    const v = await brokerVerbindungLesend(u.id);
+    const uhr = await alpacaFetch(v.mode, '/v2/clock', v.schluessel);
+    console.log(`Uhr: is_open=${uhr.is_open} next_open=${uhr.next_open}`);
+    const roh = await alpacaFetch(v.mode, '/v2/orders?status=open&limit=500&nested=true', v.schluessel);
+    for (const o of roh) {
+      const art = String(o.client_order_id ?? '').startsWith('atd-') ? 'atd' : 'sonst';
+      console.log(
+        `${o.symbol} ${o.side} ${o.type} class=${o.order_class || '-'} status=${o.status} tif=${o.time_in_force}`
+        + ` qty=${o.qty} stop=${o.stop_price} cid=${art} erstellt=${String(o.created_at).slice(0, 16)}`
+        + ` storno_angefragt=${o.canceled_at ?? '-'} legs=${(o.legs ?? []).map((l) => `${l.type}/${l.status}`).join(',') || '-'}`,
+      );
+    }
+  }
+}
+
+if (modus === 'orders-diagnose') {
+  await ordersDiagnose();
+} else if (modus === 'inventur') {
   await inventur();
 } else if (modus === 'anhalten') {
   await anhalten();
