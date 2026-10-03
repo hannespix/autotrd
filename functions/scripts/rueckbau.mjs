@@ -180,10 +180,128 @@ async function anhalten() {
   if (rest.size > 0) process.exit(1);
 }
 
+const schlafen = (ms) => new Promise((r) => setTimeout(r, ms));
+const UMSTIEG_GRUND = 'Umstieg auf den Engine-Takt';
+/** Felder, die nur bei Broker-Positionen Sinn haben — im Archiv eines Kontos
+ *  OHNE Broker dürfen sie nicht zurück ins Buch, sonst sucht der Scan eine
+ *  Order, die es nicht gibt. */
+const BROKER_FELDER = ['broker', 'brokerOrderId', 'schutz', 'quelle'];
+
+/**
+ * Bücher auf den alten Stand bringen.
+ *  - Konto MIT Broker (nur Papier): alle offenen Orders stornieren, Spiegel
+ *    der neuen Engine löschen, dann die alte Depot-Übernahme laufen lassen.
+ *  - Konto OHNE Broker: Umstiegs-Archiv zurück nach `positions`.
+ * `schreiben=false` gibt nur den Plan aus.
+ */
+async function wiederherstellen(schreiben) {
+  console.log(`Tresor-Schlüssel: ${await tresorLaden()}`);
+  const lib = '../lib/functions/src';
+  const { brokerVerbindungLesend } = await import(`${lib}/core/orderRouting.js`);
+  const { alpacaFetch } = await import(`${lib}/core/alpacaBroker.js`);
+  const { adoptBroker } = await import(`${lib}/callable/adoptBroker.js`);
+  const offeneOrders = async (v) => {
+    const roh = await alpacaFetch(v.mode, '/v2/orders?status=open&limit=500&nested=false', v.schluessel);
+    return Array.isArray(roh) ? roh : [];
+  };
+  let fehler = 0;
+
+  for (const u of (await db.collection('users').get()).docs) {
+    const uid = u.id;
+    const z = [];
+    const brokerDoc = await db.doc(`users/${uid}/private/broker`).get();
+    const pos = await db.collection(`users/${uid}/positions`).get();
+
+    if (brokerDoc.exists) {
+      const verb = await brokerVerbindungLesend(uid);
+      if (!verb) {
+        z.push('Broker nicht lesbar — übersprungen');
+        fehler++;
+      } else if (verb.mode !== 'paper') {
+        z.push('Broker LIVE — übersprungen (Rückbau fasst nur Papier an)');
+        fehler++;
+      } else {
+        const offen = await offeneOrders(verb);
+        const spiegel = pos.docs.filter((p) => p.get('quelle') === 'engine');
+        z.push(`Broker: ${offen.length} offene Order(s) stornieren, ${spiegel.length} Engine-Spiegel löschen, dann Übernahme`);
+        if (schreiben) {
+          if (offen.length) await alpacaFetch(verb.mode, '/v2/orders', verb.schluessel, { method: 'DELETE' });
+          let rest = offen.length ? await offeneOrders(verb) : [];
+          for (let i = 0; rest.length && i < 30; i++) {
+            await schlafen(2000);
+            rest = await offeneOrders(verb);
+          }
+          if (rest.length) {
+            // Ohne leeres Orderbuch keine Übernahme: Ein liegengebliebener
+            // Stop würde zur Waise und Exits blockieren.
+            z.push(`  ${rest.length} Order(s) nicht storniert — Übernahme NICHT ausgeführt`);
+            fehler++;
+          } else {
+            z.push('  Orderbuch leer');
+            const b = db.batch();
+            for (const p of spiegel) b.delete(p.ref);
+            if (spiegel.length) await b.commit();
+            const erg = await adoptBroker.run({ data: {}, auth: { uid, token: {} }, rawRequest: {}, acceptsStreaming: false });
+            z.push(`  Übernahme: positionen=${erg.positionen} geloescht=${erg.geloescht} trades=${erg.trades} cash=${r2(erg.cash)} schnitt=${erg.schnitt}`);
+          }
+        }
+      }
+    } else {
+      const archiv = (await db.collection(`users/${uid}/positionsArchiv`).get()).docs.filter(
+        (a) => a.get('archivGrund') === UMSTIEG_GRUND,
+      );
+      const vorhanden = new Set(pos.docs.map((p) => p.id));
+      const zurueck = [];
+      for (const a of archiv) {
+        if (vorhanden.has(a.id)) {
+          z.push(`  ${a.id}: steht schon im Buch — Archiv bleibt, nichts überschrieben`);
+          continue;
+        }
+        const daten = { ...a.data() };
+        delete daten.archiviertAm;
+        delete daten.archivGrund;
+        const entfernt = BROKER_FELDER.filter((f) => f in daten);
+        for (const f of entfernt) delete daten[f];
+        zurueck.push({ a, daten });
+        z.push(`  ${a.id}: qty=${r2(daten.qty)} avgEntry=${r2(daten.avgEntry)} openedAt=${String(daten.openedAt ?? '').slice(0, 10)}${entfernt.length ? ` (entfernt: ${entfernt.join(',')})` : ''}`);
+      }
+      if (archiv.length) z.unshift(`Archiv → Buch: ${zurueck.length} von ${archiv.length}`);
+      if (schreiben && zurueck.length) {
+        const b = db.batch();
+        for (const { a, daten } of zurueck) {
+          b.set(db.doc(`users/${uid}/positions/${a.id}`), daten);
+          b.delete(a.ref);
+        }
+        await b.commit();
+        z.push('  zurückgeschrieben');
+      }
+    }
+
+    // Equity-Reihe seit dem Umstieg: nur ansehen, Entscheidung nach der Probe.
+    const eq = await db.collection(`users/${uid}/equity`).where(FieldPath.documentId(), '>=', '2026-09-01').get();
+    if (eq.size) {
+      const kurz = (d) => `${d.id}:${r2(d.get('equity'))}/${r2(d.get('balance'))}/${d.get('positionsCount') ?? '?'}${d.get('uebernommen') ? 'U' : ''}`;
+      const docs = eq.docs;
+      const auswahl = [...docs.slice(0, 8), ...(docs.length > 11 ? [null] : []), ...docs.slice(Math.max(8, docs.length - 3))];
+      z.push(`equity ab 01.09. (Datum:Equity/Balance/Pos): ${auswahl.map((d) => (d ? kurz(d) : '…')).join(' ')}`);
+      const felder = new Set();
+      for (const d of docs) if (d.id >= UMSTIEG) for (const k of Object.keys(d.data())) felder.add(k);
+      z.push(`  Felder seit Umstieg: [${[...felder].sort().join(',')}]`);
+    }
+    if (z.length) console.log(`── ${pseudo(uid)}\n   ${z.join('\n   ')}`);
+  }
+  console.log(`\nFehler/Übersprungen: ${fehler}`);
+  if (fehler) process.exit(1);
+}
+
 if (modus === 'inventur') {
   await inventur();
 } else if (modus === 'anhalten') {
   await anhalten();
+} else if (modus === 'wiederherstellen-probe') {
+  await wiederherstellen(false);
+} else if (modus === 'wiederherstellen') {
+  await wiederherstellen(true);
 } else {
   console.error(`Unbekannter Modus „${modus}"`);
   process.exit(1);
