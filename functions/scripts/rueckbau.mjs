@@ -144,8 +144,46 @@ async function inventur() {
   }
 }
 
+/* Kurz-Hashes der 7 Konten, die vor dem Umstieg (07.09.) die Engine an hatten
+ * (6 abgeschaltet + 1 behalten; Quelle: Umstiegs-Log). Am 03.10. laufen genau
+ * diese 7 wieder. Sie sind die Liste, die nach dem Rückbau wieder an geht. */
+const VOR_UMSTIEG_AN = ['441aa35b', '442ba0ed', '45662a77', '795d6003', '91fd363e', 'b5eb6cb2', 'd733b350'];
+
+/** Alle laufenden Engines anhalten — vorher die Liste in `admin/rueckbau` sichern. */
+async function anhalten() {
+  const ref = db.doc('admin/rueckbau');
+  const laufend = (
+    await db.collection('users').where('settings.strategy.engine.running', '==', true).get()
+  ).docs.map((d) => d.id);
+  const vorher = await ref.get();
+  const bisher = vorher.exists ? (vorher.get('engineAnVorRueckbau') ?? []) : [];
+  // Vereinigen statt überschreiben: Ein zweiter Lauf (dann ist alles aus)
+  // darf die Liste nicht leeren.
+  const liste = [...new Set([...bisher, ...laufend])].sort();
+  await ref.set(
+    { engineAnVorRueckbau: liste, angehaltenAm: new Date().toISOString(), rueckbauAuf: '6f6bb5f' },
+    { merge: true },
+  );
+  const gesichert = (await ref.get()).get('engineAnVorRueckbau') ?? [];
+  if (gesichert.length !== liste.length) throw new Error('Sicherung nicht bestätigt — nichts angehalten.');
+  console.log(`gesichert in admin/rueckbau: ${gesichert.map(pseudo).sort().join(' ')}`);
+  const fremd = gesichert.map(pseudo).filter((h) => !VOR_UMSTIEG_AN.includes(h));
+  const fehlt = VOR_UMSTIEG_AN.filter((h) => !gesichert.map(pseudo).includes(h));
+  console.log(`Abgleich mit den 7 vor dem Umstieg: zusätzlich=[${fremd.join(' ')}] fehlt=[${fehlt.join(' ')}]`);
+
+  // NUR der Schalter, nichts sonst.
+  const batch = db.batch();
+  for (const uid of laufend) batch.update(db.doc(`users/${uid}`), { 'settings.strategy.engine.running': false });
+  if (laufend.length) await batch.commit();
+  const rest = await db.collection('users').where('settings.strategy.engine.running', '==', true).get();
+  console.log(`angehalten: ${laufend.length} · laufen danach noch: ${rest.size}`);
+  if (rest.size > 0) process.exit(1);
+}
+
 if (modus === 'inventur') {
   await inventur();
+} else if (modus === 'anhalten') {
+  await anhalten();
 } else {
   console.error(`Unbekannter Modus „${modus}"`);
   process.exit(1);
