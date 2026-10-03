@@ -20,10 +20,15 @@ export const APPCHECK_ENFORCE = process.env.APPCHECK_ENFORCE === '1';
  * CORS-Header. Öffentlich aufrufbar ≠ ungeschützt: Auth/App-Check/Quotas
  * prüft jede Function selbst.
  */
-export const CALLABLE_OPTS = {
+export const CALLABLE_OPTS: { enforceAppCheck: boolean; invoker: 'public'; secrets: string[] } = {
   enforceAppCheck: APPCHECK_ENFORCE,
   invoker: 'public',
-} as const;
+  /* Rückbau 03.10.: `keyVault.ts` liest `BROKER_MASTER_KEY` seit jeher, das
+   * Secret gab es am 29.08. aber noch nicht — Schlüssel lagen im Klartext.
+   * Seit 07.09. existiert es, und Verbindungen danach sind `v1:`-verschlüsselt.
+   * Ohne Bindung gälte jedes solche Konto still als „ohne Broker". */
+  secrets: ['BROKER_MASTER_KEY'],
+};
 
 /** Emulator-only-HTTP-Trigger: in Produktion gar nicht erst aufrufbar. */
 export const EMULATOR_TRIGGER_OPTS = { invoker: 'private' } as const;

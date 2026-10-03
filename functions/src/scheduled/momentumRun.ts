@@ -955,6 +955,7 @@ export const momentumRun = onSchedule(
     retryCount: 0,
     timeoutSeconds: 540,
     memory: '512MiB',
+    secrets: ['BROKER_MASTER_KEY'],
   },
   async () => {
     await runMomentum();

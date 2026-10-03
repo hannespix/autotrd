@@ -323,6 +323,7 @@ export const riskPulse = onSchedule(
     memory: '256MiB',
     timeoutSeconds: 55, // kürzer als der Takt: Läufe dürfen sich nie stapeln
     retryCount: 0, // ein verpasster Puls ist in 60 s ohnehin wieder da
+    secrets: ['BROKER_MASTER_KEY'],
   },
   async () => {
     const res = await runPulse();

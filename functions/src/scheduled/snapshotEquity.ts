@@ -766,6 +766,7 @@ export const snapshotEquity = onSchedule(
     // Schleife abbrechen — und ein halb geschriebener Snapshot-Tag verzerrt
     // Sharpe und Drawdown dauerhaft, weil die Serie eine Lücke bekäme.
     timeoutSeconds: 180,
+    secrets: ['BROKER_MASTER_KEY'],
   },
   async () => {
     await snapshotAll();

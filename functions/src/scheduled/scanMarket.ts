@@ -4303,6 +4303,8 @@ export const scanMarket = onSchedule(
     timeoutSeconds: 180,
     // Kein KI-Secret mehr: Der Scan ruft seit 28.07. keine Claude-API auf —
     // Der Scan ruft kein Sprachmodell mehr auf (MILESTONES M6).
+    // Tresor-Schlüssel für `v1:`-verschlüsselte Broker-Zugangsdaten (s. appcheck.ts).
+    secrets: ['BROKER_MASTER_KEY'],
   },
   async () => {
     try {
