@@ -1,0 +1,39 @@
+# Rückbau-Werkzeug (03.10.) — NUR auf dem Branch `rueckbau-daten`, wird nie
+# gemergt und danach gelöscht. Der Modus steht in `ops/rueckbau-modus.txt`.
+name: Rückbau Daten (Werkzeug)
+
+on:
+  push:
+    branches: [rueckbau-daten]
+
+concurrency: rueckbau-daten
+
+jobs:
+  rueckbau:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+    steps:
+      - name: Guard — Service-Account vorhanden?
+        if: env.FIREBASE_SERVICE_ACCOUNT == ''
+        run: |
+          echo "::error::FIREBASE_SERVICE_ACCOUNT fehlt."
+          exit 1
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - name: Abhängigkeiten installieren
+        run: npm ci
+      - name: Functions bauen
+        run: npm run build --workspace=functions
+      - name: Service-Account bereitstellen
+        run: printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-sa.json"
+      - name: Rückbau-Schritt ausführen
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
+        run: |
+          echo "Modus: $(cat ops/rueckbau-modus.txt)"
+          node functions/scripts/rueckbau.mjs
