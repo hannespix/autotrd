@@ -187,6 +187,21 @@ const UMSTIEG_GRUND = 'Umstieg auf den Engine-Takt';
  *  Order, die es nicht gibt. */
 const BROKER_FELDER = ['broker', 'brokerOrderId', 'schutz', 'quelle'];
 
+/** Equity-Docs nach `admin/rueckbau/equity-<uid>/` kopieren, bevor etwas
+ *  sie löscht — die Übernahme schneidet die ganze Reihe vor heute ab. */
+async function equitySichern(uid, abId = '') {
+  const q = db.collection(`users/${uid}/equity`);
+  const docs = (abId ? await q.where(FieldPath.documentId(), '>=', abId).get() : await q.get()).docs;
+  for (let i = 0; i < docs.length; i += 400) {
+    const b = db.batch();
+    for (const d of docs.slice(i, i + 400)) b.set(db.doc(`admin/rueckbau/equity-${uid}/${d.id}`), d.data());
+    await b.commit();
+  }
+  const gesichert = await db.collection(`admin/rueckbau/equity-${uid}`).count().get();
+  if (gesichert.data().count < docs.length) throw new Error(`Equity-Sicherung ${pseudo(uid)} unvollständig`);
+  return docs;
+}
+
 /**
  * Bücher auf den alten Stand bringen.
  *  - Konto MIT Broker (nur Papier): alle offenen Orders stornieren, Spiegel
@@ -200,6 +215,7 @@ async function wiederherstellen(schreiben) {
   const { brokerVerbindungLesend } = await import(`${lib}/core/orderRouting.js`);
   const { alpacaFetch } = await import(`${lib}/core/alpacaBroker.js`);
   const { adoptBroker } = await import(`${lib}/callable/adoptBroker.js`);
+  const { validateStrategy } = await import('../lib/shared/src/index.js');
   const offeneOrders = async (v) => {
     const roh = await alpacaFetch(v.mode, '/v2/orders?status=open&limit=500&nested=false', v.schluessel);
     return Array.isArray(roh) ? roh : [];
@@ -211,6 +227,9 @@ async function wiederherstellen(schreiben) {
     const z = [];
     const brokerDoc = await db.doc(`users/${uid}/private/broker`).get();
     const pos = await db.collection(`users/${uid}/positions`).get();
+    // Lehnt der ALTE Validator die Strategie ab, überspringt der Scan das Konto still.
+    const strategieFehler = validateStrategy(u.get('settings.strategy'));
+    if (strategieFehler.length) z.push(`⚠️ Strategie besteht den alten Validator NICHT: ${JSON.stringify(strategieFehler).slice(0, 400)}`);
 
     if (brokerDoc.exists) {
       const verb = await brokerVerbindungLesend(uid);
@@ -238,6 +257,8 @@ async function wiederherstellen(schreiben) {
             fehler++;
           } else {
             z.push('  Orderbuch leer');
+            const gesichert = await equitySichern(uid);
+            z.push(`  ${gesichert.length} Equity-Docs gesichert`);
             const b = db.batch();
             for (const p of spiegel) b.delete(p.ref);
             if (spiegel.length) await b.commit();
@@ -275,6 +296,20 @@ async function wiederherstellen(schreiben) {
         await b.commit();
         z.push('  zurückgeschrieben');
       }
+      /* Die Reihe ab dem Umstieg misst ein Buch OHNE diese Positionen —
+       * ein künstlicher Einbruch, dem mit der Rückkehr ein ebenso künstlicher
+       * Sprung folgen würde. Nur bei Konten, deren Buch sich hier ändert. */
+      if (zurueck.length) {
+        const ab = await db.collection(`users/${uid}/equity`).where(FieldPath.documentId(), '>=', UMSTIEG).get();
+        z.push(`  Equity ab ${UMSTIEG}: ${ab.size} Docs sichern + löschen`);
+        if (schreiben && ab.size) {
+          await equitySichern(uid, UMSTIEG);
+          const b2 = db.batch();
+          for (const d of ab.docs) b2.delete(d.ref);
+          await b2.commit();
+          z.push('  Equity bereinigt');
+        }
+      }
     }
 
     // Equity-Reihe seit dem Umstieg: nur ansehen, Entscheidung nach der Probe.
@@ -294,6 +329,23 @@ async function wiederherstellen(schreiben) {
   if (fehler) process.exit(1);
 }
 
+/** Engines wieder einschalten — genau die Liste aus `admin/rueckbau`. */
+async function einschalten() {
+  const { isStrategy } = await import('../lib/shared/src/index.js');
+  const liste = (await db.doc('admin/rueckbau').get()).get('engineAnVorRueckbau') ?? [];
+  const b = db.batch();
+  for (const uid of liste) {
+    const u = await db.doc(`users/${uid}`).get();
+    const gueltig = isStrategy(u.get('settings.strategy'));
+    console.log(`${pseudo(uid)}: access=${u.get('accessLevel') ?? 'approved'} strategieGueltig=${gueltig}`);
+    b.update(u.ref, { 'settings.strategy.engine.running': true });
+  }
+  if (liste.length) await b.commit();
+  const an = await db.collection('users').where('settings.strategy.engine.running', '==', true).get();
+  console.log(`eingeschaltet: ${liste.length} · laufen jetzt: ${an.size}`);
+  await db.doc('admin/rueckbau').set({ eingeschaltetAm: new Date().toISOString() }, { merge: true });
+}
+
 if (modus === 'inventur') {
   await inventur();
 } else if (modus === 'anhalten') {
@@ -302,6 +354,8 @@ if (modus === 'inventur') {
   await wiederherstellen(false);
 } else if (modus === 'wiederherstellen') {
   await wiederherstellen(true);
+} else if (modus === 'einschalten') {
+  await einschalten();
 } else {
   console.error(`Unbekannter Modus „${modus}"`);
   process.exit(1);
