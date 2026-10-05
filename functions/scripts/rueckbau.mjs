@@ -438,7 +438,32 @@ async function bilVerkaufen() {
   }
 }
 
-if (modus === 'bil-verkaufen') {
+/** Den Schein-Einbruch vom Umstiegstag aus der Equity-Reihe des Ziel-Kontos
+ *  nehmen — nur wenn er nachweislich einer ist (nur Cash, Nachbartage >10 % höher). */
+async function phantomTag() {
+  const ziel = opsListe('rueckbau-ziel.txt');
+  for (const u of (await db.collection('users').get()).docs) {
+    if (!ziel.includes(pseudo(u.id))) continue;
+    const col = db.collection(`users/${u.id}/equity`);
+    const [vor, tag, nach] = await Promise.all(['2026-09-06', UMSTIEG, '2026-09-08'].map((d) => col.doc(d).get()));
+    const e = (d) => Number(d.get('equity'));
+    console.log(`${pseudo(u.id)}: 06.09.=${e(vor)} 07.09.=${e(tag)} (pos=${tag.get('positionsCount')}) 08.09.=${e(nach)}`);
+    const phantom = tag.exists && tag.get('positionsCount') === 0 && e(tag) === Number(tag.get('balance'))
+      && e(tag) < 0.9 * Math.min(e(vor), e(nach));
+    if (!phantom) {
+      console.log('  kein eindeutiger Schein-Einbruch — nichts geändert');
+      continue;
+    }
+    await db.doc(`admin/rueckbau/equity-${u.id}/${UMSTIEG}`).set(tag.data());
+    await tag.ref.delete();
+    console.log(`  ${UMSTIEG} gesichert und entfernt`);
+  }
+  await inventur();
+}
+
+if (modus === 'phantom-tag') {
+  await phantomTag();
+} else if (modus === 'bil-verkaufen') {
   await bilVerkaufen();
 } else if (modus === 'orders-diagnose') {
   await ordersDiagnose();
