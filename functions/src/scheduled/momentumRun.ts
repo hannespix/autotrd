@@ -1189,9 +1189,29 @@ export async function runMomentumAusfuehrung(
     logger.info('momentumAusfuehrung: kein frisches Ziel — nichts zu tun');
     return { konten: 0, orders: 0, grund: 'kein_frisches_ziel' };
   }
-  const quotes = await getSparkBatch(ziel.map((z) => z.symbol));
+  // Hat der Abendlauf wegen fehlender Qualitätsdaten ausgesetzt, gilt das
+  // auch hier (Prüfbefund 05.10.) — nicht mit einem älteren Ziel nachholen.
+  if (doc.get('ausgesetzt') === true) {
+    logger.info('momentumAusfuehrung: Abendlauf hat ausgesetzt — heute kein Rebalancing');
+    return { konten: 0, orders: 0, grund: 'ausgesetzt' };
+  }
+  /* Kurse für das Ziel UND alles, was Broker-Konten im Sockel/Momentum-Depot
+   * halten: Sonst bewertete das Budget gehaltene Titel zum Einstand. Fehlt ein
+   * Ziel-Kurs (Yahoo-Ausfall), wird NICHTS getan: Die Käufe fielen sonst still
+   * weg, die Verkäufe liefen trotzdem, und das Konto gälte eine Woche lang
+   * als erledigt — in Cash (Prüfbefund 05.10.). Morgen erneut. */
+  // Nur die Doc-IDs (`select()`), ohne Filter — dieselbe Abfrage wie im
+  // Risiko-Puls; ein Filter über die Collection-Group bräuchte einen eigenen Index.
+  const gehaltenSnap = await db.collectionGroup('positions').select().get().catch(() => null);
+  const gehaltene = gehaltenSnap ? gehaltenSnap.docs.map((d) => d.id) : [];
+  const quotes = await getSparkBatch([...new Set([...ziel.map((z) => z.symbol), ...gehaltene])]);
   const preise = new Map<string, number>();
   for (const [sym, q] of quotes) if (q.price > 0) preise.set(sym, q.price);
+  const fehlend = ziel.filter((z) => !preise.has(z.symbol)).map((z) => z.symbol);
+  if (fehlend.length > 0) {
+    logger.warn(`momentumAusfuehrung: Kurse fehlen für ${fehlend.join(', ')} — heute kein Rebalancing`);
+    return { konten: 0, orders: 0, grund: 'kurse_fehlen' };
+  }
   const echte = await rebalanceMomentumUsers(ziel, preise, now, true);
   const sockel = await rebalanceCoreSleeve(ziel, preise, now, true);
   await db.doc('meta/momentum').set(
@@ -1215,7 +1235,8 @@ export const momentumAusfuehrung = onSchedule(
     schedule: '45 9 * * 1-5',
     timeZone: 'America/New_York',
     retryCount: 0,
-    timeoutSeconds: 300,
+    // Wie der Abendlauf: Orders laufen nacheinander, mit Teilfill-Fenster.
+    timeoutSeconds: 540,
     memory: '512MiB',
     secrets: ['BROKER_MASTER_KEY'],
   },

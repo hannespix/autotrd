@@ -64,8 +64,11 @@ export async function wachhundLauf(now = new Date()): Promise<{
     bewerteAktivitaet({
       jetztMs: now.getTime(),
       // `gehandelt` statt `laufend` (Prüfbefund 05.10.): Wartende, gesperrte
-      // und live-verriegelte Konten können gar nicht handeln.
-      laufend: health.get('konten.gehandelt') as number | undefined,
+      // und live-verriegelte Konten können gar nicht handeln. Momentum-Konten
+      // handelt der Momentum-Lauf — sie zählen mit.
+      laufend:
+        ((health.get('konten.gehandelt') as number | undefined) ?? 0)
+        + ((health.get('konten.momentum') as number | undefined) ?? 0),
       trades7t: health.get('trading.trades7t') as number | undefined,
       zaehlungAt: health.get('trading.at') as string | undefined,
     }),

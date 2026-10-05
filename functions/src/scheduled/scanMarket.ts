@@ -983,13 +983,20 @@ async function executeUserTrades(
        * Order ab, die der vierte wäre, auch einen Ausstieg. Deshalb pausieren
        * vorher die EINSTIEGE; Exits laufen unberührt weiter. */
       const heuteEt = handelstagET(now);
+      // Sockel-Positionen zählen NICHT (Prüfbefund 05.10.): Sie halten über
+      // Wochen; mitgezählt sperrte ein Sockel-Tag mit acht Käufen jedes kleine
+      // Konto für den Rest des Tages.
       const heuteEroeffnet = positionsSnap.docs.filter((d) => {
         const p = d.data() as Position;
         return p.broker === true
+          && p.core !== true
           && classify(d.id) !== 'crypto'
           && typeof p.openedAt === 'string'
           && handelstagET(new Date(p.openedAt)) === heuteEt;
       }).length;
+      // Stand zu Beginn des Scans — Einstiege DIESES Scans zählt `entrySperre`
+      // laufend dazu, sonst eröffnete ein einzelner Scan bis zum Positionslimit.
+      const startSymbole = new Set(positionsSnap.docs.map((d) => d.id));
       const pdtSperre = pdtEinstiegGesperrt(abgleichBefund.pdt, now, heuteEroeffnet);
       if (pdtSperre) gate.pdt_schutz += 1;
       // Zeitbasis der Signale (Owner 26.07., „Tradefrequenz erhöhen"):
@@ -1341,6 +1348,8 @@ async function executeUserTrades(
         atrPct: number | null | undefined,
         offen: readonly string[],
         side: 'long' | 'short',
+        /** `false` für das Schattenbuch: dessen `offen` ist ein anderes Buch. */
+        echtesBuch = true,
       ):
         | 'live_verriegelt'
         | 'nicht_handelbar'
@@ -1374,7 +1383,13 @@ async function executeUserTrades(
         if (abgleichBefund.sperre) return 'abgleich_drift';
         // PDT-Bremse (05.10.): frisch aus DIESEM Abgleich. Je Konto gezählt.
         // Krypto unterliegt der Regel nicht — dort kein Grund zu bremsen.
-        if (pdtSperre && classify(symbol) !== 'crypto') return 'pdt_schutz';
+        // Einstiege DIESES Scans laufend mitzählen (Prüfbefund 05.10.).
+        if (classify(symbol) !== 'crypto') {
+          const neuImScan = echtesBuch
+            ? offen.filter((s) => !startSymbole.has(s) && !coreSymbols.has(s) && classify(s) !== 'crypto').length
+            : 0;
+          if (pdtEinstiegGesperrt(abgleichBefund.pdt, now, heuteEroeffnet + neuImScan)) return 'pdt_schutz';
+        }
         const handelbar = isTradable(symbol);
         // Regime-Ampel Stufe 2 (04.08.): Im Aufwärtstrend keine Shorts, im
         // Stress gar keine neuen Einstiege. Die Messung dahinter steht an
@@ -1681,7 +1696,7 @@ async function executeUserTrades(
                 // A/B-Duell verzerrt: Der Schatten dürfte Trades machen, die
                 // dem echten Konto verboten sind, und gewönne aus dem
                 // falschen Grund.
-                if (entrySperre(symbol, data.atrPct, Object.keys(book.positions), 'long')) continue;
+                if (entrySperre(symbol, data.atrPct, Object.keys(book.positions), 'long', false)) continue;
                 // Sizing-Parität (MA4): gleiche Basis wie der echte Broker —
                 // Cash (Default) oder Startkapital, Deckung prüft der Cash.
                 const r = shadowTrade(book, symbol, 'buy', data.price, clamped.engine.maxPositionPct, {
@@ -1708,7 +1723,7 @@ async function executeUserTrades(
                 // Shadow-Short (R2): gleiche Entry-Guards wie der echte Pfad
                 if (Object.keys(book.positions).length >= posLimit) { gate.pos_limit += 1; continue; }
                 if (cooldownActive(doc.lastTrades?.[symbol], now, cdMin)) { gate.cooldown_aktiv += 1; continue; }
-                if (entrySperre(symbol, data.atrPct, Object.keys(book.positions), 'short')) continue;
+                if (entrySperre(symbol, data.atrPct, Object.keys(book.positions), 'short', false)) continue;
                 const r = shadowTrade(book, symbol, 'sell', data.price, clamped.engine.maxPositionPct, {
                   capital: sizingCapital(),
                   now,

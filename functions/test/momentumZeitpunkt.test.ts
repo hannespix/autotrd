@@ -88,3 +88,11 @@ describe('Quelltext-Wächter', () => {
     }
   });
 });
+
+describe('Morgenlauf — Nachprüfung 05.10.', () => {
+  const quelle = lies('functions', 'src', 'scheduled', 'momentumRun.ts');
+  it('setzt aus, wenn der Abendlauf aussetzte, und wenn ein Ziel-Kurs fehlt', () => {
+    expect(quelle).toContain("if (doc.get('ausgesetzt') === true) {");
+    expect(quelle).toContain("return { konten: 0, orders: 0, grund: 'kurse_fehlen' };");
+  });
+});

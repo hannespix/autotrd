@@ -141,7 +141,10 @@ describe('PDT-Bremse im Konto-Tor (05.10.)', () => {
     const scan = readFileSync(join(hier2, '../src/scheduled/scanMarket.ts'), 'utf8');
     const abgleich = readFileSync(join(hier2, '../src/core/brokerAbgleich.ts'), 'utf8');
     // Krypto unterliegt der Regel nicht; heute eröffnete Broker-Positionen zählen mit.
-    expect(scan).toContain("if (pdtSperre && classify(symbol) !== 'crypto') return 'pdt_schutz';");
+    expect(scan).toContain('if (pdtEinstiegGesperrt(abgleichBefund.pdt, now, heuteEroeffnet + neuImScan)) return \'pdt_schutz\';');
+    // Sockel-Positionen zählen nicht; das Schattenbuch zählt nicht laufend mit.
+    expect(scan).toContain('&& p.core !== true');
+    expect(scan.match(/entrySperre\(symbol, data\.atrPct, Object\.keys\(book\.positions\), '(long|short)', false\)/g)?.length).toBe(2);
     expect(scan).toContain('const pdtSperre = pdtEinstiegGesperrt(abgleichBefund.pdt, now, heuteEroeffnet);');
     const trade = readFileSync(join(hier2, '../src/callable/trade.ts'), 'utf8');
     expect(trade).toContain("if (tore.einstieg && !(tore.einstieg === 'pdt_schutz' && classify(symbol) === 'crypto')) {");
