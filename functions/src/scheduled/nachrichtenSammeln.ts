@@ -242,8 +242,14 @@ export async function runNachrichtenSammeln(
     const neuerCursor = abgeschnitten ? alterCursor : spaeterer(alterCursor, gelesenBis);
     // Wie weit der Sammler hinter der Gegenwart liegt — die Größe, an der
     // ein Stillstand sichtbar wird, auch wenn jeder Lauf „erfolgreich" ist.
-    const stehtBei = abgeschnitten ? (gelesenBis ?? alterCursor) : neuerCursor;
-    const rueckstandS = stehtBei ? Math.max(0, Math.round((jetzt().getTime() - Date.parse(stehtBei)) / 1000)) : null;
+    // Hinterher ist er NUR in einer Fortsetzungs-Kette: Ein vollständiger
+    // Durchgang hat alles bis jetzt gelesen. Der Cursor steht dann an der
+    // letzten Meldung — in einer stillen Nacht Stunden zurück, ohne dass
+    // irgendetwas fehlt (Befund im ersten Live-Lauf 05.10.: 872 s nach
+    // einer Viertelstunde Ruhe; nach 2 h hätte der Wachhund falsch gemeldet).
+    const rueckstandS = abgeschnitten
+      ? Math.max(0, Math.round((jetzt().getTime() - Date.parse(gelesenBis ?? alterCursor ?? abfrage.start)) / 1000))
+      : 0;
     await standRef.set(
       {
         ...(abgeschnitten

@@ -633,6 +633,14 @@ describe('runNachrichtenSammeln', () => {
     }
   });
 
+  it('stille Phase: vollständiger Durchgang ohne neue Meldung heißt Rückstand 0 — kein Fehlalarm', async () => {
+    store.set('meta/nachrichtenStand', { cursor: '2026-10-05T10:00:00.000Z' });
+    alpaca.artikel = [artikel(61, '2026-10-05T09:59:00Z', ['AAPL'])];
+    await run();
+    expect(stand()['cursor']).toBe('2026-10-05T10:00:00.000Z');
+    expect(stand()['rueckstandS']).toBe(0);
+  });
+
   it('ein Zeitstempel aus der Zukunft nagelt den Cursor nicht fest', async () => {
     alpaca.artikel = [artikel(8, '2026-10-05T13:50:00Z', ['AAPL'], '2027-01-01T00:00:00Z')];
     await run();
