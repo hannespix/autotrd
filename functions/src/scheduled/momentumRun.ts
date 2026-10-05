@@ -34,7 +34,12 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 import {
   MOMENTUM_DEFAULTS,
+  MOMENTUM_QUALITAET_FENSTER,
   MOMENTUM_TOP_N,
+  filtereRangliste,
+  medianDollarUmsatz,
+  qualitaetsMangel,
+  type QualitaetsGrund,
   allSymbols,
   applyMomentumOrders,
   classify,
@@ -67,11 +72,13 @@ import {
   DEEP_BACKFILL_V,
   chunkBarsByYear,
   getDeepDailyBars,
+  getMarketSnapshot,
   getSparkDailyCloses,
+  mitGrenze,
 } from '../core/marketData.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 import { fetchPositioning } from '../core/positioning.js';
-import { ladeUniversumSymbole } from '../core/universumLeser.js';
+import { ladeUniversumNamen, ladeUniversumSymbole } from '../core/universumLeser.js';
 import { brokerVerbindungLesend } from '../core/orderRouting.js';
 import { boersenOffen, offenMitUhr } from '../core/marktUhr.js';
 
@@ -100,6 +107,64 @@ export function rebalanceJetzt(hatBroker: boolean, aktienOffen: boolean): boolea
  */
 export function rebalanceErledigt(orders: number, ausgefuehrt: number): boolean {
   return orders === 0 || ausgefuehrt > 0;
+}
+
+/**
+ * Qualitätsurteile für die Spitze der Rangliste (Befund 05.10.).
+ *
+ * Geprüft werden nur Universums-Kandidaten mit positivem Score, höchstens
+ * `MOMENTUM_QUALITAET_FENSTER` — der Umsatz kostet je Symbol einen
+ * Yahoo-Abruf. Katalog-Symbole sind handverlesen und gelten als zugelassen.
+ * Universums-Symbole, die NICHT geprüft wurden (hinter dem Fenster) oder
+ * deren Name fehlt, gelten als `keine_daten`: Ein ungeprüfter Exot darf
+ * nicht durch die Hintertür ins Ziel rutschen, nur weil die Spitze verworfen
+ * wurde. Das Ziel füllt sich dann aus dem Katalog — es bleibt voll.
+ */
+export async function qualitaetsUrteile(
+  ranked: readonly RankedSymbol[],
+  katalog: ReadonlySet<string>,
+  closesMap: ReadonlyMap<string, number[]>,
+): Promise<{ mangel: (symbol: string) => QualitaetsGrund | null; geprueft: Map<string, QualitaetsGrund | null> }> {
+  const namen = await ladeUniversumNamen();
+  const geprueft = new Map<string, QualitaetsGrund | null>();
+  const kopf = ranked
+    .filter((r) => r.score > 0 && !katalog.has(r.symbol))
+    .slice(0, MOMENTUM_QUALITAET_FENSTER);
+  const umsatzNoetig: string[] = [];
+  for (const r of kopf) {
+    const name = namen.get(r.symbol);
+    if (name === undefined) {
+      geprueft.set(r.symbol, 'keine_daten');
+      continue;
+    }
+    const closes = closesMap.get(r.symbol);
+    const vorab = qualitaetsMangel({
+      imKatalog: false,
+      name,
+      letzterKurs: closes?.[closes.length - 1] ?? null,
+      medianDollarUmsatz: Number.POSITIVE_INFINITY, // Umsatz kommt gleich
+    });
+    if (vorab !== null) geprueft.set(r.symbol, vorab);
+    else umsatzNoetig.push(r.symbol);
+  }
+  const abrufe = await mitGrenze(umsatzNoetig.map((sym) => () => getMarketSnapshot(sym, '1mo')), 8);
+  umsatzNoetig.forEach((sym, i) => {
+    const a = abrufe[i];
+    const umsatz = a?.status === 'fulfilled' ? medianDollarUmsatz(a.value.bars) : null;
+    const closes = closesMap.get(sym);
+    geprueft.set(
+      sym,
+      qualitaetsMangel({
+        imKatalog: false,
+        name: namen.get(sym) ?? '',
+        letzterKurs: closes?.[closes.length - 1] ?? null,
+        medianDollarUmsatz: umsatz,
+      }),
+    );
+  });
+  const mangel = (symbol: string): QualitaetsGrund | null =>
+    katalog.has(symbol) ? null : geprueft.has(symbol) ? geprueft.get(symbol)! : 'keine_daten';
+  return { mangel, geprueft };
 }
 
 /** Leitindex des Marktfilters — der breiteste verfügbare US-Index. */
@@ -338,7 +403,23 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
   // Der Marktfilter läuft bewusst über den nicht handelbaren ^GSPC: Als
   // SIGNAL ist er das breiteste verfügbare US-Bild, gekauft wird er nie.
   const marktOffen = marketFilterPasses(indexCloses);
-  const ziel = targetPortfolio(ranked, marktOffen, MOMENTUM_TOP_N);
+
+  /* Qualitätsfilter (Befund 05.10.): keine Hebel-/Inverse-Produkte, keine
+   * Penny-Stocks, keine dünn gehandelten Titel aus dem Universum. Wer fällt,
+   * wird durch den Nächstbesten ERSETZT — das Ziel bleibt voll. Scheitert
+   * die Prüfung selbst, gilt nur der Katalog (lieber bekannte Namen als
+   * ungeprüfte Exoten), nie ein leeres Ziel. */
+  const katalogSet = new Set(katalog);
+  let urteile: Awaited<ReturnType<typeof qualitaetsUrteile>>;
+  try {
+    urteile = await qualitaetsUrteile(ranked, katalogSet, closesMap);
+  } catch (err) {
+    logger.warn('Momentum: Qualitätsprüfung fehlgeschlagen — Ziel nur aus dem Katalog', err);
+    urteile = { mangel: (s) => (katalogSet.has(s) ? null : 'keine_daten'), geprueft: new Map() };
+  }
+  const rankedQ = filtereRangliste(ranked, urteile.mangel).zugelassen;
+  const verworfenKopf = [...urteile.geprueft].filter(([, g]) => g !== null) as Array<[string, QualitaetsGrund]>;
+  const ziel = targetPortfolio(rankedQ, marktOffen, MOMENTUM_TOP_N);
 
   /* ── Marktbreite (Owner 18.08.) — MESSUNG, kein Tor ────────────────────
    *
@@ -431,7 +512,19 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
        * Sichten auf denselben Markt nebeneinander lesbar sind: der
        * Index-Filter (Durchschnitt) und die Verteilung dahinter. */
       breite,
-      top: ranked.slice(0, MOMENTUM_TOP_N).map((r) => ({ symbol: r.symbol, score: r.score })),
+      // Die GEFILTERTE Spitze: Sie speist auch die Scan-Symbole und die
+      // KI-Stimme — ein Exot, den der Sockel nicht kauft, soll dort auch
+      // nicht als Kandidat auftauchen.
+      top: rankedQ.slice(0, MOMENTUM_TOP_N).map((r) => ({ symbol: r.symbol, score: r.score })),
+      /* Was der Qualitätsfilter verworfen hat (05.10.) — ohne diese Zahl
+       * sähe ein Filter, der alles verwirft, aus wie ein Markt ohne
+       * Universums-Kandidaten. */
+      qualitaet: {
+        geprueft: urteile.geprueft.size,
+        verworfen: verworfenKopf.length,
+        gruende: verworfenKopf.reduce<Record<string, number>>((acc, [, g]) => ({ ...acc, [g]: (acc[g] ?? 0) + 1 }), {}),
+        beispiele: verworfenKopf.slice(0, 12).map(([sym, g]) => `${sym}:${g}`),
+      },
       ziel: ziel.map((z) => z.symbol),
       gehalten: Object.keys(book.holdings).sort(),
       equity,
