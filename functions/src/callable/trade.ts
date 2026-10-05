@@ -146,7 +146,9 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
           ? 'srv.breakerAktiv'
           : tore.einstieg === 'abgleich_drift'
             ? 'srv.abgleichDrift'
-            : 'srv.einstiegeGesperrt',
+            : tore.einstieg === 'pdt_schutz'
+              ? 'srv.pdtSchutz'
+              : 'srv.einstiegeGesperrt',
       );
     }
     /* Positionslimit auch von Hand (Audit 13.08., H3): 50 Käufe am Tag mit

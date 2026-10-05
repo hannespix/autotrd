@@ -6730,6 +6730,7 @@ function renderAccessNote(): void {
 const GATE_TEXT: ReadonlyArray<[string, string]> = [
   ['breaker_aktiv', t('gate.breakerAktiv')],
   ['abgleich_drift', t('gate.abgleichDrift')],
+  ['pdt_schutz', t('gate.pdtSchutz')],
   ['klasse_aus', t('gate.klasseAus')],
   ['regime_gegen_trend', t('gate.regimeGegenTrend')],
   ['regime_stress', t('gate.regimeStress')],

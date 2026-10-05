@@ -60,6 +60,7 @@ const KONTO_ROH = {
   trading_blocked: false,
   account_blocked: false,
   pattern_day_trader: false,
+  daytrade_count: 2,
 };
 
 const konto = (over: Partial<AlpacaKonto> = {}): AlpacaKonto => ({
@@ -72,6 +73,7 @@ const konto = (over: Partial<AlpacaKonto> = {}): AlpacaKonto => ({
   tradingBlocked: false,
   accountBlocked: false,
   patternDayTrader: false,
+  daytradeCount: 0,
   ...over,
 });
 
@@ -90,6 +92,13 @@ describe('Endpunkt-Trennung', () => {
     expect(f.mock.calls[0]![0]).toBe('https://api.alpaca.markets/v2/account');
     await alpacaKonto('paper', null, f);
     expect(f.mock.calls[1]![0]).toBe('https://paper-api.alpaca.markets/v2/account');
+  });
+
+  it('liest den Daytrade-Zähler für die PDT-Bremse (05.10.)', async () => {
+    const f = vi.fn().mockResolvedValue(antwort(KONTO_ROH));
+    const k = await alpacaKonto('paper', null, f);
+    expect(k.daytradeCount).toBe(2);
+    expect(k.patternDayTrader).toBe(false);
   });
 
   it('sendet die Schlüssel als Header', async () => {

@@ -229,6 +229,8 @@ export interface AlpacaKonto {
   accountBlocked: boolean;
   /** Wurde das Muster-Daytrader-Limit gerissen? */
   patternDayTrader: boolean;
+  /** Daytrades der letzten fünf Handelstage (`daytrade_count`) — PDT-Bremse. */
+  daytradeCount: number;
   /**
    * Konto-Eröffnung (ISO, `created_at`) — der ehrliche Anker der
    * Order-Historie (Owner-Wunsch 13.08.: Historie ohne 30-Tage-Deckel).
@@ -360,6 +362,7 @@ export async function alpacaKonto(
     tradingBlocked: d['trading_blocked'] === true,
     accountBlocked: d['account_blocked'] === true,
     patternDayTrader: d['pattern_day_trader'] === true,
+    daytradeCount: zahl(d['daytrade_count']),
     createdAt: typeof d['created_at'] === 'string' ? d['created_at'] : '',
   };
 }

@@ -122,3 +122,26 @@ describe('Konto-Tore — die Verdrahtung (Quelltext-Wächter)', () => {
     expect(trade).toContain('offenAktiv >= limit');
   });
 });
+
+describe('PDT-Bremse im Konto-Tor (05.10.)', () => {
+  const pdtJetzt = new Date('2026-10-05T15:00:00.000Z');
+  const pdt = { daytrades: 3, equity: 2_000, markiert: false, at: '2026-10-05T14:55:00.000Z' };
+
+  it('drei Daytrades unter 25.000 $ → nur Einstiege gesperrt, Handel frei', () => {
+    const t = kontoTore(stub({ 'risk.abgleich.pdt': pdt }), strat(), pdtJetzt);
+    expect(t.handel).toBeNull();
+    expect(t.einstieg).toBe('pdt_schutz');
+  });
+  it('ohne Stand oder mit großem Konto → frei', () => {
+    expect(kontoTore(stub({}), strat(), pdtJetzt).einstieg).toBeNull();
+    expect(kontoTore(stub({ 'risk.abgleich.pdt': { ...pdt, equity: 30_000 } }), strat(), pdtJetzt).einstieg).toBeNull();
+  });
+  it('Quelltext-Wächter: Scan prüft die Bremse in der Einstiegs-Sperre, der Abgleich vermerkt den Stand', () => {
+    const hier2 = dirname(fileURLToPath(import.meta.url));
+    const scan = readFileSync(join(hier2, '../src/scheduled/scanMarket.ts'), 'utf8');
+    const abgleich = readFileSync(join(hier2, '../src/core/brokerAbgleich.ts'), 'utf8');
+    expect(scan).toContain("if (pdtSperre) return 'pdt_schutz';");
+    expect(scan).toContain('const pdtSperre = pdtEinstiegGesperrt(abgleichBefund.pdt, now);');
+    expect(abgleich).toContain('...(pdtStand ? { pdt: pdtStand } : {}),');
+  });
+});

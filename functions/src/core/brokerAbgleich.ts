@@ -39,7 +39,7 @@ import {
   nurBrokerPositionen,
   type Abweichung,
 } from './alpacaBroker.js';
-import { kontoAbgleich, type KontoBefund } from '../../../shared/src/index.js';
+import { kontoAbgleich, type KontoBefund, type PdtStand } from '../../../shared/src/index.js';
 import { brokerVerbindungLesend, verbindungUnlesbar } from './orderRouting.js';
 
 /**
@@ -73,6 +73,8 @@ export interface AbgleichBefund {
   fremdbestand: number;
   /** Sollen Einstiege gesperrt werden? */
   sperre: boolean;
+  /** Daytrade-Stand des Brokers (PDT-Bremse, 05.10.) — fehlt, wenn das Konto nicht lesbar war. */
+  pdt?: PdtStand;
   /** Klartext für Log und Anzeige. */
   grund?: string;
   /**
@@ -254,9 +256,18 @@ export async function abgleichFuerKonto(
    * trotzdem etwas wert. Ein Kontoteil, der den ganzen Abgleich scheitern
    * laesst, machte die Pruefung insgesamt unzuverlaessiger statt besser. */
   let kontoBefund: KontoBefund | undefined;
+  let pdtStand: PdtStand | undefined;
   if (buch) {
     try {
       const k = await alpacaKonto(verbindung.mode, verbindung.schluessel);
+      // Daytrade-Stand für die PDT-Bremse (05.10.) — dieselbe Ablesung, kein
+      // zusätzlicher Aufruf.
+      pdtStand = {
+        daytrades: k.daytradeCount,
+        equity: k.equity,
+        markiert: k.patternDayTrader,
+        at: jetzt.toISOString(),
+      };
       /* Equity 0 im Buch heisst „nicht erhoben", nicht „Konto leer".
        *
        * Der Scan kann sie beim Aufruf nicht belastbar liefern (Kurse fehlen
@@ -355,6 +366,8 @@ export async function abgleichFuerKonto(
         }
       : {}),
     ...(verlauf ? { verlauf } : {}),
+    // Für Handeingabe und Momentum, die den Scan-Befund nicht in der Hand haben.
+    ...(pdtStand ? { pdt: pdtStand } : {}),
   });
 
   if (abweichungen.length === 0) {
@@ -371,6 +384,7 @@ export async function abgleichFuerKonto(
       sperre: kontoBefund?.sperre === true,
       ...(kontoBefund ? { konto: kontoBefund } : {}),
       ...(kontoBefund?.grund ? { grund: kontoBefund.grund } : {}),
+      ...(pdtStand ? { pdt: pdtStand } : {}),
     };
   }
   const beschreibe = (liste: Abweichung[]): string =>
@@ -392,6 +406,7 @@ export async function abgleichFuerKonto(
       fremdbestand: fremdbestand.length,
       sperre: kontoBefund?.sperre === true,
       ...(kontoBefund ? { konto: kontoBefund } : {}),
+      ...(pdtStand ? { pdt: pdtStand } : {}),
       grund:
         `Nur beim Broker (${fremdbestand.length}): ${beschreibe(fremdbestand)}`
         + (kontoBefund?.grund ? ` · ${kontoBefund.grund}` : ''),
@@ -409,6 +424,7 @@ export async function abgleichFuerKonto(
     fremdbestand: fremdbestand.length,
     sperre: true,
     ...(kontoBefund ? { konto: kontoBefund } : {}),
+    ...(pdtStand ? { pdt: pdtStand } : {}),
     grund:
       `Im Buch stehen ${fehlbestand.length} Position(en), die der Broker nicht hat: `
       + `${beschreibe(fehlbestand)}`
