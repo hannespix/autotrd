@@ -16,11 +16,17 @@ import { join } from 'node:path';
 const src = join(import.meta.dirname, '..', 'src');
 const lies = (...teile: string[]): string => readFileSync(join(src, ...teile), 'utf8');
 
-/** Der Optionsblock direkt nach `onSchedule(` — dort steht die Bindung. */
-function scheduleOptionen(text: string): string {
-  const ab = text.indexOf('onSchedule(');
+/** ALLE Optionsblöcke nach `onSchedule(` — eine Datei kann mehrere
+ *  zeitgesteuerte Functions tragen (momentumRun + momentumAusfuehrung). */
+function scheduleOptionen(text: string): string[] {
+  const bloecke: string[] = [];
+  let ab = text.indexOf('onSchedule(');
   expect(ab).toBeGreaterThan(-1);
-  return text.slice(ab, text.indexOf('async', ab));
+  while (ab > -1) {
+    bloecke.push(text.slice(ab, text.indexOf('async', ab)));
+    ab = text.indexOf('onSchedule(', ab + 1);
+  }
+  return bloecke;
 }
 
 describe('Tresor-Schlüssel ist gebunden', () => {
@@ -39,7 +45,7 @@ describe('Tresor-Schlüssel ist gebunden', () => {
       const text = lies('scheduled', name);
       if (!brokerModul.test(text) || !text.includes('onSchedule(')) continue;
       geprueft.push(name);
-      expect(scheduleOptionen(text), name).toContain("'BROKER_MASTER_KEY'");
+      for (const block of scheduleOptionen(text)) expect(block, name).toContain("'BROKER_MASTER_KEY'");
     }
     // Schranke gegen einen leeren Scan: Diese vier lesen nachweislich Zugangsdaten.
     expect(geprueft.sort()).toEqual(

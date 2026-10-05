@@ -15,6 +15,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { DEFAULT_STRATEGY, type Position, type Strategy } from '../../shared/src/index.js';
 import {
   abgleich,
@@ -993,13 +995,29 @@ describe('K-2 — routeOrder: Storno bei kein_fill, Nachschlag bei duplicate', (
       { body: { id: 'o9', status: 'new' } },
       { body: { id: 'o9', status: 'new' } },
       { body: {} }, // DELETE /v2/orders/o9
+      { body: { id: 'o9', status: 'canceled', filled_qty: '0', filled_avg_price: null } },
     );
     const r = await routeOrder(verbindung, oeffnend, f, SCHNELL);
     expect(r.ausgefuehrt).toBe(false);
     expect(r.grund).toBe('kein_fill');
     // Der vierte Aufruf IST der Storno — ohne ihn bliebe die Order stehen
-    // und füllte Minuten später parallel zum nächsten Scan-Kauf.
-    expect(f).toHaveBeenCalledTimes(4);
+    // und füllte Minuten später parallel zum nächsten Scan-Kauf. Der fünfte
+    // ist die Nachfrage bis zum Endzustand (Prüfbefund 05.10.).
+    const methoden = f.mock.calls.map((c) => (c[1] as RequestInit | undefined)?.method ?? 'GET');
+    expect(methoden).toEqual(['POST', 'GET', 'GET', 'DELETE', 'GET']);
+  });
+
+  it('Storno angenommen, aber im Zustand pending_cancel noch gefüllt → der Fill wird gebucht, kein Waise', async () => {
+    const f = antwortFolge(
+      { body: { id: 'o9', status: 'accepted' } },
+      { body: { id: 'o9', status: 'new' } },
+      { body: { id: 'o9', status: 'new' } },
+      { body: {} }, // DELETE angenommen
+      { body: { id: 'o9', status: 'pending_cancel', filled_qty: '5', filled_avg_price: '101' } },
+      { body: { id: 'o9', status: 'filled', filled_qty: '5', filled_avg_price: '101' } },
+    );
+    const r = await routeOrder(verbindung, oeffnend, f, SCHNELL);
+    expect(r).toEqual({ ausgefuehrt: true, fillPreis: 101, fillMenge: 5, brokerOrderId: 'o9' });
   });
 
   it('bucht den Fill, wenn der Storno zu spät kommt — die Order füllte doch', async () => {
@@ -1044,6 +1062,33 @@ describe('K-2 — routeOrder: Storno bei kein_fill, Nachschlag bei duplicate', (
     const r = await routeOrder(verbindung, { ...oeffnend, stornoBeiKeinFill: false }, f, SCHNELL);
     expect(r.ausgefuehrt).toBe(false);
     expect(r.grund).toBe('duplicate_ohne_fill');
+  });
+
+  it('422 unique, ERÖFFNENDE Ur-Order noch teilgefüllt → Fenster, Rest-Storno, Endstand gebucht (kein CCG-Muster)', async () => {
+    const f = antwortFolge(
+      { ok: false, status: 422, body: 'client_order_id must be unique' },
+      { body: { id: 'alt1', status: 'partially_filled', filled_qty: '53', filled_avg_price: '6.52' } }, // Nachschlag
+      { body: { id: 'alt1', status: 'partially_filled', filled_qty: '53', filled_avg_price: '6.52' } }, // Fenster 1
+      { body: { id: 'alt1', status: 'partially_filled', filled_qty: '60', filled_avg_price: '6.53' } }, // Fenster 2
+      { body: {} }, // DELETE
+      { body: { id: 'alt1', status: 'canceled', filled_qty: '61', filled_avg_price: '6.53' } },
+    );
+    const r = await routeOrder(verbindung, { ...oeffnend, symbol: 'CCG', qty: 1433 }, f, SCHNELL);
+    expect(r).toEqual({ ausgefuehrt: true, fillPreis: 6.53, fillMenge: 61, brokerOrderId: 'alt1' });
+    const methoden = f.mock.calls.map((c) => (c[1] as RequestInit | undefined)?.method ?? 'GET');
+    expect(methoden).toContain('DELETE');
+  });
+
+  it('422 unique, ERÖFFNENDE Ur-Order füllt im Fenster ganz → kein Storno', async () => {
+    const f = antwortFolge(
+      { ok: false, status: 422, body: 'client_order_id must be unique' },
+      { body: { id: 'alt1', status: 'new', filled_qty: '0', filled_avg_price: null } },
+      { body: { id: 'alt1', status: 'filled', filled_qty: '5', filled_avg_price: '101' } },
+    );
+    const r = await routeOrder(verbindung, oeffnend, f, SCHNELL);
+    expect(r).toEqual({ ausgefuehrt: true, fillPreis: 101, fillMenge: 5, brokerOrderId: 'alt1' });
+    const methoden = f.mock.calls.map((c) => (c[1] as RequestInit | undefined)?.method ?? 'GET');
+    expect(methoden).not.toContain('DELETE');
   });
 
   it('anderes 422 (kein unique) bleibt ein broker_fehler', async () => {
@@ -1231,9 +1276,10 @@ describe('Root-Cause-Fix: Teilausführung einer SCHLIESSENDEN Order', () => {
     expect(f).toHaveBeenCalledTimes(2); // kein dritter (DELETE-)Aufruf
   });
 
-  it('ERÖFFNENDE Order (schliessend fehlt): Teilfill wird NICHT storniert', async () => {
-    // Für Einstiege gilt weiterhin die alte Regel — ein Rest-Einstieg ist
-    // ohnehin nicht gewollt, kein Sonderfall nötig.
+  it('ohne beide Schalter (kein Produktionspfad): Teilfill wird NICHT storniert', async () => {
+    // broker.ts setzt immer GENAU einen der beiden Schalter. Einstiege laufen
+    // mit `stornoBeiKeinFill` und stornieren ihren Rest seit 05.10. ebenfalls
+    // — siehe „Befund 05.10." unten.
     const f = antwortFolge(
       { body: { id: 'o1', status: 'accepted' } },
       { body: { id: 'o1', status: 'partially_filled', filled_qty: '2', filled_avg_price: '190' } },
@@ -1247,5 +1293,208 @@ describe('Root-Cause-Fix: Teilausführung einer SCHLIESSENDEN Order', () => {
     expect(r.fillMenge).toBe(2);
     expect(r.restStorniert).toBeUndefined();
     expect(f).toHaveBeenCalledTimes(2);
+  });
+});
+
+/* ── Befund 05.10. (CCG): Teilausführung einer ERÖFFNENDEN Order ────────────
+ *
+ * Der erste Poll meldete 53 von 1.433 Stück, gebucht wurden 53 — und die
+ * Market-Order füllte danach weiter, bis 1.380 Stück ohne Buch beim Broker
+ * lagen. Seitdem schöpft routeOrder bei Einstiegen das Wartefenster aus,
+ * storniert erst DANN den Rest und fragt bis zum Endzustand nach.
+ * SCHNELL = 2 Polls im Fenster, ohne Pause.
+ */
+describe('Befund 05.10.: Teilausführung einer ERÖFFNENDEN Order', () => {
+  const verbindung = { mode: 'paper' as const, schluessel: SCHLUESSEL };
+  const einstieg = {
+    uid: 'u1',
+    symbol: 'CCG',
+    side: 'buy' as const,
+    qty: 1433,
+    laufId: 'scan-ccg',
+    stornoBeiKeinFill: true,
+  };
+  const teil = (q: string, preis = '6.52', status = 'partially_filled') => ({
+    body: { id: 'o1', status, filled_qty: q, filled_avg_price: preis },
+  });
+  const methoden = (f: ReturnType<typeof vi.fn>): string[] =>
+    f.mock.calls.map((c) => (c[1] as RequestInit | undefined)?.method ?? 'GET');
+
+  it('füllt die Order im Fenster doch noch GANZ → volle Menge, kein Storno (Einstiege bleiben groß)', async () => {
+    const f = antwortFolge({ body: { id: 'o1', status: 'accepted' } }, teil('53'), teil('1433', '6.52', 'filled'));
+    const r = await routeOrder(verbindung, einstieg, f, SCHNELL);
+    expect(r).toEqual({ ausgefuehrt: true, fillPreis: 6.52, fillMenge: 1433, brokerOrderId: 'o1' });
+    expect(methoden(f)).toEqual(['POST', 'GET', 'GET']);
+  });
+
+  it('der CCG-Fall: nach dem Fenster noch teilgefüllt → Rest storniert, Endzustand gebucht', async () => {
+    const f = antwortFolge(
+      { body: { id: 'o1', status: 'accepted' } },
+      teil('53'),
+      teil('55'),
+      { body: {} }, // DELETE — angenommen
+      teil('60', '6.53', 'canceled'),
+    );
+    const r = await routeOrder(verbindung, einstieg, f, SCHNELL);
+    expect(r).toEqual({ ausgefuehrt: true, fillPreis: 6.53, fillMenge: 60, brokerOrderId: 'o1' });
+    expect(methoden(f)).toEqual(['POST', 'GET', 'GET', 'DELETE', 'GET']);
+  });
+
+  it('Storno asynchron: pending_cancel füllt noch nach → es wird bis zum Endzustand nachgefragt', async () => {
+    const f = antwortFolge(
+      { body: { id: 'o1', status: 'accepted' } },
+      teil('53'),
+      teil('53'),
+      { body: {} },
+      teil('60', '6.53', 'pending_cancel'),
+      teil('75', '6.54', 'canceled'),
+    );
+    const r = await routeOrder(verbindung, einstieg, f, SCHNELL);
+    expect(r.fillMenge).toBe(75);
+    expect(methoden(f)).toEqual(['POST', 'GET', 'GET', 'DELETE', 'GET', 'GET']);
+  });
+
+  it('bleibt auch nach drei Nachfragen ohne Endzustand → zuletzt gemeldete Menge, kein Crash', async () => {
+    const f = antwortFolge(
+      { body: { id: 'o1', status: 'accepted' } },
+      teil('53'),
+      teil('53'),
+      { body: {} },
+      teil('60', '6.53', 'pending_cancel'),
+      teil('61', '6.53', 'pending_cancel'),
+      teil('62', '6.53', 'pending_cancel'),
+    );
+    const r = await routeOrder(verbindung, einstieg, f, SCHNELL);
+    expect(r.fillMenge).toBe(62);
+    expect(methoden(f).filter((m) => m === 'GET')).toHaveLength(5); // 2 Fenster + 3 Nachfragen
+  });
+
+  it('Storno zu spät (422), Order inzwischen GANZ gefüllt → die ganze Menge wird gebucht', async () => {
+    const f = antwortFolge(
+      { body: { id: 'o1', status: 'accepted' } },
+      teil('53'),
+      teil('53'),
+      { ok: false, status: 422, body: 'order is not cancelable' },
+      teil('1433', '6.52', 'filled'),
+    );
+    const r = await routeOrder(verbindung, einstieg, f, SCHNELL);
+    expect(r.fillMenge).toBe(1433);
+  });
+
+  it('Storno wirft → genau ein zweiter Versuch, danach Nachfrage', async () => {
+    let deletes = 0;
+    const folge = [
+      { id: 'o1', status: 'accepted' },
+      { id: 'o1', status: 'partially_filled', filled_qty: '53', filled_avg_price: '6.52' },
+      { id: 'o1', status: 'partially_filled', filled_qty: '53', filled_avg_price: '6.52' },
+      { id: 'o1', status: 'canceled', filled_qty: '80', filled_avg_price: '6.55' },
+    ];
+    let gets = 0;
+    const f = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'DELETE') {
+        deletes += 1;
+        if (deletes === 1) throw new TypeError('fetch failed');
+        return { ok: true, status: 200, text: async () => '{}' } as unknown as Response;
+      }
+      const b = folge[Math.min(gets++, folge.length - 1)];
+      return { ok: true, status: 200, text: async () => JSON.stringify(b) } as unknown as Response;
+    });
+    const r = await routeOrder(verbindung, einstieg, f, SCHNELL);
+    expect(deletes).toBe(2);
+    expect(r.fillMenge).toBe(80);
+  });
+
+  it('Storno UND Nachfrage werfen → die Menge aus dem Fenster gilt, kein Crash', async () => {
+    let gets = 0;
+    const f = vi.fn(async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'DELETE') throw new TypeError('fetch failed');
+      gets += 1;
+      if (gets > 3) throw new TypeError('fetch failed');
+      const b = gets === 1
+        ? { id: 'o1', status: 'accepted' }
+        : { id: 'o1', status: 'partially_filled', filled_qty: '53', filled_avg_price: '6.52' };
+      return { ok: true, status: 200, text: async () => JSON.stringify(b) } as unknown as Response;
+    });
+    const r = await routeOrder(verbindung, einstieg, f, SCHNELL);
+    expect(r).toEqual({ ausgefuehrt: true, fillPreis: 6.52, fillMenge: 53, brokerOrderId: 'o1' });
+  });
+
+  it('Nachfrage liefert 404 → die Menge aus dem Fenster gilt', async () => {
+    const f = antwortFolge(
+      { body: { id: 'o1', status: 'accepted' } },
+      teil('53'),
+      teil('53'),
+      { body: {} },
+      { ok: false, status: 404, body: '' },
+    );
+    const r = await routeOrder(verbindung, einstieg, f, SCHNELL);
+    expect(r.fillMenge).toBe(53);
+  });
+
+  it('eröffnender SHORT (side sell) folgt derselben Regel', async () => {
+    const f = antwortFolge(
+      { body: { id: 'o1', status: 'accepted' } },
+      teil('10', '50'),
+      teil('10', '50'),
+      { body: {} },
+      teil('12', '50', 'canceled'),
+    );
+    const r = await routeOrder(verbindung, { ...einstieg, side: 'sell' as const, qty: 40 }, f, SCHNELL);
+    expect(r.fillMenge).toBe(12);
+  });
+
+  it('SCHLIESSENDE Order wartet NICHT ab — Exits behalten die sofortige Rückkehr', async () => {
+    const f = antwortFolge(
+      { body: { id: 'o1', status: 'accepted' } },
+      teil('21', '101'),
+      { body: {} },
+      teil('21', '101', 'canceled'),
+    );
+    const r = await routeOrder(
+      verbindung,
+      { uid: 'u1', symbol: 'NVDA', side: 'sell', qty: 25, laufId: 'scan-9', schliessend: true },
+      f,
+      SCHNELL,
+    );
+    expect(r.restStorniert).toBe(true);
+    expect(methoden(f)).toEqual(['POST', 'GET', 'DELETE', 'GET']);
+  });
+
+  it('Quelltext-Wächter: der Buchungspfad routet JEDEN Einstieg mit stornoBeiKeinFill', () => {
+    // Der neue Zweig hängt an diesem Schalter. Fiele er im Buchungspfad weg,
+    // wäre der CCG-Fall still zurück — kein Unit-Test von routeOrder sähe es.
+    const quelle = readFileSync(join(import.meta.dirname, '..', 'src', 'core', 'broker.ts'), 'utf8');
+    expect(quelle).toContain('stornoBeiKeinFill: eroeffnet,');
+  });
+});
+
+describe('warteAufFill — teilfillAbwarten', () => {
+  const teilBody = { id: 'o1', status: 'partially_filled', filled_qty: '5', filled_avg_price: '10' };
+
+  it('Teilfill, dann voll → das volle Ergebnis', async () => {
+    const f = antworten(teilBody, { ...teilBody, status: 'filled', filled_qty: '9' });
+    const r = await warteAufFill('paper', 'o1', SCHLUESSEL, { ...SCHNELL, teilfillAbwarten: true }, f);
+    expect(r?.qty).toBe(9);
+    expect(r?.status).toBe('filled');
+  });
+
+  it('Teilfill bis zum Fensterende → der letzte Teilfill', async () => {
+    const f = antworten(teilBody, { ...teilBody, filled_qty: '6' });
+    const r = await warteAufFill('paper', 'o1', SCHLUESSEL, { ...SCHNELL, teilfillAbwarten: true }, f);
+    expect(r?.qty).toBe(6);
+    expect(r?.status).toBe('partially_filled');
+  });
+
+  it('Teilfill, dann storniert → der Teilfill bleibt gültig (was ausgeführt ist, ist ausgeführt)', async () => {
+    const f = antworten(teilBody, { id: 'o1', status: 'canceled', filled_qty: '5', filled_avg_price: '10' });
+    const r = await warteAufFill('paper', 'o1', SCHLUESSEL, { versuche: 3, pauseMs: 0, teilfillAbwarten: true }, f);
+    expect(r?.qty).toBe(5);
+  });
+
+  it('ohne die Option kehrt ein Teilfill sofort zurück (Exits)', async () => {
+    const f = antworten(teilBody, { ...teilBody, status: 'filled', filled_qty: '9' });
+    const r = await warteAufFill('paper', 'o1', SCHLUESSEL, SCHNELL, f);
+    expect(r?.qty).toBe(5);
+    expect(f).toHaveBeenCalledTimes(1);
   });
 });

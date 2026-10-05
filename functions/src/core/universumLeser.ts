@@ -68,3 +68,40 @@ export async function ladeUniversumSymbole(jetztMs = Date.now()): Promise<Readon
     return cache?.symbole ?? new Set<string>();
   }
 }
+
+/**
+ * Namen aus den Block-Dokumenten — für den Qualitätsfilter der Momentum-
+ * Rangliste (Befund 05.10.): Hebel- und Inverse-Produkte erkennt man nur am
+ * Namen. Pur, aus demselben Grund wie `symboleAusBloecken`.
+ */
+export function namenAusBloecken(bloecke: readonly unknown[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const block of bloecke) {
+    const liste = (block as { symbole?: unknown } | null | undefined)?.symbole;
+    if (!Array.isArray(liste)) continue;
+    for (const eintrag of liste) {
+      const e = eintrag as { symbol?: unknown; name?: unknown } | null | undefined;
+      if (typeof e?.symbol === 'string' && e.symbol.length > 0) {
+        out.set(e.symbol, typeof e.name === 'string' ? e.name : '');
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Symbol → Name des gespeicherten Universums. Bewusst OHNE Cache: Der einzige
+ * Leser ist der tägliche Momentum-Lauf. Lesefehler liefern eine leere Map —
+ * dann gilt für jeden Universums-Kandidaten „Name unbekannt", und der
+ * Momentum-Lauf verwirft ihn als `keine_daten`, statt einen Hebel-ETF
+ * durchzulassen, den nur der Name verraten hätte.
+ */
+export async function ladeUniversumNamen(): Promise<ReadonlyMap<string, string>> {
+  try {
+    const snap = await getFirestore().collection('meta/alpacaUniversum/bloecke').get();
+    return namenAusBloecken(snap.docs.map((d) => d.data()));
+  } catch (err) {
+    logger.warn('Universums-Namen nicht lesbar — Universums-Kandidaten gelten als ungeprüft', err);
+    return new Map();
+  }
+}

@@ -60,6 +60,8 @@ describe('die trade-Grenze wirft Codes, nie Prosa', () => {
     expect(trade).toContain("tore.einstieg === 'breaker_aktiv'");
     expect(trade).toContain("'srv.breakerAktiv'");
     expect(trade).toContain("'srv.abgleichDrift'");
+    expect(trade).toContain("tore.einstieg === 'pdt_schutz'");
+    expect(trade).toContain("'srv.pdtSchutz'");
   });
 
   it('das Kursalter reist als Zahl, nicht als Satz', () => {

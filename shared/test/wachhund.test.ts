@@ -8,7 +8,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  bewerteAktivitaet,
   bewerteHerzschlag,
+  naechsterAktivitaetsZustand,
   naechsterAlarm,
   KURSQUELLE_MIN_FEHLER,
   SCAN_TOT_MIN,
@@ -145,5 +147,33 @@ describe('naechsterAlarm', () => {
     const a = naechsterAlarm(alt, { ok: true, text: 'Letzter Lauf vor 3 min.' }, jetzt);
     expect(a.aktiv).toBe(false);
     expect(a.grund).toBeUndefined();
+  });
+});
+
+describe('Untätigkeits-Wächter (05.10.)', () => {
+  const jetztMs = Date.parse('2026-10-05T20:00:00.000Z');
+  const frisch = '2026-10-05T03:00:00.000Z';
+
+  it('Engines an, aber 7 Tage kein geschlossener Trade → Alarm', () => {
+    const u = bewerteAktivitaet({ jetztMs, laufend: 7, trades7t: 0, zaehlungAt: frisch });
+    expect(u.ok).toBe(false);
+    expect(u.text).toContain('7 Engine(s) an');
+  });
+  it('Trades vorhanden → ruhig', () => {
+    expect(bewerteAktivitaet({ jetztMs, laufend: 7, trades7t: 12, zaehlungAt: frisch }).ok).toBe(true);
+  });
+  it('keine Engine an, fehlende oder alte Zählung → kein Alarm (fehlende Daten sind kein Befund)', () => {
+    expect(bewerteAktivitaet({ jetztMs, laufend: 0, trades7t: 0, zaehlungAt: frisch }).ok).toBe(true);
+    expect(bewerteAktivitaet({ jetztMs, laufend: 7, trades7t: 0 }).ok).toBe(true);
+    expect(bewerteAktivitaet({ jetztMs, laufend: 7, trades7t: 0, zaehlungAt: '2026-10-02T03:00:00.000Z' }).ok).toBe(true);
+  });
+  it('„seit" bleibt stehen, solange der Alarm anhält; Entwarnung löscht es', () => {
+    const alarm = { ok: false, text: 'x' };
+    const a1 = naechsterAktivitaetsZustand(undefined, alarm, '2026-10-05T10:00:00.000Z');
+    const a2 = naechsterAktivitaetsZustand(a1, alarm, '2026-10-05T10:10:00.000Z');
+    expect(a2.seit).toBe('2026-10-05T10:00:00.000Z');
+    const a3 = naechsterAktivitaetsZustand(a2, { ok: true, text: 'ok' }, '2026-10-05T10:20:00.000Z');
+    expect(a3.aktiv).toBe(false);
+    expect(a3.seit).toBeUndefined();
   });
 });

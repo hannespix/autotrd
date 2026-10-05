@@ -53,6 +53,9 @@ const SCHEDULES = [
   { fn: 'snapshotEquity', service: 'snapshotequity', cron: '15 17 * * *', was: 'Equity-Snapshot' },
   { fn: 'autoTune', service: 'autotune', cron: '45 17 * * *', was: 'Auto-Tuner' },
   { fn: 'momentumRun', service: 'momentumrun', cron: '0 18 * * *', was: 'Momentum-Ranking' },
+  // Morgenlauf (05.10.): Sockel-Orders der Broker-Konten in der Handelszeit —
+  // um 18:00 wurden sie bei geschlossener Börse sofort wieder storniert.
+  { fn: 'momentumAusfuehrung', service: 'momentumausfuehrung', cron: '45 9 * * 1-5', was: 'Sockel-Ausführung (Broker)' },
   { fn: 'strukturSuche', service: 'struktursuche', cron: '10 18 * * *', was: 'Struktursuche' },
   // Nach allen Tages-Läufen: Der Bericht kommentiert den FERTIGEN Tagesstand.
   { fn: 'kiBericht', service: 'kibericht', cron: '25 18 * * *', was: 'KI-Lagebericht' },

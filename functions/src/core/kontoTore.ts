@@ -26,7 +26,7 @@
  * offene Position muss schließbar bleiben, gerade wenn das Konto brennt.
  */
 
-import { pruefeBreaker, resetLaeuft, type Strategy } from '../../../shared/src/index.js';
+import { pdtEinstiegGesperrt, pruefeBreaker, resetLaeuft, type Strategy } from '../../../shared/src/index.js';
 import { KAPITAL_DECKEL_STD } from './broker.js';
 import { breakerHeuteAusgeloest, handelstagET } from '../scheduled/scanMarket.js';
 
@@ -36,8 +36,8 @@ export interface KontoTore {
    * hinterließe jede Buchung einen Trade, den der Schnitt nicht mitnimmt.
    */
   handel: 'reset_laeuft' | null;
-  /** Sperrt nur EINSTIEGE: Notbremse bzw. Buch/Broker-Drift. */
-  einstieg: 'breaker_aktiv' | 'abgleich_drift' | null;
+  /** Sperrt nur EINSTIEGE: Notbremse, Buch/Broker-Drift bzw. PDT-Bremse. */
+  einstieg: 'breaker_aktiv' | 'abgleich_drift' | 'pdt_schutz' | null;
   /** Klartext für Fehlermeldung und Log. */
   grund?: string;
 }
@@ -106,6 +106,19 @@ export function kontoTore(
       grund:
         'Buch und Broker-Depot weichen voneinander ab — neue Einstiege sind '
         + 'gesperrt, bis der Abgleich wieder stimmt. Verkäufe bleiben möglich.',
+    };
+  }
+
+  // PDT-Bremse (05.10.): Ein vierter Daytrade unter 25.000 $ sperrte das
+  // Konto beim Broker für 90 Tage — Einstiege werden vorher angehalten.
+  if (pdtEinstiegGesperrt(snap.get('risk.abgleich.pdt'), jetzt)) {
+    return {
+      handel: null,
+      einstieg: 'pdt_schutz',
+      grund:
+        'Drei Daytrades in fünf Handelstagen bei unter 25.000 $ — ein vierter würde '
+        + 'das Konto beim Broker für 90 Tage sperren. Neue Einstiege pausieren, '
+        + 'Verkäufe bleiben möglich.',
     };
   }
 

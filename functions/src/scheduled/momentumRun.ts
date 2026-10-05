@@ -34,7 +34,12 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 import {
   MOMENTUM_DEFAULTS,
+  MOMENTUM_QUALITAET_FENSTER,
   MOMENTUM_TOP_N,
+  filtereRangliste,
+  medianDollarUmsatz,
+  qualitaetsMangel,
+  type QualitaetsGrund,
   allSymbols,
   applyMomentumOrders,
   classify,
@@ -67,11 +72,115 @@ import {
   DEEP_BACKFILL_V,
   chunkBarsByYear,
   getDeepDailyBars,
+  getMarketSnapshot,
+  getSparkBatch,
   getSparkDailyCloses,
+  mitGrenze,
 } from '../core/marketData.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 import { fetchPositioning } from '../core/positioning.js';
-import { ladeUniversumSymbole } from '../core/universumLeser.js';
+import { ladeUniversumNamen, ladeUniversumSymbole } from '../core/universumLeser.js';
+import { brokerVerbindungLesend } from '../core/orderRouting.js';
+import { boersenOffen, offenMitUhr } from '../core/marktUhr.js';
+
+/**
+ * Darf dieses Konto JETZT rebalancen? (Befund 05.10.)
+ *
+ * Der Lauf liegt um 18:00 ET — nach Börsenschluss. Für Konten mit Broker
+ * hieß das bis heute: Jede Sockel-Order ging bei geschlossener Börse raus,
+ * der Storno-Pfad für ungefüllte Einstiege (K-2c) nahm sie nach Sekunden
+ * wieder zurück (03.10.: alle acht „canceled") — und der Lauf stempelte
+ * trotzdem `lastRebalance`. Broker-Konten bekamen ihren Sockel praktisch nie.
+ *
+ * Jetzt verschiebt der Abendlauf Broker-Konten, ohne zu stempeln, und der
+ * leichte Morgenlauf `momentumAusfuehrung` (09:45 ET) führt sie aus. Konten
+ * OHNE Broker buchen im eigenen Buch und brauchen keine offene Börse — für
+ * sie ändert sich nichts. Pur, damit die Regel testbar ist.
+ */
+export function rebalanceJetzt(hatBroker: boolean, aktienOffen: boolean): boolean {
+  return !hatBroker || aktienOffen;
+}
+
+/**
+ * Gilt das Rebalancing als erledigt? (Befund 05.10.)
+ *
+ * Ja, wenn keine Order VERSUCHT wurde (nichts zu tun, oder alles schon vorab
+ * aussortiert: Menge unter 1, Positionslimit, Symbol anderweitig gehalten)
+ * oder mindestens eine ausgeführt wurde. Nein nur, wenn Orders versucht
+ * wurden und KEINE durchging — dann versucht es der nächste Lauf erneut,
+ * statt eine ganze Woche Sockel still zu streichen. Gezählt werden bewusst
+ * die Versuche, nicht die geplanten Orders: Sonst triebe eine nie
+ * ausführbare Order den Lauf täglich neu an (Prüfbefund 05.10.).
+ */
+export function rebalanceErledigt(versucht: number, ausgefuehrt: number): boolean {
+  return versucht === 0 || ausgefuehrt > 0;
+}
+
+/**
+ * Qualitätsurteile für die Spitze der Rangliste (Befund 05.10.).
+ *
+ * Geprüft werden nur Universums-Kandidaten mit positivem Score, höchstens
+ * `MOMENTUM_QUALITAET_FENSTER` — der Umsatz kostet je Symbol einen
+ * Yahoo-Abruf. Katalog-Symbole sind handverlesen und gelten als zugelassen.
+ * Universums-Symbole, die NICHT geprüft wurden (hinter dem Fenster) oder
+ * deren Name fehlt, gelten als `keine_daten`: Ein ungeprüfter Exot darf
+ * nicht durch die Hintertür ins Ziel rutschen, nur weil die Spitze verworfen
+ * wurde. Das Ziel füllt sich dann aus dem Katalog — es bleibt voll.
+ */
+export async function qualitaetsUrteile(
+  ranked: readonly RankedSymbol[],
+  katalog: ReadonlySet<string>,
+  closesMap: ReadonlyMap<string, number[]>,
+): Promise<{
+  mangel: (symbol: string) => QualitaetsGrund | null;
+  geprueft: Map<string, QualitaetsGrund | null>;
+  /** Namensliste leer oder JEDER Umsatz-Abruf gescheitert — das Urteil ist dann kein Urteil. */
+  unsicher: boolean;
+}> {
+  const namen = await ladeUniversumNamen();
+  const geprueft = new Map<string, QualitaetsGrund | null>();
+  const kopf = ranked
+    .filter((r) => r.score > 0 && !katalog.has(r.symbol))
+    .slice(0, MOMENTUM_QUALITAET_FENSTER);
+  const umsatzNoetig: string[] = [];
+  for (const r of kopf) {
+    const name = namen.get(r.symbol);
+    if (name === undefined) {
+      geprueft.set(r.symbol, 'keine_daten');
+      continue;
+    }
+    const closes = closesMap.get(r.symbol);
+    const vorab = qualitaetsMangel({
+      imKatalog: false,
+      name,
+      letzterKurs: closes?.[closes.length - 1] ?? null,
+      medianDollarUmsatz: Number.POSITIVE_INFINITY, // Umsatz kommt gleich
+    });
+    if (vorab !== null) geprueft.set(r.symbol, vorab);
+    else umsatzNoetig.push(r.symbol);
+  }
+  const abrufe = await mitGrenze(umsatzNoetig.map((sym) => () => getMarketSnapshot(sym, '1mo')), 8);
+  umsatzNoetig.forEach((sym, i) => {
+    const a = abrufe[i];
+    const umsatz = a?.status === 'fulfilled' ? medianDollarUmsatz(a.value.bars) : null;
+    const closes = closesMap.get(sym);
+    geprueft.set(
+      sym,
+      qualitaetsMangel({
+        imKatalog: false,
+        name: namen.get(sym) ?? '',
+        letzterKurs: closes?.[closes.length - 1] ?? null,
+        medianDollarUmsatz: umsatz,
+      }),
+    );
+  });
+  const mangel = (symbol: string): QualitaetsGrund | null =>
+    katalog.has(symbol) ? null : geprueft.has(symbol) ? geprueft.get(symbol)! : 'keine_daten';
+  const unsicher =
+    (kopf.length > 0 && namen.size === 0)
+    || (umsatzNoetig.length > 0 && abrufe.every((a) => a.status === 'rejected'));
+  return { mangel, geprueft, unsicher };
+}
 
 /** Leitindex des Marktfilters — der breiteste verfügbare US-Index. */
 const MARKET_INDEX = '^GSPC';
@@ -309,7 +418,30 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
   // Der Marktfilter läuft bewusst über den nicht handelbaren ^GSPC: Als
   // SIGNAL ist er das breiteste verfügbare US-Bild, gekauft wird er nie.
   const marktOffen = marketFilterPasses(indexCloses);
-  const ziel = targetPortfolio(ranked, marktOffen, MOMENTUM_TOP_N);
+
+  /* Qualitätsfilter (Befund 05.10.): keine Hebel-/Inverse-Produkte, keine
+   * Penny-Stocks, keine dünn gehandelten Titel aus dem Universum. Wer fällt,
+   * wird durch den Nächstbesten ERSETZT — das Ziel bleibt voll. Scheitert
+   * die Prüfung selbst, gilt nur der Katalog (lieber bekannte Namen als
+   * ungeprüfte Exoten), nie ein leeres Ziel. */
+  const katalogSet = new Set(katalog);
+  let urteile: Awaited<ReturnType<typeof qualitaetsUrteile>>;
+  try {
+    urteile = await qualitaetsUrteile(ranked, katalogSet, closesMap);
+  } catch (err) {
+    logger.warn('Momentum: Qualitätsprüfung fehlgeschlagen — Ziel nur aus dem Katalog', err);
+    urteile = { mangel: (s) => (katalogSet.has(s) ? null : 'keine_daten'), geprueft: new Map(), unsicher: true };
+  }
+  /* Datenausfall (Prüfbefund 05.10.): Ohne Namen oder ohne einen einzigen
+   * Umsatz-Abruf ist „verworfen" kein Befund, sondern eine Lücke. Fiele das
+   * auf einen Rebalance-Tag, verkaufte `rebalanceOrders` gestern noch gültige
+   * Titel — Kosten für nichts. Deshalb setzt heute JEDES Rebalancing aus
+   * (nicht gestempelt, morgen erneut); die Rangliste wird trotzdem geführt. */
+  const aussetzen = urteile.unsicher;
+  if (aussetzen) logger.warn('Momentum: Qualitätsdaten fehlen — Rebalancing heute ausgesetzt');
+  const rankedQ = filtereRangliste(ranked, urteile.mangel).zugelassen;
+  const verworfenKopf = [...urteile.geprueft].filter(([, g]) => g !== null) as Array<[string, QualitaetsGrund]>;
+  const ziel = targetPortfolio(rankedQ, marktOffen, MOMENTUM_TOP_N);
 
   /* ── Marktbreite (Owner 18.08.) — MESSUNG, kein Tor ────────────────────
    *
@@ -341,7 +473,7 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
     if (p !== undefined && p > 0) preise.set(sym, p);
   }
 
-  const faellig = istRebalanceFaellig(book.lastRebalance, now);
+  const faellig = !aussetzen && istRebalanceFaellig(book.lastRebalance, now);
   let orders: ReturnType<typeof rebalanceOrders> = [];
   if (faellig) {
     const equity = momentumEquity(book, preise);
@@ -376,9 +508,9 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
   const equity = momentumEquity(book, preise);
 
   // ── 5. Echte Wallets im Momentum-Modus ────────────────────────────────────
-  const echte = await rebalanceMomentumUsers(ziel, preise, now);
+  const echte = aussetzen ? { konten: 0, orders: 0 } : await rebalanceMomentumUsers(ziel, preise, now);
   // ── 5b. Sockel-Hülle der Konfluenz-Wallets (Kern-Satellit, 04.08.) ────────
-  const sockel = await rebalanceCoreSleeve(ziel, preise, now);
+  const sockel = aussetzen ? { konten: 0, orders: 0 } : await rebalanceCoreSleeve(ziel, preise, now);
   // ── 5c. Positionierungs-Messung (Schatten, 04.08.) ────────────────────────
   // Hier und nicht im 5-Minuten-Scan: Positionierung ändert sich nicht im
   // Minutentakt sinnvoll, und der tägliche Rhythmus liefert nebenbei den
@@ -402,8 +534,25 @@ export async function runMomentum(now = new Date()): Promise<MomentumRunResult> 
        * Sichten auf denselben Markt nebeneinander lesbar sind: der
        * Index-Filter (Durchschnitt) und die Verteilung dahinter. */
       breite,
-      top: ranked.slice(0, MOMENTUM_TOP_N).map((r) => ({ symbol: r.symbol, score: r.score })),
+      // Die GEFILTERTE Spitze: Sie speist auch die Scan-Symbole und die
+      // KI-Stimme — ein Exot, den der Sockel nicht kauft, soll dort auch
+      // nicht als Kandidat auftauchen.
+      top: rankedQ.slice(0, MOMENTUM_TOP_N).map((r) => ({ symbol: r.symbol, score: r.score })),
+      /* Was der Qualitätsfilter verworfen hat (05.10.) — ohne diese Zahl
+       * sähe ein Filter, der alles verwirft, aus wie ein Markt ohne
+       * Universums-Kandidaten. */
+      qualitaet: {
+        geprueft: urteile.geprueft.size,
+        verworfen: verworfenKopf.length,
+        gruende: verworfenKopf.reduce<Record<string, number>>((acc, [, g]) => ({ ...acc, [g]: (acc[g] ?? 0) + 1 }), {}),
+        beispiele: verworfenKopf.slice(0, 12).map(([sym, g]) => `${sym}:${g}`),
+      },
       ziel: ziel.map((z) => z.symbol),
+      // Für den Morgenlauf (`momentumAusfuehrung`): das vollständige Ziel samt
+      // Gewichten. Bei Datenausfall NICHT überschrieben — der Morgenlauf soll
+      // nicht mit einem Notfall-Ziel Titel verkaufen.
+      ...(aussetzen ? {} : { zielGewichte: ziel, zielAt: now.toISOString() }),
+      ausgesetzt: aussetzen,
       gehalten: Object.keys(book.holdings).sort(),
       equity,
       trades: book.pnls.length,
@@ -484,6 +633,8 @@ async function rebalanceMomentumUsers(
   ziel: TargetPosition[],
   preise: ReadonlyMap<string, number>,
   now: Date,
+  /** Morgenlauf: nur Konten MIT Broker (die ohne erledigt der Abendlauf). */
+  nurBroker = false,
 ): Promise<{ konten: number; orders: number }> {
   const db = getFirestore();
   /* Lauf-Kennung fuer das Order-Routing (M13): ein Lauf JE TAG.
@@ -493,6 +644,8 @@ async function rebalanceMomentumUsers(
    * Praefixe traegen beide Orders dieselbe `client_order_id`, und Alpaca
    * wiese die zweite als Duplikat ab — der Sockel bliebe still. */
   const laufId = `mom-${now.toISOString().slice(0, 10)}`;
+  // Einmal je Lauf: Ist der US-Aktienmarkt offen? (s. `rebalanceJetzt`)
+  const aktienOffen = offenMitUhr('SPY', now, await boersenOffen(now.getTime()));
   const users = await db
     .collection('users')
     .where('settings.strategy.engine.mode', '==', 'momentum')
@@ -510,6 +663,10 @@ async function rebalanceMomentumUsers(
       // freigeschaltete Konten handeln nicht.
       if (resolveBrokerMode(roh) !== 'paper') continue;
       if (!mayTrade(userDoc.data())) continue;
+      // Konto mit Broker? Entscheidet über Zeitpunkt (s. `rebalanceJetzt`) und
+      // darüber, welcher der beiden Läufe zuständig ist.
+      const hatBroker = (await brokerVerbindungLesend(userDoc.id)) !== null;
+      if (nurBroker && !hatBroker) continue;
       const clamped = clampStrategyRisk(structuredClone(roh));
 
       /* Dieselben Konto-Tore wie Scan und Handeingabe (Audit 13.08., H2):
@@ -518,7 +675,10 @@ async function rebalanceMomentumUsers(
        * rebalanciert. Reset sperrt den ganzen Lauf (Buchführung); Bremse und
        * Drift sperren nur KÄUFE — Verkäufe des Rebalancings laufen weiter,
        * ein Ausstieg darf nie an einer Sperre scheitern. */
-      const tore = kontoTore(userDoc, clamped, now);
+      const toreRoh = kontoTore(userDoc, clamped, now);
+      /* Die PDT-Bremse gilt hier nicht (Prüfbefund 05.10.): Momentum und
+       * Sockel halten über Wochen, ein Kauf hier plant keinen Daytrade. */
+      const tore = toreRoh.einstieg === 'pdt_schutz' ? { ...toreRoh, einstieg: null } : toreRoh;
       if (tore.handel) {
         logger.info(`Momentum-Rebalancing ${userDoc.id}: übersprungen — ${tore.handel}`);
         continue;
@@ -527,6 +687,10 @@ async function rebalanceMomentumUsers(
       const stateRef = userDoc.ref.collection('meta').doc('momentum');
       const lastRebalance = (await stateRef.get()).get('lastRebalance') as string | undefined;
       if (!istRebalanceFaellig(lastRebalance ?? null, now)) continue;
+      if (!rebalanceJetzt(hatBroker, aktienOffen)) {
+        logger.info(`Momentum-Rebalancing ${userDoc.id}: Börse zu — verschoben, nicht gestempelt`);
+        continue;
+      }
 
       const posSnap = await userDoc.ref.collection('positions').get();
       const gehalten = new Map<string, Position>(
@@ -562,6 +726,7 @@ async function rebalanceMomentumUsers(
         .filter((o) => o.side === 'sell' || preise.has(o.symbol));
 
       let ausgefuehrt = 0;
+      let versucht = 0;
       // Laufende Positionszahl für das Limit: Verkäufe machen Platz frei,
       // Käufe belegen ihn — in der Reihenfolge, in der die Orders laufen.
       let offenZahl = gehalten.size;
@@ -571,6 +736,7 @@ async function rebalanceMomentumUsers(
         if (!preis || !(preis > 0)) continue;
         const cls = classify(o.symbol);
         if (o.side === 'sell') {
+          versucht += 1;
           const r = await executeTrade(
             { uid: userDoc.id, symbol: o.symbol, side: 'sell', price: preis, source: 'engine', riskExit: 'momentum_rebalance', assetClass: cls },
             clamped,
@@ -598,6 +764,7 @@ async function rebalanceMomentumUsers(
         const roheMenge = (o.notional ?? 0) / preis;
         const qty = fractional ? Math.floor(roheMenge * 1e6) / 1e6 : Math.floor(roheMenge);
         if (qty < (fractional ? 1e-6 : 1)) continue;
+        versucht += 1;
         const r = await executeTrade(
           {
             uid: userDoc.id,
@@ -640,9 +807,15 @@ async function rebalanceMomentumUsers(
           { merge: true },
         );
         logger.info(`Momentum-Rebalancing ${userDoc.id}: Käufe gesperrt — ${tore.einstieg}`);
-      } else {
+      } else if (rebalanceErledigt(versucht, ausgefuehrt)) {
         await stateRef.set(
           { lastRebalance: now.toISOString(), orders: orders.length, executed: ausgefuehrt, einstiegGesperrt: null },
+          { merge: true },
+        );
+      } else {
+        // Versucht, nichts ausgeführt — nächster Lauf erneut (s. `rebalanceErledigt`).
+        await stateRef.set(
+          { letzterVersuch: now.toISOString(), orders: orders.length, versucht, executed: 0 },
           { merge: true },
         );
       }
@@ -686,10 +859,14 @@ async function rebalanceCoreSleeve(
   ziel: TargetPosition[],
   preise: ReadonlyMap<string, number>,
   now: Date,
+  /** Morgenlauf: nur Konten MIT Broker (die ohne erledigt der Abendlauf). */
+  nurBroker = false,
 ): Promise<{ konten: number; orders: number }> {
   const db = getFirestore();
   /** Eigenes Praefix — siehe rebalanceMomentumUsers. */
   const laufId = `core-${now.toISOString().slice(0, 10)}`;
+  // Einmal je Lauf: Ist der US-Aktienmarkt offen? (s. `rebalanceJetzt`)
+  const aktienOffen = offenMitUhr('SPY', now, await boersenOffen(now.getTime()));
   const users = await db
     .collection('users')
     .where('settings.strategy.engine.running', '==', true)
@@ -706,13 +883,20 @@ async function rebalanceCoreSleeve(
       if (roh.engine.mode === 'momentum') continue;
       if (resolveBrokerMode(roh) !== 'paper') continue;
       if (!mayTrade(userDoc.data())) continue;
+      // Konto mit Broker? Entscheidet über Zeitpunkt (s. `rebalanceJetzt`) und
+      // darüber, welcher der beiden Läufe zuständig ist.
+      const hatBroker = (await brokerVerbindungLesend(userDoc.id)) !== null;
+      if (nurBroker && !hatBroker) continue;
       const clamped = clampStrategyRisk(structuredClone(roh));
       const anteil = corePct(clamped);
 
       /* Dieselben Konto-Tore wie oben (Audit 13.08., H2): Genau dieser Pfad
        * war der Anlass — ein per Notbremse gesperrtes Konto bekam am selben
        * Tag Sockel-Käufe bis 60 % der Equity. Verkäufe laufen weiter. */
-      const tore = kontoTore(userDoc, clamped, now);
+      const toreRoh = kontoTore(userDoc, clamped, now);
+      /* Die PDT-Bremse gilt hier nicht (Prüfbefund 05.10.): Momentum und
+       * Sockel halten über Wochen, ein Kauf hier plant keinen Daytrade. */
+      const tore = toreRoh.einstieg === 'pdt_schutz' ? { ...toreRoh, einstieg: null } : toreRoh;
       if (tore.handel) {
         logger.info(`Sockel-Rebalancing ${userDoc.id}: übersprungen — ${tore.handel}`);
         continue;
@@ -755,6 +939,10 @@ async function rebalanceCoreSleeve(
       const stateRef = userDoc.ref.collection('meta').doc('coreSleeve');
       const lastRebalance = (await stateRef.get()).get('lastRebalance') as string | undefined;
       if (!istRebalanceFaellig(lastRebalance ?? null, now)) continue;
+      if (!rebalanceJetzt(hatBroker, aktienOffen)) {
+        logger.info(`Sockel-Rebalancing ${userDoc.id}: Börse zu — verschoben, nicht gestempelt`);
+        continue;
+      }
 
       const posSnap = await userDoc.ref.collection('positions').get();
       const alle = new Map<string, Position>(posSnap.docs.map((d) => [d.id, d.data() as Position]));
@@ -808,6 +996,7 @@ async function rebalanceCoreSleeve(
         .filter((o) => o.side !== 'sell' || sockel.has(o.symbol));
 
       let ausgefuehrt = 0;
+      let versucht = 0;
       // Positionszahl des SOCKELS fürs Limit — die Besitzgrenze gilt in beide
       // Richtungen: Aktive Positionen zählen nicht gegen den Sockel (wie
       // Sockel-Positionen nicht gegen den Scan), aber mehr als das geklemmte
@@ -819,6 +1008,7 @@ async function rebalanceCoreSleeve(
         if (!preis || !(preis > 0)) continue;
         const cls = classify(o.symbol);
         if (o.side === 'sell') {
+          versucht += 1;
           const r = await executeTrade(
             { uid: userDoc.id, symbol: o.symbol, side: 'sell', price: preis, source: 'engine', riskExit: 'core_rebalance', assetClass: cls },
             clamped,
@@ -847,6 +1037,7 @@ async function rebalanceCoreSleeve(
         const roheMenge = (o.notional ?? 0) / preis;
         const qty = fractional ? Math.floor(roheMenge * 1e6) / 1e6 : Math.floor(roheMenge);
         if (qty < (fractional ? 1e-6 : 1)) continue;
+        versucht += 1;
         const r = await executeTrade(
           {
             uid: userDoc.id,
@@ -879,9 +1070,15 @@ async function rebalanceCoreSleeve(
           { merge: true },
         );
         logger.info(`Sockel-Rebalancing ${userDoc.id}: Käufe gesperrt — ${tore.einstieg}`);
-      } else {
+      } else if (rebalanceErledigt(versucht, ausgefuehrt)) {
         await stateRef.set(
           { lastRebalance: now.toISOString(), orders: orders.length, executed: ausgefuehrt, anteilPct: anteil, einstiegGesperrt: null },
+          { merge: true },
+        );
+      } else {
+        // Versucht, nichts ausgeführt — nächster Lauf erneut (s. `rebalanceErledigt`).
+        await stateRef.set(
+          { letzterVersuch: now.toISOString(), orders: orders.length, versucht, executed: 0, anteilPct: anteil },
           { merge: true },
         );
       }
@@ -947,7 +1144,15 @@ async function messePositionierung(
   }
 }
 
-/** Täglich 18:00 ET — nach snapshotEquity (17:15) und autoTune (17:45). */
+/**
+ * Täglich 18:00 ET — nach snapshotEquity (17:15) und autoTune (17:45).
+ *
+ * Die Rangliste über ~12.800 Papiere (rund 640 Yahoo-Abrufe) gehört bewusst
+ * NACH den Börsenschluss: In der Handelszeit konkurrierte sie mit dem
+ * 5-Minuten-Scan um dieselbe Kursquelle, und eine Drosselung dort hieße „keine
+ * Kurse, keine Trades" (Prüfbefund 05.10.). Konten mit Broker werden hier nur
+ * verschoben; ausgeführt werden sie vom Morgenlauf `momentumAusfuehrung`.
+ */
 export const momentumRun = onSchedule(
   {
     schedule: '0 18 * * *',
@@ -959,6 +1164,84 @@ export const momentumRun = onSchedule(
   },
   async () => {
     await runMomentum();
+  },
+);
+
+/** Ab diesem Alter gilt das gespeicherte Ziel als zu alt für den Morgenlauf. */
+export const ZIEL_MAX_ALTER_TAGE = 4;
+
+/**
+ * Morgenlauf (Befund 05.10.): führt das Rebalancing der Konten MIT Broker in
+ * der Handelszeit aus — mit dem Ziel, das der Abendlauf gespeichert hat.
+ *
+ * Bewusst leicht: keine Rangliste, nur ein Spark-Abruf für die Zielsymbole.
+ * Konten ohne Broker hat der Abendlauf längst erledigt (`nurBroker`).
+ */
+export async function runMomentumAusfuehrung(
+  now = new Date(),
+): Promise<{ konten: number; orders: number; grund?: string }> {
+  const db = getFirestore();
+  const doc = await db.doc('meta/momentum').get();
+  const ziel = doc.get('zielGewichte') as TargetPosition[] | undefined;
+  const zielAt = doc.get('zielAt') as string | undefined;
+  const alterMs = zielAt ? now.getTime() - Date.parse(zielAt) : Number.NaN;
+  if (!Array.isArray(ziel) || !Number.isFinite(alterMs) || alterMs > ZIEL_MAX_ALTER_TAGE * 86_400_000) {
+    logger.info('momentumAusfuehrung: kein frisches Ziel — nichts zu tun');
+    return { konten: 0, orders: 0, grund: 'kein_frisches_ziel' };
+  }
+  // Hat der Abendlauf wegen fehlender Qualitätsdaten ausgesetzt, gilt das
+  // auch hier (Prüfbefund 05.10.) — nicht mit einem älteren Ziel nachholen.
+  if (doc.get('ausgesetzt') === true) {
+    logger.info('momentumAusfuehrung: Abendlauf hat ausgesetzt — heute kein Rebalancing');
+    return { konten: 0, orders: 0, grund: 'ausgesetzt' };
+  }
+  /* Kurse für das Ziel UND alles, was Broker-Konten im Sockel/Momentum-Depot
+   * halten: Sonst bewertete das Budget gehaltene Titel zum Einstand. Fehlt ein
+   * Ziel-Kurs (Yahoo-Ausfall), wird NICHTS getan: Die Käufe fielen sonst still
+   * weg, die Verkäufe liefen trotzdem, und das Konto gälte eine Woche lang
+   * als erledigt — in Cash (Prüfbefund 05.10.). Morgen erneut. */
+  // Nur die Doc-IDs (`select()`), ohne Filter — dieselbe Abfrage wie im
+  // Risiko-Puls; ein Filter über die Collection-Group bräuchte einen eigenen Index.
+  const gehaltenSnap = await db.collectionGroup('positions').select().get().catch(() => null);
+  const gehaltene = gehaltenSnap ? gehaltenSnap.docs.map((d) => d.id) : [];
+  const quotes = await getSparkBatch([...new Set([...ziel.map((z) => z.symbol), ...gehaltene])]);
+  const preise = new Map<string, number>();
+  for (const [sym, q] of quotes) if (q.price > 0) preise.set(sym, q.price);
+  const fehlend = ziel.filter((z) => !preise.has(z.symbol)).map((z) => z.symbol);
+  if (fehlend.length > 0) {
+    logger.warn(`momentumAusfuehrung: Kurse fehlen für ${fehlend.join(', ')} — heute kein Rebalancing`);
+    return { konten: 0, orders: 0, grund: 'kurse_fehlen' };
+  }
+  const echte = await rebalanceMomentumUsers(ziel, preise, now, true);
+  const sockel = await rebalanceCoreSleeve(ziel, preise, now, true);
+  await db.doc('meta/momentum').set(
+    {
+      ausfuehrung: {
+        at: now.toISOString(),
+        echteKonten: echte.konten,
+        echteOrders: echte.orders,
+        sockelKonten: sockel.konten,
+        sockelOrders: sockel.orders,
+      },
+    },
+    { merge: true },
+  );
+  return { konten: echte.konten + sockel.konten, orders: echte.orders + sockel.orders };
+}
+
+/** Werktags 09:45 ET — in der Handelszeit, nach den breitesten Eröffnungs-Spreads. */
+export const momentumAusfuehrung = onSchedule(
+  {
+    schedule: '45 9 * * 1-5',
+    timeZone: 'America/New_York',
+    retryCount: 0,
+    // Wie der Abendlauf: Orders laufen nacheinander, mit Teilfill-Fenster.
+    timeoutSeconds: 540,
+    memory: '512MiB',
+    secrets: ['BROKER_MASTER_KEY'],
+  },
+  async () => {
+    await runMomentumAusfuehrung();
   },
 );
 

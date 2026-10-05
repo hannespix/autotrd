@@ -229,6 +229,10 @@ export interface AlpacaKonto {
   accountBlocked: boolean;
   /** Wurde das Muster-Daytrader-Limit gerissen? */
   patternDayTrader: boolean;
+  /** Daytrades der letzten fünf Handelstage (`daytrade_count`) — PDT-Bremse. */
+  daytradeCount: number;
+  /** Equity zum Vortagesschluss (`last_equity`) — Maßstab der PDT-Grenze. */
+  lastEquity: number;
   /**
    * Konto-Eröffnung (ISO, `created_at`) — der ehrliche Anker der
    * Order-Historie (Owner-Wunsch 13.08.: Historie ohne 30-Tage-Deckel).
@@ -360,6 +364,8 @@ export async function alpacaKonto(
     tradingBlocked: d['trading_blocked'] === true,
     accountBlocked: d['account_blocked'] === true,
     patternDayTrader: d['pattern_day_trader'] === true,
+    daytradeCount: zahl(d['daytrade_count']),
+    lastEquity: zahl(d['last_equity']),
     createdAt: typeof d['created_at'] === 'string' ? d['created_at'] : '',
   };
 }
@@ -1082,12 +1088,26 @@ export async function warteAufFill(
   mode: BrokerMode,
   orderId: string,
   schluessel: AlpacaSchluessel | null = null,
-  opts: { versuche?: number; pauseMs?: number; schlaf?: (ms: number) => Promise<void> } = {},
+  opts: {
+    versuche?: number;
+    pauseMs?: number;
+    schlaf?: (ms: number) => Promise<void>;
+    /**
+     * Bei `partially_filled` NICHT sofort zurückkehren, sondern das Fenster
+     * ausschöpfen (Prüfbefund 05.10.): Der erste Abruf folgt dem Senden ohne
+     * Pause — eine Market-Order in einem dünnen Titel steht dort fast immer
+     * erst teilgefüllt. Kehrt man dann zurück und storniert den Rest, werden
+     * Einstiege systematisch winzig (CCG: 53 von 1.433). Gilt für ERÖFFNENDE
+     * Orders; Exits behalten die sofortige Rückkehr.
+     */
+    teilfillAbwarten?: boolean;
+  } = {},
   fetchImpl: FetchLike = fetch,
 ): Promise<OrderErgebnis | null> {
   const versuche = opts.versuche ?? 6;
   const pause = opts.pauseMs ?? 700;
   const schlaf = opts.schlaf ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  let letzterTeilfill: OrderErgebnis | null = null;
 
   for (let i = 0; i < versuche; i += 1) {
     const d = (await alpacaFetch(
@@ -1105,7 +1125,7 @@ export async function warteAufFill(
     // ebenfalls: Was ausgeführt IST, ist ausgeführt — der Rest steht in der
     // Menge, und der Abgleich fängt eine Abweichung auf.
     if ((status === 'filled' || status === 'partially_filled') && kurs > 0 && menge > 0) {
-      return {
+      const ergebnis: OrderErgebnis = {
         id: String(d['id'] ?? orderId),
         clientOrderId: String(d['client_order_id'] ?? ''),
         status,
@@ -1114,12 +1134,16 @@ export async function warteAufFill(
         side: String(d['side'] ?? '') === 'sell' ? 'sell' : 'buy',
         ausfuehrungskurs: kurs,
       };
+      if (status === 'filled' || opts.teilfillAbwarten !== true) return ergebnis;
+      letzterTeilfill = ergebnis;
+    } else if (['canceled', 'expired', 'rejected', 'suspended'].includes(status)) {
+      // Endzustände: weiter zu warten wäre sinnlos. Ein zuvor gesehener
+      // Teilfill bleibt gültig — was ausgeführt IST, ist ausgeführt.
+      return letzterTeilfill;
     }
-    // Endzustände ohne Ausführung: weiter zu warten wäre sinnlos.
-    if (['canceled', 'expired', 'rejected', 'suspended'].includes(status)) return null;
     if (i < versuche - 1) await schlaf(pause);
   }
-  return null;
+  return letzterTeilfill;
 }
 
 export interface Abweichung {

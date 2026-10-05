@@ -114,3 +114,18 @@ describe('Quelltext: der Sync räumt wirklich auf', () => {
     expect(text()).not.toContain('muss die Blöcke am Ende wirklich leeren');
   });
 });
+
+describe('namenAusBloecken (Qualitätsfilter, 05.10.)', () => {
+  it('liest Symbol → Name und übersteht fremde Formen', async () => {
+    const { namenAusBloecken } = await import('../src/core/universumLeser.js');
+    const m = namenAusBloecken([
+      { symbole: [{ symbol: 'MUU', name: 'Direxion Daily MU Bull 2X Shares' }, { symbol: 'X' }, { name: 'ohne Symbol' }] },
+      null,
+      { symbole: 'kaputt' },
+    ]);
+    expect([...m]).toEqual([
+      ['MUU', 'Direxion Daily MU Bull 2X Shares'],
+      ['X', ''],
+    ]);
+  });
+});

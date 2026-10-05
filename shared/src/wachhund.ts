@@ -151,3 +151,73 @@ export function naechsterAlarm(
     vorher?.aktiv && vorher.grund === urteil.grund && vorher.seit ? vorher.seit : jetztIso;
   return { aktiv: true, grund: urteil.grund, text: urteil.text, seit, at: jetztIso };
 }
+
+/* ── Untätigkeits-Wächter (05.10.) ───────────────────────────────────────────
+ *
+ * Der Neubau stand wochenlang auf „30 bewertet · 0 Einstiegswunsch", und das
+ * sah aus wie Normalbetrieb. Der Herzschlag oben merkt das nicht: Der Scan
+ * läuft ja. Diese zweite Frage — „handelt das System überhaupt?" — bekommt
+ * deshalb ein eigenes Urteil und ein eigenes Feld (`meta/health.aktivitaet`),
+ * NICHT den Herzschlag-Alarm: `healthz` soll bei einem ruhigen Markt nicht
+ * mit 503 antworten und den externen Uptime-Check auslösen.
+ */
+
+/** Ab diesem Alter gilt die Trade-Zählung als nicht mehr belastbar. */
+export const AKTIVITAET_MAX_ALTER_STD = 48;
+
+export interface AktivitaetEingabe {
+  jetztMs: number;
+  /** `meta/health.konten.gehandelt` — Konten, die den Handelspfad tatsächlich durchliefen. */
+  laufend?: number | undefined;
+  /** `meta/health.trading.trades7t` — geschlossene Trades der letzten 7 Tage. */
+  trades7t?: number | undefined;
+  /** `meta/health.trading.at` — wann die Zählung entstand. */
+  zaehlungAt?: string | undefined;
+}
+
+export interface AktivitaetUrteil {
+  ok: boolean;
+  text: string;
+}
+
+/**
+ * Alarm, wenn Engines laufen, aber sieben Tage lang kein Trade geschlossen
+ * wurde. Ohne laufende Engine oder ohne frische Zählung gibt es kein Urteil
+ * (ok) — ein Wächter, der aus fehlenden Daten Alarm macht, wird abgeschaltet.
+ */
+export function bewerteAktivitaet(e: AktivitaetEingabe): AktivitaetUrteil {
+  const laufend = e.laufend ?? 0;
+  if (!(laufend > 0)) return { ok: true, text: 'Keine Engine an — nichts zu erwarten.' };
+  const at = e.zaehlungAt ? Date.parse(e.zaehlungAt) : Number.NaN;
+  if (!Number.isFinite(at) || e.jetztMs - at > AKTIVITAET_MAX_ALTER_STD * 3_600_000) {
+    return { ok: true, text: 'Trade-Zählung nicht frisch — kein Urteil.' };
+  }
+  if ((e.trades7t ?? 0) === 0) {
+    return {
+      ok: false,
+      text:
+        `${laufend} Engine(s) an, aber seit 7 Tagen kein geschlossener Trade — `
+        + 'Einstiegs-Sperren im Heartbeat (gate) prüfen. Das System handelt nicht.',
+    };
+  }
+  return { ok: true, text: `${e.trades7t} geschlossene Trades in 7 Tagen.` };
+}
+
+/** Was in `meta/health.aktivitaet` steht. */
+export interface AktivitaetZustand {
+  aktiv: boolean;
+  text: string;
+  /** Wann der AKTUELLE Alarm begann — bleibt über die Ticks stehen. */
+  seit?: string | undefined;
+  at: string;
+}
+
+export function naechsterAktivitaetsZustand(
+  vorher: AktivitaetZustand | undefined,
+  urteil: AktivitaetUrteil,
+  jetztIso: string,
+): AktivitaetZustand {
+  if (urteil.ok) return { aktiv: false, text: urteil.text, at: jetztIso };
+  const seit = vorher?.aktiv && vorher.seit ? vorher.seit : jetztIso;
+  return { aktiv: true, text: urteil.text, seit, at: jetztIso };
+}

@@ -1011,7 +1011,7 @@ describe('Ablehnungsgründe, Regime und Zugang (Tranche 5k)', () => {
       dashboard.indexOf('const REGIME_TEXT'),
     );
     for (const code of [
-      'breaker_aktiv', 'abgleich_drift', 'klasse_aus', 'regime_gegen_trend',
+      'breaker_aktiv', 'abgleich_drift', 'pdt_schutz', 'klasse_aus', 'regime_gegen_trend',
       'regime_stress', 'filter_blockiert', 'news_veto', 'unter_kosten',
       'cluster_voll', 'nicht_handelbar', 'hebel_frei',
     ]) {

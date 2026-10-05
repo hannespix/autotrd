@@ -56,3 +56,5 @@ export * from './tagRueckblick.js';
 export * from './sizingSchatten.js';
 export * from './risiko.js';
 export * from './nachrichten.js';
+export * from './momentumQualitaet.js';
+export * from './pdt.js';

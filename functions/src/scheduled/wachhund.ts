@@ -28,8 +28,11 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 import {
+  bewerteAktivitaet,
   bewerteHerzschlag,
+  naechsterAktivitaetsZustand,
   naechsterAlarm,
+  type AktivitaetZustand,
   type AlarmZustand,
   type HerzschlagUrteil,
 } from '../../../shared/src/index.js';
@@ -39,6 +42,7 @@ import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 export async function wachhundLauf(now = new Date()): Promise<{
   urteil: HerzschlagUrteil;
   alarm: AlarmZustand;
+  aktivitaet: AktivitaetZustand;
 }> {
   const db = getFirestore();
   const health = await db.doc('meta/health').get();
@@ -54,9 +58,36 @@ export async function wachhundLauf(now = new Date()): Promise<{
   const vorher = health.get('alarm') as AlarmZustand | undefined;
   const alarm = naechsterAlarm(vorher, urteil, now.toISOString());
 
+  // Zweite Frage, eigenes Feld (05.10.): Handelt das System überhaupt?
+  const aktivitaet = naechsterAktivitaetsZustand(
+    health.get('aktivitaet') as AktivitaetZustand | undefined,
+    bewerteAktivitaet({
+      jetztMs: now.getTime(),
+      // `gehandelt` statt `laufend` (Prüfbefund 05.10.): Wartende, gesperrte
+      // und live-verriegelte Konten können gar nicht handeln. Momentum-Konten
+      // handelt der Momentum-Lauf — sie zählen mit.
+      laufend:
+        ((health.get('konten.gehandelt') as number | undefined) ?? 0)
+        + ((health.get('konten.momentum') as number | undefined) ?? 0),
+      trades7t: health.get('trading.trades7t') as number | undefined,
+      zaehlungAt: health.get('trading.at') as string | undefined,
+    }),
+    now.toISOString(),
+  );
+
   // `merge: true`, damit der Wächter NIE den Heartbeat überschreibt, den er
   // bewacht — ein Wächter, der sein eigenes Messobjekt anfasst, taugt nichts.
-  await db.doc('meta/health').set({ alarm }, { merge: true });
+  await db.doc('meta/health').set({ alarm, aktivitaet }, { merge: true });
+
+  /* Nur bei WECHSEL loggen und mit eigenem Präfix (Prüfbefund 05.10.): Der
+   * bestehende Log-Alert hört auf „WACHHUND" und ist für den stehenden Scan
+   * gedacht. Untätigkeit ist ein Tages-Befund, kein Notfall alle 10 Minuten. */
+  const vorherAktiv = (health.get('aktivitaet') as AktivitaetZustand | undefined)?.aktiv === true;
+  if (aktivitaet.aktiv && !vorherAktiv) {
+    logger.error(`UNTAETIGKEIT: ${aktivitaet.text}`);
+  } else if (!aktivitaet.aktiv && vorherAktiv) {
+    logger.info(`UNTAETIGKEIT: Entwarnung — ${aktivitaet.text}`);
+  }
 
   if (alarm.aktiv) {
     // error, nicht warn: Genau auf diese Zeile gehört der Log-Alert. Jeder
@@ -67,7 +98,7 @@ export async function wachhundLauf(now = new Date()): Promise<{
     logger.info(`WACHHUND: Entwarnung — ${alarm.text} (Alarm lief seit ${vorher.seit ?? '?'})`);
   }
 
-  return { urteil, alarm };
+  return { urteil, alarm, aktivitaet };
 }
 
 /** Alle 10 Minuten; ohne Retry — der nächste Tick ist der Retry. */
