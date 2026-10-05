@@ -23,6 +23,7 @@ export { autoTune, tuneNow } from './scheduled/autoTune.js';
 export { strukturSuche, strukturNow } from './scheduled/strukturSuche.js';
 export { momentumAusfuehrung, momentumRun, momentumNow } from './scheduled/momentumRun.js';
 export { universumSync, universumSyncNow } from './scheduled/universumSync.js';
+export { nachrichtenSammeln } from './scheduled/nachrichtenSammeln.js';
 export { tagRueckblick, tagRueckblickNow } from './scheduled/tagRueckblick.js';
 export { riskPulse, pulseNow } from './scheduled/riskPulse.js';
 export { wachhund, wachhundNow } from './scheduled/wachhund.js';

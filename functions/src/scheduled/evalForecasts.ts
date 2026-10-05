@@ -14,6 +14,8 @@ import { logger } from 'firebase-functions/v2';
 import {
   DEFAULT_INTRADAY_LOOKBACK,
   FORECAST_V,
+  INTRADAY_LOOKBACK_GRID,
+  LOOKBACK_GRID,
   bestParams,
   comboKey,
   isForecastDue,
@@ -46,7 +48,29 @@ interface SentDelta {
 
 const emptySentDelta = (): SentDelta => ({ pos: { n: 0, hits: 0 }, neg: { n: 0, hits: 0 } });
 
-function tallySent(delta: SentDelta, sentSign: number | undefined, baseClose: number, actLast: number | undefined): void {
+/**
+ * Zählt dieser Prognose-Lookback für den Sentiment-Schatten? (Red-Team-Befund
+ * 05.10.)
+ *
+ * Bis dahin zählte JEDES Prognose-Dokument — und davon gibt es je Symbol und
+ * Basistag eines je Lookback (Tag: 10/20/30, intraday: 24/48). Alle tragen
+ * dieselbe Nachrichtenlage, denselben Basiskurs und denselben End-Kurs:
+ * dreimal derselbe Treffer. `n` war damit rund dreifach aufgebläht, und eine
+ * Lernschleife auf dieser Zahl hätte Rauschen für Evidenz gehalten.
+ *
+ * Bewusst KEIN Merker im Speicher: Der Tageslauf holt 200 unbewertete
+ * Dokumente ohne Sortierung, die Geschwister eines Falls können also in
+ * verschiedenen Läufen landen. Nur eine Regel am Dokument selbst zählt
+ * laufübergreifend genau einmal — der kleinste Lookback des Gitters. Er ist
+ * zugleich der, den `computeForecastV2` am sichersten erzeugt (braucht die
+ * wenigsten Schlusskurse). Fehlt er, fehlt der Fall: ein verlorener
+ * Messpunkt statt eines doppelten.
+ */
+export function vertrittSentimentFall(lookback: number, gitter: readonly number[]): boolean {
+  return gitter.length > 0 && lookback === Math.min(...gitter);
+}
+
+export function tallySent(delta: SentDelta, sentSign: number | undefined, baseClose: number, actLast: number | undefined): void {
   const hit = sentimentHit(sentSign, baseClose, actLast);
   if (hit === null) return;
   const b = sentSign === 1 ? delta.pos : delta.neg;
@@ -56,14 +80,19 @@ function tallySent(delta: SentDelta, sentSign: number | undefined, baseClose: nu
 
 async function writeSentStats(scope: 'daily' | 'intraday', delta: SentDelta): Promise<void> {
   if (delta.pos.n + delta.neg.n === 0) return;
+  // Unter `einmalig` (05.10.): Die alten Felder `daily`/`intraday` zählten
+  // jeden Fall je Lookback mehrfach und bleiben als Altbestand stehen —
+  // korrekte und aufgeblähte Zahlen in einem Zähler wären keine Statistik.
   await getFirestore()
     .doc('meta/sentimentStats')
     .set(
       {
         updatedAt: new Date().toISOString(),
-        [scope]: {
-          pos: { n: FieldValue.increment(delta.pos.n), hits: FieldValue.increment(delta.pos.hits) },
-          neg: { n: FieldValue.increment(delta.neg.n), hits: FieldValue.increment(delta.neg.hits) },
+        einmalig: {
+          [scope]: {
+            pos: { n: FieldValue.increment(delta.pos.n), hits: FieldValue.increment(delta.pos.hits) },
+            neg: { n: FieldValue.increment(delta.neg.n), hits: FieldValue.increment(delta.neg.hits) },
+          },
         },
       },
       { merge: true },
@@ -215,8 +244,11 @@ export async function evaluateDue(): Promise<EvalResult> {
       d.hits += score.dirHit ? 1 : 0;
       d.maeSum += score.maePct;
       symbolDelta.set(key, d);
-      // Sentiment-Schatten: nur bewertete Prognosen — dieselben Gates.
-      tallySent(sentDelta, doc.sentSign, doc.baseClose, actuals[doc.points[doc.points.length - 1]!.time]);
+      // Sentiment-Schatten: nur bewertete Prognosen — dieselben Gates, ein
+      // Fall je (Symbol, Basistag).
+      if (vertrittSentimentFall(doc.lookback, LOOKBACK_GRID)) {
+        tallySent(sentDelta, doc.sentSign, doc.baseClose, actuals[doc.points[doc.points.length - 1]!.time]);
+      }
       scored += 1;
     }
     aggregatInBatch(batch, statsRef, symbolDelta);
@@ -400,13 +432,16 @@ export async function evaluateIntradayDue(): Promise<IntradayEvalResult> {
         d.hits += score.dirHit ? 1 : 0;
         d.maeSum += score.maePct;
         symbolDelta.set(key, d);
-        // Sentiment-Schatten: gleiche Gates wie der dirHit (nur realisierte).
-        tallySent(
-          sentDelta,
-          doc.sentSign,
-          doc.baseClose,
-          actuals[String(doc.points[doc.points.length - 1]!.t)],
-        );
+        // Sentiment-Schatten: gleiche Gates wie der dirHit (nur realisierte),
+        // ein Fall je (Symbol, Basis-Bar).
+        if (vertrittSentimentFall(doc.lookback, INTRADAY_LOOKBACK_GRID)) {
+          tallySent(
+            sentDelta,
+            doc.sentSign,
+            doc.baseClose,
+            actuals[String(doc.points[doc.points.length - 1]!.t)],
+          );
+        }
         scored += 1;
       } else if (nowSec - doc.baseT > INTRADAY_EXPIRE_SEC) {
         // End-Bar wird nie realisiert (Session-Ende/Halt) → verfallen lassen,
