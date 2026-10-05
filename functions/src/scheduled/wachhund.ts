@@ -30,6 +30,7 @@ import { logger } from 'firebase-functions/v2';
 import {
   bewerteAktivitaet,
   bewerteHerzschlag,
+  bewerteNachrichten,
   naechsterAktivitaetsZustand,
   naechsterAlarm,
   type AktivitaetZustand,
@@ -43,6 +44,7 @@ export async function wachhundLauf(now = new Date()): Promise<{
   urteil: HerzschlagUrteil;
   alarm: AlarmZustand;
   aktivitaet: AktivitaetZustand;
+  nachrichten: AktivitaetZustand;
 }> {
   const db = getFirestore();
   const health = await db.doc('meta/health').get();
@@ -75,9 +77,31 @@ export async function wachhundLauf(now = new Date()): Promise<{
     now.toISOString(),
   );
 
+  // Dritte Frage, eigenes Feld (05.10.): Kommt der Nachrichtenstrom an?
+  const stand = await db.doc('meta/nachrichtenStand').get();
+  const vorherNachrichten = health.get('nachrichten') as AktivitaetZustand | undefined;
+  const nachrichten = naechsterAktivitaetsZustand(
+    vorherNachrichten,
+    bewerteNachrichten({
+      jetztMs: now.getTime(),
+      letzterLauf: stand.get('letzterLauf') as string | undefined,
+      letzterErfolg: stand.get('letzterErfolg') as string | undefined,
+      grund: stand.get('grund') as string | null | undefined,
+      rueckstandS: stand.get('rueckstandS') as number | null | undefined,
+      fehlerFolge: stand.get('fehlerFolge') as number | undefined,
+    }),
+    now.toISOString(),
+  );
+
   // `merge: true`, damit der Wächter NIE den Heartbeat überschreibt, den er
   // bewacht — ein Wächter, der sein eigenes Messobjekt anfasst, taugt nichts.
-  await db.doc('meta/health').set({ alarm, aktivitaet }, { merge: true });
+  await db.doc('meta/health').set({ alarm, aktivitaet, nachrichten }, { merge: true });
+
+  if (nachrichten.aktiv && vorherNachrichten?.aktiv !== true) {
+    logger.error(`NACHRICHTEN: ${nachrichten.text}`);
+  } else if (!nachrichten.aktiv && vorherNachrichten?.aktiv === true) {
+    logger.info(`NACHRICHTEN: Entwarnung — ${nachrichten.text}`);
+  }
 
   /* Nur bei WECHSEL loggen und mit eigenem Präfix (Prüfbefund 05.10.): Der
    * bestehende Log-Alert hört auf „WACHHUND" und ist für den stehenden Scan
@@ -98,7 +122,7 @@ export async function wachhundLauf(now = new Date()): Promise<{
     logger.info(`WACHHUND: Entwarnung — ${alarm.text} (Alarm lief seit ${vorher.seit ?? '?'})`);
   }
 
-  return { urteil, alarm, aktivitaet };
+  return { urteil, alarm, aktivitaet, nachrichten };
 }
 
 /** Alle 10 Minuten; ohne Retry — der nächste Tick ist der Retry. */

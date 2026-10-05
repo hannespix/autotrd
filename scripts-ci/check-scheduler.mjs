@@ -45,6 +45,8 @@ const JOB_ID = 'firebase-schedule-scanMarket-us-central1';
  */
 const SCHEDULES = [
   { fn: 'scanMarket', service: 'scanmarket', cron: '*/5 * * * *', was: 'Marktscan' },
+  // KI-Kaskade Stufe 1 (05.10.): Nachrichtenstrom mit erstem Sehzeitpunkt.
+  { fn: 'nachrichtenSammeln', service: 'nachrichtensammeln', cron: '*/5 * * * *', was: 'Nachrichten-Sammler' },
   // Der Ausstiegs-Wächter läuft MINÜTLICH: Ein Stop-Loss, der fünf Minuten
   // zu spät auslöst, kostet Geld — ein Einstieg fünf Minuten später fast
   // nichts (Owner-Wunsch 28.07., Begründung in riskPulse.ts).

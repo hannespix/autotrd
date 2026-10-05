@@ -221,3 +221,54 @@ export function naechsterAktivitaetsZustand(
   const seit = vorher?.aktiv && vorher.seit ? vorher.seit : jetztIso;
   return { aktiv: true, text: urteil.text, seit, at: jetztIso };
 }
+
+/* ── Nachrichten-Sammler (KI-Kaskade Stufe 1, 05.10.) ────────────────────────
+ *
+ * Dritte Frage, drittes Feld (`meta/health.nachrichten`): Kommt der
+ * Nachrichtenstrom an? Das Red-Team zeigte zwei Arten, auf die der Sammler
+ * stehen kann, ohne dass ein einzelner Lauf scheitert: ein Rückstand, der
+ * nicht abnimmt, und Läufe, die abwechselnd gelingen und scheitern. Beides
+ * fängt nur ein Blick von außen — Alter des letzten Erfolgs und Abstand zur
+ * Gegenwart. Wie bei der Untätigkeit NICHT im Herzschlag-Alarm: Ohne
+ * Nachrichten handelt das System weiter, `healthz` bleibt grün.
+ */
+
+/** So lange darf der letzte erfolgreiche Lauf her sein (Takt 5 min). */
+export const NACHRICHTEN_STILL_MAX_MIN = 30;
+/** So weit darf der Sammler hinter der Gegenwart liegen. */
+export const NACHRICHTEN_RUECKSTAND_MAX_S = 2 * 3600;
+
+export interface NachrichtenEingabe {
+  jetztMs: number;
+  letzterLauf?: string | undefined;
+  letzterErfolg?: string | undefined;
+  grund?: string | null | undefined;
+  rueckstandS?: number | null | undefined;
+  fehlerFolge?: number | undefined;
+}
+
+export function bewerteNachrichten(e: NachrichtenEingabe): AktivitaetUrteil {
+  if (!e.letzterLauf) return { ok: true, text: 'Nachrichten-Sammler lief noch nie — kein Urteil.' };
+  if (e.grund === 'keine_schluessel') {
+    return { ok: false, text: 'Nachrichten-Sammler ohne Alpaca-Schlüssel — es wird nichts gesammelt.' };
+  }
+  const erfolg = e.letzterErfolg ? Date.parse(e.letzterErfolg) : Number.NaN;
+  if (!Number.isFinite(erfolg) || e.jetztMs - erfolg > NACHRICHTEN_STILL_MAX_MIN * 60_000) {
+    const min = Number.isFinite(erfolg) ? Math.round((e.jetztMs - erfolg) / 60_000) : null;
+    return {
+      ok: false,
+      text:
+        `Nachrichten-Sammler ${min === null ? 'noch nie' : `seit ${min} min nicht`} erfolgreich `
+        + `(${e.fehlerFolge ?? 0} Fehlschläge in Folge) — Stand in meta/nachrichtenStand prüfen.`,
+    };
+  }
+  if ((e.rueckstandS ?? 0) > NACHRICHTEN_RUECKSTAND_MAX_S) {
+    return {
+      ok: false,
+      text:
+        `Nachrichten-Sammler liegt ${Math.round(((e.rueckstandS ?? 0) / 3600) * 10) / 10} h hinter der Gegenwart `
+        + `(${e.fehlerFolge ?? 0} Fehlschläge in Folge) — Rückstand wird abgebaut oder steht.`,
+    };
+  }
+  return { ok: true, text: 'Nachrichten-Sammler läuft.' };
+}

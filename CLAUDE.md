@@ -224,6 +224,12 @@ gesamten Event-Loop ein → Server hängt → Browser bekommt leere Antwort →
 > volle Suite hat es gefangen, aber verlassen darf man sich darauf nicht.
 > Also: Anker mit genug Kontext wählen (Nachbarzeile, Zeilennummer oder
 > `count == 1` prüfen) und nach dem Rückbau die Suite laufen lassen.
+> `count == 1` gilt für BEIDE Richtungen: Am 05.10. war der Probe-Anker
+> eindeutig, der eingesetzte Text aber nicht (`… LOOKBACK_GRID)` →
+> `… INTRADAY_LOOKBACK_GRID)`, das es schon gab). Der Rückbau verweigerte
+> sich zu Recht — und die nächsten zwei Proben liefen auf der noch
+> sabotierten Datei. Vor dem Testlauf prüfen, dass der Ersatztext nach dem
+> Einsetzen genau einmal vorkommt; sonst die Probe gar nicht erst starten.
 
 Es gibt keine umfassende Test-Suite — **beobachte echtes Verhalten**:
 
@@ -322,6 +328,21 @@ Für UI-Änderungen zusätzlich mit headless Chrome bei Desktop (1500) **und** P
 > Beide Richtungen haben dieselbe Wurzel: Ein Sammel-Signal (PR-Häkchen,
 > Lauf-Farbe) beantwortet nie die Frage „läuft mein Code". Nur der Schritt,
 > der ihn ausliefert, beantwortet sie.
+
+> **Dritte Sorte: „cancelled" ohne einen einzigen Schritt = Runner-Ausfall,
+> kein Code-Fehler.** Am 05.10. wurde der Deploy zu `17957c3` zweimal
+> abgebrochen — Jobs ohne `steps[]`, Annotation „The job was not acquired
+> by Runner", zeitgleich ein GitHub-Actions-Vorfall auf githubstatus.com.
+> Im Code war nichts zu reparieren. Der Weg zurück ist der Neustart DESSELBEN
+> Laufs (dieselbe SHA, kein neuer Commit nötig):
+>
+> ```bash
+> gh api -X POST repos/hannespix/autotrd/actions/runs/<run-id>/rerun
+> ```
+>
+> Das funktioniert, wo `actions_run_trigger` mit 403 scheitert. Erst wenn
+> der Vorfall auf githubstatus vorbei ist; der dritte Versuch lief durch.
+> Danach wie immer: den Deploy-SCHRITT der Wiederholung prüfen.
 
 > **Nach einem Stapel Änderungen: ein Zusammenspiel-Durchgang.** Acht einzeln
 > verifizierte Änderungen ergeben keinen verifizierten Stand — Fehler sitzen

@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import {
   bewerteAktivitaet,
   bewerteHerzschlag,
+  bewerteNachrichten,
   naechsterAktivitaetsZustand,
   naechsterAlarm,
   KURSQUELLE_MIN_FEHLER,
@@ -175,5 +176,33 @@ describe('Untätigkeits-Wächter (05.10.)', () => {
     const a3 = naechsterAktivitaetsZustand(a2, { ok: true, text: 'ok' }, '2026-10-05T10:20:00.000Z');
     expect(a3.aktiv).toBe(false);
     expect(a3.seit).toBeUndefined();
+  });
+});
+
+describe('bewerteNachrichten (KI-Kaskade Stufe 1)', () => {
+  const jetzt = Date.parse('2026-10-05T14:00:00Z');
+  const basis = { jetztMs: jetzt, letzterLauf: '2026-10-05T13:58:00Z', letzterErfolg: '2026-10-05T13:58:00Z' };
+
+  it('lief noch nie: kein Urteil', () => {
+    expect(bewerteNachrichten({ jetztMs: jetzt }).ok).toBe(true);
+  });
+  it('frisch und ohne Rückstand: läuft', () => {
+    expect(bewerteNachrichten({ ...basis, rueckstandS: 120 }).ok).toBe(true);
+  });
+  it('ohne Schlüssel: Alarm', () => {
+    expect(bewerteNachrichten({ ...basis, grund: 'keine_schluessel' }).ok).toBe(false);
+  });
+  it('letzter Erfolg älter als 30 min: Alarm — auch wenn Läufe dazwischen „liefen"', () => {
+    const u = bewerteNachrichten({ ...basis, letzterErfolg: '2026-10-05T13:20:00Z', fehlerFolge: 8 });
+    expect(u.ok).toBe(false);
+    expect(u.text).toContain('seit 40 min');
+  });
+  it('nie erfolgreich, obwohl gelaufen: Alarm', () => {
+    expect(bewerteNachrichten({ jetztMs: jetzt, letzterLauf: '2026-10-05T13:58:00Z' }).ok).toBe(false);
+  });
+  it('Rückstand über 2 h trotz frischer Erfolge: Alarm (stummer Stillstand)', () => {
+    const u = bewerteNachrichten({ ...basis, rueckstandS: 3 * 3600 });
+    expect(u.ok).toBe(false);
+    expect(u.text).toContain('3 h');
   });
 });

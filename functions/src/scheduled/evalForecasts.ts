@@ -14,6 +14,8 @@ import { logger } from 'firebase-functions/v2';
 import {
   DEFAULT_INTRADAY_LOOKBACK,
   FORECAST_V,
+  INTRADAY_LOOKBACK_GRID,
+  LOOKBACK_GRID,
   bestParams,
   comboKey,
   isForecastDue,
@@ -46,7 +48,30 @@ interface SentDelta {
 
 const emptySentDelta = (): SentDelta => ({ pos: { n: 0, hits: 0 }, neg: { n: 0, hits: 0 } });
 
-function tallySent(delta: SentDelta, sentSign: number | undefined, baseClose: number, actLast: number | undefined): void {
+/**
+ * Zählt dieser Prognose-Lookback für den Sentiment-Schatten? (Red-Team-Befund
+ * 05.10.)
+ *
+ * Bis dahin zählte JEDES Prognose-Dokument — und davon gibt es je Symbol und
+ * Basistag eines je Lookback (Tag: 10/20/30, intraday: 24/48). Alle tragen
+ * dieselbe Nachrichtenlage, denselben Basiskurs und denselben End-Kurs:
+ * dreimal derselbe Treffer. `n` war damit rund dreifach aufgebläht, und eine
+ * Lernschleife auf dieser Zahl hätte Rauschen für Evidenz gehalten.
+ *
+ * Bewusst KEIN Merker im Speicher: Der Tageslauf holt 200 unbewertete
+ * Dokumente ohne Sortierung, die Geschwister eines Falls können also in
+ * verschiedenen Läufen landen. Nur eine Regel am Dokument selbst zählt
+ * laufübergreifend genau einmal — der kleinste Lookback des Gitters. Die
+ * Geschwister entstehen gemeinsam oder gar nicht (alle Lookbacks brauchen
+ * dieselben ≥ 5 Schlusskurse, geschrieben wird in einem Batch); fehlte der
+ * Vertreter doch einmal, fehlte der Fall: ein verlorener Messpunkt statt
+ * eines doppelten.
+ */
+export function vertrittSentimentFall(lookback: number, gitter: readonly number[]): boolean {
+  return gitter.length > 0 && lookback === Math.min(...gitter);
+}
+
+export function tallySent(delta: SentDelta, sentSign: number | undefined, baseClose: number, actLast: number | undefined): void {
   const hit = sentimentHit(sentSign, baseClose, actLast);
   if (hit === null) return;
   const b = sentSign === 1 ? delta.pos : delta.neg;
@@ -54,16 +79,31 @@ function tallySent(delta: SentDelta, sentSign: number | undefined, baseClose: nu
   b.hits += hit ? 1 : 0;
 }
 
+/**
+ * Fassung der bereinigten Zählung. Ändert sich, was gezählt wird (Lexikon,
+ * Schwellen, News-Fenster), muss diese Zahl steigen und der Zähler unter
+ * neuem Namen beginnen — sonst addieren sich zwei Messungen in einem Feld,
+ * genau der Fehler, den `einmalig` gerade behebt.
+ */
+export const SENT_SCHATTEN_V = 1;
+
 async function writeSentStats(scope: 'daily' | 'intraday', delta: SentDelta): Promise<void> {
   if (delta.pos.n + delta.neg.n === 0) return;
+  // Unter `einmalig` (05.10.): Die alten Felder `daily`/`intraday` zählten
+  // jeden Fall je Lookback mehrfach und bleiben als Altbestand stehen —
+  // korrekte und aufgeblähte Zahlen in einem Zähler wären keine Statistik.
   await getFirestore()
     .doc('meta/sentimentStats')
     .set(
       {
         updatedAt: new Date().toISOString(),
-        [scope]: {
-          pos: { n: FieldValue.increment(delta.pos.n), hits: FieldValue.increment(delta.pos.hits) },
-          neg: { n: FieldValue.increment(delta.neg.n), hits: FieldValue.increment(delta.neg.hits) },
+        altbestand: 'daily/intraday: bis 05.10. je Lookback mehrfach gezählt — nicht auswerten',
+        einmalig: {
+          v: SENT_SCHATTEN_V,
+          [scope]: {
+            pos: { n: FieldValue.increment(delta.pos.n), hits: FieldValue.increment(delta.pos.hits) },
+            neg: { n: FieldValue.increment(delta.neg.n), hits: FieldValue.increment(delta.neg.hits) },
+          },
         },
       },
       { merge: true },
@@ -202,12 +242,18 @@ export async function evaluateDue(): Promise<EvalResult> {
     for (const { ref, doc } of entries) {
       const score = scoreForecast(doc.points, doc.baseClose, actuals);
       if (!score) continue; // End-Tag (noch) nicht realisiert → später erneut
+      const endTag = doc.points[doc.points.length - 1]!.time;
+      const sentVertreter = vertrittSentimentFall(doc.lookback, LOOKBACK_GRID);
+      // Der Treffer je FALL steht am Vertreter — aus Zählern allein ließe
+      // sich später keine Abhängigkeit zwischen Nachbartagen herausrechnen.
+      const sentHit = sentVertreter ? sentimentHit(doc.sentSign, doc.baseClose, actuals[endTag]) : null;
       batch.update(ref, {
         evaluated: true,
         evaluatedAt: new Date().toISOString(),
         maePct: score.maePct,
         dirHit: score.dirHit,
         nPoints: score.nPoints,
+        ...(sentHit === null ? {} : { sentHit }),
       });
       const key = comboKey(doc.lookback);
       const d = symbolDelta.get(key) ?? { n: 0, hits: 0, maeSum: 0 };
@@ -215,8 +261,11 @@ export async function evaluateDue(): Promise<EvalResult> {
       d.hits += score.dirHit ? 1 : 0;
       d.maeSum += score.maePct;
       symbolDelta.set(key, d);
-      // Sentiment-Schatten: nur bewertete Prognosen — dieselben Gates.
-      tallySent(sentDelta, doc.sentSign, doc.baseClose, actuals[doc.points[doc.points.length - 1]!.time]);
+      // Sentiment-Schatten: nur bewertete Prognosen — dieselben Gates, ein
+      // Fall je (Symbol, Basistag).
+      if (sentVertreter) {
+        tallySent(sentDelta, doc.sentSign, doc.baseClose, actuals[endTag]);
+      }
       scored += 1;
     }
     aggregatInBatch(batch, statsRef, symbolDelta);
@@ -387,12 +436,16 @@ export async function evaluateIntradayDue(): Promise<IntradayEvalResult> {
     for (const { ref, doc } of entries) {
       const score = scoreIntradayForecast(doc.points, doc.baseClose, actuals);
       if (score) {
+        const endKurs = actuals[String(doc.points[doc.points.length - 1]!.t)];
+        const sentVertreter = vertrittSentimentFall(doc.lookback, INTRADAY_LOOKBACK_GRID);
+        const sentHit = sentVertreter ? sentimentHit(doc.sentSign, doc.baseClose, endKurs) : null;
         batch.update(ref, {
           evaluated: true,
           evaluatedAt: new Date().toISOString(),
           maePct: score.maePct,
           dirHit: score.dirHit,
           nPoints: score.nPoints,
+          ...(sentHit === null ? {} : { sentHit }),
         });
         const key = comboKey(doc.lookback);
         const d = symbolDelta.get(key) ?? { n: 0, hits: 0, maeSum: 0 };
@@ -400,13 +453,11 @@ export async function evaluateIntradayDue(): Promise<IntradayEvalResult> {
         d.hits += score.dirHit ? 1 : 0;
         d.maeSum += score.maePct;
         symbolDelta.set(key, d);
-        // Sentiment-Schatten: gleiche Gates wie der dirHit (nur realisierte).
-        tallySent(
-          sentDelta,
-          doc.sentSign,
-          doc.baseClose,
-          actuals[String(doc.points[doc.points.length - 1]!.t)],
-        );
+        // Sentiment-Schatten: gleiche Gates wie der dirHit (nur realisierte),
+        // ein Fall je (Symbol, Basis-Bar).
+        if (sentVertreter) {
+          tallySent(sentDelta, doc.sentSign, doc.baseClose, endKurs);
+        }
         scored += 1;
       } else if (nowSec - doc.baseT > INTRADAY_EXPIRE_SEC) {
         // End-Bar wird nie realisiert (Session-Ende/Halt) → verfallen lassen,
