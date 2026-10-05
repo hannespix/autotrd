@@ -461,7 +461,38 @@ async function phantomTag() {
   await inventur();
 }
 
-if (modus === 'phantom-tag') {
+/** Übernahme OHNE Storno: für ein Konto, dessen offene Orders nur noch
+ *  eigene Schutz-Stops des alten Codes sind — die erkennt die Übernahme an
+ *  der Kennung und hängt sie an die Position, der Schutz bleibt lückenlos. */
+async function uebernehmen() {
+  await tresorLaden();
+  const ziel = opsListe('rueckbau-ziel.txt');
+  if (ziel.length !== 1) throw new Error('rueckbau-ziel.txt muss genau ein Konto nennen');
+  const { brokerVerbindungLesend } = await import('../lib/functions/src/core/orderRouting.js');
+  const { alpacaFetch } = await import('../lib/functions/src/core/alpacaBroker.js');
+  const { adoptBroker } = await import('../lib/functions/src/callable/adoptBroker.js');
+  for (const u of (await db.collection('users').get()).docs) {
+    if (pseudo(u.id) !== ziel[0]) continue;
+    const v = await brokerVerbindungLesend(u.id);
+    if (!v || v.mode !== 'paper') throw new Error('nur Papier-Konten mit lesbarem Broker');
+    const uidSauber = u.id.replace(/[^A-Za-z0-9-]/g, '_');
+    const offen = await alpacaFetch(v.mode, '/v2/orders?status=open&limit=500&nested=false', v.schluessel);
+    const fremd = offen.filter((o) => !String(o.client_order_id ?? '').startsWith(`${uidSauber}-`));
+    console.log(`offene Orders: ${offen.map((o) => `${o.symbol}/${o.type}`).join(' ') || '-'} · fremd: ${fremd.length}`);
+    if (fremd.length) throw new Error('fremde offene Orders — erst klären, nichts übernommen');
+    const gesichert = await equitySichern(u.id);
+    console.log(`${gesichert.length} Equity-Docs gesichert`);
+    const erg = await adoptBroker.run({ data: {}, auth: { uid: u.id, token: {} }, rawRequest: {}, acceptsStreaming: false });
+    console.log(`Übernahme: positionen=${erg.positionen} geloescht=${erg.geloescht} trades=${erg.trades} cash=${r2(erg.cash)} schnitt=${erg.schnitt}`);
+    for (const p of (await db.collection(`users/${u.id}/positions`).get()).docs) {
+      console.log(`  Buch ${p.id}: qty=${p.get('qty')} schutz=${p.get('schutz') ? 'verknüpft' : '-'} quelle=${p.get('quelle') ?? '-'}`);
+    }
+  }
+}
+
+if (modus === 'uebernehmen') {
+  await uebernehmen();
+} else if (modus === 'phantom-tag') {
   await phantomTag();
 } else if (modus === 'bil-verkaufen') {
   await bilVerkaufen();
