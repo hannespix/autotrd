@@ -72,6 +72,35 @@ import {
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 import { fetchPositioning } from '../core/positioning.js';
 import { ladeUniversumSymbole } from '../core/universumLeser.js';
+import { brokerVerbindungLesend } from '../core/orderRouting.js';
+import { boersenOffen, offenMitUhr } from '../core/marktUhr.js';
+
+/**
+ * Darf dieses Konto JETZT rebalancen? (Befund 05.10.)
+ *
+ * Der Lauf lag bis heute um 18:00 ET — nach Börsenschluss. Für Konten mit
+ * Broker hieß das: Jede Sockel-Order ging bei geschlossener Börse raus, der
+ * Storno-Pfad für ungefüllte Einstiege (K-2c) nahm sie nach Sekunden wieder
+ * zurück (03.10.: alle acht „canceled") — und der Lauf stempelte trotzdem
+ * `lastRebalance`. Ergebnis: Broker-Konten bekamen ihren Sockel praktisch
+ * nie, und das sah aus wie „nichts zu tun".
+ *
+ * Konten OHNE Broker buchen im eigenen Buch und brauchen keine offene
+ * Börse — für sie ändert sich nichts. Pur, damit die Regel testbar ist.
+ */
+export function rebalanceJetzt(hatBroker: boolean, aktienOffen: boolean): boolean {
+  return !hatBroker || aktienOffen;
+}
+
+/**
+ * Gilt das Rebalancing als erledigt? Nur wenn nichts zu tun war oder
+ * mindestens eine Order ausgeführt wurde (Befund 05.10.). Sonst bleibt der
+ * Stempel offen und der nächste Tageslauf versucht es erneut — ein
+ * gescheiterter Versuch darf eine ganze Woche Sockel nicht still streichen.
+ */
+export function rebalanceErledigt(orders: number, ausgefuehrt: number): boolean {
+  return orders === 0 || ausgefuehrt > 0;
+}
 
 /** Leitindex des Marktfilters — der breiteste verfügbare US-Index. */
 const MARKET_INDEX = '^GSPC';
@@ -493,6 +522,8 @@ async function rebalanceMomentumUsers(
    * Praefixe traegen beide Orders dieselbe `client_order_id`, und Alpaca
    * wiese die zweite als Duplikat ab — der Sockel bliebe still. */
   const laufId = `mom-${now.toISOString().slice(0, 10)}`;
+  // Einmal je Lauf: Ist der US-Aktienmarkt offen? (s. `rebalanceJetzt`)
+  const aktienOffen = offenMitUhr('SPY', now, await boersenOffen(now.getTime()));
   const users = await db
     .collection('users')
     .where('settings.strategy.engine.mode', '==', 'momentum')
@@ -527,6 +558,10 @@ async function rebalanceMomentumUsers(
       const stateRef = userDoc.ref.collection('meta').doc('momentum');
       const lastRebalance = (await stateRef.get()).get('lastRebalance') as string | undefined;
       if (!istRebalanceFaellig(lastRebalance ?? null, now)) continue;
+      if (!rebalanceJetzt((await brokerVerbindungLesend(userDoc.id)) !== null, aktienOffen)) {
+        logger.info(`Momentum-Rebalancing ${userDoc.id}: Börse zu — verschoben, nicht gestempelt`);
+        continue;
+      }
 
       const posSnap = await userDoc.ref.collection('positions').get();
       const gehalten = new Map<string, Position>(
@@ -640,9 +675,15 @@ async function rebalanceMomentumUsers(
           { merge: true },
         );
         logger.info(`Momentum-Rebalancing ${userDoc.id}: Käufe gesperrt — ${tore.einstieg}`);
-      } else {
+      } else if (rebalanceErledigt(orders.length, ausgefuehrt)) {
         await stateRef.set(
           { lastRebalance: now.toISOString(), orders: orders.length, executed: ausgefuehrt, einstiegGesperrt: null },
+          { merge: true },
+        );
+      } else {
+        // Nichts ausgeführt, obwohl Orders anstanden — morgen erneut (s. `rebalanceErledigt`).
+        await stateRef.set(
+          { letzterVersuch: now.toISOString(), orders: orders.length, executed: 0 },
           { merge: true },
         );
       }
@@ -690,6 +731,8 @@ async function rebalanceCoreSleeve(
   const db = getFirestore();
   /** Eigenes Praefix — siehe rebalanceMomentumUsers. */
   const laufId = `core-${now.toISOString().slice(0, 10)}`;
+  // Einmal je Lauf: Ist der US-Aktienmarkt offen? (s. `rebalanceJetzt`)
+  const aktienOffen = offenMitUhr('SPY', now, await boersenOffen(now.getTime()));
   const users = await db
     .collection('users')
     .where('settings.strategy.engine.running', '==', true)
@@ -755,6 +798,10 @@ async function rebalanceCoreSleeve(
       const stateRef = userDoc.ref.collection('meta').doc('coreSleeve');
       const lastRebalance = (await stateRef.get()).get('lastRebalance') as string | undefined;
       if (!istRebalanceFaellig(lastRebalance ?? null, now)) continue;
+      if (!rebalanceJetzt((await brokerVerbindungLesend(userDoc.id)) !== null, aktienOffen)) {
+        logger.info(`Sockel-Rebalancing ${userDoc.id}: Börse zu — verschoben, nicht gestempelt`);
+        continue;
+      }
 
       const posSnap = await userDoc.ref.collection('positions').get();
       const alle = new Map<string, Position>(posSnap.docs.map((d) => [d.id, d.data() as Position]));
@@ -879,9 +926,15 @@ async function rebalanceCoreSleeve(
           { merge: true },
         );
         logger.info(`Sockel-Rebalancing ${userDoc.id}: Käufe gesperrt — ${tore.einstieg}`);
-      } else {
+      } else if (rebalanceErledigt(orders.length, ausgefuehrt)) {
         await stateRef.set(
           { lastRebalance: now.toISOString(), orders: orders.length, executed: ausgefuehrt, anteilPct: anteil, einstiegGesperrt: null },
+          { merge: true },
+        );
+      } else {
+        // Nichts ausgeführt, obwohl Orders anstanden — morgen erneut (s. `rebalanceErledigt`).
+        await stateRef.set(
+          { letzterVersuch: now.toISOString(), orders: orders.length, executed: 0, anteilPct: anteil },
           { merge: true },
         );
       }
@@ -947,10 +1000,20 @@ async function messePositionierung(
   }
 }
 
-/** Täglich 18:00 ET — nach snapshotEquity (17:15) und autoTune (17:45). */
+/**
+ * Täglich 09:45 ET — in der Handelszeit (Befund 05.10.).
+ *
+ * Bis dahin 18:00 ET, nach Börsenschluss: Für Konten mit Broker gingen die
+ * Orders damit bei geschlossener Börse raus und wurden sofort wieder
+ * storniert (s. `rebalanceJetzt`). 09:45 statt 09:30: Die ersten Minuten
+ * nach Eröffnung haben die breitesten Spreads. Die Einstellungen aus
+ * autoTune (17:45) wirken damit am nächsten Morgen. Täglich statt nur
+ * werktags, weil die Positionierungs-Messung ihren 24-h-Abstand braucht;
+ * am Wochenende verschiebt `rebalanceJetzt` die Broker-Konten.
+ */
 export const momentumRun = onSchedule(
   {
-    schedule: '0 18 * * *',
+    schedule: '45 9 * * *',
     timeZone: 'America/New_York',
     retryCount: 0,
     timeoutSeconds: 540,

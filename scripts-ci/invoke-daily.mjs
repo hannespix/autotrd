@@ -142,7 +142,7 @@ export const RUNS = [
     // Einstellung ohne Wirkung — und das sieht im Dashboard exakt so aus wie
     // ein Sockel, der bewusst in Cash steht. Deshalb gehört er hier dazu.
     //
-    // Optional, weil der Cloud Scheduler ihn ohnehin täglich um 18:00 ET
+    // Optional, weil der Cloud Scheduler ihn ohnehin täglich um 09:45 ET
     // fährt: Ein Fehlschlag beim Deploy soll den Deploy nicht rot machen.
     optional: true,
     async spur(project) {
