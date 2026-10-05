@@ -383,14 +383,30 @@ async function ordersDiagnose() {
   for (const u of (await db.collection('users').get()).docs) {
     if (pseudo(u.id) !== ziel) continue;
     const v = await brokerVerbindungLesend(u.id);
+    const uidSauber = u.id.replace(/[^A-Za-z0-9-]/g, '_');
+    const maske = (t) => String(t ?? '').split(uidSauber).join('<uid>').split(u.id).join('<uid>');
+    const strat = u.get('settings.strategy') ?? {};
+    console.log(`Engine running=${strat?.engine?.running} · risk.abgleich=${JSON.stringify(u.get('risk.abgleich') ?? null).slice(0, 160)}`);
+    const pos = await db.collection(`users/${u.id}/positions`).get();
+    for (const p of pos.docs) {
+      const d = p.data();
+      console.log(`  Buch ${p.id}: qty=${d.qty} quelle=${d.quelle ?? '-'} broker=${d.broker ?? '-'} schutz=${maske(JSON.stringify(d.schutz ?? null)).slice(0, 140)}`);
+    }
     const uhr = await alpacaFetch(v.mode, '/v2/clock', v.schluessel);
     console.log(`Uhr: is_open=${uhr.is_open} next_open=${uhr.next_open}`);
     const roh = await alpacaFetch(v.mode, '/v2/orders?status=open&limit=500&nested=true', v.schluessel);
+    // Was seit Samstag passiert ist: geschlossene Orders der letzten 3 Tage.
+    const zu = await alpacaFetch(v.mode, '/v2/orders?status=closed&limit=50&after=2026-10-03T00:00:00Z&direction=asc', v.schluessel);
+    for (const o of zu) {
+      console.log(`  zu: ${o.symbol} ${o.side} ${o.type} status=${o.status} qty=${o.qty} filled=${o.filled_qty}@${o.filled_avg_price ?? '-'} cid=${maske(o.client_order_id).slice(0, 60)} um=${String(o.updated_at).slice(0, 19)}`);
+    }
+    const ap = await alpacaFetch(v.mode, '/v2/positions', v.schluessel);
+    console.log(`  Alpaca-Positionen: ${ap.map((p) => `${p.symbol}:${p.qty}/frei=${p.qty_available}`).join(' ')}`);
     for (const o of roh) {
       const art = String(o.client_order_id ?? '').startsWith('atd-') ? 'atd' : 'sonst';
       console.log(
         `${o.symbol} ${o.side} ${o.type} class=${o.order_class || '-'} status=${o.status} tif=${o.time_in_force}`
-        + ` qty=${o.qty} stop=${o.stop_price} cid=${art} erstellt=${String(o.created_at).slice(0, 16)}`
+        + ` qty=${o.qty} stop=${o.stop_price} cid=${art}:${maske(o.client_order_id).slice(0, 60)} erstellt=${String(o.created_at).slice(0, 16)}`
         + ` storno_angefragt=${o.canceled_at ?? '-'} legs=${(o.legs ?? []).map((l) => `${l.type}/${l.status}`).join(',') || '-'}`,
       );
     }
