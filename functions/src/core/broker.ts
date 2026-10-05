@@ -175,6 +175,25 @@ export function mengeZuKlein(qty: number, fractional: boolean, echterFill: boole
   return !(qty >= (fractional ? 1e-6 : 1));
 }
 
+/**
+ * Ganze Stücke für eröffnende Aktien-Orders, wo möglich (05.10.).
+ *
+ * Alpaca nimmt Stop-Orders nur für ganze Stücke. Der Schutz-Stop deckt
+ * deshalb nur den ganzzahligen Teil einer Position (`planeSchutzStop` rundet
+ * ab) — bei 1.433,11 CCG blieben 0,11 Stück ohne Netz, bei 0,57 AAPL die
+ * ganze Position. Der Neubau kaufte deshalb nur ganze Stücke.
+ *
+ * Übernommen nur dort, wo es nichts kostet: Ab einem ganzen Stück wird
+ * abgerundet; darunter bleibt die Bruchstück-Order, damit kleine Konten
+ * und teure Aktien weiter handeln statt an `qty_unter_1` zu scheitern.
+ * Krypto (Stops dort als `stop_limit` mit Bruchstücken) und schließende
+ * Orders (sie bewegen exakt die offene Menge) bleiben unberührt.
+ */
+export function ganzeStueckeWoMoeglich(qty: number, klasse: string | null, eroeffnet: boolean): number {
+  if (!eroeffnet || klasse === 'crypto' || !(qty >= 1)) return qty;
+  return Math.floor(qty);
+}
+
 /** Geldbeträge auf Cent runden — Float-Drift hat im Kontostand nichts zu suchen. */
 function roundCents(v: number): number {
   return Math.round(v * 100) / 100;
@@ -875,12 +894,12 @@ export async function executeTrade(
     balance,
     new Date().toISOString(),
   );
-  const qty = planeMenge(req, strategy, {
+  const qty = ganzeStueckeWoMoeglich(planeMenge(req, strategy, {
     balance: deckelOrder,
     position,
     effPreis: effSchaetzung,
     fractional,
-  });
+  }), klasse, eroeffnet);
   // Hier ist noch nichts gefüllt — die Order geht erst gleich raus.
   if (mengeZuKlein(qty, fractional, false)) return { executed: false, reason: 'qty_unter_1' };
 
