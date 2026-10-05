@@ -504,38 +504,25 @@ export async function routeOrder(
     if (!fill || !(fill.ausfuehrungskurs > 0)) {
       if (auftrag.stornoBeiKeinFill) {
         /* Die Order darf nicht weiterarbeiten (Begründung am Parameter).
-         * `nicht_stornierbar` heißt fast immer: Sie hat sich zwischen dem
-         * letzten Poll und dem Storno doch noch gefüllt — dann ist der
-         * Fill hier nachzuholen statt ihn zum Waisen zu machen. */
-        try {
-          const storno = await alpacaOrderStornieren(
-            verbindung.mode,
-            order.id,
-            verbindung.schluessel,
-            fetchImpl,
-          );
-          if (storno === 'nicht_stornierbar') {
-            const stand = await alpacaOrderAbfragen(
-              verbindung.mode,
-              order.id,
-              verbindung.schluessel,
-              fetchImpl,
-            );
-            if (stand && stand.filledAvgPreis > 0 && stand.filledQty > 0) {
-              return {
-                ausgefuehrt: true,
-                fillPreis: stand.filledAvgPreis,
-                fillMenge: stand.filledQty,
-                brokerOrderId: order.id,
-              };
-            }
-          }
-        } catch (err) {
-          logger.warn(
-            `routeOrder ${auftrag.symbol}: Storno nach kein_fill fehlgeschlagen — `
-              + `Order ${order.id} arbeitet womöglich weiter`,
-            err,
-          );
+         * Derselbe Helfer wie bei der Teilausführung (Prüfbefund 05.10.):
+         * Storno mit zweitem Versuch, dann Nachfrage bis zum Endzustand.
+         * Vorher wurde nach einem angenommenen Storno gar nicht nachgefragt —
+         * ein Fill im Zustand `pending_cancel` wurde so zum Waisen. */
+        const stand = await einstiegsRestStornieren(
+          verbindung,
+          order.id,
+          auftrag.symbol,
+          auftrag.qty,
+          warteOpts.pauseMs ?? 300,
+          fetchImpl,
+        );
+        if (stand) {
+          return {
+            ausgefuehrt: true,
+            fillPreis: stand.filledAvgPreis,
+            fillMenge: stand.filledQty,
+            brokerOrderId: order.id,
+          };
         }
         return { ausgefuehrt: false, grund: 'kein_fill' };
       }
@@ -712,6 +699,30 @@ export async function routeOrder(
           verbindung.schluessel,
           fetchImpl,
         );
+        /* Eröffnende Ur-Order, die NOCH arbeitet (Prüfbefund 05.10.): wie ein
+         * frischer Einstieg behandeln — Fenster abwarten, Rest stornieren,
+         * Endzustand buchen. Sonst würde eine teilgefüllte Ur-Order mit ihrer
+         * Zwischenmenge gebucht und arbeitete weiter: das CCG-Muster. */
+        if (alt && eroeffnend && !ORDER_ENDZUSTAENDE.has(alt.status)) {
+          const fill = await warteAufFill(verbindung.mode, alt.id, verbindung.schluessel, warte, fetchImpl);
+          if (fill && fill.status === 'filled' && fill.ausfuehrungskurs > 0) {
+            return { ausgefuehrt: true, fillPreis: fill.ausfuehrungskurs, fillMenge: fill.qty, brokerOrderId: alt.id };
+          }
+          const stand = await einstiegsRestStornieren(
+            verbindung,
+            alt.id,
+            auftrag.symbol,
+            auftrag.qty,
+            warteOpts.pauseMs ?? 300,
+            fetchImpl,
+          );
+          const menge = stand?.filledQty ?? fill?.qty ?? 0;
+          const preis = stand?.filledAvgPreis ?? fill?.ausfuehrungskurs ?? 0;
+          if (menge > 0 && preis > 0) {
+            return { ausgefuehrt: true, fillPreis: preis, fillMenge: menge, brokerOrderId: alt.id };
+          }
+          return { ausgefuehrt: false, grund: 'kein_fill' };
+        }
         if (alt && alt.filledAvgPreis > 0 && alt.filledQty > 0) {
           logger.info(
             `routeOrder ${auftrag.symbol}: Ur-Order zur Kennung gefunden und Fill übernommen`,

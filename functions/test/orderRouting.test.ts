@@ -995,13 +995,29 @@ describe('K-2 — routeOrder: Storno bei kein_fill, Nachschlag bei duplicate', (
       { body: { id: 'o9', status: 'new' } },
       { body: { id: 'o9', status: 'new' } },
       { body: {} }, // DELETE /v2/orders/o9
+      { body: { id: 'o9', status: 'canceled', filled_qty: '0', filled_avg_price: null } },
     );
     const r = await routeOrder(verbindung, oeffnend, f, SCHNELL);
     expect(r.ausgefuehrt).toBe(false);
     expect(r.grund).toBe('kein_fill');
     // Der vierte Aufruf IST der Storno — ohne ihn bliebe die Order stehen
-    // und füllte Minuten später parallel zum nächsten Scan-Kauf.
-    expect(f).toHaveBeenCalledTimes(4);
+    // und füllte Minuten später parallel zum nächsten Scan-Kauf. Der fünfte
+    // ist die Nachfrage bis zum Endzustand (Prüfbefund 05.10.).
+    const methoden = f.mock.calls.map((c) => (c[1] as RequestInit | undefined)?.method ?? 'GET');
+    expect(methoden).toEqual(['POST', 'GET', 'GET', 'DELETE', 'GET']);
+  });
+
+  it('Storno angenommen, aber im Zustand pending_cancel noch gefüllt → der Fill wird gebucht, kein Waise', async () => {
+    const f = antwortFolge(
+      { body: { id: 'o9', status: 'accepted' } },
+      { body: { id: 'o9', status: 'new' } },
+      { body: { id: 'o9', status: 'new' } },
+      { body: {} }, // DELETE angenommen
+      { body: { id: 'o9', status: 'pending_cancel', filled_qty: '5', filled_avg_price: '101' } },
+      { body: { id: 'o9', status: 'filled', filled_qty: '5', filled_avg_price: '101' } },
+    );
+    const r = await routeOrder(verbindung, oeffnend, f, SCHNELL);
+    expect(r).toEqual({ ausgefuehrt: true, fillPreis: 101, fillMenge: 5, brokerOrderId: 'o9' });
   });
 
   it('bucht den Fill, wenn der Storno zu spät kommt — die Order füllte doch', async () => {
@@ -1046,6 +1062,33 @@ describe('K-2 — routeOrder: Storno bei kein_fill, Nachschlag bei duplicate', (
     const r = await routeOrder(verbindung, { ...oeffnend, stornoBeiKeinFill: false }, f, SCHNELL);
     expect(r.ausgefuehrt).toBe(false);
     expect(r.grund).toBe('duplicate_ohne_fill');
+  });
+
+  it('422 unique, ERÖFFNENDE Ur-Order noch teilgefüllt → Fenster, Rest-Storno, Endstand gebucht (kein CCG-Muster)', async () => {
+    const f = antwortFolge(
+      { ok: false, status: 422, body: 'client_order_id must be unique' },
+      { body: { id: 'alt1', status: 'partially_filled', filled_qty: '53', filled_avg_price: '6.52' } }, // Nachschlag
+      { body: { id: 'alt1', status: 'partially_filled', filled_qty: '53', filled_avg_price: '6.52' } }, // Fenster 1
+      { body: { id: 'alt1', status: 'partially_filled', filled_qty: '60', filled_avg_price: '6.53' } }, // Fenster 2
+      { body: {} }, // DELETE
+      { body: { id: 'alt1', status: 'canceled', filled_qty: '61', filled_avg_price: '6.53' } },
+    );
+    const r = await routeOrder(verbindung, { ...oeffnend, symbol: 'CCG', qty: 1433 }, f, SCHNELL);
+    expect(r).toEqual({ ausgefuehrt: true, fillPreis: 6.53, fillMenge: 61, brokerOrderId: 'alt1' });
+    const methoden = f.mock.calls.map((c) => (c[1] as RequestInit | undefined)?.method ?? 'GET');
+    expect(methoden).toContain('DELETE');
+  });
+
+  it('422 unique, ERÖFFNENDE Ur-Order füllt im Fenster ganz → kein Storno', async () => {
+    const f = antwortFolge(
+      { ok: false, status: 422, body: 'client_order_id must be unique' },
+      { body: { id: 'alt1', status: 'new', filled_qty: '0', filled_avg_price: null } },
+      { body: { id: 'alt1', status: 'filled', filled_qty: '5', filled_avg_price: '101' } },
+    );
+    const r = await routeOrder(verbindung, oeffnend, f, SCHNELL);
+    expect(r).toEqual({ ausgefuehrt: true, fillPreis: 101, fillMenge: 5, brokerOrderId: 'alt1' });
+    const methoden = f.mock.calls.map((c) => (c[1] as RequestInit | undefined)?.method ?? 'GET');
+    expect(methoden).not.toContain('DELETE');
   });
 
   it('anderes 422 (kein unique) bleibt ein broker_fehler', async () => {

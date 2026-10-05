@@ -183,15 +183,33 @@ export function mengeZuKlein(qty: number, fractional: boolean, echterFill: boole
  * ab) — bei 1.433,11 CCG blieben 0,11 Stück ohne Netz, bei 0,57 AAPL die
  * ganze Position. Der Neubau kaufte deshalb nur ganze Stücke.
  *
- * Übernommen nur dort, wo es nichts kostet: Ab einem ganzen Stück wird
- * abgerundet; darunter bleibt die Bruchstück-Order, damit kleine Konten
- * und teure Aktien weiter handeln statt an `qty_unter_1` zu scheitern.
+ * Übernommen nur dort, wo es kaum etwas kostet: Abgerundet wird nur, wenn
+ * dabei mindestens 90 % der geplanten Menge bleiben (ab ~10 Stück, oder
+ * knapp über einer ganzen Zahl). 1,9 Stück werden NICHT zu 1 — das hätte die
+ * Position fast halbiert (Prüfbefund 05.10.); dort deckt der Stop eben den
+ * ganzzahligen Teil. Unter einem Stück bleibt es ohnehin bei der
+ * Bruchstück-Order, damit kleine Konten weiter handeln.
  * Krypto (Stops dort als `stop_limit` mit Bruchstücken) und schließende
  * Orders (sie bewegen exakt die offene Menge) bleiben unberührt.
  */
 export function ganzeStueckeWoMoeglich(qty: number, klasse: string | null, eroeffnet: boolean): number {
   if (!eroeffnet || klasse === 'crypto' || !(qty >= 1)) return qty;
-  return Math.floor(qty);
+  const ganz = Math.floor(qty);
+  return ganz / qty >= 0.9 ? ganz : qty;
+}
+
+/**
+ * Doppelkauf-Sperre (Prüfbefund 05.10.) — die Regel pur, Begründung an der
+ * Aufrufstelle in `executeTrade`: Ein Engine-Kauf in eine bestehende
+ * Position nur mit ausdrücklicher Aufstockung und nur beim selben Besitzer.
+ */
+export function doppelkaufGesperrt(
+  req: Pick<TradeRequest, 'source' | 'side' | 'aufstockung' | 'core'>,
+  position: Pick<Position, 'core'> | null,
+  schliesst: boolean,
+): boolean {
+  if (req.source !== 'engine' || req.side !== 'buy' || schliesst || position === null) return false;
+  return req.aufstockung !== true || (position.core === true) !== (req.core === true);
 }
 
 /** Geldbeträge auf Cent runden — Float-Drift hat im Kontostand nichts zu suchen. */
@@ -797,6 +815,26 @@ export async function executeTrade(
    * Verkaufs-Knopf; die Ablehnung muss deshalb VOR die Order. */
   if (req.side === 'sell' && !schliesst && !(req.openShort === true && position === null)) {
     return executePaperTrade(req, strategy);
+  }
+
+  /* Doppelkauf-Sperre vor dem Routing (Prüfbefund 05.10.).
+   *
+   * Seit der Sockel der Broker-Konten um 09:45 in der Handelszeit kauft,
+   * laufen er und der 5-Minuten-Scan gleichzeitig — und der Scan beobachtet
+   * genau die Momentum-Spitze, also das Sockel-Ziel. Beide prüfen „Symbol
+   * schon gehalten?" mit einem Stand von vor dem Kauf des anderen. Die
+   * Buchung übernähme den zweiten Fill dann als Nachkauf: doppelte
+   * Positionsgröße, und Sockel- und Scan-Besitz liefen zu einer Position
+   * zusammen.
+   *
+   * Ein Engine-Kauf in eine BESTEHENDE Position ist deshalb nur mit
+   * ausdrücklicher Aufstockung erlaubt — und nur in eine Position desselben
+   * Besitzers (Sockel bleibt Sockel). Der Scan kauft nie absichtlich nach;
+   * Momentum und Sockel markieren ihre Aufstockungen. Handeingaben
+   * (`manual`) bleiben frei. Gelesen wird der Stand von eben (`posSnap`),
+   * das Fenster schrumpft damit von Minuten auf den Bruchteil einer Sekunde. */
+  if (doppelkaufGesperrt(req, position, schliesst)) {
+    return { executed: false, reason: 'position_existiert' };
   }
 
   const klasse = req.assetClass ?? classify(req.symbol);
