@@ -28,8 +28,11 @@ import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { logger } from 'firebase-functions/v2';
 import {
+  bewerteAktivitaet,
   bewerteHerzschlag,
+  naechsterAktivitaetsZustand,
   naechsterAlarm,
+  type AktivitaetZustand,
   type AlarmZustand,
   type HerzschlagUrteil,
 } from '../../../shared/src/index.js';
@@ -39,6 +42,7 @@ import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 export async function wachhundLauf(now = new Date()): Promise<{
   urteil: HerzschlagUrteil;
   alarm: AlarmZustand;
+  aktivitaet: AktivitaetZustand;
 }> {
   const db = getFirestore();
   const health = await db.doc('meta/health').get();
@@ -54,9 +58,25 @@ export async function wachhundLauf(now = new Date()): Promise<{
   const vorher = health.get('alarm') as AlarmZustand | undefined;
   const alarm = naechsterAlarm(vorher, urteil, now.toISOString());
 
+  // Zweite Frage, eigenes Feld (05.10.): Handelt das System überhaupt?
+  const aktivitaet = naechsterAktivitaetsZustand(
+    health.get('aktivitaet') as AktivitaetZustand | undefined,
+    bewerteAktivitaet({
+      jetztMs: now.getTime(),
+      laufend: health.get('konten.laufend') as number | undefined,
+      trades7t: health.get('trading.trades7t') as number | undefined,
+      zaehlungAt: health.get('trading.at') as string | undefined,
+    }),
+    now.toISOString(),
+  );
+
   // `merge: true`, damit der Wächter NIE den Heartbeat überschreibt, den er
   // bewacht — ein Wächter, der sein eigenes Messobjekt anfasst, taugt nichts.
-  await db.doc('meta/health').set({ alarm }, { merge: true });
+  await db.doc('meta/health').set({ alarm, aktivitaet }, { merge: true });
+
+  if (aktivitaet.aktiv) {
+    logger.error(`WACHHUND (Untätigkeit): ${aktivitaet.text} (seit ${aktivitaet.seit ?? '?'})`);
+  }
 
   if (alarm.aktiv) {
     // error, nicht warn: Genau auf diese Zeile gehört der Log-Alert. Jeder
@@ -67,7 +87,7 @@ export async function wachhundLauf(now = new Date()): Promise<{
     logger.info(`WACHHUND: Entwarnung — ${alarm.text} (Alarm lief seit ${vorher.seit ?? '?'})`);
   }
 
-  return { urteil, alarm };
+  return { urteil, alarm, aktivitaet };
 }
 
 /** Alle 10 Minuten; ohne Retry — der nächste Tick ist der Retry. */
