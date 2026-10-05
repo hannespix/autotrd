@@ -54,6 +54,15 @@ export const MARKT_NACHRICHT_V = 1;
 const BATCH_GROESSE = 400;
 /** `getAll` mit sehr vielen Referenzen auf einmal ist unnötig riskant. */
 const LESE_GROESSE = 300;
+/** Ab Laufbeginn: danach keine Kursabfragen mehr (Timeout 180 s, Commit geht vor). */
+export const KURS_FRIST_MS = 100_000;
+/**
+ * Nach so vielen Fehlschlägen in Folge wird eine Fortsetzung doch verworfen
+ * (eine Stunde bei 5-min-Takt). Bis dahin gilt: Das Token ist eine Position,
+ * eine Störung kein Grund, sie aufzugeben. Danach liest der Sammler ab dem
+ * Cursor neu — doppelt gelesen kostet nur Lesezugriffe.
+ */
+export const FORTSETZUNG_MAX_FEHLER = 12;
 
 export interface SammelErgebnis {
   grund: null | 'keine_schluessel' | 'fehler';
@@ -71,6 +80,8 @@ export interface Fortsetzung {
   token: string;
   /** Größte bisher in diesem Durchgang gelesene Achsen-Zeit. */
   bis: string | null;
+  /** Wann die Kette begann — wie lange der Sammler schon hinterherläuft. */
+  seit: string | null;
 }
 
 /** Fortsetzung aus dem Stand-Dokument lesen — fremde Formen gelten als keine. */
@@ -78,7 +89,12 @@ export function leseFortsetzung(roh: unknown): Fortsetzung | null {
   const f = (roh ?? null) as Record<string, unknown> | null;
   if (!f || typeof f['start'] !== 'string' || typeof f['token'] !== 'string' || f['token'].length === 0) return null;
   if (!Number.isFinite(Date.parse(f['start']))) return null;
-  return { start: f['start'], token: f['token'], bis: typeof f['bis'] === 'string' ? f['bis'] : null };
+  return {
+    start: f['start'],
+    token: f['token'],
+    bis: typeof f['bis'] === 'string' ? f['bis'] : null,
+    seit: typeof f['seit'] === 'string' ? f['seit'] : null,
+  };
 }
 
 /** Median in Sekunden zwischen Veröffentlichung und erstem Sehen — pur. */
@@ -97,6 +113,11 @@ export function verzoegerungMedianS(
 /**
  * Der Datensatz, wie er in `marktNachrichten/{id}` steht — pur (ohne die
  * Server-Zeit `gespeichertAt`, die der Aufrufer beim Commit setzt).
+ *
+ * `alterS` je Kurs = `firstSeenAt − Trade-Zeit` in Sekunden: positiv heißt,
+ * der Trade lag VOR dem ersten Sehen; negativ, er kam erst danach (Blättern
+ * und Kursabfrage brauchen Sekunden) — dann zeigt der Kurs schon ein Stück
+ * Reaktion und taugt nicht als „Stand beim Sehen".
  */
 export function nachrichtenDatensatz(
   n: MarktNachricht,
@@ -105,11 +126,11 @@ export function nachrichtenDatensatz(
   kurseAbgefragtAt: string | null,
 ): Record<string, unknown> {
   const kurseGesehen: Record<string, GesehenerKurs & { alterS: number | null }> = {};
-  const abfrageMs = kurseAbgefragtAt ? Date.parse(kurseAbgefragtAt) : NaN;
+  const gesehenMs = Date.parse(firstSeenAt);
   for (const s of n.symbole) {
     const k = kurse[s];
     if (!k) continue;
-    const alter = (abfrageMs - Date.parse(k.t)) / 1000;
+    const alter = (gesehenMs - Date.parse(k.t)) / 1000;
     kurseGesehen[s] = { ...k, alterS: Number.isFinite(alter) ? Math.round(alter) : null };
   }
   return {
@@ -139,10 +160,14 @@ export async function runNachrichtenSammeln(
     return { ...leer, grund: 'keine_schluessel' };
   }
 
+  const laufBeginn = jetzt().getTime();
+  let fort: Fortsetzung | null = null;
+  let fehlerFolgeVorher = 0;
   try {
     const stand = await standRef.get();
     const alterCursor = typeof stand.get('cursor') === 'string' ? (stand.get('cursor') as string) : null;
-    const fort = leseFortsetzung(stand.get('fortsetzung'));
+    fort = leseFortsetzung(stand.get('fortsetzung'));
+    fehlerFolgeVorher = Number(stand.get('fehlerFolge') ?? 0) || 0;
     // Abgeschnittener Vorlauf → DIESELBE Abfrage ab dem gemerkten Token.
     // Sonst eine neue ab Cursor minus Überlappung.
     const abfrage = fort
@@ -153,6 +178,11 @@ export async function runNachrichtenSammeln(
 
     const katalog = new Set(allSymbols());
     const universum = await ladeUniversumSymbole();
+    // Für den HANDEL heißt ein leeres Universum „nur Katalog" — sicher. Für
+    // die MESSUNG hieße es: alle Universums-Meldungen still verwerfen und
+    // den Cursor an ihnen vorbeiziehen (Red-Team 05.10.). Also pausieren —
+    // als Fehler, damit Cursor und Fortsetzung stehen bleiben.
+    if (universum.size === 0) throw new Error('Universum leer — Sammeln pausiert, bis universumSync gelaufen ist');
     const bekannt = (s: string): boolean => katalog.has(s) || universum.has(s);
 
     const brauchbar = new Map<string, { n: MarktNachricht; gesehenAt: string }>();
@@ -184,7 +214,10 @@ export async function runNachrichtenSammeln(
     if (neu.length > 0) {
       const symbole = [...new Set(neu.flatMap((c) => c.n.symbole))];
       kurseAbgefragtAt = jetzt().toISOString();
-      ({ kurse, fehler: kurseFehler } = await holeLetzteKurse(k, symbole, (s) => classify(s) === 'crypto', fetchImpl));
+      ({ kurse, fehler: kurseFehler } = await holeLetzteKurse(k, symbole, (s) => classify(s) === 'crypto', fetchImpl, {
+        bisMs: laufBeginn + KURS_FRIST_MS,
+        jetzt: () => jetzt().getTime(),
+      }));
       if (kurseFehler.length > 0) logger.warn(`nachrichtenSammeln: Kurse unvollständig — ${kurseFehler[0]}`);
     }
 
@@ -206,16 +239,32 @@ export async function runNachrichtenSammeln(
       juengsteAchsenZeit(abruf.roh.map((r) => r.roh), Date.parse(abruf.abrufAt)),
     );
     const abgeschnitten = abruf.weiter !== null;
+    const neuerCursor = abgeschnitten ? alterCursor : spaeterer(alterCursor, gelesenBis);
+    // Wie weit der Sammler hinter der Gegenwart liegt — die Größe, an der
+    // ein Stillstand sichtbar wird, auch wenn jeder Lauf „erfolgreich" ist.
+    const stehtBei = abgeschnitten ? (gelesenBis ?? alterCursor) : neuerCursor;
+    const rueckstandS = stehtBei ? Math.max(0, Math.round((jetzt().getTime() - Date.parse(stehtBei)) / 1000)) : null;
     await standRef.set(
       {
         ...(abgeschnitten
-          ? { fortsetzung: { start: abfrage.start, token: abruf.weiter, bis: gelesenBis } }
-          : { fortsetzung: FieldValue.delete(), cursor: spaeterer(alterCursor, gelesenBis) }),
+          ? {
+            fortsetzung: {
+              start: abfrage.start,
+              token: abruf.weiter,
+              bis: gelesenBis,
+              seit: fort?.seit ?? new Date(laufBeginn).toISOString(),
+            },
+          }
+          : { fortsetzung: FieldValue.delete(), cursor: neuerCursor }),
         letzterLauf: jetzt().toISOString(),
         letzterErfolg: jetzt().toISOString(),
         grund: null,
         fehler: abruf.fehler ? keineSchluesselImText(abruf.fehler).slice(0, 160) : FieldValue.delete(),
-        fehlerFolge: 0,
+        // Ein Lauf, dessen Blättern an einer Seite scheiterte, ist kein
+        // sauberer Lauf — sonst pendelte der Zähler zwischen 0 und 1, und
+        // eine anhaltende Störung bliebe unsichtbar.
+        fehlerFolge: abruf.fehler ? FieldValue.increment(1) : 0,
+        rueckstandS,
         gelesen: abruf.roh.length,
         brauchbar: brauchbar.size,
         neu: neu.length,
@@ -240,9 +289,15 @@ export async function runNachrichtenSammeln(
   } catch (err) {
     const text = keineSchluesselImText((err as Error).message ?? String(err)).slice(0, 160);
     logger.warn(`nachrichtenSammeln: ${text}`);
-    // Eine Fortsetzung, deren Lauf scheiterte, wird verworfen: Der Cursor
-    // stand ja noch, der nächste Lauf liest ab dort neu — doppelt gelesen
-    // kostet nur Lesezugriffe, ein totes Token aber jeden weiteren Lauf.
+    // Die Fortsetzung BLEIBT bei Störungen (Netz, 5xx, 429, Firestore): Der
+    // nächste Lauf liest dieselbe Seite erneut. Gespeichert wurde in diesem
+    // Lauf nichts, was ihr widerspräche — Cursor und Fortsetzung werden nur
+    // nach erfolgreichem Commit fortgeschrieben. Verworfen wird nur, was
+    // Alpaca als ungültig ablehnt, oder nach einer Stunde Fehlschlägen.
+    const status = (err as { status?: unknown }).status;
+    const verwerfen =
+      fort !== null
+      && (status === 400 || status === 422 || fehlerFolgeVorher + 1 >= FORTSETZUNG_MAX_FEHLER);
     await standRef
       .set(
         {
@@ -250,7 +305,10 @@ export async function runNachrichtenSammeln(
           grund: 'fehler',
           fehler: text,
           fehlerFolge: FieldValue.increment(1),
-          fortsetzung: FieldValue.delete(),
+          // Kennzahlen dieses Laufs — nicht die des Vorlaufs stehen lassen.
+          gelesen: 0,
+          neu: 0,
+          ...(verwerfen ? { fortsetzung: FieldValue.delete() } : {}),
         },
         { merge: true },
       )

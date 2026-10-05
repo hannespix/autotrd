@@ -68,9 +68,10 @@ vi.mock('firebase-admin/firestore', () => ({
   }),
 }));
 
+let universum = new Set(['CCG', 'BRK-B']);
 vi.mock('../src/core/universumLeser.js', async (orig) => ({
   ...(await orig<typeof import('../src/core/universumLeser.js')>()),
-  ladeUniversumSymbole: vi.fn(async () => new Set(['CCG', 'BRK-B'])),
+  ladeUniversumSymbole: vi.fn(async () => universum),
 }));
 
 const news = await import('../src/core/alpacaNews.js');
@@ -100,11 +101,19 @@ interface Artikel {
   symbols: string[];
   created_at: string;
   updated_at: string;
+  /** Indexierungsverzug: erst ab dann liefert Alpaca den Artikel aus. */
+  sichtbarAb?: string;
 }
-const alpaca: { artikel: Artikel[]; achse: 'updated_at' | 'created_at'; scheitern: (n: number, url: URL) => boolean } = {
+const alpaca: {
+  artikel: Artikel[];
+  achse: 'updated_at' | 'created_at';
+  scheitern: (n: number, url: URL) => number | false;
+  festesToken: boolean;
+} = {
   artikel: [],
   achse: 'updated_at',
   scheitern: () => false,
+  festesToken: false,
 };
 const KURSE: Record<string, { p: number; t: string }> = {
   AAPL: { p: 190.5, t: '2026-10-05T13:59:30Z' },
@@ -127,7 +136,9 @@ const fetchImpl = vi.fn(async (roh: string) => {
   aufrufe.push(url);
   if (url.pathname === '/v1beta1/news') {
     newsAufrufe += 1;
-    if (alpaca.scheitern(newsAufrufe, url)) return antwort({ message: 'kaputt' }, 500);
+    const fehlerStatus = alpaca.scheitern(newsAufrufe, url);
+    if (fehlerStatus) return antwort({ message: 'kaputt' }, fehlerStatus);
+    if (alpaca.festesToken) return antwort({ news: [], next_page_token: url.searchParams.get('page_token') ?? 'fest' });
     expect(url.searchParams.get('sort')).toBe('asc');
     const startMs = Date.parse(url.searchParams.get('start')!);
     const schluessel = (a: Artikel): [number, number] => [Date.parse(a.updated_at), a.id];
@@ -135,7 +146,7 @@ const fetchImpl = vi.fn(async (roh: string) => {
     const token = url.searchParams.get('page_token');
     const ab: [number, number] | null = token ? (token.split('|').map(Number) as [number, number]) : null;
     const passend = alpaca.artikel
-      .filter((a) => Date.parse(a[alpaca.achse]) >= startMs && Date.parse(a.created_at) <= uhrMs)
+      .filter((a) => Date.parse(a[alpaca.achse]) >= startMs && Date.parse(a.sichtbarAb ?? a.created_at) <= uhrMs)
       .filter((a) => !ab || nach(schluessel(a), ab))
       .sort((a, b) => (nach(schluessel(a), schluessel(b)) ? 1 : -1));
     const seite = passend.slice(0, Number(url.searchParams.get('limit')));
@@ -216,8 +227,9 @@ describe('normalisiereNachricht', () => {
 describe('Cursor-Bausteine', () => {
   const t = Date.parse('2026-10-05T14:00:00Z');
 
-  it('Start = Cursor minus 30 min; ohne, kaputter oder Zukunfts-Cursor: 2 h zurück', () => {
+  it('Start = Cursor minus 30 min; ohne, kaputter oder Zukunfts-Cursor: 2 h zurück; nie über 72 h', () => {
     expect(abrufStart('2026-10-05T13:55:00.000Z', t)).toBe('2026-10-05T13:25:00.000Z');
+    expect(abrufStart('2026-09-28T00:00:00.000Z', t)).toBe('2026-10-02T14:00:00.000Z');
     expect(abrufStart(null, t)).toBe('2026-10-05T12:00:00.000Z');
     expect(abrufStart('2026-10-06T00:00:00Z', t)).toBe('2026-10-05T12:00:00.000Z');
     expect(abrufStart('Unsinn', t)).toBe('2026-10-05T12:00:00.000Z');
@@ -236,7 +248,7 @@ describe('Cursor-Bausteine', () => {
   });
 
   it('leseFortsetzung akzeptiert nur die eigene Form', () => {
-    expect(lauf.leseFortsetzung({ start: '2026-10-05T12:00:00Z', token: 'x', bis: null })).toEqual({ start: '2026-10-05T12:00:00Z', token: 'x', bis: null });
+    expect(lauf.leseFortsetzung({ start: '2026-10-05T12:00:00Z', token: 'x', bis: null })).toEqual({ start: '2026-10-05T12:00:00Z', token: 'x', bis: null, seit: null });
     expect(lauf.leseFortsetzung({ start: 'Unsinn', token: 'x' })).toBeNull();
     expect(lauf.leseFortsetzung({ start: '2026-10-05T12:00:00Z', token: '' })).toBeNull();
     expect(lauf.leseFortsetzung(undefined)).toBeNull();
@@ -244,11 +256,19 @@ describe('Cursor-Bausteine', () => {
 });
 
 describe('Datensatz', () => {
-  it('Nachzügler ab 2 h Verzögerung; Kursalter relativ zur Kursabfrage', () => {
-    const n = normalisiereNachricht(artikel(9, '2026-10-05T11:00:00Z', ['AAPL']), () => true)!;
-    const d = lauf.nachrichtenDatensatz(n, '2026-10-05T14:00:00.000Z', { AAPL: { p: 1, t: '2026-10-05T13:59:00.000Z' } }, '2026-10-05T14:00:05.000Z');
+  it('Nachzügler ab 2 h Verzögerung; Kursalter relativ zum ERSTEN SEHEN (negativ = Trade danach)', () => {
+    const n = normalisiereNachricht(artikel(9, '2026-10-05T11:00:00Z', ['AAPL', 'MSFT']), () => true)!;
+    const d = lauf.nachrichtenDatensatz(
+      n,
+      '2026-10-05T14:00:00.000Z',
+      { AAPL: { p: 1, t: '2026-10-05T13:59:00.000Z' }, MSFT: { p: 2, t: '2026-10-05T14:00:20.000Z' } },
+      '2026-10-05T14:00:45.000Z',
+    );
     expect(d['nachzuegler']).toBe(true);
-    expect(d['kurseGesehen']).toEqual({ AAPL: { p: 1, t: '2026-10-05T13:59:00.000Z', alterS: 65 } });
+    expect(d['kurseGesehen']).toEqual({
+      AAPL: { p: 1, t: '2026-10-05T13:59:00.000Z', alterS: 60 },
+      MSFT: { p: 2, t: '2026-10-05T14:00:20.000Z', alterS: -20 },
+    });
     const frisch = lauf.nachrichtenDatensatz(n, '2026-10-05T12:30:00.000Z', {}, null);
     expect(frisch['nachzuegler']).toBe(false);
   });
@@ -306,6 +326,8 @@ describe('runNachrichtenSammeln', () => {
     alpaca.artikel = [];
     alpaca.achse = 'updated_at';
     alpaca.scheitern = () => false;
+    alpaca.festesToken = false;
+    universum = new Set(['CCG', 'BRK-B']);
     setzeUhr('2026-10-05T14:00:00Z');
     process.env.ALPACA_API_KEY = 'PKTESTSCHLUESSEL123';
     process.env.ALPACA_SECRET_KEY = 'GEHEIMNIS-0123456789';
@@ -447,7 +469,7 @@ describe('runNachrichtenSammeln', () => {
     alpaca.artikel = Array.from({ length: 140 }, (_, i) =>
       artikel(200 + i, new Date(Date.parse('2026-10-05T13:00:00Z') + i * 10_000).toISOString(), ['AAPL']),
     );
-    alpaca.scheitern = (n) => n === 3;
+    alpaca.scheitern = (n) => (n === 3 ? 500 : false);
     const r1 = await run();
     expect(r1).toMatchObject({ grund: null, neu: 100, abgeschnitten: true });
     expect(String(stand()['fehler'])).toContain('HTTP 500');
@@ -459,17 +481,127 @@ describe('runNachrichtenSammeln', () => {
     expect(stand()).not.toHaveProperty('fehler');
   });
 
-  it('scheitert die Fortsetzung schon an der ersten Seite: verworfen, Cursor steht, nächster Lauf liest neu', async () => {
+  it('eine Störung über mehrere Läufe setzt die Kette NICHT zurück — danach geht es am Token weiter', async () => {
+    alpaca.artikel = Array.from({ length: 1200 }, (_, i) =>
+      artikel(4000 + i, new Date(Date.parse('2026-10-05T12:05:00Z') + i * 5_000).toISOString(), ['AAPL']),
+    );
+    await run(); // 500 gelesen, Kette begonnen
+    const f1 = stand()['fortsetzung'] as { token: string; seit: string };
+    alpaca.scheitern = () => 503;
+    for (let i = 1; i <= 4; i += 1) {
+      setzeUhr(new Date(Date.parse('2026-10-05T14:00:00Z') + i * 5 * 60_000).toISOString());
+      expect((await run()).grund).toBe('fehler');
+      expect((stand()['fortsetzung'] as { token: string }).token).toBe(f1.token);
+    }
+    expect(stand()).toMatchObject({ fehlerFolge: 4, neu: 0, gelesen: 0 });
+    alpaca.scheitern = () => false;
+    setzeUhr('2026-10-05T14:25:00Z');
+    aufrufe.length = 0;
+    await run();
+    expect(newsUrls()[0]!.searchParams.get('page_token')).toBe(f1.token);
+    expect((stand()['fortsetzung'] as { seit: string }).seit).toBe(f1.seit);
+    expect(stand()['rueckstandS']).toBeGreaterThan(0);
+    setzeUhr('2026-10-05T14:30:00Z');
+    await run();
+    expect(gespeichert()).toHaveLength(1200);
+    expect(stand()).not.toHaveProperty('fortsetzung');
+    expect(stand()['fehlerFolge']).toBe(0);
+  });
+
+  it('pendelnde Teil-Fehler zählen weiter — der Zähler fällt nicht auf 0 zurück', async () => {
+    alpaca.artikel = Array.from({ length: 1200 }, (_, i) =>
+      artikel(6000 + i, new Date(Date.parse('2026-10-05T12:05:00Z') + i * 5_000).toISOString(), ['AAPL']),
+    );
+    // Jede zweite News-Seite scheitert: Lauf liest eine Seite, dann Fehler.
+    alpaca.scheitern = (n) => (n % 2 === 0 ? 500 : false);
+    for (let i = 0; i < 3; i += 1) {
+      setzeUhr(new Date(Date.parse('2026-10-05T14:00:00Z') + i * 5 * 60_000).toISOString());
+      await run();
+    }
+    expect(stand()['fehlerFolge']).toBe(3);
+    expect(gespeichert()).toHaveLength(150);
+  });
+
+  it('Alpaca lehnt das Token ab (400): Fortsetzung verworfen, Cursor steht', async () => {
     store.set('meta/nachrichtenStand', {
       cursor: '2026-10-05T13:00:00.000Z',
       fehlerFolge: 1,
-      fortsetzung: { start: '2026-10-05T12:30:00.000Z', token: 'tot', bis: null },
+      fortsetzung: { start: '2026-10-05T12:30:00.000Z', token: 'tot', bis: null, seit: null },
     });
-    alpaca.scheitern = () => true;
-    const r = await run();
-    expect(r.grund).toBe('fehler');
+    alpaca.scheitern = () => 400;
+    expect((await run()).grund).toBe('fehler');
     expect(stand()).not.toHaveProperty('fortsetzung');
     expect(stand()).toMatchObject({ cursor: '2026-10-05T13:00:00.000Z', fehlerFolge: 2 });
+  });
+
+  it('nach einer Stunde Fehlschlägen wird auch eine Fortsetzung bei 5xx aufgegeben', async () => {
+    store.set('meta/nachrichtenStand', {
+      cursor: '2026-10-05T13:00:00.000Z',
+      fehlerFolge: lauf.FORTSETZUNG_MAX_FEHLER - 1,
+      fortsetzung: { start: '2026-10-05T12:30:00.000Z', token: 'x', bis: null, seit: null },
+    });
+    alpaca.scheitern = () => 503;
+    await run();
+    expect(stand()).not.toHaveProperty('fortsetzung');
+  });
+
+  it('ein Token, das auf sich selbst zeigt, gilt als ungültig — keine Endlosschleife', async () => {
+    store.set('meta/nachrichtenStand', {
+      cursor: '2026-10-05T13:00:00.000Z',
+      fortsetzung: { start: '2026-10-05T12:30:00.000Z', token: 'fest', bis: null, seit: null },
+    });
+    alpaca.festesToken = true;
+    expect((await run()).grund).toBe('fehler');
+    expect(stand()).not.toHaveProperty('fortsetzung');
+    expect(newsAufrufe).toBe(1);
+  });
+
+  it('leeres Universum: Sammeln pausiert — nichts verworfen, Cursor steht', async () => {
+    store.set('meta/nachrichtenStand', { cursor: '2026-10-05T13:30:00.000Z' });
+    universum = new Set();
+    alpaca.artikel = [artikel(31, '2026-10-05T13:50:00Z', ['CCG']), artikel(32, '2026-10-05T13:51:00Z', ['AAPL'])];
+    const r = await run();
+    expect(r.grund).toBe('fehler');
+    expect(String(stand()['fehler'])).toContain('Universum leer');
+    expect(stand()['cursor']).toBe('2026-10-05T13:30:00.000Z');
+    expect(gespeichert()).toHaveLength(0);
+    universum = new Set(['CCG']);
+    setzeUhr('2026-10-05T14:05:00Z');
+    await run();
+    expect(store.has('marktNachrichten/alp-31')).toBe(true);
+  });
+
+  it('die 30-min-Überlappung rettet eine Meldung, die Alpaca 25 min verspätet ausliefert', async () => {
+    alpaca.artikel = [artikel(41, '2026-10-05T13:59:00Z', ['AAPL'])];
+    await run(); // Cursor 13:59
+    alpaca.artikel.push({ ...artikel(42, '2026-10-05T13:50:00Z', ['AAPL']), sichtbarAb: '2026-10-05T14:15:00Z' });
+    setzeUhr('2026-10-05T14:20:00Z');
+    await run();
+    expect(store.has('marktNachrichten/alp-42')).toBe(true);
+  });
+
+  it('Kurs-Frist: nach 100 s Laufzeit keine weiteren Kursabfragen — die Meldungen werden trotzdem gespeichert', async () => {
+    const viele = Array.from({ length: 230 }, (_, i) => `S${i}`);
+    universum = new Set(viele);
+    alpaca.artikel = [artikel(51, '2026-10-05T13:50:00Z', viele.slice(0, 30))];
+    for (let i = 0; i < 8; i += 1) alpaca.artikel.push(artikel(52 + i, '2026-10-05T13:51:00Z', viele.slice(30 + i * 25, 55 + i * 25)));
+    const echt = fetchImpl.getMockImplementation()!;
+    let kursAufrufe = 0;
+    fetchImpl.mockImplementation(async (u: string) => {
+      if (u.includes('/trades/latest')) {
+        kursAufrufe += 1;
+        uhrMs += 60_000;
+      }
+      return echt(u);
+    });
+    try {
+      const r = await run();
+      expect(r.neu).toBe(9);
+    } finally {
+      fetchImpl.mockImplementation(echt);
+    }
+    expect(kursAufrufe).toBe(2);
+    expect(stand()['kurseFehler']).toBe(1);
   });
 
   it('scheitert der Commit, rücken weder Cursor noch Fortsetzung — die Meldungen kommen wieder', async () => {
@@ -555,8 +687,10 @@ describe('Quelltext-Wächter nachrichtenSammeln', () => {
   it('Cursor und Fortsetzung werden erst NACH den Commits geschrieben', () => {
     const commit = src.indexOf('await batch.commit();');
     expect(commit).toBeGreaterThan(-1);
-    expect(src.indexOf('cursor: spaeterer(')).toBeGreaterThan(commit);
-    expect(src.indexOf('fortsetzung: { start: abfrage.start')).toBeGreaterThan(commit);
+    for (const anker of ['const neuerCursor = ', 'cursor: neuerCursor', 'token: abruf.weiter,', 'rueckstandS,']) {
+      expect(src.split(anker).length - 1, anker).toBe(1);
+      expect(src.indexOf(anker), anker).toBeGreaterThan(commit);
+    }
   });
 
   it('der Zeitplan bindet beide Plattform-Schlüssel und lässt der Blätter-Frist Luft', () => {

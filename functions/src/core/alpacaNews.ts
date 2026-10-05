@@ -37,8 +37,13 @@
  * Meldungen übersprungen. Jetzt gilt:
  *
  *   - Ein abgeschnittener Lauf merkt sich SEINE Abfrage samt Seiten-Token
- *     (`fortsetzung`) und macht beim nächsten Lauf genau dort weiter —
- *     Fortschritt ist garantiert, egal worauf `start` filtert.
+ *     (`fortsetzung`) und macht beim nächsten Lauf genau dort weiter, egal
+ *     worauf `start` filtert. Das Token ist eine Position, kein Zustand beim
+ *     Anbieter — eine Störung ist deshalb kein Grund, es wegzuwerfen
+ *     (Red-Team 05.10.: Verwerfen bei jedem Fehler setzte die Kette auf den
+ *     alten Cursor zurück, und bei einer Störung über mehrere Läufe kam der
+ *     Sammler nie voran — stumm, weil `fehlerFolge` nur zwischen 0 und 1
+ *     pendelte). Verworfen wird nur, was Alpaca als ungültig ablehnt.
  *   - Erst ein vollständig gelesener Durchgang setzt den Cursor, und zwar
  *     auf das größte GELESENE `updated_at` (gedeckelt auf die eigene Uhr,
  *     damit ein Zeitstempel aus der Zukunft ihn nicht festnagelt).
@@ -194,11 +199,16 @@ export function achsenZeit(roh: unknown): number {
   return Number.isFinite(u) ? u : Date.parse(text(r['created_at']));
 }
 
-/** Ab wann eine NEUE Abfrage fragt: Cursor minus Überlappung, ohne Cursor 2 h zurück. */
+/**
+ * Ab wann eine NEUE Abfrage fragt: Cursor minus Überlappung, ohne Cursor 2 h
+ * zurück — und nie weiter als `NACHRICHT_MAX_ALTER_MS`: Was älter ist, würde
+ * ohnehin nur gelesen und als `zuAlt` verworfen; nach einem mehrtägigen
+ * Ausfall verlängerte es bloß die Kette.
+ */
 export function abrufStart(cursorIso: string | null, jetztMs: number): string {
   const cursorMs = cursorIso ? Date.parse(cursorIso) : NaN;
   const basis = Number.isFinite(cursorMs) && cursorMs <= jetztMs
-    ? cursorMs - NACHRICHTEN_UEBERLAPPUNG_MS
+    ? Math.max(cursorMs - NACHRICHTEN_UEBERLAPPUNG_MS, jetztMs - NACHRICHT_MAX_ALTER_MS)
     : jetztMs - NACHRICHTEN_ERSTER_RUECKBLICK_MS;
   return new Date(basis).toISOString();
 }
@@ -310,7 +320,14 @@ export async function holeNachrichten(
     if (seiten === 0) abrufAt = gesehenAt;
     seiten += 1;
     if (Array.isArray(d.news)) for (const n of d.news as unknown[]) roh.push({ roh: n, gesehenAt });
-    token = typeof d.next_page_token === 'string' && d.next_page_token.length > 0 ? d.next_page_token : null;
+    const naechstes =
+      typeof d.next_page_token === 'string' && d.next_page_token.length > 0 ? d.next_page_token : null;
+    // Ein Token, das auf sich selbst zeigt, wäre eine Endlosschleife über
+    // Läufe hinweg — als ungültig behandeln (verwirft die Fortsetzung).
+    if (naechstes !== null && naechstes === token) {
+      throw new AlpacaFehler('Seiten-Token unverändert — Blättern ohne Fortschritt', 422);
+    }
+    token = naechstes;
     if (!token || seiten >= maxSeiten || jetzt().getTime() - beginn >= fristMs) break;
   }
   return { roh, seiten, weiter: token, abrufAt, fehler };
@@ -321,6 +338,12 @@ export interface GesehenerKurs {
   p: number;
   /** Zeitpunkt DIESES Trades — nicht der Abfrage; zeigt, wie alt der Kurs war. */
   t: string;
+}
+
+/** Zeitbudget der Kursabfragen: danach keine weiteren Abrufe (Meldungen gehen vor). */
+export interface KursFrist {
+  bisMs: number;
+  jetzt: () => number;
 }
 
 /** Krypto-Symbole, die Alpaca kennt: nur gegen USD (`BTC-EUR` brächte die ganze Abfrage zu Fall). */
@@ -339,6 +362,7 @@ export async function holeLetzteKurse(
   symbole: readonly string[],
   istKrypto: (symbol: string) => boolean,
   fetchImpl: FetchLike = fetch,
+  frist: KursFrist | null = null,
 ): Promise<{ kurse: Record<string, GesehenerKurs>; fehler: string[] }> {
   const kurse: Record<string, GesehenerKurs> = {};
   const fehler: string[] = [];
@@ -366,6 +390,13 @@ export async function holeLetzteKurse(
     abrufe.push(`${ALPACA_DATEN_BASIS}/v1beta3/crypto/us/latest/trades?${q.toString()}`);
   }
   for (const url of abrufe) {
+    // Ohne Budget hingen nacheinander mehrere 15-s-Timeouts vor dem Commit,
+    // und die Plattform beendete den Lauf, bevor eine Meldung gespeichert
+    // war (Red-Team 05.10.). Fehlende Kurse kosten Kontext, keine Meldung.
+    if (frist && frist.jetzt() >= frist.bisMs) {
+      fehler.push('Kurs-Frist erreicht — restliche Kurse ausgelassen');
+      break;
+    }
     try {
       uebernehmen(((await datenAbruf(url, k, fetchImpl)) as { trades?: unknown }).trades);
     } catch (e) {
