@@ -224,6 +224,12 @@ gesamten Event-Loop ein → Server hängt → Browser bekommt leere Antwort →
 > volle Suite hat es gefangen, aber verlassen darf man sich darauf nicht.
 > Also: Anker mit genug Kontext wählen (Nachbarzeile, Zeilennummer oder
 > `count == 1` prüfen) und nach dem Rückbau die Suite laufen lassen.
+> `count == 1` gilt für BEIDE Richtungen: Am 05.10. war der Probe-Anker
+> eindeutig, der eingesetzte Text aber nicht (`… LOOKBACK_GRID)` →
+> `… INTRADAY_LOOKBACK_GRID)`, das es schon gab). Der Rückbau verweigerte
+> sich zu Recht — und die nächsten zwei Proben liefen auf der noch
+> sabotierten Datei. Vor dem Testlauf prüfen, dass der Ersatztext nach dem
+> Einsetzen genau einmal vorkommt; sonst die Probe gar nicht erst starten.
 
 Es gibt keine umfassende Test-Suite — **beobachte echtes Verhalten**:
 

@@ -61,10 +61,11 @@ const emptySentDelta = (): SentDelta => ({ pos: { n: 0, hits: 0 }, neg: { n: 0, 
  * Bewusst KEIN Merker im Speicher: Der Tageslauf holt 200 unbewertete
  * Dokumente ohne Sortierung, die Geschwister eines Falls können also in
  * verschiedenen Läufen landen. Nur eine Regel am Dokument selbst zählt
- * laufübergreifend genau einmal — der kleinste Lookback des Gitters. Er ist
- * zugleich der, den `computeForecastV2` am sichersten erzeugt (braucht die
- * wenigsten Schlusskurse). Fehlt er, fehlt der Fall: ein verlorener
- * Messpunkt statt eines doppelten.
+ * laufübergreifend genau einmal — der kleinste Lookback des Gitters. Die
+ * Geschwister entstehen gemeinsam oder gar nicht (alle Lookbacks brauchen
+ * dieselben ≥ 5 Schlusskurse, geschrieben wird in einem Batch); fehlte der
+ * Vertreter doch einmal, fehlte der Fall: ein verlorener Messpunkt statt
+ * eines doppelten.
  */
 export function vertrittSentimentFall(lookback: number, gitter: readonly number[]): boolean {
   return gitter.length > 0 && lookback === Math.min(...gitter);
@@ -78,6 +79,14 @@ export function tallySent(delta: SentDelta, sentSign: number | undefined, baseCl
   b.hits += hit ? 1 : 0;
 }
 
+/**
+ * Fassung der bereinigten Zählung. Ändert sich, was gezählt wird (Lexikon,
+ * Schwellen, News-Fenster), muss diese Zahl steigen und der Zähler unter
+ * neuem Namen beginnen — sonst addieren sich zwei Messungen in einem Feld,
+ * genau der Fehler, den `einmalig` gerade behebt.
+ */
+export const SENT_SCHATTEN_V = 1;
+
 async function writeSentStats(scope: 'daily' | 'intraday', delta: SentDelta): Promise<void> {
   if (delta.pos.n + delta.neg.n === 0) return;
   // Unter `einmalig` (05.10.): Die alten Felder `daily`/`intraday` zählten
@@ -88,7 +97,9 @@ async function writeSentStats(scope: 'daily' | 'intraday', delta: SentDelta): Pr
     .set(
       {
         updatedAt: new Date().toISOString(),
+        altbestand: 'daily/intraday: bis 05.10. je Lookback mehrfach gezählt — nicht auswerten',
         einmalig: {
+          v: SENT_SCHATTEN_V,
           [scope]: {
             pos: { n: FieldValue.increment(delta.pos.n), hits: FieldValue.increment(delta.pos.hits) },
             neg: { n: FieldValue.increment(delta.neg.n), hits: FieldValue.increment(delta.neg.hits) },
@@ -231,12 +242,18 @@ export async function evaluateDue(): Promise<EvalResult> {
     for (const { ref, doc } of entries) {
       const score = scoreForecast(doc.points, doc.baseClose, actuals);
       if (!score) continue; // End-Tag (noch) nicht realisiert → später erneut
+      const endTag = doc.points[doc.points.length - 1]!.time;
+      const sentVertreter = vertrittSentimentFall(doc.lookback, LOOKBACK_GRID);
+      // Der Treffer je FALL steht am Vertreter — aus Zählern allein ließe
+      // sich später keine Abhängigkeit zwischen Nachbartagen herausrechnen.
+      const sentHit = sentVertreter ? sentimentHit(doc.sentSign, doc.baseClose, actuals[endTag]) : null;
       batch.update(ref, {
         evaluated: true,
         evaluatedAt: new Date().toISOString(),
         maePct: score.maePct,
         dirHit: score.dirHit,
         nPoints: score.nPoints,
+        ...(sentHit === null ? {} : { sentHit }),
       });
       const key = comboKey(doc.lookback);
       const d = symbolDelta.get(key) ?? { n: 0, hits: 0, maeSum: 0 };
@@ -246,8 +263,8 @@ export async function evaluateDue(): Promise<EvalResult> {
       symbolDelta.set(key, d);
       // Sentiment-Schatten: nur bewertete Prognosen — dieselben Gates, ein
       // Fall je (Symbol, Basistag).
-      if (vertrittSentimentFall(doc.lookback, LOOKBACK_GRID)) {
-        tallySent(sentDelta, doc.sentSign, doc.baseClose, actuals[doc.points[doc.points.length - 1]!.time]);
+      if (sentVertreter) {
+        tallySent(sentDelta, doc.sentSign, doc.baseClose, actuals[endTag]);
       }
       scored += 1;
     }
@@ -419,12 +436,16 @@ export async function evaluateIntradayDue(): Promise<IntradayEvalResult> {
     for (const { ref, doc } of entries) {
       const score = scoreIntradayForecast(doc.points, doc.baseClose, actuals);
       if (score) {
+        const endKurs = actuals[String(doc.points[doc.points.length - 1]!.t)];
+        const sentVertreter = vertrittSentimentFall(doc.lookback, INTRADAY_LOOKBACK_GRID);
+        const sentHit = sentVertreter ? sentimentHit(doc.sentSign, doc.baseClose, endKurs) : null;
         batch.update(ref, {
           evaluated: true,
           evaluatedAt: new Date().toISOString(),
           maePct: score.maePct,
           dirHit: score.dirHit,
           nPoints: score.nPoints,
+          ...(sentHit === null ? {} : { sentHit }),
         });
         const key = comboKey(doc.lookback);
         const d = symbolDelta.get(key) ?? { n: 0, hits: 0, maeSum: 0 };
@@ -434,13 +455,8 @@ export async function evaluateIntradayDue(): Promise<IntradayEvalResult> {
         symbolDelta.set(key, d);
         // Sentiment-Schatten: gleiche Gates wie der dirHit (nur realisierte),
         // ein Fall je (Symbol, Basis-Bar).
-        if (vertrittSentimentFall(doc.lookback, INTRADAY_LOOKBACK_GRID)) {
-          tallySent(
-            sentDelta,
-            doc.sentSign,
-            doc.baseClose,
-            actuals[String(doc.points[doc.points.length - 1]!.t)],
-          );
+        if (sentVertreter) {
+          tallySent(sentDelta, doc.sentSign, doc.baseClose, endKurs);
         }
         scored += 1;
       } else if (nowSec - doc.baseT > INTRADAY_EXPIRE_SEC) {

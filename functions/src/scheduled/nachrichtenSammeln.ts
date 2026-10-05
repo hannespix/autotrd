@@ -37,8 +37,11 @@ import {
   abrufStart,
   holeLetzteKurse,
   holeNachrichten,
-  naechsterCursor,
+  juengsteAchsenZeit,
   normalisiereNachricht,
+  spaeterer,
+  NACHRICHT_MAX_ALTER_MS,
+  NACHZUEGLER_AB_MS,
   type GesehenerKurs,
   type MarktNachricht,
 } from '../core/alpacaNews.js';
@@ -57,8 +60,25 @@ export interface SammelErgebnis {
   gelesen: number;
   brauchbar: number;
   neu: number;
+  zuAlt: number;
   seiten: number;
   abgeschnitten: boolean;
+}
+
+/** Eine gespeicherte Fortsetzung: dieselbe Abfrage, ab diesem Seiten-Token. */
+export interface Fortsetzung {
+  start: string;
+  token: string;
+  /** Größte bisher in diesem Durchgang gelesene Achsen-Zeit. */
+  bis: string | null;
+}
+
+/** Fortsetzung aus dem Stand-Dokument lesen — fremde Formen gelten als keine. */
+export function leseFortsetzung(roh: unknown): Fortsetzung | null {
+  const f = (roh ?? null) as Record<string, unknown> | null;
+  if (!f || typeof f['start'] !== 'string' || typeof f['token'] !== 'string' || f['token'].length === 0) return null;
+  if (!Number.isFinite(Date.parse(f['start']))) return null;
+  return { start: f['start'], token: f['token'], bis: typeof f['bis'] === 'string' ? f['bis'] : null };
 }
 
 /** Median in Sekunden zwischen Veröffentlichung und erstem Sehen — pur. */
@@ -74,15 +94,33 @@ export function verzoegerungMedianS(
   return Math.round(werte.length % 2 === 1 ? werte[m]! : (werte[m - 1]! + werte[m]!) / 2);
 }
 
-/** Der Datensatz, wie er in `marktNachrichten/{id}` steht — pur. */
+/**
+ * Der Datensatz, wie er in `marktNachrichten/{id}` steht — pur (ohne die
+ * Server-Zeit `gespeichertAt`, die der Aufrufer beim Commit setzt).
+ */
 export function nachrichtenDatensatz(
   n: MarktNachricht,
   firstSeenAt: string,
   kurse: Readonly<Record<string, GesehenerKurs>>,
+  kurseAbgefragtAt: string | null,
 ): Record<string, unknown> {
-  const kurseGesehen: Record<string, GesehenerKurs> = {};
-  for (const s of n.symbole) if (kurse[s]) kurseGesehen[s] = kurse[s]!;
-  return { ...n, v: MARKT_NACHRICHT_V, quelle: 'alpaca', firstSeenAt, kurseGesehen };
+  const kurseGesehen: Record<string, GesehenerKurs & { alterS: number | null }> = {};
+  const abfrageMs = kurseAbgefragtAt ? Date.parse(kurseAbgefragtAt) : NaN;
+  for (const s of n.symbole) {
+    const k = kurse[s];
+    if (!k) continue;
+    const alter = (abfrageMs - Date.parse(k.t)) / 1000;
+    kurseGesehen[s] = { ...k, alterS: Number.isFinite(alter) ? Math.round(alter) : null };
+  }
+  return {
+    ...n,
+    v: MARKT_NACHRICHT_V,
+    quelle: 'alpaca',
+    firstSeenAt,
+    nachzuegler: Date.parse(firstSeenAt) - Date.parse(n.publishedAt) > NACHZUEGLER_AB_MS,
+    kurseAbgefragtAt,
+    kurseGesehen,
+  };
 }
 
 export async function runNachrichtenSammeln(
@@ -91,7 +129,9 @@ export async function runNachrichtenSammeln(
 ): Promise<SammelErgebnis> {
   const db = getFirestore();
   const standRef = db.doc('meta/nachrichtenStand');
-  const leer: SammelErgebnis = { grund: null, gelesen: 0, brauchbar: 0, neu: 0, seiten: 0, abgeschnitten: false };
+  const leer: SammelErgebnis = {
+    grund: null, gelesen: 0, brauchbar: 0, neu: 0, zuAlt: 0, seiten: 0, abgeschnitten: false,
+  };
 
   const k = envSchluessel();
   if (!k) {
@@ -102,20 +142,29 @@ export async function runNachrichtenSammeln(
   try {
     const stand = await standRef.get();
     const alterCursor = typeof stand.get('cursor') === 'string' ? (stand.get('cursor') as string) : null;
-    const start = abrufStart(alterCursor, jetzt().getTime());
-    const abruf = await holeNachrichten(k, start, fetchImpl, jetzt);
+    const fort = leseFortsetzung(stand.get('fortsetzung'));
+    // Abgeschnittener Vorlauf → DIESELBE Abfrage ab dem gemerkten Token.
+    // Sonst eine neue ab Cursor minus Überlappung.
+    const abfrage = fort
+      ? { start: fort.start, token: fort.token }
+      : { start: abrufStart(alterCursor, jetzt().getTime()), token: null };
+    const abruf = await holeNachrichten(k, abfrage, fetchImpl, jetzt);
+    if (abruf.fehler) logger.warn(`nachrichtenSammeln: Blättern unterbrochen — ${abruf.fehler.slice(0, 200)}`);
 
     const katalog = new Set(allSymbols());
     const universum = await ladeUniversumSymbole();
     const bekannt = (s: string): boolean => katalog.has(s) || universum.has(s);
 
     const brauchbar = new Map<string, { n: MarktNachricht; gesehenAt: string }>();
-    let juengsteMs = Number.NEGATIVE_INFINITY;
+    let zuAlt = 0;
     for (const { roh, gesehenAt } of abruf.roh) {
-      const ms = Date.parse(String((roh as { created_at?: unknown } | null)?.created_at ?? ''));
-      if (Number.isFinite(ms) && ms > juengsteMs) juengsteMs = ms;
       const n = normalisiereNachricht(roh, bekannt);
-      if (n && !brauchbar.has(n.id)) brauchbar.set(n.id, { n, gesehenAt });
+      if (!n || brauchbar.has(n.id)) continue;
+      if (Date.parse(gesehenAt) - Date.parse(n.publishedAt) > NACHRICHT_MAX_ALTER_MS) {
+        zuAlt += 1;
+        continue;
+      }
+      brauchbar.set(n.id, { n, gesehenAt });
     }
 
     // Schon gespeicherte aussortieren — sie bleiben, wie sie sind.
@@ -131,8 +180,10 @@ export async function runNachrichtenSammeln(
     // Kurs beim ersten Sehen — best effort, kostet nie die Meldung.
     let kurse: Record<string, GesehenerKurs> = {};
     let kurseFehler: string[] = [];
+    let kurseAbgefragtAt: string | null = null;
     if (neu.length > 0) {
       const symbole = [...new Set(neu.flatMap((c) => c.n.symbole))];
+      kurseAbgefragtAt = jetzt().toISOString();
       ({ kurse, fehler: kurseFehler } = await holeLetzteKurse(k, symbole, (s) => classify(s) === 'crypto', fetchImpl));
       if (kurseFehler.length > 0) logger.warn(`nachrichtenSammeln: Kurse unvollständig — ${kurseFehler[0]}`);
     }
@@ -140,25 +191,37 @@ export async function runNachrichtenSammeln(
     for (let i = 0; i < neu.length; i += BATCH_GROESSE) {
       const batch = db.batch();
       for (const c of neu.slice(i, i + BATCH_GROESSE)) {
-        batch.create(db.doc(`marktNachrichten/${c.n.id}`), nachrichtenDatensatz(c.n, c.gesehenAt, kurse));
+        batch.create(db.doc(`marktNachrichten/${c.n.id}`), {
+          ...nachrichtenDatensatz(c.n, c.gesehenAt, kurse, kurseAbgefragtAt),
+          gespeichertAt: FieldValue.serverTimestamp(),
+        });
       }
       await batch.commit();
     }
 
-    const juengsteGelesen = Number.isFinite(juengsteMs) ? new Date(juengsteMs).toISOString() : null;
+    // Cursor und Fortsetzung erst NACH den Commits: Scheitert einer, bleibt
+    // der Stand, und der nächste Lauf liest dieselben Meldungen erneut.
+    const gelesenBis = spaeterer(
+      fort?.bis ?? null,
+      juengsteAchsenZeit(abruf.roh.map((r) => r.roh), Date.parse(abruf.abrufAt)),
+    );
+    const abgeschnitten = abruf.weiter !== null;
     await standRef.set(
       {
-        cursor: naechsterCursor(alterCursor, abruf.abrufAt, abruf.abgeschnitten, juengsteGelesen),
+        ...(abgeschnitten
+          ? { fortsetzung: { start: abfrage.start, token: abruf.weiter, bis: gelesenBis } }
+          : { fortsetzung: FieldValue.delete(), cursor: spaeterer(alterCursor, gelesenBis) }),
         letzterLauf: jetzt().toISOString(),
         letzterErfolg: jetzt().toISOString(),
         grund: null,
-        fehler: FieldValue.delete(),
+        fehler: abruf.fehler ? keineSchluesselImText(abruf.fehler).slice(0, 160) : FieldValue.delete(),
         fehlerFolge: 0,
         gelesen: abruf.roh.length,
         brauchbar: brauchbar.size,
         neu: neu.length,
+        zuAlt,
         seiten: abruf.seiten,
-        abgeschnitten: abruf.abgeschnitten,
+        abgeschnitten,
         kurseFehler: kurseFehler.length,
         verzoegerungMedianS: verzoegerungMedianS(neu.map((c) => ({ publishedAt: c.n.publishedAt, firstSeenAt: c.gesehenAt }))),
         neuGesamt: FieldValue.increment(neu.length),
@@ -170,15 +233,25 @@ export async function runNachrichtenSammeln(
       gelesen: abruf.roh.length,
       brauchbar: brauchbar.size,
       neu: neu.length,
+      zuAlt,
       seiten: abruf.seiten,
-      abgeschnitten: abruf.abgeschnitten,
+      abgeschnitten,
     };
   } catch (err) {
-    const text = keineSchluesselImText((err as Error).message ?? String(err)).slice(0, 300);
+    const text = keineSchluesselImText((err as Error).message ?? String(err)).slice(0, 160);
     logger.warn(`nachrichtenSammeln: ${text}`);
+    // Eine Fortsetzung, deren Lauf scheiterte, wird verworfen: Der Cursor
+    // stand ja noch, der nächste Lauf liest ab dort neu — doppelt gelesen
+    // kostet nur Lesezugriffe, ein totes Token aber jeden weiteren Lauf.
     await standRef
       .set(
-        { letzterLauf: jetzt().toISOString(), grund: 'fehler', fehler: text, fehlerFolge: FieldValue.increment(1) },
+        {
+          letzterLauf: jetzt().toISOString(),
+          grund: 'fehler',
+          fehler: text,
+          fehlerFolge: FieldValue.increment(1),
+          fortsetzung: FieldValue.delete(),
+        },
         { merge: true },
       )
       .catch(() => undefined);
@@ -192,7 +265,7 @@ export const nachrichtenSammeln = onSchedule(
     schedule: '*/5 * * * *',
     timeZone: 'America/New_York',
     retryCount: 0,
-    timeoutSeconds: 120,
+    timeoutSeconds: 180,
     memory: '256MiB',
     /* Dieselben Plattform-Schlüssel wie universumSync — dort seit 15.08.
      * gebunden und von der Deploy-Diagnose als vorhanden bestätigt. Ein
@@ -202,8 +275,8 @@ export const nachrichtenSammeln = onSchedule(
   async () => {
     const r = await runNachrichtenSammeln();
     logger.info(
-      `nachrichtenSammeln: ${r.neu} neu von ${r.brauchbar} brauchbaren (${r.gelesen} gelesen, ${r.seiten} Seiten`
-        + `${r.abgeschnitten ? ', abgeschnitten' : ''})${r.grund ? ` — ${r.grund}` : ''}`,
+      `nachrichtenSammeln: ${r.neu} neu von ${r.brauchbar} brauchbaren (${r.gelesen} gelesen, ${r.zuAlt} zu alt, `
+        + `${r.seiten} Seiten${r.abgeschnitten ? ', abgeschnitten' : ''})${r.grund ? ` — ${r.grund}` : ''}`,
     );
   },
 );
