@@ -47,6 +47,8 @@ const SCHEDULES = [
   { fn: 'scanMarket', service: 'scanmarket', cron: '*/5 * * * *', was: 'Marktscan' },
   // KI-Kaskade Stufe 1 (05.10.): Nachrichtenstrom mit erstem Sehzeitpunkt.
   { fn: 'nachrichtenSammeln', service: 'nachrichtensammeln', cron: '*/5 * * * *', was: 'Nachrichten-Sammler' },
+  // Stufe 2a: zwei Minuten nach dem Sammler — Sichtung + Gegenprobe.
+  { fn: 'kiNachrichten', service: 'kinachrichten', cron: '2-59/5 * * * *', was: 'KI-Nachrichten' },
   // Der Ausstiegs-Wächter läuft MINÜTLICH: Ein Stop-Loss, der fünf Minuten
   // zu spät auslöst, kostet Geld — ein Einstieg fünf Minuten später fast
   // nichts (Owner-Wunsch 28.07., Begründung in riskPulse.ts).

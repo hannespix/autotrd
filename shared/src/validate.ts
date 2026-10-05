@@ -221,6 +221,9 @@ export function validateStrategy(value: unknown): string[] {
     if (signals.captureGate !== undefined && typeof signals.captureGate !== 'boolean') {
       problems.push('val.boolean|signals.captureGate');
     }
+    if (signals.kiNachrichten !== undefined && typeof signals.kiNachrichten !== 'boolean') {
+      problems.push('val.boolean|signals.kiNachrichten');
+    }
   }
 
   return problems;
