@@ -982,7 +982,15 @@ async function executeUserTrades(
        * Konto beim Broker 90 Tage lang — und Alpacas Schutz lehnt dann die
        * Order ab, die der vierte wäre, auch einen Ausstieg. Deshalb pausieren
        * vorher die EINSTIEGE; Exits laufen unberührt weiter. */
-      const pdtSperre = pdtEinstiegGesperrt(abgleichBefund.pdt, now);
+      const heuteEt = handelstagET(now);
+      const heuteEroeffnet = positionsSnap.docs.filter((d) => {
+        const p = d.data() as Position;
+        return p.broker === true
+          && classify(d.id) !== 'crypto'
+          && typeof p.openedAt === 'string'
+          && handelstagET(new Date(p.openedAt)) === heuteEt;
+      }).length;
+      const pdtSperre = pdtEinstiegGesperrt(abgleichBefund.pdt, now, heuteEroeffnet);
       if (pdtSperre) gate.pdt_schutz += 1;
       // Zeitbasis der Signale (Owner 26.07., „Tradefrequenz erhöhen"):
       // 'intraday' rechnet auf 5-min-Kerzen — Signale drehen im Scan-Takt.
@@ -1365,7 +1373,8 @@ async function executeUserTrades(
         // ebenfalls je KONTO (siehe oben), nicht je Symbol.
         if (abgleichBefund.sperre) return 'abgleich_drift';
         // PDT-Bremse (05.10.): frisch aus DIESEM Abgleich. Je Konto gezählt.
-        if (pdtSperre) return 'pdt_schutz';
+        // Krypto unterliegt der Regel nicht — dort kein Grund zu bremsen.
+        if (pdtSperre && classify(symbol) !== 'crypto') return 'pdt_schutz';
         const handelbar = isTradable(symbol);
         // Regime-Ampel Stufe 2 (04.08.): Im Aufwärtstrend keine Shorts, im
         // Stress gar keine neuen Einstiege. Die Messung dahinter steht an

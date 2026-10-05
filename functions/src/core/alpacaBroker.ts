@@ -231,6 +231,8 @@ export interface AlpacaKonto {
   patternDayTrader: boolean;
   /** Daytrades der letzten fünf Handelstage (`daytrade_count`) — PDT-Bremse. */
   daytradeCount: number;
+  /** Equity zum Vortagesschluss (`last_equity`) — Maßstab der PDT-Grenze. */
+  lastEquity: number;
   /**
    * Konto-Eröffnung (ISO, `created_at`) — der ehrliche Anker der
    * Order-Historie (Owner-Wunsch 13.08.: Historie ohne 30-Tage-Deckel).
@@ -363,6 +365,7 @@ export async function alpacaKonto(
     accountBlocked: d['account_blocked'] === true,
     patternDayTrader: d['pattern_day_trader'] === true,
     daytradeCount: zahl(d['daytrade_count']),
+    lastEquity: zahl(d['last_equity']),
     createdAt: typeof d['created_at'] === 'string' ? d['created_at'] : '',
   };
 }

@@ -1,6 +1,9 @@
 /**
  * PDT-Regel (Pattern Day Trader) — Einstiegs-Bremse für kleine Broker-Konten.
  *
+ * Gilt nur für US-Aktien-Daytrades: Krypto und der Wochen-Sockel sind
+ * ausgenommen (die Aufrufer entscheiden das, Prüfbefund 05.10.).
+ *
  * FINRA: Ein Margin-Konto unter 25.000 $ Equity darf in fünf Handelstagen
  * höchstens drei Daytrades machen (Kauf und Verkauf desselben Papiers am
  * selben Tag). Der vierte markiert das Konto als Pattern Day Trader — bei
@@ -24,6 +27,8 @@ export const PDT_STAND_MAX_STD = 24;
 export interface PdtStand {
   /** `daytrade_count` des Brokers: Daytrades der letzten fünf Handelstage. */
   daytrades: number;
+  /** Equity zum VORTAGESSCHLUSS (`last_equity`) — daran misst der Broker die
+   *  25.000-$-Grenze, nicht am Intraday-Stand. */
   equity: number;
   /** `pattern_day_trader` des Brokers. */
   markiert: boolean;
@@ -34,8 +39,13 @@ export interface PdtStand {
 /**
  * Sollen neue Einstiege gesperrt werden? Ohne frischen, lesbaren Stand: nein
  * — ein fehlender Abgleich darf den Handel nicht still lahmlegen.
+ *
+ * `heuteEroeffnet`: heute eröffnete, noch offene Broker-Positionen (ohne
+ * Krypto). Jeder Ausstieg aus ihnen am selben Tag wäre ein weiterer Daytrade
+ * — wer nur die schon GEMACHTEN zählt, lässt bei Zähler 2 noch mehrere neue
+ * Positionen zu, deren Stops dann der Broker ablehnt (Prüfbefund 05.10.).
  */
-export function pdtEinstiegGesperrt(stand: unknown, jetzt: Date): boolean {
+export function pdtEinstiegGesperrt(stand: unknown, jetzt: Date, heuteEroeffnet = 0): boolean {
   if (typeof stand !== 'object' || stand === null) return false;
   const s = stand as Partial<PdtStand>;
   if (typeof s.at !== 'string' || typeof s.equity !== 'number' || !(s.equity > 0)) return false;
@@ -43,5 +53,5 @@ export function pdtEinstiegGesperrt(stand: unknown, jetzt: Date): boolean {
   if (!Number.isFinite(alter) || alter > PDT_STAND_MAX_STD * 3_600_000) return false;
   if (s.equity >= PDT_EQUITY_GRENZE) return false;
   if (s.markiert === true) return true;
-  return typeof s.daytrades === 'number' && s.daytrades >= PDT_MAX_DAYTRADES;
+  return typeof s.daytrades === 'number' && s.daytrades + Math.max(0, heuteEroeffnet) >= PDT_MAX_DAYTRADES;
 }

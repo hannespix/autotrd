@@ -63,7 +63,9 @@ export async function wachhundLauf(now = new Date()): Promise<{
     health.get('aktivitaet') as AktivitaetZustand | undefined,
     bewerteAktivitaet({
       jetztMs: now.getTime(),
-      laufend: health.get('konten.laufend') as number | undefined,
+      // `gehandelt` statt `laufend` (Prüfbefund 05.10.): Wartende, gesperrte
+      // und live-verriegelte Konten können gar nicht handeln.
+      laufend: health.get('konten.gehandelt') as number | undefined,
       trades7t: health.get('trading.trades7t') as number | undefined,
       zaehlungAt: health.get('trading.at') as string | undefined,
     }),
@@ -74,8 +76,14 @@ export async function wachhundLauf(now = new Date()): Promise<{
   // bewacht — ein Wächter, der sein eigenes Messobjekt anfasst, taugt nichts.
   await db.doc('meta/health').set({ alarm, aktivitaet }, { merge: true });
 
-  if (aktivitaet.aktiv) {
-    logger.error(`WACHHUND (Untätigkeit): ${aktivitaet.text} (seit ${aktivitaet.seit ?? '?'})`);
+  /* Nur bei WECHSEL loggen und mit eigenem Präfix (Prüfbefund 05.10.): Der
+   * bestehende Log-Alert hört auf „WACHHUND" und ist für den stehenden Scan
+   * gedacht. Untätigkeit ist ein Tages-Befund, kein Notfall alle 10 Minuten. */
+  const vorherAktiv = (health.get('aktivitaet') as AktivitaetZustand | undefined)?.aktiv === true;
+  if (aktivitaet.aktiv && !vorherAktiv) {
+    logger.error(`UNTAETIGKEIT: ${aktivitaet.text}`);
+  } else if (!aktivitaet.aktiv && vorherAktiv) {
+    logger.info(`UNTAETIGKEIT: Entwarnung — ${aktivitaet.text}`);
   }
 
   if (alarm.aktiv) {

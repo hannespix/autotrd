@@ -137,7 +137,8 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
     (side === 'buy' && !hatPosition)
     || (side === 'sell' && strategy.signals.allowShort === true && !hatPosition);
   if (istEinstieg) {
-    if (tore.einstieg) {
+    // Krypto unterliegt der PDT-Regel nicht (Prüfbefund 05.10.).
+    if (tore.einstieg && !(tore.einstieg === 'pdt_schutz' && classify(symbol) === 'crypto')) {
       // Wie oben: Code statt Prosa — Breaker und Abgleich-Drift haben
       // eigene, im Wörterbuch übersetzte Erklärungen.
       throw new HttpsError(

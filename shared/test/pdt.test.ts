@@ -28,6 +28,11 @@ describe('pdtEinstiegGesperrt', () => {
   it('ab 25.000 $ gilt die Regel nicht', () => {
     expect(pdtEinstiegGesperrt(stand({ daytrades: 9, equity: PDT_EQUITY_GRENZE }), jetzt)).toBe(false);
   });
+  it('heute eröffnete Broker-Positionen zählen mit — jeder Ausstieg heute wäre ein Daytrade', () => {
+    expect(pdtEinstiegGesperrt(stand({ daytrades: 2 }), jetzt, 0)).toBe(false);
+    expect(pdtEinstiegGesperrt(stand({ daytrades: 2 }), jetzt, 1)).toBe(true);
+    expect(pdtEinstiegGesperrt(stand({ daytrades: 0 }), jetzt, 3)).toBe(true);
+  });
   it('fehlender, kaputter oder alter Stand bremst NIE', () => {
     expect(pdtEinstiegGesperrt(undefined, jetzt)).toBe(false);
     expect(pdtEinstiegGesperrt({ daytrades: 5 }, jetzt)).toBe(false);

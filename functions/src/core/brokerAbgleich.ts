@@ -264,7 +264,8 @@ export async function abgleichFuerKonto(
       // zusätzlicher Aufruf.
       pdtStand = {
         daytrades: k.daytradeCount,
-        equity: k.equity,
+        // Vortagesschluss, wie der Broker misst; ohne Angabe die aktuelle.
+        equity: k.lastEquity > 0 ? k.lastEquity : k.equity,
         markiert: k.patternDayTrader,
         at: jetzt.toISOString(),
       };

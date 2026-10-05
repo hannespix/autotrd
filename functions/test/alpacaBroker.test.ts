@@ -61,6 +61,7 @@ const KONTO_ROH = {
   account_blocked: false,
   pattern_day_trader: false,
   daytrade_count: 2,
+  last_equity: '11500',
 };
 
 const konto = (over: Partial<AlpacaKonto> = {}): AlpacaKonto => ({
@@ -74,6 +75,7 @@ const konto = (over: Partial<AlpacaKonto> = {}): AlpacaKonto => ({
   accountBlocked: false,
   patternDayTrader: false,
   daytradeCount: 0,
+  lastEquity: 12_000,
   ...over,
 });
 
@@ -98,6 +100,7 @@ describe('Endpunkt-Trennung', () => {
     const f = vi.fn().mockResolvedValue(antwort(KONTO_ROH));
     const k = await alpacaKonto('paper', null, f);
     expect(k.daytradeCount).toBe(2);
+    expect(k.lastEquity).toBe(11_500);
     expect(k.patternDayTrader).toBe(false);
   });
 

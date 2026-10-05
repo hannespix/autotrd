@@ -11,7 +11,7 @@ const quelle = readFileSync(join(import.meta.dirname, '..', 'src', 'scheduled', 
 
 describe('wachhund — Untätigkeit verdrahtet', () => {
   it('liest laufende Engines und die 7-Tage-Trades aus dem Heartbeat', () => {
-    expect(quelle).toContain("laufend: health.get('konten.laufend')");
+    expect(quelle).toContain("laufend: health.get('konten.gehandelt')");
     expect(quelle).toContain("trades7t: health.get('trading.trades7t')");
   });
   it('schreibt das Urteil getrennt vom Herzschlag-Alarm', () => {

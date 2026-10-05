@@ -167,7 +167,7 @@ export const AKTIVITAET_MAX_ALTER_STD = 48;
 
 export interface AktivitaetEingabe {
   jetztMs: number;
-  /** `meta/health.konten.laufend` — Konten mit eingeschalteter Engine. */
+  /** `meta/health.konten.gehandelt` — Konten, die den Handelspfad tatsächlich durchliefen. */
   laufend?: number | undefined;
   /** `meta/health.trading.trades7t` — geschlossene Trades der letzten 7 Tage. */
   trades7t?: number | undefined;
