@@ -169,7 +169,7 @@ jobs:
       #
       # Seit dem Kern-Satelliten (04.08.) ist momentumrun mit dabei: Er ist der
       # einzige Lauf, der den ruhigen Sockel der echten Konten kauft. Ohne ihn
-      # bliebe `engine.corePct` nach einem Deploy bis 09:45 ET eine Einstellung
+      # bliebe `engine.corePct` nach einem Deploy bis 18:00 ET eine Einstellung
       # ohne Wirkung — und das sieht im Dashboard genauso aus wie ein Sockel,
       # der bewusst in Cash steht. Der Lauf ist idempotent (Wochen-Takt je
       # Konto) und als optional markiert, damit er keinen Deploy rot macht.

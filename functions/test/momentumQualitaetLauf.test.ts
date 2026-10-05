@@ -87,3 +87,24 @@ describe('Quelltext-Wächter', () => {
     expect(lauf).not.toContain('targetPortfolio(ranked, marktOffen');
   });
 });
+
+describe('qualitaetsUrteile — Datenausfall wird als unsicher gemeldet', () => {
+  it('keine Namen bei vorhandenen Kandidaten → unsicher', async () => {
+    namen.clear();
+    const { unsicher } = await qualitaetsUrteile([{ symbol: 'X', score: 1 }], new Set(), new Map());
+    expect(unsicher).toBe(true);
+  });
+  it('jeder Umsatz-Abruf gescheitert → unsicher; einer gelungen → nicht', async () => {
+    namen.clear();
+    umsaetze.clear();
+    namen.set('A', 'A Inc');
+    namen.set('B', 'B Inc');
+    umsaetze.set('A', 'fehler');
+    umsaetze.set('B', 'fehler');
+    const cm = new Map([['A', closes(20)], ['B', closes(20)]]);
+    const ranked = [{ symbol: 'A', score: 1 }, { symbol: 'B', score: 0.9 }];
+    expect((await qualitaetsUrteile(ranked, new Set(), cm)).unsicher).toBe(true);
+    umsaetze.set('B', 50_000_000);
+    expect((await qualitaetsUrteile(ranked, new Set(), cm)).unsicher).toBe(false);
+  });
+});

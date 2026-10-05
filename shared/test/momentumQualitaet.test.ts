@@ -34,6 +34,7 @@ describe('istHebelProdukt', () => {
     'Apple Inc. Common Stock',
     'SPDR S&P 500 ETF Trust',
     'Bullfrog AI Holdings, Inc. Common Stock',
+    'Ultra Clean Holdings, Inc. Common Stock',
     'Invesco QQQ Trust, Series 1',
   ])('lässt %s durch', (name) => {
     expect(istHebelProdukt(name)).toBe(false);

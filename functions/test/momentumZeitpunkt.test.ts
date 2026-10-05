@@ -28,14 +28,14 @@ describe('rebalanceJetzt', () => {
   });
 });
 
-describe('rebalanceErledigt', () => {
-  it('nichts zu tun → erledigt', () => {
+describe('rebalanceErledigt (gezählt werden VERSUCHTE Orders)', () => {
+  it('nichts versucht (nichts zu tun oder alles vorab aussortiert) → erledigt', () => {
     expect(rebalanceErledigt(0, 0)).toBe(true);
   });
   it('mindestens eine Order ausgeführt → erledigt', () => {
     expect(rebalanceErledigt(8, 1)).toBe(true);
   });
-  it('Orders anstehend, keine ausgeführt → NICHT erledigt, morgen erneut', () => {
+  it('versucht, keine ausgeführt → NICHT erledigt, nächster Lauf erneut', () => {
     expect(rebalanceErledigt(8, 0)).toBe(false);
   });
 });
@@ -43,9 +43,31 @@ describe('rebalanceErledigt', () => {
 describe('Quelltext-Wächter', () => {
   const quelle = lies('functions', 'src', 'scheduled', 'momentumRun.ts');
 
-  it('beide Rebalancing-Schleifen fragen rebalanceJetzt UND rebalanceErledigt', () => {
-    expect(quelle.match(/if \(!rebalanceJetzt\(/g)?.length).toBe(2);
-    expect(quelle.match(/\} else if \(rebalanceErledigt\(orders\.length, ausgefuehrt\)\) \{/g)?.length).toBe(2);
+  it('beide Rebalancing-Schleifen fragen rebalanceJetzt UND rebalanceErledigt nach VERSUCHEN', () => {
+    expect(quelle.match(/if \(!rebalanceJetzt\(hatBroker, aktienOffen\)\) \{/g)?.length).toBe(2);
+    expect(quelle.match(/\} else if \(rebalanceErledigt\(versucht, ausgefuehrt\)\) \{/g)?.length).toBe(2);
+    expect(quelle.match(/versucht \+= 1;/g)?.length).toBe(4);
+  });
+
+  it('Abendlauf 18:00 rankt; Morgenlauf 09:45 führt NUR die Broker-Konten aus', () => {
+    expect(quelle).toContain("schedule: '0 18 * * *',");
+    expect(quelle).toContain("schedule: '45 9 * * 1-5',");
+    expect(quelle.match(/if \(nurBroker && !hatBroker\) continue;/g)?.length).toBe(2);
+    expect(quelle).toContain('await rebalanceMomentumUsers(ziel, preise, now, true);');
+    expect(quelle).toContain('await rebalanceCoreSleeve(ziel, preise, now, true);');
+    const index = lies('functions', 'src', 'index.ts');
+    expect(index).toContain('momentumAusfuehrung');
+  });
+
+  it('bei fehlenden Qualitätsdaten setzt JEDES Rebalancing aus — und das Ziel des Morgenlaufs bleibt stehen', () => {
+    expect(quelle).toContain('const faellig = !aussetzen && istRebalanceFaellig(book.lastRebalance, now);');
+    expect(quelle).toContain('const echte = aussetzen ? { konten: 0, orders: 0 } : await rebalanceMomentumUsers(ziel, preise, now);');
+    expect(quelle).toContain('const sockel = aussetzen ? { konten: 0, orders: 0 } : await rebalanceCoreSleeve(ziel, preise, now);');
+    expect(quelle).toContain('...(aussetzen ? {} : { zielGewichte: ziel, zielAt: now.toISOString() }),');
+  });
+
+  it('PDT bremst Momentum und Sockel NICHT (Wochen-Halten, kein Daytrade)', () => {
+    expect(quelle.match(/const tore = toreRoh\.einstieg === 'pdt_schutz' \? \{ \.\.\.toreRoh, einstieg: null \} : toreRoh;/g)?.length).toBe(2);
   });
 
   it('Zeitplan jedes Scheduler-Jobs stimmt zwischen Code und Diagnose überein', () => {

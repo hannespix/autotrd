@@ -44,7 +44,10 @@ export function istHebelProdukt(name: string): boolean {
   // „Short" allein reicht NICHT: „Vanguard Short-Term Bond ETF" ist ein
   // gewöhnlicher Anleihen-ETF. Inverse Produkte tragen zusätzlich einen der
   // anderen Marker oder heißen „ProShares Short …" bzw. „UltraShort".
-  return /(\b[1-9](\.\d+)?x\b|-[1-9]x\b|\bultra(pro|short)?\b|\bleveraged\b|\binverse\b|\bbear\b|\bbull\b|\bdaily target\b|^proshares short\b)/i.test(
+  // Auch „Ultra" allein reicht nicht: „Ultra Clean Holdings" (UCTT) ist ein
+  // Halbleiter-Zulieferer. Gehebelt sind „UltraPro", „UltraShort" und die
+  // ProShares-Ultra-Reihe.
+  return /(\b[1-9](\.\d+)?x\b|-[1-9]x\b|\bultra(pro|short)\b|^proshares ultra\b|\bleveraged\b|\binverse\b|\bbear\b|\bbull\b|\bdaily target\b|^proshares short\b)/i.test(
     name,
   );
 }
@@ -88,9 +91,10 @@ export interface QualitaetsAuswahl<T extends { symbol: string }> {
 }
 
 /**
- * Rangliste filtern. `mangel` liefert je Symbol das Urteil; Symbole, für die
- * er nicht gefragt wird (hinter dem Fenster), bleiben unverändert drin — das
- * Fenster begrenzt nur die Abrufe, nicht die Liste.
+ * Rangliste filtern: Jedes Symbol, für das `mangel` einen Grund liefert, fällt
+ * heraus, die Reihenfolge des Rests bleibt. WAS ein Mangel ist, entscheidet
+ * der Aufrufer — im Momentum-Lauf gelten ungeprüfte Universums-Symbole
+ * (hinter dem Prüffenster) als `keine_daten` und fallen ebenfalls heraus.
  */
 export function filtereRangliste<T extends { symbol: string }>(
   ranked: readonly T[],
