@@ -377,6 +377,18 @@ export interface SignalsConfig {
    * nur verhindern, nie erzeugen — die sichere Voreinstellung ist AN.
    */
   regimeGate?: boolean;
+  /**
+   * KI-Nachrichten-Kaskade (Owner-Auftrag 05.10.): Dieses Konto nimmt an
+   * der KI-Bewertung frischer Nachrichten teil — eindeutig gute Meldungen
+   * werden zur Einstiegsstimme, eindeutig schlechte zu Verkauf oder
+   * nachgezogenem Stop (Stufe 2). Die KI urteilt nur in einem festen
+   * Schema; handeln dürfen ausschließlich deterministische Regeln.
+   *
+   * Fehlend = an (Owner: „auf allen angemeldeten"). Jedes Konto mit KI an
+   * bringt 2 $ Tagesbudget in den gemeinsamen Topf; `false` ist das
+   * ausdrückliche Opt-out und nimmt das Konto aus Topf und Aktionen.
+   */
+  kiNachrichten?: boolean;
 }
 
 export interface Strategy {
@@ -607,6 +619,8 @@ export const DEFAULT_STRATEGY: Strategy = {
     // Bestandskonten ohne Feld sind also ebenfalls AN — der Eintrag hier
     // dokumentiert den Standard und macht ihn im gespeicherten Doc sichtbar.
     captureGate: true,
+    // KI-Nachrichten (05.10.): an für alle — der Scan wertet `!== false`.
+    kiNachrichten: true,
   },
 };
 

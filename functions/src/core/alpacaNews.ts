@@ -114,6 +114,11 @@ export interface MarktNachricht {
   url: string;
   /** Herausgeber laut Alpaca (meist `benzinga`). */
   herausgeber: string;
+  /**
+   * Autor laut Alpaca — bei Pressemitteilungen oft der Emittent selbst.
+   * Die Gegenprobe prüft damit die Quelle (gefälschte Mitteilungen gab es).
+   */
+  autor: string;
   /** Nur Symbole, die wir kennen (Katalog ∪ Universum), in UNSERER Schreibweise. */
   symbole: string[];
   /** Wie viele Symbole Alpaca insgesamt nannte — Sammelmeldungen erkennbar. */
@@ -185,6 +190,7 @@ export function normalisiereNachricht(
     zusammenfassung: kuerze(text(r['summary']), ZUSAMMENFASSUNG_MAX),
     url: /^https?:\/\//i.test(url) ? url.slice(0, 500) : '',
     herausgeber: kuerze(text(r['source']), 40),
+    autor: kuerze(text(r['author']), 80),
     symbole,
     symboleGenannt: genannt.length,
     publishedAt,
