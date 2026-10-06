@@ -455,6 +455,38 @@ export interface KontenStats {
 }
 
 /**
+ * Was die KI-Kaskade in DIESEM Scan bewirkt hat (Stufe 2b, 06.10.) — über
+ * alle Konten summiert, landet als `ki` im Herzschlag.
+ *
+ * Dieselbe Lehre wie bei den Toren: Eine Wirkung, die nicht gezählt wird,
+ * ist von „wirkt nicht" nicht zu unterscheiden. Steht `lage` hoch und
+ * bleiben alle übrigen Zahlen auf 0, liegen Urteile vor, aber keines
+ * erreicht den Handel — genau der Befund, den Stufe 3 als Alarm braucht.
+ */
+export interface KiLaufStats {
+  /** Symbole mit gültigem, gegengeprüftem Richtungs-Urteil (je Scan, nicht je Konto). */
+  lage: number;
+  /** Ist das KI-Budget heute erschöpft (Lexikon-Rückfall aktiv)? */
+  budgetErschoepft: boolean;
+  /** Konten mit abgeschalteter KI (signals.kiNachrichten = false). */
+  kontenAus: number;
+  /** Einstiege, an denen eine KI-Stimme mitgewirkt hat. */
+  einstiege: number;
+  /** Davon NUR durch die KI zustande gekommen (Probegröße). */
+  probe: number;
+  /** Einstiege mit Lexikon-Rückfall-Stimme. */
+  lexikon: number;
+  /** Blinde Lexikon-Vetos, die ein gegengeprüftes Urteil über dasselbe
+   *  Ereignis an der Sperrprüfung aufgehoben hat (der Einstieg kann danach
+   *  noch an einem anderen Tor scheitern). */
+  vetoAufgehoben: number;
+  /** Ausstiege `ki_news`. */
+  verkauft: number;
+  /** Gesetzte bzw. nachgezogene KI-Stops. */
+  stops: number;
+}
+
+/**
  * Broker-Anbindung im Scan (M13) — vier Zahlen, die eine Frage beantworten:
  * Kommt das Order-Routing überhaupt bis zum Broker?
  *
@@ -473,36 +505,6 @@ export interface KontenStats {
  * war von einer ohne Arbeit nicht zu unterscheiden — das war der Kern des
  * Owner-Funds vom 21.08. („5 Trades nicht registriert").
  */
-/**
- * Was die KI-Kaskade in DIESEM Scan bewirkt hat (Stufe 2b, 06.10.) — über
- * alle Konten summiert, landet als `ki` im Herzschlag.
- *
- * Dieselbe Lehre wie bei den Toren: Eine Wirkung, die nicht gezählt wird,
- * ist von „wirkt nicht" nicht zu unterscheiden. Steht `lage` hoch und
- * bleiben alle übrigen Zahlen auf 0, liegen Urteile vor, aber keines
- * erreicht den Handel — genau der Befund, den Stufe 3 als Alarm braucht.
- */
-export interface KiLaufStats {
-  /** Symbole mit gültigem KI-Urteil in diesem Scan (je Scan, nicht je Konto). */
-  lage: number;
-  /** Ist das KI-Budget heute erschöpft (Lexikon-Rückfall aktiv)? */
-  budgetErschoepft: boolean;
-  /** Konten mit abgeschalteter KI (signals.kiNachrichten = false). */
-  kontenAus: number;
-  /** Einstiege, an denen eine KI-Stimme mitgewirkt hat. */
-  einstiege: number;
-  /** Davon NUR durch die KI zustande gekommen (Probegröße). */
-  probe: number;
-  /** Einstiege mit Lexikon-Rückfall-Stimme. */
-  lexikon: number;
-  /** Blinde Lexikon-Vetos, die eine gegengeprüfte KI-Stimme aufgehoben hat. */
-  vetoAufgehoben: number;
-  /** Ausstiege `ki_news`. */
-  verkauft: number;
-  /** Gesetzte bzw. nachgezogene KI-Stops. */
-  stops: number;
-}
-
 export interface NachbuchungsLauf {
   /** Erfolgreich nachgebuchte Fills. */
   gebucht: number;
@@ -748,8 +750,15 @@ async function executeUserTrades(
   try {
     const kiJetzt = Date.now();
     const [urteile, kiStand] = await Promise.all([
+      // decidedAt ≥ firstSeenAt: Wer ab dem Sehen höchstens KI_GUELTIG_STUNDEN
+      // alt ist, hat auch ein decidedAt im Fenster. `select` lädt nur, was
+      // die Regeln lesen (Speicher des Scans, Naht-Prüfung 06.10.).
       db.collection('kiUrteile')
         .where('decidedAt', '>=', new Date(kiJetzt - KI_GUELTIG_STUNDEN * 3_600_000).toISOString())
+        .select(
+          'newsId', 'symbol', 'richtung', 'handlungsfaehig', 'staerke', 'eingepreist', 'stufe',
+          'decidedAt', 'firstSeenAt', 'publishedAt', 'pruefung.kurskontext.gesehen',
+        )
         .get(),
       db.doc('meta/kiNachrichten').get(),
     ]);
@@ -759,7 +768,9 @@ async function executeUserTrades(
     logger.warn('Scan: KI-Lage nicht lesbar — Handel ohne KI-Einfluss', err);
   }
   const kiLauf: KiLaufStats = {
-    lage: kiLage.size,
+    // Nur Urteile, die handeln KÖNNEN (gegengeprüft, mit Richtung) — sonst
+    // stünde „lage hoch, alles andere 0" auch im Normalfall (Naht-Prüfung).
+    lage: [...kiLage.values()].filter((s) => s.handlungsfaehig && s.richtung !== 'neutral').length,
     budgetErschoepft: kiBudgetErschoepft,
     kontenAus: 0,
     einstiege: 0,
@@ -950,6 +961,12 @@ async function executeUserTrades(
       const kiAn = clamped.signals.kiNachrichten !== false;
       if (!kiAn) kiLauf.kontenAus += 1;
       const kiFuer = (sym: string): KiSignal | undefined => (kiAn ? kiLage.get(sym) : undefined);
+      // Je Symbol die newsId, mit der die KI auf diesem Konto zuletzt
+      // gehandelt hat — ein Urteil, eine Handlung (Red-Team H3). Ein Eintrag
+      // je Symbol, wird überschrieben: wächst nicht über das Universum hinaus.
+      const kiGenutzt: Record<string, string> = {
+        ...((userDoc.get('kiGenutzt') as Record<string, string> | undefined) ?? {}),
+      };
 
       /* Tages-Notbremse (M12 `core/risk.ts`).
        *
@@ -1299,16 +1316,19 @@ async function executeUserTrades(
         const kiAktion = kiPositionsAktion(kiSig, pos, data.price, data.atrPct);
         if (kiSig && kiAktion?.art === 'stop') {
           const kiStop = { level: kiAktion.stop, grund: kiAktion.grund, newsId: kiSig.newsId, gesetztAt: now.toISOString() };
+          // update() statt set/merge: Hat der Puls die Position inzwischen
+          // geschlossen, entstünde sonst ein Geister-Dokument nur mit kiStop
+          // (Naht-Prüfung 06.10.) — update scheitert dann sauber (NOT_FOUND).
           await userDoc.ref
             .collection('positions')
             .doc(symbol)
-            .set({ kiStop }, { merge: true })
+            .update({ kiStop })
             .then(() => {
               pos.kiStop = kiStop;
               kiLauf.stops += 1;
               logger.info(`KI-Stop ${uid} ${symbol} → ${kiStop.level} (${kiStop.grund}, ${kiStop.newsId})`);
             })
-            .catch(() => undefined);
+            .catch((err: unknown) => logger.warn(`KI-Stop ${uid} ${symbol} nicht geschrieben`, err));
         }
         const reason = regelGrund ?? (kiAktion?.art === 'verkauf' ? kiAktion.grund : null);
         if (reason) {
@@ -1342,7 +1362,13 @@ async function executeUserTrades(
             clamped,
             scanId,
           );
-          if (r.executed && reason === 'ki_news') kiLauf.verkauft += 1;
+          if (r.executed && reason === 'ki_news' && kiSig) {
+            kiLauf.verkauft += 1;
+            // Das Urteil ist verbraucht: Es eröffnet nach dem Cooldown nicht
+            // noch die Gegenposition (Red-Team H3c).
+            kiGenutzt[symbol] = kiSig.newsId;
+            cooldownUpdates.push(new FieldPath('kiGenutzt', symbol), kiSig.newsId);
+          }
           if (r.executed) {
             executed += 1;
             // Teilausführung: Der Rest lebt beim Broker weiter (verifiziert
@@ -1549,7 +1575,8 @@ async function executeUserTrades(
          * Schattenbuch misst die Technik, nicht die KI. */
         const kiSig = echtesBuch && handelbar ? kiFuer(symbol) : undefined;
         const kiGegen = kiVeto(kiSig, side);
-        const vetoAufgehoben = vetoRoh.blocked && kiUebersteuertNewsVeto(kiSig, side);
+        const vetoAufgehoben = vetoRoh.blocked
+          && kiUebersteuertNewsVeto(kiSig, side, marketData.get(symbol)?.news?.hardEvent?.published);
         const veto = vetoAufgehoben ? { blocked: false } : vetoRoh;
         const klasse = classify(symbol);
         /* Hebel 1c (15.08.): Die Klassen-Mindesthalte (Krypto: 2 Tage) gilt
@@ -2111,7 +2138,15 @@ async function executeUserTrades(
          * Lexikon-Stimme ist `direction` dieselbe Zahl aus derselben
          * Funktion — die Engine handelt dann unverändert. */
         const kiSig = kiFuer(symbol);
-        const kiVote = kiStimme(kiSig, sig.requiredConfluence, pos !== null);
+        const kiVote = kiStimme(
+          kiSig,
+          sig.requiredConfluence,
+          pos !== null,
+          data.price,
+          data.atrPct,
+          now.getTime(),
+          kiGenutzt[symbol],
+        );
         const lexVote = kiAn
           ? lexikonStimme(
               shadowSentSign(data.news, Math.floor(now.getTime() / 1000))?.sign,
@@ -2119,6 +2154,7 @@ async function executeUserTrades(
               pos !== null,
               kiSig,
               kiBudgetErschoepft,
+              sig.votes,
             )
           : null;
         const ohneKi = applyPredictionVote(sig, vote);
@@ -2143,13 +2179,15 @@ async function executeUserTrades(
             ? { lexikon: { dir: lexVote.dir, weight: lexVote.weight, probe: kiFaktor < 1 } }
             : {}),
         });
-        /* Eigener Steckbrief für KI-berührte Einstiege: `ki`/`lex` in der
-         * Signatur trennt ihre Statistik von der reinen Technik. Sonst
-         * mischte der Trade-Filter Probe-Einstiege in die Bilanz einer
-         * Indikator-Sorte — und könnte eine gute Sorte für schlechte
-         * KI-Wetten sperren (oder umgekehrt). */
+        /* Nach einem ausgeführten Einstieg: zählen und das Urteil als
+         * VERBRAUCHT vermerken (Red-Team H3) — ein Urteil, eine Handlung je
+         * Konto und Symbol. Nur, wenn die KI-Stimme wirklich mitgewirkt hat. */
         const zaehleKiEinstieg = (dir: 'buy' | 'sell'): void => {
-          if (kiVote?.dir === dir) kiLauf.einstiege += 1;
+          if (kiVote?.dir === dir && kiSig) {
+            kiLauf.einstiege += 1;
+            kiGenutzt[symbol] = kiSig.newsId;
+            cooldownUpdates.push(new FieldPath('kiGenutzt', symbol), kiSig.newsId);
+          }
           if (lexVote?.dir === dir) kiLauf.lexikon += 1;
           if (kiFaktor < 1) kiLauf.probe += 1;
         };
@@ -2158,6 +2196,33 @@ async function executeUserTrades(
           ...(kiVote?.dir === dir ? { ki: dir } : {}),
           ...(lexVote?.dir === dir ? { lex: dir } : {}),
         });
+        /* Steckbrief-Paar (Red-Team 06.10., H1 — beide Prüfer).
+         *
+         * `tech` ist der Steckbrief der Technik ALLEIN. An ihm hängen Sperre,
+         * Überzeugung und Hebel — genau wie vor Stufe 2b. Die erste Fassung
+         * hängte `ki`/`lex` auch an BESTÄTIGENDE Einstiege; der neue
+         * Schlüssel hatte n = 0, und eine nachweislich verlierende Sorte lief
+         * an der Filtersperre vorbei in voller Größe — sobald nur die KI
+         * oder das blinde Lexikon zustimmte.
+         *
+         * `gebucht` trägt `ki`/`lex` NUR beim Probe-Einstieg (die KI hat die
+         * Richtung erst hergestellt), damit dessen Ergebnis getrennt lernt.
+         * Gesperrt ist, wenn EINER der beiden gesperrt ist; die Überzeugung
+         * nimmt den schwächeren. Ein bestätigender Einstieg wäre ohne KI
+         * genauso entstanden — er gehört in den technischen Steckbrief. */
+        const steckbriefe = (dir: 'buy' | 'sell', seite: 'long' | 'short') => {
+          const basis = { assetClass: classify(symbol), timeframe: tf, side: seite, regime };
+          const tech = bucketKey({ ...basis, signature: signalSignature(sig.votes, dir) });
+          const gebucht = kiFaktor < 1 ? bucketKey({ ...basis, signature: signalSignature(votesMitKi(dir), dir) }) : tech;
+          const ueberzeugung = (b: string): number =>
+            convictionFactor({ konfluenz, requiredConfluence: clamped.signals.minConfluence, bucket: filterBuckets[b] ?? null });
+          return {
+            tech,
+            gebucht,
+            gesperrt: bucketVerdict(filterBuckets[tech]).blocked || bucketVerdict(filterBuckets[gebucht]).blocked,
+            ueberzeugung: Math.min(ueberzeugung(tech), ueberzeugung(gebucht)),
+          };
+        };
         // Überzeugungsstärke der GEWÄHLTEN Richtung, inklusive Prognose-Pfeil
         // — genau die Zahl, an der der Hebel hängt. `sig.confluence` allein
         // wäre falsch, sobald der Pfeil die Richtung gedreht hat.
@@ -2228,14 +2293,9 @@ async function executeUserTrades(
           // Steckbrief des Einstiegs (Trade-Filter, scharf seit 02.08.):
           // Sorten, deren EIGENE Historie n≥30 und t≤−1,5 zeigt, werden
           // nicht mehr gehandelt — nur gezählt. Exits bleiben frei.
-          const bucket = bucketKey({
-            assetClass: classify(symbol),
-            timeframe: tf,
-            signature: signalSignature(votesMitKi('buy'), 'buy'),
-            side: 'long',
-            regime,
-          });
-          if (bucketVerdict(filterBuckets[bucket]).blocked) {
+          const sb = steckbriefe('buy', 'long');
+          const bucket = sb.gebucht;
+          if (sb.gesperrt) {
             gate.filter_blockiert += 1;
             continue;
           }
@@ -2247,15 +2307,11 @@ async function executeUserTrades(
           // Klumpengrenze bleibt die letzte Instanz — die beiden Faktoren
           // können sich also nicht zu einem Hebel aufaddieren.
           const sizeFactor =
-            convictionFactor({
-              konfluenz,
-              requiredConfluence: clamped.signals.minConfluence,
-              bucket: filterBuckets[bucket] ?? null,
-            }) * klassenGewicht(clamped, symbol) * regimeGroessenFaktor(regime) * kiFaktor;
+            sb.ueberzeugung * klassenGewicht(clamped, symbol) * regimeGroessenFaktor(regime) * kiFaktor;
           // Ein Probe-Einstieg (nur durch KI/Lexikon) bekommt nie Hebel —
           // die Hebel-Ampel ist für bestätigte Überzeugung gebaut.
           const budget = kiFaktor < 1 ? null : hebelBudget(konfluenz, {
-            bucket: filterBuckets[bucket] ?? null,
+            bucket: filterBuckets[sb.tech] ?? null,
             side: 'long',
             symbol,
             edgeMultiple: kostenVielfaches(symbol, data.atrPct),
@@ -2363,14 +2419,9 @@ async function executeUserTrades(
           if (cooldownActive(engineCooldowns[symbol], now, cdMin)) { gate.cooldown_aktiv += 1; continue; }
           if (coreSymbols.has(symbol)) { gate.sockel_besitz += 1; continue; } // hält der Sockel
           if (entrySperre(symbol, data.atrPct, alleSymbole(), 'short')) continue;
-          const bucket = bucketKey({
-            assetClass: classify(symbol),
-            timeframe: tf,
-            signature: signalSignature(votesMitKi('sell'), 'sell'),
-            side: 'short',
-            regime,
-          });
-          if (bucketVerdict(filterBuckets[bucket]).blocked) {
+          const sb = steckbriefe('sell', 'short');
+          const bucket = sb.gebucht;
+          if (sb.gesperrt) {
             gate.filter_blockiert += 1;
             continue;
           }
@@ -2379,13 +2430,9 @@ async function executeUserTrades(
           // Klumpengrenze bleibt die letzte Instanz — die beiden Faktoren
           // können sich also nicht zu einem Hebel aufaddieren.
           const sizeFactor =
-            convictionFactor({
-              konfluenz,
-              requiredConfluence: clamped.signals.minConfluence,
-              bucket: filterBuckets[bucket] ?? null,
-            }) * klassenGewicht(clamped, symbol) * regimeGroessenFaktor(regime) * kiFaktor;
+            sb.ueberzeugung * klassenGewicht(clamped, symbol) * regimeGroessenFaktor(regime) * kiFaktor;
           const budget = kiFaktor < 1 ? null : hebelBudget(konfluenz, {
-            bucket: filterBuckets[bucket] ?? null,
+            bucket: filterBuckets[sb.tech] ?? null,
             side: 'short',
             symbol,
             edgeMultiple: kostenVielfaches(symbol, data.atrPct),

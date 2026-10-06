@@ -119,8 +119,11 @@ describe('Quelltext-Wächter: Verdrahtung im Scan', () => {
   it('Risiko-Block: die KI wird erst gefragt, wenn keine Regel schließt — und kann keinen Ausstieg verhindern', () => {
     expect(anzahl('const kiSig = regelGrund ? undefined : kiFuer(symbol);')).toBe(1);
     expect(anzahl("const reason = regelGrund ?? (kiAktion?.art === 'verkauf' ? kiAktion.grund : null);")).toBe(1);
-    // der KI-Stop landet im EIGENEN Feld, nie im stopLoss-Level
-    expect(anzahl('.set({ kiStop }, { merge: true })')).toBe(1);
+    // der KI-Stop landet im EIGENEN Feld, nie im stopLoss-Level — und per
+    // update(), damit eine inzwischen geschlossene Position kein Geister-
+    // Dokument bekommt (Naht-Prüfung 06.10.)
+    expect(anzahl('.update({ kiStop })')).toBe(1);
+    expect(scan).not.toContain('.set({ kiStop }');
     expect(scan).not.toMatch(/stopLoss:\s*kiAktion/);
   });
 
@@ -136,14 +139,38 @@ describe('Quelltext-Wächter: Verdrahtung im Scan', () => {
   });
 
   it('Probegröße an beiden Einstiegen, und ein Probe-Einstieg bekommt nie Hebel', () => {
-    expect(anzahl('regimeGroessenFaktor(regime) * kiFaktor;')).toBe(2);
+    expect(anzahl('sb.ueberzeugung * klassenGewicht(clamped, symbol) * regimeGroessenFaktor(regime) * kiFaktor;')).toBe(2);
     expect(anzahl('const budget = kiFaktor < 1 ? null : hebelBudget(konfluenz, {')).toBe(2);
-    expect(anzahl("signature: signalSignature(votesMitKi('buy'), 'buy'),")).toBe(1);
-    expect(anzahl("signature: signalSignature(votesMitKi('sell'), 'sell'),")).toBe(1);
+    // der Hebel hängt am TECHNISCHEN Steckbrief
+    expect(anzahl('bucket: filterBuckets[sb.tech] ?? null,')).toBe(2);
+  });
+
+  it('H1: Sperre und Überzeugung hängen am technischen Steckbrief — das KI-Etikett nur bei der Probe', () => {
+    expect(anzahl('const tech = bucketKey({ ...basis, signature: signalSignature(sig.votes, dir) });')).toBe(1);
+    expect(anzahl('const gebucht = kiFaktor < 1 ? bucketKey({ ...basis, signature: signalSignature(votesMitKi(dir), dir) }) : tech;')).toBe(1);
+    expect(anzahl('gesperrt: bucketVerdict(filterBuckets[tech]).blocked || bucketVerdict(filterBuckets[gebucht]).blocked,')).toBe(1);
+    expect(anzahl('ueberzeugung: Math.min(ueberzeugung(tech), ueberzeugung(gebucht)),')).toBe(1);
+    expect(anzahl("const sb = steckbriefe('buy', 'long');")).toBe(1);
+    expect(anzahl("const sb = steckbriefe('sell', 'short');")).toBe(1);
+    expect(anzahl('if (sb.gesperrt) {')).toBe(2);
+    // kein Einstieg prüft mehr direkt einen KI-Steckbrief
+    expect(scan).not.toContain("signature: signalSignature(votesMitKi('buy'), 'buy'),");
+  });
+
+  it('H2/H3: Veto-Aufhebung nur fürs selbe Ereignis; ein Urteil, eine Handlung', () => {
+    expect(anzahl('&& kiUebersteuertNewsVeto(kiSig, side, marketData.get(symbol)?.news?.hardEvent?.published);')).toBe(1);
+    expect(anzahl('kiGenutzt[symbol],')).toBe(1); // an kiStimme übergeben
+    expect(anzahl("cooldownUpdates.push(new FieldPath('kiGenutzt', symbol), kiSig.newsId);")).toBe(2); // Einstieg UND ki_news-Ausstieg
+    expect(anzahl('sig.votes,\n            )')).toBe(1); // Lexikon bekommt die Indikator-Stimmen (M2)
   });
 
   it('Herzschlag trägt die KI-Wirkung; der KI-Lauf schreibt den Budget-Tag', () => {
     expect(anzahl('ki: kiLaufGesamt,')).toBe(1);
     expect(lauf).toContain('await standRef.set({ budgetErreichtTag: tag }, { merge: true })');
+  });
+
+  it('der Auto-Tuner vergleicht ohne KI-Probe-Trades (M3)', () => {
+    const tune = readFileSync(new URL('../src/scheduled/autoTune.ts', import.meta.url), 'utf8');
+    expect(tune).toContain("if (istKiProbeBucket(t.get('bucket'))) continue;");
   });
 });

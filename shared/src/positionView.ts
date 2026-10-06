@@ -9,7 +9,8 @@
  * woanders liegt — genau die Sorte Widerspruch, die Vertrauen kostet.
  *
  * Die Level-Logik spiegelt die Engine: gespeicherte Level (`stopLoss`,
- * `takeProfit`) haben Vorrang, sonst die klassen-aufgelösten Prozente. Bei
+ * `takeProfit`) haben Vorrang, sonst die klassen-aufgelösten Prozente; ein
+ * nachgezogener KI-Stop (`kiStop`) gilt zusätzlich, der engere wird gezeigt. Bei
  * ATR-adaptiven Stops kennt nur der Server-Scan die Schwelle — der Client
  * meldet das ehrlich als „adaptiv" statt eine Linie zu erfinden.
  */
@@ -19,8 +20,10 @@ import type { Position, RiskConfig } from './strategy.js';
 export interface PositionLevels {
   /** Einstandskurs (Bezugslinie). */
   entry: number;
-  /** Fester Stop (null = unbekannt/aus). */
+  /** Fester Stop (null = unbekannt/aus) — der ENGERE aus regulärem Stop und KI-Stop. */
   stop: number | null;
+  /** Stammt `stop` vom nachgezogenen KI-Stop (Stufe 2b)? */
+  stopKi: boolean;
   /** Stop läuft ATR-adaptiv — Schwelle kennt nur der Scan. */
   stopAtr: boolean;
   /** Nachziehender Stop, sobald scharf (null = aus oder noch nicht scharf). */
@@ -45,13 +48,22 @@ export function positionLevels(p: Position, risk: RiskConfig): PositionLevels {
   const short = p.side === 'short';
 
   const stopAtr = (risk.atrStopMult ?? 0) > 0;
-  const stop =
+  const regulaer =
     p.stopLoss ??
     (stopAtr || !(risk.stopLossPct > 0)
       ? null
       : short
         ? entry * (1 + risk.stopLossPct / 100)
         : entry * (1 - risk.stopLossPct / 100));
+  /* KI-Stop (Stufe 2b, 06.10.): eine ZUSÄTZLICHE Marke, die die Engine
+   * prüft (riskExitReason → 'ki_stop'). Die Ansicht zeigt den engeren der
+   * beiden — sonst meldete die Tabelle „Stop in 3,8 %", während der Ausstieg
+   * bei 1 % käme (Naht-Prüfung 06.10.). */
+  const ki = typeof p.kiStop?.level === 'number' && Number.isFinite(p.kiStop.level) && p.kiStop.level > 0
+    ? p.kiStop.level
+    : null;
+  const stopKi = ki !== null && (regulaer === null || (short ? ki < regulaer : ki > regulaer));
+  const stop = stopKi ? ki : regulaer;
 
   const trailPct = risk.trailingStopPct ?? 0;
   // „Scharf" heißt: Die Position war seit Einstieg schon im Gewinn — vorher
@@ -74,7 +86,7 @@ export function positionLevels(p: Position, risk: RiskConfig): PositionLevels {
         ? entry * (1 - risk.takeProfitPct / 100)
         : entry * (1 + risk.takeProfitPct / 100));
 
-  return { entry, stop, stopAtr, trail, trailWartet: trailPct > 0 && !armed, target, targetAtr };
+  return { entry, stop, stopKi, stopAtr, trail, trailWartet: trailPct > 0 && !armed, target, targetAtr };
 }
 
 /**

@@ -5,19 +5,22 @@
  *
  * ── Die Regeln (Owner-Entscheidung 05.10., Empfehlung angenommen) ─────────
  *
- *   Positiv, eindeutig, gegengeprüft, nicht eingepreist
+ *   Positiv, eindeutig, gegengeprüft, nicht eingepreist, frisch (≤ 2 h),
+ *   Kurs seither < 1,5 ATR gelaufen
  *       → Kaufstimme mit vollem Konfluenz-Gewicht (reicht allein), aber in
  *         PROBEGRÖSSE: Ein Einstieg, der nur wegen der KI zustande kommt,
- *         handelt halb so groß. Stufe 3 skaliert später 0,25×–2× nach
+ *         handelt halb so groß und nie mit Hebel. Je Urteil, Konto und
+ *         Symbol genau EINE Handlung. Stufe 3 skaliert später 0,25×–2× nach
  *         gemessener Wirkung — bis dahin ist die Hälfte die ehrliche Wette.
  *   Negativ, eindeutig, gegengeprüft
  *       → sperrt neue Long-Einstiege (richtungsbewusstes Veto);
- *       → gehaltene Long-Position: noch nicht stark gefallen (< 1,5 ATR seit
- *         dem ersten Sehen) → VERKAUFEN; schon gefallen → Stop nachziehen,
- *         statt am Tief zu verkaufen.
- *   Unklar (gegen die Position, aber ohne bestandene Gegenprobe)
- *       → nur Stop nachziehen.
- *   Spiegelbildlich für Shorts.
+ *       → gehaltene Long-Position: belegt „nicht eingepreist" und gemessen
+ *         < 1,5 ATR gefallen → VERKAUFEN; sonst Stop auf 0,5 ATR nachziehen,
+ *         statt am womöglich schon erreichten Tief zu verkaufen.
+ *   Unklar (Gegenprobe lief, hat nicht bestätigt, Stärke ≥ 0,6)
+ *       → nur Stop nachziehen, mit 1 ATR Abstand. Eine bloße Sichtung ohne
+ *         Gegenprobe löst nichts aus.
+ *   Spiegelbildlich für Shorts. (Schärfungen nach Red-Team 06.10.)
  *
  * ── Was hier nie passiert ─────────────────────────────────────────────────
  *
@@ -34,16 +37,32 @@
 
 import type { SignalDirection } from './strategy.js';
 
-/** So lange wirkt ein Urteil (ab `decidedAt`). Danach ist die Nachricht alt. */
+/** So lange wirkt ein Urteil (ab dem ersten Sehen der Meldung). Danach ist die Nachricht alt. */
 export const KI_GUELTIG_STUNDEN = 6;
+/**
+ * So lange darf ein Urteil einen EINSTIEG tragen (ab dem ersten Sehen). Eine
+ * Nachricht wirkt in den ersten Stunden; wer sechs Stunden später auf sie
+ * kauft, läuft dem Kurs hinterher (Red-Team 06.10., H3). Veto und Positions-
+ * Schutz gelten weiter die vollen KI_GUELTIG_STUNDEN.
+ */
+export const KI_EINSTIEG_MAX_MIN = 120;
+/**
+ * Ein KI-Urteil hebt das blinde Lexikon-Veto nur auf, wenn seine Meldung
+ * zeitlich zum harten Ereignis passt — sonst urteilt die KI über ein ANDERES
+ * Ereignis (Red-Team 06.10., H2: 10 Uhr Upgrade positiv, 13 Uhr Gewinn-
+ * warnung im Yahoo-Feed — das Veto darf dann nicht fallen).
+ */
+export const KI_GLEICHES_EREIGNIS_MIN = 60;
 /** Größe eines Einstiegs, der NUR wegen der KI zustande kommt. */
 export const KI_PROBE_FAKTOR = 0.5;
 /** Ab so vielen ATR Bewegung seit dem ersten Sehen gilt die Nachricht als eingepreist. */
 export const KI_EINGEPREIST_ATR = 1.5;
-/** Abstand des nachgezogenen Stops in ATR. */
+/** Abstand des nachgezogenen Stops in ATR (gegengeprüftes Urteil). */
 export const KI_STOP_ATR = 0.5;
-/** Ab dieser Stärke zieht auch ein unklares Gegen-Urteil den Stop nach. */
-export const KI_UNKLAR_MIN_STAERKE = 0.5;
+/** Abstand bei einem UNKLAREN Urteil — weiter, weil ungesichert (Red-Team M5). */
+export const KI_UNKLAR_STOP_ATR = 1;
+/** Ab dieser Stärke zieht ein unklares (geprüft, nicht bestätigtes) Urteil den Stop nach. */
+export const KI_UNKLAR_MIN_STAERKE = 0.6;
 
 export interface KiSignal {
   newsId: string;
@@ -53,6 +72,12 @@ export interface KiSignal {
   staerke: number;
   eingepreist: 'nein' | 'teilweise' | 'ja' | 'unklar' | null;
   decidedAt: string;
+  /** Erstes Sehen der Meldung (Alters-Bezug; fehlt es, gilt decidedAt). */
+  firstSeenAt: string;
+  /** Veröffentlichung laut Anbieter (Abgleich mit dem harten Ereignis). */
+  publishedAt: string | null;
+  /** Lief die skeptische Gegenprobe (stufe 'pruefung')? */
+  geprueft: boolean;
   /** Kurs beim ersten Sehen der Meldung (Bezug für „schon gelaufen?"). */
   kursGesehen: number | null;
 }
@@ -60,10 +85,24 @@ export interface KiSignal {
 const zahl = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
 /**
- * Aus rohen `kiUrteile`-Dokumenten je Symbol das jüngste gültige Urteil —
+ * Rang eines Urteils bei der Auswahl je Symbol: Ein gegengeprüftes Urteil
+ * wird nicht von einer jüngeren, UNGEPRÜFTEN Sichtung verdrängt (Red-Team
+ * N2) — sonst löschte eine belanglose neutrale Meldung ein KI-Veto.
+ */
+function rang(s: KiSignal): number {
+  if (s.richtung === 'neutral') return 0;
+  if (s.handlungsfaehig) return 3;
+  return s.geprueft ? 2 : 1;
+}
+
+/**
+ * Aus rohen `kiUrteile`-Dokumenten je Symbol das maßgebliche gültige Urteil —
  * pur. Gültig heißt: `decidedAt` vor `jetztMs` (kein Blick in die Zukunft)
- * und nicht älter als `KI_GUELTIG_STUNDEN`. Das jüngste gewinnt, auch wenn
- * es schwächer ist: Eine neuere Lage löst eine ältere ab.
+ * und die Meldung nicht älter als `KI_GUELTIG_STUNDEN` ab dem ersten Sehen.
+ * Maßgeblich ist das Urteil mit dem höchsten Rang (bestätigt > geprüft >
+ * gesichtet > neutral), bei gleichem Rang das jüngste; Gleichstand wird
+ * deterministisch aufgelöst (Stärke, dann newsId), nicht über die
+ * Abfrage-Reihenfolge.
  */
 export function kiSignaleAus(urteile: readonly unknown[], jetztMs: number): Map<string, KiSignal> {
   const out = new Map<string, KiSignal>();
@@ -74,13 +113,15 @@ export function kiSignaleAus(urteile: readonly unknown[], jetztMs: number): Map<
     const decided = Date.parse(String(u['decidedAt'] ?? ''));
     if (!symbol || !Number.isFinite(decided)) continue;
     if (richtung !== 'positiv' && richtung !== 'negativ' && richtung !== 'neutral') continue;
-    if (decided > jetztMs || jetztMs - decided > KI_GUELTIG_STUNDEN * 3_600_000) continue;
-    const bisher = out.get(symbol);
-    if (bisher && Date.parse(bisher.decidedAt) >= decided) continue;
+    const gesehenRoh = Date.parse(String(u['firstSeenAt'] ?? ''));
+    const gesehenMs = Number.isFinite(gesehenRoh) ? Math.min(gesehenRoh, decided) : decided;
+    if (decided > jetztMs || jetztMs - gesehenMs > KI_GUELTIG_STUNDEN * 3_600_000) continue;
     const pruefung = (u['pruefung'] ?? {}) as Record<string, unknown>;
     const gesehen = ((pruefung['kurskontext'] ?? {}) as Record<string, unknown>)['gesehen'] as Record<string, unknown> | null | undefined;
     const ein = u['eingepreist'];
-    out.set(symbol, {
+    const pub = Date.parse(String(u['publishedAt'] ?? ''));
+    const p = zahl(gesehen?.['p']);
+    const kandidat: KiSignal = {
       newsId: String(u['newsId'] ?? ''),
       symbol,
       richtung,
@@ -88,11 +129,33 @@ export function kiSignaleAus(urteile: readonly unknown[], jetztMs: number): Map<
       staerke: zahl(u['staerke']) ?? 0,
       eingepreist: ein === 'nein' || ein === 'teilweise' || ein === 'ja' || ein === 'unklar' ? ein : null,
       decidedAt: new Date(decided).toISOString(),
-      kursGesehen: zahl(gesehen?.['p']) !== null && (zahl(gesehen?.['p']) as number) > 0 ? (zahl(gesehen?.['p']) as number) : null,
-    });
+      firstSeenAt: new Date(gesehenMs).toISOString(),
+      publishedAt: Number.isFinite(pub) ? new Date(pub).toISOString() : null,
+      geprueft: u['stufe'] === 'pruefung',
+      kursGesehen: p !== null && p > 0 ? p : null,
+    };
+    const bisher = out.get(symbol);
+    if (bisher) {
+      const d = rang(kandidat) - rang(bisher)
+        || Date.parse(kandidat.decidedAt) - Date.parse(bisher.decidedAt)
+        || kandidat.staerke - bisher.staerke
+        || (kandidat.newsId > bisher.newsId ? 1 : kandidat.newsId < bisher.newsId ? -1 : 0);
+      if (d <= 0) continue;
+    }
+    out.set(symbol, kandidat);
   }
   return out;
 }
+
+/** Wie weit ist der Kurs seit dem ersten Sehen IN Nachrichten-Richtung gelaufen (in %)? */
+function gelaufenPct(s: KiSignal, preis: number): number | null {
+  if (s.kursGesehen === null || !(preis > 0) || s.richtung === 'neutral') return null;
+  const d = ((preis - s.kursGesehen) / s.kursGesehen) * 100;
+  return s.richtung === 'positiv' ? d : -d;
+}
+
+const atrOk = (atrPct: number | null | undefined): number | null =>
+  typeof atrPct === 'number' && Number.isFinite(atrPct) && atrPct > 0 ? atrPct : null;
 
 /** Trägt das Urteil eine Handlung — gegengeprüft und nicht schon eingepreist? */
 function traegt(s: KiSignal | undefined): s is KiSignal {
@@ -101,18 +164,42 @@ function traegt(s: KiSignal | undefined): s is KiSignal {
 
 /**
  * Einstiegsstimme der KI — nur OHNE offene Position (Ausstiege laufen über
- * `kiPositionsAktion`, damit kein Urteil doppelt wirkt). Gewicht = die
- * geforderte Konfluenz: Die KI kann allein einen Einstieg tragen, der dann
- * aber in Probegröße handelt (`kiGroessenFaktor`).
+ * `kiPositionsAktion`). Gewicht = die geforderte Konfluenz: Die KI kann
+ * allein einen Einstieg tragen, der dann aber in Probegröße handelt
+ * (`kiGroessenFaktor`).
+ *
+ * Nach dem Red-Team vom 06.10. (H3) nur, wenn ALLES davon stimmt:
+ *   - die Meldung ist frisch (≤ KI_EINSTIEG_MAX_MIN seit dem ersten Sehen),
+ *   - der Kurs beim Sehen UND die ATR sind bekannt — sonst lässt sich nicht
+ *     prüfen, ob man dem Kurs schon hinterherläuft,
+ *   - der Kurs ist seither noch keine KI_EINGEPREIST_ATR in Nachrichten-
+ *     richtung gelaufen,
+ *   - dieses Urteil hat auf diesem Konto für dieses Symbol noch NICHT
+ *     gehandelt (`genutzt` = zuletzt verbrauchte newsId). Ein Urteil, eine
+ *     Handlung — sonst stiege dieselbe Meldung nach jedem Stop wieder ein.
  */
 export function kiStimme(
   s: KiSignal | undefined,
   requiredConfluence: number,
   hatPosition: boolean,
+  preis: number,
+  atrPct: number | null | undefined,
+  jetztMs: number,
+  genutzt?: string | null,
 ): { dir: 'buy' | 'sell'; weight: number } | null {
   if (hatPosition || !traegt(s)) return null;
+  if (genutzt && genutzt === s.newsId) return null;
+  if (jetztMs - Date.parse(s.firstSeenAt) > KI_EINSTIEG_MAX_MIN * 60_000) return null;
+  const atr = atrOk(atrPct);
+  const gelaufen = gelaufenPct(s, preis);
+  if (atr === null || gelaufen === null || gelaufen >= KI_EINGEPREIST_ATR * atr) return null;
   const weight = Math.max(1, Math.ceil(requiredConfluence));
   return { dir: s.richtung === 'positiv' ? 'buy' : 'sell', weight };
+}
+
+/** Indikator-Stimmen (ohne Prognose) in Richtung `dir`. */
+function indikatorenDafuer(votes: Readonly<Record<string, string | undefined>> | null | undefined, dir: 'buy' | 'sell'): number {
+  return Object.entries(votes ?? {}).filter(([k, v]) => k !== 'forecast' && v === dir).length;
 }
 
 /**
@@ -120,6 +207,10 @@ export function kiStimme(
  * zählt das Lexikon-Sentiment mit HALBEM Gewicht der KI-Stimme — nie allein
  * genug für einen Einstieg, nie Grund für einen Ausstieg, und es hebt kein
  * Veto auf. Nur, wenn für das Symbol kein gültiges KI-Urteil vorliegt.
+ *
+ * Und nur, wenn mindestens ein INDIKATOR in dieselbe Richtung zeigt
+ * (Red-Team M2): Die Prognose-Stimme ist auf minConfluence−1 gedeckelt —
+ * Prognose plus Lexikon ergäbe sonst einen Einstieg ganz ohne Technik.
  */
 export function lexikonStimme(
   sentSign: -1 | 0 | 1 | null | undefined,
@@ -127,11 +218,14 @@ export function lexikonStimme(
   hatPosition: boolean,
   kiSignal: KiSignal | undefined,
   budgetErschoepft: boolean,
+  votes: Readonly<Record<string, string | undefined>> | null | undefined,
 ): { dir: 'buy' | 'sell'; weight: number } | null {
   if (!budgetErschoepft || hatPosition || kiSignal || !sentSign) return null;
   const halb = Math.floor(Math.max(1, Math.ceil(requiredConfluence)) / 2);
   if (halb < 1) return null;
-  return { dir: sentSign > 0 ? 'buy' : 'sell', weight: Math.min(halb, Math.max(1, Math.ceil(requiredConfluence)) - 1) };
+  const dir = sentSign > 0 ? 'buy' : 'sell';
+  if (indikatorenDafuer(votes, dir) < 1) return null;
+  return { dir, weight: Math.min(halb, Math.max(1, Math.ceil(requiredConfluence)) - 1) };
 }
 
 /**
@@ -174,11 +268,21 @@ export function kiVeto(s: KiSignal | undefined, seite: 'long' | 'short'): boolea
 /**
  * Hebt die KI das blinde Lexikon-Veto auf? Nur, wenn sie gegengeprüft in
  * Handelsrichtung urteilt — dann weiß sie, was das Lexikon nicht weiß: in
- * welche Richtung das harte Ereignis wirkt.
+ * welche Richtung das harte Ereignis wirkt. UND nur, wenn ihre Meldung
+ * zeitlich zum harten Ereignis passt (± KI_GLEICHES_EREIGNIS_MIN): Die
+ * beiden stammen aus verschiedenen Feeds; ohne diesen Abgleich hebe ein
+ * Urteil über ein ANDERES Ereignis das Veto auf (Red-Team H2).
  */
-export function kiUebersteuertNewsVeto(s: KiSignal | undefined, seite: 'long' | 'short'): boolean {
+export function kiUebersteuertNewsVeto(
+  s: KiSignal | undefined,
+  seite: 'long' | 'short',
+  hartesEreignisSec: number | null | undefined,
+): boolean {
   if (!s || !s.handlungsfaehig) return false;
-  return seite === 'long' ? s.richtung === 'positiv' : s.richtung === 'negativ';
+  if (!(seite === 'long' ? s.richtung === 'positiv' : s.richtung === 'negativ')) return false;
+  if (typeof hartesEreignisSec !== 'number' || !Number.isFinite(hartesEreignisSec) || hartesEreignisSec <= 0) return false;
+  const kiMs = Date.parse(s.publishedAt ?? s.firstSeenAt);
+  return Number.isFinite(kiMs) && Math.abs(kiMs - hartesEreignisSec * 1000) <= KI_GLEICHES_EREIGNIS_MIN * 60_000;
 }
 
 export type KiPositionsAktion =
@@ -205,11 +309,11 @@ export interface KiStop {
 /**
  * Was ein Urteil GEGEN eine gehaltene Position auslöst — pur.
  *
- * Gegengeprüft und noch nicht gelaufen → raus (Owner-Empfehlung 05.10.:
- * „eindeutig negativ und noch nicht eingepreist → sofort verkaufen").
- * Gegengeprüft, aber schon ≥ 1,5 ATR gelaufen oder als eingepreist bewertet
- * → nicht am Tief verkaufen, sondern den Stop auf 0,5 ATR nachziehen.
- * Unklar (stark, aber ohne bestandene Gegenprobe) → nur Stop nachziehen.
+ * Gegengeprüft, belegt nicht eingepreist und noch nicht gelaufen → raus
+ * (Owner-Empfehlung 05.10.: „eindeutig negativ und noch nicht eingepreist →
+ * sofort verkaufen"). Gegengeprüft, aber gelaufen, eingepreist oder nicht
+ * belegbar → nicht am Tief verkaufen, sondern den Stop auf 0,5 ATR
+ * nachziehen. Unklar (Gegenprobe lief, nicht bestätigt) → Stop auf 1 ATR.
  *
  * Der KI-Stop bewegt sich NUR in Schutzrichtung (Long: nach oben, Short:
  * nach unten) und liegt immer auf der sicheren Seite des aktuellen Kurses.
@@ -231,24 +335,42 @@ export function kiPositionsAktion(
   const short = pos.side === 'short';
   const gegen = short ? s.richtung === 'positiv' : s.richtung === 'negativ';
   if (!gegen) return null;
-  const atr = typeof atrPct === 'number' && Number.isFinite(atrPct) && atrPct > 0 ? atrPct : null;
+  const atr = atrOk(atrPct);
 
-  const stopAktion = (grund: 'ki_eingepreist' | 'ki_unklar'): KiPositionsAktion | null => {
+  const stopAktion = (grund: 'ki_eingepreist' | 'ki_unklar', abstandAtr: number): KiPositionsAktion | null => {
     if (atr === null) return null;
-    const neu = short ? preis * (1 + (KI_STOP_ATR * atr) / 100) : preis * (1 - (KI_STOP_ATR * atr) / 100);
+    const neu = short ? preis * (1 + (abstandAtr * atr) / 100) : preis * (1 - (abstandAtr * atr) / 100);
     const alt = pos.kiStop?.level;
     const enger = typeof alt !== 'number' || !Number.isFinite(alt) || !(alt > 0) ? true : short ? neu < alt : neu > alt;
     return enger ? { art: 'stop', stop: Math.round(neu * 1e6) / 1e6, grund } : null;
   };
 
   if (s.handlungsfaehig) {
-    // Wie weit ist der Kurs seit dem ersten Sehen schon in Nachrichten-Richtung gelaufen?
-    const gelaufenPct = s.kursGesehen !== null
-      ? (short ? (preis - s.kursGesehen) / s.kursGesehen : (s.kursGesehen - preis) / s.kursGesehen) * 100
-      : null;
-    const eingepreist = s.eingepreist === 'ja'
-      || (gelaufenPct !== null && atr !== null && gelaufenPct >= KI_EINGEPREIST_ATR * atr);
-    return eingepreist ? stopAktion('ki_eingepreist') : { art: 'verkauf', grund: 'ki_news' };
+    /* VERKAUF nur, wenn er sich belegen lässt (Red-Team M1): ausdrücklich
+     * „nicht eingepreist" UND gemessen noch keine 1,5 ATR gelaufen. Fehlt
+     * der Kurs beim Sehen oder die ATR, oder ist die Lage nur „teilweise"/
+     * „unklar" eingepreist, wird nicht blind am womöglich schon erreichten
+     * Tief verkauft, sondern der Stop nachgezogen. */
+    const gelaufen = gelaufenPct(s, preis);
+    const belegtFrisch = s.eingepreist === 'nein' && atr !== null && gelaufen !== null
+      && gelaufen < KI_EINGEPREIST_ATR * atr;
+    return belegtFrisch ? { art: 'verkauf', grund: 'ki_news' } : stopAktion('ki_eingepreist', KI_STOP_ATR);
   }
-  return s.staerke >= KI_UNKLAR_MIN_STAERKE ? stopAktion('ki_unklar') : null;
+  /* Unklar = die Gegenprobe LIEF und hat nicht bestätigt (Red-Team M5): Eine
+   * bloße Sichtung — ungeprüft wegen Budget, Alter oder unlesbarer Antwort —
+   * löst gar nichts aus. Weiterer Abstand, weil ungesichert. */
+  return s.geprueft && s.staerke >= KI_UNKLAR_MIN_STAERKE ? stopAktion('ki_unklar', KI_UNKLAR_STOP_ATR) : null;
+}
+
+/**
+ * Stammt ein Steckbrief von einem KI-/Lexikon-PROBE-Einstieg? Nur Proben
+ * tragen `ki`/`lex` in der Signatur (Teil 3 des Schlüssels). Der Auto-Tuner
+ * nimmt sie aus seinem Live-Vergleich: Die Schattenkonten handeln ohne KI —
+ * ein Einstieg, den es dort nicht geben kann, verzerrt sonst den Vergleich
+ * (Red-Team M3).
+ */
+export function istKiProbeBucket(bucket: unknown): boolean {
+  if (typeof bucket !== 'string') return false;
+  const sig = bucket.split('|')[2] ?? '';
+  return sig.split('+').some((t) => t === 'ki' || t === 'lex');
 }

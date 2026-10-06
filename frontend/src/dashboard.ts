@@ -4137,7 +4137,7 @@ function applyPosition(): void {
     teile.splice(1, 0, tage === 0 ? t('ap.heuteRein') : tage === 1 ? t('ap.seitEinemTag') : `${t('ap.seit')} ${tage} ${t('ap.tagen')}`);
     teile.splice(2, 0, `${fmtNum(lv.entry)} → ${fmtNum(live)}`);
     if (p.core === true) teile.push(`<span class="pos-tag">${t('ew.sockel')}</span>`);
-    if (lv.stop !== null) teile.push(`${t('eo.stop')} ${fmtPct(levelDistPct(lv.stop, live, 'stop', short))}`);
+    if (lv.stop !== null) teile.push(`${lv.stopKi ? t('an.kiStop') : t('eo.stop')} ${fmtPct(levelDistPct(lv.stop, live, 'stop', short))}`);
     else if (lv.stopAtr) teile.push(`${t('eo.stop')} ${t('ap.adaptiv')}`);
     if (lv.target !== null) teile.push(`${t('eo.ziel')} ${fmtPct(levelDistPct(lv.target, live, 'target', short))}`);
     else if (lv.targetAtr) teile.push(`${t('eo.ziel')} ${t('ap.adaptiv')}`);
@@ -8270,8 +8270,10 @@ function exitOutlook(p: Position, live: number | undefined): string {
 
   if (lv.stop !== null) {
     const dist = levelDistPct(lv.stop, live, 'stop', short);
-    parts.push(dist <= 0 ? `<b class="c-rd">${t('eo.stop')}: ${t('eo.loestAus')}</b>` : `${t('eo.stop')} ${t('eo.inAbstand')} <b>${fmt(dist)}</b>`);
-    candidates.push({ label: t('eo.stop'), dist });
+    // Stammt die Marke vom nachgezogenen KI-Stop (Stufe 2b), heißt sie so.
+    const stopName = lv.stopKi ? t('an.kiStop') : t('eo.stop');
+    parts.push(dist <= 0 ? `<b class="c-rd">${stopName}: ${t('eo.loestAus')}</b>` : `${stopName} ${t('eo.inAbstand')} <b>${fmt(dist)}</b>`);
+    candidates.push({ label: stopName, dist });
   } else if (lv.stopAtr) {
     parts.push(`${t('eo.stop')}: <b>${t('eo.atrAdaptiv')}</b>`);
   }
