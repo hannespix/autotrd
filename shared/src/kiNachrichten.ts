@@ -135,18 +135,24 @@ const RUECK = PREISE['claude-opus-5']!;
  * Angenommen wird das Schlimmste (Red-Team 05.10., zwei Runden): Der
  * Hauptversuch schreibt bis zum Deckel und wird abgelehnt; jeder Rückfall
  * bekommt die Eingabe PLUS den Teiltext als Fortsetzung, schreibt wieder bis
- * zum Deckel und wird abgelehnt — bis zum letzten Hop. Eingabe mit 2 Zeichen
- * je Token (Ziffern, IDs und Zeitstempel sind dicht). Gebucht wird danach
- * der gemessene Betrag; die Differenz wird frei.
+ * zum Deckel und wird abgelehnt — bis zum letzten Hop. Eingabe mit EINEM
+ * Token je Zeichen: Fremdtext kann nicht-lateinisch, ziffern- oder
+ * emojilastig sein, und 2 Zeichen je Token wurden in Runde 3 überschritten.
+ * Gebucht wird danach der gemessene Betrag; die Differenz wird frei.
+ *
+ * Bekannte Restgrenze: Antwortet ein Modell, das nicht in der Preisliste
+ * steht, wird es zum teuersten Satz gebucht (10/50) — dann kann ein
+ * einzelner Aufruf seine Reservierung übersteigen. Die dokumentierten
+ * Rückfall-Ziele (Opus 5, Opus 4.8) stehen in der Liste.
  */
 /** Worst Case NUR des Hauptversuchs (Eingabe + Deckel zum Satz von Opus 5.5). */
 export function hauptversuchWorstUsd(eingabeZeichen: number, systemZeichen: number, maxTokens: number): number {
-  const ein = (Math.max(0, eingabeZeichen) + Math.max(0, systemZeichen)) / 2;
+  const ein = Math.max(0, eingabeZeichen) + Math.max(0, systemZeichen);
   return Math.round(((ein * HAUPT.ein + maxTokens * HAUPT.aus) / 1_000_000) * 1_000_000) / 1_000_000;
 }
 
 export function worstCaseUsd(eingabeZeichen: number, systemZeichen: number, maxTokens: number): number {
-  const ein = (Math.max(0, eingabeZeichen) + Math.max(0, systemZeichen)) / 2;
+  const ein = Math.max(0, eingabeZeichen) + Math.max(0, systemZeichen);
   const haupt = ein * HAUPT.ein + maxTokens * HAUPT.aus;
   const rueck = RUECKFALL_HOPS_MAX * ((ein + maxTokens) * RUECK.ein + maxTokens * RUECK.aus);
   return Math.round(((haupt + rueck) / 1_000_000) * 1_000_000) / 1_000_000;

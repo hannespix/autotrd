@@ -415,61 +415,101 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
     /* ── Ein Aufruf: reservieren, aufrufen, buchen, ins Journal ─────────── */
     let aufrufNr = 0;
     let stopp = false; // nach einem Fehler ohne HTTP-Status: keine weiteren Aufrufe
+    /** Worst Cases, die DIESER Lauf gerade reserviert hat (laufende Aufrufe). */
+    let eigeneReserviertUsd = 0;
     type Ergebnis =
       | { art: 'budget'; urteil: Exclude<BudgetUrteil, 'ok'> }
       | { art: 'fehler'; status: number | null }
+      | { art: 'gestoppt' }
       | { art: 'antwort'; antwort: KiAntwort; usd: number; aufrufId: string };
+
+    /**
+     * Ist der Tag wirklich vorbei? Nur wenn nicht einmal EINE Gegenprobe mehr
+     * passt — gerechnet OHNE die eigenen laufenden Reservierungen. Die erste
+     * Fassung mit parallelen Gegenproben prüfte gegen die Reservierungen der
+     * Geschwister, schrieb endgültige „budget"-Urteile und schickte die
+     * Owner-Nachricht, obwohl der Topf fast voll war (Red-Team Runde 3).
+     */
+    const istErschoepft = async (): Promise<boolean> => {
+      const snap = await db.doc(`admin/kiBudget-${tag}`).get();
+      const fremdReserviert = Math.max(0, zahl(snap.get('reserviertUsd')) - eigeneReserviertUsd);
+      return budgetPruefen(zahl(snap.get('verbrauchtUsd')), fremdReserviert, limitUsd, limitUsd, worstPruefung) === 'erschoepft';
+    };
+    const meldenWennErschoepft = async (): Promise<boolean> => {
+      if (!(await istErschoepft())) return false;
+      if (!e.budgetErreicht) {
+        e.budgetErreicht = true;
+        await budgetMelden(topf, iso()).catch((err) => logger.warn('kiNachrichten: Budget-Meldung', err));
+      }
+      return true;
+    };
+
     const bezahlterAufruf = async (
       anfrage: Omit<KiAnfrage, 'timeoutMs'>,
       zusatzUsd: number,
       bezug: Record<string, unknown>,
     ): Promise<Ergebnis> => {
+      // Auch ein später fortgesetzter (pausierter) Lauf startet nichts mehr.
+      if (stopp || restMs() < 0) return { art: 'gestoppt' };
       const worst = worstCaseUsd(anfrage.eingabe.length, anfrage.system.length, anfrage.maxTokens);
       const u = await reservieren(topf, worst, zusatzUsd);
-      if (u !== 'ok') {
-        // „Erschöpft" heißt: nicht einmal eine Gegenprobe passt mehr. Nur dann
-        // ist der Tag wirklich vorbei — und nur dann geht die Nachricht raus.
-        const snap = await db.doc(`admin/kiBudget-${tag}`).get();
-        if (budgetPruefen(zahl(snap.get('verbrauchtUsd')), zahl(snap.get('reserviertUsd')), limitUsd, limitUsd, worstPruefung) === 'erschoepft'
-          && !e.budgetErreicht) {
-          e.budgetErreicht = true;
-          await budgetMelden(topf, iso()).catch((err) => logger.warn('kiNachrichten: Budget-Meldung', err));
-        }
-        return { art: 'budget', urteil: u };
-      }
+      if (u !== 'ok') return { art: 'budget', urteil: u };
+      eigeneReserviertUsd += worst;
       aufrufNr += 1;
       const aufrufId = `${laufId}_${aufrufNr}`;
       const timeoutMs = Math.max(5_000, restMs() + AUFRUF_PUFFER_MS);
       const journal = { ...bezug, effort: anfrage.effort, maxTokens: anfrage.maxTokens, timeoutMs, reserviertUsd: worst, startAt: iso() };
+      const journalSchreiben = (daten: Record<string, unknown>): Promise<unknown> =>
+        // Das Journal ist Protokoll: Sein Fehler darf weder doppelt buchen
+        // noch eine bezahlte Antwort verwerfen (Red-Team Runde 3).
+        anlegen(`kiAufrufe/${aufrufId}`, { ...journal, ...daten, endeAt: iso() })
+          .catch((err) => logger.warn(`kiNachrichten: Journal ${aufrufId}`, err));
+
+      // NUR der Modell-Aufruf steht im try — Buchung genau einmal danach.
+      let antwort: KiAntwort;
       try {
-        const antwort = await aufruf({ ...anfrage, timeoutMs });
-        // Ohne Iterationen, aber mit fremdem Modell, ist der abgelehnte
-        // Hauptversuch nirgends gezählt — dann zählt er mit seinem Deckel.
-        const ohneIterationen = !(antwort.usage.iterations ?? []).some((i) => i.type === 'message');
-        const zuschlag = antwort.modell !== KI_NACHRICHTEN_MODELL && ohneIterationen
-          ? hauptversuchWorstUsd(anfrage.eingabe.length, anfrage.system.length, anfrage.maxTokens)
-          : 0;
-        const usd = rund(kostenUsd(antwort.usage, antwort.modell) + zuschlag);
-        await abrechnen(topf, worst, usd, iso());
-        await anlegen(`kiAufrufe/${aufrufId}`, { ...journal, status: 'antwort', stopReason: antwort.stopReason, modell: antwort.modell, usage: antwort.usage, gebuchtUsd: usd, endeAt: iso() });
-        return { art: 'antwort', antwort, usd, aufrufId };
+        antwort = await aufruf({ ...anfrage, timeoutMs });
       } catch (err) {
         const status = typeof (err as { status?: unknown }).status === 'number' ? ((err as { status: number }).status) : null;
+        // Mit eindeutigem 4xx hat der Anbieter nicht gerechnet. Sonst (Timeout,
+        // Verbindung, 5xx, 529) ist unklar, was berechnet wurde: Worst Case.
         const usd = status !== null && UNBERECHNET.has(status) ? 0 : worst;
         await abrechnen(topf, worst, usd, iso());
-        await anlegen(`kiAufrufe/${aufrufId}`, { ...journal, status: 'fehler', httpStatus: status, fehler: (err as Error).message?.slice(0, 160) ?? '', gebuchtUsd: usd, endeAt: iso() });
+        eigeneReserviertUsd -= worst;
+        await journalSchreiben({ status: 'fehler', httpStatus: status, fehler: (err as Error).message?.slice(0, 160) ?? '', gebuchtUsd: usd });
         e.aufrufFehler += 1;
         if (status === null) stopp = true;
         logger.warn(`kiNachrichten: Aufruf ${aufrufId} gescheitert (${status ?? 'ohne Status'}) — ${(err as Error).message?.slice(0, 160)}`);
         return { art: 'fehler', status };
       }
+      // Ohne Iterationen, aber mit fremdem Modell, ist der abgelehnte
+      // Hauptversuch nirgends gezählt — dann zählt er mit seinem Deckel.
+      const ohneIterationen = !(antwort.usage.iterations ?? []).some((i) => i.type === 'message');
+      const zuschlag = antwort.modell !== KI_NACHRICHTEN_MODELL && ohneIterationen
+        ? hauptversuchWorstUsd(anfrage.eingabe.length, anfrage.system.length, anfrage.maxTokens)
+        : 0;
+      const usd = rund(kostenUsd(antwort.usage, antwort.modell) + zuschlag);
+      await abrechnen(topf, worst, usd, iso());
+      eigeneReserviertUsd -= worst;
+      await journalSchreiben({ status: 'antwort', stopReason: antwort.stopReason, modell: antwort.modell, usage: antwort.usage, gebuchtUsd: usd });
+      return { art: 'antwort', antwort, usd, aufrufId };
     };
 
     /* ── Phase B zuerst: offene Gegenproben ─────────────────────────────── */
     const offenAlle = (await db.collection('kiOffen').orderBy('publishedAt').limit(200).get()).docs.map((d) => d.data() as Offen);
+    // Schon entschieden, aber nicht von der Liste gelöscht (Abbruch zwischen
+    // Urteil und Löschen)? Dann nur räumen — keine zweite, bezahlte Gegenprobe.
+    const schonEntschieden = new Set<string>();
+    if (offenAlle.length > 0) {
+      for (const u of await db.getAll(...offenAlle.map((k) => db.doc(`kiUrteile/${urteilId(k.newsId, k.symbol)}`)))) {
+        if (u.exists) schonEntschieden.add(u.id);
+      }
+    }
     const offen: Offen[] = [];
     for (const k of offenAlle) {
-      if (zuAlt(k, laufBeginn)) {
+      if (schonEntschieden.has(urteilId(k.newsId, k.symbol))) {
+        await db.doc(`kiOffen/${urteilId(k.newsId, k.symbol)}`).delete();
+      } else if (zuAlt(k, laufBeginn)) {
         await urteilSchreiben(k, k.symbol, { sichtung: k.urteil, ...endUrteil(k.urteil, null, 'zu_alt') });
       } else {
         offen.push(k);
@@ -486,9 +526,12 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
           bisMs: laufBeginn + 20_000, jetzt: () => jetzt().getTime(),
         })).kurse
         : {};
+      const budgetAbgewiesen: Offen[] = [];
       // Parallel: Jede reserviert für sich, dann laufen alle gleichzeitig —
       // nacheinander passten vier Gegenproben nicht sicher in die Frist.
-      await Promise.all(auswahl.map(async (k) => {
+      // `allSettled`: Phase B endet erst, wenn ALLE fertig sind — sonst gäbe
+      // `finally` die Sperre frei, während Geschwister noch laufen.
+      const ausgaenge = await Promise.allSettled(auswahl.map(async (k) => {
         const m = texte.get(k.newsId);
         if (!m) {
           await urteilSchreiben(k, k.symbol, { sichtung: k.urteil, ...endUrteil(k.urteil, null, 'fehler') });
@@ -506,12 +549,9 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
           0,
           { art: 'pruefung', newsIds: [k.newsId], symbol: k.symbol },
         );
-        if (r.art === 'fehler' || (r.art === 'budget' && r.urteil === 'takt')) {
-          e.offen += 1; // bleibt auf der Liste — der nächste Lauf
-          return;
-        }
-        if (r.art === 'budget') {
-          await urteilSchreiben(k, k.symbol, { sichtung: k.urteil, ...endUrteil(k.urteil, null, 'budget') });
+        if (r.art !== 'antwort') {
+          e.offen += 1; // bleibt auf der Liste — Endgültiges erst nach allen
+          if (r.art === 'budget') budgetAbgewiesen.push(k);
           return;
         }
         const p = r.antwort.stopReason === 'refusal' ? null : parsePruefung(r.antwort.text);
@@ -532,6 +572,16 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
         if (p) e.geprueft += 1;
         if (u.handlungsfaehig) e.handlungsfaehig += 1;
       }));
+      for (const a of ausgaenge) {
+        if (a.status === 'rejected') logger.warn('kiNachrichten: Gegenprobe gescheitert', a.reason);
+      }
+      // Erst jetzt, mit allen Geschwistern fertig: Ist der Tag wirklich vorbei?
+      if (budgetAbgewiesen.length > 0 && (await meldenWennErschoepft())) {
+        for (const k of budgetAbgewiesen) {
+          await urteilSchreiben(k, k.symbol, { sichtung: k.urteil, ...endUrteil(k.urteil, null, 'budget') });
+          e.offen -= 1;
+        }
+      }
     }
 
     /* ── Phase A: neue Meldungen sichten ────────────────────────────────── */
@@ -559,7 +609,45 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
       if (letzter && letzter.length < SICHTUNG_MAX_MELDUNGEN && letzter.reduce((n, x) => n + paareVon(x), 0) + paareVon(m) <= SICHTUNG_MAX_PAARE) letzter.push(m);
       else stapel.push([m]);
     }
-    const nochOffen = e.offen; // Kandidaten, die schon auf eine Gegenprobe warten
+    /** Wartende Gegenproben — fortlaufend, auch die in diesem Lauf neu entstandenen. */
+    let wartend = e.offen;
+
+    /**
+     * Alles zu einer gesichteten Meldung in EINEM Batch: Arbeitsliste,
+     * Sofort-Urteile und zuletzt der Sichtungs-Eintrag. Die zweite Fassung
+     * schrieb einzeln; scheiterte die Liste nach dem Eintrag, sah die Meldung
+     * gesichtet aus und das Paar bekam nie ein Urteil (Red-Team Runde 3).
+     */
+    const sichtungAblegen = async (
+      m: KiMeldung,
+      eigene: SichtungsUrteil[],
+      kandidaten: SichtungsUrteil[],
+      fehlend: string[],
+      meta: Record<string, unknown>,
+      aufrufId: string,
+    ): Promise<boolean> => {
+      const kopf = { promptV: KI_NACHRICHTEN_PROMPT_V, laufId, gespeichertAt: FieldValue.serverTimestamp() };
+      const ref = { newsId: m.id, publishedAt: m.publishedAt, firstSeenAt: m.firstSeenAt };
+      const batch = db.batch();
+      for (const u of kandidaten) batch.create(db.doc(`kiOffen/${urteilId(m.id, u.symbol)}`), { ...kopf, ...ref, symbol: u.symbol, urteil: u });
+      for (const u of eigene.filter((x) => !kandidaten.includes(x))) {
+        batch.create(db.doc(`kiUrteile/${urteilId(m.id, u.symbol)}`), { ...kopf, ...ref, symbol: u.symbol, decidedAt: iso(), sichtung: u, ...endUrteil(u, null, null), sichtungAufrufId: aufrufId });
+      }
+      for (const symbol of fehlend) {
+        batch.create(db.doc(`kiUrteile/${urteilId(m.id, symbol)}`), { ...kopf, ...ref, symbol, decidedAt: iso(), sichtung: null, richtung: null, handlungsfaehig: false, stufe: 'sichtung', ohnePruefung: 'unlesbar', sichtungAufrufId: aufrufId });
+      }
+      batch.create(db.doc(`kiSichtungen/${m.id}`), {
+        ...kopf, ...ref, symbole: m.symbole, entschiedenAt: iso(), ausgelassen: null,
+        sichtung: eigene, kandidaten: kandidaten.map((u) => u.symbol), fehlend, ...meta,
+      });
+      try {
+        await batch.commit();
+        return true;
+      } catch (err) {
+        if ((err as { code?: unknown }).code === 6) return false; // ein anderer Lauf war schneller
+        throw err;
+      }
+    };
 
     const sichte = async (gruppe: KiMeldung[]): Promise<void> => {
       if (stopp || restMs() < MIN_REST_SICHTUNG_MS) {
@@ -570,15 +658,22 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
       const r = await bezahlterAufruf(
         { system: SICHTUNG_SYSTEM, eingabe: sichtungEingabe(gruppe, paare, iso()), schema: SICHTUNG_SCHEMA as unknown as Record<string, unknown>, effort: 'low', maxTokens: SICHTUNG_MAX_TOKENS },
         // Danach müssen die Gegenproben aller Wartenden plus einer passen.
-        worstPruefung * (nochOffen + 1),
+        worstPruefung * (wartend + 1),
         { art: 'sichtung', newsIds: gruppe.map((m) => m.id) },
       );
-      if (r.art === 'fehler' || (r.art === 'budget' && r.urteil === 'takt')) {
-        e.offen += gruppe.length;
+      if (r.art === 'budget') {
+        // Endgültig nur, wenn der Tag wirklich vorbei ist — Takt oder der
+        // Kopfraum für Wartende lassen die Meldungen offen (Red-Team Runde 3:
+        // sonst wurden bei fast vollem Topf neue Meldungen endgültig „budget").
+        if (await meldenWennErschoepft()) {
+          for (const m of gruppe) await auslassen(m, 'budget');
+        } else {
+          e.offen += gruppe.length;
+        }
         return;
       }
-      if (r.art === 'budget') {
-        for (const m of gruppe) await auslassen(m, 'budget');
+      if (r.art !== 'antwort') {
+        e.offen += gruppe.length;
         return;
       }
       const { antwort, usd, aufrufId } = r;
@@ -608,23 +703,10 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
         }
         const kandidaten = eigene.filter((u) => brauchtPruefung(u, relevant));
         const fehlend = m.symbole.filter((s) => relevant.has(s) && !eigene.some((u) => u.symbol === s));
-        if (!(await anlegen(`kiSichtungen/${m.id}`, {
-          newsId: m.id, symbole: m.symbole, publishedAt: m.publishedAt, firstSeenAt: m.firstSeenAt,
-          entschiedenAt: iso(), ausgelassen: null, sichtung: eigene, kandidaten: kandidaten.map((u) => u.symbol), fehlend, ...meta,
-        }))) continue;
+        if (!(await sichtungAblegen(m, eigene, kandidaten, fehlend, meta, aufrufId))) continue;
         e.gesichtet += 1;
-        const ref = { newsId: m.id, publishedAt: m.publishedAt, firstSeenAt: m.firstSeenAt };
-        for (const u of kandidaten) {
-          await anlegen(`kiOffen/${urteilId(m.id, u.symbol)}`, { ...ref, symbol: u.symbol, urteil: u });
-          e.offen += 1;
-        }
-        // Was keine Gegenprobe braucht, ist jetzt entschieden.
-        for (const u of eigene.filter((x) => !kandidaten.includes(x))) {
-          await urteilSchreiben(ref, u.symbol, { sichtung: u, ...endUrteil(u, null, null), sichtungAufrufId: aufrufId });
-        }
-        for (const symbol of fehlend) {
-          await urteilSchreiben(ref, symbol, { sichtung: null, richtung: null, handlungsfaehig: false, stufe: 'sichtung', ohnePruefung: 'unlesbar', sichtungAufrufId: aufrufId });
-        }
+        e.offen += kandidaten.length;
+        wartend += kandidaten.length;
       }
     };
     for (const g of stapel) await sichte(g);

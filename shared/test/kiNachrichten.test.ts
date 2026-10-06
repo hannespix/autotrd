@@ -70,12 +70,12 @@ describe('Kosten und Budget', () => {
     expect(kostenUsd({ ...usage, iterations: null }, 'claude-opus-5')).toBeCloseTo(0.005 + 0.05, 6);
   });
 
-  it('Worst Case: Hauptversuch plus zwei Rückfall-Hops mit Fortsetzung, Eingabe zu 2 Zeichen je Token', () => {
+  it('Worst Case: Hauptversuch plus zwei Rückfall-Hops mit Fortsetzung, Eingabe zu 1 Token je Zeichen', () => {
     // Haupt: 8000 × 20; je Hop: 8000 Fortsetzung × 5 + 8000 × 25
     expect(worstCaseUsd(0, 0, 8000)).toBeCloseTo((8000 * 20 + 2 * (8000 * 5 + 8000 * 25)) / 1_000_000, 6);
-    // Eingabe 3000 Zeichen = 1500 Token: Haupt × 4 + zwei Hops × 5
-    expect(worstCaseUsd(3000, 0, 0)).toBeCloseTo((1500 * 4 + 2 * 1500 * 5) / 1_000_000, 6);
-    expect(hauptversuchWorstUsd(3000, 0, 8000)).toBeCloseTo((1500 * 4 + 8000 * 20) / 1_000_000, 6);
+    // Eingabe 3000 Zeichen = 3000 Token: Haupt × 4 + zwei Hops × 5
+    expect(worstCaseUsd(3000, 0, 0)).toBeCloseTo((3000 * 4 + 2 * 3000 * 5) / 1_000_000, 6);
+    expect(hauptversuchWorstUsd(3000, 0, 8000)).toBeCloseTo((3000 * 4 + 8000 * 20) / 1_000_000, 6);
   });
 
   it('Budget-Tag ist der Kalendertag in New York', () => {

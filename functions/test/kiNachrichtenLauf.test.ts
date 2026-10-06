@@ -24,6 +24,8 @@ type Daten = Record<string, unknown>;
 const store = new Map<string, Daten>();
 let nachrichtenId = 0;
 const DELETE = Symbol('delete');
+/** Eingeschleuster Schreibfehler je Pfad (create/Batch) — `null` = kein Fehler. */
+let schreibFehler: (pfad: string) => Error | null = () => null;
 
 const holen = (pfad: string, feld: string): unknown =>
   feld.split('.').reduce<unknown>((o, k) => (o && typeof o === 'object' ? (o as Daten)[k] : undefined), store.get(pfad));
@@ -49,6 +51,8 @@ const ref = (pfad: string): Record<string, unknown> => ({
     store.set(pfad, opt?.merge ? mischen(store.get(pfad), d) : mischen(undefined, d));
   },
   create: async (d: Daten) => {
+    const f = schreibFehler(pfad);
+    if (f) throw f;
     if (store.has(pfad)) throw Object.assign(new Error('ALREADY_EXISTS'), { code: 6 });
     store.set(pfad, { ...d });
   },
@@ -100,6 +104,21 @@ vi.mock('firebase-admin/firestore', () => ({
     doc: ref,
     getAll: async (...refs: Array<{ path: string }>) => refs.map((r) => snapshot(r.path)),
     collection: (name: string) => abfrage({ name, filter: [] }),
+    batch: () => {
+      const ops: Array<{ pfad: string; d: Daten }> = [];
+      return {
+        create: (r: { path: string }, d: Daten) => ops.push({ pfad: r.path, d }),
+        // Atomar: entweder alles oder nichts.
+        commit: async () => {
+          for (const o of ops) {
+            const f = schreibFehler(o.pfad);
+            if (f) throw f;
+            if (store.has(o.pfad)) throw Object.assign(new Error('ALREADY_EXISTS'), { code: 6 });
+          }
+          for (const o of ops) store.set(o.pfad, { ...o.d });
+        },
+      };
+    },
     runTransaction: async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({
         get: async (r: { path: string }) => snapshot(r.path),
@@ -122,11 +141,15 @@ const anfragen: KiAnfrage[] = [];
 let sichtungsAntwort: (a: KiAnfrage) => Partial<KiAntwort> = () => ({});
 let pruefAntwort: (a: KiAnfrage) => Partial<KiAntwort> = () => ({});
 let dauerMs = 0;
+/** Echte Wartezeit je Aufruf — lässt parallele Geschwister sich überlappen. */
+let latenzMs: (a: KiAnfrage) => number = () => 0;
 let waehrendAufruf: () => void = () => undefined;
 const usage = { input_tokens: 2000, output_tokens: 1000 }; // 0,028 $ bei Opus 5.5
 
 const aufruf = vi.fn(async (a: KiAnfrage): Promise<KiAntwort> => {
   anfragen.push(a);
+  const warten = latenzMs(a);
+  if (warten > 0) await new Promise((r) => setTimeout(r, warten));
   uhrMs += dauerMs;
   waehrendAufruf();
   const teil = a.effort === 'low' ? sichtungsAntwort(a) : pruefAntwort(a);
@@ -186,6 +209,8 @@ beforeEach(() => {
   anfragen.length = 0;
   aufruf.mockClear();
   dauerMs = 0;
+  latenzMs = () => 0;
+  schreibFehler = () => null;
   waehrendAufruf = () => undefined;
   uhrMs = Date.parse('2026-10-05T14:02:00Z'); // 10:02 ET
   delete process.env.ALPACA_API_KEY;
@@ -463,6 +488,73 @@ describe('Geld', () => {
     await lauf();
     expect(budget()).toMatchObject({ reserviertUsd: 0, verbrauchtUnklarUsd: 0.5, lecks: 1 });
     expect(Number(budget()['verbrauchtUsd'])).toBeCloseTo(0.6, 6);
+  });
+});
+
+describe('Red-Team Runde 3', () => {
+  const offenEintrag = (newsId: string, publishedAt: string): void => {
+    meldung(newsId, { publishedAt, firstSeenAt: publishedAt });
+    store.set(`kiOffen/${newsId}_ACME`, { newsId, symbol: 'ACME', publishedAt, firstSeenAt: publishedAt, urteil: eintrag(newsId, 'ACME') });
+    // Invariante (Batch): kein Listeneintrag ohne seinen Sichtungs-Eintrag.
+    store.set(`kiSichtungen/${newsId}`, { newsId, ausgelassen: null, kandidaten: ['ACME'] });
+  };
+
+  it('parallele Gegenproben: Reservierungen der Geschwister machen den Tag NICHT „erschöpft" — offen statt budget, keine Owner-Nachricht', async () => {
+    uhrMs = Date.parse('2026-10-06T01:02:00Z'); // 21:02 ET, Topf voll freigegeben
+    ['n1', 'n2', 'n3', 'n4'].forEach((id, i) => offenEintrag(id, `2026-10-06T00:5${i}:00.000Z`));
+    meldung('neu', { publishedAt: '2026-10-06T01:00:00.000Z', firstSeenAt: '2026-10-06T01:00:30.000Z' });
+    latenzMs = () => 20;
+    const r = await lauf(1); // ein Konto: 2 $, je Gegenprobe ~0,7 $ reserviert
+    const urteile = [...store.entries()].filter(([k]) => k.startsWith('kiUrteile/')).map(([, v]) => v);
+    expect(urteile.some((u) => u['ohnePruefung'] === 'budget')).toBe(false);
+    expect(ownerNachrichten()).toHaveLength(0);
+    expect(r.budgetErreicht).toBe(false);
+    expect(r.geprueft).toBeGreaterThanOrEqual(1);
+    expect(offenListe().length).toBeGreaterThanOrEqual(1);
+    // Auch die neue Meldung wird nicht endgültig „budget", nur weil Wartende Kopfraum brauchen.
+    expect(sichtungDoc('neu')?.['ausgelassen']).not.toBe('budget');
+  });
+
+  it('allSettled: wirft ein Geschwister, wartet der Lauf trotzdem auf die anderen (Sperre erst danach frei)', async () => {
+    offenEintrag('n1', '2026-10-05T13:55:00.000Z');
+    offenEintrag('n2', '2026-10-05T13:56:00.000Z');
+    schreibFehler = (pfad) => (pfad === 'kiUrteile/n1_ACME' ? new Error('UNAVAILABLE') : null);
+    latenzMs = (a) => (a.eingabe.includes('Schlagzeile n2') ? 30 : 0);
+    const r = await lauf();
+    expect(r.grund).toBeNull();
+    expect(urteil('n2')).toBeDefined(); // fertig, BEVOR der Lauf zurückkam
+    expect(offenListe()).toContain('kiOffen/n1_ACME'); // n1 bleibt auf der Liste
+  });
+
+  it('ein Journal-Fehler nach der Buchung bucht nicht doppelt und verwirft die bezahlte Antwort nicht', async () => {
+    meldung('alp-1');
+    meldung('alp-2', { publishedAt: '2026-10-05T13:57:00.000Z', firstSeenAt: '2026-10-05T13:57:30.000Z', symbole: ['BETA'] });
+    schreibFehler = (pfad) => (pfad.startsWith('kiAufrufe/') ? new Error('UNAVAILABLE') : null);
+    const r = await lauf();
+    expect(r.aufrufFehler).toBe(0);
+    expect(Number(budget()['verbrauchtUsd'])).toBeCloseTo(0.028, 6);
+    expect(sichtungDoc('alp-1')).toMatchObject({ ausgelassen: null });
+    expect(sichtungDoc('alp-2')).toMatchObject({ ausgelassen: null });
+  });
+
+  it('Sichtung atomar: scheitert die Arbeitsliste, gibt es auch keinen Sichtungs-Eintrag — der nächste Lauf holt es nach', async () => {
+    meldung('alp-1');
+    schreibFehler = (pfad) => (pfad.startsWith('kiOffen/') ? new Error('UNAVAILABLE') : null);
+    await lauf();
+    expect(sichtungDoc('alp-1')).toBeUndefined();
+    schreibFehler = () => null;
+    uhrMs += 5 * 60_000;
+    await lauf();
+    expect(sichtungDoc('alp-1')).toMatchObject({ ausgelassen: null, kandidaten: ['ACME'] });
+    expect(offenListe()).toEqual(['kiOffen/alp-1_ACME']);
+  });
+
+  it('schon entschieden, aber noch auf der Liste: nur räumen — keine zweite, bezahlte Gegenprobe', async () => {
+    offenEintrag('n1', '2026-10-05T13:55:00.000Z');
+    store.set('kiUrteile/n1_ACME', { newsId: 'n1', symbol: 'ACME', handlungsfaehig: true });
+    await lauf();
+    expect(effortListe()).not.toContain('high');
+    expect(offenListe()).toEqual([]);
   });
 });
 
