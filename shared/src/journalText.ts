@@ -25,6 +25,8 @@ export interface JournalThesenFakten {
     minKonfluenz?: number;
     forecast?: { dir?: string; weight?: number };
     regime?: string;
+    ki?: { richtung?: string; probe?: boolean };
+    lexikon?: { dir?: string; probe?: boolean };
   };
 }
 
@@ -40,6 +42,9 @@ const EXIT_GRUND: Record<string, string> = {
   trailing_stop_broker: 'über den Trailing-Stop beim Broker',
   max_hold: 'nach Ablauf der maximalen Haltedauer',
   breaker: 'durch die Tages-Notbremse',
+  // KI-Kaskade Stufe 2b (06.10.)
+  ki_news: 'auf eine gegengeprüfte Nachricht gegen die Position (KI)',
+  ki_stop: 'über den nach einer Gegen-Nachricht nachgezogenen KI-Stop',
 };
 
 /** Geldbetrag deutsch: Vorzeichen, Komma, Dollar. */
@@ -95,7 +100,14 @@ export function journalThese(e: JournalThesenFakten): string {
   } else if (typeof sc?.konfluenz === 'number') {
     const latte = typeof sc.minKonfluenz === 'number' ? `/${sc.minKonfluenz}` : '';
     const s = stimmen(sc.votes);
-    gruende.push(`die Konfluenz ${sc.konfluenz}${latte} erreicht war${s ? ` (${s})` : ''}`);
+    // KI-Probe: Die Technik allein hat die Latte NICHT gerissen — dann darf
+    // der Satz nicht „erreicht" behaupten (`konfluenz` ist die Zahl ohne KI).
+    const probe = sc.ki?.probe === true || sc.lexikon?.probe === true;
+    gruende.push(
+      probe
+        ? `die Technik bei ${sc.konfluenz}${latte} stand${s ? ` (${s})` : ''}`
+        : `die Konfluenz ${sc.konfluenz}${latte} erreicht war${s ? ` (${s})` : ''}`,
+    );
   } else if (sc?.typ === 'momentum') {
     gruende.push('das Momentum-Ranking das Symbol gekürt hat');
   } else if (sc?.typ) {
@@ -108,6 +120,16 @@ export function journalThese(e: JournalThesenFakten): string {
         ? ` (Gewicht ${sc.forecast.weight.toFixed(2).replace('.', ',')})`
         : '';
     gruende.push(`die Prognose ${wohin} zeigte${gewicht}`);
+  }
+  if (sc?.ki?.richtung) {
+    gruende.push(
+      `eine gegengeprüfte Nachricht ${sc.ki.richtung} bewertet wurde (KI${sc.ki.probe ? ', Probegröße' : ''})`,
+    );
+  }
+  if (sc?.lexikon?.dir) {
+    gruende.push(
+      `das Nachrichten-Lexikon ${sc.lexikon.dir === 'buy' ? 'positiv' : 'negativ'} stimmte (KI-Budget aufgebraucht${sc.lexikon.probe ? ', Probegröße' : ''})`,
+    );
   }
   const regime = sc?.regime ? ` — Regime ${sc.regime}` : '';
   if (gruende.length === 0) return `${kopf}${regime}.`;

@@ -1219,6 +1219,10 @@ export interface JournalRow {
     minKonfluenz?: number;
     forecast?: { dir?: string; weight?: number };
     regime?: string;
+    /** KI-Kaskade Stufe 2b: mitstimmendes Urteil bzw. Grund eines `ki_news`-Ausstiegs. */
+    ki?: { newsId?: string; richtung?: string; gewicht?: number; staerke?: number; eingepreist?: string | null; probe?: boolean };
+    /** Lexikon-Rückfall bei erschöpftem KI-Budget. */
+    lexikon?: { dir?: string; weight?: number; probe?: boolean };
   };
   /* Review-Felder des Users. */
   review?: string;

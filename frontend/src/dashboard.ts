@@ -6736,6 +6736,7 @@ const GATE_TEXT: ReadonlyArray<[string, string]> = [
   ['regime_stress', t('gate.regimeStress')],
   ['filter_blockiert', t('gate.filterBlockiert')],
   ['news_veto', t('gate.newsVeto')],
+  ['ki_veto', t('gate.kiVeto')],
   ['unter_kosten', t('gate.unterKosten')],
   ['cluster_voll', t('gate.clusterVoll')],
   ['nicht_handelbar', t('gate.nichtHandelbar')],
@@ -8875,6 +8876,10 @@ const EXIT_LABELS: Record<string, string> = {
   // Tages-Notbremse".
   breaker: `${t('an.notbremse')} (${t('an.glattstellung')})`,
   margin_call: 'Margin-Call',
+  // KI-Kaskade Stufe 2b (06.10.): Verkauf auf eine gegengeprüfte Nachricht
+  // bzw. der nachgezogene KI-Stop — eigene Eimer, damit Stufe 3 sie misst.
+  ki_news: t('an.kiNews'),
+  ki_stop: t('an.kiStop'),
 };
 
 /* ── Portfolio-Kennzahlen (M12): Stats-Doc + Equity-Sparkline ──────────────
@@ -9997,6 +10002,8 @@ const EXIT_LABEL: Record<string, string> = {
   trailing_stop: 'Trailing-Stop',
   trailing_stop_broker: 'Trailing-Stop (Broker)',
   max_hold: 'Haltedauer',
+  ki_news: t('an.kiNews'),
+  ki_stop: t('an.kiStop'),
 };
 
 /**

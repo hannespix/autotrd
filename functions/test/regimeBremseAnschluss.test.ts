@@ -27,7 +27,8 @@ describe('Seitwärts-Bremse — Anschluss-Wächter', () => {
 
   it('Classic-Sizing (long UND short) trägt den Größen-Dämpfer', () => {
     const treffer =
-      scan.match(/\* klassenGewicht\(clamped, symbol\) \* regimeGroessenFaktor\(regime\);/g) ?? [];
+      // Seit Stufe 2b (06.10.) folgt der KI-Probefaktor — der Regime-Dämpfer bleibt.
+      scan.match(/\* klassenGewicht\(clamped, symbol\) \* regimeGroessenFaktor\(regime\) \* kiFaktor;/g) ?? [];
     expect(treffer, 'beide Classic-sizeFactor-Stellen erwartet').toHaveLength(2);
     // Keine ungebremste Fassung mehr.
     expect(scan).not.toContain('}) * klassenGewicht(clamped, symbol);');

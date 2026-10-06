@@ -1012,7 +1012,7 @@ describe('Ablehnungsgründe, Regime und Zugang (Tranche 5k)', () => {
     );
     for (const code of [
       'breaker_aktiv', 'abgleich_drift', 'pdt_schutz', 'klasse_aus', 'regime_gegen_trend',
-      'regime_stress', 'filter_blockiert', 'news_veto', 'unter_kosten',
+      'regime_stress', 'filter_blockiert', 'news_veto', 'ki_veto', 'unter_kosten',
       'cluster_voll', 'nicht_handelbar', 'hebel_frei',
     ]) {
       expect(tab, `Kürzel ${code} fehlt`).toContain(`'${code}'`);

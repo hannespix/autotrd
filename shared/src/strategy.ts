@@ -1068,6 +1068,22 @@ export interface Position {
      */
     quelle?: 'einstand' | 'trailing';
   } | null;
+  /**
+   * Nachgezogener KI-Stop (KI-Kaskade Stufe 2b, 06.10.): Eine Nachricht
+   * gegen die Position hat ihn gesetzt (`kiPositionsAktion`). Eine
+   * ZUSÄTZLICHE Marke — sie ersetzt weder `stopLoss` noch den Prozent-/ATR-
+   * Stop und kann einen Ausstieg deshalb nur früher auslösen, nie später
+   * (Begründung bei `KiStop`). Software-Stop: Scan und Puls prüfen ihn; der
+   * Broker-Schutz-Stop bleibt auf seinem eigenen Niveau.
+   *
+   * Fehlend = kein KI-Stop (Normalfall, Altbestand bleibt gültig).
+   */
+  kiStop?: {
+    level: number;
+    grund: 'ki_eingepreist' | 'ki_unklar';
+    newsId: string;
+    gesetztAt: string;
+  } | null;
 }
 
 export interface Trade {
