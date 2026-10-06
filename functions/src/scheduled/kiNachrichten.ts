@@ -405,6 +405,7 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
     const limitUsd = budgetLimitUsd(uids.size);
     const worstPruefung = worstCaseUsd(2_500, PRUEFUNG_SYSTEM.length, PRUEFUNG_MAX_TOKENS);
     const worstSichtungMax = worstCaseUsd(SICHTUNG_MAX_MELDUNGEN * 1_100, SICHTUNG_SYSTEM.length, SICHTUNG_MAX_TOKENS);
+    const worstSichtungEinzeln = worstCaseUsd(1_100, SICHTUNG_SYSTEM.length, SICHTUNG_MAX_TOKENS);
     const tag = budgetTag(jetzt());
     const topf: Topf = {
       tag, limitUsd, konten: uids.size,
@@ -430,13 +431,20 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
      * Geschwister, schrieb endgültige „budget"-Urteile und schickte die
      * Owner-Nachricht, obwohl der Topf fast voll war (Red-Team Runde 3).
      */
-    const istErschoepft = async (): Promise<boolean> => {
+    const istErschoepft = async (bedarfUsd: number): Promise<boolean> => {
       const snap = await db.doc(`admin/kiBudget-${tag}`).get();
       const fremdReserviert = Math.max(0, zahl(snap.get('reserviertUsd')) - eigeneReserviertUsd);
-      return budgetPruefen(zahl(snap.get('verbrauchtUsd')), fremdReserviert, limitUsd, limitUsd, worstPruefung) === 'erschoepft';
+      return budgetPruefen(zahl(snap.get('verbrauchtUsd')), fremdReserviert, limitUsd, limitUsd, bedarfUsd) === 'erschoepft';
     };
-    const meldenWennErschoepft = async (): Promise<boolean> => {
-      if (!(await istErschoepft())) return false;
+    /**
+     * `bedarfUsd`: was mindestens noch passen müsste, damit der Tag nicht
+     * vorbei ist. Phase B: eine Gegenprobe. Phase A: eine Einzel-Sichtung
+     * PLUS eine Gegenprobe — sonst wäre Phase A am Topfende für den Rest des
+     * Tages still, ohne „budget" und ohne Nachricht (Kurzprüfung Runde 3).
+     * Exakt, weil der Verbrauch innerhalb eines Tages nur steigt.
+     */
+    const meldenWennErschoepft = async (bedarfUsd: number): Promise<boolean> => {
+      if (!(await istErschoepft(bedarfUsd))) return false;
       if (!e.budgetErreicht) {
         e.budgetErreicht = true;
         await budgetMelden(topf, iso()).catch((err) => logger.warn('kiNachrichten: Budget-Meldung', err));
@@ -508,7 +516,7 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
     const offen: Offen[] = [];
     for (const k of offenAlle) {
       if (schonEntschieden.has(urteilId(k.newsId, k.symbol))) {
-        await db.doc(`kiOffen/${urteilId(k.newsId, k.symbol)}`).delete();
+        await db.doc(`kiOffen/${urteilId(k.newsId, k.symbol)}`).delete().catch(() => undefined);
       } else if (zuAlt(k, laufBeginn)) {
         await urteilSchreiben(k, k.symbol, { sichtung: k.urteil, ...endUrteil(k.urteil, null, 'zu_alt') });
       } else {
@@ -573,10 +581,14 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
         if (u.handlungsfaehig) e.handlungsfaehig += 1;
       }));
       for (const a of ausgaenge) {
-        if (a.status === 'rejected') logger.warn('kiNachrichten: Gegenprobe gescheitert', a.reason);
+        if (a.status === 'rejected') {
+          // Der Eintrag bleibt auf der Liste — als Wartender mitzählen.
+          e.offen += 1;
+          logger.warn('kiNachrichten: Gegenprobe gescheitert', a.reason);
+        }
       }
       // Erst jetzt, mit allen Geschwistern fertig: Ist der Tag wirklich vorbei?
-      if (budgetAbgewiesen.length > 0 && (await meldenWennErschoepft())) {
+      if (budgetAbgewiesen.length > 0 && (await meldenWennErschoepft(worstPruefung))) {
         for (const k of budgetAbgewiesen) {
           await urteilSchreiben(k, k.symbol, { sichtung: k.urteil, ...endUrteil(k.urteil, null, 'budget') });
           e.offen -= 1;
@@ -665,7 +677,7 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
         // Endgültig nur, wenn der Tag wirklich vorbei ist — Takt oder der
         // Kopfraum für Wartende lassen die Meldungen offen (Red-Team Runde 3:
         // sonst wurden bei fast vollem Topf neue Meldungen endgültig „budget").
-        if (await meldenWennErschoepft()) {
+        if (await meldenWennErschoepft(worstSichtungEinzeln + worstPruefung)) {
           for (const m of gruppe) await auslassen(m, 'budget');
         } else {
           e.offen += gruppe.length;

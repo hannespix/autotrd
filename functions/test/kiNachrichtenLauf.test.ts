@@ -436,6 +436,17 @@ describe('Geld', () => {
     expect(effortListe()).toEqual(['low']);
   });
 
+  it('Topfende: passt keine Einzel-Sichtung plus Gegenprobe mehr, ist der Tag vorbei — „budget" UND Nachricht, keine stille Totzone', async () => {
+    uhrMs = Date.parse('2026-10-06T01:02:00Z'); // 21:02 ET
+    store.set('admin/kiBudget-2026-10-05', { tag: '2026-10-05', verbrauchtUsd: 1.0 }); // 21:02 ET ist noch der 05.10.
+    meldung('alp-1', { publishedAt: '2026-10-06T01:00:00.000Z', firstSeenAt: '2026-10-06T01:00:30.000Z' });
+    const r = await lauf(1); // 2 $: eine Gegenprobe (~0,7 $) passt noch, Sichtung + Gegenprobe nicht
+    expect(aufruf).not.toHaveBeenCalled();
+    expect(sichtungDoc('alp-1')).toMatchObject({ ausgelassen: 'budget' });
+    expect(r.budgetErreicht).toBe(true);
+    expect(ownerNachrichten()).toHaveLength(1);
+  });
+
   it('Rückfall mit Iterationen: ALLE Versuche gebucht', async () => {
     meldung('alp-1');
     sichtungsAntwort = (a) => ({
