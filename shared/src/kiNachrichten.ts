@@ -120,21 +120,36 @@ export function kostenUsd(usage: KiUsage | null | undefined, modell: string): nu
   return Math.round(usd * 1_000_000) / 1_000_000;
 }
 
-/** Teuerster Satz, den ein Aufruf samt Rückfall erreichen kann (je Mio. Token). */
-const WORST_EIN = PREISE['claude-opus-5-5']!.ein + PREISE['claude-opus-5']!.ein;
-const WORST_AUS = PREISE['claude-opus-5-5']!.aus + PREISE['claude-opus-5']!.aus;
+/**
+ * So viele Rückfall-Versuche kann `fallbacks: 'default'` höchstens nachlegen
+ * (Opus 5, dann Opus 4.8 — beide zum Satz 5/25). Die Konfiguration liegt
+ * beim Anbieter; zwei sind die dokumentierten Ziele für Opus 5.5.
+ */
+export const RUECKFALL_HOPS_MAX = 2;
+const HAUPT = PREISE['claude-opus-5-5']!;
+const RUECK = PREISE['claude-opus-5']!;
 
 /**
  * Worst Case eines Aufrufs — das, was VOR dem Aufruf reserviert wird.
  *
- * Angenommen wird das Schlimmste: Der Hauptversuch schreibt bis zum Deckel
- * und wird dann abgelehnt, der Rückfall (teurer) schreibt noch einmal bis
- * zum Deckel. Eingabe grob mit 3 Zeichen je Token (Englisch liegt bei ~4).
- * Gebucht wird danach der gemessene Betrag; die Differenz wird frei.
+ * Angenommen wird das Schlimmste (Red-Team 05.10., zwei Runden): Der
+ * Hauptversuch schreibt bis zum Deckel und wird abgelehnt; jeder Rückfall
+ * bekommt die Eingabe PLUS den Teiltext als Fortsetzung, schreibt wieder bis
+ * zum Deckel und wird abgelehnt — bis zum letzten Hop. Eingabe mit 2 Zeichen
+ * je Token (Ziffern, IDs und Zeitstempel sind dicht). Gebucht wird danach
+ * der gemessene Betrag; die Differenz wird frei.
  */
+/** Worst Case NUR des Hauptversuchs (Eingabe + Deckel zum Satz von Opus 5.5). */
+export function hauptversuchWorstUsd(eingabeZeichen: number, systemZeichen: number, maxTokens: number): number {
+  const ein = (Math.max(0, eingabeZeichen) + Math.max(0, systemZeichen)) / 2;
+  return Math.round(((ein * HAUPT.ein + maxTokens * HAUPT.aus) / 1_000_000) * 1_000_000) / 1_000_000;
+}
+
 export function worstCaseUsd(eingabeZeichen: number, systemZeichen: number, maxTokens: number): number {
-  const einToken = (Math.max(0, eingabeZeichen) + Math.max(0, systemZeichen)) / 3;
-  return Math.round(((einToken * WORST_EIN + maxTokens * WORST_AUS) / 1_000_000) * 1_000_000) / 1_000_000;
+  const ein = (Math.max(0, eingabeZeichen) + Math.max(0, systemZeichen)) / 2;
+  const haupt = ein * HAUPT.ein + maxTokens * HAUPT.aus;
+  const rueck = RUECKFALL_HOPS_MAX * ((ein + maxTokens) * RUECK.ein + maxTokens * RUECK.aus);
+  return Math.round(((haupt + rueck) / 1_000_000) * 1_000_000) / 1_000_000;
 }
 
 /* ── Budget ─────────────────────────────────────────────────────────────── */
@@ -158,12 +173,15 @@ export function budgetLimitUsd(kontenMitKi: number): number {
  * linear bis 20:00 ET auf 100 %. Was früh nicht verbraucht wird, steht
  * später zur Verfügung.
  */
-export function budgetFreigegebenUsd(limitUsd: number, jetzt: Date): number {
+export function budgetFreigegebenUsd(limitUsd: number, jetzt: Date, mindestUsd = 0): number {
   const teile = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' })
     .formatToParts(jetzt);
   const h = Number(teile.find((t) => t.type === 'hour')?.value ?? 0) + Number(teile.find((t) => t.type === 'minute')?.value ?? 0) / 60;
   const anteil = h < 4 ? 0.2 : h >= 20 ? 1 : 0.2 + (0.8 * (h - 4)) / 16;
-  return limitUsd * anteil;
+  // Nie weniger als ein vollständiger Zyklus (Sichtung + Gegenprobe) — sonst
+  // wäre bei kleinem Topf nachts nichts möglich, obwohl der Topf voll ist
+  // (Red-Team 05.10.: Totzone bis 06:31 ET bei einem Konto).
+  return Math.min(limitUsd, Math.max(limitUsd * anteil, mindestUsd));
 }
 
 export type BudgetUrteil = 'ok' | 'takt' | 'erschoepft';
@@ -235,9 +253,13 @@ export function auswahlGrund(
   return null;
 }
 
-/** Kennt der Markt die Meldung schon zu lange? Gemessen ab `publishedAt`. */
-export function zuAlt(m: Pick<KiMeldung, 'publishedAt'>, jetztMs: number): boolean {
-  const pub = Date.parse(m.publishedAt);
+/**
+ * Kennt der Markt die Meldung schon zu lange? Gemessen ab `publishedAt`,
+ * geklemmt auf `firstSeenAt` — ein Zeitstempel aus der Zukunft darf eine
+ * Meldung nicht ewig frisch halten.
+ */
+export function zuAlt(m: Pick<KiMeldung, 'publishedAt' | 'firstSeenAt'>, jetztMs: number): boolean {
+  const pub = Math.min(Date.parse(m.publishedAt), Date.parse(m.firstSeenAt));
   return !Number.isFinite(pub) || jetztMs - pub > KI_MAX_ALTER_MIN * 60_000;
 }
 
@@ -273,7 +295,7 @@ Check, in this order:
 2. Is this genuinely new information, or a rehash, a preview, an opinion or a routine filing?
 3. Is it material relative to the size of this company?
 4. Is the direction really unambiguous, or is there a credible opposite reading?
-5. Could the market already have priced it in? Use the price context: the price when the system first saw the news, the latest price, and today's change (mind the stated time of that figure).
+5. Could the market already have priced it in? Use the price context: the last trade when the system first saw the news and the latest trade, each with its own time.
 
 Answer:
 - bestaetigt: true only if you would put capital behind the direction yourself.
@@ -306,12 +328,16 @@ export function sichtungEingabe(meldungen: readonly KiMeldung[], paare: readonly
   return `Jetzt: ${jetztIso}\n\n${meldungen.map((m) => meldungsBlock(m, true)).join('\n\n')}\n\nZu bewerten (id | symbol):\n${liste}`;
 }
 
+/**
+ * Kurskontext der Gegenprobe: nur Trades MIT ihrem eigenen Zeitstempel.
+ * Eine „Tagesänderung" fehlt bewusst — die vorhandene (`market/{sym}.quote`)
+ * trägt den Schreibzeitpunkt des Scans, nicht den der Daten, und ist
+ * vorbörslich die des Vortags (Red-Team 05.10.). Lieber keine Zahl als
+ * eine falsch beschriftete.
+ */
 export interface Kurskontext {
   gesehen?: { p: number; t: string } | null;
   aktuell?: { p: number; t: string } | null;
-  tagesAenderungPct?: number | null;
-  /** Stand der Tagesänderung — vorbörslich ist sie die des Vortags. */
-  tagesAenderungStand?: string | null;
 }
 
 /**
@@ -330,9 +356,6 @@ export function pruefungEingabe(
   jetztIso: string,
 ): string {
   const fmt = (k: { p: number; t: string } | null | undefined): string => (k ? `${k.p} (Trade ${k.t})` : 'unbekannt');
-  const tag = typeof kurs.tagesAenderungPct === 'number'
-    ? `${kurs.tagesAenderungPct.toFixed(2)} % (Stand ${kurs.tagesAenderungStand ?? 'unbekannt'})`
-    : 'unbekannt';
   return [
     `Jetzt: ${jetztIso}`,
     '',
@@ -344,7 +367,6 @@ export function pruefungEingabe(
     'Kurskontext:',
     `- Kurs beim ersten Sehen: ${fmt(kurs.gesehen)}`,
     `- Letzter Kurs: ${fmt(kurs.aktuell)}`,
-    `- Tagesaenderung: ${tag}`,
   ].join('\n');
 }
 
