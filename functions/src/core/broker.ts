@@ -415,6 +415,17 @@ export interface SignalKontext {
    * kann man auch nicht verantworten.
    */
   soloTrend?: boolean;
+  /**
+   * KI-Kaskade Stufe 2b (06.10.): Das gegengeprüfte KI-Urteil, das an
+   * dieser Entscheidung mitgewirkt hat — an Einstiegen als Stimme, an
+   * `ki_news`-Ausstiegen als Grund. `probe` = der Einstieg kam NUR durch die
+   * KI zustande und handelt in Probegröße. Stufe 3 misst genau diese
+   * Kohorte gegen den Markt; ohne Etikett wäre sie unbeurteilbar (dieselbe
+   * Disziplin wie `soloTrend`). `konfluenz` oben bleibt die Zahl OHNE KI.
+   */
+  ki?: { newsId: string; richtung: string; gewicht: number; staerke: number; eingepreist: string | null; probe: boolean };
+  /** Lexikon-Rückfall bei erschöpftem KI-Budget (halbes Gewicht). */
+  lexikon?: { dir: string; weight: number; probe: boolean };
 }
 
 export interface TradeRequest {
@@ -1771,6 +1782,10 @@ export function riskExitReason(
     } else if (stopPct > 0 && atLeast(price / pos.avgEntry - 1, stopPct / 100)) {
       return 'stop_loss';
     }
+    // 2b) KI-Stop (06.10.): ZUSÄTZLICHE Marke, nach dem regulären Stop
+    //     geprüft — feuern beide, gehört der Ausstieg dem regulären Stop.
+    const kiShort = level(pos.kiStop?.level);
+    if (kiShort !== null && atLeast(price, kiShort)) return 'ki_stop';
     // 3) Take UNTER dem Einstand: Level vor Prozent
     const tLevel = level(pos.takeProfit);
     if (tLevel !== null) {
@@ -1796,6 +1811,10 @@ export function riskExitReason(
     } else if (stopPct > 0 && atMost(price / pos.avgEntry - 1, -stopPct / 100)) {
       return 'stop_loss';
     }
+    // 2b) KI-Stop (06.10.): ZUSÄTZLICHE Marke, kein Ersatz für Level 2 —
+    //     sonst könnte er einen engeren Prozent-Stop lockern (s. KiStop).
+    const kiLevel = level(pos.kiStop?.level);
+    if (kiLevel !== null && atMost(price, kiLevel)) return 'ki_stop';
 
     // 3) Take-Profit: ebenso Level vor Prozent
     const takeLevel = level(pos.takeProfit);

@@ -285,6 +285,10 @@ export function netzZeile(riskExit: string | null): string {
       return t('ts.netzTrailing');
     case 'max_hold':
       return t('ts.netzHalte');
+    case 'ki_news':
+      return t('ts.netzKi');
+    case 'ki_stop':
+      return t('ts.netzKiStop');
     default:
       return t('ts.netzSignal');
   }

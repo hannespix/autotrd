@@ -447,6 +447,12 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
       if (!(await istErschoepft(bedarfUsd))) return false;
       if (!e.budgetErreicht) {
         e.budgetErreicht = true;
+        /* Stufe 2b (06.10.): Der TAG der Erschöpfung, nicht nur das Flag des
+         * Laufs — `budgetErreicht` überschreibt jeder Folgelauf, der
+         * zufällig nichts zu tun hat, mit false. Der Scan liest dieses Feld
+         * und schaltet für den Rest des ET-Tages den Lexikon-Rückfall zu. */
+        await standRef.set({ budgetErreichtTag: tag }, { merge: true })
+          .catch((err) => logger.warn('kiNachrichten: Budget-Tag', err));
         await budgetMelden(topf, iso()).catch((err) => logger.warn('kiNachrichten: Budget-Meldung', err));
       }
       return true;

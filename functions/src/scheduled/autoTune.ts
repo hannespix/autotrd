@@ -33,6 +33,7 @@ import {
   TUNE_AXES,
   buildPriors,
   buildVariants,
+  istKiProbeBucket,
   mergeAxisStat,
   orderByPrior,
   type GlobalAxisStats,
@@ -214,6 +215,12 @@ export async function tuneAll(now = new Date()): Promise<TuneRunResult> {
       const livePnls: number[] = [];
       for (const t of tradesSnap.docs) {
         const pnl = t.get('pnl') as number | undefined;
+        // KI-/Lexikon-PROBE-Einstiege (Stufe 2b) zählen nicht: Die Schatten-
+        // konten handeln ohne KI — einen Einstieg, den es dort nicht geben
+        // kann, gegen sie zu stellen, verzerrte die Beförderung (Red-Team
+        // 06.10., M3). KI-AUSSTIEGE an technischen Positionen bleiben drin:
+        // Sie gehören zum Ausstiegsregime des echten Kontos.
+        if (istKiProbeBucket(t.get('bucket'))) continue;
         if (typeof pnl === 'number' && Number.isFinite(pnl)) livePnls.push(pnl);
       }
 

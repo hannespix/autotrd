@@ -56,6 +56,24 @@ describe('positionLevels', () => {
     expect(lv.target).toBe(123);
   });
 
+  it('zeigt den KI-Stop, wenn er enger ist — nie den weiteren (Stufe 2b)', () => {
+    const ki = (level: number): Position['kiStop'] => ({ level, grund: 'ki_unklar', newsId: 'alp-1', gesetztAt: '2026-10-06T14:00:00.000Z' });
+    const eng = positionLevels(pos({ kiStop: ki(98) }), RISK);
+    expect(eng.stop).toBe(98);
+    expect(eng.stopKi).toBe(true);
+    const weit = positionLevels(pos({ kiStop: ki(93) }), RISK);
+    expect(weit.stop).toBeCloseTo(95, 6);
+    expect(weit.stopKi).toBe(false);
+    const short = positionLevels(pos({ side: 'short', kiStop: ki(102) }), RISK);
+    expect(short.stop).toBe(102);
+    expect(short.stopKi).toBe(true);
+    // ATR-adaptiv ohne Level: der KI-Stop ist die einzige bekannte Marke
+    const atr = positionLevels(pos({ kiStop: ki(97) }), { ...RISK, atrStopMult: 2 });
+    expect(atr.stop).toBe(97);
+    expect(atr.stopKi).toBe(true);
+    expect(positionLevels(pos(), RISK).stopKi).toBe(false);
+  });
+
   it('meldet ATR-adaptive Stops als adaptiv statt eine Linie zu erfinden', () => {
     const lv = positionLevels(pos(), { ...RISK, atrStopMult: 2, atrTakeMult: 3 });
     expect(lv.stop).toBeNull();

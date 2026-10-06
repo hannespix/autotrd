@@ -412,10 +412,13 @@ describe('Geld', () => {
     expect(r.budgetErreicht).toBe(true);
     expect(sichtungDoc('alp-1')).toMatchObject({ ausgelassen: 'budget' });
     expect(ownerNachrichten()).toHaveLength(1);
+    // Stufe 2b: Der TAG der Erschöpfung bleibt stehen (der Scan schaltet daran den Lexikon-Rückfall zu)
+    expect(store.get('meta/kiNachrichten')).toMatchObject({ budgetErreichtTag: '2026-10-05' });
     meldung('alp-2', { publishedAt: '2026-10-05T14:00:00.000Z', firstSeenAt: '2026-10-05T14:00:30.000Z' });
     uhrMs += 5 * 60_000;
     await lauf();
     expect(ownerNachrichten()).toHaveLength(1);
+    expect(store.get('meta/kiNachrichten')).toMatchObject({ budgetErreichtTag: '2026-10-05' });
   });
 
   it('Taktung: noch nicht freigegeben ⇒ Meldung bleibt OFFEN (kein endgültiges „budget"), keine Owner-Nachricht', async () => {
@@ -520,6 +523,8 @@ describe('Red-Team Runde 3', () => {
     expect(urteile.some((u) => u['ohnePruefung'] === 'budget')).toBe(false);
     expect(ownerNachrichten()).toHaveLength(0);
     expect(r.budgetErreicht).toBe(false);
+    // ohne erschöpften Topf kein Rückfall-Tag (sonst stimmte das Lexikon grundlos mit)
+    expect(store.get('meta/kiNachrichten')?.['budgetErreichtTag']).toBeUndefined();
     expect(r.geprueft).toBeGreaterThanOrEqual(1);
     expect(offenListe().length).toBeGreaterThanOrEqual(1);
     // Auch die neue Meldung wird nicht endgültig „budget", nur weil Wartende Kopfraum brauchen.

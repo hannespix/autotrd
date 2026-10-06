@@ -96,7 +96,9 @@ function signalCloses(d: FleetSymbolData, tf: 'daily' | 'intraday'): number[] {
  *
  * Hier stand bis heute „bewusst mit denselben Marken wie der echte Pfad".
  * Das war falsch. `riskExitReason` in `broker.ts` prüft VIER Marken in fester
- * Reihenfolge — nachziehender Stop, fester Stop, Ziel, Zeitgrenze. Diese
+ * Reihenfolge — nachziehender Stop, fester Stop, Ziel, Zeitgrenze (seit dem
+ * 06.10. dazu den KI-Stop als fünfte, die es in der KI-freien Flotte
+ * bewusst nicht gibt — sie misst die Technik). Diese
  * Funktion prüft ZWEI: fester Stop und Ziel. Es fehlen das Trailing (im
  * echten Pfad die ZUERST geprüfte Marke) und `max_hold`.
  *

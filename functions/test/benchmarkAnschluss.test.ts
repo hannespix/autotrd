@@ -68,8 +68,11 @@ describe('die Trendstimme wird ab jetzt einzeln abgerechnet', () => {
     // Ein Feature, dessen Ertrag man nicht isolieren kann, kann man auch
     // nicht verantworten — und seit dem 17.08. steht genau diese Frage im
     // Raum (Gebührenanteil 57 % → 68 %).
+    // Seit Stufe 2b (06.10.) NICHT an KI-Probe-Einstiegen: Dort steht die
+    // Konfluenz unter der Latte, weil die KI den Einstieg trägt — sonst
+    // landeten KI-Wetten in der Trendsolo-Kohorte und verfälschten beide.
     expect(scan).toContain(
-      '...(konfluenz < clamped.signals.minConfluence ? { soloTrend: true } : {}),',
+      '...(konfluenz < clamped.signals.minConfluence && kiFaktor === 1 ? { soloTrend: true } : {}),',
     );
   });
 
