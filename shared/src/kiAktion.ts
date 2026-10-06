@@ -85,14 +85,20 @@ export interface KiSignal {
 const zahl = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
 /**
- * Rang eines Urteils bei der Auswahl je Symbol: Ein gegengeprüftes Urteil
- * wird nicht von einer jüngeren, UNGEPRÜFTEN Sichtung verdrängt (Red-Team
- * N2) — sonst löschte eine belanglose neutrale Meldung ein KI-Veto.
+ * Rang eines Urteils bei der Auswahl je Symbol. Zwei Lehren aus dem
+ * Red-Team vom 06.10.:
+ *   N2 — Eine jüngere UNGEPRÜFTE Sichtung verdrängt kein gegengeprüftes
+ *        Urteil (sonst löschte eine belanglose Meldung ein KI-Veto).
+ *   R1 — Unter den GEPRÜFTEN gewinnt das jüngste, bestätigt oder nicht.
+ *        Die erste Fassung bevorzugte „bestätigt" über alles und hielt so
+ *        ein älteres positives Urteil fest, während eine neuere, geprüfte
+ *        Gegen-Meldung den Stop hätte nachziehen müssen — und kaufte
+ *        sogar dagegen. Neuere geprüfte Evidenz löst ältere ab, auch eine
+ *        geprüft NEUTRALE.
  */
 function rang(s: KiSignal): number {
-  if (s.richtung === 'neutral') return 0;
-  if (s.handlungsfaehig) return 3;
-  return s.geprueft ? 2 : 1;
+  if (s.geprueft) return 2;
+  return s.richtung === 'neutral' ? 0 : 1;
 }
 
 /**
@@ -147,7 +153,7 @@ export function kiSignaleAus(urteile: readonly unknown[], jetztMs: number): Map<
   return out;
 }
 
-/** Wie weit ist der Kurs seit dem ersten Sehen IN Nachrichten-Richtung gelaufen (in %)? */
+/** Wie weit ist der Kurs seit dem ersten Sehen IN Nachrichten-Richtung gelaufen (in %, gegen die Richtung negativ)? */
 function gelaufenPct(s: KiSignal, preis: number): number | null {
   if (s.kursGesehen === null || !(preis > 0) || s.richtung === 'neutral') return null;
   const d = ((preis - s.kursGesehen) / s.kursGesehen) * 100;
@@ -162,6 +168,27 @@ function traegt(s: KiSignal | undefined): s is KiSignal {
   return !!s && s.handlungsfaehig && s.richtung !== 'neutral' && s.eingepreist !== 'ja';
 }
 
+/** Vermerk der letzten KI-Handlung je Konto und Symbol (`users/{uid}.kiGenutzt.<symbol>`). */
+export interface KiGenutzt {
+  newsId: string;
+  at: string;
+}
+
+/**
+ * Hat die KI auf diesem Konto für dieses Symbol kürzlich gehandelt? Ja, wenn
+ * es dieselbe Meldung war (egal wann) oder die letzte KI-Handlung keine
+ * KI_GUELTIG_STUNDEN zurückliegt. Unlesbare Vermerke zählen als „genutzt" —
+ * im Zweifel keine zweite Handlung.
+ */
+export function kiKuerzlichGenutzt(g: unknown, newsId: string, jetztMs: number): boolean {
+  if (g === null || g === undefined) return false;
+  const v = g as Partial<KiGenutzt>;
+  if (v.newsId === newsId) return true;
+  const at = Date.parse(String(v.at ?? ''));
+  if (!Number.isFinite(at)) return true;
+  return jetztMs - at < KI_GUELTIG_STUNDEN * 3_600_000;
+}
+
 /**
  * Einstiegsstimme der KI — nur OHNE offene Position (Ausstiege laufen über
  * `kiPositionsAktion`). Gewicht = die geforderte Konfluenz: Die KI kann
@@ -174,9 +201,11 @@ function traegt(s: KiSignal | undefined): s is KiSignal {
  *     prüfen, ob man dem Kurs schon hinterherläuft,
  *   - der Kurs ist seither noch keine KI_EINGEPREIST_ATR in Nachrichten-
  *     richtung gelaufen,
- *   - dieses Urteil hat auf diesem Konto für dieses Symbol noch NICHT
- *     gehandelt (`genutzt` = zuletzt verbrauchte newsId). Ein Urteil, eine
- *     Handlung — sonst stiege dieselbe Meldung nach jedem Stop wieder ein.
+ *   - die KI hat auf diesem Konto für dieses Symbol in den letzten
+ *     KI_GUELTIG_STUNDEN noch NICHT gehandelt (`genutzt`). Ein Ereignis,
+ *     eine Handlung — sonst stiege dieselbe Meldung nach jedem Stop wieder
+ *     ein. Je Symbol und Zeit statt je newsId (Red-Team R3): Folgeartikel
+ *     („Why XYZ is soaring") tragen eine neue newsId, aber dasselbe Ereignis.
  */
 export function kiStimme(
   s: KiSignal | undefined,
@@ -185,14 +214,16 @@ export function kiStimme(
   preis: number,
   atrPct: number | null | undefined,
   jetztMs: number,
-  genutzt?: string | null,
+  genutzt?: KiGenutzt | null,
 ): { dir: 'buy' | 'sell'; weight: number } | null {
   if (hatPosition || !traegt(s)) return null;
-  if (genutzt && genutzt === s.newsId) return null;
+  if (kiKuerzlichGenutzt(genutzt, s.newsId, jetztMs)) return null;
   if (jetztMs - Date.parse(s.firstSeenAt) > KI_EINSTIEG_MAX_MIN * 60_000) return null;
   const atr = atrOk(atrPct);
   const gelaufen = gelaufenPct(s, preis);
-  if (atr === null || gelaufen === null || gelaufen >= KI_EINGEPREIST_ATR * atr) return null;
+  // BEIDSEITIG (Red-Team R2): Ist der Kurs seither 1,5 ATR GEGEN die
+  // Meldung gelaufen, widerspricht der Markt — kein Griff ins fallende Messer.
+  if (atr === null || gelaufen === null || Math.abs(gelaufen) >= KI_EINGEPREIST_ATR * atr) return null;
   const weight = Math.max(1, Math.ceil(requiredConfluence));
   return { dir: s.richtung === 'positiv' ? 'buy' : 'sell', weight };
 }
@@ -353,7 +384,7 @@ export function kiPositionsAktion(
      * Tief verkauft, sondern der Stop nachgezogen. */
     const gelaufen = gelaufenPct(s, preis);
     const belegtFrisch = s.eingepreist === 'nein' && atr !== null && gelaufen !== null
-      && gelaufen < KI_EINGEPREIST_ATR * atr;
+      && Math.abs(gelaufen) < KI_EINGEPREIST_ATR * atr;
     return belegtFrisch ? { art: 'verkauf', grund: 'ki_news' } : stopAktion('ki_eingepreist', KI_STOP_ATR);
   }
   /* Unklar = die Gegenprobe LIEF und hat nicht bestätigt (Red-Team M5): Eine

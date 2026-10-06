@@ -159,8 +159,12 @@ describe('Quelltext-Wächter: Verdrahtung im Scan', () => {
 
   it('H2/H3: Veto-Aufhebung nur fürs selbe Ereignis; ein Urteil, eine Handlung', () => {
     expect(anzahl('&& kiUebersteuertNewsVeto(kiSig, side, marketData.get(symbol)?.news?.hardEvent?.published);')).toBe(1);
-    expect(anzahl('kiGenutzt[symbol],')).toBe(1); // an kiStimme übergeben
-    expect(anzahl("cooldownUpdates.push(new FieldPath('kiGenutzt', symbol), kiSig.newsId);")).toBe(2); // Einstieg UND ki_news-Ausstieg
+    expect(anzahl('kiGenutzt[symbol] as KiGenutzt | undefined,')).toBe(1); // an kiStimme übergeben
+    // Einstieg UND ki_news-Ausstieg verbrauchen — sofort geschrieben, nicht am Kontoende (R4)
+    expect(anzahl('await kiVerbrauchen(symbol, kiSig.newsId);')).toBe(2);
+    expect(anzahl("await (userDoc.ref.update as (...a: unknown[]) => Promise<unknown>)(new FieldPath('kiGenutzt', sym), wert)")).toBe(1);
+    expect(anzahl("await zaehleKiEinstieg('buy');")).toBe(1);
+    expect(anzahl("await zaehleKiEinstieg('sell');")).toBe(1);
     expect(anzahl('sig.votes,\n            )')).toBe(1); // Lexikon bekommt die Indikator-Stimmen (M2)
   });
 

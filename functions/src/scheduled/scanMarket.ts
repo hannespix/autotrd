@@ -65,6 +65,7 @@ import {
   kiVeto,
   kiUebersteuertNewsVeto,
   kiPositionsAktion,
+  type KiGenutzt,
   type KiSignal,
   bucketKey,
   bucketVerdict,
@@ -961,11 +962,21 @@ async function executeUserTrades(
       const kiAn = clamped.signals.kiNachrichten !== false;
       if (!kiAn) kiLauf.kontenAus += 1;
       const kiFuer = (sym: string): KiSignal | undefined => (kiAn ? kiLage.get(sym) : undefined);
-      // Je Symbol die newsId, mit der die KI auf diesem Konto zuletzt
-      // gehandelt hat — ein Urteil, eine Handlung (Red-Team H3). Ein Eintrag
-      // je Symbol, wird überschrieben: wächst nicht über das Universum hinaus.
-      const kiGenutzt: Record<string, string> = {
-        ...((userDoc.get('kiGenutzt') as Record<string, string> | undefined) ?? {}),
+      // Je Symbol die letzte KI-Handlung auf diesem Konto ({newsId, at}) —
+      // ein Ereignis, eine Handlung (Red-Team H3/R3). Ein Eintrag je Symbol,
+      // wird überschrieben: wächst nicht über das Universum hinaus.
+      const kiGenutzt: Record<string, unknown> = {
+        ...((userDoc.get('kiGenutzt') as Record<string, unknown> | undefined) ?? {}),
+      };
+      // SOFORT schreiben, nicht erst mit den Cooldowns am Ende des Kontolaufs
+      // (Red-Team R4): Wirft der Lauf danach, ginge der Vermerk sonst verloren
+      // und dieselbe Meldung handelte im nächsten Scan erneut. Selten (nur bei
+      // einer KI-Handlung) — der eine Schreibvorgang kostet nichts.
+      const kiVerbrauchen = async (sym: string, newsId: string): Promise<void> => {
+        const wert: KiGenutzt = { newsId, at: now.toISOString() };
+        kiGenutzt[sym] = wert;
+        await (userDoc.ref.update as (...a: unknown[]) => Promise<unknown>)(new FieldPath('kiGenutzt', sym), wert)
+          .catch((err: unknown) => logger.warn(`kiGenutzt ${uid} ${sym} nicht geschrieben`, err));
       };
 
       /* Tages-Notbremse (M12 `core/risk.ts`).
@@ -1366,8 +1377,7 @@ async function executeUserTrades(
             kiLauf.verkauft += 1;
             // Das Urteil ist verbraucht: Es eröffnet nach dem Cooldown nicht
             // noch die Gegenposition (Red-Team H3c).
-            kiGenutzt[symbol] = kiSig.newsId;
-            cooldownUpdates.push(new FieldPath('kiGenutzt', symbol), kiSig.newsId);
+            await kiVerbrauchen(symbol, kiSig.newsId);
           }
           if (r.executed) {
             executed += 1;
@@ -2145,7 +2155,7 @@ async function executeUserTrades(
           data.price,
           data.atrPct,
           now.getTime(),
-          kiGenutzt[symbol],
+          kiGenutzt[symbol] as KiGenutzt | undefined,
         );
         const lexVote = kiAn
           ? lexikonStimme(
@@ -2182,11 +2192,10 @@ async function executeUserTrades(
         /* Nach einem ausgeführten Einstieg: zählen und das Urteil als
          * VERBRAUCHT vermerken (Red-Team H3) — ein Urteil, eine Handlung je
          * Konto und Symbol. Nur, wenn die KI-Stimme wirklich mitgewirkt hat. */
-        const zaehleKiEinstieg = (dir: 'buy' | 'sell'): void => {
+        const zaehleKiEinstieg = async (dir: 'buy' | 'sell'): Promise<void> => {
           if (kiVote?.dir === dir && kiSig) {
             kiLauf.einstiege += 1;
-            kiGenutzt[symbol] = kiSig.newsId;
-            cooldownUpdates.push(new FieldPath('kiGenutzt', symbol), kiSig.newsId);
+            await kiVerbrauchen(symbol, kiSig.newsId);
           }
           if (lexVote?.dir === dir) kiLauf.lexikon += 1;
           if (kiFaktor < 1) kiLauf.probe += 1;
@@ -2382,7 +2391,7 @@ async function executeUserTrades(
               openedAt: r.trade?.executedAt ?? now.toISOString(),
             });
             merkeSizing(r, sizeFactor, symbol);
-            zaehleKiEinstieg('buy');
+            await zaehleKiEinstieg('buy');
             logger.info(`Engine-Buy ${uid} ${symbol} @ ${data.price}${kiFaktor < 1 ? ' (KI-Probe)' : ''}`);
           }
         } else if (direction === 'sell' && pos && pos.side !== 'short') {
@@ -2465,7 +2474,7 @@ async function executeUserTrades(
           );
           if (r.executed) {
             executed += 1;
-            zaehleKiEinstieg('sell');
+            await zaehleKiEinstieg('sell');
             gebundeneKaufkraft += (r.trade?.qty ?? 0) * (r.trade?.price ?? data.price);
             positions.set(symbol, {
               symbol,

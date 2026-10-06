@@ -17,6 +17,7 @@ import {
   kiVeto,
   lexikonStimme,
   mitStimmen,
+  type KiGenutzt,
   type KiSignal,
 } from '../src/kiAktion.js';
 
@@ -76,6 +77,19 @@ describe('kiSignaleAus', () => {
       urteil({ newsId: 'alp-3', richtung: 'positiv', handlungsfaehig: false, stufe: 'sichtung', decidedAt: '2026-10-06T14:55:00.000Z' }),
     ], jetzt);
     expect(m.get('ACME')).toMatchObject({ newsId: 'alp-1', richtung: 'negativ' });
+    // R1: ein jüngeres GEPRÜFTES Urteil löst ab — auch wenn es nicht bestätigt
+    // ist und das ältere bestätigt war (sonst kaufte man gegen neue Evidenz)
+    const r1 = kiSignaleAus([
+      urteil({ eingepreist: 'teilweise', decidedAt: '2026-10-06T14:00:00.000Z' }),
+      urteil({ newsId: 'alp-5', richtung: 'negativ', handlungsfaehig: false, staerke: 0.9, decidedAt: '2026-10-06T14:45:00.000Z' }),
+    ], jetzt);
+    expect(r1.get('ACME')).toMatchObject({ newsId: 'alp-5', richtung: 'negativ', handlungsfaehig: false });
+    // … und eine geprüft NEUTRALE ebenso
+    const neutral = kiSignaleAus([
+      urteil({ decidedAt: '2026-10-06T14:00:00.000Z' }),
+      urteil({ newsId: 'alp-6', richtung: 'neutral', handlungsfaehig: false, decidedAt: '2026-10-06T14:45:00.000Z' }),
+    ], jetzt);
+    expect(neutral.get('ACME')).toMatchObject({ newsId: 'alp-6', richtung: 'neutral' });
     // ein jüngeres GEGENGEPRÜFTES Urteil löst dagegen ab
     const n = kiSignaleAus([
       urteil({ richtung: 'negativ', decidedAt: '2026-10-06T13:00:00.000Z' }),
@@ -93,7 +107,7 @@ describe('kiSignaleAus', () => {
 
 describe('Einstieg', () => {
   const sig = (buy: number, sell: number, required = 2) => ({ direction: 'hold' as const, buyVotes: buy, sellVotes: sell, requiredConfluence: required });
-  const stimme = (s: KiSignal | undefined, preis = 100.5, atr: number | null = 2, um = jetzt, genutzt?: string) =>
+  const stimme = (s: KiSignal | undefined, preis = 100.5, atr: number | null = 2, um = jetzt, genutzt?: KiGenutzt) =>
     kiStimme(s, 2, false, preis, atr, um, genutzt);
 
   it('gegengeprüft positiv, nicht eingepreist, frisch: Kaufstimme, die allein reicht', () => {
@@ -114,15 +128,23 @@ describe('Einstieg', () => {
     expect(stimme(signal(), 103)).toBeNull(); // +3 % ≥ 1,5 × 2 %
     expect(stimme(signal(), 102.9)).not.toBeNull();
     expect(stimme(signal({ richtung: 'negativ' }), 97)).toBeNull(); // spiegelbildlich
+    // beidseitig (R2): 1,5 ATR GEGEN die Meldung gelaufen — kein Griff ins fallende Messer
+    expect(stimme(signal(), 97)).toBeNull();
+    expect(stimme(signal(), 97.1)).not.toBeNull();
     expect(stimme(signal(), 100.5, 2, Date.parse('2026-10-06T16:22:00Z'))).toBeNull(); // > 2 h seit dem Sehen
     expect(stimme(signal(), 100.5, 2, Date.parse('2026-10-06T16:20:00Z'))).not.toBeNull();
     expect(stimme(signal({ kursGesehen: null }))).toBeNull();
     expect(stimme(signal(), 100.5, null)).toBeNull();
   });
 
-  it('ein Urteil, eine Handlung (H3): verbraucht ⇒ keine zweite Stimme', () => {
-    expect(stimme(signal(), 100.5, 2, jetzt, 'alp-1')).toBeNull();
-    expect(stimme(signal(), 100.5, 2, jetzt, 'alp-0')).not.toBeNull();
+  it('ein Ereignis, eine Handlung (H3/R3): je Symbol höchstens eine KI-Handlung in 6 h', () => {
+    expect(stimme(signal(), 100.5, 2, jetzt, { newsId: 'alp-1', at: '2026-10-05T10:00:00.000Z' })).toBeNull(); // dieselbe Meldung
+    // Folgeartikel mit NEUER newsId binnen 6 h: ebenfalls gesperrt
+    expect(stimme(signal(), 100.5, 2, jetzt, { newsId: 'alp-0', at: '2026-10-06T12:00:00.000Z' })).toBeNull();
+    expect(stimme(signal(), 100.5, 2, jetzt, { newsId: 'alp-0', at: '2026-10-06T08:59:00.000Z' })).not.toBeNull();
+    // unlesbarer Vermerk: im Zweifel keine zweite Handlung
+    expect(stimme(signal(), 100.5, 2, jetzt, { newsId: 'alp-0' } as KiGenutzt)).toBeNull();
+    expect(stimme(signal(), 100.5, 2, jetzt, undefined)).not.toBeNull();
   });
 
   it('Probegröße nur, wenn die KI die Richtung erst herstellt', () => {
@@ -195,6 +217,10 @@ describe('gehaltene Position', () => {
     for (const e of ['ja', 'teilweise', 'unklar', null] as const) {
       expect(kiPositionsAktion(neg({ eingepreist: e }), long, 99, 2)).toMatchObject({ art: 'stop', grund: 'ki_eingepreist' });
     }
+  });
+
+  it('Markt läuft ≥ 1,5 ATR GEGEN die Meldung: Stop statt Verkauf (R2, beidseitig)', () => {
+    expect(kiPositionsAktion(neg(), long, 103.5, 2)).toMatchObject({ art: 'stop', grund: 'ki_eingepreist' });
   });
 
   it('ohne Kurs beim Sehen oder ohne ATR: KEIN blinder Verkauf (M1)', () => {
