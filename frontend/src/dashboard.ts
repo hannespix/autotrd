@@ -8897,6 +8897,7 @@ const EXIT_LABELS: Record<string, string> = {
   ki_stop: t('an.kiStop'),
   // Drift-Paket 08.10.: ein Exit, dessen Fill erst der Nachlauf gebucht hat.
   exit_nachlauf: t('an.exitNachlauf'),
+  fill_sync: t('an.fillSync'),
 };
 
 /* ── Portfolio-Kennzahlen (M12): Stats-Doc + Equity-Sparkline ──────────────
@@ -10023,6 +10024,7 @@ const EXIT_LABEL: Record<string, string> = {
   ki_stop: t('an.kiStop'),
   // Drift-Paket 08.10.: ein Exit, dessen Fill erst der Nachlauf gebucht hat.
   exit_nachlauf: t('an.exitNachlauf'),
+  fill_sync: t('an.fillSync'),
 };
 
 /**

@@ -30,6 +30,7 @@ import { logger } from 'firebase-functions/v2';
 import {
   bewerteAktivitaet,
   bewerteHerzschlag,
+  bewerteFillSync,
   bewerteNachrichten,
   naechsterAktivitaetsZustand,
   naechsterAlarm,
@@ -95,7 +96,25 @@ export async function wachhundLauf(now = new Date()): Promise<{
 
   // `merge: true`, damit der Wächter NIE den Heartbeat überschreibt, den er
   // bewacht — ein Wächter, der sein eigenes Messobjekt anfasst, taugt nichts.
-  await db.doc('meta/health').set({ alarm, aktivitaet, nachrichten }, { merge: true });
+  // Vierte Frage, eigenes Feld (08.10.): Läuft der Ereigniskanal für Ausführungen?
+  const vorherFillSync = health.get('fillSync.zustand') as AktivitaetZustand | undefined;
+  const fillSyncZustand = naechsterAktivitaetsZustand(
+    vorherFillSync,
+    bewerteFillSync({
+      jetztMs: now.getTime(),
+      at: health.get('fillSync.at') as string | undefined,
+      fehler: health.get('fillSync.fehler') as number | undefined,
+    }),
+    now.toISOString(),
+  );
+
+  await db.doc('meta/health').set({ alarm, aktivitaet, nachrichten, fillSync: { zustand: fillSyncZustand } }, { merge: true });
+
+  if (fillSyncZustand.aktiv && vorherFillSync?.aktiv !== true) {
+    logger.error(`FILLSYNC: ${fillSyncZustand.text}`);
+  } else if (!fillSyncZustand.aktiv && vorherFillSync?.aktiv === true) {
+    logger.info(`FILLSYNC: Entwarnung — ${fillSyncZustand.text}`);
+  }
 
   if (nachrichten.aktiv && vorherNachrichten?.aktiv !== true) {
     logger.error(`NACHRICHTEN: ${nachrichten.text}`);

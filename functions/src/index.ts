@@ -27,6 +27,8 @@ export { nachrichtenSammeln } from './scheduled/nachrichtenSammeln.js';
 export { kiNachrichten } from './scheduled/kiNachrichten.js';
 export { tagRueckblick, tagRueckblickNow } from './scheduled/tagRueckblick.js';
 export { riskPulse, pulseNow } from './scheduled/riskPulse.js';
+// Drift-Paket 2 (08.10.): Ereigniskanal — jede Ausführung beim Broker landet im Buch.
+export { fillSync, fillSyncNow } from './scheduled/fillSync.js';
 export { wachhund, wachhundNow } from './scheduled/wachhund.js';
 export { kiBericht, kiBerichtNow } from './scheduled/kiBericht.js';
 export { kiStimme, kiStimmeNow } from './scheduled/kiStimme.js';

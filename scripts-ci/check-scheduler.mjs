@@ -53,6 +53,8 @@ const SCHEDULES = [
   // zu spät auslöst, kostet Geld — ein Einstieg fünf Minuten später fast
   // nichts (Owner-Wunsch 28.07., Begründung in riskPulse.ts).
   { fn: 'riskPulse', service: 'riskpulse', cron: '* * * * *', was: 'Risiko-Puls' },
+  // Drift-Paket 2 (08.10.): zwei Minuten nach dem Scan — bucht, was dessen Pfad verpasst hat.
+  { fn: 'fillSync', service: 'fillsync', cron: '2-59/5 * * * *', was: 'Ausführungs-Abgleich' },
   { fn: 'evalForecasts', service: 'evalforecasts', cron: '30 16 * * 1-5', was: 'Prognose-Bewertung' },
   { fn: 'snapshotEquity', service: 'snapshotequity', cron: '15 17 * * *', was: 'Equity-Snapshot' },
   { fn: 'autoTune', service: 'autotune', cron: '45 17 * * *', was: 'Auto-Tuner' },

@@ -610,6 +610,13 @@ export interface TradeRequest {
    */
   aufstockung?: boolean;
   /**
+   * Ausführungszeit laut Broker (Drift-Paket 2, 08.10.) — für Trades, die der
+   * Ereigniskanal nachbucht. Ohne Angabe gilt die Buchungszeit. Der Trade
+   * und eine neu eröffnete Position tragen dann den echten Zeitpunkt (FIFO,
+   * Haltedauer), nicht den Moment, in dem das Buch davon erfuhr.
+   */
+  ausgefuehrtAt?: string;
+  /**
    * Überzeugungs-Faktor der Positionsgröße (Owner-Direktive 01.08.): skaliert
    * die Tranche mit messbarer Überzeugung (convictionFactor, 0,25–1,5).
    * Fehlt er, gilt exakt die bisherige Größe. Die Klumpengrenze (25 %)
@@ -1632,7 +1639,9 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       if (!schon.empty) return { executed: false, reason: 'fill_schon_gebucht' };
     }
     const balance = (userSnap.get('wallet.paperBalance') as number | undefined) ?? 0;
-    const now = new Date().toISOString();
+    const now = typeof req.ausgefuehrtAt === 'string' && Number.isFinite(Date.parse(req.ausgefuehrtAt))
+      ? new Date(Date.parse(req.ausgefuehrtAt)).toISOString()
+      : new Date().toISOString();
     /* Einstiege rechnen mit dem GEDECKELTEN Kapital (siehe kapitalDeckel):
      * min(Buch, Broker) aus dem letzten Konto-Abgleich. Die Wallet-Buchungen
      * weiter unten bleiben beim echten Buchstand — der Deckel entscheidet,

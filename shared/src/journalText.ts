@@ -47,6 +47,8 @@ const EXIT_GRUND: Record<string, string> = {
   ki_stop: 'über den nach einer Gegen-Nachricht nachgezogenen KI-Stop',
   // Drift-Paket 08.10.: die Order stand beim Broker, der Fill kam später.
   exit_nachlauf: 'über eine stehen gebliebene Ausstiegs-Order (nachgebucht)',
+  // Drift-Paket 2: vom Ereigniskanal aus der Broker-Aktivität nachgebucht.
+  fill_sync: 'laut Broker-Aktivität (vom Ereigniskanal nachgebucht)',
 };
 
 /** Geldbetrag deutsch: Vorzeichen, Komma, Dollar. */
