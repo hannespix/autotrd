@@ -82,11 +82,12 @@ describe('Root-Cause-Fix: Fehlbestand durch ungenetzte Schutz-Stop-Fills', () =>
     expect(scan).toContain('merkeUnbookedFill,');
   });
 
-  it('genau drei Aufrufe in broker.ts — routeOrder-Pfad, schutzAufheben UND der Nachlauf offener Orders', () => {
-    // Seit dem Drift-Paket 08.10. entdeckt auch `bucheOffeneOrders` Fills —
-    // und auch dort darf ein nicht buchbarer Fill nie stumm verschwinden.
+  it('genau zwei Aufrufe in broker.ts — routeOrder-Pfad UND schutzAufheben', () => {
+    // Der Nachlauf offener Orders (08.10.) nutzt das Netz bewusst NICHT: Sein
+    // Dedupe nach Order-Kennung löschte eine Teilfill-DIFFERENZ ohne Buchung.
+    // Der Vermerk bleibt stattdessen stehen und wird erneut versucht.
     const treffer = (broker.match(/await merkeUnbookedFill\(/g) ?? []).length;
-    expect(treffer).toBe(3);
+    expect(treffer).toBe(2);
   });
 
   it('genau ein Aufruf in scanMarket.ts — der pflegeSchutz-Aufrufer', () => {
@@ -107,7 +108,8 @@ describe('Root-Cause-Fix: Fehlbestand durch ungenetzte Schutz-Stop-Fills', () =>
   });
 
   it('der pflegeSchutz-Fehlerzweig in scanMarket.ts bucht nicht mehr nur ins Log', () => {
-    const ab = scan.indexOf("if (befund.stand === 'gefuellt') {");
+    // seit dem Drift-Paket 08.10.: nur buchen, wenn der Fill nicht schon im Buch steht
+    const ab = scan.indexOf("if (befund.stand === 'gefuellt' && !schonGebucht) {");
     expect(ab).toBeGreaterThan(-1);
     const bis = scan.indexOf('\n            }', ab);
     const block = scan.slice(ab, bis);

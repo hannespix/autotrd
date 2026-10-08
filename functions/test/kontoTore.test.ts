@@ -16,7 +16,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_STRATEGY, type Strategy } from '../../shared/src/index.js';
-import { abgleichSperreAusVermerk, kontoTore } from '../src/core/kontoTore.js';
+import { abgleichSperreAusVermerk, kontoTore, symbolSperreAusVermerk } from '../src/core/kontoTore.js';
 
 const jetzt = new Date('2026-08-13T14:00:00.000Z');
 const stub = (m: Record<string, unknown>): { get(f: string): unknown } => ({
@@ -91,6 +91,20 @@ describe('abgleichSperreAusVermerk — Spiegel der Live-Entscheidung', () => {
   it('ohne Vermerk oder mit Unlesbarem: keine Sperre', () => {
     expect(abgleichSperreAusVermerk(undefined, jetzt)).toBe(false);
     expect(abgleichSperreAusVermerk({ fehlbestand: 5 }, jetzt)).toBe(false);
+  });
+});
+
+describe('symbolSperreAusVermerk — die Symbol-Sperre aus dem Vermerk (Drift-Paket 08.10.)', () => {
+  const jetzt = new Date('2026-10-08T10:00:00Z');
+  const vermerk = { at: '2026-10-08T09:55:00Z', fehlbestand: 0, fremdbestand: 1, abweichungen: [{ symbol: 'CCG', eigeneMenge: 0, brokerMenge: 1380, differenz: -1380 }] };
+  it('sperrt genau das abweichende Symbol', () => {
+    expect(symbolSperreAusVermerk(vermerk, 'CCG', jetzt)).toBe(true);
+    expect(symbolSperreAusVermerk(vermerk, 'AAPL', jetzt)).toBe(false);
+  });
+  it('ein alter Vermerk sperrt nicht; Unlesbares sperrt nicht', () => {
+    expect(symbolSperreAusVermerk({ ...vermerk, at: '2026-10-06T09:55:00Z' }, 'CCG', jetzt)).toBe(false);
+    expect(symbolSperreAusVermerk(undefined, 'CCG', jetzt)).toBe(false);
+    expect(symbolSperreAusVermerk({ at: vermerk.at, abweichungen: 'kaputt' }, 'CCG', jetzt)).toBe(false);
   });
 });
 

@@ -16,7 +16,7 @@ import {
 } from '../../../shared/src/index.js';
 import { consumeQuota, executeTrade, resolveBrokerMode } from '../core/broker.js';
 import { ladeUniversumSymbole } from '../core/universumLeser.js';
-import { kontoTore } from '../core/kontoTore.js';
+import { kontoTore, symbolSperreAusVermerk } from '../core/kontoTore.js';
 import { clampStrategyRisk, maxOpenPositions } from '../core/rulesTrading.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
 import { accessDeniedReason, accessLevelOfSnap, mayTradeSnap } from '../core/access.js';
@@ -151,6 +151,12 @@ export const trade = onCall(CALLABLE_OPTS, async (request) => {
               ? 'srv.pdtSchutz'
               : 'srv.einstiegeGesperrt',
       );
+    }
+    // Symbol-Sperre (Drift-Paket 08.10.): auch von Hand nicht in ein Symbol,
+    // das Buch und Broker verschieden führen — erst klären (verkaufen oder
+    // übernehmen), sonst verschmilzt der Kauf beim Broker mit dem Rest.
+    if (symbolSperreAusVermerk(userSnap.get('risk.abgleich'), symbol, new Date())) {
+      throw new HttpsError('failed-precondition', 'srv.fremdbestand');
     }
     /* Positionslimit auch von Hand (Audit 13.08., H3): 50 Käufe am Tag mit
      * je 25 % wären sonst regelkonform gewesen, während der Scan beim

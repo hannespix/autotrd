@@ -211,6 +211,38 @@ export function auftragsLauf(
  * gebuchter Fill, den der Abgleich meldet, als ein Exit, der nicht
  * stattfindet.
  */
+/** Verbrauchte Schutz-Order von der Position lösen (Red-Team 08.10., H1). */
+export async function schutzVerknuepfungLoesen(uid: string, symbol: string): Promise<void> {
+  await getFirestore()
+    .collection('users')
+    .doc(uid)
+    .collection('positions')
+    .doc(symbol)
+    .update({ schutz: null })
+    .catch(() => undefined);
+}
+
+/**
+ * Bereits gebuchte Menge zu einer Broker-Order — Summe über alle Trades mit
+ * dieser Kennung (Red-Team 08.10., M3): Bei Teilfüllungen gibt es mehrere
+ * Buchungen je Order; „schon gebucht ja/nein" wäre dann die falsche Frage.
+ * Nicht lesbar ⇒ 0 (der Aufrufer hat seinen eigenen Zähler als Untergrenze).
+ */
+export async function gebuchteMengeJeOrder(uid: string, brokerOrderId: string): Promise<number> {
+  const snap = await getFirestore()
+    .collection('users')
+    .doc(uid)
+    .collection('trades')
+    .where('brokerOrderId', '==', brokerOrderId)
+    .get()
+    .catch(() => null);
+  if (!snap) return 0;
+  return snap.docs.reduce((summe, d) => {
+    const q = d.get('qty') as unknown;
+    return summe + (typeof q === 'number' && Number.isFinite(q) ? q : 0);
+  }, 0);
+}
+
 export async function fillSchonGebucht(uid: string, brokerOrderId: string | null | undefined): Promise<boolean> {
   if (!brokerOrderId) return false;
   const schon = await getFirestore()
@@ -920,10 +952,20 @@ export async function executeTrade(
         return { stand: 'frei' } as const;
       },
     );
-    if (aufhebung.stand === 'gefuellt') {
-      if (await fillSchonGebucht(req.uid, aufhebung.orderId)) {
-        return { executed: false, reason: 'fill_schon_gebucht' };
-      }
+    /* Ist der Rest der Stop-Order tot, ist die Order VERBRAUCHT — die
+     * Verknüpfung an der Position muss weg, BEVOR gebucht wird (Red-Team
+     * 08.10., H1): Sonst sammelte der nächste Puls dieselbe gefüllte Order
+     * wieder ein, fand ihren Fill schon gebucht — und kam nie bis zum
+     * Routing des Rests. Der Rest wäre dauerhaft unverkäuflich gewesen. */
+    if (aufhebung.stand === 'gefuellt' && aufhebung.restStorniert === true) {
+      await schutzVerknuepfungLoesen(req.uid, req.symbol);
+    }
+    if (aufhebung.stand === 'gefuellt' && await fillSchonGebucht(req.uid, aufhebung.orderId)) {
+      // Schon gebucht (vom Scan oder einem früheren Puls): nichts doppelt
+      // buchen — aber NICHT aufhören. Der Rest der Position geht jetzt
+      // regulär ins Routing, wie jeder andere Exit.
+      logger.info(`executeTrade ${req.uid} ${req.symbol}: Stop-Fill ${aufhebung.orderId} war schon gebucht — Rest wird regulär geschlossen`);
+    } else if (aufhebung.stand === 'gefuellt') {
       const aufhebungsBuchung = await executePaperTrade(
         {
           ...req,
@@ -1198,27 +1240,29 @@ export async function merkeOffeneOrder(
   mengen: { gebucht: number; soll: number; lauf: string },
 ): Promise<void> {
   const id = offen.clientOrderId.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 120);
-  await getFirestore()
-    .collection('users')
-    .doc(uid)
-    .collection('offeneOrders')
-    .doc(id)
-    .set(
-      {
-        art: offen.art,
-        clientOrderId: offen.clientOrderId,
-        ...(offen.orderId ? { orderId: offen.orderId } : {}),
-        symbol,
-        side,
-        gebuchteMenge: mengen.gebucht,
-        sollMenge: mengen.soll,
-        lauf: mengen.lauf,
-        at: new Date().toISOString(),
-        versuche: 0,
-      },
-      { merge: true },
-    )
-    .catch((err: unknown) => logger.warn(`offeneOrders ${uid} ${symbol}: Vermerk nicht geschrieben`, err));
+  const ref = getFirestore().collection('users').doc(uid).collection('offeneOrders').doc(id);
+  /* Erst `create` — ein zweiter Lauf, der dieselbe Order wieder vorfindet,
+   * darf `at` und `versuche` nicht zurücksetzen (Red-Team 08.10., M3): Sonst
+   * erreichte eine laufend wiederbesuchte Order nie NACHLAUF_MAX_TAGE.
+   * Existiert der Vermerk, wird nur die Broker-Kennung nachgetragen. */
+  try {
+    await ref.create({
+      art: offen.art,
+      clientOrderId: offen.clientOrderId,
+      ...(offen.orderId ? { orderId: offen.orderId } : {}),
+      symbol,
+      side,
+      gebuchteMenge: mengen.gebucht,
+      sollMenge: mengen.soll,
+      lauf: mengen.lauf,
+      at: new Date().toISOString(),
+      versuche: 0,
+    });
+  } catch {
+    await ref
+      .set({ ...(offen.orderId ? { orderId: offen.orderId } : {}), gebuchteMenge: mengen.gebucht }, { merge: true })
+      .catch((err: unknown) => logger.warn(`offeneOrders ${uid} ${symbol}: Vermerk nicht geschrieben`, err));
+  }
   logger.warn(`OFFENE ORDER ${uid} ${symbol} ${side} (${offen.art}) — wird im nächsten Scan nachgefragt`);
 }
 
@@ -1251,7 +1295,7 @@ export async function bucheOffeneOrders(uid: string, strategy: Strategy): Promis
   if (!verbindung) return { ...leer, offen: snap.size };
 
   const zahl = (x: unknown): number => (typeof x === 'number' && Number.isFinite(x) ? x : 0);
-  let gebucht = 0;
+  let nachgebucht = 0;
   let offen = 0;
   for (const doc of snap.docs) {
     const d = doc.data() as {
@@ -1279,7 +1323,11 @@ export async function bucheOffeneOrders(uid: string, strategy: Strategy): Promis
         stand = (await alpacaOrderAbfragen(verbindung.mode, stand.id, verbindung.schluessel).catch(() => null)) ?? stand;
       }
       const endzustand = ORDER_ENDZUSTAENDE.has(stand.status);
-      const neu = stand.filledQty - zahl(d.gebuchteMenge);
+      /* Was schon im Buch steht, zählt — auch wenn ein ANDERER Weg (Puls,
+       * Duplicate-Pfad) den Fill gebucht hat, während der Vermerk noch bei 0
+       * stand (Red-Team 08.10., M3). Der eigene Zähler ist die Untergrenze. */
+      const gebucht = Math.max(zahl(d.gebuchteMenge), await gebuchteMengeJeOrder(uid, stand.id));
+      const neu = stand.filledQty - gebucht;
       if (neu > 1e-9 && stand.filledAvgPreis > 0) {
         const r = await executePaperTrade(
           {
@@ -1302,14 +1350,21 @@ export async function bucheOffeneOrders(uid: string, strategy: Strategy): Promis
           reason: `buchung_exception: ${err instanceof Error ? err.message : String(err)}`.slice(0, 200),
         }));
         if (r.executed) {
-          gebucht += 1;
+          nachgebucht += 1;
           logger.warn(`NACHLAUF ${uid} ${d.symbol}: ${neu} Stück (${d.art}) nachgebucht @ ${stand.filledAvgPreis}`);
-          await doc.ref.set({ gebuchteMenge: zahl(d.gebuchteMenge) + neu, orderId: stand.id }, { merge: true })
+          await doc.ref.set({ gebuchteMenge: gebucht + neu, orderId: stand.id }, { merge: true })
             .catch(() => undefined);
         } else {
-          await merkeUnbookedFill(uid, d.symbol, d.side, neu, stand.filledAvgPreis, stand.id, String(d.lauf ?? 'nachlauf'),
-            r.reason ?? 'unbekannt', eroeffnend ? undefined : endzustand);
-          await doc.ref.delete().catch(() => undefined);
+          /* Scheitert die Buchung der DIFFERENZ, bleibt der Vermerk stehen
+           * und der nächste Scan versucht es erneut (Red-Team 08.10., M1).
+           * NICHT in `unbookedFills`: Dessen Dedupe nach Order-Kennung fände
+           * den ersten Teilfill derselben Order und löschte den Eintrag ohne
+           * Buchung — die Differenz wäre still verschwunden. Nach
+           * NACHLAUF_MAX_TAGE wird laut aufgegeben (unten). */
+          logger.error(`NACHLAUF ${uid} ${d.symbol}: ${neu} Stück NICHT gebucht — ${r.reason ?? 'unbekannt'} (Vermerk bleibt)`);
+          offen += 1;
+          await doc.ref.set({ versuche: zahl(d.versuche) + 1, letzterVersuch: new Date().toISOString(), letzterGrund: (r.reason ?? 'unbekannt').slice(0, 200), orderId: stand.id }, { merge: true })
+            .catch(() => undefined);
           continue;
         }
       }
@@ -1328,7 +1383,7 @@ export async function bucheOffeneOrders(uid: string, strategy: Strategy): Promis
       logger.warn(`offeneOrders ${uid} ${d.symbol}: Nachfrage fehlgeschlagen`, err);
     }
   }
-  return { geprueft: snap.size, gebucht, offen };
+  return { geprueft: snap.size, gebucht: nachgebucht, offen };
 }
 
 /**
@@ -1858,7 +1913,44 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       return { executed: true, trade: { ...trade, id: tradeRef.id } };
     }
     const pos = posSnap.data() as Position;
-    if (pos.side === 'short') return { executed: false, reason: 'short_nachverkauf_verboten' };
+    if (pos.side === 'short') {
+      /* Ein ECHTER Fill, der einen bestehenden Short vergrößert (Rest einer
+       * teilgefüllten Leerverkaufs-Order, Nachlauf; Red-Team 08.10., M2),
+       * MUSS gebucht werden — der Broker hält ihn längst. Das Verbot bleibt
+       * für alles andere: Die Engine stockt Shorts nie absichtlich auf. */
+      if (!(req.aufstockung === true && echterFill && req.qty !== undefined && req.qty > 0)) {
+        return { executed: false, reason: 'short_nachverkauf_verboten' };
+      }
+      const qty = req.qty;
+      const margin = qty * eff;
+      const nQty = pos.qty + qty;
+      const nAvg = Math.round(((pos.qty * pos.avgEntry + qty * eff) / nQty) * 10_000) / 10_000;
+      const risk = resolveRisk(strategy.engine, req.assetClass ?? classify(req.symbol));
+      tx.set(posRef, {
+        ...pos,
+        qty: nQty,
+        avgEntry: nAvg,
+        stopLoss: risk.stopLossPct > 0 ? nAvg * (1 + risk.stopLossPct / 100) : (pos.stopLoss ?? null),
+        takeProfit: risk.takeProfitPct > 0 ? nAvg * (1 - risk.takeProfitPct / 100) : (pos.takeProfit ?? null),
+        lowWater: Math.min(pos.lowWater ?? nAvg, eff),
+        broker: true,
+        ...(req.brokerOrderId ? { brokerOrderId: req.brokerOrderId } : {}),
+      });
+      const trade: Trade & { short: boolean; nachkauf: boolean } = {
+        symbol: req.symbol,
+        side: 'sell',
+        qty,
+        price: eff,
+        executedAt: now,
+        source: req.source,
+        paper: true,
+        short: true,
+        nachkauf: true,
+      };
+      tx.set(tradeRef, { ...trade, at: Timestamp.now(), rawPrice: req.price, ...herkunft, fee: kosten(qty) });
+      tx.update(userRef, { 'wallet.paperBalance': roundCents(balance - margin), 'wallet.updatedAt': now });
+      return { executed: true, trade: { ...trade, id: tradeRef.id } };
+    }
     const { menge: qty, rest, ganz } = schlussMenge(pos.qty, req.qty, req.restStorniert);
     const proceeds = qty * eff;
     const pnl = (eff - pos.avgEntry) * qty;

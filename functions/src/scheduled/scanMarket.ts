@@ -106,6 +106,7 @@ import {
   executePaperTrade,
   bucheUnverbuchteFills,
   bucheOffeneOrders,
+  fillSchonGebucht,
   executeTrade,
   kapitalDeckel,
   merkeUnbookedFill,
@@ -1248,7 +1249,15 @@ async function executeUserTrades(
               cls,
               scanId,
             );
-            if (befund.stand === 'gefuellt') {
+            /* Schon gebucht — vom Minuten-Puls, der denselben Stop-Fill
+             * über `schutzAufheben` eingesammelt hat (Red-Team 08.10., H1)?
+             * Dann nichts doppelt buchen: `pflegeSchutz` hat die Verknüpfung
+             * gelöst, der Rest läuft unten durch den regulären Exit-Check. */
+            const schonGebucht = befund.stand === 'gefuellt' && await fillSchonGebucht(uid, befund.orderId);
+            if (schonGebucht) {
+              logger.info(`Broker-Stop ${uid} ${symbol}: Fill ${befund.orderId} war schon gebucht`);
+            }
+            if (befund.stand === 'gefuellt' && !schonGebucht) {
               const r = await executePaperTrade(
                 {
                   uid,

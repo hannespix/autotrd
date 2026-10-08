@@ -49,6 +49,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions/v2';
 import { usSessionClass, type Position, type RiskConfig } from '../../../shared/src/index.js';
 import {
+  type AlpacaOrderStand,
   alpacaOrderAbfragen,
   alpacaOrderErsetzen,
   alpacaOrderStornieren,
@@ -530,9 +531,18 @@ export async function schutzAufheben(
     if (!ORDER_ENDZUSTAENDE.has(endstand.status)) {
       await alpacaOrderStornieren(verbindung.mode, schutz.orderId, verbindung.schluessel, fetchImpl)
         .catch(() => 'nicht_stornierbar' as const);
-      const nach = await alpacaOrderAbfragen(verbindung.mode, schutz.orderId, verbindung.schluessel, fetchImpl)
-        .catch(() => null);
+      /* Ein NETZFEHLER bei der Nachfrage ist kein Endzustand (Red-Team
+       * 08.10., H2): `null` heißt bei `alpacaOrderAbfragen` ausdrücklich 404
+       * — die Order ist weg. Wirft die Nachfrage, bleibt der Stand unbekannt
+       * und die Zusicherung unterbleibt; es gilt der sichere volle Schluss. */
+      let nach: AlpacaOrderStand | null | 'unbekannt';
+      try {
+        nach = await alpacaOrderAbfragen(verbindung.mode, schutz.orderId, verbindung.schluessel, fetchImpl);
+      } catch {
+        nach = 'unbekannt';
+      }
       if (nach === null) endstand = { ...endstand, status: 'canceled' };
+      else if (nach === 'unbekannt') { /* Stand bleibt: kein Endzustand */ }
       else if (nach.filledQty > 0 && nach.filledAvgPreis > 0) endstand = nach;
       else endstand = { ...endstand, status: nach.status };
     }

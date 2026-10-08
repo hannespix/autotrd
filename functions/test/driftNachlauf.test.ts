@@ -158,6 +158,19 @@ describe('schutzAufheben: der Rest der Stop-Order wird verifiziert', () => {
     expect(b).toMatchObject({ stand: 'gefuellt', fillQty: 2, fillPreis: 98.3, restStorniert: true });
   });
 
+  it('Netzfehler bei der Nachfrage ist KEIN Endzustand (Red-Team H2) — keine Zusicherung', async () => {
+    let n = 0;
+    const f = vi.fn(async (_url: string, init?: RequestInit) => {
+      n += 1;
+      if (n === 1) return { ok: false, status: 422, text: async () => JSON.stringify({ message: 'not cancelable' }) } as unknown as Response;
+      if (n === 2) return { ok: true, status: 200, text: async () => JSON.stringify({ id: 'o1', status: 'partially_filled', filled_qty: '1', filled_avg_price: '98.4' }) } as unknown as Response;
+      if (init?.method === 'DELETE') throw new TypeError('fetch failed');
+      throw new TypeError('fetch failed'); // Nachfrage wirft — Stand unbekannt
+    });
+    const b = await schutzAufheben(VERBINDUNG, 'u1', 'AAPL', { orderId: 'o1' }, f as never);
+    expect(b).toMatchObject({ stand: 'gefuellt', fillQty: 1, restStorniert: false });
+  });
+
   it('Rest lebt weiter (kein Endzustand) → KEINE Zusicherung: sicherer voller Schluss', async () => {
     const f = folge(
       { ok: false, status: 422, body: { message: 'not cancelable' } },
@@ -215,7 +228,7 @@ describe('Quelltext-Wächter: die Verdrahtung', () => {
   });
 
   it('kein Fill wird zweimal gebucht — Routing-Pfad UND Stop-Pfad fragen das Buch', () => {
-    expect(anzahl(broker, 'if (await fillSchonGebucht(req.uid, aufhebung.orderId)) {')).toBe(1);
+    expect(anzahl(broker, "if (aufhebung.stand === 'gefuellt' && await fillSchonGebucht(req.uid, aufhebung.orderId)) {")).toBe(1);
     expect(anzahl(broker, 'if (await fillSchonGebucht(req.uid, routing.brokerOrderId)) {')).toBe(1);
   });
 
@@ -244,19 +257,63 @@ describe('Quelltext-Wächter: die Verdrahtung', () => {
 
   it('Nachlauf: Einstiege buchen nur die DIFFERENZ als Aufstockung, Exits nur mit Endzustand-Zusicherung', () => {
     const f = broker.slice(broker.indexOf('export async function bucheOffeneOrders'));
-    expect(f).toContain('const neu = stand.filledQty - zahl(d.gebuchteMenge);');
+    expect(f).toContain('const neu = stand.filledQty - gebucht;');
     expect(f).toContain("? { aufstockung: true, ...(d.side === 'sell' ? { openShort: true } : {}) }");
     expect(f).toContain("{ restStorniert: endzustand, riskExit: 'exit_nachlauf' }");
     // ein eröffnender Rest wird storniert, bevor gebucht wird
     expect(f).toContain('if (eroeffnend && !ORDER_ENDZUSTAENDE.has(stand.status)) {');
-    // ein nicht buchbarer Fill verschwindet nie stumm
-    expect(f).toContain('await merkeUnbookedFill(uid, d.symbol, d.side, neu, stand.filledAvgPreis, stand.id,');
+    // ein nicht buchbarer Fill verschwindet nie stumm: der Vermerk bleibt stehen (M1), nach NACHLAUF_MAX_TAGE wird laut aufgegeben
+    expect(f).toContain('ohne Endzustand — aufgegeben, Fall für die Übernahme');
   });
 
   it('Symbol-Sperre: kein Einstieg in ein Symbol, das Buch und Broker verschieden führen', () => {
     expect(anzahl(scan, "if (echtesBuch && abweichSymbole.has(symbol)) { gate.fremdbestand += 1; return 'fremdbestand'; }")).toBe(1);
     expect(anzahl(scan, 'const abweichSymbole = new Set(abgleichBefund.abweichungen.map((a) => a.symbol));')).toBe(1);
     expect(dashboard).toContain("['fremdbestand', t('gate.fremdbestand')],");
+  });
+
+  it('H1: Die verbrauchte Stop-Order wird VOR der Buchung von der Position gelöst — und ein schon gebuchter Fill beendet den Exit nicht', () => {
+    const et = broker.slice(broker.indexOf('export async function executeTrade'), broker.indexOf('export async function merkeOffeneOrder'));
+    const loesen = et.indexOf("if (aufhebung.stand === 'gefuellt' && aufhebung.restStorniert === true) {\n      await schutzVerknuepfungLoesen(req.uid, req.symbol);");
+    const schon = et.indexOf("if (aufhebung.stand === 'gefuellt' && await fillSchonGebucht(req.uid, aufhebung.orderId)) {");
+    const buchung = et.indexOf("} else if (aufhebung.stand === 'gefuellt') {");
+    const routing = et.indexOf('const routing = await routeOrder(');
+    expect(loesen).toBeGreaterThan(0);
+    expect(loesen).toBeLessThan(schon);
+    expect(schon).toBeLessThan(buchung);
+    expect(buchung).toBeLessThan(routing);
+    // im „schon gebucht"-Zweig gibt es KEIN return — der Rest geht ins Routing
+    const zweig = et.slice(schon, buchung);
+    expect(zweig).not.toContain('return ');
+    expect(zweig).toContain('Rest wird regulär geschlossen');
+  });
+
+  it('H1 im Scan: der pflegeSchutz-Pfad fragt das Buch, bevor er den Stop-Fill bucht', () => {
+    expect(anzahl(scan, "const schonGebucht = befund.stand === 'gefuellt' && await fillSchonGebucht(uid, befund.orderId);")).toBe(1);
+    expect(anzahl(scan, "if (befund.stand === 'gefuellt' && !schonGebucht) {")).toBe(1);
+  });
+
+  it('M1/M3: der Nachlauf summiert das Buch je Order, lässt eine gescheiterte Differenz STEHEN und setzt Vermerke nicht zurück', () => {
+    const f = broker.slice(broker.indexOf('export async function bucheOffeneOrders'));
+    expect(f).toContain('const gebucht = Math.max(zahl(d.gebuchteMenge), await gebuchteMengeJeOrder(uid, stand.id));');
+    expect(f).not.toContain('await merkeUnbookedFill(');
+    expect(f).toContain("NICHT gebucht — ${r.reason ?? 'unbekannt'} (Vermerk bleibt)");
+    const m = broker.slice(broker.indexOf('export async function merkeOffeneOrder'), broker.indexOf('export async function bucheOffeneOrders'));
+    expect(m).toContain('await ref.create({');
+    expect(m).not.toContain('versuche: 0,\n      },\n      { merge: true }');
+  });
+
+  it('M2: ein echter Fill darf einen bestehenden Short vergrößern — sonst bleibt das Verbot', () => {
+    const b = broker.slice(broker.indexOf('export async function executePaperTrade'));
+    expect(b).toContain("if (!(req.aufstockung === true && echterFill && req.qty !== undefined && req.qty > 0)) {\n        return { executed: false, reason: 'short_nachverkauf_verboten' };");
+    expect(b).toContain('stopLoss: risk.stopLossPct > 0 ? nAvg * (1 + risk.stopLossPct / 100) : (pos.stopLoss ?? null),');
+  });
+
+  it('M4: Momentum, Sockel und Handeingabe fragen die Symbol-Sperre', () => {
+    const momentum = lies('scheduled', 'momentumRun.ts');
+    const trade = lies('callable', 'trade.ts');
+    expect(anzahl(momentum, "symbolSperreAusVermerk(userDoc.get('risk.abgleich'), o.symbol, now)")).toBe(2);
+    expect(trade).toContain("throw new HttpsError('failed-precondition', 'srv.fremdbestand');");
   });
 
   it('Anzeige: die abweichenden Symbole stehen mit Mengen in der Abgleich-Zeile', () => {
