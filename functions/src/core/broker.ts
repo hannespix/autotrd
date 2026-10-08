@@ -229,18 +229,38 @@ export async function schutzVerknuepfungLoesen(uid: string, symbol: string): Pro
  * Nicht lesbar ⇒ 0 (der Aufrufer hat seinen eigenen Zähler als Untergrenze).
  */
 export async function gebuchteMengeJeOrder(uid: string, brokerOrderId: string): Promise<number> {
-  const snap = await getFirestore()
-    .collection('users')
-    .doc(uid)
-    .collection('trades')
-    .where('brokerOrderId', '==', brokerOrderId)
-    .get()
-    .catch(() => null);
-  if (!snap) return 0;
-  return snap.docs.reduce((summe, d) => {
-    const q = d.get('qty') as unknown;
-    return summe + (typeof q === 'number' && Number.isFinite(q) ? q : 0);
-  }, 0);
+  return (await gebuchtJeOrder(uid, brokerOrderId)).menge;
+}
+
+/**
+ * Gebuchte Menge UND gebuchter Wert (Σ Menge × Broker-Kurs) je Order — der
+ * Wert erlaubt dem Ereigniskanal die exakte Tranchen-Preisformel
+ * (Nachprüfung 08.10., N1): Der Preis einer fehlenden Tranche ist
+ * (Gesamtmenge × Order-Durchschnitt − gebuchter Wert) / fehlende Menge, nicht
+ * der Order-Durchschnitt, der den schon gebuchten Teil ein zweites Mal
+ * mittelt. Preisquelle je Trade: der Broker-Kurs, sonst der Rohkurs.
+ */
+export async function gebuchtJeOrder(uid: string, brokerOrderId: string): Promise<{ menge: number; wert: number }> {
+  const userRef = getFirestore().collection('users').doc(uid);
+  // Auch das ARCHIV (Red-Team 08.10., M1): Ein Reset verschiebt die Trades
+  // nach `tradesArchive`; ohne diesen Blick stünde ein längst gebuchter
+  // Fill wieder als „fehlend" da und landete im frisch zurückgesetzten Buch.
+  const [aktiv, archiv] = await Promise.all([
+    userRef.collection('trades').where('brokerOrderId', '==', brokerOrderId).get().catch(() => null),
+    userRef.collection('tradesArchive').where('brokerOrderId', '==', brokerOrderId).get().catch(() => null),
+  ]);
+  const zahl = (x: unknown): number => (typeof x === 'number' && Number.isFinite(x) ? x : 0);
+  const out = { menge: 0, wert: 0 };
+  for (const snap of [aktiv, archiv]) {
+    if (!snap) continue;
+    for (const d of snap.docs) {
+      const q = zahl(d.get('qty'));
+      const kurs = zahl(d.get('brokerFillPrice')) || zahl(d.get('rawPrice')) || zahl(d.get('price'));
+      out.menge += q;
+      out.wert += q * kurs;
+    }
+  }
+  return out;
 }
 
 export async function fillSchonGebucht(uid: string, brokerOrderId: string | null | undefined): Promise<boolean> {
@@ -609,6 +629,13 @@ export interface TradeRequest {
    * strikt aus dem Cash (zu_wenig_cash statt Kredit).
    */
   aufstockung?: boolean;
+  /**
+   * Ausführungszeit laut Broker (Drift-Paket 2, 08.10.) — für Trades, die der
+   * Ereigniskanal nachbucht. Ohne Angabe gilt die Buchungszeit. Der Trade
+   * und eine neu eröffnete Position tragen dann den echten Zeitpunkt (FIFO,
+   * Haltedauer), nicht den Moment, in dem das Buch davon erfuhr.
+   */
+  ausgefuehrtAt?: string;
   /**
    * Überzeugungs-Faktor der Positionsgröße (Owner-Direktive 01.08.): skaliert
    * die Tranche mit messbarer Überzeugung (convictionFactor, 0,25–1,5).
@@ -1632,7 +1659,9 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       if (!schon.empty) return { executed: false, reason: 'fill_schon_gebucht' };
     }
     const balance = (userSnap.get('wallet.paperBalance') as number | undefined) ?? 0;
-    const now = new Date().toISOString();
+    const now = typeof req.ausgefuehrtAt === 'string' && Number.isFinite(Date.parse(req.ausgefuehrtAt))
+      ? new Date(Date.parse(req.ausgefuehrtAt)).toISOString()
+      : new Date().toISOString();
     /* Einstiege rechnen mit dem GEDECKELTEN Kapital (siehe kapitalDeckel):
      * min(Buch, Broker) aus dem letzten Konto-Abgleich. Die Wallet-Buchungen
      * weiter unten bleiben beim echten Buchstand — der Deckel entscheidet,
@@ -1904,10 +1933,14 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       const margin = qty * eff;
       // Gleiche Deckungsprüfung wie beim Kauf: Der Short bindet Sicherheit,
       // und ob die aus Cash oder aus Kaufkraft kommt, entscheidet der Hebel.
-      if (req.margin) {
-        if (margin > req.margin.buyingPower + 1e-9) return { executed: false, reason: 'zu_wenig_kaufkraft' };
-      } else if (margin > deckung) {
-        return { executed: false, reason: 'zu_wenig_cash' };
+      // Ein ECHTER Fill wird immer gebucht (Red-Team 08.10., M2) — der
+      // Broker hält den Short längst; das Buch darf ihn nicht verweigern.
+      if (!echterFill) {
+        if (req.margin) {
+          if (margin > req.margin.buyingPower + 1e-9) return { executed: false, reason: 'zu_wenig_kaufkraft' };
+        } else if (margin > deckung) {
+          return { executed: false, reason: 'zu_wenig_cash' };
+        }
       }
       const risk = resolveRisk(strategy.engine, cls);
       const position: Position = {

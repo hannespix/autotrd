@@ -1106,6 +1106,17 @@ export interface HealthDoc {
    * seit Tagen stand, exakt so aus wie „nichts zu tun". `null` bedeutet
    * „nicht gemessen" (Trade-Block lief nicht) und ist nicht dasselbe wie 0.
    */
+  /** Ereigniskanal für Ausführungen (Drift-Paket 2, 08.10.). */
+  fillSync?: {
+    at?: string;
+    konten?: number;
+    gebucht?: number;
+    fremd?: number;
+    fehler?: number;
+    uebersprungen?: number;
+    ohnePosition?: number;
+    zustand?: { aktiv?: boolean; text?: string; seit?: string; at?: string };
+  } | null;
   nachbuchung?: {
     gebucht?: number;
     offen?: number;

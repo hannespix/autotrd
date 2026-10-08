@@ -16,7 +16,7 @@ describe('wachhund — Untätigkeit verdrahtet', () => {
     expect(quelle).toContain("trades7t: health.get('trading.trades7t')");
   });
   it('schreibt das Urteil getrennt vom Herzschlag-Alarm', () => {
-    expect(quelle).toContain("await db.doc('meta/health').set({ alarm, aktivitaet, nachrichten }, { merge: true });");
+    expect(quelle).toContain("await db.doc('meta/health').set({ alarm, aktivitaet, nachrichten, fillSync: { zustand: fillSyncZustand } }, { merge: true });");
   });
   it('bewertet den Nachrichten-Sammler aus seinem Stand — auch nur in einem eigenen Feld', () => {
     expect(quelle).toContain("const stand = await db.doc('meta/nachrichtenStand').get();");

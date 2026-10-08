@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   bewerteAktivitaet,
+  bewerteFillSync,
   bewerteHerzschlag,
   bewerteNachrichten,
   naechsterAktivitaetsZustand,
@@ -204,5 +205,20 @@ describe('bewerteNachrichten (KI-Kaskade Stufe 1)', () => {
     const u = bewerteNachrichten({ ...basis, rueckstandS: 3 * 3600 });
     expect(u.ok).toBe(false);
     expect(u.text).toContain('3 h');
+  });
+});
+
+describe('bewerteFillSync — vierte Frage: läuft der Ereigniskanal?', () => {
+  const jetztMs = Date.parse('2026-10-08T12:00:00Z');
+  it('nie gelaufen: kein Urteil; frisch: läuft (mit Fehlerzahl im Text)', () => {
+    expect(bewerteFillSync({ jetztMs }).ok).toBe(true);
+    expect(bewerteFillSync({ jetztMs, at: '2026-10-08T11:50:00Z' })).toEqual({ ok: true, text: 'Ereigniskanal läuft.' });
+    expect(bewerteFillSync({ jetztMs, at: '2026-10-08T11:50:00Z', fehler: 2 }).text).toContain('2 Fehler');
+  });
+  it('länger als FILLSYNC_STILL_MAX_MIN still: Alarm', () => {
+    const u = bewerteFillSync({ jetztMs, at: '2026-10-08T11:20:00Z' });
+    expect(u.ok).toBe(false);
+    expect(u.text).toContain('seit 40 min nicht');
+    expect(bewerteFillSync({ jetztMs, at: 'kaputt' }).ok).toBe(false);
   });
 });

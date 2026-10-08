@@ -907,6 +907,12 @@ export interface AlpacaOrderStand {
   filledQty: number;
   /** Mittlerer Ausführungskurs; 0, solange nichts ausgeführt ist. */
   filledAvgPreis: number;
+  /** Unsere Client-Kennung (Drift-Paket 2, 08.10.) — verrät, ob die Order von uns ist. */
+  clientOrderId?: string;
+  /** Richtung laut Broker. */
+  side?: 'buy' | 'sell';
+  /** Order-Typ laut Broker (market/limit/stop/stop_limit …). */
+  typ?: string;
 }
 
 /**
@@ -939,6 +945,9 @@ export async function alpacaOrderAbfragen(
     status: String(d['status'] ?? ''),
     filledQty: zahl(d['filled_qty']),
     filledAvgPreis: zahl(d['filled_avg_price']),
+    clientOrderId: String(d['client_order_id'] ?? ''),
+    side: String(d['side'] ?? '') === 'sell' ? 'sell' : 'buy',
+    typ: String(d['type'] ?? ''),
   };
 }
 
@@ -977,7 +986,86 @@ export async function alpacaOrderPerClientId(
     status: String(d['status'] ?? ''),
     filledQty: zahl(d['filled_qty']),
     filledAvgPreis: zahl(d['filled_avg_price']),
+    clientOrderId: String(d['client_order_id'] ?? clientOrderId),
+    side: String(d['side'] ?? '') === 'sell' ? 'sell' : 'buy',
+    typ: String(d['type'] ?? ''),
   };
+}
+
+/* ── Ausführungs-Ereignisse (Drift-Paket 2, 08.10.) ─────────────────────── */
+
+/** Eine Ausführung aus der Konto-Aktivität — die Quelle, die KEINE Nachfrage braucht. */
+export interface AlpacaFill {
+  id: string;
+  orderId: string;
+  symbol: string;
+  side: 'buy' | 'sell';
+  /** Menge DIESER Ausführung (nicht kumuliert). */
+  qty: number;
+  price: number;
+  cumQty: number;
+  leavesQty: number;
+  transactionTime: string;
+  typ: 'fill' | 'partial_fill';
+}
+
+/** Höchstens so viele Seiten je Konto und Lauf. */
+export const FILL_SEITEN_MAX = 5;
+
+/**
+ * Ausführungen seit `afterIso` aufsteigend abrufen — paginiert über die
+ * Kennung der letzten Zeile (`page_token`). Das ist der Ereigniskanal, den
+ * das Buch bisher nicht hatte: Jede Ausführung beim Broker, egal auf welchem
+ * Weg sie zustande kam, taucht hier auf.
+ */
+export async function holeFillAktivitaeten(
+  mode: BrokerMode,
+  schluessel: AlpacaSchluessel | null,
+  afterIso: string,
+  fetchImpl: FetchLike = fetch,
+  maxSeiten: number = FILL_SEITEN_MAX,
+): Promise<{ fills: AlpacaFill[]; abgeschnitten: boolean }> {
+  const out: AlpacaFill[] = [];
+  let token = '';
+  let abgeschnitten = false;
+  for (let seite = 0; seite < maxSeiten; seite += 1) {
+    const d = (await alpacaFetch(
+      mode,
+      `/v2/account/activities/FILL?after=${encodeURIComponent(afterIso)}&direction=asc&page_size=100`
+        + (token ? `&page_token=${encodeURIComponent(token)}` : ''),
+      schluessel,
+      {},
+      fetchImpl,
+    )) as unknown[];
+    if (!Array.isArray(d) || d.length === 0) break;
+    for (const roh of d) {
+      const r = roh as Record<string, unknown>;
+      const qty = zahl(r['qty']);
+      const price = zahl(r['price']);
+      const id = String(r['id'] ?? '');
+      const seite = String(r['side'] ?? '');
+      // Unbekannte Seite ⇒ überspringen, nicht raten (Red-Team 08.10.):
+      // „unbekannt ⇒ Kauf" wäre die gefährliche Richtung.
+      if (!(qty > 0) || !(price > 0) || !id || (seite !== 'buy' && seite !== 'sell')) continue;
+      out.push({
+        id,
+        orderId: String(r['order_id'] ?? ''),
+        symbol: vonAlpacaSymbol(String(r['symbol'] ?? '')),
+        side: seite,
+        qty,
+        price,
+        cumQty: zahl(r['cum_qty']),
+        leavesQty: zahl(r['leaves_qty']),
+        transactionTime: String(r['transaction_time'] ?? ''),
+        typ: String(r['type'] ?? '') === 'partial_fill' ? 'partial_fill' : 'fill',
+      });
+    }
+    const letzte = (d[d.length - 1] as Record<string, unknown>)['id'];
+    token = String(letzte ?? '');
+    if (d.length < 100 || !token) break;
+    if (seite === maxSeiten - 1) abgeschnitten = true;
+  }
+  return { fills: out, abgeschnitten };
 }
 
 /**

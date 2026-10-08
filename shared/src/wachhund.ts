@@ -247,6 +247,38 @@ export interface NachrichtenEingabe {
   fehlerFolge?: number | undefined;
 }
 
+/** So lange darf der Ereigniskanal für Ausführungen ohne Lebenszeichen bleiben. */
+export const FILLSYNC_STILL_MAX_MIN = 30;
+
+export interface FillSyncEingabe {
+  jetztMs: number;
+  /** `meta/health.fillSync.at` — letzter Lauf des Ereigniskanals. */
+  at?: string | undefined;
+  /** `meta/health.fillSync.fehler` — Fehler im letzten Lauf. */
+  fehler?: number | undefined;
+}
+
+/**
+ * Vierte Frage, viertes Feld (`meta/health.fillSync`, Drift-Paket 2):
+ * Läuft der Ereigniskanal, der Ausführungen des Brokers ins Buch holt?
+ * Steht er, wandert jede verpasste Ausführung wieder in den Fremdbestand
+ * — genau der Zustand, den er beenden soll. Fehler im Lauf sind kein
+ * Alarm für sich (ein Konto mit Netzfehler wiederholt im nächsten Lauf),
+ * aber sie stehen im Text.
+ */
+export function bewerteFillSync(e: FillSyncEingabe): AktivitaetUrteil {
+  if (!e.at) return { ok: true, text: 'Ereigniskanal lief noch nie — kein Urteil.' };
+  const at = Date.parse(e.at);
+  if (!Number.isFinite(at) || e.jetztMs - at > FILLSYNC_STILL_MAX_MIN * 60_000) {
+    const min = Number.isFinite(at) ? Math.round((e.jetztMs - at) / 60_000) : null;
+    return {
+      ok: false,
+      text: `Ereigniskanal (fillSync) ${min === null ? 'noch nie' : `seit ${min} min nicht`} gelaufen — Ausführungen des Brokers erreichen das Buch nur noch über den Scan.`,
+    };
+  }
+  return { ok: true, text: `Ereigniskanal läuft${(e.fehler ?? 0) > 0 ? ` (${e.fehler} Fehler im letzten Lauf)` : ''}.` };
+}
+
 export function bewerteNachrichten(e: NachrichtenEingabe): AktivitaetUrteil {
   if (!e.letzterLauf) return { ok: true, text: 'Nachrichten-Sammler lief noch nie — kein Urteil.' };
   if (e.grund === 'keine_schluessel') {
