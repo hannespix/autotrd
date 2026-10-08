@@ -16,8 +16,10 @@ import {
   handelbarZurBezugszeit,
   holdoutArm,
   benchmarkPct,
+  BENCHMARK_H_MAX,
   BENCHMARK_MIN_FENSTER,
   fallKennzahlen,
+  KI_HOLDOUT_BUCKET,
   isoWocheEt,
   KI_GEWICHT_BUCKET,
   KI_GEWICHT_MAX,
@@ -155,7 +157,8 @@ describe('bewerteUrteil — Gate und Rechnung', () => {
 
 describe('Buckets und Fälle', () => {
   it('wirksam heißt: der Scan hat TATSÄCHLICH gestimmt (gestimmtAt) — Long und Short getrennt', () => {
-    expect(KI_GEWICHT_BUCKET).toBe('wirksam_long');
+    expect(KI_GEWICHT_BUCKET).toBe('holdout_a'); // das Gewicht rechnet NUR aus Arm A
+    expect(KI_HOLDOUT_BUCKET).toBe('holdout_b');
     // Stufe 4a: der Gewichts-Bucket bekommt zusätzlich seinen Holdout-Arm (Hash des Fallschlüssels).
     const arm = holdoutArm('AAPL|2026-09-01');
     expect(bucketsFuer(urteil())).toEqual(['gesamt', 'pruefung', 'wirksam_long', `holdout_${arm}`, 'handelbar', 'ereignis_zahlen']);
@@ -269,20 +272,31 @@ describe('Stufe 4a — Benchmark, Holdout, Kennzahlen', () => {
     }
     return out;
   };
-  it('benchmarkPct = mittlere h-Tage-Bewegung VOR dem Bezugstag; nie eine Kerze danach', () => {
+  it('benchmarkPct = mittlere h-Tage-Bewegung STRIKT vor dem Bezugstag; weder die Bezugstag-Kerze noch spätere zählen', () => {
     const r = reihe(80);
     const bezug = r[70]!.date;
     const b = benchmarkPct(r, bezug, 3);
     expect(b).not.toBeNull();
     expect(b!).toBeCloseTo(3.03, 1); // (1.01^3 − 1) × 100
-    // Kerzen nach dem Bezug ändern NICHTS (Lookahead-frei)
-    const manipuliert = r.map((s) => (s.date > bezug ? { ...s, close: s.close * 10 } : s));
+    // Kerzen AB dem Bezugstag ändern NICHTS — auch nicht die des Bezugstags selbst
+    // (Spike +50 %, Red-Team 4a B3: ihr Schluss liegt zur Bezugszeit nicht vor).
+    const manipuliert = r.map((s) => (s.date >= bezug ? { ...s, close: s.close * 1.5 } : s));
     expect(benchmarkPct(manipuliert, bezug, 3)).toBe(b);
+    // und ein Trendbruch VOR dem 60-Tage-Deckel ändert auch nichts
+    const alt = r.map((s, i) => (i < 5 ? { ...s, close: s.close * 0.1 } : s));
+    expect(benchmarkPct(alt, bezug, 3)).toBe(b);
   });
-  it('zu wenig Vorlauf → null (unter BENCHMARK_MIN_FENSTER Fenster)', () => {
+  it('Mindestfenster exakt: 19 → null, 20 → Zahl; h > BENCHMARK_H_MAX → null', () => {
     expect(BENCHMARK_MIN_FENSTER).toBe(20);
-    const r = reihe(15);
-    expect(benchmarkPct(r, r[14]!.date, 3)).toBeNull();
+    expect(BENCHMARK_H_MAX).toBe(3);
+    // Fenster = Kerzen vor dem Bezug − h; h=1 → 20 Kerzen vor dem Bezug ergeben 19 Fenster
+    const r = reihe(40);
+    const bezug19 = r[20]!.date; // 20 Kerzen davor → 19 Fenster
+    const bezug20 = r[21]!.date; // 21 Kerzen davor → 20 Fenster
+    expect(benchmarkPct(r, bezug19, 1)).toBeNull();
+    expect(benchmarkPct(r, bezug20, 1)).not.toBeNull();
+    expect(benchmarkPct(r, r[39]!.date, 4)).toBeNull(); // h=4: keine Drift-Schätzung
+    expect(benchmarkPct(r, r[39]!.date, 3)).not.toBeNull();
   });
   it('bewerteUrteil trägt Markt und Über-Markt; ohne Vorlauf null', () => {
     const r = reihe(80);
@@ -291,18 +305,33 @@ describe('Stufe 4a — Benchmark, Holdout, Kennzahlen', () => {
       firstSeenAt: `${bezugTag}T14:00:00Z`, decidedAt: `${bezugTag}T14:05:00Z`, gespeichertAt: `${bezugTag}T14:06:00Z`,
       pruefung: null, horizontTage: 3,
     });
-    const x = bewerteUrteil(u, r, 0, '2026-12-31');
+    const x = bewerteUrteil(u, r, 0.01, '2026-12-31'); // 1 % Roundtrip-Kosten: netto ≠ brutto
     expect(x.stand).toBe('bewertet');
     if (x.stand !== 'bewertet') return;
     expect(x.marktPct).toBeCloseTo(3.03, 1);
-    expect(x.ueberMarktPct).toBeCloseTo(x.bruttoPct - 3.03, 1);
+    expect(x.nettoPct).toBeCloseTo(x.bruttoPct - 1, 3);
+    expect(x.ueberMarktPct).toBeCloseTo(x.nettoPct - 3.03, 2); // NETTO-Basis (B5), nicht brutto
     const y = bewerteUrteil(urteil({ pruefung: null }), schluesse, 0, '2026-09-10');
     expect(y.stand === 'bewertet' && y.marktPct === null && y.ueberMarktPct === null).toBe(true);
   });
-  it('holdoutArm ist deterministisch, hängt am Fall, und beide Arme kommen vor', () => {
+  it('holdoutArm ist deterministisch und MISCHT: ein Symbol über 60 Tage alterniert nicht, 60 Symbole an einem Tag clustern nicht', () => {
     expect(holdoutArm('AAPL|2026-09-01')).toBe(holdoutArm('AAPL|2026-09-01'));
-    const arme = new Set(['AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'META', 'GOOG', 'BTC-USD'].map((s) => holdoutArm(`${s}|2026-09-01`)));
-    expect(arme.size).toBe(2);
+    // ein Symbol × 60 Tage: etwa halbe/halbe, und kein tägliches Kippen (B1)
+    const tage = reihe(60).map((s) => holdoutArm(`AAPL|${s.date}`));
+    const a = tage.filter((x) => x === 'a').length;
+    expect(a).toBeGreaterThanOrEqual(18);
+    expect(a).toBeLessThanOrEqual(42);
+    let wechsel = 0;
+    for (let i = 1; i < tage.length; i += 1) if (tage[i] !== tage[i - 1]) wechsel += 1;
+    expect(wechsel).toBeLessThan(50); // der Paritätshash kippte 59-mal
+    // 60 Symbole × ein Tag: beide Arme deutlich besetzt
+    const symbole = Array.from({ length: 60 }, (_, i) => `S${String(i).padStart(3, '0')}|2026-09-01`).map(holdoutArm);
+    const b = symbole.filter((x) => x === 'b').length;
+    expect(b).toBeGreaterThanOrEqual(18);
+    expect(b).toBeLessThanOrEqual(42);
+    // Parität des Symbols entscheidet NICHT: AAPL/MSFT/TSLA (gleiche Parität im alten Hash) liegen nicht zwingend zusammen
+    const probe = ['AAPL', 'MSFT', 'TSLA', 'AMZN', 'GOOG', 'BTC-USD', 'NVDA', 'META'].map((s) => holdoutArm(`${s}|2026-09-01`));
+    expect(new Set(probe).size).toBe(2);
   });
   it('fallKennzahlen: Quote, Ø netto, Über-Markt-Quote — null ohne Fälle', () => {
     expect(fallKennzahlen({ n: 4, treffer: 3, nettoSum: 2, nMarkt: 2, trefferMarkt: 1 })).toEqual({ n: 4, quotePct: 75, nettoAvgPct: 0.5, ueberMarktQuotePct: 50 });
@@ -310,7 +339,8 @@ describe('Stufe 4a — Benchmark, Holdout, Kennzahlen', () => {
   });
   it('Wochenbericht nennt den Holdout und die Über-Markt-Quote', () => {
     const t = wochenNachricht('2026-W41', { n: 40, treffer: 24, nettoSum: 8, nMarkt: 30, trefferMarkt: 15 }, null, 1, { n: 20, treffer: 9, nettoSum: -1 });
-    expect(t).toContain('über Markt 50 %');
-    expect(t).toContain('Holdout B: 20 Fälle, Trefferquote 45 %');
+    expect(t).toContain('Anteil über Symbol-Drift 50 %');
+    expect(t).toContain('Arm A (steuert): 40 Fälle');
+    expect(t).toContain('Holdout B (steuert nicht): 20 Fälle, Trefferquote 45 %');
   });
 });

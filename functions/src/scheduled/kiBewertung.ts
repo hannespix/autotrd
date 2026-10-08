@@ -25,6 +25,7 @@ import {
   isoWocheEt,
   KI_BEWERTUNG_V,
   KI_GEWICHT_BUCKET,
+  KI_HOLDOUT_BUCKET,
   kiGewicht,
   kostenRateFuer,
   naechsterAktivitaetsZustand,
@@ -170,7 +171,7 @@ export async function runKiBewertung(now = new Date()): Promise<KiBewertungResul
           if (r.ueberMarktPct !== null) {
             // Benchmark (Stufe 4a): netto über der Markt-Drift in Urteilsrichtung.
             d.nMarkt = (d.nMarkt ?? 0) + 1;
-            d.trefferMarkt = (d.trefferMarkt ?? 0) + (r.nettoPct - (r.marktPct ?? 0) * (u.richtung === 'positiv' ? 1 : -1) > 0 ? 1 : 0);
+            d.trefferMarkt = (d.trefferMarkt ?? 0) + (r.ueberMarktPct > 0 ? 1 : 0);
             d.ueberMarktSum = (d.ueberMarktSum ?? 0) + r.ueberMarktPct;
           }
           delta.set(b, d);
@@ -225,7 +226,7 @@ export async function runKiBewertung(now = new Date()): Promise<KiBewertungResul
   const wochentagEt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' }).format(now);
   let wocheGemeldet = false;
   if (wochentagEt === 'Fri' && stand.get('wocheGemeldet') !== woche) {
-    const text = wochenNachricht(woche, faelle[KI_GEWICHT_BUCKET], faelle['gesamt'], gewicht, faelle['holdout_b']);
+    const text = wochenNachricht(woche, faelle[KI_GEWICHT_BUCKET], faelle['gesamt'], gewicht, faelle[KI_HOLDOUT_BUCKET]);
     const admins = await db.collection('users').where('admin', '==', true).get();
     for (const a of admins.docs) {
       await a.ref.collection('nachrichten').add({ von: 'admin', text, at: now.toISOString() }).catch(() => undefined);
@@ -260,8 +261,9 @@ export async function runKiBewertung(now = new Date()): Promise<KiBewertungResul
           quotePct: fallKennzahlen(faelle[KI_GEWICHT_BUCKET]).quotePct,
           nettoAvgPct: fallKennzahlen(faelle[KI_GEWICHT_BUCKET]).nettoAvgPct,
           ueberMarktQuotePct: fallKennzahlen(faelle[KI_GEWICHT_BUCKET]).ueberMarktQuotePct,
-          holdoutN: faelle['holdout_b']?.n ?? 0,
-          holdoutQuotePct: fallKennzahlen(faelle['holdout_b']).quotePct,
+          holdoutN: faelle[KI_HOLDOUT_BUCKET]?.n ?? 0,
+          holdoutQuotePct: fallKennzahlen(faelle[KI_HOLDOUT_BUCKET]).quotePct,
+          faelleWirksamLong: faelle['wirksam_long']?.n ?? 0,
         },
         kiWirkung: zustand,
       },

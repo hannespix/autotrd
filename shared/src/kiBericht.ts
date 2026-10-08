@@ -128,6 +128,7 @@ export interface KiFakten {
     ueberMarktQuotePct?: number | null;
     holdoutQuotePct?: number | null;
     holdoutN?: number;
+    faelleWirksamLong?: number;
     gewicht?: number;
   };
 }
@@ -191,14 +192,16 @@ export function baueEingabe(chronik: ErkenntnisChronik, fakten: KiFakten): strin
 
   const ki = fakten.kiBewertung;
   if (ki) {
-    zeilen.push('', 'KI-NACHRICHTEN (Urteile nach Horizont gegen den Markt bewertet, netto nach Kosten):');
+    const z = (v: number | null | undefined): string => (typeof v === 'number' ? pz(v) : '--');
+    zeilen.push('', 'KI-NACHRICHTEN (Urteile nach Horizont gegen den Kurs bewertet, netto nach Kosten; Fallanteile, keine Renditen):');
     zeilen.push(
-      `- wirksame Urteile: n=${ki.faelleWirksam ?? 0}, Trefferquote ${ki.quotePct ?? '--'} %, ` +
-        `Ø netto ${ki.nettoAvgPct ?? '--'} %, über Markt-Drift ${ki.ueberMarktQuotePct ?? '--'} %`,
+      `- Arm A (steuert das Gewicht): n=${ki.faelleWirksam ?? 0}, Trefferquote ${z(ki.quotePct)} %, ` +
+        `Ø netto ${z(ki.nettoAvgPct)} %, Anteil der Fälle über der Symbol-Drift ${z(ki.ueberMarktQuotePct)} %`,
     );
     zeilen.push(
-      `- Holdout B (nicht steuernd): n=${ki.holdoutN ?? 0}, Trefferquote ${ki.holdoutQuotePct ?? '--'} %; ` +
-        `alle Urteile n=${ki.faelleGesamt ?? 0}; Gewicht der KI-Stimme ×${ki.gewicht ?? 1}`,
+      `- Holdout B (steuert nicht): n=${ki.holdoutN ?? 0}, Trefferquote ${z(ki.holdoutQuotePct)} %; ` +
+        `wirksame Long-Urteile gesamt n=${ki.faelleWirksamLong ?? 0}; alle Urteile n=${ki.faelleGesamt ?? 0}; ` +
+        `Gewicht der KI-Stimme ×${z(ki.gewicht ?? 1)}`,
     );
   }
 

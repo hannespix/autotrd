@@ -168,8 +168,10 @@ describe('Stufe 4a — Benchmark und Holdout im Lauf und im Lagebericht', () => 
   });
   it('Herzschlag und Wochenbericht tragen Quote, Ø netto, Über-Markt-Quote und den Holdout B', () => {
     expect(lauf).toContain('quotePct: fallKennzahlen(faelle[KI_GEWICHT_BUCKET]).quotePct,');
-    expect(lauf).toContain("holdoutQuotePct: fallKennzahlen(faelle['holdout_b']).quotePct,");
-    expect(lauf).toContain("wochenNachricht(woche, faelle[KI_GEWICHT_BUCKET], faelle['gesamt'], gewicht, faelle['holdout_b'])");
+    expect(lauf).toContain('holdoutQuotePct: fallKennzahlen(faelle[KI_HOLDOUT_BUCKET]).quotePct,');
+    expect(lauf).toContain("wochenNachricht(woche, faelle[KI_GEWICHT_BUCKET], faelle['gesamt'], gewicht, faelle[KI_HOLDOUT_BUCKET])");
+    // Über-Drift-Treffer aus derselben Netto-Größe wie die Bewertung (B5)
+    expect(lauf).toContain('d.trefferMarkt = (d.trefferMarkt ?? 0) + (r.ueberMarktPct > 0 ? 1 : 0);');
   });
   it('der Lagebericht übernimmt kiBewertung aus meta/health (nur Summen)', () => {
     expect(bericht).toContain("...nimm('kiBewertung'),");
