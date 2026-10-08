@@ -60,6 +60,8 @@ export interface MarketDocData {
   name?: string;
   assetClass?: string;
   quote?: Quote;
+  /** Kennzahlen aus dem Chart-Abruf (Task 19): Vortag, Spannen, Volumen, Name, Börse. */
+  kennzahlen?: Partial<import('@autotrd/shared').Kennzahlen> | null;
   /** News-Lage (News-Rückkehr 29.07.): Veto-Grundlage + Schlagzeilen-Anzeige. */
   news?: import('@autotrd/shared').NewsSnapshot | null;
   forecast?: {
@@ -482,6 +484,19 @@ export async function saveStrategy(strategy: Strategy): Promise<void> {
   await httpsCallable(fns(), 'saveStrategy')({ strategy });
 }
 
+/**
+ * Kennzahlen-Cache (Task 19): Das Steckbrief-Kärtchen läuft synchron beim
+ * Hover und darf NICHTS laden. Es liest, was Markt-Listener und -Übersicht
+ * ohnehin schon hereingeholt haben — null zusätzliche Lesevorgänge.
+ */
+const kennzahlenCache = new Map<string, Partial<import('@autotrd/shared').Kennzahlen>>();
+function merkeKennzahlen(symbol: string, d: MarketDocData | null | undefined): void {
+  if (d?.kennzahlen && typeof d.kennzahlen === 'object') kennzahlenCache.set(symbol, d.kennzahlen);
+}
+export function kennzahlenAusCache(symbol: string): Partial<import('@autotrd/shared').Kennzahlen> | null {
+  return kennzahlenCache.get(symbol) ?? null;
+}
+
 export function watchMarketDoc(
   symbol: string,
   cb: (data: MarketDocData | null) => void,
@@ -490,7 +505,10 @@ export function watchMarketDoc(
     `marketDoc:${symbol}`,
     (emit) =>
       onSnapshot(doc(db(), 'market', symbol), (snap) => emit(snap.exists() ? snap.data() : null)),
-    (p) => cb(p as MarketDocData | null),
+    (p) => {
+      merkeKennzahlen(symbol, p as MarketDocData | null);
+      cb(p as MarketDocData | null);
+    },
   );
 }
 
@@ -1833,7 +1851,11 @@ export async function saveWorkspace(uid: string, data: WorkspaceDocData): Promis
 export async function loadMarketQuotes(): Promise<Map<string, MarketDocData>> {
   const snap = await getDocs(collection(db(), 'market'));
   const map = new Map<string, MarketDocData>();
-  for (const d of snap.docs) map.set(d.id, d.data() as MarketDocData);
+  for (const d of snap.docs) {
+    const data = d.data() as MarketDocData;
+    map.set(d.id, data);
+    merkeKennzahlen(d.id, data);
+  }
   return map;
 }
 

@@ -84,6 +84,7 @@ import {
   type KurvenWahl,
   benchmarkKurve,
   benchmarkSatz,
+  volDurchschnittFrisch,
 } from '@autotrd/shared';
 import type { Unsubscribe } from 'firebase/firestore';
 import {
@@ -199,6 +200,7 @@ import {
   type TaxReportResult,
   resetBreaker,
   resetWallet,
+  kennzahlenAusCache,
 } from './data.js';
 import {
   emailVerified,
@@ -4358,11 +4360,44 @@ function versteckeSymbolTip(): void {
   if (symTipEl) symTipEl.hidden = true;
 }
 
+/**
+ * Volumen kompakt (Task 19): 18.9K · 16.5M · 1.2B — Punkt wie `fmtNum`, weil
+ * die Kärtchen und das Sheet durchgehend en-US-Zahlen zeigen (CLAUDE.md §8
+ * Naht: nie Punkt und Komma in derselben Fläche).
+ */
+function volKompakt(v: number | null | undefined): string {
+  if (v === null || v === undefined || !Number.isFinite(v) || v <= 0) return '—';
+  if (v >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
+  if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
+  if (v >= 1e3) return `${(v / 1e3).toFixed(1)}K`;
+  return String(Math.round(v));
+}
+
+/**
+ * Eine Mono-Zeile Kennzahlen fürs Steckbrief-Kärtchen (Task 19): höchstens
+ * zwei Werte, nur aus dem Client-Cache — ein Abruf beim Hover ist tabu. Ohne
+ * Daten fällt die Zeile weg, statt „--" zu zeigen.
+ */
+function symTipKennzahlen(sym: string): string {
+  const k = kennzahlenAusCache(sym);
+  if (!k) return '';
+  const teile: string[] = [];
+  if (typeof k.w52Tief === 'number' && typeof k.w52Hoch === 'number') {
+    teile.push(`${t('steck.kz52w')} ${fmtNum(k.w52Tief)}–${fmtNum(k.w52Hoch)}`);
+  }
+  if (typeof k.volumen === 'number' && k.volumen > 0) teile.push(`${t('steck.kzVol')} ${volKompakt(k.volumen)}`);
+  return teile.length ? `<div class="sym-tip-kz mono">${escText(teile.join(' · '))}</div>` : '';
+}
+
 function zeigeSymbolTip(sym: string, x: number, y: number): void {
   const herkunft = symbolHerkunft(sym);
   const text = steckbriefText(sym);
   if (!herkunft && !text) return; // unbekanntes Symbol: lieber nichts als Leeres
   const tip = symTip();
+  // Symbole außerhalb des Katalogs haben nur ihr Kürzel als Namen — Yahoos
+  // Klarname aus dem Cache ist dort der echte Gewinn (Task 19).
+  const kz = kennzahlenAusCache(sym);
+  const kopfName = herkunft?.ausserhalbKatalog === true && typeof kz?.name === 'string' && kz.name ? kz.name : (herkunft?.name ?? sym);
   // Chips: Klasse immer, Gruppe nur wenn es eine gibt (frei eingegebene
   // Symbole haben keine Katalog-Gruppe — dann bleibt der Chip weg statt leer).
   const chips = herkunft
@@ -4378,8 +4413,8 @@ function zeigeSymbolTip(sym: string, x: number, y: number): void {
       ? `<div class="sym-tip-text c-t3">${escText(t('steck.ohneEintrag'))}</div>`
       : '';
   tip.innerHTML =
-    `<div class="sym-tip-kopf">${symbolAvatar(sym, true)}<b>${escText(herkunft?.name ?? sym)}</b><span class="mono">${escText(sym)}</span></div>`
-    + chips + koerper;
+    `<div class="sym-tip-kopf">${symbolAvatar(sym, true)}<b>${escText(kopfName)}</b><span class="mono">${escText(sym)}</span></div>`
+    + chips + symTipKennzahlen(sym) + koerper;
   tip.hidden = false;
   schmueckeAvatare(); // echtes Logo statt Monogramm, sobald geladen
   const b = tip.getBoundingClientRect();
@@ -8182,6 +8217,29 @@ async function renderMarketGrid(): Promise<void> {
   schmueckeAvatare();
 }
 
+/**
+ * Kennzahlen-Raster fürs Detail-Sheet (Task 19) — dieselben acht Werte wie
+ * unter dem Yahoo-Chart, alle mit `fmtNum` (Punkt) wie der große Kurs
+ * darüber: EIN Format je Fläche (CLAUDE.md §8 Naht).
+ */
+function kennzahlenRaster(kz: MarketDocData['kennzahlen']): string {
+  if (!kz) return '';
+  const spanne = (a: number | null | undefined, b: number | null | undefined): string =>
+    typeof a === 'number' && typeof b === 'number' ? `${fmtNum(a)} – ${fmtNum(b)}` : '—';
+  const wert = (v: number | null | undefined): string => (typeof v === 'number' ? fmtNum(v) : '—');
+  const text = (v: unknown): string => (typeof v === 'string' && v ? escText(v) : '—');
+  return `<dl class="dkz mono">
+      <div><dt>${t('dt.vortag')}</dt><dd>${wert(kz.vortag)}</dd></div>
+      <div><dt>${t('dt.oeffnen')}</dt><dd>${wert(kz.oeffnen)}</dd></div>
+      <div><dt>${t('dt.tagesspanne')}</dt><dd>${spanne(kz.tagTief, kz.tagHoch)}</dd></div>
+      <div><dt>${t('dt.spanne52w')}</dt><dd>${spanne(kz.w52Tief, kz.w52Hoch)}</dd></div>
+      <div><dt>${t('dt.volumen')}</dt><dd>${volKompakt(kz.volumen)}</dd></div>
+      <div><dt>${t('dt.volDurchschnitt')}</dt><dd>${volDurchschnittFrisch(kz.volDurchschnittAt) ? volKompakt(kz.volDurchschnitt3M) : '—'}</dd></div>
+      <div><dt>${t('dt.boerse')}</dt><dd>${text(kz.boerse)}</dd></div>
+      <div><dt>${t('dt.waehrung')}</dt><dd>${text(kz.waehrung)}</dd></div>
+    </dl>`;
+}
+
 function openDetail(symbol: string, name: string, data: MarketDocData | null): void {
   if (!st) return;
   // Longpress zeigte evtl. gerade das Steckbrief-Kärtchen — das Sheet
@@ -8194,7 +8252,7 @@ function openDetail(symbol: string, name: string, data: MarketDocData | null): v
   const esc = (s: string): string => s.replace(/[<>&"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c]!);
   const alter = (pub: number): string => {
     const min = Math.max(0, Math.round((Date.now() / 1000 - pub) / 60));
-    return min < 60 ? `vor ${min} min` : `vor ${Math.round(min / 60)} h`;
+    return min < 60 ? t('dt.vorMin').replace('{0}', String(min)) : t('dt.vorStd').replace('{0}', String(Math.round(min / 60)));
   };
   const newsHtml = (data?.news?.top ?? [])
     .slice(0, 4)
@@ -8219,11 +8277,12 @@ function openDetail(symbol: string, name: string, data: MarketDocData | null): v
     <div class="hint sym-steck"></div>
     <div class="vbig ${q ? pnlClass(q.changePct) : 'c-t3'}">${q ? fmtNum(q.price) : '—'}</div>
     <div class="smv ${q ? pnlClass(q.changePct) : 'c-t3'}">${q ? fmtPct(q.changePct) : t('dt.keineScanDaten')}</div>
+    ${kennzahlenRaster(data?.kennzahlen)}
     <div class="dbtns">
       ${q ? `<button class="dbtn pri" id="dOpenChart">${t('dt.imChartOeffnen')}</button>` : ''}
     </div>
     ${veto}
-    ${newsHtml ? `<div class="wl-sec" style="margin-top:10px">Schlagzeilen</div><div class="dnews">${newsHtml}</div>` : ''}`;
+    ${newsHtml ? `<div class="wl-sec" style="margin-top:10px">${t('dt.schlagzeilen')}</div><div class="dnews">${newsHtml}</div>` : ''}`;
   sheet.querySelector('h3')!.textContent = name;
   sheet.querySelector('.dmeta .mono')!.textContent = symbol;
   // Steckbrief (16:5x): dieselbe kuratierte Zeile wie im Hover-Kärtchen —
