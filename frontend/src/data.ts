@@ -1106,6 +1106,20 @@ export interface HealthDoc {
    * seit Tagen stand, exakt so aus wie „nichts zu tun". `null` bedeutet
    * „nicht gemessen" (Trade-Block lief nicht) und ist nicht dasselbe wie 0.
    */
+  /** KI-Kaskade Stufe 2b: Wirkung der KI-Urteile im letzten Lauf (nur
+   *  Zähler, keine Kosten, kein Konto-Bezug). null, wenn der Trade-Block
+   *  nicht lief. */
+  ki?: {
+    lage?: number;
+    budgetErschoepft?: boolean;
+    kontenAus?: number;
+    einstiege?: number;
+    probe?: number;
+    lexikon?: number;
+    vetoAufgehoben?: number;
+    verkauft?: number;
+    stops?: number;
+  } | null;
   /** Ereigniskanal für Ausführungen (Drift-Paket 2, 08.10.). */
   fillSync?: {
     at?: string;
@@ -1594,6 +1608,20 @@ export interface KillSwitchStatus {
   killSwitch: boolean;
   at: string | null;
   von: string | null;
+  /** KI-Tagesbudget (Stufe 2b-2) — null, wenn heute noch kein Topf existiert. */
+  kiBudget?: KiBudgetStatus | null;
+}
+
+/** Tagesbudget der KI-Nachrichten, nur Summen (admin/kiBudget-{tag}). */
+export interface KiBudgetStatus {
+  tag: string;
+  limitUsd: number;
+  konten: number;
+  verbrauchtUsd: number;
+  reserviertUsd: number;
+  aufrufe: number;
+  at: string | null;
+  erschoepft: boolean;
 }
 
 export async function adminLiveStatus(): Promise<KillSwitchStatus> {
