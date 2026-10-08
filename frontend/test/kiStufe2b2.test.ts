@@ -85,3 +85,33 @@ describe('Stufe 2b-2 — meta/health.ki im Betriebszustand', () => {
     expect(dashboard).toContain("whyChip(t('ew.kiBudgetErschoepft'), 'var(--yl,#d9a441)')");
   });
 });
+
+describe('Stufe 3 — Gewicht und Untätigkeits-Alarm im Betriebszustand', () => {
+  it('der Typ kennt das Gewicht im ki-Block sowie kiBewertung und kiWirkung', () => {
+    const start = data.indexOf('  ki?: {\n    lage?: number;');
+    expect(start).toBeGreaterThan(-1);
+    const kiBlock = data.slice(start, data.indexOf('} | null;', start));
+    expect(kiBlock).toContain('gewicht?: number;');
+    expect(data).toContain('kiBewertung?: {');
+    expect(data).toContain('faelleWirksam?: number;');
+    expect(data).toContain('kiWirkung?: { aktiv?: boolean; text?: string; seit?: string; at?: string } | null;');
+  });
+  it('Gewichts-Chip nur bei Abweichung von ×1 — und an whyChip gebunden', () => {
+    const stelle = dashboard.indexOf("typeof h.ki?.gewicht === 'number' && h.ki.gewicht !== 1");
+    expect(stelle).toBeGreaterThan(-1);
+    const block = dashboard.slice(stelle, stelle + 700);
+    expect(block).toContain('whyChip(');
+    expect(block).toContain("`${t('ew.kiGewicht')} ×${gewicht.toFixed(2)}`");
+    expect(block).toContain("gewicht > 1 ? 'var(--gn)' : 'var(--yl,#d9a441)'");
+    expect(block).toContain("t('ew.kiGewichtTitel')");
+    expect(block).toContain("${faelle} ${t('ew.kiFaelle')}");
+  });
+  it('Untätigkeits-Chip nur bei aktivem Alarm — GELB, nicht rot (nichts ist kaputt)', () => {
+    const stelle = dashboard.indexOf('if (h.kiWirkung?.aktiv === true) {');
+    expect(stelle).toBeGreaterThan(-1);
+    const block = dashboard.slice(stelle, stelle + 400);
+    expect(block).toContain("whyChip(t('ew.kiWirkungAlarm'), 'var(--yl,#d9a441)')");
+    expect(block).not.toContain("'var(--rd)'");
+    expect(block).toContain("chip.title = h.kiWirkung.text ?? t('ew.kiWirkungTitel');");
+  });
+});
