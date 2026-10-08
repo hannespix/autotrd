@@ -4361,12 +4361,13 @@ function versteckeSymbolTip(): void {
 }
 
 /**
- * Volumen kompakt (Task 19): 18.9K · 16.5M · 1.2B — Punkt wie `fmtNum`, weil
+ * Volumen kompakt (Task 19): 18.9K · 16.5M · 1.2B · 3.4T — Punkt wie `fmtNum`, weil
  * die Kärtchen und das Sheet durchgehend en-US-Zahlen zeigen (CLAUDE.md §8
  * Naht: nie Punkt und Komma in derselben Fläche).
  */
 function volKompakt(v: number | null | undefined): string {
   if (v === null || v === undefined || !Number.isFinite(v) || v <= 0) return '—';
+  if (v >= 1e12) return `${(v / 1e12).toFixed(1)}T`; // Marktkap. der Großen (Apple: $3.4T, nicht „$3412.0B")
   if (v >= 1e9) return `${(v / 1e9).toFixed(1)}B`;
   if (v >= 1e6) return `${(v / 1e6).toFixed(1)}M`;
   if (v >= 1e3) return `${(v / 1e3).toFixed(1)}K`;
@@ -8240,6 +8241,39 @@ function kennzahlenRaster(kz: MarketDocData['kennzahlen']): string {
     </dl>`;
 }
 
+/**
+ * Firmenprofil und Fundamentaldaten fürs Detail-Sheet (Task 19, Teil 2) —
+ * die „Übersicht" der Yahoo-Seite: Branche · Land · Börsengang · Website,
+ * darunter Marktkapitalisierung, Beta, KGV, EPS, Dividendenrendite und der
+ * nächste Gewinntermin. Dasselbe Raster und dieselben Formate wie die
+ * Kennzahlen darüber; fehlt ein Wert, steht „—", fehlt das Profil ganz
+ * (Krypto, FX, Indizes, ohne Schlüssel), fehlt der Block.
+ */
+function profilRaster(pr: MarketDocData['profil']): string {
+  if (!pr) return '';
+  // Leere Hülle (nur Kopffelder null, keine Zahl) → kein Raster aus sechs Strichen.
+  if (!['branche', 'land', 'ipo', 'website', 'marktkapMio', 'beta', 'kgvTtm', 'epsTtm', 'dividendenrenditePct', 'gewinntermin'].some((k) => (pr as Record<string, unknown>)[k] != null)) return '';
+  // Marktkap in der Notierungswährung aus profile2 — `$` nur, wenn es USD ist (Red-Team H2).
+  const marktkap = (mio: number): string => (!pr.waehrung || pr.waehrung === 'USD' ? `$${volKompakt(mio * 1e6)}` : `${volKompakt(mio * 1e6)} ${escText(pr.waehrung)}`);
+  const text = (v: unknown): string => (typeof v === 'string' && v ? escText(v) : '—');
+  const zahl = (v: unknown, nk = 2): string => (typeof v === 'number' && Number.isFinite(v) ? v.toFixed(nk) : '—');
+  const kopf = [pr.branche, pr.land, pr.ipo ? `${t('dt.ipo')} ${pr.ipo}` : null]
+    .filter((x): x is string => typeof x === 'string' && x.length > 0)
+    .map((x) => escText(x));
+  const link = typeof pr.website === 'string' && /^https?:\/\//.test(pr.website)
+    ? `<a href="${escText(pr.website)}" target="_blank" rel="noopener noreferrer">${escText(pr.website.replace(/^https?:\/\/(www\.)?/, '').replace(/\/$/, ''))}</a>`
+    : '';
+  const zeile = kopf.length || link ? `<div class="hint dprofil">${[...kopf, link].filter(Boolean).join(' · ')}</div>` : '';
+  return `${zeile}<dl class="dkz mono">
+      <div><dt>${t('dt.marktkap')}</dt><dd>${typeof pr.marktkapMio === 'number' && pr.marktkapMio > 0 ? marktkap(pr.marktkapMio) : '—'}</dd></div>
+      <div><dt>${t('dt.beta')}</dt><dd>${zahl(pr.beta)}</dd></div>
+      <div><dt>${t('dt.kgv')}</dt><dd>${zahl(pr.kgvTtm)}</dd></div>
+      <div><dt>${t('dt.eps')}</dt><dd>${zahl(pr.epsTtm)}</dd></div>
+      <div><dt>${t('dt.dividende')}</dt><dd>${typeof pr.dividendenrenditePct === 'number' && pr.dividendenrenditePct > 0 ? `${pr.dividendenrenditePct.toFixed(2)} %` : '—'}</dd></div>
+      <div><dt>${t('dt.gewinntermin')}</dt><dd>${text(pr.gewinntermin)}</dd></div>
+    </dl>`;
+}
+
 function openDetail(symbol: string, name: string, data: MarketDocData | null): void {
   if (!st) return;
   // Longpress zeigte evtl. gerade das Steckbrief-Kärtchen — das Sheet
@@ -8278,6 +8312,7 @@ function openDetail(symbol: string, name: string, data: MarketDocData | null): v
     <div class="vbig ${q ? pnlClass(q.changePct) : 'c-t3'}">${q ? fmtNum(q.price) : '—'}</div>
     <div class="smv ${q ? pnlClass(q.changePct) : 'c-t3'}">${q ? fmtPct(q.changePct) : t('dt.keineScanDaten')}</div>
     ${kennzahlenRaster(data?.kennzahlen)}
+    ${profilRaster(data?.profil)}
     <div class="dbtns">
       ${q ? `<button class="dbtn pri" id="dOpenChart">${t('dt.imChartOeffnen')}</button>` : ''}
     </div>

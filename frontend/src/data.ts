@@ -62,6 +62,8 @@ export interface MarketDocData {
   quote?: Quote;
   /** Kennzahlen aus dem Chart-Abruf (Task 19): Vortag, Spannen, Volumen, Name, Börse. */
   kennzahlen?: Partial<import('@autotrd/shared').Kennzahlen> | null;
+  /** Firmenprofil und Fundamentaldaten (Task 19, Teil 2) aus dem täglichen Profil-Lauf. */
+  profil?: Partial<import('@autotrd/shared').Profil> | null;
   /** News-Lage (News-Rückkehr 29.07.): Veto-Grundlage + Schlagzeilen-Anzeige. */
   news?: import('@autotrd/shared').NewsSnapshot | null;
   forecast?: {

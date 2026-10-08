@@ -62,4 +62,5 @@ export * from './risiko.js';
 export * from './nachrichten.js';
 export * from './momentumQualitaet.js';
 export * from './kennzahlen.js';
+export * from './profil.js';
 export * from './pdt.js';

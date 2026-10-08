@@ -77,6 +77,8 @@ describe('Kennzahlen — Detail-Sheet', () => {
     const v = fn('volKompakt', 600);
     expect(v).toContain("if (v === null || v === undefined || !Number.isFinite(v) || v <= 0) return '—';");
     expect(v).toContain('toFixed(1)}M');
+    // Billionen-Stufe — Bildbefund 08.10.: Apple stand als „$3412.0B" im Sheet
+    expect(v).toContain('if (v >= 1e12) return `${(v / 1e12).toFixed(1)}T`;');
     expect(v).not.toContain('de-DE');
   });
 

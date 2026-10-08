@@ -23,6 +23,7 @@ export { autoTune, tuneNow } from './scheduled/autoTune.js';
 export { strukturSuche, strukturNow } from './scheduled/strukturSuche.js';
 export { momentumAusfuehrung, momentumRun, momentumNow } from './scheduled/momentumRun.js';
 export { universumSync, universumSyncNow } from './scheduled/universumSync.js';
+export { profilSync, profilSyncNow } from './scheduled/profilSync.js';
 export { nachrichtenSammeln } from './scheduled/nachrichtenSammeln.js';
 export { kiNachrichten } from './scheduled/kiNachrichten.js';
 export { tagRueckblick, tagRueckblickNow } from './scheduled/tagRueckblick.js';
