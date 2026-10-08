@@ -49,7 +49,7 @@ import {
   type AlpacaFill,
   type AlpacaOrderStand,
 } from '../core/alpacaBroker.js';
-import { executePaperTrade, gebuchteMengeJeOrder, merkeOffeneOrder, merkeUnbookedFill } from '../core/broker.js';
+import { executePaperTrade, gebuchtJeOrder, merkeOffeneOrder, merkeUnbookedFill } from '../core/broker.js';
 import { ORDER_ENDZUSTAENDE, brokerVerbindungLesend } from '../core/orderRouting.js';
 import { mayTrade } from '../core/access.js';
 import { clampStrategyRisk } from '../core/rulesTrading.js';
@@ -136,6 +136,28 @@ export function cursorVor(fills: readonly AlpacaFill[], zuerstIso: string, fallb
 }
 
 /**
+ * Preis der fehlenden Tranche (Nachprüfung 08.10., N1) — pur. Enthält das
+ * Fenster genau den fehlenden Teil, gilt sein gewichteter Preis. Sonst die
+ * exakte Formel aus dem Order-Durchschnitt: (gesamt × Ø − gebuchter Wert) /
+ * fehlt — der Order-Durchschnitt allein mittelte den schon gebuchten Teil ein
+ * zweites Mal (5 @ 100 gebucht, 5 @ 110 folgen: Ø 105 ergäbe 102,5 im Buch).
+ * Unbrauchbare Zwischenwerte fallen auf den Fensterpreis zurück.
+ */
+export function tranchenPreis(
+  fenster: { menge: number; preis: number },
+  gesamt: number,
+  orderAvg: number,
+  schon: number,
+  gebuchtWert: number,
+  fehlt: number,
+): number {
+  if (Math.abs(fenster.menge - fehlt) < 1e-9 || !(orderAvg > 0) || !(fehlt > 0)) return fenster.preis;
+  if (!(schon > 0) || !(gebuchtWert > 0)) return orderAvg;
+  const p = (gesamt * orderAvg - gebuchtWert) / fehlt;
+  return Number.isFinite(p) && p > 0 ? Math.round(p * 10_000) / 10_000 : fenster.preis;
+}
+
+/**
  * Darf ein VERKAUF ohne Buch-Position einen Buch-Short eröffnen? Nur eine
  * eigene Market-Order mit Lauf-Kennung (so eröffnet die Engine Shorts).
  * Stop-Orders und Exits (`exit-` in der Kennung) gehören zu einer Position,
@@ -207,14 +229,12 @@ export async function fillSyncKonto(
       cursorNeu = o.zuletzt > cursorNeu ? o.zuletzt : cursorNeu;
       continue;
     }
-    const schon = await gebuchteMengeJeOrder(uid, o.orderId);
+    const { menge: schon, wert: gebuchtWert } = await gebuchtJeOrder(uid, o.orderId);
     // KUMULIERT laut Order (H2), nicht nur das Fenster: Ein Rest-Fill einer
     // offenen Order ist sonst „schon gebucht", weil Fenster-Summe = Buch.
     const gesamt = order.filledQty > 0 ? order.filledQty : o.menge;
     const fehlt = Math.round((gesamt - schon) * 1e6) / 1e6;
-    // Preis: der des Fensters, wenn es genau den fehlenden Teil enthält —
-    // sonst der Durchschnitt der Order (ehrlicher als ein geratener).
-    const preis = Math.abs(o.menge - fehlt) < 1e-9 || !(order.filledAvgPreis > 0) ? o.preis : order.filledAvgPreis;
+    const preis = tranchenPreis(o, gesamt, order.filledAvgPreis, schon, gebuchtWert, fehlt);
     if (fehlt <= 1e-9) {
       cursorNeu = o.zuletzt > cursorNeu ? o.zuletzt : cursorNeu;
       continue;
@@ -233,6 +253,11 @@ export async function fillSyncKonto(
     if (o.side === 'sell' && !posSnap.exists && !darfShortEroeffnen(order)) {
       ohnePosition += 1;
       logger.error(`fillSync ${uid} ${o.symbol}: Verkauf ${fehlt} Stück (${order.typ ?? '?'}) ohne Buch-Position — Fall für die Übernahme, nicht gebucht`);
+      // DAUERHAFT sichtbar (Nachprüfung N2): als unbuchbarer Fill vermerkt —
+      // er landet im Herzschlag als „Fills ohne Buchung" statt nur fünf
+      // Minuten im Log. Buch und Broker sind danach beide flat; nur der
+      // Cash-Unterschied bliebe sonst als Spur.
+      await merkeUnbookedFill(uid, o.symbol, o.side, fehlt, preis, o.orderId, 'fill-sync', 'keine_buch_position', true);
       cursorNeu = o.zuletzt > cursorNeu ? o.zuletzt : cursorNeu;
       continue;
     }

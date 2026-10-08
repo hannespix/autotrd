@@ -229,6 +229,18 @@ export async function schutzVerknuepfungLoesen(uid: string, symbol: string): Pro
  * Nicht lesbar ⇒ 0 (der Aufrufer hat seinen eigenen Zähler als Untergrenze).
  */
 export async function gebuchteMengeJeOrder(uid: string, brokerOrderId: string): Promise<number> {
+  return (await gebuchtJeOrder(uid, brokerOrderId)).menge;
+}
+
+/**
+ * Gebuchte Menge UND gebuchter Wert (Σ Menge × Broker-Kurs) je Order — der
+ * Wert erlaubt dem Ereigniskanal die exakte Tranchen-Preisformel
+ * (Nachprüfung 08.10., N1): Der Preis einer fehlenden Tranche ist
+ * (Gesamtmenge × Order-Durchschnitt − gebuchter Wert) / fehlende Menge, nicht
+ * der Order-Durchschnitt, der den schon gebuchten Teil ein zweites Mal
+ * mittelt. Preisquelle je Trade: der Broker-Kurs, sonst der Rohkurs.
+ */
+export async function gebuchtJeOrder(uid: string, brokerOrderId: string): Promise<{ menge: number; wert: number }> {
   const userRef = getFirestore().collection('users').doc(uid);
   // Auch das ARCHIV (Red-Team 08.10., M1): Ein Reset verschiebt die Trades
   // nach `tradesArchive`; ohne diesen Blick stünde ein längst gebuchter
@@ -237,14 +249,18 @@ export async function gebuchteMengeJeOrder(uid: string, brokerOrderId: string): 
     userRef.collection('trades').where('brokerOrderId', '==', brokerOrderId).get().catch(() => null),
     userRef.collection('tradesArchive').where('brokerOrderId', '==', brokerOrderId).get().catch(() => null),
   ]);
-  const summe = (snap: FirebaseFirestore.QuerySnapshot | null): number =>
-    snap
-      ? snap.docs.reduce((s, d) => {
-          const q = d.get('qty') as unknown;
-          return s + (typeof q === 'number' && Number.isFinite(q) ? q : 0);
-        }, 0)
-      : 0;
-  return summe(aktiv) + summe(archiv);
+  const zahl = (x: unknown): number => (typeof x === 'number' && Number.isFinite(x) ? x : 0);
+  const out = { menge: 0, wert: 0 };
+  for (const snap of [aktiv, archiv]) {
+    if (!snap) continue;
+    for (const d of snap.docs) {
+      const q = zahl(d.get('qty'));
+      const kurs = zahl(d.get('brokerFillPrice')) || zahl(d.get('rawPrice')) || zahl(d.get('price'));
+      out.menge += q;
+      out.wert += q * kurs;
+    }
+  }
+  return out;
 }
 
 export async function fillSchonGebucht(uid: string, brokerOrderId: string | null | undefined): Promise<boolean> {

@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { holeFillAktivitaeten, type AlpacaFill } from '../src/core/alpacaBroker.js';
-import { buendleFills, cursorVor, darfShortEroeffnen, eigeneOrder } from '../src/scheduled/fillSync.js';
+import { buendleFills, cursorVor, darfShortEroeffnen, eigeneOrder, tranchenPreis } from '../src/scheduled/fillSync.js';
 
 vi.mock('firebase-admin/firestore', () => ({
   getFirestore: () => ({
@@ -91,6 +91,20 @@ describe('darfShortEroeffnen — kein Phantom-Short aus Stop oder Exit (H3)', ()
   });
 });
 
+describe('tranchenPreis — die fehlende Tranche zum richtigen Preis (N1)', () => {
+  it('Fenster enthält genau den fehlenden Teil → Fensterpreis', () => {
+    expect(tranchenPreis({ menge: 5, preis: 110 }, 10, 105, 5, 500, 5)).toBe(110);
+  });
+  it('Fenster ≠ fehlt → exakte Formel, nicht der Order-Durchschnitt (5 @ 100 gebucht, 5 @ 110 folgen)', () => {
+    // Fenster sieht 7 Stück (2 davon aus dem gebuchten Teil); Order-Ø 105; gebucht 5 × 100
+    expect(tranchenPreis({ menge: 7, preis: 107 }, 10, 105, 5, 500, 5)).toBe(110);
+  });
+  it('ohne gebuchten Wert gilt der Order-Durchschnitt; unbrauchbare Formel fällt auf den Fensterpreis', () => {
+    expect(tranchenPreis({ menge: 7, preis: 107 }, 10, 105, 0, 0, 10)).toBe(105);
+    expect(tranchenPreis({ menge: 7, preis: 107 }, 10, 105, 5, 2_000, 5)).toBe(107); // negativer Rest
+  });
+});
+
 describe('eigeneOrder — dieselbe Regel wie bei der Depot-Übernahme', () => {
   it('erkennt das Nutzer-Präfix, nicht fremde oder leere Kennungen', () => {
     expect(eigeneOrder('u1', 'u1-ACME-buy-10-scan')).toBe(true);
@@ -140,10 +154,11 @@ describe('Quelltext-Wächter: die Verdrahtung', () => {
     expect(sync).toContain('fremd += 1;');
   });
   it('die Differenz zum Buch wird gebucht — nie die ganze Summe', () => {
-    expect(sync).toContain('const schon = await gebuchteMengeJeOrder(uid, o.orderId);');
+    expect(sync).toContain('const { menge: schon, wert: gebuchtWert } = await gebuchtJeOrder(uid, o.orderId);');
     // KUMULIERT laut Order (H2), nicht die Fenster-Summe
     expect(sync).toContain('const gesamt = order.filledQty > 0 ? order.filledQty : o.menge;');
     expect(sync).toContain('const fehlt = Math.round((gesamt - schon) * 1e6) / 1e6;');
+    expect(sync).toContain('const preis = tranchenPreis(o, gesamt, order.filledAvgPreis, schon, gebuchtWert, fehlt);');
     // eine noch arbeitende eröffnende Order bekommt den Nachlauf-Vermerk
     expect(sync).toContain("if (!schliesst && !endzustand && order.clientOrderId) {");
     expect(sync).toContain('qty: fehlt,');
@@ -155,6 +170,8 @@ describe('Quelltext-Wächter: die Verdrahtung', () => {
   it('H3: ein Verkauf ohne Buch-Position wird nicht zum Phantom-Short', () => {
     expect(sync).toContain("if (o.side === 'sell' && !posSnap.exists && !darfShortEroeffnen(order)) {");
     expect(sync).toContain('ohnePosition += 1;');
+    // dauerhaft sichtbar statt nur im Log (N2)
+    expect(sync).toContain("await merkeUnbookedFill(uid, o.symbol, o.side, fehlt, preis, o.orderId, 'fill-sync', 'keine_buch_position', true);");
   });
   it('M1/M2: das Buch zählt auch das Archiv; ein echter Short-Fill wird nie an der Deckung abgewiesen', () => {
     const broker = lies('core', 'broker.ts');
