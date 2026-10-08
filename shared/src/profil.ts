@@ -19,6 +19,8 @@ export interface Profil {
   land: string | null;
   boerse: string | null;
   website: string | null;
+  /** Notierungswährung laut profile2 — Marktkap und EPS stehen darin, nie stillschweigend `$`. */
+  waehrung: string | null;
   /** Börsengang, YYYY-MM-DD. */
   ipo: string | null;
   /** Marktkapitalisierung in Millionen der Handelswährung. */
@@ -34,6 +36,13 @@ export interface Profil {
   dividendenrenditePct: number | null;
   /** Nächster Gewinntermin ≥ heute, YYYY-MM-DD; null, wenn keiner gemeldet. */
   gewinntermin: string | null;
+  /**
+   * Red-Team 08.10.: `metric` kam für CCG mit EPS −26,11 und 52W-Hoch 43,05,
+   * Yahoo zeigt −2,20 / 18,16 (Berichtswährung statt Notierung). Weicht das
+   * 52W-Hoch um mehr als METRIC_ABWEICHUNG_MAX vom Yahoo-Wert desselben
+   * Dokuments ab, bleiben die metric-Werte leer und dieses Flag steht.
+   */
+  metricVerdacht: boolean;
   quelle: 'finnhub';
   updatedAt: string;
 }
@@ -48,6 +57,7 @@ export interface FinnhubProfile2 {
   country?: unknown;
   exchange?: unknown;
   weburl?: unknown;
+  currency?: unknown;
   ipo?: unknown;
   marketCapitalization?: unknown;
 }
@@ -66,6 +76,24 @@ export interface FinnhubMetric {
 /** Rohform von Finnhub `calendar/earnings` → `earningsCalendar[]`. */
 export interface FinnhubEarning {
   date?: unknown;
+  /** 'bmo' | 'amc' | 'dmh' — hier nur dokumentiert; entscheidend ist `nachSchluss`. */
+  hour?: unknown;
+}
+
+/** Zulässige relative Abweichung Finnhub-52W-Hoch ↔ Yahoo-52W-Hoch. */
+export const METRIC_ABWEICHUNG_MAX = 0.1;
+
+export interface ProfilOptionen {
+  /** Lauf nach Börsenschluss (ET): ein Termin von HEUTE ist dann vorbei (bmo wie amc). */
+  nachSchluss?: boolean;
+  /** 52W-Hoch aus den Yahoo-Kennzahlen desselben Dokuments (Teil 1) — Plausibilitätsanker. */
+  yahooW52Hoch?: number | null;
+}
+
+/** Weicht der Finnhub-Wert um mehr als METRIC_ABWEICHUNG_MAX vom Yahoo-Anker ab? Ohne Anker: nein. */
+export function metricAbweichend(finnhub: number | null, yahoo: number | null | undefined): boolean {
+  if (finnhub === null || typeof yahoo !== 'number' || !Number.isFinite(yahoo) || yahoo <= 0) return false;
+  return Math.abs(finnhub / yahoo - 1) > METRIC_ABWEICHUNG_MAX;
 }
 
 const zahl = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -76,12 +104,16 @@ const positiv = (v: unknown): number | null => {
 const text = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
 const datum = (v: unknown): string | null => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
 
-/** Frühester gemeldeter Termin ≥ `heute` (YYYY-MM-DD); null ohne Treffer. */
-export function naechsterGewinntermin(termine: readonly FinnhubEarning[], heute: string): string | null {
+/**
+ * Frühester gemeldeter Termin ≥ `heute` (YYYY-MM-DD); null ohne Treffer.
+ * Nach Börsenschluss zählt der heutige Termin nicht mehr (Red-Team M3: um
+ * 17:45 ET sind „vor Eröffnung" und „nach Schluss" beide vorbei).
+ */
+export function naechsterGewinntermin(termine: readonly FinnhubEarning[], heute: string, nachSchluss = false): string | null {
   let best: string | null = null;
   for (const e of termine) {
     const d = datum(e.date);
-    if (d === null || d < heute) continue;
+    if (d === null || d < heute || (nachSchluss && d === heute)) continue;
     if (best === null || d < best) best = d;
   }
   return best;
@@ -98,7 +130,10 @@ export function profilAus(
   termine: readonly FinnhubEarning[],
   heute: string,
   updatedAt: string,
+  opt: ProfilOptionen = {},
 ): Profil {
+  const w52Hoch = positiv(metric?.['52WeekHigh']);
+  const verdacht = metricAbweichend(w52Hoch, opt.yahooW52Hoch);
   return {
     name: text(profile2?.name),
     branche: text(profile2?.finnhubIndustry),
@@ -108,15 +143,20 @@ export function profilAus(
       const w = text(profile2?.weburl);
       return w && /^https?:\/\//i.test(w) ? w : null;
     })(),
+    waehrung: text(profile2?.currency)?.toUpperCase() ?? null,
     ipo: datum(profile2?.ipo),
-    marktkapMio: positiv(metric?.marketCapitalization) ?? positiv(profile2?.marketCapitalization),
+    // Unter Verdacht nur der profile2-Wert; Beta ist dimensionslos und bleibt.
+    marktkapMio: verdacht
+      ? positiv(profile2?.marketCapitalization)
+      : positiv(metric?.marketCapitalization) ?? positiv(profile2?.marketCapitalization),
     beta: zahl(metric?.beta),
-    kgvTtm: positiv(metric?.peTTM),
-    epsTtm: zahl(metric?.epsTTM),
-    w52Hoch: positiv(metric?.['52WeekHigh']),
-    w52Tief: positiv(metric?.['52WeekLow']),
-    dividendenrenditePct: positiv(metric?.dividendYieldIndicatedAnnual),
-    gewinntermin: naechsterGewinntermin(termine, heute),
+    kgvTtm: verdacht ? null : positiv(metric?.peTTM),
+    epsTtm: verdacht ? null : zahl(metric?.epsTTM),
+    w52Hoch: verdacht ? null : w52Hoch,
+    w52Tief: verdacht ? null : positiv(metric?.['52WeekLow']),
+    dividendenrenditePct: verdacht ? null : positiv(metric?.dividendYieldIndicatedAnnual),
+    gewinntermin: naechsterGewinntermin(termine, heute, opt.nachSchluss === true),
+    metricVerdacht: verdacht,
     quelle: 'finnhub',
     updatedAt,
   };

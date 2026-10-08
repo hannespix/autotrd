@@ -29,7 +29,8 @@ describe('Profil im Detail-Sheet', () => {
     expect(r).toContain('<dl class="dkz mono">');
     for (const k of ['dt.marktkap', 'dt.beta', 'dt.kgv', 'dt.eps', 'dt.dividende', 'dt.gewinntermin', 'dt.ipo']) expect(r).toContain(`t('${k}')`);
     // Marktkap. in Millionen → kompakt mit Dollar (nur US-Aktien haben ein Profil)
-    expect(r).toContain('`$${volKompakt(pr.marktkapMio * 1e6)}`');
+    expect(r).toContain("!pr.waehrung || pr.waehrung === 'USD' ? `$${volKompakt(mio * 1e6)}` : `${volKompakt(mio * 1e6)} ${escText(pr.waehrung)}`");
+    expect(r).toContain("'dividendenrenditePct', 'gewinntermin'].some((k) => (pr as Record<string, unknown>)[k] != null)) return '';");
     // Website nur http(s), escaped, als sicherer Link
     expect(r).toContain("typeof pr.website === 'string' && /^https?:\\/\\//.test(pr.website)");
     expect(r).toContain('target="_blank" rel="noopener noreferrer"');

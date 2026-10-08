@@ -62,7 +62,10 @@ describe('profilSync — Deploy-Wächter', () => {
   });
 
   it('Drossel bricht den Lauf ab (Grund statt Kontingent verbrennen); Budget-Konstanten unter der 60er-Grenze', () => {
-    expect(sync).toContain("if (err instanceof ProfilQuelleFehler && (err.grund === 'rate_limit' || err.grund === 'kein_zugriff')) {");
+    expect(sync).toContain("if (err instanceof ProfilQuelleFehler && (err.grund === 'rate_limit' || (err.grund === 'kein_zugriff' && (err.status === 401 || i === 0)))) {");
+    expect(sync).toContain('export const PROFIL_ZEITBUDGET_MS = 450_000;');
+    expect(sync).toContain("if (uhr() - beginn > PROFIL_ZEITBUDGET_MS) {");
+    expect(sync).toContain("alt.get('kennzahlen.w52Hoch')");
     expect(sync).toContain('export const PROFIL_ABSTAND_MS = 3300;');
     expect(sync).toContain('export const PROFIL_PRO_LAUF = 80;');
     // 3 Abrufe je 3,3 s ≈ 55/min

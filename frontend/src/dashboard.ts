@@ -8251,6 +8251,10 @@ function kennzahlenRaster(kz: MarketDocData['kennzahlen']): string {
  */
 function profilRaster(pr: MarketDocData['profil']): string {
   if (!pr) return '';
+  // Leere Hülle (nur Kopffelder null, keine Zahl) → kein Raster aus sechs Strichen.
+  if (!['branche', 'land', 'ipo', 'website', 'marktkapMio', 'beta', 'kgvTtm', 'epsTtm', 'dividendenrenditePct', 'gewinntermin'].some((k) => (pr as Record<string, unknown>)[k] != null)) return '';
+  // Marktkap in der Notierungswährung aus profile2 — `$` nur, wenn es USD ist (Red-Team H2).
+  const marktkap = (mio: number): string => (!pr.waehrung || pr.waehrung === 'USD' ? `$${volKompakt(mio * 1e6)}` : `${volKompakt(mio * 1e6)} ${escText(pr.waehrung)}`);
   const text = (v: unknown): string => (typeof v === 'string' && v ? escText(v) : '—');
   const zahl = (v: unknown, nk = 2): string => (typeof v === 'number' && Number.isFinite(v) ? v.toFixed(nk) : '—');
   const kopf = [pr.branche, pr.land, pr.ipo ? `${t('dt.ipo')} ${pr.ipo}` : null]
@@ -8261,7 +8265,7 @@ function profilRaster(pr: MarketDocData['profil']): string {
     : '';
   const zeile = kopf.length || link ? `<div class="hint dprofil">${[...kopf, link].filter(Boolean).join(' · ')}</div>` : '';
   return `${zeile}<dl class="dkz mono">
-      <div><dt>${t('dt.marktkap')}</dt><dd>${typeof pr.marktkapMio === 'number' && pr.marktkapMio > 0 ? `$${volKompakt(pr.marktkapMio * 1e6)}` : '—'}</dd></div>
+      <div><dt>${t('dt.marktkap')}</dt><dd>${typeof pr.marktkapMio === 'number' && pr.marktkapMio > 0 ? marktkap(pr.marktkapMio) : '—'}</dd></div>
       <div><dt>${t('dt.beta')}</dt><dd>${zahl(pr.beta)}</dd></div>
       <div><dt>${t('dt.kgv')}</dt><dd>${zahl(pr.kgvTtm)}</dd></div>
       <div><dt>${t('dt.eps')}</dt><dd>${zahl(pr.epsTtm)}</dd></div>

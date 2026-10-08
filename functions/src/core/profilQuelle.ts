@@ -12,6 +12,7 @@ import {
   type FinnhubMetric,
   type FinnhubProfile2,
   type Profil,
+  type ProfilOptionen,
   finnhubSymbol,
   profilAus,
 } from '../../../shared/src/index.js';
@@ -23,7 +24,7 @@ const BASE = 'https://finnhub.io/api/v1';
 export const PROFIL_TIMEOUT_MS = 8000;
 
 export class ProfilQuelleFehler extends Error {
-  constructor(public readonly grund: 'rate_limit' | 'kein_zugriff' | 'http' | 'timeout', status?: number) {
+  constructor(public readonly grund: 'rate_limit' | 'kein_zugriff' | 'http' | 'timeout', public readonly status?: number) {
     super(`finnhub_${grund}${status ? `_${status}` : ''}`);
   }
 }
@@ -63,6 +64,7 @@ export async function holeProfil(
   heute: string,
   fetchImpl: FetchLike,
   updatedAt = new Date().toISOString(),
+  opt: ProfilOptionen = {},
 ): Promise<Profil> {
   const sym = encodeURIComponent(finnhubSymbol(symbol));
   const profile2 = (await hole(fetchImpl, `stock/profile2?symbol=${sym}`, key)) as FinnhubProfile2 | null;
@@ -78,5 +80,6 @@ export async function holeProfil(
     Array.isArray(kalender?.earningsCalendar) ? kalender.earningsCalendar : [],
     heute,
     updatedAt,
+    opt,
   );
 }

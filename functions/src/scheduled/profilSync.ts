@@ -16,7 +16,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions/v2';
 import { onRequest } from 'firebase-functions/v2/https';
 import { onSchedule } from 'firebase-functions/v2/scheduler';
-import { PROFIL_KLASSEN, allSymbols, profilHatInhalt } from '../../../shared/src/index.js';
+import { PROFIL_KLASSEN, allSymbols, budgetTag, profilHatInhalt } from '../../../shared/src/index.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
 import { type FetchLike, ProfilQuelleFehler, holeProfil } from '../core/profilQuelle.js';
 
@@ -24,7 +24,14 @@ import { type FetchLike, ProfilQuelleFehler, holeProfil } from '../core/profilQu
 export const PROFIL_PRO_LAUF = 80;
 /** Abstand zwischen zwei Symbolen — 3 Abrufe je 3,3 s ≈ 55/min, unter der 60er-Grenze. */
 export const PROFIL_ABSTAND_MS = 3300;
-export const PROFIL_STAND_V = 1;
+/**
+ * Zeitbudget je Lauf (Red-Team M1): 66 Symbole × 3,3 s sind 218 s Sockel;
+ * mit Latenz und Timeouts (3 × 8 s je Symbol) reißt timeoutSeconds 540 —
+ * und dann schreibt der Lauf weder Cursor noch Stand. Also selbst aufhören,
+ * Cursor sichern, morgen weiter.
+ */
+export const PROFIL_ZEITBUDGET_MS = 450_000;
+export const PROFIL_STAND_V = 2;
 
 export interface ProfilSyncErgebnis {
   grund: string | null;
@@ -36,6 +43,9 @@ export interface ProfilSyncErgebnis {
 
 const schluessel = (): string => (process.env.FINNHUB_API_KEY ?? '').trim();
 const schlaf = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+/** Stunde in New York (0–23) — Börsenschluss ist 16:00 ET. */
+const etStunde = (d: Date): number =>
+  Number(new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', hourCycle: 'h23' }).formatToParts(d).find((t) => t.type === 'hour')?.value ?? 0);
 
 /** Kandidaten: der Katalog der Profil-Klassen, deterministisch sortiert (Cursor-Rotation). */
 export function profilKandidaten(): string[] {
@@ -48,6 +58,7 @@ export async function runProfilSync(
   now = new Date(),
   fetchImpl: FetchLike = fetch as unknown as FetchLike,
   abstandMs = PROFIL_ABSTAND_MS,
+  uhr: () => number = Date.now,
 ): Promise<ProfilSyncErgebnis> {
   const db = getFirestore();
   const standRef = db.doc('meta/profilStand');
@@ -62,17 +73,27 @@ export async function runProfilSync(
   if (kandidaten.length === 0) return { ...leer, grund: 'keine_kandidaten' };
   const vorher = await standRef.get().catch(() => null);
   const cursorAlt = ((vorher?.get('cursor') as number | undefined) ?? 0) % kandidaten.length;
-  const heute = now.toISOString().slice(0, 10);
-  const beginn = Date.now();
+  // Kalendertag und Tageszeit in New York (Red-Team M3): 17:45 ET ist nach
+  // Schluss, ein Termin von heute also vorbei; 22:30 ET ist noch derselbe Tag.
+  const heute = budgetTag(now);
+  const nachSchluss = etStunde(now) >= 16;
+  const beginn = uhr();
   let geschrieben = 0;
   let leerZahl = 0;
   let fehler = 0;
   let grund: string | null = null;
   let i = 0;
   for (; i < Math.min(PROFIL_PRO_LAUF, kandidaten.length); i += 1) {
+    if (uhr() - beginn > PROFIL_ZEITBUDGET_MS) {
+      grund = 'zeit';
+      break;
+    }
     const sym = kandidaten[(cursorAlt + i) % kandidaten.length]!;
     try {
-      const profil = await holeProfil(sym, key, heute, fetchImpl, now.toISOString());
+      // Yahoo-52W-Hoch aus Teil 1 als Plausibilitätsanker (Red-Team H2).
+      const alt = await db.doc(`market/${sym}`).get();
+      const yahooW52Hoch = alt.exists ? ((alt.get('kennzahlen.w52Hoch') as number | null | undefined) ?? null) : null;
+      const profil = await holeProfil(sym, key, heute, fetchImpl, now.toISOString(), { nachSchluss, yahooW52Hoch });
       if (!profilHatInhalt(profil)) {
         leerZahl += 1;
       } else {
@@ -81,9 +102,13 @@ export async function runProfilSync(
       }
     } catch (err) {
       fehler += 1;
-      if (err instanceof ProfilQuelleFehler && (err.grund === 'rate_limit' || err.grund === 'kein_zugriff')) {
-        // Drossel oder gesperrter Schlüssel: weiterzumachen hieße, das
-        // Kontingent zu verbrennen — Grund festhalten, morgen weiter.
+      // Drossel (429) oder ungültiger Schlüssel (401): weiterzumachen hieße,
+      // das Kontingent zu verbrennen — Grund festhalten, morgen weiter. Ein
+      // 403 ist bei Finnhub auch SYMBOLBEZOGEN (Papier nicht im Gratis-Tarif);
+      // als Abbruch parkte der Cursor dauerhaft auf diesem Symbol (Red-Team
+      // H1). Deshalb: 403 nur am ersten Symbol des Laufs als Schlüsselproblem
+      // werten, sonst zählen und weitergehen.
+      if (err instanceof ProfilQuelleFehler && (err.grund === 'rate_limit' || (err.grund === 'kein_zugriff' && (err.status === 401 || i === 0)))) {
         grund = err.grund;
         break;
       }
@@ -102,7 +127,7 @@ export async function runProfilSync(
       fehler,
       cursor,
       kandidaten: kandidaten.length,
-      dauerMs: Date.now() - beginn,
+      dauerMs: uhr() - beginn,
       v: PROFIL_STAND_V,
     },
     { merge: true },
