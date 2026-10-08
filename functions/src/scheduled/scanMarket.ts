@@ -72,6 +72,8 @@ import {
   type KiGenutzt,
   type KiSignal,
   bucketKey,
+  kanteJeRegime,
+  type RegimeKante,
   bucketVerdict,
   DEFAULT_CORE_PCT,
   convictionFactor,
@@ -630,6 +632,8 @@ async function executeUserTrades(
   executed: number;
   gate: EntryGateStats;
   ki: KiLaufStats;
+  /** Hebel 2, Messung: Kante je Regime aus den Steckbriefen dieses Laufs. */
+  regimeKante: Record<string, RegimeKante>;
   konten: KontenStats;
   broker: BrokerStats;
   /** Sizing-Schatten über ALLE Konten dieses Laufs (Hebel 2, 21.08.). */
@@ -2630,6 +2634,7 @@ async function executeUserTrades(
     executed,
     gate,
     ki: kiLauf,
+    regimeKante: kanteJeRegime(filterBuckets),
     konten,
     broker,
     sizing: fasseSizingSchatten(sizingAlle),
@@ -4260,6 +4265,7 @@ export async function runScan(force = false): Promise<ScanResult> {
   /* KI-Kaskade (Stufe 2b): `null`, solange der Trade-Block nicht lief —
    * dieselbe Unterscheidung wie oben. */
   let kiLaufGesamt: KiLaufStats | null = null;
+  let regimeKanteGesamt: Record<string, RegimeKante> | null = null;
   /* Hebel 1a (22.08.): Der Stand des HALTE-Schattens VOR diesem Lauf — die
    * Grundlage der gemessenen Einfangquote im Kosten-Tor.
    *
@@ -4293,6 +4299,7 @@ export async function runScan(force = false): Promise<ScanResult> {
     sizingSchattenLauf = res.sizing;
     nachbuchungLaufGesamt = res.nachbuchung;
     kiLaufGesamt = res.ki;
+    regimeKanteGesamt = res.regimeKante;
   } catch (err) {
     lastError = `trades: ${err instanceof Error ? err.message : String(err)}`.slice(0, 400);
     logger.error('Trade-Block fehlgeschlagen', err);
@@ -4635,6 +4642,11 @@ export async function runScan(force = false): Promise<ScanResult> {
         // Hebel 2 (15.08.): Was die Seitwärts-Bremse in DIESEM Lauf an
         // Frequenz und Größe gedämpft hat — deklarativ, damit die Wirkung
         // je Lauf nachlesbar ist statt nur im Code zu stehen.
+        /* Hebel 2, Messung (08.10.): die Kante je Regime aus den
+         * Steckbriefen — damit die Seitwärts-Bremse eine Zahl bekommt,
+         * gegen die man sie halten kann. Keine neuen Lesevorgänge; die
+         * Zähler liegen ohnehin öffentlich in meta/tradeFilter. */
+        regimeKante: regimeKanteGesamt,
         regimeBremse: {
           state: regime.state,
           cooldownFaktor: regime.state === 'seitwaerts' ? SEITWAERTS_COOLDOWN_FAKTOR : 1,

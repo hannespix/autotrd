@@ -119,6 +119,8 @@ export interface KiFakten {
   signalSchatten?: Record<string, { n?: number; trefferquote?: number | null; kantePct?: number | null }>;
   konten?: Record<string, number | string>;
   regime?: { state?: string; vix?: number; aboveSma200?: boolean };
+  /** Kante je Regime (Hebel 2, Messung): n, Trefferquote, Ø P&L je Trade — aus meta/health.regimeKante. */
+  regimeKante?: Record<string, { n?: number; winRatePct?: number | null; pnlAvg?: number | null }>;
   /** KI-Nachrichten (Stufe 3/4a): gemessene Güte der Urteile — nur Summen aus meta/health.kiBewertung. */
   kiBewertung?: {
     faelleWirksam?: number;
@@ -203,6 +205,17 @@ export function baueEingabe(chronik: ErkenntnisChronik, fakten: KiFakten): strin
         `wirksame Long-Urteile gesamt n=${ki.faelleWirksamLong ?? 0}; alle Urteile n=${ki.faelleGesamt ?? 0}; ` +
         `Gewicht der KI-Stimme ×${z(ki.gewicht ?? 1)}`,
     );
+  }
+
+  const rk = fakten.regimeKante;
+  if (rk && Object.keys(rk).length > 0) {
+    zeilen.push('', 'KANTE JE REGIME (realisierte Trades aller Konten, Seitwärts-Bremse seit 15.08.):');
+    for (const [k, v] of Object.entries(rk)) {
+      zeilen.push(
+        `- ${k}: n=${v.n ?? 0}, Trefferquote ${typeof v.winRatePct === 'number' ? pz(v.winRatePct) : '--'} %, ` +
+          `Ø P&L je Trade ${typeof v.pnlAvg === 'number' ? pz(v.pnlAvg) : '--'}`,
+      );
+    }
   }
 
   if (fakten.regime) {

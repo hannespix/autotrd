@@ -194,6 +194,9 @@ describe('Golden-Wächter — die deutschen Tips sind byte-gleich zum Bestand', 
     expect(INFO_DE['dailyLossLimit']?.t).toBe('Tages-Notbremse');
     expect(INFO_DE['flattenOnBreach']?.t).toBe('Bei Notbremse glattstellen');
     expect(INFO_DE['regimeGate']?.t).toBe('Markt-Ampel');
+    // Hebel 2 (Seitwärts-Bremse) darf dem Nutzer nicht verschwiegen werden
+    expect(INFO_DE['regimeGate']?.d).toContain('NEUTRALER Ampel (seitwärts) bremst die Engine zusätzlich');
+    expect(INFO_EN['regimeGate']?.d).toContain('On a NEUTRAL light (sideways) the engine also brakes');
     expect(INFO_DE['newsVeto']?.t).toBe('News-Veto');
     expect(INFO_DE['kiNachrichten']?.t).toBe('KI-Nachrichten');
     expect(INFO_EN['kiNachrichten']?.t).toBe('AI news');

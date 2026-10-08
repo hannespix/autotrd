@@ -15,6 +15,8 @@ import {
   signalSignature,
   updateBucket,
   type BucketStat,
+  kanteJeRegime,
+  MIN_BUCKET_N_REGIME,
 } from '../src/tradeFilter.js';
 
 const fuellen = (pnls: number[]): BucketStat =>
@@ -110,5 +112,25 @@ describe('bucketVerdict — die Beweislast liegt beim Block', () => {
   it('positiver Erwartungswert blockt nie — auch bei riesigem n', () => {
     const gewinner = fuellen(Array.from({ length: 500 }, (_, i) => (i % 3 === 0 ? -2 : 3)));
     expect(bucketVerdict(gewinner).blocked).toBe(false);
+  });
+});
+
+describe('kanteJeRegime — Hebel 2, Messung (08.10.)', () => {
+  it('fasst die Steckbriefe nach dem 5. Schlüsselsegment zusammen; Mittelwerte erst ab MIN_BUCKET_N_REGIME', () => {
+    expect(MIN_BUCKET_N_REGIME).toBe(10);
+    const buckets = {
+      'stocks_us|daily|rsi+macd|long|trend': { n: 8, wins: 5, pnlSum: 40, pnlSqSum: 0 },
+      'crypto|daily|rsi|long|trend': { n: 4, wins: 1, pnlSum: -20, pnlSqSum: 0 },
+      'stocks_us|daily|rsi|long|seitwaerts': { n: 6, wins: 2, pnlSum: -12, pnlSqSum: 0 },
+      'stocks_us|daily|rsi|long': { n: 3, wins: 2, pnlSum: 3, pnlSqSum: 0 }, // Altbestand ohne Segment → 'alle'
+      'kaputt|x|y|long|stress': { n: 0, wins: 0, pnlSum: 0, pnlSqSum: 0 }, // leer zählt nicht
+    };
+    expect(kanteJeRegime(buckets)).toEqual({
+      trend: { n: 12, winRatePct: 50, pnlAvg: 1.67 },
+      seitwaerts: { n: 6, winRatePct: null, pnlAvg: null },
+      alle: { n: 3, winRatePct: null, pnlAvg: null },
+    });
+    expect(kanteJeRegime({})).toEqual({});
+    expect(kanteJeRegime(undefined)).toEqual({});
   });
 });

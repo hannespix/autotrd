@@ -25,6 +25,45 @@
  * Positions-Doc, Schatten-Zähler im Heartbeat) liegt in functions/.
  */
 
+/** Kante je Regime-Zustand (Hebel 2, Messung 08.10.) — aus den Steckbriefen, 5. Schlüsselsegment. */
+export interface RegimeKante {
+  n: number;
+  winRatePct: number | null;
+  /** Mittlerer realisierter P&L je Trade (Kontowährung) — null unter MIN_BUCKET_N_REGIME. */
+  pnlAvg: number | null;
+}
+
+/** Erst ab so vielen Trades je Regime wird der Mittelwert ausgewiesen (sonst nur n). */
+export const MIN_BUCKET_N_REGIME = 10;
+
+/**
+ * Die Steckbrief-Zähler nach Regime zusammenfassen (Hebel 2, Messung). Die
+ * Seitwärts-Bremse (Cooldown ×2, halbe Größe) läuft seit 15.08. — ob sie
+ * etwas bringt, konnte bisher niemand sehen, weil keine Kennzahl je Regime
+ * existierte. Pure; Schlüssel ohne Regime-Segment zählen als 'alle'.
+ */
+export function kanteJeRegime(buckets: Record<string, BucketStat> | null | undefined): Record<string, RegimeKante> {
+  const summen = new Map<string, { n: number; wins: number; pnlSum: number }>();
+  for (const [key, b] of Object.entries(buckets ?? {})) {
+    if (!b || !Number.isFinite(b.n) || b.n <= 0) continue;
+    const regime = key.split('|')[4] ?? 'alle';
+    const s = summen.get(regime) ?? { n: 0, wins: 0, pnlSum: 0 };
+    s.n += b.n;
+    s.wins += Number.isFinite(b.wins) ? b.wins : 0;
+    s.pnlSum += Number.isFinite(b.pnlSum) ? b.pnlSum : 0;
+    summen.set(regime, s);
+  }
+  const out: Record<string, RegimeKante> = {};
+  for (const [regime, s] of summen) {
+    out[regime] = {
+      n: s.n,
+      winRatePct: s.n >= MIN_BUCKET_N_REGIME ? Math.round((s.wins / s.n) * 1000) / 10 : null,
+      pnlAvg: s.n >= MIN_BUCKET_N_REGIME ? Math.round((s.pnlSum / s.n) * 100) / 100 : null,
+    };
+  }
+  return out;
+}
+
 /** Realisierte Statistik eines Steckbriefs. */
 export interface BucketStat {
   n: number;

@@ -168,3 +168,14 @@ describe('Stufe 4a — KI-Abschnitt im Lagebericht', () => {
     expect(text).not.toContain('55.5');
   });
 });
+
+describe('Hebel 2, Messung — Kante je Regime im Lagebericht', () => {
+  it('erscheint nur mit Daten, mit Kommazahlen', () => {
+    const chronik = { date: '2026-10-08', eintraege: {} } as unknown as Parameters<typeof baueEingabe>[0];
+    expect(baueEingabe(chronik, {})).not.toContain('KANTE JE REGIME');
+    const text = baueEingabe(chronik, { regimeKante: { trend: { n: 12, winRatePct: 50, pnlAvg: 1.67 }, seitwaerts: { n: 6, winRatePct: null, pnlAvg: null } } });
+    expect(text).toContain('KANTE JE REGIME (realisierte Trades aller Konten, Seitwärts-Bremse seit 15.08.):');
+    expect(text).toContain('- trend: n=12, Trefferquote 50,00 %, Ø P&L je Trade 1,67');
+    expect(text).toContain('- seitwaerts: n=6, Trefferquote -- %, Ø P&L je Trade --');
+  });
+});

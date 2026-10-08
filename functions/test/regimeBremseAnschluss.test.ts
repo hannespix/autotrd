@@ -71,3 +71,11 @@ describe('Seitwärts-Bremse — Anschluss-Wächter', () => {
     }
   });
 });
+
+describe('Hebel 2, Messung (08.10.): Kante je Regime im Herzschlag', () => {
+  it('executeUserTrades liefert die Kante aus den Steckbriefen, der Herzschlag schreibt sie', () => {
+    expect(scan).toContain('    regimeKante: kanteJeRegime(filterBuckets),');
+    expect(scan).toContain('    regimeKanteGesamt = res.regimeKante;');
+    expect(scan).toContain('        regimeKante: regimeKanteGesamt,');
+  });
+});
