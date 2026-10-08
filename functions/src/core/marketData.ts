@@ -34,6 +34,8 @@
  * Börsenuhr, Asset-Metadaten (`alpacaBroker.ts`).
  */
 
+import { kennzahlenAus, type Kennzahlen } from '../../../shared/src/index.js';
+
 export interface DailyBar {
   date: string; // YYYY-MM-DD in der Börsen-Zeitzone des Symbols
   open: number;
@@ -50,6 +52,8 @@ export interface MarketSnapshot {
   bars: DailyBar[];
   /** Bewusst nur ein Wert: Signal-Bars und Chart-Historie teilen die Quelle. */
   source: 'yahoo';
+  /** Kennzahlen aus demselben Abruf (Task 19) — Vortag, Spannen, Volumen, Name, Börse. */
+  kennzahlen: Kennzahlen;
 }
 
 const YAHOO_BASE = 'https://query1.finance.yahoo.com/v8/finance/chart';
@@ -72,6 +76,17 @@ interface YahooChartResponse {
         previousClose?: number;
         chartPreviousClose?: number;
         exchangeTimezoneName?: string;
+        // Task 19: Kennzahlen-Felder, die der Chart-Abruf ohnehin mitliefert
+        regularMarketDayHigh?: number;
+        regularMarketDayLow?: number;
+        fiftyTwoWeekHigh?: number;
+        fiftyTwoWeekLow?: number;
+        regularMarketVolume?: number;
+        longName?: string;
+        shortName?: string;
+        fullExchangeName?: string;
+        exchangeName?: string;
+        currency?: string;
       };
       timestamp?: number[];
       indicators: {
@@ -122,7 +137,14 @@ async function fetchYahoo(symbol: string, range: string): Promise<MarketSnapshot
     (bars.length >= 2 ? bars[bars.length - 2]!.close : price);
   const changePct = prev > 0 ? (price / prev - 1) * 100 : 0;
 
-  return { symbol, price, changePct, bars, source: 'yahoo' };
+  return {
+    symbol,
+    price,
+    changePct,
+    bars,
+    source: 'yahoo',
+    kennzahlen: kennzahlenAus(result.meta, bars, new Date().toISOString()),
+  };
 }
 
 /**
@@ -176,9 +198,9 @@ export async function getDeepDailyBars(symbol: string): Promise<DailyBar[]> {
  *  Tageskerze aus demselben 5d-Fetch (keine zweite Anfrage nötig). */
 export async function getQuickQuote(
   symbol: string,
-): Promise<{ price: number; changePct: number; lastBar: DailyBar }> {
+): Promise<{ price: number; changePct: number; lastBar: DailyBar; kennzahlen: Kennzahlen }> {
   const snap = await fetchYahoo(symbol, '5d');
-  return { price: snap.price, changePct: snap.changePct, lastBar: snap.bars[snap.bars.length - 1]! };
+  return { price: snap.price, changePct: snap.changePct, lastBar: snap.bars[snap.bars.length - 1]!, kennzahlen: snap.kennzahlen };
 }
 
 /** Tages-Bars nach Jahr bündeln (ein Firestore-Doc je Jahr — Lese-Kosten). */

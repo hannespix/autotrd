@@ -556,6 +556,8 @@ td .sym-av, .lb-sym .sym-av { margin-right: 6px; }
   color: var(--t2); background: var(--sd); border: 1px solid var(--bd);
   padding: 2px 7px; border-radius: 999px; }
 .sym-tip-text { margin-top: 7px; font-size: 11px; line-height: 1.5; color: var(--t2); }
+/* Kennzahlen-Zeile im Kärtchen (Task 19): eine Zeile, zwei Werte. */
+.sym-tip-kz { margin-top: 7px; font-size: 10.5px; color: var(--t2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Erklaer-Variante des Kaertchens (Signal-Zelle, 22.08.).
    Zwei Werte, die hier nicht kosmetisch sind:
    - max-width 320 statt 280: Die Stimm-Zeilen brechen sonst nach jedem
@@ -739,6 +741,12 @@ select.inp option { background: var(--card-solid); color: var(--t1); }
 .dsheet .dbtn.pri { background: linear-gradient(135deg, var(--ac2), var(--ac)); color: var(--on-ac); border-color: transparent; box-shadow: var(--glow-ac); }
 .dclose { position: absolute; top: 10px; right: 10px; width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--bd2); background: var(--sd); color: var(--t1); font-size: 16px; cursor: pointer; line-height: 1; display: flex; align-items: center; justify-content: center; }
 
+/* Kennzahlen-Raster im Detail-Sheet (Task 19): 2 Spalten, Begriff über Wert,
+   Werte in voller Breite — nichts wird abgeschnitten, auch nicht bei 390 px. */
+.dsheet .dkz { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 14px; margin: 12px 0 2px; font-size: 12px; }
+.dsheet .dkz div { display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid var(--hair); padding-bottom: 5px; min-width: 0; }
+.dsheet .dkz dt { font-size: 10px; text-transform: uppercase; letter-spacing: .4px; color: var(--t3); font-family: inherit; }
+.dsheet .dkz dd { color: var(--t1); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin: 0; }
 /* Schlagzeilen im Detail-Sheet (News-Rückkehr 29.07.) */
 .dsheet .dnews { display: flex; flex-direction: column; gap: 8px; }
 .dsheet .dnews-item { display: grid; grid-template-columns: 8px 1fr; column-gap: 8px; align-items: baseline; text-decoration: none; color: var(--t1); font-size: 12px; line-height: 1.35; }

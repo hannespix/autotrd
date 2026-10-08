@@ -9,7 +9,7 @@
 
 import { getFirestore } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
-import { allSymbols } from '../../../shared/src/index.js';
+import { allSymbols, kennzahlenFelder } from '../../../shared/src/index.js';
 import { consumeQuota } from '../core/broker.js';
 import { getQuickQuote } from '../core/marketData.js';
 import { CALLABLE_OPTS } from '../core/appcheck.js';
@@ -30,7 +30,11 @@ export const quoteNow = onCall(CALLABLE_OPTS, async (request) => {
   await getFirestore()
     .doc(`market/${symbol}`)
     .set(
-      { quote: { price: q.price, changePct: q.changePct, updatedAt: new Date().toISOString() } },
+      {
+        quote: { price: q.price, changePct: q.changePct, updatedAt: new Date().toISOString() },
+        // Task 19: Tagesspanne/Volumen frisch; Ø-Volumen fehlt im 5d-Abruf und bleibt vom Scan.
+        kennzahlen: kennzahlenFelder(q.kennzahlen),
+      },
       { merge: true },
     );
   return q;

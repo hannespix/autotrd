@@ -103,6 +103,7 @@ import {
   fasseSizingSchatten,
   type SizingSchatten,
   type SizingSchattenSumme,
+  kennzahlenFelder,
 } from '../../../shared/src/index.js';
 import { atrPct } from '../../../shared/src/index.js';
 import { EMULATOR_TRIGGER_OPTS } from '../core/appcheck.js';
@@ -3204,7 +3205,9 @@ async function supplyCatalog(
       });
       await batch.set(
         db.collection('market').doc(sym),
-        { lastBarDate: qq.lastBar.date },
+        // Kennzahlen (Task 19) aus dem 5d-Abruf — ohne Ø-Volumen, das Feld
+        // fehlt dann im merge und der Scan-Wert bleibt stehen.
+        { lastBarDate: qq.lastBar.date, kennzahlen: kennzahlenFelder(qq.kennzahlen) },
         { merge: true },
       );
     } catch (err) {
@@ -3943,6 +3946,8 @@ export async function runScan(force = false): Promise<ScanResult> {
             changePct: snap.changePct,
             updatedAt: now.toISOString(),
           },
+          // Kennzahlen (Task 19) aus demselben 1y-Abruf — hier MIT Ø-Volumen.
+          kennzahlen: kennzahlenFelder(snap.kennzahlen),
           source: snap.source,
           // Live-Prognose fürs Chart-Overlay (Punkte + Band + Kennwerte)
           forecast: forecast
