@@ -86,11 +86,22 @@ describe('bestParams — Self-Tuning ohne Lookahead', () => {
 
   it('wählt beste Richtungs-Quote, Tiebreak niedrigste MAE', () => {
     const combos = {
-      [comboKey(10)]: { n: 10, hits: 9, maeSum: 30 }, // 90 %, MAE 3.0
-      [comboKey(20)]: { n: 10, hits: 9, maeSum: 20 }, // 90 %, MAE 2.0 ← Gewinner
-      [comboKey(30)]: { n: 10, hits: 7, maeSum: 5 },  // 70 %
+      [comboKey(10)]: { n: 20, hits: 18, maeSum: 60 }, // 90 %, MAE 3.0
+      [comboKey(20)]: { n: 20, hits: 18, maeSum: 40 }, // 90 %, MAE 2.0 ← Gewinner
+      [comboKey(30)]: { n: 20, hits: 14, maeSum: 10 }, // 70 %
     };
     expect(bestParams(combos)).toEqual({ lookback: 20 });
+  });
+
+  it('zählt Fälle, nicht Dokumente: 3 Kombis × 10 sind 10 Fälle, keine 30 (H2)', () => {
+    // Arm 10 wäre der klare Sieger — mit nur 10 Fällen bleibt es beim Default (20).
+    const combos = {
+      [comboKey(10)]: { n: 10, hits: 9, maeSum: 20 },
+      [comboKey(20)]: { n: 10, hits: 6, maeSum: 30 },
+      [comboKey(30)]: { n: 10, hits: 5, maeSum: 5 },
+    };
+    expect(DEFAULT_LOOKBACK).not.toBe(10);
+    expect(bestParams(combos)).toEqual({ lookback: DEFAULT_LOOKBACK });
   });
 
   it('ignoriert Kombis unter MIN_SAMPLES_PER_COMBO', () => {

@@ -18,6 +18,7 @@ import {
   LOOKBACK_GRID,
   bestParams,
   comboKey,
+  fallZahl,
   isForecastDue,
   isIntradayForecastDue,
   MIN_TOTAL_SCORES,
@@ -59,6 +60,27 @@ const BATCH_LIMIT = 200;
  * 20 Fällen statt nach 7 — Guards nur verschärft. */
 export const TAGES_VERFALL_TAGE = 30;
 
+/**
+ * Verfall OHNE Kursdaten (Red-Team B1): Scheitert der Snapshot, weiß der
+ * Lauf nichts über den Fall — ein transienter Yahoo-Fehler darf dann keine
+ * bewertbare Historie vernichten. Erst wenn der End-Tag so weit zurückliegt,
+ * dass ein Symbol ohne Kursquelle schlicht tot ist, wird verfallen; bis
+ * dahin wird übersprungen und im nächsten Lauf erneut versucht.
+ */
+export const TAGES_VERFALL_OHNE_KURSE_TAGE = 120;
+
+/**
+ * Verfall am KURSRASTER (Red-Team B2): `nextWeekdays` kennt keine
+ * Feiertage. Fällt der End-Tag auf einen, erscheint er nie als Kerze — und
+ * die Prognosen EINES Basistags aller Symbole (bis zu 120 Dokumente) stünden
+ * 30 Kalendertage am Kopf der sortierten Schlange. Liegen bereits so viele
+ * Kerzen NACH dem End-Tag vor, kommt er nicht mehr: Der Markt ist weiter.
+ * Zwei statt eine, weil eine Yahoo-Lücke (null-Close) am Folgetag noch
+ * geschlossen werden kann. Lookahead-neutral: Es wird nie gescort, nur
+ * verfallen.
+ */
+export const KERZEN_NACH_ENDTAG = 2;
+
 /** Ist der End-Tag einer Tages-Prognose so alt, dass er nie mehr als Kerze
  *  erscheinen wird? Kalendertage, UTC-Mitternacht, strikt größer. */
 export function tagesPrognoseVerfallen(endTag: string, today: string, tage = TAGES_VERFALL_TAGE): boolean {
@@ -68,9 +90,11 @@ export function tagesPrognoseVerfallen(endTag: string, today: string, tage = TAG
   return heute - ende > tage * 86_400_000;
 }
 
-/** Fälle statt Dokumente: das größte n einer Kombi (H2). */
-export function fallZahl(combos: Record<string, ComboStat>): number {
-  return Object.values(combos).reduce((m, d) => Math.max(m, d?.n ?? 0), 0);
+/** Wie viele realisierte Kerzen liegen NACH dem End-Tag? (ISO-Datum, lexikalisch) */
+export function kerzenNachEndTag(actuals: Record<string, number>, endTag: string): number {
+  let n = 0;
+  for (const [tag, close] of Object.entries(actuals)) if (tag > endTag && close > 0) n += 1;
+  return n;
 }
 
 /**
@@ -290,15 +314,25 @@ export async function evaluateDue(): Promise<EvalResult> {
       actuals = Object.fromEntries(snap.bars.map((b) => [b.date, b.close]));
     } catch (err) {
       logger.warn(`evalForecasts: keine Actuals für ${symbol}`, err);
-      // Ohne Snapshot (Symbol vom Markt, Quelle tot) bliebe der Fall ewig am
-      // Kopf der sortierten Schlange — nach der Verfallsfrist verfallen
-      // lassen, nie bewerten (H1).
-      const alt = entries.filter(({ doc }) => tagesPrognoseVerfallen(endTagVon(doc), today));
-      if (alt.length > 0) {
+      // Ohne Snapshot weiß der Lauf NICHTS über den Fall — ein transienter
+      // Fehler darf keine bewertbare Historie vernichten (Red-Team B1).
+      // Nur ein seit TAGES_VERFALL_OHNE_KURSE_TAGE totes Symbol verfällt,
+      // damit es nicht ewig am Kopf der Schlange steht; alles andere wird im
+      // nächsten Lauf erneut versucht.
+      const tot = entries.filter(({ doc }) =>
+        tagesPrognoseVerfallen(endTagVon(doc), today, TAGES_VERFALL_OHNE_KURSE_TAGE),
+      );
+      if (tot.length > 0) {
         const batch = db.batch();
-        for (const { ref } of alt) batch.update(ref, { evaluated: true, expired: true });
-        await batch.commit().catch((e) => logger.warn('evalForecasts: Verfall nicht geschrieben', e));
-        expired += alt.length;
+        for (const { ref } of tot) batch.update(ref, { evaluated: true, expired: true });
+        const ok = await batch
+          .commit()
+          .then(() => true)
+          .catch((e) => {
+            logger.warn('evalForecasts: Verfall nicht geschrieben', e);
+            return false;
+          });
+        if (ok) expired += tot.length;
       }
       continue;
     }
@@ -309,10 +343,11 @@ export async function evaluateDue(): Promise<EvalResult> {
       const score = scoreForecast(doc.points, doc.baseClose, actuals);
       const endTag = endTagVon(doc);
       if (!score) {
-        // End-Tag (noch) nicht realisiert → später erneut; nach der
-        // Verfallsfrist verfallen (ein Feiertag als End-Tag erscheint nie
-        // als Kerze). NIEMALS mit unvollständigen Daten scoren.
-        if (tagesPrognoseVerfallen(endTag, today)) {
+        // End-Tag (noch) nicht realisiert → später erneut. Verfallen, wenn
+        // der Markt schon KERZEN_NACH_ENDTAG Kerzen weiter ist (Feiertag als
+        // End-Tag, Red-Team B2) oder die Kalenderfrist um ist. NIEMALS mit
+        // unvollständigen Daten scoren.
+        if (kerzenNachEndTag(actuals, endTag) >= KERZEN_NACH_ENDTAG || tagesPrognoseVerfallen(endTag, today)) {
           batch.update(ref, { evaluated: true, expired: true });
           expired += 1;
         } else {

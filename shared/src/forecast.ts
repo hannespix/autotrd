@@ -243,8 +243,11 @@ export function bestParams(
 ): { lookback: number } {
   const fallback = { lookback: fallbackLookback };
   const entries = Object.entries(combos);
-  const total = entries.reduce((s, [, d]) => s + d.n, 0);
-  if (total < MIN_TOTAL_SCORES) return fallback;
+  // Messkorrektur H2 (08.10.): Die Evidenzschwelle zählt FÄLLE, nicht
+  // Dokumente — vorher reichten 7 Fälle (×3 Lookbacks = 21 Dokumente), und
+  // `tuningActive` im Dashboard und die Wahl hier hatten verschiedene
+  // Schwellen (Red-Team B6). Jetzt dieselbe Zahl an beiden Stellen.
+  if (fallZahl(combos) < MIN_TOTAL_SCORES) return fallback;
   const eligible = entries.filter(([, d]) => d.n >= MIN_SAMPLES_PER_COMBO);
   if (eligible.length === 0) return fallback;
   let best: { key: string; dirAcc: number; mae: number } | null = null;
@@ -257,6 +260,15 @@ export function bestParams(
   }
   const lb = Number(best!.key);
   return { lookback: Number.isFinite(lb) && lb > 0 ? lb : fallbackLookback };
+}
+
+/**
+ * Fälle statt Dokumente: Jede Lookback-Kombi sieht dieselben (Symbol,
+ * Basistag)-Fälle, also ist das größte n einer Kombi die Zahl der Fälle
+ * (Batch-Grenzen versetzen Geschwister höchstens um eins).
+ */
+export function fallZahl(combos: Record<string, ComboStat>): number {
+  return Object.values(combos).reduce((m, d) => Math.max(m, d?.n ?? 0), 0);
 }
 
 /**

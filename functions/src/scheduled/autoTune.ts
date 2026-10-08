@@ -54,15 +54,23 @@ export const FLEET_SIZE = 6;
  * „Konten", und `MIN_ACCOUNTS = 3` war nach drei Abenden mit EINEM Konto
  * erfüllt. Das Vorwissen sprach, bevor es Breite hatte.
  *
- * Jetzt merkt sich jedes Konto unter users/{uid}/tuning/kollektiv, zu
+ * Jetzt merkt sich jedes Konto unter users/{uid}/kollektiv/beitrag, zu
  * welchen Varianten es schon beigetragen hat (nur Variantenschlüssel und
- * Datum — keine Zahlen, keine Trades). Der aufgeblähte Altbestand von
+ * Datum — keine Zahlen, keine Trades). BEWUSST nicht unter `tuning`: Der
+ * Konto-Reset löscht `tuning` komplett (reset.ts GELOESCHTE_SAMMLUNGEN) —
+ * dort läge der Merker, zählte ein Konto je Reset erneut, und drei Resets
+ * an einem Abend erfüllten MIN_ACCOUNTS allein (Red-Team B3). Der Beitrag
+ * zum Kollektiv ist Historie, kein Kontostand; die Kontolöschung nimmt ihn
+ * mit (recursiveDelete über das ganze Nutzerdokument). Der aufgeblähte Altbestand von
  * `accounts` lässt sich nicht zurückrechnen (es wurden nie Kennungen
  * gespeichert, mit Absicht): Beim ersten Lauf der Fassung KONTEN_ZAEHLUNG_V
  * werden alle `accounts` auf 0 gesetzt und zählen ab da ehrlich hoch. Bis
  * genügend echte Konten beigetragen haben, schweigt der Prior — die
  * Ursprungsordnung der Flotte gilt. Das ist die konservative Richtung. */
 export const KONTEN_ZAEHLUNG_V = 2;
+
+/** Unterliste des Konto-Merkers — darf NIE in reset.ts GELOESCHTE_SAMMLUNGEN stehen. */
+export const KOLLEKTIV_SAMMLUNG = 'kollektiv';
 
 /** Variantenschlüssel als Firestore-Feldname (Punkte verschachteln Pfade). */
 export function axisKey(variantId: string): string {
@@ -232,8 +240,9 @@ export async function tuneAll(now = new Date()): Promise<TuneRunResult> {
 
       const fleetDoc = await userDoc.ref.collection('tuning').doc('fleet').get();
       const fleet = ((fleetDoc.get('variants') as FleetState | undefined) ?? {}) as FleetState;
-      // M3: Was dieses Konto dem Kollektiv schon beigetragen hat.
-      const kollektivRef = userDoc.ref.collection('tuning').doc('kollektiv');
+      // M3: Was dieses Konto dem Kollektiv schon beigetragen hat — außerhalb
+      // von `tuning`, weil der Reset diese Sammlung löscht (B3).
+      const kollektivRef = userDoc.ref.collection(KOLLEKTIV_SAMMLUNG).doc('beitrag');
       const beigetragen =
         ((await kollektivRef.get()).get('beigetragen') as Record<string, unknown> | undefined) ?? {};
 
@@ -377,6 +386,9 @@ export async function tuneAll(now = new Date()): Promise<TuneRunResult> {
           // Sichtbar machen, wie breit das Kollektiv gerade ist — sonst
           // bliebe unklar, ob der Prior überhaupt spricht.
           priors: priors.length,
+          // M3: Fassung der Konten-Zählung — nach der Nullung schweigt der
+          // Prior, bis echte Breite da ist (bewusster Schnitt, Red-Team B7).
+          kontenV: KONTEN_ZAEHLUNG_V,
         },
       },
       { merge: true },

@@ -119,12 +119,29 @@ export const PULSE_HERZSCHLAG_MIN = 5;
 /**
  * Schreibt dieser Lauf einen Herzschlag? Bei einem Ereignis immer; sonst im
  * 5-Minuten-Takt. Vorher nur bei Ereignis — ein Puls, der stillsteht, sah
- * genauso aus wie einer, der nichts zu tun hat (`meta/health.pulse` hatte
- * keinen Leser und keinen Takt). 288 statt 1440 Schreibvorgänge am Tag für
- * die Antwort auf „läuft er?".
+ * genauso aus wie einer, der nichts zu tun hat. 288 statt 1440
+ * Schreibvorgänge am Tag für die Antwort auf „läuft er?".
+ *
+ * Ziel ist `meta/pulse`, NICHT `meta/health` (Red-Team B5): Auf meta/health
+ * hängt jeder Client per onSnapshot — jeder Herzschlag wäre ein bezahlter
+ * Push des ganzen Dokuments an alle. meta/pulse liest niemand live; der
+ * Wächter kann es bei Bedarf abfragen. Und er wird auf ALLEN Pfaden
+ * geschrieben, auch wenn der Markt zu ist oder die Kurse fehlen (B4) —
+ * sonst sähe genau der Leerlauf, den er unterscheidbar machen soll, wieder
+ * wie Stillstand aus.
  */
 export function pulsHerzschlagFaellig(now: Date, ereignis: boolean): boolean {
   return ereignis || now.getUTCMinutes() % PULSE_HERZSCHLAG_MIN === 0;
+}
+
+async function pulsHerzschlag(now: Date, r: PulseResult): Promise<PulseResult> {
+  if (pulsHerzschlagFaellig(now, r.exits > 0 || r.waterMarks > 0 || r.marginCalls > 0)) {
+    await getFirestore()
+      .doc('meta/pulse')
+      .set({ at: now.toISOString(), ...r, skipped: r.skipped ?? null }, { merge: true })
+      .catch(() => undefined);
+  }
+  return r;
 }
 
 export async function runPulse(now = new Date()): Promise<PulseResult> {
@@ -142,7 +159,9 @@ export async function runPulse(now = new Date()): Promise<PulseResult> {
     (sym) => offenMitUhr(sym, now, uhrOffen),
   );
   if (symbole.length === 0) {
-    return { positions: alle.size, watched: 0, exits: 0, waterMarks: 0, marginCalls: 0, skipped: 'market_closed' };
+    return pulsHerzschlag(now, {
+      positions: alle.size, watched: 0, exits: 0, waterMarks: 0, marginCalls: 0, skipped: 'market_closed',
+    });
   }
 
   const quotes = await getSparkBatch(symbole);
@@ -150,14 +169,14 @@ export async function runPulse(now = new Date()): Promise<PulseResult> {
     // Lieber gar nichts tun als auf einem leeren Kursbild handeln: Ein
     // fehlender Kurs darf keinen Ausstieg auslösen, und der 5-min-Scan
     // holt es ohnehin nach.
-    return {
+    return pulsHerzschlag(now, {
       positions: alle.size,
       watched: symbole.length,
       exits: 0,
       waterMarks: 0,
       marginCalls: 0,
       skipped: 'keine_kurse',
-    };
+    });
   }
 
   let exits = 0;
@@ -313,29 +332,9 @@ export async function runPulse(now = new Date()): Promise<PulseResult> {
     }
   }
 
-  // Herzschlag: bei Ereignis sofort, sonst im 5-Minuten-Takt (siehe
-  // pulsHerzschlagFaellig) — „nichts passiert" und „läuft nicht" müssen
-  // unterscheidbar bleiben.
-  if (pulsHerzschlagFaellig(now, exits > 0 || waterMarks > 0 || marginCalls > 0)) {
-    await db
-      .doc('meta/health')
-      .set(
-        {
-          pulse: {
-            at: now.toISOString(),
-            positions: alle.size,
-            watched: symbole.length,
-            exits,
-            waterMarks,
-            marginCalls,
-          },
-        },
-        { merge: true },
-      )
-      .catch(() => undefined);
-  }
-
-  return { positions: alle.size, watched: symbole.length, exits, waterMarks, marginCalls };
+  // Herzschlag nach meta/pulse: bei Ereignis sofort, sonst im 5-Minuten-Takt
+  // (siehe pulsHerzschlagFaellig).
+  return pulsHerzschlag(now, { positions: alle.size, watched: symbole.length, exits, waterMarks, marginCalls });
 }
 
 /** Jede Minute — der schnelle Wächter über offene Positionen.
