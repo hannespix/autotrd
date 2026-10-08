@@ -161,12 +161,17 @@ describe('Buckets und Fälle', () => {
     expect(KI_HOLDOUT_BUCKET).toBe('holdout_b');
     // Stufe 4a: der Gewichts-Bucket bekommt zusätzlich seinen Holdout-Arm (Hash des Fallschlüssels).
     const arm = holdoutArm('AAPL|2026-09-01');
-    expect(bucketsFuer(urteil())).toEqual(['gesamt', 'pruefung', 'wirksam_long', `holdout_${arm}`, 'handelbar', 'ereignis_zahlen']);
-    expect(bucketsFuer(urteil({ richtung: 'negativ' }))).toEqual(['gesamt', 'pruefung', 'wirksam_short', 'handelbar', 'ereignis_zahlen']);
+    expect(bucketsFuer(urteil())).toEqual(['gesamt', 'pruefung', 'wirksam_long', `holdout_${arm}`, 'handelbar', 'ereignis_zahlen', 'prompt_unbekannt']);
+    expect(bucketsFuer(urteil({ richtung: 'negativ' }))).toEqual(['gesamt', 'pruefung', 'wirksam_short', 'handelbar', 'ereignis_zahlen', 'prompt_unbekannt']);
+    // Task 19 Teil 2b: Prompt-Fassung als eigener Bucket — v1 und v2 werden nie gepoolt.
+    expect(bucketsFuer(urteil({ promptV: 2 }))).toContain('prompt_v2');
+    expect(bucketsFuer(urteil({ promptV: 1 }))).toContain('prompt_v1');
+    expect(bucketsFuer(urteil({ promptV: 0 }))).toContain('prompt_unbekannt');
+    expect(bucketsFuer(urteil({ promptV: 1.5 }))).toContain('prompt_unbekannt');
     // „hätte dürfen" ohne abgegebene Stimme ist Schatten
-    expect(bucketsFuer(urteil({ gestimmtAt: undefined }))).toEqual(['gesamt', 'pruefung', 'schatten', 'handelbar', 'ereignis_zahlen']);
+    expect(bucketsFuer(urteil({ gestimmtAt: undefined }))).toEqual(['gesamt', 'pruefung', 'schatten', 'handelbar', 'ereignis_zahlen', 'prompt_unbekannt']);
     expect(bucketsFuer(urteil({ handlungsfaehig: false, stufe: 'sichtung', gestimmtAt: null, sichtung: { ereignis: 'X Y' } }))).toEqual([
-      'gesamt', 'sichtung', 'schatten', 'handelbar',
+      'gesamt', 'sichtung', 'schatten', 'handelbar', 'prompt_unbekannt',
     ]);
   });
   it('Bezug außerhalb der Handelszeit → ausserhalb (Aktie 17:30 ET); Krypto ist immer handelbar', () => {

@@ -22,6 +22,8 @@ import {
   parsePruefung,
   parseSichtung,
   pruefAuswahl,
+  FIRMENBLOCK_MAX_ZEICHEN,
+  PROFIL_MAX_ALTER_TAGE,
   firmenBlock,
   marktkapText,
   pruefungEingabe,
@@ -282,6 +284,31 @@ describe('Firmenprofil als Datenblock (Teil 2b)', () => {
     expect(b).toContain('Marktkapitalisierung: 3.4 Mrd USD');
     expect(b).toContain('KGV (TTM): 33.8');
     expect(b).toContain('Naechste Zahlen: 2026-10-30');
+    // Währung aus profile2, nie stillschweigend USD (Red-Team N2).
+    expect(firmenBlock('X', { marktkapMio: 500, waehrung: 'CNY' })).toContain('Marktkapitalisierung: 500 Mio CNY');
+    // Maximallänge: Jede Zeile ist gedeckelt — die Reservierung rechnet mit FIRMENBLOCK_MAX_ZEICHEN.
+    const lang = firmenBlock('A'.repeat(50), { branche: 'B'.repeat(500), land: 'L'.repeat(100), marktkapMio: 123_456_789, kgvTtm: 12345.678, gewinntermin: '2026-10-30', waehrung: 'X'.repeat(50) })!;
+    expect(lang.length).toBeLessThanOrEqual(FIRMENBLOCK_MAX_ZEICHEN);
+  });
+
+  it('kaputte Felder (Nicht-String, Nicht-Zahl) werfen nie — sie fallen weg (Red-Team M1)', () => {
+    expect(() => firmenBlock('ACME', { branche: 123, land: {}, gewinntermin: 42, marktkapMio: 'x', kgvTtm: 'y', waehrung: 7 } as never)).not.toThrow();
+    expect(firmenBlock('ACME', { branche: 123, gewinntermin: 42 } as never)).toBeNull();
+    expect(firmenBlock('ACME', 'kein objekt' as never)).toBeNull();
+  });
+
+  it('veraltetes Profil → kein Block; vergangener Gewinntermin → Zeile fehlt (Red-Team M4)', () => {
+    const jetzt = '2026-10-08T14:00:00.000Z';
+    const frisch = { ...profil, updatedAt: '2026-10-07T22:00:00.000Z' };
+    expect(firmenBlock('ACME', frisch, jetzt)).toContain('Naechste Zahlen: 2026-10-30');
+    const alt = { ...profil, updatedAt: new Date(Date.parse(jetzt) - (PROFIL_MAX_ALTER_TAGE + 1) * 86_400_000).toISOString() };
+    expect(firmenBlock('ACME', alt, jetzt)).toBeNull();
+    expect(firmenBlock('ACME', { ...profil, updatedAt: 'gestern' }, jetzt)).toBeNull(); // unlesbares Alter = kein Vertrauen
+    const vorbei = firmenBlock('ACME', { ...frisch, gewinntermin: '2026-10-07' }, jetzt)!;
+    expect(vorbei).not.toContain('Naechste Zahlen');
+    expect(vorbei).toContain('Branche: Semiconductors');
+    // Ohne Zeitangabe (reine Unit-Nutzung) bleibt der Termin stehen.
+    expect(firmenBlock('ACME', { gewinntermin: '2020-01-01' })).toContain('Naechste Zahlen: 2020-01-01');
   });
 
   it('ohne Profile ist die Sichtungs-Eingabe byte-gleich zur v1-Fassung', () => {

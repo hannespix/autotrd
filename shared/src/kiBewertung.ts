@@ -66,6 +66,8 @@ export interface KiUrteilRoh {
   eingepreist?: 'nein' | 'teilweise' | 'ja' | 'unklar' | null;
   horizontTage?: number | null;
   stufe?: 'sichtung' | 'pruefung';
+  /** Fassung von Prompts/Schemas beim Urteil (KI_NACHRICHTEN_PROMPT_V) — Bucket `prompt_v{N}`. */
+  promptV?: number;
   firstSeenAt?: string;
   decidedAt?: string;
   gespeichertAt?: unknown;
@@ -345,6 +347,10 @@ export function bucketsFuer(u: KiUrteilRoh): string[] {
   out.push(handelbarZurBezugszeit(u) ? 'handelbar' : 'ausserhalb');
   const ereignis = u.sichtung?.ereignis;
   if (typeof ereignis === 'string' && /^[a-z]+$/.test(ereignis)) out.push(`ereignis_${ereignis}`);
+  // Task 19 Teil 2b (Red-Team H1): Ein Prompt-Wechsel ist ein Regimewechsel in
+  // der Messung. Ohne eigenen Bucket wäre „v2 hilft“ nie belegbar — der
+  // Bestand würde gepoolt. Fehlende Fassung = eigener Bucket, nie v1 unterstellt.
+  out.push(Number.isInteger(u.promptV) && (u.promptV as number) > 0 ? `prompt_v${u.promptV}` : 'prompt_unbekannt');
   return out;
 }
 

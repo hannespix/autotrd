@@ -341,11 +341,19 @@ function meldungsBlock(m: KiMeldung, mitSymbolen: boolean): string {
 /** Firmenprofile je Symbol, wie sie die Sichtung mitbekommt (Teil 2b); fehlend = kein Block. */
 export type FirmenProfile = ReadonlyMap<string, Partial<Profil> | null | undefined>;
 
-/** Marktkapitalisierung lesbar: Finnhub liefert Millionen USD. */
-export function marktkapText(mio: number | null | undefined): string | null {
+/** Ein Profil älter als so viele Tage bekommt KEINEN Block (Red-Team M4: „Naechste Zahlen“ würde sonst in der Vergangenheit stehen). */
+export const PROFIL_MAX_ALTER_TAGE = 10;
+/** Obergrenze eines Firmenblocks in Zeichen — geht in die Worst-Case-Reservierung ein (Red-Team M3). */
+export const FIRMENBLOCK_MAX_ZEICHEN = 240; // Summe der gedeckelten Zeilen (Symbol 20, Branche 60, Land 20, Währung 5) + Rahmen
+
+const textOderNull = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null);
+
+/** Marktkapitalisierung lesbar: Finnhub liefert Millionen in der Notierungswährung (profile2.currency). */
+export function marktkapText(mio: number | null | undefined, waehrung?: string | null): string | null {
   if (typeof mio !== 'number' || !Number.isFinite(mio) || mio <= 0) return null;
+  const w = entschaerfe(textOderNull(waehrung) ?? 'USD').slice(0, 5);
   // Ab 100 Mrd ganze Milliarden, darunter eine Nachkommastelle (12,5 Mrd ≠ 13 Mrd).
-  return mio >= 1000 ? `${(mio / 1000).toFixed(mio >= 100_000 ? 0 : 1)} Mrd USD` : `${Math.round(mio)} Mio USD`;
+  return mio >= 1000 ? `${(mio / 1000).toFixed(mio >= 100_000 ? 0 : 1)} Mrd ${w}` : `${Math.round(mio)} Mio ${w}`;
 }
 
 /**
@@ -353,24 +361,34 @@ export function marktkapText(mio: number | null | undefined): string | null {
  * formatiert. Ohne Inhalt KEIN Block: Dann ist die Eingabe byte-gleich zur
  * v1-Fassung, und Krypto/Indizes (kein Profil) bleiben unberührt.
  */
-export function firmenBlock(symbol: string, p: Partial<Profil> | null | undefined): string | null {
-  if (!p) return null;
+export function firmenBlock(symbol: string, p: Partial<Profil> | null | undefined, jetztIso?: string): string | null {
+  if (!p || typeof p !== 'object') return null;
+  // Jedes Feld wird geprüft, nie vorausgesetzt (Red-Team M1): Ein einziges
+  // Nicht-String-Feld in einem Dokument darf nicht die ganze Kaskade stoppen.
+  const jetztMs = jetztIso ? Date.parse(jetztIso) : Number.NaN;
+  const heute = Number.isFinite(jetztMs) ? budgetTag(new Date(jetztMs)) : null;
+  const alterTage = Number.isFinite(jetztMs) && typeof p.updatedAt === 'string' ? (jetztMs - Date.parse(p.updatedAt)) / 86_400_000 : null;
+  if (alterTage !== null && !(alterTage <= PROFIL_MAX_ALTER_TAGE)) return null; // veraltet oder unlesbar = kein Block
   const zeilen: string[] = [];
-  if (p.branche) zeilen.push(`Branche: ${entschaerfe(p.branche)}`);
-  if (p.land) zeilen.push(`Land: ${entschaerfe(p.land)}`);
-  const mk = marktkapText(p.marktkapMio);
+  const branche = textOderNull(p.branche);
+  if (branche) zeilen.push(`Branche: ${entschaerfe(branche).slice(0, 60)}`);
+  const land = textOderNull(p.land);
+  if (land) zeilen.push(`Land: ${entschaerfe(land).slice(0, 20)}`);
+  const mk = marktkapText(p.marktkapMio, p.waehrung);
   if (mk) zeilen.push(`Marktkapitalisierung: ${mk}`);
   if (typeof p.kgvTtm === 'number' && Number.isFinite(p.kgvTtm)) zeilen.push(`KGV (TTM): ${p.kgvTtm.toFixed(1)}`);
-  if (p.gewinntermin) zeilen.push(`Naechste Zahlen: ${entschaerfe(p.gewinntermin)}`);
+  const termin = textOderNull(p.gewinntermin);
+  // Ein Termin vor „heute“ ist vorbei — er würde die Sichtung gegen echte Zahlen-Meldungen stimmen.
+  if (termin && /^\d{4}-\d{2}-\d{2}$/.test(termin) && (heute === null || termin >= heute)) zeilen.push(`Naechste Zahlen: ${termin}`);
   if (zeilen.length === 0) return null;
-  return [`<firma symbol="${entschaerfe(symbol)}">`, ...zeilen, '</firma>'].join('\n');
+  return [`<firma symbol="${entschaerfe(symbol).slice(0, 20)}">`, ...zeilen, '</firma>'].join('\n');
 }
 
 /** Die Nutzer-Nachricht der Sichtung: Meldungen als Datenblöcke, Firmenblöcke, Paarliste. */
 export function sichtungEingabe(meldungen: readonly KiMeldung[], paare: readonly SichtungsPaar[], jetztIso: string, profile?: FirmenProfile): string {
   const liste = paare.map((p) => `- ${p.id} | ${p.symbol}`).join('\n');
   const firmen = [...new Set(paare.map((p) => p.symbol))]
-    .map((s) => firmenBlock(s, profile?.get(s)))
+    .map((s) => firmenBlock(s, profile?.get(s), jetztIso))
     .filter((b): b is string => b !== null);
   const firmenTeil = firmen.length > 0 ? `\n\n${firmen.join('\n\n')}` : '';
   return `Jetzt: ${jetztIso}\n\n${meldungen.map((m) => meldungsBlock(m, true)).join('\n\n')}${firmenTeil}\n\nZu bewerten (id | symbol):\n${liste}`;
@@ -405,7 +423,7 @@ export function pruefungEingabe(
   profil?: Partial<Profil> | null,
 ): string {
   const fmt = (k: { p: number; t: string } | null | undefined): string => (k ? `${k.p} (Trade ${k.t})` : 'unbekannt');
-  const firma = firmenBlock(symbol, profil);
+  const firma = firmenBlock(symbol, profil, jetztIso);
   return [
     `Jetzt: ${jetztIso}`,
     '',
