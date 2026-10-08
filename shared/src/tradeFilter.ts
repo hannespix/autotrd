@@ -25,6 +25,59 @@
  * Positions-Doc, Schatten-Zähler im Heartbeat) liegt in functions/.
  */
 
+/**
+ * Kante je Regime-Zustand (Hebel 2, Messung 08.10.) — aus den Steckbriefen,
+ * 5. Schlüsselsegment. BEWUSST nur Anzahl und Trefferquote, kein Geldbetrag:
+ * (1) Ein Ø-P&L je Trade wäre durch die Seitwärts-Bremse selbst halbiert
+ * (halbe Größe) und sagte über die Signalgüte nichts — die Trefferquote ist
+ * größenunabhängig. (2) Die Buckets summieren Symbol-Währungen ungewandelt.
+ * (3) Bei einem Konto wäre Ø × n dessen realisierter Gewinn — öffentlich in
+ * meta/health, unter der Anonymitätsschwelle MIN_ACCOUNTS_PUBLIC (Red-Team
+ * 08.10.). Die Zahl ist UNTER der Bremse gemessen (Cooldown ×2 drückt n).
+ */
+export interface RegimeKante {
+  n: number;
+  winRatePct: number | null;
+}
+
+/** Erst ab so vielen Trades je Regime wird die Trefferquote ausgewiesen (sonst nur n). */
+export const MIN_BUCKET_N_REGIME = 10;
+
+/**
+ * Steckbrief-Schlüssel ohne echtes Regime (Default-Segment 'alle': Momentum,
+ * Sockel, Hand-Trades, Altbestand vor der Ampel) laufen unter DIESEM Namen —
+ * sie sind kein viertes Regime und tragen keine Bremse.
+ */
+export const REGIME_OHNE = 'ohne_regime';
+
+/**
+ * Die Steckbrief-Zähler nach Regime zusammenfassen (Hebel 2, Messung). Die
+ * Seitwärts-Bremse (Cooldown ×2, halbe Größe) läuft seit 15.08. — ob sie
+ * etwas bringt, konnte bisher niemand sehen, weil keine Kennzahl je Regime
+ * existierte. Pure; nur Regelbaum- und Konfluenz-Einstiege tragen ein
+ * Regime-Segment, alles andere fällt unter REGIME_OHNE.
+ */
+export function kanteJeRegime(buckets: Record<string, BucketStat> | null | undefined): Record<string, RegimeKante> {
+  const summen = new Map<string, { n: number; wins: number }>();
+  for (const [key, b] of Object.entries(buckets ?? {})) {
+    if (!b || !Number.isFinite(b.n) || b.n <= 0) continue;
+    const seg = key.split('|')[4];
+    const regime = seg && seg !== 'alle' ? seg : REGIME_OHNE;
+    const s = summen.get(regime) ?? { n: 0, wins: 0 };
+    s.n += b.n;
+    s.wins += Number.isFinite(b.wins) ? b.wins : 0;
+    summen.set(regime, s);
+  }
+  const out: Record<string, RegimeKante> = {};
+  for (const [regime, s] of summen) {
+    out[regime] = {
+      n: s.n,
+      winRatePct: s.n >= MIN_BUCKET_N_REGIME ? Math.round((s.wins / s.n) * 1000) / 10 : null,
+    };
+  }
+  return out;
+}
+
 /** Realisierte Statistik eines Steckbriefs. */
 export interface BucketStat {
   n: number;

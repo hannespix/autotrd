@@ -6786,6 +6786,22 @@ const KALENDER_TEXT: Record<string, string> = {
   cpi: t('kal.cpi'),
 };
 
+/**
+ * Tooltip-Text der Kante je Regime (Hebel 2, Messung): nur Anzahl und ganze
+ * Prozent (kein Dezimaltrenner → keine DE/EN-Naht), kein Geldbetrag.
+ */
+function regimeKanteTooltip(
+  rk: Record<string, { n?: number; winRatePct?: number | null }> | null | undefined,
+): string {
+  if (!rk) return '';
+  return Object.entries(rk)
+    .map(([k, v]) => {
+      const quote = typeof v.winRatePct === 'number' ? ` · ${Math.round(v.winRatePct)} %` : '';
+      return `${k}: n=${v.n ?? 0}${quote}`;
+    })
+    .join('\n');
+}
+
 function whyChip(text: string, farbe: string): HTMLElement {
   const el = document.createElement('span');
   el.className = 'hint mono';
@@ -6835,7 +6851,11 @@ function renderEngineWhy(): void {
   const r = REGIME_TEXT[h.regime?.state ?? ''] ?? { t: t('ew.unbekannt'), c: 'var(--t3)' };
   const vix = typeof h.regime?.vix === 'number' ? ` · VIX ${h.regime.vix.toFixed(1)}` : '';
   const vol = typeof h.regime?.realizedVolPct === 'number' ? ` · Vol ${h.regime.realizedVolPct}%` : '';
-  ampel.append(whyChip(`${r.t}${vix}${vol}`, r.c));
+  const regimeChip = whyChip(`${r.t}${vix}${vol}`, r.c);
+  // Hebel 2, Messung: die Kante je Regime als Tooltip am Ampel-Chip.
+  const regimeTip = regimeKanteTooltip(h.regimeKante);
+  if (regimeTip) regimeChip.title = regimeTip;
+  ampel.append(regimeChip);
   if (h.kalender?.bevorstehend) {
     const name = KALENDER_TEXT[h.kalender.bevorstehend] ?? h.kalender.bevorstehend;
     ampel.append(whyChip(`${name} in ${h.kalender.stundenBis ?? '?'} h`, 'var(--yl,#d9a441)'));

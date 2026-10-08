@@ -71,3 +71,19 @@ describe('Seitwärts-Bremse — Anschluss-Wächter', () => {
     }
   });
 });
+
+describe('Hebel 2, Messung (08.10.): Kante je Regime im Herzschlag', () => {
+  it('executeUserTrades liefert die Kante aus den Steckbriefen, der Herzschlag schreibt sie', () => {
+    expect(scan).toContain('    regimeKante: kanteJeRegime(filterBuckets),');
+    expect(scan).toContain('    regimeKanteGesamt = res.regimeKante;');
+    expect(scan).toContain('        regimeKante: regimeKanteGesamt,');
+  });
+
+  it('die Kante trägt KEINEN Geldbetrag — meta/health ist öffentlich, die Buckets zählen Trades, nicht Konten', () => {
+    const tf = readFileSync(join(hier, '../../shared/src/tradeFilter.ts'), 'utf8');
+    const body = tf.slice(tf.indexOf('export function kanteJeRegime('), tf.indexOf('/** Realisierte Statistik eines Steckbriefs. */'));
+    expect(body.length).toBeGreaterThan(200);
+    expect(body).not.toMatch(/pnl/i);
+    expect(tf).toContain("export const REGIME_OHNE = 'ohne_regime';");
+  });
+});
