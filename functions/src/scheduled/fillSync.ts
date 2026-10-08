@@ -22,10 +22,20 @@
  *     (Paket 1) und werden hier übersprungen.
  *   - Karenz: Ausführungen jünger als FILL_KARENZ_MIN bleiben liegen —
  *     der eigene Buchungspfad des Scans hat Vorrang.
- *   - Scheitert eine Buchung, rückt der Cursor NICHT vor; der nächste Lauf
- *     versucht es erneut. Nach FILL_FEHLER_MAX Fehlschlägen in Folge wird
- *     laut aufgegeben und der Cursor rückt vor (Fall für die Übernahme).
- *     Nichts verschwindet still.
+ *   - Maßgeblich ist die KUMULIERTE Menge der Order laut Broker, nicht die
+ *     Summe der Ausführungen im Fenster (Red-Team 08.10., H2): Ein später
+ *     Rest-Fill einer offenen Order wird so auch dann gebucht, wenn der
+ *     erste Teil schon im Buch steht. Eine eröffnende Order, die noch
+ *     arbeitet, bekommt einen Nachlauf-Vermerk (Paket 1 storniert den Rest).
+ *   - Scheitert eine Buchung, fällt der Cursor auf den Stand VOR der ersten
+ *     Ausführung dieser Order zurück (H1) — auch wenn andere Orders danach
+ *     schon gebucht wurden; die liest der nächste Lauf harmlos noch einmal.
+ *     Nach FILL_FEHLER_MAX Fehlschlägen in Folge wird laut aufgegeben und der
+ *     Cursor rückt vor (Fall für die Übernahme). Nichts verschwindet still.
+ *   - Ein VERKAUF ohne Buch-Position eröffnet nur dann einen Buch-Short, wenn
+ *     es eine eigene Market-Order mit Lauf-Kennung ist (H3). Ein Stop oder
+ *     ein Exit auf eine Position, die das Buch nicht (mehr) kennt — etwa
+ *     nach einem Reset —, ist ein Fall für die Übernahme, kein Phantom-Short.
  */
 
 import { getFirestore } from 'firebase-admin/firestore';
@@ -39,7 +49,7 @@ import {
   type AlpacaFill,
   type AlpacaOrderStand,
 } from '../core/alpacaBroker.js';
-import { executePaperTrade, gebuchteMengeJeOrder, merkeUnbookedFill } from '../core/broker.js';
+import { executePaperTrade, gebuchteMengeJeOrder, merkeOffeneOrder, merkeUnbookedFill } from '../core/broker.js';
 import { ORDER_ENDZUSTAENDE, brokerVerbindungLesend } from '../core/orderRouting.js';
 import { mayTrade } from '../core/access.js';
 import { clampStrategyRisk } from '../core/rulesTrading.js';
@@ -58,7 +68,9 @@ export interface FillSyncKonto {
   fremd: number;
   uebersprungen: number;
   fehler: number;
-  /** Cursor blieb stehen (Fehlschlag) — der nächste Lauf wiederholt. */
+  /** Verkäufe ohne Buch-Position, nicht gebucht (Fall für die Übernahme). */
+  ohnePosition: number;
+  /** Cursor fiel zurück (Fehlschlag) — der nächste Lauf wiederholt. */
   wartet: boolean;
 }
 
@@ -110,6 +122,31 @@ export function eigeneOrder(uid: string, clientOrderId: string | undefined): boo
 const minusMin = (iso: string, min: number): string => new Date(Date.parse(iso) - min * 60_000).toISOString();
 
 /**
+ * Cursor-Stand VOR einer Order (Red-Team 08.10., H1): die späteste
+ * Ausführung, die strikt vor der ersten Ausführung dieser Order liegt —
+ * sonst der alte Cursor. `after` ist beim Broker exklusiv; alles ab der
+ * Order wird im nächsten Lauf erneut gelesen.
+ */
+export function cursorVor(fills: readonly AlpacaFill[], zuerstIso: string, fallback: string): string {
+  let best = fallback;
+  for (const f of fills) {
+    if (f.transactionTime < zuerstIso && f.transactionTime > best) best = f.transactionTime;
+  }
+  return best;
+}
+
+/**
+ * Darf ein VERKAUF ohne Buch-Position einen Buch-Short eröffnen? Nur eine
+ * eigene Market-Order mit Lauf-Kennung (so eröffnet die Engine Shorts).
+ * Stop-Orders und Exits (`exit-` in der Kennung) gehören zu einer Position,
+ * die das Buch nicht mehr kennt — Fall für die Übernahme (H3).
+ */
+export function darfShortEroeffnen(order: { typ?: string | undefined; clientOrderId?: string | undefined }): boolean {
+  if (order.typ !== 'market') return false;
+  return !/-exit-/.test(order.clientOrderId ?? '');
+}
+
+/**
  * Ein Konto: Aktivität lesen, fehlende Ausführungen buchen, Cursor vorrücken.
  */
 export async function fillSyncKonto(
@@ -118,7 +155,7 @@ export async function fillSyncKonto(
   now: Date,
   fetchImpl: typeof fetch = fetch,
 ): Promise<FillSyncKonto> {
-  const leer: FillSyncKonto = { geprueft: 0, gebucht: 0, fremd: 0, uebersprungen: 0, fehler: 0, wartet: false };
+  const leer: FillSyncKonto = { geprueft: 0, gebucht: 0, fremd: 0, uebersprungen: 0, fehler: 0, ohnePosition: 0, wartet: false };
   const verbindung = await brokerVerbindungLesend(uid, now.getTime());
   if (!verbindung) return leer;
   const db = getFirestore();
@@ -143,17 +180,17 @@ export async function fillSyncKonto(
   let fremd = 0;
   let uebersprungen = 0;
   let fehler = 0;
+  let ohnePosition = 0;
   let cursorNeu = cursorAlt;
   let fehlerFolge = typeof stand.fehlerFolge === 'number' ? stand.fehlerFolge : 0;
   let wartet = false;
-  const uidSauber = uid.replace(/[^A-Za-z0-9-]/g, '_');
-
   for (const o of orders) {
     let order: AlpacaOrderStand | null;
     try {
       order = await alpacaOrderAbfragen(verbindung.mode, o.orderId, verbindung.schluessel, fetchImpl);
     } catch (err) {
       logger.warn(`fillSync ${uid} ${o.symbol}: Order ${o.orderId} nicht lesbar — nächster Lauf`, err);
+      cursorNeu = cursorVor(fills, o.zuerst, cursorAlt);
       wartet = true;
       break;
     }
@@ -171,7 +208,13 @@ export async function fillSyncKonto(
       continue;
     }
     const schon = await gebuchteMengeJeOrder(uid, o.orderId);
-    const fehlt = Math.round((o.menge - schon) * 1e6) / 1e6;
+    // KUMULIERT laut Order (H2), nicht nur das Fenster: Ein Rest-Fill einer
+    // offenen Order ist sonst „schon gebucht", weil Fenster-Summe = Buch.
+    const gesamt = order.filledQty > 0 ? order.filledQty : o.menge;
+    const fehlt = Math.round((gesamt - schon) * 1e6) / 1e6;
+    // Preis: der des Fensters, wenn es genau den fehlenden Teil enthält —
+    // sonst der Durchschnitt der Order (ehrlicher als ein geratener).
+    const preis = Math.abs(o.menge - fehlt) < 1e-9 || !(order.filledAvgPreis > 0) ? o.preis : order.filledAvgPreis;
     if (fehlt <= 1e-9) {
       cursorNeu = o.zuletzt > cursorNeu ? o.zuletzt : cursorNeu;
       continue;
@@ -183,14 +226,24 @@ export async function fillSyncKonto(
     const posSide = posSnap.exists ? (posSnap.get('side') as string | undefined) : undefined;
     const schliesst = posSnap.exists && ((o.side === 'buy' && posSide === 'short') || (o.side === 'sell' && posSide !== 'short'));
     const endzustand = ORDER_ENDZUSTAENDE.has(order.status);
+    /* Verkauf ohne Buch-Position (H3): kein Phantom-Short aus einem Stop
+     * oder Exit auf eine Position, die das Buch nicht mehr kennt (Reset).
+     * Laut melden, Cursor vorrücken — der Abgleich zeigt den Zustand, die
+     * Übernahme löst ihn. */
+    if (o.side === 'sell' && !posSnap.exists && !darfShortEroeffnen(order)) {
+      ohnePosition += 1;
+      logger.error(`fillSync ${uid} ${o.symbol}: Verkauf ${fehlt} Stück (${order.typ ?? '?'}) ohne Buch-Position — Fall für die Übernahme, nicht gebucht`);
+      cursorNeu = o.zuletzt > cursorNeu ? o.zuletzt : cursorNeu;
+      continue;
+    }
     const r = await executePaperTrade(
       {
         uid,
         symbol: o.symbol,
         side: o.side,
-        price: o.preis,
+        price: preis,
         qty: fehlt,
-        fillPreis: o.preis,
+        fillPreis: preis,
         brokerOrderId: o.orderId,
         source: 'engine',
         assetClass: classify(o.symbol),
@@ -208,7 +261,16 @@ export async function fillSyncKonto(
       gebucht += 1;
       fehlerFolge = 0;
       cursorNeu = o.zuletzt > cursorNeu ? o.zuletzt : cursorNeu;
-      logger.warn(`FILL-SYNC ${uid} ${o.symbol}: ${o.side} ${fehlt} @ ${o.preis} nachgebucht (Order ${o.orderId})`);
+      logger.warn(`FILL-SYNC ${uid} ${o.symbol}: ${o.side} ${fehlt} @ ${preis} nachgebucht (Order ${o.orderId})`);
+      // Eine eröffnende Order, die noch ARBEITET, darf nicht unbeaufsichtigt
+      // weiterfüllen (H2): Vermerk für den Nachlauf, der den Rest storniert.
+      if (!schliesst && !endzustand && order.clientOrderId) {
+        await merkeOffeneOrder(uid, o.symbol, o.side, { art: 'einstieg_rest', orderId: o.orderId, clientOrderId: order.clientOrderId }, {
+          gebucht: schon + fehlt,
+          soll: gesamt,
+          lauf: 'fill-sync',
+        });
+      }
       continue;
     }
     if (r.reason === 'fill_schon_gebucht') {
@@ -225,16 +287,16 @@ export async function fillSyncKonto(
       cursorNeu = o.zuletzt > cursorNeu ? o.zuletzt : cursorNeu;
       continue;
     }
-    logger.error(`fillSync ${uid} ${o.symbol}: ${fehlt} Stück NICHT gebucht — ${r.reason ?? '?'} (Versuch ${fehlerFolge}, Cursor bleibt)`);
+    logger.error(`fillSync ${uid} ${o.symbol}: ${fehlt} Stück NICHT gebucht — ${r.reason ?? '?'} (Versuch ${fehlerFolge}, Cursor fällt zurück)`);
+    cursorNeu = cursorVor(fills, o.zuerst, cursorAlt);
     wartet = true;
     break;
   }
 
   await brokerRef
-    .set({ fillSync: { cursor: cursorNeu, accountId, at: nowIso, fehlerFolge, gebucht, fremd } }, { merge: true })
+    .set({ fillSync: { cursor: cursorNeu, accountId, at: nowIso, fehlerFolge, gebucht, fremd, ohnePosition } }, { merge: true })
     .catch((err: unknown) => logger.warn(`fillSync ${uid}: Cursor nicht geschrieben`, err));
-  void uidSauber;
-  return { geprueft: orders.length, gebucht, fremd, uebersprungen, fehler, wartet };
+  return { geprueft: orders.length, gebucht, fremd, uebersprungen, fehler, ohnePosition, wartet };
 }
 
 export interface FillSyncLauf {
@@ -243,6 +305,7 @@ export interface FillSyncLauf {
   fremd: number;
   fehler: number;
   uebersprungen: number;
+  ohnePosition: number;
 }
 
 export async function runFillSync(now: Date = new Date()): Promise<FillSyncLauf> {
@@ -251,7 +314,7 @@ export async function runFillSync(now: Date = new Date()): Promise<FillSyncLauf>
     .collection('users')
     .where('settings.strategy.engine.running', '==', true)
     .get();
-  const summe: FillSyncLauf = { konten: 0, gebucht: 0, fremd: 0, fehler: 0, uebersprungen: 0 };
+  const summe: FillSyncLauf = { konten: 0, gebucht: 0, fremd: 0, fehler: 0, uebersprungen: 0, ohnePosition: 0 };
   for (const userDoc of users.docs) {
     try {
       const roh = userDoc.get('settings.strategy') as Strategy | undefined;
@@ -266,6 +329,7 @@ export async function runFillSync(now: Date = new Date()): Promise<FillSyncLauf>
       summe.fremd += r.fremd;
       summe.fehler += r.fehler;
       summe.uebersprungen += r.uebersprungen;
+      summe.ohnePosition += r.ohnePosition;
     } catch (err) {
       summe.fehler += 1;
       logger.warn(`fillSync: Konto übersprungen`, err);

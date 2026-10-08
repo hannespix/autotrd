@@ -229,18 +229,22 @@ export async function schutzVerknuepfungLoesen(uid: string, symbol: string): Pro
  * Nicht lesbar ⇒ 0 (der Aufrufer hat seinen eigenen Zähler als Untergrenze).
  */
 export async function gebuchteMengeJeOrder(uid: string, brokerOrderId: string): Promise<number> {
-  const snap = await getFirestore()
-    .collection('users')
-    .doc(uid)
-    .collection('trades')
-    .where('brokerOrderId', '==', brokerOrderId)
-    .get()
-    .catch(() => null);
-  if (!snap) return 0;
-  return snap.docs.reduce((summe, d) => {
-    const q = d.get('qty') as unknown;
-    return summe + (typeof q === 'number' && Number.isFinite(q) ? q : 0);
-  }, 0);
+  const userRef = getFirestore().collection('users').doc(uid);
+  // Auch das ARCHIV (Red-Team 08.10., M1): Ein Reset verschiebt die Trades
+  // nach `tradesArchive`; ohne diesen Blick stünde ein längst gebuchter
+  // Fill wieder als „fehlend" da und landete im frisch zurückgesetzten Buch.
+  const [aktiv, archiv] = await Promise.all([
+    userRef.collection('trades').where('brokerOrderId', '==', brokerOrderId).get().catch(() => null),
+    userRef.collection('tradesArchive').where('brokerOrderId', '==', brokerOrderId).get().catch(() => null),
+  ]);
+  const summe = (snap: FirebaseFirestore.QuerySnapshot | null): number =>
+    snap
+      ? snap.docs.reduce((s, d) => {
+          const q = d.get('qty') as unknown;
+          return s + (typeof q === 'number' && Number.isFinite(q) ? q : 0);
+        }, 0)
+      : 0;
+  return summe(aktiv) + summe(archiv);
 }
 
 export async function fillSchonGebucht(uid: string, brokerOrderId: string | null | undefined): Promise<boolean> {
@@ -1913,10 +1917,14 @@ export async function executePaperTrade(req: TradeRequest, strategy: Strategy): 
       const margin = qty * eff;
       // Gleiche Deckungsprüfung wie beim Kauf: Der Short bindet Sicherheit,
       // und ob die aus Cash oder aus Kaufkraft kommt, entscheidet der Hebel.
-      if (req.margin) {
-        if (margin > req.margin.buyingPower + 1e-9) return { executed: false, reason: 'zu_wenig_kaufkraft' };
-      } else if (margin > deckung) {
-        return { executed: false, reason: 'zu_wenig_cash' };
+      // Ein ECHTER Fill wird immer gebucht (Red-Team 08.10., M2) — der
+      // Broker hält den Short längst; das Buch darf ihn nicht verweigern.
+      if (!echterFill) {
+        if (req.margin) {
+          if (margin > req.margin.buyingPower + 1e-9) return { executed: false, reason: 'zu_wenig_kaufkraft' };
+        } else if (margin > deckung) {
+          return { executed: false, reason: 'zu_wenig_cash' };
+        }
       }
       const risk = resolveRisk(strategy.engine, cls);
       const position: Position = {

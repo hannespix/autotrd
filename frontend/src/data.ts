@@ -1114,6 +1114,7 @@ export interface HealthDoc {
     fremd?: number;
     fehler?: number;
     uebersprungen?: number;
+    ohnePosition?: number;
     zustand?: { aktiv?: boolean; text?: string; seit?: string; at?: string };
   } | null;
   nachbuchung?: {

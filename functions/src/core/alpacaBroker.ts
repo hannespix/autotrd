@@ -911,6 +911,8 @@ export interface AlpacaOrderStand {
   clientOrderId?: string;
   /** Richtung laut Broker. */
   side?: 'buy' | 'sell';
+  /** Order-Typ laut Broker (market/limit/stop/stop_limit …). */
+  typ?: string;
 }
 
 /**
@@ -945,6 +947,7 @@ export async function alpacaOrderAbfragen(
     filledAvgPreis: zahl(d['filled_avg_price']),
     clientOrderId: String(d['client_order_id'] ?? ''),
     side: String(d['side'] ?? '') === 'sell' ? 'sell' : 'buy',
+    typ: String(d['type'] ?? ''),
   };
 }
 
@@ -985,6 +988,7 @@ export async function alpacaOrderPerClientId(
     filledAvgPreis: zahl(d['filled_avg_price']),
     clientOrderId: String(d['client_order_id'] ?? clientOrderId),
     side: String(d['side'] ?? '') === 'sell' ? 'sell' : 'buy',
+    typ: String(d['type'] ?? ''),
   };
 }
 
@@ -1039,12 +1043,15 @@ export async function holeFillAktivitaeten(
       const qty = zahl(r['qty']);
       const price = zahl(r['price']);
       const id = String(r['id'] ?? '');
-      if (!(qty > 0) || !(price > 0) || !id) continue;
+      const seite = String(r['side'] ?? '');
+      // Unbekannte Seite ⇒ überspringen, nicht raten (Red-Team 08.10.):
+      // „unbekannt ⇒ Kauf" wäre die gefährliche Richtung.
+      if (!(qty > 0) || !(price > 0) || !id || (seite !== 'buy' && seite !== 'sell')) continue;
       out.push({
         id,
         orderId: String(r['order_id'] ?? ''),
         symbol: vonAlpacaSymbol(String(r['symbol'] ?? '')),
-        side: String(r['side'] ?? '') === 'sell' ? 'sell' : 'buy',
+        side: seite,
         qty,
         price,
         cumQty: zahl(r['cum_qty']),

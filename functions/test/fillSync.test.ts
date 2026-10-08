@@ -11,7 +11,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { holeFillAktivitaeten, type AlpacaFill } from '../src/core/alpacaBroker.js';
-import { buendleFills, eigeneOrder } from '../src/scheduled/fillSync.js';
+import { buendleFills, cursorVor, darfShortEroeffnen, eigeneOrder } from '../src/scheduled/fillSync.js';
 
 vi.mock('firebase-admin/firestore', () => ({
   getFirestore: () => ({
@@ -67,6 +67,30 @@ describe('buendleFills — je Order die Summe, mengengewichtet, mit Karenz', () 
   });
 });
 
+describe('cursorVor — bei Fehlschlag fällt der Cursor VOR die erste Ausführung der Order (H1)', () => {
+  const fills = [
+    fill({ id: 'a1', orderId: 'A', transactionTime: '2026-10-08T10:00:00.000Z' }),
+    fill({ id: 'b1', orderId: 'B', transactionTime: '2026-10-08T10:02:00.000Z' }),
+    fill({ id: 'a2', orderId: 'A', transactionTime: '2026-10-08T10:05:00.000Z' }),
+  ];
+  it('Order A gebucht (Cursor 10:05), B scheitert (zuerst 10:02) → Cursor 10:00, B wird erneut gelesen', () => {
+    expect(cursorVor(fills, '2026-10-08T10:02:00.000Z', '2026-10-08T09:00:00.000Z')).toBe('2026-10-08T10:00:00.000Z');
+  });
+  it('scheitert die allererste Order, bleibt der alte Cursor', () => {
+    expect(cursorVor(fills, '2026-10-08T10:00:00.000Z', '2026-10-08T09:00:00.000Z')).toBe('2026-10-08T09:00:00.000Z');
+  });
+});
+
+describe('darfShortEroeffnen — kein Phantom-Short aus Stop oder Exit (H3)', () => {
+  it('nur eine eigene Market-Order mit Lauf-Kennung eröffnet einen Buch-Short', () => {
+    expect(darfShortEroeffnen({ typ: 'market', clientOrderId: 'u1-ACME-sell-10-2026-10-08T14_00Z' })).toBe(true);
+    expect(darfShortEroeffnen({ typ: 'stop', clientOrderId: 'u1-ACME-sell-10-2026-10-08T14_00Z' })).toBe(false);
+    expect(darfShortEroeffnen({ typ: 'stop_limit', clientOrderId: 'u1-ACME-sell-10-x' })).toBe(false);
+    expect(darfShortEroeffnen({ typ: 'market', clientOrderId: 'u1-ACME-sell-10-exit-2026-10-07T14_00_00_000Z-q10' })).toBe(false);
+    expect(darfShortEroeffnen({ typ: undefined, clientOrderId: 'u1-ACME-sell-10-x' })).toBe(false);
+  });
+});
+
 describe('eigeneOrder — dieselbe Regel wie bei der Depot-Übernahme', () => {
   it('erkennt das Nutzer-Präfix, nicht fremde oder leere Kennungen', () => {
     expect(eigeneOrder('u1', 'u1-ACME-buy-10-scan')).toBe(true);
@@ -117,15 +141,28 @@ describe('Quelltext-Wächter: die Verdrahtung', () => {
   });
   it('die Differenz zum Buch wird gebucht — nie die ganze Summe', () => {
     expect(sync).toContain('const schon = await gebuchteMengeJeOrder(uid, o.orderId);');
-    expect(sync).toContain('const fehlt = Math.round((o.menge - schon) * 1e6) / 1e6;');
+    // KUMULIERT laut Order (H2), nicht die Fenster-Summe
+    expect(sync).toContain('const gesamt = order.filledQty > 0 ? order.filledQty : o.menge;');
+    expect(sync).toContain('const fehlt = Math.round((gesamt - schon) * 1e6) / 1e6;');
+    // eine noch arbeitende eröffnende Order bekommt den Nachlauf-Vermerk
+    expect(sync).toContain("if (!schliesst && !endzustand && order.clientOrderId) {");
     expect(sync).toContain('qty: fehlt,');
   });
   it('Orders mit Nachlauf-Vermerk gehören Paket 1', () => {
     expect(sync).toContain("const vermerk = vermerkId ? await db.doc(`users/${uid}/offeneOrders/${vermerkId}`).get().catch(() => null) : null;");
     expect(sync).toContain('if (vermerk?.exists) {');
   });
-  it('bei Fehlschlag bleibt der Cursor stehen; nach FILL_FEHLER_MAX wird laut aufgegeben', () => {
-    expect(sync).toContain('wartet = true;\n    break;');
+  it('H3: ein Verkauf ohne Buch-Position wird nicht zum Phantom-Short', () => {
+    expect(sync).toContain("if (o.side === 'sell' && !posSnap.exists && !darfShortEroeffnen(order)) {");
+    expect(sync).toContain('ohnePosition += 1;');
+  });
+  it('M1/M2: das Buch zählt auch das Archiv; ein echter Short-Fill wird nie an der Deckung abgewiesen', () => {
+    const broker = lies('core', 'broker.ts');
+    expect(broker).toContain("userRef.collection('tradesArchive').where('brokerOrderId', '==', brokerOrderId).get().catch(() => null),");
+    expect(broker).toContain('      if (!echterFill) {\n        if (req.margin) {');
+  });
+  it('bei Fehlschlag fällt der Cursor zurück; nach FILL_FEHLER_MAX wird laut aufgegeben', () => {
+    expect(sync).toContain('cursorNeu = cursorVor(fills, o.zuerst, cursorAlt);\n    wartet = true;\n    break;');
     expect(sync).toContain('if (fehlerFolge >= FILL_FEHLER_MAX) {');
     expect(sync).toContain("await merkeUnbookedFill(uid, o.symbol, o.side, fehlt, o.preis, o.orderId, 'fill-sync'");
     // der Cursor rückt in JEDEM Erfolgs- und Überspringpfad vor
