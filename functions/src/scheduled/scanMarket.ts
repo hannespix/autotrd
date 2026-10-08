@@ -63,6 +63,7 @@ import {
   mitStimmen,
   kiGroessenFaktor,
   kiGewicht,
+  KI_GEWICHT_BUCKET,
   KI_EINSTIEG_MAX_MIN,
   marketOpenForClass,
   kiVeto,
@@ -786,7 +787,12 @@ async function executeUserTrades(
     ]);
     kiLage = kiSignaleAus(urteile.docs.map((d) => d.data()), kiJetzt);
     kiBudgetErschoepft = kiStand.get('budgetErreichtTag') === budgetTag(new Date(kiJetzt));
-    kiGewichtFaktor = kiGewicht(kiStats.get('faelle.wirksam') as { n?: number; treffer?: number; nettoSum?: number } | undefined);
+    // DERSELBE Bucket wie der Bewertungslauf (Naht-Befund 08.10.: der Scan las
+    // `faelle.wirksam`, geschrieben wird `wirksam_long` — das Gewicht wäre
+    // immer 1 geblieben). Die Konstante hält beide Seiten zusammen.
+    kiGewichtFaktor = kiGewicht(
+      kiStats.get(`faelle.${KI_GEWICHT_BUCKET}`) as { n?: number; treffer?: number; nettoSum?: number } | undefined,
+    );
   } catch (err) {
     logger.warn('Scan: KI-Lage nicht lesbar — Handel ohne KI-Einfluss', err);
   }
