@@ -6,7 +6,7 @@
  * Symbol-Übersetzung, Firestore-Tauglichkeit (nie undefined).
  */
 import { describe, expect, it } from 'vitest';
-import { METRIC_ABWEICHUNG_MAX, PROFIL_KLASSEN, finnhubSymbol, metricAbweichend, naechsterGewinntermin, profilAus, profilHatInhalt } from '../src/profil.js';
+import { METRIC_ABWEICHUNG_MAX, PROFIL_KLASSEN, finnhubSymbol, gewinnterminZeitVon, metricAbweichend, naechsterGewinntermin, profilAus, profilHatInhalt } from '../src/profil.js';
 
 const profile2 = { name: 'Cheche Group Inc', exchange: 'NASDAQ NMS - GLOBAL MARKET', finnhubIndustry: 'Insurance', marketCapitalization: 14.456311247484907, weburl: 'https://ir.chechegroup.com/', currency: 'USD', ipo: '2020-11-02', country: 'CN' };
 const metric = { marketCapitalization: 14.456310999999998, beta: 0.25971144, peTTM: null, epsTTM: -26.1133, '52WeekHigh': 43.05, '52WeekLow': 4.65, dividendYieldIndicatedAnnual: null, '10DayAverageTradingVolume': 0.03524 };
@@ -17,7 +17,7 @@ describe('profilAus', () => {
     expect(p).toEqual({
       name: 'Cheche Group Inc', branche: 'Insurance', land: 'CN', boerse: 'NASDAQ NMS - GLOBAL MARKET', website: 'https://ir.chechegroup.com/', waehrung: 'USD', ipo: '2020-11-02',
       marktkapMio: 14.456310999999998, beta: 0.25971144, kgvTtm: null, epsTtm: -26.1133, w52Hoch: 43.05, w52Tief: 4.65,
-      dividendenrenditePct: null, gewinntermin: null, metricVerdacht: false, quelle: 'finnhub', updatedAt: '2026-10-08T22:00:00.000Z',
+      dividendenrenditePct: null, gewinntermin: null, gewinnterminZeit: null, metricVerdacht: false, quelle: 'finnhub', updatedAt: '2026-10-08T22:00:00.000Z',
     });
     for (const v of Object.values(p)) expect(v).not.toBeUndefined();
     expect(profilHatInhalt(p)).toBe(true);
@@ -61,6 +61,13 @@ describe('naechsterGewinntermin', () => {
     expect(naechsterGewinntermin([{ date: '2026-11-05', hour: 'amc' }], '2026-11-05', true)).toBeNull();
     expect(naechsterGewinntermin(termine, '2026-12-11')).toBeNull();
     expect(naechsterGewinntermin([], '2026-10-08')).toBeNull();
+    // Tageszeit gehört zum gewählten Termin, nicht zum ersten Eintrag.
+    const mitZeit = [{ date: '2026-11-05', hour: 'AMC' }, { date: '2026-12-10', hour: 'bmo' }, { date: '2026-11-05', hour: 'x' }];
+    expect(gewinnterminZeitVon(mitZeit, '2026-11-05')).toBe('amc');
+    expect(gewinnterminZeitVon(mitZeit, '2026-12-10')).toBe('bmo');
+    expect(gewinnterminZeitVon([{ date: '2026-12-10', hour: 'später' }], '2026-12-10')).toBeNull();
+    expect(gewinnterminZeitVon(mitZeit, null)).toBeNull();
+    expect(profilAus(null, null, mitZeit, '2026-10-08', 'y')).toMatchObject({ gewinntermin: '2026-11-05', gewinnterminZeit: 'amc' });
   });
 });
 

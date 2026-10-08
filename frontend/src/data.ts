@@ -1099,6 +1099,19 @@ export interface HealthDoc {
   alarm?: { aktiv?: boolean; grund?: string; text?: string; seit?: string; at?: string };
   trades?: number;
   entryGate?: Record<string, number>;
+  /** Task 19 Teil 2c: Tagesaggregat der Fundamental-Messung (Prüfungen, kein Tor). */
+  fundamentalSchatten?: {
+    tag?: string;
+    scans?: number;
+    at?: string;
+    usAktien?: number;
+    mitProfil?: number;
+    gewinnterminMessbar?: number;
+    mitVolumen?: number;
+    gewinnterminNah?: number;
+    illiquide?: number;
+    kleinstwert?: number;
+  };
   /**
    * Richtungs-Verteilung der Signale des letzten Scans (04.08.).
    *

@@ -26,6 +26,8 @@ let nachrichtenId = 0;
 const DELETE = Symbol('delete');
 /** Eingeschleuster Schreibfehler je Pfad (create/Batch) — `null` = kein Fehler. */
 let schreibFehler: (pfad: string) => Error | null = () => null;
+/** Eingeschleuster Lesefehler für getAll (alle Pfade des Aufrufs) — `null` = kein Fehler. */
+let leseFehler: (pfade: string[]) => Error | null = () => null;
 
 const holen = (pfad: string, feld: string): unknown =>
   feld.split('.').reduce<unknown>((o, k) => (o && typeof o === 'object' ? (o as Daten)[k] : undefined), store.get(pfad));
@@ -102,7 +104,13 @@ vi.mock('firebase-admin/firestore', () => ({
   FieldValue: { increment: (n: number) => n, delete: () => DELETE, serverTimestamp: () => 'SERVER_TS' },
   getFirestore: () => ({
     doc: ref,
-    getAll: async (...refs: Array<{ path: string }>) => refs.map((r) => snapshot(r.path)),
+    // Letztes Argument darf eine Option sein ({ fieldMask }) — wie beim echten getAll.
+    getAll: async (...args: Array<{ path: string } | { fieldMask?: string[] }>) => {
+      const refs = args.filter((a): a is { path: string } => typeof (a as { path?: unknown }).path === 'string');
+      const f = leseFehler(refs.map((r) => r.path));
+      if (f) throw f;
+      return refs.map((r) => snapshot(r.path));
+    },
     collection: (name: string) => abfrage({ name, filter: [] }),
     batch: () => {
       const ops: Array<{ pfad: string; d: Daten }> = [];
@@ -235,7 +243,7 @@ describe('Abdeckung und Ablage', () => {
     expect(sichtungDoc('alp-2')).toMatchObject({ ausgelassen: 'irrelevant' });
     expect(sichtungDoc('alp-3')).toMatchObject({ ausgelassen: 'nachzuegler' });
     expect(sichtungDoc('alp-4')).toMatchObject({ ausgelassen: 'sammelmeldung' });
-    expect(sichtungDoc('alp-1')).toMatchObject({ ausgelassen: null, kandidaten: ['ACME'], fehlend: [], promptV: 1, laufId: 'L1' });
+    expect(sichtungDoc('alp-1')).toMatchObject({ ausgelassen: null, kandidaten: ['ACME'], fehlend: [], promptV: 2, laufId: 'L1' });
     uhrMs += 5 * 60_000;
     const r2 = await lauf();
     expect(r2).toMatchObject({ geprueft: 1, handlungsfaehig: 1 });
@@ -597,8 +605,59 @@ describe('Sperre', () => {
   });
 });
 
+describe('Firmenprofil im Prompt (Teil 2b)', () => {
+  it('market/{sym}.profil landet als <firma>-Block in Sichtung UND Gegenprobe', async () => {
+    store.set('market/ACME', { profil: { branche: 'Software', marktkapMio: 12_500, gewinntermin: '2026-10-28' } });
+    meldung('alp-1');
+    await lauf();
+    uhrMs += 5 * 60_000;
+    await lauf();
+    expect(anfragen).toHaveLength(2);
+    for (const a of anfragen) {
+      expect(a.eingabe).toContain('<firma symbol="ACME">');
+      expect(a.eingabe).toContain('Marktkapitalisierung: 12.5 Mrd USD');
+      expect(a.eingabe).toContain('Branche: Software');
+    }
+  });
+
+  it('ohne Profil-Dokument kein Block — und Krypto wird gar nicht erst gelesen (Profil liegt da, Block fehlt)', async () => {
+    store.set('market/BTC-USD', { profil: { branche: 'Krypto', marktkapMio: 1_000_000 } });
+    meldung('alp-1', { symbole: ['ACME', 'BTC-USD'], symboleGenannt: 2 });
+    await lauf(3, ['ACME', 'BTC-USD']);
+    expect(anfragen[0]!.eingabe).toContain('- alp-1 | BTC-USD');
+    expect(anfragen[0]!.eingabe).not.toContain('<firma');
+  });
+
+  it('Lesefehler beim Profil stoppt die Kaskade NICHT (fails open: Block fehlt, Urteil kommt)', async () => {
+    store.set('market/ACME', { profil: { branche: 'Software', marktkapMio: 12_500 } });
+    leseFehler = (pfade) => (pfade.some((p) => p.startsWith('market/')) ? new Error('DEADLINE_EXCEEDED') : null);
+    meldung('alp-1');
+    const r = await lauf();
+    leseFehler = () => null;
+    expect(r).toMatchObject({ grund: null, gesichtet: 1 });
+    expect(anfragen[0]!.eingabe).not.toContain('<firma');
+  });
+
+  it('kaputtes Profil (Nicht-String-Felder) wirft nicht — der Block lässt die Felder weg', async () => {
+    store.set('market/ACME', { profil: { branche: 123, land: ['US'], gewinntermin: 42, marktkapMio: 'viel', kgvTtm: 20 } });
+    meldung('alp-1');
+    const r = await lauf();
+    expect(r).toMatchObject({ grund: null, gesichtet: 1 });
+    expect(anfragen[0]!.eingabe).toContain('<firma symbol="ACME">\nKGV (TTM): 20.0\n</firma>');
+  });
+});
+
 describe('Quelltext-Wächter kiNachrichten', () => {
   const src = readFileSync(join(import.meta.dirname, '..', 'src', 'scheduled', 'kiNachrichten.ts'), 'utf8');
+
+  it('Firmenprofil geht in beide Prompts; nur Klassen mit Profil werden gelesen', () => {
+    expect(src).toContain('eingabe: sichtungEingabe(gruppe, paare, iso(), profile)');
+    expect(src).toContain('pruefungEingabe(m, k.symbol, k.urteil.richtung, k.urteil.ereignis, kontext, iso(), profile.get(k.symbol))');
+    expect(src).toContain('.filter((s) => PROFIL_KLASSEN.includes(classify(s)))');
+    expect(src).toContain("{ fieldMask: ['profil'] })");
+    expect(src).toContain('ohne Firmenblock weiter');
+    expect(src).toContain('SICHTUNG_MAX_MELDUNGEN * 1_100 + SICHTUNG_MAX_PAARE * FIRMENBLOCK_MAX_ZEICHEN');
+  });
 
   it('kein Weg zu einer Order: weder Broker- noch Routing-Modul importiert', () => {
     expect(src).not.toMatch(/from '\.\.\/core\/(broker|orderRouting|brokerAbgleich|schutzStop|kontoTore)\.js'/);

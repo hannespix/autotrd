@@ -148,6 +148,19 @@ export interface KiFakten {
     faelleWirksamLong?: number;
     gewicht?: number;
   };
+  /** Task 19 Teil 2c: Fundamental-Schatten (meta/health.fundamentalSchatten) — Tagesaggregat, kein Tor. */
+  fundamentalSchatten?: {
+    tag?: string;
+    scans?: number;
+    usAktien?: number;
+    mitProfil?: number;
+    gewinnterminMessbar?: number;
+    mitVolumen?: number;
+    gewinnterminNah?: number;
+    illiquide?: number;
+    kleinstwert?: number;
+    parameter?: { sperrtage?: number; dollarVolMinUsd?: number; marktkapMinMio?: number };
+  };
 }
 
 const pz = (x: number, s = 2): string => x.toFixed(s).replace('.', ',');
@@ -254,6 +267,20 @@ export function baueEingabe(chronik: ErkenntnisChronik, fakten: KiFakten): strin
       `- Holdout B (steuert nicht): n=${ki.holdoutN ?? 0}, Trefferquote ${z(ki.holdoutQuotePct)} %; ` +
         `wirksame Long-Urteile gesamt n=${ki.faelleWirksamLong ?? 0}; alle Urteile n=${ki.faelleGesamt ?? 0}; ` +
         `Gewicht der KI-Stimme ×${z(ki.gewicht ?? 1)}`,
+    );
+  }
+
+  const fs = fakten.fundamentalSchatten;
+  // Nur mit echter Deckung (Red-Team H1): Ohne Profil wäre jede Null eine
+  // Behauptung über eine Messung, die nicht stattfand.
+  if (fs && (fs.mitProfil ?? 0) > 0) {
+    const p = fs.parameter ?? {};
+    zeilen.push(
+      '',
+      `FUNDAMENTAL-SCHATTEN (Tagessumme über ${fs.scans ?? 0} US-Scans am ${fs.tag ?? '?'}, blockt nichts — Einstiegs-PRÜFUNGEN je Konto und Scan, ` +
+        'die das Kosten-Tor durchließ und die ein Veto getroffen hätte; Prüfungen, keine Einstiege):',
+      `- Deckung im letzten US-Scan: ${fs.usAktien ?? 0} US-Aktien, davon ${fs.mitProfil ?? 0} mit Profil, ${fs.gewinnterminMessbar ?? 0} mit künftigem Gewinntermin, ${fs.mitVolumen ?? 0} mit Ø-Volumen`,
+      `- Gewinntermin ≤ ${p.sperrtage ?? '?'} Tage: ${fs.gewinnterminNah ?? 0}; Tagesumsatz < ${typeof p.dollarVolMinUsd === 'number' ? Math.round(p.dollarVolMinUsd / 1e6) : '?'} Mio USD: ${fs.illiquide ?? 0}; Marktkap < ${p.marktkapMinMio ?? '?'} Mio USD: ${fs.kleinstwert ?? 0}`,
     );
   }
 

@@ -874,6 +874,8 @@ export const DE = {
    * komplett neu. Zwei parallele Rechnungen, keine Reihenschaltung. */
   'se.getrenntGerechnet': 'Ob dein Konto handelt, wird getrennt gerechnet — mit deinen Einstellungen, deinem Bestand und deinem Zeitraster.',
   'ew.quoteSchatten': 'Einstiege unter gemessener Quote',
+  'ew.fundSchatten': 'Prüfungen im Fundamental-Schatten (heute)',
+  'ew.fundTitel': 'Schatten-Messung, blockt nichts. Tagessumme der Einstiegs-Prüfungen (je Konto und Scan, keine Einstiege), die das Kosten-Tor durchließ und die ein Fundamental-Veto getroffen hätte: {0} bis 2 Tage vor den Zahlen, {1} mit Ø-Tagesumsatz unter 2 Mio $, {2} mit Marktkap. unter 300 Mio $ — über {3} US-Scans. Ob daraus ein Tor wird, entscheidet die gemessene Kante dieser Einstiege.',
   'ew.quoteTitel': 'Die Kostenhürde rechnet je Anlageklasse mit einer angenommenen Einfangquote — dem Anteil der Kursbewegung, den die Signale tatsächlich mitnehmen. Diese Annahme stammt aus einer einzigen Messwoche. Parallel läuft die echte Messung mit. Hier steht, wie viele Einstiege dieses Laufs durchgekommen sind, die mit der GEMESSENEN Quote gescheitert wären. Es wird nichts blockiert: Die Zahl beziffert, was ein Scharfschalten kosten würde.',
   'ew.nachbuchungSteckt': 'Fills ohne Buchung',
   'ew.nachbuchungTitel': 'Diese Ausführungen liegen real beim Broker, im eigenen Buch fehlen sie — und die automatische Nachbuchung kommt an sie nicht mehr heran. Sie werden nicht gelöscht: Sie warten auf die Depot-Übernahme, die das Buch mit dem Broker-Bestand zusammenführt.',
@@ -2524,6 +2526,8 @@ export const EN: Partial<Record<TextSchluessel, string>> = {
   'se.systemwerte': 'daily candles \u00b7 system settings',
   'se.getrenntGerechnet': 'Whether your account trades is calculated separately \u2014 with your settings, your holdings and your time frame.',
   'ew.quoteSchatten': 'entries below measured capture',
+  'ew.fundSchatten': 'checks in the fundamentals shadow (today)',
+  'ew.fundTitel': 'Shadow measurement, blocks nothing. Daily sum of entry checks (per account and scan, not entries) that passed the cost gate and that a fundamentals veto would have caught: {0} within 2 days of earnings, {1} with avg daily turnover below $2M, {2} with market cap below $300M — across {3} US scans. Whether this becomes a gate is decided by the measured edge of those entries.',
   'ew.quoteTitel': 'The cost hurdle uses an assumed capture rate per asset class — the share of a price move the signals actually catch. That assumption comes from a single week of measurement. The real measurement runs alongside it. This is how many entries in this run got through that would have failed against the MEASURED rate. Nothing is blocked: the number quantifies what switching it on would cost.',
   'ew.nachbuchungSteckt': 'fills not booked',
   'ew.nachbuchungTitel': 'These executions exist at the broker but are missing from your own book, and automatic re-booking can no longer reach them. They are not deleted: they wait for the portfolio import, which merges the book with the broker holdings.',

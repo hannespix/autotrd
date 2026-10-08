@@ -6976,6 +6976,21 @@ function renderEngineWhy(): void {
     chip.title = t('ew.quoteTitel');
     ampel.append(chip);
   }
+  /* Task 19 Teil 2c: Fundamental-Schatten — derselbe Chip-Pfad wie der
+   * Quoten-Schatten (Red-Team M3: in GATE_TEXT verdrängte er „nichts
+   * abgelehnt“ und las sich wie eine Ablehnung). Tagessumme der PRÜFUNGEN,
+   * nicht Einstiege; gelb, weil nichts blockiert ist. */
+  const fsStand = h.fundamentalSchatten;
+  const fundSchatten = (fsStand?.gewinnterminNah ?? 0) + (fsStand?.illiquide ?? 0) + (fsStand?.kleinstwert ?? 0);
+  if (fundSchatten > 0) {
+    const chip = whyChip(`${fundSchatten} ${t('ew.fundSchatten')}`, 'var(--yl,#d9a441)');
+    chip.title = t('ew.fundTitel')
+      .replace('{0}', String(fsStand?.gewinnterminNah ?? 0))
+      .replace('{1}', String(fsStand?.illiquide ?? 0))
+      .replace('{2}', String(fsStand?.kleinstwert ?? 0))
+      .replace('{3}', String(fsStand?.scans ?? 0));
+    ampel.append(chip);
+  }
   const steckt = h.nachbuchung?.steckt ?? 0;
   if (steckt > 0) {
     const chip = whyChip(`${steckt} ${t('ew.nachbuchungSteckt')}`, 'var(--rd)');

@@ -53,6 +53,9 @@ import {
   EXIT_UMBAU_STAND,
   marginState,
   newsVeto,
+  PROFIL_KLASSEN,
+  fundamentalBefund,
+  fundamentalSchattenTag,
   shadowSentSign,
   NEWS_TTL_SEC,
   budgetTag,
@@ -297,6 +300,8 @@ interface SymbolData {
   forecast: LiveForecast | null;
   /** ATR(14) in Prozent des Kurses — Basis volatilitätsadaptiver Stops (MA6). */
   atrPct?: number | null;
+  /** Task 19 Teil 2c: Gewinntermin/Liquidität/Kleinstwert — Schatten, blockt nichts. */
+  fundamental?: ReturnType<typeof fundamentalBefund> | null;
   /** 5-min-Closes (~5 Handelstage) — Signal-Basis im 'intraday'-Zeitrahmen
    *  (Owner 26.07.: „Tradefrequenz deutlich erhöhen"). */
   closes5m?: number[];
@@ -428,6 +433,17 @@ export interface EntryGateStats {
    * Verhalten bleibt unverändert, bis diese Zahl über ein paar Tage zeigt,
    * was das Scharfschalten kosten würde. */
   quote_wuerde_blocken: number;
+  /* ── Task 19 Teil 2c (08.10.): Fundamental-Schatten ──────────────────
+   *
+   * Drei Zähler, dieselbe Buchführung wie `quote_wuerde_blocken`: nur
+   * Einstiege, die das scharfe Kosten-Tor DURCHLÄSST. Sie blocken nichts;
+   * sie beziffern, was ein Gewinntermin-Veto (≤ 2 Kalendertage vor den
+   * Zahlen), ein Liquiditätsboden (Ø-Tagesumsatz < 2 Mio USD) und eine
+   * Kleinstwert-Grenze (Marktkap < 300 Mio USD) kosten würden. Ob daraus
+   * ein Tor wird, entscheidet die realisierte Kante dieser Einstiege. */
+  gewinntermin_wuerde_blocken: number;
+  illiquide_wuerde_blocken: number;
+  kleinstwert_wuerde_blocken: number;
 }
 
 /**
@@ -682,6 +698,9 @@ async function executeUserTrades(
     cooldown_aktiv: 0,
     sockel_besitz: 0,
     quote_wuerde_blocken: 0,
+    gewinntermin_wuerde_blocken: 0,
+    illiquide_wuerde_blocken: 0,
+    kleinstwert_wuerde_blocken: 0,
   };
   /* Rückstand der Nachbuchung, über alle Konten summiert. `steckt` ist die
    * Zahl, auf die es ankommt: Einträge, die die Heilung aufgegeben hat und
@@ -1750,6 +1769,12 @@ async function executeUserTrades(
           // derselbe Einstieg in zwei Zählern und läse sich wie doppelte
           // Wirkung.
           if (kosten.ok && !mitMessung.ok) gate.quote_wuerde_blocken += 1;
+          // Task 19 Teil 2c: Fundamental-Schatten — dieselbe Buchführung, zählt nur,
+          // was das scharfe Tor durchlässt; entscheidet nichts.
+          const fb = marketData.get(symbol)?.fundamental;
+          if (kosten.ok && fb?.gewinnterminNah) gate.gewinntermin_wuerde_blocken += 1;
+          if (kosten.ok && fb?.illiquide) gate.illiquide_wuerde_blocken += 1;
+          if (kosten.ok && fb?.kleinstwert) gate.kleinstwert_wuerde_blocken += 1;
           // Hebel 3: Blocks, die NUR die Short-Leihe verursacht — getrennt
           // gezählt, sonst wäre ihre Wirkung von der Basis-Hürde ununter-
           // scheidbar. Zählt nur echte Zusatz-Blocks (Basis ließ durch).
@@ -3764,7 +3789,19 @@ export async function runScan(force = false): Promise<ScanResult> {
       // ATR(14) in % — Basis für volatilitätsadaptive Stops (MA6). Wird nur
       // berechnet, nicht erzwungen: Ohne atrStopMult bleibt alles wie gehabt.
       const atrPctVal = atrPct(snap.bars.map((b) => ({ high: b.high, low: b.low, close: b.close })), 14);
-      marketData.set(symbol, { closes, price: snap.price, forecast, atrPct: atrPctVal, news });
+      // Task 19 Teil 2c: Profil (Finnhub-Nachtlauf) aus dem Dokument, Kennzahlen
+      // FRISCH aus dem Abruf (Red-Team N2: das Dokument trägt den Vor-Scan) —
+      // hier beurteilt, im Einstiegs-Tor nur GEZÄHLT. Nur Profil-Klassen:
+      // Krypto-Volumen ist schon in Quote-Währung, × Kurs wäre Unsinn (N3).
+      const fundamental = PROFIL_KLASSEN.includes(classify(symbol))
+        ? fundamentalBefund(
+          symDoc.get('profil') as Parameters<typeof fundamentalBefund>[0],
+          snap.kennzahlen ?? (symDoc.get('kennzahlen') as Parameters<typeof fundamentalBefund>[1]),
+          snap.price,
+          budgetTag(now),
+        )
+        : null;
+      marketData.set(symbol, { closes, price: snap.price, forecast, atrPct: atrPctVal, news, fundamental });
 
       const sig = computeSignal(
         closes,
@@ -4252,6 +4289,9 @@ export async function runScan(force = false): Promise<ScanResult> {
     cooldown_aktiv: 0,
     sockel_besitz: 0,
     quote_wuerde_blocken: 0,
+    gewinntermin_wuerde_blocken: 0,
+    illiquide_wuerde_blocken: 0,
+    kleinstwert_wuerde_blocken: 0,
   };
   let lastError: string | null = null;
   // null = Trade-Block ist gar nicht gelaufen (Fehler davor) — das ist eine
@@ -4466,6 +4506,17 @@ export async function runScan(force = false): Promise<ScanResult> {
     logger.warn('Varianten-Schatten nicht fortgeschrieben', err);
   }
 
+  // Task 19 Teil 2c: Tagesaggregat der Fundamental-Messung. Nur Scans mit
+  // US-Aktien schreiben das Feld (Red-Team H1: der Lagebericht um 18:25 ET
+  // sähe sonst den Krypto-Scan von 18:20); gleicher ET-Tag summiert.
+  const fsVorher = (await db.doc('meta/health').get().catch(() => null))?.get('fundamentalSchatten') as Parameters<typeof fundamentalSchattenTag>[0];
+  const fundamentalSchatten = fundamentalSchattenTag(
+    fsVorher,
+    [...marketData.entries()].map(([s, d]) => ({ klasse: classify(s), befund: d.fundamental })),
+    entryGate,
+    budgetTag(now),
+    now.toISOString(),
+  );
   // Heartbeat für Monitoring-Alerts (SETUP.md §J): meta/health ist öffentlich
   // lesbar (meta-Rules) und enthält bewusst KEINE sensiblen Daten.
   await db
@@ -4507,6 +4558,9 @@ export async function runScan(force = false): Promise<ScanResult> {
         // prüft gar nicht, und die Ursache liegt bei den Daten, nicht am
         // Parameter.
         entryGate,
+        // Task 19 Teil 2c: Tagesaggregat — nur wenn dieser Scan US-Aktien hatte,
+        // sonst bleibt der Stand des letzten US-Scans stehen (merge).
+        ...(fundamentalSchatten ? { fundamentalSchatten } : {}),
         /* Broker-Anbindung (M13): Kommt das Order-Routing bis zum Broker?
          *
          * `verbunden: 0` heißt: Kein Konto hat einen Schlüssel hinterlegt —

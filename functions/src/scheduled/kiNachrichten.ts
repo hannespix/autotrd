@@ -57,6 +57,8 @@ import { logger } from 'firebase-functions/v2';
 import {
   KI_NACHRICHTEN_MODELL,
   KI_NACHRICHTEN_PROMPT_V,
+  FIRMENBLOCK_MAX_ZEICHEN,
+  PROFIL_KLASSEN,
   PRUEFUNG_MAX_TOKENS,
   PRUEFUNG_SCHEMA,
   PRUEFUNG_SYSTEM,
@@ -89,6 +91,7 @@ import {
   type KiMeldung,
   type KiUsage,
   type Kurskontext,
+  type Profil,
   type SichtungsPaar,
   type SichtungsUrteil,
   type Strategy,
@@ -327,6 +330,31 @@ export interface KiLaufAbhaengigkeiten {
 
 const urteilId = (newsId: string, symbol: string): string => `${newsId}_${symbol}`;
 
+/**
+ * Firmenprofile (Task 19 Teil 2b) für die Prompts: `market/{sym}.profil`,
+ * das der Finnhub-Nachtlauf schreibt. Nur Klassen, die ein Profil haben
+ * können — Krypto/Indizes kosten so keinen Lese-Zugriff und bekommen
+ * keinen Block. Fehlt das Dokument oder das Feld, steht null in der Karte.
+ */
+async function ladeProfile(db: FirebaseFirestore.Firestore, symbole: readonly string[]): Promise<Map<string, Partial<Profil> | null>> {
+  const profile = new Map<string, Partial<Profil> | null>();
+  const kandidaten = [...new Set(symbole)].filter((s) => PROFIL_KLASSEN.includes(classify(s)));
+  if (kandidaten.length === 0) return profile;
+  try {
+    // Nur das eine Feld — das Dokument trägt sonst Kurs, Kennzahlen, News.
+    for (const d of await db.getAll(...kandidaten.map((s) => db.doc(`market/${s}`)), { fieldMask: ['profil'] })) {
+      const profil = d.exists ? (d.get('profil') as Partial<Profil> | null | undefined) : null;
+      profile.set(d.id, profil && typeof profil === 'object' ? profil : null);
+    }
+  } catch (err) {
+    // Der Block ist Anreicherung, kein Muss (Red-Team M2): Ein Lesefehler
+    // darf die Kaskade nicht stoppen, die ohne Block genauso liefe.
+    logger.warn(`Profile für Prompt nicht lesbar — ohne Firmenblock weiter: ${err instanceof Error ? err.message : String(err)}`.slice(0, 200));
+    profile.clear();
+  }
+  return profile;
+}
+
 interface Offen {
   newsId: string;
   symbol: string;
@@ -404,8 +432,10 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
     e.konten = uids.size;
     const limitUsd = budgetLimitUsd(uids.size);
     const worstPruefung = worstCaseUsd(2_500, PRUEFUNG_SYSTEM.length, PRUEFUNG_MAX_TOKENS);
-    const worstSichtungMax = worstCaseUsd(SICHTUNG_MAX_MELDUNGEN * 1_100, SICHTUNG_SYSTEM.length, SICHTUNG_MAX_TOKENS);
-    const worstSichtungEinzeln = worstCaseUsd(1_100, SICHTUNG_SYSTEM.length, SICHTUNG_MAX_TOKENS);
+    // Firmenblöcke (Teil 2b) zählen in die Worst-Case-Reservierung mit — sonst
+    // taktet die Mindestfreigabe einen vollen Stapel weg (Red-Team M3).
+    const worstSichtungMax = worstCaseUsd(SICHTUNG_MAX_MELDUNGEN * 1_100 + SICHTUNG_MAX_PAARE * FIRMENBLOCK_MAX_ZEICHEN, SICHTUNG_SYSTEM.length, SICHTUNG_MAX_TOKENS);
+    const worstSichtungEinzeln = worstCaseUsd(1_100 + FIRMENBLOCK_MAX_ZEICHEN, SICHTUNG_SYSTEM.length, SICHTUNG_MAX_TOKENS);
     const tag = budgetTag(jetzt());
     const topf: Topf = {
       tag, limitUsd, konten: uids.size,
@@ -534,6 +564,7 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
     if (auswahl.length > 0) {
       const texte = new Map((await db.getAll(...auswahl.map((k) => db.doc(`marktNachrichten/${k.newsId}`))))
         .filter((d) => d.exists).map((d) => [d.id, { ...(d.data() as KiMeldung), id: d.id }]));
+      const profile = await ladeProfile(db, auswahl.map((k) => k.symbol));
       const alpaca = envSchluessel();
       const aktuelle = alpaca
         ? (await holeLetzteKurse(alpaca, [...new Set(auswahl.map((k) => k.symbol))], (s) => classify(s) === 'crypto', abh.fetchImpl ?? fetch, {
@@ -555,7 +586,7 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
         const r = await bezahlterAufruf(
           {
             system: PRUEFUNG_SYSTEM,
-            eingabe: pruefungEingabe(m, k.symbol, k.urteil.richtung, k.urteil.ereignis, kontext, iso()),
+            eingabe: pruefungEingabe(m, k.symbol, k.urteil.richtung, k.urteil.ereignis, kontext, iso(), profile.get(k.symbol)),
             schema: PRUEFUNG_SCHEMA as unknown as Record<string, unknown>,
             effort: 'high',
             maxTokens: PRUEFUNG_MAX_TOKENS,
@@ -673,8 +704,9 @@ export async function runKiNachrichten(abh: KiLaufAbhaengigkeiten = {}): Promise
         return;
       }
       const paare: SichtungsPaar[] = gruppe.flatMap((m) => m.symbole.filter((s) => relevant.has(s)).map((symbol) => ({ id: m.id, symbol })));
+      const profile = await ladeProfile(db, paare.map((p) => p.symbol));
       const r = await bezahlterAufruf(
-        { system: SICHTUNG_SYSTEM, eingabe: sichtungEingabe(gruppe, paare, iso()), schema: SICHTUNG_SCHEMA as unknown as Record<string, unknown>, effort: 'low', maxTokens: SICHTUNG_MAX_TOKENS },
+        { system: SICHTUNG_SYSTEM, eingabe: sichtungEingabe(gruppe, paare, iso(), profile), schema: SICHTUNG_SCHEMA as unknown as Record<string, unknown>, effort: 'low', maxTokens: SICHTUNG_MAX_TOKENS },
         // Danach müssen die Gegenproben aller Wartenden plus einer passen.
         worstPruefung * (wartend + 1),
         { art: 'sichtung', newsIds: gruppe.map((m) => m.id) },

@@ -43,6 +43,10 @@ describe('Engine-Why-Karte zeigt jeden Grund, den der Scan zählt', () => {
       'kante_wuerde_blocken',
       'short_zins_blockt',
       'quote_wuerde_blocken',
+      // Task 19 Teil 2c: Fundamental-Schatten — Chip-Pfad wie der Quoten-Schatten (Test darunter).
+      'gewinntermin_wuerde_blocken',
+      'illiquide_wuerde_blocken',
+      'kleinstwert_wuerde_blocken',
     ]);
     const block = dashboard.slice(
       dashboard.indexOf('const GATE_TEXT'),
@@ -62,6 +66,18 @@ describe('Engine-Why-Karte zeigt jeden Grund, den der Scan zählt', () => {
     expect(dashboard).toContain("t('ew.quoteTitel')");
     // Nur bei echten Grenzfällen — eine Null wäre Rauschen.
     expect(dashboard).toContain('if (quoteSchatten > 0) {');
+  });
+
+  it('der Fundamental-Schatten (Teil 2c) hat denselben Chip-Pfad — keine GATE_TEXT-Zeile, kein Verdrängen von „nichts abgelehnt“', () => {
+    for (const f of ['gewinntermin_wuerde_blocken', 'illiquide_wuerde_blocken', 'kleinstwert_wuerde_blocken']) {
+      expect(gateFelder(), `${f} wird gar nicht erhoben`).toContain(f);
+      const block = dashboard.slice(dashboard.indexOf('const GATE_TEXT'), dashboard.indexOf('const REGIME_TEXT'));
+      expect(block, `${f} steht in GATE_TEXT — das ist keine Ablehnung`).not.toContain(`'${f}'`);
+    }
+    expect(dashboard).toContain('const fsStand = h.fundamentalSchatten;');
+    expect(dashboard).toContain("t('ew.fundSchatten')");
+    expect(dashboard).toContain("t('ew.fundTitel')");
+    expect(dashboard).toContain('if (fundSchatten > 0) {');
   });
 
   it('die drei stillen Bremsen stehen in der Liste', () => {

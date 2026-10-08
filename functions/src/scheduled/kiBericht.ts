@@ -113,6 +113,8 @@ export async function schreibeBericht(now = new Date()): Promise<KiBerichtResult
     ...nimm('regimeKante'),
     // Stufe 4a: die gemessene Güte der KI-Urteile (nur Summen).
     ...nimm('kiBewertung'),
+    // Task 19 Teil 2c: Fundamental-Schatten (nur Summen).
+    ...nimm('fundamentalSchatten'),
   };
 
   try {
